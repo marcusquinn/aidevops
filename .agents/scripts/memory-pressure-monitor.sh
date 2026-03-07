@@ -19,6 +19,10 @@
 # .shellcheckrc causing recursive expansion) has been removed — SC1091 is
 # now globally disabled instead. This monitor remains as defense-in-depth.
 #
+# The primary defense is now shellcheck-wrapper.sh which has a background
+# RSS watchdog (kills at 1 GB) and respawn rate limiting (exponential backoff).
+# This monitor is the secondary safety net with higher thresholds (2 GB).
+#
 # kern.memorystatus_level is a secondary/informational signal only. macOS runs
 # fine with compression + swap; aggressive thresholds on that metric cause false
 # alarms. The primary signals are process-level.
@@ -32,8 +36,8 @@
 #   memory-pressure-monitor.sh --help       # Show usage
 #
 # Process-level thresholds (primary signals):
-#   RSS per process:  > 2 GB  → warning, > 4 GB → critical (kill candidate)
-#   Runtime (tools):  > 10 min for shellcheck, > 30 min for other tools
+#   RSS per process:  > 1 GB  → warning, > 2 GB → critical (kill candidate)
+#   Runtime (tools):  > 5 min for shellcheck, > 30 min for other tools
 #   Runtime (apps):   skipped — long-running by design
 #   Session count:    > 8 concurrent interactive sessions → warning
 #   Total aidevops:   > 8 GB aggregate RSS → warning
@@ -43,9 +47,9 @@
 #   Swap file count:  > 10 → informational warning
 #
 # Environment:
-#   PROCESS_RSS_WARN_MB       Per-process RSS warning (default: 2048)
-#   PROCESS_RSS_CRIT_MB       Per-process RSS critical (default: 4096)
-#   SHELLCHECK_RUNTIME_MAX    ShellCheck max runtime in seconds (default: 600)
+#   PROCESS_RSS_WARN_MB       Per-process RSS warning (default: 1024)
+#   PROCESS_RSS_CRIT_MB       Per-process RSS critical (default: 2048)
+#   SHELLCHECK_RUNTIME_MAX    ShellCheck max runtime in seconds (default: 300)
 #   TOOL_RUNTIME_MAX          Other tool max runtime in seconds (default: 1800)
 #   SESSION_COUNT_WARN        Interactive session warning threshold (default: 8)
 #   AGGREGATE_RSS_WARN_MB     Total aidevops RSS warning (default: 8192)
@@ -59,14 +63,18 @@ set -euo pipefail
 # --- Configuration -----------------------------------------------------------
 
 readonly SCRIPT_NAME="memory-pressure-monitor"
-readonly SCRIPT_VERSION="2.0.0"
+readonly SCRIPT_VERSION="2.1.0"
 
 # Per-process RSS thresholds (MB)
-PROCESS_RSS_WARN_MB="${PROCESS_RSS_WARN_MB:-2048}"
-PROCESS_RSS_CRIT_MB="${PROCESS_RSS_CRIT_MB:-4096}"
+# Lowered from 2048/4096 after Mar 7 crash: shellcheck grew to 18.5 GB in <60s.
+# The wrapper's watchdog kills at 1 GB; these are the secondary safety net.
+PROCESS_RSS_WARN_MB="${PROCESS_RSS_WARN_MB:-1024}"
+PROCESS_RSS_CRIT_MB="${PROCESS_RSS_CRIT_MB:-2048}"
 
 # Runtime thresholds (seconds)
-SHELLCHECK_RUNTIME_MAX="${SHELLCHECK_RUNTIME_MAX:-600}" # 10 min
+# Lowered shellcheck from 600s to 300s — wrapper has 120s hard timeout,
+# so any shellcheck surviving 5 min has bypassed the wrapper.
+SHELLCHECK_RUNTIME_MAX="${SHELLCHECK_RUNTIME_MAX:-300}" # 5 min
 TOOL_RUNTIME_MAX="${TOOL_RUNTIME_MAX:-1800}"            # 30 min
 
 # Session/aggregate thresholds
@@ -131,9 +139,9 @@ _validate_int() {
 	return 0
 }
 
-PROCESS_RSS_WARN_MB=$(_validate_int PROCESS_RSS_WARN_MB "$PROCESS_RSS_WARN_MB" 2048 256)
-PROCESS_RSS_CRIT_MB=$(_validate_int PROCESS_RSS_CRIT_MB "$PROCESS_RSS_CRIT_MB" 4096 512)
-SHELLCHECK_RUNTIME_MAX=$(_validate_int SHELLCHECK_RUNTIME_MAX "$SHELLCHECK_RUNTIME_MAX" 600 60)
+PROCESS_RSS_WARN_MB=$(_validate_int PROCESS_RSS_WARN_MB "$PROCESS_RSS_WARN_MB" 1024 256)
+PROCESS_RSS_CRIT_MB=$(_validate_int PROCESS_RSS_CRIT_MB "$PROCESS_RSS_CRIT_MB" 2048 512)
+SHELLCHECK_RUNTIME_MAX=$(_validate_int SHELLCHECK_RUNTIME_MAX "$SHELLCHECK_RUNTIME_MAX" 300 60)
 TOOL_RUNTIME_MAX=$(_validate_int TOOL_RUNTIME_MAX "$TOOL_RUNTIME_MAX" 1800 120)
 SESSION_COUNT_WARN=$(_validate_int SESSION_COUNT_WARN "$SESSION_COUNT_WARN" 8 2)
 AGGREGATE_RSS_WARN_MB=$(_validate_int AGGREGATE_RSS_WARN_MB "$AGGREGATE_RSS_WARN_MB" 8192 1024)
@@ -143,6 +151,8 @@ readonly COOLDOWN_SECS DAEMON_INTERVAL
 
 # --- Helpers ------------------------------------------------------------------
 
+# Log a timestamped message to the log file
+# Arguments: $1=level (INFO|WARN|CRIT), remaining args=message text
 log_msg() {
 	local level="$1"
 	shift
@@ -152,6 +162,7 @@ log_msg() {
 	return 0
 }
 
+# Create required log and state directories if they don't exist
 ensure_dirs() {
 	mkdir -p "${LOG_DIR}" "${STATE_DIR}"
 	return 0
@@ -225,6 +236,8 @@ check_cooldown() {
 	return 0
 }
 
+# Record current time as cooldown start for a notification category
+# Arguments: $1=category name (used as filename suffix)
 set_cooldown() {
 	local category="$1"
 	local cooldown_file="${STATE_DIR}/memory-pressure-${category}.cooldown"
@@ -232,6 +245,8 @@ set_cooldown() {
 	return 0
 }
 
+# Remove cooldown file for a category, allowing immediate re-notification
+# Arguments: $1=category name (used as filename suffix)
 clear_cooldown() {
 	local category="$1"
 	local cooldown_file="${STATE_DIR}/memory-pressure-${category}.cooldown"
@@ -347,14 +362,20 @@ _is_app_process() {
 
 # Collect all monitored processes with their RSS and runtime
 # Output: one line per process: PID|RSS_MB|RUNTIME_SECS|COMMAND_NAME|FULL_COMMAND
+#
+# Pattern matching: MONITORED_PATTERNS are matched against the COMMAND BASENAME
+# only (not the full command line with arguments). This prevents false positives
+# like zsh processes whose arguments contain "opencode" (e.g., `zsh -l -c opencode`).
 _collect_monitored_processes() {
+	# Collect all processes once, then filter by pattern against basename
+	local ps_output
+	ps_output=$(ps axo pid=,rss=,command= 2>/dev/null || true)
+
+	# Track PIDs we've already emitted to avoid duplicates from overlapping patterns
+	local -a seen_pids=()
+
 	local pattern
 	for pattern in "${MONITORED_PATTERNS[@]}"; do
-		# Use ps to get PID, RSS (KB), and command
-		# Filter by pattern, exclude grep itself and this script
-		local ps_output
-		ps_output=$(ps axo pid=,rss=,command= 2>/dev/null | grep -iE "$pattern" | grep -v "grep" | grep -v "${SCRIPT_NAME}" || true)
-
 		while IFS= read -r line; do
 			[[ -z "$line" ]] && continue
 			# Parse with read builtin — avoids spawning echo/awk/cut subshells per line
@@ -365,18 +386,60 @@ _collect_monitored_processes() {
 			[[ "$pid" =~ ^[0-9]+$ ]] || continue
 			[[ "$rss_kb" =~ ^[0-9]+$ ]] || rss_kb=0
 
-			local rss_mb=$((rss_kb / 1024))
-			local runtime
-			runtime=$(_get_process_age "$pid")
-
-			# Extract short command name via parameter expansion (no subshell)
+			# Extract short command name (basename of the executable path)
 			local cmd_path="${cmd%% *}"
 			local cmd_name
 			cmd_name=$(basename "$cmd_path" 2>/dev/null || echo "unknown")
 
+			# Match pattern against the command basename, NOT the full command line.
+			# This prevents false positives like `zsh -l -c "opencode"` matching
+			# the "opencode" pattern — zsh is not an opencode process.
+			# Exception: patterns containing ".*" (regex) are matched against full
+			# command for cases like "node.*language-server".
+			local match=false
+			if [[ "$pattern" == *".*"* ]]; then
+				# Regex pattern — match against full command line
+				if echo "$cmd" | grep -iqE "$pattern"; then
+					match=true
+				fi
+			else
+				# Simple pattern — match against basename only
+				local cmd_lower pattern_lower
+				cmd_lower=$(printf '%s' "$cmd_name" | tr '[:upper:]' '[:lower:]')
+				pattern_lower=$(printf '%s' "$pattern" | tr '[:upper:]' '[:lower:]')
+				if [[ "$cmd_lower" == *"$pattern_lower"* ]]; then
+					match=true
+				fi
+			fi
+
+			if [[ "$match" != "true" ]]; then
+				continue
+			fi
+
+			# Skip grep, this script, and already-seen PIDs
+			if [[ "$cmd_name" == "grep" ]] || [[ "$cmd" == *"${SCRIPT_NAME}"* ]]; then
+				continue
+			fi
+			local seen_pid
+			local is_dup=false
+			for seen_pid in "${seen_pids[@]+"${seen_pids[@]}"}"; do
+				if [[ "$seen_pid" == "$pid" ]]; then
+					is_dup=true
+					break
+				fi
+			done
+			if [[ "$is_dup" == "true" ]]; then
+				continue
+			fi
+			seen_pids+=("$pid")
+
+			local rss_mb=$((rss_kb / 1024))
+			local runtime
+			runtime=$(_get_process_age "$pid")
+
 			printf '%s|%s|%s|%s|%s\n' "$pid" "$rss_mb" "$runtime" "$cmd_name" "$cmd"
 		done <<<"$ps_output"
-	done | sort -t'|' -k2 -rn | uniq
+	done | sort -t'|' -k2 -rn
 	return 0
 }
 
@@ -611,6 +674,8 @@ do_check() {
 
 # --- Commands -----------------------------------------------------------------
 
+# Run a single check pass — collect processes, evaluate thresholds, notify/kill
+# Returns: 0=ok, 1=warnings found, 2=critical findings
 cmd_check() {
 	# do_check returns non-zero for warnings/critical — that's informational,
 	# not a script failure. Capture the exit code for callers that want it.
@@ -619,6 +684,7 @@ cmd_check() {
 	return "$exit_code"
 }
 
+# Print detailed status of all monitored processes, sessions, and OS memory
 cmd_status() {
 	ensure_dirs
 
@@ -731,16 +797,28 @@ cmd_status() {
 	return 0
 }
 
+# Run continuous monitoring loop with adaptive polling (faster when shellcheck detected)
 cmd_daemon() {
-	echo "[${SCRIPT_NAME}] Starting daemon mode (interval: ${DAEMON_INTERVAL}s)"
+	echo "[${SCRIPT_NAME}] Starting daemon mode (interval: ${DAEMON_INTERVAL}s, fast: 10s when shellcheck detected)"
 	echo "[${SCRIPT_NAME}] Press Ctrl+C to stop"
 
 	while true; do
-		cmd_check || true
-		sleep "${DAEMON_INTERVAL}"
+		local check_exit=0
+		cmd_check || check_exit=$?
+
+		# Adaptive polling: if shellcheck processes are running, poll every 10s
+		# instead of the normal 60s interval. ShellCheck can grow from 0 to 18 GB
+		# in under 60s (observed Mar 7 crash), so the normal interval is too slow.
+		local interval="$DAEMON_INTERVAL"
+		if pgrep -x shellcheck >/dev/null 2>&1; then
+			interval=10
+		fi
+
+		sleep "$interval"
 	done
 }
 
+# Install launchd plist for periodic monitoring (every 30 seconds)
 cmd_install() {
 	# Resolve script path — prefer installed location
 	local script_path
@@ -770,7 +848,7 @@ cmd_install() {
 		<string>${script_path}</string>
 	</array>
 	<key>StartInterval</key>
-	<integer>60</integer>
+	<integer>30</integer>
 	<key>StandardOutPath</key>
 	<string>${home_escaped}/.aidevops/logs/memory-pressure-launchd.log</string>
 	<key>StandardErrorPath</key>
@@ -803,10 +881,11 @@ EOF
 	echo "Installed and loaded: ${LAUNCHD_LABEL}"
 	echo "Plist: ${PLIST_PATH}"
 	echo "Log: ${LOG_FILE}"
-	echo "Check interval: 60 seconds"
+	echo "Check interval: 30 seconds"
 	return 0
 }
 
+# Remove launchd plist and clean up state files
 cmd_uninstall() {
 	if [[ -f "${PLIST_PATH}" ]]; then
 		launchctl bootout "gui/$(id -u)" "${PLIST_PATH}" 2>/dev/null || true
@@ -822,6 +901,7 @@ cmd_uninstall() {
 	return 0
 }
 
+# Display usage information and current configuration
 cmd_help() {
 	cat <<HELP
 Usage: ${SCRIPT_NAME}.sh [COMMAND]
@@ -852,9 +932,9 @@ Auto-kill (GH#2915):
   Safe because the language server respawns them. Disable: AUTO_KILL_SHELLCHECK=false
 
 Environment variables:
-  PROCESS_RSS_WARN_MB       Per-process RSS warning (default: 2048)
-  PROCESS_RSS_CRIT_MB       Per-process RSS critical (default: 4096)
-  SHELLCHECK_RUNTIME_MAX    ShellCheck max runtime in seconds (default: 600)
+  PROCESS_RSS_WARN_MB       Per-process RSS warning (default: 1024)
+  PROCESS_RSS_CRIT_MB       Per-process RSS critical (default: 2048)
+  SHELLCHECK_RUNTIME_MAX    ShellCheck max runtime in seconds (default: 300)
   TOOL_RUNTIME_MAX          Other tool max runtime in seconds (default: 1800)
   SESSION_COUNT_WARN        Interactive session warning threshold (default: 8)
   AGGREGATE_RSS_WARN_MB     Total aidevops RSS warning (default: 8192)
@@ -868,6 +948,7 @@ HELP
 
 # --- Main ---------------------------------------------------------------------
 
+# Parse command-line arguments and dispatch to the appropriate subcommand
 main() {
 	local cmd="${1:-check}"
 

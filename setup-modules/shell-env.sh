@@ -9,6 +9,7 @@ IFS=$'\n\t'
 trap 'rc=$?; echo "[ERROR] ${BASH_SOURCE[0]}:${LINENO} exit $rc" >&2' ERR
 shopt -s inherit_errexit 2>/dev/null || true
 
+# Detect the shell currently executing this script (zsh, bash, or fallback)
 detect_running_shell() {
 	if [[ -n "${ZSH_VERSION:-}" ]]; then
 		echo "zsh"
@@ -20,6 +21,7 @@ detect_running_shell() {
 	return 0
 }
 
+# Detect the user's default login shell from $SHELL
 detect_default_shell() {
 	basename "${SHELL:-/bin/bash}"
 	return 0
@@ -61,6 +63,7 @@ get_shell_rc() {
 	return 0
 }
 
+# Return all relevant shell rc file paths for the current platform
 get_all_shell_rcs() {
 	local rcs=()
 
@@ -88,6 +91,7 @@ get_all_shell_rcs() {
 	return 0
 }
 
+# Offer to install Oh My Zsh if zsh is the default shell and OMZ is not present
 setup_oh_my_zsh() {
 	# Only relevant if zsh is available
 	if ! command -v zsh >/dev/null 2>&1; then
@@ -155,6 +159,7 @@ setup_oh_my_zsh() {
 	return 0
 }
 
+# Extract portable customizations from bash configs into a shared profile for cross-shell use
 setup_shell_compatibility() {
 	print_info "Setting up cross-shell compatibility..."
 
@@ -375,6 +380,7 @@ setup_shell_compatibility() {
 	return 0
 }
 
+# Check for optional dependencies (sshpass) and offer to install them
 check_optional_deps() {
 	print_info "Checking optional dependencies..."
 
@@ -411,6 +417,7 @@ check_optional_deps() {
 	return 0
 }
 
+# Add ~/.local/bin to PATH in all shell rc files for the aidevops CLI
 add_local_bin_to_path() {
 	# shellcheck disable=SC2016 # path_line is written to rc files; must expand at shell startup, not now
 	local path_line='export PATH="$HOME/.local/bin:$PATH"'
@@ -466,7 +473,8 @@ add_local_bin_to_path() {
 #
 # The bash language server hardcodes --external-sources in every ShellCheck
 # invocation, causing exponential memory growth (9+ GB) when source chains
-# span 463+ scripts. The wrapper strips --external-sources and enforces ulimit.
+# span 463+ scripts. The wrapper strips --external-sources and enforces a
+# background RSS watchdog (ulimit -v is broken on macOS ARM — EINVAL).
 #
 # GH#2915 set SHELLCHECK_PATH env var, but bash-language-server ignores it —
 # it resolves `shellcheck` via PATH lookup, finding /opt/homebrew/bin/shellcheck
@@ -482,6 +490,11 @@ add_local_bin_to_path() {
 # "shellcheck". By placing ~/.aidevops/bin first on PATH with a symlink to
 # the wrapper, the language server finds the wrapper instead of the real binary.
 # Layers 1-3 are retained for tools that honour SHELLCHECK_PATH.
+#
+# CRITICAL: ~/.aidevops/bin MUST be at the START of PATH, not the end.
+# If it appears after /opt/homebrew/bin, the real shellcheck is found first
+# and the wrapper is bypassed entirely. The launchctl setenv always prepends,
+# and the case-guard in shell rc files ensures it stays first.
 setup_shellcheck_wrapper() {
 	local wrapper_path="$HOME/.aidevops/agents/scripts/shellcheck-wrapper.sh"
 
@@ -505,13 +518,16 @@ setup_shellcheck_wrapper() {
 	# shellcheck disable=SC2016 # env_line is written to rc files; must expand at shell startup
 	env_line='export SHELLCHECK_PATH="$HOME/.aidevops/agents/scripts/shellcheck-wrapper.sh"'
 	# shellcheck disable=SC2016 # path_line is written to rc files; must expand at shell startup
-	# Use case guard so repeated sourcing (e.g. nested shells) doesn't duplicate PATH entries
-	local path_line='case ":$PATH:" in *":$HOME/.aidevops/bin:"*) ;; *) export PATH="$HOME/.aidevops/bin:$PATH" ;; esac'
+	# Sanitize-and-prepend: strip any existing occurrence of the shim dir from PATH
+	# (it may be at the END from a previous setup run), then prepend it. This ensures
+	# the shim is always first, even on machines upgrading from the old append form.
+	# The ${PATH:+:$PATH} guard handles the empty-PATH edge case without a trailing colon.
+	local path_line='_aidevops_shim="$HOME/.aidevops/bin"; PATH="$(printf '\''%s'\'' "$PATH" | tr '\'':'\'' '\''\n'\'' | grep -Fxv -- "$_aidevops_shim" | paste -sd: -)"; export PATH="$_aidevops_shim${PATH:+:$PATH}"; unset _aidevops_shim'
 	# Fish shell uses different syntax (set -gx instead of export)
 	# shellcheck disable=SC2016 # fish lines are written to config.fish; must expand at shell startup
 	local env_line_fish='set -gx SHELLCHECK_PATH "$HOME/.aidevops/agents/scripts/shellcheck-wrapper.sh"'
-	# shellcheck disable=SC2016
-	local path_line_fish='contains -- "$HOME/.aidevops/bin" $PATH; or set -gx PATH "$HOME/.aidevops/bin" $PATH'
+	# shellcheck disable=SC2016 # fish path line: strip existing, then prepend
+	local path_line_fish='set -l _aidevops_shim "$HOME/.aidevops/bin"; set -l _aidevops_rest (string match -v -- "$_aidevops_shim" $PATH); set -gx PATH $_aidevops_shim $_aidevops_rest'
 	local added_to=""
 	local already_in=""
 
@@ -549,14 +565,29 @@ setup_shellcheck_wrapper() {
 	# Note: 2>/dev/null on launchctl is intentional — launchctl may not be
 	# available in non-GUI contexts (SSH, containers). Unlike grep where we
 	# want errors visible, launchctl failure is a non-fatal fallback.
+	#
+	# CRITICAL: Always prepend shim_dir even if it's already in PATH — it may
+	# be at the END (e.g., appended by a previous setup run), which means the
+	# real shellcheck at /opt/homebrew/bin is found first. We strip any existing
+	# occurrence and prepend to guarantee first position.
 	if [[ "$PLATFORM_MACOS" == "true" ]]; then
 		if launchctl setenv SHELLCHECK_PATH "$wrapper_path" 2>/dev/null; then
 			print_info "Set SHELLCHECK_PATH via launchctl (GUI processes)"
 		fi
-		if [[ ":$PATH:" != *":$shim_dir:"* ]]; then
-			if launchctl setenv PATH "$shim_dir:$PATH" 2>/dev/null; then
-				print_info "Prepended $shim_dir to PATH via launchctl (GUI processes)"
-			fi
+		# Build a clean PATH with shim_dir at the front, removing any existing
+		# occurrence to prevent duplicates while ensuring first position.
+		# Handle the empty-PATH edge case to avoid a trailing colon (which
+		# resolves to "." and is a PATH injection vector).
+		local clean_path
+		clean_path=$(printf '%s' "$PATH" | tr ':' '\n' | grep -Fxv "$shim_dir" | tr '\n' ':' | sed 's/:$//')
+		local new_path
+		if [[ -n "$clean_path" ]]; then
+			new_path="${shim_dir}:${clean_path}"
+		else
+			new_path="${shim_dir}"
+		fi
+		if launchctl setenv PATH "$new_path" 2>/dev/null; then
+			print_info "Prepended $shim_dir to PATH via launchctl (GUI processes)"
 		fi
 	fi
 
@@ -582,8 +613,17 @@ setup_shellcheck_wrapper() {
 		fi
 
 		# PATH prepend for ~/.aidevops/bin (GH#2993: shim must be on PATH)
-		# Use exact-line match so stale entries (append-form, comments) don't short-circuit
-		if ! grep -Fq "$path_line" "$zshenv"; then
+		# Remove stale old-form entries (case guard that only checked presence,
+		# not position — left the shim at the end of PATH on upgrades)
+		# shellcheck disable=SC2016 # Matching literal $PATH text in rc files, not expanding
+		if grep -q 'case ":$PATH:" in.*\.aidevops/bin' "$zshenv"; then
+			# Remove the old case-guard line (sed is appropriate here — targeted single-line removal)
+			# shellcheck disable=SC2016
+			sed -i.bak '/case ":$PATH:" in.*\.aidevops\/bin/d' "$zshenv"
+			rm -f "${zshenv}.bak"
+		fi
+		# Use exact-line match for the new sanitize-and-prepend form
+		if ! grep -Fq '_aidevops_shim' "$zshenv"; then
 			{
 				echo ""
 				echo "# Added by aidevops setup (GH#2993: shellcheck shim on PATH)"
@@ -632,8 +672,21 @@ setup_shellcheck_wrapper() {
 		fi
 
 		# PATH prepend for ~/.aidevops/bin (GH#2993)
-		# Use exact-line match so stale entries don't short-circuit
-		if ! grep -Fq "$rc_path_line" "$rc_file"; then
+		# Remove stale old-form entries (case guard that only checked presence,
+		# not position — left the shim at the end of PATH on upgrades)
+		# shellcheck disable=SC2016 # Matching literal $PATH text in rc files, not expanding
+		if grep -q 'case ":$PATH:" in.*\.aidevops/bin' "$rc_file"; then
+			# shellcheck disable=SC2016
+			sed -i.bak '/case ":$PATH:" in.*\.aidevops\/bin/d' "$rc_file"
+			rm -f "${rc_file}.bak"
+		fi
+		# For fish: also remove old 'contains' form that only checked presence
+		if [[ "$is_fish_rc" == "true" ]] && grep -q 'contains.*\.aidevops/bin' "$rc_file"; then
+			sed -i.bak '/contains.*\.aidevops\/bin/d' "$rc_file"
+			rm -f "${rc_file}.bak"
+		fi
+		# Check for the new sanitize-and-prepend form (uses _aidevops_shim variable)
+		if ! grep -Fq '_aidevops_shim' "$rc_file"; then
 			{
 				echo ""
 				echo "# Added by aidevops setup (GH#2993: shellcheck shim on PATH)"
@@ -662,6 +715,7 @@ setup_shellcheck_wrapper() {
 	return 0
 }
 
+# Add server access aliases to shell rc files (bash/zsh/fish)
 setup_aliases() {
 	print_info "Setting up shell aliases..."
 
@@ -765,6 +819,7 @@ ALIASES
 	return 0
 }
 
+# Install terminal title integration that syncs tab titles with git repo/branch
 setup_terminal_title() {
 	print_info "Setting up terminal title integration..."
 
