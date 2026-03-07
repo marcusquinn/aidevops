@@ -19,7 +19,7 @@ jobs:
       contents: write
     steps:
       - name: Checkout source code
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Configure Git
         run: |
@@ -27,10 +27,16 @@ jobs:
           git config --global user.email "actions@github.com"
 
       - name: Clone wiki repository
+        env:
+          REPO: ${{ github.repository }}
         run: |
-          git clone https://github.com/${{ github.repository }}.wiki.git wiki
+          git clone "https://github.com/${REPO}.wiki.git" wiki
 
       - name: Sync wiki content
+        env:
+          REPO: ${{ github.repository }}
+          ACTOR: ${{ github.actor }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           # Remove all files from wiki repository except .git
           find wiki -mindepth 1 -maxdepth 1 -not -name '.git' -exec rm -rf {} \;
@@ -54,7 +60,7 @@ jobs:
           git commit -m "Sync wiki from source repository"
 
           # Retry loop to handle concurrent pushes (up to 3 attempts)
-          PUSH_URL="https://${{ github.actor }}:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.wiki.git"
+          PUSH_URL="https://${ACTOR}:${GH_TOKEN}@github.com/${REPO}.wiki.git"
           for i in 1 2 3; do
             echo "Push attempt $i..."
             git pull --rebase origin master || true

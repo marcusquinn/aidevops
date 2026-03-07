@@ -36,12 +36,12 @@ jobs:
     
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           fetch-depth: 1
 
       - name: Run OpenCode
-        uses: sst/opencode/github@latest
+        uses: sst/opencode/github@0cf0294787322664c6d668fa5ab0a9ce26796f78 # latest
         env:
           # Use your preferred AI provider
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}

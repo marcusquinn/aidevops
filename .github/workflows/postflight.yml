@@ -26,17 +26,21 @@ jobs:
     
     steps:
     - name: Checkout
-      uses: actions/checkout@v4
+      uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       with:
         ref: ${{ github.event.inputs.tag || github.ref }}
         fetch-depth: 0
     
     - name: Setup Bun
-      uses: oven-sh/setup-bun@v2
+      uses: oven-sh/setup-bun@ecf28ddc73e819eb6fa29df6b34ef8921c743461 # v2
       with:
         bun-version: latest
     
     - name: Wait for CI/CD Pipelines
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        REPO: ${{ github.repository }}
+        COMMIT_SHA: ${{ github.sha }}
       run: |
         echo "Waiting for all check runs to complete..."
         echo "Note: Excluding this workflow (Verify Release Health) to avoid circular dependency"
@@ -45,7 +49,7 @@ jobs:
         # Poll for completion, excluding this workflow to avoid circular dependency
         SELF_NAME="Verify Release Health"
         for i in {1..20}; do
-          PENDING=$(gh api repos/${{ github.repository }}/commits/${{ github.sha }}/check-runs \
+          PENDING=$(gh api "repos/${REPO}/commits/${COMMIT_SHA}/check-runs" \
             --jq "[.check_runs[] | select(.status != \"completed\" and .name != \"$SELF_NAME\")] | length")
           
           if [[ "$PENDING" == "0" ]]; then
@@ -55,22 +59,24 @@ jobs:
           
           # Show which workflows are still pending
           echo "Waiting for $PENDING check runs... (attempt $i/20)"
-          gh api repos/${{ github.repository }}/commits/${{ github.sha }}/check-runs \
+          gh api "repos/${REPO}/commits/${COMMIT_SHA}/check-runs" \
             --jq ".check_runs[] | select(.status != \"completed\" and .name != \"$SELF_NAME\") | \"  - \(.name): \(.status)\"" || true
           sleep 30
         done
-      env:
-        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     
     - name: Verify CI/CD Status
       id: cicd
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        REPO: ${{ github.repository }}
+        COMMIT_SHA: ${{ github.sha }}
       run: |
         echo "## CI/CD Pipeline Status" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
         
         # Get all check runs, excluding self to avoid counting our own status
         SELF_NAME="Verify Release Health"
-        CHECK_RUNS=$(gh api repos/${{ github.repository }}/commits/${{ github.sha }}/check-runs \
+        CHECK_RUNS=$(gh api "repos/${REPO}/commits/${COMMIT_SHA}/check-runs" \
           --jq ".check_runs[] | select(.name != \"$SELF_NAME\") | {name, status, conclusion}")
         
         # Count results (excluding self)
@@ -83,7 +89,7 @@ jobs:
         echo "|-------|--------|------------|" >> $GITHUB_STEP_SUMMARY
         
         # Show all check runs including self for transparency
-        gh api repos/${{ github.repository }}/commits/${{ github.sha }}/check-runs \
+        gh api "repos/${REPO}/commits/${COMMIT_SHA}/check-runs" \
           --jq '.check_runs[] | "| \(.name) | \(.status) | \(.conclusion // "pending") |"' >> $GITHUB_STEP_SUMMARY
         
         echo "" >> $GITHUB_STEP_SUMMARY
@@ -127,8 +133,6 @@ jobs:
           echo "cicd_status=passed" >> $GITHUB_OUTPUT
         fi
         echo "CI/CD critical checks passed"
-      env:
-        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     
     - name: Check SonarCloud Quality Gate
       if: always()
@@ -174,8 +178,8 @@ jobs:
         bun install -g snyk
         
         # Authenticate if token available
-        if [[ -n "${{ secrets.SNYK_TOKEN }}" ]]; then
-          snyk auth ${{ secrets.SNYK_TOKEN }}
+        if [[ -n "$SNYK_TOKEN" ]]; then
+          snyk auth "$SNYK_TOKEN"
           
           # Run security scan
           if snyk test --severity-threshold=high --json > snyk-results.json 2>/dev/null; then
@@ -223,6 +227,13 @@ jobs:
     - name: Generate Final Report
       id: report
       if: always()
+      env:
+        CICD_STATUS: ${{ steps.cicd.outputs.cicd_status }}
+        SONAR_STATUS: ${{ steps.sonarcloud.outputs.sonar_status }}
+        SNYK_STATUS: ${{ steps.snyk.outputs.snyk_status }}
+        SECRETS_STATUS: ${{ steps.secrets.outputs.secrets_status }}
+        RELEASE_TAG: ${{ github.event.release.tag_name || github.ref_name }}
+        COMMIT_SHA: ${{ github.sha }}
       run: |
         echo "" >> $GITHUB_STEP_SUMMARY
         echo "---" >> $GITHUB_STEP_SUMMARY
@@ -230,16 +241,11 @@ jobs:
         echo "## Postflight Summary" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
         
-        CICD="${{ steps.cicd.outputs.cicd_status }}"
-        SONAR="${{ steps.sonarcloud.outputs.sonar_status }}"
-        SNYK="${{ steps.snyk.outputs.snyk_status }}"
-        SECRETS="${{ steps.secrets.outputs.secrets_status }}"
-        
         # Default unset outputs to 'skipped' (step didn't produce output)
-        CICD="${CICD:-skipped}"
-        SONAR="${SONAR:-skipped}"
-        SNYK="${SNYK:-skipped}"
-        SECRETS="${SECRETS:-skipped}"
+        CICD="${CICD_STATUS:-skipped}"
+        SONAR="${SONAR_STATUS:-skipped}"
+        SNYK="${SNYK_STATUS:-skipped}"
+        SECRETS="${SECRETS_STATUS:-skipped}"
         
         echo "| Check | Status |" >> $GITHUB_STEP_SUMMARY
         echo "|-------|--------|" >> $GITHUB_STEP_SUMMARY
@@ -248,8 +254,8 @@ jobs:
         echo "| Snyk Security | ${SNYK} |" >> $GITHUB_STEP_SUMMARY
         echo "| Secret Detection | ${SECRETS} |" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
-        echo "**Release**: ${{ github.event.release.tag_name || github.ref_name }}" >> $GITHUB_STEP_SUMMARY
-        echo "**Commit**: ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+        echo "**Release**: ${RELEASE_TAG}" >> $GITHUB_STEP_SUMMARY
+        echo "**Commit**: ${COMMIT_SHA}" >> $GITHUB_STEP_SUMMARY
         echo "**Time**: $(date -u)" >> $GITHUB_STEP_SUMMARY
         echo "" >> $GITHUB_STEP_SUMMARY
         echo "*Generated by AI DevOps Framework Postflight Verification*" >> $GITHUB_STEP_SUMMARY
@@ -272,7 +278,7 @@ jobs:
         fi
         
         if [[ "$HAS_CRITICAL" == "true" ]]; then
-          echo "::error::Postflight verification failed for release ${{ github.event.release.tag_name || github.ref_name }}"
+          echo "::error::Postflight verification failed for release ${RELEASE_TAG}"
           echo ""
           echo "Recommended actions:"
           echo "1. Review the failed checks in the workflow summary"
@@ -280,8 +286,8 @@ jobs:
           echo "3. See: .agents/workflows/postflight.md#rollback-procedures"
           exit 1
         elif [[ "$HAS_WARNING" == "true" ]]; then
-          echo "::warning::Postflight completed with warnings for release ${{ github.event.release.tag_name || github.ref_name }}"
+          echo "::warning::Postflight completed with warnings for release ${RELEASE_TAG}"
           echo "Review advisory warnings above and address in next release if needed."
         else
-          echo "Postflight verification passed for release ${{ github.event.release.tag_name || github.ref_name }}"
+          echo "Postflight verification passed for release ${RELEASE_TAG}"
         fi

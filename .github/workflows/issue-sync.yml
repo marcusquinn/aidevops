@@ -58,7 +58,7 @@ jobs:
 
       - name: Checkout
         if: steps.check-author.outputs.skip != 'true'
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           fetch-depth: 1
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -166,7 +166,7 @@ jobs:
 
       - name: Checkout
         if: steps.check-issue.outputs.sync == 'true'
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           fetch-depth: 1
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -179,22 +179,26 @@ jobs:
 
       - name: Sync issue ref to TODO.md
         if: steps.check-issue.outputs.sync == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TASK_ID: ${{ steps.check-issue.outputs.task_id }}
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
         run: |
           chmod +x .agents/scripts/issue-sync-helper.sh
           chmod +x .agents/scripts/shared-constants.sh
-          echo "=== New issue opened: ${{ steps.check-issue.outputs.task_id }} (#${{ github.event.issue.number }}) ==="
+          echo "=== New issue opened: ${TASK_ID} (#${ISSUE_NUMBER}) ==="
           bash .agents/scripts/issue-sync-helper.sh pull --verbose || true
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Commit and push TODO.md updates
         if: steps.check-issue.outputs.sync == 'true'
+        env:
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
         run: |
           if git diff --quiet TODO.md 2>/dev/null; then
             echo "No TODO.md changes to commit"
           else
             git add TODO.md
-            git commit -m "chore: sync ref:GH#${{ github.event.issue.number }} to TODO.md [skip ci]"
+            git commit -m "chore: sync ref:GH#${ISSUE_NUMBER} to TODO.md [skip ci]"
             for i in 1 2 3; do
               echo "Push attempt $i..."
               git pull --rebase origin main || true
@@ -222,7 +226,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           fetch-depth: 1
           token: ${{ secrets.GITHUB_TOKEN }}
@@ -233,23 +237,25 @@ jobs:
           git config --global user.email "actions@github.com"
 
       - name: Run sync command
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SYNC_COMMAND: ${{ github.event.inputs.command }}
         run: |
           chmod +x .agents/scripts/issue-sync-helper.sh
           chmod +x .agents/scripts/shared-constants.sh
-          COMMAND="${{ github.event.inputs.command }}"
-          echo "=== Running: issue-sync-helper.sh $COMMAND ==="
-          bash .agents/scripts/issue-sync-helper.sh "$COMMAND" --verbose
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          echo "=== Running: issue-sync-helper.sh $SYNC_COMMAND ==="
+          bash .agents/scripts/issue-sync-helper.sh "$SYNC_COMMAND" --verbose
 
       - name: Commit and push TODO.md updates
         if: github.event.inputs.command == 'pull' || github.event.inputs.command == 'push'
+        env:
+          SYNC_COMMAND: ${{ github.event.inputs.command }}
         run: |
           if git diff --quiet TODO.md 2>/dev/null; then
             echo "No TODO.md changes to commit"
           else
             git add TODO.md
-            git commit -m "chore: manual issue sync (${{ github.event.inputs.command }}) [skip ci]"
+            git commit -m "chore: manual issue sync ($SYNC_COMMAND) [skip ci]"
             for i in 1 2 3; do
               git pull --rebase origin main || true
               if git push; then
@@ -396,7 +402,7 @@ jobs:
 
       - name: Checkout repo for TODO.md update
         if: steps.extract.outputs.task_id != ''
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           ref: main
           fetch-depth: 1
