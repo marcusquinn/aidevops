@@ -36,14 +36,26 @@ while [[ $# -gt 0 ]]; do
 		shift
 		;;
 	--vm-name)
+		if [[ $# -lt 2 || "$2" == -* ]]; then
+			echo "Option $1 requires a value" >&2
+			exit 2
+		fi
 		VM_NAME="$2"
 		shift 2
 		;;
 	--branch)
+		if [[ $# -lt 2 || "$2" == -* ]]; then
+			echo "Option $1 requires a value" >&2
+			exit 2
+		fi
 		TEST_BRANCH="$2"
 		shift 2
 		;;
 	--distro)
+		if [[ $# -lt 2 || "$2" == -* ]]; then
+			echo "Option $1 requires a value" >&2
+			exit 2
+		fi
 		VM_DISTRO="ubuntu:$2"
 		shift 2
 		;;
@@ -116,19 +128,28 @@ vm_test() {
 	local expect_pattern="${3:-}"
 
 	local output
-	output=$(orb run -m "$VM_NAME" bash -c "$command" 2>&1) || true
+	local status
+	if output=$(orb run -m "$VM_NAME" bash -c "$command" 2>&1); then
+		status=0
+	else
+		status=$?
+	fi
 
 	if [[ -n "$expect_pattern" ]]; then
-		if echo "$output" | grep -qE "$expect_pattern"; then
+		if [[ $status -eq 0 ]] && printf '%s\n' "$output" | grep -qE "$expect_pattern"; then
 			pass "$description"
 		else
-			fail "$description" "Expected pattern '$expect_pattern' not found in output"
+			fail "$description" "Command exited with $status or pattern '$expect_pattern' was not found"
 			if [[ "$VERBOSE" == "true" ]]; then
-				echo "       Output: $(echo "$output" | head -3)"
+				printf '       Output: %s\n' "$(printf '%s\n' "$output" | head -3)"
 			fi
 		fi
 	else
-		pass "$description"
+		if [[ $status -eq 0 ]]; then
+			pass "$description"
+		else
+			fail "$description" "Command exited with $status"
+		fi
 	fi
 }
 
