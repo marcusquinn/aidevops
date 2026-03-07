@@ -2633,7 +2633,7 @@ if m:
 #
 # Options:
 #   --judge           Enable LLM-as-judge scoring (haiku-tier, ~$0.001/call)
-#   --dataset FILE    Read prompts from JSONL file (each line: {"prompt":"..."})
+#   --dataset FILE    Read prompts from JSONL file (each line: {"input":"..."} or {"prompt":"..."})
 #   --max-tokens N    Max output tokens per model (default: 1024)
 #   --dry-run         Show what would happen without making API calls
 #   --history         Show historical bench results
@@ -2722,7 +2722,7 @@ cmd_bench() {
 		echo ""
 		echo "Options:"
 		echo "  --judge           Enable LLM-as-judge quality scoring"
-		echo "  --dataset FILE    Read prompts from JSONL (each line: {\"prompt\":\"...\"})"
+		echo "  --dataset FILE    Read prompts from JSONL (each line: {\"input\":\"...\"} or {\"prompt\":\"...\"})"
 		echo "  --max-tokens N    Max output tokens per model (default: 1024)"
 		echo "  --dry-run         Show plan without making API calls"
 		echo "  --history         Show historical bench results"
@@ -2753,13 +2753,14 @@ cmd_bench() {
 		while IFS= read -r line; do
 			[[ -z "$line" ]] && continue
 			local p
-			p=$(echo "$line" | jq -r '.prompt // empty' 2>/dev/null || echo "")
+			# Support both dataset convention (.input) and legacy (.prompt)
+			p=$(echo "$line" | jq -r '(.input // .prompt) // empty' 2>/dev/null || echo "")
 			if [[ -n "$p" ]]; then
 				prompts+=("$p")
 			fi
 		done <"$dataset_file"
 		if [[ ${#prompts[@]} -eq 0 ]]; then
-			print_error "No valid prompts found in dataset (expected JSONL with {\"prompt\":\"...\"})"
+			print_error "No valid prompts found in dataset (expected JSONL with {\"input\":\"...\"} or {\"prompt\":\"...\"})"
 			return 1
 		fi
 	else

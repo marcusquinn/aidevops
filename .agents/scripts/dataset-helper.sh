@@ -212,7 +212,7 @@ cmd_validate() {
 
 	local errors=0
 	local line_num=0
-	local -A seen_ids=()
+	local seen_ids=""
 
 	while IFS= read -r line || [[ -n "$line" ]]; do
 		line_num=$((line_num + 1))
@@ -242,15 +242,16 @@ cmd_validate() {
 			errors=$((errors + 1))
 		fi
 
-		# Check for duplicate IDs (O(1) lookup via associative array)
+		# Check for duplicate IDs (newline-separated list, bash 3.2 compatible)
 		if [[ "$has_id" == "true" ]]; then
 			local entry_id
 			entry_id=$(echo "$line" | jq -r '.id')
-			if [[ -n "${seen_ids[$entry_id]+x}" ]]; then
+			if echo "$seen_ids" | grep -qxF "$entry_id"; then
 				print_error "Line $line_num: Duplicate ID '$entry_id'"
 				errors=$((errors + 1))
 			else
-				seen_ids["$entry_id"]=1
+				seen_ids="${seen_ids}${entry_id}
+"
 			fi
 		fi
 
