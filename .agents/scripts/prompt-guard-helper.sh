@@ -1431,11 +1431,21 @@ cmd_classify_deep() {
 	fi
 
 	local tier2_result
+	local tier2_stderr
 	local tier2_exit=0
+	local stderr_tmpfile
+	stderr_tmpfile=$(mktemp "${TMPDIR:-/tmp}/pg-tier2-stderr.XXXXXX")
 	if [[ -n "$repo" && -n "$author" ]]; then
-		tier2_result=$("$classifier" classify-if-external "$repo" "$author" "$content") || tier2_exit=$?
+		tier2_result=$("$classifier" classify-if-external "$repo" "$author" "$content" 2>"$stderr_tmpfile") || tier2_exit=$?
 	else
-		tier2_result=$("$classifier" classify "$content") || tier2_exit=$?
+		tier2_result=$("$classifier" classify "$content" 2>"$stderr_tmpfile") || tier2_exit=$?
+	fi
+	tier2_stderr=$(<"$stderr_tmpfile")
+	rm -f "$stderr_tmpfile"
+
+	# Log classifier stderr if non-empty (captures API errors, timeouts, etc.)
+	if [[ -n "$tier2_stderr" ]]; then
+		_pg_log_warn "Tier 2 classifier stderr: ${tier2_stderr}"
 	fi
 
 	local tier2_class
@@ -1452,7 +1462,7 @@ cmd_classify_deep() {
 
 	# Fail securely: if Tier 2 errored or returned UNKNOWN, do not treat as clean
 	if [[ "$tier2_exit" -ne 0 || "$tier2_class" == "UNKNOWN" || -z "$tier2_class" ]]; then
-		_pg_log_error "Tier 2 classification failed or returned UNKNOWN (exit ${tier2_exit}): ${tier2_result}"
+		_pg_log_error "Tier 2 classification failed or returned UNKNOWN (exit ${tier2_exit}, stderr: ${tier2_stderr}): ${tier2_result}"
 		if [[ -n "$tier1_results" ]]; then
 			_pg_print_findings "$tier1_results"
 			echo "TIER1_WARN_T2_FAIL"
