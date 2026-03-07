@@ -883,6 +883,8 @@ runner-helper.sh run tester "Write tests for the changes"
 | Generate tests for 5 modules | Parallel | Each module is independent |
 | Plan → implement → verify | Sequential | Each step depends on previous |
 | Decomposed subtasks (same parent) | Batch strategy | Use `batch-strategy-helper.sh` |
+| Cron: daily report + weekly digest | Parallel | Independent scheduled tasks |
+| Migration: schema → data → verify | Sequential | Each step depends on previous |
 
 ### Batch Strategies for Decomposed Tasks (t1408.4)
 
@@ -907,8 +909,6 @@ done
 ```
 
 The helper respects `blocked_by:` dependencies and never includes blocked tasks in a batch. See `scripts/batch-strategy-helper.sh help` for full usage.
-| Cron: daily report + weekly digest | Parallel | Independent scheduled tasks |
-| Migration: schema → data → verify | Sequential | Each step depends on previous |
 
 ### Hybrid Pattern
 
