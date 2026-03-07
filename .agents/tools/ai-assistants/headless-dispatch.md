@@ -712,15 +712,16 @@ classify(task, lineage)
 
 ```bash
 # Classify: atomic or composite? (~$0.001, haiku tier)
-task-decompose-helper.sh classify --task "Build auth with login and OAuth"
+task-decompose-helper.sh classify "Build auth with login and OAuth" --depth 0
 # → {"kind": "composite", "confidence": 0.9, "reasoning": "..."}
 
 # Decompose: split into subtasks with dependency edges
-task-decompose-helper.sh decompose --task "Build auth with login and OAuth"
-# → {"subtasks": [{"description": "...", "depends_on": [], "estimate": "~2h"}], ...}
+task-decompose-helper.sh decompose "Build auth with login and OAuth" --max-subtasks 5
+# → {"subtasks": [{"description": "...", "blocked_by": []}], "strategy": "..."}
 
-# Lineage: show ancestor/sibling context for a subtask
-task-decompose-helper.sh lineage --task-id t1408.2 --repo-path ~/Git/myproject
+# Format lineage: show ancestor/sibling context for a subtask
+task-decompose-helper.sh format-lineage --parent "Build auth" \
+  --children '[{"description": "login"}, {"description": "OAuth"}]' --current 1
 # → formatted hierarchy with sibling tasks
 ```
 
