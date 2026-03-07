@@ -768,4 +768,4 @@ echo "Commands are available immediately in Claude Code (no restart needed)."
 echo "Type / in Claude Code to see the command list."
 echo ""
 
-return 0 2>/dev/null || exit 0
+exit 0
