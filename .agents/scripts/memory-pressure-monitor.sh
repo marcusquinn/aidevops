@@ -151,6 +151,8 @@ readonly COOLDOWN_SECS DAEMON_INTERVAL
 
 # --- Helpers ------------------------------------------------------------------
 
+# Log a timestamped message to the log file
+# Arguments: $1=level (INFO|WARN|CRIT), remaining args=message text
 log_msg() {
 	local level="$1"
 	shift
@@ -160,6 +162,7 @@ log_msg() {
 	return 0
 }
 
+# Create required log and state directories if they don't exist
 ensure_dirs() {
 	mkdir -p "${LOG_DIR}" "${STATE_DIR}"
 	return 0
@@ -233,6 +236,8 @@ check_cooldown() {
 	return 0
 }
 
+# Record current time as cooldown start for a notification category
+# Arguments: $1=category name (used as filename suffix)
 set_cooldown() {
 	local category="$1"
 	local cooldown_file="${STATE_DIR}/memory-pressure-${category}.cooldown"
@@ -240,6 +245,8 @@ set_cooldown() {
 	return 0
 }
 
+# Remove cooldown file for a category, allowing immediate re-notification
+# Arguments: $1=category name (used as filename suffix)
 clear_cooldown() {
 	local category="$1"
 	local cooldown_file="${STATE_DIR}/memory-pressure-${category}.cooldown"
@@ -667,6 +674,8 @@ do_check() {
 
 # --- Commands -----------------------------------------------------------------
 
+# Run a single check pass — collect processes, evaluate thresholds, notify/kill
+# Returns: 0=ok, 1=warnings found, 2=critical findings
 cmd_check() {
 	# do_check returns non-zero for warnings/critical — that's informational,
 	# not a script failure. Capture the exit code for callers that want it.
@@ -675,6 +684,7 @@ cmd_check() {
 	return "$exit_code"
 }
 
+# Print detailed status of all monitored processes, sessions, and OS memory
 cmd_status() {
 	ensure_dirs
 
@@ -787,6 +797,7 @@ cmd_status() {
 	return 0
 }
 
+# Run continuous monitoring loop with adaptive polling (faster when shellcheck detected)
 cmd_daemon() {
 	echo "[${SCRIPT_NAME}] Starting daemon mode (interval: ${DAEMON_INTERVAL}s, fast: 10s when shellcheck detected)"
 	echo "[${SCRIPT_NAME}] Press Ctrl+C to stop"
@@ -807,6 +818,7 @@ cmd_daemon() {
 	done
 }
 
+# Install launchd plist for periodic monitoring (every 30 seconds)
 cmd_install() {
 	# Resolve script path — prefer installed location
 	local script_path
@@ -873,6 +885,7 @@ EOF
 	return 0
 }
 
+# Remove launchd plist and clean up state files
 cmd_uninstall() {
 	if [[ -f "${PLIST_PATH}" ]]; then
 		launchctl bootout "gui/$(id -u)" "${PLIST_PATH}" 2>/dev/null || true
@@ -888,6 +901,7 @@ cmd_uninstall() {
 	return 0
 }
 
+# Display usage information and current configuration
 cmd_help() {
 	cat <<HELP
 Usage: ${SCRIPT_NAME}.sh [COMMAND]
@@ -918,9 +932,9 @@ Auto-kill (GH#2915):
   Safe because the language server respawns them. Disable: AUTO_KILL_SHELLCHECK=false
 
 Environment variables:
-  PROCESS_RSS_WARN_MB       Per-process RSS warning (default: 2048)
-  PROCESS_RSS_CRIT_MB       Per-process RSS critical (default: 4096)
-  SHELLCHECK_RUNTIME_MAX    ShellCheck max runtime in seconds (default: 600)
+  PROCESS_RSS_WARN_MB       Per-process RSS warning (default: 1024)
+  PROCESS_RSS_CRIT_MB       Per-process RSS critical (default: 2048)
+  SHELLCHECK_RUNTIME_MAX    ShellCheck max runtime in seconds (default: 300)
   TOOL_RUNTIME_MAX          Other tool max runtime in seconds (default: 1800)
   SESSION_COUNT_WARN        Interactive session warning threshold (default: 8)
   AGGREGATE_RSS_WARN_MB     Total aidevops RSS warning (default: 8192)
@@ -934,6 +948,7 @@ HELP
 
 # --- Main ---------------------------------------------------------------------
 
+# Parse command-line arguments and dispatch to the appropriate subcommand
 main() {
 	local cmd="${1:-check}"
 

@@ -146,7 +146,7 @@ _filter_args() {
 # 1st kill: 5s, 2nd: 10s, 3rd: 20s, ... up to MAX_BACKOFF (300s).
 # Resets after MAX_BACKOFF seconds of no kills.
 _check_rate_limit() {
-	mkdir -p "$BACKOFF_DIR" || true
+	mkdir -p "$BACKOFF_DIR" || return 0
 
 	if [[ ! -f "$BACKOFF_FILE" ]]; then
 		return 0
@@ -197,7 +197,7 @@ _check_rate_limit() {
 # wrapper instances kill concurrently — without the lock, the read-modify-write
 # on $BACKOFF_FILE could produce an incorrect kill_count and shorter backoff.
 _record_kill() {
-	mkdir -p "$BACKOFF_DIR" || true
+	mkdir -p "$BACKOFF_DIR" || return 0
 	local lock_dir="${BACKOFF_DIR}/shellcheck.lock"
 
 	# mkdir is atomic — if it fails, another process holds the lock
@@ -275,6 +275,7 @@ _start_watchdog() {
 }
 
 # --- Main ---
+# Entry point: find real shellcheck, filter args, check rate limit, run with watchdog
 main() {
 	local real_shellcheck
 	real_shellcheck="$(_find_real_shellcheck)" || exit 1

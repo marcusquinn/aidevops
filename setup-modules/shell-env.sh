@@ -9,6 +9,7 @@ IFS=$'\n\t'
 trap 'rc=$?; echo "[ERROR] ${BASH_SOURCE[0]}:${LINENO} exit $rc" >&2' ERR
 shopt -s inherit_errexit 2>/dev/null || true
 
+# Detect the shell currently executing this script (zsh, bash, or fallback)
 detect_running_shell() {
 	if [[ -n "${ZSH_VERSION:-}" ]]; then
 		echo "zsh"
@@ -20,6 +21,7 @@ detect_running_shell() {
 	return 0
 }
 
+# Detect the user's default login shell from $SHELL
 detect_default_shell() {
 	basename "${SHELL:-/bin/bash}"
 	return 0
@@ -61,6 +63,7 @@ get_shell_rc() {
 	return 0
 }
 
+# Return all relevant shell rc file paths for the current platform
 get_all_shell_rcs() {
 	local rcs=()
 
@@ -88,6 +91,7 @@ get_all_shell_rcs() {
 	return 0
 }
 
+# Offer to install Oh My Zsh if zsh is the default shell and OMZ is not present
 setup_oh_my_zsh() {
 	# Only relevant if zsh is available
 	if ! command -v zsh >/dev/null 2>&1; then
@@ -155,6 +159,7 @@ setup_oh_my_zsh() {
 	return 0
 }
 
+# Extract portable customizations from bash configs into a shared profile for cross-shell use
 setup_shell_compatibility() {
 	print_info "Setting up cross-shell compatibility..."
 
@@ -375,6 +380,7 @@ setup_shell_compatibility() {
 	return 0
 }
 
+# Check for optional dependencies (sshpass) and offer to install them
 check_optional_deps() {
 	print_info "Checking optional dependencies..."
 
@@ -411,6 +417,7 @@ check_optional_deps() {
 	return 0
 }
 
+# Add ~/.local/bin to PATH in all shell rc files for the aidevops CLI
 add_local_bin_to_path() {
 	# shellcheck disable=SC2016 # path_line is written to rc files; must expand at shell startup, not now
 	local path_line='export PATH="$HOME/.local/bin:$PATH"'
@@ -673,12 +680,13 @@ setup_shellcheck_wrapper() {
 			sed -i.bak '/case ":$PATH:" in.*\.aidevops\/bin/d' "$rc_file"
 			rm -f "${rc_file}.bak"
 		fi
-		# For fish: check for old 'contains' form; for bash/zsh: check for new '_aidevops_shim' form
-		local rc_path_marker='_aidevops_shim'
-		if [[ "$is_fish_rc" == "true" ]]; then
-			rc_path_marker='_aidevops_shim'
+		# For fish: also remove old 'contains' form that only checked presence
+		if [[ "$is_fish_rc" == "true" ]] && grep -q 'contains.*\.aidevops/bin' "$rc_file"; then
+			sed -i.bak '/contains.*\.aidevops\/bin/d' "$rc_file"
+			rm -f "${rc_file}.bak"
 		fi
-		if ! grep -Fq "$rc_path_marker" "$rc_file"; then
+		# Check for the new sanitize-and-prepend form (uses _aidevops_shim variable)
+		if ! grep -Fq '_aidevops_shim' "$rc_file"; then
 			{
 				echo ""
 				echo "# Added by aidevops setup (GH#2993: shellcheck shim on PATH)"
@@ -707,6 +715,7 @@ setup_shellcheck_wrapper() {
 	return 0
 }
 
+# Add server access aliases to shell rc files (bash/zsh/fish)
 setup_aliases() {
 	print_info "Setting up shell aliases..."
 
@@ -810,6 +819,7 @@ ALIASES
 	return 0
 }
 
+# Install terminal title integration that syncs tab titles with git repo/branch
 setup_terminal_title() {
 	print_info "Setting up terminal title integration..."
 
