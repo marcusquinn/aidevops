@@ -327,10 +327,12 @@ setup_browser_tools() {
 						touch "$bun_rc"
 					fi
 					if ! grep -q '\.bun' "$bun_rc" 2>/dev/null; then
-						echo "" >>"$bun_rc"
-						echo "# Bun (added by aidevops setup)" >>"$bun_rc"
-						echo "$bun_path_line" >>"$bun_rc"
-						echo "$bun_export_line" >>"$bun_rc"
+						{
+							echo ""
+							echo "# Bun (added by aidevops setup)"
+							echo "$bun_path_line"
+							echo "$bun_export_line"
+						} >>"$bun_rc"
 						print_info "Added Bun to PATH in $bun_rc"
 					fi
 				done < <(get_all_shell_rcs)

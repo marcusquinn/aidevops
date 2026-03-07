@@ -434,9 +434,11 @@ add_local_bin_to_path() {
 		fi
 
 		# Add to shell config
-		echo "" >>"$rc_file"
-		echo "# Added by aidevops setup" >>"$rc_file"
-		echo "$path_line" >>"$rc_file"
+		{
+			echo ""
+			echo "# Added by aidevops setup"
+			echo "$path_line"
+		} >>"$rc_file"
 		added_to="${added_to:+$added_to, }$rc_file"
 	done < <(get_all_shell_rcs)
 
@@ -571,18 +573,22 @@ setup_shellcheck_wrapper() {
 		if grep -q 'SHELLCHECK_PATH' "$zshenv"; then
 			already_in="${already_in:+$already_in, }$zshenv"
 		else
-			echo "" >>"$zshenv"
-			echo "# Added by aidevops setup (GH#2915: prevent ShellCheck memory explosion)" >>"$zshenv"
-			echo "$env_line" >>"$zshenv"
+			{
+				echo ""
+				echo "# Added by aidevops setup (GH#2915: prevent ShellCheck memory explosion)"
+				echo "$env_line"
+			} >>"$zshenv"
 			added_to="${added_to:+$added_to, }$zshenv"
 		fi
 
 		# PATH prepend for ~/.aidevops/bin (GH#2993: shim must be on PATH)
 		# Use exact-line match so stale entries (append-form, comments) don't short-circuit
 		if ! grep -Fq "$path_line" "$zshenv"; then
-			echo "" >>"$zshenv"
-			echo "# Added by aidevops setup (GH#2993: shellcheck shim on PATH)" >>"$zshenv"
-			echo "$path_line" >>"$zshenv"
+			{
+				echo ""
+				echo "# Added by aidevops setup (GH#2993: shellcheck shim on PATH)"
+				echo "$path_line"
+			} >>"$zshenv"
 			print_success "Prepended $shim_dir to PATH in .zshenv"
 		else
 			print_info "$shim_dir already on PATH in .zshenv"
@@ -617,18 +623,22 @@ setup_shellcheck_wrapper() {
 		if grep -q 'SHELLCHECK_PATH' "$rc_file"; then
 			already_in="${already_in:+$already_in, }$rc_file"
 		else
-			echo "" >>"$rc_file"
-			echo "# Added by aidevops setup (GH#2915: prevent ShellCheck memory explosion)" >>"$rc_file"
-			echo "$rc_env_line" >>"$rc_file"
+			{
+				echo ""
+				echo "# Added by aidevops setup (GH#2915: prevent ShellCheck memory explosion)"
+				echo "$rc_env_line"
+			} >>"$rc_file"
 			added_to="${added_to:+$added_to, }$rc_file"
 		fi
 
 		# PATH prepend for ~/.aidevops/bin (GH#2993)
 		# Use exact-line match so stale entries don't short-circuit
 		if ! grep -Fq "$rc_path_line" "$rc_file"; then
-			echo "" >>"$rc_file"
-			echo "# Added by aidevops setup (GH#2993: shellcheck shim on PATH)" >>"$rc_file"
-			echo "$rc_path_line" >>"$rc_file"
+			{
+				echo ""
+				echo "# Added by aidevops setup (GH#2993: shellcheck shim on PATH)"
+				echo "$rc_path_line"
+			} >>"$rc_file"
 		fi
 	done < <(get_all_shell_rcs)
 

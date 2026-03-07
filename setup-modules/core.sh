@@ -351,9 +351,11 @@ check_requirements() {
 			while IFS= read -r rc_file; do
 				[[ -z "$rc_file" ]] && continue
 				if ! grep -q '/opt/homebrew/bin/brew' "$rc_file" 2>/dev/null; then
-					echo "" >>"$rc_file"
-					echo "# Homebrew (added by aidevops setup)" >>"$rc_file"
-					echo "$brew_line" >>"$rc_file"
+					{
+						echo ""
+						echo "# Homebrew (added by aidevops setup)"
+						echo "$brew_line"
+					} >>"$rc_file"
 					print_success "Added Homebrew to PATH in $rc_file"
 					fixed_rc=true
 				fi
@@ -388,9 +390,11 @@ check_requirements() {
 				while IFS= read -r intel_rc; do
 					[[ -z "$intel_rc" ]] && continue
 					if ! grep -q '/usr/local/bin/brew' "$intel_rc" 2>/dev/null; then
-						echo "" >>"$intel_rc"
-						echo "# Homebrew Intel Mac (added by aidevops setup)" >>"$intel_rc"
-						echo "$intel_brew_line" >>"$intel_rc"
+						{
+							echo ""
+							echo "# Homebrew Intel Mac (added by aidevops setup)"
+							echo "$intel_brew_line"
+						} >>"$intel_rc"
 						print_success "Added Homebrew to PATH in $intel_rc"
 						intel_fixed_rc=true
 					fi
