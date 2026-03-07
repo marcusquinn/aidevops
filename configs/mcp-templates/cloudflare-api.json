@@ -1,5 +1,5 @@
 {
-  "_comment": "Cloudflare Code Mode MCP — remote server, OAuth-authenticated (no API tokens needed)",
+  "_comment": "Cloudflare Code Mode MCP — remote server, OAuth-authenticated (no API tokens needed). For clients without native remote MCP support (e.g. Cursor), use mcp-remote proxy: { \"command\": \"npx\", \"args\": [\"mcp-remote\", \"https://mcp.cloudflare.com/mcp\"] }",
   "_source": "https://developers.cloudflare.com/agents/guides/remote-mcp-server/",
   "_remote_url": "https://mcp.cloudflare.com/mcp",
 
