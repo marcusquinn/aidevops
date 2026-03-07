@@ -466,7 +466,8 @@ add_local_bin_to_path() {
 #
 # The bash language server hardcodes --external-sources in every ShellCheck
 # invocation, causing exponential memory growth (9+ GB) when source chains
-# span 463+ scripts. The wrapper strips --external-sources and enforces ulimit.
+# span 463+ scripts. The wrapper strips --external-sources and enforces a
+# background RSS watchdog (ulimit -v is broken on macOS ARM — EINVAL).
 #
 # GH#2915 set SHELLCHECK_PATH env var, but bash-language-server ignores it —
 # it resolves `shellcheck` via PATH lookup, finding /opt/homebrew/bin/shellcheck
@@ -482,6 +483,11 @@ add_local_bin_to_path() {
 # "shellcheck". By placing ~/.aidevops/bin first on PATH with a symlink to
 # the wrapper, the language server finds the wrapper instead of the real binary.
 # Layers 1-3 are retained for tools that honour SHELLCHECK_PATH.
+#
+# CRITICAL: ~/.aidevops/bin MUST be at the START of PATH, not the end.
+# If it appears after /opt/homebrew/bin, the real shellcheck is found first
+# and the wrapper is bypassed entirely. The launchctl setenv always prepends,
+# and the case-guard in shell rc files ensures it stays first.
 setup_shellcheck_wrapper() {
 	local wrapper_path="$HOME/.aidevops/agents/scripts/shellcheck-wrapper.sh"
 
@@ -549,14 +555,21 @@ setup_shellcheck_wrapper() {
 	# Note: 2>/dev/null on launchctl is intentional — launchctl may not be
 	# available in non-GUI contexts (SSH, containers). Unlike grep where we
 	# want errors visible, launchctl failure is a non-fatal fallback.
+	#
+	# CRITICAL: Always prepend shim_dir even if it's already in PATH — it may
+	# be at the END (e.g., appended by a previous setup run), which means the
+	# real shellcheck at /opt/homebrew/bin is found first. We strip any existing
+	# occurrence and prepend to guarantee first position.
 	if [[ "$PLATFORM_MACOS" == "true" ]]; then
 		if launchctl setenv SHELLCHECK_PATH "$wrapper_path" 2>/dev/null; then
 			print_info "Set SHELLCHECK_PATH via launchctl (GUI processes)"
 		fi
-		if [[ ":$PATH:" != *":$shim_dir:"* ]]; then
-			if launchctl setenv PATH "$shim_dir:$PATH" 2>/dev/null; then
-				print_info "Prepended $shim_dir to PATH via launchctl (GUI processes)"
-			fi
+		# Build a clean PATH with shim_dir at the front, removing any existing
+		# occurrence to prevent duplicates while ensuring first position
+		local clean_path
+		clean_path=$(printf '%s' "$PATH" | tr ':' '\n' | grep -v "^${shim_dir}$" | tr '\n' ':' | sed 's/:$//')
+		if launchctl setenv PATH "${shim_dir}:${clean_path}" 2>/dev/null; then
+			print_info "Prepended $shim_dir to PATH via launchctl (GUI processes)"
 		fi
 	fi
 
