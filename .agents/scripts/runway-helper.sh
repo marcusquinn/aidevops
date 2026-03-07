@@ -210,26 +210,21 @@ cmd_image() {
         return 1
     fi
 
-    # Build reference images JSON array using jq
+    # Build reference images JSON array using jq (safe construction, no string concat)
     local ref_json="[]"
     if [[ ${#refs[@]} -gt 0 ]]; then
-        ref_json="["
-        local first=true
+        local -a ref_elements=()
         for ref in "${refs[@]}"; do
-            if [[ "$first" != true ]]; then
-                ref_json="${ref_json},"
-            fi
-            first=false
             # Split on last colon; if suffix has no slash, treat as tag
             local ref_tag="${ref##*:}"
             local ref_uri="${ref%:*}"
             if [[ "$ref_tag" != "$ref" ]] && [[ "$ref_tag" != "//"* ]] && [[ "$ref_tag" != *"/"* ]]; then
-                ref_json="${ref_json}$(jq -n --arg u "$ref_uri" --arg t "$ref_tag" '{uri:$u,tag:$t}')"
+                ref_elements+=("$(jq -n --arg u "$ref_uri" --arg t "$ref_tag" '{uri:$u,tag:$t}')")
             else
-                ref_json="${ref_json}$(jq -n --arg u "$ref" '{uri:$u}')"
+                ref_elements+=("$(jq -n --arg u "$ref" '{uri:$u}')")
             fi
         done
-        ref_json="${ref_json}]"
+        ref_json="$(printf '%s\n' "${ref_elements[@]}" | jq -s '.')"
     fi
 
     local json_body
