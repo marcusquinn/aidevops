@@ -511,13 +511,16 @@ setup_shellcheck_wrapper() {
 	# shellcheck disable=SC2016 # env_line is written to rc files; must expand at shell startup
 	env_line='export SHELLCHECK_PATH="$HOME/.aidevops/agents/scripts/shellcheck-wrapper.sh"'
 	# shellcheck disable=SC2016 # path_line is written to rc files; must expand at shell startup
-	# Use case guard so repeated sourcing (e.g. nested shells) doesn't duplicate PATH entries
-	local path_line='case ":$PATH:" in *":$HOME/.aidevops/bin:"*) ;; *) export PATH="$HOME/.aidevops/bin:$PATH" ;; esac'
+	# Sanitize-and-prepend: strip any existing occurrence of the shim dir from PATH
+	# (it may be at the END from a previous setup run), then prepend it. This ensures
+	# the shim is always first, even on machines upgrading from the old append form.
+	# The ${PATH:+:$PATH} guard handles the empty-PATH edge case without a trailing colon.
+	local path_line='_aidevops_shim="$HOME/.aidevops/bin"; PATH="$(printf '\''%s'\'' "$PATH" | tr '\'':'\'' '\''\n'\'' | grep -Fxv -- "$_aidevops_shim" | paste -sd: -)"; export PATH="$_aidevops_shim${PATH:+:$PATH}"; unset _aidevops_shim'
 	# Fish shell uses different syntax (set -gx instead of export)
 	# shellcheck disable=SC2016 # fish lines are written to config.fish; must expand at shell startup
 	local env_line_fish='set -gx SHELLCHECK_PATH "$HOME/.aidevops/agents/scripts/shellcheck-wrapper.sh"'
-	# shellcheck disable=SC2016
-	local path_line_fish='contains -- "$HOME/.aidevops/bin" $PATH; or set -gx PATH "$HOME/.aidevops/bin" $PATH'
+	# shellcheck disable=SC2016 # fish path line: strip existing, then prepend
+	local path_line_fish='set -l _aidevops_shim "$HOME/.aidevops/bin"; set -l _aidevops_rest (string match -v -- "$_aidevops_shim" $PATH); set -gx PATH $_aidevops_shim $_aidevops_rest'
 	local added_to=""
 	local already_in=""
 
@@ -565,10 +568,18 @@ setup_shellcheck_wrapper() {
 			print_info "Set SHELLCHECK_PATH via launchctl (GUI processes)"
 		fi
 		# Build a clean PATH with shim_dir at the front, removing any existing
-		# occurrence to prevent duplicates while ensuring first position
+		# occurrence to prevent duplicates while ensuring first position.
+		# Handle the empty-PATH edge case to avoid a trailing colon (which
+		# resolves to "." and is a PATH injection vector).
 		local clean_path
-		clean_path=$(printf '%s' "$PATH" | tr ':' '\n' | grep -v "^${shim_dir}$" | tr '\n' ':' | sed 's/:$//')
-		if launchctl setenv PATH "${shim_dir}:${clean_path}" 2>/dev/null; then
+		clean_path=$(printf '%s' "$PATH" | tr ':' '\n' | grep -Fxv "$shim_dir" | tr '\n' ':' | sed 's/:$//')
+		local new_path
+		if [[ -n "$clean_path" ]]; then
+			new_path="${shim_dir}:${clean_path}"
+		else
+			new_path="${shim_dir}"
+		fi
+		if launchctl setenv PATH "$new_path" 2>/dev/null; then
 			print_info "Prepended $shim_dir to PATH via launchctl (GUI processes)"
 		fi
 	fi
@@ -595,8 +606,17 @@ setup_shellcheck_wrapper() {
 		fi
 
 		# PATH prepend for ~/.aidevops/bin (GH#2993: shim must be on PATH)
-		# Use exact-line match so stale entries (append-form, comments) don't short-circuit
-		if ! grep -Fq "$path_line" "$zshenv"; then
+		# Remove stale old-form entries (case guard that only checked presence,
+		# not position — left the shim at the end of PATH on upgrades)
+		# shellcheck disable=SC2016 # Matching literal $PATH text in rc files, not expanding
+		if grep -q 'case ":$PATH:" in.*\.aidevops/bin' "$zshenv"; then
+			# Remove the old case-guard line (sed is appropriate here — targeted single-line removal)
+			# shellcheck disable=SC2016
+			sed -i.bak '/case ":$PATH:" in.*\.aidevops\/bin/d' "$zshenv"
+			rm -f "${zshenv}.bak"
+		fi
+		# Use exact-line match for the new sanitize-and-prepend form
+		if ! grep -Fq '_aidevops_shim' "$zshenv"; then
 			{
 				echo ""
 				echo "# Added by aidevops setup (GH#2993: shellcheck shim on PATH)"
@@ -645,8 +665,20 @@ setup_shellcheck_wrapper() {
 		fi
 
 		# PATH prepend for ~/.aidevops/bin (GH#2993)
-		# Use exact-line match so stale entries don't short-circuit
-		if ! grep -Fq "$rc_path_line" "$rc_file"; then
+		# Remove stale old-form entries (case guard that only checked presence,
+		# not position — left the shim at the end of PATH on upgrades)
+		# shellcheck disable=SC2016 # Matching literal $PATH text in rc files, not expanding
+		if grep -q 'case ":$PATH:" in.*\.aidevops/bin' "$rc_file" 2>/dev/null; then
+			# shellcheck disable=SC2016
+			sed -i.bak '/case ":$PATH:" in.*\.aidevops\/bin/d' "$rc_file"
+			rm -f "${rc_file}.bak"
+		fi
+		# For fish: check for old 'contains' form; for bash/zsh: check for new '_aidevops_shim' form
+		local rc_path_marker='_aidevops_shim'
+		if [[ "$is_fish_rc" == "true" ]]; then
+			rc_path_marker='_aidevops_shim'
+		fi
+		if ! grep -Fq "$rc_path_marker" "$rc_file"; then
 			{
 				echo ""
 				echo "# Added by aidevops setup (GH#2993: shellcheck shim on PATH)"

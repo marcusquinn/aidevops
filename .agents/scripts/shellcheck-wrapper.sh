@@ -29,10 +29,34 @@
 
 set -uo pipefail
 
+# --- Validation ---
+# Validate that a value is a positive integer; coerce invalid/too-small values
+# to a safe default and log a warning. Prevents tight loops or premature aborts
+# when environment tunables contain typos (e.g., SHELLCHECK_WATCHDOG_SEC=abc).
+_validate_int() {
+	local name="$1" value="$2" default="$3" min="$4"
+	if ! [[ "$value" =~ ^[0-9]+$ ]]; then
+		echo "shellcheck-wrapper: WARN: invalid ${name}='${value}', using ${default}" >&2
+		printf '%s' "$default"
+		return 0
+	fi
+	local canonical=$((10#$value))
+	if ((canonical < min)); then
+		echo "shellcheck-wrapper: WARN: ${name}=${canonical} below minimum ${min}, using ${default}" >&2
+		printf '%s' "$default"
+		return 0
+	fi
+	printf '%s' "$canonical"
+	return 0
+}
+
 # --- Configuration ---
-readonly RSS_LIMIT_MB="${SHELLCHECK_RSS_LIMIT_MB:-1024}"
-readonly WATCHDOG_INTERVAL="${SHELLCHECK_WATCHDOG_SEC:-2}"
-readonly HARD_TIMEOUT="${SHELLCHECK_TIMEOUT_SEC:-120}"
+RSS_LIMIT_MB="$(_validate_int SHELLCHECK_RSS_LIMIT_MB "${SHELLCHECK_RSS_LIMIT_MB:-1024}" 1024 128)"
+readonly RSS_LIMIT_MB
+WATCHDOG_INTERVAL="$(_validate_int SHELLCHECK_WATCHDOG_SEC "${SHELLCHECK_WATCHDOG_SEC:-2}" 2 1)"
+readonly WATCHDOG_INTERVAL
+HARD_TIMEOUT="$(_validate_int SHELLCHECK_TIMEOUT_SEC "${SHELLCHECK_TIMEOUT_SEC:-120}" 120 10)"
+readonly HARD_TIMEOUT
 readonly BACKOFF_DIR="${SHELLCHECK_BACKOFF_DIR:-${HOME}/.aidevops/.agent-workspace/tmp}"
 readonly BACKOFF_FILE="${BACKOFF_DIR}/shellcheck-backoff"
 readonly MAX_BACKOFF=300 # 5 minutes max backoff
@@ -122,7 +146,7 @@ _filter_args() {
 # 1st kill: 5s, 2nd: 10s, 3rd: 20s, ... up to MAX_BACKOFF (300s).
 # Resets after MAX_BACKOFF seconds of no kills.
 _check_rate_limit() {
-	mkdir -p "$BACKOFF_DIR" 2>/dev/null || true
+	mkdir -p "$BACKOFF_DIR" || true
 
 	if [[ ! -f "$BACKOFF_FILE" ]]; then
 		return 0
@@ -168,9 +192,24 @@ _check_rate_limit() {
 	return 0
 }
 
-# Record that a kill happened (called by the watchdog)
+# Record that a kill happened (called by the watchdog).
+# Uses mkdir as an atomic lock to prevent race conditions when multiple
+# wrapper instances kill concurrently — without the lock, the read-modify-write
+# on $BACKOFF_FILE could produce an incorrect kill_count and shorter backoff.
 _record_kill() {
-	mkdir -p "$BACKOFF_DIR" 2>/dev/null || true
+	mkdir -p "$BACKOFF_DIR" || true
+	local lock_dir="${BACKOFF_DIR}/shellcheck.lock"
+
+	# mkdir is atomic — if it fails, another process holds the lock
+	if ! mkdir "$lock_dir" 2>/dev/null; then
+		# Another process is updating; skip this increment (safe — the other
+		# process will record its own kill, so the count stays approximately correct)
+		return 0
+	fi
+
+	# Ensure lock is removed on function exit (including errors)
+	# shellcheck disable=SC2064
+	trap "rmdir '$lock_dir' 2>/dev/null || true" RETURN
 
 	local kill_count=0
 	if [[ -f "$BACKOFF_FILE" ]]; then
@@ -180,6 +219,7 @@ _record_kill() {
 
 	kill_count=$((kill_count + 1))
 	printf '%s %s\n' "$kill_count" "$(date +%s)" >"$BACKOFF_FILE"
+	return 0
 }
 
 # --- RSS watchdog ---
