@@ -92,7 +92,7 @@ Implement as a transparent logging proxy or iptables/pf rules wrapper:
 - Wrap webfetch, MCP tool outputs, and file reads from untrusted sources with `prompt-guard-helper.sh scan-stdin`
 - Currently scanning happens at dispatch time only (task description)
 - Extend to: issue body fetch, PR diff fetch, web page fetch, dependency README reads
-- Integration point: OpenCode hooks (PostToolUse) or wrapper functions in dispatch
+- Integration point: Claude Code hooks (PostToolUse via `claude` CLI workers) or wrapper functions in dispatch
 
 ### Phase 5: Command pattern baseline (stretch)
 
@@ -136,7 +136,7 @@ Key decisions from the conversation:
 - **Pattern scanner acknowledged as speed bump, not wall** — against an informed attacker who reads our open-source patterns, regex scanning is near-zero value. Enforcement layers (credential isolation, network policy) are effective regardless of attacker knowledge. Scanner remains useful against opportunistic/automated attacks and as telemetry.
 - **Interactive sessions explicitly unrestricted** — the human in the loop is the enforcement layer for interactive use. Sandboxing only applies to headless workers.
 - **Fake HOME chosen over container sandboxing** — containers provide stronger isolation but require per-project tool matrices (Node, Python, Rust, etc.), path remapping, and significant implementation effort. Fake HOME achieves 80% of the credential isolation value at 5% of the effort. Container sandboxing is a future enhancement.
-- **Domain data sourced from session transcripts** — analyzed 1337+ GitHub hits, 276 x.com hits, and hundreds of other domains from session transcripts to build the tiering baseline. Real usage data, not guesswork.
+- **Domain data sourced from session transcripts** — analyzed 1337+ GitHub hits, 276 x.com hits, and hundreds of other domains from Claude Code session transcripts (`~/.claude/transcripts/`) to build the tiering baseline. Real usage data, not guesswork.
 - **Content from allowed domains can still contain injections** — the allowlist permits the connection; it doesn't make the content safe. Tier 4 documentation sites, third-party APIs, and project-specific services can all serve injection payloads. Runtime content scanning (Phase 4) addresses this orthogonal concern.
 - **Clinejection reference case** — the attack chained: issue title injection → AI bot executes npm install from typosquatted repo → cache poisoning → credential theft → malicious npm publish. Our workers have the same structural exposure (shell access + untrusted input). The typosquatted repo was on github.com (Tier 1 allowed domain), so domain allowlisting alone wouldn't catch it — command pattern analysis (Phase 5) is needed for that class.
 
