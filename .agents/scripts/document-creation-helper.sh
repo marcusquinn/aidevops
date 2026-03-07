@@ -66,6 +66,27 @@ has_cmd() {
 	command -v "$bin_name" &>/dev/null
 }
 
+# Get human-readable file size without using ls (SC2012)
+human_filesize() {
+	local file="$1"
+	local bytes
+	if [[ "$(uname)" == "Darwin" ]]; then
+		bytes=$(stat -f%z "$file" 2>/dev/null || echo "0")
+	else
+		bytes=$(stat -c%s "$file" 2>/dev/null || echo "0")
+	fi
+	if [[ "$bytes" -ge 1073741824 ]]; then
+		printf '%sG' "$((bytes / 1073741824))"
+	elif [[ "$bytes" -ge 1048576 ]]; then
+		printf '%sM' "$((bytes / 1048576))"
+	elif [[ "$bytes" -ge 1024 ]]; then
+		printf '%sK' "$((bytes / 1024))"
+	else
+		printf '%sB' "$bytes"
+	fi
+	return 0
+}
+
 # Get file extension (lowercase)
 get_ext() {
 	local file="$1"
@@ -1036,7 +1057,7 @@ convert_with_pandoc() {
 
 	if [[ -f "$output" ]]; then
 		local size
-		size=$(ls -lh "$output" | awk '{print $5}')
+		size=$(human_filesize "$output")
 		log_ok "Created: ${output} (${size})"
 	else
 		die "Conversion failed: output file not created"
@@ -1067,7 +1088,7 @@ convert_with_libreoffice() {
 
 	if [[ -f "${output_file}" ]]; then
 		local size
-		size=$(ls -lh "${output_file}" | awk '{print $5}')
+		size=$(human_filesize "${output_file}")
 		log_ok "Created: ${output_file} (${size})"
 	else
 		die "LibreOffice conversion failed"
@@ -1104,7 +1125,7 @@ convert_with_reader_lm() {
 
 	if [[ -f "$output" ]] && [[ -s "$output" ]]; then
 		local size
-		size=$(ls -lh "$output" | awk '{print $5}')
+		size=$(human_filesize "$output")
 		log_ok "Created: ${output} (${size})"
 	else
 		die "Reader-LM conversion failed: output file empty or not created"
@@ -1178,7 +1199,7 @@ convert_with_rolm_ocr() {
 
 	if [[ -f "$output" ]] && [[ -s "$output" ]]; then
 		local size
-		size=$(ls -lh "$output" | awk '{print $5}')
+		size=$(human_filesize "$output")
 		log_ok "Created: ${output} (${size})"
 	else
 		die "RolmOCR conversion failed: output file empty or not created"
@@ -1237,7 +1258,7 @@ convert_pdf_to_odt() {
 		pandoc "$text_file" -o "$output" --wrap=none
 		if [[ -f "$output" ]]; then
 			local size
-			size=$(ls -lh "$output" | awk '{print $5}')
+			size=$(human_filesize "$output")
 			log_ok "Created basic ODT: ${output} (${size})"
 			log_info "For full layout reconstruction with images, headers, and footers,"
 			log_info "use the AI agent: 'convert this PDF to ODT with full layout'"
@@ -1302,7 +1323,7 @@ convert_email() {
 
 	if [[ -f "$output" ]]; then
 		local size
-		size=$(ls -lh "$output" | awk '{print $5}')
+		size=$(human_filesize "$output")
 		log_ok "Created: ${output} (${size})"
 		if [[ -d "$attachments_dir" ]]; then
 			local att_count
@@ -1484,7 +1505,7 @@ cmd_convert() {
 		pdftotext -layout "$input" "$output"
 		if [[ -f "$output" ]]; then
 			local size
-			size=$(ls -lh "$output" | awk '{print $5}')
+			size=$(human_filesize "$output")
 			log_ok "Created: ${output} (${size})"
 		fi
 		;;
@@ -1532,7 +1553,7 @@ cmd_template() {
 			find "${TEMPLATE_DIR}" -type f | while read -r f; do
 				local rel="${f#"${TEMPLATE_DIR}/"}"
 				local size
-				size=$(ls -lh "$f" | awk '{print $5}')
+				size=$(human_filesize "$f")
 				printf "  %s (%s)\n" "$rel" "$size"
 			done
 		else
@@ -1922,7 +1943,7 @@ finally:
 PYEOF
 		if [[ -f "$output" ]]; then
 			local size
-			size=$(ls -lh "$output" | awk '{print $5}')
+			size=$(human_filesize "$output")
 			log_ok "Created: ${output} (${size})"
 		fi
 		;;
@@ -3436,7 +3457,7 @@ PYEOF
 
 	if [[ -f "${output}" ]]; then
 		local size
-		size=$(ls -lh "${output}" | awk '{print $5}')
+		size=$(human_filesize "${output}")
 		log_ok "Normalised: ${output} (${size})"
 
 		if [[ "${inplace}" == true ]]; then
@@ -3821,7 +3842,7 @@ PYEOF
 
 	if [[ -f "${output}" ]]; then
 		local size
-		size=$(ls -lh "${output}" | awk '{print $5}')
+		size=$(human_filesize "${output}")
 		local node_count
 		node_count=$(python3 -c "
 import json, sys
