@@ -90,12 +90,12 @@ _audit_ensure_log() {
 
 	if [[ ! -d "$log_dir" ]]; then
 		mkdir -p "$log_dir" || true
-		chmod 700 "$log_dir" || true
+		chmod 700 "$log_dir" || _audit_warn "Could not set log directory permissions to 700: $log_dir"
 	fi
 
 	if [[ ! -f "$log_file" ]]; then
 		: >"$log_file"
-		chmod 600 "$log_file" || true
+		chmod 600 "$log_file" || _audit_warn "Could not set log file permissions to 600: $log_file"
 	fi
 
 	return 0
@@ -385,7 +385,8 @@ cmd_log() {
 		entry="{\"seq\":${seq},\"ts\":\"${ts}\",\"type\":\"${event_type}\",\"msg\":\"$(_audit_json_escape "$message")\",\"detail\":${detail_json},\"actor\":\"${actor}\",\"host\":\"${host}\",\"prev_hash\":\"${prev_hash}\",\"hash\":\"${entry_hash}\"}"
 	fi
 
-	# Append atomically (single write, no partial lines)
+	# Append entry (single write — not fully atomic without flock, but sufficient
+	# for single-writer scenarios typical of agent sessions)
 	echo "$entry" >>"$log_file"
 
 	_audit_info "Logged ${event_type} (seq=${seq})"
@@ -445,12 +446,10 @@ cmd_verify() {
 		fi
 
 		# Check 1: Valid JSON
-		if command -v jq &>/dev/null; then
-			if ! echo "$line" | jq -e '.' &>/dev/null; then
-				_audit_error "Entry ${line_num}: Invalid JSON"
-				errors=$((errors + 1))
-				continue
-			fi
+		if command -v jq &>/dev/null && ! echo "$line" | jq -e '.' &>/dev/null; then
+			_audit_error "Entry ${line_num}: Invalid JSON"
+			errors=$((errors + 1))
+			continue
 		fi
 
 		# Extract fields
@@ -657,7 +656,7 @@ cmd_rotate() {
 	local rotated_file="${log_file%.jsonl}.${rotate_ts}.jsonl"
 
 	mv "$log_file" "$rotated_file"
-	chmod 400 "$rotated_file" 2>/dev/null || true # Read-only for rotated files
+	chmod 400 "$rotated_file" || _audit_warn "Could not set rotated log permissions to 400: $rotated_file"
 
 	_audit_info "Rotated to ${rotated_file}"
 
