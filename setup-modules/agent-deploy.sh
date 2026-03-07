@@ -374,7 +374,7 @@ install_beads_binary() {
 
 	local tmp_dir
 	tmp_dir=$(mktemp -d)
-	# shellcheck disable=SC2064
+	# shellcheck disable=SC2064  # Intentional: $tmp_dir must expand at trap definition time, not execution time
 	trap "rm -rf '$tmp_dir'" RETURN
 
 	if ! curl -fsSL "$download_url" -o "$tmp_dir/$tarball_name" 2>/dev/null; then
