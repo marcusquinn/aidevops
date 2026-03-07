@@ -29,10 +29,10 @@ imported_from: external
 
 | Task | Tool |
 |------|------|
-| Manage DNS records, zones | Code Mode MCP |
-| Configure WAF, DDoS, firewall rules | Code Mode MCP |
-| Manage R2 buckets, Workers deployments | Code Mode MCP |
-| Zero Trust, Access, Tunnel management | Code Mode MCP |
+| Manage DNS records, zones | Code Mode MCP (`tools/mcp/cloudflare-code-mode.md`) |
+| Configure WAF, DDoS, firewall rules | Code Mode MCP (`tools/mcp/cloudflare-code-mode.md`) |
+| Manage R2 buckets, Workers deployments | Code Mode MCP (`tools/mcp/cloudflare-code-mode.md`) |
+| Zero Trust, Access, Tunnel management | Code Mode MCP (`tools/mcp/cloudflare-code-mode.md`) |
 | Build a Worker (SDK, bindings, types) | This skill |
 | Configure wrangler.toml, local dev | This skill |
 | Debug Workers runtime issues | This skill |

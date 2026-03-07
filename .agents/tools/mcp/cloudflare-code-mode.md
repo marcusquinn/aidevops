@@ -53,8 +53,7 @@ On first connection, you are redirected to Cloudflare to authorize and select pe
 
 Create a Cloudflare API token with required permissions, then pass as bearer token:
 
-```bash
-# Authorization header
+```text
 Authorization: Bearer <your-cloudflare-api-token>
 ```
 
@@ -99,6 +98,7 @@ Executes JavaScript against the Cloudflare API. The sandbox provides a `cloudfla
 ```javascript
 // List rulesets on a zone
 async () => {
+  const zoneId = "<YOUR_ZONE_ID>"; // replace with actual zone ID
   const response = await cloudflare.request({
     method: "GET",
     path: `/zones/${zoneId}/rulesets`
@@ -110,6 +110,7 @@ async () => {
 ```javascript
 // Chain multiple API calls in one execution
 async () => {
+  const zoneId = "<YOUR_ZONE_ID>"; // replace with actual zone ID
   const ddos = await cloudflare.request({
     method: "GET",
     path: `/zones/${zoneId}/rulesets/phases/ddos_l7/entrypoint`
@@ -146,6 +147,7 @@ async () => {
 
 // execute: list DNS records
 async () => {
+  const zoneId = "<YOUR_ZONE_ID>"; // replace with actual zone ID
   const res = await cloudflare.request({
     method: "GET",
     path: `/zones/${zoneId}/dns_records`
@@ -159,6 +161,7 @@ async () => {
 ```javascript
 // execute: enable managed WAF ruleset
 async () => {
+  const zoneId = "<YOUR_ZONE_ID>"; // replace with actual zone ID
   return await cloudflare.request({
     method: "PUT",
     path: `/zones/${zoneId}/rulesets/phases/http_request_firewall_managed/entrypoint`,
@@ -178,6 +181,7 @@ async () => {
 ```javascript
 // execute: list R2 buckets
 async () => {
+  const accountId = "<YOUR_ACCOUNT_ID>"; // replace with actual account ID
   const res = await cloudflare.request({
     method: "GET",
     path: `/accounts/${accountId}/r2/buckets`
@@ -189,6 +193,6 @@ async () => {
 ## References
 
 - Blog post: https://blog.cloudflare.com/code-mode-mcp/
-- GitHub: https://github.com/cloudflare/mcp
+- GitHub: https://github.com/cloudflare/mcp-server-cloudflare
 - Cloudflare API docs: https://developers.cloudflare.com/api/
 - Code Mode SDK (open source): https://github.com/cloudflare/agents/tree/main/packages/codemode
