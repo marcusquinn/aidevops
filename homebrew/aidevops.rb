@@ -17,9 +17,11 @@ class Aidevops < Formula
   def install
     # Install the CLI script to libexec (not bin, to avoid double-write conflict)
     libexec.install "aidevops.sh"
+    (libexec/"aidevops.sh").chmod 0755
     
     # Install setup script for manual setup
     libexec.install "setup.sh"
+    (libexec/"setup.sh").chmod 0755
     
     # Install agent files
     (share/"aidevops").install ".agents"
@@ -31,6 +33,7 @@ class Aidevops < Formula
       export AIDEVOPS_SHARE="#{share}/aidevops"
       exec "#{libexec}/aidevops.sh" "$@"
     EOS
+    (bin/"aidevops").chmod 0755
   end
 
   def post_install
