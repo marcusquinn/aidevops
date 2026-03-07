@@ -254,6 +254,80 @@ update_last_checked() {
 	return 0
 }
 
+# Fetch a URL and compute its SHA-256 content hash.
+# Downloads to a temp file first so we can detect fetch failures separately
+# from hash computation (piping curl|shasum loses the curl exit code with
+# pipefail, and produces a hash of empty input on failure).
+# Arguments:
+#   $1 - URL to fetch
+# Outputs: hex-encoded SHA-256 hash of the response body
+# Returns: 0 on success, 1 on fetch failure or empty response
+fetch_url_hash() {
+	local url="$1"
+
+	local tmp_file
+	tmp_file=$(mktemp)
+	_save_cleanup_scope
+	trap '_run_cleanups' RETURN
+	push_cleanup "rm -f '${tmp_file}'"
+
+	# Download to temp file — -f fails on HTTP errors, -L follows redirects
+	if ! curl -sS --connect-timeout 15 --max-time 60 \
+		-L -f -o "$tmp_file" "$url" 2>/dev/null; then
+		return 1
+	fi
+
+	# Reject empty responses (server returned 200 but no body)
+	if [[ ! -s "$tmp_file" ]]; then
+		return 1
+	fi
+
+	local hash
+	hash=$(shasum -a 256 "$tmp_file" | cut -d' ' -f1)
+
+	if [[ -z "$hash" ]]; then
+		return 1
+	fi
+
+	echo "$hash"
+	return 0
+}
+
+# Update the upstream_hash field in skill-sources.json for a URL-sourced skill.
+# Arguments:
+#   $1 - skill name
+#   $2 - new hash value
+# Returns: 0 on success
+update_upstream_hash() {
+	local skill_name="$1"
+	local new_hash="$2"
+
+	local tmp_file
+	tmp_file=$(mktemp)
+	_save_cleanup_scope
+	trap '_run_cleanups' RETURN
+	push_cleanup "rm -f '${tmp_file}'"
+
+	jq --arg name "$skill_name" --arg hash "$new_hash" \
+		'.skills = [.skills[] | if .name == $name then .upstream_hash = $hash else . end]' \
+		"$SKILL_SOURCES" >"$tmp_file" && mv "$tmp_file" "$SKILL_SOURCES"
+	return 0
+}
+
+# Check if a skill uses URL-based tracking (format_detected == "url").
+# Arguments:
+#   $1 - skill JSON object (from jq -c)
+# Returns: 0 if URL-sourced, 1 otherwise
+is_url_skill() {
+	local skill_json="$1"
+	local format
+	format=$(echo "$skill_json" | jq -r '.format_detected // empty')
+	if [[ "$format" == "url" ]]; then
+		return 0
+	fi
+	return 1
+}
+
 # =============================================================================
 # Commands
 # =============================================================================
@@ -278,6 +352,74 @@ cmd_check() {
 		name=$(echo "$skill_json" | jq -r '.name')
 		upstream_url=$(echo "$skill_json" | jq -r '.upstream_url')
 		current_commit=$(echo "$skill_json" | jq -r '.upstream_commit // empty')
+
+		# --- URL-sourced skills: content-hash comparison (t1415.2) ---
+		if is_url_skill "$skill_json"; then
+			local stored_hash
+			stored_hash=$(echo "$skill_json" | jq -r '.upstream_hash // empty')
+
+			local latest_hash
+			if ! latest_hash=$(fetch_url_hash "$upstream_url"); then
+				log_warning "Could not fetch URL for $name: $upstream_url"
+				((check_failed++)) || true
+				continue
+			fi
+
+			# Update last_checked timestamp
+			update_last_checked "$name"
+
+			if [[ -z "$stored_hash" ]]; then
+				# No hash recorded — first check after import
+				if [[ "$NON_INTERACTIVE" != true ]]; then
+					echo -e "${YELLOW}UNKNOWN${NC}: $name (no hash recorded)"
+					echo "  Source: $upstream_url"
+					echo "  Latest hash: ${latest_hash:0:12}"
+					echo ""
+				fi
+				log_info "UNKNOWN: $name (no hash recorded) latest_hash=${latest_hash:0:12}"
+				((updates_available++)) || true
+				results+=("{\"name\":\"$name\",\"status\":\"unknown\",\"latest\":\"${latest_hash}\"}")
+			elif [[ "$latest_hash" != "$stored_hash" ]]; then
+				if [[ "$NON_INTERACTIVE" != true ]]; then
+					echo -e "${YELLOW}UPDATE AVAILABLE${NC}: $name (URL content changed)"
+					echo "  Previous hash: ${stored_hash:0:12}"
+					echo "  Current hash:  ${latest_hash:0:12}"
+					echo "  Run: aidevops skill update $name"
+					echo ""
+				fi
+				log_info "UPDATE AVAILABLE: $name prev_hash=${stored_hash:0:12} new_hash=${latest_hash:0:12}"
+				((updates_available++)) || true
+				results+=("{\"name\":\"$name\",\"status\":\"update_available\",\"current\":\"${stored_hash}\",\"latest\":\"${latest_hash}\"}")
+
+				# Auto-update if enabled
+				if [[ "$AUTO_UPDATE" == true ]]; then
+					log_info "Auto-updating $name..."
+					local add_exit=0
+					if [[ "$NON_INTERACTIVE" == true ]]; then
+						"$ADD_SKILL_HELPER" add "$upstream_url" --force </dev/null >>"$SKILL_LOG_FILE" 2>&1 || add_exit=$?
+					else
+						"$ADD_SKILL_HELPER" add "$upstream_url" --force || add_exit=$?
+					fi
+					if [[ "$add_exit" -eq 0 ]]; then
+						# Update the stored hash after successful re-import
+						update_upstream_hash "$name" "$latest_hash"
+						log_success "Updated $name"
+					else
+						log_error "Failed to update $name (exit $add_exit)"
+					fi
+				fi
+			else
+				if [[ "$NON_INTERACTIVE" != true ]]; then
+					echo -e "${GREEN}Up to date${NC}: $name"
+				fi
+				log_info "Up to date: $name hash=${stored_hash:0:12}"
+				((up_to_date++)) || true
+				results+=("{\"name\":\"$name\",\"status\":\"up_to_date\",\"commit\":\"${stored_hash}\"}")
+			fi
+			continue
+		fi
+
+		# --- GitHub-sourced skills: commit SHA comparison ---
 
 		# Parse owner/repo from URL
 		local owner_repo
@@ -408,6 +550,17 @@ cmd_update() {
 
 		log_info "Updating $skill_name from $upstream_url"
 		"$ADD_SKILL_HELPER" add "$upstream_url" --force
+
+		# For URL-sourced skills, update the stored hash after re-import (t1415.2)
+		local format
+		format=$(jq -r --arg name "$skill_name" '.skills[] | select(.name == $name) | .format_detected // empty' "$SKILL_SOURCES")
+		if [[ "$format" == "url" ]]; then
+			local new_hash
+			if new_hash=$(fetch_url_hash "$upstream_url"); then
+				update_upstream_hash "$skill_name" "$new_hash"
+				log_info "Updated upstream_hash for $skill_name"
+			fi
+		fi
 	else
 		# Update all skills with available updates
 		log_info "Checking and updating all skills..."
@@ -433,6 +586,7 @@ cmd_status() {
                 upstream: .upstream_url,
                 local_path: .local_path,
                 format: .format_detected,
+                upstream_hash: (.upstream_hash // null),
                 imported: .imported_at,
                 last_checked: .last_checked,
                 strategy: .merge_strategy
@@ -448,7 +602,7 @@ cmd_status() {
 	echo "Total: $skill_count skill(s)"
 	echo ""
 
-	jq -r '.skills[] | "  \(.name)\n    Path: \(.local_path)\n    Source: \(.upstream_url)\n    Format: \(.format_detected)\n    Imported: \(.imported_at)\n    Last checked: \(.last_checked // "never")\n    Strategy: \(.merge_strategy)\n"' "$SKILL_SOURCES"
+	jq -r '.skills[] | "  \(.name)\n    Path: \(.local_path)\n    Source: \(.upstream_url)\n    Format: \(.format_detected)\(if .format_detected == "url" then "\n    Hash: \(.upstream_hash // "none")" else "" end)\n    Imported: \(.imported_at)\n    Last checked: \(.last_checked // "never")\n    Strategy: \(.merge_strategy)\n"' "$SKILL_SOURCES"
 
 	return 0
 }
@@ -670,6 +824,101 @@ PREOF
 	return 0
 }
 
+# Generate a conventional commit message for a URL-sourced skill update (t1415.2).
+# Arguments:
+#   $1 - skill name
+#   $2 - upstream URL
+#   $3 - previous hash (may be empty)
+#   $4 - new hash
+# Outputs: commit message string
+# Returns: 0 always
+generate_url_skill_commit_msg() {
+	local skill_name="$1"
+	local upstream_url="$2"
+	local prev_hash="$3"
+	local new_hash="$4"
+
+	local timestamp
+	timestamp=$(date -u +"%Y-%m-%d")
+
+	local subject="chore(skill/${skill_name}): update from upstream URL (${new_hash:0:12})"
+
+	local prev_short="${prev_hash:0:12}"
+	[[ -z "$prev_short" ]] && prev_short="(none)"
+
+	local body
+	body="Upstream: ${upstream_url}
+Previous hash: ${prev_short}
+New hash:      ${new_hash:0:12}
+Updated:       ${timestamp}
+
+Content hash changed — URL-sourced skill re-imported."
+
+	printf '%s\n\n%s\n' "$subject" "$body"
+	return 0
+}
+
+# Generate the full PR body for a URL-sourced skill update (t1415.2).
+# Arguments:
+#   $1 - skill name
+#   $2 - upstream URL
+#   $3 - previous hash (may be empty)
+#   $4 - new hash
+#   $5 - diff summary (multi-line string, may be empty)
+# Outputs: PR body markdown
+# Returns: 0 always
+generate_url_skill_pr_body() {
+	local skill_name="$1"
+	local upstream_url="$2"
+	local prev_hash="$3"
+	local new_hash="$4"
+	local diff_summary="$5"
+
+	local prev_display="${prev_hash:0:12}"
+	[[ -z "$prev_display" ]] && prev_display="_(none -- first import)_"
+
+	cat <<PREOF
+## Skill Update: \`${skill_name}\` (URL source)
+
+Automated skill update — upstream URL content changed (SHA-256 hash mismatch).
+
+| Field | Value |
+|-------|-------|
+| Skill | \`${skill_name}\` |
+| Source | ${upstream_url} |
+| Previous hash | \`${prev_display}\` |
+| New hash | \`${new_hash:0:12}\` |
+| Detection | Content hash (SHA-256) |
+
+### Upstream changelog
+
+_Not available for URL-sourced skills (no git history). Review the diff below for changes._
+
+### Diff summary
+
+PREOF
+
+	if [[ -n "$diff_summary" ]]; then
+		echo "$diff_summary"
+	else
+		echo "_No diff available._"
+	fi
+
+	cat <<PREOF
+
+### Review checklist
+
+- [ ] Verify the updated skill content is correct
+- [ ] Check for breaking changes in the skill format
+- [ ] Confirm security scan passes (re-run if needed)
+
+---
+*Generated by \`skill-update-helper.sh pr\` (t1415.2)*
+PREOF
+
+	return 0
+}
+
 # =============================================================================
 # PR Pipeline — create worktree + PR per updated skill (t1082)
 # =============================================================================
@@ -702,14 +951,16 @@ get_default_branch() {
 # Arguments:
 #   $1 - skill name
 #   $2 - upstream URL
-#   $3 - current commit (for PR body context)
-#   $4 - latest commit
+#   $3 - current commit/hash (for PR body context)
+#   $4 - latest commit/hash
+#   $5 - source type: "github" (default) or "url" (t1415.2)
 # Returns: 0 on success, 1 on failure
 cmd_pr_single() {
 	local skill_name="$1"
 	local upstream_url="$2"
 	local current_commit="$3"
 	local latest_commit="$4"
+	local source_type="${5:-github}"
 
 	local repo_root
 	repo_root=$(get_repo_root)
@@ -834,25 +1085,43 @@ cmd_pr_single() {
 		fi
 	fi
 
-	# Fetch upstream changelog (commits between previous and latest)
-	local owner_repo_for_log
-	owner_repo_for_log=$(parse_github_url "$upstream_url")
-	owner_repo_for_log=$(echo "$owner_repo_for_log" | cut -d'/' -f1-2)
-	local changelog=""
-	if [[ -n "$owner_repo_for_log" && "$owner_repo_for_log" != "/" ]]; then
-		log_info "Fetching upstream changelog for $skill_name..."
-		changelog=$(get_upstream_changelog "$owner_repo_for_log" "$current_commit" "$latest_commit" 2>/dev/null || true)
-	fi
-
 	# Stage changes and capture diff summary before committing
 	git -C "$worktree_path" add -A
 	local diff_summary
 	diff_summary=$(get_skill_diff_summary "$worktree_path" "$default_branch")
 
-	# Generate conventional commit message with changelog
 	local commit_msg
-	commit_msg=$(generate_skill_commit_msg \
-		"$skill_name" "$upstream_url" "$current_commit" "$latest_commit" "$changelog")
+	local pr_title
+	local pr_body
+
+	if [[ "$source_type" == "url" ]]; then
+		# URL-sourced skill: hash-based commit/PR (t1415.2)
+		commit_msg=$(generate_url_skill_commit_msg \
+			"$skill_name" "$upstream_url" "$current_commit" "$latest_commit")
+		pr_title="chore(skill/${skill_name}): update from upstream URL (${latest_commit:0:12})"
+		pr_body=$(generate_url_skill_pr_body \
+			"$skill_name" "$upstream_url" "$current_commit" "$latest_commit" "$diff_summary")
+
+		# Update the stored hash after successful re-import
+		update_upstream_hash "$skill_name" "$latest_commit"
+	else
+		# GitHub-sourced skill: commit-based with changelog
+		local owner_repo_for_log
+		owner_repo_for_log=$(parse_github_url "$upstream_url")
+		owner_repo_for_log=$(echo "$owner_repo_for_log" | cut -d'/' -f1-2)
+		local changelog=""
+		if [[ -n "$owner_repo_for_log" && "$owner_repo_for_log" != "/" ]]; then
+			log_info "Fetching upstream changelog for $skill_name..."
+			changelog=$(get_upstream_changelog "$owner_repo_for_log" "$current_commit" "$latest_commit" 2>/dev/null || true)
+		fi
+
+		commit_msg=$(generate_skill_commit_msg \
+			"$skill_name" "$upstream_url" "$current_commit" "$latest_commit" "$changelog")
+		pr_title="chore(skill/${skill_name}): update from upstream (${latest_commit:0:7})"
+		pr_body=$(generate_skill_pr_body \
+			"$skill_name" "$upstream_url" "$current_commit" "$latest_commit" \
+			"$changelog" "$diff_summary")
+	fi
 
 	local commit_output
 	commit_output=$(git -C "$worktree_path" commit -m "$commit_msg" --no-verify 2>&1) || {
@@ -878,12 +1147,6 @@ cmd_pr_single() {
 		log_info "Create PR manually: gh pr create --head $branch_name"
 		return 0
 	fi
-
-	local pr_title="chore(skill/${skill_name}): update from upstream (${latest_commit:0:7})"
-	local pr_body
-	pr_body=$(generate_skill_pr_body \
-		"$skill_name" "$upstream_url" "$current_commit" "$latest_commit" \
-		"$changelog" "$diff_summary")
 
 	local pr_url
 	local pr_create_output
@@ -966,13 +1229,46 @@ cmd_pr_batch() {
 	local skill_current_commits=()
 	local skill_latest_commits=()
 
-	while IFS=$'\t' read -r name upstream_url current_commit; do
+	while IFS= read -r skill_json; do
+		local name upstream_url current_commit
+		name=$(echo "$skill_json" | jq -r '.name')
+		upstream_url=$(echo "$skill_json" | jq -r '.upstream_url')
+		current_commit=$(echo "$skill_json" | jq -r '.upstream_commit // empty')
+
 		# Filter to specific skill if requested
 		if [[ -n "$target_skill" && "$name" != "$target_skill" ]]; then
 			continue
 		fi
 
-		# Skip non-GitHub sources
+		# --- URL-sourced skills: content-hash comparison (t1415.2) ---
+		if is_url_skill "$skill_json"; then
+			local stored_hash
+			stored_hash=$(echo "$skill_json" | jq -r '.upstream_hash // empty')
+
+			local latest_hash
+			if ! latest_hash=$(fetch_url_hash "$upstream_url"); then
+				log_warning "Could not fetch URL for $name: $upstream_url — skipping"
+				continue
+			fi
+
+			update_last_checked "$name"
+
+			if [[ -n "$stored_hash" && "$latest_hash" == "$stored_hash" ]]; then
+				if [[ "$QUIET" != true ]]; then
+					echo -e "${GREEN}Up to date${NC}: $name"
+				fi
+				continue
+			fi
+
+			log_info "Update available: $name (hash ${stored_hash:0:12} → ${latest_hash:0:12})"
+			skills_to_update+=("$name")
+			skill_urls+=("$upstream_url")
+			skill_current_commits+=("$stored_hash")
+			skill_latest_commits+=("$latest_hash")
+			continue
+		fi
+
+		# --- Non-GitHub, non-URL sources (ClawdHub, etc.) — skip ---
 		if [[ "$upstream_url" != *"github.com"* ]]; then
 			if [[ "$QUIET" != true ]]; then
 				log_info "Skipping $name (non-GitHub source: ${upstream_url})"
@@ -980,7 +1276,7 @@ cmd_pr_batch() {
 			continue
 		fi
 
-		# Parse owner/repo from URL
+		# --- GitHub-sourced skills: commit SHA comparison ---
 		local owner_repo
 		owner_repo=$(parse_github_url "$upstream_url")
 		owner_repo=$(echo "$owner_repo" | cut -d'/' -f1-2)
@@ -1014,7 +1310,7 @@ cmd_pr_batch() {
 		skill_current_commits+=("$current_commit")
 		skill_latest_commits+=("$latest_commit")
 
-	done < <(jq -r '.skills[] | [.name, .upstream_url, .upstream_commit // empty] | @tsv' "$SKILL_SOURCES")
+	done < <(jq -c '.skills[]' "$SKILL_SOURCES")
 
 	local update_count="${#skills_to_update[@]}"
 
@@ -1125,6 +1421,27 @@ cmd_pr_batch() {
 		else
 			log_error "Failed to re-import $skill_name — skipping"
 			failed_skills+=("$skill_name")
+		fi
+	done
+
+	# Update upstream_hash for URL-sourced skills that were successfully re-imported (t1415.2)
+	for i in "${!skills_to_update[@]}"; do
+		local sname="${skills_to_update[$i]}"
+		local sformat
+		sformat=$(jq -r --arg name "$sname" '.skills[] | select(.name == $name) | .format_detected // empty' "$SKILL_SOURCES")
+		if [[ "$sformat" == "url" ]]; then
+			# Check if this skill was successfully imported
+			local was_imported=false
+			for imp in "${imported_skills[@]}"; do
+				if [[ "$imp" == "$sname" ]]; then
+					was_imported=true
+					break
+				fi
+			done
+			if [[ "$was_imported" == true ]]; then
+				update_upstream_hash "$sname" "${skill_latest_commits[$i]}"
+				log_info "Updated upstream_hash for URL skill: $sname"
+			fi
 		fi
 	done
 
@@ -1306,7 +1623,37 @@ cmd_pr() {
 			continue
 		fi
 
-		# Skip non-GitHub sources (ClawdHub, etc.) — no git commit to compare
+		# --- URL-sourced skills: content-hash comparison (t1415.2) ---
+		if is_url_skill "$skill_json"; then
+			local stored_hash
+			stored_hash=$(echo "$skill_json" | jq -r '.upstream_hash // empty')
+
+			local latest_hash
+			if ! latest_hash=$(fetch_url_hash "$upstream_url"); then
+				log_warning "Could not fetch URL for $name: $upstream_url — skipping"
+				((prs_skipped++)) || true
+				continue
+			fi
+
+			update_last_checked "$name"
+
+			if [[ -n "$stored_hash" && "$latest_hash" == "$stored_hash" ]]; then
+				if [[ "$QUIET" != true ]]; then
+					echo -e "${GREEN}Up to date${NC}: $name"
+				fi
+				continue
+			fi
+
+			# URL skill has an update (or no stored hash) — create PR
+			if cmd_pr_single "$name" "$upstream_url" "$stored_hash" "$latest_hash" "url"; then
+				((prs_created++)) || true
+			else
+				((prs_failed++)) || true
+			fi
+			continue
+		fi
+
+		# --- Non-GitHub, non-URL sources (ClawdHub, etc.) — skip ---
 		if [[ "$upstream_url" != *"github.com"* ]]; then
 			if [[ "$QUIET" != true ]]; then
 				log_info "Skipping $name (non-GitHub source: ${upstream_url})"
@@ -1315,7 +1662,7 @@ cmd_pr() {
 			continue
 		fi
 
-		# Parse owner/repo from URL
+		# --- GitHub-sourced skills: commit SHA comparison ---
 		local owner_repo
 		owner_repo=$(parse_github_url "$upstream_url")
 		owner_repo=$(echo "$owner_repo" | cut -d'/' -f1-2)
@@ -1346,7 +1693,7 @@ cmd_pr() {
 		fi
 
 		# Skill has an update — create PR
-		if cmd_pr_single "$name" "$upstream_url" "$current_commit" "$latest_commit"; then
+		if cmd_pr_single "$name" "$upstream_url" "$current_commit" "$latest_commit" "github"; then
 			((prs_created++)) || true
 		else
 			((prs_failed++)) || true

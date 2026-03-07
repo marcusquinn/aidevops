@@ -1032,7 +1032,11 @@ do_prompt_repeat() {
 		if [[ -x "$sandbox_helper" ]]; then
 			# shellcheck source=../worker-sandbox-helper.sh
 			source "$sandbox_helper"
-			sandbox_dir=$(create_worker_sandbox "$task_id") || sandbox_dir=""
+			# GH#3118: Log warning on failure for consistency with cmd_dispatch
+			sandbox_dir=$(create_worker_sandbox "$task_id") || {
+				log_warn "Failed to create worker sandbox for $task_id prompt-repeat — proceeding without isolation (t1412.1)"
+				sandbox_dir=""
+			}
 			if [[ -n "$sandbox_dir" ]]; then
 				sandbox_env_lines=$(generate_sandbox_env "$sandbox_dir") || sandbox_env_lines=""
 				log_info "Worker sandbox created for $task_id prompt-repeat: $sandbox_dir (t1412.1)"
@@ -1119,11 +1123,14 @@ do_prompt_repeat() {
 		echo "  echo \"WORKER_DISPATCH_ERROR: prompt-repeat script exited with code \${rc}\" >> '${new_log_file}'"
 		echo "fi"
 		# t1412.1: Clean up sandbox HOME directory after worker exits
+		# GH#3118: Use printf %q to prevent command injection from sandbox_dir
+		# containing shell metacharacters. Remove 2>/dev/null to preserve error
+		# visibility — || true is sufficient to prevent script exit.
 		if [[ -n "$sandbox_dir" ]]; then
 			echo "# t1412.1: Sandbox cleanup"
-			echo "if [[ -f '${sandbox_dir}/.aidevops-sandbox' ]]; then"
-			echo "  rm -rf '${sandbox_dir}' 2>/dev/null || true"
-			echo "  echo 'SANDBOX_CLEANED: ${sandbox_dir}' >> '${new_log_file}' 2>/dev/null || true"
+			printf 'if [[ -f %q ]]; then\n' "${sandbox_dir}/.aidevops-sandbox"
+			printf '  rm -rf %q || true\n' "${sandbox_dir}"
+			printf '  echo %q >> %q || true\n' "SANDBOX_CLEANED: ${sandbox_dir}" "${new_log_file}"
 			echo "fi"
 		fi
 	} >"$wrapper_script"
@@ -3205,11 +3212,14 @@ cmd_dispatch() {
 		echo "  echo \"WORKER_DISPATCH_ERROR: dispatch script exited with code \${rc}\" >> '${log_file}'"
 		echo "fi"
 		# t1412.1: Clean up sandbox HOME directory after worker exits
+		# GH#3118: Use printf %q to prevent command injection from sandbox_dir
+		# containing shell metacharacters. Remove 2>/dev/null to preserve error
+		# visibility — || true is sufficient to prevent script exit.
 		if [[ -n "$sandbox_dir" ]]; then
 			echo "# t1412.1: Sandbox cleanup"
-			echo "if [[ -f '${sandbox_dir}/.aidevops-sandbox' ]]; then"
-			echo "  rm -rf '${sandbox_dir}' 2>/dev/null || true"
-			echo "  echo 'SANDBOX_CLEANED: ${sandbox_dir}' >> '${log_file}' 2>/dev/null || true"
+			printf 'if [[ -f %q ]]; then\n' "${sandbox_dir}/.aidevops-sandbox"
+			printf '  rm -rf %q || true\n' "${sandbox_dir}"
+			printf '  echo %q >> %q || true\n' "SANDBOX_CLEANED: ${sandbox_dir}" "${log_file}"
 			echo "fi"
 		fi
 	} >"$wrapper_script"
@@ -3686,7 +3696,11 @@ Task description: ${tdesc:-$task_id}"
 		if [[ -x "$sandbox_helper" ]]; then
 			# shellcheck source=../worker-sandbox-helper.sh
 			source "$sandbox_helper"
-			sandbox_dir=$(create_worker_sandbox "$task_id") || sandbox_dir=""
+			# GH#3118: Log warning on failure for consistency with cmd_dispatch
+			sandbox_dir=$(create_worker_sandbox "$task_id") || {
+				log_warn "Failed to create worker sandbox for $task_id reprompt — proceeding without isolation (t1412.1)"
+				sandbox_dir=""
+			}
 			if [[ -n "$sandbox_dir" ]]; then
 				sandbox_env_lines=$(generate_sandbox_env "$sandbox_dir") || sandbox_env_lines=""
 				log_info "Worker sandbox created for $task_id reprompt: $sandbox_dir (t1412.1)"
@@ -3766,11 +3780,14 @@ Task description: ${tdesc:-$task_id}"
 		echo "  echo \"WORKER_DISPATCH_ERROR: reprompt script exited with code \${rc}\" >> '${new_log_file}'"
 		echo "fi"
 		# t1412.1: Clean up sandbox HOME directory after worker exits
+		# GH#3118: Use printf %q to prevent command injection from sandbox_dir
+		# containing shell metacharacters. Remove 2>/dev/null to preserve error
+		# visibility — || true is sufficient to prevent script exit.
 		if [[ -n "$sandbox_dir" ]]; then
 			echo "# t1412.1: Sandbox cleanup"
-			echo "if [[ -f '${sandbox_dir}/.aidevops-sandbox' ]]; then"
-			echo "  rm -rf '${sandbox_dir}' 2>/dev/null || true"
-			echo "  echo 'SANDBOX_CLEANED: ${sandbox_dir}' >> '${new_log_file}' 2>/dev/null || true"
+			printf 'if [[ -f %q ]]; then\n' "${sandbox_dir}/.aidevops-sandbox"
+			printf '  rm -rf %q || true\n' "${sandbox_dir}"
+			printf '  echo %q >> %q || true\n' "SANDBOX_CLEANED: ${sandbox_dir}" "${new_log_file}"
 			echo "fi"
 		fi
 	} >"$wrapper_script"

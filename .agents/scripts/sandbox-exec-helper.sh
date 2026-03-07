@@ -97,12 +97,31 @@ _sandbox_check_network_tiers() {
 	local command="$1"
 	local wid="$2"
 
-	# Extract potential domains/URLs from the command using common patterns:
-	# - https://domain.com/... or http://domain.com/...
-	# - curl/wget/git clone followed by a URL
-	# - @scope/package from npm (not a domain, skip)
-	local domains
-	domains="$(printf '%s' "$command" | grep -oE 'https?://[a-zA-Z0-9._-]+' | sed 's|https\?://||' | sort -u)" || true
+	# Extract potential domains from the command using multiple strategies:
+	# 1. Full URLs: https://domain.com/... or http://domain.com/...
+	# 2. Bare hostnames after networking tools: curl example.com, wget host.io
+	# 3. Git SSH patterns: git@github.com:user/repo.git
+	# 4. SCP-style: scp file user@host.example.com:/path
+	# Excludes: @scope/package (npm), single-label names (localhost, etc.)
+	local domains=""
+	local url_domains bare_domains git_ssh_domains
+
+	# Strategy 1: Extract domains from http(s) URLs
+	url_domains="$(printf '%s' "$command" | grep -oE 'https?://[a-zA-Z0-9._-]+' | sed -E 's|https?://||')" || true
+
+	# Strategy 2: Extract bare hostnames after networking tools that take a URL/host
+	# as their primary argument (curl, wget, etc.). Tools where arguments are mixed
+	# (scp, rsync) are handled by Strategy 3 via user@host patterns instead.
+	# Requires TLD of 2+ alpha chars to avoid matching filenames like "file.txt"
+	# and excludes common file extensions (.sh, .py, .js, .json, .txt, .log, .yml, .yaml, .md, .conf)
+	bare_domains="$(printf '%s' "$command" | grep -oE '(curl|wget|fetch|nc|ncat|telnet)\s+(-[a-zA-Z0-9]+\s+)*([a-zA-Z0-9]([a-zA-Z0-9_-]*\.)+[a-zA-Z]{2,})' | grep -oE '[a-zA-Z0-9]([a-zA-Z0-9_-]*\.)+[a-zA-Z]{2,}$' | grep -vE '\.(sh|py|js|ts|json|txt|log|yml|yaml|md|conf|cfg|xml|html|css|gz|tar|zip)$')" || true
+
+	# Strategy 3: Extract hosts from user@host patterns (git SSH, ssh, scp, etc.)
+	# Matches both git@github.com:user/repo and user@server.example.com
+	git_ssh_domains="$(printf '%s' "$command" | grep -oE '[a-zA-Z0-9_-]+@([a-zA-Z0-9]([a-zA-Z0-9_-]*\.)+[a-zA-Z]{2,})' | sed 's/.*@//')" || true
+
+	# Combine and deduplicate all extracted domains
+	domains="$(printf '%s\n%s\n%s' "$url_domains" "$bare_domains" "$git_ssh_domains" | grep -v '^$' | sort -u)" || true
 
 	if [[ -z "$domains" ]]; then
 		return 0
@@ -111,17 +130,17 @@ _sandbox_check_network_tiers() {
 	local domain tier_result
 	while IFS= read -r domain; do
 		[[ -z "$domain" ]] && continue
-		tier_result="$("$NET_TIER_HELPER" classify "$domain" 2>/dev/null)" || true
+		tier_result="$("$NET_TIER_HELPER" classify "$domain")" || true
 
 		if [[ "$tier_result" == "5" ]]; then
 			log_sandbox "WARN" "Network tier DENY: ${domain} (Tier 5 — exfiltration indicator)"
-			"$NET_TIER_HELPER" log-access "$domain" "$wid" "pre-check-deny" 2>/dev/null || true
+			"$NET_TIER_HELPER" log-access "$domain" "$wid" "pre-check-deny" || true
 		elif [[ "$tier_result" == "4" ]]; then
 			log_sandbox "INFO" "Network tier FLAG: ${domain} (Tier 4 — unknown domain)"
-			"$NET_TIER_HELPER" log-access "$domain" "$wid" "pre-check-flag" 2>/dev/null || true
+			"$NET_TIER_HELPER" log-access "$domain" "$wid" "pre-check-flag" || true
 		else
 			# Tiers 1-3: log silently (tier helper handles routing)
-			"$NET_TIER_HELPER" log-access "$domain" "$wid" "pre-check-allow" 2>/dev/null || true
+			"$NET_TIER_HELPER" log-access "$domain" "$wid" "pre-check-allow" || true
 		fi
 	done <<<"$domains"
 

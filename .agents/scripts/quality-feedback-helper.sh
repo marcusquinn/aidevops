@@ -375,6 +375,8 @@ cmd_scan_merged() {
 	local create_issues=false
 	local min_severity="medium"
 	local json_output=false
+	local backfill=false
+	local tag_actioned=false
 
 	# Parse flags
 	while [[ $# -gt 0 ]]; do
@@ -397,6 +399,14 @@ cmd_scan_merged() {
 			;;
 		--json)
 			json_output=true
+			shift
+			;;
+		--backfill)
+			backfill=true
+			shift
+			;;
+		--tag-actioned)
+			tag_actioned=true
 			shift
 			;;
 		*)
@@ -428,15 +438,25 @@ cmd_scan_merged() {
 		echo '{"scanned_prs":[],"last_run":"","issues_created":0}' >"$state_file"
 	fi
 
-	# Fetch recently merged PRs (newest first)
+	# Fetch merged PRs — backfill uses gh api pagination for ALL PRs,
+	# normal mode uses gh pr list with a limited window (t1413)
 	local merged_prs
-	merged_prs=$(gh pr list --repo "$repo_slug" --state merged \
-		--limit "$((batch_size * 2))" \
-		--json number,title,mergedAt,headRefName \
-		--jq 'sort_by(.mergedAt) | reverse | .[].number') || {
-		echo "Error: Failed to fetch merged PRs from ${repo_slug}" >&2
-		return 1
-	}
+	if [[ "$backfill" == true ]]; then
+		echo "Backfill mode: fetching ALL merged PRs for ${repo_slug}..." >&2
+		merged_prs=$(gh api "repos/${repo_slug}/pulls?state=closed&per_page=100&sort=updated&direction=desc" \
+			--paginate --jq '.[] | select(.merged_at != null) | .number') || {
+			echo "Error: Failed to fetch merged PRs from ${repo_slug}" >&2
+			return 1
+		}
+	else
+		merged_prs=$(gh pr list --repo "$repo_slug" --state merged \
+			--limit "$((batch_size * 2))" \
+			--json number,title,mergedAt,headRefName \
+			--jq 'sort_by(.mergedAt) | reverse | .[].number') || {
+			echo "Error: Failed to fetch merged PRs from ${repo_slug}" >&2
+			return 1
+		}
+	fi
 
 	if [[ -z "$merged_prs" ]]; then
 		if [[ "$json_output" == "true" ]]; then
@@ -448,6 +468,7 @@ cmd_scan_merged() {
 	fi
 
 	# Filter out already-scanned PRs, limit to batch_size
+	# In backfill mode, process ALL unscanned PRs in batches with rate limiting
 	local prs_to_scan=()
 	local count=0
 	while IFS= read -r pr_num; do
@@ -458,21 +479,32 @@ cmd_scan_merged() {
 		fi
 		prs_to_scan+=("$pr_num")
 		count=$((count + 1))
-		[[ "$count" -ge "$batch_size" ]] && break
+		# In normal mode, cap at batch_size. In backfill mode, collect all.
+		if [[ "$backfill" != true ]] && [[ "$count" -ge "$batch_size" ]]; then
+			break
+		fi
 	done <<<"$merged_prs"
 
 	if [[ ${#prs_to_scan[@]} -eq 0 ]]; then
 		if [[ "$json_output" == "true" ]]; then
 			echo '{"scanned":0,"findings":0,"issues_created":0,"details":[]}'
 		else
-			echo "All recent merged PRs already scanned for ${repo_slug}."
+			echo "All merged PRs already scanned for ${repo_slug}."
+		fi
+		# Even if nothing to scan, tag actioned PRs if requested
+		if [[ "$tag_actioned" == true ]]; then
+			_tag_actioned_prs "$repo_slug" "$state_file"
 		fi
 		return 0
 	fi
 
+	local total_to_scan=${#prs_to_scan[@]}
 	if [[ "$json_output" != "true" ]]; then
-		echo -e "${BLUE:-}=== Scanning ${#prs_to_scan[@]} merged PRs for unactioned review feedback ===${NC:-}"
+		echo -e "${BLUE:-}=== Scanning ${total_to_scan} merged PRs for unactioned review feedback ===${NC:-}"
 		echo "Repository: ${repo_slug}"
+		if [[ "$backfill" == true ]]; then
+			echo "Mode: backfill (processing in batches of ${batch_size} with rate limiting)"
+		fi
 		echo ""
 	fi
 
@@ -480,11 +512,39 @@ cmd_scan_merged() {
 	local total_issues_created=0
 	local all_findings_json="[]"
 	local newly_scanned=()
+	local batch_count=0
 
 	for pr_num in "${prs_to_scan[@]}"; do
+		# Rate limiting: sleep between batches to stay within GitHub API limits
+		# ~3 API calls per PR (comments, reviews, tree). At batch_size=20,
+		# that's ~60 calls per batch. GitHub allows 5,000/hour.
+		# Sleep 5s every batch_size PRs to spread the load.
+		if [[ "$backfill" == true ]] && [[ "$batch_count" -gt 0 ]] && [[ $((batch_count % batch_size)) -eq 0 ]]; then
+			echo "  Rate limit pause (${batch_count}/${total_to_scan} scanned, sleeping 5s)..." >&2
+			sleep 5
+			# Save progress incrementally so we don't lose work on interruption
+			if [[ ${#newly_scanned[@]} -gt 0 ]]; then
+				local progress_json
+				progress_json=$(printf '%s\n' "${newly_scanned[@]}" | jq -R 'tonumber' | jq -s '.')
+				local progress_iso
+				progress_iso=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+				jq --argjson new_prs "$progress_json" \
+					--arg last_run "$progress_iso" \
+					--argjson created "$total_issues_created" \
+					'.scanned_prs = (.scanned_prs + $new_prs | unique) | .last_run = $last_run | .issues_created = (.issues_created + $created)' \
+					"$state_file" >"${state_file}.tmp" && mv "${state_file}.tmp" "$state_file"
+				newly_scanned=()
+			fi
+		fi
+
 		local findings
-		findings=$(_scan_single_pr "$repo_slug" "$pr_num" "$min_severity") || continue
+		findings=$(_scan_single_pr "$repo_slug" "$pr_num" "$min_severity") || {
+			newly_scanned+=("$pr_num")
+			batch_count=$((batch_count + 1))
+			continue
+		}
 		newly_scanned+=("$pr_num")
+		batch_count=$((batch_count + 1))
 
 		local finding_count
 		finding_count=$(echo "$findings" | jq 'length' 2>/dev/null || echo "0")
@@ -495,8 +555,10 @@ cmd_scan_merged() {
 
 		total_findings=$((total_findings + finding_count))
 
-		# Merge into all_findings_json
-		all_findings_json=$(echo "$all_findings_json" "$findings" | jq -s '.[0] + .[1]')
+		# Merge into all_findings_json (skip in backfill to save memory)
+		if [[ "$backfill" != true ]]; then
+			all_findings_json=$(echo "$all_findings_json" "$findings" | jq -s '.[0] + .[1]')
+		fi
 
 		# Create issues if requested
 		if [[ "$create_issues" == "true" ]]; then
@@ -506,29 +568,38 @@ cmd_scan_merged() {
 		fi
 	done
 
-	# Update state file with newly scanned PRs
-	local new_scanned_json
-	new_scanned_json=$(printf '%s\n' "${newly_scanned[@]}" | jq -R 'tonumber' | jq -s '.')
-	local now_iso
-	now_iso=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-	jq --argjson new_prs "$new_scanned_json" \
-		--arg last_run "$now_iso" \
-		--argjson created "$total_issues_created" \
-		'.scanned_prs = (.scanned_prs + $new_prs | unique) | .last_run = $last_run | .issues_created = (.issues_created + $created)' \
-		"$state_file" >"${state_file}.tmp" && mv "${state_file}.tmp" "$state_file"
+	# Update state file with newly scanned PRs (final save)
+	if [[ ${#newly_scanned[@]} -gt 0 ]]; then
+		local new_scanned_json
+		new_scanned_json=$(printf '%s\n' "${newly_scanned[@]}" | jq -R 'tonumber' | jq -s '.')
+		local now_iso
+		now_iso=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+		jq --argjson new_prs "$new_scanned_json" \
+			--arg last_run "$now_iso" \
+			--argjson created "$total_issues_created" \
+			'.scanned_prs = (.scanned_prs + $new_prs | unique) | .last_run = $last_run | .issues_created = (.issues_created + $created)' \
+			"$state_file" >"${state_file}.tmp" && mv "${state_file}.tmp" "$state_file"
+	fi
+
+	# Tag actioned PRs if requested (t1413)
+	if [[ "$tag_actioned" == true ]]; then
+		_tag_actioned_prs "$repo_slug" "$state_file"
+	fi
 
 	# Output
 	if [[ "$json_output" == "true" ]]; then
+		local details_json="$all_findings_json"
+		[[ "$backfill" == true ]] && details_json="[]"
 		jq -n \
-			--argjson scanned "${#prs_to_scan[@]}" \
+			--argjson scanned "$batch_count" \
 			--argjson findings "$total_findings" \
 			--argjson issues_created "$total_issues_created" \
-			--argjson details "$all_findings_json" \
+			--argjson details "$details_json" \
 			'{scanned: $scanned, findings: $findings, issues_created: $issues_created, details: $details}'
 	else
 		echo ""
 		echo -e "${BLUE:-}=== Scan Summary ===${NC:-}"
-		echo "PRs scanned: ${#prs_to_scan[@]}"
+		echo "PRs scanned: ${batch_count}"
 		echo "Findings: ${total_findings}"
 		echo "Issues created: ${total_issues_created}"
 	fi
@@ -689,6 +760,151 @@ _scan_single_pr() {
 }
 
 #######################################
+# Tag scanned PRs where all review feedback has been actioned (t1413)
+#
+# For each scanned PR, checks if any quality-debt issues reference it.
+# If all such issues are closed (or none were created because the PR
+# had no actionable findings), labels the PR as "code-reviews-actioned".
+#
+# This provides a clear signal of which PRs have been fully reviewed
+# and resolved, vs which still have outstanding feedback.
+#
+# Arguments:
+#   $1 - repo slug
+#   $2 - state file path
+# Returns: 0 on success
+#######################################
+_tag_actioned_prs() {
+	local repo_slug="$1"
+	local state_file="$2"
+
+	echo "Tagging actioned PRs for ${repo_slug}..." >&2
+
+	# Ensure label exists
+	gh label create "code-reviews-actioned" --repo "$repo_slug" --color "0E8A16" \
+		--description "All review feedback has been actioned" --force 2>/dev/null || true
+
+	# Get all scanned PR numbers
+	local scanned_prs
+	scanned_prs=$(jq -r '.scanned_prs[]' "$state_file" 2>/dev/null) || return 0
+
+	# Get all OPEN quality-debt issues with their titles (to extract PR numbers)
+	local open_debt_titles
+	open_debt_titles=$(gh issue list --repo "$repo_slug" \
+		--label "quality-debt" --state open --limit 500 \
+		--json title --jq '.[].title' 2>/dev/null || echo "")
+
+	# Get PRs that already have the label (avoid redundant API calls)
+	local already_tagged
+	already_tagged=$(gh pr list --repo "$repo_slug" --state merged \
+		--label "code-reviews-actioned" --limit 500 \
+		--json number --jq '.[].number' 2>/dev/null || echo "")
+
+	local tagged_count=0
+	local batch_count=0
+
+	while IFS= read -r pr_num; do
+		[[ -z "$pr_num" ]] && continue
+
+		# Skip if already tagged
+		if echo "$already_tagged" | grep -qx "$pr_num" 2>/dev/null; then
+			continue
+		fi
+
+		# Check if this PR has any OPEN quality-debt issues
+		# Quality-debt issue titles contain "PR #NNN" — check for open ones
+		local has_open_debt=false
+		if [[ -n "$open_debt_titles" ]]; then
+			if echo "$open_debt_titles" | grep -qF "PR #${pr_num}" 2>/dev/null; then
+				has_open_debt=true
+			fi
+		fi
+
+		if [[ "$has_open_debt" == false ]]; then
+			# No open debt for this PR — tag it as actioned
+			gh pr edit "$pr_num" --repo "$repo_slug" \
+				--add-label "code-reviews-actioned" 2>/dev/null || true
+			tagged_count=$((tagged_count + 1))
+		fi
+
+		# Rate limiting: sleep every 50 labels to avoid API abuse
+		batch_count=$((batch_count + 1))
+		if [[ $((batch_count % 50)) -eq 0 ]]; then
+			echo "  Tagged ${tagged_count} PRs so far (${batch_count} checked), sleeping 3s..." >&2
+			sleep 3
+		fi
+	done <<<"$scanned_prs"
+
+	echo "  Tagged ${tagged_count} PRs as code-reviews-actioned" >&2
+
+	# Backfill priority labels on existing open quality-debt issues (t1413)
+	# Issues created before the priority label feature won't have them.
+	# Parse severity from the title "(critical)", "(high)", "(medium)" and add
+	# the corresponding priority:* label if missing.
+	_backfill_priority_labels "$repo_slug"
+
+	return 0
+}
+
+#######################################
+# Backfill priority labels on open quality-debt issues (t1413)
+#
+# Parses severity from issue titles and adds priority:critical,
+# priority:high, or priority:medium labels to issues that don't
+# have them yet. Enables the supervisor to sort quality-debt
+# issues by severity when deciding dispatch order.
+#
+# Arguments:
+#   $1 - repo slug
+# Returns: 0 on success
+#######################################
+_backfill_priority_labels() {
+	local repo_slug="$1"
+
+	# Ensure priority labels exist on the repo
+	gh label create "priority:critical" --repo "$repo_slug" --color "B60205" \
+		--description "Critical severity — security or data loss risk" --force 2>/dev/null || true
+	gh label create "priority:high" --repo "$repo_slug" --color "D93F0B" \
+		--description "High severity — significant quality issue" --force 2>/dev/null || true
+	gh label create "priority:medium" --repo "$repo_slug" --color "FBCA04" \
+		--description "Medium severity — moderate quality issue" --force 2>/dev/null || true
+
+	# Get open quality-debt issues — extract number, title, and whether
+	# a priority label already exists, in a single jq pass
+	local issues_to_label
+	issues_to_label=$(gh issue list --repo "$repo_slug" \
+		--label "quality-debt" --state open --limit 500 \
+		--json number,title,labels \
+		--jq '.[] | select([.labels[].name] | any(startswith("priority:")) | not) | "\(.number)|\(.title)"' \
+		2>/dev/null || echo "")
+
+	[[ -z "$issues_to_label" ]] && return 0
+
+	local labelled_count=0
+
+	while IFS='|' read -r issue_num title; do
+		[[ -z "$issue_num" ]] && continue
+
+		# Extract severity from title: "(critical)", "(high)", "(medium)"
+		local severity=""
+		case "$title" in
+		*"(critical)"*) severity="critical" ;;
+		*"(high)"*) severity="high" ;;
+		*"(medium)"*) severity="medium" ;;
+		esac
+
+		if [[ -n "$severity" ]]; then
+			gh issue edit "$issue_num" --repo "$repo_slug" \
+				--add-label "priority:${severity}" 2>/dev/null || true
+			labelled_count=$((labelled_count + 1))
+		fi
+	done <<<"$issues_to_label"
+
+	[[ "$labelled_count" -gt 0 ]] && echo "  Added priority labels to ${labelled_count} quality-debt issues" >&2
+	return 0
+}
+
+#######################################
 # Create GitHub issues for quality-debt findings
 #
 # Groups findings by file, creates one issue per file (or per PR
@@ -715,9 +931,15 @@ _create_quality_debt_issues() {
 		return 0
 	fi
 
-	# Ensure labels exist
+	# Ensure labels exist (quality-debt + priority labels for dispatch ordering, t1413)
 	gh label create "quality-debt" --repo "$repo_slug" --color "D93F0B" \
-		--description "Unactioned review feedback from merged PRs" --force >/dev/null || true
+		--description "Unactioned review feedback from merged PRs" --force 2>/dev/null || true
+	gh label create "priority:critical" --repo "$repo_slug" --color "B60205" \
+		--description "Critical severity — security or data loss risk" --force 2>/dev/null || true
+	gh label create "priority:high" --repo "$repo_slug" --color "D93F0B" \
+		--description "High severity — significant quality issue" --force 2>/dev/null || true
+	gh label create "priority:medium" --repo "$repo_slug" --color "FBCA04" \
+		--description "Medium severity — moderate quality issue" --force 2>/dev/null || true
 
 	# Check existing quality-debt issues to avoid duplicates.
 	# Fetch both title and number so we can append to existing file-level issues (t1411).
@@ -839,12 +1061,24 @@ ${finding_details}
 ---
 _Auto-generated by \`quality-feedback-helper.sh scan-merged\`. Review each finding and either fix the code or dismiss with a reason._"
 
-		# Create the issue
+		# Map severity to priority label for dispatch ordering (t1413)
+		local priority_label=""
+		case "$max_severity" in
+		critical) priority_label="priority:critical" ;;
+		high) priority_label="priority:high" ;;
+		medium) priority_label="priority:medium" ;;
+		*) priority_label="" ;;
+		esac
+
+		# Create the issue with severity-based priority label
+		local label_args="quality-debt"
+		[[ -n "$priority_label" ]] && label_args="${label_args},${priority_label}"
+
 		local new_issue
 		new_issue=$(gh issue create --repo "$repo_slug" \
 			--title "$issue_title" \
 			--body "$issue_body" \
-			--label "quality-debt" | grep -oE '[0-9]+$' || echo "")
+			--label "$label_args" | grep -oE '[0-9]+$' || echo "")
 
 		if [[ -n "$new_issue" ]]; then
 			echo "  Created issue #${new_issue}: ${issue_title}" >&2
@@ -884,6 +1118,11 @@ scan-merged options:
   --create-issues   Create GitHub issues for findings (label: quality-debt)
   --min-severity    Minimum severity: critical|high|medium (default: medium)
   --json            Output findings as JSON
+  --backfill        Scan ALL merged PRs (paginated), not just recent ones.
+                    Processes in batches with rate limiting. Saves progress
+                    incrementally so interrupted runs can resume.
+  --tag-actioned    Label scanned PRs as "code-reviews-actioned" when all
+                    quality-debt issues for that PR are closed (or none exist).
 
 Examples:
   quality-feedback-helper.sh status
@@ -893,6 +1132,7 @@ Examples:
   quality-feedback-helper.sh watch --pr 4
   quality-feedback-helper.sh scan-merged --repo owner/repo --batch 20
   quality-feedback-helper.sh scan-merged --repo owner/repo --create-issues
+  quality-feedback-helper.sh scan-merged --repo owner/repo --backfill --create-issues --tag-actioned
 
 Requirements:
   - GitHub CLI (gh) installed and authenticated

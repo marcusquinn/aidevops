@@ -138,13 +138,13 @@ cmd_scan() {
 	local violations=0
 
 	echo "--- AI Processes ---"
-	printf "%-8s %-6s %-10s %-5s %-12s %-8s %s\n" "PID" "RSS_MB" "RUNTIME" "TTY" "COMMAND" "STATUS" "DETAIL"
+	printf "%-8s %-6s %-6s %-10s %-5s %-12s %-8s %s\n" "PID" "PPID" "RSS_MB" "RUNTIME" "TTY" "COMMAND" "STATUS" "DETAIL"
 
 	while IFS= read -r line; do
 		[[ -z "$line" ]] && continue
-		# Fields: pid, tty, rss, etime, command (command is last — may contain spaces)
-		local pid tty rss etime cmd_full
-		read -r pid tty rss etime cmd_full <<<"$line"
+		# Fields: pid, ppid, tty, rss, etime, command (command is last — may contain spaces)
+		local pid ppid tty rss etime cmd_full
+		read -r pid ppid tty rss etime cmd_full <<<"$line"
 
 		[[ "$pid" =~ ^[0-9]+$ ]] || continue
 		[[ "$rss" =~ ^[0-9]+$ ]] || rss=0
@@ -181,10 +181,17 @@ cmd_scan() {
 			status="OVER_TIME"
 			detail="runtime ${age_seconds}s > ${runtime_limit}s"
 			violations=$((violations + 1))
+		elif [[ "$cmd_base" == "shellcheck" ]]; then
+			[[ "$ppid" =~ ^[0-9]+$ ]] || ppid=0
+			if [[ "$ppid" -eq 1 ]] && [[ "$age_seconds" -gt 120 ]]; then
+				status="ORPHAN"
+				detail="ppid=1, age=${age_seconds}s (no consumer)"
+				violations=$((violations + 1))
+			fi
 		fi
 
-		printf "%-8s %-6s %-10s %-5s %-12s %-8s %s\n" "$pid" "${rss_mb}MB" "$etime" "$tty" "$cmd_base" "$status" "$detail"
-	done < <(ps axo pid,tty,rss,etime,command | grep -E 'opencode|shellcheck|node.*opencode' | grep -v grep || true)
+		printf "%-8s %-6s %-6s %-10s %-5s %-12s %-8s %s\n" "$pid" "$ppid" "${rss_mb}MB" "$etime" "$tty" "$cmd_base" "$status" "$detail"
+	done < <(ps axo pid,ppid,tty,rss,etime,command | grep -E 'opencode|shellcheck|node.*opencode' | grep -v grep || true)
 
 	echo ""
 	echo "Total: ${process_count} processes, $((total_rss_kb / 1024))MB RSS, ${violations} violation(s)"
@@ -215,9 +222,9 @@ cmd_kill_runaways() {
 
 	while IFS= read -r line; do
 		[[ -z "$line" ]] && continue
-		# Fields: pid, tty, rss, etime, command (command is last — may contain spaces)
-		local pid tty rss etime cmd_full
-		read -r pid tty rss etime cmd_full <<<"$line"
+		# Fields: pid, ppid, tty, rss, etime, command (command is last — may contain spaces)
+		local pid ppid tty rss etime cmd_full
+		read -r pid ppid tty rss etime cmd_full <<<"$line"
 
 		[[ "$pid" =~ ^[0-9]+$ ]] || continue
 		[[ "$rss" =~ ^[0-9]+$ ]] || rss=0
@@ -248,6 +255,16 @@ cmd_kill_runaways() {
 			violation="runtime ${age_seconds}s > ${runtime_limit}s"
 		fi
 
+		# Orphan shellcheck reaper: if parent is PID 1 (reparented because the
+		# language server that spawned it exited) and alive >120s, kill it.
+		# Nobody is reading the output, so the work is wasted CPU.
+		if [[ -z "$violation" ]] && [[ "$cmd_base" == "shellcheck" ]]; then
+			[[ "$ppid" =~ ^[0-9]+$ ]] || ppid=0
+			if [[ "$ppid" -eq 1 ]] && [[ "$age_seconds" -gt 120 ]]; then
+				violation="orphan (ppid=1, age=${age_seconds}s)"
+			fi
+		fi
+
 		if [[ -n "$violation" ]]; then
 			local rss_mb=$((rss / 1024))
 			echo "Killing PID $pid ($cmd_base) — $violation"
@@ -260,7 +277,7 @@ cmd_kill_runaways() {
 			killed=$((killed + 1))
 			total_freed_mb=$((total_freed_mb + rss_mb))
 		fi
-	done < <(ps axo pid,tty,rss,etime,command | grep -E 'opencode|shellcheck|node.*opencode' | grep -v grep || true)
+	done < <(ps axo pid,ppid,tty,rss,etime,command | grep -E 'opencode|shellcheck|node.*opencode' | grep -v grep || true)
 
 	if [[ "$killed" -gt 0 ]]; then
 		echo "Killed $killed process(es), freed ~${total_freed_mb}MB"
@@ -302,9 +319,9 @@ cmd_status() {
 
 	while IFS= read -r line; do
 		[[ -z "$line" ]] && continue
-		# Fields: pid, tty, rss, etime, command (command is last — may contain spaces)
-		local pid tty rss etime cmd_full
-		read -r pid tty rss etime cmd_full <<<"$line"
+		# Fields: pid, ppid, tty, rss, etime, command (command is last — may contain spaces)
+		local pid ppid tty rss etime cmd_full
+		read -r pid ppid tty rss etime cmd_full <<<"$line"
 		[[ "$rss" =~ ^[0-9]+$ ]] || rss=0
 		total_rss_kb=$((total_rss_kb + rss))
 		process_count=$((process_count + 1))
@@ -326,8 +343,13 @@ cmd_status() {
 		fi
 		if [[ "$rss" -gt "$rss_limit" ]] || [[ "$age_seconds" -gt "$runtime_limit" ]]; then
 			violations=$((violations + 1))
+		elif [[ "$cmd_base" == "shellcheck" ]]; then
+			[[ "$ppid" =~ ^[0-9]+$ ]] || ppid=0
+			if [[ "$ppid" -eq 1 ]] && [[ "$age_seconds" -gt 120 ]]; then
+				violations=$((violations + 1))
+			fi
 		fi
-	done < <(ps axo pid,tty,rss,etime,command | grep -E 'opencode|shellcheck|node.*opencode' | grep -v grep || true)
+	done < <(ps axo pid,ppid,tty,rss,etime,command | grep -E 'opencode|shellcheck|node.*opencode' | grep -v grep || true)
 
 	local session_count
 	session_count=$(ps axo tty,command | awk '

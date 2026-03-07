@@ -150,7 +150,7 @@ _cc_cache_set() {
 	local result="$2"
 	local cache_file="${CONTENT_CLASSIFIER_CACHE_DIR}/classifications/${hash}"
 
-	printf '%s' "$result" >"$cache_file" || true
+	printf '%s' "$result" >"$cache_file"
 	return 0
 }
 
@@ -196,7 +196,7 @@ _cc_collab_cache_set() {
 	safe_key=$(printf '%s_%s' "$repo" "$user" | tr '/' '_')
 	local cache_file="${CONTENT_CLASSIFIER_CACHE_DIR}/collaborators/${safe_key}"
 
-	printf '%s' "$result" >"$cache_file" || true
+	printf '%s' "$result" >"$cache_file"
 	return 0
 }
 
@@ -693,7 +693,7 @@ cmd_test() {
 	# Test 10: Dry-run classification
 	total=$((total + 1))
 	local dry_result
-	dry_result=$(CONTENT_CLASSIFIER_DRY_RUN=true CONTENT_CLASSIFIER_QUIET=true _cc_classify "test content" 2>/dev/null) || true
+	dry_result=$(CONTENT_CLASSIFIER_DRY_RUN=true CONTENT_CLASSIFIER_QUIET=true _cc_classify "test content") || true
 	if printf '%s' "$dry_result" | grep -q 'UNKNOWN.*dry-run'; then
 		echo "  PASS: Dry-run returns UNKNOWN"
 		passed=$((passed + 1))

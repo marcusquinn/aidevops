@@ -59,6 +59,7 @@ Every point where an agent reads external content is a potential injection vecto
 | **API responses** | Medium | Third-party API returns injection payload in JSON string fields |
 | **Email/chat content** | High | Inbound message contains injection (the original `prompt-guard-helper.sh` use case) |
 | **Search results** | Medium | SEO-poisoned content designed to manipulate agents that scrape search results |
+| **CI/CD inputs** | Critical | Issue titles, PR descriptions, or commit messages processed by AI bots in GitHub Actions with shell access and cached credentials. See `tools/security/opsec.md` "CI/CD AI Agent Security" |
 
 ### Why Indirect Injection Is Harder to Defend
 
@@ -674,7 +675,7 @@ network-tier-helper.sh report --flagged-only
 - `scripts/worker-token-helper.sh` — Scoped GitHub token lifecycle for workers (t1412.2)
 - `scripts/network-tier-helper.sh` — Network domain tiering (t1412.3)
 - `configs/network-tiers.conf` — Domain classification database
-- `tools/security/opsec.md` — Operational security guide
+- `tools/security/opsec.md` — Operational security guide (includes CI/CD AI agent security — token scoping, secret isolation, Clinejection case study)
 - `tools/security/privacy-filter.md` — Privacy filter for public contributions
 - `tools/security/tirith.md` — Terminal command security guard
 - `tools/code-review/security-analysis.md` — Ferret AI config scanner (detects injection in `.claude/`, `.cursor/`, etc.)

@@ -10,7 +10,7 @@ shopt -s inherit_errexit 2>/dev/null || true
 # AI Assistant Server Access Framework Setup Script
 # Helps developers set up the framework for their infrastructure
 #
-# Version: 2.154.0
+# Version: 2.154.4
 #
 # Quick Install:
 #   npm install -g aidevops && aidevops update          (recommended)
@@ -665,6 +665,7 @@ main() {
 		confirm_step "Setup Git CLIs (gh, glab, tea)" && setup_git_clis
 		confirm_step "Setup file discovery tools (fd, ripgrep, ripgrep-all)" && setup_file_discovery_tools
 		confirm_step "Setup shell linting tools (shellcheck, shfmt)" && setup_shell_linting_tools
+		setup_shellcheck_wrapper
 		confirm_step "Setup Qlty CLI (multi-linter code quality)" && setup_qlty_cli
 		confirm_step "Rosetta audit (Apple Silicon x86 migration)" && setup_rosetta_audit
 		confirm_step "Setup Worktrunk (git worktree management)" && setup_worktrunk

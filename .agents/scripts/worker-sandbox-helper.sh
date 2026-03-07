@@ -175,33 +175,36 @@ generate_sandbox_env() {
 	fi
 
 	# Core: override HOME
-	echo "export HOME='${sandbox_dir}'"
+	# Use printf %q to safely escape all shell metacharacters, preventing
+	# command injection if any variable contains single quotes or other
+	# special characters (security fix: GH#3119, PR#3080 review feedback)
+	printf "export HOME=%q\n" "${sandbox_dir}"
 
 	# Preserve REAL_HOME so scripts that need the actual home can find it
 	# (e.g., for reading repos.json, which is a framework config not a credential)
-	echo "export REAL_HOME='${REAL_HOME}'"
+	printf "export REAL_HOME=%q\n" "${REAL_HOME}"
 
 	# GH_TOKEN: if set in the current environment, pass it through.
 	# This is the primary auth mechanism for workers (env var, not filesystem).
 	# The dispatch script is responsible for setting GH_TOKEN before calling this.
 	if [[ -n "${GH_TOKEN:-}" ]]; then
-		echo "export GH_TOKEN='${GH_TOKEN}'"
+		printf "export GH_TOKEN=%q\n" "${GH_TOKEN}"
 	fi
 
 	# XDG overrides to keep tool state inside the sandbox
-	echo "export XDG_CONFIG_HOME='${sandbox_dir}/.config'"
-	echo "export XDG_DATA_HOME='${sandbox_dir}/.local/share'"
-	echo "export XDG_CACHE_HOME='${sandbox_dir}/.cache'"
+	printf "export XDG_CONFIG_HOME=%q\n" "${sandbox_dir}/.config"
+	printf "export XDG_DATA_HOME=%q\n" "${sandbox_dir}/.local/share"
+	printf "export XDG_CACHE_HOME=%q\n" "${sandbox_dir}/.cache"
 
 	# npm config to use sandbox directory
-	echo "export npm_config_cache='${sandbox_dir}/.npm'"
+	printf "export npm_config_cache=%q\n" "${sandbox_dir}/.npm"
 
 	# Prevent tools from reading the real home's dotfiles
-	echo "export GNUPGHOME='${sandbox_dir}/.gnupg'"
+	printf "export GNUPGHOME=%q\n" "${sandbox_dir}/.gnupg"
 
 	# Signal to the worker that it's sandboxed (for conditional logic)
 	echo "export AIDEVOPS_SANDBOXED=true"
-	echo "export AIDEVOPS_SANDBOX_DIR='${sandbox_dir}'"
+	printf "export AIDEVOPS_SANDBOX_DIR=%q\n" "${sandbox_dir}"
 
 	return 0
 }
@@ -263,7 +266,7 @@ cleanup_stale_sandboxes() {
 	while IFS= read -r -d '' sandbox_dir; do
 		# Verify it's a sandbox before removing
 		if [[ -f "$sandbox_dir/.aidevops-sandbox" ]]; then
-			rm -rf "$sandbox_dir" 2>/dev/null || true
+			rm -rf "$sandbox_dir" || true
 			count=$((count + 1))
 		fi
 	done < <(find "${SANDBOX_BASE}"* -maxdepth 0 -type d -mmin +"$max_age_minutes" -print0 2>/dev/null || true)

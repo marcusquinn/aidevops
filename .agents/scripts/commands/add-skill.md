@@ -1,10 +1,10 @@
 ---
-description: Import external skills from GitHub or ClawdHub into aidevops
+description: Import external skills from GitHub, ClawdHub, or URLs into aidevops
 agent: Build+
 mode: subagent
 ---
 
-Import an external skill from GitHub or ClawdHub, convert it to aidevops format, and register it for update tracking.
+Import an external skill from GitHub, ClawdHub, or a raw URL, convert it to aidevops format, and register it for update tracking.
 
 URL/Repo: $ARGUMENTS
 
@@ -29,6 +29,10 @@ URL/Repo: $ARGUMENTS
 # Import with custom name
 /add-skill vercel-labs/agent-skills --name vercel-deploy
 # → .agents/tools/deployment/vercel-deploy-skill.md
+
+# Import from a raw URL
+/add-skill https://convos.org/skill.md --name convos
+# → .agents/tools/convos-skill.md (category auto-detected from content)
 
 # List imported skills
 /add-skill list
@@ -61,6 +65,7 @@ Determine if the input is:
 - A full GitHub URL: `https://github.com/owner/repo`
 - A ClawdHub shorthand: `clawdhub:<slug>`
 - A ClawdHub URL: `https://clawdhub.com/owner/slug`
+- A raw URL: `https://example.com/skill.md` (any non-GitHub, non-ClawdHub URL)
 - A command: `list`, `check-updates`, `remove <name>`
 
 ### Step 2: Run Helper Script
@@ -111,6 +116,7 @@ After successful import:
 |--------|-----------|--------------|
 | GitHub | `owner/repo` or github.com URL | `git clone --depth 1` |
 | ClawdHub | `clawdhub:slug` or clawdhub.com URL | Playwright browser extraction |
+| Raw URL | Any `https://` URL (not GitHub/ClawdHub) | `curl` with SHA-256 content hash |
 
 | Format | Detection | Conversion |
 |--------|-----------|------------|
@@ -136,6 +142,10 @@ After successful import:
 /add-skill clawdhub:proxmox-full
 /add-skill https://clawdhub.com/mSarheed/proxmox-full
 
+# Import from a raw URL
+/add-skill https://convos.org/skill.md --name convos
+/add-skill https://example.com/agents/my-skill.md
+
 # Import with force (overwrite existing)
 /add-skill dmmulroy/cloudflare-skill --force
 
@@ -159,12 +169,24 @@ Imported skills are tracked in `.agents/configs/skill-sources.json`:
       "imported_at": "2026-01-21T00:00:00Z",
       "last_checked": "2026-01-21T00:00:00Z",
       "merge_strategy": "added"
+    },
+    {
+      "name": "convos",
+      "upstream_url": "https://convos.org/skill.md",
+      "upstream_commit": "",
+      "local_path": ".agents/tools/convos-skill.md",
+      "format_detected": "url",
+      "imported_at": "2026-03-07T00:00:00Z",
+      "last_checked": "2026-03-07T00:00:00Z",
+      "merge_strategy": "added",
+      "notes": "Imported from URL",
+      "upstream_hash": "a1b2c3d4e5f6..."
     }
   ]
 }
 ```
 
-Run `/add-skill check-updates` periodically to see if upstream skills have changed.
+URL-sourced skills use SHA-256 content hashing for update detection instead of git commit comparison. Run `/add-skill check-updates` periodically to see if upstream skills have changed.
 
 ## Related
 

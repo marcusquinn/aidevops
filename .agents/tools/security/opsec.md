@@ -18,9 +18,9 @@ tools:
 
 ## Quick Reference
 
-- **Purpose**: Threat modeling, platform selection, network privacy, and anti-detect for operational security
-- **Scope**: Communications, network, browser, device, and identity hygiene
-- **Related**: `tools/security/tirith.md`, `tools/security/tamper-evident-audit.md`, `tools/credentials/encryption-stack.md`, `services/communications/simplex.md`, `tools/browser/browser-automation.md`
+- **Purpose**: Threat modeling, platform selection, network privacy, anti-detect, and CI/CD AI agent security
+- **Scope**: Communications, network, browser, device, identity hygiene, and AI agent pipeline security
+- **Related**: `tools/security/tirith.md`, `tools/security/tamper-evident-audit.md`, `tools/credentials/encryption-stack.md`, `services/communications/simplex.md`, `tools/browser/browser-automation.md`, `tools/security/prompt-injection-defender.md`
 
 **Decision tree**:
 
@@ -29,6 +29,7 @@ tools:
 3. Network privacy? → [Network Privacy](#network-privacy)
 4. Browser fingerprinting? → [Anti-Detect Browsers](#anti-detect-browsers)
 5. Device hygiene? → [Device Hygiene](#device-hygiene)
+6. AI agents in CI/CD? → [CI/CD AI Agent Security](#cicd-ai-agent-security)
 
 <!-- AI-CONTEXT-END -->
 
@@ -302,6 +303,209 @@ sudo fwupdmgr update
 3. Revoke SSH keys: `ssh-keygen -R hostname` on all servers
 4. Revoke GPG subkeys if device had access
 5. Notify contacts if messaging keys were on device
+
+## CI/CD AI Agent Security
+
+AI agents in CI/CD pipelines (GitHub Actions bots, PR triage bots, automated code reviewers) introduce a distinct attack surface. Unlike interactive agents where a human reviews output, CI/CD agents operate autonomously with cached credentials and shell access — making them high-value targets for prompt injection via untrusted inputs (issue titles, PR descriptions, commit messages, dependency metadata).
+
+**Reference case — Clinejection**: The [Clinejection attack](https://grith.ai/blog/clinejection-when-your-ai-tool-installs-another) demonstrated a full chain: malicious issue title → AI triage bot processes it → bot executes `npm install` from a typosquatted repo → cache poisoning → credential theft → malicious npm publish. The attack exploited three structural weaknesses: (1) the bot had shell access, (2) it processed untrusted input without scanning, (3) it ran with cached credentials that included npm publish tokens.
+
+### Threat Model
+
+| Vector | Risk | Example |
+|--------|------|---------|
+| **Issue/PR title injection** | Critical | Attacker crafts issue title containing instructions the AI bot follows |
+| **PR diff injection** | Critical | Malicious code comments or strings contain hidden instructions for AI reviewers |
+| **Commit message injection** | High | Commit messages with embedded instructions processed by AI changelog generators |
+| **Dependency metadata** | High | Package README/description contains injection payload, processed during AI-assisted dependency review |
+| **Webhook payload manipulation** | Medium | Crafted webhook payloads trigger unintended AI agent behaviour |
+
+### Rules for CI/CD AI Agents
+
+**1. Never give AI bots shell access + credentials in the same context.**
+
+The combination of shell execution and cached credentials is the critical vulnerability. If an AI agent needs shell access (to run tests, linters, etc.), it must not have access to publish tokens, deploy keys, or credentials beyond what the current job requires.
+
+```yaml
+# BAD — bot has shell access AND inherited credentials
+- name: AI Code Review
+  run: |
+    ai-review-bot analyze --shell-enabled
+  env:
+    NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+    DEPLOY_KEY: ${{ secrets.DEPLOY_KEY }}
+
+# GOOD — bot has read-only access, no shell, no extra credentials
+- name: AI Code Review
+  uses: ai-review-bot/action@a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2  # pin to SHA per Rule 7
+  with:
+    github-token: ${{ secrets.GITHUB_TOKEN }}
+    mode: comment-only  # No shell execution
+```
+
+**2. Use short-lived tokens, not long-lived PATs.**
+
+Long-lived PATs cached in repository secrets are a persistent credential theft target. Use short-lived, scoped alternatives instead.
+
+**For GitHub API auth:** Use the built-in `GITHUB_TOKEN` with least-privilege `permissions:`, or mint a [GitHub App installation token](https://docs.github.com/en/apps/creating-github-apps/authenticating-with-a-github-app/generating-an-installation-access-token-for-a-github-app) scoped to specific repositories. `actions/create-github-app-token` uses a GitHub App private key to create a short-lived installation token — this is not OIDC, but it is short-lived and scoped.
+
+```yaml
+# BAD — long-lived PAT with broad permissions
+env:
+  GH_TOKEN: ${{ secrets.PERSONAL_ACCESS_TOKEN }}
+
+# GOOD — GitHub App installation token, scoped to this repo, short-lived
+permissions:
+  contents: read
+  pull-requests: write
+steps:
+  - uses: actions/create-github-app-token@d72941d797fd3113feb6b93fd0dec494b13a2547  # v1 — pin to SHA per Rule 7
+    id: app-token
+    with:
+      app-id: ${{ vars.APP_ID }}
+      private-key: ${{ secrets.APP_PRIVATE_KEY }}
+      repositories: ${{ github.event.repository.name }}
+```
+
+**For cloud-provider auth:** Use [OpenID Connect (OIDC)](https://docs.github.com/en/actions/security-for-github-actions/security-hardening-your-deployments/about-security-hardening-with-openid-connect) to exchange the workflow's identity for short-lived cloud credentials. This eliminates the need to store cloud provider secrets in GitHub.
+
+```yaml
+# GOOD — OIDC exchanges workflow identity for short-lived cloud credentials
+permissions:
+  id-token: write  # Required for OIDC token request
+  contents: read
+steps:
+  - uses: aws-actions/configure-aws-credentials@7474bc4690e29a8392af63c5b98e7449536d5c3a  # v4 — pin to SHA per Rule 7
+    with:
+      role-to-assume: arn:aws:iam::123456789012:role/github-actions
+      aws-region: us-east-1
+```
+
+**3. Apply minimal permissions to workflow tokens.**
+
+Always declare the minimum `permissions` block explicitly to override repository/organization/enterprise defaults, which may be permissive or restricted (note: repos/orgs created after February 2023 may default certain scopes like `contents` and `packages` to read-only, while older ones default to read/write).
+
+```yaml
+# At the top of every workflow that uses AI agents
+permissions:
+  contents: read
+  pull-requests: write
+  issues: write
+  # Do NOT add: packages:write, deployments:write, etc.
+  # unless the workflow genuinely needs them
+```
+
+**4. Scan untrusted inputs before AI processing.**
+
+Issue bodies, PR descriptions, commit messages, and comment content from non-collaborators are untrusted input. Scan before passing to any AI agent.
+
+```yaml
+- name: Scan PR for injection
+  run: |
+    gh pr view ${{ github.event.pull_request.number }} \
+      --json body,title --jq '.body + "\n" + .title' \
+      | prompt-guard-helper.sh scan-stdin
+  env:
+    GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+- name: AI Review (only if scan passes)
+  if: success()
+  uses: ai-review-bot/action@a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2  # pin to SHA per Rule 7
+```
+
+**5. Never use `allowed_non_write_users: "*"` or equivalent wildcard trust.**
+
+Some AI bot configurations allow specifying which users can trigger the bot. A wildcard (`*`) means any GitHub user — including attackers — can craft inputs that the bot processes with its full permissions. Always restrict to collaborators or a named allowlist.
+
+```yaml
+# BAD — any user can trigger the bot
+allowed_non_write_users: "*"
+
+# GOOD — only collaborators can trigger
+allowed_non_write_users: ["maintainer1", "maintainer2"]
+```
+
+**6. Isolate AI agent jobs from deployment jobs.**
+
+AI review/triage jobs should never share a runner, environment, or credential context with deployment jobs. Use separate GitHub environments with protection rules.
+
+```yaml
+jobs:
+  ai-review:
+    runs-on: ubuntu-latest
+    # No environment — no access to deployment secrets
+    permissions:
+      contents: read
+      pull-requests: write
+
+  deploy:
+    runs-on: ubuntu-latest
+    needs: [ai-review, tests]
+    environment: production  # Protected, requires approval
+    permissions:
+      contents: read
+      deployments: write
+```
+
+**7. Pin AI agent actions to commit SHAs, not tags.**
+
+Tags can be force-pushed. A compromised AI action tag could inject malicious behaviour into every workflow that references it. Pin to the full commit SHA.
+
+```yaml
+# BAD — tag can be moved to a malicious commit
+- uses: ai-review-bot/action@v2
+
+# GOOD — immutable reference
+- uses: ai-review-bot/action@a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2
+```
+
+### Checklist for CI/CD AI Agent Security
+
+Use this checklist when adding or auditing AI agents in CI/CD pipelines:
+
+- [ ] AI agent job has explicit `permissions` block with minimal scopes
+- [ ] No long-lived PATs — using `GITHUB_TOKEN`, GitHub App installation tokens, or OIDC for cloud providers
+- [ ] AI agent cannot access publish tokens (npm, PyPI, Docker Hub, etc.)
+- [ ] AI agent cannot access deployment credentials or SSH keys
+- [ ] Untrusted inputs (issue body, PR description, comments) are scanned before AI processing
+- [ ] No wildcard user allowlists (`allowed_non_write_users: "*"`)
+- [ ] AI agent actions pinned to commit SHA, not mutable tag
+- [ ] AI review jobs isolated from deployment jobs (separate environments)
+- [ ] AI agent has no shell execution capability, or shell is sandboxed without credentials
+- [ ] Workflow uses `pull_request_target` with caution (runs with base repo permissions on fork PRs)
+
+### `pull_request_target` Warning
+
+The `pull_request_target` event runs workflows with the **base repository's** permissions and secrets, even when triggered by a fork PR. If an AI agent processes the fork PR's diff or description using `pull_request_target`, the attacker's untrusted content runs in a privileged context.
+
+```yaml
+# DANGEROUS — AI processes fork PR content with base repo secrets
+on:
+  pull_request_target:
+    types: [opened]
+jobs:
+  review:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}  # Fork code!
+      - run: ai-review-bot analyze .  # Processes untrusted code with secrets
+
+# SAFER — use pull_request (no base secrets) or gate with approval
+on:
+  pull_request:
+    types: [opened]
+```
+
+If you must use `pull_request_target` (e.g., to comment on PRs from forks), never check out the fork's code and never pass fork-controlled content to shell commands.
+
+### Related Guidance
+
+- `tools/security/prompt-injection-defender.md` — Pattern C (PR/Code Review Pipeline) for scanning PR content
+- `workflows/git-workflow.md` — Destructive command protection and branch safety
+- OWASP [LLM Top 10](https://owasp.org/www-project-top-10-for-large-language-model-applications/) — Industry reference for LLM application security
+- GitHub [Security hardening for GitHub Actions](https://docs.github.com/en/actions/security-for-github-actions/security-hardening-your-deployments/about-security-hardening-with-openid-connect) — OIDC and token scoping
 
 ## Related
 

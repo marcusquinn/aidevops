@@ -22,6 +22,92 @@ Each plan includes:
 
 ## Active Plans
 
+### [2026-03-07] Convos Encrypted Messaging Agent
+
+**Status:** Planning
+**Estimate:** ~2h (ai:1.5h read:30m)
+**TODO:** t1414 (parent), t1414.1-t1414.2 (subtasks)
+**Logged:** 2026-03-07
+**Upstream skill:** `https://convos.org/skill.md`
+
+<!--TOON:plan{id,title,status,phase,total_phases,owner,tags,est,est_ai,est_read,logged}:
+p042,Convos Encrypted Messaging Agent,planning,0,2,,agent|communications|xmtp|convos,2h,1.5h,30m,2026-03-07T00:00Z
+-->
+
+#### Purpose
+
+Add a Convos subagent to the communications domain. [Convos](https://convos.org) is an encrypted messaging app built on XMTP that provides a CLI (`@xmtp/convos-cli`) for agent participation in conversations. The upstream project publishes a well-structured skill file at `https://convos.org/skill.md` covering the full agent lifecycle: CLI installation, joining/creating conversations, real-time participation via `convos agent serve` (ndjson stdin/stdout protocol), bridge script templates, group management, and behavioural principles.
+
+**Relationship to existing agents:** We already have `xmtp.md` covering the protocol/SDK layer. Convos is a distinct product built on XMTP — a consumer-facing encrypted chat app with its own CLI and agent mode. The two agents are complementary: `xmtp.md` for building on the protocol, `convos.md` for participating in Convos conversations.
+
+#### Phases
+
+- [ ] **Phase 1 — Create agent file** (t1414.1, ~1h): Ingest upstream skill content into `.agents/services/communications/convos.md`. Add aidevops frontmatter (mode, tools, description), `AI-CONTEXT` markers, Quick Reference section, and Related section linking to `xmtp.md`, `simplex.md`, `matterbridge.md`. Adapt bridge script section to reference aidevops dispatch patterns instead of OpenClaw-specific calls.
+- [ ] **Phase 2 — Index and cross-reference** (t1414.2, ~30m): Add `convos` to `subagent-index.toon` communications entry. Add to AGENTS.md domain index communications list. Update `xmtp.md` Production Apps table (Convos URL changed from `converse.xyz` to `convos.org`).
+- [ ] **Phase 3 — Register for upstream tracking** (t1414.3, ~15m): Add entry to `skill-sources.json` with `format_detected: "url"` and `upstream_url: "https://convos.org/skill.md"`. Depends on t1415 for the update checker to handle URL-based sources.
+
+#### Upstream Tracking
+
+The skill is published at `https://convos.org/skill.md` — a raw URL, not a GitHub repo. The existing `skill-update-helper.sh` only supports GitHub commit comparison. Task t1415 adds URL-based content-hash checking to close this gap. Once t1415 is complete, Convos (and any future URL-sourced skills) will be tracked automatically.
+
+#### Decision Log
+
+| Date | Decision | Rationale |
+|------|----------|-----------|
+| 2026-03-07 | Separate file from xmtp.md | Convos is a distinct product with its own CLI; xmtp.md covers the protocol layer. Keeping them separate follows the pattern of other comms agents (e.g., Matrix protocol vs Matrix bot). |
+| 2026-03-07 | Ingest upstream skill rather than link-only | The skill content is substantial and well-structured. Ingesting ensures availability even if the upstream URL changes, and allows aidevops-specific adaptations. |
+| 2026-03-07 | URL-based tracking needed | No GitHub repo found hosting the skill. The upstream URL is `convos.org/skill.md`. Created t1415 to add content-hash comparison to the skill update pipeline. |
+
+### [2026-03-07] URL-Based Skill Update Checking for Non-GitHub Sources
+
+**Status:** Planning
+**Estimate:** ~3h (ai:2.5h test:30m)
+**TODO:** t1415 (parent), t1415.1-t1415.3 (subtasks)
+**Logged:** 2026-03-07
+**Depends on:** None
+**Enables:** t1414.3 (Convos upstream tracking)
+
+<!--TOON:plan{id,title,status,phase,total_phases,owner,tags,est,est_ai,est_test,logged}:
+p043,URL-Based Skill Update Checking,planning,0,3,,enhancement|skills|infrastructure,3h,2.5h,30m,2026-03-07T00:00Z
+-->
+
+#### Purpose
+
+The skill update pipeline (`skill-update-helper.sh` + `add-skill-helper.sh`) currently only supports GitHub-hosted skills — it compares commit SHAs via the GitHub API. Skills published at raw URLs (e.g., `https://convos.org/skill.md`, or any project that hosts a `skill.md` on their own domain) are invisible to update detection.
+
+As more projects adopt the skill.md convention and publish at their own domains, this gap will grow. The fix is straightforward: content-hash comparison for URL-sourced skills.
+
+**Problem:** `skill-update-helper.sh` skips non-GitHub sources entirely (line ~980: `if [[ "$upstream_url" != *"github.com"* ]]; then ... continue`). `add-skill-helper.sh` only accepts GitHub repos or ClawdHub slugs — no raw URL import path.
+
+#### Phases
+
+- [ ] **Phase 1 — URL import** (t1415.1, ~1.5h): Enhance `add-skill-helper.sh` to detect raw `.md` URLs (not GitHub, not ClawdHub). Fetch with curl, compute SHA-256 of response body, register in `skill-sources.json` with `format_detected: "url"` and new `upstream_hash` field. Security scan still runs on fetched content.
+- [ ] **Phase 2 — URL update checking** (t1415.2, ~1h): Enhance `skill-update-helper.sh` to handle `format_detected: "url"` entries. Fetch the URL, compute SHA-256, compare against stored `upstream_hash`. If different, flag as update available. Wire into `--auto-update` and `pr` commands — re-fetch and re-import on update.
+- [ ] **Phase 3 — HTTP caching** (t1415.3, ~30m): Store `ETag` and `Last-Modified` response headers in `skill-sources.json`. Use conditional requests (`If-None-Match`, `If-Modified-Since`) to avoid re-downloading unchanged content. Reduces bandwidth and avoids unnecessary hash computation on periodic checks.
+
+#### Schema Changes
+
+New fields in `skill-sources.json` skill entries:
+
+```json
+{
+  "format_detected": "url",
+  "upstream_url": "https://convos.org/skill.md",
+  "upstream_hash": "sha256:abc123...",
+  "upstream_etag": "\"67890\"",
+  "upstream_last_modified": "Sat, 07 Mar 2026 12:00:00 GMT"
+}
+```
+
+Existing GitHub-sourced skills continue using `upstream_commit` — no breaking changes.
+
+#### Decision Log
+
+| Date | Decision | Rationale |
+|------|----------|-----------|
+| 2026-03-07 | Content hash (SHA-256) over timestamp | Timestamps can change without content changing (CDN re-deploy). Hash comparison is definitive. ETag/Last-Modified are optimisations layered on top. |
+| 2026-03-07 | Separate format_detected value ("url") | Clean separation from "skill-md", "clawdhub", etc. The update checker dispatches on this field, so a distinct value avoids polluting existing code paths. |
+
 ### [2026-03-06] Recursive Task Decomposition for Dispatch — Classify/Decompose Pipeline
 
 **Status:** Planning

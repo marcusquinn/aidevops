@@ -829,6 +829,7 @@ Files: `~/.aidevops/agents/hooks/git_safety_guard.py` (guard script),
 | `bug-fixing.md` | Bug fix patterns |
 | `sql-migrations.md` | Database schema version control |
 | `tools/git/lumen.md` | AI-powered diffs, commit messages, change explanations |
+| `tools/security/opsec.md` | CI/CD AI agent security — token scoping, secret isolation, safe dispatch |
 
 ## Platform CLI Reference
 
