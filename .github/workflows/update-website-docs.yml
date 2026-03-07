@@ -19,10 +19,10 @@ jobs:
     
     steps:
       - name: Checkout aidevops repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
       - name: Setup Bun
-        uses: oven-sh/setup-bun@v2
+        uses: oven-sh/setup-bun@ecf28ddc73e819eb6fa29df6b34ef8921c743461 # v2
         with:
           bun-version: latest
 
@@ -200,13 +200,16 @@ jobs:
           FOOTER
 
       - name: Checkout website repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           repository: marcusquinn/aidevops.sh
           path: website
           token: ${{ secrets.WEBSITE_PAT }}
 
       - name: Update docs.html in website repo
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          COMMIT_SHA: ${{ github.sha }}
         run: |
           cp docs.html website/docs.html
           cd website
@@ -224,8 +227,8 @@ jobs:
           git commit -m "docs: sync from aidevops README.md
 
           Auto-generated from marcusquinn/aidevops README.md
-          Triggered by: ${{ github.event_name }}
-          Source commit: ${{ github.sha }}"
+          Triggered by: ${EVENT_NAME}
+          Source commit: ${COMMIT_SHA}"
           
           # Retry loop to handle concurrent pushes (up to 3 attempts)
           for i in 1 2 3; do
@@ -243,9 +246,12 @@ jobs:
           exit 1
 
       - name: Summary
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          COMMIT_SHA: ${{ github.sha }}
         run: |
           echo "## Docs Update Summary" >> $GITHUB_STEP_SUMMARY
           echo "- Source: \`marcusquinn/aidevops/README.md\`" >> $GITHUB_STEP_SUMMARY
           echo "- Target: \`marcusquinn/aidevops.sh/docs.html\`" >> $GITHUB_STEP_SUMMARY
-          echo "- Trigger: ${{ github.event_name }}" >> $GITHUB_STEP_SUMMARY
-          echo "- Commit: ${{ github.sha }}" >> $GITHUB_STEP_SUMMARY
+          echo "- Trigger: ${EVENT_NAME}" >> $GITHUB_STEP_SUMMARY
+          echo "- Commit: ${COMMIT_SHA}" >> $GITHUB_STEP_SUMMARY

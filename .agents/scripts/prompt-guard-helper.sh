@@ -1015,6 +1015,14 @@ cmd_status() {
 		;;
 	esac
 
+	# Tier 2: Intelligence-layer classifier (t1412.7)
+	local classifier="${SCRIPT_DIR}/content-classifier-helper.sh"
+	if [[ -x "$classifier" ]]; then
+		echo -e "  Tier 2 (LLM):     ${GREEN}available${NC} (content-classifier-helper.sh)"
+	else
+		echo -e "  Tier 2 (LLM):     ${YELLOW}not available${NC} (content-classifier-helper.sh not found)"
+	fi
+
 	return 0
 }
 
@@ -1370,6 +1378,100 @@ YAML_EOF
 	return 0
 }
 
+# Deep classification: Tier 1 (pattern) + Tier 2 (LLM) combined scan (t1412.7)
+# Runs pattern scan first; if clean or low-severity, escalates to LLM classifier.
+# For high-severity pattern matches, skips LLM (already caught).
+# Args: $1=content, $2=repo (optional), $3=author (optional)
+# Exit codes: 0=SAFE, 1=flagged, 2=error
+cmd_classify_deep() {
+	local content="${1:-}"
+	local repo="${2:-}"
+	local author="${3:-}"
+
+	if [[ -z "$content" ]]; then
+		_pg_log_error "No content provided for deep classification"
+		return 2
+	fi
+
+	# Tier 1: Pattern scan
+	local tier1_results
+	tier1_results=$(_pg_scan_message "$content") || true
+
+	if [[ -n "$tier1_results" ]]; then
+		local max_num
+		max_num=$(_pg_max_severity "$tier1_results")
+		local max_severity
+		max_severity=$(_pg_num_to_severity "$max_num")
+		local threshold
+		threshold=$(_pg_policy_threshold)
+
+		if [[ "$max_num" -ge "$threshold" ]]; then
+			# Tier 1 already caught it at block level — no need for Tier 2
+			_pg_log_warn "Tier 1 BLOCK (${max_severity}) — skipping Tier 2"
+			_pg_print_findings "$tier1_results"
+			echo "TIER1_BLOCK|${max_severity}"
+			return 1
+		fi
+
+		# Tier 1 found something below threshold — escalate to Tier 2 for confirmation
+		_pg_log_info "Tier 1 found ${max_severity} findings — escalating to Tier 2"
+	fi
+
+	# Tier 2: LLM classification
+	local classifier="${SCRIPT_DIR}/content-classifier-helper.sh"
+	if [[ ! -x "$classifier" ]]; then
+		_pg_log_info "Tier 2 classifier not available — using Tier 1 result only"
+		if [[ -n "$tier1_results" ]]; then
+			_pg_print_findings "$tier1_results"
+			echo "TIER1_WARN"
+			return 1
+		fi
+		echo "TIER1_CLEAN"
+		return 0
+	fi
+
+	local tier2_result
+	local tier2_exit=0
+	if [[ -n "$repo" && -n "$author" ]]; then
+		tier2_result=$("$classifier" classify-if-external "$repo" "$author" "$content") || tier2_exit=$?
+	else
+		tier2_result=$("$classifier" classify "$content") || tier2_exit=$?
+	fi
+
+	local tier2_class
+	tier2_class=$(printf '%s' "$tier2_result" | cut -d'|' -f1)
+
+	if [[ "$tier2_class" == "MALICIOUS" || "$tier2_class" == "SUSPICIOUS" ]]; then
+		_pg_log_warn "Tier 2 classification: ${tier2_result}"
+		if [[ -n "$tier1_results" ]]; then
+			_pg_print_findings "$tier1_results"
+		fi
+		echo "TIER2_${tier2_class}|${tier2_result}"
+		return 1
+	fi
+
+	# Fail securely: if Tier 2 errored or returned UNKNOWN, do not treat as clean
+	if [[ "$tier2_exit" -ne 0 || "$tier2_class" == "UNKNOWN" || -z "$tier2_class" ]]; then
+		_pg_log_error "Tier 2 classification failed or returned UNKNOWN (exit ${tier2_exit}): ${tier2_result}"
+		if [[ -n "$tier1_results" ]]; then
+			_pg_print_findings "$tier1_results"
+			echo "TIER1_WARN_T2_FAIL"
+			return 1
+		fi
+		echo "ERROR_T2_FAIL|${tier2_result}"
+		return 2
+	fi
+
+	# Both tiers agree it's clean (or Tier 1 had low findings + Tier 2 says SAFE)
+	if [[ -n "$tier1_results" ]]; then
+		local max_severity
+		max_severity=$(_pg_num_to_severity "$(_pg_max_severity "$tier1_results")")
+		_pg_log_info "Tier 1: ${max_severity} findings, Tier 2: SAFE — allowing"
+	fi
+	echo "CLEAN|${tier2_result}"
+	return 0
+}
+
 # Show help
 cmd_help() {
 	cat <<'EOF'
@@ -1387,6 +1489,8 @@ COMMANDS:
     scan <message>               Scan message, report all findings (no policy action)
     scan-stdin                   Scan stdin input (pipeline use, e.g., curl | scan-stdin)
     sanitize <message>           Sanitize message, output cleaned version
+    classify-deep <content> [repo] [author]
+                                 Combined Tier 1 + Tier 2 scan (t1412.7)
     check-file <file>            Check message from file
     scan-file <file>             Scan message from file
     sanitize-file <file>         Sanitize message from file
@@ -1530,15 +1634,6 @@ main() {
 		fi
 		cmd_check "$content"
 		;;
-	scan-stdin)
-		local content
-		content=$(cat)
-		if [[ -z "$content" ]]; then
-			_pg_log_error "No input received on stdin"
-			return 1
-		fi
-		cmd_scan "$content"
-		;;
 	sanitize-stdin)
 		local content
 		content=$(cat)
@@ -1556,6 +1651,9 @@ main() {
 		;;
 	status)
 		cmd_status
+		;;
+	classify-deep)
+		cmd_classify_deep "${1:-}" "${2:-}" "${3:-}"
 		;;
 	test)
 		cmd_test

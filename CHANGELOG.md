@@ -7,6 +7,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.154.0] - 2026-03-07
+
+### Added
+
+- add security-audit-sweep.sh and run cross-repo security audit (t1412.13) (#3100)
+- add command logger helper for worker command auditing (t1412.5) (#3102)
+- add network domain tiering for worker sandboxing (t1412.3) (#3081)
+- add startup security posture check (t1412.6) (#3089)
+- add worker sandbox for credential isolation (t1412.1) (#3080)
+- enhance task-decompose-helper with context-aware classification and improved LLM prompts (#3091)
+- add per-repo security posture checks to aidevops init (#3093)
+- add scoped short-lived GitHub tokens for worker agents (t1412.2) (#3094)
+
+### Changed
+
+- Documentation: add MCP server install security warnings across all MCP docs and install flows (#3090)
+- Documentation: recommend @stackone/defender for product-side injection defense (#3097)
+- Documentation: t1412.13 includes per-repo AGENTS.md security section updates
+- Documentation: add t1412.13 security audit sweep across managed repos
+- Documentation: add StackOne Defender learnings to t1412 — framework + product-side
+- Documentation: add t1412.11 per-repo security posture in aidevops init
+- Documentation: expand t1412 with intelligence-layer scan, tamper-evident logging, CI/CD guidance, MCP warnings
+- Documentation: add user-action requirements and startup security posture check (Phase 6) to t1412
+- Documentation: add t1412 worker sandboxing task — credential isolation, network tiering, content trust boundaries
+
+### Fixed
+
+- pin all GitHub Actions to SHA and fix github.event injection risks (#3103)
+- suppress SC2030 for intentional PATH modification in test subshells (#3051)
+- bash 3.2 compatibility for dataset-helper.sh and align bench --dataset with dataset convention (#3079)
+- address ShellCheck dead code warnings (SC2034, SC2317, SC2329) (#3077)
+- correct t1412 brief to reference OpenCode throughout
+- restore accurate Claude Code references in t1412 brief
+- correct runtime identity references in t1412 brief (OpenCode, not Claude Code)
+- align task-decompose-helper.sh invocations with actual API contract (#3042)
+- use $path/TODO.md in pulse lineage examples instead of bare TODO.md (#3044)
+- remove blanket stderr suppression and fix stream mixing in review-bot-gate-helper (#3039)
+- correct documentation link paths in orchestration.md (#3036)
+- resolve canonical model names in routing tiers output (#3032)
+- add request-retry to review-bot-gate-helper for rate-limited bots (#3017)
+- memory recall uses per-token quoting instead of phrase matching (#3064)
+- move orphaned table rows back into Decision Table in headless-dispatch.md (#3065)
+
 ## [2.153.0] - 2026-03-07
 
 ### Added

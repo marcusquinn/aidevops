@@ -41,7 +41,7 @@ jobs:
     steps:
       - name: Validate trigger conditions
         id: check
-        uses: actions/github-script@v7
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
         with:
           script: |
             const comment = context.payload.comment;
@@ -175,7 +175,7 @@ jobs:
     needs: security-check
     steps:
       - name: Log AI agent invocation
-        uses: actions/github-script@v7
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
         with:
           script: |
             const comment = context.payload.comment;
@@ -229,13 +229,13 @@ jobs:
     
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
         with:
           fetch-depth: 1
           # Use default GITHUB_TOKEN, not a PAT with elevated permissions
       
       - name: Add processing indicator
-        uses: actions/github-script@v7
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
         with:
           script: |
             // Handle both issue_comment and pull_request_review_comment events
@@ -260,7 +260,7 @@ jobs:
             }
       
       - name: Run OpenCode Agent
-        uses: sst/opencode/github@latest
+        uses: sst/opencode/github@0cf0294787322664c6d668fa5ab0a9ce26796f78 # latest
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         with:
@@ -290,7 +290,7 @@ jobs:
       
       - name: Mark completion
         if: always()
-        uses: actions/github-script@v7
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
         with:
           script: |
             // Handle both issue_comment and pull_request_review_comment events
@@ -323,5 +323,7 @@ jobs:
     if: needs.security-check.outputs.allowed == 'false'
     steps:
       - name: Log security block
+        env:
+          BLOCK_REASON: ${{ needs.security-check.outputs.reason }}
         run: |
-          echo "::warning::AI agent request blocked: ${{ needs.security-check.outputs.reason }}"
+          echo "::warning::AI agent request blocked: ${BLOCK_REASON}"

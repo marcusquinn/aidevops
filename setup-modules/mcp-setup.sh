@@ -12,6 +12,12 @@ shopt -s inherit_errexit 2>/dev/null || true
 install_mcp_packages() {
 	print_info "Installing MCP server packages globally (eliminates npx startup delay)..."
 
+	# Security note: MCP servers run as persistent processes with access to conversation
+	# context, credentials, and network. The packages below are from known/vetted sources.
+	# Before adding new MCP packages to this list, verify the source repository and scan
+	# dependencies with: npx @socketsecurity/cli npm info <package>
+	# See: .agents/tools/mcp-toolkit/mcporter.md "Security Considerations"
+
 	# Node.js MCP packages to install globally
 	local -a node_mcps=(
 		"chrome-devtools-mcp"

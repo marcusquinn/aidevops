@@ -10,7 +10,7 @@ shopt -s inherit_errexit 2>/dev/null || true
 # AI Assistant Server Access Framework Setup Script
 # Helps developers set up the framework for their infrastructure
 #
-# Version: 2.153.1
+# Version: 2.154.0
 #
 # Quick Install:
 #   npm install -g aidevops && aidevops update          (recommended)
@@ -29,8 +29,8 @@ CLEAN_MODE=false
 INTERACTIVE_MODE=false
 NON_INTERACTIVE="${AIDEVOPS_NON_INTERACTIVE:-false}"
 UPDATE_TOOLS_MODE=false
-# Platform constants — exported so ShellCheck sees them as used (consumed by
-# sourced setup-modules: shell-env.sh:552,653 and tool-install.sh:249).
+# Platform constants — exported for sourced setup-modules (shell-env.sh,
+# tool-install.sh) that reference them at runtime.
 PLATFORM_MACOS=$([[ "$(uname -s)" == "Darwin" ]] && echo true || echo false)
 PLATFORM_ARM64=$([[ "$(uname -m)" == "arm64" || "$(uname -m)" == "aarch64" ]] && echo true || echo false)
 export PLATFORM_MACOS PLATFORM_ARM64

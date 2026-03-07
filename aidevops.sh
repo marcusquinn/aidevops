@@ -3,7 +3,7 @@
 # AI DevOps Framework CLI
 # Usage: aidevops <command> [options]
 #
-# Version: 2.153.1
+# Version: 2.154.0
 
 set -euo pipefail
 
@@ -1198,6 +1198,7 @@ cmd_init() {
 	local enable_database=false
 	local enable_beads=false
 	local enable_sops=false
+	local enable_security=false
 
 	case "$features" in
 	all)
@@ -1207,6 +1208,7 @@ cmd_init() {
 		enable_time_tracking=true
 		enable_database=true
 		enable_beads=true
+		enable_security=true
 		;;
 	planning)
 		enable_planning=true
@@ -1231,6 +1233,9 @@ cmd_init() {
 	sops)
 		enable_sops=true
 		;;
+	security)
+		enable_security=true
+		;;
 	*)
 		# Comma-separated list
 		IFS=',' read -ra FEATURE_LIST <<<"$features"
@@ -1249,6 +1254,7 @@ cmd_init() {
 				enable_planning=true
 				;;
 			sops) enable_sops=true ;;
+			security) enable_security=true ;;
 			esac
 		done
 		;;
@@ -1270,7 +1276,8 @@ cmd_init() {
     "code_quality": $enable_code_quality,
     "time_tracking": $enable_time_tracking,
     "database": $enable_database,
-    "beads": $enable_beads
+    "beads": $enable_beads,
+    "security": $enable_security
   },
   "time_tracking": {
     "enabled": $enable_time_tracking,
@@ -1749,6 +1756,21 @@ SOPSEOF
 		print_info "MODELS.md skipped (sqlite3 or generate script not available)"
 	fi
 
+	# Run security posture assessment if enabled (t1412.11)
+	if [[ "$enable_security" == "true" ]]; then
+		local security_posture_script="$AGENTS_DIR/scripts/security-posture-helper.sh"
+		if [[ -f "$security_posture_script" ]]; then
+			print_info "Running security posture assessment..."
+			if bash "$security_posture_script" store "$project_root" 2>/dev/null; then
+				print_success "Security posture assessed and stored in .aidevops.json"
+			else
+				print_warning "Security posture assessment found issues (review with: aidevops security audit)"
+			fi
+		else
+			print_info "Security posture check skipped (security-posture-helper.sh not available)"
+		fi
+	fi
+
 	# Build features string for registration
 	local features_list=""
 	[[ "$enable_planning" == "true" ]] && features_list="${features_list}planning,"
@@ -1758,6 +1780,7 @@ SOPSEOF
 	[[ "$enable_database" == "true" ]] && features_list="${features_list}database,"
 	[[ "$enable_beads" == "true" ]] && features_list="${features_list}beads,"
 	[[ "$enable_sops" == "true" ]] && features_list="${features_list}sops,"
+	[[ "$enable_security" == "true" ]] && features_list="${features_list}security,"
 	features_list="${features_list%,}" # Remove trailing comma
 
 	# Register repo in repos.json
@@ -1811,6 +1834,7 @@ SOPSEOF
 	[[ "$enable_database" == "true" ]] && echo "  ✓ Database (schemas/, migrations/, seeds/)"
 	[[ "$enable_beads" == "true" ]] && echo "  ✓ Beads (task graph visualization)"
 	[[ "$enable_sops" == "true" ]] && echo "  ✓ SOPS (encrypted config files with age backend)"
+	[[ "$enable_security" == "true" ]] && echo "  ✓ Security (per-repo posture assessment)"
 	[[ -f "$project_root/MODELS.md" ]] && echo "  ✓ MODELS.md (per-repo model performance leaderboard)"
 	echo ""
 	echo "Next steps:"
@@ -2229,6 +2253,14 @@ cmd_features() {
 	echo "                 - Patterns: *.secret.yaml, configs/*.enc.json"
 	echo "                 - See: .agents/tools/credentials/sops.md"
 	echo ""
+	echo "  security       Per-repo security posture assessment"
+	echo "                 - GitHub Actions workflow scanning (injection risks)"
+	echo "                 - Branch protection verification (PR reviews)"
+	echo "                 - Review-bot-gate status check"
+	echo "                 - Dependency vulnerability scanning (npm/pip/cargo)"
+	echo "                 - Collaborator access audit"
+	echo "                 - Re-run anytime: aidevops security audit"
+	echo ""
 	echo "Extensibility:"
 	echo ""
 	echo "  plugins        Third-party agent plugins (configured in .aidevops.json)"
@@ -2241,9 +2273,10 @@ cmd_features() {
 	echo "  aidevops init                    # Enable all features (except sops)"
 	echo "  aidevops init planning           # Enable only planning"
 	echo "  aidevops init sops               # Enable SOPS encryption"
+	echo "  aidevops init security           # Enable security posture checks"
 	echo "  aidevops init beads              # Enable beads (includes planning)"
 	echo "  aidevops init database           # Enable only database"
-	echo "  aidevops init planning,sops      # Enable multiple"
+	echo "  aidevops init planning,security  # Enable multiple"
 	echo ""
 }
 
@@ -3267,6 +3300,7 @@ cmd_help() {
 	echo "  repo-sync <cmd>    Daily git pull for repos in parent dirs (enable/disable/status/dirs)"
 	echo "  update-tools       Check for outdated tools (--update to auto-update)"
 	echo "  repos [cmd]        Manage registered projects (list/add/remove/clean)"
+	echo "  security <cmd>     Security posture (check/audit/setup/status/summary)"
 	echo "  ip-check <cmd>     IP reputation checks (check/batch/report/providers)"
 	echo "  secret <cmd>       Manage secrets (set/list/run/init/import/status)"
 	echo "  config <cmd>       Feature toggles (list/get/set/reset/path/help)"
@@ -3289,6 +3323,13 @@ cmd_help() {
 	echo "  aidevops update-tools        # Check for outdated tools"
 	echo "  aidevops update-tools -u     # Update all outdated tools"
 	echo "  aidevops uninstall           # Remove aidevops"
+	echo ""
+	echo "Security:"
+	echo "  aidevops security check      # Run per-repo security posture assessment"
+	echo "  aidevops security audit      # Alias for check"
+	echo "  aidevops security summary    # One-line per-repo security status"
+	echo "  aidevops security setup      # Interactive guided user security setup"
+	echo "  aidevops security status     # Detailed user security posture report"
 	echo ""
 	echo "IP Reputation:"
 	echo "  aidevops ip-check check <ip> # Check IP reputation across providers"
@@ -3508,6 +3549,24 @@ main() {
 			bash "$pulse_session_helper" "$@"
 		else
 			print_error "pulse-session-helper.sh not found. Run: aidevops update"
+			exit 1
+		fi
+		;;
+	security)
+		shift
+		local security_posture_helper="$AGENTS_DIR/scripts/security-posture-helper.sh"
+		if [[ ! -f "$security_posture_helper" ]]; then
+			security_posture_helper="$INSTALL_DIR/.agents/scripts/security-posture-helper.sh"
+		fi
+		if [[ -f "$security_posture_helper" ]]; then
+			# Default to 'setup' when no subcommand given (most useful action)
+			if [[ $# -eq 0 ]]; then
+				bash "$security_posture_helper" setup
+			else
+				bash "$security_posture_helper" "$@"
+			fi
+		else
+			print_error "security-posture-helper.sh not found. Run: aidevops update"
 			exit 1
 		fi
 		;;

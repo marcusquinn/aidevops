@@ -1,5 +1,8 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC2016 # $ARGUMENTS is a Claude Code template placeholder written literally to .md files
+# shellcheck disable=SC2016,SC2317
+# SC2016: $ARGUMENTS is a Claude Code template placeholder written literally to .md files
+# SC2317: Functions defined after arg-parsing case (which contains exit 0 in --help)
+#         appear unreachable to ShellCheck but are always reached in normal execution
 # =============================================================================
 # Generate Claude Code Commands from Agent Files
 # =============================================================================

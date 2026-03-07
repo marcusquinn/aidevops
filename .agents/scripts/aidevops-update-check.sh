@@ -256,6 +256,15 @@ main() {
 		echo "$session_warning"
 	fi
 
+	# Security posture check (t1412.6)
+	local security_posture=""
+	if [[ -x "${script_dir}/security-posture-helper.sh" ]]; then
+		security_posture="$("${script_dir}/security-posture-helper.sh" startup-check 2>/dev/null || true)"
+	fi
+	if [[ -n "$security_posture" ]]; then
+		echo "$security_posture"
+	fi
+
 	# Cache output for agents without Bash (e.g., Plan+)
 	local cache_dir="$HOME/.aidevops/cache"
 	mkdir -p "$cache_dir"
@@ -264,6 +273,7 @@ main() {
 		[[ -n "$runtime_hint" ]] && echo "$runtime_hint"
 		[[ -n "$nudge_output" ]] && echo "$nudge_output"
 		[[ -n "$session_warning" ]] && echo "$session_warning"
+		[[ -n "$security_posture" ]] && echo "$security_posture"
 	} >"$cache_dir/session-greeting.txt"
 
 	return 0

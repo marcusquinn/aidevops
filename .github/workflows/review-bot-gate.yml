@@ -325,11 +325,14 @@ jobs:
 
       - name: Gate result
         if: steps.check.outputs.gate_passed != 'true' && steps.skip.outputs.skip != 'true'
+        env:
+          RATE_LIMITED_BOTS: ${{ steps.check.outputs.rate_limited_bots }}
+          MISSING_BOTS: ${{ steps.check.outputs.missing_bots }}
         run: |
-          if [[ -n "${{ steps.check.outputs.rate_limited_bots }}" ]]; then
+          if [[ -n "$RATE_LIMITED_BOTS" ]]; then
             echo "::error::Review bots posted rate-limit notices only — no real reviews or SUCCESS status checks."
             echo ""
-            echo "Rate-limited bots: ${{ steps.check.outputs.rate_limited_bots }}"
+            echo "Rate-limited bots: ${RATE_LIMITED_BOTS}"
             echo ""
             echo "The bots are rate-limited and did not perform actual code review."
             echo "No SUCCESS commit status checks were found as fallback."
@@ -346,51 +349,58 @@ jobs:
           echo "  2. This check re-runs automatically when a bot posts"
           echo "  3. If no bots are configured, add 'skip-review-gate' label"
           echo ""
-          echo "Missing bots: ${{ steps.check.outputs.missing_bots }}"
+          echo "Missing bots: ${MISSING_BOTS}"
           exit 1
 
       - name: Summary
         if: always()
+        env:
+          GATE_PASSED: ${{ steps.check.outputs.gate_passed }}
+          STATUS_FALLBACK: ${{ steps.check.outputs.status_fallback }}
+          FOUND_BOTS: ${{ steps.check.outputs.found_bots }}
+          MISSING_BOTS: ${{ steps.check.outputs.missing_bots }}
+          RATE_LIMITED_BOTS: ${{ steps.check.outputs.rate_limited_bots }}
+          SKIP_GATE: ${{ steps.skip.outputs.skip }}
         run: |
           {
             echo "## Review Bot Gate"
             echo ""
-            if [[ "${{ steps.check.outputs.gate_passed }}" == "true" && "${{ steps.check.outputs.status_fallback }}" == "true" ]]; then
+            if [[ "$GATE_PASSED" == "true" && "$STATUS_FALLBACK" == "true" ]]; then
               echo "**Status**: PASSED (status check fallback)"
               echo ""
               echo "Bots posted rate-limit notices but have SUCCESS commit status checks."
               echo "The bots completed their analysis — treating as reviewed. (GH#3005)"
               echo ""
-              echo "**Bots with SUCCESS status**: ${{ steps.check.outputs.found_bots }}"
-              if [[ -n "${{ steps.check.outputs.missing_bots }}" ]]; then
+              echo "**Bots with SUCCESS status**: ${FOUND_BOTS}"
+              if [[ -n "$MISSING_BOTS" ]]; then
                 echo ""
-                echo "**Bots not yet reviewed**: ${{ steps.check.outputs.missing_bots }}"
+                echo "**Bots not yet reviewed**: ${MISSING_BOTS}"
               fi
-            elif [[ "${{ steps.check.outputs.gate_passed }}" == "true" && -n "${{ steps.check.outputs.found_bots }}" ]]; then
+            elif [[ "$GATE_PASSED" == "true" && -n "$FOUND_BOTS" ]]; then
               echo "**Status**: PASSED"
               echo ""
-              echo "**Bots that reviewed**: ${{ steps.check.outputs.found_bots }}"
-              if [[ -n "${{ steps.check.outputs.rate_limited_bots }}" ]]; then
+              echo "**Bots that reviewed**: ${FOUND_BOTS}"
+              if [[ -n "$RATE_LIMITED_BOTS" ]]; then
                 echo ""
-                echo "**Bots rate-limited (not counted)**: ${{ steps.check.outputs.rate_limited_bots }}"
+                echo "**Bots rate-limited (not counted)**: ${RATE_LIMITED_BOTS}"
               fi
-              if [[ -n "${{ steps.check.outputs.missing_bots }}" ]]; then
+              if [[ -n "$MISSING_BOTS" ]]; then
                 echo ""
-                echo "**Bots not yet reviewed**: ${{ steps.check.outputs.missing_bots }}"
+                echo "**Bots not yet reviewed**: ${MISSING_BOTS}"
               fi
-            elif [[ "${{ steps.check.outputs.gate_passed }}" == "true" ]]; then
+            elif [[ "$GATE_PASSED" == "true" ]]; then
               echo "**Status**: PASSED (pending bot reviews)"
               echo ""
               echo "PR is too young to enforce the gate. Bots will re-trigger this"
               echo "check when they post their reviews."
-            elif [[ "${{ steps.skip.outputs.skip }}" == "true" ]]; then
+            elif [[ "$SKIP_GATE" == "true" ]]; then
               echo "**Status**: SKIPPED (skip-review-gate label)"
             else
               echo "**Status**: WAITING"
               echo ""
-              if [[ -n "${{ steps.check.outputs.rate_limited_bots }}" ]]; then
+              if [[ -n "$RATE_LIMITED_BOTS" ]]; then
                 echo "Bots posted rate-limit notices only (not real reviews):"
-                echo "${{ steps.check.outputs.rate_limited_bots }}"
+                echo "${RATE_LIMITED_BOTS}"
                 echo ""
               fi
               echo "No real AI review bot feedback yet. This check will re-run"

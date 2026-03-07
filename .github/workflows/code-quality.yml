@@ -22,7 +22,7 @@ jobs:
 
     steps:
     - name: Checkout code
-      uses: actions/checkout@v4
+      uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
     - name: Framework Structure Check
       run: |
@@ -138,7 +138,7 @@ jobs:
 
     steps:
     - name: Checkout code
-      uses: actions/checkout@v4
+      uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
       with:
         fetch-depth: 0  # Shallow clones should be disabled for better analysis
 
@@ -149,8 +149,10 @@ jobs:
         SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
 
     - name: Codacy Analysis
+      env:
+        CODACY_API_TOKEN: ${{ secrets.CODACY_API_TOKEN }}
       run: |
-        if [[ -n "${{ secrets.CODACY_API_TOKEN }}" ]]; then
+        if [[ -n "$CODACY_API_TOKEN" ]]; then
           echo "🔍 Codacy Analysis Status..."
           echo "✅ Codacy API Token: Configured"
           echo "📊 Repository monitored at: https://app.codacy.com/gh/marcusquinn/aidevops"
@@ -163,11 +165,13 @@ jobs:
         fi
 
     - name: Quality Analysis Summary
+      env:
+        CODACY_API_TOKEN: ${{ secrets.CODACY_API_TOKEN }}
       run: |
         echo "📊 Code Quality Analysis Summary"
         echo "================================"
         echo "✅ SonarCloud: Analysis completed"
-        if [[ -n "${{ secrets.CODACY_API_TOKEN }}" ]]; then
+        if [[ -n "$CODACY_API_TOKEN" ]]; then
           echo "✅ Codacy: Analysis completed"
         else
           echo "⚠️  Codacy: Skipped (token not configured)"

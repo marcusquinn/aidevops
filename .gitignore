@@ -37,6 +37,9 @@ authorized_keys
 !.secretlintrc.json
 !.secretlintignore
 !.agents/scripts/secretlint-helper.sh
+
+# Exception for worker token helper (manages tokens, doesn't contain them)
+!.agents/scripts/worker-token-helper.sh
 !.agents/secretlint.md
 
 # Exception for credential/secret management scripts (not actual credentials)

@@ -478,6 +478,124 @@ export OPENAI_API_KEY="sk-..."
 3. **Permissions**: Use `OPENCODE_PERMISSION` env var for headless autonomy
 4. **Credentials**: Never pass secrets in prompts - use environment variables
 5. **Cleanup**: Delete sessions after use to prevent data leakage
+6. **Scoped tokens** (t1412.2): Workers get minimal-permission GitHub tokens scoped to the target repo
+7. **Worker sandbox** (t1412.1): Headless workers run with an isolated HOME directory
+8. **Network tiering** (t1412.3): Worker network access is classified into 5 tiers. Tier 5 domains (exfiltration indicators like `requestbin.com`, `ngrok.io`, raw IPs) are denied. Tier 4 (unknown) domains are allowed but flagged for post-session review. Use `sandbox-exec-helper.sh run --network-tiering --worker-id <id>` to enable. Config: `configs/network-tiers.conf`, user overrides: `~/.config/aidevops/network-tiers-custom.conf`. See `scripts/network-tier-helper.sh` for the full API.
+
+### Scoped Worker Tokens (t1412.2)
+
+Headless workers receive scoped, short-lived GitHub tokens instead of the user's full-permission token. This limits blast radius if a worker is compromised via prompt injection.
+
+**How it works:**
+
+```text
+Dispatch starts
+  │
+  ├── Resolve repo slug from workdir git remote
+  │
+  ├── worker-token-helper.sh create --repo owner/repo --ttl 3600
+  │   ├── Strategy 1: GitHub App installation token (enforced by GitHub)
+  │   └── Strategy 2: Delegated token (advisory scoping)
+  │
+  ├── Pass token to worker via GH_TOKEN env var
+  │
+  ├── Worker executes (can only access target repo)
+  │
+  └── worker-token-helper.sh revoke --token-file <path>
+```
+
+**Token permissions** (minimal set for PR workflow):
+
+- `contents:write` — push branches, read/write files
+- `pull_requests:write` — create/update PRs
+- `issues:write` — comment on issues, update labels
+
+**Token strategies** (tried in priority order):
+
+| Strategy | Scoping | TTL | Setup required |
+|----------|---------|-----|----------------|
+| GitHub App installation token | Enforced by GitHub (repo-scoped) | 1h (GitHub enforced) | One-time App install |
+| Delegated token | Advisory (tracked locally) | Configurable (default 1h) | None (zero-config) |
+
+**Setup for GitHub App** (recommended for enforced scoping):
+
+1. Create a GitHub App at `https://github.com/settings/apps/new`
+   - Permissions: Contents (R&W), Pull requests (R&W), Issues (R&W)
+   - No webhook URL needed
+2. Install the App on your account/org
+3. Generate and download a private key
+4. Configure:
+
+```bash
+cat > ~/.config/aidevops/github-app.json << 'EOF'
+{
+  "app_id": "YOUR_APP_ID",
+  "private_key_path": "~/.config/aidevops/github-app-key.pem",
+  "installation_id": "YOUR_INSTALLATION_ID"
+}
+EOF
+chmod 600 ~/.config/aidevops/github-app.json
+chmod 600 ~/.config/aidevops/github-app-key.pem
+```
+
+**Disable scoped tokens** (not recommended):
+
+```bash
+export WORKER_SCOPED_TOKENS=false
+```
+
+**CLI usage:**
+
+```bash
+# Check token configuration
+worker-token-helper.sh status
+
+# Manually create a scoped token
+TOKEN_FILE=$(worker-token-helper.sh create --repo owner/repo --ttl 3600)
+
+# Validate a token
+worker-token-helper.sh validate --token-file "$TOKEN_FILE"
+
+# Clean up expired tokens
+worker-token-helper.sh cleanup
+```
+
+### Worker Sandbox (t1412.1)
+
+Headless workers dispatched by the supervisor run with a **fake HOME directory** that contains only the minimal configuration needed for their task. This limits blast radius if a worker is compromised via prompt injection.
+
+**What workers get:**
+
+- `.gitconfig` — user name/email for commits (no credential helpers)
+- `GH_TOKEN` — GitHub API access via environment variable (not filesystem)
+- `.aidevops/` — symlink to agent prompts (read-only)
+- OpenCode/Claude config — MCP server definitions only (no auth tokens)
+- Writable XDG dirs — for tool state (npm cache, etc.)
+
+**What workers cannot access:**
+
+- `~/.ssh/` — no SSH key access
+- gopass / pass stores — no password manager access
+- `~/.config/aidevops/credentials.sh` — no plaintext credentials
+- Cloud provider tokens (AWS, GCP, Azure)
+- npm/pypi publish tokens
+- Browser profiles or cookies
+
+**Configuration:**
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `WORKER_SANDBOX_ENABLED` | `true` | Set to `false` to disable sandboxing |
+| `WORKER_SANDBOX_BASE` | `/tmp/aidevops-worker` | Base path for sandbox directories |
+
+**Interactive sessions are never sandboxed** — the human in the loop is the enforcement layer.
+
+**Sandbox lifecycle:**
+
+1. Created by `worker-sandbox-helper.sh create <task_id>` before dispatch
+2. Environment variables injected into the worker's dispatch script
+3. Automatically cleaned up by the wrapper script after the worker exits
+4. Stale sandboxes (>24h) cleaned by `worker-sandbox-helper.sh cleanup-stale`
 
 ### Autonomous Mode (CI/CD)
 
@@ -949,4 +1067,9 @@ See [runners/README.md](runners/README.md) for how to create runners from templa
 - `services/communications/matrix-bot.md` - Matrix bot setup and configuration
 - Pulse supervisor (`scripts/commands/pulse.md`) - Multi-agent coordination (replaces archived `coordinator-helper.sh`)
 - `scripts/mail-helper.sh` - Inter-agent mailbox
+- `scripts/worker-token-helper.sh` - Scoped GitHub token lifecycle for workers (t1412.2)
+- `scripts/network-tier-helper.sh` - Network domain tiering for worker sandboxing (t1412.3)
+- `scripts/sandbox-exec-helper.sh` - Execution sandbox with network tiering integration
+- `configs/network-tiers.conf` - Domain classification database
+- `tools/security/prompt-injection-defender.md` - Prompt injection defense (includes network tiering section)
 - `memory/README.md` - Memory system (supports namespaces)
