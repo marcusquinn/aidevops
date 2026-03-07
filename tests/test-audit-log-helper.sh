@@ -396,13 +396,13 @@ test_status_output() {
 	local status_output
 	status_output="$(bash "$SCRIPT" status 2>/dev/null)"
 
-	if echo "$status_output" | grep -q "Entries:"; then
+	if grep -q "Entries:" <<<"$status_output"; then
 		pass "status shows entry count"
 	else
 		fail "status missing entry count"
 	fi
 
-	if echo "$status_output" | grep -q "INTACT"; then
+	if grep -q "INTACT" <<<"$status_output"; then
 		pass "status shows chain status"
 	else
 		fail "status missing chain status"
@@ -449,7 +449,7 @@ test_empty_log() {
 	# Status on non-existent log
 	local status_output
 	status_output="$(bash "$SCRIPT" status 2>/dev/null)"
-	if echo "$status_output" | grep -q "No log file"; then
+	if grep -q "No log file" <<<"$status_output"; then
 		pass "status reports no log file"
 	else
 		fail "status should report no log file"
@@ -517,13 +517,13 @@ test_help_output() {
 	local help_output
 	help_output="$(bash "$SCRIPT" help 2>/dev/null)"
 
-	if echo "$help_output" | grep -qi "tamper-evident"; then
+	if grep -qi "tamper-evident" <<<"$help_output"; then
 		pass "help mentions tamper-evident"
 	else
 		fail "help missing tamper-evident description"
 	fi
 
-	if echo "$help_output" | grep -q "worker.dispatch"; then
+	if grep -q "worker.dispatch" <<<"$help_output"; then
 		pass "help lists event types"
 	else
 		fail "help missing event types"
@@ -578,58 +578,50 @@ test_no_jq_fallback() {
 		return 0
 	fi
 
-	# Run a representative subset of tests in a subshell with jq removed from
+	# Run a representative subset of tests in a subshell with jq hidden from
 	# PATH. This exercises the manual JSON construction, sed-based hash
 	# extraction, and manual JSON escaping fallback code paths.
 	#
-	# Strategy: create a temp directory with symlinks to all binaries in jq's
-	# directory EXCEPT jq itself, then replace that directory in PATH. This
-	# removes jq without losing other tools (mktemp, sed, etc.) that may
-	# share the same directory.
+	# Strategy: build a minimal PATH containing symlinks to only the tools
+	# the script needs, explicitly excluding jq. This avoids symlinking all
+	# of /usr/bin (which has 1000+ entries on macOS and is very slow).
 	# shellcheck disable=SC2030
 	(
-		local jq_path jq_dir shadow_dir
-		jq_path="$(command -v jq)"
-		jq_dir="$(dirname "$jq_path")"
+		local shadow_dir
 		shadow_dir="$(mktemp -d)"
 
-		# Symlink everything in jq's directory except jq itself
-		local bin
-		for bin in "${jq_dir}"/*; do
-			local bin_name
-			bin_name="$(basename "$bin")"
-			if [[ "$bin_name" != "jq" ]]; then
-				ln -sf "$bin" "${shadow_dir}/${bin_name}" 2>/dev/null || true
+		# shellcheck disable=SC2064
+		trap "rm -rf '$shadow_dir'" EXIT
+
+		# Symlink only the specific tools the script needs (not jq)
+		local needed_tools=(bash cat chmod cut date dirname env flock grep
+			head hostname ln ls mkdir mktemp mv printf pwd rm sed shasum
+			sha256sum source tail tr uname wc)
+		local tool tool_path
+		for tool in "${needed_tools[@]}"; do
+			tool_path="$(command -v "$tool" 2>/dev/null || true)"
+			if [[ -n "$tool_path" ]] && [[ -x "$tool_path" ]]; then
+				ln -sf "$tool_path" "${shadow_dir}/${tool}" 2>/dev/null || true
 			fi
 		done
 
-		# Build new PATH replacing jq_dir with shadow_dir
-		local new_path=""
+		# Build minimal PATH: shadow_dir + any PATH dirs that don't have jq
+		local minimal_path="${shadow_dir}"
 		local saved_ifs="$IFS"
 		IFS=':'
 		local dir
 		for dir in $PATH; do
-			local replacement="$dir"
-			if [[ "$dir" == "$jq_dir" ]]; then
-				replacement="$shadow_dir"
-			fi
-			if [[ -z "$new_path" ]]; then
-				new_path="$replacement"
-			else
-				new_path="${new_path}:${replacement}"
+			if [[ -d "$dir" ]] && ! [[ -x "${dir}/jq" ]]; then
+				minimal_path="${minimal_path}:${dir}"
 			fi
 		done
 		IFS="$saved_ifs"
 		# shellcheck disable=SC2031
-		export PATH="$new_path"
-
-		# Clean up shadow dir on exit from subshell
-		# shellcheck disable=SC2064
-		trap "rm -rf '$shadow_dir'" EXIT
+		export PATH="$minimal_path"
 
 		# Verify jq is actually gone
 		if command -v jq &>/dev/null; then
-			echo "  WARN: Could not remove jq from PATH (multiple copies?), skipping"
+			echo "  WARN: Could not remove jq from PATH (found at $(command -v jq)), skipping"
 			exit 0
 		fi
 
@@ -638,7 +630,6 @@ test_no_jq_fallback() {
 		# 1. Basic logging (exercises manual JSON construction + escaping)
 		setup
 		if bash "$SCRIPT" log worker.dispatch "No-jq test entry" 2>/dev/null; then
-			# Verify the file has content and looks like JSON
 			if [[ -s "$AUDIT_LOG_FILE" ]]; then
 				local line_count
 				line_count="$(wc -l <"$AUDIT_LOG_FILE" | tr -d ' ')"
