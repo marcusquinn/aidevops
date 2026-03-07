@@ -57,6 +57,7 @@ RAM_PER_WORKER_MB="${RAM_PER_WORKER_MB:-1024}"            # 1 GB per worker
 RAM_RESERVE_MB="${RAM_RESERVE_MB:-8192}"                  # 8 GB reserved for OS + user apps
 MAX_WORKERS_CAP="${MAX_WORKERS_CAP:-8}"                   # Hard ceiling regardless of RAM
 QUALITY_SWEEP_INTERVAL="${QUALITY_SWEEP_INTERVAL:-86400}" # 24 hours between sweeps
+DAILY_PR_CAP="${DAILY_PR_CAP:-5}"                         # Max PRs created per repo per day (GH#3821)
 
 # Process guard limits (t1398)
 CHILD_RSS_LIMIT_KB="${CHILD_RSS_LIMIT_KB:-2097152}"           # 2 GB default — kill child if RSS exceeds this
@@ -97,6 +98,7 @@ RAM_PER_WORKER_MB=$(_validate_int RAM_PER_WORKER_MB "$RAM_PER_WORKER_MB" 1024 1)
 RAM_RESERVE_MB=$(_validate_int RAM_RESERVE_MB "$RAM_RESERVE_MB" 8192)
 MAX_WORKERS_CAP=$(_validate_int MAX_WORKERS_CAP "$MAX_WORKERS_CAP" 8)
 QUALITY_SWEEP_INTERVAL=$(_validate_int QUALITY_SWEEP_INTERVAL "$QUALITY_SWEEP_INTERVAL" 86400)
+DAILY_PR_CAP=$(_validate_int DAILY_PR_CAP "$DAILY_PR_CAP" 5 1)
 CHILD_RSS_LIMIT_KB=$(_validate_int CHILD_RSS_LIMIT_KB "$CHILD_RSS_LIMIT_KB" 2097152 1)
 CHILD_RUNTIME_LIMIT=$(_validate_int CHILD_RUNTIME_LIMIT "$CHILD_RUNTIME_LIMIT" 1800 1)
 SHELLCHECK_RSS_LIMIT_KB=$(_validate_int SHELLCHECK_RSS_LIMIT_KB "$SHELLCHECK_RSS_LIMIT_KB" 1048576 1)
@@ -393,11 +395,11 @@ prefetch_state() {
 				echo "## ${slug} (${path})"
 				echo ""
 
-				# PRs
+				# PRs (createdAt included for daily PR cap — GH#3821)
 				local pr_json
 				pr_json=$(gh pr list --repo "$slug" --state open \
-					--json number,title,reviewDecision,statusCheckRollup,updatedAt,headRefName \
-					--limit 20 2>/dev/null) || pr_json="[]"
+					--json number,title,reviewDecision,statusCheckRollup,updatedAt,headRefName,createdAt \
+					--limit 100 2>/dev/null) || pr_json="[]"
 
 				local pr_count
 				pr_count=$(echo "$pr_json" | jq 'length')
@@ -408,6 +410,31 @@ prefetch_state() {
 				else
 					echo "### Open PRs (0)"
 					echo "- None"
+				fi
+
+				echo ""
+
+				# Daily PR cap (GH#3821) — count PRs created today to prevent
+				# CodeRabbit quota exhaustion from too many PRs in one day.
+				# Reuses pr_json already fetched above (no extra API call).
+				local today_utc
+				today_utc=$(date -u +%Y-%m-%d)
+				local daily_pr_count
+				daily_pr_count=$(echo "$pr_json" | jq --arg today "$today_utc" \
+					'[.[] | select(.createdAt | startswith($today))] | length') || daily_pr_count=0
+				[[ "$daily_pr_count" =~ ^[0-9]+$ ]] || daily_pr_count=0
+				local daily_pr_remaining=$((DAILY_PR_CAP - daily_pr_count))
+				if [[ "$daily_pr_remaining" -lt 0 ]]; then
+					daily_pr_remaining=0
+				fi
+
+				echo "### Daily PR Cap"
+				if [[ "$daily_pr_count" -ge "$DAILY_PR_CAP" ]]; then
+					echo "- **DAILY PR CAP REACHED** — ${daily_pr_count}/${DAILY_PR_CAP} PRs created today (UTC)"
+					echo "- **DO NOT dispatch new workers for this repo.** Wait for the next UTC day."
+					echo "[pulse-wrapper] Daily PR cap reached for ${slug}: ${daily_pr_count}/${DAILY_PR_CAP}" >>"$LOGFILE"
+				else
+					echo "- PRs created today: ${daily_pr_count}/${DAILY_PR_CAP} (${daily_pr_remaining} remaining)"
 				fi
 
 				echo ""
