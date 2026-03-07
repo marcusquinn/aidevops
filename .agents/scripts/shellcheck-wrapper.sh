@@ -19,7 +19,7 @@
 #   Environment variables:
 #     SHELLCHECK_REAL_PATH    — Path to the real shellcheck binary (auto-detected)
 #     SHELLCHECK_VMEM_MB      — Virtual memory limit in MB (default: 2048)
-#     SHELLCHECK_MAX_PARALLEL — Max concurrent shellcheck processes (default: 4)
+#     SHELLCHECK_MAX_PARALLEL — Max concurrent shellcheck processes (default: nproc)
 #     SHELLCHECK_DEBOUNCE_SEC — Skip re-check if file unchanged within N sec (default: 10)
 #
 # GH#2915: https://github.com/marcusquinn/aidevops/issues/2915
@@ -27,7 +27,11 @@
 set -uo pipefail
 
 # --- Configuration ---
-_SC_MAX_PARALLEL="${SHELLCHECK_MAX_PARALLEL:-4}"
+# Auto-detect CPU count: use all cores by default (shellcheck uses ~1.7MB RSS
+# per process with --external-sources stripped, so RAM is not a constraint).
+# Override with SHELLCHECK_MAX_PARALLEL=N for constrained environments.
+_SC_DEFAULT_PARALLEL=$(sysctl -n hw.ncpu 2>/dev/null || nproc 2>/dev/null || echo 4)
+_SC_MAX_PARALLEL="${SHELLCHECK_MAX_PARALLEL:-$_SC_DEFAULT_PARALLEL}"
 _SC_DEBOUNCE_SEC="${SHELLCHECK_DEBOUNCE_SEC:-10}"
 _SC_CACHE_DIR="/tmp/shellcheck-wrapper-cache"
 _SC_LOCK_DIR="/tmp/shellcheck-wrapper-locks"
