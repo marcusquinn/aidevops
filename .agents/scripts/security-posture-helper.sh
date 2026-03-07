@@ -1,37 +1,53 @@
 #!/usr/bin/env bash
-# security-posture-helper.sh — Per-repo security posture assessment
+# security-posture-helper.sh — Security posture assessment
 #
-# Scans a repository for security baseline issues:
-#   1. GitHub Actions workflows for unsafe AI patterns
-#   2. Branch protection (requires PR reviews)
-#   3. Review-bot-gate as required status check
-#   4. Dependency scanning (Socket.dev / npm audit / pip-audit)
-#   5. Stores security posture in .aidevops.json
+# Two modes:
+#   A. Per-repo audit (t1412.11) — scans a repository for security baseline issues
+#   B. User-level startup check (t1412.6) — checks user's security configuration
 #
-# Usage:
-#   security-posture-helper.sh check [repo-path]    # Run all checks, report findings
+# Per-repo audit commands:
+#   security-posture-helper.sh check [repo-path]    # Run all repo checks, report findings
 #   security-posture-helper.sh audit [repo-path]     # Alias for check
 #   security-posture-helper.sh store [repo-path]     # Run checks and store in .aidevops.json
 #   security-posture-helper.sh summary [repo-path]   # One-line summary for greeting
+#
+# User-level commands:
+#   security-posture-helper.sh startup-check         # One-line summary for session greeting
+#   security-posture-helper.sh setup                 # Interactive guided setup
+#   security-posture-helper.sh status                # Detailed status report
+#
 #   security-posture-helper.sh help                  # Show usage
 #
 # Exit codes:
-#   0 — All checks passed (or findings stored successfully)
-#   1 — Findings detected (non-zero issues)
+#   0 — All checks passed (or setup completed)
+#   1 — Findings detected (non-zero issues / actions needed)
 #   2 — Error (missing args, tool failure)
 #
+# t1412.6:  https://github.com/marcusquinn/aidevops/issues/3078
 # t1412.11: https://github.com/marcusquinn/aidevops/issues/3087
 
 set -euo pipefail
 
-# Colors
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-CYAN='\033[0;36m'
-BOLD='\033[1m'
-NC='\033[0m'
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 2
+source "${SCRIPT_DIR}/shared-constants.sh" 2>/dev/null || true
+
+# Fallback colours if shared-constants.sh not loaded
+[[ -z "${RED+x}" ]] && RED='\033[0;31m'
+[[ -z "${GREEN+x}" ]] && GREEN='\033[0;32m'
+[[ -z "${YELLOW+x}" ]] && YELLOW='\033[1;33m'
+[[ -z "${BLUE+x}" ]] && BLUE='\033[0;34m'
+[[ -z "${CYAN+x}" ]] && CYAN='\033[0;36m'
+[[ -z "${BOLD+x}" ]] && BOLD='\033[1m'
+[[ -z "${NC+x}" ]] && NC='\033[0m'
+
+# Paths
+readonly AGENTS_DIR="${AIDEVOPS_AGENTS_DIR:-$HOME/.aidevops/agents}"
+readonly CONFIG_DIR="$HOME/.config/aidevops"
+readonly CREDENTIALS_FILE="$CONFIG_DIR/credentials.sh"
+
+# ============================================================
+# PER-REPO AUDIT (t1412.11)
+# ============================================================
 
 # Counters
 FINDINGS_CRITICAL=0
@@ -586,7 +602,7 @@ store_posture() {
 	return 0
 }
 
-# Print summary (one-line for greeting)
+# Print summary (one-line for greeting — per-repo)
 print_summary() {
 	local repo_path="$1"
 
@@ -657,7 +673,7 @@ print_report() {
 	return 0
 }
 
-# Run all checks
+# Run all per-repo checks
 run_all_checks() {
 	local repo_path="$1"
 
@@ -680,25 +696,460 @@ run_all_checks() {
 	return 0
 }
 
+# ============================================================
+# USER-LEVEL STARTUP CHECKS (t1412.6)
+# ============================================================
+# Each check function:
+#   - Prints nothing (results collected by caller)
+#   - Returns 0 if OK, 1 if action needed
+#   - Sets CHECK_LABEL and CHECK_FIX for the caller
+
+# Check 1: Prompt injection patterns are up to date
+check_prompt_guard_patterns() {
+	local yaml_file=""
+	local label="Prompt guard patterns"
+
+	# Check deployed location
+	if [[ -f "${AGENTS_DIR}/configs/prompt-injection-patterns.yaml" ]]; then
+		yaml_file="${AGENTS_DIR}/configs/prompt-injection-patterns.yaml"
+	fi
+
+	if [[ -z "$yaml_file" ]]; then
+		CHECK_LABEL="$label: YAML patterns file missing"
+		CHECK_FIX="Run: aidevops update"
+		return 1
+	fi
+
+	# Check staleness (>30 days old)
+	local file_age_days=0
+	if [[ "$(uname)" == "Darwin" ]]; then
+		local file_mod
+		file_mod=$(stat -f %m "$yaml_file" 2>/dev/null || echo "0")
+		local now
+		now=$(date +%s)
+		file_age_days=$(((now - file_mod) / 86400))
+	else
+		file_age_days=$((($(date +%s) - $(stat -c %Y "$yaml_file" 2>/dev/null || echo "0")) / 86400))
+	fi
+
+	if [[ "$file_age_days" -gt 30 ]]; then
+		CHECK_LABEL="$label: ${file_age_days}d old (>30d)"
+		CHECK_FIX="Run: aidevops update"
+		return 1
+	fi
+
+	CHECK_LABEL="$label"
+	return 0
+}
+
+# Check 2: Secret storage backend is configured
+check_secret_storage() {
+	local label="Secret storage"
+
+	# Prefer gopass
+	if command -v gopass &>/dev/null; then
+		# Check if gopass store is initialized
+		if gopass ls &>/dev/null 2>&1; then
+			CHECK_LABEL="$label (gopass)"
+			return 0
+		fi
+		CHECK_LABEL="$label: gopass installed but store not initialized"
+		CHECK_FIX="Run: aidevops secret init"
+		return 1
+	fi
+
+	# Fallback: credentials.sh with correct permissions
+	if [[ -f "$CREDENTIALS_FILE" ]]; then
+		local perms
+		if [[ "$(uname)" == "Darwin" ]]; then
+			perms=$(stat -f %Lp "$CREDENTIALS_FILE" 2>/dev/null || echo "000")
+		else
+			perms=$(stat -c %a "$CREDENTIALS_FILE" 2>/dev/null || echo "000")
+		fi
+		if [[ "$perms" == "600" ]]; then
+			CHECK_LABEL="$label (credentials.sh, 600)"
+			return 0
+		fi
+		CHECK_LABEL="$label: credentials.sh has insecure permissions ($perms, need 600)"
+		CHECK_FIX="Run: chmod 600 $CREDENTIALS_FILE"
+		return 1
+	fi
+
+	# No secret storage at all
+	CHECK_LABEL="$label: no backend configured"
+	CHECK_FIX="Run: aidevops secret init (gopass) or create ~/.config/aidevops/credentials.sh"
+	return 1
+}
+
+# Check 3: GitHub CLI is authenticated
+check_gh_auth() {
+	local label="GitHub CLI auth"
+
+	if ! command -v gh &>/dev/null; then
+		CHECK_LABEL="$label: gh not installed"
+		CHECK_FIX="Run: brew install gh && gh auth login"
+		return 1
+	fi
+
+	if gh auth status &>/dev/null 2>&1; then
+		CHECK_LABEL="$label"
+		return 0
+	fi
+
+	CHECK_LABEL="$label: not authenticated"
+	CHECK_FIX="Run: gh auth login"
+	return 1
+}
+
+# Check 4: SSH key exists
+check_ssh_key() {
+	local label="SSH key"
+
+	if [[ -f "$HOME/.ssh/id_ed25519" ]] || [[ -f "$HOME/.ssh/id_rsa" ]]; then
+		CHECK_LABEL="$label"
+		return 0
+	fi
+
+	CHECK_LABEL="$label: no SSH key found"
+	CHECK_FIX="Run: ssh-keygen -t ed25519"
+	return 1
+}
+
+# Check 5: Git commit signing (optional — informational only)
+check_git_signing() {
+	local label="Git commit signing"
+
+	local signing_key
+	signing_key=$(git config --global user.signingkey 2>/dev/null || echo "")
+	local gpg_sign
+	gpg_sign=$(git config --global commit.gpgsign 2>/dev/null || echo "false")
+
+	if [[ -n "$signing_key" && "$gpg_sign" == "true" ]]; then
+		CHECK_LABEL="$label"
+		return 0
+	fi
+
+	# Optional — don't count as a required action
+	CHECK_LABEL="$label: not configured (optional)"
+	CHECK_FIX="See: https://docs.github.com/en/authentication/managing-commit-signature-verification"
+	return 0
+}
+
+# Check 6: Secretlint available for pre-commit scanning
+check_secretlint() {
+	local label="Secret scanning (secretlint)"
+
+	if command -v secretlint &>/dev/null; then
+		CHECK_LABEL="$label"
+		return 0
+	fi
+
+	CHECK_LABEL="$label: not installed"
+	CHECK_FIX="Run: npm install -g secretlint @secretlint/secretlint-rule-preset-recommend"
+	return 1
+}
+
+# ============================================================
+# USER-LEVEL COMMANDS (t1412.6)
+# ============================================================
+
+# Quick startup check — outputs a single line for the greeting
+cmd_startup_check() {
+	local actions_needed=0
+	local CHECK_LABEL="" CHECK_FIX=""
+
+	# Run all checks, count failures
+	if ! check_prompt_guard_patterns; then
+		actions_needed=$((actions_needed + 1))
+	fi
+
+	if ! check_secret_storage; then
+		actions_needed=$((actions_needed + 1))
+	fi
+
+	if ! check_gh_auth; then
+		actions_needed=$((actions_needed + 1))
+	fi
+
+	if ! check_ssh_key; then
+		actions_needed=$((actions_needed + 1))
+	fi
+
+	check_git_signing # optional, doesn't increment counter
+
+	if ! check_secretlint; then
+		actions_needed=$((actions_needed + 1))
+	fi
+
+	if [[ "$actions_needed" -eq 0 ]]; then
+		echo "Security: all protections active"
+		return 0
+	fi
+
+	local plural=""
+	if [[ "$actions_needed" -gt 1 ]]; then
+		plural="s"
+	fi
+	echo "Security: ${actions_needed} action${plural} needed — run \`aidevops security setup\` for details"
+	return 1
+}
+
+# Detailed status report
+cmd_status() {
+	echo -e "${BOLD}${CYAN}Security Posture Status${NC}"
+	echo "========================"
+	echo ""
+
+	local actions_needed=0
+	local CHECK_LABEL="" CHECK_FIX=""
+
+	# Check 1: Prompt guard patterns
+	if check_prompt_guard_patterns; then
+		echo -e "  ${GREEN}[OK]${NC} $CHECK_LABEL"
+	else
+		echo -e "  ${RED}[!!]${NC} $CHECK_LABEL"
+		echo -e "    Fix: $CHECK_FIX"
+		actions_needed=$((actions_needed + 1))
+	fi
+
+	# Check 2: Secret storage
+	if check_secret_storage; then
+		echo -e "  ${GREEN}[OK]${NC} $CHECK_LABEL"
+	else
+		echo -e "  ${RED}[!!]${NC} $CHECK_LABEL"
+		echo -e "    Fix: $CHECK_FIX"
+		actions_needed=$((actions_needed + 1))
+	fi
+
+	# Check 3: GitHub CLI auth
+	if check_gh_auth; then
+		echo -e "  ${GREEN}[OK]${NC} $CHECK_LABEL"
+	else
+		echo -e "  ${RED}[!!]${NC} $CHECK_LABEL"
+		echo -e "    Fix: $CHECK_FIX"
+		actions_needed=$((actions_needed + 1))
+	fi
+
+	# Check 4: SSH key
+	if check_ssh_key; then
+		echo -e "  ${GREEN}[OK]${NC} $CHECK_LABEL"
+	else
+		echo -e "  ${RED}[!!]${NC} $CHECK_LABEL"
+		echo -e "    Fix: $CHECK_FIX"
+		actions_needed=$((actions_needed + 1))
+	fi
+
+	# Check 5: Git signing (optional)
+	check_git_signing
+	echo -e "  ${YELLOW}[--]${NC} $CHECK_LABEL"
+
+	# Check 6: Secretlint
+	if check_secretlint; then
+		echo -e "  ${GREEN}[OK]${NC} $CHECK_LABEL"
+	else
+		echo -e "  ${RED}[!!]${NC} $CHECK_LABEL"
+		echo -e "    Fix: $CHECK_FIX"
+		actions_needed=$((actions_needed + 1))
+	fi
+
+	echo ""
+	if [[ "$actions_needed" -eq 0 ]]; then
+		echo -e "${GREEN}All protections active.${NC}"
+		return 0
+	fi
+
+	local plural=""
+	[[ "$actions_needed" -gt 1 ]] && plural="s"
+	echo -e "${YELLOW}${actions_needed} action${plural} needed.${NC} Run: aidevops security setup"
+	return 1
+}
+
+# Interactive guided setup
+cmd_setup() {
+	echo -e "${BOLD}${CYAN}Security Setup${NC}"
+	echo "==============="
+	echo ""
+	echo "Walking through pending security actions."
+	echo ""
+
+	local actions_fixed=0
+	local actions_skipped=0
+	local CHECK_LABEL="" CHECK_FIX=""
+
+	# --- Prompt guard patterns ---
+	if ! check_prompt_guard_patterns; then
+		echo -e "${YELLOW}[1]${NC} $CHECK_LABEL"
+		echo "    $CHECK_FIX"
+		echo ""
+		read -r -p "    Run aidevops update now? [Y/n] " response
+		response="${response:-y}"
+		if [[ "$response" =~ ^[Yy]$ ]]; then
+			echo ""
+			if command -v aidevops &>/dev/null; then
+				aidevops update
+			else
+				bash "$HOME/Git/aidevops/setup.sh" --non-interactive
+			fi
+			actions_fixed=$((actions_fixed + 1))
+		else
+			actions_skipped=$((actions_skipped + 1))
+		fi
+		echo ""
+	else
+		echo -e "${GREEN}[OK]${NC} $CHECK_LABEL"
+	fi
+
+	# --- Secret storage ---
+	if ! check_secret_storage; then
+		echo -e "${YELLOW}[2]${NC} $CHECK_LABEL"
+		echo "    $CHECK_FIX"
+		echo ""
+
+		if command -v gopass &>/dev/null; then
+			read -r -p "    Initialize gopass store now? [Y/n] " response
+			response="${response:-y}"
+			if [[ "$response" =~ ^[Yy]$ ]]; then
+				echo ""
+				local secret_helper="${AGENTS_DIR}/scripts/secret-helper.sh"
+				if [[ -f "$secret_helper" ]]; then
+					bash "$secret_helper" init
+				else
+					gopass init
+				fi
+				actions_fixed=$((actions_fixed + 1))
+			else
+				actions_skipped=$((actions_skipped + 1))
+			fi
+		elif [[ -f "$CREDENTIALS_FILE" ]]; then
+			read -r -p "    Fix permissions on credentials.sh? [Y/n] " response
+			response="${response:-y}"
+			if [[ "$response" =~ ^[Yy]$ ]]; then
+				chmod 600 "$CREDENTIALS_FILE"
+				echo -e "    ${GREEN}Fixed.${NC}"
+				actions_fixed=$((actions_fixed + 1))
+			else
+				actions_skipped=$((actions_skipped + 1))
+			fi
+		else
+			echo "    Options:"
+			echo "      1. Install gopass (recommended): brew install gopass && aidevops secret init"
+			echo "      2. Create credentials.sh: touch $CREDENTIALS_FILE && chmod 600 $CREDENTIALS_FILE"
+			echo ""
+			read -r -p "    Skip for now? [Y/n] " _
+			actions_skipped=$((actions_skipped + 1))
+		fi
+		echo ""
+	else
+		echo -e "${GREEN}[OK]${NC} $CHECK_LABEL"
+	fi
+
+	# --- GitHub CLI auth ---
+	if ! check_gh_auth; then
+		echo -e "${YELLOW}[3]${NC} $CHECK_LABEL"
+		echo "    $CHECK_FIX"
+		echo ""
+
+		if command -v gh &>/dev/null; then
+			read -r -p "    Run gh auth login now? [Y/n] " response
+			response="${response:-y}"
+			if [[ "$response" =~ ^[Yy]$ ]]; then
+				echo ""
+				gh auth login
+				actions_fixed=$((actions_fixed + 1))
+			else
+				actions_skipped=$((actions_skipped + 1))
+			fi
+		else
+			echo "    Install GitHub CLI first: brew install gh"
+			actions_skipped=$((actions_skipped + 1))
+		fi
+		echo ""
+	else
+		echo -e "${GREEN}[OK]${NC} $CHECK_LABEL"
+	fi
+
+	# --- SSH key ---
+	if ! check_ssh_key; then
+		echo -e "${YELLOW}[4]${NC} $CHECK_LABEL"
+		echo "    $CHECK_FIX"
+		echo ""
+		read -r -p "    Generate an Ed25519 SSH key now? [Y/n] " response
+		response="${response:-y}"
+		if [[ "$response" =~ ^[Yy]$ ]]; then
+			echo ""
+			local git_email
+			git_email=$(git config --global user.email 2>/dev/null || echo "")
+			ssh-keygen -t ed25519 -C "$git_email"
+			actions_fixed=$((actions_fixed + 1))
+			echo ""
+			echo "    Add to GitHub: gh ssh-key add ~/.ssh/id_ed25519.pub"
+		else
+			actions_skipped=$((actions_skipped + 1))
+		fi
+		echo ""
+	else
+		echo -e "${GREEN}[OK]${NC} $CHECK_LABEL"
+	fi
+
+	# --- Secretlint ---
+	if ! check_secretlint; then
+		echo -e "${YELLOW}[5]${NC} $CHECK_LABEL"
+		echo "    $CHECK_FIX"
+		echo ""
+		read -r -p "    Install secretlint now? [Y/n] " response
+		response="${response:-y}"
+		if [[ "$response" =~ ^[Yy]$ ]]; then
+			echo ""
+			npm install -g secretlint @secretlint/secretlint-rule-preset-recommend
+			actions_fixed=$((actions_fixed + 1))
+		else
+			actions_skipped=$((actions_skipped + 1))
+		fi
+		echo ""
+	else
+		echo -e "${GREEN}[OK]${NC} $CHECK_LABEL"
+	fi
+
+	# --- Summary ---
+	echo ""
+	echo "======================================="
+	if [[ "$actions_fixed" -gt 0 ]]; then
+		echo -e "${GREEN}Fixed: ${actions_fixed} action(s)${NC}"
+	fi
+	if [[ "$actions_skipped" -gt 0 ]]; then
+		echo -e "${YELLOW}Skipped: ${actions_skipped} action(s)${NC}"
+	fi
+	if [[ "$actions_fixed" -eq 0 && "$actions_skipped" -eq 0 ]]; then
+		echo -e "${GREEN}All protections already active!${NC}"
+	fi
+	echo "======================================="
+
+	return 0
+}
+
+# ============================================================
+# HELP & MAIN
+# ============================================================
+
 # Print usage
 print_usage() {
 	cat <<EOF
 Usage: $(basename "$0") <command> [repo-path]
 
-Commands:
-  check [path]     Run all security posture checks (default: current dir)
-  audit [path]     Alias for check
-  store [path]     Run checks and store results in .aidevops.json
-  summary [path]   Print one-line summary (for session greeting)
-  help             Show this help message
+Per-repo audit commands:
+  check [path]         Run all security posture checks (default: current dir)
+  audit [path]         Alias for check
+  store [path]         Run checks and store results in .aidevops.json
+  summary [path]       Print one-line summary (for session greeting)
 
-Examples:
-  $(basename "$0") check                    # Audit current repo
-  $(basename "$0") check ~/Git/myproject    # Audit specific repo
-  $(basename "$0") store                    # Audit and store in .aidevops.json
-  $(basename "$0") summary                  # One-line status for greeting
+User-level commands:
+  startup-check        One-line user security posture for session greeting
+  setup                Interactive guided security setup
+  status               Detailed user security posture report
 
-Checks performed:
+  help                 Show this help message
+
+Per-repo checks (check/audit/store):
   1. GitHub Actions workflows for unsafe AI patterns
   2. Branch protection (PR reviews required)
   3. Review-bot-gate as required status check
@@ -706,9 +1157,24 @@ Checks performed:
   5. Collaborator access levels (per-repo, never cached)
   6. Repository security basics (SECURITY.md, .gitignore, secrets)
 
+User-level checks (startup-check/setup/status):
+  1. Prompt injection patterns (YAML file present and <30d old)
+  2. Secret storage backend (gopass or credentials.sh with 600 perms)
+  3. GitHub CLI authentication (gh auth status)
+  4. SSH key (id_ed25519 or id_rsa)
+  5. Git commit signing (optional, informational only)
+  6. Secret scanning tool (secretlint installed)
+
+Examples:
+  $(basename "$0") check                    # Audit current repo
+  $(basename "$0") check ~/Git/myproject    # Audit specific repo
+  $(basename "$0") store                    # Audit and store in .aidevops.json
+  $(basename "$0") startup-check            # Quick user posture for greeting
+  $(basename "$0") setup                    # Walk through user security fixes
+
 Exit codes:
   0 — All checks passed
-  1 — Findings detected
+  1 — Findings detected / actions needed
   2 — Error
 EOF
 }
@@ -718,15 +1184,13 @@ main() {
 	local command="${1:-help}"
 	shift || true
 
-	local repo_path="${1:-.}"
-
-	# Resolve to git root if possible
-	if git -C "$repo_path" rev-parse --is-inside-work-tree &>/dev/null; then
-		repo_path=$(git -C "$repo_path" rev-parse --show-toplevel)
-	fi
-
 	case "$command" in
+	# Per-repo audit commands (t1412.11)
 	check | audit)
+		local repo_path="${1:-.}"
+		if git -C "$repo_path" rev-parse --is-inside-work-tree &>/dev/null; then
+			repo_path=$(git -C "$repo_path" rev-parse --show-toplevel)
+		fi
 		run_all_checks "$repo_path"
 		store_posture "$repo_path"
 		local exit_code=0
@@ -736,13 +1200,31 @@ main() {
 		return "$exit_code"
 		;;
 	store)
+		local repo_path="${1:-.}"
+		if git -C "$repo_path" rev-parse --is-inside-work-tree &>/dev/null; then
+			repo_path=$(git -C "$repo_path" rev-parse --show-toplevel)
+		fi
 		run_all_checks "$repo_path"
 		store_posture "$repo_path"
 		return 0
 		;;
 	summary)
+		local repo_path="${1:-.}"
+		if git -C "$repo_path" rev-parse --is-inside-work-tree &>/dev/null; then
+			repo_path=$(git -C "$repo_path" rev-parse --show-toplevel)
+		fi
 		print_summary "$repo_path"
 		return 0
+		;;
+	# User-level commands (t1412.6)
+	startup-check)
+		cmd_startup_check
+		;;
+	setup)
+		cmd_setup
+		;;
+	status)
+		cmd_status
 		;;
 	help | --help | -h)
 		print_usage

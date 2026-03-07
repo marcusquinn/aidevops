@@ -3300,7 +3300,7 @@ cmd_help() {
 	echo "  repo-sync <cmd>    Daily git pull for repos in parent dirs (enable/disable/status/dirs)"
 	echo "  update-tools       Check for outdated tools (--update to auto-update)"
 	echo "  repos [cmd]        Manage registered projects (list/add/remove/clean)"
-	echo "  security <cmd>     Per-repo security posture (check/audit/summary)"
+	echo "  security <cmd>     Security posture (check/audit/setup/status/summary)"
 	echo "  ip-check <cmd>     IP reputation checks (check/batch/report/providers)"
 	echo "  secret <cmd>       Manage secrets (set/list/run/init/import/status)"
 	echo "  config <cmd>       Feature toggles (list/get/set/reset/path/help)"
@@ -3325,9 +3325,11 @@ cmd_help() {
 	echo "  aidevops uninstall           # Remove aidevops"
 	echo ""
 	echo "Security:"
-	echo "  aidevops security check      # Run security posture assessment"
+	echo "  aidevops security check      # Run per-repo security posture assessment"
 	echo "  aidevops security audit      # Alias for check"
-	echo "  aidevops security summary    # One-line security status"
+	echo "  aidevops security summary    # One-line per-repo security status"
+	echo "  aidevops security setup      # Interactive guided user security setup"
+	echo "  aidevops security status     # Detailed user security posture report"
 	echo ""
 	echo "IP Reputation:"
 	echo "  aidevops ip-check check <ip> # Check IP reputation across providers"
@@ -3557,7 +3559,12 @@ main() {
 			security_posture_helper="$INSTALL_DIR/.agents/scripts/security-posture-helper.sh"
 		fi
 		if [[ -f "$security_posture_helper" ]]; then
-			bash "$security_posture_helper" "$@"
+			# Default to 'setup' when no subcommand given (most useful action)
+			if [[ $# -eq 0 ]]; then
+				bash "$security_posture_helper" setup
+			else
+				bash "$security_posture_helper" "$@"
+			fi
 		else
 			print_error "security-posture-helper.sh not found. Run: aidevops update"
 			exit 1
