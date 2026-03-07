@@ -569,6 +569,148 @@ test_input_validation() {
 	return 0
 }
 
+test_no_jq_fallback() {
+	echo "Test: No-jq fallback code paths"
+
+	# Skip if jq is not installed (fallback is already the default path)
+	if ! command -v jq &>/dev/null; then
+		pass "jq not installed — fallback is already the default path, skipping"
+		return 0
+	fi
+
+	# Run a representative subset of tests in a subshell with jq removed from
+	# PATH. This exercises the manual JSON construction, sed-based hash
+	# extraction, and manual JSON escaping fallback code paths.
+	#
+	# Strategy: create a temp directory with symlinks to all binaries in jq's
+	# directory EXCEPT jq itself, then replace that directory in PATH. This
+	# removes jq without losing other tools (mktemp, sed, etc.) that may
+	# share the same directory.
+	# shellcheck disable=SC2030
+	(
+		local jq_path jq_dir shadow_dir
+		jq_path="$(command -v jq)"
+		jq_dir="$(dirname "$jq_path")"
+		shadow_dir="$(mktemp -d)"
+
+		# Symlink everything in jq's directory except jq itself
+		local bin
+		for bin in "${jq_dir}"/*; do
+			local bin_name
+			bin_name="$(basename "$bin")"
+			if [[ "$bin_name" != "jq" ]]; then
+				ln -sf "$bin" "${shadow_dir}/${bin_name}" 2>/dev/null || true
+			fi
+		done
+
+		# Build new PATH replacing jq_dir with shadow_dir
+		local new_path=""
+		local saved_ifs="$IFS"
+		IFS=':'
+		local dir
+		for dir in $PATH; do
+			local replacement="$dir"
+			if [[ "$dir" == "$jq_dir" ]]; then
+				replacement="$shadow_dir"
+			fi
+			if [[ -z "$new_path" ]]; then
+				new_path="$replacement"
+			else
+				new_path="${new_path}:${replacement}"
+			fi
+		done
+		IFS="$saved_ifs"
+		# shellcheck disable=SC2031
+		export PATH="$new_path"
+
+		# Clean up shadow dir on exit from subshell
+		# shellcheck disable=SC2064
+		trap "rm -rf '$shadow_dir'" EXIT
+
+		# Verify jq is actually gone
+		if command -v jq &>/dev/null; then
+			echo "  WARN: Could not remove jq from PATH (multiple copies?), skipping"
+			exit 0
+		fi
+
+		# --- Run representative tests without jq ---
+
+		# 1. Basic logging (exercises manual JSON construction + escaping)
+		setup
+		if bash "$SCRIPT" log worker.dispatch "No-jq test entry" 2>/dev/null; then
+			# Verify the file has content and looks like JSON
+			if [[ -s "$AUDIT_LOG_FILE" ]]; then
+				local line_count
+				line_count="$(wc -l <"$AUDIT_LOG_FILE" | tr -d ' ')"
+				if [[ "$line_count" -eq 1 ]]; then
+					echo "  PASS: no-jq: basic logging produces 1 entry"
+				else
+					echo "  FAIL: no-jq: expected 1 entry, got $line_count"
+					exit 1
+				fi
+			else
+				echo "  FAIL: no-jq: log file is empty"
+				exit 1
+			fi
+		else
+			echo "  FAIL: no-jq: log command failed"
+			exit 1
+		fi
+		cleanup
+
+		# 2. Hash chain integrity (exercises sed-based hash extraction in verify)
+		setup
+		bash "$SCRIPT" log worker.dispatch "Chain entry 1" 2>/dev/null
+		bash "$SCRIPT" log credential.access "Chain entry 2" 2>/dev/null
+		bash "$SCRIPT" log config.change "Chain entry 3" 2>/dev/null
+		if bash "$SCRIPT" verify --quiet 2>/dev/null; then
+			echo "  PASS: no-jq: 3-entry chain verifies"
+		else
+			echo "  FAIL: no-jq: chain verification failed without jq"
+			exit 1
+		fi
+		cleanup
+
+		# 3. Tamper detection (exercises sed-based verify fallback)
+		setup
+		bash "$SCRIPT" log worker.dispatch "Original 1" 2>/dev/null
+		bash "$SCRIPT" log credential.access "Original 2" 2>/dev/null
+		bash "$SCRIPT" log worker.complete "Original 3" 2>/dev/null
+		# Tamper with entry 2
+		sed -i '' 's/Original 2/TAMPERED 2/' "$AUDIT_LOG_FILE" 2>/dev/null ||
+			sed -i 's/Original 2/TAMPERED 2/' "$AUDIT_LOG_FILE"
+		if bash "$SCRIPT" verify --quiet 2>/dev/null; then
+			echo "  FAIL: no-jq: verify should detect tampered entry"
+			exit 1
+		else
+			echo "  PASS: no-jq: tampered entry detected without jq"
+		fi
+		cleanup
+
+		# 4. Special characters (exercises _audit_json_escape fallback)
+		setup
+		bash "$SCRIPT" log security.event 'Msg with "quotes" and back\\slash' 2>/dev/null
+		if bash "$SCRIPT" verify --quiet 2>/dev/null; then
+			echo "  PASS: no-jq: special characters handled in fallback"
+		else
+			echo "  FAIL: no-jq: special characters broke chain in fallback"
+			exit 1
+		fi
+		cleanup
+
+		exit 0
+	)
+
+	local subshell_exit=$?
+	if [[ $subshell_exit -eq 0 ]]; then
+		pass "no-jq fallback code paths work correctly"
+	else
+		fail "no-jq fallback code paths have failures"
+	fi
+
+	return 0
+}
+
 # =============================================================================
 # Run all tests
 # =============================================================================
@@ -592,6 +734,7 @@ test_message_with_special_chars
 test_sequence_numbers
 test_help_output
 test_input_validation
+test_no_jq_fallback
 
 echo ""
 echo "=== Results: ${PASS_COUNT} passed, ${FAIL_COUNT} failed ==="

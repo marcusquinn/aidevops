@@ -336,6 +336,30 @@ cmd_log() {
 	local log_file
 	log_file="$(_audit_log_path)"
 
+	# Build timestamp and actor/host outside the lock (no file dependency)
+	local ts
+	ts="$(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || date '+%Y-%m-%dT%H:%M:%SZ')"
+	local actor="${AIDEVOPS_SESSION_ID:-${USER:-unknown}}"
+	local host
+	host="$(hostname -s 2>/dev/null || echo "unknown")"
+
+	# Serialize the read-modify-write path with flock to prevent concurrent
+	# writers from duplicating sequence numbers or breaking the hash chain.
+	# Uses fd 200 for the lock file; released automatically when fd is closed.
+	local lock_file="${log_file}.lock"
+	if command -v flock &>/dev/null; then
+		exec 200>"$lock_file"
+		if ! flock -w 10 200; then
+			_audit_error "Could not acquire audit log lock after 10s"
+			exec 200>&-
+			return 1
+		fi
+	fi
+	# Note: if flock is unavailable (e.g., macOS without util-linux), we proceed
+	# without locking — single-writer scenarios are still safe.
+
+	# --- Begin locked section (seq read → hash chain → append) ---
+
 	# Get sequence number (line count + 1)
 	local seq
 	if [[ -s "$log_file" ]]; then
@@ -348,17 +372,6 @@ cmd_log() {
 	# Get previous hash
 	local prev_hash
 	prev_hash="$(_audit_last_hash)"
-
-	# Build timestamp
-	local ts
-	ts="$(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || date '+%Y-%m-%dT%H:%M:%SZ')"
-
-	# Actor: prefer AIDEVOPS_SESSION_ID, fall back to USER
-	local actor="${AIDEVOPS_SESSION_ID:-${USER:-unknown}}"
-
-	# Hostname
-	local host
-	host="$(hostname -s 2>/dev/null || echo "unknown")"
 
 	# Build the entry without hash (hash is computed over this)
 	local entry_no_hash
@@ -376,9 +389,11 @@ cmd_log() {
 			'{seq: $seq, ts: $ts, type: $type, msg: $msg, detail: $detail, actor: $actor, host: $host, prev_hash: $prev_hash}')
 	else
 		# Fallback: manual JSON construction (jq strongly preferred)
-		local escaped_msg
+		local escaped_msg escaped_actor escaped_host
 		escaped_msg="$(_audit_json_escape "$message")"
-		entry_no_hash="{\"seq\":${seq},\"ts\":\"${ts}\",\"type\":\"${event_type}\",\"msg\":\"${escaped_msg}\",\"detail\":${detail_json},\"actor\":\"${actor}\",\"host\":\"${host}\",\"prev_hash\":\"${prev_hash}\"}"
+		escaped_actor="$(_audit_json_escape "$actor")"
+		escaped_host="$(_audit_json_escape "$host")"
+		entry_no_hash="{\"seq\":${seq},\"ts\":\"${ts}\",\"type\":\"${event_type}\",\"msg\":\"${escaped_msg}\",\"detail\":${detail_json},\"actor\":\"${escaped_actor}\",\"host\":\"${escaped_host}\",\"prev_hash\":\"${prev_hash}\"}"
 	fi
 
 	# Compute hash of the entry
@@ -390,12 +405,18 @@ cmd_log() {
 	if command -v jq &>/dev/null; then
 		entry=$(echo "$entry_no_hash" | jq -c --arg hash "$entry_hash" '. + {hash: $hash}')
 	else
-		entry="{\"seq\":${seq},\"ts\":\"${ts}\",\"type\":\"${event_type}\",\"msg\":\"$(_audit_json_escape "$message")\",\"detail\":${detail_json},\"actor\":\"${actor}\",\"host\":\"${host}\",\"prev_hash\":\"${prev_hash}\",\"hash\":\"${entry_hash}\"}"
+		entry="{\"seq\":${seq},\"ts\":\"${ts}\",\"type\":\"${event_type}\",\"msg\":\"${escaped_msg}\",\"detail\":${detail_json},\"actor\":\"${escaped_actor}\",\"host\":\"${escaped_host}\",\"prev_hash\":\"${prev_hash}\",\"hash\":\"${entry_hash}\"}"
 	fi
 
-	# Append entry (single write — not fully atomic without flock, but sufficient
-	# for single-writer scenarios typical of agent sessions)
+	# Append entry while holding the lock
 	echo "$entry" >>"$log_file"
+
+	# --- End locked section ---
+
+	# Release lock
+	if command -v flock &>/dev/null; then
+		exec 200>&-
+	fi
 
 	_audit_info "Logged ${event_type} (seq=${seq})"
 
@@ -621,7 +642,11 @@ cmd_rotate() {
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--max-size)
-			max_size_mb="${2:-$AUDIT_DEFAULT_ROTATE_MB}"
+			if [[ $# -lt 2 ]]; then
+				_audit_error "--max-size requires a numeric MB value"
+				return 1
+			fi
+			max_size_mb="$2"
 			# Validate max_size_mb is a positive integer (prevent arithmetic injection)
 			if [[ ! "$max_size_mb" =~ ^[0-9]+$ ]]; then
 				_audit_error "Invalid max-size: $max_size_mb (must be a positive integer)"
@@ -663,16 +688,25 @@ cmd_rotate() {
 	rotate_ts="$(date -u '+%Y%m%dT%H%M%SZ' 2>/dev/null || date '+%Y%m%dT%H%M%SZ')"
 	local rotated_file="${log_file%.jsonl}.${rotate_ts}.jsonl"
 
+	# Capture the last entry's hash before moving — this creates a cryptographic
+	# link from the new log segment back to the rotated one. Without this, an
+	# attacker could swap or delete rotated segments undetectably.
+	local prev_segment_hash
+	prev_segment_hash="$(_audit_last_hash)"
+
 	mv "$log_file" "$rotated_file"
 	chmod 400 "$rotated_file" || _audit_warn "Could not set rotated log permissions to 400: $rotated_file"
 
 	_audit_info "Rotated to ${rotated_file}"
 
-	# Log rotation event in the new (empty) log file
+	# Log rotation event in the new (empty) log file with cryptographic handoff
+	local rotated_entries
+	rotated_entries="$(wc -l <"$rotated_file" | tr -d ' ')"
 	cmd_log "system.rotate" "Audit log rotated" \
 		--detail "rotated_file=${rotated_file}" \
-		--detail "entries=$(wc -l <"$rotated_file" | tr -d ' ')" \
-		--detail "size_bytes=${size_bytes}"
+		--detail "entries=${rotated_entries}" \
+		--detail "size_bytes=${size_bytes}" \
+		--detail "prev_segment_hash=${prev_segment_hash}"
 
 	return 0
 }
