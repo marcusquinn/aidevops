@@ -121,7 +121,7 @@ Then skip to the next PR. The next pulse cycle will retry the permission check �
   - `WAITING` only means "no known bot activity" — it does NOT mean zero reviews. When `WAITING` is returned, check the formal review count (the `gh pr view` command above). If count > 0, proceed to merge.
   - `SKIP` means the PR has a `skip-review-gate` label — it bypasses the bot gate only, NOT the review count requirement.
   - Skip the PR when the formal review count is 0, regardless of bot gate status.
-- **Green CI + zero reviews** → skip this cycle. Zero reviews means "not yet reviewed", NOT "clean to merge". Review bots typically post within 2-5 minutes. The next pulse will pick it up once a review exists.
+- **Green CI + zero reviews** → skip this cycle, but run `review-bot-gate-helper.sh request-retry <number> <slug>` to self-heal rate-limited bots. The helper checks whether bots posted rate-limit notices instead of real reviews and requests a retry if so (idempotent — safe to call every cycle). The next pulse will find the real review and merge normally. The formal review count gate still applies — this is recovery, not bypass.
 - **Failing CI or changes requested** → before dispatching a fix worker, check whether this is a systemic failure (see "CI failure pattern detection" below). If systemic, skip the per-PR dispatch — the workflow-level issue covers it. If per-PR, dispatch a worker to fix it (counts against worker slots).
 
 **For all PRs (regardless of author):**

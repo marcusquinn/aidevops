@@ -2,17 +2,20 @@
 # review-bot-gate-helper.sh — Check if AI review bots have posted on a PR
 #
 # Usage:
-#   review-bot-gate-helper.sh check <PR_NUMBER> [REPO]
-#   review-bot-gate-helper.sh wait  <PR_NUMBER> [REPO] [MAX_WAIT_SECONDS]
-#   review-bot-gate-helper.sh list  <PR_NUMBER> [REPO]
+#   review-bot-gate-helper.sh check         <PR_NUMBER> [REPO]
+#   review-bot-gate-helper.sh wait          <PR_NUMBER> [REPO] [MAX_WAIT_SECONDS]
+#   review-bot-gate-helper.sh list          <PR_NUMBER> [REPO]
+#   review-bot-gate-helper.sh request-retry <PR_NUMBER> [REPO]
 #
 # Commands:
-#   check  — Check once, return PASS/WAITING/SKIP
-#   wait   — Poll until a bot posts or timeout (default 600s)
-#   list   — List all bot comments found on the PR
+#   check          — Check once, return PASS/WAITING/SKIP
+#   wait           — Poll until a bot posts or timeout (default 600s)
+#   list           — List all bot comments found on the PR
+#   request-retry  — If bots were rate-limited and no real review exists,
+#                     request a review retry (idempotent, safe to call every pulse)
 #
 # Exit codes:
-#   0 — PASS (at least one bot reviewed) or SKIP (label present)
+#   0 — PASS/SKIP/REQUESTED/ALREADY_REQUESTED/NO_ACTION
 #   1 — WAITING (no bots found yet)
 #   2 — Error (missing args, gh auth failure)
 #
@@ -49,12 +52,13 @@ SKIP_LABEL="skip-review-gate"
 # --- Functions ---
 
 usage() {
-	echo "Usage: $(basename "$0") {check|wait|list} <PR_NUMBER> [REPO] [MAX_WAIT]"
+	echo "Usage: $(basename "$0") {check|wait|list|request-retry} <PR_NUMBER> [REPO] [MAX_WAIT]"
 	echo ""
 	echo "Commands:"
-	echo "  check  Check once for bot reviews (returns PASS/WAITING/SKIP)"
-	echo "  wait   Poll until bot reviews appear or timeout"
-	echo "  list   List all bot comments found"
+	echo "  check          Check once for bot reviews (returns PASS/WAITING/SKIP)"
+	echo "  wait           Poll until bot reviews appear or timeout"
+	echo "  list           List all bot comments found"
+	echo "  request-retry  Request review retry if bots were rate-limited (idempotent)"
 	return 0
 }
 
@@ -335,6 +339,108 @@ do_list() {
 	return 0
 }
 
+has_formal_reviews() {
+	# Check if the PR has at least one formal GitHub review (any state).
+	local pr_number="$1"
+	local repo="$2"
+
+	local count
+	count=$(gh pr view "$pr_number" --repo "$repo" \
+		--json reviews --jq '.reviews | length' 2>/dev/null || echo "0")
+	if [[ "$count" -gt 0 ]]; then
+		return 0
+	fi
+	return 1
+}
+
+has_retry_comment() {
+	# Check if we already posted a review retry request on this PR.
+	# Looks for our specific marker comment to ensure idempotency.
+	local pr_number="$1"
+	local repo="$2"
+
+	local marker="<!-- review-bot-retry-requested -->"
+	local comments
+	comments=$(gh api "repos/${repo}/issues/${pr_number}/comments" \
+		--paginate --jq '.[].body' 2>/dev/null || echo "")
+	if echo "$comments" | grep -qF "$marker"; then
+		return 0
+	fi
+	return 1
+}
+
+find_rate_limited_bots() {
+	# Return space-separated list of bots that posted only rate-limit notices.
+	# Empty string if no rate-limited bots found.
+	local pr_number="$1"
+	local repo="$2"
+
+	local all_commenters
+	all_commenters=$(get_all_bot_commenters "$pr_number" "$repo")
+
+	local rate_limited=""
+	local bot
+	for bot in "${KNOWN_BOTS[@]}"; do
+		if echo "$all_commenters" | grep -qi "$bot"; then
+			if ! bot_has_real_review "$pr_number" "$repo" "$bot"; then
+				rate_limited="${rate_limited}${bot} "
+			fi
+		fi
+	done
+	echo "$rate_limited"
+	return 0
+}
+
+do_request_retry() {
+	# Self-healing: if bots were rate-limited at PR creation and never came
+	# back, request a review retry. Idempotent — checks for prior retry
+	# comment before posting. Does NOT bypass the formal review gate.
+	#
+	# Returns: REQUESTED, ALREADY_REQUESTED, NO_ACTION, or HAS_REVIEWS
+	local pr_number="$1"
+	local repo="$2"
+
+	# If formal reviews already exist, nothing to do
+	if has_formal_reviews "$pr_number" "$repo"; then
+		echo "HAS_REVIEWS"
+		echo "PR already has formal reviews — no retry needed." >&2
+		return 0
+	fi
+
+	# If we already requested a retry, don't spam
+	if has_retry_comment "$pr_number" "$repo"; then
+		echo "ALREADY_REQUESTED"
+		echo "Retry already requested on PR #${pr_number} — waiting for bot response." >&2
+		return 0
+	fi
+
+	# Check if any bots posted rate-limit notices
+	local rate_limited_bots
+	rate_limited_bots=$(find_rate_limited_bots "$pr_number" "$repo")
+
+	if [[ -z "$rate_limited_bots" ]]; then
+		echo "NO_ACTION"
+		echo "No rate-limited bots found — nothing to retry." >&2
+		return 0
+	fi
+
+	# Post retry request with idempotency marker
+	local comment_body
+	comment_body="<!-- review-bot-retry-requested -->
+@coderabbitai review
+
+Review bots were rate-limited when this PR was created (affected: ${rate_limited_bots% }). Requesting a review retry."
+
+	if gh pr comment "$pr_number" --repo "$repo" --body "$comment_body" >/dev/null 2>&1; then
+		echo "REQUESTED"
+		echo "Requested review retry on PR #${pr_number} (rate-limited bots: ${rate_limited_bots% })." >&2
+		return 0
+	else
+		echo "ERROR: Failed to post retry comment on PR #${pr_number}." >&2
+		return 2
+	fi
+}
+
 # --- Main ---
 
 main() {
@@ -366,6 +472,9 @@ main() {
 		;;
 	list)
 		do_list "$pr_number" "$repo"
+		;;
+	request-retry)
+		do_request_retry "$pr_number" "$repo"
 		;;
 	-h | --help | help)
 		usage
