@@ -142,7 +142,10 @@ import { signIn } from "@workspace/auth/client/react";
 import { signUp } from "@workspace/auth/client/react";
 import { z } from "zod";
 
-// Validate password strength before submission
+// Client-side password validation (UX only — server must also enforce)
+// IMPORTANT: This is not a security boundary. Callers can bypass the client
+// and hit signUp.email() directly. Your server-side auth handler must
+// revalidate password strength before creating accounts.
 const passwordSchema = z.string()
   .min(8, "Password must be at least 8 characters")
   .regex(/[A-Z]/, "Must contain an uppercase letter")
@@ -156,6 +159,8 @@ const handleSignUp = async (data: { email: string; password: string; name: strin
     return;
   }
 
+  // Server-side: better-auth validates password in signUp.email() handler.
+  // Configure server-side password rules in your auth config (e.g., password.minLength).
   const result = await signUp.email({
     email: data.email,
     password: data.password,

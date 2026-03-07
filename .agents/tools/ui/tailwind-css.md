@@ -75,7 +75,7 @@ sticky   → hybrid (normal until scroll threshold)
 
 ```tsx
 // Define in context/provider — validate numeric values before injecting into CSS
-const sanitizedWidth = typeof width === 'number' && width > 0 ? width : 384;
+const sanitizedWidth = Number.isFinite(width) && width > 0 ? width : 384;
 <style>{`:root { --sidebar-width: ${sanitizedWidth}px; }`}</style>
 
 // Use in className

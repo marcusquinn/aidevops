@@ -263,7 +263,7 @@ t("ai.sidebar.title"); // Autocomplete works!
 set -euo pipefail
 
 # Check for missing translation keys across locales
-# Run from packages/i18n/src/translations/ directory
+# Run from repository root (the script cd's into the translations directory)
 
 # Prerequisites
 command -v jq >/dev/null 2>&1 || { echo "Error: jq is required" >&2; exit 1; }

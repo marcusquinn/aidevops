@@ -131,7 +131,12 @@ app.use("/api/admin/*", async (c, next) => {
   }
 
   const token = authHeader.slice(7); // Strip "Bearer " prefix
-  const user = await verifyToken(token); // Your JWT/session verification
+  let user;
+  try {
+    user = await verifyToken(token); // Your JWT/session verification
+  } catch {
+    return c.json({ error: "Invalid or expired token" }, 401);
+  }
   if (!user) {
     return c.json({ error: "Invalid or expired token" }, 401);
   }
@@ -241,10 +246,14 @@ app.post("/api/upload", async (c) => {
   }
   
   // Sanitize filename: strip path segments, normalize characters
-  const safeName = file.name
+  const sanitizedBase = file.name
     .replace(/[/\\]/g, "")           // Remove path separators
     .replace(/[^a-zA-Z0-9._-]/g, "_") // Replace unsafe chars
-    .replace(/^\.+/, "_");            // Prevent dotfiles
+    .replace(/^\.+/, "_")             // Prevent dotfiles
+    || "upload";                       // Fallback if name collapses to empty
+
+  // Prefix with UUID to guarantee uniqueness and prevent overwrites
+  const safeName = `${crypto.randomUUID()}-${sanitizedBase}`;
 
   const buffer = await file.arrayBuffer();
   // Process file with safeName...

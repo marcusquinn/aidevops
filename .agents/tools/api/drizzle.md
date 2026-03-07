@@ -238,20 +238,23 @@ async function seed() {
 
   console.log(`Seeding database (NODE_ENV=${process.env.NODE_ENV ?? "undefined"})...`);
 
-  // Clear existing data (order matters: delete children before parents)
-  await db.delete(posts);
-  await db.delete(users);
+  // Wrap in transaction so a failed insert doesn't leave the DB empty
+  await db.transaction(async (tx) => {
+    // Clear existing data (order matters: delete children before parents)
+    await tx.delete(posts);
+    await tx.delete(users);
 
-  // Insert seed data
-  const [user] = await db
-    .insert(users)
-    .values({ email: "admin@example.com", name: "Admin" })
-    .returning();
+    // Insert seed data
+    const [user] = await tx
+      .insert(users)
+      .values({ email: "admin@example.com", name: "Admin" })
+      .returning();
 
-  await db.insert(posts).values([
-    { title: "First Post", authorId: user.id },
-    { title: "Second Post", authorId: user.id },
-  ]);
+    await tx.insert(posts).values([
+      { title: "First Post", authorId: user.id },
+      { title: "Second Post", authorId: user.id },
+    ]);
+  });
 
   console.log("Seeding complete!");
 }
