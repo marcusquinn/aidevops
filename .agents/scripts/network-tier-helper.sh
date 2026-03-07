@@ -152,12 +152,12 @@ _tier_lookup() {
 		return 0
 	fi
 
-	# grep for the key, take the last match (user override wins)
+	# Exact string match via awk (avoids regex injection from domain names)
+	# Last match wins (user override), so we don't exit early
 	local result
-	result="$(grep "^${key} " "$_TIER_LOOKUP_FILE" 2>/dev/null | tail -1)" || true
+	result="$(awk -v k="${key} " 'index($0, k) == 1 { val = $NF } END { if (val) print val }' "$_TIER_LOOKUP_FILE")" || true
 	if [[ -n "$result" ]]; then
-		# Extract tier number (second field)
-		printf '%s' "${result##* }"
+		printf '%s' "$result"
 	fi
 
 	return 0
@@ -175,7 +175,7 @@ _tier_count() {
 		return 0
 	fi
 
-	grep -c "^${type_prefix}:" "$_TIER_LOOKUP_FILE" 2>/dev/null || echo "0"
+	grep -c "^${type_prefix}:" "$_TIER_LOOKUP_FILE" || echo "0"
 	return 0
 }
 
@@ -323,16 +323,19 @@ log_access() {
 	# Ensure log directory exists
 	mkdir -p "$NET_TIER_DIR" 2>/dev/null || true
 
+	# Helper to escape JSON quotes and strip newlines (prevents log injection)
+	_escape_json() { printf '%s' "$1" | tr -d '\n\r' | sed 's/\\/\\\\/g; s/"/\\"/g'; }
+
 	# Build JSON record (portable — no jq dependency for writing)
 	local record
 	record=$(printf '{"ts":"%s","domain":"%s","tier":%s,"label":"%s","worker":"%s","status":"%s","path":"%s"}' \
 		"$timestamp" \
-		"$(printf '%s' "$domain" | sed 's/"/\\"/g')" \
+		"$(_escape_json "$domain")" \
 		"$tier" \
 		"$label" \
-		"$(printf '%s' "$worker_id" | sed 's/"/\\"/g')" \
-		"$status_code" \
-		"$(printf '%s' "${url_path:0:500}" | sed 's/"/\\"/g')")
+		"$(_escape_json "$worker_id")" \
+		"$(_escape_json "$status_code")" \
+		"$(_escape_json "${url_path:0:500}")")
 
 	# Route to appropriate log based on tier
 	case "$tier" in
@@ -446,11 +449,11 @@ report() {
 
 	tail -n "$last_n" "$log_file" | while IFS= read -r line; do
 		local ts domain tier label worker
-		ts="$(printf '%s' "$line" | jq -r '.ts // "?"' 2>/dev/null)"
-		domain="$(printf '%s' "$line" | jq -r '.domain // "?"' 2>/dev/null)"
-		tier="$(printf '%s' "$line" | jq -r '.tier // "?"' 2>/dev/null)"
-		label="$(printf '%s' "$line" | jq -r '.label // "?"' 2>/dev/null)"
-		worker="$(printf '%s' "$line" | jq -r '.worker // "?"' 2>/dev/null)"
+		ts="$(printf '%s' "$line" | jq -r '.ts // "?"' || true)"
+		domain="$(printf '%s' "$line" | jq -r '.domain // "?"' || true)"
+		tier="$(printf '%s' "$line" | jq -r '.tier // "?"' || true)"
+		label="$(printf '%s' "$line" | jq -r '.label // "?"' || true)"
+		worker="$(printf '%s' "$line" | jq -r '.worker // "?"' || true)"
 		printf '%s  T%s %-12s %-40s %s\n' "$ts" "$tier" "$label" "$domain" "$worker"
 	done
 
@@ -471,8 +474,8 @@ _report_summary() {
 		label="$(basename "$log_file" .jsonl)"
 		echo ""
 		echo "=== ${label} ==="
-		tail -n "$last_n" "$log_file" |
-			jq -r '[.domain, (.tier | tostring)] | join(" T")' 2>/dev/null |
+		{ tail -n "$last_n" "$log_file" |
+			jq -r '[.domain, (.tier | tostring)] | join(" T")' || true; } |
 			sort | uniq -c | sort -rn | head -20
 	done
 
