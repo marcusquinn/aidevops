@@ -200,7 +200,7 @@ trap cleanup EXIT
 # Wait for VM to be ready
 info "Waiting for VM to be ready..."
 local_retries=0
-while ! vm_run "echo ready" | grep -q "ready"; do
+while ! grep -q "ready" <<<"$(vm_run "echo ready")"; do
 	sleep 1
 	local_retries=$((local_retries + 1))
 	if [[ $local_retries -gt 30 ]]; then
@@ -230,25 +230,30 @@ vm_test "Repo cloned" "test -f ~/Git/aidevops/setup.sh && echo exists" "exists"
 # Run setup.sh non-interactive
 info "Running setup.sh --non-interactive..."
 setup_output=""
-setup_output=$(vm_run "cd ~/Git/aidevops && bash setup.sh --non-interactive 2>&1") || true
+setup_status=0
+if setup_output=$(vm_run "cd ~/Git/aidevops && bash setup.sh --non-interactive 2>&1"); then
+	setup_status=0
+else
+	setup_status=$?
+fi
 
 if [[ "$VERBOSE" == "true" ]]; then
 	echo "$setup_output"
 fi
 
 # Check for fatal errors in output
-if echo "$setup_output" | grep -qiE "fatal|panic|segfault|core dump"; then
+if grep -qiE "fatal|panic|segfault|core dump" <<<"$setup_output"; then
 	fail "setup.sh had fatal errors"
-	echo "$setup_output" | grep -iE "fatal|panic|segfault" | head -5
+	grep -iE "fatal|panic|segfault" <<<"$setup_output" | head -5
 else
 	pass "setup.sh completed without fatal errors"
 fi
 
 # Check setup completed
-if echo "$setup_output" | grep -q "Setup complete"; then
+if [[ $setup_status -eq 0 ]] && grep -q "Setup complete" <<<"$setup_output"; then
 	pass "setup.sh reported completion"
 else
-	fail "setup.sh did not report completion"
+	fail "setup.sh did not report completion (exit status: $setup_status)"
 fi
 
 # --- Verify Outcomes ---
@@ -280,7 +285,7 @@ vm_test "/onboarding command file created" \
 	"exists|skipped"
 
 # Check /onboarding points to correct path
-if vm_run "test -f ~/.config/opencode/command/onboarding.md && echo yes" | grep -q "yes"; then
+if grep -q "yes" <<<"$(vm_run "test -f ~/.config/opencode/command/onboarding.md && echo yes")"; then
 	vm_test "/onboarding references correct path" \
 		"grep 'aidevops/onboarding.md' ~/.config/opencode/command/onboarding.md" \
 		"aidevops/onboarding.md"
@@ -303,12 +308,12 @@ vm_test "VERSION file deployed" \
 
 # No alarming errors in output (red error lines that aren't expected warnings)
 error_lines=0
-error_lines=$(echo "$setup_output" | grep -ciE '\[ERROR\]|command not found' || true)
+error_lines=$(grep -ciE '\[ERROR\]|command not found' <<<"$setup_output" || true)
 if [[ "$error_lines" -eq 0 ]]; then
 	pass "No ERROR lines or 'command not found' in output"
 else
 	fail "Found $error_lines error/command-not-found lines in output"
-	echo "$setup_output" | grep -iE '\[ERROR\]|command not found' | head -5
+	grep -iE '\[ERROR\]|command not found' <<<"$setup_output" | head -5
 fi
 
 # --- Update Test ---
