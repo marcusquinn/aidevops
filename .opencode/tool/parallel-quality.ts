@@ -43,7 +43,7 @@ function getSafeCommands(scriptDir: string, rootDir: string): SafeCommand[] {
     {
       name: "ShellCheck",
       key: "shellcheck",
-      args: ['bash', '-c', `find "${scriptDir}" -name "*.sh" -print0 | xargs -0 shellcheck 2>&1 | head -100`],
+      args: ['bash', '-c', `find "${scriptDir}" -name "*.sh" -print0 | xargs -0 -n 1 -P 4 timeout 30 shellcheck 2>&1 | head -100`],
       cwd: rootDir,
     },
     {

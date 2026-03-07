@@ -302,6 +302,79 @@ setup_shell_linting_tools() {
 	return 0
 }
 
+setup_shellcheck_wrapper() {
+	# Replace the real shellcheck binary with our wrapper script to prevent
+	# --external-sources from causing exponential memory growth (GH#2915).
+	# This intercepts ALL callers including compiled binaries (e.g., OpenCode)
+	# that invoke shellcheck by absolute path rather than via PATH.
+
+	local wrapper_src="${INSTALL_DIR:-.}/.agents/scripts/shellcheck-wrapper.sh"
+	if [[ ! -f "$wrapper_src" ]]; then
+		print_info "shellcheck-wrapper.sh not found — skipping binary replacement"
+		return 0
+	fi
+
+	# Find the real shellcheck binary
+	local sc_path
+	sc_path="$(command -v shellcheck 2>/dev/null || true)"
+	if [[ -z "$sc_path" ]]; then
+		print_info "shellcheck not installed — wrapper not needed yet"
+		return 0
+	fi
+
+	# Resolve symlinks to get the actual binary path
+	local sc_resolved
+	sc_resolved="$(realpath "$sc_path" 2>/dev/null || readlink -f "$sc_path" 2>/dev/null || echo "$sc_path")"
+
+	# Check if the binary is already our wrapper (idempotent)
+	if head -5 "$sc_resolved" 2>/dev/null | grep -q "shellcheck-wrapper" 2>/dev/null; then
+		# Already replaced — check that .real exists
+		local real_path="${sc_resolved}.real"
+		if [[ -x "$real_path" ]]; then
+			print_success "shellcheck wrapper already installed at $sc_resolved"
+		else
+			print_warning "shellcheck wrapper installed but .real binary missing at $real_path"
+			print_info "Reinstall shellcheck (brew reinstall shellcheck) then re-run setup"
+		fi
+		return 0
+	fi
+
+	# The binary at sc_resolved is the real shellcheck — replace it
+	local real_dest="${sc_resolved}.real"
+
+	print_info "Installing shellcheck wrapper at $sc_resolved"
+	print_info "  Real binary will be moved to $real_dest"
+
+	# Move real binary to .real suffix
+	if ! mv "$sc_resolved" "$real_dest" 2>/dev/null; then
+		# May need sudo (e.g., /usr/local/bin on some systems)
+		if ! sudo mv "$sc_resolved" "$real_dest" 2>/dev/null; then
+			print_warning "Cannot move shellcheck binary — insufficient permissions"
+			print_info "Run manually: sudo mv '$sc_resolved' '$real_dest'"
+			return 0
+		fi
+	fi
+
+	# Copy wrapper to the original path
+	if ! cp "$wrapper_src" "$sc_resolved" 2>/dev/null; then
+		if ! sudo cp "$wrapper_src" "$sc_resolved" 2>/dev/null; then
+			# Rollback
+			mv "$real_dest" "$sc_resolved" 2>/dev/null || sudo mv "$real_dest" "$sc_resolved" 2>/dev/null || true
+			print_warning "Cannot install wrapper — insufficient permissions"
+			return 0
+		fi
+	fi
+
+	# Ensure wrapper is executable
+	chmod +x "$sc_resolved" 2>/dev/null || sudo chmod +x "$sc_resolved" 2>/dev/null || true
+
+	print_success "shellcheck wrapper installed — --external-sources will be stripped"
+	print_info "  Real binary: $real_dest"
+	print_info "  Wrapper:     $sc_resolved"
+
+	return 0
+}
+
 setup_qlty_cli() {
 	print_info "Setting up Qlty CLI (multi-linter code quality)..."
 

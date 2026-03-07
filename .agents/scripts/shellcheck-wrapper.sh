@@ -48,9 +48,9 @@ _find_real_shellcheck() {
 		fi
 	done <<<"$PATH"
 
-	# Common locations
+	# Common locations (including .real suffix for binary-replacement installs)
 	local loc
-	for loc in /opt/homebrew/bin/shellcheck /usr/local/bin/shellcheck /usr/bin/shellcheck; do
+	for loc in /opt/homebrew/bin/shellcheck.real /opt/homebrew/bin/shellcheck /usr/local/bin/shellcheck.real /usr/local/bin/shellcheck /usr/bin/shellcheck; do
 		if [[ -x "$loc" ]]; then
 			local resolved
 			resolved="$(realpath "$loc" 2>/dev/null || readlink -f "$loc" 2>/dev/null || echo "$loc")"
@@ -99,7 +99,7 @@ main() {
 	local vmem_kb=$((vmem_mb * 1024))
 	ulimit -v "$vmem_kb" 2>/dev/null || true
 
-	exec "$real_shellcheck" "${filtered_args[@]}"
+	exec "$real_shellcheck" "${filtered_args[@]+"${filtered_args[@]}"}"
 }
 
 main "$@"
