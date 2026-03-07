@@ -24,6 +24,7 @@ tools:
 - **Policy check**: `prompt-guard-helper.sh check "$message"` (exit 0=allow, 1=block, 2=warn)
 - **Patterns**: Built-in (~40) + YAML (`patterns.yaml`) + custom (`PROMPT_GUARD_CUSTOM_PATTERNS`)
 - **Lasso reference**: [lasso-security/claude-hooks](https://github.com/lasso-security/claude-hooks) (MIT, Claude Code hooks)
+- **Product-side**: [`@stackone/defender`](https://www.npmjs.com/package/@stackone/defender) (Apache-2.0, Node.js — pattern + ML classifier for tool outputs)
 - **Related**: `tools/security/opsec.md`, `tools/security/privacy-filter.md`, `tools/code-review/security-analysis.md`
 
 **When to read this doc**: Building or operating an agentic app that ingests untrusted content — web pages, MCP tool outputs, user uploads, PR content, repo files.
@@ -476,6 +477,90 @@ contextManipulationPatterns:
 4. **Encoding arms race**: New encoding schemes (novel Unicode tricks, image-based text, audio steganography) require new patterns. The scanner only catches what it has patterns for.
 5. **Not a substitute for secure architecture**: Scanning is defense in depth, not a perimeter. Principle of least privilege, output validation, and sandboxing are equally important.
 
+## Product-Side Defense: @stackone/defender
+
+`prompt-guard-helper.sh` and Lasso hooks defend the **agent/framework layer** — they scan content that agents read during development and operations. But product teams building features on top of AI agents need **application-layer** defense: middleware that sits between tool outputs and the LLM in their own codebase.
+
+[`@stackone/defender`](https://www.npmjs.com/package/@stackone/defender) (Apache-2.0) is an npm package that provides this. It wraps tool results with a two-tier pipeline — pattern matching (Tier 1, ~1ms) plus a bundled ONNX ML classifier (Tier 2, ~10ms) — before content reaches the LLM.
+
+### When to Recommend @stackone/defender
+
+Recommend it when a worker implements features that process untrusted content with LLMs:
+
+| Feature type | Why it needs defense |
+|---|---|
+| Email handlers (Gmail, Outlook integrations) | Emails are the #1 injection vector — attacker-controlled subject/body |
+| Comment/review systems | User-generated content passed to AI summarizers or responders |
+| CRM/HRIS/ATS integrations | Free-text fields (notes, bios, descriptions) from external sources |
+| AI-powered search / RAG | Retrieved documents may contain injected instructions |
+| MCP tool-calling pipelines | Tool outputs from third-party servers are untrusted by default |
+| Chatbots with document ingestion | Uploaded files, pasted content, linked URLs |
+| GitHub/GitLab integrations | PR bodies, issue descriptions, commit messages from external contributors |
+
+### How It Works
+
+```typescript
+import { createPromptDefense } from '@stackone/defender';
+
+const defense = createPromptDefense({
+  enableTier2: true,        // ML classification (bundled ONNX model, ~22MB)
+  blockHighRisk: true,      // Block high/critical content
+  useDefaultToolRules: true, // Per-tool base risk + field-handling rules
+});
+await defense.warmupTier2(); // Pre-load model at startup (avoids first-call latency)
+
+// Wrap tool results before passing to the LLM
+const result = await defense.defendToolResult(toolOutput, 'gmail_get_message');
+
+if (!result.allowed) {
+  // Content blocked — log and return safe fallback
+  console.log(`Blocked: risk=${result.riskLevel}, detections=${result.detections}`);
+  return { error: 'Content blocked by safety filter' };
+}
+
+// Safe — pass sanitized content to LLM
+passToLLM(result.sanitized);
+```
+
+### Per-Tool Field Rules
+
+Defender applies tool-specific rules that define which fields are risky and what base risk level applies:
+
+| Tool pattern | Risky fields | Base risk |
+|---|---|---|
+| `gmail_*`, `email_*` | subject, body, snippet, content | `high` |
+| `documents_*` | name, description, content, title | `medium` |
+| `github_*` | name, title, body, description | `medium` |
+| `hris_*` | name, notes, bio, description | `medium` |
+| `ats_*` | name, notes, description, summary | `medium` |
+| `crm_*` | name, description, notes, content | `medium` |
+
+### Tier Comparison
+
+| Dimension | Tier 1 (patterns) | Tier 2 (ML classifier) |
+|---|---|---|
+| Speed | ~1ms | ~10ms (after warmup) |
+| Cost | Zero | Zero (bundled ONNX model, no API calls) |
+| Coverage | Known attack patterns | Novel attacks, paraphrased instructions |
+| F1 score | N/A | ~0.91 average across benchmarks |
+| False positives | Low, tunable | Higher variance |
+
+### prompt-guard-helper.sh vs @stackone/defender
+
+These are complementary, not competing:
+
+| Dimension | prompt-guard-helper.sh | @stackone/defender |
+|---|---|---|
+| **Layer** | Agent/framework (shell scripts, CLI pipelines) | Application/product (Node.js/TypeScript) |
+| **Runtime** | Bash + regex engine | Node.js (ONNX runtime bundled) |
+| **Detection** | Pattern-only (~40 regex patterns) | Pattern + ML classifier (ONNX MiniLM) |
+| **Integration** | Pipe any content through stdin | `defendToolResult()` wraps tool outputs |
+| **Use case** | Scanning content agents read during operations | Defending AI features in production apps |
+| **Dependencies** | None (bash, grep) | `nanoid` (1 dep), ~28MB with bundled model |
+| **License** | Part of aidevops framework | Apache-2.0 |
+
+**Decision guide**: If the code runs in a shell pipeline or agent harness, use `prompt-guard-helper.sh`. If the code is a Node.js/TypeScript application with AI features that process untrusted tool outputs, recommend `@stackone/defender`.
+
 ## Related
 
 - `scripts/prompt-guard-helper.sh` — The scanner implementation
@@ -484,6 +569,7 @@ contextManipulationPatterns:
 - `tools/security/tirith.md` — Terminal command security guard
 - `tools/code-review/security-analysis.md` — Ferret AI config scanner (detects injection in `.claude/`, `.cursor/`, etc.)
 - `tools/code-review/skill-scanner.md` — Skill import security scanning
+- [@stackone/defender](https://www.npmjs.com/package/@stackone/defender) — Product-side prompt injection defense for Node.js/TypeScript (Apache-2.0)
 - [lasso-security/claude-hooks](https://github.com/lasso-security/claude-hooks) — Claude Code PostToolUse hooks (MIT)
 - [OWASP LLM Top 10 — Prompt Injection](https://owasp.org/www-project-top-10-for-large-language-model-applications/) — Industry standard reference
 - [Lasso Security research paper](https://www.lasso.security/blog/the-hidden-backdoor-in-claude-coding-assistant) — Indirect prompt injection in coding agents
