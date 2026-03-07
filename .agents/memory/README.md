@@ -409,9 +409,9 @@ See `scripts/memory-graduate-helper.sh help` for full documentation.
 
 ## Memory Audit Pulse (Automated Hygiene)
 
-Periodic scan that deduplicates, prunes, graduates, and identifies improvement
-opportunities. Runs automatically as Phase 9 of the supervisor pulse cycle
-(self-throttled to once per 24 hours).
+Periodic scan that deduplicates, prunes, graduates, consolidates, and identifies
+improvement opportunities. Runs automatically as Phase 9 of the supervisor pulse
+cycle (self-throttled to once per 24 hours).
 
 ```bash
 # Run audit pulse manually
@@ -429,8 +429,54 @@ memory-audit-pulse.sh status
 1. **Dedup** — remove exact and near-duplicate memories
 2. **Prune** — remove stale entries (>90 days, never accessed)
 3. **Graduate** — promote high-value memories to shared docs
-4. **Scan** — identify self-improvement opportunities (recurring failures, noisy auto-capture, untagged memories)
-5. **Report** — summary with JSONL history
+4. **Consolidate** — cross-memory insight generation via LLM (see below)
+5. **Scan** — identify self-improvement opportunities (recurring failures, noisy auto-capture, untagged memories)
+6. **Report** — summary with JSONL history
+
+## Memory Consolidation (Cross-Memory Insight Generation)
+
+Like the human brain during sleep, the consolidation phase replays, connects, and
+compresses information across memories. It uses a cheap LLM call (haiku-tier,
+~$0.001/call) to scan unconsolidated memories, discover cross-cutting connections,
+and store synthesized insights.
+
+Inspired by Google's [always-on-memory-agent](https://github.com/GoogleCloudPlatform/generative-ai/tree/main/gemini/agents/always-on-memory-agent)
+consolidation loop — adapted to aidevops's batch-oriented architecture.
+
+```bash
+# Runs automatically as Phase 4 of the audit pulse
+memory-audit-pulse.sh run --force
+
+# Manual trigger via memory-helper
+memory-helper.sh insights
+
+# Preview what would be consolidated
+memory-helper.sh insights --dry-run
+```
+
+**How it works**:
+
+1. Queries memories not yet included in any consolidation
+2. If fewer than 3 unconsolidated memories, skips (not enough signal)
+3. Sends batch to `ai-research-helper.sh` (haiku tier) for pattern detection
+4. Parses response: extracts connections and synthesized insight
+5. Stores insight in `memory_consolidations` table
+6. Creates `derives` relations in `learning_relations` for discovered connections
+
+**Requirements**:
+
+- `ai-research-helper.sh` must be available and executable
+- Anthropic API key configured (env, gopass, or credentials.sh)
+- Gracefully skips if either is unavailable (no errors, just a warning)
+
+**Storage**:
+
+- Insights stored in `memory_consolidations` table (id, source_ids, insight, connections)
+- Connections stored as `derives` relations in existing `learning_relations` table
+- Both are queryable via standard SQLite queries
+
+**Cost**: ~$0.001-0.01 per audit pulse run (haiku on 10-50 memories). Negligible for
+daily operation.
 
 **Cron integration** (optional):
 
@@ -484,7 +530,8 @@ remains at `memory/memory.db` and is always accessible without `--namespace`.
 │   ├── conversations    # Conversation lifecycle state
 │   ├── conversation_summaries # Versioned summaries (Layer 1)
 │   ├── entity_profiles  # Versioned preferences (Layer 2)
-│   └── capability_gaps  # Self-evolution gap tracking
+│   ├── capability_gaps  # Self-evolution gap tracking
+│   └── memory_consolidations # Cross-memory insights (t1413)
 ├── embeddings.db       # Optional: vector embeddings for semantic search
 ├── namespaces/         # Per-runner isolated memory
 │   ├── code-reviewer/
