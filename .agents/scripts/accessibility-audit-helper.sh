@@ -113,9 +113,19 @@ install_deps() {
 # axe-core CLI Audit
 # =============================================================================
 
+_wcag_level_to_axe_tags() {
+	local level="$1"
+	case "$level" in
+	WCAG2A) echo "wcag2a,best-practice" ;;
+	WCAG2AAA) echo "wcag2a,wcag2aa,wcag2aaa,best-practice" ;;
+	WCAG2AA | *) echo "wcag2a,wcag2aa,best-practice" ;;
+	esac
+	return 0
+}
+
 run_axe_audit() {
 	local url="$1"
-	local tags="${2:-wcag2a,wcag2aa,best-practice}"
+	local tags="${2:-$(_wcag_level_to_axe_tags "$AUDIT_WCAG_LEVEL")}"
 
 	check_axe_cli || return 1
 
@@ -131,7 +141,7 @@ run_axe_audit() {
 	if axe "$url" \
 		--tags "$tags" \
 		--save "$report_file" \
-		--chrome-flags="--headless --no-sandbox --disable-gpu" 2>/dev/null; then
+		--chrome-flags="--headless --no-sandbox --disable-gpu" 2>>"$LOG_FILE"; then
 		axe_exit=0
 	else
 		axe_exit=$?
@@ -212,10 +222,13 @@ run_wave_audit() {
 	timestamp=$(date +"%Y%m%d_%H%M%S")
 	local report_file="${AUDIT_REPORTS_DIR}/wave_${timestamp}.json"
 
+	local encoded_url
+	encoded_url=$(jq -nr --arg u "$url" '$u|@uri')
+
 	local response
-	response=$(curl -s -w "\n%{http_code}" \
-		"${WAVE_API_URL}?key=${WAVE_API_KEY}&url=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$url', safe=''))" 2>/dev/null || echo "$url")&reporttype=${report_type}" \
-		2>/dev/null) || {
+	response=$(curl -s --connect-timeout 10 --max-time 30 -w "\n%{http_code}" \
+		"${WAVE_API_URL}?key=${WAVE_API_KEY}&url=${encoded_url}&reporttype=${report_type}" \
+		2>>"$LOG_FILE") || {
 		print_error "WAVE API request failed"
 		return 1
 	}
@@ -336,7 +349,7 @@ run_webaim_contrast() {
 	print_info "Background: #$bg"
 
 	local response
-	response=$(curl -s "${WEBAIMCC_API_URL}?fcolor=${fg}&bcolor=${bg}&api" 2>/dev/null) || {
+	response=$(curl -s --connect-timeout 10 --max-time 30 "${WEBAIMCC_API_URL}?fcolor=${fg}&bcolor=${bg}&api" 2>>"$LOG_FILE") || {
 		print_error "WebAIM contrast API request failed"
 		return 1
 	}
@@ -412,11 +425,12 @@ run_lighthouse_a11y() {
 	local report_file="${AUDIT_REPORTS_DIR}/lighthouse_a11y_${timestamp}.json"
 
 	local chrome_flags="--headless --no-sandbox --disable-gpu"
-	local form_factor="desktop"
+	local preset_flag="--preset=desktop"
 	local screen_emulation="--screenEmulation.disabled"
 
 	if [[ "$strategy" == "mobile" ]]; then
-		form_factor="mobile"
+		# Mobile is Lighthouse's default — no --preset flag needed
+		preset_flag=""
 		screen_emulation=""
 	fi
 
@@ -425,9 +439,9 @@ run_lighthouse_a11y() {
 		--output=json \
 		--output-path="$report_file" \
 		--chrome-flags="$chrome_flags" \
-		--preset="$form_factor" \
+		${preset_flag:+"$preset_flag"} \
 		${screen_emulation:+"$screen_emulation"} \
-		--quiet 2>/dev/null; then
+		--quiet 2>>"$LOG_FILE"; then
 
 		print_success "Report saved: $report_file"
 		parse_lighthouse_a11y "$report_file"
@@ -554,7 +568,7 @@ bulk_audit() {
 	local count=0
 	local failures=0
 
-	while IFS= read -r url; do
+	while IFS= read -r url || [[ -n "$url" ]]; do
 		[[ -z "$url" || "$url" =~ ^#.*$ ]] && continue
 
 		count=$((count + 1))
@@ -622,21 +636,21 @@ compare_engines() {
 	# axe-core
 	if command -v axe &>/dev/null; then
 		echo "--- axe-core ---" | tee -a "$summary_file"
-		run_axe_audit "$url" 2>&1 | tee -a "$summary_file"
+		run_axe_audit "$url" 2>&1 | tee -a "$summary_file" || true
 		echo "" | tee -a "$summary_file"
 	fi
 
 	# Lighthouse
 	if command -v lighthouse &>/dev/null; then
 		echo "--- Lighthouse ---" | tee -a "$summary_file"
-		run_lighthouse_a11y "$url" 2>&1 | tee -a "$summary_file"
+		run_lighthouse_a11y "$url" 2>&1 | tee -a "$summary_file" || true
 		echo "" | tee -a "$summary_file"
 	fi
 
 	# WAVE
 	if [[ -n "$WAVE_API_KEY" ]]; then
 		echo "--- WAVE ---" | tee -a "$summary_file"
-		run_wave_audit "$url" 2>&1 | tee -a "$summary_file"
+		run_wave_audit "$url" 2>&1 | tee -a "$summary_file" || true
 		echo "" | tee -a "$summary_file"
 	fi
 
@@ -738,7 +752,7 @@ main() {
 			print_info "Usage: $0 axe <url> [tags]"
 			return 1
 		fi
-		run_axe_audit "$url" "${2:-wcag2a,wcag2aa,best-practice}"
+		run_axe_audit "$url" "${2:-$(_wcag_level_to_axe_tags "$AUDIT_WCAG_LEVEL")}"
 		;;
 	"wave")
 		local url="${1:-}"
