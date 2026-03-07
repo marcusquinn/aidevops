@@ -29,6 +29,16 @@ source "${SCRIPT_DIR}/shared-constants.sh"
 readonly DEFAULT_CONTACTS_DIR="contacts"
 readonly TOON_SCHEMA="contact{email,name,title,company,phone,website,address,source,first_seen,last_seen,confidence,history}"
 
+# Trim leading and trailing whitespace using parameter expansion (avoids sed/SC2001).
+# Usage: trimmed=$(trim_whitespace "$string")
+trim_whitespace() {
+	local str="$1"
+	str="${str#"${str%%[![:space:]]*}"}"
+	str="${str%"${str##*[![:space:]]}"}"
+	printf '%s' "$str"
+	return 0
+}
+
 # Signature delimiter patterns (order matters — most specific first)
 # These mark the beginning of a signature block
 readonly -a SIG_DELIMITERS=(
@@ -216,14 +226,15 @@ extract_title() {
 			local word_count
 			word_count=$(echo "$line" | wc -w | tr -d ' ')
 			if [[ "$word_count" -ge 1 && "$word_count" -le 8 ]]; then
-				echo "$line" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//'
+				trim_whitespace "$line"
+				echo
 				return 0
 			fi
 			break
 		fi
 		# Trim and compare to name
 		local trimmed
-		trimmed=$(echo "$line" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+		trimmed=$(trim_whitespace "$line")
 		if [[ "$trimmed" == "$name" ]]; then
 			found_name=true
 		fi
@@ -233,7 +244,7 @@ extract_title() {
 	local title_keywords='(CEO|CTO|CFO|COO|CMO|CIO|CISO|VP|SVP|EVP|Director|Manager|Engineer|Developer|Architect|Designer|Analyst|Consultant|Specialist|Coordinator|Administrator|Lead|Head|Chief|President|Founder|Co-Founder|Partner|Associate|Senior|Junior|Principal|Staff)'
 	while IFS= read -r line; do
 		local trimmed
-		trimmed=$(echo "$line" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+		trimmed=$(trim_whitespace "$line")
 		[[ "$trimmed" == "$name" ]] && continue
 		if echo "$trimmed" | grep -qEi "$title_keywords"; then
 			# Avoid lines that are clearly not titles
@@ -270,13 +281,14 @@ extract_company() {
 				local word_count
 				word_count=$(echo "$line" | wc -w | tr -d ' ')
 				if [[ "$word_count" -ge 1 && "$word_count" -le 8 ]]; then
-					echo "$line" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//'
+					trim_whitespace "$line"
+					echo
 					return 0
 				fi
 				break
 			fi
 			local trimmed
-			trimmed=$(echo "$line" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+			trimmed=$(trim_whitespace "$line")
 			if [[ "$trimmed" == "$title" ]]; then
 				found_title=true
 			fi
@@ -287,7 +299,7 @@ extract_company() {
 	local company_keywords='(Inc\.|LLC|Ltd\.|Corp\.|Corporation|Company|Co\.|Group|Holdings|Technologies|Solutions|Services|Consulting|Partners|Associates|GmbH|AG|S\.A\.|B\.V\.|Pty|PLC|LLP)'
 	while IFS= read -r line; do
 		local trimmed
-		trimmed=$(echo "$line" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+		trimmed=$(trim_whitespace "$line")
 		[[ "$trimmed" == "$name" ]] && continue
 		[[ "$trimmed" == "$title" ]] && continue
 		if echo "$trimmed" | grep -qEi "$company_keywords"; then
@@ -308,10 +320,10 @@ extract_address() {
 
 	while IFS= read -r line; do
 		local trimmed
-		trimmed=$(echo "$line" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+		trimmed=$(trim_whitespace "$line")
 		[[ -z "$trimmed" ]] && continue
 
-		# Remove common labels
+		# Remove common labels (regex alternation — sed is appropriate here)
 		trimmed=$(echo "$trimmed" | sed -E 's/^(Address|Office|Location|Addr)[[:space:]]*:[[:space:]]*//')
 
 		# Match address patterns:
@@ -405,14 +417,21 @@ merge_toon_contact() {
 	local existing
 	existing=$(cat "$toon_file")
 
-	# Extract existing field values
+	# Extract existing field values using parameter expansion (avoids grep|sed pipe)
 	local existing_name existing_title existing_company existing_phone existing_website existing_address
-	existing_name=$(echo "$existing" | grep -E "^  name: " | sed 's/^  name: //' || true)
-	existing_title=$(echo "$existing" | grep -E "^  title: " | sed 's/^  title: //' || true)
-	existing_company=$(echo "$existing" | grep -E "^  company: " | sed 's/^  company: //' || true)
-	existing_phone=$(echo "$existing" | grep -E "^  phone: " | sed 's/^  phone: //' || true)
-	existing_website=$(echo "$existing" | grep -E "^  website: " | sed 's/^  website: //' || true)
-	existing_address=$(echo "$existing" | grep -E "^  address: " | sed 's/^  address: //' || true)
+	local _field_line
+	_field_line=$(echo "$existing" | grep -E "^  name: " || true)
+	existing_name="${_field_line#  name: }"
+	_field_line=$(echo "$existing" | grep -E "^  title: " || true)
+	existing_title="${_field_line#  title: }"
+	_field_line=$(echo "$existing" | grep -E "^  company: " || true)
+	existing_company="${_field_line#  company: }"
+	_field_line=$(echo "$existing" | grep -E "^  phone: " || true)
+	existing_phone="${_field_line#  phone: }"
+	_field_line=$(echo "$existing" | grep -E "^  website: " || true)
+	existing_website="${_field_line#  website: }"
+	_field_line=$(echo "$existing" | grep -E "^  address: " || true)
+	existing_address="${_field_line#  address: }"
 
 	# Update last_seen
 	existing=$(echo "$existing" | sed "s/^  last_seen: .*/  last_seen: ${now}/")
@@ -472,7 +491,8 @@ ${history_entries}"
 
 	# Upgrade confidence if new is higher
 	local existing_conf
-	existing_conf=$(echo "$existing" | grep -E "^  confidence: " | sed "s/^  confidence: //" || true)
+	_field_line=$(echo "$existing" | grep -E "^  confidence: " || true)
+	existing_conf="${_field_line#  confidence: }"
 	if [[ "$confidence" == "high" && "$existing_conf" != "high" ]]; then
 		existing=$(echo "$existing" | sed "s/^  confidence: .*/  confidence: ${confidence}/")
 	fi
@@ -501,9 +521,11 @@ resolve_contact_filename() {
 	fi
 
 	# File exists — check if it's the same person (same email or same name)
-	local existing_email existing_name
-	existing_email=$(grep -E "^  email: " "$base_file" | sed 's/^  email: //' || true)
-	existing_name=$(grep -E "^  name: " "$base_file" | sed 's/^  name: //' || true)
+	local existing_email existing_name _field_line
+	_field_line=$(grep -E "^  email: " "$base_file" || true)
+	existing_email="${_field_line#  email: }"
+	_field_line=$(grep -E "^  name: " "$base_file" || true)
+	existing_name="${_field_line#  name: }"
 
 	# Same email = same person, use existing file
 	if [[ "$existing_email" == "$email" ]]; then
@@ -938,9 +960,11 @@ list_contacts() {
 	local count=0
 	while IFS= read -r -d '' toon_file; do
 		count=$((count + 1))
-		local email name
-		email=$(grep -E "^  email: " "$toon_file" | head -1 | sed 's/^  email: //')
-		name=$(grep -E "^  name: " "$toon_file" | head -1 | sed 's/^  name: //')
+		local email name _field_line
+		_field_line=$(grep -E "^  email: " "$toon_file" | head -1 || true)
+		email="${_field_line#  email: }"
+		_field_line=$(grep -E "^  name: " "$toon_file" | head -1 || true)
+		name="${_field_line#  name: }"
 		printf "%-40s %s\n" "${email:-<unknown>}" "${name:-<no name>}"
 	done < <(find "$contacts_dir" -name "*.toon" -type f -print0 2>/dev/null | sort -z)
 
