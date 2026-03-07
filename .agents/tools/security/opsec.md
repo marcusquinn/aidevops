@@ -20,7 +20,7 @@ tools:
 
 - **Purpose**: Threat modeling, platform selection, network privacy, and anti-detect for operational security
 - **Scope**: Communications, network, browser, device, and identity hygiene
-- **Related**: `tools/security/tirith.md`, `tools/credentials/encryption-stack.md`, `services/communications/simplex.md`, `tools/browser/browser-automation.md`
+- **Related**: `tools/security/tirith.md`, `tools/security/tamper-evident-audit.md`, `tools/credentials/encryption-stack.md`, `services/communications/simplex.md`, `tools/browser/browser-automation.md`
 
 **Decision tree**:
 

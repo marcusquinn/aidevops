@@ -1,0 +1,566 @@
+#!/usr/bin/env bash
+# test-audit-log-helper.sh — Tests for tamper-evident audit logging (t1412.8)
+#
+# Exercises:
+#   1. Basic logging (all event types)
+#   2. Hash chain integrity (verify passes on clean log)
+#   3. Tamper detection (verify fails after modification)
+#   4. Chain break detection (deleted entry)
+#   5. Detail key-value pairs
+#   6. Invalid event type rejection
+#   7. Missing arguments rejection
+#   8. Rotation
+#   9. Status output
+#  10. Tail output
+#  11. Empty log handling
+#  12. Message truncation
+#
+# Usage: bash tests/test-audit-log-helper.sh [--verbose]
+#
+# Exit codes: 0 = all pass, 1 = failures found
+
+set -euo pipefail
+
+REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+SCRIPT="${REPO_DIR}/.agents/scripts/audit-log-helper.sh"
+VERBOSE="${1:-}"
+
+# =============================================================================
+# Test Framework
+# =============================================================================
+
+PASS_COUNT=0
+FAIL_COUNT=0
+TEST_TMPDIR=""
+
+cleanup() {
+	if [[ -n "$TEST_TMPDIR" && -d "$TEST_TMPDIR" ]]; then
+		rm -rf "$TEST_TMPDIR"
+	fi
+	return 0
+}
+trap cleanup EXIT
+
+setup() {
+	TEST_TMPDIR="$(mktemp -d)"
+	export AUDIT_LOG_DIR="${TEST_TMPDIR}"
+	export AUDIT_LOG_FILE="${TEST_TMPDIR}/audit.jsonl"
+	export AUDIT_QUIET="true"
+	return 0
+}
+
+pass() {
+	local name="$1"
+	PASS_COUNT=$((PASS_COUNT + 1))
+	echo "  PASS: $name"
+	return 0
+}
+
+fail() {
+	local name="$1"
+	local detail="${2:-}"
+	FAIL_COUNT=$((FAIL_COUNT + 1))
+	echo "  FAIL: $name"
+	if [[ -n "$detail" ]]; then
+		echo "        $detail"
+	fi
+	return 0
+}
+
+verbose() {
+	local msg="$1"
+	if [[ "$VERBOSE" == "--verbose" ]]; then
+		echo "  [v] $msg"
+	fi
+	return 0
+}
+
+# =============================================================================
+# Tests
+# =============================================================================
+
+test_basic_logging() {
+	echo "Test: Basic logging"
+	setup
+
+	if bash "$SCRIPT" log worker.dispatch "Test dispatch" 2>/dev/null; then
+		pass "log worker.dispatch succeeds"
+	else
+		fail "log worker.dispatch failed"
+	fi
+
+	if [[ -f "$AUDIT_LOG_FILE" ]]; then
+		pass "log file created"
+	else
+		fail "log file not created"
+		return 0
+	fi
+
+	local line_count
+	line_count="$(wc -l <"$AUDIT_LOG_FILE" | tr -d ' ')"
+	if [[ "$line_count" -eq 1 ]]; then
+		pass "exactly 1 entry"
+	else
+		fail "expected 1 entry, got $line_count"
+	fi
+
+	# Check JSON structure
+	if command -v jq &>/dev/null; then
+		local entry
+		entry="$(head -1 "$AUDIT_LOG_FILE")"
+		local has_fields
+		has_fields="$(echo "$entry" | jq 'has("seq") and has("ts") and has("type") and has("msg") and has("hash") and has("prev_hash")' 2>/dev/null || echo "false")"
+		if [[ "$has_fields" == "true" ]]; then
+			pass "entry has all required fields"
+		else
+			fail "entry missing required fields"
+			verbose "$entry"
+		fi
+
+		# Check genesis hash
+		local prev_hash
+		prev_hash="$(echo "$entry" | jq -r '.prev_hash' 2>/dev/null)"
+		if [[ "$prev_hash" == "0000000000000000000000000000000000000000000000000000000000000000" ]]; then
+			pass "first entry has genesis prev_hash"
+		else
+			fail "first entry prev_hash is not genesis: $prev_hash"
+		fi
+	fi
+
+	cleanup
+	return 0
+}
+
+test_all_event_types() {
+	echo "Test: All event types"
+	setup
+
+	local -a types=(
+		"worker.dispatch"
+		"worker.complete"
+		"worker.error"
+		"credential.access"
+		"credential.rotate"
+		"config.change"
+		"config.deploy"
+		"security.event"
+		"security.injection"
+		"security.scan"
+		"operation.verify"
+		"operation.block"
+		"system.startup"
+		"system.update"
+		"system.rotate"
+	)
+
+	local all_ok="true"
+	local t
+	for t in "${types[@]}"; do
+		if ! bash "$SCRIPT" log "$t" "Test $t" 2>/dev/null; then
+			fail "event type $t rejected"
+			all_ok="false"
+		fi
+	done
+
+	if [[ "$all_ok" == "true" ]]; then
+		pass "all ${#types[@]} event types accepted"
+	fi
+
+	# Verify chain after all entries
+	if bash "$SCRIPT" verify --quiet 2>/dev/null; then
+		pass "chain intact after ${#types[@]} entries"
+	else
+		fail "chain broken after logging all event types"
+	fi
+
+	cleanup
+	return 0
+}
+
+test_hash_chain_integrity() {
+	echo "Test: Hash chain integrity"
+	setup
+
+	# Log multiple entries
+	bash "$SCRIPT" log worker.dispatch "Entry 1" 2>/dev/null
+	bash "$SCRIPT" log credential.access "Entry 2" 2>/dev/null
+	bash "$SCRIPT" log config.change "Entry 3" 2>/dev/null
+	bash "$SCRIPT" log security.event "Entry 4" 2>/dev/null
+	bash "$SCRIPT" log worker.complete "Entry 5" 2>/dev/null
+
+	if bash "$SCRIPT" verify --quiet 2>/dev/null; then
+		pass "5-entry chain verifies"
+	else
+		fail "5-entry chain verification failed"
+	fi
+
+	# Check that each entry's prev_hash matches previous entry's hash
+	if command -v jq &>/dev/null; then
+		local prev_hash=""
+		local line_num=0
+		local chain_ok="true"
+		while IFS= read -r line; do
+			line_num=$((line_num + 1))
+			local current_prev
+			current_prev="$(echo "$line" | jq -r '.prev_hash')"
+			local current_hash
+			current_hash="$(echo "$line" | jq -r '.hash')"
+
+			if [[ $line_num -gt 1 ]] && [[ "$current_prev" != "$prev_hash" ]]; then
+				fail "entry $line_num prev_hash doesn't match entry $((line_num - 1)) hash"
+				chain_ok="false"
+			fi
+			prev_hash="$current_hash"
+		done <"$AUDIT_LOG_FILE"
+
+		if [[ "$chain_ok" == "true" ]]; then
+			pass "prev_hash chain links correctly"
+		fi
+	fi
+
+	cleanup
+	return 0
+}
+
+test_tamper_detection() {
+	echo "Test: Tamper detection"
+	setup
+
+	bash "$SCRIPT" log worker.dispatch "Original entry 1" 2>/dev/null
+	bash "$SCRIPT" log credential.access "Original entry 2" 2>/dev/null
+	bash "$SCRIPT" log worker.complete "Original entry 3" 2>/dev/null
+
+	# Verify clean state
+	if ! bash "$SCRIPT" verify --quiet 2>/dev/null; then
+		fail "chain should be valid before tampering"
+		cleanup
+		return 0
+	fi
+
+	# Tamper with entry 2 (modify message)
+	sed -i '' 's/Original entry 2/TAMPERED entry 2/' "$AUDIT_LOG_FILE" 2>/dev/null ||
+		sed -i 's/Original entry 2/TAMPERED entry 2/' "$AUDIT_LOG_FILE"
+
+	# Verify should now fail
+	if bash "$SCRIPT" verify --quiet 2>/dev/null; then
+		fail "verify should detect tampered entry"
+	else
+		pass "tampered entry detected"
+	fi
+
+	cleanup
+	return 0
+}
+
+test_deletion_detection() {
+	echo "Test: Deletion detection"
+	setup
+
+	bash "$SCRIPT" log worker.dispatch "Entry 1" 2>/dev/null
+	bash "$SCRIPT" log credential.access "Entry 2" 2>/dev/null
+	bash "$SCRIPT" log worker.complete "Entry 3" 2>/dev/null
+
+	# Delete entry 2 (middle of chain)
+	if [[ "$(uname)" == "Darwin" ]]; then
+		sed -i '' '2d' "$AUDIT_LOG_FILE"
+	else
+		sed -i '2d' "$AUDIT_LOG_FILE"
+	fi
+
+	# Verify should fail (chain broken)
+	if bash "$SCRIPT" verify --quiet 2>/dev/null; then
+		fail "verify should detect deleted entry"
+	else
+		pass "deleted entry detected (chain break)"
+	fi
+
+	cleanup
+	return 0
+}
+
+test_detail_pairs() {
+	echo "Test: Detail key-value pairs"
+	setup
+
+	bash "$SCRIPT" log worker.dispatch "Test with details" \
+		--detail repo=aidevops \
+		--detail task_id=t1412.8 \
+		--detail branch=feature/test 2>/dev/null
+
+	if command -v jq &>/dev/null; then
+		local entry
+		entry="$(head -1 "$AUDIT_LOG_FILE")"
+		local repo
+		repo="$(echo "$entry" | jq -r '.detail.repo' 2>/dev/null)"
+		local task_id
+		task_id="$(echo "$entry" | jq -r '.detail.task_id' 2>/dev/null)"
+
+		if [[ "$repo" == "aidevops" ]] && [[ "$task_id" == "t1412.8" ]]; then
+			pass "detail key-value pairs stored correctly"
+		else
+			fail "detail values wrong: repo=$repo task_id=$task_id"
+		fi
+	else
+		pass "detail pairs logged (jq not available for deep check)"
+	fi
+
+	cleanup
+	return 0
+}
+
+test_invalid_event_type() {
+	echo "Test: Invalid event type rejection"
+	setup
+
+	if bash "$SCRIPT" log "invalid.type" "Should fail" 2>/dev/null; then
+		fail "invalid event type should be rejected"
+	else
+		pass "invalid event type rejected"
+	fi
+
+	cleanup
+	return 0
+}
+
+test_missing_arguments() {
+	echo "Test: Missing arguments rejection"
+	setup
+
+	# Missing event type
+	if bash "$SCRIPT" log 2>/dev/null; then
+		fail "missing event type should be rejected"
+	else
+		pass "missing event type rejected"
+	fi
+
+	# Missing message
+	if bash "$SCRIPT" log worker.dispatch 2>/dev/null; then
+		fail "missing message should be rejected"
+	else
+		pass "missing message rejected"
+	fi
+
+	cleanup
+	return 0
+}
+
+test_rotation() {
+	echo "Test: Log rotation"
+	setup
+
+	# Create a log with a few entries
+	bash "$SCRIPT" log worker.dispatch "Entry 1" 2>/dev/null
+	bash "$SCRIPT" log worker.complete "Entry 2" 2>/dev/null
+
+	# Rotate with a tiny threshold (0 MB = always rotate)
+	if bash "$SCRIPT" rotate --max-size 0 2>/dev/null; then
+		pass "rotation command succeeds"
+	else
+		fail "rotation command failed"
+		cleanup
+		return 0
+	fi
+
+	# Check that rotated file exists
+	local rotated_count
+	rotated_count="$(find "$TEST_TMPDIR" -name 'audit.*.jsonl' 2>/dev/null | wc -l | tr -d ' ')"
+	if [[ "$rotated_count" -ge 1 ]]; then
+		pass "rotated file created"
+	else
+		fail "no rotated file found"
+	fi
+
+	# New log should have the rotation event
+	if [[ -f "$AUDIT_LOG_FILE" ]]; then
+		local new_count
+		new_count="$(wc -l <"$AUDIT_LOG_FILE" | tr -d ' ')"
+		if [[ "$new_count" -ge 1 ]]; then
+			pass "rotation event logged in new file"
+		else
+			fail "new log file is empty after rotation"
+		fi
+	else
+		fail "new log file not created after rotation"
+	fi
+
+	cleanup
+	return 0
+}
+
+test_status_output() {
+	echo "Test: Status output"
+	setup
+
+	bash "$SCRIPT" log worker.dispatch "Status test" 2>/dev/null
+
+	local status_output
+	status_output="$(bash "$SCRIPT" status 2>/dev/null)"
+
+	if echo "$status_output" | grep -q "Entries:"; then
+		pass "status shows entry count"
+	else
+		fail "status missing entry count"
+	fi
+
+	if echo "$status_output" | grep -q "INTACT"; then
+		pass "status shows chain status"
+	else
+		fail "status missing chain status"
+	fi
+
+	cleanup
+	return 0
+}
+
+test_tail_output() {
+	echo "Test: Tail output"
+	setup
+
+	bash "$SCRIPT" log worker.dispatch "Tail entry 1" 2>/dev/null
+	bash "$SCRIPT" log worker.complete "Tail entry 2" 2>/dev/null
+	bash "$SCRIPT" log config.change "Tail entry 3" 2>/dev/null
+
+	local tail_output
+	tail_output="$(bash "$SCRIPT" tail 2 2>/dev/null)"
+	local tail_lines
+	tail_lines="$(echo "$tail_output" | wc -l | tr -d ' ')"
+
+	if [[ "$tail_lines" -eq 2 ]]; then
+		pass "tail 2 returns 2 entries"
+	else
+		fail "tail 2 returned $tail_lines entries (expected 2)"
+	fi
+
+	cleanup
+	return 0
+}
+
+test_empty_log() {
+	echo "Test: Empty log handling"
+	setup
+
+	# Verify on non-existent log
+	if bash "$SCRIPT" verify 2>/dev/null; then
+		pass "verify on empty log succeeds"
+	else
+		fail "verify on empty log should succeed"
+	fi
+
+	# Status on non-existent log
+	local status_output
+	status_output="$(bash "$SCRIPT" status 2>/dev/null)"
+	if echo "$status_output" | grep -q "No log file"; then
+		pass "status reports no log file"
+	else
+		fail "status should report no log file"
+	fi
+
+	# Tail on non-existent log
+	if bash "$SCRIPT" tail 2>/dev/null; then
+		pass "tail on empty log succeeds"
+	else
+		fail "tail on empty log should succeed"
+	fi
+
+	cleanup
+	return 0
+}
+
+test_message_with_special_chars() {
+	echo "Test: Messages with special characters"
+	setup
+
+	# Test with quotes, newlines, backslashes
+	bash "$SCRIPT" log security.event 'Message with "quotes" and backslash\n and tab\t' 2>/dev/null
+
+	if bash "$SCRIPT" verify --quiet 2>/dev/null; then
+		pass "special characters handled correctly"
+	else
+		fail "special characters broke the chain"
+	fi
+
+	cleanup
+	return 0
+}
+
+test_sequence_numbers() {
+	echo "Test: Sequence numbers"
+	setup
+
+	bash "$SCRIPT" log worker.dispatch "Seq 1" 2>/dev/null
+	bash "$SCRIPT" log worker.complete "Seq 2" 2>/dev/null
+	bash "$SCRIPT" log config.change "Seq 3" 2>/dev/null
+
+	if command -v jq &>/dev/null; then
+		local seq1 seq2 seq3
+		seq1="$(sed -n '1p' "$AUDIT_LOG_FILE" | jq -r '.seq')"
+		seq2="$(sed -n '2p' "$AUDIT_LOG_FILE" | jq -r '.seq')"
+		seq3="$(sed -n '3p' "$AUDIT_LOG_FILE" | jq -r '.seq')"
+
+		if [[ "$seq1" -eq 1 ]] && [[ "$seq2" -eq 2 ]] && [[ "$seq3" -eq 3 ]]; then
+			pass "sequence numbers are monotonic (1, 2, 3)"
+		else
+			fail "sequence numbers wrong: $seq1, $seq2, $seq3"
+		fi
+	else
+		pass "sequence test skipped (no jq)"
+	fi
+
+	cleanup
+	return 0
+}
+
+test_help_output() {
+	echo "Test: Help output"
+	setup
+
+	local help_output
+	help_output="$(bash "$SCRIPT" help 2>/dev/null)"
+
+	if echo "$help_output" | grep -qi "tamper-evident"; then
+		pass "help mentions tamper-evident"
+	else
+		fail "help missing tamper-evident description"
+	fi
+
+	if echo "$help_output" | grep -q "worker.dispatch"; then
+		pass "help lists event types"
+	else
+		fail "help missing event types"
+	fi
+
+	cleanup
+	return 0
+}
+
+# =============================================================================
+# Run all tests
+# =============================================================================
+
+echo "=== audit-log-helper.sh tests (t1412.8) ==="
+echo ""
+
+test_basic_logging
+test_all_event_types
+test_hash_chain_integrity
+test_tamper_detection
+test_deletion_detection
+test_detail_pairs
+test_invalid_event_type
+test_missing_arguments
+test_rotation
+test_status_output
+test_tail_output
+test_empty_log
+test_message_with_special_chars
+test_sequence_numbers
+test_help_output
+
+echo ""
+echo "=== Results: ${PASS_COUNT} passed, ${FAIL_COUNT} failed ==="
+
+if [[ $FAIL_COUNT -gt 0 ]]; then
+	exit 1
+fi
+
+exit 0

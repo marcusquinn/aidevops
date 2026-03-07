@@ -24,7 +24,7 @@ tools:
 - **Policy check**: `prompt-guard-helper.sh check "$message"` (exit 0=allow, 1=block, 2=warn)
 - **Patterns**: Built-in (~40) + YAML (`patterns.yaml`) + custom (`PROMPT_GUARD_CUSTOM_PATTERNS`)
 - **Lasso reference**: [lasso-security/claude-hooks](https://github.com/lasso-security/claude-hooks) (MIT, Claude Code hooks)
-- **Related**: `tools/security/opsec.md`, `tools/security/privacy-filter.md`, `tools/code-review/security-analysis.md`
+- **Related**: `tools/security/opsec.md`, `tools/security/privacy-filter.md`, `tools/security/tamper-evident-audit.md`, `tools/code-review/security-analysis.md`
 
 **When to read this doc**: Building or operating an agentic app that ingests untrusted content — web pages, MCP tool outputs, user uploads, PR content, repo files.
 

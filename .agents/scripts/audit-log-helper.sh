@@ -1,0 +1,736 @@
+#!/usr/bin/env bash
+# audit-log-helper.sh — Tamper-evident audit logging with hash chaining (t1412.8)
+# Commands: log | verify | tail | status | rotate | help
+# Docs: tools/security/tamper-evident-audit.md
+#
+# Append-only JSONL log with SHA-256 hash chaining. Each entry includes the
+# hash of the previous entry, creating a chain. Modifying or deleting any
+# entry breaks the chain, making tampering detectable via `verify`.
+#
+# Event types:
+#   worker.dispatch    — Worker spawned by pulse/supervisor
+#   worker.complete    — Worker finished (success or failure)
+#   credential.access  — Credential read/write via gopass or credentials.sh
+#   config.change      — Framework config modification
+#   security.event     — Prompt injection detected, verification triggered
+#   operation.verify   — High-stakes operation verified/blocked
+#   system.startup     — Framework startup/update
+#
+# Usage:
+#   audit-log-helper.sh log <event-type> <message> [--detail key=value ...]
+#   audit-log-helper.sh verify [--quiet]
+#   audit-log-helper.sh tail [N]
+#   audit-log-helper.sh status
+#   audit-log-helper.sh rotate [--max-size MB]
+#   audit-log-helper.sh help
+#
+# Environment:
+#   AUDIT_LOG_DIR    Override log directory (default: ~/.aidevops/.agent-workspace/observability)
+#   AUDIT_LOG_FILE   Override log file path (default: $AUDIT_LOG_DIR/audit.jsonl)
+#   AUDIT_QUIET      Suppress informational stderr output when "true"
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
+# shellcheck source=shared-constants.sh
+source "${SCRIPT_DIR}/shared-constants.sh" 2>/dev/null || true
+init_log_file 2>/dev/null || true
+
+# =============================================================================
+# Constants
+# =============================================================================
+
+readonly AUDIT_VERSION="1.0.0"
+readonly AUDIT_LOG_DIR_DEFAULT="${HOME}/.aidevops/.agent-workspace/observability"
+readonly AUDIT_LOG_FILE_DEFAULT="audit.jsonl"
+readonly AUDIT_GENESIS_HASH="0000000000000000000000000000000000000000000000000000000000000000"
+readonly AUDIT_MAX_MESSAGE_LEN=4096
+readonly AUDIT_MAX_DETAIL_LEN=8192
+readonly AUDIT_DEFAULT_ROTATE_MB=50
+
+# Valid event types (prefix-based hierarchy)
+readonly -a AUDIT_EVENT_TYPES=(
+	"worker.dispatch"
+	"worker.complete"
+	"worker.error"
+	"credential.access"
+	"credential.rotate"
+	"config.change"
+	"config.deploy"
+	"security.event"
+	"security.injection"
+	"security.scan"
+	"operation.verify"
+	"operation.block"
+	"system.startup"
+	"system.update"
+	"system.rotate"
+)
+
+# =============================================================================
+# Internal helpers
+# =============================================================================
+
+# Get the resolved audit log file path.
+# Output: absolute path on stdout
+_audit_log_path() {
+	local dir="${AUDIT_LOG_DIR:-${AUDIT_LOG_DIR_DEFAULT}}"
+	local file="${AUDIT_LOG_FILE:-${dir}/${AUDIT_LOG_FILE_DEFAULT}}"
+	echo "$file"
+	return 0
+}
+
+# Ensure the audit log directory and file exist with correct permissions.
+# The log file is created with 0600 (owner read/write only).
+_audit_ensure_log() {
+	local log_file
+	log_file="$(_audit_log_path)"
+	local log_dir
+	log_dir="$(dirname "$log_file")"
+
+	if [[ ! -d "$log_dir" ]]; then
+		mkdir -p "$log_dir" 2>/dev/null || true
+		chmod 700 "$log_dir" 2>/dev/null || true
+	fi
+
+	if [[ ! -f "$log_file" ]]; then
+		: >"$log_file"
+		chmod 600 "$log_file" 2>/dev/null || true
+	fi
+
+	return 0
+}
+
+# Compute SHA-256 hash of a string.
+# Arguments: $1 — string to hash
+# Output: hex digest on stdout
+_audit_sha256() {
+	local input="$1"
+	# Use shasum (macOS/Linux) or sha256sum (Linux)
+	if command -v shasum &>/dev/null; then
+		printf '%s' "$input" | shasum -a 256 | cut -d' ' -f1
+	elif command -v sha256sum &>/dev/null; then
+		printf '%s' "$input" | sha256sum | cut -d' ' -f1
+	else
+		print_shared_error "No SHA-256 tool found (need shasum or sha256sum)" 2>/dev/null ||
+			echo "[ERROR] No SHA-256 tool found" >&2
+		return 1
+	fi
+	return 0
+}
+
+# Get the hash of the last entry in the audit log.
+# Output: hash on stdout (genesis hash if log is empty)
+_audit_last_hash() {
+	local log_file
+	log_file="$(_audit_log_path)"
+
+	if [[ ! -f "$log_file" ]] || [[ ! -s "$log_file" ]]; then
+		echo "$AUDIT_GENESIS_HASH"
+		return 0
+	fi
+
+	# Extract the hash field from the last line
+	local last_line
+	last_line="$(tail -1 "$log_file" 2>/dev/null || echo "")"
+
+	if [[ -z "$last_line" ]]; then
+		echo "$AUDIT_GENESIS_HASH"
+		return 0
+	fi
+
+	# Parse hash from JSON — use jq if available, fallback to grep
+	local hash
+	if command -v jq &>/dev/null; then
+		hash="$(echo "$last_line" | jq -r '.hash // empty' 2>/dev/null || echo "")"
+	else
+		# Fallback: extract "hash":"<value>" with grep
+		hash="$(echo "$last_line" | grep -oP '"hash"\s*:\s*"([a-f0-9]{64})"' | grep -oP '[a-f0-9]{64}' || echo "")"
+	fi
+
+	if [[ -z "$hash" ]]; then
+		echo "$AUDIT_GENESIS_HASH"
+		return 0
+	fi
+
+	echo "$hash"
+	return 0
+}
+
+# Validate an event type against the allowed list.
+# Arguments: $1 — event type string
+# Returns: 0 if valid, 1 if invalid
+_audit_validate_event_type() {
+	local event_type="$1"
+
+	local valid_type
+	for valid_type in "${AUDIT_EVENT_TYPES[@]}"; do
+		if [[ "$event_type" == "$valid_type" ]]; then
+			return 0
+		fi
+	done
+
+	return 1
+}
+
+# Escape a string for safe JSON embedding.
+# Handles: backslash, double-quote, newline, tab, carriage return.
+# Arguments: $1 — string to escape
+# Output: escaped string on stdout
+_audit_json_escape() {
+	local input="$1"
+	# Use jq if available for reliable escaping
+	if command -v jq &>/dev/null; then
+		printf '%s' "$input" | jq -Rs '.' | sed 's/^"//;s/"$//'
+		return 0
+	fi
+	# Fallback: manual escaping for common characters
+	local escaped="$input"
+	escaped="${escaped//\\/\\\\}"
+	escaped="${escaped//\"/\\\"}"
+	escaped="${escaped//$'\n'/\\n}"
+	escaped="${escaped//$'\t'/\\t}"
+	escaped="${escaped//$'\r'/\\r}"
+	echo "$escaped"
+	return 0
+}
+
+# Print info message (respects AUDIT_QUIET).
+_audit_info() {
+	local msg="$1"
+	if [[ "${AUDIT_QUIET:-false}" != "true" ]]; then
+		echo -e "${GREEN:-}[AUDIT]${NC:-} $msg" >&2
+	fi
+	return 0
+}
+
+# Print warning message.
+_audit_warn() {
+	local msg="$1"
+	echo -e "${YELLOW:-}[AUDIT WARN]${NC:-} $msg" >&2
+	return 0
+}
+
+# Print error message.
+_audit_error() {
+	local msg="$1"
+	echo -e "${RED:-}[AUDIT ERROR]${NC:-} $msg" >&2
+	return 0
+}
+
+# =============================================================================
+# Commands
+# =============================================================================
+
+# Log a security-sensitive event with hash chaining.
+#
+# Arguments:
+#   $1 — event type (e.g., "worker.dispatch")
+#   $2 — human-readable message
+#   $3+ — optional --detail key=value pairs
+#
+# The entry is a JSON object with fields:
+#   seq       — monotonic sequence number
+#   ts        — ISO 8601 timestamp
+#   type      — event type
+#   msg       — message
+#   detail    — optional key-value object
+#   actor     — USER or session ID
+#   host      — hostname
+#   prev_hash — SHA-256 of the previous entry's JSON (or genesis hash)
+#   hash      — SHA-256 of this entry (computed over all fields except hash)
+#
+# The hash chain works as follows:
+#   entry_N.prev_hash = entry_(N-1).hash
+#   entry_N.hash = SHA-256(entry_N without the hash field)
+#
+# Tampering with any entry breaks the chain because:
+#   - Modifying entry_N changes its hash
+#   - entry_(N+1).prev_hash no longer matches entry_N.hash
+cmd_log() {
+	local event_type="${1:-}"
+	local message="${2:-}"
+
+	if [[ -z "$event_type" ]]; then
+		_audit_error "Event type required. Usage: audit-log-helper.sh log <event-type> <message>"
+		return 1
+	fi
+
+	if ! _audit_validate_event_type "$event_type"; then
+		_audit_error "Invalid event type: $event_type"
+		echo "Valid types: ${AUDIT_EVENT_TYPES[*]}" >&2
+		return 1
+	fi
+
+	if [[ -z "$message" ]]; then
+		_audit_error "Message required. Usage: audit-log-helper.sh log <event-type> <message>"
+		return 1
+	fi
+
+	# Truncate message if too long
+	if [[ ${#message} -gt $AUDIT_MAX_MESSAGE_LEN ]]; then
+		message="${message:0:$AUDIT_MAX_MESSAGE_LEN}...[truncated]"
+	fi
+
+	shift 2
+
+	# Parse --detail key=value pairs
+	local detail_json="{}"
+	local detail_pairs=""
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--detail)
+			if [[ $# -lt 2 ]]; then
+				_audit_error "--detail requires a key=value argument"
+				return 1
+			fi
+			local kv="$2"
+			local key="${kv%%=*}"
+			local value="${kv#*=}"
+			if [[ "$key" == "$kv" ]]; then
+				_audit_error "Invalid --detail format: $kv (expected key=value)"
+				return 1
+			fi
+			local escaped_key
+			escaped_key="$(_audit_json_escape "$key")"
+			local escaped_value
+			escaped_value="$(_audit_json_escape "$value")"
+			if [[ -z "$detail_pairs" ]]; then
+				detail_pairs="\"${escaped_key}\":\"${escaped_value}\""
+			else
+				detail_pairs="${detail_pairs},\"${escaped_key}\":\"${escaped_value}\""
+			fi
+			shift 2
+			;;
+		*)
+			_audit_warn "Unknown argument: $1 (ignored)"
+			shift
+			;;
+		esac
+	done
+
+	if [[ -n "$detail_pairs" ]]; then
+		detail_json="{${detail_pairs}}"
+	fi
+
+	# Truncate detail if too long
+	if [[ ${#detail_json} -gt $AUDIT_MAX_DETAIL_LEN ]]; then
+		detail_json='{"error":"detail_truncated"}'
+	fi
+
+	_audit_ensure_log
+
+	local log_file
+	log_file="$(_audit_log_path)"
+
+	# Get sequence number (line count + 1)
+	local seq
+	if [[ -s "$log_file" ]]; then
+		seq="$(wc -l <"$log_file" | tr -d ' ')"
+		seq=$((seq + 1))
+	else
+		seq=1
+	fi
+
+	# Get previous hash
+	local prev_hash
+	prev_hash="$(_audit_last_hash)"
+
+	# Build timestamp
+	local ts
+	ts="$(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || date '+%Y-%m-%dT%H:%M:%SZ')"
+
+	# Actor: prefer AIDEVOPS_SESSION_ID, fall back to USER
+	local actor="${AIDEVOPS_SESSION_ID:-${USER:-unknown}}"
+
+	# Hostname
+	local host
+	host="$(hostname -s 2>/dev/null || echo "unknown")"
+
+	# Escape message for JSON
+	local escaped_msg
+	escaped_msg="$(_audit_json_escape "$message")"
+
+	# Build the entry without hash (hash is computed over this)
+	local entry_no_hash
+	entry_no_hash="{\"seq\":${seq},\"ts\":\"${ts}\",\"type\":\"${event_type}\",\"msg\":\"${escaped_msg}\",\"detail\":${detail_json},\"actor\":\"${actor}\",\"host\":\"${host}\",\"prev_hash\":\"${prev_hash}\"}"
+
+	# Compute hash of the entry
+	local entry_hash
+	entry_hash="$(_audit_sha256 "$entry_no_hash")"
+
+	# Build final entry with hash
+	local entry
+	entry="{\"seq\":${seq},\"ts\":\"${ts}\",\"type\":\"${event_type}\",\"msg\":\"${escaped_msg}\",\"detail\":${detail_json},\"actor\":\"${actor}\",\"host\":\"${host}\",\"prev_hash\":\"${prev_hash}\",\"hash\":\"${entry_hash}\"}"
+
+	# Append atomically (single write, no partial lines)
+	echo "$entry" >>"$log_file"
+
+	_audit_info "Logged ${event_type} (seq=${seq})"
+
+	return 0
+}
+
+# Verify the integrity of the audit log hash chain.
+#
+# Checks:
+#   1. Each entry is valid JSON
+#   2. Each entry's hash matches SHA-256(entry without hash field)
+#   3. Each entry's prev_hash matches the previous entry's hash
+#   4. First entry's prev_hash is the genesis hash
+#
+# Arguments:
+#   --quiet — suppress per-entry output, only show result
+#
+# Returns: 0 if chain is valid, 1 if tampered/broken
+cmd_verify() {
+	local quiet="false"
+	if [[ "${1:-}" == "--quiet" ]]; then
+		quiet="true"
+	fi
+
+	local log_file
+	log_file="$(_audit_log_path)"
+
+	if [[ ! -f "$log_file" ]]; then
+		_audit_info "No audit log found — nothing to verify"
+		return 0
+	fi
+
+	if [[ ! -s "$log_file" ]]; then
+		_audit_info "Audit log is empty — nothing to verify"
+		return 0
+	fi
+
+	local total_lines
+	total_lines="$(wc -l <"$log_file" | tr -d ' ')"
+
+	if [[ "$quiet" != "true" ]]; then
+		_audit_info "Verifying ${total_lines} entries..."
+	fi
+
+	local line_num=0
+	local expected_prev_hash="$AUDIT_GENESIS_HASH"
+	local errors=0
+	local line
+
+	while IFS= read -r line; do
+		line_num=$((line_num + 1))
+
+		# Skip empty lines
+		if [[ -z "$line" ]]; then
+			continue
+		fi
+
+		# Check 1: Valid JSON
+		if command -v jq &>/dev/null; then
+			if ! echo "$line" | jq -e '.' &>/dev/null; then
+				_audit_error "Entry ${line_num}: Invalid JSON"
+				errors=$((errors + 1))
+				continue
+			fi
+		fi
+
+		# Extract fields
+		local stored_hash stored_prev_hash entry_no_hash_json
+		if command -v jq &>/dev/null; then
+			stored_hash="$(echo "$line" | jq -r '.hash // empty')"
+			stored_prev_hash="$(echo "$line" | jq -r '.prev_hash // empty')"
+			# Reconstruct entry without hash field for verification
+			entry_no_hash_json="$(echo "$line" | jq -c 'del(.hash)')"
+		else
+			# Fallback: regex extraction
+			stored_hash="$(echo "$line" | grep -oP '"hash"\s*:\s*"([a-f0-9]{64})"' | grep -oP '[a-f0-9]{64}' | tail -1 || echo "")"
+			stored_prev_hash="$(echo "$line" | grep -oP '"prev_hash"\s*:\s*"([a-f0-9]{64})"' | grep -oP '[a-f0-9]{64}' || echo "")"
+			# Remove the trailing ,"hash":"..." from the line
+			entry_no_hash_json="$(echo "$line" | sed 's/,"hash":"[a-f0-9]\{64\}"}/}/')"
+		fi
+
+		if [[ -z "$stored_hash" ]]; then
+			_audit_error "Entry ${line_num}: Missing hash field"
+			errors=$((errors + 1))
+			continue
+		fi
+
+		# Check 2: prev_hash matches expected
+		if [[ "$stored_prev_hash" != "$expected_prev_hash" ]]; then
+			_audit_error "Entry ${line_num}: Chain broken — prev_hash mismatch"
+			_audit_error "  Expected: ${expected_prev_hash}"
+			_audit_error "  Found:    ${stored_prev_hash}"
+			errors=$((errors + 1))
+		fi
+
+		# Check 3: hash matches content
+		local computed_hash
+		computed_hash="$(_audit_sha256 "$entry_no_hash_json")"
+
+		if [[ "$computed_hash" != "$stored_hash" ]]; then
+			_audit_error "Entry ${line_num}: Hash mismatch — entry has been tampered with"
+			_audit_error "  Stored:   ${stored_hash}"
+			_audit_error "  Computed: ${computed_hash}"
+			errors=$((errors + 1))
+		fi
+
+		# Next entry should reference this entry's hash
+		expected_prev_hash="$stored_hash"
+
+	done <"$log_file"
+
+	if [[ $errors -gt 0 ]]; then
+		_audit_error "Verification FAILED: ${errors} error(s) in ${total_lines} entries"
+		return 1
+	fi
+
+	if [[ "$quiet" != "true" ]]; then
+		_audit_info "Verification PASSED: ${total_lines} entries, chain intact"
+	fi
+
+	return 0
+}
+
+# Show the last N entries from the audit log.
+# Arguments: $1 — number of entries (default: 10)
+cmd_tail() {
+	local count="${1:-10}"
+	local log_file
+	log_file="$(_audit_log_path)"
+
+	if [[ ! -f "$log_file" ]] || [[ ! -s "$log_file" ]]; then
+		_audit_info "Audit log is empty"
+		return 0
+	fi
+
+	if command -v jq &>/dev/null; then
+		tail -"${count}" "$log_file" | jq -c '{seq, ts, type, msg, actor}'
+	else
+		tail -"${count}" "$log_file"
+	fi
+
+	return 0
+}
+
+# Show audit log status and statistics.
+cmd_status() {
+	local log_file
+	log_file="$(_audit_log_path)"
+
+	echo "Audit Log Status"
+	echo "================"
+	echo "Version:  ${AUDIT_VERSION}"
+	echo "Log file: ${log_file}"
+
+	if [[ ! -f "$log_file" ]]; then
+		echo "Status:   No log file (will be created on first event)"
+		return 0
+	fi
+
+	local size_bytes
+	size_bytes="$(wc -c <"$log_file" | tr -d ' ')"
+	local size_human
+	if [[ $size_bytes -gt 1048576 ]]; then
+		size_human="$((size_bytes / 1048576)) MB"
+	elif [[ $size_bytes -gt 1024 ]]; then
+		size_human="$((size_bytes / 1024)) KB"
+	else
+		size_human="${size_bytes} bytes"
+	fi
+
+	local entry_count
+	entry_count="$(wc -l <"$log_file" | tr -d ' ')"
+
+	echo "Entries:  ${entry_count}"
+	echo "Size:     ${size_human}"
+
+	# Show first and last timestamps
+	if [[ $entry_count -gt 0 ]]; then
+		local first_ts last_ts
+		if command -v jq &>/dev/null; then
+			first_ts="$(head -1 "$log_file" | jq -r '.ts // "unknown"' 2>/dev/null || echo "unknown")"
+			last_ts="$(tail -1 "$log_file" | jq -r '.ts // "unknown"' 2>/dev/null || echo "unknown")"
+		else
+			first_ts="unknown"
+			last_ts="unknown"
+		fi
+		echo "First:    ${first_ts}"
+		echo "Last:     ${last_ts}"
+	fi
+
+	# Quick chain verification
+	echo ""
+	if cmd_verify --quiet 2>/dev/null; then
+		echo -e "Chain:    ${GREEN:-}INTACT${NC:-}"
+	else
+		echo -e "Chain:    ${RED:-}BROKEN${NC:-} — run 'audit-log-helper.sh verify' for details"
+	fi
+
+	# Event type breakdown
+	if [[ $entry_count -gt 0 ]] && command -v jq &>/dev/null; then
+		echo ""
+		echo "Event breakdown:"
+		jq -r '.type' "$log_file" 2>/dev/null | sort | uniq -c | sort -rn | while IFS= read -r line; do
+			echo "  $line"
+		done
+	fi
+
+	return 0
+}
+
+# Rotate the audit log when it exceeds a size threshold.
+# The rotated file is renamed with a timestamp suffix.
+# A rotation event is logged in the new log file.
+#
+# Arguments:
+#   --max-size MB — size threshold in megabytes (default: 50)
+cmd_rotate() {
+	local max_size_mb="$AUDIT_DEFAULT_ROTATE_MB"
+
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--max-size)
+			max_size_mb="${2:-$AUDIT_DEFAULT_ROTATE_MB}"
+			shift 2
+			;;
+		*)
+			shift
+			;;
+		esac
+	done
+
+	local log_file
+	log_file="$(_audit_log_path)"
+
+	if [[ ! -f "$log_file" ]]; then
+		_audit_info "No audit log to rotate"
+		return 0
+	fi
+
+	local size_bytes
+	size_bytes="$(wc -c <"$log_file" | tr -d ' ')"
+	local max_size_bytes=$((max_size_mb * 1048576))
+
+	if [[ $size_bytes -lt $max_size_bytes ]]; then
+		local size_mb=$((size_bytes / 1048576))
+		_audit_info "Log size (${size_mb}MB) below threshold (${max_size_mb}MB) — no rotation needed"
+		return 0
+	fi
+
+	# Verify chain before rotation
+	if ! cmd_verify --quiet 2>/dev/null; then
+		_audit_warn "Chain verification failed before rotation — rotating anyway but chain is already broken"
+	fi
+
+	# Rotate: rename with timestamp
+	local rotate_ts
+	rotate_ts="$(date -u '+%Y%m%dT%H%M%SZ' 2>/dev/null || date '+%Y%m%dT%H%M%SZ')"
+	local rotated_file="${log_file%.jsonl}.${rotate_ts}.jsonl"
+
+	mv "$log_file" "$rotated_file"
+	chmod 400 "$rotated_file" 2>/dev/null || true # Read-only for rotated files
+
+	_audit_info "Rotated to ${rotated_file}"
+
+	# Log rotation event in the new (empty) log file
+	cmd_log "system.rotate" "Audit log rotated" \
+		--detail "rotated_file=${rotated_file}" \
+		--detail "entries=$(wc -l <"$rotated_file" | tr -d ' ')" \
+		--detail "size_bytes=${size_bytes}"
+
+	return 0
+}
+
+# Show help text.
+cmd_help() {
+	cat <<'HELP'
+audit-log-helper.sh — Tamper-evident audit logging with hash chaining (t1412.8)
+
+Each log entry includes a SHA-256 hash of the previous entry, creating a
+chain. Modifying or deleting any entry breaks the chain, detectable via
+the 'verify' command.
+
+Commands:
+  log <type> <message> [--detail k=v ...]   Append an audit event
+  verify [--quiet]                           Verify hash chain integrity
+  tail [N]                                   Show last N entries (default: 10)
+  status                                     Show log status and statistics
+  rotate [--max-size MB]                     Rotate log if over size threshold
+  help                                       Show this help
+
+Event types:
+  worker.dispatch     Worker spawned by pulse/supervisor
+  worker.complete     Worker finished (success or failure)
+  worker.error        Worker encountered an error
+  credential.access   Credential read/write
+  credential.rotate   Credential rotation
+  config.change       Framework config modification
+  config.deploy       Config deployment (setup.sh)
+  security.event      Security event (generic)
+  security.injection  Prompt injection detected
+  security.scan       Security scan performed
+  operation.verify    High-stakes operation verified
+  operation.block     High-stakes operation blocked
+  system.startup      Framework startup
+  system.update       Framework update
+  system.rotate       Audit log rotation
+
+Examples:
+  # Log a worker dispatch
+  audit-log-helper.sh log worker.dispatch "Dispatched worker for issue #42" \
+    --detail repo=myproject --detail task_id=t1412
+
+  # Log a credential access
+  audit-log-helper.sh log credential.access "Read GitHub token for dispatch" \
+    --detail scope=repo:read
+
+  # Verify the audit chain
+  audit-log-helper.sh verify
+
+  # Show recent events
+  audit-log-helper.sh tail 20
+
+  # Check status
+  audit-log-helper.sh status
+
+Environment:
+  AUDIT_LOG_DIR    Override log directory
+  AUDIT_LOG_FILE   Override log file path
+  AUDIT_QUIET      Suppress informational output ("true")
+HELP
+	return 0
+}
+
+# =============================================================================
+# Main dispatch
+# =============================================================================
+
+main() {
+	local command="${1:-help}"
+	shift 2>/dev/null || true
+
+	case "$command" in
+	log)
+		cmd_log "$@"
+		;;
+	verify)
+		cmd_verify "$@"
+		;;
+	tail)
+		cmd_tail "$@"
+		;;
+	status)
+		cmd_status "$@"
+		;;
+	rotate)
+		cmd_rotate "$@"
+		;;
+	help | --help | -h)
+		cmd_help
+		;;
+	*)
+		_audit_error "Unknown command: $command"
+		cmd_help
+		return 1
+		;;
+	esac
+}
+
+main "$@"
