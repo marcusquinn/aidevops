@@ -186,8 +186,8 @@ sanitize_provider() {
 }
 
 # Get cached result for ip+provider; returns empty string if miss/expired
-# ip is validated as IPv4 (digits/dots only) by callers; provider is validated
-# by sanitize_provider ([a-zA-Z0-9_-]+) — neither can contain SQL metacharacters.
+# Defense-in-depth: escape single quotes in all interpolated values even though
+# ip is validated as IPv4 and provider is validated by sanitize_provider.
 cache_get() {
 	local ip="$1"
 	local provider="$2"
@@ -201,16 +201,19 @@ cache_get() {
 	fi
 	local now
 	now=$(date +%s)
+	# Escape single quotes in all interpolated values (SQL standard: ' → '')
+	local safe_ip="${ip//\'/\'\'}"
+	local safe_provider="${provider//\'/\'\'}"
 	local result
 	result=$(sqlite3 "$IP_REP_CACHE_DB" \
-		"SELECT result FROM ip_cache WHERE ip='${ip}' AND provider='${provider}' AND (cached_at + ttl) > ${now} LIMIT 1;" \
+		"SELECT result FROM ip_cache WHERE ip='${safe_ip}' AND provider='${safe_provider}' AND (cached_at + ttl) > ${now} LIMIT 1;" \
 		2>/dev/null || true)
 	echo "$result"
 	return 0
 }
 
 # Store result in cache
-# ip and provider are validated before this call; result (JSON) has single quotes escaped.
+# Defense-in-depth: escape single quotes in all interpolated values consistently.
 cache_put() {
 	local ip="$1"
 	local provider="$2"
@@ -224,11 +227,12 @@ cache_put() {
 	fi
 	local now
 	now=$(date +%s)
-	# Escape single quotes in result JSON by doubling them (SQL standard)
-	local escaped_result
-	escaped_result=$(printf '%s' "$result" | sed "s/'/''/g")
+	# Escape single quotes in all interpolated values (SQL standard: ' → '')
+	local safe_ip="${ip//\'/\'\'}"
+	local safe_provider="${provider//\'/\'\'}"
+	local safe_result="${result//\'/\'\'}"
 	sqlite3 "$IP_REP_CACHE_DB" \
-		"INSERT OR REPLACE INTO ip_cache (ip, provider, result, cached_at, ttl) VALUES ('${ip}', '${provider}', '${escaped_result}', ${now}, ${ttl});" \
+		"INSERT OR REPLACE INTO ip_cache (ip, provider, result, cached_at, ttl) VALUES ('${safe_ip}', '${safe_provider}', '${safe_result}', ${now}, ${ttl});" \
 		2>/dev/null || true
 	return 0
 }
