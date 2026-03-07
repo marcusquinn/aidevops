@@ -719,11 +719,12 @@ _create_quality_debt_issues() {
 	gh label create "quality-debt" --repo "$repo_slug" --color "D93F0B" \
 		--description "Unactioned review feedback from merged PRs" --force 2>/dev/null || true
 
-	# Check existing quality-debt issues to avoid duplicates
-	local existing_issues
-	existing_issues=$(gh issue list --repo "$repo_slug" \
-		--label "quality-debt" --state open \
-		--json title --jq '.[].title' 2>/dev/null || echo "")
+	# Check existing quality-debt issues to avoid duplicates.
+	# Fetch both title and number so we can append to existing file-level issues (t1411).
+	local existing_issues_json
+	existing_issues_json=$(gh issue list --repo "$repo_slug" \
+		--label "quality-debt" --state open --limit 200 \
+		--json title,number 2>/dev/null || echo "[]")
 
 	# Group findings by file (null files grouped as "general")
 	local files
@@ -765,13 +766,7 @@ _create_quality_debt_issues() {
 			issue_title="quality-debt: ${file} — PR #${pr_num} review feedback (${max_severity})"
 		fi
 
-		# Skip if duplicate
-		if echo "$existing_issues" | grep -qF "$issue_title"; then
-			echo "  Skipping duplicate: ${issue_title}" >&2
-			continue
-		fi
-
-		# Build issue body
+		# Build finding details (shared between new issue and comment append)
 		local reviewers
 		reviewers=$(echo "$file_findings" | jq -r '[.[].reviewer] | unique | join(", ")')
 
@@ -784,6 +779,50 @@ _create_quality_debt_issues() {
 			"---\n"
 		')
 
+		# Skip if exact duplicate (same PR + file combination)
+		local exact_title_match
+		exact_title_match=$(echo "$existing_issues_json" | jq -r --arg t "$issue_title" \
+			'.[] | select(.title == $t) | .number' 2>/dev/null | head -1 || echo "")
+		if [[ -n "$exact_title_match" ]]; then
+			echo "  Skipping duplicate: ${issue_title}" >&2
+			continue
+		fi
+
+		# Cross-PR file dedup (t1411): check if there's an existing open
+		# quality-debt issue for the same FILE from a different PR. If so,
+		# append findings as a comment instead of creating a new issue.
+		# This batches all outstanding feedback for a file into one issue,
+		# saving worker sessions (one worker fixes all feedback for a file).
+		local existing_file_issue=""
+		if [[ "$file" != "general" ]]; then
+			existing_file_issue=$(echo "$existing_issues_json" | jq -r --arg f "$file" \
+				'[.[] | select(.title | startswith("quality-debt: \($f) —"))] | .[0].number // empty' \
+				2>/dev/null || echo "")
+		fi
+
+		if [[ -n "$existing_file_issue" ]]; then
+			# Append findings as a comment on the existing issue
+			local comment_body="## Additional Review Feedback (PR #${pr_num})
+
+**Reviewers**: ${reviewers}
+**Findings**: ${file_finding_count}
+**Max severity**: ${max_severity}
+
+---
+
+${finding_details}
+
+---
+_Appended by \`quality-feedback-helper.sh scan-merged\` (cross-PR file dedup, t1411)._"
+
+			gh issue comment "$existing_file_issue" --repo "$repo_slug" \
+				--body "$comment_body" >/dev/null 2>&1 || true
+			echo "  Appended to existing #${existing_file_issue} for ${file} (PR #${pr_num})" >&2
+			created=$((created + 1))
+			continue
+		fi
+
+		# No existing issue for this file — create a new one
 		local issue_body
 		issue_body="## Unactioned Review Feedback
 
