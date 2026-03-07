@@ -364,30 +364,26 @@ Only include memory IDs that actually appear in the MEMORIES above."
 		return 0
 	fi
 
-	# Validate source_ids is a non-empty JSON array before persisting
-	local source_ids_valid="false"
+	# Validate source_ids: filter to only IDs matching the expected mem_* pattern.
+	# This prevents a consolidation record with garbage/hallucinated IDs from being
+	# persisted, which would incorrectly mark those IDs as "already consolidated".
+	local validated_source_ids="[]"
 	if command -v jq &>/dev/null; then
-		if echo "$source_ids" | jq -e 'type == "array" and length > 0' >/dev/null 2>&1; then
-			source_ids_valid="true"
-		fi
+		validated_source_ids=$(printf '%s' "$source_ids" | jq -c '[.[] | select(type == "string") | select(test("^mem_[0-9]{14}_[0-9a-f]+$"))]' 2>/dev/null || echo "[]")
 	elif command -v python3 &>/dev/null; then
-		if echo "$source_ids" | python3 -c "import sys,json; d=json.load(sys.stdin); assert isinstance(d,list) and len(d)>0" 2>/dev/null; then
-			source_ids_valid="true"
-		fi
+		validated_source_ids=$(printf '%s' "$source_ids" | python3 -c "import sys, json, re; ids=json.load(sys.stdin); print(json.dumps([i for i in ids if isinstance(i, str) and re.match(r'^mem_[0-9]{14}_[0-9a-f]+$', i)]))" 2>/dev/null || echo "[]")
 	fi
 
-	if [[ "$source_ids_valid" != "true" ]]; then
-		[[ "$quiet" != "true" ]] && log_warn "Consolidate: source_ids empty or malformed, skipping insert"
+	if [[ "$validated_source_ids" == "[]" ]]; then
+		[[ "$quiet" != "true" ]] && log_warn "Consolidate: LLM returned no valid source_ids, skipping"
 		echo "0"
 		return 0
 	fi
 
 	# Store the consolidation using printf to safely handle special characters.
-	# The insight/connections/source_ids come from LLM output — single-quote
-	# escaping alone is insufficient for arbitrary text. Use a heredoc with
-	# parameterised-style escaping via printf %q would be ideal, but SQLite CLI
-	# doesn't support bind parameters. We sanitise by stripping control chars
-	# and escaping single quotes.
+	# The insight/connections come from LLM output — single-quote escaping alone
+	# is insufficient for arbitrary text. We sanitise by stripping control chars
+	# and escaping single quotes. source_ids uses the validated version.
 	local cons_id
 	cons_id="cons_$(date +%Y%m%d%H%M%S)_$(head -c 4 /dev/urandom | xxd -p)"
 
@@ -395,7 +391,7 @@ Only include memory IDs that actually appear in the MEMORIES above."
 	local safe_insight safe_connections safe_source_ids
 	safe_insight=$(printf '%s' "$insight" | tr -d '\000-\010\013\014\016-\037' | sed "s/'/''/g")
 	safe_connections=$(printf '%s' "$connections" | tr -d '\000-\010\013\014\016-\037' | sed "s/'/''/g")
-	safe_source_ids=$(printf '%s' "$source_ids" | tr -d '\000-\010\013\014\016-\037' | sed "s/'/''/g")
+	safe_source_ids=$(printf '%s' "$validated_source_ids" | tr -d '\000-\010\013\014\016-\037' | sed "s/'/''/g")
 
 	db "$MEMORY_DB" <<EOF
 INSERT INTO memory_consolidations (id, source_ids, insight, connections)
