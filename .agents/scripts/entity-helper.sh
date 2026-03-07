@@ -54,8 +54,8 @@ readonly VALID_CHANNELS="matrix simplex email cli slack discord telegram irc web
 # Valid interaction directions
 readonly VALID_DIRECTIONS="inbound outbound system"
 
-# Valid confidence levels for identity links
-readonly VALID_LINK_CONFIDENCE="confirmed suggested inferred"
+# Confidence levels for identity links: validated by SQL CHECK constraint
+# in entity_channels table (confirmed, suggested, inferred)
 
 #######################################
 # SQLite wrapper (same as memory system)

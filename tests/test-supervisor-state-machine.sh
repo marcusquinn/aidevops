@@ -19,7 +19,6 @@ set -euo pipefail
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SCRIPTS_DIR="$REPO_DIR/.agents/scripts"
 SUPERVISOR_SCRIPT="$SCRIPTS_DIR/supervisor-helper.sh"
-VERBOSE="${1:-}"
 
 # --- Test Framework ---
 PASS_COUNT=0
@@ -1963,6 +1962,7 @@ TODOEOF
 	test_db "INSERT OR REPLACE INTO tasks (id, status) VALUES ('t28380', 'complete');"
 	reset_output=$(
 		# Subshell: stub supervisor globals, source sanity-check.sh, call the guard
+		# shellcheck disable=SC2034 # Used by sourced sanity-check.sh
 		SUPERVISOR_DB="$TEST_DIR/supervisor.db"
 		# Stubs for functions expected by sanity-check.sh from supervisor-helper.sh
 		db() { sqlite3 -cmd ".timeout 5000" "$@"; }
