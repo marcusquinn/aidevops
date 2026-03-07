@@ -46,6 +46,8 @@ tools:
 - OpenAPI Search MCP: Search and explore any OpenAPI spec — zero install, remote Cloudflare Worker
 
 **Config Location**: `configs/mcp-templates/`
+
+**Security**: MCP servers are a trust boundary -- they access conversation context, credentials, and network. Verify source, scan dependencies (`npx @socketsecurity/cli npm info <pkg>`), and scan source (`skill-scanner scan /path`) before installing. See `tools/mcp-toolkit/mcporter.md` "Security Considerations".
 <!-- AI-CONTEXT-END -->
 
 This document provides comprehensive setup and usage instructions for advanced Model Context Protocol (MCP) integrations that dramatically expand our AI development capabilities.
@@ -466,6 +468,25 @@ See `services/document-processing/unstract.md` for detailed documentation.
 - API testing and validation
 
 ## 🔐 **Security & API Keys**
+
+### **MCP Server Security Warning**
+
+**Every MCP server you install is a trust decision.** MCP servers run as persistent processes with access to your conversation context, credentials passed via environment variables, and network connectivity. A malicious or compromised MCP server can:
+
+- **Inject prompt instructions** via tool responses to manipulate your AI agent
+- **Exfiltrate credentials** passed in `env` blocks or inherited from your shell
+- **Log conversation context** including code, file contents, and sensitive data
+- **Introduce supply chain risks** via compromised npm/pip dependencies
+
+**Before installing any MCP server:**
+
+1. Verify the source repository and maintainer reputation
+2. Scan dependencies with Socket.dev: `npx @socketsecurity/cli npm info <package>`
+3. Scan source code with Cisco Skill Scanner: `skill-scanner scan /path/to/mcp-source`
+4. Use scoped API keys with minimal permissions -- never pass full-access tokens
+5. Pin package versions in your config -- avoid `@latest` in production
+
+See `tools/mcp-toolkit/mcporter.md` "Security Considerations" for the full risk model and mitigation checklist.
 
 ### **Required API Keys**
 

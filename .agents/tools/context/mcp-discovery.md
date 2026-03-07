@@ -307,8 +307,13 @@ This would reduce chrome-devtools from ~17K to ~1.5K tokens.
 
 The current index prepares for this by tracking tool-level metadata.
 
+## Security Note
+
+MCP servers are a trust boundary. Before enabling or installing a new MCP server discovered through `mcp-index-helper.sh` or MCPorter, verify the source and scan dependencies. See `tools/mcp-toolkit/mcporter.md` "Security Considerations" for the full risk model and pre-install checklist.
+
 ## Related
 
 - `tools/build-agent/build-agent.md` - MCP placement rules
 - `aidevops/architecture.md` - Agent design patterns
 - `generate-opencode-agents.sh` - Agent generation with MCP config
+- `tools/mcp-toolkit/mcporter.md` - MCP security considerations

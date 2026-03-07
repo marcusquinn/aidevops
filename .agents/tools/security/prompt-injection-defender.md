@@ -52,7 +52,7 @@ Every point where an agent reads external content is a potential injection vecto
 | Surface | Risk | Example attack |
 |---------|------|----------------|
 | **Web fetch results** | High | Malicious site embeds `<!-- ignore previous instructions -->` in HTML comments |
-| **MCP tool outputs** | High | Compromised MCP server returns injection payload in tool response |
+| **MCP tool outputs** | High | Compromised or malicious MCP server returns injection payload in tool response. MCP servers are persistent processes with network access — a compromised server can inject on every tool call. See `tools/mcp-toolkit/mcporter.md` "Security Considerations" for the full MCP trust model. |
 | **PR content** | High | Attacker submits PR with injection in diff, commit message, or file content |
 | **Repo file reads** | Medium | Malicious dependency includes injection in README, config, or code comments |
 | **User uploads** | High | Document/image metadata contains hidden instructions |
@@ -598,6 +598,8 @@ These are complementary, not competing:
 - `tools/security/tirith.md` — Terminal command security guard
 - `tools/code-review/security-analysis.md` — Ferret AI config scanner (detects injection in `.claude/`, `.cursor/`, etc.)
 - `tools/code-review/skill-scanner.md` — Skill import security scanning
+- `tools/mcp-toolkit/mcporter.md` — MCP server security considerations (install-time trust model)
+- `services/monitoring/socket.md` — Socket.dev dependency scanning for MCP server packages
 - [@stackone/defender](https://www.npmjs.com/package/@stackone/defender) — Product-side prompt injection defense for Node.js/TypeScript (Apache-2.0)
 - [lasso-security/claude-hooks](https://github.com/lasso-security/claude-hooks) — Claude Code PostToolUse hooks (MIT)
 - [OWASP LLM Top 10 — Prompt Injection](https://owasp.org/www-project-top-10-for-large-language-model-applications/) — Industry standard reference
