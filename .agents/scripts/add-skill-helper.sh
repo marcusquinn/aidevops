@@ -2,8 +2,8 @@
 # =============================================================================
 # Add External Skill Helper
 # =============================================================================
-# Import external skills from GitHub repos or ClawdHub, convert to aidevops
-# format, handle conflicts, and track upstream sources for update detection.
+# Import external skills from GitHub repos, ClawdHub, or raw URLs, convert to
+# aidevops format, handle conflicts, and track upstream sources for update detection.
 #
 # Usage:
 #   add-skill-helper.sh add <url|owner/repo|clawdhub:slug> [--name <name>] [--force] [--skip-security]
@@ -18,6 +18,7 @@
 #   add-skill-helper.sh add vercel-labs/agent-skills --name vercel
 #   add-skill-helper.sh add clawdhub:caldav-calendar
 #   add-skill-helper.sh add https://clawdhub.com/Asleep123/caldav-calendar
+#   add-skill-helper.sh add https://convos.org/skill.md --name convos
 #   add-skill-helper.sh check-updates
 # =============================================================================
 
@@ -42,7 +43,7 @@ LOG_PREFIX="add-skill"
 
 show_help() {
 	cat <<'EOF'
-Add External Skill Helper - Import skills from GitHub or ClawdHub to aidevops
+Add External Skill Helper - Import skills from GitHub, ClawdHub, or URLs to aidevops
 
 USAGE:
     add-skill-helper.sh <command> [options]
@@ -76,12 +77,19 @@ EXAMPLES:
     # Import from ClawdHub (full URL)
     add-skill-helper.sh add https://clawdhub.com/Asleep123/caldav-calendar
 
+    # Import from a raw URL (markdown file)
+    add-skill-helper.sh add https://convos.org/skill.md --name convos
+
+    # Import from any URL hosting a skill/markdown file
+    add-skill-helper.sh add https://example.com/path/to/SKILL.md
+
     # Check all imported skills for updates
     add-skill-helper.sh check-updates
 
 SUPPORTED SOURCES:
     - GitHub repos (owner/repo or full URL)
     - ClawdHub registry (clawdhub:slug or clawdhub.com URL)
+    - Raw URLs (any URL ending in .md or serving markdown content)
 
 SUPPORTED FORMATS:
     - SKILL.md (OpenSkills/Claude Code/ClawdHub format)
@@ -396,6 +404,7 @@ EOF
 }
 
 # Register skill in skill-sources.json
+# Args: name upstream_url local_path format commit merge_strategy notes [upstream_hash]
 register_skill() {
 	local name="$1"
 	local upstream_url="$2"
@@ -404,6 +413,7 @@ register_skill() {
 	local commit="${5:-}"
 	local merge_strategy="${6:-added}"
 	local notes="${7:-}"
+	local upstream_hash="${8:-}"
 
 	ensure_skill_sources
 
@@ -432,6 +442,7 @@ register_skill() {
 	timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
 	# Create new skill entry using jq for proper JSON escaping
+	# Include upstream_hash field for URL-sourced skills (content-hash comparison)
 	local new_entry
 	new_entry=$(jq -n \
 		--arg name "$name" \
@@ -443,6 +454,7 @@ register_skill() {
 		--arg last_checked "$timestamp" \
 		--arg merge_strategy "$merge_strategy" \
 		--arg notes "$notes" \
+		--arg upstream_hash "$upstream_hash" \
 		'{
             name: $name,
             upstream_url: $upstream_url,
@@ -453,7 +465,7 @@ register_skill() {
             last_checked: $last_checked,
             merge_strategy: $merge_strategy,
             notes: $notes
-        }')
+        } + (if $upstream_hash != "" then { upstream_hash: $upstream_hash } else {} end)')
 
 	local tmp_file
 	tmp_file=$(mktemp)
@@ -703,6 +715,20 @@ cmd_add() {
 		return $?
 	fi
 
+	# Detect raw URL source (not GitHub, not ClawdHub — a direct URL to a .md file)
+	# Matches: https://example.com/skill.md, https://convos.org/SKILL.md, etc.
+	# Also matches URLs without .md extension if they start with http(s)://
+	# and are not github.com URLs (those go through the GitHub clone path)
+	local is_raw_url=false
+	if [[ "$url" =~ ^https?:// && "$url" != *github.com* && "$url" != *clawdhub.com* ]]; then
+		is_raw_url=true
+	fi
+
+	if [[ "$is_raw_url" == true ]]; then
+		cmd_add_url "$url" "$custom_name" "$force" "$dry_run" "$skip_security"
+		return $?
+	fi
+
 	# Parse GitHub URL
 	local parsed owner repo subpath
 	parsed=$(parse_github_url "$url")
@@ -710,7 +736,7 @@ cmd_add() {
 
 	if [[ -z "$owner" || -z "$repo" ]]; then
 		log_error "Could not parse source URL: $url"
-		log_info "Expected: owner/repo, https://github.com/owner/repo, or clawdhub:slug"
+		log_info "Expected: owner/repo, https://github.com/owner/repo, clawdhub:slug, or a raw URL"
 		return 1
 	fi
 
@@ -952,6 +978,239 @@ cmd_add() {
 	# Remind about setup.sh
 	echo ""
 	log_info "Run './setup.sh' to create symlinks for other AI assistants"
+
+	return 0
+}
+
+# Import a skill from a raw URL (not GitHub, not ClawdHub)
+# Fetches with curl, computes SHA-256 content hash, registers with format_detected: "url"
+cmd_add_url() {
+	local url="$1"
+	local custom_name="$2"
+	local force="$3"
+	local dry_run="$4"
+	local skip_security="${5:-false}"
+
+	log_info "Importing from URL: $url"
+
+	# Create temp directory for fetched content
+	local fetch_dir="${TMPDIR:-/tmp}/aidevops-url-fetch"
+	rm -rf "$fetch_dir"
+	mkdir -p "$fetch_dir"
+
+	# Fetch the content with curl
+	local http_code=""
+	local fetch_file="$fetch_dir/fetched-skill.md"
+
+	http_code=$(curl -sS -L --connect-timeout 15 --max-time 60 \
+		-o "$fetch_file" -w "%{http_code}" \
+		-H "User-Agent: aidevops-skill-importer/1.0" \
+		"$url" 2>/dev/null) || true
+
+	if [[ -z "$http_code" || "$http_code" == "000" ]]; then
+		log_error "Failed to connect to URL (network error or DNS failure): $url"
+		rm -rf "$fetch_dir"
+		return 1
+	fi
+
+	if [[ "$http_code" != "200" ]]; then
+		log_error "Failed to fetch URL (HTTP $http_code): $url"
+		rm -rf "$fetch_dir"
+		return 1
+	fi
+
+	if [[ ! -s "$fetch_file" ]]; then
+		log_error "Fetched content is empty: $url"
+		rm -rf "$fetch_dir"
+		return 1
+	fi
+
+	# Validate that the content looks like markdown/text (not HTML error page, binary, etc.)
+	local content_head
+	content_head=$(head -c 512 "$fetch_file" | tr '[:upper:]' '[:lower:]')
+	if [[ "$content_head" =~ ^\<\!doctype || "$content_head" =~ ^\<html ]]; then
+		log_error "URL returned HTML instead of markdown. Ensure the URL points to raw content."
+		log_info "Hint: For GitHub files, use the raw URL (raw.githubusercontent.com)"
+		rm -rf "$fetch_dir"
+		return 1
+	fi
+
+	# Compute SHA-256 content hash
+	local content_hash=""
+	if command -v shasum &>/dev/null; then
+		content_hash=$(shasum -a 256 "$fetch_file" | cut -d' ' -f1)
+	elif command -v sha256sum &>/dev/null; then
+		content_hash=$(sha256sum "$fetch_file" | cut -d' ' -f1)
+	else
+		log_warning "Neither shasum nor sha256sum available, skipping content hash"
+	fi
+
+	log_info "Content hash (SHA-256): ${content_hash:0:16}..."
+
+	# Determine skill name
+	local skill_name=""
+	if [[ -n "$custom_name" ]]; then
+		skill_name=$(to_kebab_case "$custom_name")
+	else
+		# Try to extract name from SKILL.md frontmatter
+		local extracted_name
+		extracted_name=$(extract_skill_name "$fetch_file")
+		if [[ -n "$extracted_name" ]]; then
+			skill_name=$(to_kebab_case "$extracted_name")
+		else
+			# Derive from URL filename (strip .md extension)
+			local url_basename
+			url_basename=$(basename "$url")
+			url_basename="${url_basename%.md}"
+			# If the basename is generic (skill, SKILL, index), use the domain instead
+			if [[ "$url_basename" =~ ^(skill|SKILL|index|README|readme)$ ]]; then
+				# Extract domain name and use it
+				local domain
+				domain=$(echo "$url" | sed -E 's|^https?://([^/]+).*|\1|' | sed 's/^www\.//')
+				# Use first part of domain (e.g., "convos" from "convos.org")
+				skill_name=$(to_kebab_case "${domain%%.*}")
+			else
+				skill_name=$(to_kebab_case "$url_basename")
+			fi
+		fi
+	fi
+
+	log_info "Skill name: $skill_name"
+
+	# Extract description from frontmatter if available
+	local description=""
+	description=$(extract_skill_description "$fetch_file")
+
+	# For URL imports, determine_target_path needs a directory with the file
+	# Copy the fetched file as SKILL.md for format detection compatibility
+	cp "$fetch_file" "$fetch_dir/SKILL.md" 2>/dev/null || true
+
+	# Determine target path
+	local target_path
+	target_path=$(determine_target_path "$skill_name" "$description" "$fetch_dir")
+	log_info "Target path: .agents/$target_path"
+
+	# Check for conflicts
+	local conflicts
+	conflicts=$(check_conflicts "$target_path" ".agent") || true
+	if [[ -n "$conflicts" ]]; then
+		local blocking_conflicts
+		blocking_conflicts=$(echo "$conflicts" | grep -v "^INFO:" || true)
+		local info_lines
+		info_lines=$(echo "$conflicts" | grep "^INFO:" || true)
+
+		# Show info lines
+		if [[ -n "$info_lines" ]]; then
+			echo "$info_lines" | while read -r info; do
+				log_info "${info#INFO: }"
+			done
+		fi
+
+		if [[ -n "$blocking_conflicts" && "$force" != true ]]; then
+			log_warning "Conflicts detected:"
+			echo "$blocking_conflicts" | while read -r conflict; do
+				echo "  - ${conflict#*: }"
+			done
+			echo ""
+			echo "Options:"
+			echo "  1. Replace (overwrite existing)"
+			echo "  2. Separate (use different name)"
+			echo "  3. Skip (cancel import)"
+			echo ""
+
+			if [[ ! -t 0 ]]; then
+				log_error "Conflicts detected in non-interactive mode (use --force to override)"
+				rm -rf "$fetch_dir"
+				return 1
+			fi
+
+			read -rp "Choose option [1-3]: " choice
+
+			local new_name
+			case "$choice" in
+			1) log_info "Replacing existing..." ;;
+			2)
+				read -rp "Enter new name: " new_name
+				skill_name=$(to_kebab_case "$new_name")
+				target_path=$(determine_target_path "$skill_name" "$description" "$fetch_dir")
+				;;
+			3 | *)
+				log_info "Import cancelled"
+				rm -rf "$fetch_dir"
+				return 0
+				;;
+			esac
+		fi
+	fi
+
+	if [[ "$dry_run" == true ]]; then
+		log_info "DRY RUN - Would create:"
+		echo "  .agents/${target_path}.md"
+		echo "  Source: $url"
+		echo "  Format: url"
+		echo "  Content hash: ${content_hash:-<unavailable>}"
+		rm -rf "$fetch_dir"
+		return 0
+	fi
+
+	# Create target directory
+	local target_dir
+	target_dir=".agents/$(dirname "$target_path")"
+	mkdir -p "$target_dir"
+
+	# Convert to aidevops format
+	local target_file=".agents/${target_path}.md"
+
+	# Check if the fetched file has SKILL.md frontmatter
+	local has_frontmatter=false
+	if head -1 "$fetch_file" | grep -q "^---$"; then
+		has_frontmatter=true
+	fi
+
+	if [[ "$has_frontmatter" == true ]]; then
+		# Convert SKILL.md format to aidevops format
+		convert_skill_md "$fetch_file" "$target_file" "$skill_name"
+	else
+		# Wrap raw markdown with aidevops frontmatter
+		local safe_description
+		safe_description=$(printf '%s' "${description:-Imported from URL}" | sed 's/\\/\\\\/g; s/"/\\"/g')
+
+		cat >"$target_file" <<EOF
+---
+description: "${safe_description}"
+mode: subagent
+imported_from: url
+source_url: "${url}"
+---
+# ${skill_name}
+
+EOF
+		cat "$fetch_file" >>"$target_file"
+	fi
+
+	log_success "Created: $target_file"
+
+	# Security scan before registration
+	if ! scan_skill_security "$fetch_dir" "$skill_name" "$skip_security"; then
+		# Clean up the partially imported files
+		rm -f "$target_file"
+		rm -rf "$fetch_dir"
+		return 1
+	fi
+
+	# VirusTotal scan (advisory, non-blocking)
+	scan_skill_virustotal "$fetch_dir" "$skill_name" "$skip_security"
+
+	# Register in skill-sources.json with upstream_hash for content-based update detection
+	register_skill "$skill_name" "$url" ".agents/${target_path}.md" "url" "" "added" "Imported from URL" "$content_hash"
+
+	# Cleanup
+	rm -rf "$fetch_dir"
+
+	log_success "Skill '$skill_name' imported from URL successfully"
+	echo ""
+	log_info "Run './setup.sh' to create symlinks for other AI assistants"
+	log_info "Updates detected via content hash comparison (SHA-256)"
 
 	return 0
 }
