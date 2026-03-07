@@ -310,7 +310,7 @@ CMD ["npx", "tsx", "src/agent.ts"]
 |-----|-------------|
 | [Base App](https://base.app/) | Coinbase L2 messaging |
 | [World App](https://world.org/) | World (formerly Worldcoin) verified human messaging |
-| [Convos](https://converse.xyz/) | XMTP-native messenger |
+| [Convos](https://convos.org/) | XMTP-native encrypted messenger (CLI agent mode) |
 | [Zora](https://zora.co/) | NFT marketplace messaging |
 | [xmtp.chat](https://xmtp.chat/) | Developer playground |
 
@@ -418,6 +418,7 @@ XMTP provides tools for AI-assisted development:
 
 ## Related
 
+- `services/communications/convos.md` — Convos encrypted messenger (XMTP-native, CLI agent mode)
 - `services/communications/simplex.md` — SimpleX Chat (zero-knowledge, no identifiers)
 - `services/communications/matrix-bot.md` — Matrix bot integration (federated)
 - `services/communications/bitchat.md` — Bitchat (Bluetooth mesh, offline)
