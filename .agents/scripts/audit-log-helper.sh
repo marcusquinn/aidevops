@@ -33,8 +33,8 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
 # shellcheck source=shared-constants.sh
-source "${SCRIPT_DIR}/shared-constants.sh" 2>/dev/null || true
-init_log_file 2>/dev/null || true
+source "${SCRIPT_DIR}/shared-constants.sh" || true
+init_log_file || true
 
 # =============================================================================
 # Constants
@@ -89,13 +89,13 @@ _audit_ensure_log() {
 	log_dir="$(dirname "$log_file")"
 
 	if [[ ! -d "$log_dir" ]]; then
-		mkdir -p "$log_dir" 2>/dev/null || true
-		chmod 700 "$log_dir" 2>/dev/null || true
+		mkdir -p "$log_dir" || true
+		chmod 700 "$log_dir" || true
 	fi
 
 	if [[ ! -f "$log_file" ]]; then
 		: >"$log_file"
-		chmod 600 "$log_file" 2>/dev/null || true
+		chmod 600 "$log_file" || true
 	fi
 
 	return 0
@@ -139,13 +139,13 @@ _audit_last_hash() {
 		return 0
 	fi
 
-	# Parse hash from JSON — use jq if available, fallback to grep
+	# Parse hash from JSON — use jq if available, fallback to sed
 	local hash
 	if command -v jq &>/dev/null; then
 		hash="$(echo "$last_line" | jq -r '.hash // empty' 2>/dev/null || echo "")"
 	else
-		# Fallback: extract "hash":"<value>" with grep
-		hash="$(echo "$last_line" | grep -oP '"hash"\s*:\s*"([a-f0-9]{64})"' | grep -oP '[a-f0-9]{64}' || echo "")"
+		# Fallback: POSIX sed extraction (no grep -P, works on macOS)
+		hash="$(echo "$last_line" | sed -n 's/.*,"hash":"\([a-f0-9]\{64\}\)".*/\1/p')"
 	fi
 
 	if [[ -z "$hash" ]]; then
@@ -174,23 +174,28 @@ _audit_validate_event_type() {
 }
 
 # Escape a string for safe JSON embedding.
-# Handles: backslash, double-quote, newline, tab, carriage return.
+# Handles: backslash, double-quote, newline, tab, carriage return, and
+# other control characters (0x00-0x1F).
 # Arguments: $1 — string to escape
 # Output: escaped string on stdout
 _audit_json_escape() {
 	local input="$1"
-	# Use jq if available for reliable escaping
+	# Use jq if available for reliable escaping (preferred path)
 	if command -v jq &>/dev/null; then
 		printf '%s' "$input" | jq -Rs '.' | sed 's/^"//;s/"$//'
 		return 0
 	fi
-	# Fallback: manual escaping for common characters
+	# Fallback: manual escaping for common characters.
+	# Note: this does not handle all Unicode edge cases — jq is strongly
+	# preferred. This fallback exists only for minimal environments.
 	local escaped="$input"
 	escaped="${escaped//\\/\\\\}"
 	escaped="${escaped//\"/\\\"}"
 	escaped="${escaped//$'\n'/\\n}"
 	escaped="${escaped//$'\t'/\\t}"
 	escaped="${escaped//$'\r'/\\r}"
+	# Strip remaining control characters (0x00-0x1F except those already handled)
+	escaped="$(printf '%s' "$escaped" | tr -d '\000-\010\013\014\016-\037')"
 	echo "$escaped"
 	return 0
 }
@@ -347,13 +352,26 @@ cmd_log() {
 	local host
 	host="$(hostname -s 2>/dev/null || echo "unknown")"
 
-	# Escape message for JSON
-	local escaped_msg
-	escaped_msg="$(_audit_json_escape "$message")"
-
 	# Build the entry without hash (hash is computed over this)
 	local entry_no_hash
-	entry_no_hash="{\"seq\":${seq},\"ts\":\"${ts}\",\"type\":\"${event_type}\",\"msg\":\"${escaped_msg}\",\"detail\":${detail_json},\"actor\":\"${actor}\",\"host\":\"${host}\",\"prev_hash\":\"${prev_hash}\"}"
+	if command -v jq &>/dev/null; then
+		# Use jq for robust JSON construction — handles all escaping
+		entry_no_hash=$(jq -c -n \
+			--argjson seq "${seq}" \
+			--arg ts "${ts}" \
+			--arg type "${event_type}" \
+			--arg msg "${message}" \
+			--argjson detail "${detail_json}" \
+			--arg actor "${actor}" \
+			--arg host "${host}" \
+			--arg prev_hash "${prev_hash}" \
+			'{seq: $seq, ts: $ts, type: $type, msg: $msg, detail: $detail, actor: $actor, host: $host, prev_hash: $prev_hash}')
+	else
+		# Fallback: manual JSON construction (jq strongly preferred)
+		local escaped_msg
+		escaped_msg="$(_audit_json_escape "$message")"
+		entry_no_hash="{\"seq\":${seq},\"ts\":\"${ts}\",\"type\":\"${event_type}\",\"msg\":\"${escaped_msg}\",\"detail\":${detail_json},\"actor\":\"${actor}\",\"host\":\"${host}\",\"prev_hash\":\"${prev_hash}\"}"
+	fi
 
 	# Compute hash of the entry
 	local entry_hash
@@ -361,7 +379,11 @@ cmd_log() {
 
 	# Build final entry with hash
 	local entry
-	entry="{\"seq\":${seq},\"ts\":\"${ts}\",\"type\":\"${event_type}\",\"msg\":\"${escaped_msg}\",\"detail\":${detail_json},\"actor\":\"${actor}\",\"host\":\"${host}\",\"prev_hash\":\"${prev_hash}\",\"hash\":\"${entry_hash}\"}"
+	if command -v jq &>/dev/null; then
+		entry=$(echo "$entry_no_hash" | jq -c --arg hash "$entry_hash" '. + {hash: $hash}')
+	else
+		entry="{\"seq\":${seq},\"ts\":\"${ts}\",\"type\":\"${event_type}\",\"msg\":\"$(_audit_json_escape "$message")\",\"detail\":${detail_json},\"actor\":\"${actor}\",\"host\":\"${host}\",\"prev_hash\":\"${prev_hash}\",\"hash\":\"${entry_hash}\"}"
+	fi
 
 	# Append atomically (single write, no partial lines)
 	echo "$entry" >>"$log_file"
@@ -439,11 +461,11 @@ cmd_verify() {
 			# Reconstruct entry without hash field for verification
 			entry_no_hash_json="$(echo "$line" | jq -c 'del(.hash)')"
 		else
-			# Fallback: regex extraction
-			stored_hash="$(echo "$line" | grep -oP '"hash"\s*:\s*"([a-f0-9]{64})"' | grep -oP '[a-f0-9]{64}' | tail -1 || echo "")"
-			stored_prev_hash="$(echo "$line" | grep -oP '"prev_hash"\s*:\s*"([a-f0-9]{64})"' | grep -oP '[a-f0-9]{64}' || echo "")"
-			# Remove the trailing ,"hash":"..." from the line
-			entry_no_hash_json="$(echo "$line" | sed 's/,"hash":"[a-f0-9]\{64\}"}/}/')"
+			# Fallback: sed-based extraction (POSIX-compatible, no grep -P)
+			stored_hash="$(echo "$line" | sed -n 's/.*,"hash":"\([a-f0-9]\{64\}\)".*/\1/p')"
+			stored_prev_hash="$(echo "$line" | sed -n 's/.*"prev_hash":"\([a-f0-9]\{64\}\)".*/\1/p')"
+			# Remove the trailing ,"hash":"..." anchored to end of line
+			entry_no_hash_json="$(echo "$line" | sed 's/,"hash":"[a-f0-9]\{64\}"}$/}/')"
 		fi
 
 		if [[ -z "$stored_hash" ]]; then
@@ -492,6 +514,11 @@ cmd_verify() {
 # Arguments: $1 — number of entries (default: 10)
 cmd_tail() {
 	local count="${1:-10}"
+	# Validate count is a positive integer (prevent command injection via tail)
+	if [[ ! "$count" =~ ^[0-9]+$ ]]; then
+		_audit_error "Invalid count: $count (must be a positive integer)"
+		return 1
+	fi
 	local log_file
 	log_file="$(_audit_log_path)"
 
@@ -588,6 +615,11 @@ cmd_rotate() {
 		case "$1" in
 		--max-size)
 			max_size_mb="${2:-$AUDIT_DEFAULT_ROTATE_MB}"
+			# Validate max_size_mb is a positive integer (prevent arithmetic injection)
+			if [[ ! "$max_size_mb" =~ ^[0-9]+$ ]]; then
+				_audit_error "Invalid max-size: $max_size_mb (must be a positive integer)"
+				return 1
+			fi
 			shift 2
 			;;
 		*)

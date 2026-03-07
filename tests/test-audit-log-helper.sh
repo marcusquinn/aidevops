@@ -533,6 +533,42 @@ test_help_output() {
 	return 0
 }
 
+test_input_validation() {
+	echo "Test: Input validation (security)"
+	setup
+
+	# Tail with non-numeric input should be rejected
+	if bash "$SCRIPT" log worker.dispatch "Setup entry" 2>/dev/null; then
+		if bash "$SCRIPT" tail "abc" 2>/dev/null; then
+			fail "tail should reject non-numeric count"
+		else
+			pass "tail rejects non-numeric count"
+		fi
+
+		if bash "$SCRIPT" tail "1 /etc/passwd" 2>/dev/null; then
+			fail "tail should reject count with spaces"
+		else
+			pass "tail rejects count with injection attempt"
+		fi
+	fi
+
+	# Rotate with non-numeric max-size should be rejected
+	if bash "$SCRIPT" rotate --max-size "abc" 2>/dev/null; then
+		fail "rotate should reject non-numeric max-size"
+	else
+		pass "rotate rejects non-numeric max-size"
+	fi
+
+	if bash "$SCRIPT" rotate --max-size '$(id)' 2>/dev/null; then
+		fail "rotate should reject command injection in max-size"
+	else
+		pass "rotate rejects command injection in max-size"
+	fi
+
+	cleanup
+	return 0
+}
+
 # =============================================================================
 # Run all tests
 # =============================================================================
@@ -555,6 +591,7 @@ test_empty_log
 test_message_with_special_chars
 test_sequence_numbers
 test_help_output
+test_input_validation
 
 echo ""
 echo "=== Results: ${PASS_COUNT} passed, ${FAIL_COUNT} failed ==="
