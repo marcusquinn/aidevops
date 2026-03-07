@@ -2503,13 +2503,18 @@ _update_quality_issue_body() {
 	debt_open=$(gh issue list --repo "$repo_slug" \
 		--label "quality-debt" --state open \
 		--json number --jq 'length' 2>/dev/null || echo "0")
-	# --limit 500 is generous — no repo currently exceeds 60 closed.
-	# If a repo exceeds this, the resolution % will be slightly understated
-	# (conservative direction). Using gh api pagination would be more accurate
-	# but adds complexity and API calls for negligible benefit.
-	debt_closed=$(gh issue list --repo "$repo_slug" \
-		--label "quality-debt" --state closed --limit 500 \
-		--json number --jq 'length' 2>/dev/null || echo "0")
+	# Use GraphQL issueCount for accurate closed-issue totals without
+	# pagination limits (CodeRabbit review feedback).
+	debt_closed=$(gh api graphql -f query="
+		query {
+			search(
+				query: \"repo:${repo_slug} is:issue is:closed label:quality-debt\",
+				type: ISSUE,
+				first: 1
+			) {
+				issueCount
+			}
+		}" --jq '.data.search.issueCount' 2>/dev/null || echo "0")
 	# Validate integers
 	[[ "$debt_open" =~ ^[0-9]+$ ]] || debt_open=0
 	[[ "$debt_closed" =~ ^[0-9]+$ ]] || debt_closed=0
@@ -2537,7 +2542,7 @@ _update_quality_issue_body() {
 	local bot_coverage_section=""
 	local open_prs_json
 	open_prs_json=$(gh pr list --repo "$repo_slug" --state open \
-		--json number,title,createdAt --limit 20 2>/dev/null) || open_prs_json="[]"
+		--json number,title,createdAt 2>/dev/null) || open_prs_json="[]"
 	local open_pr_count
 	open_pr_count=$(echo "$open_prs_json" | jq 'length' 2>/dev/null || echo "0")
 	[[ "$open_pr_count" =~ ^[0-9]+$ ]] || open_pr_count=0
@@ -2550,6 +2555,13 @@ _update_quality_issue_body() {
 	local helper_available=false
 	if [[ "$open_pr_count" -gt 0 && -x "$review_helper" ]]; then
 		helper_available=true
+	elif [[ "$open_pr_count" -gt 0 ]]; then
+		# Helper unavailable but PRs exist — use UNKNOWN sentinel to avoid
+		# misleading zero counts (CodeRabbit review feedback)
+		prs_with_reviews="UNKNOWN"
+		prs_waiting="UNKNOWN"
+	fi
+	if [[ "$helper_available" == true ]]; then
 		local pr_numbers
 		pr_numbers=$(echo "$open_prs_json" | jq -r '.[].number')
 		while IFS= read -r pr_num; do
