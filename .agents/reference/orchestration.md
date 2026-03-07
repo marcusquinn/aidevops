@@ -1,7 +1,7 @@
 # Orchestration & Model Routing — Detail Reference
 
 Loaded on-demand when working with the supervisor, model routing, or pattern tracking.
-Core pointers are in `AGENTS.md`. Full docs: `tools/ai-assistants/headless-dispatch.md`, `scripts/commands/pulse.md`.
+Core pointers are in `AGENTS.md`. Full docs: `tools/ai-assistants/headless-dispatch.md`, `.agents/scripts/commands/pulse.md`.
 
 ## Supervisor
 
@@ -112,7 +112,7 @@ depth-first (concurrency=2):       breadth-first (concurrency=3):
 
 **Configuration**: `BATCH_STRATEGY` env var (default: `depth-first`). Can be overridden per-repo via bundle config or per-task via the decomposition pipeline.
 
-**Full docs**: `scripts/commands/pulse.md` "Batch execution strategies" section, `scripts/batch-strategy-helper.sh help`
+**Full docs**: `.agents/scripts/commands/pulse.md` "Batch execution strategies" section, `scripts/batch-strategy-helper.sh help`
 
 ## Pattern Tracking
 
