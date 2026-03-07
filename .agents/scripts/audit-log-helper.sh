@@ -165,8 +165,8 @@ _audit_last_hash() {
 	return 0
 }
 
-# Validate an event type against the allowed list.
-# Arguments: $1 — event type string
+# Validate an event type against the AUDIT_EVENT_TYPES allowlist.
+# Arguments: $1 — event type string (e.g., "worker.dispatch")
 # Returns: 0 if valid, 1 if invalid
 _audit_validate_event_type() {
 	local event_type="$1"
@@ -208,7 +208,8 @@ _audit_json_escape() {
 	return 0
 }
 
-# Print info message (respects AUDIT_QUIET).
+# Print informational message to stderr (suppressed when AUDIT_QUIET=true).
+# Arguments: $1 — message string
 _audit_info() {
 	local msg="$1"
 	if [[ "${AUDIT_QUIET:-false}" != "true" ]]; then
@@ -217,14 +218,16 @@ _audit_info() {
 	return 0
 }
 
-# Print warning message.
+# Print warning message to stderr (always shown).
+# Arguments: $1 — message string
 _audit_warn() {
 	local msg="$1"
 	echo -e "${YELLOW:-}[AUDIT WARN]${NC:-} $msg" >&2
 	return 0
 }
 
-# Print error message.
+# Print error message to stderr (always shown).
+# Arguments: $1 — message string
 _audit_error() {
 	local msg="$1"
 	echo -e "${RED:-}[AUDIT ERROR]${NC:-} $msg" >&2
@@ -775,6 +778,9 @@ HELP
 # Main dispatch
 # =============================================================================
 
+# Entry point — dispatch to subcommand based on first argument.
+# Arguments: $1 — command name (log|verify|tail|status|rotate|help)
+#            $2+ — command-specific arguments
 main() {
 	local command="${1:-help}"
 	shift 2>/dev/null || true
