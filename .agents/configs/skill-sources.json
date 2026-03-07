@@ -126,6 +126,17 @@
       "last_checked": "2026-03-01T18:00:00Z",
       "merge_strategy": "added",
       "notes": "Official Cloudron skill for CLI server operations (logs, exec, backups, env vars, CI/CD)"
+    },
+    {
+      "name": "convos",
+      "upstream_url": "https://convos.org/skill.md",
+      "upstream_commit": "",
+      "local_path": ".agents/services/communications/convos.md",
+      "format_detected": "url",
+      "imported_at": "2026-03-07T18:12:47Z",
+      "last_checked": "2026-03-07T18:12:47Z",
+      "merge_strategy": "added",
+      "notes": "Encrypted messaging agent built on XMTP. URL-based tracking — no GitHub repo hosts the skill file. Requires t1415 for content-hash update detection."
     }
   ]
 }
