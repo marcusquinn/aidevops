@@ -7,14 +7,22 @@
 # hash of the previous entry, creating a chain. Modifying or deleting any
 # entry breaks the chain, making tampering detectable via `verify`.
 #
-# Event types:
+# Event types (15 — must match AUDIT_EVENT_TYPES array below):
 #   worker.dispatch    — Worker spawned by pulse/supervisor
 #   worker.complete    — Worker finished (success or failure)
+#   worker.error       — Worker encountered an error
 #   credential.access  — Credential read/write via gopass or credentials.sh
+#   credential.rotate  — Credential rotation
 #   config.change      — Framework config modification
+#   config.deploy      — Config deployment (setup.sh)
 #   security.event     — Prompt injection detected, verification triggered
-#   operation.verify   — High-stakes operation verified/blocked
-#   system.startup     — Framework startup/update
+#   security.injection — Prompt injection detected
+#   security.scan      — Security scan performed
+#   operation.verify   — High-stakes operation verified
+#   operation.block    — High-stakes operation blocked
+#   system.startup     — Framework startup
+#   system.update      — Framework update
+#   system.rotate      — Audit log rotation
 #
 # Usage:
 #   audit-log-helper.sh log <event-type> <message> [--detail key=value ...]
