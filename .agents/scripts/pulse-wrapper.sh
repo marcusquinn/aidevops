@@ -2562,14 +2562,19 @@ _update_quality_issue_body() {
 				if [[ -n "$pr_created" ]]; then
 					local pr_epoch
 					pr_epoch=$(date -j -f "%Y-%m-%dT%H:%M:%SZ" "$pr_created" +%s 2>/dev/null || date -d "$pr_created" +%s 2>/dev/null || echo "0")
-					local now_epoch
-					now_epoch=$(date +%s)
-					local pr_age_hours=$(((now_epoch - pr_epoch) / 3600))
-					if [[ "$pr_age_hours" -ge 2 ]]; then
-						local pr_title
-						pr_title=$(echo "$open_prs_json" | jq -r --argjson n "$pr_num" '.[] | select(.number == $n) | .title[:50]' 2>/dev/null || echo "")
-						prs_stale_waiting="${prs_stale_waiting}  - #${pr_num}: ${pr_title} (${pr_age_hours}h old)
+					# Validate epoch is numeric and non-zero — a failed parse
+					# falls back to "0" which would produce a huge age (CodeRabbit review)
+					[[ "$pr_epoch" =~ ^[0-9]+$ ]] || pr_epoch=0
+					if [[ "$pr_epoch" -gt 0 ]]; then
+						local now_epoch
+						now_epoch=$(date +%s)
+						local pr_age_hours=$(((now_epoch - pr_epoch) / 3600))
+						if [[ "$pr_age_hours" -ge 2 ]]; then
+							local pr_title
+							pr_title=$(echo "$open_prs_json" | jq -r --argjson n "$pr_num" '.[] | select(.number == $n) | .title[:50]' 2>/dev/null || echo "")
+							prs_stale_waiting="${prs_stale_waiting}  - #${pr_num}: ${pr_title} (${pr_age_hours}h old)
 "
+						fi
 					fi
 				fi
 				;;
