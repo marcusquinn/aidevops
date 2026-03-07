@@ -32,14 +32,14 @@ model: haiku
 | `flash` | gemini-2.5-flash-preview-05-20 | Lowest (~0.20x) | Large context reads, summarization, bulk processing |
 | `haiku` | claude-haiku-4-5-20251001 | Low (~0.25x) | Triage, classification, simple transforms, formatting |
 | `sonnet` | claude-sonnet-4-6 | Medium | Code implementation, review, most development tasks |
-| `pro` | gemini-2.5-pro-preview-06-05 | Medium-High | Large codebase analysis, complex reasoning with big context |
+| `pro` | gemini-2.5-pro | Medium-High | Large codebase analysis, complex reasoning with big context |
 | `opus` | claude-opus-4-6 | Highest | Architecture decisions, complex multi-step reasoning, novel problems |
 
 ## Model ID Convention
 
 **Always use fully-qualified model IDs** — the exact string accepted by the provider API. Short-form names like `claude-sonnet-4` or `claude-opus-4` cause `ProviderModelNotFoundError` at dispatch time. The canonical model ID for each tier is defined in the subagent frontmatter (`models/*.md`) and must match what the provider API accepts.
 
-When referencing models in docs, scripts, or dispatch commands, use the full ID from the subagent frontmatter (e.g., `claude-sonnet-4-6`, not `claude-sonnet-4`). For provider-prefixed contexts (CLI `--model` flags, fallback chains), use `anthropic/claude-sonnet-4-6` or `google/gemini-2.5-pro-preview-06-05`.
+When referencing models in docs, scripts, or dispatch commands, use the full ID from the subagent frontmatter (e.g., `claude-sonnet-4-6`, not `claude-sonnet-4`). For provider-prefixed contexts (CLI `--model` flags, fallback chains), use `anthropic/claude-sonnet-4-6` or `google/gemini-2.5-pro`.
 
 **Tier names vs model IDs**: Tier names (`haiku`, `sonnet`, `opus`) are abstract routing labels. They are resolved to concrete model IDs at dispatch time by reading the corresponding subagent frontmatter. Never pass a tier name where a model ID is expected.
 
@@ -143,7 +143,7 @@ Concrete model subagents are defined across these paths (`tools/ai-assistants/mo
 | `flash` | `models/flash.md` | gemini-2.5-flash-preview-05-20 | gpt-4.1-mini |
 | `haiku` | `models/haiku.md` | claude-haiku-4-5-20251001 | gemini-2.5-flash-preview-05-20 |
 | `sonnet` | `models/sonnet.md` | claude-sonnet-4-6 | gpt-4.1 |
-| `pro` | `models/pro.md` | gemini-2.5-pro-preview-06-05 | claude-sonnet-4-6 |
+| `pro` | `models/pro.md` | gemini-2.5-pro | claude-sonnet-4-6 |
 | `opus` | `models/opus.md` | claude-opus-4-6 | o3 |
 
 Cross-provider reviewers: `models/gemini-reviewer.md`, `models/gpt-reviewer.md`
@@ -194,7 +194,7 @@ Each tier defines a primary model and a fallback from a different provider. When
 | `flash` | gemini-2.5-flash-preview-05-20 | gpt-4.1-mini | No Google key |
 | `haiku` | claude-haiku-4-5-20251001 | gemini-2.5-flash-preview-05-20 | No Anthropic key |
 | `sonnet` | claude-sonnet-4-6 | gpt-4.1 | No Anthropic key |
-| `pro` | gemini-2.5-pro-preview-06-05 | claude-sonnet-4-6 | No Google key |
+| `pro` | gemini-2.5-pro | claude-sonnet-4-6 | No Google key |
 | `opus` | claude-opus-4-6 | o3 | No Anthropic key |
 
 The supervisor resolves fallbacks automatically during headless dispatch. For interactive sessions, the orchestrating agent should run `compare-models-helper.sh discover` to check availability before selecting a model.
