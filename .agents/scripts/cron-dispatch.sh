@@ -24,6 +24,11 @@ readonly OPENCODE_PORT="${OPENCODE_PORT:-4096}"
 readonly OPENCODE_HOST="${OPENCODE_HOST:-127.0.0.1}"
 readonly OPENCODE_INSECURE="${OPENCODE_INSECURE:-}"
 readonly MAIL_HELPER="$HOME/.aidevops/agents/scripts/mail-helper.sh"
+readonly TOKEN_HELPER="${SCRIPT_DIR}/worker-token-helper.sh"
+
+# Worker token scoping (t1412.2)
+# Set to "false" to disable scoped token creation for workers
+readonly WORKER_SCOPED_TOKENS="${WORKER_SCOPED_TOKENS:-true}"
 
 #######################################
 # Determine protocol based on host
@@ -327,6 +332,29 @@ main() {
 		log_info "Changed to: $workdir"
 	fi
 
+	# Create scoped worker token (t1412.2)
+	local worker_token_file=""
+	if [[ "$WORKER_SCOPED_TOKENS" == "true" ]] && [[ -x "$TOKEN_HELPER" ]]; then
+		# Resolve repo slug from workdir git remote
+		local repo_slug=""
+		if [[ -n "$workdir" && -d "$workdir" ]]; then
+			repo_slug=$(git -C "$workdir" remote get-url origin 2>/dev/null |
+				sed -E 's|.*github\.com[:/]||; s|\.git$||' || true)
+		fi
+
+		if [[ -n "$repo_slug" ]]; then
+			worker_token_file=$("$TOKEN_HELPER" create --repo "$repo_slug" --ttl "$timeout" 2>/dev/null) || {
+				log_info "Scoped token creation failed for ${repo_slug}, proceeding with default credentials"
+				worker_token_file=""
+			}
+			if [[ -n "$worker_token_file" ]]; then
+				log_info "Created scoped worker token for ${repo_slug}"
+			fi
+		else
+			log_info "Cannot determine repo slug from workdir, skipping scoped token"
+		fi
+	fi
+
 	# Track execution time
 	local start_time
 	start_time=$(date +%s)
@@ -352,6 +380,12 @@ main() {
 	# Cleanup session
 	delete_session "$session_id"
 	log_info "Deleted session: $session_id"
+
+	# Revoke scoped worker token (t1412.2)
+	if [[ -n "$worker_token_file" ]] && [[ -x "$TOKEN_HELPER" ]]; then
+		"$TOKEN_HELPER" revoke --token-file "$worker_token_file" 2>/dev/null || true
+		log_info "Revoked scoped worker token"
+	fi
 
 	# Update status
 	if [[ $exit_code -eq 0 ]]; then

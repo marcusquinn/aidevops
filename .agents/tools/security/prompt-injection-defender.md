@@ -468,6 +468,34 @@ contextManipulationPatterns:
 | `data_exfiltration` | Attempts to send data to external URLs |
 | `delimiter_injection` | ChatML, XML system tags, markdown system blocks |
 
+## Credential Isolation (t1412)
+
+Pattern scanning is detection — it warns but cannot prevent. Enforcement-based defenses remain effective even when the attacker knows the mechanism. The worker sandboxing system (t1412) provides enforcement layers:
+
+### Scoped GitHub Tokens (t1412.2)
+
+Workers receive minimal-permission, short-lived GitHub tokens instead of the user's full-permission token. Even if a worker is compromised, the attacker can only:
+
+- Read/write contents of the **target repo only** (not all repos the user has access to)
+- Create PRs and issues on the **target repo only**
+- Token expires after 1 hour (or session duration)
+
+This is enforced by GitHub when using App installation tokens (Strategy 1). With delegated tokens (Strategy 2), scoping is advisory — the token technically has the user's full permissions, but the dispatch wrapper tracks and audits what it's scoped for.
+
+**Setup**: See `tools/ai-assistants/headless-dispatch.md` "Scoped Worker Tokens" section.
+
+**Script**: `scripts/worker-token-helper.sh` — token lifecycle management (create, validate, revoke, cleanup).
+
+### Defense Layers (Current)
+
+| Layer | Type | What it does | Effective against informed attacker? |
+|-------|------|-------------|--------------------------------------|
+| Pattern scanning | Detection | Flags known injection patterns | No (patterns are public, can be paraphrased) |
+| Scoped tokens (t1412.2) | Enforcement | Limits GitHub API access to target repo | Yes (enforced by GitHub for App tokens) |
+| Fake HOME (t1412.1) | Enforcement | Hides SSH keys, gopass, credentials.sh | Yes (worker cannot access real HOME) |
+| Network tiering (t1412.3) | Enforcement | Blocks known exfiltration endpoints | Yes (firewall rules are not bypassable) |
+| Content scanning (t1412.4) | Detection | Scans fetched content at runtime | Partially (catches known patterns only) |
+
 ## Limitations
 
 1. **Pattern evasion**: Attackers can paraphrase instructions to avoid regex matches. Patterns catch known attack templates, not novel semantic attacks.
@@ -479,6 +507,7 @@ contextManipulationPatterns:
 ## Related
 
 - `scripts/prompt-guard-helper.sh` — The scanner implementation
+- `scripts/worker-token-helper.sh` — Scoped GitHub token lifecycle for workers (t1412.2)
 - `tools/security/opsec.md` — Operational security guide
 - `tools/security/privacy-filter.md` — Privacy filter for public contributions
 - `tools/security/tirith.md` — Terminal command security guard

@@ -478,6 +478,85 @@ export OPENAI_API_KEY="sk-..."
 3. **Permissions**: Use `OPENCODE_PERMISSION` env var for headless autonomy
 4. **Credentials**: Never pass secrets in prompts - use environment variables
 5. **Cleanup**: Delete sessions after use to prevent data leakage
+6. **Scoped tokens** (t1412.2): Workers get minimal-permission GitHub tokens scoped to the target repo
+
+### Scoped Worker Tokens (t1412.2)
+
+Headless workers receive scoped, short-lived GitHub tokens instead of the user's full-permission token. This limits blast radius if a worker is compromised via prompt injection.
+
+**How it works:**
+
+```text
+Dispatch starts
+  │
+  ├── Resolve repo slug from workdir git remote
+  │
+  ├── worker-token-helper.sh create --repo owner/repo --ttl 3600
+  │   ├── Strategy 1: GitHub App installation token (enforced by GitHub)
+  │   └── Strategy 2: Delegated token (advisory scoping)
+  │
+  ├── Pass token to worker via GH_TOKEN env var
+  │
+  ├── Worker executes (can only access target repo)
+  │
+  └── worker-token-helper.sh revoke --token-file <path>
+```
+
+**Token permissions** (minimal set for PR workflow):
+
+- `contents:write` — push branches, read/write files
+- `pull_requests:write` — create/update PRs
+- `issues:write` — comment on issues, update labels
+
+**Token strategies** (tried in priority order):
+
+| Strategy | Scoping | TTL | Setup required |
+|----------|---------|-----|----------------|
+| GitHub App installation token | Enforced by GitHub (repo-scoped) | 1h (GitHub enforced) | One-time App install |
+| Delegated token | Advisory (tracked locally) | Configurable (default 1h) | None (zero-config) |
+
+**Setup for GitHub App** (recommended for enforced scoping):
+
+1. Create a GitHub App at `https://github.com/settings/apps/new`
+   - Permissions: Contents (R&W), Pull requests (R&W), Issues (R&W)
+   - No webhook URL needed
+2. Install the App on your account/org
+3. Generate and download a private key
+4. Configure:
+
+```bash
+cat > ~/.config/aidevops/github-app.json << 'EOF'
+{
+  "app_id": "YOUR_APP_ID",
+  "private_key_path": "~/.config/aidevops/github-app-key.pem",
+  "installation_id": "YOUR_INSTALLATION_ID"
+}
+EOF
+chmod 600 ~/.config/aidevops/github-app.json
+chmod 600 ~/.config/aidevops/github-app-key.pem
+```
+
+**Disable scoped tokens** (not recommended):
+
+```bash
+export WORKER_SCOPED_TOKENS=false
+```
+
+**CLI usage:**
+
+```bash
+# Check token configuration
+worker-token-helper.sh status
+
+# Manually create a scoped token
+TOKEN_FILE=$(worker-token-helper.sh create --repo owner/repo --ttl 3600)
+
+# Validate a token
+worker-token-helper.sh validate --token-file "$TOKEN_FILE"
+
+# Clean up expired tokens
+worker-token-helper.sh cleanup
+```
 
 ### Autonomous Mode (CI/CD)
 
