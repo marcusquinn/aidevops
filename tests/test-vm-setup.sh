@@ -77,7 +77,10 @@ done
 # --- Detect branch if not specified ---
 if [[ -z "$TEST_BRANCH" ]]; then
 	REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-	TEST_BRANCH="$(git -C "$REPO_DIR" rev-parse --abbrev-ref HEAD 2>/dev/null || echo "main")"
+	TEST_BRANCH="$(git -C "$REPO_DIR" symbolic-ref --quiet --short HEAD 2>/dev/null || true)"
+	if [[ -z "$TEST_BRANCH" ]]; then
+		TEST_BRANCH="main"
+	fi
 fi
 
 # --- Colors ---
@@ -136,12 +139,12 @@ vm_test() {
 	fi
 
 	if [[ -n "$expect_pattern" ]]; then
-		if [[ $status -eq 0 ]] && printf '%s\n' "$output" | grep -qE "$expect_pattern"; then
+		if [[ $status -eq 0 ]] && grep -qE "$expect_pattern" <<<"$output"; then
 			pass "$description"
 		else
 			fail "$description" "Command exited with $status or pattern '$expect_pattern' was not found"
 			if [[ "$VERBOSE" == "true" ]]; then
-				printf '       Output: %s\n' "$(printf '%s\n' "$output" | head -3)"
+				printf '       Output: %s\n' "$(sed -n '1,3p' <<<"$output")"
 			fi
 		fi
 	else
@@ -314,12 +317,17 @@ if [[ "$TEST_UPDATE" == "true" ]]; then
 
 	info "Running setup.sh --non-interactive again (simulates update)..."
 	update_output=""
-	update_output=$(vm_run "cd ~/Git/aidevops && git pull origin '$TEST_BRANCH' 2>/dev/null; bash setup.sh --non-interactive 2>&1") || true
+	update_status=0
+	if update_output=$(vm_run "cd ~/Git/aidevops && git pull origin '$TEST_BRANCH' 2>/dev/null && bash setup.sh --non-interactive 2>&1"); then
+		update_status=0
+	else
+		update_status=$?
+	fi
 
-	if echo "$update_output" | grep -q "Setup complete"; then
+	if [[ $update_status -eq 0 ]] && grep -q "Setup complete" <<<"$update_output"; then
 		pass "Update completed successfully"
 	else
-		fail "Update did not complete"
+		fail "Update exited with $update_status or did not complete"
 	fi
 
 	# Verify agents still intact after update
