@@ -118,8 +118,8 @@ After creating the brief, classify the task to determine if it should be decompo
 DECOMPOSE_HELPER="$HOME/.aidevops/agents/scripts/task-decompose-helper.sh"
 
 if [[ -x "$DECOMPOSE_HELPER" ]]; then
-  CLASSIFY=$(/bin/bash "$DECOMPOSE_HELPER" classify --task "{title}" --quiet 2>/dev/null) || CLASSIFY=""
-  TASK_KIND=$(echo "$CLASSIFY" | jq -r '.kind // "atomic"' 2>/dev/null || echo "atomic")
+  CLASSIFY=$(/bin/bash "$DECOMPOSE_HELPER" classify --task "{title}" --quiet) || CLASSIFY=""
+  TASK_KIND=$(echo "$CLASSIFY" | jq -r '.kind // "atomic"' || echo "atomic")
 fi
 ```
 

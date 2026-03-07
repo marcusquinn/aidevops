@@ -90,11 +90,11 @@ DECOMPOSE_HELPER="$HOME/.aidevops/agents/scripts/task-decompose-helper.sh"
 # Only run if the helper exists (t1408.1 must be merged)
 if [[ -x "$DECOMPOSE_HELPER" && -n "$TASK_ID" ]]; then
   # Check if subtasks already exist
-  EXISTING=$(/bin/bash "$DECOMPOSE_HELPER" classify --task-id "$TASK_ID" --repo-path "$(git rev-parse --show-toplevel)" --quiet 2>/dev/null) || EXISTING=""
-  EXISTING_KIND=$(echo "$EXISTING" | jq -r '.kind // "atomic"' 2>/dev/null || echo "atomic")
+  EXISTING=$(/bin/bash "$DECOMPOSE_HELPER" classify --task-id "$TASK_ID" --repo-path "$(git rev-parse --show-toplevel)" --quiet) || EXISTING=""
+  EXISTING_KIND=$(echo "$EXISTING" | jq -r '.kind // "atomic"' || echo "atomic")
 
   if [[ "$EXISTING_KIND" == "composite" ]]; then
-    EXISTING_SUBS=$(echo "$EXISTING" | jq -r '.existing_subtasks // empty' 2>/dev/null || echo "")
+    EXISTING_SUBS=$(echo "$EXISTING" | jq -r '.existing_subtasks // empty' || echo "")
     if [[ -n "$EXISTING_SUBS" && "$EXISTING_SUBS" != "[]" ]]; then
       # Subtasks already exist — skip decomposition
       echo "[t1408.2] Task $TASK_ID already has subtasks — proceeding with implementation"
@@ -103,8 +103,8 @@ if [[ -x "$DECOMPOSE_HELPER" && -n "$TASK_ID" ]]; then
 
   # If no existing subtasks, classify the task description
   if [[ -z "$EXISTING_SUBS" || "$EXISTING_SUBS" == "[]" ]]; then
-    CLASSIFY=$(/bin/bash "$DECOMPOSE_HELPER" classify --task "$TASK_DESC" --task-id "$TASK_ID" --repo-path "$(git rev-parse --show-toplevel)" --quiet 2>/dev/null) || CLASSIFY=""
-    TASK_KIND=$(echo "$CLASSIFY" | jq -r '.kind // "atomic"' 2>/dev/null || echo "atomic")
+    CLASSIFY=$(/bin/bash "$DECOMPOSE_HELPER" classify --task "$TASK_DESC" --task-id "$TASK_ID" --repo-path "$(git rev-parse --show-toplevel)" --quiet) || CLASSIFY=""
+    TASK_KIND=$(echo "$CLASSIFY" | jq -r '.kind // "atomic"' || echo "atomic")
   fi
 fi
 ```
@@ -116,8 +116,8 @@ fi
 Show the decomposition tree and ask for confirmation:
 
 ```bash
-DECOMPOSE=$(/bin/bash "$DECOMPOSE_HELPER" decompose --task "$TASK_DESC" --task-id "$TASK_ID" --repo-path "$(git rev-parse --show-toplevel)" --quiet 2>/dev/null)
-SUBTASK_COUNT=$(echo "$DECOMPOSE" | jq '.subtasks | length' 2>/dev/null || echo 0)
+DECOMPOSE=$(/bin/bash "$DECOMPOSE_HELPER" decompose --task "$TASK_DESC" --task-id "$TASK_ID" --repo-path "$(git rev-parse --show-toplevel)" --quiet) || DECOMPOSE=""
+SUBTASK_COUNT=$(echo "$DECOMPOSE" | jq '.subtasks | length' || echo 0)
 ```
 
 Present to the user:
@@ -306,16 +306,16 @@ Before starting implementation, check if the task should be decomposed into subt
 
 ```bash
 # Check if task already has subtasks (skip if already decomposed)
-HAS_SUBS=$(~/.aidevops/agents/scripts/task-decompose-helper.sh has-subtasks "$TASK_ID" 2>/dev/null || echo "false")
+HAS_SUBS=$(~/.aidevops/agents/scripts/task-decompose-helper.sh has-subtasks "$TASK_ID" || echo "false")
 
 if [[ "$HAS_SUBS" == "false" ]]; then
   # Classify the task
-  CLASSIFY=$(~/.aidevops/agents/scripts/task-decompose-helper.sh classify "$TASK_DESC" 2>/dev/null || echo '{"kind":"atomic"}')
+  CLASSIFY=$(~/.aidevops/agents/scripts/task-decompose-helper.sh classify "$TASK_DESC" || echo '{"kind":"atomic"}')
   TASK_KIND=$(echo "$CLASSIFY" | sed -n 's/.*"kind"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
 
   if [[ "$TASK_KIND" == "composite" ]]; then
     # Decompose into subtasks
-    DECOMPOSITION=$(~/.aidevops/agents/scripts/task-decompose-helper.sh decompose "$TASK_DESC" 2>/dev/null || echo "")
+    DECOMPOSITION=$(~/.aidevops/agents/scripts/task-decompose-helper.sh decompose "$TASK_DESC" || echo "")
 
     # Interactive mode: show tree and ask for confirmation
     # Headless mode: auto-proceed (create child tasks and dispatch)
