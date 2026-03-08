@@ -5,7 +5,7 @@
 //   node render.mjs --still --text "Title" --aspect 9:16 --output title.png
 
 import { execFileSync } from "node:child_process";
-import { readFileSync, existsSync, copyFileSync, mkdirSync } from "node:fs";
+import { readFileSync, existsSync, copyFileSync, mkdirSync, realpathSync } from "node:fs";
 import { resolve, dirname, join, basename } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -29,20 +29,25 @@ const ASPECT_DIMS = {
 function copyMusicToPublic(brief, briefPath, publicDir) {
   if (!brief.music) return undefined;
 
-  const musicAbsPath = resolve(brief.music);
+  // Resolve relative music paths against the brief file's directory (not cwd),
+  // since brief.music is authored relative to the brief's location.
+  const briefDir = dirname(briefPath);
+  const musicAbsPath = resolve(briefDir, brief.music);
   // Path traversal guard: only allow music files within the brief's directory tree
   // or the project directory. Prevents arbitrary file read via crafted brief.music paths.
-  const briefDir = dirname(briefPath);
-  const projectDir = resolve(__dirname, "..", "..");
-  if (!musicAbsPath.startsWith(briefDir + "/") && !musicAbsPath.startsWith(projectDir + "/")) {
-    console.warn(
-      `Warning: music path "${musicAbsPath}" is outside the brief directory ` +
-      `("${briefDir}") and project directory ("${projectDir}"), skipping for security`
-    );
-    return undefined;
-  }
+  // Check existence first so realpathSync can resolve symlinks for the security check.
   if (!existsSync(musicAbsPath)) {
     console.warn(`Warning: music file not found: ${musicAbsPath}, skipping`);
+    return undefined;
+  }
+  // Resolve symlinks to prevent symlink-based directory escapes
+  const musicRealPath = realpathSync(musicAbsPath);
+  const projectDir = resolve(__dirname, "..", "..");
+  if (!musicRealPath.startsWith(briefDir + "/") && !musicRealPath.startsWith(projectDir + "/")) {
+    console.warn(
+      `Warning: music path "${musicRealPath}" resolves outside the brief directory ` +
+      `("${briefDir}") and project directory ("${projectDir}"), skipping for security`
+    );
     return undefined;
   }
   // Use timestamp prefix to avoid filename collisions across renders
