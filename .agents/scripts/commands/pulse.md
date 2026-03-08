@@ -235,13 +235,7 @@ When a worker fails on an issue (killed for thrashing, PR closed without merge, 
 | 2 | Escalate to opus: add `--model anthropic/claude-opus-4-6` to the dispatch command |
 | 3+ | Escalate to opus AND simplify scope — add a comment on the issue summarising what previous workers attempted and where they got stuck, so the next worker doesn't repeat the same analysis |
 
-**When escalating, comment on the issue:**
-
-```bash
-gh issue comment <number> --repo <slug> --body "Escalating to opus after <N> failed worker attempts. Previous workers were dispatched at sonnet tier and failed with 0 commits. Model: anthropic/claude-opus-4-6. See previous comments for failure details."
-```
-
-**Override the no-model dispatch rule:** The default dispatch rule says "Do NOT add `--model`". This escalation rule overrides it — when failure count >= 2, you MUST add `--model anthropic/claude-opus-4-6`. The cost of one opus dispatch (~3x sonnet) is far less than the cost of 5+ failed sonnet dispatches.
+**Override the no-model dispatch rule:** The default dispatch rule says "Do NOT add `--model`". This escalation rule overrides it — when failure count >= 2, you MUST add `--model anthropic/claude-opus-4-6`. The cost of one opus dispatch (~3x sonnet) is far less than the cost of 5+ failed sonnet dispatches. Do NOT post a separate escalation comment — the dispatch comment's "Attempt" field captures escalation context (e.g., "Attempt: 3 of 3 (escalated to opus after 2 failed sonnet attempts)").
 
 **This is a judgment call, not a hard threshold.** If the first failure was clearly a transient issue (OOM, network timeout, CI flake) rather than a capability gap, resetting the counter is appropriate. But if the worker thrashed with high struggle ratio and 0 commits, that's a capability signal — escalate.
 
