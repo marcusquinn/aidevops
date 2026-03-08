@@ -338,15 +338,27 @@ run_webaim_contrast() {
 	print_info "Background: #$bg"
 
 	local response
-	response=$(curl -s "${WEBAIMCC_API_URL}?fcolor=${fg}&bcolor=${bg}&api" 2>>"$LOG_FILE") || {
+	response=$(curl -s -w "\n%{http_code}" \
+		"${WEBAIMCC_API_URL}?fcolor=${fg}&bcolor=${bg}&api" \
+		2>>"$LOG_FILE") || {
 		print_error "WebAIM contrast API request failed"
 		return 1
 	}
 
+	local http_code
+	http_code=$(echo "$response" | tail -1)
+	local body
+	body=$(echo "$response" | sed '$d')
+
+	if [[ "$http_code" != "200" ]]; then
+		print_error "WebAIM contrast API returned HTTP $http_code"
+		return 1
+	fi
+
 	local timestamp
 	timestamp=$(date +"%Y%m%d_%H%M%S")
 	local report_file="${AUDIT_REPORTS_DIR}/webaim_contrast_${timestamp}.json"
-	echo "$response" >"$report_file"
+	echo "$body" >"$report_file"
 
 	echo ""
 	print_header_line "WebAIM Contrast Check"
@@ -354,18 +366,18 @@ run_webaim_contrast() {
 	echo "  Background: #$bg"
 
 	local ratio
-	ratio=$(echo "$response" | jq -r '.ratio // "N/A"' 2>/dev/null)
+	ratio=$(echo "$body" | jq -r '.ratio // "N/A"' 2>/dev/null)
 	echo "  Ratio: ${ratio}"
 	echo ""
 
 	local aa_normal
-	aa_normal=$(echo "$response" | jq -r '.AA // "N/A"' 2>/dev/null)
+	aa_normal=$(echo "$body" | jq -r '.AA // "N/A"' 2>/dev/null)
 	local aa_large
-	aa_large=$(echo "$response" | jq -r '.AALarge // "N/A"' 2>/dev/null)
+	aa_large=$(echo "$body" | jq -r '.AALarge // "N/A"' 2>/dev/null)
 	local aaa_normal
-	aaa_normal=$(echo "$response" | jq -r '.AAA // "N/A"' 2>/dev/null)
+	aaa_normal=$(echo "$body" | jq -r '.AAA // "N/A"' 2>/dev/null)
 	local aaa_large
-	aaa_large=$(echo "$response" | jq -r '.AAALarge // "N/A"' 2>/dev/null)
+	aaa_large=$(echo "$body" | jq -r '.AAALarge // "N/A"' 2>/dev/null)
 
 	_format_pass_fail() {
 		local val="$1"
