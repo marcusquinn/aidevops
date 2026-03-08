@@ -473,6 +473,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 2
     permissions:
+      contents: read
+      issues: write
       pull-requests: write
 
     steps:
@@ -531,6 +533,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 2
     permissions:
+      contents: read
+      issues: read
       pull-requests: write
 
     steps:
