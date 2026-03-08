@@ -189,6 +189,11 @@ cmd_add() {
 	local escaped_model
 	escaped_model=$(sql_escape "$model")
 
+	if ! [[ "$max_retries" =~ ^[0-9]+$ ]]; then
+		log_error "--max-retries must be a non-negative integer"
+		return 1
+	fi
+
 	db "$SUPERVISOR_DB" "
         INSERT INTO tasks (id, repo, description, model, max_retries)
         VALUES ('$escaped_id', '$escaped_repo', '$escaped_desc', '$escaped_model', $max_retries);
@@ -288,6 +293,13 @@ cmd_batch() {
 			return 1
 			;;
 		esac
+	done
+
+	for v in concurrency max_concurrency; do
+		if ! [[ "${!v}" =~ ^[0-9]+$ ]]; then
+			log_error "--${v//_/-} must be a non-negative integer"
+			return 1
+		fi
 	done
 
 	if [[ -z "$name" ]]; then

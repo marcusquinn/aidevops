@@ -351,7 +351,7 @@ run_webaim_contrast() {
 	local response
 	response=$(curl -s \
 		--connect-timeout "$DEFAULT_TIMEOUT" \
-		--max-time "$DEFAULT_TIMEOUT" \
+		--max-time "$LONG_TIMEOUT" \
 		"${WEBAIMCC_API_URL}?fcolor=${fg}&bcolor=${bg}&api" 2>>"$LOG_FILE") || {
 		print_error "WebAIM contrast API request failed"
 		return 1

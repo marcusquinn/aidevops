@@ -111,22 +111,10 @@ readonly -a SEVERITY_UPGRADE_HIGH=(
 # Logging
 # =============================================================================
 
-log_info() {
-	echo -e "${BLUE}[AUDIT-TASK]${NC} $*"
-	return 0
-}
-log_success() {
-	echo -e "${GREEN}[AUDIT-TASK]${NC} $*"
-	return 0
-}
-log_warn() {
-	echo -e "${YELLOW}[AUDIT-TASK]${NC} $*"
-	return 0
-}
-log_error() {
-	echo -e "${RED}[AUDIT-TASK]${NC} $*" >&2
-	return 0
-}
+log_info() { print_info "$@"; }
+log_success() { print_success "$@"; }
+log_warn() { print_warning "$@"; }
+log_error() { print_error "$@"; }
 
 # =============================================================================
 # SQLite wrapper
@@ -567,7 +555,7 @@ scan_unified_findings() {
 	while IFS= read -r finding; do
 		total=$((total + 1))
 
-		local finding_id source severity path line description category
+		local finding_id source severity path line description category pr_number
 		finding_id=$(echo "$finding" | jq -r '.id')
 		source=$(echo "$finding" | jq -r '.source')
 		severity=$(echo "$finding" | jq -r '.severity')
@@ -575,6 +563,7 @@ scan_unified_findings() {
 		line=$(echo "$finding" | jq -r '.line // 0')
 		description=$(echo "$finding" | jq -r '.description')
 		category=$(echo "$finding" | jq -r '.category // "general"')
+		pr_number=$(echo "$finding" | jq -r '.pr_number // 0')
 
 		# Check false positive
 		local fp_reason=""
@@ -591,7 +580,7 @@ scan_unified_findings() {
 					(source, source_id, source_tool, pr_number, path, line, severity,
 					 original_severity, category, description, is_false_positive, fp_reason)
 				VALUES ('unified', '$(sql_escape "$finding_id")', '$(sql_escape "$source")',
-					${line:-0}, '$(sql_escape "$path")', ${line:-0},
+					${pr_number:-0}, '$(sql_escape "$path")', ${line:-0},
 					'$severity', '$severity', '$(sql_escape "$category")',
 					'$escaped_desc', 1, '$escaped_fp');
 			" 2>/dev/null || true
@@ -1305,6 +1294,10 @@ cmd_verify() {
 
 	if [[ $# -gt 0 && ! "$1" =~ ^-- ]]; then
 		finding_id="$1"
+		if ! [[ "$finding_id" =~ ^[0-9]+$ ]]; then
+			log_error "Invalid finding ID: '$finding_id'. Must be an integer."
+			return 1
+		fi
 		shift
 	fi
 

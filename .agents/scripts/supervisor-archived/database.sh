@@ -415,10 +415,10 @@ CREATE TABLE tasks (
 );
 INSERT INTO tasks (id, repo, description, status, session_id, worktree, branch,
     log_file, retries, max_retries, model, error, pr_url, issue_url, diagnostic_of,
-    created_at, started_at, completed_at, updated_at)
+    triage_result, created_at, started_at, completed_at, updated_at)
 SELECT id, repo, description, status, session_id, worktree, branch,
     log_file, retries, max_retries, model, error, pr_url, issue_url, diagnostic_of,
-    created_at, started_at, completed_at, updated_at
+    triage_result, created_at, started_at, completed_at, updated_at
 FROM tasks_old_t148;
 DROP TABLE tasks_old_t148;
 CREATE INDEX IF NOT EXISTS idx_tasks_status ON tasks(status);

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC2034
+# shellcheck disable=SC2034 # Variables from shared-constants.sh appear unused to ShellCheck
 
 # Email Health Check Helper Script
 # Validates email authentication and deliverability for domains

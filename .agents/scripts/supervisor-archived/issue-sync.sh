@@ -2902,9 +2902,19 @@ Respond with ONLY a JSON object:
 # Args: task_id, blocked_reason, repo_path
 #######################################
 post_blocked_comment_to_github() {
-	local task_id="$1"
-	local reason="${2:-unknown}"
-	local repo_path="$3"
+	local task_id
+	task_id="$1"
+	local reason
+	reason="${2:-unknown}"
+	local repo_path
+	repo_path="$3"
+
+	# Validate task_id to prevent command injection
+	local safe_task_id_pattern='^[a-zA-Z0-9._-]+$'
+	if [[ ! "$task_id" =~ $safe_task_id_pattern ]]; then
+		log_warn "Invalid task_id format detected, skipping GitHub comment: $task_id"
+		return 1
+	fi
 
 	# Check if gh CLI is available
 	if ! command -v gh &>/dev/null; then
@@ -2919,13 +2929,13 @@ post_blocked_comment_to_github() {
 	fi
 
 	local task_line
-	task_line=$(grep -E "^[[:space:]]*- \[.\] ${task_id} " "$todo_file" | head -1 || echo "")
+	task_line=$(grep -E -- "^[[:space:]]*- \[.\] ${task_id} " "$todo_file" | head -1 || echo "")
 	if [[ -z "$task_line" ]]; then
 		return 0
 	fi
 
 	local gh_issue_num
-	gh_issue_num=$(echo "$task_line" | grep -oE 'ref:GH#[0-9]+' | head -1 | sed 's/ref:GH#//' || echo "")
+	gh_issue_num=$(echo "$task_line" | grep -oE 'ref:GH#[0-9]+' | head -1 | cut -d'#' -f2 || echo "")
 	if [[ -z "$gh_issue_num" ]]; then
 		log_info "No GitHub issue reference found for $task_id, skipping comment"
 		return 0
@@ -2933,7 +2943,7 @@ post_blocked_comment_to_github() {
 
 	# Detect repo slug
 	local repo_slug
-	repo_slug=$(detect_repo_slug "$repo_path" 2>/dev/null || echo "")
+	repo_slug=$(detect_repo_slug "$repo_path" || echo "")
 	if [[ -z "$repo_slug" ]]; then
 		log_warn "Could not detect repo slug for $repo_path, skipping GitHub comment"
 		return 0
@@ -2955,14 +2965,14 @@ The automated worker for this task encountered an issue and needs clarification:
 The supervisor will automatically retry this task once it's tagged with \`#auto-dispatch\`."
 
 	# Post the comment
-	if gh issue comment "$gh_issue_num" --repo "$repo_slug" --body "$comment_body" 2>/dev/null; then
+	if gh issue comment "$gh_issue_num" --repo "$repo_slug" --body "$comment_body"; then
 		log_success "Posted blocked comment to GitHub issue #$gh_issue_num"
 	else
 		log_warn "Failed to post comment to GitHub issue #$gh_issue_num"
 	fi
 
 	# Remove auto-dispatch label if it exists
-	if gh issue edit "$gh_issue_num" --repo "$repo_slug" --remove-label "auto-dispatch" 2>/dev/null; then
+	if gh issue edit "$gh_issue_num" --repo "$repo_slug" --remove-label "auto-dispatch"; then
 		log_success "Removed auto-dispatch label from GitHub issue #$gh_issue_num"
 	else
 		# Label might not exist, which is fine

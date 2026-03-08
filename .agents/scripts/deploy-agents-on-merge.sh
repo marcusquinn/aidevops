@@ -332,9 +332,16 @@ deploy_changed_files() {
 			# Create target directory if needed
 			local target_parent
 			target_parent=$(dirname "$target_file")
-			if ! mkdir -p "$target_parent" || ! cp "$source_file" "$target_file"; then
+			if ! mkdir -p "$target_parent"; then
 				failed=$((failed + 1))
-				log_warn "Failed to deploy: $rel_path"
+				log_warn "mkdir failed: $rel_path"
+				continue
+			fi
+
+			# Copy file
+			if ! cp "$source_file" "$target_file"; then
+				failed=$((failed + 1))
+				log_warn "cp failed: $rel_path"
 				continue
 			fi
 
@@ -342,7 +349,7 @@ deploy_changed_files() {
 			if [[ "$target_file" == *.sh ]]; then
 				if ! chmod +x "$target_file"; then
 					failed=$((failed + 1))
-					log_warn "Failed to chmod: $rel_path"
+					log_warn "chmod failed: $rel_path"
 					continue
 				fi
 			fi

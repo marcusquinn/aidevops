@@ -17,6 +17,7 @@
 #   - Open critical issues (prioritize bug fixes over maintenance routines)
 #   - Recent task failure rate (prioritize self-healing over cosmetic updates)
 #   - Time since last run (minimum interval still enforced as a floor)
+#   Note: API budget pressure is a planned future signal (not yet implemented)
 #
 # Routines managed:
 #   - memory_audit    (Phase 9)  — lightweight, skip only if very recent
@@ -414,7 +415,7 @@ routine_refresh_signals() {
 			sed -E 's#.*[:/]([^/]+/[^/]+)$#\1#' | sed 's/\.git$//' || echo "")
 		if [[ -n "$gh_repo" ]]; then
 			critical_count=$(gh issue list --repo "$gh_repo" --state open \
-				--search 'label:bug,critical,P0,P1,"severity:critical","severity:high"' \
+				--search 'label:bug OR label:critical OR label:P0 OR label:P1 OR label:"severity:critical" OR label:"severity:high"' \
 				--limit 50 --json number --jq 'length' 2>/dev/null || echo 0)
 		fi
 	fi
@@ -646,9 +647,14 @@ routine_record_run() {
 
 #######################################
 # Set an explicit deferral for a routine
+# Public API for callers to explicitly defer a routine for a cooldown period.
+# Currently unused internally — the signal-driven "defer" paths in
+# should_run_routine() return a transient decision without persisting
+# skip_until state. Callers (e.g., pulse.sh phases) can invoke this to
+# enforce a hard deferral window when needed.
 # Arguments:
 #   $1 - routine name
-#   $2 - defer duration in seconds
+#   $2 - defer duration in seconds (default: 3600)
 # Returns: 0 on success
 #######################################
 routine_defer() {

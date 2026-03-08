@@ -10,6 +10,24 @@
 # - cmd_reconcile_todo/db_todo(): DB↔TODO.md consistency checks
 # No judgment calls — entire module stays as shell plumbing.
 
+# Validate task_id contains only safe characters (alphanumeric, dots, hyphens, underscores)
+# Prevents injection in grep/sed/awk patterns
+_validate_task_id() {
+	local id="$1"
+	if [[ ! "$id" =~ ^[a-zA-Z0-9._-]+$ ]]; then
+		log_warn "Invalid task_id format: $id"
+		return 1
+	fi
+	return 0
+}
+
+# Sanitize a filename for safe use in shell commands
+# Strips anything that isn't alphanumeric, dots, hyphens, underscores, or forward slashes
+_sanitize_filename() {
+	local name="$1"
+	printf '%s' "$name" | tr -cd 'a-zA-Z0-9._/-'
+}
+
 #######################################
 # Commit and push TODO.md with pull-rebase retry
 # Handles concurrent push conflicts from parallel workers
@@ -195,7 +213,7 @@ recover_stale_claims() {
 
 		# Check 1: Is the task actively tracked in the supervisor DB?
 		if [[ -n "$active_db_tasks" ]]; then
-			if echo "$active_db_tasks" | grep -qE "^${task_id}$"; then
+			if echo "$active_db_tasks" | grep -qE -- "^${task_id}$"; then
 				skipped_active=$((skipped_active + 1))
 				log_verbose "  Phase 0.5e: $task_id skipped — active in supervisor DB"
 				continue
@@ -206,7 +224,7 @@ recover_stale_claims() {
 		local has_worktree=false
 		if [[ -n "$active_worktrees" ]]; then
 			# Match worktree paths containing the task ID (e.g., repo.feature-t1263)
-			if echo "$active_worktrees" | grep -qE "[-./]${task_id}([^0-9.]|$)"; then
+			if echo "$active_worktrees" | grep -qE -- "[-./]${task_id}([^0-9.]|$)"; then
 				has_worktree=true
 			fi
 		fi
@@ -358,6 +376,9 @@ populate_verify_queue() {
 	local pr_url="${2:-}"
 	local repo="${3:-}"
 
+	# Validate task_id before using in patterns
+	_validate_task_id "$task_id" || return 1
+
 	if [[ -z "$repo" ]]; then
 		log_warn "populate_verify_queue: no repo for $task_id"
 		return 1
@@ -380,7 +401,7 @@ populate_verify_queue() {
 	pr_number="${parsed_populate##*|}"
 
 	# Check if this task already has a verify entry (idempotency)
-	if grep -q "^- \[.\] v[0-9]* $task_id " "$verify_file" 2>/dev/null; then
+	if grep -q -- "^- \[.\] v[0-9]* $task_id " "$verify_file" 2>/dev/null; then
 		log_info "Verify entry already exists for $task_id in VERIFY.md"
 		return 0
 	fi
@@ -434,6 +455,9 @@ populate_verify_queue() {
 	# Generate check directives based on file types
 	local checks=""
 	while IFS= read -r file; do
+		[[ -z "$file" ]] && continue
+		# Sanitize filename from PR to prevent command injection
+		file=$(_sanitize_filename "$file")
 		[[ -z "$file" ]] && continue
 		case "$file" in
 		*.sh)
@@ -584,13 +608,13 @@ process_verify_queue() {
 	local auto_verified_count=0
 	local max_auto_verify_per_pulse=50
 
-	while IFS='|' read -r tid trepo _tpr; do
+	while IFS='|' read -r tid trepo _; do
 		[[ -z "$tid" ]] && continue
 
 		local verify_file="$trepo/todo/VERIFY.md"
 		local has_entry=false
 
-		if [[ -f "$verify_file" ]] && grep -q "^- \[ \] v[0-9]* $tid " "$verify_file" 2>/dev/null; then
+		if [[ -f "$verify_file" ]] && grep -q -- "^- \[ \] v[0-9]* $tid " "$verify_file" 2>/dev/null; then
 			has_entry=true
 		fi
 
@@ -667,6 +691,9 @@ commit_verify_changes() {
 update_todo_on_complete() {
 	local task_id="$1"
 
+	# Validate task_id before using in patterns
+	_validate_task_id "$task_id" || return 1
+
 	ensure_db
 
 	local escaped_id
@@ -706,11 +733,11 @@ update_todo_on_complete() {
 	# marked [x] when ALL its subtasks are [x]. This prevents workers from prematurely
 	# completing parents, regardless of #plan tag.
 	local task_line
-	task_line=$(grep -E "^[[:space:]]*- \[[ x-]\] ${task_id}( |$)" "$todo_file" | head -1 || true)
+	task_line=$(grep -E -- "^[[:space:]]*- \[[ x-]\] ${task_id}( |$)" "$todo_file" | head -1 || true)
 	if [[ -n "$task_line" ]]; then
 		# Check for explicit subtask IDs (e.g., t123.1, t123.2 are children of t123)
 		local explicit_subtasks
-		explicit_subtasks=$(grep -E "^[[:space:]]*- \[ \] ${task_id}\.[0-9]+( |$)" "$todo_file" || true)
+		explicit_subtasks=$(grep -E -- "^[[:space:]]*- \[ \] ${task_id}\.[0-9]+( |$)" "$todo_file" || true)
 
 		if [[ -n "$explicit_subtasks" ]]; then
 			local open_count
@@ -729,7 +756,7 @@ update_todo_on_complete() {
 		local open_subtasks
 		open_subtasks=$(awk -v tid="$task_id" -v tindent="$task_indent" '
             BEGIN { found=0 }
-            /- \[[ x-]\] '"$task_id"'( |$)/ { found=1; next }
+            $0 ~ ("- \\[[ x-]\\] " tid "( |$)") { found=1; next }
             found && /^[[:space:]]*- \[/ {
                 # Count leading spaces
                 match($0, /^[[:space:]]*/);
@@ -756,7 +783,7 @@ update_todo_on_complete() {
 
 	# Match the task line (open checkbox with task ID)
 	# Handles both top-level and indented subtasks
-	if ! grep -qE "^[[:space:]]*- \[ \] ${task_id}( |$)" "$todo_file"; then
+	if ! grep -qE -- "^[[:space:]]*- \[ \] ${task_id}( |$)" "$todo_file"; then
 		log_warn "Task $task_id not found as open in $todo_file (may already be completed)"
 		return 0
 	fi
@@ -780,7 +807,7 @@ update_todo_on_complete() {
 	sed_inplace -E "$sed_pattern" "$todo_file"
 
 	# Verify the change was made
-	if ! grep -qE "^[[:space:]]*- \[x\] ${task_id} " "$todo_file"; then
+	if ! grep -qE -- "^[[:space:]]*- \[x\] ${task_id} " "$todo_file"; then
 		log_error "Failed to update TODO.md for $task_id"
 		return 1
 	fi
@@ -837,7 +864,7 @@ generate_verify_entry() {
 	# Check if entry already exists for this task
 	local task_id_escaped
 	task_id_escaped=$(printf '%s' "$task_id" | sed 's/\./\\./g')
-	if grep -qE "^- \[.\] v[0-9]+ ${task_id_escaped} " "$verify_file"; then
+	if grep -qE -- "^- \[.\] v[0-9]+ ${task_id_escaped} " "$verify_file"; then
 		log_info "generate_verify_entry: entry already exists for $task_id"
 		return 0
 	fi
@@ -1003,6 +1030,9 @@ update_todo_on_cancelled() {
 	local task_id="$1"
 	local reason="${2:-cancelled by supervisor}"
 
+	# Validate task_id before using in patterns
+	_validate_task_id "$task_id" || return 1
+
 	ensure_db
 
 	local escaped_id
@@ -1023,7 +1053,7 @@ update_todo_on_cancelled() {
 
 	# Find the task line number (open checkbox only — already-closed tasks are fine)
 	local line_num
-	line_num=$(grep -nE "^[[:space:]]*- \[ \] ${task_id}( |$)" "$todo_file" | head -1 | cut -d: -f1)
+	line_num=$(grep -nE -- "^[[:space:]]*- \[ \] ${task_id}( |$)" "$todo_file" | head -1 | cut -d: -f1)
 
 	if [[ -z "$line_num" ]]; then
 		log_verbose "Task $task_id not found as open in $todo_file (already annotated or closed)"
@@ -1076,6 +1106,9 @@ update_todo_on_blocked() {
 	local task_id="$1"
 	local reason="${2:-unknown}"
 
+	# Validate task_id before using in patterns
+	_validate_task_id "$task_id" || return 1
+
 	ensure_db
 
 	local escaped_id
@@ -1096,7 +1129,7 @@ update_todo_on_blocked() {
 
 	# Find the task line number
 	local line_num
-	line_num=$(grep -nE "^[[:space:]]*- \[ \] ${task_id}( |$)" "$todo_file" | head -1 | cut -d: -f1)
+	line_num=$(grep -nE -- "^[[:space:]]*- \[ \] ${task_id}( |$)" "$todo_file" | head -1 | cut -d: -f1)
 
 	if [[ -z "$line_num" ]]; then
 		log_warn "Task $task_id not found as open in $todo_file"
@@ -1249,7 +1282,7 @@ auto_unblock_resolved_tasks() {
 			# Remove blocked-by: field from the task line
 			# Find the line number first, then do a targeted replacement
 			local line_num
-			line_num=$(grep -nE "^[[:space:]]*- \[ \] ${task_id}( |$)" "$todo_file" | head -1 | cut -d: -f1 || echo "")
+			line_num=$(grep -nE -- "^[[:space:]]*- \[ \] ${task_id}( |$)" "$todo_file" | head -1 | cut -d: -f1 || echo "")
 			if [[ -n "$line_num" ]]; then
 				# Remove ' blocked-by:<value>' from the specific line
 				# Escape dots in task IDs for sed regex (e.g., t1224.3 → t1224\.3)
@@ -1412,7 +1445,7 @@ cmd_reconcile_todo() {
 		fi
 
 		# Check if task is still open in TODO.md
-		if grep -qE "^[[:space:]]*- \[ \] ${tid}( |$)" "$todo_file"; then
+		if grep -qE -- "^[[:space:]]*- \[ \] ${tid}( |$)" "$todo_file"; then
 			stale_count=$((stale_count + 1))
 			stale_tasks="${stale_tasks}${stale_tasks:+, }${tid}"
 
@@ -1619,7 +1652,7 @@ cmd_reconcile_db_todo() {
 
 			# Check if task is open in TODO.md with no Notes annotation
 			local line_num
-			line_num=$(grep -nE "^[[:space:]]*- \[ \] ${tid}( |$)" "$todo_file" | head -1 | cut -d: -f1)
+			line_num=$(grep -nE -- "^[[:space:]]*- \[ \] ${tid}( |$)" "$todo_file" | head -1 | cut -d: -f1)
 			[[ -z "$line_num" ]] && continue
 
 			# Check if a Notes line already exists below
@@ -1669,7 +1702,7 @@ cmd_reconcile_db_todo() {
 			[[ -z "$tid" ]] && continue
 
 			# Only act if task is still open ([ ]) in TODO.md
-			if ! grep -qE "^[[:space:]]*- \[ \] ${tid}( |$)" "$todo_file"; then
+			if ! grep -qE -- "^[[:space:]]*- \[ \] ${tid}( |$)" "$todo_file"; then
 				continue
 			fi
 
@@ -1707,7 +1740,7 @@ cmd_reconcile_db_todo() {
 			[[ -z "$tid" ]] && continue
 
 			# Check if this task is marked [x] in TODO.md
-			if grep -qE "^[[:space:]]*- \[x\] ${tid}( |$)" "$todo_file"; then
+			if grep -qE -- "^[[:space:]]*- \[x\] ${tid}( |$)" "$todo_file"; then
 				issue_count=$((issue_count + 1))
 
 				if [[ "$dry_run" == "true" ]]; then
@@ -1743,7 +1776,7 @@ cmd_reconcile_db_todo() {
 			[[ -z "$tid" ]] && continue
 
 			# Check if task ID appears anywhere in TODO.md (open, closed, or in notes)
-			if ! grep -qE "(^|[[:space:]])${tid}([[:space:]]|$)" "$todo_file"; then
+			if ! grep -qE -- "(^|[[:space:]])${tid}([[:space:]]|$)" "$todo_file"; then
 				orphan_count=$((orphan_count + 1))
 				orphan_ids="${orphan_ids}${orphan_ids:+, }${tid}(${tstatus})"
 			fi
@@ -1890,7 +1923,7 @@ cmd_reconcile_queue_dispatchability() {
 		fi
 
 		# --- Check 1: Task marked [x] (completed) in TODO.md ---
-		if grep -qE "^[[:space:]]*- \[x\] ${tid}( |$)" "$task_todo" 2>/dev/null; then
+		if grep -qE -- "^[[:space:]]*- \[x\] ${tid}( |$)" "$task_todo" 2>/dev/null; then
 			if [[ "$dry_run" == "true" ]]; then
 				log_warn "[dry-run] Phase 0.6: $tid queued in DB but [x] in TODO.md — would transition to complete"
 			else

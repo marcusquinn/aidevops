@@ -171,7 +171,7 @@ detect_format() {
 
 	# Check for nested skill directory (e.g., skill/*/SKILL.md)
 	local nested_skill
-	nested_skill=$(find "$dir" -maxdepth 3 -name "SKILL.md" -type f 2>/dev/null | head -1)
+	nested_skill=$(find "$dir" -maxdepth 3 -name "SKILL.md" -type f 2>/dev/null | awk '{ print length, $0 }' | sort -n | head -1 | cut -d' ' -f2-)
 	if [[ -n "$nested_skill" ]]; then
 		local skill_subdir
 		skill_subdir=$(dirname "$nested_skill")
@@ -268,39 +268,39 @@ determine_target_path() {
 	# Check skill name first for known services
 	if [[ "$skill_name" == "cloudflare"* ]]; then
 		category="services/hosting"
-	elif echo "$content" | grep -qi "cloudflare workers\|cloudflare pages\|wrangler"; then
+	elif grep -qi "cloudflare workers\|cloudflare pages\|wrangler" <<< "$content"; then
 		category="services/hosting"
 	# Architecture patterns (must come before generic patterns)
-	elif echo "$content" | grep -qi "clean.architecture\|hexagonal\|ddd\|domain.driven\|ports.and.adapters\|onion.architecture\|cqrs\|event.sourcing"; then
+	elif grep -qi "clean.architecture\|hexagonal\|ddd\|domain.driven\|ports.and.adapters\|onion.architecture\|cqrs\|event.sourcing" <<< "$content"; then
 		category="tools/architecture"
-	elif echo "$content" | grep -qi "feature.sliced\|feature-sliced\|fsd.architecture\|slice.organization"; then
+	elif grep -qi "feature.sliced\|feature-sliced\|fsd.architecture\|slice.organization" <<< "$content"; then
 		category="tools/architecture"
 	# Database and ORM
-	elif echo "$content" | grep -qi "postgresql\|postgres\|drizzle\|prisma\|typeorm\|sequelize\|knex\|database.orm"; then
+	elif grep -qi "postgresql\|postgres\|drizzle\|prisma\|typeorm\|sequelize\|knex\|database.orm" <<< "$content"; then
 		category="services/database"
 	# Diagrams and visualization
-	elif echo "$content" | grep -qi "mermaid\|diagram\|flowchart\|sequence.diagram\|er.diagram\|uml"; then
+	elif grep -qi "mermaid\|diagram\|flowchart\|sequence.diagram\|er.diagram\|uml" <<< "$content"; then
 		category="tools/diagrams"
 	# Programming languages (specific patterns)
-	elif echo "$content" | grep -qi "javascript\|typescript\|es6\|es2020\|es2022\|es2024\|ecmascript\|modern.js"; then
+	elif grep -qi "javascript\|typescript\|es6\|es2020\|es2022\|es2024\|ecmascript\|modern.js" <<< "$content"; then
 		category="tools/programming"
-	elif echo "$content" | grep -qi "browser\|playwright\|puppeteer\|selenium"; then
+	elif grep -qi "browser\|playwright\|puppeteer\|selenium" <<< "$content"; then
 		category="tools/browser"
-	elif echo "$content" | grep -qi "seo\|search.ranking\|keyword.research"; then
+	elif grep -qi "seo\|search.ranking\|keyword.research" <<< "$content"; then
 		category="seo"
-	elif echo "$content" | grep -qi "git\|github\|gitlab"; then
+	elif grep -qi "git\|github\|gitlab" <<< "$content"; then
 		category="tools/git"
-	elif echo "$content" | grep -qi "code.review\|lint\|quality"; then
+	elif grep -qi "code.review\|lint\|quality" <<< "$content"; then
 		category="tools/code-review"
-	elif echo "$content" | grep -qi "credential\|secret\|password\|vault"; then
+	elif grep -qi "credential\|secret\|password\|vault" <<< "$content"; then
 		category="tools/credentials"
-	elif echo "$content" | grep -qi "vercel\|coolify\|docker\|kubernetes"; then
+	elif grep -qi "vercel\|coolify\|docker\|kubernetes" <<< "$content"; then
 		category="tools/deployment"
-	elif echo "$content" | grep -qi "proxmox\|hypervisor\|virtualization\|vm.management"; then
+	elif grep -qi "proxmox\|hypervisor\|virtualization\|vm.management" <<< "$content"; then
 		category="services/hosting"
-	elif echo "$content" | grep -qi "calendar\|caldav\|ical\|scheduling"; then
+	elif grep -qi "calendar\|caldav\|ical\|scheduling" <<< "$content"; then
 		category="tools/productivity"
-	elif echo "$content" | grep -qi "dns\|hosting\|domain"; then
+	elif grep -qi "dns\|hosting\|domain" <<< "$content"; then
 		category="services/hosting"
 	fi
 
@@ -434,8 +434,12 @@ register_skill() {
 		_save_cleanup_scope
 		trap '_run_cleanups' RETURN
 		push_cleanup "rm -f '${tmp_file}'"
-		jq --arg name "$name" '.skills = [.skills[] | select(.name != $name)]' "$SKILL_SOURCES" >"$tmp_file" && mv "$tmp_file" "$SKILL_SOURCES"
-		rm -f "$tmp_file"
+		if ! jq --arg name "$name" '.skills = [.skills[] | select(.name != $name)]' "$SKILL_SOURCES" >"$tmp_file"; then
+			log_error "Failed to process skill sources JSON. Update aborted."
+			rm -f "$tmp_file"
+			return 1
+		fi
+		mv "$tmp_file" "$SKILL_SOURCES"
 	fi
 
 	local timestamp
@@ -1529,7 +1533,12 @@ cmd_remove() {
 	_save_cleanup_scope
 	trap '_run_cleanups' RETURN
 	push_cleanup "rm -f '${tmp_file}'"
-	jq --arg name "$name" '.skills = [.skills[] | select(.name != $name)]' "$SKILL_SOURCES" >"$tmp_file" && mv "$tmp_file" "$SKILL_SOURCES"
+	if ! jq --arg name "$name" '.skills = [.skills[] | select(.name != $name)]' "$SKILL_SOURCES" >"$tmp_file"; then
+		log_error "Failed to process skill sources JSON. Removal aborted."
+		rm -f "$tmp_file"
+		return 1
+	fi
+	mv "$tmp_file" "$SKILL_SOURCES"
 
 	log_success "Skill '$name' removed"
 

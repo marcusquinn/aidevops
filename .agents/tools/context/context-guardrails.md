@@ -32,7 +32,7 @@ tools:
 
 ## The Problem
 
-Claude's context window is 200K tokens. Context-heavy operations can easily exceed this:
+Claude's context window has a finite token budget. Context-heavy operations can easily consume it:
 
 | Tool | Typical Output | Risk Level |
 |------|----------------|------------|

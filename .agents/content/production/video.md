@@ -14,6 +14,9 @@ tools:
 
 # AI Video Production
 
+> **Reference guide only.** This document is a content library resource, not authoritative AI assistant instructions.
+> All operational directives live in [AGENTS.md](/AGENTS.md) as the single source of truth.
+
 <!-- AI-CONTEXT-START -->
 
 ## Quick Reference
@@ -300,10 +303,15 @@ Select seed range based on content:
 Generate 10-15 variations with sequential seeds:
 
 ```bash
+#!/bin/bash
+set -euo pipefail
+
 # Example: Product video (seed range 4000-4999)
 for seed in {4000..4010}; do
+  echo "Testing seed $seed..."
+
   # Generate with identical prompt, varying only seed
-  curl -X POST 'https://platform.higgsfield.ai/v1/image2video/dop' \
+  result=$(curl -sf -X POST 'https://platform.higgsfield.ai/v1/image2video/dop' \
     --header 'hf-api-key: {api-key}' \
     --header 'hf-secret: {secret}' \
     --data "{
@@ -312,7 +320,16 @@ for seed in {4000..4010}; do
         \"seed\": $seed,
         \"model\": \"dop-turbo\"
       }
-    }"
+    }") || { echo "ERROR: API call failed for seed $seed"; continue; }
+
+  job_id=$(echo "$result" | jq -r '.jobs[0].id // empty' 2>/dev/null)
+  if [[ -z "$job_id" ]]; then
+    echo "ERROR: Failed to extract job_id for seed $seed (API response invalid)"
+    continue
+  fi
+
+  echo "Job $job_id queued for seed $seed"
+  echo "$seed,$job_id" >> seed_bracket_results.csv
 done
 ```
 
