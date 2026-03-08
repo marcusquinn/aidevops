@@ -289,7 +289,7 @@ main() {
 		# Delegate to multi-tenant credential helper
 		local script_dir
 		script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
-		source "${SCRIPT_DIR}/shared-constants.sh"
+		source "${script_dir}/shared-constants.sh"
 
 		bash "$script_dir/credential-helper.sh" "$@"
 		;;
