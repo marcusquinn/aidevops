@@ -196,20 +196,20 @@ _pg_load_yaml_patterns() {
 			continue
 		fi
 
-		# Description field
-		if [[ "$line" =~ ^[[:space:]]*description:[[:space:]]*\"(.+)\"$ ]]; then
+		# Description field (double-quoted; use [^"]+ to avoid matching trailing comments)
+		if [[ "$line" =~ ^[[:space:]]*description:[[:space:]]*\"([^\"]+)\"[[:space:]]*(#.*)?$ ]]; then
 			description="${BASH_REMATCH[1]}"
 			continue
 		fi
 
-		# Pattern field (single-quoted — YAML standard for regex)
-		if [[ "$line" =~ ^[[:space:]]*pattern:[[:space:]]*\'(.+)\'$ ]]; then
+		# Pattern field (single-quoted — YAML standard for regex; [^']+ avoids greedy match)
+		if [[ "$line" =~ ^[[:space:]]*pattern:[[:space:]]*\'([^\']+)\'[[:space:]]*(#.*)?$ ]]; then
 			pattern="${BASH_REMATCH[1]}"
 			continue
 		fi
 
-		# Pattern field (double-quoted)
-		if [[ "$line" =~ ^[[:space:]]*pattern:[[:space:]]*\"(.+)\"$ ]]; then
+		# Pattern field (double-quoted; [^"]+ avoids greedy match)
+		if [[ "$line" =~ ^[[:space:]]*pattern:[[:space:]]*\"([^\"]+)\"[[:space:]]*(#.*)?$ ]]; then
 			pattern="${BASH_REMATCH[1]}"
 			continue
 		fi
@@ -454,6 +454,10 @@ _pg_scan_patterns_from_stream() {
 		if _pg_match "$pattern" "$message"; then
 			local matched_text
 			matched_text=$(_pg_extract_match "$pattern" "$message") || matched_text="[match]"
+			# Sanitize matched_text: replace pipe delimiters and newlines to prevent
+			# format corruption and log injection from untrusted content (GH#3220)
+			matched_text="${matched_text//$'\n'/ }"
+			matched_text="${matched_text//|/¦}"
 			echo "${severity}|${category}|${description}|${matched_text}"
 			_pg_scan_found=1
 		fi
@@ -709,8 +713,10 @@ cmd_scan_stdin() {
 		return 1
 	fi
 
+	# Limit stdin to 10MB to prevent DoS via memory exhaustion (GH#3220)
+	local max_bytes=10485760
 	local content
-	if ! content=$(cat); then
+	if ! content=$(head -c "$max_bytes"); then
 		_pg_log_error "Failed to read from stdin"
 		return 1
 	fi
@@ -718,6 +724,10 @@ cmd_scan_stdin() {
 	if [[ -z "$content" ]]; then
 		_pg_log_error "No content received on stdin"
 		return 1
+	fi
+
+	if [[ ${#content} -ge $max_bytes ]]; then
+		_pg_log_warn "Input truncated to ${max_bytes} bytes — scanning partial content"
 	fi
 
 	local byte_count

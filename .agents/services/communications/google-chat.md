@@ -232,6 +232,8 @@ google-chat-helper.sh setup
 | `asyncResponseTimeout` | `600` | Max seconds for async runner response |
 | `verifyGoogleTokens` | `true` | Verify inbound request bearer tokens against Google JWKS |
 
+> **WARNING**: Never set `verifyGoogleTokens` to `false` in production. Disabling token verification allows anyone who discovers your webhook URL to send forged events to the bot, completely bypassing authentication. This setting exists only for local testing against mock endpoints.
+
 ## Authentication
 
 ### Inbound (Google to Bot)

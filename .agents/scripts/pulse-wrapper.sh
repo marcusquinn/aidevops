@@ -2505,9 +2505,9 @@ _No smells detected or qlty analysis returned empty._
 	local sonar_section=""
 	if [[ -f "${repo_path}/sonar-project.properties" ]]; then
 		local project_key
-		project_key=$(grep '^sonar.projectKey=' "${repo_path}/sonar-project.properties" 2>/dev/null | cut -d= -f2)
+		project_key=$(grep '^sonar.projectKey=' "${repo_path}/sonar-project.properties" | cut -d= -f2 || true)
 		local org_key
-		org_key=$(grep '^sonar.organization=' "${repo_path}/sonar-project.properties" 2>/dev/null | cut -d= -f2)
+		org_key=$(grep '^sonar.organization=' "${repo_path}/sonar-project.properties" | cut -d= -f2 || true)
 
 		if [[ -n "$project_key" && -n "$org_key" ]]; then
 			# URL-encode project_key to prevent injection via crafted sonar-project.properties

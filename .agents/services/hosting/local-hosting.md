@@ -614,7 +614,7 @@ rm -f apps/web/.next/dev/lock && pnpm dev:web
 "dev": "rm -f .next/dev/lock && next dev --port 3100"
 
 # Terminal profile / Tabby start command (includes lock cleanup + port kill)
-rm -f apps/web/.next/dev/lock; lsof -ti:3100 | xargs kill -9 2>/dev/null; pnpm dev:web
+rm -f apps/web/.next/dev/lock; lsof -ti:3100 | xargs kill -9 || true; pnpm dev:web
 ```
 
 ### Docker Compose Projects

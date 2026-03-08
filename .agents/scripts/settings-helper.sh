@@ -246,14 +246,14 @@ cmd_set() {
 			return 1
 			;;
 		esac
-		jq "$jq_path = $value" "$SETTINGS_FILE" >"$tmp_file"
+		jq --argjson v "$value" "$jq_path = \$v" "$SETTINGS_FILE" >"$tmp_file"
 		;;
 	number)
-		if ! [[ "$value" =~ ^[0-9]+$ ]]; then
+		if ! jq -e 'tonumber' <<<"$value" >/dev/null 2>&1; then
 			print_error "Invalid number value: $value"
 			return 1
 		fi
-		jq "$jq_path = $value" "$SETTINGS_FILE" >"$tmp_file"
+		jq --argjson v "$value" "$jq_path = \$v" "$SETTINGS_FILE" >"$tmp_file"
 		;;
 	array)
 		# Accept JSON array or comma-separated values
