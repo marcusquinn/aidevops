@@ -136,6 +136,9 @@ jobs:
     name: SonarCloud Analysis
     runs-on: ubuntu-latest
 
+    env:
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+
     steps:
     - name: Checkout code
       uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -143,10 +146,18 @@ jobs:
         fetch-depth: 0  # Shallow clones should be disabled for better analysis
 
     - name: SonarCloud Scan
+      # Skip when SONAR_TOKEN is unavailable (e.g., fork PRs where secrets
+      # are not exposed for security). Without the token, the scan fails with
+      # "Project not found" — there is no useful degraded mode.
+      if: env.SONAR_TOKEN != ''
       uses: SonarSource/sonarqube-scan-action@40f5b61913e891f9d316696628698051136015be
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+
+    - name: SonarCloud Scan Skipped Notice
+      if: env.SONAR_TOKEN == ''
+      run: |
+        echo "::notice::SonarCloud scan skipped — SONAR_TOKEN not available (expected for fork PRs)"
 
     - name: Codacy Analysis
       env:
