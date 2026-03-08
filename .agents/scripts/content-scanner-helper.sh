@@ -229,13 +229,19 @@ _cs_normalize_nfkc() {
 	fi
 
 	# Try python3 first (most reliable NFKC)
+	# Use sentinel character to preserve trailing newlines through command substitution
+	# (bash $() strips trailing newlines, causing false "changed" detection — GH#3916)
 	if command -v python3 &>/dev/null; then
 		local py_result
-		if py_result=$(printf '%s' "$content" | python3 -c "
+		if py_result=$(
+			printf '%s' "$content" | python3 -c "
 import sys, unicodedata
 text = sys.stdin.read()
 sys.stdout.write(unicodedata.normalize('NFKC', text))
-"); then
+"
+			printf x
+		); then
+			py_result="${py_result%x}"
 			printf '%s' "$py_result"
 			return 0
 		fi
@@ -244,7 +250,11 @@ sys.stdout.write(unicodedata.normalize('NFKC', text))
 	# Try perl as fallback (Unicode::Normalize is core since 5.8)
 	if command -v perl &>/dev/null; then
 		local perl_result
-		if perl_result=$(printf '%s' "$content" | perl -MUnicode::Normalize -CS -pe '$_ = NFKC($_)'); then
+		if perl_result=$(
+			printf '%s' "$content" | perl -MUnicode::Normalize -CS -pe '$_ = NFKC($_)'
+			printf x
+		); then
+			perl_result="${perl_result%x}"
 			printf '%s' "$perl_result"
 			return 0
 		fi
