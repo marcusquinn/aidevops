@@ -28,8 +28,8 @@ reviews:
   
   # Exclude certain files from review
   path_filters:
-    - "!.agents/tmp/*"
-    - "!.agents/memory/*"
+    - "!.agents/tmp/**"
+    - "!.agents/memory/**"
     - "!*.log"
     - "!*.tmp"
   
@@ -65,6 +65,21 @@ reviews:
         - Type safety and proper typing
         - Error handling patterns
         - Clean code principles
+
+  # Enable static analysis tools
+  tools:
+    shellcheck:
+      enabled: true
+    markdownlint:
+      enabled: true
+    hadolint:
+      enabled: true
+    actionlint:
+      enabled: true
+    yamllint:
+      enabled: true
+    gitleaks:
+      enabled: true
 
 chat:
   auto_reply: true
