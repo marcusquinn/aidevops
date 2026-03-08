@@ -200,6 +200,8 @@ EOF
 	local escaped_tags="${tags//"'"/"''"}"
 	local escaped_project="${project_path//"'"/"''"}"
 	local escaped_supersedes="${supersedes_id//"'"/"''"}"
+	local escaped_session="${session_id//"'"/"''"}"
+	local escaped_source="${source//"'"/"''"}"
 
 	# Validate supersedes_id exists if provided
 	if [[ -n "$supersedes_id" ]]; then
@@ -213,7 +215,7 @@ EOF
 
 	db "$MEMORY_DB" <<EOF
 INSERT INTO learnings (id, session_id, content, type, tags, confidence, created_at, event_date, project_path, source)
-VALUES ('$id', '$session_id', '$escaped_content', '$type', '$escaped_tags', '$confidence', '$created_at', '$event_date', '$escaped_project', '$source');
+VALUES ('$id', '$escaped_session', '$escaped_content', '$type', '$escaped_tags', '$confidence', '$created_at', '$event_date', '$escaped_project', '$escaped_source');
 EOF
 
 	# Store auto-captured flag in access table
