@@ -1439,8 +1439,8 @@ cmd_migrate() {
 	local outbox_dir="$MAIL_DIR/outbox"
 	local archive_dir="$MAIL_DIR/archive"
 
-	# Migrate inbox messages
-	if [[ -d "$inbox_dir" ]]; then
+	# Migrate inbox + outbox messages
+	if [[ -d "$inbox_dir" || -d "$outbox_dir" ]]; then
 		while IFS= read -r msg_file; do
 			[[ -f "$msg_file" ]] || continue
 			local header
