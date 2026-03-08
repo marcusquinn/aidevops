@@ -226,6 +226,9 @@ for name, config in servers.items():
     # Skip non-dict entries
     if not isinstance(config, dict):
         continue
+    # Skip disabled servers
+    if config.get('enabled', True) is False:
+        continue
     # Build stdio JSON
     cmd = config.get('command', '')
     args = config.get('args', [])

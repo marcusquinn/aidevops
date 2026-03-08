@@ -40,7 +40,7 @@ The framework uses `wappalyzer-helper.sh` with `@ryntab/wappalyzer-node` (a main
 wappalyzer-helper.sh install
 ```
 
-This installs the Node.js wrapper (`wappalyzer-detect.mjs`) and its dependencies.
+This installs the dependencies required by the Node.js wrapper (`wappalyzer-detect.mjs`).
 
 Verify installation:
 

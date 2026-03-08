@@ -425,7 +425,7 @@ run_lighthouse_a11y() {
 		--output=json \
 		--output-path="$report_file" \
 		--chrome-flags="$chrome_flags" \
-		--preset="$form_factor" \
+		--form-factor="$form_factor" \
 		${screen_emulation:+"$screen_emulation"} \
 		--quiet 2>/dev/null; then
 
