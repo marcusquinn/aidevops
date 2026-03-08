@@ -626,6 +626,7 @@ i = stats['interactive']
 w = stats['worker']
 i_human_h = ms_to_h(i['human_ms'])
 i_machine_h = ms_to_h(i['machine_ms'])
+w_human_h = ms_to_h(w['human_ms'])
 w_machine_h = ms_to_h(w['machine_ms'])
 total_human_h = ms_to_h(i['human_ms'] + w['human_ms'])
 total_machine_h = ms_to_h(i['machine_ms'] + w['machine_ms'])
@@ -636,6 +637,7 @@ result = {
     'interactive_human_hours': i_human_h,
     'interactive_machine_hours': i_machine_h,
     'worker_sessions': w['count'],
+    'worker_human_hours': w_human_h,
     'worker_machine_hours': w_machine_h,
     'total_human_hours': total_human_h,
     'total_machine_hours': total_machine_h,
@@ -665,7 +667,7 @@ else:
 #
 # Arguments:
 #   $1..N - repo paths
-#   --period day|week|month|year (optional, default: month)
+#   --period day|week|month|quarter|year (optional, default: month)
 #   --format markdown|json (optional, default: markdown)
 # Output: aggregated table to stdout
 #######################################
@@ -731,6 +733,7 @@ totals = {
     'interactive_human_hours': 0,
     'interactive_machine_hours': 0,
     'worker_sessions': 0,
+    'worker_human_hours': 0,
     'worker_machine_hours': 0,
     'total_human_hours': 0,
 }
@@ -740,10 +743,11 @@ for repo in repos:
     totals['interactive_human_hours'] += repo.get('interactive_human_hours', 0)
     totals['interactive_machine_hours'] += repo.get('interactive_machine_hours', 0)
     totals['worker_sessions'] += repo.get('worker_sessions', 0)
+    totals['worker_human_hours'] += repo.get('worker_human_hours', 0)
     totals['worker_machine_hours'] += repo.get('worker_machine_hours', 0)
     totals['total_human_hours'] += repo.get('total_human_hours', 0)
 
-for k in ['interactive_human_hours', 'interactive_machine_hours', 'worker_machine_hours', 'total_human_hours']:
+for k in ['interactive_human_hours', 'interactive_machine_hours', 'worker_human_hours', 'worker_machine_hours', 'total_human_hours']:
     totals[k] = round(totals[k], 1)
 
 total_human_h = totals['total_human_hours']
