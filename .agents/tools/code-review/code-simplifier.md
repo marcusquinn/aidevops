@@ -57,6 +57,18 @@ This agent MUST run on the highest available reasoning tier:
 
 NEVER run this agent on non-thinking or mid-tier models: sonnet, haiku, flash, grok-fast, or equivalent. The risk of knowledge loss from a model that pattern-matches "this looks redundant" without understanding *why* it exists is too high. If the highest tier is unavailable, do not run -- wait until it is.
 
+## Protected Files
+
+The following files are **excluded from automated simplification** entirely. They may only be considered for simplification in interactive sessions with a maintainer present:
+
+- `prompts/build.txt` -- root system prompt loaded by every agent session. A single removed sentence can silently re-introduce a failure pattern across hundreds of sessions. The blast radius is too large for automated dispatch.
+- `AGENTS.md` (both `~/Git/aidevops/AGENTS.md` and `.agents/AGENTS.md`) -- user and developer guides that define the framework's operating model. Changes here affect every session's behaviour.
+- `scripts/commands/pulse.md` -- supervisor pulse instructions. Incorrect simplification here could cause the autonomous supervisor to skip work, merge incorrectly, or dispatch wrong.
+
+If the code-simplifier is run against a scope that includes these files, **skip them silently** and note in the output: "Protected files excluded from analysis: [list]. These require interactive maintainer review."
+
+Workers dispatched for `simplification-debt` issues MUST NOT modify these files. If an issue's scope inadvertently includes a protected file, the worker must skip it and comment on the issue explaining why.
+
 ## Analysis Process
 
 1. **Identify** target code sections (recently modified, or specified scope)
@@ -79,12 +91,30 @@ For each finding, produce:
 **Proposed**: What it would become
 **Preserved**: What knowledge/capability is explicitly retained
 **Risk**: What could go wrong if this suggestion is wrong
+**Verification**: How to prove the simplification didn't break anything
 **Confidence**: high/medium/low
 ```
 
 Findings with `low` confidence should be flagged but not recommended -- present them as "worth discussing" rather than "should change."
 
-After analysis, summarise findings as GitHub issues with the `simplification-debt` label, grouped by file or logical area. Each issue must include the preservation notes.
+After analysis, summarise findings as GitHub issues with the `simplification-debt` label, grouped by file or logical area. Each issue must include the preservation notes and verification method.
+
+## Regression Verification
+
+Every `simplification-debt` issue must specify a **verification method** -- what test or check proves the simplification preserved behaviour. The worker implementing the issue MUST run this verification before marking the PR ready for review.
+
+**Verification by file type:**
+
+| File type | Minimum verification |
+|-----------|---------------------|
+| Shell scripts (`.sh`) | `bash -n <file>` (syntax) + `shellcheck <file>` + existing test suite if present |
+| Agent docs (`.md`) | Content preservation check: all code blocks, URLs, task ID references (`tNNN`, `GH#NNN`), and command examples must be present before and after |
+| TypeScript/JavaScript | `tsc --noEmit` + existing test suite |
+| Configuration files | Validate against schema if one exists; otherwise dry-run the tool that consumes it |
+
+**For substantive refactors** (consolidating functions, removing abstractions, restructuring logic): the worker must also run a smoke test demonstrating the refactored code produces the same output as the original for at least one representative input.
+
+Workers that skip verification or mark a PR ready without running the specified checks are failing the task -- the PR should not be merged.
 
 ## Classification
 
