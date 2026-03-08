@@ -85,6 +85,7 @@ import json
 import os
 import glob
 import re
+import sys
 
 config_path = os.path.expanduser("~/.config/opencode/opencode.json")
 agents_dir = os.path.expanduser("~/.aidevops/agents")
@@ -286,7 +287,6 @@ def parse_frontmatter(filepath):
         
         return result
     except (IOError, OSError, UnicodeDecodeError) as e:
-        import sys
         print(f"Warning: Failed to parse frontmatter for {filepath}: {e}", file=sys.stderr)
         return {}
 
@@ -363,11 +363,39 @@ for filepath in glob.glob(os.path.join(agents_dir, "*.md")):
     frontmatter = parse_frontmatter(filepath)
     subagents = frontmatter.get('subagents', None)
     model_tier = frontmatter.get('model', None)
-    if subagents:
+    if isinstance(subagents, list) and len(subagents) > 0:
         subagent_filtered_count += 1
+    elif subagents:
+        print(f"  Warning: {display_name} has malformed subagents value (expected list, got {type(subagents).__name__}): {subagents}", file=sys.stderr)
     
     primary_agents[display_name] = get_agent_config(display_name, filename, subagents, model_tier)
     discovered.append(display_name)
+
+# Validate subagent references against actual files
+# Built-in agent types (general, explore) don't have .md files — skip them
+BUILTIN_SUBAGENTS = {"general", "explore"}
+all_subagent_files = set()
+for root, dirs, files in os.walk(agents_dir):
+    for f in files:
+        if f.endswith('.md'):
+            all_subagent_files.add(f.replace('.md', ''))
+
+missing_refs = []
+for display_name, agent_config in primary_agents.items():
+    task_perms = agent_config.get('permission', {}).get('task', {})
+    if not task_perms:
+        continue
+    for subagent_name in task_perms:
+        if subagent_name == '*':
+            continue
+        if subagent_name in BUILTIN_SUBAGENTS:
+            continue
+        if subagent_name not in all_subagent_files:
+            missing_refs.append((display_name, subagent_name))
+
+if missing_refs:
+    for agent, ref in missing_refs:
+        print(f"  Warning: {agent} references subagent '{ref}' but no {ref}.md found", file=sys.stderr)
 
 # Sort agents: ordered ones first, then alphabetical
 def sort_key(name):
