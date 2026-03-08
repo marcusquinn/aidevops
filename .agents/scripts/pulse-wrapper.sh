@@ -1965,9 +1965,28 @@ ${worker_table}"
 
 	# --- Contributor activity from git history ---
 	local activity_md=""
+	local cross_repo_md=""
 	local activity_helper="${HOME}/.aidevops/agents/scripts/contributor-activity-helper.sh"
 	if [[ -x "$activity_helper" ]]; then
+		# Per-repo activity (this repo only)
 		activity_md=$(bash "$activity_helper" summary "$repo_path" --period month --format markdown || echo "_Activity data unavailable._")
+
+		# Cross-repo totals (all pulse-enabled repos, privacy-safe — no repo names)
+		local repos_json_path="${REPOS_JSON:-${HOME}/.config/aidevops/repos.json}"
+		if [[ -f "$repos_json_path" ]] && command -v jq &>/dev/null; then
+			local all_repo_paths
+			all_repo_paths=$(jq -r '.initialized_repos[] | select(.pulse == true and (.local_only // false) == false) | .path' "$repos_json_path" || echo "")
+			if [[ -n "$all_repo_paths" ]]; then
+				# Build argument list for cross-repo-summary
+				local -a cross_args=()
+				while IFS= read -r rp; do
+					[[ -n "$rp" ]] && cross_args+=("$rp")
+				done <<<"$all_repo_paths"
+				if [[ ${#cross_args[@]} -gt 1 ]]; then
+					cross_repo_md=$(bash "$activity_helper" cross-repo-summary "${cross_args[@]}" --period month --format markdown || echo "_Cross-repo data unavailable._")
+				fi
+			fi
+		fi
 	else
 		activity_md="_Activity helper not installed._"
 	fi
@@ -2003,6 +2022,10 @@ ${workers_md}
 ### Contributor Activity (last 30 days)
 
 ${activity_md}
+
+### Cross-Repo Totals (last 30 days)
+
+${cross_repo_md:-_Single repo or cross-repo data unavailable._}
 
 ### System Resources
 
