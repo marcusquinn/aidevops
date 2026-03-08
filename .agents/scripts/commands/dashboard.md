@@ -28,6 +28,7 @@ Display the output directly to the user. The script handles all formatting.
 | `/dashboard json` | Machine-readable JSON output |
 | `/dashboard browser` | Generate HTML dashboard and open in browser |
 | `/dashboard --mission ID` | Filter to a specific mission |
+| `/dashboard --pending-review` | Show items awaiting maintainer review |
 
 ## Arguments
 
@@ -39,6 +40,7 @@ Display the output directly to the user. The script handles all formatting.
 | `browser` | Generate and open HTML dashboard |
 | `--mission ID`, `-m ID` | Filter by mission ID or title substring |
 | `--verbose`, `-v` | Show worker details and blockers |
+| `--pending-review` | Show issues awaiting maintainer decision |
 
 ## Data Sources
 
@@ -49,6 +51,40 @@ The dashboard aggregates data from:
 3. **Observability metrics** — `~/.aidevops/.agent-workspace/observability/metrics.jsonl` (token/cost tracking)
 4. **Process table** — `ps` for active worker count
 5. **GitHub** — `gh issue list --label status:blocked` for blockers (verbose mode)
+6. **GitHub** — `gh issue list --label needs-maintainer-review` for pending review items
+
+## Pending Review View
+
+The `--pending-review` flag shows all issues across pulse-enabled repos that are waiting for a maintainer decision. This includes `simplification-debt` issues from the code-simplifier agent, external contributor feature requests, and any other items labelled `needs-maintainer-review`.
+
+```bash
+# For each pulse-enabled repo, fetch pending review items
+for slug in $(jq -r '.initialized_repos[] | select(.pulse == true and (.local_only // false) == false) | .slug' ~/.config/aidevops/repos.json); do
+  gh issue list --repo "$slug" --label "needs-maintainer-review" --state open \
+    --json number,title,labels,assignees,createdAt \
+    --jq '.[] | "\(.number)\t\(.title)\t\(.labels | map(.name) | join(","))\t\(.assignees | map(.login) | join(","))\t\(.createdAt)"'
+done
+```
+
+Output format:
+
+```text
+Pending Maintainer Review
+=========================
+
+[repo-slug]
+  #123  simplification: remove decorative emojis from codacy.md  (simplification-debt)  @maintainer  2d ago
+  #456  feat: add support for tool X                             (needs-maintainer-review)  @maintainer  5d ago
+
+[other-repo]
+  #789  simplification: consolidate duplicate headers            (simplification-debt)  @maintainer  1d ago
+
+Total: 3 items awaiting review
+
+Actions:
+  Approve:  gh issue edit <N> --repo <slug> --remove-label needs-maintainer-review --add-label auto-dispatch
+  Decline:  gh issue close <N> --repo <slug> -c "Declined: <reason>"
+```
 
 ## Browser View
 

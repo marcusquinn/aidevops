@@ -97,7 +97,7 @@ For each finding, produce:
 
 Findings with `low` confidence should be flagged but not recommended -- present them as "worth discussing" rather than "should change."
 
-After analysis, summarise findings as GitHub issues with the `simplification-debt` label, grouped by file or logical area. Each issue must include the preservation notes and verification method.
+After analysis, summarise findings as GitHub issues with the `simplification-debt` + `needs-maintainer-review` labels, grouped by file or logical area. Each issue must include the preservation notes and verification method. See "Human Gate Workflow" below for the full label lifecycle.
 
 ## Regression Verification
 
@@ -293,6 +293,87 @@ const result = names.join(', ');
 
 This comment block looks like it could be "simplified" but it encodes critical knowledge: what was tried, why it failed, and where to find the details. Removing it risks someone re-enabling the broken approach.
 
+## Human Gate Workflow
+
+Every simplification finding must pass through a maintainer before work begins. This is enforced through GitHub labels, assignment, and dashboard visibility.
+
+### Issue creation (by code-simplifier agent)
+
+When creating `simplification-debt` issues, the agent MUST:
+
+1. Add labels: `simplification-debt` + `needs-maintainer-review`
+2. Assign to the repo maintainer (from `repos.json` `maintainer` field, or fall back to the repo owner from the slug)
+3. Include the structured finding format (Current/Proposed/Preserved/Risk/Verification/Confidence)
+
+```bash
+# Determine maintainer
+MAINTAINER=$(jq -r '.initialized_repos[] | select(.slug == "<slug>") | .maintainer // empty' ~/.config/aidevops/repos.json)
+if [[ -z "$MAINTAINER" ]]; then
+  MAINTAINER=$(echo "<slug>" | cut -d/ -f1)
+fi
+
+# Create issue with labels and assignment
+gh issue create --repo <slug> \
+  --title "simplification: <brief description>" \
+  --label "simplification-debt" --label "needs-maintainer-review" \
+  --assignee "$MAINTAINER" \
+  --body "<structured finding>"
+```
+
+GitHub sends a notification to the assignee on creation. The `needs-maintainer-review` label prevents the pulse from dispatching a worker.
+
+### Maintainer review (interactive)
+
+The maintainer reviews pending simplification issues via any of:
+
+- **GitHub notifications** -- assignment triggers email/notification
+- **Label filter** -- `gh issue list --label simplification-debt --label needs-maintainer-review`
+- **Dashboard** -- `/dashboard --pending-review` shows all items awaiting maintainer decision (see dashboard.md)
+
+For each issue, the maintainer either:
+
+**Approves** (issue becomes dispatchable):
+
+```bash
+gh issue edit <number> --repo <slug> \
+  --remove-label "needs-maintainer-review" \
+  --add-label "auto-dispatch"
+```
+
+**Declines** (issue is closed):
+
+```bash
+gh issue close <number> --repo <slug> \
+  -c "Declined: <reason — e.g., 'this verbosity is intentional, see t1345'>"
+```
+
+**Defers** (leave as-is for later review — no action needed).
+
+### Pulse behaviour
+
+The pulse already skips `needs-maintainer-review` issues (see pulse.md "External issues and PRs — scope check"). Once the maintainer removes that label and adds `auto-dispatch`, the issue enters the normal dispatch queue at priority 8 (simplification-debt).
+
+### Label lifecycle
+
+```text
+/code-simplifier creates issue
+    |
+    v
+[simplification-debt] + [needs-maintainer-review] + assigned to maintainer
+    |
+    +--> Maintainer approves --> remove [needs-maintainer-review], add [auto-dispatch]
+    |       |
+    |       v
+    |    Pulse dispatches worker --> [status:queued] --> [status:in-progress]
+    |       |
+    |       v
+    |    Worker opens PR --> [status:in-review] --> PR merged --> [status:done]
+    |
+    +--> Maintainer declines --> issue closed with reason
+    |
+    +--> Maintainer defers --> no change (reviewed on next pass)
+```
+
 ## Integration with Quality Workflow
 
 Code simplification analysis fits into the quality workflow as a periodic review, not a per-commit gate:
@@ -300,11 +381,13 @@ Code simplification analysis fits into the quality workflow as a periodic review
 ```text
 Periodic review --> /code-simplifier (analyse)
                         |
-                    Human review
+                    Issues created (needs-maintainer-review)
                         |
-                    Approved items --> GitHub issues (simplification-debt label)
+                    Maintainer approves/declines via labels
                         |
-                    Normal dispatch --> worktree + PR (lowest priority)
+                    Approved items dispatched (priority 8)
+                        |
+                    Worker implements in worktree + PR
 ```
 
 ## Pulse and Supervisor Integration
