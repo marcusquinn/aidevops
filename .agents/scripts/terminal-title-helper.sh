@@ -141,7 +141,9 @@ get_repo_name() {
 	# realpath may not exist on all systems, use cd/pwd as fallback
 	local abs_path=""
 	if command -v realpath &>/dev/null; then
-		abs_path=$(realpath "$git_common_dir" 2>/dev/null)
+		# || true prevents set -e from aborting when realpath fails
+		# (e.g., path doesn't exist yet); fallback below handles it
+		abs_path=$(realpath "$git_common_dir" 2>/dev/null) || true
 	fi
 
 	# Fallback to cd/pwd if realpath failed or doesn't exist
