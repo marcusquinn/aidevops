@@ -143,6 +143,11 @@ jobs:
         fetch-depth: 0  # Shallow clones should be disabled for better analysis
 
     - name: SonarCloud Scan
+      # continue-on-error: SONAR_TOKEN is unavailable for fork PRs (secrets
+      # are not exposed to pull_request events from forks). Without the token
+      # the scan fails with "Project not found". This is expected — SonarCloud
+      # runs on push-to-main and same-repo PRs where the secret is available.
+      continue-on-error: true
       uses: SonarSource/sonarqube-scan-action@40f5b61913e891f9d316696628698051136015be
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
