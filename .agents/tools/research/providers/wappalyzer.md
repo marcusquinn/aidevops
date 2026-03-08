@@ -83,66 +83,11 @@ node .agents/scripts/wappalyzer-detect.mjs https://example.com
 
 ## Output Format
 
-### Raw Library Output (Reference)
+When using `wappalyzer-helper.sh detect`, the output is a normalized JSON object in the common schema format. The wrapper (`wappalyzer-detect.mjs`) transforms the raw library output automatically.
 
-The underlying `@ryntab/wappalyzer-node` library returns a nested JSON structure. The helper script (`wappalyzer-helper.sh detect`) transforms this to the common schema shown in the next section. This raw format is documented for reference when using the library directly:
+### Common Schema (Default Output)
 
-```json
-{
-  "urls": {
-    "https://example.com": {
-      "status": 200,
-      "technologies": [
-        {
-          "slug": "react",
-          "name": "React",
-          "description": "React is an open-source JavaScript library for building user interfaces.",
-          "confidence": 100,
-          "version": "18.2.0",
-          "icon": "React.svg",
-          "website": "https://reactjs.org",
-          "cpe": "cpe:/a:facebook:react",
-          "categories": [
-            {
-              "id": 12,
-              "slug": "javascript-frameworks",
-              "name": "JavaScript frameworks"
-            }
-          ]
-        },
-        {
-          "slug": "webpack",
-          "name": "Webpack",
-          "confidence": 100,
-          "version": "5.88.2",
-          "categories": [
-            {
-              "id": 19,
-              "slug": "miscellaneous",
-              "name": "Miscellaneous"
-            }
-          ]
-        }
-      ]
-    }
-  }
-}
-```
-
-### Key Fields
-
-- **slug**: Technology identifier (lowercase, hyphenated)
-- **name**: Human-readable technology name
-- **confidence**: Detection confidence (0-100)
-- **version**: Detected version (if available)
-- **categories**: Technology categories (framework, CMS, analytics, etc.)
-- **description**: Technology description
-- **website**: Official website URL
-- **cpe**: Common Platform Enumeration identifier (for security scanning)
-
-## Common Schema Mapping
-
-For integration with tech-stack-helper.sh, map Wappalyzer output to the common schema:
+This is the format returned by `wappalyzer-helper.sh detect` and `wappalyzer-detect.mjs`:
 
 ```json
 {
@@ -161,6 +106,21 @@ For integration with tech-stack-helper.sh, map Wappalyzer output to the common s
   ]
 }
 ```
+
+### Key Fields
+
+- **slug**: Technology identifier (lowercase, hyphenated)
+- **name**: Human-readable technology name
+- **confidence**: Detection confidence (0-100)
+- **version**: Detected version (if available)
+- **category**: Technology category (framework, CMS, analytics, etc.)
+- **source**: Always `"wappalyzer"` for this provider
+
+### Raw Library Output (Advanced Reference)
+
+The underlying `@ryntab/wappalyzer-node` library returns a different nested structure with a `urls` object keyed by URL. You will only see this format if you call the library directly (not via the helper script or wrapper). The wrapper `wappalyzer-detect.mjs` transforms this raw format into the common schema above.
+
+Raw output includes additional fields not present in the common schema: `description`, `website`, `icon`, `cpe` (Common Platform Enumeration for security scanning), and nested `categories` with `id`/`slug`/`name`. See the `@ryntab/wappalyzer-node` package documentation for the full raw schema.
 
 ## Integration with tech-stack-helper.sh
 
