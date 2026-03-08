@@ -12,6 +12,9 @@ VERBOSE="${1:-}"
 PASS=0
 FAIL=0
 TOTAL=0
+TEMP_FILES=()
+cleanup_temps() { for f in "${TEMP_FILES[@]}"; do rm -f "$f"; done; }
+trap cleanup_temps EXIT
 
 # Colors
 RED='\033[0;31m'
@@ -24,7 +27,9 @@ log() {
 	return 0
 }
 verbose() {
-	[[ "$VERBOSE" == "--verbose" ]] && echo -e "  ${YELLOW}$1${NC}" || true
+	if [[ "$VERBOSE" == "--verbose" ]]; then
+		echo -e "  ${YELLOW}$1${NC}"
+	fi
 	return 0
 }
 
@@ -218,64 +223,58 @@ log ""
 log "--- Test Group 5: Edge cases ---"
 
 # Task ID t318 should NOT match t318.5 (boundary check)
-TEMP_TODO=$(mktemp)
+TEMP_TODO=$(mktemp); TEMP_FILES+=("$TEMP_TODO")
 echo "- [ ] t318.5 Test task" >"$TEMP_TODO"
 check_pr_task_id \
 	"t318: Parent task" \
 	"feature/t318" \
 	"$TEMP_TODO" \
 	"fail-not-found"
-rm -f "$TEMP_TODO"
 
 # Task ID t318.5 should NOT match t318.50
-TEMP_TODO=$(mktemp)
+TEMP_TODO=$(mktemp); TEMP_FILES+=("$TEMP_TODO")
 echo "- [ ] t318.50 Different task" >"$TEMP_TODO"
 check_pr_task_id \
 	"t318.5: Should not match t318.50" \
 	"feature/t318.5" \
 	"$TEMP_TODO" \
 	"fail-not-found"
-rm -f "$TEMP_TODO"
 
 # Completed task [x] should still pass
-TEMP_TODO=$(mktemp)
+TEMP_TODO=$(mktemp); TEMP_FILES+=("$TEMP_TODO")
 echo "- [x] t999 Completed task" >"$TEMP_TODO"
 check_pr_task_id \
 	"t999: Work on completed task" \
 	"feature/t999" \
 	"$TEMP_TODO" \
 	"pass"
-rm -f "$TEMP_TODO"
 
 # Declined task [-] should fail
-TEMP_TODO=$(mktemp)
+TEMP_TODO=$(mktemp); TEMP_FILES+=("$TEMP_TODO")
 echo "- [-] t888 Declined task" >"$TEMP_TODO"
 check_pr_task_id \
 	"t888: Work on declined task" \
 	"feature/t888" \
 	"$TEMP_TODO" \
 	"fail-declined"
-rm -f "$TEMP_TODO"
 
 # Subtask with indentation
-TEMP_TODO=$(mktemp)
+TEMP_TODO=$(mktemp); TEMP_FILES+=("$TEMP_TODO")
 echo "  - [ ] t100.1 Indented subtask" >"$TEMP_TODO"
 check_pr_task_id \
 	"t100.1: Subtask" \
 	"feature/t100.1" \
 	"$TEMP_TODO" \
 	"pass"
-rm -f "$TEMP_TODO"
 
 # Sub-subtask (t100.1.1)
-TEMP_TODO=$(mktemp)
+TEMP_TODO=$(mktemp); TEMP_FILES+=("$TEMP_TODO")
 echo "    - [ ] t100.1.1 Deep subtask" >"$TEMP_TODO"
 check_pr_task_id \
 	"t100.1.1: Deep subtask" \
 	"feature/t100.1.1" \
 	"$TEMP_TODO" \
 	"pass"
-rm -f "$TEMP_TODO"
 
 # --- Test Group 6: Supervisor-created PR patterns ---
 log ""
