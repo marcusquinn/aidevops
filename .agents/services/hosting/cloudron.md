@@ -27,8 +27,8 @@ tools:
 - **API test**: `curl -H "Authorization: Bearer TOKEN" https://cloudron.domain.com/api/v1/cloudron/status`
 - **SSH access**: `ssh root@cloudron.domain.com` for direct server diagnosis
 - **Forum**: [forum.cloudron.io](https://forum.cloudron.io) for known issues and solutions
-- **Docker**: `docker ps -a` (states), `docker logs <container>`, `docker exec -it mysql mysql`
-- **DB creds**: `docker inspect <container> | grep CLOUDRON_MYSQL`
+- **Docker**: `docker ps -a` (states), `docker logs <container>`, `docker exec -it <container> /bin/bash`
+- **DB creds**: `docker inspect <container> | grep CLOUDRON_MYSQL` (redact secrets before sharing output)
 <!-- AI-CONTEXT-END -->
 
 Cloudron is a complete solution for running apps on your server, providing easy app installation, automatic updates, backups, and domain management.
@@ -286,9 +286,11 @@ docker inspect <app_container> | grep CLOUDRON_MYSQL
 # Connect to MySQL via the mysql container
 docker exec -it mysql mysql -u<username> -p<password> <database>
 
-# Or use root access
-docker exec -it mysql mysql -uroot -p$(cat /home/yellowtent/platformdata/mysql/root_password)
+# Or use root access (note: -p flag exposes password in process list briefly)
+docker exec -it mysql mysql -uroot -p"$(cat /home/yellowtent/platformdata/mysql/root_password)"
 ```
+
+> **Security note**: The `docker inspect` command above reveals database credentials. Redact passwords before pasting output into forum posts, tickets, or chat. The `-p$(cat ...)` pattern briefly exposes the password in the process list while the command runs.
 
 #### **Common Database Fixes**
 
@@ -296,7 +298,7 @@ docker exec -it mysql mysql -uroot -p$(cat /home/yellowtent/platformdata/mysql/r
 
 ```sql
 -- Check current charset
-SELECT DEFAULT_CHARACTER_SET_NAME, DEFAULT_COLLATION_NAME 
+SELECT DEFAULT_CHARACTER_SET_NAME, DEFAULT_COLLATION_NAME
 FROM information_schema.SCHEMATA WHERE SCHEMA_NAME = 'your_db_hex';
 
 -- Fix table charset (example for Vaultwarden SSO issue)
@@ -304,8 +306,8 @@ ALTER TABLE sso_nonce CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_c
 ALTER TABLE sso_users CONVERT TO CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
 -- Check all tables in database
-SELECT TABLE_NAME, TABLE_COLLATION 
-FROM information_schema.TABLES 
+SELECT TABLE_NAME, TABLE_COLLATION
+FROM information_schema.TABLES
 WHERE TABLE_SCHEMA = 'your_db_hex';
 ```
 
@@ -362,7 +364,7 @@ openssl s_client -connect cloudron.yourdomain.com:443
 
 When apps fail after updates (common pattern):
 
-1. **Check container state**: `docker ps -a | grep <app>`
+1. **Check container state**: `docker ps -a | grep <app_subdomain>`
 2. **Review logs**: `docker logs --tail 200 <container>`
 3. **Search forum**: Copy error message to forum.cloudron.io search
 4. **Check database**: Often charset/migration issues
@@ -388,8 +390,8 @@ nslookup cloudron.yourdomain.com
 
 For app-specific issues, check these subagents:
 
-- **Vaultwarden**: `tools/credentials/vaultwarden.md` - Password manager troubleshooting
-- **WordPress**: `tools/wordpress/` - WordPress-specific issues
+- **Vaultwarden**: `../../tools/credentials/vaultwarden.md` - Password manager troubleshooting
+- **WordPress**: `../../tools/wordpress/` - WordPress-specific issues
 
 ## 📊 **Monitoring & Management**
 
