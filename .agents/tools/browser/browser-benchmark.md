@@ -290,51 +290,53 @@ run();
 
 TESTS=("navigate" "formFill" "extract" "multiStep")
 declare -A RESULTS
+AB_LOG="/tmp/bench-agent-browser.log"
+: > "$AB_LOG"  # Truncate log file
 
 bench_navigate() {
   local start end
   start=$(python3 -c 'import time; print(time.time())')
-  agent-browser open "https://the-internet.herokuapp.com/" 2>/dev/null
-  agent-browser screenshot /tmp/bench-ab-nav.png 2>/dev/null
+  agent-browser open "https://the-internet.herokuapp.com/" 2>>"$AB_LOG"
+  agent-browser screenshot /tmp/bench-ab-nav.png 2>>"$AB_LOG"
   end=$(python3 -c 'import time; print(time.time())')
   echo "$(python3 -c "print(f'{$end - $start:.2f}')")"
-  agent-browser close 2>/dev/null
+  agent-browser close 2>>"$AB_LOG"
 }
 
 bench_formFill() {
   local start end
   start=$(python3 -c 'import time; print(time.time())')
-  agent-browser open "https://the-internet.herokuapp.com/login" 2>/dev/null
-  agent-browser snapshot -i 2>/dev/null
-  agent-browser fill '#username' 'tomsmith' 2>/dev/null
-  agent-browser fill '#password' 'SuperSecretPassword!' 2>/dev/null
-  agent-browser click 'button[type="submit"]' 2>/dev/null
-  agent-browser wait url '**/secure' 2>/dev/null
+  agent-browser open "https://the-internet.herokuapp.com/login" 2>>"$AB_LOG"
+  agent-browser snapshot -i 2>>"$AB_LOG"
+  agent-browser fill '#username' 'tomsmith' 2>>"$AB_LOG"
+  agent-browser fill '#password' 'SuperSecretPassword!' 2>>"$AB_LOG"
+  agent-browser click 'button[type="submit"]' 2>>"$AB_LOG"
+  agent-browser wait --url '**/secure' 2>>"$AB_LOG"
   end=$(python3 -c 'import time; print(time.time())')
   echo "$(python3 -c "print(f'{$end - $start:.2f}')")"
-  agent-browser close 2>/dev/null
+  agent-browser close 2>>"$AB_LOG"
 }
 
 bench_extract() {
   local start end
   start=$(python3 -c 'import time; print(time.time())')
-  agent-browser open "https://the-internet.herokuapp.com/challenging_dom" 2>/dev/null
-  agent-browser eval "JSON.stringify([...document.querySelectorAll('table tbody tr')].slice(0,5).map(r=>r.textContent.trim()))" 2>/dev/null
+  agent-browser open "https://the-internet.herokuapp.com/challenging_dom" 2>>"$AB_LOG"
+  agent-browser eval "JSON.stringify([...document.querySelectorAll('table tbody tr')].slice(0,5).map(r=>r.textContent.trim()))" 2>>"$AB_LOG"
   end=$(python3 -c 'import time; print(time.time())')
   echo "$(python3 -c "print(f'{$end - $start:.2f}')")"
-  agent-browser close 2>/dev/null
+  agent-browser close 2>>"$AB_LOG"
 }
 
 bench_multiStep() {
   local start end
   start=$(python3 -c 'import time; print(time.time())')
-  agent-browser open "https://the-internet.herokuapp.com/" 2>/dev/null
-  agent-browser click 'a[href="/abtest"]' 2>/dev/null
-  agent-browser wait url '**/abtest' 2>/dev/null
-  agent-browser get url 2>/dev/null
+  agent-browser open "https://the-internet.herokuapp.com/" 2>>"$AB_LOG"
+  agent-browser click 'a[href="/abtest"]' 2>>"$AB_LOG"
+  agent-browser wait --url '**/abtest' 2>>"$AB_LOG"
+  agent-browser get url 2>>"$AB_LOG"
   end=$(python3 -c 'import time; print(time.time())')
   echo "$(python3 -c "print(f'{$end - $start:.2f}')")"
-  agent-browser close 2>/dev/null
+  agent-browser close 2>>"$AB_LOG"
 }
 
 echo "=== agent-browser Benchmark ==="
@@ -585,22 +587,24 @@ benchParallel();
 ```bash
 #!/bin/bash
 # bench-parallel-ab.sh
+AB_LOG="/tmp/bench-parallel-ab.log"
+: > "$AB_LOG"
 start=$(python3 -c 'import time; print(time.time())')
-agent-browser --session s1 open "https://the-internet.herokuapp.com/login" 2>/dev/null &
-agent-browser --session s2 open "https://the-internet.herokuapp.com/checkboxes" 2>/dev/null &
-agent-browser --session s3 open "https://the-internet.herokuapp.com/dropdown" 2>/dev/null &
+agent-browser --session s1 open "https://the-internet.herokuapp.com/login" 2>>"$AB_LOG" &
+agent-browser --session s2 open "https://the-internet.herokuapp.com/checkboxes" 2>>"$AB_LOG" &
+agent-browser --session s3 open "https://the-internet.herokuapp.com/dropdown" 2>>"$AB_LOG" &
 wait
 end=$(python3 -c 'import time; print(time.time())')
 echo "3 parallel sessions: $(python3 -c "print(f'{$end - $start:.2f}')")s"
 
 # Verify isolation
-echo "s1: $(agent-browser --session s1 get url 2>/dev/null)"
-echo "s2: $(agent-browser --session s2 get url 2>/dev/null)"
-echo "s3: $(agent-browser --session s3 get url 2>/dev/null)"
+echo "s1: $(agent-browser --session s1 get url 2>>"$AB_LOG")"
+echo "s2: $(agent-browser --session s2 get url 2>>"$AB_LOG")"
+echo "s3: $(agent-browser --session s3 get url 2>>"$AB_LOG")"
 
-agent-browser --session s1 close 2>/dev/null
-agent-browser --session s2 close 2>/dev/null
-agent-browser --session s3 close 2>/dev/null
+agent-browser --session s1 close 2>>"$AB_LOG"
+agent-browser --session s2 close 2>>"$AB_LOG"
+agent-browser --session s3 close 2>>"$AB_LOG"
 ```
 
 ### Crawl4AI Parallel Test

@@ -143,7 +143,7 @@ tools:
   webfetch: false # Fetch web content
   task: true      # Spawn subagents
 ---
-```text
+```
 
 **Tool permission options:**
 
@@ -192,6 +192,19 @@ description: Preview and screenshot local dev servers
 mcp_requirements:
   chrome-devtools:
     tools: [navigate_page, take_screenshot, new_page, list_pages]
+---
+```
+
+**Example with multiple MCP requirements:**
+
+```yaml
+---
+description: WordPress development with browser preview
+mcp_requirements:
+  wordpress-mcp:
+    tools: [wp_get_posts, wp_create_post, wp_update_post]
+  chrome-devtools:
+    tools: [navigate_page, take_screenshot]
 ---
 ```
 

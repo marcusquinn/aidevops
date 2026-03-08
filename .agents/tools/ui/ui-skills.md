@@ -85,8 +85,8 @@ tools:
 
 ## Layout
 
-- MUST use a fixed `z-index` scale (no arbitrary `z-x`)
-- SHOULD use `size-x` for square elements instead of `w-x` + `h-x`
+- MUST use a fixed `z-index` scale (no arbitrary `z-[value]`)
+- SHOULD use `size-*` for square elements instead of `w-*` + `h-*`
 
 ## Performance
 

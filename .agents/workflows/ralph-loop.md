@@ -276,6 +276,8 @@ When complete:
 feat: add user authentication
 fix: resolve memory leak in connection pool
 docs: update API documentation
+perf: optimize database queries
+refactor: simplify auth middleware
 
 # Excluded from changelog
 chore: update dependencies
@@ -666,6 +668,8 @@ This is a gate between task development and preflight, not a suggestion. See `sc
 - `feat:` → Added section
 - `fix:` → Fixed section
 - `docs:` → Changed section
+- `perf:` → Changed section
+- `refactor:` → Changed section
 - `chore:` → Excluded from changelog
 
 See `workflows/changelog.md` for details.

@@ -410,7 +410,7 @@ update_version_in_files() {
 	# Update package.json if it exists
 	if [[ -f "$REPO_ROOT/package.json" ]]; then
 		sed_inplace "s/\"version\": \"[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\"/\"version\": \"$new_version\"/" "$REPO_ROOT/package.json"
-		if grep -q "\"version\": \"$new_version\"" "$REPO_ROOT/package.json"; then
+		if grep -Fq "\"version\": \"$new_version\"" "$REPO_ROOT/package.json"; then
 			print_success "Updated package.json"
 		else
 			print_error "Failed to update package.json"
@@ -421,7 +421,7 @@ update_version_in_files() {
 	# Update sonar-project.properties
 	if [[ -f "$REPO_ROOT/sonar-project.properties" ]]; then
 		sed_inplace "s/sonar\.projectVersion=.*/sonar.projectVersion=$new_version/" "$REPO_ROOT/sonar-project.properties"
-		if grep -q "sonar.projectVersion=$new_version" "$REPO_ROOT/sonar-project.properties"; then
+		if grep -Fq "sonar.projectVersion=$new_version" "$REPO_ROOT/sonar-project.properties"; then
 			print_success "Updated sonar-project.properties"
 		else
 			print_error "Failed to update sonar-project.properties"
@@ -432,7 +432,7 @@ update_version_in_files() {
 	# Update setup.sh if it exists
 	if [[ -f "$REPO_ROOT/setup.sh" ]]; then
 		sed_inplace "s/# Version: .*/# Version: $new_version/" "$REPO_ROOT/setup.sh"
-		if grep -q "# Version: $new_version" "$REPO_ROOT/setup.sh"; then
+		if grep -Fq "# Version: $new_version" "$REPO_ROOT/setup.sh"; then
 			print_success "Updated setup.sh"
 		else
 			print_error "Failed to update setup.sh"
@@ -443,7 +443,7 @@ update_version_in_files() {
 	# Update aidevops.sh CLI if it exists
 	if [[ -f "$REPO_ROOT/aidevops.sh" ]]; then
 		sed_inplace "s/# Version: .*/# Version: $new_version/" "$REPO_ROOT/aidevops.sh"
-		if grep -q "# Version: $new_version" "$REPO_ROOT/aidevops.sh"; then
+		if grep -Fq "# Version: $new_version" "$REPO_ROOT/aidevops.sh"; then
 			print_success "Updated aidevops.sh"
 		else
 			print_error "Failed to update aidevops.sh"
@@ -461,7 +461,7 @@ update_version_in_files() {
 			sed_inplace "s/Version-[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*-blue/Version-$new_version-blue/" "$REPO_ROOT/README.md"
 
 			# Validate the update was successful
-			if grep -q "Version-$new_version-blue" "$REPO_ROOT/README.md"; then
+			if grep -Fq "Version-$new_version-blue" "$REPO_ROOT/README.md"; then
 				print_success "Updated README.md version badge to $new_version"
 			else
 				print_error "Failed to update README.md version badge"
@@ -480,7 +480,7 @@ update_version_in_files() {
 	if [[ -f "$formula_file" ]]; then
 		sed_inplace "s|url \"https://github.com/marcusquinn/aidevops/archive/refs/tags/v[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\.tar\.gz\"|url \"https://github.com/marcusquinn/aidevops/archive/refs/tags/v${new_version}.tar.gz\"|" "$formula_file"
 
-		if grep -q "v${new_version}.tar.gz" "$formula_file"; then
+		if grep -Fq "v${new_version}.tar.gz" "$formula_file"; then
 			print_success "Updated homebrew/aidevops.rb version URL"
 		else
 			print_error "Failed to update homebrew/aidevops.rb"
@@ -493,7 +493,7 @@ update_version_in_files() {
 		sed_inplace "s/\"version\": \"[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\"/\"version\": \"$new_version\"/" "$REPO_ROOT/.claude-plugin/marketplace.json"
 
 		# Validate the update was successful
-		if grep -q "\"version\": \"$new_version\"" "$REPO_ROOT/.claude-plugin/marketplace.json"; then
+		if grep -Fq "\"version\": \"$new_version\"" "$REPO_ROOT/.claude-plugin/marketplace.json"; then
 			print_success "Updated .claude-plugin/marketplace.json"
 		else
 			print_error "Failed to update .claude-plugin/marketplace.json"

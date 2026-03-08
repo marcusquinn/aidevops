@@ -117,7 +117,10 @@ main() {
             update_version_badge "$new_version"
             
             # Add updated files to git (all version-tracked files)
-            git add VERSION README.md sonar-project.properties setup.sh aidevops.sh package.json .claude-plugin/marketplace.json 2>/dev/null
+            # Add updated files individually (skip missing files to avoid git errors)
+            for f in VERSION README.md sonar-project.properties setup.sh aidevops.sh package.json .claude-plugin/marketplace.json; do
+                [[ -f "$f" ]] && git add "$f"
+            done
             
             echo "$new_version"
         else

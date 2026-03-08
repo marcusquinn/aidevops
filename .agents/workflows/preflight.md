@@ -285,8 +285,11 @@ Preflight checks report ALL issues, including pre-existing ones. When the loop h
 # See what files you changed
 git diff main --name-only
 
-# Check issues only in your changed files
+# Check issues only in your changed files (simple case)
 shellcheck $(git diff main --name-only -- '*.sh')
+
+# Robust alternative (handles spaces in filenames)
+git diff main --name-only -- '*.sh' | while IFS= read -r f; do shellcheck "$f"; done
 ```
 
 ### When to Proceed Despite Issues

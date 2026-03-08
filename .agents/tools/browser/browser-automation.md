@@ -18,7 +18,7 @@ tools:
 
 ## Tool Selection: Decision Tree
 
-Most tools run **headless by default** (no visible window, no mouse/keyboard competition). Playwriter is always headed because it attaches to your existing browser session.
+Most tools run **headless by default** (no visible window, no mouse/keyboard competition). The exception is **Playwriter**, which is always headed — it attaches to your existing browser session via a Chrome extension and cannot run headless.
 
 **Preferences** (apply in order):
 1. Fastest tool that meets requirements
@@ -133,7 +133,7 @@ Tested 2026-01-24, macOS ARM64 (Apple Silicon), headless, warm daemon. Median of
 | **Form Fill** (4 fields) | **0.90s** | 1.34s | 1.37s | N/A | 2.24s | 2.58s |
 | **Data Extraction** (5 items) | 1.33s | **1.08s** | 1.53s | 2.53s | 2.68s | 3.48s |
 | **Multi-step** (click + nav) | **1.49s** | 1.49s | 3.06s | N/A | 4.37s | 4.48s |
-| **Reliability** (avg, 3 runs) | **0.64s** | 1.07s | 0.66s | 0.52s | 1.96s | 1.74s |
+| **Reliability** (avg time, 3 consecutive runs — lower = more consistent) | **0.64s** | 1.07s | 0.66s | 0.52s | 1.96s | 1.74s |
 
 **Key insight**: Playwright is the underlying engine for all tools except Crawl4AI. Screenshots are near-instant (~0.05s, 24-107KB) but rarely needed for AI automation - ARIA snapshots (~0.01s, 50-200 tokens) provide sufficient page understanding for form filling, clicking, and navigation. Use screenshots only for visual debugging or regression testing.
 
@@ -433,8 +433,9 @@ await page.screenshot({ path: '/tmp/screenshot.png' });
 await page.context().storageState({ path: 'state.json' });
 await browser.close();
 
-// Later: restore state
-const context = await browser.newContext({ storageState: 'state.json' });
+// Later: restore state in a new browser instance
+const browser2 = await chromium.launch({ headless: true });
+const context = await browser2.newContext({ storageState: 'state.json' });
 ```
 
 **Persistence**: Use `storageState` to save/load cookies and localStorage across sessions.

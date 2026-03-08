@@ -521,18 +521,23 @@ EOF
 main() {
 	local command="${1:-install}"
 
+	local rc=0
 	case "$command" in
 	install)
 		cmd_install
+		rc=$?
 		;;
 	uninstall)
 		cmd_uninstall
+		rc=$?
 		;;
 	status)
 		cmd_status
+		rc=$?
 		;;
 	help | --help | -h)
 		cmd_help
+		rc=$?
 		;;
 	*)
 		log_error "Unknown command: $command"
@@ -540,7 +545,7 @@ main() {
 		return 1
 		;;
 	esac
-	# Return status of the executed command
+	return $rc
 }
 
 main "$@"
