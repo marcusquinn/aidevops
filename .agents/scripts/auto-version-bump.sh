@@ -116,8 +116,11 @@ main() {
             print_success "Version bumped: $current_version → $new_version"
             update_version_badge "$new_version"
             
-            # Add updated files to git (all version-tracked files)
-            git add VERSION README.md sonar-project.properties setup.sh aidevops.sh package.json .claude-plugin/marketplace.json 2>/dev/null
+            # Add updated files individually (skip missing files to avoid git errors)
+            cd "$REPO_ROOT" || exit 1
+            for f in VERSION README.md sonar-project.properties setup.sh aidevops.sh package.json homebrew/aidevops.rb .claude-plugin/marketplace.json; do
+                [[ -f "$f" ]] && git add "$f"
+            done
             
             echo "$new_version"
         else

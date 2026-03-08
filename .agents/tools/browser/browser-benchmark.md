@@ -304,6 +304,9 @@ bench_navigate() {
 bench_formFill() {
   local start end
   start=$(python3 -c 'import time; print(time.time())')
+  # NOTE: Benchmarks intentionally use low-level CLI forms (selector-based fill/click,
+  # snapshot -i, wait --url, eval) to test raw CLI capabilities. Production code should
+  # use the ref-based workflow documented in agent-browser-helper.sh.
   agent-browser open "https://the-internet.herokuapp.com/login" 2>/dev/null
   agent-browser snapshot -i 2>/dev/null
   agent-browser fill '#username' 'tomsmith' 2>/dev/null
