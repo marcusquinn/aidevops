@@ -1482,7 +1482,7 @@ _update_health_issue_for_repo() {
 	# Cache file for this runner + repo (slug with / replaced by -)
 	local slug_safe="${repo_slug//\//-}"
 	local cache_dir="${HOME}/.aidevops/logs"
-	local health_issue_file="${cache_dir}/health-issue-${runner_user}-${slug_safe}"
+	local health_issue_file="${cache_dir}/health-issue-${runner_user}-${role_label}-${slug_safe}"
 	local health_issue_number=""
 
 	mkdir -p "$cache_dir"
@@ -1621,7 +1621,7 @@ _update_health_issue_for_repo() {
 		--assignee "$runner_user" --json number --jq 'length' 2>/dev/null || echo "0")
 	local total_issue_count
 	total_issue_count=$(gh issue list --repo "$repo_slug" --state open \
-		--json number,labels --jq '[.[] | select(.labels | map(.name) | index("supervisor") | not)] | length' 2>/dev/null || echo "0")
+		--json number,labels --jq '[.[] | select(.labels | map(.name) | (index("supervisor") or index("contributor") or index("persistent") or index("quality-review")) | not)] | length' 2>/dev/null || echo "0")
 
 	# Active headless workers (opencode processes for this repo)
 	local workers_md=""
