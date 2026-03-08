@@ -1026,12 +1026,11 @@ cross_repo_person_stats() {
 			continue
 		fi
 		local repo_json
-		local logins_arg=""
+		local -a extra_args=()
 		if [[ -n "$logins_override" ]]; then
-			logins_arg="--logins $logins_override"
+			extra_args+=(--logins "$logins_override")
 		fi
-		# shellcheck disable=SC2086
-		repo_json=$(person_stats "$rp" --period "$period" --format json $logins_arg) || repo_json="[]"
+		repo_json=$(person_stats "$rp" --period "$period" --format json "${extra_args[@]}") || repo_json="[]"
 		if echo "$repo_json" | jq -e . >/dev/null 2>&1; then
 			all_json+="${repo_json}"$'\n'
 		fi
