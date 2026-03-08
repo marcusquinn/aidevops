@@ -36,10 +36,15 @@ opencode:
     - apt-get update && apt-get install -y git curl
     
     # Install glab CLI for GitLab operations (official gitlab-org/cli)
+    # To pin a checksum: download the checksums.txt from the release page
+    # https://gitlab.com/gitlab-org/cli/-/releases and verify with sha256sum --check
     - |
       GLAB_VERSION="v1.89.0"
-      curl -sL "https://gitlab.com/gitlab-org/cli/-/releases/${GLAB_VERSION}/downloads/glab_${GLAB_VERSION#v}_linux_amd64.tar.gz" | tar xz
+      GLAB_ARCHIVE="glab_${GLAB_VERSION#v}_linux_amd64.tar.gz"
+      curl -sLO "https://gitlab.com/gitlab-org/cli/-/releases/${GLAB_VERSION}/downloads/${GLAB_ARCHIVE}"
+      tar xzf "${GLAB_ARCHIVE}"
       mv bin/glab /usr/local/bin/
+      rm -f "${GLAB_ARCHIVE}"
     
     # Configure git identity
     - git config --global user.email "opencode@gitlab.com"
