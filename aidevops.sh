@@ -1399,16 +1399,15 @@ cmd_init() {
     "seeds_path": "seeds",
     "auto_generate_migration": true
   },
-    "beads": {
-      "enabled": $enable_beads,
-      "sync_on_commit": false,
-      "auto_ready_check": true
-    },
-    "sops": {
-      "enabled": $enable_sops,
-      "backend": "age",
-      "patterns": ["*.secret.yaml", "*.secret.json", "configs/*.enc.json", "configs/*.enc.yaml"]
-    }
+  "beads": {
+    "enabled": $enable_beads,
+    "sync_on_commit": false,
+    "auto_ready_check": true
+  },
+  "sops": {
+    "enabled": $enable_sops,
+    "backend": "age",
+    "patterns": ["*.secret.yaml", "*.secret.json", "configs/*.enc.json", "configs/*.enc.yaml"]
   },
   "plugins": []
 }
