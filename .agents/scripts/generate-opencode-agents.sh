@@ -90,14 +90,17 @@ import sys
 config_path = os.path.expanduser("~/.config/opencode/opencode.json")
 agents_dir = os.path.expanduser("~/.aidevops/agents")
 
+config_loaded = False
 try:
     with open(config_path, 'r', encoding='utf-8') as f:
         config = json.load(f)
+    config_loaded = True
 except FileNotFoundError:
     config = {"$schema": "https://opencode.ai/config.json"}
+    config_loaded = True
 except (OSError, json.JSONDecodeError) as e:
     print(f"Error: Failed to load {config_path}: {e}", file=sys.stderr)
-    raise SystemExit(1)
+    sys.exit(1)
 
 # =============================================================================
 # AUTO-DISCOVER PRIMARY AGENTS from root .md files
@@ -710,10 +713,13 @@ for tool_pattern in omo_tool_patterns:
         config['tools'][tool_pattern] = False
         print(f"  Disabled {tool_pattern} tools globally (use @github-search subagent)")
 
-with open(config_path, 'w') as f:
-    json.dump(config, f, indent=2)
-
-print(f"  Updated {len(primary_agents)} primary agents in opencode.json")
+if config_loaded:
+    with open(config_path, 'w', encoding='utf-8') as f:
+        json.dump(config, f, indent=2)
+    print(f"  Updated {len(primary_agents)} primary agents in opencode.json")
+else:
+    print("Error: config was not loaded successfully, skipping write", file=sys.stderr)
+    sys.exit(1)
 PYEOF
 
 echo -e "  ${GREEN}✓${NC} Primary agents configured in opencode.json"
