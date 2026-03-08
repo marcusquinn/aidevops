@@ -147,6 +147,8 @@ cmd_add() {
 	# Add host to config
 	local tmp_file
 	tmp_file=$(mktemp)
+	# shellcheck disable=SC2064
+	trap "rm -f '$tmp_file'" EXIT
 	jq --arg name "$name" \
 		--arg addr "$address" \
 		--arg trans "$transport" \
@@ -182,6 +184,8 @@ cmd_remove() {
 
 	local tmp_file
 	tmp_file=$(mktemp)
+	# shellcheck disable=SC2064
+	trap "rm -f '$tmp_file'" EXIT
 	jq --arg name "$name" 'del(.hosts[$name])' "$REMOTE_HOSTS_FILE" >"$tmp_file" && mv "$tmp_file" "$REMOTE_HOSTS_FILE"
 
 	_log_success "Removed remote host: $name"
@@ -402,39 +406,6 @@ _build_credential_env() {
 	return 0
 }
 
-#######################################
-# Forward credentials to remote host via SSH
-# Uses SendEnv + AcceptEnv for secure passthrough (no command-line exposure).
-# Falls back to env prefix on the remote command if SendEnv is not configured.
-#
-# Args: ssh_cmd_array credential_env_array remote_command
-# Outputs: Full command with credential forwarding
-#######################################
-_build_remote_command_with_creds() {
-	local remote_command="$1"
-	shift
-
-	# Build env export prefix for the remote command
-	local env_prefix=""
-	local -a cred_env=()
-	while IFS= read -r line; do
-		[[ -z "$line" ]] && continue
-		cred_env+=("$line")
-	done < <(_build_credential_env)
-
-	if [[ ${#cred_env[@]} -gt 0 ]]; then
-		# Use env command on remote to set variables (avoids shell escaping issues)
-		env_prefix="env"
-		for var in "${cred_env[@]}"; do
-			env_prefix+=" $(printf '%q' "$var")"
-		done
-		env_prefix+=" "
-	fi
-
-	echo "${env_prefix}${remote_command}"
-	return 0
-}
-
 # =============================================================================
 # Remote Dispatch
 # =============================================================================
@@ -509,7 +480,7 @@ cmd_dispatch() {
 	local remote_log_file="${remote_work_dir}/worker.log"
 
 	_log_info "Creating remote workspace: $remote_work_dir"
-	if ! "${ssh_cmd[@]}" "mkdir -p '${remote_work_dir}'" 2>/dev/null; then
+	if ! "${ssh_cmd[@]}" "mkdir -m 700 -p '${remote_work_dir}'" 2>/dev/null; then
 		_log_error "Failed to create remote workspace"
 		return 1
 	fi
@@ -574,7 +545,7 @@ cd "${remote_work_dir}" || exit 1
 # Clone or update repo
 if [[ -d repo/.git ]]; then
     cd repo
-    git fetch origin
+    git fetch -q origin
     git checkout -B "${branch_name}" "origin/main" 2>/dev/null || git checkout -b "${branch_name}" 2>/dev/null || true
 else
     git clone --depth=50 "${repo_url}" repo
@@ -764,9 +735,9 @@ cmd_logs() {
 	local address="" transport="" user=""
 
 	if [[ -f "$meta_file" ]]; then
-		remote_log_file=$(jq -r '.remote_log_file' "$meta_file" 2>/dev/null || echo "$remote_log_file")
-		address=$(jq -r '.address' "$meta_file" 2>/dev/null || echo "")
-		transport=$(jq -r '.transport' "$meta_file" 2>/dev/null || echo "ssh")
+		remote_log_file=$(jq -r '.remote_log_file' "$meta_file" || echo "$remote_log_file")
+		address=$(jq -r '.address' "$meta_file" || echo "")
+		transport=$(jq -r '.transport' "$meta_file" || echo "ssh")
 	fi
 
 	# Resolve host if address not from metadata
@@ -841,12 +812,12 @@ cmd_status() {
 	fi
 
 	local remote_pid address transport remote_log_file container dispatched_at
-	remote_pid=$(jq -r '.remote_pid' "$meta_file" 2>/dev/null)
-	address=$(jq -r '.address' "$meta_file" 2>/dev/null)
-	transport=$(jq -r '.transport' "$meta_file" 2>/dev/null)
-	remote_log_file=$(jq -r '.remote_log_file' "$meta_file" 2>/dev/null)
-	container=$(jq -r '.container' "$meta_file" 2>/dev/null)
-	dispatched_at=$(jq -r '.dispatched_at' "$meta_file" 2>/dev/null)
+	remote_pid=$(jq -r '.remote_pid' "$meta_file")
+	address=$(jq -r '.address' "$meta_file")
+	transport=$(jq -r '.transport' "$meta_file")
+	remote_log_file=$(jq -r '.remote_log_file' "$meta_file")
+	container=$(jq -r '.container' "$meta_file")
+	dispatched_at=$(jq -r '.dispatched_at' "$meta_file")
 
 	# Build SSH command
 	local user=""
@@ -940,10 +911,10 @@ cmd_cleanup() {
 	local remote_pid="" address="" transport="" remote_work_dir=""
 
 	if [[ -f "$meta_file" ]]; then
-		remote_pid=$(jq -r '.remote_pid' "$meta_file" 2>/dev/null)
-		address=$(jq -r '.address' "$meta_file" 2>/dev/null)
-		transport=$(jq -r '.transport' "$meta_file" 2>/dev/null)
-		remote_work_dir=$(jq -r '.remote_work_dir' "$meta_file" 2>/dev/null)
+		remote_pid=$(jq -r '.remote_pid' "$meta_file")
+		address=$(jq -r '.address' "$meta_file")
+		transport=$(jq -r '.transport' "$meta_file")
+		remote_work_dir=$(jq -r '.remote_work_dir' "$meta_file")
 	else
 		# Resolve from host config
 		local host_info

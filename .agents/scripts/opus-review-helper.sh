@@ -48,17 +48,22 @@ NC='\033[0m'
 # ============================================================
 
 _ensure_state_dir() {
-	mkdir -p "$STATE_DIR" 2>/dev/null || true
-	return 0
+	mkdir -p "$STATE_DIR"
 }
 
 _get_last_run() {
+	local val
 	if [[ -f "$STATE_FILE" ]]; then
-		cat "$STATE_FILE" 2>/dev/null || echo "0"
+		val="$(cat "$STATE_FILE")" || val="0"
+	else
+		val="0"
+	fi
+	# Validate numeric — corrupted/empty state file must not crash arithmetic
+	if [[ "$val" =~ ^[0-9]+$ ]]; then
+		echo "$val"
 	else
 		echo "0"
 	fi
-	return 0
 }
 
 _get_now() {

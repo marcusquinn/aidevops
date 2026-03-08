@@ -340,17 +340,24 @@ next_task_id() {
 	[[ -n "$dry_run_flag" ]] && claim_args+=("$dry_run_flag")
 
 	# Run claim-task-id.sh and capture output + exit code
+	# Capture stderr to temp file so we can show it on failure without re-running
 	local claim_output
 	local claim_rc=0
-	claim_output=$("$claim_script" "${claim_args[@]}" 2>/dev/null) || claim_rc=$?
+	local claim_stderr
+	claim_stderr=$(mktemp)
+	claim_output=$("$claim_script" "${claim_args[@]}" 2>"$claim_stderr") || claim_rc=$?
 
 	# Exit code 1 = hard error
 	if [[ $claim_rc -eq 1 ]]; then
 		log_error "claim-task-id.sh failed"
-		# Re-run with stderr visible for diagnostics
-		"$claim_script" "${claim_args[@]}" >/dev/null || true
+		# Show captured stderr for diagnostics
+		if [[ -s "$claim_stderr" ]]; then
+			cat "$claim_stderr" >&2
+		fi
+		rm -f "$claim_stderr"
 		return 1
 	fi
+	rm -f "$claim_stderr"
 
 	# Parse output lines: task_id=tNNN, ref=GH#NNN, issue_url=..., reconcile=true
 	local task_id="" task_ref="" issue_url="" is_offline="false"
