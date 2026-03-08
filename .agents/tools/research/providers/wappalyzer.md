@@ -34,10 +34,10 @@ Wappalyzer is a technology profiler that identifies software on websites: CMS, f
 
 ### Install via Helper Script
 
-The framework uses `wappalyzer-helper.sh` with `wappalyzer-detect.mjs` (a custom Node.js wrapper around `@AckeeCZ/wappalyzer`):
+The framework uses `wappalyzer-helper.sh` with `wappalyzer-detect.mjs` (a custom Node.js wrapper around `@ryntab/wappalyzer-node`):
 
 ```bash
-# Install dependencies (auto-installs @AckeeCZ/wappalyzer if missing)
+# Install dependencies (auto-installs @ryntab/wappalyzer-node if missing)
 wappalyzer-helper.sh install
 
 # Verify installation
