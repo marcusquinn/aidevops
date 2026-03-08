@@ -1650,6 +1650,7 @@ _get_runner_role() {
 _update_health_issue_for_repo() {
 	local repo_slug="$1"
 	local repo_path="$2"
+	local cross_repo_md="${3:-}"
 
 	[[ -z "$repo_slug" ]] && return 0
 
@@ -1963,30 +1964,13 @@ ${worker_table}"
 		session_warning=" **WARNING: exceeds threshold of ${SESSION_COUNT_WARN}**"
 	fi
 
-	# --- Contributor activity from git history ---
+	# --- Contributor activity from git history (per-repo only) ---
+	# Cross-repo totals are pre-computed once in update_health_issues() and
+	# passed via $3 to avoid redundant git log walks (N repos × N repos).
 	local activity_md=""
-	local cross_repo_md=""
 	local activity_helper="${HOME}/.aidevops/agents/scripts/contributor-activity-helper.sh"
 	if [[ -x "$activity_helper" ]]; then
-		# Per-repo activity (this repo only)
 		activity_md=$(bash "$activity_helper" summary "$repo_path" --period month --format markdown || echo "_Activity data unavailable._")
-
-		# Cross-repo totals (all pulse-enabled repos, privacy-safe — no repo names)
-		local repos_json_path="${REPOS_JSON:-${HOME}/.config/aidevops/repos.json}"
-		if [[ -f "$repos_json_path" ]] && command -v jq &>/dev/null; then
-			local all_repo_paths
-			all_repo_paths=$(jq -r '.initialized_repos[] | select(.pulse == true and (.local_only // false) == false) | .path' "$repos_json_path" || echo "")
-			if [[ -n "$all_repo_paths" ]]; then
-				# Build argument list for cross-repo-summary
-				local -a cross_args=()
-				while IFS= read -r rp; do
-					[[ -n "$rp" ]] && cross_args+=("$rp")
-				done <<<"$all_repo_paths"
-				if [[ ${#cross_args[@]} -gt 1 ]]; then
-					cross_repo_md=$(bash "$activity_helper" cross-repo-summary "${cross_args[@]}" --period month --format markdown || echo "_Cross-repo data unavailable._")
-				fi
-			fi
-		fi
 	else
 		activity_md="_Activity helper not installed._"
 	fi
@@ -2174,10 +2158,28 @@ update_health_issues() {
 		return 0
 	fi
 
+	# Pre-compute cross-repo activity summary ONCE for all health issues.
+	# This avoids N×N git log walks (one cross-repo scan per repo dashboard).
+	local cross_repo_md=""
+	local activity_helper="${HOME}/.aidevops/agents/scripts/contributor-activity-helper.sh"
+	if [[ -x "$activity_helper" ]]; then
+		local all_repo_paths
+		all_repo_paths=$(jq -r '.initialized_repos[] | select(.pulse == true and (.local_only // false) == false) | .path' "$repos_json" 2>/dev/null || echo "")
+		if [[ -n "$all_repo_paths" ]]; then
+			local -a cross_args=()
+			while IFS= read -r rp; do
+				[[ -n "$rp" ]] && cross_args+=("$rp")
+			done <<<"$all_repo_paths"
+			if [[ ${#cross_args[@]} -gt 1 ]]; then
+				cross_repo_md=$(bash "$activity_helper" cross-repo-summary "${cross_args[@]}" --period month --format markdown || echo "_Cross-repo data unavailable._")
+			fi
+		fi
+	fi
+
 	local updated=0
 	while IFS='|' read -r slug path; do
 		[[ -z "$slug" ]] && continue
-		_update_health_issue_for_repo "$slug" "$path" || true
+		_update_health_issue_for_repo "$slug" "$path" "$cross_repo_md" || true
 		updated=$((updated + 1))
 	done <<<"$repo_entries"
 

@@ -24,6 +24,32 @@
 
 set -euo pipefail
 
+# Shared Python helper functions injected into all Python blocks to avoid
+# duplication. Defined once here, passed via sys.argv to each invocation.
+# shellcheck disable=SC2016
+PYTHON_HELPERS='
+def email_to_login(email):
+    """Map git email to GitHub login. Normalises noreply emails."""
+    if email.endswith("@users.noreply.github.com"):
+        local_part = email.split("@")[0]
+        return local_part.split("+", 1)[1] if "+" in local_part else local_part
+    if email in ("actions@github.com", "action@github.com"):
+        return "github-actions"
+    return email.split("@")[0]
+
+def is_bot(login):
+    """Check if a login belongs to a bot account."""
+    if login == "github-actions":
+        return True
+    if login.endswith("[bot]") or login.endswith("-bot"):
+        return True
+    return False
+
+def is_pr_merge(committer_email):
+    """Detect GitHub squash-merge (committer=noreply@github.com)."""
+    return committer_email == "noreply@github.com"
+'
+
 #######################################
 # Compute activity summary for all contributors in a repo
 #
@@ -31,7 +57,7 @@ set -euo pipefail
 #   - Direct commits (committer = author's own email)
 #   - PR merges (committer = noreply@github.com, i.e. GitHub squash-merge)
 #   - Total commits
-#   - Active days
+#   - Active days (with day list in JSON for cross-repo deduplication)
 #   - Average commits per active day
 #
 # Arguments:
@@ -50,7 +76,9 @@ compute_activity() {
 		return 1
 	fi
 
-	# Determine --since based on period
+	# Determine --since based on period.
+	# Values are hardcoded from the case statement below — no user input reaches
+	# the git command, so word splitting via SC2086 is safe here.
 	local since_arg=""
 	case "$period" in
 	day)
@@ -95,26 +123,7 @@ import json
 from collections import defaultdict
 from datetime import datetime, timezone
 
-def email_to_login(email):
-    if email.endswith('@users.noreply.github.com'):
-        local_part = email.split('@')[0]
-        return local_part.split('+', 1)[1] if '+' in local_part else local_part
-    if email in ('actions@github.com', 'action@github.com'):
-        return 'github-actions'
-    return email.split('@')[0]
-
-def is_bot(login):
-    \"\"\"Check if a login belongs to a bot account.\"\"\"
-    if login == 'github-actions':
-        return True
-    if login.endswith('[bot]') or login.endswith('-bot'):
-        return True
-    return False
-
-def is_pr_merge(committer_email):
-    \"\"\"Detect if a commit was a GitHub squash-merge (PR merge).
-    GitHub uses noreply@github.com as the committer for squash merges.\"\"\"
-    return committer_email == 'noreply@github.com'
+${PYTHON_HELPERS}
 
 contributors = defaultdict(lambda: {
     'direct_commits': 0,
@@ -160,14 +169,18 @@ for login, data in sorted(contributors.items(), key=lambda x: -(x[1]['direct_com
     total = data['direct_commits'] + data['pr_merges']
     avg_per_day = total / active_days if active_days > 0 else 0
 
-    results.append({
+    entry = {
         'login': login,
         'direct_commits': data['direct_commits'],
         'pr_merges': data['pr_merges'],
         'total_commits': total,
         'active_days': active_days,
-        'avg_commits_per_day': round(avg_per_day, 1)
-    })
+        'avg_commits_per_day': round(avg_per_day, 1),
+    }
+    # JSON includes day list for cross-repo deduplication
+    if sys.argv[1] == 'json':
+        entry['active_days_list'] = sorted(data['days'])
+    results.append(entry)
 
 format_type = sys.argv[1]
 period_name = sys.argv[2]
@@ -215,16 +228,7 @@ import json
 from collections import defaultdict
 from datetime import datetime, timedelta, timezone
 
-def email_to_login(email):
-    if email.endswith('@users.noreply.github.com'):
-        local_part = email.split('@')[0]
-        return local_part.split('+', 1)[1] if '+' in local_part else local_part
-    if email in ('actions@github.com', 'action@github.com'):
-        return 'github-actions'
-    return email.split('@')[0]
-
-def is_pr_merge(committer_email):
-    return committer_email == 'noreply@github.com'
+${PYTHON_HELPERS}
 
 target = sys.argv[1]
 now = datetime.now(timezone.utc)
@@ -291,7 +295,8 @@ print(json.dumps(result, indent=2))
 # Cross-repo activity summary
 #
 # Aggregates activity across multiple repos without revealing repo names
-# (cross-repo privacy). Outputs a single totals table.
+# (cross-repo privacy). Uses active_days_list from JSON output to
+# deduplicate days across repos (set union, not sum).
 #
 # Arguments:
 #   $1..N - repo paths (at least one required)
@@ -327,7 +332,7 @@ cross_repo_summary() {
 		return 1
 	fi
 
-	# Collect JSON from each repo, then aggregate in Python
+	# Collect JSON (with active_days_list) from each repo, then aggregate
 	local all_json="["
 	local first="true"
 	local repo_count=0
@@ -347,7 +352,7 @@ cross_repo_summary() {
 	done
 	all_json="${all_json}]"
 
-	# Aggregate across repos in Python
+	# Aggregate across repos in Python — deduplicate active days via set union
 	echo "$all_json" | python3 -c "
 import sys
 import json
@@ -358,7 +363,9 @@ repo_count = int(sys.argv[3])
 
 repos = json.load(sys.stdin)
 
-# Aggregate per contributor across all repos
+# Aggregate per contributor across all repos.
+# active_days uses set union to avoid double-counting days where a
+# contributor committed in multiple repos on the same calendar day.
 totals = {}
 for repo in repos:
     for entry in repo.get('data', []):
@@ -368,25 +375,28 @@ for repo in repos:
                 'direct_commits': 0,
                 'pr_merges': 0,
                 'total_commits': 0,
-                'active_days': 0,
+                'active_days_set': set(),
                 'repo_count': 0,
             }
         totals[login]['direct_commits'] += entry.get('direct_commits', 0)
         totals[login]['pr_merges'] += entry.get('pr_merges', 0)
         totals[login]['total_commits'] += entry.get('total_commits', 0)
-        totals[login]['active_days'] += entry.get('active_days', 0)
+        # Union of day strings — deduplicates cross-repo overlaps
+        for day_str in entry.get('active_days_list', []):
+            totals[login]['active_days_set'].add(day_str)
         if entry.get('total_commits', 0) > 0:
             totals[login]['repo_count'] += 1
 
 results = []
 for login, data in sorted(totals.items(), key=lambda x: -x[1]['total_commits']):
-    avg = data['total_commits'] / data['active_days'] if data['active_days'] > 0 else 0
+    active_days = len(data['active_days_set'])
+    avg = data['total_commits'] / active_days if active_days > 0 else 0
     results.append({
         'login': login,
         'direct_commits': data['direct_commits'],
         'pr_merges': data['pr_merges'],
         'total_commits': data['total_commits'],
-        'active_days': data['active_days'],
+        'active_days': active_days,
         'repos_active': data['repo_count'],
         'avg_commits_per_day': round(avg, 1),
     })
