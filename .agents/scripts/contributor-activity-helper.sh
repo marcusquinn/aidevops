@@ -445,10 +445,10 @@ else:
 #
 # Arguments:
 #   $1 - repo path (filters sessions by directory)
-#   --period day|week|month|quarter|year (optional, default: month)
+#   --period day|week|month|quarter|year|all (optional, default: month)
 #   --format markdown|json (optional, default: markdown)
 #   --db-path <path> (optional, default: auto-detect)
-# Output: markdown table or JSON
+# Output: markdown table or JSON. "all" shows every period in one table.
 #######################################
 session_time() {
 	local repo_path=""
@@ -504,6 +504,62 @@ session_time() {
 		else
 			echo "_sqlite3 not available._"
 		fi
+		return 0
+	fi
+
+	# Handle --period all: collect JSON for each period and output combined table
+	if [[ "$period" == "all" ]]; then
+		local all_periods=("day" "week" "month" "quarter" "year")
+		local combined_json="["
+		local first_period=true
+		for p in "${all_periods[@]}"; do
+			local p_json
+			local -a db_args=()
+			if [[ -n "$db_path" ]]; then
+				db_args+=(--db-path "$db_path")
+			fi
+			p_json=$(session_time "$repo_path" --period "$p" --format json "${db_args[@]}") || p_json="{}"
+			if [[ "$first_period" == "true" ]]; then
+				first_period=false
+			else
+				combined_json+=","
+			fi
+			combined_json+="{\"period\":\"${p}\",\"data\":${p_json}}"
+		done
+		combined_json+="]"
+
+		echo "$combined_json" | python3 -c "
+import sys
+import json
+
+format_type = sys.argv[1]
+data = json.load(sys.stdin)
+
+if format_type == 'json':
+    result = {}
+    for entry in data:
+        result[entry['period']] = entry['data']
+    print(json.dumps(result, indent=2))
+else:
+    if not data or all(d['data'].get('total_sessions', 0) == 0 for d in data):
+        print('_No session data available._')
+    else:
+        print('| Period | Interactive | Human Hours | Machine Hours | Workers | Machine Hours |')
+        print('| --- | ---: | ---: | ---: | ---: | ---: |')
+        for entry in data:
+            p = entry['period'].capitalize()
+            d = entry['data']
+            i_sess = d.get('interactive_sessions', 0)
+            i_human = d.get('interactive_human_hours', 0)
+            i_machine = d.get('interactive_machine_hours', 0)
+            w_sess = d.get('worker_sessions', 0)
+            w_machine = d.get('worker_machine_hours', 0)
+            print(f'| {p} | {i_sess} | {i_human}h | {i_machine}h | {w_sess} | {w_machine}h |')
+        total = data[-1]['data']  # year is the largest period
+        t_human = total.get('total_human_hours', 0)
+        t_machine = total.get('total_machine_hours', 0)
+        t_sess = total.get('total_sessions', 0)
+" "$format"
 		return 0
 	fi
 
@@ -1145,8 +1201,8 @@ main() {
 		echo "  table   <repo-path> [--period day|week|month|year] [--format markdown|json]"
 		echo "  user    <repo-path> <github-login>"
 		echo "  cross-repo-summary <path1> [path2 ...] [--period month] [--format markdown]"
-		echo "  session-time <repo-path> [--period day|week|month|quarter|year] [--format markdown|json]"
-		echo "  cross-repo-session-time <path1> [path2 ...] [--period month] [--format markdown|json]"
+		echo "  session-time <repo-path> [--period day|week|month|quarter|year|all] [--format markdown|json]"
+		echo "  cross-repo-session-time <path1> [path2 ...] [--period month|all] [--format markdown|json]"
 		echo "  person-stats <repo-path> [--period day|week|month|quarter|year] [--format markdown|json] [--logins a,b]"
 		echo "  cross-repo-person-stats <path1> [path2 ...] [--period month] [--format markdown|json] [--logins a,b]"
 		echo ""
