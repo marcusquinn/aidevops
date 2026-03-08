@@ -486,7 +486,7 @@ session_time() {
 			db_path="${HOME}/.local/share/claude/Claude.db"
 		else
 			if [[ "$format" == "json" ]]; then
-				echo "[]"
+				echo '{"interactive_sessions":0,"interactive_hours":0,"worker_sessions":0,"worker_hours":0}'
 			else
 				echo "_Session database not found._"
 			fi
@@ -496,7 +496,7 @@ session_time() {
 
 	if ! command -v sqlite3 &>/dev/null; then
 		if [[ "$format" == "json" ]]; then
-			echo "[]"
+			echo '{"interactive_sessions":0,"interactive_hours":0,"worker_sessions":0,"worker_hours":0}'
 		else
 			echo "_sqlite3 not available._"
 		fi
@@ -519,14 +519,20 @@ session_time() {
 	local abs_repo_path
 	abs_repo_path=$(cd "$repo_path" 2>/dev/null && pwd) || abs_repo_path="$repo_path"
 
-	# Escape single quotes in path for safe SQL embedding (double them per SQL standard).
+	# Escape path for safe SQL embedding:
+	# - Single quotes doubled per SQL standard (prevents injection)
+	# - % and _ escaped for LIKE patterns (prevents wildcard matching)
 	# since_ms is always numeric (computed by Python above), no injection risk.
 	local safe_path="${abs_repo_path//\'/\'\'}"
+	local like_path="${safe_path//%/\\%}"
+	like_path="${like_path//_/\\_}"
 
 	# Query session data with message-based duration using JSON output.
 	# JSON avoids pipe-separator issues (session titles can contain '|').
 	# Filters: root sessions only (no parent_id), within period, matching directory.
 	# Worktree directories (e.g., ~/Git/aidevops.feature-foo) are matched by prefix.
+	# Uses m.time_created for the period filter so sessions with recent messages
+	# are included even if the session itself was created before the cutoff.
 	local query_result
 	query_result=$(sqlite3 -json "$db_path" "
 		SELECT
@@ -535,10 +541,10 @@ session_time() {
 		FROM session s
 		JOIN message m ON m.session_id = s.id
 		WHERE s.parent_id IS NULL
-		  AND s.time_created > ${since_ms}
+		  AND m.time_created > ${since_ms}
 		  AND (s.directory = '${safe_path}'
-		       OR s.directory LIKE '${safe_path}.%'
-		       OR s.directory LIKE '${safe_path}-%')
+		       OR s.directory LIKE '${like_path}.%' ESCAPE '\\'
+		       OR s.directory LIKE '${like_path}-%' ESCAPE '\\')
 		GROUP BY s.id
 		HAVING count(m.id) >= 2
 		  AND duration_ms > 5000
@@ -656,9 +662,14 @@ cross_repo_session_time() {
 
 	# Collect JSON from each repo — use jq to assemble a valid JSON array.
 	# This is robust against non-JSON responses from session_time (e.g., error strings).
+	# Skip invalid repo paths to avoid inflating the repo count.
 	local all_json=""
 	local repo_count=0
 	for rp in "${repo_paths[@]}"; do
+		if [[ ! -d "$rp/.git" && ! -f "$rp/.git" ]]; then
+			echo "Warning: $rp is not a git repository, skipping" >&2
+			continue
+		fi
 		local repo_json
 		repo_json=$(session_time "$rp" --period "$period" --format json) || repo_json="{}"
 		# Only include valid JSON objects in the array

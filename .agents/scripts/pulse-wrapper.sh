@@ -2173,13 +2173,15 @@ update_health_issues() {
 		return 0
 	fi
 
-	# Pre-compute cross-repo activity summary ONCE for all health issues.
-	# This avoids N×N git log walks (one cross-repo scan per repo dashboard).
+	# Pre-compute cross-repo summaries ONCE for all health issues.
+	# This avoids N×N git log walks (one cross-repo scan per repo dashboard)
+	# and redundant DB queries for session time.
 	local cross_repo_md=""
+	local cross_repo_session_time_md=""
 	local activity_helper="${HOME}/.aidevops/agents/scripts/contributor-activity-helper.sh"
 	if [[ -x "$activity_helper" ]]; then
 		local all_repo_paths
-		all_repo_paths=$(jq -r '.initialized_repos[] | select(.pulse == true and (.local_only // false) == false) | .path' "$repos_json" 2>/dev/null || echo "")
+		all_repo_paths=$(jq -r '.initialized_repos[] | select(.pulse == true and (.local_only // false) == false) | .path' "$repos_json" || echo "")
 		if [[ -n "$all_repo_paths" ]]; then
 			local -a cross_args=()
 			while IFS= read -r rp; do
@@ -2187,23 +2189,7 @@ update_health_issues() {
 			done <<<"$all_repo_paths"
 			if [[ ${#cross_args[@]} -gt 1 ]]; then
 				cross_repo_md=$(bash "$activity_helper" cross-repo-summary "${cross_args[@]}" --period month --format markdown || echo "_Cross-repo data unavailable._")
-			fi
-		fi
-	fi
-
-	# Pre-compute cross-repo session time ONCE for all health issues.
-	# Uses the same repo paths already collected above.
-	local cross_repo_session_time_md=""
-	if [[ -x "$activity_helper" ]]; then
-		local all_repo_paths_st
-		all_repo_paths_st=$(jq -r '.initialized_repos[] | select(.pulse == true and (.local_only // false) == false) | .path' "$repos_json" || echo "")
-		if [[ -n "$all_repo_paths_st" ]]; then
-			local -a st_args=()
-			while IFS= read -r rp; do
-				[[ -n "$rp" ]] && st_args+=("$rp")
-			done <<<"$all_repo_paths_st"
-			if [[ ${#st_args[@]} -gt 1 ]]; then
-				cross_repo_session_time_md=$(bash "$activity_helper" cross-repo-session-time "${st_args[@]}" --period month --format markdown || echo "_Cross-repo session data unavailable._")
+				cross_repo_session_time_md=$(bash "$activity_helper" cross-repo-session-time "${cross_args[@]}" --period month --format markdown || echo "_Cross-repo session data unavailable._")
 			fi
 		fi
 	fi
