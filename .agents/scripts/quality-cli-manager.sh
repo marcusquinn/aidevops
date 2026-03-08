@@ -73,21 +73,8 @@ execute_cli_command() {
 		cli_name="Snyk CLI"
 		;;
 	"qlty")
-		# Qlty uses direct CLI commands, not a wrapper script
+		script=".agents/scripts/qlty-cli.sh"
 		cli_name="Qlty CLI"
-		if ! command -v qlty &>/dev/null; then
-			if [[ "$command" == "install" ]]; then
-				print_info "Installing Qlty CLI..."
-				curl -fsSL https://qlty.sh | bash
-				return $?
-			fi
-			print_error "Qlty CLI not installed. Run: quality-cli-manager.sh install qlty"
-			return 1
-		fi
-		print_info "Executing: $cli_name $command $args"
-		# shellcheck disable=SC2086 # args is intentionally word-split
-		qlty "$command" $args
-		return $?
 		;;
 	*)
 		print_error "Unknown CLI: $cli"
@@ -177,7 +164,6 @@ install_clis() {
 		print_warning "Some CLI installations failed"
 		return 1
 	fi
-	return 0
 }
 
 # Initialize CLI configurations
@@ -243,7 +229,6 @@ init_clis() {
 		print_warning "Some CLI initializations failed"
 		return 1
 	fi
-	return 0
 }
 
 # Run analysis with CLIs
@@ -296,12 +281,9 @@ analyze_with_clis() {
 
 	if [[ "$target_cli" == "all" || "$target_cli" == "qlty" ]]; then
 		print_info "Running Qlty analysis..."
-		# Add organization parameter if provided
-		local qlty_args="$args"
-		if [[ -n "$QLTY_ORG" ]]; then
-			qlty_args="$args $QLTY_ORG"
-		fi
-		if execute_cli_command "qlty" "check" "$qlty_args"; then
+		# Qlty organization context is configured via env vars in qlty-cli.sh's load_api_config(),
+		# not as a CLI positional argument (qlty check only accepts [OPTIONS] [PATHS])
+		if execute_cli_command "qlty" "check" "$args"; then
 			((success_count++)) || true
 		fi
 		((total_count++)) || true
@@ -354,7 +336,6 @@ analyze_with_clis() {
 		print_warning "Some analyses failed"
 		return 1
 	fi
-	return 0
 }
 
 # Show CLI status

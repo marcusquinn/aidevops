@@ -184,7 +184,7 @@ branch_was_pushed() {
 		return 0
 	fi
 	# Has remote tracking branch on any remote (not just origin)
-	if git for-each-ref --format='%(refname)' "refs/remotes/*/$branch" 2>/dev/null | grep -q .; then
+	if git for-each-ref --format='%(refname)' "refs/remotes/*/$branch" | grep -q .; then
 		return 0
 	fi
 	return 1
