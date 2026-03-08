@@ -14,6 +14,7 @@ message_id and in_reply_to headers, and adds thread metadata to frontmatter:
 Also generates a thread index file listing all emails in chronological order per thread.
 """
 
+import os
 import sys
 import re
 from pathlib import Path
@@ -236,7 +237,15 @@ def generate_thread_index(threads, output_file):
         lines.append("")
 
         for i, email in enumerate(emails, 1):
-            file_path = Path(email["file"]).name
+            # Build link relative to the output file's directory so links
+            # work regardless of where the index is written
+            email_path = Path(email["file"])
+            output_dir = Path(output_file).parent
+            try:
+                file_path = os.path.relpath(email_path, output_dir)
+            except ValueError:
+                # Different drives on Windows — fall back to basename
+                file_path = email_path.name
             email_subject = email.get("subject", "No Subject")
             from_addr = email.get("from", "Unknown")
             date_sent = email.get("date_sent", "Unknown")

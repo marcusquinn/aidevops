@@ -565,7 +565,7 @@ jobs:
           fi
 
           # Check for GitHub closing keywords or ref:GH# pattern
-          if echo "$PR_BODY" | grep -qiE '(closes|fixes|resolves)[[:space:]]*#[0-9]+'; then
+          if echo "$PR_BODY" | grep -qiE '(closes?|fixes?|resolves?)[[:space:]]*#[0-9]+'; then
             echo "PR body contains issue closing keyword"
             exit 0
           fi

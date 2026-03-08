@@ -692,8 +692,8 @@ create_large_invoice() {
 	for i in $(seq 1 50); do
 		local amount=$((i * 10))
 		subtotal=$((subtotal + amount))
-		local vat_amt
-		vat_amt=$(echo "$amount * 0.2" | bc || echo "$((amount / 5))")
+		# amount is always a multiple of 5, so integer division is exact
+		local vat_amt=$((amount / 5))
 		if [[ -n "$items" ]]; then
 			items="${items},"
 		fi
@@ -707,10 +707,8 @@ create_large_invoice() {
       \"vat_amount\": ${vat_amt}
     }"
 	done
-	local vat_total
-	vat_total=$(echo "$subtotal * 0.2" | bc 2>/dev/null || echo "$((subtotal / 5))")
-	local total
-	total=$(echo "$subtotal + $vat_total" | bc 2>/dev/null || echo "$((subtotal + subtotal / 5))")
+	local vat_total=$((subtotal / 5))
+	local total=$((subtotal + vat_total))
 
 	cat >"$output_file" <<FIXTURE
 {

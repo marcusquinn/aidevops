@@ -143,7 +143,7 @@ CREATE TABLE IF NOT EXISTS sweep_runs (
 SQL
 
 	# Insert test findings from multiple sources
-	sqlite3 "$db_path" <<SQL
+	sqlite3 -cmd 'PRAGMA busy_timeout=5000' "$db_path" <<SQL
 INSERT INTO findings (source, external_key, file, line, severity, type, rule, message, status)
 VALUES
     ('sonarcloud', 'sc-001', '.agents/scripts/code-audit-helper.sh', 42, 'high', 'BUG', 'bash:S5515', 'Unquoted variable in conditional', 'OPEN'),
@@ -173,7 +173,7 @@ SQL
 seed_audit_snapshots() {
 	local db_path="$1"
 
-	sqlite3 "$db_path" <<'SQL'
+	sqlite3 -cmd 'PRAGMA busy_timeout=5000' "$db_path" <<'SQL'
 CREATE TABLE IF NOT EXISTS audit_snapshots (
     id                INTEGER PRIMARY KEY AUTOINCREMENT,
     date              TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
@@ -191,7 +191,7 @@ CREATE INDEX IF NOT EXISTS idx_snapshots_source ON audit_snapshots(source);
 SQL
 
 	# Insert historical snapshots (2 weeks ago, 1 week ago)
-	sqlite3 "$db_path" <<SQL
+	sqlite3 -cmd 'PRAGMA busy_timeout=5000' "$db_path" <<SQL
 INSERT INTO audit_snapshots (date, source, total_findings, critical_count, high_count, medium_count, low_count, false_positives, tasks_created)
 VALUES
     (strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-14 days'), 'sonarcloud', 15, 2, 5, 6, 2, 3, 5),

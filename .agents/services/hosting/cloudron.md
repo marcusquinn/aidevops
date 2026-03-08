@@ -286,11 +286,12 @@ docker inspect <app_container> | grep CLOUDRON_MYSQL
 # Connect to MySQL via the mysql container
 docker exec -it mysql mysql -u<username> -p<password> <database>
 
-# Or use root access
-docker exec -it -e MYSQL_PWD="$(cat /home/yellowtent/platformdata/mysql/root_password)" mysql mysql -uroot
+# Or use root access (interactive prompt — avoids password in process list)
+docker exec -it mysql mysql -uroot -p
+# When prompted, paste the password from: cat /home/yellowtent/platformdata/mysql/root_password
 ```
 
-> **Security note**: The `docker inspect` command above reveals database credentials. Redact passwords before pasting output into forum posts, tickets, or chat.
+> **Security note**: The `docker inspect` command above reveals database credentials. Redact passwords before pasting output into forum posts, tickets, or chat. Avoid passing passwords via `-p<password>` or env vars in `docker exec` — they appear in the host process list.
 
 #### **Common Database Fixes**
 

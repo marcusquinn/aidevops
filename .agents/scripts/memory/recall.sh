@@ -136,8 +136,15 @@ cmd_recall() {
 	# Build type filter clause (validated before --recent and regular paths)
 	local type_where=""
 	if [[ -n "$type_filter" ]]; then
-		local type_pattern=" $type_filter "
-		if [[ ! " $VALID_TYPES " =~ $type_pattern ]]; then
+		local valid_type=false
+		local candidate
+		for candidate in $VALID_TYPES; do
+			if [[ "$candidate" == "$type_filter" ]]; then
+				valid_type=true
+				break
+			fi
+		done
+		if [[ "$valid_type" != "true" ]]; then
 			log_error "Invalid type: $type_filter"
 			log_error "Valid types: $VALID_TYPES"
 			return 1
