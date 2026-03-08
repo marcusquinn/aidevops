@@ -62,7 +62,7 @@ check_session_status() {
     echo "Current PR state: ${pr_state}"
 
     # Check latest release vs VERSION
-    version=$(<VERSION 2>/dev/null || echo "unknown")
+    version=$(cat VERSION 2>/dev/null) || version="unknown"
     latest_tag=$(git describe --tags --abbrev=0 || echo "none")
     echo "VERSION: ${version}, Latest tag: ${latest_tag}"
 
