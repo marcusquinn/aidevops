@@ -437,9 +437,8 @@ get_mcp_for_tool() {
 
 	init_db
 
-	# Escape single quotes and percent signs for SQL injection prevention
+	# Escape single quotes for SQL injection prevention
 	local tool_query_esc="${tool_query//\'/\'\'}"
-	tool_query_esc="${tool_query_esc//%/%%}"
 
 	# Find which MCP provides this tool
 	sqlite3 "$INDEX_DB" <<EOF
