@@ -203,7 +203,7 @@ The principle: fix our bugs, but don't commit to supporting external tools witho
 
 ### Kill stuck workers
 
-Check `ps axo pid,etime,command | grep '/full-loop' | grep '\.opencode'`. Any worker running 3+ hours with no open PR is likely stuck. Kill it: `kill <pid>`. Comment on the issue explaining why. This frees a slot. If the worker has recent commits or an open PR with activity, leave it alone — it's making progress.
+Check `ps axo pid,etime,command | grep '/full-loop' | grep '\.opencode'`. Any worker running 3+ hours with no open PR is likely stuck. Kill it: `kill <pid>`. Comment on the issue with the full audit-quality fields (model, branch, reason, diagnosis, next action — see "Audit-quality state in issue and PR comments" below). This frees a slot. If the worker has recent commits or an open PR with activity, leave it alone — it's making progress.
 
 ### Struggle-ratio check (t1367)
 
@@ -220,6 +220,84 @@ The "Active Workers" section in the pre-fetched state includes a `struggle_ratio
 **Configuration** (env vars in pulse-wrapper.sh):
 - `STRUGGLE_RATIO_THRESHOLD` — ratio above which to flag (default: 30)
 - `STRUGGLE_MIN_ELAPSED_MINUTES` — minimum runtime before flagging (default: 30)
+
+### Model escalation after repeated failures (t1416)
+
+When a worker fails on an issue (killed for thrashing, PR closed without merge, or 0 commits after timeout), the supervisor must track the failure count and escalate the model tier after 2 failed attempts. Blindly re-dispatching at the same tier wastes compute — the t748 incident burned 7 workers over 30+ hours on a task that required codebase archaeology beyond sonnet's capability.
+
+**How to count failures:** Read the issue comments. Each kill/re-dispatch comment from the supervisor counts as one failure. Count comments matching patterns like "Worker killed", "Worker (PID", "Re-opening for dispatch", "Re-dispatching". If the count is >= 2, escalate.
+
+**Escalation tiers:**
+
+| Failures | Action |
+|----------|--------|
+| 0-1 | Dispatch at default tier (bundle default or sonnet) |
+| 2 | Escalate to opus: add `--model anthropic/claude-opus-4-6` to the dispatch command |
+| 3+ | Escalate to opus AND simplify scope — add a comment on the issue summarising what previous workers attempted and where they got stuck, so the next worker doesn't repeat the same analysis |
+
+**When escalating, comment on the issue:**
+
+```bash
+gh issue comment <number> --repo <slug> --body "Escalating to opus after <N> failed worker attempts. Previous workers were dispatched at sonnet tier and failed with 0 commits. Model: anthropic/claude-opus-4-6. See previous comments for failure details."
+```
+
+**Override the no-model dispatch rule:** The default dispatch rule says "Do NOT add `--model`". This escalation rule overrides it — when failure count >= 2, you MUST add `--model anthropic/claude-opus-4-6`. The cost of one opus dispatch (~3x sonnet) is far less than the cost of 5+ failed sonnet dispatches.
+
+**This is a judgment call, not a hard threshold.** If the first failure was clearly a transient issue (OOM, network timeout, CI flake) rather than a capability gap, resetting the counter is appropriate. But if the worker thrashed with high struggle ratio and 0 commits, that's a capability signal — escalate.
+
+### Audit-quality state in issue and PR comments (t1416)
+
+Every comment the supervisor posts on an issue or PR must be **sufficient for a human or future agent to audit and understand the work without reading logs**. The issue timeline and PR comments are the primary audit trail — if the information isn't there, it's invisible.
+
+**Required fields in dispatch comments:**
+
+When dispatching a worker, comment on the issue with:
+
+```bash
+gh issue comment <number> --repo <slug> --body "Dispatching worker.
+- **Model**: <tier and full model ID, e.g., sonnet (anthropic/claude-sonnet-4-6)>
+- **Branch**: <branch name, e.g., fix/t748-ai-migration>
+- **Scope**: <1-line description of what the worker should do>
+- **Attempt**: <N of M, e.g., 1 of 1, or 3 of 3 (escalated to opus)>
+- **Direction**: <any specific guidance, e.g., 'focus on migration chain from PR #213'>"
+```
+
+**Required fields in kill/failure comments:**
+
+When killing a worker or closing a failed PR, comment with:
+
+```bash
+gh issue comment <number> --repo <slug> --body "Worker killed after <duration> with <N> commits (struggle_ratio: <ratio>).
+- **Model**: <tier used>
+- **Branch**: <branch name>
+- **Reason**: <why it was killed — thrashing, timeout, CI loop, etc.>
+- **Diagnosis**: <1-line hypothesis of what went wrong>
+- **Next action**: <re-dispatch at same tier / escalate to opus / needs manual review>"
+```
+
+**Required fields in merge/completion comments:**
+
+When merging a PR or closing an issue as done:
+
+```bash
+gh issue comment <number> --repo <slug> --body "Completed via PR #<N>.
+- **Model**: <tier that succeeded>
+- **Attempts**: <total attempts including failures>
+- **Duration**: <wall-clock from first dispatch to merge>"
+```
+
+**Why this matters:** Without these fields, auditing a task requires reading pulse logs, cross-referencing `ps` output timestamps, and guessing which model was used. The t748 incident had 7 kill comments that all said "Worker killed after Xh with 0 commits" but none recorded the model tier, making it impossible to determine whether escalation was attempted. Issue comments are the state dashboard — they must be self-contained.
+
+### Self-improvement on information gaps (t1416)
+
+When the supervisor encounters a situation where it cannot determine what happened (missing model tier, unclear failure reason, no branch name in comments, ambiguous state labels), this is an **information gap**. Information gaps cause audit failures and prevent effective re-dispatch.
+
+**Response:** File a self-improvement issue in the aidevops repo describing:
+1. What information was missing
+2. Where it should have been recorded
+3. What went wrong because it was missing (e.g., "could not determine if model was escalated, re-dispatched at same tier 5 more times")
+
+This is a one-time observation — don't file duplicate issues for the same gap. Check existing issues first: `gh issue list --repo <aidevops-slug> --search "information gap" --state open`.
 
 ### Task decomposition before dispatch (t1408.2)
 
@@ -313,7 +391,7 @@ sleep 2
 **Dispatch rules:**
 - ALWAYS use `opencode run` — NEVER `claude` or `claude -p`
 - Background with `&`, sleep 2 between dispatches
-- Do NOT add `--model` — let `/full-loop` use its default. Bundle presets (t1364.6) handle per-project model defaults automatically.
+- Do NOT add `--model` for first attempts — let `/full-loop` use its default. Bundle presets (t1364.6) handle per-project model defaults automatically. **Exception:** when escalating after 2+ failed attempts on the same issue, add `--model anthropic/claude-opus-4-6` (see "Model escalation after repeated failures" above).
 - Use `--dir <path>` from repos.json
 - Route non-code tasks with `--agent`: SEO, Content, Marketing, Business, Research (see AGENTS.md "Agent Routing")
 - **Bundle-aware agent routing (t1364.6):** Before dispatching, check if the target repo has a bundle with `agent_routing` overrides. Run `bundle-helper.sh get agent_routing <repo-path>` — if the task domain (code, seo, content, marketing) has a non-default agent, use `--agent <name>`. Example: a content-site bundle routes `marketing` tasks to the Marketing agent instead of Build+. Explicit `--agent` flags in the issue body always override bundle defaults.
