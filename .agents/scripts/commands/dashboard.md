@@ -73,11 +73,11 @@ Pending Maintainer Review
 =========================
 
 [repo-slug]
-  #123  simplification: remove decorative emojis from codacy.md  (simplification-debt)  @maintainer  2d ago
-  #456  feat: add support for tool X                             (needs-maintainer-review)  @maintainer  5d ago
+  #123  simplification: remove decorative emojis from codacy.md  (simplification-debt,needs-maintainer-review)  @maintainer  2d ago
+  #456  feat: add support for tool X                             (needs-maintainer-review)                      @maintainer  5d ago
 
 [other-repo]
-  #789  simplification: consolidate duplicate headers            (simplification-debt)  @maintainer  1d ago
+  #789  simplification: consolidate duplicate headers            (simplification-debt,needs-maintainer-review)  @maintainer  1d ago
 
 Total: 3 items awaiting review
 
