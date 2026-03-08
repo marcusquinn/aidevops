@@ -212,9 +212,11 @@ run_wave_audit() {
 	timestamp=$(date +"%Y%m%d_%H%M%S")
 	local report_file="${AUDIT_REPORTS_DIR}/wave_${timestamp}.json"
 
+	local encoded_url
+	encoded_url=$(jq -nr --arg url "$url" '$url|@uri')
 	local response
 	response=$(curl -s -w "\n%{http_code}" \
-		"${WAVE_API_URL}?key=${WAVE_API_KEY}&url=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$url', safe=''))" 2>/dev/null || echo "$url")&reporttype=${report_type}" \
+		"${WAVE_API_URL}?key=${WAVE_API_KEY}&url=${encoded_url}&reporttype=${report_type}" \
 		2>>"$LOG_FILE") || {
 		print_error "WAVE API request failed"
 		return 1

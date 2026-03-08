@@ -77,7 +77,7 @@ jobs:
           fi
 
           # Store changed files list (truncated for output)
-          DELIM="EOF_$(date +%s)"
+          DELIM="EOF_$(openssl rand -hex 16)"
           echo "changed_files<<$DELIM" >> "$GITHUB_OUTPUT"
           echo "$CHANGED" | head -50 >> "$GITHUB_OUTPUT"
           echo "$DELIM" >> "$GITHUB_OUTPUT"
