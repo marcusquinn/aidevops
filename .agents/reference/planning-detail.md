@@ -93,6 +93,8 @@ Estimates represent **AI-assisted execution time** — the wall-clock time from 
 - `~2h` is the threshold for auto-subtasking — tasks above this get decomposed
 - When in doubt, estimate lower — over-estimation wastes dispatch capacity by reserving worker slots longer than needed
 
+**Note on `actual:` field:** The `actual:` field on completed tasks is recorded by `session-time-helper.sh` as active session time, which may differ from wall-clock branch-to-PR time. Both are useful — session time measures AI execution cost, wall-clock measures delivery speed. The calibration above is based on git-measured wall-clock time (branch creation to last commit before PR).
+
 ## Auto-Subtasking
 
 (t1188.2): Tasks with estimates >2h that have no existing subtasks are flagged as `needs-subtasking` in the eligibility assessment. The AI reasoner uses `create_subtasks` to break them into dispatchable units (~15m-2h each) before attempting dispatch. Tasks that already have subtasks are flagged as `has-subtasks` — the supervisor dispatches the subtasks instead.

@@ -102,7 +102,8 @@ for line in sys.stdin:
     email, date_str = line.split('|', 1)
     login = email_to_login(email)
 
-    if login in ('github-actions',):
+    # Skip bot accounts (GitHub Actions, Dependabot, Renovate, etc.)
+    if login == 'github-actions' or login.endswith('[bot]') or login.endswith('-bot'):
         continue
 
     try:
