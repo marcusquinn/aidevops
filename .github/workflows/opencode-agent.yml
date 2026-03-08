@@ -260,7 +260,7 @@ jobs:
             }
       
       - name: Run OpenCode Agent
-        uses: sst/opencode/github@0cf0294787322664c6d668fa5ab0a9ce26796f78 # latest
+        uses: sst/opencode/github@a52d640c8c56a5d9fb4623a1c601046c3d9a37b7 # v1.2.21
         env:
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         with:
