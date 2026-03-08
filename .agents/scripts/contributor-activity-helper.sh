@@ -544,21 +544,17 @@ else:
     if not data or all(d['data'].get('total_sessions', 0) == 0 for d in data):
         print('_No session data available._')
     else:
-        print('| Period | Interactive | Human Hours | Machine Hours | Workers | Machine Hours |')
+        print('| Period | Human Hours | AI Hours | Total Work | Sessions | Workers |')
         print('| --- | ---: | ---: | ---: | ---: | ---: |')
         for entry in data:
             p = entry['period'].capitalize()
             d = entry['data']
+            human_h = d.get('total_human_hours', 0)
+            ai_h = d.get('total_machine_hours', 0)
+            total_h = round(human_h + ai_h, 1)
             i_sess = d.get('interactive_sessions', 0)
-            i_human = d.get('interactive_human_hours', 0)
-            i_machine = d.get('interactive_machine_hours', 0)
             w_sess = d.get('worker_sessions', 0)
-            w_machine = d.get('worker_machine_hours', 0)
-            print(f'| {p} | {i_sess} | {i_human}h | {i_machine}h | {w_sess} | {w_machine}h |')
-        total = data[-1]['data']  # year is the largest period
-        t_human = total.get('total_human_hours', 0)
-        t_machine = total.get('total_machine_hours', 0)
-        t_sess = total.get('total_sessions', 0)
+            print(f'| {p} | {human_h}h | {ai_h}h | {total_h}h | {i_sess} | {w_sess} |')
 " "$format"
 		return 0
 	fi
@@ -708,11 +704,12 @@ else:
     if total_sessions == 0:
         print(f'_No session data for the last {period_name}._')
     else:
-        print(f'| Type | Sessions | Human Hours | Machine Hours |')
-        print(f'| --- | ---: | ---: | ---: |')
-        print(f'| Interactive | {i[\"count\"]} | {i_human_h}h | {i_machine_h}h |')
-        print(f'| Workers/Runners | {w[\"count\"]} | — | {w_machine_h}h |')
-        print(f'| **Total** | **{total_sessions}** | **{total_human_h}h** | **{total_machine_h}h** |')
+        total_work_h = round(total_human_h + total_machine_h, 1)
+        print(f'| Type | Human Hours | AI Hours | Total Work | Sessions |')
+        print(f'| --- | ---: | ---: | ---: | ---: |')
+        print(f'| Interactive | {i_human_h}h | {i_machine_h}h | {round(i_human_h + i_machine_h, 1)}h | {i[\"count\"]} |')
+        print(f'| Workers/Runners | {w_human_h}h | {w_machine_h}h | {round(w_human_h + w_machine_h, 1)}h | {w[\"count\"]} |')
+        print(f'| **Total** | **{total_human_h}h** | **{total_machine_h}h** | **{total_work_h}h** | **{total_sessions}** |')
 " "$format" "$period"
 
 	return 0
@@ -792,17 +789,17 @@ else:
     else:
         print(f'_Across {repo_count} managed repos:_')
         print()
-        print('| Period | Interactive | Human Hours | Machine Hours | Workers | Machine Hours |')
+        print('| Period | Human Hours | AI Hours | Total Work | Sessions | Workers |')
         print('| --- | ---: | ---: | ---: | ---: | ---: |')
         for entry in data:
             p = entry['period'].capitalize()
             d = entry['data']
+            human_h = d.get('total_human_hours', 0)
+            ai_h = d.get('total_machine_hours', 0)
+            total_h = round(human_h + ai_h, 1)
             i_sess = d.get('interactive_sessions', 0)
-            i_human = d.get('interactive_human_hours', 0)
-            i_machine = d.get('interactive_machine_hours', 0)
             w_sess = d.get('worker_sessions', 0)
-            w_machine = d.get('worker_machine_hours', 0)
-            print(f'| {p} | {i_sess} | {i_human}h | {i_machine}h | {w_sess} | {w_machine}h |')
+            print(f'| {p} | {human_h}h | {ai_h}h | {total_h}h | {i_sess} | {w_sess} |')
 " "$format"
 		return 0
 	fi
@@ -875,12 +872,15 @@ else:
     else:
         print(f'_Across {repo_count} managed repos:_')
         print()
-        print(f'| Type | Sessions | Human Hours | Machine Hours |')
-        print(f'| --- | ---: | ---: | ---: |')
+        total_work_h = round(total_human_h + total_machine_h, 1)
         i = totals
-        print(f'| Interactive | {i[\"interactive_sessions\"]} | {i[\"interactive_human_hours\"]}h | {i[\"interactive_machine_hours\"]}h |')
-        print(f'| Workers/Runners | {i[\"worker_sessions\"]} | — | {i[\"worker_machine_hours\"]}h |')
-        print(f'| **Total** | **{total_sessions}** | **{total_human_h}h** | **{total_machine_h}h** |')
+        i_work = round(i['interactive_human_hours'] + i['interactive_machine_hours'], 1)
+        w_work = round(i['worker_human_hours'] + i['worker_machine_hours'], 1)
+        print(f'| Type | Human Hours | AI Hours | Total Work | Sessions |')
+        print(f'| --- | ---: | ---: | ---: | ---: |')
+        print(f'| Interactive | {i[\"interactive_human_hours\"]}h | {i[\"interactive_machine_hours\"]}h | {i_work}h | {i[\"interactive_sessions\"]} |')
+        print(f'| Workers/Runners | {i[\"worker_human_hours\"]}h | {i[\"worker_machine_hours\"]}h | {w_work}h | {i[\"worker_sessions\"]} |')
+        print(f'| **Total** | **{total_human_h}h** | **{total_machine_h}h** | **{total_work_h}h** | **{total_sessions}** |')
 " "$format" "$period" "$repo_count"
 
 	return 0
@@ -1071,10 +1071,12 @@ else:
     if not data:
         print(f'_No GitHub activity for the last {period_name}._')
     else:
-        print(f'| Contributor | Issues | PRs | Merged | Commented On |')
-        print(f'| --- | ---: | ---: | ---: | ---: |')
+        grand_total = sum(d['total_output'] for d in data) or 1
+        print(f'| Contributor | Issues | PRs | Merged | Commented | % of Total |')
+        print(f'| --- | ---: | ---: | ---: | ---: | ---: |')
         for d in data:
-            print(f'| {d[\"login\"]} | {d[\"issues_created\"]} | {d[\"prs_created\"]} | {d[\"prs_merged\"]} | {d[\"commented_on\"]} |')
+            pct = round(d['total_output'] / grand_total * 100, 1)
+            print(f'| {d[\"login\"]} | {d[\"issues_created\"]} | {d[\"prs_created\"]} | {d[\"prs_merged\"]} | {d[\"commented_on\"]} | {pct}% |')
 " "$format" "$period"
 
 	return 0
@@ -1137,7 +1139,7 @@ cross_repo_person_stats() {
 		if [[ -n "$logins_override" ]]; then
 			extra_args+=(--logins "$logins_override")
 		fi
-		repo_json=$(person_stats "$rp" --period "$period" --format json "${extra_args[@]}") || repo_json="[]"
+		repo_json=$(person_stats "$rp" --period "$period" --format json ${extra_args[@]+"${extra_args[@]}"}) || repo_json="[]"
 		if echo "$repo_json" | jq -e . >/dev/null 2>&1; then
 			all_json+="${repo_json}"$'\n'
 		fi
@@ -1181,10 +1183,12 @@ else:
     else:
         print(f'_Across {repo_count} managed repos:_')
         print()
-        print(f'| Contributor | Issues | PRs | Merged | Commented On |')
-        print(f'| --- | ---: | ---: | ---: | ---: |')
+        grand_total = sum(r['total_output'] for r in results) or 1
+        print(f'| Contributor | Issues | PRs | Merged | Commented | % of Total |')
+        print(f'| --- | ---: | ---: | ---: | ---: | ---: |')
         for r in results:
-            print(f'| {r[\"login\"]} | {r[\"issues_created\"]} | {r[\"prs_created\"]} | {r[\"prs_merged\"]} | {r[\"commented_on\"]} |')
+            pct = round(r['total_output'] / grand_total * 100, 1)
+            print(f'| {r[\"login\"]} | {r[\"issues_created\"]} | {r[\"prs_created\"]} | {r[\"prs_merged\"]} | {r[\"commented_on\"]} | {pct}% |')
 " "$format" "$period" "$repo_count"
 
 	return 0

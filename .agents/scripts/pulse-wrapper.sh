@@ -1686,13 +1686,16 @@ ${worker_table}"
 	# Session time stats are passed via $4 (also pre-computed once).
 	local activity_md=""
 	local session_time_md=""
+	local person_stats_md=""
 	local activity_helper="${HOME}/.aidevops/agents/scripts/contributor-activity-helper.sh"
 	if [[ -x "$activity_helper" ]]; then
 		activity_md=$(bash "$activity_helper" summary "$repo_path" --period month --format markdown || echo "_Activity data unavailable._")
 		session_time_md=$(bash "$activity_helper" session-time "$repo_path" --period all --format markdown || echo "_Session data unavailable._")
+		person_stats_md=$(bash "$activity_helper" person-stats "$repo_path" --period month --format markdown || echo "_Person stats unavailable._")
 	else
 		activity_md="_Activity helper not installed._"
 		session_time_md="_Activity helper not installed._"
+		person_stats_md="_Activity helper not installed._"
 	fi
 
 	# --- Assemble body ---
@@ -1731,13 +1734,17 @@ ${activity_md}
 
 ${cross_repo_md:-_Single repo or cross-repo data unavailable._}
 
-### Session Time
+### Session Time (${runner_user})
 
 ${session_time_md}
 
-### Cross-Repo Session Time
+### Cross-Repo Session Time (${runner_user})
 
 ${cross_repo_session_time_md:-_Single repo or cross-repo session data unavailable._}
+
+### Contributor Output (last 30 days)
+
+${person_stats_md:-_Person stats unavailable._}
 
 ### System Resources
 
