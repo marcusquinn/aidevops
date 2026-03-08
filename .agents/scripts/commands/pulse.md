@@ -121,6 +121,32 @@ Then skip to the next PR. The next pulse cycle will retry the permission check �
   - `WAITING` only means "no known bot activity" — it does NOT mean zero reviews. When `WAITING` is returned, check the formal review count (the `gh pr view` command above). If count > 0, proceed to merge.
   - `SKIP` means the PR has a `skip-review-gate` label — it bypasses the bot gate only, NOT the review count requirement.
   - Skip the PR when the formal review count is 0, regardless of bot gate status.
+  - **Unresolved review suggestions check (pre-merge):** Before merging, check for unresolved inline review comments from bots. This prevents merging PRs where actionable feedback was posted but never addressed — the root cause of quality-debt backfill issues.
+
+    ```bash
+    # Fetch inline review comments from known bots that have suggestions
+    UNRESOLVED=$(gh api "repos/<slug>/pulls/<number>/comments" \
+      --jq '[.[] | select(
+        (.user.login | test("coderabbit|gemini-code-assist|copilot|augment"; "i")) and
+        (.body | test("suggestion|```suggestion"; "i"))
+      )] | length')
+
+    if [[ "$UNRESOLVED" -gt 0 ]]; then
+      # Don't block — dispatch a worker to address the feedback before merging
+      echo "PR #<number> has $UNRESOLVED unresolved bot suggestion(s) — dispatching fix worker"
+      # Label the PR so the next cycle knows a fix is in progress
+      gh api --silent "repos/<slug>/issues/<number>/labels" \
+        -X POST -f 'labels[]=needs-review-fixes' 2>/dev/null || true
+      # Dispatch a worker to address the suggestions (counts against worker slots)
+      opencode run --dir <path> --title "PR #<number>: address review suggestions" \
+        "/full-loop Address unresolved review bot suggestions on PR #<number> (<pr_url>). Read the inline review comments, apply valid suggestions, dismiss invalid ones with a reply explaining why." &
+      sleep 2
+      # Skip merge this cycle — the fix worker will push, and the next pulse merges
+      continue
+    fi
+    ```
+
+    **Judgment call, not a hard block.** Not every bot suggestion is valid — bots hallucinate. The fix worker reads each suggestion, applies valid ones, and dismisses invalid ones with a reply. The goal is to prevent the pattern where feedback is silently ignored and becomes a quality-debt issue post-merge. If the PR already has the `needs-review-fixes` label (fix worker already dispatched), skip the check — the worker is handling it. If the PR has `skip-review-suggestions` label, bypass this check entirely (for cases where all suggestions were reviewed and intentionally declined).
 - **Green CI + zero reviews** → skip this cycle, but run `review-bot-gate-helper.sh request-retry <number> <slug>` to self-heal rate-limited bots. The helper checks whether bots posted rate-limit notices instead of real reviews and requests a retry if so (idempotent — safe to call every cycle). The next pulse will find the real review and merge normally. The formal review count gate still applies — this is recovery, not bypass.
 - **Failing CI or changes requested** → before dispatching a fix worker, check whether this is a systemic failure (see "CI failure pattern detection" below). If systemic, skip the per-PR dispatch — the workflow-level issue covers it. If per-PR, dispatch a worker to fix it (counts against worker slots).
 

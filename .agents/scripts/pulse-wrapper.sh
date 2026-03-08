@@ -2424,7 +2424,7 @@ _Monitoring: ${sweep_total_issues} issues (delta: ${issue_delta}), gate ${sweep_
 		local scan_output
 		scan_output=$("$review_helper" scan-merged \
 			--repo "$repo_slug" \
-			--batch 10 \
+			--batch 30 \
 			--create-issues \
 			--min-severity medium \
 			--json) || scan_output=""
