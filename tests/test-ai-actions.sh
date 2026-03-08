@@ -23,15 +23,19 @@ FAIL=0
 TOTAL=0
 
 pass() {
+	local msg="$1"
 	PASS=$((PASS + 1))
 	TOTAL=$((TOTAL + 1))
-	echo "  PASS: $1"
+	echo "  PASS: $msg"
+	return 0
 }
 
 fail() {
+	local msg="$1"
 	FAIL=$((FAIL + 1))
 	TOTAL=$((TOTAL + 1))
-	echo "  FAIL: $1"
+	echo "  FAIL: $msg"
+	return 0
 }
 
 echo "=== AI Actions Executor Tests (t1085.3) ==="
