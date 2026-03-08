@@ -17,8 +17,11 @@ Content to remember: $ARGUMENTS
 | `CODEBASE_PATTERN` | Project conventions | "All API routes use /api/v1 prefix" |
 | `USER_PREFERENCE` | Developer preferences | "Prefers tabs over spaces" |
 | `TOOL_CONFIG` | Tool setup notes | "SonarCloud needs SONAR_TOKEN in CI" |
-| `DECISION` | Architecture decisions | "Chose SQLite over Postgres for simplicity" |
+| `DECISION` | Project-level choices and trade-offs | "Chose SQLite over Postgres for simplicity" |
 | `CONTEXT` | Background info | "Legacy API deprecated in Q3" |
+| `ARCHITECTURAL_DECISION` | System-level architecture (service boundaries, data flow, tech stack) | "Chose event-driven microservices over monolith" |
+| `ERROR_FIX` | Bug fixes and patches | "Patched null pointer in auth middleware" |
+| `OPEN_THREAD` | Unresolved questions or follow-ups | "Investigate race condition in job scheduler" |
 
 ## Workflow
 

@@ -180,8 +180,11 @@ See `scripts/commands/remember.md` and `scripts/commands/recall.md` for full doc
 | `CODEBASE_PATTERN` | Project conventions |
 | `USER_PREFERENCE` | Developer preferences |
 | `TOOL_CONFIG` | Tool setup notes |
-| `DECISION` | Architecture decisions |
+| `DECISION` | Project-level choices and trade-offs |
 | `CONTEXT` | Background info |
+| `ARCHITECTURAL_DECISION` | System-level architecture (service boundaries, data flow, tech stack) |
+| `ERROR_FIX` | Bug fixes and patches |
+| `OPEN_THREAD` | Unresolved questions or follow-ups |
 | `SUCCESS_PATTERN` | Approaches that consistently work for task types |
 | `FAILURE_PATTERN` | Approaches that consistently fail for task types |
 
