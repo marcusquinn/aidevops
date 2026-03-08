@@ -506,7 +506,7 @@ Additional context: $ARGUMENTS
    - Any TODO.md/PLANS.md task references
    - User-provided context (if any)
 6. Create PR using `gh pr create`
-7. Return PR URL
+7. If creation succeeds, return PR URL; otherwise show error and suggest fixes
 
 **Example:**
 - `/create-pr` → Creates PR with auto-generated title/description
