@@ -392,11 +392,11 @@ cmd_install() {
 	# Remove existing integration if present
 	if is_installed "$rc_file"; then
 		log_info "Existing integration found, updating..."
-		remove_integration "$rc_file"
+		remove_integration "$rc_file" || return 1
 	fi
 
 	# Install new integration
-	install_integration "$shell_name" "$rc_file"
+	install_integration "$shell_name" "$rc_file" || return 1
 
 	# Check and fix Tabby configuration if needed
 	check_and_fix_tabby
@@ -409,6 +409,7 @@ cmd_install() {
 	echo "  2. Run: source $rc_file"
 	echo ""
 	echo "Your terminal tab will now show: repo/branch (e.g., aidevops/feature/xyz)"
+	return 0
 }
 
 cmd_uninstall() {
@@ -427,11 +428,12 @@ cmd_uninstall() {
 		return 0
 	fi
 
-	remove_integration "$rc_file"
+	remove_integration "$rc_file" || return 1
 
 	echo ""
 	log_success "Terminal title integration removed!"
 	echo "Restart your terminal or run: source $rc_file"
+	return 0
 }
 
 cmd_status() {
