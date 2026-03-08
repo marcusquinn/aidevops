@@ -2564,9 +2564,8 @@ cmd_pulse() {
 			local display_base display_max display_load_factor display_adaptive
 			local escaped_display_batch
 			escaped_display_batch=$(sql_escape "$batch_id")
-			display_base=$(db "$SUPERVISOR_DB" "SELECT concurrency FROM batches WHERE id = '$escaped_display_batch';" 2>/dev/null || echo "?")
-			display_max=$(db "$SUPERVISOR_DB" "SELECT COALESCE(max_concurrency, 0) FROM batches WHERE id = '$escaped_display_batch';" 2>/dev/null || echo "0")
-			display_load_factor=$(db "$SUPERVISOR_DB" "SELECT COALESCE(max_load_factor, 2) FROM batches WHERE id = '$escaped_display_batch';" 2>/dev/null || echo "2")
+			# Single query for all batch concurrency fields (GH#3769: combine separate DB lookups)
+			IFS='|' read -r display_base display_max display_load_factor < <(db "$SUPERVISOR_DB" "SELECT COALESCE(concurrency, '?') || '|' || COALESCE(max_concurrency, 0) || '|' || COALESCE(max_load_factor, 2) FROM batches WHERE id = '$escaped_display_batch';" 2>/dev/null || echo "?|0|2")
 			display_adaptive=$(calculate_adaptive_concurrency "${display_base:-4}" "${display_load_factor:-2}" "${display_max:-0}")
 			local adaptive_label="base:${display_base}"
 			if [[ "$display_adaptive" -gt "${display_base:-0}" ]]; then

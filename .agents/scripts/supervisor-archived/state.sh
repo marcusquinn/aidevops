@@ -420,18 +420,16 @@ cmd_status() {
 
 	# Check if target is a batch
 	local batch_row
+	# Single query includes max_concurrency and max_load_factor (GH#3769: combine separate DB lookups)
 	batch_row=$(db -separator '|' "$SUPERVISOR_DB" "
-        SELECT id, name, concurrency, status, created_at, release_on_complete, release_type
+        SELECT id, name, concurrency, status, created_at, release_on_complete, release_type,
+               COALESCE(max_concurrency, 0), COALESCE(max_load_factor, 2)
         FROM batches WHERE id = '$(sql_escape "$target")' OR name = '$(sql_escape "$target")';
     ")
 
 	if [[ -n "$batch_row" ]]; then
-		local bid bname bconc bstatus bcreated brelease_flag brelease_type
-		IFS='|' read -r bid bname bconc bstatus bcreated brelease_flag brelease_type <<<"$batch_row"
-		local bmax_conc
-		bmax_conc=$(db "$SUPERVISOR_DB" "SELECT COALESCE(max_concurrency, 0) FROM batches WHERE id = '$(sql_escape "$bid")';" 2>/dev/null || echo "0")
-		local bmax_load
-		bmax_load=$(db "$SUPERVISOR_DB" "SELECT COALESCE(max_load_factor, 2) FROM batches WHERE id = '$(sql_escape "$bid")';" 2>/dev/null || echo "2")
+		local bid bname bconc bstatus bcreated brelease_flag brelease_type bmax_conc bmax_load
+		IFS='|' read -r bid bname bconc bstatus bcreated brelease_flag brelease_type bmax_conc bmax_load <<<"$batch_row"
 		local badaptive
 		badaptive=$(calculate_adaptive_concurrency "${bconc:-4}" "${bmax_load:-2}" "${bmax_conc:-0}")
 		local cap_display="auto"
