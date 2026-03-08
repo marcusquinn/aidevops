@@ -259,5 +259,5 @@ mineru -p input.pdf -o output_dir --lang zh  # Chinese
 
 - `pandoc.md` - General-purpose document conversion (broader format support)
 - `tools/pdf/overview.md` - PDF manipulation tools (form filling, signing)
-- `tools/data-extraction/` - Data extraction from web sources
-- `tools/ocr/` - OCR-specific tools
+- `../data-extraction/` - Data extraction from web sources
+- `../ocr/` - OCR-specific tools
