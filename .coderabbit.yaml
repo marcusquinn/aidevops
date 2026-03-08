@@ -17,22 +17,52 @@ reviews:
   review_status: true
   collapse_walkthrough: false
   sequence_diagrams: true
-  
-  # Auto-approve simple changes
+
+  # Abort in-progress reviews when PR is closed/merged to free up quota.
+  # GH#3827: reduces wasted review cycles on PRs that are already resolved.
+  abort_on_close: true
+
+  # Auto-review settings — tuned to reduce rate-limit pressure (GH#3827).
+  # When many PRs are open simultaneously, CodeRabbit's hourly commit review
+  # limit is exhausted. These settings reduce the review volume per PR:
+  # - auto_pause_after_reviewed_commits: pause after 3 commits (default 5)
+  #   so each PR consumes fewer review slots before requiring manual resume
+  # - auto_incremental_review: keep enabled so pushes get reviewed, but the
+  #   pause threshold above limits how many times per PR
+  # - ignore_title_keywords: skip WIP/draft-like PRs that aren't ready
+  # - ignore_usernames: skip bot-authored PRs (dependabot, renovate) that
+  #   have their own security review pipelines
   auto_review:
     enabled: true
     drafts: false
-    
+    auto_incremental_review: true
+    auto_pause_after_reviewed_commits: 3
+    ignore_title_keywords:
+      - "WIP"
+      - "DO NOT REVIEW"
+      - "[skip review]"
+    ignore_usernames:
+      - "dependabot[bot]"
+      - "renovate[bot]"
+    labels:
+      - "!no-review"
+
   # Request changes for critical issues
   request_changes_workflow: true
-  
-  # Exclude certain files from review
+
+  # Exclude certain files from review — expanded to reduce review scope
+  # and conserve rate-limit budget (GH#3827).
   path_filters:
     - "!.agents/tmp/*"
     - "!.agents/memory/*"
     - "!*.log"
     - "!*.tmp"
-  
+    - "!*.lock"
+    - "!package-lock.json"
+    - "!yarn.lock"
+    - "!pnpm-lock.yaml"
+    - "!todo/tasks/*-brief.md"
+
   # Path-specific instructions
   path_instructions:
     - path: "providers/*.sh"
@@ -42,7 +72,7 @@ reviews:
         - Proper error handling
         - Security of credential handling
         - Input validation
-        
+
     - path: ".agents/scripts/*.sh"
       instructions: |
         Automation scripts - focus on:
@@ -50,7 +80,7 @@ reviews:
         - Clear logging and feedback
         - Proper exit codes
         - Error recovery mechanisms
-        
+
     - path: "templates/*.sh"
       instructions: |
         Template scripts - focus on:
@@ -58,7 +88,7 @@ reviews:
         - Flexibility and reusability
         - Clear documentation
         - Safe defaults
-        
+
     - path: "**/*.ts"
       instructions: |
         TypeScript files - focus on:
