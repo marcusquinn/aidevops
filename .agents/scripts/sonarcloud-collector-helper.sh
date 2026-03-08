@@ -418,11 +418,14 @@ cmd_collect() {
 	log_info "Starting collection for project: $project_key"
 
 	# Create audit run (using existing schema from t1032.1)
+	# sql_escape repo to prevent SQL injection via repo name
+	local escaped_repo
+	escaped_repo=$(printf '%s' "$repo" | sed "s/'/''/g")
 	local run_id
 	run_id=$(
 		db "$COLLECTOR_DB" <<SQL
 INSERT INTO audit_runs (repo, pr_number, head_sha, services_run, status)
-VALUES ('$repo', 0, '', 'sonarcloud', 'running');
+VALUES ('$escaped_repo', 0, '', 'sonarcloud', 'running');
 SELECT last_insert_rowid();
 SQL
 	)
@@ -442,13 +445,8 @@ SQL
 		total_findings=$((total_findings + hotspot_count))
 	fi
 
-	# Update run status
-	db "$COLLECTOR_DB" <<SQL >/dev/null
-UPDATE audit_runs
-SET status = 'complete',
-    completed_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
-WHERE id = $run_id;
-SQL
+	# Update run status (run_id is from last_insert_rowid, guaranteed numeric)
+	db "$COLLECTOR_DB" "UPDATE audit_runs SET status = 'complete', completed_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id = $run_id;" >/dev/null
 
 	log_success "Collection complete. Total findings: $total_findings"
 	return 0
@@ -478,9 +476,18 @@ cmd_query() {
 
 	ensure_db
 
+	# Validate severity to prevent SQL injection
 	local where_clause=""
 	if [[ -n "$severity" ]]; then
-		where_clause="WHERE severity='$severity'"
+		case "$severity" in
+		critical | high | medium | low | info)
+			where_clause="AND severity='$severity'"
+			;;
+		*)
+			log_error "Invalid severity value: $severity (must be: critical, high, medium, low, info)"
+			return 1
+			;;
+		esac
 	fi
 
 	if [[ "$format" == "json" ]]; then
@@ -526,6 +533,12 @@ cmd_summary() {
 			;;
 		esac
 	done
+
+	# Validate last_n is numeric to prevent SQL injection
+	if ! [[ "$last_n" =~ ^[0-9]+$ ]]; then
+		log_error "Invalid value for --last: $last_n (must be numeric)"
+		return 1
+	fi
 
 	ensure_db
 

@@ -302,7 +302,7 @@ print_shared_success() {
 # Print warning message with consistent formatting
 print_shared_warning() {
 	local msg="$1"
-	echo -e "${COLOR_YELLOW}[WARNING]${COLOR_RESET} $msg"
+	echo -e "${COLOR_YELLOW}[WARNING]${COLOR_RESET} $msg" >&2
 	return 0
 }
 

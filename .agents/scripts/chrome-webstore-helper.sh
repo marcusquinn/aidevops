@@ -78,7 +78,7 @@ print_info() {
 
 print_warning() {
 	local message="$1"
-	echo -e "\033[1;33m[WARN]\033[0m $message"
+	echo -e "\033[1;33m[WARN]\033[0m $message" >&2
 	return 0
 }
 
@@ -499,7 +499,9 @@ cmd_publish() {
 	# Build extension if build command provided
 	if [[ -n "$build_cmd" ]]; then
 		print_info "Running build command: $build_cmd"
-		if ! bash -c "$build_cmd"; then
+		local build_cmd_arr
+		read -r -a build_cmd_arr <<<"$build_cmd"
+		if ! "${build_cmd_arr[@]}"; then
 			print_error "$ERROR_BUILD_FAILED"
 			return 1
 		fi
@@ -510,7 +512,9 @@ cmd_publish() {
 
 	if [[ -n "$zip_cmd" ]]; then
 		print_info "Running zip command: $zip_cmd"
-		if ! bash -c "$zip_cmd"; then
+		local zip_cmd_arr
+		read -r -a zip_cmd_arr <<<"$zip_cmd"
+		if ! "${zip_cmd_arr[@]}"; then
 			print_error "$ERROR_ZIP_FAILED"
 			return 1
 		fi

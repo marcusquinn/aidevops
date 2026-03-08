@@ -77,9 +77,10 @@ jobs:
           fi
 
           # Store changed files list (truncated for output)
-          echo "changed_files<<EOF" >> "$GITHUB_OUTPUT"
+          # Use unique delimiter to avoid collision with file content
+          echo "changed_files<<EOF_CHANGED_FILES" >> "$GITHUB_OUTPUT"
           echo "$CHANGED" | head -50 >> "$GITHUB_OUTPUT"
-          echo "EOF" >> "$GITHUB_OUTPUT"
+          echo "EOF_CHANGED_FILES" >> "$GITHUB_OUTPUT"
 
           echo "Detected $CHANGED_COUNT changed agent files ($SCRIPTS_CHANGED scripts)"
 

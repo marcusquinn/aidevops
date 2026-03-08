@@ -62,8 +62,6 @@ db() {
 
 sql_escape() {
 	local val="$1"
-	val="${val//\\\'/\'}"
-	val="${val//\\\"/\"}"
 	val="${val//\'/\'\'}"
 	echo "$val"
 	return 0
@@ -606,6 +604,12 @@ cmd_query() {
 			;;
 		esac
 	done
+
+	# Validate numeric inputs to prevent SQL injection
+	if ! [[ "$limit" =~ ^[0-9]+$ ]]; then
+		log_error "Invalid limit: $limit (must be numeric)"
+		return 1
+	fi
 
 	ensure_db
 
