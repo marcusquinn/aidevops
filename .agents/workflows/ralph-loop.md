@@ -529,46 +529,16 @@ The check runs automatically when starting an OpenCode session in the aidevops r
 
 ## Session Completion & Spawning
 
-Loop agents should detect completion and suggest next steps.
+Loop agents should detect completion and suggest next steps. See `workflows/session-manager.md` for the canonical reference on session lifecycle, completion detection, spawning patterns (terminal tabs, background sessions, worktrees), and handoff templates.
 
-### Loop Completion Detection
-
-When a loop completes successfully (promise fulfilled), suggest:
-
-```text
-<promise>PR_MERGED</promise>
-
----
-Loop complete. PR #123 merged successfully.
-
-Suggestions:
-1. Run @agent-review to capture learnings
-2. Start new session for next task
-3. Spawn parallel session for related work
----
-```
-
-### Spawning New Sessions from Loops
-
-Loops can spawn new OpenCode sessions for parallel work. See `workflows/session-manager.md` for full spawning patterns (background sessions, terminal tabs, worktrees).
-
-**Quick reference:**
-
-```bash
-# Background session
-opencode run "Continue with next task" --agent Build+ &
-
-# With worktree (recommended for parallel branches)
-~/.aidevops/agents/scripts/worktree-helper.sh add feature/parallel-task
-```
-
-### Session Spawning on Completion
-
-After a successful loop, the AI can spawn new sessions for follow-up work:
+**Quick reference for loop completion:**
 
 ```bash
 # After successful loop, start next task
 /full-loop "Next task description"
+
+# Or spawn a background session
+opencode run "Continue with next task" --agent Build+ &
 ```
 
 ## Full Development Loop

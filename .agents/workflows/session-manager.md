@@ -46,31 +46,35 @@ tools:
 ```bash
 # Check session completion status
 check_session_status() {
-    echo "=== Session Status ==="
-    
-    # Check incomplete tasks
     local incomplete
-    incomplete=$(grep -c '^\s*- \[ \]' TODO.md 2>/dev/null || echo "0")
-    echo "Incomplete tasks: $incomplete"
-    
-    # Check recent PR
     local pr_state
+    local version
+    local latest_tag
+
+    echo "=== Session Status ==="
+
+    # Check incomplete tasks
+    incomplete=$(grep -c '^\s*- \[ \]' TODO.md 2>/dev/null || echo "0")
+    echo "Incomplete tasks: ${incomplete}"
+
+    # Check recent PR (requires gh CLI)
     pr_state=$(gh pr view --json state --jq '.state' 2>/dev/null || echo "none")
-    echo "Current PR state: $pr_state"
-    
+    echo "Current PR state: ${pr_state}"
+
     # Check latest release vs VERSION
-    local version latest_tag
-    version=$(cat VERSION 2>/dev/null || echo "unknown")
+    version=$(<VERSION 2>/dev/null || echo "unknown")
     latest_tag=$(git describe --tags --abbrev=0 2>/dev/null || echo "none")
-    echo "VERSION: $version, Latest tag: $latest_tag"
-    
+    echo "VERSION: ${version}, Latest tag: ${latest_tag}"
+
     # Suggest if complete
-    if [[ "$incomplete" == "0" && "$pr_state" == "MERGED" ]]; then
+    if [[ "${incomplete}" == "0" && "${pr_state}" == "MERGED" ]]; then
         echo ""
         echo "Session appears complete. Consider:"
         echo "  1. Run @agent-review"
         echo "  2. Start new session"
     fi
+
+    return 0
 }
 ```
 
@@ -131,18 +135,20 @@ Suggestions:
 spawn_terminal_tab() {
     local dir="${1:-$(pwd)}"
     local cmd="${2:-opencode}"
-    osascript -e "tell application \"Terminal\" to do script \"cd '$dir' && $cmd\""
+    osascript -e "tell application \"Terminal\" to do script \"cd '${dir}' && ${cmd}\""
+    return 0
 }
 
-# iTerm
+# iTerm (responds to both "iTerm" and "iTerm2" in AppleScript)
 spawn_iterm_tab() {
     local dir="${1:-$(pwd)}"
     local cmd="${2:-opencode}"
-    osascript -e "tell application \"iTerm\" to tell current window to create tab with default profile command \"cd '$dir' && $cmd\""
+    osascript -e "tell application \"iTerm\" to tell current window to create tab with default profile command \"cd '${dir}' && ${cmd}\""
+    return 0
 }
 
-# Usage
-spawn_terminal_tab ~/Git/project-feature-auth
+# Usage (replace <your-project> with your actual project path)
+spawn_terminal_tab ~/Git/<your-project>
 ```
 
 ### Option 2: Background Session
@@ -163,23 +169,23 @@ Best for parallel branch work:
 ```bash
 # Create worktree
 ~/.aidevops/agents/scripts/worktree-helper.sh add feature/parallel-task
-# Output: ~/Git/project-feature-parallel-task/
+# Output: ~/Git/<your-project>-feature-parallel-task/
 
 # Spawn session in worktree (macOS)
-osascript -e 'tell application "Terminal" to do script "cd ~/Git/project-feature-parallel-task && opencode"'
+osascript -e 'tell application "Terminal" to do script "cd ~/Git/<your-project>-feature-parallel-task && opencode"'
 ```
 
 ### Linux Terminal Spawning
 
 ```bash
 # GNOME Terminal
-gnome-terminal --tab -- bash -c "cd ~/Git/project && opencode; exec bash"
+gnome-terminal --tab -- bash -c "cd ~/Git/<your-project> && opencode; exec bash"
 
 # Konsole
-konsole --new-tab -e bash -c "cd ~/Git/project && opencode"
+konsole --new-tab -e bash -c "cd ~/Git/<your-project> && opencode"
 
 # Kitty
-kitty @ launch --type=tab --cwd=~/Git/project opencode
+kitty @ launch --type=tab --cwd=~/Git/<your-project> opencode
 ```
 
 ## Session Handoff Pattern
@@ -213,12 +219,12 @@ opencode run "Read .session-handoff.md and continue the work" --agent Build+
 
 Agents should suggest `@agent-review` at these points:
 
-1. **After PR merge** - Capture what worked in the PR process
-2. **After release** - Capture release learnings
+1. **After PR merge** - Document what worked in the PR process
+2. **After release** - Document release learnings
 3. **After fixing multiple issues** - Pattern recognition opportunity
 4. **After user correction** - Immediate improvement opportunity
 5. **Before starting unrelated work** - Clean context boundary
-6. **After long session** - Capture accumulated learnings
+6. **After long session** - Document accumulated learnings
 
 ## Integration with Loop Agents
 
