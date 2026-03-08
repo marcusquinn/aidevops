@@ -61,6 +61,8 @@ tech-stack-helper.sh lookup https://example.com
 
 ### Advanced Options
 
+For advanced use cases not covered by the helper script (custom user agents, recursive crawling, debug mode), use the `wappalyzer` CLI directly. The helper script wraps common detection workflows; the direct CLI exposes the full range of options.
+
 ```bash
 # Custom user agent
 wappalyzer https://example.com --user-agent="Custom Bot 1.0"
