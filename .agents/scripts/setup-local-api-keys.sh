@@ -206,7 +206,6 @@ get_api_key() {
 		print_warning "API key for $service ($env_var) not found"
 		return 1
 	fi
-	return 0
 }
 
 # List configured services (without showing keys)
@@ -262,7 +261,7 @@ show_help() {
 
 # Main execution
 main() {
-	local command="$1"
+	local command="${1:-}"
 	shift 2>/dev/null || true
 
 	case "$command" in
