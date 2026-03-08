@@ -177,6 +177,9 @@ path_to_category() {
 # Commands
 # =============================================================================
 
+# Search the public skills.sh registry for community skills.
+# Arguments: query string
+# Returns: 0 on success (even if no results), 1 on missing query or npx
 cmd_search_registry() {
 	local query="$1"
 

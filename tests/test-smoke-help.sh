@@ -20,6 +20,8 @@ FAIL_COUNT=0
 SKIP_COUNT=0
 TOTAL_COUNT=0
 
+# Record a passing test and print in verbose mode.
+# Arguments: description string
 pass() {
 	PASS_COUNT=$((PASS_COUNT + 1))
 	TOTAL_COUNT=$((TOTAL_COUNT + 1))
@@ -29,6 +31,8 @@ pass() {
 	return 0
 }
 
+# Record a failing test and print with optional detail.
+# Arguments: description string, optional detail string
 fail() {
 	FAIL_COUNT=$((FAIL_COUNT + 1))
 	TOTAL_COUNT=$((TOTAL_COUNT + 1))
@@ -39,6 +43,8 @@ fail() {
 	return 0
 }
 
+# Record a skipped test and print in verbose mode.
+# Arguments: description string
 skip() {
 	SKIP_COUNT=$((SKIP_COUNT + 1))
 	TOTAL_COUNT=$((TOTAL_COUNT + 1))
@@ -48,6 +54,8 @@ skip() {
 	return 0
 }
 
+# Print a section header for test grouping.
+# Arguments: section name string
 section() {
 	echo ""
 	printf "\033[1m=== %s ===\033[0m\n" "$1"

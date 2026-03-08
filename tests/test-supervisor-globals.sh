@@ -21,11 +21,16 @@ SUPERVISOR="$REPO_DIR/.agents/scripts/supervisor-helper.sh"
 PASS=0
 FAIL=0
 
+# Record a passing test result and print status.
+# Arguments: description string
 pass() {
 	PASS=$((PASS + 1))
 	echo "  PASS: $1"
 	return 0
 }
+
+# Record a failing test result and print status.
+# Arguments: description string
 fail() {
 	FAIL=$((FAIL + 1))
 	echo "  FAIL: $1"
