@@ -63,7 +63,7 @@ The following files are **excluded from automated simplification** entirely. The
 
 - `prompts/build.txt` -- root system prompt loaded by every agent session. A single removed sentence can silently re-introduce a failure pattern across hundreds of sessions. The blast radius is too large for automated dispatch.
 - `AGENTS.md` (both `~/Git/aidevops/AGENTS.md` and `.agents/AGENTS.md`) -- user and developer guides that define the framework's operating model. Changes here affect every session's behaviour.
-- `scripts/commands/pulse.md` -- supervisor pulse instructions. Incorrect simplification here could cause the autonomous supervisor to skip work, merge incorrectly, or dispatch wrong.
+- `.agents/scripts/commands/pulse.md` -- supervisor pulse instructions. Incorrect simplification here could cause the autonomous supervisor to skip work, merge incorrectly, or dispatch wrong.
 
 If the code-simplifier is run against a scope that includes these files, **skip them silently** and note in the output: "Protected files excluded from analysis: [list]. These require interactive maintainer review."
 
