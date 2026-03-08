@@ -135,6 +135,8 @@ jobs:
   sonarcloud:
     name: SonarCloud Analysis
     runs-on: ubuntu-latest
+    env:
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
 
     steps:
     - name: Checkout code
@@ -143,10 +145,17 @@ jobs:
         fetch-depth: 0  # Shallow clones should be disabled for better analysis
 
     - name: SonarCloud Scan
+      if: env.SONAR_TOKEN != ''
       uses: SonarSource/sonarqube-scan-action@40f5b61913e891f9d316696628698051136015be
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+
+    - name: SonarCloud Skipped
+      if: env.SONAR_TOKEN == ''
+      run: |
+        echo "::warning::SONAR_TOKEN is not configured. Skipping SonarCloud analysis."
+        echo "Add SONAR_TOKEN to repository secrets to enable SonarCloud scanning."
+        echo "Generate a token at https://sonarcloud.io/account/security"
 
     - name: Codacy Analysis
       env:
@@ -170,7 +179,11 @@ jobs:
       run: |
         echo "📊 Code Quality Analysis Summary"
         echo "================================"
-        echo "✅ SonarCloud: Analysis completed"
+        if [[ -n "$SONAR_TOKEN" ]]; then
+          echo "✅ SonarCloud: Analysis completed"
+        else
+          echo "⚠️  SonarCloud: Skipped (SONAR_TOKEN not configured)"
+        fi
         if [[ -n "$CODACY_API_TOKEN" ]]; then
           echo "✅ Codacy: Analysis completed"
         else
