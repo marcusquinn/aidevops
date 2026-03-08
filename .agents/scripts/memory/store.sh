@@ -191,7 +191,7 @@ EOF
 	# Default event_date to created_at if not provided
 	if [[ -z "$event_date" ]]; then
 		event_date="$created_at"
-	elif ! [[ "$event_date" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2} ]]; then
+	elif ! [[ "$event_date" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}([T\ ][0-9]{2}:[0-9]{2}(:[0-9]{2})?(Z|[+-][0-9]{2}:[0-9]{2})?)?$ ]]; then
 		log_warn "event_date '$event_date' may not be a valid ISO format (YYYY-MM-DD...)"
 	fi
 
@@ -200,6 +200,9 @@ EOF
 	local escaped_tags="${tags//"'"/"''"}"
 	local escaped_project="${project_path//"'"/"''"}"
 	local escaped_supersedes="${supersedes_id//"'"/"''"}"
+	local escaped_session="${session_id//"'"/"''"}"
+	local escaped_source="${source//"'"/"''"}"
+	local escaped_event_date="${event_date//"'"/"''"}"
 
 	# Validate supersedes_id exists if provided
 	if [[ -n "$supersedes_id" ]]; then
@@ -213,7 +216,7 @@ EOF
 
 	db "$MEMORY_DB" <<EOF
 INSERT INTO learnings (id, session_id, content, type, tags, confidence, created_at, event_date, project_path, source)
-VALUES ('$id', '$session_id', '$escaped_content', '$type', '$escaped_tags', '$confidence', '$created_at', '$event_date', '$escaped_project', '$source');
+VALUES ('$id', '$escaped_session', '$escaped_content', '$type', '$escaped_tags', '$confidence', '$created_at', '$escaped_event_date', '$escaped_project', '$escaped_source');
 EOF
 
 	# Store auto-captured flag in access table
