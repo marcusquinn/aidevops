@@ -180,8 +180,9 @@ while IFS= read -r script; do
 	fi
 
 	# Run help command with timeout (5s max) and capture output
-	help_output=$(timeout 5 bash "$abs_path" help 2>&1) || true
-	help_exit=$?
+	# Capture exit code without || true (which clobbers $? to 0)
+	help_exit=0
+	help_output=$(timeout 5 bash "$abs_path" help 2>&1) || help_exit=$?
 
 	# Some scripts exit 0 on help, some exit 1 (usage error) - both are acceptable
 	# as long as they produce output and don't hang/crash
@@ -225,12 +226,14 @@ if command -v shellcheck &>/dev/null; then
 			continue
 		fi
 
-		sc_output=$(shellcheck -S error "$script_path" 2>&1 || true)
-		sc_errors=$(echo "$sc_output" | grep -c "error" || true)
-		if [[ "$sc_errors" -eq 0 ]]; then
+		sc_exit=0
+		sc_output=$(shellcheck -S error "$script_path" 2>&1) || sc_exit=$?
+		if [[ "$sc_exit" -eq 0 ]]; then
 			pass "shellcheck: $name (0 errors)"
 		else
-			fail "shellcheck: $name ($sc_errors errors)" \
+			# Count actual error lines (SC prefixed) rather than grep "error" which matches context
+			sc_errors=$(echo "$sc_output" | grep -c '^In .* line\|^ *\^-- SC' || true)
+			fail "shellcheck: $name ($sc_errors issues)" \
 				"$(echo "$sc_output" | head -5)"
 		fi
 	done

@@ -60,8 +60,8 @@ tools:
                                │
               ┌────────────────┼────────────────┐
               │                │                │
-     opencode run        SDK client       cron-dispatch
-     --attach :4096      (TypeScript)     (scheduled)
+     opencode run             SDK client       cron-dispatch
+     --attach localhost:4096  (TypeScript)     (scheduled)
 ```
 
 ## Dispatch Methods

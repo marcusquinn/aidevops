@@ -43,6 +43,9 @@ skip() {
 	SKIP_COUNT=$((SKIP_COUNT + 1))
 	TOTAL_COUNT=$((TOTAL_COUNT + 1))
 	printf "  \033[0;33mSKIP\033[0m %s\n" "$1"
+	if [[ -n "${2:-}" ]]; then
+		printf "       %s\n" "$2"
+	fi
 }
 
 section() {

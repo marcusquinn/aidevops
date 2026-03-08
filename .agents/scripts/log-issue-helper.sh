@@ -98,6 +98,7 @@ get_git_context() {
     toplevel=$(git rev-parse --show-toplevel 2>/dev/null || echo "")
     if [[ -n "$toplevel" ]]; then
         repo=$(basename "$toplevel")
+        : "${repo:=unknown}"
         branch=$(git branch --show-current 2>/dev/null || echo "detached")
     else
         repo="none"

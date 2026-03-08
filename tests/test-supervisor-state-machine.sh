@@ -98,7 +98,7 @@ fi
 # Test: tables exist
 tables=$(test_db "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name;" | tr '\n' ',')
 if [[ "$tables" == *"tasks"* && "$tables" == *"batches"* && "$tables" == *"state_log"* ]]; then
-	pass "Required tables exist (tasks, batches, state_log, batch_tasks)"
+	pass "Required tables exist (tasks, batches, state_log)"
 else
 	fail "Missing required tables" "Found: $tables"
 fi

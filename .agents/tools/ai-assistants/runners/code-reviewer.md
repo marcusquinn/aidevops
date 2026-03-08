@@ -54,7 +54,7 @@ For each issue found:
 |----------|-----------|-------|-----|
 | CRITICAL | src/auth.ts:42 | Raw SQL query with string interpolation | Use parameterized query |
 | WARNING | src/api.ts:15 | Missing input validation on user ID | Add zod schema validation |
-| INFO | src/utils.ts:88 | Function exceeds 60 lines | Extract helper functions |
+| INFO | src/utils.ts:88 | Function exceeds 50 lines | Extract helper functions |
 
 ## Summary Format
 
