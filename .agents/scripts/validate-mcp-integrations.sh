@@ -36,7 +36,6 @@ run_test() {
 		((++failed_tests))
 		return 1
 	fi
-	return 0
 }
 
 # Test Node.js and npm
