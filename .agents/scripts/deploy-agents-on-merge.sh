@@ -158,7 +158,10 @@ detect_changes() {
 	local changed_files
 
 	if [[ -n "$since_commit" ]]; then
-		changed_files=$(git -C "$REPO_DIR" diff --name-only "$since_commit" HEAD -- '.agents/' 2>/dev/null || echo "")
+		if ! changed_files=$(git -C "$REPO_DIR" diff --name-only "$since_commit" HEAD -- '.agents/' 2>&1); then
+			log_error "Git diff failed: $changed_files"
+			return 1
+		fi
 	else
 		# Compare deployed VERSION with repo VERSION to detect staleness
 		local repo_version deployed_version
@@ -173,7 +176,10 @@ detect_changes() {
 
 		log_info "Version mismatch: deployed=$deployed_version repo=$repo_version"
 		# Return all agent files as changed (version mismatch = full sync needed)
-		changed_files=$(git -C "$REPO_DIR" ls-files '.agents/' 2>/dev/null || echo "")
+		if ! changed_files=$(git -C "$REPO_DIR" ls-files '.agents/' 2>&1); then
+			log_error "Git ls-files failed: $changed_files"
+			return 1
+		fi
 	fi
 
 	echo "$changed_files"
@@ -190,8 +196,6 @@ deploy_scripts_only() {
 		return 1
 	fi
 
-	mkdir -p "$target_scripts_dir"
-
 	if [[ "$DRY_RUN" == "true" ]]; then
 		log_info "[dry-run] Would sync $source_dir/ -> $target_scripts_dir/"
 		local count
@@ -199,6 +203,8 @@ deploy_scripts_only() {
 		log_info "[dry-run] $count files would be deployed"
 		return 0
 	fi
+
+	mkdir -p "$target_scripts_dir"
 
 	log_info "Deploying scripts to $target_scripts_dir..."
 
@@ -229,18 +235,18 @@ deploy_all_agents() {
 		return 1
 	fi
 
-	mkdir -p "$TARGET_DIR"
-
 	if [[ "$DRY_RUN" == "true" ]]; then
 		log_info "[dry-run] Would sync $source_dir/ -> $TARGET_DIR/"
 		log_info "[dry-run] Preserving: custom/, draft/"
 		return 0
 	fi
 
+	mkdir -p "$TARGET_DIR"
+
 	log_info "Deploying all agents to $TARGET_DIR..."
 
 	if command -v rsync &>/dev/null; then
-		rsync -a \
+		rsync -a --delete \
 			--exclude='loop-state/' \
 			--exclude='custom/' \
 			--exclude='draft/' \
@@ -366,7 +372,11 @@ deploy_changed_files() {
 		elif [[ ! -e "$source_file" ]]; then
 			# File was deleted in source — remove from target
 			if [[ -f "$target_file" ]]; then
-				rm -f "$target_file"
+				if ! rm -f "$target_file"; then
+					failed=$((failed + 1))
+					log_warn "rm failed: $rel_path"
+					continue
+				fi
 				log_info "Removed deleted file: $rel_path"
 			fi
 		fi
@@ -430,7 +440,8 @@ main() {
 
 		# Check if only scripts changed
 		local non_script_changes
-		non_script_changes=$(echo "$changed" | grep -cv '^\.agents/scripts/' || echo "0")
+		non_script_changes=$(printf '%s\n' "$changed" | grep -cv '^\.agents/scripts/' || true)
+		non_script_changes="${non_script_changes:-0}"
 		if [[ "$non_script_changes" -eq 0 ]]; then
 			log_info "Only scripts changed — using fast scripts-only deploy"
 			deploy_scripts_only

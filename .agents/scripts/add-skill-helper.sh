@@ -250,57 +250,61 @@ to_kebab_case() {
 # Determine target path in .agents/ based on skill content
 determine_target_path() {
 	local skill_name="$1"
-	local _description="$2" # Reserved for future category detection
+	# $2 = description (used for category detection below)
 	local source_dir="$3"
 
 	# Analyze content to determine category
 	local category="tools"
 
 	# Check description and content for category hints
-	local content=""
+	# Include the passed description so ClawdHub imports (which pass summary) are categorized correctly
+	local description="${2:-}"
+	local content="$description"
 	if [[ -f "$source_dir/SKILL.md" ]]; then
-		content=$(cat "$source_dir/SKILL.md")
+		content+=$'\n'
+		content+=$(cat "$source_dir/SKILL.md")
 	elif [[ -f "$source_dir/AGENTS.md" ]]; then
-		content=$(cat "$source_dir/AGENTS.md")
+		content+=$'\n'
+		content+=$(cat "$source_dir/AGENTS.md")
 	fi
 
 	# Detect category from content (order matters - more specific patterns first)
 	# Check skill name first for known services
 	if [[ "$skill_name" == "cloudflare"* ]]; then
 		category="services/hosting"
-	elif grep -qi "cloudflare workers\|cloudflare pages\|wrangler" <<< "$content"; then
+	elif grep -qi "cloudflare workers\|cloudflare pages\|wrangler" <<<"$content"; then
 		category="services/hosting"
 	# Architecture patterns (must come before generic patterns)
-	elif grep -qi "clean.architecture\|hexagonal\|ddd\|domain.driven\|ports.and.adapters\|onion.architecture\|cqrs\|event.sourcing" <<< "$content"; then
+	elif grep -qi "clean.architecture\|hexagonal\|ddd\|domain.driven\|ports.and.adapters\|onion.architecture\|cqrs\|event.sourcing" <<<"$content"; then
 		category="tools/architecture"
-	elif grep -qi "feature.sliced\|feature-sliced\|fsd.architecture\|slice.organization" <<< "$content"; then
+	elif grep -qi "feature.sliced\|feature-sliced\|fsd.architecture\|slice.organization" <<<"$content"; then
 		category="tools/architecture"
 	# Database and ORM
-	elif grep -qi "postgresql\|postgres\|drizzle\|prisma\|typeorm\|sequelize\|knex\|database.orm" <<< "$content"; then
+	elif grep -qi "postgresql\|postgres\|drizzle\|prisma\|typeorm\|sequelize\|knex\|database.orm" <<<"$content"; then
 		category="services/database"
 	# Diagrams and visualization
-	elif grep -qi "mermaid\|diagram\|flowchart\|sequence.diagram\|er.diagram\|uml" <<< "$content"; then
+	elif grep -qi "mermaid\|diagram\|flowchart\|sequence.diagram\|er.diagram\|uml" <<<"$content"; then
 		category="tools/diagrams"
 	# Programming languages (specific patterns)
-	elif grep -qi "javascript\|typescript\|es6\|es2020\|es2022\|es2024\|ecmascript\|modern.js" <<< "$content"; then
+	elif grep -qi "javascript\|typescript\|es6\|es2020\|es2022\|es2024\|ecmascript\|modern.js" <<<"$content"; then
 		category="tools/programming"
-	elif grep -qi "browser\|playwright\|puppeteer\|selenium" <<< "$content"; then
+	elif grep -qi "browser\|playwright\|puppeteer\|selenium" <<<"$content"; then
 		category="tools/browser"
-	elif grep -qi "seo\|search.ranking\|keyword.research" <<< "$content"; then
+	elif grep -qi "seo\|search.ranking\|keyword.research" <<<"$content"; then
 		category="seo"
-	elif grep -qi "git\|github\|gitlab" <<< "$content"; then
+	elif grep -qi "git\|github\|gitlab" <<<"$content"; then
 		category="tools/git"
-	elif grep -qi "code.review\|lint\|quality" <<< "$content"; then
+	elif grep -qi "code.review\|lint\|quality" <<<"$content"; then
 		category="tools/code-review"
-	elif grep -qi "credential\|secret\|password\|vault" <<< "$content"; then
+	elif grep -qi "credential\|secret\|password\|vault" <<<"$content"; then
 		category="tools/credentials"
-	elif grep -qi "vercel\|coolify\|docker\|kubernetes" <<< "$content"; then
+	elif grep -qi "vercel\|coolify\|docker\|kubernetes" <<<"$content"; then
 		category="tools/deployment"
-	elif grep -qi "proxmox\|hypervisor\|virtualization\|vm.management" <<< "$content"; then
+	elif grep -qi "proxmox\|hypervisor\|virtualization\|vm.management" <<<"$content"; then
 		category="services/hosting"
-	elif grep -qi "calendar\|caldav\|ical\|scheduling" <<< "$content"; then
+	elif grep -qi "calendar\|caldav\|ical\|scheduling" <<<"$content"; then
 		category="tools/productivity"
-	elif grep -qi "dns\|hosting\|domain" <<< "$content"; then
+	elif grep -qi "dns\|hosting\|domain" <<<"$content"; then
 		category="services/hosting"
 	fi
 
@@ -424,22 +428,11 @@ register_skill() {
 		return 1
 	fi
 
-	# Check for existing entry and remove it (update scenario)
+	# Check for existing entry (update scenario)
 	local existing
 	existing=$(jq -r --arg name "$name" '.skills[] | select(.name == $name) | .name' "$SKILL_SOURCES" 2>/dev/null || echo "")
 	if [[ -n "$existing" ]]; then
 		log_info "Updating existing skill registration: $name"
-		local tmp_file
-		tmp_file=$(mktemp)
-		_save_cleanup_scope
-		trap '_run_cleanups' RETURN
-		push_cleanup "rm -f '${tmp_file}'"
-		if ! jq --arg name "$name" '.skills = [.skills[] | select(.name != $name)]' "$SKILL_SOURCES" >"$tmp_file"; then
-			log_error "Failed to process skill sources JSON. Update aborted."
-			rm -f "$tmp_file"
-			return 1
-		fi
-		mv "$tmp_file" "$SKILL_SOURCES"
 	fi
 
 	local timestamp
@@ -471,10 +464,21 @@ register_skill() {
             notes: $notes
         } + (if $upstream_hash != "" then { upstream_hash: $upstream_hash } else {} end)')
 
+	# Atomic delete-old + add-new in a single jq call (prevents partial state)
 	local tmp_file
 	tmp_file=$(mktemp)
-	jq --argjson entry "$new_entry" '.skills += [$entry]' "$SKILL_SOURCES" >"$tmp_file" && mv "$tmp_file" "$SKILL_SOURCES"
-	rm -f "$tmp_file"
+	_save_cleanup_scope
+	trap '_run_cleanups' RETURN
+	push_cleanup "rm -f '${tmp_file}'"
+	if ! jq \
+		--arg name "$name" \
+		--argjson entry "$new_entry" \
+		'.skills = ([.skills[] | select(.name != $name)] + [$entry])' \
+		"$SKILL_SOURCES" >"$tmp_file"; then
+		log_error "Failed to process skill sources JSON. Registration aborted."
+		return 1
+	fi
+	mv "$tmp_file" "$SKILL_SOURCES"
 
 	return 0
 }
@@ -1514,7 +1518,19 @@ cmd_remove() {
 	log_info "Removing skill: $name"
 	log_info "Path: $skill_path"
 
-	# Remove files
+	# Prepare registry update BEFORE destructive file removal
+	# If jq fails, abort without deleting files (prevents stale registry entries)
+	local tmp_file
+	tmp_file=$(mktemp)
+	_save_cleanup_scope
+	trap '_run_cleanups' RETURN
+	push_cleanup "rm -f '${tmp_file}'"
+	if ! jq --arg name "$name" '.skills = [.skills[] | select(.name != $name)]' "$SKILL_SOURCES" >"$tmp_file"; then
+		log_error "Failed to process skill sources JSON. Removal aborted."
+		return 1
+	fi
+
+	# Remove files (safe now — registry update is validated)
 	if [[ -f "$skill_path" ]]; then
 		rm -f "$skill_path"
 		log_success "Removed: $skill_path"
@@ -1527,17 +1543,7 @@ cmd_remove() {
 		log_success "Removed: $dir_path/"
 	fi
 
-	# Remove from registry
-	local tmp_file
-	tmp_file=$(mktemp)
-	_save_cleanup_scope
-	trap '_run_cleanups' RETURN
-	push_cleanup "rm -f '${tmp_file}'"
-	if ! jq --arg name "$name" '.skills = [.skills[] | select(.name != $name)]' "$SKILL_SOURCES" >"$tmp_file"; then
-		log_error "Failed to process skill sources JSON. Removal aborted."
-		rm -f "$tmp_file"
-		return 1
-	fi
+	# Commit registry update
 	mv "$tmp_file" "$SKILL_SOURCES"
 
 	log_success "Skill '$name' removed"

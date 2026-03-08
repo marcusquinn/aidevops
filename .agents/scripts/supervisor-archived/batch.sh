@@ -295,7 +295,7 @@ cmd_batch() {
 		esac
 	done
 
-	for v in concurrency max_concurrency; do
+	for v in concurrency max_concurrency max_load_factor; do
 		if ! [[ "${!v}" =~ ^[0-9]+$ ]]; then
 			log_error "--${v//_/-} must be a non-negative integer"
 			return 1

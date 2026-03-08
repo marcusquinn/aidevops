@@ -341,12 +341,18 @@ worktree_has_changes() {
 		# Exclude aidevops runtime files: .agents/loop-state/, .agents/tmp/, .DS_Store
 		# If git status fails, treat as "has changes" to prevent data loss
 		changes=$(git -C "$worktree_path" status --porcelain 2>/dev/null) || return 0
-		changes=$(echo "$changes" |
-			grep -v '^\?\? \.agents/loop-state/' |
-			grep -v '^\?\? \.agents/tmp/' |
-			grep -v '^\?\? \.agents/$' |
-			grep -v '^\?\? \.DS_Store' |
-			head -1)
+		# Filter out runtime noise safely (wrap in subshell to avoid pipefail abort
+		# when all lines are excluded, which makes every grep return exit 1)
+		changes=$(
+			{
+				printf '%s\n' "$changes" |
+					grep -v '^\?\? \.agents/loop-state/' |
+					grep -v '^\?\? \.agents/tmp/' |
+					grep -v '^\?\? \.agents/$' |
+					grep -v '^\?\? \.DS_Store' |
+					head -1
+			} || true
+		)
 		[[ -n "$changes" ]]
 	else
 		# Directory doesn't exist — no changes to protect

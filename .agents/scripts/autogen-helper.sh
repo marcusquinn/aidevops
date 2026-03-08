@@ -85,7 +85,7 @@ check_prerequisites() {
 		major=$(echo "$python_version" | cut -d. -f1)
 		minor=$(echo "$python_version" | cut -d. -f2)
 
-		if [[ $major -ge 3 ]] && [[ $minor -ge 10 ]]; then
+		if [[ $major -gt 3 ]] || { [[ $major -eq 3 ]] && [[ $minor -ge 10 ]]; }; then
 			print_success "Python $python_version found (3.10+ required)"
 		else
 			print_error "Python 3.10+ required, found $python_version"

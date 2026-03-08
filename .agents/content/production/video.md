@@ -322,8 +322,7 @@ for seed in {4000..4010}; do
       }
     }") || { echo "ERROR: API call failed for seed $seed"; continue; }
 
-  job_id=$(echo "$result" | jq -r '.jobs[0].id // empty' 2>/dev/null)
-  if [[ -z "$job_id" ]]; then
+  if ! job_id=$(echo "$result" | jq -r '.jobs[0].id // empty' 2>/dev/null) || [[ -z "$job_id" ]]; then
     echo "ERROR: Failed to extract job_id for seed $seed (API response invalid)"
     continue
   fi

@@ -194,6 +194,13 @@ ensure_task_db() {
 		db "$active_db" "ALTER TABLE processed_findings ADD COLUMN source_tool TEXT DEFAULT 'coderabbit';" 2>/dev/null || true
 	fi
 
+	# Migrate schema if needed (add pr_number column for PR linkage)
+	local has_pr_number
+	has_pr_number=$(db "$active_db" "SELECT COUNT(*) FROM pragma_table_info('processed_findings') WHERE name='pr_number';" 2>/dev/null || echo "0")
+	if [[ "$has_pr_number" == "0" ]]; then
+		db "$active_db" "ALTER TABLE processed_findings ADD COLUMN pr_number INTEGER DEFAULT 0;" 2>/dev/null || true
+	fi
+
 	return 0
 }
 
@@ -601,7 +608,7 @@ scan_unified_findings() {
 					(source, source_id, source_tool, pr_number, path, line, severity,
 					 original_severity, category, description, is_false_positive)
 				VALUES ('unified', '$(sql_escape "$finding_id")', '$(sql_escape "$source")',
-					0, '$(sql_escape "$path")', ${line:-0},
+					${pr_number:-0}, '$(sql_escape "$path")', ${line:-0},
 					'$new_severity', '$severity', '$(sql_escape "$category")',
 					'$escaped_desc', 0);
 			" 2>/dev/null || true
@@ -637,7 +644,7 @@ scan_unified_findings() {
 				 original_severity, category, description,
 				 is_false_positive, is_duplicate, duplicate_of)
 			VALUES ('unified', '$(sql_escape "$finding_id")', '$(sql_escape "$source")',
-				0, '$(sql_escape "$path")', ${line:-0},
+				${pr_number:-0}, '$(sql_escape "$path")', ${line:-0},
 				'$new_severity', '$severity', '$(sql_escape "$category")', '$escaped_desc',
 				0, $is_dup, $(if [[ -n "$dup_of" ]]; then echo "$dup_of"; else echo "NULL"; fi));
 		" 2>/dev/null || true

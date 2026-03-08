@@ -114,10 +114,19 @@ install_deps() {
 # =============================================================================
 
 _wcag_level_to_axe_tags() {
-	case "${1:-WCAG2AA}" in
+	local level="${1:-WCAG2AA}"
+	# Normalize to uppercase for case-insensitive matching
+	case "${level^^}" in
 	WCAG2A) echo "wcag2a,best-practice" ;;
+	WCAG2AA) echo "wcag2a,wcag2aa,best-practice" ;;
+	WCAG21A) echo "wcag2a,wcag21a,best-practice" ;;
+	WCAG21AA) echo "wcag2a,wcag2aa,wcag21aa,best-practice" ;;
+	WCAG22AA) echo "wcag2a,wcag2aa,wcag21aa,wcag22aa,best-practice" ;;
 	WCAG2AAA) echo "wcag2a,wcag2aa,wcag2aaa,best-practice" ;;
-	*) echo "wcag2a,wcag2aa,best-practice" ;;
+	*)
+		print_warning "Unknown AUDIT_WCAG_LEVEL '${level}', defaulting to WCAG2AA"
+		echo "wcag2a,wcag2aa,best-practice"
+		;;
 	esac
 }
 
@@ -240,6 +249,13 @@ run_wave_audit() {
 
 	if [[ "$http_code" != "200" ]]; then
 		print_error "WAVE API returned HTTP $http_code"
+		return 1
+	fi
+
+	# Validate JSON before persisting (catch HTML error pages, corrupted data)
+	if ! printf '%s' "$body" | jq empty >/dev/null 2>&1; then
+		print_error "WAVE API returned non-JSON data"
+		printf '%s\n' "$body" >>"$LOG_FILE"
 		return 1
 	fi
 

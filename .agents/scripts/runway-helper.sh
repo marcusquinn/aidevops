@@ -210,6 +210,10 @@ cmd_video() {
 
 	# Determine endpoint based on inputs
 	if [[ -n "$video_uri" ]]; then
+		# /v1/video_to_video only accepts gen4_aleph (not gen4_turbo)
+		if [[ "$model" == "gen4_turbo" ]]; then
+			model="gen4_aleph"
+		fi
 		json_body="$(_build_v2v_json "$model" "$video_uri" "$prompt")"
 		endpoint="/v1/video_to_video"
 	elif [[ -n "$image" ]]; then

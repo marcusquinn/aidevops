@@ -53,15 +53,22 @@ get_available_port() {
 		fi
 	fi
 
-	# Fallback: basic port check using lsof
-	if ! lsof -i :"$desired_port" >/dev/null 2>&1; then
+	# Fallback: basic port check using lsof (with nc double-check for parity with localhost-helper.sh)
+	_port_in_use() {
+		local p="$1"
+		lsof -i :"$p" >/dev/null 2>&1 && return 0
+		command -v nc >/dev/null 2>&1 && nc -z 127.0.0.1 "$p" 2>/dev/null && return 0
+		return 1
+	}
+
+	if ! _port_in_use "$desired_port"; then
 		echo "$desired_port"
 		return 0
 	fi
 
 	# Find next available port
 	local port="$desired_port"
-	while lsof -i :"$port" >/dev/null 2>&1; do
+	while _port_in_use "$port"; do
 		if [[ $port -ge 65535 ]]; then
 			print_error "No available ports found"
 			return 1
@@ -338,7 +345,7 @@ fi
 
 echo ""
 echo "Process Information:"
-pgrep -f "langflow" && ps aux | grep -E "langflow" | grep -v grep || echo "No Langflow processes found"
+pgrep -af "langflow" || echo "No Langflow processes found"
 EOF
 	chmod +x "$SCRIPTS_DIR/langflow-status.sh"
 

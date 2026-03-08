@@ -133,24 +133,29 @@ loop_create_state() {
 	local started_at
 	started_at=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
-	# Create JSON state file
-	cat >"$LOOP_STATE_FILE" <<EOF
-{
-  "loop_type": "$loop_type",
-  "prompt": $(echo "$prompt" | jq -Rs .),
-  "iteration": 1,
-  "max_iterations": $max_iterations,
-  "phase": "task",
-  "task_id": "$task_id",
-  "started_at": "$started_at",
-  "last_iteration_at": "$started_at",
-  "completion_promise": "$completion_promise",
-  "attempts": {},
-  "receipts": [],
-  "blocked_tasks": [],
-  "active": true
-}
-EOF
+	# Create JSON state file (use jq -n for safe escaping of all values)
+	jq -n \
+		--arg loop_type "$loop_type" \
+		--arg prompt "$prompt" \
+		--argjson max_iterations "$max_iterations" \
+		--arg task_id "$task_id" \
+		--arg started_at "$started_at" \
+		--arg completion_promise "$completion_promise" \
+		'{
+			loop_type: $loop_type,
+			prompt: $prompt,
+			iteration: 1,
+			max_iterations: $max_iterations,
+			phase: "task",
+			task_id: $task_id,
+			started_at: $started_at,
+			last_iteration_at: $started_at,
+			completion_promise: $completion_promise,
+			attempts: {},
+			receipts: [],
+			blocked_tasks: [],
+			active: true
+		}' >"$LOOP_STATE_FILE"
 
 	loop_log_success "Loop state created: $LOOP_STATE_FILE"
 	return 0
@@ -399,10 +404,18 @@ loop_generate_reanchor() {
 	local guardrails
 	guardrails=$(loop_generate_guardrails 5)
 
-	# Get latest receipt
+	# Get latest receipt (guard against empty receipts dir to avoid ls listing cwd)
 	local latest_receipt=""
-	local latest_receipt_file
-	latest_receipt_file=$(find "$LOOP_RECEIPTS_DIR" -name "*.json" -type f -print0 2>/dev/null | xargs -0 ls -t 2>/dev/null | head -1 || echo "")
+	local latest_receipt_file=""
+	if [[ -d "$LOOP_RECEIPTS_DIR" ]]; then
+		local -a receipt_files=()
+		while IFS= read -r -d '' f; do
+			receipt_files+=("$f")
+		done < <(find "$LOOP_RECEIPTS_DIR" -name "*.json" -type f -print0 2>/dev/null)
+		if [[ ${#receipt_files[@]} -gt 0 ]]; then
+			latest_receipt_file=$(ls -t "${receipt_files[@]}" 2>/dev/null | head -1 || echo "")
+		fi
+	fi
 	if [[ -n "$latest_receipt_file" && -f "$latest_receipt_file" ]]; then
 		latest_receipt=$(cat "$latest_receipt_file")
 	fi
@@ -585,8 +598,15 @@ loop_verify_receipt() {
 loop_get_latest_receipt() {
 	local receipt_type="$1"
 
-	local latest
-	latest=$(find "$LOOP_RECEIPTS_DIR" -name "${receipt_type}-*.json" -type f -print0 2>/dev/null | xargs -0 ls -t 2>/dev/null | head -1 || echo "")
+	# Guard against empty find results to avoid ls listing cwd
+	local latest=""
+	local -a receipt_files=()
+	while IFS= read -r -d '' f; do
+		receipt_files+=("$f")
+	done < <(find "$LOOP_RECEIPTS_DIR" -name "${receipt_type}-*.json" -type f -print0 2>/dev/null)
+	if [[ ${#receipt_files[@]} -gt 0 ]]; then
+		latest=$(ls -t "${receipt_files[@]}" 2>/dev/null | head -1 || echo "")
+	fi
 
 	if [[ -n "$latest" && -f "$latest" ]]; then
 		cat "$latest"
@@ -831,10 +851,13 @@ loop_emergency_push() {
 		# No uncommitted changes — just push existing commits
 		if git log --oneline "origin/${branch}..HEAD" 2>/dev/null | grep -q .; then
 			loop_log_info "Context guard: pushing unpushed commits on $branch"
-			git push origin "$branch" 2>/dev/null || {
+			if ! git push origin "$branch" 2>/dev/null; then
 				loop_log_warn "Context guard: push failed, trying with --force-with-lease"
-				git push --force-with-lease origin "$branch" 2>/dev/null || true
-			}
+				if ! git push --force-with-lease origin "$branch" 2>/dev/null; then
+					loop_log_warn "Context guard: all push attempts failed"
+					return 1
+				fi
+			fi
 		fi
 		return 0
 	fi
@@ -851,14 +874,17 @@ loop_emergency_push() {
 		return 1
 	}
 
-	# Push
+	# Push — propagate failure so callers know work wasn't preserved remotely
 	loop_log_info "Context guard: pushing to $branch"
-	git push origin "$branch" 2>/dev/null || {
-		git push -u origin "$branch" 2>/dev/null || {
+	if ! git push origin "$branch" 2>/dev/null; then
+		if ! git push -u origin "$branch" 2>/dev/null; then
 			loop_log_warn "Context guard: push failed, trying with --force-with-lease"
-			git push --force-with-lease origin "$branch" 2>/dev/null || true
-		}
-	}
+			if ! git push --force-with-lease origin "$branch" 2>/dev/null; then
+				loop_log_warn "Context guard: all push attempts failed — work committed locally only"
+				return 1
+			fi
+		fi
+	fi
 
 	return 0
 }
@@ -916,12 +942,16 @@ loop_context_guard() {
 	fi
 
 	# Emergency push to preserve work
-	loop_emergency_push
+	local push_result=0
+	loop_emergency_push || push_result=$?
+	if [[ "$push_result" -ne 0 ]]; then
+		loop_log_warn "Context guard: emergency push failed (exit $push_result) — work may only be local"
+	fi
 
 	# Emit the signal
 	loop_emit_completion_signal "$reason"
 
-	return 0
+	return "$push_result"
 }
 
 # =============================================================================
@@ -964,7 +994,10 @@ loop_run_external() {
 	output_file=$(mktemp)
 	local output_sizes_file
 	output_sizes_file=$(mktemp)
-	trap 'rm -f "$output_file" "$output_sizes_file"' EXIT
+	# Use cleanup stack instead of EXIT trap to avoid overwriting caller's traps
+	_save_cleanup_scope
+	trap '_run_cleanups' RETURN
+	push_cleanup "rm -f '${output_file}' '${output_sizes_file}'"
 
 	while [[ $iteration -le $max_iterations ]]; do
 		loop_log_step "=== Iteration $iteration/$max_iterations ==="

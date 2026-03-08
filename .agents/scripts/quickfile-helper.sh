@@ -44,7 +44,10 @@ readonly DEFAULT_CURRENCY="GBP"
 
 # Ensure workspace exists
 ensure_workspace() {
-	mkdir -p "$QF_WORKSPACE" 2>/dev/null || true
+	if ! mkdir -p "$QF_WORKSPACE"; then
+		print_error "Failed to create QuickFile workspace: ${QF_WORKSPACE}"
+		return 1
+	fi
 	return 0
 }
 

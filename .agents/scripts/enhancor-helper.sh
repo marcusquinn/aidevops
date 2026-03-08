@@ -122,13 +122,20 @@ poll_status() {
 			return 1
 		fi
 
-		status=$(echo "${response}" | jq -r '.status // empty' 2>/dev/null)
+		if ! status=$(printf '%s' "${response}" | jq -r '.status // empty' 2>/dev/null); then
+			print_error "Invalid JSON in status response for request: ${request_id}"
+			printf '%s\n' "${response}" >&2
+			return 1
+		fi
 
 		case "${status}" in
 		COMPLETED)
 			print_success "Request completed"
 			local result_url
-			result_url=$(echo "${response}" | jq -r '.result // empty' 2>/dev/null)
+			if ! result_url=$(printf '%s' "${response}" | jq -r '.result // empty' 2>/dev/null); then
+				print_error "Failed to parse result URL from response"
+				return 1
+			fi
 			if [[ -n "${result_url}" ]]; then
 				download_result "${result_url}" "${output_file}"
 			fi
@@ -262,41 +269,36 @@ cmd_enhance() {
 
 	load_api_key || return 1
 
-	# Build request body
-	local body="{\"img_url\": \"${img_url}\""
-
-	if [[ -n "${webhook_url}" ]]; then
-		body="${body}, \"webhookUrl\": \"${webhook_url}\""
-	fi
-
-	body="${body}, \"model_version\": \"${model_version}\""
-	body="${body}, \"enhancementMode\": \"${enhancement_mode}\""
-	body="${body}, \"enhancementType\": \"${enhancement_type}\""
-	body="${body}, \"skin_refinement_level\": ${skin_refinement_level}"
-
-	if [[ -n "${skin_realism_level}" ]]; then
-		body="${body}, \"skin_realism_Level\": ${skin_realism_level}"
-	fi
-
-	if [[ -n "${portrait_depth}" ]]; then
-		body="${body}, \"portrait_depth\": ${portrait_depth}"
-	fi
-
-	if [[ -n "${output_resolution}" ]]; then
-		body="${body}, \"output_resolution\": ${output_resolution}"
-	fi
-
-	if [[ -n "${mask_image_url}" ]]; then
-		body="${body}, \"mask_image_url\": \"${mask_image_url}\""
-	fi
-
-	body="${body}, \"mask_expand\": ${mask_expand}"
-
-	if [[ -n "${extra_params}" ]]; then
-		body="${body}${extra_params}"
-	fi
-
-	body="${body}}"
+	# Build request body safely with jq
+	local body
+	body=$(jq -cn \
+		--arg img_url "$img_url" \
+		--arg webhook_url "$webhook_url" \
+		--arg model_version "$model_version" \
+		--arg enhancementMode "$enhancement_mode" \
+		--arg enhancementType "$enhancement_type" \
+		--argjson skin_refinement_level "$skin_refinement_level" \
+		--arg skin_realism_level "${skin_realism_level:-}" \
+		--arg portrait_depth "${portrait_depth:-}" \
+		--arg output_resolution "${output_resolution:-}" \
+		--arg mask_image_url "${mask_image_url:-}" \
+		--argjson mask_expand "$mask_expand" \
+		'{
+			img_url: $img_url,
+			model_version: $model_version,
+			enhancementMode: $enhancementMode,
+			enhancementType: $enhancementType,
+			skin_refinement_level: $skin_refinement_level,
+			mask_expand: $mask_expand
+		}
+		+ (if $webhook_url != "" then {webhookUrl: $webhook_url} else {} end)
+		+ (if $skin_realism_level != "" then {skin_realism_Level: ($skin_realism_level | tonumber)} else {} end)
+		+ (if $portrait_depth != "" then {portrait_depth: ($portrait_depth | tonumber)} else {} end)
+		+ (if $output_resolution != "" then {output_resolution: ($output_resolution | tonumber)} else {} end)
+		+ (if $mask_image_url != "" then {mask_image_url: $mask_image_url} else {} end)') || {
+		print_error "Failed to build request JSON"
+		return 1
+	}
 
 	print_info "Submitting skin enhancement request..."
 
@@ -391,13 +393,16 @@ cmd_upscale() {
 
 	load_api_key || return 1
 
-	local body="{\"img_url\": \"${img_url}\", \"mode\": \"${mode}\""
-
-	if [[ -n "${webhook_url}" ]]; then
-		body="${body}, \"webhookUrl\": \"${webhook_url}\""
-	fi
-
-	body="${body}}"
+	local body
+	body=$(jq -cn \
+		--arg img_url "$img_url" \
+		--arg mode "$mode" \
+		--arg webhook_url "${webhook_url:-}" \
+		'{img_url: $img_url, mode: $mode}
+		+ (if $webhook_url != "" then {webhookUrl: $webhook_url} else {} end)') || {
+		print_error "Failed to build request JSON"
+		return 1
+	}
 
 	print_info "Submitting upscale request (${mode} mode)..."
 
@@ -486,13 +491,15 @@ cmd_upscale_general() {
 
 	load_api_key || return 1
 
-	local body="{\"img_url\": \"${img_url}\""
-
-	if [[ -n "${webhook_url}" ]]; then
-		body="${body}, \"webhookUrl\": \"${webhook_url}\""
-	fi
-
-	body="${body}}"
+	local body
+	body=$(jq -cn \
+		--arg img_url "$img_url" \
+		--arg webhook_url "${webhook_url:-}" \
+		'{img_url: $img_url}
+		+ (if $webhook_url != "" then {webhookUrl: $webhook_url} else {} end)') || {
+		print_error "Failed to build request JSON"
+		return 1
+	}
 
 	print_info "Submitting general upscale request..."
 
@@ -581,13 +588,15 @@ cmd_detailed() {
 
 	load_api_key || return 1
 
-	local body="{\"img_url\": \"${img_url}\""
-
-	if [[ -n "${webhook_url}" ]]; then
-		body="${body}, \"webhookUrl\": \"${webhook_url}\""
-	fi
-
-	body="${body}}"
+	local body
+	body=$(jq -cn \
+		--arg img_url "$img_url" \
+		--arg webhook_url "${webhook_url:-}" \
+		'{img_url: $img_url}
+		+ (if $webhook_url != "" then {webhookUrl: $webhook_url} else {} end)') || {
+		print_error "Failed to build request JSON"
+		return 1
+	}
 
 	print_info "Submitting detailed enhancement request..."
 

@@ -29,11 +29,11 @@ source "${SCRIPT_DIR}/shared-constants.sh"
 
 # Common constants
 # CLI Scripts
-readonly CODERABBIT_SCRIPT=".agents/scripts/coderabbit-cli.sh"
-readonly CODACY_SCRIPT=".agents/scripts/codacy-cli.sh"
-readonly SONAR_SCRIPT=".agents/scripts/sonarscanner-cli.sh"
-readonly SNYK_SCRIPT=".agents/scripts/snyk-helper.sh"
-readonly QLTY_SCRIPT=".agents/scripts/qlty-cli.sh"
+readonly CODERABBIT_SCRIPT="${SCRIPT_DIR}/coderabbit-cli.sh"
+readonly CODACY_SCRIPT="${SCRIPT_DIR}/codacy-cli.sh"
+readonly SONAR_SCRIPT="${SCRIPT_DIR}/sonarscanner-cli.sh"
+readonly SNYK_SCRIPT="${SCRIPT_DIR}/snyk-helper.sh"
+readonly QLTY_SCRIPT="${SCRIPT_DIR}/qlty-cli.sh"
 
 # CLI Names
 readonly CLI_CODERABBIT="coderabbit"
@@ -353,19 +353,25 @@ show_cli_status() {
 
 	if [[ "$target_cli" == "all" || "$target_cli" == "$CLI_CODERABBIT" ]]; then
 		print_info "CodeRabbit CLI Status:"
-		execute_cli_command "$CLI_CODERABBIT" "status"
+		if ! execute_cli_command "$CLI_CODERABBIT" "status"; then
+			print_warning "Unable to retrieve CodeRabbit CLI status"
+		fi
 		echo ""
 	fi
 
 	if [[ "$target_cli" == "all" || "$target_cli" == "codacy" ]]; then
 		print_info "Codacy CLI Status:"
-		execute_cli_command "codacy" "status"
+		if ! execute_cli_command "codacy" "status"; then
+			print_warning "Unable to retrieve Codacy CLI status"
+		fi
 		echo ""
 	fi
 
 	if [[ "$target_cli" == "all" || "$target_cli" == "sonar" ]]; then
 		print_info "SonarScanner CLI Status:"
-		execute_cli_command "sonar" "status"
+		if ! execute_cli_command "sonar" "status"; then
+			print_warning "Unable to retrieve SonarScanner CLI status"
+		fi
 		echo ""
 	fi
 
@@ -466,11 +472,37 @@ show_help() {
 	return 0
 }
 
+# Validate command:cli combination
+_is_valid_target() {
+	local command="$1"
+	local cli="$2"
+
+	case "${command}:${cli}" in
+	install:all | install:coderabbit | install:codacy | install:sonar | install:qlty | install:snyk | install:linters | \
+		init:all | init:coderabbit | init:codacy | init:sonar | init:qlty | init:snyk | \
+		analyze:all | analyze:coderabbit | analyze:codacy | analyze:codacy-fix | analyze:sonar | analyze:qlty | analyze:snyk | analyze:snyk-sca | analyze:snyk-code | analyze:snyk-iac | \
+		status:all | status:coderabbit | status:codacy | status:sonar | status:qlty | status:snyk | \
+		help:* | --help:* | -h:*)
+		return 0
+		;;
+	*)
+		return 1
+		;;
+	esac
+}
+
 # Main function
 main() {
 	local command="${1:-help}"
 	local cli="${2:-all}"
 	shift 2 2>/dev/null || shift $# # Remove processed arguments
+
+	if ! _is_valid_target "$command" "$cli"; then
+		print_error "Unsupported CLI target '$cli' for command '$command'"
+		echo ""
+		show_help
+		return 1
+	fi
 
 	case "$command" in
 	"install")
