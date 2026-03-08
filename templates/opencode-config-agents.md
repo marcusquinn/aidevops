@@ -1,4 +1,4 @@
-Add ~/.aidevops/agents/AGENTS.md to context for AI DevOps capabilities.
+<!-- Add ~/.aidevops/agents/AGENTS.md to context for AI DevOps capabilities. -->
 
 ## aidevops Framework Status
 
