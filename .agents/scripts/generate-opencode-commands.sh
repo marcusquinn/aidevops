@@ -1545,6 +1545,25 @@ if [[ -d "$COMMANDS_DIR" ]]; then
 fi
 
 # =============================================================================
+# RESOLVE CONFIGURABLE PATHS IN GENERATED COMMANDS
+# =============================================================================
+# Heredocs above use <<'EOF' (no expansion) to safely handle $ARGUMENTS and
+# literal $ signs in examples. Now replace the default ~/.aidevops paths with
+# the resolved AIDEVOPS_AGENTS_DIR / AIDEVOPS_BASE so custom installs work.
+
+if [[ "$AIDEVOPS_AGENTS_DIR" != "$HOME/.aidevops/agents" ]] || [[ "${AIDEVOPS_BASE}" != "$HOME/.aidevops" ]]; then
+	for cmd_file in "$OPENCODE_COMMAND_DIR"/*.md; do
+		[[ -f "$cmd_file" ]] || continue
+		# Order matters: replace the longer agents/ path first to avoid partial matches
+		sed_inplace \
+			-e "s|~/.aidevops/agents/|${AIDEVOPS_AGENTS_DIR}/|g" \
+			-e "s|~/.aidevops/|${AIDEVOPS_BASE}/|g" \
+			"$cmd_file"
+	done
+	echo -e "  ${GREEN}✓${NC} Resolved custom paths in generated commands"
+fi
+
+# =============================================================================
 # SUMMARY
 # =============================================================================
 
