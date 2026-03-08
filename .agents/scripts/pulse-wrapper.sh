@@ -499,6 +499,9 @@ prefetch_state() {
 	# Append active worker snapshot for orphaned PR detection (t216)
 	prefetch_active_workers >>"$STATE_FILE"
 
+	# Append repo hygiene data for LLM triage (t1417)
+	prefetch_hygiene >>"$STATE_FILE"
+
 	# Export PULSE_SCOPE_REPOS — comma-separated list of repo slugs that
 	# workers are allowed to create PRs/branches on (t1405, GH#2928).
 	# Workers CAN file issues on any repo (cross-repo self-improvement),
@@ -991,6 +994,133 @@ prefetch_active_workers() {
 }
 
 #######################################
+# Pre-fetch repo hygiene data for LLM triage (t1417)
+#
+# Appends a "Repo Hygiene" section to the state file with:
+#   1. Orphan worktrees — branches with 0 commits ahead of main,
+#      no PR (open or merged), and no active worker process.
+#   2. Stash summary — count of needs-review stashes per repo.
+#   3. Uncommitted changes on main — repos with dirty main worktree.
+#
+# This data enables the pulse LLM to make intelligent triage decisions
+# about cleanup. Deterministic cleanup (merged-PR worktrees, safe stashes)
+# is handled by cleanup_worktrees() and cleanup_stashes() before this runs.
+# What remains here requires judgment.
+#
+# Output: hygiene summary to stdout (appended to STATE_FILE by caller)
+#######################################
+prefetch_hygiene() {
+	local repos_json="${HOME}/.config/aidevops/repos.json"
+
+	echo ""
+	echo "# Repo Hygiene"
+	echo ""
+	echo "Non-deterministic cleanup candidates requiring LLM assessment."
+	echo "Merged-PR worktrees and safe-to-drop stashes were already cleaned by the shell layer."
+	echo ""
+
+	if [[ ! -f "$repos_json" ]] || ! command -v jq &>/dev/null; then
+		echo "- repos.json not available — skipping hygiene prefetch"
+		echo ""
+		return 0
+	fi
+
+	local repo_paths
+	repo_paths=$(jq -r '.initialized_repos[] | select((.local_only // false) == false) | .path' "$repos_json" || echo "")
+
+	local found_any=false
+
+	local repo_path
+	while IFS= read -r repo_path; do
+		[[ -z "$repo_path" ]] && continue
+		[[ ! -d "$repo_path/.git" ]] && continue
+
+		local repo_name
+		repo_name=$(basename "$repo_path")
+		local repo_issues=""
+
+		# 1. Orphan worktrees: 0 commits ahead of default branch, no PR
+		local default_branch
+		default_branch=$(git -C "$repo_path" symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's|refs/remotes/origin/||') || default_branch="main"
+		[[ -z "$default_branch" ]] && default_branch="main"
+
+		local wt_branch wt_path
+		while IFS= read -r line; do
+			if [[ "$line" =~ ^worktree\ (.+)$ ]]; then
+				wt_path="${BASH_REMATCH[1]}"
+			elif [[ "$line" =~ ^branch\ refs/heads/(.+)$ ]]; then
+				wt_branch="${BASH_REMATCH[1]}"
+			elif [[ -z "$line" && -n "$wt_branch" ]]; then
+				# Skip the default branch
+				if [[ "$wt_branch" != "$default_branch" ]]; then
+					local commits_ahead
+					commits_ahead=$(git -C "$repo_path" rev-list --count "${default_branch}..${wt_branch}" 2>/dev/null) || commits_ahead="?"
+
+					if [[ "$commits_ahead" == "0" ]]; then
+						# Check if any PR exists (open or merged)
+						local has_pr="false"
+						if command -v gh &>/dev/null; then
+							local pr_check
+							pr_check=$(gh pr list --repo "$(jq -r --arg p "$repo_path" '.initialized_repos[] | select(.path == $p) | .slug' "$repos_json" 2>/dev/null)" \
+								--head "$wt_branch" --state all --json number --jq 'length' 2>/dev/null) || pr_check="0"
+							[[ "${pr_check:-0}" -gt 0 ]] && has_pr="true"
+						fi
+
+						if [[ "$has_pr" == "false" ]]; then
+							# Check for dirty state
+							local dirty=""
+							local change_count
+							change_count=$(git -C "${wt_path:-$repo_path}" status --porcelain 2>/dev/null | wc -l | tr -d ' ') || change_count=0
+							[[ "${change_count:-0}" -gt 0 ]] && dirty=" (${change_count} uncommitted files)"
+
+							repo_issues="${repo_issues}  - Orphan worktree: \`${wt_branch}\` — 0 commits, no PR${dirty} (${wt_path})\n"
+						fi
+					fi
+				fi
+				wt_path=""
+				wt_branch=""
+			fi
+		done < <(
+			git -C "$repo_path" worktree list --porcelain 2>/dev/null
+			echo ""
+		)
+
+		# 2. Stash summary (needs-review count)
+		local stash_count
+		stash_count=$(git -C "$repo_path" stash list 2>/dev/null | wc -l | tr -d ' ')
+		if [[ "${stash_count:-0}" -gt 0 ]]; then
+			repo_issues="${repo_issues}  - ${stash_count} stash(es) remaining (safe-to-drop already cleaned; these need review)\n"
+		fi
+
+		# 3. Uncommitted changes on main worktree
+		local main_wt_path="$repo_path"
+		local current_branch
+		current_branch=$(git -C "$main_wt_path" rev-parse --abbrev-ref HEAD 2>/dev/null) || current_branch=""
+		if [[ "$current_branch" == "$default_branch" ]]; then
+			local main_dirty
+			main_dirty=$(git -C "$main_wt_path" status --porcelain 2>/dev/null | wc -l | tr -d ' ') || main_dirty=0
+			if [[ "${main_dirty:-0}" -gt 0 ]]; then
+				repo_issues="${repo_issues}  - ${main_dirty} uncommitted file(s) on ${default_branch} branch\n"
+			fi
+		fi
+
+		# Output repo section if any issues found
+		if [[ -n "$repo_issues" ]]; then
+			found_any=true
+			echo "### ${repo_name}"
+			echo -e "$repo_issues"
+		fi
+	done <<<"$repo_paths"
+
+	if [[ "$found_any" == "false" ]]; then
+		echo "- All repos clean — no hygiene issues detected"
+		echo ""
+	fi
+
+	return 0
+}
+
+#######################################
 # Process guard: kill child processes exceeding RSS or runtime limits (t1398)
 #
 # Scans all child processes of the current pulse (and their descendants)
@@ -1371,6 +1501,73 @@ cleanup_worktrees() {
 
 	if [[ "$total_removed" -gt 0 ]]; then
 		echo "[pulse-wrapper] Worktree cleanup total: $total_removed worktree(s) removed across all repos" >>"$LOGFILE"
+	fi
+
+	return 0
+}
+
+#######################################
+# Clean up safe-to-drop stashes across ALL managed repos (t1417)
+#
+# Iterates repos.json (.initialized_repos[]) and runs
+# stash-audit-helper.sh auto-clean in each repo directory.
+# Only drops stashes whose content is already in HEAD — safe
+# and deterministic, no judgment needed.
+#
+# Stashes classified as "needs-review" or "obsolete" are left
+# for the LLM hygiene triage (see prefetch_hygiene + pulse.md).
+#######################################
+cleanup_stashes() {
+	local helper="${HOME}/.aidevops/agents/scripts/stash-audit-helper.sh"
+	if [[ ! -x "$helper" ]]; then
+		return 0
+	fi
+
+	local repos_json="${HOME}/.config/aidevops/repos.json"
+	local total_dropped=0
+
+	if [[ -f "$repos_json" ]] && command -v jq &>/dev/null; then
+		local repo_paths
+		repo_paths=$(jq -r '.initialized_repos[] | select((.local_only // false) == false) | .path' "$repos_json" || echo "")
+
+		local repo_path
+		while IFS= read -r repo_path; do
+			[[ -z "$repo_path" ]] && continue
+			[[ ! -d "$repo_path/.git" ]] && continue
+
+			# Skip repos with no stashes
+			local stash_count
+			stash_count=$(git -C "$repo_path" stash list 2>/dev/null | wc -l | tr -d ' ')
+			if [[ "${stash_count:-0}" -eq 0 ]]; then
+				continue
+			fi
+
+			local clean_result
+			clean_result=$(cd "$repo_path" && bash "$helper" auto-clean 2>&1) || true
+
+			local count
+			count=$(echo "$clean_result" | grep -c 'Dropped') || count=0
+			if [[ "$count" -gt 0 ]]; then
+				local repo_name
+				repo_name=$(basename "$repo_path")
+				echo "[pulse-wrapper] Stash cleanup ($repo_name): $count stash(es) dropped" >>"$LOGFILE"
+				total_dropped=$((total_dropped + count))
+			fi
+		done <<<"$repo_paths"
+	else
+		# Fallback: just clean the current repo
+		local clean_result
+		clean_result=$(bash "$helper" auto-clean 2>&1) || true
+		local fallback_count
+		fallback_count=$(echo "$clean_result" | grep -c 'Dropped') || fallback_count=0
+		if [[ "$fallback_count" -gt 0 ]]; then
+			echo "[pulse-wrapper] Stash cleanup: $fallback_count stash(es) dropped" >>"$LOGFILE"
+			total_dropped=$((total_dropped + fallback_count))
+		fi
+	fi
+
+	if [[ "$total_dropped" -gt 0 ]]; then
+		echo "[pulse-wrapper] Stash cleanup total: $total_dropped stash(es) dropped across all repos" >>"$LOGFILE"
 	fi
 
 	return 0
@@ -2522,7 +2719,7 @@ _Monitoring: ${sweep_total_issues} issues (delta: ${issue_delta}), gate ${sweep_
 		local scan_output
 		scan_output=$("$review_helper" scan-merged \
 			--repo "$repo_slug" \
-			--batch 10 \
+			--batch 30 \
 			--create-issues \
 			--min-severity medium \
 			--json) || scan_output=""
@@ -2894,6 +3091,7 @@ main() {
 
 	cleanup_orphans
 	cleanup_worktrees
+	cleanup_stashes
 	calculate_max_workers
 	check_session_count >/dev/null
 

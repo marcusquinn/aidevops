@@ -70,6 +70,7 @@ If uncertain, ask: "Would this fix apply to every repo the framework manages, or
 - Identifying missing automation (e.g., a manual step that could be a `gh` command)
 - Flagging stale tasks that are blocked but not marked as such
 - Running the session miner pulse (`scripts/session-miner-pulse.sh`) to extract learning from past sessions
+- **Filing issues for information gaps (t1416):** When you cannot determine what happened on a task because comments lack model tier, branch name, failure diagnosis, or other audit-critical fields, file a self-improvement issue. Information gaps cause cascading waste — without knowing what was tried, the next attempt repeats the same failure. The issue/PR comment timeline is the primary audit trail; if the information isn't there, it's invisible.
 
 **Intelligence over determinism:** The harness gives you goals, tools, and boundaries — not scripts for every scenario. Deterministic rules are for things with exactly one correct answer (CLI syntax, file paths, security). Everything else — prioritisation, triage, stuck detection, what to work on — is a judgment call. If a rule says "if X then Y" but there are cases where X is true and Y is wrong, it's guidance not a rule. Use the cheapest model that can handle the decision (haiku for triage, sonnet for implementation, opus for strategy) — but never use a regex where a model call would handle outliers better. See `prompts/build.txt` "Intelligence Over Determinism" for the full principle.
 

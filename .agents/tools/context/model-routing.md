@@ -374,6 +374,18 @@ bundle-helper.sh list
 - **pulse.md**: Supervisor uses bundle `agent_routing` to select the right agent for non-code tasks
 - **linters-local.sh**: Reads bundle `skip_gates` to skip irrelevant quality checks (e.g., ShellCheck on a pure web-app)
 
+## Failure-Based Escalation (t1416)
+
+When a worker fails on a task (killed for thrashing, 0 commits, PR closed without merge), the supervisor escalates to a higher model tier. This is cost-effective: one opus dispatch (~3x sonnet) costs far less than 5+ failed sonnet dispatches.
+
+**Escalation rule:** After 2 failed worker attempts on the same issue, escalate from the current tier to the next tier up. In practice this means sonnet -> opus for most tasks (sonnet is the default dispatch tier).
+
+**How to escalate:** Add `--model anthropic/claude-opus-4-6` to the `opencode run` dispatch command. This overrides the default "do not add --model" rule in pulse.md.
+
+**Recording:** Every dispatch and kill comment on the issue MUST include the model tier used. Without this, it's impossible to audit whether escalation was attempted. See pulse.md "Audit-quality state in issue and PR comments" (t1416).
+
+**Cost justification:** The t748 incident dispatched 7 sonnet workers over 30+ hours, all thrashing. A single opus dispatch would have cost ~3x one sonnet attempt but saved 6 failed attempts. The break-even point is 1 failed re-dispatch — escalation after 2 failures is always cheaper than a 3rd attempt at the same tier.
+
 ## Tier Drift Detection (t1191)
 
 When tasks are requested at one tier but executed at another (e.g., `model:sonnet` in

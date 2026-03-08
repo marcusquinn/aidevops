@@ -121,6 +121,32 @@ Then skip to the next PR. The next pulse cycle will retry the permission check �
   - `WAITING` only means "no known bot activity" — it does NOT mean zero reviews. When `WAITING` is returned, check the formal review count (the `gh pr view` command above). If count > 0, proceed to merge.
   - `SKIP` means the PR has a `skip-review-gate` label — it bypasses the bot gate only, NOT the review count requirement.
   - Skip the PR when the formal review count is 0, regardless of bot gate status.
+  - **Unresolved review suggestions check (pre-merge):** Before merging, check for unresolved inline review comments from bots. This prevents merging PRs where actionable feedback was posted but never addressed — the root cause of quality-debt backfill issues.
+
+    ```bash
+    # Fetch inline review comments from known bots that have suggestions
+    UNRESOLVED=$(gh api "repos/<slug>/pulls/<number>/comments" \
+      --jq '[.[] | select(
+        (.user.login | test("coderabbit|gemini-code-assist|copilot|augment"; "i")) and
+        (.body | test("suggestion|```suggestion"; "i"))
+      )] | length')
+
+    if [[ "$UNRESOLVED" -gt 0 ]]; then
+      # Don't block — dispatch a worker to address the feedback before merging
+      echo "PR #<number> has $UNRESOLVED unresolved bot suggestion(s) — dispatching fix worker"
+      # Label the PR so the next cycle knows a fix is in progress
+      gh api --silent "repos/<slug>/issues/<number>/labels" \
+        -X POST -f 'labels[]=needs-review-fixes' 2>/dev/null || true
+      # Dispatch a worker to address the suggestions (counts against worker slots)
+      opencode run --dir <path> --title "PR #<number>: address review suggestions" \
+        "/full-loop Address unresolved review bot suggestions on PR #<number> (<pr_url>). Read the inline review comments, apply valid suggestions, dismiss invalid ones with a reply explaining why." &
+      sleep 2
+      # Skip merge this cycle — the fix worker will push, and the next pulse merges
+      continue
+    fi
+    ```
+
+    **Judgment call, not a hard block.** Not every bot suggestion is valid — bots hallucinate. The fix worker reads each suggestion, applies valid ones, and dismisses invalid ones with a reply. The goal is to prevent the pattern where feedback is silently ignored and becomes a quality-debt issue post-merge. If the PR already has the `needs-review-fixes` label (fix worker already dispatched), skip the check — the worker is handling it. If the PR has `skip-review-suggestions` label, bypass this check entirely (for cases where all suggestions were reviewed and intentionally declined).
 - **Green CI + zero reviews** → skip this cycle, but run `review-bot-gate-helper.sh request-retry <number> <slug>` to self-heal rate-limited bots. The helper checks whether bots posted rate-limit notices instead of real reviews and requests a retry if so (idempotent — safe to call every cycle). The next pulse will find the real review and merge normally. The formal review count gate still applies — this is recovery, not bypass.
 - **Failing CI or changes requested** → before dispatching a fix worker, check whether this is a systemic failure (see "CI failure pattern detection" below). If systemic, skip the per-PR dispatch — the workflow-level issue covers it. If per-PR, dispatch a worker to fix it (counts against worker slots).
 
@@ -203,7 +229,7 @@ The principle: fix our bugs, but don't commit to supporting external tools witho
 
 ### Kill stuck workers
 
-Check `ps axo pid,etime,command | grep '/full-loop' | grep '\.opencode'`. Any worker running 3+ hours with no open PR is likely stuck. Kill it: `kill <pid>`. Comment on the issue explaining why. This frees a slot. If the worker has recent commits or an open PR with activity, leave it alone — it's making progress.
+Check `ps axo pid,etime,command | grep '/full-loop' | grep '\.opencode'`. Any worker running 3+ hours with no open PR is likely stuck. Kill it: `kill <pid>`. Comment on the issue with the full audit-quality fields (model, branch, reason, diagnosis, next action — see "Audit-quality state in issue and PR comments" below). This frees a slot. If the worker has recent commits or an open PR with activity, leave it alone — it's making progress.
 
 ### Struggle-ratio check (t1367)
 
@@ -220,6 +246,78 @@ The "Active Workers" section in the pre-fetched state includes a `struggle_ratio
 **Configuration** (env vars in pulse-wrapper.sh):
 - `STRUGGLE_RATIO_THRESHOLD` — ratio above which to flag (default: 30)
 - `STRUGGLE_MIN_ELAPSED_MINUTES` — minimum runtime before flagging (default: 30)
+
+### Model escalation after repeated failures (t1416)
+
+When a worker fails on an issue (killed for thrashing, PR closed without merge, or 0 commits after timeout), the supervisor must track the failure count and escalate the model tier after 2 failed attempts. Blindly re-dispatching at the same tier wastes compute — the t748 incident burned 7 workers over 30+ hours on a task that required codebase archaeology beyond sonnet's capability.
+
+**How to count failures:** Read the issue comments. Each kill/re-dispatch comment from the supervisor counts as one failure. Count comments matching patterns like "Worker killed", "Worker (PID", "Re-opening for dispatch", "Re-dispatching". If the count is >= 2, escalate.
+
+**Escalation tiers:**
+
+| Failures | Action |
+|----------|--------|
+| 0-1 | Dispatch at default tier (bundle default or sonnet) |
+| 2 | Escalate to opus: add `--model anthropic/claude-opus-4-6` to the dispatch command |
+| 3+ | Escalate to opus AND simplify scope — add a comment on the issue summarising what previous workers attempted and where they got stuck, so the next worker doesn't repeat the same analysis |
+
+**Override the no-model dispatch rule:** The default dispatch rule says "Do NOT add `--model`". This escalation rule overrides it — when failure count >= 2, you MUST add `--model anthropic/claude-opus-4-6`. The cost of one opus dispatch (~3x sonnet) is far less than the cost of 5+ failed sonnet dispatches. Do NOT post a separate escalation comment — the dispatch comment's "Attempt" field captures escalation context (e.g., "Attempt: 3 of 3 (escalated to opus after 2 failed sonnet attempts)").
+
+**This is a judgment call, not a hard threshold.** If the first failure was clearly a transient issue (OOM, network timeout, CI flake) rather than a capability gap, resetting the counter is appropriate. But if the worker thrashed with high struggle ratio and 0 commits, that's a capability signal — escalate.
+
+### Audit-quality state in issue and PR comments (t1416)
+
+Every comment the supervisor posts on an issue or PR must be **sufficient for a human or future agent to audit and understand the work without reading logs**. The issue timeline and PR comments are the primary audit trail — if the information isn't there, it's invisible.
+
+**Required fields in dispatch comments:**
+
+When dispatching a worker, comment on the issue with:
+
+```bash
+gh issue comment <number> --repo <slug> --body "Dispatching worker.
+- **Model**: <tier and full model ID, e.g., sonnet (anthropic/claude-sonnet-4-6)>
+- **Branch**: <branch name, e.g., fix/t748-ai-migration>
+- **Scope**: <1-line description of what the worker should do>
+- **Attempt**: <N of M, e.g., 1 of 1, or 3 of 3 (escalated to opus)>
+- **Direction**: <any specific guidance, e.g., 'focus on migration chain from PR #213'>"
+```
+
+**Required fields in kill/failure comments:**
+
+When killing a worker or closing a failed PR, comment with:
+
+```bash
+gh issue comment <number> --repo <slug> --body "Worker killed after <duration> with <N> commits (struggle_ratio: <ratio>).
+- **Model**: <tier used>
+- **Branch**: <branch name>
+- **Reason**: <why it was killed — thrashing, timeout, CI loop, etc.>
+- **Diagnosis**: <1-line hypothesis of what went wrong>
+- **Next action**: <re-dispatch at same tier / escalate to opus / needs manual review>"
+```
+
+**Required fields in merge/completion comments:**
+
+When merging a PR or closing an issue as done:
+
+```bash
+gh issue comment <number> --repo <slug> --body "Completed via PR #<N>.
+- **Model**: <tier that succeeded>
+- **Attempts**: <total attempts including failures>
+- **Duration**: <wall-clock from first dispatch to merge>"
+```
+
+**Why this matters:** Without these fields, auditing a task requires reading pulse logs, cross-referencing `ps` output timestamps, and guessing which model was used. The t748 incident had 7 kill comments that all said "Worker killed after Xh with 0 commits" but none recorded the model tier, making it impossible to determine whether escalation was attempted. Issue comments are the state dashboard — they must be self-contained.
+
+### Self-improvement on information gaps (t1416)
+
+When the supervisor encounters a situation where it cannot determine what happened (missing model tier, unclear failure reason, no branch name in comments, ambiguous state labels), this is an **information gap**. Information gaps cause audit failures and prevent effective re-dispatch.
+
+**Response:** File a self-improvement issue in the aidevops repo describing:
+1. What information was missing
+2. Where it should have been recorded
+3. What went wrong because it was missing (e.g., "could not determine if model was escalated, re-dispatched at same tier 5 more times")
+
+This is a one-time observation — don't file duplicate issues for the same gap. Check existing issues first: `gh issue list --repo <aidevops-slug> --search "information gap" --state open`.
 
 ### Task decomposition before dispatch (t1408.2)
 
@@ -313,7 +411,7 @@ sleep 2
 **Dispatch rules:**
 - ALWAYS use `opencode run` — NEVER `claude` or `claude -p`
 - Background with `&`, sleep 2 between dispatches
-- Do NOT add `--model` — let `/full-loop` use its default. Bundle presets (t1364.6) handle per-project model defaults automatically.
+- Do NOT add `--model` for first attempts — let `/full-loop` use its default. Bundle presets (t1364.6) handle per-project model defaults automatically. **Exception:** when escalating after 2+ failed attempts on the same issue, add `--model anthropic/claude-opus-4-6` (see "Model escalation after repeated failures" above).
 - Use `--dir <path>` from repos.json
 - Route non-code tasks with `--agent`: SEO, Content, Marketing, Business, Research (see AGENTS.md "Agent Routing")
 - **Bundle-aware agent routing (t1364.6):** Before dispatching, check if the target repo has a bundle with `agent_routing` overrides. Run `bundle-helper.sh get agent_routing <repo-path>` — if the task domain (code, seo, content, marketing) has a non-default agent, use `--agent <name>`. Example: a content-site bundle routes `marketing` tasks to the Marketing agent instead of Build+. Explicit `--agent` flags in the issue body always override bundle defaults.
@@ -498,6 +596,61 @@ gh issue comment <issue_number> --repo <slug> --body "Re-opened for dispatch —
 - NEVER flag a PR that has the `persistent` label
 - NEVER flag a PR that has passing CI and approved reviews — it should be merged, not flagged (handle it in the PRs section above instead)
 - If uncertain whether a PR is truly orphaned, skip it — the next pulse is 2 minutes away
+
+### Repo Hygiene Triage (t1417)
+
+After processing PRs, issues, and orphaned PRs, check the **"Repo Hygiene"** section in the pre-fetched state. This section contains non-deterministic cleanup candidates that the shell layer could not handle automatically — they require your judgment.
+
+The shell layer already handled deterministic cleanup before you started:
+- Worktrees for merged/closed PRs → removed by `worktree-helper.sh clean --auto --force-merged`
+- Stashes whose content is already in HEAD → dropped by `stash-audit-helper.sh auto-clean`
+
+What remains in the hygiene section needs intelligence:
+
+**Orphan worktrees** (0 commits ahead of main, no PR, no active worker):
+
+These are typically branches created by workers that crashed or were killed before producing any commits. However, they could also be:
+- A user's manual experiment they intend to return to
+- A worker that was just dispatched and hasn't committed yet (check Active Workers)
+- A branch with uncommitted work that would be lost if removed
+
+**Assessment approach:**
+1. Cross-reference with Active Workers — if a worker is running on this branch, skip it
+2. Check if the worktree has uncommitted files (noted in the hygiene data as "N uncommitted files") — if dirty, flag but do NOT recommend removal
+3. If the worktree is clean (0 commits, 0 uncommitted files, no PR, no worker) AND the branch name matches a known task pattern (feature/tNNN, bugfix/*, etc.), it's likely a crashed worker — comment on the associated issue if one exists, noting the orphan branch
+4. If uncertain, skip — the next pulse is 2 minutes away
+
+**Do NOT auto-remove orphan worktrees.** Only flag them. The user or a future pulse with more context can decide. Post a comment on the repo's health issue if one exists, listing the orphan worktrees found.
+
+**Stale PRs** (failing CI, no progress):
+
+For each open PR in the pre-fetched state, check:
+- Has CI been failing for 7+ days? (Compare `updatedAt` with current time — if no commits pushed in 7 days and CI is FAIL, it's stale)
+- Is there an active worker? (Check Active Workers section)
+- Is there a `needs-review-fixes` label? (A fix worker may be dispatched)
+
+If a PR has been failing CI for 7+ days with no new commits and no active worker:
+1. Close the PR with a comment explaining why:
+
+```bash
+gh pr close <number> --repo <slug> --comment "Closing — CI has been failing for 7+ days with no new commits or active worker. The linked issue will be relabelled for re-dispatch. If this work is still viable, reopen the PR and push fixes."
+```
+
+2. Relabel the linked issue to `status:available` for re-dispatch
+3. Log the closure in your output
+
+**Uncommitted changes on main:**
+
+If the hygiene data shows uncommitted files on a repo's main branch, this is unusual — main should always be clean. Possible causes:
+- A stash pop that failed (conflict left working tree dirty)
+- Manual edits the user forgot to commit
+- A script that modified files without committing
+
+**Do NOT commit or discard these changes.** Flag them in your output so the user is aware. Example: "aidevops: 2 uncommitted files on main (loop-common.sh, worktree-helper.sh) — likely from a failed stash pop. Manual resolution needed."
+
+**Remaining stashes:**
+
+If the hygiene data shows stashes remaining after auto-clean, these contain changes NOT in HEAD (the safe ones were already dropped). Note the count in your output but take no action — stash management beyond safe-to-drop requires user judgment.
 
 ## Step 3.5: Mission Awareness
 

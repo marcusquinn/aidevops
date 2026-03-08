@@ -22,16 +22,24 @@ PASS=0
 FAIL=0
 TOTAL=0
 
+# Record a passing test result and print status.
+# Args: $1 - test description message
 pass() {
+	local msg="$1"
 	PASS=$((PASS + 1))
 	TOTAL=$((TOTAL + 1))
-	echo "  PASS: $1"
+	echo "  PASS: $msg"
+	return 0
 }
 
+# Record a failing test result and print status.
+# Args: $1 - test description message
 fail() {
+	local msg="$1"
 	FAIL=$((FAIL + 1))
 	TOTAL=$((TOTAL + 1))
-	echo "  FAIL: $1"
+	echo "  FAIL: $msg"
+	return 0
 }
 
 echo "=== AI Actions Executor Tests (t1085.3) ==="
@@ -2164,10 +2172,9 @@ TODOEOF
 
 		# Test 4: Recently completed tasks should also be found
 		# t102 is [x] with completed:2026-02-19 — should appear as candidate
-		# We need to test _check_similar_open_task which includes completed tasks
-		# But _keyword_prefilter_open_tasks only scans open tasks by design
-		# The completed task scanning is in _check_similar_open_task via the
-		# recently-completed scan added in this fix
+		# _keyword_prefilter_open_tasks now scans both open and recently completed
+		# tasks directly (completed-task scanning was moved into the prefilter).
+		# Test 31 covers the completed-task path explicitly.
 
 		rm -rf "$tmp_dir" "/tmp/test-ai-actions-logs-$$" "$SUPERVISOR_DB" 2>/dev/null || true
 		exit "$failures"

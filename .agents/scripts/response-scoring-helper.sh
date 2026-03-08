@@ -388,18 +388,27 @@ _sync_score_to_patterns() {
 	fi
 
 	# Get response metadata including per-criterion scores and token usage (t1094)
+	# Uses LEFT JOIN + conditional aggregation instead of correlated subqueries (GH#3631)
+	# Note: WEIGHTED_AVG_SQL is a correlated subquery that computes a weighted sum across
+	# all scorers, while MAX(CASE...) picks the highest score per criterion. In practice
+	# the scores table has one scorer per criterion for automated scoring (UNIQUE constraint
+	# on response_id+criterion+scored_by). The MAX() is deterministic vs the original
+	# LIMIT 1 (no ORDER BY) which was arbitrary. Unifying both aggregation paths is a
+	# valid follow-up refactor but out of scope for this fix (see PR #3884 discussion).
 	local result
 	result=$(sqlite3 -separator '|' "$SCORING_DB" "
         SELECT r.model_id, p.category, p.difficulty,
                ${WEIGHTED_AVG_SQL} as weighted_avg,
                r.token_count, r.cost_estimate,
-               (SELECT score FROM scores s WHERE s.response_id = r.response_id AND s.criterion = 'correctness' LIMIT 1) as corr,
-               (SELECT score FROM scores s WHERE s.response_id = r.response_id AND s.criterion = 'completeness' LIMIT 1) as comp,
-               (SELECT score FROM scores s WHERE s.response_id = r.response_id AND s.criterion = 'code_quality' LIMIT 1) as cq,
-               (SELECT score FROM scores s WHERE s.response_id = r.response_id AND s.criterion = 'clarity' LIMIT 1) as clar
+               MAX(CASE WHEN s.criterion = 'correctness' THEN s.score END) as corr,
+               MAX(CASE WHEN s.criterion = 'completeness' THEN s.score END) as comp,
+               MAX(CASE WHEN s.criterion = 'code_quality' THEN s.score END) as cq,
+               MAX(CASE WHEN s.criterion = 'clarity' THEN s.score END) as clar
         FROM responses r
         JOIN prompts p ON r.prompt_id = p.prompt_id
-        WHERE r.response_id = ${response_id};
+        LEFT JOIN scores s ON r.response_id = s.response_id
+        WHERE r.response_id = ${response_id}
+        GROUP BY r.response_id;
     ") || return 0
 
 	if [[ -z "$result" ]]; then
