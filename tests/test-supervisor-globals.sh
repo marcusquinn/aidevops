@@ -24,10 +24,12 @@ FAIL=0
 pass() {
 	PASS=$((PASS + 1))
 	echo "  PASS: $1"
+	return 0
 }
 fail() {
 	FAIL=$((FAIL + 1))
 	echo "  FAIL: $1"
+	return 0
 }
 
 echo "=== Supervisor Globals Test ==="
@@ -92,7 +94,7 @@ for var in SUPERVISOR_DIR SUPERVISOR_DB SUPERVISOR_LOG PULSE_LOCK_DIR PULSE_LOCK
 	if grep -rq "\$${var}\b\|\${${var}}" "$module_dir/" 2>/dev/null; then
 		# Check if defined in monolith or _common.sh
 		# shellcheck disable=SC2086
-		if ! grep -q "^[[:space:]]*\(readonly \)\{0,1\}${var}=" $all_files 2>/dev/null; then
+		if ! grep -qE "^[[:space:]]*(readonly( -a)? )?${var}=" $all_files 2>/dev/null; then
 			fail "$var used in modules but not defined anywhere"
 			missing_count=$((missing_count + 1))
 		fi

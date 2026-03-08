@@ -32,16 +32,16 @@ Wappalyzer is a technology profiler that identifies software on websites: CMS, f
 - Node.js 18+ and npm
 - Chrome/Chromium (for headless browser detection)
 
-### Install Wappalyzer CLI
+### Install via Helper Script
+
+The framework uses `wappalyzer-helper.sh` with `wappalyzer-detect.mjs` (a custom Node.js wrapper around `@AckeeCZ/wappalyzer`):
 
 ```bash
-npm install -g wappalyzer
-```
+# Install dependencies (auto-installs @AckeeCZ/wappalyzer if missing)
+wappalyzer-helper.sh install
 
-Verify installation:
-
-```bash
-wappalyzer --version
+# Verify installation
+wappalyzer-helper.sh detect https://example.com
 ```
 
 ## Usage
@@ -49,14 +49,14 @@ wappalyzer --version
 ### Basic Detection
 
 ```bash
-# Analyze a URL and output JSON
-wappalyzer https://example.com --format=json
+# Analyze a URL via the helper script
+wappalyzer-helper.sh detect https://example.com
 
-# Pretty-printed output
-wappalyzer https://example.com --format=json --pretty
+# With JSON output
+wappalyzer-helper.sh detect https://example.com --json
 
-# Increase timeout for slow sites
-wappalyzer https://example.com --max-wait=10000
+# As part of tech-stack lookup
+tech-stack-helper.sh lookup https://example.com
 ```
 
 ### Advanced Options

@@ -208,7 +208,7 @@ validate_manifest() {
 	fi
 
 	# Validate version format (semver-like)
-	if [[ -n "$version" ]] && [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$ ]]; then
+	if [[ -n "$version" ]] && [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.-]+)?$ ]]; then
 		log_warning "Version '$version' is not semver format (expected: X.Y.Z)"
 	fi
 
@@ -249,7 +249,7 @@ validate_manifest() {
 	min_version=$(jq -r '.min_aidevops_version // empty' "$manifest" 2>/dev/null)
 	if [[ -n "$min_version" ]]; then
 		local current_version
-		current_version=$(cat "$HOME/.aidevops/version" 2>/dev/null || echo "0.0.0")
+		current_version=$(cat "$HOME/.aidevops/agents/VERSION" 2>/dev/null || echo "0.0.0")
 		# Simple version comparison (major.minor only)
 		local min_major min_minor cur_major cur_minor
 		min_major=$(echo "$min_version" | cut -d. -f1)
