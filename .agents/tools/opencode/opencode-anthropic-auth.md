@@ -423,8 +423,16 @@ aidevops follows OpenCode's credential storage:
 ## Version History
 
 - **0.0.9** (latest): Current version in repository
-- Maintained by Anomaly (anomalyco)
-- Dependencies: `@opencode-ai/plugin`, `@openauthjs/openauth`
+  - **DEPRECATED** — functionality now built into OpenCode v1.1.36+
+  - Maintained by Anomaly (anomalyco)
+  - Dependencies: `@opencode-ai/plugin`, `@openauthjs/openauth`
+- **0.0.8**: Updated dependencies and compatibility
+  - Updated from `@openauthjs/openauth@^0.4.3` to latest
+- **0.0.7**: Previous stable release
+- **0.0.6**: Initial public release with core OAuth support
+  - OAuth 2.0 with PKCE for Anthropic Console
+  - Claude Pro/Max subscription support
+  - Automatic token refresh
 
 ## References
 
