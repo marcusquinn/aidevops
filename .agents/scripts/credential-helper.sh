@@ -43,10 +43,13 @@ validate_tenant_name() {
 # Get the active tenant name
 get_active_tenant() {
 	# Priority: 1) Project override, 2) Global active, 3) "default"
+	# Guard reads against TOCTOU race (file may vanish/change permissions between
+	# -f check and read) — degrade gracefully instead of aborting under set -e (GH#3916)
 	if [[ -f "$PROJECT_TENANT_FILE" ]]; then
 		local project_tenant
-		project_tenant=$(tr -d '[:space:]' <"$PROJECT_TENANT_FILE")
-		if [[ -n "$project_tenant" ]]; then
+		if ! project_tenant=$(tr -d '[:space:]' <"$PROJECT_TENANT_FILE" 2>/dev/null); then
+			print_warning "Failed to read project tenant file, falling back"
+		elif [[ -n "$project_tenant" ]]; then
 			if validate_tenant_name "$project_tenant"; then
 				echo "$project_tenant"
 				return 0
@@ -57,8 +60,9 @@ get_active_tenant() {
 
 	if [[ -f "$ACTIVE_TENANT_FILE" ]]; then
 		local active
-		active=$(tr -d '[:space:]' <"$ACTIVE_TENANT_FILE")
-		if [[ -n "$active" ]]; then
+		if ! active=$(tr -d '[:space:]' <"$ACTIVE_TENANT_FILE" 2>/dev/null); then
+			print_warning "Failed to read active tenant file, falling back"
+		elif [[ -n "$active" ]]; then
 			if validate_tenant_name "$active"; then
 				echo "$active"
 				return 0
@@ -693,7 +697,9 @@ cmd_use() {
 		# Show current project tenant
 		if [[ -f "$PROJECT_TENANT_FILE" ]]; then
 			local current
-			current=$(tr -d '[:space:]' <"$PROJECT_TENANT_FILE")
+			if ! current=$(tr -d '[:space:]' <"$PROJECT_TENANT_FILE" 2>/dev/null); then
+				current="<unreadable>"
+			fi
 			print_info "Project tenant: $current"
 		else
 			print_info "No project-level tenant set (using global: $(get_active_tenant))"
@@ -743,7 +749,7 @@ cmd_status() {
 	local project_tenant=""
 
 	if [[ -f "$PROJECT_TENANT_FILE" ]]; then
-		project_tenant=$(tr -d '[:space:]' <"$PROJECT_TENANT_FILE")
+		project_tenant=$(tr -d '[:space:]' <"$PROJECT_TENANT_FILE" 2>/dev/null) || project_tenant=""
 	fi
 
 	echo ""
@@ -758,7 +764,7 @@ cmd_status() {
 
 	local global_active=""
 	if [[ -f "$ACTIVE_TENANT_FILE" ]]; then
-		global_active=$(tr -d '[:space:]' <"$ACTIVE_TENANT_FILE")
+		global_active=$(tr -d '[:space:]' <"$ACTIVE_TENANT_FILE" 2>/dev/null) || global_active=""
 	fi
 	if [[ -n "$global_active" && "$global_active" != "$active" ]]; then
 		echo -e "  Global tenant:  ${DIM}$global_active${NC}"
