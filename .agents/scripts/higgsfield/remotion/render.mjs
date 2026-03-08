@@ -11,6 +11,91 @@ import { fileURLToPath } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
+// Aspect ratio to pixel dimensions lookup (shared by renderVideo and renderStill)
+const ASPECT_DIMS = {
+  "16:9": [1920, 1080],
+  "9:16": [1080, 1920],
+  "1:1": [1080, 1080],
+  "4:3": [1440, 1080],
+  "3:4": [1080, 1440],
+  "4:5": [1080, 1350],
+  "5:4": [1350, 1080],
+};
+
+/**
+ * Copy a music file to Remotion's public/ directory with path traversal protection.
+ * Returns the public-relative filename, or undefined if skipped.
+ */
+function copyMusicToPublic(brief, briefPath, publicDir) {
+  if (!brief.music) return undefined;
+
+  const musicAbsPath = resolve(brief.music);
+  // Path traversal guard: only allow music files within the brief's directory tree
+  // or the project directory. Prevents arbitrary file read via crafted brief.music paths.
+  const briefDir = dirname(briefPath);
+  const projectDir = resolve(__dirname, "..", "..");
+  if (!musicAbsPath.startsWith(briefDir + "/") && !musicAbsPath.startsWith(projectDir + "/")) {
+    console.warn(
+      `Warning: music path "${musicAbsPath}" is outside the brief directory ` +
+      `("${briefDir}") and project directory ("${projectDir}"), skipping for security`
+    );
+    return undefined;
+  }
+  if (!existsSync(musicAbsPath)) {
+    console.warn(`Warning: music file not found: ${musicAbsPath}, skipping`);
+    return undefined;
+  }
+  // Use timestamp prefix to avoid filename collisions across renders
+  const musicFilename = `music-${Date.now()}-${basename(musicAbsPath)}`;
+  const musicDest = join(publicDir, musicFilename);
+  copyFileSync(musicAbsPath, musicDest);
+  console.log(`  Copied ${basename(musicAbsPath)} -> public/${musicFilename}`);
+  return musicFilename;
+}
+
+/**
+ * Calculate total duration and frame count for the composition.
+ * Uses only scenes that have corresponding video files to avoid empty frames.
+ */
+function calculateFrames(scenes, sceneVideoFilenames, transitionDuration, fps) {
+  const sceneCount = Math.min(scenes.length, sceneVideoFilenames.length);
+  const totalSceneDuration = scenes.slice(0, sceneCount).reduce((sum, s) => sum + (s.duration || 5), 0);
+  const transitionOverlap = Math.max(0, (sceneCount - 1)) * transitionDuration;
+  const totalFrames = Math.max(1, totalSceneDuration * fps - transitionOverlap);
+  return { sceneCount, totalSceneDuration, totalFrames };
+}
+
+/**
+ * Normalize captions from brief format to FullVideo.tsx format.
+ * Maps startFrame-based captions to scene indices and clamps out-of-range values.
+ */
+function normalizeCaptions(rawCaptions, scenes, fps) {
+  const lastSceneIndex = Math.max(0, scenes.length - 1);
+  return rawCaptions.map((cap) => {
+    if (typeof cap.scene === "number") {
+      // Clamp to last scene so out-of-range indices don't silently drop captions
+      return { ...cap, scene: Math.min(cap.scene, lastSceneIndex) };
+    }
+    // Derive scene index from startFrame
+    let frameOffset = 0;
+    let sceneIdx = scenes.length - 1; // Default to last scene (fallback for beyond-end frames)
+    for (let s = 0; s < scenes.length; s++) {
+      const sceneDur = (scenes[s].duration || 5) * fps;
+      if ((cap.startFrame || 0) >= frameOffset && (cap.startFrame || 0) < frameOffset + sceneDur) {
+        sceneIdx = s;
+        break;
+      }
+      frameOffset += sceneDur;
+    }
+    return {
+      scene: sceneIdx,
+      text: cap.text || "",
+      position: cap.position || "bottom",
+      style: cap.style || "bold-white",
+    };
+  });
+}
+
 function parseArgs() {
   const args = process.argv.slice(2);
   const opts = {};
@@ -58,101 +143,32 @@ function renderVideo(opts) {
     return filename;
   });
 
-  // Normalize captions: the brief may use startFrame/endFrame format,
-  // but FullVideo.tsx expects { scene, text, position, style }.
-  // Map startFrame to scene index based on scene durations.
   const fps = 30;
-  const rawCaptions = brief.captions || [];
   const scenes = brief.scenes || [];
-  const lastSceneIndex = Math.max(0, scenes.length - 1);
-  const normalizedCaptions = rawCaptions.map((cap) => {
-    if (typeof cap.scene === "number") {
-      // Clamp to last scene so out-of-range indices don't silently drop captions
-      return { ...cap, scene: Math.min(cap.scene, lastSceneIndex) };
-    }
-    // Derive scene index from startFrame
-    let frameOffset = 0;
-    let sceneIdx = scenes.length - 1; // Default to last scene (fallback for beyond-end frames)
-    for (let s = 0; s < scenes.length; s++) {
-      const sceneDur = (scenes[s].duration || 5) * fps;
-      if ((cap.startFrame || 0) >= frameOffset && (cap.startFrame || 0) < frameOffset + sceneDur) {
-        sceneIdx = s;
-        break;
-      }
-      frameOffset += sceneDur;
-    }
-    return {
-      scene: sceneIdx,
-      text: cap.text || "",
-      position: cap.position || "bottom",
-      style: cap.style || "bold-white",
-    };
-  });
 
   // Build props for Remotion
   const props = {
     title: brief.title || "Untitled",
     scenes,
     aspect: brief.aspect || "9:16",
-    captions: normalizedCaptions,
+    captions: normalizeCaptions(brief.captions || [], scenes, fps),
     sceneVideos: sceneVideoFilenames,
     transitionStyle: brief.transitionStyle || opts.transition || "fade",
     transitionDuration: parseInt(opts["transition-duration"] || "15", 10),
-    musicPath: undefined, // set below after copy-to-public
+    musicPath: copyMusicToPublic(brief, briefPath, publicDir),
   };
 
-  // Copy music file to public/ so staticFile() can resolve it (same pattern as sceneVideos).
-  // Remotion's <Audio> cannot resolve absolute filesystem paths in a browser rendering context.
-  if (brief.music) {
-    const musicAbsPath = resolve(brief.music);
-    // Path traversal guard: only allow music files within the brief's directory tree
-    // or the project directory. Prevents arbitrary file read via crafted brief.music paths.
-    const briefDir = dirname(briefPath);
-    const projectDir = resolve(__dirname, "..", "..");
-    if (!musicAbsPath.startsWith(briefDir + "/") && !musicAbsPath.startsWith(projectDir + "/")) {
-      console.warn(
-        `Warning: music path "${musicAbsPath}" is outside the brief directory ` +
-        `("${briefDir}") and project directory ("${projectDir}"), skipping for security`
-      );
-    } else if (!existsSync(musicAbsPath)) {
-      console.warn(`Warning: music file not found: ${musicAbsPath}, skipping`);
-    } else {
-      // Use timestamp prefix to avoid filename collisions across renders
-      const musicFilename = `music-${Date.now()}-${basename(musicAbsPath)}`;
-      const musicDest = join(publicDir, musicFilename);
-      copyFileSync(musicAbsPath, musicDest);
-      console.log(`  Copied ${basename(musicAbsPath)} -> public/${musicFilename}`);
-      props.musicPath = musicFilename;
-    }
-  }
-
-  // Validate scene/video count consistency — these are derived from different sources
-  // (brief metadata vs actual video files) and can diverge, causing incorrect frame math.
+  // Warn on scene/video count mismatch (different sources can diverge)
   if (sceneVideoFilenames.length !== scenes.length) {
     console.warn(
       `Warning: ${sceneVideoFilenames.length} videos provided but brief defines ${scenes.length} scenes`
     );
   }
 
-  // Calculate duration — use only scenes that have corresponding video files.
-  // When scene count and video count diverge, rendering is constrained to the minimum,
-  // so duration must match to avoid empty frames or negative totalFrames.
-  const sceneCount = Math.min(scenes.length, sceneVideoFilenames.length);
-  const totalSceneDuration = props.scenes.slice(0, sceneCount).reduce((sum, s) => sum + (s.duration || 5), 0);
-  const transitionOverlap = Math.max(0, (sceneCount - 1)) * props.transitionDuration;
-  const totalFrames = Math.max(1, totalSceneDuration * fps - transitionOverlap);
-
-  // Aspect dimensions
-  const dims = {
-    "16:9": [1920, 1080],
-    "9:16": [1080, 1920],
-    "1:1": [1080, 1080],
-    "4:3": [1440, 1080],
-    "3:4": [1080, 1440],
-    "4:5": [1080, 1350],
-    "5:4": [1350, 1080],
-  };
-  const [width, height] = dims[props.aspect] || dims["9:16"];
+  const { totalSceneDuration, totalFrames } = calculateFrames(
+    scenes, sceneVideoFilenames, props.transitionDuration, fps
+  );
+  const [width, height] = ASPECT_DIMS[props.aspect] || ASPECT_DIMS["9:16"];
 
   const propsJson = JSON.stringify(props);
 
@@ -191,12 +207,7 @@ function renderVideo(opts) {
 function renderStill(opts) {
   const output = opts.output ? resolve(opts.output) : resolve("graphic.png");
   const aspect = opts.aspect || "9:16";
-  const dims = {
-    "16:9": [1920, 1080],
-    "9:16": [1080, 1920],
-    "1:1": [1080, 1080],
-  };
-  const [width, height] = dims[aspect] || dims["9:16"];
+  const [width, height] = ASPECT_DIMS[aspect] || ASPECT_DIMS["9:16"];
 
   const props = {
     text: opts.text || "Title",
