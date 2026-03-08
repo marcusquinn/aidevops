@@ -389,6 +389,12 @@ _sync_score_to_patterns() {
 
 	# Get response metadata including per-criterion scores and token usage (t1094)
 	# Uses LEFT JOIN + conditional aggregation instead of correlated subqueries (GH#3631)
+	# Note: WEIGHTED_AVG_SQL is a correlated subquery that computes a weighted sum across
+	# all scorers, while MAX(CASE...) picks the highest score per criterion. In practice
+	# the scores table has one scorer per criterion for automated scoring (UNIQUE constraint
+	# on response_id+criterion+scored_by). The MAX() is deterministic vs the original
+	# LIMIT 1 (no ORDER BY) which was arbitrary. Unifying both aggregation paths is a
+	# valid follow-up refactor but out of scope for this fix (see PR #3884 discussion).
 	local result
 	result=$(sqlite3 -separator '|' "$SCORING_DB" "
         SELECT r.model_id, p.category, p.difficulty,

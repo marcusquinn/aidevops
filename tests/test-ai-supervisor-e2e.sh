@@ -59,6 +59,9 @@ while [[ $# -gt 0 ]]; do
 done
 
 # Test helpers
+
+# Record a passing test result and print status.
+# Args: $1 - test description message
 pass() {
 	local msg="$1"
 	PASS=$((PASS + 1))
@@ -67,6 +70,8 @@ pass() {
 	return 0
 }
 
+# Record a failing test result and print status.
+# Args: $1 - test description message
 fail() {
 	local msg="$1"
 	FAIL=$((FAIL + 1))
@@ -75,6 +80,8 @@ fail() {
 	return 0
 }
 
+# Record a skipped test result and print status.
+# Args: $1 - test description message
 skip() {
 	local msg="$1"
 	SKIP=$((SKIP + 1))
