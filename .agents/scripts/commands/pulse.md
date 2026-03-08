@@ -410,7 +410,8 @@ batch-strategy-helper.sh validate --tasks "$TASKS_JSON"
 5. Product repos (`"priority": "product"` in repos.json) over tooling
 6. Smaller/simpler tasks over large ones (faster throughput)
 7. `quality-debt` issues (unactioned review feedback from merged PRs)
-8. Oldest issues
+8. `simplification-debt` issues (human-approved simplification opportunities)
+9. Oldest issues
 
 ### Quality-debt concurrency cap (30%)
 
@@ -428,6 +429,30 @@ QUALITY_DEBT_MAX=$(( MAX_WORKERS * 30 / 100 ))
 ```
 
 If `QUALITY_DEBT_CURRENT >= QUALITY_DEBT_MAX`, do not dispatch more quality-debt issues this cycle.
+
+### Simplification-debt concurrency cap (10%)
+
+Issues labelled `simplification-debt` (created by `/code-simplifier` analysis, approved by a human) represent maintainability improvements that preserve all functionality and knowledge. These are the lowest-priority automated work -- post-deployment nice-to-haves.
+
+**Rule: simplification-debt issues may consume at most 10% of available worker slots** (minimum 1, but only when no higher-priority work exists). These issues share the combined debt cap with quality-debt -- total debt work (quality-debt + simplification-debt) should not exceed 30% of slots.
+
+```bash
+# Count active simplification-debt workers
+SIMPLIFICATION_DEBT_ACTIVE=$(gh issue list --repo <slug> --label "simplification-debt" --label "status:in-progress" --state open --json number --jq 'length' || echo 0)
+SIMPLIFICATION_DEBT_QUEUED=$(gh issue list --repo <slug> --label "simplification-debt" --label "status:queued" --state open --json number --jq 'length' || echo 0)
+SIMPLIFICATION_DEBT_CURRENT=$((SIMPLIFICATION_DEBT_ACTIVE + SIMPLIFICATION_DEBT_QUEUED))
+SIMPLIFICATION_DEBT_MAX=$(( MAX_WORKERS * 10 / 100 ))
+[[ "$SIMPLIFICATION_DEBT_MAX" -lt 1 ]] && SIMPLIFICATION_DEBT_MAX=1
+
+# Combined debt cap -- quality-debt + simplification-debt together
+TOTAL_DEBT_CURRENT=$((QUALITY_DEBT_CURRENT + SIMPLIFICATION_DEBT_CURRENT))
+TOTAL_DEBT_MAX=$(( MAX_WORKERS * 30 / 100 ))
+[[ "$TOTAL_DEBT_MAX" -lt 1 ]] && TOTAL_DEBT_MAX=1
+```
+
+If `SIMPLIFICATION_DEBT_CURRENT >= SIMPLIFICATION_DEBT_MAX` or `TOTAL_DEBT_CURRENT >= TOTAL_DEBT_MAX`, do not dispatch more simplification-debt issues this cycle.
+
+**Codacy maintainability signal:** When Codacy reports a maintainability grade drop (B or below) for a repo, simplification-debt issues for that repo get a temporary priority boost -- treat them as priority 7 (same as quality-debt) until the grade recovers. Check the daily quality sweep comment on the persistent quality-review issue for Codacy grade data.
 
 **Label lifecycle** (for your awareness — workers manage their own transitions): `available` → `queued` (you dispatch) → `in-progress` (worker starts) → `in-review` (PR opened) → `done` (PR merged)
 

@@ -1,11 +1,12 @@
 ---
-description: Simplify and refine code for clarity, consistency, and maintainability
+description: Analyse code for simplification opportunities (analysis-only, human-gated)
 agent: Build+
 mode: subagent
+model: opus
 ---
 
-Simplify and refine code for clarity, consistency, and maintainability while preserving all functionality.
+Analyse code for simplification opportunities. This is analysis-only -- produce suggestions for human review, never apply changes directly.
 
 Target: $ARGUMENTS
 
-Read `tools/code-review/code-simplifier.md` and follow its refinement process with the provided arguments.
+Read `tools/code-review/code-simplifier.md` and follow its analysis process with the provided arguments. Output findings in the structured format specified. Do not modify any files.
