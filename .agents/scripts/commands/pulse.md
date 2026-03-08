@@ -597,6 +597,61 @@ gh issue comment <issue_number> --repo <slug> --body "Re-opened for dispatch —
 - NEVER flag a PR that has passing CI and approved reviews — it should be merged, not flagged (handle it in the PRs section above instead)
 - If uncertain whether a PR is truly orphaned, skip it — the next pulse is 2 minutes away
 
+### Repo Hygiene Triage (t1417)
+
+After processing PRs, issues, and orphaned PRs, check the **"Repo Hygiene"** section in the pre-fetched state. This section contains non-deterministic cleanup candidates that the shell layer could not handle automatically — they require your judgment.
+
+The shell layer already handled deterministic cleanup before you started:
+- Worktrees for merged/closed PRs → removed by `worktree-helper.sh clean --auto --force-merged`
+- Stashes whose content is already in HEAD → dropped by `stash-audit-helper.sh auto-clean`
+
+What remains in the hygiene section needs intelligence:
+
+**Orphan worktrees** (0 commits ahead of main, no PR, no active worker):
+
+These are typically branches created by workers that crashed or were killed before producing any commits. However, they could also be:
+- A user's manual experiment they intend to return to
+- A worker that was just dispatched and hasn't committed yet (check Active Workers)
+- A branch with uncommitted work that would be lost if removed
+
+**Assessment approach:**
+1. Cross-reference with Active Workers — if a worker is running on this branch, skip it
+2. Check if the worktree has uncommitted files (noted in the hygiene data as "N uncommitted files") — if dirty, flag but do NOT recommend removal
+3. If the worktree is clean (0 commits, 0 uncommitted files, no PR, no worker) AND the branch name matches a known task pattern (feature/tNNN, bugfix/*, etc.), it's likely a crashed worker — comment on the associated issue if one exists, noting the orphan branch
+4. If uncertain, skip — the next pulse is 2 minutes away
+
+**Do NOT auto-remove orphan worktrees.** Only flag them. The user or a future pulse with more context can decide. Post a comment on the repo's health issue if one exists, listing the orphan worktrees found.
+
+**Stale PRs** (failing CI, no progress):
+
+For each open PR in the pre-fetched state, check:
+- Has CI been failing for 7+ days? (Compare `updatedAt` with current time — if no commits pushed in 7 days and CI is FAIL, it's stale)
+- Is there an active worker? (Check Active Workers section)
+- Is there a `needs-review-fixes` label? (A fix worker may be dispatched)
+
+If a PR has been failing CI for 7+ days with no new commits and no active worker:
+1. Close the PR with a comment explaining why:
+
+```bash
+gh pr close <number> --repo <slug> --comment "Closing — CI has been failing for 7+ days with no new commits or active worker. The linked issue will be relabelled for re-dispatch. If this work is still viable, reopen the PR and push fixes."
+```
+
+2. Relabel the linked issue to `status:available` for re-dispatch
+3. Log the closure in your output
+
+**Uncommitted changes on main:**
+
+If the hygiene data shows uncommitted files on a repo's main branch, this is unusual — main should always be clean. Possible causes:
+- A stash pop that failed (conflict left working tree dirty)
+- Manual edits the user forgot to commit
+- A script that modified files without committing
+
+**Do NOT commit or discard these changes.** Flag them in your output so the user is aware. Example: "aidevops: 2 uncommitted files on main (loop-common.sh, worktree-helper.sh) — likely from a failed stash pop. Manual resolution needed."
+
+**Remaining stashes:**
+
+If the hygiene data shows stashes remaining after auto-clean, these contain changes NOT in HEAD (the safe ones were already dropped). Note the count in your output but take no action — stash management beyond safe-to-drop requires user judgment.
+
 ## Step 3.5: Mission Awareness
 
 If the pre-fetched state includes an "Active Missions" section, process each mission. Missions are autonomous multi-day projects with milestones and features — see `workflows/mission-orchestrator.md` for the full orchestrator spec. The pulse's job is lightweight: check status, dispatch undispatched features, detect milestone completion, and advance state. Heavy reasoning (re-planning, validation design) is the orchestrator's job — the pulse just keeps the pipeline moving.
