@@ -14,10 +14,13 @@ tools:
 
 # AI Video Production
 
-<!-- NOTE: This is a domain-specific content production reference guide, NOT agent
-     operational instructions. The single-source-of-truth policy (AGENTS.md) applies
-     to agent behaviour directives, not domain knowledge. This file belongs in the
-     .agents content library as reference material for the Video/Content subagents. -->
+<!-- CLASSIFICATION: Domain reference material (not agent operational instructions).
+     This file documents video production techniques, API workflows, prompt templates,
+     and tool comparisons. Imperative language ("ALWAYS use ingredients-to-video",
+     "NEVER frame-to-video") describes domain best practices, not agent behaviour
+     directives. The single-source-of-truth policy (AGENTS.md) governs agent routing,
+     tool access, and behavioural rules — not domain knowledge libraries like this.
+     See AGENTS.md Domain Index: Content/Video/Voice for the authoritative pointer. -->
 
 <!-- AI-CONTEXT-START -->
 
@@ -326,7 +329,7 @@ for seed in {4000..4010}; do
     }") || { echo "ERROR: API call failed for seed $seed" >&2; continue; }
 
   # Validate response before using
-  job_id=$(echo "$result" | jq -r '.jobs[0].id // empty' 2>/dev/null)
+  job_id=$(echo "$result" | jq -r '.jobs[0].id // empty' || true)
   if [[ -z "$job_id" ]]; then
     echo "ERROR: Failed to extract job_id for seed $seed (invalid API response)" >&2
     continue
