@@ -291,7 +291,7 @@ main() {
 		script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 		source "${SCRIPT_DIR}/shared-constants.sh"
 
-		bash "$script_dir/credential-helper.sh" "$@"
+		bash "$script_dir/credential-helper.sh" "$@" || return $?
 		;;
 	"help" | "--help" | "-h" | "")
 		show_help
