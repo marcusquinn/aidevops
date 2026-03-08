@@ -18,6 +18,8 @@ New to aidevops? Type `/onboarding`.
 
 ## Pre-Edit Git Check
 
+> **Skip this section if you don't have Edit/Write/Bash tools** (e.g., Plan+ agent). Instead, proceed directly to responding to the user.
+
 Rules: `prompts/build.txt`. Details: `workflows/pre-edit.md`.
 
 Subagent write restrictions: on `main`/`master`, subagents may ONLY write to `README.md`, `TODO.md`, `todo/PLANS.md`, `todo/tasks/*`. All other writes → proposed edits in a worktree.
