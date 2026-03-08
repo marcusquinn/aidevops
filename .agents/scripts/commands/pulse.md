@@ -128,7 +128,7 @@ Then skip to the next PR. The next pulse cycle will retry the permission check â
     UNRESOLVED=$(gh api "repos/<slug>/pulls/<number>/comments" \
       --jq '[.[] | select(
         (.user.login | test("coderabbit|gemini-code-assist|copilot|augment"; "i")) and
-        (.body | test("suggestion|```suggestion"; "i"))
+        (.body | test("```suggestion"; "i"))
       )] | length')
 
     if [[ "$UNRESOLVED" -gt 0 ]]; then
