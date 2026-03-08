@@ -431,17 +431,19 @@ else:
 # Queries the OpenCode/Claude Code SQLite database to compute time spent
 # in interactive sessions vs headless worker/runner sessions, per repo.
 #
+# Measures ACTUAL human time vs machine time per session using message
+# timestamps: human_time = gap between assistant completing and next user
+# message (reading + thinking + typing). machine_time = gap between
+# assistant message created and completed (AI generating).
+#
 # Session type classification (by title pattern):
-#   - Worker: "Issue #*", "Supervisor Pulse", contains "/full-loop"
+#   - Worker: "Issue #*", "PR #*", "Supervisor Pulse", "/full-loop", "dispatch:", "Worker:"
 #   - Interactive: everything else (root sessions only)
 #   - Subagent: sessions with parent_id (excluded — time attributed to parent)
 #
-# Duration: max(message.time_created) - min(message.time_created) per session
-# (actual active time between first and last message, not wall clock).
-#
 # Arguments:
 #   $1 - repo path (filters sessions by directory)
-#   --period day|week|month|year (optional, default: month)
+#   --period day|week|month|quarter|year (optional, default: month)
 #   --format markdown|json (optional, default: markdown)
 #   --db-path <path> (optional, default: auto-detect)
 # Output: markdown table or JSON
@@ -486,7 +488,7 @@ session_time() {
 			db_path="${HOME}/.local/share/claude/Claude.db"
 		else
 			if [[ "$format" == "json" ]]; then
-				echo '{"interactive_sessions":0,"interactive_hours":0,"worker_sessions":0,"worker_hours":0}'
+				echo '{"interactive_sessions":0,"interactive_human_hours":0,"interactive_machine_hours":0,"worker_sessions":0,"worker_machine_hours":0,"total_human_hours":0,"total_machine_hours":0,"total_sessions":0}'
 			else
 				echo "_Session database not found._"
 			fi
@@ -496,7 +498,7 @@ session_time() {
 
 	if ! command -v sqlite3 &>/dev/null; then
 		if [[ "$format" == "json" ]]; then
-			echo '{"interactive_sessions":0,"interactive_hours":0,"worker_sessions":0,"worker_hours":0}'
+			echo '{"interactive_sessions":0,"interactive_human_hours":0,"interactive_machine_hours":0,"worker_sessions":0,"worker_machine_hours":0,"total_human_hours":0,"total_machine_hours":0,"total_sessions":0}'
 		else
 			echo "_sqlite3 not available._"
 		fi
@@ -509,6 +511,7 @@ session_time() {
 	day) seconds=86400 ;;
 	week) seconds=604800 ;;
 	month) seconds=2592000 ;;
+	quarter) seconds=7776000 ;;
 	year) seconds=31536000 ;;
 	*) seconds=2592000 ;;
 	esac
@@ -527,27 +530,52 @@ session_time() {
 	local like_path="${safe_path//%/\\%}"
 	like_path="${like_path//_/\\_}"
 
-	# Query session data with message-based duration using JSON output.
-	# JSON avoids pipe-separator issues (session titles can contain '|').
-	# Filters: root sessions only (no parent_id), within period, matching directory.
-	# Worktree directories (e.g., ~/Git/aidevops.feature-foo) are matched by prefix.
-	# Uses m.time_created for the period filter so sessions with recent messages
-	# are included even if the session itself was created before the cutoff.
+	# Query per-session human vs machine time using window functions.
+	# LAG() compares each message with the previous one in the same session:
+	#   human_time = user.created - prev_assistant.completed (reading + thinking + typing)
+	#   machine_time = assistant.completed - assistant.created (AI generating)
+	# Caps human gaps at 1 hour to exclude idle/abandoned sessions.
+	# Worker sessions (headless) have ~0% human time; interactive ~70-85%.
 	local query_result
 	query_result=$(sqlite3 -json "$db_path" "
+		WITH msg_data AS (
+			SELECT
+				s.id AS session_id,
+				s.title,
+				json_extract(m.data, '\$.role') AS role,
+				m.time_created AS created,
+				json_extract(m.data, '\$.time.completed') AS completed,
+				LAG(json_extract(m.data, '\$.role'))
+					OVER (PARTITION BY s.id ORDER BY m.time_created) AS prev_role,
+				LAG(json_extract(m.data, '\$.time.completed'))
+					OVER (PARTITION BY s.id ORDER BY m.time_created) AS prev_completed
+			FROM session s
+			JOIN message m ON m.session_id = s.id
+			WHERE s.parent_id IS NULL
+			  AND m.time_created > ${since_ms}
+			  AND (s.directory = '${safe_path}'
+			       OR s.directory LIKE '${like_path}.%' ESCAPE '\\'
+			       OR s.directory LIKE '${like_path}-%' ESCAPE '\\')
+		)
 		SELECT
-			s.title,
-			(max(m.time_created) - min(m.time_created)) as duration_ms
-		FROM session s
-		JOIN message m ON m.session_id = s.id
-		WHERE s.parent_id IS NULL
-		  AND m.time_created > ${since_ms}
-		  AND (s.directory = '${safe_path}'
-		       OR s.directory LIKE '${like_path}.%' ESCAPE '\\'
-		       OR s.directory LIKE '${like_path}-%' ESCAPE '\\')
-		GROUP BY s.id
-		HAVING count(m.id) >= 2
-		  AND duration_ms > 5000
+			session_id,
+			title,
+			SUM(CASE
+				WHEN role = 'user' AND prev_role = 'assistant'
+				     AND prev_completed IS NOT NULL
+				     AND (created - prev_completed) BETWEEN 1 AND 3600000
+				THEN created - prev_completed
+				ELSE 0
+			END) AS human_ms,
+			SUM(CASE
+				WHEN role = 'assistant' AND completed IS NOT NULL
+				     AND (completed - created) > 0
+				THEN completed - created
+				ELSE 0
+			END) AS machine_ms
+		FROM msg_data
+		GROUP BY session_id
+		HAVING human_ms + machine_ms > 5000
 	") || query_result="[]"
 
 	# Process JSON in Python for classification and aggregation
@@ -562,6 +590,7 @@ period_name = sys.argv[2]
 # Worker session title patterns
 worker_patterns = [
     re.compile(r'^Issue #\d+'),
+    re.compile(r'^PR #\d+'),
     re.compile(r'^Supervisor Pulse'),
     re.compile(r'/full-loop', re.IGNORECASE),
     re.compile(r'^dispatch:', re.IGNORECASE),
@@ -576,47 +605,54 @@ def classify_session(title):
 
 sessions = json.load(sys.stdin)
 
-interactive_ms = 0
-worker_ms = 0
-interactive_count = 0
-worker_count = 0
+stats = {
+    'interactive': {'count': 0, 'human_ms': 0, 'machine_ms': 0},
+    'worker':      {'count': 0, 'human_ms': 0, 'machine_ms': 0},
+}
 
 for row in sessions:
     title = row.get('title', '')
-    duration_ms = row.get('duration_ms', 0)
+    human_ms = row.get('human_ms', 0)
+    machine_ms = row.get('machine_ms', 0)
+    stype = classify_session(title)
+    stats[stype]['count'] += 1
+    stats[stype]['human_ms'] += human_ms
+    stats[stype]['machine_ms'] += machine_ms
 
-    session_type = classify_session(title)
-    if session_type == 'worker':
-        worker_ms += duration_ms
-        worker_count += 1
-    else:
-        interactive_ms += duration_ms
-        interactive_count += 1
+def ms_to_h(ms):
+    return round(ms / 3600000, 1)
 
-interactive_hours = round(interactive_ms / 1000 / 3600, 1)
-worker_hours = round(worker_ms / 1000 / 3600, 1)
-total_hours = round((interactive_ms + worker_ms) / 1000 / 3600, 1)
+i = stats['interactive']
+w = stats['worker']
+i_human_h = ms_to_h(i['human_ms'])
+i_machine_h = ms_to_h(i['machine_ms'])
+w_machine_h = ms_to_h(w['machine_ms'])
+total_human_h = ms_to_h(i['human_ms'] + w['human_ms'])
+total_machine_h = ms_to_h(i['machine_ms'] + w['machine_ms'])
+total_sessions = i['count'] + w['count']
 
 result = {
-    'interactive_hours': interactive_hours,
-    'interactive_sessions': interactive_count,
-    'worker_hours': worker_hours,
-    'worker_sessions': worker_count,
-    'total_hours': total_hours,
-    'total_sessions': interactive_count + worker_count,
+    'interactive_sessions': i['count'],
+    'interactive_human_hours': i_human_h,
+    'interactive_machine_hours': i_machine_h,
+    'worker_sessions': w['count'],
+    'worker_machine_hours': w_machine_h,
+    'total_human_hours': total_human_h,
+    'total_machine_hours': total_machine_h,
+    'total_sessions': total_sessions,
 }
 
 if format_type == 'json':
     print(json.dumps(result, indent=2))
 else:
-    if interactive_count == 0 and worker_count == 0:
+    if total_sessions == 0:
         print(f'_No session data for the last {period_name}._')
     else:
-        print(f'| Type | Sessions | Hours |')
-        print(f'| --- | ---: | ---: |')
-        print(f'| Interactive (human) | {interactive_count} | {interactive_hours}h |')
-        print(f'| Workers/Runners | {worker_count} | {worker_hours}h |')
-        print(f'| **Total** | **{interactive_count + worker_count}** | **{total_hours}h** |')
+        print(f'| Type | Sessions | Human Hours | Machine Hours |')
+        print(f'| --- | ---: | ---: | ---: |')
+        print(f'| Interactive | {i[\"count\"]} | {i_human_h}h | {i_machine_h}h |')
+        print(f'| Workers/Runners | {w[\"count\"]} | — | {w_machine_h}h |')
+        print(f'| **Total** | **{total_sessions}** | **{total_human_h}h** | **{total_machine_h}h** |')
 " "$format" "$period"
 
 	return 0
@@ -691,25 +727,30 @@ repo_count = int(sys.argv[3])
 repos = json.load(sys.stdin)
 
 totals = {
-    'interactive_hours': 0,
     'interactive_sessions': 0,
-    'worker_hours': 0,
+    'interactive_human_hours': 0,
+    'interactive_machine_hours': 0,
     'worker_sessions': 0,
+    'worker_machine_hours': 0,
 }
 
 for repo in repos:
-    totals['interactive_hours'] += repo.get('interactive_hours', 0)
     totals['interactive_sessions'] += repo.get('interactive_sessions', 0)
-    totals['worker_hours'] += repo.get('worker_hours', 0)
+    totals['interactive_human_hours'] += repo.get('interactive_human_hours', 0)
+    totals['interactive_machine_hours'] += repo.get('interactive_machine_hours', 0)
     totals['worker_sessions'] += repo.get('worker_sessions', 0)
+    totals['worker_machine_hours'] += repo.get('worker_machine_hours', 0)
 
-totals['interactive_hours'] = round(totals['interactive_hours'], 1)
-totals['worker_hours'] = round(totals['worker_hours'], 1)
-total_hours = round(totals['interactive_hours'] + totals['worker_hours'], 1)
+for k in ['interactive_human_hours', 'interactive_machine_hours', 'worker_machine_hours']:
+    totals[k] = round(totals[k], 1)
+
+total_human_h = totals['interactive_human_hours']
+total_machine_h = round(totals['interactive_machine_hours'] + totals['worker_machine_hours'], 1)
 total_sessions = totals['interactive_sessions'] + totals['worker_sessions']
 
 if format_type == 'json':
-    totals['total_hours'] = total_hours
+    totals['total_human_hours'] = total_human_h
+    totals['total_machine_hours'] = total_machine_h
     totals['total_sessions'] = total_sessions
     totals['repo_count'] = repo_count
     print(json.dumps(totals, indent=2))
@@ -719,11 +760,12 @@ else:
     else:
         print(f'_Across {repo_count} managed repos:_')
         print()
-        print(f'| Type | Sessions | Hours |')
-        print(f'| --- | ---: | ---: |')
-        print(f'| Interactive (human) | {totals[\"interactive_sessions\"]} | {totals[\"interactive_hours\"]}h |')
-        print(f'| Workers/Runners | {totals[\"worker_sessions\"]} | {totals[\"worker_hours\"]}h |')
-        print(f'| **Total** | **{total_sessions}** | **{total_hours}h** |')
+        print(f'| Type | Sessions | Human Hours | Machine Hours |')
+        print(f'| --- | ---: | ---: | ---: |')
+        i = totals
+        print(f'| Interactive | {i[\"interactive_sessions\"]} | {i[\"interactive_human_hours\"]}h | {i[\"interactive_machine_hours\"]}h |')
+        print(f'| Workers/Runners | {i[\"worker_sessions\"]} | — | {i[\"worker_machine_hours\"]}h |')
+        print(f'| **Total** | **{total_sessions}** | **{total_human_h}h** | **{total_machine_h}h** |')
 " "$format" "$period" "$repo_count"
 
 	return 0
@@ -785,8 +827,8 @@ main() {
 		echo "  table   <repo-path> [--period day|week|month|year] [--format markdown|json]"
 		echo "  user    <repo-path> <github-login>"
 		echo "  cross-repo-summary <path1> [path2 ...] [--period month] [--format markdown]"
-		echo "  session-time <repo-path> [--period month] [--format markdown]"
-		echo "  cross-repo-session-time <path1> [path2 ...] [--period month] [--format markdown]"
+		echo "  session-time <repo-path> [--period day|week|month|quarter|year] [--format markdown|json]"
+		echo "  cross-repo-session-time <path1> [path2 ...] [--period month] [--format markdown|json]"
 		echo ""
 		echo "Computes contributor activity from immutable git commit history."
 		echo "Session time stats from AI assistant database (OpenCode/Claude Code)."
@@ -796,9 +838,11 @@ main() {
 		echo "  Direct  - committer is the author (push, CLI commit)"
 		echo "  PR Merge - committer is noreply@github.com (GitHub squash-merge)"
 		echo ""
-		echo "Session types:"
-		echo "  Interactive - human-driven sessions (conversations, debugging)"
-		echo "  Worker      - headless dispatched tasks (Issue #N, Supervisor Pulse)"
+		echo "Session time (human vs machine):"
+		echo "  Human hours   - time spent reading, thinking, typing (between AI responses)"
+		echo "  Machine hours - time AI spent generating responses"
+		echo "  Interactive   - human-driven sessions (conversations, debugging)"
+		echo "  Worker        - headless dispatched tasks (Issue #N, PR #N, Supervisor Pulse)"
 		return 0
 		;;
 	esac
