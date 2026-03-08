@@ -277,8 +277,6 @@ Periodic review --> /code-simplifier (analyse)
                     Normal dispatch --> worktree + PR (lowest priority)
 ```
 
-This is deliberately slower than direct editing. The cost of accidentally removing institutional knowledge far exceeds the cost of a human review step.
-
 ## Pulse and Supervisor Integration
 
 Approved `simplification-debt` issues enter the normal pulse dispatch queue at **priority 8** (below quality-debt, above oldest-issues). They are post-deployment maintainability work -- dispatched only when no higher-priority work exists.

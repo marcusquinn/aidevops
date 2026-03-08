@@ -445,6 +445,10 @@ SIMPLIFICATION_DEBT_MAX=$(( MAX_WORKERS * 10 / 100 ))
 [[ "$SIMPLIFICATION_DEBT_MAX" -lt 1 ]] && SIMPLIFICATION_DEBT_MAX=1
 
 # Combined debt cap -- quality-debt + simplification-debt together
+# Recalculate quality-debt here so this snippet is self-contained
+QUALITY_DEBT_ACTIVE=$(gh issue list --repo <slug> --label "quality-debt" --label "status:in-progress" --state open --json number --jq 'length' || echo 0)
+QUALITY_DEBT_QUEUED=$(gh issue list --repo <slug> --label "quality-debt" --label "status:queued" --state open --json number --jq 'length' || echo 0)
+QUALITY_DEBT_CURRENT=$((QUALITY_DEBT_ACTIVE + QUALITY_DEBT_QUEUED))
 TOTAL_DEBT_CURRENT=$((QUALITY_DEBT_CURRENT + SIMPLIFICATION_DEBT_CURRENT))
 TOTAL_DEBT_MAX=$(( MAX_WORKERS * 30 / 100 ))
 [[ "$TOTAL_DEBT_MAX" -lt 1 ]] && TOTAL_DEBT_MAX=1
