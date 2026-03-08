@@ -24,6 +24,11 @@ readonly VT_API_BASE="https://www.virustotal.com/api/v3"
 readonly VERSION="1.0.0"
 readonly RATE_LIMIT_DELAY="${VT_RATE_LIMIT_DELAY:-16}" # 4 req/min = 1 every 15s, add 1s buffer
 
+# Resolve script directory and source shared constants (colors, log_* helpers)
+_vt_script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
+# shellcheck source=shared-constants.sh
+source "${_vt_script_dir}/shared-constants.sh"
+
 # =============================================================================
 # Helper Functions
 # =============================================================================
@@ -90,15 +95,11 @@ resolve_api_key() {
 	fi
 
 	# Try aidevops secret helper
-	local script_dir=""
-	script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || return 1
-	source "${SCRIPT_DIR}/shared-constants.sh"
-
-	if [[ -x "${script_dir}/secret-helper.sh" ]]; then
+	if [[ -x "${_vt_script_dir}/secret-helper.sh" ]]; then
 		local key=""
-		key=$("${script_dir}/secret-helper.sh" get VIRUSTOTAL_MARCUSQUINN 2>/dev/null || true)
+		key=$("${_vt_script_dir}/secret-helper.sh" get VIRUSTOTAL_MARCUSQUINN 2>/dev/null || true)
 		if [[ -z "$key" ]]; then
-			key=$("${script_dir}/secret-helper.sh" get VIRUSTOTAL_API_KEY 2>/dev/null || true)
+			key=$("${_vt_script_dir}/secret-helper.sh" get VIRUSTOTAL_API_KEY 2>/dev/null || true)
 		fi
 		if [[ -n "$key" ]]; then
 			echo "$key"
@@ -241,8 +242,8 @@ cmd_scan_file() {
 		else
 			log_info "File not found in VirusTotal database (never submitted)"
 			log_info "This is normal for text/markdown skill files"
+			echo "UNKNOWN|File not in VT database"
 		fi
-		echo "UNKNOWN|File not in VT database"
 		return 0
 	elif [[ $vt_exit -ne 0 ]]; then
 		# Real API error (quota exceeded, network failure, etc.)

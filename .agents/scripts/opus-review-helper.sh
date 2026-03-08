@@ -48,14 +48,29 @@ NC='\033[0m'
 # ============================================================
 
 _ensure_state_dir() {
-	mkdir -p "$STATE_DIR" 2>/dev/null || true
-	return 0
+	mkdir -p "$STATE_DIR"
 }
 
 _get_last_run() {
-	if [[ -f "$STATE_FILE" ]]; then
-		cat "$STATE_FILE" 2>/dev/null || echo "0"
+	local val
+
+	if [[ ! -f "$STATE_FILE" ]]; then
+		# No state file yet — first run
+		echo "0"
+		return 0
+	fi
+
+	# File exists — read it; surface permission/I/O errors instead of hiding them
+	if ! val="$(<"$STATE_FILE")"; then
+		echo "ERROR: Cannot read state file: $STATE_FILE" >&2
+		return 1
+	fi
+
+	# Validate numeric — corrupted/empty state file must not crash arithmetic
+	if [[ "$val" =~ ^[0-9]+$ ]]; then
+		echo "$val"
 	else
+		echo "WARNING: State file contains non-numeric value, treating as 0" >&2
 		echo "0"
 	fi
 	return 0

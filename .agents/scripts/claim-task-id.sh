@@ -677,6 +677,7 @@ main() {
 	# Associative-style parallel arrays: issue_nums[0..N-1] for each allocated ID
 	local -a issue_nums=()
 	local has_any_issue=false
+	local first_issue_num="" # Track first successful issue number (not relying on issue_nums[0])
 
 	if [[ "$NO_ISSUE" == "false" ]] && [[ "$is_offline" == "false" ]] && [[ "$platform" != "unknown" ]]; then
 		if check_cli "$platform"; then
@@ -685,29 +686,37 @@ main() {
 			gitlab) ref_prefix="GL" ;;
 			esac
 
-			local i
-			for ((i = first_id; i <= last_id; i++)); do
-				local issue_title="t${i}: ${TASK_TITLE}"
-				local issue_num=""
+			# Guard: skip issue creation if TASK_TITLE is empty (batch without --title)
+			if [[ -z "$TASK_TITLE" ]]; then
+				log_warn "No --title provided — skipping issue creation for batch allocation"
+			else
+				local i
+				for ((i = first_id; i <= last_id; i++)); do
+					local issue_title="t${i}: ${TASK_TITLE}"
+					local issue_num=""
 
-				case "$platform" in
-				github)
-					issue_num=$(create_github_issue "$issue_title" "$TASK_DESCRIPTION" "$TASK_LABELS" "$REPO_PATH") || true
-					;;
-				gitlab)
-					issue_num=$(create_gitlab_issue "$issue_title" "$TASK_DESCRIPTION" "$TASK_LABELS" "$REPO_PATH") || true
-					;;
-				esac
+					case "$platform" in
+					github)
+						issue_num=$(create_github_issue "$issue_title" "$TASK_DESCRIPTION" "$TASK_LABELS" "$REPO_PATH") || true
+						;;
+					gitlab)
+						issue_num=$(create_gitlab_issue "$issue_title" "$TASK_DESCRIPTION" "$TASK_LABELS" "$REPO_PATH") || true
+						;;
+					esac
 
-				if [[ -n "$issue_num" ]]; then
-					log_success "Created issue: ${ref_prefix}#${issue_num}"
-					issue_nums+=("$issue_num")
-					has_any_issue=true
-				else
-					log_warn "Issue creation failed for t${i} (non-fatal — ID is secured)"
-					issue_nums+=("")
-				fi
-			done
+					if [[ -n "$issue_num" ]]; then
+						log_success "Created issue: ${ref_prefix}#${issue_num}"
+						issue_nums+=("$issue_num")
+						has_any_issue=true
+						if [[ -z "$first_issue_num" ]]; then
+							first_issue_num="$issue_num"
+						fi
+					else
+						log_warn "Issue creation failed for t${i} (non-fatal — ID is secured)"
+						issue_nums+=("")
+					fi
+				done
+			fi
 		else
 			log_warn "CLI for $platform not found — skipping issue creation"
 		fi
@@ -723,13 +732,13 @@ main() {
 		echo "task_count=${ALLOC_COUNT}"
 	fi
 
-	if [[ "$has_any_issue" == "true" ]]; then
-		# Output ref for first issue (primary — backwards compatible)
-		echo "ref=${ref_prefix}#${issue_nums[0]}"
+	if [[ "$has_any_issue" == "true" ]] && [[ -n "$first_issue_num" ]]; then
+		# Output ref for first successful issue (primary — backwards compatible)
+		echo "ref=${ref_prefix}#${first_issue_num}"
 		local remote_url
 		remote_url=$(cd "$REPO_PATH" && git remote get-url "$REMOTE_NAME" 2>/dev/null | sed 's/\.git$//' || echo "")
-		if [[ -n "$remote_url" ]] && [[ -n "${issue_nums[0]}" ]]; then
-			echo "issue_url=${remote_url}/issues/${issue_nums[0]}"
+		if [[ -n "$remote_url" ]]; then
+			echo "issue_url=${remote_url}/issues/${first_issue_num}"
 		fi
 		# Output refs for all issues in batch (new — for callers that parse all output)
 		if [[ "$ALLOC_COUNT" -gt 1 ]]; then
