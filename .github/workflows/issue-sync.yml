@@ -465,11 +465,13 @@ jobs:
   # =========================================================================
   # t1339: Apply conventional-commit labels to PRs
   # t3851: Fixed — uses pull_request_target for fork PR write permissions
+  # t3862: Added GH#NNNN: prefix stripping, graceful permission failure
   # =========================================================================
   # Parses the PR title prefix (feat:, fix:, docs:, etc.) and applies
   # the corresponding GitHub label. Runs on PR open and title edit.
   # Uses pull_request_target (not pull_request) so the GITHUB_TOKEN has
   # write access even for PRs from forks.
+  # Strips task ID prefixes (t1234:, GH#1234:) before extracting the type.
   label-pr:
     name: Label PR from Conventional Commit
     if: >-
@@ -496,11 +498,13 @@ jobs:
         run: |
           # Extract conventional commit prefix from PR title
           # Supports: feat, fix, docs, refactor, chore, perf, test, ci, build, style
-          # Also supports task-prefixed titles: "t1234: feat: ..." or "t1234: Fix ..."
+          # Also supports task-prefixed titles: "t1234: feat: ..." or "GH#1234: Fix ..."
           TITLE="$PR_TITLE"
 
-          # Strip task ID prefix if present (e.g., "t1234: " or "t1234.5: ")
-          TITLE=$(echo "$TITLE" | sed -E 's/^t[0-9]+(\.[0-9]+)*:\s*//')
+          # Strip task ID prefixes if present:
+          #   - "t1234: " or "t1234.5: " (internal task IDs)
+          #   - "GH#1234: " (GitHub issue references)
+          TITLE=$(echo "$TITLE" | sed -E 's/^(t[0-9]+(\.[0-9]+)*|GH#[0-9]+):[[:space:]]*//')
 
           # Extract the conventional commit type (case-insensitive)
           # Matches "feat:", "fix:", "Fix ", "Add ", etc. — colon or space after prefix
@@ -529,7 +533,12 @@ jobs:
           if [[ -n "$LABEL" ]]; then
             # Create label if it doesn't exist (idempotent)
             gh label create "$LABEL" --repo "$REPO" --force 2>/dev/null || true
-            gh pr edit "$PR_NUMBER" --repo "$REPO" --add-label "$LABEL"
+            # Apply label — graceful failure if token lacks write permissions
+            # (e.g., stale runs from before pull_request_target migration)
+            if ! gh pr edit "$PR_NUMBER" --repo "$REPO" --add-label "$LABEL" 2>&1; then
+              echo "::warning::Could not apply label '$LABEL' to PR #$PR_NUMBER (insufficient permissions). Re-run this check to pick up the latest workflow permissions."
+              exit 0
+            fi
             echo "Applied label '$LABEL' to PR #$PR_NUMBER (prefix: $PREFIX)"
           fi
 
@@ -575,22 +584,29 @@ jobs:
             exit 0
           fi
 
-          # Check if a task ID in the title has a matching open issue
+          # Check if a task ID or GH# reference in the title has a matching open issue
           TASK_ID=$(echo "$PR_TITLE" | grep -oE '^t[0-9]+(\.[0-9]+)*' || true)
-          if [[ -n "$TASK_ID" ]]; then
+          GH_REF=$(echo "$PR_TITLE" | grep -oE '^GH#[0-9]+' | sed 's/GH#//' || true)
+          if [[ -n "$GH_REF" ]]; then
+            # GH#NNNN: prefix directly references the issue number
+            ISSUE_NUM="$GH_REF"
+          elif [[ -n "$TASK_ID" ]]; then
             ISSUE_NUM=$(gh issue list --repo "$REPO" --state open --search "${TASK_ID}:" --json number --jq '.[0].number' 2>/dev/null || true)
-            if [[ -n "$ISSUE_NUM" && "$ISSUE_NUM" != "null" ]]; then
-              echo "::warning::PR has task ID $TASK_ID with matching issue #$ISSUE_NUM but no closing keyword in body. Add 'Closes #$ISSUE_NUM' to the PR body for automatic linkage."
-              # Post a one-time comment (check if we already commented)
-              EXISTING=$(gh pr view "$PR_NUMBER" --repo "$REPO" --json comments --jq '[.comments[] | select(.body | contains("issue-link-check"))] | length' 2>/dev/null || echo "0")
-              if [[ "$EXISTING" == "0" ]]; then
-                gh pr comment "$PR_NUMBER" --repo "$REPO" --body "<!-- issue-link-check -->
-          **Missing issue link.** This PR has task ID \`$TASK_ID\` with a matching open issue #$ISSUE_NUM, but the PR body doesn't contain a closing keyword.
+          else
+            ISSUE_NUM=""
+          fi
+          if [[ -n "$ISSUE_NUM" && "$ISSUE_NUM" != "null" ]]; then
+            echo "::warning::PR references issue #$ISSUE_NUM but no closing keyword in body. Add 'Closes #$ISSUE_NUM' to the PR body for automatic linkage."
+            # Post a one-time comment (check if we already commented)
+            # Graceful failure if token lacks write permissions
+            EXISTING=$(gh pr view "$PR_NUMBER" --repo "$REPO" --json comments --jq '[.comments[] | select(.body | contains("issue-link-check"))] | length' 2>/dev/null || echo "0")
+            if [[ "$EXISTING" == "0" ]]; then
+              gh pr comment "$PR_NUMBER" --repo "$REPO" --body "<!-- issue-link-check -->
+          **Missing issue link.** This PR references issue #$ISSUE_NUM, but the PR body doesn't contain a closing keyword.
 
-          Add \`Closes #$ISSUE_NUM\` to the PR description so GitHub auto-links and auto-closes the issue on merge."
-              fi
-              exit 0
+          Add \`Closes #$ISSUE_NUM\` to the PR description so GitHub auto-links and auto-closes the issue on merge." 2>/dev/null || echo "::warning::Could not post comment (insufficient permissions)"
             fi
+            exit 0
           fi
 
           echo "No issue reference found — this is acceptable for chore/docs PRs without tracked issues"
