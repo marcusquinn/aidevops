@@ -127,7 +127,7 @@ When work evolves significantly from the branch name/purpose:
 git stash --include-untracked -m "WIP: {description}"
 git checkout main && git pull origin main
 git checkout -b {type}/{description}
-git stash pop
+git stash pop || echo "Stash conflicts detected - resolve before continuing"
 ```
 
 **Self-check trigger**: Before each file edit, briefly consider: "Does this change align with `{branch-name}`?"

@@ -157,8 +157,8 @@ EOF
 
 	# Check for superseded entries that may be obsolete
 	local superseded_count
-	superseded_count=$(db "$MEMORY_DB" "SELECT COUNT(*) FROM learning_relations WHERE relation_type = 'updates';" 2>/dev/null || echo "0")
-	if [[ "$superseded_count" -gt 0 ]]; then
+	superseded_count=$(db "$MEMORY_DB" "SELECT COUNT(*) FROM learning_relations WHERE relation_type = 'updates';") || log_warn "Failed to query superseded count"
+	if [[ "${superseded_count:-0}" -gt 0 ]]; then
 		log_info "$superseded_count memories have been superseded by newer versions"
 	fi
 
@@ -271,8 +271,8 @@ ON CONFLICT(id) DO UPDATE SET
 EOF
 
 					# Re-point relations
-					db "$MEMORY_DB" "UPDATE learning_relations SET supersedes_id = '$escaped_keep' WHERE supersedes_id = '$escaped_remove';" 2>/dev/null || true
-					db "$MEMORY_DB" "DELETE FROM learning_relations WHERE id = '$escaped_remove';" 2>/dev/null || true
+					db_cleanup "$MEMORY_DB" "UPDATE learning_relations SET supersedes_id = '$escaped_keep' WHERE supersedes_id = '$escaped_remove';"
+					db_cleanup "$MEMORY_DB" "DELETE FROM learning_relations WHERE id = '$escaped_remove';"
 
 					# Delete duplicate
 					db "$MEMORY_DB" "DELETE FROM learning_access WHERE id = '$escaped_remove';"
@@ -358,8 +358,8 @@ EOF
 						fi
 
 						# Re-point relations and delete
-						db "$MEMORY_DB" "UPDATE learning_relations SET supersedes_id = '$oldest_esc' WHERE supersedes_id = '$nid_esc';" 2>/dev/null || true
-						db "$MEMORY_DB" "DELETE FROM learning_relations WHERE id = '$nid_esc';" 2>/dev/null || true
+						db_cleanup "$MEMORY_DB" "UPDATE learning_relations SET supersedes_id = '$oldest_esc' WHERE supersedes_id = '$nid_esc';"
+						db_cleanup "$MEMORY_DB" "DELETE FROM learning_relations WHERE id = '$nid_esc';"
 						db "$MEMORY_DB" "DELETE FROM learning_access WHERE id = '$nid_esc';"
 						db "$MEMORY_DB" "DELETE FROM learnings WHERE id = '$nid_esc';"
 					fi
@@ -435,8 +435,8 @@ EOF
 									db "$MEMORY_DB" "UPDATE learnings SET tags = '$merged_tags_esc' WHERE id = '$keep_esc';"
 								fi
 
-								db "$MEMORY_DB" "UPDATE learning_relations SET supersedes_id = '$keep_esc' WHERE supersedes_id = '$remove_esc';" 2>/dev/null || true
-								db "$MEMORY_DB" "DELETE FROM learning_relations WHERE id = '$remove_esc';" 2>/dev/null || true
+								db_cleanup "$MEMORY_DB" "UPDATE learning_relations SET supersedes_id = '$keep_esc' WHERE supersedes_id = '$remove_esc';"
+								db_cleanup "$MEMORY_DB" "DELETE FROM learning_relations WHERE id = '$remove_esc';"
 								db "$MEMORY_DB" "DELETE FROM learning_access WHERE id = '$remove_esc';"
 								db "$MEMORY_DB" "DELETE FROM learnings WHERE id = '$remove_esc';"
 							fi
@@ -601,10 +601,10 @@ _prune_ai_judged() {
 		log_warn "Backup failed before prune — proceeding cautiously"
 	fi
 
-	db "$MEMORY_DB" "DELETE FROM learning_relations WHERE id IN ($prune_ids);" 2>/dev/null || true
-	db "$MEMORY_DB" "DELETE FROM learning_relations WHERE supersedes_id IN ($prune_ids);" 2>/dev/null || true
-	db "$MEMORY_DB" "DELETE FROM learning_access WHERE id IN ($prune_ids);" 2>/dev/null || true
-	db "$MEMORY_DB" "DELETE FROM learnings WHERE id IN ($prune_ids);" 2>/dev/null || true
+	db_cleanup "$MEMORY_DB" "DELETE FROM learning_relations WHERE id IN ($prune_ids);"
+	db_cleanup "$MEMORY_DB" "DELETE FROM learning_relations WHERE supersedes_id IN ($prune_ids);"
+	db_cleanup "$MEMORY_DB" "DELETE FROM learning_access WHERE id IN ($prune_ids);"
+	db_cleanup "$MEMORY_DB" "DELETE FROM learnings WHERE id IN ($prune_ids);"
 
 	db "$MEMORY_DB" "INSERT INTO learnings(learnings) VALUES('rebuild');"
 	log_success "Pruned $prune_count entries (AI-judged, kept $keep_count)"
@@ -890,7 +890,7 @@ cmd_prune_patterns() {
 
 	init_db
 
-	# Build type filter SQL
+	# Build type filter SQL (validate each type against VALID_TYPES to prevent SQL injection)
 	local type_sql=""
 	local IFS=','
 	local type_parts=()
@@ -898,8 +898,24 @@ cmd_prune_patterns() {
 	unset IFS
 	local type_conditions=()
 	for t in "${type_parts[@]}"; do
+		# Validate against VALID_TYPES allowlist
+		local valid=false
+		for vt in $VALID_TYPES; do
+			if [[ "$t" == "$vt" ]]; then
+				valid=true
+				break
+			fi
+		done
+		if [[ "$valid" != true ]]; then
+			log_error "Invalid type '$t'. Valid types: $VALID_TYPES"
+			return 1
+		fi
 		type_conditions+=("'$t'")
 	done
+	if [[ ${#type_conditions[@]} -eq 0 ]]; then
+		log_error "No valid types specified"
+		return 1
+	fi
 	type_sql=$(printf "%s," "${type_conditions[@]}")
 	type_sql="${type_sql%,}"
 
@@ -977,8 +993,8 @@ EOF
 	fi
 
 	# Clean up relations first
-	db "$MEMORY_DB" "DELETE FROM learning_relations WHERE id IN (SELECT id FROM learnings WHERE $delete_where);" 2>/dev/null || true
-	db "$MEMORY_DB" "DELETE FROM learning_relations WHERE supersedes_id IN (SELECT id FROM learnings WHERE $delete_where);" 2>/dev/null || true
+	db_cleanup "$MEMORY_DB" "DELETE FROM learning_relations WHERE id IN (SELECT id FROM learnings WHERE $delete_where);"
+	db_cleanup "$MEMORY_DB" "DELETE FROM learning_relations WHERE supersedes_id IN (SELECT id FROM learnings WHERE $delete_where);"
 	db "$MEMORY_DB" "DELETE FROM learning_access WHERE id IN (SELECT id FROM learnings WHERE $delete_where);"
 	db "$MEMORY_DB" "DELETE FROM learnings WHERE $delete_where;"
 

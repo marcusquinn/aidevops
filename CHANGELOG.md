@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.159.0] - 2026-03-08
+
+### Added
+
+- add session time tracking to health dashboard (#3920)
+
+### Changed
+
+- Documentation: add changelog entry for session time tracking
+
+## [2.156.0] - 2026-03-08
+
+### Added
+
+- add hygiene layer — stash cleanup, orphan worktree detection, stale PR triage (#3895)
+
 ## [2.154.5] - 2026-03-08
 
 ### Fixed
@@ -164,7 +180,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Version bump and maintenance updates
-
 
 ## [2.151.2] - 2026-03-05
 
@@ -457,7 +472,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Version bump and maintenance updates
-
 
 ## [2.134.1] - 2026-02-27
 
@@ -1350,13 +1364,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Version bump and maintenance updates
 
-
 ## [2.115.20] - 2026-02-15
 
 ### Changed
 
 - Version bump and maintenance updates
-
 
 ## [2.115.19] - 2026-02-15
 
@@ -1364,13 +1376,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Version bump and maintenance updates
 
-
 ## [2.115.18] - 2026-02-15
 
 ### Changed
 
 - Version bump and maintenance updates
-
 
 ## [2.115.17] - 2026-02-15
 
@@ -1378,13 +1388,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Version bump and maintenance updates
 
-
 ## [2.115.16] - 2026-02-15
 
 ### Changed
 
 - Version bump and maintenance updates
-
 
 ## [2.115.15] - 2026-02-15
 
@@ -1392,13 +1400,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Version bump and maintenance updates
 
-
 ## [2.115.14] - 2026-02-15
 
 ### Changed
 
 - Version bump and maintenance updates
-
 
 ## [2.115.13] - 2026-02-15
 
@@ -1406,13 +1412,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Version bump and maintenance updates
 
-
 ## [2.115.12] - 2026-02-15
 
 ### Changed
 
 - Version bump and maintenance updates
-
 
 ## [2.115.11] - 2026-02-15
 
@@ -1420,13 +1424,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Version bump and maintenance updates
 
-
 ## [2.115.10] - 2026-02-15
 
 ### Changed
 
 - Version bump and maintenance updates
-
 
 ## [2.115.9] - 2026-02-15
 
@@ -1434,13 +1436,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Version bump and maintenance updates
 
-
 ## [2.115.8] - 2026-02-15
 
 ### Changed
 
 - Version bump and maintenance updates
-
 
 ## [2.115.7] - 2026-02-15
 
@@ -1448,13 +1448,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Version bump and maintenance updates
 
-
 ## [2.115.6] - 2026-02-15
 
 ### Changed
 
 - Version bump and maintenance updates
-
 
 ## [2.115.5] - 2026-02-15
 
@@ -1462,20 +1460,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Version bump and maintenance updates
 
-
 ## [2.115.4] - 2026-02-15
 
 ### Changed
 
 - Version bump and maintenance updates
 
-
 ## [2.115.3] - 2026-02-15
 
 ### Changed
 
 - Version bump and maintenance updates
-
 
 ## [2.115.2] - 2026-02-15
 

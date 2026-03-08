@@ -465,6 +465,8 @@ add_opencode_plugin() {
 		jq --arg p "$plugin_spec" '. + {plugin: [$p]}' "$opencode_config" >"$temp_file" && mv "$temp_file" "$opencode_config"
 		print_success "Created plugin array with $plugin_name"
 	fi
+
+	return 0
 }
 
 setup_opencode_plugins() {

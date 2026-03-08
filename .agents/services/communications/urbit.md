@@ -445,16 +445,19 @@ sse.listen({
       if (data.json?.["add-nodes"]) {
         const nodes = data.json["add-nodes"].nodes
         for (const [index, node] of Object.entries(nodes)) {
-          // Runtime type check instead of unsafe type assertion
+          // Runtime type guard — validate structure before accessing properties
           const nodeObj = node as Record<string, unknown>
           if (!nodeObj?.post || typeof nodeObj.post !== "object") continue
-          const post = nodeObj.post as { author: string; contents: { text?: string }[] }
-          if (post.author !== SHIP_NAME) {
-            const textContent = post.contents
-              .filter((c: { text?: string }) => c.text)
-              .map((c: { text?: string }) => c.text)
+          const rawPost = nodeObj.post as Record<string, unknown>
+          if (typeof rawPost.author !== "string" || !Array.isArray(rawPost.contents)) continue
+          const author = rawPost.author
+          const contents = rawPost.contents as Array<Record<string, unknown>>
+          if (author !== SHIP_NAME) {
+            const textContent = contents
+              .filter((c) => c != null && typeof c === "object" && typeof c.text === "string")
+              .map((c) => c.text as string)
               .join(" ")
-            console.log(`Message from ~${post.author}: ${textContent}`)
+            console.log(`Message from ~${author}: ${textContent}`)
             // Handle command and send response...
           }
         }

@@ -404,7 +404,7 @@ EOF
 }
 
 # Register skill in skill-sources.json
-# Args: name upstream_url local_path format commit merge_strategy notes [upstream_hash]
+# Args: name upstream_url local_path format commit merge_strategy notes [upstream_hash] [upstream_etag] [upstream_last_modified]
 register_skill() {
 	local name="$1"
 	local upstream_url="$2"
@@ -414,6 +414,8 @@ register_skill() {
 	local merge_strategy="${6:-added}"
 	local notes="${7:-}"
 	local upstream_hash="${8:-}"
+	local upstream_etag="${9:-}"
+	local upstream_last_modified="${10:-}"
 
 	ensure_skill_sources
 
@@ -442,7 +444,7 @@ register_skill() {
 	timestamp=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
 	# Create new skill entry using jq for proper JSON escaping
-	# Include upstream_hash field for URL-sourced skills (content-hash comparison)
+	# Include upstream_hash, upstream_etag, upstream_last_modified for URL-sourced skills (t1415.2, t1415.3)
 	local new_entry
 	new_entry=$(jq -n \
 		--arg name "$name" \
@@ -455,6 +457,8 @@ register_skill() {
 		--arg merge_strategy "$merge_strategy" \
 		--arg notes "$notes" \
 		--arg upstream_hash "$upstream_hash" \
+		--arg upstream_etag "$upstream_etag" \
+		--arg upstream_last_modified "$upstream_last_modified" \
 		'{
             name: $name,
             upstream_url: $upstream_url,
@@ -465,7 +469,9 @@ register_skill() {
             last_checked: $last_checked,
             merge_strategy: $merge_strategy,
             notes: $notes
-        } + (if $upstream_hash != "" then { upstream_hash: $upstream_hash } else {} end)')
+        } + (if $upstream_hash != "" then { upstream_hash: $upstream_hash } else {} end)
+          + (if $upstream_etag != "" then { upstream_etag: $upstream_etag } else {} end)
+          + (if $upstream_last_modified != "" then { upstream_last_modified: $upstream_last_modified } else {} end)')
 
 	local tmp_file
 	tmp_file=$(mktemp)
@@ -998,12 +1004,13 @@ cmd_add_url() {
 	rm -rf "$fetch_dir"
 	mkdir -p "$fetch_dir"
 
-	# Fetch the content with curl
+	# Fetch the content with curl, capturing response headers for ETag/Last-Modified (t1415.3)
 	local http_code=""
 	local fetch_file="$fetch_dir/fetched-skill.md"
+	local header_file="$fetch_dir/response-headers.txt"
 
 	http_code=$(curl -sS -L --connect-timeout 15 --max-time 60 \
-		-o "$fetch_file" -w "%{http_code}" \
+		-o "$fetch_file" -D "$header_file" -w "%{http_code}" \
 		-H "User-Agent: aidevops-skill-importer/1.0" \
 		"$url" 2>/dev/null) || true
 
@@ -1023,6 +1030,13 @@ cmd_add_url() {
 		log_error "Fetched content is empty: $url"
 		rm -rf "$fetch_dir"
 		return 1
+	fi
+
+	# Extract ETag and Last-Modified from response headers for caching (t1415.3)
+	local resp_etag="" resp_last_modified=""
+	if [[ -f "$header_file" ]]; then
+		resp_etag=$(grep -i '^etag:' "$header_file" | tail -1 | sed 's/^[Ee][Tt][Aa][Gg]: *//; s/\r$//')
+		resp_last_modified=$(grep -i '^last-modified:' "$header_file" | tail -1 | sed 's/^[Ll][Aa][Ss][Tt]-[Mm][Oo][Dd][Ii][Ff][Ii][Ee][Dd]: *//; s/\r$//')
 	fi
 
 	# Validate that the content looks like markdown/text (not HTML error page, binary, etc.)
@@ -1201,8 +1215,8 @@ EOF
 	# VirusTotal scan (advisory, non-blocking)
 	scan_skill_virustotal "$fetch_dir" "$skill_name" "$skip_security"
 
-	# Register in skill-sources.json with upstream_hash for content-based update detection
-	register_skill "$skill_name" "$url" ".agents/${target_path}.md" "url" "" "added" "Imported from URL" "$content_hash"
+	# Register in skill-sources.json with upstream_hash and cache headers for update detection (t1415.2, t1415.3)
+	register_skill "$skill_name" "$url" ".agents/${target_path}.md" "url" "" "added" "Imported from URL" "$content_hash" "$resp_etag" "$resp_last_modified"
 
 	# Cleanup
 	rm -rf "$fetch_dir"
@@ -1211,6 +1225,9 @@ EOF
 	echo ""
 	log_info "Run './setup.sh' to create symlinks for other AI assistants"
 	log_info "Updates detected via content hash comparison (SHA-256)"
+	if [[ -n "$resp_etag" || -n "$resp_last_modified" ]]; then
+		log_info "HTTP caching headers captured for conditional requests (ETag/Last-Modified)"
+	fi
 
 	return 0
 }

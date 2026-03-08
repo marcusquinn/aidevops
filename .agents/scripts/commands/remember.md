@@ -17,8 +17,11 @@ Content to remember: $ARGUMENTS
 | `CODEBASE_PATTERN` | Project conventions | "All API routes use /api/v1 prefix" |
 | `USER_PREFERENCE` | Developer preferences | "Prefers tabs over spaces" |
 | `TOOL_CONFIG` | Tool setup notes | "SonarCloud needs SONAR_TOKEN in CI" |
-| `DECISION` | Architecture decisions | "Chose SQLite over Postgres for simplicity" |
+| `DECISION` | Project-level process, workflow, or policy choices (naming conventions, release cadence, branching strategy) | "Adopted conventional commits for all repos" |
 | `CONTEXT` | Background info | "Legacy API deprecated in Q3" |
+| `ARCHITECTURAL_DECISION` | System-level architecture choices and trade-offs (service boundaries, data flow, tech stack selection) | "Chose SQLite over Postgres for single-node simplicity" |
+| `ERROR_FIX` | Bug fixes and patches | "Patched null pointer in auth middleware" |
+| `OPEN_THREAD` | Unresolved questions or follow-ups | "Investigate race condition in job scheduler" |
 
 ## Workflow
 
@@ -120,7 +123,8 @@ AI assistants **MUST** proactively suggest `/remember` when detecting these patt
 | "that fixed it", "it works now", "solved" | Solution found | `WORKING_SOLUTION` |
 | "I prefer", "I like", "always use", "never use" | Preference stated | `USER_PREFERENCE` |
 | "don't do X", "X doesn't work", "avoid X" | Failed approach | `FAILED_APPROACH` |
-| "let's go with", "decided to", "we'll use" | Decision made | `DECISION` |
+| "let's go with", "decided to", "we'll use" | Process/policy decision | `DECISION` |
+| "architecture", "service boundary", "tech stack", "data flow" | Architecture decision | `ARCHITECTURAL_DECISION` |
 | "the trick is", "workaround", "hack" | Workaround found | `WORKING_SOLUTION` |
 | "configure X as", "set X to", "X needs Y" | Tool config | `TOOL_CONFIG` |
 

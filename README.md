@@ -1128,7 +1128,7 @@ These use direct API calls via curl, avoiding MCP server startup entirely:
 **Context & Codebase:**
 
 - [Augment Context Engine](https://docs.augmentcode.com/context-services/mcp/overview) - Semantic codebase retrieval with deep code understanding
-- [llm-tldr](https://github.com/parcadei/llm-tldr) - Semantic code analysis with 95% token savings (tree, structure, CFG, DFG, impact analysis)
+- [llm-tldr](https://github.com/parcadei/llm-tldr) - Semantic code analysis with 95% token savings ([details below](#llm-tldr---semantic-code-analysis))
 - [Context7](https://context7.com/) - Real-time documentation access for thousands of libraries
 - [Repomix](https://github.com/yamadashy/repomix) - Pack codebases into AI-friendly context
 - [OpenAPI Search](https://openapi-mcp.openapisearch.com/mcp) - Search and explore any OpenAPI specification (zero install, Cloudflare Worker)
@@ -1556,7 +1556,7 @@ tldr impact src/auth.py validate   # What would change affect?
 | Feature | Token Savings | Use Case |
 |---------|---------------|----------|
 | Structure extraction | 90% | Understanding code layout |
-| Context analysis | 95% | Deep code understanding |
+| Context analysis | 95% | Comprehensive code understanding |
 | Semantic search | N/A | Finding code by meaning |
 | Impact analysis | N/A | Change risk assessment |
 
@@ -2068,8 +2068,11 @@ See `.agents/workflows/session-manager.md` for the complete guide.
 | `CODEBASE_PATTERN` | Project conventions |
 | `USER_PREFERENCE` | Developer preferences |
 | `TOOL_CONFIG` | Tool setup notes |
-| `DECISION` | Architecture decisions |
+| `DECISION` | Process, workflow, or policy choices (naming, release cadence, branching) |
 | `CONTEXT` | Background info |
+| `ARCHITECTURAL_DECISION` | System-level architecture (service boundaries, data flow, tech stack) |
+| `ERROR_FIX` | Bug fixes and patches |
+| `OPEN_THREAD` | Unresolved questions or follow-ups |
 | `SUCCESS_PATTERN` | Approaches that consistently work |
 | `FAILURE_PATTERN` | Approaches that consistently fail |
 

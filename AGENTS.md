@@ -68,7 +68,7 @@ find .agents/scripts/ -name "*.sh" -exec shellcheck {} \;
 
 # Release new version
 .agents/scripts/version-manager.sh release [major|minor|patch]
-```text
+```
 
 ## Self-Assessment Protocol
 

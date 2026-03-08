@@ -22,6 +22,7 @@ jobs:
     
     permissions:
       contents: write
+      issues: write
       pull-requests: write
       security-events: write
     
@@ -230,6 +231,7 @@ jobs:
     - name: 📝 Comment on PR
       if: github.event_name == 'pull_request'
       uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
+      continue-on-error: true
       with:
         script: |
           const fs = require('fs');
@@ -237,7 +239,7 @@ jobs:
           if (fs.existsSync('quality-report.md')) {
             const report = fs.readFileSync('quality-report.md', 'utf8');
             
-            github.rest.issues.createComment({
+            await github.rest.issues.createComment({
               issue_number: context.issue.number,
               owner: context.repo.owner,
               repo: context.repo.repo,

@@ -503,14 +503,33 @@ do_validate() {
 }
 
 # Determine LLM backend with multi-model fallback
+# Model IDs are configurable via environment variables:
+#   DOCEXTRACT_GEMINI_MODEL  - Gemini model (default: gemini-2.5-flash)
+#   DOCEXTRACT_OPENAI_MODEL  - OpenAI model (default: gpt-4o)
+#   DOCEXTRACT_ANTHROPIC_MODEL - Anthropic model (default: claude-sonnet-4-6)
+#   DOCEXTRACT_OLLAMA_MODEL  - Ollama model (default: llama3.2)
 resolve_llm_backend() {
 	local privacy="$1"
 	local llm_backend=""
 
+	local gemini_model="${DOCEXTRACT_GEMINI_MODEL:-gemini-2.5-flash}"
+	local openai_model="${DOCEXTRACT_OPENAI_MODEL:-gpt-4o}"
+	local anthropic_model="${DOCEXTRACT_ANTHROPIC_MODEL:-claude-sonnet-4-6}"
+	local ollama_model="${DOCEXTRACT_OLLAMA_MODEL:-llama3.2}"
+
+	# Basic model name sanity check (no spaces, no shell metacharacters)
+	local model_var
+	for model_var in "$gemini_model" "$openai_model" "$anthropic_model" "$ollama_model"; do
+		if [[ "$model_var" =~ [[:space:]\;\|\&\$] ]]; then
+			print_error "Invalid model identifier '${model_var}': contains disallowed characters"
+			return 1
+		fi
+	done
+
 	case "$privacy" in
 	local)
 		if command -v ollama &>/dev/null; then
-			llm_backend="ollama/llama3.2"
+			llm_backend="ollama/${ollama_model}"
 		else
 			print_error "Ollama required for local privacy mode but not installed"
 			return 1
@@ -522,15 +541,15 @@ resolve_llm_backend() {
 	cloud)
 		# Prefer Gemini Flash for cost efficiency, fall back to OpenAI
 		if [[ -n "${GOOGLE_API_KEY:-}" ]] || [[ -n "${GEMINI_API_KEY:-}" ]]; then
-			llm_backend="google/gemini-2.5-flash"
+			llm_backend="google/${gemini_model}"
 		elif [[ -n "${OPENAI_API_KEY:-}" ]]; then
-			llm_backend="openai/gpt-4o"
+			llm_backend="openai/${openai_model}"
 		elif [[ -n "${ANTHROPIC_API_KEY:-}" ]]; then
-			llm_backend="anthropic/claude-sonnet-4-6"
+			llm_backend="anthropic/${anthropic_model}"
 		else
 			print_warning "No cloud API key found, falling back to local"
 			if command -v ollama &>/dev/null; then
-				llm_backend="ollama/llama3.2"
+				llm_backend="ollama/${ollama_model}"
 			else
 				print_error "No LLM backend available"
 				return 1
@@ -540,11 +559,11 @@ resolve_llm_backend() {
 	none | *)
 		# Auto-select: prefer local, fall back to cloud
 		if command -v ollama &>/dev/null; then
-			llm_backend="ollama/llama3.2"
+			llm_backend="ollama/${ollama_model}"
 		elif [[ -n "${GOOGLE_API_KEY:-}" ]] || [[ -n "${GEMINI_API_KEY:-}" ]]; then
-			llm_backend="google/gemini-2.5-flash"
+			llm_backend="google/${gemini_model}"
 		elif [[ -n "${OPENAI_API_KEY:-}" ]]; then
-			llm_backend="openai/gpt-4o"
+			llm_backend="openai/${openai_model}"
 		else
 			print_error "No LLM backend available (install Ollama or set API key)"
 			return 1

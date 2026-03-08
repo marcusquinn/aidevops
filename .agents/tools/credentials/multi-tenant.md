@@ -67,6 +67,11 @@ Multi-tenant credential storage allows managing separate credential sets for:
 
 ## Setup
 
+> **Note:** The examples below use `credential-helper.sh` for brevity. If the script
+> is not on your `PATH`, invoke it explicitly:
+> `bash ~/.aidevops/agents/scripts/credential-helper.sh <command>`
+> or via the wrapper: `setup-local-api-keys.sh tenant <command>`
+
 ### Initialize
 
 ```bash
@@ -182,7 +187,7 @@ exec $SHELL              # Restart shell
 
 ```bash
 # Load specific tenant in a script (preferred: source)
-source <(credential-helper.sh export --tenant client-acme)
+source <(bash ~/.aidevops/agents/scripts/credential-helper.sh export --tenant client-acme)
 
 # Check active tenant
 echo "$AIDEVOPS_ACTIVE_TENANT"

@@ -76,7 +76,7 @@ Preflight runs automatically during release:
 ```bash
 # Preflight runs before version bump
 .agents/scripts/version-manager.sh release minor
-```text
+```
 
 ### Manual
 
@@ -92,7 +92,7 @@ Run quality checks independently:
 # Specific checks
 shellcheck .agents/scripts/*.sh
 npx secretlint "**/*"
-```text
+```
 
 ## Integration with Release
 
@@ -116,7 +116,7 @@ release command
     │
     ▼
    ... tag, release ...
-```text
+```
 
 ## Bypassing Preflight
 
@@ -128,7 +128,7 @@ For emergency hotfixes only:
 
 # Skip both preflight and changelog
 .agents/scripts/version-manager.sh release patch --skip-preflight --force
-```text
+```
 
 **When to skip:**
 - Critical security hotfix that can't wait
@@ -152,7 +152,7 @@ shellcheck .agents/scripts/*.sh
 
 # Check specific file
 shellcheck .agents/scripts/version-manager.sh
-```text
+```
 
 **Must pass**: Zero violations (errors are blocking)
 
@@ -166,7 +166,7 @@ npx secretlint "**/*"
 
 # With helper
 .agents/scripts/secretlint-helper.sh scan
-```text
+```
 
 **Detects**: AWS keys, GitHub tokens, OpenAI keys, private keys, database URLs
 
@@ -176,7 +176,7 @@ Ensures VERSION file matches all references:
 
 ```bash
 .agents/scripts/version-manager.sh validate
-```text
+```
 
 **Checks**: VERSION, README badge, sonar-project.properties, setup.sh
 
@@ -243,7 +243,7 @@ shellcheck -f gcc .agents/scripts/problem-script.sh
 
 # Auto-fix some issues (with shellcheck-fix if available)
 # Or manually fix based on SC codes
-```text
+```
 
 ### Secretlint False Positives
 
@@ -255,7 +255,7 @@ tests/fixtures/*
 
 # Ignore specific file
 path/to/false-positive.txt
-```text
+```
 
 ### Version Mismatch
 
@@ -265,7 +265,7 @@ path/to/false-positive.txt
 
 # Fix by re-running bump
 .agents/scripts/version-manager.sh bump patch
-```text
+```
 
 ## Worktree Awareness
 
@@ -285,8 +285,9 @@ Preflight checks report ALL issues, including pre-existing ones. When the loop h
 # See what files you changed
 git diff main --name-only
 
-# Check issues only in your changed files
-shellcheck $(git diff main --name-only -- '*.sh')
+# Check issues only in your changed shell scripts
+# Uses -z/xargs -0 to handle filenames with spaces safely
+git diff main --name-only -z -- '*.sh' | xargs -0 shellcheck
 ```
 
 ### When to Proceed Despite Issues

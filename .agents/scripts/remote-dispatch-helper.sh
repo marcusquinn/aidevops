@@ -147,13 +147,24 @@ cmd_add() {
 	# Add host to config
 	local tmp_file
 	tmp_file=$(mktemp)
-	jq --arg name "$name" \
+	# shellcheck disable=SC2064
+	trap "rm -f '$tmp_file'" EXIT
+	if ! jq --arg name "$name" \
 		--arg addr "$address" \
 		--arg trans "$transport" \
 		--arg cont "$container" \
 		--arg usr "$user" \
 		'.hosts[$name] = {address: $addr, transport: $trans, container: $cont, user: $usr, added: (now | strftime("%Y-%m-%dT%H:%M:%SZ"))}' \
-		"$REMOTE_HOSTS_FILE" >"$tmp_file" && mv "$tmp_file" "$REMOTE_HOSTS_FILE"
+		"$REMOTE_HOSTS_FILE" >"$tmp_file"; then
+		_log_error "Failed to update $REMOTE_HOSTS_FILE"
+		rm -f "$tmp_file"
+		return 1
+	fi
+	if ! mv "$tmp_file" "$REMOTE_HOSTS_FILE"; then
+		_log_error "Failed to replace $REMOTE_HOSTS_FILE"
+		rm -f "$tmp_file"
+		return 1
+	fi
 
 	_log_success "Added remote host: $name ($address via $transport)"
 	return 0
@@ -182,7 +193,18 @@ cmd_remove() {
 
 	local tmp_file
 	tmp_file=$(mktemp)
-	jq --arg name "$name" 'del(.hosts[$name])' "$REMOTE_HOSTS_FILE" >"$tmp_file" && mv "$tmp_file" "$REMOTE_HOSTS_FILE"
+	# shellcheck disable=SC2064
+	trap "rm -f '$tmp_file'" EXIT
+	if ! jq --arg name "$name" 'del(.hosts[$name])' "$REMOTE_HOSTS_FILE" >"$tmp_file"; then
+		_log_error "Failed to update $REMOTE_HOSTS_FILE"
+		rm -f "$tmp_file"
+		return 1
+	fi
+	if ! mv "$tmp_file" "$REMOTE_HOSTS_FILE"; then
+		_log_error "Failed to replace $REMOTE_HOSTS_FILE"
+		rm -f "$tmp_file"
+		return 1
+	fi
 
 	_log_success "Removed remote host: $name"
 	return 0
@@ -402,39 +424,6 @@ _build_credential_env() {
 	return 0
 }
 
-#######################################
-# Forward credentials to remote host via SSH
-# Uses SendEnv + AcceptEnv for secure passthrough (no command-line exposure).
-# Falls back to env prefix on the remote command if SendEnv is not configured.
-#
-# Args: ssh_cmd_array credential_env_array remote_command
-# Outputs: Full command with credential forwarding
-#######################################
-_build_remote_command_with_creds() {
-	local remote_command="$1"
-	shift
-
-	# Build env export prefix for the remote command
-	local env_prefix=""
-	local -a cred_env=()
-	while IFS= read -r line; do
-		[[ -z "$line" ]] && continue
-		cred_env+=("$line")
-	done < <(_build_credential_env)
-
-	if [[ ${#cred_env[@]} -gt 0 ]]; then
-		# Use env command on remote to set variables (avoids shell escaping issues)
-		env_prefix="env"
-		for var in "${cred_env[@]}"; do
-			env_prefix+=" $(printf '%q' "$var")"
-		done
-		env_prefix+=" "
-	fi
-
-	echo "${env_prefix}${remote_command}"
-	return 0
-}
-
 # =============================================================================
 # Remote Dispatch
 # =============================================================================
@@ -509,7 +498,7 @@ cmd_dispatch() {
 	local remote_log_file="${remote_work_dir}/worker.log"
 
 	_log_info "Creating remote workspace: $remote_work_dir"
-	if ! "${ssh_cmd[@]}" "mkdir -p '${remote_work_dir}'" 2>/dev/null; then
+	if ! "${ssh_cmd[@]}" "mkdir -p '${REMOTE_WORK_BASE}' '${remote_work_dir}' && chmod 700 '${REMOTE_WORK_BASE}' '${remote_work_dir}'" 2>/dev/null; then
 		_log_error "Failed to create remote workspace"
 		return 1
 	fi
@@ -574,7 +563,7 @@ cd "${remote_work_dir}" || exit 1
 # Clone or update repo
 if [[ -d repo/.git ]]; then
     cd repo
-    git fetch origin
+    git fetch -q origin
     git checkout -B "${branch_name}" "origin/main" 2>/dev/null || git checkout -b "${branch_name}" 2>/dev/null || true
 else
     git clone --depth=50 "${repo_url}" repo
@@ -671,9 +660,19 @@ WRAPPER_EOF
 	local remote_pid=""
 	if [[ "$container_name" != "auto" && "$container_name" != "none" && -n "$container_name" ]]; then
 		# Dispatch inside a container on the remote host
+		# Copy scripts into the container first (host paths are not visible inside)
 		_log_info "Dispatching inside container: $container_name"
+		if ! "${ssh_cmd[@]}" "docker cp '${remote_wrapper}' '${container_name}:${remote_wrapper}'" 2>/dev/null; then
+			_log_error "Failed to copy wrapper script into container: $container_name"
+			return 1
+		fi
+		if ! "${ssh_cmd[@]}" "docker cp '${remote_script}' '${container_name}:${remote_script}'" 2>/dev/null; then
+			_log_error "Failed to copy dispatch script into container: $container_name"
+			return 1
+		fi
+		# Run without -d so nohup/& properly backgrounds and captures the docker exec PID
 		remote_pid=$("${ssh_cmd[@]}" "
-			nohup docker exec -d '${container_name}' bash '${remote_wrapper}' &
+			nohup docker exec '${container_name}' bash '${remote_wrapper}' >> '${remote_log_file}' 2>&1 &
 			echo \$!
 		" 2>/dev/null)
 	else
@@ -699,6 +698,7 @@ WRAPPER_EOF
     "host": "${host}",
     "address": "${address}",
     "transport": "${transport}",
+    "user": "${user}",
     "container": "${container_name}",
     "remote_pid": "${remote_pid}",
     "remote_work_dir": "${remote_work_dir}",
@@ -748,6 +748,10 @@ cmd_logs() {
 			shift
 			;;
 		--tail)
+			if [[ ! "${2:-}" =~ ^[0-9]+$ ]]; then
+				_log_error "--tail requires a non-negative integer"
+				return 1
+			fi
 			tail_lines="$2"
 			shift 2
 			;;
@@ -764,9 +768,10 @@ cmd_logs() {
 	local address="" transport="" user=""
 
 	if [[ -f "$meta_file" ]]; then
-		remote_log_file=$(jq -r '.remote_log_file' "$meta_file" 2>/dev/null || echo "$remote_log_file")
-		address=$(jq -r '.address' "$meta_file" 2>/dev/null || echo "")
-		transport=$(jq -r '.transport' "$meta_file" 2>/dev/null || echo "ssh")
+		remote_log_file=$(jq -r '.remote_log_file' "$meta_file" || echo "$remote_log_file")
+		address=$(jq -r '.address // empty' "$meta_file" || echo "")
+		transport=$(jq -r '.transport // "ssh"' "$meta_file" || echo "ssh")
+		user=$(jq -r '.user // empty' "$meta_file" || echo "")
 	fi
 
 	# Resolve host if address not from metadata
@@ -840,16 +845,16 @@ cmd_status() {
 		return 1
 	fi
 
-	local remote_pid address transport remote_log_file container dispatched_at
-	remote_pid=$(jq -r '.remote_pid' "$meta_file" 2>/dev/null)
-	address=$(jq -r '.address' "$meta_file" 2>/dev/null)
-	transport=$(jq -r '.transport' "$meta_file" 2>/dev/null)
-	remote_log_file=$(jq -r '.remote_log_file' "$meta_file" 2>/dev/null)
-	container=$(jq -r '.container' "$meta_file" 2>/dev/null)
-	dispatched_at=$(jq -r '.dispatched_at' "$meta_file" 2>/dev/null)
+	local remote_pid address transport user remote_log_file container dispatched_at
+	remote_pid=$(jq -r '.remote_pid' "$meta_file")
+	address=$(jq -r '.address' "$meta_file")
+	transport=$(jq -r '.transport' "$meta_file")
+	user=$(jq -r '.user // empty' "$meta_file" || echo "")
+	remote_log_file=$(jq -r '.remote_log_file' "$meta_file")
+	container=$(jq -r '.container' "$meta_file")
+	dispatched_at=$(jq -r '.dispatched_at' "$meta_file")
 
 	# Build SSH command
-	local user=""
 	local -a ssh_cmd=()
 	while IFS= read -r line; do
 		ssh_cmd+=("$line")
@@ -937,18 +942,19 @@ cmd_cleanup() {
 
 	# Read metadata
 	local meta_file="${REMOTE_LOG_DIR}/${task_id}-remote.json"
-	local remote_pid="" address="" transport="" remote_work_dir=""
+	local remote_pid="" address="" transport="" user="" remote_work_dir=""
 
 	if [[ -f "$meta_file" ]]; then
-		remote_pid=$(jq -r '.remote_pid' "$meta_file" 2>/dev/null)
-		address=$(jq -r '.address' "$meta_file" 2>/dev/null)
-		transport=$(jq -r '.transport' "$meta_file" 2>/dev/null)
-		remote_work_dir=$(jq -r '.remote_work_dir' "$meta_file" 2>/dev/null)
+		remote_pid=$(jq -r '.remote_pid' "$meta_file")
+		address=$(jq -r '.address' "$meta_file")
+		transport=$(jq -r '.transport' "$meta_file")
+		user=$(jq -r '.user // empty' "$meta_file" || echo "")
+		remote_work_dir=$(jq -r '.remote_work_dir' "$meta_file")
 	else
 		# Resolve from host config
 		local host_info
 		host_info=$(_resolve_host "$host")
-		IFS='|' read -r address transport _ _ <<<"$host_info"
+		IFS='|' read -r address transport _ user <<<"$host_info"
 		remote_work_dir="${REMOTE_WORK_BASE}/${task_id}"
 	fi
 
@@ -956,7 +962,7 @@ cmd_cleanup() {
 	local -a ssh_cmd=()
 	while IFS= read -r line; do
 		ssh_cmd+=("$line")
-	done < <(_build_ssh_cmd "$address" "$transport" "")
+	done < <(_build_ssh_cmd "$address" "$transport" "$user")
 
 	# Kill remote process if still running
 	if [[ -n "$remote_pid" ]]; then
@@ -1042,10 +1048,10 @@ main() {
 	add) cmd_add "$@" ;;
 	remove) cmd_remove "$@" ;;
 	check) cmd_check "$@" ;;
-	dispatch) cmd_dispatch "$@" ;;
+	dispatch | dispatch-container) cmd_dispatch "$@" ;;
 	logs) cmd_logs "$@" ;;
 	status) cmd_status "$@" ;;
-	cleanup) cmd_cleanup "$@" ;;
+	cleanup | cleanup-container) cmd_cleanup "$@" ;;
 	help | --help | -h) cmd_help ;;
 	*)
 		_log_error "Unknown command: $command"

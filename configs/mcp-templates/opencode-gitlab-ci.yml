@@ -29,17 +29,17 @@ opencode:
     - when: never
   
   before_script:
-    # Install OpenCode CLI
-    - npm install --global opencode-ai
+    # Install OpenCode CLI (pin version for reproducible builds)
+    - npm install --global opencode-ai@1.2.21
     
     # Install system dependencies
     - apt-get update && apt-get install -y git curl
     
-    # Install glab CLI for GitLab operations
+    # Install glab CLI for GitLab operations (official gitlab-org/cli)
     - |
-      GLAB_VERSION=$(curl -s https://api.github.com/repos/profclems/glab/releases/latest | grep tag_name | cut -d '"' -f 4)
-      curl -sL "https://github.com/profclems/glab/releases/download/${GLAB_VERSION}/glab_${GLAB_VERSION#v}_Linux_x86_64.tar.gz" | tar xz
-      mv glab /usr/local/bin/
+      GLAB_VERSION="v1.89.0"
+      curl -sL "https://gitlab.com/gitlab-org/cli/-/releases/${GLAB_VERSION}/downloads/glab_${GLAB_VERSION#v}_linux_amd64.tar.gz" | tar xz
+      mv bin/glab /usr/local/bin/
     
     # Configure git identity
     - git config --global user.email "opencode@gitlab.com"
@@ -106,7 +106,7 @@ opencode:
   stage: opencode
   image: node:22-slim
   script:
-    - npm install --global opencode-ai
+    - npm install --global opencode-ai@1.2.21
     - mkdir -p ~/.local/share/opencode
     - echo '{"anthropic":{"apiKey":"'$ANTHROPIC_API_KEY'"}}' > ~/.local/share/opencode/auth.json
     - opencode run "$AI_FLOW_INPUT"

@@ -710,10 +710,10 @@ auto_prune() {
 
 		if [[ "$unlinked_stale_count" -gt 0 ]]; then
 			local unlinked_subquery="SELECT l.id FROM learnings l LEFT JOIN learning_access a ON l.id = a.id LEFT JOIN learning_entities le ON l.id = le.learning_id WHERE l.created_at < datetime('now', '-$DEFAULT_MAX_AGE_DAYS days') AND a.id IS NULL AND le.learning_id IS NULL"
-			db "$MEMORY_DB" "DELETE FROM learning_relations WHERE id IN ($unlinked_subquery);" 2>/dev/null || true
-			db "$MEMORY_DB" "DELETE FROM learning_relations WHERE supersedes_id IN ($unlinked_subquery);" 2>/dev/null || true
-			db "$MEMORY_DB" "DELETE FROM learning_access WHERE id IN ($unlinked_subquery);" 2>/dev/null || true
-			db "$MEMORY_DB" "DELETE FROM learnings WHERE id IN ($unlinked_subquery);" 2>/dev/null || true
+			db_cleanup "$MEMORY_DB" "DELETE FROM learning_relations WHERE id IN ($unlinked_subquery);"
+			db_cleanup "$MEMORY_DB" "DELETE FROM learning_relations WHERE supersedes_id IN ($unlinked_subquery);"
+			db_cleanup "$MEMORY_DB" "DELETE FROM learning_access WHERE id IN ($unlinked_subquery);"
+			db_cleanup "$MEMORY_DB" "DELETE FROM learnings WHERE id IN ($unlinked_subquery);"
 			log_info "Auto-pruned $unlinked_stale_count unlinked stale entries (>$DEFAULT_MAX_AGE_DAYS days, never accessed)"
 		fi
 
@@ -723,17 +723,17 @@ auto_prune() {
 
 		if [[ "$linked_stale_count" -gt 0 ]]; then
 			local linked_subquery="SELECT l.id FROM learnings l LEFT JOIN learning_access a ON l.id = a.id INNER JOIN learning_entities le ON l.id = le.learning_id WHERE l.created_at < datetime('now', '-$entity_max_age_days days') AND a.id IS NULL"
-			db "$MEMORY_DB" "DELETE FROM learning_entities WHERE learning_id IN ($linked_subquery);" 2>/dev/null || true
-			db "$MEMORY_DB" "DELETE FROM learning_relations WHERE id IN ($linked_subquery);" 2>/dev/null || true
-			db "$MEMORY_DB" "DELETE FROM learning_relations WHERE supersedes_id IN ($linked_subquery);" 2>/dev/null || true
-			db "$MEMORY_DB" "DELETE FROM learning_access WHERE id IN ($linked_subquery);" 2>/dev/null || true
-			db "$MEMORY_DB" "DELETE FROM learnings WHERE id IN ($linked_subquery);" 2>/dev/null || true
+			db_cleanup "$MEMORY_DB" "DELETE FROM learning_entities WHERE learning_id IN ($linked_subquery);"
+			db_cleanup "$MEMORY_DB" "DELETE FROM learning_relations WHERE id IN ($linked_subquery);"
+			db_cleanup "$MEMORY_DB" "DELETE FROM learning_relations WHERE supersedes_id IN ($linked_subquery);"
+			db_cleanup "$MEMORY_DB" "DELETE FROM learning_access WHERE id IN ($linked_subquery);"
+			db_cleanup "$MEMORY_DB" "DELETE FROM learnings WHERE id IN ($linked_subquery);"
 			log_info "Auto-pruned $linked_stale_count entity-linked stale entries (>$entity_max_age_days days, never accessed)"
 		fi
 
 		local total_pruned=$((unlinked_stale_count + linked_stale_count))
 		if [[ "$total_pruned" -gt 0 ]]; then
-			db "$MEMORY_DB" "INSERT INTO learnings(learnings) VALUES('rebuild');" 2>/dev/null || true
+			db_cleanup "$MEMORY_DB" "INSERT INTO learnings(learnings) VALUES('rebuild');"
 		fi
 	else
 		# Fallback: no entity tables — use original fixed-threshold pruning
@@ -742,11 +742,11 @@ auto_prune() {
 
 		if [[ "$stale_count" -gt 0 ]]; then
 			local subquery="SELECT l.id FROM learnings l LEFT JOIN learning_access a ON l.id = a.id WHERE l.created_at < datetime('now', '-$DEFAULT_MAX_AGE_DAYS days') AND a.id IS NULL"
-			db "$MEMORY_DB" "DELETE FROM learning_relations WHERE id IN ($subquery);" 2>/dev/null || true
-			db "$MEMORY_DB" "DELETE FROM learning_relations WHERE supersedes_id IN ($subquery);" 2>/dev/null || true
-			db "$MEMORY_DB" "DELETE FROM learning_access WHERE id IN ($subquery);" 2>/dev/null || true
-			db "$MEMORY_DB" "DELETE FROM learnings WHERE id IN ($subquery);" 2>/dev/null || true
-			db "$MEMORY_DB" "INSERT INTO learnings(learnings) VALUES('rebuild');" 2>/dev/null || true
+			db_cleanup "$MEMORY_DB" "DELETE FROM learning_relations WHERE id IN ($subquery);"
+			db_cleanup "$MEMORY_DB" "DELETE FROM learning_relations WHERE supersedes_id IN ($subquery);"
+			db_cleanup "$MEMORY_DB" "DELETE FROM learning_access WHERE id IN ($subquery);"
+			db_cleanup "$MEMORY_DB" "DELETE FROM learnings WHERE id IN ($subquery);"
+			db_cleanup "$MEMORY_DB" "INSERT INTO learnings(learnings) VALUES('rebuild');"
 			log_info "Auto-pruned $stale_count stale entries (>$DEFAULT_MAX_AGE_DAYS days, never accessed)"
 		fi
 	fi
@@ -784,6 +784,21 @@ INSERT OR IGNORE INTO learning_entities (learning_id, entity_id)
 VALUES ('$escaped_learning', '$escaped_entity');
 EOF
 	return 0
+}
+
+#######################################
+# Run a cleanup SQL statement, logging errors instead of suppressing them.
+# Used for secondary operations (relation/access cleanup) where failure
+# should not abort the parent operation but must not be silently swallowed.
+# Usage: db_cleanup "$MEMORY_DB" "DELETE FROM learning_relations WHERE ..."
+#######################################
+db_cleanup() {
+	local db_path="$1"
+	shift
+	local err_output
+	if ! err_output=$(db "$db_path" "$@" 2>&1); then
+		log_warn "Cleanup SQL failed: $err_output (statement: ${*:0:120})"
+	fi
 }
 
 #######################################

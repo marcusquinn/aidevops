@@ -13,7 +13,7 @@ Use `/save-todo` after planning. Auto-detects complexity:
 
 ## Task Format
 
-`- [ ] t001 Description @owner #tag ~4h (ai:2h test:1h) started:ISO blocked-by:t002`
+`- [ ] t001 Description @owner #tag ~1h started:ISO blocked-by:t002`
 
 Dependencies: `blocked-by:t001`, `blocks:t002`, `t001.1` (subtask).
 
@@ -68,9 +68,36 @@ The AI lifecycle engine (`SUPERVISOR_AI_LIFECYCLE=true`, default) replaces hardc
 
 Add these tags to tasks that need human action before they can proceed. The supervisor's eligibility assessment detects them and skips dispatch: `account-needed`, `hosting-needed`, `login-needed`, `api-key-needed`, `clarification-needed`, `resources-needed`, `payment-needed`, `approval-needed`, `decision-needed`, `design-needed`, `content-needed`, `dns-needed`, `domain-needed`, `testing-needed`.
 
+## Estimation Calibration
+
+Estimates represent **AI-assisted execution time** — the wall-clock time from branch creation to PR-ready, including implementation, testing, and verification. They are NOT human-developer estimates.
+
+**Calibrated from 340 completed tasks** (git-measured actual vs estimated):
+- Median estimate/actual ratio was 2.2x (estimates were 2.2x too high)
+- 53% of tasks had estimates > 2x actual duration
+- Root cause: estimates were written as if a human developer were doing the work
+
+**Use these calibrated tiers:**
+
+| Tier | Estimate | Scope | Examples |
+|------|----------|-------|---------|
+| Trivial | `~15m` | 1-2 file edits, single function | Fix typo, update config value, add label |
+| Small | `~30m` | Single-file feature, helper function | New helper script, add CLI flag, fix bug |
+| Medium | `~1h` | Multi-file, CI workflow, new integration | New subagent, API integration, workflow |
+| Large | `~2h` | 5+ files, new subsystem, cross-cutting | New feature with tests, refactor module |
+| Major | `~4h` | Cross-cutting orchestration, new system | New orchestration layer, major redesign |
+
+**Rules:**
+- Default to `~30m` for most tasks (the median actual completion time)
+- Only use `~4h` for genuinely complex multi-system work
+- `~2h` is the threshold for auto-subtasking — tasks above this get decomposed
+- When in doubt, estimate lower — over-estimation wastes dispatch capacity by reserving worker slots longer than needed
+
+**Note on `actual:` field:** The `actual:` field on completed tasks is recorded by `session-time-helper.sh` as active session time, which may differ from wall-clock branch-to-PR time. Both are useful — session time measures AI execution cost, wall-clock measures delivery speed. The calibration above is based on git-measured wall-clock time (branch creation to last commit before PR).
+
 ## Auto-Subtasking
 
-(t1188.2): Tasks with estimates >4h that have no existing subtasks are flagged as `needs-subtasking` in the eligibility assessment. The AI reasoner uses `create_subtasks` to break them into dispatchable units (~30m-4h each) before attempting dispatch. Tasks that already have subtasks are flagged as `has-subtasks` — the supervisor dispatches the subtasks instead.
+(t1188.2): Tasks with estimates >2h that have no existing subtasks are flagged as `needs-subtasking` in the eligibility assessment. The AI reasoner uses `create_subtasks` to break them into dispatchable units (~15m-2h each) before attempting dispatch. Tasks that already have subtasks are flagged as `has-subtasks` — the supervisor dispatches the subtasks instead.
 
 ## Cross-Repo Concurrency Fairness
 

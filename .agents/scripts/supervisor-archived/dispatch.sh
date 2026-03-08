@@ -2733,9 +2733,8 @@ cmd_dispatch() {
 		local escaped_batch
 		escaped_batch=$(sql_escape "$batch_id")
 		local base_concurrency max_load_factor batch_max_concurrency
-		base_concurrency=$(db "$SUPERVISOR_DB" "SELECT concurrency FROM batches WHERE id = '$escaped_batch';")
-		max_load_factor=$(db "$SUPERVISOR_DB" "SELECT max_load_factor FROM batches WHERE id = '$escaped_batch';")
-		batch_max_concurrency=$(db "$SUPERVISOR_DB" "SELECT COALESCE(max_concurrency, 0) FROM batches WHERE id = '$escaped_batch';" 2>/dev/null || echo "0")
+		# Single query for all batch concurrency fields (GH#3769: combine separate DB lookups)
+		IFS='|' read -r base_concurrency max_load_factor batch_max_concurrency < <(db "$SUPERVISOR_DB" "SELECT concurrency || '|' || COALESCE(max_load_factor, '') || '|' || COALESCE(max_concurrency, 0) FROM batches WHERE id = '$escaped_batch';" 2>/dev/null || echo "||0")
 		local concurrency
 		concurrency=$(calculate_adaptive_concurrency "${base_concurrency:-4}" "${max_load_factor:-2}" "${batch_max_concurrency:-0}")
 		local active_count

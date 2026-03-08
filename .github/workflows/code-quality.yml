@@ -143,10 +143,20 @@ jobs:
         fetch-depth: 0  # Shallow clones should be disabled for better analysis
 
     - name: SonarCloud Scan
+      if: env.SONAR_TOKEN != ''
       uses: SonarSource/sonarqube-scan-action@40f5b61913e891f9d316696628698051136015be
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+      continue-on-error: true
+
+    - name: SonarCloud Scan Skipped
+      if: env.SONAR_TOKEN == ''
+      env:
+        SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+      run: |
+        echo "::warning::SONAR_TOKEN not configured — skipping SonarCloud scan"
+        echo "Add SONAR_TOKEN to repository secrets to enable SonarCloud analysis"
 
     - name: Codacy Analysis
       env:

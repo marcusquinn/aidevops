@@ -78,6 +78,13 @@ jobs:
           # Gives bots time to start their analysis
           MIN_WAIT_SECONDS=120
 
+          # GH#3827: Grace period for rate-limited bots. If bots posted
+          # rate-limit notices but the PR has been open longer than this,
+          # pass the gate with a warning instead of blocking indefinitely.
+          # Default: 4 hours (14400s). Prevents systemic rate-limiting from
+          # blocking all PRs when many are opened in a short window.
+          RATE_LIMIT_GRACE_SECONDS=14400
+
           # Get PR creation time
           PR_CREATED=$(gh pr view "$PR_NUMBER" --repo "$REPO" \
             --json createdAt -q '.createdAt')
@@ -274,6 +281,22 @@ jobs:
             echo "missing_bots=${MISSING_BOTS}" >> "$GITHUB_OUTPUT"
             echo "rate_limited_bots=${RATE_LIMITED_BOTS}" >> "$GITHUB_OUTPUT"
             echo "status_fallback=true" >> "$GITHUB_OUTPUT"
+          elif [[ -n "$RATE_LIMITED_BOTS" ]] && [[ "$ELAPSED" -ge "$RATE_LIMIT_GRACE_SECONDS" ]]; then
+            # GH#3827: Rate-limit grace period exceeded. Bots posted rate-limit
+            # notices (proving they're configured) but the PR has been open long
+            # enough that blocking further provides no value. Pass with a warning.
+            GRACE_HOURS=$((RATE_LIMIT_GRACE_SECONDS / 3600))
+            AGE_HOURS=$((ELAPSED / 3600))
+            echo ""
+            echo "PASS (rate-limit grace): PR is ${AGE_HOURS}h old (threshold: ${GRACE_HOURS}h)."
+            echo "Bots are rate-limited but grace period exceeded. Passing gate."
+            echo "Bot reviews will be addressed post-merge if needed."
+            echo "gate_passed=true" >> "$GITHUB_OUTPUT"
+            echo "found_bots=" >> "$GITHUB_OUTPUT"
+            echo "missing_bots=${MISSING_BOTS}" >> "$GITHUB_OUTPUT"
+            echo "rate_limited_bots=${RATE_LIMITED_BOTS}" >> "$GITHUB_OUTPUT"
+            echo "status_fallback=false" >> "$GITHUB_OUTPUT"
+            echo "rate_limit_grace=true" >> "$GITHUB_OUTPUT"
           elif [[ "$ELAPSED" -lt "$MIN_WAIT_SECONDS" ]]; then
             echo ""
             echo "PASS (pending): PR is ${ELAPSED}s old (< ${MIN_WAIT_SECONDS}s minimum)."
@@ -357,6 +380,7 @@ jobs:
         env:
           GATE_PASSED: ${{ steps.check.outputs.gate_passed }}
           STATUS_FALLBACK: ${{ steps.check.outputs.status_fallback }}
+          RATE_LIMIT_GRACE: ${{ steps.check.outputs.rate_limit_grace }}
           FOUND_BOTS: ${{ steps.check.outputs.found_bots }}
           MISSING_BOTS: ${{ steps.check.outputs.missing_bots }}
           RATE_LIMITED_BOTS: ${{ steps.check.outputs.rate_limited_bots }}
@@ -376,6 +400,15 @@ jobs:
                 echo ""
                 echo "**Bots not yet reviewed**: ${MISSING_BOTS}"
               fi
+            elif [[ "$GATE_PASSED" == "true" && "$RATE_LIMIT_GRACE" == "true" ]]; then
+              echo "**Status**: PASSED (rate-limit grace period)"
+              echo ""
+              echo "Bots are rate-limited and the PR has been open longer than the"
+              echo "grace period threshold. Passing to prevent indefinite blockage. (GH#3827)"
+              echo ""
+              echo "**Rate-limited bots**: ${RATE_LIMITED_BOTS}"
+              echo ""
+              echo "Bot reviews will be addressed post-merge if needed."
             elif [[ "$GATE_PASSED" == "true" && -n "$FOUND_BOTS" ]]; then
               echo "**Status**: PASSED"
               echo ""

@@ -345,7 +345,7 @@ ${suggested_actions}
 		--arg issue "$issue_number" \
 		--arg repo "$repo_slug" \
 		--arg now "$now" \
-		'.labeled_issues = ((.labeled_issues // []) + [{"issue": $issue, "repo": $repo, "labeled_at": $now}] | unique_by(.issue + .repo))') || true
+		'.labeled_issues = ((.labeled_issues // []) + [{"issue": $issue, "repo": $repo, "labeled_at": $now}] | unique_by([.issue, .repo]))') || true
 	if [[ -n "$new_state" ]]; then
 		_sd_write_state "$new_state" || true
 	fi

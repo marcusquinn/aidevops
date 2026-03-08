@@ -741,6 +741,8 @@ Same pattern as Matrix room mappings:
 
 Matterbridge has native Microsoft Teams support via the Graph API. This is the simplest way to bridge Teams to other platforms without building a custom bot.
 
+> **Security**: Store `ClientSecret` in gopass (`aidevops secret set MSTEAMS_CLIENT_SECRET`) and inject it via environment variable substitution or a templating step. Never commit the actual secret value to `matterbridge.toml`. The value below is a placeholder only.
+
 ```toml
 # matterbridge.toml — Teams bridge configuration
 [msteams]

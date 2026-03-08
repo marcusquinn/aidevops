@@ -45,19 +45,25 @@ get_active_tenant() {
 	# Priority: 1) Project override, 2) Global active, 3) "default"
 	if [[ -f "$PROJECT_TENANT_FILE" ]]; then
 		local project_tenant
-		project_tenant=$(cat "$PROJECT_TENANT_FILE" 2>/dev/null | tr -d '[:space:]')
+		project_tenant=$(tr -d '[:space:]' <"$PROJECT_TENANT_FILE" 2>/dev/null)
 		if [[ -n "$project_tenant" ]]; then
-			echo "$project_tenant"
-			return 0
+			if validate_tenant_name "$project_tenant" 2>/dev/null; then
+				echo "$project_tenant"
+				return 0
+			fi
+			print_warning "Ignoring invalid project tenant '$project_tenant', falling back"
 		fi
 	fi
 
 	if [[ -f "$ACTIVE_TENANT_FILE" ]]; then
 		local active
-		active=$(cat "$ACTIVE_TENANT_FILE" 2>/dev/null | tr -d '[:space:]')
+		active=$(tr -d '[:space:]' <"$ACTIVE_TENANT_FILE" 2>/dev/null)
 		if [[ -n "$active" ]]; then
-			echo "$active"
-			return 0
+			if validate_tenant_name "$active" 2>/dev/null; then
+				echo "$active"
+				return 0
+			fi
+			print_warning "Ignoring invalid active tenant '$active', falling back"
 		fi
 	fi
 
@@ -252,6 +258,8 @@ cmd_switch() {
 		return 1
 	fi
 
+	validate_tenant_name "$tenant" || return 1
+
 	local tenant_env
 	tenant_env=$(get_tenant_env_file "$tenant")
 	if [[ ! -f "$tenant_env" ]]; then
@@ -342,6 +350,8 @@ cmd_set() {
 	# Default to active tenant
 	if [[ -z "$tenant" ]]; then
 		tenant=$(get_active_tenant)
+	else
+		validate_tenant_name "$tenant" || return 1
 	fi
 
 	migrate_legacy
@@ -414,6 +424,8 @@ cmd_get() {
 
 	if [[ -z "$tenant" ]]; then
 		tenant=$(get_active_tenant)
+	else
+		validate_tenant_name "$tenant" || return 1
 	fi
 
 	local env_file
@@ -492,6 +504,8 @@ cmd_remove() {
 
 	if [[ -z "$tenant" ]]; then
 		tenant=$(get_active_tenant)
+	else
+		validate_tenant_name "$tenant" || return 1
 	fi
 
 	local env_file
@@ -530,6 +544,8 @@ cmd_delete() {
 		print_error "Usage: credential-helper.sh delete <tenant-name>"
 		return 1
 	fi
+
+	validate_tenant_name "$tenant" || return 1
 
 	if [[ "$tenant" == "default" ]]; then
 		print_error "Cannot delete the 'default' tenant"
@@ -576,6 +592,8 @@ cmd_keys() {
 
 	if [[ -z "$tenant" ]]; then
 		tenant=$(get_active_tenant)
+	else
+		validate_tenant_name "$tenant" || return 1
 	fi
 
 	migrate_legacy
@@ -622,6 +640,9 @@ cmd_copy() {
 		print_error "Usage: credential-helper.sh copy <source-tenant> <dest-tenant> [--key KEY_NAME]"
 		return 1
 	fi
+
+	validate_tenant_name "$source_tenant" || return 1
+	validate_tenant_name "$dest_tenant" || return 1
 
 	local source_env
 	source_env=$(get_tenant_env_file "$source_tenant")
@@ -672,7 +693,7 @@ cmd_use() {
 		# Show current project tenant
 		if [[ -f "$PROJECT_TENANT_FILE" ]]; then
 			local current
-			current=$(cat "$PROJECT_TENANT_FILE" 2>/dev/null | tr -d '[:space:]')
+			current=$(tr -d '[:space:]' <"$PROJECT_TENANT_FILE" 2>/dev/null)
 			print_info "Project tenant: $current"
 		else
 			print_info "No project-level tenant set (using global: $(get_active_tenant))"
@@ -689,6 +710,8 @@ cmd_use() {
 		fi
 		return 0
 	fi
+
+	validate_tenant_name "$tenant" || return 1
 
 	# Verify tenant exists
 	local tenant_env
@@ -720,7 +743,7 @@ cmd_status() {
 	local project_tenant=""
 
 	if [[ -f "$PROJECT_TENANT_FILE" ]]; then
-		project_tenant=$(cat "$PROJECT_TENANT_FILE" 2>/dev/null | tr -d '[:space:]')
+		project_tenant=$(tr -d '[:space:]' <"$PROJECT_TENANT_FILE" 2>/dev/null)
 	fi
 
 	echo ""
@@ -735,7 +758,7 @@ cmd_status() {
 
 	local global_active=""
 	if [[ -f "$ACTIVE_TENANT_FILE" ]]; then
-		global_active=$(cat "$ACTIVE_TENANT_FILE" 2>/dev/null | tr -d '[:space:]')
+		global_active=$(tr -d '[:space:]' <"$ACTIVE_TENANT_FILE" 2>/dev/null)
 	fi
 	if [[ -n "$global_active" && "$global_active" != "$active" ]]; then
 		echo -e "  Global tenant:  ${DIM}$global_active${NC}"
@@ -828,6 +851,8 @@ cmd_export() {
 
 	if [[ -z "$tenant" ]]; then
 		tenant=$(get_active_tenant)
+	else
+		validate_tenant_name "$tenant" || return 1
 	fi
 
 	local env_file

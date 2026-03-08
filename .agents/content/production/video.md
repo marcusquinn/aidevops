@@ -14,6 +14,14 @@ tools:
 
 # AI Video Production
 
+<!-- CLASSIFICATION: Domain reference material (not agent operational instructions).
+     This file documents video production techniques, API workflows, prompt templates,
+     and tool comparisons. Imperative language ("ALWAYS use ingredients-to-video",
+     "NEVER frame-to-video") describes domain best practices, not agent behaviour
+     directives. The single-source-of-truth policy (AGENTS.md) governs agent routing,
+     tool access, and behavioural rules — not domain knowledge libraries like this.
+     See AGENTS.md Domain Index: Content/Video/Voice for the authoritative pointer. -->
+
 <!-- AI-CONTEXT-START -->
 
 ## Quick Reference
@@ -300,10 +308,16 @@ Select seed range based on content:
 Generate 10-15 variations with sequential seeds:
 
 ```bash
+#!/bin/bash
+set -euo pipefail
+
 # Example: Product video (seed range 4000-4999)
 for seed in {4000..4010}; do
+  echo "Testing seed $seed..."
+
   # Generate with identical prompt, varying only seed
-  curl -X POST 'https://platform.higgsfield.ai/v1/image2video/dop' \
+  result=$(curl --fail --show-error --silent -X POST \
+    'https://platform.higgsfield.ai/v1/image2video/dop' \
     --header 'hf-api-key: {api-key}' \
     --header 'hf-secret: {secret}' \
     --data "{
@@ -312,7 +326,17 @@ for seed in {4000..4010}; do
         \"seed\": $seed,
         \"model\": \"dop-turbo\"
       }
-    }"
+    }") || { echo "ERROR: API call failed for seed $seed" >&2; continue; }
+
+  # Validate response before using
+  job_id=$(echo "$result" | jq -r '.jobs[0].id // empty' || true)
+  if [[ -z "$job_id" ]]; then
+    echo "ERROR: Failed to extract job_id for seed $seed (invalid API response)" >&2
+    continue
+  fi
+
+  echo "Job $job_id queued for seed $seed"
+  echo "$seed,$job_id" >> seed_bracket_results.csv
 done
 ```
 
@@ -400,7 +424,7 @@ Append professional camera models to prompts for cinematic quality and specific 
 **Cinematic Drama**:
 
 ```text
-Shot on ARRI Alexa LF with 35mm anamorphic lens, 8K resolution, 24fps, 2.39:1 aspect ratio. 
+Shot on ARRI Alexa LF with 35mm anamorphic lens, 8K resolution, 24 fps, 2.39:1 aspect ratio.
 Warm color grading, film grain texture, natural lighting with practical sources.
 [rest of prompt]
 ```
@@ -606,18 +630,18 @@ color_variation: 2-5%
 
 ### Frame Rate Conversion
 
-**60fps**: ONLY for high-action content (sports, fast motion) or social media platforms
+**60 fps**: ONLY for high-action content (sports, fast motion) or social media platforms
 
-**24fps**: Cinematic standard, use for narrative/commercial
-**30fps**: Broadcast/web standard, use for UGC/documentary
+**24 fps**: Cinematic standard, use for narrative/commercial
+**30 fps**: Broadcast/web standard, use for UGC/documentary
 
 **REAL Video Enhancer** (AI-based interpolation):
 
 ```bash
-# 24fps → 60fps (cinematic to social media)
+# 24 fps to 60 fps (cinematic to social media)
 real-video-enhancer-helper.sh interpolate input.mp4 output.mp4 --fps 60
 
-# 24fps → 48fps (balanced smoothness)
+# 24 fps to 48 fps (balanced smoothness)
 real-video-enhancer-helper.sh interpolate input.mp4 output.mp4 --fps 48
 
 # Custom model selection
@@ -636,7 +660,7 @@ real-video-enhancer-helper.sh interpolate input.mp4 output.mp4 \
 - Adobe Premiere: Frame Blending (fast, lower quality)
 - Topaz Video AI: Chronos (AI-based, good for complex motion)
 
-**CRITICAL**: Never upconvert 24fps → 60fps for non-action content (creates soap opera effect) unless targeting social media platforms where 60fps is preferred
+**CRITICAL**: Never upconvert 24 fps to 60 fps for non-action content (creates soap opera effect) unless targeting social media platforms where 60 fps is preferred
 
 ### Denoising and Artifact Removal
 

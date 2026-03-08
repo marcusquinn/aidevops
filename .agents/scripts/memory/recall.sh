@@ -226,7 +226,11 @@ cmd_recall() {
 	fi
 	if [[ -n "$project_filter" ]]; then
 		local escaped_project="${project_filter//"'"/"''"}"
-		extra_filters="$extra_filters AND project_path LIKE '%$escaped_project%'"
+		# Escape LIKE wildcards (%, _) to prevent wildcard injection
+		escaped_project="${escaped_project//\\/\\\\}"
+		escaped_project="${escaped_project//%/\\%}"
+		escaped_project="${escaped_project//_/\\_}"
+		extra_filters="$extra_filters AND project_path LIKE '%$escaped_project%' ESCAPE '\\'"
 	fi
 
 	# Build auto-capture filter for main query
@@ -273,20 +277,30 @@ EOF
 	)
 
 	# Update access tracking for returned results (prevents staleness)
+	# Batched into a single SQL statement for performance
 	if [[ -n "$results" && "$results" != "[]" ]]; then
 		local ids
 		ids=$(echo "$results" | extract_ids_from_json)
 		if [[ -n "$ids" ]]; then
+			local id_values=""
 			while IFS= read -r id; do
 				[[ -z "$id" ]] && continue
+				local escaped_id="${id//"'"/"''"}"
+				if [[ -n "$id_values" ]]; then
+					id_values="${id_values}, ('${escaped_id}', datetime('now'), 1)"
+				else
+					id_values="('${escaped_id}', datetime('now'), 1)"
+				fi
+			done <<<"$ids"
+			if [[ -n "$id_values" ]]; then
 				db "$MEMORY_DB" <<EOF
 INSERT INTO learning_access (id, last_accessed_at, access_count)
-VALUES ('$id', datetime('now'), 1)
+VALUES $id_values
 ON CONFLICT(id) DO UPDATE SET 
     last_accessed_at = datetime('now'),
     access_count = access_count + 1;
 EOF
-			done <<<"$ids"
+			fi
 		fi
 	fi
 
@@ -316,20 +330,30 @@ LIMIT $limit;
 EOF
 			)
 			# Update access tracking in global DB for shared results
+			# Batched into a single SQL statement for performance
 			if [[ -n "$shared_results" && "$shared_results" != "[]" ]]; then
 				local shared_ids
 				shared_ids=$(echo "$shared_results" | extract_ids_from_json)
 				if [[ -n "$shared_ids" ]]; then
+					local shared_id_values=""
 					while IFS= read -r sid; do
 						[[ -z "$sid" ]] && continue
+						local escaped_sid="${sid//"'"/"''"}"
+						if [[ -n "$shared_id_values" ]]; then
+							shared_id_values="${shared_id_values}, ('${escaped_sid}', datetime('now'), 1)"
+						else
+							shared_id_values="('${escaped_sid}', datetime('now'), 1)"
+						fi
+					done <<<"$shared_ids"
+					if [[ -n "$shared_id_values" ]]; then
 						db "$global_db" <<EOF
 INSERT INTO learning_access (id, last_accessed_at, access_count)
-VALUES ('$sid', datetime('now'), 1)
+VALUES $shared_id_values
 ON CONFLICT(id) DO UPDATE SET 
     last_accessed_at = datetime('now'),
     access_count = access_count + 1;
 EOF
-					done <<<"$shared_ids"
+					fi
 				fi
 			fi
 		fi

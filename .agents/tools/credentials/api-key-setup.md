@@ -159,7 +159,8 @@ cat ~/.config/aidevops/credentials.sh | sed 's/=.*/=<REDACTED>/'
 
 ### Secrets (Secure - 600 permissions)
 
-- `~/.config/aidevops/credentials.sh` - All API keys and tokens
+- `~/.config/aidevops/credentials.sh` - Credential loader (sources active tenant)
+- `~/.config/aidevops/tenants/{tenant}/credentials.sh` - Per-tenant API keys and tokens
 
 ### Working Directories (Standard permissions)
 
@@ -230,16 +231,20 @@ For managing multiple accounts (clients, environments, organizations):
 
 ```bash
 # Initialize multi-tenant storage
-credential-helper.sh init
+bash .agents/scripts/credential-helper.sh init
 
 # Create per-client tenants
-credential-helper.sh create client-acme
-credential-helper.sh set GITHUB_TOKEN ghp_xxx --tenant client-acme
+bash .agents/scripts/credential-helper.sh create client-acme
+bash .agents/scripts/credential-helper.sh set GITHUB_TOKEN ghp_xxx --tenant client-acme
 
 # Switch globally or per-project
-credential-helper.sh switch client-acme
-credential-helper.sh use client-acme  # per-project override
+bash .agents/scripts/credential-helper.sh switch client-acme
+bash .agents/scripts/credential-helper.sh use client-acme  # per-project override
 ```
+
+Note: with multi-tenant enabled, credentials live in
+`~/.config/aidevops/tenants/{tenant}/credentials.sh`; `~/.config/aidevops/credentials.sh`
+is now a loader for the active tenant.
 
 See `multi-tenant.md` for full documentation.
 

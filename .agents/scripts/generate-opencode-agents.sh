@@ -85,15 +85,22 @@ import json
 import os
 import glob
 import re
+import sys
 
 config_path = os.path.expanduser("~/.config/opencode/opencode.json")
 agents_dir = os.path.expanduser("~/.aidevops/agents")
 
+config_loaded = False
 try:
-    with open(config_path, 'r') as f:
+    with open(config_path, 'r', encoding='utf-8') as f:
         config = json.load(f)
-except:
+    config_loaded = True
+except FileNotFoundError:
     config = {"$schema": "https://opencode.ai/config.json"}
+    config_loaded = True
+except (OSError, json.JSONDecodeError) as e:
+    print(f"Error: Failed to load {config_path}: {e}", file=sys.stderr)
+    sys.exit(1)
 
 # =============================================================================
 # AUTO-DISCOVER PRIMARY AGENTS from root .md files
@@ -286,7 +293,6 @@ def parse_frontmatter(filepath):
         
         return result
     except (IOError, OSError, UnicodeDecodeError) as e:
-        import sys
         print(f"Warning: Failed to parse frontmatter for {filepath}: {e}", file=sys.stderr)
         return {}
 
@@ -363,11 +369,49 @@ for filepath in glob.glob(os.path.join(agents_dir, "*.md")):
     frontmatter = parse_frontmatter(filepath)
     subagents = frontmatter.get('subagents', None)
     model_tier = frontmatter.get('model', None)
+    if not isinstance(subagents, (list, type(None))):
+        print(f"  Warning: {display_name} has malformed subagents value (expected list, got {type(subagents).__name__}): {subagents}", file=sys.stderr)
+        subagents = None
+
     if subagents:
         subagent_filtered_count += 1
     
     primary_agents[display_name] = get_agent_config(display_name, filename, subagents, model_tier)
     discovered.append(display_name)
+
+# Validate subagent references against actual files
+# Built-in agent types (general, explore) don't have .md files — skip them
+# Discovery must match the generator's rules: only nested dirs (not root),
+# skip AGENTS.md/README.md, skip *-skill.md files, skip loop-state dirs
+BUILTIN_SUBAGENTS = {"general", "explore"}
+all_subagent_files = set()
+for root, _, files in os.walk(agents_dir):
+    rel_root = os.path.relpath(root, agents_dir)
+    if rel_root == "." or "loop-state" in rel_root.split(os.sep):
+        continue
+    for f in files:
+        if not f.endswith(".md"):
+            continue
+        if f in {"AGENTS.md", "README.md"} or f.endswith("-skill.md"):
+            continue
+        all_subagent_files.add(os.path.splitext(f)[0])
+
+missing_refs = []
+for display_name, agent_config in primary_agents.items():
+    task_perms = agent_config.get('permission', {}).get('task', {})
+    if not task_perms:
+        continue
+    for subagent_name in task_perms:
+        if subagent_name == '*':
+            continue
+        if subagent_name in BUILTIN_SUBAGENTS:
+            continue
+        if subagent_name not in all_subagent_files:
+            missing_refs.append((display_name, subagent_name))
+
+if missing_refs:
+    for agent, ref in missing_refs:
+        print(f"  Warning: {agent} references subagent '{ref}' but no {ref}.md found", file=sys.stderr)
 
 # Sort agents: ordered ones first, then alphabetical
 def sort_key(name):
@@ -669,10 +713,13 @@ for tool_pattern in omo_tool_patterns:
         config['tools'][tool_pattern] = False
         print(f"  Disabled {tool_pattern} tools globally (use @github-search subagent)")
 
-with open(config_path, 'w') as f:
-    json.dump(config, f, indent=2)
-
-print(f"  Updated {len(primary_agents)} primary agents in opencode.json")
+if config_loaded:
+    with open(config_path, 'w', encoding='utf-8') as f:
+        json.dump(config, f, indent=2)
+    print(f"  Updated {len(primary_agents)} primary agents in opencode.json")
+else:
+    print("Error: config was not loaded successfully, skipping write", file=sys.stderr)
+    sys.exit(1)
 PYEOF
 
 echo -e "  ${GREEN}✓${NC} Primary agents configured in opencode.json"
