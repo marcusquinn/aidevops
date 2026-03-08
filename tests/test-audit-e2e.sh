@@ -108,6 +108,7 @@ seed_sweep_findings() {
 
 	sqlite3 "$db_path" <<'SQL' >/dev/null
 PRAGMA journal_mode=WAL;
+PRAGMA busy_timeout=5000;
 
 CREATE TABLE IF NOT EXISTS findings (
     id              INTEGER PRIMARY KEY AUTOINCREMENT,
