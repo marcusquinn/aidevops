@@ -14,11 +14,17 @@
 # git author names to GitHub logins, normalising multiple author name variants
 # (e.g., "Marcus Quinn" and "marcusquinn" both map to "marcusquinn").
 #
+# Session time tracking uses the AI assistant database (OpenCode/Claude Code)
+# to measure interactive (human) vs worker/runner (headless) session hours.
+# Session type is classified by title pattern matching.
+#
 # Usage:
 #   contributor-activity-helper.sh summary <repo-path> [--period day|week|month|year]
 #   contributor-activity-helper.sh table <repo-path> [--format markdown|json]
 #   contributor-activity-helper.sh user <repo-path> <github-login>
 #   contributor-activity-helper.sh cross-repo-summary <repo-path1> [<repo-path2> ...] [--period month]
+#   contributor-activity-helper.sh session-time <repo-path> [--period month]
+#   contributor-activity-helper.sh cross-repo-session-time <path1> [path2 ...] [--period month]
 #
 # Output: markdown table or JSON suitable for embedding in health issues.
 
@@ -420,6 +426,305 @@ else:
 }
 
 #######################################
+# Session time stats from AI assistant database
+#
+# Queries the OpenCode/Claude Code SQLite database to compute time spent
+# in interactive sessions vs headless worker/runner sessions, per repo.
+#
+# Session type classification (by title pattern):
+#   - Worker: "Issue #*", "Supervisor Pulse", contains "/full-loop"
+#   - Interactive: everything else (root sessions only)
+#   - Subagent: sessions with parent_id (excluded — time attributed to parent)
+#
+# Duration: max(message.time_created) - min(message.time_created) per session
+# (actual active time between first and last message, not wall clock).
+#
+# Arguments:
+#   $1 - repo path (filters sessions by directory)
+#   --period day|week|month|year (optional, default: month)
+#   --format markdown|json (optional, default: markdown)
+#   --db-path <path> (optional, default: auto-detect)
+# Output: markdown table or JSON
+#######################################
+session_time() {
+	local repo_path=""
+	local period="month"
+	local format="markdown"
+	local db_path=""
+
+	# Parse arguments
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--period)
+			period="${2:-month}"
+			shift 2
+			;;
+		--format)
+			format="${2:-markdown}"
+			shift 2
+			;;
+		--db-path)
+			db_path="${2:-}"
+			shift 2
+			;;
+		*)
+			if [[ -z "$repo_path" ]]; then
+				repo_path="$1"
+			fi
+			shift
+			;;
+		esac
+	done
+
+	repo_path="${repo_path:-.}"
+
+	# Auto-detect database path
+	if [[ -z "$db_path" ]]; then
+		if [[ -f "${HOME}/.local/share/opencode/opencode.db" ]]; then
+			db_path="${HOME}/.local/share/opencode/opencode.db"
+		elif [[ -f "${HOME}/.local/share/claude/Claude.db" ]]; then
+			db_path="${HOME}/.local/share/claude/Claude.db"
+		else
+			if [[ "$format" == "json" ]]; then
+				echo "[]"
+			else
+				echo "_Session database not found._"
+			fi
+			return 0
+		fi
+	fi
+
+	if ! command -v sqlite3 &>/dev/null; then
+		if [[ "$format" == "json" ]]; then
+			echo "[]"
+		else
+			echo "_sqlite3 not available._"
+		fi
+		return 0
+	fi
+
+	# Determine --since threshold in milliseconds
+	local since_ms
+	case "$period" in
+	day)
+		since_ms=$(python3 -c "import time; print(int((time.time() - 86400) * 1000))")
+		;;
+	week)
+		since_ms=$(python3 -c "import time; print(int((time.time() - 604800) * 1000))")
+		;;
+	month)
+		since_ms=$(python3 -c "import time; print(int((time.time() - 2592000) * 1000))")
+		;;
+	year)
+		since_ms=$(python3 -c "import time; print(int((time.time() - 31536000) * 1000))")
+		;;
+	*)
+		since_ms=$(python3 -c "import time; print(int((time.time() - 2592000) * 1000))")
+		;;
+	esac
+
+	# Resolve repo_path to absolute for matching against session.directory
+	local abs_repo_path
+	abs_repo_path=$(cd "$repo_path" 2>/dev/null && pwd) || abs_repo_path="$repo_path"
+
+	# Query session data with message-based duration using JSON output.
+	# JSON avoids pipe-separator issues (session titles can contain '|').
+	# Filters: root sessions only (no parent_id), within period, matching directory.
+	# Worktree directories (e.g., ~/Git/aidevops.feature-foo) are matched by prefix.
+	local query_result
+	query_result=$(sqlite3 -json "$db_path" "
+		SELECT
+			s.title,
+			(max(m.time_created) - min(m.time_created)) as duration_ms
+		FROM session s
+		JOIN message m ON m.session_id = s.id
+		WHERE s.parent_id IS NULL
+		  AND s.time_created > ${since_ms}
+		  AND (s.directory = '${abs_repo_path}'
+		       OR s.directory LIKE '${abs_repo_path}.%'
+		       OR s.directory LIKE '${abs_repo_path}-%')
+		GROUP BY s.id
+		HAVING count(m.id) >= 2
+		  AND duration_ms > 5000
+	" 2>/dev/null) || query_result="[]"
+
+	# Process JSON in Python for classification and aggregation
+	echo "$query_result" | python3 -c "
+import sys
+import json
+import re
+
+format_type = sys.argv[1]
+period_name = sys.argv[2]
+
+# Worker session title patterns
+worker_patterns = [
+    re.compile(r'^Issue #\d+'),
+    re.compile(r'^Supervisor Pulse'),
+    re.compile(r'/full-loop', re.IGNORECASE),
+    re.compile(r'^dispatch:', re.IGNORECASE),
+    re.compile(r'^Worker:', re.IGNORECASE),
+]
+
+def classify_session(title):
+    for pat in worker_patterns:
+        if pat.search(title):
+            return 'worker'
+    return 'interactive'
+
+sessions = json.load(sys.stdin)
+
+interactive_ms = 0
+worker_ms = 0
+interactive_count = 0
+worker_count = 0
+
+for row in sessions:
+    title = row.get('title', '')
+    duration_ms = row.get('duration_ms', 0)
+
+    session_type = classify_session(title)
+    if session_type == 'worker':
+        worker_ms += duration_ms
+        worker_count += 1
+    else:
+        interactive_ms += duration_ms
+        interactive_count += 1
+
+interactive_hours = round(interactive_ms / 1000 / 3600, 1)
+worker_hours = round(worker_ms / 1000 / 3600, 1)
+total_hours = round((interactive_ms + worker_ms) / 1000 / 3600, 1)
+
+result = {
+    'interactive_hours': interactive_hours,
+    'interactive_sessions': interactive_count,
+    'worker_hours': worker_hours,
+    'worker_sessions': worker_count,
+    'total_hours': total_hours,
+    'total_sessions': interactive_count + worker_count,
+}
+
+if format_type == 'json':
+    print(json.dumps(result, indent=2))
+else:
+    if interactive_count == 0 and worker_count == 0:
+        print(f'_No session data for the last {period_name}._')
+    else:
+        print(f'| Type | Sessions | Hours |')
+        print(f'| --- | ---: | ---: |')
+        print(f'| Interactive (human) | {interactive_count} | {interactive_hours}h |')
+        print(f'| Workers/Runners | {worker_count} | {worker_hours}h |')
+        print(f'| **Total** | **{interactive_count + worker_count}** | **{total_hours}h** |')
+" "$format" "$period"
+
+	return 0
+}
+
+#######################################
+# Cross-repo session time summary
+#
+# Aggregates session time across multiple repos. Privacy-safe (no repo names).
+#
+# Arguments:
+#   $1..N - repo paths
+#   --period day|week|month|year (optional, default: month)
+#   --format markdown|json (optional, default: markdown)
+# Output: aggregated table to stdout
+#######################################
+cross_repo_session_time() {
+	local period="month"
+	local format="markdown"
+	local -a repo_paths=()
+
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--period)
+			period="${2:-month}"
+			shift 2
+			;;
+		--format)
+			format="${2:-markdown}"
+			shift 2
+			;;
+		*)
+			repo_paths+=("$1")
+			shift
+			;;
+		esac
+	done
+
+	if [[ ${#repo_paths[@]} -eq 0 ]]; then
+		echo "Error: at least one repo path required" >&2
+		return 1
+	fi
+
+	# Collect JSON from each repo
+	local all_json="["
+	local first="true"
+	local repo_count=0
+	for rp in "${repo_paths[@]}"; do
+		local repo_json
+		repo_json=$(session_time "$rp" --period "$period" --format json) || repo_json="{}"
+		if [[ "$first" == "true" ]]; then
+			first="false"
+		else
+			all_json="${all_json},"
+		fi
+		all_json="${all_json}${repo_json}"
+		repo_count=$((repo_count + 1))
+	done
+	all_json="${all_json}]"
+
+	echo "$all_json" | python3 -c "
+import sys
+import json
+
+format_type = sys.argv[1]
+period_name = sys.argv[2]
+repo_count = int(sys.argv[3])
+
+repos = json.load(sys.stdin)
+
+totals = {
+    'interactive_hours': 0,
+    'interactive_sessions': 0,
+    'worker_hours': 0,
+    'worker_sessions': 0,
+}
+
+for repo in repos:
+    totals['interactive_hours'] += repo.get('interactive_hours', 0)
+    totals['interactive_sessions'] += repo.get('interactive_sessions', 0)
+    totals['worker_hours'] += repo.get('worker_hours', 0)
+    totals['worker_sessions'] += repo.get('worker_sessions', 0)
+
+totals['interactive_hours'] = round(totals['interactive_hours'], 1)
+totals['worker_hours'] = round(totals['worker_hours'], 1)
+total_hours = round(totals['interactive_hours'] + totals['worker_hours'], 1)
+total_sessions = totals['interactive_sessions'] + totals['worker_sessions']
+
+if format_type == 'json':
+    totals['total_hours'] = total_hours
+    totals['total_sessions'] = total_sessions
+    totals['repo_count'] = repo_count
+    print(json.dumps(totals, indent=2))
+else:
+    if total_sessions == 0:
+        print(f'_No session data across {repo_count} repos for the last {period_name}._')
+    else:
+        print(f'_Across {repo_count} managed repos:_')
+        print()
+        print(f'| Type | Sessions | Hours |')
+        print(f'| --- | ---: | ---: |')
+        print(f'| Interactive (human) | {totals[\"interactive_sessions\"]} | {totals[\"interactive_hours\"]}h |')
+        print(f'| Workers/Runners | {totals[\"worker_sessions\"]} | {totals[\"worker_hours\"]}h |')
+        print(f'| **Total** | **{total_sessions}** | **{total_hours}h** |')
+" "$format" "$period" "$repo_count"
+
+	return 0
+}
+
+#######################################
 # Main
 #######################################
 main() {
@@ -461,6 +766,12 @@ main() {
 	cross-repo-summary)
 		cross_repo_summary "$@"
 		;;
+	session-time)
+		session_time "$@"
+		;;
+	cross-repo-session-time)
+		cross_repo_session_time "$@"
+		;;
 	help | *)
 		echo "Usage: $0 <command> [options]"
 		echo ""
@@ -469,13 +780,20 @@ main() {
 		echo "  table   <repo-path> [--period day|week|month|year] [--format markdown|json]"
 		echo "  user    <repo-path> <github-login>"
 		echo "  cross-repo-summary <path1> [path2 ...] [--period month] [--format markdown]"
+		echo "  session-time <repo-path> [--period month] [--format markdown]"
+		echo "  cross-repo-session-time <path1> [path2 ...] [--period month] [--format markdown]"
 		echo ""
 		echo "Computes contributor activity from immutable git commit history."
+		echo "Session time stats from AI assistant database (OpenCode/Claude Code)."
 		echo "GitHub noreply emails are used to normalise author names to logins."
 		echo ""
 		echo "Commit types:"
 		echo "  Direct  - committer is the author (push, CLI commit)"
 		echo "  PR Merge - committer is noreply@github.com (GitHub squash-merge)"
+		echo ""
+		echo "Session types:"
+		echo "  Interactive - human-driven sessions (conversations, debugging)"
+		echo "  Worker      - headless dispatched tasks (Issue #N, Supervisor Pulse)"
 		return 0
 		;;
 	esac

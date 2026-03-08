@@ -1645,12 +1645,15 @@ _get_runner_role() {
 # Arguments:
 #   $1 - repo slug (owner/repo)
 #   $2 - repo path (local filesystem)
+#   $3 - cross-repo activity markdown (pre-computed by update_health_issues)
+#   $4 - cross-repo session time markdown (pre-computed by update_health_issues)
 # Returns: 0 always (best-effort, never breaks the pulse)
 #######################################
 _update_health_issue_for_repo() {
 	local repo_slug="$1"
 	local repo_path="$2"
 	local cross_repo_md="${3:-}"
+	local cross_repo_session_time_md="${4:-}"
 
 	[[ -z "$repo_slug" ]] && return 0
 
@@ -1967,12 +1970,16 @@ ${worker_table}"
 	# --- Contributor activity from git history (per-repo only) ---
 	# Cross-repo totals are pre-computed once in update_health_issues() and
 	# passed via $3 to avoid redundant git log walks (N repos × N repos).
+	# Session time stats are passed via $4 (also pre-computed once).
 	local activity_md=""
+	local session_time_md=""
 	local activity_helper="${HOME}/.aidevops/agents/scripts/contributor-activity-helper.sh"
 	if [[ -x "$activity_helper" ]]; then
 		activity_md=$(bash "$activity_helper" summary "$repo_path" --period month --format markdown || echo "_Activity data unavailable._")
+		session_time_md=$(bash "$activity_helper" session-time "$repo_path" --period month --format markdown || echo "_Session data unavailable._")
 	else
 		activity_md="_Activity helper not installed._"
+		session_time_md="_Activity helper not installed._"
 	fi
 
 	# --- Assemble body ---
@@ -2010,6 +2017,14 @@ ${activity_md}
 ### Cross-Repo Totals (last 30 days)
 
 ${cross_repo_md:-_Single repo or cross-repo data unavailable._}
+
+### Session Time (last 30 days)
+
+${session_time_md}
+
+### Cross-Repo Session Time (last 30 days)
+
+${cross_repo_session_time_md:-_Single repo or cross-repo session data unavailable._}
 
 ### System Resources
 
@@ -2176,10 +2191,27 @@ update_health_issues() {
 		fi
 	fi
 
+	# Pre-compute cross-repo session time ONCE for all health issues.
+	# Uses the same repo paths already collected above.
+	local cross_repo_session_time_md=""
+	if [[ -x "$activity_helper" ]]; then
+		local all_repo_paths_st
+		all_repo_paths_st=$(jq -r '.initialized_repos[] | select(.pulse == true and (.local_only // false) == false) | .path' "$repos_json" 2>/dev/null || echo "")
+		if [[ -n "$all_repo_paths_st" ]]; then
+			local -a st_args=()
+			while IFS= read -r rp; do
+				[[ -n "$rp" ]] && st_args+=("$rp")
+			done <<<"$all_repo_paths_st"
+			if [[ ${#st_args[@]} -gt 1 ]]; then
+				cross_repo_session_time_md=$(bash "$activity_helper" cross-repo-session-time "${st_args[@]}" --period month --format markdown || echo "_Cross-repo session data unavailable._")
+			fi
+		fi
+	fi
+
 	local updated=0
 	while IFS='|' read -r slug path; do
 		[[ -z "$slug" ]] && continue
-		_update_health_issue_for_repo "$slug" "$path" "$cross_repo_md" || true
+		_update_health_issue_for_repo "$slug" "$path" "$cross_repo_md" "$cross_repo_session_time_md" || true
 		updated=$((updated + 1))
 	done <<<"$repo_entries"
 
