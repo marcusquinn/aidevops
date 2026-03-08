@@ -20,7 +20,7 @@ tools:
 
 - **Purpose**: Opinionated constraints for building better interfaces with agents
 - **Source**: https://www.ui-skills.com/llms.txt
-- **Stack**: Tailwind CSS, motion/react, tw-animate-css, clsx + tailwind-merge
+- **Stack**: Tailwind CSS, motion/react, tw-animate-css, `cn` utility (`clsx` + `tailwind-merge`)
 
 **When to apply these constraints**:
 - Building React/Next.js interfaces
@@ -85,8 +85,8 @@ tools:
 
 ## Layout
 
-- MUST use a fixed `z-index` scale (no arbitrary `z-x`)
-- SHOULD use `size-x` for square elements instead of `w-x` + `h-x`
+- MUST use a fixed `z-index` scale (e.g., `z-10`, `z-20`) and avoid arbitrary values (e.g., `z-[99]`)
+- SHOULD use `size-*` for square elements instead of `w-*` + `h-*`
 
 ## Performance
 
@@ -97,7 +97,7 @@ tools:
 ## Design
 
 - NEVER use gradients unless explicitly requested
-- NEVER use purple or multicolor gradients
+- SHOULD avoid purple or multicolor gradients even when gradients are requested (prefer subtle, single-hue gradients)
 - NEVER use glow effects as primary affordances
 - SHOULD use Tailwind CSS default shadow scale unless explicitly requested
 - MUST give empty states one clear next action
