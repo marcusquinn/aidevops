@@ -19,6 +19,7 @@ source "${SCRIPT_DIR}/shared-constants.sh"
 set -euo pipefail
 
 OPENCODE_COMMAND_DIR="$HOME/.config/opencode/command"
+AIDEVOPS_AGENTS_DIR="${AIDEVOPS_HOME:-$HOME/.aidevops}/agents"
 
 echo -e "${BLUE}Generating OpenCode commands...${NC}"
 
@@ -1518,27 +1519,34 @@ echo -e "  ${GREEN}✓${NC} Created /recall command"
 # Each file should have frontmatter with description and agent
 # This prevents needing to manually add new commands to this script
 
-COMMANDS_DIR="$HOME/.aidevops/agents/scripts/commands"
+COMMANDS_DIR="$AIDEVOPS_AGENTS_DIR/scripts/commands"
 
 if [[ -d "$COMMANDS_DIR" ]]; then
-	for cmd_file in "$COMMANDS_DIR"/*.md; do
-		[[ -f "$cmd_file" ]] || continue
+	# Track manually-defined commands so auto-discover doesn't overwrite them
+	declare -A manual_commands
+	for f in "$OPENCODE_COMMAND_DIR"/*.md; do
+		[[ -f "$f" ]] && manual_commands["$(basename "$f" .md)"]=1
+	done
 
+	shopt -s nullglob
+	for cmd_file in "$COMMANDS_DIR"/*.md; do
 		cmd_name=$(basename "$cmd_file" .md)
 
 		# Skip SKILL.md (not a command)
 		[[ "$cmd_name" == "SKILL" ]] && continue
 
-		# Skip if already manually defined (avoid duplicates)
-		if [[ -f "$OPENCODE_COMMAND_DIR/$cmd_name.md" ]]; then
-			continue
-		fi
+		# Skip if manually defined earlier in this script (avoid overwriting)
+		[[ -n "${manual_commands[$cmd_name]:-}" ]] && continue
 
-		# Copy command file directly (it already has proper frontmatter)
-		cp "$cmd_file" "$OPENCODE_COMMAND_DIR/$cmd_name.md"
-		((++command_count))
-		echo -e "  ${GREEN}✓${NC} Auto-discovered /$cmd_name command"
+		# Copy command file (always overwrite to stay in sync with source)
+		if cp "$cmd_file" "$OPENCODE_COMMAND_DIR/$cmd_name.md"; then
+			((++command_count))
+			echo -e "  ${GREEN}✓${NC} Auto-discovered /$cmd_name command"
+		else
+			echo -e "  ${RED}✗${NC} Failed to copy /$cmd_name command" >&2
+		fi
 	done
+	shopt -u nullglob
 fi
 
 # =============================================================================
@@ -1599,7 +1607,7 @@ echo ""
 echo "  Automation (Ralph Loops):"
 echo "    /ralph-loop       - Start iterative AI development loop"
 echo "    /ralph-task       - Run Ralph loop for a TODO.md task by ID"
-echo "    /full-loop        - End-to-end: task → preflight → PR → postflight"
+echo "    /full-loop        - End-to-end: task → preflight → PR → postflight → deploy"
 echo "    /cancel-ralph     - Cancel active Ralph loop"
 echo "    /ralph-status     - Show Ralph loop status"
 echo "    /preflight-loop   - Iterative preflight until all pass"
