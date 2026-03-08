@@ -91,10 +91,13 @@ config_path = os.path.expanduser("~/.config/opencode/opencode.json")
 agents_dir = os.path.expanduser("~/.aidevops/agents")
 
 try:
-    with open(config_path, 'r') as f:
+    with open(config_path, 'r', encoding='utf-8') as f:
         config = json.load(f)
-except:
+except FileNotFoundError:
     config = {"$schema": "https://opencode.ai/config.json"}
+except (OSError, json.JSONDecodeError) as e:
+    print(f"Error: Failed to load {config_path}: {e}", file=sys.stderr)
+    raise SystemExit(1)
 
 # =============================================================================
 # AUTO-DISCOVER PRIMARY AGENTS from root .md files
@@ -363,22 +366,32 @@ for filepath in glob.glob(os.path.join(agents_dir, "*.md")):
     frontmatter = parse_frontmatter(filepath)
     subagents = frontmatter.get('subagents', None)
     model_tier = frontmatter.get('model', None)
-    if isinstance(subagents, list) and len(subagents) > 0:
-        subagent_filtered_count += 1
-    elif subagents:
+    if not isinstance(subagents, (list, type(None))):
         print(f"  Warning: {display_name} has malformed subagents value (expected list, got {type(subagents).__name__}): {subagents}", file=sys.stderr)
+        subagents = None
+
+    if subagents:
+        subagent_filtered_count += 1
     
     primary_agents[display_name] = get_agent_config(display_name, filename, subagents, model_tier)
     discovered.append(display_name)
 
 # Validate subagent references against actual files
 # Built-in agent types (general, explore) don't have .md files — skip them
+# Discovery must match the generator's rules: only nested dirs (not root),
+# skip AGENTS.md/README.md, skip *-skill.md files, skip loop-state dirs
 BUILTIN_SUBAGENTS = {"general", "explore"}
 all_subagent_files = set()
-for root, dirs, files in os.walk(agents_dir):
+for root, _, files in os.walk(agents_dir):
+    rel_root = os.path.relpath(root, agents_dir)
+    if rel_root == "." or "loop-state" in rel_root.split(os.sep):
+        continue
     for f in files:
-        if f.endswith('.md'):
-            all_subagent_files.add(f.replace('.md', ''))
+        if not f.endswith(".md"):
+            continue
+        if f in {"AGENTS.md", "README.md"} or f.endswith("-skill.md"):
+            continue
+        all_subagent_files.add(os.path.splitext(f)[0])
 
 missing_refs = []
 for display_name, agent_config in primary_agents.items():
