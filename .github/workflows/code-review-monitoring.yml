@@ -10,6 +10,16 @@ on:
     - cron: '0 2 * * *'
   workflow_dispatch:
 
+# Top-level permissions required for GITHUB_TOKEN to post PR comments.
+# Job-level permissions alone are insufficient when the repository default
+# token permissions are set to read-only (GitHub Actions ignores job-level
+# elevation in that case). See: github.com/marcusquinn/aidevops/issues/3848
+permissions:
+  contents: write
+  issues: write
+  pull-requests: write
+  security-events: write
+
 # Cancel in-progress runs when a new run is triggered
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
