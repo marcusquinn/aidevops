@@ -25,6 +25,8 @@
 #   contributor-activity-helper.sh cross-repo-summary <repo-path1> [<repo-path2> ...] [--period month]
 #   contributor-activity-helper.sh session-time <repo-path> [--period month]
 #   contributor-activity-helper.sh cross-repo-session-time <path1> [path2 ...] [--period month]
+#   contributor-activity-helper.sh person-stats <repo-path> [--period month] [--logins a,b]
+#   contributor-activity-helper.sh cross-repo-person-stats <path1> [path2 ...] [--period month]
 #
 # Output: markdown table or JSON suitable for embedding in health issues.
 
@@ -778,6 +780,311 @@ else:
 }
 
 #######################################
+# Per-person GitHub output stats
+#
+# Queries GitHub Search API for each contributor's issues, PRs, and comments.
+# Contributors are auto-discovered from git history (non-bot authors).
+#
+# Arguments:
+#   $1 - repo path (used to derive slug and discover contributors)
+#   --period day|week|month|quarter|year (optional, default: month)
+#   --format markdown|json (optional, default: markdown)
+#   --logins login1,login2 (optional, override auto-discovery)
+# Output: per-person table to stdout
+#######################################
+person_stats() {
+	local repo_path=""
+	local period="month"
+	local format="markdown"
+	local logins_override=""
+
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--period)
+			period="${2:-month}"
+			shift 2
+			;;
+		--format)
+			format="${2:-markdown}"
+			shift 2
+			;;
+		--logins)
+			logins_override="${2:-}"
+			shift 2
+			;;
+		*)
+			if [[ -z "$repo_path" ]]; then
+				repo_path="$1"
+			fi
+			shift
+			;;
+		esac
+	done
+
+	repo_path="${repo_path:-.}"
+
+	if [[ ! -d "$repo_path/.git" && ! -f "$repo_path/.git" ]]; then
+		echo "Error: $repo_path is not a git repository" >&2
+		return 1
+	fi
+
+	# Derive repo slug from git remote
+	local remote_url
+	remote_url=$(git -C "$repo_path" remote get-url origin 2>/dev/null) || remote_url=""
+	if [[ -z "$remote_url" ]]; then
+		echo "Error: no origin remote found" >&2
+		return 1
+	fi
+
+	# Extract owner/repo from various URL formats
+	local slug
+	slug=$(echo "$remote_url" | sed -E 's#.*github\.com[:/]##; s/\.git$//')
+	if [[ -z "$slug" || "$slug" == "$remote_url" ]]; then
+		echo "Error: could not extract repo slug from $remote_url" >&2
+		return 1
+	fi
+
+	# Calculate date threshold for the period
+	local since_date
+	case "$period" in
+	day) since_date=$(date -v-1d +%Y-%m-%d 2>/dev/null || date -d '1 day ago' +%Y-%m-%d) ;;
+	week) since_date=$(date -v-7d +%Y-%m-%d 2>/dev/null || date -d '7 days ago' +%Y-%m-%d) ;;
+	month) since_date=$(date -v-30d +%Y-%m-%d 2>/dev/null || date -d '30 days ago' +%Y-%m-%d) ;;
+	quarter) since_date=$(date -v-90d +%Y-%m-%d 2>/dev/null || date -d '90 days ago' +%Y-%m-%d) ;;
+	year) since_date=$(date -v-365d +%Y-%m-%d 2>/dev/null || date -d '365 days ago' +%Y-%m-%d) ;;
+	*) since_date=$(date -v-30d +%Y-%m-%d 2>/dev/null || date -d '30 days ago' +%Y-%m-%d) ;;
+	esac
+
+	# Discover contributor logins from git history or use override
+	local logins_csv
+	if [[ -n "$logins_override" ]]; then
+		logins_csv="$logins_override"
+	else
+		# Extract unique non-bot logins from git history using the same
+		# noreply email mapping as compute_activity
+		local git_data
+		git_data=$(git -C "$repo_path" log --all --format='%ae|%ce' --since="$since_date") || git_data=""
+		logins_csv=$(echo "$git_data" | python3 -c "
+import sys
+
+${PYTHON_HELPERS}
+
+logins = set()
+for line in sys.stdin:
+    line = line.strip()
+    if not line or '|' not in line:
+        continue
+    parts = line.split('|', 1)
+    if len(parts) < 2:
+        continue
+    author_email, committer_email = parts
+    login = email_to_login(author_email)
+    committer_login = email_to_login(committer_email)
+    if is_bot(login) or is_bot(committer_login):
+        continue
+    logins.add(login)
+
+print(','.join(sorted(logins)))
+")
+	fi
+
+	if [[ -z "$logins_csv" ]]; then
+		echo "_No contributors found for the last ${period}._"
+		return 0
+	fi
+
+	# Query GitHub Search API for each login.
+	# Uses gh api with search/issues endpoint — returns total_count without pagination.
+	# Rate limit: 30 requests/min for search API. With 4 queries per user,
+	# we can handle ~7 users per minute. For larger teams, the function
+	# checks remaining rate limit and sleeps until reset if needed.
+	local results_json="["
+	local first=true
+	local IFS=','
+	for login in $logins_csv; do
+		# Check search API rate limit before each batch of 4 queries per user
+		local remaining
+		remaining=$(gh api rate_limit --jq '.resources.search.remaining' 2>/dev/null) || remaining=30
+		if [[ "$remaining" -lt 5 ]]; then
+			local reset_at
+			reset_at=$(gh api rate_limit --jq '.resources.search.reset' 2>/dev/null) || reset_at=0
+			local now_epoch
+			now_epoch=$(date +%s)
+			local wait_secs=$((reset_at - now_epoch + 1))
+			if [[ "$wait_secs" -gt 0 && "$wait_secs" -lt 120 ]]; then
+				echo "Rate limit low (${remaining} remaining), waiting ${wait_secs}s..." >&2
+				sleep "$wait_secs"
+			fi
+		fi
+
+		# Issues created by this user in this repo since the date
+		local issues_created
+		issues_created=$(gh api "search/issues?q=author:${login}+repo:${slug}+type:issue+created:>${since_date}&per_page=1" --jq '.total_count' 2>/dev/null) || issues_created=0
+
+		# PRs created
+		local prs_created
+		prs_created=$(gh api "search/issues?q=author:${login}+repo:${slug}+type:pr+created:>${since_date}&per_page=1" --jq '.total_count' 2>/dev/null) || prs_created=0
+
+		# PRs merged
+		local prs_merged
+		prs_merged=$(gh api "search/issues?q=author:${login}+repo:${slug}+type:pr+is:merged+merged:>${since_date}&per_page=1" --jq '.total_count' 2>/dev/null) || prs_merged=0
+
+		# Issues/PRs commented on (commenter: qualifier counts unique issues, not comments)
+		local commented_on
+		commented_on=$(gh api "search/issues?q=commenter:${login}+repo:${slug}+updated:>${since_date}&per_page=1" --jq '.total_count' 2>/dev/null) || commented_on=0
+
+		if [[ "$first" == "true" ]]; then
+			first=false
+		else
+			results_json+=","
+		fi
+		results_json+="{\"login\":\"${login}\",\"issues_created\":${issues_created},\"prs_created\":${prs_created},\"prs_merged\":${prs_merged},\"commented_on\":${commented_on}}"
+	done
+	unset IFS
+	results_json+="]"
+
+	# Format output
+	echo "$results_json" | python3 -c "
+import sys
+import json
+
+format_type = sys.argv[1]
+period_name = sys.argv[2]
+
+data = json.load(sys.stdin)
+
+# Sort by total output (issues + PRs + comments) descending
+for d in data:
+    d['total_output'] = d['issues_created'] + d['prs_created'] + d['commented_on']
+data.sort(key=lambda x: x['total_output'], reverse=True)
+
+if format_type == 'json':
+    print(json.dumps(data, indent=2))
+else:
+    if not data:
+        print(f'_No GitHub activity for the last {period_name}._')
+    else:
+        print(f'| Contributor | Issues | PRs | Merged | Commented On |')
+        print(f'| --- | ---: | ---: | ---: | ---: |')
+        for d in data:
+            print(f'| {d[\"login\"]} | {d[\"issues_created\"]} | {d[\"prs_created\"]} | {d[\"prs_merged\"]} | {d[\"commented_on\"]} |')
+" "$format" "$period"
+
+	return 0
+}
+
+#######################################
+# Cross-repo per-person GitHub output stats
+#
+# Aggregates person_stats across multiple repos. Privacy-safe (no repo names).
+#
+# Arguments:
+#   $1..N - repo paths
+#   --period day|week|month|quarter|year (optional, default: month)
+#   --format markdown|json (optional, default: markdown)
+#   --logins login1,login2 (optional, override auto-discovery)
+# Output: aggregated per-person table to stdout
+#######################################
+cross_repo_person_stats() {
+	local period="month"
+	local format="markdown"
+	local logins_override=""
+	local -a repo_paths=()
+
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--period)
+			period="${2:-month}"
+			shift 2
+			;;
+		--format)
+			format="${2:-markdown}"
+			shift 2
+			;;
+		--logins)
+			logins_override="${2:-}"
+			shift 2
+			;;
+		*)
+			repo_paths+=("$1")
+			shift
+			;;
+		esac
+	done
+
+	if [[ ${#repo_paths[@]} -eq 0 ]]; then
+		echo "Error: at least one repo path required" >&2
+		return 1
+	fi
+
+	# Collect JSON from each repo
+	local all_json=""
+	local repo_count=0
+	for rp in "${repo_paths[@]}"; do
+		if [[ ! -d "$rp/.git" && ! -f "$rp/.git" ]]; then
+			echo "Warning: $rp is not a git repository, skipping" >&2
+			continue
+		fi
+		local repo_json
+		local logins_arg=""
+		if [[ -n "$logins_override" ]]; then
+			logins_arg="--logins $logins_override"
+		fi
+		# shellcheck disable=SC2086
+		repo_json=$(person_stats "$rp" --period "$period" --format json $logins_arg) || repo_json="[]"
+		if echo "$repo_json" | jq -e . >/dev/null 2>&1; then
+			all_json+="${repo_json}"$'\n'
+		fi
+		repo_count=$((repo_count + 1))
+	done
+
+	# Merge all repo arrays into one, then aggregate per login
+	all_json=$(echo -n "$all_json" | jq -s 'add // []')
+
+	echo "$all_json" | python3 -c "
+import sys
+import json
+
+format_type = sys.argv[1]
+period_name = sys.argv[2]
+repo_count = int(sys.argv[3])
+
+data = json.load(sys.stdin)
+
+# Aggregate by login
+totals = {}
+for d in data:
+    login = d['login']
+    if login not in totals:
+        totals[login] = {'login': login, 'issues_created': 0, 'prs_created': 0, 'prs_merged': 0, 'commented_on': 0}
+    totals[login]['issues_created'] += d.get('issues_created', 0)
+    totals[login]['prs_created'] += d.get('prs_created', 0)
+    totals[login]['prs_merged'] += d.get('prs_merged', 0)
+    totals[login]['commented_on'] += d.get('commented_on', 0)
+
+results = list(totals.values())
+for r in results:
+    r['total_output'] = r['issues_created'] + r['prs_created'] + r['commented_on']
+results.sort(key=lambda x: x['total_output'], reverse=True)
+
+if format_type == 'json':
+    print(json.dumps({'repo_count': repo_count, 'contributors': results}, indent=2))
+else:
+    if not results:
+        print(f'_No GitHub activity across {repo_count} repos for the last {period_name}._')
+    else:
+        print(f'_Across {repo_count} managed repos:_')
+        print()
+        print(f'| Contributor | Issues | PRs | Merged | Commented On |')
+        print(f'| --- | ---: | ---: | ---: | ---: |')
+        for r in results:
+            print(f'| {r[\"login\"]} | {r[\"issues_created\"]} | {r[\"prs_created\"]} | {r[\"prs_merged\"]} | {r[\"commented_on\"]} |')
+" "$format" "$period" "$repo_count"
+
+	return 0
+}
+
+#######################################
 # Main
 #######################################
 main() {
@@ -825,6 +1132,12 @@ main() {
 	cross-repo-session-time)
 		cross_repo_session_time "$@"
 		;;
+	person-stats)
+		person_stats "$@"
+		;;
+	cross-repo-person-stats)
+		cross_repo_person_stats "$@"
+		;;
 	help | *)
 		echo "Usage: $0 <command> [options]"
 		echo ""
@@ -835,9 +1148,12 @@ main() {
 		echo "  cross-repo-summary <path1> [path2 ...] [--period month] [--format markdown]"
 		echo "  session-time <repo-path> [--period day|week|month|quarter|year] [--format markdown|json]"
 		echo "  cross-repo-session-time <path1> [path2 ...] [--period month] [--format markdown|json]"
+		echo "  person-stats <repo-path> [--period day|week|month|quarter|year] [--format markdown|json] [--logins a,b]"
+		echo "  cross-repo-person-stats <path1> [path2 ...] [--period month] [--format markdown|json] [--logins a,b]"
 		echo ""
 		echo "Computes contributor activity from immutable git commit history."
 		echo "Session time stats from AI assistant database (OpenCode/Claude Code)."
+		echo "Per-person GitHub output stats from GitHub Search API."
 		echo "GitHub noreply emails are used to normalise author names to logins."
 		echo ""
 		echo "Commit types:"
@@ -849,6 +1165,12 @@ main() {
 		echo "  Machine hours - time AI spent generating responses"
 		echo "  Interactive   - human-driven sessions (conversations, debugging)"
 		echo "  Worker        - headless dispatched tasks (Issue #N, PR #N, Supervisor Pulse)"
+		echo ""
+		echo "Person stats (GitHub output per contributor):"
+		echo "  Issues    - issues created by this person"
+		echo "  PRs       - pull requests created by this person"
+		echo "  Merged    - pull requests merged (authored by this person)"
+		echo "  Commented - unique issues/PRs this person commented on"
 		return 0
 		;;
 	esac
