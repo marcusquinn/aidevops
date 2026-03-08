@@ -86,10 +86,10 @@ export const FullVideo: React.FC<BriefProps> = ({
           })}
         </TransitionSeries>
 
-        {/* Background music */}
+        {/* Background music — resolve via staticFile() like scene videos */}
         {musicPath && (
           <Audio
-            src={musicPath}
+            src={toVideoSrc(musicPath)}
             volume={0.3}
           />
         )}
@@ -134,7 +134,7 @@ export const FullVideo: React.FC<BriefProps> = ({
 
       {musicPath && (
         <Audio
-          src={musicPath}
+          src={toVideoSrc(musicPath)}
           volume={0.3}
         />
       )}

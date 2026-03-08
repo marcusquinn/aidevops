@@ -98,13 +98,38 @@ function renderVideo(opts) {
     sceneVideos: sceneVideoFilenames,
     transitionStyle: brief.transitionStyle || opts.transition || "fade",
     transitionDuration: parseInt(opts["transition-duration"] || "15", 10),
-    musicPath: brief.music ? resolve(brief.music) : undefined,
+    musicPath: undefined, // set below after copy-to-public
   };
 
-  // Calculate duration
+  // Copy music file to public/ so staticFile() can resolve it (same pattern as sceneVideos).
+  // Remotion's <Audio> cannot resolve absolute filesystem paths in a browser rendering context.
+  if (brief.music) {
+    const musicAbsPath = resolve(brief.music);
+    if (!existsSync(musicAbsPath)) {
+      console.warn(`Warning: music file not found: ${musicAbsPath}, skipping`);
+    } else {
+      const musicFilename = `music-${basename(musicAbsPath)}`;
+      const musicDest = join(publicDir, musicFilename);
+      copyFileSync(musicAbsPath, musicDest);
+      console.log(`  Copied ${basename(musicAbsPath)} -> public/${musicFilename}`);
+      props.musicPath = musicFilename;
+    }
+  }
+
+  // Validate scene/video count consistency — these are derived from different sources
+  // (brief metadata vs actual video files) and can diverge, causing incorrect frame math.
+  if (sceneVideoFilenames.length !== scenes.length) {
+    console.warn(
+      `Warning: ${sceneVideoFilenames.length} videos provided but brief defines ${scenes.length} scenes`
+    );
+  }
+
+  // Calculate duration — use consistent source (scenes) for both components.
+  // Clamp transitionOverlap to scene count to avoid negative frames when counts diverge.
+  const sceneCount = Math.min(scenes.length, sceneVideoFilenames.length);
   const totalSceneDuration = props.scenes.reduce((sum, s) => sum + (s.duration || 5), 0);
-  const transitionOverlap = Math.max(0, (sceneVideoFilenames.length - 1)) * props.transitionDuration;
-  const totalFrames = totalSceneDuration * fps - transitionOverlap;
+  const transitionOverlap = Math.max(0, (sceneCount - 1)) * props.transitionDuration;
+  const totalFrames = Math.max(1, totalSceneDuration * fps - transitionOverlap);
 
   // Aspect dimensions
   const dims = {
