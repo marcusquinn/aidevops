@@ -19,36 +19,6 @@
 set -euo pipefail
 
 #######################################
-# Extract GitHub login from a git noreply email
-#
-# GitHub noreply format: NNN+login@users.noreply.github.com
-# Falls back to the local part of the email if not a noreply address.
-#
-# Arguments:
-#   $1 - email address
-# Output: GitHub login to stdout
-#######################################
-_email_to_login() {
-	local email="$1"
-
-	if [[ "$email" == *"@users.noreply.github.com" ]]; then
-		# Extract login from NNN+login@users.noreply.github.com
-		local local_part="${email%%@*}"
-		if [[ "$local_part" == *"+"* ]]; then
-			echo "${local_part#*+}"
-		else
-			echo "$local_part"
-		fi
-	elif [[ "$email" == "actions@github.com" || "$email" == "action@github.com" ]]; then
-		echo "github-actions"
-	else
-		# Fallback: use local part of email
-		echo "${email%%@*}"
-	fi
-	return 0
-}
-
-#######################################
 # Compute activity summary for all contributors in a repo
 #
 # Reads git log and computes per-contributor stats:
@@ -95,7 +65,8 @@ compute_activity() {
 
 	# Get git log: email|ISO-date (one line per commit)
 	local git_data
-	git_data=$(git -C "$repo_path" log --all --format='%ae|%aI' $since_arg 2>/dev/null) || git_data=""
+	# shellcheck disable=SC2086
+	git_data=$(git -C "$repo_path" log --all --format='%ae|%aI' $since_arg) || git_data=""
 
 	if [[ -z "$git_data" ]]; then
 		if [[ "$format" == "json" ]]; then
@@ -106,14 +77,14 @@ compute_activity() {
 		return 0
 	fi
 
-	# Process with python3 for date arithmetic
+	# Process with python3 for date arithmetic.
+	# Variables passed via sys.argv to avoid shell injection.
 	echo "$git_data" | python3 -c "
 import sys
 import json
 from collections import defaultdict
 from datetime import datetime, timezone
 
-# Read email-to-login mapping function inline
 def email_to_login(email):
     if email.endswith('@users.noreply.github.com'):
         local = email.split('@')[0]
@@ -122,7 +93,6 @@ def email_to_login(email):
         return 'github-actions'
     return email.split('@')[0]
 
-# Parse commits
 contributors = defaultdict(lambda: {'commits': 0, 'days': set(), 'daily_spans': defaultdict(list)})
 
 for line in sys.stdin:
@@ -132,7 +102,6 @@ for line in sys.stdin:
     email, date_str = line.split('|', 1)
     login = email_to_login(email)
 
-    # Skip bot accounts
     if login in ('github-actions',):
         continue
 
@@ -146,19 +115,16 @@ for line in sys.stdin:
     contributors[login]['days'].add(day)
     contributors[login]['daily_spans'][day].append(dt)
 
-# Compute productive hours per contributor
 results = []
 for login, data in sorted(contributors.items(), key=lambda x: -x[1]['commits']):
     active_days = len(data['days'])
     commits = data['commits']
 
-    # Productive hours: sum of (last - first) commit time per active day
-    # Minimum 15 minutes per active day (accounts for single-commit days)
     total_hours = 0.0
     for day, timestamps in data['daily_spans'].items():
         timestamps.sort()
         span = (timestamps[-1] - timestamps[0]).total_seconds() / 3600
-        total_hours += max(span, 0.25)  # minimum 15 min per active day
+        total_hours += max(span, 0.25)
 
     avg_per_day = commits / active_days if active_days > 0 else 0
 
@@ -170,21 +136,20 @@ for login, data in sorted(contributors.items(), key=lambda x: -x[1]['commits']):
         'avg_commits_per_day': round(avg_per_day, 1)
     })
 
-format_type = '${format}'
-period = '${period}'
+format_type = sys.argv[1]
+period_name = sys.argv[2]
 
 if format_type == 'json':
     print(json.dumps(results, indent=2))
 else:
-    # Markdown table
     if not results:
-        print('_No contributor activity._')
+        print(f'_No contributor activity in the last {period_name}._')
     else:
-        print(f'| Contributor | Commits | Active Days | Productive Hours | Avg/Day |')
-        print(f'| --- | ---: | ---: | ---: | ---: |')
+        print('| Contributor | Commits | Active Days | Productive Hours | Avg/Day |')
+        print('| --- | ---: | ---: | ---: | ---: |')
         for r in results:
             print(f'| {r[\"login\"]} | {r[\"commits\"]} | {r[\"active_days\"]} | {r[\"productive_hours\"]}h | {r[\"avg_commits_per_day\"]} |')
-" 2>/dev/null
+" "$format" "$period"
 
 	return 0
 }
@@ -206,10 +171,11 @@ user_activity() {
 		return 1
 	fi
 
-	# Get all commits by this user (match by noreply email pattern)
+	# Get all commits (match by noreply email pattern in Python)
 	local git_data
-	git_data=$(git -C "$repo_path" log --all --format='%ae|%aI' --since='1.year.ago' 2>/dev/null) || git_data=""
+	git_data=$(git -C "$repo_path" log --all --format='%ae|%aI' --since='1.year.ago') || git_data=""
 
+	# Target login passed via sys.argv to avoid shell injection.
 	echo "$git_data" | python3 -c "
 import sys
 import json
@@ -224,7 +190,7 @@ def email_to_login(email):
         return 'github-actions'
     return email.split('@')[0]
 
-target = '${target_login}'
+target = sys.argv[1]
 now = datetime.now(timezone.utc)
 
 periods = {
@@ -274,7 +240,7 @@ for period_name in ('today', 'this_week', 'this_month', 'this_year'):
     }
 
 print(json.dumps(result, indent=2))
-" 2>/dev/null
+" "$target_login"
 
 	return 0
 }

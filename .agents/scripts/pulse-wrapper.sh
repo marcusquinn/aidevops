@@ -1405,8 +1405,9 @@ _get_runner_role() {
 	fi
 
 	local role="contributor"
+	local api_path="repos/${repo_slug}/collaborators/${runner_user}/permission"
 	local response
-	response=$(gh api "repos/${repo_slug}/collaborators/${runner_user}/permission" --jq '.permission // empty' 2>/dev/null) || response=""
+	response=$(gh api "$api_path" --jq '.permission // empty') || response=""
 
 	case "$response" in
 	admin | maintain | write)
@@ -1457,7 +1458,7 @@ _update_health_issue_for_repo() {
 
 	# Per-runner identity and role
 	local runner_user
-	runner_user=$(gh api user --jq '.login' 2>/dev/null || whoami)
+	runner_user=$(gh api user --jq '.login' || whoami)
 
 	# Determine role: supervisor (maintainer) or contributor (non-maintainer)
 	local runner_role
@@ -1769,7 +1770,7 @@ ${worker_table}"
 	local activity_md=""
 	local activity_helper="${HOME}/.aidevops/agents/scripts/contributor-activity-helper.sh"
 	if [[ -x "$activity_helper" ]]; then
-		activity_md=$(bash "$activity_helper" summary "$repo_path" --period month --format markdown 2>/dev/null || echo "_Activity data unavailable._")
+		activity_md=$(bash "$activity_helper" summary "$repo_path" --period month --format markdown || echo "_Activity data unavailable._")
 	else
 		activity_md="_Activity helper not installed._"
 	fi

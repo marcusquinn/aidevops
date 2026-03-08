@@ -95,7 +95,7 @@ Estimates represent **AI-assisted execution time** — the wall-clock time from 
 
 ## Auto-Subtasking
 
-(t1188.2): Tasks with estimates >4h that have no existing subtasks are flagged as `needs-subtasking` in the eligibility assessment. The AI reasoner uses `create_subtasks` to break them into dispatchable units (~30m-4h each) before attempting dispatch. Tasks that already have subtasks are flagged as `has-subtasks` — the supervisor dispatches the subtasks instead.
+(t1188.2): Tasks with estimates >2h that have no existing subtasks are flagged as `needs-subtasking` in the eligibility assessment. The AI reasoner uses `create_subtasks` to break them into dispatchable units (~15m-2h each) before attempting dispatch. Tasks that already have subtasks are flagged as `has-subtasks` — the supervisor dispatches the subtasks instead.
 
 ## Cross-Repo Concurrency Fairness
 
