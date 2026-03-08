@@ -361,7 +361,7 @@ cmd_check() {
 			local latest_hash
 			if ! latest_hash=$(fetch_url_hash "$upstream_url"); then
 				log_warning "Could not fetch URL for $name: $upstream_url"
-				((check_failed++)) || true
+				((++check_failed))
 				continue
 			fi
 
@@ -377,7 +377,7 @@ cmd_check() {
 					echo ""
 				fi
 				log_info "UNKNOWN: $name (no hash recorded) latest_hash=${latest_hash:0:12}"
-				((updates_available++)) || true
+				((++updates_available))
 				results+=("{\"name\":\"$name\",\"status\":\"unknown\",\"latest\":\"${latest_hash}\"}")
 			elif [[ "$latest_hash" != "$stored_hash" ]]; then
 				if [[ "$NON_INTERACTIVE" != true ]]; then
@@ -388,7 +388,7 @@ cmd_check() {
 					echo ""
 				fi
 				log_info "UPDATE AVAILABLE: $name prev_hash=${stored_hash:0:12} new_hash=${latest_hash:0:12}"
-				((updates_available++)) || true
+				((++updates_available))
 				results+=("{\"name\":\"$name\",\"status\":\"update_available\",\"current\":\"${stored_hash}\",\"latest\":\"${latest_hash}\"}")
 
 				# Auto-update if enabled
@@ -413,7 +413,7 @@ cmd_check() {
 					echo -e "${GREEN}Up to date${NC}: $name"
 				fi
 				log_info "Up to date: $name hash=${stored_hash:0:12}"
-				((up_to_date++)) || true
+				((++up_to_date))
 				results+=("{\"name\":\"$name\",\"status\":\"up_to_date\",\"commit\":\"${stored_hash}\"}")
 			fi
 			continue
@@ -430,7 +430,7 @@ cmd_check() {
 
 		if [[ -z "$owner_repo" || "$owner_repo" == "/" ]]; then
 			log_warning "Could not parse URL for $name: $upstream_url"
-			((check_failed++)) || true
+			((++check_failed))
 			continue
 		fi
 
@@ -438,7 +438,7 @@ cmd_check() {
 		local latest_commit
 		if ! latest_commit=$(get_latest_commit "$owner_repo"); then
 			log_warning "Could not fetch latest commit for $name ($owner_repo)"
-			((check_failed++)) || true
+			((++check_failed))
 			continue
 		fi
 
@@ -455,7 +455,7 @@ cmd_check() {
 				echo ""
 			fi
 			log_info "UNKNOWN: $name (no commit recorded) latest=${latest_commit:0:7}"
-			((updates_available++)) || true
+			((++updates_available))
 			results+=("{\"name\":\"$name\",\"status\":\"unknown\",\"latest\":\"$latest_commit\"}")
 		elif [[ "$latest_commit" != "$current_commit" ]]; then
 			if [[ "$NON_INTERACTIVE" != true ]]; then
@@ -466,7 +466,7 @@ cmd_check() {
 				echo ""
 			fi
 			log_info "UPDATE AVAILABLE: $name current=${current_commit:0:7} latest=${latest_commit:0:7}"
-			((updates_available++)) || true
+			((++updates_available))
 			results+=("{\"name\":\"$name\",\"status\":\"update_available\",\"current\":\"$current_commit\",\"latest\":\"$latest_commit\"}")
 
 			# Auto-update if enabled
@@ -490,7 +490,7 @@ cmd_check() {
 				echo -e "${GREEN}Up to date${NC}: $name"
 			fi
 			log_info "Up to date: $name commit=${current_commit:0:7}"
-			((up_to_date++)) || true
+			((++up_to_date))
 			results+=("{\"name\":\"$name\",\"status\":\"up_to_date\",\"commit\":\"$current_commit\"}")
 		fi
 
@@ -1631,7 +1631,7 @@ cmd_pr() {
 			local latest_hash
 			if ! latest_hash=$(fetch_url_hash "$upstream_url"); then
 				log_warning "Could not fetch URL for $name: $upstream_url — skipping"
-				((prs_skipped++)) || true
+				((++prs_skipped))
 				continue
 			fi
 
@@ -1646,9 +1646,9 @@ cmd_pr() {
 
 			# URL skill has an update (or no stored hash) — create PR
 			if cmd_pr_single "$name" "$upstream_url" "$stored_hash" "$latest_hash" "url"; then
-				((prs_created++)) || true
+				((++prs_created))
 			else
-				((prs_failed++)) || true
+				((++prs_failed))
 			fi
 			continue
 		fi
@@ -1658,7 +1658,7 @@ cmd_pr() {
 			if [[ "$QUIET" != true ]]; then
 				log_info "Skipping $name (non-GitHub source: ${upstream_url})"
 			fi
-			((prs_skipped++)) || true
+			((++prs_skipped))
 			continue
 		fi
 
@@ -1669,7 +1669,7 @@ cmd_pr() {
 
 		if [[ -z "$owner_repo" || "$owner_repo" == "/" ]]; then
 			log_warning "Could not parse URL for $name: $upstream_url — skipping"
-			((prs_skipped++)) || true
+			((++prs_skipped))
 			continue
 		fi
 
@@ -1677,7 +1677,7 @@ cmd_pr() {
 		local latest_commit
 		if ! latest_commit=$(get_latest_commit "$owner_repo"); then
 			log_warning "Could not fetch latest commit for $name ($owner_repo) — skipping"
-			((prs_skipped++)) || true
+			((++prs_skipped))
 			continue
 		fi
 
@@ -1694,9 +1694,9 @@ cmd_pr() {
 
 		# Skill has an update — create PR
 		if cmd_pr_single "$name" "$upstream_url" "$current_commit" "$latest_commit" "github"; then
-			((prs_created++)) || true
+			((++prs_created))
 		else
-			((prs_failed++)) || true
+			((++prs_failed))
 		fi
 
 	done < <(jq -c '.skills[]' "$SKILL_SOURCES")

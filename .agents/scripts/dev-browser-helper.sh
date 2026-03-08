@@ -154,7 +154,7 @@ start_server() {
     
     while ! curl -s "http://localhost:${SERVER_PORT}" > /dev/null 2>&1; do
         sleep 1
-        ((waited++))
+        ((++waited))
         if [[ ${waited} -ge ${max_wait} ]]; then
             print_error "Server failed to start within ${max_wait}s"
             print_info "Check logs: cat ${DEV_BROWSER_DIR}/server.log"

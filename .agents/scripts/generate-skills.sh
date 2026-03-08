@@ -215,7 +215,7 @@ if [[ "$CLEAN" == true ]]; then
 			rm -f "$skill_file"
 			log_success "Removed: $skill_file"
 		fi
-		((count++)) || true
+		((++count))
 	done < <(find "$AGENTS_DIR" -name "SKILL.md" -type f 2>/dev/null)
 
 	if [[ $count -eq 0 ]]; then
@@ -263,7 +263,7 @@ while IFS= read -r folder; do
 			generate_folder_skill "$folder" "$parent_md" >"$skill_file"
 			log_success "Generated: $skill_file"
 		fi
-		((generated++)) || true
+		((++generated))
 	fi
 done < <(find "$AGENTS_DIR" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort)
 
@@ -303,7 +303,7 @@ while IFS= read -r folder; do
 			} >"$skill_file"
 			log_success "Generated: $skill_file"
 		fi
-		((generated++)) || true
+		((++generated))
 	fi
 done < <(find "$AGENTS_DIR" -mindepth 2 -type d 2>/dev/null | sort)
 
@@ -348,7 +348,7 @@ while IFS= read -r md_file; do
 		generate_leaf_skill "$md_file" >"$skill_file"
 		log_success "Generated: $skill_file"
 	fi
-	((generated++)) || true
+	((++generated))
 done < <(find "$AGENTS_DIR" -mindepth 2 -name "*.md" -not -name "SKILL.md" -not -name "AGENTS.md" -not -name "README.md" -type f 2>/dev/null | sort)
 
 # =============================================================================

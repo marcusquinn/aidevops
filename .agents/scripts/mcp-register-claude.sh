@@ -342,7 +342,7 @@ run_command() {
 
 	if [[ "$DRY_RUN" == true ]]; then
 		echo "  ${cmd}"
-		((registered++))
+		((++registered))
 		return 0
 	fi
 
@@ -356,10 +356,10 @@ run_command() {
 
 	if "${cmd_parts[@]}" "$json_payload"; then
 		print_success "${template_name}: registered"
-		((registered++))
+		((++registered))
 	else
 		print_error "${template_name}: registration failed"
-		((failed++))
+		((++failed))
 	fi
 	return 0
 }
@@ -428,7 +428,7 @@ register_all() {
 
 		# Check skip list (includes default skips)
 		if should_skip "$stem"; then
-			((skipped++))
+			((++skipped))
 			continue
 		fi
 
@@ -440,14 +440,14 @@ register_all() {
 		fi
 
 		if [[ -z "$cmd" ]]; then
-			((skipped++))
+			((++skipped))
 			continue
 		fi
 
 		# Skip commands with placeholders (unless forced)
 		if has_placeholders "$cmd" && [[ "$FORCE" != true ]]; then
 			print_warning "${stem}: skipped (contains placeholders — use --force to override)"
-			((skipped++))
+			((++skipped))
 			continue
 		fi
 
@@ -458,7 +458,7 @@ register_all() {
 		# Check if already registered
 		if [[ -n "$server_name" ]] && is_registered "$server_name" "$registered_list" && [[ "$FORCE" != true ]]; then
 			print_info "${stem}: already registered as '${server_name}'"
-			((already++))
+			((++already))
 			continue
 		fi
 

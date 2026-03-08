@@ -480,7 +480,7 @@ list_plans() {
 
 		# Detect plan header
 		if [[ "$line" =~ ^###[[:space:]]+\[([0-9-]+)\][[:space:]]+(.+)$ ]]; then
-			((num++))
+			((++num))
 			local title="${BASH_REMATCH[2]}"
 			title="${title% ✓}"
 			local status=""

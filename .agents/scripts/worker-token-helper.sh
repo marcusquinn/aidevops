@@ -579,7 +579,7 @@ cmd_cleanup() {
 			if [[ "$expires_epoch" -gt 0 ]] && [[ "$now_epoch" -gt "$expires_epoch" ]]; then
 				local token_file="${meta_file%.meta}.token"
 				cmd_revoke --token-file "$token_file" 2>/dev/null || true
-				((cleaned++))
+				((++cleaned))
 			fi
 		fi
 	done
@@ -645,9 +645,9 @@ cmd_status() {
 				date -d "$expires_at" +%s 2>/dev/null || echo "0")
 
 			if [[ "$expires_epoch" -gt 0 ]] && [[ "$now_epoch" -gt "$expires_epoch" ]]; then
-				((expired_count++))
+				((++expired_count))
 			else
-				((active_count++))
+				((++active_count))
 				echo "  Active: ${repo} (${strategy}, expires: ${expires_at})"
 			fi
 		done

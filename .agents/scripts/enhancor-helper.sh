@@ -62,11 +62,21 @@ api_request() {
 	local endpoint="$2"
 	shift 2
 
-	curl -s -X "${method}" \
+	local http_code response
+	response=$(curl -s -w '\n%{http_code}' -X "${method}" \
 		"${ENHANCOR_API_BASE}${endpoint}" \
 		-H "x-api-key: ${ENHANCOR_API_KEY}" \
 		-H "Content-Type: application/json" \
-		"$@"
+		"$@")
+	http_code=$(tail -n1 <<<"${response}")
+	response=$(sed '$d' <<<"${response}")
+	if [[ "${http_code}" -ge 400 ]]; then
+		print_error "HTTP ${http_code} from ${endpoint}" >&2
+		echo "${response}"
+		return 1
+	fi
+	echo "${response}"
+	return 0
 }
 
 # Download result file

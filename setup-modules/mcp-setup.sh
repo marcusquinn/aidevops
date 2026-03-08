@@ -85,7 +85,8 @@ install_mcp_packages() {
 }
 
 resolve_mcp_binary_path() {
-	local bin_name="$1"
+	local bin_name
+	bin_name="$1"
 	local resolved=""
 
 	# Check common locations in priority order
@@ -419,9 +420,12 @@ setup_browser_tools() {
 }
 
 add_opencode_plugin() {
-	local plugin_name="$1"
-	local plugin_spec="$2"
-	local opencode_config="$3"
+	local plugin_name
+	plugin_name="$1"
+	local plugin_spec
+	plugin_spec="$2"
+	local opencode_config
+	opencode_config="$3"
 
 	# Check if plugin array exists and if plugin is already configured
 	local has_plugin_array

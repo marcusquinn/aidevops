@@ -43,7 +43,7 @@ print_header() {
 print_skip() {
     local message="$1"
     echo -e "${BLUE}SKIPPED${NC} $message"
-    ((SKIPPED++))
+    ((++SKIPPED))
     return 0
 }
 
@@ -148,7 +148,7 @@ check_cicd_status() {
         local attempt=0
         while [[ $attempt -lt $MAX_ATTEMPTS ]]; do
             sleep "$POLL_INTERVAL"
-            ((attempt++))
+            ((++attempt))
             
             local current_status
             current_status=$(gh run view "$run_id" --repo "$repo" --json status,conclusion 2>/dev/null || echo "")

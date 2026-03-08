@@ -22,9 +22,12 @@ check_python_for_skill_scanner() {
 		local ver_output
 		ver_output=$("$py_bin" --version 2>/dev/null) || return 1
 		# "Python 3.11.5" -> extract major.minor
-		local major minor
-		major=$(echo "$ver_output" | sed -E 's/Python ([0-9]+)\..*/\1/')
-		minor=$(echo "$ver_output" | sed -E 's/Python [0-9]+\.([0-9]+).*/\1/')
+		local major minor ver_string
+		# "Python 3.11.5" -> "3.11.5" -> extract major and minor
+		ver_string="${ver_output#Python }"
+		major="${ver_string%%.*}"
+		minor="${ver_string#*.}"
+		minor="${minor%%.*}"
 		if [[ "$major" -gt "$required_major" ]] ||
 			{ [[ "$major" -eq "$required_major" ]] && [[ "$minor" -ge "$required_minor" ]]; }; then
 			return 0
@@ -48,7 +51,8 @@ check_python_for_skill_scanner() {
 	# 3. If uv is available, install Python 3.11 and retry
 	if command -v uv &>/dev/null; then
 		print_info "No Python >= 3.10 found. Installing Python 3.11 via uv..."
-		if uv python install 3.11 2>/dev/null; then
+		local uv_install_output
+		if uv_install_output=$(uv python install 3.11 2>&1); then
 			# uv installs to its managed path; check if python3.11 is now available
 			if command -v python3.11 &>/dev/null && _python_version_ok python3.11; then
 				print_success "Python 3.11 installed via uv"
@@ -61,6 +65,9 @@ check_python_for_skill_scanner() {
 				print_success "Python 3.11 installed via uv (at $uv_py)"
 				return 0
 			fi
+		else
+			print_warning "uv python install 3.11 failed:"
+			print_info "  $uv_install_output"
 		fi
 	fi
 

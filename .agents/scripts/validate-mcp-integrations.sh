@@ -24,16 +24,16 @@ run_test() {
 	local test_name="$1"
 	local test_command="$2"
 
-	((total_tests++))
+	((++total_tests))
 	print_info "Testing: $test_name"
 
 	if bash -c "$test_command" &>/dev/null; then
 		print_success "$test_name: PASSED"
-		((passed_tests++))
+		((++passed_tests))
 		return 0
 	else
 		print_error "$test_name: FAILED"
-		((failed_tests++))
+		((++failed_tests))
 		return 1
 	fi
 	return 0

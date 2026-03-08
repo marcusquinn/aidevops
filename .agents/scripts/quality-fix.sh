@@ -110,7 +110,7 @@ fix_return_statements() {
 							sed_inplace '$ d' "$temp_file"
 							echo "    return 0" >>"$temp_file"
 							echo "}" >>"$temp_file"
-							((fixed_functions++))
+							((++fixed_functions))
 							print_info "Fixed function: $function_name"
 						fi
 
@@ -122,7 +122,7 @@ fix_return_statements() {
 
 			if [[ $fixed_functions -gt 0 ]]; then
 				mv "$temp_file" "$file"
-				((files_fixed++))
+				((++files_fixed))
 				print_success "Fixed $fixed_functions functions in $file"
 			else
 				rm -f "$temp_file"
@@ -161,7 +161,7 @@ fix_positional_parameters() {
 
 				if ! diff -q "$file" "$temp_file" >/dev/null; then
 					mv "$temp_file" "$file"
-					((files_fixed++))
+					((++files_fixed))
 					print_success "Fixed positional parameters in main() function of $file"
 				else
 					rm -f "$temp_file"
@@ -219,7 +219,7 @@ validate_fixes() {
 
 	while IFS= read -r -d '' file; do
 		if [[ -f "$file" ]] && ! shellcheck "$file" >/dev/null 2>&1; then
-			((validation_errors++))
+			((++validation_errors))
 			print_warning "ShellCheck issues remain in $file"
 		fi
 	done < <(find .agents/scripts -name "*.sh" -not -path "*/_archive/*" -print0 2>/dev/null)

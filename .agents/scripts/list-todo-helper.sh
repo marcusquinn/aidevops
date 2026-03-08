@@ -434,12 +434,12 @@ output_markdown() {
     # Count tasks
     while IFS='|' read -r status id desc est tags owner logged blocked_by is_plan; do
         case "$status" in
-            in-progress|in-review) ((in_progress_count++)) ;;
+            in-progress|in-review) ((++in_progress_count)) ;;
             pending) 
-                ((pending_count++))
-                [[ -n "$blocked_by" ]] && ((blocked_count++))
+                ((++pending_count))
+                [[ -n "$blocked_by" ]] && ((++blocked_count))
                 ;;
-            done) ((done_count++)) ;;
+            done) ((++done_count)) ;;
         esac
     done < "$tasks_file"
     
@@ -476,7 +476,7 @@ output_markdown() {
             local num=0
             while IFS='|' read -r status id desc est tags owner logged blocked_by is_plan; do
                 [[ "$status" != "in-progress" && "$status" != "in-review" ]] && continue
-                ((num++))
+                ((++num))
                 echo "| $num | $id | $desc | $est | $tags | ${owner:--} |"
             done < "$tasks_file"
         fi
@@ -495,7 +495,7 @@ output_markdown() {
         local num=0
         while IFS='|' read -r status id desc est tags owner logged blocked_by is_plan; do
             [[ "$status" != "pending" ]] && continue
-            ((num++))
+            ((++num))
             [[ $LIMIT -gt 0 && $num -gt $LIMIT ]] && break
             local blocked_marker=""
             [[ -n "$blocked_by" ]] && blocked_marker=" [BLOCKED by $blocked_by]"
@@ -507,7 +507,7 @@ output_markdown() {
         local num=0
         while IFS='|' read -r status id desc est tags owner logged blocked_by is_plan; do
             [[ "$status" != "pending" ]] && continue
-            ((num++))
+            ((++num))
             [[ $LIMIT -gt 0 && $num -gt $LIMIT ]] && break
             echo "| $num | $id | $desc | $est | $tags | ${owner:--} | $logged |"
         done < "$tasks_file"
