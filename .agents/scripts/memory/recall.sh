@@ -330,20 +330,30 @@ LIMIT $limit;
 EOF
 			)
 			# Update access tracking in global DB for shared results
+			# Batched into a single SQL statement for performance
 			if [[ -n "$shared_results" && "$shared_results" != "[]" ]]; then
 				local shared_ids
 				shared_ids=$(echo "$shared_results" | extract_ids_from_json)
 				if [[ -n "$shared_ids" ]]; then
+					local shared_id_values=""
 					while IFS= read -r sid; do
 						[[ -z "$sid" ]] && continue
+						local escaped_sid="${sid//"'"/"''"}"
+						if [[ -n "$shared_id_values" ]]; then
+							shared_id_values="${shared_id_values}, ('${escaped_sid}', datetime('now'), 1)"
+						else
+							shared_id_values="('${escaped_sid}', datetime('now'), 1)"
+						fi
+					done <<<"$shared_ids"
+					if [[ -n "$shared_id_values" ]]; then
 						db "$global_db" <<EOF
 INSERT INTO learning_access (id, last_accessed_at, access_count)
-VALUES ('$sid', datetime('now'), 1)
+VALUES $shared_id_values
 ON CONFLICT(id) DO UPDATE SET 
     last_accessed_at = datetime('now'),
     access_count = access_count + 1;
 EOF
-					done <<<"$shared_ids"
+					fi
 				fi
 			fi
 		fi
