@@ -15,51 +15,8 @@ SCRIPTS_DIR="$REPO_DIR/.agents/scripts"
 VERBOSE="${1:-}"
 
 # --- Test Framework ---
-PASS_COUNT=0
-FAIL_COUNT=0
-SKIP_COUNT=0
-TOTAL_COUNT=0
-
-# Record a passing test and print in verbose mode.
-# Arguments: description string
-pass() {
-	PASS_COUNT=$((PASS_COUNT + 1))
-	TOTAL_COUNT=$((TOTAL_COUNT + 1))
-	if [[ "$VERBOSE" == "--verbose" ]]; then
-		printf "  \033[0;32mPASS\033[0m %s\n" "$1"
-	fi
-	return 0
-}
-
-# Record a failing test and print with optional detail.
-# Arguments: description string, optional detail string
-fail() {
-	FAIL_COUNT=$((FAIL_COUNT + 1))
-	TOTAL_COUNT=$((TOTAL_COUNT + 1))
-	printf "  \033[0;31mFAIL\033[0m %s\n" "$1"
-	if [[ -n "${2:-}" ]]; then
-		printf "       %s\n" "$2"
-	fi
-	return 0
-}
-
-# Record a skipped test and print in verbose mode.
-# Arguments: description string
-skip() {
-	SKIP_COUNT=$((SKIP_COUNT + 1))
-	TOTAL_COUNT=$((TOTAL_COUNT + 1))
-	if [[ "$VERBOSE" == "--verbose" ]]; then
-		printf "  \033[0;33mSKIP\033[0m %s\n" "$1"
-	fi
-	return 0
-}
-
-# Print a section header for test grouping.
-# Arguments: section name string
-section() {
-	echo ""
-	printf "\033[1m=== %s ===\033[0m\n" "$1"
-}
+# shellcheck source=tests/test-helpers.sh
+source "$(dirname "${BASH_SOURCE[0]}")/test-helpers.sh"
 
 # ============================================================
 # SECTION 1: bash -n syntax check for ALL scripts
@@ -252,18 +209,5 @@ fi
 # ============================================================
 # SUMMARY
 # ============================================================
-echo ""
-echo "========================================"
-printf "  \033[1mResults: %d total, \033[0;32m%d passed\033[0m, \033[0;31m%d failed\033[0m, \033[0;33m%d skipped\033[0m\n" \
-	"$TOTAL_COUNT" "$PASS_COUNT" "$FAIL_COUNT" "$SKIP_COUNT"
-echo "========================================"
-
-if [[ "$FAIL_COUNT" -gt 0 ]]; then
-	echo ""
-	printf "\033[0;31mFAILURES DETECTED - review output above\033[0m\n"
-	exit 1
-else
-	echo ""
-	printf "\033[0;32mAll tests passed.\033[0m\n"
-	exit 0
-fi
+print_summary
+exit $?

@@ -25,24 +25,8 @@ else
 	SUPERVISOR=""
 fi
 
-PASS=0
-FAIL=0
-
-# Record a passing test result and print status.
-# Arguments: description string
-pass() {
-	PASS=$((PASS + 1))
-	echo "  PASS: $1"
-	return 0
-}
-
-# Record a failing test result and print status.
-# Arguments: description string
-fail() {
-	FAIL=$((FAIL + 1))
-	echo "  FAIL: $1"
-	return 0
-}
+# shellcheck source=tests/test-helpers.sh
+source "$(dirname "${BASH_SOURCE[0]}")/test-helpers.sh"
 
 echo "=== Supervisor Globals Test ==="
 echo ""
@@ -141,10 +125,5 @@ else
 	fi
 fi
 
-echo ""
-echo "=== Results: $PASS passed, $FAIL failed ==="
-
-if [[ "$FAIL" -gt 0 ]]; then
-	exit 1
-fi
-exit 0
+print_summary
+exit $?

@@ -30,10 +30,8 @@ SUPERVISOR_DIR="$REPO_DIR/.agents/scripts/supervisor"
 SCRIPTS_DIR="$REPO_DIR/.agents/scripts"
 
 # Test state
-PASS=0
-FAIL=0
-SKIP=0
-TOTAL=0
+# shellcheck source=tests/test-helpers.sh
+source "$(dirname "${BASH_SOURCE[0]}")/test-helpers.sh"
 LIVE_MODE=false
 
 # Parse args
@@ -57,25 +55,6 @@ while [[ $# -gt 0 ]]; do
 		;;
 	esac
 done
-
-# Test helpers
-pass() {
-	PASS=$((PASS + 1))
-	TOTAL=$((TOTAL + 1))
-	echo "  PASS: $1"
-}
-
-fail() {
-	FAIL=$((FAIL + 1))
-	TOTAL=$((TOTAL + 1))
-	echo "  FAIL: $1"
-}
-
-skip() {
-	SKIP=$((SKIP + 1))
-	TOTAL=$((TOTAL + 1))
-	echo "  SKIP: $1"
-}
 
 # Temp directory for test artifacts
 TEST_TMP=""
@@ -2023,13 +2002,5 @@ fi
 echo ""
 
 # ─── Summary ────────────────────────────────────────────────────────
-echo "=== Results: $PASS passed, $FAIL failed, $SKIP skipped (of $TOTAL total) ==="
-echo ""
-
-if [[ "$FAIL" -gt 0 ]]; then
-	echo "FAILED — $FAIL test(s) need attention"
-	exit 1
-fi
-
-echo "ALL TESTS PASSED"
-exit 0
+print_summary
+exit $?
