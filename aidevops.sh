@@ -1385,6 +1385,7 @@ cmd_init() {
     "time_tracking": $enable_time_tracking,
     "database": $enable_database,
     "beads": $enable_beads,
+    "sops": $enable_sops,
     "security": $enable_security
   },
   "time_tracking": {
