@@ -7,7 +7,7 @@ on:
       - 'TODO.md'
       - 'todo/PLANS.md'
       - 'todo/tasks/**'
-  pull_request:
+  pull_request_target:
     branches: [main]
     types: [closed, opened, edited]
   issues:
@@ -280,7 +280,7 @@ jobs:
   # hygiene treatment — previously only the TODO.md push path ran issue-sync.
   sync-on-pr-merge:
     name: Sync Issue Hygiene on PR Merge
-    if: github.event_name == 'pull_request' && github.event.pull_request.merged == true
+    if: github.event_name == 'pull_request_target' && github.event.pull_request.merged == true
     runs-on: ubuntu-latest
     timeout-minutes: 5
     concurrency:
@@ -292,6 +292,9 @@ jobs:
       pull-requests: write
 
     steps:
+      # Security: This job uses pull_request_target to get write permissions for
+      # fork PRs. It only checks out ref:main (base branch), never fork code.
+      # Event metadata (PR title, body, number) is used for issue hygiene only.
       - name: Extract task ID and collect linked issues
         id: extract
         env:
@@ -461,13 +464,16 @@ jobs:
 
   # =========================================================================
   # t1339: Apply conventional-commit labels to PRs
+  # t3851: Fixed — uses pull_request_target for fork PR write permissions
   # =========================================================================
   # Parses the PR title prefix (feat:, fix:, docs:, etc.) and applies
   # the corresponding GitHub label. Runs on PR open and title edit.
+  # Uses pull_request_target (not pull_request) so the GITHUB_TOKEN has
+  # write access even for PRs from forks.
   label-pr:
     name: Label PR from Conventional Commit
     if: >-
-      github.event_name == 'pull_request' &&
+      github.event_name == 'pull_request_target' &&
       github.event.pull_request.merged != true &&
       (github.event.action == 'opened' || github.event.action == 'edited')
     runs-on: ubuntu-latest
@@ -478,6 +484,9 @@ jobs:
       pull-requests: write
 
     steps:
+      # Security: This job uses pull_request_target to get write permissions for
+      # fork PRs. It ONLY reads event metadata (PR title, number) — it never
+      # checks out or executes code from the PR head branch.
       - name: Apply label from PR title prefix
         env:
           PR_TITLE: ${{ github.event.pull_request.title }}
@@ -527,7 +536,7 @@ jobs:
   check-issue-link:
     name: Check PR-Issue Linkage
     if: >-
-      github.event_name == 'pull_request' &&
+      github.event_name == 'pull_request_target' &&
       github.event.pull_request.merged != true &&
       (github.event.action == 'opened' || github.event.action == 'edited')
     runs-on: ubuntu-latest
@@ -538,6 +547,9 @@ jobs:
       pull-requests: write
 
     steps:
+      # Security: This job uses pull_request_target to get write permissions for
+      # fork PRs. It ONLY reads event metadata (PR title, body, number) — it never
+      # checks out or executes code from the PR head branch.
       - name: Check for issue reference in PR body
         env:
           PR_TITLE: ${{ github.event.pull_request.title }}
