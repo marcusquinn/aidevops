@@ -21,11 +21,19 @@ _validate_task_id() {
 	return 0
 }
 
-# Sanitize a filename for safe use in shell commands
-# Strips anything that isn't alphanumeric, dots, hyphens, underscores, or forward slashes
+# Escape task_id dots for use in extended regex patterns
+# e.g. t128.10 -> t128\.10 (prevents matching t12810)
+_escape_task_id_regex() {
+	local id="$1"
+	printf '%s' "$id" | sed 's/\./\\./g'
+}
+
+# Shell-quote a filename for safe use in generated check directives
+# Preserves the original path (including spaces) using printf %q quoting
+# instead of stripping characters, which would corrupt valid filenames
 _sanitize_filename() {
 	local name="$1"
-	printf '%s' "$name" | tr -cd 'a-zA-Z0-9._/-'
+	printf '%q' "$name"
 }
 
 #######################################
@@ -401,7 +409,9 @@ populate_verify_queue() {
 	pr_number="${parsed_populate##*|}"
 
 	# Check if this task already has a verify entry (idempotency)
-	if grep -q -- "^- \[.\] v[0-9]* $task_id " "$verify_file" 2>/dev/null; then
+	local tid_re
+	tid_re=$(_escape_task_id_regex "$task_id")
+	if grep -qE -- "^- \[.\] v[0-9]+ ${tid_re} " "$verify_file" 2>/dev/null; then
 		log_info "Verify entry already exists for $task_id in VERIFY.md"
 		return 0
 	fi
@@ -732,12 +742,15 @@ update_todo_on_complete() {
 	# Any task with subtasks (indented children OR explicit tNNN.M IDs) should only be
 	# marked [x] when ALL its subtasks are [x]. This prevents workers from prematurely
 	# completing parents, regardless of #plan tag.
+	# Escape dots in task_id for regex (e.g. t128.10 -> t128\.10)
+	local tid_re
+	tid_re=$(_escape_task_id_regex "$task_id")
 	local task_line
-	task_line=$(grep -E -- "^[[:space:]]*- \[[ x-]\] ${task_id}( |$)" "$todo_file" | head -1 || true)
+	task_line=$(grep -E -- "^[[:space:]]*- \[[ x-]\] ${tid_re}( |$)" "$todo_file" | head -1 || true)
 	if [[ -n "$task_line" ]]; then
 		# Check for explicit subtask IDs (e.g., t123.1, t123.2 are children of t123)
 		local explicit_subtasks
-		explicit_subtasks=$(grep -E -- "^[[:space:]]*- \[ \] ${task_id}\.[0-9]+( |$)" "$todo_file" || true)
+		explicit_subtasks=$(grep -E -- "^[[:space:]]*- \[ \] ${tid_re}\.[0-9]+( |$)" "$todo_file" || true)
 
 		if [[ -n "$explicit_subtasks" ]]; then
 			local open_count
@@ -783,7 +796,7 @@ update_todo_on_complete() {
 
 	# Match the task line (open checkbox with task ID)
 	# Handles both top-level and indented subtasks
-	if ! grep -qE -- "^[[:space:]]*- \[ \] ${task_id}( |$)" "$todo_file"; then
+	if ! grep -qE -- "^[[:space:]]*- \[ \] ${tid_re}( |$)" "$todo_file"; then
 		log_warn "Task $task_id not found as open in $todo_file (may already be completed)"
 		return 0
 	fi
@@ -802,12 +815,12 @@ update_todo_on_complete() {
 	else
 		proof_log=" verified:${today}"
 	fi
-	local sed_pattern="s/^([[:space:]]*- )\[ \] (${task_id} .*)$/\1[x] \2${proof_log} completed:${today}/"
+	local sed_pattern="s/^([[:space:]]*- )\[ \] (${tid_re} .*)$/\1[x] \2${proof_log} completed:${today}/"
 
 	sed_inplace -E "$sed_pattern" "$todo_file"
 
 	# Verify the change was made
-	if ! grep -qE -- "^[[:space:]]*- \[x\] ${task_id} " "$todo_file"; then
+	if ! grep -qE -- "^[[:space:]]*- \[x\] ${tid_re} " "$todo_file"; then
 		log_error "Failed to update TODO.md for $task_id"
 		return 1
 	fi
@@ -1052,8 +1065,10 @@ update_todo_on_cancelled() {
 	fi
 
 	# Find the task line number (open checkbox only — already-closed tasks are fine)
+	local tid_re
+	tid_re=$(_escape_task_id_regex "$task_id")
 	local line_num
-	line_num=$(grep -nE -- "^[[:space:]]*- \[ \] ${task_id}( |$)" "$todo_file" | head -1 | cut -d: -f1)
+	line_num=$(grep -nE -- "^[[:space:]]*- \[ \] ${tid_re}( |$)" "$todo_file" | head -1 | cut -d: -f1)
 
 	if [[ -z "$line_num" ]]; then
 		log_verbose "Task $task_id not found as open in $todo_file (already annotated or closed)"
@@ -1128,8 +1143,10 @@ update_todo_on_blocked() {
 	fi
 
 	# Find the task line number
+	local tid_re
+	tid_re=$(_escape_task_id_regex "$task_id")
 	local line_num
-	line_num=$(grep -nE -- "^[[:space:]]*- \[ \] ${task_id}( |$)" "$todo_file" | head -1 | cut -d: -f1)
+	line_num=$(grep -nE -- "^[[:space:]]*- \[ \] ${tid_re}( |$)" "$todo_file" | head -1 | cut -d: -f1)
 
 	if [[ -z "$line_num" ]]; then
 		log_warn "Task $task_id not found as open in $todo_file"

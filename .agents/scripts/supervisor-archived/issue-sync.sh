@@ -2928,8 +2928,12 @@ post_blocked_comment_to_github() {
 		return 0
 	fi
 
+	# Escape dots in task_id for regex (e.g. t128.10 -> t128\.10)
+	local task_id_escaped
+	task_id_escaped=$(printf '%s' "$task_id" | sed 's/\./\\./g')
+
 	local task_line
-	task_line=$(grep -E -- "^[[:space:]]*- \[.\] ${task_id} " "$todo_file" | head -1 || echo "")
+	task_line=$(grep -E -- "^[[:space:]]*- \[.\] ${task_id_escaped} " "$todo_file" | head -1 || echo "")
 	if [[ -z "$task_line" ]]; then
 		return 0
 	fi
