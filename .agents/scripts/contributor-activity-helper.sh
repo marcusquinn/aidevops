@@ -732,6 +732,7 @@ totals = {
     'interactive_machine_hours': 0,
     'worker_sessions': 0,
     'worker_machine_hours': 0,
+    'total_human_hours': 0,
 }
 
 for repo in repos:
@@ -740,11 +741,12 @@ for repo in repos:
     totals['interactive_machine_hours'] += repo.get('interactive_machine_hours', 0)
     totals['worker_sessions'] += repo.get('worker_sessions', 0)
     totals['worker_machine_hours'] += repo.get('worker_machine_hours', 0)
+    totals['total_human_hours'] += repo.get('total_human_hours', 0)
 
-for k in ['interactive_human_hours', 'interactive_machine_hours', 'worker_machine_hours']:
+for k in ['interactive_human_hours', 'interactive_machine_hours', 'worker_machine_hours', 'total_human_hours']:
     totals[k] = round(totals[k], 1)
 
-total_human_h = totals['interactive_human_hours']
+total_human_h = totals['total_human_hours']
 total_machine_h = round(totals['interactive_machine_hours'] + totals['worker_machine_hours'], 1)
 total_sessions = totals['interactive_sessions'] + totals['worker_sessions']
 
