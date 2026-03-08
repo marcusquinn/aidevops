@@ -105,10 +105,20 @@ function renderVideo(opts) {
   // Remotion's <Audio> cannot resolve absolute filesystem paths in a browser rendering context.
   if (brief.music) {
     const musicAbsPath = resolve(brief.music);
-    if (!existsSync(musicAbsPath)) {
+    // Path traversal guard: only allow music files within the brief's directory tree
+    // or the project directory. Prevents arbitrary file read via crafted brief.music paths.
+    const briefDir = dirname(briefPath);
+    const projectDir = resolve(__dirname, "..", "..");
+    if (!musicAbsPath.startsWith(briefDir + "/") && !musicAbsPath.startsWith(projectDir + "/")) {
+      console.warn(
+        `Warning: music path "${musicAbsPath}" is outside the brief directory ` +
+        `("${briefDir}") and project directory ("${projectDir}"), skipping for security`
+      );
+    } else if (!existsSync(musicAbsPath)) {
       console.warn(`Warning: music file not found: ${musicAbsPath}, skipping`);
     } else {
-      const musicFilename = `music-${basename(musicAbsPath)}`;
+      // Use timestamp prefix to avoid filename collisions across renders
+      const musicFilename = `music-${Date.now()}-${basename(musicAbsPath)}`;
       const musicDest = join(publicDir, musicFilename);
       copyFileSync(musicAbsPath, musicDest);
       console.log(`  Copied ${basename(musicAbsPath)} -> public/${musicFilename}`);
@@ -124,10 +134,11 @@ function renderVideo(opts) {
     );
   }
 
-  // Calculate duration — use consistent source (scenes) for both components.
-  // Clamp transitionOverlap to scene count to avoid negative frames when counts diverge.
+  // Calculate duration — use only scenes that have corresponding video files.
+  // When scene count and video count diverge, rendering is constrained to the minimum,
+  // so duration must match to avoid empty frames or negative totalFrames.
   const sceneCount = Math.min(scenes.length, sceneVideoFilenames.length);
-  const totalSceneDuration = props.scenes.reduce((sum, s) => sum + (s.duration || 5), 0);
+  const totalSceneDuration = props.scenes.slice(0, sceneCount).reduce((sum, s) => sum + (s.duration || 5), 0);
   const transitionOverlap = Math.max(0, (sceneCount - 1)) * props.transitionDuration;
   const totalFrames = Math.max(1, totalSceneDuration * fps - transitionOverlap);
 
