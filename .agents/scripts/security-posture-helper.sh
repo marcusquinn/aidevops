@@ -61,19 +61,19 @@ FINDINGS_JSON="[]"
 print_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
 print_pass() {
 	echo -e "${GREEN}[PASS]${NC} $1"
-	((FINDINGS_PASS++)) || true
+	((++FINDINGS_PASS))
 }
 print_warn() {
 	echo -e "${YELLOW}[WARN]${NC} $1"
-	((FINDINGS_WARNING++)) || true
+	((++FINDINGS_WARNING))
 }
 print_crit() {
 	echo -e "${RED}[CRIT]${NC} $1"
-	((FINDINGS_CRITICAL++)) || true
+	((++FINDINGS_CRITICAL))
 }
 print_skip() {
 	echo -e "${CYAN}[SKIP]${NC} $1"
-	((FINDINGS_INFO++)) || true
+	((++FINDINGS_INFO))
 }
 print_header() { echo -e "\n${BOLD}${CYAN}$1${NC}"; }
 

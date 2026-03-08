@@ -226,25 +226,25 @@ check_tool() {
 		status="not_installed"
 		icon="○"
 		color="$YELLOW"
-		((NOT_INSTALLED_COUNT++)) || true
+		((++NOT_INSTALLED_COUNT))
 	elif [[ "$installed" == "timeout" ]]; then
 		status="timeout"
 		icon="⏱"
 		color="$RED"
-		((INSTALLED_COUNT++)) || true
+		((++INSTALLED_COUNT))
 	elif [[ "$installed" == "unknown" || "$latest" == "unknown" ]]; then
 		status="unknown"
 		icon="?"
 		color="$YELLOW"
-		((INSTALLED_COUNT++)) || true
+		((++INSTALLED_COUNT))
 	elif [[ "$installed" != "$latest" ]] && version_lt "$installed" "$latest"; then
 		status="outdated"
 		icon="⬆"
 		color="$RED"
-		((OUTDATED_COUNT++)) || true
+		((++OUTDATED_COUNT))
 		OUTDATED_PACKAGES+=("$update_cmd")
 	else
-		((INSTALLED_COUNT++)) || true
+		((++INSTALLED_COUNT))
 	fi
 
 	# JSON output (escape special characters for valid JSON)

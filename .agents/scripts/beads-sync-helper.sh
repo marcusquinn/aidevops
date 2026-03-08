@@ -231,16 +231,16 @@ cmd_push() {
 			if [[ "$verbose" == "true" ]]; then
 				log_info "Updating: $id - $desc"
 			fi
-			# bd update "$id" --title "$desc" --json &>/dev/null || ((error_count++))
+			# bd update "$id" --title "$desc" --json &>/dev/null || ((++error_count))
 		else
 			# Create new
 			if [[ "$verbose" == "true" ]]; then
 				log_info "Creating: $id - $desc"
 			fi
 			# For now, just count - actual creation would use bd create
-			# bd create "$desc" --json &>/dev/null || ((error_count++))
+			# bd create "$desc" --json &>/dev/null || ((++error_count))
 		fi
-		((task_count++))
+		((++task_count))
 	done < <(parse_todo_md "$project_root")
 
 	# Verify checksums after
@@ -486,7 +486,7 @@ cmd_ready() {
 
 		# Check for blocked-by
 		if [[ "$line" =~ blocked-by: ]]; then
-			((blocked_count++))
+			((++blocked_count))
 			# Extract task ID and blocker
 			local task_id
 			task_id=$(echo "$line" | grep -oE 't[0-9]+(\.[0-9]+)*' | head -1)
@@ -494,7 +494,7 @@ cmd_ready() {
 			blocker=$(echo "$line" | grep -oE 'blocked-by:[^ ]+' | cut -d: -f2)
 			echo "  BLOCKED: $task_id (waiting on: $blocker)"
 		else
-			((ready_count++))
+			((++ready_count))
 			# Extract task ID and description
 			local task_info
 			task_info=$(echo "$line" | sed 's/^- \[ \] //' | cut -d'#' -f1 | head -c 60)

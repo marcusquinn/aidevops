@@ -564,7 +564,7 @@ cmd_batch_score() {
 
 	# Find all image files
 	while IFS= read -r -d '' image_file; do
-		((image_count++))
+		((++image_count))
 
 		echo ""
 		print_info "=== Image $image_count: $(basename "$image_file") ==="
@@ -581,7 +581,7 @@ cmd_batch_score() {
 
 			if (($(echo "$existing_score >= $MIN_SCORE_THRESHOLD" | bc -l))); then
 				print_success "✓ PASS"
-				((pass_count++))
+				((++pass_count))
 			else
 				print_warning "✗ FAIL"
 			fi
@@ -593,7 +593,7 @@ cmd_batch_score() {
 			local new_score
 			new_score=$(grep "Weighted Score:" "$score_file" | awk '{print $3}')
 			if (($(echo "$new_score >= $MIN_SCORE_THRESHOLD" | bc -l))); then
-				((pass_count++))
+				((++pass_count))
 			fi
 		fi
 	done < <(find "$dir" -type f \( -name "*.png" -o -name "*.jpg" -o -name "*.jpeg" \) -print0)

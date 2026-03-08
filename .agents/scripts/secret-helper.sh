@@ -472,7 +472,7 @@ _import_credential_file() {
 
 			# Skip empty/placeholder values
 			if [[ -z "$val" || "$val" == "YOUR_"* || "$val" == "CHANGE_ME"* ]]; then
-				((skipped++))
+				((++skipped))
 				continue
 			fi
 
@@ -485,13 +485,13 @@ _import_credential_file() {
 			# Check if already in gopass
 			if gopass show -o "$gopass_path" &>/dev/null; then
 				print_info "Skipping $name (already in gopass${tenant:+ [$tenant]})"
-				((skipped++))
+				((++skipped))
 				continue
 			fi
 
 			# Import to gopass
 			echo "$val" | gopass insert --force "$gopass_path"
-			((imported++))
+			((++imported))
 			print_success "Imported $name${tenant:+ (tenant: $tenant)}"
 		fi
 	done <"$file"

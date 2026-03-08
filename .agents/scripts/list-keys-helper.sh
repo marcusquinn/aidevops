@@ -36,7 +36,7 @@ print_source() {
     # Shorten home directory paths for readability
     source="${source/#$HOME/~}"
     echo -e "${BLUE}Source:${NC} $source"
-    ((total_sources++)) || true
+    ((++total_sources))
     return 0
 }
 
@@ -62,7 +62,7 @@ print_key() {
     
     # Simple format: "  KEY_NAME [status]" - no fixed width padding
     echo -e "  ${key_name} ${status_color}[${status}]${NC}"
-    ((total_keys++)) || true
+    ((++total_keys))
     return 0
 }
 

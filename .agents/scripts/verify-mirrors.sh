@@ -139,7 +139,7 @@ main() {
         local link_path="${entry%%:*}"
         local target="${entry##*:}"
         if ! verify_symlink "$link_path" "$target"; then
-            ((issues++)) || true
+            ((++issues))
         fi
     done
     

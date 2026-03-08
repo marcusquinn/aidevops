@@ -183,11 +183,25 @@ branch_was_pushed() {
 	if git config "branch.$branch.remote" &>/dev/null; then
 		return 0
 	fi
-	# Has remote tracking branch
-	if git show-ref --verify --quiet "refs/remotes/origin/$branch" 2>/dev/null; then
+	# Has remote tracking branch on any remote (not just origin)
+	if git show-ref --quiet "refs/remotes/*/$branch" 2>/dev/null; then
 		return 0
 	fi
 	return 1
+}
+
+# Get the actual remote for a branch (GH#3797)
+# Returns the remote name (e.g., "origin", "fork", "upstream")
+# Falls back to "origin" if no upstream is configured
+branch_remote() {
+	local branch="$1"
+	local remote
+	remote=$(git config "branch.$branch.remote" 2>/dev/null || echo "")
+	if [[ -n "$remote" ]]; then
+		echo "$remote"
+	else
+		echo "origin"
+	fi
 }
 
 # Check if a stale remote branch exists for a branch name (t1060)
@@ -319,12 +333,15 @@ handle_stale_remote_branch() {
 
 # Check if worktree has uncommitted changes
 # Excludes aidevops runtime directories that are safe to discard
+# Returns 0 (has changes) if git status fails — safer for destructive paths (GH#3797)
 worktree_has_changes() {
 	local worktree_path="$1"
 	if [[ -d "$worktree_path" ]]; then
 		local changes
 		# Exclude aidevops runtime files: .agents/loop-state/, .agents/tmp/, .DS_Store
-		changes=$(git -C "$worktree_path" status --porcelain 2>/dev/null |
+		# If git status fails, treat as "has changes" to prevent data loss
+		changes=$(git -C "$worktree_path" status --porcelain 2>/dev/null) || return 0
+		changes=$(echo "$changes" |
 			grep -v '^\?\? \.agents/loop-state/' |
 			grep -v '^\?\? \.agents/tmp/' |
 			grep -v '^\?\? \.agents/$' |
@@ -332,6 +349,7 @@ worktree_has_changes() {
 			head -1)
 		[[ -n "$changes" ]]
 	else
+		# Directory doesn't exist — no changes to protect
 		return 1
 	fi
 }
@@ -727,8 +745,9 @@ cmd_clean() {
 					merge_type="merged"
 				# Check 2: Remote branch deleted (indicates squash merge or PR closed)
 				# ONLY check this if the branch was previously pushed - unpushed branches should NOT be flagged
+				# Use the branch's actual remote, not hardcoded origin (GH#3797)
 				elif branch_was_pushed "$worktree_branch" &&
-					! git show-ref --verify --quiet "refs/remotes/origin/$worktree_branch" 2>/dev/null; then
+					! git show-ref --verify --quiet "refs/remotes/$(branch_remote "$worktree_branch")/$worktree_branch" 2>/dev/null; then
 					is_merged=true
 					merge_type="remote deleted"
 				# Check 3: Squash-merge detection via GitHub PR state
@@ -818,8 +837,9 @@ cmd_clean() {
 					elif git branch --merged "$default_branch" 2>/dev/null | grep -q "^\s*$worktree_branch$"; then
 						should_remove=true
 					# Check 2: Remote branch deleted - ONLY if branch was previously pushed
+					# Use the branch's actual remote, not hardcoded origin (GH#3797)
 					elif branch_was_pushed "$worktree_branch" &&
-						! git show-ref --verify --quiet "refs/remotes/origin/$worktree_branch" 2>/dev/null; then
+						! git show-ref --verify --quiet "refs/remotes/$(branch_remote "$worktree_branch")/$worktree_branch" 2>/dev/null; then
 						should_remove=true
 					# Check 3: Squash-merged PR
 					elif [[ -n "$merged_pr_branches" ]] && echo "$merged_pr_branches" | grep -qx "$worktree_branch"; then
