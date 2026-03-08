@@ -756,6 +756,57 @@ cross_repo_session_time() {
 		return 1
 	fi
 
+	# Handle --period all: call cross_repo_session_time for each period and combine
+	if [[ "$period" == "all" ]]; then
+		local all_periods=("day" "week" "month" "quarter" "year")
+		local combined_json="["
+		local first_period=true
+		for p in "${all_periods[@]}"; do
+			local p_json
+			p_json=$(cross_repo_session_time "${repo_paths[@]}" --period "$p" --format json) || p_json="{}"
+			if [[ "$first_period" == "true" ]]; then
+				first_period=false
+			else
+				combined_json+=","
+			fi
+			combined_json+="{\"period\":\"${p}\",\"data\":${p_json}}"
+		done
+		combined_json+="]"
+
+		echo "$combined_json" | python3 -c "
+import sys
+import json
+
+format_type = sys.argv[1]
+data = json.load(sys.stdin)
+
+if format_type == 'json':
+    result = {}
+    for entry in data:
+        result[entry['period']] = entry['data']
+    print(json.dumps(result, indent=2))
+else:
+    repo_count = data[0]['data'].get('repo_count', 0) if data else 0
+    if not data or all(d['data'].get('total_sessions', 0) == 0 for d in data):
+        print(f'_No session data across {repo_count} repos._')
+    else:
+        print(f'_Across {repo_count} managed repos:_')
+        print()
+        print('| Period | Interactive | Human Hours | Machine Hours | Workers | Machine Hours |')
+        print('| --- | ---: | ---: | ---: | ---: | ---: |')
+        for entry in data:
+            p = entry['period'].capitalize()
+            d = entry['data']
+            i_sess = d.get('interactive_sessions', 0)
+            i_human = d.get('interactive_human_hours', 0)
+            i_machine = d.get('interactive_machine_hours', 0)
+            w_sess = d.get('worker_sessions', 0)
+            w_machine = d.get('worker_machine_hours', 0)
+            print(f'| {p} | {i_sess} | {i_human}h | {i_machine}h | {w_sess} | {w_machine}h |')
+" "$format"
+		return 0
+	fi
+
 	# Collect JSON from each repo — use jq to assemble a valid JSON array.
 	# This is robust against non-JSON responses from session_time (e.g., error strings).
 	# Skip invalid repo paths to avoid inflating the repo count.

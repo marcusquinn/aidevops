@@ -1689,7 +1689,7 @@ ${worker_table}"
 	local activity_helper="${HOME}/.aidevops/agents/scripts/contributor-activity-helper.sh"
 	if [[ -x "$activity_helper" ]]; then
 		activity_md=$(bash "$activity_helper" summary "$repo_path" --period month --format markdown || echo "_Activity data unavailable._")
-		session_time_md=$(bash "$activity_helper" session-time "$repo_path" --period month --format markdown || echo "_Session data unavailable._")
+		session_time_md=$(bash "$activity_helper" session-time "$repo_path" --period all --format markdown || echo "_Session data unavailable._")
 	else
 		activity_md="_Activity helper not installed._"
 		session_time_md="_Activity helper not installed._"
@@ -1731,11 +1731,11 @@ ${activity_md}
 
 ${cross_repo_md:-_Single repo or cross-repo data unavailable._}
 
-### Session Time (last 30 days)
+### Session Time
 
 ${session_time_md}
 
-### Cross-Repo Session Time (last 30 days)
+### Cross-Repo Session Time
 
 ${cross_repo_session_time_md:-_Single repo or cross-repo session data unavailable._}
 
@@ -1902,7 +1902,7 @@ update_health_issues() {
 			done <<<"$all_repo_paths"
 			if [[ ${#cross_args[@]} -gt 1 ]]; then
 				cross_repo_md=$(bash "$activity_helper" cross-repo-summary "${cross_args[@]}" --period month --format markdown || echo "_Cross-repo data unavailable._")
-				cross_repo_session_time_md=$(bash "$activity_helper" cross-repo-session-time "${cross_args[@]}" --period month --format markdown || echo "_Cross-repo session data unavailable._")
+				cross_repo_session_time_md=$(bash "$activity_helper" cross-repo-session-time "${cross_args[@]}" --period all --format markdown || echo "_Cross-repo session data unavailable._")
 			fi
 		fi
 	fi
