@@ -2068,7 +2068,7 @@ See `.agents/workflows/session-manager.md` for the complete guide.
 | `CODEBASE_PATTERN` | Project conventions |
 | `USER_PREFERENCE` | Developer preferences |
 | `TOOL_CONFIG` | Tool setup notes |
-| `DECISION` | Project-level choices and trade-offs |
+| `DECISION` | Process, workflow, or policy choices (naming, release cadence, branching) |
 | `CONTEXT` | Background info |
 | `ARCHITECTURAL_DECISION` | System-level architecture (service boundaries, data flow, tech stack) |
 | `ERROR_FIX` | Bug fixes and patches |
