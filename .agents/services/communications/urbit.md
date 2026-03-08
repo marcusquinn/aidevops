@@ -454,7 +454,7 @@ sse.listen({
           const contents = rawPost.contents as Array<Record<string, unknown>>
           if (author !== SHIP_NAME) {
             const textContent = contents
-              .filter((c) => typeof c.text === "string")
+              .filter((c) => c != null && typeof c === "object" && typeof c.text === "string")
               .map((c) => c.text as string)
               .join(" ")
             console.log(`Message from ~${author}: ${textContent}`)

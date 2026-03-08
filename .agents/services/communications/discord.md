@@ -487,7 +487,7 @@ Map Discord roles to aidevops runners. Users with specific roles get routed to t
 
 `~/.config/aidevops/discord-bot.json` (600 permissions):
 
-> **Security**: Store `botToken` in gopass (`aidevops secret set discord-bot-token`), not in this JSON file. Reference it via environment variables or `credentials.sh`. The value below is a placeholder only.
+> **Security**: Store `botToken` in gopass (`aidevops secret set DISCORD_BOT_TOKEN`), not in this JSON file. Reference it via environment variables or `credentials.sh`. The value below is a placeholder only.
 
 ```json
 {
