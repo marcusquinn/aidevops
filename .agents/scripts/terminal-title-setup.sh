@@ -134,11 +134,12 @@ check_and_fix_tabby() {
 	read -r -p "Fix Tabby config to allow dynamic titles? [Y/n]: " fix_tabby
 
 	if [[ "$fix_tabby" =~ ^[Yy]?$ ]]; then
-		tabby_enable_dynamic_titles
+		tabby_enable_dynamic_titles || return 1
 	else
 		log_info "Skipped Tabby config fix"
 		log_info "You can fix manually: Settings → Profiles → Uncheck 'Disable dynamic title'"
 	fi
+	return 0
 }
 
 # =============================================================================
@@ -399,7 +400,7 @@ cmd_install() {
 	install_integration "$shell_name" "$rc_file" || return 1
 
 	# Check and fix Tabby configuration if needed
-	check_and_fix_tabby
+	check_and_fix_tabby || return 1
 
 	echo ""
 	log_success "Terminal title integration installed!"

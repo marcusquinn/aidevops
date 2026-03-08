@@ -389,16 +389,28 @@ _sync_score_to_patterns() {
 
 	# Get response metadata including per-criterion scores and token usage (t1094)
 	# Uses LEFT JOIN + conditional aggregation instead of correlated subqueries (GH#3631)
-	# Note: WEIGHTED_AVG_SQL is a correlated subquery that computes a weighted sum across
-	# all scorers, while MAX(CASE...) picks the highest score per criterion. In practice
-	# the scores table has one scorer per criterion for automated scoring (UNIQUE constraint
-	# on response_id+criterion+scored_by). The MAX() is deterministic vs the original
-	# LIMIT 1 (no ORDER BY) which was arbitrary. Unifying both aggregation paths is a
-	# valid follow-up refactor but out of scope for this fix (see PR #3884 discussion).
+	# The LEFT JOIN deduplicates to one scorer per criterion (latest by rowid) so that
+	# both the weighted average and per-criterion scores use the same row set. With one
+	# scorer per criterion (the common case), the subquery is a no-op. (GH#3896)
 	local result
 	result=$(sqlite3 -separator '|' "$SCORING_DB" "
         SELECT r.model_id, p.category, p.difficulty,
-               ${WEIGHTED_AVG_SQL} as weighted_avg,
+               COALESCE(ROUND(
+                   SUM(CASE s.criterion
+                       WHEN 'correctness' THEN s.score * 0.30
+                       WHEN 'completeness' THEN s.score * 0.25
+                       WHEN 'code_quality' THEN s.score * 0.25
+                       WHEN 'clarity' THEN s.score * 0.20
+                       ELSE s.score * 0.25
+                   END)
+                   / NULLIF(SUM(CASE s.criterion
+                       WHEN 'correctness' THEN 0.30
+                       WHEN 'completeness' THEN 0.25
+                       WHEN 'code_quality' THEN 0.25
+                       WHEN 'clarity' THEN 0.20
+                       ELSE 0.25
+                   END), 0)
+               , 2), 0) as weighted_avg,
                r.token_count, r.cost_estimate,
                MAX(CASE WHEN s.criterion = 'correctness' THEN s.score END) as corr,
                MAX(CASE WHEN s.criterion = 'completeness' THEN s.score END) as comp,
@@ -406,7 +418,13 @@ _sync_score_to_patterns() {
                MAX(CASE WHEN s.criterion = 'clarity' THEN s.score END) as clar
         FROM responses r
         JOIN prompts p ON r.prompt_id = p.prompt_id
-        LEFT JOIN scores s ON r.response_id = s.response_id
+        LEFT JOIN (
+            SELECT s1.* FROM scores s1
+            INNER JOIN (
+                SELECT response_id, criterion, MAX(rowid) as max_rowid
+                FROM scores GROUP BY response_id, criterion
+            ) s2 ON s1.rowid = s2.max_rowid
+        ) s ON r.response_id = s.response_id
         WHERE r.response_id = ${response_id}
         GROUP BY r.response_id;
     ") || return 0

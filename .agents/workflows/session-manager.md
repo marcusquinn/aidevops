@@ -54,16 +54,16 @@ check_session_status() {
     echo "=== Session Status ==="
 
     # Check incomplete tasks
-    incomplete=$(grep -c '^\s*- \[ \]' TODO.md 2>/dev/null || echo "0")
+    incomplete=$(grep -c '^\s*- \[ \]' TODO.md || echo "0")
     echo "Incomplete tasks: ${incomplete}"
 
     # Check recent PR (requires gh CLI)
-    pr_state=$(gh pr view --json state --jq '.state' 2>/dev/null || echo "none")
+    pr_state=$(gh pr view --json state --jq '.state' || echo "none")
     echo "Current PR state: ${pr_state}"
 
     # Check latest release vs VERSION
-    version=$(<VERSION 2>/dev/null || echo "unknown")
-    latest_tag=$(git describe --tags --abbrev=0 2>/dev/null || echo "none")
+    version=$(<VERSION) || echo "unknown"
+    latest_tag=$(git describe --tags --abbrev=0 || echo "none")
     echo "VERSION: ${version}, Latest tag: ${latest_tag}"
 
     # Suggest if complete
@@ -135,7 +135,9 @@ Suggestions:
 spawn_terminal_tab() {
     local dir="${1:-$(pwd)}"
     local cmd="${2:-opencode}"
-    osascript -e "tell application \"Terminal\" to do script \"cd '${dir}' && ${cmd}\""
+    local safe_dir
+    safe_dir=$(printf %q "$dir")
+    osascript -e "tell application \"Terminal\" to do script \"cd ${safe_dir} && ${cmd}\""
     return 0
 }
 
@@ -143,7 +145,9 @@ spawn_terminal_tab() {
 spawn_iterm_tab() {
     local dir="${1:-$(pwd)}"
     local cmd="${2:-opencode}"
-    osascript -e "tell application \"iTerm\" to tell current window to create tab with default profile command \"cd '${dir}' && ${cmd}\""
+    local safe_dir
+    safe_dir=$(printf %q "$dir")
+    osascript -e "tell application \"iTerm\" to tell current window to create tab with default profile command \"cd ${safe_dir} && ${cmd}\""
     return 0
 }
 
