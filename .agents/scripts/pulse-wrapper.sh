@@ -2196,7 +2196,7 @@ update_health_issues() {
 	local cross_repo_session_time_md=""
 	if [[ -x "$activity_helper" ]]; then
 		local all_repo_paths_st
-		all_repo_paths_st=$(jq -r '.initialized_repos[] | select(.pulse == true and (.local_only // false) == false) | .path' "$repos_json" 2>/dev/null || echo "")
+		all_repo_paths_st=$(jq -r '.initialized_repos[] | select(.pulse == true and (.local_only // false) == false) | .path' "$repos_json" || echo "")
 		if [[ -n "$all_repo_paths_st" ]]; then
 			local -a st_args=()
 			while IFS= read -r rp; do

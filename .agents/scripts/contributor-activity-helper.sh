@@ -503,29 +503,25 @@ session_time() {
 		return 0
 	fi
 
-	# Determine --since threshold in milliseconds
-	local since_ms
+	# Determine --since threshold in milliseconds (single Python call)
+	local seconds
 	case "$period" in
-	day)
-		since_ms=$(python3 -c "import time; print(int((time.time() - 86400) * 1000))")
-		;;
-	week)
-		since_ms=$(python3 -c "import time; print(int((time.time() - 604800) * 1000))")
-		;;
-	month)
-		since_ms=$(python3 -c "import time; print(int((time.time() - 2592000) * 1000))")
-		;;
-	year)
-		since_ms=$(python3 -c "import time; print(int((time.time() - 31536000) * 1000))")
-		;;
-	*)
-		since_ms=$(python3 -c "import time; print(int((time.time() - 2592000) * 1000))")
-		;;
+	day) seconds=86400 ;;
+	week) seconds=604800 ;;
+	month) seconds=2592000 ;;
+	year) seconds=31536000 ;;
+	*) seconds=2592000 ;;
 	esac
+	local since_ms
+	since_ms=$(python3 -c "import time; print(int((time.time() - ${seconds}) * 1000))")
 
 	# Resolve repo_path to absolute for matching against session.directory
 	local abs_repo_path
 	abs_repo_path=$(cd "$repo_path" 2>/dev/null && pwd) || abs_repo_path="$repo_path"
+
+	# Escape single quotes in path for safe SQL embedding (double them per SQL standard).
+	# since_ms is always numeric (computed by Python above), no injection risk.
+	local safe_path="${abs_repo_path//\'/\'\'}"
 
 	# Query session data with message-based duration using JSON output.
 	# JSON avoids pipe-separator issues (session titles can contain '|').
@@ -540,13 +536,13 @@ session_time() {
 		JOIN message m ON m.session_id = s.id
 		WHERE s.parent_id IS NULL
 		  AND s.time_created > ${since_ms}
-		  AND (s.directory = '${abs_repo_path}'
-		       OR s.directory LIKE '${abs_repo_path}.%'
-		       OR s.directory LIKE '${abs_repo_path}-%')
+		  AND (s.directory = '${safe_path}'
+		       OR s.directory LIKE '${safe_path}.%'
+		       OR s.directory LIKE '${safe_path}-%')
 		GROUP BY s.id
 		HAVING count(m.id) >= 2
 		  AND duration_ms > 5000
-	" 2>/dev/null) || query_result="[]"
+	") || query_result="[]"
 
 	# Process JSON in Python for classification and aggregation
 	echo "$query_result" | python3 -c "
@@ -658,22 +654,20 @@ cross_repo_session_time() {
 		return 1
 	fi
 
-	# Collect JSON from each repo
-	local all_json="["
-	local first="true"
+	# Collect JSON from each repo — use jq to assemble a valid JSON array.
+	# This is robust against non-JSON responses from session_time (e.g., error strings).
+	local all_json=""
 	local repo_count=0
 	for rp in "${repo_paths[@]}"; do
 		local repo_json
 		repo_json=$(session_time "$rp" --period "$period" --format json) || repo_json="{}"
-		if [[ "$first" == "true" ]]; then
-			first="false"
-		else
-			all_json="${all_json},"
+		# Only include valid JSON objects in the array
+		if echo "$repo_json" | jq -e . >/dev/null 2>&1; then
+			all_json+="${repo_json}"$'\n'
 		fi
-		all_json="${all_json}${repo_json}"
 		repo_count=$((repo_count + 1))
 	done
-	all_json="${all_json}]"
+	all_json=$(echo -n "$all_json" | jq -s '.')
 
 	echo "$all_json" | python3 -c "
 import sys
