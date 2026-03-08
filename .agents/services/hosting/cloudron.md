@@ -28,7 +28,7 @@ tools:
 - **SSH access**: `ssh root@cloudron.domain.com` for direct server diagnosis
 - **Forum**: [forum.cloudron.io](https://forum.cloudron.io) for known issues and solutions
 - **Docker**: `docker ps -a` (states), `docker logs <container>`, `docker exec -it mysql mysql` (requires credentials — see "Database Troubleshooting" section)
-- **DB creds**: `docker inspect <container> | grep CLOUDRON_MYSQL`
+- **DB creds**: `docker inspect "<container>" | grep CLOUDRON_MYSQL`
 <!-- AI-CONTEXT-END -->
 
 Cloudron is a complete solution for running apps on your server, providing easy app installation, automatic updates, backups, and domain management.
@@ -259,7 +259,7 @@ docker inspect <container_name>
 docker exec -it <container_name> /bin/bash
 ```
 
-> **Note:** `<container_name>` and `<app_container>` refer to the Docker container name shown by `docker ps`. Cloudron container names typically match the app's subdomain (e.g., `mail` for `mail.yourdomain.com`).
+> **Note:** `<container>`, `<container_name>`, and `<app_container>` all refer to the Docker container name shown by `docker ps`. Cloudron container names typically match the app's subdomain (e.g., `mail` for `mail.yourdomain.com`).
 
 ### **Container State Diagnosis**
 

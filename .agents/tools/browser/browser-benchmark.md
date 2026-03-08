@@ -284,6 +284,8 @@ run();
 
 ### agent-browser Benchmark
 
+> **Note:** These benchmarks use the full `agent-browser` CLI API including selector-based operations (`fill '#selector'`, `click 'selector'`), `snapshot -i`, `wait --url`, `eval`, and `get url`. The helper documentation (`agent-browser-helper.sh`) primarily documents the ref-based workflow (`snapshot` then `click @e2`), but the CLI also supports direct CSS selector targeting for scripted automation.
+
 ```bash
 #!/bin/bash
 # bench-agent-browser.sh

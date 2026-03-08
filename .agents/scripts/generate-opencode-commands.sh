@@ -19,7 +19,7 @@ source "${SCRIPT_DIR}/shared-constants.sh"
 set -euo pipefail
 
 OPENCODE_COMMAND_DIR="$HOME/.config/opencode/command"
-AIDEVOPS_AGENTS_DIR="${AIDEVOPS_HOME:-$HOME/.aidevops}/agents"
+AIDEVOPS_AGENTS_DIR="${AIDEVOPS_AGENTS_DIR:-${AIDEVOPS_HOME:-$HOME/.aidevops}/agents}"
 
 echo -e "${BLUE}Generating OpenCode commands...${NC}"
 

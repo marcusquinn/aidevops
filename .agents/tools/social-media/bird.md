@@ -386,11 +386,10 @@ bird mentions -n 10 --json | jq '.[] | select(.text | contains("help"))'
 # Export bookmarks for analysis
 bird bookmarks --all --json > bookmarks.json
 
-# Thread a long post
-bird tweet "1/3 Here's a thread about..."
-# Get the tweet ID from output, then reply to the previous tweet each time:
-bird reply <tweet_id_1> "2/3 Continuing the thread..."
-bird reply <tweet_id_2> "3/3 Final thoughts..."
+# Thread a long post (capture each tweet ID from output)
+tweet_id_1=$(bird tweet "1/3 Here's a thread about..." --json | jq -r '.id')
+tweet_id_2=$(bird reply "$tweet_id_1" "2/3 Continuing the thread..." --json | jq -r '.id')
+bird reply "$tweet_id_2" "3/3 Final thoughts..."
 ```
 
 ### Combining with summarize
