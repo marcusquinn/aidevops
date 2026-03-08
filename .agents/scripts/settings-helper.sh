@@ -277,7 +277,9 @@ cmd_set() {
 		;;
 	esac
 
-	if [[ $? -eq 0 && -s "$tmp_file" ]]; then
+	# Under set -euo pipefail, jq failures exit before reaching here,
+	# so $? is always 0 — only the file-size check matters (GH#3916)
+	if [[ -s "$tmp_file" ]]; then
 		mv "$tmp_file" "$SETTINGS_FILE"
 		print_success "Set $key = $value"
 	else
