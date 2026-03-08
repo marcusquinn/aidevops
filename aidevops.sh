@@ -1186,19 +1186,26 @@ SECHEADER
 		cat <<'SECEOF'
 ### Prompt Injection Defense
 
-Any feature that accepts user input and passes it to an LLM must defend against
-prompt injection. This is a JS/TS project — use `@stackone/defender` for input
-sanitization:
+Any feature that processes untrusted content (tool outputs, user input, webhook
+payloads) and passes it to an LLM must defend against prompt injection. This is
+a JS/TS project — use `@stackone/defender` to sanitize untrusted tool results
+before they enter the LLM context:
 
 ```bash
 npm install @stackone/defender
 ```
 
 ```typescript
-import { defend } from '@stackone/defender';
+import { createPromptDefense } from '@stackone/defender';
 
-// Sanitize user input before passing to LLM
-const safeInput = await defend(userInput);
+const defense = createPromptDefense({ enableTier2: true, blockHighRisk: true });
+
+// Sanitize untrusted tool output before adding to LLM context
+const result = await defense.defendToolResult(toolResponse, 'tool_name');
+if (!result.allowed) {
+  throw new Error('Blocked untrusted content');
+}
+const safeContent = result.sanitized;
 ```
 
 For features that don't use LLMs but process untrusted text (webhooks, form
@@ -1207,7 +1214,9 @@ submissions, API endpoints), validate and sanitize inputs at the boundary.
 ### General Security Rules
 
 - Never log or expose API keys, tokens, or credentials in output
-- Use environment variables for secrets, never hardcode them
+- Store secrets via `aidevops secret set <NAME>` (gopass-encrypted) or
+  environment variables — never hardcode them in source
+- Use `<PLACEHOLDER>` values in code examples; note the secure storage location
 - Validate all external input (user input, webhook payloads, API responses)
 - Pin third-party GitHub Actions to SHA hashes, not branch tags
 - Run `aidevops security audit` periodically to check security posture
@@ -1230,7 +1239,9 @@ in prompts:
 ### General Security Rules
 
 - Never log or expose API keys, tokens, or credentials in output
-- Use environment variables for secrets, never hardcode them
+- Store secrets via `aidevops secret set <NAME>` (gopass-encrypted) or
+  environment variables — never hardcode them in source
+- Use `<PLACEHOLDER>` values in code examples; note the secure storage location
 - Validate all external input (user input, webhook payloads, API responses)
 - Pin third-party GitHub Actions to SHA hashes, not branch tags
 - Run `aidevops security audit` periodically to check security posture
@@ -1314,7 +1325,7 @@ _update_agents_md_security() {
 
 	# Process line by line: skip old Security section, insert new one
 	while IFS= read -r line || [[ -n "$line" ]]; do
-		if [[ "$line" == "## Security" || "$line" == "## Security "* ]]; then
+		if [[ "$line" == "## Security" ]]; then
 			# Found the Security heading — replace it
 			in_security=true
 			has_security_section=true
