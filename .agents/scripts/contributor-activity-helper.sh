@@ -145,9 +145,9 @@ for line in sys.stdin:
     if is_bot(login):
         continue
 
-    # Also skip if the committer is a bot (Actions commits attributed to humans)
+    # Also skip if the committer is a bot (Actions, Dependabot, etc.)
     committer_login = email_to_login(committer_email)
-    if committer_login == 'github-actions':
+    if is_bot(committer_login):
         continue
 
     try:
@@ -254,9 +254,9 @@ for line in sys.stdin:
     if login != target:
         continue
 
-    # Skip if committer is a bot
+    # Skip if committer is a bot (Actions, Dependabot, etc.)
     committer_login = email_to_login(committer_email)
-    if committer_login == 'github-actions':
+    if is_bot(committer_login):
         continue
 
     try:
@@ -338,6 +338,7 @@ cross_repo_summary() {
 	local repo_count=0
 	for rp in "${repo_paths[@]}"; do
 		if [[ ! -d "$rp/.git" && ! -f "$rp/.git" ]]; then
+			echo "Warning: $rp is not a git repository, skipping" >&2
 			continue
 		fi
 		local repo_json
