@@ -440,18 +440,18 @@ prefetch_state() {
 				echo ""
 
 				# Issues (include assignees for dispatch dedup)
-				# Filter out supervisor/persistent/quality-review issues — these are
-				# managed by pulse-wrapper.sh and must not be touched by the pulse agent.
-				# Exposing them in pre-fetched state causes the LLM to close them as
-				# "stale", creating churn (wrapper recreates them on the next cycle).
+				# Filter out supervisor/contributor/persistent/quality-review issues —
+				# these are managed by pulse-wrapper.sh and must not be touched by the
+				# pulse agent. Exposing them in pre-fetched state causes the LLM to
+				# close them as "stale", creating churn (wrapper recreates on next cycle).
 				local issue_json
 				issue_json=$(gh issue list --repo "$slug" --state open \
 					--json number,title,labels,updatedAt,assignees \
 					--limit 50 2>/dev/null) || issue_json="[]"
 
-				# Remove issues with supervisor, persistent, or quality-review labels
+				# Remove issues with supervisor, contributor, persistent, or quality-review labels
 				local filtered_json
-				filtered_json=$(echo "$issue_json" | jq '[.[] | select(.labels | map(.name) | (index("supervisor") or index("persistent") or index("quality-review")) | not)]')
+				filtered_json=$(echo "$issue_json" | jq '[.[] | select(.labels | map(.name) | (index("supervisor") or index("contributor") or index("persistent") or index("quality-review")) | not)]')
 
 				local issue_count
 				issue_count=$(echo "$filtered_json" | jq 'length')
@@ -1377,6 +1377,58 @@ cleanup_worktrees() {
 }
 
 #######################################
+# Determine runner role for a repo: supervisor or contributor
+#
+# Checks the runner's permission on the repo via the GitHub API.
+# Maintainers (admin, maintain, write) are "supervisor"; everyone
+# else (read, none, 404) is "contributor". API failures default to
+# "contributor" (fail closed — never grant elevated status on error).
+#
+# Results are cached per runner+repo for the duration of the pulse
+# to avoid repeated API calls (one call per repo per pulse cycle).
+#
+# Arguments:
+#   $1 - runner GitHub login
+#   $2 - repo slug (owner/repo)
+# Output: "supervisor" or "contributor" to stdout
+#######################################
+_get_runner_role() {
+	local runner_user="$1"
+	local repo_slug="$2"
+
+	# Check cache (env var keyed by slug — avoids repeated API calls)
+	local cache_key="__RUNNER_ROLE_${repo_slug//[^a-zA-Z0-9]/_}"
+	local cached_role="${!cache_key:-}"
+	if [[ -n "$cached_role" ]]; then
+		echo "$cached_role"
+		return 0
+	fi
+
+	local role="contributor"
+	local response
+	response=$(gh api "repos/${repo_slug}/collaborators/${runner_user}/permission" --jq '.permission // empty' 2>/dev/null) || response=""
+
+	case "$response" in
+	admin | maintain | write)
+		role="supervisor"
+		;;
+	read | none | "")
+		role="contributor"
+		;;
+	*)
+		# Unknown permission value — fail closed
+		role="contributor"
+		;;
+	esac
+
+	# Cache for this pulse cycle
+	export "$cache_key=$role"
+
+	echo "$role"
+	return 0
+}
+
+#######################################
 # Update pinned health issue for a single repo
 #
 # Creates or updates a pinned GitHub issue with live status:
@@ -1386,8 +1438,11 @@ cleanup_worktrees() {
 #   - Last pulse timestamp
 #
 # One issue per runner (GitHub user) per repo. Uses labels
-# "supervisor" + "$runner_user" for dedup. Issue number cached
-# in ~/.aidevops/logs/ to avoid repeated lookups.
+# "supervisor" or "contributor" + "$runner_user" for dedup.
+# Issue number cached in ~/.aidevops/logs/ to avoid repeated lookups.
+#
+# Maintainers get [Supervisor:user] issues; non-maintainers get
+# [Contributor:user] issues. Role determined by _get_runner_role().
 #
 # Arguments:
 #   $1 - repo slug (owner/repo)
@@ -1400,10 +1455,28 @@ _update_health_issue_for_repo() {
 
 	[[ -z "$repo_slug" ]] && return 0
 
-	# Per-runner identity
+	# Per-runner identity and role
 	local runner_user
 	runner_user=$(gh api user --jq '.login' 2>/dev/null || whoami)
-	local runner_prefix="[Supervisor:${runner_user}]"
+
+	# Determine role: supervisor (maintainer) or contributor (non-maintainer)
+	local runner_role
+	runner_role=$(_get_runner_role "$runner_user" "$repo_slug")
+
+	local runner_prefix role_label role_label_color role_label_desc role_display
+	if [[ "$runner_role" == "supervisor" ]]; then
+		runner_prefix="[Supervisor:${runner_user}]"
+		role_label="supervisor"
+		role_label_color="1D76DB"
+		role_label_desc="Supervisor health dashboard"
+		role_display="Supervisor"
+	else
+		runner_prefix="[Contributor:${runner_user}]"
+		role_label="contributor"
+		role_label_color="A2EEEF"
+		role_label_desc="Contributor health dashboard"
+		role_display="Contributor"
+	fi
 
 	# Cache file for this runner + repo (slug with / replaced by -)
 	local slug_safe="${repo_slug//\//-}"
@@ -1423,7 +1496,9 @@ _update_health_issue_for_repo() {
 		local issue_state
 		issue_state=$(gh issue view "$health_issue_number" --repo "$repo_slug" --json state --jq '.state' 2>/dev/null || echo "")
 		if [[ "$issue_state" != "OPEN" ]]; then
-			_unpin_health_issue "$health_issue_number" "$repo_slug"
+			if [[ "$runner_role" == "supervisor" ]]; then
+				_unpin_health_issue "$health_issue_number" "$repo_slug"
+			fi
 			health_issue_number=""
 			rm -f "$health_issue_file" 2>/dev/null || true
 		fi
@@ -1433,9 +1508,9 @@ _update_health_issue_for_repo() {
 	if [[ -z "$health_issue_number" ]]; then
 		local label_results
 		label_results=$(gh issue list --repo "$repo_slug" \
-			--label "supervisor" --label "$runner_user" \
+			--label "$role_label" --label "$runner_user" \
 			--state open --json number,title \
-			--jq '[.[] | select(.title | startswith("[Supervisor:"))] | sort_by(.number) | reverse' 2>/dev/null || echo "[]")
+			--jq "[.[] | select(.title | startswith(\"[${role_display}:\"))] | sort_by(.number) | reverse" 2>/dev/null || echo "[]")
 
 		health_issue_number=$(printf '%s' "$label_results" | jq -r '.[0].number // empty' 2>/dev/null || echo "")
 
@@ -1447,9 +1522,11 @@ _update_health_issue_for_repo() {
 			dup_numbers=$(printf '%s' "$label_results" | jq -r '.[1:][].number' 2>/dev/null || echo "")
 			while IFS= read -r dup_num; do
 				[[ -z "$dup_num" ]] && continue
-				_unpin_health_issue "$dup_num" "$repo_slug"
+				if [[ "$runner_role" == "supervisor" ]]; then
+					_unpin_health_issue "$dup_num" "$repo_slug"
+				fi
 				gh issue close "$dup_num" --repo "$repo_slug" \
-					--comment "Closing duplicate supervisor health issue — superseded by #${health_issue_number}." 2>/dev/null || true
+					--comment "Closing duplicate ${runner_role} health issue — superseded by #${health_issue_number}." 2>/dev/null || true
 			done <<<"$dup_numbers"
 		fi
 	fi
@@ -1463,56 +1540,63 @@ _update_health_issue_for_repo() {
 		# Backfill labels
 		if [[ -n "$health_issue_number" ]]; then
 			gh label create "$runner_user" --repo "$repo_slug" --color "0E8A16" \
-				--description "Supervisor runner: ${runner_user}" --force 2>/dev/null || true
+				--description "${role_display} runner: ${runner_user}" --force 2>/dev/null || true
 			gh issue edit "$health_issue_number" --repo "$repo_slug" \
-				--add-label "supervisor" --add-label "$runner_user" 2>/dev/null || true
+				--add-label "$role_label" --add-label "$runner_user" 2>/dev/null || true
 		fi
 	fi
 
 	# Create the issue if it doesn't exist
 	if [[ -z "$health_issue_number" ]]; then
-		gh label create "supervisor" --repo "$repo_slug" --color "1D76DB" \
-			--description "Supervisor health dashboard" --force 2>/dev/null || true
+		gh label create "$role_label" --repo "$repo_slug" --color "$role_label_color" \
+			--description "$role_label_desc" --force 2>/dev/null || true
 		gh label create "$runner_user" --repo "$repo_slug" --color "0E8A16" \
-			--description "Supervisor runner: ${runner_user}" --force 2>/dev/null || true
+			--description "${role_display} runner: ${runner_user}" --force 2>/dev/null || true
 
 		health_issue_number=$(gh issue create --repo "$repo_slug" \
 			--title "${runner_prefix} starting..." \
-			--body "Live supervisor status for **${runner_user}**. Updated each pulse. Pin this issue for at-a-glance monitoring." \
-			--label "supervisor" --label "$runner_user" 2>/dev/null | grep -oE '[0-9]+$' || echo "")
+			--body "Live ${runner_role} status for **${runner_user}**. Updated each pulse. Pin this issue for at-a-glance monitoring." \
+			--label "$role_label" --label "$runner_user" 2>/dev/null | grep -oE '[0-9]+$' || echo "")
 
 		if [[ -z "$health_issue_number" ]]; then
 			echo "[pulse-wrapper] Health issue: could not create for ${repo_slug}" >>"$LOGFILE"
 			return 0
 		fi
 
-		# Pin (best-effort — requires admin)
-		local node_id
-		node_id=$(gh issue view "$health_issue_number" --repo "$repo_slug" --json id --jq '.id' 2>/dev/null || echo "")
-		if [[ -n "$node_id" ]]; then
+		# Pin only supervisor issues — contributor issues don't pin because
+		# GitHub allows max 3 pinned issues per repo and those slots are
+		# reserved for maintainer dashboards and the quality review issue.
+		if [[ "$runner_role" == "supervisor" ]]; then
+			local node_id
+			node_id=$(gh issue view "$health_issue_number" --repo "$repo_slug" --json id --jq '.id' 2>/dev/null || echo "")
+			if [[ -n "$node_id" ]]; then
+				gh api graphql -f query="
+					mutation {
+						pinIssue(input: {issueId: \"${node_id}\"}) {
+							issue { number }
+						}
+					}" >/dev/null 2>&1 || true
+			fi
+		fi
+		echo "[pulse-wrapper] Health issue: created #${health_issue_number} (${runner_role}) for ${runner_user} in ${repo_slug}" >>"$LOGFILE"
+	fi
+
+	# Supervisor-only: unpin closed/stale issues and ensure current is pinned
+	if [[ "$runner_role" == "supervisor" ]]; then
+		# Unpin closed/stale supervisor issues to free pin slots (max 3 per repo)
+		_cleanup_stale_pinned_issues "$repo_slug" "$runner_user"
+
+		# Ensure pinned (idempotent)
+		local active_node_id
+		active_node_id=$(gh issue view "$health_issue_number" --repo "$repo_slug" --json id --jq '.id' 2>/dev/null || echo "")
+		if [[ -n "$active_node_id" ]]; then
 			gh api graphql -f query="
 				mutation {
-					pinIssue(input: {issueId: \"${node_id}\"}) {
+					pinIssue(input: {issueId: \"${active_node_id}\"}) {
 						issue { number }
 					}
 				}" >/dev/null 2>&1 || true
 		fi
-		echo "[pulse-wrapper] Health issue: created and pinned #${health_issue_number} for ${runner_user} in ${repo_slug}" >>"$LOGFILE"
-	fi
-
-	# Unpin closed/stale supervisor issues to free pin slots (max 3 per repo)
-	_cleanup_stale_pinned_issues "$repo_slug" "$runner_user"
-
-	# Ensure pinned (idempotent)
-	local active_node_id
-	active_node_id=$(gh issue view "$health_issue_number" --repo "$repo_slug" --json id --jq '.id' 2>/dev/null || echo "")
-	if [[ -n "$active_node_id" ]]; then
-		gh api graphql -f query="
-			mutation {
-				pinIssue(input: {issueId: \"${active_node_id}\"}) {
-					issue { number }
-				}
-			}" >/dev/null 2>&1 || true
 	fi
 
 	# Cache the issue number
@@ -1681,12 +1765,21 @@ ${worker_table}"
 		session_warning=" **WARNING: exceeds threshold of ${SESSION_COUNT_WARN}**"
 	fi
 
+	# --- Contributor activity from git history ---
+	local activity_md=""
+	local activity_helper="${HOME}/.aidevops/agents/scripts/contributor-activity-helper.sh"
+	if [[ -x "$activity_helper" ]]; then
+		activity_md=$(bash "$activity_helper" summary "$repo_path" --period month --format markdown 2>/dev/null || echo "_Activity data unavailable._")
+	else
+		activity_md="_Activity helper not installed._"
+	fi
+
 	# --- Assemble body ---
 	local body
 	body="## Queue Health Dashboard
 
 **Last pulse**: \`${now_iso}\`
-**Runner**: \`${runner_user}\`
+**${role_display}**: \`${runner_user}\`
 **Repo**: \`${repo_slug}\`
 
 ### Summary
@@ -1709,6 +1802,10 @@ ${prs_md}
 
 ${workers_md}
 
+### Contributor Activity (last 30 days)
+
+${activity_md}
+
 ### System Resources
 
 | Metric | Value |
@@ -1718,7 +1815,7 @@ ${workers_md}
 | Processes | ${sys_procs} |
 
 ---
-_Auto-updated by supervisor pulse. Do not edit manually._"
+_Auto-updated by ${runner_role} pulse. Do not edit manually._"
 
 	# Update the issue body
 	gh issue edit "$health_issue_number" --repo "$repo_slug" --body "$body" >/dev/null 2>&1 || {

@@ -30,7 +30,7 @@ Compatible with [todo-md](https://github.com/todo-md/todo-md), [todomd](https://
 - `blocks:t003` - This task blocks t003
 
 **Time fields:**
-- `~estimate` - Active session time (AI execution, not wall clock)
+- `~estimate` - AI-assisted execution time (~15m trivial, ~30m small, ~1h medium, ~2h large, ~4h major — see `reference/planning-detail.md`)
 - `actual:` - Actual active time spent (from session-time-helper.sh)
 - `logged:` - When task was added
 - `started:` - When branch was created

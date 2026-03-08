@@ -110,9 +110,9 @@ A task is Ralph-able when it has:
 When a task meets Ralph criteria, add the `#ralph` tag:
 
 ```markdown
-- [ ] t042 Fix all ShellCheck violations in scripts/ #ralph ~2h
-- [ ] t043 Implement user auth with tests #ralph #feature ~4h
-- [ ] t044 Design new dashboard layout #feature ~3h  (NOT ralph-able)
+- [ ] t042 Fix all ShellCheck violations in scripts/ #ralph ~1h
+- [ ] t043 Implement user auth with tests #ralph #feature ~2h
+- [ ] t044 Design new dashboard layout #feature ~2h  (NOT ralph-able)
 ```
 
 ### Auto-Dispatch Tagging
@@ -121,7 +121,7 @@ When creating TODO entries, assess whether the task can run autonomously without
 
 **Add `#auto-dispatch` when ALL of these are true:**
 - Clear fix/feature description with specific files or patterns to change
-- Bounded scope (~2h or less estimated)
+- Bounded scope (~1h or less estimated — most tasks complete in ~30m)
 - No user credentials, accounts, or purchases needed
 - No design decisions requiring user preference
 - Verification is automatable (tests, ShellCheck, syntax check, browser test)
@@ -155,7 +155,7 @@ When tagging a task as `#ralph`, ensure it includes:
 **Full format:**
 
 ```markdown
-- [ ] t042 Fix all ShellCheck violations #ralph ~2h
+- [ ] t042 Fix all ShellCheck violations #ralph ~1h
   ralph-promise: "SHELLCHECK_CLEAN"
   ralph-verify: "shellcheck .agents/scripts/*.sh"
   ralph-max: 10
@@ -164,7 +164,7 @@ When tagging a task as `#ralph`, ensure it includes:
 **Shorthand** (for simple cases):
 
 ```markdown
-- [ ] t042 Fix all ShellCheck violations #ralph(SHELLCHECK_CLEAN) ~2h
+- [ ] t042 Fix all ShellCheck violations #ralph(SHELLCHECK_CLEAN) ~1h
 ```
 
 ### Running Ralph Tasks
@@ -184,12 +184,12 @@ For complex plans, mark Ralph-able phases:
 ```markdown
 #### Progress
 
-- [ ] Phase 1: Research API endpoints ~1h
-- [ ] Phase 2: Implement core logic #ralph ~2h
+- [ ] Phase 1: Research API endpoints ~30m
+- [ ] Phase 2: Implement core logic #ralph ~1h
   ralph-promise: "ALL_TESTS_PASS"
   ralph-verify: "npm test"
-- [ ] Phase 3: Design UI components ~2h (requires human review)
-- [ ] Phase 4: Integration tests #ralph ~1h
+- [ ] Phase 3: Design UI components ~1h (requires human review)
+- [ ] Phase 4: Integration tests #ralph ~30m
   ralph-promise: "INTEGRATION_PASS"
   ralph-verify: "npm run test:integration"
 ```
@@ -282,7 +282,7 @@ Creating brief: todo/tasks/{task_id}-brief.md
 - `t{NNN}` - Unique task ID (auto-generated, never reused)
 - `@owner` - Who should work on this
 - `#tag` - Category (seo, security, browser, etc.)
-- `~estimate` - Time estimate with breakdown: `~4h (ai:2h test:1h read:30m)`
+- `~estimate` - AI-assisted execution time (see `reference/planning-detail.md` "Estimation Calibration" for tiers: ~15m trivial, ~30m small, ~1h medium, ~2h large, ~4h major)
 - `logged:YYYY-MM-DD` - Auto-added when task created
 - `blocked-by:t001,t002` - Dependencies (cannot start until these done)
 - `blocks:t003` - What this unblocks when complete
