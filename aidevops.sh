@@ -1166,11 +1166,10 @@ COCEOF
 	return 0
 }
 
-# Scaffold .agents/AGENTS.md with context-aware Security section (t1412.11)
-# Detects project type (JS/TS vs other) and includes appropriate security guidance.
-scaffold_agents_md() {
+# Generate the Security section content based on project type (t1412.11)
+# Returns the content via stdout so callers can use it for create or update.
+_generate_security_section() {
 	local project_root="$1"
-	local agents_md="$project_root/.agents/AGENTS.md"
 
 	# Detect project type for security recommendations
 	local is_js_ts=false
@@ -1178,44 +1177,13 @@ scaffold_agents_md() {
 		is_js_ts=true
 	fi
 
-	# Write the base template
-	cat >"$agents_md" <<'AGENTSEOF'
-# Agent Instructions
-
-This directory contains project-specific agent context. The [aidevops](https://aidevops.sh)
-framework is loaded separately via the global config (`~/.aidevops/agents/`).
-
-## Purpose
-
-Files in `.agents/` provide project-specific instructions that AI assistants
-read when working in this repository. Use this for:
-
-- Domain-specific conventions not covered by the framework
-- Project architecture decisions and patterns
-- API design rules, data models, naming conventions
-- Integration details (third-party services, deployment targets)
-
-## Adding Agents
-
-Create `.md` files in this directory for domain-specific context:
-
-```text
-.agents/
-  AGENTS.md              # This file - overview and index
-  api-patterns.md        # API design conventions
-  deployment.md          # Deployment procedures
-  data-model.md          # Database schema and relationships
-```
-
-Each file is read on demand by AI assistants when relevant to the task.
-
+	cat <<'SECHEADER'
 ## Security
 
-AGENTSEOF
+SECHEADER
 
-	# Append context-aware security section
 	if [[ "$is_js_ts" == "true" ]]; then
-		cat >>"$agents_md" <<'SECEOF'
+		cat <<'SECEOF'
 ### Prompt Injection Defense
 
 Any feature that accepts user input and passes it to an LLM must defend against
@@ -1247,7 +1215,7 @@ submissions, API endpoints), validate and sanitize inputs at the boundary.
   the framework's prompt injection defense patterns
 SECEOF
 	else
-		cat >>"$agents_md" <<'SECEOF'
+		cat <<'SECEOF'
 ### Prompt Injection Defense
 
 Any feature that accepts user input and passes it to an LLM must defend against
@@ -1270,6 +1238,110 @@ in prompts:
   the framework's prompt injection defense patterns
 SECEOF
 	fi
+
+	return 0
+}
+
+# Scaffold .agents/AGENTS.md with context-aware Security section (t1412.11)
+# Idempotent: creates the file if missing, or updates the Security section
+# in an existing file (preserving all other custom content).
+scaffold_agents_md() {
+	local project_root="$1"
+	local agents_md="$project_root/.agents/AGENTS.md"
+
+	if [[ -f "$agents_md" ]]; then
+		# File exists — update the Security section idempotently
+		_update_agents_md_security "$project_root"
+		return $?
+	fi
+
+	# File missing — create from scratch with base template + security
+	local security_content
+	security_content=$(_generate_security_section "$project_root")
+
+	cat >"$agents_md" <<'AGENTSEOF'
+# Agent Instructions
+
+This directory contains project-specific agent context. The [aidevops](https://aidevops.sh)
+framework is loaded separately via the global config (`~/.aidevops/agents/`).
+
+## Purpose
+
+Files in `.agents/` provide project-specific instructions that AI assistants
+read when working in this repository. Use this for:
+
+- Domain-specific conventions not covered by the framework
+- Project architecture decisions and patterns
+- API design rules, data models, naming conventions
+- Integration details (third-party services, deployment targets)
+
+## Adding Agents
+
+Create `.md` files in this directory for domain-specific context:
+
+```text
+.agents/
+  AGENTS.md              # This file - overview and index
+  api-patterns.md        # API design conventions
+  deployment.md          # Deployment procedures
+  data-model.md          # Database schema and relationships
+```
+
+Each file is read on demand by AI assistants when relevant to the task.
+
+AGENTSEOF
+
+	# Append the generated security section
+	printf '%s\n' "$security_content" >>"$agents_md"
+
+	return 0
+}
+
+# Update the Security section in an existing .agents/AGENTS.md (t1412.11)
+# Replaces everything from "## Security" to the next "## " heading (or EOF)
+# with the latest security guidance. Preserves all other content.
+_update_agents_md_security() {
+	local project_root="$1"
+	local agents_md="$project_root/.agents/AGENTS.md"
+	local tmp_file="${agents_md}.tmp.$$"
+
+	local security_content
+	security_content=$(_generate_security_section "$project_root")
+
+	local in_security=false
+	local security_replaced=false
+	local has_security_section=false
+
+	# Process line by line: skip old Security section, insert new one
+	while IFS= read -r line || [[ -n "$line" ]]; do
+		if [[ "$line" == "## Security" || "$line" == "## Security "* ]]; then
+			# Found the Security heading — replace it
+			in_security=true
+			has_security_section=true
+			printf '%s\n' "$security_content" >>"$tmp_file"
+			security_replaced=true
+			continue
+		fi
+
+		if [[ "$in_security" == "true" ]]; then
+			# Check if we've hit the next ## heading (end of Security section)
+			if [[ "$line" == "## "* ]]; then
+				in_security=false
+				printf '%s\n' "$line" >>"$tmp_file"
+			fi
+			# Skip lines within the old Security section
+			continue
+		fi
+
+		printf '%s\n' "$line" >>"$tmp_file"
+	done <"$agents_md"
+
+	if [[ "$has_security_section" == "false" ]]; then
+		# No existing Security section — append it
+		printf '\n%s\n' "$security_content" >>"$tmp_file"
+	fi
+
+	mv "$tmp_file" "$agents_md"
 
 	return 0
 }
@@ -1467,9 +1539,14 @@ EOF
 		print_success "Created .agents/ directory"
 	fi
 
-	# Scaffold .agents/AGENTS.md if missing
-	if [[ ! -f "$project_root/.agents/AGENTS.md" ]]; then
-		scaffold_agents_md "$project_root"
+	# Scaffold or update .agents/AGENTS.md (idempotent — creates if missing,
+	# updates Security section if file already exists)
+	local _agents_md_existed=false
+	[[ -f "$project_root/.agents/AGENTS.md" ]] && _agents_md_existed=true
+	scaffold_agents_md "$project_root"
+	if [[ "$_agents_md_existed" == "true" ]]; then
+		print_success "Updated Security section in .agents/AGENTS.md"
+	else
 		print_success "Created .agents/AGENTS.md"
 	fi
 
