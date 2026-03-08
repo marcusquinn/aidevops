@@ -293,6 +293,88 @@ fetch_url_hash() {
 	return 0
 }
 
+# Fetch a URL with conditional request headers (ETag/Last-Modified) to avoid
+# re-downloading unchanged content (t1415.3). Returns "not_modified" on HTTP 304,
+# or the SHA-256 hash on HTTP 200. Also captures response ETag and Last-Modified
+# headers into global variables for the caller to store.
+#
+# Arguments:
+#   $1 - URL to fetch
+#   $2 - stored ETag value (may be empty)
+#   $3 - stored Last-Modified value (may be empty)
+# Outputs: "not_modified" on 304, or hex-encoded SHA-256 hash on 200
+# Side effects: sets FETCH_RESP_ETAG and FETCH_RESP_LAST_MODIFIED globals
+# Returns: 0 on success (200 or 304), 1 on fetch failure or empty response
+FETCH_RESP_ETAG=""
+FETCH_RESP_LAST_MODIFIED=""
+
+fetch_url_conditional() {
+	local url="$1"
+	local stored_etag="${2:-}"
+	local stored_last_modified="${3:-}"
+
+	# Reset response header globals
+	FETCH_RESP_ETAG=""
+	FETCH_RESP_LAST_MODIFIED=""
+
+	local tmp_file header_file
+	tmp_file=$(mktemp)
+	header_file=$(mktemp)
+	_save_cleanup_scope
+	trap '_run_cleanups' RETURN
+	push_cleanup "rm -f '${tmp_file}'"
+	push_cleanup "rm -f '${header_file}'"
+
+	# Build curl args with conditional headers
+	local curl_args=(-sS --connect-timeout 15 --max-time 60 -L
+		-o "$tmp_file" -D "$header_file"
+		-w "%{http_code}")
+
+	if [[ -n "$stored_etag" ]]; then
+		curl_args+=(-H "If-None-Match: ${stored_etag}")
+	fi
+	if [[ -n "$stored_last_modified" ]]; then
+		curl_args+=(-H "If-Modified-Since: ${stored_last_modified}")
+	fi
+
+	local http_code
+	http_code=$(curl "${curl_args[@]}" "$url" 2>/dev/null) || {
+		return 1
+	}
+
+	# Parse response headers (case-insensitive, handle \r line endings)
+	if [[ -f "$header_file" ]]; then
+		FETCH_RESP_ETAG=$(grep -i '^etag:' "$header_file" | tail -1 | sed 's/^[Ee][Tt][Aa][Gg]: *//; s/\r$//')
+		FETCH_RESP_LAST_MODIFIED=$(grep -i '^last-modified:' "$header_file" | tail -1 | sed 's/^[Ll][Aa][Ss][Tt]-[Mm][Oo][Dd][Ii][Ff][Ii][Ee][Dd]: *//; s/\r$//')
+	fi
+
+	# HTTP 304 Not Modified — content unchanged, no need to re-download
+	if [[ "$http_code" == "304" ]]; then
+		echo "not_modified"
+		return 0
+	fi
+
+	# Non-2xx responses are failures (except 304 handled above)
+	if [[ "${http_code:0:1}" != "2" ]]; then
+		return 1
+	fi
+
+	# Reject empty responses
+	if [[ ! -s "$tmp_file" ]]; then
+		return 1
+	fi
+
+	local hash
+	hash=$(shasum -a 256 "$tmp_file" | cut -d' ' -f1)
+
+	if [[ -z "$hash" ]]; then
+		return 1
+	fi
+
+	echo "$hash"
+	return 0
+}
+
 # Update the upstream_hash field in skill-sources.json for a URL-sourced skill.
 # Arguments:
 #   $1 - skill name
@@ -310,6 +392,39 @@ update_upstream_hash() {
 
 	jq --arg name "$skill_name" --arg hash "$new_hash" \
 		'.skills = [.skills[] | if .name == $name then .upstream_hash = $hash else . end]' \
+		"$SKILL_SOURCES" >"$tmp_file" && mv "$tmp_file" "$SKILL_SOURCES"
+	return 0
+}
+
+# Update ETag and Last-Modified cache headers in skill-sources.json (t1415.3).
+# Stores HTTP caching headers so subsequent checks can use conditional requests
+# (If-None-Match / If-Modified-Since) to avoid re-downloading unchanged content.
+# Arguments:
+#   $1 - skill name
+#   $2 - ETag value (may be empty)
+#   $3 - Last-Modified value (may be empty)
+# Returns: 0 on success
+update_cache_headers() {
+	local skill_name="$1"
+	local etag="${2:-}"
+	local last_modified="${3:-}"
+
+	# Skip if neither header is available
+	if [[ -z "$etag" && -z "$last_modified" ]]; then
+		return 0
+	fi
+
+	local tmp_file
+	tmp_file=$(mktemp)
+	_save_cleanup_scope
+	trap '_run_cleanups' RETURN
+	push_cleanup "rm -f '${tmp_file}'"
+
+	jq --arg name "$skill_name" --arg etag "$etag" --arg lm "$last_modified" \
+		'.skills = [.skills[] | if .name == $name then
+			(if $etag != "" then .upstream_etag = $etag else . end) |
+			(if $lm != "" then .upstream_last_modified = $lm else . end)
+		else . end]' \
 		"$SKILL_SOURCES" >"$tmp_file" && mv "$tmp_file" "$SKILL_SOURCES"
 	return 0
 }
@@ -353,16 +468,47 @@ cmd_check() {
 		upstream_url=$(echo "$skill_json" | jq -r '.upstream_url')
 		current_commit=$(echo "$skill_json" | jq -r '.upstream_commit // empty')
 
-		# --- URL-sourced skills: content-hash comparison (t1415.2) ---
+		# --- URL-sourced skills: conditional request + content-hash comparison (t1415.2, t1415.3) ---
 		if is_url_skill "$skill_json"; then
-			local stored_hash
+			local stored_hash stored_etag stored_last_modified
 			stored_hash=$(echo "$skill_json" | jq -r '.upstream_hash // empty')
+			stored_etag=$(echo "$skill_json" | jq -r '.upstream_etag // empty')
+			stored_last_modified=$(echo "$skill_json" | jq -r '.upstream_last_modified // empty')
 
+			# Use conditional request when we have cache headers (t1415.3)
 			local latest_hash
-			if ! latest_hash=$(fetch_url_hash "$upstream_url"); then
-				log_warning "Could not fetch URL for $name: $upstream_url"
-				((check_failed++)) || true
-				continue
+			if [[ -n "$stored_etag" || -n "$stored_last_modified" ]]; then
+				if ! latest_hash=$(fetch_url_conditional "$upstream_url" "$stored_etag" "$stored_last_modified"); then
+					log_warning "Could not fetch URL for $name: $upstream_url"
+					((check_failed++)) || true
+					continue
+				fi
+
+				# HTTP 304 — content unchanged, skip hash computation entirely
+				if [[ "$latest_hash" == "not_modified" ]]; then
+					update_last_checked "$name"
+					if [[ "$NON_INTERACTIVE" != true ]]; then
+						echo -e "${GREEN}Up to date${NC}: $name (304 Not Modified)"
+					fi
+					log_info "Up to date: $name (304 Not Modified, skipped download)"
+					((up_to_date++)) || true
+					results+=("{\"name\":\"$name\",\"status\":\"up_to_date\",\"commit\":\"${stored_hash}\"}")
+					continue
+				fi
+
+				# Got a 200 — store updated cache headers from the response
+				update_cache_headers "$name" "$FETCH_RESP_ETAG" "$FETCH_RESP_LAST_MODIFIED"
+			else
+				# No cache headers stored yet — use plain fetch (t1415.2 path)
+				# but capture headers for future conditional requests
+				if ! latest_hash=$(fetch_url_conditional "$upstream_url" "" ""); then
+					log_warning "Could not fetch URL for $name: $upstream_url"
+					((check_failed++)) || true
+					continue
+				fi
+
+				# Store any cache headers from the response for next time
+				update_cache_headers "$name" "$FETCH_RESP_ETAG" "$FETCH_RESP_LAST_MODIFIED"
 			fi
 
 			# Update last_checked timestamp
@@ -551,14 +697,17 @@ cmd_update() {
 		log_info "Updating $skill_name from $upstream_url"
 		"$ADD_SKILL_HELPER" add "$upstream_url" --force
 
-		# For URL-sourced skills, update the stored hash after re-import (t1415.2)
+		# For URL-sourced skills, update the stored hash and cache headers after re-import (t1415.2, t1415.3)
 		local format
 		format=$(jq -r --arg name "$skill_name" '.skills[] | select(.name == $name) | .format_detected // empty' "$SKILL_SOURCES")
 		if [[ "$format" == "url" ]]; then
 			local new_hash
-			if new_hash=$(fetch_url_hash "$upstream_url"); then
-				update_upstream_hash "$skill_name" "$new_hash"
-				log_info "Updated upstream_hash for $skill_name"
+			if new_hash=$(fetch_url_conditional "$upstream_url" "" ""); then
+				if [[ "$new_hash" != "not_modified" ]]; then
+					update_upstream_hash "$skill_name" "$new_hash"
+					log_info "Updated upstream_hash for $skill_name"
+				fi
+				update_cache_headers "$skill_name" "$FETCH_RESP_ETAG" "$FETCH_RESP_LAST_MODIFIED"
 			fi
 		fi
 	else
@@ -587,6 +736,8 @@ cmd_status() {
                 local_path: .local_path,
                 format: .format_detected,
                 upstream_hash: (.upstream_hash // null),
+                upstream_etag: (.upstream_etag // null),
+                upstream_last_modified: (.upstream_last_modified // null),
                 imported: .imported_at,
                 last_checked: .last_checked,
                 strategy: .merge_strategy
@@ -602,7 +753,7 @@ cmd_status() {
 	echo "Total: $skill_count skill(s)"
 	echo ""
 
-	jq -r '.skills[] | "  \(.name)\n    Path: \(.local_path)\n    Source: \(.upstream_url)\n    Format: \(.format_detected)\(if .format_detected == "url" then "\n    Hash: \(.upstream_hash // "none")" else "" end)\n    Imported: \(.imported_at)\n    Last checked: \(.last_checked // "never")\n    Strategy: \(.merge_strategy)\n"' "$SKILL_SOURCES"
+	jq -r '.skills[] | "  \(.name)\n    Path: \(.local_path)\n    Source: \(.upstream_url)\n    Format: \(.format_detected)\(if .format_detected == "url" then "\n    Hash: \(.upstream_hash // "none")\(if .upstream_etag then "\n    ETag: \(.upstream_etag)" else "" end)\(if .upstream_last_modified then "\n    Last-Modified: \(.upstream_last_modified)" else "" end)" else "" end)\n    Imported: \(.imported_at)\n    Last checked: \(.last_checked // "never")\n    Strategy: \(.merge_strategy)\n"' "$SKILL_SOURCES"
 
 	return 0
 }
@@ -1240,18 +1391,30 @@ cmd_pr_batch() {
 			continue
 		fi
 
-		# --- URL-sourced skills: content-hash comparison (t1415.2) ---
+		# --- URL-sourced skills: conditional request + content-hash comparison (t1415.2, t1415.3) ---
 		if is_url_skill "$skill_json"; then
-			local stored_hash
+			local stored_hash stored_etag stored_last_modified
 			stored_hash=$(echo "$skill_json" | jq -r '.upstream_hash // empty')
+			stored_etag=$(echo "$skill_json" | jq -r '.upstream_etag // empty')
+			stored_last_modified=$(echo "$skill_json" | jq -r '.upstream_last_modified // empty')
 
 			local latest_hash
-			if ! latest_hash=$(fetch_url_hash "$upstream_url"); then
+			if ! latest_hash=$(fetch_url_conditional "$upstream_url" "$stored_etag" "$stored_last_modified"); then
 				log_warning "Could not fetch URL for $name: $upstream_url — skipping"
 				continue
 			fi
 
+			# Store updated cache headers from the response
+			update_cache_headers "$name" "$FETCH_RESP_ETAG" "$FETCH_RESP_LAST_MODIFIED"
 			update_last_checked "$name"
+
+			# HTTP 304 — content unchanged
+			if [[ "$latest_hash" == "not_modified" ]]; then
+				if [[ "$QUIET" != true ]]; then
+					echo -e "${GREEN}Up to date${NC}: $name (304 Not Modified)"
+				fi
+				continue
+			fi
 
 			if [[ -n "$stored_hash" && "$latest_hash" == "$stored_hash" ]]; then
 				if [[ "$QUIET" != true ]]; then
@@ -1623,19 +1786,31 @@ cmd_pr() {
 			continue
 		fi
 
-		# --- URL-sourced skills: content-hash comparison (t1415.2) ---
+		# --- URL-sourced skills: conditional request + content-hash comparison (t1415.2, t1415.3) ---
 		if is_url_skill "$skill_json"; then
-			local stored_hash
+			local stored_hash stored_etag stored_last_modified
 			stored_hash=$(echo "$skill_json" | jq -r '.upstream_hash // empty')
+			stored_etag=$(echo "$skill_json" | jq -r '.upstream_etag // empty')
+			stored_last_modified=$(echo "$skill_json" | jq -r '.upstream_last_modified // empty')
 
 			local latest_hash
-			if ! latest_hash=$(fetch_url_hash "$upstream_url"); then
+			if ! latest_hash=$(fetch_url_conditional "$upstream_url" "$stored_etag" "$stored_last_modified"); then
 				log_warning "Could not fetch URL for $name: $upstream_url — skipping"
 				((prs_skipped++)) || true
 				continue
 			fi
 
+			# Store updated cache headers from the response
+			update_cache_headers "$name" "$FETCH_RESP_ETAG" "$FETCH_RESP_LAST_MODIFIED"
 			update_last_checked "$name"
+
+			# HTTP 304 — content unchanged
+			if [[ "$latest_hash" == "not_modified" ]]; then
+				if [[ "$QUIET" != true ]]; then
+					echo -e "${GREEN}Up to date${NC}: $name (304 Not Modified)"
+				fi
+				continue
+			fi
 
 			if [[ -n "$stored_hash" && "$latest_hash" == "$stored_hash" ]]; then
 				if [[ "$QUIET" != true ]]; then
