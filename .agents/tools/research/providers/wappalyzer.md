@@ -49,11 +49,8 @@ wappalyzer-helper.sh detect https://example.com
 ### Basic Detection
 
 ```bash
-# Analyze a URL via the helper script
+# Analyze a URL via the helper script (outputs JSON by default)
 wappalyzer-helper.sh detect https://example.com
-
-# With JSON output
-wappalyzer-helper.sh detect https://example.com --json
 
 # As part of tech-stack lookup
 tech-stack-helper.sh lookup https://example.com
