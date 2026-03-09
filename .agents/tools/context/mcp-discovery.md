@@ -293,7 +293,7 @@ The savings compound over a conversation as context accumulates.
 
 ## Future: OpenCode includeTools Support
 
-When OpenCode implements `includeTools` filtering ([#7399](https://github.com/anomalyco/opencode/issues/7399)), agents can specify exactly which tools they need:
+When OpenCode implements `includeTools` filtering ([#7399](https://github.com/opencode-ai/opencode/issues/7399)), agents can specify exactly which tools they need:
 
 ```yaml
 ---

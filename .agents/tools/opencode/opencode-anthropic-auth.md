@@ -20,7 +20,7 @@ tools:
 
 - **Purpose**: OAuth authentication for Claude Pro/Max accounts in OpenCode
 - **Status**: **DEPRECATED** — built into OpenCode v1.1.36+, do not install as external plugin
-- **Repository**: https://github.com/anomalyco/opencode-anthropic-auth
+- **Repository**: https://github.com/opencode-ai/opencode-anthropic-auth
 - **Installation**: Built-in to OpenCode v1.1.36+ (no installation needed)
 
 **Authentication Methods**:
@@ -424,7 +424,7 @@ aidevops follows OpenCode's credential storage:
 
 - **0.0.9** (latest): Current version in repository
   - **DEPRECATED** — functionality now built into OpenCode v1.1.36+
-  - Maintained by Anomaly (anomalyco)
+  - Maintained by OpenCode (opencode-ai)
   - Dependencies: `@opencode-ai/plugin`, `@openauthjs/openauth`
 - **0.0.8**: Updated dependencies and compatibility
   - Updated from `@openauthjs/openauth@^0.4.3` to latest
@@ -436,7 +436,7 @@ aidevops follows OpenCode's credential storage:
 
 ## References
 
-- **Plugin Repository**: https://github.com/anomalyco/opencode-anthropic-auth
+- **Plugin Repository**: https://github.com/opencode-ai/opencode-anthropic-auth
 - **OpenCode Plugins**: https://opencode.ai/docs/plugins
 - **Anthropic OAuth**: https://docs.anthropic.com/en/api/oauth
 - **OpenAuth Library**: https://openauth.js.org/
