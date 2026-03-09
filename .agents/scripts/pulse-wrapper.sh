@@ -63,6 +63,7 @@ RAM_RESERVE_MB="${RAM_RESERVE_MB:-8192}"                  # 8 GB reserved for OS
 MAX_WORKERS_CAP="${MAX_WORKERS_CAP:-8}"                   # Hard ceiling regardless of RAM
 QUALITY_SWEEP_INTERVAL="${QUALITY_SWEEP_INTERVAL:-86400}" # 24 hours between sweeps
 DAILY_PR_CAP="${DAILY_PR_CAP:-5}"                         # Max PRs created per repo per day (GH#3821)
+PRODUCT_RESERVATION_PCT="${PRODUCT_RESERVATION_PCT:-60}"  # % of worker slots reserved for product repos (t1423)
 
 # Process guard limits (t1398)
 CHILD_RSS_LIMIT_KB="${CHILD_RSS_LIMIT_KB:-2097152}"           # 2 GB default — kill child if RSS exceeds this
@@ -82,6 +83,7 @@ RAM_RESERVE_MB=$(_validate_int RAM_RESERVE_MB "$RAM_RESERVE_MB" 8192)
 MAX_WORKERS_CAP=$(_validate_int MAX_WORKERS_CAP "$MAX_WORKERS_CAP" 8)
 QUALITY_SWEEP_INTERVAL=$(_validate_int QUALITY_SWEEP_INTERVAL "$QUALITY_SWEEP_INTERVAL" 86400)
 DAILY_PR_CAP=$(_validate_int DAILY_PR_CAP "$DAILY_PR_CAP" 5 1)
+PRODUCT_RESERVATION_PCT=$(_validate_int PRODUCT_RESERVATION_PCT "$PRODUCT_RESERVATION_PCT" 60 0)
 CHILD_RSS_LIMIT_KB=$(_validate_int CHILD_RSS_LIMIT_KB "$CHILD_RSS_LIMIT_KB" 2097152 1)
 CHILD_RUNTIME_LIMIT=$(_validate_int CHILD_RUNTIME_LIMIT "$CHILD_RUNTIME_LIMIT" 1800 1)
 SHELLCHECK_RSS_LIMIT_KB=$(_validate_int SHELLCHECK_RSS_LIMIT_KB "$SHELLCHECK_RSS_LIMIT_KB" 1048576 1)
@@ -311,6 +313,9 @@ prefetch_state() {
 
 	# Append repo hygiene data for LLM triage (t1417)
 	prefetch_hygiene >>"$STATE_FILE"
+
+	# Append priority-class worker allocations (t1423)
+	_append_priority_allocations >>"$STATE_FILE"
 
 	# Export PULSE_SCOPE_REPOS — comma-separated list of repo slugs that
 	# workers are allowed to create PRs/branches on (t1405, GH#2928).
@@ -713,6 +718,54 @@ prefetch_active_workers() {
 	fi
 
 	echo ""
+	return 0
+}
+
+#######################################
+# Append priority-class worker allocations to state file (t1423)
+#
+# Reads the allocation file written by calculate_priority_allocations()
+# and formats it as a section the pulse agent can act on.
+#
+# The pulse agent uses this to enforce soft reservations: product repos
+# get a guaranteed minimum share of worker slots, tooling gets the rest.
+# When one class has no pending work, the other can use freed slots.
+#
+# Output: allocation summary to stdout (appended to STATE_FILE by caller)
+#######################################
+_append_priority_allocations() {
+	local alloc_file="${HOME}/.aidevops/logs/pulse-priority-allocations"
+
+	echo ""
+	echo "# Priority-Class Worker Allocations (t1423)"
+	echo ""
+
+	if [[ ! -f "$alloc_file" ]]; then
+		echo "- Allocation data not available — using flat pool (no reservations)"
+		echo ""
+		return 0
+	fi
+
+	# Read allocation values
+	local max_workers product_repos tooling_repos product_min tooling_max reservation_pct
+	max_workers=$(grep '^MAX_WORKERS=' "$alloc_file" | cut -d= -f2) || max_workers=4
+	product_repos=$(grep '^PRODUCT_REPOS=' "$alloc_file" | cut -d= -f2) || product_repos=0
+	tooling_repos=$(grep '^TOOLING_REPOS=' "$alloc_file" | cut -d= -f2) || tooling_repos=0
+	product_min=$(grep '^PRODUCT_MIN=' "$alloc_file" | cut -d= -f2) || product_min=0
+	tooling_max=$(grep '^TOOLING_MAX=' "$alloc_file" | cut -d= -f2) || tooling_max=0
+	reservation_pct=$(grep '^PRODUCT_RESERVATION_PCT=' "$alloc_file" | cut -d= -f2) || reservation_pct=60
+
+	echo "Worker pool: **${max_workers}** total slots"
+	echo "Product repos (${product_repos}): **${product_min}** reserved slots (${reservation_pct}% minimum)"
+	echo "Tooling repos (${tooling_repos}): **${tooling_max}** slots (remainder)"
+	echo ""
+	echo "**Enforcement rules:**"
+	echo "- Before dispatching a tooling-repo worker, check: are product-repo workers using fewer than ${product_min} slots? If yes, the remaining product slots are reserved — do NOT fill them with tooling work."
+	echo "- If product repos have no pending work (no open issues, no failing PRs), their reserved slots become available for tooling."
+	echo "- If all ${max_workers} slots are needed for product work, tooling gets 0 (product reservation is a minimum, not a maximum)."
+	echo "- Merges (priority 1) and CI fixes (priority 2) are exempt — they always proceed regardless of class."
+	echo ""
+
 	return 0
 }
 
@@ -2948,6 +3001,7 @@ main() {
 	cleanup_worktrees
 	cleanup_stashes
 	calculate_max_workers
+	calculate_priority_allocations
 	check_session_count >/dev/null
 
 	# Run housekeeping BEFORE the pulse — these are shell-level operations
@@ -3088,6 +3142,81 @@ calculate_max_workers() {
 	echo "$max_workers" >"$max_workers_file"
 
 	echo "[pulse-wrapper] Available RAM: ${free_mb}MB, reserve: ${RAM_RESERVE_MB}MB, max workers: ${max_workers}" >>"$LOGFILE"
+	return 0
+}
+
+#######################################
+# Calculate priority-class worker allocations (t1423)
+#
+# Reads repos.json to count product vs tooling repos, then computes
+# per-class slot reservations based on PRODUCT_RESERVATION_PCT.
+#
+# Product repos get a guaranteed minimum share of worker slots.
+# Tooling repos get the remainder. When one class has no pending work,
+# the other class can use the freed slots (soft reservation).
+#
+# Output: writes allocation data to pulse-priority-allocations file
+# and appends a summary section to STATE_FILE for the pulse agent.
+#
+# Depends on: calculate_max_workers() having run first (reads pulse-max-workers)
+#######################################
+calculate_priority_allocations() {
+	local repos_json="${REPOS_JSON}"
+	local max_workers_file="${HOME}/.aidevops/logs/pulse-max-workers"
+	local alloc_file="${HOME}/.aidevops/logs/pulse-priority-allocations"
+
+	if [[ ! -f "$repos_json" ]] || ! command -v jq &>/dev/null; then
+		echo "[pulse-wrapper] repos.json or jq not available — skipping priority allocations" >>"$LOGFILE"
+		return 0
+	fi
+
+	local max_workers
+	max_workers=$(cat "$max_workers_file" 2>/dev/null || echo 4)
+	[[ "$max_workers" =~ ^[0-9]+$ ]] || max_workers=4
+
+	# Count pulse-enabled repos by priority class
+	local product_repos tooling_repos
+	product_repos=$(jq '[.initialized_repos[] | select(.pulse == true and (.local_only // false) == false and .slug != "" and .priority == "product")] | length' "$repos_json" 2>/dev/null) || product_repos=0
+	tooling_repos=$(jq '[.initialized_repos[] | select(.pulse == true and (.local_only // false) == false and .slug != "" and .priority == "tooling")] | length' "$repos_json" 2>/dev/null) || tooling_repos=0
+	[[ "$product_repos" =~ ^[0-9]+$ ]] || product_repos=0
+	[[ "$tooling_repos" =~ ^[0-9]+$ ]] || tooling_repos=0
+
+	# Calculate reservations
+	# product_min = ceil(max_workers * PRODUCT_RESERVATION_PCT / 100)
+	# Using integer arithmetic: ceil(a/b) = (a + b - 1) / b
+	local product_min tooling_max
+	if [[ "$product_repos" -eq 0 ]]; then
+		# No product repos — all slots available for tooling
+		product_min=0
+		tooling_max="$max_workers"
+	elif [[ "$tooling_repos" -eq 0 ]]; then
+		# No tooling repos — all slots available for product
+		product_min="$max_workers"
+		tooling_max=0
+	else
+		product_min=$(((max_workers * PRODUCT_RESERVATION_PCT + 99) / 100))
+		# Ensure product_min doesn't exceed max_workers
+		if [[ "$product_min" -gt "$max_workers" ]]; then
+			product_min="$max_workers"
+		fi
+		# Ensure at least 1 slot for tooling when tooling repos exist
+		if [[ "$product_min" -ge "$max_workers" && "$tooling_repos" -gt 0 ]]; then
+			product_min=$((max_workers - 1))
+		fi
+		tooling_max=$((max_workers - product_min))
+	fi
+
+	# Write allocation file (key=value, readable by pulse.md)
+	{
+		echo "MAX_WORKERS=${max_workers}"
+		echo "PRODUCT_REPOS=${product_repos}"
+		echo "TOOLING_REPOS=${tooling_repos}"
+		echo "PRODUCT_MIN=${product_min}"
+		echo "TOOLING_MAX=${tooling_max}"
+		echo "PRODUCT_RESERVATION_PCT=${PRODUCT_RESERVATION_PCT}"
+	} >"$alloc_file"
+
+	echo "[pulse-wrapper] Priority allocations: product_min=${product_min}, tooling_max=${tooling_max} (${product_repos} product, ${tooling_repos} tooling repos, ${max_workers} total slots)" >>"$LOGFILE"
 	return 0
 }
 
