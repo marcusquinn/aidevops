@@ -1414,9 +1414,15 @@ get_provider_from_model() {
 #   is_feature_enabled <key>             — backward-compatible (flat key)
 
 # Source config-helper.sh (provides _jsonc_get, config_get, config_enabled, etc.)
+# IMPORTANT: source=/dev/null tells ShellCheck NOT to follow this source directive.
+# Without it, ShellCheck follows the cycle shared-constants.sh → config-helper.sh →
+# shared-constants.sh infinitely, consuming exponential memory (7-14 GB observed).
+# The include guard (_SHARED_CONSTANTS_LOADED at line 14) prevents infinite recursion
+# at execution time, but ShellCheck is a static analyzer and ignores runtime guards.
+# GH#3981: https://github.com/marcusquinn/aidevops/issues/3981
 _CONFIG_HELPER="${BASH_SOURCE[0]%/*}/config-helper.sh"
 if [[ -r "$_CONFIG_HELPER" ]]; then
-	# shellcheck source=config-helper.sh
+	# shellcheck source=/dev/null
 	source "$_CONFIG_HELPER"
 fi
 
