@@ -115,12 +115,15 @@ Then skip to the next PR. The next pulse cycle will retry the permission check �
 
 **For maintainer PRs (admin/maintain/write permission):**
 
-- **Green CI + at least one review posted + no blocking reviews** → merge: `gh pr merge <number> --repo <slug> --squash`. If the PR resolves an issue, the issue should be closed with a comment linking to the merged PR.
-  - **CRITICAL (t2839):** Before merging, always verify at least one review exists using `gh pr view <number> --repo <slug> --json reviews --jq '.reviews | length'`. This is the mandatory gate — no PR merges with zero reviews.
-  - If `review-bot-gate-helper.sh check <number> <slug>` is available, use it as an additional bot-activity signal. `PASS` confirms bots have reviewed but does NOT replace the formal review-count check above.
-  - `WAITING` only means "no known bot activity" — it does NOT mean zero reviews. When `WAITING` is returned, check the formal review count (the `gh pr view` command above). If count > 0, proceed to merge.
-  - `SKIP` means the PR has a `skip-review-gate` label — it bypasses the bot gate only, NOT the review count requirement.
-  - Skip the PR when the formal review count is 0, regardless of bot gate status.
+- **Green CI + review gate passed + no blocking reviews** → merge: `gh pr merge <number> --repo <slug> --squash`. If the PR resolves an issue, the issue should be closed with a comment linking to the merged PR.
+  - **Review gate (t2839, GH#3932):** Run `review-bot-gate-helper.sh check <number> <slug>` first, then check formal review count with `gh pr view <number> --repo <slug> --json reviews --jq '.reviews | length'`.
+  - **Merge conditions (any one is sufficient):**
+    1. Formal review count > 0 (at least one bot or human submitted a review) — merge.
+    2. Bot gate returns `PASS` (a bot posted a real review comment, even if GitHub didn't record it as a formal review) — merge.
+    3. Bot gate returns `PASS_RATE_LIMITED` (bots posted rate-limit notices proving they're configured, and the PR exceeded the grace period) — merge. This is the designed escape valve for systemic rate limiting (GH#3932). The rate-limit grace period (default 4h) provides sufficient time for bots to recover; if they haven't reviewed after 4h, the PR has been adequately delayed.
+    4. Bot gate returns `SKIP` (PR has `skip-review-gate` label) — merge (label is an explicit human override).
+  - **Do NOT merge when:** formal review count is 0 AND bot gate returns `WAITING` (bots haven't posted anything yet, or rate-limit grace period hasn't elapsed). Skip this PR and let `request-retry` handle recovery (see below).
+  - **Rationale for PASS_RATE_LIMITED (GH#3932):** The previous rule ("skip when formal review count is 0, regardless of bot gate status") created a deadlock: CodeRabbit rate-limits prevented formal reviews, and the hard review-count gate prevented merging, so PRs accumulated indefinitely. The PASS_RATE_LIMITED status was designed specifically for this scenario but was being overridden by the review-count gate. Now the two checks work together: the bot gate determines whether the PR has been adequately reviewed OR has waited long enough, and the formal review count is one input to that determination, not an independent hard gate.
   - **Unresolved review suggestions check (pre-merge):** Before merging, check for unresolved inline review comments from bots. This prevents merging PRs where actionable feedback was posted but never addressed — the root cause of quality-debt backfill issues.
 
     ```bash
@@ -147,7 +150,7 @@ Then skip to the next PR. The next pulse cycle will retry the permission check �
     ```
 
     **Judgment call, not a hard block.** Not every bot suggestion is valid — bots hallucinate. The fix worker reads each suggestion, applies valid ones, and dismisses invalid ones with a reply. The goal is to prevent the pattern where feedback is silently ignored and becomes a quality-debt issue post-merge. If the PR already has the `needs-review-fixes` label (fix worker already dispatched), skip the check — the worker is handling it. If the PR has `skip-review-suggestions` label, bypass this check entirely (for cases where all suggestions were reviewed and intentionally declined).
-- **Green CI + zero reviews** → skip this cycle, but run `review-bot-gate-helper.sh request-retry <number> <slug>` to self-heal rate-limited bots. The helper checks whether bots posted rate-limit notices instead of real reviews and requests a retry if so (idempotent — safe to call every cycle). The next pulse will find the real review and merge normally. The formal review count gate still applies — this is recovery, not bypass.
+- **Green CI + bot gate returns WAITING** → skip this cycle, but run `review-bot-gate-helper.sh request-retry <number> <slug>` to self-heal rate-limited bots. The helper checks whether bots posted rate-limit notices instead of real reviews and requests a retry if so (idempotent — safe to call every cycle). The next pulse will either find a real review (merge via condition 1/2) or the grace period will elapse (merge via condition 3 PASS_RATE_LIMITED).
 - **Failing CI or changes requested** → before dispatching a fix worker, check whether this is a systemic failure (see "CI failure pattern detection" below). If systemic, skip the per-PR dispatch — the workflow-level issue covers it. If per-PR, dispatch a worker to fix it (counts against worker slots).
 
 **For all PRs (regardless of author):**

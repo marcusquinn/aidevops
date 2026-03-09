@@ -6,6 +6,7 @@
 #   review-bot-gate-helper.sh wait          <PR_NUMBER> [REPO] [MAX_WAIT_SECONDS]
 #   review-bot-gate-helper.sh list          <PR_NUMBER> [REPO]
 #   review-bot-gate-helper.sh request-retry <PR_NUMBER> [REPO]
+#   review-bot-gate-helper.sh batch-retry   [REPO]
 #
 # Commands:
 #   check          — Check once, return PASS/PASS_RATE_LIMITED/WAITING/SKIP
@@ -13,6 +14,9 @@
 #   list           — List all bot comments found on the PR
 #   request-retry  — If bots were rate-limited and no real review exists,
 #                     request a review retry (idempotent, safe to call every pulse)
+#   batch-retry    — Process all open PRs with 0 formal reviews, request retries
+#                     for rate-limited ones. Staggers requests to avoid re-triggering
+#                     rate limits. (GH#3932)
 #
 # Output values for check/wait:
 #   PASS              — At least one bot posted a real review
@@ -68,13 +72,14 @@ RATE_LIMIT_GRACE_SECONDS="${RATE_LIMIT_GRACE_SECONDS:-14400}"
 # --- Functions ---
 
 usage() {
-	echo "Usage: $(basename "$0") {check|wait|list|request-retry} <PR_NUMBER> [REPO] [MAX_WAIT]"
+	echo "Usage: $(basename "$0") {check|wait|list|request-retry|batch-retry} <PR_NUMBER> [REPO] [MAX_WAIT]"
 	echo ""
 	echo "Commands:"
 	echo "  check          Check once for bot reviews (returns PASS/PASS_RATE_LIMITED/WAITING/SKIP)"
 	echo "  wait           Poll until bot reviews appear or timeout"
 	echo "  list           List all bot comments found"
 	echo "  request-retry  Request review retry if bots were rate-limited (idempotent)"
+	echo "  batch-retry    Process all open PRs with 0 reviews, request retries (GH#3932)"
 	return 0
 }
 
@@ -501,6 +506,74 @@ Review bots were rate-limited when this PR was created (affected: ${rate_limited
 	fi
 }
 
+do_batch_retry() {
+	# GH#3932: Process all open PRs with 0 formal reviews, request retries
+	# for rate-limited ones. Staggers requests with a delay between each to
+	# avoid re-triggering CodeRabbit's hourly rate limit.
+	#
+	# Returns summary: REQUESTED_N (where N is the count of retries requested)
+	local repo="$1"
+	local stagger_seconds="${BATCH_RETRY_STAGGER:-5}"
+
+	echo "Scanning open PRs in ${repo} for rate-limited reviews..." >&2
+
+	# Get all open PRs with 0 formal reviews
+	local pr_numbers
+	pr_numbers=$(gh pr list --repo "$repo" --state open --limit 100 \
+		--json number,reviews \
+		--jq '[.[] | select((.reviews | length) == 0)] | .[].number' 2>/dev/null || echo "")
+
+	if [[ -z "$pr_numbers" ]]; then
+		echo "NO_ACTION"
+		echo "No open PRs with 0 formal reviews found." >&2
+		return 0
+	fi
+
+	local total=0
+	local requested=0
+	local already=0
+	local skipped=0
+	local pr_num result
+
+	while IFS= read -r pr_num; do
+		[[ -z "$pr_num" ]] && continue
+		total=$((total + 1))
+
+		# Run request-retry for each PR (it handles idempotency internally)
+		result=$(do_request_retry "$pr_num" "$repo" 2>/dev/null) || true
+
+		case "$result" in
+		REQUESTED)
+			requested=$((requested + 1))
+			echo "  PR #${pr_num}: retry requested" >&2
+			# Stagger to avoid re-triggering rate limits
+			if [[ "$stagger_seconds" -gt 0 ]]; then
+				sleep "$stagger_seconds"
+			fi
+			;;
+		ALREADY_REQUESTED)
+			already=$((already + 1))
+			echo "  PR #${pr_num}: already requested" >&2
+			;;
+		HAS_REVIEWS)
+			echo "  PR #${pr_num}: has formal reviews (skipped)" >&2
+			;;
+		NO_ACTION)
+			skipped=$((skipped + 1))
+			echo "  PR #${pr_num}: no rate-limited bots (skipped)" >&2
+			;;
+		*)
+			skipped=$((skipped + 1))
+			echo "  PR #${pr_num}: ${result:-error} (skipped)" >&2
+			;;
+		esac
+	done <<<"$pr_numbers"
+
+	echo "REQUESTED_${requested}"
+	echo "Batch retry complete: ${total} PRs scanned, ${requested} retries requested, ${already} already requested, ${skipped} skipped." >&2
+	return 0
+}
+
 # --- Main ---
 
 main() {
@@ -508,6 +581,20 @@ main() {
 	local pr_number="${2:-}"
 	local repo="${3:-}"
 	local max_wait="${4:-}"
+
+	# batch-retry only needs repo, not pr_number
+	if [[ "$command" == "batch-retry" ]]; then
+		local batch_repo="${2:-}"
+		if [[ -z "$batch_repo" ]]; then
+			batch_repo=$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || echo "")
+			if [[ -z "$batch_repo" ]]; then
+				echo "ERROR: Could not determine repo. Pass REPO as argument." >&2
+				return 2
+			fi
+		fi
+		do_batch_retry "$batch_repo"
+		return $?
+	fi
 
 	if [[ -z "$command" || -z "$pr_number" ]]; then
 		usage
@@ -535,6 +622,9 @@ main() {
 		;;
 	request-retry)
 		do_request_retry "$pr_number" "$repo"
+		;;
+	batch-retry)
+		do_batch_retry "$repo"
 		;;
 	-h | --help | help)
 		usage

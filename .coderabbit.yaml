@@ -47,8 +47,17 @@ reviews:
     labels:
       - "!no-review"
 
-  # Request changes for critical issues
+  # Request changes for critical issues — this is the setting that controls
+  # whether CodeRabbit submits formal APPROVED/CHANGES_REQUESTED reviews.
+  # Without this, CodeRabbit only posts comments (no formal review).
+  # GH#3932: Confirmed via schema that review_status only controls status
+  # messages in walkthrough comments, NOT formal review submission.
   request_changes_workflow: true
+
+  # GH#3932: Enable commit status checks so review-bot-gate-helper.sh can
+  # detect CodeRabbit activity via status API when formal reviews are missing
+  # due to rate limiting. This provides a fallback signal for the merge gate.
+  commit_status: true
 
   # Exclude certain files from review — expanded to reduce review scope
   # and conserve rate-limit budget (GH#3827).
