@@ -27,6 +27,10 @@ mkdir -p "$OPENCODE_COMMAND_DIR"
 
 command_count=0
 
+# Agent name constants (single source of truth for agent renames)
+readonly AGENT_BUILD="Build+"
+readonly AGENT_SEO="SEO"
+
 # =============================================================================
 # COMMAND CREATION HELPER
 # =============================================================================
@@ -45,6 +49,10 @@ command_count=0
 # =============================================================================
 create_command() {
 	local name="$1"
+	[[ -n "$name" ]] || {
+		echo -e "  ${RED}✗${NC} Error: command name required" >&2
+		return 1
+	}
 	local description="$2"
 	local agent="$3"
 	local subtask="$4"
@@ -74,7 +82,7 @@ create_command() {
 # --- Agent Review ---
 create_command "agent-review" \
 	"Systematic review and improvement of agent instructions" \
-	"Build+" "true" <<'BODY'
+	"$AGENT_BUILD" "true" <<'BODY'
 Read ~/.aidevops/agents/tools/build-agent/agent-review.md and follow its instructions.
 
 Review the agent file(s) specified: $ARGUMENTS
@@ -92,7 +100,7 @@ BODY
 # --- Preflight ---
 create_command "preflight" \
 	"Run quality checks before version bump and release" \
-	"Build+" "true" <<'BODY'
+	"$AGENT_BUILD" "true" <<'BODY'
 Read ~/.aidevops/agents/workflows/preflight.md and follow its instructions.
 
 Run preflight checks for: $ARGUMENTS
@@ -107,7 +115,7 @@ BODY
 # --- Postflight ---
 create_command "postflight" \
 	"Check code audit feedback on latest push (branch or PR)" \
-	"Build+" "true" <<'BODY'
+	"$AGENT_BUILD" "true" <<'BODY'
 Check code audit tool feedback on the latest push.
 
 Target: $ARGUMENTS
@@ -136,7 +144,7 @@ BODY
 # --- Review Issue/PR ---
 create_command "review-issue-pr" \
 	"Review external issue or PR - validate problem and evaluate solution" \
-	"Build+" "true" <<'BODY'
+	"$AGENT_BUILD" "true" <<'BODY'
 Read ~/.aidevops/agents/workflows/review-issue-pr.md and follow its instructions.
 
 Review this issue or PR: $ARGUMENTS
@@ -155,7 +163,7 @@ BODY
 # --- Release ---
 create_command "release" \
 	"Full release workflow with version bump, tag, and GitHub release" \
-	"Build+" "" <<'BODY'
+	"$AGENT_BUILD" "" <<'BODY'
 Execute a release for the current repository.
 
 Release type: $ARGUMENTS (valid: major, minor, patch)
@@ -178,7 +186,7 @@ BODY
 # --- Version Bump ---
 create_command "version-bump" \
 	"Bump project version (major, minor, or patch)" \
-	"Build+" "" <<'BODY'
+	"$AGENT_BUILD" "" <<'BODY'
 Read ~/.aidevops/agents/workflows/version-bump.md and follow its instructions.
 
 Bump type: $ARGUMENTS
@@ -194,7 +202,7 @@ BODY
 # --- Changelog ---
 create_command "changelog" \
 	"Update CHANGELOG.md following Keep a Changelog format" \
-	"Build+" "" <<'BODY'
+	"$AGENT_BUILD" "" <<'BODY'
 Read ~/.aidevops/agents/workflows/changelog.md and follow its instructions.
 
 Action: $ARGUMENTS
@@ -208,7 +216,7 @@ BODY
 # --- Linters Local ---
 create_command "linters-local" \
 	"Run local linting tools (ShellCheck, secretlint, pattern checks)" \
-	"Build+" "" <<'BODY'
+	"$AGENT_BUILD" "" <<'BODY'
 Run the local linters script:
 
 !`~/.aidevops/agents/scripts/linters-local.sh $ARGUMENTS`
@@ -225,7 +233,7 @@ BODY
 # --- Code Audit Remote ---
 create_command "code-audit-remote" \
 	"Run remote code auditing (CodeRabbit, Codacy, SonarCloud)" \
-	"Build+" "true" <<'BODY'
+	"$AGENT_BUILD" "true" <<'BODY'
 Read ~/.aidevops/agents/workflows/code-audit-remote.md and follow its instructions.
 
 Audit target: $ARGUMENTS
@@ -241,7 +249,7 @@ BODY
 # --- Code Standards ---
 create_command "code-standards" \
 	"Check code against documented quality standards" \
-	"Build+" "true" <<'BODY'
+	"$AGENT_BUILD" "true" <<'BODY'
 Read ~/.aidevops/agents/tools/code-review/code-standards.md and follow its instructions.
 
 Check target: $ARGUMENTS
@@ -257,7 +265,7 @@ BODY
 # --- Feature Branch ---
 create_command "feature" \
 	"Create and develop a feature branch" \
-	"Build+" "" <<'BODY'
+	"$AGENT_BUILD" "" <<'BODY'
 Read ~/.aidevops/agents/workflows/branch/feature.md and follow its instructions.
 
 Feature: $ARGUMENTS
@@ -271,7 +279,7 @@ BODY
 # --- Bugfix Branch ---
 create_command "bugfix" \
 	"Create and resolve a bugfix branch" \
-	"Build+" "" <<'BODY'
+	"$AGENT_BUILD" "" <<'BODY'
 Read ~/.aidevops/agents/workflows/branch/bugfix.md and follow its instructions.
 
 Bug: $ARGUMENTS
@@ -285,7 +293,7 @@ BODY
 # --- Hotfix Branch ---
 create_command "hotfix" \
 	"Urgent hotfix for critical production issues" \
-	"Build+" "" <<'BODY'
+	"$AGENT_BUILD" "" <<'BODY'
 Read ~/.aidevops/agents/workflows/branch/hotfix.md and follow its instructions.
 
 Issue: $ARGUMENTS
@@ -299,7 +307,7 @@ BODY
 # --- List Keys ---
 create_command "list-keys" \
 	"List all API keys available in session with their storage locations" \
-	"Build+" "" <<'BODY'
+	"$AGENT_BUILD" "" <<'BODY'
 Run the list-keys helper script and format the output as a markdown table:
 
 !`~/.aidevops/agents/scripts/list-keys-helper.sh --json $ARGUMENTS`
@@ -332,7 +340,7 @@ BODY
 # --- Log Time Spent ---
 create_command "log-time-spent" \
 	"Log time spent on a task in TODO.md" \
-	"Build+" "" <<'BODY'
+	"$AGENT_BUILD" "" <<'BODY'
 Log time spent on a task.
 
 Arguments: $ARGUMENTS
@@ -372,7 +380,7 @@ BODY
 # --- Context Builder ---
 create_command "context" \
 	"Build token-efficient AI context for complex tasks" \
-	"Build+" "true" <<'BODY'
+	"$AGENT_BUILD" "true" <<'BODY'
 Read ~/.aidevops/agents/tools/context/context-builder.md and follow its instructions.
 
 Context request: $ARGUMENTS
@@ -386,7 +394,7 @@ BODY
 # --- Create PR ---
 create_command "create-pr" \
 	"Create PR from current branch with title and description" \
-	"Build+" "" <<'BODY'
+	"$AGENT_BUILD" "" <<'BODY'
 Create a pull request from the current branch.
 
 Additional context: $ARGUMENTS
@@ -412,7 +420,7 @@ BODY
 # --- PR Alias ---
 create_command "pr" \
 	"Alias for /create-pr - Create PR from current branch" \
-	"Build+" "" <<'BODY'
+	"$AGENT_BUILD" "" <<'BODY'
 This is an alias for /create-pr. Creating PR from current branch.
 
 Context: $ARGUMENTS
@@ -423,7 +431,7 @@ BODY
 # --- Create PRD ---
 create_command "create-prd" \
 	"Generate a Product Requirements Document for a feature" \
-	"Build+" "" <<'BODY'
+	"$AGENT_BUILD" "" <<'BODY'
 Read ~/.aidevops/agents/workflows/plans.md and follow its PRD generation instructions.
 
 Feature to document: $ARGUMENTS
@@ -452,7 +460,7 @@ BODY
 # --- Generate Tasks ---
 create_command "generate-tasks" \
 	"Generate implementation tasks from a PRD" \
-	"Build+" "" <<'BODY'
+	"$AGENT_BUILD" "" <<'BODY'
 Read ~/.aidevops/agents/workflows/plans.md and follow its task generation instructions.
 
 PRD or feature: $ARGUMENTS
@@ -483,7 +491,7 @@ BODY
 # --- List Todo ---
 create_command "list-todo" \
 	"List tasks and plans with sorting, filtering, and grouping" \
-	"Build+" "" <<'BODY'
+	"$AGENT_BUILD" "" <<'BODY'
 Read TODO.md and todo/PLANS.md and display tasks based on arguments.
 
 Arguments: $ARGUMENTS
@@ -562,7 +570,7 @@ BODY
 # --- Save Todo ---
 create_command "save-todo" \
 	"Save current discussion as task or plan (auto-detects complexity)" \
-	"Build+" "" <<'BODY'
+	"$AGENT_BUILD" "" <<'BODY'
 Analyze the current conversation and save appropriately based on complexity.
 
 Topic/context: $ARGUMENTS
@@ -619,7 +627,7 @@ BODY
 # --- Plan Status ---
 create_command "plan-status" \
 	"Show active plans and TODO.md status" \
-	"Build+" "" <<'BODY'
+	"$AGENT_BUILD" "" <<'BODY'
 Read TODO.md and todo/PLANS.md to show current planning status.
 
 Filter: $ARGUMENTS (optional: "in-progress", "backlog", plan name)
@@ -653,7 +661,7 @@ BODY
 # --- Keyword Research ---
 create_command "keyword-research" \
 	"Keyword research with seed keyword expansion" \
-	"SEO" "" <<'BODY'
+	"$AGENT_SEO" "" <<'BODY'
 Read ~/.aidevops/agents/seo/keyword-research.md and follow its instructions.
 
 Keywords to research: $ARGUMENTS
@@ -686,7 +694,7 @@ BODY
 # --- Autocomplete Research ---
 create_command "autocomplete-research" \
 	"Google autocomplete long-tail keyword expansion" \
-	"SEO" "" <<'BODY'
+	"$AGENT_SEO" "" <<'BODY'
 Read ~/.aidevops/agents/seo/keyword-research.md and follow its instructions.
 
 Seed keyword for autocomplete: $ARGUMENTS
@@ -716,7 +724,7 @@ BODY
 # --- Keyword Research Extended ---
 create_command "keyword-research-extended" \
 	"Full SERP analysis with weakness detection and KeywordScore" \
-	"SEO" "true" <<'BODY'
+	"$AGENT_SEO" "true" <<'BODY'
 Read ~/.aidevops/agents/seo/keyword-research.md and follow its instructions.
 
 Research target: $ARGUMENTS
@@ -768,7 +776,7 @@ BODY
 # --- Webmaster Keywords ---
 create_command "webmaster-keywords" \
 	"Keywords from GSC + Bing for your verified sites" \
-	"SEO" "" <<'BODY'
+	"$AGENT_SEO" "" <<'BODY'
 Read ~/.aidevops/agents/seo/keyword-research.md and follow its instructions.
 
 Site URL: $ARGUMENTS
@@ -826,7 +834,7 @@ BODY
 # --- Setup aidevops ---
 create_command "setup-aidevops" \
 	"Deploy latest aidevops agent changes locally" \
-	"Build+" "" <<'BODY'
+	"$AGENT_BUILD" "" <<'BODY'
 Run the aidevops setup script to deploy the latest changes.
 
 **Command:**
@@ -850,7 +858,7 @@ BODY
 # --- Ralph Loop ---
 create_command "ralph-loop" \
 	"Start iterative AI development loop (Ralph Wiggum technique)" \
-	"Build+" "" <<'BODY'
+	"$AGENT_BUILD" "" <<'BODY'
 Read ~/.aidevops/agents/workflows/ralph-loop.md and follow its instructions.
 
 Start a Ralph loop for iterative development.
@@ -890,7 +898,7 @@ BODY
 # --- Cancel Ralph ---
 create_command "cancel-ralph" \
 	"Cancel active Ralph Wiggum loop" \
-	"Build+" "" <<'BODY'
+	"$AGENT_BUILD" "" <<'BODY'
 Cancel the active Ralph loop.
 
 Remove the state file to stop the loop:
@@ -905,7 +913,7 @@ BODY
 # --- Ralph Status ---
 create_command "ralph-status" \
 	"Show current Ralph loop status" \
-	"Build+" "" <<'BODY'
+	"$AGENT_BUILD" "" <<'BODY'
 Show the current Ralph loop status.
 
 **Check status:**
@@ -925,7 +933,7 @@ BODY
 # --- Preflight Loop ---
 create_command "preflight-loop" \
 	"Run preflight checks in a loop until all pass (Ralph pattern)" \
-	"Build+" "" <<'BODY'
+	"$AGENT_BUILD" "" <<'BODY'
 Run preflight checks iteratively until all pass or max iterations reached.
 
 Arguments: $ARGUMENTS
@@ -963,7 +971,7 @@ BODY
 # --- PR Loop ---
 create_command "pr-loop" \
 	"Monitor PR until approved or merged (Ralph pattern)" \
-	"Build+" "" <<'BODY'
+	"$AGENT_BUILD" "" <<'BODY'
 Monitor a PR iteratively until approved, merged, or max iterations reached.
 
 Arguments: $ARGUMENTS
@@ -1001,7 +1009,7 @@ BODY
 # --- Postflight Loop ---
 create_command "postflight-loop" \
 	"Monitor release health after deployment (Ralph pattern)" \
-	"Build+" "" <<'BODY'
+	"$AGENT_BUILD" "" <<'BODY'
 Monitor release health for a specified duration.
 
 Arguments: $ARGUMENTS
@@ -1034,7 +1042,7 @@ BODY
 # --- Ralph Task ---
 create_command "ralph-task" \
 	"Run Ralph loop for a task from TODO.md by ID" \
-	"Build+" "" <<'BODY'
+	"$AGENT_BUILD" "" <<'BODY'
 Run a Ralph loop for a specific task from TODO.md.
 
 Task ID: $ARGUMENTS
@@ -1077,7 +1085,7 @@ BODY
 # --- Full Loop ---
 create_command "full-loop" \
 	"Start end-to-end development loop (task -> preflight -> PR -> postflight -> deploy)" \
-	"Build+" "" <<'BODY'
+	"$AGENT_BUILD" "" <<'BODY'
 Read ~/.aidevops/agents/scripts/commands/full-loop.md and follow its instructions.
 
 Start a full development loop for: $ARGUMENTS
@@ -1106,7 +1114,7 @@ BODY
 # --- Code Simplifier ---
 create_command "code-simplifier" \
 	"Simplify and refine code for clarity, consistency, and maintainability" \
-	"Build+" "" <<'BODY'
+	"$AGENT_BUILD" "" <<'BODY'
 Read ~/.aidevops/agents/tools/code-review/code-simplifier.md and follow its instructions.
 
 Target: $ARGUMENTS
@@ -1129,7 +1137,7 @@ BODY
 # --- Session Review ---
 create_command "session-review" \
 	"Review session for completeness before ending" \
-	"Build+" "" <<'BODY'
+	"$AGENT_BUILD" "" <<'BODY'
 Read ~/.aidevops/agents/scripts/commands/session-review.md and follow its instructions.
 
 Review the current session for: $ARGUMENTS
@@ -1150,7 +1158,7 @@ BODY
 # --- Remember ---
 create_command "remember" \
 	"Store a memory for cross-session recall" \
-	"Build+" "" <<'BODY'
+	"$AGENT_BUILD" "" <<'BODY'
 Read ~/.aidevops/agents/scripts/commands/remember.md and follow its instructions.
 
 Remember: $ARGUMENTS
@@ -1177,7 +1185,7 @@ BODY
 # --- Recall ---
 create_command "recall" \
 	"Search memories from previous sessions" \
-	"Build+" "" <<'BODY'
+	"$AGENT_BUILD" "" <<'BODY'
 Read ~/.aidevops/agents/scripts/commands/recall.md and follow its instructions.
 
 Search for: $ARGUMENTS
@@ -1217,9 +1225,12 @@ if [[ -d "$COMMANDS_DIR" ]]; then
 		fi
 
 		# Copy command file directly (it already has proper frontmatter)
-		cp "$cmd_file" "$OPENCODE_COMMAND_DIR/$cmd_name.md"
-		((++command_count))
-		echo -e "  ${GREEN}✓${NC} Auto-discovered /$cmd_name command"
+		if cp "$cmd_file" "$OPENCODE_COMMAND_DIR/$cmd_name.md"; then
+			((++command_count))
+			echo -e "  ${GREEN}✓${NC} Auto-discovered /$cmd_name command"
+		else
+			echo -e "  ${RED}✗${NC} Failed to copy /$cmd_name command" >&2
+		fi
 	done
 fi
 
