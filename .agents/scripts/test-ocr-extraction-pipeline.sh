@@ -755,7 +755,7 @@ test_pipeline_classify() {
 		local text_file="${TEST_WORKSPACE}/receipt-text.txt"
 		create_receipt_text "$text_file"
 		local output
-		output="$("$PYTHON_CMD" "$PIPELINE_PY" classify "$text_file" 2>/dev/null)" || true
+		output="$("$PYTHON_CMD" "$PIPELINE_PY" classify "$text_file")" || true
 		if echo "$output" | grep -q '"expense_receipt"'; then
 			log_test "PASS" "${group}/receipt-text"
 		else
@@ -768,7 +768,7 @@ test_pipeline_classify() {
 		local text_file="${TEST_WORKSPACE}/credit-note-text.txt"
 		create_credit_note_text "$text_file"
 		local output
-		output="$("$PYTHON_CMD" "$PIPELINE_PY" classify "$text_file" 2>/dev/null)" || true
+		output="$("$PYTHON_CMD" "$PIPELINE_PY" classify "$text_file")" || true
 		if echo "$output" | grep -q '"credit_note"'; then
 			log_test "PASS" "${group}/credit-note-text"
 		else
@@ -781,7 +781,7 @@ test_pipeline_classify() {
 		local text_file="${TEST_WORKSPACE}/ambiguous-text.txt"
 		create_ambiguous_text "$text_file"
 		local output
-		output="$("$PYTHON_CMD" "$PIPELINE_PY" classify "$text_file" 2>/dev/null)" || true
+		output="$("$PYTHON_CMD" "$PIPELINE_PY" classify "$text_file")" || true
 		if echo "$output" | grep -q '"purchase_invoice"'; then
 			log_test "PASS" "${group}/ambiguous-text"
 		else
@@ -792,7 +792,7 @@ test_pipeline_classify() {
 	# Test 5: Classify inline string (no file)
 	if should_run "${group}/inline-string"; then
 		local output
-		output="$("$PYTHON_CMD" "$PIPELINE_PY" classify "Invoice No: 12345 Due Date: 2025-01-15 Payment Terms: Net 30" 2>/dev/null)" || true
+		output="$("$PYTHON_CMD" "$PIPELINE_PY" classify "Invoice No: 12345 Due Date: 2025-01-15 Payment Terms: Net 30")" || true
 		if echo "$output" | grep -q '"purchase_invoice"'; then
 			log_test "PASS" "${group}/inline-string"
 		else
@@ -805,7 +805,7 @@ test_pipeline_classify() {
 		local text_file="${TEST_WORKSPACE}/invoice-text.txt"
 		create_invoice_text "$text_file"
 		local output
-		output="$("$PYTHON_CMD" "$PIPELINE_PY" classify "$text_file" 2>/dev/null)" || true
+		output="$("$PYTHON_CMD" "$PIPELINE_PY" classify "$text_file")" || true
 		if echo "$output" | grep -q '"scores"'; then
 			log_test "PASS" "${group}/scores-output"
 		else
