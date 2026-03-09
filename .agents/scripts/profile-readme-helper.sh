@@ -266,20 +266,39 @@ cmd_generate() {
 	f_month_total=$(_format_number "$month_total")
 	f_year_total=$(_format_number "$year_total")
 
+	# Determine platform label for screen time row
+	local os_type
+	os_type="$(uname -s)"
+	local screen_label screen_source
+	case "$os_type" in
+	Darwin)
+		screen_label="Screen time (Mac)"
+		screen_source="macOS display events"
+		;;
+	Linux)
+		screen_label="Screen time (Linux)"
+		screen_source="systemd-logind session events"
+		;;
+	*)
+		screen_label="Screen time"
+		screen_source="system events"
+		;;
+	esac
+
 	# Build Work with AI table
 	cat <<EOF
 ## Work with AI
 
 | Metric | Today | 7 Days | 28 Days | 365 Days |
 | --- | ---: | ---: | ---: | ---: |
-| Screen time (Mac) | ${screen_today}h | ${screen_week}h | ${f_screen_month}h | ${year_prefix}${f_screen_year}h${year_suffix} |
+| ${screen_label} | ${screen_today}h | ${screen_week}h | ${f_screen_month}h | ${year_prefix}${f_screen_year}h${year_suffix} |
 | User AI session hours | ${day_human}h | ${week_human}h | ${month_human}h | ${year_human}h |
 | AI worker hours | ${day_worker}h | ${week_worker}h | ${month_worker}h | ${year_worker}h |
 | Total AI work | ${day_total}h | ${week_total}h | ${f_month_total}h | ${f_year_total}h |
 | Interactive sessions | ${f_day_int} | ${f_week_int} | ${f_month_int} | ${f_year_int} |
 | Worker sessions | ${f_day_wrk} | ${f_week_wrk} | ${f_month_wrk} | ${f_year_wrk} |
 
-_Screen time from macOS display events, snapshotted every 6h.$([ -n "$year_suffix" ] && echo " *365-day extrapolated (accumulating real data).")_
+_Screen time from ${screen_source}, snapshotted daily.$([ -n "$year_suffix" ] && echo " *365-day extrapolated (accumulating real data).")_
 _User AI session hours measured from AI message timestamps (reading, thinking, typing between responses)._
 EOF
 

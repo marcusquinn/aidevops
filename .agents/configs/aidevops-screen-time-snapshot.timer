@@ -1,0 +1,19 @@
+# systemd user timer for screen time snapshots — runs every 6 hours
+#
+# Install:
+#   mkdir -p ~/.config/systemd/user
+#   cp aidevops-screen-time-snapshot.service ~/.config/systemd/user/
+#   cp aidevops-screen-time-snapshot.timer ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now aidevops-screen-time-snapshot.timer
+
+[Unit]
+Description=aidevops screen time snapshot timer (every 6h)
+
+[Timer]
+OnBootSec=5min
+OnUnitActiveSec=6h
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,25 @@
+# systemd user service for screen time snapshots (Linux equivalent of launchd plist)
+#
+# Install:
+#   mkdir -p ~/.config/systemd/user
+#   cp aidevops-screen-time-snapshot.service ~/.config/systemd/user/
+#   cp aidevops-screen-time-snapshot.timer ~/.config/systemd/user/
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now aidevops-screen-time-snapshot.timer
+#
+# Check status:
+#   systemctl --user status aidevops-screen-time-snapshot.timer
+#   journalctl --user -u aidevops-screen-time-snapshot.service
+
+[Unit]
+Description=aidevops screen time snapshot
+After=network.target
+
+[Service]
+Type=oneshot
+ExecStart=%h/.aidevops/agents/scripts/screen-time-helper.sh snapshot
+StandardOutput=append:%h/.aidevops/.agent-workspace/logs/screen-time-snapshot.log
+StandardError=append:%h/.aidevops/.agent-workspace/logs/screen-time-snapshot.log
+
+[Install]
+WantedBy=default.target
