@@ -1962,7 +1962,6 @@ ${worker_table}"
 		session_time_md="_Activity helper not installed._"
 	fi
 	# t1426: person-stats from hourly cache (see _refresh_person_stats_cache)
-	local slug_safe="${repo_slug//\//-}"
 	local ps_cache="${PERSON_STATS_CACHE_DIR}/person-stats-cache-${slug_safe}.md"
 	if [[ -f "$ps_cache" ]]; then
 		person_stats_md=$(cat "$ps_cache")

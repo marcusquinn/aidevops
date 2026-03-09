@@ -633,7 +633,7 @@ else:
 	") || query_result="[]"
 
 	# t1427: sqlite3 -json returns "" (not "[]") when no rows match.
-	if [[ -z "$query_result" || "${query_result:0:1}" != "[" ]]; then
+	if [[ "$query_result" != "["* ]]; then
 		query_result="[]"
 	fi
 
