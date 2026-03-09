@@ -44,7 +44,7 @@ function createMemoryTool({ scriptsDir, run, action, description, buildArgs }) {
 /**
  * Validate that a CLI command string contains only safe characters.
  * Allows alphanumeric, spaces, hyphens, underscores, dots, forward slashes,
- * and colons — sufficient for all aidevops subcommands and file path arguments.
+ * colons, hash signs (#), and at-signs (@) — sufficient for all aidevops subcommands and file path arguments.
  * Rejects shell metacharacters ($, `, ;, |, &, (, ), etc.).
  * @param {string} command
  * @returns {boolean}
