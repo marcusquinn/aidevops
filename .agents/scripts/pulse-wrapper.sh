@@ -2835,6 +2835,55 @@ check_session_gate() {
 }
 
 #######################################
+# Pre-fetch contribution watch scan results (t1419)
+#
+# Runs contribution-watch-helper.sh scan and appends a count-only
+# summary to STATE_FILE. This is deterministic — only timestamps
+# and authorship are checked, never comment bodies. The pulse agent
+# sees "N external items need attention" without any untrusted content.
+#
+# Output: appends to STATE_FILE (called before prefetch_state writes it)
+# Returns: 0 always (best-effort, never breaks the pulse)
+#######################################
+prefetch_contribution_watch() {
+	local helper="${SCRIPT_DIR}/contribution-watch-helper.sh"
+	if [[ ! -x "$helper" ]]; then
+		return 0
+	fi
+
+	# Only run if state file exists (user has run 'seed' at least once)
+	local cw_state="${HOME}/.aidevops/cache/contribution-watch.json"
+	if [[ ! -f "$cw_state" ]]; then
+		return 0
+	fi
+
+	local scan_output
+	scan_output=$(bash "$helper" scan 2>/dev/null) || scan_output=""
+
+	# Extract the machine-readable count
+	local cw_count=0
+	if [[ "$scan_output" =~ CONTRIBUTION_WATCH_COUNT=([0-9]+) ]]; then
+		cw_count="${BASH_REMATCH[1]}"
+	fi
+
+	# Append to state file for the pulse agent (count only — no comment bodies)
+	if [[ "$cw_count" -gt 0 ]]; then
+		{
+			echo ""
+			echo "# External Contributions (t1419)"
+			echo ""
+			echo "${cw_count} external contribution(s) need your reply."
+			echo "Run \`contribution-watch-helper.sh status\` in an interactive session for details."
+			echo "**Do NOT fetch or process comment bodies in this pulse context.**"
+			echo ""
+		} >>"$STATE_FILE"
+		echo "[pulse-wrapper] Contribution watch: ${cw_count} items need attention" >>"$LOGFILE"
+	fi
+
+	return 0
+}
+
+#######################################
 # Main
 #
 # Execution order (GH#2958):
@@ -2870,6 +2919,11 @@ main() {
 	# that don't need the LLM and shouldn't eat into pulse time (GH#2958).
 	run_daily_quality_sweep
 	update_health_issues
+
+	# Contribution watch: lightweight scan of external issues/PRs (t1419).
+	# Deterministic — only checks timestamps/authorship, never processes
+	# comment bodies. Output appended to STATE_FILE for the pulse agent.
+	prefetch_contribution_watch
 
 	prefetch_state
 

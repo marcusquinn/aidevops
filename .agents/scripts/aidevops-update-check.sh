@@ -265,6 +265,30 @@ main() {
 		echo "$security_posture"
 	fi
 
+	# Contribution watch: surface items needing reply (t1419)
+	# Reads cached state file — no API calls, no LLM, no comment bodies.
+	local contribution_watch=""
+	local cw_state="${HOME}/.aidevops/cache/contribution-watch.json"
+	if [[ -f "$cw_state" ]] && command -v jq &>/dev/null; then
+		local cw_username
+		cw_username=$(gh api user --jq '.login' 2>/dev/null || echo "")
+		if [[ -n "$cw_username" ]]; then
+			local cw_count
+			cw_count=$(jq -r --arg user "$cw_username" '
+				[.items | to_entries[] |
+				 select(.value.last_any_comment > (.value.last_our_comment // "")) |
+				 select(.value.last_notified == "" or .value.last_any_comment > .value.last_notified)
+				] | length
+			' "$cw_state" 2>/dev/null) || cw_count=0
+			if [[ "${cw_count:-0}" -gt 0 ]]; then
+				contribution_watch="${cw_count} external contribution(s) need your reply (run contribution-watch-helper.sh status to see them)."
+			fi
+		fi
+	fi
+	if [[ -n "$contribution_watch" ]]; then
+		echo "$contribution_watch"
+	fi
+
 	# Cache output for agents without Bash (e.g., Plan+)
 	local cache_dir="$HOME/.aidevops/cache"
 	mkdir -p "$cache_dir"
@@ -274,6 +298,7 @@ main() {
 		[[ -n "$nudge_output" ]] && echo "$nudge_output"
 		[[ -n "$session_warning" ]] && echo "$session_warning"
 		[[ -n "$security_posture" ]] && echo "$security_posture"
+		[[ -n "$contribution_watch" ]] && echo "$contribution_watch"
 	} >"$cache_dir/session-greeting.txt"
 
 	return 0
