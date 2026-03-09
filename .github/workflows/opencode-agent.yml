@@ -29,6 +29,18 @@ jobs:
   security-check:
     name: Security Validation
     runs-on: ubuntu-latest
+    # GH#4002: Skip when triggered by known review bots. Bot review comments
+    # (from CodeRabbit, Gemini, etc.) never contain /oc or /opencode triggers,
+    # but GitHub requires manual approval for workflow runs triggered by bot
+    # accounts, causing permanent action_required status on PRs.
+    if: >
+      github.actor != 'coderabbitai' &&
+      github.actor != 'gemini-code-assist[bot]' &&
+      github.actor != 'augment-code[bot]' &&
+      github.actor != 'augmentcode[bot]' &&
+      github.actor != 'copilot[bot]' &&
+      github.actor != 'github-actions[bot]' &&
+      github.actor != 'dependabot[bot]'
     # Needs write permissions to post rejection replies on untrusted comments.
     # Without this, the GITHUB_TOKEN defaults to read-only and the
     # createReplyForReviewComment/createComment calls fail with 403. GH#2973.
