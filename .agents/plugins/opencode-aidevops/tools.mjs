@@ -42,6 +42,18 @@ function createMemoryTool({ scriptsDir, run, action, description, buildArgs }) {
 }
 
 /**
+ * Validate that a CLI command string contains only safe characters.
+ * Allows alphanumeric, spaces, hyphens, underscores, dots, forward slashes,
+ * and colons — sufficient for all aidevops subcommands and file path arguments.
+ * Rejects shell metacharacters ($, `, ;, |, &, (, ), etc.).
+ * @param {string} command
+ * @returns {boolean}
+ */
+function isSafeCommand(command) {
+  return /^[a-zA-Z0-9 _\-./:#@]+$/.test(command);
+}
+
+/**
  * Create the aidevops CLI tool.
  * @param {function} run - Shell command runner
  * @returns {object} Tool definition
@@ -51,7 +63,11 @@ function createAidevopsTool(run) {
     description:
       'Run aidevops CLI commands (status, repos, features, secret, etc.). Pass command as string e.g. "status", "repos", "features"',
     async execute(args) {
-      const cmd = `aidevops ${args.command || args}`;
+      const rawCmd = String(args.command || args);
+      if (!isSafeCommand(rawCmd)) {
+        return `Error: command contains disallowed characters. Only alphanumeric, spaces, hyphens, underscores, dots, slashes, colons, # and @ are permitted.`;
+      }
+      const cmd = `aidevops ${rawCmd}`;
       const result = run(cmd, 15000);
       return result || `Command completed: ${cmd}`;
     },
@@ -79,7 +95,7 @@ function createPreEditCheckTool(scriptsDir) {
         return "pre-edit-check.sh not found — cannot verify git safety";
       }
       const taskFlag = args.task
-        ? ` --loop-mode --task "${args.task}"`
+        ? ` --loop-mode --task ${shellEscape(args.task)}`
         : "";
       try {
         const result = execSync(`bash "${script}"${taskFlag}`, {
@@ -171,6 +187,9 @@ function createQualityCheckTool(scriptsDir, pipelines) {
   };
 }
 
+/** Valid actions for the install-hooks-helper.sh script. */
+const VALID_HOOK_ACTIONS = new Set(["install", "uninstall", "status", "test"]);
+
 /**
  * Run the install-hooks-helper.sh script.
  * @param {string} helperScript
@@ -178,9 +197,13 @@ function createQualityCheckTool(scriptsDir, pipelines) {
  * @returns {string}
  */
 function runHookHelper(helperScript, action) {
+  const safeAction = String(action);
+  if (!VALID_HOOK_ACTIONS.has(safeAction)) {
+    return `Invalid action: ${safeAction}. Valid actions: ${[...VALID_HOOK_ACTIONS].join(", ")}`;
+  }
   try {
     const result = execSync(
-      `bash "${helperScript}" ${action}`,
+      `bash "${helperScript}" ${safeAction}`,
       {
         encoding: "utf-8",
         timeout: 15000,
@@ -190,7 +213,7 @@ function runHookHelper(helperScript, action) {
     return result.trim();
   } catch (err) {
     const cmdOutput = (err.stdout || "") + (err.stderr || "");
-    return `Hook ${action} failed:\n${cmdOutput.trim()}`;
+    return `Hook ${safeAction} failed:\n${cmdOutput.trim()}`;
   }
 }
 
