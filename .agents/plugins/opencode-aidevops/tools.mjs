@@ -3,6 +3,16 @@ import { existsSync } from "fs";
 import { join } from "path";
 
 /**
+ * Escape a string for safe interpolation into a shell command.
+ * Wraps in single quotes and escapes any internal single quotes.
+ * @param {string} str
+ * @returns {string}
+ */
+function shellEscape(str) {
+  return "'" + String(str).replace(/'/g, "'\\''") + "'";
+}
+
+/**
  * Create a memory tool (recall or store) using a shared factory pattern.
  * Deduplicates the near-identical memory_recall and memory_store definitions.
  *
@@ -266,7 +276,7 @@ export function createTools(scriptsDir, run, pipelines) {
       description:
         'Recall memories from the aidevops cross-session memory system. Args: query (string), limit (string, default "5")',
       buildArgs: (args, helper) => ({
-        cmd: `bash "${helper}" recall "${args.query}" --limit ${args.limit || "5"} 2>/dev/null`,
+        cmd: `bash "${helper}" recall ${shellEscape(args.query)} --limit ${shellEscape(args.limit || "5")}`,
         timeout: 10000,
       }),
     }),
@@ -282,8 +292,9 @@ export function createTools(scriptsDir, run, pipelines) {
         if (!content) {
           return { cmd: `echo "Error: content is required to store a memory" >&2; exit 1`, timeout: 1000 };
         }
+        const confidence = args.confidence || "medium";
         return {
-          cmd: `bash "${helper}" store "${content}" --confidence ${args.confidence || "medium"} 2>/dev/null`,
+          cmd: `bash "${helper}" store ${shellEscape(content)} --confidence ${shellEscape(confidence)}`,
           timeout: 10000,
         };
       },

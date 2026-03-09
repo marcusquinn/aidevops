@@ -3,7 +3,7 @@
 # AI DevOps Framework CLI
 # Usage: aidevops <command> [options]
 #
-# Version: 2.170.0
+# Version: 2.170.1
 
 set -euo pipefail
 
@@ -721,7 +721,6 @@ cmd_update() {
 			local new_version new_hash
 			new_version=$(get_version)
 			new_hash=$(git rev-parse HEAD)
-			print_success "Updated to version $new_version"
 
 			# Print bounded summary of meaningful changes
 			if [[ "$old_hash" != "$new_hash" ]]; then
@@ -741,12 +740,32 @@ cmd_update() {
 
 			echo ""
 			print_info "Running setup to apply changes..."
-			bash "$INSTALL_DIR/setup.sh" --non-interactive
+			local setup_exit=0
+			bash "$INSTALL_DIR/setup.sh" --non-interactive || setup_exit=$?
 
 			# Safety net: discard any working tree changes setup.sh may have introduced
 			# (e.g. chmod on tracked scripts, scan results written to repo)
 			# See: https://github.com/marcusquinn/aidevops/issues/2286
 			git checkout -- . 2>/dev/null || true
+
+			# Verify deployment: compare repo VERSION with deployed agents VERSION
+			# This catches silent setup.sh failures (e.g., non-interactive mode in
+			# environments where setup.sh exits early without deploying agents)
+			# See: https://github.com/marcusquinn/aidevops/issues/3980
+			local repo_version deployed_version
+			repo_version=$(cat "$INSTALL_DIR/VERSION" 2>/dev/null || echo "unknown")
+			deployed_version=$(cat "$HOME/.aidevops/agents/VERSION" 2>/dev/null || echo "none")
+
+			if [[ "$setup_exit" -ne 0 ]]; then
+				print_warning "Setup exited with code $setup_exit"
+			fi
+
+			if [[ "$repo_version" != "$deployed_version" ]]; then
+				print_warning "Agent deployment incomplete: repo=$repo_version, deployed=$deployed_version"
+				print_info "Run 'bash $INSTALL_DIR/setup.sh' manually to deploy agents"
+			else
+				print_success "Updated to version $new_version (agents deployed)"
+			fi
 		fi
 	else
 		print_warning "Repository not found, performing fresh install..."

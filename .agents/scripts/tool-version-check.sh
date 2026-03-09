@@ -73,7 +73,6 @@ NPM_TOOLS=(
 	"npm|LocalWP MCP|mcp-local-wp|--version|@verygoodplugins/mcp-local-wp|npm update -g @verygoodplugins/mcp-local-wp"
 	"npm|Beads UI|beads-ui|--version|beads-ui|npm update -g beads-ui"
 	"npm|BDUI|bdui|--version|bdui|npm update -g bdui"
-	"npm|OpenCode|opencode|--version|opencode-ai|npm install -g opencode-ai@latest"
 	"npm|Chrome DevTools MCP|chrome-devtools-mcp|--version|chrome-devtools-mcp|npm install -g chrome-devtools-mcp@latest"
 	"npm|GSC MCP|mcp-server-gsc|--version|mcp-server-gsc|npm install -g mcp-server-gsc@latest"
 	"npm|Playwriter MCP|playwriter|--version|playwriter|npm install -g playwriter@latest"
@@ -82,6 +81,7 @@ NPM_TOOLS=(
 )
 
 BREW_TOOLS=(
+	"brew|OpenCode|opencode|--version|anomalyco/tap/opencode|brew upgrade anomalyco/tap/opencode"
 	"brew|GitHub CLI|gh|--version|gh|brew upgrade gh"
 	"brew|GitLab CLI|glab|--version|glab|brew upgrade glab"
 	"brew|Worktrunk|wt|--version|max-sixty/worktrunk/wt|brew upgrade max-sixty/worktrunk/wt"
@@ -110,10 +110,27 @@ declare -a JSON_RESULTS=()
 # slow interpreters (Python, Ruby) while still catching hung MCP servers.
 readonly VERSION_TIMEOUT=10
 
+# Get installed version from npm global package.json
+# Fallback for tools where --version starts a server instead of printing a version
+get_npm_pkg_version() {
+	local pkg="$1"
+	local npm_root
+	npm_root="$(npm root -g 2>/dev/null)" || return 1
+	[[ -n "$npm_root" ]] || return 1
+	local pkg_json="${npm_root}/${pkg}/package.json"
+	if [[ -f "$pkg_json" ]]; then
+		grep -oE '"version"\s*:\s*"[0-9]+\.[0-9]+\.[0-9]+"' "$pkg_json" |
+			grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1
+		return 0
+	fi
+	return 1
+}
+
 # Get installed version
 get_installed_version() {
 	local cmd="$1"
 	local ver_flag="$2"
+	local pkg="${3:-}"
 
 	if command -v "$cmd" &>/dev/null; then
 		local version
@@ -130,21 +147,42 @@ get_installed_version() {
 		fi
 		local _ver_rc=0
 		# shellcheck disable=SC2086
-		timeout_sec "$VERSION_TIMEOUT" "$cmd" $ver_flag >"$_ver_log" || _ver_rc=$?
+		timeout_sec "$VERSION_TIMEOUT" "$cmd" $ver_flag >"$_ver_log" 2>/dev/null || _ver_rc=$?
 
 		if [[ "$_ver_rc" -eq 124 ]]; then
-			# timeout_sec killed the process — command hung
+			# timeout_sec killed the process — command hung (MCP server started)
 			rm -f "$_ver_log"
+			# Fallback: read version from npm package.json
+			if [[ -n "$pkg" ]]; then
+				version=$(get_npm_pkg_version "$pkg")
+				if [[ -n "$version" ]]; then
+					echo "$version"
+					return 0
+				fi
+			fi
 			echo "timeout"
 			return 0
 		fi
 
-		version=$(head -1 "$_ver_log" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo "")
-		if [[ -z "$version" ]]; then
-			version=$(head -1 "$_ver_log" | grep -oE '[0-9]+\.[0-9]+' | head -1 || echo "unknown")
-		fi
+		local ver_output
+		ver_output=$(head -1 "$_ver_log")
 		rm -f "$_ver_log"
-		echo "$version"
+		version=$(echo "$ver_output" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+		if [[ -z "$version" ]]; then
+			version=$(echo "$ver_output" | grep -oE '[0-9]+\.[0-9]+' | head -1)
+		fi
+
+		# If --version produced no parseable version, try npm package.json fallback
+		if [[ -z "$version" ]] && [[ -n "$pkg" ]]; then
+			local pkg_version
+			pkg_version=$(get_npm_pkg_version "$pkg")
+			if [[ -n "$pkg_version" ]]; then
+				echo "$pkg_version"
+				return 0
+			fi
+		fi
+
+		echo "${version:-unknown}"
 	else
 		echo "not installed"
 	fi
@@ -208,7 +246,12 @@ check_tool() {
 	local update_cmd="$6"
 
 	local installed
-	installed=$(get_installed_version "$cmd" "$ver_flag")
+	# Pass package name for npm tools so fallback to package.json works
+	if [[ "$category" == "npm" ]]; then
+		installed=$(get_installed_version "$cmd" "$ver_flag" "$pkg")
+	else
+		installed=$(get_installed_version "$cmd" "$ver_flag")
+	fi
 
 	local latest="unknown"
 	case "$category" in

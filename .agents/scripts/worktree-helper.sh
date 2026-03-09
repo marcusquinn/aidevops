@@ -133,6 +133,7 @@ get_repo_root() {
 	git rev-parse --show-toplevel 2>/dev/null || echo ""
 }
 
+# Get the repository name (basename of the repo root directory).
 get_repo_name() {
 	local root
 	root=$(get_repo_root)
@@ -141,20 +142,30 @@ get_repo_name() {
 	fi
 }
 
+# Get the current branch name, or empty string if detached/unavailable.
 get_current_branch() {
 	git branch --show-current 2>/dev/null || echo ""
 }
 
-# Get the default branch (main or master)
+# Get the default branch (main or master) (GH#3797)
+# Checks all remotes for HEAD, preferring origin first.
 get_default_branch() {
-	# Try to get from remote HEAD
-	local default_branch
-	default_branch=$(git symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's@^refs/remotes/origin/@@')
-
+	# Try origin first, then any other remote HEAD
+	local default_branch=""
+	local remote
+	default_branch=$(git symbolic-ref "refs/remotes/origin/HEAD" 2>/dev/null | sed 's@^refs/remotes/origin/@@')
 	if [[ -n "$default_branch" ]]; then
 		echo "$default_branch"
 		return 0
 	fi
+	for remote in $(git remote 2>/dev/null); do
+		[[ "$remote" == "origin" ]] && continue
+		default_branch=$(git symbolic-ref "refs/remotes/${remote}/HEAD" 2>/dev/null | sed "s@^refs/remotes/${remote}/@@")
+		if [[ -n "$default_branch" ]]; then
+			echo "$default_branch"
+			return 0
+		fi
+	done
 
 	# Fallback: check if main or master exists
 	if git show-ref --verify --quiet refs/heads/main 2>/dev/null; then
@@ -167,11 +178,49 @@ get_default_branch() {
 	fi
 }
 
+# Check if the current directory is the main (non-linked) worktree.
+# Returns 0 if main worktree, 1 if linked worktree.
 is_main_worktree() {
 	local git_dir
 	git_dir=$(git rev-parse --git-dir 2>/dev/null)
 	# Main worktree has .git as a directory, linked worktrees have .git as a file
 	[[ -d "$git_dir" ]] && [[ "$git_dir" == ".git" || "$git_dir" == "$(get_repo_root)/.git" ]]
+}
+
+# Get the remote name for a branch (from git config or remote-tracking refs).
+# Outputs the remote name (e.g., "origin", "upstream") or empty string if none.
+# Prefers the configured upstream remote; falls back to scanning all remotes.
+_get_branch_remote() {
+	local branch="$1"
+	# Prefer configured upstream
+	local configured_remote
+	configured_remote=$(git config "branch.$branch.remote" 2>/dev/null || echo "")
+	if [[ -n "$configured_remote" ]]; then
+		echo "$configured_remote"
+		return 0
+	fi
+	# Fallback: prefer origin before checking other remotes for predictability
+	local ref
+	ref=$(git for-each-ref --format='%(refname)' "refs/remotes/origin/$branch" 2>/dev/null)
+	if [[ -z "$ref" ]]; then
+		ref=$(git for-each-ref --format='%(refname)' "refs/remotes/*/$branch" | head -1)
+	fi
+	if [[ -n "$ref" ]]; then
+		# Extract remote name from refs/remotes/<remote>/<branch>
+		local remote_name
+		remote_name="${ref#refs/remotes/}"
+		remote_name="${remote_name%%/*}"
+		echo "$remote_name"
+		return 0
+	fi
+	return 1
+}
+
+# Check if a branch exists on any remote.
+# Returns 0 (true) if refs/remotes/<any>/<branch> exists, 1 otherwise.
+_branch_exists_on_any_remote() {
+	local branch="$1"
+	git for-each-ref --format='%(refname)' "refs/remotes/*/$branch" | grep -q .
 }
 
 # Check if a branch was ever pushed to remote
@@ -190,12 +239,13 @@ branch_was_pushed() {
 	return 1
 }
 
-# Check if a stale remote branch exists for a branch name (t1060)
-# A "stale remote" means refs/remotes/origin/$branch exists but no local branch does.
+# Check if a stale remote branch exists for a branch name (t1060, GH#3797)
+# A "stale remote" means refs/remotes/<remote>/$branch exists but no local branch does.
 # This typically happens when a branch was merged via PR (remote deleted) but the
 # local remote-tracking ref wasn't pruned, or when re-using a branch name.
+# Checks all remotes, not just origin.
 # Returns 0 if stale remote exists, 1 otherwise.
-# Outputs: "merged" if the remote branch is merged into default, "unmerged" otherwise.
+# Outputs: "<remote>|merged" or "<remote>|unmerged".
 check_stale_remote_branch() {
 	local branch="$1"
 
@@ -204,31 +254,41 @@ check_stale_remote_branch() {
 		return 1
 	fi
 
-	if ! git show-ref --verify --quiet "refs/remotes/origin/$branch" 2>/dev/null; then
+	# Find the remote that has this branch (check all remotes, not just origin)
+	local ref
+	ref=$(git for-each-ref --format='%(refname)' "refs/remotes/*/$branch" | head -1)
+	if [[ -z "$ref" ]]; then
 		return 1
 	fi
+
+	# Extract remote name from refs/remotes/<remote>/<branch>
+	local stale_remote
+	stale_remote="${ref#refs/remotes/}"
+	stale_remote="${stale_remote%%/*}"
 
 	# Remote ref exists without a local branch — check if it's merged
 	local default_branch
 	default_branch=$(get_default_branch)
-	if git branch -r --merged "$default_branch" 2>/dev/null | grep -q "origin/$branch$"; then
-		echo "merged"
+	if git branch -r --merged "$default_branch" 2>/dev/null | grep -q "${stale_remote}/$branch$"; then
+		echo "${stale_remote}|merged"
 	else
-		echo "unmerged"
+		echo "${stale_remote}|unmerged"
 	fi
 	return 0
 }
 
-# Delete a stale remote ref and prune local tracking ref
+# Delete a stale remote ref and prune local tracking ref (GH#3797)
 # Internal helper to avoid repeating the same 3-line pattern
+# Args: $1=branch, $2=message, $3=remote (defaults to "origin")
 _delete_stale_remote_ref() {
 	local branch="$1"
 	local message="$2"
+	local remote="${3:-origin}"
 
 	echo -e "${BLUE}${message}${NC}"
-	git push origin --delete "$branch" 2>/dev/null || true
-	git fetch --prune origin 2>/dev/null || true
-	echo -e "${GREEN}Deleted origin/$branch${NC}"
+	git push "$remote" --delete "$branch" 2>/dev/null || true
+	git fetch --prune "$remote" 2>/dev/null || true
+	echo -e "${GREEN}Deleted ${remote}/$branch${NC}"
 }
 
 # Handle stale remote branch before creating a new local branch (t1060)
@@ -321,19 +381,28 @@ handle_stale_remote_branch() {
 	return 0
 }
 
-# Check if worktree has uncommitted changes
-# Excludes aidevops runtime directories that are safe to discard
+# Check if worktree has uncommitted changes (GH#3797)
+# Excludes aidevops runtime directories that are safe to discard.
+# Returns 0 (true) if changes exist OR if git status fails (safety-first:
+# treat unknown state as "has changes" to prevent data loss on cleanup).
 worktree_has_changes() {
 	local worktree_path="$1"
 	if [[ -d "$worktree_path" ]]; then
+		local status_output
+		# Capture git status; if it fails, treat as "has changes" (safety-first)
+		if ! status_output=$(git -C "$worktree_path" status --porcelain 2>&1); then
+			return 0
+		fi
 		local changes
 		# Exclude aidevops runtime files: .agents/loop-state/, .agents/tmp/, .DS_Store
-		changes=$(git -C "$worktree_path" status --porcelain 2>/dev/null |
-			grep -v '^\?\? \.agents/loop-state/' |
-			grep -v '^\?\? \.agents/tmp/' |
-			grep -v '^\?\? \.agents/$' |
-			grep -v '^\?\? \.DS_Store' |
-			head -1)
+		# Use literal '??' (not '\?\?') to match git status untracked prefix.
+		# Append '|| true' so the pipeline doesn't fail under pipefail when all lines are filtered.
+		changes=$(echo "$status_output" |
+			grep -v '^?? \.agents/loop-state/' |
+			grep -v '^?? \.agents/tmp/' |
+			grep -v '^?? \.agents/$' |
+			grep -v '^?? \.DS_Store' |
+			head -1 || true)
 		[[ -n "$changes" ]]
 	else
 		return 1
@@ -456,6 +525,7 @@ cmd_add() {
 	return 0
 }
 
+# List all worktrees with branch names, merge status, and current marker.
 cmd_list() {
 	echo -e "${BOLD}Git Worktrees:${NC}"
 	echo ""
@@ -511,6 +581,7 @@ cmd_list() {
 	return 0
 }
 
+# Remove a worktree by branch name or path, with optional --force.
 cmd_remove() {
 	local target=""
 	local force_remove=false
@@ -616,6 +687,7 @@ cmd_remove() {
 	return 0
 }
 
+# Show status of the current worktree (repo, branch, type, total count).
 cmd_status() {
 	local repo_root
 	repo_root=$(get_repo_root)
@@ -654,6 +726,7 @@ cmd_status() {
 	return 0
 }
 
+# Switch to a worktree for the given branch, creating one if needed.
 cmd_switch() {
 	local branch="${1:-}"
 
@@ -682,6 +755,8 @@ cmd_switch() {
 	return $?
 }
 
+# Clean up worktrees whose branches have been merged, remote-deleted, or squash-merged.
+# Supports --auto (non-interactive) and --force-merged (skip confirmation for merged).
 cmd_clean() {
 	local auto_mode=false
 	local force_merged=false
@@ -705,7 +780,16 @@ cmd_clean() {
 	default_branch=$(get_default_branch)
 
 	# Fetch to get current remote branch state (detects deleted branches)
-	git fetch --prune origin 2>/dev/null || true
+	# Prune all remotes, not just origin (GH#3797)
+	# Track fetch failures to avoid false-positive "remote deleted" heuristics
+	local remote_state_unknown=false
+	local remote
+	for remote in $(git remote 2>/dev/null); do
+		if ! git fetch --prune "$remote" 2>/dev/null; then
+			echo -e "${YELLOW}Warning: failed to refresh $remote; skipping remote-deleted cleanup checks${NC}"
+			remote_state_unknown=true
+		fi
+	done
 
 	# Build a lookup of merged PR branches for squash-merge detection.
 	# gh pr list only returns squash-merged PRs that git branch --merged misses.
@@ -732,7 +816,8 @@ cmd_clean() {
 				# Check 2: Remote branch deleted (indicates squash merge or PR closed)
 				# ONLY check this if the branch was previously pushed - unpushed branches should NOT be flagged
 				# Check all remotes, not just origin (consistent with branch_was_pushed)
-				elif branch_was_pushed "$worktree_branch" && ! _branch_exists_on_any_remote "$worktree_branch"; then
+				# Skip if fetch failed — stale refs could cause false-positive deletion
+				elif [[ "$remote_state_unknown" == "false" ]] && branch_was_pushed "$worktree_branch" && ! _branch_exists_on_any_remote "$worktree_branch"; then
 					is_merged=true
 					merge_type="remote deleted"
 				# Check 3: Squash-merge detection via GitHub PR state
@@ -823,7 +908,8 @@ cmd_clean() {
 						should_remove=true
 					# Check 2: Remote branch deleted - ONLY if branch was previously pushed
 					# Check all remotes, not just origin (consistent with branch_was_pushed)
-					elif branch_was_pushed "$worktree_branch" && ! _branch_exists_on_any_remote "$worktree_branch"; then
+					# Skip if fetch failed — stale refs could cause false-positive deletion
+					elif [[ "$remote_state_unknown" == "false" ]] && branch_was_pushed "$worktree_branch" && ! _branch_exists_on_any_remote "$worktree_branch"; then
 						should_remove=true
 					# Check 3: Squash-merged PR
 					elif [[ -n "$merged_pr_branches" ]] && echo "$merged_pr_branches" | grep -qx "$worktree_branch"; then
@@ -886,6 +972,7 @@ cmd_clean() {
 	return 0
 }
 
+# Manage the worktree ownership registry (list or prune stale entries).
 cmd_registry() {
 	local subcmd="${1:-list}"
 
@@ -956,6 +1043,7 @@ cmd_registry() {
 	return 0
 }
 
+# Display usage information and available commands.
 cmd_help() {
 	cat <<'EOF'
 Git Worktree Helper - Parallel Branch Development
@@ -1029,9 +1117,9 @@ DIRECTORY STRUCTURE
   ~/Git/myrepo-feature-user-auth/    # Linked worktree (feature/user-auth)
   ~/Git/myrepo-bugfix-login/         # Linked worktree (bugfix/login)
 
-STALE REMOTE DETECTION (t1060)
+STALE REMOTE DETECTION (t1060, GH#3797)
   When creating a new branch, the script checks for stale remote refs
-  (refs/remotes/origin/<branch> exists but no local branch does).
+  on all configured remotes (not just origin).
   
   Interactive mode:
     - Merged stale: offers to delete (recommended) or continue

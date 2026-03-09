@@ -659,6 +659,178 @@ check_permission_failure_pr() {
 }
 
 #######################################
+# Check if a PR modifies GitHub Actions workflow files (t3934)
+#
+# PRs that modify .github/workflows/ files require the `workflow` scope
+# on the GitHub OAuth token. Without it, `gh pr merge` fails with:
+#   "refusing to allow an OAuth App to create or update workflow ... without workflow scope"
+#
+# This function checks the PR's changed files for workflow modifications
+# so the pulse can skip auto-merge and post a helpful comment instead of
+# failing with a cryptic GraphQL error.
+#
+# Arguments:
+#   $1 - PR number
+#   $2 - repo slug (owner/repo)
+#
+# Exit codes:
+#   0 - PR modifies workflow files
+#   1 - PR does NOT modify workflow files
+#   2 - API error (fail open — let merge attempt proceed)
+#######################################
+check_pr_modifies_workflows() {
+	local pr_number="$1"
+	local repo_slug="$2"
+
+	if [[ -z "$pr_number" || -z "$repo_slug" ]]; then
+		echo "[pulse-wrapper] check_pr_modifies_workflows: missing arguments" >>"$LOGFILE"
+		return 2
+	fi
+
+	local files_output
+	files_output=$(gh pr view "$pr_number" --repo "$repo_slug" --json files --jq '.files[].path')
+	local files_exit=$?
+
+	if [[ $files_exit -ne 0 ]]; then
+		echo "[pulse-wrapper] check_pr_modifies_workflows: API error (exit=$files_exit) for PR #$pr_number in $repo_slug — failing open" >>"$LOGFILE"
+		return 2
+	fi
+
+	if echo "$files_output" | grep -qE '^\.github/workflows/'; then
+		echo "[pulse-wrapper] check_pr_modifies_workflows: PR #$pr_number in $repo_slug modifies workflow files" >>"$LOGFILE"
+		return 0
+	fi
+
+	return 1
+}
+
+#######################################
+# Check if the current GitHub token has the `workflow` scope (t3934)
+#
+# The `workflow` scope is required to merge PRs that modify
+# .github/workflows/ files. This function checks the current
+# token's scopes via `gh auth status`.
+#
+# Exit codes:
+#   0 - token HAS workflow scope
+#   1 - token does NOT have workflow scope
+#   2 - unable to determine (fail open)
+#######################################
+check_gh_workflow_scope() {
+	local auth_output
+	auth_output=$(gh auth status 2>&1)
+	local auth_exit=$?
+
+	if [[ $auth_exit -ne 0 ]]; then
+		echo "[pulse-wrapper] check_gh_workflow_scope: gh auth status failed (exit=$auth_exit) — failing open" >>"$LOGFILE"
+		return 2
+	fi
+
+	if echo "$auth_output" | grep -q "'workflow'"; then
+		return 0
+	fi
+
+	# Also check for the scope without quotes (format varies by gh version)
+	if echo "$auth_output" | grep -qiE 'Token scopes:.*workflow'; then
+		return 0
+	fi
+
+	echo "[pulse-wrapper] check_gh_workflow_scope: token lacks workflow scope" >>"$LOGFILE"
+	return 1
+}
+
+#######################################
+# Guard merge of PRs that modify workflow files (t3934)
+#
+# Combines check_pr_modifies_workflows() and check_gh_workflow_scope()
+# into a single pre-merge guard. If the PR modifies workflow files and
+# the token lacks the workflow scope, posts a comment explaining the
+# issue and how to fix it. Idempotent — checks for existing comment.
+#
+# Arguments:
+#   $1 - PR number
+#   $2 - repo slug (owner/repo)
+#
+# Exit codes:
+#   0 - safe to merge (no workflow files, or token has scope)
+#   1 - blocked (workflow files + missing scope, comment posted)
+#   2 - API error (fail open — let merge attempt proceed)
+#######################################
+check_workflow_merge_guard() {
+	local pr_number="$1"
+	local repo_slug="$2"
+
+	if [[ -z "$pr_number" || -z "$repo_slug" ]]; then
+		echo "[pulse-wrapper] check_workflow_merge_guard: missing arguments" >>"$LOGFILE"
+		return 2
+	fi
+
+	# Step 1: Check if PR modifies workflow files
+	check_pr_modifies_workflows "$pr_number" "$repo_slug"
+	local wf_exit=$?
+
+	if [[ $wf_exit -eq 1 ]]; then
+		# No workflow files modified — safe to merge
+		return 0
+	fi
+
+	if [[ $wf_exit -eq 2 ]]; then
+		# API error — fail open, let merge attempt proceed
+		return 2
+	fi
+
+	# Step 2: PR modifies workflow files — check token scope
+	check_gh_workflow_scope
+	local scope_exit=$?
+
+	if [[ $scope_exit -eq 0 ]]; then
+		# Token has workflow scope — safe to merge
+		return 0
+	fi
+
+	if [[ $scope_exit -eq 2 ]]; then
+		# Unable to determine — fail open
+		return 2
+	fi
+
+	# Step 3: PR modifies workflows AND token lacks scope — check for existing comment
+	local comments_output
+	comments_output=$(gh pr view "$pr_number" --repo "$repo_slug" --json comments --jq '.comments[].body')
+	local comments_exit=$?
+
+	if [[ $comments_exit -ne 0 ]]; then
+		echo "[pulse-wrapper] check_workflow_merge_guard: API error reading comments for PR #$pr_number — failing open" >>"$LOGFILE"
+		return 2
+	fi
+
+	if echo "$comments_output" | grep -qF 'workflow scope'; then
+		# Already commented — still blocked
+		echo "[pulse-wrapper] check_workflow_merge_guard: PR #$pr_number already has workflow scope comment — skipping merge" >>"$LOGFILE"
+		return 1
+	fi
+
+	# Post comment explaining the issue
+	gh pr comment "$pr_number" --repo "$repo_slug" \
+		--body "**Cannot auto-merge: workflow scope required** (GH#3934)
+
+This PR modifies \`.github/workflows/\` files but the GitHub OAuth token used by the pulse lacks the \`workflow\` scope. GitHub requires this scope to merge PRs that modify workflow files.
+
+**To fix:**
+1. Run \`gh auth refresh -s workflow\` to add the \`workflow\` scope to your token
+2. The next pulse cycle will merge this PR automatically
+
+**Alternatively:** Merge manually via the GitHub UI." ||
+		true
+
+	# Add a label for visibility
+	gh api --silent "repos/${repo_slug}/issues/${pr_number}/labels" \
+		-X POST -f 'labels[]=needs-workflow-scope' || true
+
+	echo "[pulse-wrapper] check_workflow_merge_guard: blocked PR #$pr_number in $repo_slug — workflow files + missing scope" >>"$LOGFILE"
+	return 1
+}
+
+#######################################
 # Pre-fetch active worker processes (t216, t1367)
 #
 # Captures a snapshot of running worker processes so the pulse agent

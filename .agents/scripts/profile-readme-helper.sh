@@ -94,7 +94,7 @@ _format_tokens() {
 # --- Gather screen time data ---
 _get_screen_time() {
 	local screen_json
-	screen_json=$("${SCRIPT_DIR}/screen-time-helper.sh" profile-stats 2>/dev/null) || screen_json="{}"
+	screen_json=$("${SCRIPT_DIR}/screen-time-helper.sh" profile-stats) || screen_json="{}"
 	echo "$screen_json"
 	return 0
 }
@@ -468,7 +468,7 @@ cmd_generate() {
 	cat <<EOF
 ## Work with AI
 
-| Metric | Today | 7 Days | 28 Days | 365 Days |
+| Metric | 24h | 7 Days | 28 Days | 365 Days |
 | --- | ---: | ---: | ---: | ---: |
 | ${screen_label} | ${screen_today}h | ${screen_week}h | ${f_screen_month}h | ${year_prefix}${f_screen_year}h${year_suffix} |
 | User AI session hours | ${day_human}h | ${week_human}h | ${month_human}h | ${year_human}h |
@@ -608,7 +608,7 @@ EOF
 
 ## Top Apps by Screen Time
 
-| App | Today | 7 Days | 28 Days |
+| App | 24h | 7 Days | 28 Days |
 | --- | ---: | ---: | ---: |
 ${app_rows}
 _Top 10 apps by foreground time share. Mac only._

@@ -652,37 +652,65 @@ cmd_history() {
 # Returns: 0
 #######################################
 cmd_profile_stats() {
-	# Live data
-	local today_hours
+	# Live data — rolling 24h window instead of "today since midnight"
+	local day_hours
 	local week_hours
-	today_hours=$(_query_screen_hours 1)
+	day_hours=$(_query_screen_hours 1)
 	week_hours=$(_query_screen_hours 7)
 
 	# For 28 days: use live query
 	local month_hours
 	month_hours=$(_query_screen_hours 28)
 
+	# Fallback to accumulated history when live queries return 0
+	# This happens when the launchd job runs without Knowledge DB access
+	# (TCC/Full Disk Access not granted in non-interactive context)
+	local history_days=0
+	local history_total=0 hist_1d=0 hist_7d=0 hist_28d=0 hist_365d=0
+	if [[ -f "$HISTORY_FILE" ]]; then
+		history_days=$(wc -l <"$HISTORY_FILE" | tr -d ' ')
+		if [[ "$history_days" -gt 0 ]]; then
+			# Single jq pass for all history stats
+			local history_stats
+			history_stats=$(jq -rs '
+				. as $all |
+				[
+					([$all[].screen_hours] | add // 0),
+					([$all[-1:][].screen_hours] | add // 0 | . * 10 | round / 10),
+					([$all[-7:][].screen_hours] | add // 0 | . * 10 | round / 10),
+					([$all[-28:][].screen_hours] | add // 0 | . * 10 | round / 10),
+					([$all[-365:][].screen_hours] | add // 0 | . * 10 | round / 10)
+				] | @tsv
+			' "$HISTORY_FILE" 2>/dev/null) || true
+			if [[ -n "$history_stats" ]]; then
+				read -r history_total hist_1d hist_7d hist_28d hist_365d <<<"$history_stats"
+			fi
+		fi
+	fi
+
+	# If live queries returned 0 but we have history, use history instead
+	if [[ "$history_days" -gt 0 ]]; then
+		if [[ "$(echo "$day_hours == 0" | bc)" -eq 1 ]]; then
+			day_hours="${hist_1d:-0}"
+		fi
+		if [[ "$(echo "$week_hours == 0" | bc)" -eq 1 ]]; then
+			week_hours="${hist_7d:-0}"
+		fi
+		if [[ "$(echo "$month_hours == 0" | bc)" -eq 1 ]]; then
+			month_hours="${hist_28d:-0}"
+		fi
+	fi
+
 	# For 365 days: use accumulated history if available, else extrapolate
 	local year_hours
-	if [[ -f "$HISTORY_FILE" ]]; then
-		local history_days
-		local history_total
-		history_days=$(wc -l <"$HISTORY_FILE" | tr -d ' ')
-		history_total=$(jq -s '[.[].screen_hours] | add' "$HISTORY_FILE" 2>/dev/null || echo "0")
-
-		if [[ "$history_days" -gt 0 ]]; then
-			# Use actual accumulated data + extrapolate remaining days
-			local daily_avg
-			daily_avg=$(echo "scale=2; $history_total / $history_days" | bc)
-			if [[ "$history_days" -ge 365 ]]; then
-				# Have a full year of data — use last 365 days from history
-				year_hours=$(jq -s '[.[-365:][].screen_hours] | add | . * 10 | round / 10' "$HISTORY_FILE" 2>/dev/null || echo "0")
-			else
-				# Extrapolate from available data
-				year_hours=$(echo "scale=1; $daily_avg * 365" | bc)
-			fi
+	if [[ "$history_days" -gt 0 ]]; then
+		local daily_avg
+		daily_avg=$(echo "scale=2; ${history_total:-0} / $history_days" | bc)
+		if [[ "$history_days" -ge 365 ]]; then
+			year_hours="${hist_365d:-0}"
 		else
-			year_hours=$(echo "scale=1; $month_hours / 28 * 365" | bc 2>/dev/null || echo "0")
+			# Extrapolate from available data
+			year_hours=$(echo "scale=1; $daily_avg * 365" | bc)
 		fi
 	else
 		# No history — extrapolate from 28-day data
@@ -697,13 +725,13 @@ cmd_profile_stats() {
 	esac
 
 	jq -n \
-		--arg today "$today_hours" \
+		--arg day "$day_hours" \
 		--arg week "$week_hours" \
 		--arg month "$month_hours" \
 		--arg year "$year_hours" \
 		--arg note "$platform_note" \
 		'{
-			today_hours: ($today | tonumber),
+			today_hours: ($day | tonumber),
 			week_hours: ($week | tonumber),
 			month_hours: ($month | tonumber),
 			year_hours: ($year | tonumber),

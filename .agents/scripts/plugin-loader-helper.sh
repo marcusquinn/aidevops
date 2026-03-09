@@ -208,7 +208,7 @@ validate_manifest() {
 	fi
 
 	# Validate version format (semver-like)
-	if [[ -n "$version" ]] && [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.]+)?$ ]]; then
+	if [[ -n "$version" ]] && [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.-]+)?$ ]]; then
 		log_warning "Version '$version' is not semver format (expected: X.Y.Z)"
 	fi
 
@@ -249,7 +249,7 @@ validate_manifest() {
 	min_version=$(jq -r '.min_aidevops_version // empty' "$manifest" 2>/dev/null)
 	if [[ -n "$min_version" ]]; then
 		local current_version
-		current_version=$(cat "$HOME/.aidevops/version" 2>/dev/null || echo "0.0.0")
+		current_version=$(cat "$AGENTS_DIR/VERSION" 2>/dev/null || echo "0.0.0")
 		# Simple version comparison (major.minor only)
 		local min_major min_minor cur_major cur_minor
 		min_major=$(echo "$min_version" | cut -d. -f1)
@@ -398,9 +398,6 @@ cmd_load() {
 			return 1
 		fi
 
-		# Run init hook if available
-		run_hook "$target" "init" 2>/dev/null || true
-
 		local agents
 		agents=$(load_plugin_agents "$target")
 		if [[ -z "$agents" ]]; then
@@ -413,8 +410,8 @@ cmd_load() {
 			printf "  %-20s %-30s %s\n" "$name" "$file" "$desc"
 		done
 
-		# Run load hook if available
-		run_hook "$target" "load" 2>/dev/null || true
+		# Run load hook if available (init hook belongs in install/enable, not load)
+		run_hook "$target" "load" || true
 		return 0
 	fi
 
@@ -432,9 +429,6 @@ cmd_load() {
 	while IFS= read -r ns; do
 		[[ -z "$ns" ]] && continue
 
-		# Run init hook
-		run_hook "$ns" "init" 2>/dev/null || true
-
 		local agents
 		agents=$(load_plugin_agents "$ns")
 		if [[ -n "$agents" ]]; then
@@ -445,8 +439,8 @@ cmd_load() {
 			log_info "Loaded $count agent(s) from '$ns'"
 		fi
 
-		# Run load hook
-		run_hook "$ns" "load" 2>/dev/null || true
+		# Run load hook (init hook belongs in install/enable, not load)
+		run_hook "$ns" "load" || true
 	done <<<"$namespaces"
 
 	log_success "Loaded $total_agents agent(s) from $total_plugins plugin(s)"

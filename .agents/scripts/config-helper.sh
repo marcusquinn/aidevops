@@ -31,10 +31,19 @@ fi
 # Resolve script directory (works when sourced or executed)
 _CONFIG_HELPER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || return 2>/dev/null || exit
 
-# Only source shared-constants.sh when running standalone (not when sourced by it)
+# Only source shared-constants.sh when running standalone (not when sourced by it).
+# IMPORTANT: source=/dev/null tells ShellCheck NOT to follow this source directive.
+# Without it, ShellCheck follows the cycle config-helper.sh → shared-constants.sh →
+# config-helper.sh infinitely, consuming exponential memory (7-14 GB observed).
+# The runtime guard (_SHARED_CONSTANTS_LOADED) prevents infinite recursion at
+# execution time, but ShellCheck is a static analyzer and ignores runtime guards.
+# GH#3981: https://github.com/marcusquinn/aidevops/issues/3981
 if [[ -z "${_SHARED_CONSTANTS_LOADED:-}" ]]; then
-	# shellcheck source=shared-constants.sh
-	source "${_CONFIG_HELPER_DIR}/shared-constants.sh" 2>/dev/null || true
+	_SHARED_CONSTANTS_FILE="${_CONFIG_HELPER_DIR}/shared-constants.sh"
+	if [[ -r "${_SHARED_CONSTANTS_FILE}" ]]; then
+		# shellcheck source=/dev/null
+		source "${_SHARED_CONSTANTS_FILE}"
+	fi
 fi
 
 # ---------------------------------------------------------------------------

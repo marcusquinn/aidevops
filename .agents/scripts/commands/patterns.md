@@ -15,16 +15,16 @@ Arguments: $ARGUMENTS
 
 ```bash
 # Get success patterns
-~/.aidevops/agents/scripts/memory-helper.sh recall --type SUCCESS_PATTERN --limit 20
+~/.aidevops/agents/scripts/memory-helper.sh recall "success pattern" --type SUCCESS_PATTERN --limit 20
 
 # Get failure patterns
-~/.aidevops/agents/scripts/memory-helper.sh recall --type FAILURE_PATTERN --limit 20
+~/.aidevops/agents/scripts/memory-helper.sh recall "failure pattern" --type FAILURE_PATTERN --limit 20
 
 # Get working solutions
-~/.aidevops/agents/scripts/memory-helper.sh recall --type WORKING_SOLUTION --limit 10
+~/.aidevops/agents/scripts/memory-helper.sh recall "working solution" --type WORKING_SOLUTION --limit 10
 
 # Get failed approaches
-~/.aidevops/agents/scripts/memory-helper.sh recall --type FAILED_APPROACH --limit 10
+~/.aidevops/agents/scripts/memory-helper.sh recall "failed approach" --type FAILED_APPROACH --limit 10
 ```
 
 2. If arguments are provided, filter results relevant to the task description.

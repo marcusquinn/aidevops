@@ -27,18 +27,66 @@ mkdir -p "$OPENCODE_COMMAND_DIR"
 
 command_count=0
 
-# =============================================================================
-# AGENT-REVIEW COMMAND
-# =============================================================================
-# The agent-review command triggers a systematic review of agent instructions
+# Agent name constants (single source of truth for agent renames)
+readonly AGENT_BUILD="Build+"
+readonly AGENT_SEO="SEO"
 
-cat >"$OPENCODE_COMMAND_DIR/agent-review.md" <<'EOF'
----
-description: Systematic review and improvement of agent instructions
-agent: Build+
-subtask: true
----
+# =============================================================================
+# COMMAND CREATION HELPER
+# =============================================================================
+# Eliminates duplication across all manual command definitions.
+#
+# Usage:
+#   create_command "name" "description" "agent" "subtask" <<'BODY'
+#   Command body content here (without frontmatter)
+#   BODY
+#
+# Parameters:
+#   $1 - command name (e.g., "agent-review")
+#   $2 - description for frontmatter
+#   $3 - agent name (e.g., "Build+", "SEO", or "" for no agent field)
+#   $4 - subtask flag ("true" to add subtask: true, "" to omit)
+# =============================================================================
+create_command() {
+	(($# == 4)) || {
+		echo -e "  ${RED}✗${NC} Error: create_command requires 4 arguments (got $#)" >&2
+		return 1
+	}
+	local name="$1"
+	[[ -n "$name" ]] || {
+		echo -e "  ${RED}✗${NC} Error: command name required" >&2
+		return 1
+	}
+	local description="$2"
+	local agent="$3"
+	local subtask="$4"
+	local body
+	body=$(cat)
 
+	# Write command file
+	{
+		echo "---"
+		echo "description: ${description}"
+		[[ -n "$agent" ]] && echo "agent: ${agent}"
+		[[ "$subtask" == "true" ]] && echo "subtask: true"
+		echo "---"
+		echo ""
+		cat <<<"$body"
+	} >"${OPENCODE_COMMAND_DIR}/${name}.md"
+
+	((++command_count))
+	echo -e "  ${GREEN}✓${NC} Created /${name} command"
+	return 0
+}
+
+# =============================================================================
+# COMMAND DEFINITIONS
+# =============================================================================
+
+# --- Agent Review ---
+create_command "agent-review" \
+	"Systematic review and improvement of agent instructions" \
+	"$AGENT_BUILD" "true" <<'BODY'
 Read ~/.aidevops/agents/tools/build-agent/agent-review.md and follow its instructions.
 
 Review the agent file(s) specified: $ARGUMENTS
@@ -51,22 +99,12 @@ If no specific file is provided, review the agents used in this session and prop
 5. Duplicate detection across agents
 
 Follow the improvement proposal format from the agent-review instructions.
-EOF
-((++command_count))
-echo -e "  ${GREEN}✓${NC} Created /agent-review command"
+BODY
 
-# =============================================================================
-# PREFLIGHT COMMAND
-# =============================================================================
-# Quality checks before version bump and release
-
-cat >"$OPENCODE_COMMAND_DIR/preflight.md" <<'EOF'
----
-description: Run quality checks before version bump and release
-agent: Build+
-subtask: true
----
-
+# --- Preflight ---
+create_command "preflight" \
+	"Run quality checks before version bump and release" \
+	"$AGENT_BUILD" "true" <<'BODY'
 Read ~/.aidevops/agents/workflows/preflight.md and follow its instructions.
 
 Run preflight checks for: $ARGUMENTS
@@ -76,31 +114,21 @@ This includes:
 2. Markdown formatting validation
 3. Version consistency verification
 4. Git status check (clean working tree)
-EOF
-((++command_count))
-echo -e "  ${GREEN}✓${NC} Created /preflight command"
+BODY
 
-# =============================================================================
-# POSTFLIGHT COMMAND
-# =============================================================================
-# Check code audit feedback on latest push to branch or PR
-
-cat >"$OPENCODE_COMMAND_DIR/postflight.md" <<'EOF'
----
-description: Check code audit feedback on latest push (branch or PR)
-agent: Build+
-subtask: true
----
-
+# --- Postflight ---
+create_command "postflight" \
+	"Check code audit feedback on latest push (branch or PR)" \
+	"$AGENT_BUILD" "true" <<'BODY'
 Check code audit tool feedback on the latest push.
 
 Target: $ARGUMENTS
 
 **Auto-detection:**
-1. If on a feature branch with open PR → check that PR's feedback
-2. If on a feature branch without PR → check branch CI status
-3. If on main → check latest commit's CI/audit status
-4. If no git context or ambiguous → ask user which branch/PR to check
+1. If on a feature branch with open PR -> check that PR's feedback
+2. If on a feature branch without PR -> check branch CI status
+3. If on main -> check latest commit's CI/audit status
+4. If no git context or ambiguous -> ask user which branch/PR to check
 
 **Checks performed:**
 1. GitHub Actions workflow status (pass/fail/pending)
@@ -115,22 +143,12 @@ Target: $ARGUMENTS
 - `gh api repos/{owner}/{repo}/commits/{sha}/check-runs` (detailed checks)
 
 Report findings and recommend next actions (fix issues, merge, etc.)
-EOF
-((++command_count))
-echo -e "  ${GREEN}✓${NC} Created /postflight command"
+BODY
 
-# =============================================================================
-# REVIEW-ISSUE-PR COMMAND
-# =============================================================================
-# Review external issues and PRs - validate problems and evaluate solutions
-
-cat >"$OPENCODE_COMMAND_DIR/review-issue-pr.md" <<'EOF'
----
-description: Review external issue or PR - validate problem and evaluate solution
-agent: Build+
-subtask: true
----
-
+# --- Review Issue/PR ---
+create_command "review-issue-pr" \
+	"Review external issue or PR - validate problem and evaluate solution" \
+	"$AGENT_BUILD" "true" <<'BODY'
 Read ~/.aidevops/agents/workflows/review-issue-pr.md and follow its instructions.
 
 Review this issue or PR: $ARGUMENTS
@@ -144,21 +162,12 @@ Review this issue or PR: $ARGUMENTS
 1. Is the issue real? (reproducible, not duplicate, actually a bug)
 2. Is this the best solution? (simplest approach, fixes root cause)
 3. Is the scope appropriate? (minimal changes, no scope creep)
-EOF
-((++command_count))
-echo -e "  ${GREEN}✓${NC} Created /review-issue-pr command"
+BODY
 
-# =============================================================================
-# RELEASE COMMAND
-# =============================================================================
-# Full release workflow - direct execution, no subagent needed
-
-cat >"$OPENCODE_COMMAND_DIR/release.md" <<'EOF'
----
-description: Full release workflow with version bump, tag, and GitHub release
-agent: Build+
----
-
+# --- Release ---
+create_command "release" \
+	"Full release workflow with version bump, tag, and GitHub release" \
+	"$AGENT_BUILD" "" <<'BODY'
 Execute a release for the current repository.
 
 Release type: $ARGUMENTS (valid: major, minor, patch)
@@ -166,9 +175,9 @@ Release type: $ARGUMENTS (valid: major, minor, patch)
 **Steps:**
 1. Run `git log v$(cat VERSION 2>/dev/null || echo "0.0.0")..HEAD --oneline` to see commits since last release
 2. If no release type provided, determine it from commits:
-   - Any `feat:` or new feature → minor
-   - Only `fix:`, `docs:`, `chore:`, `perf:`, `refactor:` → patch
-   - Any `BREAKING CHANGE:` or `!` → major
+   - Any `feat:` or new feature -> minor
+   - Only `fix:`, `docs:`, `chore:`, `perf:`, `refactor:` -> patch
+   - Any `BREAKING CHANGE:` or `!` -> major
 3. Run the single release command:
    ```bash
    .agents/scripts/version-manager.sh release [type] --skip-preflight --force
@@ -176,21 +185,12 @@ Release type: $ARGUMENTS (valid: major, minor, patch)
 4. Report the result with the GitHub release URL
 
 **CRITICAL**: Use only the single command above - it handles everything atomically.
-EOF
-((++command_count))
-echo -e "  ${GREEN}✓${NC} Created /release command"
+BODY
 
-# =============================================================================
-# VERSION-BUMP COMMAND
-# =============================================================================
-# Version management
-
-cat >"$OPENCODE_COMMAND_DIR/version-bump.md" <<'EOF'
----
-description: Bump project version (major, minor, or patch)
-agent: Build+
----
-
+# --- Version Bump ---
+create_command "version-bump" \
+	"Bump project version (major, minor, or patch)" \
+	"$AGENT_BUILD" "" <<'BODY'
 Read ~/.aidevops/agents/workflows/version-bump.md and follow its instructions.
 
 Bump type: $ARGUMENTS
@@ -201,21 +201,12 @@ This updates:
 1. VERSION file
 2. package.json (if exists)
 3. Other version references as configured
-EOF
-((++command_count))
-echo -e "  ${GREEN}✓${NC} Created /version-bump command"
+BODY
 
-# =============================================================================
-# CHANGELOG COMMAND
-# =============================================================================
-# Changelog management
-
-cat >"$OPENCODE_COMMAND_DIR/changelog.md" <<'EOF'
----
-description: Update CHANGELOG.md following Keep a Changelog format
-agent: Build+
----
-
+# --- Changelog ---
+create_command "changelog" \
+	"Update CHANGELOG.md following Keep a Changelog format" \
+	"$AGENT_BUILD" "" <<'BODY'
 Read ~/.aidevops/agents/workflows/changelog.md and follow its instructions.
 
 Action: $ARGUMENTS
@@ -224,21 +215,12 @@ This maintains CHANGELOG.md with:
 - Unreleased section for pending changes
 - Version sections with dates
 - Categories: Added, Changed, Deprecated, Removed, Fixed, Security
-EOF
-((++command_count))
-echo -e "  ${GREEN}✓${NC} Created /changelog command"
+BODY
 
-# =============================================================================
-# LINTERS-LOCAL COMMAND
-# =============================================================================
-# Run local linting tools (fast, offline)
-
-cat >"$OPENCODE_COMMAND_DIR/linters-local.md" <<'EOF'
----
-description: Run local linting tools (ShellCheck, secretlint, pattern checks)
-agent: Build+
----
-
+# --- Linters Local ---
+create_command "linters-local" \
+	"Run local linting tools (ShellCheck, secretlint, pattern checks)" \
+	"$AGENT_BUILD" "" <<'BODY'
 Run the local linters script:
 
 !`~/.aidevops/agents/scripts/linters-local.sh $ARGUMENTS`
@@ -250,22 +232,12 @@ This runs fast, offline checks:
 4. Markdown formatting checks
 
 For remote auditing (CodeRabbit, Codacy, SonarCloud), use /code-audit-remote
-EOF
-((++command_count))
-echo -e "  ${GREEN}✓${NC} Created /linters-local command"
+BODY
 
-# =============================================================================
-# CODE-AUDIT-REMOTE COMMAND
-# =============================================================================
-# Run remote code auditing services
-
-cat >"$OPENCODE_COMMAND_DIR/code-audit-remote.md" <<'EOF'
----
-description: Run remote code auditing (CodeRabbit, Codacy, SonarCloud)
-agent: Build+
-subtask: true
----
-
+# --- Code Audit Remote ---
+create_command "code-audit-remote" \
+	"Run remote code auditing (CodeRabbit, Codacy, SonarCloud)" \
+	"$AGENT_BUILD" "true" <<'BODY'
 Read ~/.aidevops/agents/workflows/code-audit-remote.md and follow its instructions.
 
 Audit target: $ARGUMENTS
@@ -276,22 +248,12 @@ This calls external quality services:
 3. SonarCloud - Security and maintainability
 
 For local linting (fast, offline), use /linters-local first
-EOF
-((++command_count))
-echo -e "  ${GREEN}✓${NC} Created /code-audit-remote command"
+BODY
 
-# =============================================================================
-# CODE-STANDARDS COMMAND
-# =============================================================================
-# Check against documented code standards
-
-cat >"$OPENCODE_COMMAND_DIR/code-standards.md" <<'EOF'
----
-description: Check code against documented quality standards
-agent: Build+
-subtask: true
----
-
+# --- Code Standards ---
+create_command "code-standards" \
+	"Check code against documented quality standards" \
+	"$AGENT_BUILD" "true" <<'BODY'
 Read ~/.aidevops/agents/tools/code-review/code-standards.md and follow its instructions.
 
 Check target: $ARGUMENTS
@@ -302,21 +264,12 @@ This validates against our documented standards:
 - S1192: Constants for repeated strings
 - S1481: No unused variables
 - ShellCheck: Zero violations
-EOF
-((++command_count))
-echo -e "  ${GREEN}✓${NC} Created /code-standards command"
+BODY
 
-# =============================================================================
-# BRANCH COMMANDS
-# =============================================================================
-# Git branch workflows
-
-cat >"$OPENCODE_COMMAND_DIR/feature.md" <<'EOF'
----
-description: Create and develop a feature branch
-agent: Build+
----
-
+# --- Feature Branch ---
+create_command "feature" \
+	"Create and develop a feature branch" \
+	"$AGENT_BUILD" "" <<'BODY'
 Read ~/.aidevops/agents/workflows/branch/feature.md and follow its instructions.
 
 Feature: $ARGUMENTS
@@ -325,16 +278,12 @@ This will:
 1. Create feature branch from main
 2. Set up development environment
 3. Guide feature implementation
-EOF
-((++command_count))
-echo -e "  ${GREEN}✓${NC} Created /feature command"
+BODY
 
-cat >"$OPENCODE_COMMAND_DIR/bugfix.md" <<'EOF'
----
-description: Create and resolve a bugfix branch
-agent: Build+
----
-
+# --- Bugfix Branch ---
+create_command "bugfix" \
+	"Create and resolve a bugfix branch" \
+	"$AGENT_BUILD" "" <<'BODY'
 Read ~/.aidevops/agents/workflows/branch/bugfix.md and follow its instructions.
 
 Bug: $ARGUMENTS
@@ -343,16 +292,12 @@ This will:
 1. Create bugfix branch
 2. Guide bug investigation
 3. Implement and test fix
-EOF
-((++command_count))
-echo -e "  ${GREEN}✓${NC} Created /bugfix command"
+BODY
 
-cat >"$OPENCODE_COMMAND_DIR/hotfix.md" <<'EOF'
----
-description: Urgent hotfix for critical production issues
-agent: Build+
----
-
+# --- Hotfix Branch ---
+create_command "hotfix" \
+	"Urgent hotfix for critical production issues" \
+	"$AGENT_BUILD" "" <<'BODY'
 Read ~/.aidevops/agents/workflows/branch/hotfix.md and follow its instructions.
 
 Issue: $ARGUMENTS
@@ -361,21 +306,12 @@ This will:
 1. Create hotfix branch from main/production
 2. Implement minimal fix
 3. Fast-track to release
-EOF
-((++command_count))
-echo -e "  ${GREEN}✓${NC} Created /hotfix command"
+BODY
 
-# =============================================================================
-# LIST-KEYS COMMAND
-# =============================================================================
-# List all API keys available in session
-
-cat >"$OPENCODE_COMMAND_DIR/list-keys.md" <<'EOF'
----
-description: List all API keys available in session with their storage locations
-agent: Build+
----
-
+# --- List Keys ---
+create_command "list-keys" \
+	"List all API keys available in session with their storage locations" \
+	"$AGENT_BUILD" "" <<'BODY'
 Run the list-keys helper script and format the output as a markdown table:
 
 !`~/.aidevops/agents/scripts/list-keys-helper.sh --json $ARGUMENTS`
@@ -396,28 +332,19 @@ Format with padded columns for readability:
 
 Status icons:
 - ✓ loaded
-- ⚠ placeholder (needs real value)  
+- ⚠ placeholder (needs real value)
 - ✗ not loaded
 - ℹ configured
 
 Pad key names to align columns. End with total count.
 
 Security: Key values are NEVER displayed.
-EOF
-((++command_count))
-echo -e "  ${GREEN}✓${NC} Created /list-keys command"
+BODY
 
-# =============================================================================
-# LOG-TIME-SPENT COMMAND
-# =============================================================================
-# Manual time logging for tasks
-
-cat >"$OPENCODE_COMMAND_DIR/log-time-spent.md" <<'EOF'
----
-description: Log time spent on a task in TODO.md
-agent: Build+
----
-
+# --- Log Time Spent ---
+create_command "log-time-spent" \
+	"Log time spent on a task in TODO.md" \
+	"$AGENT_BUILD" "" <<'BODY'
 Log time spent on a task.
 
 Arguments: $ARGUMENTS
@@ -452,22 +379,12 @@ Arguments: $ARGUMENTS
 ```
 
 When task is completed, the `actual:` field is calculated from all logged time.
-EOF
-((++command_count))
-echo -e "  ${GREEN}✓${NC} Created /log-time-spent command"
+BODY
 
-# =============================================================================
-# CONTEXT BUILDER COMMAND
-# =============================================================================
-# Token-efficient context generation
-
-cat >"$OPENCODE_COMMAND_DIR/context.md" <<'EOF'
----
-description: Build token-efficient AI context for complex tasks
-agent: Build+
-subtask: true
----
-
+# --- Context Builder ---
+create_command "context" \
+	"Build token-efficient AI context for complex tasks" \
+	"$AGENT_BUILD" "true" <<'BODY'
 Read ~/.aidevops/agents/tools/context/context-builder.md and follow its instructions.
 
 Context request: $ARGUMENTS
@@ -476,21 +393,12 @@ This generates optimized context for AI assistants including:
 1. Relevant code snippets
 2. Architecture overview
 3. Dependencies and relationships
-EOF
-((++command_count))
-echo -e "  ${GREEN}✓${NC} Created /context command"
+BODY
 
-# =============================================================================
-# CREATE-PR COMMAND
-# =============================================================================
-# Create a PR from current branch with auto-generated title and description
-
-cat >"$OPENCODE_COMMAND_DIR/create-pr.md" <<'EOF'
----
-description: Create PR from current branch with title and description
-agent: Build+
----
-
+# --- Create PR ---
+create_command "create-pr" \
+	"Create PR from current branch with title and description" \
+	"$AGENT_BUILD" "" <<'BODY'
 Create a pull request from the current branch.
 
 Additional context: $ARGUMENTS
@@ -499,7 +407,7 @@ Additional context: $ARGUMENTS
 1. Check current branch (must not be main/master)
 2. Check for uncommitted changes (warn if present)
 3. Push branch to remote if not already pushed
-4. Generate PR title from branch name (e.g., `feature/add-login` → "Add login")
+4. Generate PR title from branch name (e.g., `feature/add-login` -> "Add login")
 5. Generate PR description from:
    - Commit messages on this branch
    - Changed files summary
@@ -509,39 +417,25 @@ Additional context: $ARGUMENTS
 7. If creation succeeds, return PR URL; otherwise show error and suggest fixes
 
 **Example:**
-- `/create-pr` → Creates PR with auto-generated title/description
-- `/create-pr fixes authentication bug` → Adds context to description
-EOF
-((++command_count))
-echo -e "  ${GREEN}✓${NC} Created /create-pr command"
+- `/create-pr` -> Creates PR with auto-generated title/description
+- `/create-pr fixes authentication bug` -> Adds context to description
+BODY
 
-# Keep /pr as alias pointing to /create-pr for discoverability
-cat >"$OPENCODE_COMMAND_DIR/pr.md" <<'EOF'
----
-description: Alias for /create-pr - Create PR from current branch
-agent: Build+
----
-
+# --- PR Alias ---
+create_command "pr" \
+	"Alias for /create-pr - Create PR from current branch" \
+	"$AGENT_BUILD" "" <<'BODY'
 This is an alias for /create-pr. Creating PR from current branch.
 
 Context: $ARGUMENTS
 
 Run /create-pr with the same arguments.
-EOF
-((++command_count))
-echo -e "  ${GREEN}✓${NC} Created /pr command (alias for /create-pr)"
+BODY
 
-# =============================================================================
-# CREATE-PRD COMMAND
-# =============================================================================
-# Generate Product Requirements Document
-
-cat >"$OPENCODE_COMMAND_DIR/create-prd.md" <<'EOF'
----
-description: Generate a Product Requirements Document for a feature
-agent: Build+
----
-
+# --- Create PRD ---
+create_command "create-prd" \
+	"Generate a Product Requirements Document for a feature" \
+	"$AGENT_BUILD" "" <<'BODY'
 Read ~/.aidevops/agents/workflows/plans.md and follow its PRD generation instructions.
 
 Feature to document: $ARGUMENTS
@@ -565,21 +459,12 @@ Feature to document: $ARGUMENTS
 ```
 
 User can reply with "1A, 2B" or provide details.
-EOF
-((++command_count))
-echo -e "  ${GREEN}✓${NC} Created /create-prd command"
+BODY
 
-# =============================================================================
-# GENERATE-TASKS COMMAND
-# =============================================================================
-# Generate task list from PRD
-
-cat >"$OPENCODE_COMMAND_DIR/generate-tasks.md" <<'EOF'
----
-description: Generate implementation tasks from a PRD
-agent: Build+
----
-
+# --- Generate Tasks ---
+create_command "generate-tasks" \
+	"Generate implementation tasks from a PRD" \
+	"$AGENT_BUILD" "" <<'BODY'
 Read ~/.aidevops/agents/workflows/plans.md and follow its task generation instructions.
 
 PRD or feature: $ARGUMENTS
@@ -605,29 +490,20 @@ PRD or feature: $ARGUMENTS
 ```
 
 Mark tasks complete by changing `- [ ]` to `- [x]` as work progresses.
-EOF
-((++command_count))
-echo -e "  ${GREEN}✓${NC} Created /generate-tasks command"
+BODY
 
-# =============================================================================
-# LIST-TODO COMMAND
-# =============================================================================
-# List tasks and plans with sorting, filtering, and grouping
-
-cat >"$OPENCODE_COMMAND_DIR/list-todo.md" <<'EOF'
----
-description: List tasks and plans with sorting, filtering, and grouping
-agent: Build+
----
-
+# --- List Todo ---
+create_command "list-todo" \
+	"List tasks and plans with sorting, filtering, and grouping" \
+	"$AGENT_BUILD" "" <<'BODY'
 Read TODO.md and todo/PLANS.md and display tasks based on arguments.
 
 Arguments: $ARGUMENTS
 
-**Default (no args):** Show all pending tasks grouped by status (In Progress → Backlog)
+**Default (no args):** Show all pending tasks grouped by status (In Progress -> Backlog)
 
 **Sorting options:**
-- `--priority` or `-p` - Sort by priority (high → medium → low)
+- `--priority` or `-p` - Sort by priority (high -> medium -> low)
 - `--estimate` or `-e` - Sort by time estimate (shortest first)
 - `--date` or `-d` - Sort by logged date (newest first)
 - `--alpha` or `-a` - Sort alphabetically
@@ -693,21 +569,12 @@ After displaying, offer:
 1. Work on a specific task (enter number or name)
 2. Filter/sort differently
 3. Done browsing
-EOF
-((++command_count))
-echo -e "  ${GREEN}✓${NC} Created /list-todo command"
+BODY
 
-# =============================================================================
-# SAVE-TODO COMMAND
-# =============================================================================
-# Save current discussion as task or plan (auto-detects complexity)
-
-cat >"$OPENCODE_COMMAND_DIR/save-todo.md" <<'EOF'
----
-description: Save current discussion as task or plan (auto-detects complexity)
-agent: Build+
----
-
+# --- Save Todo ---
+create_command "save-todo" \
+	"Save current discussion as task or plan (auto-detects complexity)" \
+	"$AGENT_BUILD" "" <<'BODY'
 Analyze the current conversation and save appropriately based on complexity.
 
 Topic/context: $ARGUMENTS
@@ -759,21 +626,12 @@ Capture from conversation:
 - Related links
 
 This goes into PLANS.md "Context from Discussion" section.
-EOF
-((++command_count))
-echo -e "  ${GREEN}✓${NC} Created /save-todo command"
+BODY
 
-# =============================================================================
-# PLAN-STATUS COMMAND
-# =============================================================================
-# Show active plans and TODO.md status
-
-cat >"$OPENCODE_COMMAND_DIR/plan-status.md" <<'EOF'
----
-description: Show active plans and TODO.md status
-agent: Build+
----
-
+# --- Plan Status ---
+create_command "plan-status" \
+	"Show active plans and TODO.md status" \
+	"$AGENT_BUILD" "" <<'BODY'
 Read TODO.md and todo/PLANS.md to show current planning status.
 
 Filter: $ARGUMENTS (optional: "in-progress", "backlog", plan name)
@@ -802,21 +660,12 @@ Offer options:
 1. Work on a specific task/plan
 2. Add new task to TODO.md
 3. Create new execution plan
-EOF
-((++command_count))
-echo -e "  ${GREEN}✓${NC} Created /plan-status command"
+BODY
 
-# =============================================================================
-# KEYWORD RESEARCH COMMAND
-# =============================================================================
-# Basic keyword expansion from seed keywords
-
-cat >"$OPENCODE_COMMAND_DIR/keyword-research.md" <<'EOF'
----
-description: Keyword research with seed keyword expansion
-agent: SEO
----
-
+# --- Keyword Research ---
+create_command "keyword-research" \
+	"Keyword research with seed keyword expansion" \
+	"$AGENT_SEO" "" <<'BODY'
 Read ~/.aidevops/agents/seo/keyword-research.md and follow its instructions.
 
 Keywords to research: $ARGUMENTS
@@ -844,21 +693,12 @@ Keywords to research: $ARGUMENTS
 - `--contains "term"`, `--excludes "term"`
 
 Wildcards supported: "best * for dogs" expands to variations.
-EOF
-((++command_count))
-echo -e "  ${GREEN}✓${NC} Created /keyword-research command"
+BODY
 
-# =============================================================================
-# AUTOCOMPLETE RESEARCH COMMAND
-# =============================================================================
-# Google autocomplete long-tail expansion
-
-cat >"$OPENCODE_COMMAND_DIR/autocomplete-research.md" <<'EOF'
----
-description: Google autocomplete long-tail keyword expansion
-agent: SEO
----
-
+# --- Autocomplete Research ---
+create_command "autocomplete-research" \
+	"Google autocomplete long-tail keyword expansion" \
+	"$AGENT_SEO" "" <<'BODY'
 Read ~/.aidevops/agents/seo/keyword-research.md and follow its instructions.
 
 Seed keyword for autocomplete: $ARGUMENTS
@@ -883,22 +723,12 @@ Seed keyword for autocomplete: $ARGUMENTS
 - `--csv` - Export to ~/Downloads/
 
 This is ideal for discovering question-based and long-tail keywords.
-EOF
-((++command_count))
-echo -e "  ${GREEN}✓${NC} Created /autocomplete-research command"
+BODY
 
-# =============================================================================
-# KEYWORD RESEARCH EXTENDED COMMAND
-# =============================================================================
-# Full SERP analysis with weakness detection and KeywordScore
-
-cat >"$OPENCODE_COMMAND_DIR/keyword-research-extended.md" <<'EOF'
----
-description: Full SERP analysis with weakness detection and KeywordScore
-agent: SEO
-subtask: true
----
-
+# --- Keyword Research Extended ---
+create_command "keyword-research-extended" \
+	"Full SERP analysis with weakness detection and KeywordScore" \
+	"$AGENT_SEO" "true" <<'BODY'
 Read ~/.aidevops/agents/seo/keyword-research.md and follow its instructions.
 
 Research target: $ARGUMENTS
@@ -945,21 +775,12 @@ Domain: Low DS, Low PS, No Backlinks
 Technical: Slow Page, High Spam, Non-HTTPS, Broken, Flash, Frames, Non-Canonical
 Content: Old Content, Title Mismatch, No Keyword in Headings, No Headings, Unmatched Intent
 SERP: UGC-Heavy Results
-EOF
-((++command_count))
-echo -e "  ${GREEN}✓${NC} Created /keyword-research-extended command"
+BODY
 
-# =============================================================================
-# WEBMASTER KEYWORDS COMMAND
-# =============================================================================
-# Keywords from Google Search Console and Bing Webmaster Tools
-
-cat >"$OPENCODE_COMMAND_DIR/webmaster-keywords.md" <<'EOF'
----
-description: Keywords from GSC + Bing for your verified sites
-agent: SEO
----
-
+# --- Webmaster Keywords ---
+create_command "webmaster-keywords" \
+	"Keywords from GSC + Bing for your verified sites" \
+	"$AGENT_SEO" "" <<'BODY'
 Read ~/.aidevops/agents/seo/keyword-research.md and follow its instructions.
 
 Site URL: $ARGUMENTS
@@ -1003,38 +824,21 @@ keyword-research-helper.sh webmaster https://example.com --days 90 --no-enrich
 2. Track ranking changes over time
 3. Discover keywords you're ranking for but not targeting
 4. Compare Google vs Bing performance
-EOF
-((++command_count))
-echo -e "  ${GREEN}✓${NC} Created /webmaster-keywords command"
+BODY
 
-# =============================================================================
-# ONBOARDING COMMAND
-# =============================================================================
-# Interactive setup wizard for new users
-
-cat >"$OPENCODE_COMMAND_DIR/onboarding.md" <<'EOF'
----
-description: Interactive onboarding wizard - discover services, configure integrations
----
-
-Read ~/.aidevops/agents/aidevops/onboarding.md and follow its Welcome Flow instructions to guide the user through setup. Do NOT repeat these instructions — go straight to the Welcome Flow conversation.
+# --- Onboarding ---
+create_command "onboarding" \
+	"Interactive onboarding wizard - discover services, configure integrations" \
+	"" "" <<'BODY'
+Read ~/.aidevops/agents/aidevops/onboarding.md and follow its Welcome Flow instructions to guide the user through setup. Do NOT repeat these instructions -- go straight to the Welcome Flow conversation.
 
 Arguments: $ARGUMENTS
-EOF
-((++command_count))
-echo -e "  ${GREEN}✓${NC} Created /onboarding command"
+BODY
 
-# =============================================================================
-# SETUP-AIDEVOPS COMMAND
-# =============================================================================
-# Run setup.sh to deploy latest agent changes locally
-
-cat >"$OPENCODE_COMMAND_DIR/setup-aidevops.md" <<'EOF'
----
-description: Deploy latest aidevops agent changes locally
-agent: Build+
----
-
+# --- Setup aidevops ---
+create_command "setup-aidevops" \
+	"Deploy latest aidevops agent changes locally" \
+	"$AGENT_BUILD" "" <<'BODY'
 Run the aidevops setup script to deploy the latest changes.
 
 **Command:**
@@ -1053,21 +857,12 @@ cd ~/Git/aidevops && ./setup.sh || exit
 - New/updated commands will be available
 
 Arguments: $ARGUMENTS
-EOF
-((++command_count))
-echo -e "  ${GREEN}✓${NC} Created /setup-aidevops command"
+BODY
 
-# =============================================================================
-# RALPH-LOOP COMMAND
-# =============================================================================
-# Start iterative AI development loop (Ralph Wiggum technique)
-
-cat >"$OPENCODE_COMMAND_DIR/ralph-loop.md" <<'EOF'
----
-description: Start iterative AI development loop (Ralph Wiggum technique)
-agent: Build+
----
-
+# --- Ralph Loop ---
+create_command "ralph-loop" \
+	"Start iterative AI development loop (Ralph Wiggum technique)" \
+	"$AGENT_BUILD" "" <<'BODY'
 Read ~/.aidevops/agents/workflows/ralph-loop.md and follow its instructions.
 
 Start a Ralph loop for iterative development.
@@ -1102,21 +897,12 @@ The promise must be TRUE - do not output false promises to escape.
 /ralph-loop "Build a REST API for todos" --max-iterations 20 --completion-promise "DONE"
 /ralph-loop "Fix all TypeScript errors" --completion-promise "ALL_FIXED" --max-iterations 10
 ```
-EOF
-((++command_count))
-echo -e "  ${GREEN}✓${NC} Created /ralph-loop command"
+BODY
 
-# =============================================================================
-# CANCEL-RALPH COMMAND
-# =============================================================================
-# Cancel active Ralph loop
-
-cat >"$OPENCODE_COMMAND_DIR/cancel-ralph.md" <<'EOF'
----
-description: Cancel active Ralph Wiggum loop
-agent: Build+
----
-
+# --- Cancel Ralph ---
+create_command "cancel-ralph" \
+	"Cancel active Ralph Wiggum loop" \
+	"$AGENT_BUILD" "" <<'BODY'
 Cancel the active Ralph loop.
 
 Remove the state file to stop the loop:
@@ -1126,21 +912,12 @@ rm -f .agents/loop-state/ralph-loop.local.md .agents/loop-state/ralph-loop.local
 ```
 
 If no loop state file exists, no loop is active.
-EOF
-((++command_count))
-echo -e "  ${GREEN}✓${NC} Created /cancel-ralph command"
+BODY
 
-# =============================================================================
-# RALPH-STATUS COMMAND
-# =============================================================================
-# Show Ralph loop status
-
-cat >"$OPENCODE_COMMAND_DIR/ralph-status.md" <<'EOF'
----
-description: Show current Ralph loop status
-agent: Build+
----
-
+# --- Ralph Status ---
+create_command "ralph-status" \
+	"Show current Ralph loop status" \
+	"$AGENT_BUILD" "" <<'BODY'
 Show the current Ralph loop status.
 
 **Check status:**
@@ -1155,21 +932,12 @@ This shows:
 - Max iterations setting
 - Completion promise (if set)
 - When the loop started
-EOF
-((++command_count))
-echo -e "  ${GREEN}✓${NC} Created /ralph-status command"
+BODY
 
-# =============================================================================
-# PREFLIGHT-LOOP COMMAND
-# =============================================================================
-# Iterative preflight checks until all pass
-
-cat >"$OPENCODE_COMMAND_DIR/preflight-loop.md" <<'EOF'
----
-description: Run preflight checks in a loop until all pass (Ralph pattern)
-agent: Build+
----
-
+# --- Preflight Loop ---
+create_command "preflight-loop" \
+	"Run preflight checks in a loop until all pass (Ralph pattern)" \
+	"$AGENT_BUILD" "" <<'BODY'
 Run preflight checks iteratively until all pass or max iterations reached.
 
 Arguments: $ARGUMENTS
@@ -1202,21 +970,12 @@ This applies the Ralph Wiggum technique to quality checks:
 /preflight-loop --auto-fix --max-iterations 5
 /preflight-loop  # Manual fixes between iterations
 ```
-EOF
-((++command_count))
-echo -e "  ${GREEN}✓${NC} Created /preflight-loop command"
+BODY
 
-# =============================================================================
-# PR-LOOP COMMAND
-# =============================================================================
-# Iterative PR review monitoring
-
-cat >"$OPENCODE_COMMAND_DIR/pr-loop.md" <<'EOF'
----
-description: Monitor PR until approved or merged (Ralph pattern)
-agent: Build+
----
-
+# --- PR Loop ---
+create_command "pr-loop" \
+	"Monitor PR until approved or merged (Ralph pattern)" \
+	"$AGENT_BUILD" "" <<'BODY'
 Monitor a PR iteratively until approved, merged, or max iterations reached.
 
 Arguments: $ARGUMENTS
@@ -1249,21 +1008,12 @@ Read ~/.aidevops/agents/scripts/commands/pr-loop.md and follow its instructions.
 /pr-loop --wait-for-ci
 /pr-loop --pr 123 --max-iterations 20
 ```
-EOF
-((++command_count))
-echo -e "  ${GREEN}✓${NC} Created /pr-loop command"
+BODY
 
-# =============================================================================
-# POSTFLIGHT-LOOP COMMAND
-# =============================================================================
-# Release health monitoring
-
-cat >"$OPENCODE_COMMAND_DIR/postflight-loop.md" <<'EOF'
----
-description: Monitor release health after deployment (Ralph pattern)
-agent: Build+
----
-
+# --- Postflight Loop ---
+create_command "postflight-loop" \
+	"Monitor release health after deployment (Ralph pattern)" \
+	"$AGENT_BUILD" "" <<'BODY'
 Monitor release health for a specified duration.
 
 Arguments: $ARGUMENTS
@@ -1291,21 +1041,12 @@ Read ~/.aidevops/agents/scripts/commands/postflight-loop.md and follow its instr
 /postflight-loop --monitor-duration 10m
 /postflight-loop --monitor-duration 1h --max-iterations 10
 ```
-EOF
-((++command_count))
-echo -e "  ${GREEN}✓${NC} Created /postflight-loop command"
+BODY
 
-# =============================================================================
-# RALPH-TASK COMMAND
-# =============================================================================
-# Run a Ralph loop for a specific task ID
-
-cat >"$OPENCODE_COMMAND_DIR/ralph-task.md" <<'EOF'
----
-description: Run Ralph loop for a task from TODO.md by ID
-agent: Build+
----
-
+# --- Ralph Task ---
+create_command "ralph-task" \
+	"Run Ralph loop for a task from TODO.md by ID" \
+	"$AGENT_BUILD" "" <<'BODY'
 Run a Ralph loop for a specific task from TODO.md.
 
 Task ID: $ARGUMENTS
@@ -1343,28 +1084,19 @@ This will:
 **Requirements:**
 - Task must have `#ralph` tag
 - Task should have completion criteria defined
-EOF
-((++command_count))
-echo -e "  ${GREEN}✓${NC} Created /ralph-task command"
+BODY
 
-# =============================================================================
-# FULL-LOOP COMMAND
-# =============================================================================
-# End-to-end development loop (task → preflight → PR → postflight → deploy)
-
-cat >"$OPENCODE_COMMAND_DIR/full-loop.md" <<'EOF'
----
-description: Start end-to-end development loop (task → preflight → PR → postflight → deploy)
-agent: Build+
----
-
+# --- Full Loop ---
+create_command "full-loop" \
+	"Start end-to-end development loop (task -> preflight -> PR -> postflight -> deploy)" \
+	"$AGENT_BUILD" "" <<'BODY'
 Read ~/.aidevops/agents/scripts/commands/full-loop.md and follow its instructions.
 
 Start a full development loop for: $ARGUMENTS
 
 **Full Loop Phases:**
 ```text
-Task Development → Preflight → PR Create → PR Review → Postflight → Deploy
+Task Development -> Preflight -> PR Create -> PR Review -> Postflight -> Deploy
 ```
 
 **Usage:**
@@ -1381,21 +1113,12 @@ Task Development → Preflight → PR Create → PR Review → Postflight → De
 - `--no-auto-pr` - Pause for manual PR creation
 
 **Completion promise:** `<promise>FULL_LOOP_COMPLETE</promise>`
-EOF
-((++command_count))
-echo -e "  ${GREEN}✓${NC} Created /full-loop command"
+BODY
 
-# =============================================================================
-# CODE-SIMPLIFIER COMMAND
-# =============================================================================
-# Simplify and refine code for clarity
-
-cat >"$OPENCODE_COMMAND_DIR/code-simplifier.md" <<'EOF'
----
-description: Simplify and refine code for clarity, consistency, and maintainability
-agent: Build+
----
-
+# --- Code Simplifier ---
+create_command "code-simplifier" \
+	"Simplify and refine code for clarity, consistency, and maintainability" \
+	"$AGENT_BUILD" "" <<'BODY'
 Read ~/.aidevops/agents/tools/code-review/code-simplifier.md and follow its instructions.
 
 Target: $ARGUMENTS
@@ -1413,21 +1136,12 @@ Target: $ARGUMENTS
 - Avoid nested ternaries
 - Remove obvious comments
 - Apply project standards
-EOF
-((++command_count))
-echo -e "  ${GREEN}✓${NC} Created /code-simplifier command"
+BODY
 
-# =============================================================================
-# SESSION-REVIEW COMMAND
-# =============================================================================
-# Review session for completeness before ending
-
-cat >"$OPENCODE_COMMAND_DIR/session-review.md" <<'EOF'
----
-description: Review session for completeness before ending
-agent: Build+
----
-
+# --- Session Review ---
+create_command "session-review" \
+	"Review session for completeness before ending" \
+	"$AGENT_BUILD" "" <<'BODY'
 Read ~/.aidevops/agents/scripts/commands/session-review.md and follow its instructions.
 
 Review the current session for: $ARGUMENTS
@@ -1443,21 +1157,12 @@ Review the current session for: $ARGUMENTS
 /session-review               # Review current session
 /session-review --capture     # Also capture learnings to memory
 ```
-EOF
-((++command_count))
-echo -e "  ${GREEN}✓${NC} Created /session-review command"
+BODY
 
-# =============================================================================
-# REMEMBER COMMAND
-# =============================================================================
-# Store a memory for cross-session recall
-
-cat >"$OPENCODE_COMMAND_DIR/remember.md" <<'EOF'
----
-description: Store a memory for cross-session recall
-agent: Build+
----
-
+# --- Remember ---
+create_command "remember" \
+	"Store a memory for cross-session recall" \
+	"$AGENT_BUILD" "" <<'BODY'
 Read ~/.aidevops/agents/scripts/commands/remember.md and follow its instructions.
 
 Remember: $ARGUMENTS
@@ -1479,21 +1184,12 @@ Remember: $ARGUMENTS
 - CONTEXT - General context
 
 **Storage:** ~/.aidevops/.agent-workspace/memory/memory.db
-EOF
-((++command_count))
-echo -e "  ${GREEN}✓${NC} Created /remember command"
+BODY
 
-# =============================================================================
-# RECALL COMMAND
-# =============================================================================
-# Search memories from previous sessions
-
-cat >"$OPENCODE_COMMAND_DIR/recall.md" <<'EOF'
----
-description: Search memories from previous sessions
-agent: Build+
----
-
+# --- Recall ---
+create_command "recall" \
+	"Search memories from previous sessions" \
+	"$AGENT_BUILD" "" <<'BODY'
 Read ~/.aidevops/agents/scripts/commands/recall.md and follow its instructions.
 
 Search for: $ARGUMENTS
@@ -1507,9 +1203,7 @@ Search for: $ARGUMENTS
 ```
 
 **Storage:** ~/.aidevops/.agent-workspace/memory/memory.db
-EOF
-((++command_count))
-echo -e "  ${GREEN}✓${NC} Created /recall command"
+BODY
 
 # =============================================================================
 # AUTO-DISCOVERED COMMANDS FROM scripts/commands/
@@ -1535,9 +1229,13 @@ if [[ -d "$COMMANDS_DIR" ]]; then
 		fi
 
 		# Copy command file directly (it already has proper frontmatter)
-		cp "$cmd_file" "$OPENCODE_COMMAND_DIR/$cmd_name.md"
-		((++command_count))
-		echo -e "  ${GREEN}✓${NC} Auto-discovered /$cmd_name command"
+		if cp "$cmd_file" "$OPENCODE_COMMAND_DIR/$cmd_name.md"; then
+			((++command_count))
+			echo -e "  ${GREEN}✓${NC} Auto-discovered /$cmd_name command"
+		else
+			echo -e "  ${RED}✗${NC} Failed to copy /$cmd_name command" >&2
+			exit 1
+		fi
 	done
 fi
 
@@ -1599,7 +1297,7 @@ echo ""
 echo "  Automation (Ralph Loops):"
 echo "    /ralph-loop       - Start iterative AI development loop"
 echo "    /ralph-task       - Run Ralph loop for a TODO.md task by ID"
-echo "    /full-loop        - End-to-end: task → preflight → PR → postflight"
+echo "    /full-loop        - End-to-end: task -> preflight -> PR -> postflight"
 echo "    /cancel-ralph     - Cancel active Ralph loop"
 echo "    /ralph-status     - Show Ralph loop status"
 echo "    /preflight-loop   - Iterative preflight until all pass"

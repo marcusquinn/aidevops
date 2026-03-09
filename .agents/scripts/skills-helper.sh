@@ -196,7 +196,7 @@ cmd_search_registry() {
 
 	local raw_output
 	# Strip ANSI escape codes for parsing, but capture raw for display
-	raw_output=$(npx --yes skills find "$query" 2>/dev/null || true)
+	raw_output=$(npx --yes skills find "$query" || true)
 
 	if [[ -z "$raw_output" ]]; then
 		log_warning "No results from skills.sh registry for '$query'"

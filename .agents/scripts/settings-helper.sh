@@ -310,11 +310,11 @@ cmd_list() {
 	for section in $sections; do
 		echo -e "${BLUE}[$section]${NC}"
 		local keys
-		keys=$(jq -r ".$section | keys[]" "$SETTINGS_FILE" 2>/dev/null)
+		keys=$(jq -r --arg s "$section" '.[$s] | keys[]' "$SETTINGS_FILE" 2>/dev/null)
 		for key in $keys; do
 			local full_key="${section}.${key}"
 			local value
-			value=$(jq -r ".$section.$key" "$SETTINGS_FILE" 2>/dev/null)
+			value=$(jq -r --arg s "$section" --arg k "$key" '.[$s][$k]' "$SETTINGS_FILE" 2>/dev/null)
 			local env_var
 			env_var=$(_env_var_for_key "$full_key")
 			local env_override=""

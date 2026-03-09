@@ -180,7 +180,7 @@ while IFS= read -r script; do
 	fi
 
 	# Run help command with timeout (5s max) and capture output
-	help_output=$(timeout 5 bash "$abs_path" help 2>&1) || true
+	help_output=$(timeout 5 bash "$abs_path" help 2>&1)
 	help_exit=$?
 
 	# Some scripts exit 0 on help, some exit 1 (usage error) - both are acceptable

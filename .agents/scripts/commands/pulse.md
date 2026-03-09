@@ -135,6 +135,20 @@ Then skip to the next PR. The next pulse cycle will retry the permission check �
 **For maintainer PRs (admin/maintain/write permission):**
 
 - **Green CI + review gate passed + no blocking reviews** → merge: `gh pr merge <number> --repo <slug> --squash`. If the PR resolves an issue, the issue should be closed with a comment linking to the merged PR.
+  - **Workflow file merge guard (t3934):** Before merging, check if the PR modifies `.github/workflows/` files. PRs that modify workflow files require the `workflow` scope on the GitHub OAuth token — without it, `gh pr merge` fails with a GraphQL error. Use the deterministic helper:
+
+    ```bash
+    source ~/.aidevops/agents/scripts/pulse-wrapper.sh || true
+    check_workflow_merge_guard <number> <slug>
+    wf_guard=$?
+    if [[ $wf_guard -eq 1 ]]; then
+      # Blocked — comment posted, skip merge this cycle
+      continue
+    fi
+    # wf_guard 0 or 2 = safe to proceed (no workflow files, has scope, or API error — fail open)
+    ```
+
+    If blocked, the comment tells the user to run `gh auth refresh -s workflow`. Once the scope is added, the next pulse cycle merges normally. If the PR already has a `needs-workflow-scope` label, skip the check — the comment was already posted.
   - **Review gate (t2839, GH#3932):** Run `review-bot-gate-helper.sh check <number> <slug>` first, then check formal review count with `gh pr view <number> --repo <slug> --json reviews --jq '.reviews | length'`.
   - **Merge conditions (any one is sufficient):**
     1. Formal review count > 0 (at least one bot or human submitted a review) — merge.

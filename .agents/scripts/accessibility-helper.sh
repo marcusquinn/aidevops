@@ -97,8 +97,13 @@ load_wave_api_key() {
 	fi
 
 	# Try gopass (encrypted, preferred)
+	# secret-helper.sh normalizes names to uppercase (wave-api-key -> WAVE_API_KEY)
+	# Try normalized path first, then legacy lowercase for backward compatibility
 	if command -v gopass &>/dev/null; then
-		WAVE_API_KEY=$(gopass show -o "aidevops/wave-api-key" 2>/dev/null || echo "")
+		WAVE_API_KEY=$(gopass show -o "aidevops/WAVE_API_KEY" 2>/dev/null || echo "")
+		if [[ -z "$WAVE_API_KEY" ]]; then
+			WAVE_API_KEY=$(gopass show -o "aidevops/wave-api-key" 2>/dev/null || echo "")
+		fi
 		if [[ -n "$WAVE_API_KEY" ]]; then
 			export WAVE_API_KEY
 			return 0
@@ -322,6 +327,12 @@ wave_docs() {
 		return 1
 	}
 
+	# Validate JSON before parsing
+	if ! echo "$result" | jq empty 2>/dev/null; then
+		print_error "WAVE API returned invalid JSON (possible HTML error page)"
+		return 1
+	fi
+
 	echo ""
 	print_header_line "WAVE Documentation: $item_id"
 
@@ -375,6 +386,12 @@ wave_credits() {
 		return 1
 	}
 
+	# Validate JSON before parsing
+	if ! echo "$result" | jq empty 2>/dev/null; then
+		print_error "WAVE API returned invalid JSON (possible HTML error page)"
+		return 1
+	fi
+
 	local success
 	success=$(echo "$result" | jq -r '.status.success // false')
 	if [[ "$success" != "true" ]]; then
@@ -398,6 +415,15 @@ run_lighthouse_a11y() {
 	local url="$1"
 	local strategy="${2:-desktop}"
 
+	case "$strategy" in
+	desktop | mobile) ;;
+	*)
+		print_error "Invalid Lighthouse strategy: $strategy"
+		print_info "Use: desktop or mobile"
+		return 1
+		;;
+	esac
+
 	check_lighthouse || return 1
 	check_jq || return 1
 
@@ -410,13 +436,12 @@ run_lighthouse_a11y() {
 	local report_file="${A11Y_REPORTS_DIR}/lighthouse_a11y_${timestamp}.json"
 
 	local chrome_flags="--headless --no-sandbox --disable-gpu"
-	local preset_flag="--preset=desktop"
-	local screen_emulation="--screenEmulation.disabled"
-
-	if [[ "$strategy" == "mobile" ]]; then
-		# Mobile is Lighthouse's default — no --preset flag needed
-		preset_flag=""
-		screen_emulation=""
+	# Lighthouse --preset only accepts: desktop, perf, experimental.
+	# Mobile is the default (no preset flag needed).
+	local lighthouse_args=()
+	if [[ "$strategy" == "desktop" ]]; then
+		lighthouse_args+=(--preset=desktop)
+		lighthouse_args+=(--screenEmulation.disabled)
 	fi
 
 	if lighthouse "$url" \
@@ -424,9 +449,8 @@ run_lighthouse_a11y() {
 		--output=json \
 		--output-path="$report_file" \
 		--chrome-flags="$chrome_flags" \
-		${preset_flag:+"$preset_flag"} \
-		${screen_emulation:+"$screen_emulation"} \
-		--quiet 2>>"$LOG_FILE"; then
+		${lighthouse_args[@]+"${lighthouse_args[@]}"} \
+		--quiet; then
 
 		print_success "Report saved: $report_file"
 		parse_lighthouse_a11y "$report_file"
@@ -450,7 +474,7 @@ parse_lighthouse_a11y() {
 	if [[ "$score" != "N/A" ]]; then
 		local pct
 		pct=$(awk -v s="$score" 'BEGIN { printf "%.0f", s * 100 }')
-		local int_pct="$pct"
+		local int_pct="${pct%.*}"
 
 		if [[ "$int_pct" -ge 90 ]]; then
 			echo -e "  Score: ${GREEN}${int_pct}%${NC} (Good)"
@@ -550,12 +574,13 @@ run_pa11y_audit() {
 		fi
 	fi
 
-	parse_pa11y_report "$report_file"
+	parse_pa11y_report "$report_file" "$standard"
 	return 0
 }
 
 parse_pa11y_report() {
 	local report_file="$1"
+	local standard="${2:-$A11Y_WCAG_LEVEL}"
 
 	check_jq || return 1
 
@@ -572,7 +597,7 @@ parse_pa11y_report() {
 	notices=$(jq '[.[] | select(.type == "notice")] | length' "$report_file" 2>/dev/null || echo "0")
 
 	echo ""
-	print_header_line "pa11y Results ($A11Y_WCAG_LEVEL)"
+	print_header_line "pa11y Results ($standard)"
 	echo "  Total issues: $total"
 
 	if [[ "$errors" -gt 0 ]]; then
@@ -630,8 +655,12 @@ check_email_a11y() {
 		return 0
 	}
 
-	# grep -c exits non-zero when count is 0; this wrapper returns "0" cleanly
-	_grep_count() { grep -ciE "$@" 2>/dev/null || true; }
+	# Count matched occurrences (not matching lines) so minified HTML is handled correctly
+	_grep_count() {
+		local pattern="$1"
+		local file="$2"
+		(grep -oiE "$pattern" "$file" 2>/dev/null || true) | awk 'END { print NR }'
+	}
 
 	_append "Email Accessibility Report"
 	_append "File: $file"
@@ -764,6 +793,11 @@ hex_to_rgb() {
 	local hex="$1"
 	hex="${hex#\#}"
 
+	if [[ ! "$hex" =~ ^([[:xdigit:]]{3}|[[:xdigit:]]{6})$ ]]; then
+		print_error "Invalid hex color: $1"
+		return 1
+	fi
+
 	# Expand shorthand (e.g., #fff -> #ffffff)
 	if [[ ${#hex} -eq 3 ]]; then
 		hex="${hex:0:1}${hex:0:1}${hex:1:1}${hex:1:1}${hex:2:1}${hex:2:1}"
@@ -803,8 +837,12 @@ check_contrast() {
 	local bg="$2"
 
 	local fg_rgb bg_rgb
-	fg_rgb=$(hex_to_rgb "$fg")
-	bg_rgb=$(hex_to_rgb "$bg")
+	if ! fg_rgb=$(hex_to_rgb "$fg"); then
+		return 1
+	fi
+	if ! bg_rgb=$(hex_to_rgb "$bg"); then
+		return 1
+	fi
 
 	local fg_r fg_g fg_b bg_r bg_g bg_b
 	read -r fg_r fg_g fg_b <<<"$fg_rgb"
@@ -1139,7 +1177,7 @@ main() {
 	"install-deps")
 		install_deps
 		;;
-	"help" | *)
+	"help")
 		print_header_line "Accessibility & Contrast Testing Helper"
 		echo "Usage: $0 [command] [options]"
 		echo ""
@@ -1184,6 +1222,11 @@ main() {
 		echo "  $0 bulk websites.txt"
 		echo ""
 		echo "Reports saved to: $A11Y_REPORTS_DIR"
+		;;
+	*)
+		print_error "Unknown command: $command"
+		print_info "Run: $0 help"
+		return 1
 		;;
 	esac
 }
