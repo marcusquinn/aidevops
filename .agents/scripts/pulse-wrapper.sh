@@ -2174,12 +2174,43 @@ _refresh_person_stats_cache() {
 
 	mkdir -p "$PERSON_STATS_CACHE_DIR"
 
+	# t1426: Estimate Search API cost before calling person_stats().
+	# person_stats() burns ~4 Search API requests per contributor per repo.
+	# GitHub Search API limit is 30 req/min. Check remaining budget against
+	# estimated cost to avoid blocking the pulse with rate-limit sleeps.
+	local search_remaining
+	search_remaining=$(gh api rate_limit --jq '.resources.search.remaining' 2>/dev/null) || search_remaining=0
+
 	# Per-repo person-stats
 	local repo_entries
 	repo_entries=$(jq -r '.initialized_repos[] | select(.pulse == true and (.local_only // false) == false and .slug != "") | "\(.slug)|\(.path)"' "$repos_json" 2>/dev/null || echo "")
 
+	# Count repos to estimate minimum cost (at least 1 contributor × 4 queries per repo)
+	local repo_count=0
+	local search_api_cost_per_contributor=4
+	while IFS='|' read -r _slug _path; do
+		[[ -z "$_slug" ]] && continue
+		repo_count=$((repo_count + 1))
+	done <<<"$repo_entries"
+
+	# Minimum budget: repo_count × 1 contributor × 4 queries. In practice,
+	# repos have 2-3 contributors, so this is a conservative lower bound.
+	local min_budget_needed=$((repo_count * search_api_cost_per_contributor))
+	if [[ "$search_remaining" -lt "$min_budget_needed" ]]; then
+		echo "[pulse-wrapper] Person stats cache refresh skipped: Search API budget ${search_remaining} < estimated cost ${min_budget_needed} (${repo_count} repos × ${search_api_cost_per_contributor} queries/contributor)" >>"$LOGFILE"
+		return 0
+	fi
+
 	while IFS='|' read -r slug path; do
 		[[ -z "$slug" ]] && continue
+
+		# Re-check budget before each repo — bail early if exhausted mid-refresh
+		search_remaining=$(gh api rate_limit --jq '.resources.search.remaining' 2>/dev/null) || search_remaining=0
+		if [[ "$search_remaining" -lt "$search_api_cost_per_contributor" ]]; then
+			echo "[pulse-wrapper] Person stats cache refresh stopped mid-run: Search API budget exhausted (${search_remaining} remaining)" >>"$LOGFILE"
+			break
+		fi
+
 		local slug_safe="${slug//\//-}"
 		local cache_file="${PERSON_STATS_CACHE_DIR}/person-stats-cache-${slug_safe}.md"
 		local md
@@ -2189,10 +2220,11 @@ _refresh_person_stats_cache() {
 		fi
 	done <<<"$repo_entries"
 
-	# Cross-repo person-stats
+	# Cross-repo person-stats — also gated on remaining budget
+	search_remaining=$(gh api rate_limit --jq '.resources.search.remaining' 2>/dev/null) || search_remaining=0
 	local all_repo_paths
 	all_repo_paths=$(jq -r '.initialized_repos[] | select(.pulse == true and (.local_only // false) == false) | .path' "$repos_json" 2>/dev/null || echo "")
-	if [[ -n "$all_repo_paths" ]]; then
+	if [[ -n "$all_repo_paths" && "$search_remaining" -ge "$search_api_cost_per_contributor" ]]; then
 		local -a cross_args=()
 		while IFS= read -r rp; do
 			[[ -n "$rp" ]] && cross_args+=("$rp")
