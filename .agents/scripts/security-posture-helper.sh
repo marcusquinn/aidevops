@@ -584,6 +584,8 @@ store_posture() {
 		posture_status="$SEVERITY_CRITICAL"
 	elif [[ "$FINDINGS_WARNING" -gt 0 ]]; then
 		posture_status="$SEVERITY_WARNING"
+	elif [[ "$FINDINGS_INFO" -gt 0 && "$FINDINGS_PASS" -eq 0 ]]; then
+		posture_status="partial"
 	elif [[ "$total_findings" -gt 0 ]]; then
 		posture_status="good"
 	fi
@@ -593,6 +595,7 @@ store_posture() {
 		--arg ts "$timestamp" \
 		--argjson critical "$FINDINGS_CRITICAL" \
 		--argjson warnings "$FINDINGS_WARNING" \
+		--argjson info "$FINDINGS_INFO" \
 		--argjson passed "$FINDINGS_PASS" \
 		--argjson findings "$FINDINGS_JSON" \
 		'.security_posture = {
@@ -600,6 +603,7 @@ store_posture() {
 			"last_audit": $ts,
 			"critical": $critical,
 			"warnings": $warnings,
+			"info": $info,
 			"passed": $passed,
 			"findings": $findings
 		}' "$config_file" >"$temp_file" && mv "$temp_file" "$config_file"
@@ -632,6 +636,9 @@ print_summary() {
 				;;
 			warning)
 				echo "Security: $stored_warnings warning(s) — run \`aidevops security audit\` for details (last: $stored_ts)"
+				;;
+			partial)
+				echo "Security: audit completed with skipped checks — review findings (last: $stored_ts)"
 				;;
 			good)
 				echo "Security: all checks passed (last: $stored_ts)"

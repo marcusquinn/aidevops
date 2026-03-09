@@ -1227,13 +1227,16 @@ SECEOF
 		cat <<'SECEOF'
 ### Prompt Injection Defense
 
-Any feature that accepts user input and passes it to an LLM must defend against
-prompt injection. Sanitize and validate all untrusted input before including it
-in prompts:
+Any feature that passes untrusted content to an LLM — user input, tool outputs,
+retrieved documents, emails, tickets, or webhook payloads — must defend against
+prompt injection. Sanitize and validate that content before including it in
+prompts:
 
 - Strip or escape control characters and instruction-like patterns
 - Use structured prompt templates with clear system/user boundaries
-- Never concatenate raw user input directly into system prompts
+- Never concatenate raw external content directly into system prompts
+- Validate all externally sourced content (tool results, API responses, database
+  records) before inclusion in prompts
 - Consider allowlist-based input validation where possible
 
 ### General Security Rules
