@@ -227,6 +227,58 @@ Issues and PRs from non-maintainers (check `authorAssociation`: `NONE`, `FIRST_T
 
 The principle: fix our bugs, but don't commit to supporting external tools without maintainer sign-off. Compatibility is best-effort, not guaranteed.
 
+### Comment-based approval for needs-maintainer-review issues (t1421)
+
+Issues with the `needs-maintainer-review` label (e.g., `simplification-debt` from `/code-simplifier`, or external feature requests) can be approved or declined by the maintainer commenting on the issue instead of manually editing labels. The pulse scans these comments each cycle.
+
+**How to scan:** For each open issue with `needs-maintainer-review` in the pre-fetched state, fetch comments and check for approval/decline keywords from the repo maintainer:
+
+```bash
+# Get the maintainer for this repo
+MAINTAINER=$(jq -r '.initialized_repos[] | select(.slug == "<slug>") | .maintainer // empty' ~/.config/aidevops/repos.json)
+if [[ -z "$MAINTAINER" ]]; then
+  MAINTAINER=$(echo "<slug>" | cut -d/ -f1)
+fi
+
+# Fetch comments and check for maintainer approval/decline
+# Look for the LAST comment from the maintainer that matches
+COMMENT_DATA=$(gh api "repos/<slug>/issues/<number>/comments" \
+  --jq "[.[] | select(.user.login == \"$MAINTAINER\")] | last | {body: .body, id: .id}")
+COMMENT_BODY=$(echo "$COMMENT_DATA" | jq -r '.body // empty' | tr '[:upper:]' '[:lower:]' | xargs)
+```
+
+**Three outcomes:**
+
+1. **Comment starts with `approved`** (case-insensitive) — the maintainer wants this dispatched:
+
+```bash
+gh issue edit <number> --repo <slug> \
+  --remove-label "needs-maintainer-review" \
+  --add-label "auto-dispatch"
+gh issue comment <number> --repo <slug> \
+  --body "Maintainer approved via comment. Removed \`needs-maintainer-review\`, added \`auto-dispatch\`. Issue is now in the dispatch queue."
+```
+
+The issue becomes dispatchable this cycle (priority 8 for `simplification-debt`, normal priority for other issue types).
+
+2. **Comment starts with `declined`** (case-insensitive) — the maintainer rejects this:
+
+```bash
+# Extract the reason (everything after "declined" or "declined:")
+REASON=$(echo "$COMMENT_BODY" | sed -E 's/^declined:?\s*//')
+gh issue close <number> --repo <slug> \
+  -c "Closed per maintainer decision. Reason: ${REASON:-no reason given}"
+```
+
+3. **No matching comment from maintainer** — skip, check again next cycle.
+
+**Guard rails:**
+
+- Only process comments from the repo maintainer (from `repos.json` or slug owner). Ignore comments from bots, other contributors, or the agent itself.
+- Only check the maintainer's **most recent** comment — earlier comments may have been superseded.
+- This is additive — direct label manipulation still works. If the maintainer has already removed `needs-maintainer-review` via labels, the issue won't appear in this scan.
+- Keep this lightweight — one API call per `needs-maintainer-review` issue per cycle. These issues are low-volume by design.
+
 ### Kill stuck workers
 
 Check `ps axo pid,etime,command | grep '/full-loop' | grep '\.opencode'`. Any worker running 3+ hours with no open PR is likely stuck. Kill it: `kill <pid>`. Comment on the issue with the full audit-quality fields (model, branch, reason, diagnosis, next action — see "Audit-quality state in issue and PR comments" below). This frees a slot. If the worker has recent commits or an open PR with activity, leave it alone — it's making progress.

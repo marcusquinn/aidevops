@@ -318,10 +318,15 @@ gh issue create --repo <slug> \
   --title "simplification: <brief description>" \
   --label "simplification-debt" --label "needs-maintainer-review" \
   --assignee "$MAINTAINER" \
-  --body "<structured finding>"
+  --body "<structured finding>
+
+---
+**To approve or decline**, comment on this issue:
+- \`approved\` — removes the review gate and queues for automated dispatch
+- \`declined: <reason>\` — closes this issue (include your reason after the colon)"
 ```
 
-GitHub sends a notification to the assignee on creation. The `needs-maintainer-review` label prevents the pulse from dispatching a worker.
+GitHub sends a notification to the assignee on creation. The `needs-maintainer-review` label prevents the pulse from dispatching a worker. The footer tells the maintainer exactly how to act — no label commands needed.
 
 ### Maintainer review (interactive)
 
@@ -331,24 +336,26 @@ The maintainer reviews pending simplification issues via any of:
 - **Label filter** -- `gh issue list --label simplification-debt --label needs-maintainer-review`
 - **Dashboard** -- `/dashboard --pending-review` shows all items awaiting maintainer decision (see dashboard.md)
 
-For each issue, the maintainer either:
+For each issue, the maintainer comments on the issue:
 
-**Approves** (issue becomes dispatchable):
+**Approves** -- comment `approved` (case-insensitive). The pulse scans for this keyword from the maintainer, removes `needs-maintainer-review`, adds `auto-dispatch`, and the issue enters the dispatch queue.
+
+**Declines** -- comment `declined: <reason>` (e.g., `declined: this verbosity is intentional, see t1345`). The pulse closes the issue with the maintainer's reason preserved.
+
+**Defers** -- no comment needed. The issue stays in `needs-maintainer-review` for later review.
+
+**Label fallback** -- maintainers who prefer direct label manipulation can still use:
 
 ```bash
+# Approve via labels
 gh issue edit <number> --repo <slug> \
   --remove-label "needs-maintainer-review" \
   --add-label "auto-dispatch"
-```
 
-**Declines** (issue is closed):
-
-```bash
+# Decline via labels
 gh issue close <number> --repo <slug> \
-  -c "Declined: <reason — e.g., 'this verbosity is intentional, see t1345'>"
+  -c "Declined: <reason>"
 ```
-
-**Defers** (leave as-is for later review — no action needed).
 
 ### Pulse behaviour
 
@@ -357,12 +364,15 @@ The pulse already skips `needs-maintainer-review` issues (see pulse.md "External
 ### Label lifecycle
 
 ```text
-/code-simplifier creates issue
+/code-simplifier creates issue (with approval instructions in footer)
     |
     v
 [simplification-debt] + [needs-maintainer-review] + assigned to maintainer
     |
-    +--> Maintainer approves --> remove [needs-maintainer-review], add [auto-dispatch]
+    +--> Maintainer comments "approved"
+    |       |
+    |       v
+    |    Pulse scans comment --> remove [needs-maintainer-review], add [auto-dispatch]
     |       |
     |       v
     |    Pulse dispatches worker --> [status:queued] --> [status:in-progress]
@@ -370,9 +380,9 @@ The pulse already skips `needs-maintainer-review` issues (see pulse.md "External
     |       v
     |    Worker opens PR --> [status:in-review] --> PR merged --> [status:done]
     |
-    +--> Maintainer declines --> issue closed with reason
+    +--> Maintainer comments "declined: <reason>" --> pulse closes issue
     |
-    +--> Maintainer defers --> no change (reviewed on next pass)
+    +--> Maintainer defers (no comment) --> no change (reviewed on next pass)
 ```
 
 ## Integration with Quality Workflow
@@ -384,7 +394,9 @@ Periodic review --> /code-simplifier (analyse)
                         |
                     Issues created (needs-maintainer-review)
                         |
-                    Maintainer approves/declines via labels
+                    Maintainer comments "approved" or "declined: reason"
+                        |
+                    Pulse processes comment (labels + close)
                         |
                     Approved items dispatched (priority 8)
                         |
