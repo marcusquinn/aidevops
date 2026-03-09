@@ -112,7 +112,7 @@ add_model_label() {
 
 	# Detect repo slug
 	if [[ -z "$project_root" ]]; then
-		project_root=$(find_project_root 2>/dev/null || echo ".")
+		project_root=$(find_project_root 2>>"${SUPERVISOR_LOG:-/dev/null}" || echo ".")
 	fi
 	local repo_slug
 	repo_slug=$(detect_repo_slug "$project_root" 2>/dev/null || echo "")
@@ -225,7 +225,7 @@ cmd_labels() {
 	# Detect repo if not provided
 	if [[ -z "$repo_slug" ]]; then
 		local project_root
-		project_root=$(find_project_root 2>/dev/null || echo ".")
+		project_root=$(find_project_root 2>>"${SUPERVISOR_LOG:-/dev/null}" || echo ".")
 		repo_slug=$(detect_repo_slug "$project_root" 2>/dev/null || echo "")
 	fi
 
@@ -370,7 +370,7 @@ sync_issue_status_label() {
 	local repo_path
 	repo_path=$(db "$SUPERVISOR_DB" "SELECT repo FROM tasks WHERE id = '$escaped_id';" 2>>"${SUPERVISOR_LOG:-/dev/null}" || echo "")
 	if [[ -z "$repo_path" ]]; then
-		repo_path=$(find_project_root 2>/dev/null || echo ".")
+		repo_path=$(find_project_root 2>>"${SUPERVISOR_LOG:-/dev/null}" || echo ".")
 	fi
 
 	local issue_number
@@ -1401,7 +1401,7 @@ find_task_issue_number() {
 	task_id_escaped=$(printf '%s' "$task_id" | sed 's/\./\\./g')
 
 	if [[ -z "$project_root" ]]; then
-		project_root=$(find_project_root 2>/dev/null || echo ".")
+		project_root=$(find_project_root 2>>"${SUPERVISOR_LOG:-/dev/null}" || echo ".")
 	fi
 
 	local todo_file="$project_root/TODO.md"
@@ -1505,7 +1505,7 @@ cmd_claim() {
 	if [[ -n "$explicit_root" && -f "$explicit_root/TODO.md" ]]; then
 		project_root="$explicit_root"
 	else
-		project_root=$(find_project_root 2>/dev/null || echo "")
+		project_root=$(find_project_root 2>>"${SUPERVISOR_LOG:-/dev/null}" || echo "")
 		# Fallback: look up repo from task DB record (needed for cron/non-interactive)
 		if [[ -z "$project_root" || ! -f "$project_root/TODO.md" ]]; then
 			local db_repo=""
@@ -1640,7 +1640,7 @@ cmd_unclaim() {
 	if [[ -n "$explicit_root" && -f "$explicit_root/TODO.md" ]]; then
 		project_root="$explicit_root"
 	else
-		project_root=$(find_project_root 2>/dev/null || echo "")
+		project_root=$(find_project_root 2>>"${SUPERVISOR_LOG:-/dev/null}" || echo "")
 		# Fallback: look up repo from task DB record (needed for cron/non-interactive)
 		if [[ -z "$project_root" || ! -f "$project_root/TODO.md" ]]; then
 			local db_repo=""
