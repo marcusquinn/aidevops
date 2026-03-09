@@ -650,28 +650,65 @@ _lang_badge() {
 	return 0
 }
 
+# --- Sanitize a string for safe use in markdown ---
+# Strips characters that could break markdown link/image syntax
+_sanitize_md() {
+	local input="$1"
+	# Remove markdown-breaking characters: [ ] ( ) and backticks
+	local sanitized
+	sanitized="${input//[\[\]()]/}"
+	sanitized="${sanitized//\`/}"
+	echo "$sanitized"
+	return 0
+}
+
+# --- Validate a URL for safe embedding in markdown ---
+# Rejects javascript: URIs and non-http(s) schemes
+_sanitize_url() {
+	local url="$1"
+	# Only allow http:// and https:// schemes
+	if [[ "$url" =~ ^https?:// ]]; then
+		echo "$url"
+	else
+		# Reject javascript:, data:, and other schemes
+		echo ""
+	fi
+	return 0
+}
+
 # --- Generate rich profile README from GitHub data ---
 _generate_rich_readme() {
 	local gh_user="$1"
 	local readme_path="$2"
 
-	# Fetch user profile
+	# Fetch user profile — single jq pass for all fields
 	local user_json
-	user_json=$(gh api "users/${gh_user}" 2>/dev/null) || user_json="{}"
+	user_json=$(gh api "users/${gh_user}") || user_json="{}"
 	local display_name bio blog twitter
-	display_name=$(echo "$user_json" | jq -r '.name // empty' 2>/dev/null)
+	IFS=$'\t' read -r display_name bio blog twitter < <(
+		echo "$user_json" | jq -r '[
+			(.name // ""),
+			(.bio // ""),
+			(if .blog != null and .blog != "" then .blog else "" end),
+			(if .twitter_username != null and .twitter_username != "" then .twitter_username else "" end)
+		] | join("\t")' || printf '\t\t\t\n'
+	)
 	display_name="${display_name:-$gh_user}"
-	bio=$(echo "$user_json" | jq -r '.bio // empty' 2>/dev/null)
-	blog=$(echo "$user_json" | jq -r 'select(.blog != null and .blog != "") | .blog' 2>/dev/null)
-	twitter=$(echo "$user_json" | jq -r 'select(.twitter_username != null and .twitter_username != "") | .twitter_username' 2>/dev/null)
+
+	# Sanitize user-controlled fields
+	display_name=$(_sanitize_md "$display_name")
+	bio=$(_sanitize_md "$bio")
+	blog=$(_sanitize_url "$blog")
+	# twitter is used as a path component, strip non-alphanumeric/underscore
+	twitter="${twitter//[^a-zA-Z0-9_]/}"
 
 	# Fetch repos and detect languages
 	local repos_json
-	repos_json=$(gh api "users/${gh_user}/repos?per_page=100&sort=updated" 2>/dev/null) || repos_json="[]"
+	repos_json=$(gh api "users/${gh_user}/repos?per_page=100&sort=updated") || repos_json="[]"
 
 	# Unique languages from all repos (sorted)
 	local languages
-	languages=$(echo "$repos_json" | jq -r '[.[].language | select(. != null)] | unique | .[]' 2>/dev/null)
+	languages=$(echo "$repos_json" | jq -r '[.[].language | select(. != null)] | unique | .[]')
 
 	# Build badge line
 	local badges=""
@@ -686,39 +723,37 @@ _generate_rich_readme() {
 	badges="${badges}"'![Linux](https://img.shields.io/badge/-Linux-FCC624?style=flat-square&logo=linux&logoColor=black)'$'\n'
 	badges="${badges}"'![Git](https://img.shields.io/badge/-Git-F05032?style=flat-square&logo=git&logoColor=white)'$'\n'
 
-	# Build own repos section (non-fork, non-profile, with description)
-	local own_repos=""
-	while IFS= read -r row; do
-		[[ -z "$row" ]] && continue
-		local rname rdesc rurl
-		rname=$(echo "$row" | jq -r '.name')
-		rdesc=$(echo "$row" | jq -r '.description // "No description"')
-		rurl=$(echo "$row" | jq -r '.html_url')
-		own_repos="${own_repos}- **[${rname}](${rurl})** -- ${rdesc}"$'\n'
-	done < <(echo "$repos_json" | jq -c ".[] | select(.fork == false and .name != \"${gh_user}\")")
+	# Build own repos section — single jq pass (no loop)
+	local own_repos
+	own_repos=$(echo "$repos_json" | jq -r --arg user "$gh_user" '
+		[.[] | select(.fork == false and .name != $user)] |
+		map("- **[\(.name)](\(.html_url))** -- \(.description // "No description")") |
+		.[]
+	')
 
-	# Build contributions section (forks with description)
+	# Build contributions section — batch-fetch parent URLs for forks
+	local fork_names
+	fork_names=$(echo "$repos_json" | jq -r '.[] | select(.fork == true) | .name')
 	local contrib_repos=""
-	while IFS= read -r row; do
-		[[ -z "$row" ]] && continue
-		local rname rdesc rurl
-		rname=$(echo "$row" | jq -r '.name')
-		rdesc=$(echo "$row" | jq -r '.description // "No description"')
-		rurl=$(echo "$row" | jq -r '.html_url')
-		# Try to get parent repo URL
-		local parent_url
-		parent_url=$(gh api "repos/${gh_user}/${rname}" --jq '.parent.html_url // empty' 2>/dev/null)
-		if [[ -n "$parent_url" ]]; then
-			contrib_repos="${contrib_repos}- **[${rname}](${parent_url})** -- ${rdesc}"$'\n'
-		else
+	if [[ -n "$fork_names" ]]; then
+		# Fetch all fork details in parallel (up to 6 concurrent) to get parent URLs
+		local fork_details
+		fork_details=$(echo "$fork_names" | xargs -P 6 -I{} gh api "repos/${gh_user}/{}" --jq '
+			"\(.name)\t\(.description // "No description")\t\(.parent.html_url // .html_url)"
+		' 2>/dev/null || true)
+		while IFS=$'\t' read -r rname rdesc rurl; do
+			[[ -z "$rname" ]] && continue
 			contrib_repos="${contrib_repos}- **[${rname}](${rurl})** -- ${rdesc}"$'\n'
-		fi
-	done < <(echo "$repos_json" | jq -c '.[] | select(.fork == true)')
+		done <<<"$fork_details"
+	fi
 
 	# Build connect section
 	local connect=""
 	if [[ -n "$blog" ]]; then
-		connect="${connect}[![Website](https://img.shields.io/badge/-${blog##*//}-FF5722?style=flat-square&logo=hugo&logoColor=white)](${blog})"$'\n'
+		local blog_display
+		blog_display="${blog##*//}"
+		blog_display=$(_sanitize_md "$blog_display")
+		connect="${connect}[![Website](https://img.shields.io/badge/-${blog_display}-FF5722?style=flat-square&logo=hugo&logoColor=white)](${blog})"$'\n'
 	fi
 	if [[ -n "$twitter" ]]; then
 		connect="${connect}[![X](https://img.shields.io/badge/-@${twitter}-000000?style=flat-square&logo=x&logoColor=white)](https://twitter.com/${twitter})"$'\n'
@@ -747,7 +782,7 @@ _generate_rich_readme() {
 		if [[ -n "$own_repos" ]]; then
 			echo "## Projects"
 			echo ""
-			printf '%s' "$own_repos"
+			printf '%s\n' "$own_repos"
 			echo ""
 		fi
 		# Contributions
