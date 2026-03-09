@@ -32,11 +32,29 @@ jobs:
   review-bot-gate:
     name: Wait for AI Review Bots
     runs-on: ubuntu-latest
-    # Only run on PRs (issue_comment fires for PR comments too)
+    # Only run on PRs (issue_comment fires for PR comments too).
+    # GH#4002: Skip pull_request_review events from known review bots.
+    # GitHub requires manual approval for workflow runs triggered by bot
+    # accounts on pull_request_review and pull_request_review_comment events,
+    # causing permanent action_required status on PRs. The issue_comment
+    # event from bots does NOT require approval, so we allow it — this is
+    # the primary re-trigger path when a bot posts its review as a comment.
     if: >
-      github.event_name == 'pull_request' ||
-      github.event_name == 'pull_request_review' ||
-      (github.event_name == 'issue_comment' && github.event.issue.pull_request)
+      (
+        github.event_name == 'pull_request' ||
+        github.event_name == 'pull_request_review' ||
+        (github.event_name == 'issue_comment' && github.event.issue.pull_request)
+      ) && !(
+        github.event_name == 'pull_request_review' && (
+          github.actor == 'coderabbitai' ||
+          github.actor == 'gemini-code-assist[bot]' ||
+          github.actor == 'augment-code[bot]' ||
+          github.actor == 'augmentcode[bot]' ||
+          github.actor == 'copilot[bot]' ||
+          github.actor == 'github-actions[bot]' ||
+          github.actor == 'dependabot[bot]'
+        )
+      )
 
     permissions:
       pull-requests: read

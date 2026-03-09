@@ -22,10 +22,20 @@ on:
 
 jobs:
   opencode:
-    # Only run if comment contains /oc or /opencode
-    if: |
-      contains(github.event.comment.body, '/oc') ||
-      contains(github.event.comment.body, '/opencode')
+    # Only run if comment contains /oc or /opencode.
+    # GH#4002: Also skip known review bots — their comments never contain
+    # trigger commands, and bot-triggered runs require manual approval,
+    # causing permanent action_required status on PRs.
+    if: >
+      (
+        contains(github.event.comment.body, '/oc') ||
+        contains(github.event.comment.body, '/opencode')
+      ) &&
+      github.actor != 'coderabbitai' &&
+      github.actor != 'gemini-code-assist[bot]' &&
+      github.actor != 'copilot[bot]' &&
+      github.actor != 'github-actions[bot]' &&
+      github.actor != 'dependabot[bot]'
     runs-on: ubuntu-latest
     
     permissions:
