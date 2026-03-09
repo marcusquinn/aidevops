@@ -48,7 +48,7 @@ check_python_for_skill_scanner() {
 	# 3. If uv is available, install Python 3.11 and retry
 	if command -v uv &>/dev/null; then
 		print_info "No Python >= 3.10 found. Installing Python 3.11 via uv..."
-		if uv python install 3.11 2>/dev/null; then
+		if uv python install 3.11; then
 			# uv installs to its managed path; check if python3.11 is now available
 			if command -v python3.11 &>/dev/null && _python_version_ok python3.11; then
 				print_success "Python 3.11 installed via uv"
@@ -61,6 +61,9 @@ check_python_for_skill_scanner() {
 				print_success "Python 3.11 installed via uv (at $uv_py)"
 				return 0
 			fi
+			print_warning "uv installed Python 3.11 but it could not be found on PATH"
+		else
+			print_warning "uv python install 3.11 failed — see errors above"
 		fi
 	fi
 
