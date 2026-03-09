@@ -146,12 +146,18 @@ get_current_branch() {
 }
 
 # Get the default branch (main or master) (GH#3797)
-# Checks all remotes for HEAD, not just origin.
+# Checks all remotes for HEAD, preferring origin first.
 get_default_branch() {
-	# Try to get from any remote's HEAD (prefer origin, then first available)
+	# Try origin first, then any other remote HEAD
 	local default_branch=""
 	local remote
+	default_branch=$(git symbolic-ref "refs/remotes/origin/HEAD" 2>/dev/null | sed 's@^refs/remotes/origin/@@')
+	if [[ -n "$default_branch" ]]; then
+		echo "$default_branch"
+		return 0
+	fi
 	for remote in $(git remote 2>/dev/null); do
+		[[ "$remote" == "origin" ]] && continue
 		default_branch=$(git symbolic-ref "refs/remotes/${remote}/HEAD" 2>/dev/null | sed "s@^refs/remotes/${remote}/@@")
 		if [[ -n "$default_branch" ]]; then
 			echo "$default_branch"
@@ -189,9 +195,12 @@ _get_branch_remote() {
 		echo "$configured_remote"
 		return 0
 	fi
-	# Fallback: find any remote that has a tracking ref for this branch
+	# Fallback: prefer origin before checking other remotes for predictability
 	local ref
-	ref=$(git for-each-ref --format='%(refname)' "refs/remotes/*/$branch" | head -1)
+	ref=$(git for-each-ref --format='%(refname)' "refs/remotes/origin/$branch" 2>/dev/null)
+	if [[ -z "$ref" ]]; then
+		ref=$(git for-each-ref --format='%(refname)' "refs/remotes/*/$branch" | head -1)
+	fi
 	if [[ -n "$ref" ]]; then
 		# Extract remote name from refs/remotes/<remote>/<branch>
 		local remote_name
@@ -382,12 +391,14 @@ worktree_has_changes() {
 		fi
 		local changes
 		# Exclude aidevops runtime files: .agents/loop-state/, .agents/tmp/, .DS_Store
+		# Use literal '??' (not '\?\?') to match git status untracked prefix.
+		# Append '|| true' so the pipeline doesn't fail under pipefail when all lines are filtered.
 		changes=$(echo "$status_output" |
-			grep -v '^\?\? \.agents/loop-state/' |
-			grep -v '^\?\? \.agents/tmp/' |
-			grep -v '^\?\? \.agents/$' |
-			grep -v '^\?\? \.DS_Store' |
-			head -1)
+			grep -v '^?? \.agents/loop-state/' |
+			grep -v '^?? \.agents/tmp/' |
+			grep -v '^?? \.agents/$' |
+			grep -v '^?? \.DS_Store' |
+			head -1 || true)
 		[[ -n "$changes" ]]
 	else
 		return 1
@@ -760,9 +771,14 @@ cmd_clean() {
 
 	# Fetch to get current remote branch state (detects deleted branches)
 	# Prune all remotes, not just origin (GH#3797)
+	# Track fetch failures to avoid false-positive "remote deleted" heuristics
+	local remote_state_unknown=false
 	local remote
 	for remote in $(git remote 2>/dev/null); do
-		git fetch --prune "$remote" 2>/dev/null || true
+		if ! git fetch --prune "$remote" 2>/dev/null; then
+			echo -e "${YELLOW}Warning: failed to refresh $remote; skipping remote-deleted cleanup checks${NC}"
+			remote_state_unknown=true
+		fi
 	done
 
 	# Build a lookup of merged PR branches for squash-merge detection.
@@ -790,7 +806,8 @@ cmd_clean() {
 				# Check 2: Remote branch deleted (indicates squash merge or PR closed)
 				# ONLY check this if the branch was previously pushed - unpushed branches should NOT be flagged
 				# Check all remotes, not just origin (consistent with branch_was_pushed)
-				elif branch_was_pushed "$worktree_branch" && ! _branch_exists_on_any_remote "$worktree_branch"; then
+				# Skip if fetch failed — stale refs could cause false-positive deletion
+				elif [[ "$remote_state_unknown" == "false" ]] && branch_was_pushed "$worktree_branch" && ! _branch_exists_on_any_remote "$worktree_branch"; then
 					is_merged=true
 					merge_type="remote deleted"
 				# Check 3: Squash-merge detection via GitHub PR state
@@ -881,7 +898,8 @@ cmd_clean() {
 						should_remove=true
 					# Check 2: Remote branch deleted - ONLY if branch was previously pushed
 					# Check all remotes, not just origin (consistent with branch_was_pushed)
-					elif branch_was_pushed "$worktree_branch" && ! _branch_exists_on_any_remote "$worktree_branch"; then
+					# Skip if fetch failed — stale refs could cause false-positive deletion
+					elif [[ "$remote_state_unknown" == "false" ]] && branch_was_pushed "$worktree_branch" && ! _branch_exists_on_any_remote "$worktree_branch"; then
 						should_remove=true
 					# Check 3: Squash-merged PR
 					elif [[ -n "$merged_pr_branches" ]] && echo "$merged_pr_branches" | grep -qx "$worktree_branch"; then
