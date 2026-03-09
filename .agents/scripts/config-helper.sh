@@ -39,8 +39,11 @@ _CONFIG_HELPER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || return 2>/
 # execution time, but ShellCheck is a static analyzer and ignores runtime guards.
 # GH#3981: https://github.com/marcusquinn/aidevops/issues/3981
 if [[ -z "${_SHARED_CONSTANTS_LOADED:-}" ]]; then
-	# shellcheck source=/dev/null
-	source "${_CONFIG_HELPER_DIR}/shared-constants.sh" 2>/dev/null || true
+	_SHARED_CONSTANTS_FILE="${_CONFIG_HELPER_DIR}/shared-constants.sh"
+	if [[ -r "${_SHARED_CONSTANTS_FILE}" ]]; then
+		# shellcheck source=/dev/null
+		source "${_SHARED_CONSTANTS_FILE}"
+	fi
 fi
 
 # ---------------------------------------------------------------------------
