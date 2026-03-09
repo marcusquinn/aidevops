@@ -666,31 +666,38 @@ cmd_profile_stats() {
 	# This happens when the launchd job runs without Knowledge DB access
 	# (TCC/Full Disk Access not granted in non-interactive context)
 	local history_days=0
-	local history_total=0
+	local history_total=0 hist_1d=0 hist_7d=0 hist_28d=0 hist_365d=0
 	if [[ -f "$HISTORY_FILE" ]]; then
 		history_days=$(wc -l <"$HISTORY_FILE" | tr -d ' ')
-		history_total=$(jq -s '[.[].screen_hours] | add // 0' "$HISTORY_FILE" 2>/dev/null || echo "0")
+		if [[ "$history_days" -gt 0 ]]; then
+			# Single jq pass for all history stats
+			local history_stats
+			history_stats=$(jq -rs '
+				. as $all |
+				[
+					([$all[].screen_hours] | add // 0),
+					([$all[-1:][].screen_hours] | add // 0 | . * 10 | round / 10),
+					([$all[-7:][].screen_hours] | add // 0 | . * 10 | round / 10),
+					([$all[-28:][].screen_hours] | add // 0 | . * 10 | round / 10),
+					([$all[-365:][].screen_hours] | add // 0 | . * 10 | round / 10)
+				] | @tsv
+			' "$HISTORY_FILE" 2>/dev/null) || true
+			if [[ -n "$history_stats" ]]; then
+				read -r history_total hist_1d hist_7d hist_28d hist_365d <<<"$history_stats"
+			fi
+		fi
 	fi
 
-	# If live 7d/28d returned 0 but we have history, use history instead
+	# If live queries returned 0 but we have history, use history instead
 	if [[ "$history_days" -gt 0 ]]; then
+		if [[ "$(echo "$day_hours == 0" | bc)" -eq 1 ]]; then
+			day_hours="${hist_1d:-0}"
+		fi
 		if [[ "$(echo "$week_hours == 0" | bc)" -eq 1 ]]; then
-			# Sum last 7 days from history (or all if fewer)
-			local hist_7d
-			hist_7d=$(jq -s '[.[-7:][].screen_hours] | add // 0 | . * 10 | round / 10' "$HISTORY_FILE" 2>/dev/null || echo "0")
-			week_hours="$hist_7d"
+			week_hours="${hist_7d:-0}"
 		fi
 		if [[ "$(echo "$month_hours == 0" | bc)" -eq 1 ]]; then
-			# Sum last 28 days from history (or all if fewer)
-			local hist_28d
-			hist_28d=$(jq -s '[.[-28:][].screen_hours] | add // 0 | . * 10 | round / 10' "$HISTORY_FILE" 2>/dev/null || echo "0")
-			month_hours="$hist_28d"
-		fi
-		if [[ "$(echo "$day_hours == 0" | bc)" -eq 1 ]]; then
-			# Use last day from history as fallback for 24h
-			local hist_1d
-			hist_1d=$(jq -s '[.[-1:][].screen_hours] | add // 0 | . * 10 | round / 10' "$HISTORY_FILE" 2>/dev/null || echo "0")
-			day_hours="$hist_1d"
+			month_hours="${hist_28d:-0}"
 		fi
 	fi
 
@@ -698,10 +705,9 @@ cmd_profile_stats() {
 	local year_hours
 	if [[ "$history_days" -gt 0 ]]; then
 		local daily_avg
-		daily_avg=$(echo "scale=2; $history_total / $history_days" | bc)
+		daily_avg=$(echo "scale=2; ${history_total:-0} / $history_days" | bc)
 		if [[ "$history_days" -ge 365 ]]; then
-			# Have a full year of data — use last 365 days from history
-			year_hours=$(jq -s '[.[-365:][].screen_hours] | add // 0 | . * 10 | round / 10' "$HISTORY_FILE" 2>/dev/null || echo "0")
+			year_hours="${hist_365d:-0}"
 		else
 			# Extrapolate from available data
 			year_hours=$(echo "scale=1; $daily_avg * 365" | bc)
