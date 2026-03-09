@@ -116,6 +116,7 @@ get_npm_pkg_version() {
 	local pkg="$1"
 	local npm_root
 	npm_root="$(npm root -g 2>/dev/null)" || return 1
+	[[ -n "$npm_root" ]] || return 1
 	local pkg_json="${npm_root}/${pkg}/package.json"
 	if [[ -f "$pkg_json" ]]; then
 		grep -oE '"version"\s*:\s*"[0-9]+\.[0-9]+\.[0-9]+"' "$pkg_json" |
@@ -163,14 +164,16 @@ get_installed_version() {
 			return 0
 		fi
 
-		version=$(head -1 "$_ver_log" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo "")
-		if [[ -z "$version" ]]; then
-			version=$(head -1 "$_ver_log" | grep -oE '[0-9]+\.[0-9]+' | head -1 || echo "")
-		fi
+		local ver_output
+		ver_output=$(head -1 "$_ver_log")
 		rm -f "$_ver_log"
+		version=$(echo "$ver_output" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+		if [[ -z "$version" ]]; then
+			version=$(echo "$ver_output" | grep -oE '[0-9]+\.[0-9]+' | head -1)
+		fi
 
 		# If --version produced no parseable version, try npm package.json fallback
-		if [[ -z "$version" || "$version" == "unknown" ]] && [[ -n "$pkg" ]]; then
+		if [[ -z "$version" ]] && [[ -n "$pkg" ]]; then
 			local pkg_version
 			pkg_version=$(get_npm_pkg_version "$pkg")
 			if [[ -n "$pkg_version" ]]; then
