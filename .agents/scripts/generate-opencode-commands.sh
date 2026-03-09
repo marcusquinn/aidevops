@@ -48,6 +48,10 @@ readonly AGENT_SEO="SEO"
 #   $4 - subtask flag ("true" to add subtask: true, "" to omit)
 # =============================================================================
 create_command() {
+	(($# == 4)) || {
+		echo -e "  ${RED}✗${NC} Error: create_command requires 4 arguments (got $#)" >&2
+		return 1
+	}
 	local name="$1"
 	[[ -n "$name" ]] || {
 		echo -e "  ${RED}✗${NC} Error: command name required" >&2
@@ -1230,6 +1234,7 @@ if [[ -d "$COMMANDS_DIR" ]]; then
 			echo -e "  ${GREEN}✓${NC} Auto-discovered /$cmd_name command"
 		else
 			echo -e "  ${RED}✗${NC} Failed to copy /$cmd_name command" >&2
+			exit 1
 		fi
 	done
 fi
