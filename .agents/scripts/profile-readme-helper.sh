@@ -511,15 +511,16 @@ EOF
 
 		# Cache savings: what caching saved vs re-sending as full input
 		# cache_read_tokens / 1M * (input_price - cache_read_price)
+		# Use scale=6 in loop to avoid rounding error accumulation; round at display
 		local row_cache_savings
-		row_cache_savings=$(echo "scale=2; $cache / 1000000 * ($m_input_rate - $m_cache_rate)" | bc)
+		row_cache_savings=$(echo "scale=6; $cache / 1000000 * ($m_input_rate - $m_cache_rate)" | bc)
 		total_cache_savings=$(echo "$total_cache_savings + $row_cache_savings" | bc)
 
 		# Model routing savings: what using this model saved vs Opus
 		# For each token type: (opus_rate - model_rate) * tokens / 1M
 		# Opus rows produce $0 (same rates). Sonnet/Haiku produce large savings.
 		local row_model_savings
-		row_model_savings=$(echo "scale=2; ($opus_input_rate - $m_input_rate) * $input / 1000000 + ($opus_output_rate - $m_output_rate) * $output / 1000000 + ($opus_cache_rate - $m_cache_rate) * $cache / 1000000" | bc)
+		row_model_savings=$(echo "scale=6; ($opus_input_rate - $m_input_rate) * $input / 1000000 + ($opus_output_rate - $m_output_rate) * $output / 1000000 + ($opus_cache_rate - $m_cache_rate) * $cache / 1000000" | bc)
 		total_model_savings=$(echo "$total_model_savings + $row_model_savings" | bc)
 
 		local clean_model
