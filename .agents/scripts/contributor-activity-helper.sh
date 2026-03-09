@@ -632,6 +632,11 @@ else:
 		HAVING human_ms + machine_ms > 5000
 	") || query_result="[]"
 
+	# t1427: sqlite3 -json returns "" (not "[]") when no rows match.
+	if [[ -z "$query_result" || "${query_result:0:1}" != "[" ]]; then
+		query_result="[]"
+	fi
+
 	# Process JSON in Python for classification and aggregation
 	echo "$query_result" | python3 -c "
 import sys

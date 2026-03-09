@@ -1953,7 +1953,15 @@ ${worker_table}"
 	if [[ -x "$activity_helper" ]]; then
 		activity_md=$(bash "$activity_helper" summary "$repo_path" --period month --format markdown || echo "_Activity data unavailable._")
 		session_time_md=$(bash "$activity_helper" session-time "$repo_path" --period all --format markdown || echo "_Session data unavailable._")
-		person_stats_md=$(bash "$activity_helper" person-stats "$repo_path" --period month --format markdown || echo "_Person stats unavailable._")
+
+		# t1426: Skip person-stats when search API rate limit is low.
+		local search_remaining
+		search_remaining=$(gh api rate_limit --jq '.resources.search.remaining' 2>/dev/null) || search_remaining=0
+		if [[ "$search_remaining" -ge 10 ]]; then
+			person_stats_md=$(bash "$activity_helper" person-stats "$repo_path" --period month --format markdown || echo "_Person stats unavailable._")
+		else
+			person_stats_md="_Person stats skipped (GitHub Search API rate limit: ${search_remaining} remaining)._"
+		fi
 	else
 		activity_md="_Activity helper not installed._"
 		session_time_md="_Activity helper not installed._"
@@ -2177,7 +2185,16 @@ update_health_issues() {
 			if [[ ${#cross_args[@]} -gt 1 ]]; then
 				cross_repo_md=$(bash "$activity_helper" cross-repo-summary "${cross_args[@]}" --period month --format markdown || echo "_Cross-repo data unavailable._")
 				cross_repo_session_time_md=$(bash "$activity_helper" cross-repo-session-time "${cross_args[@]}" --period all --format markdown || echo "_Cross-repo session data unavailable._")
-				cross_repo_person_stats_md=$(bash "$activity_helper" cross-repo-person-stats "${cross_args[@]}" --period month --format markdown || echo "_Cross-repo person stats unavailable._")
+
+				# t1426: Skip when search API rate limit is low to avoid 56s+ blocking waits.
+				local search_remaining
+				search_remaining=$(gh api rate_limit --jq '.resources.search.remaining' 2>/dev/null) || search_remaining=0
+				if [[ "$search_remaining" -ge 10 ]]; then
+					cross_repo_person_stats_md=$(bash "$activity_helper" cross-repo-person-stats "${cross_args[@]}" --period month --format markdown || echo "_Cross-repo person stats unavailable._")
+				else
+					cross_repo_person_stats_md="_Cross-repo person stats skipped (GitHub Search API rate limit: ${search_remaining} remaining)._"
+					echo "[pulse-wrapper] Skipping cross-repo-person-stats: search rate limit ${search_remaining}/30" >>"$LOGFILE"
+				fi
 			fi
 		fi
 	fi
@@ -3168,6 +3185,10 @@ main() {
 	if ! check_dedup; then
 		return 0
 	fi
+
+	# t1425: Write PID early to prevent parallel instances during setup.
+	# run_pulse() overwrites with the opencode PID for watchdog tracking.
+	echo "$$" >"$PIDFILE"
 
 	cleanup_orphans
 	cleanup_worktrees
