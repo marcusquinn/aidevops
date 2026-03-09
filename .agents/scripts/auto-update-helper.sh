@@ -910,8 +910,9 @@ check_upstream_watch() {
 		return 0
 	fi
 
-	# Locate upstream-watch-helper.sh
-	local upstream_watch_script="$HOME/.aidevops/agents/scripts/upstream-watch-helper.sh"
+	# Locate upstream-watch-helper.sh (respect AIDEVOPS_AGENTS_DIR)
+	local agents_dir="${AIDEVOPS_AGENTS_DIR:-$HOME/.aidevops/agents}"
+	local upstream_watch_script="${agents_dir}/scripts/upstream-watch-helper.sh"
 	if [[ ! -x "$upstream_watch_script" ]]; then
 		upstream_watch_script="$INSTALL_DIR/.agents/scripts/upstream-watch-helper.sh"
 	fi
@@ -922,7 +923,7 @@ check_upstream_watch() {
 	fi
 
 	# Check if upstream-watch.json has any repos
-	local watch_config="$HOME/.aidevops/agents/configs/upstream-watch.json"
+	local watch_config="${agents_dir}/configs/upstream-watch.json"
 	if [[ ! -f "$watch_config" ]]; then
 		log_info "No upstream watch config found — skipping"
 		update_upstream_watch_timestamp
@@ -940,11 +941,10 @@ check_upstream_watch() {
 	log_info "Running daily upstream watch check (${repo_count} repos)..."
 	if "$upstream_watch_script" check >>"$LOG_FILE" 2>&1; then
 		log_info "Upstream watch check complete"
+		update_upstream_watch_timestamp
 	else
-		log_warn "Upstream watch check had errors (exit code: $?)"
+		log_warn "Upstream watch check had errors (exit code: $?) — will retry next run"
 	fi
-
-	update_upstream_watch_timestamp
 	return 0
 }
 
@@ -961,9 +961,13 @@ update_upstream_watch_timestamp() {
 		trap 'rm -f "${tmp_state:-}"' RETURN
 
 		if [[ -f "$STATE_FILE" ]]; then
-			jq --arg ts "$timestamp" \
+			if ! jq --arg ts "$timestamp" \
 				'. + {last_upstream_watch_check: $ts}' \
-				"$STATE_FILE" >"$tmp_state" 2>/dev/null && mv "$tmp_state" "$STATE_FILE"
+				"$STATE_FILE" >"$tmp_state" 2>&1; then
+				log_warn "Failed to update upstream watch timestamp (jq error on state file)"
+				return 1
+			fi
+			mv "$tmp_state" "$STATE_FILE"
 		else
 			jq -n --arg ts "$timestamp" \
 				'{last_upstream_watch_check: $ts}' >"$STATE_FILE"
