@@ -1228,6 +1228,8 @@ MONITOR_PLIST
 	<string>${_xml_st_home}/.aidevops/.agent-workspace/logs/screen-time-snapshot.log</string>
 	<key>EnvironmentVariables</key>
 	<dict>
+		<key>PATH</key>
+		<string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
 		<key>HOME</key>
 		<string>${_xml_st_home}</string>
 	</dict>
@@ -1256,7 +1258,7 @@ ST_PLIST
 			_cron_st_script=$(_cron_escape "$st_script")
 			(
 				crontab -l 2>/dev/null | grep -v 'aidevops: screen-time-snapshot'
-				echo "0 */6 * * * /bin/bash ${_cron_st_script} snapshot >> \"\$HOME/.aidevops/.agent-workspace/logs/screen-time-snapshot.log\" 2>&1 # aidevops: screen-time-snapshot"
+				echo "0 */6 * * * PATH=\"/usr/local/bin:/usr/bin:/bin\" /bin/bash ${_cron_st_script} snapshot >> \"\$HOME/.aidevops/.agent-workspace/logs/screen-time-snapshot.log\" 2>&1 # aidevops: screen-time-snapshot"
 			) | crontab - 2>/dev/null || true
 			if crontab -l 2>/dev/null | grep -qF "aidevops: screen-time-snapshot" 2>/dev/null; then
 				print_info "Screen time snapshot enabled (cron, every 6h)"
