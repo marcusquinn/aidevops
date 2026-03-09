@@ -125,6 +125,7 @@ Workers that skip verification or mark a PR ready without running the specified 
 - Duplicated structure where the same pattern appears in two places and one can reference the other
 - Dead code that is unreachable and has no explanatory value
 - Redundant formatting (excessive bold, unnecessary headers for single-line content)
+- Format inconsistency with project convention -- e.g., `### **EMOJI ALL CAPS**` when 91% of the codebase uses plain `### Section Name`. Normalising outlier files to the established convention improves scannability across docs. Heading level (`###`) already conveys hierarchy; bold/caps/emoji on top is redundant emphasis.
 - Stale references to files that no longer exist or tools that were replaced
 
 ### Requires careful judgment (suggest with medium confidence)

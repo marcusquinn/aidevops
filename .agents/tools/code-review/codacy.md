@@ -34,9 +34,9 @@ tools:
 
 Codacy CLI v2 provides automated fix capabilities that mirror the "Fix Issues" functionality available in the Codacy web dashboard. This feature can automatically resolve many common code quality violations without manual intervention.
 
-### **🔧 AUTO-FIX CAPABILITIES**
+### Auto-Fix Capabilities
 
-#### **Supported Fix Types:**
+#### Supported Fix Types
 
 - **Code Style Issues**: Formatting, indentation, spacing
 - **Best Practice Violations**: Variable naming, function structure
@@ -44,16 +44,16 @@ Codacy CLI v2 provides automated fix capabilities that mirror the "Fix Issues" f
 - **Performance Issues**: Simple optimization patterns
 - **Maintainability**: Code complexity reduction where safe
 
-#### **Safety Guarantees:**
+#### Safety Guarantees
 
 - **Non-Breaking**: Only applies fixes guaranteed not to break functionality
 - **Reversible**: All changes can be reverted via Git
 - **Conservative**: Skips ambiguous cases requiring human judgment
 - **Tested**: Fixes are based on proven patterns from millions of repositories
 
-### **🛠️ USAGE METHODS**
+### Usage Methods
 
-#### **Method 1: Direct CLI Usage**
+#### Method 1: Direct CLI Usage
 
 ```bash
 # Basic auto-fix analysis
@@ -66,7 +66,7 @@ bash .agents/scripts/codacy-cli.sh analyze eslint --fix
 bash .agents/scripts/codacy-cli.sh analyze
 ```
 
-#### **Method 2: Quality CLI Manager**
+#### Method 2: Quality CLI Manager
 
 ```bash
 # Auto-fix via unified manager
@@ -76,7 +76,7 @@ bash .agents/scripts/quality-cli-manager.sh analyze codacy-fix
 bash .agents/scripts/quality-cli-manager.sh status codacy
 ```
 
-#### **Method 3: Integration with Quality Workflow**
+#### Method 3: Integration with Quality Workflow
 
 ```bash
 # Pre-commit auto-fix workflow
@@ -85,9 +85,9 @@ bash .agents/scripts/codacy-cli.sh analyze --fix
 bash .agents/scripts/linters-local.sh  # Verify improvements
 ```
 
-### **📊 EXPECTED RESULTS**
+### Expected Results
 
-#### **Typical Fix Categories:**
+#### Typical Fix Categories
 
 - **String Literals**: Consolidation into constants
 - **Variable Declarations**: Proper scoping and initialization
@@ -95,16 +95,16 @@ bash .agents/scripts/linters-local.sh  # Verify improvements
 - **Code Formatting**: Consistent style application
 - **Import/Export**: Optimization and organization
 
-#### **Performance Impact:**
+#### Performance Impact
 
 - **Time Savings**: 70-90% reduction in manual fix time
 - **Accuracy**: 99%+ accuracy for supported fix types
 - **Coverage**: Handles 60-80% of common quality violations
 - **Consistency**: Uniform application across entire codebase
 
-### **🔄 WORKFLOW INTEGRATION**
+### Workflow Integration
 
-#### **Recommended Development Workflow:**
+#### Recommended Development Workflow
 
 1. **Pre-Development**: Run quality check to identify issues
 2. **Auto-Fix**: Apply automated fixes where available
@@ -112,7 +112,7 @@ bash .agents/scripts/linters-local.sh  # Verify improvements
 4. **Validation**: Re-run quality checks to verify improvements
 5. **Commit**: Include before/after metrics in commit message
 
-#### **CI/CD Integration:**
+#### CI/CD Integration
 
 ```yaml
 # GitHub Actions example
@@ -120,32 +120,30 @@ bash .agents/scripts/linters-local.sh  # Verify improvements
   run: |
     bash .agents/scripts/codacy-cli.sh analyze --fix
     git add .
-    git diff --staged --quiet || git commit -m "🔧 AUTO-FIX: Applied Codacy automated fixes"
+    git diff --staged --quiet || git commit -m "fix: applied Codacy automated fixes"
 ```
 
-### **⚠️ LIMITATIONS & CONSIDERATIONS**
+### Limitations and Considerations
 
-#### **What Auto-Fix Cannot Do:**
+#### What Auto-Fix Cannot Do
 
 - **Complex Logic**: Business logic or algorithmic changes
 - **Architecture**: Structural or design pattern modifications
 - **Context-Dependent**: Fixes requiring domain knowledge
 - **Breaking Changes**: Modifications that could affect functionality
 
-#### **Best Practices:**
+#### Best Practices
 
 - **Always Review**: Check auto-applied changes before committing
 - **Test After**: Run tests to ensure functionality is preserved
 - **Incremental**: Apply auto-fixes in small batches for easier review
 - **Backup**: Ensure clean Git state before running auto-fix
 
-### **🎯 SUCCESS METRICS**
+### Success Metrics
 
-#### **Quality Improvement Tracking:**
+#### Quality Improvement Tracking
 
 - **Before/After Counts**: Track violation reduction
 - **Fix Success Rate**: Monitor auto-fix effectiveness
 - **Time Savings**: Measure development efficiency gains
 - **Quality Trends**: Long-term code quality improvements
-
-This auto-fix integration represents a significant advancement in automated code quality management, providing the same powerful fix capabilities available in the Codacy web interface directly through our CLI workflows.
