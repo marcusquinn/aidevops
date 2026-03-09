@@ -41,9 +41,28 @@ MAX_WORKERS=$(cat ~/.aidevops/logs/pulse-max-workers 2>/dev/null || echo 4)
 # Count running workers (only .opencode binaries, not node launchers)
 WORKER_COUNT=$(ps axo command | grep '/full-loop' | grep '\.opencode' | grep -v grep | wc -l | tr -d ' ')
 AVAILABLE=$((MAX_WORKERS - WORKER_COUNT))
+
+# Priority-class allocations (t1423) — read from pre-fetched state
+# The "Priority-Class Worker Allocations" section in the pre-fetched state
+# shows PRODUCT_MIN and TOOLING_MAX. Read these values:
+PRODUCT_MIN=$(grep '^PRODUCT_MIN=' ~/.aidevops/logs/pulse-priority-allocations 2>/dev/null | cut -d= -f2 || echo 0)
+TOOLING_MAX=$(grep '^TOOLING_MAX=' ~/.aidevops/logs/pulse-priority-allocations 2>/dev/null | cut -d= -f2 || echo "$MAX_WORKERS")
 ```
 
 If `AVAILABLE <= 0`: you can still merge ready PRs, but don't dispatch new workers.
+
+### Priority-class enforcement (t1423)
+
+Worker slots are partitioned between **product** repos (`"priority": "product"` in repos.json) and **tooling** repos (`"priority": "tooling"`). Product repos get a guaranteed minimum share (default 60%) to prevent tooling hygiene from starving user-facing work.
+
+**Before dispatching each worker, apply this check:**
+
+1. Determine the target repo's priority class (from the pre-fetched state repo header or repos.json).
+2. Count running workers per class: scan the Active Workers section — match each worker's `--dir` path to a repo in repos.json to determine its class.
+3. **If dispatching a tooling worker:** check whether product-class workers are using fewer than `PRODUCT_MIN` slots. If `product_active < PRODUCT_MIN` AND product repos have pending work (open issues or failing PRs), the remaining product slots are **reserved** — skip the tooling dispatch and look for product work instead.
+4. **If dispatching a product worker:** always proceed — product has no ceiling (only a floor).
+5. **Exemptions:** Merges (priority 1) and CI-fix dispatches (priority 2) are exempt from class checks — they always proceed regardless of class.
+6. **Soft reservation:** When product repos have no pending work (no open issues, no failing-CI PRs, no orphaned PRs), their reserved slots become available for tooling. The reservation protects product work when it exists, not when it doesn't.
 
 ## Step 2: Use Pre-Fetched State
 
@@ -610,7 +629,7 @@ batch-strategy-helper.sh validate --tasks "$TASKS_JSON"
 2. PRs with failing CI or review feedback → fix (uses a slot, but closer to done than new issues)
 3. Issues labelled `priority:high` or `bug`
 4. Active mission features (keeps multi-day projects moving — see Step 3.5)
-5. Product repos (`"priority": "product"` in repos.json) over tooling
+5. Product repos (`"priority": "product"` in repos.json) over tooling — **enforced by priority-class reservations (t1423)**. Product repos have `PRODUCT_MIN` reserved slots; tooling cannot consume them when product work is pending. See "Priority-class enforcement" in Step 1.
 6. Smaller/simpler tasks over large ones (faster throughput)
 7. `quality-debt` issues (unactioned review feedback from merged PRs)
 8. `simplification-debt` issues (human-approved simplification opportunities)
@@ -1027,7 +1046,7 @@ Output a brief summary of what you did (past tense), then exit.
 3. **NEVER close an issue without a comment.** The comment must explain why and link to the PR(s) or evidence. Silent closes are audit failures.
 4. **NEVER use `claude` CLI.** Always `opencode run`.
 5. **NEVER include private repo names** in public issue titles/bodies/comments.
-6. **NEVER exceed MAX_WORKERS.** Count before dispatching.
+6. **NEVER exceed MAX_WORKERS or violate priority-class reservations.** Count before dispatching. Check class allocations (Step 1) — tooling workers must not consume product-reserved slots when product work is pending.
 7. **Do your job completely, then exit.** Don't loop or re-analyze — one pass through all repos, act on everything, exit.
 8. **NEVER create "pulse summary" or "supervisor log" issues.** The pulse runs every 2 minutes — creating an issue per cycle produces hundreds of spam issues per day. Your output text IS the log (it's captured by the wrapper to `~/.aidevops/logs/pulse.log`). The audit trail lives in PR/issue comments on the items you acted on, not in separate summary issues.
 9. **NEVER create an issue if one already exists for the same task ID.** Before `gh issue create`, check `gh issue list --repo <slug> --search "tNNN" --state all` to see if an issue with that task ID prefix already exists. If it does (open or closed), use the existing one — don't create a duplicate. This applies to both issue-sync-helper and manual issue creation.
