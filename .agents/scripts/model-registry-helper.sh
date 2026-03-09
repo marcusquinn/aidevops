@@ -491,9 +491,6 @@ sync_providers() {
     " 2>/dev/null || echo "")
 
 	# If recent successful sync, skip
-	if [[ -n "$opencode_synced" && "$opencode_synced" != "0" ]]; then
-		return 0
-	fi
 	if [[ -n "$opencode_synced" && "$opencode_synced" -gt 0 ]]; then
 		print_info "Skipping direct API probing (OpenCode sync already discovered $opencode_synced models)"
 		return 0
