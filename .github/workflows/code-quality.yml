@@ -135,6 +135,11 @@ jobs:
   sonarcloud:
     name: SonarCloud Analysis
     runs-on: ubuntu-latest
+    # Job-level env so that step `if:` conditions can reference env.SONAR_TOKEN
+    # (step-level env: blocks are applied AFTER the if: is evaluated)
+    env:
+      SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+      CODACY_API_TOKEN: ${{ secrets.CODACY_API_TOKEN }}
 
     steps:
     - name: Checkout code
@@ -147,48 +152,42 @@ jobs:
       uses: SonarSource/sonarqube-scan-action@40f5b61913e891f9d316696628698051136015be
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
-      continue-on-error: true
 
     - name: SonarCloud Scan Skipped
       if: env.SONAR_TOKEN == ''
-      env:
-        SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
       run: |
         echo "::warning::SONAR_TOKEN not configured — skipping SonarCloud scan"
         echo "Add SONAR_TOKEN to repository secrets to enable SonarCloud analysis"
 
     - name: Codacy Analysis
-      env:
-        CODACY_API_TOKEN: ${{ secrets.CODACY_API_TOKEN }}
       run: |
         if [[ -n "$CODACY_API_TOKEN" ]]; then
-          echo "🔍 Codacy Analysis Status..."
-          echo "✅ Codacy API Token: Configured"
-          echo "📊 Repository monitored at: https://app.codacy.com/gh/marcusquinn/aidevops"
-          echo "🔧 Local CLI available for auto-fix: codacy-cli analyze --fix"
-          echo "⚡ Web-based analysis: Automatic on every commit"
-          echo "✅ Codacy integration: Active"
+          echo "Codacy Analysis Status..."
+          echo "Codacy API Token: Configured"
+          echo "Repository monitored at: https://app.codacy.com/gh/marcusquinn/aidevops"
+          echo "Codacy integration: Active"
         else
-          echo "⚠️  Codacy API token not configured, skipping analysis"
-          echo "   Add CODACY_API_TOKEN to repository secrets to enable Codacy analysis"
+          echo "::notice::Codacy API token not configured, skipping analysis"
+          echo "Add CODACY_API_TOKEN to repository secrets to enable Codacy analysis"
         fi
 
     - name: Quality Analysis Summary
-      env:
-        CODACY_API_TOKEN: ${{ secrets.CODACY_API_TOKEN }}
       run: |
-        echo "📊 Code Quality Analysis Summary"
+        echo "Code Quality Analysis Summary"
         echo "================================"
-        echo "✅ SonarCloud: Analysis completed"
-        if [[ -n "$CODACY_API_TOKEN" ]]; then
-          echo "✅ Codacy: Analysis completed"
+        if [[ -n "$SONAR_TOKEN" ]]; then
+          echo "SonarCloud: Analysis completed"
         else
-          echo "⚠️  Codacy: Skipped (token not configured)"
+          echo "SonarCloud: Skipped (SONAR_TOKEN not configured)"
+        fi
+        if [[ -n "$CODACY_API_TOKEN" ]]; then
+          echo "Codacy: Analysis completed"
+        else
+          echo "Codacy: Skipped (token not configured)"
         fi
         echo ""
-        echo "🔗 View Results:"
+        echo "View Results:"
         echo "   SonarCloud: https://sonarcloud.io/project/overview?id=marcusquinn_aidevops"
         echo "   Codacy: https://app.codacy.com/gh/marcusquinn/aidevops"
         echo ""
-        echo "🎯 Code Quality Pipeline: COMPLETE"
+        echo "Code Quality Pipeline: COMPLETE"
