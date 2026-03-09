@@ -497,7 +497,7 @@ _show_release_diff() {
 
 	# Show all releases between from_tag and to_tag
 	local releases
-	releases=$(gh api "repos/${slug}/releases?per_page=20" --jq '.[].tag_name' 2>/dev/null) || {
+	releases=$(gh api --paginate "repos/${slug}/releases" --jq '.[].tag_name' 2>/dev/null) || {
 		echo "  (Could not fetch release list)"
 		return 0
 	}

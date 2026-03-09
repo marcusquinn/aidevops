@@ -869,7 +869,7 @@ update_tool_check_timestamp() {
 #######################################
 check_upstream_watch() {
 	# Opt-out via config (env var or config file)
-	if ! is_feature_enabled upstream_watch 2>/dev/null; then
+	if ! is_feature_enabled upstream_watch; then
 		log_info "Upstream watch disabled via config"
 		return 0
 	fi
