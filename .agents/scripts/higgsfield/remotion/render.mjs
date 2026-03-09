@@ -101,6 +101,11 @@ function normalizeCaptions(rawCaptions, scenes, fps) {
   });
 }
 
+/**
+ * Parse CLI arguments into a key-value options object.
+ * Supports --key value and --flag (boolean) patterns.
+ * @returns {Record<string, string | boolean>} Parsed options
+ */
 function parseArgs() {
   const args = process.argv.slice(2);
   const opts = {};
@@ -114,6 +119,11 @@ function parseArgs() {
   return opts;
 }
 
+/**
+ * Render a multi-scene video composition from a brief JSON and scene video files.
+ * Copies assets to public/, builds Remotion props, and invokes npx remotion render.
+ * @param {Record<string, string | boolean>} opts - CLI options (brief, videos, output, transition, etc.)
+ */
 function renderVideo(opts) {
   const briefPath = resolve(opts.brief);
   if (!existsSync(briefPath)) {
@@ -209,6 +219,10 @@ function renderVideo(opts) {
   }
 }
 
+/**
+ * Render a single still image (title card / graphic) via Remotion.
+ * @param {Record<string, string | boolean>} opts - CLI options (text, subtitle, aspect, bg, color, font, output)
+ */
 function renderStill(opts) {
   const output = opts.output ? resolve(opts.output) : resolve("graphic.png");
   const aspect = opts.aspect || "9:16";
