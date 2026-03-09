@@ -162,6 +162,152 @@ _get_token_totals() {
 	return 0
 }
 
+# --- Map bundle ID to friendly app name ---
+_friendly_app_name() {
+	local bundle="$1"
+	case "$bundle" in
+	# System apps
+	com.apple.mail) echo "Mail" ;;
+	com.apple.finder) echo "Finder" ;;
+	com.apple.MobileSMS) echo "Messages" ;;
+	com.apple.Photos) echo "Photos" ;;
+	com.apple.Preview) echo "Preview" ;;
+	com.apple.Safari) echo "Safari" ;;
+	com.apple.iCal) echo "Calendar" ;;
+	com.apple.systempreferences) echo "System Settings" ;;
+	com.apple.AddressBook) echo "Contacts" ;;
+	com.apple.Terminal) echo "Terminal" ;;
+	com.apple.dt.Xcode) echo "Xcode" ;;
+	com.apple.Notes) echo "Notes" ;;
+	# Third-party apps
+	org.tabby) echo "Tabby" ;;
+	com.brave.Browser) echo "Brave Browser" ;;
+	com.tinyspeck.slackmacgap) echo "Slack" ;;
+	net.whatsapp.WhatsApp) echo "WhatsApp" ;;
+	org.whispersystems.signal-desktop) echo "Signal" ;;
+	com.spotify.client) echo "Spotify" ;;
+	org.mozilla.firefox) echo "Firefox" ;;
+	com.google.Chrome) echo "Chrome" ;;
+	com.microsoft.VSCode) echo "VS Code" ;;
+	com.canva.affinity) echo "Affinity" ;;
+	org.libreoffice.script) echo "LibreOffice" ;;
+	com.webcatalog.juli.facebook) echo "Facebook" ;;
+	# Brave PWAs — extract from known mappings
+	com.brave.Browser.app.mjoklplbddabcmpepnokjaffbmgbkkgg) echo "GitHub" ;;
+	com.brave.Browser.app.lodlkdfmihgonocnmddehnfgiljnadcf) echo "X" ;;
+	com.brave.Browser.app.agimnkijcaahngcdmfeangaknmldooml) echo "YouTube" ;;
+	com.brave.Browser.app.imdajkchfecmmahjodnfnpihejhejdgo) echo "Amazon" ;;
+	com.brave.Browser.app.ggjocahimgaohmigbfhghnlfcnjemagj) echo "Grok" ;;
+	com.brave.Browser.app.mmkpebkcahljniimmcipdlmdonpnlild) echo "Nextcloud Talk" ;;
+	com.brave.Browser.app.bkmlmojhimpoiaopgajnfcgdknkaklcc) echo "Nextcloud Talk 2" ;;
+	com.brave.Browser.app.ohghonlafcimfigiajnmhdklcbjlbfda) echo "LinkedIn" ;;
+	com.brave.Browser.app.akpamiohjfcnimfljfndmaldlcfphjmp) echo "Instagram" ;;
+	com.brave.Browser.app.fmpnliohjhemenmnlpbfagaolkdacoja) echo "Claude" ;;
+	com.brave.Browser.app.cadlkienfkclaiaibeoongdcgmdikeeg) echo "ChatGPT" ;;
+	com.brave.Browser.app.gogeloecmlhfmifbfchpldmjclnfoiho) echo "Search Console" ;;
+	com.brave.Browser.app.fbamlndehdinmdbhpcihcihhmjmmpgjn) echo "TradingView" ;;
+	com.brave.Browser.app.fbjnhnmfhfifmkmokgjddadhphahbkpp) echo "Spaceship" ;;
+	com.brave.Browser.app.mnhkaebcjjhencmpkapnbdaogjamfbcj) echo "Google Maps" ;;
+	com.brave.Browser.app.kpmdbogdmbfckbgdfdffkleoleokbhod) echo "Perplexity" ;;
+	com.brave.Browser.app.allndljdpmepdafjbbilonjhdgmlohlh) echo "X Pro" ;;
+	com.brave.Browser.app.*)
+		# Unknown Brave PWA — try to extract a readable suffix
+		echo "Brave PWA"
+		;;
+	*)
+		# Unknown — use last component of bundle ID
+		local short
+		short="${bundle##*.}"
+		echo "$short"
+		;;
+	esac
+	return 0
+}
+
+# --- Get top apps by screen time percentage (macOS only) ---
+# Returns JSON array: [{"app":"Name","today_pct":N,"week_pct":N,"month_pct":N}, ...]
+_get_top_apps() {
+	local knowledge_db="${HOME}/Library/Application Support/Knowledge/knowledgeC.db"
+
+	if [[ "$(uname -s)" != "Darwin" ]] || [[ ! -f "$knowledge_db" ]]; then
+		echo "[]"
+		return 0
+	fi
+
+	# Query per-app seconds for each period, output as TSV: bundle\ttoday\tweek\tmonth
+	local app_data
+	app_data=$(sqlite3 "$knowledge_db" "
+		SELECT
+			ZVALUESTRING,
+			COALESCE(SUM(CASE WHEN ZSTARTDATE > (strftime('%s', 'now') - 978307200
+				- (CAST(strftime('%H', 'now', 'localtime') AS INTEGER) * 3600
+				+ CAST(strftime('%M', 'now', 'localtime') AS INTEGER) * 60
+				+ CAST(strftime('%S', 'now', 'localtime') AS INTEGER)))
+				THEN ZENDDATE - ZSTARTDATE ELSE 0 END), 0) as today_secs,
+			COALESCE(SUM(CASE WHEN ZSTARTDATE > (strftime('%s', 'now') - 978307200 - 86400*7)
+				THEN ZENDDATE - ZSTARTDATE ELSE 0 END), 0) as week_secs,
+			COALESCE(SUM(ZENDDATE - ZSTARTDATE), 0) as month_secs
+		FROM ZOBJECT
+		WHERE ZSTREAMNAME = '/app/usage'
+			AND ZSTARTDATE > (strftime('%s', 'now') - 978307200 - 86400*28)
+		GROUP BY ZVALUESTRING
+		HAVING month_secs > 0;
+	" 2>/dev/null) || {
+		echo "[]"
+		return 0
+	}
+
+	if [[ -z "$app_data" ]]; then
+		echo "[]"
+		return 0
+	fi
+
+	# Calculate totals for each period
+	local total_today=0 total_week=0 total_month=0
+	while IFS='|' read -r _bundle today_s week_s month_s; do
+		total_today=$((total_today + today_s))
+		total_week=$((total_week + week_s))
+		total_month=$((total_month + month_s))
+	done <<<"$app_data"
+
+	# Build JSON array sorted by month_secs descending, top 10
+	local json_arr="["
+	local count=0
+	local first=true
+	while IFS='|' read -r bundle today_s week_s month_s; do
+		if [[ $count -ge 10 ]]; then
+			break
+		fi
+
+		local name
+		name=$(_friendly_app_name "$bundle")
+
+		# Calculate percentages (integer, rounded)
+		local today_pct=0 week_pct=0 month_pct=0
+		if [[ $total_today -gt 0 ]]; then
+			today_pct=$(((today_s * 100 + total_today / 2) / total_today))
+		fi
+		if [[ $total_week -gt 0 ]]; then
+			week_pct=$(((week_s * 100 + total_week / 2) / total_week))
+		fi
+		if [[ $total_month -gt 0 ]]; then
+			month_pct=$(((month_s * 100 + total_month / 2) / total_month))
+		fi
+
+		if [[ "$first" == true ]]; then
+			first=false
+		else
+			json_arr="${json_arr},"
+		fi
+		json_arr="${json_arr}{\"app\":\"${name}\",\"today_pct\":${today_pct},\"week_pct\":${week_pct},\"month_pct\":${month_pct}}"
+		count=$((count + 1))
+	done < <(echo "$app_data" | sort -t'|' -k4 -rn)
+
+	json_arr="${json_arr}]"
+	echo "$json_arr"
+	return 0
+}
+
 # --- Clean model name for display ---
 _clean_model_name() {
 	local model="$1"
@@ -371,6 +517,43 @@ ${model_rows}| **Total** | **${f_total_req}** | **${f_total_in}** | **${f_total_
 
 _${f_all_tokens} total tokens processed. Cache hit rate: ${cache_pct}% -- prompt caching reduces cost by ~${cost_reduction}% vs uncached._
 EOF
+
+	# Build top apps table (macOS only — requires Knowledge DB)
+	local top_apps_json
+	top_apps_json=$(_get_top_apps)
+
+	local app_count
+	app_count=$(echo "$top_apps_json" | jq 'length')
+
+	if [[ "$app_count" -gt 0 ]]; then
+		local app_rows=""
+		while IFS= read -r row; do
+			local app today_pct week_pct month_pct
+			app=$(echo "$row" | jq -r '.app')
+			today_pct=$(echo "$row" | jq -r '.today_pct')
+			week_pct=$(echo "$row" | jq -r '.week_pct')
+			month_pct=$(echo "$row" | jq -r '.month_pct')
+
+			# Show "--" for 0% (app not used in that period)
+			local today_str week_str month_str
+			if [[ "$today_pct" -eq 0 ]]; then today_str="--"; else today_str="${today_pct}%"; fi
+			if [[ "$week_pct" -eq 0 ]]; then week_str="--"; else week_str="${week_pct}%"; fi
+			if [[ "$month_pct" -eq 0 ]]; then month_str="--"; else month_str="${month_pct}%"; fi
+
+			app_rows="${app_rows}| ${app} | ${today_str} | ${week_str} | ${month_str} |
+"
+		done < <(echo "$top_apps_json" | jq -c '.[]')
+
+		cat <<EOF
+
+## Top Apps by Screen Time
+
+| App | Today | 7 Days | 28 Days |
+| --- | ---: | ---: | ---: |
+${app_rows}
+_Top 10 apps by foreground time share. Mac only._
+EOF
+	fi
 
 	return 0
 }
