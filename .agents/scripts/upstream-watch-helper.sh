@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# upstream-watch-helper.sh — Track external repos for release monitoring (t1424)
+# upstream-watch-helper.sh — Track external repos for release monitoring (t1426)
 #
 # Maintains a watchlist of external repos we've borrowed ideas/code from.
 # Checks for new releases and significant commits, shows changelog diffs
