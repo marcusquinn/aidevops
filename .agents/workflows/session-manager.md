@@ -53,8 +53,13 @@ check_session_status() {
 
     echo "=== Session Status ==="
 
-    # Check incomplete tasks
-    incomplete=$(grep -c '^\s*- \[ \]' TODO.md || echo "0")
+    # Check incomplete tasks (use portable [[:space:]] and || true to avoid
+    # grep -c exit 1 on zero matches appending a second "0" via || echo)
+    if [[ -f TODO.md ]]; then
+        incomplete=$(grep -c '^[[:space:]]*- \[ \]' TODO.md || true)
+    else
+        incomplete="0"
+    fi
     echo "Incomplete tasks: ${incomplete}"
 
     # Check recent PR (requires gh CLI)

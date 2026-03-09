@@ -77,11 +77,13 @@ validate_positional_parameters() {
 
 	for file in "$@"; do
 		# Exclude currency/pricing patterns: $[1-9] followed by digit, decimal, comma,
-		# slash (e.g. $28/mo, $1.99, $1,000), pipe (markdown table cell), or common
-		# currency/pricing unit words (per, mo, month, flat, etc.).
+		# slash (e.g. $28/mo, $1.99, $1,000), or common currency/pricing unit words
+		# (per, mo, month, flat, etc.). Pipe exclusion removed — this function only
+		# runs on .sh files where $1 | ... is a real positional parameter violation,
+		# not a markdown table cell (GH#3916).
 		if [[ -f "$file" ]]; then
 			local violations_output
-			violations_output=$(grep -n '\$[1-9]' "$file" | grep -v 'local.*=.*\$[1-9]' | grep -vE '\$[1-9][0-9.,/]' | grep -vE '\$[1-9]\s*\|' | grep -vE '\$[1-9]\s+(per|mo(nth)?|year|yr|day|week|hr|hour|flat|each|off|fee|plan|tier|user|seat|unit|addon|setup|trial|credit|annual|quarterly|monthly)\b' || true)
+			violations_output=$(grep -n '\$[1-9]' "$file" | grep -v 'local.*=.*\$[1-9]' | grep -vE '\$[1-9][0-9.,/]' | grep -vE '\$[1-9]\s+(per|mo(nth)?|year|yr|day|week|hr|hour|flat|each|off|fee|plan|tier|user|seat|unit|addon|setup|trial|credit|annual|quarterly|monthly)\b' || true)
 			if [[ -n "$violations_output" ]]; then
 				print_error "Direct positional parameter usage in $file"
 				echo "$violations_output" | head -3

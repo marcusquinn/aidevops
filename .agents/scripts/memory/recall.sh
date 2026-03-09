@@ -152,10 +152,28 @@ cmd_recall() {
 		type_where="AND l.type = '$type_filter'"
 	fi
 
+	# Build --max-age-days and --project filters early so --recent can use them (GH#3916)
+	local age_where=""
+	if [[ -n "$max_age_days" ]]; then
+		if ! [[ "$max_age_days" =~ ^[0-9]+$ ]]; then
+			log_error "--max-age-days must be a positive integer"
+			return 1
+		fi
+		age_where="AND created_at >= datetime('now', '-$max_age_days days')"
+	fi
+	local project_where=""
+	if [[ -n "$project_filter" ]]; then
+		local escaped_project="${project_filter//"'"/"''"}"
+		escaped_project="${escaped_project//\\/\\\\}"
+		escaped_project="${escaped_project//%/\\%}"
+		escaped_project="${escaped_project//_/\\_}"
+		project_where="AND project_path LIKE '%$escaped_project%' ESCAPE '\\'"
+	fi
+
 	# Handle --recent mode (no query required)
 	if [[ "$recent_mode" == true ]]; then
 		local results
-		results=$(db -json "$MEMORY_DB" "SELECT l.id, l.content, l.type, l.tags, l.confidence, l.created_at, COALESCE(a.last_accessed_at, '') as last_accessed_at, COALESCE(a.access_count, 0) as access_count, COALESCE(a.auto_captured, 0) as auto_captured FROM learnings l LEFT JOIN learning_access a ON l.id = a.id $entity_join WHERE 1=1 $entity_where $auto_filter $type_where ORDER BY l.created_at DESC LIMIT $limit;")
+		results=$(db -json "$MEMORY_DB" "SELECT l.id, l.content, l.type, l.tags, l.confidence, l.created_at, COALESCE(a.last_accessed_at, '') as last_accessed_at, COALESCE(a.access_count, 0) as access_count, COALESCE(a.auto_captured, 0) as auto_captured FROM learnings l LEFT JOIN learning_access a ON l.id = a.id $entity_join WHERE 1=1 $entity_where $auto_filter $type_where $age_where $project_where ORDER BY l.created_at DESC LIMIT $limit;")
 		if [[ "$format" == "json" ]]; then
 			echo "$results"
 		else
@@ -223,24 +241,8 @@ cmd_recall() {
 	set +f # Re-enable globbing
 	escaped_query="$tokenised_query"
 
-	# Build filters with validation (type_where already validated above)
-	local extra_filters="$type_where"
-	if [[ -n "$max_age_days" ]]; then
-		# Validate max_age_days is a positive integer
-		if ! [[ "$max_age_days" =~ ^[0-9]+$ ]]; then
-			log_error "--max-age-days must be a positive integer"
-			return 1
-		fi
-		extra_filters="$extra_filters AND created_at >= datetime('now', '-$max_age_days days')"
-	fi
-	if [[ -n "$project_filter" ]]; then
-		local escaped_project="${project_filter//"'"/"''"}"
-		# Escape LIKE wildcards (%, _) to prevent wildcard injection
-		escaped_project="${escaped_project//\\/\\\\}"
-		escaped_project="${escaped_project//%/\\%}"
-		escaped_project="${escaped_project//_/\\_}"
-		extra_filters="$extra_filters AND project_path LIKE '%$escaped_project%' ESCAPE '\\'"
-	fi
+	# Reuse pre-built filters (type_where, age_where, project_where validated above)
+	local extra_filters="${type_where}${age_where}${project_where}"
 
 	# Build auto-capture filter for main query
 	local auto_join_filter=""

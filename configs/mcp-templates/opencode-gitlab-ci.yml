@@ -40,8 +40,16 @@ opencode:
     # https://gitlab.com/gitlab-org/cli/-/releases and verify with sha256sum --check
     - |
       GLAB_VERSION="v1.89.0"
-      GLAB_ARCHIVE="glab_${GLAB_VERSION#v}_linux_amd64.tar.gz"
-      curl -fsLO "https://gitlab.com/gitlab-org/cli/-/releases/${GLAB_VERSION}/downloads/${GLAB_ARCHIVE}"
+      case "$(uname -m)" in
+        x86_64|amd64) GLAB_ARCH="amd64" ;;
+        aarch64|arm64) GLAB_ARCH="arm64" ;;
+        *) echo "Unsupported runner architecture: $(uname -m)" >&2; exit 1 ;;
+      esac
+      GLAB_ARCHIVE="glab_${GLAB_VERSION#v}_linux_${GLAB_ARCH}.tar.gz"
+      curl -fsSLO "https://gitlab.com/gitlab-org/cli/-/releases/${GLAB_VERSION}/downloads/${GLAB_ARCHIVE}"
+      # Optional: verify checksum (download checksums.txt and compare)
+      # curl -fsSLO "https://gitlab.com/gitlab-org/cli/-/releases/${GLAB_VERSION}/downloads/checksums.txt"
+      # grep "${GLAB_ARCHIVE}" checksums.txt | sha256sum --check --status
       tar xzf "${GLAB_ARCHIVE}"
       mv bin/glab /usr/local/bin/
       rm -f "${GLAB_ARCHIVE}"

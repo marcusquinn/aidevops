@@ -115,9 +115,16 @@ cmd_store() {
 		return 0
 	fi
 
-	# Validate type
-	local type_pattern=" $type "
-	if [[ ! " $VALID_TYPES " =~ $type_pattern ]]; then
+	# Validate type (exact-match loop prevents regex metacharacter bypass — GH#3916)
+	local valid_type=false
+	local vt
+	for vt in $VALID_TYPES; do
+		if [[ "$vt" == "$type" ]]; then
+			valid_type=true
+			break
+		fi
+	done
+	if [[ "$valid_type" != "true" ]]; then
 		log_error "Invalid type: $type"
 		log_error "Valid types: $VALID_TYPES"
 		return 1
