@@ -197,13 +197,15 @@ const VALID_HOOK_ACTIONS = new Set(["install", "uninstall", "status", "test"]);
  * @returns {string}
  */
 function runHookHelper(helperScript, action) {
-  const safeAction = String(action);
-  if (!VALID_HOOK_ACTIONS.has(safeAction)) {
-    return `Invalid action: ${safeAction}. Valid actions: ${[...VALID_HOOK_ACTIONS].join(", ")}`;
+  // Look up the action in the allowlist — returns an allowlist-owned string,
+  // breaking the taint chain from the function parameter to execSync.
+  const validAction = [...VALID_HOOK_ACTIONS].find((a) => a === String(action));
+  if (!validAction) {
+    return `Invalid action: ${String(action)}. Valid actions: ${[...VALID_HOOK_ACTIONS].join(", ")}`;
   }
   try {
     const result = execSync(
-      `bash "${helperScript}" ${safeAction}`,
+      `bash "${helperScript}" ${validAction}`,
       {
         encoding: "utf-8",
         timeout: 15000,
@@ -213,7 +215,7 @@ function runHookHelper(helperScript, action) {
     return result.trim();
   } catch (err) {
     const cmdOutput = (err.stdout || "") + (err.stderr || "");
-    return `Hook ${safeAction} failed:\n${cmdOutput.trim()}`;
+    return `Hook ${validAction} failed:\n${cmdOutput.trim()}`;
   }
 }
 
