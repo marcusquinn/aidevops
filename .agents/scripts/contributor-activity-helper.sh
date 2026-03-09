@@ -642,13 +642,28 @@ format_type = sys.argv[1]
 period_name = sys.argv[2]
 
 # Worker session title patterns
+# Matches headless dispatches, PR fix sessions, CI fix sessions, review feedback,
+# task-ID-prefixed sessions (t123, t123.4, t123-fix:), escalation sessions, health checks
 worker_patterns = [
     re.compile(r'^Issue #\d+'),
     re.compile(r'^PR #\d+'),
+    re.compile(r'^Fix PR\b', re.IGNORECASE),
+    re.compile(r'^Review PR\b', re.IGNORECASE),
     re.compile(r'^Supervisor Pulse'),
     re.compile(r'/full-loop', re.IGNORECASE),
     re.compile(r'^dispatch:', re.IGNORECASE),
     re.compile(r'^Worker:', re.IGNORECASE),
+    re.compile(r'^t\d+[\.\-:]', re.IGNORECASE),
+    re.compile(r'^escalation-', re.IGNORECASE),
+    re.compile(r'^health-check$', re.IGNORECASE),
+    re.compile(r'failing CI\b', re.IGNORECASE),
+    re.compile(r'CI fail', re.IGNORECASE),
+    re.compile(r'CHANGES_REQUESTED', re.IGNORECASE),
+    re.compile(r'CodeRabbit review', re.IGNORECASE),
+    re.compile(r'address review', re.IGNORECASE),
+    re.compile(r'review feedback', re.IGNORECASE),
+    re.compile(r'^Fix qlty\b', re.IGNORECASE),
+    re.compile(r'^Gemini feedback\b', re.IGNORECASE),
 ]
 
 def classify_session(title):
