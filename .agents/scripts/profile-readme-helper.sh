@@ -316,23 +316,26 @@ _get_top_apps() {
 
 # --- Get cache savings rate per million tokens for a model ---
 # Returns: (input_price - cache_read_price) per million tokens
-_cache_savings_rate() {
+# --- Get model pricing rates (input|output|cache_read per M tokens) ---
+# Mirrors shared-constants.sh get_model_pricing() hardcoded fallback.
+# Returns: input_price|output_price|cache_read_price
+_model_cost_rates() {
 	local model="$1"
 	local ms="${model#*/}"
 	ms="${ms%%-202*}"
 	case "$ms" in
-	*opus-4* | *claude-opus*) echo "13.50" ;;
-	*sonnet-4* | *claude-sonnet*) echo "2.70" ;;
-	*haiku-4* | *haiku-3* | *claude-haiku*) echo "0.72" ;;
-	*gpt-4.1-mini*) echo "0.30" ;;
-	*gpt-4.1*) echo "1.50" ;;
-	*o3*) echo "7.50" ;;
-	*o4-mini*) echo "0.825" ;;
-	*gemini-2.5-pro* | *gemini-3-pro*) echo "0.9375" ;;
-	*gemini-2.5-flash* | *gemini-3-flash*) echo "0.1125" ;;
-	*deepseek-r1*) echo "0.41" ;;
-	*deepseek-v3*) echo "0.20" ;;
-	*) echo "2.70" ;;
+	*opus-4* | *claude-opus*) echo "15.0|75.0|1.50" ;;
+	*sonnet-4* | *claude-sonnet*) echo "3.0|15.0|0.30" ;;
+	*haiku-4* | *haiku-3* | *claude-haiku*) echo "0.80|4.0|0.08" ;;
+	*gpt-4.1-mini*) echo "0.40|1.60|0.10" ;;
+	*gpt-4.1*) echo "2.0|8.0|0.50" ;;
+	*o3*) echo "10.0|40.0|2.50" ;;
+	*o4-mini*) echo "1.10|4.40|0.275" ;;
+	*gemini-2.5-pro* | *gemini-3-pro*) echo "1.25|10.0|0.3125" ;;
+	*gemini-2.5-flash* | *gemini-3-flash*) echo "0.15|0.60|0.0375" ;;
+	*deepseek-r1*) echo "0.55|2.19|0.14" ;;
+	*deepseek-v3*) echo "0.27|1.10|0.07" ;;
+	*) echo "3.0|15.0|0.30" ;;
 	esac
 	return 0
 }
@@ -478,8 +481,10 @@ _User AI session hours measured from AI message timestamps (reading, thinking, t
 EOF
 
 	# Build model usage table
+	# Opus rates used as baseline for model routing savings
+	local opus_input_rate="15.0" opus_output_rate="75.0" opus_cache_rate="1.50"
 	local total_requests=0 total_input=0 total_output=0 total_cache=0 total_cost=0
-	local total_savings="0"
+	local total_cache_savings="0" total_model_savings="0"
 	local model_rows=""
 
 	while IFS= read -r row; do
@@ -497,11 +502,25 @@ EOF
 		total_cache=$((total_cache + cache))
 		total_cost=$(echo "$total_cost + $cost" | bc)
 
-		# Calculate cache savings: cache_read_tokens / 1M * savings_rate_per_M
-		local savings_rate row_savings
-		savings_rate=$(_cache_savings_rate "$model")
-		row_savings=$(echo "scale=2; $cache / 1000000 * $savings_rate" | bc)
-		total_savings=$(echo "$total_savings + $row_savings" | bc)
+		# Get this model's rates: input|output|cache_read
+		local rates m_input_rate m_output_rate m_cache_rate
+		rates=$(_model_cost_rates "$model")
+		m_input_rate=$(echo "$rates" | cut -d'|' -f1)
+		m_output_rate=$(echo "$rates" | cut -d'|' -f2)
+		m_cache_rate=$(echo "$rates" | cut -d'|' -f3)
+
+		# Cache savings: what caching saved vs re-sending as full input
+		# cache_read_tokens / 1M * (input_price - cache_read_price)
+		local row_cache_savings
+		row_cache_savings=$(echo "scale=2; $cache / 1000000 * ($m_input_rate - $m_cache_rate)" | bc)
+		total_cache_savings=$(echo "$total_cache_savings + $row_cache_savings" | bc)
+
+		# Model routing savings: what using this model saved vs Opus
+		# For each token type: (opus_rate - model_rate) * tokens / 1M
+		# Opus rows produce $0 (same rates). Sonnet/Haiku produce large savings.
+		local row_model_savings
+		row_model_savings=$(echo "scale=2; ($opus_input_rate - $m_input_rate) * $input / 1000000 + ($opus_output_rate - $m_output_rate) * $output / 1000000 + ($opus_cache_rate - $m_cache_rate) * $cache / 1000000" | bc)
+		total_model_savings=$(echo "$total_model_savings + $row_model_savings" | bc)
 
 		local clean_model
 		clean_model=$(_clean_model_name "$model")
@@ -511,24 +530,32 @@ EOF
 		f_output=$(_format_tokens "$output")
 		f_cache=$(_format_tokens "$cache")
 
-		# Format cost and savings with 2 decimal places
-		local f_cost f_savings
+		# Format cost and both savings with 2 decimal places
+		local f_cost f_csavings f_msavings
 		f_cost=$(printf "%.2f" "$cost")
-		f_savings=$(printf "%.2f" "$row_savings")
+		f_csavings=$(printf "%.2f" "$row_cache_savings")
+		f_msavings=$(printf "%.2f" "$row_model_savings")
 
-		model_rows="${model_rows}| ${clean_model} | ${f_requests} | ${f_input} | ${f_output} | ${f_cache} | \$${f_cost} | \$${f_savings} |
+		model_rows="${model_rows}| ${clean_model} | ${f_requests} | ${f_input} | ${f_output} | ${f_cache} | \$${f_cost} | \$${f_csavings} | \$${f_msavings} |
 "
 	done < <(echo "$model_json" | jq -c '.[] | select(.cost_total >= 0.05)')
 
 	# Format totals
-	local f_total_req f_total_in f_total_out f_total_cache f_total_savings
+	local f_total_req f_total_in f_total_out f_total_cache
+	local f_total_csavings f_total_msavings
 	f_total_req=$(_format_number "$total_requests")
 	f_total_in=$(_format_tokens "$total_input")
 	f_total_out=$(_format_tokens "$total_output")
 	f_total_cache=$(_format_tokens "$total_cache")
-	# Round total_cost and total_savings to 2 decimal places
+	# Round costs and savings to 2 decimal places
 	total_cost=$(printf "%.2f" "$total_cost")
-	f_total_savings=$(printf "%.2f" "$total_savings")
+	f_total_csavings=$(printf "%.2f" "$total_cache_savings")
+	f_total_msavings=$(printf "%.2f" "$total_model_savings")
+
+	# Combined savings for footer
+	local combined_savings
+	combined_savings=$(echo "$total_cache_savings + $total_model_savings" | bc)
+	combined_savings=$(printf "%.2f" "$combined_savings")
 
 	# Token totals for footer
 	local all_tokens cache_pct
@@ -541,11 +568,11 @@ EOF
 
 ## AI Model Usage (last 30 days)
 
-| Model | Requests | Input | Output | Cache read | Cost | Cache savings |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: |
-${model_rows}| **Total** | **${f_total_req}** | **${f_total_in}** | **${f_total_out}** | **${f_total_cache}** | **\$${total_cost}** | **\$${f_total_savings}** |
+| Model | Requests | Input | Output | Cache read | Cost | Cache savings | Model savings |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+${model_rows}| **Total** | **${f_total_req}** | **${f_total_in}** | **${f_total_out}** | **${f_total_cache}** | **\$${total_cost}** | **\$${f_total_csavings}** | **\$${f_total_msavings}** |
 
-_${f_all_tokens} total tokens processed. Cache hit rate: ${cache_pct}% -- \$${f_total_savings} saved via prompt caching._
+_${f_all_tokens} total tokens processed. ${cache_pct}% cache hit rate. \$${combined_savings} total saved (\$${f_total_csavings} caching + \$${f_total_msavings} model routing vs all-Opus)._
 EOF
 
 	# Build top apps table (macOS only — requires Knowledge DB)
