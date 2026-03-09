@@ -83,7 +83,7 @@ function normalizeCaptions(rawCaptions, scenes, fps) {
     }
     // Derive scene index from startFrame
     let frameOffset = 0;
-    let sceneIdx = scenes.length - 1; // Default to last scene (fallback for beyond-end frames)
+    let sceneIdx = lastSceneIndex; // Default to last scene (fallback for beyond-end frames)
     for (let s = 0; s < scenes.length; s++) {
       const sceneDur = (scenes[s].duration || 5) * fps;
       if ((cap.startFrame || 0) >= frameOffset && (cap.startFrame || 0) < frameOffset + sceneDur) {
