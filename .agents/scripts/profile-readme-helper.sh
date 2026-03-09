@@ -262,22 +262,31 @@ _get_top_apps() {
 		return 0
 	fi
 
-	# Calculate totals for each period
+	# Validate and sum totals for each period (reject non-integer values)
 	local total_today=0 total_week=0 total_month=0
 	while IFS='|' read -r _bundle today_s week_s month_s; do
+		# Skip rows with non-integer values (prevents arithmetic injection)
+		[[ "$today_s" =~ ^[0-9]+$ ]] || continue
+		[[ "$week_s" =~ ^[0-9]+$ ]] || continue
+		[[ "$month_s" =~ ^[0-9]+$ ]] || continue
 		total_today=$((total_today + today_s))
 		total_week=$((total_week + week_s))
 		total_month=$((total_month + month_s))
 	done <<<"$app_data"
 
 	# Build JSON array sorted by month_secs descending, top 10
-	local json_arr="["
+	# Uses jq for safe JSON construction (prevents injection from special chars)
+	local json_arr="[]"
 	local count=0
-	local first=true
 	while IFS='|' read -r bundle today_s week_s month_s; do
 		if [[ $count -ge 10 ]]; then
 			break
 		fi
+
+		# Validate numeric fields
+		[[ "$today_s" =~ ^[0-9]+$ ]] || continue
+		[[ "$week_s" =~ ^[0-9]+$ ]] || continue
+		[[ "$month_s" =~ ^[0-9]+$ ]] || continue
 
 		local name
 		name=$(_friendly_app_name "$bundle")
@@ -294,16 +303,13 @@ _get_top_apps() {
 			month_pct=$(((month_s * 100 + total_month / 2) / total_month))
 		fi
 
-		if [[ "$first" == true ]]; then
-			first=false
-		else
-			json_arr="${json_arr},"
-		fi
-		json_arr="${json_arr}{\"app\":\"${name}\",\"today_pct\":${today_pct},\"week_pct\":${week_pct},\"month_pct\":${month_pct}}"
+		# Use jq for safe JSON construction (handles special chars in app names)
+		json_arr=$(echo "$json_arr" | jq --arg app "$name" \
+			--argjson tp "$today_pct" --argjson wp "$week_pct" --argjson mp "$month_pct" \
+			'. + [{app: $app, today_pct: $tp, week_pct: $wp, month_pct: $mp}]')
 		count=$((count + 1))
 	done < <(echo "$app_data" | sort -t'|' -k4 -rn)
 
-	json_arr="${json_arr}]"
 	echo "$json_arr"
 	return 0
 }
