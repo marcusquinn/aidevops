@@ -151,9 +151,10 @@ test_simplex_bridge_init() {
 	if [[ -f "$config_path" ]]; then
 		local perms
 		# stat -c '%a' is GNU/Linux; stat -f '%Lp' is BSD/macOS
+		# Guard each stat call so failures under set -e are captured, not fatal
 		case "$(uname -s)" in
-		Linux*) perms="$(stat -c '%a' "$config_path")" ;;
-		Darwin* | FreeBSD*) perms="$(stat -f '%Lp' "$config_path")" ;;
+		Linux*) perms="$(stat -c '%a' "$config_path" 2>/dev/null || echo "unknown")" ;;
+		Darwin* | FreeBSD*) perms="$(stat -f '%Lp' "$config_path" 2>/dev/null || echo "unknown")" ;;
 		*) perms="unknown" ;;
 		esac
 		if [[ "$perms" == "600" ]]; then
