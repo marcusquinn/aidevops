@@ -164,6 +164,7 @@ Planning files go direct to main. Code changes need worktree + PR. Workers NEVER
 - `pulse: false` — repos that exist but don't need task management (profile READMEs, forks for reference, archived projects)
 - `local_only: true` — repos with no remote (skip all `gh` operations)
 - `priority` — `"tooling"` (infrastructure/tools), `"product"` (user-facing), `"profile"` (GitHub profile, docs-only)
+- `maintainer` — GitHub username of the repo maintainer. Used by code-simplifier for issue assignment and other maintainer-gated workflows. Auto-detected from `gh api user` on registration; falls back to slug owner if missing.
 
 **Cross-repo task creation**: When a session creates a task in a *different* repo (e.g., adding an aidevops TODO while working in another project), follow the full workflow — not just the TODO edit:
 

@@ -173,31 +173,40 @@ register_repo() {
 		fi
 	fi
 
+	# Auto-detect maintainer from gh API (current authenticated user)
+	# Only runs once per registration — preserved on subsequent updates
+	local maintainer=""
+	if command -v gh &>/dev/null; then
+		maintainer=$(gh api user --jq '.login' 2>/dev/null) || maintainer=""
+	fi
+
 	# Check if repo already registered
 	if jq -e --arg path "$repo_path" '.initialized_repos[] | select(.path == $path)' "$REPOS_FILE" &>/dev/null; then
-		# Update existing entry, preserving pulse/priority/local_only if already set
+		# Update existing entry, preserving pulse/priority/local_only/maintainer if already set
 		local temp_file="${REPOS_FILE}.tmp"
 		jq --arg path "$repo_path" --arg version "$version" --arg features "$features" \
-			--arg slug "$slug" --argjson local_only "$is_local_only" \
+			--arg slug "$slug" --argjson local_only "$is_local_only" --arg maintainer "$maintainer" \
 			'(.initialized_repos[] | select(.path == $path)) |= (
 				. + {path: $path, version: $version, features: ($features | split(",")), updated: (now | strftime("%Y-%m-%dT%H:%M:%SZ"))}
 				| if $slug != "" then .slug = $slug else . end
 				| if $local_only then .local_only = true else . end
+				| if (.maintainer == null or .maintainer == "") and $maintainer != "" then .maintainer = $maintainer else . end
 			)' \
 			"$REPOS_FILE" >"$temp_file" && mv "$temp_file" "$REPOS_FILE"
 	else
-		# Add new entry with slug
+		# Add new entry with slug and maintainer
 		local temp_file="${REPOS_FILE}.tmp"
 		local new_entry
 		# shellcheck disable=SC2016  # jq expressions use $var syntax, not shell expansion
 		if [[ -n "$slug" ]]; then
-			new_entry='{path: $path, slug: $slug, version: $version, features: ($features | split(",")), initialized: (now | strftime("%Y-%m-%dT%H:%M:%SZ"))}'
+			new_entry='{path: $path, slug: $slug, maintainer: $maintainer, version: $version, features: ($features | split(",")), initialized: (now | strftime("%Y-%m-%dT%H:%M:%SZ"))}'
 		elif [[ "$is_local_only" == "true" ]]; then
-			new_entry='{path: $path, local_only: true, version: $version, features: ($features | split(",")), initialized: (now | strftime("%Y-%m-%dT%H:%M:%SZ"))}'
+			new_entry='{path: $path, local_only: true, maintainer: $maintainer, version: $version, features: ($features | split(",")), initialized: (now | strftime("%Y-%m-%dT%H:%M:%SZ"))}'
 		else
-			new_entry='{path: $path, version: $version, features: ($features | split(",")), initialized: (now | strftime("%Y-%m-%dT%H:%M:%SZ"))}'
+			new_entry='{path: $path, maintainer: $maintainer, version: $version, features: ($features | split(",")), initialized: (now | strftime("%Y-%m-%dT%H:%M:%SZ"))}'
 		fi
-		jq --arg path "$repo_path" --arg version "$version" --arg features "$features" --arg slug "$slug" \
+		jq --arg path "$repo_path" --arg version "$version" --arg features "$features" \
+			--arg slug "$slug" --arg maintainer "$maintainer" \
 			".initialized_repos += [$new_entry]" \
 			"$REPOS_FILE" >"$temp_file" && mv "$temp_file" "$REPOS_FILE"
 	fi
@@ -214,6 +223,37 @@ get_registered_repos() {
 	fi
 
 	jq -r '.initialized_repos[] | .path' "$REPOS_FILE" 2>/dev/null || echo ""
+	return 0
+}
+
+# Get the maintainer GitHub username for a repo
+# Fallback chain: maintainer field > slug owner > empty string
+# Usage: get_repo_maintainer <slug>
+get_repo_maintainer() {
+	local slug="$1"
+
+	if ! command -v jq &>/dev/null; then
+		echo ""
+		return 0
+	fi
+
+	local maintainer
+	maintainer=$(jq -r --arg slug "$slug" \
+		'.initialized_repos[] | select(.slug == $slug) | .maintainer // empty' \
+		"$REPOS_FILE" 2>/dev/null) || maintainer=""
+
+	if [[ -n "$maintainer" ]]; then
+		echo "$maintainer"
+		return 0
+	fi
+
+	# Fallback: extract owner from slug (owner/repo -> owner)
+	if [[ -n "$slug" && "$slug" == *"/"* ]]; then
+		echo "${slug%%/*}"
+		return 0
+	fi
+
+	echo ""
 	return 0
 }
 
