@@ -233,7 +233,7 @@ collect_issues() {
 			# Store in database (run_id, severity, category, rule_id, description, path, line)
 			store_finding "$run_id" "$mapped_severity" "issue" "$rule" "$message" "$path" "$line"
 
-			((total_collected++))
+			((++total_collected))
 		done <<<"$issues"
 
 		# Check if there are more pages
@@ -243,7 +243,7 @@ collect_issues() {
 			break
 		fi
 
-		((page++))
+		((++page))
 	done
 
 	log_success "Collected $total_collected issues"
@@ -327,7 +327,7 @@ collect_hotspots() {
 			# Store in database (run_id, severity, category, rule_id, description, path, line)
 			store_finding "$run_id" "$mapped_severity" "security_hotspot" "$rule" "$message" "$path" "$line"
 
-			((total_collected++))
+			((++total_collected))
 		done <<<"$hotspots"
 
 		# Check if there are more pages
@@ -339,7 +339,7 @@ collect_hotspots() {
 			break
 		fi
 
-		((page++))
+		((++page))
 	done
 
 	log_success "Collected $total_collected security hotspots"

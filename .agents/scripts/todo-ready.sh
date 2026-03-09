@@ -83,14 +83,14 @@ output_text() {
     while IFS='|' read -r status id desc est blocker; do
         case "$status" in
             READY)
-                ((ready_count++))
+                ((++ready_count))
                 echo "  $ready_count. $id: $desc ${est:+($est)}"
                 ;;
             BLOCKED)
-                ((blocked_count++))
+                ((++blocked_count))
                 ;;
             IN_PROGRESS)
-                ((in_progress_count++))
+                ((++in_progress_count))
                 ;;
             *)
                 # Ignore unknown status
@@ -173,17 +173,17 @@ output_json() {
             READY)
                 [[ $ready_count -gt 0 ]] && ready_json+=","
                 ready_json+="{\"id\":\"$id\",\"desc\":\"$desc\",\"est\":\"$est\"}"
-                ((ready_count++))
+                ((++ready_count))
                 ;;
             BLOCKED)
                 [[ $blocked_count -gt 0 ]] && blocked_json+=","
                 blocked_json+="{\"id\":\"$id\",\"desc\":\"$desc\",\"est\":\"$est\",\"blocked_by\":\"$blocker\"}"
-                ((blocked_count++))
+                ((++blocked_count))
                 ;;
             IN_PROGRESS)
                 [[ $in_progress_count -gt 0 ]] && in_progress_json+=","
                 in_progress_json+="{\"id\":\"$id\",\"desc\":\"$desc\",\"est\":\"$est\"}"
-                ((in_progress_count++))
+                ((++in_progress_count))
                 ;;
             *)
                 # Ignore unknown status

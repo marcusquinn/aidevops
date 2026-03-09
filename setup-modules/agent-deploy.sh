@@ -297,7 +297,7 @@ inject_agents_reference() {
 					cat "$agents_file" >>"$temp_file"
 					mv "$temp_file" "$agents_file"
 					print_success "Added reference to $agents_file"
-					((updated_count++)) || true
+					((++updated_count))
 				else
 					print_info "Reference already exists in $agents_file"
 				fi
@@ -305,7 +305,7 @@ inject_agents_reference() {
 				# Create new file with just the reference
 				echo "$reference_line" >"$agents_file"
 				print_success "Created $agents_file with aidevops reference"
-				((updated_count++)) || true
+				((++updated_count))
 			fi
 		fi
 	done
@@ -520,7 +520,7 @@ setup_beads_ui() {
 			# brew install user/tap/formula auto-taps
 			if run_with_spinner "Installing bv via Homebrew" brew install dicklesworthstone/tap/bv; then
 				print_info "Run: bv (in a beads-enabled project)"
-				((installed_count++)) || true
+				((++installed_count))
 			else
 				print_warning "Homebrew install failed - try manually:"
 				print_info "  brew install dicklesworthstone/tap/bv"
@@ -532,7 +532,7 @@ setup_beads_ui() {
 				# Go available - use go install
 				if run_with_spinner "Installing bv via Go" go install github.com/Dicklesworthstone/beads_viewer/cmd/bv@latest; then
 					print_info "Run: bv (in a beads-enabled project)"
-					((installed_count++)) || true
+					((++installed_count))
 				else
 					print_warning "Go install failed"
 				fi
@@ -542,7 +542,7 @@ setup_beads_ui() {
 				if [[ "$use_script" =~ ^[Yy]?$ ]]; then
 					if verified_install "bv (beads viewer)" "https://raw.githubusercontent.com/Dicklesworthstone/beads_viewer/main/install.sh"; then
 						print_info "Run: bv (in a beads-enabled project)"
-						((installed_count++)) || true
+						((++installed_count))
 					else
 						print_warning "Install script failed - try manually:"
 						print_info "  Homebrew: brew tap dicklesworthstone/tap && brew install dicklesworthstone/tap/bv"
@@ -562,7 +562,7 @@ setup_beads_ui() {
 		if [[ "$install_web" =~ ^[Yy]?$ ]]; then
 			if run_with_spinner "Installing beads-ui" npm_global_install beads-ui; then
 				print_info "Run: beads-ui"
-				((installed_count++)) || true
+				((++installed_count))
 			fi
 		fi
 
@@ -570,7 +570,7 @@ setup_beads_ui() {
 		if [[ "$install_bdui" =~ ^[Yy]?$ ]]; then
 			if run_with_spinner "Installing bdui" npm_global_install bdui; then
 				print_info "Run: bdui"
-				((installed_count++)) || true
+				((++installed_count))
 			fi
 		fi
 	fi
@@ -581,7 +581,7 @@ setup_beads_ui() {
 		if [[ "$install_perles" =~ ^[Yy]?$ ]]; then
 			if run_with_spinner "Installing perles (Rust compile)" cargo install perles; then
 				print_info "Run: perles"
-				((installed_count++)) || true
+				((++installed_count))
 			fi
 		fi
 	fi

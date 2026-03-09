@@ -321,7 +321,7 @@ cmd_search() {
 		done
 
 		if [[ "$matched" == true ]]; then
-			((found++)) || true
+			((++found))
 
 			local is_imported="false"
 			if [[ "$filename" == *-skill ]]; then
@@ -458,7 +458,7 @@ cmd_browse() {
 			if [[ -n "$desc" ]]; then
 				echo "    $desc"
 			fi
-			((found++)) || true
+			((++found))
 		fi
 	done < <(find "$AGENTS_DIR" -name "*.md" -type f | sort)
 
@@ -784,7 +784,7 @@ cmd_list() {
 			fi
 			printf "  %-35s %-25s %s\n" "$filename" "[$category]" "($type_label)"
 		fi
-		((count++)) || true
+		((++count))
 	done < <(find "$AGENTS_DIR" -name "*.md" -type f | sort)
 
 	if [[ "$json_output" == true ]]; then
@@ -996,8 +996,8 @@ receipt=tools/accounts"
 				local desc
 				desc=$(extract_description "$md_file")
 				echo -e "    ${GREEN}-${NC} $filename: ${desc:-<no description>}"
-				((found_in_cat++)) || true
-				((total_found++)) || true
+				((++found_in_cat))
+				((++total_found))
 			fi
 		done < <(find "$AGENTS_DIR" -name "*.md" -type f | sort)
 

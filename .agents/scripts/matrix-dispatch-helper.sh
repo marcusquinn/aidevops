@@ -1496,7 +1496,7 @@ cmd_stop() {
 		local wait_count=0
 		while kill -0 "$pid" 2>/dev/null && ((wait_count < 10)); do
 			sleep 1
-			((wait_count++))
+			((++wait_count))
 		done
 
 		if kill -0 "$pid" 2>/dev/null; then

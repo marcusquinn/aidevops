@@ -285,7 +285,7 @@ create_skill_symlinks() {
 			# Create symlink (remove existing first)
 			rm -f "$target_file" 2>/dev/null || true
 			if ln -sf "$full_path" "$target_file" 2>/dev/null; then
-				((created_count++)) || true
+				((++created_count))
 			fi
 		done
 	done < <(jq -c '.skills[]' "$skill_sources" 2>/dev/null)
@@ -367,7 +367,7 @@ check_skill_updates() {
 		fi
 
 		if [[ -n "$latest_commit" && "$latest_commit" != "$upstream_commit" ]]; then
-			((updates_available++)) || true
+			((++updates_available))
 			update_list="${update_list}\n  - $name (${upstream_commit:0:7} → ${latest_commit:0:7})"
 		fi
 	done < <(jq -c '.skills[]' "$skill_sources" 2>/dev/null)

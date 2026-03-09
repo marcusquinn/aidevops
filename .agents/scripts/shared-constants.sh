@@ -980,7 +980,7 @@ prune_worktree_registry() {
 
 			if [[ "$should_prune" == "true" ]]; then
 				unregister_worktree "$wt_path"
-				((pruned_count++))
+				((++pruned_count))
 				[[ -n "${VERBOSE:-}" ]] && echo "  Pruned: $wt_path ($prune_reason)"
 			fi
 		done <<<"$entries"

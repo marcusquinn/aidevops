@@ -167,7 +167,7 @@ calculate_backoff_wait() {
 			wait_time=$BACKOFF_MAX
 			break
 		fi
-		((i++))
+		((++i))
 	done
 
 	echo "$wait_time"

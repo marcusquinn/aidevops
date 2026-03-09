@@ -1493,7 +1493,7 @@ dismiss_bot_reviews() {
 			if gh api -X PUT "repos/${repo_slug}/pulls/${pr_number}/reviews/${review_id}/dismissals" \
 				-f message="Auto-dismissed: bot review does not block autonomous pipeline" \
 				-f event="DISMISS" 2>>"$SUPERVISOR_LOG"; then
-				((dismissed_count++))
+				((++dismissed_count))
 				log_success "Dismissed bot review #${review_id}"
 			else
 				log_warn "Failed to dismiss bot review #${review_id}"

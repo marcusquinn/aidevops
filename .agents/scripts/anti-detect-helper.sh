@@ -1092,7 +1092,7 @@ show_status() {
     # Profiles
     local profile_count=0
     for dir in "$PROFILES_DIR"/{persistent,clean,warmup}/*/; do
-        [[ -d "$dir" ]] && [[ "$(basename "$dir")" != "default" ]] && ((profile_count++)) || true || true
+        [[ -d "$dir" ]] && [[ "$(basename "$dir")" != "default" ]] && ((++profile_count)) || true
     done
     echo -e "  Profiles:          ${GREEN}$profile_count${NC} configured"
 

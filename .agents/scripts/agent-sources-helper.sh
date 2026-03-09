@@ -354,7 +354,7 @@ cmd_list() {
 		# Shorten home path
 		path="${path/#${HOME}/~}"
 		printf "  %-25s %-45s %s\n" "${name}" "${path}" "${synced}"
-		((i++))
+		((++i))
 	done
 	return 0
 }
@@ -425,7 +425,7 @@ cmd_status() {
 			fi
 		fi
 		echo ""
-		((i++))
+		((++i))
 	done
 	return 0
 }
@@ -458,13 +458,13 @@ cmd_sync() {
 
 		if [[ ! -d "${path}" ]]; then
 			warn "  Source directory missing: ${path}"
-			((i++))
+			((++i))
 			continue
 		fi
 
 		if [[ ! -d "${path}/.agents" ]]; then
 			warn "  No .agents/ directory in ${path}"
-			((i++))
+			((++i))
 			continue
 		fi
 
@@ -491,7 +491,7 @@ cmd_sync() {
 
 			# rsync the agent directory (preserves permissions, handles deletions)
 			rsync -a --delete "${agent_dir}" "${dest_dir}/${agent_name}/"
-			((agent_count++))
+			((++agent_count))
 
 			# Post-sync: register primary agents and deploy slash commands
 			sync_primary_agent "${dest_dir}/${agent_name}" "${agent_name}"
@@ -501,8 +501,8 @@ cmd_sync() {
 		update_last_synced "${name}" "${agent_count}"
 		success "  Synced ${agent_count} agent(s) to custom/${name}/"
 		total_agents=$((total_agents + agent_count))
-		((total_sources++))
-		((i++))
+		((++total_sources))
+		((++i))
 	done
 
 	echo ""
@@ -539,7 +539,7 @@ sync_primary_agent() {
 
 	ln -s "${agent_md}" "${link_target}"
 	info "  Registered primary agent: ${agent_name}"
-	((total_primary++)) || true
+	((++total_primary))
 	return 0
 }
 
@@ -578,7 +578,7 @@ sync_slash_commands() {
 
 		# Symlink rather than copy — stays in sync without re-running
 		ln -sf "${md_file}" "${target}"
-		((total_commands++)) || true
+		((++total_commands))
 	done
 	return 0
 }

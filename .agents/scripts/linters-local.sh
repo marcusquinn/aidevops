@@ -104,7 +104,7 @@ check_return_statements() {
 
 	for file in "${ALL_SH_FILES[@]}"; do
 		[[ -f "$file" ]] || continue
-		((files_checked++))
+		((++files_checked))
 
 		# Count multi-line functions (exclude one-liners like: func() { echo "x"; })
 		# One-liners don't need explicit return statements
@@ -131,7 +131,7 @@ check_return_statements() {
 		local total_returns=$((return_statements + exit_statements))
 
 		if [[ $total_returns -lt $functions_count ]]; then
-			((violations++))
+			((++violations))
 			print_warning "Missing return statements in $file"
 		fi
 	done
@@ -565,7 +565,7 @@ check_toon_syntax() {
 				result=$(toon-lsp check "$file" 2>&1)
 				local exit_code=$?
 				if [[ $exit_code -ne 0 ]] || [[ "$result" == *"error"* ]]; then
-					((violations++))
+					((++violations))
 					print_warning "TOON syntax issue in $file"
 				fi
 			fi
@@ -574,7 +574,7 @@ check_toon_syntax() {
 		# Fallback: basic structure validation (non-empty check)
 		while IFS= read -r file; do
 			if [[ -f "$file" ]] && [[ ! -s "$file" ]]; then
-				((violations++))
+				((++violations))
 				print_warning "TOON: Empty file $file"
 			fi
 		done <<<"$toon_files"
@@ -695,7 +695,7 @@ check_skill_frontmatter() {
 	while IFS='|' read -r name local_path; do
 		if [[ ! -f "$local_path" ]]; then
 			print_warning "Skill file missing: $local_path (skill: $name)"
-			((errors++)) || true
+			((++errors))
 			continue
 		fi
 
@@ -715,13 +715,13 @@ check_skill_frontmatter() {
 
 		if [[ -z "$fm_name" ]]; then
 			print_error "Missing 'name' field in frontmatter: $local_path (expected: $name)"
-			((errors++)) || true
+			((++errors))
 		elif [[ "$fm_name" != "$name" ]]; then
 			print_error "Name mismatch in $local_path: got '$fm_name', expected '$name'"
-			((errors++)) || true
+			((++errors))
 		fi
 
-		((checked++)) || true
+		((++checked))
 	done <<<"$skill_entries"
 
 	if [[ $errors -eq 0 ]]; then

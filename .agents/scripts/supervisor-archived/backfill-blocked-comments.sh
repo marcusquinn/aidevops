@@ -86,7 +86,7 @@ main() {
 			echo "  [DRY RUN] Would post blocked comment"
 		else
 			post_blocked_comment_to_github "$task_id" "$blocked_error" "$repo_path"
-			((count++))
+			((++count))
 		fi
 	done <<< "$issues"
 	

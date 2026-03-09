@@ -434,7 +434,7 @@ show_status() {
 			size=$(du -h "$file" 2>/dev/null | cut -f1 || echo "unknown")
 			ext="${file##*.}"
 			print_info "  $(basename "$file") (${ext} - $size)"
-			((shown++)) || true
+			((++shown))
 		done
 	fi
 

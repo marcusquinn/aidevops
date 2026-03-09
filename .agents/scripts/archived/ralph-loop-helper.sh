@@ -384,7 +384,7 @@ calculate_delay() {
         local i=1
         while [[ $i -lt $iteration ]] && [[ $delay -lt $RALPH_DELAY_MAX ]]; do
             delay=$((delay * 2))
-            ((i++))
+            ((++i))
         done
         [[ $delay -gt $RALPH_DELAY_MAX ]] && delay=$RALPH_DELAY_MAX
     fi

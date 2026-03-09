@@ -62,7 +62,7 @@ get_available_port() {
     # Find next available port
     local port="$desired_port"
     while lsof -i :"$port" >/dev/null 2>&1 && [[ $port -lt 65535 ]]; do
-        ((port++))
+        ((++port))
     done
     
     if [[ $port -lt 65535 ]]; then
@@ -248,7 +248,7 @@ else
     if lsof -i :"$DESIRED_PORT" >/dev/null 2>&1; then
         echo "[WARNING] Port $DESIRED_PORT is in use, finding alternative..."
         while lsof -i :"$DESIRED_PORT" >/dev/null 2>&1 && [[ $DESIRED_PORT -lt 65535 ]]; do
-            ((DESIRED_PORT++))
+            ((++DESIRED_PORT))
         done
         echo "[INFO] Using port: $DESIRED_PORT"
     fi
@@ -432,7 +432,7 @@ import_flows() {
         if [[ -f "$flow_file" ]]; then
             if langflow import --file "$flow_file" 2>/dev/null; then
                 print_success "Imported: $(basename "$flow_file")"
-                ((count++))
+                ((++count))
             else
                 print_warning "Failed to import: $(basename "$flow_file")"
             fi

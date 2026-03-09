@@ -282,20 +282,20 @@ cmd_migrate() {
 
 			if ! has_arm_formula "$pkg"; then
 				print_warning "Skipped: $pkg (no ARM formula available)"
-				((skipped++))
+				((++skipped))
 				continue
 			fi
 
 			if [[ "$dry_run" = true ]]; then
 				echo "  [DRY RUN] Would install ARM: $pkg"
-				((migrated++))
+				((++migrated))
 			else
 				if "$ARM_BREW" install "$pkg" 2>&1 | tail -1; then
 					print_success "Installed ARM: $pkg"
-					((migrated++))
+					((++migrated))
 				else
 					print_error "Failed to install ARM: $pkg"
-					((failed++))
+					((++failed))
 				fi
 			fi
 		done <<<"$x86_only"
