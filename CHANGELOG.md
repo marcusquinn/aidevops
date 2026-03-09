@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- generate rich profile READMEs with language badges, repos, and contributions (#3962)
+
 ## [2.167.2] - 2026-03-09
 
 ### Changed
