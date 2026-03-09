@@ -97,8 +97,13 @@ load_wave_api_key() {
 	fi
 
 	# Try gopass (encrypted, preferred)
+	# secret-helper.sh normalizes names to uppercase (wave-api-key -> WAVE_API_KEY)
+	# Try normalized path first, then legacy lowercase for backward compatibility
 	if command -v gopass &>/dev/null; then
-		WAVE_API_KEY=$(gopass show -o "aidevops/wave-api-key" 2>/dev/null || echo "")
+		WAVE_API_KEY=$(gopass show -o "aidevops/WAVE_API_KEY" 2>/dev/null || echo "")
+		if [[ -z "$WAVE_API_KEY" ]]; then
+			WAVE_API_KEY=$(gopass show -o "aidevops/wave-api-key" 2>/dev/null || echo "")
+		fi
 		if [[ -n "$WAVE_API_KEY" ]]; then
 			export WAVE_API_KEY
 			return 0
