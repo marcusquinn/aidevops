@@ -55,6 +55,14 @@ readonly SEVERITY_WARNING="warning"
 readonly SEVERITY_INFO="info"
 readonly SEVERITY_PASS="pass"
 
+# Category constants (SonarCloud: avoid repeated string literals)
+readonly CAT_WORKFLOWS="workflows"
+readonly CAT_BRANCH_PROTECTION="branch_protection"
+readonly CAT_REVIEW_BOT_GATE="review_bot_gate"
+readonly CAT_DEPENDENCIES="dependencies"
+readonly CAT_COLLABORATORS="collaborators"
+readonly CAT_REPO_SECURITY="repo_security"
+
 # Counters
 FINDINGS_CRITICAL=0
 FINDINGS_WARNING=0
@@ -126,7 +134,7 @@ check_workflow_security() {
 
 	if [[ ! -d "$workflows_dir" ]]; then
 		print_skip "No .github/workflows/ directory found"
-		add_finding "$SEVERITY_INFO" "workflows" "No .github/workflows/ directory"
+		add_finding "$SEVERITY_INFO" "$CAT_WORKFLOWS" "No .github/workflows/ directory"
 		return 0
 	fi
 
@@ -135,7 +143,7 @@ check_workflow_security() {
 
 	if [[ -z "$workflow_files" ]]; then
 		print_skip "No workflow files found"
-		add_finding "$SEVERITY_INFO" "workflows" "No workflow YAML files found"
+		add_finding "$SEVERITY_INFO" "$CAT_WORKFLOWS" "No workflow YAML files found"
 		return 0
 	fi
 
@@ -155,7 +163,7 @@ check_workflow_security() {
 		if grep -qE '\$\{\{\s*github\.event\.(issue|pull_request|comment)\.' "$wf" 2>/dev/null; then
 			if grep -qE '^\s*run:' "$wf" 2>/dev/null; then
 				print_crit "$wf_name: Uses github.event context in shell run step (injection risk)"
-				add_finding "$SEVERITY_CRITICAL" "workflows" "$wf_name: github.event context in shell run step"
+				add_finding "$SEVERITY_CRITICAL" "$CAT_WORKFLOWS" "$wf_name: github.event context in shell run step"
 				unsafe_found=true
 			fi
 		fi
@@ -163,7 +171,7 @@ check_workflow_security() {
 		# Check 2: Overly permissive allowed_non_write_users or permissions
 		if grep -qE 'allowed_non_write_users:\s*"\*"' "$wf" 2>/dev/null; then
 			print_crit "$wf_name: allowed_non_write_users set to wildcard '*'"
-			add_finding "$SEVERITY_CRITICAL" "workflows" "$wf_name: allowed_non_write_users wildcard"
+			add_finding "$SEVERITY_CRITICAL" "$CAT_WORKFLOWS" "$wf_name: allowed_non_write_users wildcard"
 			unsafe_found=true
 		fi
 
@@ -172,24 +180,24 @@ check_workflow_security() {
 		if grep -qE 'pull_request_target' "$wf" 2>/dev/null; then
 			if grep -qE 'ref:\s*\$\{\{\s*github\.event\.pull_request\.head\.(ref|sha)' "$wf" 2>/dev/null; then
 				print_crit "$wf_name: pull_request_target with PR head checkout (pwn request risk)"
-				add_finding "$SEVERITY_CRITICAL" "workflows" "$wf_name: pull_request_target with PR head checkout"
+				add_finding "$SEVERITY_CRITICAL" "$CAT_WORKFLOWS" "$wf_name: pull_request_target with PR head checkout"
 				unsafe_found=true
 			else
 				print_warn "$wf_name: Uses pull_request_target (review checkout refs carefully)"
-				add_finding "$SEVERITY_WARNING" "workflows" "$wf_name: uses pull_request_target"
+				add_finding "$SEVERITY_WARNING" "$CAT_WORKFLOWS" "$wf_name: uses pull_request_target"
 			fi
 		fi
 
 		# Check 4: Long-lived tokens cached or stored in artifacts
 		if grep -qE 'actions/cache.*token|save-state.*token|GITHUB_TOKEN.*>>.*GITHUB_ENV' "$wf" 2>/dev/null; then
 			print_warn "$wf_name: Possible token caching pattern detected"
-			add_finding "$SEVERITY_WARNING" "workflows" "$wf_name: possible token caching"
+			add_finding "$SEVERITY_WARNING" "$CAT_WORKFLOWS" "$wf_name: possible token caching"
 		fi
 
 		# Check 5: Overly broad permissions
 		if grep -qE '^\s*permissions:\s*write-all' "$wf" 2>/dev/null; then
 			print_warn "$wf_name: Uses write-all permissions (prefer least-privilege)"
-			add_finding "$SEVERITY_WARNING" "workflows" "$wf_name: write-all permissions"
+			add_finding "$SEVERITY_WARNING" "$CAT_WORKFLOWS" "$wf_name: write-all permissions"
 		fi
 
 		# Check 6: Third-party actions pinned to branch instead of SHA
@@ -199,14 +207,14 @@ check_workflow_security() {
 			local unpinned_count
 			unpinned_count=$(echo "$unpinned_actions" | wc -l | tr -d ' ')
 			print_warn "$wf_name: $unpinned_count action(s) pinned to branch/tag instead of SHA"
-			add_finding "$SEVERITY_WARNING" "workflows" "$wf_name: $unpinned_count actions not SHA-pinned"
+			add_finding "$SEVERITY_WARNING" "$CAT_WORKFLOWS" "$wf_name: $unpinned_count actions not SHA-pinned"
 		fi
 
 	done <<<"$workflow_files"
 
 	if [[ "$unsafe_found" == "false" ]]; then
 		print_pass "No critical workflow security issues found"
-		add_finding "$SEVERITY_PASS" "workflows" "No critical issues"
+		add_finding "$SEVERITY_PASS" "$CAT_WORKFLOWS" "No critical issues"
 	fi
 
 	return 0
@@ -221,14 +229,14 @@ check_branch_protection() {
 	# Need gh CLI and a GitHub remote
 	if ! command -v gh &>/dev/null; then
 		print_skip "GitHub CLI (gh) not installed — cannot check branch protection"
-		add_finding "$SEVERITY_INFO" "branch_protection" "gh CLI not available"
+		add_finding "$SEVERITY_INFO" "$CAT_BRANCH_PROTECTION" "gh CLI not available"
 		return 0
 	fi
 
 	local slug
 	if ! slug=$(resolve_slug "$repo_path"); then
 		print_skip "No GitHub remote — branch protection check skipped"
-		add_finding "$SEVERITY_INFO" "branch_protection" "No GitHub remote"
+		add_finding "$SEVERITY_INFO" "$CAT_BRANCH_PROTECTION" "No GitHub remote"
 		return 0
 	fi
 
@@ -245,7 +253,7 @@ check_branch_protection() {
 
 	if [[ -z "$protection_json" || "$protection_json" == *"Not Found"* || "$protection_json" == *"Branch not protected"* ]]; then
 		print_crit "Default branch '$default_branch' has NO branch protection"
-		add_finding "$SEVERITY_CRITICAL" "branch_protection" "No branch protection on $default_branch"
+		add_finding "$SEVERITY_CRITICAL" "$CAT_BRANCH_PROTECTION" "No branch protection on $default_branch"
 		return 0
 	fi
 
@@ -255,10 +263,10 @@ check_branch_protection() {
 
 	if [[ "$required_reviews" -gt 0 ]]; then
 		print_pass "PR reviews required ($required_reviews approving review(s))"
-		add_finding "$SEVERITY_PASS" "branch_protection" "PR reviews required: $required_reviews"
+		add_finding "$SEVERITY_PASS" "$CAT_BRANCH_PROTECTION" "PR reviews required: $required_reviews"
 	else
 		print_warn "PR reviews not required on $default_branch"
-		add_finding "$SEVERITY_WARNING" "branch_protection" "PR reviews not required"
+		add_finding "$SEVERITY_WARNING" "$CAT_BRANCH_PROTECTION" "PR reviews not required"
 	fi
 
 	# Check: require status checks
@@ -267,10 +275,10 @@ check_branch_protection() {
 
 	if [[ "$required_checks" -gt 0 ]]; then
 		print_pass "Required status checks configured ($required_checks check(s))"
-		add_finding "$SEVERITY_PASS" "branch_protection" "Status checks configured: $required_checks"
+		add_finding "$SEVERITY_PASS" "$CAT_BRANCH_PROTECTION" "Status checks configured: $required_checks"
 	else
 		print_warn "No required status checks on $default_branch"
-		add_finding "$SEVERITY_WARNING" "branch_protection" "No required status checks"
+		add_finding "$SEVERITY_WARNING" "$CAT_BRANCH_PROTECTION" "No required status checks"
 	fi
 
 	# Check: enforce for admins
@@ -279,10 +287,10 @@ check_branch_protection() {
 
 	if [[ "$enforce_admins" == "true" ]]; then
 		print_pass "Branch protection enforced for admins"
-		add_finding "$SEVERITY_PASS" "branch_protection" "Enforced for admins"
+		add_finding "$SEVERITY_PASS" "$CAT_BRANCH_PROTECTION" "Enforced for admins"
 	else
 		print_info "Branch protection not enforced for admins (common for solo repos)"
-		add_finding "$SEVERITY_INFO" "branch_protection" "Not enforced for admins"
+		add_finding "$SEVERITY_INFO" "$CAT_BRANCH_PROTECTION" "Not enforced for admins"
 	fi
 
 	return 0
@@ -298,10 +306,10 @@ check_review_bot_gate() {
 	local gate_workflow="$repo_path/.github/workflows/review-bot-gate.yml"
 	if [[ -f "$gate_workflow" ]]; then
 		print_pass "review-bot-gate.yml workflow present"
-		add_finding "$SEVERITY_PASS" "review_bot_gate" "Workflow file present"
+		add_finding "$SEVERITY_PASS" "$CAT_REVIEW_BOT_GATE" "Workflow file present"
 	else
 		print_warn "No review-bot-gate.yml workflow — AI review bots may not be gated"
-		add_finding "$SEVERITY_WARNING" "review_bot_gate" "No review-bot-gate.yml workflow"
+		add_finding "$SEVERITY_WARNING" "$CAT_REVIEW_BOT_GATE" "No review-bot-gate.yml workflow"
 		print_info "  Suggestion: Copy from aidevops repo or add review-bot-gate as required check"
 	fi
 
@@ -324,11 +332,11 @@ check_review_bot_gate() {
 
 	if echo "$check_contexts" | grep -q "review-bot-gate" 2>/dev/null; then
 		print_pass "review-bot-gate is a required status check"
-		add_finding "$SEVERITY_PASS" "review_bot_gate" "Required status check configured"
+		add_finding "$SEVERITY_PASS" "$CAT_REVIEW_BOT_GATE" "Required status check configured"
 	else
 		if [[ -f "$gate_workflow" ]]; then
 			print_warn "review-bot-gate workflow exists but is not a required status check"
-			add_finding "$SEVERITY_WARNING" "review_bot_gate" "Not configured as required status check"
+			add_finding "$SEVERITY_WARNING" "$CAT_REVIEW_BOT_GATE" "Not configured as required status check"
 			print_info "  Add 'review-bot-gate' to branch protection required checks"
 		fi
 	fi
@@ -364,23 +372,23 @@ check_dependencies() {
 
 				if [[ "$vuln_critical" -gt 0 ]]; then
 					print_crit "npm audit: $vuln_critical critical, $vuln_high high ($vuln_total total vulnerabilities)"
-					add_finding "$SEVERITY_CRITICAL" "dependencies" "npm: $vuln_critical critical, $vuln_high high vulnerabilities"
+					add_finding "$SEVERITY_CRITICAL" "$CAT_DEPENDENCIES" "npm: $vuln_critical critical, $vuln_high high vulnerabilities"
 				elif [[ "$vuln_high" -gt 0 ]]; then
 					print_warn "npm audit: $vuln_high high ($vuln_total total vulnerabilities)"
-					add_finding "$SEVERITY_WARNING" "dependencies" "npm: $vuln_high high vulnerabilities"
+					add_finding "$SEVERITY_WARNING" "$CAT_DEPENDENCIES" "npm: $vuln_high high vulnerabilities"
 				elif [[ "$vuln_total" -gt 0 ]]; then
 					print_info "npm audit: $vuln_total low/moderate vulnerabilities"
-					add_finding "$SEVERITY_INFO" "dependencies" "npm: $vuln_total low/moderate vulnerabilities"
+					add_finding "$SEVERITY_INFO" "$CAT_DEPENDENCIES" "npm: $vuln_total low/moderate vulnerabilities"
 				else
 					print_pass "npm audit: no known vulnerabilities"
-					add_finding "$SEVERITY_PASS" "dependencies" "npm: clean audit"
+					add_finding "$SEVERITY_PASS" "$CAT_DEPENDENCIES" "npm: clean audit"
 				fi
 			else
 				print_skip "npm audit returned no output"
 			fi
 		elif [[ ! -f "$repo_path/package-lock.json" ]]; then
 			print_warn "package.json exists but no package-lock.json — cannot run npm audit"
-			add_finding "$SEVERITY_WARNING" "dependencies" "Missing package-lock.json"
+			add_finding "$SEVERITY_WARNING" "$CAT_DEPENDENCIES" "Missing package-lock.json"
 		fi
 	fi
 
@@ -399,15 +407,15 @@ check_dependencies() {
 
 				if [[ "$pip_vulns" -gt 0 ]]; then
 					print_warn "pip-audit: $pip_vulns vulnerable package(s)"
-					add_finding "$SEVERITY_WARNING" "dependencies" "pip: $pip_vulns vulnerable packages"
+					add_finding "$SEVERITY_WARNING" "$CAT_DEPENDENCIES" "pip: $pip_vulns vulnerable packages"
 				else
 					print_pass "pip-audit: no known vulnerabilities"
-					add_finding "$SEVERITY_PASS" "dependencies" "pip: clean audit"
+					add_finding "$SEVERITY_PASS" "$CAT_DEPENDENCIES" "pip: clean audit"
 				fi
 			fi
 		else
 			print_skip "pip-audit not installed — install with: pip install pip-audit"
-			add_finding "$SEVERITY_INFO" "dependencies" "pip-audit not available"
+			add_finding "$SEVERITY_INFO" "$CAT_DEPENDENCIES" "pip-audit not available"
 		fi
 	fi
 
@@ -423,21 +431,21 @@ check_dependencies() {
 				cargo_vulns=$(echo "$cargo_output" | jq '.vulnerabilities.found // 0' 2>/dev/null) || cargo_vulns="0"
 				if [[ "$cargo_vulns" -gt 0 ]]; then
 					print_warn "cargo audit: $cargo_vulns vulnerability(ies)"
-					add_finding "$SEVERITY_WARNING" "dependencies" "cargo: $cargo_vulns vulnerabilities"
+					add_finding "$SEVERITY_WARNING" "$CAT_DEPENDENCIES" "cargo: $cargo_vulns vulnerabilities"
 				else
 					print_pass "cargo audit: no known vulnerabilities"
-					add_finding "$SEVERITY_PASS" "dependencies" "cargo: clean audit"
+					add_finding "$SEVERITY_PASS" "$CAT_DEPENDENCIES" "cargo: clean audit"
 				fi
 			fi
 		else
 			print_skip "cargo-audit not installed — install with: cargo install cargo-audit"
-			add_finding "$SEVERITY_INFO" "dependencies" "cargo-audit not available"
+			add_finding "$SEVERITY_INFO" "$CAT_DEPENDENCIES" "cargo-audit not available"
 		fi
 	fi
 
 	if [[ "$has_deps" == "false" ]]; then
 		print_skip "No dependency manifests found (package.json, requirements.txt, Cargo.toml)"
-		add_finding "$SEVERITY_INFO" "dependencies" "No dependency manifests found"
+		add_finding "$SEVERITY_INFO" "$CAT_DEPENDENCIES" "No dependency manifests found"
 	fi
 
 	return 0
@@ -451,14 +459,14 @@ check_collaborators() {
 
 	if ! command -v gh &>/dev/null; then
 		print_skip "GitHub CLI (gh) not installed"
-		add_finding "$SEVERITY_INFO" "collaborators" "gh CLI not available"
+		add_finding "$SEVERITY_INFO" "$CAT_COLLABORATORS" "gh CLI not available"
 		return 0
 	fi
 
 	local slug
 	if ! slug=$(resolve_slug "$repo_path"); then
 		print_skip "No GitHub remote"
-		add_finding "$SEVERITY_INFO" "collaborators" "No GitHub remote"
+		add_finding "$SEVERITY_INFO" "$CAT_COLLABORATORS" "No GitHub remote"
 		return 0
 	fi
 
@@ -468,7 +476,7 @@ check_collaborators() {
 
 	if [[ -z "$collab_json" ]]; then
 		print_skip "Cannot access collaborator list (may require admin permissions)"
-		add_finding "$SEVERITY_INFO" "collaborators" "Cannot access collaborator list"
+		add_finding "$SEVERITY_INFO" "$CAT_COLLABORATORS" "Cannot access collaborator list"
 		return 0
 	fi
 
@@ -480,14 +488,14 @@ check_collaborators() {
 	total_count=$(echo "$collab_json" | jq -s 'length' 2>/dev/null) || total_count="0"
 
 	print_info "Collaborators: $total_count total ($admin_count admin, $write_count write)"
-	add_finding "$SEVERITY_INFO" "collaborators" "$total_count collaborators ($admin_count admin, $write_count write)"
+	add_finding "$SEVERITY_INFO" "$CAT_COLLABORATORS" "$total_count collaborators ($admin_count admin, $write_count write)"
 
 	if [[ "$admin_count" -gt 5 ]]; then
 		print_warn "High number of admin collaborators ($admin_count) — review access levels"
-		add_finding "$SEVERITY_WARNING" "collaborators" "High admin count: $admin_count"
+		add_finding "$SEVERITY_WARNING" "$CAT_COLLABORATORS" "High admin count: $admin_count"
 	else
 		print_pass "Admin collaborator count is reasonable ($admin_count)"
-		add_finding "$SEVERITY_PASS" "collaborators" "Admin count OK: $admin_count"
+		add_finding "$SEVERITY_PASS" "$CAT_COLLABORATORS" "Admin count OK: $admin_count"
 	fi
 
 	return 0
@@ -502,10 +510,10 @@ check_repo_security() {
 	# Check for SECURITY.md
 	if [[ -f "$repo_path/SECURITY.md" ]]; then
 		print_pass "SECURITY.md present"
-		add_finding "$SEVERITY_PASS" "repo_security" "SECURITY.md present"
+		add_finding "$SEVERITY_PASS" "$CAT_REPO_SECURITY" "SECURITY.md present"
 	else
 		print_warn "No SECURITY.md — add a security policy for vulnerability reporting"
-		add_finding "$SEVERITY_WARNING" "repo_security" "Missing SECURITY.md"
+		add_finding "$SEVERITY_WARNING" "$CAT_REPO_SECURITY" "Missing SECURITY.md"
 	fi
 
 	# Check for .gitignore with common secret patterns
@@ -519,14 +527,14 @@ check_repo_security() {
 
 		if [[ ${#missing_patterns[@]} -gt 0 ]]; then
 			print_warn ".gitignore missing common secret patterns: ${missing_patterns[*]}"
-			add_finding "$SEVERITY_WARNING" "repo_security" "gitignore missing: ${missing_patterns[*]}"
+			add_finding "$SEVERITY_WARNING" "$CAT_REPO_SECURITY" "gitignore missing: ${missing_patterns[*]}"
 		else
 			print_pass ".gitignore covers common secret file patterns"
-			add_finding "$SEVERITY_PASS" "repo_security" "gitignore covers secret patterns"
+			add_finding "$SEVERITY_PASS" "$CAT_REPO_SECURITY" "gitignore covers secret patterns"
 		fi
 	else
 		print_warn "No .gitignore file"
-		add_finding "$SEVERITY_WARNING" "repo_security" "No .gitignore"
+		add_finding "$SEVERITY_WARNING" "$CAT_REPO_SECURITY" "No .gitignore"
 	fi
 
 	# Check for committed secrets (quick scan of tracked files)
@@ -537,22 +545,22 @@ check_repo_security() {
 		local secret_count
 		secret_count=$(echo "$secret_files" | wc -l | tr -d ' ')
 		print_crit "$secret_count potential secret file(s) tracked by git"
-		add_finding "$SEVERITY_CRITICAL" "repo_security" "$secret_count secret files tracked: $(echo "$secret_files" | head -3 | tr '\n' ', ')"
+		add_finding "$SEVERITY_CRITICAL" "$CAT_REPO_SECURITY" "$secret_count secret files tracked: $(echo "$secret_files" | head -3 | tr '\n' ', ')"
 	else
 		print_pass "No obvious secret files tracked by git"
-		add_finding "$SEVERITY_PASS" "repo_security" "No secret files tracked"
+		add_finding "$SEVERITY_PASS" "$CAT_REPO_SECURITY" "No secret files tracked"
 	fi
 
 	# Check for Dependabot or Renovate config
 	if [[ -f "$repo_path/.github/dependabot.yml" ]] || [[ -f "$repo_path/.github/dependabot.yaml" ]]; then
 		print_pass "Dependabot configured"
-		add_finding "$SEVERITY_PASS" "repo_security" "Dependabot configured"
+		add_finding "$SEVERITY_PASS" "$CAT_REPO_SECURITY" "Dependabot configured"
 	elif [[ -f "$repo_path/renovate.json" ]] || [[ -f "$repo_path/.github/renovate.json" ]] || [[ -f "$repo_path/renovate.json5" ]]; then
 		print_pass "Renovate configured"
-		add_finding "$SEVERITY_PASS" "repo_security" "Renovate configured"
+		add_finding "$SEVERITY_PASS" "$CAT_REPO_SECURITY" "Renovate configured"
 	else
 		print_warn "No automated dependency update tool (Dependabot/Renovate)"
-		add_finding "$SEVERITY_WARNING" "repo_security" "No dependency update automation"
+		add_finding "$SEVERITY_WARNING" "$CAT_REPO_SECURITY" "No dependency update automation"
 	fi
 
 	return 0
