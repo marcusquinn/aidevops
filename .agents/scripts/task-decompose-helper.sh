@@ -73,6 +73,8 @@ check_existing_subtasks() {
 
 	# Escape regex metacharacters in task_id to prevent injection
 	local escaped_id
+	# Single quotes intentional: sed pattern must not expand
+	# shellcheck disable=SC2016
 	escaped_id=$(printf '%s' "$task_id" | sed 's/[.[\*^$()+?{|\\]/\\&/g')
 
 	local parent_pattern="^- \\[[ x-]\\] ${escaped_id} "
