@@ -35,6 +35,8 @@ Controls automatic update behavior for aidevops, skills, tools, and OpenClaw.
 | `auto_update.tool_idle_hours` | number | `6` | `AIDEVOPS_TOOL_IDLE_HOURS` | Required user idle time (hours) before tool updates run. Prevents updates during active work. |
 | `auto_update.openclaw_auto_update` | boolean | `true` | `AIDEVOPS_OPENCLAW_AUTO_UPDATE` | Enable daily OpenClaw update checks (only if openclaw CLI is installed). |
 | `auto_update.openclaw_freshness_hours` | number | `24` | `AIDEVOPS_OPENCLAW_FRESHNESS_HOURS` | Hours between OpenClaw update checks. |
+| `auto_update.upstream_watch` | boolean | `true` | `AIDEVOPS_UPSTREAM_WATCH` | Enable daily upstream repo watch checks. Monitors external repos for new releases. |
+| `auto_update.upstream_watch_hours` | number | `24` | `AIDEVOPS_UPSTREAM_WATCH_HOURS` | Hours between upstream watch checks. |
 
 ### supervisor
 
