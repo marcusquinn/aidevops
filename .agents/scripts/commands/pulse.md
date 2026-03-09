@@ -580,6 +580,57 @@ QUALITY_DEBT_MAX=$(( MAX_WORKERS * 30 / 100 ))
 
 If `QUALITY_DEBT_CURRENT >= QUALITY_DEBT_MAX`, do not dispatch more quality-debt issues this cycle.
 
+### Quality-debt PR blast radius cap (t1422)
+
+Quality-debt PRs that touch many files conflict with every other PR in flight. When multiple large-batch quality-debt PRs are created concurrently, they cascade into merge conflicts — each merge moves main, invalidating the next PR's base. This was observed in March 2026: 19 of 30 open PRs were conflicting, with individual PRs touching up to 69 files.
+
+**Rule: quality-debt PRs must touch at most 5 files.** This is a hard cap enforced by the worker (see `full-loop.md` "Quality-debt blast radius cap"). The pulse enforces it at dispatch time by scoping issue descriptions:
+
+1. **Per-file issues preferred.** When creating quality-debt issues (via `quality-feedback-helper.sh`, code-simplifier, or manual filing), create one issue per file or per tightly-coupled file group (max 5 files). An issue titled "Fix shellcheck violations in dispatch.sh" will produce a 1-file PR that conflicts with nothing. An issue titled "Fix shellcheck violations across 20 scripts" will produce a 20-file PR that conflicts with everything.
+
+2. **File-level dedup before dispatch.** Before dispatching a quality-debt worker, check whether any open PR already touches the same files. If overlap exists, skip the issue this cycle — the existing PR must merge first.
+
+   ```bash
+   # Get files that would be touched by this issue (from issue body or title)
+   # Then check open PRs for overlap
+   OPEN_PR_FILES=$(gh pr list --repo <slug> --state open --json number,files \
+     --jq '[.[].files[].path] | unique | .[]' 2>/dev/null)
+
+   # If the issue mentions specific files, check for overlap
+   # This is a judgment call — read the issue body for file paths
+   # If overlap is found, skip: "Skipping quality-debt #NNN — files overlap with open PR #MMM"
+   ```
+
+3. **Serial merge for quality-debt.** Do not dispatch a second quality-debt worker for the same repo while a quality-debt PR is open and mergeable. Wait for the first to merge, then dispatch the next. This prevents the conflict cascade at the source. Feature PRs are unaffected — they touch different files by nature.
+
+   ```bash
+   # Check for open quality-debt PRs in this repo
+   OPEN_DEBT_PRS=$(gh pr list --repo <slug> --state open \
+     --json number,title,labels \
+     --jq '[.[] | select(.labels[]?.name == "quality-debt" or (.title | test("quality.debt|fix:.*batch|fix:.*harden"; "i")))] | length' \
+     2>/dev/null || echo 0)
+
+   # If there's already an open quality-debt PR, skip dispatching more
+   if [[ "$OPEN_DEBT_PRS" -gt 0 ]]; then
+     echo "Skipping quality-debt dispatch — $OPEN_DEBT_PRS quality-debt PR(s) already open for <slug>"
+     # Focus on merging the existing PR instead
+   fi
+   ```
+
+**Why 5 files?** A 5-file PR has a ~10% chance of conflicting with another random 5-file PR in a 200-file repo. A 50-file PR has a ~95% chance. The conflict probability scales quadratically with file count — small PRs are exponentially safer.
+
+### Stale quality-debt PR cleanup
+
+When the pulse detects quality-debt PRs that have been `CONFLICTING` for 24+ hours, close them with a comment explaining they'll be superseded by smaller, atomic PRs:
+
+```bash
+# For each conflicting quality-debt PR older than 24 hours:
+gh pr close <number> --repo <slug> \
+  -c "Closing — this PR has merge conflicts and touches too many files (blast radius issue, see t1422). The underlying fixes will be re-created as smaller PRs (max 5 files each) to prevent conflict cascades."
+```
+
+After closing, ensure the corresponding issues are relabelled `status:available` so they re-enter the dispatch queue. The next dispatch cycle will create properly-scoped PRs.
+
 ### Simplification-debt concurrency cap (10%)
 
 Issues labelled `simplification-debt` (created by `/code-simplifier` analysis, approved by a human) represent maintainability improvements that preserve all functionality and knowledge. These are the lowest-priority automated work -- post-deployment nice-to-haves.

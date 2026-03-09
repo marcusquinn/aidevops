@@ -531,6 +531,30 @@ waste entire sessions guessing at root causes. Common pitfalls:
 - Assuming infrastructure issues (OOM, timeouts) when the test itself is wrong
 - Not checking if another PR (e.g., a CI investigation PR) already identified the fix
 
+**Quality-debt blast radius cap (t1422 — MANDATORY for quality-debt tasks):**
+
+When working on a quality-debt, simplification-debt, or batch-fix task (any task whose issue has `quality-debt` or `simplification-debt` labels, or whose description mentions "batch", "across N files", or "harden N scripts"), the PR must touch **at most 5 files**. This is a hard cap — not a guideline.
+
+**Why:** Large batch PRs (10-69 files) conflict with every other PR in flight. When multiple batch PRs exist concurrently, each merge moves main and invalidates the others, creating a cascade where 63%+ of open PRs become `CONFLICTING`. Small PRs merge cleanly in any order.
+
+**How to comply:**
+
+1. If the issue describes fixes across more than 5 files, implement only the first 5 (prioritise by severity). Commit and create the PR for those 5.
+2. File follow-up issues for the remaining files — one issue per 5-file batch, or one issue per file for complex fixes.
+3. Do NOT attempt to fix all files in a single PR. A partial PR that merges cleanly is worth more than a complete PR that conflicts.
+
+**Detection:** Before creating the PR, count the files you've changed:
+
+```bash
+CHANGED_FILES=$(git diff --name-only origin/main | wc -l | tr -d ' ')
+if [[ "$CHANGED_FILES" -gt 5 ]]; then
+  echo "[t1422] WARNING: $CHANGED_FILES files changed — quality-debt PRs must touch at most 5 files"
+  echo "Split into multiple PRs or file follow-up issues for remaining files"
+fi
+```
+
+If you exceed 5 files, split the work before creating the PR. This rule does NOT apply to feature PRs, bug fixes, or refactors — only to automated quality-debt and batch-fix tasks.
+
 **Headless dispatch rules (MANDATORY for supervisor-dispatched workers - t158/t174):**
 
 When running as a headless worker (dispatched by the supervisor via `opencode run` or `Claude -p`), the `--headless` flag is passed automatically. The full-loop-helper.sh script enforces these rules:
