@@ -97,7 +97,7 @@ _check_prerequisites() {
 		echo -e "${RED}Error: jq not found. Install with: brew install jq${NC}" >&2
 		return 1
 	fi
-	if ! gh auth status &>/dev/null 2>&1; then
+	if ! gh auth status &>/dev/null; then
 		echo -e "${RED}Error: gh not authenticated. Run: gh auth login${NC}" >&2
 		return 1
 	fi
@@ -604,16 +604,16 @@ cmd_ack() {
 
 	_check_prerequisites || return 1
 
-	local state
-	state=$(_read_state)
-
-	# Check if we're watching this repo
-	local existing
-	existing=$(echo "$state" | jq -r --arg slug "$slug" '.repos[$slug] // empty')
-	if [[ -z "$existing" ]]; then
-		echo -e "${YELLOW}Not watching: ${slug}${NC}"
+	# Validate against config watchlist (consistent with cmd_check)
+	local config
+	config=$(_read_config)
+	if ! echo "$config" | jq -e --arg slug "$slug" '.repos[] | select(.slug == $slug)' >/dev/null 2>&1; then
+		echo -e "${RED}Error: Not watching ${slug}. Add it first with 'upstream-watch-helper.sh add ${slug}'.${NC}" >&2
 		return 1
 	fi
+
+	local state
+	state=$(_read_state)
 
 	# Get current latest release
 	local latest_tag
@@ -748,8 +748,12 @@ main() {
 		while [[ $# -gt 0 ]]; do
 			case "$1" in
 			--relevance)
-				relevance="${2:-}"
-				shift 2
+				if [[ $# -ge 2 && "${2:0:1}" != "-" ]]; then
+					relevance="$2"
+					shift 2
+				else
+					shift
+				fi
 				;;
 			*)
 				if [[ -z "$slug" ]]; then
