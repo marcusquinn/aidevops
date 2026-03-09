@@ -688,7 +688,7 @@ check_pr_modifies_workflows() {
 	fi
 
 	local files_output
-	files_output=$(gh pr view "$pr_number" --repo "$repo_slug" --json files --jq '.files[].path' 2>/dev/null)
+	files_output=$(gh pr view "$pr_number" --repo "$repo_slug" --json files --jq '.files[].path')
 	local files_exit=$?
 
 	if [[ $files_exit -ne 0 ]]; then
@@ -795,7 +795,7 @@ check_workflow_merge_guard() {
 
 	# Step 3: PR modifies workflows AND token lacks scope — check for existing comment
 	local comments_output
-	comments_output=$(gh pr view "$pr_number" --repo "$repo_slug" --json comments --jq '.comments[].body' 2>/dev/null)
+	comments_output=$(gh pr view "$pr_number" --repo "$repo_slug" --json comments --jq '.comments[].body')
 	local comments_exit=$?
 
 	if [[ $comments_exit -ne 0 ]]; then
@@ -819,12 +819,12 @@ This PR modifies \`.github/workflows/\` files but the GitHub OAuth token used by
 1. Run \`gh auth refresh -s workflow\` to add the \`workflow\` scope to your token
 2. The next pulse cycle will merge this PR automatically
 
-**Alternatively:** Merge manually via the GitHub UI." \
-		2>/dev/null || true
+**Alternatively:** Merge manually via the GitHub UI." ||
+		true
 
 	# Add a label for visibility
 	gh api --silent "repos/${repo_slug}/issues/${pr_number}/labels" \
-		-X POST -f 'labels[]=needs-workflow-scope' 2>/dev/null || true
+		-X POST -f 'labels[]=needs-workflow-scope' || true
 
 	echo "[pulse-wrapper] check_workflow_merge_guard: blocked PR #$pr_number in $repo_slug — workflow files + missing scope" >>"$LOGFILE"
 	return 1
