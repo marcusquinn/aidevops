@@ -521,7 +521,7 @@ do_batch_retry() {
 	local pr_numbers
 	pr_numbers=$(gh pr list --repo "$repo" --state open --limit 100 \
 		--json number,reviews \
-		--jq '[.[] | select((.reviews | length) == 0)] | .[].number' 2>/dev/null || echo "")
+		--jq '[.[] | select((.reviews | length) == 0)] | .[].number' || echo "")
 
 	if [[ -z "$pr_numbers" ]]; then
 		echo "NO_ACTION"
@@ -540,7 +540,7 @@ do_batch_retry() {
 		total=$((total + 1))
 
 		# Run request-retry for each PR (it handles idempotency internally)
-		result=$(do_request_retry "$pr_num" "$repo" 2>/dev/null) || true
+		result=$(do_request_retry "$pr_num" "$repo") || true
 
 		case "$result" in
 		REQUESTED)
@@ -586,7 +586,7 @@ main() {
 	if [[ "$command" == "batch-retry" ]]; then
 		local batch_repo="${2:-}"
 		if [[ -z "$batch_repo" ]]; then
-			batch_repo=$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || echo "")
+			batch_repo=$(gh repo view --json nameWithOwner -q .nameWithOwner || echo "")
 			if [[ -z "$batch_repo" ]]; then
 				echo "ERROR: Could not determine repo. Pass REPO as argument." >&2
 				return 2
@@ -603,7 +603,7 @@ main() {
 
 	# Default repo from current git context
 	if [[ -z "$repo" ]]; then
-		repo=$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || echo "")
+		repo=$(gh repo view --json nameWithOwner -q .nameWithOwner || echo "")
 		if [[ -z "$repo" ]]; then
 			echo "ERROR: Could not determine repo. Pass REPO as third argument." >&2
 			return 2
@@ -622,9 +622,6 @@ main() {
 		;;
 	request-retry)
 		do_request_retry "$pr_number" "$repo"
-		;;
-	batch-retry)
-		do_batch_retry "$repo"
 		;;
 	-h | --help | help)
 		usage
