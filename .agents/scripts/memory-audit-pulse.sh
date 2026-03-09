@@ -2,8 +2,8 @@
 # =============================================================================
 # Memory Audit Pulse - Periodic self-improvement scan
 # =============================================================================
-# Automated memory hygiene: dedup, prune, graduate, and surface improvement
-# opportunities. Designed to run as a supervisor pulse phase or standalone.
+# Automated memory hygiene: dedup, prune, graduate, consolidate, and surface
+# improvement opportunities. Designed to run as a supervisor pulse phase or standalone.
 #
 # Usage:
 #   memory-audit-pulse.sh run [--dry-run] [--quiet]
@@ -19,11 +19,12 @@
 #   1. Deduplication — remove exact and near-duplicate memories
 #   2. Pruning — remove stale entries (>90 days, never accessed)
 #   3. Graduation — promote high-value memories to shared docs
-#   4. Opportunity scan — identify self-improvement patterns
-#   5. Report — summary of actions taken
+#   4. Consolidation — cross-memory insight generation via LLM (t1413)
+#   5. Opportunity scan — identify self-improvement patterns
+#   6. Report — summary of actions taken
 #
 # Author: AI DevOps Framework
-# Version: 1.0.0
+# Version: 1.1.0
 # License: MIT
 # =============================================================================
 
@@ -197,13 +198,260 @@ phase_graduate() {
 }
 
 #######################################
-# Phase 4: Opportunity scan
+# Phase 4: Consolidation (cross-memory insight generation)
+# Uses a cheap LLM call (haiku) to find connections between
+# unconsolidated memories and generate synthesized insights.
+# Inspired by Google's always-on-memory-agent consolidation loop.
+#######################################
+phase_consolidate() {
+	local dry_run="$1"
+	local quiet="$2"
+
+	[[ "$quiet" != "true" ]] && log_info "Phase 4: Consolidating memories (cross-memory insight generation)..."
+
+	if [[ ! -f "$MEMORY_DB" ]]; then
+		echo "0"
+		return 0
+	fi
+
+	# Ensure memory_consolidations table exists (with index, matching _common.sh schema)
+	db "$MEMORY_DB" <<'EOF' || true
+CREATE TABLE IF NOT EXISTS memory_consolidations (
+    id TEXT PRIMARY KEY,
+    source_ids TEXT NOT NULL,
+    insight TEXT NOT NULL,
+    connections TEXT NOT NULL DEFAULT '[]',
+    created_at TEXT DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))
+);
+CREATE INDEX IF NOT EXISTS idx_consolidations_created
+    ON memory_consolidations(created_at DESC);
+EOF
+
+	# Find memories not yet included in any consolidation.
+	# A memory is "unconsolidated" if its ID doesn't appear in any
+	# memory_consolidations.source_ids JSON array.
+	# We extract all previously consolidated IDs and validate them
+	# against the expected mem_* pattern to prevent SQL injection.
+	local all_consolidated_ids
+	all_consolidated_ids=$(db "$MEMORY_DB" "SELECT source_ids FROM memory_consolidations;" || echo "")
+
+	# Build a list of already-consolidated memory IDs (validated)
+	local consolidated_set=""
+	if [[ -n "$all_consolidated_ids" ]]; then
+		local raw_ids=""
+		if command -v jq &>/dev/null; then
+			raw_ids=$(echo "$all_consolidated_ids" | jq -r '.[]' | sort -u)
+		elif command -v python3 &>/dev/null; then
+			raw_ids=$(echo "$all_consolidated_ids" | python3 -c "
+import sys, json
+ids = set()
+for line in sys.stdin:
+    line = line.strip()
+    if line:
+        try:
+            ids.update(json.loads(line))
+        except (json.JSONDecodeError, TypeError) as e:
+            print(f'Python fallback: JSON parse error: {e}', file=sys.stderr)
+for i in sorted(ids):
+    print(i)
+")
+		fi
+		# Validate each ID matches expected mem_* pattern (prevent SQL injection)
+		local validated_ids=""
+		while IFS= read -r mid; do
+			[[ -z "$mid" ]] && continue
+			if [[ "$mid" =~ ^mem_[0-9]{14}_[0-9a-f]+$ ]]; then
+				[[ -n "$validated_ids" ]] && validated_ids+=","
+				validated_ids+="$mid"
+			fi
+		done <<<"$raw_ids"
+		consolidated_set="$validated_ids"
+	fi
+
+	# Query unconsolidated memories (limit to recent 20 for cost control)
+	local unconsolidated_query
+	if [[ -n "$consolidated_set" ]]; then
+		# Build SQL IN clause from validated IDs
+		local in_clause
+		in_clause=$(echo "$consolidated_set" | tr ',' '\n' | sed "s/.*/'&'/" | paste -sd ',' -)
+		unconsolidated_query="SELECT id, replace(replace(substr(content, 1, 200), char(10), ' '), char(13), ' ') AS content_preview, type, tags FROM learnings WHERE id NOT IN ($in_clause) ORDER BY created_at DESC LIMIT 20;"
+	else
+		unconsolidated_query="SELECT id, replace(replace(substr(content, 1, 200), char(10), ' '), char(13), ' ') AS content_preview, type, tags FROM learnings ORDER BY created_at DESC LIMIT 20;"
+	fi
+
+	local unconsolidated
+	unconsolidated=$(db "$MEMORY_DB" "$unconsolidated_query" || echo "")
+
+	if [[ -z "$unconsolidated" ]]; then
+		[[ "$quiet" != "true" ]] && log_success "Consolidate: no unconsolidated memories"
+		echo "0"
+		return 0
+	fi
+
+	# Count unconsolidated memories (grep -c is more reliable than wc -l for non-empty)
+	local uncons_count
+	uncons_count=$(printf '%s\n' "$unconsolidated" | grep -c '.' || echo "0")
+
+	if [[ "$uncons_count" -lt 3 ]]; then
+		[[ "$quiet" != "true" ]] && log_success "Consolidate: only $uncons_count unconsolidated memories (need 3+)"
+		echo "0"
+		return 0
+	fi
+
+	if [[ "$dry_run" == "true" ]]; then
+		[[ "$quiet" != "true" ]] && log_info "Consolidate: would analyze $uncons_count unconsolidated memories (dry-run)"
+		echo "$uncons_count"
+		return 0
+	fi
+
+	# Check if ai-research-helper.sh is available
+	local ai_helper="${SCRIPT_DIR}/ai-research-helper.sh"
+	if [[ ! -x "$ai_helper" ]]; then
+		[[ "$quiet" != "true" ]] && log_warn "Consolidate: ai-research-helper.sh not found, skipping"
+		echo "0"
+		return 0
+	fi
+
+	# Build the consolidation prompt
+	local prompt
+	prompt="You are a memory consolidation agent. Below are memories from a developer's knowledge base. Find cross-cutting connections and patterns between them.
+
+MEMORIES:
+$unconsolidated
+
+INSTRUCTIONS:
+1. Identify 1-3 connections between memories (pairs that relate to each other)
+2. Generate ONE key insight that emerges from the connections
+3. Respond in this exact JSON format (no markdown, no code fences):
+{\"connections\":[{\"from_id\":\"mem_xxx\",\"to_id\":\"mem_yyy\",\"relationship\":\"brief description\"}],\"insight\":\"One sentence synthesized insight\",\"source_ids\":[\"mem_xxx\",\"mem_yyy\",\"mem_zzz\"]}
+
+If no meaningful connections exist, respond: {\"connections\":[],\"insight\":\"\",\"source_ids\":[]}
+Only include memory IDs that actually appear in the MEMORIES above."
+
+	# Call haiku for consolidation
+	local response
+	response=$("$ai_helper" --prompt "$prompt" --model haiku --max-tokens 500) || {
+		[[ "$quiet" != "true" ]] && log_warn "Consolidate: LLM call failed, skipping"
+		echo "0"
+		return 0
+	}
+
+	# Strip markdown code fences if present (LLMs sometimes wrap JSON)
+	# Backticks in sed are literal, not command substitution
+	# shellcheck disable=SC2016
+	response=$(echo "$response" | sed 's/^```json//; s/^```//; s/```$//' | tr -d '\n')
+
+	# Parse the response — jq preferred, python3 fallback
+	local insight connections source_ids
+	if command -v jq &>/dev/null; then
+		insight=$(echo "$response" | jq -r '.insight // empty' || echo "")
+		connections=$(echo "$response" | jq -c '.connections // []' || echo "[]")
+		source_ids=$(echo "$response" | jq -c '.source_ids // []' || echo "[]")
+	elif command -v python3 &>/dev/null; then
+		insight=$(echo "$response" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('insight',''))" || echo "")
+		connections=$(echo "$response" | python3 -c "import sys,json; d=json.load(sys.stdin); print(json.dumps(d.get('connections',[])))" || echo "[]")
+		source_ids=$(echo "$response" | python3 -c "import sys,json; d=json.load(sys.stdin); print(json.dumps(d.get('source_ids',[])))" || echo "[]")
+	else
+		[[ "$quiet" != "true" ]] && log_warn "Consolidate: neither jq nor python3 available for parsing"
+		echo "0"
+		return 0
+	fi
+
+	# Skip if no meaningful insight
+	if [[ -z "$insight" || "$insight" == "null" ]]; then
+		[[ "$quiet" != "true" ]] && log_success "Consolidate: no meaningful connections found"
+		echo "0"
+		return 0
+	fi
+
+	# Validate source_ids: filter to only IDs matching the expected mem_* pattern.
+	# This prevents a consolidation record with garbage/hallucinated IDs from being
+	# persisted, which would incorrectly mark those IDs as "already consolidated".
+	local validated_source_ids="[]"
+	if command -v jq &>/dev/null; then
+		validated_source_ids=$(printf '%s' "$source_ids" | jq -c '[.[] | select(type == "string") | select(test("^mem_[0-9]{14}_[0-9a-f]+$"))]' 2>/dev/null || echo "[]")
+	elif command -v python3 &>/dev/null; then
+		validated_source_ids=$(printf '%s' "$source_ids" | python3 -c "import sys, json, re; ids=json.load(sys.stdin); print(json.dumps([i for i in ids if isinstance(i, str) and re.match(r'^mem_[0-9]{14}_[0-9a-f]+$', i)]))" 2>/dev/null || echo "[]")
+	fi
+
+	if [[ "$validated_source_ids" == "[]" ]]; then
+		[[ "$quiet" != "true" ]] && log_warn "Consolidate: LLM returned no valid source_ids, skipping"
+		echo "0"
+		return 0
+	fi
+
+	# Store the consolidation using printf to safely handle special characters.
+	# The insight/connections come from LLM output — single-quote escaping alone
+	# is insufficient for arbitrary text. We sanitise by stripping control chars
+	# and escaping single quotes. source_ids uses the validated version.
+	local cons_id
+	cons_id="cons_$(date +%Y%m%d%H%M%S)_$(head -c 4 /dev/urandom | xxd -p)"
+
+	# Sanitise LLM output: strip control chars (except space), escape single quotes
+	local safe_insight safe_connections safe_source_ids
+	safe_insight=$(printf '%s' "$insight" | tr -d '\000-\010\013\014\016-\037' | sed "s/'/''/g")
+	safe_connections=$(printf '%s' "$connections" | tr -d '\000-\010\013\014\016-\037' | sed "s/'/''/g")
+	safe_source_ids=$(printf '%s' "$validated_source_ids" | tr -d '\000-\010\013\014\016-\037' | sed "s/'/''/g")
+
+	db "$MEMORY_DB" <<EOF
+INSERT INTO memory_consolidations (id, source_ids, insight, connections)
+VALUES ('$cons_id', '$safe_source_ids', '$safe_insight', '$safe_connections');
+EOF
+
+	# Create 'derives' relations in learning_relations for each connection.
+	# Schema: learning_relations(id, supersedes_id, relation_type, created_at)
+	# For 'derives', id = the derived/downstream memory, supersedes_id = the source.
+	# We create a relation from to_id -> from_id meaning "to_id derives from from_id".
+	local conn_count=0
+	local conn_pairs=""
+	if command -v jq &>/dev/null; then
+		conn_pairs=$(printf '%s' "$connections" | jq -r '.[] | "\(.from_id)|\(.to_id)"' || echo "")
+	elif command -v python3 &>/dev/null; then
+		conn_pairs=$(printf '%s' "$connections" | python3 -c "
+import sys, json
+try:
+    for c in json.load(sys.stdin):
+        print(f\"{c.get('from_id', '')}|{c.get('to_id', '')}\")
+except (json.JSONDecodeError, TypeError) as e:
+    print(f'Python fallback: connection parse error: {e}', file=sys.stderr)
+" || echo "")
+	fi
+
+	if [[ -n "$conn_pairs" ]]; then
+		local now_ts
+		now_ts=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+		while IFS='|' read -r from_id to_id; do
+			[[ -z "$from_id" || -z "$to_id" ]] && continue
+			# Validate IDs match expected pattern (prevent SQL injection from LLM output)
+			[[ "$from_id" =~ ^mem_[0-9]{14}_[0-9a-f]+$ ]] || continue
+			[[ "$to_id" =~ ^mem_[0-9]{14}_[0-9a-f]+$ ]] || continue
+			# Verify both IDs exist in the database
+			local from_exists to_exists
+			from_exists=$(db "$MEMORY_DB" "SELECT COUNT(*) FROM learnings WHERE id = '$from_id';" || echo "0")
+			to_exists=$(db "$MEMORY_DB" "SELECT COUNT(*) FROM learnings WHERE id = '$to_id';" || echo "0")
+			if [[ "$from_exists" == "1" && "$to_exists" == "1" ]]; then
+				# to_id derives from from_id: id=to_id, supersedes_id=from_id
+				db "$MEMORY_DB" "INSERT OR IGNORE INTO learning_relations (id, supersedes_id, relation_type, created_at) VALUES ('$to_id', '$from_id', 'derives', '$now_ts');" || true
+				conn_count=$((conn_count + 1))
+			fi
+		done <<<"$conn_pairs"
+	fi
+
+	[[ "$quiet" != "true" ]] && log_success "Consolidate: generated insight from $uncons_count memories ($conn_count connections)"
+	[[ "$quiet" != "true" ]] && log_info "  Insight: ${insight:0:120}..."
+
+	echo "1"
+	return 0
+}
+
+#######################################
+# Phase 5: Opportunity scan
 # Identifies patterns that suggest self-improvement opportunities
 #######################################
 phase_opportunities() {
 	local quiet="$1"
 
-	[[ "$quiet" != "true" ]] && log_info "Phase 4: Scanning for improvement opportunities..."
+	[[ "$quiet" != "true" ]] && log_info "Phase 5: Scanning for improvement opportunities..."
 
 	if [[ ! -f "$MEMORY_DB" ]]; then
 		echo "0"
@@ -213,7 +461,7 @@ phase_opportunities() {
 	local opportunities=0
 	local opportunity_details=""
 
-	# 4a. Check for repeated failure patterns (same type of error recurring)
+	# 5a. Check for repeated failure patterns (same type of error recurring)
 	local repeated_failures
 	repeated_failures=$(
 		db "$MEMORY_DB" <<'EOF'
@@ -235,7 +483,7 @@ EOF
 		done <<<"$repeated_failures"
 	fi
 
-	# 4b. Check for low-confidence memories that are frequently accessed
+	# 5b. Check for low-confidence memories that are frequently accessed
 	# (suggests they should be validated and upgraded)
 	local low_conf_popular
 	low_conf_popular=$(
@@ -257,7 +505,7 @@ EOF
 		done <<<"$low_conf_popular"
 	fi
 
-	# 4c. Check for memories with no tags (harder to find later)
+	# 5c. Check for memories with no tags (harder to find later)
 	local untagged_count
 	untagged_count=$(db "$MEMORY_DB" \
 		"SELECT COUNT(*) FROM learnings WHERE tags = '' OR tags IS NULL;" \
@@ -268,7 +516,7 @@ EOF
 		opportunity_details+="  - ${untagged_count} memories have no tags (reduces discoverability)\n"
 	fi
 
-	# 4d. Check for superseded memories that were never cleaned up
+	# 5d. Check for superseded memories that were never cleaned up
 	local orphan_superseded
 	orphan_superseded=$(
 		db "$MEMORY_DB" <<'EOF'
@@ -284,7 +532,7 @@ EOF
 		opportunity_details+="  - ${orphan_superseded} superseded memories still in DB (consider archiving)\n"
 	fi
 
-	# 4e. Check memory growth rate (warn if growing too fast)
+	# 5e. Check memory growth rate (warn if growing too fast)
 	local recent_7d
 	recent_7d=$(db "$MEMORY_DB" \
 		"SELECT COUNT(*) FROM learnings WHERE created_at >= datetime('now', '-7 days');" \
@@ -295,7 +543,7 @@ EOF
 		opportunity_details+="  - High memory growth: ${recent_7d} in 7 days (check for noisy auto-capture)\n"
 	fi
 
-	# 4f. Check for batch retrospective noise (session metadata stored as memories)
+	# 5f. Check for batch retrospective noise (session metadata stored as memories)
 	local noise_count
 	noise_count=$(
 		db "$MEMORY_DB" <<'EOF'
@@ -327,15 +575,16 @@ EOF
 }
 
 #######################################
-# Phase 5: Report
+# Phase 6: Report
 #######################################
 phase_report() {
 	local dedup_count="$1"
 	local prune_count="$2"
 	local graduate_count="$3"
-	local opportunity_count="$4"
-	local dry_run="$5"
-	local quiet="$6"
+	local consolidate_count="$4"
+	local opportunity_count="$5"
+	local dry_run="$6"
+	local quiet="$7"
 
 	# Get current stats
 	local total_memories=0
@@ -364,6 +613,7 @@ phase_report() {
 	report+="  Duplicates removed: $dedup_count\n"
 	report+="  Stale entries pruned: $prune_count\n"
 	report+="  Memories graduated: $graduate_count\n"
+	report+="  Consolidations generated: $consolidate_count\n"
 	report+="  Opportunities found: $opportunity_count\n"
 	report+="\n"
 	report+="Database:\n"
@@ -383,7 +633,7 @@ phase_report() {
 
 	# Append to JSONL history
 	local history_file="$AUDIT_LOG_DIR/history.jsonl"
-	echo "{\"timestamp\":\"$timestamp\",\"dedup\":$dedup_count,\"pruned\":$prune_count,\"graduated\":$graduate_count,\"opportunities\":$opportunity_count,\"total\":$total_memories,\"dry_run\":${dry_run:-false}}" >>"$history_file"
+	echo "{\"timestamp\":\"$timestamp\",\"dedup\":$dedup_count,\"pruned\":$prune_count,\"graduated\":$graduate_count,\"consolidated\":$consolidate_count,\"opportunities\":$opportunity_count,\"total\":$total_memories,\"dry_run\":${dry_run:-false}}" >>"$history_file"
 
 	return 0
 }
@@ -427,15 +677,16 @@ cmd_run() {
 	fi
 
 	# Run all phases
-	local dedup_count prune_count graduate_count opportunity_count
+	local dedup_count prune_count graduate_count consolidate_count opportunity_count
 
 	dedup_count=$(phase_dedup "$dry_run" "$quiet")
 	prune_count=$(phase_prune "$dry_run" "$quiet")
 	graduate_count=$(phase_graduate "$dry_run" "$quiet")
+	consolidate_count=$(phase_consolidate "$dry_run" "$quiet")
 	opportunity_count=$(phase_opportunities "$quiet")
 
 	# Generate report
-	phase_report "$dedup_count" "$prune_count" "$graduate_count" "$opportunity_count" "$dry_run" "$quiet"
+	phase_report "$dedup_count" "$prune_count" "$graduate_count" "$consolidate_count" "$opportunity_count" "$dry_run" "$quiet"
 
 	# Update marker (only on live runs)
 	if [[ "$dry_run" != "true" ]]; then
@@ -480,13 +731,14 @@ cmd_status() {
 		echo ""
 		echo "Recent audits:"
 		tail -5 "$history_file" | while IFS= read -r line; do
-			local ts dedup pruned graduated opps
+			local ts dedup pruned graduated consolidated opps
 			ts=$(echo "$line" | jq -r '.timestamp' 2>/dev/null || echo "?")
 			dedup=$(echo "$line" | jq -r '.dedup' 2>/dev/null || echo "0")
 			pruned=$(echo "$line" | jq -r '.pruned' 2>/dev/null || echo "0")
 			graduated=$(echo "$line" | jq -r '.graduated' 2>/dev/null || echo "0")
+			consolidated=$(echo "$line" | jq -r '.consolidated // 0' 2>/dev/null || echo "0")
 			opps=$(echo "$line" | jq -r '.opportunities' 2>/dev/null || echo "0")
-			echo "  $ts | dedup:$dedup prune:$pruned grad:$graduated opps:$opps"
+			echo "  $ts | dedup:$dedup prune:$pruned grad:$graduated cons:$consolidated opps:$opps"
 		done
 	else
 		log_info "No audit history yet"
@@ -497,9 +749,11 @@ cmd_status() {
 	if [[ -f "$MEMORY_DB" ]]; then
 		local total
 		total=$(db "$MEMORY_DB" "SELECT COUNT(*) FROM learnings;" 2>/dev/null || echo "0")
+		local consolidations
+		consolidations=$(db "$MEMORY_DB" "SELECT COUNT(*) FROM memory_consolidations;" 2>/dev/null || echo "0")
 		local db_size
 		db_size=$(du -h "$MEMORY_DB" | cut -f1)
-		log_info "Memory DB: $total memories, $db_size"
+		log_info "Memory DB: $total memories, $consolidations consolidations, $db_size"
 	else
 		log_info "Memory DB: not found"
 	fi
@@ -515,8 +769,9 @@ cmd_help() {
 	cat <<'EOF'
 memory-audit-pulse.sh - Periodic memory self-improvement scan
 
-Automated memory hygiene that deduplicates, prunes, graduates, and
-identifies improvement opportunities in the memory database.
+Automated memory hygiene that deduplicates, prunes, graduates,
+consolidates, and identifies improvement opportunities in the
+memory database.
 
 USAGE:
     memory-audit-pulse.sh <command> [options]
@@ -532,16 +787,21 @@ RUN OPTIONS:
     --force     Run even if interval hasn't elapsed
 
 PHASES:
-    1. Dedup     Remove exact and near-duplicate memories
-    2. Prune     Remove stale entries (>90 days, never accessed)
-    3. Graduate  Promote high-value memories to shared docs
-    4. Scan      Identify self-improvement opportunities:
-                 - Recurring failure patterns
-                 - Popular but low-confidence memories
-                 - Untagged memories (poor discoverability)
-                 - Session metadata noise
-                 - High memory growth rate
-    5. Report    Summary of actions + JSONL history
+    1. Dedup        Remove exact and near-duplicate memories
+    2. Prune        Remove stale entries (>90 days, never accessed)
+    3. Graduate     Promote high-value memories to shared docs
+    4. Consolidate  Cross-memory insight generation via LLM (haiku)
+                    Finds connections between memories and generates
+                    synthesized insights stored as derives relations.
+                    Requires ai-research-helper.sh and Anthropic API key.
+                    Skips gracefully if unavailable.
+    5. Scan         Identify self-improvement opportunities:
+                    - Recurring failure patterns
+                    - Popular but low-confidence memories
+                    - Untagged memories (poor discoverability)
+                    - Session metadata noise
+                    - High memory growth rate
+    6. Report       Summary of actions + JSONL history
 
 INTEGRATION:
     # Supervisor pulse (automatic)

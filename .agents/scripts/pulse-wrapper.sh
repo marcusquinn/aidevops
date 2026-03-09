@@ -840,6 +840,31 @@ prefetch_hygiene() {
 		echo ""
 	fi
 
+	# PR salvage scan: detect closed-unmerged PRs with recoverable code
+	local salvage_helper="${SCRIPT_DIR}/pr-salvage-helper.sh"
+	if [[ -x "$salvage_helper" ]]; then
+		echo ""
+		echo "# PR Salvage (closed-unmerged with recoverable code)"
+		echo ""
+
+		local salvage_found=false
+		local slug path
+		while IFS='|' read -r slug path; do
+			[[ -z "$slug" ]] && continue
+			local salvage_output
+			salvage_output=$("$salvage_helper" prefetch "$slug" "$path" 2>/dev/null) || true
+			if [[ -n "$salvage_output" ]]; then
+				salvage_found=true
+				echo "$salvage_output"
+			fi
+		done < <(jq -r '.initialized_repos[] | select(.pulse == true and (.local_only // false) == false and .slug != "") | "\(.slug)|\(.path)"' "$repos_json" 2>/dev/null)
+
+		if [[ "$salvage_found" == "false" ]]; then
+			echo "- No salvageable closed-unmerged PRs detected"
+			echo ""
+		fi
+	fi
+
 	return 0
 }
 

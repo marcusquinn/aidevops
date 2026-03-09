@@ -105,6 +105,9 @@ COMMANDS:
     prune-patterns  Remove repetitive pattern entries by keyword (e.g., clean_exit_no_signal)
     dedup       Remove exact and near-duplicate entries
     consolidate Merge similar memories to reduce redundancy
+    insights    Run full memory audit pulse (dedup, prune, graduate, consolidate)
+                Includes cross-memory insight generation via LLM (haiku-tier).
+                Delegates to memory-audit-pulse.sh with --force.
     export      Export all memories
     graduate    Promote validated memories into shared docs (delegates to memory-graduate-helper.sh)
     namespaces  List all memory namespaces
@@ -339,16 +342,37 @@ main() {
 	prune-patterns) cmd_prune_patterns "$@" ;;
 	dedup) cmd_dedup "$@" ;;
 	consolidate) cmd_consolidate "$@" ;;
+	insights)
+		# Delegate to memory-audit-pulse.sh (t1413)
+		# Runs the full audit pulse with --force to bypass interval check.
+		# The consolidation phase runs as Phase 4 within the pulse.
+		# Propagate resolved MEMORY_DIR so the child uses the correct namespace.
+		local audit_script
+		audit_script="${SCRIPT_DIR}/memory-audit-pulse.sh"
+		if [[ ! -x "$audit_script" ]]; then
+			log_error "Memory audit pulse not found: $audit_script"
+			return 1
+		fi
+		local insights_args=("run" "--force")
+		for arg in "$@"; do
+			case "$arg" in
+			--dry-run) insights_args+=("--dry-run") ;;
+			--quiet | -q) insights_args+=("--quiet") ;;
+			esac
+		done
+		AIDEVOPS_MEMORY_DIR="$MEMORY_DIR" "$audit_script" "${insights_args[@]}"
+		;;
 	export) cmd_export "$@" ;;
 	graduate)
 		# Delegate to memory-graduate-helper.sh
+		# Propagate resolved MEMORY_DIR so the child uses the correct namespace.
 		local graduate_script
 		graduate_script="$(dirname "$0")/memory-graduate-helper.sh"
 		if [[ ! -x "$graduate_script" ]]; then
 			log_error "Graduate helper not found: $graduate_script"
 			return 1
 		fi
-		"$graduate_script" "$@"
+		AIDEVOPS_MEMORY_DIR="$MEMORY_DIR" "$graduate_script" "$@"
 		;;
 	namespaces)
 		# Support subcommands: namespaces [list|prune|migrate]
