@@ -3174,10 +3174,18 @@ calculate_priority_allocations() {
 	max_workers=$(cat "$max_workers_file" 2>/dev/null || echo 4)
 	[[ "$max_workers" =~ ^[0-9]+$ ]] || max_workers=4
 
-	# Count pulse-enabled repos by priority class
+	# Count pulse-enabled repos by priority class (single jq pass)
 	local product_repos tooling_repos
-	product_repos=$(jq '[.initialized_repos[] | select(.pulse == true and (.local_only // false) == false and .slug != "" and .priority == "product")] | length' "$repos_json" 2>/dev/null) || product_repos=0
-	tooling_repos=$(jq '[.initialized_repos[] | select(.pulse == true and (.local_only // false) == false and .slug != "" and .priority == "tooling")] | length' "$repos_json" 2>/dev/null) || tooling_repos=0
+	read -r product_repos tooling_repos < <(jq -r '
+		.initialized_repos |
+		map(select(.pulse == true and (.local_only // false) == false and .slug != "")) |
+		[
+			(map(select(.priority == "product")) | length),
+			(map(select(.priority == "tooling")) | length)
+		] | @tsv
+	' "$repos_json" 2>/dev/null) || true
+	product_repos=${product_repos:-0}
+	tooling_repos=${tooling_repos:-0}
 	[[ "$product_repos" =~ ^[0-9]+$ ]] || product_repos=0
 	[[ "$tooling_repos" =~ ^[0-9]+$ ]] || tooling_repos=0
 
@@ -3200,7 +3208,9 @@ calculate_priority_allocations() {
 			product_min="$max_workers"
 		fi
 		# Ensure at least 1 slot for tooling when tooling repos exist
-		if [[ "$product_min" -ge "$max_workers" && "$tooling_repos" -gt 0 ]]; then
+		# but only when there are multiple slots to distribute (with 1 slot,
+		# product keeps it — the reservation is a minimum guarantee)
+		if [[ "$max_workers" -gt 1 && "$product_min" -ge "$max_workers" && "$tooling_repos" -gt 0 ]]; then
 			product_min=$((max_workers - 1))
 		fi
 		tooling_max=$((max_workers - product_min))
