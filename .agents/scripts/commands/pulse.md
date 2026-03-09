@@ -594,7 +594,7 @@ Quality-debt PRs that touch many files conflict with every other PR in flight. W
    # Get files that would be touched by this issue (from issue body or title)
    # Then check open PRs for overlap
    OPEN_PR_FILES=$(gh pr list --repo <slug> --state open --json number,files \
-     --jq '[.[].files[].path] | unique | .[]' 2>/dev/null)
+     --jq '[.[].files[].path] | unique | .[]')
 
    # If the issue mentions specific files, check for overlap
    # This is a judgment call — read the issue body for file paths
@@ -608,7 +608,7 @@ Quality-debt PRs that touch many files conflict with every other PR in flight. W
    OPEN_DEBT_PRS=$(gh pr list --repo <slug> --state open \
      --json number,title,labels \
      --jq '[.[] | select(.labels[]?.name == "quality-debt" or (.title | test("quality.debt|fix:.*batch|fix:.*harden"; "i")))] | length' \
-     2>/dev/null || echo 0)
+     || echo 0)
 
    # If there's already an open quality-debt PR, skip dispatching more
    if [[ "$OPEN_DEBT_PRS" -gt 0 ]]; then
