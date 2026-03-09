@@ -903,6 +903,27 @@ cmd_check() {
 	if [[ "$current" == "$remote" ]]; then
 		log_info "Already up to date (v$current)"
 		update_state "check" "$current" "up_to_date"
+
+		# Even when repo matches remote, deployed agents may be stale
+		# (e.g., previous setup.sh was interrupted or failed silently)
+		# See: https://github.com/marcusquinn/aidevops/issues/3980
+		local deployed_version
+		deployed_version=$(cat "$HOME/.aidevops/agents/VERSION" 2>/dev/null || echo "none")
+		if [[ "$current" != "$deployed_version" ]]; then
+			log_warn "Deployed agents stale ($deployed_version), re-deploying..."
+			if bash "$INSTALL_DIR/setup.sh" --non-interactive >>"$LOG_FILE" 2>&1; then
+				local redeployed_version
+				redeployed_version=$(cat "$HOME/.aidevops/agents/VERSION" 2>/dev/null || echo "none")
+				if [[ "$current" == "$redeployed_version" ]]; then
+					log_info "Agents re-deployed successfully ($deployed_version -> $redeployed_version)"
+				else
+					log_error "Agent re-deploy incomplete: repo=$current, deployed=$redeployed_version"
+				fi
+			else
+				log_error "setup.sh failed during stale-agent re-deploy (exit code: $?)"
+			fi
+		fi
+
 		check_skill_freshness
 		check_openclaw_freshness
 		check_tool_freshness
@@ -947,8 +968,18 @@ cmd_check() {
 	if bash "$INSTALL_DIR/setup.sh" --non-interactive >>"$LOG_FILE" 2>&1; then
 		local new_version
 		new_version=$(get_local_version)
-		log_info "Update complete: v$current -> v$new_version"
-		update_state "update" "$new_version" "success"
+
+		# Verify agents were actually deployed (setup.sh may exit 0 without deploying)
+		# See: https://github.com/marcusquinn/aidevops/issues/3980
+		local deployed_version
+		deployed_version=$(cat "$HOME/.aidevops/agents/VERSION" 2>/dev/null || echo "none")
+		if [[ "$new_version" != "$deployed_version" ]]; then
+			log_warn "Update pulled v$new_version but agents at v$deployed_version — deployment incomplete"
+			update_state "update" "$new_version" "agents_stale"
+		else
+			log_info "Update complete: v$current -> v$new_version (agents deployed)"
+			update_state "update" "$new_version" "success"
+		fi
 	else
 		log_error "setup.sh failed (exit code: $?)"
 		update_state "update" "$remote" "setup_failed"
