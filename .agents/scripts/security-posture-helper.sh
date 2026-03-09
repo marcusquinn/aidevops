@@ -1200,7 +1200,7 @@ main() {
 		run_all_checks "$repo_path"
 		store_posture "$repo_path"
 		local exit_code=0
-		if [[ "$FINDINGS_CRITICAL" -gt 0 ]]; then
+		if [[ "$FINDINGS_CRITICAL" -gt 0 || "$FINDINGS_WARNING" -gt 0 ]]; then
 			exit_code=1
 		fi
 		return "$exit_code"
@@ -1212,6 +1212,9 @@ main() {
 		fi
 		run_all_checks "$repo_path"
 		store_posture "$repo_path"
+		if [[ "$FINDINGS_CRITICAL" -gt 0 || "$FINDINGS_WARNING" -gt 0 ]]; then
+			return 1
+		fi
 		return 0
 		;;
 	summary)

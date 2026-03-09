@@ -1260,6 +1260,8 @@ scaffold_agents_md() {
 	local project_root="$1"
 	local agents_md="$project_root/.agents/AGENTS.md"
 
+	mkdir -p "$(dirname "$agents_md")"
+
 	if [[ -f "$agents_md" ]]; then
 		# File exists — update the Security section idempotently
 		_update_agents_md_security "$project_root"
