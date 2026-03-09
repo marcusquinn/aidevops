@@ -71,8 +71,12 @@ jobs:
         run: |
           echo "Checking PR #${PR_NUMBER} for AI review bot activity..."
 
-          # Known review bot patterns (case-insensitive matching on login)
-          # Add new bots here as they are configured
+          # Known review bot patterns (case-insensitive matching on login).
+          # Add new bots here as they are configured.
+          # NOTE: This list differs from the job-level if-condition which also
+          # excludes github-actions[bot] and dependabot[bot]. Those bots are
+          # excluded from triggering this workflow but are NOT code review bots
+          # whose reviews we wait for.
           KNOWN_BOTS=(
             "coderabbitai"
             "gemini-code-assist[bot]"
