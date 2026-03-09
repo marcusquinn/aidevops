@@ -47,7 +47,7 @@ check_opencode_prompt_drift() {
 			local_hash=$(echo "$output" | cut -d'|' -f2)
 			upstream_hash=$(echo "$output" | cut -d'|' -f3)
 			print_warning "OpenCode upstream prompt has changed (${local_hash} → ${upstream_hash})"
-			print_info "  Review: https://github.com/opencode-ai/opencode/compare/${local_hash}...${upstream_hash}"
+			print_info "  Review: https://github.com/anomalyco/opencode/compare/${local_hash}...${upstream_hash}"
 			print_info "  Update .agents/prompts/build.txt if needed"
 		elif [[ "$exit_code" -eq 0 ]]; then
 			print_success "OpenCode prompt in sync with upstream"

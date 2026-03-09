@@ -1,4 +1,4 @@
-# Upstream base: opencode-ai/opencode anthropic.txt @ 3c41e4e8f12b
+# Upstream base: anomalyco/opencode anthropic.txt @ 3c41e4e8f12b
 # Overrides: file discovery, code search, git workflow, security, agent framework
 
 # Mission
@@ -140,11 +140,9 @@ When referencing specific functions or code include the pattern `file_path:line_
 - If Glob fails with permission error, switch to `git ls-files` or `fd` immediately — do not retry Glob.
 - If Glob fails with "No such directory", verify the directory exists before searching inside it.
 #
-# 6. repo slug hallucination (observed: agent fabricated wrong org prefix for repos)
+# 6. repo slug hallucination (observed: agent fabricated "anomalyco/" org prefix)
 #    Root cause: repos.json had no slug field, so agents guessed org names from
-#    unrelated context in the system prompt. Now repos.json stores the slug.
-#    Secondary cause: mentioning the wrong org name in this file gave the model
-#    a string to pattern-match against. Removed all such references.
+#    unrelated context (e.g., OpenCode's org). Now repos.json stores the slug.
 - ALWAYS resolve repo slugs from `~/.config/aidevops/repos.json` (the `slug` field). NEVER guess or construct `owner/repo` from memory.
 - If a repo has no slug in repos.json, resolve it from `git -C <path> remote get-url origin` and parse `owner/repo`.
 - For pulse/supervisor operations, filter repos.json to entries with `"pulse": true`.
@@ -292,7 +290,7 @@ Git is the primary audit trail for all work. Every change should be discoverable
 # Write-Time Quality Enforcement
 # Inspired by Plankton (github.com/alexfazio/plankton) — adapted for runtime-agnostic use.
 # Plankton uses Claude Code PostToolUse hooks to lint on every edit. OpenCode does not yet
-# have equivalent hooks (feature requested upstream). Until then, enforce via
+# have equivalent hooks (feature requested: anomalyco/opencode). Until then, enforce via
 # prompt-level discipline and explicit tool calls.
 #
 # Linter config protection (soft rule):
