@@ -663,16 +663,20 @@ _sanitize_md() {
 }
 
 # --- Validate a URL for safe embedding in markdown ---
-# Rejects javascript: URIs and non-http(s) schemes
+# Rejects javascript: URIs, non-http(s) schemes, and markdown-breaking chars
 _sanitize_url() {
 	local url="$1"
-	# Only allow http:// and https:// schemes
-	if [[ "$url" =~ ^https?:// ]]; then
-		echo "$url"
-	else
-		# Reject javascript:, data:, and other schemes
+	# Must start with http:// or https://
+	if [[ "$url" != http://* && "$url" != https://* ]]; then
 		echo ""
+		return 0
 	fi
+	# Reject URLs containing markdown-breaking characters or whitespace
+	if [[ "$url" == *'('* || "$url" == *')'* || "$url" == *'['* || "$url" == *']'* || "$url" == *' '* ]]; then
+		echo ""
+		return 0
+	fi
+	echo "$url"
 	return 0
 }
 
@@ -687,10 +691,10 @@ _generate_rich_readme() {
 	local display_name bio blog twitter
 	IFS=$'\t' read -r display_name bio blog twitter < <(
 		echo "$user_json" | jq -r '[
-			(.name // ""),
-			(.bio // ""),
-			(if .blog != null and .blog != "" then .blog else "" end),
-			(if .twitter_username != null and .twitter_username != "" then .twitter_username else "" end)
+			((.name // "") | gsub("[\\t\\n]"; " ")),
+			((.bio // "") | gsub("[\\t\\n]"; " ")),
+			(if .blog != null and .blog != "" then (.blog | gsub("[\\t\\n]"; "")) else "" end),
+			(if .twitter_username != null and .twitter_username != "" then (.twitter_username | gsub("[\\t\\n]"; "")) else "" end)
 		] | join("\t")' || printf '\t\t\t\n'
 	)
 	display_name="${display_name:-$gh_user}"
@@ -727,7 +731,7 @@ _generate_rich_readme() {
 	local own_repos
 	own_repos=$(echo "$repos_json" | jq -r --arg user "$gh_user" '
 		[.[] | select(.fork == false and .name != $user)] |
-		map("- **[\(.name)](\(.html_url))** -- \(.description // "No description")") |
+		map("- **[\(.name | gsub("[\\[\\]()]"; ""))](\(.html_url))** -- \(.description // "No description" | gsub("[\\[\\]()]"; ""))") |
 		.[]
 	')
 
@@ -739,10 +743,12 @@ _generate_rich_readme() {
 		# Fetch all fork details in parallel (up to 6 concurrent) to get parent URLs
 		local fork_details
 		fork_details=$(echo "$fork_names" | xargs -P 6 -I{} gh api "repos/${gh_user}/{}" --jq '
-			"\(.name)\t\(.description // "No description")\t\(.parent.html_url // .html_url)"
-		' 2>/dev/null || true)
+			"\(.name)\t\(.description // "No description" | gsub("[\\t\\n]"; " "))\t\(.parent.html_url // .html_url)"
+		' || true)
 		while IFS=$'\t' read -r rname rdesc rurl; do
 			[[ -z "$rname" ]] && continue
+			rname=$(_sanitize_md "$rname")
+			rdesc=$(_sanitize_md "$rdesc")
 			contrib_repos="${contrib_repos}- **[${rname}](${rurl})** -- ${rdesc}"$'\n'
 		done <<<"$fork_details"
 	fi
