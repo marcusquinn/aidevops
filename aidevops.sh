@@ -1320,17 +1320,16 @@ _update_agents_md_security() {
 	security_content=$(_generate_security_section "$project_root")
 
 	local in_security=false
-	local security_replaced=false
 	local has_security_section=false
 
 	# Process line by line: skip old Security section, insert new one
 	while IFS= read -r line || [[ -n "$line" ]]; do
-		if [[ "$line" == "## Security" ]]; then
+		# Match "## Security" exactly, with optional trailing whitespace
+		if [[ "$line" =~ ^'## Security'[[:space:]]*$ ]]; then
 			# Found the Security heading — replace it
 			in_security=true
 			has_security_section=true
 			printf '%s\n' "$security_content" >>"$tmp_file"
-			security_replaced=true
 			continue
 		fi
 
