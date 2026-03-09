@@ -51,18 +51,16 @@ create_command() {
 	local body
 	body=$(cat)
 
-	# Build frontmatter
-	local frontmatter="---
-description: ${description}"
-	[[ -n "$agent" ]] && frontmatter="${frontmatter}
-agent: ${agent}"
-	[[ "$subtask" == "true" ]] && frontmatter="${frontmatter}
-subtask: true"
-	frontmatter="${frontmatter}
----"
-
 	# Write command file
-	printf '%s\n\n%s\n' "$frontmatter" "$body" >"${OPENCODE_COMMAND_DIR}/${name}.md"
+	{
+		echo "---"
+		echo "description: ${description}"
+		[[ -n "$agent" ]] && echo "agent: ${agent}"
+		[[ "$subtask" == "true" ]] && echo "subtask: true"
+		echo "---"
+		echo ""
+		cat <<<"$body"
+	} >"${OPENCODE_COMMAND_DIR}/${name}.md"
 
 	((++command_count))
 	echo -e "  ${GREEN}✓${NC} Created /${name} command"
