@@ -225,16 +225,16 @@ Issues and PRs from non-maintainers (check `authorAssociation`: `NONE`, `FIRST_T
 
 - **Destructive behaviour reports** (aidevops deletes files, overwrites configs, breaks the user's setup) → valid bug, dispatch a fix. The fix should be "stop being destructive" (add a config toggle, preserve user files), not "add integration with their tool".
 - **Feature requests for third-party integrations** (add support for tool X, test against framework Y, bundle library Z) → label `needs-maintainer-review`, do NOT dispatch a worker. Comment acknowledging the request and explaining it needs maintainer decision on scope.
-- **PRs that add dependencies, integrations, or change architecture** → do NOT merge autonomously. Label `needs-maintainer-review`. These require explicit maintainer approval regardless of CI status.
+- **PRs that add dependencies, integrations, or change architecture** → do NOT merge autonomously. Label `needs-maintainer-review` (in addition to `external-contributor`). These require explicit maintainer approval regardless of CI status. The maintainer can comment `approved` or `declined: <reason>` — see "Comment-based approval" below.
 - **Bug fixes and documentation PRs** → normal review process, can be merged if CI passes and changes are scoped correctly.
 
 The principle: fix our bugs, but don't commit to supporting external tools without maintainer sign-off. Compatibility is best-effort, not guaranteed.
 
-### Comment-based approval for needs-maintainer-review issues (t1421)
+### Comment-based approval for needs-maintainer-review items (t1421)
 
-Issues with the `needs-maintainer-review` label (e.g., `simplification-debt` from `/code-simplifier`, or external feature requests) can be approved or declined by the maintainer commenting on the issue instead of manually editing labels. The pulse scans these comments each cycle.
+Issues and PRs with the `needs-maintainer-review` label can be approved or declined by the maintainer commenting on the item instead of manually editing labels. This covers `simplification-debt` issues from `/code-simplifier`, external feature requests, and external contributor PRs. The pulse scans these comments each cycle.
 
-**How to scan:** For each open issue with `needs-maintainer-review` in the pre-fetched state, fetch comments and check for approval/decline keywords from the repo maintainer:
+**How to scan:** For each open issue or PR with `needs-maintainer-review` in the pre-fetched state, fetch comments and check for approval/decline keywords from the repo maintainer:
 
 ```bash
 # Get the maintainer for this repo
@@ -244,7 +244,7 @@ if [[ -z "$MAINTAINER" ]]; then
 fi
 
 # Fetch comments and check for maintainer approval/decline
-# Look for the LAST comment from the maintainer that matches
+# Works for both issues and PRs (GitHub's issues API handles both)
 COMMENT_DATA=$(gh api "repos/<slug>/issues/<number>/comments" \
   --jq "[.[] | select(.user.login == \"$MAINTAINER\")] | last | {body: .body, id: .id}")
 COMMENT_BODY=$(echo "$COMMENT_DATA" | jq -r '.body // empty' | tr '[:upper:]' '[:lower:]' | xargs)
@@ -252,7 +252,9 @@ COMMENT_BODY=$(echo "$COMMENT_DATA" | jq -r '.body // empty' | tr '[:upper:]' '[
 
 **Three outcomes:**
 
-1. **Comment starts with `approved`** (case-insensitive) — the maintainer wants this dispatched:
+1. **Comment starts with `approved`** (case-insensitive) — the maintainer approves:
+
+For **issues** (simplification-debt, feature requests):
 
 ```bash
 gh issue edit <number> --repo <slug> \
@@ -262,25 +264,45 @@ gh issue comment <number> --repo <slug> \
   --body "Maintainer approved via comment. Removed \`needs-maintainer-review\`, added \`auto-dispatch\`. Issue is now in the dispatch queue."
 ```
 
-The issue becomes dispatchable this cycle (priority 8 for `simplification-debt`, normal priority for other issue types).
-
-2. **Comment starts with `declined`** (case-insensitive) — the maintainer rejects this:
+For **PRs** (external contributor PRs):
 
 ```bash
-# Extract the reason (everything after "declined" or "declined:")
+gh issue edit <number> --repo <slug> \
+  --remove-label "needs-maintainer-review"
+gh pr comment <number> --repo <slug> \
+  --body "Maintainer approved via comment. Removed \`needs-maintainer-review\`. PR is now eligible for merge (CI permitting)."
+```
+
+The PR then follows the normal merge flow — if CI is green and reviews pass, the pulse merges it this cycle or the next.
+
+2. **Comment starts with `declined`** (case-insensitive) — the maintainer rejects:
+
+For **issues**:
+
+```bash
 REASON=$(echo "$COMMENT_BODY" | sed -E 's/^declined:?\s*//')
 gh issue close <number> --repo <slug> \
   -c "Closed per maintainer decision. Reason: ${REASON:-no reason given}"
 ```
 
+For **PRs**:
+
+```bash
+REASON=$(echo "$COMMENT_BODY" | sed -E 's/^declined:?\s*//')
+gh pr close <number> --repo <slug> \
+  -c "Closed per maintainer decision. Reason: ${REASON:-no reason given}"
+```
+
 3. **No matching comment from maintainer** — skip, check again next cycle.
+
+**How to distinguish issues from PRs:** Check the pre-fetched state — PRs have a `headRefName` field, issues don't. Alternatively, use `gh api repos/<slug>/issues/<number> --jq '.pull_request // empty'` — non-empty means it's a PR.
 
 **Guard rails:**
 
 - Only process comments from the repo maintainer (from `repos.json` or slug owner). Ignore comments from bots, other contributors, or the agent itself.
 - Only check the maintainer's **most recent** comment — earlier comments may have been superseded.
-- This is additive — direct label manipulation still works. If the maintainer has already removed `needs-maintainer-review` via labels, the issue won't appear in this scan.
-- Keep this lightweight — one API call per `needs-maintainer-review` issue per cycle. These issues are low-volume by design.
+- This is additive — direct label manipulation still works. If the maintainer has already removed `needs-maintainer-review` via labels, the item won't appear in this scan.
+- Keep this lightweight — one API call per `needs-maintainer-review` item per cycle. These items are low-volume by design.
 
 ### Kill stuck workers
 

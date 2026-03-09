@@ -585,9 +585,15 @@ check_external_contributor_pr() {
 	if [[ "$do_post" == "--post" ]]; then
 		# Safe to post — this is the only code path that creates a comment.
 		gh pr comment "$pr_number" --repo "$repo_slug" \
-			--body "This PR is from an external contributor (@${pr_author}). Auto-merge is disabled for external PRs — a maintainer must review and merge manually." &&
+			--body "This PR is from an external contributor (@${pr_author}). Auto-merge is disabled for external PRs — a maintainer must review and approve manually.
+
+---
+**To approve or decline**, comment on this PR:
+- \`approved\` — removes the review gate and allows merge (CI permitting)
+- \`declined: <reason>\` — closes this PR (include your reason after the colon)" &&
 			gh api --silent "repos/${repo_slug}/issues/${pr_number}/labels" \
-				-X POST -f 'labels[]=external-contributor' || true
+				-X POST -f 'labels[]=external-contributor' \
+				-f 'labels[]=needs-maintainer-review' || true
 		echo "[pulse-wrapper] check_external_contributor_pr: flagged PR #$pr_number in $repo_slug as external contributor (@$pr_author)" >>"$LOGFILE"
 	fi
 	return 1
