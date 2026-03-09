@@ -159,6 +159,34 @@ Then skip to the next PR. The next pulse cycle will retry the permission check �
 - **Two PRs targeting the same issue** → flag the duplicate by commenting on the newer one
 - **Recently closed without merge** → a worker failed. Look for patterns. If the same failure repeats, file an improvement issue.
 
+### PR salvage — recovering closed-unmerged work
+
+The pre-fetched state includes a "PR Salvage" section listing closed-unmerged PRs that still have branches with recoverable code. These represent **knowledge loss risk** — code that was written, reviewed, and possibly review-addressed but never landed on main.
+
+**How to act on salvageable PRs:**
+
+For each salvageable PR in the pre-fetched state:
+
+1. **Check the linked issue** — is it still open? If so, the work is still wanted.
+2. **Check the risk level:**
+   - **HIGH** (>500 lines with branch, or >100 lines without): Act immediately this cycle.
+   - **MEDIUM**: Act if worker slots are available after higher-priority work.
+   - **LOW** (<50 lines): Note for next cycle or skip.
+3. **Determine the best recovery action:**
+   - **Branch exists + review addressed + CI was passing (or only infra failures)** → reopen the PR: `gh pr reopen <number> --repo <slug>`. Then merge if CI is green, or dispatch a worker to rebase and fix conflicts.
+   - **Branch exists + needs work** → dispatch a worker to rebase the branch onto main and address outstanding review feedback. Use the existing PR number in the dispatch prompt so the worker pushes to the same branch.
+   - **Branch deleted** → the diff is still available via `gh pr diff <number> --repo <slug>`. Dispatch a worker to recreate the changes on a fresh branch. Include the PR URL in the dispatch prompt for context.
+4. **Comment on the PR** explaining the recovery action taken (audit trail).
+5. **Comment on the linked issue** if one exists, noting the recovery.
+
+**Guard rails:**
+
+- Do NOT reopen PRs that were intentionally declined (check for maintainer "declined" comments).
+- Do NOT reopen PRs that have been superseded by a merged PR covering the same work.
+- Do NOT reopen PRs from external contributors without maintainer approval — flag with `needs-maintainer-review` label instead.
+- Salvage recovery counts against worker slots like any other dispatch.
+- Priority: salvage HIGH-risk PRs at priority 2.5 (between "fix failing CI" and "dispatch new issues") — recovering near-complete work is higher-value than starting fresh.
+
 ### CI failure pattern detection (GH#2973)
 
 After processing individual PRs, correlate CI failures across all open PRs in the repo. The goal is to detect **systemic workflow bugs** that affect all PRs identically — these can't be fixed by dispatching workers to individual PRs.
