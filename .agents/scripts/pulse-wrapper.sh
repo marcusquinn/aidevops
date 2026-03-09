@@ -1360,6 +1360,7 @@ _get_runner_role() {
 #   $2 - repo path (local filesystem)
 #   $3 - cross-repo activity markdown (pre-computed by update_health_issues)
 #   $4 - cross-repo session time markdown (pre-computed by update_health_issues)
+#   $5 - cross-repo person stats markdown (pre-computed by update_health_issues)
 # Returns: 0 always (best-effort, never breaks the pulse)
 #######################################
 _update_health_issue_for_repo() {
@@ -1367,6 +1368,7 @@ _update_health_issue_for_repo() {
 	local repo_path="$2"
 	local cross_repo_md="${3:-}"
 	local cross_repo_session_time_md="${4:-}"
+	local cross_repo_person_stats_md="${5:-}"
 
 	[[ -z "$repo_slug" ]] && return 0
 
@@ -1726,25 +1728,29 @@ ${prs_md}
 
 ${workers_md}
 
-### Contributor Activity (last 30 days)
+### Contributions to this project (last 30 days)
 
 ${activity_md}
 
-### Cross-Repo Totals (last 30 days)
+### Contributions to all projects (last 30 days)
 
 ${cross_repo_md:-_Single repo or cross-repo data unavailable._}
 
-### Session Time (${runner_user})
+### Work with AI sessions on this project (${runner_user})
 
 ${session_time_md}
 
-### Cross-Repo Session Time (${runner_user})
+### Work with AI sessions on all projects (${runner_user})
 
 ${cross_repo_session_time_md:-_Single repo or cross-repo session data unavailable._}
 
-### Contributor Output (last 30 days)
+### Contributor output on this project (last 30 days)
 
 ${person_stats_md:-_Person stats unavailable._}
+
+### Contributor output on all projects (last 30 days)
+
+${cross_repo_person_stats_md:-_Cross-repo person stats unavailable._}
 
 ### System Resources
 
@@ -1898,6 +1904,7 @@ update_health_issues() {
 	# and redundant DB queries for session time.
 	local cross_repo_md=""
 	local cross_repo_session_time_md=""
+	local cross_repo_person_stats_md=""
 	local activity_helper="${HOME}/.aidevops/agents/scripts/contributor-activity-helper.sh"
 	if [[ -x "$activity_helper" ]]; then
 		local all_repo_paths
@@ -1910,6 +1917,7 @@ update_health_issues() {
 			if [[ ${#cross_args[@]} -gt 1 ]]; then
 				cross_repo_md=$(bash "$activity_helper" cross-repo-summary "${cross_args[@]}" --period month --format markdown || echo "_Cross-repo data unavailable._")
 				cross_repo_session_time_md=$(bash "$activity_helper" cross-repo-session-time "${cross_args[@]}" --period all --format markdown || echo "_Cross-repo session data unavailable._")
+				cross_repo_person_stats_md=$(bash "$activity_helper" cross-repo-person-stats "${cross_args[@]}" --period month --format markdown || echo "_Cross-repo person stats unavailable._")
 			fi
 		fi
 	fi
@@ -1917,7 +1925,7 @@ update_health_issues() {
 	local updated=0
 	while IFS='|' read -r slug path; do
 		[[ -z "$slug" ]] && continue
-		_update_health_issue_for_repo "$slug" "$path" "$cross_repo_md" "$cross_repo_session_time_md" || true
+		_update_health_issue_for_repo "$slug" "$path" "$cross_repo_md" "$cross_repo_session_time_md" "$cross_repo_person_stats_md" || true
 		updated=$((updated + 1))
 	done <<<"$repo_entries"
 
