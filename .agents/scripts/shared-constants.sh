@@ -1480,7 +1480,7 @@ _load_feature_toggles_legacy() {
 		done <"$FEATURE_TOGGLES_USER"
 	fi
 
-	local toggle_keys="auto_update update_interval skill_auto_update skill_freshness_hours tool_auto_update tool_freshness_hours tool_idle_hours supervisor_pulse repo_sync openclaw_auto_update openclaw_freshness_hours upstream_watch upstream_watch_hours manage_opencode_config manage_claude_config session_greeting safety_hooks shell_aliases onboarding_prompt"
+	local toggle_keys="auto_update update_interval skill_auto_update skill_freshness_hours tool_auto_update tool_freshness_hours tool_idle_hours supervisor_pulse repo_sync openclaw_auto_update openclaw_freshness_hours upstream_watch upstream_watch_hours max_interactive_sessions manage_opencode_config manage_claude_config session_greeting safety_hooks shell_aliases onboarding_prompt"
 	local tk env_var env_val
 	for tk in $toggle_keys; do
 		env_var=$(_ft_env_map "$tk")

@@ -332,6 +332,11 @@ cmd_check() {
 
 	local slugs
 	if [[ -n "$target_slug" ]]; then
+		# Validate that the target slug is on the watchlist
+		if ! echo "$config" | jq -e --arg slug "$target_slug" '.repos[] | select(.slug == $slug)' >/dev/null 2>&1; then
+			echo -e "${RED}Error: Not watching ${target_slug}. Add it first with 'upstream-watch-helper.sh add ${target_slug}'.${NC}" >&2
+			return 1
+		fi
 		slugs="$target_slug"
 	else
 		slugs=$(echo "$config" | jq -r '.repos[].slug')
@@ -659,8 +664,9 @@ cmd_status() {
 
 		local relevance
 		relevance=$(echo "$config" | jq -r --arg slug "$slug" '.repos[] | select(.slug == $slug) | .relevance // ""')
-		local last_release last_checked pending
+		local last_release last_commit last_checked pending
 		last_release=$(echo "$state" | jq -r --arg slug "$slug" '.repos[$slug].last_release_seen // "none"')
+		last_commit=$(echo "$state" | jq -r --arg slug "$slug" '.repos[$slug].last_commit_seen // "none"')
 		last_checked=$(echo "$state" | jq -r --arg slug "$slug" '.repos[$slug].last_checked // "never"')
 		pending=$(echo "$state" | jq -r --arg slug "$slug" '.repos[$slug].updates_pending // 0')
 
@@ -670,6 +676,7 @@ cmd_status() {
 			echo -e "  ${GREEN}-${NC} ${slug}"
 		fi
 		echo "    Last release seen: ${last_release}"
+		echo "    Last commit seen:  ${last_commit}"
 		echo "    Last checked:      ${last_checked:0:10}"
 		[[ -n "$relevance" ]] && echo "    Relevance:         ${relevance}"
 		echo ""
