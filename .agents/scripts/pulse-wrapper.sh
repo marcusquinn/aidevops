@@ -46,7 +46,7 @@ export PATH="/bin:/usr/bin:/usr/local/bin:/opt/homebrew/bin:${PATH}"
 # in zsh, which is the MCP shell environment. This fallback ensures SCRIPT_DIR
 # resolves correctly whether the script is executed directly (bash) or sourced
 # from zsh. See GH#3931.
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)" || exit
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)" || return 2>/dev/null || exit
 source "${SCRIPT_DIR}/shared-constants.sh"
 source "${SCRIPT_DIR}/worker-lifecycle-common.sh"
 
@@ -3011,7 +3011,7 @@ _pulse_is_sourced() {
 	if [[ -n "${BASH_SOURCE[0]:-}" ]]; then
 		[[ "${BASH_SOURCE[0]}" != "${0}" ]]
 	elif [[ -n "${ZSH_EVAL_CONTEXT:-}" ]]; then
-		[[ "$ZSH_EVAL_CONTEXT" == *":file:"* || "$ZSH_EVAL_CONTEXT" == *":file" ]]
+		[[ ":${ZSH_EVAL_CONTEXT}:" == *":file:"* ]]
 	else
 		return 1
 	fi
