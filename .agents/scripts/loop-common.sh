@@ -198,19 +198,22 @@ loop_set_state() {
 	trap '_run_cleanups' RETURN
 	push_cleanup "rm -f '${temp_file}'"
 
-	# Determine value type and update
+	# Strip leading dot from key for safe --arg passing (e.g., ".iteration" -> "iteration")
+	local key_name="${key#.}"
+
+	# Determine value type and update — key passed via --arg to prevent injection
 	if [[ "$value" =~ ^[0-9]+$ ]]; then
 		# Integer
-		jq "$key = $value" "$LOOP_STATE_FILE" >"$temp_file"
+		jq --arg k "$key_name" --argjson v "$value" '.[$k] = $v' "$LOOP_STATE_FILE" >"$temp_file"
 	elif [[ "$value" == "true" || "$value" == "false" ]]; then
 		# Boolean
-		jq "$key = $value" "$LOOP_STATE_FILE" >"$temp_file"
+		jq --arg k "$key_name" --argjson v "$value" '.[$k] = $v' "$LOOP_STATE_FILE" >"$temp_file"
 	elif [[ "$value" == "null" ]]; then
 		# Null
-		jq "$key = null" "$LOOP_STATE_FILE" >"$temp_file"
+		jq --arg k "$key_name" '.[$k] = null' "$LOOP_STATE_FILE" >"$temp_file"
 	else
 		# String - use --arg to handle special characters safely
-		jq --arg val "$value" "$key = \$val" "$LOOP_STATE_FILE" >"$temp_file"
+		jq --arg k "$key_name" --arg v "$value" '.[$k] = $v' "$LOOP_STATE_FILE" >"$temp_file"
 	fi
 
 	mv "$temp_file" "$LOOP_STATE_FILE"
@@ -1010,8 +1013,13 @@ loop_run_external() {
 			;;
 		esac
 
-		# Check for completion promise (tolerate whitespace inside tags)
-		if grep -qE "<promise>[[:space:]]*${completion_promise}[[:space:]]*</promise>" "$output_file" 2>/dev/null; then
+		# Check for completion promise using fixed-string match to avoid regex injection.
+		# Extract promise content with sed, trim whitespace, compare as literal string.
+		local extracted_promise=""
+		if grep -qF "<promise>" "$output_file" 2>/dev/null; then
+			extracted_promise=$(sed -n 's/.*<promise>[[:space:]]*\(.*\)[[:space:]]*<\/promise>.*/\1/p' "$output_file" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | head -1)
+		fi
+		if [[ -n "$extracted_promise" && "$extracted_promise" == "$completion_promise" ]]; then
 			loop_log_success "Completion promise detected!"
 			loop_create_receipt "task" "success" '{"promise_fulfilled": true}'
 			loop_store_success "Task completed after $iteration iterations"
