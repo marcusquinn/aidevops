@@ -42,7 +42,11 @@ set -euo pipefail
 #######################################
 export PATH="/bin:/usr/bin:/usr/local/bin:/opt/homebrew/bin:${PATH}"
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
+# Use ${BASH_SOURCE[0]:-$0} for shell portability — BASH_SOURCE is undefined
+# in zsh, which is the MCP shell environment. This fallback ensures SCRIPT_DIR
+# resolves correctly whether the script is executed directly (bash) or sourced
+# from zsh. See GH#3931.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)" || exit
 source "${SCRIPT_DIR}/shared-constants.sh"
 source "${SCRIPT_DIR}/worker-lifecycle-common.sh"
 
@@ -2998,6 +3002,20 @@ calculate_max_workers() {
 # The pulse agent sources this file to access helper functions
 # (check_external_contributor_pr, check_permission_failure_pr)
 # without triggering the full pulse lifecycle.
-if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+#
+# Shell-portable source detection (GH#3931):
+#   bash: BASH_SOURCE[0] differs from $0 when sourced
+#   zsh:  BASH_SOURCE is undefined; use ZSH_EVAL_CONTEXT instead
+#         (contains "file" when sourced, "toplevel" when executed)
+_pulse_is_sourced() {
+	if [[ -n "${BASH_SOURCE[0]:-}" ]]; then
+		[[ "${BASH_SOURCE[0]}" != "${0}" ]]
+	elif [[ -n "${ZSH_EVAL_CONTEXT:-}" ]]; then
+		[[ "$ZSH_EVAL_CONTEXT" == *":file:"* || "$ZSH_EVAL_CONTEXT" == *":file" ]]
+	else
+		return 1
+	fi
+}
+if ! _pulse_is_sourced; then
 	main "$@"
 fi
