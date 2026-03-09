@@ -2,7 +2,8 @@
 # profile-readme-helper.sh — Auto-update GitHub profile README with live stats
 #
 # Usage:
-#   profile-readme-helper.sh update [--dry-run]   # Update README with live data
+#   profile-readme-helper.sh init                  # Create profile repo, seed README, register
+#   profile-readme-helper.sh update [--dry-run]    # Update README with live data
 #   profile-readme-helper.sh generate              # Print generated stats section to stdout
 #   profile-readme-helper.sh help
 #
@@ -573,7 +574,8 @@ EOF
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 ${model_rows}| **Total** | **${f_total_req}** | **${f_total_in}** | **${f_total_out}** | **${f_total_cache}** | **\$${total_cost}** | **\$${f_total_csavings}** | **\$${f_total_msavings}** |
 
-_${f_all_tokens} total tokens processed. ${cache_pct}% cache hit rate. \$${combined_savings} total saved (\$${f_total_csavings} caching + \$${f_total_msavings} model routing vs all-Opus)._
+_${f_all_tokens} total tokens processed. ${cache_pct}% cache hit rate. \$${combined_savings} total saved (\$${f_total_csavings} caching + \$${f_total_msavings} model routing vs all-Opus).
+Model savings are modest because ~${cache_pct}% of tokens are cache reads, where price differences between models are small._
 EOF
 
 	# Build top apps table (macOS only — requires Knowledge DB)
@@ -612,6 +614,151 @@ ${app_rows}
 _Top 10 apps by foreground time share. Mac only._
 EOF
 	fi
+
+	return 0
+}
+
+# --- Initialize profile README repo ---
+# Creates the username/username GitHub repo if it doesn't exist, clones it,
+# seeds a starter README with stat markers, and registers it in repos.json.
+cmd_init() {
+	# Require gh CLI
+	if ! command -v gh &>/dev/null; then
+		echo "Error: gh CLI required. Install from https://cli.github.com" >&2
+		return 1
+	fi
+
+	# Get GitHub username
+	local gh_user
+	gh_user=$(gh api user --jq '.login' 2>/dev/null) || {
+		echo "Error: not authenticated with gh CLI. Run 'gh auth login' first." >&2
+		return 1
+	}
+
+	local repo_slug="${gh_user}/${gh_user}"
+	local repo_dir="${HOME}/Git/${gh_user}"
+	local repos_json="${HOME}/.config/aidevops/repos.json"
+
+	# Check if already initialized
+	if [[ -f "$repos_json" ]] && command -v jq &>/dev/null; then
+		local existing_profile
+		existing_profile=$(jq -r '
+			if .initialized_repos then
+				.initialized_repos[] | select(.priority == "profile") | .path
+			else
+				to_entries[] | select(.value.priority == "profile") | .value.path
+			end
+		' "$repos_json" 2>/dev/null | head -1)
+		if [[ -n "$existing_profile" && "$existing_profile" != "null" ]]; then
+			if [[ -d "$existing_profile" ]]; then
+				echo "Profile repo already initialized at $existing_profile"
+				return 0
+			fi
+		fi
+	fi
+
+	# Create the repo on GitHub if it doesn't exist
+	if ! gh repo view "$repo_slug" &>/dev/null; then
+		echo "Creating GitHub profile repo: $repo_slug"
+		gh repo create "$gh_user" --public --description "GitHub profile README" || {
+			echo "Error: failed to create repo $repo_slug" >&2
+			return 1
+		}
+	else
+		echo "GitHub repo $repo_slug already exists"
+	fi
+
+	# Clone if not already local
+	if [[ ! -d "$repo_dir" ]]; then
+		echo "Cloning $repo_slug to $repo_dir"
+		git clone "git@github.com:${repo_slug}.git" "$repo_dir" 2>/dev/null ||
+			git clone "https://github.com/${repo_slug}.git" "$repo_dir" || {
+			echo "Error: failed to clone $repo_slug" >&2
+			return 1
+		}
+	else
+		echo "Local repo already exists at $repo_dir"
+	fi
+
+	# Seed README.md if it doesn't have stat markers
+	local readme_path="${repo_dir}/README.md"
+	if [[ ! -f "$readme_path" ]] || ! grep -q '<!-- STATS-START -->' "$readme_path"; then
+		echo "Creating starter README with stat markers"
+
+		# Get display name from git config or GitHub
+		local display_name
+		display_name=$(git config --global user.name 2>/dev/null || echo "$gh_user")
+
+		cat >"$readme_path" <<README
+# ${display_name}
+
+> Shipping with AI agents around the clock -- human hours for thinking, machine hours for doing.
+> Stats auto-updated by [aidevops](https://aidevops.sh).
+
+<!-- STATS-START -->
+<!-- Stats will be populated on first update -->
+<!-- STATS-END -->
+
+<!-- UPDATED-START -->
+<!-- UPDATED-END -->
+README
+
+		git -C "$repo_dir" add README.md
+		git -C "$repo_dir" commit -m "feat: initialize profile README with aidevops stat markers" --no-verify 2>/dev/null || true
+		git -C "$repo_dir" push origin main 2>/dev/null || git -C "$repo_dir" push origin master 2>/dev/null || {
+			echo "Warning: failed to push initial README — push manually" >&2
+		}
+	fi
+
+	# Register in repos.json
+	if [[ -f "$repos_json" ]] && command -v jq &>/dev/null; then
+		# Check if already registered
+		local already_registered
+		already_registered=$(jq -r --arg path "$repo_dir" '
+			if .initialized_repos then
+				[.initialized_repos[] | select(.path == $path)] | length
+			else
+				[to_entries[] | select(.value.path == $path)] | length
+			end
+		' "$repos_json" 2>/dev/null)
+
+		if [[ "$already_registered" == "0" ]]; then
+			echo "Registering profile repo in repos.json"
+			local tmp_json
+			tmp_json=$(mktemp)
+			jq --arg path "$repo_dir" --arg slug "$repo_slug" '
+				.initialized_repos += [{
+					"path": $path,
+					"slug": $slug,
+					"priority": "profile",
+					"pulse": false,
+					"maintainer": ($slug | split("/")[0])
+				}]
+			' "$repos_json" >"$tmp_json" && mv "$tmp_json" "$repos_json"
+		else
+			# Ensure priority is set to "profile"
+			local tmp_json
+			tmp_json=$(mktemp)
+			jq --arg path "$repo_dir" '
+				.initialized_repos |= map(
+					if .path == $path then .priority = "profile" else . end
+				)
+			' "$repos_json" >"$tmp_json" && mv "$tmp_json" "$repos_json"
+		fi
+	fi
+
+	# Run first update
+	echo "Running first stats update..."
+	cmd_update
+
+	echo ""
+	echo "Profile README initialized at: https://github.com/${gh_user}"
+	echo ""
+	echo "IMPORTANT: To show this on your GitHub profile, visit:"
+	echo "  https://github.com/${repo_slug}"
+	echo "and click the 'Show on profile' button if prompted."
+	echo ""
+	echo "Stats will auto-update daily at 06:00 (configured by setup.sh)."
 
 	return 0
 }
@@ -698,7 +845,7 @@ cmd_update() {
 			}
 			/<!-- UPDATED-END -->/ {
 				skip = 0
-				printf "_Stats auto-updated %s by [aidevops](https://github.com/marcusquinn/aidevops) pulse._\n", ts
+				printf "_Stats auto-updated %s by [aidevops](https://aidevops.sh) pulse._\n", ts
 				print "<!-- UPDATED-END -->"
 				next
 			}
@@ -747,15 +894,17 @@ cmd_update() {
 
 # --- Main dispatch ---
 case "${1:-help}" in
+init) cmd_init ;;
 generate) cmd_generate ;;
 update)
 	shift
 	cmd_update "$@"
 	;;
 help | *)
-	echo "Usage: profile-readme-helper.sh {update [--dry-run]|generate|help}"
+	echo "Usage: profile-readme-helper.sh {init|update [--dry-run]|generate|help}"
 	echo ""
 	echo "Commands:"
+	echo "  init                Create profile repo, seed README, register in repos.json"
 	echo "  update [--dry-run]  Update profile README with live stats and push"
 	echo "  generate            Print generated stats section to stdout"
 	echo "  help                Show this help"

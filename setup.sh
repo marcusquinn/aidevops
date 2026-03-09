@@ -1268,18 +1268,41 @@ ST_PLIST
 		fi
 	fi
 
-	# Profile README auto-update — updates GitHub profile README with contributor stats.
-	# Only installed if user has a profile repo (priority: "profile") in repos.json.
-	# macOS: launchd plist (daily at 06:00) | Linux: cron (daily at 06:00)
+	# Profile README — auto-create repo and seed README if not already set up.
+	# Requires gh CLI authenticated. Creates username/username repo, seeds README
+	# with stat markers, registers in repos.json with priority: "profile".
 	local pr_script="$HOME/.aidevops/agents/scripts/profile-readme-helper.sh"
 	local pr_label="sh.aidevops.profile-readme-update"
 	local repos_json="$HOME/.config/aidevops/repos.json"
 	local has_profile_repo="false"
-	if [[ -f "$repos_json" ]] && command -v jq &>/dev/null; then
+	if [[ -x "$pr_script" ]] && command -v gh &>/dev/null && gh auth status &>/dev/null 2>&1; then
+		# Initialize profile repo if not already set up
+		if [[ -f "$repos_json" ]] && command -v jq &>/dev/null; then
+			if jq -e '.initialized_repos[]? | select(.priority == "profile")' "$repos_json" >/dev/null 2>&1; then
+				has_profile_repo="true"
+			fi
+		fi
+		if [[ "$has_profile_repo" == "false" ]]; then
+			print_info "Setting up GitHub profile README..."
+			if bash "$pr_script" init; then
+				has_profile_repo="true"
+				print_info "Profile README created. Visit your profile repo and click 'Show on profile'."
+			else
+				print_warning "Profile README setup failed (non-fatal, skipping)"
+			fi
+		else
+			has_profile_repo="true"
+		fi
+	elif [[ -f "$repos_json" ]] && command -v jq &>/dev/null; then
+		# No gh CLI but check if profile repo already registered
 		if jq -e '.initialized_repos[]? | select(.priority == "profile")' "$repos_json" >/dev/null 2>&1; then
 			has_profile_repo="true"
 		fi
 	fi
+
+	# Profile README auto-update scheduled job.
+	# Only installed if user has a profile repo (priority: "profile") in repos.json.
+	# macOS: launchd plist (daily at 06:00) | Linux: cron (daily at 06:00)
 	if [[ -x "$pr_script" ]] && [[ "$has_profile_repo" == "true" ]]; then
 		mkdir -p "$HOME/.aidevops/.agent-workspace/logs"
 
