@@ -1185,6 +1185,181 @@ MONITOR_PLIST
 		fi
 	fi
 
+	# Screen time snapshot — captures daily screen time for contributor stats.
+	# Accumulates data in screen-time.jsonl (macOS Knowledge DB retains only ~28 days).
+	# Always installed when the script exists; no consent needed (data collection only).
+	# macOS: launchd plist (every 6h, RunAtLoad=true) | Linux: cron (every 6h)
+	local st_script="$HOME/.aidevops/agents/scripts/screen-time-helper.sh"
+	local st_label="sh.aidevops.screen-time-snapshot"
+	if [[ -x "$st_script" ]]; then
+		mkdir -p "$HOME/.aidevops/.agent-workspace/logs"
+
+		if [[ "$(uname -s)" == "Darwin" ]]; then
+			local st_plist="$HOME/Library/LaunchAgents/${st_label}.plist"
+
+			# Unload old plist if upgrading
+			if _launchd_has_agent "$st_label"; then
+				launchctl unload "$st_plist" 2>/dev/null || true
+			fi
+
+			# XML-escape paths for safe plist embedding
+			local _xml_st_script _xml_st_home
+			_xml_st_script=$(_xml_escape "$st_script")
+			_xml_st_home=$(_xml_escape "$HOME")
+
+			cat >"$st_plist" <<ST_PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>${st_label}</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/bin/bash</string>
+		<string>${_xml_st_script}</string>
+		<string>snapshot</string>
+	</array>
+	<key>StartInterval</key>
+	<integer>21600</integer>
+	<key>StandardOutPath</key>
+	<string>${_xml_st_home}/.aidevops/.agent-workspace/logs/screen-time-snapshot.log</string>
+	<key>StandardErrorPath</key>
+	<string>${_xml_st_home}/.aidevops/.agent-workspace/logs/screen-time-snapshot.log</string>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>HOME</key>
+		<string>${_xml_st_home}</string>
+	</dict>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<false/>
+	<key>ProcessType</key>
+	<string>Background</string>
+	<key>LowPriorityBackgroundIO</key>
+	<true/>
+	<key>Nice</key>
+	<integer>10</integer>
+</dict>
+</plist>
+ST_PLIST
+
+			if launchctl load "$st_plist" 2>/dev/null; then
+				print_info "Screen time snapshot enabled (launchd, every 6h, survives reboot)"
+			else
+				print_warning "Failed to load screen time snapshot LaunchAgent"
+			fi
+		else
+			# Linux: cron entry (every 6 hours)
+			local _cron_st_script
+			_cron_st_script=$(_cron_escape "$st_script")
+			(
+				crontab -l 2>/dev/null | grep -v 'aidevops: screen-time-snapshot'
+				echo "0 */6 * * * /bin/bash ${_cron_st_script} snapshot >> \"\$HOME/.aidevops/.agent-workspace/logs/screen-time-snapshot.log\" 2>&1 # aidevops: screen-time-snapshot"
+			) | crontab - 2>/dev/null || true
+			if crontab -l 2>/dev/null | grep -qF "aidevops: screen-time-snapshot" 2>/dev/null; then
+				print_info "Screen time snapshot enabled (cron, every 6h)"
+			else
+				print_warning "Failed to install screen time snapshot cron entry"
+			fi
+		fi
+	fi
+
+	# Profile README auto-update — updates GitHub profile README with contributor stats.
+	# Only installed if user has a profile repo (priority: "profile") in repos.json.
+	# macOS: launchd plist (daily at 06:00) | Linux: cron (daily at 06:00)
+	local pr_script="$HOME/.aidevops/agents/scripts/profile-readme-helper.sh"
+	local pr_label="sh.aidevops.profile-readme-update"
+	local repos_json="$HOME/.config/aidevops/repos.json"
+	local has_profile_repo="false"
+	if [[ -f "$repos_json" ]] && command -v jq &>/dev/null; then
+		if jq -e '.initialized_repos[]? | select(.priority == "profile")' "$repos_json" >/dev/null 2>&1; then
+			has_profile_repo="true"
+		fi
+	fi
+	if [[ -x "$pr_script" ]] && [[ "$has_profile_repo" == "true" ]]; then
+		mkdir -p "$HOME/.aidevops/.agent-workspace/logs"
+
+		if [[ "$(uname -s)" == "Darwin" ]]; then
+			local pr_plist="$HOME/Library/LaunchAgents/${pr_label}.plist"
+
+			# Unload old plist if upgrading
+			if _launchd_has_agent "$pr_label"; then
+				launchctl unload "$pr_plist" 2>/dev/null || true
+			fi
+
+			# XML-escape paths for safe plist embedding
+			local _xml_pr_script _xml_pr_home
+			_xml_pr_script=$(_xml_escape "$pr_script")
+			_xml_pr_home=$(_xml_escape "$HOME")
+
+			cat >"$pr_plist" <<PR_PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>${pr_label}</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/bin/bash</string>
+		<string>${_xml_pr_script}</string>
+		<string>update</string>
+	</array>
+	<key>StartCalendarInterval</key>
+	<dict>
+		<key>Hour</key>
+		<integer>6</integer>
+		<key>Minute</key>
+		<integer>0</integer>
+	</dict>
+	<key>StandardOutPath</key>
+	<string>${_xml_pr_home}/.aidevops/.agent-workspace/logs/profile-readme-update.log</string>
+	<key>StandardErrorPath</key>
+	<string>${_xml_pr_home}/.aidevops/.agent-workspace/logs/profile-readme-update.log</string>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>PATH</key>
+		<string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+		<key>HOME</key>
+		<string>${_xml_pr_home}</string>
+	</dict>
+	<key>RunAtLoad</key>
+	<false/>
+	<key>KeepAlive</key>
+	<false/>
+	<key>ProcessType</key>
+	<string>Background</string>
+	<key>LowPriorityBackgroundIO</key>
+	<true/>
+	<key>Nice</key>
+	<integer>10</integer>
+</dict>
+</plist>
+PR_PLIST
+
+			if launchctl load "$pr_plist" 2>/dev/null; then
+				print_info "Profile README update enabled (launchd, daily at 06:00)"
+			else
+				print_warning "Failed to load profile README update LaunchAgent"
+			fi
+		else
+			# Linux: cron entry (daily at 06:00)
+			local _cron_pr_script
+			_cron_pr_script=$(_cron_escape "$pr_script")
+			(
+				crontab -l 2>/dev/null | grep -v 'aidevops: profile-readme-update'
+				echo "0 6 * * * PATH=\"/usr/local/bin:/usr/bin:/bin\" /bin/bash ${_cron_pr_script} update >> \"\$HOME/.aidevops/.agent-workspace/logs/profile-readme-update.log\" 2>&1 # aidevops: profile-readme-update"
+			) | crontab - 2>/dev/null || true
+			if crontab -l 2>/dev/null | grep -qF "aidevops: profile-readme-update" 2>/dev/null; then
+				print_info "Profile README update enabled (cron, daily at 06:00)"
+			else
+				print_warning "Failed to install profile README update cron entry"
+			fi
+		fi
+	fi
+
 	echo ""
 	echo "CLI Command:"
 	echo "  aidevops init         - Initialize aidevops in a project"
