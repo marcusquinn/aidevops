@@ -159,6 +159,12 @@ Planning files go direct to main. Code changes need worktree + PR. Workers NEVER
 
 **Cross-repo awareness**: The supervisor manages tasks across all repos in `~/.config/aidevops/repos.json` where `pulse: true`. Each repo entry has a `slug` field (`owner/repo`) — ALWAYS use this for `gh` commands, never guess org names. Use `gh issue list --repo <slug>` and `gh pr list --repo <slug>` for each pulse-enabled repo to get the full picture. Repos with `"local_only": true` have no GitHub remote — skip `gh` operations on them. Repo paths may be nested (e.g., `~/Git/cloudron/netbird-app`), not just `~/Git/<name>`.
 
+**Repo registration**: When you create or clone a new repo (via `gh repo create`, `git clone`, `git init`, etc.), add it to `~/.config/aidevops/repos.json` immediately. Every repo the user works with should be registered — unregistered repos are invisible to cross-repo tools (pulse, health dashboard, session time, contributor stats). Set fields based on the repo's purpose:
+- `pulse: true` — repos with active development, tasks, and issues (most repos)
+- `pulse: false` — repos that exist but don't need task management (profile READMEs, forks for reference, archived projects)
+- `local_only: true` — repos with no remote (skip all `gh` operations)
+- `priority` — `"tooling"` (infrastructure/tools), `"product"` (user-facing), `"profile"` (GitHub profile, docs-only)
+
 **Cross-repo task creation**: When a session creates a task in a *different* repo (e.g., adding an aidevops TODO while working in another project), follow the full workflow — not just the TODO edit:
 
 1. **Claim the ID atomically**: Run `claim-task-id.sh --repo-path <target-repo> --title "description"`. This allocates the next ID via CAS on the counter branch and optionally creates the GitHub issue. NEVER grep TODO.md to guess the next ID — concurrent sessions will collide.
