@@ -45,7 +45,7 @@ SCRIPT_NAME="ttsr-rule-loader"
 
 # Default rules directory: relative to repo root (one level up from scripts/)
 DEFAULT_RULES_DIR="${SCRIPT_DIR}/../rules"
-DEFAULT_STATE_FILE="/tmp/ttsr-state-$$"
+DEFAULT_STATE_FILE="/tmp/ttsr-state-${PPID:-$$}"
 
 # =============================================================================
 # Utility Functions
@@ -366,9 +366,16 @@ cmd_list() {
 
 		if [[ "$format" == "json" ]]; then
 			[[ "$first" -eq 1 ]] && first=0 || printf ',\n'
-			printf '  {"id":"%s","trigger":"%s","severity":"%s","repeat_policy":"%s","gap_turns":%s,"enabled":%s,"tags":"%s","file":"%s"}' \
-				"$rule_id" "$rule_trigger" "$rule_severity" "$rule_repeat_policy" \
-				"$rule_gap_turns" "$rule_enabled" "$rule_tags" "$rule_file"
+			printf '  %s' "$(jq -c -n \
+				--arg id "$rule_id" \
+				--arg trigger "$rule_trigger" \
+				--arg severity "$rule_severity" \
+				--arg repeat_policy "$rule_repeat_policy" \
+				--argjson gap_turns "$rule_gap_turns" \
+				--argjson enabled "$rule_enabled" \
+				--arg tags "$rule_tags" \
+				--arg file "$rule_file" \
+				'{id: $id, trigger: $trigger, severity: $severity, repeat_policy: $repeat_policy, gap_turns: $gap_turns, enabled: $enabled, tags: $tags, file: $file}')"
 		else
 			# Truncate trigger for display
 			local display_trigger="$rule_trigger"
