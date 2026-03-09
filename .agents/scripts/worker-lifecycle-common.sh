@@ -280,7 +280,7 @@ _compute_struggle_ratio() {
 	local commits=0
 	if [[ -d "${worktree_dir}/.git" || -f "${worktree_dir}/.git" ]]; then
 		local since_seconds_ago="${elapsed_seconds}"
-		# Use (cmd || echo "") pattern for set -e safety — ensures the pipeline
+		# Use (cmd || true) pattern for set -e safety — ensures the pipeline
 		# always succeeds and stderr remains visible for debugging (GH#4010)
 		commits=$( (git -C "$worktree_dir" log --oneline --since="${since_seconds_ago} seconds ago" || true) | wc -l | tr -d ' ')
 	fi
