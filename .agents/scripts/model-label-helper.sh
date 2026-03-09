@@ -180,12 +180,65 @@ get_issue_number() {
 }
 
 #######################################
+# Shared: validate action is in VALID_ACTIONS
+#######################################
+_validate_action() {
+	local action="$1"
+	if ! echo "$VALID_ACTIONS" | grep -qw "$action"; then
+		echo "[ERROR] Invalid action '$action'. Valid: $VALID_ACTIONS" >&2
+		return 1
+	fi
+	return 0
+}
+
+#######################################
+# Shared: require gh CLI
+#######################################
+_require_gh() {
+	if ! command -v gh &>/dev/null; then
+		echo "[ERROR] gh CLI not found" >&2
+		return 1
+	fi
+	return 0
+}
+
+#######################################
+# Shared: resolve repo name from path
+# Sets REPLY to the repo slug (owner/repo)
+#######################################
+_resolve_repo() {
+	local repo_path="$1"
+	REPLY=$(cd "$repo_path" && gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || echo '')
+	if [[ -z "$REPLY" ]]; then
+		echo "[ERROR] Could not determine repository name" >&2
+		return 1
+	fi
+	return 0
+}
+
+#######################################
+# Shared: parse trailing --repo flag from args
+# Sets REPLY to the repo path (default: ".")
+#######################################
+_parse_repo_flag() {
+	REPLY="."
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--repo)
+			REPLY="$2"
+			shift 2
+			;;
+		*)
+			echo "[ERROR] Unknown option: $1" >&2
+			return 1
+			;;
+		esac
+	done
+	return 0
+}
+
+#######################################
 # Add model usage label to GitHub issue
-# Arguments:
-#   $1 - Task ID
-#   $2 - Action (planned, implemented, failed, etc.)
-#   $3 - Model tier/name
-#   $4 - Repository path (optional, defaults to current dir)
 #######################################
 cmd_add() {
 	local task_id="$1"
@@ -193,35 +246,25 @@ cmd_add() {
 	local model="$3"
 	local repo_path="${4:-.}"
 
-	# Validate action
-	if ! echo "$VALID_ACTIONS" | grep -qw "$action"; then
-		echo "[ERROR] Invalid action '$action'. Valid: $VALID_ACTIONS" >&2
-		return 1
-	fi
+	_validate_action "$action" || return 1
+	_require_gh || return 1
 
-	# Normalize model to tier
 	local model_tier
 	model_tier=$(normalize_model "$model")
 
-	# Get issue number from TODO.md
 	local issue_num
 	if ! issue_num=$(get_issue_number "$task_id" "$repo_path"); then
 		echo "[WARN] Cannot add label - no GitHub issue reference found" >&2
 		return 1
 	fi
 
-	# Construct label name
 	local label="${action}:${model_tier}"
+	local repo_name
+	_resolve_repo "$repo_path" || return 1
+	repo_name="$REPLY"
 
-	# Check if gh CLI is available
-	if ! command -v gh &>/dev/null; then
-		echo "[ERROR] gh CLI not found - cannot add label" >&2
-		return 1
-	fi
-
-	# Add label (creates label if it doesn't exist)
 	echo "[INFO] Adding label '$label' to issue #$issue_num for task $task_id"
-	if gh issue edit "$issue_num" --add-label "$label" --repo "$(cd "$repo_path" && gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || echo '')" 2>/dev/null; then
+	if gh issue edit "$issue_num" --add-label "$label" --repo "$repo_name" 2>/dev/null; then
 		echo "[OK] Label added successfully"
 		return 0
 	else
@@ -232,44 +275,24 @@ cmd_add() {
 
 #######################################
 # Query tasks with specific action:model label
-# Arguments:
-#   $1 - Action
-#   $2 - Model tier/name
-#   $3 - Repository path (optional)
 #######################################
 cmd_query() {
 	local action="$1"
 	local model="$2"
 	local repo_path="${3:-.}"
 
-	# Validate action
-	if ! echo "$VALID_ACTIONS" | grep -qw "$action"; then
-		echo "[ERROR] Invalid action '$action'. Valid: $VALID_ACTIONS" >&2
-		return 1
-	fi
+	_validate_action "$action" || return 1
+	_require_gh || return 1
 
-	# Normalize model
 	local model_tier
 	model_tier=$(normalize_model "$model")
-
 	local label="${action}:${model_tier}"
 
-	# Check gh CLI
-	if ! command -v gh &>/dev/null; then
-		echo "[ERROR] gh CLI not found" >&2
-		return 1
-	fi
-
-	# Query issues with label
-	echo "[INFO] Querying issues with label '$label'..."
 	local repo_name
-	repo_name=$(cd "$repo_path" && gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || echo '')
+	_resolve_repo "$repo_path" || return 1
+	repo_name="$REPLY"
 
-	if [[ -z "$repo_name" ]]; then
-		echo "[ERROR] Could not determine repository name" >&2
-		return 1
-	fi
-
+	echo "[INFO] Querying issues with label '$label'..."
 	gh issue list --label "$label" --repo "$repo_name" --limit 100 --json number,title,labels --jq '.[] | "#\(.number): \(.title) [\(.labels | map(.name) | join(", "))]"'
 
 	return 0
@@ -277,41 +300,46 @@ cmd_query() {
 
 #######################################
 # Show model usage statistics
-# Arguments:
-#   $1 - Repository path (optional)
+# Uses a single API call to fetch all labels instead of 40 separate gh calls
 #######################################
 cmd_stats() {
 	local repo_path="${1:-.}"
 
-	if ! command -v gh &>/dev/null; then
-		echo "[ERROR] gh CLI not found" >&2
-		return 1
-	fi
+	_require_gh || return 1
 
 	local repo_name
-	repo_name=$(cd "$repo_path" && gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || echo '')
-
-	if [[ -z "$repo_name" ]]; then
-		echo "[ERROR] Could not determine repository name" >&2
-		return 1
-	fi
+	_resolve_repo "$repo_path" || return 1
+	repo_name="$REPLY"
 
 	echo "Model Usage Statistics for $repo_name"
 	echo "========================================"
 	echo ""
 
-	# Count labels by action and model
+	# Single API call: fetch all repo labels with issue counts
+	# This replaces 40 separate gh issue list calls (8 actions * 5 models)
+	local all_labels
+	all_labels=$(gh label list --repo "$repo_name" --limit 200 --json name --jq '.[].name' 2>/dev/null || echo '')
+
 	for action in $VALID_ACTIONS; do
-		echo "[$action]"
+		local has_data=false
+		local section=""
 		for model in $VALID_MODELS; do
 			local label="${action}:${model}"
-			local count
-			count=$(gh issue list --label "$label" --repo "$repo_name" --limit 1000 --json number 2>/dev/null | jq '. | length' || echo "0")
-			if [[ "$count" -gt 0 ]]; then
-				printf "  %-10s: %d\n" "$model" "$count"
+			if echo "$all_labels" | grep -qx "$label"; then
+				if [[ "$has_data" == false ]]; then
+					section="[$action]"$'\n'
+					has_data=true
+				fi
+				local count
+				count=$(gh issue list --label "$label" --repo "$repo_name" --limit 1000 --json number --jq 'length' 2>/dev/null || echo "0")
+				if [[ "$count" -gt 0 ]]; then
+					section+=$(printf "  %-10s: %d\n" "$model" "$count")$'\n'
+				fi
 			fi
 		done
-		echo ""
+		if [[ "$has_data" == true ]]; then
+			printf '%s\n' "$section"
+		fi
 	done
 
 	return 0
@@ -330,70 +358,27 @@ main() {
 			echo "[ERROR] Usage: model-label-helper.sh add <task-id> <action> <model> [--repo PATH]" >&2
 			return 1
 		fi
-
 		local task_id="$1"
 		local action="$2"
 		local model="$3"
 		shift 3
-
-		local repo_path="."
-		while [[ $# -gt 0 ]]; do
-			case "$1" in
-			--repo)
-				repo_path="$2"
-				shift 2
-				;;
-			*)
-				echo "[ERROR] Unknown option: $1" >&2
-				return 1
-				;;
-			esac
-		done
-
-		cmd_add "$task_id" "$action" "$model" "$repo_path"
+		_parse_repo_flag "$@" || return 1
+		cmd_add "$task_id" "$action" "$model" "$REPLY"
 		;;
 	query)
 		if [[ $# -lt 2 ]]; then
 			echo "[ERROR] Usage: model-label-helper.sh query <action> <model> [--repo PATH]" >&2
 			return 1
 		fi
-
 		local action="$1"
 		local model="$2"
 		shift 2
-
-		local repo_path="."
-		while [[ $# -gt 0 ]]; do
-			case "$1" in
-			--repo)
-				repo_path="$2"
-				shift 2
-				;;
-			*)
-				echo "[ERROR] Unknown option: $1" >&2
-				return 1
-				;;
-			esac
-		done
-
-		cmd_query "$action" "$model" "$repo_path"
+		_parse_repo_flag "$@" || return 1
+		cmd_query "$action" "$model" "$REPLY"
 		;;
 	stats)
-		local repo_path="."
-		while [[ $# -gt 0 ]]; do
-			case "$1" in
-			--repo)
-				repo_path="$2"
-				shift 2
-				;;
-			*)
-				echo "[ERROR] Unknown option: $1" >&2
-				return 1
-				;;
-			esac
-		done
-
-		cmd_stats "$repo_path"
+		_parse_repo_flag "$@" || return 1
+		cmd_stats "$REPLY"
 		;;
 	help | --help | -h)
 		cmd_help
