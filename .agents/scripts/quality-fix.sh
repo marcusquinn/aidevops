@@ -17,32 +17,32 @@ source "$SCRIPT_DIR/shared-constants.sh" 2>/dev/null || true
 [[ -z "${NC+x}" ]] && NC='\033[0m'
 
 print_header() {
-	echo -e "${BLUE}🔧 AI DevOps Framework - Universal Quality Fix${NC}"
+	echo -e "${BLUE}AI DevOps Framework - Universal Quality Fix${NC}"
 	echo -e "${BLUE}==========================================================${NC}"
 	return 0
 }
 
 print_success() {
 	local message="$1"
-	echo -e "${GREEN}✅ $message${NC}"
+	echo -e "${GREEN}[SUCCESS]${NC} $message"
 	return 0
 }
 
 print_warning() {
 	local message="$1"
-	echo -e "${YELLOW}⚠️  $message${NC}"
+	echo -e "${YELLOW}[WARNING]${NC} $message"
 	return 0
 }
 
 print_error() {
 	local message="$1"
-	echo -e "${RED}❌ $message${NC}"
+	echo -e "${RED}[ERROR]${NC} $message" >&2
 	return 0
 }
 
 print_info() {
 	local message="$1"
-	echo -e "${BLUE}ℹ️  $message${NC}"
+	echo -e "${BLUE}[INFO]${NC} $message"
 	return 0
 }
 backup_files() {
@@ -258,9 +258,9 @@ main() {
 	validate_fixes
 	echo ""
 
-	print_success "🎉 Universal quality fixes completed!"
+	print_success "Universal quality fixes completed!"
 	print_info "Review changes and run linters-local.sh to validate improvements"
-	print_info "Commit changes with: git add . && git commit -m '🎯 Universal quality fixes'"
+	print_info "Commit changes with: git add . && git commit -m 'fix: apply universal quality fixes'"
 	return 0
 }
 
