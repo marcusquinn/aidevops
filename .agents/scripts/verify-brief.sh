@@ -78,7 +78,7 @@ parse_args() {
 		arg="$1"
 		case "$arg" in
 		--repo-path)
-			if [[ $# -lt 2 ]]; then
+			if [[ $# -lt 2 || "$2" == -* ]]; then
 				log_fail "Missing value for --repo-path"
 				return 2
 			fi

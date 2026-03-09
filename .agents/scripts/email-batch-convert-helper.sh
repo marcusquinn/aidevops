@@ -98,11 +98,12 @@ cmd_convert() {
 		fi
 	done < <(find "$input_dir" -type f \( -name "*.eml" -o -name "*.msg" \) -print0 2>/dev/null)
 
-	print_success "Conversion complete: ${success}/${count} succeeded, ${failed} failed"
 	if [[ "$count" -gt 0 && "$success" -eq 0 ]]; then
+		print_error "Conversion complete: ${success}/${count} succeeded, ${failed} failed"
 		print_error "All conversions failed"
 		return 1
 	fi
+	print_success "Conversion complete: ${success}/${count} succeeded, ${failed} failed"
 	return 0
 }
 
