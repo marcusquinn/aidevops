@@ -343,6 +343,7 @@ cmd_check() {
 	fi
 
 	local updates_found=0
+	local had_probe_failure=false
 	local now
 	now=$(_now_iso)
 
@@ -440,12 +441,15 @@ cmd_check() {
 			echo "  Action:    Review changes, then run: upstream-watch-helper.sh ack ${slug}"
 
 		elif [[ "$has_new_commits" == true ]]; then
+			updates_found=$((updates_found + 1))
+			echo ""
+			echo -e "${BLUE}NEW COMMITS${NC}: ${slug} (no new release)"
+			[[ -n "$relevance" ]] && echo -e "  Relevance: ${CYAN}${relevance}${NC}"
 			if [[ "$verbose" == true ]]; then
-				updates_found=$((updates_found + 1))
-				echo ""
-				echo -e "${BLUE}NEW COMMITS${NC}: ${slug} (no new release)"
-				[[ -n "$relevance" ]] && echo -e "  Relevance: ${CYAN}${relevance}${NC}"
 				_show_commit_diff "$slug" "$last_commit_seen" "${latest_commit:0:7}"
+			else
+				echo "  Latest commit: ${latest_commit:0:7} (${latest_commit_date:-unknown})"
+				echo "  Action:        Review changes, then run: upstream-watch-helper.sh ack ${slug}"
 			fi
 		else
 			echo -e "${GREEN}Up to date${NC}: ${slug} (${latest_release_tag:-no releases})"
@@ -455,14 +459,19 @@ cmd_check() {
 		# Skip state update if probes failed to avoid masking errors as "up to date"
 		if [[ "$probe_failed" != true ]]; then
 			state=$(echo "$state" | jq --arg slug "$slug" --arg now "$now" \
-				--argjson pending "$([[ "$has_new_release" == true ]] && echo 1 || echo 0)" \
+				--argjson pending "$([[ "$has_new_release" == true || "$has_new_commits" == true ]] && echo 1 || echo 0)" \
 				'.repos[$slug].last_checked = $now | .repos[$slug].updates_pending = $pending')
+		else
+			had_probe_failure=true
 		fi
 
 	done <<<"$slugs"
 
-	# Update global last_check
-	state=$(echo "$state" | jq --arg now "$now" '.last_check = $now')
+	# Only advance global last_check if all probes succeeded — partial failures
+	# should not advance the 24h gate so the caller retries on the next cycle
+	if [[ "$had_probe_failure" != true ]]; then
+		state=$(echo "$state" | jq --arg now "$now" '.last_check = $now')
+	fi
 	_write_state "$state"
 
 	echo ""
@@ -473,6 +482,7 @@ cmd_check() {
 	fi
 
 	_log_info "Check complete: ${updates_found} updates found"
+	[[ "$had_probe_failure" == true ]] && return 1
 	return 0
 }
 
@@ -486,9 +496,9 @@ _show_release_diff() {
 		echo "  Release notes:"
 		local body
 		body=$(gh api "repos/${slug}/releases/latest" --jq '.body // "No release notes"' 2>/dev/null) || body="Could not fetch"
-		echo "$body" | head -20 | sed 's/^/    /'
+		sed -n '1,20{s/^/    /;p;}' <<<"$body"
 		local line_count
-		line_count=$(echo "$body" | wc -l | tr -d ' ')
+		line_count=$(wc -l <<<"$body" | tr -d ' ')
 		if [[ "$line_count" -gt 20 ]]; then
 			echo "    ... (${line_count} lines total — view full notes on GitHub)"
 		fi
@@ -532,9 +542,9 @@ _show_release_diff() {
 	echo "  Latest release notes (${to_tag}):"
 	local body
 	body=$(gh api "repos/${slug}/releases/tags/${to_tag}" --jq '.body // "No release notes"' 2>/dev/null) || body="Could not fetch"
-	echo "$body" | head -30 | sed 's/^/    /'
+	sed -n '1,30{s/^/    /;p;}' <<<"$body"
 	local line_count
-	line_count=$(echo "$body" | wc -l | tr -d ' ')
+	line_count=$(wc -l <<<"$body" | tr -d ' ')
 	if [[ "$line_count" -gt 30 ]]; then
 		echo "    ... (${line_count} lines total)"
 	fi

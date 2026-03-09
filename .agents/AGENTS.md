@@ -232,9 +232,9 @@ Key capabilities (details in `reference/orchestration.md`, `reference/services.m
 - **Memory**: cross-session SQLite FTS5 (`/remember`, `/recall`)
 - **Orchestration**: supervisor dispatch, pulse scheduler, auto-pickup, cross-repo issue/PR/TODO visibility
 - **Contribution watch**: monitors external issues/PRs for new comments needing reply. `contribution-watch-helper.sh seed|scan|status|install|uninstall`. Prompt-injection-safe — automated scans are deterministic (no LLM), comment bodies only shown in interactive sessions after `prompt-guard-helper.sh scan`.
-- **Upstream watch**: monitors external repos we've borrowed ideas/code from for new releases. `upstream-watch-helper.sh add|remove|check|ack|status`. Shows release diffs and changelogs between our last-seen version and latest. Distinct from skill imports (code we pulled in) and contribution watch (repos we filed issues on) — this tracks "inspiration repos" for passive monitoring. Config: `configs/upstream-watch.json`.
+- **Upstream watch**: monitors external repos we've borrowed ideas/code from for new releases. `upstream-watch-helper.sh add|remove|check|ack|status`. Shows release diffs and changelogs between our last-seen version and latest. Distinct from skill imports (code we pulled in) and contribution watch (repos we filed issues on) — this tracks "inspiration repos" for passive monitoring. Config: `.agents/configs/upstream-watch.json`.
 - **Skills**: `aidevops skills`, `/skills`
-- **Auto-update**: GitHub poll + daily skill/repo sync + upstream watch check
+- **Auto-update**: GitHub poll + daily skill/upstream watch/OpenClaw/tool freshness checks (via `auto-update-helper.sh`). Repo sync runs separately via `aidevops repo-sync` scheduler.
 - **Browser**: Playwright, dev-browser (persistent login)
 - **Quality**: Write-time per-edit linting → `linters-local.sh` → `/pr review` → `/postflight`. Fix violations at edit time, not commit time. See `prompts/build.txt` "Write-Time Quality Enforcement". Bundle `skip_gates` filter irrelevant checks per project type.
 - **Sessions**: `/session-review`, `/checkpoint`, compaction resilience
