@@ -133,24 +133,29 @@ loop_create_state() {
 	local started_at
 	started_at=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
-	# Create JSON state file
-	cat >"$LOOP_STATE_FILE" <<EOF
-{
-  "loop_type": "$loop_type",
-  "prompt": $(echo "$prompt" | jq -Rs .),
-  "iteration": 1,
-  "max_iterations": $max_iterations,
-  "phase": "task",
-  "task_id": "$task_id",
-  "started_at": "$started_at",
-  "last_iteration_at": "$started_at",
-  "completion_promise": "$completion_promise",
-  "attempts": {},
-  "receipts": [],
-  "blocked_tasks": [],
-  "active": true
-}
-EOF
+	# Create JSON state file safely using jq to handle special characters
+	jq -n \
+		--arg loop_type "$loop_type" \
+		--arg prompt "$prompt" \
+		--argjson max_iterations "$max_iterations" \
+		--arg task_id "$task_id" \
+		--arg started_at "$started_at" \
+		--arg completion_promise "$completion_promise" \
+		'{
+			loop_type: $loop_type,
+			prompt: $prompt,
+			iteration: 1,
+			max_iterations: $max_iterations,
+			phase: "task",
+			task_id: $task_id,
+			started_at: $started_at,
+			last_iteration_at: $started_at,
+			completion_promise: $completion_promise,
+			attempts: {},
+			receipts: [],
+			blocked_tasks: [],
+			active: true
+		}' >"$LOOP_STATE_FILE"
 
 	loop_log_success "Loop state created: $LOOP_STATE_FILE"
 	return 0
@@ -204,8 +209,8 @@ loop_set_state() {
 		# Null
 		jq "$key = null" "$LOOP_STATE_FILE" >"$temp_file"
 	else
-		# String
-		jq "$key = \"$value\"" "$LOOP_STATE_FILE" >"$temp_file"
+		# String - use --arg to handle special characters safely
+		jq --arg val "$value" "$key = \$val" "$LOOP_STATE_FILE" >"$temp_file"
 	fi
 
 	mv "$temp_file" "$LOOP_STATE_FILE"
@@ -551,12 +556,6 @@ loop_create_receipt() {
         }' >"$receipt_file"
 
 	# Add receipt to state (use --arg for safe escaping)
-	local receipts
-	receipts=$(loop_get_state ".receipts")
-	if [[ -z "$receipts" || "$receipts" == "null" ]]; then
-		receipts="[]"
-	fi
-
 	local temp_file
 	temp_file=$(mktemp)
 	local receipt_name
@@ -676,12 +675,12 @@ loop_track_attempt() {
 	local task_id="${1:-$(loop_get_state ".task_id")}"
 
 	local attempts
-	attempts=$(jq -r ".attempts[\"$task_id\"] // 0" "$LOOP_STATE_FILE" 2>/dev/null || echo "0")
+	attempts=$(jq -r --arg tid "$task_id" '.attempts[$tid] // 0' "$LOOP_STATE_FILE" 2>/dev/null || echo "0")
 	local new_attempts=$((attempts + 1))
 
 	local temp_file
 	temp_file=$(mktemp)
-	jq ".attempts[\"$task_id\"] = $new_attempts" "$LOOP_STATE_FILE" >"$temp_file"
+	jq --arg tid "$task_id" --argjson count "$new_attempts" '.attempts[$tid] = $count' "$LOOP_STATE_FILE" >"$temp_file"
 	mv "$temp_file" "$LOOP_STATE_FILE"
 
 	echo "$new_attempts"
@@ -701,7 +700,7 @@ loop_should_block() {
 	local task_id="${2:-$(loop_get_state ".task_id")}"
 
 	local attempts
-	attempts=$(jq -r ".attempts[\"$task_id\"] // 0" "$LOOP_STATE_FILE" 2>/dev/null || echo "0")
+	attempts=$(jq -r --arg tid "$task_id" '.attempts[$tid] // 0' "$LOOP_STATE_FILE" 2>/dev/null || echo "0")
 
 	# Warn at 80% of max attempts (gutter warning)
 	local warn_threshold=$(((max_attempts * 4) / 5))
@@ -724,7 +723,11 @@ loop_block_task() {
 
 	local temp_file
 	temp_file=$(mktemp)
-	jq ".blocked_tasks += [{\"id\": \"$task_id\", \"reason\": \"$reason\", \"blocked_at\": \"$(date -u +"%Y-%m-%dT%H:%M:%SZ")\"}]" "$LOOP_STATE_FILE" >"$temp_file"
+	local blocked_at
+	blocked_at=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+	jq --arg task_id "$task_id" --arg reason "$reason" --arg blocked_at "$blocked_at" \
+		'.blocked_tasks += [{"id": $task_id, "reason": $reason, "blocked_at": $blocked_at}]' \
+		"$LOOP_STATE_FILE" >"$temp_file"
 	mv "$temp_file" "$LOOP_STATE_FILE"
 
 	loop_store_failure "Task blocked after multiple attempts" "$reason"
@@ -1007,8 +1010,8 @@ loop_run_external() {
 			;;
 		esac
 
-		# Check for completion promise
-		if grep -q "<promise>$completion_promise</promise>" "$output_file" 2>/dev/null; then
+		# Check for completion promise (tolerate whitespace inside tags)
+		if grep -qE "<promise>[[:space:]]*${completion_promise}[[:space:]]*</promise>" "$output_file" 2>/dev/null; then
 			loop_log_success "Completion promise detected!"
 			loop_create_receipt "task" "success" '{"promise_fulfilled": true}'
 			loop_store_success "Task completed after $iteration iterations"
@@ -1083,22 +1086,10 @@ loop_show_status() {
 	echo "=== Loop Status ==="
 	echo ""
 
-	local loop_type
-	loop_type=$(loop_get_state ".loop_type")
-	local task_id
-	task_id=$(loop_get_state ".task_id")
-	local iteration
-	iteration=$(loop_get_state ".iteration")
-	local max_iterations
-	max_iterations=$(loop_get_state ".max_iterations")
-	local phase
-	phase=$(loop_get_state ".phase")
-	local started_at
-	started_at=$(loop_get_state ".started_at")
-	local active
-	active=$(loop_get_state ".active")
-	local completion_promise
-	completion_promise=$(loop_get_state ".completion_promise")
+	# Read all state values in a single jq call to avoid repeated file parsing
+	local loop_type task_id iteration max_iterations phase started_at active completion_promise
+	read -r loop_type task_id iteration max_iterations phase started_at active completion_promise \
+		< <(jq -r '[.loop_type, .task_id, .iteration, .max_iterations, .phase, .started_at, .active, .completion_promise] | @tsv' "$LOOP_STATE_FILE" 2>/dev/null)
 
 	echo "Type: $loop_type"
 	echo "Task ID: $task_id"
@@ -1111,7 +1102,7 @@ loop_show_status() {
 
 	# Show receipts
 	local receipt_count
-	receipt_count=$(find "$LOOP_RECEIPTS_DIR" -name "*.json" -type f 2>/dev/null | wc -l | tr -d ' ')
+	receipt_count=$(find "$LOOP_RECEIPTS_DIR" -name "*.json" -type f 2>/dev/null | grep -c . || echo "0")
 	echo "Receipts: $receipt_count"
 
 	# Show blocked tasks
