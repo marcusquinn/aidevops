@@ -73,7 +73,6 @@ NPM_TOOLS=(
 	"npm|LocalWP MCP|mcp-local-wp|--version|@verygoodplugins/mcp-local-wp|npm update -g @verygoodplugins/mcp-local-wp"
 	"npm|Beads UI|beads-ui|--version|beads-ui|npm update -g beads-ui"
 	"npm|BDUI|bdui|--version|bdui|npm update -g bdui"
-	"npm|OpenCode|opencode|--version|opencode-ai|npm install -g opencode-ai@latest"
 	"npm|Chrome DevTools MCP|chrome-devtools-mcp|--version|chrome-devtools-mcp|npm install -g chrome-devtools-mcp@latest"
 	"npm|GSC MCP|mcp-server-gsc|--version|mcp-server-gsc|npm install -g mcp-server-gsc@latest"
 	"npm|Playwriter MCP|playwriter|--version|playwriter|npm install -g playwriter@latest"
@@ -82,6 +81,7 @@ NPM_TOOLS=(
 )
 
 BREW_TOOLS=(
+	"brew|OpenCode|opencode|--version|anomalyco/tap/opencode|brew upgrade anomalyco/tap/opencode"
 	"brew|GitHub CLI|gh|--version|gh|brew upgrade gh"
 	"brew|GitLab CLI|glab|--version|glab|brew upgrade glab"
 	"brew|Worktrunk|wt|--version|max-sixty/worktrunk/wt|brew upgrade max-sixty/worktrunk/wt"
