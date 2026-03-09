@@ -410,6 +410,15 @@ run_lighthouse_a11y() {
 	local url="$1"
 	local strategy="${2:-desktop}"
 
+	case "$strategy" in
+	desktop | mobile) ;;
+	*)
+		print_error "Invalid Lighthouse strategy: $strategy"
+		print_info "Use: desktop or mobile"
+		return 1
+		;;
+	esac
+
 	check_lighthouse || return 1
 	check_jq || return 1
 
@@ -641,8 +650,12 @@ check_email_a11y() {
 		return 0
 	}
 
-	# grep -c exits non-zero when count is 0; this wrapper returns "0" cleanly
-	_grep_count() { grep -ciE "$@" 2>/dev/null || true; }
+	# Count matched occurrences (not matching lines) so minified HTML is handled correctly
+	_grep_count() {
+		local pattern="$1"
+		local file="$2"
+		(grep -oiE "$pattern" "$file" 2>/dev/null || true) | awk 'END { print NR }'
+	}
 
 	_append "Email Accessibility Report"
 	_append "File: $file"
@@ -775,6 +788,11 @@ hex_to_rgb() {
 	local hex="$1"
 	hex="${hex#\#}"
 
+	if [[ ! "$hex" =~ ^([[:xdigit:]]{3}|[[:xdigit:]]{6})$ ]]; then
+		print_error "Invalid hex color: $1"
+		return 1
+	fi
+
 	# Expand shorthand (e.g., #fff -> #ffffff)
 	if [[ ${#hex} -eq 3 ]]; then
 		hex="${hex:0:1}${hex:0:1}${hex:1:1}${hex:1:1}${hex:2:1}${hex:2:1}"
@@ -814,8 +832,12 @@ check_contrast() {
 	local bg="$2"
 
 	local fg_rgb bg_rgb
-	fg_rgb=$(hex_to_rgb "$fg")
-	bg_rgb=$(hex_to_rgb "$bg")
+	if ! fg_rgb=$(hex_to_rgb "$fg"); then
+		return 1
+	fi
+	if ! bg_rgb=$(hex_to_rgb "$bg"); then
+		return 1
+	fi
 
 	local fg_r fg_g fg_b bg_r bg_g bg_b
 	read -r fg_r fg_g fg_b <<<"$fg_rgb"
