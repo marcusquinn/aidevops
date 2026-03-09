@@ -618,6 +618,159 @@ EOF
 	return 0
 }
 
+# --- Map language name to shields.io badge ---
+_lang_badge() {
+	local lang="$1"
+	case "$lang" in
+	Shell) echo '![Shell](https://img.shields.io/badge/-Shell-4EAA25?style=flat-square&logo=gnu-bash&logoColor=white)' ;;
+	TypeScript) echo '![TypeScript](https://img.shields.io/badge/-TypeScript-3178C6?style=flat-square&logo=typescript&logoColor=white)' ;;
+	JavaScript) echo '![JavaScript](https://img.shields.io/badge/-JavaScript-F7DF1E?style=flat-square&logo=javascript&logoColor=black)' ;;
+	Python) echo '![Python](https://img.shields.io/badge/-Python-3776AB?style=flat-square&logo=python&logoColor=white)' ;;
+	Ruby) echo '![Ruby](https://img.shields.io/badge/-Ruby-CC342D?style=flat-square&logo=ruby&logoColor=white)' ;;
+	Go) echo '![Go](https://img.shields.io/badge/-Go-00ADD8?style=flat-square&logo=go&logoColor=white)' ;;
+	Rust) echo '![Rust](https://img.shields.io/badge/-Rust-000000?style=flat-square&logo=rust&logoColor=white)' ;;
+	Java) echo '![Java](https://img.shields.io/badge/-Java-007396?style=flat-square&logo=openjdk&logoColor=white)' ;;
+	PHP) echo '![PHP](https://img.shields.io/badge/-PHP-777BB4?style=flat-square&logo=php&logoColor=white)' ;;
+	C) echo '![C](https://img.shields.io/badge/-C-A8B9CC?style=flat-square&logo=c&logoColor=black)' ;;
+	"C++") echo '![C++](https://img.shields.io/badge/-C++-00599C?style=flat-square&logo=cplusplus&logoColor=white)' ;;
+	"C#") echo '![C#](https://img.shields.io/badge/-C%23-239120?style=flat-square&logo=csharp&logoColor=white)' ;;
+	Swift) echo '![Swift](https://img.shields.io/badge/-Swift-FA7343?style=flat-square&logo=swift&logoColor=white)' ;;
+	Kotlin) echo '![Kotlin](https://img.shields.io/badge/-Kotlin-7F52FF?style=flat-square&logo=kotlin&logoColor=white)' ;;
+	Dart) echo '![Dart](https://img.shields.io/badge/-Dart-0175C2?style=flat-square&logo=dart&logoColor=white)' ;;
+	HTML) echo '![HTML](https://img.shields.io/badge/-HTML-E34F26?style=flat-square&logo=html5&logoColor=white)' ;;
+	CSS) echo '![CSS](https://img.shields.io/badge/-CSS-1572B6?style=flat-square&logo=css3&logoColor=white)' ;;
+	Lua) echo '![Lua](https://img.shields.io/badge/-Lua-2C2D72?style=flat-square&logo=lua&logoColor=white)' ;;
+	Elixir) echo '![Elixir](https://img.shields.io/badge/-Elixir-4B275F?style=flat-square&logo=elixir&logoColor=white)' ;;
+	Scala) echo '![Scala](https://img.shields.io/badge/-Scala-DC322F?style=flat-square&logo=scala&logoColor=white)' ;;
+	Haskell) echo '![Haskell](https://img.shields.io/badge/-Haskell-5D4F85?style=flat-square&logo=haskell&logoColor=white)' ;;
+	Vue) echo '![Vue](https://img.shields.io/badge/-Vue-4FC08D?style=flat-square&logo=vuedotjs&logoColor=white)' ;;
+	Svelte) echo '![Svelte](https://img.shields.io/badge/-Svelte-FF3E00?style=flat-square&logo=svelte&logoColor=white)' ;;
+	*) echo "![${lang}](https://img.shields.io/badge/-${lang// /%20}-555555?style=flat-square)" ;;
+	esac
+	return 0
+}
+
+# --- Generate rich profile README from GitHub data ---
+_generate_rich_readme() {
+	local gh_user="$1"
+	local readme_path="$2"
+
+	# Fetch user profile
+	local user_json
+	user_json=$(gh api "users/${gh_user}" 2>/dev/null) || user_json="{}"
+	local display_name bio blog twitter
+	display_name=$(echo "$user_json" | jq -r '.name // empty' 2>/dev/null)
+	display_name="${display_name:-$gh_user}"
+	bio=$(echo "$user_json" | jq -r '.bio // empty' 2>/dev/null)
+	blog=$(echo "$user_json" | jq -r 'select(.blog != null and .blog != "") | .blog' 2>/dev/null)
+	twitter=$(echo "$user_json" | jq -r 'select(.twitter_username != null and .twitter_username != "") | .twitter_username' 2>/dev/null)
+
+	# Fetch repos and detect languages
+	local repos_json
+	repos_json=$(gh api "users/${gh_user}/repos?per_page=100&sort=updated" 2>/dev/null) || repos_json="[]"
+
+	# Unique languages from all repos (sorted)
+	local languages
+	languages=$(echo "$repos_json" | jq -r '[.[].language | select(. != null)] | unique | .[]' 2>/dev/null)
+
+	# Build badge line
+	local badges=""
+	while IFS= read -r lang; do
+		[[ -z "$lang" ]] && continue
+		local badge
+		badge=$(_lang_badge "$lang")
+		badges="${badges}${badge}"$'\n'
+	done <<<"$languages"
+	# Always add common tooling badges
+	badges="${badges}"'![Docker](https://img.shields.io/badge/-Docker-2496ED?style=flat-square&logo=docker&logoColor=white)'$'\n'
+	badges="${badges}"'![Linux](https://img.shields.io/badge/-Linux-FCC624?style=flat-square&logo=linux&logoColor=black)'$'\n'
+	badges="${badges}"'![Git](https://img.shields.io/badge/-Git-F05032?style=flat-square&logo=git&logoColor=white)'$'\n'
+
+	# Build own repos section (non-fork, non-profile, with description)
+	local own_repos=""
+	while IFS= read -r row; do
+		[[ -z "$row" ]] && continue
+		local rname rdesc rurl
+		rname=$(echo "$row" | jq -r '.name')
+		rdesc=$(echo "$row" | jq -r '.description // "No description"')
+		rurl=$(echo "$row" | jq -r '.html_url')
+		own_repos="${own_repos}- **[${rname}](${rurl})** -- ${rdesc}"$'\n'
+	done < <(echo "$repos_json" | jq -c ".[] | select(.fork == false and .name != \"${gh_user}\")")
+
+	# Build contributions section (forks with description)
+	local contrib_repos=""
+	while IFS= read -r row; do
+		[[ -z "$row" ]] && continue
+		local rname rdesc rurl
+		rname=$(echo "$row" | jq -r '.name')
+		rdesc=$(echo "$row" | jq -r '.description // "No description"')
+		rurl=$(echo "$row" | jq -r '.html_url')
+		# Try to get parent repo URL
+		local parent_url
+		parent_url=$(gh api "repos/${gh_user}/${rname}" --jq '.parent.html_url // empty' 2>/dev/null)
+		if [[ -n "$parent_url" ]]; then
+			contrib_repos="${contrib_repos}- **[${rname}](${parent_url})** -- ${rdesc}"$'\n'
+		else
+			contrib_repos="${contrib_repos}- **[${rname}](${rurl})** -- ${rdesc}"$'\n'
+		fi
+	done < <(echo "$repos_json" | jq -c '.[] | select(.fork == true)')
+
+	# Build connect section
+	local connect=""
+	if [[ -n "$blog" ]]; then
+		connect="${connect}[![Website](https://img.shields.io/badge/-${blog##*//}-FF5722?style=flat-square&logo=hugo&logoColor=white)](${blog})"$'\n'
+	fi
+	if [[ -n "$twitter" ]]; then
+		connect="${connect}[![X](https://img.shields.io/badge/-@${twitter}-000000?style=flat-square&logo=x&logoColor=white)](https://twitter.com/${twitter})"$'\n'
+	fi
+	connect="${connect}[![GitHub](https://img.shields.io/badge/-Follow-181717?style=flat-square&logo=github&logoColor=white)](https://github.com/${gh_user})"$'\n'
+
+	# Compose the README
+	{
+		echo "# ${display_name}"
+		echo ""
+		if [[ -n "$bio" ]]; then
+			echo "**${bio}**"
+			echo ""
+		fi
+		# Badges
+		printf '%s' "$badges"
+		echo ""
+		echo "> Shipping with AI agents around the clock -- human hours for thinking, machine hours for doing."
+		echo "> Stats auto-updated by [aidevops](https://aidevops.sh)."
+		echo ""
+		echo "<!-- STATS-START -->"
+		echo "<!-- Stats will be populated on first update -->"
+		echo "<!-- STATS-END -->"
+		echo ""
+		# Own repos
+		if [[ -n "$own_repos" ]]; then
+			echo "## Projects"
+			echo ""
+			printf '%s' "$own_repos"
+			echo ""
+		fi
+		# Contributions
+		if [[ -n "$contrib_repos" ]]; then
+			echo "## Contributions"
+			echo ""
+			printf '%s' "$contrib_repos"
+			echo ""
+		fi
+		# Connect
+		echo "## Connect"
+		echo ""
+		printf '%s' "$connect"
+		echo ""
+		echo "---"
+		echo ""
+		echo "<!-- UPDATED-START -->"
+		echo "<!-- UPDATED-END -->"
+	} >"$readme_path"
+
+	return 0
+}
+
 # --- Initialize profile README repo ---
 # Creates the username/username GitHub repo if it doesn't exist, clones it,
 # seeds a starter README with stat markers, and registers it in repos.json.
@@ -683,25 +836,8 @@ cmd_init() {
 	# Seed README.md if it doesn't have stat markers
 	local readme_path="${repo_dir}/README.md"
 	if [[ ! -f "$readme_path" ]] || ! grep -q '<!-- STATS-START -->' "$readme_path"; then
-		echo "Creating starter README with stat markers"
-
-		# Get display name from git config or GitHub
-		local display_name
-		display_name=$(git config --global user.name 2>/dev/null || echo "$gh_user")
-
-		cat >"$readme_path" <<README
-# ${display_name}
-
-> Shipping with AI agents around the clock -- human hours for thinking, machine hours for doing.
-> Stats auto-updated by [aidevops](https://aidevops.sh).
-
-<!-- STATS-START -->
-<!-- Stats will be populated on first update -->
-<!-- STATS-END -->
-
-<!-- UPDATED-START -->
-<!-- UPDATED-END -->
-README
+		echo "Creating rich profile README..."
+		_generate_rich_readme "$gh_user" "$readme_path"
 
 		git -C "$repo_dir" add README.md
 		git -C "$repo_dir" commit -m "feat: initialize profile README with aidevops stat markers" --no-verify 2>/dev/null || true
