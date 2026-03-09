@@ -1275,7 +1275,7 @@ ST_PLIST
 	local pr_label="sh.aidevops.profile-readme-update"
 	local repos_json="$HOME/.config/aidevops/repos.json"
 	local has_profile_repo="false"
-	if [[ -x "$pr_script" ]] && command -v gh &>/dev/null && gh auth status &>/dev/null 2>&1; then
+	if [[ -x "$pr_script" ]] && command -v gh &>/dev/null && gh auth status &>/dev/null; then
 		# Initialize profile repo if not already set up
 		if [[ -f "$repos_json" ]] && command -v jq &>/dev/null; then
 			if jq -e '.initialized_repos[]? | select(.priority == "profile")' "$repos_json" >/dev/null 2>&1; then

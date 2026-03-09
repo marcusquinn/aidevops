@@ -660,7 +660,7 @@ cmd_init() {
 	# Create the repo on GitHub if it doesn't exist
 	if ! gh repo view "$repo_slug" &>/dev/null; then
 		echo "Creating GitHub profile repo: $repo_slug"
-		gh repo create "$gh_user" --public --description "GitHub profile README" || {
+		gh repo create "$repo_slug" --public --add-readme --description "GitHub profile README" || {
 			echo "Error: failed to create repo $repo_slug" >&2
 			return 1
 		}
