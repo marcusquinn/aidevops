@@ -195,7 +195,7 @@ mcp_requirements:
 ---
 ```
 
-This convention documents which specific tools an agent needs from an MCP server. Currently informational only - OpenCode doesn't yet support `includeTools` filtering (see [OpenCode #7399](https://github.com/anomalyco/opencode/issues/7399)). When supported, our agent generator can use this to configure filtered MCP access.
+This convention documents which specific tools an agent needs from an MCP server. Currently informational only - OpenCode doesn't yet support `includeTools` filtering (see [OpenCode #7399](https://github.com/opencode-ai/opencode/issues/7399)). When supported, our agent generator can use this to configure filtered MCP access.
 
 **Why document MCP requirements?**
 - Prepares agents for future `includeTools` support
