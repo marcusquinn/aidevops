@@ -314,6 +314,29 @@ _get_top_apps() {
 	return 0
 }
 
+# --- Get cache savings rate per million tokens for a model ---
+# Returns: (input_price - cache_read_price) per million tokens
+_cache_savings_rate() {
+	local model="$1"
+	local ms="${model#*/}"
+	ms="${ms%%-202*}"
+	case "$ms" in
+	*opus-4* | *claude-opus*) echo "13.50" ;;
+	*sonnet-4* | *claude-sonnet*) echo "2.70" ;;
+	*haiku-4* | *haiku-3* | *claude-haiku*) echo "0.72" ;;
+	*gpt-4.1-mini*) echo "0.30" ;;
+	*gpt-4.1*) echo "1.50" ;;
+	*o3*) echo "7.50" ;;
+	*o4-mini*) echo "0.825" ;;
+	*gemini-2.5-pro* | *gemini-3-pro*) echo "0.9375" ;;
+	*gemini-2.5-flash* | *gemini-3-flash*) echo "0.1125" ;;
+	*deepseek-r1*) echo "0.41" ;;
+	*deepseek-v3*) echo "0.20" ;;
+	*) echo "2.70" ;;
+	esac
+	return 0
+}
+
 # --- Clean model name for display ---
 _clean_model_name() {
 	local model="$1"
@@ -456,6 +479,7 @@ EOF
 
 	# Build model usage table
 	local total_requests=0 total_input=0 total_output=0 total_cache=0 total_cost=0
+	local total_savings="0"
 	local model_rows=""
 
 	while IFS= read -r row; do
@@ -473,6 +497,12 @@ EOF
 		total_cache=$((total_cache + cache))
 		total_cost=$(echo "$total_cost + $cost" | bc)
 
+		# Calculate cache savings: cache_read_tokens / 1M * savings_rate_per_M
+		local savings_rate row_savings
+		savings_rate=$(_cache_savings_rate "$model")
+		row_savings=$(echo "scale=2; $cache / 1000000 * $savings_rate" | bc)
+		total_savings=$(echo "$total_savings + $row_savings" | bc)
+
 		local clean_model
 		clean_model=$(_clean_model_name "$model")
 		local f_requests f_input f_output f_cache
@@ -481,22 +511,24 @@ EOF
 		f_output=$(_format_tokens "$output")
 		f_cache=$(_format_tokens "$cache")
 
-		# Format cost with 2 decimal places
-		local f_cost
+		# Format cost and savings with 2 decimal places
+		local f_cost f_savings
 		f_cost=$(printf "%.2f" "$cost")
+		f_savings=$(printf "%.2f" "$row_savings")
 
-		model_rows="${model_rows}| ${clean_model} | ${f_requests} | ${f_input} | ${f_output} | ${f_cache} | \$${f_cost} |
+		model_rows="${model_rows}| ${clean_model} | ${f_requests} | ${f_input} | ${f_output} | ${f_cache} | \$${f_cost} | \$${f_savings} |
 "
 	done < <(echo "$model_json" | jq -c '.[] | select(.cost_total >= 0.05)')
 
 	# Format totals
-	local f_total_req f_total_in f_total_out f_total_cache
+	local f_total_req f_total_in f_total_out f_total_cache f_total_savings
 	f_total_req=$(_format_number "$total_requests")
 	f_total_in=$(_format_tokens "$total_input")
 	f_total_out=$(_format_tokens "$total_output")
 	f_total_cache=$(_format_tokens "$total_cache")
-	# Round total_cost to 2 decimal places
+	# Round total_cost and total_savings to 2 decimal places
 	total_cost=$(printf "%.2f" "$total_cost")
+	f_total_savings=$(printf "%.2f" "$total_savings")
 
 	# Token totals for footer
 	local all_tokens cache_pct
@@ -505,23 +537,15 @@ EOF
 	local f_all_tokens
 	f_all_tokens=$(_format_tokens "$all_tokens")
 
-	# Calculate cost reduction percentage
-	local cost_reduction
-	if command -v bc >/dev/null 2>&1; then
-		cost_reduction=$(echo "scale=0; 100 - (100 * (100 - $cache_pct) / 100)" | bc 2>/dev/null || echo "$cache_pct")
-	else
-		cost_reduction="$cache_pct"
-	fi
-
 	cat <<EOF
 
 ## AI Model Usage (last 30 days)
 
-| Model | Requests | Input | Output | Cache read | Cost |
-| --- | ---: | ---: | ---: | ---: | ---: |
-${model_rows}| **Total** | **${f_total_req}** | **${f_total_in}** | **${f_total_out}** | **${f_total_cache}** | **\$${total_cost}** |
+| Model | Requests | Input | Output | Cache read | Cost | Cache savings |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: |
+${model_rows}| **Total** | **${f_total_req}** | **${f_total_in}** | **${f_total_out}** | **${f_total_cache}** | **\$${total_cost}** | **\$${f_total_savings}** |
 
-_${f_all_tokens} total tokens processed. Cache hit rate: ${cache_pct}% -- prompt caching reduces cost by ~${cost_reduction}% vs uncached._
+_${f_all_tokens} total tokens processed. Cache hit rate: ${cache_pct}% -- \$${f_total_savings} saved via prompt caching._
 EOF
 
 	# Build top apps table (macOS only — requires Knowledge DB)
