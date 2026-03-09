@@ -469,7 +469,7 @@ cmd_generate() {
 | ${screen_label} | ${screen_today}h | ${screen_week}h | ${f_screen_month}h | ${year_prefix}${f_screen_year}h${year_suffix} |
 | User AI session hours | ${day_human}h | ${week_human}h | ${month_human}h | ${year_human}h |
 | AI worker hours | ${day_worker}h | ${week_worker}h | ${month_worker}h | ${year_worker}h |
-| Total AI work | ${day_total}h | ${week_total}h | ${f_month_total}h | ${f_year_total}h |
+| AI concurrency hours | ${day_total}h | ${week_total}h | ${f_month_total}h | ${f_year_total}h |
 | Interactive sessions | ${f_day_int} | ${f_week_int} | ${f_month_int} | ${f_year_int} |
 | Worker sessions | ${f_day_wrk} | ${f_week_wrk} | ${f_month_wrk} | ${f_year_wrk} |
 
