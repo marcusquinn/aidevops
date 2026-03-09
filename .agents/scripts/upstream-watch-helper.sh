@@ -129,8 +129,9 @@ _read_state() {
 _write_state() {
 	local state="$1"
 	_ensure_state_file
-	echo "$state" | jq '.' >"$STATE_FILE" 2>/dev/null || {
-		_log_error "Failed to write state file (invalid JSON)"
+	local jq_err
+	jq_err=$(echo "$state" | jq '.' 2>&1 >"$STATE_FILE") || {
+		_log_error "Failed to write state file (invalid JSON): ${jq_err}"
 		return 1
 	}
 	return 0
@@ -166,8 +167,9 @@ _read_config() {
 _write_config() {
 	local config="$1"
 	_ensure_config_file
-	echo "$config" | jq '.' >"$CONFIG_FILE" 2>/dev/null || {
-		_log_error "Failed to write config file (invalid JSON)"
+	local jq_err
+	jq_err=$(echo "$config" | jq '.' 2>&1 >"$CONFIG_FILE") || {
+		_log_error "Failed to write config file (invalid JSON): ${jq_err}"
 		return 1
 	}
 	return 0
@@ -215,9 +217,9 @@ cmd_add() {
 
 	# Verify repo exists and get metadata
 	echo -e "${BLUE}Verifying repo: ${slug}...${NC}"
-	local repo_info
-	repo_info=$(gh api "repos/${slug}" --jq '{description, stargazers_count, pushed_at, default_branch}' 2>/dev/null) || {
-		echo -e "${RED}Error: Could not access repo ${slug}. Check the slug and your permissions.${NC}" >&2
+	local repo_info repo_err
+	repo_err=$(gh api "repos/${slug}" --jq '{description, stargazers_count, pushed_at, default_branch}' 2>&1) && repo_info="$repo_err" || {
+		echo -e "${RED}Error: Could not access repo ${slug}: ${repo_err}${NC}" >&2
 		return 1
 	}
 
@@ -357,18 +359,32 @@ cmd_check() {
 		last_commit_seen=$(echo "$state" | jq -r --arg slug "$slug" '.repos[$slug].last_commit_seen // ""')
 
 		# --- Check releases ---
-		local latest_release_tag latest_release_name latest_release_date
-		local release_json
-		release_json=$(gh api "repos/${slug}/releases/latest" 2>/dev/null) || release_json=""
+		local latest_release_tag="" latest_release_name="" latest_release_date=""
+		local release_json=""
+		local probe_failed=false
+		local api_stderr
+		api_stderr=$(mktemp)
+		if release_json=$(gh api "repos/${slug}/releases/latest" 2>"$api_stderr"); then
+			: # success — release_json has the response
+		else
+			local release_err
+			release_err=$(<"$api_stderr")
+			# 404 = no releases (normal), anything else = real error
+			if [[ "$release_err" == *"Not Found"* || "$release_err" == *"404"* ]]; then
+				release_json=""
+			else
+				_log_warn "gh api releases failed for ${slug}: ${release_err}"
+				echo -e "${YELLOW}Warning${NC}: Could not fetch releases for ${slug}" >&2
+				release_json=""
+				probe_failed=true
+			fi
+		fi
+		rm -f "$api_stderr"
 
 		if [[ -n "$release_json" ]]; then
 			latest_release_tag=$(echo "$release_json" | jq -r '.tag_name // ""')
 			latest_release_name=$(echo "$release_json" | jq -r '.name // ""')
 			latest_release_date=$(echo "$release_json" | jq -r '.published_at // ""')
-		else
-			latest_release_tag=""
-			latest_release_name=""
-			latest_release_date=""
 		fi
 
 		local has_new_release=false
@@ -377,16 +393,24 @@ cmd_check() {
 		fi
 
 		# --- Check commits (even if no new release) ---
-		local latest_commit latest_commit_date
-		local commit_json
-		commit_json=$(gh api "repos/${slug}/commits?per_page=1" --jq '.[0]' 2>/dev/null) || commit_json=""
+		local latest_commit="" latest_commit_date=""
+		local commit_json=""
+		api_stderr=$(mktemp)
+		if commit_json=$(gh api "repos/${slug}/commits?per_page=1" --jq '.[0]' 2>"$api_stderr"); then
+			: # success
+		else
+			local commit_err
+			commit_err=$(<"$api_stderr")
+			_log_warn "gh api commits failed for ${slug}: ${commit_err}"
+			echo -e "${YELLOW}Warning${NC}: Could not fetch commits for ${slug}" >&2
+			commit_json=""
+			probe_failed=true
+		fi
+		rm -f "$api_stderr"
 
 		if [[ -n "$commit_json" ]]; then
 			latest_commit=$(echo "$commit_json" | jq -r '.sha // ""')
 			latest_commit_date=$(echo "$commit_json" | jq -r '.commit.committer.date // ""')
-		else
-			latest_commit=""
-			latest_commit_date=""
 		fi
 
 		local has_new_commits=false
@@ -427,11 +451,13 @@ cmd_check() {
 			echo -e "${GREEN}Up to date${NC}: ${slug} (${latest_release_tag:-no releases})"
 		fi
 
-		# Update last_checked timestamp (but NOT last_release_seen — that requires explicit ack)
-		state=$(echo "$state" | jq --arg slug "$slug" --arg now "$now" \
-			--arg commit "${latest_commit:0:7}" \
-			--argjson pending "$([[ "$has_new_release" == true ]] && echo 1 || echo 0)" \
-			'.repos[$slug].last_checked = $now | .repos[$slug].last_commit_seen = $commit | .repos[$slug].updates_pending = $pending')
+		# Update last_checked and updates_pending (but NOT last_release_seen or last_commit_seen — those require explicit ack)
+		# Skip state update if probes failed to avoid masking errors as "up to date"
+		if [[ "$probe_failed" != true ]]; then
+			state=$(echo "$state" | jq --arg slug "$slug" --arg now "$now" \
+				--argjson pending "$([[ "$has_new_release" == true ]] && echo 1 || echo 0)" \
+				'.repos[$slug].last_checked = $now | .repos[$slug].updates_pending = $pending')
+		fi
 
 	done <<<"$slugs"
 
