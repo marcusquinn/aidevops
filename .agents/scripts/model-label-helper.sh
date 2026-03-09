@@ -225,6 +225,10 @@ _parse_repo_flag() {
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--repo)
+			if [[ $# -lt 2 || -z "${2:-}" ]]; then
+				echo "[ERROR] Missing value for --repo" >&2
+				return 1
+			fi
 			REPLY="$2"
 			shift 2
 			;;
@@ -326,13 +330,13 @@ cmd_stats() {
 		for model in $VALID_MODELS; do
 			local label="${action}:${model}"
 			if echo "$all_labels" | grep -qx "$label"; then
-				if [[ "$has_data" == false ]]; then
-					section="[$action]"$'\n'
-					has_data=true
-				fi
 				local count
 				count=$(gh issue list --label "$label" --repo "$repo_name" --limit 1000 --json number --jq 'length' 2>/dev/null || echo "0")
 				if [[ "$count" -gt 0 ]]; then
+					if [[ "$has_data" == false ]]; then
+						section="[$action]"$'\n'
+						has_data=true
+					fi
 					section+=$(printf "  %-10s: %d\n" "$model" "$count")$'\n'
 				fi
 			fi
