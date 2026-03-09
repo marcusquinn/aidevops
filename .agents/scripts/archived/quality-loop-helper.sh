@@ -936,7 +936,7 @@ pr_review_loop() {
 			fi
 			;;
 		*)
-			print_warning "Unknown PR status: $status"
+			echo "WARNING: Unknown PR status: $status" >&2
 			;;
 		esac
 
