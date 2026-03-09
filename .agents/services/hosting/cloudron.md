@@ -247,19 +247,19 @@ docker ps -a
 docker ps -a --filter "status=restarting"
 
 # View container logs (last 100 lines)
-docker logs --tail 100 <container_name>
+docker logs --tail 100 <container>
 
 # Follow logs in real-time
-docker logs -f <container_name>
+docker logs -f <container>
 
 # Inspect container for environment variables and config
-docker inspect <container_name>
+docker inspect <container>
 
 # Execute commands inside a running container
-docker exec -it <container_name> /bin/bash
+docker exec -it <container> /bin/bash
 ```
 
-> **Note:** `<container>`, `<container_name>`, and `<app_container>` all refer to the Docker container name shown by `docker ps`. Cloudron container names typically match the app's subdomain (e.g., `mail` for `mail.yourdomain.com`).
+> **Note:** `<container>` refers to the Docker container name shown by `docker ps`. Cloudron container names typically match the app's subdomain (e.g., `mail` for `mail.yourdomain.com`).
 
 ### **Container State Diagnosis**
 
@@ -276,7 +276,7 @@ Cloudron apps use MySQL with randomly-generated database names. To troubleshoot:
 
 ```bash
 # Find MySQL credentials from app container
-docker inspect "<app_container>" | grep CLOUDRON_MYSQL
+docker inspect "<container>" | grep CLOUDRON_MYSQL
 
 # This reveals:
 # - CLOUDRON_MYSQL_HOST (usually "mysql")
@@ -327,7 +327,7 @@ When an app won't start, use Cloudron's recovery mode:
 
 ```bash
 # After enabling recovery mode, access app container
-docker exec -it <app_container> /bin/bash
+docker exec -it <container> /bin/bash
 
 # Make fixes, then disable recovery mode via dashboard
 ```
