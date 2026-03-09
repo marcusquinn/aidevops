@@ -7,9 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.168.0] - 2026-03-09
+
 ### Added
 
-- generate rich profile READMEs with language badges, repos, and contributions (#3962)
+- generate rich profile READMEs with badges, repos, and contributions (#3962)
+
+### Changed
+
+- Documentation: add changelog entry for rich profile README feature
 
 ## [2.167.2] - 2026-03-09
 
