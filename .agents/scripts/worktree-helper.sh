@@ -133,6 +133,7 @@ get_repo_root() {
 	git rev-parse --show-toplevel 2>/dev/null || echo ""
 }
 
+# Get the repository name (basename of the repo root directory).
 get_repo_name() {
 	local root
 	root=$(get_repo_root)
@@ -141,6 +142,7 @@ get_repo_name() {
 	fi
 }
 
+# Get the current branch name, or empty string if detached/unavailable.
 get_current_branch() {
 	git branch --show-current 2>/dev/null || echo ""
 }
@@ -176,6 +178,8 @@ get_default_branch() {
 	fi
 }
 
+# Check if the current directory is the main (non-linked) worktree.
+# Returns 0 if main worktree, 1 if linked worktree.
 is_main_worktree() {
 	local git_dir
 	git_dir=$(git rev-parse --git-dir 2>/dev/null)
@@ -521,6 +525,7 @@ cmd_add() {
 	return 0
 }
 
+# List all worktrees with branch names, merge status, and current marker.
 cmd_list() {
 	echo -e "${BOLD}Git Worktrees:${NC}"
 	echo ""
@@ -576,6 +581,7 @@ cmd_list() {
 	return 0
 }
 
+# Remove a worktree by branch name or path, with optional --force.
 cmd_remove() {
 	local target=""
 	local force_remove=false
@@ -681,6 +687,7 @@ cmd_remove() {
 	return 0
 }
 
+# Show status of the current worktree (repo, branch, type, total count).
 cmd_status() {
 	local repo_root
 	repo_root=$(get_repo_root)
@@ -719,6 +726,7 @@ cmd_status() {
 	return 0
 }
 
+# Switch to a worktree for the given branch, creating one if needed.
 cmd_switch() {
 	local branch="${1:-}"
 
@@ -747,6 +755,8 @@ cmd_switch() {
 	return $?
 }
 
+# Clean up worktrees whose branches have been merged, remote-deleted, or squash-merged.
+# Supports --auto (non-interactive) and --force-merged (skip confirmation for merged).
 cmd_clean() {
 	local auto_mode=false
 	local force_merged=false
@@ -962,6 +972,7 @@ cmd_clean() {
 	return 0
 }
 
+# Manage the worktree ownership registry (list or prune stale entries).
 cmd_registry() {
 	local subcmd="${1:-list}"
 
@@ -1032,6 +1043,7 @@ cmd_registry() {
 	return 0
 }
 
+# Display usage information and available commands.
 cmd_help() {
 	cat <<'EOF'
 Git Worktree Helper - Parallel Branch Development
