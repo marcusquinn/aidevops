@@ -12,6 +12,6 @@ Here are the key dates for the project:
 - Phase 1 deadline: 2026-03-15
 - Phase 2 deadline: 28 Feb 2026
 - Final delivery: March 30, 2026
-- Board review: Monday, 5 April 2026
+- Board review: Sunday, 5 April 2026
 
 Please confirm availability for all dates.

@@ -24,7 +24,9 @@ log() {
 	return 0
 }
 verbose() {
-	[[ "$VERBOSE" == "--verbose" ]] && echo -e "  ${YELLOW}$1${NC}" || true
+	if [[ "$VERBOSE" == "--verbose" ]]; then
+		echo -e "  ${YELLOW}$1${NC}"
+	fi
 	return 0
 }
 
