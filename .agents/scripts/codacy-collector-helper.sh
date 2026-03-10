@@ -38,9 +38,11 @@ readonly CODACY_PAGE_SIZE=100
 readonly CODACY_MAX_PAGES=50
 readonly CODACY_RATE_LIMIT_WAIT=60
 readonly CODACY_RETRY_BACKOFF_BASE=2
-# Config file paths (working config preferred, template as fallback)
-readonly AUDIT_CONFIG="configs/code-audit-config.json"
-readonly AUDIT_CONFIG_TEMPLATE="configs/code-audit-config.json.txt"
+# Config file paths anchored to repo root (not CWD-dependent)
+REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
+readonly REPO_ROOT
+readonly AUDIT_CONFIG="${REPO_ROOT}/configs/code-audit-config.json"
+readonly AUDIT_CONFIG_TEMPLATE="${REPO_ROOT}/configs/code-audit-config.json.txt"
 
 # =============================================================================
 # Logging: uses shared log_* from shared-constants.sh with CODACY prefix
@@ -228,13 +230,17 @@ codacy_api_request() {
 	local attempt=0
 	local response=""
 	local http_code=""
-	local tmp_response tmp_headers
-
-	tmp_response=$(mktemp)
-	tmp_headers=$(mktemp)
+	local tmp_response
+	local tmp_dir="${HOME}/.aidevops/.agent-workspace/tmp"
+	mkdir -p "$tmp_dir" 2>/dev/null || true
+	tmp_response=$(mktemp "${tmp_dir}/codacy-resp.XXXXXX")
 	_save_cleanup_scope
 	trap '_run_cleanups' RETURN
-	push_cleanup "rm -f '${tmp_response}' '${tmp_headers}'"
+	push_cleanup "rm -f '${tmp_response}'"
+
+	# Rate-limit retries use a separate budget so 429s don't consume error retries
+	local rate_limit_retries=0
+	local max_rate_limit_retries=5
 
 	while [[ $attempt -lt ${MAX_RETRIES:-3} ]]; do
 		attempt=$((attempt + 1))
@@ -243,7 +249,6 @@ codacy_api_request() {
 			-s
 			-w "%{http_code}"
 			-o "$tmp_response"
-			-D "$tmp_headers"
 			-H "api-token: ${CODACY_TOKEN}"
 			-H "Accept: application/json"
 		)
@@ -270,10 +275,17 @@ codacy_api_request() {
 			return 0
 			;;
 		429)
-			# Rate limited — extract retry-after or use default wait
+			# Rate limited — separate budget so 429s don't consume error retries
+			rate_limit_retries=$((rate_limit_retries + 1))
+			if [[ $rate_limit_retries -ge $max_rate_limit_retries ]]; then
+				log_error "Rate limited ${rate_limit_retries} times — giving up: ${endpoint}"
+				return 1
+			fi
 			local retry_after="$CODACY_RATE_LIMIT_WAIT"
-			log_warn "Rate limited (429). Waiting ${retry_after}s before retry (attempt ${attempt}/${MAX_RETRIES})..."
+			log_warn "Rate limited (429). Waiting ${retry_after}s (rate-limit retry ${rate_limit_retries}/${max_rate_limit_retries})..."
 			sleep "$retry_after"
+			# Don't consume the error retry budget for rate limits
+			attempt=$((attempt - 1))
 			continue
 			;;
 		401)
@@ -387,12 +399,13 @@ cmd_collect() {
 	while [[ "$has_more" == "true" && $page -lt $CODACY_MAX_PAGES ]]; do
 		page=$((page + 1))
 
-		# Build request body with cursor-based pagination
+		# Build request body with cursor-based pagination (jq for safe JSON escaping)
 		local request_body
 		if [[ -n "$cursor" ]]; then
-			request_body="{\"limit\": ${CODACY_PAGE_SIZE}, \"cursor\": \"${cursor}\"}"
+			request_body=$(jq -nc --argjson limit "$CODACY_PAGE_SIZE" --arg cursor "$cursor" \
+				'{limit: $limit, cursor: $cursor}')
 		else
-			request_body="{\"limit\": ${CODACY_PAGE_SIZE}}"
+			request_body=$(jq -nc --argjson limit "$CODACY_PAGE_SIZE" '{limit: $limit}')
 		fi
 
 		local endpoint="/analysis/organizations/gh/${org}/repositories/${repo_name}/issues/search"
@@ -463,8 +476,10 @@ insert_findings() {
 	local response="$2"
 
 	local sql_file jq_filter_file
-	sql_file=$(mktemp)
-	jq_filter_file=$(mktemp)
+	local tmp_dir="${HOME}/.aidevops/.agent-workspace/tmp"
+	mkdir -p "$tmp_dir" 2>/dev/null || true
+	sql_file=$(mktemp "${tmp_dir}/codacy-sql.XXXXXX")
+	jq_filter_file=$(mktemp "${tmp_dir}/codacy-jq.XXXXXX")
 	_save_cleanup_scope
 	trap '_run_cleanups' RETURN
 	push_cleanup "rm -f '${sql_file}'"
@@ -512,7 +527,13 @@ JQ_EOF
 
 	local count=0
 	if [[ -s "$sql_file" ]]; then
-		db "$AUDIT_DB" <"$sql_file" 2>/dev/null || log_warn "Some Codacy inserts may have failed"
+		# Wrap in transaction for atomicity and performance (single fsync)
+		{
+			echo "BEGIN TRANSACTION;"
+			cat "$sql_file"
+			echo "COMMIT;"
+		} |
+			db "$AUDIT_DB" 2>/dev/null || log_warn "Some Codacy inserts may have failed"
 		count=$(wc -l <"$sql_file" | tr -d ' ')
 	fi
 
@@ -597,7 +618,12 @@ cmd_query() {
 				log_error "Missing value for --limit"
 				return 1
 			}
-			limit="$2"
+			if [[ "$2" =~ ^[0-9]+$ ]] && [[ "$2" -gt 0 && "$2" -le 10000 ]]; then
+				limit="$2"
+			else
+				log_error "Invalid limit value: $2 (must be a positive integer, max 10000)"
+				return 1
+			fi
 			shift 2
 			;;
 		*)
