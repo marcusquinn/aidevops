@@ -623,6 +623,45 @@ _pg_log_attempt() {
 }
 
 # ============================================================
+# QUARANTINE INTEGRATION (t1428.4)
+# ============================================================
+# Sends ambiguous-score items (WARN, below block threshold) to the
+# quarantine queue for human review. The quarantine-helper.sh learn
+# command feeds decisions back into prompt-guard-custom.txt.
+
+readonly _PG_QUARANTINE_HELPER="${SCRIPT_DIR}/quarantine-helper.sh"
+
+# Send a WARN-level detection to the quarantine queue.
+# Only called for items below the block threshold (ambiguous).
+_pg_quarantine_item() {
+	local message="$1"
+	local results="$2"
+	local max_severity="$3"
+
+	# Only quarantine if the helper exists
+	if [[ ! -x "$_PG_QUARANTINE_HELPER" ]]; then
+		return 0
+	fi
+
+	# Extract the first category from results
+	local category
+	category=$(echo "$results" | head -1 | cut -d'|' -f2)
+
+	# Truncate message for quarantine (max 500 chars)
+	local content
+	content="${message:0:500}"
+
+	"$_PG_QUARANTINE_HELPER" add \
+		--source prompt-guard \
+		--severity "$max_severity" \
+		--category "${category:-unknown}" \
+		--content "$content" \
+		>/dev/null 2>&1 || true
+
+	return 0
+}
+
+# ============================================================
 # COMMANDS
 # ============================================================
 
@@ -663,6 +702,8 @@ cmd_check() {
 		_pg_log_warn "WARN — $finding_count finding(s), max severity: $max_severity (below block threshold)"
 		_pg_print_findings "$results"
 		_pg_log_attempt "$message" "$results" "WARN" "$max_severity"
+		# Quarantine ambiguous items for human review (t1428.4)
+		_pg_quarantine_item "$message" "$results" "$max_severity"
 		return 2
 	fi
 }

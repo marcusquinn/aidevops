@@ -298,6 +298,35 @@ tier_label() {
 }
 
 # =============================================================================
+# Quarantine Integration (t1428.4)
+# =============================================================================
+# Sends Tier 4 (unknown/flagged) domains to the quarantine queue for human
+# review. The quarantine-helper.sh learn command feeds decisions back into
+# network-tiers-custom.conf (allow → Tier 3, deny → Tier 5).
+
+readonly _NT_QUARANTINE_HELPER="${SCRIPT_DIR}/quarantine-helper.sh"
+
+# Send a Tier 4 domain to the quarantine queue.
+_nt_quarantine_domain() {
+	local domain="$1"
+	local worker_id="$2"
+
+	if [[ ! -x "$_NT_QUARANTINE_HELPER" ]]; then
+		return 0
+	fi
+
+	"$_NT_QUARANTINE_HELPER" add \
+		--source network-tier \
+		--severity MEDIUM \
+		--category unknown_domain \
+		--content "$domain" \
+		--worker-id "$worker_id" \
+		>/dev/null 2>&1 || true
+
+	return 0
+}
+
+# =============================================================================
 # Access Logging
 # =============================================================================
 
@@ -352,6 +381,8 @@ log_access() {
 		echo "$record" >>"$NET_TIER_LOG"
 		echo "$record" >>"$NET_TIER_FLAGGED_LOG"
 		log_warn "Tier 4 (unknown domain): ${domain} by ${worker_id}"
+		# Quarantine for human review (t1428.4)
+		_nt_quarantine_domain "$domain" "$worker_id"
 		;;
 	5)
 		# Tier 5: log to denied log (access was blocked)

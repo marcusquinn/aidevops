@@ -45,6 +45,9 @@ readonly DEFAULT_PASSTHROUGH="PATH HOME USER LANG TERM SHELL"
 # Network tier helper (t1412.3)
 readonly NET_TIER_HELPER="${SCRIPT_DIR}/network-tier-helper.sh"
 
+# Quarantine helper (t1428.4)
+readonly QUARANTINE_HELPER="${SCRIPT_DIR}/quarantine-helper.sh"
+
 # =============================================================================
 # Helpers
 # =============================================================================
@@ -135,8 +138,19 @@ _sandbox_check_network_tiers() {
 		if [[ "$tier_result" == "5" ]]; then
 			log_sandbox "WARN" "Network tier DENY: ${domain} (Tier 5 — exfiltration indicator)"
 			"$NET_TIER_HELPER" log-access "$domain" "$wid" "pre-check-deny" || true
+			# Quarantine denied domains for review — user may want to allow (t1428.4)
+			if [[ -x "$QUARANTINE_HELPER" ]]; then
+				"$QUARANTINE_HELPER" add \
+					--source sandbox-exec \
+					--severity HIGH \
+					--category denied_domain \
+					--content "$domain" \
+					--worker-id "$wid" \
+					>/dev/null 2>&1 || true
+			fi
 		elif [[ "$tier_result" == "4" ]]; then
 			log_sandbox "INFO" "Network tier FLAG: ${domain} (Tier 4 — unknown domain)"
+			# Note: Tier 4 quarantine is handled by network-tier-helper.sh log_access
 			"$NET_TIER_HELPER" log-access "$domain" "$wid" "pre-check-flag" || true
 		else
 			# Tiers 1-3: log silently (tier helper handles routing)
