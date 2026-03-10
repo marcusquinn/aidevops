@@ -748,9 +748,9 @@ cmd_status() {
 	echo ""
 	if [[ -f "$MEMORY_DB" ]]; then
 		local total
-		total=$(db "$MEMORY_DB" "SELECT COUNT(*) FROM learnings;" 2>/dev/null || echo "0")
+		total=$(db "$MEMORY_DB" "SELECT COUNT(*) FROM learnings;" || echo "0")
 		local consolidations
-		consolidations=$(db "$MEMORY_DB" "SELECT COUNT(*) FROM memory_consolidations;" 2>/dev/null || echo "0")
+		consolidations=$(db "$MEMORY_DB" "SELECT COUNT(*) FROM memory_consolidations;" || echo "0")
 		local db_size
 		db_size=$(du -h "$MEMORY_DB" | cut -f1)
 		log_info "Memory DB: $total memories, $consolidations consolidations, $db_size"
