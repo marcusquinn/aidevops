@@ -32,8 +32,12 @@ check_stats_dedup() {
 		return 0
 	fi
 
-	local old_pid
-	old_pid=$(cat "$STATS_PIDFILE" 2>/dev/null || echo "")
+	# PID file format: "PID EPOCH" (PID + start timestamp)
+	local old_pid old_epoch
+	read -r old_pid old_epoch <"$STATS_PIDFILE" 2>/dev/null || {
+		rm -f "$STATS_PIDFILE"
+		return 0
+	}
 
 	if [[ -z "$old_pid" ]]; then
 		rm -f "$STATS_PIDFILE"
@@ -45,22 +49,15 @@ check_stats_dedup() {
 		return 0
 	fi
 
-	# Still running — check age
-	local start_time
-	start_time=$(ps -o lstart= -p "$old_pid" 2>/dev/null) || {
-		rm -f "$STATS_PIDFILE"
-		return 0
-	}
-
-	local start_epoch
-	start_epoch=$(date -d "$start_time" +%s 2>/dev/null) || start_epoch=0
+	# Check age using stored epoch (portable — no date -d)
+	old_epoch="${old_epoch:-0}"
 	local now
 	now=$(date +%s)
-	local elapsed=$((now - start_epoch))
+	local elapsed=$((now - old_epoch))
 
 	if [[ "$elapsed" -gt "$STATS_TIMEOUT" ]]; then
 		echo "[stats-wrapper] Killing stale stats process $old_pid (${elapsed}s)" >>"$STATS_LOGFILE"
-		kill -TERM -- "-$old_pid" 2>/dev/null || kill "$old_pid" 2>/dev/null || true
+		kill "$old_pid" 2>/dev/null || true
 		sleep 2
 		kill -9 "$old_pid" 2>/dev/null || true
 		rm -f "$STATS_PIDFILE"
@@ -79,7 +76,7 @@ main() {
 		return 0
 	fi
 
-	echo "$$" >"$STATS_PIDFILE"
+	echo "$$ $(date +%s)" >"$STATS_PIDFILE"
 	trap 'rm -f "$STATS_PIDFILE"' EXIT
 
 	echo "[stats-wrapper] Starting at $(date -u +%Y-%m-%dT%H:%M:%SZ)" >>"$STATS_LOGFILE"

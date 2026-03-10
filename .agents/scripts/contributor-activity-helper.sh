@@ -1027,6 +1027,7 @@ print(','.join(sorted(logins)))
 	# with partial results instead of blocking (t1429).
 	local results_json="["
 	local first=true
+	local _ps_partial=false
 	local IFS=','
 	for login in $logins_csv; do
 		# Check search API rate limit before each batch of 4 queries per user
@@ -1037,6 +1038,7 @@ print(','.join(sorted(logins)))
 			# The old code slept until reset, creating an infinite blocking
 			# loop when multiple users × repos exhausted the 30 req/min budget.
 			echo "Rate limit exhausted (${remaining} remaining), returning partial results" >&2
+			_ps_partial=true
 			break
 		fi
 
@@ -1066,13 +1068,14 @@ print(','.join(sorted(logins)))
 	unset IFS
 	results_json+="]"
 
-	# Format output
+	# Format output (pass partial flag so callers can detect truncated data)
 	echo "$results_json" | python3 -c "
 import sys
 import json
 
 format_type = sys.argv[1]
 period_name = sys.argv[2]
+is_partial = sys.argv[3] == 'true'
 
 data = json.load(sys.stdin)
 
@@ -1082,7 +1085,8 @@ for d in data:
 data.sort(key=lambda x: x['total_output'], reverse=True)
 
 if format_type == 'json':
-    print(json.dumps(data, indent=2))
+    result = {'data': data, 'partial': is_partial}
+    print(json.dumps(result, indent=2))
 else:
     if not data:
         print(f'_No GitHub activity for the last {period_name}._')
@@ -1093,7 +1097,10 @@ else:
         for d in data:
             pct = round(d['total_output'] / grand_total * 100, 1)
             print(f'| {d[\"login\"]} | {d[\"issues_created\"]} | {d[\"prs_created\"]} | {d[\"prs_merged\"]} | {d[\"commented_on\"]} | {pct}% |')
-" "$format" "$period"
+    if is_partial:
+        print()
+        print('_Partial results — GitHub Search API rate limit exhausted._')
+" "$format" "$period" "$_ps_partial"
 
 	return 0
 }
