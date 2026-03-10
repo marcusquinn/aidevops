@@ -1,4 +1,12 @@
 {
   "$comment": "Upstream repos to watch for releases and significant changes. Managed by upstream-watch-helper.sh (t1426). Entry schema: {slug, description, relevance, default_branch, added_at}. State (last_release_seen, last_commit_seen, last_checked, updates_pending) stored in ~/.aidevops/cache/upstream-watch-state.json.",
-  "repos": []
+  "repos": [
+    {
+      "slug": "rtk-ai/rtk",
+      "description": "CLI proxy that reduces LLM token consumption by 60-90% via smart output filtering",
+      "relevance": "Token cost optimization for agent bash operations (git, gh, test runners). Evaluated in t1430.",
+      "default_branch": "master",
+      "added_at": "2026-03-10"
+    }
+  ]
 }

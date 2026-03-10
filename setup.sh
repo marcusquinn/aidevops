@@ -664,6 +664,7 @@ main() {
 		confirm_step "Setup MiniSim (iOS/Android emulator launcher)" && setup_minisim
 		confirm_step "Setup Git CLIs (gh, glab, tea)" && setup_git_clis
 		confirm_step "Setup file discovery tools (fd, ripgrep, ripgrep-all)" && setup_file_discovery_tools
+		confirm_step "Setup rtk (token-optimized CLI output, 60-90% savings)" && setup_rtk
 		confirm_step "Setup shell linting tools (shellcheck, shfmt)" && setup_shell_linting_tools
 		setup_shellcheck_wrapper
 		confirm_step "Setup Qlty CLI (multi-linter code quality)" && setup_qlty_cli

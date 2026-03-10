@@ -79,6 +79,23 @@ Use TodoWrite frequently to track tasks and show progress. Break complex tasks i
 - Use `rg --files -g '<pattern>'` for content + file list
 - Only use mcp_glob as last resort when Bash is unavailable
 
+# Token-Optimized CLI Output (t1430)
+# rtk (https://github.com/rtk-ai/rtk) is an optional CLI proxy that compresses
+# command outputs before they reach the LLM context. Single Rust binary, <10ms
+# overhead, 60-90% token reduction on git/gh/test commands.
+# rtk only affects Bash tool calls — MCP tools (Read, Grep, Glob) are unaffected.
+# Helper scripts call git directly in subshells, so rtk does NOT interfere.
+- When `rtk` is installed (`command -v rtk`), prefer `rtk` prefix for token-heavy bash commands:
+  - `rtk git status` instead of `git status` (76-80% reduction)
+  - `rtk git log -n N` instead of `git log -n N` (86% reduction)
+  - `rtk git diff` instead of `git diff` (75% reduction)
+  - `rtk gh pr list` instead of `gh pr list` (29-80% reduction)
+  - `rtk gh pr view N` instead of `gh pr view N` (87% reduction)
+- Do NOT use rtk for file reading (use MCP Read tool) or content search (use MCP Grep tool)
+- Do NOT use rtk in helper scripts — scripts call tools directly, not through the agent
+- rtk is optional — if not installed, use commands normally. Never block on rtk absence.
+- Telemetry: disable in headless/worker mode (`RTK_TELEMETRY_DISABLED=1`)
+
 # Code Search Priority
 1. grep/rg - for exact string matching (fast, zero overhead)
 2. Augment Context Engine (semantic search) - for code understanding

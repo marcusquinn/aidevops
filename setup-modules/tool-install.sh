@@ -234,6 +234,77 @@ setup_file_discovery_tools() {
 	return 0
 }
 
+setup_rtk() {
+	# rtk — CLI proxy that reduces LLM token consumption by 60-90% (t1430)
+	# Optional optimization: compresses git/gh/test outputs before they reach LLM context
+	# Single Rust binary, zero dependencies, <10ms overhead
+	# https://github.com/rtk-ai/rtk
+
+	if command -v rtk >/dev/null 2>&1; then
+		local rtk_version
+		rtk_version=$(rtk --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo "unknown")
+		print_success "rtk found: v$rtk_version (token optimization proxy)"
+		return 0
+	fi
+
+	print_info "rtk (Rust Token Killer) reduces LLM token usage by 60-90% on CLI commands"
+	echo "  Compresses git, gh, test runner, and linter outputs before they reach the AI context."
+	echo "  Single binary, zero dependencies, <10ms overhead."
+	echo ""
+
+	local install_rtk="y"
+	if [[ "$INTERACTIVE_MODE" == "true" ]]; then
+		read -r -p "Install rtk for token-optimized CLI output? [Y/n]: " install_rtk
+	fi
+
+	if [[ "$install_rtk" =~ ^[Yy]?$ ]]; then
+		if command -v brew >/dev/null 2>&1; then
+			if run_with_spinner "Installing rtk via Homebrew" brew install rtk; then
+				print_success "rtk installed via Homebrew"
+			else
+				print_warning "Homebrew install failed, trying curl installer..."
+				if curl -fsSL https://raw.githubusercontent.com/rtk-ai/rtk/refs/heads/master/install.sh | sh; then
+					print_success "rtk installed to ~/.local/bin/rtk"
+				else
+					print_warning "rtk installation failed (non-critical, optional tool)"
+				fi
+			fi
+		else
+			# Linux or macOS without brew — use curl installer
+			if curl -fsSL https://raw.githubusercontent.com/rtk-ai/rtk/refs/heads/master/install.sh | sh; then
+				print_success "rtk installed to ~/.local/bin/rtk"
+			else
+				print_warning "rtk installation failed (non-critical, optional tool)"
+				echo "  Manual install: https://github.com/rtk-ai/rtk#installation"
+			fi
+		fi
+
+		# Disable telemetry by default for headless/worker environments
+		local rtk_config_dir="${XDG_CONFIG_HOME:-$HOME/.config}/rtk"
+		if [[ ! -f "$rtk_config_dir/config.toml" ]]; then
+			mkdir -p "$rtk_config_dir"
+			cat >"$rtk_config_dir/config.toml" <<-'RTKEOF'
+				# rtk configuration (created by aidevops setup.sh)
+				# https://github.com/rtk-ai/rtk
+
+				[telemetry]
+				enabled = false
+
+				[tee]
+				enabled = true
+				mode = "failures"
+				max_files = 20
+			RTKEOF
+			print_success "rtk config created (telemetry disabled)"
+		fi
+	else
+		print_info "Skipped rtk installation (optional)"
+		echo "  Manual install: brew install rtk  OR  curl -fsSL https://raw.githubusercontent.com/rtk-ai/rtk/refs/heads/master/install.sh | sh"
+	fi
+
+	return 0
+}
+
 setup_shell_linting_tools() {
 	print_info "Setting up shell linting tools..."
 
