@@ -7,25 +7,34 @@
 # Running them in-process with the pulse prevented dispatch and merge work
 # from ever executing. See t1429 for the full root cause analysis.
 #
-# Called by cron every 15 minutes. Has its own PID dedup and hard timeout.
+# Called by cron/launchd every 15 minutes. Has its own PID dedup and hard timeout.
 
 set -euo pipefail
 
+#######################################
+# PATH normalisation — same as pulse-wrapper.sh
+#######################################
 export PATH="/bin:/usr/bin:/usr/local/bin:/opt/homebrew/bin:${PATH}"
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)" || exit 1
+# Use ${BASH_SOURCE[0]:-$0} for shell portability — BASH_SOURCE is undefined
+# in zsh (MCP shell environment). See GH#3931.
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)" || return 2>/dev/null || exit
+source "${SCRIPT_DIR}/shared-constants.sh"
+source "${SCRIPT_DIR}/worker-lifecycle-common.sh"
 
 #######################################
 # Configuration
 #######################################
 STATS_TIMEOUT="${STATS_TIMEOUT:-600}" # 10 min hard ceiling
+STATS_TIMEOUT=$(_validate_int STATS_TIMEOUT "$STATS_TIMEOUT" 600 60)
+
 STATS_PIDFILE="${HOME}/.aidevops/logs/stats.pid"
 STATS_LOGFILE="${HOME}/.aidevops/logs/stats.log"
 
 mkdir -p "$(dirname "$STATS_PIDFILE")"
 
 #######################################
-# PID-based dedup — same pattern as pulse-wrapper
+# PID-based dedup — same pattern as pulse-wrapper check_dedup()
 #######################################
 check_stats_dedup() {
 	if [[ ! -f "$STATS_PIDFILE" ]]; then
@@ -49,7 +58,7 @@ check_stats_dedup() {
 		return 0
 	fi
 
-	# Check age using stored epoch (portable — no date -d)
+	# Check age using stored epoch (portable — no date -d / _get_process_age)
 	old_epoch="${old_epoch:-0}"
 	local now
 	now=$(date +%s)
@@ -57,9 +66,11 @@ check_stats_dedup() {
 
 	if [[ "$elapsed" -gt "$STATS_TIMEOUT" ]]; then
 		echo "[stats-wrapper] Killing stale stats process $old_pid (${elapsed}s)" >>"$STATS_LOGFILE"
-		kill "$old_pid" 2>/dev/null || true
+		_kill_tree "$old_pid" || true
 		sleep 2
-		kill -9 "$old_pid" 2>/dev/null || true
+		if kill -0 "$old_pid" 2>/dev/null; then
+			_force_kill_tree "$old_pid" || true
+		fi
 		rm -f "$STATS_PIDFILE"
 		return 0
 	fi
@@ -97,7 +108,16 @@ main() {
 	return 0
 }
 
-# Only run main if not being sourced
-if [[ "${BASH_SOURCE[0]:-$0}" == "${0}" ]]; then
-	main
+# Shell-portable source detection — same as pulse-wrapper (GH#3931)
+_stats_is_sourced() {
+	if [[ -n "${BASH_SOURCE[0]:-}" ]]; then
+		[[ "${BASH_SOURCE[0]}" != "${0}" ]]
+	elif [[ -n "${ZSH_EVAL_CONTEXT:-}" ]]; then
+		[[ ":${ZSH_EVAL_CONTEXT}:" == *":file:"* ]]
+	else
+		return 1
+	fi
+}
+if ! _stats_is_sourced; then
+	main "$@"
 fi
