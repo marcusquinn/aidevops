@@ -188,18 +188,27 @@ function createQualityCheckTool(scriptsDir, pipelines) {
 }
 
 /**
- * Allowlist map for install-hooks-helper.sh actions.
- * Object.create(null) eliminates the prototype chain, preventing inherited
- * properties (toString, constructor, __proto__) from bypassing validation.
- * Object-literal lookup severs the taint chain — the value returned is from
- * this constant, not derived from the caller's input.
+ * Sanitize a hook action string into a known-safe literal.
+ * Uses a switch statement so static taint analyzers (Codacy/Semgrep) can
+ * prove the returned value is a constant — completely severing the data flow
+ * from the function parameter to the shell command. Object-property lookups
+ * and Array.find() do not satisfy Semgrep's taint tracking because the
+ * analyzer cannot prove the returned value is independent of the input.
+ * @param {string} action - Raw action string from caller
+ * @returns {string|undefined} Sanitized action literal, or undefined if invalid
  */
-const HOOK_ACTION_MAP = Object.freeze(Object.assign(Object.create(null), {
-  install: "install",
-  uninstall: "uninstall",
-  status: "status",
-  test: "test",
-}));
+function sanitizeHookAction(action) {
+  switch (String(action)) {
+    case "install": return "install";
+    case "uninstall": return "uninstall";
+    case "status": return "status";
+    case "test": return "test";
+    default: return undefined;
+  }
+}
+
+/** Valid hook actions for display in error messages. */
+const VALID_HOOK_ACTIONS = ["install", "uninstall", "status", "test"];
 
 /**
  * Run the install-hooks-helper.sh script.
@@ -208,16 +217,9 @@ const HOOK_ACTION_MAP = Object.freeze(Object.assign(Object.create(null), {
  * @returns {string}
  */
 function runHookHelper(helperScript, action) {
-  // Own-property check + lookup returns a string owned by HOOK_ACTION_MAP,
-  // completely severing the taint chain from the function parameter.
-  // Object.hasOwn guards against any inherited properties even if
-  // Object.create(null) is accidentally reverted.
-  const actionKey = String(action);
-  const validAction = Object.hasOwn(HOOK_ACTION_MAP, actionKey)
-    ? HOOK_ACTION_MAP[actionKey]
-    : undefined;
+  const validAction = sanitizeHookAction(action);
   if (!validAction) {
-    return `Invalid action: ${String(action)}. Valid actions: ${Object.keys(HOOK_ACTION_MAP).join(", ")}`;
+    return `Invalid action: ${String(action)}. Valid actions: ${VALID_HOOK_ACTIONS.join(", ")}`;
   }
   try {
     const result = execSync(
