@@ -7,6 +7,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.171.0] - 2026-03-10
+
+### Added
+
+- add DNS exfiltration detection patterns (t1428.1, GH#4023) (#4045)
+- add MCP tool description runtime scanning for prompt injection detection (#4031)
+
+### Changed
+
+- Documentation: add t1428 Grith-inspired security enhancements plan and brief
+- Refactor: standardize on pre-increment ((++var)) across all shell scripts (#3972)
+- Documentation: add t1426 task brief
+
+### Fixed
+
+- make skills-helper.sh discover symlinked skills in custom/skills/ (#4092)
+- validate auto-detected PR number and harden sql_escape against newlines (GH#3706) (#4069)
+- eliminate SQL injection vulnerabilities in sonarcloud-collector-helper.sh (GH#3710) (#4068)
+- address critical quality-debt in codacy-collector-helper.sh (GH#3711) (#4067)
+- address SQL injection, data corruption, and command injection in audit-task-creator-helper.sh (#4065)
+- validate numeric inputs before SQL interpolation and preserve triage_result in migration (GH#3716) (#4062)
+- harden SQL queries against injection in quality sweep scripts (GH#3719) (#4064)
+- harden resolve_rebase_conflicts against indirect prompt injection (GH#3721) (#4059)
+- refactor normalise_email_sections to fix quality-debt findings (#3701) (#4060)
+- resolve quality-debt findings in email-thread-reconstruction.py (#4061)
+- address quality-debt in real-video-enhancer-helper.sh (GH#3729) (#4058)
+- remove stray :1 suffix and fix path style in enhancor.md (#4057)
+- add robustness guards to Node.js version string parsing (#4056)
+- harden todo-sync.sh against injection vulnerabilities (GH#3727) (#4055)
+- namespace plugin template subagent name to avoid collisions (GH#3741) (#4054)
+- address critical quality-debt in enhancor-helper.sh (GH#3731) (#4053)
+- add prompt injection mitigations to OCR receipt extraction prompts (#4051)
+- use canonical PyPI package name for extract-thinker (GH#3742) (#4049)
+- add task_id input validation to prevent command injection (GH#3734) (#4050)
+- correct broken code block fences and add PATH note in Playwriter docs (#4047)
+- use backticks for code elements in graduated-learnings.md (#4048)
+- resubmit 5 quality-debt fixes from closed batch PRs (#3974)
+- address security findings in quickfile-helper.sh (GH#3736) (#4046)
+- address quality-debt in memory-audit-pulse, test-memory-mail, route.md (GH#3983, GH#3771, GH#3765) (#4043)
+- address quality-debt in compare-models.md, schema-validator-helper, marketing.md (GH#3764, GH#3760, GH#3753) (#4044)
+- clarify dashboard.md output format inconsistencies (#4037)
+- replace echo|bc pipes with bc here-strings in OCR test script (#4039)
+- address PR #4020 review bot suggestions (#4022)
+- make CI workflows resilient to fork PR permission limitations (#4017)
+- make worker-lifecycle-common.sh set -e safe (GH#4010) (#4018)
+
 ## [2.170.2] - 2026-03-09
 
 ### Fixed
