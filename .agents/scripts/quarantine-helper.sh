@@ -255,21 +255,25 @@ cmd_list() {
 		_q_validate_value "$filter_severity" "$VALID_SEVERITIES" "severity filter" || return 1
 	fi
 
+	# Build jq filter using --arg to avoid injection (values already validated above)
 	local jq_filter=". "
+	local -a jq_args=()
 	if [[ -n "$filter_source" ]]; then
-		jq_filter="${jq_filter} | select(.source == \"${filter_source}\")"
+		jq_filter="${jq_filter} | select(.source == \$fsrc)"
+		jq_args+=(--arg fsrc "$filter_source")
 	fi
 	if [[ -n "$filter_severity" ]]; then
-		jq_filter="${jq_filter} | select(.severity == \"${filter_severity}\")"
+		jq_filter="${jq_filter} | select(.severity == \$fsev)"
+		jq_args+=(--arg fsev "$filter_severity")
 	fi
 
 	local count
-	count="$(jq -c "$jq_filter" "$QUARANTINE_PENDING" 2>/dev/null | wc -l | tr -d ' ')"
+	count="$(jq -c ${jq_args[@]+"${jq_args[@]}"} "$jq_filter" "$QUARANTINE_PENDING" 2>/dev/null | wc -l | tr -d ' ')"
 
 	echo "Quarantine queue: ${count} item(s) pending"
 	echo "---"
 
-	tail -n "$last_n" "$QUARANTINE_PENDING" | jq -c "$jq_filter" 2>/dev/null | while IFS= read -r line; do
+	tail -n "$last_n" "$QUARANTINE_PENDING" | jq -c ${jq_args[@]+"${jq_args[@]}"} "$jq_filter" 2>/dev/null | while IFS= read -r line; do
 		local id ts src sev cat content_preview
 		id="$(printf '%s' "$line" | jq -r '.id // "?"')"
 		ts="$(printf '%s' "$line" | jq -r '.timestamp // "?"')"
@@ -327,16 +331,20 @@ cmd_digest() {
 		_q_validate_value "$filter_severity" "$VALID_SEVERITIES" "severity filter" || return 1
 	fi
 
+	# Build jq filter using --arg to avoid injection (values already validated above)
 	local jq_filter="."
+	local -a jq_args=()
 	if [[ -n "$filter_source" ]]; then
-		jq_filter="${jq_filter} | select(.source == \"${filter_source}\")"
+		jq_filter="${jq_filter} | select(.source == \$fsrc)"
+		jq_args+=(--arg fsrc "$filter_source")
 	fi
 	if [[ -n "$filter_severity" ]]; then
-		jq_filter="${jq_filter} | select(.severity == \"${filter_severity}\")"
+		jq_filter="${jq_filter} | select(.severity == \$fsev)"
+		jq_args+=(--arg fsev "$filter_severity")
 	fi
 
 	local total
-	total="$(jq -c "$jq_filter" "$QUARANTINE_PENDING" 2>/dev/null | wc -l | tr -d ' ')"
+	total="$(jq -c ${jq_args[@]+"${jq_args[@]}"} "$jq_filter" "$QUARANTINE_PENDING" 2>/dev/null | wc -l | tr -d ' ')"
 
 	if [[ "$total" -eq 0 ]]; then
 		echo "No items match the specified filters."
@@ -353,7 +361,7 @@ cmd_digest() {
 	local src
 	for src in prompt-guard network-tier sandbox-exec mcp-audit; do
 		local src_items
-		src_items="$(jq -c "${jq_filter} | select(.source == \"${src}\")" "$QUARANTINE_PENDING" 2>/dev/null)" || true
+		src_items="$(jq -c ${jq_args[@]+"${jq_args[@]}"} --arg gsrc "$src" "${jq_filter} | select(.source == \$gsrc)" "$QUARANTINE_PENDING" 2>/dev/null)" || true
 
 		if [[ -z "$src_items" ]]; then
 			continue
