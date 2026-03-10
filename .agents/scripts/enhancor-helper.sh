@@ -9,23 +9,36 @@ set -euo pipefail
 # Source shared constants
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 if [[ -f "${SCRIPT_DIR}/shared-constants.sh" ]]; then
+	# shellcheck disable=SC1091  # shared-constants path resolved at runtime
 	source "${SCRIPT_DIR}/shared-constants.sh"
 fi
 
-# Constants
+# Constants (prefixed to avoid collision with shared-constants.sh)
 readonly ENHANCOR_API_BASE="https://apireq.enhancor.ai/api"
-readonly DEFAULT_POLL_INTERVAL=5
-readonly DEFAULT_TIMEOUT=600
-readonly DEFAULT_MODEL_VERSION="enhancorv3"
-readonly DEFAULT_ENHANCEMENT_MODE="standard"
-readonly DEFAULT_ENHANCEMENT_TYPE="face"
+readonly ENHANCOR_POLL_INTERVAL=5
+readonly ENHANCOR_TIMEOUT=600
+readonly ENHANCOR_MODEL_VERSION="enhancorv3"
+readonly ENHANCOR_ENHANCEMENT_MODE="standard"
+readonly ENHANCOR_ENHANCEMENT_TYPE="face"
 
 # Print helpers (fallback if shared-constants not loaded)
 if ! command -v print_info &>/dev/null; then
-	print_info() { echo "[INFO] $*"; }
-	print_success() { echo "[OK] $*"; }
-	print_error() { echo "[ERROR] $*" >&2; }
-	print_warning() { echo "[WARN] $*"; }
+	print_info() {
+		echo "[INFO] $*"
+		return 0
+	}
+	print_success() {
+		echo "[OK] $*"
+		return 0
+	}
+	print_error() {
+		echo "[ERROR] $*" >&2
+		return 0
+	}
+	print_warning() {
+		echo "[WARN] $*"
+		return 0
+	}
 fi
 
 # Load API key from credentials
@@ -56,23 +69,38 @@ load_api_key() {
 	return 0
 }
 
-# Make authenticated API request
+# Make authenticated API request with HTTP status code detection
 api_request() {
-	local method="$1"
-	local endpoint="$2"
+	local method
+	method="$1"
+	local endpoint
+	endpoint="$2"
 	shift 2
 
-	curl -s -X "${method}" \
+	local http_code
+	local response
+	response=$(curl -s -w '\n%{http_code}' -X "${method}" \
 		"${ENHANCOR_API_BASE}${endpoint}" \
 		-H "x-api-key: ${ENHANCOR_API_KEY}" \
 		-H "Content-Type: application/json" \
-		"$@"
+		"$@")
+	http_code=$(tail -n1 <<<"${response}")
+	response=$(sed '$d' <<<"${response}")
+
+	if [[ "${http_code}" -ge 400 ]]; then
+		print_error "HTTP ${http_code} from ${endpoint}" >&2
+	fi
+
+	echo "${response}"
+	return 0
 }
 
 # Download result file
 download_result() {
-	local url="$1"
-	local output_file="$2"
+	local url
+	url="$1"
+	local output_file
+	output_file="$2"
 
 	if [[ -z "${output_file}" ]]; then
 		print_info "Result URL: ${url}"
@@ -91,10 +119,12 @@ download_result() {
 
 # Poll for request status
 poll_status() {
-	local api_path="$1"
-	local request_id="$2"
-	local poll_interval="${3:-${DEFAULT_POLL_INTERVAL}}"
-	local timeout="${4:-${DEFAULT_TIMEOUT}}"
+	local api_path
+	api_path="$1"
+	local request_id
+	request_id="$2"
+	local poll_interval="${3:-${ENHANCOR_POLL_INTERVAL}}"
+	local timeout="${4:-${ENHANCOR_TIMEOUT}}"
 	local output_file="${5:-}"
 
 	local elapsed=0
@@ -102,17 +132,20 @@ poll_status() {
 
 	print_info "Polling status for request: ${request_id}"
 
+	local status_body
+	status_body=$(jq -n --arg id "${request_id}" '{request_id: $id}')
+
 	while [[ ${elapsed} -lt ${timeout} ]]; do
 		local response
-		response=$(api_request POST "${api_path}/status" -d "{\"request_id\": \"${request_id}\"}")
+		response=$(api_request POST "${api_path}/status" -d "${status_body}")
 
-		status=$(echo "${response}" | jq -r '.status // empty' 2>/dev/null)
+		status=$(echo "${response}" | jq -r '.status // empty' 2>/dev/null || true)
 
 		case "${status}" in
 		COMPLETED)
 			print_success "Request completed"
 			local result_url
-			result_url=$(echo "${response}" | jq -r '.result // empty' 2>/dev/null)
+			result_url=$(echo "${response}" | jq -r '.result // empty' 2>/dev/null || true)
 			if [[ -n "${result_url}" ]]; then
 				download_result "${result_url}" "${output_file}"
 			fi
@@ -141,13 +174,63 @@ poll_status() {
 	return 1
 }
 
+# Helper: submit request, check for errors, optionally poll
+_submit_and_handle() {
+	local api_path
+	api_path="$1"
+	local body
+	body="$2"
+	local sync_mode
+	sync_mode="$3"
+	local poll_interval
+	poll_interval="$4"
+	local timeout
+	timeout="$5"
+	local output_file
+	output_file="$6"
+	local description
+	description="$7"
+
+	print_info "Submitting ${description}..."
+
+	local response
+	response=$(api_request POST "${api_path}/queue" -d "${body}")
+
+	# Check for errors
+	local error
+	error=$(echo "${response}" | jq -r '.error // empty' 2>/dev/null || true)
+	if [[ -n "${error}" ]]; then
+		print_error "API error: ${error}"
+		echo "${response}" | jq . 2>/dev/null || echo "${response}"
+		return 1
+	fi
+
+	local request_id
+	request_id=$(echo "${response}" | jq -r '.requestId // empty' 2>/dev/null || true)
+
+	if [[ -z "${request_id}" ]]; then
+		print_error "No request ID returned"
+		echo "${response}" | jq . 2>/dev/null || echo "${response}"
+		return 1
+	fi
+
+	print_success "Request queued: ${request_id}"
+
+	if [[ "${sync_mode}" == "true" ]]; then
+		poll_status "${api_path}" "${request_id}" "${poll_interval}" "${timeout}" "${output_file}"
+	else
+		echo "${response}" | jq . 2>/dev/null || echo "${response}"
+	fi
+	return 0
+}
+
 # Realistic Skin Enhancement
 cmd_enhance() {
 	local img_url=""
 	local webhook_url=""
-	local model_version="${DEFAULT_MODEL_VERSION}"
-	local enhancement_mode="${DEFAULT_ENHANCEMENT_MODE}"
-	local enhancement_type="${DEFAULT_ENHANCEMENT_TYPE}"
+	local model_version="${ENHANCOR_MODEL_VERSION}"
+	local enhancement_mode="${ENHANCOR_ENHANCEMENT_MODE}"
+	local enhancement_type="${ENHANCOR_ENHANCEMENT_TYPE}"
 	local skin_refinement_level=0
 	local skin_realism_level=""
 	local portrait_depth=""
@@ -155,10 +238,10 @@ cmd_enhance() {
 	local mask_image_url=""
 	local mask_expand=15
 	local sync_mode="false"
-	local poll_interval="${DEFAULT_POLL_INTERVAL}"
-	local timeout="${DEFAULT_TIMEOUT}"
+	local poll_interval="${ENHANCOR_POLL_INTERVAL}"
+	local timeout="${ENHANCOR_TIMEOUT}"
 	local output_file=""
-	local extra_params=""
+	local -a area_flags=()
 
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
@@ -223,8 +306,9 @@ cmd_enhance() {
 			shift 2
 			;;
 		--area-*)
-			local area="${1#--area-}"
-			extra_params="${extra_params}, \"${area}\": true"
+			local area
+			area="${1#--area-}"
+			area_flags+=("${area}")
 			shift
 			;;
 		--*)
@@ -246,72 +330,51 @@ cmd_enhance() {
 
 	load_api_key || return 1
 
-	# Build request body
-	local body="{\"img_url\": \"${img_url}\""
+	# Build request body safely with jq
+	local body
+	body=$(jq -n \
+		--arg img_url "${img_url}" \
+		--arg model_version "${model_version}" \
+		--arg enhancement_mode "${enhancement_mode}" \
+		--arg enhancement_type "${enhancement_type}" \
+		--argjson skin_refinement_level "${skin_refinement_level}" \
+		--argjson mask_expand "${mask_expand}" \
+		'{
+			img_url: $img_url,
+			model_version: $model_version,
+			enhancementMode: $enhancement_mode,
+			enhancementType: $enhancement_type,
+			skin_refinement_level: $skin_refinement_level,
+			mask_expand: $mask_expand
+		}')
 
+	# Conditionally add optional string fields
 	if [[ -n "${webhook_url}" ]]; then
-		body="${body}, \"webhookUrl\": \"${webhook_url}\""
+		body=$(echo "${body}" | jq --arg v "${webhook_url}" '. + {webhookUrl: $v}')
 	fi
-
-	body="${body}, \"model_version\": \"${model_version}\""
-	body="${body}, \"enhancementMode\": \"${enhancement_mode}\""
-	body="${body}, \"enhancementType\": \"${enhancement_type}\""
-	body="${body}, \"skin_refinement_level\": ${skin_refinement_level}"
-
-	if [[ -n "${skin_realism_level}" ]]; then
-		body="${body}, \"skin_realism_Level\": ${skin_realism_level}"
-	fi
-
-	if [[ -n "${portrait_depth}" ]]; then
-		body="${body}, \"portrait_depth\": ${portrait_depth}"
-	fi
-
-	if [[ -n "${output_resolution}" ]]; then
-		body="${body}, \"output_resolution\": ${output_resolution}"
-	fi
-
 	if [[ -n "${mask_image_url}" ]]; then
-		body="${body}, \"mask_image_url\": \"${mask_image_url}\""
+		body=$(echo "${body}" | jq --arg v "${mask_image_url}" '. + {mask_image_url: $v}')
 	fi
 
-	body="${body}, \"mask_expand\": ${mask_expand}"
-
-	if [[ -n "${extra_params}" ]]; then
-		body="${body}${extra_params}"
+	# Conditionally add optional numeric fields
+	if [[ -n "${skin_realism_level}" ]]; then
+		body=$(echo "${body}" | jq --argjson v "${skin_realism_level}" '. + {skin_realism_Level: $v}')
+	fi
+	if [[ -n "${portrait_depth}" ]]; then
+		body=$(echo "${body}" | jq --argjson v "${portrait_depth}" '. + {portrait_depth: $v}')
+	fi
+	if [[ -n "${output_resolution}" ]]; then
+		body=$(echo "${body}" | jq --argjson v "${output_resolution}" '. + {output_resolution: $v}')
 	fi
 
-	body="${body}}"
+	# Add area flags
+	local area_name
+	for area_name in "${area_flags[@]+"${area_flags[@]}"}"; do
+		body=$(echo "${body}" | jq --arg k "${area_name}" '. + {($k): true}')
+	done
 
-	print_info "Submitting skin enhancement request..."
-
-	local response
-	response=$(api_request POST "/realistic-skin/v1/queue" -d "${body}")
-
-	# Check for errors
-	local error
-	error=$(echo "${response}" | jq -r '.error // empty' 2>/dev/null)
-	if [[ -n "${error}" ]]; then
-		print_error "API error: ${error}"
-		echo "${response}" | jq . 2>/dev/null || echo "${response}"
-		return 1
-	fi
-
-	local request_id
-	request_id=$(echo "${response}" | jq -r '.requestId // empty' 2>/dev/null)
-
-	if [[ -z "${request_id}" ]]; then
-		print_error "No request ID returned"
-		echo "${response}" | jq . 2>/dev/null || echo "${response}"
-		return 1
-	fi
-
-	print_success "Request queued: ${request_id}"
-
-	if [[ "${sync_mode}" == "true" ]]; then
-		poll_status "/realistic-skin/v1" "${request_id}" "${poll_interval}" "${timeout}" "${output_file}"
-	else
-		echo "${response}" | jq . 2>/dev/null || echo "${response}"
-	fi
+	_submit_and_handle "/realistic-skin/v1" "${body}" "${sync_mode}" "${poll_interval}" "${timeout}" "${output_file}" "skin enhancement request"
+	return $?
 }
 
 # Portrait Upscaler
@@ -320,8 +383,8 @@ cmd_upscale() {
 	local webhook_url=""
 	local mode="fast"
 	local sync_mode="false"
-	local poll_interval="${DEFAULT_POLL_INTERVAL}"
-	local timeout="${DEFAULT_TIMEOUT}"
+	local poll_interval="${ENHANCOR_POLL_INTERVAL}"
+	local timeout="${ENHANCOR_TIMEOUT}"
 	local output_file=""
 
 	while [[ $# -gt 0 ]]; do
@@ -373,43 +436,18 @@ cmd_upscale() {
 
 	load_api_key || return 1
 
-	local body="{\"img_url\": \"${img_url}\", \"mode\": \"${mode}\""
+	local body
+	body=$(jq -n \
+		--arg img_url "${img_url}" \
+		--arg mode "${mode}" \
+		'{img_url: $img_url, mode: $mode}')
 
 	if [[ -n "${webhook_url}" ]]; then
-		body="${body}, \"webhookUrl\": \"${webhook_url}\""
+		body=$(echo "${body}" | jq --arg v "${webhook_url}" '. + {webhookUrl: $v}')
 	fi
 
-	body="${body}}"
-
-	print_info "Submitting upscale request (${mode} mode)..."
-
-	local response
-	response=$(api_request POST "/upscaler/v1/queue" -d "${body}")
-
-	local error
-	error=$(echo "${response}" | jq -r '.error // empty' 2>/dev/null)
-	if [[ -n "${error}" ]]; then
-		print_error "API error: ${error}"
-		echo "${response}" | jq . 2>/dev/null || echo "${response}"
-		return 1
-	fi
-
-	local request_id
-	request_id=$(echo "${response}" | jq -r '.requestId // empty' 2>/dev/null)
-
-	if [[ -z "${request_id}" ]]; then
-		print_error "No request ID returned"
-		echo "${response}" | jq . 2>/dev/null || echo "${response}"
-		return 1
-	fi
-
-	print_success "Request queued: ${request_id}"
-
-	if [[ "${sync_mode}" == "true" ]]; then
-		poll_status "/upscaler/v1" "${request_id}" "${poll_interval}" "${timeout}" "${output_file}"
-	else
-		echo "${response}" | jq . 2>/dev/null || echo "${response}"
-	fi
+	_submit_and_handle "/upscaler/v1" "${body}" "${sync_mode}" "${poll_interval}" "${timeout}" "${output_file}" "upscale request (${mode} mode)"
+	return $?
 }
 
 # General Image Upscaler
@@ -417,8 +455,8 @@ cmd_upscale_general() {
 	local img_url=""
 	local webhook_url=""
 	local sync_mode="false"
-	local poll_interval="${DEFAULT_POLL_INTERVAL}"
-	local timeout="${DEFAULT_TIMEOUT}"
+	local poll_interval="${ENHANCOR_POLL_INTERVAL}"
+	local timeout="${ENHANCOR_TIMEOUT}"
 	local output_file=""
 
 	while [[ $# -gt 0 ]]; do
@@ -466,43 +504,15 @@ cmd_upscale_general() {
 
 	load_api_key || return 1
 
-	local body="{\"img_url\": \"${img_url}\""
+	local body
+	body=$(jq -n --arg img_url "${img_url}" '{img_url: $img_url}')
 
 	if [[ -n "${webhook_url}" ]]; then
-		body="${body}, \"webhookUrl\": \"${webhook_url}\""
+		body=$(echo "${body}" | jq --arg v "${webhook_url}" '. + {webhookUrl: $v}')
 	fi
 
-	body="${body}}"
-
-	print_info "Submitting general upscale request..."
-
-	local response
-	response=$(api_request POST "/general-upscaler/v1/queue" -d "${body}")
-
-	local error
-	error=$(echo "${response}" | jq -r '.error // empty' 2>/dev/null)
-	if [[ -n "${error}" ]]; then
-		print_error "API error: ${error}"
-		echo "${response}" | jq . 2>/dev/null || echo "${response}"
-		return 1
-	fi
-
-	local request_id
-	request_id=$(echo "${response}" | jq -r '.requestId // empty' 2>/dev/null)
-
-	if [[ -z "${request_id}" ]]; then
-		print_error "No request ID returned"
-		echo "${response}" | jq . 2>/dev/null || echo "${response}"
-		return 1
-	fi
-
-	print_success "Request queued: ${request_id}"
-
-	if [[ "${sync_mode}" == "true" ]]; then
-		poll_status "/general-upscaler/v1" "${request_id}" "${poll_interval}" "${timeout}" "${output_file}"
-	else
-		echo "${response}" | jq . 2>/dev/null || echo "${response}"
-	fi
+	_submit_and_handle "/general-upscaler/v1" "${body}" "${sync_mode}" "${poll_interval}" "${timeout}" "${output_file}" "general upscale request"
+	return $?
 }
 
 # Detailed API (upscaling + detailed enhancement)
@@ -510,8 +520,8 @@ cmd_detailed() {
 	local img_url=""
 	local webhook_url=""
 	local sync_mode="false"
-	local poll_interval="${DEFAULT_POLL_INTERVAL}"
-	local timeout="${DEFAULT_TIMEOUT}"
+	local poll_interval="${ENHANCOR_POLL_INTERVAL}"
+	local timeout="${ENHANCOR_TIMEOUT}"
 	local output_file=""
 
 	while [[ $# -gt 0 ]]; do
@@ -559,43 +569,15 @@ cmd_detailed() {
 
 	load_api_key || return 1
 
-	local body="{\"img_url\": \"${img_url}\""
+	local body
+	body=$(jq -n --arg img_url "${img_url}" '{img_url: $img_url}')
 
 	if [[ -n "${webhook_url}" ]]; then
-		body="${body}, \"webhookUrl\": \"${webhook_url}\""
+		body=$(echo "${body}" | jq --arg v "${webhook_url}" '. + {webhookUrl: $v}')
 	fi
 
-	body="${body}}"
-
-	print_info "Submitting detailed enhancement request..."
-
-	local response
-	response=$(api_request POST "/detailed/v1/queue" -d "${body}")
-
-	local error
-	error=$(echo "${response}" | jq -r '.error // empty' 2>/dev/null)
-	if [[ -n "${error}" ]]; then
-		print_error "API error: ${error}"
-		echo "${response}" | jq . 2>/dev/null || echo "${response}"
-		return 1
-	fi
-
-	local request_id
-	request_id=$(echo "${response}" | jq -r '.requestId // empty' 2>/dev/null)
-
-	if [[ -z "${request_id}" ]]; then
-		print_error "No request ID returned"
-		echo "${response}" | jq . 2>/dev/null || echo "${response}"
-		return 1
-	fi
-
-	print_success "Request queued: ${request_id}"
-
-	if [[ "${sync_mode}" == "true" ]]; then
-		poll_status "/detailed/v1" "${request_id}" "${poll_interval}" "${timeout}" "${output_file}"
-	else
-		echo "${response}" | jq . 2>/dev/null || echo "${response}"
-	fi
+	_submit_and_handle "/detailed/v1" "${body}" "${sync_mode}" "${poll_interval}" "${timeout}" "${output_file}" "detailed enhancement request"
+	return $?
 }
 
 # Kora Pro AI Image Generation
@@ -607,8 +589,8 @@ cmd_generate() {
 	local generation_mode="normal"
 	local image_size="portrait_3:4"
 	local sync_mode="false"
-	local poll_interval="${DEFAULT_POLL_INTERVAL}"
-	local timeout="${DEFAULT_TIMEOUT}"
+	local poll_interval="${ENHANCOR_POLL_INTERVAL}"
+	local timeout="${ENHANCOR_TIMEOUT}"
 	local output_file=""
 
 	while [[ $# -gt 0 ]]; do
@@ -677,49 +659,29 @@ cmd_generate() {
 
 	load_api_key || return 1
 
-	local body="{\"model\": \"${model}\", \"prompt\": \"${prompt}\""
+	# Build request body safely with jq (critical for prompts containing quotes)
+	local body
+	body=$(jq -n \
+		--arg model "${model}" \
+		--arg prompt "${prompt}" \
+		--arg generation_mode "${generation_mode}" \
+		--arg image_size "${image_size}" \
+		'{
+			model: $model,
+			prompt: $prompt,
+			generation_mode: $generation_mode,
+			image_size: $image_size
+		}')
 
 	if [[ -n "${img_url}" ]]; then
-		body="${body}, \"img_url\": \"${img_url}\""
+		body=$(echo "${body}" | jq --arg v "${img_url}" '. + {img_url: $v}')
 	fi
-
 	if [[ -n "${webhook_url}" ]]; then
-		body="${body}, \"webhookUrl\": \"${webhook_url}\""
+		body=$(echo "${body}" | jq --arg v "${webhook_url}" '. + {webhookUrl: $v}')
 	fi
 
-	body="${body}, \"generation_mode\": \"${generation_mode}\""
-	body="${body}, \"image_size\": \"${image_size}\""
-	body="${body}}"
-
-	print_info "Submitting generation request (${model})..."
-
-	local response
-	response=$(api_request POST "/kora/v1/queue" -d "${body}")
-
-	local error
-	error=$(echo "${response}" | jq -r '.error // empty' 2>/dev/null)
-	if [[ -n "${error}" ]]; then
-		print_error "API error: ${error}"
-		echo "${response}" | jq . 2>/dev/null || echo "${response}"
-		return 1
-	fi
-
-	local request_id
-	request_id=$(echo "${response}" | jq -r '.requestId // empty' 2>/dev/null)
-
-	if [[ -z "${request_id}" ]]; then
-		print_error "No request ID returned"
-		echo "${response}" | jq . 2>/dev/null || echo "${response}"
-		return 1
-	fi
-
-	print_success "Request queued: ${request_id}"
-
-	if [[ "${sync_mode}" == "true" ]]; then
-		poll_status "/kora/v1" "${request_id}" "${poll_interval}" "${timeout}" "${output_file}"
-	else
-		echo "${response}" | jq . 2>/dev/null || echo "${response}"
-	fi
+	_submit_and_handle "/kora/v1" "${body}" "${sync_mode}" "${poll_interval}" "${timeout}" "${output_file}" "generation request (${model})"
+	return $?
 }
 
 # Check status of any request
@@ -767,10 +729,25 @@ cmd_status() {
 
 	load_api_key || return 1
 
+	local body
+	body=$(jq -n --arg id "${request_id}" '{request_id: $id}')
+
 	local response
-	response=$(api_request POST "${api_path}/status" -d "{\"request_id\": \"${request_id}\"}")
+	response=$(api_request POST "${api_path}/status" -d "${body}")
 
 	echo "${response}" | jq . 2>/dev/null || echo "${response}"
+	return 0
+}
+
+# Map CLI command name to internal function name
+_resolve_cmd_func() {
+	local cmd_name
+	cmd_name="$1"
+	# Map hyphenated CLI names to underscored function names
+	local func_name
+	func_name="cmd_${cmd_name//-/_}"
+	echo "${func_name}"
+	return 0
 }
 
 # Batch processing
@@ -812,6 +789,14 @@ cmd_batch() {
 		return 1
 	fi
 
+	# Resolve command to function name and verify it exists
+	local func_name
+	func_name=$(_resolve_cmd_func "${command}")
+	if ! declare -f "${func_name}" &>/dev/null; then
+		print_error "Unknown batch command: ${command}"
+		return 1
+	fi
+
 	mkdir -p "${output_dir}"
 
 	local line_num=0
@@ -824,7 +809,7 @@ cmd_batch() {
 
 		print_info "Processing ${line_num}: ${url}"
 
-		if "${BASH_SOURCE[0]}" "${command}" --img-url "${url}" --sync --output "${output_file}" "${extra_args[@]}"; then
+		if "${func_name}" --img-url "${url}" --sync --output "${output_file}" "${extra_args[@]+"${extra_args[@]}"}"; then
 			print_success "Completed ${line_num}"
 		else
 			print_error "Failed ${line_num}"
@@ -832,6 +817,7 @@ cmd_batch() {
 	done <"${input_file}"
 
 	print_success "Batch processing complete"
+	return 0
 }
 
 # Setup API key
@@ -842,6 +828,7 @@ cmd_setup() {
 	print_info "Run: aidevops secret set ENHANCOR_API_KEY"
 	print_info "Or add to ~/.config/aidevops/credentials.sh:"
 	print_info "  export ENHANCOR_API_KEY='your_key_here'"
+	return 0
 }
 
 # Help
@@ -949,6 +936,7 @@ ENVIRONMENT:
 
 For more information, see: https://www.enhancor.ai/
 EOF
+	return 0
 }
 
 # Main
@@ -958,7 +946,8 @@ main() {
 		return 0
 	fi
 
-	local command="$1"
+	local command
+	command="$1"
 	shift
 
 	case "${command}" in
