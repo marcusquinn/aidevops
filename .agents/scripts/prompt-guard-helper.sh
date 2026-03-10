@@ -240,8 +240,8 @@ _pg_load_yaml_patterns() {
 # Severity: CRITICAL, HIGH, MEDIUM, LOW
 # Categories: role_play, instruction_override, delimiter_injection,
 #             encoding_tricks, system_prompt_extraction, social_engineering,
-#             data_exfiltration, context_manipulation, homoglyph,
-#             unicode_manipulation, fake_role, comment_injection,
+#             data_exfiltration, data_exfiltration_dns, context_manipulation,
+#             homoglyph, unicode_manipulation, fake_role, comment_injection,
 #             priority_manipulation, fake_delimiter, split_personality,
 #             steganographic, fake_conversation
 
@@ -274,6 +274,15 @@ HIGH|delimiter_injection|XML system tags|<system>|</system>|<\/?system_prompt>|<
 HIGH|delimiter_injection|ChatML injection|<\|im_start\|>|<\|im_end\|>|<\|endoftext\|>
 HIGH|data_exfiltration|Exfiltrate via URL|([Ss]end|[Pp]ost|[Tt]ransmit|[Ee]xfiltrate|[Ll]eak)\s+(the\s+)?(data|information|content|secrets?|keys?|tokens?|credentials?)\s+(to|via|through|using)\s+(https?://|a\s+URL|an?\s+endpoint)
 HIGH|data_exfiltration|Encode and send|([Ee]ncode|[Bb]ase64|[Hh]ex)\s+(and\s+)?(send|transmit|post|include\s+in)
+CRITICAL|data_exfiltration_dns|DNS exfil: dig with command substitution|(?i)\bdig\s+.*(\$\(|\$\{|`)[^)}`]*(\)|`|\})
+CRITICAL|data_exfiltration_dns|DNS exfil: nslookup with command substitution|(?i)\bnslookup\s+.*(\$\(|\$\{|`)[^)}`]*(\)|`|\})
+CRITICAL|data_exfiltration_dns|DNS exfil: host with command substitution|(?i)\bhost\s+.*(\$\(|\$\{|`)[^)}`]*(\)|`|\})
+CRITICAL|data_exfiltration_dns|DNS exfil: base64 data piped to DNS tool|(?i)\bbase64\b.*\|.*\b(dig|nslookup|host)\b
+HIGH|data_exfiltration_dns|DNS exfil: variable interpolation with trailing dot|(?i)\b(dig|nslookup|host)\s+.*\$[A-Za-z_{].*\.\s*$
+HIGH|data_exfiltration_dns|DNS exfil: encoded data piped to DNS tool|(?i)\b(xxd|od\s+-[AaxX]|hexdump)\b.*\|\s*(dig|nslookup|host)\b
+HIGH|data_exfiltration_dns|DNS exfil: TXT record query with dynamic data|(?i)\bdig\s+.*\bTXT\b.*(\$\(|\$\{|`)
+HIGH|data_exfiltration_dns|DNS exfil: DNS tool inside loop|(?i)\b(for|while)\b.*\b(dig|nslookup|host)\b.*\bdone\b
+HIGH|data_exfiltration_dns|DNS exfil: DNS-over-HTTPS with dynamic data|(?i)(dns-query|dns\.google|cloudflare-dns\.com/dns-query|doh\.).*(\$\(|\$\{|`)
 HIGH|fake_role|Fake JSON system role|"role"\s*:\s*"system"|'role'\s*:\s*'system'
 HIGH|fake_role|Fake JSON assistant message|"role"\s*:\s*"assistant"|'role'\s*:\s*'assistant'
 HIGH|fake_role|Fake XML role tags|<role>system</role>|<role>assistant</role>
