@@ -265,7 +265,7 @@ _security_network_summary() {
 	if [[ "$flagged_count" -gt 0 ]] && command -v jq &>/dev/null; then
 		echo ""
 		echo "  Top flagged domains:"
-		jq -r '.domain // empty' "$NET_FLAGGED_LOG" 2>/dev/null | sort | uniq -c | sort -rn | head -5 | while read -r count domain; do
+		jq -r '(.domain // empty) | select(. != "")' "$NET_FLAGGED_LOG" 2>/dev/null | sort | uniq -c | sort -rn | head -5 | while read -r count domain; do
 			printf "    %-35s %s\n" "$domain" "$count"
 		done
 	fi
