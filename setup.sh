@@ -990,6 +990,30 @@ PLIST
 		fi
 	fi
 
+	# Enable stats-wrapper cron — runs quality sweep and health issue
+	# updates separately from the pulse (t1429). Only installed when
+	# the supervisor pulse is enabled (stats are useless without it).
+	local stats_script="$HOME/.aidevops/agents/scripts/stats-wrapper.sh"
+	if [[ -x "$stats_script" ]] && [[ "$_pulse_lower" == "true" ]]; then
+		if ! crontab -l 2>/dev/null | grep -qF "aidevops: stats-wrapper"; then
+			local _cron_stats_script
+			_cron_stats_script=$(_cron_escape "$stats_script")
+			(
+				crontab -l 2>/dev/null | grep -v 'aidevops: stats-wrapper'
+				echo "*/15 * * * * PATH=\"/usr/local/bin:/usr/bin:/bin\" /bin/bash ${_cron_stats_script} >> \"\$HOME/.aidevops/logs/stats.log\" 2>&1 # aidevops: stats-wrapper"
+			) | crontab - || true
+			if crontab -l 2>/dev/null | grep -qF "aidevops: stats-wrapper"; then
+				print_info "Stats wrapper enabled (cron, every 15 min)"
+			fi
+		fi
+	elif [[ "$_pulse_lower" == "false" ]]; then
+		# Remove stats cron if pulse is disabled
+		if crontab -l 2>/dev/null | grep -qF "aidevops: stats-wrapper"; then
+			crontab -l 2>/dev/null | grep -v 'aidevops: stats-wrapper' | crontab - || true
+			print_info "Stats wrapper disabled (cron entry removed — pulse is off)"
+		fi
+	fi
+
 	# Enable repo-sync scheduler if not already installed
 	# Keeps local git repos up to date with daily ff-only pulls
 	# Respects config: aidevops config set orchestration.repo_sync false

@@ -1023,8 +1023,8 @@ print(','.join(sorted(logins)))
 	# Query GitHub Search API for each login.
 	# Uses gh api with search/issues endpoint — returns total_count without pagination.
 	# Rate limit: 30 requests/min for search API. With 4 queries per user,
-	# we can handle ~7 users per minute. For larger teams, the function
-	# checks remaining rate limit and sleeps until reset if needed.
+	# we can handle ~7 users per minute. If budget is exhausted, bail out
+	# with partial results instead of blocking (t1429).
 	local results_json="["
 	local first=true
 	local IFS=','
@@ -1033,15 +1033,11 @@ print(','.join(sorted(logins)))
 		local remaining
 		remaining=$(gh api rate_limit --jq '.resources.search.remaining' 2>/dev/null) || remaining=30
 		if [[ "$remaining" -lt 5 ]]; then
-			local reset_at
-			reset_at=$(gh api rate_limit --jq '.resources.search.reset' 2>/dev/null) || reset_at=0
-			local now_epoch
-			now_epoch=$(date +%s)
-			local wait_secs=$((reset_at - now_epoch + 1))
-			if [[ "$wait_secs" -gt 0 && "$wait_secs" -lt 120 ]]; then
-				echo "Rate limit low (${remaining} remaining), waiting ${wait_secs}s..." >&2
-				sleep "$wait_secs"
-			fi
+			# t1429: bail out with partial results instead of sleeping.
+			# The old code slept until reset, creating an infinite blocking
+			# loop when multiple users × repos exhausted the 30 req/min budget.
+			echo "Rate limit exhausted (${remaining} remaining), returning partial results" >&2
+			break
 		fi
 
 		# Issues created by this user in this repo since the date

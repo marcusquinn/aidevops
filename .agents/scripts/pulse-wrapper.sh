@@ -3259,19 +3259,18 @@ prefetch_contribution_watch() {
 #######################################
 # Main
 #
-# Execution order (GH#2958):
+# Execution order (t1429):
 #   1. Gate checks (consent, dedup)
-#   2. Cleanup (orphans, worktrees)
-#   3. Pre-pulse housekeeping (quality sweep, health issues) — these are
-#      shell-level operations that run quickly and don't need the LLM.
-#      Running them BEFORE the pulse ensures the LLM session gets maximum
-#      time for its actual job (triage, dispatch, PR review).
-#   4. Prefetch state (parallel gh API calls)
-#   5. Run pulse (LLM session — the main event)
+#   2. Cleanup (orphans, worktrees, stashes)
+#   3. Prefetch state (parallel gh API calls)
+#   4. Run pulse (LLM session — dispatch workers, merge PRs)
 #
-# Previously, quality sweep and health issues ran AFTER the pulse. This
-# meant the pulse's 30-min timeout was shared with these operations,
-# and the LLM session was killed before completing its work.
+# Statistics (quality sweep, health issues, person-stats) run in a
+# SEPARATE process — stats-wrapper.sh — on its own cron schedule.
+# They must never share a process with the pulse because
+# contributor-activity-helper.sh has a blocking sleep loop that waits
+# for GitHub Search API rate limits (30 req/min), which can stall for
+# hours and prevent the pulse from ever dispatching or merging.
 #######################################
 main() {
 	if ! check_session_gate; then
@@ -3292,11 +3291,6 @@ main() {
 	calculate_max_workers
 	calculate_priority_allocations
 	check_session_count >/dev/null
-
-	# Run housekeeping BEFORE the pulse — these are shell-level operations
-	# that don't need the LLM and shouldn't eat into pulse time (GH#2958).
-	run_daily_quality_sweep
-	update_health_issues
 
 	# Contribution watch: lightweight scan of external issues/PRs (t1419).
 	# Deterministic — only checks timestamps/authorship, never processes
