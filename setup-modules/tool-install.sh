@@ -992,8 +992,12 @@ setup_nodejs_env() {
 	fi
 
 	local node_version
-	node_version=$(node --version | cut -d'v' -f2 | cut -d'.' -f1)
-	if [[ $node_version -lt 18 ]]; then
+	node_version=$(node --version 2>/dev/null | cut -d'v' -f2 | cut -d'.' -f1)
+	if [[ -z "$node_version" ]] || ! [[ "$node_version" =~ ^[0-9]+$ ]]; then
+		print_warning "Could not determine Node.js version - DSPyGround setup skipped"
+		return
+	fi
+	if [[ "$node_version" -lt 18 ]]; then
 		print_warning "Node.js 18+ required for DSPyGround, found v$node_version - DSPyGround setup skipped"
 		return
 	fi

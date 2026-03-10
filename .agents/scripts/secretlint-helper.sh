@@ -230,8 +230,10 @@ install_secretlint() {
     fi
 
     local node_version
-    node_version=$(node -v | sed 's/v//' | cut -d. -f1)
-    if [[ $node_version -lt 18 ]]; then
+    node_version=$(node -v 2>/dev/null | sed 's/v//' | cut -d. -f1)
+    if [[ -z "$node_version" ]] || ! [[ "$node_version" =~ ^[0-9]+$ ]]; then
+        print_warning "Could not determine Node.js version"
+    elif [[ "$node_version" -lt 18 ]]; then
         print_warning "Node.js 20+ recommended. Current version: $(node -v)"
     fi
 

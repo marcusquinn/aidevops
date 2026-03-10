@@ -158,7 +158,11 @@ check_node() {
 	fi
 
 	local node_version
-	node_version=$(node -v | sed 's/v//' | cut -d. -f1)
+	node_version=$(node -v 2>/dev/null | sed 's/v//' | cut -d. -f1)
+	if [[ -z "$node_version" ]] || ! [[ "$node_version" =~ ^[0-9]+$ ]]; then
+		print_error "Could not determine Node.js version"
+		return 1
+	fi
 
 	if [[ "$node_version" -lt 14 ]]; then
 		print_error "Node.js 14+ is required. Current version: $(node -v)"

@@ -261,8 +261,12 @@ setup_augment_context_engine() {
 	fi
 
 	local node_version
-	node_version=$(node --version | cut -d'v' -f2 | cut -d'.' -f1)
-	if [[ $node_version -lt 22 ]]; then
+	node_version=$(node --version 2>/dev/null | cut -d'v' -f2 | cut -d'.' -f1)
+	if [[ -z "$node_version" ]] || ! [[ "$node_version" =~ ^[0-9]+$ ]]; then
+		print_warning "Could not determine Node.js version - Augment Context Engine setup skipped"
+		return
+	fi
+	if [[ "$node_version" -lt 22 ]]; then
 		print_warning "Node.js 22+ required for Augment Context Engine, found v$node_version"
 		print_info "Install: brew install node@22 (macOS) or nvm install 22"
 		return

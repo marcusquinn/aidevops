@@ -39,8 +39,12 @@ check_prerequisites() {
         print_success "Bun $(bun --version) found (preferred)"
     elif command -v node &> /dev/null; then
         local node_version
-        node_version=$(node --version | cut -d'v' -f2 | cut -d'.' -f1)
-        if [[ $node_version -lt 18 ]]; then
+        node_version=$(node --version 2>/dev/null | cut -d'v' -f2 | cut -d'.' -f1)
+        if [[ -z "$node_version" ]] || ! [[ "$node_version" =~ ^[0-9]+$ ]]; then
+            print_error "Could not determine Node.js version"
+            return 1
+        fi
+        if [[ "$node_version" -lt 18 ]]; then
             print_error "Node.js 18+ is required, found v$node_version"
             return 1
         fi
