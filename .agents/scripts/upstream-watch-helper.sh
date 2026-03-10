@@ -748,11 +748,12 @@ main() {
 		while [[ $# -gt 0 ]]; do
 			case "$1" in
 			--relevance)
-				if [[ $# -ge 2 && "${2:0:1}" != "-" ]]; then
+				if [[ $# -ge 2 && -n "${2:-}" && "${2:0:1}" != "-" ]]; then
 					relevance="$2"
 					shift 2
 				else
-					shift
+					echo -e "${RED}Error: --relevance requires a value${NC}" >&2
+					return 1
 				fi
 				;;
 			*)
