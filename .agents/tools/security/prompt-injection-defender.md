@@ -510,6 +510,7 @@ contextManipulationPatterns:
 | `system_prompt_extraction` | Attempts to reveal system prompt or instructions |
 | `social_engineering` | Urgency pressure, authority claims, emotional manipulation |
 | `data_exfiltration` | Attempts to send data to external URLs |
+| `data_exfiltration_dns` | DNS-based data exfiltration — dig/nslookup/host with command substitution, base64-piped DNS queries, DNS-over-HTTPS exfil (CVE-2025-55284) |
 | `delimiter_injection` | ChatML, XML system tags, markdown system blocks |
 
 ## Credential Isolation (t1412)
@@ -547,6 +548,7 @@ This is enforced by GitHub when using App installation tokens (Strategy 1). With
 3. **No semantic understanding**: The scanner matches text patterns, not intent. "Ignore previous instructions" in a tutorial about prompt injection is flagged the same as an actual attack.
 4. **Encoding arms race**: New encoding schemes (novel Unicode tricks, image-based text, audio steganography) require new patterns. The scanner only catches what it has patterns for.
 5. **Not a substitute for secure architecture**: Scanning is defense in depth, not a perimeter. Principle of least privilege, output validation, and sandboxing are equally important.
+6. **DNS exfiltration detection is shape-based** (t1428.1): The `data_exfiltration_dns` patterns detect known DNS exfil command shapes (`dig $(cmd).domain`, `base64 | dig`, etc.) from CVE-2025-55284. They catch the attack template but not novel DNS exfil techniques (e.g., custom Python DNS resolvers, encoded data in legitimate-looking subdomains without command substitution). The `sandbox-exec-helper.sh` DNS exfil check is a pre-execution heuristic — it cannot intercept runtime DNS resolution. For comprehensive DNS exfil prevention, combine with network-level DNS monitoring or DNS firewall rules.
 
 ## Product-Side Defense: @stackone/defender
 
@@ -664,9 +666,9 @@ network-tier-helper.sh report --flagged-only
 
 **Config:** Default tiers in `configs/network-tiers.conf`. User overrides in `~/.config/aidevops/network-tiers-custom.conf`.
 
-**Integration:** `sandbox-exec-helper.sh --network-tiering` enables domain classification for sandboxed commands. The sandbox extracts domains from commands and pre-checks them before execution.
+**Integration:** `sandbox-exec-helper.sh --network-tiering` enables domain classification for sandboxed commands. The sandbox extracts domains from commands (including DNS tool arguments — Strategy 4, t1428.1) and pre-checks them before execution. Additionally, the sandbox detects DNS exfiltration command shapes (command substitution in `dig`/`nslookup`/`host`, base64-piped DNS queries) and logs them as critical security events.
 
-**Limitations:** Domain tiering is a network-layer control. It cannot inspect encrypted payloads, detect data encoded in DNS queries to allowed domains, or prevent exfiltration via GitHub issue comments (Tier 1 domain). It complements — does not replace — content scanning and credential isolation.
+**Limitations:** Domain tiering is a network-layer control. It cannot inspect encrypted payloads or prevent exfiltration via GitHub issue comments (Tier 1 domain). DNS exfiltration to attacker-owned domains is partially mitigated by shape-based detection in `sandbox-exec-helper.sh` (t1428.1) and `data_exfiltration_dns` patterns in `prompt-guard-helper.sh`, but novel DNS exfil techniques that avoid known command shapes will not be caught. Domain tiering complements — does not replace — content scanning and credential isolation.
 
 ## Related
 

@@ -100,10 +100,30 @@ detect_localdev_project() {
 
 # Auto-create localdev branch route after worktree creation.
 # Called from cmd_add after successful worktree creation.
+# If the project is not registered, auto-registers it first (t1424.1).
 localdev_auto_branch() {
 	local branch="$1"
 	local project
-	project="$(detect_localdev_project)" || return 0
+
+	# Check if localdev-helper.sh exists
+	[[ ! -x "$LOCALDEV_HELPER" ]] && return 0
+
+	if ! project="$(detect_localdev_project)" || [[ -z "$project" ]]; then
+		# Project not registered — try to auto-register (t1424.1)
+		# Delegate name inference to localdev-helper.sh to avoid logic duplication
+		local inferred_name=""
+		inferred_name="$("$LOCALDEV_HELPER" infer-name "$(get_repo_root)" 2>/dev/null)" || true
+		[[ -z "$inferred_name" ]] && return 0
+
+		echo ""
+		echo -e "${BLUE}Localdev integration: auto-registering project '$inferred_name'...${NC}"
+		if "$LOCALDEV_HELPER" add "$inferred_name" 2>&1; then
+			project="$inferred_name"
+		else
+			echo -e "${YELLOW}Localdev auto-registration failed (non-fatal)${NC}"
+			return 0
+		fi
+	fi
 
 	echo ""
 	echo -e "${BLUE}Localdev integration: creating branch route for $project...${NC}"

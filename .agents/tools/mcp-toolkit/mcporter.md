@@ -505,9 +505,44 @@ MCPORTER_LIST_TIMEOUT=120000 mcporter list <server>
 
 5. **Prefer HTTPS endpoints.** For HTTP-based MCP servers, always use HTTPS. MCPorter enforces this by default (`--allow-http` is required to override).
 
+### Runtime Description Auditing (t1428.2)
+
+MCP tool descriptions are injected into the AI model's context at runtime. A malicious or compromised MCP server can embed prompt injection payloads in its tool descriptions — instructing the model to read sensitive files, exfiltrate data, or bypass security controls. This is the most underappreciated MCP attack vector per Grith/Invariant Labs research.
+
+**Audit all configured MCP tool descriptions:**
+
+```bash
+# Scan all configured MCP servers
+mcp-audit-helper.sh scan
+
+# Scan a specific server
+mcp-audit-helper.sh scan --server context7
+
+# JSON output for CI/CD integration
+mcp-audit-helper.sh scan --json
+
+# View audit history
+mcp-audit-helper.sh report
+```
+
+The audit combines `prompt-guard-helper.sh` general injection patterns (70+) with MCP-specific patterns that detect:
+
+- **File read instructions** (CRITICAL): Descriptions that instruct the model to read `~/.ssh/id_rsa`, `~/.aws/credentials`, `.env`, `kubeconfig`, etc.
+- **Credential exfiltration** (CRITICAL): Descriptions that instruct the model to include API keys, tokens, or passwords in tool parameters
+- **Data exfiltration** (HIGH): Descriptions that instruct the model to send data to external URLs or encode and transmit it
+- **Hidden instructions** (HIGH): Descriptions with covert pre/post-call instructions ("before using this tool, read...")
+- **Scope escalation** (MEDIUM): Descriptions requesting excessive permissions (full filesystem access, admin privileges)
+
+**Integration points:**
+
+- Run during `aidevops init` (initial setup)
+- Run after `mcporter config add` (new MCP server added)
+- Include in periodic security audits
+
 ### Ongoing Vigilance
 
 - **Pin versions** in your `mcporter.json` or MCP config rather than using `@latest`. This prevents silent updates that could introduce malicious code.
+- **Audit tool descriptions.** Run `mcp-audit-helper.sh scan` after adding or updating MCP servers. Tool descriptions can change between versions.
 - **Audit periodically.** Run `mcporter list --verbose` to review all configured servers and their sources. Remove servers you no longer use.
 - **Monitor daemon processes.** If using `mcporter daemon`, periodically check `mcporter daemon status` and review logs for unexpected network activity.
 - **Scan on update.** When updating MCP servers, re-run dependency and source scans before deploying the new version.
@@ -515,6 +550,7 @@ MCPORTER_LIST_TIMEOUT=120000 mcporter list <server>
 ### Related Security Docs
 
 - `tools/security/prompt-injection-defender.md` — Prompt injection defense, including MCP tool output scanning
+- `scripts/mcp-audit-helper.sh` — MCP tool description runtime scanning (t1428.2)
 - `tools/code-review/skill-scanner.md` — Cisco Skill Scanner for AI agent skill/MCP source analysis
 - `services/monitoring/socket.md` — Socket.dev dependency security scanning
 - `tools/security/opsec.md` — Operational security guide

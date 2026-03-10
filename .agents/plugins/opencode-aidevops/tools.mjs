@@ -1,4 +1,4 @@
-import { execSync } from "child_process";
+import { execSync, execFileSync } from "child_process";
 import { existsSync } from "fs";
 import { join } from "path";
 
@@ -42,6 +42,18 @@ function createMemoryTool({ scriptsDir, run, action, description, buildArgs }) {
 }
 
 /**
+ * Validate that a CLI command string contains only safe characters.
+ * Allows alphanumeric, spaces, hyphens, underscores, dots, forward slashes,
+ * colons, hash signs (#), and at-signs (@) — sufficient for all aidevops subcommands and file path arguments.
+ * Rejects shell metacharacters ($, `, ;, |, &, (, ), etc.).
+ * @param {string} command
+ * @returns {boolean}
+ */
+function isSafeCommand(command) {
+  return /^[a-zA-Z0-9 _\-./:#@]+$/.test(command);
+}
+
+/**
  * Create the aidevops CLI tool.
  * @param {function} run - Shell command runner
  * @returns {object} Tool definition
@@ -51,7 +63,11 @@ function createAidevopsTool(run) {
     description:
       'Run aidevops CLI commands (status, repos, features, secret, etc.). Pass command as string e.g. "status", "repos", "features"',
     async execute(args) {
-      const cmd = `aidevops ${args.command || args}`;
+      const rawCmd = String(args.command || args);
+      if (!isSafeCommand(rawCmd)) {
+        return `Error: command contains disallowed characters. Only alphanumeric, spaces, hyphens, underscores, dots, slashes, colons, # and @ are permitted.`;
+      }
+      const cmd = `aidevops ${rawCmd}`;
       const result = run(cmd, 15000);
       return result || `Command completed: ${cmd}`;
     },
@@ -79,7 +95,7 @@ function createPreEditCheckTool(scriptsDir) {
         return "pre-edit-check.sh not found — cannot verify git safety";
       }
       const taskFlag = args.task
-        ? ` --loop-mode --task "${args.task}"`
+        ? ` --loop-mode --task ${shellEscape(args.task)}`
         : "";
       try {
         const result = execSync(`bash "${script}"${taskFlag}`, {
@@ -172,25 +188,53 @@ function createQualityCheckTool(scriptsDir, pipelines) {
 }
 
 /**
+ * Sanitize a hook action string into a known-safe literal.
+ * Uses a switch statement so static taint analyzers (Codacy/Semgrep) can
+ * prove the returned value is a constant — completely severing the data flow
+ * from the function parameter to the shell command. Object-property lookups
+ * and Array.find() do not satisfy Semgrep's taint tracking because the
+ * analyzer cannot prove the returned value is independent of the input.
+ * @param {string} action - Raw action string from caller
+ * @returns {string|undefined} Sanitized action literal, or undefined if invalid
+ */
+function sanitizeHookAction(action) {
+  switch (String(action)) {
+    case "install": return "install";
+    case "uninstall": return "uninstall";
+    case "status": return "status";
+    case "test": return "test";
+    default: return undefined;
+  }
+}
+
+/** Valid hook actions for display in error messages. */
+const VALID_HOOK_ACTIONS = ["install", "uninstall", "status", "test"];
+
+/**
  * Run the install-hooks-helper.sh script.
- * @param {string} helperScript
- * @param {string} action
+ * Uses execFileSync with argument array instead of execSync with string
+ * interpolation — eliminates shell interpretation entirely, which is both
+ * more secure and satisfies static taint analyzers (Codacy/Semgrep) that
+ * flag parameter-to-child_process data flows in execSync template strings.
+ * @param {string} helperScript - Path to the helper script
+ * @param {string} action - Hook action to run
  * @returns {string}
  */
 function runHookHelper(helperScript, action) {
+  const validAction = sanitizeHookAction(action);
+  if (!validAction) {
+    return `Invalid action: ${String(action)}. Valid actions: ${VALID_HOOK_ACTIONS.join(", ")}`;
+  }
   try {
-    const result = execSync(
-      `bash "${helperScript}" ${action}`,
-      {
-        encoding: "utf-8",
-        timeout: 15000,
-        stdio: ["pipe", "pipe", "pipe"],
-      },
-    );
+    const result = execFileSync("bash", [helperScript, validAction], {
+      encoding: "utf-8",
+      timeout: 15000,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
     return result.trim();
   } catch (err) {
     const cmdOutput = (err.stdout || "") + (err.stderr || "");
-    return `Hook ${action} failed:\n${cmdOutput.trim()}`;
+    return `Hook ${validAction} failed:\n${cmdOutput.trim()}`;
   }
 }
 

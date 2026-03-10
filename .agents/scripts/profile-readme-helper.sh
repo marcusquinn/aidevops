@@ -666,8 +666,10 @@ _sanitize_md() {
 # Rejects javascript: URIs, non-http(s) schemes, and markdown-breaking chars
 _sanitize_url() {
 	local url="$1"
-	# Must start with http:// or https://
-	if [[ "$url" != http://* && "$url" != https://* ]]; then
+	# Must start with http:// or https:// (case-insensitive)
+	local url_lower
+	url_lower=$(printf '%s' "$url" | tr '[:upper:]' '[:lower:]')
+	if [[ "$url_lower" != http://* && "$url_lower" != https://* ]]; then
 		echo ""
 		return 0
 	fi
@@ -708,7 +710,7 @@ _generate_rich_readme() {
 
 	# Fetch repos and detect languages
 	local repos_json
-	repos_json=$(gh api "users/${gh_user}/repos?per_page=100&sort=updated") || repos_json="[]"
+	repos_json=$(gh api "users/${gh_user}/repos?per_page=100&sort=updated" --paginate) || repos_json="[]"
 
 	# Unique languages from all repos (sorted)
 	local languages
@@ -731,7 +733,7 @@ _generate_rich_readme() {
 	local own_repos
 	own_repos=$(echo "$repos_json" | jq -r --arg user "$gh_user" '
 		[.[] | select(.fork == false and .name != $user)] |
-		map("- **[\(.name | gsub("[\\[\\]()]"; ""))](\(.html_url))** -- \(.description // "No description" | gsub("[\\[\\]()]"; ""))") |
+		map("- **[\(.name | gsub("[\\[\\]()`]"; ""))](\(.html_url))** -- \((.description // "No description") | gsub("[\\[\\]()`]"; ""))") |
 		.[]
 	')
 
@@ -742,13 +744,20 @@ _generate_rich_readme() {
 	if [[ -n "$fork_names" ]]; then
 		# Fetch all fork details in parallel (up to 6 concurrent) to get parent URLs
 		local fork_details
+		# Backticks in jq gsub pattern are literal, not shell expansion
+		# shellcheck disable=SC2016
 		fork_details=$(echo "$fork_names" | xargs -P 6 -I{} gh api "repos/${gh_user}/{}" --jq '
-			"\(.name)\t\(.description // "No description" | gsub("[\\t\\n]"; " "))\t\(.parent.html_url // .html_url)"
+			"\(.name | gsub("[\\[\\]()`]"; ""))\t\((.description // "No description") | gsub("[\\t\\n]"; " ") | gsub("[\\[\\]()`]"; ""))\t\(.parent.html_url // .html_url)"
 		' || true)
 		while IFS=$'\t' read -r rname rdesc rurl; do
 			[[ -z "$rname" ]] && continue
+			# Names and descriptions already sanitized in jq above;
+			# apply _sanitize_md as defense-in-depth for any residual chars
 			rname=$(_sanitize_md "$rname")
 			rdesc=$(_sanitize_md "$rdesc")
+			# Validate fork URL before embedding in markdown
+			rurl=$(_sanitize_url "$rurl")
+			[[ -z "$rurl" ]] && continue
 			contrib_repos="${contrib_repos}- **[${rname}](${rurl})** -- ${rdesc}"$'\n'
 		done <<<"$fork_details"
 	fi
@@ -788,7 +797,7 @@ _generate_rich_readme() {
 		if [[ -n "$own_repos" ]]; then
 			echo "## Projects"
 			echo ""
-			printf '%s\n' "$own_repos"
+			printf '%s' "$own_repos"
 			echo ""
 		fi
 		# Contributions
