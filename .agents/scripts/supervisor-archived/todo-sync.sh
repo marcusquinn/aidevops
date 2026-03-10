@@ -11,6 +11,41 @@
 # No judgment calls — entire module stays as shell plumbing.
 
 #######################################
+# Validate task_id format to prevent command/regex injection (GH#3727)
+# Task IDs must match: t<digits> or t<digits>.<digits> (e.g., t123, t123.4)
+# Args: $1=task_id
+# Returns: 0 if valid, 1 if invalid
+#######################################
+_validate_task_id() {
+	local task_id="$1"
+	if [[ ! "$task_id" =~ ^t[0-9]+(\.[0-9]+)*$ ]]; then
+		log_error "Invalid task_id format '$task_id': refusing to process unsanitized input (GH#3727)"
+		return 1
+	fi
+	return 0
+}
+
+#######################################
+# Sanitize a filename for safe use in shell commands (GH#3727)
+# Strips characters that could enable injection when filenames from
+# untrusted sources (e.g., PR file lists) are used in check directives.
+# Only allows: alphanumeric, dots, hyphens, underscores, forward slashes
+# Args: $1=filename
+# Returns: sanitized filename on stdout, 1 if empty after sanitization
+#######################################
+_sanitize_filename() {
+	local filename="$1"
+	# Strip any character that isn't safe for shell commands
+	local sanitized
+	sanitized=$(printf '%s' "$filename" | tr -cd 'A-Za-z0-9._/-')
+	if [[ -z "$sanitized" ]]; then
+		return 1
+	fi
+	printf '%s' "$sanitized"
+	return 0
+}
+
+#######################################
 # Commit and push TODO.md with pull-rebase retry
 # Handles concurrent push conflicts from parallel workers
 # Args: $1=repo_path $2=commit_message $3=max_retries (default 3)
@@ -358,6 +393,9 @@ populate_verify_queue() {
 	local pr_url="${2:-}"
 	local repo="${3:-}"
 
+	# Validate task_id to prevent injection into grep/sed/awk patterns (GH#3727)
+	_validate_task_id "$task_id" || return 1
+
 	if [[ -z "$repo" ]]; then
 		log_warn "populate_verify_queue: no repo for $task_id"
 		return 1
@@ -380,7 +418,7 @@ populate_verify_queue() {
 	pr_number="${parsed_populate##*|}"
 
 	# Check if this task already has a verify entry (idempotency)
-	if grep -q "^- \[.\] v[0-9]* $task_id " "$verify_file" 2>/dev/null; then
+	if grep -q -- "^- \[.\] v[0-9]* $task_id " "$verify_file" 2>/dev/null; then
 		log_info "Verify entry already exists for $task_id in VERIFY.md"
 		return 0
 	fi
@@ -432,28 +470,33 @@ populate_verify_queue() {
 	entry+="  files: $(echo "$substantive_files" | tr '\n' ',' | sed 's/,$//' | sed 's/,/, /g')"
 
 	# Generate check directives based on file types
+	# SECURITY (GH#3727): Sanitize filenames from PR data before constructing
+	# check directives. Malicious PR filenames (e.g., "; rm -rf /;.sh") could
+	# enable command injection when verification checks are later executed.
 	local checks=""
 	while IFS= read -r file; do
 		[[ -z "$file" ]] && continue
-		case "$file" in
+		local safe_file
+		safe_file=$(_sanitize_filename "$file") || continue
+		case "$safe_file" in
 		*.sh)
-			checks+=$'\n'"  check: shellcheck $file"
-			checks+=$'\n'"  check: file-exists $file"
+			checks+=$'\n'"  check: shellcheck $safe_file"
+			checks+=$'\n'"  check: file-exists $safe_file"
 			;;
 		*.md)
-			checks+=$'\n'"  check: file-exists $file"
+			checks+=$'\n'"  check: file-exists $safe_file"
 			;;
 		*.toon)
-			checks+=$'\n'"  check: file-exists $file"
+			checks+=$'\n'"  check: file-exists $safe_file"
 			;;
 		*.yml | *.yaml)
-			checks+=$'\n'"  check: file-exists $file"
+			checks+=$'\n'"  check: file-exists $safe_file"
 			;;
 		*.json)
-			checks+=$'\n'"  check: file-exists $file"
+			checks+=$'\n'"  check: file-exists $safe_file"
 			;;
 		*)
-			checks+=$'\n'"  check: file-exists $file"
+			checks+=$'\n'"  check: file-exists $safe_file"
 			;;
 		esac
 	done <<<"$substantive_files"
@@ -464,9 +507,12 @@ populate_verify_queue() {
 		base_names=$(echo "$substantive_files" | grep -E '\.agents/.*\.md$' | xargs -I{} basename {} .md || true)
 		while IFS= read -r bname; do
 			[[ -z "$bname" ]] && continue
+			# Sanitize basename before use in check directives (GH#3727)
+			local safe_bname
+			safe_bname=$(_sanitize_filename "$bname") || continue
 			# Only check for subagent-index entries for tool/service/workflow files
-			if echo "$substantive_files" | grep -qE "\.agents/(tools|services|workflows)/.*${bname}\.md$"; then
-				checks+=$'\n'"  check: rg \"$bname\" .agents/subagent-index.toon"
+			if echo "$substantive_files" | grep -qE "\.agents/(tools|services|workflows)/.*${safe_bname}\.md$"; then
+				checks+=$'\n'"  check: rg \"$safe_bname\" .agents/subagent-index.toon"
 			fi
 		done <<<"$base_names"
 	fi
@@ -508,6 +554,9 @@ mark_verify_entry() {
 	local result="$3"
 	local today="${4:-$(date +%Y-%m-%d)}"
 	local reason="${5:-}"
+
+	# Validate task_id before interpolation into sed patterns (GH#3727)
+	_validate_task_id "$task_id" || return 1
 
 	if [[ "$result" == "pass" ]]; then
 		# Mark [x] and add verified:date
@@ -570,7 +619,7 @@ process_verify_queue() {
 	fi
 
 	deployed_tasks=$(db -separator '|' "$SUPERVISOR_DB" "
-        SELECT t.id, t.repo, t.pr_url FROM tasks t
+        SELECT t.id, t.repo FROM tasks t
         WHERE $where_clause
         ORDER BY t.updated_at ASC;
     ")
@@ -584,13 +633,13 @@ process_verify_queue() {
 	local auto_verified_count=0
 	local max_auto_verify_per_pulse=50
 
-	while IFS='|' read -r tid trepo _tpr; do
+	while IFS='|' read -r tid trepo; do
 		[[ -z "$tid" ]] && continue
 
 		local verify_file="$trepo/todo/VERIFY.md"
 		local has_entry=false
 
-		if [[ -f "$verify_file" ]] && grep -q "^- \[ \] v[0-9]* $tid " "$verify_file" 2>/dev/null; then
+		if [[ -f "$verify_file" ]] && grep -q -- "^- \[ \] v[0-9]* $tid " "$verify_file" 2>/dev/null; then
 			has_entry=true
 		fi
 
@@ -667,6 +716,9 @@ commit_verify_changes() {
 update_todo_on_complete() {
 	local task_id="$1"
 
+	# Validate task_id before interpolation into sed/grep patterns (GH#3727)
+	_validate_task_id "$task_id" || return 1
+
 	ensure_db
 
 	local escaped_id
@@ -729,7 +781,7 @@ update_todo_on_complete() {
 		local open_subtasks
 		open_subtasks=$(awk -v tid="$task_id" -v tindent="$task_indent" '
             BEGIN { found=0 }
-            /- \[[ x-]\] '"$task_id"'( |$)/ { found=1; next }
+            $0 ~ ("- \\[[ x-]\\] " tid "( |$)") { found=1; next }
             found && /^[[:space:]]*- \[/ {
                 # Count leading spaces
                 match($0, /^[[:space:]]*/);
@@ -811,6 +863,9 @@ update_todo_on_complete() {
 generate_verify_entry() {
 	local task_id="$1"
 
+	# Validate task_id before interpolation into grep/sed patterns (GH#3727)
+	_validate_task_id "$task_id" || return 1
+
 	ensure_db
 
 	local escaped_id
@@ -837,7 +892,7 @@ generate_verify_entry() {
 	# Check if entry already exists for this task
 	local task_id_escaped
 	task_id_escaped=$(printf '%s' "$task_id" | sed 's/\./\\./g')
-	if grep -qE "^- \[.\] v[0-9]+ ${task_id_escaped} " "$verify_file"; then
+	if grep -qE -- "^- \[.\] v[0-9]+ ${task_id_escaped} " "$verify_file"; then
 		log_info "generate_verify_entry: entry already exists for $task_id"
 		return 0
 	fi
@@ -897,26 +952,30 @@ generate_verify_entry() {
 			done
 
 			# Generate check directives based on file types
+			# SECURITY (GH#3727): Sanitize filenames from PR data before constructing
+			# check directives to prevent command injection via malicious filenames.
 			for fpath in "${substantive_files[@]}"; do
-				case "$fpath" in
+				local safe_fpath
+				safe_fpath=$(_sanitize_filename "$fpath") || continue
+				case "$safe_fpath" in
 				*.sh)
-					check_lines+=("  check: shellcheck $fpath")
-					check_lines+=("  check: file-exists $fpath")
+					check_lines+=("  check: shellcheck $safe_fpath")
+					check_lines+=("  check: file-exists $safe_fpath")
 					;;
 				*.toon)
-					check_lines+=("  check: file-exists $fpath")
+					check_lines+=("  check: file-exists $safe_fpath")
 					;;
 				*.yml | *.yaml)
-					check_lines+=("  check: file-exists $fpath")
+					check_lines+=("  check: file-exists $safe_fpath")
 					;;
 				*.json)
-					check_lines+=("  check: file-exists $fpath")
+					check_lines+=("  check: file-exists $safe_fpath")
 					;;
 				*.md)
-					check_lines+=("  check: file-exists $fpath")
+					check_lines+=("  check: file-exists $safe_fpath")
 					;;
 				*)
-					check_lines+=("  check: file-exists $fpath")
+					check_lines+=("  check: file-exists $safe_fpath")
 					;;
 				esac
 			done
@@ -926,7 +985,10 @@ generate_verify_entry() {
 				if [[ "$fpath" =~ ^\.agents/(tools|services|workflows)/.+\.md$ ]]; then
 					local bname
 					bname=$(basename "$fpath" .md)
-					check_lines+=("  check: rg \"$bname\" .agents/subagent-index.toon")
+					# Sanitize basename before use in check directives (GH#3727)
+					local safe_bname
+					safe_bname=$(_sanitize_filename "$bname") || continue
+					check_lines+=("  check: rg \"$safe_bname\" .agents/subagent-index.toon")
 				fi
 			done
 		fi
@@ -1003,6 +1065,9 @@ update_todo_on_cancelled() {
 	local task_id="$1"
 	local reason="${2:-cancelled by supervisor}"
 
+	# Validate task_id before interpolation into grep/sed patterns (GH#3727)
+	_validate_task_id "$task_id" || return 1
+
 	ensure_db
 
 	local escaped_id
@@ -1076,11 +1141,8 @@ update_todo_on_blocked() {
 	local task_id="$1"
 	local reason="${2:-unknown}"
 
-	# Validate task_id format to prevent command/regex injection (GH#3734)
-	if [[ ! "$task_id" =~ ^t[0-9]+(\.[0-9]+)?$ ]]; then
-		log_error "Invalid task_id format: refusing to process unsanitized input"
-		return 1
-	fi
+	# Validate task_id before interpolation into grep/sed patterns (GH#3727, GH#3734)
+	_validate_task_id "$task_id" || return 1
 
 	ensure_db
 
@@ -1189,12 +1251,14 @@ auto_unblock_resolved_tasks() {
 		IFS=','
 		for blocker_id in $blocked_by; do
 			[[ -z "$blocker_id" ]] && continue
+			# Validate blocker_id format before use in grep patterns (GH#3727)
+			_validate_task_id "$blocker_id" || continue
 
 			# Check if blocker is completed ([x]) or declined ([-])
-			if grep -qE "^[[:space:]]*- \[x\] ${blocker_id}( |$)" "$todo_file" 2>/dev/null; then
+			if grep -qE -- "^[[:space:]]*- \[x\] ${blocker_id}( |$)" "$todo_file" 2>/dev/null; then
 				continue # Resolved
 			fi
-			if grep -qE "^[[:space:]]*- \[-\] ${blocker_id}( |$)" "$todo_file" 2>/dev/null; then
+			if grep -qE -- "^[[:space:]]*- \[-\] ${blocker_id}( |$)" "$todo_file" 2>/dev/null; then
 				continue # Declined = resolved
 			fi
 
@@ -1241,7 +1305,7 @@ auto_unblock_resolved_tasks() {
 			fi
 
 			# Check if blocker doesn't exist in TODO.md at all (orphaned reference)
-			if ! grep -qE "^[[:space:]]*- \[.\] ${blocker_id}( |$)" "$todo_file" 2>/dev/null; then
+			if ! grep -qE -- "^[[:space:]]*- \[.\] ${blocker_id}( |$)" "$todo_file" 2>/dev/null; then
 				continue # Non-existent blocker = resolved
 			fi
 
@@ -1311,6 +1375,9 @@ cmd_update_todo() {
 		log_error "Usage: supervisor-helper.sh update-todo <task_id>"
 		return 1
 	fi
+
+	# Validate task_id — this is a user-facing command entry point (GH#3727)
+	_validate_task_id "$task_id" || return 1
 
 	ensure_db
 
