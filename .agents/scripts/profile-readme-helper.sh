@@ -744,6 +744,8 @@ _generate_rich_readme() {
 	if [[ -n "$fork_names" ]]; then
 		# Fetch all fork details in parallel (up to 6 concurrent) to get parent URLs
 		local fork_details
+		# Backticks in jq gsub pattern are literal, not shell expansion
+		# shellcheck disable=SC2016
 		fork_details=$(echo "$fork_names" | xargs -P 6 -I{} gh api "repos/${gh_user}/{}" --jq '
 			"\(.name | gsub("[\\[\\]()`]"; ""))\t\((.description // "No description") | gsub("[\\t\\n]"; " ") | gsub("[\\[\\]()`]"; ""))\t\(.parent.html_url // .html_url)"
 		' || true)
