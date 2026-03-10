@@ -225,7 +225,7 @@ docling invoice.pdf --output markdown
 ### ExtractThinker (LLM Extraction)
 
 ```bash
-pip install extract_thinker
+pip install extract-thinker
 # Supports: OpenAI, Anthropic, Google, Ollama, Azure
 # ORM-style: define Pydantic contract, call extractor.extract()
 ```
