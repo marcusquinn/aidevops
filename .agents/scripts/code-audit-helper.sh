@@ -172,6 +172,10 @@ get_head_sha() {
 sql_escape() {
 	local val
 	val="$1"
+	# Replace newlines and carriage returns with spaces to prevent
+	# multi-line SQL corruption in line-by-line INSERT generation
+	val="${val//$'\n'/ }"
+	val="${val//$'\r'/}"
 	val="${val//\'/\'\'}"
 	echo "$val"
 	return 0
@@ -621,6 +625,10 @@ cmd_audit() {
 	# Auto-detect PR if not specified
 	if [[ "$pr_number" -eq 0 ]]; then
 		pr_number=$(gh pr view --json number -q .number 2>/dev/null || echo "0")
+		if ! [[ "$pr_number" =~ ^[0-9]+$ ]]; then
+			log_warn "Could not auto-detect PR number, defaulting to 0"
+			pr_number=0
+		fi
 	fi
 
 	local head_sha
