@@ -376,9 +376,50 @@ When a Ralph loop completes, `/session-review` helps:
 - Identify any cleanup needed
 - Suggest next steps
 
+### Security Summary (t1428.5)
+
+Run `/session-review security` or `session-review-helper.sh security` for a unified post-session security summary. This aggregates data from all security subsystems into a single view:
+
+```bash
+# Full security summary
+session-review-helper.sh security
+
+# JSON output for programmatic use
+session-review-helper.sh security --json
+
+# Filter to a specific session
+session-review-helper.sh security --session abc123
+
+# Include security in the standard gather output
+session-review-helper.sh gather --security
+```
+
+**Data sources aggregated:**
+
+| Source | Data | Script |
+|--------|------|--------|
+| Cost breakdown | LLM requests by model, token counts, costs | `observability-helper.sh` |
+| Audit events | Security event type breakdown, chain integrity | `audit-log-helper.sh` |
+| Network access | Logged/flagged/denied domain counts, top flagged | `network-tier-helper.sh` |
+| Prompt guard | Blocked/warned/sanitized injection attempts | `prompt-guard-helper.sh` |
+| Session context | Composite security score (when t1428.3 available) | `session-security-helper.sh` |
+| Quarantine | Pending review items (when t1428.4 available) | `quarantine-helper.sh` |
+
+**Security posture levels:**
+
+| Level | Meaning |
+|-------|---------|
+| CLEAN | No security events detected |
+| LOW | Flagged domains or warned injection attempts |
+| MEDIUM | Blocked injection attempts detected |
+| HIGH | Denied network access (Tier 5 domains) |
+| CRITICAL | Audit chain integrity broken |
+
 ## Related
 
 - `workflows/session-manager.md` - Session lifecycle management
 - `tools/build-agent/agent-review.md` - Agent improvement process
 - `workflows/preflight.md` - Pre-commit quality checks
 - `workflows/postflight.md` - Post-release verification
+- `tools/security/tamper-evident-audit.md` - Audit log documentation
+- `tools/security/prompt-injection-defender.md` - Prompt guard documentation
