@@ -110,6 +110,54 @@ _cron_escape() {
 	return 0
 }
 
+# Ensure the crontab has a single PATH= line at the top with the current $PATH.
+# Individual cron entries must NOT set inline PATH= — it overrides the global one
+# and hardcodes system-specific paths (nvm, bun, cargo, etc.). This function
+# manages a tagged comment + PATH line pair; re-running setup.sh updates it
+# idempotently. The marker must be a separate comment line because crontab does
+# NOT support inline comments on environment variable lines — anything after
+# PATH= is treated as part of the value.
+_ensure_cron_path() {
+	local current_crontab marker="# aidevops-path"
+	current_crontab=$(crontab -l 2>/dev/null) || current_crontab=""
+
+	# Deduplicate PATH entries (preserving order)
+	local deduped_path=""
+	local -A seen_dirs=()
+	local IFS=':'
+	for dir in $PATH; do
+		if [[ -n "$dir" && -z "${seen_dirs[$dir]:-}" ]]; then
+			seen_dirs[$dir]=1
+			deduped_path="${deduped_path:+${deduped_path}:}${dir}"
+		fi
+	done
+	unset IFS
+
+	# Marker on its own line, PATH on the next — crontab treats everything
+	# after PATH= as the value (no inline comments)
+	local path_block="${marker}
+PATH=${deduped_path}"
+
+	# Remove only the aidevops-managed marker + PATH pair.
+	# User-owned PATH= lines are left untouched.
+	local filtered
+	filtered=$(printf '%s\n' "$current_crontab" | awk -v marker="$marker" '
+		$0 == marker { drop_next_path=1; next }
+		drop_next_path && /^PATH=/ { drop_next_path=0; next }
+		{ drop_next_path=0; print }
+	')
+
+	if [[ -n "$filtered" ]]; then
+		current_crontab="${path_block}
+${filtered}"
+	else
+		current_crontab="$path_block"
+	fi
+
+	printf '%s\n' "$current_crontab" | crontab - 2>/dev/null || true
+	return 0
+}
+
 # Check if a launchd agent is loaded (SIGPIPE-safe for pipefail, t1265)
 _launchd_has_agent() {
 	local label="$1"
@@ -775,6 +823,12 @@ main() {
 	# The plist is ALWAYS regenerated on setup.sh to pick up config changes (env vars,
 	# thresholds). Only the first-install prompt is gated on consent state.
 	#
+	# Ensure crontab has a global PATH= line (Linux only; macOS uses launchd env).
+	# Must run before any cron entries are installed so they inherit the PATH.
+	if [[ "$(uname -s)" != "Darwin" ]]; then
+		_ensure_cron_path
+	fi
+
 	# Consent model (GH#2926):
 	#   - Default OFF: supervisor_pulse defaults to false in all config layers
 	#   - Explicit consent required: user must type "y" (prompt defaults to [y/N])
@@ -958,13 +1012,12 @@ PLIST
 			# Remove old-style cron entries (direct opencode invocation)
 			# Shell-escape all interpolated paths to prevent command injection
 			# via $(…) or backticks if paths contain shell metacharacters
-			local _cron_opencode_bin _cron_aidevops_dir _cron_wrapper_script
-			_cron_opencode_bin=$(_cron_escape "$opencode_bin")
+			local _cron_aidevops_dir _cron_wrapper_script
 			_cron_aidevops_dir=$(_cron_escape "$_aidevops_dir")
 			_cron_wrapper_script=$(_cron_escape "$wrapper_script")
 			(
 				crontab -l 2>/dev/null | grep -v 'aidevops: supervisor-pulse'
-				echo "*/2 * * * * PATH=\"/usr/local/bin:/usr/bin:/bin\" OPENCODE_BIN=${_cron_opencode_bin} PULSE_DIR=${_cron_aidevops_dir} /bin/bash ${_cron_wrapper_script} >> \"\$HOME/.aidevops/logs/pulse-wrapper.log\" 2>&1 # aidevops: supervisor-pulse"
+				echo "*/2 * * * * PULSE_DIR=${_cron_aidevops_dir} /bin/bash ${_cron_wrapper_script} >> \"\$HOME/.aidevops/logs/pulse-wrapper.log\" 2>&1 # aidevops: supervisor-pulse"
 			) | crontab - || true
 			if crontab -l 2>/dev/null | grep -qF "aidevops: supervisor-pulse"; then
 				print_info "Supervisor pulse enabled (cron, every 2 min). Disable: crontab -e and remove the supervisor-pulse line"
@@ -996,20 +1049,19 @@ PLIST
 	local stats_script="$HOME/.aidevops/agents/scripts/stats-wrapper.sh"
 	local stats_label="com.aidevops.aidevops-stats-wrapper"
 	if [[ -x "$stats_script" ]] && [[ "$_pulse_lower" == "true" ]]; then
-		local _stats_installed=false
-		if _launchd_has_agent "$stats_label"; then
-			_stats_installed=true
-		elif crontab -l 2>/dev/null | grep -qF "aidevops: stats-wrapper"; then
-			_stats_installed=true
-		fi
-		if [[ "$_stats_installed" == "false" ]]; then
-			if [[ "$(uname -s)" == "Darwin" ]]; then
-				local stats_plist="$HOME/Library/LaunchAgents/${stats_label}.plist"
-				local _xml_stats_script _xml_stats_home _xml_stats_path
-				_xml_stats_script=$(_xml_escape "$stats_script")
-				_xml_stats_home=$(_xml_escape "$HOME")
-				_xml_stats_path=$(_xml_escape "$PATH")
-				cat >"$stats_plist" <<PLIST
+		# Always regenerate to pick up config/format changes (matches pulse behavior)
+		if [[ "$(uname -s)" == "Darwin" ]]; then
+			local stats_plist="$HOME/Library/LaunchAgents/${stats_label}.plist"
+
+			if _launchd_has_agent "$stats_label"; then
+				launchctl unload "$stats_plist" 2>/dev/null || true
+			fi
+
+			local _xml_stats_script _xml_stats_home _xml_stats_path
+			_xml_stats_script=$(_xml_escape "$stats_script")
+			_xml_stats_home=$(_xml_escape "$HOME")
+			_xml_stats_path=$(_xml_escape "$PATH")
+			cat >"$stats_plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -1041,21 +1093,20 @@ PLIST
 </dict>
 </plist>
 PLIST
-				if launchctl load "$stats_plist"; then
-					print_info "Stats wrapper enabled (launchd, every 15 min)"
-				else
-					print_warning "Failed to load stats wrapper LaunchAgent"
-				fi
+			if launchctl load "$stats_plist"; then
+				print_info "Stats wrapper enabled (launchd, every 15 min)"
 			else
-				local _cron_stats_script
-				_cron_stats_script=$(_cron_escape "$stats_script")
-				(
-					crontab -l 2>/dev/null | grep -v 'aidevops: stats-wrapper'
-					echo "*/15 * * * * PATH=\"/usr/local/bin:/usr/bin:/bin\" /bin/bash ${_cron_stats_script} >> \"\$HOME/.aidevops/logs/stats.log\" 2>&1 # aidevops: stats-wrapper"
-				) | crontab - || true
-				if crontab -l 2>/dev/null | grep -qF "aidevops: stats-wrapper"; then
-					print_info "Stats wrapper enabled (cron, every 15 min)"
-				fi
+				print_warning "Failed to load stats wrapper LaunchAgent"
+			fi
+		else
+			local _cron_stats_script
+			_cron_stats_script=$(_cron_escape "$stats_script")
+			(
+				crontab -l 2>/dev/null | grep -v 'aidevops: stats-wrapper'
+				echo "*/15 * * * * /bin/bash ${_cron_stats_script} >> \"\$HOME/.aidevops/logs/stats.log\" 2>&1 # aidevops: stats-wrapper"
+			) | crontab - || true
+			if crontab -l 2>/dev/null | grep -qF "aidevops: stats-wrapper"; then
+				print_info "Stats wrapper enabled (cron, every 15 min)"
 			fi
 		fi
 	elif [[ "$_pulse_lower" == "false" ]]; then
@@ -1184,7 +1235,7 @@ GUARD_PLIST
 			_cron_guard_script=$(_cron_escape "$guard_script")
 			(
 				crontab -l 2>/dev/null | grep -v 'aidevops: process-guard'
-				echo "* * * * * PATH=\"/usr/local/bin:/usr/bin:/bin\" SHELLCHECK_RSS_LIMIT_KB=524288 SHELLCHECK_RUNTIME_LIMIT=120 CHILD_RSS_LIMIT_KB=8388608 CHILD_RUNTIME_LIMIT=7200 /bin/bash ${_cron_guard_script} kill-runaways >> \"\$HOME/.aidevops/logs/process-guard.log\" 2>&1 # aidevops: process-guard"
+				echo "* * * * * SHELLCHECK_RSS_LIMIT_KB=524288 SHELLCHECK_RUNTIME_LIMIT=120 CHILD_RSS_LIMIT_KB=8388608 CHILD_RUNTIME_LIMIT=7200 /bin/bash ${_cron_guard_script} kill-runaways >> \"\$HOME/.aidevops/logs/process-guard.log\" 2>&1 # aidevops: process-guard"
 			) | crontab - || true
 			if crontab -l 2>/dev/null | grep -qF "aidevops: process-guard"; then
 				print_info "Process guard enabled (cron, every minute)"
@@ -1343,7 +1394,7 @@ ST_PLIST
 			_cron_st_script=$(_cron_escape "$st_script")
 			(
 				crontab -l 2>/dev/null | grep -v 'aidevops: screen-time-snapshot'
-				echo "0 */6 * * * PATH=\"/usr/local/bin:/usr/bin:/bin\" /bin/bash ${_cron_st_script} snapshot >> \"\$HOME/.aidevops/.agent-workspace/logs/screen-time-snapshot.log\" 2>&1 # aidevops: screen-time-snapshot"
+				echo "0 */6 * * * /bin/bash ${_cron_st_script} snapshot >> \"\$HOME/.aidevops/.agent-workspace/logs/screen-time-snapshot.log\" 2>&1 # aidevops: screen-time-snapshot"
 			) | crontab - 2>/dev/null || true
 			if crontab -l 2>/dev/null | grep -qF "aidevops: screen-time-snapshot" 2>/dev/null; then
 				print_info "Screen time snapshot enabled (cron, every 6h)"
@@ -1460,7 +1511,7 @@ PR_PLIST
 			_cron_pr_script=$(_cron_escape "$pr_script")
 			(
 				crontab -l 2>/dev/null | grep -v 'aidevops: profile-readme-update'
-				echo "0 6 * * * PATH=\"/usr/local/bin:/usr/bin:/bin\" /bin/bash ${_cron_pr_script} update >> \"\$HOME/.aidevops/.agent-workspace/logs/profile-readme-update.log\" 2>&1 # aidevops: profile-readme-update"
+				echo "0 6 * * * /bin/bash ${_cron_pr_script} update >> \"\$HOME/.aidevops/.agent-workspace/logs/profile-readme-update.log\" 2>&1 # aidevops: profile-readme-update"
 			) | crontab - 2>/dev/null || true
 			if crontab -l 2>/dev/null | grep -qF "aidevops: profile-readme-update" 2>/dev/null; then
 				print_info "Profile README update enabled (cron, daily at 06:00)"
