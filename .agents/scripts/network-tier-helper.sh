@@ -26,6 +26,8 @@
 # Usage:
 #   network-tier-helper.sh classify example.com     # → 1|2|3|4|5
 #   network-tier-helper.sh check example.com        # exit 0=allow, 1=deny
+#   network-tier-helper.sh check-session example.com [--session-id ID]
+#                                                   # Session-aware check (t1428.3)
 #   network-tier-helper.sh log-access example.com worker-123 200
 #   network-tier-helper.sh report [--last N] [--flagged-only]
 #   network-tier-helper.sh init                     # Create log dirs and validate config
@@ -390,6 +392,81 @@ check_domain() {
 	return 0
 }
 
+# Session-aware domain check (t1428.3).
+# Checks the session security context for taint signals. If the session is
+# tainted (sensitive data was accessed), the effective tier is elevated —
+# domains that would normally be allowed may be denied.
+# Arguments:
+#   $1 - domain
+#   Remaining args scanned for --session-id
+# Returns: 0 if allowed, 1 if denied (base or elevated)
+# Output: tier info on stderr
+check_domain_session() {
+	local domain="$1"
+	shift || true
+
+	# Parse --session-id from remaining args
+	local session_id=""
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--session-id)
+			session_id="${2:-}"
+			shift 2
+			;;
+		*) shift ;;
+		esac
+	done
+
+	# If no session ID, fall back to standard check
+	if [[ -z "$session_id" ]]; then
+		check_domain "$domain"
+		return $?
+	fi
+
+	# Get session-elevated tier from session-security-helper.sh
+	local session_helper="${SCRIPT_DIR}/session-security-helper.sh"
+	local effective_tier
+
+	if [[ -x "$session_helper" ]]; then
+		effective_tier=$("$session_helper" elevate-tier "$domain" --session-id "$session_id" 2>/dev/null) || effective_tier=""
+	fi
+
+	# Fall back to base classification if session helper unavailable
+	if [[ -z "$effective_tier" ]]; then
+		effective_tier=$(classify_domain "$domain")
+	fi
+
+	local base_tier
+	base_tier=$(classify_domain "$domain")
+
+	if [[ "$effective_tier" -eq 5 ]]; then
+		if [[ "$base_tier" -ne 5 ]]; then
+			log_error "BLOCKED (session-elevated): ${domain} T${base_tier}→T5 (session tainted)"
+		else
+			log_error "BLOCKED: ${domain} (Tier 5: DENY)"
+		fi
+		# Record the network flag in session context
+		if [[ -x "$session_helper" ]]; then
+			"$session_helper" record-signal "network-flag" "HIGH" \
+				"Blocked domain ${domain} (base=T${base_tier}, effective=T${effective_tier})" \
+				--session-id "$session_id" 2>/dev/null || true
+		fi
+		return 1
+	fi
+
+	if [[ "$effective_tier" -eq 4 ]]; then
+		log_warn "FLAGGED: ${domain} (Tier 4: unknown domain)"
+		# Record tier 4 access in session context as LOW signal
+		if [[ -x "$session_helper" ]]; then
+			"$session_helper" record-signal "network-flag" "LOW" \
+				"Unknown domain ${domain} (T4)" \
+				--session-id "$session_id" 2>/dev/null || true
+		fi
+	fi
+
+	return 0
+}
+
 # =============================================================================
 # Reporting
 # =============================================================================
@@ -624,6 +701,10 @@ network-tier-helper.sh — Network domain tiering for worker sandboxing (t1412.3
 Commands:
   classify <domain>          Classify domain into tier (1-5)
   check <domain>             Check if domain is allowed (exit 0) or denied (exit 1)
+  check-session <domain> [--session-id ID]
+                             Session-aware check — elevates tier if session
+                             is tainted (t1428.3). Falls back to check if
+                             no session ID or session helper unavailable.
   log-access <domain> [worker-id] [status] [path]
                              Log a network access event
   report [options]           Show network access report
@@ -669,6 +750,13 @@ Integration with sandbox-exec-helper.sh:
       # proceed with request
       network-tier-helper.sh log-access "$domain" "$WORKER_ID" "$status"
     fi
+
+Session-aware integration (t1428.3):
+  # Check with session taint elevation
+  if network-tier-helper.sh check-session "$domain" --session-id "$SESSION_ID"; then
+    # proceed — tier may have been elevated if session is tainted
+    network-tier-helper.sh log-access "$domain" "$WORKER_ID" "$status"
+  fi
 HELP
 	return 0
 }
@@ -695,6 +783,13 @@ main() {
 			return 1
 		fi
 		check_domain "$1"
+		;;
+	check-session)
+		if [[ -z "${1:-}" ]]; then
+			log_error "Domain required. Usage: network-tier-helper.sh check-session <domain> [--session-id ID]"
+			return 1
+		fi
+		check_domain_session "$@"
 		;;
 	log-access | log)
 		if [[ -z "${1:-}" ]]; then
