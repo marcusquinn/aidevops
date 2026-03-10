@@ -255,7 +255,7 @@ Enhancor integrates into the content production pipeline as a post-processing st
 3. **Optimize** for web delivery (compression, format conversion)
 4. **Distribute** to target platforms
 
-**See**: `content/production/image.md` for full integration details.
+**See**: `.agents/content/production/image.md` for full integration details.
 
 ## Use Cases
 
@@ -344,8 +344,8 @@ enhancor-helper.sh enhance --img-url URL \
 
 - **Website**: https://www.enhancor.ai/
 - **API Docs**: https://github.com/rohan-kulkarni-25/enhancor-api-docs
-- **Helper Script**: `.agents/scripts/enhancor-helper.sh:1`
-- **Integration**: `content/production/image.md` (post-processing step)
+- **Helper Script**: `.agents/scripts/enhancor-helper.sh`
+- **Integration**: `.agents/content/production/image.md` (post-processing step)
 
 ## Examples
 
