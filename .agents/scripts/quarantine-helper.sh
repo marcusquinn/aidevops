@@ -78,8 +78,8 @@ _q_generate_id() {
 # Escape a string for safe JSON embedding (no jq dependency for writing).
 _q_json_escape() {
 	local input="$1"
-	# Remove newlines, escape backslashes and quotes
-	printf '%s' "$input" | tr -d '\n\r' | sed 's/\\/\\\\/g; s/"/\\"/g'
+	# Remove newlines, escape backslashes, quotes, and tabs
+	printf '%s' "$input" | tr -d '\n\r' | sed 's/\\/\\\\/g; s/"/\\"/g; s/	/\\t/g'
 	return 0
 }
 
@@ -172,24 +172,28 @@ cmd_add() {
 	timestamp="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
 	# Truncate content for storage (max 1000 chars)
-	local stored_content
-	stored_content="$(_q_json_escape "${content:0:1000}")"
+	local content_trunc
+	content_trunc="${content:0:1000}"
 
 	# Build JSON record
 	local record
 	if command -v jq &>/dev/null; then
+		# jq --arg handles escaping automatically — no pre-escaping needed
 		record="$(jq -nc \
 			--arg id "$item_id" \
 			--arg ts "$timestamp" \
 			--arg src "$source" \
 			--arg sev "$severity" \
 			--arg cat "$category" \
-			--arg content "$stored_content" \
+			--arg content "$content_trunc" \
 			--arg sid "${session_id:-}" \
 			--arg wid "${worker_id:-}" \
 			--argjson meta "$metadata" \
 			'{id:$id, timestamp:$ts, source:$src, severity:$sev, category:$cat, content:$content, session_id:$sid, worker_id:$wid, metadata:$meta, status:"pending"}')"
 	else
+		# Manual escaping needed for printf path
+		local stored_content
+		stored_content="$(_q_json_escape "$content_trunc")"
 		record="$(printf '{"id":"%s","timestamp":"%s","source":"%s","severity":"%s","category":"%s","content":"%s","session_id":"%s","worker_id":"%s","metadata":%s,"status":"pending"}' \
 			"$item_id" "$timestamp" "$source" "$severity" \
 			"$(_q_json_escape "$category")" "$stored_content" \
@@ -241,6 +245,14 @@ cmd_list() {
 	if ! command -v jq &>/dev/null; then
 		log_error "jq is required for list/digest commands"
 		return 1
+	fi
+
+	# Validate filter values to prevent jq injection
+	if [[ -n "$filter_source" ]]; then
+		_q_validate_value "$filter_source" "$VALID_SOURCES" "source filter" || return 1
+	fi
+	if [[ -n "$filter_severity" ]]; then
+		_q_validate_value "$filter_severity" "$VALID_SEVERITIES" "severity filter" || return 1
 	fi
 
 	local jq_filter=". "
@@ -305,6 +317,14 @@ cmd_digest() {
 	if ! command -v jq &>/dev/null; then
 		log_error "jq is required for digest command"
 		return 1
+	fi
+
+	# Validate filter values to prevent jq injection
+	if [[ -n "$filter_source" ]]; then
+		_q_validate_value "$filter_source" "$VALID_SOURCES" "source filter" || return 1
+	fi
+	if [[ -n "$filter_severity" ]]; then
+		_q_validate_value "$filter_severity" "$VALID_SEVERITIES" "severity filter" || return 1
 	fi
 
 	local jq_filter="."
@@ -442,9 +462,15 @@ cmd_learn() {
 		return 1
 	fi
 
-	# Find the item
+	# Validate item ID format to prevent jq injection (q<timestamp>-<hex>)
+	if ! [[ "$item_id" =~ ^q[0-9]+-[0-9a-f]+$ ]]; then
+		log_error "Invalid item ID format: ${item_id}"
+		return 1
+	fi
+
+	# Find the item (using --arg to avoid jq injection)
 	local item
-	item="$(jq -c "select(.id == \"${item_id}\")" "$QUARANTINE_PENDING" 2>/dev/null | head -1)"
+	item="$(jq -c --arg id "$item_id" 'select(.id == $id)' "$QUARANTINE_PENDING" 2>/dev/null | head -1)"
 
 	if [[ -z "$item" ]]; then
 		log_error "Item not found: ${item_id}"
@@ -491,7 +517,7 @@ cmd_learn() {
 	# Remove from pending (write all non-matching lines to temp, then replace)
 	local tmp_file
 	tmp_file="$(mktemp)"
-	jq -c "select(.id != \"${item_id}\")" "$QUARANTINE_PENDING" >"$tmp_file" 2>/dev/null || true
+	jq -c --arg id "$item_id" 'select(.id != $id)' "$QUARANTINE_PENDING" >"$tmp_file" 2>/dev/null || true
 	mv "$tmp_file" "$QUARANTINE_PENDING"
 
 	log_success "Learned: ${item_id} → ${action}${value:+ (${value})}"
@@ -517,6 +543,9 @@ _learn_allow() {
 		return 0
 	fi
 
+	# Normalize domain to lowercase (matches network-tier-helper.sh parsing)
+	domain="$(printf '%s' "$domain" | tr '[:upper:]' '[:lower:]')"
+
 	# Ensure config directory exists
 	mkdir -p "$(dirname "$NET_TIER_USER_CONF")" 2>/dev/null || true
 
@@ -525,8 +554,8 @@ _learn_allow() {
 		printf '# User network tier overrides (managed by quarantine-helper.sh)\n\n' >"$NET_TIER_USER_CONF"
 	fi
 
-	# Check if domain already exists in the file
-	if grep -qF "$domain" "$NET_TIER_USER_CONF" 2>/dev/null; then
+	# Check if domain already exists in the file (case-insensitive)
+	if grep -qiF "$domain" "$NET_TIER_USER_CONF" 2>/dev/null; then
 		log_info "Domain already in custom config: ${domain}"
 		return 0
 	fi
@@ -575,13 +604,17 @@ _learn_deny() {
 			return 0
 		fi
 
+		# Normalize domain to lowercase (matches network-tier-helper.sh parsing)
+		domain="$(printf '%s' "$domain" | tr '[:upper:]' '[:lower:]')"
+
 		mkdir -p "$(dirname "$NET_TIER_USER_CONF")" 2>/dev/null || true
 
 		if [[ ! -f "$NET_TIER_USER_CONF" ]]; then
 			printf '# User network tier overrides (managed by quarantine-helper.sh)\n\n' >"$NET_TIER_USER_CONF"
 		fi
 
-		if grep -qF "$domain" "$NET_TIER_USER_CONF" 2>/dev/null; then
+		# Case-insensitive check for existing domain
+		if grep -qiF "$domain" "$NET_TIER_USER_CONF" 2>/dev/null; then
 			log_info "Domain already in custom config: ${domain}"
 			return 0
 		fi
@@ -609,6 +642,8 @@ _learn_deny() {
 		local pattern="${value:-}"
 		if [[ -z "$pattern" ]]; then
 			# Use the content as a simple pattern (escaped for regex)
+			# Single quotes intentional: \\& is sed backreference syntax, not shell expansion
+			# shellcheck disable=SC2016
 			pattern="$(printf '%s' "$content" | head -c 100 | sed 's/[.[\*^$()+?{|]/\\&/g')"
 		fi
 

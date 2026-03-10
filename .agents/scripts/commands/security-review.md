@@ -6,7 +6,7 @@ Review quarantined security items and provide feedback to improve detection accu
 
 Presents a digest of ambiguous security items that were flagged but not automatically blocked. These items come from:
 
-- **prompt-guard-helper.sh** — MEDIUM severity prompt injection detections (below block threshold)
+- **prompt-guard-helper.sh** — WARN-level prompt injection detections (below block threshold)
 - **network-tier-helper.sh** — Tier 4 unknown domains (allowed but flagged)
 - **sandbox-exec-helper.sh** — Flagged command patterns during sandboxed execution
 - **mcp-audit** — MCP tool descriptions with ambiguous injection patterns
@@ -50,7 +50,7 @@ quarantine-helper.sh purge --older-than 60 --reviewed-only
 | Action | Effect | Config file modified |
 |--------|--------|---------------------|
 | `allow` | Add domain to Tier 3 (known tools, allowed + logged) | `~/.config/aidevops/network-tiers-custom.conf` |
-| `deny` | Add domain to Tier 5 (blocked) or pattern to prompt guard deny list | `network-tiers-custom.conf` or `prompt-guard-custom.txt` |
+| `deny` | Add domain to Tier 5 (blocked) or pattern to prompt guard deny list | `network-tiers-custom.conf` (network/sandbox sources) or `prompt-guard-custom.txt` (prompt-guard/mcp sources) |
 | `trust` | Add MCP server to trusted list | `~/.config/aidevops/mcp-trusted-servers.txt` |
 | `dismiss` | Mark as false positive, no config change | None (recorded in reviewed.jsonl) |
 
