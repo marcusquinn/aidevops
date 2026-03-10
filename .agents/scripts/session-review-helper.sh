@@ -39,9 +39,11 @@ readonly PG_ATTEMPTS_LOG="${HOME}/.aidevops/logs/prompt-guard/attempts.jsonl"
 readonly SESSION_CONTEXT_FILE="${HOME}/.aidevops/.agent-workspace/security/session-context.json"
 readonly QUARANTINE_LOG="${HOME}/.aidevops/.agent-workspace/security/quarantine.jsonl"
 
-# Shared format strings for cost summary table
+# Shared format strings for summary tables
 readonly FMT_COST_ROW="  %-35s %6s %10s %10s %10s %10s\n"
 readonly FMT_COST_DATA="  %-35s %6s %10s %10s %10s \$%s\n"
+readonly FMT_AUDIT_ROW="  %-25s %6s\n"
+readonly FMT_SUMMARY_ROW="  %-20s %6s\n"
 
 # Sanitize a session ID filter to prevent injection attacks.
 # Only allows alphanumeric characters, hyphens, underscores, and dots.
@@ -195,13 +197,13 @@ _security_audit_events() {
 	local total_events
 	total_events=$(wc -l <"$AUDIT_LOG" | tr -d ' ')
 
-	printf "  %-25s %6s\n" "Event Type" "Count"
-	printf "  %-25s %6s\n" "---" "---"
+	printf "$FMT_AUDIT_ROW" "Event Type" "Count"
+	printf "$FMT_AUDIT_ROW" "---" "---"
 	echo "$breakdown" | while read -r count event_type; do
 		[[ -z "$event_type" ]] && continue
-		printf "  %-25s %6s\n" "$event_type" "$count"
+		printf "$FMT_AUDIT_ROW" "$event_type" "$count"
 	done
-	printf "  %-25s %6s\n" "TOTAL" "$total_events"
+	printf "$FMT_AUDIT_ROW" "TOTAL" "$total_events"
 
 	# Chain integrity check
 	local chain_status="UNKNOWN"
@@ -245,18 +247,18 @@ _security_network_summary() {
 		return 0
 	fi
 
-	printf "  %-20s %6s\n" "Category" "Count"
-	printf "  %-20s %6s\n" "---" "---"
-	printf "  %-20s %6s\n" "Logged (Tier 2-3)" "$access_count"
+	printf "$FMT_SUMMARY_ROW" "Category" "Count"
+	printf "$FMT_SUMMARY_ROW" "---" "---"
+	printf "$FMT_SUMMARY_ROW" "Logged (Tier 2-3)" "$access_count"
 	if [[ "$flagged_count" -gt 0 ]]; then
 		printf "  ${YELLOW}%-20s %6s${NC}\n" "Flagged (Tier 4)" "$flagged_count"
 	else
-		printf "  %-20s %6s\n" "Flagged (Tier 4)" "$flagged_count"
+		printf "$FMT_SUMMARY_ROW" "Flagged (Tier 4)" "$flagged_count"
 	fi
 	if [[ "$denied_count" -gt 0 ]]; then
 		printf "  ${RED}%-20s %6s${NC}\n" "Denied (Tier 5)" "$denied_count"
 	else
-		printf "  %-20s %6s\n" "Denied (Tier 5)" "$denied_count"
+		printf "$FMT_SUMMARY_ROW" "Denied (Tier 5)" "$denied_count"
 	fi
 
 	# Show top flagged domains if any
@@ -288,20 +290,20 @@ _security_prompt_guard() {
 	warns=$(grep -c '"action":"WARN"' "$PG_ATTEMPTS_LOG" 2>/dev/null || echo "0")
 	sanitizes=$(grep -c '"action":"SANITIZE"' "$PG_ATTEMPTS_LOG" 2>/dev/null || echo "0")
 
-	printf "  %-20s %6s\n" "Action" "Count"
-	printf "  %-20s %6s\n" "---" "---"
+	printf "$FMT_SUMMARY_ROW" "Action" "Count"
+	printf "$FMT_SUMMARY_ROW" "---" "---"
 	if [[ "$blocks" -gt 0 ]]; then
 		printf "  ${RED}%-20s %6s${NC}\n" "Blocked" "$blocks"
 	else
-		printf "  %-20s %6s\n" "Blocked" "$blocks"
+		printf "$FMT_SUMMARY_ROW" "Blocked" "$blocks"
 	fi
 	if [[ "$warns" -gt 0 ]]; then
 		printf "  ${YELLOW}%-20s %6s${NC}\n" "Warned" "$warns"
 	else
-		printf "  %-20s %6s\n" "Warned" "$warns"
+		printf "$FMT_SUMMARY_ROW" "Warned" "$warns"
 	fi
-	printf "  %-20s %6s\n" "Sanitized" "$sanitizes"
-	printf "  %-20s %6s\n" "TOTAL" "$total_entries"
+	printf "$FMT_SUMMARY_ROW" "Sanitized" "$sanitizes"
+	printf "$FMT_SUMMARY_ROW" "TOTAL" "$total_entries"
 
 	# Severity breakdown
 	if command -v jq &>/dev/null; then
@@ -607,7 +609,6 @@ is_protected_branch() {
 	local branch
 	branch=$(get_branch)
 	[[ "$branch" == "main" || "$branch" == "master" ]]
-	return 0
 }
 
 # Get recent commits
