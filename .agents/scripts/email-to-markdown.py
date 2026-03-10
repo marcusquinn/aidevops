@@ -276,6 +276,49 @@ def yaml_escape(value):
     return value
 
 
+def _is_forwarded_header(stripped):
+    """Check if a line is a forwarded message header delimiter."""
+    if re.match(r'^-{3,}\s*(Forwarded|Original)\s+(message|Message)\s*-{3,}$', stripped):
+        return True
+    if re.match(r'^Begin forwarded message\s*:', stripped, re.IGNORECASE):
+        return True
+    return False
+
+
+_HEADER_FIELD_RE = re.compile(
+    r'^(From|Date|Subject|To|Cc|Sent|Reply-To)\s*:')
+
+_ATTRIBUTION_RE = re.compile(r'^On\s+.+wrote\s*:\s*$')
+
+
+def _is_signature_delimiter(line, stripped):
+    """Check if a line is an email signature delimiter.
+
+    RFC 3676 defines the canonical delimiter as '-- ' (dash-dash-space).
+    We also accept bare '--' which is common in practice.
+    Check the raw line for '-- ' since str.strip() removes trailing spaces.
+    """
+    raw = line.rstrip('\n\r')
+    if raw == '-- ' or stripped == '--':
+        return True
+    return False
+
+
+def _has_attribution_before(lines, index):
+    """Check if the previous line has an 'On ... wrote:' attribution pattern.
+
+    Handles re-quoted emails where the previous line may itself be
+    quote-marked (e.g., '> On date, user wrote:') by stripping leading
+    '>' characters and whitespace before matching.
+    """
+    if index <= 0:
+        return False
+    prev = re.sub(r'^[>\s]+', '', lines[index - 1])
+    if _ATTRIBUTION_RE.match(prev):
+        return True
+    return False
+
+
 def normalise_email_sections(body):
     """Detect and structure email-specific sections in the body text.
 
@@ -293,44 +336,30 @@ def normalise_email_sections(body):
     for i, line in enumerate(lines):
         stripped = line.strip()
 
-        # Detect forwarded message headers
-        if re.match(r'^-{3,}\s*(Forwarded|Original)\s+(message|Message)\s*-{3,}$', stripped):
+        # --- Forwarded message detection ---
+        if _is_forwarded_header(stripped):
             if in_quote_block:
                 result.append('')
                 in_quote_block = False
-            if in_signature:
-                in_signature = False
+            in_signature = False
             in_forwarded = True
             result.append('')
             result.append('## Forwarded Message')
             result.append('')
             continue
 
-        # Detect "Begin forwarded message:" variant
-        if re.match(r'^Begin forwarded message\s*:', stripped, re.IGNORECASE):
-            if in_quote_block:
-                result.append('')
-                in_quote_block = False
-            in_forwarded = True
-            result.append('')
-            result.append('## Forwarded Message')
-            result.append('')
-            continue
-
-        # Detect forwarded header fields (From:, Date:, Subject:, To:)
-        if in_forwarded and re.match(
-                r'^(From|Date|Subject|To|Cc|Sent|Reply-To)\s*:', stripped):
+        # Forwarded header fields (From:, Date:, Subject:, To:, etc.)
+        if in_forwarded and _HEADER_FIELD_RE.match(stripped):
             result.append(f'**{stripped}**')
             continue
 
         # End forwarded header block on first non-header, non-blank line
-        if in_forwarded and stripped and not re.match(
-                r'^(From|Date|Subject|To|Cc|Sent|Reply-To)\s*:', stripped):
+        if in_forwarded and stripped and not _HEADER_FIELD_RE.match(stripped):
             in_forwarded = False
             result.append('')
 
-        # Detect signature block: line is exactly "-- " or "--"
-        if stripped == '--' or stripped == '-- ':
+        # --- Signature detection (RFC 3676) ---
+        if _is_signature_delimiter(line, stripped):
             if in_quote_block:
                 result.append('')
                 in_quote_block = False
@@ -349,17 +378,11 @@ def normalise_email_sections(body):
                 result.append(line)
                 continue
 
-        # Detect quoted reply lines (starting with >)
+        # --- Quoted reply detection ---
         if stripped.startswith('>'):
             if not in_quote_block:
                 in_quote_block = True
-                # Check if previous line has "On ... wrote:" pattern
-                prev_wrote = False
-                if i > 0:
-                    prev = lines[i - 1].strip()
-                    if re.match(r'^On\s+.+wrote\s*:\s*$', prev):
-                        prev_wrote = True
-                if not prev_wrote:
+                if not _has_attribution_before(lines, i):
                     result.append('')
                     result.append('## Quoted Reply')
                     result.append('')
@@ -369,7 +392,7 @@ def normalise_email_sections(body):
         # Transition out of quote block
         if in_quote_block and not stripped.startswith('>'):
             in_quote_block = False
-            if re.match(r'^On\s+.+wrote\s*:\s*$', stripped):
+            if _ATTRIBUTION_RE.match(stripped):
                 result.append('')
                 result.append('## Quoted Reply')
                 result.append('')
