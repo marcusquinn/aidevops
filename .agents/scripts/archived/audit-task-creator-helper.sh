@@ -30,6 +30,7 @@ set -euo pipefail
 # =============================================================================
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
+LOG_PREFIX="AUDIT-TASK"
 source "${SCRIPT_DIR}/shared-constants.sh"
 init_log_file
 
@@ -107,26 +108,8 @@ readonly -a SEVERITY_UPGRADE_HIGH=(
 	"weak.*crypto"
 )
 
-# =============================================================================
-# Logging
-# =============================================================================
-
-log_info() {
-	echo -e "${BLUE}[AUDIT-TASK]${NC} $*"
-	return 0
-}
-log_success() {
-	echo -e "${GREEN}[AUDIT-TASK]${NC} $*"
-	return 0
-}
-log_warn() {
-	echo -e "${YELLOW}[AUDIT-TASK]${NC} $*"
-	return 0
-}
-log_error() {
-	echo -e "${RED}[AUDIT-TASK]${NC} $*" >&2
-	return 0
-}
+# Logging: uses shared-constants.sh log_info/log_error/log_success/log_warn
+# with LOG_PREFIX="AUDIT-TASK" set above (see issue #2411).
 
 # =============================================================================
 # SQLite wrapper
@@ -567,7 +550,7 @@ scan_unified_findings() {
 	while IFS= read -r finding; do
 		total=$((total + 1))
 
-		local finding_id source severity path line description category
+		local finding_id source severity path line description category pr_number
 		finding_id=$(echo "$finding" | jq -r '.id')
 		source=$(echo "$finding" | jq -r '.source')
 		severity=$(echo "$finding" | jq -r '.severity')
@@ -575,6 +558,11 @@ scan_unified_findings() {
 		line=$(echo "$finding" | jq -r '.line // 0')
 		description=$(echo "$finding" | jq -r '.description')
 		category=$(echo "$finding" | jq -r '.category // "general"')
+		pr_number=$(echo "$finding" | jq -r '.pr_number // 0')
+
+		# Sanitise integer fields to prevent SQL injection
+		[[ "$line" =~ ^[0-9]+$ ]] || line=0
+		[[ "$pr_number" =~ ^[0-9]+$ ]] || pr_number=0
 
 		# Check false positive
 		local fp_reason=""
@@ -591,8 +579,8 @@ scan_unified_findings() {
 					(source, source_id, source_tool, pr_number, path, line, severity,
 					 original_severity, category, description, is_false_positive, fp_reason)
 				VALUES ('unified', '$(sql_escape "$finding_id")', '$(sql_escape "$source")',
-					${line:-0}, '$(sql_escape "$path")', ${line:-0},
-					'$severity', '$severity', '$(sql_escape "$category")',
+					$pr_number, '$(sql_escape "$path")', $line,
+					'$(sql_escape "$severity")', '$(sql_escape "$severity")', '$(sql_escape "$category")',
 					'$escaped_desc', 1, '$escaped_fp');
 			" 2>/dev/null || true
 			continue
@@ -612,8 +600,8 @@ scan_unified_findings() {
 					(source, source_id, source_tool, pr_number, path, line, severity,
 					 original_severity, category, description, is_false_positive)
 				VALUES ('unified', '$(sql_escape "$finding_id")', '$(sql_escape "$source")',
-					0, '$(sql_escape "$path")', ${line:-0},
-					'$new_severity', '$severity', '$(sql_escape "$category")',
+					$pr_number, '$(sql_escape "$path")', $line,
+					'$(sql_escape "$new_severity")', '$(sql_escape "$severity")', '$(sql_escape "$category")',
 					'$escaped_desc', 0);
 			" 2>/dev/null || true
 			continue
@@ -641,6 +629,12 @@ scan_unified_findings() {
 
 		valid=$((valid + 1))
 
+		# Validate dup_of is an integer before using in SQL
+		if [[ -n "$dup_of" ]] && ! [[ "$dup_of" =~ ^[0-9]+$ ]]; then
+			dup_of=""
+			is_dup=0
+		fi
+
 		# Insert processed finding
 		db "$active_db" "
 			INSERT OR IGNORE INTO processed_findings
@@ -648,8 +642,8 @@ scan_unified_findings() {
 				 original_severity, category, description,
 				 is_false_positive, is_duplicate, duplicate_of)
 			VALUES ('unified', '$(sql_escape "$finding_id")', '$(sql_escape "$source")',
-				0, '$(sql_escape "$path")', ${line:-0},
-				'$new_severity', '$severity', '$(sql_escape "$category")', '$escaped_desc',
+				$pr_number, '$(sql_escape "$path")', $line,
+				'$(sql_escape "$new_severity")', '$(sql_escape "$severity")', '$(sql_escape "$category")', '$escaped_desc',
 				0, $is_dup, $(if [[ -n "$dup_of" ]]; then echo "$dup_of"; else echo "NULL"; fi));
 		" 2>/dev/null || true
 	done <"$tmp_file"
@@ -718,12 +712,16 @@ scan_legacy_db_findings() {
 
 		local comment_id pr_number path line severity category body
 		comment_id=$(echo "$comment" | jq -r '.gh_comment_id // .id')
-		pr_number=$(echo "$comment" | jq -r '.pr_number')
+		pr_number=$(echo "$comment" | jq -r '.pr_number // 0')
 		path=$(echo "$comment" | jq -r '.path // ""')
 		line=$(echo "$comment" | jq -r '.line // 0')
 		severity=$(echo "$comment" | jq -r '.severity')
 		category=$(echo "$comment" | jq -r '.category')
 		body=$(echo "$comment" | jq -r '.body')
+
+		# Sanitise integer fields to prevent SQL injection
+		[[ "$line" =~ ^[0-9]+$ ]] || line=0
+		[[ "$pr_number" =~ ^[0-9]+$ ]] || pr_number=0
 
 		local fp_reason=""
 		fp_reason=$(is_false_positive "$body" "coderabbit") || true
@@ -739,8 +737,8 @@ scan_legacy_db_findings() {
 					(source, source_id, source_tool, pr_number, path, line, severity,
 					 original_severity, category, description, is_false_positive, fp_reason)
 				VALUES ('collector_db', '$(sql_escape "$comment_id")', 'coderabbit',
-					$pr_number, '$(sql_escape "$path")', ${line:-0},
-					'$severity', '$severity', '$(sql_escape "$category")',
+					$pr_number, '$(sql_escape "$path")', $line,
+					'$(sql_escape "$severity")', '$(sql_escape "$severity")', '$(sql_escape "$category")',
 					'$escaped_desc', 1, '$escaped_fp');
 			" 2>/dev/null || true
 			continue
@@ -758,8 +756,8 @@ scan_legacy_db_findings() {
 					(source, source_id, source_tool, pr_number, path, line, severity,
 					 original_severity, category, description, is_false_positive)
 				VALUES ('collector_db', '$(sql_escape "$comment_id")', 'coderabbit',
-					$pr_number, '$(sql_escape "$path")', ${line:-0},
-					'$new_severity', '$severity', '$(sql_escape "$category")',
+					$pr_number, '$(sql_escape "$path")', $line,
+					'$(sql_escape "$new_severity")', '$(sql_escape "$severity")', '$(sql_escape "$category")',
 					'$escaped_desc', 0);
 			" 2>/dev/null || true
 			continue
@@ -788,14 +786,20 @@ scan_legacy_db_findings() {
 
 		valid=$((valid + 1))
 
+		# Validate dup_of is an integer before using in SQL
+		if [[ -n "$dup_of" ]] && ! [[ "$dup_of" =~ ^[0-9]+$ ]]; then
+			dup_of=""
+			is_dup=0
+		fi
+
 		db "$active_db" "
 			INSERT OR IGNORE INTO processed_findings
 				(source, source_id, source_tool, pr_number, path, line, severity,
 				 original_severity, category, description,
 				 is_false_positive, is_duplicate, duplicate_of)
 			VALUES ('collector_db', '$(sql_escape "$comment_id")', 'coderabbit',
-				$pr_number, '$(sql_escape "$path")', ${line:-0},
-				'$new_severity', '$severity', '$(sql_escape "$category")', '$escaped_desc',
+				$pr_number, '$(sql_escape "$path")', $line,
+				'$(sql_escape "$new_severity")', '$(sql_escape "$severity")', '$(sql_escape "$category")', '$escaped_desc',
 				0, $is_dup, $(if [[ -n "$dup_of" ]]; then echo "$dup_of"; else echo "NULL"; fi));
 		" 2>/dev/null || true
 	done <"$tmp_file"
@@ -879,7 +883,7 @@ scan_legacy_pulse_findings() {
 				(source, source_id, source_tool, path, severity, original_severity,
 				 category, description)
 			VALUES ('pulse', '$(sql_escape "$finding_id")', 'coderabbit',
-				'$(sql_escape "$file")', '$severity', '$severity',
+				'$(sql_escape "$file")', '$(sql_escape "$severity")', '$(sql_escape "$severity")',
 				'general', '$escaped_desc');
 		" 2>/dev/null || true
 	done <"$tmp_file"
@@ -1144,6 +1148,12 @@ cmd_create() {
 		pr_number=$(echo "$finding" | jq -r '.pr_number // ""')
 		source_tool=$(echo "$finding" | jq -r '.source_tool // "unknown"')
 
+		# Validate finding_id is an integer (defense-in-depth)
+		if ! [[ "$finding_id" =~ ^[0-9]+$ ]]; then
+			log_warn "Skipping finding with non-integer ID: '$finding_id'"
+			continue
+		fi
+
 		# Map severity to priority tag
 		local priority_tag
 		case "$severity" in
@@ -1227,7 +1237,7 @@ cmd_create() {
 
 			# Mark as task created in DB
 			db "$active_db" "
-				UPDATE processed_findings SET task_created = 1, task_id = '${task_id}' WHERE id = $finding_id;
+				UPDATE processed_findings SET task_created = 1, task_id = '$(sql_escape "$task_id")' WHERE id = $finding_id;
 			" 2>/dev/null || true
 
 			# Log task creation
@@ -1235,7 +1245,7 @@ cmd_create() {
 			escaped_desc=$(sql_escape "$task_desc")
 			db "$active_db" "
 				INSERT INTO task_log (finding_id, task_id, description, severity, source_tool)
-				VALUES ($finding_id, '${task_id}', '$escaped_desc', '$severity', '$(sql_escape "$source_tool")');
+				VALUES ($finding_id, '$(sql_escape "$task_id")', '$escaped_desc', '$(sql_escape "$severity")', '$(sql_escape "$source_tool")');
 			" 2>/dev/null || true
 		fi
 
@@ -1305,6 +1315,11 @@ cmd_verify() {
 
 	if [[ $# -gt 0 && ! "$1" =~ ^-- ]]; then
 		finding_id="$1"
+		# Validate finding_id is a positive integer to prevent command injection
+		if ! [[ "$finding_id" =~ ^[0-9]+$ ]]; then
+			log_error "Invalid finding ID: '$finding_id'. Must be a positive integer."
+			return 1
+		fi
 		shift
 	fi
 
