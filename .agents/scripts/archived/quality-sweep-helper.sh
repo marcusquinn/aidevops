@@ -49,6 +49,20 @@ db() {
 }
 
 # =============================================================================
+# SQL safety helpers (GH#3719 — prevent SQL injection)
+# =============================================================================
+
+# Escape a string for safe use in SQL single-quoted literals.
+# Doubles single quotes (the only escape needed for SQLite string literals)
+# and strips null bytes which could truncate strings.
+sql_escape() {
+	local val="$1"
+	# Strip null bytes and double single quotes for SQLite safety
+	printf '%s' "$val" | tr -d '\0' | sed "s/'/''/g"
+	return 0
+}
+
+# =============================================================================
 # Database initialization
 # =============================================================================
 
@@ -227,9 +241,9 @@ fetch_sonarcloud_issues() {
 
 	init_db
 
-	# Create sweep run record
+	# Create sweep run record (GH#3719: use sql_escape)
 	local run_id
-	run_id=$(db "$SWEEP_DB" "INSERT INTO sweep_runs (source, project_key) VALUES ('sonarcloud', '$(echo "$project_key" | sed "s/'/''/g")'); SELECT last_insert_rowid();")
+	run_id=$(db "$SWEEP_DB" "INSERT INTO sweep_runs (source, project_key) VALUES ('sonarcloud', '$(sql_escape "$project_key")'); SELECT last_insert_rowid();")
 
 	local page=1
 	local total_fetched=0
@@ -427,18 +441,19 @@ cmd_sonarcloud_query() {
 
 	init_db
 
+	# Build WHERE clause using sql_escape for user-supplied values (GH#3719)
 	local where="WHERE source='sonarcloud'"
 	if [[ -n "$severity" ]]; then
-		where="$where AND severity='$(echo "$severity" | sed "s/'/''/g")'"
+		where="$where AND severity='$(sql_escape "$severity")'"
 	fi
 	if [[ -n "$file_pattern" ]]; then
-		where="$where AND file LIKE '%$(echo "$file_pattern" | sed "s/'/''/g")%'"
+		where="$where AND file LIKE '%$(sql_escape "$file_pattern")%'"
 	fi
 	if [[ -n "$rule" ]]; then
-		where="$where AND rule LIKE '%$(echo "$rule" | sed "s/'/''/g")%'"
+		where="$where AND rule LIKE '%$(sql_escape "$rule")%'"
 	fi
 	if [[ -n "$status" ]]; then
-		where="$where AND status='$(echo "$status" | sed "s/'/''/g")'"
+		where="$where AND status='$(sql_escape "$status")'"
 	fi
 
 	case "$format" in
@@ -794,9 +809,9 @@ fetch_codacy_issues() {
 
 	init_db
 
-	# Create sweep run record
+	# Create sweep run record (GH#3719: use sql_escape)
 	local run_id
-	run_id=$(db "$SWEEP_DB" "INSERT INTO sweep_runs (source, project_key) VALUES ('codacy', '$(echo "${org}/${repo}" | sed "s/'/''/g")'); SELECT last_insert_rowid();")
+	run_id=$(db "$SWEEP_DB" "INSERT INTO sweep_runs (source, project_key) VALUES ('codacy', '$(sql_escape "${org}/${repo}")'); SELECT last_insert_rowid();")
 
 	local cursor=""
 	local total_fetched=0
@@ -963,18 +978,19 @@ cmd_codacy_query() {
 
 	init_db
 
+	# Build WHERE clause using sql_escape for user-supplied values (GH#3719)
 	local where="WHERE source='codacy'"
 	if [[ -n "$severity" ]]; then
-		where="$where AND severity='$(echo "$severity" | sed "s/'/''/g")'"
+		where="$where AND severity='$(sql_escape "$severity")'"
 	fi
 	if [[ -n "$file_pattern" ]]; then
-		where="$where AND file LIKE '%$(echo "$file_pattern" | sed "s/'/''/g")%'"
+		where="$where AND file LIKE '%$(sql_escape "$file_pattern")%'"
 	fi
 	if [[ -n "$rule" ]]; then
-		where="$where AND rule LIKE '%$(echo "$rule" | sed "s/'/''/g")%'"
+		where="$where AND rule LIKE '%$(sql_escape "$rule")%'"
 	fi
 	if [[ -n "$status" ]]; then
-		where="$where AND status='$(echo "$status" | sed "s/'/''/g")'"
+		where="$where AND status='$(sql_escape "$status")'"
 	fi
 
 	case "$format" in
@@ -1706,7 +1722,7 @@ cmd_tasks() {
 		fi
 		task_line="${task_line} logged:$(date +%Y-%m-%d)"
 
-		task_lines="${task_lines}${task_line}\n"
+		task_lines="${task_lines}${task_line}"$'\n'
 		tasks_created=$((tasks_created + 1))
 	done <"$tmp_groups"
 
@@ -1716,7 +1732,9 @@ cmd_tasks() {
 		echo ""
 		echo "=== Task Lines (for TODO.md) ==="
 		echo ""
-		echo -e "$task_lines"
+		# GH#3719: Use printf '%s' instead of echo -e to prevent interpretation
+		# of escape sequences in database-derived data (task injection risk).
+		printf '%s' "$task_lines"
 		echo "================================"
 		echo ""
 		print_info "To add these to TODO.md, copy the lines above into the appropriate section."
