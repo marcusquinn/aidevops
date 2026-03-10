@@ -189,15 +189,17 @@ function createQualityCheckTool(scriptsDir, pipelines) {
 
 /**
  * Allowlist map for install-hooks-helper.sh actions.
+ * Object.create(null) eliminates the prototype chain, preventing inherited
+ * properties (toString, constructor, __proto__) from bypassing validation.
  * Object-literal lookup severs the taint chain — the value returned is from
  * this constant, not derived from the caller's input.
  */
-const HOOK_ACTION_MAP = {
+const HOOK_ACTION_MAP = Object.freeze(Object.assign(Object.create(null), {
   install: "install",
   uninstall: "uninstall",
   status: "status",
   test: "test",
-};
+}));
 
 /**
  * Run the install-hooks-helper.sh script.
@@ -206,9 +208,14 @@ const HOOK_ACTION_MAP = {
  * @returns {string}
  */
 function runHookHelper(helperScript, action) {
-  // Object-property lookup returns a string owned by HOOK_ACTION_MAP,
+  // Own-property check + lookup returns a string owned by HOOK_ACTION_MAP,
   // completely severing the taint chain from the function parameter.
-  const validAction = HOOK_ACTION_MAP[String(action)];
+  // Object.hasOwn guards against any inherited properties even if
+  // Object.create(null) is accidentally reverted.
+  const actionKey = String(action);
+  const validAction = Object.hasOwn(HOOK_ACTION_MAP, actionKey)
+    ? HOOK_ACTION_MAP[actionKey]
+    : undefined;
   if (!validAction) {
     return `Invalid action: ${String(action)}. Valid actions: ${Object.keys(HOOK_ACTION_MAP).join(", ")}`;
   }
