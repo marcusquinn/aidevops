@@ -265,7 +265,7 @@ _security_network_summary() {
 	if [[ "$flagged_count" -gt 0 ]] && command -v jq &>/dev/null; then
 		echo ""
 		echo "  Top flagged domains:"
-		jq -r '.domain' "$NET_FLAGGED_LOG" 2>/dev/null | sort | uniq -c | sort -rn | head -5 | while read -r count domain; do
+		jq -r '.domain // empty' "$NET_FLAGGED_LOG" 2>/dev/null | sort | uniq -c | sort -rn | head -5 | while read -r count domain; do
 			printf "    %-35s %s\n" "$domain" "$count"
 		done
 	fi
@@ -954,8 +954,12 @@ main() {
 			include_security=true
 			;;
 		--session)
+			if [[ $# -le 1 ]] || [[ "${2:-}" == --* ]]; then
+				echo "Error: --session requires a session ID argument" >&2
+				exit 1
+			fi
 			shift
-			session_filter=$(_sanitize_session_filter "${1:-}")
+			session_filter=$(_sanitize_session_filter "$1")
 			;;
 		--json)
 			json_flag=true
