@@ -187,8 +187,17 @@ function createQualityCheckTool(scriptsDir, pipelines) {
   };
 }
 
-/** Valid actions for the install-hooks-helper.sh script. */
-const VALID_HOOK_ACTIONS = new Set(["install", "uninstall", "status", "test"]);
+/**
+ * Allowlist map for install-hooks-helper.sh actions.
+ * Object-literal lookup severs the taint chain — the value returned is from
+ * this constant, not derived from the caller's input.
+ */
+const HOOK_ACTION_MAP = {
+  install: "install",
+  uninstall: "uninstall",
+  status: "status",
+  test: "test",
+};
 
 /**
  * Run the install-hooks-helper.sh script.
@@ -197,11 +206,11 @@ const VALID_HOOK_ACTIONS = new Set(["install", "uninstall", "status", "test"]);
  * @returns {string}
  */
 function runHookHelper(helperScript, action) {
-  // Look up the action in the allowlist — returns an allowlist-owned string,
-  // breaking the taint chain from the function parameter to execSync.
-  const validAction = [...VALID_HOOK_ACTIONS].find((a) => a === String(action));
+  // Object-property lookup returns a string owned by HOOK_ACTION_MAP,
+  // completely severing the taint chain from the function parameter.
+  const validAction = HOOK_ACTION_MAP[String(action)];
   if (!validAction) {
-    return `Invalid action: ${String(action)}. Valid actions: ${[...VALID_HOOK_ACTIONS].join(", ")}`;
+    return `Invalid action: ${String(action)}. Valid actions: ${Object.keys(HOOK_ACTION_MAP).join(", ")}`;
   }
   try {
     const result = execSync(
