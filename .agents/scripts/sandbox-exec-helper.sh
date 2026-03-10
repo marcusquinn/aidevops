@@ -184,7 +184,7 @@ _sandbox_check_dns_exfil() {
 	fi
 
 	# Pattern 2: base64/encoding piped to DNS tool
-	if printf '%s' "$command" | grep -qE '\b(base64|xxd|od|hexdump)\b.*\|\s*(dig|nslookup|host)\b'; then
+	if printf '%s' "$command" | grep -qE '\b(base64|xxd|od[[:space:]]+-[AaxX]|hexdump)\b.*\|[[:space:]]*(dig|nslookup|host)\b'; then
 		log_sandbox "CRIT" "DNS EXFIL DETECTED: Encoded data piped to DNS tool (worker=${wid})"
 		dns_exfil_detected=true
 	fi
@@ -196,7 +196,7 @@ _sandbox_check_dns_exfil() {
 	fi
 
 	# Pattern 4: DNS-over-HTTPS with dynamic data
-	if printf '%s' "$command" | grep -qE '(dns-query|dns\.google|cloudflare-dns\.com/dns-query).*(\$\(|\$\{|`)'; then
+	if printf '%s' "$command" | grep -qE '(dns-query|dns\.google|cloudflare-dns\.com/dns-query|doh\.).*(\$\(|\$\{|`)'; then
 		log_sandbox "CRIT" "DNS EXFIL DETECTED: DNS-over-HTTPS with dynamic data (worker=${wid})"
 		dns_exfil_detected=true
 	fi
