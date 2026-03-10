@@ -39,6 +39,22 @@ readonly PG_ATTEMPTS_LOG="${HOME}/.aidevops/logs/prompt-guard/attempts.jsonl"
 readonly SESSION_CONTEXT_FILE="${HOME}/.aidevops/.agent-workspace/security/session-context.json"
 readonly QUARANTINE_LOG="${HOME}/.aidevops/.agent-workspace/security/quarantine.jsonl"
 
+# Shared format string for cost summary table rows
+readonly FMT_COST_ROW="  %-35s %6s %10s %10s %10s %10s\n"
+
+# Sanitize a session ID filter to prevent injection attacks.
+# Only allows alphanumeric characters, hyphens, underscores, and dots.
+# Arguments:
+#   $1 - raw session filter value
+# Output: sanitized value on stdout
+_sanitize_session_filter() {
+	local raw="${1:-}"
+	# Strip any characters that aren't alphanumeric, dash, underscore, or dot
+	local sanitized="${raw//[^a-zA-Z0-9_.-]/}"
+	echo "$sanitized"
+	return 0
+}
+
 # Get cost summary from observability data.
 # Aggregates by model, showing request count and total cost.
 # Arguments:
@@ -51,7 +67,9 @@ _security_cost_summary() {
 	if [[ -f "$OBS_DB" ]] && command -v sqlite3 &>/dev/null; then
 		local where_clause=""
 		if [[ -n "$session_filter" ]]; then
-			where_clause="WHERE session_id = '${session_filter}'"
+			local safe_session
+			safe_session=$(_sanitize_session_filter "$session_filter")
+			where_clause="WHERE session_id = '${safe_session}'"
 		fi
 		local result
 		result=$(sqlite3 -separator '|' "$OBS_DB" "
@@ -70,8 +88,8 @@ _security_cost_summary() {
 
 		if [[ -n "$result" ]]; then
 			local grand_total_cost=0 grand_total_reqs=0
-			printf "  %-35s %6s %10s %10s %10s %10s\n" "Model" "Reqs" "Input" "Output" "Cache" "Cost"
-			printf "  %-35s %6s %10s %10s %10s %10s\n" "---" "---" "---" "---" "---" "---"
+			printf "$FMT_COST_ROW" "Model" "Reqs" "Input" "Output" "Cache" "Cost"
+			printf "$FMT_COST_ROW" "---" "---" "---" "---" "---" "---"
 			while IFS='|' read -r model reqs input_tok output_tok cache_tok cost; do
 				[[ -z "$model" ]] && continue
 				local short_model="${model##*/}"
@@ -89,24 +107,33 @@ _security_cost_summary() {
 
 	# Fallback to JSONL metrics
 	if [[ -f "$OBS_METRICS" ]] && command -v jq &>/dev/null; then
-		local jq_filter='.'
-		if [[ -n "$session_filter" ]]; then
-			jq_filter="select(.session_id == \"${session_filter}\")"
-		fi
 		local result
-		result=$(jq -sr "[.[] | ${jq_filter}] | group_by(.model) | map({
-            model: .[0].model,
-            requests: length,
-            input_tokens: ([.[].input_tokens] | add),
-            output_tokens: ([.[].output_tokens] | add),
-            cache_tokens: ([.[].cache_read_tokens] | add),
-            cost: ([.[].cost_total] | add)
-        }) | sort_by(-.cost)" "$OBS_METRICS" 2>/dev/null) || result=""
+		if [[ -n "$session_filter" ]]; then
+			local safe_session
+			safe_session=$(_sanitize_session_filter "$session_filter")
+			result=$(jq -sr --arg sid "$safe_session" '[.[] | select(.session_id == $sid)] | group_by(.model) | map({
+                model: .[0].model,
+                requests: length,
+                input_tokens: ([.[].input_tokens] | add),
+                output_tokens: ([.[].output_tokens] | add),
+                cache_tokens: ([.[].cache_read_tokens] | add),
+                cost: ([.[].cost_total] | add)
+            }) | sort_by(-.cost)' "$OBS_METRICS" 2>/dev/null) || result=""
+		else
+			result=$(jq -sr '[.[] ] | group_by(.model) | map({
+                model: .[0].model,
+                requests: length,
+                input_tokens: ([.[].input_tokens] | add),
+                output_tokens: ([.[].output_tokens] | add),
+                cache_tokens: ([.[].cache_read_tokens] | add),
+                cost: ([.[].cost_total] | add)
+            }) | sort_by(-.cost)' "$OBS_METRICS" 2>/dev/null) || result=""
+		fi
 
 		if [[ -n "$result" && "$result" != "[]" ]]; then
 			local grand_total_cost=0 grand_total_reqs=0
-			printf "  %-35s %6s %10s %10s %10s %10s\n" "Model" "Reqs" "Input" "Output" "Cache" "Cost"
-			printf "  %-35s %6s %10s %10s %10s %10s\n" "---" "---" "---" "---" "---" "---"
+			printf "$FMT_COST_ROW" "Model" "Reqs" "Input" "Output" "Cache" "Cost"
+			printf "$FMT_COST_ROW" "---" "---" "---" "---" "---" "---"
 			echo "$result" | jq -r '.[] | "\(.model)|\(.requests)|\(.input_tokens)|\(.output_tokens)|\(.cache_tokens)|\(.cost)"' 2>/dev/null | while IFS='|' read -r model reqs input_tok output_tok cache_tok cost; do
 				[[ -z "$model" ]] && continue
 				local short_model="${model##*/}"
@@ -339,10 +366,8 @@ _security_posture() {
 	if [[ -f "$PG_ATTEMPTS_LOG" ]]; then
 		local blocks
 		blocks=$(grep -c '"action":"BLOCK"' "$PG_ATTEMPTS_LOG" 2>/dev/null || echo "0")
-		if [[ "$blocks" -gt 0 ]]; then
-			if [[ "$posture" == "CLEAN" || "$posture" == "LOW" ]]; then
-				posture="MEDIUM"
-			fi
+		if [[ "$blocks" -gt 0 && ("$posture" == "CLEAN" || "$posture" == "LOW") ]]; then
+			posture="MEDIUM"
 		fi
 		local warns
 		warns=$(grep -c '"action":"WARN"' "$PG_ATTEMPTS_LOG" 2>/dev/null || echo "0")
@@ -482,34 +507,39 @@ _security_summary_json() {
 	local quarantine_available="false"
 	[[ -x "${SCRIPT_DIR}/quarantine-helper.sh" ]] && quarantine_available="true"
 
-	cat <<EOF
-{
-  "timestamp": "$(date -u '+%Y-%m-%dT%H:%M:%SZ')",
-  "session_filter": $(if [[ -n "$session_filter" ]]; then echo "\"$session_filter\""; else echo "null"; fi),
-  "posture": "$posture",
-  "audit": {
-    "total_events": $audit_count,
-    "chain_intact": $chain_intact
-  },
-  "network": {
-    "logged_access": $net_access,
-    "flagged": $net_flagged,
-    "denied": $net_denied
-  },
-  "prompt_guard": {
-    "total_detections": $pg_total,
-    "blocked": $pg_blocks,
-    "warned": $pg_warns,
-    "sanitized": $pg_sanitizes
-  },
-  "session_context": {
-    "available": $session_context_available
-  },
-  "quarantine": {
-    "available": $quarantine_available
-  }
-}
-EOF
+	# Build JSON safely using jq to prevent injection via session_filter
+	local session_json="null"
+	if [[ -n "$session_filter" ]]; then
+		local safe_session
+		safe_session=$(_sanitize_session_filter "$session_filter")
+		session_json=$(jq -n --arg s "$safe_session" '$s')
+	fi
+
+	jq -n \
+		--arg timestamp "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
+		--argjson session_filter "$session_json" \
+		--arg posture "$posture" \
+		--argjson audit_count "$audit_count" \
+		--argjson chain_intact "$chain_intact" \
+		--argjson net_access "$net_access" \
+		--argjson net_flagged "$net_flagged" \
+		--argjson net_denied "$net_denied" \
+		--argjson pg_total "$pg_total" \
+		--argjson pg_blocks "$pg_blocks" \
+		--argjson pg_warns "$pg_warns" \
+		--argjson pg_sanitizes "$pg_sanitizes" \
+		--argjson session_context_available "$session_context_available" \
+		--argjson quarantine_available "$quarantine_available" \
+		'{
+			timestamp: $timestamp,
+			session_filter: $session_filter,
+			posture: $posture,
+			audit: { total_events: $audit_count, chain_intact: $chain_intact },
+			network: { logged_access: $net_access, flagged: $net_flagged, denied: $net_denied },
+			prompt_guard: { total_detections: $pg_total, blocked: $pg_blocks, warned: $pg_warns, sanitized: $pg_sanitizes },
+			session_context: { available: $session_context_available },
+			quarantine: { available: $quarantine_available }
+		}'
 	return 0
 }
 
@@ -885,7 +915,7 @@ main() {
 			;;
 		--session)
 			shift
-			session_filter="${1:-}"
+			session_filter=$(_sanitize_session_filter "${1:-}")
 			;;
 		--json)
 			json_flag=true
