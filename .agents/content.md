@@ -13,6 +13,8 @@ subagents:
   - production/video
   - production/audio
   - production/characters
+  # Humanise (post-production)
+  - humanise
   # Distribution (multi-channel)
   - distribution/youtube
   - distribution/short-form
@@ -25,7 +27,6 @@ subagents:
   # Legacy content tools
   - guidelines
   - platform-personas
-  - humanise
   - seo-writer
   - meta-creator
   - editor
@@ -43,7 +44,7 @@ subagents:
 ## Quick Reference
 
 - **Purpose**: Multi-media multi-channel content production at scale
-- **Architecture**: Diamond pipeline (Research → Story → Production fan-out → Distribution fan-out)
+- **Architecture**: Diamond pipeline (Research → Story → Production fan-out → Humanise → Distribution fan-out)
 - **Multiplier**: One researched story → 10+ outputs across media types and channels
 
 **The Diamond Pipeline**:
@@ -57,6 +58,9 @@ subagents:
             Production (multi-media)
            /    |    |    |    \
        Writing Image Video Audio Characters
+          \    |    |    |    /
+           \   |    |    |   /
+                 Humanise
           \    |    |    |    /
            \   |    |    |   /
         Distribution (multi-channel)

@@ -32,7 +32,9 @@ readonly BOLD='\033[1m'
 get_local_version() {
 	local subagent_file="$1"
 	if [[ -f "$subagent_file" ]]; then
-		grep -E '^version:' "$subagent_file" | head -1 | sed 's/version:[[:space:]]*//' | tr -d '"'"'"
+		local version
+		version=$(grep -E '^version:' "$subagent_file" | head -1 | sed 's/version:[[:space:]]*//' | tr -d '"'"'" || echo "unknown")
+		echo "${version:-unknown}"
 	else
 		echo "not found"
 	fi
@@ -43,7 +45,9 @@ get_local_version() {
 get_upstream_version() {
 	local subagent_file="$1"
 	if [[ -f "$subagent_file" ]]; then
-		grep -E '^upstream_version:' "$subagent_file" | head -1 | sed 's/upstream_version:[[:space:]]*//' | tr -d '"'"'"
+		local version
+		version=$(grep -E '^upstream_version:' "$subagent_file" | head -1 | sed 's/upstream_version:[[:space:]]*//' | tr -d '"'"'" || echo "unknown")
+		echo "${version:-unknown}"
 	else
 		echo "not found"
 	fi
@@ -173,10 +177,14 @@ cmd_check() {
 	echo -e "Latest upstream:  ${CYAN}${upstream_latest}${NC}"
 	echo ""
 
-	if compare_versions "$upstream_tracked" "$upstream_latest"; then
+	local rc=0
+	compare_versions "$upstream_tracked" "$upstream_latest" || rc=$?
+	case $rc in
+	0)
 		echo -e "${GREEN}Up to date with upstream.${NC}"
 		return 0
-	else
+		;;
+	1)
 		echo -e "${YELLOW}UPDATE AVAILABLE${NC}"
 		echo ""
 		echo "The upstream humanizer skill has been updated."
@@ -188,7 +196,13 @@ cmd_check() {
 		echo "  4. Update upstream_version in frontmatter to: ${upstream_latest}"
 		echo ""
 		return 1
-	fi
+		;;
+	2)
+		echo -e "${YELLOW}Tracked version (${upstream_tracked}) is ahead of upstream (${upstream_latest}).${NC}"
+		echo "Check whether upstream_version was bumped incorrectly or upstream rolled back."
+		return 2
+		;;
+	esac
 }
 
 # Show diff between local and upstream
