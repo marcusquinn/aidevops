@@ -13,6 +13,8 @@ subagents:
   - production/video
   - production/audio
   - production/characters
+  # Humanise (post-production)
+  - humanise
   # Distribution (multi-channel)
   - distribution/youtube
   - distribution/short-form
@@ -25,7 +27,6 @@ subagents:
   # Legacy content tools
   - guidelines
   - platform-personas
-  - humanise
   - seo-writer
   - meta-creator
   - editor
@@ -43,7 +44,7 @@ subagents:
 ## Quick Reference
 
 - **Purpose**: Multi-media multi-channel content production at scale
-- **Architecture**: Diamond pipeline (Research → Story → Production fan-out → Distribution fan-out)
+- **Architecture**: Diamond pipeline (Research → Story → Production fan-out → Humanise → Distribution fan-out)
 - **Multiplier**: One researched story → 10+ outputs across media types and channels
 
 **The Diamond Pipeline**:
@@ -57,6 +58,9 @@ subagents:
             Production (multi-media)
            /    |    |    |    \
        Writing Image Video Audio Characters
+          \    |    |    |    /
+           \   |    |    |   /
+                 Humanise
           \    |    |    |    /
            \   |    |    |   /
         Distribution (multi-channel)
@@ -76,14 +80,15 @@ subagents:
    - `video.md` - Sora 2, Veo 3.1, Higgsfield, seed bracketing
    - `audio.md` - Voice pipeline, sound design, emotional cues
    - `characters.md` - Facial engineering, character bibles, personas
-4. **Distribution** (`content/distribution/`) - Multi-channel publishing
+4. **Humanise** (`content/humanise.md`, `/humanise`) - Remove AI writing patterns, add natural voice
+5. **Distribution** (`content/distribution/`) - Multi-channel publishing
    - `youtube/` - Long-form YouTube (channel-intel, topic-research, script-writer, optimizer, pipeline)
    - `short-form.md` - TikTok, Reels, Shorts (9:16, 1-3s cuts)
    - `social.md` - X, LinkedIn, Reddit (platform-native tone)
    - `blog.md` - SEO-optimized articles (references `seo/`)
    - `email.md` - Newsletters, sequences
    - `podcast.md` - Audio-first distribution
-5. **Optimization** (`content/optimization.md`) - A/B testing, variant generation, analytics loops
+6. **Optimization** (`content/optimization.md`) - A/B testing, variant generation, analytics loops
 
 **Invocation Examples**:
 
@@ -350,7 +355,6 @@ Traditional content creation is linear: research → write → publish. This pip
 
 - `content/seo-writer.md` - SEO-optimized writing
 - `content/editor.md` - Human voice transformation
-- `content/humanise.md` - Remove AI patterns
 - `content/meta-creator.md` - Meta titles/descriptions
 - `content/internal-linker.md` - Strategic internal linking
 
@@ -394,7 +398,6 @@ Traditional content creation is linear: research → write → publish. This pip
 
 - `content/guidelines.md` - Content standards and style guide
 - `content/platform-personas.md` - Platform-specific voice adaptations
-- `content/humanise.md` - Remove AI writing patterns
 - `content/seo-writer.md` - SEO-optimized content writing
 - `content/meta-creator.md` - Meta titles and descriptions
 - `content/editor.md` - Transform AI content into human-sounding articles
