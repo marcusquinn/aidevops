@@ -544,6 +544,9 @@ cmd_run() {
 			fi
 		fi
 
+		# Working directory
+		cmd_args+=("--dir" "$workdir")
+
 		# Output format
 		if [[ -n "$format" ]]; then
 			cmd_args+=("--format" "$format")
@@ -576,6 +579,9 @@ cmd_run() {
 				log_warn "No previous session found for $name, starting fresh"
 			fi
 		fi
+
+		# Working directory
+		cmd_args+=("--dir" "$workdir")
 
 		# Claude CLI does not support --attach (server mode)
 		if [[ -n "$attach" ]]; then

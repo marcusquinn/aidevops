@@ -135,35 +135,68 @@ Cloudron provides one-click Synapse installation with automatic SSL and updates.
 ```bash
 # 1. Install Synapse on Cloudron
 # Dashboard > App Store > Matrix Synapse > Install
+# Set user management to "Leave user management to the app"
 # Or via CLI: cloudron-helper.sh install-app production matrix synapse.yourdomain.com
 
-# 2. Create bot user
-# Synapse Admin Console > Users > Create User
-# Username: aibot
-# Password: (generate secure password)
-# Admin: No (bots don't need admin)
+# 2. Create bot user via Cloudron terminal (App > Terminal)
+/app/code/env/bin/register_new_matrix_user -c /app/data/configs/homeserver.yaml http://localhost:8008
+# Username: aibot, Admin: No
 
-# 3. Get access token
-# Login as bot via Element (https://app.element.io)
-# Settings > Help & About > Advanced > Access Token
-# Copy the token (starts with syt_)
+# 3. Get access token via login API (from Cloudron terminal)
+curl -s -X POST "http://localhost:8008/_matrix/client/v3/login" \
+  -H "Content-Type: application/json" \
+  -d '{"type":"m.login.password","identifier":{"type":"m.id.user","user":"aibot"},"password":"YOUR_PASSWORD"}' \
+  | python3 -m json.tool
+# Copy the access_token value
 
-# 4. Configure the bot (use --dry-run to test first)
+# 4. Disable federation and registration (in Cloudron terminal)
+# Edit /app/data/configs/homeserver.yaml:
+#   enable_registration: false
+#   enable_registration_without_verification: false
+#   resources: - names: [client]  (remove 'federation')
+# Then restart the app from Cloudron dashboard
+
+# 5. Create unencrypted rooms
+# IMPORTANT: Use Element client (web/desktop) — NOT FluffyChat.
+# FluffyChat forces encryption on all new rooms with no toggle to disable.
+# Element has an explicit encryption toggle during room creation.
+# Alternative: create rooms via Synapse API (see below)
+
+# 6. Configure the bot (use --dry-run to test first)
 matrix-dispatch-helper.sh setup --dry-run  # Preview configuration
 matrix-dispatch-helper.sh setup            # Apply configuration
 # Enter: https://synapse.yourdomain.com
-# Enter: syt_your_access_token_here
+# Enter: access token from step 3
 # Enter allowed users (optional)
 # Enter default runner (optional)
 
-# 5. Invite bot to rooms
+# 7. Create runners for each room mapping
+runner-helper.sh create code-reviewer --description "Code review bot" --workdir ~/Git/myproject
+
+# 8. Invite bot to rooms
 # In Element: Invite @aibot:yourdomain.com to your rooms
 
-# 6. Map rooms to runners
+# 9. Map rooms to runners
 matrix-dispatch-helper.sh map '!roomid:yourdomain.com' code-reviewer
 
-# 7. Start the bot
+# 10. Start the bot
 matrix-dispatch-helper.sh start --daemon
+```
+
+**Creating unencrypted rooms via API** (alternative to Element):
+
+```bash
+TOKEN="<admin-access-token>"
+curl -s -X POST "http://localhost:8008/_matrix/client/v3/createRoom" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"name":"room-name","room_alias_name":"room-name","visibility":"private","preset":"private_chat","initial_state":[]}'
+```
+
+**Cleaning up stale invites** (if bot crashes on startup due to deleted rooms):
+
+```bash
+matrix-dispatch-helper.sh cleanup-invites
 ```
 
 ### Manual Synapse Setup
@@ -407,6 +440,8 @@ runner-helper.sh edit code-reviewer
 4. **No admin access**: Bot account should not have Synapse admin privileges
 5. **Network**: OpenCode server should be localhost-only unless secured
 6. **Concurrency**: One dispatch per room prevents resource exhaustion
+7. **OpenCode server password**: Set `OPENCODE_SERVER_PASSWORD` env var to secure the server. Without it, any local process can dispatch to the AI. Low risk on single-user machines (localhost-only), but recommended for shared systems.
+8. **Encryption**: The bot cannot read encrypted messages. All rooms used with the bot must have encryption disabled. Use Element (not FluffyChat) to create rooms with encryption off.
 
 ## Troubleshooting
 
@@ -415,9 +450,13 @@ runner-helper.sh edit code-reviewer
 | Bot not responding | Check `matrix-dispatch-helper.sh status` and logs |
 | "Not mapped" error | Map the room: `matrix-dispatch-helper.sh map '!room:server' runner` |
 | Runner dispatch fails | Ensure OpenCode server is running: `opencode serve` |
+| Runner not found | Create the runner: `runner-helper.sh create <name> --workdir /path` |
 | Access denied | Check `allowedUsers` in config |
 | Bot not joining rooms | Invite the bot user to the room via Element |
+| Bot crashes on startup | Run `matrix-dispatch-helper.sh cleanup-invites` to reject stale invites |
+| Raw JSON in responses | Regenerate bot script: `matrix-dispatch-helper.sh setup` |
 | Stale PID file | Run `matrix-dispatch-helper.sh stop` to clean up |
+| Wrong working directory | Check runner config: `runner-helper.sh status <name>` (verify workdir) |
 
 ## Related
 

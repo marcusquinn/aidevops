@@ -183,15 +183,15 @@ cmd_setup() {
 		existing_hs=$(config_get "homeserverUrl")
 		if [[ -n "$existing_hs" ]]; then
 			echo -n "Matrix homeserver URL [$existing_hs]: "
-			read -r homeserver
+			read -r homeserver </dev/tty
 			homeserver="${homeserver:-$existing_hs}"
 		else
 			echo -n "Matrix homeserver URL (e.g., https://matrix.example.com): "
-			read -r homeserver
+			read -r homeserver </dev/tty
 		fi
 	else
 		echo -n "Matrix homeserver URL (e.g., https://matrix.example.com): "
-		read -r homeserver
+		read -r homeserver </dev/tty
 	fi
 
 	if [[ -z "$homeserver" ]]; then
@@ -211,12 +211,11 @@ cmd_setup() {
 	existing_token=$(config_get "accessToken")
 	if [[ -n "$existing_token" ]]; then
 		echo -n "Bot access token [****${existing_token: -8}]: "
-		read -r access_token
+		read -r access_token </dev/tty
 		access_token="${access_token:-$existing_token}"
 	else
 		echo -n "Bot access token: "
-		read -rs access_token
-		echo ""
+		read -r access_token </dev/tty
 	fi
 
 	if [[ -z "$access_token" ]]; then
@@ -236,11 +235,11 @@ cmd_setup() {
 	existing_users=$(config_get "allowedUsers")
 	if [[ -n "$existing_users" ]]; then
 		echo -n "Allowed users [$existing_users]: "
-		read -r allowed_users
+		read -r allowed_users </dev/tty
 		allowed_users="${allowed_users:-$existing_users}"
 	else
 		echo -n "Allowed users (empty = all): "
-		read -r allowed_users
+		read -r allowed_users </dev/tty
 	fi
 
 	# Default runner
@@ -254,11 +253,11 @@ cmd_setup() {
 	existing_runner=$(config_get "defaultRunner")
 	if [[ -n "$existing_runner" ]]; then
 		echo -n "Default runner [$existing_runner]: "
-		read -r default_runner
+		read -r default_runner </dev/tty
 		default_runner="${default_runner:-$existing_runner}"
 	else
 		echo -n "Default runner (empty = ignore unmapped rooms): "
-		read -r default_runner
+		read -r default_runner </dev/tty
 	fi
 
 	# Session idle timeout
@@ -273,11 +272,11 @@ cmd_setup() {
 	existing_timeout=$(config_get "sessionIdleTimeout")
 	if [[ -n "$existing_timeout" ]]; then
 		echo -n "Session idle timeout [${existing_timeout}s]: "
-		read -r idle_timeout
+		read -r idle_timeout </dev/tty
 		idle_timeout="${idle_timeout:-$existing_timeout}"
 	else
 		echo -n "Session idle timeout [300]: "
-		read -r idle_timeout
+		read -r idle_timeout </dev/tty
 		idle_timeout="${idle_timeout:-300}"
 	fi
 
@@ -373,14 +372,46 @@ cmd_setup() {
 	else
 		log_success "Setup complete!"
 		echo ""
+
+		# Check for existing room mappings and warn about missing runners
+		local runner_helper="$HOME/.aidevops/agents/scripts/runner-helper.sh"
+		if config_exists && [[ -x "$runner_helper" ]]; then
+			local mappings
+			mappings=$(jq -r '.roomMappings // {} | values[]' "$CONFIG_FILE" 2>/dev/null)
+			if [[ -n "$mappings" ]]; then
+				local missing_runners=()
+				while IFS= read -r runner_name; do
+					if ! "$runner_helper" status "$runner_name" &>/dev/null; then
+						missing_runners+=("$runner_name")
+					fi
+				done <<<"$mappings"
+
+				if ((${#missing_runners[@]} > 0)); then
+					log_warn "The following mapped runners do not exist yet:"
+					for mr in "${missing_runners[@]}"; do
+						echo "  - $mr"
+					done
+					echo ""
+					echo "Create them with:"
+					for mr in "${missing_runners[@]}"; do
+						echo "  runner-helper.sh create $mr --description \"Description\" --workdir /path/to/project"
+					done
+					echo ""
+				fi
+			fi
+		fi
+
 		echo "Next steps:"
 		echo "  1. Map rooms to runners:"
 		echo "     matrix-dispatch-helper.sh map '!roomid:server' my-runner"
 		echo ""
-		echo "  2. Start the bot:"
+		echo "  2. Create runners for each mapped room:"
+		echo "     runner-helper.sh create <name> --description \"desc\" --workdir /path/to/project"
+		echo ""
+		echo "  3. Start the bot:"
 		echo "     matrix-dispatch-helper.sh start"
 		echo ""
-		echo "  3. In a mapped Matrix room, type:"
+		echo "  4. In a mapped Matrix room, type:"
 		echo "     !ai Review the auth module for security issues"
 	fi
 
@@ -863,7 +894,7 @@ generate_bot_script() {
 // - Loads entity profile + conversation context for prompts
 // - Privacy-aware: filters cross-channel information
 
-import { MatrixClient, SimpleFsStorageProvider, AutojoinRoomsMixin } from "matrix-bot-sdk";
+import { MatrixClient, SimpleFsStorageProvider } from "matrix-bot-sdk";
 import { readFileSync } from "fs";
 import { spawn } from "child_process";
 import * as store from "./session-store.mjs";
@@ -982,6 +1013,23 @@ function buildCompactionPrompt(roomId, entityId = "") {
     return parts.join("\n");
 }
 
+// Parse JSONL output to extract text parts from OpenCode streaming responses
+function parseJsonlText(raw) {
+    const textParts = [];
+    for (const line of raw.split("\n")) {
+        if (!line.trim()) continue;
+        try {
+            const event = JSON.parse(line);
+            if (event.type === "text" && event.part?.text) {
+                textParts.push(event.part.text);
+            }
+        } catch {
+            // Skip non-JSON lines (log output, stderr mixed in, etc.)
+        }
+    }
+    return textParts.join("\n") || raw.trim();
+}
+
 // Dispatch to runner via runner-helper.sh
 async function dispatchToRunner(runnerName, prompt) {
     return new Promise((resolve, reject) => {
@@ -1003,7 +1051,7 @@ async function dispatchToRunner(runnerName, prompt) {
 
         proc.on("close", (code) => {
             if (code === 0) {
-                resolve(stdout.trim());
+                resolve(parseJsonlText(stdout));
             } else {
                 reject(new Error(`Runner exited with code ${code}: ${stderr}`));
             }
@@ -1040,12 +1088,21 @@ async function dispatchViaAPI(prompt, runnerName) {
     });
 
     if (!msgRes.ok) throw new Error(`Failed to send message: ${msgRes.status}`);
-    const response = await msgRes.json();
+    const rawText = await msgRes.text();
 
-    // Extract text from response
-    const textParts = (response.parts || [])
-        .filter(p => p.type === "text")
-        .map(p => p.text);
+    // Parse JSONL stream — extract text parts from streaming response
+    const textParts = [];
+    for (const line of rawText.split("\n")) {
+        if (!line.trim()) continue;
+        try {
+            const event = JSON.parse(line);
+            if (event.type === "text" && event.part?.text) {
+                textParts.push(event.part.text);
+            }
+        } catch {
+            // Skip non-JSON lines
+        }
+    }
 
     return { sessionId: session.id, text: textParts.join("\n") || "(no response)" };
 }
@@ -1216,8 +1273,16 @@ async function main() {
     const matrixStorage = new SimpleFsStorageProvider(`${process.env.HOME}/.aidevops/.agent-workspace/matrix-bot/bot-storage.json`);
     const client = new MatrixClient(config.homeserverUrl, config.accessToken, matrixStorage);
 
-    // Auto-join rooms when invited
-    AutojoinRoomsMixin.setupOnClient(client);
+    // Auto-join rooms when invited (with error handling to prevent crashes on stale invites)
+    client.on("room.invite", async (roomId, inviteEvent) => {
+        try {
+            console.log(`[MATRIX-BOT] Invited to room ${roomId}, attempting to join...`);
+            await client.joinRoom(roomId);
+            console.log(`[MATRIX-BOT] Joined room ${roomId}`);
+        } catch (err) {
+            console.warn(`[MATRIX-BOT] Failed to join room ${roomId}: ${err.message} — skipping`);
+        }
+    });
 
     // Track active dispatches to prevent flooding
     const activeDispatches = new Set();
@@ -1279,7 +1344,7 @@ async function main() {
         console.log(`[MATRIX-BOT] Dispatching to runner '${runnerName}' from ${event.sender} in ${roomId}`);
 
         // Send typing indicator
-        await client.sendTyping(roomId, true, 30000).catch(() => {});
+        await client.setTyping(roomId, true, 30000).catch(() => {});
 
         // React with hourglass to acknowledge
         await client.sendEvent(roomId, "m.reaction", {
@@ -1357,13 +1422,24 @@ async function main() {
             }).catch(() => {});
         } finally {
             activeDispatches.delete(dispatchKey);
-            await client.sendTyping(roomId, false).catch(() => {});
+            await client.setTyping(roomId, false).catch(() => {});
         }
     });
 
     // Start syncing
     await client.start();
     console.log("[MATRIX-BOT] Bot started and syncing");
+
+    // Join all mapped rooms on startup (ensures bot is in rooms created while it was offline)
+    const mappedRooms = Object.keys(config.roomMappings || {});
+    for (const roomId of mappedRooms) {
+        try {
+            await client.joinRoom(roomId);
+            console.log(`[MATRIX-BOT] Joined mapped room ${roomId}`);
+        } catch (err) {
+            console.warn(`[MATRIX-BOT] Could not join mapped room ${roomId}: ${err.message}`);
+        }
+    }
 
     // Graceful shutdown: compact all active sessions, then exit
     async function shutdown() {
@@ -2841,6 +2917,94 @@ EOF
 }
 
 #######################################
+#######################################
+# Cleanup stale invites
+# Rejects pending invites to rooms not in the room mappings
+#######################################
+cmd_cleanup_invites() {
+	if ! config_exists; then
+		log_error "Bot not configured. Run: matrix-dispatch-helper.sh setup"
+		return 1
+	fi
+
+	local access_token
+	access_token=$(config_get "accessToken")
+	local homeserver
+	homeserver=$(config_get "homeserverUrl")
+
+	if [[ -z "$access_token" || -z "$homeserver" ]]; then
+		log_error "Missing accessToken or homeserverUrl in config"
+		return 1
+	fi
+
+	log_info "Fetching pending invites..."
+
+	# Get sync data to find pending invites
+	local sync_data
+	sync_data=$(curl -sf "${homeserver}/_matrix/client/v3/sync?filter=%7B%22room%22%3A%7B%22timeline%22%3A%7B%22limit%22%3A0%7D%7D%7D" \
+		-H "Authorization: Bearer $access_token" 2>/dev/null)
+
+	if [[ -z "$sync_data" ]]; then
+		log_error "Failed to fetch sync data from homeserver"
+		return 1
+	fi
+
+	# Get invited room IDs
+	local invited_rooms
+	invited_rooms=$(echo "$sync_data" | jq -r '.rooms.invite // {} | keys[]' 2>/dev/null)
+
+	if [[ -z "$invited_rooms" ]]; then
+		log_info "No pending invites"
+		return 0
+	fi
+
+	# Get mapped room IDs
+	local mapped_rooms
+	mapped_rooms=$(jq -r '.roomMappings // {} | keys[]' "$CONFIG_FILE" 2>/dev/null)
+
+	local rejected=0
+	while IFS= read -r room_id; do
+		# Check if this room is in our mappings
+		if echo "$mapped_rooms" | grep -qF "$room_id"; then
+			log_info "Keeping invite for mapped room: $room_id"
+			continue
+		fi
+
+		# Get room name from invite state
+		local room_name
+		room_name=$(echo "$sync_data" | jq -r --arg rid "$room_id" \
+			'.rooms.invite[$rid].invite_state.events[] | select(.type == "m.room.name") | .content.name // "unknown"' 2>/dev/null)
+
+		log_info "Rejecting stale invite: $room_id ($room_name)"
+
+		local encoded_room
+		encoded_room=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$room_id'))")
+
+		# Leave (reject invite)
+		curl -sf -X POST "${homeserver}/_matrix/client/v3/rooms/${encoded_room}/leave" \
+			-H "Authorization: Bearer $access_token" \
+			-H "Content-Type: application/json" \
+			-d '{}' >/dev/null 2>&1
+
+		# Forget the room
+		curl -sf -X POST "${homeserver}/_matrix/client/v3/rooms/${encoded_room}/forget" \
+			-H "Authorization: Bearer $access_token" \
+			-H "Content-Type: application/json" \
+			-d '{}' >/dev/null 2>&1
+
+		((++rejected))
+	done <<<"$invited_rooms"
+
+	if ((rejected > 0)); then
+		log_success "Rejected $rejected stale invite(s)"
+		echo "Restart the bot to apply: matrix-dispatch-helper.sh stop && matrix-dispatch-helper.sh start"
+	else
+		log_info "All pending invites are for mapped rooms"
+	fi
+
+	return 0
+}
+
 # Main
 #######################################
 main() {
@@ -2859,6 +3023,7 @@ main() {
 	sessions) cmd_sessions "$@" ;;
 	test) cmd_test "$@" ;;
 	logs) cmd_logs "$@" ;;
+	cleanup-invites) cmd_cleanup_invites "$@" ;;
 	help | --help | -h) cmd_help ;;
 	*)
 		log_error "Unknown command: $command"
