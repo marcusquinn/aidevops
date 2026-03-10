@@ -644,12 +644,12 @@ cmd_history() {
 		history_stats=$(jq -rs '
 			[
 				([.[].screen_hours] | add // 0 | . * 10 | round / 10),
-				(min_by(.date) | .date),
-				(max_by(.date) | .date)
+				(min_by(.date) | .date // "unknown"),
+				(max_by(.date) | .date // "unknown")
 			] | @tsv
 		' "$HISTORY_FILE" 2>/dev/null) || true
 		if [[ -n "$history_stats" ]]; then
-			read -r total_hours earliest latest <<<"$history_stats"
+			IFS=$'\t' read -r total_hours earliest latest <<<"$history_stats"
 		fi
 	fi
 
