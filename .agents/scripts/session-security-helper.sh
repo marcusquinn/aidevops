@@ -239,7 +239,7 @@ cmd_record_signal() {
 
 	# Truncate detail for storage (max 200 chars)
 	local safe_detail
-	safe_detail=$(printf '%s' "$detail" | head -c 200 | tr -d '"\\' | tr '\n' ' ')
+	safe_detail=$(printf '%s' "$detail" | head -c 200 | tr -d '"' | tr -d "\\" | tr '\n' ' ')
 
 	if command -v jq &>/dev/null; then
 		# Use jq for reliable JSON manipulation
