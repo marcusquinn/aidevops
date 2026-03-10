@@ -50,6 +50,11 @@ cmd_add() {
 				log_error "--max-retries requires a value"
 				return 1
 			}
+			# GH#3716: Validate max_retries is a non-negative integer before SQL interpolation
+			if ! [[ "$2" =~ ^[0-9]+$ ]]; then
+				log_error "--max-retries must be a non-negative integer, got: $2"
+				return 1
+			fi
 			max_retries="$2"
 			shift 2
 			;;
@@ -240,6 +245,11 @@ cmd_batch() {
 				log_error "--concurrency requires a value"
 				return 1
 			}
+			# GH#3716: Validate concurrency is a positive integer before SQL interpolation
+			if ! [[ "$2" =~ ^[0-9]+$ ]] || [[ "$2" -eq 0 ]]; then
+				log_error "--concurrency must be a positive integer, got: $2"
+				return 1
+			fi
 			concurrency="$2"
 			shift 2
 			;;
@@ -248,6 +258,11 @@ cmd_batch() {
 				log_error "--max-concurrency requires a value"
 				return 1
 			}
+			# GH#3716: Validate max_concurrency is a non-negative integer before SQL interpolation
+			if ! [[ "$2" =~ ^[0-9]+$ ]]; then
+				log_error "--max-concurrency must be a non-negative integer, got: $2"
+				return 1
+			fi
 			max_concurrency="$2"
 			shift 2
 			;;
@@ -264,6 +279,11 @@ cmd_batch() {
 				log_error "--max-load requires a value"
 				return 1
 			}
+			# GH#3716: Validate max_load_factor is a non-negative integer before SQL interpolation
+			if ! [[ "$2" =~ ^[0-9]+$ ]]; then
+				log_error "--max-load must be a non-negative integer, got: $2"
+				return 1
+			fi
 			max_load_factor="$2"
 			shift 2
 			;;
