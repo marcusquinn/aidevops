@@ -39,8 +39,9 @@ readonly PG_ATTEMPTS_LOG="${HOME}/.aidevops/logs/prompt-guard/attempts.jsonl"
 readonly SESSION_CONTEXT_FILE="${HOME}/.aidevops/.agent-workspace/security/session-context.json"
 readonly QUARANTINE_LOG="${HOME}/.aidevops/.agent-workspace/security/quarantine.jsonl"
 
-# Shared format string for cost summary table rows
+# Shared format strings for cost summary table
 readonly FMT_COST_ROW="  %-35s %6s %10s %10s %10s %10s\n"
+readonly FMT_COST_DATA="  %-35s %6s %10s %10s %10s \$%s\n"
 
 # Sanitize a session ID filter to prevent injection attacks.
 # Only allows alphanumeric characters, hyphens, underscores, and dots.
@@ -70,6 +71,9 @@ _security_cost_summary() {
 		if [[ -n "$session_filter" ]]; then
 			local safe_session
 			safe_session=$(_sanitize_session_filter "$session_filter")
+			# Belt-and-suspenders: escape single quotes for SQL even though
+			# _sanitize_session_filter already strips them
+			safe_session="${safe_session//\'/\'\'}"
 			where_clause="WHERE session_id = '${safe_session}'"
 		fi
 		local result
@@ -95,12 +99,12 @@ _security_cost_summary() {
 				[[ -z "$model" ]] && continue
 				local short_model="${model##*/}"
 				short_model="${short_model:0:35}"
-				printf "  %-35s %6s %10s %10s %10s \$%s\n" \
+				printf "$FMT_COST_DATA" \
 					"$short_model" "$reqs" "$input_tok" "$output_tok" "$cache_tok" "$cost"
 				grand_total_cost=$(awk -v total="$grand_total_cost" -v c="$cost" 'BEGIN { printf "%.6f", total + c }')
 				grand_total_reqs=$(awk -v total="$grand_total_reqs" -v r="$reqs" 'BEGIN { print total + r }')
 			done <<<"$result"
-			printf "  %-35s %6s %10s %10s %10s \$%s\n" \
+			printf "$FMT_COST_DATA" \
 				"TOTAL" "$grand_total_reqs" "" "" "" "$grand_total_cost"
 			return 0
 		fi
@@ -112,6 +116,7 @@ _security_cost_summary() {
 		if [[ -n "$session_filter" ]]; then
 			local safe_session
 			safe_session=$(_sanitize_session_filter "$session_filter")
+			# Use jq --arg to pass session filter safely (prevents jq injection)
 			result=$(jq -sr --arg sid "$safe_session" '[.[] | select(.session_id == $sid)] | group_by(.model) | map({
                 model: .[0].model,
                 requests: length,
@@ -139,12 +144,12 @@ _security_cost_summary() {
 				[[ -z "$model" ]] && continue
 				local short_model="${model##*/}"
 				short_model="${short_model:0:35}"
-				printf "  %-35s %6s %10s %10s %10s \$%s\n" \
+				printf "$FMT_COST_DATA" \
 					"$short_model" "$reqs" "$input_tok" "$output_tok" "$cache_tok" "$cost"
 			done
 			grand_total_cost=$(echo "$result" | jq -r '[.[].cost] | add' 2>/dev/null || echo "0")
 			grand_total_reqs=$(echo "$result" | jq -r '[.[].requests] | add' 2>/dev/null || echo "0")
-			printf "  %-35s %6s %10s %10s %10s \$%s\n" \
+			printf "$FMT_COST_DATA" \
 				"TOTAL" "$grand_total_reqs" "" "" "" "$grand_total_cost"
 			return 0
 		fi
@@ -363,16 +368,14 @@ _security_posture() {
 		fi
 	fi
 
-	# Check for blocked prompt injections
+	# Check for prompt injection attempts (escalate posture based on severity)
 	if [[ -f "$PG_ATTEMPTS_LOG" ]]; then
-		local blocks
+		local blocks warns
 		blocks=$(grep -c '"action":"BLOCK"' "$PG_ATTEMPTS_LOG" 2>/dev/null || echo "0")
-		if [[ "$blocks" -gt 0 && ("$posture" == "CLEAN" || "$posture" == "LOW") ]]; then
-			posture="MEDIUM"
-		fi
-		local warns
 		warns=$(grep -c '"action":"WARN"' "$PG_ATTEMPTS_LOG" 2>/dev/null || echo "0")
-		if [[ "$warns" -gt 0 && "$posture" == "CLEAN" ]]; then
+		if [[ "$blocks" -gt 0 && "$posture" != "HIGH" && "$posture" != "CRITICAL" ]]; then
+			posture="MEDIUM"
+		elif [[ "$warns" -gt 0 && "$posture" == "CLEAN" ]]; then
 			posture="LOW"
 		fi
 	fi
