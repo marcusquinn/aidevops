@@ -35,8 +35,46 @@ readonly MIN_FINDINGS_PER_TASK=1
 # =============================================================================
 
 db() {
-    sqlite3 -cmd ".timeout 5000" "$@"
-    return $?
+	sqlite3 -cmd ".timeout 5000" "$@"
+	return $?
+}
+
+# =============================================================================
+# SQL safety helpers (GH#3719 — prevent SQL injection)
+# =============================================================================
+
+# Escape a string for safe use in SQL single-quoted literals.
+# Doubles single quotes (the only escape needed for SQLite string literals)
+# and strips null bytes which could truncate strings.
+sql_escape() {
+	local val="$1"
+	# Strip null bytes and double single quotes for SQLite safety
+	printf '%s' "$val" | tr -d '\0' | sed "s/'/''/g"
+	return 0
+}
+
+# Validate that a value matches an allowlist of permitted values.
+# Usage: validate_allowlist "$value" "opt1" "opt2" "opt3" || return 1
+validate_allowlist() {
+	local val="$1"
+	shift
+	local allowed
+	for allowed in "$@"; do
+		if [[ "$val" == "$allowed" ]]; then
+			return 0
+		fi
+	done
+	return 1
+}
+
+# Validate that a value is a positive integer (prevents SQL injection in
+# numeric contexts where quoting isn't used).
+validate_positive_int() {
+	local val="$1"
+	if [[ "$val" =~ ^[1-9][0-9]*$ ]]; then
+		return 0
+	fi
+	return 1
 }
 
 # =============================================================================
@@ -44,9 +82,9 @@ db() {
 # =============================================================================
 
 init_task_db() {
-    mkdir -p "$SWEEP_DATA_DIR" 2>/dev/null || true
+	mkdir -p "$SWEEP_DATA_DIR" 2>/dev/null || true
 
-    db "$TASK_DB" <<'SQL' >/dev/null
+	db "$TASK_DB" <<'SQL' >/dev/null
 PRAGMA journal_mode=WAL;
 
 CREATE TABLE IF NOT EXISTS generated_tasks (
@@ -81,7 +119,7 @@ CREATE INDEX IF NOT EXISTS idx_gt_group ON generated_tasks(group_key, group_by);
 CREATE INDEX IF NOT EXISTS idx_gt_severity ON generated_tasks(max_severity);
 CREATE INDEX IF NOT EXISTS idx_tf_task ON task_findings(task_id);
 SQL
-    return 0
+	return 0
 }
 
 # =============================================================================
@@ -89,69 +127,69 @@ SQL
 # =============================================================================
 
 severity_rank() {
-    local sev="$1"
-    case "$sev" in
-        critical) echo 1 ;;
-        high)     echo 2 ;;
-        medium)   echo 3 ;;
-        low)      echo 4 ;;
-        info)     echo 5 ;;
-        *)        echo 5 ;;
-    esac
-    return 0
+	local sev="$1"
+	case "$sev" in
+	critical) echo 1 ;;
+	high) echo 2 ;;
+	medium) echo 3 ;;
+	low) echo 4 ;;
+	info) echo 5 ;;
+	*) echo 5 ;;
+	esac
+	return 0
 }
 
 higher_severity() {
-    local a="$1"
-    local b="$2"
-    local rank_a
-    local rank_b
-    rank_a=$(severity_rank "$a")
-    rank_b=$(severity_rank "$b")
-    if [[ "$rank_a" -le "$rank_b" ]]; then
-        echo "$a"
-    else
-        echo "$b"
-    fi
-    return 0
+	local a="$1"
+	local b="$2"
+	local rank_a
+	local rank_b
+	rank_a=$(severity_rank "$a")
+	rank_b=$(severity_rank "$b")
+	if [[ "$rank_a" -le "$rank_b" ]]; then
+		echo "$a"
+	else
+		echo "$b"
+	fi
+	return 0
 }
 
 severity_to_tag() {
-    local sev="$1"
-    case "$sev" in
-        critical) echo "#critical" ;;
-        high)     echo "#high" ;;
-        medium)   echo "#medium" ;;
-        low)      echo "#low" ;;
-        *)        echo "#info" ;;
-    esac
-    return 0
+	local sev="$1"
+	case "$sev" in
+	critical) echo "#critical" ;;
+	high) echo "#high" ;;
+	medium) echo "#medium" ;;
+	low) echo "#low" ;;
+	*) echo "#info" ;;
+	esac
+	return 0
 }
 
 severity_to_estimate() {
-    local sev="$1"
-    local count="$2"
-    case "$sev" in
-        critical) echo "~2h" ;;
-        high)
-            if [[ "$count" -gt 5 ]]; then
-                echo "~2h"
-            else
-                echo "~1h"
-            fi
-            ;;
-        medium)
-            if [[ "$count" -gt 10 ]]; then
-                echo "~2h"
-            elif [[ "$count" -gt 3 ]]; then
-                echo "~1h"
-            else
-                echo "~30m"
-            fi
-            ;;
-        *)       echo "~30m" ;;
-    esac
-    return 0
+	local sev="$1"
+	local count="$2"
+	case "$sev" in
+	critical) echo "~2h" ;;
+	high)
+		if [[ "$count" -gt 5 ]]; then
+			echo "~2h"
+		else
+			echo "~1h"
+		fi
+		;;
+	medium)
+		if [[ "$count" -gt 10 ]]; then
+			echo "~2h"
+		elif [[ "$count" -gt 3 ]]; then
+			echo "~1h"
+		else
+			echo "~30m"
+		fi
+		;;
+	*) echo "~30m" ;;
+	esac
+	return 0
 }
 
 # =============================================================================
@@ -159,12 +197,12 @@ severity_to_estimate() {
 # =============================================================================
 
 check_findings_db() {
-    if [[ ! -f "$SWEEP_DB" ]]; then
-        print_error "Findings database not found at $SWEEP_DB"
-        print_info "Run 'quality-sweep-helper.sh sonarcloud fetch' first to populate findings."
-        return 1
-    fi
-    return 0
+	if [[ ! -f "$SWEEP_DB" ]]; then
+		print_error "Findings database not found at $SWEEP_DB"
+		print_info "Run 'quality-sweep-helper.sh sonarcloud fetch' first to populate findings."
+		return 1
+	fi
+	return 0
 }
 
 # =============================================================================
@@ -172,67 +210,98 @@ check_findings_db() {
 # =============================================================================
 
 cmd_group() {
-    local group_by="file"
-    local source=""
-    local min_severity="info"
-    local format="table"
-    local limit="50"
+	local group_by="file"
+	local source=""
+	local min_severity="info"
+	local format="table"
+	local limit="50"
 
-    while [[ $# -gt 0 ]]; do
-        case "$1" in
-            --by)           group_by="${2:-file}"; shift 2 ;;
-            --source)       source="${2:-}"; shift 2 ;;
-            --min-severity) min_severity="${2:-info}"; shift 2 ;;
-            --format)       format="${2:-table}"; shift 2 ;;
-            --limit)        limit="${2:-50}"; shift 2 ;;
-            *)              shift ;;
-        esac
-    done
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--by)
+			group_by="${2:-file}"
+			shift 2
+			;;
+		--source)
+			source="${2:-}"
+			shift 2
+			;;
+		--min-severity)
+			min_severity="${2:-info}"
+			shift 2
+			;;
+		--format)
+			format="${2:-table}"
+			shift 2
+			;;
+		--limit)
+			limit="${2:-50}"
+			shift 2
+			;;
+		*) shift ;;
+		esac
+	done
 
-    check_findings_db || return 1
+	check_findings_db || return 1
 
-    local min_rank
-    min_rank=$(severity_rank "$min_severity")
+	# Validate inputs to prevent SQL injection (GH#3719)
+	if ! validate_allowlist "$group_by" "file" "rule" "severity"; then
+		print_error "Unknown grouping: $group_by (use: file, rule, severity)"
+		return 1
+	fi
+	if ! validate_allowlist "$min_severity" "critical" "high" "medium" "low" "info"; then
+		print_error "Unknown severity: $min_severity (use: critical, high, medium, low, info)"
+		return 1
+	fi
+	if ! validate_allowlist "$format" "table" "json" "csv"; then
+		print_error "Unknown format: $format (use: table, json, csv)"
+		return 1
+	fi
+	if ! validate_positive_int "$limit"; then
+		print_error "--limit must be a positive integer, got: '$limit'"
+		return 1
+	fi
 
-    # Build WHERE clause
-    local where="WHERE status IN ('OPEN', 'CONFIRMED')"
-    if [[ -n "$source" ]]; then
-        where="$where AND source='$(echo "$source" | sed "s/'/''/g")'"
-    fi
-    where="$where AND CASE severity WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 WHEN 'low' THEN 4 ELSE 5 END <= $min_rank"
+	local min_rank
+	min_rank=$(severity_rank "$min_severity")
 
-    local query=""
-    case "$group_by" in
-        file)
-            query="SELECT file as group_key, count(*) as finding_count, MIN(CASE severity WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 WHEN 'low' THEN 4 ELSE 5 END) as sev_rank, CASE MIN(CASE severity WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 WHEN 'low' THEN 4 ELSE 5 END) WHEN 1 THEN 'critical' WHEN 2 THEN 'high' WHEN 3 THEN 'medium' WHEN 4 THEN 'low' ELSE 'info' END as max_severity, GROUP_CONCAT(DISTINCT source) as sources FROM findings $where GROUP BY file HAVING count(*) >= $MIN_FINDINGS_PER_TASK ORDER BY sev_rank ASC, finding_count DESC LIMIT $limit;"
-            ;;
-        rule)
-            query="SELECT rule as group_key, count(*) as finding_count, MIN(CASE severity WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 WHEN 'low' THEN 4 ELSE 5 END) as sev_rank, CASE MIN(CASE severity WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 WHEN 'low' THEN 4 ELSE 5 END) WHEN 1 THEN 'critical' WHEN 2 THEN 'high' WHEN 3 THEN 'medium' WHEN 4 THEN 'low' ELSE 'info' END as max_severity, GROUP_CONCAT(DISTINCT source) as sources FROM findings $where GROUP BY rule HAVING count(*) >= $MIN_FINDINGS_PER_TASK ORDER BY sev_rank ASC, finding_count DESC LIMIT $limit;"
-            ;;
-        severity)
-            query="SELECT severity as group_key, count(*) as finding_count, MIN(CASE severity WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 WHEN 'low' THEN 4 ELSE 5 END) as sev_rank, severity as max_severity, GROUP_CONCAT(DISTINCT source) as sources FROM findings $where GROUP BY severity ORDER BY sev_rank ASC LIMIT $limit;"
-            ;;
-        *)
-            print_error "Unknown grouping: $group_by (use: file, rule, severity)"
-            return 1
-            ;;
-    esac
+	# Build WHERE clause using sql_escape for user-supplied values
+	local where="WHERE status IN ('OPEN', 'CONFIRMED')"
+	if [[ -n "$source" ]]; then
+		local escaped_source
+		escaped_source=$(sql_escape "$source")
+		where="$where AND source='${escaped_source}'"
+	fi
+	where="$where AND CASE severity WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 WHEN 'low' THEN 4 ELSE 5 END <= $min_rank"
 
-    case "$format" in
-        json)
-            db "$SWEEP_DB" -json "$query"
-            ;;
-        csv)
-            db "$SWEEP_DB" -header -csv "$query"
-            ;;
-        table|*)
-            echo ""
-            print_info "Findings grouped by: $group_by (min severity: $min_severity)"
-            echo ""
-            db "$SWEEP_DB" -header -column "$query"
-            ;;
-    esac
-    return 0
+	local query=""
+	case "$group_by" in
+	file)
+		query="SELECT file as group_key, count(*) as finding_count, MIN(CASE severity WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 WHEN 'low' THEN 4 ELSE 5 END) as sev_rank, CASE MIN(CASE severity WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 WHEN 'low' THEN 4 ELSE 5 END) WHEN 1 THEN 'critical' WHEN 2 THEN 'high' WHEN 3 THEN 'medium' WHEN 4 THEN 'low' ELSE 'info' END as max_severity, GROUP_CONCAT(DISTINCT source) as sources FROM findings $where GROUP BY file HAVING count(*) >= $MIN_FINDINGS_PER_TASK ORDER BY sev_rank ASC, finding_count DESC LIMIT $limit;"
+		;;
+	rule)
+		query="SELECT rule as group_key, count(*) as finding_count, MIN(CASE severity WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 WHEN 'low' THEN 4 ELSE 5 END) as sev_rank, CASE MIN(CASE severity WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 WHEN 'low' THEN 4 ELSE 5 END) WHEN 1 THEN 'critical' WHEN 2 THEN 'high' WHEN 3 THEN 'medium' WHEN 4 THEN 'low' ELSE 'info' END as max_severity, GROUP_CONCAT(DISTINCT source) as sources FROM findings $where GROUP BY rule HAVING count(*) >= $MIN_FINDINGS_PER_TASK ORDER BY sev_rank ASC, finding_count DESC LIMIT $limit;"
+		;;
+	severity)
+		query="SELECT severity as group_key, count(*) as finding_count, MIN(CASE severity WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 WHEN 'low' THEN 4 ELSE 5 END) as sev_rank, severity as max_severity, GROUP_CONCAT(DISTINCT source) as sources FROM findings $where GROUP BY severity ORDER BY sev_rank ASC LIMIT $limit;"
+		;;
+	esac
+
+	case "$format" in
+	json)
+		db "$SWEEP_DB" -json "$query"
+		;;
+	csv)
+		db "$SWEEP_DB" -header -csv "$query"
+		;;
+	table | *)
+		echo ""
+		print_info "Findings grouped by: $group_by (min severity: $min_severity)"
+		echo ""
+		db "$SWEEP_DB" -header -column "$query"
+		;;
+	esac
+	return 0
 }
 
 # =============================================================================
@@ -240,50 +309,50 @@ cmd_group() {
 # =============================================================================
 
 build_task_description() {
-    local group_by="$1"
-    local group_key="$2"
-    local finding_count="$3"
-    local max_severity="$4"
-    local sources="$5"
+	local group_by="$1"
+	local group_key="$2"
+	local finding_count="$3"
+	local max_severity="$4"
+	local sources="$5"
 
-    local desc=""
-    local priority_tag
-    local estimate
-    priority_tag=$(severity_to_tag "$max_severity")
-    estimate=$(severity_to_estimate "$max_severity" "$finding_count")
+	local desc=""
+	local priority_tag
+	local estimate
+	priority_tag=$(severity_to_tag "$max_severity")
+	estimate=$(severity_to_estimate "$max_severity" "$finding_count")
 
-    case "$group_by" in
-        file)
-            local short_file
-            short_file=$(basename "$group_key")
-            if [[ "$finding_count" -eq 1 ]]; then
-                desc="Fix quality finding in ${short_file} (${max_severity}) [${group_key}]"
-            else
-                desc="Fix ${finding_count} quality findings in ${short_file} (${max_severity}) [${group_key}]"
-            fi
-            ;;
-        rule)
-            if [[ "$finding_count" -eq 1 ]]; then
-                desc="Fix ${group_key} quality rule violation (${max_severity})"
-            else
-                desc="Fix ${finding_count} ${group_key} violations across codebase (${max_severity})"
-            fi
-            ;;
-        severity)
-            desc="Fix ${finding_count} ${max_severity}-severity quality findings"
-            ;;
-    esac
+	case "$group_by" in
+	file)
+		local short_file
+		short_file=$(basename "$group_key")
+		if [[ "$finding_count" -eq 1 ]]; then
+			desc="Fix quality finding in ${short_file} (${max_severity}) [${group_key}]"
+		else
+			desc="Fix ${finding_count} quality findings in ${short_file} (${max_severity}) [${group_key}]"
+		fi
+		;;
+	rule)
+		if [[ "$finding_count" -eq 1 ]]; then
+			desc="Fix ${group_key} quality rule violation (${max_severity})"
+		else
+			desc="Fix ${finding_count} ${group_key} violations across codebase (${max_severity})"
+		fi
+		;;
+	severity)
+		desc="Fix ${finding_count} ${max_severity}-severity quality findings"
+		;;
+	esac
 
-    local source_tag=""
-    if [[ -n "$sources" ]]; then
-        local src
-        for src in $(echo "$sources" | tr ',' ' '); do
-            source_tag="${source_tag} #${src}"
-        done
-    fi
+	local source_tag=""
+	if [[ -n "$sources" ]]; then
+		local src
+		for src in $(echo "$sources" | tr ',' ' '); do
+			source_tag="${source_tag} #${src}"
+		done
+	fi
 
-    echo "${desc} ${priority_tag} #quality #auto-dispatch${source_tag} ${estimate}"
-    return 0
+	echo "${desc} ${priority_tag} #quality #auto-dispatch${source_tag} ${estimate}"
+	return 0
 }
 
 # =============================================================================
@@ -291,35 +360,35 @@ build_task_description() {
 # =============================================================================
 
 task_exists_in_todo() {
-    local todo_file="$1"
-    local group_key="$2"
-    local group_by="$3"
+	local todo_file="$1"
+	local group_key="$2"
+	local group_by="$3"
 
-    if [[ ! -f "$todo_file" ]]; then
-        return 1
-    fi
+	if [[ ! -f "$todo_file" ]]; then
+		return 1
+	fi
 
-    case "$group_by" in
-        file)
-            # Check if there's an open task referencing this file path
-            if grep -qE "^[[:space:]]*- \[ \] t[0-9].*\[${group_key}\]" "$todo_file" 2>/dev/null; then
-                return 0
-            fi
-            ;;
-        rule)
-            # Check if there's an open task referencing this rule
-            # shellcheck disable=SC2016 # sed replacement pattern is intentionally literal
-            if grep -qF "$group_key" "$todo_file" 2>/dev/null && \
-               grep -qE "^[[:space:]]*- \[ \] t[0-9].*$(echo "$group_key" | sed 's/[.[\*^$()+?{|]/\\&/g')" "$todo_file" 2>/dev/null; then
-                return 0
-            fi
-            ;;
-        severity)
-            # Severity-based tasks are always unique enough
-            return 1
-            ;;
-    esac
-    return 1
+	case "$group_by" in
+	file)
+		# Check if there's an open task referencing this file path
+		if grep -qE "^[[:space:]]*- \[ \] t[0-9].*\[${group_key}\]" "$todo_file" 2>/dev/null; then
+			return 0
+		fi
+		;;
+	rule)
+		# Check if there's an open task referencing this rule
+		# shellcheck disable=SC2016 # sed replacement pattern is intentionally literal
+		if grep -qF "$group_key" "$todo_file" 2>/dev/null &&
+			grep -qE "^[[:space:]]*- \[ \] t[0-9].*$(echo "$group_key" | sed 's/[.[\*^$()+?{|]/\\&/g')" "$todo_file" 2>/dev/null; then
+			return 0
+		fi
+		;;
+	severity)
+		# Severity-based tasks are always unique enough
+		return 1
+		;;
+	esac
+	return 1
 }
 
 # =============================================================================
@@ -327,15 +396,19 @@ task_exists_in_todo() {
 # =============================================================================
 
 group_already_processed() {
-    local group_key="$1"
-    local group_by="$2"
+	local group_key="$1"
+	local group_by="$2"
 
-    local existing
-    existing=$(db "$TASK_DB" "SELECT id FROM generated_tasks WHERE group_key='$(echo "$group_key" | sed "s/'/''/g")' AND group_by='$(echo "$group_by" | sed "s/'/''/g")';" 2>/dev/null || true)
-    if [[ -n "$existing" ]]; then
-        return 0
-    fi
-    return 1
+	local escaped_key escaped_by
+	escaped_key=$(sql_escape "$group_key")
+	escaped_by=$(sql_escape "$group_by")
+
+	local existing
+	existing=$(db "$TASK_DB" "SELECT id FROM generated_tasks WHERE group_key='${escaped_key}' AND group_by='${escaped_by}';" 2>/dev/null || true)
+	if [[ -n "$existing" ]]; then
+		return 0
+	fi
+	return 1
 }
 
 # =============================================================================
@@ -343,100 +416,137 @@ group_already_processed() {
 # =============================================================================
 
 cmd_create() {
-    local repo=""
-    local dry_run="false"
-    local auto_dispatch="false"
-    local group_by="file"
-    local source=""
-    local min_severity="medium"
-    local limit="20"
+	local repo=""
+	local dry_run="false"
+	local auto_dispatch="false"
+	local group_by="file"
+	local source=""
+	local min_severity="medium"
+	local limit="20"
 
-    while [[ $# -gt 0 ]]; do
-        case "$1" in
-            --repo)           repo="${2:-}"; shift 2 ;;
-            --dry-run)        dry_run="true"; shift ;;
-            --auto-dispatch)  auto_dispatch="true"; shift ;;
-            --by)             group_by="${2:-file}"; shift 2 ;;
-            --source)         source="${2:-}"; shift 2 ;;
-            --min-severity)   min_severity="${2:-medium}"; shift 2 ;;
-            --limit)          limit="${2:-20}"; shift 2 ;;
-            *)                shift ;;
-        esac
-    done
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--repo)
+			repo="${2:-}"
+			shift 2
+			;;
+		--dry-run)
+			dry_run="true"
+			shift
+			;;
+		--auto-dispatch)
+			auto_dispatch="true"
+			shift
+			;;
+		--by)
+			group_by="${2:-file}"
+			shift 2
+			;;
+		--source)
+			source="${2:-}"
+			shift 2
+			;;
+		--min-severity)
+			min_severity="${2:-medium}"
+			shift 2
+			;;
+		--limit)
+			limit="${2:-20}"
+			shift 2
+			;;
+		*) shift ;;
+		esac
+	done
 
-    check_findings_db || return 1
-    init_task_db
+	check_findings_db || return 1
+	init_task_db
 
-    if [[ -z "$repo" ]]; then
-        repo="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
-    fi
+	if [[ -z "$repo" ]]; then
+		repo="$(git rev-parse --show-toplevel 2>/dev/null || pwd)"
+	fi
 
-    local todo_file="$repo/TODO.md"
-    if [[ ! -f "$todo_file" ]]; then
-        print_error "TODO.md not found at $todo_file"
-        return 1
-    fi
+	local todo_file="$repo/TODO.md"
+	if [[ ! -f "$todo_file" ]]; then
+		print_error "TODO.md not found at $todo_file"
+		return 1
+	fi
 
-    local min_rank
-    min_rank=$(severity_rank "$min_severity")
+	# Validate inputs to prevent SQL injection (GH#3719)
+	if ! validate_allowlist "$group_by" "file" "rule"; then
+		print_error "Task creation only supports --by file or --by rule"
+		return 1
+	fi
+	if ! validate_allowlist "$min_severity" "critical" "high" "medium" "low" "info"; then
+		print_error "Unknown severity: $min_severity (use: critical, high, medium, low, info)"
+		return 1
+	fi
+	if ! validate_positive_int "$limit"; then
+		print_error "--limit must be a positive integer, got: '$limit'"
+		return 1
+	fi
 
-    # Build WHERE clause for findings
-    local where="WHERE status IN ('OPEN', 'CONFIRMED')"
-    if [[ -n "$source" ]]; then
-        where="$where AND source='$(echo "$source" | sed "s/'/''/g")'"
-    fi
-    where="$where AND CASE severity WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 WHEN 'low' THEN 4 ELSE 5 END <= $min_rank"
+	local min_rank
+	min_rank=$(severity_rank "$min_severity")
 
-    # Get grouped findings
-    local groups_json
-    case "$group_by" in
-        file)
-            groups_json=$(db "$SWEEP_DB" -json "SELECT file as group_key, count(*) as finding_count, CASE MIN(CASE severity WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 WHEN 'low' THEN 4 ELSE 5 END) WHEN 1 THEN 'critical' WHEN 2 THEN 'high' WHEN 3 THEN 'medium' WHEN 4 THEN 'low' ELSE 'info' END as max_severity, GROUP_CONCAT(DISTINCT source) as sources FROM findings $where GROUP BY file HAVING count(*) >= $MIN_FINDINGS_PER_TASK ORDER BY MIN(CASE severity WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 WHEN 'low' THEN 4 ELSE 5 END) ASC, count(*) DESC LIMIT $limit;" 2>/dev/null || echo "[]")
-            ;;
-        rule)
-            groups_json=$(db "$SWEEP_DB" -json "SELECT rule as group_key, count(*) as finding_count, CASE MIN(CASE severity WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 WHEN 'low' THEN 4 ELSE 5 END) WHEN 1 THEN 'critical' WHEN 2 THEN 'high' WHEN 3 THEN 'medium' WHEN 4 THEN 'low' ELSE 'info' END as max_severity, GROUP_CONCAT(DISTINCT source) as sources FROM findings $where GROUP BY rule HAVING count(*) >= $MIN_FINDINGS_PER_TASK ORDER BY MIN(CASE severity WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 WHEN 'low' THEN 4 ELSE 5 END) ASC, count(*) DESC LIMIT $limit;" 2>/dev/null || echo "[]")
-            ;;
-        *)
-            print_error "Task creation only supports --by file or --by rule"
-            return 1
-            ;;
-    esac
+	# Build WHERE clause using sql_escape for user-supplied values (GH#3719)
+	local where="WHERE status IN ('OPEN', 'CONFIRMED')"
+	if [[ -n "$source" ]]; then
+		local escaped_source
+		escaped_source=$(sql_escape "$source")
+		where="$where AND source='${escaped_source}'"
+	fi
+	where="$where AND CASE severity WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 WHEN 'low' THEN 4 ELSE 5 END <= $min_rank"
 
-    if [[ -z "$groups_json" ]] || [[ "$groups_json" == "[]" ]]; then
-        print_info "No findings match the criteria (source: ${source:-all}, min severity: $min_severity)"
-        return 0
-    fi
+	# Get grouped findings
+	local groups_json
+	case "$group_by" in
+	file)
+		groups_json=$(db "$SWEEP_DB" -json "SELECT file as group_key, count(*) as finding_count, CASE MIN(CASE severity WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 WHEN 'low' THEN 4 ELSE 5 END) WHEN 1 THEN 'critical' WHEN 2 THEN 'high' WHEN 3 THEN 'medium' WHEN 4 THEN 'low' ELSE 'info' END as max_severity, GROUP_CONCAT(DISTINCT source) as sources FROM findings $where GROUP BY file HAVING count(*) >= $MIN_FINDINGS_PER_TASK ORDER BY MIN(CASE severity WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 WHEN 'low' THEN 4 ELSE 5 END) ASC, count(*) DESC LIMIT $limit;" 2>/dev/null || echo "[]")
+		;;
+	rule)
+		groups_json=$(db "$SWEEP_DB" -json "SELECT rule as group_key, count(*) as finding_count, CASE MIN(CASE severity WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 WHEN 'low' THEN 4 ELSE 5 END) WHEN 1 THEN 'critical' WHEN 2 THEN 'high' WHEN 3 THEN 'medium' WHEN 4 THEN 'low' ELSE 'info' END as max_severity, GROUP_CONCAT(DISTINCT source) as sources FROM findings $where GROUP BY rule HAVING count(*) >= $MIN_FINDINGS_PER_TASK ORDER BY MIN(CASE severity WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 WHEN 'low' THEN 4 ELSE 5 END) ASC, count(*) DESC LIMIT $limit;" 2>/dev/null || echo "[]")
+		;;
+	*)
+		print_error "Task creation only supports --by file or --by rule"
+		return 1
+		;;
+	esac
 
-    local group_count
-    group_count=$(echo "$groups_json" | jq 'length')
-    print_info "Found $group_count finding groups (grouped by: $group_by, min severity: $min_severity)"
+	if [[ -z "$groups_json" ]] || [[ "$groups_json" == "[]" ]]; then
+		print_info "No findings match the criteria (source: ${source:-all}, min severity: $min_severity)"
+		return 0
+	fi
 
-    local created=0
-    local skipped_existing=0
-    local skipped_processed=0
-    local task_lines=""
+	local group_count
+	group_count=$(echo "$groups_json" | jq 'length')
+	print_info "Found $group_count finding groups (grouped by: $group_by, min severity: $min_severity)"
 
-    local i=0
-    while [[ $i -lt $group_count ]]; do
-        local group_key finding_count max_severity sources
-        group_key=$(echo "$groups_json" | jq -r ".[$i].group_key")
-        finding_count=$(echo "$groups_json" | jq -r ".[$i].finding_count")
-        max_severity=$(echo "$groups_json" | jq -r ".[$i].max_severity")
-        sources=$(echo "$groups_json" | jq -r ".[$i].sources")
+	local created=0
+	local skipped_existing=0
+	local skipped_processed=0
+	local task_lines=""
 
-        # Skip if already in TODO.md
-        if task_exists_in_todo "$todo_file" "$group_key" "$group_by"; then
-            skipped_existing=$((skipped_existing + 1))
-            i=$((i + 1))
-            continue
-        fi
+	local i=0
+	while [[ $i -lt $group_count ]]; do
+		local group_key finding_count max_severity sources
+		group_key=$(echo "$groups_json" | jq -r ".[$i].group_key")
+		finding_count=$(echo "$groups_json" | jq -r ".[$i].finding_count")
+		max_severity=$(echo "$groups_json" | jq -r ".[$i].max_severity")
+		sources=$(echo "$groups_json" | jq -r ".[$i].sources")
 
-        # Skip if already processed in task DB
-        if group_already_processed "$group_key" "$group_by"; then
-            skipped_processed=$((skipped_processed + 1))
-            i=$((i + 1))
-            continue
-        fi
+		# Skip if already in TODO.md
+		if task_exists_in_todo "$todo_file" "$group_key" "$group_by"; then
+			skipped_existing=$((skipped_existing + 1))
+			i=$((i + 1))
+			continue
+		fi
+
+		# Skip if already processed in task DB
+		if group_already_processed "$group_key" "$group_by"; then
+			skipped_processed=$((skipped_processed + 1))
+			i=$((i + 1))
+			continue
+		fi
 
 		# Build task description
 		local task_desc
@@ -477,27 +587,46 @@ cmd_create() {
 
 			task_lines="${task_lines}${task_line}"$'\n'
 
-			# Record in task DB with allocated task ID
-			local escaped_key escaped_line
-			escaped_key=$(echo "$group_key" | sed "s/'/''/g")
-			escaped_line=$(echo "$task_line" | sed "s/'/''/g")
-			db "$TASK_DB" "INSERT OR REPLACE INTO generated_tasks (group_key, group_by, task_line, finding_count, max_severity, sources, todo_task_id) VALUES ('$escaped_key', '$group_by', '$escaped_line', $finding_count, '$max_severity', '$(echo "$sources" | sed "s/'/''/g")', '$task_id');"
+			# Record in task DB with allocated task ID (GH#3719: use sql_escape)
+			local escaped_key escaped_line escaped_sources escaped_severity escaped_task_id
+			escaped_key=$(sql_escape "$group_key")
+			escaped_line=$(sql_escape "$task_line")
+			escaped_sources=$(sql_escape "$sources")
+			escaped_severity=$(sql_escape "$max_severity")
+			escaped_task_id=$(sql_escape "$task_id")
+			# finding_count is validated as integer via jq -r (from JSON number)
+			if ! validate_positive_int "$finding_count"; then
+				finding_count=0
+			fi
+			db "$TASK_DB" "INSERT OR REPLACE INTO generated_tasks (group_key, group_by, task_line, finding_count, max_severity, sources, todo_task_id) VALUES ('${escaped_key}', '${group_by}', '${escaped_line}', ${finding_count}, '${escaped_severity}', '${escaped_sources}', '${escaped_task_id}');"
 
 			# Record individual findings linked to this task
 			local task_row_id
-			task_row_id=$(db "$TASK_DB" "SELECT id FROM generated_tasks WHERE group_key='$escaped_key' AND group_by='$group_by';")
+			task_row_id=$(db "$TASK_DB" "SELECT id FROM generated_tasks WHERE group_key='${escaped_key}' AND group_by='${group_by}';")
+
+			# Validate task_row_id is an integer before using in SQL
+			if ! [[ "$task_row_id" =~ ^[0-9]+$ ]]; then
+				print_warning "Invalid task row ID for ${group_by}=${group_key}, skipping findings link"
+				i=$((i + 1))
+				continue
+			fi
 
 			local findings_sql
 			case "$group_by" in
-				file)
-					findings_sql="SELECT id, source, file, line, severity, rule, message FROM findings $where AND file='$escaped_key';"
-					;;
-				rule)
-					findings_sql="SELECT id, source, file, line, severity, rule, message FROM findings $where AND rule='$escaped_key';"
-					;;
+			file)
+				findings_sql="SELECT id, source, file, line, severity, rule, message FROM findings ${where} AND file='${escaped_key}';"
+				;;
+			rule)
+				findings_sql="SELECT id, source, file, line, severity, rule, message FROM findings ${where} AND rule='${escaped_key}';"
+				;;
 			esac
 
-			db "$SWEEP_DB" -json "$findings_sql" 2>/dev/null | jq -r '.[] | "INSERT OR IGNORE INTO task_findings (task_id, finding_id, source, file, line, severity, rule, message) VALUES ('"$task_row_id"', \(.id), '"'"'\(.source)'"'"', '"'"'\(.file | gsub("'"'"'"; "'"'"''"'"'"))'"'"', \(.line), '"'"'\(.severity)'"'"', '"'"'\(.rule | gsub("'"'"'"; "'"'"''"'"'"))'"'"', '"'"'\(.message | gsub("'"'"'"; "'"'"''"'"'"))'"'"');"' 2>/dev/null | db "$TASK_DB" 2>/dev/null || true
+			# GH#3719: Use jq to generate safe SQL with proper escaping.
+			# The gsub handles single-quote escaping within jq before emitting SQL.
+			db "$SWEEP_DB" -json "$findings_sql" 2>/dev/null | jq -r --argjson tid "$task_row_id" '
+				def esc: gsub("'"'"'"; "'"'"''"'"'");
+				.[] | "INSERT OR IGNORE INTO task_findings (task_id, finding_id, source, file, line, severity, rule, message) VALUES (\($tid), \(.id), '"'"'\(.source | esc)'"'"', '"'"'\(.file | esc)'"'"', \(.line), '"'"'\(.severity | esc)'"'"', '"'"'\(.rule | esc)'"'"', '"'"'\(.message | esc)'"'"');"
+			' 2>/dev/null | db "$TASK_DB" 2>/dev/null || true
 		fi
 
 		created=$((created + 1))
@@ -540,21 +669,21 @@ cmd_create() {
 # =============================================================================
 
 dispatch_tasks() {
-    local repo="$1"
+	local repo="$1"
 
-    local supervisor="${SCRIPT_DIR}/supervisor-helper.sh"
-    if [[ ! -x "$supervisor" ]]; then
-        print_warning "supervisor-helper.sh not found or not executable — skipping auto-dispatch"
-        return 0
-    fi
+	local supervisor="${SCRIPT_DIR}/supervisor-helper.sh"
+	if [[ ! -x "$supervisor" ]]; then
+		print_warning "supervisor-helper.sh not found or not executable — skipping auto-dispatch"
+		return 0
+	fi
 
-    print_info "Triggering supervisor auto-pickup for #auto-dispatch tasks..."
-    if "$supervisor" auto-pickup --repo "$repo" 2>/dev/null; then
-        print_success "Supervisor auto-pickup completed"
-    else
-        print_warning "Supervisor auto-pickup returned non-zero (tasks may need manual IDs first)"
-    fi
-    return 0
+	print_info "Triggering supervisor auto-pickup for #auto-dispatch tasks..."
+	if "$supervisor" auto-pickup --repo "$repo" 2>/dev/null; then
+		print_success "Supervisor auto-pickup completed"
+	else
+		print_warning "Supervisor auto-pickup returned non-zero (tasks may need manual IDs first)"
+	fi
+	return 0
 }
 
 # =============================================================================
@@ -562,57 +691,57 @@ dispatch_tasks() {
 # =============================================================================
 
 cmd_status() {
-    echo ""
-    print_info "Finding-to-Task Pipeline Status"
-    echo ""
+	echo ""
+	print_info "Finding-to-Task Pipeline Status"
+	echo ""
 
-    # Check findings DB
-    echo "Findings Database:"
-    if [[ -f "$SWEEP_DB" ]]; then
-        local total_findings
-        total_findings=$(db "$SWEEP_DB" "SELECT count(*) FROM findings WHERE status IN ('OPEN', 'CONFIRMED');" 2>/dev/null || echo "0")
-        echo "  Location: $SWEEP_DB"
-        echo "  Open findings: $total_findings"
+	# Check findings DB
+	echo "Findings Database:"
+	if [[ -f "$SWEEP_DB" ]]; then
+		local total_findings
+		total_findings=$(db "$SWEEP_DB" "SELECT count(*) FROM findings WHERE status IN ('OPEN', 'CONFIRMED');" 2>/dev/null || echo "0")
+		echo "  Location: $SWEEP_DB"
+		echo "  Open findings: $total_findings"
 
-        echo ""
-        echo "  By source:"
-        db "$SWEEP_DB" -header -column "SELECT source, count(*) as count FROM findings WHERE status IN ('OPEN', 'CONFIRMED') GROUP BY source ORDER BY count DESC;" 2>/dev/null || echo "  (no data)"
+		echo ""
+		echo "  By source:"
+		db "$SWEEP_DB" -header -column "SELECT source, count(*) as count FROM findings WHERE status IN ('OPEN', 'CONFIRMED') GROUP BY source ORDER BY count DESC;" 2>/dev/null || echo "  (no data)"
 
-        echo ""
-        echo "  By severity:"
-        db "$SWEEP_DB" -header -column "SELECT severity, count(*) as count FROM findings WHERE status IN ('OPEN', 'CONFIRMED') GROUP BY severity ORDER BY CASE severity WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 WHEN 'low' THEN 4 ELSE 5 END;" 2>/dev/null || echo "  (no data)"
-    else
-        echo "  Not found — run 'quality-sweep-helper.sh sonarcloud fetch' first"
-    fi
+		echo ""
+		echo "  By severity:"
+		db "$SWEEP_DB" -header -column "SELECT severity, count(*) as count FROM findings WHERE status IN ('OPEN', 'CONFIRMED') GROUP BY severity ORDER BY CASE severity WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 WHEN 'low' THEN 4 ELSE 5 END;" 2>/dev/null || echo "  (no data)"
+	else
+		echo "  Not found — run 'quality-sweep-helper.sh sonarcloud fetch' first"
+	fi
 
-    echo ""
+	echo ""
 
-    # Check task DB
-    echo "Task Generation Database:"
-    if [[ -f "$TASK_DB" ]]; then
-        local total_tasks
-        total_tasks=$(db "$TASK_DB" "SELECT count(*) FROM generated_tasks;" 2>/dev/null || echo "0")
-        local dispatched_tasks
-        dispatched_tasks=$(db "$TASK_DB" "SELECT count(*) FROM generated_tasks WHERE dispatched=1;" 2>/dev/null || echo "0")
-        echo "  Location: $TASK_DB"
-        echo "  Generated tasks: $total_tasks"
-        echo "  Dispatched: $dispatched_tasks"
+	# Check task DB
+	echo "Task Generation Database:"
+	if [[ -f "$TASK_DB" ]]; then
+		local total_tasks
+		total_tasks=$(db "$TASK_DB" "SELECT count(*) FROM generated_tasks;" 2>/dev/null || echo "0")
+		local dispatched_tasks
+		dispatched_tasks=$(db "$TASK_DB" "SELECT count(*) FROM generated_tasks WHERE dispatched=1;" 2>/dev/null || echo "0")
+		echo "  Location: $TASK_DB"
+		echo "  Generated tasks: $total_tasks"
+		echo "  Dispatched: $dispatched_tasks"
 
-        if [[ "$total_tasks" -gt 0 ]]; then
-            echo ""
-            echo "  By severity:"
-            db "$TASK_DB" -header -column "SELECT max_severity, count(*) as count FROM generated_tasks GROUP BY max_severity ORDER BY CASE max_severity WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 WHEN 'low' THEN 4 ELSE 5 END;" 2>/dev/null || echo "  (no data)"
+		if [[ "$total_tasks" -gt 0 ]]; then
+			echo ""
+			echo "  By severity:"
+			db "$TASK_DB" -header -column "SELECT max_severity, count(*) as count FROM generated_tasks GROUP BY max_severity ORDER BY CASE max_severity WHEN 'critical' THEN 1 WHEN 'high' THEN 2 WHEN 'medium' THEN 3 WHEN 'low' THEN 4 ELSE 5 END;" 2>/dev/null || echo "  (no data)"
 
-            echo ""
-            echo "  Recent tasks:"
-            db "$TASK_DB" -header -column "SELECT group_key, finding_count, max_severity, created_at FROM generated_tasks ORDER BY created_at DESC LIMIT 5;" 2>/dev/null || echo "  (no data)"
-        fi
-    else
-        echo "  Not yet created — run 'finding-to-task-helper.sh create' first"
-    fi
+			echo ""
+			echo "  Recent tasks:"
+			db "$TASK_DB" -header -column "SELECT group_key, finding_count, max_severity, created_at FROM generated_tasks ORDER BY created_at DESC LIMIT 5;" 2>/dev/null || echo "  (no data)"
+		fi
+	else
+		echo "  Not yet created — run 'finding-to-task-helper.sh create' first"
+	fi
 
-    echo ""
-    return 0
+	echo ""
+	return 0
 }
 
 # =============================================================================
@@ -620,48 +749,48 @@ cmd_status() {
 # =============================================================================
 
 show_help() {
-    echo ""
-    echo "finding-to-task-helper.sh — Convert quality findings into TODO tasks"
-    echo ""
-    echo "Usage: finding-to-task-helper.sh <command> [options]"
-    echo ""
-    echo "Commands:"
-    echo "  group      Preview how findings would be grouped"
-    echo "  create     Generate TODO-compatible task lines from findings"
-    echo "  status     Show pipeline status and statistics"
-    echo "  help       Show this help message"
-    echo ""
-    echo "Group options:"
-    echo "  --by TYPE          Group by: file (default), rule, severity"
-    echo "  --source SOURCE    Filter by source (e.g., sonarcloud, codacy)"
-    echo "  --min-severity LVL Minimum severity: critical, high, medium (default), low, info"
-    echo "  --format FMT       Output format: table (default), json, csv"
-    echo "  --limit N          Max groups to show (default: 50)"
-    echo ""
-    echo "Create options:"
-    echo "  --repo PATH        Repository root (default: git root or cwd)"
-    echo "  --dry-run          Preview task lines without recording"
-    echo "  --auto-dispatch    Trigger supervisor auto-pickup after creation"
-    echo "  --by TYPE          Group by: file (default), rule"
-    echo "  --source SOURCE    Filter by source"
-    echo "  --min-severity LVL Minimum severity (default: medium)"
-    echo "  --limit N          Max tasks to create (default: 20)"
-    echo ""
-    echo "Pipeline:"
-    echo "  1. quality-sweep-helper.sh sonarcloud fetch   # Populate findings DB"
-    echo "  2. finding-to-task-helper.sh group             # Preview groupings"
-    echo "  3. finding-to-task-helper.sh create --dry-run  # Preview task lines"
-    echo "  4. finding-to-task-helper.sh create            # Generate tasks"
-    echo "  5. Add task IDs (tNNN) and insert into TODO.md"
-    echo "  6. finding-to-task-helper.sh create --auto-dispatch  # Or auto-pickup"
-    echo ""
-    echo "Examples:"
-    echo "  finding-to-task-helper.sh group --by file --min-severity high"
-    echo "  finding-to-task-helper.sh create --dry-run --by rule"
-    echo "  finding-to-task-helper.sh create --auto-dispatch --min-severity critical"
-    echo "  finding-to-task-helper.sh status"
-    echo ""
-    return 0
+	echo ""
+	echo "finding-to-task-helper.sh — Convert quality findings into TODO tasks"
+	echo ""
+	echo "Usage: finding-to-task-helper.sh <command> [options]"
+	echo ""
+	echo "Commands:"
+	echo "  group      Preview how findings would be grouped"
+	echo "  create     Generate TODO-compatible task lines from findings"
+	echo "  status     Show pipeline status and statistics"
+	echo "  help       Show this help message"
+	echo ""
+	echo "Group options:"
+	echo "  --by TYPE          Group by: file (default), rule, severity"
+	echo "  --source SOURCE    Filter by source (e.g., sonarcloud, codacy)"
+	echo "  --min-severity LVL Minimum severity: critical, high, medium (default), low, info"
+	echo "  --format FMT       Output format: table (default), json, csv"
+	echo "  --limit N          Max groups to show (default: 50)"
+	echo ""
+	echo "Create options:"
+	echo "  --repo PATH        Repository root (default: git root or cwd)"
+	echo "  --dry-run          Preview task lines without recording"
+	echo "  --auto-dispatch    Trigger supervisor auto-pickup after creation"
+	echo "  --by TYPE          Group by: file (default), rule"
+	echo "  --source SOURCE    Filter by source"
+	echo "  --min-severity LVL Minimum severity (default: medium)"
+	echo "  --limit N          Max tasks to create (default: 20)"
+	echo ""
+	echo "Pipeline:"
+	echo "  1. quality-sweep-helper.sh sonarcloud fetch   # Populate findings DB"
+	echo "  2. finding-to-task-helper.sh group             # Preview groupings"
+	echo "  3. finding-to-task-helper.sh create --dry-run  # Preview task lines"
+	echo "  4. finding-to-task-helper.sh create            # Generate tasks"
+	echo "  5. Add task IDs (tNNN) and insert into TODO.md"
+	echo "  6. finding-to-task-helper.sh create --auto-dispatch  # Or auto-pickup"
+	echo ""
+	echo "Examples:"
+	echo "  finding-to-task-helper.sh group --by file --min-severity high"
+	echo "  finding-to-task-helper.sh create --dry-run --by rule"
+	echo "  finding-to-task-helper.sh create --auto-dispatch --min-severity critical"
+	echo "  finding-to-task-helper.sh status"
+	echo ""
+	return 0
 }
 
 # =============================================================================
@@ -669,29 +798,29 @@ show_help() {
 # =============================================================================
 
 main() {
-    local cmd="${1:-help}"
-    shift || true
+	local cmd="${1:-help}"
+	shift || true
 
-    case "$cmd" in
-        group)
-            cmd_group "$@"
-            ;;
-        create)
-            cmd_create "$@"
-            ;;
-        status)
-            cmd_status "$@"
-            ;;
-        help|--help|-h)
-            show_help
-            ;;
-        *)
-            print_error "Unknown command: $cmd"
-            show_help
-            return 1
-            ;;
-    esac
-    return 0
+	case "$cmd" in
+	group)
+		cmd_group "$@"
+		;;
+	create)
+		cmd_create "$@"
+		;;
+	status)
+		cmd_status "$@"
+		;;
+	help | --help | -h)
+		show_help
+		;;
+	*)
+		print_error "Unknown command: $cmd"
+		show_help
+		return 1
+		;;
+	esac
+	return 0
 }
 
 main "$@"
