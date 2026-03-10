@@ -355,7 +355,6 @@ Traditional content creation is linear: research → write → publish. This pip
 
 - `content/seo-writer.md` - SEO-optimized writing
 - `content/editor.md` - Human voice transformation
-- `content/humanise.md` - Remove AI patterns
 - `content/meta-creator.md` - Meta titles/descriptions
 - `content/internal-linker.md` - Strategic internal linking
 
@@ -399,7 +398,6 @@ Traditional content creation is linear: research → write → publish. This pip
 
 - `content/guidelines.md` - Content standards and style guide
 - `content/platform-personas.md` - Platform-specific voice adaptations
-- `content/humanise.md` - Remove AI writing patterns
 - `content/seo-writer.md` - SEO-optimized content writing
 - `content/meta-creator.md` - Meta titles and descriptions
 - `content/editor.md` - Transform AI content into human-sounding articles

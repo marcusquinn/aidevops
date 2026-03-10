@@ -169,6 +169,15 @@ cmd_check() {
 	local upstream_latest
 	upstream_latest=$(cat "$CACHE_VERSION_FILE")
 
+	# Guard against non-numeric version strings that would cause arithmetic errors in version_leq()
+	if [[ "$upstream_tracked" == "unknown" || "$upstream_latest" == "unknown" ]]; then
+		echo ""
+		echo -e "${YELLOW}Could not determine versions (tracked=${upstream_tracked}, upstream=${upstream_latest}).${NC}"
+		echo "Check that the subagent file has upstream_version: in its frontmatter"
+		echo "and that the upstream repo is accessible."
+		return 3
+	fi
+
 	echo ""
 	echo -e "${BOLD}Update Check${NC}"
 	echo "============"
@@ -242,16 +251,40 @@ cmd_diff() {
 	# shellcheck disable=SC2064
 	trap "rm -f '$tmp_local' '$tmp_upstream'" EXIT
 
-	sed '1{/^---$/d}; 1,/^---$/d' "$subagent_file" >"$tmp_local"
-	sed '1{/^---$/d}; 1,/^---$/d' "$CACHE_FILE" >"$tmp_upstream"
+	# Strip YAML frontmatter only when file starts with '---'
+	# Using awk to avoid sed's range deletion eating content when no frontmatter exists
+	strip_frontmatter() {
+		local file="$1"
+		awk '
+			NR == 1 && $0 == "---" { in_fm = 1; next }
+			in_fm && $0 == "---" { in_fm = 0; next }
+			!in_fm { print }
+		' "$file"
+		return 0
+	}
+	strip_frontmatter "$subagent_file" >"$tmp_local"
+	strip_frontmatter "$CACHE_FILE" >"$tmp_upstream"
 
 	# Show diff with best available tool
+	# diff exits 0 (identical), 1 (differences found), >1 (real error)
+	# Only suppress exit 1; propagate real failures
+	local diff_rc=0
+	set +e
 	if command -v delta &>/dev/null; then
-		diff -u "$tmp_local" "$tmp_upstream" | delta --side-by-side || true
+		diff -u "$tmp_local" "$tmp_upstream" | delta --side-by-side
+		diff_rc=$?
 	elif command -v colordiff &>/dev/null; then
-		diff -u "$tmp_local" "$tmp_upstream" | colordiff || true
+		diff -u "$tmp_local" "$tmp_upstream" | colordiff
+		diff_rc=$?
 	else
-		diff -u "$tmp_local" "$tmp_upstream" || true
+		diff -u "$tmp_local" "$tmp_upstream"
+		diff_rc=$?
+	fi
+	set -e
+
+	if [[ $diff_rc -gt 1 ]]; then
+		echo -e "${RED}Failed to generate diff (exit code ${diff_rc}).${NC}"
+		return "$diff_rc"
 	fi
 
 	echo ""
