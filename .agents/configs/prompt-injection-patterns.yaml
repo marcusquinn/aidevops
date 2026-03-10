@@ -485,6 +485,18 @@ data_exfiltration_dns:
     description: "DNS exfil: DNS-over-HTTPS query with dynamic data"
     pattern: '(?i)(dns-query|dns\.google|cloudflare-dns\.com/dns-query|doh\.).*(\$\(|\$\{|`)'
 
+  # --- curl/wget to known DNS exfiltration services ---
+  # These services provide attacker-controlled DNS servers that log queries.
+  # Also blocked at Tier 5 in network-tiers.conf, but pattern detection
+  # catches them in prompt content before execution.
+  - severity: CRITICAL
+    description: "DNS exfil: HTTP request to known DNS exfil service"
+    pattern: '(?i)\b(curl|wget|fetch|http)\b.*\b(dnslog\.cn|ceye\.io|interact\.sh|burpcollaborator\.net|oastify\.com|oast\.fun|oast\.me|oast\.live)\b'
+
+  - severity: CRITICAL
+    description: "DNS exfil: known exfil service domain in DNS tool"
+    pattern: '(?i)\b(dig|nslookup|host)\b.*\b(dnslog\.cn|ceye\.io|interact\.sh|burpcollaborator\.net|oastify\.com|oast\.fun|oast\.me|oast\.live)\b'
+
 # ================================================================
 # CONTEXT MANIPULATION
 # ================================================================

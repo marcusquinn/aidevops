@@ -201,6 +201,14 @@ _sandbox_check_dns_exfil() {
 		dns_exfil_detected=true
 	fi
 
+	# Pattern 5: Known DNS exfiltration service domains
+	# These are attacker-controlled DNS logging services. Any DNS query or
+	# HTTP request to these domains is a strong exfil indicator.
+	if printf '%s' "$command" | grep -qiE '\b(dnslog\.cn|ceye\.io|interact\.sh|burpcollaborator\.net|oastify\.com|oast\.(fun|me|live))\b'; then
+		log_sandbox "CRIT" "DNS EXFIL DETECTED: Known exfiltration service domain (worker=${wid})"
+		dns_exfil_detected=true
+	fi
+
 	if [[ "$dns_exfil_detected" == true ]]; then
 		# Log to audit trail if available
 		local audit_helper="${SCRIPT_DIR}/audit-log-helper.sh"
