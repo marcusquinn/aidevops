@@ -86,7 +86,7 @@ _security_cost_summary() {
                 COALESCE(SUM(tokens_input), 0) AS input_tok,
                 COALESCE(SUM(tokens_output), 0) AS output_tok,
                 COALESCE(SUM(tokens_cache_read), 0) AS cache_tok,
-                COALESCE(SUM(cost_total), 0) AS total_cost
+                COALESCE(SUM(cost), 0) AS total_cost
             FROM llm_requests
             ${where_clause}
             GROUP BY model_id
@@ -598,13 +598,97 @@ _security_summary_json() {
 	local posture
 	posture=$(_security_posture "$net_denied" "$pg_blocks" "$pg_warns" "$net_flagged" "$chain_intact")
 
-	# Session context availability
-	local session_context_available="false"
-	[[ -x "${SCRIPT_DIR}/session-security-helper.sh" ]] && session_context_available="true"
+	# Cost breakdown — query SQLite DB or JSONL for per-model cost data
+	local cost_json="[]"
+	local cost_total=0
+	if [[ -f "$OBS_DB" ]] && command -v sqlite3 &>/dev/null; then
+		local where_clause=""
+		if [[ -n "$session_filter" ]]; then
+			local safe_session
+			safe_session=$(_sanitize_session_filter "$session_filter")
+			safe_session="${safe_session//\'/\'\'}"
+			where_clause="WHERE session_id = '${safe_session}'"
+		fi
+		local db_result
+		db_result=$(sqlite3 -json "$OBS_DB" "
+			SELECT
+				COALESCE(model_id, 'unknown') AS model,
+				COUNT(*) AS requests,
+				COALESCE(SUM(tokens_input), 0) AS input_tokens,
+				COALESCE(SUM(tokens_output), 0) AS output_tokens,
+				COALESCE(SUM(tokens_cache_read), 0) AS cache_tokens,
+				COALESCE(SUM(cost), 0) AS cost
+			FROM llm_requests
+			${where_clause}
+			GROUP BY model_id
+			ORDER BY cost DESC;
+		" 2>/dev/null) || db_result=""
+		if [[ -n "$db_result" && "$db_result" != "[]" ]]; then
+			cost_json="$db_result"
+			cost_total=$(echo "$db_result" | jq '[.[].cost] | add // 0' 2>/dev/null) || cost_total=0
+		fi
+	elif [[ -f "$OBS_METRICS" ]] && command -v jq &>/dev/null; then
+		local jq_result
+		if [[ -n "$session_filter" ]]; then
+			local safe_session
+			safe_session=$(_sanitize_session_filter "$session_filter")
+			jq_result=$(jq -sr --arg sid "$safe_session" '[.[] | select(.session_id == $sid)] | group_by(.model) | map({
+				model: .[0].model,
+				requests: length,
+				input_tokens: ([.[].input_tokens] | add),
+				output_tokens: ([.[].output_tokens] | add),
+				cache_tokens: ([.[].cache_read_tokens] | add),
+				cost: ([.[].cost_total] | add)
+			}) | sort_by(-.cost)' "$OBS_METRICS" 2>/dev/null) || jq_result=""
+		else
+			jq_result=$(jq -sr '[.[] ] | group_by(.model) | map({
+				model: .[0].model,
+				requests: length,
+				input_tokens: ([.[].input_tokens] | add),
+				output_tokens: ([.[].output_tokens] | add),
+				cache_tokens: ([.[].cache_read_tokens] | add),
+				cost: ([.[].cost_total] | add)
+			}) | sort_by(-.cost)' "$OBS_METRICS" 2>/dev/null) || jq_result=""
+		fi
+		if [[ -n "$jq_result" && "$jq_result" != "[]" ]]; then
+			cost_json="$jq_result"
+			cost_total=$(echo "$jq_result" | jq '[.[].cost] | add // 0' 2>/dev/null) || cost_total=0
+		fi
+	fi
 
-	# Quarantine availability
+	# Session context — query helper if available
+	local session_context_available="false"
+	local session_context_score="null"
+	local session_helper="${SCRIPT_DIR}/session-security-helper.sh"
+	if [[ -x "$session_helper" ]]; then
+		session_context_available="true"
+		local score_result
+		if [[ -n "$session_filter" ]]; then
+			score_result=$("$session_helper" score --session "$session_filter" 2>/dev/null) || score_result=""
+		else
+			score_result=$("$session_helper" score 2>/dev/null) || score_result=""
+		fi
+		if [[ -n "$score_result" ]]; then
+			session_context_score=$(jq -n --arg s "$score_result" '$s')
+		fi
+	fi
+
+	# Quarantine — query helper if available
 	local quarantine_available="false"
-	[[ -x "${SCRIPT_DIR}/quarantine-helper.sh" ]] && quarantine_available="true"
+	local quarantine_pending=0
+	local quarantine_helper="${SCRIPT_DIR}/quarantine-helper.sh"
+	if [[ -x "$quarantine_helper" ]]; then
+		quarantine_available="true"
+		local q_status
+		if [[ -n "$session_filter" ]]; then
+			q_status=$("$quarantine_helper" count --session "$session_filter" 2>/dev/null) || q_status=""
+		else
+			q_status=$("$quarantine_helper" count 2>/dev/null) || q_status=""
+		fi
+		if [[ -n "$q_status" && "$q_status" =~ ^[0-9]+$ ]]; then
+			quarantine_pending="$q_status"
+		fi
+	fi
 
 	# Build JSON safely using jq to prevent injection via session_filter
 	local session_json="null"
@@ -618,6 +702,8 @@ _security_summary_json() {
 		--arg timestamp "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
 		--argjson session_filter "$session_json" \
 		--arg posture "$posture" \
+		--argjson cost_breakdown "$cost_json" \
+		--argjson cost_total "$cost_total" \
 		--argjson audit_count "$audit_count" \
 		--argjson chain_intact "$chain_intact" \
 		--argjson net_access "$net_access" \
@@ -628,16 +714,19 @@ _security_summary_json() {
 		--argjson pg_warns "$pg_warns" \
 		--argjson pg_sanitizes "$pg_sanitizes" \
 		--argjson session_context_available "$session_context_available" \
+		--argjson session_context_score "$session_context_score" \
 		--argjson quarantine_available "$quarantine_available" \
+		--argjson quarantine_pending "$quarantine_pending" \
 		'{
 			timestamp: $timestamp,
 			session_filter: $session_filter,
 			posture: $posture,
+			cost: { total: $cost_total, breakdown: $cost_breakdown },
 			audit: { total_events: $audit_count, chain_intact: $chain_intact },
 			network: { logged_access: $net_access, flagged: $net_flagged, denied: $net_denied },
 			prompt_guard: { total_detections: $pg_total, blocked: $pg_blocks, warned: $pg_warns, sanitized: $pg_sanitizes },
-			session_context: { available: $session_context_available },
-			quarantine: { available: $quarantine_available }
+			session_context: { available: $session_context_available, score: $session_context_score },
+			quarantine: { available: $quarantine_available, pending_items: $quarantine_pending }
 		}'
 	return 0
 }
@@ -1021,7 +1110,12 @@ main() {
 				exit 1
 			fi
 			shift
-			session_filter=$(_sanitize_session_filter "$1")
+			local raw_session="$1"
+			session_filter=$(_sanitize_session_filter "$raw_session")
+			if [[ -z "$session_filter" || "$session_filter" != "$raw_session" ]]; then
+				echo "Error: --session may only contain letters, numbers, dots, hyphens, and underscores" >&2
+				exit 1
+			fi
 			;;
 		--json)
 			json_flag=true
