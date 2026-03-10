@@ -183,7 +183,7 @@ summarize "https://example.com" --stream off
 | Anthropic | `anthropic/claude-sonnet-4-6` | `ANTHROPIC_API_KEY` |
 | Google | `google/gemini-3-flash-preview` | `GEMINI_API_KEY` |
 | xAI | `xai/grok-4-fast-non-reasoning` | `XAI_API_KEY` |
-| Zhipu AI | `zhipuai/glm-4` | `ZHIPUAI_API_KEY` |
+| Z.AI (Zhipu) | `zai/glm-4.7` | `Z_AI_API_KEY` |
 | OpenRouter | `openrouter/openai/gpt-5-mini` | `OPENROUTER_API_KEY` |
 
 ### Free Models via OpenRouter
