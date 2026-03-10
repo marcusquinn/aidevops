@@ -41,6 +41,10 @@ readonly CODACY_RETRY_BACKOFF_BASE=2
 # Config file paths anchored to repo root (not CWD-dependent)
 REPO_ROOT="$(cd "${SCRIPT_DIR}/../.." && pwd)"
 readonly REPO_ROOT
+[[ -d "$REPO_ROOT" ]] || {
+	echo "FATAL: Could not determine REPO_ROOT" >&2
+	exit 1
+}
 readonly AUDIT_CONFIG="${REPO_ROOT}/configs/code-audit-config.json"
 readonly AUDIT_CONFIG_TEMPLATE="${REPO_ROOT}/configs/code-audit-config.json.txt"
 
@@ -528,16 +532,22 @@ JQ_EOF
 	local count=0
 	if [[ -s "$sql_file" ]]; then
 		# Wrap in transaction for atomicity and performance (single fsync)
-		{
-			echo "BEGIN TRANSACTION;"
-			cat "$sql_file"
-			echo "COMMIT;"
-		} |
-			db "$AUDIT_DB" 2>/dev/null || log_warn "Some Codacy inserts may have failed"
-		count=$(wc -l <"$sql_file" | tr -d ' ')
+		# Use total_changes() for accurate committed row count instead of wc -l
+		count=$(
+			{
+				echo "BEGIN TRANSACTION;"
+				cat "$sql_file"
+				echo "COMMIT;"
+				echo "SELECT total_changes();"
+			} |
+				db "$AUDIT_DB" 2>/dev/null
+		) || {
+			log_warn "Some Codacy inserts may have failed"
+			count=0
+		}
 	fi
 
-	echo "$count"
+	echo "${count:-0}"
 	return 0
 }
 
