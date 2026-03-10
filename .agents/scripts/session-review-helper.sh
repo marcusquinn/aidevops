@@ -373,7 +373,7 @@ _security_posture() {
 		local blocks warns
 		blocks=$(grep -c '"action":"BLOCK"' "$PG_ATTEMPTS_LOG" 2>/dev/null || echo "0")
 		warns=$(grep -c '"action":"WARN"' "$PG_ATTEMPTS_LOG" 2>/dev/null || echo "0")
-		if [[ "$blocks" -gt 0 && "$posture" != "HIGH" && "$posture" != "CRITICAL" ]]; then
+		if [[ "$blocks" -gt 0 && ("$posture" == "CLEAN" || "$posture" == "LOW") ]]; then
 			posture="MEDIUM"
 		elif [[ "$warns" -gt 0 && "$posture" == "CLEAN" ]]; then
 			posture="LOW"
