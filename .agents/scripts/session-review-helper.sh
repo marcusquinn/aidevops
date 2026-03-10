@@ -61,7 +61,8 @@ _sanitize_session_filter() {
 #   $1 - session ID filter (optional, empty = all)
 # Output: formatted cost table on stdout
 _security_cost_summary() {
-	local session_filter="$1"
+	local session_filter
+	session_filter=$(_sanitize_session_filter "${1:-}")
 
 	# Prefer SQLite DB (real-time via plugin)
 	if [[ -f "$OBS_DB" ]] && command -v sqlite3 &>/dev/null; then
@@ -96,8 +97,8 @@ _security_cost_summary() {
 				short_model="${short_model:0:35}"
 				printf "  %-35s %6s %10s %10s %10s \$%s\n" \
 					"$short_model" "$reqs" "$input_tok" "$output_tok" "$cache_tok" "$cost"
-				grand_total_cost=$(awk "BEGIN { printf \"%.6f\", $grand_total_cost + $cost }")
-				grand_total_reqs=$((grand_total_reqs + reqs))
+				grand_total_cost=$(awk -v total="$grand_total_cost" -v c="$cost" 'BEGIN { printf "%.6f", total + c }')
+				grand_total_reqs=$(awk -v total="$grand_total_reqs" -v r="$reqs" 'BEGIN { print total + r }')
 			done <<<"$result"
 			printf "  %-35s %6s %10s %10s %10s \$%s\n" \
 				"TOTAL" "$grand_total_reqs" "" "" "" "$grand_total_cost"
@@ -403,7 +404,8 @@ _security_posture() {
 #   $1 - session ID filter (optional)
 #   $2 - output format: "text" or "json" (default: text)
 output_security_summary() {
-	local session_filter="${1:-}"
+	local session_filter
+	session_filter=$(_sanitize_session_filter "${1:-}")
 	local output_format="${2:-text}"
 
 	if [[ "$output_format" == "json" ]]; then
@@ -468,7 +470,8 @@ output_security_summary() {
 # Arguments:
 #   $1 - session ID filter (optional)
 _security_summary_json() {
-	local session_filter="${1:-}"
+	local session_filter
+	session_filter=$(_sanitize_session_filter "${1:-}")
 
 	local posture
 	posture=$(_security_posture)
