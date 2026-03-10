@@ -71,8 +71,14 @@ check_existing_subtasks() {
 		return 0
 	fi
 
-	local parent_pattern="^- \\[[ x-]\\] ${task_id} "
-	local child_pattern="^  - \\[[ x-]\\] ${task_id}\\."
+	# Escape regex metacharacters in task_id to prevent injection
+	local escaped_id
+	# Single quotes intentional: sed pattern must not expand
+	# shellcheck disable=SC2016
+	escaped_id=$(printf '%s' "$task_id" | sed 's/[.[\*^$()+?{|\\]/\\&/g')
+
+	local parent_pattern="^- \\[[ x-]\\] ${escaped_id} "
+	local child_pattern="^  - \\[[ x-]\\] ${escaped_id}\\."
 
 	if grep -qE "$parent_pattern" "$todo_file" && grep -qE "$child_pattern" "$todo_file"; then
 		echo "true"

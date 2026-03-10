@@ -316,7 +316,7 @@ main() {
 
 		if [[ -z "$candidate_urls" ]]; then
 			log_verbose "No merged PR found for $task_id"
-			((unmatched++)) || true
+			((++unmatched))
 
 			if [[ "$DRY_RUN" != "true" ]]; then
 				write_proof_log "$task_id" "pr_backfill" \
@@ -353,7 +353,7 @@ main() {
 
 			if [[ -n "$existing_task" ]]; then
 				log "SKIP $task_id: PR $validated_url already linked to $existing_task"
-				((already_linked++)) || true
+				((++already_linked))
 
 				if [[ "$DRY_RUN" != "true" ]]; then
 					write_proof_log "$task_id" "pr_backfill" \
@@ -385,7 +385,7 @@ main() {
 					break
 				else
 					log "ERROR: Failed to update DB for $task_id: $db_err"
-					((errors++)) || true
+					((++errors))
 					linked="error"
 					break
 				fi
@@ -393,10 +393,10 @@ main() {
 		done <<<"$candidate_urls"
 
 		case "$linked" in
-		true) ((matched++)) || true ;;
+		true) ((++matched)) ;;
 		skip) ;;  # already counted in already_linked
 		error) ;; # already counted in errors
-		*) ((unmatched++)) || true ;;
+		*) ((++unmatched)) ;;
 		esac
 
 		# Rate limit: small delay between GitHub API calls to avoid rate limiting

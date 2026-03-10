@@ -329,7 +329,7 @@ setup_shell_compatibility() {
 				fi
 				echo "$line" >>"$shared_profile"
 				seen_lines+=("$line")
-				((extracted++)) || true
+				((++extracted))
 			fi
 		done <"$src_file"
 	done

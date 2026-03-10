@@ -72,7 +72,11 @@ parse_args() {
 		arg="$1"
 		case "$arg" in
 		--pr)
-			val="$2"
+			val="${2:-}"
+			if [[ -z "$val" || "$val" == --* ]]; then
+				echo "Error: --pr requires a PR number" >&2
+				exit 1
+			fi
 			PR_NUMBER="$val"
 			shift 2
 			;;
@@ -87,7 +91,11 @@ parse_args() {
 			fi
 			;;
 		--repo-path)
-			val="$2"
+			val="${2:-}"
+			if [[ -z "$val" || "$val" == --* ]]; then
+				echo "Error: --repo-path requires a path" >&2
+				exit 1
+			fi
 			REPO_PATH="$val"
 			shift 2
 			;;

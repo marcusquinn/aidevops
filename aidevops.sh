@@ -3,7 +3,7 @@
 # AI DevOps Framework CLI
 # Usage: aidevops <command> [options]
 #
-# Version: 2.170.1
+# Version: 2.170.2
 
 set -euo pipefail
 
@@ -932,7 +932,7 @@ cmd_update() {
 
 			if [[ "$installed" != "$latest" ]]; then
 				stale_tools="${stale_tools:+$stale_tools, }$cmd_name ($installed -> $latest)"
-				((stale_count++)) || true
+				((++stale_count))
 			fi
 		done
 
@@ -1095,7 +1095,7 @@ scaffold_repo_courtesy_files() {
 			readme_content="$readme_content"$'\n\n'"## Licence"$'\n\n'"See [LICENCE](LICENCE) for details."
 		fi
 		printf '%s\n' "$readme_content" >"$project_root/README.md"
-		((created++))
+		((++created))
 	fi
 
 	# LICENCE (MIT default)
@@ -1124,7 +1124,7 @@ LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
 LICEOF
-		((created++))
+		((++created))
 	fi
 
 	# CHANGELOG.md
@@ -1139,7 +1139,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 CHEOF
-		((created++))
+		((++created))
 	fi
 
 	# CONTRIBUTING.md
@@ -1160,7 +1160,7 @@ CHEOF
 		contrib_content="$contrib_content"$'\n'"- \`refactor:\` - Code change that neither fixes a bug nor adds a feature"
 		contrib_content="$contrib_content"$'\n'"- \`chore:\` - Maintenance tasks"
 		printf '%s\n' "$contrib_content" >"$project_root/CONTRIBUTING.md"
-		((created++))
+		((++created))
 	fi
 
 	# SECURITY.md
@@ -1186,7 +1186,7 @@ SECEOF
 Please do not open public issues for security vulnerabilities.
 SECEOF
 		fi
-		((created++))
+		((++created))
 	fi
 
 	# CODE_OF_CONDUCT.md
@@ -1213,7 +1213,7 @@ Examples of behavior that contributes to a positive environment:
 This Code of Conduct is adapted from the [Contributor Covenant](https://www.contributor-covenant.org),
 version 2.1.
 COCEOF
-		((created++))
+		((++created))
 	fi
 
 	if [[ $created -gt 0 ]]; then
@@ -1961,7 +1961,7 @@ SOPSEOF
 		if [[ ! -f "$pf_path" ]]; then
 			mkdir -p "$(dirname "$pf_path")"
 			echo "$pointer_content" >"$pf_path"
-			((pointer_created++))
+			((++pointer_created))
 		fi
 	done
 	if [[ $pointer_created -gt 0 ]]; then
@@ -2071,27 +2071,27 @@ SOPSEOF
 	local step=1
 	if [[ "$committed" != "true" ]]; then
 		echo "  ${step}. Commit the initialized files: git add -A && git commit -m 'chore: initialize aidevops'"
-		((step++))
+		((++step))
 	fi
 	if [[ "$enable_beads" == "true" ]]; then
 		echo "  ${step}. Add tasks to TODO.md with dependencies (blocked-by:t001)"
-		((step++))
+		((++step))
 		echo "  ${step}. Run /ready to see unblocked tasks"
-		((step++))
+		((++step))
 		echo "  ${step}. Run /sync-beads to sync with Beads graph"
-		((step++))
+		((++step))
 		echo "  ${step}. Use 'bd' CLI for graph visualization"
 	elif [[ "$enable_database" == "true" ]]; then
 		echo "  ${step}. Add schema files to schemas/"
-		((step++))
+		((++step))
 		echo "  ${step}. Run diff to generate migrations"
-		((step++))
+		((++step))
 		echo "  ${step}. See .agents/workflows/sql-migrations.md"
 	else
 		echo "  ${step}. Add tasks to TODO.md"
-		((step++))
+		((++step))
 		echo "  ${step}. Use /create-prd for complex features"
-		((step++))
+		((++step))
 		echo "  ${step}. Use /feature to start development"
 	fi
 

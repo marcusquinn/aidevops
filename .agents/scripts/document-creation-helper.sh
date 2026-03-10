@@ -71,9 +71,9 @@ human_filesize() {
 	local file="$1"
 	local bytes
 	if [[ "$(uname)" == "Darwin" ]]; then
-		bytes=$(stat -f%z -- "$file" 2>/dev/null || echo "0")
+		bytes=$(stat -f%z -- "$file" || echo "0")
 	else
-		bytes=$(stat -c%s -- "$file" 2>/dev/null || echo "0")
+		bytes=$(stat -c%s -- "$file" || echo "0")
 	fi
 	if [[ "$bytes" -ge 1073741824 ]]; then
 		printf '%s.%sG' "$((bytes / 1073741824))" "$(((bytes % 1073741824) * 10 / 1073741824))"

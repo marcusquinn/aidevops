@@ -368,10 +368,10 @@ show_help() {
 
 # Main function
 main() {
-    local _arg2="$2"
-    local _arg3="$3"
-    local _arg4="$4"
     local command="${1:-help}"
+    local _arg2="${2:-}"
+    local _arg3="${3:-}"
+    local _arg4="${4:-}"
 
     case "$command" in
         "install")

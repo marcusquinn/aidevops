@@ -547,63 +547,63 @@ _self_test() {
 	result=$(classify_domain "github.com")
 	if [[ "$result" != "1" ]]; then
 		log_error "Self-test: github.com expected tier 1, got tier ${result}"
-		((failures++)) || true
+		((++failures))
 	fi
 
 	# Tier 1: api.github.com (wildcard *.github.com)
 	result=$(classify_domain "api.github.com")
 	if [[ "$result" != "1" ]]; then
 		log_error "Self-test: api.github.com expected tier 1, got tier ${result}"
-		((failures++)) || true
+		((++failures))
 	fi
 
 	# Tier 2: registry.npmjs.org
 	result=$(classify_domain "registry.npmjs.org")
 	if [[ "$result" != "2" ]]; then
 		log_error "Self-test: registry.npmjs.org expected tier 2, got tier ${result}"
-		((failures++)) || true
+		((++failures))
 	fi
 
 	# Tier 3: sonarcloud.io
 	result=$(classify_domain "sonarcloud.io")
 	if [[ "$result" != "3" ]]; then
 		log_error "Self-test: sonarcloud.io expected tier 3, got tier ${result}"
-		((failures++)) || true
+		((++failures))
 	fi
 
 	# Tier 4: unknown domain
 	result=$(classify_domain "totally-unknown-domain.example.net")
 	if [[ "$result" != "4" ]]; then
 		log_error "Self-test: unknown domain expected tier 4, got tier ${result}"
-		((failures++)) || true
+		((++failures))
 	fi
 
 	# Tier 5: ngrok.io (deny list)
 	result=$(classify_domain "evil.ngrok.io")
 	if [[ "$result" != "5" ]]; then
 		log_error "Self-test: evil.ngrok.io expected tier 5, got tier ${result}"
-		((failures++)) || true
+		((++failures))
 	fi
 
 	# Tier 5: raw IP
 	result=$(classify_domain "192.168.1.1")
 	if [[ "$result" != "5" ]]; then
 		log_error "Self-test: raw IP expected tier 5, got tier ${result}"
-		((failures++)) || true
+		((++failures))
 	fi
 
 	# Tier 5: .onion TLD
 	result=$(classify_domain "hidden.onion")
 	if [[ "$result" != "5" ]]; then
 		log_error "Self-test: .onion expected tier 5, got tier ${result}"
-		((failures++)) || true
+		((++failures))
 	fi
 
 	# URL normalization: strip protocol and port
 	result=$(classify_domain "https://github.com:443/foo/bar")
 	if [[ "$result" != "1" ]]; then
 		log_error "Self-test: URL normalization expected tier 1, got tier ${result}"
-		((failures++)) || true
+		((++failures))
 	fi
 
 	if [[ $failures -gt 0 ]]; then

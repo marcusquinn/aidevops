@@ -62,6 +62,7 @@ RAM_PER_WORKER_MB="${RAM_PER_WORKER_MB:-1024}"            # 1 GB per worker
 RAM_RESERVE_MB="${RAM_RESERVE_MB:-8192}"                  # 8 GB reserved for OS + user apps
 MAX_WORKERS_CAP="${MAX_WORKERS_CAP:-8}"                   # Hard ceiling regardless of RAM
 QUALITY_SWEEP_INTERVAL="${QUALITY_SWEEP_INTERVAL:-86400}" # 24 hours between sweeps
+PERSON_STATS_INTERVAL="${PERSON_STATS_INTERVAL:-3600}"    # 1 hour between person-stats refreshes (t1426)
 DAILY_PR_CAP="${DAILY_PR_CAP:-5}"                         # Max PRs created per repo per day (GH#3821)
 PRODUCT_RESERVATION_PCT="${PRODUCT_RESERVATION_PCT:-60}"  # % of worker slots reserved for product repos (t1423)
 
@@ -82,6 +83,7 @@ RAM_PER_WORKER_MB=$(_validate_int RAM_PER_WORKER_MB "$RAM_PER_WORKER_MB" 1024 1)
 RAM_RESERVE_MB=$(_validate_int RAM_RESERVE_MB "$RAM_RESERVE_MB" 8192)
 MAX_WORKERS_CAP=$(_validate_int MAX_WORKERS_CAP "$MAX_WORKERS_CAP" 8)
 QUALITY_SWEEP_INTERVAL=$(_validate_int QUALITY_SWEEP_INTERVAL "$QUALITY_SWEEP_INTERVAL" 86400)
+PERSON_STATS_INTERVAL=$(_validate_int PERSON_STATS_INTERVAL "$PERSON_STATS_INTERVAL" 3600)
 DAILY_PR_CAP=$(_validate_int DAILY_PR_CAP "$DAILY_PR_CAP" 5 1)
 PRODUCT_RESERVATION_PCT=$(_validate_int PRODUCT_RESERVATION_PCT "$PRODUCT_RESERVATION_PCT" 60 0)
 CHILD_RSS_LIMIT_KB=$(_validate_int CHILD_RSS_LIMIT_KB "$CHILD_RSS_LIMIT_KB" 2097152 1)
@@ -102,6 +104,8 @@ PULSE_MODEL="${PULSE_MODEL:-anthropic/claude-sonnet-4-6}"
 REPOS_JSON="${REPOS_JSON:-${HOME}/.config/aidevops/repos.json}"
 STATE_FILE="${HOME}/.aidevops/logs/pulse-state.txt"
 QUALITY_SWEEP_LAST_RUN="${HOME}/.aidevops/logs/quality-sweep-last-run"
+PERSON_STATS_LAST_RUN="${HOME}/.aidevops/logs/person-stats-last-run"
+PERSON_STATS_CACHE_DIR="${HOME}/.aidevops/logs"
 QUALITY_SWEEP_STATE_DIR="${HOME}/.aidevops/logs/quality-sweep-state"
 CODERABBIT_ISSUE_SPIKE="${CODERABBIT_ISSUE_SPIKE:-10}" # trigger active review when issues increase by this many
 
@@ -1953,11 +1957,16 @@ ${worker_table}"
 	if [[ -x "$activity_helper" ]]; then
 		activity_md=$(bash "$activity_helper" summary "$repo_path" --period month --format markdown || echo "_Activity data unavailable._")
 		session_time_md=$(bash "$activity_helper" session-time "$repo_path" --period all --format markdown || echo "_Session data unavailable._")
-		person_stats_md=$(bash "$activity_helper" person-stats "$repo_path" --period month --format markdown || echo "_Person stats unavailable._")
 	else
 		activity_md="_Activity helper not installed._"
 		session_time_md="_Activity helper not installed._"
-		person_stats_md="_Activity helper not installed._"
+	fi
+	# t1426: person-stats from hourly cache (see _refresh_person_stats_cache)
+	local ps_cache="${PERSON_STATS_CACHE_DIR}/person-stats-cache-${slug_safe}.md"
+	if [[ -f "$ps_cache" ]]; then
+		person_stats_md=$(cat "$ps_cache")
+	else
+		person_stats_md="_Person stats not yet cached._"
 	fi
 
 	# --- Assemble body ---
@@ -2137,6 +2146,103 @@ _unpin_health_issue() {
 }
 
 #######################################
+# Refresh person-stats cache (t1426)
+#
+# Runs at most once per PERSON_STATS_INTERVAL (default 1h).
+# Computes per-repo and cross-repo person-stats, writes markdown
+# to cache files. Health issue updates read from cache.
+#######################################
+_refresh_person_stats_cache() {
+	if [[ -f "$PERSON_STATS_LAST_RUN" ]]; then
+		local last_run
+		last_run=$(cat "$PERSON_STATS_LAST_RUN" 2>/dev/null || echo "0")
+		last_run="${last_run//[^0-9]/}"
+		last_run="${last_run:-0}"
+		local now
+		now=$(date +%s)
+		if [[ $((now - last_run)) -lt "$PERSON_STATS_INTERVAL" ]]; then
+			return 0
+		fi
+	fi
+
+	local activity_helper="${HOME}/.aidevops/agents/scripts/contributor-activity-helper.sh"
+	[[ -x "$activity_helper" ]] || return 0
+
+	local repos_json="$REPOS_JSON"
+	[[ -f "$repos_json" ]] || return 0
+
+	mkdir -p "$PERSON_STATS_CACHE_DIR"
+
+	# t1426: Estimate Search API cost before calling person_stats().
+	# person_stats() burns ~4 Search API requests per contributor per repo.
+	# GitHub Search API limit is 30 req/min. Check remaining budget against
+	# estimated cost to avoid blocking the pulse with rate-limit sleeps.
+	local search_remaining
+	search_remaining=$(gh api rate_limit --jq '.resources.search.remaining' 2>/dev/null) || search_remaining=0
+
+	# Per-repo person-stats
+	local repo_entries
+	repo_entries=$(jq -r '.initialized_repos[] | select(.pulse == true and (.local_only // false) == false and .slug != "") | "\(.slug)|\(.path)"' "$repos_json" 2>/dev/null || echo "")
+
+	# Count repos to estimate minimum cost (at least 1 contributor × 4 queries per repo)
+	local repo_count=0
+	local search_api_cost_per_contributor=4
+	while IFS='|' read -r _slug _path; do
+		[[ -z "$_slug" ]] && continue
+		repo_count=$((repo_count + 1))
+	done <<<"$repo_entries"
+
+	# Minimum budget: repo_count × 1 contributor × 4 queries. In practice,
+	# repos have 2-3 contributors, so this is a conservative lower bound.
+	local min_budget_needed=$((repo_count * search_api_cost_per_contributor))
+	if [[ "$search_remaining" -lt "$min_budget_needed" ]]; then
+		echo "[pulse-wrapper] Person stats cache refresh skipped: Search API budget ${search_remaining} < estimated cost ${min_budget_needed} (${repo_count} repos × ${search_api_cost_per_contributor} queries/contributor)" >>"$LOGFILE"
+		return 0
+	fi
+
+	while IFS='|' read -r slug path; do
+		[[ -z "$slug" ]] && continue
+
+		# Re-check budget before each repo — bail early if exhausted mid-refresh
+		search_remaining=$(gh api rate_limit --jq '.resources.search.remaining' 2>/dev/null) || search_remaining=0
+		if [[ "$search_remaining" -lt "$search_api_cost_per_contributor" ]]; then
+			echo "[pulse-wrapper] Person stats cache refresh stopped mid-run: Search API budget exhausted (${search_remaining} remaining)" >>"$LOGFILE"
+			break
+		fi
+
+		local slug_safe="${slug//\//-}"
+		local cache_file="${PERSON_STATS_CACHE_DIR}/person-stats-cache-${slug_safe}.md"
+		local md
+		md=$(bash "$activity_helper" person-stats "$path" --period month --format markdown 2>/dev/null) || md=""
+		if [[ -n "$md" ]]; then
+			echo "$md" >"$cache_file"
+		fi
+	done <<<"$repo_entries"
+
+	# Cross-repo person-stats — also gated on remaining budget
+	search_remaining=$(gh api rate_limit --jq '.resources.search.remaining' 2>/dev/null) || search_remaining=0
+	local all_repo_paths
+	all_repo_paths=$(jq -r '.initialized_repos[] | select(.pulse == true and (.local_only // false) == false) | .path' "$repos_json" 2>/dev/null || echo "")
+	if [[ -n "$all_repo_paths" && "$search_remaining" -ge "$search_api_cost_per_contributor" ]]; then
+		local -a cross_args=()
+		while IFS= read -r rp; do
+			[[ -n "$rp" ]] && cross_args+=("$rp")
+		done <<<"$all_repo_paths"
+		if [[ ${#cross_args[@]} -gt 1 ]]; then
+			local cross_md
+			cross_md=$(bash "$activity_helper" cross-repo-person-stats "${cross_args[@]}" --period month --format markdown 2>/dev/null) || cross_md=""
+			if [[ -n "$cross_md" ]]; then
+				echo "$cross_md" >"${PERSON_STATS_CACHE_DIR}/person-stats-cache-cross-repo.md"
+			fi
+		fi
+	fi
+
+	date +%s >"$PERSON_STATS_LAST_RUN"
+	echo "[pulse-wrapper] Person stats cache refreshed" >>"$LOGFILE"
+	return 0
+}
+
+#######################################
 # Update health issues for ALL pulse-enabled repos
 #
 # Iterates repos.json and calls _update_health_issue_for_repo for each
@@ -2159,9 +2265,13 @@ update_health_issues() {
 		return 0
 	fi
 
+	# Refresh person-stats cache if stale (t1426: hourly, not every pulse)
+	_refresh_person_stats_cache || true
+
 	# Pre-compute cross-repo summaries ONCE for all health issues.
 	# This avoids N×N git log walks (one cross-repo scan per repo dashboard)
 	# and redundant DB queries for session time.
+	# Person stats read from cache (refreshed hourly by _refresh_person_stats_cache).
 	local cross_repo_md=""
 	local cross_repo_session_time_md=""
 	local cross_repo_person_stats_md=""
@@ -2177,9 +2287,12 @@ update_health_issues() {
 			if [[ ${#cross_args[@]} -gt 1 ]]; then
 				cross_repo_md=$(bash "$activity_helper" cross-repo-summary "${cross_args[@]}" --period month --format markdown || echo "_Cross-repo data unavailable._")
 				cross_repo_session_time_md=$(bash "$activity_helper" cross-repo-session-time "${cross_args[@]}" --period all --format markdown || echo "_Cross-repo session data unavailable._")
-				cross_repo_person_stats_md=$(bash "$activity_helper" cross-repo-person-stats "${cross_args[@]}" --period month --format markdown || echo "_Cross-repo person stats unavailable._")
 			fi
 		fi
+	fi
+	local cross_repo_cache="${PERSON_STATS_CACHE_DIR}/person-stats-cache-cross-repo.md"
+	if [[ -f "$cross_repo_cache" ]]; then
+		cross_repo_person_stats_md=$(cat "$cross_repo_cache")
 	fi
 
 	local updated=0
@@ -3168,6 +3281,10 @@ main() {
 	if ! check_dedup; then
 		return 0
 	fi
+
+	# t1425: Write PID early to prevent parallel instances during setup.
+	# run_pulse() overwrites with the opencode PID for watchdog tracking.
+	echo "$$" >"$PIDFILE"
 
 	cleanup_orphans
 	cleanup_worktrees

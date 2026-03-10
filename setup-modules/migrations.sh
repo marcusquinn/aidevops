@@ -42,7 +42,7 @@ cleanup_deprecated_paths() {
 	for path in "${deprecated_paths[@]}"; do
 		if [[ -e "$path" ]]; then
 			rm -rf "$path"
-			((cleaned++)) || true
+			((++cleaned))
 		fi
 	done
 
@@ -238,13 +238,13 @@ migrate_agent_to_agents_folder() {
 					mkdir -p "$repo_path/.agents"
 				fi
 				print_info "  Removed legacy .agent symlink in $(basename "$repo_path")"
-				((migrated++)) || true
+				((++migrated))
 			elif [[ -d "$repo_path/.agent" && ! -L "$repo_path/.agent" ]]; then
 				# Real directory (not symlink) - rename it
 				if [[ ! -e "$repo_path/.agents" ]]; then
 					mv "$repo_path/.agent" "$repo_path/.agents"
 					print_info "  Renamed directory: $repo_path/.agent -> .agents"
-					((migrated++)) || true
+					((++migrated))
 				fi
 			fi
 
@@ -253,7 +253,7 @@ migrate_agent_to_agents_folder() {
 				rm -f "$repo_path/.agents"
 				mkdir -p "$repo_path/.agents"
 				print_info "  Replaced .agents symlink with real directory in $(basename "$repo_path")"
-				((migrated++)) || true
+				((++migrated))
 			fi
 
 			# Update .gitignore: remove legacy bare ".agents" (now tracked),
@@ -324,13 +324,13 @@ migrate_agent_to_agents_folder() {
 					mkdir -p "$repo_dir/.agents"
 				fi
 				print_info "  Removed legacy .agent symlink: $agent_path"
-				((migrated++)) || true
+				((++migrated))
 			elif [[ -d "$agent_path" ]]; then
 				# Directory: rename to .agents if .agents doesn't exist
 				if [[ ! -e "$repo_dir/.agents" ]]; then
 					mv "$agent_path" "$repo_dir/.agents"
 					print_info "  Renamed directory: $agent_path -> .agents"
-					((migrated++)) || true
+					((++migrated))
 				fi
 			fi
 		done < <(find "$HOME/Git" -maxdepth 3 -name ".agent" \( -type l -o -type d \) -print0 2>/dev/null)
@@ -350,7 +350,7 @@ migrate_agent_to_agents_folder() {
 				sed -i '' 's|\.agent/|.agents/|g' "$config_file" 2>/dev/null ||
 					sed -i 's|\.agent/|.agents/|g' "$config_file" 2>/dev/null || true
 				print_info "  Updated references in $config_file"
-				((migrated++)) || true
+				((++migrated))
 			fi
 		fi
 	done
@@ -422,7 +422,7 @@ cleanup_deprecated_mcps() {
 	for mcp in "${deprecated_mcps[@]}"; do
 		if jq -e ".mcp[\"$mcp\"]" "$tmp_config" >/dev/null 2>&1; then
 			jq "del(.mcp[\"$mcp\"])" "$tmp_config" >"${tmp_config}.new" && mv "${tmp_config}.new" "$tmp_config"
-			((cleaned++)) || true
+			((++cleaned))
 		fi
 	done
 
@@ -470,7 +470,7 @@ cleanup_deprecated_mcps() {
 			full_path=$(resolve_mcp_binary_path "$bin_name")
 			if [[ -n "$full_path" ]]; then
 				jq --arg k "$mcp_key" --arg p "$full_path" '.mcp[$k].command = [$p]' "$tmp_config" >"${tmp_config}.new" && mv "${tmp_config}.new" "$tmp_config"
-				((cleaned++)) || true
+				((++cleaned))
 			fi
 		fi
 	done
@@ -487,7 +487,7 @@ cleanup_deprecated_mcps() {
 				outscraper_key=$(source "$HOME/.config/aidevops/credentials.sh" && echo "${OUTSCRAPER_API_KEY:-}")
 			fi
 			jq --arg p "$outscraper_path" --arg key "$outscraper_key" '.mcp.outscraper.command = [$p] | .mcp.outscraper.environment = {"OUTSCRAPER_API_KEY": $key}' "$tmp_config" >"${tmp_config}.new" && mv "${tmp_config}.new" "$tmp_config"
-			((cleaned++)) || true
+			((++cleaned))
 		fi
 	fi
 
@@ -537,6 +537,7 @@ disable_ondemand_mcps() {
 	)
 
 	local disabled=0
+	local changed=0
 	local tmp_config
 	tmp_config=$(mktemp)
 	trap 'rm -f "${tmp_config:-}"' RETURN
@@ -551,7 +552,7 @@ disable_ondemand_mcps() {
 			current_enabled=$(jq -r ".mcp[\"$mcp\"].enabled // \"true\"" "$tmp_config")
 			if [[ "$current_enabled" != "false" ]]; then
 				jq ".mcp[\"$mcp\"].enabled = false" "$tmp_config" >"${tmp_config}.new" && mv "${tmp_config}.new" "$tmp_config"
-				((disabled++)) || true
+				((++disabled))
 			fi
 		fi
 	done
@@ -565,7 +566,7 @@ disable_ondemand_mcps() {
 		if jq -e ".mcp[\"$mcp\"].type == \"stdio\" or .mcp[\"$mcp\"].command[0] == \"echo\"" "$tmp_config" >/dev/null 2>&1; then
 			jq "del(.mcp[\"$mcp\"])" "$tmp_config" >"${tmp_config}.new" && mv "${tmp_config}.new" "$tmp_config"
 			print_info "Removed invalid MCP entry: $mcp"
-			disabled=1 # Mark as changed
+			changed=1
 		fi
 	done
 
@@ -575,14 +576,16 @@ disable_ondemand_mcps() {
 		if jq -e ".mcp[\"$mcp\"].enabled == false" "$tmp_config" >/dev/null 2>&1; then
 			jq ".mcp[\"$mcp\"].enabled = true" "$tmp_config" >"${tmp_config}.new" && mv "${tmp_config}.new" "$tmp_config"
 			print_info "Re-enabled $mcp MCP"
-			disabled=1 # Mark as changed
+			changed=1
 		fi
 	done
 
-	if [[ $disabled -gt 0 ]]; then
+	if [[ $disabled -gt 0 || $changed -gt 0 ]]; then
 		create_backup_with_rotation "$opencode_config" "opencode"
 		mv "$tmp_config" "$opencode_config"
-		print_info "Disabled $disabled MCP(s) globally (use subagents to enable on-demand)"
+		if [[ $disabled -gt 0 ]]; then
+			print_info "Disabled $disabled MCP(s) globally (use subagents to enable on-demand)"
+		fi
 	else
 		rm -f "$tmp_config"
 	fi
@@ -700,7 +703,7 @@ migrate_mcp_env_to_credentials() {
 		if [[ ! -f "$new_file" ]]; then
 			mv "$old_file" "$new_file"
 			chmod 600 "$new_file"
-			((migrated++)) || true
+			((++migrated))
 			print_info "Renamed mcp-env.sh to credentials.sh"
 		fi
 		# Create backward-compatible symlink
@@ -721,7 +724,7 @@ migrate_mcp_env_to_credentials() {
 				if [[ ! -f "$tenant_new" ]]; then
 					mv "$tenant_old" "$tenant_new"
 					chmod 600 "$tenant_new"
-					((migrated++)) || true
+					((++migrated))
 				fi
 				if [[ ! -L "$tenant_old" ]]; then
 					ln -sf "credentials.sh" "$tenant_old"
@@ -736,7 +739,7 @@ migrate_mcp_env_to_credentials() {
 			# shellcheck disable=SC2016
 			sed -i '' 's|source.*\.config/aidevops/mcp-env\.sh|source "$HOME/.config/aidevops/credentials.sh"|g' "$rc_file" 2>/dev/null ||
 				sed -i 's|source.*\.config/aidevops/mcp-env\.sh|source "$HOME/.config/aidevops/credentials.sh"|g' "$rc_file" 2>/dev/null || true
-			((migrated++)) || true
+			((++migrated))
 			print_info "Updated $rc_file to source credentials.sh"
 		fi
 	done
@@ -784,11 +787,11 @@ migrate_old_backups() {
 		# Check if it contains agents folder (most common)
 		if [[ -d "$backup/agents" ]]; then
 			mv "$backup" "$HOME/.aidevops/agents-backups/$backup_name"
-			((migrated++)) || true
+			((++migrated))
 		# Check if it contains opencode.json
 		elif [[ -f "$backup/opencode.json" ]]; then
 			mv "$backup" "$HOME/.aidevops/opencode-backups/$backup_name"
-			((migrated++)) || true
+			((++migrated))
 		fi
 	done
 
@@ -862,7 +865,7 @@ migrate_loop_state_directories() {
 					print_warning "  .claude/ has other files, not removing"
 				fi
 
-				((migrated++)) || true
+				((++migrated))
 			fi
 		fi
 
@@ -876,7 +879,7 @@ migrate_loop_state_directories() {
 				cp -R "$legacy_state_dir"/* "$new_state_dir/" 2>/dev/null || true
 				rm -rf "$legacy_state_dir"
 				print_info "  Migrated .agents/loop-state/ -> .agents/loop-state/"
-				((migrated++)) || true
+				((++migrated))
 			fi
 		fi
 
@@ -936,14 +939,14 @@ migrate_pulse_repos_to_repos_json() {
 			jq --arg path "$expanded_path" --arg slug "$slug" --arg priority "$priority" \
 				'(.initialized_repos[] | select(.path == $path)) |= . + {slug: $slug, pulse: true, priority: $priority}' \
 				"$repos_file" >"$temp_file" && mv "$temp_file" "$repos_file"
-			((migrated++)) || true
+			((++migrated))
 		else
 			# Add new entry from pulse-repos.json
 			local temp_file="${repos_file}.tmp"
 			jq --arg path "$expanded_path" --arg slug "$slug" --arg priority "$priority" \
 				'.initialized_repos += [{path: $path, slug: $slug, pulse: true, priority: $priority}]' \
 				"$repos_file" >"$temp_file" && mv "$temp_file" "$repos_file"
-			((migrated++)) || true
+			((++migrated))
 		fi
 	done < <(jq -r '(.repos? // .)[] | [.slug, .path, .priority] | @tsv' "$pulse_file" 2>/dev/null)
 

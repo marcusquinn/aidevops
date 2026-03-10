@@ -150,6 +150,10 @@ jobs:
     - name: SonarCloud Scan
       if: env.SONAR_TOKEN != ''
       uses: SonarSource/sonarqube-scan-action@40f5b61913e891f9d316696628698051136015be
+      # SonarCloud may fail on fork PR merge refs even when SONAR_TOKEN is
+      # available (e.g., maintainer re-runs). Non-fatal — other quality tools
+      # (Codacy, CodeFactor, Qlty) still provide coverage.
+      continue-on-error: true
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 

@@ -22,6 +22,51 @@ Each plan includes:
 
 ## Active Plans
 
+### [2026-03-09] Grith-Inspired Security Enhancements
+
+**Status:** Planning
+**Estimate:** ~18h (ai:14h test:2.5h read:1.5h)
+**TODO:** t1428 (parent), t1428.1-t1428.5 (subtasks)
+**Logged:** 2026-03-09
+**Inspiration:** [grith.ai](https://grith.ai) — zero-trust AI agent security proxy. Blog analysis of 9 posts covering: 7-agent security audit, MCP tool poisoning, skill supply chain attacks, Clinejection, DNS exfiltration (CVE-2025-55284), IDEsaster 24 CVEs, OpenClaw bans, vibe coding OSS impact.
+
+<!--TOON:plan{id,title,status,phase,total_phases,owner,tags,est,est_ai,est_test,est_read,logged}:
+p044,Grith-Inspired Security Enhancements,planning,0,5,,security|prompt-injection|mcp|network|observability,18h,14h,2.5h,1.5h,2026-03-09T00:00Z
+-->
+
+#### Purpose
+
+Gap analysis of aidevops security stack against Grith.ai's zero-trust AI agent security model. After deep audit of our existing capabilities (prompt-guard-helper.sh, network-tier-helper.sh, worker-sandbox-helper.sh, content-classifier-helper.sh, audit-log-helper.sh, verify-operation-helper.sh, security-helper.sh, opsec.md CI/CD section, skill-scanner, privacy-filter-helper.sh, tirith, sandbox-exec-helper.sh), 5 genuine gaps were identified. These enhance both the framework's own security posture and provide patterns/guidance for apps built with aidevops.
+
+**What we already have (no gap):** prompt injection detection (70+ patterns + LLM classifier), MCP tool poisoning awareness (mcporter.md security section), network egress controls (5-tier domain classification, 222 domains), tamper-evident audit trail (hash-chained JSONL), high-stakes operation verification (cross-provider), cost tracking, worker credential isolation (fake HOME), execution sandboxing, skill supply chain scanning (Cisco + VirusTotal), CI/CD AI agent security guidance (Clinejection case study, 10-point checklist), privacy filter, terminal security (Tirith), AI config scanning (Ferret), dependency scanning (Socket.dev + OSV).
+
+**What's missing:** The 5 gaps below represent capabilities Grith implements at the syscall level that we can implement at the prompt/script layer — without kernel instrumentation.
+
+#### Phases
+
+- [ ] **Phase 1 — DNS exfiltration detection** (t1428.1, ~2h): Add patterns to `prompt-injection-patterns.yaml` and `sandbox-exec-helper.sh` that detect DNS exfiltration command shapes (`dig $(...).`, `nslookup $(...).`, `host $(...).`, base64-encoded data piped to DNS tools). Directly addresses CVE-2025-55284 demonstrated against Claude Code. Low effort, high value.
+
+- [ ] **Phase 2 — MCP tool description runtime scanning** (t1428.2, ~3h): Create `mcp-audit` command that uses `mcporter list --json` to fetch all configured MCP server tool descriptions, runs `prompt-guard-helper.sh scan` on each description text, and flags any containing injection patterns. Run automatically on `aidevops init` and after `mcporter config add`. Catches the most underappreciated MCP attack vector — tool descriptions that instruct the model to read sensitive files.
+
+- [ ] **Phase 3 — Session-scoped composite security scoring** (t1428.3, ~5h): Add a session security context that accumulates signals across operations. When `prompt-guard-helper.sh` detects a sensitive file access, it writes to a session state file. When `network-tier-helper.sh` evaluates an outbound request, it checks the session state — if sensitive data was accessed, the composite score gets elevated. Implements lightweight taint tracking without syscall interception. Extends `prompt-guard-helper.sh` to produce numeric composite scores from existing severity weights.
+
+- [ ] **Phase 4 — Quarantine digest with learn feedback** (t1428.4, ~5h): Create `quarantine-helper.sh` providing a unified quarantine queue that `prompt-guard-helper.sh`, `network-tier-helper.sh`, and `sandbox-exec-helper.sh` all write to. Items in the ambiguous score range are batched for periodic review via `/security-review` command. "Learn" action feeds back into `network-tiers-custom.conf` or `prompt-guard-custom.txt`, creating a self-improving feedback loop.
+
+- [ ] **Phase 5 — Unified post-session security summary** (t1428.5, ~3h): Enhance `session-review-helper.sh` with a `--security` mode that aggregates: cost from `observability-helper.sh`, security events from `audit-log-helper.sh` (filtered to current session), flagged domains from `network-tier-helper.sh`, quarantine items pending review, prompt-guard detections. Single summary view after each session. All data sources already exist — this is presentation/aggregation.
+
+#### Future consideration
+
+**Interactive session security posture dashboard** — deferred to a future aidevops interface project. The information (accessible sensitive paths, network egress posture, gopass entries) is security-sensitive and should not be published to public GitHub issues. Will be part of a local-only aidevops UI. For now, `security-posture-helper.sh` (t1412.6) provides CLI-based posture checks.
+
+#### Decision Log
+
+| Date | Decision | Rationale |
+|------|----------|-----------|
+| 2026-03-09 | Defer interactive dashboard to future aidevops UI | Security posture data (accessible keys, credentials, network state) should not be published to public GitHub issues. Needs a local-only interface. |
+| 2026-03-09 | Implement at prompt/script layer, not syscall level | Grith's core value is OS-level interception. We can achieve 80% of the security benefit at the prompt/script layer using existing infrastructure (prompt-guard, network-tier, sandbox-exec). Syscall interception would require a separate tool. |
+| 2026-03-09 | DNS exfil detection as Phase 1 | Lowest effort, highest immediate value. Directly addresses a demonstrated CVE. Pattern-based detection catches known attack shapes from CVE-2025-55284. |
+| 2026-03-09 | MCP description scanning before composite scoring | MCP tool descriptions entering model context is a pre-execution attack vector. Catching it before the model processes the description is more effective than scoring the resulting operations after the fact. |
+
 ### [2026-03-07] Convos Encrypted Messaging Agent
 
 **Status:** Planning

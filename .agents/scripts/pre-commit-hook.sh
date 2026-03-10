@@ -62,7 +62,7 @@ validate_return_statements() {
 
 			if [[ $functions -gt 0 && $returns -lt $functions ]]; then
 				print_error "Missing return statements in $file"
-				((violations++))
+				((++violations))
 			fi
 		fi
 	done
@@ -107,7 +107,7 @@ validate_string_literals() {
 			if [[ $repeated -gt 0 ]]; then
 				print_warning "Repeated string literals in $file (consider using constants)"
 				grep -o '"[^"]*"' "$file" | sort | uniq -c | awk '$1 >= 3 {print "  " $1 "x: " $2}' | head -3
-				((violations++))
+				((++violations))
 			fi
 		fi
 	done
@@ -123,7 +123,7 @@ run_shellcheck() {
 	for file in "$@"; do
 		if [[ -f "$file" ]] && ! shellcheck "$file"; then
 			print_error "ShellCheck violations in $file"
-			((violations++))
+			((++violations))
 		fi
 	done
 
@@ -154,21 +154,21 @@ check_secrets() {
 			print_info "  1. Remove the secrets from your code"
 			print_info "  2. Add to .secretlintignore if false positive"
 			print_info "  3. Use // secretlint-disable-line comment"
-			((violations++))
+			((++violations))
 		fi
 	elif [[ -f "node_modules/.bin/secretlint" ]]; then
 		if echo "$staged_files" | xargs ./node_modules/.bin/secretlint --format compact 2>/dev/null; then
 			print_success "No secrets detected in staged files"
 		else
 			print_error "Potential secrets detected in staged files!"
-			((violations++))
+			((++violations))
 		fi
 	elif command -v npx &>/dev/null && [[ -f ".secretlintrc.json" ]]; then
 		if echo "$staged_files" | xargs npx secretlint --format compact 2>/dev/null; then
 			print_success "No secrets detected in staged files"
 		else
 			print_error "Potential secrets detected in staged files!"
-			((violations++))
+			((++violations))
 		fi
 	else
 		print_warning "Secretlint not available (install: npm install secretlint --save-dev)"
@@ -255,7 +255,7 @@ validate_todo_completions() {
 
 		if [[ "$has_evidence" == "false" ]]; then
 			failed_tasks+=("$task_id")
-			((fail_count++))
+			((++fail_count))
 		fi
 	done <<<"$newly_completed"
 
@@ -341,7 +341,7 @@ validate_parent_subtask_blocking() {
 			local open_count
 			open_count=$(echo "$explicit_subtasks" | wc -l | tr -d ' ')
 			failed_tasks+=("$task_id (has $open_count open subtask(s) by ID)")
-			((fail_count++))
+			((++fail_count))
 			continue
 		fi
 
@@ -375,7 +375,7 @@ validate_parent_subtask_blocking() {
 			local open_count
 			open_count=$(echo "$open_subtasks" | wc -l | tr -d ' ')
 			failed_tasks+=("$task_id (has $open_count open subtask(s) by indentation)")
-			((fail_count++))
+			((++fail_count))
 		fi
 	done <<<"$newly_completed"
 
@@ -474,7 +474,7 @@ validate_repo_root_files() {
 
 		if [[ "$allowed" == "false" ]]; then
 			rejected_files+=("$file")
-			((violations++))
+			((++violations))
 		fi
 	done <<<"$new_root_files"
 

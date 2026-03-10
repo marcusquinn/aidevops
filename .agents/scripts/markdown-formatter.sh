@@ -99,13 +99,13 @@ process_directory() {
 
 	# Find all markdown files
 	while IFS= read -r -d '' file; do
-		((total_files++)) || true
+		((++total_files))
 		local before_hash after_hash
 		before_hash=$(sha256sum "$file" | awk '{print $1}')
 		fix_markdown_file "$file"
 		after_hash=$(sha256sum "$file" | awk '{print $1}')
 		if [[ "$before_hash" != "$after_hash" ]]; then
-			((changed_files++)) || true
+			((++changed_files))
 		fi
 	done < <(find "$dir" -name "*.md" -type f -print0)
 
@@ -317,7 +317,7 @@ main() {
 				fix_markdown_file "$temp_file"
 				if ! cmp -s "$file" "$temp_file"; then
 					print_warning "Formatting issues found in: $file"
-					((lint_issues++)) || true
+					((++lint_issues))
 				fi
 				rm -f "$temp_file" "${temp_file}.bak"
 			done < <(find "$target" -name "*.md" -type f -print0)

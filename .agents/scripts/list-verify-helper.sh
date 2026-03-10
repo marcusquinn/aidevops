@@ -198,9 +198,9 @@ output_markdown() {
 	# Count entries
 	while IFS='|' read -r status vid tid desc pr merged files checks verified failed_reason; do
 		case "$status" in
-		pending) ((pending_count++)) ;;
-		passed) ((passed_count++)) ;;
-		failed) ((failed_count++)) ;;
+		pending) ((++pending_count)) ;;
+		passed) ((++passed_count)) ;;
+		failed) ((++failed_count)) ;;
 		esac
 	done <"$entries_file"
 
@@ -235,7 +235,7 @@ output_markdown() {
 			local num=0
 			while IFS='|' read -r status vid tid desc pr merged files checks verified failed_reason; do
 				[[ "$status" != "failed" ]] && continue
-				((num++))
+				((++num))
 				echo "| $num | $vid | $tid | $desc | $pr | $merged | ${failed_reason:--} |"
 			done <"$entries_file"
 		fi
@@ -264,7 +264,7 @@ output_markdown() {
 			local num=0
 			while IFS='|' read -r status vid tid desc pr merged files checks verified failed_reason; do
 				[[ "$status" != "pending" ]] && continue
-				((num++))
+				((++num))
 				local check_count
 				if [[ -n "$checks" ]]; then
 					check_count=$(echo "$checks" | tr ';' '\n' | wc -l | xargs)
@@ -299,7 +299,7 @@ output_markdown() {
 			local num=0
 			while IFS='|' read -r status vid tid desc pr merged files checks verified failed_reason; do
 				[[ "$status" != "passed" ]] && continue
-				((num++))
+				((++num))
 				echo "| $num | $vid | $tid | $desc | $pr | $merged | ${verified:--} |"
 			done <"$entries_file"
 		fi

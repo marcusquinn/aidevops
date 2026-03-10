@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.170.2] - 2026-03-09
+
+### Fixed
+
+- revert incorrect anomalyco removal, add explicit marcusquinn/aidevops slug (#4014)
+- address set -e incompatible error handling and blanket stderr suppression in worker-watchdog.sh (#4013)
+- address 5 quality-debt findings from closed batch PRs (batch 3) (#3976)
+- address 5 quality-debt findings (batch 4) (#3977)
+- address 4 quality-debt findings in plugin-loader-helper.sh (#3978)
+- remove blanket error suppression in OCR test pipeline (#3979)
+- detect and redeploy stale agents in update pipeline (#4001)
+- tool-version-check falls back to package.json for MCP servers that block on --version (#3973)
+- resubmit 5 quality-debt fixes from closed batch PRs (batch 2) (#3975)
+- remove anomalyco org name from system prompt and active code to prevent slug hallucination (#3999)
+
 ## [2.170.1] - 2026-03-09
 
 ### Changed

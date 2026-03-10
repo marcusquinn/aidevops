@@ -51,7 +51,7 @@ bootstrap_repo() {
 					local wait_count=0
 					while ! command -v orb >/dev/null 2>&1 && [[ $wait_count -lt 30 ]]; do
 						sleep 2
-						((wait_count++)) || true
+						((++wait_count))
 					done
 					if ! command -v orb >/dev/null 2>&1; then
 						print_error "OrbStack CLI not found after installation"

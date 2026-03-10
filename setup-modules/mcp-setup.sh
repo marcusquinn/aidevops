@@ -44,9 +44,9 @@ install_mcp_packages() {
 	for pkg in "${node_mcps[@]}"; do
 		local short_name="${pkg##*/}" # Strip @scope/ prefix for display
 		if run_with_spinner "Installing $short_name" npm_global_install "${pkg}@latest"; then
-			((updated++)) || true
+			((++updated))
 		else
-			((failed++)) || true
+			((++failed))
 			print_warning "Failed to install/update $pkg"
 		fi
 	done
@@ -155,7 +155,7 @@ update_mcp_paths_in_opencode() {
 				new_path=$(resolve_mcp_binary_path "$bin_name")
 				if [[ -n "$new_path" && "$new_path" != "$current_cmd" ]]; then
 					jq --arg k "$mcp_key" --arg p "$new_path" '.mcp[$k].command[0] = $p' "$tmp_config" >"${tmp_config}.new" && mv "${tmp_config}.new" "$tmp_config"
-					((updated++)) || true
+					((++updated))
 				fi
 			fi
 			continue
@@ -172,7 +172,7 @@ update_mcp_paths_in_opencode() {
 
 		if [[ -n "$full_path" && "$full_path" != "$current_cmd" ]]; then
 			jq --arg k "$mcp_key" --arg p "$full_path" '.mcp[$k].command[0] = $p' "$tmp_config" >"${tmp_config}.new" && mv "${tmp_config}.new" "$tmp_config"
-			((updated++)) || true
+			((++updated))
 		fi
 	done <<<"$mcp_keys"
 
@@ -186,7 +186,7 @@ update_mcp_paths_in_opencode() {
 		while IFS= read -r mcp_key; do
 			[[ -z "$mcp_key" ]] && continue
 			jq --arg k "$mcp_key" --arg p "$node_path" '.mcp[$k].command[0] = $p' "$tmp_config" >"${tmp_config}.new" && mv "${tmp_config}.new" "$tmp_config"
-			((updated++)) || true
+			((++updated))
 		done <<<"$node_mcp_keys"
 	fi
 

@@ -145,7 +145,7 @@ find_workers() {
 
 		# Output: PID|ELAPSED|COMMAND
 		echo "${pid}|${elapsed_seconds}|${cmd}"
-	done < <(ps axo pid,command 2>/dev/null | grep "$grep_pattern" | grep '/full-loop' || true)
+	done < <(ps axo pid,command | grep "$grep_pattern" | grep '/full-loop' || true)
 
 	return 0
 }
@@ -202,7 +202,7 @@ extract_repo_slug() {
 
 	# Get remote URL and extract slug
 	local remote_url
-	remote_url=$(git -C "$worktree_dir" remote get-url origin 2>/dev/null) || remote_url=""
+	remote_url=$(git -C "$worktree_dir" remote get-url origin) || true
 
 	if [[ -z "$remote_url" ]]; then
 		echo ""
@@ -307,7 +307,7 @@ check_progress_stall() {
 				JOIN session s ON m.session_id = s.id
 				WHERE s.title LIKE '%${escaped_title}%'
 				AND m.created_at > datetime('now', '-${WORKER_PROGRESS_TIMEOUT} seconds')
-			" 2>/dev/null) || recent_count=0
+			" || echo 0)
 
 			if [[ "$recent_count" -gt 0 ]]; then
 				has_recent_activity=true

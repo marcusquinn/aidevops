@@ -230,7 +230,7 @@ google-chat-helper.sh setup
 | `maxResponseLength` | `4096` | Max response text length before truncation |
 | `responseTimeout` | `30` | Seconds before returning async acknowledgment |
 | `asyncResponseTimeout` | `600` | Max seconds for async runner response |
-| `verifyGoogleTokens` | `true` | Verify inbound request bearer tokens against Google JWKS |
+| `verifyGoogleTokens` | `true` | Verify inbound request bearer tokens against Google JWKS. **Must remain `true` in production** — disable only for local development without Google connectivity |
 
 ## Authentication
 

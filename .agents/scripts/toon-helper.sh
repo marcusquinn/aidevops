@@ -208,9 +208,9 @@ batch_convert() {
                     basename=$(basename "$file" .json)
                     local target_file="$target_dir/$basename.toon"
                     
-                    ((count++)) || true
+                    ((++count))
                     if json_to_toon "$file" "$target_file" "$delimiter" "false"; then
-                        ((success_count++)) || true
+                        ((++success_count))
                     fi
                 fi
             done
@@ -222,9 +222,9 @@ batch_convert() {
                     basename=$(basename "$file" .toon)
                     local target_file="$target_dir/$basename.json"
                     
-                    ((count++)) || true
+                    ((++count))
                     if toon_to_json "$file" "$target_file" "true"; then
-                        ((success_count++)) || true
+                        ((++success_count))
                     fi
                 fi
             done

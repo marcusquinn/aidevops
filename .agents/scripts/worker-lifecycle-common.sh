@@ -280,7 +280,9 @@ _compute_struggle_ratio() {
 	local commits=0
 	if [[ -d "${worktree_dir}/.git" || -f "${worktree_dir}/.git" ]]; then
 		local since_seconds_ago="${elapsed_seconds}"
-		commits=$(git -C "$worktree_dir" log --oneline --since="${since_seconds_ago} seconds ago" 2>/dev/null | wc -l | tr -d ' ') || commits=0
+		# Use (cmd || true) pattern for set -e safety — ensures the pipeline
+		# always succeeds and stderr remains visible for debugging (GH#4010)
+		commits=$( (git -C "$worktree_dir" log --oneline --since="${since_seconds_ago} seconds ago" || true) | wc -l | tr -d ' ')
 	fi
 
 	# Estimate message count from OpenCode session DB
@@ -298,13 +300,15 @@ _compute_struggle_ratio() {
 			# Query message count for the most recent session matching this title
 			# Use sqlite3 with a LIKE match on session title
 			local escaped_title="${session_title//\'/\'\'}"
+			# Use (cmd || echo 0) pattern for set -e safety — ensures the
+			# assignment always succeeds and stderr remains visible (GH#4010)
 			messages=$(sqlite3 "$db_path" "
 				SELECT COUNT(*)
 				FROM message m
 				JOIN session s ON m.session_id = s.id
 				WHERE s.title LIKE '%${escaped_title}%'
 				AND s.time_created > strftime('%s', 'now') - ${elapsed_seconds}
-			" 2>/dev/null) || messages=0
+			" || echo 0)
 		fi
 	fi
 

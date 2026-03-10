@@ -470,7 +470,7 @@ crawl_with_crawl4ai() {
             fi
             batch_urls+=("$queue_url")
             echo "$queue_url" >> "$visited_file"
-            ((batch_count++))
+            ((++batch_count))
         done < "$queue_file"
         
         # Remove processed URLs from queue
@@ -534,7 +534,7 @@ crawl_with_crawl4ai() {
                 
                 # Append to results file
                 echo "$result" >> "$results_file"
-                ((crawled_count++))
+                ((++crawled_count))
                 
                 local page_url status_code
                 page_url=$(printf '%s' "$result" | jq -r '.url // empty')
@@ -572,7 +572,7 @@ crawl_with_crawl4ai() {
             done
         fi
         
-        ((current_depth++))
+        ((++current_depth))
     done
     
     print_info "Crawl complete. Processing results..."
@@ -700,12 +700,12 @@ crawl4ai_generate_reports() {
     local code_200=0 code_301=0 code_302=0 code_404=0 code_500=0 code_other=0
     for code in "${status_codes[@]}"; do
         case "$code" in
-            200) ((code_200++)) ;;
-            301) ((code_301++)) ;;
-            302) ((code_302++)) ;;
-            404) ((code_404++)) ;;
-            500) ((code_500++)) ;;
-            *) ((code_other++)) ;;
+            200) ((++code_200)) ;;
+            301) ((++code_301)) ;;
+            302) ((++code_302)) ;;
+            404) ((++code_404)) ;;
+            500) ((++code_500)) ;;
+            *) ((++code_other)) ;;
         esac
     done
     

@@ -109,7 +109,7 @@ cmd_failed() {
 	local failed_count=0
 
 	while IFS=$'\t' read -r name summary url; do
-		((failed_count++)) || true
+		((++failed_count))
 		echo -e "${RED}✗ ${name}${NC}"
 		[[ -n "$summary" && "$summary" != "null" ]] && echo "  Summary: ${summary}"
 		[[ -n "$url" && "$url" != "null" ]] && echo "  Details: ${url}"

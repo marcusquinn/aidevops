@@ -672,7 +672,7 @@ cmd_copy() {
 			fi
 
 			echo "$line" >>"$dest_env"
-			((copied++))
+			((++copied))
 		fi
 	done <"$source_env"
 
