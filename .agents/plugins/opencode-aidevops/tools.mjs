@@ -1,4 +1,4 @@
-import { execSync } from "child_process";
+import { execSync, execFileSync } from "child_process";
 import { existsSync } from "fs";
 import { join } from "path";
 
@@ -212,8 +212,12 @@ const VALID_HOOK_ACTIONS = ["install", "uninstall", "status", "test"];
 
 /**
  * Run the install-hooks-helper.sh script.
- * @param {string} helperScript
- * @param {string} action
+ * Uses execFileSync with argument array instead of execSync with string
+ * interpolation — eliminates shell interpretation entirely, which is both
+ * more secure and satisfies static taint analyzers (Codacy/Semgrep) that
+ * flag parameter-to-child_process data flows in execSync template strings.
+ * @param {string} helperScript - Path to the helper script
+ * @param {string} action - Hook action to run
  * @returns {string}
  */
 function runHookHelper(helperScript, action) {
@@ -222,14 +226,11 @@ function runHookHelper(helperScript, action) {
     return `Invalid action: ${String(action)}. Valid actions: ${VALID_HOOK_ACTIONS.join(", ")}`;
   }
   try {
-    const result = execSync(
-      `bash "${helperScript}" ${validAction}`,
-      {
-        encoding: "utf-8",
-        timeout: 15000,
-        stdio: ["pipe", "pipe", "pipe"],
-      },
-    );
+    const result = execFileSync("bash", [helperScript, validAction], {
+      encoding: "utf-8",
+      timeout: 15000,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
     return result.trim();
   } catch (err) {
     const cmdOutput = (err.stdout || "") + (err.stderr || "");
