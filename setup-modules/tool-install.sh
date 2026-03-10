@@ -240,46 +240,54 @@ setup_rtk() {
 	# Single Rust binary, zero dependencies, <10ms overhead
 	# https://github.com/rtk-ai/rtk
 
+	local rtk_installer_url="https://raw.githubusercontent.com/rtk-ai/rtk/refs/heads/master/install.sh"
+
 	if command -v rtk >/dev/null 2>&1; then
 		local rtk_version
 		rtk_version=$(rtk --version 2>/dev/null | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo "unknown")
 		print_success "rtk found: v$rtk_version (token optimization proxy)"
-		return 0
-	fi
+		# Fall through to ensure config is applied (telemetry, tee)
+	else
+		print_info "rtk (Rust Token Killer) reduces LLM token usage by 60-90% on CLI commands"
+		echo "  Compresses git, gh, test runner, and linter outputs before they reach the AI context."
+		echo "  Single binary, zero dependencies, <10ms overhead."
+		echo ""
 
-	print_info "rtk (Rust Token Killer) reduces LLM token usage by 60-90% on CLI commands"
-	echo "  Compresses git, gh, test runner, and linter outputs before they reach the AI context."
-	echo "  Single binary, zero dependencies, <10ms overhead."
-	echo ""
+		local install_rtk="y"
+		if [[ "$INTERACTIVE_MODE" == "true" ]]; then
+			read -r -p "Install rtk for token-optimized CLI output? [Y/n]: " install_rtk
+		fi
 
-	local install_rtk="y"
-	if [[ "$INTERACTIVE_MODE" == "true" ]]; then
-		read -r -p "Install rtk for token-optimized CLI output? [Y/n]: " install_rtk
-	fi
-
-	if [[ "$install_rtk" =~ ^[Yy]?$ ]]; then
-		if command -v brew >/dev/null 2>&1; then
-			if run_with_spinner "Installing rtk via Homebrew" brew install rtk; then
-				print_success "rtk installed via Homebrew"
+		if [[ "$install_rtk" =~ ^[Yy]?$ ]]; then
+			VERIFIED_INSTALL_SHELL="sh"
+			if command -v brew >/dev/null 2>&1; then
+				if run_with_spinner "Installing rtk via Homebrew" brew install rtk; then
+					print_success "rtk installed via Homebrew"
+				else
+					print_warning "Homebrew install failed, trying curl installer..."
+					if verified_install "rtk" "$rtk_installer_url"; then
+						print_success "rtk installed to ~/.local/bin/rtk"
+					else
+						print_warning "rtk installation failed (non-critical, optional tool)"
+					fi
+				fi
 			else
-				print_warning "Homebrew install failed, trying curl installer..."
-				if curl -fsSL https://raw.githubusercontent.com/rtk-ai/rtk/refs/heads/master/install.sh | sh; then
+				# Linux or macOS without brew — use verified_install for secure execution
+				if verified_install "rtk" "$rtk_installer_url"; then
 					print_success "rtk installed to ~/.local/bin/rtk"
 				else
 					print_warning "rtk installation failed (non-critical, optional tool)"
+					echo "  Manual install: https://github.com/rtk-ai/rtk#installation"
 				fi
 			fi
 		else
-			# Linux or macOS without brew — use curl installer
-			if curl -fsSL https://raw.githubusercontent.com/rtk-ai/rtk/refs/heads/master/install.sh | sh; then
-				print_success "rtk installed to ~/.local/bin/rtk"
-			else
-				print_warning "rtk installation failed (non-critical, optional tool)"
-				echo "  Manual install: https://github.com/rtk-ai/rtk#installation"
-			fi
+			print_info "Skipped rtk installation (optional)"
+			echo "  Manual install: brew install rtk  OR  curl -fsSL $rtk_installer_url | sh"
 		fi
+	fi
 
-		# Disable telemetry by default for headless/worker environments
+	# Configure rtk (telemetry off, tee for failure capture) — only if binary is present
+	if command -v rtk >/dev/null 2>&1; then
 		local rtk_config_dir="${XDG_CONFIG_HOME:-$HOME/.config}/rtk"
 		if [[ ! -f "$rtk_config_dir/config.toml" ]]; then
 			mkdir -p "$rtk_config_dir"
@@ -297,9 +305,6 @@ setup_rtk() {
 			RTKEOF
 			print_success "rtk config created (telemetry disabled)"
 		fi
-	else
-		print_info "Skipped rtk installation (optional)"
-		echo "  Manual install: brew install rtk  OR  curl -fsSL https://raw.githubusercontent.com/rtk-ai/rtk/refs/heads/master/install.sh | sh"
 	fi
 
 	return 0
