@@ -293,8 +293,9 @@ cmd_search() {
 		local category
 		category=$(path_to_category "$rel_path")
 
-		# Skip non-skill files
+		# Skip non-skill files (custom/skills/* is allowed through)
 		case "$rel_path" in
+		custom/skills/*) ;;
 		scripts/* | templates/* | memory/* | configs/* | custom/* | draft/* | AGENTS.md | VERSION | subagent-index.toon)
 			continue
 			;;
@@ -341,7 +342,7 @@ cmd_search() {
 				fi
 			fi
 		fi
-	done < <(find "$AGENTS_DIR" -name "*.md" -type f | sort)
+	done < <(find -L "$AGENTS_DIR" -name "*.md" -type f | sort)
 
 	if [[ "$json_output" == true ]]; then
 		local results_json
@@ -403,7 +404,7 @@ cmd_browse() {
 			if [[ -n "$top_cat" && "$top_cat" != "root" ]]; then
 				echo "$top_cat" >>"$cat_counts_file"
 			fi
-		done < <(find "$AGENTS_DIR" -name "*.md" -type f)
+		done < <(find -L "$AGENTS_DIR" -name "*.md" -type f)
 
 		# Sort, count, and display
 		if [[ -s "$cat_counts_file" ]]; then
@@ -432,8 +433,9 @@ cmd_browse() {
 	while IFS= read -r md_file; do
 		local rel_path="${md_file#"$AGENTS_DIR/"}"
 
-		# Skip non-skill files
+		# Skip non-skill files (custom/skills/* is allowed through)
 		case "$rel_path" in
+		custom/skills/*) ;;
 		scripts/* | templates/* | memory/* | configs/* | custom/* | draft/* | AGENTS.md | VERSION | subagent-index.toon)
 			continue
 			;;
@@ -460,7 +462,7 @@ cmd_browse() {
 			fi
 			((++found))
 		fi
-	done < <(find "$AGENTS_DIR" -name "*.md" -type f | sort)
+	done < <(find -L "$AGENTS_DIR" -name "*.md" -type f | sort)
 
 	echo ""
 	if [[ $found -eq 0 ]]; then
@@ -507,7 +509,7 @@ cmd_describe() {
 		elif [[ "$filename" == *"$name"* ]]; then
 			candidates+=("$md_file")
 		fi
-	done < <(find "$AGENTS_DIR" -name "*.md" -type f | sort)
+	done < <(find -L "$AGENTS_DIR" -name "*.md" -type f | sort)
 
 	# Use first candidate if no exact match
 	if [[ -z "$skill_file" && ${#candidates[@]} -gt 0 ]]; then
@@ -638,7 +640,7 @@ cmd_info() {
 			skill_file="$md_file"
 			break
 		fi
-	done < <(find "$AGENTS_DIR" -name "*.md" -type f | sort)
+	done < <(find -L "$AGENTS_DIR" -name "*.md" -type f | sort)
 
 	if [[ -z "$skill_file" || ! -f "$skill_file" ]]; then
 		log_error "Skill not found: $name"
@@ -750,8 +752,9 @@ cmd_list() {
 		local filename
 		filename=$(basename "$md_file" .md)
 
-		# Skip non-skill files
+		# Skip non-skill files (custom/skills/* is allowed through)
 		case "$rel_path" in
+		custom/skills/*) ;;
 		scripts/* | templates/* | memory/* | configs/* | custom/* | draft/* | AGENTS.md | VERSION | subagent-index.toon)
 			continue
 			;;
@@ -785,7 +788,7 @@ cmd_list() {
 			printf "  %-35s %-25s %s\n" "$filename" "[$category]" "($type_label)"
 		fi
 		((++count))
-	done < <(find "$AGENTS_DIR" -name "*.md" -type f | sort)
+	done < <(find -L "$AGENTS_DIR" -name "*.md" -type f | sort)
 
 	if [[ "$json_output" == true ]]; then
 		local results_json
@@ -812,8 +815,9 @@ cmd_categories() {
 	while IFS= read -r md_file; do
 		local rel_path="${md_file#"$AGENTS_DIR/"}"
 
-		# Skip non-skill files
+		# Skip non-skill files (custom/skills/* is allowed through)
 		case "$rel_path" in
+		custom/skills/*) ;;
 		scripts/* | templates/* | memory/* | configs/* | custom/* | draft/* | AGENTS.md | VERSION | subagent-index.toon)
 			continue
 			;;
@@ -824,7 +828,7 @@ cmd_categories() {
 		if [[ -n "$cat" ]]; then
 			echo "$cat" >>"$cat_counts_file"
 		fi
-	done < <(find "$AGENTS_DIR" -name "*.md" -type f)
+	done < <(find -L "$AGENTS_DIR" -name "*.md" -type f)
 
 	if [[ "$json_output" == true ]]; then
 		local entries=()
@@ -999,7 +1003,7 @@ receipt=tools/accounts"
 				((++found_in_cat))
 				((++total_found))
 			fi
-		done < <(find "$AGENTS_DIR" -name "*.md" -type f | sort)
+		done < <(find -L "$AGENTS_DIR" -name "*.md" -type f | sort)
 
 		if [[ $found_in_cat -eq 0 ]]; then
 			echo "    (no skills in this category)"
