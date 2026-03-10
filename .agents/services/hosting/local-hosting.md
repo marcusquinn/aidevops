@@ -18,7 +18,7 @@ tools:
 ## Quick Reference
 
 - **Purpose**: Production-like local development with `.local` domains, HTTPS, and port management
-- **Primary CLI**: `localdev-helper.sh [init|add|rm|branch|db|list|status|help]`
+- **Primary CLI**: `localdev-helper.sh [run|init|add|rm|branch|db|list|status|help]`
 - **Legacy CLI**: `localhost-helper.sh [check-port|find-port|list-ports|kill-port|generate-cert|setup-dns|setup-proxy|create-app|start-mcp]`
 - **Port registry**: `~/.local-dev-proxy/ports.json`
 - **Certs**: `~/.local-ssl-certs/`
@@ -27,12 +27,24 @@ tools:
 - **Docker Compose**: `~/.local-dev-proxy/docker-compose.yml`
 - **Shared Postgres**: `local-postgres` container on port 5432
 
-**Standard workflow — register a new project:**
+**Zero-config workflow (recommended):**
 
 ```bash
 # One-time system setup (dnsmasq, resolver, Traefik conf.d)
 localdev-helper.sh init
 
+# In any project directory — auto-registers, injects PORT, runs command
+cd ~/Git/myapp
+localdev-helper.sh run npm run dev
+# → Auto-registers myapp (cert, Traefik route, /etc/hosts, port 3100)
+# → Sets PORT=3100 HOST=0.0.0.0
+# → Runs: npm run dev
+# → https://myapp.local just works
+```
+
+**Manual workflow — register then start separately:**
+
+```bash
 # Register app: generates cert, creates Traefik route, assigns port
 localdev-helper.sh add myapp
 
@@ -147,6 +159,59 @@ Performs:
 6. Restart Traefik if running
 
 Note: `init` sets up dnsmasq for CLI tool resolution (`dig`, `curl`). Browser resolution requires per-app `/etc/hosts` entries, which `add` handles automatically.
+
+### run
+
+Zero-config dev server wrapper. Auto-registers the project if needed, resolves the correct port (main or branch), injects `PORT` and `HOST` environment variables, and execs the command. Signals (SIGINT/SIGTERM) pass through directly to the child process.
+
+```bash
+localdev-helper.sh run [options] <command...>
+```
+
+Options:
+
+- `--name <name>`: Override inferred project name
+- `--port <port>`: Override auto-assigned port
+- `--no-host`: Don't set `HOST=0.0.0.0`
+
+Examples:
+
+```bash
+# In ~/Git/myapp/ (not yet registered)
+localdev-helper.sh run npm run dev
+# → Auto-registers myapp (cert, Traefik route, /etc/hosts, port 3100)
+# → Sets PORT=3100 HOST=0.0.0.0
+# → Runs: npm run dev
+# → https://myapp.local just works
+
+# In a worktree ~/Git/myapp-bugfix-fix-thing/
+localdev-helper.sh run npm run dev
+# → Auto-detects worktree, creates branch subdomain
+# → Sets PORT=3101
+# → Runs: npm run dev
+# → https://bugfix-fix-thing.myapp.local just works
+
+# Override project name
+localdev-helper.sh run --name my-custom-name pnpm dev
+
+# Override port
+localdev-helper.sh run --port 3200 bun run dev
+```
+
+Performs:
+
+1. Infer project name from `package.json` `name` field (stripping npm scope) or git repo basename
+2. Auto-register if not already in port registry (runs full `add` workflow)
+3. Detect worktree/branch context and create branch subdomain route if needed
+4. Set `PORT={assigned_port}` and `HOST=0.0.0.0` environment variables
+5. `exec` the command (replaces the shell process — signals go directly to the child)
+
+Project name inference priority:
+
+1. `--name` flag (explicit override)
+2. `package.json` `name` field (strips `@scope/` prefix)
+3. Git repo basename (strips worktree suffix for worktrees)
+4. Current directory basename (last resort)
 
 ### add
 
@@ -399,7 +464,20 @@ networks:
 
 The branch subdomain system enables running multiple versions of an app simultaneously — useful for PR reviews, A/B testing, or parallel feature development.
 
-### Full Workflow
+### Zero-Config Workflow (recommended)
+
+```bash
+# In a worktree — localdev run handles everything
+cd ~/Git/myapp-feature-user-auth/
+localdev-helper.sh run npm run dev
+# → Auto-registers myapp if needed
+# → Auto-creates branch subdomain feature-user-auth.myapp.local
+# → Sets PORT=3101 HOST=0.0.0.0
+# → Runs: npm run dev
+# → https://feature-user-auth.myapp.local just works
+```
+
+### Manual Workflow
 
 ```bash
 # 1. Register the main app (one-time)
@@ -423,7 +501,16 @@ localdev-helper.sh branch list myapp
 
 ### Integration with Git Worktrees
 
-Branch subdomains pair naturally with git worktrees:
+Branch subdomains pair naturally with git worktrees. With `localdev run`, the worktree integration is automatic:
+
+```bash
+# Create worktree and start dev server — zero config
+cd ~/Git/myapp-feature-login/
+localdev-helper.sh run npm run dev
+# → Everything handled automatically
+```
+
+Manual approach:
 
 ```bash
 # Create worktree for feature branch

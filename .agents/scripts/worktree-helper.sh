@@ -100,10 +100,45 @@ detect_localdev_project() {
 
 # Auto-create localdev branch route after worktree creation.
 # Called from cmd_add after successful worktree creation.
+# If the project is not registered, auto-registers it first (t1424.1).
 localdev_auto_branch() {
 	local branch="$1"
 	local project
-	project="$(detect_localdev_project)" || return 0
+
+	# Check if localdev-helper.sh exists
+	[[ ! -x "$LOCALDEV_HELPER" ]] && return 0
+
+	if ! project="$(detect_localdev_project)" || [[ -z "$project" ]]; then
+		# Project not registered — try to auto-register (t1424.1)
+		# Source infer_project_name from localdev-helper.sh
+		local inferred_name=""
+		local repo_root
+		repo_root="$(get_repo_root)"
+		[[ -z "$repo_root" ]] && return 0
+
+		# Infer name: try package.json first, then repo basename
+		if [[ -f "$repo_root/package.json" ]] && command -v jq >/dev/null 2>&1; then
+			inferred_name="$(jq -r '.name // empty' "$repo_root/package.json" 2>/dev/null)"
+			# Strip npm scope prefix (@org/name -> name)
+			inferred_name="${inferred_name##*/}"
+		fi
+		if [[ -z "$inferred_name" ]]; then
+			inferred_name="$(basename "$repo_root")"
+		fi
+		# Sanitise for DNS
+		inferred_name="$(echo "$inferred_name" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9-]/-/g; s/--*/-/g; s/^-//; s/-$//')"
+
+		[[ -z "$inferred_name" ]] && return 0
+
+		echo ""
+		echo -e "${BLUE}Localdev integration: auto-registering project '$inferred_name'...${NC}"
+		if "$LOCALDEV_HELPER" add "$inferred_name" 2>&1; then
+			project="$inferred_name"
+		else
+			echo -e "${YELLOW}Localdev auto-registration failed (non-fatal)${NC}"
+			return 0
+		fi
+	fi
 
 	echo ""
 	echo -e "${BLUE}Localdev integration: creating branch route for $project...${NC}"
