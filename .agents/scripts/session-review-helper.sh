@@ -92,18 +92,26 @@ _security_cost_summary() {
         " 2>/dev/null) || result=""
 
 		if [[ -n "$result" ]]; then
-			local grand_total_cost=0 grand_total_reqs=0
 			printf "$FMT_COST_ROW" "Model" "Reqs" "Input" "Output" "Cache" "Cost"
 			printf "$FMT_COST_ROW" "---" "---" "---" "---" "---" "---"
+			# Collect costs/reqs for post-loop totalling (avoids awk-per-row)
+			local all_costs="" all_reqs=""
 			while IFS='|' read -r model reqs input_tok output_tok cache_tok cost; do
 				[[ -z "$model" ]] && continue
+				# Validate numeric fields to prevent injection via malformed DB data
+				[[ "$reqs" =~ ^[0-9]+$ ]] || reqs=0
+				[[ "$cost" =~ ^[0-9.]+$ ]] || cost="0"
 				local short_model="${model##*/}"
 				short_model="${short_model:0:35}"
 				printf "$FMT_COST_DATA" \
 					"$short_model" "$reqs" "$input_tok" "$output_tok" "$cache_tok" "$cost"
-				grand_total_cost=$(awk -v total="$grand_total_cost" -v c="$cost" 'BEGIN { printf "%.6f", total + c }')
-				grand_total_reqs=$(awk -v total="$grand_total_reqs" -v r="$reqs" 'BEGIN { print total + r }')
+				all_costs="${all_costs}${cost}\n"
+				all_reqs="${all_reqs}${reqs}\n"
 			done <<<"$result"
+			# Calculate totals in a single awk call outside the loop
+			local grand_total_cost grand_total_reqs
+			grand_total_cost=$(printf '%b' "$all_costs" | awk '{s+=$1} END {printf "%.6f", s}')
+			grand_total_reqs=$(printf '%b' "$all_reqs" | awk '{s+=$1} END {print s}')
 			printf "$FMT_COST_DATA" \
 				"TOTAL" "$grand_total_reqs" "" "" "" "$grand_total_cost"
 			return 0
@@ -137,20 +145,20 @@ _security_cost_summary() {
 		fi
 
 		if [[ -n "$result" && "$result" != "[]" ]]; then
-			local grand_total_cost=0 grand_total_reqs=0
 			printf "$FMT_COST_ROW" "Model" "Reqs" "Input" "Output" "Cache" "Cost"
 			printf "$FMT_COST_ROW" "---" "---" "---" "---" "---" "---"
-			echo "$result" | jq -r '.[] | "\(.model)|\(.requests)|\(.input_tokens)|\(.output_tokens)|\(.cache_tokens)|\(.cost)"' 2>/dev/null | while IFS='|' read -r model reqs input_tok output_tok cache_tok cost; do
-				[[ -z "$model" ]] && continue
-				local short_model="${model##*/}"
-				short_model="${short_model:0:35}"
-				printf "$FMT_COST_DATA" \
-					"$short_model" "$reqs" "$input_tok" "$output_tok" "$cache_tok" "$cost"
-			done
-			grand_total_cost=$(echo "$result" | jq -r '[.[].cost] | add' 2>/dev/null || echo "0")
-			grand_total_reqs=$(echo "$result" | jq -r '[.[].requests] | add' 2>/dev/null || echo "0")
-			printf "$FMT_COST_DATA" \
-				"TOTAL" "$grand_total_reqs" "" "" "" "$grand_total_cost"
+			# Single jq pass: format rows + compute totals (avoids 3 separate jq calls)
+			echo "$result" | jq -r '
+				(.[] |
+					(.model | split("/")[-1][:35]) as $short |
+					"  \($short | . + " " * (35 - length) | .[:35]) \(.requests | tostring | " " * (6 - length) + .) \(.input_tokens | tostring | " " * (10 - length) + .) \(.output_tokens | tostring | " " * (10 - length) + .) \(.cache_tokens | tostring | " " * (10 - length) + .) $\(.cost)"
+				),
+				(
+					([.[].requests] | add) as $treqs |
+					([.[].cost] | add) as $tcost |
+					"  \("TOTAL" | . + " " * (35 - length) | .[:35]) \($treqs | tostring | " " * (6 - length) + .)                                           $\($tcost)"
+				)
+			' 2>/dev/null
 			return 0
 		fi
 	fi
@@ -355,46 +363,70 @@ _security_quarantine() {
 }
 
 # Compute overall security posture from available data.
-# Returns: CLEAN, LOW, MEDIUM, HIGH, CRITICAL
+# Accepts optional pre-computed counts to avoid redundant file processing.
+# Arguments:
+#   $1 - denied count (optional, computed from logs if empty)
+#   $2 - prompt-guard blocks count (optional)
+#   $3 - prompt-guard warns count (optional)
+#   $4 - flagged domains count (optional)
+#   $5 - audit chain intact: "true"/"false"/"" (optional, checked if empty)
+# Returns: CLEAN, LOW, MEDIUM, HIGH, CRITICAL on stdout
 _security_posture() {
+	local denied_count="${1:-}"
+	local blocks="${2:-}"
+	local warns="${3:-}"
+	local flagged_count="${4:-}"
+	local chain_intact="${5:-}"
 	local posture="CLEAN"
 
-	# Check for denied network access
-	if [[ -f "$NET_DENIED_LOG" ]]; then
-		local denied_count
+	# Compute any counts not passed as arguments
+	if [[ -z "$denied_count" ]] && [[ -f "$NET_DENIED_LOG" ]]; then
 		denied_count=$(wc -l <"$NET_DENIED_LOG" | tr -d ' ')
-		if [[ "$denied_count" -gt 0 ]]; then
-			posture="HIGH"
-		fi
+	fi
+	denied_count="${denied_count:-0}"
+
+	if [[ -z "$blocks" || -z "$warns" ]] && [[ -f "$PG_ATTEMPTS_LOG" ]]; then
+		[[ -z "$blocks" ]] && blocks=$(grep -c '"action":"BLOCK"' "$PG_ATTEMPTS_LOG" 2>/dev/null || echo "0")
+		[[ -z "$warns" ]] && warns=$(grep -c '"action":"WARN"' "$PG_ATTEMPTS_LOG" 2>/dev/null || echo "0")
+	fi
+	blocks="${blocks:-0}"
+	warns="${warns:-0}"
+
+	if [[ -z "$flagged_count" ]] && [[ -f "$NET_FLAGGED_LOG" ]]; then
+		flagged_count=$(wc -l <"$NET_FLAGGED_LOG" | tr -d ' ')
+	fi
+	flagged_count="${flagged_count:-0}"
+
+	# Check for denied network access
+	if [[ "$denied_count" -gt 0 ]]; then
+		posture="HIGH"
 	fi
 
 	# Check for prompt injection attempts (escalate posture based on severity)
-	if [[ -f "$PG_ATTEMPTS_LOG" ]]; then
-		local blocks warns
-		blocks=$(grep -c '"action":"BLOCK"' "$PG_ATTEMPTS_LOG" 2>/dev/null || echo "0")
-		warns=$(grep -c '"action":"WARN"' "$PG_ATTEMPTS_LOG" 2>/dev/null || echo "0")
-		if [[ "$blocks" -gt 0 && ("$posture" == "CLEAN" || "$posture" == "LOW") ]]; then
-			posture="MEDIUM"
-		elif [[ "$warns" -gt 0 && "$posture" == "CLEAN" ]]; then
-			posture="LOW"
-		fi
+	if [[ "$blocks" -gt 0 && ("$posture" == "CLEAN" || "$posture" == "LOW") ]]; then
+		posture="MEDIUM"
+	elif [[ "$warns" -gt 0 && "$posture" == "CLEAN" ]]; then
+		posture="LOW"
 	fi
 
 	# Check for flagged domains
-	if [[ -f "$NET_FLAGGED_LOG" ]]; then
-		local flagged_count
-		flagged_count=$(wc -l <"$NET_FLAGGED_LOG" | tr -d ' ')
-		if [[ "$flagged_count" -gt 0 && "$posture" == "CLEAN" ]]; then
-			posture="LOW"
-		fi
+	if [[ "$flagged_count" -gt 0 && "$posture" == "CLEAN" ]]; then
+		posture="LOW"
 	fi
 
 	# Check audit chain integrity
-	local audit_helper="${SCRIPT_DIR}/audit-log-helper.sh"
-	if [[ -x "$audit_helper" ]] && [[ -f "$AUDIT_LOG" ]] && [[ -s "$AUDIT_LOG" ]]; then
-		if ! "$audit_helper" verify --quiet 2>/dev/null; then
-			posture="CRITICAL"
+	if [[ -z "$chain_intact" ]]; then
+		local audit_helper="${SCRIPT_DIR}/audit-log-helper.sh"
+		if [[ -x "$audit_helper" ]] && [[ -f "$AUDIT_LOG" ]] && [[ -s "$AUDIT_LOG" ]]; then
+			if "$audit_helper" verify --quiet 2>/dev/null; then
+				chain_intact="true"
+			else
+				chain_intact="false"
+			fi
 		fi
+	fi
+	if [[ "$chain_intact" == "false" ]]; then
+		posture="CRITICAL"
 	fi
 
 	echo "$posture"
@@ -476,10 +508,7 @@ _security_summary_json() {
 	local session_filter
 	session_filter=$(_sanitize_session_filter "${1:-}")
 
-	local posture
-	posture=$(_security_posture)
-
-	# Collect counts
+	# Collect counts first (used by both posture calculation and JSON output)
 	local audit_count=0 net_access=0 net_flagged=0 net_denied=0
 	local pg_total=0 pg_blocks=0 pg_warns=0 pg_sanitizes=0
 
@@ -504,6 +533,10 @@ _security_summary_json() {
 			chain_intact="false"
 		fi
 	fi
+
+	# Compute posture using pre-computed counts (avoids redundant file reads)
+	local posture
+	posture=$(_security_posture "$net_denied" "$pg_blocks" "$pg_warns" "$net_flagged" "$chain_intact")
 
 	# Session context availability
 	local session_context_available="false"
