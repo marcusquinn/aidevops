@@ -251,6 +251,7 @@ Results are stored as JSONL at `~/.aidevops/.agent-workspace/observability/bench
 
 - `scripts/commands/compare-models-free.md` - `/compare-models-free` slash command handler
 - `scripts/commands/score-responses.md` - `/score-responses` slash command handler
+- `scripts/commands/route.md` - `/route` slash command handler
 - `tools/ai-assistants/response-scoring.md` - Evaluate actual model response quality
 - `tools/context/model-routing.md` - Cost-aware model routing within aidevops
 - Cross-session memory system - Pattern data source for live success rates (replaces archived `pattern-tracker-helper.sh`)
