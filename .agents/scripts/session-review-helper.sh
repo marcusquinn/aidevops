@@ -171,11 +171,20 @@ _security_cost_summary() {
 
 # Get audit log security events summary.
 # Shows event type breakdown from the tamper-evident audit log.
+# Arguments:
+#   $1 - session ID filter (optional; audit log has no session_id field,
+#        so this parameter is accepted for API consistency but noted as unfiltered)
 # Output: formatted event table on stdout
 _security_audit_events() {
+	local session_filter="${1:-}"
+
 	if [[ ! -f "$AUDIT_LOG" ]] || [[ ! -s "$AUDIT_LOG" ]]; then
 		echo "  No audit events recorded"
 		return 0
+	fi
+
+	if [[ -n "$session_filter" ]]; then
+		echo "  (global — audit log has no session_id field)"
 	fi
 
 	if ! command -v jq &>/dev/null; then
@@ -223,8 +232,12 @@ _security_audit_events() {
 
 # Get network tier summary.
 # Shows flagged and denied domain counts from network-tier logs.
+# Arguments:
+#   $1 - session ID filter (optional; network logs have no session_id field,
+#        so this parameter is accepted for API consistency but noted as unfiltered)
 # Output: formatted network summary on stdout
 _security_network_summary() {
+	local session_filter="${1:-}"
 	local has_data=false
 
 	local access_count=0 flagged_count=0 denied_count=0
@@ -245,6 +258,10 @@ _security_network_summary() {
 	if [[ "$has_data" == "false" ]]; then
 		echo "  No network access logs"
 		return 0
+	fi
+
+	if [[ -n "$session_filter" ]]; then
+		echo "  (global — network logs have no session_id field)"
 	fi
 
 	printf "$FMT_SUMMARY_ROW" "Category" "Count"
@@ -275,11 +292,20 @@ _security_network_summary() {
 
 # Get prompt guard detection summary.
 # Shows blocked/warned/sanitized counts from prompt-guard logs.
+# Arguments:
+#   $1 - session ID filter (optional; prompt-guard logs have no session_id field,
+#        so this parameter is accepted for API consistency but noted as unfiltered)
 # Output: formatted detection summary on stdout
 _security_prompt_guard() {
+	local session_filter="${1:-}"
+
 	if [[ ! -f "$PG_ATTEMPTS_LOG" ]] || [[ ! -s "$PG_ATTEMPTS_LOG" ]]; then
 		echo "  No prompt injection attempts detected"
 		return 0
+	fi
+
+	if [[ -n "$session_filter" ]]; then
+		echo "  (global — prompt-guard logs have no session_id field)"
 	fi
 
 	local total_entries
@@ -320,8 +346,11 @@ _security_prompt_guard() {
 
 # Get session security context (t1428.3 — may not exist yet).
 # Shows composite security score if session-security-helper.sh is available.
+# Arguments:
+#   $1 - session ID filter (optional, passed to session-security-helper.sh)
 # Output: formatted context summary on stdout
 _security_session_context() {
+	local session_filter="${1:-}"
 	local session_helper="${SCRIPT_DIR}/session-security-helper.sh"
 
 	if [[ ! -x "$session_helper" ]]; then
@@ -331,7 +360,11 @@ _security_session_context() {
 
 	# session-security-helper.sh exists — query it
 	local score
-	score=$("$session_helper" score 2>/dev/null) || score=""
+	if [[ -n "$session_filter" ]]; then
+		score=$("$session_helper" score --session "$session_filter" 2>/dev/null) || score=""
+	else
+		score=$("$session_helper" score 2>/dev/null) || score=""
+	fi
 	if [[ -n "$score" ]]; then
 		echo "  Composite score: $score"
 	else
@@ -343,8 +376,11 @@ _security_session_context() {
 
 # Get quarantine queue status (t1428.4 — may not exist yet).
 # Shows pending quarantine items if quarantine-helper.sh is available.
+# Arguments:
+#   $1 - session ID filter (optional, passed to quarantine-helper.sh)
 # Output: formatted quarantine summary on stdout
 _security_quarantine() {
+	local session_filter="${1:-}"
 	local quarantine_helper="${SCRIPT_DIR}/quarantine-helper.sh"
 
 	if [[ ! -x "$quarantine_helper" ]]; then
@@ -354,7 +390,11 @@ _security_quarantine() {
 
 	# quarantine-helper.sh exists — query it
 	local status
-	status=$("$quarantine_helper" status 2>/dev/null) || status=""
+	if [[ -n "$session_filter" ]]; then
+		status=$("$quarantine_helper" status --session "$session_filter" 2>/dev/null) || status=""
+	else
+		status=$("$quarantine_helper" status 2>/dev/null) || status=""
+	fi
 	if [[ -n "$status" ]]; then
 		echo "$status" | sed 's/^/  /'
 	else
@@ -477,27 +517,27 @@ output_security_summary() {
 
 	# Section 2: Audit log events
 	echo -e "${CYAN}## Audit Events${NC}"
-	_security_audit_events
+	_security_audit_events "$session_filter"
 	echo ""
 
 	# Section 3: Network access
 	echo -e "${CYAN}## Network Access${NC}"
-	_security_network_summary
+	_security_network_summary "$session_filter"
 	echo ""
 
 	# Section 4: Prompt guard detections
 	echo -e "${CYAN}## Prompt Injection Defense${NC}"
-	_security_prompt_guard
+	_security_prompt_guard "$session_filter"
 	echo ""
 
 	# Section 5: Session security context (t1428.3)
 	echo -e "${CYAN}## Session Security Context${NC}"
-	_security_session_context
+	_security_session_context "$session_filter"
 	echo ""
 
 	# Section 6: Quarantine queue (t1428.4)
 	echo -e "${CYAN}## Quarantine Queue${NC}"
-	_security_quarantine
+	_security_quarantine "$session_filter"
 	echo ""
 
 	return 0
@@ -947,8 +987,12 @@ main() {
 			command="$1"
 			;;
 		--focus)
+			if [[ $# -le 1 ]] || [[ "${2:-}" == --* ]]; then
+				echo "Error: --focus requires an area argument (objectives, workflow, knowledge, all)" >&2
+				exit 1
+			fi
 			shift
-			focus="${1:-all}"
+			focus="$1"
 			;;
 		--security)
 			include_security=true
