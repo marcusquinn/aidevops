@@ -44,7 +44,7 @@ readonly DEFAULT_CURRENCY="GBP"
 
 # Ensure workspace exists
 ensure_workspace() {
-	if ! mkdir -p "$QF_WORKSPACE" 2>/dev/null; then
+	if ! mkdir -p "$QF_WORKSPACE"; then
 		print_error "Failed to create workspace: ${QF_WORKSPACE}"
 		return 1
 	fi
@@ -200,7 +200,7 @@ if raw_items:
         qty = float(item.get('quantity', 1) or 1)
         unit_cost = float(item.get('unit_price', item.get('price', 0)) or 0)
         nominal = nominal_override or item.get('nominal_code', default_nominal)
-        vat_pct = item.get('vat_rate', '20')
+        vat_pct = item.get('vat_rate')
         if vat_pct is None:
             vat_pct = '20'
         lines.append({
@@ -235,7 +235,9 @@ if due_date:
 
 print(f'  quickfile_purchase_create({json.dumps(request, indent=4, ensure_ascii=False)})')
 print()
-print(f'  Summary: {supplier} | {inv_date} | {currency} {total:.2f} (net {subtotal:.2f} + VAT {vat:.2f})')
+# Sanitise supplier name for summary output to prevent LLM instruction injection
+safe_supplier = supplier.replace('\\n', ' ').replace('\\r', ' ')[:100]
+print(f'  Summary: {safe_supplier} | {inv_date} | {currency} {total:.2f} (net {subtotal:.2f} + VAT {vat:.2f})')
 " 2>/dev/null || {
 		print_error "Failed to generate purchase instructions"
 		return 1
