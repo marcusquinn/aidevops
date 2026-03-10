@@ -490,8 +490,26 @@ output_security_summary() {
 		return $?
 	fi
 
+	# Pre-compute counts once for both posture calculation and display
+	# (mirrors the JSON path to avoid redundant file reads)
+	local _denied=0 _flagged=0 _blocks=0 _warns=0 _chain=""
+	[[ -f "$NET_DENIED_LOG" ]] && _denied=$(wc -l <"$NET_DENIED_LOG" | tr -d ' ')
+	[[ -f "$NET_FLAGGED_LOG" ]] && _flagged=$(wc -l <"$NET_FLAGGED_LOG" | tr -d ' ')
+	if [[ -f "$PG_ATTEMPTS_LOG" ]]; then
+		_blocks=$(grep -c '"action":"BLOCK"' "$PG_ATTEMPTS_LOG" 2>/dev/null || echo "0")
+		_warns=$(grep -c '"action":"WARN"' "$PG_ATTEMPTS_LOG" 2>/dev/null || echo "0")
+	fi
+	local audit_helper="${SCRIPT_DIR}/audit-log-helper.sh"
+	if [[ -x "$audit_helper" ]] && [[ -f "$AUDIT_LOG" ]] && [[ -s "$AUDIT_LOG" ]]; then
+		if "$audit_helper" verify --quiet 2>/dev/null; then
+			_chain="true"
+		else
+			_chain="false"
+		fi
+	fi
+
 	local posture
-	posture=$(_security_posture)
+	posture=$(_security_posture "$_denied" "$_blocks" "$_warns" "$_flagged" "$_chain")
 
 	local posture_color="$GREEN"
 	case "$posture" in
