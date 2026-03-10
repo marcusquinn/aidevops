@@ -33,13 +33,13 @@ readonly RVE_PYTHON_MIN="3.10"
 readonly RVE_PYTHON_MAX="3.12"
 
 # Default settings
-DEFAULT_SCALE=2
-DEFAULT_FPS=60
-DEFAULT_INTERPOLATE_MODEL="rife"
-DEFAULT_UPSCALE_MODEL="span"
-DEFAULT_DENOISE_MODEL="drunet"
-DEFAULT_TILE_SIZE=1024
-DEFAULT_BACKEND="auto"
+readonly DEFAULT_SCALE=2
+readonly DEFAULT_FPS=60
+readonly DEFAULT_INTERPOLATE_MODEL="rife"
+readonly DEFAULT_UPSCALE_MODEL="span"
+readonly DEFAULT_DENOISE_MODEL="drunet"
+readonly DEFAULT_TILE_SIZE=1024
+readonly DEFAULT_BACKEND="auto"
 
 # =============================================================================
 # Helper Functions
@@ -675,7 +675,6 @@ cmd_enhance() {
 	fi
 
 	if ! cmd_upscale "${upscale_args[@]}"; then
-		rm -rf "$temp_dir"
 		return 1
 	fi
 
@@ -693,7 +692,6 @@ cmd_enhance() {
 	fi
 
 	if ! cmd_interpolate "${interpolate_args[@]}"; then
-		rm -rf "$temp_dir"
 		return 1
 	fi
 
@@ -711,16 +709,12 @@ cmd_enhance() {
 		fi
 
 		if ! cmd_denoise "${denoise_args[@]}"; then
-			rm -rf "$temp_dir"
 			return 1
 		fi
 	else
 		print_info "[3/3] Skipping denoising"
 		mv "$temp_interpolated" "$output"
 	fi
-
-	# Cleanup
-	rm -rf "$temp_dir"
 
 	print_success "Enhancement complete: $output"
 	return 0
@@ -1059,6 +1053,8 @@ Examples:
 
 For more information, see: .agents/tools/video/real-video-enhancer.md
 EOF
+
+	return 0
 }
 
 # =============================================================================
@@ -1114,6 +1110,8 @@ main() {
 		exit 1
 		;;
 	esac
+
+	return 0
 }
 
 main "$@"
