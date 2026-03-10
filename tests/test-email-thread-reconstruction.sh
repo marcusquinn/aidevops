@@ -193,6 +193,50 @@ test_thread_index_content() {
 	return 0
 }
 
+test_trailing_newline() {
+	print_info "Test: Generated index ends with trailing newline"
+
+	local index_file="${TEST_DIR}/thread-index.md"
+
+	# POSIX: text files must end with a newline
+	local last_byte
+	last_byte=$(tail -c 1 "$index_file" | xxd -p)
+	if [[ "$last_byte" != "0a" ]]; then
+		print_error "Thread index does not end with trailing newline"
+		return 1
+	fi
+
+	print_success "Trailing newline present"
+	return 0
+}
+
+test_relative_paths_cross_directory() {
+	print_info "Test: Index links use relative paths (cross-directory output)"
+
+	local output_dir="${TEST_DIR}/subdir"
+	mkdir -p "$output_dir"
+
+	# Run reconstruction with output in a subdirectory
+	if ! python3 "$THREAD_RECON_SCRIPT" "$TEST_DIR" --output "${output_dir}/index.md" >/dev/null 2>&1; then
+		print_error "Thread reconstruction with cross-directory output failed"
+		return 1
+	fi
+
+	local index_file="${output_dir}/index.md"
+
+	# Links should use relative paths back to parent (e.g., ../email1.md)
+	if ! grep -q '\.\./email' "$index_file"; then
+		print_error "Index links do not use relative paths to parent directory"
+		return 1
+	fi
+
+	# Clean up the subdirectory output
+	rm -rf "$output_dir"
+
+	print_success "Relative paths correct for cross-directory output"
+	return 0
+}
+
 # =============================================================================
 # Main
 # =============================================================================
@@ -207,6 +251,8 @@ main() {
 	test_thread_reconstruction || failed=$((failed + 1))
 	test_frontmatter_updates || failed=$((failed + 1))
 	test_thread_index_content || failed=$((failed + 1))
+	test_trailing_newline || failed=$((failed + 1))
+	test_relative_paths_cross_directory || failed=$((failed + 1))
 
 	cleanup_test_data
 
