@@ -58,6 +58,12 @@ LOG_PREFIX="upstream-watch"
 # Logging (standalone — shared-constants.sh log_* may not be available)
 # =============================================================================
 
+#######################################
+# Write a timestamped log entry to the upstream-watch log file
+# Arguments:
+#   $1 - Log level (INFO, WARN, ERROR)
+#   $@ - Log message
+#######################################
 _log() {
 	local level="$1"
 	shift
@@ -71,14 +77,25 @@ _log() {
 	return 0
 }
 
+#######################################
+# Log an informational message
+#######################################
 _log_info() {
 	_log "INFO" "$@"
 	return 0
 }
+
+#######################################
+# Log a warning message
+#######################################
 _log_warn() {
 	_log "WARN" "$@"
 	return 0
 }
+
+#######################################
+# Log an error message
+#######################################
 _log_error() {
 	_log "ERROR" "$@"
 	return 0
@@ -88,6 +105,10 @@ _log_error() {
 # Prerequisites
 # =============================================================================
 
+#######################################
+# Verify required tools (gh, jq) are installed and gh is authenticated
+# Returns: 0 if all prerequisites met, 1 otherwise
+#######################################
 _check_prerequisites() {
 	if ! command -v gh &>/dev/null; then
 		echo -e "${RED}Error: gh CLI not found. Install from https://cli.github.com/${NC}" >&2
@@ -108,6 +129,9 @@ _check_prerequisites() {
 # State file management
 # =============================================================================
 
+#######################################
+# Create the state file with empty defaults if it doesn't exist
+#######################################
 _ensure_state_file() {
 	local state_dir
 	state_dir=$(dirname "$STATE_FILE")
@@ -120,12 +144,20 @@ _ensure_state_file() {
 	return 0
 }
 
+#######################################
+# Read and output the current state JSON
+#######################################
 _read_state() {
 	_ensure_state_file
 	cat "$STATE_FILE"
 	return 0
 }
 
+#######################################
+# Write state JSON to the state file, validating JSON first
+# Arguments:
+#   $1 - JSON string to write
+#######################################
 _write_state() {
 	local state="$1"
 	_ensure_state_file
@@ -141,6 +173,9 @@ _write_state() {
 # Config file management
 # =============================================================================
 
+#######################################
+# Create the config file with empty defaults if it doesn't exist
+#######################################
 _ensure_config_file() {
 	local config_dir
 	config_dir=$(dirname "$CONFIG_FILE")
@@ -158,12 +193,20 @@ DEFAULTCONFIG
 	return 0
 }
 
+#######################################
+# Read and output the current config JSON
+#######################################
 _read_config() {
 	_ensure_config_file
 	cat "$CONFIG_FILE"
 	return 0
 }
 
+#######################################
+# Write config JSON to the config file, validating JSON first
+# Arguments:
+#   $1 - JSON string to write
+#######################################
 _write_config() {
 	local config="$1"
 	_ensure_config_file
@@ -179,6 +222,9 @@ _write_config() {
 # ISO 8601 helpers
 # =============================================================================
 
+#######################################
+# Output the current UTC time in ISO 8601 format
+#######################################
 _now_iso() {
 	date -u +%Y-%m-%dT%H:%M:%SZ
 	return 0
@@ -188,6 +234,14 @@ _now_iso() {
 # Commands
 # =============================================================================
 
+#######################################
+# Add a repository to the upstream watchlist
+# Verifies the repo exists, captures initial state (latest release/commit),
+# and stores config + state so the first check doesn't flag everything as new.
+# Arguments:
+#   $1 - Repository slug (owner/repo)
+#   $2 - Optional relevance description
+#######################################
 cmd_add() {
 	local slug="$1"
 	local relevance="${2:-}"
@@ -288,6 +342,11 @@ cmd_add() {
 	return 0
 }
 
+#######################################
+# Remove a repository from the upstream watchlist and clean up its state
+# Arguments:
+#   $1 - Repository slug (owner/repo)
+#######################################
 cmd_remove() {
 	local slug="$1"
 
@@ -319,6 +378,16 @@ cmd_remove() {
 	return 0
 }
 
+#######################################
+# Check watched repos for new releases and commits
+# Compares current GitHub state against last-seen state. Reports new
+# releases with changelog diffs and new commits. Does NOT advance
+# last_seen — that requires explicit ack. Returns 1 if any probe failed.
+# Arguments:
+#   $1 - Optional target slug to check a single repo
+# Globals:
+#   VERBOSE - Show commit-level detail when true
+#######################################
 cmd_check() {
 	local target_slug="${1:-}"
 	local verbose="${VERBOSE:-false}"
@@ -491,6 +560,14 @@ cmd_check() {
 	return 0
 }
 
+#######################################
+# Display release changelog between two tags
+# Shows all releases between from_tag and to_tag, plus latest release notes.
+# Arguments:
+#   $1 - Repository slug (owner/repo)
+#   $2 - From tag (last seen, empty for first check)
+#   $3 - To tag (latest release)
+#######################################
 _show_release_diff() {
 	local slug="$1"
 	local from_tag="$2"
@@ -556,6 +633,14 @@ _show_release_diff() {
 	return 0
 }
 
+#######################################
+# Display recent commits between two SHAs
+# Shows up to 10 commits newer than from_sha.
+# Arguments:
+#   $1 - Repository slug (owner/repo)
+#   $2 - From SHA (7-char, last seen)
+#   $3 - To SHA (7-char, latest)
+#######################################
 _show_commit_diff() {
 	local slug="$1"
 	local from_sha="$2"
@@ -594,6 +679,13 @@ _show_commit_diff() {
 	return 0
 }
 
+#######################################
+# Acknowledge the latest release/commit for a watched repo
+# Updates last_release_seen and last_commit_seen to current, clears
+# updates_pending. Validates slug against config watchlist first.
+# Arguments:
+#   $1 - Repository slug (owner/repo)
+#######################################
 cmd_ack() {
 	local slug="$1"
 
@@ -635,6 +727,11 @@ cmd_ack() {
 	return 0
 }
 
+#######################################
+# Display the status of all watched repos
+# Shows repo count, last check time, and per-repo state including
+# last release/commit seen, last checked date, and pending updates.
+#######################################
 cmd_status() {
 	local config
 	config=$(_read_config)
@@ -685,6 +782,9 @@ cmd_status() {
 	return 0
 }
 
+#######################################
+# Display usage information and examples
+#######################################
 cmd_help() {
 	cat <<'EOF'
 upstream-watch-helper.sh — Track external repos for release monitoring
@@ -737,6 +837,12 @@ EOF
 # Main dispatch
 # =============================================================================
 
+#######################################
+# Main entry point — parse command and dispatch to handler
+# Arguments:
+#   $1 - Command (add, remove, check, ack, status, help)
+#   $@ - Command-specific arguments
+#######################################
 main() {
 	local cmd="${1:-help}"
 	shift || true
