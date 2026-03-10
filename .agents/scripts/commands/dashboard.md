@@ -66,7 +66,16 @@ for slug in $(jq -r '.initialized_repos[] | select(.pulse == true and (.local_on
 done
 ```
 
-Output format:
+The script above produces raw tab-separated output with ISO 8601 timestamps and all labels comma-joined. The dashboard agent formats this into a readable display.
+
+Raw output (one line per issue, tab-separated):
+
+```text
+123	simplification: remove decorative emojis from codacy.md	simplification-debt,needs-maintainer-review	maintainer	2026-03-08T14:23:00Z
+456	feat: add support for tool X	needs-maintainer-review	maintainer	2026-03-05T09:10:00Z
+```
+
+Formatted display (produced by the dashboard agent):
 
 ```text
 Pending Maintainer Review
@@ -85,6 +94,8 @@ Actions:
   Approve:  gh issue edit <N> --repo <slug> --remove-label needs-maintainer-review --add-label auto-dispatch
   Decline:  gh issue close <N> --repo <slug> -c "Declined: <reason>"
 ```
+
+The formatted display converts ISO timestamps to relative times (e.g., "2d ago"), aligns columns, and groups issues by repo. This formatting is done by the agent at display time, not by the shell script.
 
 ## Browser View
 

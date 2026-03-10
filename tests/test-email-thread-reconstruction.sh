@@ -184,7 +184,7 @@ test_thread_index_content() {
 	fi
 
 	# Check for standalone thread with 1 message
-	if ! grep -q "Standalone message (1 messages)" "$index_file"; then
+	if ! grep -q "Standalone message (1 message)" "$index_file"; then
 		print_error "Standalone thread not found"
 		return 1
 	fi

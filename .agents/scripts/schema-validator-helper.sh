@@ -35,68 +35,65 @@ readonly HELP_USAGE_INFO="Use '$0 help' for usage information"
 
 # Check if a command exists
 command_exists() {
-    local cmd="$1"
-    command -v "$cmd" >/dev/null 2>&1
-    return $?
+	local cmd="$1"
+	command -v "$cmd" >/dev/null 2>&1
+	return $?
 }
 
 # Install npm dependencies to tool directory
 install_deps() {
-    if ! command_exists npm; then
-        print_error "npm is required but not found. Install Node.js 18+ first."
-        return 1
-    fi
-    print_info "Installing schema-validator dependencies in $TOOL_DIR..."
-    mkdir -p "$TOOL_DIR"
+	if ! command_exists npm; then
+		print_error "npm is required but not found. Install Node.js 18+ first."
+		return 1
+	fi
+	print_info "Installing schema-validator dependencies in $TOOL_DIR..."
+	mkdir -p "$TOOL_DIR"
 
-    if [[ ! -f "$TOOL_DIR/package.json" ]]; then
-        (cd "$TOOL_DIR" && npm init -y > /dev/null 2>&1) || {
-            print_error "Failed to initialize package.json"
-            return 1
-        }
-    fi
+	if [[ ! -f "$TOOL_DIR/package.json" ]]; then
+		(cd "$TOOL_DIR" && npm init -y >/dev/null 2>&1) || {
+			print_error "Failed to initialize package.json"
+			return 1
+		}
+	fi
 
-    # Ensure type: module for ESM imports
-    _save_cleanup_scope; trap '_run_cleanups' RETURN
-    if ! grep -q '"type": "module"' "$TOOL_DIR/package.json" 2>/dev/null; then
-        if command_exists jq; then
-            local tmp
-            tmp=$(mktemp)
-            push_cleanup "rm -f '${tmp}'"
-            jq '. + {"type": "module"}' "$TOOL_DIR/package.json" > "$tmp" && mv "$tmp" "$TOOL_DIR/package.json"
-            rm -f "$tmp"
-        else
-            # Fallback: write "type": "module" into package.json without jq
-            local tmp
-            tmp=$(mktemp)
-            push_cleanup "rm -f '${tmp}'"
-            printf '{\n  "type": "module",\n' > "$tmp"
-            # Append everything after the opening brace
-            tail -n +2 "$TOOL_DIR/package.json" >> "$tmp" && mv "$tmp" "$TOOL_DIR/package.json"
-            rm -f "$tmp"
-            print_info "Added \"type\": \"module\" to package.json (jq not available)"
-        fi
-    fi
+	# Ensure type: module for ESM imports
+	_save_cleanup_scope
+	trap '_run_cleanups' RETURN
+	if ! grep -q '"type": "module"' "$TOOL_DIR/package.json" 2>/dev/null; then
+		local tmp
+		tmp=$(mktemp)
+		push_cleanup "rm -f '${tmp}'"
+		if command_exists jq; then
+			jq '. + {"type": "module"}' "$TOOL_DIR/package.json" >"$tmp" && mv "$tmp" "$TOOL_DIR/package.json"
+		else
+			# Fallback: write "type": "module" into package.json without jq
+			printf '{\n  "type": "module",\n' >"$tmp"
+			# Append everything after the opening brace
+			tail -n +2 "$TOOL_DIR/package.json" >>"$tmp" && mv "$tmp" "$TOOL_DIR/package.json"
+			print_info "Added \"type\": \"module\" to package.json (jq not available)"
+		fi
+		rm -f "$tmp"
+	fi
 
-    # Install packages if missing
-    if [[ ! -d "$TOOL_DIR/node_modules/@adobe/structured-data-validator" ]]; then
-        print_info "Installing @adobe/structured-data-validator, @marbec/web-auto-extractor, node-fetch..."
-        (cd "$TOOL_DIR" && npm install --ignore-scripts @adobe/structured-data-validator @marbec/web-auto-extractor node-fetch --silent) || {
-            print_error "Failed to install npm dependencies"
-            return 1
-        }
-        print_success "Dependencies installed"
-    else
-        print_success "Dependencies already installed"
-    fi
+	# Install packages if missing
+	if [[ ! -d "$TOOL_DIR/node_modules/@adobe/structured-data-validator" ]]; then
+		print_info "Installing @adobe/structured-data-validator, @marbec/web-auto-extractor, node-fetch..."
+		(cd "$TOOL_DIR" && npm install --ignore-scripts @adobe/structured-data-validator @marbec/web-auto-extractor node-fetch --silent) || {
+			print_error "Failed to install npm dependencies"
+			return 1
+		}
+		print_success "Dependencies installed"
+	else
+		print_success "Dependencies already installed"
+	fi
 
-    return 0
+	return 0
 }
 
 # Create the validation JS script
 create_js_script() {
-    mkdir -p "$TOOL_DIR"
-    cat > "$JS_SCRIPT" << 'JSEOF'
+	mkdir -p "$TOOL_DIR"
+	cat >"$JS_SCRIPT" <<'JSEOF'
 import Validator from '@adobe/structured-data-validator';
 import WebAutoExtractor from '@marbec/web-auto-extractor';
 import fs from 'fs';
@@ -215,147 +212,147 @@ if (command === 'validate') {
     process.exit(1);
 }
 JSEOF
-    return 0
+	return 0
 }
 
 # Check installation status
 cmd_status() {
-    print_info "Schema Validator Status"
-    echo ""
+	print_info "Schema Validator Status"
+	echo ""
 
-    if [[ -d "$TOOL_DIR/node_modules/@adobe/structured-data-validator" ]]; then
-        print_success "Dependencies installed at $TOOL_DIR"
-    else
-        print_warning "Dependencies not installed"
-        print_info "Run: $0 install"
-    fi
+	if [[ -d "$TOOL_DIR/node_modules/@adobe/structured-data-validator" ]]; then
+		print_success "Dependencies installed at $TOOL_DIR"
+	else
+		print_warning "Dependencies not installed"
+		print_info "Run: $0 install"
+	fi
 
-    if command_exists node; then
-        local node_version
-        node_version=$(node --version 2>/dev/null || echo "unknown")
-        print_success "Node.js: $node_version"
-    else
-        print_error "Node.js not found"
-    fi
+	if command_exists node; then
+		local node_version
+		node_version=$(node --version 2>/dev/null || echo "unknown")
+		print_success "Node.js: $node_version"
+	else
+		print_error "Node.js not found"
+	fi
 
-    if [[ -f "$SCHEMA_CACHE" ]]; then
-        local cache_age
-        cache_age=$(( ($(date +%s) - $(stat -c %Y "$SCHEMA_CACHE" 2>/dev/null || stat -f %m "$SCHEMA_CACHE" 2>/dev/null || echo 0)) / 3600 ))
-        print_success "Schema cache: ${cache_age}h old (24h TTL)"
-    else
-        print_info "Schema cache: not yet fetched (will download on first run)"
-    fi
+	if [[ -f "$SCHEMA_CACHE" ]]; then
+		local cache_age
+		cache_age=$((($(date +%s) - $(stat -c %Y "$SCHEMA_CACHE" 2>/dev/null || stat -f %m "$SCHEMA_CACHE" 2>/dev/null || echo 0)) / 3600))
+		print_success "Schema cache: ${cache_age}h old (24h TTL)"
+	else
+		print_info "Schema cache: not yet fetched (will download on first run)"
+	fi
 
-    return 0
+	return 0
 }
 
 # Run validation
 cmd_validate() {
-    local target="$1"
-    local is_json="${2:-false}"
+	local target="$1"
+	local is_json="${2:-false}"
 
-    if [[ -z "$target" ]]; then
-        print_error "Target URL or file path required"
-        echo "$HELP_USAGE_INFO"
-        return 1
-    fi
+	if [[ -z "$target" ]]; then
+		print_error "Target URL or file path required"
+		echo "$HELP_USAGE_INFO"
+		return 1
+	fi
 
-    # Ensure dependencies are installed
-    if [[ ! -d "$TOOL_DIR/node_modules/@adobe/structured-data-validator" ]]; then
-        install_deps || return 1
-    fi
+	# Ensure dependencies are installed
+	if [[ ! -d "$TOOL_DIR/node_modules/@adobe/structured-data-validator" ]]; then
+		install_deps || return 1
+	fi
 
-    # Create/update the JS script
-    create_js_script || {
-        print_error "Failed to create validation script"
-        return 1
-    }
+	# Create/update the JS script
+	create_js_script || {
+		print_error "Failed to create validation script"
+		return 1
+	}
 
-    local node_cmd="validate"
-    if [[ "$is_json" == "true" ]]; then
-        node_cmd="validate-json"
-    fi
+	local node_cmd="validate"
+	if [[ "$is_json" == "true" ]]; then
+		node_cmd="validate-json"
+	fi
 
-    print_info "Validating: $target"
-    # Capture exit code explicitly — node returns non-zero for validation
-    # errors, which is expected. Without || guard, set -e would kill the
-    # script before we can report results to the user.
-    local exit_code=0
-    (cd "$TOOL_DIR" && node "$JS_SCRIPT" "$node_cmd" "$target") || exit_code=$?
+	print_info "Validating: $target"
+	# Capture exit code explicitly — node returns non-zero for validation
+	# errors, which is expected. Without || guard, set -e would kill the
+	# script before we can report results to the user.
+	local exit_code=0
+	(cd "$TOOL_DIR" && node "$JS_SCRIPT" "$node_cmd" "$target") || exit_code=$?
 
-    if [[ $exit_code -eq 0 ]]; then
-        print_success "Validation complete"
-    else
-        print_error "Validation found errors (exit code: $exit_code)"
-    fi
+	if [[ $exit_code -eq 0 ]]; then
+		print_success "Validation complete"
+	else
+		print_error "Validation found errors (exit code: $exit_code)"
+	fi
 
-    return $exit_code
+	return $exit_code
 }
 
 # Show help
 show_help() {
-    echo "Schema Validator Helper Script"
-    echo "$USAGE_COMMAND_OPTIONS"
-    echo ""
-    echo "Validates structured data (JSON-LD, Microdata, RDFa) against Schema.org"
-    echo "specifications and Google Rich Results requirements."
-    echo ""
-    echo "Commands:"
-    echo "  validate <url|file>       Validate structured data from URL or HTML file"
-    echo "  validate-json <file>      Validate raw JSON-LD file"
-    echo "  status                    Check installation status"
-    echo "  install                   Install/update dependencies"
-    echo "  help                      $HELP_SHOW_MESSAGE"
-    echo ""
-    echo "Examples:"
-    echo "  $0 validate https://example.com"
-    echo "  $0 validate ./page.html"
-    echo "  $0 validate-json ./schema.json"
-    echo "  $0 status"
-    echo ""
-    echo "Dependencies:"
-    echo "  Required: Node.js 18+ (for native fetch)"
-    echo "  Auto-installed: @adobe/structured-data-validator"
-    echo "  Auto-installed: @marbec/web-auto-extractor"
-    echo "  Auto-installed: node-fetch (fallback for Node <18)"
-    echo ""
-    echo "Install directory: $TOOL_DIR"
+	echo "Schema Validator Helper Script"
+	echo "$USAGE_COMMAND_OPTIONS"
+	echo ""
+	echo "Validates structured data (JSON-LD, Microdata, RDFa) against Schema.org"
+	echo "specifications and Google Rich Results requirements."
+	echo ""
+	echo "Commands:"
+	echo "  validate <url|file>       Validate structured data from URL or HTML file"
+	echo "  validate-json <file>      Validate raw JSON-LD file"
+	echo "  status                    Check installation status"
+	echo "  install                   Install/update dependencies"
+	echo "  help                      $HELP_SHOW_MESSAGE"
+	echo ""
+	echo "Examples:"
+	echo "  $0 validate https://example.com"
+	echo "  $0 validate ./page.html"
+	echo "  $0 validate-json ./schema.json"
+	echo "  $0 status"
+	echo ""
+	echo "Dependencies:"
+	echo "  Required: Node.js 18+ (for native fetch)"
+	echo "  Auto-installed: @adobe/structured-data-validator"
+	echo "  Auto-installed: @marbec/web-auto-extractor"
+	echo "  Auto-installed: node-fetch (fallback for Node <18)"
+	echo ""
+	echo "Install directory: $TOOL_DIR"
 
-    return 0
+	return 0
 }
 
 # Main function
 main() {
-    local command="${1:-help}"
-    local target="${2:-}"
+	local command="${1:-help}"
+	local target="${2:-}"
 
-    case "$command" in
-        "validate")
-            cmd_validate "$target" "false"
-            ;;
-        "validate-json")
-            cmd_validate "$target" "true"
-            ;;
-        "status")
-            cmd_status
-            ;;
-        "install")
-            install_deps
-            ;;
-        "help"|"-h"|"--help"|"")
-            show_help
-            ;;
-        *)
-            # If first arg looks like a URL or file, treat as validate
-            if [[ "$command" == http* || -f "$command" ]]; then
-                cmd_validate "$command" "false"
-            else
-                print_error "Unknown command: $command"
-                echo "$HELP_USAGE_INFO"
-                return 1
-            fi
-            ;;
-    esac
+	case "$command" in
+	"validate")
+		cmd_validate "$target" "false"
+		;;
+	"validate-json")
+		cmd_validate "$target" "true"
+		;;
+	"status")
+		cmd_status
+		;;
+	"install")
+		install_deps
+		;;
+	"help" | "-h" | "--help" | "")
+		show_help
+		;;
+	*)
+		# If first arg looks like a URL or file, treat as validate
+		if [[ "$command" == http* || -f "$command" ]]; then
+			cmd_validate "$command" "false"
+		else
+			print_error "Unknown command: $command"
+			echo "$HELP_USAGE_INFO"
+			return 1
+		fi
+		;;
+	esac
 }
 
 main "$@"

@@ -9,6 +9,12 @@ Analyze the task description and recommend the optimal model tier.
 
 Task: $ARGUMENTS
 
+<!-- NOTE: $ARGUMENTS is raw free-form text from the user, not necessarily a --task-type
+     value. The recommend command (cmd_recommend in model-routing) only filters by
+     --task-type. When called with free-form text, recommend shows global model stats
+     (not task-type-specific). For task-specific routing, extract a task type (e.g.,
+     "code", "triage", "research") from ARGUMENTS before calling recommend. -->
+
 ## Instructions
 
 1. First, check pattern history from cross-session memory:

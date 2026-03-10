@@ -388,6 +388,64 @@ restart_traefik_if_running() {
 }
 
 # =============================================================================
+# Project Name Inference
+# =============================================================================
+# Infer a localdev-compatible project name from the current directory.
+# Priority: 1) package.json "name" field, 2) git repo basename.
+# Sanitises to lowercase alphanumeric + hyphens (localdev add requirement).
+
+# Infer project name from the current directory or a given path.
+# Outputs a sanitised name suitable for localdev add.
+infer_project_name() {
+	local dir="${1:-.}"
+	local name=""
+
+	# Try package.json "name" field first (most explicit signal)
+	if [[ -f "$dir/package.json" ]]; then
+		if command -v jq >/dev/null 2>&1; then
+			name="$(jq -r '.name // empty' "$dir/package.json" 2>/dev/null)"
+		else
+			# Fallback: grep-based extraction
+			name="$(grep -m1 '"name"' "$dir/package.json" 2>/dev/null | sed 's/.*"name"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/')"
+		fi
+		# Strip npm scope prefix (@org/name -> name)
+		name="${name##*/}"
+	fi
+
+	# Fallback: git repo basename (strip worktree suffix)
+	if [[ -z "$name" ]]; then
+		local repo_root=""
+		if [[ -d "$dir/.git" ]] || [[ -f "$dir/.git" ]]; then
+			repo_root="$(git -C "$dir" rev-parse --show-toplevel 2>/dev/null)"
+		fi
+		if [[ -n "$repo_root" ]]; then
+			name="$(basename "$repo_root")"
+			# If this is a worktree, get the main repo name
+			if [[ -f "$repo_root/.git" ]]; then
+				local main_worktree
+				main_worktree="$(git -C "$repo_root" worktree list --porcelain 2>/dev/null | head -1 | cut -d' ' -f2-)"
+				if [[ -n "$main_worktree" ]]; then
+					name="$(basename "$main_worktree")"
+				fi
+			fi
+		else
+			# Last resort: directory basename
+			name="$(basename "$(cd "$dir" && pwd)")"
+		fi
+	fi
+
+	# Sanitise: lowercase, replace non-alphanumeric with hyphens, collapse, trim
+	name="$(echo "$name" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9-]/-/g; s/--*/-/g; s/^-//; s/-$//')"
+
+	if [[ -z "$name" ]]; then
+		return 1
+	fi
+
+	echo "$name"
+	return 0
+}
+
+# =============================================================================
 # Port Registry Helpers
 # =============================================================================
 # Port registry: ~/.local-dev-proxy/ports.json
@@ -860,6 +918,199 @@ cmd_add() {
 	print_info "  Route:   $CONFD_DIR/${name}.yml"
 	print_info "  Registry: $PORTS_FILE"
 	return 0
+}
+
+# =============================================================================
+# Run Command — Zero-config dev server wrapper
+# =============================================================================
+# Wraps a dev command (e.g., npm run dev) with automatic:
+#   1. Project registration (if not already registered)
+#   2. Port resolution (main or branch)
+#   3. PORT/HOST env var injection
+#   4. Signal passthrough (SIGINT/SIGTERM forwarded to child)
+#
+# Usage: localdev run [options] <command...>
+#   Options:
+#     --name <name>   Override inferred project name
+#     --port <port>   Override auto-assigned port
+#     --no-host       Don't set HOST=0.0.0.0
+#
+# Examples:
+#   localdev run npm run dev
+#   localdev run --name myapp pnpm dev
+#   localdev run bun run dev
+
+cmd_run() {
+	local name_override=""
+	local port_override=""
+	local set_host=1
+	local cmd_args=()
+
+	# Parse options before the command
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--name)
+			name_override="${2:-}"
+			if [[ -z "$name_override" ]]; then
+				print_error "Usage: localdev run --name <name> <command...>"
+				return 1
+			fi
+			shift 2
+			;;
+		--port)
+			port_override="${2:-}"
+			if [[ ! "$port_override" =~ ^[0-9]+$ ]]; then
+				print_error "Invalid port: ${port_override:-<empty>} (must be numeric)"
+				return 1
+			fi
+			shift 2
+			;;
+		--no-host)
+			set_host=0
+			shift
+			;;
+		--)
+			shift
+			cmd_args+=("$@")
+			break
+			;;
+		-*)
+			print_error "Unknown option: $1"
+			print_info "Usage: localdev run [--name <name>] [--port <port>] [--no-host] <command...>"
+			return 1
+			;;
+		*)
+			cmd_args+=("$@")
+			break
+			;;
+		esac
+	done
+
+	if [[ ${#cmd_args[@]} -eq 0 ]]; then
+		print_error "Usage: localdev run [options] <command...>"
+		print_info ""
+		print_info "Wraps a dev command with automatic project registration and port injection."
+		print_info ""
+		print_info "Examples:"
+		print_info "  localdev run npm run dev"
+		print_info "  localdev run --name myapp pnpm dev"
+		print_info "  localdev run bun run dev"
+		print_info ""
+		print_info "Options:"
+		print_info "  --name <name>   Override inferred project name"
+		print_info "  --port <port>   Override auto-assigned port"
+		print_info "  --no-host       Don't set HOST=0.0.0.0"
+		return 1
+	fi
+
+	# Step 1: Determine project name
+	local name=""
+	if [[ -n "$name_override" ]]; then
+		# Sanitise: lowercase, replace non-alphanumeric with hyphens, collapse, trim
+		name="$(echo "$name_override" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9-]/-/g; s/--*/-/g; s/^-//; s/-$//')"
+		if [[ -z "$name" ]]; then
+			print_error "Invalid project name after sanitisation: $name_override"
+			return 1
+		fi
+	else
+		name="$(infer_project_name ".")" || {
+			print_error "Cannot infer project name from current directory"
+			print_info "  Use --name <name> to specify explicitly"
+			return 1
+		}
+	fi
+
+	# Step 2: Detect if we're in a worktree (branch context)
+	local is_worktree=0
+	local branch_name=""
+	local is_feature_branch=0
+	if [[ -f ".git" ]]; then
+		is_worktree=1
+		branch_name="$(git rev-parse --abbrev-ref HEAD 2>/dev/null)"
+		if [[ -n "$branch_name" ]] && [[ "$branch_name" != "main" ]] && [[ "$branch_name" != "master" ]]; then
+			is_feature_branch=1
+		fi
+	fi
+
+	# Step 3: Auto-register if not already registered
+	if ! is_app_registered "$name"; then
+		print_info "Project '$name' not registered — auto-registering..."
+		echo ""
+
+		if [[ -n "$port_override" ]]; then
+			cmd_add "$name" "$port_override"
+		else
+			cmd_add "$name"
+		fi
+
+		local add_exit=$?
+		if [[ "$add_exit" -ne 0 ]]; then
+			print_error "Auto-registration failed for '$name'"
+			return 1
+		fi
+		echo ""
+	fi
+
+	# Step 4: Resolve the correct port
+	local port=""
+	if [[ -n "$port_override" ]]; then
+		port="$port_override"
+	elif [[ "$is_feature_branch" -eq 1 ]]; then
+		# In a worktree on a feature branch — check for branch port
+		local sanitised_branch
+		sanitised_branch="$(sanitise_branch_name "$branch_name")"
+		if is_branch_registered "$name" "$sanitised_branch"; then
+			port="$(get_branch_port "$name" "$sanitised_branch")"
+			print_info "Using branch port: $port (${sanitised_branch}.${name}.local)"
+		else
+			# Auto-create branch route
+			print_info "Creating branch route for $sanitised_branch..."
+			cmd_branch "$name" "$branch_name"
+			port="$(get_branch_port "$name" "$sanitised_branch")"
+			if [[ -z "$port" ]]; then
+				# Fallback to main port if branch registration failed
+				port="$(get_app_port "$name")"
+				print_warning "Branch route creation failed — using main port: $port"
+			else
+				print_info "Using branch port: $port (${sanitised_branch}.${name}.local)"
+			fi
+		fi
+	else
+		# Main repo — use the app's main port
+		port="$(get_app_port "$name")"
+	fi
+
+	if [[ -z "$port" ]]; then
+		print_error "Cannot determine port for '$name'"
+		return 1
+	fi
+
+	# Step 5: Build the environment and exec
+	local domain="${name}.local"
+	if [[ "$is_feature_branch" -eq 1 ]]; then
+		local sanitised
+		sanitised="$(sanitise_branch_name "$branch_name")"
+		domain="${sanitised}.${name}.local"
+	fi
+
+	echo ""
+	print_success "localdev run: $name"
+	print_info "  URL:     https://$domain"
+	print_info "  PORT:    $port"
+	if [[ "$set_host" -eq 1 ]]; then
+		print_info "  HOST:    0.0.0.0"
+	fi
+	print_info "  Command: ${cmd_args[*]}"
+	echo ""
+
+	# Export PORT and optionally HOST, then exec the command
+	# exec replaces this process — signals go directly to the child
+	export PORT="$port"
+	if [[ "$set_host" -eq 1 ]]; then
+		export HOST="0.0.0.0"
+	fi
+
+	exec "${cmd_args[@]}"
 }
 
 # =============================================================================
@@ -2279,6 +2530,7 @@ cmd_help() {
 	echo "Usage: localdev-helper.sh <command> [options]"
 	echo ""
 	echo "Commands:"
+	echo "  run <command...>   Zero-config: auto-register + inject PORT + exec command"
 	echo "  init               One-time setup: dnsmasq, resolver, Traefik conf.d migration"
 	echo "  add <name> [port]  Register app: cert + Traefik route + port registry"
 	echo "  rm <name>          Remove app: reverses all add operations (incl. branches)"
@@ -2289,6 +2541,13 @@ cmd_help() {
 	echo "  list               Dashboard: all projects, URLs, certs, health, LocalWP"
 	echo "  status             Infrastructure health: dnsmasq, Traefik, certs, ports"
 	echo "  help               Show this help message"
+	echo ""
+	echo "Run performs (zero-config):"
+	echo "  1. Infer project name from package.json or git repo basename"
+	echo "  2. Auto-register if not already registered (cert, route, port, /etc/hosts)"
+	echo "  3. Detect worktree/branch and create branch subdomain if needed"
+	echo "  4. Set PORT and HOST=0.0.0.0 environment variables"
+	echo "  5. Exec the command (signals pass through directly)"
 	echo ""
 	echo "Add performs:"
 	echo "  1. Collision detection (LocalWP, registry, port)"
@@ -2334,6 +2593,10 @@ main() {
 	init)
 		cmd_init
 		;;
+	run)
+		shift
+		cmd_run "$@"
+		;;
 	add)
 		shift
 		cmd_add "$@"
@@ -2355,6 +2618,11 @@ main() {
 		;;
 	status)
 		cmd_status
+		;;
+	infer-name)
+		# Internal: infer project name for a directory (used by worktree-helper.sh)
+		shift
+		infer_project_name "${1:-.}"
 		;;
 	help | -h | --help | "")
 		cmd_help

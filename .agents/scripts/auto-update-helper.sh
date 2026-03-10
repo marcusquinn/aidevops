@@ -35,6 +35,8 @@
 #   AIDEVOPS_TOOL_AUTO_UPDATE=false       Disable 6-hourly tool freshness check
 #   AIDEVOPS_TOOL_FRESHNESS_HOURS=6       Hours between tool checks (default: 6)
 #   AIDEVOPS_TOOL_IDLE_HOURS=6            Required user idle hours before tool updates (default: 6)
+#   AIDEVOPS_UPSTREAM_WATCH=false         Disable daily upstream repo watch check
+#   AIDEVOPS_UPSTREAM_WATCH_HOURS=24      Hours between upstream watch checks (default: 24)
 #
 # Logs: ~/.aidevops/logs/auto-update.log
 
@@ -71,6 +73,7 @@ readonly DEFAULT_SKILL_FRESHNESS_HOURS=24
 readonly DEFAULT_OPENCLAW_FRESHNESS_HOURS=24
 readonly DEFAULT_TOOL_FRESHNESS_HOURS=6
 readonly DEFAULT_TOOL_IDLE_HOURS=6
+readonly DEFAULT_UPSTREAM_WATCH_HOURS=24
 readonly LAUNCHD_LABEL="com.aidevops.aidevops-auto-update"
 readonly LAUNCHD_DIR="$HOME/Library/LaunchAgents"
 readonly LAUNCHD_PLIST="${LAUNCHD_DIR}/${LAUNCHD_LABEL}.plist"
@@ -860,6 +863,120 @@ update_tool_check_timestamp() {
 }
 
 #######################################
+# Check upstream-watched repos for new releases (24h gate)
+# Called from cmd_check after tool freshness check.
+# Respects config: aidevops config set updates.upstream_watch false
+#######################################
+check_upstream_watch() {
+	# Opt-out via config (env var or config file)
+	if ! is_feature_enabled upstream_watch; then
+		log_info "Upstream watch disabled via config"
+		return 0
+	fi
+
+	local freshness_hours
+	freshness_hours=$(get_feature_toggle upstream_watch_hours "$DEFAULT_UPSTREAM_WATCH_HOURS")
+	if ! [[ "$freshness_hours" =~ ^[0-9]+$ ]] || [[ "$freshness_hours" -eq 0 ]]; then
+		log_warn "updates.upstream_watch_hours='${freshness_hours}' is not a positive integer — using default (${DEFAULT_UPSTREAM_WATCH_HOURS}h)"
+		freshness_hours="$DEFAULT_UPSTREAM_WATCH_HOURS"
+	fi
+	local freshness_seconds=$((freshness_hours * 3600))
+
+	# Read last upstream watch check timestamp from state file
+	local last_upstream_check=""
+	if [[ -f "$STATE_FILE" ]] && command -v jq &>/dev/null; then
+		last_upstream_check=$(jq -r '.last_upstream_watch_check // empty' "$STATE_FILE" 2>/dev/null || true)
+	fi
+
+	# Determine if check is needed
+	local needs_check=true
+	if [[ -n "$last_upstream_check" ]]; then
+		local last_epoch now_epoch elapsed
+		if [[ "$(uname)" == "Darwin" ]]; then
+			last_epoch=$(TZ=UTC date -j -f "%Y-%m-%dT%H:%M:%SZ" "$last_upstream_check" "+%s" 2>/dev/null || echo "0")
+		else
+			last_epoch=$(date -d "$last_upstream_check" "+%s" 2>/dev/null || echo "0")
+		fi
+		now_epoch=$(date +%s)
+		elapsed=$((now_epoch - last_epoch))
+
+		if [[ $elapsed -lt $freshness_seconds ]]; then
+			log_info "Upstream watch checked ${elapsed}s ago (gate: ${freshness_seconds}s) — skipping"
+			needs_check=false
+		fi
+	fi
+
+	if [[ "$needs_check" != "true" ]]; then
+		return 0
+	fi
+
+	# Locate upstream-watch-helper.sh (respect AIDEVOPS_AGENTS_DIR)
+	local agents_dir="${AIDEVOPS_AGENTS_DIR:-$HOME/.aidevops/agents}"
+	local upstream_watch_script="${agents_dir}/scripts/upstream-watch-helper.sh"
+	if [[ ! -x "$upstream_watch_script" ]]; then
+		upstream_watch_script="$INSTALL_DIR/.agents/scripts/upstream-watch-helper.sh"
+	fi
+
+	if [[ ! -x "$upstream_watch_script" ]]; then
+		log_info "upstream-watch-helper.sh not found — skipping upstream watch check"
+		return 0
+	fi
+
+	# Check if upstream-watch.json has any repos
+	local watch_config="${agents_dir}/configs/upstream-watch.json"
+	if [[ ! -f "$watch_config" ]]; then
+		log_info "No upstream watch config found — skipping"
+		update_upstream_watch_timestamp
+		return 0
+	fi
+
+	local repo_count
+	repo_count=$(jq '.repos | length' "$watch_config" 2>/dev/null || echo "0")
+	if [[ "$repo_count" -eq 0 ]]; then
+		log_info "No repos in upstream watchlist — skipping"
+		update_upstream_watch_timestamp
+		return 0
+	fi
+
+	log_info "Running daily upstream watch check (${repo_count} repos)..."
+	if "$upstream_watch_script" check >>"$LOG_FILE" 2>&1; then
+		log_info "Upstream watch check complete"
+		update_upstream_watch_timestamp
+	else
+		log_warn "Upstream watch check had errors (exit code: $?) — will retry next run"
+	fi
+	return 0
+}
+
+#######################################
+# Record last_upstream_watch_check timestamp in state file
+#######################################
+update_upstream_watch_timestamp() {
+	local timestamp
+	timestamp="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+	if command -v jq &>/dev/null; then
+		local tmp_state
+		tmp_state=$(mktemp)
+		trap 'rm -f "${tmp_state:-}"' RETURN
+
+		if [[ -f "$STATE_FILE" ]]; then
+			if ! jq --arg ts "$timestamp" \
+				'. + {last_upstream_watch_check: $ts}' \
+				"$STATE_FILE" >"$tmp_state" 2>&1; then
+				log_warn "Failed to update upstream watch timestamp (jq error on state file)"
+				return 1
+			fi
+			mv "$tmp_state" "$STATE_FILE"
+		else
+			jq -n --arg ts "$timestamp" \
+				'{last_upstream_watch_check: $ts}' >"$STATE_FILE"
+		fi
+	fi
+	return 0
+}
+
+#######################################
 # One-shot check and update
 # This is what the cron job calls
 #######################################
@@ -897,6 +1014,7 @@ cmd_check() {
 		check_skill_freshness
 		check_openclaw_freshness
 		check_tool_freshness
+		check_upstream_watch
 		return 0
 	fi
 
@@ -927,6 +1045,7 @@ cmd_check() {
 		check_skill_freshness
 		check_openclaw_freshness
 		check_tool_freshness
+		check_upstream_watch
 		return 0
 	fi
 
@@ -941,6 +1060,7 @@ cmd_check() {
 		check_skill_freshness
 		check_openclaw_freshness
 		check_tool_freshness
+		check_upstream_watch
 		return 1
 	fi
 
@@ -951,6 +1071,7 @@ cmd_check() {
 		check_skill_freshness
 		check_openclaw_freshness
 		check_tool_freshness
+		check_upstream_watch
 		return 1
 	fi
 
@@ -960,6 +1081,7 @@ cmd_check() {
 		check_skill_freshness
 		check_openclaw_freshness
 		check_tool_freshness
+		check_upstream_watch
 		return 1
 	fi
 
@@ -986,6 +1108,7 @@ cmd_check() {
 		check_skill_freshness
 		check_openclaw_freshness
 		check_tool_freshness
+		check_upstream_watch
 		return 1
 	fi
 
@@ -997,6 +1120,9 @@ cmd_check() {
 
 	# Run 6-hourly tool freshness check (idle-gated)
 	check_tool_freshness
+
+	# Run daily upstream watch check (24h gate)
+	check_upstream_watch
 
 	return 0
 }

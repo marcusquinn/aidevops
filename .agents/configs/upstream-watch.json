@@ -1,0 +1,4 @@
+{
+  "$comment": "Upstream repos to watch for releases and significant changes. Managed by upstream-watch-helper.sh (t1426). Entry schema: {slug, description, relevance, default_branch, added_at}. State (last_release_seen, last_commit_seen, last_checked, updates_pending) stored in ~/.aidevops/cache/upstream-watch-state.json.",
+  "repos": []
+}

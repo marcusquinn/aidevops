@@ -134,9 +134,11 @@
       "local_path": ".agents/services/communications/convos.md",
       "format_detected": "url",
       "imported_at": "2026-03-07T18:12:47Z",
-      "last_checked": "2026-03-07T18:12:47Z",
+      "last_checked": "2026-03-10T12:00:00Z",
       "merge_strategy": "added",
-      "notes": "Encrypted messaging agent built on XMTP. URL-based tracking — no GitHub repo hosts the skill file. Requires t1415 for content-hash update detection."
+      "notes": "Encrypted messaging agent built on XMTP. URL-based tracking with ETag caching (t1415.3).",
+      "upstream_hash": "14e995504820fa8a9d5bac31565e52115b93157180f0d28c20ad2e9d8e137db5",
+      "upstream_etag": "W/\"8d4e56bcb843d8234b504171092b05dc32aefc894d2f16ec9178e9e706e4099c\""
     }
   ]
 }

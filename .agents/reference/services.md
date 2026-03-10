@@ -128,6 +128,8 @@ Automatic polling for new releases. Checks GitHub every 10 minutes and runs `aid
 
 **Daily skill refresh**: Each auto-update check also runs a 24h-gated skill freshness check. If >24h have passed since the last check, `skill-update-helper.sh --auto-update --quiet` pulls upstream changes for all imported skills. State is tracked in `~/.aidevops/cache/auto-update-state.json` (`last_skill_check`, `skill_updates_applied`). Disable with `AIDEVOPS_SKILL_AUTO_UPDATE=false`; adjust frequency with `AIDEVOPS_SKILL_FRESHNESS_HOURS=<hours>` (default: 24). View skill check status with `aidevops auto-update status`.
 
+**Upstream watch**: Alongside skill refresh, `upstream-watch-helper.sh check` monitors external repos we've borrowed ideas/code from for new releases. Unlike skill imports (code we pulled in) or contribution watch (repos we filed issues on), this tracks "inspiration repos" — repos we want to passively monitor for improvements relevant to our implementation. Config: `.agents/configs/upstream-watch.json`. State: `~/.aidevops/cache/upstream-watch-state.json`. Run `upstream-watch-helper.sh status` to see watched repos, `upstream-watch-helper.sh check` to check for updates, `upstream-watch-helper.sh ack <slug>` after reviewing.
+
 **Repo version wins on update**: When `aidevops update` runs, shared agents in `~/.aidevops/agents/` are overwritten by the repo version. Only `custom/` and `draft/` directories are preserved. Imported skills stored outside these directories will be overwritten. To keep a skill across updates, either re-import it after each update or move it to `custom/`.
 
 ## Repo Sync

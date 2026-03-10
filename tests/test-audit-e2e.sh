@@ -22,6 +22,11 @@ REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SCRIPTS_DIR="$REPO_DIR/.agents/scripts"
 VERBOSE="${1:-}"
 
+# --- SQLite wrapper: apply busy_timeout to every connection ---
+sqlite_with_timeout() {
+	sqlite3 -cmd ".timeout 5000" "$@"
+}
+
 # --- Isolated test environment ---
 TEST_TMPDIR=""
 cleanup_test_env() {
@@ -106,7 +111,7 @@ section() {
 seed_sweep_findings() {
 	local db_path="$1"
 
-	sqlite3 "$db_path" <<'SQL' >/dev/null
+	sqlite_with_timeout "$db_path" <<'SQL' >/dev/null
 PRAGMA journal_mode=WAL;
 
 CREATE TABLE IF NOT EXISTS findings (
@@ -142,7 +147,7 @@ CREATE TABLE IF NOT EXISTS sweep_runs (
 SQL
 
 	# Insert test findings from multiple sources
-	sqlite3 "$db_path" <<SQL
+	sqlite_with_timeout "$db_path" <<SQL
 INSERT INTO findings (source, external_key, file, line, severity, type, rule, message, status)
 VALUES
     ('sonarcloud', 'sc-001', '.agents/scripts/code-audit-helper.sh', 42, 'high', 'BUG', 'bash:S5515', 'Unquoted variable in conditional', 'OPEN'),
@@ -172,7 +177,7 @@ SQL
 seed_audit_snapshots() {
 	local db_path="$1"
 
-	sqlite3 "$db_path" <<'SQL'
+	sqlite_with_timeout "$db_path" <<'SQL'
 CREATE TABLE IF NOT EXISTS audit_snapshots (
     id                INTEGER PRIMARY KEY AUTOINCREMENT,
     date              TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%SZ','now')),
@@ -190,7 +195,7 @@ CREATE INDEX IF NOT EXISTS idx_snapshots_source ON audit_snapshots(source);
 SQL
 
 	# Insert historical snapshots (2 weeks ago, 1 week ago)
-	sqlite3 "$db_path" <<SQL
+	sqlite_with_timeout "$db_path" <<SQL
 INSERT INTO audit_snapshots (date, source, total_findings, critical_count, high_count, medium_count, low_count, false_positives, tasks_created)
 VALUES
     (strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-14 days'), 'sonarcloud', 15, 2, 5, 6, 2, 3, 5),
@@ -208,7 +213,7 @@ seed_supervisor_db() {
 	local db_path="$1"
 	local repo_path="$2"
 
-	sqlite3 "$db_path" <<SQL
+	sqlite_with_timeout "$db_path" <<SQL
 PRAGMA journal_mode=WAL;
 
 CREATE TABLE IF NOT EXISTS tasks (
@@ -328,7 +333,7 @@ test_checkpoint_2() {
 
 	# Verify findings were inserted
 	local total_findings
-	total_findings=$(sqlite3 "$TEST_SWEEP_DB" "SELECT count(*) FROM findings;" 2>/dev/null || echo "0")
+	total_findings=$(sqlite_with_timeout "$TEST_SWEEP_DB" "SELECT count(*) FROM findings;" 2>/dev/null || echo "0")
 	if [[ "$total_findings" -eq 10 ]]; then
 		pass "Seeded 10 test findings into sweep DB"
 	else
@@ -337,7 +342,7 @@ test_checkpoint_2() {
 
 	# Verify multi-source coverage
 	local source_count
-	source_count=$(sqlite3 "$TEST_SWEEP_DB" "SELECT count(DISTINCT source) FROM findings;" 2>/dev/null || echo "0")
+	source_count=$(sqlite_with_timeout "$TEST_SWEEP_DB" "SELECT count(DISTINCT source) FROM findings;" 2>/dev/null || echo "0")
 	if [[ "$source_count" -eq 4 ]]; then
 		pass "Findings from 4 distinct sources"
 	else
@@ -346,10 +351,10 @@ test_checkpoint_2() {
 
 	# Verify severity distribution
 	local critical_count high_count medium_count low_count
-	critical_count=$(sqlite3 "$TEST_SWEEP_DB" "SELECT count(*) FROM findings WHERE severity='critical';" 2>/dev/null || echo "0")
-	high_count=$(sqlite3 "$TEST_SWEEP_DB" "SELECT count(*) FROM findings WHERE severity='high';" 2>/dev/null || echo "0")
-	medium_count=$(sqlite3 "$TEST_SWEEP_DB" "SELECT count(*) FROM findings WHERE severity='medium';" 2>/dev/null || echo "0")
-	low_count=$(sqlite3 "$TEST_SWEEP_DB" "SELECT count(*) FROM findings WHERE severity='low';" 2>/dev/null || echo "0")
+	critical_count=$(sqlite_with_timeout "$TEST_SWEEP_DB" "SELECT count(*) FROM findings WHERE severity='critical';" 2>/dev/null || echo "0")
+	high_count=$(sqlite_with_timeout "$TEST_SWEEP_DB" "SELECT count(*) FROM findings WHERE severity='high';" 2>/dev/null || echo "0")
+	medium_count=$(sqlite_with_timeout "$TEST_SWEEP_DB" "SELECT count(*) FROM findings WHERE severity='medium';" 2>/dev/null || echo "0")
+	low_count=$(sqlite_with_timeout "$TEST_SWEEP_DB" "SELECT count(*) FROM findings WHERE severity='low';" 2>/dev/null || echo "0")
 	if [[ "$critical_count" -ge 1 && "$high_count" -ge 1 && "$medium_count" -ge 1 && "$low_count" -ge 1 ]]; then
 		pass "Findings span all severity levels (critical=$critical_count, high=$high_count, medium=$medium_count, low=$low_count)"
 	else
@@ -358,7 +363,7 @@ test_checkpoint_2() {
 
 	# Verify deduplication potential (same file+line from different sources)
 	local dup_candidates
-	dup_candidates=$(sqlite3 "$TEST_SWEEP_DB" "SELECT count(*) FROM (SELECT file, line, count(DISTINCT source) as src_count FROM findings WHERE status='OPEN' GROUP BY file, line HAVING src_count > 1);" 2>/dev/null || echo "0")
+	dup_candidates=$(sqlite_with_timeout "$TEST_SWEEP_DB" "SELECT count(*) FROM (SELECT file, line, count(DISTINCT source) as src_count FROM findings WHERE status='OPEN' GROUP BY file, line HAVING src_count > 1);" 2>/dev/null || echo "0")
 	if [[ "$dup_candidates" -ge 1 ]]; then
 		pass "Cross-service dedup candidates detected ($dup_candidates file+line overlaps)"
 	else
@@ -612,7 +617,7 @@ test_checkpoint_7() {
 	seed_audit_snapshots "$TEST_AUDIT_DB"
 
 	local snapshot_count
-	snapshot_count=$(sqlite3 "$TEST_AUDIT_DB" "SELECT count(*) FROM audit_snapshots;" 2>/dev/null || echo "0")
+	snapshot_count=$(sqlite_with_timeout "$TEST_AUDIT_DB" "SELECT count(*) FROM audit_snapshots;" 2>/dev/null || echo "0")
 	if [[ "$snapshot_count" -eq 4 ]]; then
 		pass "audit_snapshots table created and seeded with $snapshot_count historical snapshots"
 	else
@@ -621,8 +626,8 @@ test_checkpoint_7() {
 
 	# Verify trend calculation (WoW delta)
 	local latest_total week_ago_total
-	latest_total=$(sqlite3 "$TEST_AUDIT_DB" "SELECT total_findings FROM audit_snapshots WHERE source='sonarcloud' ORDER BY date DESC LIMIT 1;" 2>/dev/null || echo "0")
-	week_ago_total=$(sqlite3 "$TEST_AUDIT_DB" "SELECT total_findings FROM audit_snapshots WHERE source='sonarcloud' ORDER BY date ASC LIMIT 1;" 2>/dev/null || echo "0")
+	latest_total=$(sqlite_with_timeout "$TEST_AUDIT_DB" "SELECT total_findings FROM audit_snapshots WHERE source='sonarcloud' ORDER BY date DESC LIMIT 1;" 2>/dev/null || echo "0")
+	week_ago_total=$(sqlite_with_timeout "$TEST_AUDIT_DB" "SELECT total_findings FROM audit_snapshots WHERE source='sonarcloud' ORDER BY date ASC LIMIT 1;" 2>/dev/null || echo "0")
 	if [[ "$latest_total" -gt 0 && "$week_ago_total" -gt 0 ]]; then
 		local delta=$((latest_total - week_ago_total))
 		pass "Trend calculation works: sonarcloud $week_ago_total -> $latest_total (delta: $delta)"
@@ -656,8 +661,8 @@ test_checkpoint_7() {
 
 	# Verify snapshot recording works
 	local new_snapshot_count
-	sqlite3 "$TEST_AUDIT_DB" "INSERT INTO audit_snapshots (source, total_findings, critical_count, high_count, medium_count, low_count, false_positives, tasks_created) VALUES ('sonarcloud', 10, 1, 3, 4, 2, 1, 3);" 2>/dev/null
-	new_snapshot_count=$(sqlite3 "$TEST_AUDIT_DB" "SELECT count(*) FROM audit_snapshots;" 2>/dev/null || echo "0")
+	sqlite_with_timeout "$TEST_AUDIT_DB" "INSERT INTO audit_snapshots (source, total_findings, critical_count, high_count, medium_count, low_count, false_positives, tasks_created) VALUES ('sonarcloud', 10, 1, 3, 4, 2, 1, 3);" 2>/dev/null
+	new_snapshot_count=$(sqlite_with_timeout "$TEST_AUDIT_DB" "SELECT count(*) FROM audit_snapshots;" 2>/dev/null || echo "0")
 	if [[ "$new_snapshot_count" -eq 5 ]]; then
 		pass "New snapshot recorded successfully (total: $new_snapshot_count)"
 	else
@@ -674,6 +679,7 @@ test_checkpoint_8() {
 	section "Checkpoint 8: Integration — full pipeline connectivity"
 
 	# Verify the pipeline chain: collect -> DB -> task-create -> TODO.md -> dispatch
+	local pulse_script="$SCRIPTS_DIR/supervisor/pulse.sh"
 	local chain_ok=true
 
 	# Step 1: Collectors exist
@@ -686,7 +692,7 @@ test_checkpoint_8() {
 	fi
 
 	# Step 2: Findings DB schema is consistent
-	if sqlite3 "$TEST_SWEEP_DB" "SELECT source, file, line, severity, rule, message FROM findings LIMIT 1;" >/dev/null 2>&1; then
+	if sqlite_with_timeout "$TEST_SWEEP_DB" "SELECT source, file, line, severity, rule, message FROM findings LIMIT 1;" >/dev/null 2>&1; then
 		pass "Findings DB schema has required columns (source, file, line, severity, rule, message)"
 	else
 		fail "Findings DB schema missing required columns"

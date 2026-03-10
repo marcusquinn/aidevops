@@ -83,7 +83,7 @@ jobs:
         TOTAL=$(echo "$CHECK_RUNS" | jq -s 'length')
         PASSED=$(echo "$CHECK_RUNS" | jq -s '[.[] | select(.conclusion == "success")] | length')
         SKIPPED=$(echo "$CHECK_RUNS" | jq -s '[.[] | select(.conclusion == "skipped")] | length')
-        FAILED=$(echo "$CHECK_RUNS" | jq -s '[.[] | select(.conclusion == "failure")] | length')
+        FAILED=$(echo "$CHECK_RUNS" | jq -s '[.[] | select(.conclusion == "failure" or .conclusion == "cancelled" or .conclusion == "timed_out" or .conclusion == "action_required")] | length')
         
         echo "| Check | Status | Conclusion |" >> $GITHUB_STEP_SUMMARY
         echo "|-------|--------|------------|" >> $GITHUB_STEP_SUMMARY
@@ -106,23 +106,23 @@ jobs:
         
         CRITICAL_FAILED=$(echo "$CHECK_RUNS" | jq -s --arg names "$ADVISORY_NAMES" \
           '($names | split("|")) as $adv |
-           [.[] | select(.conclusion == "failure") | select(.name as $n | $adv | index($n) | not)] | length')
+           [.[] | select(.conclusion == "failure" or .conclusion == "cancelled" or .conclusion == "timed_out" or .conclusion == "action_required") | select(.name as $n | $adv | index($n) | not)] | length')
         ADVISORY_FAILED=$(echo "$CHECK_RUNS" | jq -s --arg names "$ADVISORY_NAMES" \
           '($names | split("|")) as $adv |
-           [.[] | select(.conclusion == "failure") | select(.name as $n | $adv | index($n))] | length')
+           [.[] | select(.conclusion == "failure" or .conclusion == "cancelled" or .conclusion == "timed_out" or .conclusion == "action_required") | select(.name as $n | $adv | index($n))] | length')
         
         if [[ "$ADVISORY_FAILED" != "0" ]]; then
           echo "::warning::$ADVISORY_FAILED advisory check(s) failed (non-blocking)"
           echo "$CHECK_RUNS" | jq -rs --arg names "$ADVISORY_NAMES" \
             '($names | split("|")) as $adv |
-             .[] | select(.conclusion == "failure") | select(.name as $n | $adv | index($n)) | "  Advisory failure: \(.name)"'
+             .[] | select(.conclusion == "failure" or .conclusion == "cancelled" or .conclusion == "timed_out" or .conclusion == "action_required") | select(.name as $n | $adv | index($n)) | "  Advisory failure: \(.name) (\(.conclusion))"'
         fi
         
         if [[ "$CRITICAL_FAILED" != "0" ]]; then
           echo "::error::$CRITICAL_FAILED critical check run(s) failed"
           echo "$CHECK_RUNS" | jq -rs --arg names "$ADVISORY_NAMES" \
             '($names | split("|")) as $adv |
-             .[] | select(.conclusion == "failure") | select(.name as $n | $adv | index($n) | not) | "  Critical failure: \(.name)"'
+             .[] | select(.conclusion == "failure" or .conclusion == "cancelled" or .conclusion == "timed_out" or .conclusion == "action_required") | select(.name as $n | $adv | index($n) | not) | "  Critical failure: \(.name) (\(.conclusion))"'
           echo "cicd_status=failed" >> $GITHUB_OUTPUT
           exit 1
         fi
