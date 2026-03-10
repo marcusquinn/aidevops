@@ -959,8 +959,8 @@ cmd_run() {
 			;;
 		--port)
 			port_override="${2:-}"
-			if [[ -z "$port_override" ]]; then
-				print_error "Usage: localdev run --port <port> <command...>"
+			if [[ ! "$port_override" =~ ^[0-9]+$ ]]; then
+				print_error "Invalid port: ${port_override:-<empty>} (must be numeric)"
 				return 1
 			fi
 			shift 2
@@ -1006,7 +1006,12 @@ cmd_run() {
 	# Step 1: Determine project name
 	local name=""
 	if [[ -n "$name_override" ]]; then
-		name="$name_override"
+		# Sanitise: lowercase, replace non-alphanumeric with hyphens, collapse, trim
+		name="$(echo "$name_override" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9-]/-/g; s/--*/-/g; s/^-//; s/-$//')"
+		if [[ -z "$name" ]]; then
+			print_error "Invalid project name after sanitisation: $name_override"
+			return 1
+		fi
 	else
 		name="$(infer_project_name ".")" || {
 			print_error "Cannot infer project name from current directory"
@@ -1018,9 +1023,13 @@ cmd_run() {
 	# Step 2: Detect if we're in a worktree (branch context)
 	local is_worktree=0
 	local branch_name=""
+	local is_feature_branch=0
 	if [[ -f ".git" ]]; then
 		is_worktree=1
 		branch_name="$(git rev-parse --abbrev-ref HEAD 2>/dev/null)"
+		if [[ -n "$branch_name" ]] && [[ "$branch_name" != "main" ]] && [[ "$branch_name" != "master" ]]; then
+			is_feature_branch=1
+		fi
 	fi
 
 	# Step 3: Auto-register if not already registered
@@ -1046,7 +1055,7 @@ cmd_run() {
 	local port=""
 	if [[ -n "$port_override" ]]; then
 		port="$port_override"
-	elif [[ "$is_worktree" -eq 1 ]] && [[ -n "$branch_name" ]] && [[ "$branch_name" != "main" ]] && [[ "$branch_name" != "master" ]]; then
+	elif [[ "$is_feature_branch" -eq 1 ]]; then
 		# In a worktree on a feature branch — check for branch port
 		local sanitised_branch
 		sanitised_branch="$(sanitise_branch_name "$branch_name")"
@@ -1078,7 +1087,7 @@ cmd_run() {
 
 	# Step 5: Build the environment and exec
 	local domain="${name}.local"
-	if [[ "$is_worktree" -eq 1 ]] && [[ -n "$branch_name" ]] && [[ "$branch_name" != "main" ]] && [[ "$branch_name" != "master" ]]; then
+	if [[ "$is_feature_branch" -eq 1 ]]; then
 		local sanitised
 		sanitised="$(sanitise_branch_name "$branch_name")"
 		domain="${sanitised}.${name}.local"
@@ -2609,6 +2618,11 @@ main() {
 		;;
 	status)
 		cmd_status
+		;;
+	infer-name)
+		# Internal: infer project name for a directory (used by worktree-helper.sh)
+		shift
+		infer_project_name "${1:-.}"
 		;;
 	help | -h | --help | "")
 		cmd_help
