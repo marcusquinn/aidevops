@@ -633,13 +633,25 @@ cmd_history() {
 	fi
 
 	local total_days
-	local total_hours
-	local earliest
-	local latest
 	total_days=$(wc -l <"$HISTORY_FILE" | tr -d ' ')
-	total_hours=$(jq -s '[.[].screen_hours] | add | . * 10 | round / 10' "$HISTORY_FILE" 2>/dev/null || echo "0")
-	earliest=$(jq -s 'min_by(.date) | .date' "$HISTORY_FILE" 2>/dev/null || echo "unknown")
-	latest=$(jq -s 'max_by(.date) | .date' "$HISTORY_FILE" 2>/dev/null || echo "unknown")
+
+	# Single jq pass for all history stats (total_hours, earliest, latest)
+	local total_hours="0"
+	local earliest="unknown"
+	local latest="unknown"
+	if [[ "$total_days" -gt 0 ]]; then
+		local history_stats
+		history_stats=$(jq -rs '
+			[
+				([.[].screen_hours] | add // 0 | . * 10 | round / 10),
+				(min_by(.date) | .date),
+				(max_by(.date) | .date)
+			] | @tsv
+		' "$HISTORY_FILE" 2>/dev/null) || true
+		if [[ -n "$history_stats" ]]; then
+			read -r total_hours earliest latest <<<"$history_stats"
+		fi
+	fi
 
 	echo "Screen time history: ${total_days} days, ${total_hours}h total"
 	echo "Range: ${earliest} to ${latest}"
