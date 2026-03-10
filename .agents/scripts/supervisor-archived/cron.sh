@@ -34,6 +34,11 @@ cmd_cron() {
 				log_error "--interval requires a value"
 				return 1
 			}
+			# GH#3716: Validate interval is a positive integer before use in cron/launchd commands
+			if ! [[ "$2" =~ ^[0-9]+$ ]] || [[ "$2" -eq 0 ]]; then
+				log_error "--interval must be a positive integer (minutes), got: $2"
+				return 1
+			fi
 			interval="$2"
 			shift 2
 			;;
