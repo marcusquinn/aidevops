@@ -12,7 +12,7 @@
     },
     {
       "file": "{{NAMESPACE}}/example.md",
-      "name": "example",
+      "name": "{{NAMESPACE}}.example",
       "description": "Example subagent",
       "model": "sonnet"
     }
