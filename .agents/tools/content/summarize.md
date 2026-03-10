@@ -20,7 +20,7 @@ tools:
 
 - **Purpose**: Summarize URLs, YouTube videos, podcasts, and files using AI
 - **Install**: `npm i -g @steipete/summarize` or `brew install steipete/tap/summarize`
-- **Repo**: https://github.com/steipete/summarize (726+ stars)
+- **Repo**: https://github.com/steipete/summarize
 - **Website**: https://summarize.sh
 
 **Quick Commands**:
@@ -183,7 +183,7 @@ summarize "https://example.com" --stream off
 | Anthropic | `anthropic/claude-sonnet-4-6` | `ANTHROPIC_API_KEY` |
 | Google | `google/gemini-3-flash-preview` | `GEMINI_API_KEY` |
 | xAI | `xai/grok-4-fast-non-reasoning` | `XAI_API_KEY` |
-| Z.AI | `zai/glm-4.7` | `Z_AI_API_KEY` |
+| Zhipu AI | `zhipuai/glm-4` | `ZHIPUAI_API_KEY` |
 | OpenRouter | `openrouter/openai/gpt-5-mini` | `OPENROUTER_API_KEY` |
 
 ### Free Models via OpenRouter
@@ -322,6 +322,7 @@ summarize "https://example.com" --markdown-mode off
 summarize "https://docs.example.com/api" --length long --json > api-summary.json
 
 # Summarize multiple sources
+urls=("https://example.com/page1" "https://example.com/page2")
 for url in "${urls[@]}"; do
   summarize "$url" --length medium >> research-notes.md
 done
