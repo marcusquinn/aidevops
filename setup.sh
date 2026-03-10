@@ -990,27 +990,88 @@ PLIST
 		fi
 	fi
 
-	# Enable stats-wrapper cron — runs quality sweep and health issue
-	# updates separately from the pulse (t1429). Only installed when
-	# the supervisor pulse is enabled (stats are useless without it).
+	# Enable stats-wrapper — runs quality sweep and health issue updates
+	# separately from the pulse (t1429). Only installed when the supervisor
+	# pulse is enabled (stats are useless without it).
 	local stats_script="$HOME/.aidevops/agents/scripts/stats-wrapper.sh"
+	local stats_label="com.aidevops.aidevops-stats-wrapper"
 	if [[ -x "$stats_script" ]] && [[ "$_pulse_lower" == "true" ]]; then
-		if ! crontab -l 2>/dev/null | grep -qF "aidevops: stats-wrapper"; then
-			local _cron_stats_script
-			_cron_stats_script=$(_cron_escape "$stats_script")
-			(
-				crontab -l 2>/dev/null | grep -v 'aidevops: stats-wrapper'
-				echo "*/15 * * * * PATH=\"/usr/local/bin:/usr/bin:/bin\" /bin/bash ${_cron_stats_script} >> \"\$HOME/.aidevops/logs/stats.log\" 2>&1 # aidevops: stats-wrapper"
-			) | crontab - || true
-			if crontab -l 2>/dev/null | grep -qF "aidevops: stats-wrapper"; then
-				print_info "Stats wrapper enabled (cron, every 15 min)"
+		local _stats_installed=false
+		if _launchd_has_agent "$stats_label"; then
+			_stats_installed=true
+		elif crontab -l 2>/dev/null | grep -qF "aidevops: stats-wrapper"; then
+			_stats_installed=true
+		fi
+		if [[ "$_stats_installed" == "false" ]]; then
+			if [[ "$(uname -s)" == "Darwin" ]]; then
+				local stats_plist="$HOME/Library/LaunchAgents/${stats_label}.plist"
+				local _xml_stats_script _xml_stats_home _xml_stats_path
+				_xml_stats_script=$(_xml_escape "$stats_script")
+				_xml_stats_home=$(_xml_escape "$HOME")
+				_xml_stats_path=$(_xml_escape "$PATH")
+				cat >"$stats_plist" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>${stats_label}</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/bin/bash</string>
+		<string>${_xml_stats_script}</string>
+	</array>
+	<key>StartInterval</key>
+	<integer>900</integer>
+	<key>StandardOutPath</key>
+	<string>${_xml_stats_home}/.aidevops/logs/stats.log</string>
+	<key>StandardErrorPath</key>
+	<string>${_xml_stats_home}/.aidevops/logs/stats.log</string>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>PATH</key>
+		<string>${_xml_stats_path}</string>
+		<key>HOME</key>
+		<string>${_xml_stats_home}</string>
+	</dict>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<false/>
+</dict>
+</plist>
+PLIST
+				if launchctl load "$stats_plist"; then
+					print_info "Stats wrapper enabled (launchd, every 15 min)"
+				else
+					print_warning "Failed to load stats wrapper LaunchAgent"
+				fi
+			else
+				local _cron_stats_script
+				_cron_stats_script=$(_cron_escape "$stats_script")
+				(
+					crontab -l 2>/dev/null | grep -v 'aidevops: stats-wrapper'
+					echo "*/15 * * * * PATH=\"/usr/local/bin:/usr/bin:/bin\" /bin/bash ${_cron_stats_script} >> \"\$HOME/.aidevops/logs/stats.log\" 2>&1 # aidevops: stats-wrapper"
+				) | crontab - || true
+				if crontab -l 2>/dev/null | grep -qF "aidevops: stats-wrapper"; then
+					print_info "Stats wrapper enabled (cron, every 15 min)"
+				fi
 			fi
 		fi
 	elif [[ "$_pulse_lower" == "false" ]]; then
-		# Remove stats cron if pulse is disabled
-		if crontab -l 2>/dev/null | grep -qF "aidevops: stats-wrapper"; then
-			crontab -l 2>/dev/null | grep -v 'aidevops: stats-wrapper' | crontab - || true
-			print_info "Stats wrapper disabled (cron entry removed — pulse is off)"
+		# Remove stats scheduler if pulse is disabled
+		if [[ "$(uname -s)" == "Darwin" ]]; then
+			local stats_plist="$HOME/Library/LaunchAgents/${stats_label}.plist"
+			if _launchd_has_agent "$stats_label"; then
+				launchctl unload "$stats_plist" || true
+				rm -f "$stats_plist"
+				print_info "Stats wrapper disabled (launchd agent removed — pulse is off)"
+			fi
+		else
+			if crontab -l 2>/dev/null | grep -qF "aidevops: stats-wrapper"; then
+				crontab -l 2>/dev/null | grep -v 'aidevops: stats-wrapper' | crontab - || true
+				print_info "Stats wrapper disabled (cron entry removed — pulse is off)"
+			fi
 		fi
 	fi
 

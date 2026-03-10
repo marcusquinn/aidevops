@@ -3267,10 +3267,10 @@ prefetch_contribution_watch() {
 #
 # Statistics (quality sweep, health issues, person-stats) run in a
 # SEPARATE process — stats-wrapper.sh — on its own cron schedule.
-# They must never share a process with the pulse because
-# contributor-activity-helper.sh has a blocking sleep loop that waits
-# for GitHub Search API rate limits (30 req/min), which can stall for
-# hours and prevent the pulse from ever dispatching or merging.
+# They must never share a process with the pulse because they depend
+# on GitHub Search API (30 req/min limit). When budget is exhausted,
+# contributor-activity-helper.sh bails out with partial results, but
+# even the API calls themselves add latency that delays dispatch.
 #######################################
 main() {
 	if ! check_session_gate; then
