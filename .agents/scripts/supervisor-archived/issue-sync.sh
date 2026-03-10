@@ -360,6 +360,12 @@ sync_issue_status_label() {
 	local new_state="$2"
 	local old_state="${3:-}"
 
+	# Validate task_id format to prevent command/regex injection (GH#3734)
+	if [[ ! "$task_id" =~ ^t[0-9]+(\.[0-9]+)?$ ]]; then
+		log_warn "sync_issue_status_label: invalid task_id format, skipping"
+		return 1
+	fi
+
 	# Skip if gh CLI not available or not authenticated
 	command -v gh &>/dev/null || return 0
 	check_gh_auth || return 0
@@ -1394,6 +1400,11 @@ find_task_issue_number() {
 
 	if [[ -z "$task_id" ]]; then
 		return 0
+	fi
+
+	# Validate task_id format to prevent regex injection (GH#3734)
+	if [[ ! "$task_id" =~ ^t[0-9]+(\.[0-9]+)?$ ]]; then
+		return 1
 	fi
 
 	# Escape dots in task_id for regex (e.g. t128.10 -> t128\.10)
@@ -2905,6 +2916,13 @@ post_blocked_comment_to_github() {
 	local task_id="$1"
 	local reason="${2:-unknown}"
 	local repo_path="$3"
+
+	# Validate task_id format to prevent command/regex injection (GH#3734)
+	# Valid formats: t1, t001, t1234, t001.1, t004.21
+	if [[ ! "$task_id" =~ ^t[0-9]+(\.[0-9]+)?$ ]]; then
+		log_warn "Invalid task_id format: refusing to process '${task_id//[^a-zA-Z0-9._-]/}'"
+		return 1
+	fi
 
 	# Check if gh CLI is available
 	if ! command -v gh &>/dev/null; then

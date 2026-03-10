@@ -1076,6 +1076,12 @@ update_todo_on_blocked() {
 	local task_id="$1"
 	local reason="${2:-unknown}"
 
+	# Validate task_id format to prevent command/regex injection (GH#3734)
+	if [[ ! "$task_id" =~ ^t[0-9]+(\.[0-9]+)?$ ]]; then
+		log_error "Invalid task_id format: refusing to process unsanitized input"
+		return 1
+	fi
+
 	ensure_db
 
 	local escaped_id
