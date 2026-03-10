@@ -8,7 +8,7 @@ Presents a digest of ambiguous security items that were flagged but not automati
 
 - **prompt-guard-helper.sh** — WARN-level prompt injection detections (below block threshold)
 - **network-tier-helper.sh** — Tier 4 unknown domains (allowed but flagged)
-- **sandbox-exec-helper.sh** — Flagged command patterns during sandboxed execution
+- **sandbox-exec-helper.sh** — Tier 5 denied domains from sandbox pre-checks
 - **mcp-audit** — MCP tool descriptions with ambiguous injection patterns
 
 Each item can be reviewed and a decision applied that feeds back into the security configuration, creating a self-improving feedback loop.
