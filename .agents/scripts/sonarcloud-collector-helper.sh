@@ -43,6 +43,34 @@ readonly SONARCLOUD_API_BASE="https://sonarcloud.io/api"
 LOG_PREFIX="SONARCLOUD"
 
 # =============================================================================
+# SQL safety helpers: prevent injection in sqlite3 CLI queries
+# =============================================================================
+
+# Escape a string for safe use in SQL single-quoted literals.
+# Replaces ' with '' per SQL standard. Usage: "INSERT ... VALUES ('$(sql_escape "$val")');"
+sql_escape() {
+	local val
+	val="$1"
+	# Use sed for reliable single-quote doubling; bash parameter expansion
+	# with single quotes in the pattern is unreliable across shell versions.
+	printf '%s' "$val" | sed "s/'/''/g"
+	return 0
+}
+
+# Validate that a value is a non-negative integer. Returns 1 on failure.
+# Usage: sql_int "$run_id" || return 1
+sql_int() {
+	local val
+	val="$1"
+	if [[ "$val" =~ ^[0-9]+$ ]]; then
+		printf '%s' "$val"
+		return 0
+	fi
+	log_error "Expected integer, got: $val"
+	return 1
+}
+
+# =============================================================================
 # SQLite wrapper: sets busy_timeout on every connection (t135.3 pattern)
 # =============================================================================
 
@@ -108,6 +136,8 @@ map_severity() {
 		echo "info"
 		;;
 	esac
+
+	return 0
 }
 
 # =============================================================================
@@ -366,10 +396,17 @@ store_finding() {
 	local dedup_key
 	dedup_key="${path}:${line}:${rule_id}"
 
-	# Use parameterized query to prevent SQL injection
-	db "$COLLECTOR_DB" \
-		"INSERT INTO audit_findings (run_id, source, severity, path, line, description, category, rule_id, dedup_key) VALUES (?, 'sonarcloud', ?, ?, ?, ?, ?, ?, ?);" \
-		"$run_id" "$severity" "$path" "$line" "$description" "$category" "$rule_id" "$dedup_key" >/dev/null
+	# Validate integer fields and escape strings to prevent SQL injection.
+	# Note: sqlite3 CLI does not support positional parameter binding (?);
+	# extra arguments after the SQL string are treated as additional SQL
+	# statements, not parameter values. Use sql_escape() for strings and
+	# sql_int() for integers instead.
+	local safe_run_id
+	safe_run_id=$(sql_int "$run_id") || return 1
+	local safe_line
+	safe_line=$(sql_int "$line") || return 1
+
+	db "$COLLECTOR_DB" "INSERT INTO audit_findings (run_id, source, severity, path, line, description, category, rule_id, dedup_key) VALUES (${safe_run_id}, 'sonarcloud', '$(sql_escape "$severity")', '$(sql_escape "$path")', ${safe_line}, '$(sql_escape "$description")', '$(sql_escape "$category")', '$(sql_escape "$rule_id")', '$(sql_escape "$dedup_key")');" >/dev/null
 
 	return 0
 }
@@ -418,37 +455,33 @@ cmd_collect() {
 	log_info "Starting collection for project: $project_key"
 
 	# Create audit run (using existing schema from t1032.1)
+	local safe_repo
+	safe_repo=$(sql_escape "$repo")
+
 	local run_id
-	run_id=$(
-		db "$COLLECTOR_DB" <<SQL
-INSERT INTO audit_runs (repo, pr_number, head_sha, services_run, status)
-VALUES ('$repo', 0, '', 'sonarcloud', 'running');
-SELECT last_insert_rowid();
-SQL
-	)
+	run_id=$(db "$COLLECTOR_DB" "INSERT INTO audit_runs (repo, pr_number, head_sha, services_run, status) VALUES ('${safe_repo}', 0, '', 'sonarcloud', 'running'); SELECT last_insert_rowid();")
+
+	# Validate run_id is an integer (from last_insert_rowid)
+	local safe_run_id
+	safe_run_id=$(sql_int "$run_id") || return 1
 
 	# Collect issues and hotspots
 	local total_findings=0
 
-	if collect_issues "$run_id" "$project_key" "$branch"; then
+	if collect_issues "$safe_run_id" "$project_key" "$branch"; then
 		local issue_count
-		issue_count=$(db "$COLLECTOR_DB" "SELECT COUNT(*) FROM audit_findings WHERE run_id=$run_id AND category='issue';")
+		issue_count=$(db "$COLLECTOR_DB" "SELECT COUNT(*) FROM audit_findings WHERE run_id=${safe_run_id} AND category='issue';")
 		total_findings=$((total_findings + issue_count))
 	fi
 
-	if collect_hotspots "$run_id" "$project_key" "$branch"; then
+	if collect_hotspots "$safe_run_id" "$project_key" "$branch"; then
 		local hotspot_count
-		hotspot_count=$(db "$COLLECTOR_DB" "SELECT COUNT(*) FROM audit_findings WHERE run_id=$run_id AND category='security_hotspot';")
+		hotspot_count=$(db "$COLLECTOR_DB" "SELECT COUNT(*) FROM audit_findings WHERE run_id=${safe_run_id} AND category='security_hotspot';")
 		total_findings=$((total_findings + hotspot_count))
 	fi
 
 	# Update run status
-	db "$COLLECTOR_DB" <<SQL >/dev/null
-UPDATE audit_runs
-SET status = 'complete',
-    completed_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
-WHERE id = $run_id;
-SQL
+	db "$COLLECTOR_DB" "UPDATE audit_runs SET status = 'complete', completed_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id = ${safe_run_id};" >/dev/null
 
 	log_success "Collection complete. Total findings: $total_findings"
 	return 0
@@ -478,34 +511,24 @@ cmd_query() {
 
 	ensure_db
 
-	local where_clause=""
+	# Validate severity against allowed values (whitelist) to prevent injection
+	local severity_filter=""
 	if [[ -n "$severity" ]]; then
-		where_clause="WHERE severity='$severity'"
+		case "$severity" in
+		critical | high | medium | low | info)
+			severity_filter="AND severity='${severity}'"
+			;;
+		*)
+			log_error "Invalid severity: $severity (must be critical/high/medium/low/info)"
+			return 1
+			;;
+		esac
 	fi
 
 	if [[ "$format" == "json" ]]; then
-		db "$COLLECTOR_DB" <<SQL
-SELECT json_group_array(
-    json_object(
-        'id', id,
-        'severity', severity,
-        'category', category,
-        'rule_id', rule_id,
-        'description', description,
-        'path', path,
-        'line', line
-    )
-)
-FROM audit_findings
-WHERE source='sonarcloud' $where_clause;
-SQL
+		db "$COLLECTOR_DB" "SELECT json_group_array(json_object('id', id, 'severity', severity, 'category', category, 'rule_id', rule_id, 'description', description, 'path', path, 'line', line)) FROM audit_findings WHERE source='sonarcloud' ${severity_filter};"
 	else
-		db "$COLLECTOR_DB" <<SQL
-SELECT severity, category, path, line, description
-FROM audit_findings
-WHERE source='sonarcloud' $where_clause
-ORDER BY severity, path, line;
-SQL
+		db "$COLLECTOR_DB" "SELECT severity, category, path, line, description FROM audit_findings WHERE source='sonarcloud' ${severity_filter} ORDER BY severity, path, line;"
 	fi
 
 	return 0
@@ -529,21 +552,13 @@ cmd_summary() {
 
 	ensure_db
 
-	log_info "SonarCloud Collection Summary (last $last_n runs)"
+	# Validate last_n is a positive integer to prevent injection
+	local safe_last_n
+	safe_last_n=$(sql_int "$last_n") || return 1
 
-	db "$COLLECTOR_DB" <<SQL
-SELECT
-    r.started_at,
-    r.repo,
-    COUNT(f.id) as finding_count,
-    r.status
-FROM audit_runs r
-LEFT JOIN audit_findings f ON f.run_id = r.id AND f.source = 'sonarcloud'
-WHERE r.services_run LIKE '%sonarcloud%'
-GROUP BY r.id
-ORDER BY r.started_at DESC
-LIMIT $last_n;
-SQL
+	log_info "SonarCloud Collection Summary (last $safe_last_n runs)"
+
+	db "$COLLECTOR_DB" "SELECT r.started_at, r.repo, COUNT(f.id) as finding_count, r.status FROM audit_runs r LEFT JOIN audit_findings f ON f.run_id = r.id AND f.source = 'sonarcloud' WHERE r.services_run LIKE '%sonarcloud%' GROUP BY r.id ORDER BY r.started_at DESC LIMIT ${safe_last_n};"
 
 	echo ""
 	log_info "Findings by Severity:"
