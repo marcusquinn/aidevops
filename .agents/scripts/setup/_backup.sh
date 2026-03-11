@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+set -euo pipefail
 # Backup and rotation functions for setup.sh
 
 # Create a backup with rotation (keeps last N backups)
