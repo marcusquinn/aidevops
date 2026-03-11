@@ -552,7 +552,7 @@ scan_unified_findings() {
 
 		# Extract most fields in a single jq call for performance
 		local finding_id source severity path line category pr_number description
-		mapfile -t _vals < <(echo "$finding" | jq -r '.id, .source, .severity, (.path // ""), (.line // 0), (.category // "general"), (.pr_number // 0)')
+		mapfile -t _vals < <(jq -r '.id, .source, .severity, (.path // ""), (.line // 0), (.category // "general"), (.pr_number // 0)' <<<"$finding")
 		finding_id="${_vals[0]}"
 		source="${_vals[1]}"
 		severity="${_vals[2]}"
@@ -561,7 +561,7 @@ scan_unified_findings() {
 		category="${_vals[5]}"
 		pr_number="${_vals[6]}"
 		# Description may contain newlines — extract separately
-		description=$(echo "$finding" | jq -r '.description')
+		description=$(jq -r '.description' <<<"$finding")
 
 		# Sanitise integer fields to prevent SQL injection
 		[[ "$line" =~ ^[0-9]+$ ]] || line=0
@@ -716,7 +716,7 @@ scan_legacy_db_findings() {
 
 		# Extract most fields in a single jq call for performance
 		local comment_id pr_number path line severity category body
-		mapfile -t _vals < <(echo "$comment" | jq -r '(.gh_comment_id // .id), (.pr_number // 0), (.path // ""), (.line // 0), .severity, .category')
+		mapfile -t _vals < <(jq -r '(.gh_comment_id // .id), (.pr_number // 0), (.path // ""), (.line // 0), .severity, .category' <<<"$comment")
 		comment_id="${_vals[0]}"
 		pr_number="${_vals[1]}"
 		path="${_vals[2]}"
@@ -724,7 +724,7 @@ scan_legacy_db_findings() {
 		severity="${_vals[4]}"
 		category="${_vals[5]}"
 		# Body may contain newlines — extract separately
-		body=$(echo "$comment" | jq -r '.body')
+		body=$(jq -r '.body' <<<"$comment")
 
 		# Sanitise integer fields to prevent SQL injection
 		[[ "$line" =~ ^[0-9]+$ ]] || line=0
