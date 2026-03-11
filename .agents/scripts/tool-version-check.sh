@@ -10,6 +10,7 @@
 #
 # Categories: npm, brew, pip, all (default)
 
+# shellcheck disable=SC1091
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 source "${SCRIPT_DIR}/shared-constants.sh"
 
@@ -197,6 +198,17 @@ get_installed_version() {
 # Timeout for external package manager queries (seconds)
 readonly PKG_QUERY_TIMEOUT=30
 
+get_public_release_tag() {
+	local repo="$1"
+	local tag=""
+	tag=$(timeout_sec "$PKG_QUERY_TIMEOUT" curl -fsSL "https://api.github.com/repos/${repo}/releases/latest" 2>/dev/null |
+		grep -oE '"tag_name"[[:space:]]*:[[:space:]]*"v?[^"]+"' |
+		head -1 |
+		sed -E 's/.*"v?([^"]+)"/\1/' || true)
+	echo "$tag"
+	return 0
+}
+
 # Get latest npm version
 get_npm_latest() {
 	local pkg="$1"
@@ -208,8 +220,12 @@ get_npm_latest() {
 # Get latest brew version
 get_brew_latest() {
 	local pkg="$1"
-	if command -v brew &>/dev/null; then
-		timeout_sec "$PKG_QUERY_TIMEOUT" brew info "$pkg" 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo "unknown"
+	local brew_bin=""
+	brew_bin=$(command -v brew 2>/dev/null || true)
+	if [[ -n "$brew_bin" && -x "$brew_bin" ]]; then
+		timeout_sec "$PKG_QUERY_TIMEOUT" "$brew_bin" info "$pkg" 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo "unknown"
+	elif [[ "$pkg" == "gh" ]]; then
+		get_public_release_tag "cli/cli"
 	else
 		echo "unknown"
 	fi
@@ -299,7 +315,7 @@ check_tool() {
 		json_name="${json_name//\"/\\\"}"
 		local json_update="${update_cmd//\\/\\\\}"
 		json_update="${json_update//\"/\\\"}"
-		JSON_RESULTS+=("{\"name\":\"$json_name\",\"category\":\"$category\",\"installed\":\"$installed\",\"latest\":\"$latest\",\"status\":\"$status\",\"update_cmd\":\"$json_update\"}")
+		JSON_RESULTS+=("{\"name\": \"$json_name\", \"category\": \"$category\", \"installed\": \"$installed\", \"latest\": \"$latest\", \"status\": \"$status\", \"update_cmd\": \"$json_update\"}")
 	else
 		# Console output
 		if [[ "$QUIET" == "true" && "$status" != "outdated" && "$status" != "timeout" ]]; then

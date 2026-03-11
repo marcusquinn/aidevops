@@ -74,6 +74,19 @@ get_remote_version() {
 	curl -fsSL "https://raw.githubusercontent.com/marcusquinn/aidevops/main/VERSION" 2>/dev/null || echo "unknown"
 }
 
+get_public_release_tag() {
+	local repo="$1"
+	local tag=""
+
+	tag=$(_timeout_cmd 15 curl -fsSL "https://api.github.com/repos/${repo}/releases/latest" 2>/dev/null |
+		grep -oE '"tag_name"[[:space:]]*:[[:space:]]*"v?[^"]+"' |
+		head -1 |
+		sed -E 's/.*"v?([^"]+)"/\1/' || true)
+
+	printf '%s\n' "$tag"
+	return 0
+}
+
 # Check if a command exists
 check_cmd() {
 	command -v "$1" >/dev/null 2>&1
@@ -924,11 +937,14 @@ cmd_update() {
 			# Get latest version (npm, brew, or GitHub API) — timeout prevents hangs on slow registries
 			if [[ "$pkg_ref" == brew:* ]]; then
 				local brew_pkg="${pkg_ref#brew:}"
-				if command -v brew &>/dev/null; then
-					latest=$(_timeout_cmd 30 brew info --json=v2 "$brew_pkg" | jq -r '.formulae[0].versions.stable // empty' || true)
+				local brew_bin=""
+				brew_bin=$(command -v brew 2>/dev/null || true)
+				if [[ -n "$brew_bin" && -x "$brew_bin" ]]; then
+					latest=$(_timeout_cmd 30 "$brew_bin" info --json=v2 "$brew_pkg" | jq -r '.formulae[0].versions.stable // empty' || true)
 				elif [[ "$brew_pkg" == "gh" ]] && command -v gh &>/dev/null; then
-					# Fallback: get latest gh version from GitHub API (works without brew)
-					latest=$(_timeout_cmd 15 gh api repos/cli/cli/releases/latest --jq '.tag_name' 2>/dev/null | sed 's/^v//' || true)
+					# Fallback: use the public GitHub API so update still works when brew
+					# is unavailable or gh auth refresh is unhealthy.
+					latest=$(get_public_release_tag "cli/cli")
 				fi
 			else
 				latest=$(_timeout_cmd 30 npm view "$pkg_ref" version || true)
