@@ -42,15 +42,31 @@ assert_contains() {
 	return 1
 }
 
+assert_line_exists() {
+	local file_path="$1"
+	local line_value="$2"
+	local message="$3"
+
+	if rg -Fxq -- "$line_value" "$file_path"; then
+		pass "$message"
+		return 0
+	fi
+
+	fail "$message"
+	return 1
+}
+
 run_checks() {
+	set +e
 	assert_contains "$QUALITY_FILE" '"qlty")' "quality-cli-manager has qlty dispatcher case"
 	assert_contains "$QUALITY_FILE" 'script=".agents/scripts/qlty-cli.sh"' "quality-cli-manager routes qlty through wrapper"
 	assert_contains "$QUALITY_FILE" "execute_cli_command \"qlty\" \"check\" \"\$args\"" "quality-cli-manager runs qlty check without positional org arg"
 	assert_contains "$STUCK_FILE" 'unique_by([.issue, .repo])' "stuck-detection helper uses collision-safe jq dedup key"
 	assert_contains "$WORKTREE_FILE" "refs/remotes/*/\$branch" "worktree helper checks remote branch presence across all remotes"
-	assert_contains "$GITIGNORE_FILE" 'hostinger' "gitignore includes hostinger base pattern"
-	assert_contains "$GITIGNORE_FILE" 'hostinger.*' "gitignore includes hostinger wildcard extension pattern"
-	assert_contains "$GITIGNORE_FILE" 'hostinger_*' "gitignore retains hostinger underscore pattern"
+	assert_line_exists "$GITIGNORE_FILE" 'hostinger' "gitignore includes hostinger base pattern"
+	assert_line_exists "$GITIGNORE_FILE" 'hostinger.*' "gitignore includes hostinger wildcard extension pattern"
+	assert_line_exists "$GITIGNORE_FILE" 'hostinger_*' "gitignore retains hostinger underscore pattern"
+	set -e
 	return 0
 }
 
