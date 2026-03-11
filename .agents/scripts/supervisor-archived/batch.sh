@@ -246,7 +246,7 @@ cmd_batch() {
 				return 1
 			}
 			# GH#3716: Validate concurrency is a positive integer before SQL interpolation
-			if ! [[ "$2" =~ ^[0-9]+$ ]] || [[ "$2" -eq 0 ]]; then
+			if ! [[ "$2" =~ ^[1-9][0-9]*$ ]]; then
 				log_error "--concurrency must be a positive integer, got: $2"
 				return 1
 			fi
