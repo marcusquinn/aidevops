@@ -33,7 +33,7 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
-source "${SCRIPT_DIR}/shared-constants.sh" 2>/dev/null || true
+source "${SCRIPT_DIR}/shared-constants.sh" || true
 
 # Fallback colours if shared-constants.sh not loaded
 [[ -z "${RED+x}" ]] && RED='\033[0;31m'
@@ -193,8 +193,16 @@ _cs_prefilter() {
 
 	local keyword
 	for keyword in "${_CS_PREFILTER_KEYWORDS[@]}"; do
-		if [[ "$lower_content" == *"$keyword"* ]]; then
-			return 0
+		# Keywords containing regex metacharacters (.*+?|()^$) use regex matching;
+		# plain keywords use faster literal substring matching.
+		if [[ "$keyword" =~ [.*+?|()^$] ]]; then
+			if [[ "$lower_content" =~ $keyword ]]; then
+				return 0
+			fi
+		else
+			if [[ "$lower_content" == *"$keyword"* ]]; then
+				return 0
+			fi
 		fi
 	done
 
@@ -221,17 +229,35 @@ _cs_normalize_nfkc() {
 	fi
 
 	# Try python3 first (most reliable NFKC)
+	# Sentinel character preserves trailing newlines through command substitution.
+	# Bash $() strips trailing newlines, causing false "changed" detection.
+	# The sentinel is appended inside the normalizer process (not via separate
+	# printf) so the exit code reflects whether normalization succeeded.
 	if command -v python3 &>/dev/null; then
-		printf '%s' "$content" | python3 -c "
+		local py_result
+		if py_result=$(printf '%s' "$content" | python3 -c "
 import sys, unicodedata
 text = sys.stdin.read()
-sys.stdout.write(unicodedata.normalize('NFKC', text))
-" 2>/dev/null && return 0
+sys.stdout.write(unicodedata.normalize('NFKC', text) + 'x')
+"); then
+			py_result="${py_result%x}"
+			printf '%s' "$py_result"
+			return 0
+		fi
 	fi
 
 	# Try perl as fallback (Unicode::Normalize is core since 5.8)
 	if command -v perl &>/dev/null; then
-		printf '%s' "$content" | perl -MUnicode::Normalize -CS -pe '$_ = NFKC($_)' 2>/dev/null && return 0
+		local perl_result
+		if perl_result=$(printf '%s' "$content" | perl -MUnicode::Normalize -CS -e '
+			local $/;
+			my $text = <STDIN>;
+			print NFKC($text) . "x";
+		'); then
+			perl_result="${perl_result%x}"
+			printf '%s' "$perl_result"
+			return 0
+		fi
 	fi
 
 	# No normalizer available — pass through unchanged
@@ -250,12 +276,14 @@ sys.stdout.write(unicodedata.normalize('NFKC', text))
 _cs_generate_boundary_id() {
 	# Use /dev/urandom for a short unique ID (8 hex chars)
 	if [[ -r /dev/urandom ]]; then
-		od -An -tx1 -N4 /dev/urandom 2>/dev/null | tr -d ' \n'
+		od -An -tx1 -N4 /dev/urandom | tr -d '[:space:]'
 		return 0
 	fi
 
-	# Fallback: use $RANDOM (less entropy but functional)
-	printf '%04x%04x' "$RANDOM" "$RANDOM"
+	# Fallback: combine $RANDOM with PID and epoch for less predictability.
+	# $RANDOM alone is a 15-bit PRNG seeded from PID — too predictable for
+	# boundary IDs that must resist crafted payloads.
+	printf '%04x%04x%04x' "$RANDOM" "$$" "$((SECONDS % 65536))"
 	return 0
 }
 
@@ -292,17 +320,19 @@ scan_content() {
 	byte_count=$(printf '%s' "$content" | wc -c | tr -d ' ')
 	_cs_log_info "Scanning content ($byte_count bytes)"
 
-	# Layer 1: Keyword pre-filter
-	if ! _cs_prefilter "$content"; then
+	# Layer 2 first: NFKC normalization (must run before pre-filter to prevent
+	# Unicode bypass — e.g., "𝐈𝐠𝐧𝐨𝐫𝐞" normalizes to "Ignore" which the
+	# pre-filter can then match).
+	local normalized
+	normalized=$(_cs_normalize_nfkc "$content")
+
+	# Layer 1: Keyword pre-filter on NORMALIZED content
+	if ! _cs_prefilter "$normalized"; then
 		_cs_log_success "Pre-filter: no suspicious keywords found — skipping full scan"
 		echo "CLEAN"
 		return 0
 	fi
 	_cs_log_info "Pre-filter: keyword match — proceeding to full scan"
-
-	# Layer 2: NFKC normalization
-	local normalized
-	normalized=$(_cs_normalize_nfkc "$content")
 
 	# Layer 3: Delegate to prompt-guard-helper.sh
 	if [[ ! -x "$PROMPT_GUARD" ]]; then

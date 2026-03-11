@@ -154,7 +154,12 @@ detect_changes() {
 	local changed_files
 
 	if [[ -n "$since_commit" ]]; then
-		changed_files=$(git -C "$REPO_DIR" diff --name-only "$since_commit" HEAD -- '.agents/' 2>/dev/null || echo "")
+		# Validate since_commit is a valid revision (not an injected option)
+		if [[ "$since_commit" == -* ]] || ! git -C "$REPO_DIR" rev-parse --verify "$since_commit" >/dev/null 2>&1; then
+			log_error "Invalid commit reference: $since_commit"
+			return 1
+		fi
+		changed_files=$(git -C "$REPO_DIR" diff --name-only "$since_commit" HEAD -- '.agents/' || echo "")
 	else
 		# Compare deployed VERSION with repo VERSION to detect staleness
 		local repo_version deployed_version
@@ -203,7 +208,7 @@ deploy_scripts_only() {
 	else
 		# Fallback: tar-based copy
 		# Remove existing target contents first to match rsync --delete behavior
-		find "$target_scripts_dir" -mindepth 1 -delete 2>/dev/null || true
+		find "$target_scripts_dir" -mindepth 1 -delete || true
 		(cd "$source_dir" && tar cf - .) | (cd "$target_scripts_dir" && tar xf -)
 	fi
 
@@ -261,9 +266,14 @@ deploy_all_agents() {
 		fi
 
 		# Remove existing target contents (except custom/draft) to match rsync --delete behavior
+		if [[ -z "$TARGET_DIR" ]]; then
+			log_error "TARGET_DIR is empty — refusing to run find cleanup"
+			rm -rf "$tmp_preserve"
+			return 1
+		fi
 		find "$TARGET_DIR" -mindepth 1 -maxdepth 1 \
 			! -name 'custom' ! -name 'draft' ! -name 'loop-state' \
-			-exec rm -rf {} + 2>/dev/null || true
+			-exec rm -rf {} + || true
 
 		# Copy all agents
 		(cd "$source_dir" && tar cf - --exclude='loop-state' --exclude='custom' --exclude='draft' .) |
@@ -340,7 +350,7 @@ deploy_changed_files() {
 			mkdir -p "$target_parent"
 
 			# Copy file (catch errors instead of letting set -e abort)
-			if ! cp "$source_file" "$target_file"; then
+			if ! cp -- "$source_file" "$target_file"; then
 				log_warn "Failed to copy: $rel_path"
 				failed=$((failed + 1))
 				continue
@@ -348,7 +358,7 @@ deploy_changed_files() {
 
 			# Set executable if it's a script
 			if [[ "$target_file" == *.sh ]]; then
-				if ! chmod +x "$target_file"; then
+				if ! chmod -- +x "$target_file"; then
 					log_warn "Failed to set executable: $rel_path"
 					failed=$((failed + 1))
 					continue
@@ -359,7 +369,7 @@ deploy_changed_files() {
 		elif [[ ! -e "$source_file" ]]; then
 			# File was deleted in source — remove from target
 			if [[ -f "$target_file" ]]; then
-				if ! rm -f "$target_file"; then
+				if ! rm -f -- "$target_file"; then
 					log_warn "Failed to remove deleted file: $rel_path"
 					failed=$((failed + 1))
 					continue
