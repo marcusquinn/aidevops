@@ -230,6 +230,12 @@ test_relative_paths_cross_directory() {
 		return 1
 	fi
 
+	# Verify paths use forward slashes only (portable Markdown links)
+	if grep -qP '\(.*\\\\.*\.md\)' "$index_file"; then
+		print_error "Index links contain backslashes (not portable)"
+		return 1
+	fi
+
 	# Clean up the subdirectory output
 	rm -rf "$output_dir"
 

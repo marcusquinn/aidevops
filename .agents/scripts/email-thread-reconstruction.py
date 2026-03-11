@@ -241,9 +241,10 @@ def generate_thread_index(threads, output_file):
 
         for i, email in enumerate(emails, 1):
             # Compute relative path from index file location to email file
+            # Normalize separators to forward slashes for portable Markdown links
             file_path = os.path.relpath(
                 Path(email["file"]).resolve(), output_dir
-            )
+            ).replace(os.sep, "/")
             email_subject = email.get("subject", "No Subject")
             from_addr = email.get("from", "Unknown")
             date_sent = email.get("date_sent", "Unknown")
