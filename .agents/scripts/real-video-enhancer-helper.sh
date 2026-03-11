@@ -260,8 +260,6 @@ cmd_install() {
 	print_info "  1. Upscale video: real-video-enhancer-helper.sh upscale input.mp4 output.mp4 --scale 2"
 	print_info "  2. Interpolate: real-video-enhancer-helper.sh interpolate input.mp4 output.mp4 --fps 60"
 	print_info "  3. Full enhance: real-video-enhancer-helper.sh enhance input.mp4 output.mp4 --scale 2 --fps 60"
-
-	return 0
 }
 
 # =============================================================================
@@ -367,7 +365,6 @@ cmd_upscale() {
 	fi
 
 	print_success "Upscaling complete: $output"
-	return 0
 }
 
 cmd_interpolate() {
@@ -462,7 +459,6 @@ cmd_interpolate() {
 	fi
 
 	print_success "Interpolation complete: $output"
-	return 0
 }
 
 cmd_denoise() {
@@ -550,7 +546,6 @@ cmd_denoise() {
 	fi
 
 	print_success "Denoising complete: $output"
-	return 0
 }
 
 cmd_enhance() {
@@ -717,7 +712,6 @@ cmd_enhance() {
 	fi
 
 	print_success "Enhancement complete: $output"
-	return 0
 }
 
 cmd_batch() {
@@ -860,7 +854,6 @@ cmd_batch() {
 	fi
 
 	print_success "Batch processing complete: $output_dir"
-	return 0
 }
 
 # =============================================================================
@@ -912,8 +905,6 @@ cmd_models() {
 		return 1
 		;;
 	esac
-
-	return 0
 }
 
 cmd_backends() {
@@ -985,8 +976,6 @@ cmd_backends() {
 	local recommended
 	recommended=$(detect_backend)
 	print_info "Recommended backend: $recommended"
-
-	return 0
 }
 
 cmd_gui() {
@@ -1004,8 +993,6 @@ cmd_gui() {
 		print_info "Try running directly: cd ${RVE_DIR} && python3 main.py --gui"
 		return 1
 	fi
-
-	return 0
 }
 
 cmd_help() {
@@ -1053,8 +1040,6 @@ Examples:
 
 For more information, see: .agents/tools/video/real-video-enhancer.md
 EOF
-
-	return 0
 }
 
 # =============================================================================
@@ -1110,8 +1095,6 @@ main() {
 		exit 1
 		;;
 	esac
-
-	return 0
 }
 
 main "$@"
