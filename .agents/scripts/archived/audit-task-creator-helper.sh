@@ -550,15 +550,18 @@ scan_unified_findings() {
 	while IFS= read -r finding; do
 		total=$((total + 1))
 
-		local finding_id source severity path line description category pr_number
-		finding_id=$(echo "$finding" | jq -r '.id')
-		source=$(echo "$finding" | jq -r '.source')
-		severity=$(echo "$finding" | jq -r '.severity')
-		path=$(echo "$finding" | jq -r '.path // ""')
-		line=$(echo "$finding" | jq -r '.line // 0')
+		# Extract most fields in a single jq call for performance
+		local finding_id source severity path line category pr_number description
+		mapfile -t _vals < <(echo "$finding" | jq -r '.id, .source, .severity, (.path // ""), (.line // 0), (.category // "general"), (.pr_number // 0)')
+		finding_id="${_vals[0]}"
+		source="${_vals[1]}"
+		severity="${_vals[2]}"
+		path="${_vals[3]}"
+		line="${_vals[4]}"
+		category="${_vals[5]}"
+		pr_number="${_vals[6]}"
+		# Description may contain newlines — extract separately
 		description=$(echo "$finding" | jq -r '.description')
-		category=$(echo "$finding" | jq -r '.category // "general"')
-		pr_number=$(echo "$finding" | jq -r '.pr_number // 0')
 
 		# Sanitise integer fields to prevent SQL injection
 		[[ "$line" =~ ^[0-9]+$ ]] || line=0
@@ -629,11 +632,12 @@ scan_unified_findings() {
 
 		valid=$((valid + 1))
 
-		# Validate dup_of is an integer before using in SQL
+		# Validate dup_of and is_dup are safe integers before using in SQL
 		if [[ -n "$dup_of" ]] && ! [[ "$dup_of" =~ ^[0-9]+$ ]]; then
 			dup_of=""
 			is_dup=0
 		fi
+		[[ "$is_dup" =~ ^[01]$ ]] || is_dup=0
 
 		# Insert processed finding
 		db "$active_db" "
@@ -710,13 +714,16 @@ scan_legacy_db_findings() {
 	while IFS= read -r comment; do
 		total=$((total + 1))
 
+		# Extract most fields in a single jq call for performance
 		local comment_id pr_number path line severity category body
-		comment_id=$(echo "$comment" | jq -r '.gh_comment_id // .id')
-		pr_number=$(echo "$comment" | jq -r '.pr_number // 0')
-		path=$(echo "$comment" | jq -r '.path // ""')
-		line=$(echo "$comment" | jq -r '.line // 0')
-		severity=$(echo "$comment" | jq -r '.severity')
-		category=$(echo "$comment" | jq -r '.category')
+		mapfile -t _vals < <(echo "$comment" | jq -r '(.gh_comment_id // .id), (.pr_number // 0), (.path // ""), (.line // 0), .severity, .category')
+		comment_id="${_vals[0]}"
+		pr_number="${_vals[1]}"
+		path="${_vals[2]}"
+		line="${_vals[3]}"
+		severity="${_vals[4]}"
+		category="${_vals[5]}"
+		# Body may contain newlines — extract separately
 		body=$(echo "$comment" | jq -r '.body')
 
 		# Sanitise integer fields to prevent SQL injection
@@ -786,11 +793,12 @@ scan_legacy_db_findings() {
 
 		valid=$((valid + 1))
 
-		# Validate dup_of is an integer before using in SQL
+		# Validate dup_of and is_dup are safe integers before using in SQL
 		if [[ -n "$dup_of" ]] && ! [[ "$dup_of" =~ ^[0-9]+$ ]]; then
 			dup_of=""
 			is_dup=0
 		fi
+		[[ "$is_dup" =~ ^[01]$ ]] || is_dup=0
 
 		db "$active_db" "
 			INSERT OR IGNORE INTO processed_findings
