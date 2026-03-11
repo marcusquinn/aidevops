@@ -329,12 +329,14 @@ main() {
 			local scan_result=""
 			local scan_exit=0
 			scan_result=$(printf '%s' "$task" | CONTENT_SCANNER_QUIET=true "$CONTENT_SCANNER_HELPER" scan-stdin 2>&1) || scan_exit=$?
+			local scan_marker=""
+			scan_marker=$(printf '%s' "$scan_result" | tr -d '\r' | awk 'NF {print $1; exit}') || scan_marker=""
 
 			if [[ "$scan_exit" -eq 0 ]]; then
 				log_info "Runtime task scan: clean"
-			elif [[ "$scan_exit" -eq 2 || ("$scan_exit" -eq 1 && "$scan_result" =~ (^|[[:space:]])(FLAGGED|WARN)($|[[:space:]])) ]]; then
+			elif [[ "$scan_exit" -eq 2 || ("$scan_exit" -eq 1 && ("$scan_marker" == "FLAGGED" || "$scan_marker" == "WARN")) ]]; then
 				local severity_label="flagged"
-				if [[ "$scan_exit" -eq 2 || "$scan_result" =~ (^|[[:space:]])WARN($|[[:space:]]) ]]; then
+				if [[ "$scan_exit" -eq 2 || "$scan_marker" == "WARN" ]]; then
 					severity_label="warn"
 				fi
 
