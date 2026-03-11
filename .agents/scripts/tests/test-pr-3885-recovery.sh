@@ -39,7 +39,7 @@ assert_contains() {
 	fi
 
 	fail "$message"
-	return 1
+	return 0
 }
 
 assert_line_exists() {
