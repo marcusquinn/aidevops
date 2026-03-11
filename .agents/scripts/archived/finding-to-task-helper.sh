@@ -604,8 +604,8 @@ cmd_create() {
 			local task_row_id
 			task_row_id=$(db "$TASK_DB" "SELECT id FROM generated_tasks WHERE group_key='${escaped_key}' AND group_by='${group_by}';")
 
-			# Validate task_row_id is an integer before using in SQL
-			if ! [[ "$task_row_id" =~ ^[0-9]+$ ]]; then
+			# Validate task_row_id is a positive integer before using in SQL
+			if ! validate_positive_int "$task_row_id"; then
 				print_warning "Invalid task row ID for ${group_by}=${group_key}, skipping findings link"
 				i=$((i + 1))
 				continue
