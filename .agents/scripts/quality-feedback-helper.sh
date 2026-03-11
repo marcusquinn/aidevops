@@ -34,7 +34,7 @@ get_repo() {
 	local repo
 	repo="${GITHUB_REPOSITORY:-}"
 	if [[ -z "$repo" ]]; then
-		repo=$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null) || {
+		repo=$(gh repo view --json nameWithOwner -q .nameWithOwner) || {
 			echo "Error: Not in a GitHub repository or gh CLI not configured" >&2
 			exit 1
 		}
@@ -149,7 +149,7 @@ cmd_annotations() {
 		check_name=$(gh api "repos/${repo}/check-runs/${check_id}" --jq '.name')
 
 		local annotations
-		annotations=$(gh api "repos/${repo}/check-runs/${check_id}/annotations" 2>/dev/null || echo "[]")
+		annotations=$(gh api "repos/${repo}/check-runs/${check_id}/annotations" || echo "[]")
 
 		local count
 		count=$(echo "$annotations" | jq 'length')
@@ -183,7 +183,7 @@ cmd_codacy() {
 
 	local codacy_check
 	codacy_check=$(gh api "repos/${repo}/commits/${sha}/check-runs" \
-		--jq '.check_runs[] | select(.app.slug == "codacy-production" or .name | contains("Codacy"))' 2>/dev/null)
+		--jq '.check_runs[] | select(.app.slug == "codacy-production" or .name | contains("Codacy"))')
 
 	if [[ -z "$codacy_check" ]]; then
 		echo "No Codacy check found for this commit."
@@ -207,7 +207,7 @@ cmd_codacy() {
 
 	# Get annotations if available
 	local annotations
-	annotations=$(gh api "repos/${repo}/check-runs/${check_id}/annotations" 2>/dev/null || echo "[]")
+	annotations=$(gh api "repos/${repo}/check-runs/${check_id}/annotations" || echo "[]")
 	local count
 	count=$(echo "$annotations" | jq 'length')
 
@@ -226,7 +226,7 @@ cmd_coderabbit() {
 	repo=$(get_repo)
 
 	if [[ -z "$pr_number" ]]; then
-		pr_number=$(gh pr view --json number -q .number 2>/dev/null) || {
+		pr_number=$(gh pr view --json number -q .number) || {
 			echo "Error: Please specify a PR number with --pr" >&2
 			exit 1
 		}
@@ -239,10 +239,10 @@ cmd_coderabbit() {
 	# Get review comments from CodeRabbit
 	local comments
 	comments=$(gh api "repos/${repo}/pulls/${pr_number}/comments" \
-		--jq '[.[] | select(.user.login | contains("coderabbit"))]' 2>/dev/null || echo "[]")
+		--jq '[.[] | select(.user.login | contains("coderabbit"))]' || echo "[]")
 
 	local count
-	count=$(echo "$comments" | jq 'length')
+	count=$(printf '%s' "$comments" | jq 'length')
 
 	if [[ "$count" -eq 0 ]]; then
 		echo "No CodeRabbit comments found."
@@ -250,7 +250,7 @@ cmd_coderabbit() {
 		# Check for review body
 		local reviews
 		reviews=$(gh api "repos/${repo}/pulls/${pr_number}/reviews" \
-			--jq '[.[] | select(.user.login | contains("coderabbit"))]' 2>/dev/null || echo "[]")
+			--jq '[.[] | select(.user.login | contains("coderabbit"))]' || echo "[]")
 
 		local review_count
 		review_count=$(echo "$reviews" | jq 'length')
@@ -280,7 +280,7 @@ cmd_sonar() {
 
 	local sonar_check
 	sonar_check=$(gh api "repos/${repo}/commits/${sha}/check-runs" \
-		--jq '.check_runs[] | select(.name | contains("SonarCloud") or .name | contains("sonar"))' 2>/dev/null)
+		--jq '.check_runs[] | select(.name | contains("SonarCloud") or .name | contains("sonar"))')
 
 	if [[ -z "$sonar_check" ]]; then
 		echo "No SonarCloud check found for this commit."
@@ -547,7 +547,7 @@ cmd_scan_merged() {
 		batch_count=$((batch_count + 1))
 
 		local finding_count
-		finding_count=$(echo "$findings" | jq 'length' 2>/dev/null || echo "0")
+		finding_count=$(printf '%s' "$findings" | jq 'length' || echo "0")
 
 		if [[ "$finding_count" -eq 0 || "$finding_count" == "0" ]]; then
 			continue
@@ -633,12 +633,12 @@ _scan_single_pr() {
 	# --- Fetch inline review comments (file-level) ---
 	local comments
 	comments=$(gh api "repos/${repo_slug}/pulls/${pr_num}/comments" \
-		--paginate --jq '.' 2>/dev/null) || comments="[]"
+		--paginate --jq '.') || comments="[]"
 
 	# --- Fetch review bodies (top-level reviews) ---
 	local reviews
 	reviews=$(gh api "repos/${repo_slug}/pulls/${pr_num}/reviews" \
-		--paginate --jq '.' 2>/dev/null) || reviews="[]"
+		--paginate --jq '.') || reviews="[]"
 
 	# Process inline comments
 	local inline_findings
@@ -685,7 +685,7 @@ _scan_single_pr() {
 			url: .html_url,
 			created_at: .created_at
 		}]
-	' 2>/dev/null) || inline_findings="[]"
+	') || inline_findings="[]"
 
 	# Process review bodies (for substantive reviews with body content)
 	local review_findings
@@ -745,21 +745,21 @@ _scan_single_pr() {
 			url: .html_url,
 			created_at: .submitted_at
 		}]
-	' 2>/dev/null) || review_findings="[]"
+	') || review_findings="[]"
 
 	# Merge and deduplicate
-	findings=$(echo "$inline_findings" "$review_findings" | jq -s '.[0] + .[1]')
+	findings=$(printf '%s\n%s' "$inline_findings" "$review_findings" | jq -s '.[0] + .[1]')
 
 	# Filter: check if affected files still exist on HEAD
 	local filtered="[]"
 	local item_count
-	item_count=$(echo "$findings" | jq 'length' 2>/dev/null || echo "0")
+	item_count=$(printf '%s' "$findings" | jq 'length' || echo "0")
 
 	if [[ "$item_count" -gt 0 ]]; then
 		# Get list of files in the repo at HEAD
 		local head_files
 		head_files=$(gh api "repos/${repo_slug}/git/trees/HEAD?recursive=1" \
-			--jq '[.tree[].path]' 2>/dev/null) || head_files="[]"
+			--jq '[.tree[].path]') || head_files="[]"
 
 		filtered=$(echo "$findings" | jq --argjson head_files "$head_files" '
 			[.[] |
@@ -797,23 +797,23 @@ _tag_actioned_prs() {
 
 	# Ensure label exists
 	gh label create "code-reviews-actioned" --repo "$repo_slug" --color "0E8A16" \
-		--description "All review feedback has been actioned" --force 2>/dev/null || true
+		--description "All review feedback has been actioned" --force || true
 
 	# Get all scanned PR numbers
 	local scanned_prs
-	scanned_prs=$(jq -r '.scanned_prs[]' "$state_file" 2>/dev/null) || return 0
+	scanned_prs=$(jq -r '.scanned_prs[]' "$state_file") || return 0
 
 	# Get all OPEN quality-debt issues with their titles (to extract PR numbers)
 	local open_debt_titles
 	open_debt_titles=$(gh issue list --repo "$repo_slug" \
 		--label "quality-debt" --state open --limit 500 \
-		--json title --jq '.[].title' 2>/dev/null || echo "")
+		--json title --jq '.[].title' || echo "")
 
 	# Get PRs that already have the label (avoid redundant API calls)
 	local already_tagged
 	already_tagged=$(gh pr list --repo "$repo_slug" --state merged \
 		--label "code-reviews-actioned" --limit 500 \
-		--json number --jq '.[].number' 2>/dev/null || echo "")
+		--json number --jq '.[].number' || echo "")
 
 	local tagged_count=0
 	local batch_count=0
@@ -822,7 +822,7 @@ _tag_actioned_prs() {
 		[[ -z "$pr_num" ]] && continue
 
 		# Skip if already tagged
-		if echo "$already_tagged" | grep -qx "$pr_num" 2>/dev/null; then
+		if printf '%s' "$already_tagged" | grep -qx "$pr_num"; then
 			continue
 		fi
 
@@ -830,7 +830,7 @@ _tag_actioned_prs() {
 		# Quality-debt issue titles contain "PR #NNN" — check for open ones
 		local has_open_debt=false
 		if [[ -n "$open_debt_titles" ]]; then
-			if echo "$open_debt_titles" | grep -qF "PR #${pr_num}" 2>/dev/null; then
+			if printf '%s' "$open_debt_titles" | grep -qF "PR #${pr_num}"; then
 				has_open_debt=true
 			fi
 		fi
@@ -838,7 +838,7 @@ _tag_actioned_prs() {
 		if [[ "$has_open_debt" == false ]]; then
 			# No open debt for this PR — tag it as actioned
 			gh pr edit "$pr_num" --repo "$repo_slug" \
-				--add-label "code-reviews-actioned" 2>/dev/null || true
+				--add-label "code-reviews-actioned" || true
 			tagged_count=$((tagged_count + 1))
 		fi
 
@@ -878,11 +878,11 @@ _backfill_priority_labels() {
 
 	# Ensure priority labels exist on the repo
 	gh label create "priority:critical" --repo "$repo_slug" --color "B60205" \
-		--description "Critical severity — security or data loss risk" --force 2>/dev/null || true
+		--description "Critical severity — security or data loss risk" --force || true
 	gh label create "priority:high" --repo "$repo_slug" --color "D93F0B" \
-		--description "High severity — significant quality issue" --force 2>/dev/null || true
+		--description "High severity — significant quality issue" --force || true
 	gh label create "priority:medium" --repo "$repo_slug" --color "FBCA04" \
-		--description "Medium severity — moderate quality issue" --force 2>/dev/null || true
+		--description "Medium severity — moderate quality issue" --force || true
 
 	# Get open quality-debt issues — extract number, title, and whether
 	# a priority label already exists, in a single jq pass
@@ -890,8 +890,8 @@ _backfill_priority_labels() {
 	issues_to_label=$(gh issue list --repo "$repo_slug" \
 		--label "quality-debt" --state open --limit 500 \
 		--json number,title,labels \
-		--jq '.[] | select([.labels[].name] | any(startswith("priority:")) | not) | "\(.number)|\(.title)"' \
-		2>/dev/null || echo "")
+		--jq '.[] | select([.labels[].name] | any(startswith("priority:")) | not) | "\(.number)|\(.title)"' ||
+		echo "")
 
 	[[ -z "$issues_to_label" ]] && return 0
 
@@ -910,7 +910,7 @@ _backfill_priority_labels() {
 
 		if [[ -n "$severity" ]]; then
 			gh issue edit "$issue_num" --repo "$repo_slug" \
-				--add-label "priority:${severity}" 2>/dev/null || true
+				--add-label "priority:${severity}" || true
 			labelled_count=$((labelled_count + 1))
 		fi
 	done <<<"$issues_to_label"
@@ -939,7 +939,7 @@ _create_quality_debt_issues() {
 	local findings="$3"
 
 	local finding_count
-	finding_count=$(echo "$findings" | jq 'length' 2>/dev/null || echo "0")
+	finding_count=$(printf '%s' "$findings" | jq 'length' || echo "0")
 
 	if [[ "$finding_count" -eq 0 ]]; then
 		echo "0"
@@ -948,13 +948,13 @@ _create_quality_debt_issues() {
 
 	# Ensure labels exist (quality-debt + priority labels for dispatch ordering, t1413)
 	gh label create "quality-debt" --repo "$repo_slug" --color "D93F0B" \
-		--description "Unactioned review feedback from merged PRs" --force 2>/dev/null || true
+		--description "Unactioned review feedback from merged PRs" --force || true
 	gh label create "priority:critical" --repo "$repo_slug" --color "B60205" \
-		--description "Critical severity — security or data loss risk" --force 2>/dev/null || true
+		--description "Critical severity — security or data loss risk" --force || true
 	gh label create "priority:high" --repo "$repo_slug" --color "D93F0B" \
-		--description "High severity — significant quality issue" --force 2>/dev/null || true
+		--description "High severity — significant quality issue" --force || true
 	gh label create "priority:medium" --repo "$repo_slug" --color "FBCA04" \
-		--description "Medium severity — moderate quality issue" --force 2>/dev/null || true
+		--description "Medium severity — moderate quality issue" --force || true
 
 	# Check existing quality-debt issues to avoid duplicates.
 	# Fetch both title and number so we can append to existing file-level issues (t1411).

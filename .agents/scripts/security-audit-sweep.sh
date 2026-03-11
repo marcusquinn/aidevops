@@ -86,10 +86,10 @@ check_ai_deps() {
 	# Check package.json (npm)
 	if [[ -f "$repo_path/package.json" ]]; then
 		local npm_deps
-		npm_deps=$(jq -r '(.dependencies // {}) + (.devDependencies // {}) | keys[]' "$repo_path/package.json" 2>/dev/null) || true
+		npm_deps=$(jq -r '(.dependencies // {}) + (.devDependencies // {}) | keys[]' "$repo_path/package.json") || true
 		if [[ -n "$npm_deps" ]]; then
 			local matched
-			matched=$(echo "$npm_deps" | grep -iE "$AI_DEPS_NPM" 2>/dev/null) || true
+			matched=$(printf '%s' "$npm_deps" | grep -iE "$AI_DEPS_NPM") || true
 			if [[ -n "$matched" ]]; then
 				deps_found="${deps_found}${matched}"$'\n'
 			fi
@@ -99,7 +99,7 @@ check_ai_deps() {
 	# Check requirements.txt (pip)
 	if [[ -f "$repo_path/requirements.txt" ]]; then
 		local pip_matched
-		pip_matched=$(grep -iE "$AI_DEPS_PIP" "$repo_path/requirements.txt" 2>/dev/null | sed 's/[>=<].*//' | tr -d ' ') || true
+		pip_matched=$(grep -iE "$AI_DEPS_PIP" "$repo_path/requirements.txt" | sed 's/[>=<].*//' | tr -d ' ') || true
 		if [[ -n "$pip_matched" ]]; then
 			deps_found="${deps_found}${pip_matched}"$'\n'
 		fi
@@ -108,7 +108,7 @@ check_ai_deps() {
 	# Check pyproject.toml (pip)
 	if [[ -f "$repo_path/pyproject.toml" ]]; then
 		local pyproject_matched
-		pyproject_matched=$(grep -iE "$AI_DEPS_PIP" "$repo_path/pyproject.toml" 2>/dev/null | sed 's/[>=<"'\'',].*//' | tr -d ' ') || true
+		pyproject_matched=$(grep -iE "$AI_DEPS_PIP" "$repo_path/pyproject.toml" | sed 's/[>=<"'\'',].*//' | tr -d ' ') || true
 		if [[ -n "$pyproject_matched" ]]; then
 			deps_found="${deps_found}${pyproject_matched}"$'\n'
 		fi
@@ -142,36 +142,36 @@ check_ci_patterns() {
 		wf_name=$(basename "$wf")
 
 		# Shell injection via github.event context
-		if grep -qE '\$\{\{\s*github\.event\.(issue|pull_request|comment)\.' "$wf" 2>/dev/null; then
-			if grep -qE '^\s*run:' "$wf" 2>/dev/null; then
+		if grep -qE '\$\{\{\s*github\.event\.(issue|pull_request|comment)\.' "$wf"; then
+			if grep -qE '^\s*run:' "$wf"; then
 				findings="${findings}CRITICAL: $wf_name uses github.event context in shell run step"$'\n'
 			fi
 		fi
 
 		# Overly permissive wildcard
-		if grep -qE 'allowed_non_write_users:\s*"\*"' "$wf" 2>/dev/null; then
+		if grep -qE 'allowed_non_write_users:\s*"\*"' "$wf"; then
 			findings="${findings}CRITICAL: $wf_name has allowed_non_write_users wildcard"$'\n'
 		fi
 
 		# pull_request_target with PR head checkout
-		if grep -qE 'pull_request_target' "$wf" 2>/dev/null; then
-			if grep -qE 'ref:\s*\$\{\{\s*github\.event\.pull_request\.head\.(ref|sha)' "$wf" 2>/dev/null; then
+		if grep -qE 'pull_request_target' "$wf"; then
+			if grep -qE 'ref:\s*\$\{\{\s*github\.event\.pull_request\.head\.(ref|sha)' "$wf"; then
 				findings="${findings}CRITICAL: $wf_name has pull_request_target with PR head checkout"$'\n'
 			fi
 		fi
 
 		# Actions not pinned to SHA
 		local unpinned
-		unpinned=$(grep -oE 'uses:\s+[a-zA-Z0-9_-]+/[a-zA-Z0-9_.-]+@(main|master|v[0-9]+)' "$wf" 2>/dev/null | wc -l | tr -d ' ') || unpinned="0"
+		unpinned=$(grep -oE 'uses:\s+[a-zA-Z0-9_-]+/[a-zA-Z0-9_.-]+@(main|master|v[0-9]+)' "$wf" | wc -l | tr -d ' ') || unpinned="0"
 		if [[ "$unpinned" -gt 0 ]]; then
 			findings="${findings}WARNING: $wf_name has $unpinned action(s) not SHA-pinned"$'\n'
 		fi
 
 		# write-all permissions
-		if grep -qE '^\s*permissions:\s*write-all' "$wf" 2>/dev/null; then
+		if grep -qE '^\s*permissions:\s*write-all' "$wf"; then
 			findings="${findings}WARNING: $wf_name uses write-all permissions"$'\n'
 		fi
-	done < <(find "$workflows_dir" -name "*.yml" -o -name "*.yaml" 2>/dev/null)
+	done < <(find "$workflows_dir" -name "*.yml" -o -name "*.yaml")
 
 	if [[ -n "$findings" ]]; then
 		echo "$findings" | sed '/^$/d'
@@ -288,19 +288,19 @@ cmd_run() {
 
 		# Extract summary counts from posture output
 		local critical_count warning_count pass_count
-		critical_count=$(echo "$posture_output" | grep -c '^\[CRIT\]' 2>/dev/null) || critical_count=0
-		warning_count=$(echo "$posture_output" | grep -c '^\[WARN\]' 2>/dev/null) || warning_count=0
-		pass_count=$(echo "$posture_output" | grep -c '^\[PASS\]' 2>/dev/null) || pass_count=0
+		critical_count=$(printf '%s' "$posture_output" | grep -c '^\[CRIT\]') || critical_count=0
+		warning_count=$(printf '%s' "$posture_output" | grep -c '^\[WARN\]') || warning_count=0
+		pass_count=$(printf '%s' "$posture_output" | grep -c '^\[PASS\]') || pass_count=0
 
 		# The posture helper uses ANSI codes, so also check with color codes
 		if [[ "$critical_count" -eq 0 ]]; then
-			critical_count=$(echo "$posture_output" | grep -c '\[CRIT\]' 2>/dev/null) || critical_count=0
+			critical_count=$(printf '%s' "$posture_output" | grep -c '\[CRIT\]') || critical_count=0
 		fi
 		if [[ "$warning_count" -eq 0 ]]; then
-			warning_count=$(echo "$posture_output" | grep -c '\[WARN\]' 2>/dev/null) || warning_count=0
+			warning_count=$(printf '%s' "$posture_output" | grep -c '\[WARN\]') || warning_count=0
 		fi
 		if [[ "$pass_count" -eq 0 ]]; then
-			pass_count=$(echo "$posture_output" | grep -c '\[PASS\]' 2>/dev/null) || pass_count=0
+			pass_count=$(printf '%s' "$posture_output" | grep -c '\[PASS\]') || pass_count=0
 		fi
 
 		total_critical=$((total_critical + critical_count))
