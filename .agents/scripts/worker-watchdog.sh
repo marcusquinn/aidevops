@@ -9,7 +9,8 @@
 #   1. CPU idle: Worker completed but sits in file-watcher (OpenCode idle bug).
 #      Signal: tree CPU < WORKER_IDLE_CPU_THRESHOLD for WORKER_IDLE_TIMEOUT.
 #   2. Progress stall: Worker is running but producing no output (stuck on API,
-#      rate-limited, spinning). Signal: no log growth for WORKER_PROGRESS_TIMEOUT.
+#      rate-limited, spinning). Signal: no log growth for WORKER_PROGRESS_TIMEOUT,
+#      then inspect recent transcript tail evidence before killing.
 #   3. Runtime ceiling: Worker has been running too long regardless of activity.
 #      Signal: elapsed > WORKER_MAX_RUNTIME. Prevents infinite loops.
 #
@@ -44,7 +45,9 @@ set -euo pipefail
 export PATH="/bin:/usr/bin:/usr/local/bin:/opt/homebrew/bin:${PATH}"
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
+# shellcheck source=/dev/null
 source "${SCRIPT_DIR}/shared-constants.sh"
+# shellcheck source=/dev/null
 source "${SCRIPT_DIR}/worker-lifecycle-common.sh"
 
 #######################################
@@ -72,6 +75,9 @@ readonly LOG_DIR="${HOME}/.aidevops/logs"
 readonly LOG_FILE="${LOG_DIR}/worker-watchdog.log"
 readonly STATE_DIR="${HOME}/.aidevops/.agent-workspace/tmp"
 readonly IDLE_STATE_DIR="${STATE_DIR}/worker-idle-tracking"
+
+STALL_EVIDENCE_CLASS=""
+STALL_EVIDENCE_SUMMARY=""
 
 readonly LAUNCHD_LABEL="sh.aidevops.worker-watchdog"
 readonly PLIST_PATH="${HOME}/Library/LaunchAgents/${LAUNCHD_LABEL}.plist"
@@ -281,33 +287,53 @@ check_progress_stall() {
 	local cmd="$2"
 	local elapsed_seconds="$3"
 	local stall_file="${IDLE_STATE_DIR}/stall-${pid}"
+	local grace_file="${IDLE_STATE_DIR}/stall-grace-${pid}"
+	STALL_EVIDENCE_CLASS=""
+	STALL_EVIDENCE_SUMMARY=""
 
 	# Skip progress check for very young workers (< 10 min)
 	if [[ "$elapsed_seconds" -lt 600 ]]; then
-		rm -f "$stall_file" 2>/dev/null || true
+		rm -f "$stall_file" "$grace_file" 2>/dev/null || true
 		return 1
 	fi
 
 	# Check OpenCode session DB for recent messages
-	local db_path="${HOME}/.local/share/opencode/opencode.db"
+	local db_path
+	db_path=$(_opencode_db_path)
 	local has_recent_activity=false
 
 	if [[ -f "$db_path" ]]; then
 		local session_title=""
-		if [[ "$cmd" =~ --title[[:space:]]+\"([^\"]+)\" ]] || [[ "$cmd" =~ --title[[:space:]]+([^[:space:]]+) ]]; then
-			session_title="${BASH_REMATCH[1]}"
-		fi
+		session_title=$(_extract_session_title "$cmd")
 
 		if [[ -n "$session_title" ]]; then
-			local escaped_title="${session_title//\'/\'\'}"
 			local recent_count
-			recent_count=$(sqlite3 "$db_path" "
-				SELECT COUNT(*)
-				FROM message m
-				JOIN session s ON m.session_id = s.id
-				WHERE s.title LIKE '%${escaped_title}%'
-				AND m.created_at > datetime('now', '-${WORKER_PROGRESS_TIMEOUT} seconds')
-			" || echo 0)
+			recent_count=$(
+				SESSION_WATCHDOG_DB_PATH="$db_path" SESSION_WATCHDOG_TITLE="$session_title" SESSION_WATCHDOG_TIMEOUT="$WORKER_PROGRESS_TIMEOUT" python3 - <<'PY'
+import os
+import sqlite3
+
+db_path = os.environ["SESSION_WATCHDOG_DB_PATH"]
+session_title = os.environ["SESSION_WATCHDOG_TITLE"]
+timeout_seconds = int(os.environ["SESSION_WATCHDOG_TIMEOUT"])
+
+conn = sqlite3.connect(db_path)
+conn.execute("PRAGMA busy_timeout=5000")
+cursor = conn.cursor()
+cursor.execute(
+    """
+    SELECT COUNT(*)
+    FROM message m
+    JOIN session s ON m.session_id = s.id
+    WHERE s.title LIKE ?
+      AND m.time_created > strftime('%s', 'now') - ?
+    """,
+    (f"%{session_title}%", timeout_seconds),
+)
+row = cursor.fetchone()
+print(int(row[0] or 0))
+PY
+			)
 
 			if [[ "$recent_count" -gt 0 ]]; then
 				has_recent_activity=true
@@ -317,7 +343,7 @@ check_progress_stall() {
 
 	if [[ "$has_recent_activity" == "true" ]]; then
 		# Activity detected — reset stall tracking
-		rm -f "$stall_file" 2>/dev/null || true
+		rm -f "$stall_file" "$grace_file" 2>/dev/null || true
 		return 1
 	fi
 
@@ -336,6 +362,36 @@ check_progress_stall() {
 	local stall_duration=$((now - stall_since))
 
 	if [[ "$stall_duration" -ge "$WORKER_PROGRESS_TIMEOUT" ]]; then
+		local evidence_result
+		evidence_result=$(_get_session_tail_evidence "$cmd" "$WORKER_PROGRESS_TIMEOUT")
+		IFS='|' read -r STALL_EVIDENCE_CLASS STALL_EVIDENCE_SUMMARY <<<"$evidence_result"
+		local sanitized_evidence
+		sanitized_evidence=$(_sanitize_log_field "$STALL_EVIDENCE_SUMMARY")
+
+		if [[ "$STALL_EVIDENCE_CLASS" == "active" ]]; then
+			log_msg "STALL CLEARED: PID=${pid} evidence=${sanitized_evidence}"
+			rm -f "$stall_file" "$grace_file" 2>/dev/null || true
+			return 1
+		fi
+
+		if [[ "$STALL_EVIDENCE_CLASS" == "provider-waiting" ]]; then
+			if [[ ! -f "$grace_file" ]]; then
+				date +%s >"$grace_file"
+				log_msg "STALL GRACE: PID=${pid} evidence=${sanitized_evidence}"
+				return 1
+			fi
+
+			local grace_since
+			grace_since=$(cat "$grace_file" 2>/dev/null || echo "0")
+			[[ "$grace_since" =~ ^[0-9]+$ ]] || grace_since=0
+			local grace_duration=$((now - grace_since))
+			if [[ "$grace_duration" -lt "$WORKER_PROGRESS_TIMEOUT" ]]; then
+				return 1
+			fi
+		else
+			rm -f "$grace_file" 2>/dev/null || true
+		fi
+
 		return 0 # Stalled long enough — kill
 	fi
 	return 1
@@ -349,25 +405,31 @@ check_progress_stall() {
 #   $2 - reason (idle|stall|runtime)
 #   $3 - command line
 #   $4 - elapsed seconds
+#   $5 - evidence summary (optional)
 #######################################
 kill_worker() {
 	local pid="$1"
 	local reason="$2"
 	local cmd="$3"
 	local elapsed_seconds="$4"
+	local evidence_summary="${5:-}"
 
 	local duration
 	duration=$(_format_duration "$elapsed_seconds")
 	local sanitized_cmd
 	sanitized_cmd=$(_sanitize_log_field "$cmd")
+	local sanitized_evidence=""
+	if [[ -n "$evidence_summary" ]]; then
+		sanitized_evidence=$(_sanitize_log_field "$evidence_summary")
+	fi
 
 	if [[ "$WORKER_DRY_RUN" == "true" ]]; then
-		log_msg "DRY RUN: Would kill worker PID=${pid} reason=${reason} elapsed=${duration} cmd=${sanitized_cmd}"
+		log_msg "DRY RUN: Would kill worker PID=${pid} reason=${reason} elapsed=${duration} cmd=${sanitized_cmd}${sanitized_evidence:+ evidence=${sanitized_evidence}}"
 		echo "  DRY RUN: Would kill PID ${pid} (${reason}, running ${duration})"
 		return 0
 	fi
 
-	log_msg "Killing worker PID=${pid} reason=${reason} elapsed=${duration} cmd=${sanitized_cmd}"
+	log_msg "Killing worker PID=${pid} reason=${reason} elapsed=${duration} cmd=${sanitized_cmd}${sanitized_evidence:+ evidence=${sanitized_evidence}}"
 
 	# Graceful kill first
 	_kill_tree "$pid" || true
@@ -380,10 +442,10 @@ kill_worker() {
 	fi
 
 	# Clean up idle/stall tracking files
-	rm -f "${IDLE_STATE_DIR}/idle-${pid}" "${IDLE_STATE_DIR}/stall-${pid}" 2>/dev/null || true
+	rm -f "${IDLE_STATE_DIR}/idle-${pid}" "${IDLE_STATE_DIR}/stall-${pid}" "${IDLE_STATE_DIR}/stall-grace-${pid}" 2>/dev/null || true
 
 	# Post-kill: update GitHub issue labels and comment
-	post_kill_github_update "$cmd" "$reason" "$duration"
+	post_kill_github_update "$cmd" "$reason" "$duration" "$evidence_summary"
 
 	# Notify
 	notify "Worker Watchdog" "Killed worker (${reason}) after ${duration}"
@@ -400,11 +462,13 @@ kill_worker() {
 #   $1 - command line
 #   $2 - kill reason
 #   $3 - formatted duration
+#   $4 - evidence summary (optional)
 #######################################
 post_kill_github_update() {
 	local cmd="$1"
 	local reason="$2"
 	local duration="$3"
+	local evidence_summary="${4:-No transcript evidence available.}"
 
 	# Extract issue number and repo slug
 	local issue_number
@@ -433,9 +497,12 @@ post_kill_github_update() {
 
 **Runtime:** ${duration}
 
+**Diagnostic tail:** ${evidence_summary}
+
 This issue has been re-labeled \`status:available\` for re-dispatch. The next pulse or manual dispatch will pick it up.
 
 _Automated by \`worker-watchdog.sh\` (t1419)_"
+	comment_body=$(_sanitize_markdown "$comment_body")
 
 	if gh issue comment "$issue_number" --repo "$repo_slug" --body "$comment_body" 2>>"$LOG_FILE"; then
 		log_msg "Posted kill comment on ${repo_slug}#${issue_number}"
@@ -464,7 +531,7 @@ cmd_check() {
 
 	if [[ -z "$workers" ]]; then
 		# No workers running — clean up stale tracking files
-		rm -f "${IDLE_STATE_DIR}"/idle-* "${IDLE_STATE_DIR}"/stall-* 2>/dev/null || true
+		rm -f "${IDLE_STATE_DIR}"/idle-* "${IDLE_STATE_DIR}"/stall-* "${IDLE_STATE_DIR}"/stall-grace-* 2>/dev/null || true
 		return 0
 	fi
 
@@ -499,8 +566,12 @@ cmd_check() {
 
 		# Check 3: Progress stall detection
 		if check_progress_stall "$pid" "$cmd" "$elapsed_seconds"; then
-			log_msg "PROGRESS STALL: PID=${pid} elapsed=${duration}"
-			kill_worker "$pid" "stall" "$cmd" "$elapsed_seconds"
+			local sanitized_evidence=""
+			if [[ -n "$STALL_EVIDENCE_SUMMARY" ]]; then
+				sanitized_evidence=$(_sanitize_log_field "$STALL_EVIDENCE_SUMMARY")
+			fi
+			log_msg "PROGRESS STALL: PID=${pid} elapsed=${duration}${sanitized_evidence:+ evidence=${sanitized_evidence}}"
+			kill_worker "$pid" "stall" "$cmd" "$elapsed_seconds" "$STALL_EVIDENCE_SUMMARY"
 			killed_count=$((killed_count + 1))
 			continue
 		fi
@@ -513,10 +584,10 @@ cmd_check() {
 
 	# Clean up tracking files for PIDs that no longer exist
 	local tracking_file
-	for tracking_file in "${IDLE_STATE_DIR}"/idle-* "${IDLE_STATE_DIR}"/stall-*; do
+	for tracking_file in "${IDLE_STATE_DIR}"/idle-* "${IDLE_STATE_DIR}"/stall-* "${IDLE_STATE_DIR}"/stall-grace-*; do
 		[[ -f "$tracking_file" ]] || continue
 		local tracked_pid
-		tracked_pid=$(basename "$tracking_file" | sed 's/^idle-//;s/^stall-//')
+		tracked_pid=$(basename "$tracking_file" | sed 's/^idle-//;s/^stall-//;s/^grace-//')
 		if [[ "$tracked_pid" =~ ^[0-9]+$ ]] && ! kill -0 "$tracked_pid" 2>/dev/null; then
 			rm -f "$tracking_file" 2>/dev/null || true
 		fi
@@ -589,6 +660,15 @@ cmd_status() {
 				now=$(date +%s)
 				local stall_for=$((now - stall_since))
 				echo "    Stalled:  $(_format_duration "$stall_for") / $(_format_duration "$WORKER_PROGRESS_TIMEOUT")"
+			fi
+
+			if [[ -f "${IDLE_STATE_DIR}/stall-grace-${pid}" ]]; then
+				local grace_since
+				grace_since=$(cat "${IDLE_STATE_DIR}/stall-grace-${pid}" 2>/dev/null || echo "0")
+				local now
+				now=$(date +%s)
+				local grace_for=$((now - grace_since))
+				echo "    Grace:    $(_format_duration "$grace_for") / $(_format_duration "$WORKER_PROGRESS_TIMEOUT")"
 			fi
 
 			# Struggle ratio
@@ -722,7 +802,7 @@ Commands:
 
 Detection signals:
   CPU idle:         Tree CPU < ${WORKER_IDLE_CPU_THRESHOLD}% for $(_format_duration "$WORKER_IDLE_TIMEOUT")
-  Progress stall:   No session messages for $(_format_duration "$WORKER_PROGRESS_TIMEOUT")
+  Progress stall:   No session messages for $(_format_duration "$WORKER_PROGRESS_TIMEOUT"), then inspect transcript tail evidence
   Runtime ceiling:  Hard kill after $(_format_duration "$WORKER_MAX_RUNTIME")
 
 On kill:
@@ -773,4 +853,6 @@ main() {
 	esac
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+	main "$@"
+fi

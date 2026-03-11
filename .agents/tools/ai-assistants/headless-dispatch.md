@@ -242,7 +242,7 @@ done
 
 The pulse supervisor handles this automatically via its capacity calculation (`RAM_PER_WORKER_MB`, `RAM_RESERVE_MB`, `MAX_WORKERS_CAP`). Manual dispatch bypasses these checks.
 
-**Worker monitoring**: Use `worker-watchdog.sh --status` to check active workers, or install the launchd service (`worker-watchdog.sh --install`) for automatic detection and cleanup of hung/idle workers. See `scripts/worker-watchdog.sh` for details.
+**Worker monitoring**: Use `worker-watchdog.sh --status` to check active workers, or install the launchd service (`worker-watchdog.sh --install`) for automatic detection and cleanup of hung/idle workers. Stall checks now inspect the recent OpenCode transcript tail before killing a suspect worker, log that diagnostic summary, and give provider-wait evidence one extra grace window before re-queueing the issue. See `scripts/worker-watchdog.sh` for details.
 
 ### SDK Parallel (Promise.all)
 

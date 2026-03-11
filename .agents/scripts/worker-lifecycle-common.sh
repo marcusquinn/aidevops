@@ -26,6 +26,204 @@
 _WORKER_LIFECYCLE_COMMON_LOADED=1
 
 #######################################
+# Resolve the OpenCode session DB path
+# Returns: path via stdout
+#######################################
+_opencode_db_path() {
+	local db_path="${OPENCODE_DB_PATH:-${HOME}/.local/share/opencode/opencode.db}"
+	printf '%s' "$db_path"
+	return 0
+}
+
+#######################################
+# Extract session title from a worker command line
+# Arguments:
+#   $1 - command line string
+# Returns: session title or empty string via stdout
+#######################################
+_extract_session_title() {
+	local cmd="$1"
+	local session_title=""
+
+	if [[ "$cmd" =~ --title[[:space:]]+\"([^\"]+)\" ]] || [[ "$cmd" =~ --title[[:space:]]+([^[:space:]]+) ]]; then
+		session_title="${BASH_REMATCH[1]}"
+	fi
+
+	printf '%s' "$session_title"
+	return 0
+}
+
+#######################################
+# Summarise the recent OpenCode transcript tail for a worker session
+# Arguments:
+#   $1 - worker command line
+#   $2 - recent activity timeout seconds
+#   $3 - maximum parts to inspect (optional, default: 8)
+# Returns: "classification|summary" where classification is one of
+#   active, provider-waiting, stalled, none
+#######################################
+_get_session_tail_evidence() {
+	local cmd="$1"
+	local timeout_seconds="$2"
+	local part_limit="${3:-8}"
+	local db_path session_title
+	db_path=$(_opencode_db_path)
+	session_title=$(_extract_session_title "$cmd")
+
+	if [[ ! -f "$db_path" ]]; then
+		printf '%s' 'none|OpenCode session DB unavailable'
+		return 0
+	fi
+
+	if [[ -z "$session_title" ]]; then
+		printf '%s' 'none|Worker command has no session title'
+		return 0
+	fi
+
+	SESSION_TAIL_DB_PATH="$db_path" \
+		SESSION_TAIL_TITLE="$session_title" \
+		SESSION_TAIL_TIMEOUT="$timeout_seconds" \
+		SESSION_TAIL_LIMIT="$part_limit" \
+		python3 - <<'PY'
+import json
+import os
+import re
+import sqlite3
+import time
+
+db_path = os.environ["SESSION_TAIL_DB_PATH"]
+session_title = os.environ["SESSION_TAIL_TITLE"]
+timeout_seconds = int(os.environ["SESSION_TAIL_TIMEOUT"])
+part_limit = int(os.environ["SESSION_TAIL_LIMIT"])
+
+provider_markers = (
+    "rate limit",
+    "rate-limit",
+    "429",
+    "backoff",
+    "retrying",
+    "retry after",
+    "overloaded",
+    "temporarily unavailable",
+    "connection reset",
+    "timed out",
+    "timeout",
+    "econnreset",
+    "etimedout",
+    "service unavailable",
+)
+
+def collapse(value: str, limit: int = 120) -> str:
+    value = re.sub(r"\s+", " ", value or "").strip()
+    if len(value) > limit:
+        value = value[: limit - 3] + "..."
+    return value.replace("|", "/")
+
+try:
+    conn = sqlite3.connect(db_path)
+    conn.execute("PRAGMA busy_timeout=5000")
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        SELECT id, title
+        FROM session
+        WHERE title LIKE ?
+        ORDER BY time_created DESC
+        LIMIT 1
+        """,
+        (f"%{session_title}%",),
+    )
+    session_row = cursor.fetchone()
+    if not session_row:
+        print("none|No OpenCode session found")
+        raise SystemExit(0)
+
+    session_id, resolved_title = session_row
+    cursor.execute(
+        """
+        SELECT COUNT(*)
+        FROM message
+        WHERE session_id = ?
+          AND time_created > strftime('%s', 'now') - ?
+        """,
+        (session_id, timeout_seconds),
+    )
+    recent_count = int(cursor.fetchone()[0] or 0)
+
+    cursor.execute(
+        """
+        SELECT data, time_created
+        FROM part
+        WHERE session_id = ?
+        ORDER BY time_created DESC
+        LIMIT ?
+        """,
+        (session_id, part_limit),
+    )
+    part_rows = list(reversed(cursor.fetchall()))
+except sqlite3.Error as exc:
+    print(f"none|Session evidence query failed: {collapse(str(exc), 120)}")
+    raise SystemExit(0)
+
+entries = []
+search_blob = []
+newest_part_time = 0
+
+for raw_data, part_time in part_rows:
+    newest_part_time = max(newest_part_time, int(part_time or 0))
+    data = json.loads(raw_data)
+    part_type = data.get("type", "unknown")
+
+    if part_type == "text":
+        preview = collapse(data.get("text", ""))
+        if preview:
+            entries.append(f'text:"{preview}"')
+            search_blob.append(preview.lower())
+    elif part_type == "tool":
+        state = data.get("state", {})
+        status = collapse(str(state.get("status", "unknown")), 24)
+        description = collapse(str(state.get("input", {}).get("description", "")))
+        tool_name = collapse(str(data.get("tool", "tool")), 32)
+        if description:
+            entries.append(f'tool:{tool_name}({status}) "{description}"')
+            search_blob.append(description.lower())
+        else:
+            entries.append(f"tool:{tool_name}({status})")
+    elif part_type == "step-finish":
+        reason = collapse(str(data.get("reason", "done")), 32)
+        entries.append(f"step-finish:{reason}")
+    elif part_type == "step-start":
+        entries.append("step-start")
+    elif part_type == "reasoning":
+        entries.append("reasoning")
+    else:
+        entries.append(collapse(part_type, 32))
+
+if not entries:
+    entries.append("no-parts")
+
+joined_blob = " ".join(search_blob)
+if recent_count > 0:
+    classification = "active"
+elif any(marker in joined_blob for marker in provider_markers):
+    classification = "provider-waiting"
+else:
+    classification = "stalled"
+
+age_seconds = max(0, int(time.time()) - newest_part_time) if newest_part_time else -1
+tail_summary = " > ".join(entries[-5:])
+summary = (
+    f'session="{collapse(resolved_title, 80)}"; '
+    f"recent_messages={recent_count}; "
+    f"newest_part_age={age_seconds}s; "
+    f"tail={tail_summary}"
+)
+print(f"{classification}|{summary}")
+PY
+	return 0
+}
+
+#######################################
 # Kill a process and all its children (macOS-compatible)
 # Arguments:
 #   $1 - PID to kill
