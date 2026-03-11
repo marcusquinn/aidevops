@@ -77,6 +77,8 @@ Raw output (one line per issue, tab-separated):
 
 Formatted display (produced by the dashboard agent):
 
+The agent converts ISO timestamps to relative times (e.g., "2d ago"), aligns columns, and groups issues by repo. This formatting is done at display time, not by the shell script.
+
 ```text
 Pending Maintainer Review
 =========================
@@ -94,8 +96,6 @@ Actions:
   Approve:  gh issue edit <N> --repo <slug> --remove-label needs-maintainer-review --add-label auto-dispatch
   Decline:  gh issue close <N> --repo <slug> -c "Declined: <reason>"
 ```
-
-The formatted display converts ISO timestamps to relative times (e.g., "2d ago"), aligns columns, and groups issues by repo. This formatting is done by the agent at display time, not by the shell script.
 
 ## Browser View
 
