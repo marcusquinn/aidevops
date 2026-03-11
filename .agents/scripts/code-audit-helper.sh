@@ -174,8 +174,7 @@ sql_escape() {
 	val="$1"
 	# Replace newlines and carriage returns with spaces to prevent
 	# multi-line SQL corruption in line-by-line INSERT generation
-	val="${val//$'\n'/ }"
-	val="${val//$'\r'/ }"
+	val="${val//[$'\r\n']/ }"
 	val="${val//\'/\'\'}"
 	echo "$val"
 	return 0
