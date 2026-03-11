@@ -241,7 +241,7 @@ def generate_thread_index(threads, output_file):
 
         for i, email in enumerate(emails, 1):
             # Compute relative path from index file location to email file
-            # Normalize separators to forward slashes for portable Markdown links
+            # Use pathlib.as_posix() for portable forward-slash Markdown links
             file_path = Path(
                 os.path.relpath(Path(email["file"]).resolve(), output_dir)
             ).as_posix()
