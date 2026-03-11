@@ -7,13 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.171.7] - 2026-03-11
+
 ### Changed
 
-- document pulse backlog fallback for high-priority unlabeled issues
+- Documentation: add unreleased notes for pulse dispatch fallback
 
 ### Fixed
 
-- reduce pulse idle cycles caused by over-reliance on `auto-dispatch` / `status:available` labels
+- keep pulse productive when labels lag
+- align conventional commit prefixes across loop docs (GH#3800)
 
 ## [2.171.6] - 2026-03-11
 
