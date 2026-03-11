@@ -90,8 +90,8 @@ _security_cost_query_sqlite() {
 	sqlite_cmd+=("$OBS_DB")
 
 	"${sqlite_cmd[@]}" \
-		".parameter init" \
-		".parameter set @session_id ${session_param}" \
+		".param init" \
+		".param set @session_id ${session_param}" \
 		"SELECT
 			COALESCE(model_id, 'unknown') AS model,
 			COUNT(*) AS requests,
@@ -121,7 +121,7 @@ _security_cost_summary() {
 	# Prefer SQLite DB (real-time via plugin)
 	if [[ -f "$OBS_DB" ]] && command -v sqlite3 &>/dev/null; then
 		local result
-		result=$(_security_cost_query_sqlite "text" "$session_filter" 2>/dev/null) || result=""
+		result=$(_security_cost_query_sqlite "text" "$session_filter" 2>/dev/null || echo "")
 
 		if [[ -n "$result" ]]; then
 			printf "$FMT_COST_ROW" "Model" "Reqs" "Input" "Output" "Cache" "Cost"
@@ -157,10 +157,8 @@ _security_cost_summary() {
 	if [[ -f "$OBS_METRICS" ]] && command -v jq &>/dev/null; then
 		local result
 		if [[ -n "$session_filter" ]]; then
-			local safe_session
-			safe_session=$(_sanitize_session_filter "$session_filter")
 			# Use jq --arg to pass session filter safely (prevents jq injection)
-			result=$(jq -sr --arg sid "$safe_session" '[.[] | select(.session_id == $sid)] | group_by(.model) | map({
+			result=$(jq -sr --arg sid "$session_filter" '[.[] | select(.session_id == $sid)] | group_by(.model) | map({
                 model: .[0].model,
                 requests: length,
                 input_tokens: ([.[].input_tokens] | add),
@@ -394,9 +392,9 @@ _security_session_context() {
 	# session-security-helper.sh exists — query it
 	local score
 	if [[ -n "$session_filter" ]]; then
-		score=$("$session_helper" score --session-id "$session_filter" 2>/dev/null || echo "")
+		score=$("$session_helper" get-score --session-id "$session_filter" 2>/dev/null || echo "")
 	else
-		score=$("$session_helper" score 2>/dev/null || echo "")
+		score=$("$session_helper" get-score 2>/dev/null || echo "")
 	fi
 	if [[ -n "$score" ]]; then
 		echo "  Composite score: $score"
@@ -424,10 +422,9 @@ _security_quarantine() {
 	# quarantine-helper.sh exists — query it
 	local status
 	if [[ -n "$session_filter" ]]; then
-		status=$("$quarantine_helper" status --session "$session_filter" 2>/dev/null) || status=""
-	else
-		status=$("$quarantine_helper" status 2>/dev/null) || status=""
+		echo "  (global - quarantine helper has no session filter)"
 	fi
+	status=$("$quarantine_helper" stats 2>/dev/null || echo "")
 	if [[ -n "$status" ]]; then
 		echo "$status" | sed 's/^/  /'
 	else
@@ -642,7 +639,7 @@ _security_summary_json() {
 	local cost_total=0
 	if [[ -f "$OBS_DB" ]] && command -v sqlite3 &>/dev/null; then
 		local db_result
-		db_result=$(_security_cost_query_sqlite "json" "$session_filter" 2>/dev/null) || db_result=""
+		db_result=$(_security_cost_query_sqlite "json" "$session_filter" 2>/dev/null || echo "")
 		if [[ -n "$db_result" && "$db_result" != "[]" ]]; then
 			cost_json="$db_result"
 			cost_total=$(echo "$db_result" | jq '[.[].cost] | add // 0' 2>/dev/null) || cost_total=0
@@ -650,9 +647,7 @@ _security_summary_json() {
 	elif [[ -f "$OBS_METRICS" ]] && command -v jq &>/dev/null; then
 		local jq_result
 		if [[ -n "$session_filter" ]]; then
-			local safe_session
-			safe_session=$(_sanitize_session_filter "$session_filter")
-			jq_result=$(jq -sr --arg sid "$safe_session" '[.[] | select(.session_id == $sid)] | group_by(.model) | map({
+			jq_result=$(jq -sr --arg sid "$session_filter" '[.[] | select(.session_id == $sid)] | group_by(.model) | map({
 				model: .[0].model,
 				requests: length,
 				input_tokens: ([.[].input_tokens] | add),
@@ -695,12 +690,9 @@ _security_summary_json() {
 	local quarantine_helper="${SCRIPT_DIR}/quarantine-helper.sh"
 	if [[ -x "$quarantine_helper" ]]; then
 		quarantine_available="true"
-		local q_status
-		if [[ -n "$session_filter" ]]; then
-			q_status=$("$quarantine_helper" count --session "$session_filter" 2>/dev/null) || q_status=""
-		else
-			q_status=$("$quarantine_helper" count 2>/dev/null) || q_status=""
-		fi
+		local q_stats q_status
+		q_stats=$("$quarantine_helper" stats 2>/dev/null || echo "")
+		q_status=$(printf '%s\n' "$q_stats" | awk '/^[[:space:]]*Pending:[[:space:]]*[0-9]+$/ {print $2; exit}' || echo "")
 		if [[ -n "$q_status" && "$q_status" =~ ^[0-9]+$ ]]; then
 			quarantine_pending="$q_status"
 		fi
@@ -709,9 +701,7 @@ _security_summary_json() {
 	# Build JSON safely using jq to prevent injection via session_filter
 	local session_json="null"
 	if [[ -n "$session_filter" ]]; then
-		local safe_session
-		safe_session=$(_sanitize_session_filter "$session_filter")
-		session_json=$(jq -n --arg s "$safe_session" '$s')
+		session_json=$(jq -n --arg s "$session_filter" '$s')
 	fi
 
 	jq -n \
