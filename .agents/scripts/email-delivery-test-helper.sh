@@ -142,7 +142,7 @@ analyze_spam_content() {
 	local high_risk_found=0
 	for phrase in "${high_risk_phrases[@]}"; do
 		local count
-		count=$(echo "$content" | grep -ciE "$phrase" 2>/dev/null || true)
+		count=$(echo "$content" | grep -ciE "$phrase" || true)
 		count="${count:-0}"
 		if [[ "$count" -gt 0 ]]; then
 			print_warning "High-risk phrase found: '$phrase' ($count occurrences)"
@@ -194,7 +194,7 @@ analyze_spam_content() {
 	local medium_risk_found=0
 	for phrase in "${medium_risk_phrases[@]}"; do
 		local count
-		count=$(echo "$content" | grep -ciE "$phrase" 2>/dev/null || true)
+		count=$(echo "$content" | grep -ciE "$phrase" || true)
 		count="${count:-0}"
 		if [[ "$count" -gt 0 ]]; then
 			medium_risk_found=$((medium_risk_found + 1))
@@ -214,7 +214,7 @@ analyze_spam_content() {
 
 	# Image-to-text ratio
 	local img_count
-	img_count=$(echo "$content" | grep -ciE '<img' 2>/dev/null || true)
+	img_count=$(echo "$content" | grep -ciE '<img' || true)
 	img_count="${img_count:-0}"
 	local text_length
 	text_length=$(echo "$content" | sed 's/<[^>]*>//g' | tr -s '[:space:]' | wc -c | tr -d ' ')
@@ -230,7 +230,7 @@ analyze_spam_content() {
 
 	# URL analysis
 	local url_count
-	url_count=$(echo "$content" | grep -coiE 'https?://' 2>/dev/null || true)
+	url_count=$(echo "$content" | grep -coiE 'https?://' || true)
 	url_count="${url_count:-0}"
 	if [[ "$url_count" -gt 20 ]]; then
 		print_warning "Excessive URLs ($url_count) - may trigger spam filters"
@@ -240,7 +240,7 @@ analyze_spam_content() {
 
 	# Shortened URLs
 	local short_url_count
-	short_url_count=$(echo "$content" | grep -ciE 'bit\.ly|tinyurl|t\.co|goo\.gl|ow\.ly|is\.gd|buff\.ly' 2>/dev/null || true)
+	short_url_count=$(echo "$content" | grep -ciE 'bit\.ly|tinyurl|t\.co|goo\.gl|ow\.ly|is\.gd|buff\.ly' || true)
 	short_url_count="${short_url_count:-0}"
 	if [[ "$short_url_count" -gt 0 ]]; then
 		print_warning "URL shorteners detected ($short_url_count) - spam trigger"
@@ -258,7 +258,7 @@ analyze_spam_content() {
 
 	# JavaScript (should never be in email)
 	local js_count
-	js_count=$(echo "$content" | grep -ciE '<script|javascript:' 2>/dev/null || true)
+	js_count=$(echo "$content" | grep -ciE '<script|javascript:' || true)
 	js_count="${js_count:-0}"
 	if [[ "$js_count" -gt 0 ]]; then
 		print_error "JavaScript detected ($js_count) - will be stripped and may trigger spam"
@@ -353,7 +353,7 @@ check_spamassassin() {
 
 	print_info "Running SpamAssassin analysis..."
 	local sa_output
-	sa_output=$(spamassassin -t <"$input_file" 2>/dev/null || true)
+	sa_output=$(spamassassin -t <"$input_file" 2>>"${AIDEVOPS_LOG_FILE:-/dev/null}" || true)
 
 	if [[ -z "$sa_output" ]]; then
 		print_warning "SpamAssassin returned no output"
@@ -958,7 +958,7 @@ full_report() {
 	print_header "1. DNS Authentication"
 	local health_script="$SCRIPT_DIR/email-health-check-helper.sh"
 	if [[ -x "$health_script" ]]; then
-		"$health_script" check "$domain" 2>/dev/null || true
+		"$health_script" check "$domain" || true
 	else
 		print_info "Run: email-health-check-helper.sh check $domain"
 	fi
@@ -1003,7 +1003,7 @@ show_help() {
 	echo "$USAGE_COMMAND_OPTIONS"
 	echo ""
 	echo "Spam Content Analysis:"
-	echo "  spam-check [file]             Analyse email content for spam triggers"
+	echo "  spam-check [file]             Analyze email content for spam triggers"
 	echo "  spamassassin [file]           Run SpamAssassin analysis (if installed)"
 	echo ""
 	echo "Provider Deliverability:"

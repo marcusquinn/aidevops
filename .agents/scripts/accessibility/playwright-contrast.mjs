@@ -536,8 +536,8 @@ async function main() {
       timeout: options.timeout,
     });
 
-    // Allow dynamic content to settle (CSS, web fonts, lazy styles)
-    await page.waitForTimeout(1500);
+    // Wait for web fonts to load (affects text size and contrast calculations)
+    await page.evaluate(() => document.fonts.ready);
 
     // Extract contrast data from all visible elements
     const results = await page.evaluate(extractContrastData);
