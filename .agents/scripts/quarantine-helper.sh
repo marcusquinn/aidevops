@@ -274,7 +274,7 @@ cmd_list() {
 	echo "---"
 
 	tail -n "$last_n" "$QUARANTINE_PENDING" | jq -c ${jq_args[@]+"${jq_args[@]}"} "$jq_filter" 2>/dev/null | while IFS= read -r line; do
-		local id ts src sev cat content_preview
+		# Note: no 'local' — this runs in a subshell (piped while-read)
 		id="$(printf '%s' "$line" | jq -r '.id // "?"')"
 		ts="$(printf '%s' "$line" | jq -r '.timestamp // "?"')"
 		src="$(printf '%s' "$line" | jq -r '.source // "?"')"
@@ -375,7 +375,7 @@ cmd_digest() {
 
 		printf '%s\n' "$src_items" | while IFS= read -r line; do
 			[[ -z "$line" ]] && continue
-			local id ts sev cat content wid
+			# Note: no 'local' — this runs in a subshell (piped while-read)
 			id="$(printf '%s' "$line" | jq -r '.id // "?"')"
 			ts="$(printf '%s' "$line" | jq -r '.timestamp // "?"')"
 			sev="$(printf '%s' "$line" | jq -r '.severity // "?"')"
@@ -773,16 +773,11 @@ cmd_stats() {
 		echo "  Trusted (MCP):     ${trust_count}"
 		echo "  Dismissed (FP):    ${dismiss_count}"
 
-		if [[ "$reviewed_count" -gt 0 ]]; then
-			local actionable=$((allow_count + deny_count + trust_count))
-			local fp_rate
-			if [[ "$reviewed_count" -gt 0 ]]; then
-				fp_rate="$(awk "BEGIN { printf \"%.0f\", (${dismiss_count} / ${reviewed_count}) * 100 }")"
-			else
-				fp_rate="0"
-			fi
-			echo "  False positive rate: ${fp_rate}%"
-		fi
+		# reviewed_count > 0 already guaranteed by outer guard (line 758)
+		local fp_rate
+		fp_rate="$(awk -v dismissed="$dismiss_count" -v total="$reviewed_count" \
+			'BEGIN { printf "%.0f", (dismissed / total) * 100 }')"
+		echo "  False positive rate: ${fp_rate}%"
 	fi
 
 	# Config file status
@@ -820,6 +815,12 @@ cmd_purge() {
 		esac
 	done
 
+	# Validate older_than_days is a positive integer
+	if ! [[ "$older_than_days" =~ ^[0-9]+$ ]] || [[ "$older_than_days" -eq 0 ]]; then
+		log_error "Invalid --older-than value: '${older_than_days}' (must be a positive integer)"
+		return 1
+	fi
+
 	if ! command -v jq &>/dev/null; then
 		log_error "jq is required for purge command"
 		return 1
@@ -835,13 +836,15 @@ cmd_purge() {
 
 	local purged=0
 
-	# Purge reviewed items
+	# Purge reviewed items (use --arg to avoid jq injection with cutoff_ts)
 	if [[ -f "$QUARANTINE_REVIEWED" ]]; then
 		local before_count
 		before_count="$(wc -l <"$QUARANTINE_REVIEWED" | tr -d ' ')"
 		local tmp_file
 		tmp_file="$(mktemp)"
-		jq -c "select(.reviewed_at > \"${cutoff_ts}\" or .reviewed_at == null)" "$QUARANTINE_REVIEWED" >"$tmp_file" 2>/dev/null || true
+		jq -c --arg cutoff "$cutoff_ts" \
+			'select(.reviewed_at > $cutoff or .reviewed_at == null)' \
+			"$QUARANTINE_REVIEWED" >"$tmp_file" 2>/dev/null || true
 		local after_count
 		after_count="$(wc -l <"$tmp_file" | tr -d ' ')"
 		mv "$tmp_file" "$QUARANTINE_REVIEWED"
@@ -855,7 +858,9 @@ cmd_purge() {
 		before_count="$(wc -l <"$QUARANTINE_PENDING" | tr -d ' ')"
 		local tmp_file
 		tmp_file="$(mktemp)"
-		jq -c "select(.timestamp > \"${cutoff_ts}\")" "$QUARANTINE_PENDING" >"$tmp_file" 2>/dev/null || true
+		jq -c --arg cutoff "$cutoff_ts" \
+			'select(.timestamp > $cutoff)' \
+			"$QUARANTINE_PENDING" >"$tmp_file" 2>/dev/null || true
 		local after_count
 		after_count="$(wc -l <"$tmp_file" | tr -d ' ')"
 		mv "$tmp_file" "$QUARANTINE_PENDING"
