@@ -269,6 +269,7 @@ collect_issues() {
 		# Check if there are more pages
 		local total
 		total=$(echo "$response" | jq -r '.total // 0')
+		total=$(sql_int "$total") || total=0
 		if [[ $((page * page_size)) -ge $total ]]; then
 			break
 		fi
@@ -365,6 +366,7 @@ collect_hotspots() {
 		paging=$(echo "$response" | jq -r '.paging // {}')
 		local total
 		total=$(echo "$paging" | jq -r '.total // 0')
+		total=$(sql_int "$total") || total=0
 		if [[ $((page * page_size)) -ge $total ]]; then
 			break
 		fi
@@ -471,12 +473,14 @@ cmd_collect() {
 	if collect_issues "$safe_run_id" "$project_key" "$branch"; then
 		local issue_count
 		issue_count=$(db "$COLLECTOR_DB" "SELECT COUNT(*) FROM audit_findings WHERE run_id=${safe_run_id} AND category='issue';")
+		issue_count=$(sql_int "$issue_count") || issue_count=0
 		total_findings=$((total_findings + issue_count))
 	fi
 
 	if collect_hotspots "$safe_run_id" "$project_key" "$branch"; then
 		local hotspot_count
 		hotspot_count=$(db "$COLLECTOR_DB" "SELECT COUNT(*) FROM audit_findings WHERE run_id=${safe_run_id} AND category='security_hotspot';")
+		hotspot_count=$(sql_int "$hotspot_count") || hotspot_count=0
 		total_findings=$((total_findings + hotspot_count))
 	fi
 
@@ -510,6 +514,15 @@ cmd_query() {
 	done
 
 	ensure_db
+
+	# Validate format against allowed values (whitelist) for defense-in-depth
+	case "$format" in
+	json | text) ;;
+	*)
+		log_error "Invalid format: $format (must be json/text)"
+		return 1
+		;;
+	esac
 
 	# Validate severity against allowed values (whitelist) to prevent injection
 	local severity_filter=""
@@ -615,6 +628,15 @@ cmd_export() {
 	done
 
 	ensure_db
+
+	# Validate format against allowed values (whitelist) for defense-in-depth
+	case "$format" in
+	json | csv) ;;
+	*)
+		log_error "Invalid format: $format (must be json/csv)"
+		return 1
+		;;
+	esac
 
 	if [[ "$format" == "csv" ]]; then
 		db "$COLLECTOR_DB" <<SQL
