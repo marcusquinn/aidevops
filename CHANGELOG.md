@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.171.5] - 2026-03-11
+
+### Fixed
+
+- simplify session context JSON fallback handling
+- address final session review feedback
+- resolve remaining session review feedback
+- align session context helper flags and fallbacks
+- harden session review security summaries
+
 ## [2.171.0] - 2026-03-10
 
 ### Added
