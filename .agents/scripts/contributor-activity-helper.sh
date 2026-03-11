@@ -29,8 +29,23 @@
 #   contributor-activity-helper.sh cross-repo-person-stats <path1> [path2 ...] [--period month]
 #
 # Output: markdown table or JSON suitable for embedding in health issues.
+#
+# Exit codes:
+#   0  - success (complete results)
+#   1  - error (invalid args, missing repo, etc.)
+#   75 - partial results (EX_TEMPFAIL from sysexits.h) — rate limit exhausted
+#        mid-run. Stdout still contains valid output but may be truncated.
+#        JSON output includes "partial": true. Markdown output includes an
+#        HTML comment <!-- partial-results --> for machine-readable detection.
+#        Callers should cache partial data but mark it as incomplete.
 
 set -euo pipefail
+
+# Distinct exit code for partial results (rate limit exhaustion mid-run).
+# Callers can distinguish "complete success" (0) from "valid but truncated" (75)
+# from "error" (1). 75 = EX_TEMPFAIL from sysexits.h — a temporary failure
+# that may succeed on retry.
+readonly EX_PARTIAL=75
 
 # Shared Python helper functions injected into all Python blocks to avoid
 # duplication. Defined once here, passed via sys.argv to each invocation.
@@ -1099,9 +1114,16 @@ else:
             print(f'| {d[\"login\"]} | {d[\"issues_created\"]} | {d[\"prs_created\"]} | {d[\"prs_merged\"]} | {d[\"commented_on\"]} | {pct}% |')
     if is_partial:
         print()
+        print('<!-- partial-results -->')
         print('_Partial results — GitHub Search API rate limit exhausted._')
 " "$format" "$period" "$_ps_partial"
 
+	# Return distinct exit code so callers can detect truncated payloads.
+	# EX_PARTIAL (75) means "valid output on stdout, but incomplete due to
+	# rate limiting". Callers should cache the output but mark it as partial.
+	if [[ "$_ps_partial" == "true" ]]; then
+		return "$EX_PARTIAL"
+	fi
 	return 0
 }
 
@@ -1152,18 +1174,31 @@ cross_repo_person_stats() {
 	# Collect JSON from each repo
 	local all_json=""
 	local repo_count=0
+	local _crps_any_partial=false
 	for rp in "${repo_paths[@]}"; do
 		if [[ ! -d "$rp/.git" && ! -f "$rp/.git" ]]; then
 			echo "Warning: $rp is not a git repository, skipping" >&2
 			continue
 		fi
 		local repo_json
+		local repo_rc=0
 		local -a extra_args=()
 		if [[ -n "$logins_override" ]]; then
 			extra_args+=(--logins "$logins_override")
 		fi
-		repo_json=$(person_stats "$rp" --period "$period" --format json ${extra_args[@]+"${extra_args[@]}"}) || repo_json="[]"
-		if echo "$repo_json" | jq -e . >/dev/null 2>&1; then
+		repo_json=$(person_stats "$rp" --period "$period" --format json ${extra_args[@]+"${extra_args[@]}"}) || repo_rc=$?
+		if [[ "$repo_rc" -eq "$EX_PARTIAL" ]]; then
+			_crps_any_partial=true
+		elif [[ "$repo_rc" -ne 0 ]]; then
+			repo_json='{"data":[],"partial":false}'
+		fi
+		# person_stats --format json returns {"data": [...], "partial": bool}.
+		# Extract the .data array for aggregation.
+		local repo_data
+		if repo_data=$(echo "$repo_json" | jq -e '.data // empty' 2>/dev/null); then
+			all_json+="${repo_data}"$'\n'
+		elif echo "$repo_json" | jq -e 'type == "array"' >/dev/null 2>&1; then
+			# Fallback: raw array (shouldn't happen, but defensive)
 			all_json+="${repo_json}"$'\n'
 		fi
 		repo_count=$((repo_count + 1))
@@ -1179,6 +1214,7 @@ import json
 format_type = sys.argv[1]
 period_name = sys.argv[2]
 repo_count = int(sys.argv[3])
+is_partial = sys.argv[4] == 'true'
 
 data = json.load(sys.stdin)
 
@@ -1199,7 +1235,8 @@ for r in results:
 results.sort(key=lambda x: x['total_output'], reverse=True)
 
 if format_type == 'json':
-    print(json.dumps({'repo_count': repo_count, 'contributors': results}, indent=2))
+    result = {'repo_count': repo_count, 'contributors': results, 'partial': is_partial}
+    print(json.dumps(result, indent=2))
 else:
     if not results:
         print(f'_No GitHub activity across {repo_count} repos for the last {period_name}._')
@@ -1212,8 +1249,16 @@ else:
         for r in results:
             pct = round(r['total_output'] / grand_total * 100, 1)
             print(f'| {r[\"login\"]} | {r[\"issues_created\"]} | {r[\"prs_created\"]} | {r[\"prs_merged\"]} | {r[\"commented_on\"]} | {pct}% |')
-" "$format" "$period" "$repo_count"
+    if is_partial:
+        print()
+        print('<!-- partial-results -->')
+        print('_Partial results — GitHub Search API rate limit exhausted._')
+" "$format" "$period" "$repo_count" "$_crps_any_partial"
 
+	# Propagate partial status to callers
+	if [[ "$_crps_any_partial" == "true" ]]; then
+		return "$EX_PARTIAL"
+	fi
 	return 0
 }
 
