@@ -143,7 +143,7 @@ tools:
   webfetch: false # Fetch web content
   task: true      # Spawn subagents
 ---
-```text
+```
 
 **Tool permission options:**
 
@@ -193,7 +193,7 @@ mcp_requirements:
   chrome-devtools:
     tools: [navigate_page, take_screenshot, new_page, list_pages]
 ---
-```text
+```
 
 **Example with multiple MCPs:**
 
@@ -206,7 +206,7 @@ mcp_requirements:
   snyk:
     tools: [snyk_sca_scan]
 ---
-```text
+```
 
 This convention documents which specific tools an agent needs from an MCP server. Currently informational only - OpenCode doesn't yet support `includeTools` filtering (see [OpenCode #7399](https://github.com/anomalyco/opencode/issues/7399)). When supported, our agent generator can use this to configure filtered MCP access.
 
@@ -606,7 +606,7 @@ Instead of putting everything in AGENTS.md:
 ## Database Schema Guidelines
 [50 lines of schema rules...]
 
-## API Design Patterns  
+## API Design Patterns
 [40 lines of API rules...]
 
 ## Testing Requirements
@@ -639,7 +639,7 @@ Read subagents only when task requires them.
    ```bash
    # Correct: Placeholder for secret
    curl -H "Authorization: Bearer ${API_TOKEN}" ...
-   
+
    # Wrong: Actual secret in example
    curl -H "Authorization: Bearer sk-abc123..." ...
    ```
@@ -658,7 +658,7 @@ Read subagents only when task requires them.
    # Bad
    Here's how to handle errors:
    [20 lines of error handling code]
-   
+
    # Good
    Search for `handle_api_error` in service-helper.sh for error handling pattern.
    ```
@@ -669,7 +669,7 @@ Read subagents only when task requires them.
    # Bad
    Here's the React Query pattern:
    [code that may be outdated]
-   
+
    # Good
    Use Context7 MCP to fetch current React Query documentation
    ```
@@ -679,7 +679,7 @@ Read subagents only when task requires them.
    ```markdown
    # Bad
    Current API endpoint: https://api.service.com/v2/...
-   
+
    # Good
    See `configs/service-config.json.txt` for current endpoints
    ```
@@ -732,7 +732,7 @@ When code examples are used during a task:
    ```bash
    # Search for similar instructions
    rg "pattern" .agents/
-   
+
    # Check files that might have parallel instructions
    # Note potential conflicts if change is made
    ```
@@ -745,9 +745,9 @@ When code examples are used during a task:
 5. **Request permission**:
 
    ```text
-   > Agent Feedback: While [task], I noticed [issue] in 
-   > `.agents/[file].md`. Related instructions also exist in 
-   > `[other-files]`. Suggested improvement: [change]. 
+   > Agent Feedback: While [task], I noticed [issue] in
+   > `.agents/[file].md`. Related instructions also exist in
+   > `[other-files]`. Suggested improvement: [change].
    > Should I update these after completing your request?
    ```
 
@@ -1077,7 +1077,7 @@ Keep the beginning of your prompts stable across calls:
 ```text
 # Good: Stable prefix, variable suffix
 [AGENTS.md content - stable]     ← Cached
-[Subagent content - stable]      ← Cached  
+[Subagent content - stable]      ← Cached
 [User message - variable]        ← Not cached
 
 # Bad: Variable content early
