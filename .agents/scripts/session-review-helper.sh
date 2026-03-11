@@ -681,7 +681,7 @@ _security_summary_json() {
 		else
 			context_result=$("$session_helper" get-context 2>/dev/null || echo "")
 		fi
-		session_context_json=$(printf '%s' "$context_result" | jq -c --argjson available true '. + {available: $available}' 2>/dev/null || echo '{"available":false}')
+		session_context_json=$(printf '%s' "$context_result" | jq -ce --argjson available true '. + {available: $available}' 2>/dev/null || echo '{"available":false}')
 	fi
 
 	# Quarantine — query helper if available
