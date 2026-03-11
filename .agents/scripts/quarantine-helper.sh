@@ -776,7 +776,7 @@ cmd_stats() {
 		# reviewed_count > 0 already guaranteed by outer guard (line 758)
 		local fp_rate
 		fp_rate="$(awk -v dismissed="$dismiss_count" -v total="$reviewed_count" \
-			'BEGIN { printf "%.0f", (dismissed / total) * 100 }')"
+			'BEGIN { if (total > 0) printf "%.0f", (dismissed / total) * 100; else print 0 }')"
 		echo "  False positive rate: ${fp_rate}%"
 	fi
 
