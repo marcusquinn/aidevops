@@ -444,7 +444,11 @@ capture_secretlint_findings() {
 	local output_file="$2"
 	local canonical_scan_root=""
 	local raw_output_file=""
+	local targets_file=""
 	local secretlint_exit=0
+	local target_path=""
+	local target_output=""
+	local target_exit=0
 
 	canonical_scan_root=$(cd "$scan_root" && pwd -P)
 	raw_output_file=$(mktemp "$PATCH_PREFLIGHT_TMP_DIR/secretlint-output.XXXXXX")
@@ -452,35 +456,64 @@ capture_secretlint_findings() {
 		print_error "Failed to allocate temporary file for secretlint output"
 		return 1
 	fi
-
-	(
-		cd "$canonical_scan_root" || exit 1
-		"${SECRETLINT_CMD[@]}" "**/*" --format compact >"$raw_output_file" 2>&1
-	)
-	secretlint_exit=$?
-
-	if secretlint_output_has_runtime_error "$raw_output_file"; then
-		print_error "Secretlint execution failed due to runtime error"
+	targets_file=$(mktemp "$PATCH_PREFLIGHT_TMP_DIR/secretlint-targets.XXXXXX")
+	if [[ -z "$targets_file" ]]; then
+		print_error "Failed to allocate temporary file for secretlint targets"
 		rm -f "$raw_output_file"
 		return 1
 	fi
 
-	if [[ $secretlint_exit -ne 0 ]]; then
-		if ! grep -Eq ': line [0-9]+, col [0-9]+, ' "$raw_output_file"; then
-			print_error "Secretlint execution failed with non-finding output"
-			rm -f "$raw_output_file"
-			return 1
+	(
+		cd "$canonical_scan_root" || exit 1
+		rg --files --hidden -g '!.git' -0 >"$targets_file"
+	)
+
+	if [[ ! -s "$targets_file" ]]; then
+		: >"$output_file"
+		rm -f "$raw_output_file" "$targets_file"
+		return 0
+	fi
+
+	while IFS= read -r -d '' target_path; do
+		target_output=$(
+			cd "$canonical_scan_root" || exit 1
+			"${SECRETLINT_CMD[@]}" "$target_path" --format compact 2>&1
+		)
+		target_exit=$?
+
+		if [[ -n "$target_output" ]]; then
+			printf '%s\n' "$target_output" >>"$raw_output_file"
 		fi
+
+		if [[ $target_exit -ne 0 ]]; then
+			if printf '%s\n' "$target_output" | grep -Eq ': line [0-9]+, col [0-9]+, '; then
+				continue
+			fi
+			secretlint_exit=1
+			break
+		fi
+	done <"$targets_file"
+
+	if secretlint_output_has_runtime_error "$raw_output_file"; then
+		print_error "Secretlint execution failed due to runtime error"
+		rm -f "$raw_output_file" "$targets_file"
+		return 1
+	fi
+
+	if [[ $secretlint_exit -ne 0 ]]; then
+		print_error "Secretlint execution failed with non-finding output"
+		rm -f "$raw_output_file" "$targets_file"
+		return 1
 	fi
 
 	if [[ ! -s "$raw_output_file" ]]; then
 		: >"$output_file"
-		rm -f "$raw_output_file"
+		rm -f "$raw_output_file" "$targets_file"
 		return 0
 	fi
 
 	normalize_secretlint_output "$canonical_scan_root" <"$raw_output_file" >"$output_file"
-	rm -f "$raw_output_file"
+	rm -f "$raw_output_file" "$targets_file"
 	return 0
 }
 
