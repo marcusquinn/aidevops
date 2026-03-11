@@ -294,6 +294,8 @@ _config_env_map() {
 	updates.openclaw_freshness_hours) echo "AIDEVOPS_OPENCLAW_FRESHNESS_HOURS" ;;
 	orchestration.supervisor_pulse) echo "AIDEVOPS_SUPERVISOR_PULSE" ;;
 	orchestration.repo_sync) echo "AIDEVOPS_REPO_SYNC" ;;
+	orchestration.max_workers_cap) echo "AIDEVOPS_MAX_WORKERS_CAP" ;;
+	orchestration.quality_debt_cap_pct) echo "AIDEVOPS_QUALITY_DEBT_CAP_PCT" ;;
 	*) echo "" ;;
 	esac
 	return 0

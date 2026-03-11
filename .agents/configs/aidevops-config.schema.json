@@ -99,6 +99,19 @@
           "type": "boolean",
           "default": true,
           "description": "Enable daily git pull --ff-only on clean repos. Env: AIDEVOPS_REPO_SYNC"
+        },
+        "max_workers_cap": {
+          "type": "integer",
+          "default": 8,
+          "minimum": 1,
+          "description": "Hard ceiling for pulse worker pool size after RAM-based calculation. Env: AIDEVOPS_MAX_WORKERS_CAP"
+        },
+        "quality_debt_cap_pct": {
+          "type": "integer",
+          "default": 30,
+          "minimum": 0,
+          "maximum": 100,
+          "description": "Maximum share of worker slots quality-debt issues may consume. Env: AIDEVOPS_QUALITY_DEBT_CAP_PCT"
         }
       },
       "additionalProperties": false

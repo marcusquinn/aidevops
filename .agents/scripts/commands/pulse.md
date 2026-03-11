@@ -662,18 +662,20 @@ batch-strategy-helper.sh validate --tasks "$TASKS_JSON"
 8. `simplification-debt` issues (human-approved simplification opportunities)
 9. Oldest issues
 
-### Quality-debt concurrency cap (30%)
+### Quality-debt concurrency cap (configurable, default 30%)
 
 Issues labelled `quality-debt` (created by `quality-feedback-helper.sh scan-merged`) represent unactioned review feedback from merged PRs. These are important but should not crowd out new feature work.
 
-**Rule: quality-debt issues may consume at most 30% of available worker slots.** Calculate: `QUALITY_DEBT_MAX = floor(MAX_WORKERS * 0.30)` (minimum 1). Count running workers whose command line contains a `quality-debt` issue number, plus open `quality-debt` issues with `status:in-progress` or `status:queued` labels. If the count >= `QUALITY_DEBT_MAX`, skip remaining quality-debt issues and dispatch higher-priority work instead.
+**Rule: quality-debt issues may consume at most `QUALITY_DEBT_CAP_PCT` of available worker slots.** Default is 30%. Pulse pre-fetched state includes the active cap as `Quality-debt cap: **X%** of worker pool` from `pulse-wrapper.sh`. Calculate: `QUALITY_DEBT_MAX = floor(MAX_WORKERS * QUALITY_DEBT_CAP_PCT / 100)` (minimum 1). Count running workers whose command line contains a `quality-debt` issue number, plus open `quality-debt` issues with `status:in-progress` or `status:queued` labels. If the count >= `QUALITY_DEBT_MAX`, skip remaining quality-debt issues and dispatch higher-priority work instead.
 
 ```bash
 # Count active quality-debt workers
 QUALITY_DEBT_ACTIVE=$(gh issue list --repo <slug> --label "quality-debt" --label "status:in-progress" --state open --json number --jq 'length' || echo 0)
 QUALITY_DEBT_QUEUED=$(gh issue list --repo <slug> --label "quality-debt" --label "status:queued" --state open --json number --jq 'length' || echo 0)
 QUALITY_DEBT_CURRENT=$((QUALITY_DEBT_ACTIVE + QUALITY_DEBT_QUEUED))
-QUALITY_DEBT_MAX=$(( MAX_WORKERS * 30 / 100 ))
+# Read from pre-fetched state section (default 30 if unavailable)
+QUALITY_DEBT_CAP_PCT=<from pre-fetched "Quality-debt cap: **X%**" line, default 30>
+QUALITY_DEBT_MAX=$(( MAX_WORKERS * QUALITY_DEBT_CAP_PCT / 100 ))
 [[ "$QUALITY_DEBT_MAX" -lt 1 ]] && QUALITY_DEBT_MAX=1
 ```
 

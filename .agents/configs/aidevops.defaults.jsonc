@@ -92,7 +92,17 @@
 
     // Enable daily git pull --ff-only on clean repos.
     // Env override: AIDEVOPS_REPO_SYNC
-    "repo_sync": true
+    "repo_sync": true,
+
+    // Hard ceiling for pulse worker pool size after RAM-based calculation.
+    // Default 8 preserves current behavior.
+    // Env override: AIDEVOPS_MAX_WORKERS_CAP
+    "max_workers_cap": 8,
+
+    // Maximum share of worker slots that quality-debt issues may consume.
+    // Default 30 preserves current behavior.
+    // Env override: AIDEVOPS_QUALITY_DEBT_CAP_PCT
+    "quality_debt_cap_pct": 30
   },
 
   // ---------------------------------------------------------------------------

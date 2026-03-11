@@ -54,16 +54,17 @@ source "${SCRIPT_DIR}/worker-lifecycle-common.sh"
 #######################################
 # Configuration
 #######################################
-PULSE_STALE_THRESHOLD="${PULSE_STALE_THRESHOLD:-3600}"    # 60 min hard ceiling (raised from 30 min — GH#2958)
-PULSE_IDLE_TIMEOUT="${PULSE_IDLE_TIMEOUT:-300}"           # 5 min idle = process completed, sitting in file watcher (t1398.3)
-PULSE_IDLE_CPU_THRESHOLD="${PULSE_IDLE_CPU_THRESHOLD:-5}" # CPU% below this = idle (0-100 scale)
-PULSE_PROGRESS_TIMEOUT="${PULSE_PROGRESS_TIMEOUT:-600}"   # 10 min no log output = stuck (GH#2958)
-ORPHAN_MAX_AGE="${ORPHAN_MAX_AGE:-7200}"                  # 2 hours — kill orphans older than this
-RAM_PER_WORKER_MB="${RAM_PER_WORKER_MB:-1024}"            # 1 GB per worker
-RAM_RESERVE_MB="${RAM_RESERVE_MB:-8192}"                  # 8 GB reserved for OS + user apps
-MAX_WORKERS_CAP="${MAX_WORKERS_CAP:-8}"                   # Hard ceiling regardless of RAM
-DAILY_PR_CAP="${DAILY_PR_CAP:-5}"                         # Max PRs created per repo per day (GH#3821)
-PRODUCT_RESERVATION_PCT="${PRODUCT_RESERVATION_PCT:-60}"  # % of worker slots reserved for product repos (t1423)
+PULSE_STALE_THRESHOLD="${PULSE_STALE_THRESHOLD:-3600}"                                                  # 60 min hard ceiling (raised from 30 min — GH#2958)
+PULSE_IDLE_TIMEOUT="${PULSE_IDLE_TIMEOUT:-300}"                                                         # 5 min idle = process completed, sitting in file watcher (t1398.3)
+PULSE_IDLE_CPU_THRESHOLD="${PULSE_IDLE_CPU_THRESHOLD:-5}"                                               # CPU% below this = idle (0-100 scale)
+PULSE_PROGRESS_TIMEOUT="${PULSE_PROGRESS_TIMEOUT:-600}"                                                 # 10 min no log output = stuck (GH#2958)
+ORPHAN_MAX_AGE="${ORPHAN_MAX_AGE:-7200}"                                                                # 2 hours — kill orphans older than this
+RAM_PER_WORKER_MB="${RAM_PER_WORKER_MB:-1024}"                                                          # 1 GB per worker
+RAM_RESERVE_MB="${RAM_RESERVE_MB:-8192}"                                                                # 8 GB reserved for OS + user apps
+MAX_WORKERS_CAP="${MAX_WORKERS_CAP:-$(config_get "orchestration.max_workers_cap" "8")}"                 # Hard ceiling regardless of RAM
+DAILY_PR_CAP="${DAILY_PR_CAP:-5}"                                                                       # Max PRs created per repo per day (GH#3821)
+PRODUCT_RESERVATION_PCT="${PRODUCT_RESERVATION_PCT:-60}"                                                # % of worker slots reserved for product repos (t1423)
+QUALITY_DEBT_CAP_PCT="${QUALITY_DEBT_CAP_PCT:-$(config_get "orchestration.quality_debt_cap_pct" "30")}" # % cap for quality-debt dispatch share
 
 # Process guard limits (t1398)
 CHILD_RSS_LIMIT_KB="${CHILD_RSS_LIMIT_KB:-2097152}"           # 2 GB default — kill child if RSS exceeds this
@@ -83,6 +84,10 @@ RAM_RESERVE_MB=$(_validate_int RAM_RESERVE_MB "$RAM_RESERVE_MB" 8192)
 MAX_WORKERS_CAP=$(_validate_int MAX_WORKERS_CAP "$MAX_WORKERS_CAP" 8)
 DAILY_PR_CAP=$(_validate_int DAILY_PR_CAP "$DAILY_PR_CAP" 5 1)
 PRODUCT_RESERVATION_PCT=$(_validate_int PRODUCT_RESERVATION_PCT "$PRODUCT_RESERVATION_PCT" 60 0)
+QUALITY_DEBT_CAP_PCT=$(_validate_int QUALITY_DEBT_CAP_PCT "$QUALITY_DEBT_CAP_PCT" 30 0)
+if [[ "$QUALITY_DEBT_CAP_PCT" -gt 100 ]]; then
+	QUALITY_DEBT_CAP_PCT=100
+fi
 CHILD_RSS_LIMIT_KB=$(_validate_int CHILD_RSS_LIMIT_KB "$CHILD_RSS_LIMIT_KB" 2097152 1)
 CHILD_RUNTIME_LIMIT=$(_validate_int CHILD_RUNTIME_LIMIT "$CHILD_RUNTIME_LIMIT" 1800 1)
 SHELLCHECK_RSS_LIMIT_KB=$(_validate_int SHELLCHECK_RSS_LIMIT_KB "$SHELLCHECK_RSS_LIMIT_KB" 1048576 1)
@@ -921,17 +926,19 @@ _append_priority_allocations() {
 	fi
 
 	# Read allocation values
-	local max_workers product_repos tooling_repos product_min tooling_max reservation_pct
+	local max_workers product_repos tooling_repos product_min tooling_max reservation_pct quality_debt_cap_pct
 	max_workers=$(grep '^MAX_WORKERS=' "$alloc_file" | cut -d= -f2) || max_workers=4
 	product_repos=$(grep '^PRODUCT_REPOS=' "$alloc_file" | cut -d= -f2) || product_repos=0
 	tooling_repos=$(grep '^TOOLING_REPOS=' "$alloc_file" | cut -d= -f2) || tooling_repos=0
 	product_min=$(grep '^PRODUCT_MIN=' "$alloc_file" | cut -d= -f2) || product_min=0
 	tooling_max=$(grep '^TOOLING_MAX=' "$alloc_file" | cut -d= -f2) || tooling_max=0
 	reservation_pct=$(grep '^PRODUCT_RESERVATION_PCT=' "$alloc_file" | cut -d= -f2) || reservation_pct=60
+	quality_debt_cap_pct=$(grep '^QUALITY_DEBT_CAP_PCT=' "$alloc_file" | cut -d= -f2) || quality_debt_cap_pct=30
 
 	echo "Worker pool: **${max_workers}** total slots"
 	echo "Product repos (${product_repos}): **${product_min}** reserved slots (${reservation_pct}% minimum)"
 	echo "Tooling repos (${tooling_repos}): **${tooling_max}** slots (remainder)"
+	echo "Quality-debt cap: **${quality_debt_cap_pct}%** of worker pool"
 	echo ""
 	echo "**Enforcement rules:**"
 	echo "- Before dispatching a tooling-repo worker, check: are product-repo workers using fewer than ${product_min} slots? If yes, the remaining product slots are reserved — do NOT fill them with tooling work."
@@ -1891,6 +1898,7 @@ calculate_priority_allocations() {
 		echo "PRODUCT_MIN=${product_min}"
 		echo "TOOLING_MAX=${tooling_max}"
 		echo "PRODUCT_RESERVATION_PCT=${PRODUCT_RESERVATION_PCT}"
+		echo "QUALITY_DEBT_CAP_PCT=${QUALITY_DEBT_CAP_PCT}"
 	} >"$alloc_file"
 
 	echo "[pulse-wrapper] Priority allocations: product_min=${product_min}, tooling_max=${tooling_max} (${product_repos} product, ${tooling_repos} tooling repos, ${max_workers} total slots)" >>"$LOGFILE"
