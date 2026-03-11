@@ -862,10 +862,10 @@ scan_legacy_pulse_findings() {
 
 	while IFS= read -r finding; do
 		local finding_id file severity description
-		finding_id=$(echo "$finding" | jq -r '.id')
-		file=$(echo "$finding" | jq -r '.file')
-		severity=$(echo "$finding" | jq -r '.severity')
-		description=$(echo "$finding" | jq -r '.description')
+		finding_id=$(jq -r '.id' <<<"$finding")
+		file=$(jq -r '.file' <<<"$finding")
+		severity=$(jq -r '.severity' <<<"$finding")
+		description=$(jq -r '.description' <<<"$finding")
 
 		local existing
 		existing=$(db "$active_db" "
@@ -1148,13 +1148,13 @@ cmd_create() {
 
 	while IFS= read -r finding; do
 		local finding_id severity category path description pr_number source_tool
-		finding_id=$(echo "$finding" | jq -r '.id')
-		severity=$(echo "$finding" | jq -r '.severity')
-		category=$(echo "$finding" | jq -r '.category')
-		path=$(echo "$finding" | jq -r '.path // ""')
-		description=$(echo "$finding" | jq -r '.description')
-		pr_number=$(echo "$finding" | jq -r '.pr_number // ""')
-		source_tool=$(echo "$finding" | jq -r '.source_tool // "unknown"')
+		finding_id=$(jq -r '.id' <<<"$finding")
+		severity=$(jq -r '.severity' <<<"$finding")
+		category=$(jq -r '.category' <<<"$finding")
+		path=$(jq -r '.path // ""' <<<"$finding")
+		description=$(jq -r '.description' <<<"$finding")
+		pr_number=$(jq -r '.pr_number // ""' <<<"$finding")
+		source_tool=$(jq -r '.source_tool // "unknown"' <<<"$finding")
 
 		# Validate finding_id is an integer (defense-in-depth)
 		if ! [[ "$finding_id" =~ ^[0-9]+$ ]]; then
