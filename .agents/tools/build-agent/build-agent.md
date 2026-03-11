@@ -193,7 +193,20 @@ mcp_requirements:
   chrome-devtools:
     tools: [navigate_page, take_screenshot, new_page, list_pages]
 ---
-```
+```text
+
+**Example with multiple MCPs:**
+
+```yaml
+---
+description: Agent that uses browser and security tools
+mcp_requirements:
+  chrome-devtools:
+    tools: [navigate_page, take_screenshot]
+  snyk:
+    tools: [snyk_sca_scan]
+---
+```text
 
 This convention documents which specific tools an agent needs from an MCP server. Currently informational only - OpenCode doesn't yet support `includeTools` filtering (see [OpenCode #7399](https://github.com/anomalyco/opencode/issues/7399)). When supported, our agent generator can use this to configure filtered MCP access.
 
