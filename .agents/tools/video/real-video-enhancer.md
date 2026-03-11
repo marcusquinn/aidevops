@@ -354,12 +354,13 @@ Models are downloaded automatically on first use to `~/.cache/real-video-enhance
 # List available models
 real-video-enhancer-helper.sh models list
 
-# Download specific model
-real-video-enhancer-helper.sh models download rife-4.6
-
 # Clear model cache (re-download on next use)
 real-video-enhancer-helper.sh models clear
 ```
+
+> **Note**: Manual model download is not yet implemented. Models are downloaded
+> automatically on first use when running `enhance`, `upscale`, `interpolate`,
+> or `denoise` commands.
 
 **Model sizes**:
 - RIFE: ~200MB
