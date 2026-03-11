@@ -92,8 +92,12 @@ Use TodoWrite frequently to track tasks and show progress. Break complex tasks i
   - `rtk gh pr list` instead of `gh pr list` (29-80% reduction)
   - `rtk gh pr view N` instead of `gh pr view N` (87% reduction)
 - Do NOT use rtk for file reading (use MCP Read tool) or content search (use MCP Grep tool)
-- Do NOT use rtk when exact or machine-readable output is required: `gh api`, `gh ... --json`,
-  `gh ... --jq`, `git status --porcelain`, parser pipelines, or any diff/log output needed verbatim
+- Do NOT use rtk when exact, structured, or machine-readable output is required:
+  - API/JSON: `gh api`, `gh ... --json`, `gh ... --jq`, `jq` pipelines
+  - Porcelain/parseable: `git status --porcelain`, `git diff --stat`, `git log --format='...'`
+  - Test assertions: test runners where pass/fail counts or assertion messages must be exact
+  - Pipelines: any command whose output is piped to `grep`, `awk`, `sed`, `cut`, `jq`, or similar parsers
+  - Verbatim diffs: any diff/log output needed character-for-character (e.g., for patch application)
 - If rtk output looks summarized or filtered (missing values, only keys/types), rerun without `rtk`
 - Do NOT use rtk in helper scripts — scripts call tools directly, not through the agent
 - rtk is optional — if not installed, use commands normally. Never block on rtk absence.

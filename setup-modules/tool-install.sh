@@ -253,12 +253,12 @@ setup_rtk() {
 		echo "  Single binary, zero dependencies, <10ms overhead."
 		echo ""
 
-		local install_rtk="y"
+		local install_rtk="n"
 		if [[ "$INTERACTIVE_MODE" == "true" ]]; then
-			read -r -p "Install rtk for token-optimized CLI output? [Y/n]: " install_rtk
+			read -r -p "Install rtk for token-optimized CLI output? [y/N]: " install_rtk
 		fi
 
-		if [[ "$install_rtk" =~ ^[Yy]?$ ]]; then
+		if [[ "$install_rtk" =~ ^[Yy]$ ]]; then
 			VERIFIED_INSTALL_SHELL="sh"
 			if command -v brew >/dev/null 2>&1; then
 				if run_with_spinner "Installing rtk via Homebrew" brew install rtk; then
