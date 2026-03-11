@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.171.9] - 2026-03-11
+
+### Fixed
+
+- make pulse dispatch intelligence-first by default
+
 ## [2.171.8] - 2026-03-11
 
 ### Fixed
