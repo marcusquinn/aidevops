@@ -54,6 +54,110 @@ get_sha() {
 	return 0
 }
 
+# Resolve default branch for repo (cached per process)
+_QF_DEFAULT_BRANCH=""
+_QF_DEFAULT_BRANCH_REPO=""
+
+_get_default_branch() {
+	local repo_slug="$1"
+
+	if [[ -n "$_QF_DEFAULT_BRANCH" && "$_QF_DEFAULT_BRANCH_REPO" == "$repo_slug" ]]; then
+		echo "$_QF_DEFAULT_BRANCH"
+		return 0
+	fi
+
+	local branch
+	branch=$(gh api "repos/${repo_slug}" --jq '.default_branch' 2>/dev/null || echo "main")
+	if [[ -z "$branch" || "$branch" == "null" ]]; then
+		branch="main"
+	fi
+
+	_QF_DEFAULT_BRANCH="$branch"
+	_QF_DEFAULT_BRANCH_REPO="$repo_slug"
+	echo "$branch"
+	return 0
+}
+
+_trim_whitespace() {
+	local text="$1"
+	text="${text#"${text%%[![:space:]]*}"}"
+	text="${text%"${text##*[![:space:]]}"}"
+	echo "$text"
+	return 0
+}
+
+_extract_verification_snippet() {
+	local body_full="$1"
+	local line=""
+	local in_fence="false"
+
+	while IFS= read -r line; do
+		if [[ "$line" =~ ^\`\`\` ]]; then
+			if [[ "$in_fence" == "false" ]]; then
+				in_fence="true"
+				continue
+			fi
+			break
+		fi
+
+		if [[ "$in_fence" == "true" ]]; then
+			line=$(_trim_whitespace "$line")
+			if [[ -n "$line" ]]; then
+				echo "$line"
+				return 0
+			fi
+		fi
+	done <<<"$body_full"
+
+	while IFS= read -r line; do
+		line="${line#> }"
+		line="${line#- }"
+		line=$(_trim_whitespace "$line")
+		if [[ -n "$line" && ${#line} -ge 12 ]]; then
+			echo "$line"
+			return 0
+		fi
+	done <<<"$body_full"
+
+	return 1
+}
+
+_finding_still_exists_on_main() {
+	local repo_slug="$1"
+	local file_path="$2"
+	local line_num="$3"
+	local body_full="$4"
+
+	if [[ -z "$file_path" || "$file_path" == "null" ]]; then
+		return 0
+	fi
+
+	local default_branch
+	default_branch=$(_get_default_branch "$repo_slug")
+
+	local file_content
+	file_content=$(gh api -H "Accept: application/vnd.github.raw" \
+		"repos/${repo_slug}/contents/${file_path}?ref=${default_branch}" 2>/dev/null || true)
+
+	if [[ -z "$file_content" ]]; then
+		echo "[scan] Skipping resolved finding: ${file_path}:${line_num} - file missing on ${default_branch}" >&2
+		return 1
+	fi
+
+	local snippet
+	if ! snippet=$(_extract_verification_snippet "$body_full"); then
+		echo "[scan] Keeping unverifiable finding: ${file_path}:${line_num} - no snippet extracted" >&2
+		return 0
+	fi
+
+	if printf '%s' "$file_content" | grep -Fq "$snippet"; then
+		return 0
+	fi
+
+	echo "[scan] Skipping resolved finding: ${file_path}:${line_num} - snippet not found on ${default_branch}" >&2
+	return 1
+}
+
 # Show status of all checks
 cmd_status() {
 	local pr_number="${1:-}"
@@ -937,6 +1041,24 @@ _create_quality_debt_issues() {
 	local repo_slug="$1"
 	local pr_num="$2"
 	local findings="$3"
+	local verified_findings="[]"
+
+	while IFS= read -r finding; do
+		[[ -z "$finding" ]] && continue
+
+		local file_path
+		local line_num
+		local body_full
+		file_path=$(echo "$finding" | jq -r '.file // ""')
+		line_num=$(echo "$finding" | jq -r '.line // "?"')
+		body_full=$(echo "$finding" | jq -r '.body_full // .body // ""')
+
+		if _finding_still_exists_on_main "$repo_slug" "$file_path" "$line_num" "$body_full"; then
+			verified_findings=$(echo "$verified_findings" "$finding" | jq -s '.[0] + [.[1]]')
+		fi
+	done < <(echo "$findings" | jq -c '.[]')
+
+	findings="$verified_findings"
 
 	local finding_count
 	finding_count=$(echo "$findings" | jq 'length' 2>/dev/null || echo "0")
@@ -1235,4 +1357,6 @@ main() {
 	return 0
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+	main "$@"
+fi
