@@ -289,29 +289,16 @@ check_progress_stall() {
 	fi
 
 	# Check OpenCode session DB for recent messages
-	local db_path="${HOME}/.local/share/opencode/opencode.db"
 	local has_recent_activity=false
 
-	if [[ -f "$db_path" ]]; then
-		local session_title=""
-		if [[ "$cmd" =~ --title[[:space:]]+\"([^\"]+)\" ]] || [[ "$cmd" =~ --title[[:space:]]+([^[:space:]]+) ]]; then
-			session_title="${BASH_REMATCH[1]}"
-		fi
+	local session_title=""
+	session_title=$(_extract_session_title_from_cmd "$cmd")
 
-		if [[ -n "$session_title" ]]; then
-			local escaped_title="${session_title//\'/\'\'}"
-			local recent_count
-			recent_count=$(sqlite3 "$db_path" "
-				SELECT COUNT(*)
-				FROM message m
-				JOIN session s ON m.session_id = s.id
-				WHERE s.title LIKE '%${escaped_title}%'
-				AND m.created_at > datetime('now', '-${WORKER_PROGRESS_TIMEOUT} seconds')
-			" || echo 0)
-
-			if [[ "$recent_count" -gt 0 ]]; then
-				has_recent_activity=true
-			fi
+	if [[ -n "$session_title" ]]; then
+		local recent_count
+		recent_count=$(_count_recent_opencode_messages "$session_title" "$WORKER_PROGRESS_TIMEOUT")
+		if [[ "$recent_count" -gt 0 ]]; then
+			has_recent_activity=true
 		fi
 	fi
 

@@ -11,6 +11,9 @@
 #   _get_process_age()        Get process age in seconds from ps etime
 #   _get_pid_cpu()            Get integer CPU% for a single PID
 #   _get_process_tree_cpu()   Get CPU% summed across a process tree (BFS)
+#   _extract_session_title_from_cmd() Extract session title from opencode CLI args
+#   _count_recent_opencode_messages() Count recent OpenCode messages by title match
+#   _collect_worker_stall_evidence()  Summarise recent worker transcript/output tail
 #   _sanitize_log_field()     Strip control characters from log fields
 #   _sanitize_markdown()      Strip @ mentions and backticks from markdown
 #   _validate_int()           Validate and sanitize integer config values
@@ -176,6 +179,148 @@ _get_process_tree_cpu() {
 	return 0
 }
 
+#######################################
+# Extract the --title value from an opencode command line
+# Arguments:
+#   $1 - command line string
+# Returns: session title via stdout, or empty string if absent
+#######################################
+_extract_session_title_from_cmd() {
+	local cmd="$1"
+	local session_title=""
+
+	if [[ "$cmd" =~ --title[[:space:]]+\"([^\"]+)\" ]]; then
+		session_title="${BASH_REMATCH[1]}"
+	elif [[ "$cmd" =~ --title[[:space:]]+([^[:space:]]+) ]]; then
+		session_title="${BASH_REMATCH[1]}"
+	fi
+
+	printf '%s' "$session_title"
+	return 0
+}
+
+#######################################
+# Count recent OpenCode messages for sessions matching a title fragment
+# Arguments:
+#   $1 - title fragment (task ID or session title)
+#   $2 - recent window in seconds
+# Returns: integer count via stdout
+#######################################
+_count_recent_opencode_messages() {
+	local session_match="$1"
+	local recent_window="$2"
+	local db_path="${HOME}/.local/share/opencode/opencode.db"
+
+	[[ -n "$session_match" ]] || {
+		printf '%s' "0"
+		return 0
+	}
+	[[ "$recent_window" =~ ^[0-9]+$ ]] || recent_window=180
+
+	if [[ ! -f "$db_path" ]]; then
+		printf '%s' "0"
+		return 0
+	fi
+
+	local escaped_match="${session_match//\'/\'\'}"
+	local recent_count
+	recent_count=$(sqlite3 "$db_path" "
+		SELECT COUNT(*)
+		FROM message m
+		JOIN session s ON m.session_id = s.id
+		WHERE s.title LIKE '%${escaped_match}%'
+		AND m.time_created >= strftime('%s', 'now') - ${recent_window}
+	" 2>/dev/null || printf '%s' "0")
+	[[ "$recent_count" =~ ^[0-9]+$ ]] || recent_count=0
+
+	printf '%s' "$recent_count"
+	return 0
+}
+
+#######################################
+# Summarise recent worker transcript/output evidence for stall diagnosis
+# Arguments:
+#   $1 - session title fragment (task ID or exact title)
+#   $2 - log file path (optional)
+#   $3 - recent window in seconds
+#   $4 - number of log lines to inspect
+# Returns: tab-separated "recent_count<TAB>classification<TAB>excerpt"
+#######################################
+_collect_worker_stall_evidence() {
+	local session_match="$1"
+	local log_file="${2:-}"
+	local recent_window="${3:-180}"
+	local tail_lines="${4:-8}"
+	local recent_count
+	recent_count=$(_count_recent_opencode_messages "$session_match" "$recent_window")
+	[[ "$tail_lines" =~ ^[0-9]+$ ]] || tail_lines=8
+
+	local evidence
+	evidence=$(
+		python3 - "$log_file" "$tail_lines" <<'PY'
+import json
+import re
+import sys
+from collections import deque
+from pathlib import Path
+
+log_file = sys.argv[1]
+tail_lines = int(sys.argv[2])
+
+classification = "no_log"
+excerpt = ""
+
+if log_file and Path(log_file).is_file():
+    classification = "no_signal"
+    collected = deque(maxlen=max(tail_lines, 1))
+    for raw_line in Path(log_file).read_text(errors="ignore").splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        if line.startswith("{"):
+            try:
+                obj = json.loads(line)
+            except Exception:
+                pass
+            else:
+                event_type = obj.get("type") or obj.get("role") or obj.get("finish") or obj.get("event")
+                summary = obj.get("summary") or {}
+                title = summary.get("title") or obj.get("title") or ""
+                tool_name = ""
+                for key in ("tool", "toolName", "name"):
+                    value = obj.get(key)
+                    if isinstance(value, str) and value:
+                        tool_name = value
+                        break
+                line = " ".join(part for part in [event_type, title, tool_name] if part)
+                line = line.strip() or raw_line.strip()
+        collected.append(line)
+
+    excerpt = " || ".join(collected)
+    excerpt = re.sub(r"\s+", " ", excerpt).strip()
+    excerpt = excerpt[:240]
+    lowered = excerpt.lower()
+    if not excerpt:
+        classification = "empty_log"
+    elif any(token in lowered for token in ["rate limit", "too many requests", "429", "retry after"]):
+        classification = "rate_limited"
+    elif any(token in lowered for token in ["full_loop_complete", "pr_url", "worker_done", "exit:0"]):
+        classification = "completion_signal"
+    elif any(token in lowered for token in ["tool", "reasoning", "step", "assistant", "apply_patch", "bash"]):
+        classification = "activity_signal"
+
+excerpt = excerpt.replace("\t", " ").replace("|", "/")
+
+print(f"{classification}\t{excerpt}")
+PY
+	)
+
+	local classification excerpt
+	IFS=$'\t' read -r classification excerpt <<<"${evidence:-no_log$'\t'}"
+	printf '%s\t%s\t%s\n' "$recent_count" "$classification" "$excerpt"
+	return 0
+}
+
 # Sanitise untrusted strings before embedding in GitHub markdown comments.
 # Strips @ mentions (prevents unwanted notifications) and backtick sequences
 # (prevents markdown injection). Used for API response data that gets posted
@@ -290,11 +435,8 @@ _compute_struggle_ratio() {
 	local db_path="${HOME}/.local/share/opencode/opencode.db"
 
 	if [[ -f "$db_path" ]]; then
-		# Extract title from command to match session
 		local session_title=""
-		if [[ "$cmd" =~ --title[[:space:]]+\"([^\"]+)\" ]] || [[ "$cmd" =~ --title[[:space:]]+([^[:space:]]+) ]]; then
-			session_title="${BASH_REMATCH[1]}"
-		fi
+		session_title=$(_extract_session_title_from_cmd "$cmd")
 
 		if [[ -n "$session_title" ]]; then
 			# Query message count for the most recent session matching this title
