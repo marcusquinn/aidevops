@@ -264,6 +264,10 @@ cmd_set() {
 	array)
 		# Accept JSON array or comma-separated values
 		if [[ "$value" == "["* ]]; then
+			if ! jq -e . <<<"$value" >/dev/null 2>&1; then
+				print_error "Invalid array JSON value: $value"
+				return 1
+			fi
 			jq --arg k "$key" --argjson v "$value" 'setpath($k | split("."); $v)' "$SETTINGS_FILE" >"$tmp_file"
 		else
 			# Convert comma-separated to JSON array

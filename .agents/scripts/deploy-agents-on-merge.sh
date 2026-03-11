@@ -159,7 +159,10 @@ detect_changes() {
 			log_error "Invalid commit reference: $since_commit"
 			return 1
 		fi
-		changed_files=$(git -C "$REPO_DIR" diff --name-only "$since_commit" HEAD -- '.agents/' || echo "")
+		if ! changed_files=$(git -C "$REPO_DIR" diff --name-only "$since_commit" HEAD -- '.agents/' 2>&1); then
+			log_error "Failed to detect changed agent files: $changed_files"
+			return 1
+		fi
 	else
 		# Compare deployed VERSION with repo VERSION to detect staleness
 		local repo_version deployed_version

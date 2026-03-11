@@ -221,10 +221,20 @@ _cs_prefilter() {
 # We try python3 (most reliable), then iconv (partial), then skip.
 
 _cs_normalize_nfkc() {
-	local content="$1"
+	local has_input_arg="false"
+	local input_content=""
+
+	if [[ "$#" -gt 0 ]]; then
+		has_input_arg="true"
+		input_content="$1"
+	fi
 
 	if [[ "$CONTENT_SCANNER_SKIP_NORMALIZE" == "true" ]]; then
-		printf '%s' "$content"
+		if [[ "$has_input_arg" == "true" ]]; then
+			printf '%s' "$input_content"
+		else
+			cat
+		fi
 		return 0
 	fi
 
@@ -235,34 +245,62 @@ _cs_normalize_nfkc() {
 	# printf) so the exit code reflects whether normalization succeeded.
 	if command -v python3 &>/dev/null; then
 		local py_result
-		if py_result=$(printf '%s' "$content" | python3 -c "
+		if [[ "$has_input_arg" == "true" ]]; then
+			if py_result=$(printf '%s' "$input_content" | python3 -c "
 import sys, unicodedata
 text = sys.stdin.read()
 sys.stdout.write(unicodedata.normalize('NFKC', text) + 'x')
 "); then
-			py_result="${py_result%x}"
-			printf '%s' "$py_result"
-			return 0
+				py_result="${py_result%x}"
+				printf '%s' "$py_result"
+				return 0
+			fi
+		else
+			if py_result=$(python3 -c "
+import sys, unicodedata
+text = sys.stdin.read()
+sys.stdout.write(unicodedata.normalize('NFKC', text) + 'x')
+"); then
+				py_result="${py_result%x}"
+				printf '%s' "$py_result"
+				return 0
+			fi
 		fi
 	fi
 
 	# Try perl as fallback (Unicode::Normalize is core since 5.8)
 	if command -v perl &>/dev/null; then
 		local perl_result
-		if perl_result=$(printf '%s' "$content" | perl -MUnicode::Normalize -CS -e '
-			local $/;
-			my $text = <STDIN>;
-			print NFKC($text) . "x";
-		'); then
-			perl_result="${perl_result%x}"
-			printf '%s' "$perl_result"
-			return 0
+		if [[ "$has_input_arg" == "true" ]]; then
+			if perl_result=$(printf '%s' "$input_content" | perl -MUnicode::Normalize -CS -e '
+				local $/;
+				my $text = <STDIN>;
+				print NFKC($text) . "x";
+			'); then
+				perl_result="${perl_result%x}"
+				printf '%s' "$perl_result"
+				return 0
+			fi
+		else
+			if perl_result=$(perl -MUnicode::Normalize -CS -e '
+				local $/;
+				my $text = <STDIN>;
+				print NFKC($text) . "x";
+			'); then
+				perl_result="${perl_result%x}"
+				printf '%s' "$perl_result"
+				return 0
+			fi
 		fi
 	fi
 
 	# No normalizer available — pass through unchanged
 	_cs_log_warn "NFKC normalization unavailable (install python3 or perl)"
-	printf '%s' "$content"
+	if [[ "$has_input_arg" == "true" ]]; then
+		printf '%s' "$input_content"
+	else
+		cat
+	fi
 	return 0
 }
 
@@ -407,7 +445,10 @@ cmd_scan_file() {
 	fi
 
 	local content
-	content=$(<"$file")
+	if ! content=$(_cs_normalize_nfkc <"$file"); then
+		_cs_log_error "Failed to normalize file content"
+		return 1
+	fi
 	scan_content "$content"
 	return $?
 }
@@ -419,8 +460,8 @@ cmd_scan_stdin() {
 	fi
 
 	local content
-	if ! content=$(cat); then
-		_cs_log_error "Failed to read from stdin"
+	if ! content=$(_cs_normalize_nfkc); then
+		_cs_log_error "Failed to normalize stdin content"
 		return 1
 	fi
 
@@ -459,7 +500,10 @@ cmd_annotate_file() {
 	fi
 
 	local content
-	content=$(<"$file")
+	if ! content=$(_cs_normalize_nfkc <"$file"); then
+		_cs_log_error "Failed to normalize file content"
+		return 1
+	fi
 	_cs_annotate_content "$content"
 	return 0
 }
@@ -471,8 +515,8 @@ cmd_annotate_stdin() {
 	fi
 
 	local content
-	if ! content=$(cat); then
-		_cs_log_error "Failed to read from stdin"
+	if ! content=$(_cs_normalize_nfkc); then
+		_cs_log_error "Failed to normalize stdin content"
 		return 1
 	fi
 
