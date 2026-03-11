@@ -22,6 +22,54 @@ Each plan includes:
 
 ## Active Plans
 
+### [2026-03-11] gh Mutation `/bin/zsh` `posix_spawn` Failure
+
+**Status:** Planning
+**Estimate:** ~3h (ai:2h test:45m read:15m)
+**TODO:** t1434
+**Logged:** 2026-03-11
+**Trigger:** Provider-aware headless runtime release session hit `gh` write-path failures during merge and issue lifecycle steps.
+
+<!--TOON:plan{id,title,status,phase,total_phases,owner,tags,est,est_ai,est_test,est_read,logged}:
+p045,gh Mutation /bin/zsh posix_spawn Failure,planning,0,3,,github|release|orchestration|bugfix,3h,2h,45m,15m,2026-03-11T00:00Z
+-->
+
+#### Purpose
+
+Fix intermittent failures in mutating GitHub CLI commands on this machine/runtime. During PR #4116 merge/release, read-only commands such as `gh pr view` and `gh issue view` worked, but mutating paths such as `gh pr merge`, `gh api --method PUT .../merge`, and other write operations failed with `ENOENT: no such file or directory, posix_spawn '/bin/zsh'`.
+
+This is a framework-level reliability issue because full-loop, release, and supervisor workflows assume `gh` mutations work once auth is valid. Falling back to local git unblocked the release, but it bypasses part of the intended PR/issue lifecycle and is not acceptable as the normal automation path.
+
+#### Known Observations
+
+- The failure reproduces only on `gh` mutation commands; read-only `gh` commands continued to work in the same shell session.
+- `/bin/zsh` exists on disk, so this is not a simple missing-binary problem.
+- The failure occurred after a long interactive/release session with multiple worktrees and AI-run subprocesses.
+- Local git fallback succeeded, which suggests repo state and credentials were otherwise healthy.
+
+#### Phases
+
+- [ ] **Phase 1 — Reproduce and isolate** (~45m): Capture the smallest command matrix that distinguishes working read-only commands from failing mutation commands. Test from main repo, worktree, clean shell env, and minimal env (`env -i ...`). Record whether failure is tied to `gh`, shell selection, pager/editor config, or inherited env vars.
+
+- [ ] **Phase 2 — Root cause and fix** (~1.5h): Trace why `gh` attempts to spawn `/bin/zsh` for mutation paths. Check `SHELL`, git editor/pager env vars, `gh` config, and any aidevops wrappers that may inject shell-specific behavior. Implement the narrowest reliable fix in aidevops or local runtime setup.
+
+- [ ] **Phase 3 — Harden and verify** (~45m): Add a deterministic preflight/health check for `gh` mutation capability, document the failure mode, and ensure full-loop/release paths either recover cleanly or emit a precise blocked state instead of failing late.
+
+#### Acceptance Criteria
+
+- `gh pr merge` works reliably in the same contexts where `gh pr view` already works.
+- `gh api` mutation commands no longer fail with `/bin/zsh` `posix_spawn` in normal aidevops sessions.
+- Full-loop can complete PR merge/comment/close steps without requiring local git fallback.
+- A targeted verification command exists for future regressions.
+
+#### Decision Log
+
+| Date | Decision | Rationale |
+|------|----------|-----------|
+| 2026-03-11 | Track as framework bug, not machine-only note | The failure breaks release/merge automation and should be diagnosable by future sessions rather than rediscovered ad hoc. |
+| 2026-03-11 | Capture reproduction before changing defaults | `gh` reads worked while writes failed, so changing shell config blindly risks masking the real cause. |
+| 2026-03-11 | Keep local-git merge as emergency fallback only | It unblocks releases, but the normal path must preserve PR/issue automation and review-bot workflow integrity. |
+
 ### [2026-03-09] Grith-Inspired Security Enhancements
 
 **Status:** Planning
