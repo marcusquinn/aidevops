@@ -165,7 +165,7 @@ _security_cost_summary() {
                 output_tokens: ([.[].output_tokens] | add),
                 cache_tokens: ([.[].cache_read_tokens] | add),
                 cost: ([.[].cost_total] | add)
-            }) | sort_by(-.cost)' "$OBS_METRICS" 2>/dev/null) || result=""
+	            }) | sort_by(-.cost)' "$OBS_METRICS" 2>/dev/null || echo "")
 		else
 			result=$(jq -sr '[.[] ] | group_by(.model) | map({
                 model: .[0].model,
@@ -174,7 +174,7 @@ _security_cost_summary() {
                 output_tokens: ([.[].output_tokens] | add),
                 cache_tokens: ([.[].cache_read_tokens] | add),
                 cost: ([.[].cost_total] | add)
-            }) | sort_by(-.cost)' "$OBS_METRICS" 2>/dev/null) || result=""
+	            }) | sort_by(-.cost)' "$OBS_METRICS" 2>/dev/null || echo "")
 		fi
 
 		if [[ -n "$result" && "$result" != "[]" ]]; then
@@ -642,7 +642,7 @@ _security_summary_json() {
 		db_result=$(_security_cost_query_sqlite "json" "$session_filter" 2>/dev/null || echo "")
 		if [[ -n "$db_result" && "$db_result" != "[]" ]]; then
 			cost_json="$db_result"
-			cost_total=$(echo "$db_result" | jq '[.[].cost] | add // 0' 2>/dev/null) || cost_total=0
+			cost_total=$(echo "$db_result" | jq '[.[].cost] | add // 0' 2>/dev/null || echo "0")
 		fi
 	elif [[ -f "$OBS_METRICS" ]] && command -v jq &>/dev/null; then
 		local jq_result
@@ -654,7 +654,7 @@ _security_summary_json() {
 				output_tokens: ([.[].output_tokens] | add),
 				cache_tokens: ([.[].cache_read_tokens] | add),
 				cost: ([.[].cost_total] | add)
-			}) | sort_by(-.cost)' "$OBS_METRICS" 2>/dev/null) || jq_result=""
+			}) | sort_by(-.cost)' "$OBS_METRICS" 2>/dev/null || echo "")
 		else
 			jq_result=$(jq -sr '[.[] ] | group_by(.model) | map({
 				model: .[0].model,
@@ -663,11 +663,11 @@ _security_summary_json() {
 				output_tokens: ([.[].output_tokens] | add),
 				cache_tokens: ([.[].cache_read_tokens] | add),
 				cost: ([.[].cost_total] | add)
-			}) | sort_by(-.cost)' "$OBS_METRICS" 2>/dev/null) || jq_result=""
+			}) | sort_by(-.cost)' "$OBS_METRICS" 2>/dev/null || echo "")
 		fi
 		if [[ -n "$jq_result" && "$jq_result" != "[]" ]]; then
 			cost_json="$jq_result"
-			cost_total=$(echo "$jq_result" | jq '[.[].cost] | add // 0' 2>/dev/null) || cost_total=0
+			cost_total=$(echo "$jq_result" | jq '[.[].cost] | add // 0' 2>/dev/null || echo "0")
 		fi
 	fi
 
@@ -681,7 +681,9 @@ _security_summary_json() {
 		else
 			context_result=$("$session_helper" get-context 2>/dev/null || echo "")
 		fi
-		session_context_json=$(printf '%s' "$context_result" | jq -c --argjson available true '. + {available: $available}' 2>/dev/null || echo '{"available":true}')
+		if [[ -n "$context_result" ]]; then
+			session_context_json=$(printf '%s' "$context_result" | jq -c --argjson available true '. + {available: $available}' 2>/dev/null || echo '{"available":false}')
+		fi
 	fi
 
 	# Quarantine — query helper if available
@@ -703,10 +705,15 @@ _security_summary_json() {
 	if [[ -n "$session_filter" ]]; then
 		session_json=$(jq -n --arg s "$session_filter" '$s')
 	fi
+	local session_mode="false"
+	if [[ -n "$session_filter" ]]; then
+		session_mode="true"
+	fi
 
 	jq -n \
 		--arg timestamp "$(date -u '+%Y-%m-%dT%H:%M:%SZ')" \
 		--argjson session_filter "$session_json" \
+		--argjson session_mode "$session_mode" \
 		--arg posture "$posture" \
 		--argjson cost_breakdown "$cost_json" \
 		--argjson cost_total "$cost_total" \
@@ -727,11 +734,11 @@ _security_summary_json() {
 			session_filter: $session_filter,
 			posture: $posture,
 			cost: { total: $cost_total, breakdown: $cost_breakdown },
-			audit: { total_events: $audit_count, chain_intact: $chain_intact },
-			network: { logged_access: $net_access, flagged: $net_flagged, denied: $net_denied },
-			prompt_guard: { total_detections: $pg_total, blocked: $pg_blocks, warned: $pg_warns, sanitized: $pg_sanitizes },
+			audit: ({ total_events: $audit_count, chain_intact: $chain_intact } + if $session_mode then {global_only: true} else {} end),
+			network: ({ logged_access: $net_access, flagged: $net_flagged, denied: $net_denied } + if $session_mode then {global_only: true} else {} end),
+			prompt_guard: ({ total_detections: $pg_total, blocked: $pg_blocks, warned: $pg_warns, sanitized: $pg_sanitizes } + if $session_mode then {global_only: true} else {} end),
 			session_context: $session_context,
-			quarantine: { available: $quarantine_available, pending_items: $quarantine_pending }
+			quarantine: ({ available: $quarantine_available, pending_items: $quarantine_pending } + if $session_mode then {global_only: true} else {} end)
 		}'
 	return 0
 }
