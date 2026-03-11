@@ -2131,16 +2131,25 @@ resolve_rebase_conflicts() {
 
 		# Scan for prompt injection patterns in the conflict content.
 		# File content from external branches is untrusted input.
+		# Fail-closed: if scanner is missing or fails, skip AI resolution for safety.
 		local prompt_guard_script="${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/prompt-guard-helper.sh"
 		if [[ -x "$prompt_guard_script" ]]; then
 			local scan_result
-			scan_result=$("$prompt_guard_script" scan-file "$full_path" 2>/dev/null || echo "")
+			if ! scan_result=$("$prompt_guard_script" scan-file "$full_path" 2>/dev/null); then
+				log_warn "resolve_rebase_conflicts: scanner failed for $conflict_file — skipping AI resolution for safety"
+				failed_files="${failed_files}${failed_files:+, }${conflict_file}"
+				continue
+			fi
 			if [[ "$scan_result" == *"SUSPICIOUS"* || "$scan_result" == *"BLOCKED"* ]]; then
 				log_warn "resolve_rebase_conflicts: prompt injection detected in $conflict_file — skipping AI resolution"
 				log_warn "  Scan result: $scan_result"
 				failed_files="${failed_files}${failed_files:+, }${conflict_file}"
 				continue
 			fi
+		else
+			log_warn "resolve_rebase_conflicts: scanner missing — skipping AI resolution for safety"
+			failed_files="${failed_files}${failed_files:+, }${conflict_file}"
+			continue
 		fi
 
 		# Build a sandboxed prompt that treats file content as data, not instructions.
@@ -2148,8 +2157,17 @@ resolve_rebase_conflicts() {
 		# We write a temp file with the content for the AI to process, then
 		# write the result back ourselves.
 		local tmp_input tmp_output
-		tmp_input=$(mktemp "${TMPDIR:-/tmp}/rebase-input-XXXXXX")
-		tmp_output=$(mktemp "${TMPDIR:-/tmp}/rebase-output-XXXXXX")
+		tmp_input=$(mktemp "${TMPDIR:-/tmp}/rebase-input-XXXXXX") || {
+			log_warn "resolve_rebase_conflicts: failed to create temp input file for $conflict_file"
+			failed_files="${failed_files}${failed_files:+, }${conflict_file}"
+			continue
+		}
+		tmp_output=$(mktemp "${TMPDIR:-/tmp}/rebase-output-XXXXXX") || {
+			log_warn "resolve_rebase_conflicts: failed to create temp output file for $conflict_file"
+			rm -f "$tmp_input" 2>/dev/null || true
+			failed_files="${failed_files}${failed_files:+, }${conflict_file}"
+			continue
+		}
 
 		# Write content to temp file (AI reads only this scoped file)
 		printf '%s\n' "$file_content" >"$tmp_input"
@@ -2183,6 +2201,10 @@ TASK:
 			--allowedTools "Read,Write" \
 			--title "resolve-conflict-${task_id}-$(basename "$conflict_file")" \
 			"$resolve_prompt" 2>>"$SUPERVISOR_LOG" || ai_exit=$?
+
+		if [[ "$ai_exit" -ne 0 ]]; then
+			log_warn "  AI CLI failed with exit code $ai_exit for: $conflict_file"
+		fi
 
 		# Validate the AI output before applying it
 		local resolved_content=""
