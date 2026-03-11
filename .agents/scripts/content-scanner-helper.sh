@@ -47,6 +47,7 @@ source "${SCRIPT_DIR}/shared-constants.sh" || true
 CONTENT_SCANNER_QUIET="${CONTENT_SCANNER_QUIET:-false}"
 CONTENT_SCANNER_SKIP_NORMALIZE="${CONTENT_SCANNER_SKIP_NORMALIZE:-false}"
 CONTENT_SCANNER_SKIP_PREFILTER="${CONTENT_SCANNER_SKIP_PREFILTER:-false}"
+_CS_NORMALIZE_SENTINEL="__CS_NFKC_SENTINEL_4f6f6f9b__"
 
 # Prompt guard helper path
 PROMPT_GUARD="${SCRIPT_DIR}/prompt-guard-helper.sh"
@@ -231,37 +232,35 @@ _cs_normalize_nfkc() {
 
 	if [[ "$CONTENT_SCANNER_SKIP_NORMALIZE" == "true" ]]; then
 		if [[ "$has_input_arg" == "true" ]]; then
-			printf '%s' "$input_content"
+			printf '%s%s' "$input_content" "$_CS_NORMALIZE_SENTINEL"
 		else
 			cat
+			printf '%s' "$_CS_NORMALIZE_SENTINEL"
 		fi
 		return 0
 	fi
 
 	# Try python3 first (most reliable NFKC)
-	# Sentinel character preserves trailing newlines through command substitution.
-	# Bash $() strips trailing newlines, causing false "changed" detection.
-	# The sentinel is appended inside the normalizer process (not via separate
-	# printf) so the exit code reflects whether normalization succeeded.
+	# Sentinel preserves trailing newlines through outer command substitution.
+	# Bash $() strips trailing newlines, so the sentinel must survive until
+	# callers strip it after capture.
 	if command -v python3 &>/dev/null; then
 		local py_result
 		if [[ "$has_input_arg" == "true" ]]; then
-			if py_result=$(printf '%s' "$input_content" | python3 -c "
-import sys, unicodedata
+			if py_result=$(printf '%s' "$input_content" | CS_NORMALIZE_SENTINEL="$_CS_NORMALIZE_SENTINEL" python3 -c "
+import os, sys, unicodedata
 text = sys.stdin.read()
-sys.stdout.write(unicodedata.normalize('NFKC', text) + 'x')
+sys.stdout.write(unicodedata.normalize('NFKC', text) + os.environ['CS_NORMALIZE_SENTINEL'])
 "); then
-				py_result="${py_result%x}"
 				printf '%s' "$py_result"
 				return 0
 			fi
 		else
-			if py_result=$(python3 -c "
-import sys, unicodedata
+			if py_result=$(CS_NORMALIZE_SENTINEL="$_CS_NORMALIZE_SENTINEL" python3 -c "
+import os, sys, unicodedata
 text = sys.stdin.read()
-sys.stdout.write(unicodedata.normalize('NFKC', text) + 'x')
+sys.stdout.write(unicodedata.normalize('NFKC', text) + os.environ['CS_NORMALIZE_SENTINEL'])
 "); then
-				py_result="${py_result%x}"
 				printf '%s' "$py_result"
 				return 0
 			fi
@@ -272,22 +271,20 @@ sys.stdout.write(unicodedata.normalize('NFKC', text) + 'x')
 	if command -v perl &>/dev/null; then
 		local perl_result
 		if [[ "$has_input_arg" == "true" ]]; then
-			if perl_result=$(printf '%s' "$input_content" | perl -MUnicode::Normalize -CS -e '
+			if perl_result=$(printf '%s' "$input_content" | CS_NORMALIZE_SENTINEL="$_CS_NORMALIZE_SENTINEL" perl -MUnicode::Normalize -CS -e '
 				local $/;
 				my $text = <STDIN>;
-				print NFKC($text) . "x";
+				print NFKC($text) . $ENV{"CS_NORMALIZE_SENTINEL"};
 			'); then
-				perl_result="${perl_result%x}"
 				printf '%s' "$perl_result"
 				return 0
 			fi
 		else
-			if perl_result=$(perl -MUnicode::Normalize -CS -e '
+			if perl_result=$(CS_NORMALIZE_SENTINEL="$_CS_NORMALIZE_SENTINEL" perl -MUnicode::Normalize -CS -e '
 				local $/;
 				my $text = <STDIN>;
-				print NFKC($text) . "x";
+				print NFKC($text) . $ENV{"CS_NORMALIZE_SENTINEL"};
 			'); then
-				perl_result="${perl_result%x}"
 				printf '%s' "$perl_result"
 				return 0
 			fi
@@ -297,10 +294,23 @@ sys.stdout.write(unicodedata.normalize('NFKC', text) + 'x')
 	# No normalizer available — pass through unchanged
 	_cs_log_warn "NFKC normalization unavailable (install python3 or perl)"
 	if [[ "$has_input_arg" == "true" ]]; then
-		printf '%s' "$input_content"
+		printf '%s%s' "$input_content" "$_CS_NORMALIZE_SENTINEL"
 	else
 		cat
+		printf '%s' "$_CS_NORMALIZE_SENTINEL"
 	fi
+	return 0
+}
+
+_cs_strip_normalize_sentinel() {
+	local content="$1"
+
+	if [[ "$content" != *"$_CS_NORMALIZE_SENTINEL" ]]; then
+		_cs_log_error "Normalization output missing sentinel"
+		return 1
+	fi
+
+	printf '%s' "${content%"$_CS_NORMALIZE_SENTINEL"}"
 	return 0
 }
 
@@ -363,6 +373,9 @@ scan_content() {
 	# pre-filter can then match).
 	local normalized
 	normalized=$(_cs_normalize_nfkc "$content")
+	if ! normalized=$(_cs_strip_normalize_sentinel "$normalized"); then
+		return 1
+	fi
 
 	# Layer 1: Keyword pre-filter on NORMALIZED content
 	if ! _cs_prefilter "$normalized"; then
@@ -449,6 +462,10 @@ cmd_scan_file() {
 		_cs_log_error "Failed to normalize file content"
 		return 1
 	fi
+	if ! content=$(_cs_strip_normalize_sentinel "$content"); then
+		_cs_log_error "Failed to finalize normalized file content"
+		return 1
+	fi
 	scan_content "$content"
 	return $?
 }
@@ -462,6 +479,10 @@ cmd_scan_stdin() {
 	local content
 	if ! content=$(_cs_normalize_nfkc); then
 		_cs_log_error "Failed to normalize stdin content"
+		return 1
+	fi
+	if ! content=$(_cs_strip_normalize_sentinel "$content"); then
+		_cs_log_error "Failed to finalize normalized stdin content"
 		return 1
 	fi
 
@@ -504,6 +525,10 @@ cmd_annotate_file() {
 		_cs_log_error "Failed to normalize file content"
 		return 1
 	fi
+	if ! content=$(_cs_strip_normalize_sentinel "$content"); then
+		_cs_log_error "Failed to finalize normalized file content"
+		return 1
+	fi
 	_cs_annotate_content "$content"
 	return 0
 }
@@ -517,6 +542,10 @@ cmd_annotate_stdin() {
 	local content
 	if ! content=$(_cs_normalize_nfkc); then
 		_cs_log_error "Failed to normalize stdin content"
+		return 1
+	fi
+	if ! content=$(_cs_strip_normalize_sentinel "$content"); then
+		_cs_log_error "Failed to finalize normalized stdin content"
 		return 1
 	fi
 
@@ -651,6 +680,7 @@ cmd_test() {
 		local fw_input fw_output
 		fw_input=$(printf '\357\274\251\357\275\207\357\275\216\357\275\217\357\275\222\357\275\205')
 		fw_output=$(_cs_normalize_nfkc "$fw_input")
+		fw_output=$(_cs_strip_normalize_sentinel "$fw_output")
 		if [[ "$fw_output" == "Ignore" ]]; then
 			echo -e "  ${GREEN}PASS${NC} Fullwidth chars normalized to ASCII"
 			passed=$((passed + 1))
@@ -663,6 +693,7 @@ cmd_test() {
 		# Plain ASCII should pass through unchanged
 		local plain_output
 		plain_output=$(_cs_normalize_nfkc "Hello world")
+		plain_output=$(_cs_strip_normalize_sentinel "$plain_output")
 		if [[ "$plain_output" == "Hello world" ]]; then
 			echo -e "  ${GREEN}PASS${NC} Plain ASCII passes through unchanged"
 			passed=$((passed + 1))

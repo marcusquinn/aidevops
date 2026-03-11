@@ -211,7 +211,10 @@ deploy_scripts_only() {
 	else
 		# Fallback: tar-based copy
 		# Remove existing target contents first to match rsync --delete behavior
-		find "$target_scripts_dir" -mindepth 1 -delete || true
+		if ! find "$target_scripts_dir" -mindepth 1 -delete; then
+			log_error "Failed to clean target scripts directory: $target_scripts_dir"
+			return 1
+		fi
 		(cd "$source_dir" && tar cf - .) | (cd "$target_scripts_dir" && tar xf -)
 	fi
 
@@ -274,9 +277,13 @@ deploy_all_agents() {
 			rm -rf "$tmp_preserve"
 			return 1
 		fi
-		find "$TARGET_DIR" -mindepth 1 -maxdepth 1 \
+		if ! find "$TARGET_DIR" -mindepth 1 -maxdepth 1 \
 			! -name 'custom' ! -name 'draft' ! -name 'loop-state' \
-			-exec rm -rf {} + || true
+			-exec rm -rf {} +; then
+			log_error "Failed to clean target directory: $TARGET_DIR"
+			rm -rf "$tmp_preserve"
+			return 1
+		fi
 
 		# Copy all agents
 		(cd "$source_dir" && tar cf - --exclude='loop-state' --exclude='custom' --exclude='draft' .) |
