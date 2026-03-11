@@ -92,12 +92,13 @@ main() {
 
 	echo "[stats-wrapper] Starting at $(date -u +%Y-%m-%dT%H:%M:%SZ)" >>"$STATS_LOGFILE"
 
-	# Source pulse-wrapper to reuse its functions
-	# (update_health_issues, run_daily_quality_sweep, etc.)
-	# pulse-wrapper.sh has a source guard — main() won't execute on source.
-	# shellcheck source=pulse-wrapper.sh
-	source "${SCRIPT_DIR}/pulse-wrapper.sh" || {
-		echo "[stats-wrapper] Failed to source pulse-wrapper.sh" >>"$STATS_LOGFILE"
+	# Source stats-functions.sh for health dashboard and quality sweep functions.
+	# After t1431, these functions live in their own file instead of pulse-wrapper.sh.
+	# LOGFILE is set to STATS_LOGFILE so all function logging goes to stats.log.
+	LOGFILE="$STATS_LOGFILE"
+	# shellcheck source=stats-functions.sh
+	source "${SCRIPT_DIR}/stats-functions.sh" || {
+		echo "[stats-wrapper] Failed to source stats-functions.sh" >>"$STATS_LOGFILE"
 		return 1
 	}
 
