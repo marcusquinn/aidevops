@@ -271,15 +271,14 @@ When complete:
 
 **Changelog via commits** - Use conventional commit messages for auto-generated changelogs:
 
-```text
-# Good commit messages (auto-included in changelog)
-feat: add user authentication
-fix: resolve memory leak in connection pool
-docs: update API documentation
-
-# Excluded from changelog
-chore: update dependencies
-```
+| Prefix | Changelog Section | Example |
+|--------|-------------------|---------|
+| `feat:` | Added | `feat: add JWT authentication` |
+| `fix:` | Fixed | `fix: resolve memory leak in connection pool` |
+| `docs:` | Changed | `docs: update API documentation` |
+| `perf:` | Changed | `perf: optimize database queries` |
+| `refactor:` | Changed | `refactor: simplify auth middleware` |
+| `chore:` | (excluded) | `chore: update dependencies` |
 
 The release workflow auto-generates CHANGELOG.md from conventional commits. See `workflows/changelog.md`.
 
@@ -632,13 +631,7 @@ The loop is designed for maximum AI autonomy while preserving human control at s
 
 This is a gate between task development and preflight, not a suggestion. See `scripts/commands/full-loop.md` Step 3 completion criteria.
 
-**Changelog**: Auto-generated from conventional commits during release. Use proper prefixes:
-- `feat:` → Added section
-- `fix:` → Fixed section
-- `docs:` → Changed section
-- `chore:` → Excluded from changelog
-
-See `workflows/changelog.md` for details.
+**Changelog**: Auto-generated from conventional commits during release. See the commit prefix table in Section 4 "Documentation Updates" above, and `workflows/changelog.md` for full details.
 
 ### Options
 

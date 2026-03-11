@@ -502,8 +502,8 @@ The AI will iterate on the task until outputting:
 2. Tests passing (if applicable)
 3. Code quality acceptable (lint, shellcheck, type-check)
 4. **Generalization check** — solution works for varying inputs, not just current state
-5. **README gate passed** (see below)
-6. Conventional commits used (for auto-changelog)
+5. **README gate passed** — required if task adds/changes user-facing features (see below)
+6. Conventional commits used — required for all commits (enables auto-changelog)
 7. **Headless rules observed** (see below)
 
 **Parallelism rule (t217)**: When your task involves multiple independent operations (reading several files, running lint + typecheck + tests, researching separate modules), use the Task tool to run them concurrently in a single message — not one at a time. Serial execution of independent work wastes wall-clock time proportional to the number of subtasks. See `tools/ai-assistants/headless-dispatch.md` "Worker Efficiency Protocol" point 5 for criteria and examples.
