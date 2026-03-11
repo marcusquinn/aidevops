@@ -3,6 +3,28 @@
 #
 # Functions for the main pulse loop and post-PR lifecycle processing
 
+source "${SCRIPT_DIR}/../worker-lifecycle-common.sh"
+
+#######################################
+# Gather recent transcript/output evidence for a suspect hung worker.
+# Args: $1 = task_id, $2 = log_file, $3 = hung timeout in seconds
+# Returns: tab-separated recent_count, classification, excerpt
+#######################################
+_worker_hang_evidence() {
+	local task_id="$1"
+	local log_file="$2"
+	local hung_timeout="$3"
+	local recent_window="${SUPERVISOR_STALL_ACTIVITY_WINDOW:-180}"
+
+	[[ "$recent_window" =~ ^[0-9]+$ ]] || recent_window=180
+	if [[ "$hung_timeout" =~ ^[0-9]+$ ]] && [[ "$hung_timeout" -gt 0 ]] && [[ "$recent_window" -gt "$hung_timeout" ]]; then
+		recent_window="$hung_timeout"
+	fi
+
+	_collect_worker_stall_evidence "$task_id" "$log_file" "$recent_window" 8
+	return 0
+}
+
 #######################################
 # Convert an ISO 8601 timestamp to a Unix epoch integer (t1249)
 # Tries BSD date (-j -f), then GNU date (-d), falls back to 0.
@@ -2306,40 +2328,54 @@ cmd_pulse() {
 							local hang_warn_threshold=$((task_hung_timeout / 2))
 							local hang_warn_marker="$SUPERVISOR_DIR/pids/${health_task}.hang-warned"
 
-							if [[ "$log_age_seconds" -gt "$task_hung_timeout" ]]; then
-								# Phase 2 (or single-phase if graceful disabled): Full timeout exceeded — hard kill
-								should_kill=true
-								kill_reason="Worker hung (no output for ${log_age_seconds}s, timeout ${task_hung_timeout}s)"
-								rm -f "$hang_warn_marker"
-							elif [[ "$hang_graceful" == "true" && "$log_age_seconds" -gt "$hang_warn_threshold" ]]; then
-								# Phase 1: 50% timeout exceeded — attempt graceful termination
-								if [[ ! -f "$hang_warn_marker" ]]; then
-									# First detection at 50%: send SIGTERM for graceful shutdown
-									log_warn "  t1222: Worker $health_task possibly hung (no output for ${log_age_seconds}s, 50% of ${task_hung_timeout}s timeout)"
-									log_warn "  t1222: Sending SIGTERM for graceful shutdown (PID $health_pid)"
-									echo "$now_epoch" >"$hang_warn_marker" 2>/dev/null || true
-									# SIGTERM triggers the wrapper's cleanup_children trap
-									kill -TERM "$health_pid" 2>/dev/null || true
-								else
-									# Already warned — check if SIGTERM worked (grace period: 2 pulse cycles ~4min)
-									local warn_epoch=0
-									warn_epoch=$(cat "$hang_warn_marker" 2>/dev/null || echo "0")
-									warn_epoch="${warn_epoch:-0}"
-									local grace_elapsed=$((now_epoch - warn_epoch))
-									# Grace period: min(240s, max(120s, 25% of hung timeout))
-									# At 2-min cron this spans 1-2 cycles; at 5-min cron the hard kill fires on the next cycle
-									local grace_period=$((task_hung_timeout / 4))
-									if [[ "$grace_period" -gt 240 ]]; then
-										grace_period=240
-									fi
-									if [[ "$grace_period" -lt 120 ]]; then
-										grace_period=120
-									fi
-									if [[ "$grace_elapsed" -gt "$grace_period" ]]; then
-										# Grace period expired, worker didn't terminate — escalate to hard kill
-										should_kill=true
-										kill_reason="Worker hung (graceful SIGTERM failed after ${grace_elapsed}s grace, no output for ${log_age_seconds}s)"
-										rm -f "$hang_warn_marker"
+							if [[ "$log_age_seconds" -gt "$hang_warn_threshold" ]]; then
+								local hang_evidence recent_transcript_count hang_evidence_class hang_evidence_excerpt
+								hang_evidence=$(_worker_hang_evidence "$health_task" "$log_file" "$task_hung_timeout")
+								IFS=$'\t' read -r recent_transcript_count hang_evidence_class hang_evidence_excerpt <<<"$hang_evidence"
+								[[ "$recent_transcript_count" =~ ^[0-9]+$ ]] || recent_transcript_count=0
+								local hang_evidence_suffix=""
+								if [[ -n "$hang_evidence_excerpt" ]]; then
+									hang_evidence_suffix="; evidence=${hang_evidence_class}: ${hang_evidence_excerpt}"
+								fi
+
+								if [[ "$recent_transcript_count" -gt 0 ]]; then
+									log_info "  Preserving worker $health_task despite stale log: recent transcript activity (${recent_transcript_count} messages)${hang_evidence_suffix}"
+									rm -f "$hang_warn_marker"
+								elif [[ "$log_age_seconds" -gt "$task_hung_timeout" ]]; then
+									# Phase 2 (or single-phase if graceful disabled): Full timeout exceeded — hard kill
+									should_kill=true
+									kill_reason="Worker hung (no output for ${log_age_seconds}s, timeout ${task_hung_timeout}s${hang_evidence_suffix})"
+									rm -f "$hang_warn_marker"
+								elif [[ "$hang_graceful" == "true" ]]; then
+									# Phase 1: 50% timeout exceeded — attempt graceful termination
+									if [[ ! -f "$hang_warn_marker" ]]; then
+										# First detection at 50%: send SIGTERM for graceful shutdown
+										log_warn "  t1222: Worker $health_task possibly hung (no output for ${log_age_seconds}s, 50% of ${task_hung_timeout}s timeout${hang_evidence_suffix})"
+										log_warn "  t1222: Sending SIGTERM for graceful shutdown (PID $health_pid)"
+										echo "$now_epoch" >"$hang_warn_marker" 2>/dev/null || true
+										# SIGTERM triggers the wrapper's cleanup_children trap
+										kill -TERM "$health_pid" 2>/dev/null || true
+									else
+										# Already warned — check if SIGTERM worked (grace period: 2 pulse cycles ~4min)
+										local warn_epoch=0
+										warn_epoch=$(cat "$hang_warn_marker" 2>/dev/null || echo "0")
+										warn_epoch="${warn_epoch:-0}"
+										local grace_elapsed=$((now_epoch - warn_epoch))
+										# Grace period: min(240s, max(120s, 25% of hung timeout))
+										# At 2-min cron this spans 1-2 cycles; at 5-min cron the hard kill fires on the next cycle
+										local grace_period=$((task_hung_timeout / 4))
+										if [[ "$grace_period" -gt 240 ]]; then
+											grace_period=240
+										fi
+										if [[ "$grace_period" -lt 120 ]]; then
+											grace_period=120
+										fi
+										if [[ "$grace_elapsed" -gt "$grace_period" ]]; then
+											# Grace period expired, worker didn't terminate — escalate to hard kill
+											should_kill=true
+											kill_reason="Worker hung (graceful SIGTERM failed after ${grace_elapsed}s grace, no output for ${log_age_seconds}s${hang_evidence_suffix})"
+											rm -f "$hang_warn_marker"
+										fi
 									fi
 								fi
 							fi
