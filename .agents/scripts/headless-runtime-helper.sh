@@ -222,6 +222,13 @@ get_session_id() {
 	return 0
 }
 
+clear_session_id() {
+	local provider="$1"
+	local session_key="$2"
+	db_query "DELETE FROM provider_sessions WHERE provider = '$(sql_escape "$provider")' AND session_key = '$(sql_escape "$session_key")';" >/dev/null
+	return 0
+}
+
 store_session_id() {
 	local provider="$1"
 	local session_key="$2"
@@ -671,10 +678,18 @@ cmd_run() {
 		return 1
 	}
 
-	local selected_model provider persisted_session
+	local selected_model provider persisted_session=""
 	selected_model=$(choose_model "$role" "$model_override") || return $?
 	provider=$(extract_provider "$selected_model")
-	persisted_session=$(get_session_id "$provider" "$session_key")
+	if [[ "$role" == "pulse" ]]; then
+		# Pulse runs must start from the current pre-fetched state each cycle.
+		# Reusing a prior OpenCode session contaminates later /pulse runs with
+		# stale conversational context, which leads to idle watchdog kills and an
+		# empty worker pool. Workers still keep session reuse.
+		clear_session_id "$provider" "$session_key"
+	else
+		persisted_session=$(get_session_id "$provider" "$session_key")
+	fi
 
 	local -a cmd=("$OPENCODE_BIN_DEFAULT" run "$prompt" --dir "$work_dir" -m "$selected_model" --title "$title" --format json)
 	if [[ -n "$agent_name" ]]; then
@@ -704,7 +719,7 @@ cmd_run() {
 			print_warning "$provider returned exit 0 without any model activity; backing off provider"
 			return 75
 		fi
-		if [[ -n "$discovered_session" ]]; then
+		if [[ "$role" != "pulse" && -n "$discovered_session" ]]; then
 			store_session_id "$provider" "$session_key" "$discovered_session" "$selected_model"
 		fi
 		rm -f "$output_file"

@@ -112,6 +112,21 @@ _cron_escape() {
 	return 0
 }
 
+# Resolve the canonical main worktree path for the current repo.
+# When setup.sh is run from a linked worktree, launchd/cron should still point
+# autonomous services at the main repo checkout, not the feature worktree.
+_resolve_main_worktree_dir() {
+	local repo_dir="$1"
+	local main_worktree=""
+	main_worktree=$(git -C "$repo_dir" worktree list --porcelain 2>/dev/null | awk '/^worktree / {print substr($0, 10); exit}') || main_worktree=""
+	if [[ -n "$main_worktree" && -d "$main_worktree" ]]; then
+		printf '%s' "$main_worktree"
+		return 0
+	fi
+	printf '%s' "$repo_dir"
+	return 0
+}
+
 # Ensure the crontab has a single PATH= line at the top with the current $PATH.
 # Individual cron entries must NOT set inline PATH= — it overrides the global one
 # and hardcodes system-specific paths (nvm, bun, cargo, etc.). This function
@@ -840,8 +855,9 @@ main() {
 	#   - Non-interactive: only installs if config explicitly says true
 	local wrapper_script="$HOME/.aidevops/agents/scripts/pulse-wrapper.sh"
 	local pulse_label="com.aidevops.aidevops-supervisor-pulse"
-	local _aidevops_dir
+	local _aidevops_dir _pulse_repo_dir
 	_aidevops_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+	_pulse_repo_dir=$(_resolve_main_worktree_dir "$_aidevops_dir")
 
 	# Read explicit user consent from config.jsonc (not merged defaults).
 	# Empty = user never configured this; "true"/"false" = explicit choice.
@@ -959,7 +975,7 @@ main() {
 			_xml_wrapper_script=$(_xml_escape "$wrapper_script")
 			_xml_home=$(_xml_escape "$HOME")
 			_xml_opencode_bin=$(_xml_escape "$opencode_bin")
-			_xml_aidevops_dir=$(_xml_escape "$_aidevops_dir")
+			_xml_aidevops_dir=$(_xml_escape "$_pulse_repo_dir")
 			_xml_path=$(_xml_escape "$PATH")
 			if [[ -n "${AIDEVOPS_HEADLESS_MODELS:-}" ]]; then
 				local _xml_headless_models
@@ -1035,7 +1051,7 @@ PLIST
 			# via $(…) or backticks if paths contain shell metacharacters
 			local _cron_opencode_bin _cron_aidevops_dir _cron_wrapper_script _cron_headless_env=""
 			_cron_opencode_bin=$(_cron_escape "$opencode_bin")
-			_cron_aidevops_dir=$(_cron_escape "$_aidevops_dir")
+			_cron_aidevops_dir=$(_cron_escape "$_pulse_repo_dir")
 			_cron_wrapper_script=$(_cron_escape "$wrapper_script")
 			if [[ -n "${AIDEVOPS_HEADLESS_MODELS:-}" ]]; then
 				local _cron_headless_models

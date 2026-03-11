@@ -148,6 +148,29 @@ else
 	fail "second run reuses persisted provider session" "logged args: $(tr '\n' ' ' <"$STUB_LOG_FILE")"
 fi
 
+section "Pulse Runs Stay Fresh"
+export STUB_SESSION_ID="ses_pulse_one"
+rm -f "$STUB_LOG_FILE"
+AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST=openai bash "$HELPER" run \
+	--role pulse \
+	--session-key supervisor-pulse \
+	--dir "$REPO_DIR" \
+	--title "Supervisor Pulse" \
+	--prompt "/pulse" >/dev/null
+export STUB_SESSION_ID="ses_pulse_two"
+AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST=openai bash "$HELPER" run \
+	--role pulse \
+	--session-key supervisor-pulse \
+	--dir "$REPO_DIR" \
+	--title "Supervisor Pulse" \
+	--prompt "/pulse" >/dev/null
+
+if grep -q -- '--session ' "$STUB_LOG_FILE"; then
+	fail "pulse runs do not reuse persisted sessions" "logged args: $(tr '\n' ' ' <"$STUB_LOG_FILE")"
+else
+	pass "pulse runs do not reuse persisted sessions"
+fi
+
 section "Zero Activity Success Is Rejected"
 export STUB_EMIT_ACTIVITY="0"
 if AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST=openai bash "$HELPER" run \
