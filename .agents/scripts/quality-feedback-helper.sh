@@ -714,21 +714,25 @@ _scan_single_pr() {
 
 		select($sev_num >= $min_num) |
 
-		# Filter out approving reviews with no actionable feedback (t1406).
-		# APPROVED reviews from bots often contain long summaries/walkthroughs
-		# that are purely positive — these should not create quality-debt issues.
-		# Keep the review only if: (a) not APPROVED, or (b) body contains
-		# actionable language (suggestions, warnings, bugs, fix proposals).
-		(if .state == "APPROVED" then
-			($body | test(
-				"\\bshould\\b|\\bconsider\\b|\\binstead\\b|\\bsuggest|\\brecommend|" +
-				"\\bwarning\\b|\\bcaution\\b|\\bavoid\\b|\\b(don ?'"'"'?t|do not)\\b|" +
-				"\\bvulnerab|\\binsecure|\\binjection\\b|\\bxss\\b|\\bcsrf\\b|" +
-				"\\bnit:|\\btodo:|\\bfixme|\\bhardcoded|\\bdeprecated|" +
-				"\\brace.condition|\\bdeadlock|\\bleak|\\boverflow|" +
-				"\\bworkaround\\b|\\bhack\\b|" +
-				"```\\s*(suggestion|diff)"; "i"))
-		 else true
+		# Filter out review-body summaries that do not contain concrete fixes.
+		# Bots frequently post high-level walkthroughs that mention suggestions
+		# but do not include actionable details tied to a file/line.
+		($body | test(
+			"\\bshould\\b|\\bconsider\\b|\\binstead\\b|\\bsuggest|\\brecommend|" +
+			"\\bwarning\\b|\\bcaution\\b|\\bavoid\\b|\\b(don ?'"'"'?t|do not)\\b|" +
+			"\\bvulnerab|\\binsecure|\\binjection\\b|\\bxss\\b|\\bcsrf\\b|" +
+			"\\bnit:|\\btodo:|\\bfixme|\\bhardcoded|\\bdeprecated|" +
+			"\\brace.condition|\\bdeadlock|\\bleak|\\boverflow|" +
+			"\\bworkaround\\b|\\bhack\\b|" +
+			"```\\s*(suggestion|diff)"; "i")) as $actionable |
+		(if $reviewer == "human" then
+			true
+		 elif .state == "APPROVED" then
+			$actionable
+		 else
+			($actionable and ($body | test(
+				"\\*\\*File\\*\\*|```\\s*(suggestion|diff)|" +
+				"\\bline\\s+[0-9]+\\b|\\bL[0-9]+\\b"; "i")))
 		 end) |
 		select(.) |
 
