@@ -332,9 +332,9 @@ main() {
 
 			if [[ "$scan_exit" -eq 0 ]]; then
 				log_info "Runtime task scan: clean"
-			elif [[ "$scan_exit" -eq 1 || "$scan_exit" -eq 2 ]]; then
+			elif [[ "$scan_exit" -eq 2 || ("$scan_exit" -eq 1 && "$scan_result" =~ (^|[[:space:]])(FLAGGED|WARN)($|[[:space:]])) ]]; then
 				local severity_label="flagged"
-				if [[ "$scan_exit" -eq 2 ]]; then
+				if [[ "$scan_exit" -eq 2 || "$scan_result" =~ (^|[[:space:]])WARN($|[[:space:]]) ]]; then
 					severity_label="warn"
 				fi
 
