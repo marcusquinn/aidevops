@@ -240,7 +240,9 @@ setup_rtk() {
 	# Single Rust binary, zero dependencies, <10ms overhead
 	# https://github.com/rtk-ai/rtk
 
-	local rtk_installer_url="https://raw.githubusercontent.com/rtk-ai/rtk/refs/heads/master/install.sh"
+	# Pin to a tagged release for stability and auditability (Gemini review feedback).
+	# Update the tag when upstream-watch detects a new release.
+	local rtk_installer_url="https://raw.githubusercontent.com/rtk-ai/rtk/v0.28.2/install.sh"
 
 	if command -v rtk >/dev/null 2>&1; then
 		local rtk_version
