@@ -35,7 +35,7 @@ cmd_cron() {
 				return 1
 			}
 			# GH#3716: Validate interval is a positive integer before use in cron/launchd commands
-			if ! [[ "$2" =~ ^[0-9]+$ ]] || [[ "$2" -eq 0 ]]; then
+			if ! [[ "$2" =~ ^[1-9][0-9]*$ ]]; then
 				log_error "--interval must be a positive integer (minutes), got: $2"
 				return 1
 			fi
