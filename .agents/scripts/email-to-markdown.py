@@ -291,17 +291,13 @@ _HEADER_FIELD_RE = re.compile(
 _ATTRIBUTION_RE = re.compile(r'^On\s+.+wrote\s*:\s*$')
 
 
-def _is_signature_delimiter(line, stripped):
+def _is_signature_delimiter(stripped):
     """Check if a line is an email signature delimiter.
 
-    RFC 3676 defines the canonical delimiter as '-- ' (dash-dash-space).
-    We also accept bare '--' which is common in practice.
-    Check the raw line for '-- ' since str.strip() removes trailing spaces.
+    A line that strips to '--' covers both the RFC 3676 delimiter ('-- ')
+    and the common bare '--'.
     """
-    raw = line.rstrip('\n\r')
-    if raw == '-- ' or stripped == '--':
-        return True
-    return False
+    return stripped == '--'
 
 
 def _has_attribution_before(lines, index):
@@ -359,7 +355,7 @@ def normalise_email_sections(body):
             result.append('')
 
         # --- Signature detection (RFC 3676) ---
-        if _is_signature_delimiter(line, stripped):
+        if _is_signature_delimiter(stripped):
             if in_quote_block:
                 result.append('')
                 in_quote_block = False
