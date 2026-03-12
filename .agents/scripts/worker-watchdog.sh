@@ -570,9 +570,7 @@ post_kill_github_update() {
 
 **Diagnostic tail:** ${evidence_summary}
 
-${destination_text}
-
-**Retry guidance:** Post a blocker update describing a changed plan (or newly unblocked dependency), then move the issue back to \`status:available\` before re-dispatch.
+${destination_text}$([[ "$reason" == "thrash" ]] && printf '%s' "\n\n**Retry guidance:** Post a blocker update describing a changed plan (or newly unblocked dependency), then move the issue back to \`status:available\` before re-dispatch.")
 
 _Automated by \`worker-watchdog.sh\` (t1419)_"
 	comment_body=$(_sanitize_markdown "$comment_body")
