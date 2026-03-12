@@ -86,6 +86,7 @@ teardown() {
 
 test_set_uses_provided_stdin_value() {
 	setup
+	trap 'teardown' RETURN
 
 	local output_file="$TEST_DIR/output.log"
 	local exit_code=0
@@ -93,7 +94,6 @@ test_set_uses_provided_stdin_value() {
 
 	if [[ "$exit_code" -ne 0 ]]; then
 		print_result "set stores provided stdin value" 1 "Command failed (exit=$exit_code)"
-		teardown
 		return 0
 	fi
 
@@ -109,7 +109,6 @@ test_set_uses_provided_stdin_value() {
 		print_result "set stores provided stdin value" 1 "stored_value='$stored_value' stored_path='$stored_path'"
 	fi
 
-	teardown
 	return 0
 }
 
@@ -136,6 +135,7 @@ test_credentials_read_unescapes_special_chars() {
 
 test_set_rejects_command_literal_input() {
 	setup
+	trap 'teardown' RETURN
 	local test_name="set rejects command-literal input"
 
 	local output_file="$TEST_DIR/output.log"
@@ -144,13 +144,11 @@ test_set_rejects_command_literal_input() {
 
 	if [[ "$exit_code" -eq 0 ]]; then
 		print_result "$test_name" 1 "Expected non-zero exit code"
-		teardown
 		return 0
 	fi
 
 	if [[ -f "$TEST_DIR/stored_value" ]]; then
 		print_result "$test_name" 1 "Secret was unexpectedly stored"
-		teardown
 		return 0
 	fi
 
@@ -160,7 +158,6 @@ test_set_rejects_command_literal_input() {
 		print_result "$test_name" 1 "Missing rejection message"
 	fi
 
-	teardown
 	return 0
 }
 
