@@ -138,8 +138,23 @@ _extract_verification_snippet() {
 	done <<<"$body_full"
 
 	while IFS= read -r line; do
-		line="${line#> }"
-		line="${line#- }"
+		case "$line" in
+		'> '*)
+			line="${line#> }"
+			;;
+		'    '* | '	'*)
+			# indented code block (4 spaces or tab)
+			line="${line#    }"
+			line="${line#	}"
+			;;
+		'`'*)
+			# inline backtick code — strip surrounding backticks
+			line="${line//\`/}"
+			;;
+		*)
+			continue
+			;;
+		esac
 		line=$(_trim_whitespace "$line")
 		if [[ -n "$line" && ${#line} -ge 12 ]]; then
 			echo "$line"
@@ -165,8 +180,22 @@ _finding_still_exists_on_main() {
 	default_branch=$(_get_default_branch "$repo_slug")
 
 	local file_content
-	file_content=$(gh api -H "Accept: application/vnd.github.raw" \
-		"repos/${repo_slug}/contents/${file_path}?ref=${default_branch}" 2>/dev/null || true)
+	local api_err
+	api_err="$(mktemp)"
+	if ! file_content=$(gh api -H "Accept: application/vnd.github.raw" \
+		"repos/${repo_slug}/contents/${file_path}?ref=${default_branch}" 2>"$api_err"); then
+		if grep -q "404" "$api_err"; then
+			echo "[scan] Skipping resolved finding: ${file_path}:${line_num} - file missing on ${default_branch}" >&2
+			rm -f "$api_err"
+			echo '{"result":false,"status":"resolved"}'
+			return 1
+		fi
+		echo "[scan] Keeping unverifiable finding: ${file_path}:${line_num} - failed to fetch ${default_branch}" >&2
+		rm -f "$api_err"
+		echo '{"result":true,"status":"unverifiable"}'
+		return 0
+	fi
+	rm -f "$api_err"
 
 	if [[ -z "$file_content" ]]; then
 		echo "[scan] Skipping resolved finding: ${file_path}:${line_num} - file missing on ${default_branch}" >&2

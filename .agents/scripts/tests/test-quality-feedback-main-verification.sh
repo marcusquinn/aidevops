@@ -95,6 +95,14 @@ _mock_gh_api() {
 		[[ -n "$GH_API_LOG" ]] && printf '%s\n' "$endpoint" >>"$GH_API_LOG"
 
 		if [[ "$GH_DELETED" == "1" ]]; then
+			# Simulate a 404 — write "404" to stderr so the caller can detect it
+			echo "404 Not Found" >&2
+			return 1
+		fi
+
+		if [[ "$GH_DELETED" == "transient" ]]; then
+			# Simulate a transient API error (non-404) — no "404" in stderr
+			echo "500 Internal Server Error" >&2
 			return 1
 		fi
 
@@ -336,6 +344,34 @@ test_keeps_unverifiable_finding() {
 	return 0
 }
 
+test_transient_api_error_keeps_finding_as_unverifiable() {
+	reset_mock_state
+	GH_DELETED="transient"
+
+	local findings
+	findings='[{"file":".agents/scripts/example.sh","line":42,"body_full":"```bash\nsome code snippet here\n```","reviewer":"coderabbit","reviewer_login":"coderabbitai","severity":"high","url":"https://example.test/comment"}]'
+
+	local out_file
+	out_file=$(mktemp)
+	local created
+	_create_quality_debt_issues "owner/repo" "123" "$findings" >"$out_file"
+	created=$(<"$out_file")
+	rm -f "$out_file"
+
+	local created_count
+	created_count=$(wc -l <"$GH_CREATE_LOG" | tr -d ' ')
+	rm -f "$GH_CREATE_LOG"
+	rm -f "$GH_API_LOG"
+
+	# Transient API error should keep finding as unverifiable → issue created
+	if [[ "$created" == "1" && "$created_count" -eq 1 ]]; then
+		print_result "transient API error keeps finding as unverifiable" 0
+	else
+		print_result "transient API error keeps finding as unverifiable" 1 "created=${created}, issues=${created_count}"
+	fi
+	return 0
+}
+
 test_uses_default_branch_ref_for_contents_lookup() {
 	reset_mock_state
 	GH_RAW_CONTENT=$'#!/usr/bin/env bash\nverification marker present\nreturn 0\n'
@@ -369,6 +405,7 @@ main() {
 	test_handles_diff_fence_without_false_positive
 	test_handles_suggestion_fence_and_comments
 	test_keeps_unverifiable_finding
+	test_transient_api_error_keeps_finding_as_unverifiable
 	test_uses_default_branch_ref_for_contents_lookup
 
 	echo "Results: ${TESTS_PASSED}/${TESTS_RUN} passed, ${TESTS_FAILED} failed"
