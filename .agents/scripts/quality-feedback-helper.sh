@@ -90,20 +90,48 @@ _extract_verification_snippet() {
 	local body_full="$1"
 	local line=""
 	local in_fence="false"
+	local fence_type=""
+	local candidate=""
 
 	while IFS= read -r line; do
 		if [[ "$line" =~ ^\`\`\` ]]; then
 			if [[ "$in_fence" == "false" ]]; then
 				in_fence="true"
+				fence_type=""
+				if [[ "$line" =~ ^\`\`\`([[:alnum:]_-]+) ]]; then
+					fence_type="${BASH_REMATCH[1],,}"
+				fi
 				continue
 			fi
 			break
 		fi
 
 		if [[ "$in_fence" == "true" ]]; then
-			line=$(_trim_whitespace "$line")
-			if [[ -n "$line" ]]; then
-				echo "$line"
+			candidate=$(_trim_whitespace "$line")
+			[[ -z "$candidate" ]] && continue
+
+			if [[ "$fence_type" == "diff" || "$fence_type" == "suggestion" ]]; then
+				[[ "$candidate" == "@@"* ]] && continue
+				[[ "$candidate" == "diff --git"* ]] && continue
+				[[ "$candidate" == "index "* ]] && continue
+				[[ "$candidate" == "+++"* ]] && continue
+				[[ "$candidate" == "---"* ]] && continue
+				[[ "$candidate" == +* ]] && continue
+				[[ "$candidate" == -* ]] && continue
+			fi
+
+			if [[ "$candidate" == +* || "$candidate" == -* ]]; then
+				candidate=$(_trim_whitespace "${candidate:1}")
+			fi
+
+			[[ "$candidate" == "Suggestion:"* ]] && continue
+			[[ "$candidate" == "//"* ]] && continue
+			[[ "$candidate" == "# "* ]] && continue
+			[[ "$candidate" == "/*"* ]] && continue
+			[[ "$candidate" == "*"* ]] && continue
+
+			if [[ -n "$candidate" && ${#candidate} -ge 12 ]]; then
+				echo "$candidate"
 				return 0
 			fi
 		fi
@@ -129,6 +157,7 @@ _finding_still_exists_on_main() {
 	local body_full="$4"
 
 	if [[ -z "$file_path" || "$file_path" == "null" ]]; then
+		echo '{"result":true,"status":"unverifiable"}'
 		return 0
 	fi
 
@@ -141,20 +170,52 @@ _finding_still_exists_on_main() {
 
 	if [[ -z "$file_content" ]]; then
 		echo "[scan] Skipping resolved finding: ${file_path}:${line_num} - file missing on ${default_branch}" >&2
+		echo '{"result":false,"status":"resolved"}'
 		return 1
 	fi
 
 	local snippet
 	if ! snippet=$(_extract_verification_snippet "$body_full"); then
 		echo "[scan] Keeping unverifiable finding: ${file_path}:${line_num} - no snippet extracted" >&2
+		echo '{"result":true,"status":"unverifiable"}'
+		return 0
+	fi
+
+	local found_in_window="false"
+	if [[ "$line_num" =~ ^[0-9]+$ && "$line_num" -gt 0 ]]; then
+		local total_lines
+		total_lines=$(printf '%s\n' "$file_content" | wc -l | tr -d ' ')
+
+		if [[ "$line_num" -le "$total_lines" ]]; then
+			local start_line=$((line_num - 20))
+			local end_line=$((line_num + 20))
+			((start_line < 1)) && start_line=1
+			((end_line > total_lines)) && end_line=$total_lines
+
+			local current_line=0
+			local file_line=""
+			while IFS= read -r file_line; do
+				current_line=$((current_line + 1))
+				if [[ "$current_line" -ge "$start_line" && "$current_line" -le "$end_line" && "$file_line" == *"$snippet"* ]]; then
+					found_in_window="true"
+					break
+				fi
+			done <<<"$file_content"
+		fi
+	fi
+
+	if [[ "$found_in_window" == "true" ]]; then
+		echo '{"result":true,"status":"verified"}'
 		return 0
 	fi
 
 	if printf '%s' "$file_content" | grep -Fq "$snippet"; then
+		echo '{"result":true,"status":"verified"}'
 		return 0
 	fi
 
 	echo "[scan] Skipping resolved finding: ${file_path}:${line_num} - snippet not found on ${default_branch}" >&2
+	echo '{"result":false,"status":"resolved"}'
 	return 1
 }
 
@@ -1049,12 +1110,21 @@ _create_quality_debt_issues() {
 		local file_path
 		local line_num
 		local body_full
+		local verification_json
+		local verification_result
+		local verification_status
+		local finding_with_status
 		file_path=$(echo "$finding" | jq -r '.file // ""')
 		line_num=$(echo "$finding" | jq -r '.line // "?"')
 		body_full=$(echo "$finding" | jq -r '.body_full // .body // ""')
 
-		if _finding_still_exists_on_main "$repo_slug" "$file_path" "$line_num" "$body_full"; then
-			verified_findings=$(echo "$verified_findings" "$finding" | jq -s '.[0] + [.[1]]')
+		verification_json=$(_finding_still_exists_on_main "$repo_slug" "$file_path" "$line_num" "$body_full" || true)
+		verification_result=$(echo "$verification_json" | jq -r '.result // false')
+		verification_status=$(echo "$verification_json" | jq -r '.status // "verified"')
+
+		if [[ "$verification_result" == "true" ]]; then
+			finding_with_status=$(echo "$finding" | jq --arg status "$verification_status" '. + {verification_status: $status}')
+			verified_findings=$(echo "$verified_findings" "$finding_with_status" | jq -s '.[0] + [.[1]]')
 		fi
 	done < <(echo "$findings" | jq -c '.[]')
 
@@ -1133,6 +1203,7 @@ _create_quality_debt_issues() {
 		finding_details=$(echo "$file_findings" | jq -r '.[] |
 			"### \(.severity | ascii_upcase): \(.reviewer) (\(.reviewer_login))\n" +
 			(if .file != null and .line != null then "**File**: `\(.file):\(.line)`\n" else "" end) +
+			(if .verification_status == "unverifiable" then "**Verification**: kept as unverifiable (no stable snippet extracted)\n" else "" end) +
 			"\(.body_full)\n\n" +
 			(if .url != null then "[View comment](\(.url))\n" else "" end) +
 			"---\n"
