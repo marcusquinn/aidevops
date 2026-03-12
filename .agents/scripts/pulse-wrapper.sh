@@ -142,6 +142,7 @@ HEADLESS_RUNTIME_HELPER="${HEADLESS_RUNTIME_HELPER:-${SCRIPT_DIR}/headless-runti
 REPOS_JSON="${REPOS_JSON:-${HOME}/.config/aidevops/repos.json}"
 STATE_FILE="${HOME}/.aidevops/logs/pulse-state.txt"
 QUEUE_METRICS_FILE="${HOME}/.aidevops/logs/pulse-queue-metrics"
+SCOPE_FILE="${HOME}/.aidevops/logs/pulse-scope-repos"
 
 if [[ ! -x "$HEADLESS_RUNTIME_HELPER" ]]; then
 	printf '[pulse-wrapper] ERROR: headless runtime helper is missing or not executable: %s (SCRIPT_DIR=%s)\n' "$HEADLESS_RUNTIME_HELPER" "$SCRIPT_DIR" >&2
@@ -370,6 +371,7 @@ prefetch_state() {
 	local scope_slugs
 	scope_slugs=$(echo "$repo_entries" | cut -d'|' -f1 | grep . | paste -sd ',' -)
 	export PULSE_SCOPE_REPOS="$scope_slugs"
+	echo "$scope_slugs" >"$SCOPE_FILE"
 	echo "[pulse-wrapper] PULSE_SCOPE_REPOS=${scope_slugs}" >>"$LOGFILE"
 
 	local repo_count
@@ -2188,6 +2190,15 @@ main() {
 		echo "[pulse-wrapper] prefetch_state did not complete successfully — aborting this cycle to avoid stale dispatch decisions" >>"$LOGFILE"
 		rm -f "$PIDFILE"
 		return 0
+	fi
+
+	if [[ -f "$SCOPE_FILE" ]]; then
+		local persisted_scope
+		persisted_scope=$(cat "$SCOPE_FILE" 2>/dev/null || echo "")
+		if [[ -n "$persisted_scope" ]]; then
+			export PULSE_SCOPE_REPOS="$persisted_scope"
+			echo "[pulse-wrapper] Restored PULSE_SCOPE_REPOS from ${SCOPE_FILE}" >>"$LOGFILE"
+		fi
 	fi
 
 	# Re-check stop flag immediately before run_pulse() — a stop may have
