@@ -48,22 +48,7 @@ Not every autonomous task should use `/full-loop`. Use this decision rule:
 - **Code change needed** (repo files, tests, PRs) → `/full-loop`
 - **Operational execution** (reports, audits, monitoring, outreach, client ops) → run a domain agent/command directly, with no branch/PR ceremony
 
-For recurring operational work, follow this sequence:
-1. **Design the operator first**: Create a custom agent for the SOP (`tools/build-agent/build-agent.md`)
-2. **Prove it ad-hoc**: Run it manually with representative inputs until output quality is stable
-3. **Harden guardrails**: Add clear output format, retries/timeouts, and privacy rules (never leak cross-client data)
-4. **Pilot safely**: Test on yourself/internal targets first, then one client, then a staged rollout
-5. **Schedule the command**: Run the proven command via launchd/cron using `opencode run`
-
-Scheduling pattern:
-
-```bash
-# aidevops: weekly SEO ranking report run
-opencode run --dir ~/Git/myproject --agent SEO --title "Weekly rankings" \
-  "/your-command client-set-a"
-```
-
-Use pulse for queue-based task pickup; use scheduled `opencode run` jobs for fixed-time operational routines.
+For setup workflow, safety gates, and scheduling patterns, use `/routine` or read `.agents/scripts/commands/routine.md`.
 
 ---
 

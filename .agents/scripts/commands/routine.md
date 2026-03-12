@@ -104,7 +104,9 @@ targets_cmd: "wp-helper --list-category client --jsonl"
 run_template: "/seo-export --account {{target.account}} --format summary"
 ```
 
-`targets_cmd` should emit one JSON object per line so the scheduler can iterate targets.
+`targets_cmd` should emit one JSON object per line so a scheduler can iterate targets.
+
+Note: this template is architectural guidance. `routine-helper.sh` currently schedules a literal `--prompt` command and does not parse `targets_cmd` or `run_template` directly.
 
 ## Anti-Patterns
 

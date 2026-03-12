@@ -68,6 +68,15 @@ validate_required() {
 	return 0
 }
 
+validate_routine_name() {
+	local routine_name="$1"
+	if [[ ! "$routine_name" =~ ^[A-Za-z0-9_-]+$ ]]; then
+		die "Routine name must use only letters, digits, underscore, or hyphen"
+		return 1
+	fi
+	return 0
+}
+
 require_option_value() {
 	local argc_remaining="$1"
 	local flag_name="$2"
@@ -81,8 +90,20 @@ require_option_value() {
 validate_routine_prompt() {
 	local prompt="$1"
 	if [[ "$prompt" == *"/full-loop"* ]]; then
-		printf '[WARN] Prompt includes /full-loop. For non-code routines, use direct task commands.\n' >&2
+		die "Prompt must not include /full-loop for routine-helper workflows"
+		return 1
 	fi
+	return 0
+}
+
+xml_escape() {
+	local value="$1"
+	value="${value//&/&amp;}"
+	value="${value//</&lt;}"
+	value="${value//>/&gt;}"
+	value="${value//\"/&quot;}"
+	value="${value//\'/&apos;}"
+	printf '%s' "$value"
 	return 0
 }
 
@@ -225,6 +246,7 @@ parse_common_args() {
 	validate_required "$ROUTINE_SCHEDULE" "--schedule" || return 1
 	validate_required "$ROUTINE_DIR" "--dir" || return 1
 	validate_required "$ROUTINE_PROMPT" "--prompt" || return 1
+	validate_routine_name "$ROUTINE_NAME" || return 1
 	validate_cron_expression "$ROUTINE_SCHEDULE" || return 1
 	validate_routine_prompt "$ROUTINE_PROMPT" || return 1
 
@@ -304,6 +326,19 @@ cmd_install_launchd() {
 
 	local launchd_schedule_xml
 	launchd_schedule_xml=$(parse_cron_to_launchd_xml "$ROUTINE_SCHEDULE") || return 1
+	# launchd_schedule_xml is generated from validated numeric/* cron tokens only
+	# and emits fixed XML tags, so this block is already XML-safe.
+
+	local label_escaped
+	label_escaped=$(xml_escape "sh.aidevops.routine-${ROUTINE_NAME}")
+	local command_escaped
+	command_escaped=$(xml_escape "$command")
+	local home_escaped
+	home_escaped=$(xml_escape "$HOME")
+	local env_path_escaped
+	env_path_escaped=$(xml_escape "/bin:/usr/bin:/usr/local/bin:/opt/homebrew/bin:${PATH}")
+	local log_path_escaped
+	log_path_escaped=$(xml_escape "${HOME}/.aidevops/logs/routine-${ROUTINE_NAME}.log")
 
 	local plist_dir="$HOME/Library/LaunchAgents"
 	local plist_name="sh.aidevops.routine-${ROUTINE_NAME}.plist"
@@ -317,25 +352,25 @@ cmd_install_launchd() {
 <plist version="1.0">
 <dict>
   <key>Label</key>
-  <string>sh.aidevops.routine-${ROUTINE_NAME}</string>
+  <string>${label_escaped}</string>
   <key>ProgramArguments</key>
   <array>
     <string>/bin/bash</string>
     <string>-lc</string>
-    <string>${command}</string>
+    <string>${command_escaped}</string>
   </array>
   <key>EnvironmentVariables</key>
   <dict>
     <key>HOME</key>
-    <string>${HOME}</string>
+    <string>${home_escaped}</string>
     <key>PATH</key>
-    <string>/bin:/usr/bin:/usr/local/bin:/opt/homebrew/bin:${PATH}</string>
+    <string>${env_path_escaped}</string>
   </dict>
 ${launchd_schedule_xml}
   <key>StandardOutPath</key>
-  <string>${HOME}/.aidevops/logs/routine-${ROUTINE_NAME}.log</string>
+  <string>${log_path_escaped}</string>
   <key>StandardErrorPath</key>
-  <string>${HOME}/.aidevops/logs/routine-${ROUTINE_NAME}.log</string>
+  <string>${log_path_escaped}</string>
   <key>RunAtLoad</key>
   <false/>
 </dict>

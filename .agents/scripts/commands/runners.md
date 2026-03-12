@@ -237,7 +237,7 @@ The supervisor (whether `/pulse` or `/runners`) NEVER does task work itself:
 - **Never** reads source code or implements features
 - **Never** runs tests or linters on behalf of workers
 - **Never** pushes branches or resolves merge conflicts for workers
-- **Always** dispatches workers via `opencode run "/full-loop ..."`
+- **Always** dispatches workers via `opencode run` with the command chosen by task type
 - **Always** routes to the right agent — not every task is code
 
 If a worker fails, improve the worker instructions/command definition,
