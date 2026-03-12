@@ -50,6 +50,36 @@ assert_file_exists() {
 	return 0
 }
 
+safe_jq_file() {
+	local filter="$1"
+	local file="$2"
+	local name="$3"
+	local value=""
+	if value="$(jq -er "$filter" "$file" 2>/dev/null)"; then
+		printf '%s\n' "$value"
+		return 0
+	fi
+
+	fail "$name" "Could not read '$filter' from $file"
+	printf '\n'
+	return 1
+}
+
+safe_jq_json() {
+	local filter="$1"
+	local json="$2"
+	local name="$3"
+	local value=""
+	if value="$(jq -er "$filter" <<<"$json" 2>/dev/null)"; then
+		printf '%s\n' "$value"
+		return 0
+	fi
+
+	fail "$name" "Could not read '$filter' from helper JSON output"
+	printf '\n'
+	return 1
+}
+
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
 
@@ -64,6 +94,7 @@ output_file=""
 header_file=""
 write_http_code=false
 log_file="${CURL_LOG:-}"
+requested_url=""
 
 while [[ $# -gt 0 ]]; do
 	case "$1" in
@@ -85,11 +116,20 @@ while [[ $# -gt 0 ]]; do
 		fi
 		shift 2
 		;;
+	http://*|https://*)
+		requested_url="$1"
+		shift
+		;;
 	*)
 		shift
 		;;
 	esac
 done
+
+if [[ "$requested_url" != "https://convos.org/skill.md" ]]; then
+	printf 'unexpected URL: %s\n' "$requested_url" >&2
+	exit 1
+fi
 
 mode="${CURL_MODE:-add_import}"
 
@@ -158,11 +198,11 @@ mkdir -p "$PROJECT_DIR_1/.agents" "$AGENTS_DIR_1/configs"
 )
 
 SOURCES_FILE_1="$AGENTS_DIR_1/configs/skill-sources.json"
-format_detected_1="$(jq -r '.skills[0].format_detected' "$SOURCES_FILE_1")"
-upstream_hash_1="$(jq -r '.skills[0].upstream_hash' "$SOURCES_FILE_1")"
-upstream_etag_1="$(jq -r '.skills[0].upstream_etag' "$SOURCES_FILE_1")"
-upstream_last_modified_1="$(jq -r '.skills[0].upstream_last_modified' "$SOURCES_FILE_1")"
-local_path_1="$(jq -r '.skills[0].local_path' "$SOURCES_FILE_1")"
+format_detected_1="$(safe_jq_file '.skills[0].format_detected' "$SOURCES_FILE_1" 'Imported format_detected is readable' || true)"
+upstream_hash_1="$(safe_jq_file '.skills[0].upstream_hash' "$SOURCES_FILE_1" 'Imported upstream_hash is readable' || true)"
+upstream_etag_1="$(safe_jq_file '.skills[0].upstream_etag' "$SOURCES_FILE_1" 'Imported upstream_etag is readable' || true)"
+upstream_last_modified_1="$(safe_jq_file '.skills[0].upstream_last_modified' "$SOURCES_FILE_1" 'Imported upstream_last_modified is readable' || true)"
+local_path_1="$(safe_jq_file '.skills[0].local_path' "$SOURCES_FILE_1" 'Imported local_path is readable' || true)"
 
 assert_eq "url" "$format_detected_1" "URL import sets format_detected to url"
 assert_eq "\"etag-import-1\"" "$upstream_etag_1" "URL import stores ETag header"
@@ -213,10 +253,10 @@ CHECK_EXIT_2=$?
 set -e
 
 JSON_OUTPUT_2="$(printf '%s\n' "$CHECK_OUTPUT_2" | sed -n '/^{/,$p')"
-updates_available_2="$(echo "$JSON_OUTPUT_2" | jq -r '.updates_available')"
-up_to_date_2="$(echo "$JSON_OUTPUT_2" | jq -r '.up_to_date')"
-status_2="$(echo "$JSON_OUTPUT_2" | jq -r '.results[0].status')"
-last_checked_2="$(jq -r '.skills[0].last_checked // ""' "$AGENTS_DIR_2/configs/skill-sources.json")"
+updates_available_2="$(safe_jq_json '.updates_available' "$JSON_OUTPUT_2" '304 check updates_available is readable' || true)"
+up_to_date_2="$(safe_jq_json '.up_to_date' "$JSON_OUTPUT_2" '304 check up_to_date is readable' || true)"
+status_2="$(safe_jq_json '.results[0].status' "$JSON_OUTPUT_2" '304 check result status is readable' || true)"
+last_checked_2="$(safe_jq_file '.skills[0].last_checked // ""' "$AGENTS_DIR_2/configs/skill-sources.json" '304 check last_checked is readable' || true)"
 
 assert_eq "0" "$CHECK_EXIT_2" "URL check returns success when upstream is 304"
 assert_eq "0" "$updates_available_2" "URL check reports no updates on 304"
@@ -275,9 +315,9 @@ CHECK_EXIT_3=$?
 set -e
 
 JSON_OUTPUT_3="$(printf '%s\n' "$CHECK_OUTPUT_3" | sed -n '/^{/,$p')"
-updates_available_3="$(echo "$JSON_OUTPUT_3" | jq -r '.updates_available')"
-status_3="$(echo "$JSON_OUTPUT_3" | jq -r '.results[0].status')"
-latest_hash_3="$(echo "$JSON_OUTPUT_3" | jq -r '.results[0].latest')"
+updates_available_3="$(safe_jq_json '.updates_available' "$JSON_OUTPUT_3" 'Changed-content check updates_available is readable' || true)"
+status_3="$(safe_jq_json '.results[0].status' "$JSON_OUTPUT_3" 'Changed-content check result status is readable' || true)"
+latest_hash_3="$(safe_jq_json '.results[0].latest' "$JSON_OUTPUT_3" 'Changed-content check latest hash is readable' || true)"
 
 assert_eq "1" "$CHECK_EXIT_3" "URL check exits non-zero when update is available"
 assert_eq "1" "$updates_available_3" "URL check reports one available update"
