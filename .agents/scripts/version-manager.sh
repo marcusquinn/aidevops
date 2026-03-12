@@ -486,7 +486,7 @@ capture_secretlint_findings() {
 		fi
 
 		if [[ $target_exit -ne 0 ]]; then
-			if printf '%s\n' "$target_output" | grep -Eq ': line [0-9]+, col [0-9]+, '; then
+			if [[ "$target_output" =~ :\ line\ [0-9]+,\ col\ [0-9]+,\  ]]; then
 				continue
 			fi
 			secretlint_exit=1
