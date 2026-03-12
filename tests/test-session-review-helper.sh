@@ -14,6 +14,7 @@ TEST_TMPDIR=""
 cleanup() {
 	if [[ -n "${TEST_TMPDIR}" && -d "${TEST_TMPDIR}" ]]; then
 		rm -rf "${TEST_TMPDIR}"
+		TEST_TMPDIR=""
 	fi
 	return 0
 }
@@ -54,6 +55,18 @@ setup_fixtures() {
 	return 0
 }
 
+# run_test <label> <test_fn> — sets up fixtures, runs the test function, then cleans up.
+# Each test function receives no arguments and uses TEST_TMPDIR for its fixtures.
+run_test() {
+	local label="$1"
+	local test_fn="$2"
+	echo "Test: ${label}"
+	setup_fixtures
+	"${test_fn}"
+	cleanup
+	return 0
+}
+
 run_security_json() {
 	local session_id="$1"
 	HOME="${TEST_TMPDIR}/home" "${TEST_TMPDIR}/session-review-helper.sh" security --json --session "${session_id}"
@@ -61,10 +74,7 @@ run_security_json() {
 	return "$status"
 }
 
-test_session_helper_uses_session_id_flag() {
-	echo "Test: session helper uses --session-id"
-	setup_fixtures
-
+_test_session_helper_uses_session_id_flag() {
 	cat >"${TEST_TMPDIR}/session-security-helper.sh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -79,7 +89,6 @@ EOF
 	local result
 	if ! result="$(run_security_json "abc.123")"; then
 		fail "security --json command" "command failed"
-		cleanup
 		return 0
 	fi
 
@@ -94,15 +103,10 @@ EOF
 		fail "get-context call accepted --session-id" "available=${available} session_id=${context_session}"
 		verbose "output=${result}"
 	fi
-
-	cleanup
 	return 0
 }
 
-test_invalid_context_falls_back_to_unavailable() {
-	echo "Test: invalid helper context falls back unavailable"
-	setup_fixtures
-
+_test_invalid_context_falls_back_to_unavailable() {
 	cat >"${TEST_TMPDIR}/session-security-helper.sh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -117,7 +121,6 @@ EOF
 	local result
 	if ! result="$(run_security_json "abc123")"; then
 		fail "security --json command" "command failed"
-		cleanup
 		return 0
 	fi
 
@@ -129,15 +132,10 @@ EOF
 		fail "fallback keeps session_context.available false" "available=${available}"
 		verbose "output=${result}"
 	fi
-
-	cleanup
 	return 0
 }
 
-test_sqlite_cost_query_param_binding() {
-	echo "Test: sqlite cost query uses working param binding"
-	setup_fixtures
-
+_test_sqlite_cost_query_param_binding() {
 	cat >"${TEST_TMPDIR}/session-security-helper.sh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -154,7 +152,6 @@ EOF
 	local result
 	if ! result="$(run_security_json "session-A")"; then
 		fail "security --json command" "command failed"
-		cleanup
 		return 0
 	fi
 
@@ -167,8 +164,6 @@ EOF
 		fail "sqlite query returns filtered session totals" "total=${total} requests=${requests}"
 		verbose "output=${result}"
 	fi
-
-	cleanup
 	return 0
 }
 
@@ -186,9 +181,9 @@ main() {
 		return 1
 	fi
 
-	test_session_helper_uses_session_id_flag
-	test_invalid_context_falls_back_to_unavailable
-	test_sqlite_cost_query_param_binding
+	run_test "session helper uses --session-id" _test_session_helper_uses_session_id_flag
+	run_test "invalid helper context falls back unavailable" _test_invalid_context_falls_back_to_unavailable
+	run_test "sqlite cost query uses working param binding" _test_sqlite_cost_query_param_binding
 
 	echo ""
 	echo "Results: ${PASS_COUNT} passed, ${FAIL_COUNT} failed"
