@@ -38,16 +38,16 @@ mkdir -p "$(dirname "$STATS_PIDFILE")"
 #######################################
 _stats_process_elapsed_seconds() {
 	local pid="$1"
-	local elapsed
+	local elapsed=""
 
-	elapsed=$(ps -p "$pid" -o etimes= 2>/dev/null | tr -d '[:space:]')
+	elapsed=$(ps -p "$pid" -o etimes= 2>/dev/null | tr -d '[:space:]' || true)
 	if [[ "$elapsed" =~ ^[0-9]+$ ]]; then
 		printf '%s\n' "$elapsed"
 		return 0
 	fi
 
-	local etime
-	etime=$(ps -p "$pid" -o etime= 2>/dev/null | tr -d '[:space:]')
+	local etime=""
+	etime=$(ps -p "$pid" -o etime= 2>/dev/null | tr -d '[:space:]' || true)
 	if [[ -z "$etime" ]]; then
 		return 1
 	fi
@@ -56,18 +56,14 @@ _stats_process_elapsed_seconds() {
 		BEGIN {
 			n = split(value, parts, /[-:]/)
 			if (index(value, "-") > 0) {
-				if (n != 4) {
-					print ""
-					exit
-				}
+				if (n != 4) { exit 1 }
 				total = (parts[1] * 86400) + (parts[2] * 3600) + (parts[3] * 60) + parts[4]
 			} else if (n == 3) {
 				total = (parts[1] * 3600) + (parts[2] * 60) + parts[3]
 			} else if (n == 2) {
 				total = (parts[1] * 60) + parts[2]
 			} else {
-				print ""
-				exit
+				exit 1
 			}
 			print total
 		}
@@ -114,6 +110,10 @@ check_stats_dedup() {
 		elapsed=$((now - old_epoch))
 	else
 		elapsed=$(_stats_process_elapsed_seconds "$old_pid") || {
+			if kill -0 "$old_pid" 2>/dev/null; then
+				echo "[stats-wrapper] Unable to determine elapsed time for live PID $old_pid; preserving pidfile and skipping." >>"$STATS_LOGFILE"
+				return 1
+			fi
 			rm -f "$STATS_PIDFILE"
 			return 0
 		}
