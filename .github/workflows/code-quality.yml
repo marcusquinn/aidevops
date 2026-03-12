@@ -132,6 +132,12 @@ jobs:
         echo ""
         echo "All shell scripts passed ShellCheck"
 
+    - name: Secret Safety Policy Check
+      run: |
+        echo "Running secret safety policy checks..."
+        bash .agents/scripts/secret-policy-check.sh
+        echo "Secret safety policy checks passed"
+
   sonarcloud:
     name: SonarCloud Analysis
     runs-on: ubuntu-latest

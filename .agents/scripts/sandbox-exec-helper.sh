@@ -16,6 +16,7 @@
 #   sandbox-exec-helper.sh run "command args"
 #   sandbox-exec-helper.sh run --timeout 60 --no-network "curl example.com"
 #   sandbox-exec-helper.sh run --network-tiering --worker-id w123 "curl example.com"
+#   sandbox-exec-helper.sh run --allow-secret-io "gopass show path"  # explicit override
 #   sandbox-exec-helper.sh run --passthrough "GITHUB_TOKEN,NPM_TOKEN" "npm publish"
 #   sandbox-exec-helper.sh audit [--last N]
 #   sandbox-exec-helper.sh config --show
@@ -35,9 +36,10 @@ LOG_PREFIX="SANDBOX"
 readonly SANDBOX_DIR="${HOME}/.aidevops/.agent-workspace/sandbox"
 readonly SANDBOX_LOG="${SANDBOX_DIR}/executions.jsonl"
 readonly SANDBOX_TMP_BASE="${SANDBOX_DIR}/tmp"
-readonly DEFAULT_TIMEOUT=120
-readonly MAX_TIMEOUT=3600
-readonly MAX_OUTPUT_BYTES=10485760 # 10MB per stream
+readonly SANDBOX_DEFAULT_TIMEOUT=120
+readonly SANDBOX_MAX_TIMEOUT=3600
+readonly SANDBOX_MAX_OUTPUT_BYTES=10485760 # 10MB per stream
+readonly SECRET_IO_GUARD_DEFAULT="true"
 
 # Minimal environment passthrough — only what's needed for basic operation
 readonly DEFAULT_PASSTHROUGH="PATH HOME USER LANG TERM SHELL"
@@ -84,6 +86,177 @@ log_execution() {
 		"$network_blocked" \
 		"$passthrough_vars" \
 		>>"$SANDBOX_LOG"
+}
+
+# Detect high-risk commands that could expose secret values in transcript output.
+# Returns 0 and prints a reason when command should be blocked.
+# Returns 1 when command appears safe.
+_sandbox_secret_block_reason() {
+	local command="$1"
+	local normalized
+	normalized="$(printf '%s' "$command" | tr '[:upper:]' '[:lower:]')"
+
+	if [[ "$normalized" =~ (^|[[:space:];|&])(gopass|pass)[[:space:]]+(show|cat)([[:space:]]|$) ]]; then
+		echo "password manager value read command"
+		return 0
+	fi
+
+	if [[ "$normalized" =~ (^|[[:space:];|&])op[[:space:]]+read([[:space:]]|$) ]]; then
+		echo "1Password secret read command"
+		return 0
+	fi
+
+	if [[ "$normalized" =~ (^|[[:space:];|&])cat[[:space:]]+([^[:space:]]*/)?(\.env([^[:space:]]*)?|credentials\.sh|[^[:space:]]*secret[^[:space:]]*)($|[[:space:];|&]) ]]; then
+		echo "file read command targeting likely secret material"
+		return 0
+	fi
+
+	if [[ "$normalized" =~ (^|[[:space:];|&])(echo|printenv)[[:space:]]+\$?[a-z_][a-z0-9_]*(secret|token|key|password|passwd|pwd|credential|client_secret|access_token)([[:space:];|&]|$) ]]; then
+		echo "environment variable value print command"
+		return 0
+	fi
+
+	if [[ "$normalized" =~ (^|[[:space:];|&])env[[:space:]]*\|[[:space:]]*(grep|rg)([[:space:];|&]|$) ]]; then
+		echo "environment dump piped to search command"
+		return 0
+	fi
+
+	if [[ "$normalized" =~ (^|[[:space:];|&])kubectl[[:space:]]+get[[:space:]]+secret([[:space:]]|$) ]]; then
+		echo "kubernetes secret read command"
+		return 0
+	fi
+
+	if [[ "$normalized" =~ (^|[[:space:];|&])docker[[:space:]]+inspect([[:space:]]|$) ]] || [[ "$normalized" =~ (^|[[:space:];|&])docker[[:space:]]+exec[[:space:]].*[[:space:]]env([[:space:];|&]|$) ]]; then
+		echo "docker environment inspection command"
+		return 0
+	fi
+
+	if [[ "$normalized" =~ (^|[[:space:];|&])pm2[[:space:]]+env([[:space:]]|$) ]]; then
+		echo "pm2 environment dump command"
+		return 0
+	fi
+
+	return 1
+}
+
+# Determine whether command/output should be treated as secret-tainted.
+# Tainted commands get stronger output handling (warning + redaction).
+_sandbox_is_secret_tainted_command() {
+	local command="$1"
+	local normalized
+	normalized="$(printf '%s' "$command" | tr '[:upper:]' '[:lower:]')"
+
+	if _sandbox_secret_block_reason "$command" >/dev/null 2>&1; then
+		return 0
+	fi
+
+	if [[ "$normalized" =~ oauth/access_token|client_secret|access_token|refresh_token|authorization:[[:space:]]*bearer ]]; then
+		return 0
+	fi
+
+	return 1
+}
+
+# Redact likely secret values from a captured output file.
+# Arguments: $1=file path, $2=stream name (stdout|stderr)
+_sandbox_emit_redacted_output() {
+	local output_file="$1"
+	local stream_name="$2"
+	local tainted_flag="$3"
+
+	if [[ ! -f "$output_file" ]] || [[ ! -s "$output_file" ]]; then
+		return 0
+	fi
+
+	local truncated_file
+	truncated_file="$(mktemp)"
+	head -c "$SANDBOX_MAX_OUTPUT_BYTES" "$output_file" >"$truncated_file"
+
+	if [[ "$tainted_flag" == "true" ]]; then
+		local warning_msg="[sandbox] WARNING: secret-tainted command detected — output is redacted"
+		if [[ "$stream_name" == "stderr" ]]; then
+			printf '%s\n' "$warning_msg" >&2
+		else
+			printf '%s\n' "$warning_msg"
+		fi
+	fi
+
+	if command -v python3 >/dev/null 2>&1; then
+		if [[ "$stream_name" == "stderr" ]]; then
+			python3 - "$truncated_file" <<'PY' >&2
+import os
+import re
+import sys
+
+path = sys.argv[1]
+try:
+    text = open(path, "r", encoding="utf-8", errors="replace").read()
+except Exception:
+    sys.exit(0)
+
+candidate_values = []
+for key, value in os.environ.items():
+    upper = key.upper()
+    if any(token in upper for token in ["SECRET", "TOKEN", "PASSWORD", "API_KEY", "ACCESS_KEY", "PRIVATE_KEY", "CLIENT_SECRET", "AUTH"]):
+        if value and len(value) >= 8:
+            candidate_values.append(value)
+
+for value in sorted(set(candidate_values), key=len, reverse=True):
+    text = text.replace(value, "[REDACTED_SECRET]")
+
+patterns = [
+    (re.compile(r'(?i)(authorization\s*:\s*bearer\s+)([A-Za-z0-9._~+/=-]+)'), r'\1[REDACTED_SECRET]'),
+    (re.compile(r'(?i)(access_token|refresh_token|client_secret|api[_-]?key|password|token|secret)(\s*[:=]\s*)("?[^"\s,}]+"?)'), r'\1\2"[REDACTED_SECRET]"'),
+]
+
+for pattern, repl in patterns:
+    text = pattern.sub(repl, text)
+
+sys.stdout.write(text)
+PY
+		else
+			python3 - "$truncated_file" <<'PY'
+import os
+import re
+import sys
+
+path = sys.argv[1]
+try:
+    text = open(path, "r", encoding="utf-8", errors="replace").read()
+except Exception:
+    sys.exit(0)
+
+candidate_values = []
+for key, value in os.environ.items():
+    upper = key.upper()
+    if any(token in upper for token in ["SECRET", "TOKEN", "PASSWORD", "API_KEY", "ACCESS_KEY", "PRIVATE_KEY", "CLIENT_SECRET", "AUTH"]):
+        if value and len(value) >= 8:
+            candidate_values.append(value)
+
+for value in sorted(set(candidate_values), key=len, reverse=True):
+    text = text.replace(value, "[REDACTED_SECRET]")
+
+patterns = [
+    (re.compile(r'(?i)(authorization\s*:\s*bearer\s+)([A-Za-z0-9._~+/=-]+)'), r'\1[REDACTED_SECRET]'),
+    (re.compile(r'(?i)(access_token|refresh_token|client_secret|api[_-]?key|password|token|secret)(\s*[:=]\s*)("?[^"\s,}]+"?)'), r'\1\2"[REDACTED_SECRET]"'),
+]
+
+for pattern, repl in patterns:
+    text = pattern.sub(repl, text)
+
+sys.stdout.write(text)
+PY
+		fi
+	else
+		if [[ "$stream_name" == "stderr" ]]; then
+			cat "$truncated_file" >&2
+		else
+			cat "$truncated_file"
+		fi
+	fi
+
+	rm -f "$truncated_file"
+	return 0
 }
 
 # =============================================================================
@@ -242,21 +415,23 @@ _sandbox_check_dns_exfil() {
 # =============================================================================
 
 sandbox_run() {
-	local timeout_secs="$DEFAULT_TIMEOUT"
+	local timeout_secs="$SANDBOX_DEFAULT_TIMEOUT"
 	local block_network=false
 	local network_tiering=false
+	local allow_secret_io=false
 	local worker_id="sandbox-$$"
 	local extra_passthrough=""
 	local command=""
+	local secret_io_guard="${AIDEVOPS_BLOCK_SECRET_IO:-$SECRET_IO_GUARD_DEFAULT}"
 
 	# Parse arguments
 	while [[ $# -gt 0 ]]; do
 		case $1 in
 		--timeout)
 			timeout_secs="$2"
-			if ((timeout_secs > MAX_TIMEOUT)); then
-				log_sandbox "WARN" "Timeout capped at ${MAX_TIMEOUT}s (requested ${timeout_secs}s)"
-				timeout_secs=$MAX_TIMEOUT
+			if ((timeout_secs > SANDBOX_MAX_TIMEOUT)); then
+				log_sandbox "WARN" "Timeout capped at ${SANDBOX_MAX_TIMEOUT}s (requested ${timeout_secs}s)"
+				timeout_secs=$SANDBOX_MAX_TIMEOUT
 			fi
 			shift 2
 			;;
@@ -266,6 +441,10 @@ sandbox_run() {
 			;;
 		--network-tiering)
 			network_tiering=true
+			shift
+			;;
+		--allow-secret-io)
+			allow_secret_io=true
 			shift
 			;;
 		--worker-id)
@@ -291,6 +470,16 @@ sandbox_run() {
 	if [[ -z "$command" ]]; then
 		log_sandbox "ERROR" "No command provided"
 		return 1
+	fi
+
+	if [[ "$secret_io_guard" == "true" ]] && [[ "$allow_secret_io" != "true" ]]; then
+		local block_reason
+		if block_reason="$(_sandbox_secret_block_reason "$command")"; then
+			log_sandbox "ERROR" "Blocked command due to secret leak risk: ${block_reason}"
+			log_sandbox "ERROR" "Use --allow-secret-io only for explicit user-approved local operations"
+			log_execution "$command" 126 0 "$timeout_secs" "$block_network" "$extra_passthrough"
+			return 126
+		fi
 	fi
 
 	# Create isolated temp directory
@@ -346,6 +535,10 @@ sandbox_run() {
 	local start_time
 	start_time="$(date +%s)"
 	local exit_code=0
+	local command_tainted=false
+	if _sandbox_is_secret_tainted_command "$command"; then
+		command_tainted=true
+	fi
 
 	# Execute with timeout and clean environment
 	if [[ "$block_network" == true ]] && command -v sandbox-exec &>/dev/null; then
@@ -375,13 +568,9 @@ sandbox_run() {
 		log_sandbox "WARN" "Command timed out after ${timeout_secs}s"
 	fi
 
-	# Output results (truncated to MAX_OUTPUT_BYTES)
-	if [[ -f "$stdout_file" ]] && [[ -s "$stdout_file" ]]; then
-		head -c "$MAX_OUTPUT_BYTES" "$stdout_file"
-	fi
-	if [[ -f "$stderr_file" ]] && [[ -s "$stderr_file" ]]; then
-		head -c "$MAX_OUTPUT_BYTES" "$stderr_file" >&2
-	fi
+	# Output results with redaction and taint-aware handling
+	_sandbox_emit_redacted_output "$stdout_file" "stdout" "$command_tainted"
+	_sandbox_emit_redacted_output "$stderr_file" "stderr" "$command_tainted"
 
 	# Audit log
 	log_execution "$command" "$exit_code" "$duration" "$timeout_secs" "$block_network" "$extra_passthrough"
@@ -434,8 +623,9 @@ sandbox_config() {
 	echo "Sandbox configuration:"
 	echo "  Log:          ${SANDBOX_LOG}"
 	echo "  Tmp base:     ${SANDBOX_TMP_BASE}"
-	echo "  Timeout:      ${DEFAULT_TIMEOUT}s (max ${MAX_TIMEOUT}s)"
-	echo "  Max output:   $((MAX_OUTPUT_BYTES / 1048576))MB per stream"
+	echo "  Timeout:      ${SANDBOX_DEFAULT_TIMEOUT}s (max ${SANDBOX_MAX_TIMEOUT}s)"
+	echo "  Max output:   $((SANDBOX_MAX_OUTPUT_BYTES / 1048576))MB per stream"
+	echo "  Secret guard: ${AIDEVOPS_BLOCK_SECRET_IO:-$SECRET_IO_GUARD_DEFAULT}"
 	echo "  Passthrough:  ${DEFAULT_PASSTHROUGH}"
 	echo "  Net tiering:  $([ -x "$NET_TIER_HELPER" ] && echo "available" || echo "not found")"
 	echo ""
@@ -466,6 +656,7 @@ Run options:
   --timeout N                Timeout in seconds (default: 120, max: 3600)
   --no-network               Block network access (macOS only, uses seatbelt)
   --network-tiering          Enable domain classification and logging (t1412.3)
+  --allow-secret-io          Bypass secret-output guard for this command only
   --worker-id ID             Worker identifier for network tier logs
   --passthrough "VAR1,VAR2"  Additional env vars to pass through
 
@@ -474,6 +665,7 @@ Examples:
   sandbox-exec-helper.sh run --timeout 60 "npm test"
   sandbox-exec-helper.sh run --no-network "python3 script.py"
   sandbox-exec-helper.sh run --network-tiering --worker-id w123 "curl https://api.github.com/repos"
+  sandbox-exec-helper.sh run --allow-secret-io "gopass show aidevops/EXAMPLE"
   sandbox-exec-helper.sh run --passthrough "GITHUB_TOKEN" "gh pr list"
   sandbox-exec-helper.sh audit --last 10
 
@@ -481,6 +673,7 @@ Security model:
   - Environment cleared (env -i) with minimal passthrough
   - Each execution gets isolated TMPDIR
   - Configurable timeout with hard kill
+  - Secret-output command guard blocks likely credential leakage patterns
   - Optional network blocking (macOS seatbelt)
   - Network domain tiering: classify, log, flag unknown domains (t1412.3)
   - All executions logged to JSONL audit trail

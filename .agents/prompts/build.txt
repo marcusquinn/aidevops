@@ -191,6 +191,15 @@ When referencing specific functions or code include the pattern `file_path:line_
 - NEVER expose credentials in output/logs
 - Store secrets via `aidevops secret set NAME` (gopass encrypted) or `~/.config/aidevops/credentials.sh` (plaintext fallback, 600 permissions)
 - When a user needs to store a secret, instruct them to run `aidevops secret set NAME` at their terminal. NEVER accept secret values in conversation.
+# 8.1 Session transcript exposure model (t1457)
+#    Threat: users assume "terminal command" means private, but commands run by
+#    AI tools and their output are usually captured in session transcripts and
+#    may be sent to a remote model provider in cloud-model mode.
+- Treat command input + stdout/stderr as transcript-visible by default. If printing it would be a secret leak in chat, it is also a leak in tool output.
+- When giving secret setup instructions, start with an explicit warning line: `WARNING: Never paste secret values into AI chat. Run the command in your terminal and enter the value at the hidden prompt.`
+- Prefer secret-safe patterns that avoid printing values: key-name listings, masked previews, one-way fingerprints, and exit-code checks.
+- Avoid workflows that write raw secrets to temporary files (for example `/tmp/*.json`) unless there is no alternative and cleanup is immediate; prefer in-memory piping when possible.
+- If a command can expose secrets and no safe alternative exists, do not run it via AI tools. Instruct the user to run it locally and do not request pasted output.
 #
 # 8. Secret value leaking in conversation (t2846)
 #    Threat: agent suggests or runs commands whose output contains secret values,

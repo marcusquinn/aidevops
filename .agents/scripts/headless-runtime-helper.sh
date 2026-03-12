@@ -19,6 +19,33 @@ readonly DEFAULT_HEADLESS_MODELS="anthropic/claude-sonnet-4-6,openai/gpt-5.3-cod
 readonly STATE_DIR="${AIDEVOPS_HEADLESS_RUNTIME_DIR:-${HOME}/.aidevops/.agent-workspace/headless-runtime}"
 readonly STATE_DB="${STATE_DIR}/state.db"
 readonly OPENCODE_BIN_DEFAULT="${OPENCODE_BIN:-opencode}"
+readonly SANDBOX_EXEC_HELPER="${SCRIPT_DIR}/sandbox-exec-helper.sh"
+readonly HEADLESS_SANDBOX_TIMEOUT_DEFAULT="${AIDEVOPS_HEADLESS_SANDBOX_TIMEOUT:-3600}"
+
+build_sandbox_passthrough_csv() {
+	local passthrough_csv=""
+	local seen_names=" "
+	local name
+
+	while IFS='=' read -r name _; do
+		case "$name" in
+		AIDEVOPS_* | PULSE_* | GH_* | GITHUB_* | OPENAI_* | ANTHROPIC_* | GOOGLE_* | OPENCODE_* | CLAUDE_* | XDG_* | REAL_HOME | TMPDIR | TMP | TEMP | RTK_* | VERIFY_*)
+			if [[ "$seen_names" == *" ${name} "* ]]; then
+				continue
+			fi
+			seen_names+="${name} "
+			if [[ -z "$passthrough_csv" ]]; then
+				passthrough_csv="$name"
+			else
+				passthrough_csv+=",$name"
+			fi
+			;;
+		esac
+	done < <(env)
+
+	printf '%s' "$passthrough_csv"
+	return 0
+}
 
 init_state_db() {
 	mkdir -p "$STATE_DIR" 2>/dev/null || true
@@ -714,8 +741,21 @@ cmd_run() {
 		# Subshell localises errexit so main shell state is never modified.
 		exit_code=$(
 			set +e
-			"${cmd[@]}" 2>&1 | tee "$output_file"
-			echo "${PIPESTATUS[0]}"
+			if [[ -x "$SANDBOX_EXEC_HELPER" ]]; then
+				local escaped_cmd passthrough_csv
+				printf -v escaped_cmd '%q ' "${cmd[@]}"
+				escaped_cmd="${escaped_cmd% }"
+				passthrough_csv="$(build_sandbox_passthrough_csv)"
+				if [[ -n "$passthrough_csv" ]]; then
+					"$SANDBOX_EXEC_HELPER" run --timeout "$HEADLESS_SANDBOX_TIMEOUT_DEFAULT" --allow-secret-io --passthrough "$passthrough_csv" -- "$escaped_cmd" 2>&1 | tee "$output_file"
+				else
+					"$SANDBOX_EXEC_HELPER" run --timeout "$HEADLESS_SANDBOX_TIMEOUT_DEFAULT" --allow-secret-io -- "$escaped_cmd" 2>&1 | tee "$output_file"
+				fi
+				echo "${PIPESTATUS[0]}"
+			else
+				"${cmd[@]}" 2>&1 | tee "$output_file"
+				echo "${PIPESTATUS[0]}"
+			fi
 		) || true
 
 		local discovered_session

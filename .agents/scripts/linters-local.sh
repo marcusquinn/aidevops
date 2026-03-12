@@ -734,6 +734,24 @@ check_skill_frontmatter() {
 	return 0
 }
 
+check_secret_policy() {
+	echo -e "${BLUE}Checking Secret Safety Policy...${NC}"
+
+	local policy_script=".agents/scripts/secret-policy-check.sh"
+	if [[ ! -x "$policy_script" ]]; then
+		print_error "Missing executable policy checker: $policy_script"
+		return 1
+	fi
+
+	if bash "$policy_script"; then
+		print_success "Secret safety policy checks passed"
+		return 0
+	fi
+
+	print_error "Secret safety policy check failed"
+	return 1
+}
+
 # =============================================================================
 # Bundle-Aware Gate Filtering (t1364.6)
 # =============================================================================
@@ -847,6 +865,11 @@ main() {
 
 	if ! should_skip_gate "skill-frontmatter"; then
 		check_skill_frontmatter || exit_code=1
+		echo ""
+	fi
+
+	if ! should_skip_gate "secret-policy"; then
+		check_secret_policy || exit_code=1
 		echo ""
 	fi
 
