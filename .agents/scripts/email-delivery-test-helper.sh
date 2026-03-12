@@ -56,7 +56,7 @@ analyze_spam_content() {
 
 	# --- Subject line analysis (if HTML email, extract <title>) ---
 	local subject=""
-	subject=$(echo "$content" | grep -oiE '<title>[^<]+</title>' | sed 's/<[^>]*>//g' | head -1 || true)
+	subject=$(grep -oiE '<title>[^<]+</title>' <<<"$content" | sed 's/<[^>]*>//g' | head -1 || true)
 
 	if [[ -n "$subject" ]]; then
 		print_header "Subject Line Analysis"
@@ -142,7 +142,7 @@ analyze_spam_content() {
 	local high_risk_found=0
 	for phrase in "${high_risk_phrases[@]}"; do
 		local count
-		count=$( (echo "$content" | grep -oiE "$phrase" || true) | wc -l | tr -d ' ')
+		count=$( (grep -oiE "$phrase" <<<"$content" || true) | wc -l | tr -d ' ')
 		count="${count:-0}"
 		if [[ "$count" -gt 0 ]]; then
 			print_warning "High-risk phrase found: '$phrase' ($count occurrences)"
@@ -194,7 +194,7 @@ analyze_spam_content() {
 	local medium_risk_found=0
 	for phrase in "${medium_risk_phrases[@]}"; do
 		local count
-		count=$( (echo "$content" | grep -oiE "$phrase" || true) | wc -l | tr -d ' ')
+		count=$( (grep -oiE "$phrase" <<<"$content" || true) | wc -l | tr -d ' ')
 		count="${count:-0}"
 		if [[ "$count" -gt 0 ]]; then
 			medium_risk_found=$((medium_risk_found + 1))
@@ -214,10 +214,10 @@ analyze_spam_content() {
 
 	# Image-to-text ratio
 	local img_count
-	img_count=$(echo "$content" | grep -oiE '<img' | wc -l | tr -d ' ')
+	img_count=$( (grep -oiE '<img' <<<"$content" || true) | wc -l | tr -d ' ')
 	img_count="${img_count:-0}"
 	local text_length
-	text_length=$(echo "$content" | sed 's/<[^>]*>//g' | tr -s '[:space:]' | wc -c | tr -d ' ')
+	text_length=$(sed 's/<[^>]*>//g' <<<"$content" | tr -s '[:space:]' | wc -c | tr -d ' ')
 
 	if [[ "$img_count" -gt 0 && "$text_length" -lt 200 ]]; then
 		print_warning "Low text-to-image ratio ($text_length chars, $img_count images)"
@@ -230,7 +230,7 @@ analyze_spam_content() {
 
 	# URL analysis
 	local url_count
-	url_count=$(echo "$content" | grep -oiE 'https?://' | wc -l | tr -d ' ')
+	url_count=$( (grep -oiE 'https?://' <<<"$content" || true) | wc -l | tr -d ' ')
 	url_count="${url_count:-0}"
 	if [[ "$url_count" -gt 20 ]]; then
 		print_warning "Excessive URLs ($url_count) - may trigger spam filters"
@@ -240,7 +240,7 @@ analyze_spam_content() {
 
 	# Shortened URLs
 	local short_url_count
-	short_url_count=$(echo "$content" | grep -oiE 'bit\.ly|tinyurl|t\.co|goo\.gl|ow\.ly|is\.gd|buff\.ly' | wc -l | tr -d ' ')
+	short_url_count=$( (grep -oiE 'bit\.ly|tinyurl|t\.co|goo\.gl|ow\.ly|is\.gd|buff\.ly' <<<"$content" || true) | wc -l | tr -d ' ')
 	short_url_count="${short_url_count:-0}"
 	if [[ "$short_url_count" -gt 0 ]]; then
 		print_warning "URL shorteners detected ($short_url_count) - spam trigger"
@@ -250,7 +250,7 @@ analyze_spam_content() {
 	fi
 
 	# Hidden text (white text on white, font-size: 0, display: none)
-	if echo "$content" | grep -qiE 'color:\s*(#fff|#ffffff|white).*background.*white|font-size:\s*0|display:\s*none.*[a-z]'; then
+	if grep -qiE 'color:\s*(#fff|#ffffff|white).*background.*white|font-size:\s*0|display:\s*none.*[a-z]' <<<"$content"; then
 		print_error "Possible hidden text detected - major spam signal"
 		score=$((score + 20))
 		issues=$((issues + 1))
@@ -258,7 +258,7 @@ analyze_spam_content() {
 
 	# JavaScript (should never be in email)
 	local js_count
-	js_count=$(echo "$content" | grep -oiE '<script|javascript:' | wc -l | tr -d ' ')
+	js_count=$( (grep -oiE '<script|javascript:' <<<"$content" || true) | wc -l | tr -d ' ')
 	js_count="${js_count:-0}"
 	if [[ "$js_count" -gt 0 ]]; then
 		print_error "JavaScript detected ($js_count) - will be stripped and may trigger spam"
@@ -267,14 +267,14 @@ analyze_spam_content() {
 	fi
 
 	# Form elements
-	if echo "$content" | grep -qiE '<form|<input|<select|<textarea'; then
+	if grep -qiE '<form|<input|<select|<textarea' <<<"$content"; then
 		print_warning "Form elements detected - not supported in most email clients"
 		score=$((score + 5))
 		issues=$((issues + 1))
 	fi
 
 	# Unsubscribe link check
-	if ! echo "$content" | grep -qi 'unsubscribe'; then
+	if ! grep -qi 'unsubscribe' <<<"$content"; then
 		print_error "No unsubscribe link found - required for marketing emails"
 		print_info "Missing unsubscribe is a CAN-SPAM violation and spam trigger"
 		score=$((score + 10))
@@ -284,7 +284,7 @@ analyze_spam_content() {
 	fi
 
 	# Physical address check (CAN-SPAM requirement)
-	if ! echo "$content" | grep -qiE '[0-9]+\s+[A-Za-z]+\s+(street|st|avenue|ave|road|rd|boulevard|blvd|drive|dr|lane|ln|way|court|ct|suite|ste)'; then
+	if ! grep -qiE '[0-9]+\s+[A-Za-z]+\s+(street|st|avenue|ave|road|rd|boulevard|blvd|drive|dr|lane|ln|way|court|ct|suite|ste)' <<<"$content"; then
 		print_warning "No physical address detected - required by CAN-SPAM"
 		score=$((score + 5))
 		issues=$((issues + 1))
