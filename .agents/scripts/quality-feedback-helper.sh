@@ -1131,7 +1131,7 @@ _create_quality_debt_issues() {
 	local repo_slug="$1"
 	local pr_num="$2"
 	local findings="$3"
-	local verified_findings="[]"
+	local verified_findings_stream=""
 
 	while IFS= read -r finding; do
 		[[ -z "$finding" ]] && continue
@@ -1153,11 +1153,15 @@ _create_quality_debt_issues() {
 
 		if [[ "$verification_result" == "true" ]]; then
 			finding_with_status=$(echo "$finding" | jq --arg status "$verification_status" '. + {verification_status: $status}')
-			verified_findings=$(echo "$verified_findings" "$finding_with_status" | jq -s '.[0] + [.[1]]')
+			verified_findings_stream+="${finding_with_status}"$'\n'
 		fi
 	done < <(echo "$findings" | jq -c '.[]')
 
-	findings="$verified_findings"
+	if [[ -n "$verified_findings_stream" ]]; then
+		findings=$(printf '%s' "$verified_findings_stream" | jq -s '.')
+	else
+		findings="[]"
+	fi
 
 	local finding_count
 	finding_count=$(echo "$findings" | jq 'length' 2>/dev/null || echo "0")
