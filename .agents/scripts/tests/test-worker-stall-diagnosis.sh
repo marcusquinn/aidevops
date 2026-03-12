@@ -156,6 +156,17 @@ assert_file_missing() {
 	return 0
 }
 
+set_struggle_stub() {
+	local result="$1"
+	STUB_STRUGGLE_RESULT="$result"
+	# shellcheck disable=SC2317
+	_compute_struggle_ratio() {
+		printf '%s' "$STUB_STRUGGLE_RESULT"
+		return 0
+	}
+	return 0
+}
+
 test_recent_message_clears_stall() {
 	reset_fixture
 	local cmd='opencode run --title "Issue #4136: Diagnose stalls" --dir /tmp/aidevops "/full-loop Implement issue #4136"'
@@ -250,12 +261,122 @@ test_stalled_tail_is_reported() {
 	return 0
 }
 
+test_thrashing_guard_detects_zero_commit_high_message() {
+	reset_fixture
+	set_struggle_stub "320|0|320|thrashing"
+	local cmd='opencode run --title "Issue #4187: thrash" --dir /tmp/aidevops "/full-loop Implement issue #4187"'
+
+	if ! check_zero_commit_thrashing "4301" "$cmd" 8000; then
+		print_result "thrash guard detects zero-commit high-message loops" 1 "Expected thrashing detection to trigger"
+		return 0
+	fi
+
+	if [[ "$THRASH_COMMITS" != "0" || "$THRASH_MESSAGES" != "320" || "$THRASH_FLAG" != "thrashing" ]]; then
+		print_result "thrash guard detects zero-commit high-message loops" 1 "Expected thrash metrics to be populated"
+		return 0
+	fi
+
+	print_result "thrash guard detects zero-commit high-message loops" 0
+	return 0
+}
+
+test_thrashing_guard_skips_workers_with_commits() {
+	reset_fixture
+	set_struggle_stub "45|2|90|"
+	local cmd='opencode run --title "Issue #4187: thrash" --dir /tmp/aidevops "/full-loop Implement issue #4187"'
+
+	if check_zero_commit_thrashing "4302" "$cmd" 8000; then
+		print_result "thrash guard ignores workers with commits" 1 "Expected guardrail to skip workers that produced commits"
+		return 0
+	fi
+
+	print_result "thrash guard ignores workers with commits" 0
+	return 0
+}
+
+test_post_kill_marks_thrash_as_blocked() {
+	reset_fixture
+	local gh_calls_file="${TEST_ROOT}/gh-calls.log"
+	: >"$gh_calls_file"
+
+	extract_issue_number() {
+		printf '%s' "4187"
+		return 0
+	}
+
+	extract_repo_slug() {
+		printf '%s' "marcusquinn/aidevops"
+		return 0
+	}
+
+	gh() {
+		printf '%s\n' "$*" >>"$gh_calls_file"
+		return 0
+	}
+
+	post_kill_github_update "worker cmd" "thrash" "2h 13m" "ratio=320 messages=320 commits=0 flag=thrashing"
+
+	local captured_calls=""
+	captured_calls=$(<"$gh_calls_file")
+
+	if [[ "$captured_calls" != *"--add-label status:blocked"* ]]; then
+		print_result "thrash kills relabel issues as blocked" 1 "Expected status:blocked label on thrash kill"
+		return 0
+	fi
+
+	if [[ "$captured_calls" != *"Retry guidance:"* ]]; then
+		print_result "thrash kills relabel issues as blocked" 1 "Expected retry guidance in watchdog annotation"
+		return 0
+	fi
+
+	print_result "thrash kills relabel issues as blocked" 0
+	return 0
+}
+
+test_post_kill_marks_runtime_as_available() {
+	reset_fixture
+	local gh_calls_file="${TEST_ROOT}/gh-calls-runtime.log"
+	: >"$gh_calls_file"
+
+	extract_issue_number() {
+		printf '%s' "4188"
+		return 0
+	}
+
+	extract_repo_slug() {
+		printf '%s' "marcusquinn/aidevops"
+		return 0
+	}
+
+	gh() {
+		printf '%s\n' "$*" >>"$gh_calls_file"
+		return 0
+	}
+
+	post_kill_github_update "worker cmd" "runtime" "3h 0m" "no transcript"
+
+	local captured_calls=""
+	captured_calls=$(<"$gh_calls_file")
+
+	if [[ "$captured_calls" != *"--add-label status:available"* ]]; then
+		print_result "runtime kills keep issues dispatchable" 1 "Expected status:available label for runtime kill"
+		return 0
+	fi
+
+	print_result "runtime kills keep issues dispatchable" 0
+	return 0
+}
+
 main() {
 	setup_test_env
 	test_recent_message_clears_stall
 	test_provider_waiting_gets_grace_window
 	test_provider_waiting_kills_after_grace_expires
 	test_stalled_tail_is_reported
+	test_thrashing_guard_detects_zero_commit_high_message
+	test_thrashing_guard_skips_workers_with_commits
+	test_post_kill_marks_thrash_as_blocked
+	test_post_kill_marks_runtime_as_available
 	teardown_test_env
 
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"

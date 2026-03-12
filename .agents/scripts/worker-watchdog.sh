@@ -5,19 +5,23 @@
 # have no monitoring. Workers that crash, hang, or enter the OpenCode idle-state
 # bug sit indefinitely consuming resources and blocking issue re-dispatch.
 #
-# Three failure modes detected:
+# Four failure modes detected:
 #   1. CPU idle: Worker completed but sits in file-watcher (OpenCode idle bug).
 #      Signal: tree CPU < WORKER_IDLE_CPU_THRESHOLD for WORKER_IDLE_TIMEOUT.
 #   2. Progress stall: Worker is running but producing no output (stuck on API,
 #      rate-limited, spinning). Signal: no log growth for WORKER_PROGRESS_TIMEOUT,
 #      then inspect recent transcript tail evidence before killing.
-#   3. Runtime ceiling: Worker has been running too long regardless of activity.
+#   3. Zero-commit thrash: Worker runs for long time with heavy message volume
+#      but no commits. Signal: elapsed >= WORKER_THRASH_ELAPSED_THRESHOLD,
+#      commits == 0, messages >= WORKER_THRASH_MESSAGE_THRESHOLD.
+#   4. Runtime ceiling: Worker has been running too long regardless of activity.
 #      Signal: elapsed > WORKER_MAX_RUNTIME. Prevents infinite loops.
 #
 # On kill:
 #   - Posts a comment on the associated GitHub issue explaining the kill reason
 #   - Removes the worker's status:in-progress label
-#   - Adds status:available label so the issue is re-queued for dispatch
+#   - Adds status:available for recoverable exits (idle, stall, runtime)
+#   - Adds status:blocked for zero-commit thrash to prevent blind relaunch loops
 #   - Logs the action to the watchdog log file
 #
 # Usage:
@@ -32,6 +36,8 @@
 #   WORKER_IDLE_TIMEOUT          Seconds of low CPU before kill (default: 300)
 #   WORKER_IDLE_CPU_THRESHOLD    CPU% below this = idle (default: 5)
 #   WORKER_PROGRESS_TIMEOUT      Seconds without log growth = stuck (default: 600)
+#   WORKER_THRASH_ELAPSED_THRESHOLD  Minimum runtime before thrash check (default: 7200)
+#   WORKER_THRASH_MESSAGE_THRESHOLD  Minimum messages for thrash check (default: 180)
 #   WORKER_MAX_RUNTIME           Hard ceiling in seconds (default: 10800 = 3h)
 #   WORKER_DRY_RUN               Set to "true" to log but not kill (default: false)
 #   WORKER_WATCHDOG_NOTIFY       Set to "false" to disable macOS notifications
@@ -56,10 +62,12 @@ source "${SCRIPT_DIR}/worker-lifecycle-common.sh"
 readonly SCRIPT_NAME="worker-watchdog"
 readonly SCRIPT_VERSION="1.0.0"
 
-WORKER_IDLE_TIMEOUT="${WORKER_IDLE_TIMEOUT:-300}"           # 5 min idle = completed, sitting in file watcher
-WORKER_IDLE_CPU_THRESHOLD="${WORKER_IDLE_CPU_THRESHOLD:-5}" # CPU% below this = idle
-WORKER_PROGRESS_TIMEOUT="${WORKER_PROGRESS_TIMEOUT:-600}"   # 10 min no log output = stuck
-WORKER_MAX_RUNTIME="${WORKER_MAX_RUNTIME:-10800}"           # 3 hour hard ceiling
+WORKER_IDLE_TIMEOUT="${WORKER_IDLE_TIMEOUT:-300}"                          # 5 min idle = completed, sitting in file watcher
+WORKER_IDLE_CPU_THRESHOLD="${WORKER_IDLE_CPU_THRESHOLD:-5}"                # CPU% below this = idle
+WORKER_PROGRESS_TIMEOUT="${WORKER_PROGRESS_TIMEOUT:-600}"                  # 10 min no log output = stuck
+WORKER_THRASH_ELAPSED_THRESHOLD="${WORKER_THRASH_ELAPSED_THRESHOLD:-7200}" # 2h minimum runtime before zero-commit thrash checks
+WORKER_THRASH_MESSAGE_THRESHOLD="${WORKER_THRASH_MESSAGE_THRESHOLD:-180}"  # ~1.5 messages/min over 2h before thrash checks
+WORKER_MAX_RUNTIME="${WORKER_MAX_RUNTIME:-10800}"                          # 3 hour hard ceiling
 WORKER_DRY_RUN="${WORKER_DRY_RUN:-false}"
 WORKER_WATCHDOG_NOTIFY="${WORKER_WATCHDOG_NOTIFY:-true}"
 WORKER_PROCESS_PATTERN="${WORKER_PROCESS_PATTERN:-opencode}" # CLI name to match (update if CLI changes)
@@ -68,6 +76,8 @@ WORKER_PROCESS_PATTERN="${WORKER_PROCESS_PATTERN:-opencode}" # CLI name to match
 WORKER_IDLE_TIMEOUT=$(_validate_int WORKER_IDLE_TIMEOUT "$WORKER_IDLE_TIMEOUT" 300 60)
 WORKER_IDLE_CPU_THRESHOLD=$(_validate_int WORKER_IDLE_CPU_THRESHOLD "$WORKER_IDLE_CPU_THRESHOLD" 5)
 WORKER_PROGRESS_TIMEOUT=$(_validate_int WORKER_PROGRESS_TIMEOUT "$WORKER_PROGRESS_TIMEOUT" 600 120)
+WORKER_THRASH_ELAPSED_THRESHOLD=$(_validate_int WORKER_THRASH_ELAPSED_THRESHOLD "$WORKER_THRASH_ELAPSED_THRESHOLD" 7200 600)
+WORKER_THRASH_MESSAGE_THRESHOLD=$(_validate_int WORKER_THRASH_MESSAGE_THRESHOLD "$WORKER_THRASH_MESSAGE_THRESHOLD" 180 30)
 WORKER_MAX_RUNTIME=$(_validate_int WORKER_MAX_RUNTIME "$WORKER_MAX_RUNTIME" 10800 600)
 
 # Paths
@@ -78,6 +88,10 @@ readonly IDLE_STATE_DIR="${STATE_DIR}/worker-idle-tracking"
 
 STALL_EVIDENCE_CLASS=""
 STALL_EVIDENCE_SUMMARY=""
+THRASH_RATIO=""
+THRASH_COMMITS=""
+THRASH_MESSAGES=""
+THRASH_FLAG=""
 
 readonly LAUNCHD_LABEL="sh.aidevops.worker-watchdog"
 readonly PLIST_PATH="${HOME}/Library/LaunchAgents/${LAUNCHD_LABEL}.plist"
@@ -398,11 +412,60 @@ PY
 }
 
 #######################################
+# Check if a worker is in zero-commit high-message thrash
+#
+# Uses _compute_struggle_ratio to detect workers that are producing many
+# model messages over a long runtime without producing commits.
+#
+# Arguments:
+#   $1 - PID
+#   $2 - command line
+#   $3 - elapsed seconds
+# Returns: 0 if thrashing, 1 otherwise
+#######################################
+check_zero_commit_thrashing() {
+	local pid="$1"
+	local cmd="$2"
+	local elapsed_seconds="$3"
+
+	THRASH_RATIO=""
+	THRASH_COMMITS=""
+	THRASH_MESSAGES=""
+	THRASH_FLAG=""
+
+	if [[ "$elapsed_seconds" -lt "$WORKER_THRASH_ELAPSED_THRESHOLD" ]]; then
+		return 1
+	fi
+
+	local sr_result
+	sr_result=$(_compute_struggle_ratio "$pid" "$elapsed_seconds" "$cmd")
+	IFS='|' read -r THRASH_RATIO THRASH_COMMITS THRASH_MESSAGES THRASH_FLAG <<<"$sr_result"
+
+	[[ "$THRASH_RATIO" =~ ^[0-9]+$ ]] || return 1
+	[[ "$THRASH_COMMITS" =~ ^[0-9]+$ ]] || return 1
+	[[ "$THRASH_MESSAGES" =~ ^[0-9]+$ ]] || return 1
+
+	if [[ "$THRASH_COMMITS" -ne 0 ]]; then
+		return 1
+	fi
+
+	if [[ "$THRASH_MESSAGES" -lt "$WORKER_THRASH_MESSAGE_THRESHOLD" ]]; then
+		return 1
+	fi
+
+	if [[ "$THRASH_FLAG" != "thrashing" ]]; then
+		return 1
+	fi
+
+	return 0
+}
+
+#######################################
 # Kill a worker and handle cleanup
 #
 # Arguments:
 #   $1 - PID
-#   $2 - reason (idle|stall|runtime)
+#   $2 - reason (idle|stall|thrash|runtime)
 #   $3 - command line
 #   $4 - elapsed seconds
 #   $5 - evidence summary (optional)
@@ -483,9 +546,17 @@ post_kill_github_update() {
 
 	# Map reason to human-readable description
 	local reason_desc=""
+	local destination_status="status:available"
+	local destination_text="This issue has been re-labeled \`status:available\` for re-dispatch. The next pulse or manual dispatch will pick it up."
+
 	case "$reason" in
 	idle) reason_desc="Worker process became idle (CPU below ${WORKER_IDLE_CPU_THRESHOLD}% for ${WORKER_IDLE_TIMEOUT}s) — likely completed or hit the OpenCode idle-state bug." ;;
 	stall) reason_desc="Worker stopped producing output for ${WORKER_PROGRESS_TIMEOUT}s — likely stuck on API rate limiting or an unrecoverable error." ;;
+	thrash)
+		reason_desc="Worker hit zero-commit/high-message thrash guardrail (runtime >= ${WORKER_THRASH_ELAPSED_THRESHOLD}s, commits=0, messages >= ${WORKER_THRASH_MESSAGE_THRESHOLD})."
+		destination_status="status:blocked"
+		destination_text="This issue has been re-labeled \`status:blocked\` to prevent blind re-dispatch of the same failing strategy."
+		;;
 	runtime) reason_desc="Worker exceeded the ${duration} runtime ceiling — killed to prevent infinite loops." ;;
 	*) reason_desc="Worker killed by watchdog (reason: ${reason})." ;;
 	esac
@@ -499,7 +570,9 @@ post_kill_github_update() {
 
 **Diagnostic tail:** ${evidence_summary}
 
-This issue has been re-labeled \`status:available\` for re-dispatch. The next pulse or manual dispatch will pick it up.
+${destination_text}
+
+**Retry guidance:** Post a blocker update describing a changed plan (or newly unblocked dependency), then move the issue back to \`status:available\` before re-dispatch.
 
 _Automated by \`worker-watchdog.sh\` (t1419)_"
 	comment_body=$(_sanitize_markdown "$comment_body")
@@ -510,10 +583,15 @@ _Automated by \`worker-watchdog.sh\` (t1419)_"
 		log_msg "Failed to post comment on ${repo_slug}#${issue_number}"
 	fi
 
-	# Remove in-progress label, add available label
+	# Remove stale status labels and add destination status label.
+	# For thrash kills destination is status:blocked, otherwise status:available.
 	gh issue edit "$issue_number" --repo "$repo_slug" \
 		--remove-label "status:in-progress" \
-		--add-label "status:available" 2>>"$LOG_FILE" || {
+		--remove-label "status:claimed" \
+		--remove-label "status:queued" \
+		--remove-label "status:available" \
+		--remove-label "status:blocked" \
+		--add-label "$destination_status" 2>>"$LOG_FILE" || {
 		log_msg "Failed to update labels on ${repo_slug}#${issue_number}"
 	}
 
@@ -556,7 +634,21 @@ cmd_check() {
 			continue
 		fi
 
-		# Check 2: CPU idle detection
+		# Check 2: zero-commit high-message thrash detection
+		if check_zero_commit_thrashing "$pid" "$cmd" "$elapsed_seconds"; then
+			local thrash_evidence="ratio=${THRASH_RATIO} messages=${THRASH_MESSAGES} commits=${THRASH_COMMITS} flag=${THRASH_FLAG:-none}"
+			local session_title
+			session_title=$(_extract_session_title "$cmd")
+			if [[ -n "$session_title" ]]; then
+				thrash_evidence="${thrash_evidence}; objective=${session_title}"
+			fi
+			log_msg "THRASH DETECTED: PID=${pid} elapsed=${duration} ${thrash_evidence}"
+			kill_worker "$pid" "thrash" "$cmd" "$elapsed_seconds" "$thrash_evidence"
+			killed_count=$((killed_count + 1))
+			continue
+		fi
+
+		# Check 3: CPU idle detection
 		if check_idle "$pid" "$tree_cpu"; then
 			log_msg "IDLE DETECTED: PID=${pid} cpu=${tree_cpu}% elapsed=${duration}"
 			kill_worker "$pid" "idle" "$cmd" "$elapsed_seconds"
@@ -564,7 +656,7 @@ cmd_check() {
 			continue
 		fi
 
-		# Check 3: Progress stall detection
+		# Check 4: Progress stall detection
 		if check_progress_stall "$pid" "$cmd" "$elapsed_seconds"; then
 			local sanitized_evidence=""
 			if [[ -n "$STALL_EVIDENCE_SUMMARY" ]]; then
@@ -609,6 +701,7 @@ cmd_status() {
 	echo "  Idle timeout:        $(_format_duration "$WORKER_IDLE_TIMEOUT") (CPU < ${WORKER_IDLE_CPU_THRESHOLD}%)"
 	echo "  Progress timeout:    $(_format_duration "$WORKER_PROGRESS_TIMEOUT")"
 	echo "  Runtime ceiling:     $(_format_duration "$WORKER_MAX_RUNTIME")"
+	echo "  Thrash guardrail:    elapsed >= $(_format_duration "$WORKER_THRASH_ELAPSED_THRESHOLD"), messages >= ${WORKER_THRASH_MESSAGE_THRESHOLD}, commits = 0"
 	echo "  Dry run:             ${WORKER_DRY_RUN}"
 	echo "  Notifications:       ${WORKER_WATCHDOG_NOTIFY}"
 
@@ -801,6 +894,7 @@ Commands:
   --help, -h        Show this help
 
 Detection signals:
+  Zero-commit thrash: elapsed >= $(_format_duration "$WORKER_THRASH_ELAPSED_THRESHOLD"), commits = 0, messages >= ${WORKER_THRASH_MESSAGE_THRESHOLD}
   CPU idle:         Tree CPU < ${WORKER_IDLE_CPU_THRESHOLD}% for $(_format_duration "$WORKER_IDLE_TIMEOUT")
   Progress stall:   No session messages for $(_format_duration "$WORKER_PROGRESS_TIMEOUT"), then inspect transcript tail evidence
   Runtime ceiling:  Hard kill after $(_format_duration "$WORKER_MAX_RUNTIME")
@@ -808,13 +902,16 @@ Detection signals:
 On kill:
   - Posts comment on associated GitHub issue
   - Removes status:in-progress label
-  - Adds status:available label for re-dispatch
+  - Adds status:blocked for zero-commit thrash kills
+  - Adds status:available for all other kill reasons
   - Logs to ${LOG_FILE}
 
 Environment variables:
   WORKER_IDLE_TIMEOUT          Idle detection window (default: 300s)
   WORKER_IDLE_CPU_THRESHOLD    CPU% idle threshold (default: 5)
   WORKER_PROGRESS_TIMEOUT      Stall detection window (default: 600s)
+  WORKER_THRASH_ELAPSED_THRESHOLD  Minimum runtime for thrash guardrail (default: 7200s)
+  WORKER_THRASH_MESSAGE_THRESHOLD  Minimum messages for thrash guardrail (default: 180)
   WORKER_MAX_RUNTIME           Hard runtime ceiling (default: 10800s = 3h)
   WORKER_DRY_RUN               Log but don't kill (default: false)
   WORKER_WATCHDOG_NOTIFY       macOS notifications (default: true)
