@@ -20,6 +20,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 METRICS_FILE="${HOME}/.aidevops/.agent-workspace/observability/metrics.jsonl"
+OBS_DB_FILE="${HOME}/.aidevops/.agent-workspace/observability/llm-requests.db"
 
 # --- Resolve profile repo path from repos.json ---
 _resolve_profile_repo() {
@@ -112,6 +113,49 @@ _get_session_time() {
 
 # --- Gather model usage stats ---
 _get_model_usage() {
+	# Primary source: OpenCode real-time observability SQLite database.
+	if command -v sqlite3 &>/dev/null && [[ -f "$OBS_DB_FILE" ]]; then
+		local sqlite_json
+		sqlite_json=$(sqlite3 "$OBS_DB_FILE" "
+			SELECT COALESCE(
+				json_group_array(
+					json_object(
+						'model', model_id,
+						'requests', requests,
+						'input_tokens', input_tokens,
+						'output_tokens', output_tokens,
+						'cache_read_tokens', cache_read_tokens,
+						'cache_write_tokens', cache_write_tokens,
+						'cost_total', ROUND(cost_total, 2)
+					)
+				),
+				'[]'
+			)
+			FROM (
+				SELECT
+					model_id,
+					COUNT(*) AS requests,
+					COALESCE(SUM(tokens_input), 0) AS input_tokens,
+					COALESCE(SUM(tokens_output), 0) AS output_tokens,
+					COALESCE(SUM(tokens_cache_read), 0) AS cache_read_tokens,
+					COALESCE(SUM(tokens_cache_write), 0) AS cache_write_tokens,
+					COALESCE(SUM(cost), 0.0) AS cost_total
+				FROM llm_requests
+				WHERE model_id IS NOT NULL
+				  AND model_id != ''
+				  AND timestamp >= strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-30 days')
+				GROUP BY model_id
+				ORDER BY cost_total DESC
+			);
+		" 2>/dev/null || true)
+
+		if [[ -n "$sqlite_json" ]]; then
+			echo "$sqlite_json" | jq -c '.' 2>/dev/null || echo "[]"
+			return 0
+		fi
+	fi
+
+	# Legacy fallback: JSONL metrics file.
 	if [[ ! -f "$METRICS_FILE" ]]; then
 		echo "[]"
 		return 0
@@ -140,6 +184,30 @@ _get_model_usage() {
 
 # --- Get total token stats for footer ---
 _get_token_totals() {
+	# Primary source: OpenCode real-time observability SQLite database.
+	if command -v sqlite3 &>/dev/null && [[ -f "$OBS_DB_FILE" ]]; then
+		local sqlite_totals
+		sqlite_totals=$(sqlite3 "$OBS_DB_FILE" "
+			SELECT json_object(
+				'total_input', COALESCE(SUM(tokens_input), 0),
+				'total_output', COALESCE(SUM(tokens_output), 0),
+				'total_cache_read', COALESCE(SUM(tokens_cache_read), 0),
+				'total_cache_write', COALESCE(SUM(tokens_cache_write), 0)
+			)
+			FROM llm_requests
+			WHERE timestamp >= strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-30 days');
+		" 2>/dev/null || true)
+
+		if [[ -n "$sqlite_totals" ]]; then
+			echo "$sqlite_totals" | jq -c '
+				. + {total_all: (.total_input + .total_output + .total_cache_read + .total_cache_write)}
+				| . + {cache_hit_pct: (if .total_all > 0 then ((.total_cache_read / .total_all * 1000 | round) / 10) else 0 end)}
+			' 2>/dev/null || echo '{"total_all":0,"cache_hit_pct":0}'
+			return 0
+		fi
+	fi
+
+	# Legacy fallback: JSONL metrics file.
 	if [[ ! -f "$METRICS_FILE" ]]; then
 		echo '{"total_all":0,"cache_hit_pct":0}'
 		return 0
