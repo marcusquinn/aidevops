@@ -1064,6 +1064,7 @@ See `.agents/tools/ocr/glm-ocr.md` for batch processing, PDF workflows, and Peek
 ### **AI & Documentation**
 
 - **[Context7](https://context7.io/)**: Real-time documentation access for libraries and frameworks
+- **Context7 CLI mode**: `npx ctx7 setup --opencode --cli` for docs lookup without MCP transport (useful fallback in shell-first workflows)
 - **[Local Models](https://github.com/ggml-org/llama.cpp)**: Run AI models locally via llama.cpp for free, private, offline inference with HuggingFace GGUF model management (`local-model-helper.sh`)
 
 ### **Local Development**

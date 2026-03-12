@@ -21,11 +21,17 @@ tools:
 - **Purpose**: Real-time access to latest library/framework documentation
 - **Package**: `@upstash/context7-mcp` (formerly `@context7/mcp-server`)
 - **CLI**: `npx ctx7` for skills and setup commands
+- **CLI setup mode**: `npx ctx7 setup --opencode --cli` (no MCP server)
+- **Strategy**: Hybrid backend - MCP first (`@context7`), CLI fallback (`@context7-cli`)
 - **Telemetry**: Disable with `export CTX7_TELEMETRY_DISABLED=1`
 
 **MCP Tools**:
 - `resolve-library-id` → Resolves library name to Context7 ID (e.g., "next.js" → "/vercel/next.js")
 - `query-docs` → Retrieves documentation for a library ID with a query
+
+**CLI equivalents**:
+- `npx ctx7 library <name> [query] --json` → Resolve library ID
+- `npx ctx7 docs <libraryId> <query> --json` → Query docs
 
 **Common Library IDs**:
 - Frontend: `/vercel/next.js`, `/facebook/react`, `/vuejs/vue`
@@ -47,6 +53,16 @@ Skills found in the Context7 registry can be imported into aidevops using `/add-
 <!-- AI-CONTEXT-END -->
 
 Context7 MCP provides AI assistants with real-time access to the latest documentation for thousands of development tools, frameworks, and libraries.
+
+## Hybrid Usage (MCP + CLI)
+
+Use Context7 as a hybrid documentation backend:
+
+1. **Default:** `@context7` via MCP tools for standard interactive tasks
+2. **Fallback:** `@context7-cli` when MCP is unavailable or constrained
+3. **CLI-first:** shell workflows that need deterministic JSON output (`--json`) for pipelines
+
+This keeps existing MCP flows stable while adding a low-friction CLI path for cost and context control.
 
 ## 🎯 **What is Context7 MCP?**
 
