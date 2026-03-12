@@ -113,6 +113,8 @@ base64 -i screenshot.png | \
 
 **Image token costs**: Images are resized and tiled. A 1024x1024 image uses ~765 tokens. Larger images use more tiles. Use `detail: "low"` for cheaper analysis (~85 tokens per image).
 
+**Image size limits**: Max 20MB per image. Images are auto-resized by the API (short side scaled to 768px for `high` detail). No hard pixel dimension limit, but very large images increase token cost without improving accuracy.
+
 ### Anthropic (Claude Vision)
 
 ```bash
@@ -136,23 +138,17 @@ curl https://api.anthropic.com/v1/messages \
 
 **Supported formats**: JPEG, PNG, GIF, WebP. Max 5MB per image (API), 10MB (Claude.ai).
 
-**Dimension limit (critical)**: Anthropic rejects base64 images where any dimension exceeds `8000px`.
-
-Recommended safety margin for screenshots:
+**Image size limits**: Max 8000px per dimension AND max 1568 megapixels total area (width x height). Full-page screenshots easily exceed these limits. The API rejects oversized images with: `At least one of the image dimensions exceed max allowed size: 8000 pixels`. Resize before submission:
 
 ```bash
-# macOS (built-in)
+# macOS (built-in, no install)
 sips --resampleHeightWidthMax 4000 input.png --out output.png
 
-# Cross-platform (ImageMagick)
-magick input.png -resize '4000x4000>' output.png
+# Cross-platform (requires ImageMagick)
+magick input.png -resize '4000x4000>' output.png  # '>' = only shrink, never upscale
 ```
 
-The Browser QA helper enforces this by default:
-
-```bash
-browser-qa-helper.sh screenshot --url http://localhost:3000 --full-page --max-dim 4000
-```
+The 4000px max gives a safe margin below the 8000px hard limit while preserving detail for visual comparison. See GH#4213 for the `browser-qa-helper.sh` auto-resize implementation.
 
 ### Google (Gemini Vision)
 
