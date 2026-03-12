@@ -1291,16 +1291,18 @@ run_pulse() {
 	start_epoch=$(date +%s)
 	echo "[pulse-wrapper] Starting pulse at $(date -u +%Y-%m-%dT%H:%M:%SZ)" >>"$WRAPPER_LOGFILE"
 
-	# Build the prompt: /pulse + pre-fetched state
+	# Build the prompt: /pulse + reference to pre-fetched state file.
+	# The state is NOT inlined into the prompt — on Linux, execve() enforces
+	# MAX_ARG_STRLEN (128KB per argument) and the state routinely exceeds this,
+	# causing "Argument list too long" on every pulse invocation. The agent
+	# reads the file via its Read tool instead. See: #4257
 	local prompt="/pulse"
 	if [[ -f "$STATE_FILE" ]]; then
-		local state_content
-		state_content=$(cat "$STATE_FILE")
 		prompt="/pulse
 
---- PRE-FETCHED STATE (from pulse-wrapper.sh) ---
-${state_content}
---- END PRE-FETCHED STATE ---"
+Pre-fetched state file: ${STATE_FILE}
+Read this file before proceeding — it contains the current repo/PR/issue state
+gathered by pulse-wrapper.sh BEFORE this session started."
 	fi
 
 	# Run the provider-aware headless wrapper in background.
