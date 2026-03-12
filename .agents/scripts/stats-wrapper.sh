@@ -35,6 +35,14 @@ mkdir -p "$(dirname "$STATS_PIDFILE")"
 
 #######################################
 # Portable elapsed-seconds lookup for a running PID
+#
+# Robustness notes (GH#4271 — PR #4232 review findings):
+# - Both ps probes use `|| true` so set -euo pipefail cannot abort the
+#   function before the etime fallback runs (critical finding, coderabbit).
+# - awk uses `exit 1` for all invalid-input branches (medium finding, gemini).
+#   The `|| true` on the awk command substitution is intentional — it prevents
+#   set -euo pipefail from aborting on awk parse failure; the ^[0-9]+$ guard
+#   below handles the empty-result case cleanly.
 #######################################
 _stats_process_elapsed_seconds() {
 	local pid="$1"
