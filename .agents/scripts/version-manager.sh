@@ -357,7 +357,6 @@ PATCH_PREFLIGHT_TMP_DIR=""
 
 secretlint_runtime_works() {
 	local -a candidate_cmd=("$@")
-	local smoke_output=""
 	local smoke_file=""
 
 	smoke_file=$(mktemp "$REPO_ROOT/.secretlint-smoke.XXXXXX")
@@ -365,17 +364,14 @@ secretlint_runtime_works() {
 		return 1
 	fi
 
-	smoke_output=$(
+	(
 		cd "$REPO_ROOT" || exit 1
-		"${candidate_cmd[@]}" "$smoke_file" --format compact 2>&1
+		"${candidate_cmd[@]}" "$smoke_file" --format compact >/dev/null 2>&1
 	)
 	local smoke_exit=$?
 	rm -f "$smoke_file"
 
 	if [[ $smoke_exit -ne 0 ]]; then
-		if [[ "$smoke_output" == *"AggregationError"* ]] || [[ "$smoke_output" == *"Failed to load rule module"* ]] || [[ "$smoke_output" == *"Cannot find module"* ]] || [[ "$smoke_output" == *"at async file://"* ]]; then
-			return 1
-		fi
 		return 1
 	fi
 
@@ -440,6 +436,9 @@ normalize_secretlint_output() {
 }
 
 capture_secretlint_findings() {
+	_save_cleanup_scope
+	trap '_run_cleanups' RETURN
+
 	local scan_root="$1"
 	local output_file="$2"
 	local canonical_scan_root=""
@@ -456,12 +455,13 @@ capture_secretlint_findings() {
 		print_error "Failed to allocate temporary file for secretlint output"
 		return 1
 	fi
+	push_cleanup "rm -f '${raw_output_file}'"
 	targets_file=$(mktemp "$PATCH_PREFLIGHT_TMP_DIR/secretlint-targets.XXXXXX")
 	if [[ -z "$targets_file" ]]; then
 		print_error "Failed to allocate temporary file for secretlint targets"
-		rm -f "$raw_output_file"
 		return 1
 	fi
+	push_cleanup "rm -f '${targets_file}'"
 
 	(
 		cd "$canonical_scan_root" || exit 1
@@ -470,7 +470,6 @@ capture_secretlint_findings() {
 
 	if [[ ! -s "$targets_file" ]]; then
 		: >"$output_file"
-		rm -f "$raw_output_file" "$targets_file"
 		return 0
 	fi
 
@@ -486,7 +485,7 @@ capture_secretlint_findings() {
 		fi
 
 		if [[ $target_exit -ne 0 ]]; then
-			if printf '%s\n' "$target_output" | grep -Eq ': line [0-9]+, col [0-9]+, '; then
+			if [[ "$target_output" =~ :\ line\ [0-9]+,\ col\ [0-9]+,\  ]]; then
 				continue
 			fi
 			secretlint_exit=1
@@ -496,24 +495,20 @@ capture_secretlint_findings() {
 
 	if secretlint_output_has_runtime_error "$raw_output_file"; then
 		print_error "Secretlint execution failed due to runtime error"
-		rm -f "$raw_output_file" "$targets_file"
 		return 1
 	fi
 
 	if [[ $secretlint_exit -ne 0 ]]; then
 		print_error "Secretlint execution failed with non-finding output"
-		rm -f "$raw_output_file" "$targets_file"
 		return 1
 	fi
 
 	if [[ ! -s "$raw_output_file" ]]; then
 		: >"$output_file"
-		rm -f "$raw_output_file" "$targets_file"
 		return 0
 	fi
 
 	normalize_secretlint_output "$canonical_scan_root" <"$raw_output_file" >"$output_file"
-	rm -f "$raw_output_file" "$targets_file"
 	return 0
 }
 
