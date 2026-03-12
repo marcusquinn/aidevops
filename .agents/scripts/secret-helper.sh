@@ -236,7 +236,7 @@ read_secret_input() {
 	if [[ -t 0 ]]; then
 		print_info "Enter secret value for $name (input hidden):"
 		print_info "Paste only the secret value, then press Enter"
-		IFS= read -rs value
+		IFS= read -rs value || true
 		echo ""
 	else
 		IFS= read -r value || true
@@ -311,8 +311,15 @@ cmd_set() {
 	fi
 
 	if has_gopass; then
-		if ! printf '%s' "$value" | gopass insert --force "${GOPASS_PREFIX}/${name}" >/dev/null 2>&1; then
-			print_error "Failed to store $name in gopass"
+		local gopass_err=""
+		if ! gopass_err=$(printf '%s' "$value" | gopass insert --force "${GOPASS_PREFIX}/${name}" 2>&1 >/dev/null); then
+			if [[ "$gopass_err" == *"GPG"* || "$gopass_err" == *"gpg"* ]]; then
+				print_error "Failed to store $name in gopass (GPG error)"
+			elif [[ "$gopass_err" == *"not initialized"* ]]; then
+				print_error "Failed to store $name in gopass (store not initialized)"
+			else
+				print_error "Failed to store $name in gopass"
+			fi
 			return 1
 		fi
 		print_success "Stored $name in gopass"

@@ -115,27 +115,28 @@ test_set_uses_provided_stdin_value() {
 
 test_set_rejects_command_literal_input() {
 	setup
+	local test_name="set rejects command-literal input"
 
 	local output_file="$TEST_DIR/output.log"
 	local exit_code=0
 	printf '%s\n' 'aidevops secret set TEST_KEY' | bash "$HELPER" set TEST_KEY >"$output_file" 2>&1 || exit_code=$?
 
 	if [[ "$exit_code" -eq 0 ]]; then
-		print_result "set rejects command-literal input" 1 "Expected non-zero exit code"
+		print_result "$test_name" 1 "Expected non-zero exit code"
 		teardown
 		return 0
 	fi
 
 	if [[ -f "$TEST_DIR/stored_value" ]]; then
-		print_result "set rejects command-literal input" 1 "Secret was unexpectedly stored"
+		print_result "$test_name" 1 "Secret was unexpectedly stored"
 		teardown
 		return 0
 	fi
 
 	if grep -q "looks like a command" "$output_file"; then
-		print_result "set rejects command-literal input" 0
+		print_result "$test_name" 0
 	else
-		print_result "set rejects command-literal input" 1 "Missing rejection message"
+		print_result "$test_name" 1 "Missing rejection message"
 	fi
 
 	teardown
