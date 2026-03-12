@@ -299,7 +299,9 @@ get_local_version() {
 
 #######################################
 # Get remote version (from GitHub API)
-# Uses API endpoint (not raw.githubusercontent.com) to avoid CDN cache
+# Tries authenticated gh api first (5000 req/hr), then unauthenticated curl
+# (60 req/hr), then raw.githubusercontent.com CDN fallback.
+# See: #4142 — 106 "remote=unknown" failures from rate-limited unauth API
 #######################################
 get_remote_version() {
 	local version=""
