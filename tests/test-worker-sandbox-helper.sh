@@ -81,10 +81,11 @@ test_create_records_audit_event() {
 		fail "sentinel missing expected task id"
 	fi
 
-	if grep -q 'worker_sandbox_created' "$TEST_TMPDIR/audit/audit.jsonl"; then
-		pass "audit log contains sandbox create event"
+	if jq -e 'select(.msg == "worker_sandbox_created" and .detail.task_id == "t1412-create")' \
+		"$TEST_TMPDIR/audit/audit.jsonl" >/dev/null 2>&1; then
+		pass "audit log contains sandbox create event with correct task_id"
 	else
-		fail "missing sandbox create audit event"
+		fail "missing sandbox create audit event or incorrect task_id"
 	fi
 
 	run_sandbox_cmd cleanup "$sandbox_dir" >/dev/null
@@ -106,16 +107,11 @@ test_cleanup_records_audit_event() {
 		fail "sandbox directory still exists after cleanup"
 	fi
 
-	if grep -q 'worker_sandbox_cleaned' "$TEST_TMPDIR/audit/audit.jsonl"; then
-		pass "audit log contains sandbox cleanup event"
+	if jq -e 'select(.msg == "worker_sandbox_cleaned" and .detail.task_id == "t1412-cleanup")' \
+		"$TEST_TMPDIR/audit/audit.jsonl" >/dev/null 2>&1; then
+		pass "audit log contains sandbox cleanup event with correct task_id"
 	else
-		fail "missing sandbox cleanup audit event"
-	fi
-
-	if grep -q '"task_id":"t1412-cleanup"' "$TEST_TMPDIR/audit/audit.jsonl"; then
-		pass "audit log stores task id detail"
-	else
-		fail "audit log missing expected task id detail"
+		fail "missing sandbox cleanup audit event or incorrect task_id"
 	fi
 
 	cleanup

@@ -278,10 +278,8 @@ cleanup_worker_sandbox() {
 		return 1
 	fi
 
-	sandbox_task_id=$(grep '^task_id=' "$sandbox_dir/.aidevops-sandbox" 2>/dev/null | cut -d= -f2 || true)
-	if [[ -z "$sandbox_task_id" ]]; then
-		sandbox_task_id="unknown"
-	fi
+	sandbox_task_id=$(grep '^task_id=' "$sandbox_dir/.aidevops-sandbox" 2>/dev/null | cut -d= -f2- || true)
+	sandbox_task_id="${sandbox_task_id:-unknown}"
 
 	rm -rf "$sandbox_dir"
 	log_worker_sandbox_event "cleaned" "$sandbox_task_id" "$sandbox_dir"
