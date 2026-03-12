@@ -56,7 +56,11 @@ npx -y ctx7 docs /facebook/react "useEffect examples" --json
 
 ```bash
 LIB_ID=$(npx -y ctx7 library react --json | jq -r '.library.id // empty')
-npx -y ctx7 docs "$LIB_ID" "how to memoize expensive renders" --json
+if [ -n "$LIB_ID" ]; then
+  npx -y ctx7 docs "$LIB_ID" "how to memoize expensive renders" --json
+else
+  echo "Error: Library 'react' not found." >&2
+fi
 ```
 
 ## Backend Selection Guidance

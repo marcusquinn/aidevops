@@ -377,7 +377,7 @@ PY
 		printf '%s' "rate_limit"
 		return 0
 	fi
-	if [[ "$lowered" == *"unauthorized"* ]] || [[ "$lowered" == *"401"* ]] || [[ "$lowered" == *"invalid api key"* ]] || [[ "$lowered" == *"authentication"* ]] || [[ "$lowered" == *"auth"* && "$lowered" == *"failed"* ]] || [[ "$lowered" == *"token refresh failed"* ]] || [[ "$lowered" == *"invalid_grant"* ]] || [[ "$lowered" == *"invalid refresh token"* ]]; then
+	if [[ "$lowered" =~ (unauthorized|401|invalid\ api\ key|authentication|token\ refresh\ failed|invalid_grant|invalid\ refresh\ token) ]] || [[ "$lowered" == *"auth"* && "$lowered" == *"failed"* ]]; then
 		printf '%s' "auth_error"
 		return 0
 	fi
@@ -710,16 +710,13 @@ cmd_run() {
 		local output_file
 		output_file=$(mktemp)
 		local exit_code=0
-		local errexit_was_on=0
-		if [[ $- == *e* ]]; then
-			errexit_was_on=1
+		# Run in subshell to avoid fragile set +e/set -e toggling (GH#4225).
+		# Subshell localises errexit so main shell state is never modified.
+		exit_code=$(
 			set +e
-		fi
-		"${cmd[@]}" 2>&1 | tee "$output_file"
-		exit_code=${PIPESTATUS[0]}
-		if [[ "$errexit_was_on" -eq 1 ]]; then
-			set -e
-		fi
+			"${cmd[@]}" 2>&1 | tee "$output_file"
+			echo "${PIPESTATUS[0]}"
+		) || true
 
 		local discovered_session
 		discovered_session=$(extract_session_id_from_output "$output_file")
@@ -763,6 +760,8 @@ cmd_run() {
 		attempt=$((attempt + 1))
 	done
 
+	# Unreachable: loop always executes (attempt starts at 1, max_attempts=2)
+	# and every path inside returns explicitly. Kept as defensive fallback.
 	return 1
 }
 
