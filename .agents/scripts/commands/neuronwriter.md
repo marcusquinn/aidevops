@@ -44,6 +44,9 @@ fi
 
 Read `seo/neuronwriter.md` for full API reference, then execute the appropriate endpoint.
 
+Use NeuronWriter API base `https://app.neuronwriter.com/neuron-api/0.5/writer` with POST methods.
+Do not use `https://app.neuronwriter.com/api/v1/` for this command flow.
+
 ### Step 4: Execute Action
 
 **For `analyze` (default):**

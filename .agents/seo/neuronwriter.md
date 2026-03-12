@@ -19,7 +19,7 @@ tools:
 - **API**: `https://app.neuronwriter.com/neuron-api/0.5/writer`
 - **Auth**: API key in `X-API-KEY` header, stored in `~/.config/aidevops/credentials.sh` as `NEURONWRITER_API_KEY`
 - **Plan**: Gold plan or higher required
-- **Docs**: https://neuronwriter.com/faqs/neuronwriter-api-how-to-use/
+- **Docs**: https://neuronwriter.com/faq/
 - **No MCP required** - uses curl directly
 
 **API requests consume monthly limits** (same cost as using the NeuronWriter UI).
@@ -35,6 +35,7 @@ source ~/.config/aidevops/credentials.sh
 ## API Endpoints
 
 All endpoints use POST. All require the `X-API-KEY` header.
+Do not use `https://app.neuronwriter.com/api/v1/` for Neuron API calls.
 
 ### List Projects
 
@@ -316,7 +317,7 @@ curl -s -X POST "https://app.neuronwriter.com/neuron-api/0.5/writer/list-project
 
 ## Resources
 
-- **Official Docs**: https://neuronwriter.com/faqs/neuronwriter-api-how-to-use/
+- **Official Docs**: https://neuronwriter.com/faq/
 - **Roadmap**: https://roadmap.neuronwriter.com/p/neuron-api-HOPZZB
 - **Dashboard**: https://app.neuronwriter.com/
 - **Plan Required**: Gold or higher
