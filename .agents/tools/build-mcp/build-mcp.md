@@ -217,6 +217,59 @@ MCP servers are a trust boundary. Users grant your server access to their conver
 
 **Network transparency** -- Document all external network connections your server makes. Users should know which domains your server contacts and why. Avoid unexpected outbound connections.
 
+## Consuming Remote MCPs
+
+The sections above cover **building** MCP servers. This section covers **consuming** third-party remote MCPs (Ahrefs, Outscraper, DataForSEO, etc.) from your AI assistant.
+
+### Local vs Remote MCP
+
+| Type | Transport | How it runs |
+|------|-----------|-------------|
+| **Local** | STDIO | Assistant spawns a process on your machine; communicates via stdin/stdout |
+| **Remote** | Streamable HTTP | Hosted by the provider; communicates via HTTP POST with `Accept: application/json, text/event-stream` |
+
+Remote MCPs may work on API plans that block direct REST access, because the provider hosts the server and controls the transport.
+
+### OpenCode Remote MCP Config
+
+In `~/.config/opencode/opencode.json`:
+
+```json
+{
+  "mcp": {
+    "provider-name": {
+      "type": "remote",
+      "url": "https://mcp.provider.com/sse",
+      "headers": { "Authorization": "Bearer <API_KEY>" },
+      "enabled": true
+    }
+  }
+}
+```
+
+Key fields: `type` (`local` | `remote`), `url` (Streamable HTTP endpoint), `headers` (auth headers), `timeout` (ms, optional), `oauth` (OAuth config object, optional).
+
+### Secure Key Injection
+
+Never paste API keys into conversation context. Inject them into the config file from gopass:
+
+```bash
+jq --arg key "$(gopass show -o provider/api-key)" \
+  '.mcp["provider-name"].headers.Authorization = "Bearer " + $key' \
+  ~/.config/opencode/opencode.json > /tmp/oc.json \
+  && mv /tmp/oc.json ~/.config/opencode/opencode.json
+```
+
+This keeps the key out of conversation transcripts and shell history (gopass prompts for GPG passphrase, not the key itself).
+
+### Auth Debugging
+
+| HTTP Status | Meaning | Action |
+|-------------|---------|--------|
+| **401** | No auth sent or token invalid | Check `headers.Authorization` is set and the key is correct |
+| **403** | Auth valid but plan/scope insufficient | Upgrade API plan or request the required scope from the provider |
+| **405** | Wrong HTTP method or transport | Ensure the URL accepts POST with `Accept: application/json, text/event-stream` (Streamable HTTP, not REST) |
+
 ## References
 
 Use Context7 MCP for current documentation:
