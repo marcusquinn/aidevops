@@ -22,6 +22,55 @@ Each plan includes:
 
 ## Active Plans
 
+### [2026-03-12] Agent Runtime Sync After Merge/Release
+
+**Status:** Planning
+**Estimate:** ~3h (ai:1.75h test:45m read:30m)
+**TODO:** t1453
+**Logged:** 2026-03-12
+**Trigger:** Issue [GH#4205](https://github.com/marcusquinn/aidevops/issues/4205) plus observed post-release drift where new SEO subagent and slash-command docs were present in repo but missing in `~/.aidevops/agents/` until manual `rsync`.
+
+<!--TOON:plan{id,title,status,phase,total_phases,owner,tags,est,est_ai,est_test,est_read,logged}:
+p046,Agent Runtime Sync After Merge/Release,planning,0,3,,deployment|automation|release|runtime-drift,3h,1.75h,45m,30m,2026-03-12T00:00Z
+-->
+
+#### Purpose
+
+Eliminate deployment drift between repo state (`.agents/`) and runtime state (`~/.aidevops/agents/`) after merge/release workflows. Newly merged docs/agents/commands should become available without requiring operators to remember manual sync commands.
+
+This is a framework reliability issue, not only a one-off docs problem. If runtime sync is best-effort, every release can silently ship incomplete behavior from the user's perspective.
+
+#### Constraints
+
+- Preserve user-managed directories in runtime deploy (`custom/`, `draft/`, `loop-state/`, plugin namespaces).
+- Avoid destructive cleanup unless explicitly in clean mode.
+- Keep behavior deterministic in both interactive and headless flows.
+- Do not require manual operator action for standard merge/release paths.
+
+#### Phases
+
+- [ ] **Phase 1 — Reproduce and instrument drift check** (~45m): Add a deterministic check command/script that compares `.agents/` against `~/.aidevops/agents/` for tracked files relevant to runtime behavior (especially `seo/`, `scripts/commands/`, and top-level agent docs). Emit clear PASS/DRIFT output.
+
+- [ ] **Phase 2 — Wire automatic sync into post-merge/release paths** (~1.5h): Integrate `deploy_aidevops_agents` (or equivalent safe sync wrapper) into the existing merge/release lifecycle where drift can occur. Ensure sync runs from canonical repo path and logs success/failure with actionable diagnostics.
+
+- [ ] **Phase 3 — Harden and verify** (~45m): Add regression checks and a fallback remediation command surfaced in release output when sync cannot run automatically. Verify newly added files appear in runtime immediately after merge/release.
+
+#### Acceptance Criteria
+
+- Standard merge/release flow updates `~/.aidevops/agents/` without manual `rsync`.
+- Drift detection command reports PASS when runtime is current and DRIFT with precise file list when stale.
+- New subagent files and slash commands become available in runtime right after release completion.
+- Existing preserved runtime directories (`custom/`, `draft/`, plugin namespaces, `loop-state/`) are untouched.
+- Docs reference the new behavior and fallback remediation command.
+
+#### Decision Log
+
+| Date | Decision | Rationale |
+|------|----------|-----------|
+| 2026-03-12 | Track as framework deployment issue | Drift affects user-visible capabilities after release and should not depend on operator memory. |
+| 2026-03-12 | Prefer deterministic sync + check over heuristics | File-level diff is testable and avoids ambiguous "maybe deployed" states. |
+| 2026-03-12 | Preserve user/private runtime dirs | Deploy automation must not overwrite user custom agents or runtime state. |
+
 ### [2026-03-11] gh Mutation `/bin/zsh` `posix_spawn` Failure
 
 **Status:** Planning
