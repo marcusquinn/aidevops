@@ -2136,7 +2136,9 @@ resolve_rebase_conflicts() {
 		local skip_ai_resolution=false
 		if [[ -x "$prompt_guard_script" ]]; then
 			local scan_result
-			if ! scan_result=$("$prompt_guard_script" scan-file "$full_path"); then
+			scan_result=$("$prompt_guard_script" scan-file "$full_path")
+			local rc=$?
+			if [[ $rc -ne 0 ]]; then
 				log_warn "resolve_rebase_conflicts: scanner failed for $conflict_file — skipping AI resolution for safety"
 				skip_ai_resolution=true
 			elif [[ "$scan_result" == *"SUSPICIOUS"* || "$scan_result" == *"BLOCKED"* ]]; then
