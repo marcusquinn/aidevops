@@ -28,6 +28,14 @@ fail() {
 	return 0
 }
 
+_fail_with_audit_events() {
+	local fail_message="$1"
+	local audit_log="$2"
+	local actual_events
+	actual_events="$(jq -r '.msg // "no msg field"' "$audit_log" | tr '\n' ' ' || echo "(unreadable)")"
+	fail "$fail_message" "actual events in log: ${actual_events% }"
+}
+
 cleanup() {
 	if [[ -n "$TEST_TMPDIR" && -d "$TEST_TMPDIR" ]]; then
 		rm -rf "$TEST_TMPDIR"
@@ -86,10 +94,7 @@ test_create_records_audit_event() {
 		"$audit_log" >/dev/null 2>&1; then
 		pass "audit log contains sandbox create event with correct task_id"
 	else
-		local actual_events
-		actual_events="$(jq -r '.msg // "no msg field"' "$audit_log" 2>/dev/null | tr '\n' ' ' || echo "(unreadable)")"
-		fail "missing sandbox create audit event or incorrect task_id" \
-			"actual events in log: ${actual_events}"
+		_fail_with_audit_events "missing sandbox create audit event or incorrect task_id" "$audit_log"
 	fi
 
 	run_sandbox_cmd cleanup "$sandbox_dir" >/dev/null
@@ -116,10 +121,7 @@ test_cleanup_records_audit_event() {
 		"$audit_log" >/dev/null 2>&1; then
 		pass "audit log contains sandbox cleanup event with correct task_id"
 	else
-		local actual_events
-		actual_events="$(jq -r '.msg // "no msg field"' "$audit_log" 2>/dev/null | tr '\n' ' ' || echo "(unreadable)")"
-		fail "missing sandbox cleanup audit event or incorrect task_id" \
-			"actual events in log: ${actual_events}"
+		_fail_with_audit_events "missing sandbox cleanup audit event or incorrect task_id" "$audit_log"
 	fi
 
 	cleanup
