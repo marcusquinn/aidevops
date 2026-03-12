@@ -116,11 +116,10 @@ while [[ $# -gt 0 ]]; do
 		fi
 		shift 2
 		;;
-	http://*|https://*)
-		requested_url="$1"
-		shift
-		;;
 	*)
+		if [[ -z "$requested_url" && ( "$1" == http://* || "$1" == https://* ) ]]; then
+			requested_url="$1"
+		fi
 		shift
 		;;
 	esac
