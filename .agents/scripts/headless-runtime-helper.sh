@@ -742,15 +742,16 @@ cmd_run() {
 		exit_code=$(
 			set +e
 			if [[ -x "$SANDBOX_EXEC_HELPER" ]]; then
-				local escaped_cmd passthrough_csv
+				escaped_cmd=""
+				passthrough_csv=""
 				printf -v escaped_cmd '%q ' "${cmd[@]}"
 				escaped_cmd="${escaped_cmd% }"
 				passthrough_csv="$(build_sandbox_passthrough_csv)"
+				sandbox_args=()
 				if [[ -n "$passthrough_csv" ]]; then
-					"$SANDBOX_EXEC_HELPER" run --timeout "$HEADLESS_SANDBOX_TIMEOUT_DEFAULT" --allow-secret-io --passthrough "$passthrough_csv" -- "$escaped_cmd" 2>&1 | tee "$output_file"
-				else
-					"$SANDBOX_EXEC_HELPER" run --timeout "$HEADLESS_SANDBOX_TIMEOUT_DEFAULT" --allow-secret-io -- "$escaped_cmd" 2>&1 | tee "$output_file"
+					sandbox_args=(--passthrough "$passthrough_csv")
 				fi
+				"$SANDBOX_EXEC_HELPER" run --timeout "$HEADLESS_SANDBOX_TIMEOUT_DEFAULT" --allow-secret-io "${sandbox_args[@]}" -- "$escaped_cmd" 2>&1 | tee "$output_file"
 				echo "${PIPESTATUS[0]}"
 			else
 				"${cmd[@]}" 2>&1 | tee "$output_file"
