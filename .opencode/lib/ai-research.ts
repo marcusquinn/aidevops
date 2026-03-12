@@ -288,6 +288,8 @@ async function buildSystemPrompt(
 
 const AUTH_FILE = `${process.env.HOME || "~"}/.local/share/opencode/auth.json`
 const OAUTH_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
+const OAUTH_TOKEN_URL = "https://console.anthropic.com/v1/oauth/token"
+const ANTHROPIC_API_URL = "https://api.anthropic.com/v1/messages"
 
 interface OAuthAuth {
   type: "oauth"
@@ -323,18 +325,26 @@ async function readAuthFile(): Promise<AuthEntry | null> {
  * Updates auth.json with the new tokens.
  */
 async function refreshOAuthToken(auth: OAuthAuth): Promise<string> {
-  const response = await fetch(
-    "https://console.anthropic.com/v1/oauth/token",
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        grant_type: "refresh_token",
-        refresh_token: auth.refresh,
-        client_id: OAUTH_CLIENT_ID,
-      }),
-    }
-  )
+  const controller = new AbortController()
+  const timeout = setTimeout(() => controller.abort(), 15_000)
+  let response: Response
+  try {
+    response = await fetch(
+      OAUTH_TOKEN_URL,
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          grant_type: "refresh_token",
+          refresh_token: auth.refresh,
+          client_id: OAUTH_CLIENT_ID,
+        }),
+        signal: controller.signal,
+      }
+    )
+  } finally {
+    clearTimeout(timeout)
+  }
 
   if (!response.ok) {
     throw new Error(`OAuth token refresh failed (${response.status})`)
@@ -357,8 +367,10 @@ async function refreshOAuthToken(auth: OAuthAuth): Promise<string> {
       expires: Date.now() + json.expires_in * 1000,
     }
     await Bun.write(AUTH_FILE, JSON.stringify(data, null, 2))
-  } catch {
-    // Non-fatal: token still works for this request even if we can't persist
+  } catch (err) {
+    // Non-fatal: token still works for this request even if we can't persist.
+    // Log so persistent write failures are visible (e.g., permissions, disk full).
+    console.error(`[ai-research] Warning: failed to persist refreshed OAuth token: ${err}`)
   }
 
   return json.access_token
@@ -384,7 +396,9 @@ async function resolveAuth(): Promise<ResolvedAuth> {
 
   if (auth?.type === "oauth") {
     let accessToken = auth.access
-    if (!accessToken || auth.expires < Date.now()) {
+    // Refresh 5 minutes before expiry to avoid using near-expired tokens
+    const EXPIRY_BUFFER_MS = 5 * 60 * 1000
+    if (!accessToken || auth.expires < Date.now() + EXPIRY_BUFFER_MS) {
       accessToken = await refreshOAuthToken(auth)
     }
     return { method: "oauth", token: accessToken }
@@ -430,7 +444,7 @@ async function callAnthropic(
     "anthropic-version": "2023-06-01",
   }
 
-  let url = "https://api.anthropic.com/v1/messages"
+  let url = ANTHROPIC_API_URL
 
   if (auth.method === "oauth") {
     headers["authorization"] = `Bearer ${auth.token}`
