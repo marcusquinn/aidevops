@@ -328,17 +328,18 @@ cmd_set() {
 		print_warning "gopass not available, falling back to credentials.sh"
 
 		ensure_credentials_file "$CREDENTIALS_FILE"
-		# Use printf %q to safely escape the value for shell embedding.
-		# This prevents breakage when the value contains quotes, $, backticks, or backslashes.
-		local escaped_value
-		escaped_value=$(printf '%q' "$value")
+		# Escape backslashes then double quotes so the value can be safely embedded
+		# in a double-quoted shell assignment.  get_secret_value() strips the
+		# surrounding double quotes, so this round-trips correctly.
+		local escaped_value="${value//\\/\\\\}"
+		escaped_value="${escaped_value//\"/\\\"}"
 		if [[ -f "$CREDENTIALS_FILE" ]] && grep -q "^export ${name}=" "$CREDENTIALS_FILE" 2>/dev/null; then
 			local tmp_file="${CREDENTIALS_FILE}.tmp"
 			grep -v "^export ${name}=" "$CREDENTIALS_FILE" >"$tmp_file"
-			printf 'export %s=%s\n' "${name}" "${escaped_value}" >>"$tmp_file"
+			printf 'export %s="%s"\n' "${name}" "${escaped_value}" >>"$tmp_file"
 			mv "$tmp_file" "$CREDENTIALS_FILE"
 		else
-			printf 'export %s=%s\n' "${name}" "${escaped_value}" >>"$CREDENTIALS_FILE"
+			printf 'export %s="%s"\n' "${name}" "${escaped_value}" >>"$CREDENTIALS_FILE"
 		fi
 		chmod 600 "$CREDENTIALS_FILE"
 		print_success "Stored $name in credentials.sh"
