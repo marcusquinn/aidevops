@@ -57,43 +57,27 @@ jobs:
         pip install --upgrade pip pyyaml
     
     - name: 🔍 Install Quality Tools
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
-        # Install Qlty CLI — fail-open: transient download failures must not block CI.
-        # Root cause of GH#4216: curl sometimes returns a truncated/rate-limited
-        # response (9 bytes) from GitHub releases; tar then exits 2, killing the job.
-        # Fix: validate download size before extracting; skip qlty gracefully if unavailable.
-        QLTY_URL="https://github.com/qltysh/qlty/releases/latest/download/qlty-x86_64-unknown-linux-gnu.tar.xz"
-        if curl -sSL --retry 3 --retry-delay 5 "$QLTY_URL" -o qlty.tar.xz 2>&1; then
-          QLTY_SIZE=$(stat -c%s qlty.tar.xz 2>/dev/null || echo 0)
-          if [ "$QLTY_SIZE" -gt 100000 ]; then
-            if tar xf qlty.tar.xz 2>&1; then
-              sudo mv qlty-*/qlty /usr/local/bin/ 2>/dev/null || true
-              echo "Qlty CLI installed: $(qlty --version 2>/dev/null || echo 'version unknown')"
-            else
-              echo "::warning::Qlty tar extraction failed — skipping qlty analysis"
-            fi
+        # Install Qlty CLI via gh release download (uses GITHUB_TOKEN, avoids
+        # redirect/rate-limit issues with curl on /releases/latest/download/ URLs).
+        # Fail-open: transient failures must not block CI (root cause of GH#4216).
+        if gh release download --repo qltysh/qlty --pattern "qlty-x86_64-unknown-linux-gnu.tar.xz" --output qlty.tar.xz 2>&1; then
+          if tar xf qlty.tar.xz 2>&1; then
+            sudo mv qlty-x86_64-unknown-linux-gnu/qlty /usr/local/bin/ 2>/dev/null || true
+            echo "Qlty CLI installed: $(qlty --version 2>/dev/null || echo 'version unknown')"
           else
-            echo "::warning::Qlty download incomplete (${QLTY_SIZE} bytes) — skipping qlty analysis"
+            echo "::warning::Qlty tar extraction failed — skipping qlty analysis"
           fi
         else
           echo "::warning::Qlty download failed — skipping qlty analysis"
         fi
-        rm -rf qlty.tar.xz qlty-* 2>/dev/null || true
+        rm -rf qlty.tar.xz qlty-x86_64-unknown-linux-gnu 2>/dev/null || true
 
-        # Install Codacy CLI — also fail-open
-        if curl -L --retry 3 --retry-delay 5 https://github.com/codacy/codacy-analysis-cli/releases/latest/download/codacy-analysis-cli-linux -o codacy-analysis-cli 2>&1; then
-          CODACY_SIZE=$(stat -c%s codacy-analysis-cli 2>/dev/null || echo 0)
-          if [ "$CODACY_SIZE" -gt 100000 ]; then
-            chmod +x codacy-analysis-cli
-            sudo mv codacy-analysis-cli /usr/local/bin/
-            echo "Codacy CLI installed"
-          else
-            echo "::warning::Codacy download incomplete (${CODACY_SIZE} bytes) — skipping codacy analysis"
-            rm -f codacy-analysis-cli
-          fi
-        else
-          echo "::warning::Codacy download failed — skipping codacy analysis"
-        fi
+        # Codacy CLI: the Linux binary was removed from releases (only JAR remains).
+        # Skip install — codacy-analysis-cli is not used in monitor-code-review.sh.
+        echo "Codacy CLI binary no longer available as a release asset; skipping."
     
     - name: 🏃 Run Code Review Monitoring
       env:
