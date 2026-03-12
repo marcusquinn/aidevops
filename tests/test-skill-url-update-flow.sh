@@ -151,7 +151,7 @@ mkdir -p "$PROJECT_DIR_1/.agents" "$AGENTS_DIR_1/configs"
 
 (
 	cd "$PROJECT_DIR_1"
-	PATH="$FAKE_BIN:/usr/bin:/bin" \
+	PATH="$FAKE_BIN:$PATH" \
 		CURL_MODE="add_import" \
 		AIDEVOPS_AGENTS_DIR="$AGENTS_DIR_1" \
 		bash "$ADD_SCRIPT" add "https://convos.org/skill.md" --name convos --skip-security >/dev/null
@@ -167,10 +167,11 @@ local_path_1="$(jq -r '.skills[0].local_path' "$SOURCES_FILE_1")"
 assert_eq "url" "$format_detected_1" "URL import sets format_detected to url"
 assert_eq "\"etag-import-1\"" "$upstream_etag_1" "URL import stores ETag header"
 assert_eq "Sat, 08 Mar 2026 12:00:00 GMT" "$upstream_last_modified_1" "URL import stores Last-Modified header"
-if [[ "$upstream_hash_1" =~ ^[a-f0-9]{64}$ ]]; then
+expected_hash_1="2b280fca6ee87ff065b23e81958dccf40476c9bfa3aefe62507fd52ba212b60f"
+if [[ "$upstream_hash_1" == "$expected_hash_1" ]]; then
 	pass "URL import stores SHA-256 upstream_hash"
 else
-	fail "URL import stores SHA-256 upstream_hash" "Invalid hash: $upstream_hash_1"
+	fail "URL import stores SHA-256 upstream_hash" "Expected '$expected_hash_1', got '$upstream_hash_1'"
 fi
 assert_file_exists "$PROJECT_DIR_1/$local_path_1" "URL import creates local skill file"
 
@@ -202,7 +203,7 @@ EOF
 set +e
 CHECK_OUTPUT_2="$(
 	cd "$PROJECT_DIR_2"
-	PATH="$FAKE_BIN:/usr/bin:/bin" \
+	PATH="$FAKE_BIN:$PATH" \
 		CURL_MODE="check_304" \
 		CURL_LOG="$CURL_LOG_2" \
 		AIDEVOPS_AGENTS_DIR="$AGENTS_DIR_2" \
@@ -265,7 +266,7 @@ EOF
 set +e
 CHECK_OUTPUT_3="$(
 	cd "$PROJECT_DIR_3"
-	PATH="$FAKE_BIN:/usr/bin:/bin" \
+	PATH="$FAKE_BIN:$PATH" \
 		CURL_MODE="check_changed" \
 		AIDEVOPS_AGENTS_DIR="$AGENTS_DIR_3" \
 		bash "$UPDATE_SCRIPT" check --quiet --json 2>&1
@@ -281,10 +282,11 @@ latest_hash_3="$(echo "$JSON_OUTPUT_3" | jq -r '.results[0].latest')"
 assert_eq "1" "$CHECK_EXIT_3" "URL check exits non-zero when update is available"
 assert_eq "1" "$updates_available_3" "URL check reports one available update"
 assert_eq "update_available" "$status_3" "URL check marks changed content as update_available"
-if [[ "$latest_hash_3" =~ ^[a-f0-9]{64}$ ]]; then
+expected_hash_3="291b09128f5aadaf623ad8a05e120cf659e84d274bab87648c9a5ef9f5926d07"
+if [[ "$latest_hash_3" == "$expected_hash_3" ]]; then
 	pass "URL check returns latest SHA-256 hash for changed content"
 else
-	fail "URL check returns latest SHA-256 hash for changed content" "Invalid hash: $latest_hash_3"
+	fail "URL check returns latest SHA-256 hash for changed content" "Expected '$expected_hash_3', got '$latest_hash_3'"
 fi
 
 printf "\nRan %d tests, %d failed.\n" "$TOTAL_COUNT" "$FAIL_COUNT"
