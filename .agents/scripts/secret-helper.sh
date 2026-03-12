@@ -228,6 +228,38 @@ build_secret_env() {
 
 # --- Commands ---
 
+# Read and validate a secret value from stdin/tty
+read_secret_input() {
+	local name="$1"
+	local value=""
+
+	if [[ -t 0 ]]; then
+		print_info "Enter secret value for $name (input hidden):"
+		print_info "Paste only the secret value, then press Enter"
+		IFS= read -rs value
+		echo ""
+	else
+		IFS= read -r value || true
+	fi
+
+	value="${value%$'\r'}"
+
+	if [[ -z "$value" ]]; then
+		print_error "No secret value received for $name"
+		print_info "Run again and paste only the secret value"
+		return 1
+	fi
+
+	if [[ "$value" =~ ^[[:space:]]*aidevops[[:space:]]+secret[[:space:]]+set([[:space:]]|$) ]]; then
+		print_error "Input for $name looks like a command, not a secret value"
+		print_info "Paste the secret value itself, not 'aidevops secret set ...'"
+		return 1
+	fi
+
+	printf '%s' "$value"
+	return 0
+}
+
 # Initialize gopass store for aidevops
 cmd_init() {
 	if ! command -v gopass &>/dev/null; then
@@ -273,16 +305,19 @@ cmd_set() {
 	# Normalize to uppercase
 	name=$(echo "$name" | tr '[:lower:]-' '[:upper:]_')
 
+	local value
+	if ! value=$(read_secret_input "$name"); then
+		return 1
+	fi
+
 	if has_gopass; then
-		print_info "Enter value for $name (input hidden):"
-		gopass insert "${GOPASS_PREFIX}/${name}"
+		if ! printf '%s' "$value" | gopass insert --force "${GOPASS_PREFIX}/${name}" >/dev/null 2>&1; then
+			print_error "Failed to store $name in gopass"
+			return 1
+		fi
 		print_success "Stored $name in gopass"
 	else
 		print_warning "gopass not available, falling back to credentials.sh"
-		print_info "Enter value for $name (input hidden):"
-		local value
-		read -rs value
-		echo ""
 
 		ensure_credentials_file "$CREDENTIALS_FILE"
 		if [[ -f "$CREDENTIALS_FILE" ]] && grep -q "^export ${name}=" "$CREDENTIALS_FILE" 2>/dev/null; then
