@@ -1049,8 +1049,11 @@ PLIST
 			# Remove old-style cron entries (direct opencode invocation)
 			# Shell-escape all interpolated paths to prevent command injection
 			# via $(…) or backticks if paths contain shell metacharacters
-			local _cron_opencode_bin _cron_aidevops_dir _cron_wrapper_script _cron_headless_env=""
-			_cron_opencode_bin=$(_cron_escape "$opencode_bin")
+			# PATH is managed globally by _ensure_cron_path() — do NOT set inline
+			# PATH= here, it overrides the global line and breaks nvm/bun/cargo.
+			# OPENCODE_BIN removed — resolved from PATH at runtime via command -v.
+			# See #4099 and #4240 for history.
+			local _cron_aidevops_dir _cron_wrapper_script _cron_headless_env=""
 			_cron_aidevops_dir=$(_cron_escape "$_pulse_repo_dir")
 			_cron_wrapper_script=$(_cron_escape "$wrapper_script")
 			if [[ -n "${AIDEVOPS_HEADLESS_MODELS:-}" ]]; then
@@ -1065,7 +1068,7 @@ PLIST
 			fi
 			(
 				crontab -l 2>/dev/null | grep -v 'aidevops: supervisor-pulse'
-				echo "*/2 * * * * PATH=\"/usr/local/bin:/usr/bin:/bin\" OPENCODE_BIN=${_cron_opencode_bin} PULSE_DIR=${_cron_aidevops_dir}${_cron_headless_env} /bin/bash ${_cron_wrapper_script} >> \"\$HOME/.aidevops/logs/pulse-wrapper.log\" 2>&1 # aidevops: supervisor-pulse"
+				echo "*/2 * * * * PULSE_DIR=${_cron_aidevops_dir}${_cron_headless_env} /bin/bash ${_cron_wrapper_script} >> \"\$HOME/.aidevops/logs/pulse-wrapper.log\" 2>&1 # aidevops: supervisor-pulse"
 			) | crontab - || true
 			if crontab -l 2>/dev/null | grep -qF "aidevops: supervisor-pulse"; then
 				print_info "Supervisor pulse enabled (cron, every 2 min). Disable: crontab -e and remove the supervisor-pulse line"
