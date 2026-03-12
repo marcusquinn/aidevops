@@ -430,7 +430,9 @@ main() {
 	# Diff-based deploy
 	if [[ -n "$DIFF_COMMIT" ]]; then
 		local changed
-		changed=$(detect_changes "$DIFF_COMMIT")
+		if ! changed=$(detect_changes "$DIFF_COMMIT"); then
+			return 1
+		fi
 		if [[ -z "$changed" ]]; then
 			log_info "No agent changes since $DIFF_COMMIT"
 			return 2
@@ -447,7 +449,9 @@ main() {
 
 		# Check if only scripts changed
 		local non_script_changes
-		non_script_changes=$(echo "$changed" | grep -cv '^\.agents/scripts/' || echo "0")
+		if ! non_script_changes=$(printf '%s\n' "$changed" | grep -cEv '^\.agents/scripts/'); then
+			non_script_changes=0
+		fi
 		if [[ "$non_script_changes" -eq 0 ]]; then
 			log_info "Only scripts changed — using fast scripts-only deploy"
 			deploy_scripts_only
@@ -460,7 +464,9 @@ main() {
 
 	# Default: version-based detection
 	local changed
-	changed=$(detect_changes "")
+	if ! changed=$(detect_changes ""); then
+		return 1
+	fi
 	if [[ -z "$changed" ]]; then
 		return 2
 	fi
