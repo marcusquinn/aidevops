@@ -558,23 +558,25 @@ sleep 2
 
 If a dispatch attempt exits immediately with provider/auth failure (for example `Token refresh failed`, `authentication`, `401`, `403`, `400` in startup logs), do not wait for next cycle. Re-dispatch in the same cycle via `headless-runtime-helper.sh run` with an explicit alternate model/provider and continue filling remaining slots.
 
-**Launch validation is mandatory (t1452):** after each dispatch, verify the worker actually started and did not fall through to CLI usage output.
+**Launch validation is mandatory (t1452/t1453):** after each dispatch, validate the launch with the wrapper helper. This keeps the gate deterministic and aligned with wrapper-side enforcement.
 
 ```bash
-# 1) Process exists (session-key must map to a live run)
-pgrep -fal "issue-<number>|Issue #<number>:" >/dev/null
+# Source wrapper helper once per pulse run (safe when sourced)
+source ~/.aidevops/agents/scripts/pulse-wrapper.sh
 
-# 2) Startup log is not CLI help/usage output
-LOG_PATH="/tmp/pulse-<slug>-<number>.log"
-if [[ -f "$LOG_PATH" ]] && rg -q '^opencode run \[message\.\.]|^run opencode with a message|^Options:' "$LOG_PATH"; then
-  echo "Invalid worker launch for #<number> (CLI usage output)"
+# check_worker_launch returns 0 only when the worker process appears
+# and no CLI usage-output markers are detected in known startup logs.
+if ! check_worker_launch <number> <slug>; then
+  echo "Invalid worker launch for #<number>"
   # Relaunch immediately via helper (never leave this for next pulse)
 fi
 ```
 
 If validation fails, re-dispatch immediately via `headless-runtime-helper.sh run`, add a short issue comment noting the failed launch and correction, and continue filling slots.
 
-9. **Fill-to-cap post-condition (t1449):** before ending the pulse cycle, compare active workers vs `MAX_WORKERS`. If below cap and runnable scoped issues/PR work exists in any repo class, continue dispatching until cap is reached or no runnable candidates remain. Do not leave slots idle because of class reservations when one class is PR-capped or empty.
+9. **Fill-to-cap post-condition (t1449/t1453):** before ending the pulse cycle, compare active workers vs `MAX_WORKERS`. If below cap and runnable scoped issues/PR work exists in any repo class, continue dispatching until cap is reached or no runnable candidates remain. Do not leave slots idle because of class reservations when one class is PR-capped or empty.
+
+   `pulse-wrapper.sh` now enforces this invariant after the LLM pulse pass via bounded backfill cycles (until max workers or no runnable work) and treats queued issues without live workers as launch-validation failures to backfill immediately.
 
 ### Candidate discovery baseline (t1443 + t1448)
 
