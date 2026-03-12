@@ -579,9 +579,10 @@ ${cross_repo_person_stats_md:-_Cross-repo person stats unavailable._}
 ---
 _Auto-updated by ${runner_role} stats process. Do not edit manually._"
 
-	# Update the issue body
-	gh issue edit "$health_issue_number" --repo "$repo_slug" --body "$body" >/dev/null 2>&1 || {
-		echo "[stats] Health issue: failed to update body for #${health_issue_number}" >>"$LOGFILE"
+	# Update the issue body — capture stderr for debugging auth/API failures
+	local body_edit_stderr
+	body_edit_stderr=$(gh issue edit "$health_issue_number" --repo "$repo_slug" --body "$body" 2>&1 >/dev/null) || {
+		echo "[stats] Health issue: failed to update body for #${health_issue_number}: ${body_edit_stderr}" >>"$LOGFILE"
 		return 0
 	}
 
@@ -598,11 +599,11 @@ _Auto-updated by ${runner_role} stats process. Do not edit manually._"
 
 	# Only update title if stats changed
 	local current_title
-	current_title=$(gh issue view "$health_issue_number" --repo "$repo_slug" --json title --jq '.title' 2>/dev/null || echo "")
+	current_title=$(gh issue view "$health_issue_number" --repo "$repo_slug" --json title --jq '.title' 2>>"$LOGFILE" || echo "")
 	local current_stats="${current_title% at [0-9][0-9]:[0-9][0-9] UTC}"
 	local new_stats="${health_title% at [0-9][0-9]:[0-9][0-9] UTC}"
 	if [[ "$current_stats" != "$new_stats" ]]; then
-		gh issue edit "$health_issue_number" --repo "$repo_slug" --title "$health_title" >/dev/null 2>&1 || true
+		gh issue edit "$health_issue_number" --repo "$repo_slug" --title "$health_title" 2>>"$LOGFILE" >/dev/null || true
 	fi
 
 	return 0
