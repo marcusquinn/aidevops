@@ -1682,7 +1682,7 @@ prefetch_contribution_watch() {
 #######################################
 count_active_workers() {
 	local count
-	count=$(ps axo command | grep '\.opencode run' | grep '/full-loop Implement issue #' | grep -v '/pulse' | grep -c -v grep) || count=0
+	count=$(ps axo command | grep '\.opencode run' | grep '/full-loop' | grep -v '/pulse' | grep -v 'Supervisor Pulse' | grep -c -v grep) || count=0
 	echo "$count"
 	return 0
 }

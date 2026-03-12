@@ -40,9 +40,8 @@ This is idempotent — safe to run even when PATH is already correct. All subseq
 # Max workers (dynamic, from available RAM)
 MAX_WORKERS=$(cat ~/.aidevops/logs/pulse-max-workers 2>/dev/null || echo 4)
 
-# Count running issue workers only (exclude supervisor /pulse processes whose
-# command payload can contain '/full-loop' text from pre-fetched state)
-WORKER_COUNT=$(ps axo command | grep '\.opencode run' | grep '/full-loop Implement issue #' | grep -v '/pulse' | grep -v grep | wc -l | tr -d ' ')
+# Count all full-loop workers (issue + PR advancement), excluding supervisor /pulse noise
+WORKER_COUNT=$(ps axo command | grep '\.opencode run' | grep '/full-loop' | grep -v '/pulse' | grep -v 'Supervisor Pulse' | grep -v grep | wc -l | tr -d ' ')
 AVAILABLE=$((MAX_WORKERS - WORKER_COUNT))
 
 # Priority-class allocations (t1423) — read from pre-fetched state
