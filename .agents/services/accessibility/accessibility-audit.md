@@ -104,7 +104,7 @@ accessibility-helper.sh email ./templates/welcome.html
 | Missing `alt` on images | 1.1.1 Non-text Content | Error |
 | Missing `lang` attribute | 3.1.1 Language of Page | Error |
 | Layout tables without `role="presentation"` | 1.3.1 Info and Relationships | Warning |
-| Font size below 14px | 1.4.4 Resize Text | Warning |
+| Font size below 12px | 1.4.4 Resize Text | Warning |
 | Generic link text ("click here") | 2.4.4 Link Purpose | Warning |
 | No heading structure | 1.3.1 Info and Relationships | Warning |
 | Colour-only indicators | 1.4.1 Use of Colour | Warning |
@@ -234,7 +234,7 @@ Add accessibility checks to build pipelines:
 ```bash
 # Fail build if Lighthouse accessibility score drops below 90
 score=$(accessibility-helper.sh lighthouse https://staging.example.com \
-  | sed -E -n 's/.*Score: ([0-9]+).*/\1/p')
+  | sed 's/\x1b\[[0-9;]*m//g' | sed -E -n 's/.*Score: ([0-9]+).*/\1/p')
 if [[ -z "$score" ]]; then
   echo "Error: Could not parse accessibility score from output." >&2
   exit 1

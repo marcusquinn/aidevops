@@ -232,7 +232,7 @@ test_relative_paths_cross_directory() {
 
 	# Verify paths use forward slashes only (portable Markdown links)
 	# Use grep -E instead of grep -P for macOS portability
-	if grep -qE '\(.*\\\\.*\.md\)' "$index_file"; then
+	if grep -qE '\(.*\\.*\.md\)' "$index_file"; then
 		print_error "Index links contain backslashes (not portable)"
 		return 1
 	fi

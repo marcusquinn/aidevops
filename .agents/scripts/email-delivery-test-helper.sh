@@ -214,7 +214,7 @@ analyze_spam_content() {
 
 	# Image-to-text ratio
 	local img_count
-	img_count=$(echo "$content" | grep -ciE '<img' || true)
+	img_count=$(echo "$content" | grep -oiE '<img' | wc -l | tr -d ' ')
 	img_count="${img_count:-0}"
 	local text_length
 	text_length=$(echo "$content" | sed 's/<[^>]*>//g' | tr -s '[:space:]' | wc -c | tr -d ' ')
@@ -230,7 +230,7 @@ analyze_spam_content() {
 
 	# URL analysis
 	local url_count
-	url_count=$(echo "$content" | grep -coiE 'https?://' || true)
+	url_count=$(echo "$content" | grep -oiE 'https?://' | wc -l | tr -d ' ')
 	url_count="${url_count:-0}"
 	if [[ "$url_count" -gt 20 ]]; then
 		print_warning "Excessive URLs ($url_count) - may trigger spam filters"
@@ -240,7 +240,7 @@ analyze_spam_content() {
 
 	# Shortened URLs
 	local short_url_count
-	short_url_count=$(echo "$content" | grep -ciE 'bit\.ly|tinyurl|t\.co|goo\.gl|ow\.ly|is\.gd|buff\.ly' || true)
+	short_url_count=$(echo "$content" | grep -oiE 'bit\.ly|tinyurl|t\.co|goo\.gl|ow\.ly|is\.gd|buff\.ly' | wc -l | tr -d ' ')
 	short_url_count="${short_url_count:-0}"
 	if [[ "$short_url_count" -gt 0 ]]; then
 		print_warning "URL shorteners detected ($short_url_count) - spam trigger"
@@ -258,7 +258,7 @@ analyze_spam_content() {
 
 	# JavaScript (should never be in email)
 	local js_count
-	js_count=$(echo "$content" | grep -ciE '<script|javascript:' || true)
+	js_count=$(echo "$content" | grep -oiE '<script|javascript:' | wc -l | tr -d ' ')
 	js_count="${js_count:-0}"
 	if [[ "$js_count" -gt 0 ]]; then
 		print_error "JavaScript detected ($js_count) - will be stripped and may trigger spam"
