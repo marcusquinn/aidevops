@@ -174,7 +174,7 @@ Planning files go direct to main. Code changes need worktree + PR. Workers NEVER
 **Repo registration**: When you create or clone a new repo (via `gh repo create`, `git clone`, `git init`, etc.), add it to `~/.config/aidevops/repos.json` immediately. Every repo the user works with should be registered — unregistered repos are invisible to cross-repo tools (pulse, health dashboard, session time, contributor stats). Set fields based on the repo's purpose:
 - `pulse: true` — repos with active development, tasks, and issues (most repos)
 - `pulse: false` — repos that exist but don't need task management (profile READMEs, forks for reference, archived projects)
-- `contributed: true` — external repos where we've authored or commented on issues/PRs. No merge/dispatch/TODO powers — only monitors for new comments needing reply. Managed by `contribution-watch-helper.sh`.
+- `contributed: true` — external repos where we've authored or commented on issues/PRs. No merge/dispatch/TODO powers — only monitors for new activity needing reply. Managed by `contribution-watch-helper.sh` (notification-driven, excludes managed `pulse: true` repos).
 - `local_only: true` — repos with no remote (skip all `gh` operations)
 - `priority` — `"tooling"` (infrastructure/tools), `"product"` (user-facing), `"profile"` (GitHub profile, docs-only)
 - `maintainer` — GitHub username of the repo maintainer. Used by code-simplifier for issue assignment and other maintainer-gated workflows. Auto-detected from `gh api user` on registration; falls back to slug owner if missing.
@@ -243,7 +243,7 @@ Key capabilities (details in `reference/orchestration.md`, `reference/services.m
 - **Bundle presets**: Project-type-aware defaults for model tiers, quality gates, and agent routing. Auto-detected from marker files or explicit in repos.json. See `bundles/` and `scripts/bundle-helper.sh`.
 - **Memory**: cross-session SQLite FTS5 (`/remember`, `/recall`)
 - **Orchestration**: supervisor dispatch, pulse scheduler, auto-pickup, cross-repo issue/PR/TODO visibility
-- **Contribution watch**: monitors external issues/PRs for new comments needing reply. `contribution-watch-helper.sh seed|scan|status|install|uninstall`. Prompt-injection-safe — automated scans are deterministic (no LLM), comment bodies only shown in interactive sessions after `prompt-guard-helper.sh scan`.
+- **Contribution watch**: monitors external issues/PRs for new activity needing reply using the GitHub Notifications API. `contribution-watch-helper.sh seed|scan|status|install|uninstall`. Managed repos (`pulse: true` in repos.json) are excluded to suppress internal automation noise. Prompt-injection-safe — automated scans are deterministic metadata checks (no LLM), comment bodies only shown in interactive sessions after `prompt-guard-helper.sh scan`.
 - **Upstream watch**: monitors external repos we've borrowed ideas/code from for new releases. `upstream-watch-helper.sh add|remove|check|ack|status`. Shows release diffs and changelogs between our last-seen version and latest. Distinct from skill imports (code we pulled in) and contribution watch (repos we filed issues on) — this tracks "inspiration repos" for passive monitoring. Config: `.agents/configs/upstream-watch.json`.
 - **Skills**: `aidevops skills`, `/skills`
 - **Auto-update**: GitHub poll + daily skill/upstream watch/OpenClaw/tool freshness checks (via `auto-update-helper.sh`). Repo sync runs separately via `aidevops repo-sync` scheduler.
