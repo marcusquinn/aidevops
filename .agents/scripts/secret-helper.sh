@@ -311,14 +311,15 @@ cmd_set() {
 	fi
 
 	if has_gopass; then
-		local gopass_err=""
-		if ! gopass_err=$(printf '%s' "$value" | gopass insert --force "${GOPASS_PREFIX}/${name}" 2>&1 >/dev/null); then
-			if [[ "$gopass_err" == *"GPG"* || "$gopass_err" == *"gpg"* ]]; then
+		local gopass_output
+		if ! gopass_output=$(printf '%s' "$value" | gopass insert --force "${GOPASS_PREFIX}/${name}" 2>&1); then
+			if [[ "$gopass_output" == *"GPG"* || "$gopass_output" == *"gpg"* ]]; then
 				print_error "Failed to store $name in gopass (GPG error)"
-			elif [[ "$gopass_err" == *"not initialized"* ]]; then
+			elif [[ "$gopass_output" == *"not initialized"* ]]; then
 				print_error "Failed to store $name in gopass (store not initialized)"
 			else
-				print_error "Failed to store $name in gopass"
+				print_error "Failed to store $name in gopass. Error from gopass:"
+				echo "${gopass_output}" | sed 's/^/  /'
 			fi
 			return 1
 		fi
