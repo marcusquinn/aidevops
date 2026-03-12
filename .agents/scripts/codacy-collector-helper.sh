@@ -534,6 +534,7 @@ JQ_EOF
 		# Wrap in transaction for atomicity and performance (single fsync)
 		# Use total_changes() for accurate committed row count instead of wc -l
 		count=$(
+			set -o pipefail
 			{
 				echo "BEGIN TRANSACTION;"
 				cat "$sql_file"
