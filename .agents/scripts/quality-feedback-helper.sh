@@ -721,7 +721,7 @@ _scan_single_pr() {
 			"\\bshould\\b|\\bconsider\\b|\\binstead\\b|\\bsuggest|\\brecommend|" +
 			"\\bwarning\\b|\\bcaution\\b|\\bavoid\\b|\\b(don ?'"'"'?t|do not)\\b|" +
 			"\\bvulnerab|\\binsecure|\\binjection\\b|\\bxss\\b|\\bcsrf\\b|" +
-			"\\bbug\\b|\\berror\\b|\\bproblem\\b|\\bfail\\b|" +
+			"\\bbug\\b|\\berror\\b|\\bproblem\\b|\\bfail\\b|\\bincorrect\\b|\\bwrong\\b|\\bmissing\\b|\\bbroken\\b|" +
 			"\\bnit:|\\btodo:|\\bfixme|\\bhardcoded|\\bdeprecated|" +
 			"\\brace.condition|\\bdeadlock|\\bleak|\\boverflow|" +
 			"\\bworkaround\\b|\\bhack\\b|" +
