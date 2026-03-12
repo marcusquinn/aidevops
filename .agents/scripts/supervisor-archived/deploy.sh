@@ -2133,21 +2133,23 @@ resolve_rebase_conflicts() {
 		# File content from external branches is untrusted input.
 		# Fail-closed: if scanner is missing or fails, skip AI resolution for safety.
 		local prompt_guard_script="${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/prompt-guard-helper.sh"
+		local skip_ai_resolution=false
 		if [[ -x "$prompt_guard_script" ]]; then
 			local scan_result
-			if ! scan_result=$("$prompt_guard_script" scan-file "$full_path" 2>/dev/null); then
+			if ! scan_result=$("$prompt_guard_script" scan-file "$full_path"); then
 				log_warn "resolve_rebase_conflicts: scanner failed for $conflict_file — skipping AI resolution for safety"
-				failed_files="${failed_files}${failed_files:+, }${conflict_file}"
-				continue
-			fi
-			if [[ "$scan_result" == *"SUSPICIOUS"* || "$scan_result" == *"BLOCKED"* ]]; then
+				skip_ai_resolution=true
+			elif [[ "$scan_result" == *"SUSPICIOUS"* || "$scan_result" == *"BLOCKED"* ]]; then
 				log_warn "resolve_rebase_conflicts: prompt injection detected in $conflict_file — skipping AI resolution"
 				log_warn "  Scan result: $scan_result"
-				failed_files="${failed_files}${failed_files:+, }${conflict_file}"
-				continue
+				skip_ai_resolution=true
 			fi
 		else
 			log_warn "resolve_rebase_conflicts: scanner missing — skipping AI resolution for safety"
+			skip_ai_resolution=true
+		fi
+
+		if [[ "$skip_ai_resolution" == true ]]; then
 			failed_files="${failed_files}${failed_files:+, }${conflict_file}"
 			continue
 		fi
