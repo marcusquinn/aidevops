@@ -55,7 +55,7 @@ reviewed_file="$HOME/.aidevops/.agent-workspace/security/quarantine/reviewed.jso
 printf '{"id":"q1","timestamp":"2026-01-01T00:00:00Z"}\n' >"$reviewed_file"
 
 stats_output="$(bash "$QUARANTINE_HELPER" stats 2>&1 || true)"
-if printf '%s\n' "$stats_output" | grep -q "False positive rate: 0%"; then
+if printf '%s\n' "$stats_output" | grep -qE 'False positive rate:[[:space:]]+0%'; then
 	pass "stats keeps false-positive rate safe at 0 when no decisions exist"
 else
 	fail "stats did not report 0% false-positive rate for decisionless records" "$stats_output"
@@ -64,7 +64,7 @@ fi
 printf '{"id":"q2","decision":"dismiss"}\n{"id":"q3","decision":"allow"}\n' >"$reviewed_file"
 
 stats_output="$(bash "$QUARANTINE_HELPER" stats 2>&1 || true)"
-if printf '%s\n' "$stats_output" | grep -q "False positive rate: 50%"; then
+if printf '%s\n' "$stats_output" | grep -qE 'False positive rate:[[:space:]]+50%'; then
 	pass "stats computes false-positive rate from reviewed decisions"
 else
 	fail "stats did not report expected 50% false-positive rate" "$stats_output"
