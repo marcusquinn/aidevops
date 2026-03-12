@@ -111,6 +111,7 @@ _extract_verification_snippet() {
 			[[ -z "$candidate" ]] && continue
 
 			if [[ "$fence_type" == "diff" || "$fence_type" == "suggestion" ]]; then
+				# diff/suggestion fences: skip all diff markers and added/removed lines
 				[[ "$candidate" == "@@"* ]] && continue
 				[[ "$candidate" == "diff --git"* ]] && continue
 				[[ "$candidate" == "index "* ]] && continue
@@ -118,10 +119,11 @@ _extract_verification_snippet() {
 				[[ "$candidate" == "---"* ]] && continue
 				[[ "$candidate" == +* ]] && continue
 				[[ "$candidate" == -* ]] && continue
-			fi
-
-			if [[ "$candidate" == +* || "$candidate" == -* ]]; then
-				candidate=$(_trim_whitespace "${candidate:1}")
+			else
+				# non-diff fences: lines starting with +/- are diff markers too —
+				# skip them rather than stripping the prefix and using the content
+				[[ "$candidate" == +* ]] && continue
+				[[ "$candidate" == -* ]] && continue
 			fi
 
 			[[ "$candidate" == "Suggestion:"* ]] && continue
