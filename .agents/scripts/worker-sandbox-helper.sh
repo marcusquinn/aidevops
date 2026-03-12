@@ -278,7 +278,12 @@ cleanup_worker_sandbox() {
 		return 1
 	fi
 
-	sandbox_task_id=$(grep '^task_id=' "$sandbox_dir/.aidevops-sandbox" 2>/dev/null | cut -d= -f2- || true)
+	sandbox_task_id=$(while IFS='=' read -r key value; do
+		if [[ "$key" == "task_id" ]]; then
+			echo "$value"
+			break
+		fi
+	done <"$sandbox_dir/.aidevops-sandbox")
 	sandbox_task_id="${sandbox_task_id:-unknown}"
 
 	rm -rf "$sandbox_dir"
