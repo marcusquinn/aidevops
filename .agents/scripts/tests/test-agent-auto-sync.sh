@@ -33,6 +33,7 @@ print_result() {
 
 setup() {
 	TEST_DIR=$(mktemp -d)
+	trap teardown EXIT
 	mkdir -p "$TEST_DIR/repo/.agents/scripts"
 	cat >"$TEST_DIR/repo/.agents/scripts/deploy-agents-on-merge.sh" <<'EOF'
 #!/usr/bin/env bash
@@ -146,6 +147,7 @@ main() {
 	test_release_sync_skips_other_remotes
 
 	teardown
+	trap - EXIT
 	echo "Results: $TESTS_PASSED/$TESTS_RUN passed, $TESTS_FAILED failed"
 
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then

@@ -661,9 +661,12 @@ EOF
 
 main() {
 	local command="${1:-help}"
-	local account_name="$2"
-	local target="$3"
-	local options="$4"
+	local account_name="${2:-}"
+	local target="${3:-}"
+	local options="${4:-}"
+	local arg5="${5:-}"
+	local arg6="${6:-}"
+	local arg7="${7:-}"
 
 	case "$command" in
 	"list-repos")
@@ -671,8 +674,8 @@ main() {
 		;;
 	"create-repo")
 		local repo_desc="$options"
-		local repo_vis="$5"
-		local repo_init="$6"
+		local repo_vis="$arg5"
+		local repo_init="$arg6"
 		create_repo "$account_name" "$target" "$repo_desc" "$repo_vis" "$repo_init"
 		;;
 	"delete-repo")
@@ -685,7 +688,7 @@ main() {
 		list_issues "$account_name" "$target" "$options"
 		;;
 	"create-issue")
-		local issue_body="$5"
+		local issue_body="$arg5"
 		create_issue "$account_name" "$target" "$options" "$issue_body"
 		;;
 	"close-issue")
@@ -695,20 +698,20 @@ main() {
 		list_prs "$account_name" "$target" "$options"
 		;;
 	"create-pr")
-		local pr_base="$5"
-		local pr_head="$6"
-		local pr_body="$7"
+		local pr_base="$arg5"
+		local pr_head="$arg6"
+		local pr_body="$arg7"
 		create_pr "$account_name" "$target" "$options" "$pr_base" "$pr_head" "$pr_body"
 		;;
 	"merge-pr")
-		local merge_method="$5"
+		local merge_method="$arg5"
 		merge_pr "$account_name" "$target" "$options" "$merge_method"
 		;;
 	"list-branches")
 		list_branches "$account_name" "$target"
 		;;
 	"create-branch")
-		local source_branch="$5"
+		local source_branch="$arg5"
 		create_branch "$account_name" "$target" "$options" "$source_branch"
 		;;
 	"list-accounts")
