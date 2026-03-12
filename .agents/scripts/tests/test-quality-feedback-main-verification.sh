@@ -395,6 +395,48 @@ test_uses_default_branch_ref_for_contents_lookup() {
 	return 0
 }
 
+test_plain_fence_skips_diff_marker_lines() {
+	# Regression: a plain ```bash fence whose first line starts with '+' or '-'
+	# must NOT strip the marker and use the remainder as a snippet.  The old code
+	# did `candidate="${candidate:1}"` which turned "+ new code" into "new code"
+	# and then matched it against the file, producing a false "verified" result.
+	# The fix skips +/- lines in non-diff fences entirely, so the snippet falls
+	# through to the fallback extractor (or returns unverifiable if nothing else
+	# matches), preventing the false positive.
+	reset_mock_state
+	# File contains "new code" — the stripped version of "+ new code"
+	GH_RAW_CONTENT=$'#!/usr/bin/env bash\nnew code\nreturn 0\n'
+
+	local findings
+	# Body has a plain bash fence whose only substantive line is "+ new code".
+	# With the old strip logic this would extract "new code", find it in the file,
+	# and mark the finding verified.  With the fix it skips the +/- line and falls
+	# through to unverifiable (no other qualifying line), so the issue is still
+	# created (unverifiable → kept), but the snippet is NOT "new code".
+	findings='[{"file":".agents/scripts/example.sh","line":2,"body_full":"```bash\n+ new code\n```","reviewer":"coderabbit","reviewer_login":"coderabbitai","severity":"high","url":"https://example.test/comment"}]'
+
+	local out_file
+	out_file=$(mktemp)
+	local created
+	_create_quality_debt_issues "owner/repo" "123" "$findings" >"$out_file"
+	created=$(<"$out_file")
+	rm -f "$out_file"
+
+	local created_count
+	created_count=$(wc -l <"$GH_CREATE_LOG" | tr -d ' ')
+	rm -f "$GH_CREATE_LOG"
+	rm -f "$GH_API_LOG"
+
+	# Finding must be kept (unverifiable — no snippet extracted from +/- only fence)
+	# rather than falsely resolved by matching the stripped "new code" in the file.
+	if [[ "$created" == "1" && "$created_count" -eq 1 ]]; then
+		print_result "plain fence skips +/- lines instead of stripping prefix" 0
+	else
+		print_result "plain fence skips +/- lines instead of stripping prefix" 1 "created=${created}, issues=${created_count}"
+	fi
+	return 0
+}
+
 main() {
 	source "$HELPER"
 
@@ -407,6 +449,7 @@ main() {
 	test_keeps_unverifiable_finding
 	test_transient_api_error_keeps_finding_as_unverifiable
 	test_uses_default_branch_ref_for_contents_lookup
+	test_plain_fence_skips_diff_marker_lines
 
 	echo "Results: ${TESTS_PASSED}/${TESTS_RUN} passed, ${TESTS_FAILED} failed"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then
