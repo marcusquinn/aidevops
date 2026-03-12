@@ -81,11 +81,15 @@ test_create_records_audit_event() {
 		fail "sentinel missing expected task id"
 	fi
 
+	local audit_log="$TEST_TMPDIR/audit/audit.jsonl"
 	if jq -e 'select(.msg == "worker_sandbox_created" and .detail.task_id == "t1412-create")' \
-		"$TEST_TMPDIR/audit/audit.jsonl" >/dev/null 2>&1; then
+		"$audit_log" >/dev/null 2>&1; then
 		pass "audit log contains sandbox create event with correct task_id"
 	else
-		fail "missing sandbox create audit event or incorrect task_id"
+		local actual_events
+		actual_events="$(jq -r '.msg // "no msg field"' "$audit_log" 2>/dev/null | tr '\n' ' ' || echo "(unreadable)")"
+		fail "missing sandbox create audit event or incorrect task_id" \
+			"actual events in log: ${actual_events}"
 	fi
 
 	run_sandbox_cmd cleanup "$sandbox_dir" >/dev/null
@@ -107,11 +111,15 @@ test_cleanup_records_audit_event() {
 		fail "sandbox directory still exists after cleanup"
 	fi
 
+	local audit_log="$TEST_TMPDIR/audit/audit.jsonl"
 	if jq -e 'select(.msg == "worker_sandbox_cleaned" and .detail.task_id == "t1412-cleanup")' \
-		"$TEST_TMPDIR/audit/audit.jsonl" >/dev/null 2>&1; then
+		"$audit_log" >/dev/null 2>&1; then
 		pass "audit log contains sandbox cleanup event with correct task_id"
 	else
-		fail "missing sandbox cleanup audit event or incorrect task_id"
+		local actual_events
+		actual_events="$(jq -r '.msg // "no msg field"' "$audit_log" 2>/dev/null | tr '\n' ' ' || echo "(unreadable)")"
+		fail "missing sandbox cleanup audit event or incorrect task_id" \
+			"actual events in log: ${actual_events}"
 	fi
 
 	cleanup
