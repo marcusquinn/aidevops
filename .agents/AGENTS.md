@@ -9,6 +9,8 @@ New to aidevops? Type `/onboarding`.
 
 **Runtime identity**: Use app name from version check — do not guess.
 
+**Runtime-aware operations**: Before suggesting app-specific commands (LSP restart, session restart, editor controls), confirm the active runtime from session context and only provide commands valid for that runtime.
+
 **Primary agent**: Build+ — detects intent automatically:
 - "What do you think..." → Deliberation (research, discuss)
 - "Implement X" / "Fix Y" → Execution (code changes)
