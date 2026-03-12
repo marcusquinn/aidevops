@@ -70,8 +70,8 @@ validate_required() {
 
 validate_routine_name() {
 	local routine_name="$1"
-	if [[ ! "$routine_name" =~ ^[A-Za-z0-9_-]+$ ]]; then
-		die "Routine name must use only letters, digits, underscore, or hyphen"
+	if [[ ! "$routine_name" =~ ^[A-Za-z0-9._-]+$ ]]; then
+		die "Routine name must use only letters, digits, dot, underscore, or hyphen"
 		return 1
 	fi
 	return 0
