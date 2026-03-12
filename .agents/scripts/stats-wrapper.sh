@@ -67,7 +67,7 @@ _stats_process_elapsed_seconds() {
 			}
 			print total
 		}
-	')
+	' || true)
 
 	if [[ "$elapsed" =~ ^[0-9]+$ ]]; then
 		printf '%s\n' "$elapsed"
