@@ -113,6 +113,27 @@ test_set_uses_provided_stdin_value() {
 	return 0
 }
 
+test_credentials_read_unescapes_special_chars() {
+	local test_name="credentials.sh read path unescapes backslash and double-quote"
+
+	# Simulate what the write path stores for value: foo\bar"baz
+	# write: escaped_value="${value//\\/\\\\}"; escaped_value="${escaped_value//\"/\\\"}"
+	# result: export KEY="foo\\bar\"baz"
+	local stored_line='export ROUND_TRIP_KEY="foo\\bar\"baz"'
+
+	# Apply the same sed pipeline as get_secret_value()
+	local readback
+	readback=$(printf '%s\n' "$stored_line" | sed 's/^export [^=]*=//' | sed 's/^"//' | sed 's/"$//' | sed 's/\\"/"/g' | sed 's/\\\\/\\/g')
+
+	if [[ "$readback" == 'foo\bar"baz' ]]; then
+		print_result "$test_name" 0
+	else
+		print_result "$test_name" 1 "expected 'foo\\bar\"baz', got '$readback'"
+	fi
+
+	return 0
+}
+
 test_set_rejects_command_literal_input() {
 	setup
 	local test_name="set rejects command-literal input"
@@ -148,6 +169,7 @@ main() {
 	echo ""
 
 	test_set_uses_provided_stdin_value
+	test_credentials_read_unescapes_special_chars
 	test_set_rejects_command_literal_input
 
 	echo ""

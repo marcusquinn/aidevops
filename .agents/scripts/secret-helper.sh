@@ -84,7 +84,9 @@ get_secret_value() {
 		while IFS= read -r cred_file; do
 			[[ -z "$cred_file" ]] && continue
 			local value
-			value=$(grep "^export ${name}=" "$cred_file" 2>/dev/null | head -1 | sed 's/^export [^=]*=//' | sed 's/^"//' | sed 's/"$//')
+			# Strip 'export NAME=', strip surrounding double quotes, then unescape
+			# \" -> " and \\ -> \ (order matters: unescape \" before \\)
+			value=$(grep "^export ${name}=" "$cred_file" 2>/dev/null | head -1 | sed 's/^export [^=]*=//' | sed 's/^"//' | sed 's/"$//' | sed 's/\\"/"/g' | sed 's/\\\\/\\/g')
 			if [[ -n "$value" ]]; then
 				echo "$value"
 				return 0
