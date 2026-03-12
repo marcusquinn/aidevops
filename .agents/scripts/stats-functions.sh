@@ -1164,7 +1164,7 @@ _All clear — no issues found._
 	# --- 2. Qlty CLI ---
 	local qlty_section=""
 	local qlty_bin="${HOME}/.qlty/bin/qlty"
-	if [[ -x "$qlty_bin" ]] && [[ -f "${repo_path}/.qlty.toml" ]]; then
+	if [[ -x "$qlty_bin" ]] && [[ -f "${repo_path}/.qlty/qlty.toml" || -f "${repo_path}/.qlty.toml" ]]; then
 		local qlty_output
 		qlty_output=$("$qlty_bin" smells --all 2>/dev/null | head -50) || qlty_output=""
 
