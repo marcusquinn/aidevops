@@ -13,7 +13,7 @@ set -euo pipefail
 # ------------------------------------------------------------------------------
 
 script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
-source "${SCRIPT_DIR}/shared-constants.sh"
+source "${script_dir}/shared-constants.sh"
 
 readonly SCRIPT_DIR="$script_dir"
 
@@ -453,6 +453,7 @@ merge_pr() {
 
     if [[ $merge_exit -eq 0 ]]; then
         print_success "$SUCCESS_PR_MERGED"
+        trigger_aidevops_post_merge_sync "$owner/$repo_name"
         return 0
     fi
 
@@ -465,6 +466,60 @@ merge_pr() {
 
     print_error "Failed to merge pull request: $merge_output"
     return 1
+}
+
+resolve_aidevops_sync_repo_dir() {
+    if [[ -n "${AIDEVOPS_SYNC_REPO_PATH:-}" ]] && [[ -d "$AIDEVOPS_SYNC_REPO_PATH/.agents" ]]; then
+        printf '%s\n' "$AIDEVOPS_SYNC_REPO_PATH"
+        return 0
+    fi
+
+    local current_repo_root
+    current_repo_root=$(git rev-parse --show-toplevel 2>/dev/null || true)
+    if [[ -n "$current_repo_root" ]] && [[ "$(basename "$current_repo_root")" == "aidevops" ]] && [[ -d "$current_repo_root/.agents" ]]; then
+        printf '%s\n' "$current_repo_root"
+        return 0
+    fi
+
+    local default_repo_path="$HOME/Git/aidevops"
+    if [[ -d "$default_repo_path/.agents" ]]; then
+        printf '%s\n' "$default_repo_path"
+        return 0
+    fi
+
+    return 1
+}
+
+trigger_aidevops_post_merge_sync() {
+    local repo_slug="$1"
+
+    if [[ "$repo_slug" != "marcusquinn/aidevops" ]]; then
+        return 0
+    fi
+
+    local repo_dir
+    if ! repo_dir=$(resolve_aidevops_sync_repo_dir); then
+        print_warning "Merged aidevops PR but could not locate local aidevops repo for sync"
+        return 0
+    fi
+
+    local deploy_script="${AIDEVOPS_SYNC_DEPLOY_SCRIPT:-$repo_dir/.agents/scripts/deploy-agents-on-merge.sh}"
+    if [[ ! -f "$deploy_script" ]]; then
+        print_warning "Post-merge sync script not found: $deploy_script"
+        return 0
+    fi
+
+    local sync_output=""
+    local sync_exit=0
+    sync_output=$(bash "$deploy_script" --repo "$repo_dir" --quiet 2>&1) || sync_exit=$?
+
+    if [[ "$sync_exit" -eq 0 || "$sync_exit" -eq 2 ]]; then
+        print_success "Post-merge aidevops agent sync completed"
+        return 0
+    fi
+
+    print_warning "Post-merge aidevops agent sync failed (non-blocking): $sync_output"
+    return 0
 }
 
 # ------------------------------------------------------------------------------
@@ -672,9 +727,11 @@ main() {
     return 0
 }
 
-# Initialize
-check_dependencies
-load_config
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+    # Initialize
+    check_dependencies
+    load_config
 
-# Execute main function
-main "$@"
+    # Execute main function
+    main "$@"
+fi

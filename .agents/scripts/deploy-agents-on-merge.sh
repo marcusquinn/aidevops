@@ -60,10 +60,45 @@ log_error() {
 # Defaults
 REPO_DIR="${HOME}/Git/aidevops"
 TARGET_DIR="${HOME}/.aidevops/agents"
+PLUGINS_FILE="${HOME}/.config/aidevops/plugins.json"
 SCRIPTS_ONLY=false
 FULL_DEPLOY=false
 DRY_RUN=false
 DIFF_COMMIT=""
+PLUGIN_NAMESPACES=()
+
+sanitize_plugin_namespace() {
+	local namespace="$1"
+
+	if [[ -z "$namespace" ]]; then
+		return 1
+	fi
+
+	if [[ "$namespace" =~ ^[A-Za-z0-9._-]+$ ]]; then
+		printf '%s\n' "$namespace"
+		return 0
+	fi
+
+	return 1
+}
+
+collect_plugin_namespaces() {
+	PLUGIN_NAMESPACES=()
+
+	if [[ ! -f "$PLUGINS_FILE" ]] || ! command -v jq >/dev/null 2>&1; then
+		return 0
+	fi
+
+	local namespace
+	local safe_namespace
+	while IFS= read -r namespace; do
+		if [[ -n "$namespace" ]] && safe_namespace=$(sanitize_plugin_namespace "$namespace"); then
+			PLUGIN_NAMESPACES+=("$safe_namespace")
+		fi
+	done < <(jq -r '.plugins[].namespace // empty' "$PLUGINS_FILE" 2>/dev/null)
+
+	return 0
+}
 
 parse_args() {
 	while [[ $# -gt 0 ]]; do
@@ -241,25 +276,40 @@ deploy_all_agents() {
 
 	if [[ "$DRY_RUN" == "true" ]]; then
 		log_info "[dry-run] Would sync $source_dir/ -> $TARGET_DIR/"
-		log_info "[dry-run] Preserving: custom/, draft/"
+		local preserve_display="custom/, draft/, loop-state/"
+		if [[ ${#PLUGIN_NAMESPACES[@]} -gt 0 ]]; then
+			preserve_display+=", ${PLUGIN_NAMESPACES[*]}"
+		fi
+		log_info "[dry-run] Preserving: $preserve_display"
 		return 0
 	fi
 
 	log_info "Deploying all agents to $TARGET_DIR..."
 
 	if command -v rsync &>/dev/null; then
-		rsync -a \
-			--exclude='loop-state/' \
-			--exclude='custom/' \
-			--exclude='draft/' \
-			"$source_dir/" "$TARGET_DIR/"
+		local -a rsync_excludes=(
+			"--exclude=loop-state/"
+			"--exclude=custom/"
+			"--exclude=draft/"
+		)
+		local plugin_namespace
+		for plugin_namespace in "${PLUGIN_NAMESPACES[@]}"; do
+			rsync_excludes+=("--exclude=${plugin_namespace}/")
+		done
+		rsync -a "${rsync_excludes[@]}" "$source_dir/" "$TARGET_DIR/"
 	else
-		# Preserve custom and draft directories
+		# Preserve user and plugin namespace directories
 		local tmp_preserve
 		tmp_preserve=$(mktemp -d)
 		local preserve_ok=true
+		local -a preserved_dirs=("custom" "draft")
+		local plugin_namespace
+		for plugin_namespace in "${PLUGIN_NAMESPACES[@]}"; do
+			preserved_dirs+=("$plugin_namespace")
+		done
 
-		for pdir in custom draft; do
+		local pdir
+		for pdir in "${preserved_dirs[@]}"; do
 			if [[ -d "$TARGET_DIR/$pdir" ]] && ! cp -R "$TARGET_DIR/$pdir" "$tmp_preserve/$pdir"; then
 				preserve_ok=false
 			fi
@@ -277,20 +327,33 @@ deploy_all_agents() {
 			rm -rf "$tmp_preserve"
 			return 1
 		fi
-		if ! find "$TARGET_DIR" -mindepth 1 -maxdepth 1 \
-			! -name 'custom' ! -name 'draft' ! -name 'loop-state' \
-			-exec rm -rf {} +; then
+		local -a find_args=(
+			-mindepth 1
+			-maxdepth 1
+			! -name 'custom'
+			! -name 'draft'
+			! -name 'loop-state'
+		)
+		for plugin_namespace in "${PLUGIN_NAMESPACES[@]}"; do
+			find_args+=(! -name "$plugin_namespace")
+		done
+		find_args+=(-exec rm -rf {} +)
+		if ! find "$TARGET_DIR" "${find_args[@]}"; then
 			log_error "Failed to clean target directory: $TARGET_DIR"
 			rm -rf "$tmp_preserve"
 			return 1
 		fi
 
 		# Copy all agents
-		(cd "$source_dir" && tar cf - --exclude='loop-state' --exclude='custom' --exclude='draft' .) |
+		local -a tar_excludes=("--exclude=loop-state" "--exclude=custom" "--exclude=draft")
+		for plugin_namespace in "${PLUGIN_NAMESPACES[@]}"; do
+			tar_excludes+=("--exclude=$plugin_namespace")
+		done
+		(cd "$source_dir" && tar cf - "${tar_excludes[@]}" .) |
 			(cd "$TARGET_DIR" && tar xf -)
 
 		# Restore preserved directories
-		for pdir in custom draft; do
+		for pdir in "${preserved_dirs[@]}"; do
 			if [[ -d "$tmp_preserve/$pdir" ]]; then
 				cp -R "$tmp_preserve/$pdir" "$TARGET_DIR/$pdir"
 			fi
@@ -353,6 +416,15 @@ deploy_changed_files() {
 		custom/* | draft/* | loop-state/*) continue ;;
 		esac
 
+		local plugin_namespace
+		for plugin_namespace in "${PLUGIN_NAMESPACES[@]}"; do
+			case "$rel_path" in
+			"$plugin_namespace"/*)
+				continue 2
+				;;
+			esac
+		done
+
 		if [[ -f "$source_file" ]]; then
 			# Create target directory if needed
 			local target_parent
@@ -406,6 +478,7 @@ deploy_changed_files() {
 main() {
 	parse_args "$@" || return 1
 	validate_repo || return 1
+	collect_plugin_namespaces || return 1
 
 	# Full deploy: delegate to setup.sh
 	if [[ "$FULL_DEPLOY" == "true" ]]; then
