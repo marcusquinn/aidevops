@@ -10,6 +10,7 @@ set -euo pipefail
 
 # Source shared constants (provides sed_inplace, print_*, color constants)
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
+# shellcheck source=/dev/null
 source "${SCRIPT_DIR}/shared-constants.sh"
 
 # Repository root directory
@@ -591,6 +592,7 @@ run_patch_release_preflight() {
 
 	local changed_files=""
 	changed_files=$(git diff --name-only "$baseline_ref"..HEAD 2>/dev/null || echo "")
+	local pre_edit_test_script="$REPO_ROOT/.agents/scripts/tests/test-pre-edit-check.sh"
 
 	if ! configure_secretlint_command; then
 		return 1
@@ -655,6 +657,21 @@ run_patch_release_preflight() {
 		fi
 	else
 		print_info "ShellCheck: no shell files changed since $baseline_ref"
+	fi
+
+	if [[ "$changed_files" == *".agents/scripts/pre-edit-check.sh"* ]] || [[ "$changed_files" == *".agents/scripts/tests/test-pre-edit-check.sh"* ]]; then
+		if [[ ! -x "$pre_edit_test_script" ]]; then
+			print_error "Pre-edit regression test missing or not executable: $pre_edit_test_script"
+			return 1
+		fi
+
+		print_info "Running pre-edit regression test..."
+		if bash "$pre_edit_test_script"; then
+			print_success "Pre-edit regression test passed"
+		else
+			print_error "Pre-edit regression test failed"
+			return 1
+		fi
 	fi
 
 	print_success "Patch release regression preflight passed"
