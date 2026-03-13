@@ -1144,14 +1144,16 @@ _create_quality_debt_issues() {
 		local verification_json
 		local verification_result
 		local verification_status
+		local verification_fields
 		local finding_with_status
+
 		file_path=$(echo "$finding" | jq -r '.file // ""')
 		line_num=$(echo "$finding" | jq -r '.line // "?"')
 		body_full=$(echo "$finding" | jq -r '.body_full // .body // ""')
 
 		verification_json=$(_finding_still_exists_on_main "$repo_slug" "$file_path" "$line_num" "$body_full" || true)
-		verification_result=$(echo "$verification_json" | jq -r '.result // false')
-		verification_status=$(echo "$verification_json" | jq -r '.status // "verified"')
+		verification_fields=$(echo "$verification_json" | jq -r '[(.result // false), (.status // "verified")] | @tsv')
+		IFS=$'\t' read -r verification_result verification_status <<<"$verification_fields"
 
 		if [[ "$verification_result" == "true" ]]; then
 			finding_with_status=$(echo "$finding" | jq --arg status "$verification_status" '. + {verification_status: $status}')
