@@ -188,7 +188,7 @@ cmd_launch() {
 	fi
 
 	log_info "Launching ComfyUI..."
-	comfy launch "${launch_args[@]}"
+	comfy launch "${launch_args[@]:-}"
 	return 0
 }
 
@@ -271,7 +271,7 @@ cmd_snapshot_save() {
 	[[ -n "$output" ]] && save_args+=("--output" "$output")
 
 	log_info "Saving environment snapshot..."
-	comfy node save-snapshot "${save_args[@]}"
+	comfy node save-snapshot "${save_args[@]:-}"
 	log_success "Snapshot saved"
 	return 0
 }
