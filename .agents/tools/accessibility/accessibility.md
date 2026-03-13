@@ -376,5 +376,5 @@ Reports from `accessibility-audit-helper.sh` are saved to `~/.aidevops/reports/a
 
 - `tools/browser/pagespeed.md` — Performance testing (includes accessibility score)
 - `tools/performance/performance.md` — Core Web Vitals
-- `seo/` — SEO optimization (overlapping concerns)
+- `seo/` — SEO (overlapping concerns)
 - `tools/browser/browser-automation.md` — Browser tool selection for dynamic testing
