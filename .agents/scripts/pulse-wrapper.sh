@@ -97,10 +97,10 @@ PULSE_BACKFILL_MAX_ATTEMPTS="${PULSE_BACKFILL_MAX_ATTEMPTS:-3}"                 
 PULSE_LAUNCH_GRACE_SECONDS="${PULSE_LAUNCH_GRACE_SECONDS:-20}"                                          # Grace window for worker process to appear after dispatch (t1453)
 PRE_RUN_STAGE_TIMEOUT="${PRE_RUN_STAGE_TIMEOUT:-600}"                                                   # 10 min cap per pre-run stage (cleanup/prefetch)
 PULSE_PREFETCH_PR_LIMIT="${PULSE_PREFETCH_PR_LIMIT:-200}"                                               # Open PR list window per repo for pre-fetched state
-PULSE_PREFETCH_ISSUE_LIMIT="${PULSE_PREFETCH_ISSUE_LIMIT:-200}"                                         # Open issue list window per repo for pre-fetched state
+PULSE_PREFETCH_ISSUE_LIMIT="${PULSE_PREFETCH_ISSUE_LIMIT:-1000}"                                        # Open issue list window per repo for pre-fetched state (large repos need >200)
 PULSE_RUNNABLE_PR_LIMIT="${PULSE_RUNNABLE_PR_LIMIT:-200}"                                               # Open PR sample size for runnable-candidate counting
-PULSE_RUNNABLE_ISSUE_LIMIT="${PULSE_RUNNABLE_ISSUE_LIMIT:-200}"                                         # Open issue sample size for runnable-candidate counting
-PULSE_QUEUED_SCAN_LIMIT="${PULSE_QUEUED_SCAN_LIMIT:-200}"                                               # Queued-issue scan window per repo
+PULSE_RUNNABLE_ISSUE_LIMIT="${PULSE_RUNNABLE_ISSUE_LIMIT:-1000}"                                        # Open issue sample size for runnable-candidate counting
+PULSE_QUEUED_SCAN_LIMIT="${PULSE_QUEUED_SCAN_LIMIT:-1000}"                                              # Queued/in-progress scan window per repo
 
 # Process guard limits (t1398)
 CHILD_RSS_LIMIT_KB="${CHILD_RSS_LIMIT_KB:-2097152}"           # 2 GB default — kill child if RSS exceeds this
@@ -131,10 +131,10 @@ PULSE_BACKFILL_MAX_ATTEMPTS=$(_validate_int PULSE_BACKFILL_MAX_ATTEMPTS "$PULSE_
 PULSE_LAUNCH_GRACE_SECONDS=$(_validate_int PULSE_LAUNCH_GRACE_SECONDS "$PULSE_LAUNCH_GRACE_SECONDS" 20 5)
 PRE_RUN_STAGE_TIMEOUT=$(_validate_int PRE_RUN_STAGE_TIMEOUT "$PRE_RUN_STAGE_TIMEOUT" 600 30)
 PULSE_PREFETCH_PR_LIMIT=$(_validate_int PULSE_PREFETCH_PR_LIMIT "$PULSE_PREFETCH_PR_LIMIT" 200 1)
-PULSE_PREFETCH_ISSUE_LIMIT=$(_validate_int PULSE_PREFETCH_ISSUE_LIMIT "$PULSE_PREFETCH_ISSUE_LIMIT" 200 1)
+PULSE_PREFETCH_ISSUE_LIMIT=$(_validate_int PULSE_PREFETCH_ISSUE_LIMIT "$PULSE_PREFETCH_ISSUE_LIMIT" 1000 1)
 PULSE_RUNNABLE_PR_LIMIT=$(_validate_int PULSE_RUNNABLE_PR_LIMIT "$PULSE_RUNNABLE_PR_LIMIT" 200 1)
-PULSE_RUNNABLE_ISSUE_LIMIT=$(_validate_int PULSE_RUNNABLE_ISSUE_LIMIT "$PULSE_RUNNABLE_ISSUE_LIMIT" 200 1)
-PULSE_QUEUED_SCAN_LIMIT=$(_validate_int PULSE_QUEUED_SCAN_LIMIT "$PULSE_QUEUED_SCAN_LIMIT" 200 1)
+PULSE_RUNNABLE_ISSUE_LIMIT=$(_validate_int PULSE_RUNNABLE_ISSUE_LIMIT "$PULSE_RUNNABLE_ISSUE_LIMIT" 1000 1)
+PULSE_QUEUED_SCAN_LIMIT=$(_validate_int PULSE_QUEUED_SCAN_LIMIT "$PULSE_QUEUED_SCAN_LIMIT" 1000 1)
 CHILD_RSS_LIMIT_KB=$(_validate_int CHILD_RSS_LIMIT_KB "$CHILD_RSS_LIMIT_KB" 2097152 1)
 CHILD_RUNTIME_LIMIT=$(_validate_int CHILD_RUNTIME_LIMIT "$CHILD_RUNTIME_LIMIT" 1800 1)
 SHELLCHECK_RSS_LIMIT_KB=$(_validate_int SHELLCHECK_RSS_LIMIT_KB "$SHELLCHECK_RSS_LIMIT_KB" 1048576 1)
@@ -1836,6 +1836,56 @@ prefetch_contribution_watch() {
 }
 
 #######################################
+# Ensure active issues have an assignee
+#
+# Prevent overlap by normalizing assignment on issues already marked as
+# actively worked (`status:queued` or `status:in-progress`). If an issue
+# has one of these labels but no assignee, assign it to the runner user.
+#
+# Returns: 0 always (best-effort)
+#######################################
+normalize_active_issue_assignments() {
+	local repos_json="$REPOS_JSON"
+	if [[ ! -f "$repos_json" ]]; then
+		return 0
+	fi
+
+	local runner_user
+	runner_user=$(gh api user --jq '.login' 2>/dev/null || echo "")
+	if [[ -z "$runner_user" ]]; then
+		echo "[pulse-wrapper] Assignment normalization skipped: unable to resolve runner user" >>"$LOGFILE"
+		return 0
+	fi
+
+	local total_checked=0
+	local total_assigned=0
+
+	while IFS= read -r slug; do
+		[[ -n "$slug" ]] || continue
+
+		local issue_rows
+		issue_rows=$(gh issue list --repo "$slug" --state open --json number,assignees,labels --limit "$PULSE_QUEUED_SCAN_LIMIT" 2>/dev/null | jq -r '.[] | select(((.labels | map(.name) | index("status:queued")) or (.labels | map(.name) | index("status:in-progress"))) and ((.assignees | length) == 0)) | .number' 2>/dev/null) || issue_rows=""
+		if [[ -z "$issue_rows" ]]; then
+			continue
+		fi
+
+		while IFS= read -r issue_number; do
+			[[ "$issue_number" =~ ^[0-9]+$ ]] || continue
+			total_checked=$((total_checked + 1))
+			if gh issue edit "$issue_number" --repo "$slug" --add-assignee "$runner_user" >/dev/null 2>&1; then
+				total_assigned=$((total_assigned + 1))
+			fi
+		done <<<"$issue_rows"
+	done < <(jq -r '.initialized_repos[] | select(.pulse == true and (.local_only // false) == false and .slug != "") | .slug' "$repos_json" 2>/dev/null)
+
+	if [[ "$total_checked" -gt 0 ]]; then
+		echo "[pulse-wrapper] Assignment normalization: assigned ${total_assigned}/${total_checked} active unassigned issues to ${runner_user}" >>"$LOGFILE"
+	fi
+
+	return 0
+}
+
+#######################################
 # Count active worker processes
 # Returns: count via stdout
 #######################################
@@ -2268,6 +2318,9 @@ main() {
 	# Deterministic — only checks timestamps/authorship, never processes
 	# comment bodies. Output appended to STATE_FILE for the pulse agent.
 	prefetch_contribution_watch
+
+	# Ensure active labels reflect ownership to prevent multi-worker overlap.
+	run_stage_with_timeout "normalize_active_issue_assignments" "$PRE_RUN_STAGE_TIMEOUT" normalize_active_issue_assignments || true
 
 	if ! run_stage_with_timeout "prefetch_state" "$PRE_RUN_STAGE_TIMEOUT" prefetch_state; then
 		echo "[pulse-wrapper] prefetch_state did not complete successfully — aborting this cycle to avoid stale dispatch decisions" >>"$LOGFILE"
