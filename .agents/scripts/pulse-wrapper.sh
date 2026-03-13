@@ -103,6 +103,10 @@ PULSE_RUNNABLE_PR_LIMIT="${PULSE_RUNNABLE_PR_LIMIT:-200}"                       
 PULSE_RUNNABLE_ISSUE_LIMIT="${PULSE_RUNNABLE_ISSUE_LIMIT:-1000}"                                        # Open issue sample size for runnable-candidate counting
 PULSE_QUEUED_SCAN_LIMIT="${PULSE_QUEUED_SCAN_LIMIT:-1000}"                                              # Queued/in-progress scan window per repo
 UNDERFILL_RECYCLE_DEFICIT_MIN_PCT="${UNDERFILL_RECYCLE_DEFICIT_MIN_PCT:-25}"                            # Run worker recycler when underfill reaches this threshold
+GH_FAILURE_PREFETCH_HOURS="${GH_FAILURE_PREFETCH_HOURS:-24}"                                            # Window for failed-notification mining summary
+GH_FAILURE_PREFETCH_LIMIT="${GH_FAILURE_PREFETCH_LIMIT:-100}"                                           # Notification page size for failed-notification mining
+GH_FAILURE_SYSTEMIC_THRESHOLD="${GH_FAILURE_SYSTEMIC_THRESHOLD:-3}"                                     # Cluster threshold for systemic-failure flag
+GH_FAILURE_MAX_RUN_LOGS="${GH_FAILURE_MAX_RUN_LOGS:-6}"                                                 # Max failed workflow runs to sample for signatures per pulse
 
 # Process guard limits (t1398)
 CHILD_RSS_LIMIT_KB="${CHILD_RSS_LIMIT_KB:-2097152}"           # 2 GB default — kill child if RSS exceeds this
@@ -141,6 +145,10 @@ UNDERFILL_RECYCLE_DEFICIT_MIN_PCT=$(_validate_int UNDERFILL_RECYCLE_DEFICIT_MIN_
 if [[ "$UNDERFILL_RECYCLE_DEFICIT_MIN_PCT" -gt 100 ]]; then
 	UNDERFILL_RECYCLE_DEFICIT_MIN_PCT=100
 fi
+GH_FAILURE_PREFETCH_HOURS=$(_validate_int GH_FAILURE_PREFETCH_HOURS "$GH_FAILURE_PREFETCH_HOURS" 24 1)
+GH_FAILURE_PREFETCH_LIMIT=$(_validate_int GH_FAILURE_PREFETCH_LIMIT "$GH_FAILURE_PREFETCH_LIMIT" 100 1)
+GH_FAILURE_SYSTEMIC_THRESHOLD=$(_validate_int GH_FAILURE_SYSTEMIC_THRESHOLD "$GH_FAILURE_SYSTEMIC_THRESHOLD" 3 1)
+GH_FAILURE_MAX_RUN_LOGS=$(_validate_int GH_FAILURE_MAX_RUN_LOGS "$GH_FAILURE_MAX_RUN_LOGS" 6 0)
 CHILD_RSS_LIMIT_KB=$(_validate_int CHILD_RSS_LIMIT_KB "$CHILD_RSS_LIMIT_KB" 2097152 1)
 CHILD_RUNTIME_LIMIT=$(_validate_int CHILD_RUNTIME_LIMIT "$CHILD_RUNTIME_LIMIT" 1800 1)
 SHELLCHECK_RSS_LIMIT_KB=$(_validate_int SHELLCHECK_RSS_LIMIT_KB "$SHELLCHECK_RSS_LIMIT_KB" 1048576 1)
@@ -453,6 +461,12 @@ prefetch_state() {
 
 	# Append adaptive queue-governor guidance (t1455)
 	append_adaptive_queue_governor
+
+	# Append external contribution watch summary (t1419)
+	prefetch_contribution_watch >>"$STATE_FILE"
+
+	# Append failed-notification systemic summary (t3960)
+	prefetch_gh_failure_notifications >>"$STATE_FILE"
 
 	# Export PULSE_SCOPE_REPOS — comma-separated list of repo slugs that
 	# workers are allowed to create PRs/branches on (t1405, GH#2928).
@@ -1885,7 +1899,7 @@ prefetch_contribution_watch() {
 			echo "Run \`contribution-watch-helper.sh status\` in an interactive session for details."
 			echo "**Do NOT fetch or process comment bodies in this pulse context.**"
 			echo ""
-		} >>"$STATE_FILE"
+		}
 		echo "[pulse-wrapper] Contribution watch: ${cw_count} items need attention" >>"$LOGFILE"
 	fi
 
@@ -1939,6 +1953,41 @@ normalize_active_issue_assignments() {
 		echo "[pulse-wrapper] Assignment normalization: assigned ${total_assigned}/${total_checked} active unassigned issues to ${runner_user}" >>"$LOGFILE"
 	fi
 
+	return 0
+}
+
+#######################################
+# Pre-fetch failed notification summary (t3960)
+#
+# Uses gh-failure-miner-helper.sh to mine ci_activity notifications,
+# cluster recurring failures, and append a compact summary to STATE_FILE.
+# This gives the pulse early signal on systemic CI breakages.
+#
+# Returns: 0 always (best-effort)
+#######################################
+prefetch_gh_failure_notifications() {
+	local helper="${SCRIPT_DIR}/gh-failure-miner-helper.sh"
+	if [[ ! -x "$helper" ]]; then
+		return 0
+	fi
+
+	local summary
+	summary=$(bash "$helper" prefetch \
+		--pulse-repos \
+		--since-hours "$GH_FAILURE_PREFETCH_HOURS" \
+		--limit "$GH_FAILURE_PREFETCH_LIMIT" \
+		--systemic-threshold "$GH_FAILURE_SYSTEMIC_THRESHOLD" \
+		--max-run-logs "$GH_FAILURE_MAX_RUN_LOGS" 2>/dev/null || true)
+
+	if [[ -z "$summary" ]]; then
+		return 0
+	fi
+
+	echo ""
+	echo "$summary"
+	echo "- action: for systemic clusters, create/update one bug+auto-dispatch issue per affected repo"
+	echo ""
+	echo "[pulse-wrapper] Failed-notification summary appended (hours=${GH_FAILURE_PREFETCH_HOURS}, threshold=${GH_FAILURE_SYSTEMIC_THRESHOLD})" >>"$LOGFILE"
 	return 0
 }
 

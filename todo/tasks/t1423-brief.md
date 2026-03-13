@@ -28,7 +28,7 @@ Without reservations, tooling hygiene work (quality-debt, simplification-debt, C
 
 ## Context
 
-- 8 pulse-enabled repos: 4 product (cloudron-netbird-app, turbostarter-plus, awardsapp, essentials.com), 4 tooling (aidevops, aidevops.sh, quickfile-mcp, aidevops-cloudron-app)
+- 8 pulse-enabled repos: 4 product (cloudron-netbird-app, turbostarter-plus, webapp, essentials.com), 4 tooling (aidevops, aidevops.sh, quickfile-mcp, aidevops-cloudron-app)
 - Current MAX_WORKERS is RAM-based: `(free_mb - 8GB) / 1GB`, capped at 8
 - DAILY_PR_CAP=5 per repo already prevents PR flood, but doesn't prevent worker slot starvation
 - Quality-debt cap (30%) and simplification-debt cap (10%) are global against MAX_WORKERS

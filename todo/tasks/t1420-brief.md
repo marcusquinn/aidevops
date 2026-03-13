@@ -10,7 +10,7 @@ Add a `maintainer` field to each repo entry in `~/.config/aidevops/repos.json`. 
 
 ## Why
 
-The code-simplifier agent (`.agents/tools/code-review/code-simplifier.md`) already references `repos.json`'s `maintainer` field in its Human Gate Workflow (line 311), but the field doesn't exist in any repo entry. Currently the fallback is to parse the owner from the slug (`cut -d/ -f1`), which breaks when the repo owner org differs from the actual maintainer (e.g., `awardsapp/awardsapp` is maintained by `marcusquinn`, not `awardsapp`).
+The code-simplifier agent (`.agents/tools/code-review/code-simplifier.md`) already references `repos.json`'s `maintainer` field in its Human Gate Workflow (line 311), but the field doesn't exist in any repo entry. Currently the fallback is to parse the owner from the slug (`cut -d/ -f1`), which breaks when the repo owner org differs from the actual maintainer (e.g., `webapp/webapp` is maintained by an individual user, not the org slug owner).
 
 ## How
 

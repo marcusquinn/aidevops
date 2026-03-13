@@ -285,6 +285,15 @@ gh run rerun <run_id> --repo <slug>
 
 This completes the detect-fix-heal cycle: the pulse detects the pattern, dispatches a worker to fix the workflow, and once the fix merges, heals the existing PRs that were affected.
 
+### Notification-based failure mining (t3960)
+
+The pre-fetched state may include a `## GH Failed Notifications` section generated from GitHub `ci_activity` notifications. This is a cross-PR signal that complements per-PR check status.
+
+- If the section reports one or more systemic clusters, treat it as a high-priority systemic queue.
+- Use `~/.aidevops/agents/scripts/gh-failure-miner-helper.sh create-issues --pulse-repos --since-hours 24 --systemic-threshold 3 --max-issues 3 --label auto-dispatch` to file deduplicated `bug` issues in affected repos.
+- Do NOT create duplicate issues when a matching signal tag already exists.
+- Prefer fixing one shared root cause over dispatching multiple PR-specific CI fix workers.
+
 ### Issues — close, unblock, or dispatch
 
 When closing any issue, ALWAYS add a comment first explaining: (1) why you're closing it, and (2) which PR(s) delivered the work (link them: `Resolved by #N`). If the work was done before the issue existed (synced from a completed TODO), say so and link the most relevant PRs. An issue closed without a comment is an audit failure.

@@ -91,6 +91,62 @@ opencode run --dir ~/Git/<repo> --agent SEO --title "Weekly rankings" \
 
 For queue-driven development work, use `/pulse`. For fixed-time routines, use scheduler entries.
 
+## Example: Mine Failed GitHub Notifications
+
+When your notification inbox accumulates `ci_activity` failures, schedule a routine that clusters failure signatures and surfaces systemic fixes.
+
+By default this mines both PR and push notification sources. Add `--pr-only` if you want PR-only analysis.
+
+```bash
+~/.aidevops/agents/scripts/gh-failure-miner-helper.sh report \
+  --since-hours 24 \
+  --pulse-repos
+```
+
+To generate an issue-ready root-cause draft from the top cluster:
+
+```bash
+~/.aidevops/agents/scripts/gh-failure-miner-helper.sh issue-body \
+  --since-hours 24 \
+  --pulse-repos
+```
+
+To auto-file deduplicated systemic-fix issues in affected repos:
+
+```bash
+~/.aidevops/agents/scripts/gh-failure-miner-helper.sh create-issues \
+  --since-hours 24 \
+  --pulse-repos \
+  --systemic-threshold 3 \
+  --max-issues 3 \
+  --label auto-dispatch
+```
+
+One-shot launchd installer (recommended):
+
+```bash
+~/.aidevops/agents/scripts/gh-failure-miner-helper.sh install-launchd-routine
+```
+
+Preview without installing:
+
+```bash
+~/.aidevops/agents/scripts/gh-failure-miner-helper.sh install-launchd-routine --dry-run
+```
+
+Schedule it as a routine:
+
+```bash
+~/.aidevops/agents/scripts/routine-helper.sh install-cron \
+  --name gh-failure-miner \
+  --schedule "15 */2 * * *" \
+  --dir ~/Git/aidevops \
+  --title "GH failed notifications: systemic triage" \
+  --prompt "Run ~/.aidevops/agents/scripts/gh-failure-miner-helper.sh create-issues --since-hours 6 --pulse-repos --systemic-threshold 3 --max-issues 3 --label auto-dispatch and then print ~/.aidevops/agents/scripts/gh-failure-miner-helper.sh report --since-hours 6 --pulse-repos."
+```
+
+This routine is operational (triage + issue filing), so it should not use `/full-loop`.
+
 ## Routine Spec Template
 
 Store routine definitions in your repo (for example `routines/seo-weekly.yaml`):

@@ -626,14 +626,14 @@ When running as a headless worker (dispatched by the supervisor via `opencode ru
    3. If retry fails, exit immediately with: `BLOCKED: push/PR creation failed — <exact error>. Commits exist on local branch <branch-name> in worktree <path>.`
    4. Do NOT continue implementing code after a push failure — the work is unrecoverable without a PR
 
-9. **Cross-repo routing** — If you discover mid-task that the fix belongs in a different repo (e.g., working in awardsapp but the bug is in an aidevops framework script), do NOT create tasks or TODO entries in the current repo. Instead, file a GitHub issue in the correct repo:
+9. **Cross-repo routing** — If you discover mid-task that the fix belongs in a different repo (e.g., working in a webapp repo but the bug is in an aidevops framework script), do NOT create tasks or TODO entries in the current repo. Instead, file a GitHub issue in the correct repo:
 
    ```bash
    gh issue create --repo <owner/correct-repo> --title "<description>" \
      --body "Discovered while working on <current-task> in <current-repo>. <details>"
    ```
 
-   **If creating TODOs/PLANS in another repo** (e.g., adding a TODO to `~/Git/aidevops/TODO.md` while working in awardsapp): always commit and push them immediately so the issue-sync workflow picks them up. Uncommitted TODOs are invisible to the supervisor and issue-sync.
+   **If creating TODOs/PLANS in another repo** (e.g., adding a TODO to `~/Git/aidevops/TODO.md` while working in a webapp repo): always commit and push them immediately so the issue-sync workflow picks them up. Uncommitted TODOs are invisible to the supervisor and issue-sync.
 
    ```bash
    git -C ~/Git/<target-repo> add TODO.md todo/PLANS.md

@@ -973,7 +973,7 @@ Current Document Pipeline:
 NEW — Scene Text Pipeline:
   Screenshot/Photo/Image → PaddleOCR (PP-OCRv5) → Raw text + bounding boxes
   Screenshot/Photo/Image → PaddleOCR-VL (0.9B)  → Structured understanding
-  
+
   Integration points:
   ├── paddleocr-helper.sh ocr <image>     → CLI text extraction
   ├── PaddleOCR MCP Server (stdio/HTTP)   → Agent framework integration
@@ -1057,7 +1057,7 @@ Inspired by Perplexity Computer (model council for reliability) and Microsoft Am
 ```text
 Workstream 1: Parallel Model Verification
   t1364.1 Taxonomy → t1364.2 Agent + Script → t1364.3 Pipeline Integration
-  
+
   Operation detected → Check taxonomy → Match? → Invoke cross-provider verifier
                                           │              │
                                           No             ├── Verified → Proceed
@@ -1067,7 +1067,7 @@ Workstream 1: Parallel Model Verification
 
 Workstream 2: Bundle-Based Project Presets
   t1364.4 Schema + Defaults → t1364.5 Detection + Resolution → t1364.6 Pipeline Integration
-  
+
   Repo path → Check repos.json → Explicit bundle? → Use it
                                        │
                                        No → Auto-detect from markers
@@ -1418,7 +1418,7 @@ Build+'s step 2b Domain Expertise Check table routes agents to specialist subage
 
 #### Context
 
-Observed in an awardsapp session: agent suggested Caddy for `awardsapp.local` HTTPS proxy when the actual stack is dnsmasq + Traefik + mkcert managed by `localdev-helper.sh`. The `local-hosting.md` subagent documents the full architecture but Build+ had no trigger to read it.
+Observed in a webapp session: agent suggested Caddy for a `.local` HTTPS proxy when the actual stack is dnsmasq + Traefik + mkcert managed by `localdev-helper.sh`. The `local-hosting.md` subagent documents the full architecture but Build+ had no trigger to read it.
 
 #### Execution (single phase)
 
@@ -1451,11 +1451,11 @@ p035,Add Cross-Repo Improvement Guidance to AGENTS.md,completed,1,1,,docs|agent|
 
 #### Purpose
 
-When agents working on other repos (e.g. awardsapp) discover aidevops framework improvements, they currently edit the installed copy at `~/.aidevops/agents/` which is overwritten on next `aidevops update`. There's no guidance telling agents to make changes on the source repo or capture them as todos there, with PLANS.md entries recommended for clarity of objectives when the improvement is non-trivial.
+When agents working on other repos (e.g. a webapp repo) discover aidevops framework improvements, they currently edit the installed copy at `~/.aidevops/agents/` which is overwritten on next `aidevops update`. There's no guidance telling agents to make changes on the source repo or capture them as todos there, with PLANS.md entries recommended for clarity of objectives when the improvement is non-trivial.
 
 #### Context
 
-Observed in an awardsapp session: a `build-plus.md` improvement was made to `~/.aidevops/agents/build-plus.md` (the installed copy). This edit will be lost on next `aidevops update` because `setup.sh` copies from `~/Git/aidevops/.agents/` to `~/.aidevops/agents/`. The agent had no guidance that improvements must go to the source repo.
+Observed in a webapp session: a `build-plus.md` improvement was made to `~/.aidevops/agents/build-plus.md` (the installed copy). This edit will be lost on next `aidevops update` because `setup.sh` copies from `~/Git/aidevops/.agents/` to `~/.aidevops/agents/`. The agent had no guidance that improvements must go to the source repo.
 
 #### Execution (single phase)
 
