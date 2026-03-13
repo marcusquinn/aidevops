@@ -270,7 +270,8 @@ list_sites_by_category() {
 # Applies server_ref resolution and SSH config host integration before connecting
 execute_wp_via_ssh() {
 	local site_config="$1"
-	local wp_command="$2"
+	shift
+	local -a wp_args=("$@")
 
 	# Resolve server_ref and SSH config host aliases
 	site_config=$(resolve_server_ref "$site_config")
@@ -299,17 +300,11 @@ execute_wp_via_ssh() {
 		ssh_identity_flag=(-i "$expanded_identity")
 	fi
 
-	# Quote each word of wp_command for safe remote shell execution
-	# shellcheck disable=SC2086 # word-split is intentional: wp_command is a space-separated arg list
-	local quoted_wp_command
-	quoted_wp_command=$(printf '%q ' $wp_command)
-
 	case "$site_type" in
 	localwp)
 		# LocalWP - direct local access
 		local expanded_path="${local_path/#\~/$HOME}"
-		# shellcheck disable=SC2086 # wp_command is intentionally word-split into multiple args
-		(cd "$expanded_path" && wp $wp_command)
+		(cd "$expanded_path" && wp "${wp_args[@]}")
 		return $?
 		;;
 	hostinger | closte)
@@ -332,14 +327,16 @@ execute_wp_via_ssh() {
 			return 1
 		fi
 
-		# Use quoted wp_command to prevent command injection via shell metacharacters
-		sshpass -f "$expanded_password_file" ssh -n "${ssh_identity_flag[@]}" -p "$ssh_port" "${ssh_user}@${ssh_host}" "cd $(printf %q "$wp_path") && wp $quoted_wp_command"
+		# Pass wp args as positional parameters to avoid shell interpolation issues
+		# shellcheck disable=SC2016 # $1/$@ expand on the remote shell, not locally
+		sshpass -f "$expanded_password_file" ssh -n "${ssh_identity_flag[@]}" -p "$ssh_port" "${ssh_user}@${ssh_host}" bash -lc 'cd "$1" && shift && wp "$@"' _ "$wp_path" "${wp_args[@]}"
 		return $?
 		;;
 	hetzner | cloudways | cloudron)
 		# SSH key-based authentication (preferred, -n prevents stdin consumption in loops)
-		# Use quoted wp_command to prevent command injection via shell metacharacters
-		ssh -n "${ssh_identity_flag[@]}" -p "$ssh_port" "${ssh_user}@${ssh_host}" "cd $(printf %q "$wp_path") && wp $quoted_wp_command"
+		# Pass wp args as positional parameters to avoid shell interpolation issues
+		# shellcheck disable=SC2016 # $1/$@ expand on the remote shell, not locally
+		ssh -n "${ssh_identity_flag[@]}" -p "$ssh_port" "${ssh_user}@${ssh_host}" bash -lc 'cd "$1" && shift && wp "$@"' _ "$wp_path" "${wp_args[@]}"
 		return $?
 		;;
 	*)
@@ -353,9 +350,9 @@ execute_wp_via_ssh() {
 run_wp_command() {
 	local site_key="$1"
 	shift
-	local wp_command="$*"
+	local -a wp_args=("$@")
 
-	if [[ -z "$wp_command" ]]; then
+	if [[ ${#wp_args[@]} -eq 0 ]]; then
 		print_error "$ERROR_COMMAND_REQUIRED"
 		exit 1
 	fi
@@ -374,10 +371,10 @@ run_wp_command() {
 	local site_type
 	site_type=$(echo "$site_config" | jq -r '.type')
 
-	print_info "Running on $site_name ($site_type): wp $wp_command"
+	print_info "Running on $site_name ($site_type): wp ${wp_args[*]}"
 
 	# Execute directly without eval
-	execute_wp_via_ssh "$site_config" "$wp_command"
+	execute_wp_via_ssh "$site_config" "${wp_args[@]}"
 	return $?
 }
 
@@ -385,9 +382,9 @@ run_wp_command() {
 run_on_category() {
 	local category="$1"
 	shift
-	local wp_command="$*"
+	local -a wp_args=("$@")
 
-	if [[ -z "$wp_command" ]]; then
+	if [[ ${#wp_args[@]} -eq 0 ]]; then
 		print_error "$ERROR_COMMAND_REQUIRED"
 		exit 1
 	fi
@@ -395,7 +392,7 @@ run_on_category() {
 	load_config
 
 	print_info "Running on all sites in category: $category"
-	print_info "Command: wp $wp_command"
+	print_info "Command: wp ${wp_args[*]}"
 	echo ""
 
 	local site_keys
@@ -412,7 +409,7 @@ run_on_category() {
 	while IFS= read -r site_key; do
 		echo "----------------------------------------"
 		print_info "Site: $site_key"
-		if run_wp_command "$site_key" "$wp_command"; then
+		if run_wp_command "$site_key" "${wp_args[@]}"; then
 			((++success_count))
 		else
 			((++fail_count))
@@ -428,9 +425,9 @@ run_on_category() {
 
 # Run WP-CLI command on all sites
 run_on_all() {
-	local wp_command="$*"
+	local -a wp_args=("$@")
 
-	if [[ -z "$wp_command" ]]; then
+	if [[ ${#wp_args[@]} -eq 0 ]]; then
 		print_error "$ERROR_COMMAND_REQUIRED"
 		exit 1
 	fi
@@ -438,7 +435,7 @@ run_on_all() {
 	load_config
 
 	print_info "Running on ALL sites"
-	print_info "Command: wp $wp_command"
+	print_info "Command: wp ${wp_args[*]}"
 	echo ""
 
 	local site_keys
@@ -450,7 +447,7 @@ run_on_all() {
 	while IFS= read -r site_key; do
 		echo "----------------------------------------"
 		print_info "Site: $site_key"
-		if run_wp_command "$site_key" "$wp_command"; then
+		if run_wp_command "$site_key" "${wp_args[@]}"; then
 			((++success_count))
 		else
 			((++fail_count))
