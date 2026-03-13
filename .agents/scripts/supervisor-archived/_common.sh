@@ -28,30 +28,32 @@ db() {
 
 #######################################
 # Structured logging functions
-# All output to stderr with color-coded prefixes
+# All output to stderr with color-coded prefixes.
+# Uses printf to safely handle arbitrary message content (avoids echo -e
+# interpreting backslash sequences in $* and word-splitting on unquoted args).
 #######################################
 log_info() {
-	echo -e "${BLUE}[SUPERVISOR]${NC} $*" >&2
+	printf "%b %s\n" "${BLUE}[SUPERVISOR]${NC}" "$*" >&2
 	return 0
 }
 
 log_success() {
-	echo -e "${GREEN}[SUPERVISOR]${NC} $*" >&2
+	printf "%b %s\n" "${GREEN}[SUPERVISOR]${NC}" "$*" >&2
 	return 0
 }
 
 log_warn() {
-	echo -e "${YELLOW}[SUPERVISOR]${NC} $*" >&2
+	printf "%b %s\n" "${YELLOW}[SUPERVISOR]${NC}" "$*" >&2
 	return 0
 }
 
 log_error() {
-	echo -e "${RED}[SUPERVISOR]${NC} $*" >&2
+	printf "%b %s\n" "${RED}[SUPERVISOR]${NC}" "$*" >&2
 	return 0
 }
 
 log_verbose() {
-	[[ "${SUPERVISOR_VERBOSE:-}" == "true" ]] && echo -e "${BLUE}[SUPERVISOR]${NC} $*" >&2 || true
+	[[ "${SUPERVISOR_VERBOSE:-}" == "true" ]] && printf "%b %s\n" "${BLUE}[SUPERVISOR]${NC}" "$*" >&2 || true
 	return 0
 }
 
