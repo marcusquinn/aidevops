@@ -25,7 +25,7 @@ tools:
 - **Latency**: 97ms streaming latency (first chunk)
 - **Models**: 1.7B and 0.6B variants (CustomVoice, VoiceDesign, Base)
 - **Install**: `pip install qwen-tts` or vLLM-Omni
-- **Helper**: `voice-helper.sh talk --tts qwen3-tts` (integration with voice bridge)
+- **Helper**: `voice-helper.sh talk whisper-mlx qwen3-tts` (integration with voice bridge)
 
 **When to Use**: Read this when you need multi-language TTS with voice cloning (3s reference), custom voice control (9 speakers + instruction), or voice design (natural language persona description). Ideal for production voice agents, content creation, and accessibility applications.
 
@@ -192,12 +192,16 @@ Add Qwen3-TTS to the aidevops voice bridge:
 # Use Qwen3-TTS as TTS engine
 voice-helper.sh talk whisper-mlx qwen3-tts
 
-# With custom voice
-voice-helper.sh talk whisper-mlx qwen3-tts --voice-ref path/to/reference.wav
+# With custom voice (positional: stt tts voice)
+voice-helper.sh talk whisper-mlx qwen3-tts path/to/reference.wav
 
-# With persona
-voice-helper.sh talk whisper-mlx qwen3-tts --persona "Friendly British female, professional"
+# With custom voice and model (positional: stt tts voice model)
+voice-helper.sh talk whisper-mlx qwen3-tts path/to/reference.wav opencode/claude-sonnet-4-6
 ```
+
+> **Note**: `voice-helper.sh talk` uses positional arguments (`stt tts voice model`). Named flags like
+> `--voice-ref` and `--persona` are not supported. Voice design (persona descriptions) must be
+> configured via the Qwen3-TTS Python API directly — see the Voice Design section above.
 
 See `voice-helper.sh` for full integration details.
 
