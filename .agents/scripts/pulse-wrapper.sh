@@ -31,6 +31,13 @@
 # check_dedup() serves as a tertiary safety net for edge cases where the
 # wrapper itself gets stuck.
 #
+# PID file sentinel protocol (GH#4324):
+#   The PID file is NEVER deleted at run end. Instead it is overwritten with
+#   an "IDLE:<timestamp>" sentinel. check_dedup() treats any content that is
+#   not a live numeric PID as "safe to proceed". This closes the race window
+#   where launchd fires between rm -f and the next write, which caused the
+#   82-concurrent-pulse incident (2026-03-13T02:06:01Z, issue #4318).
+#
 # Called by launchd every 120s via the supervisor-pulse plist.
 
 set -euo pipefail
@@ -161,6 +168,12 @@ mkdir -p "$(dirname "$PIDFILE")"
 #######################################
 # Check for stale PID file and clean up
 # Returns: 0 if safe to proceed, 1 if another pulse is genuinely running
+#
+# PID file sentinel protocol (GH#4324):
+#   The PID file is never deleted — only overwritten. Valid states:
+#     <numeric PID>  — a pulse may be running; verify with ps
+#     IDLE:<ts>      — last run completed normally; safe to proceed
+#     empty / other  — treat as safe to proceed (first run or corrupt)
 #######################################
 check_dedup() {
 	if [[ ! -f "$PIDFILE" ]]; then
@@ -170,15 +183,21 @@ check_dedup() {
 	local old_pid
 	old_pid=$(cat "$PIDFILE" 2>/dev/null || echo "")
 
-	if [[ -z "$old_pid" ]]; then
-		rm -f "$PIDFILE"
+	# Empty file or IDLE sentinel — safe to proceed (GH#4324)
+	if [[ -z "$old_pid" ]] || [[ "$old_pid" == IDLE:* ]]; then
+		return 0
+	fi
+
+	# Non-numeric content (corrupt/unknown) — safe to proceed
+	if ! [[ "$old_pid" =~ ^[0-9]+$ ]]; then
+		echo "[pulse-wrapper] check_dedup: unrecognised PID file content '${old_pid}' — treating as idle" >>"$LOGFILE"
 		return 0
 	fi
 
 	# Check if the process is still running
-	if ! ps -p "$old_pid" >/dev/null; then
-		# Process is dead, clean up stale PID file
-		rm -f "$PIDFILE"
+	if ! ps -p "$old_pid" >/dev/null 2>&1; then
+		# Process is dead — write IDLE sentinel so the file is never absent
+		echo "IDLE:$(date -u +%Y-%m-%dT%H:%M:%SZ)" >"$PIDFILE"
 		return 0
 	fi
 
@@ -197,7 +216,8 @@ check_dedup() {
 		if kill -0 "$old_pid" 2>/dev/null; then
 			_force_kill_tree "$old_pid" || true
 		fi
-		rm -f "$PIDFILE"
+		# Write IDLE sentinel — never leave the file absent (GH#4324)
+		echo "IDLE:$(date -u +%Y-%m-%dT%H:%M:%SZ)" >"$PIDFILE"
 		return 0
 	fi
 
@@ -1541,8 +1561,11 @@ gathered by pulse-wrapper.sh BEFORE this session started."
 	# Reap the process (may already be dead)
 	wait "$opencode_pid" 2>/dev/null || true
 
-	# Clean up PID file
-	rm -f "$PIDFILE"
+	# Write IDLE sentinel — never delete the PID file (GH#4324).
+	# Deleting creates a race window where launchd can start multiple
+	# concurrent pulses before the next run writes its PID. The sentinel
+	# keeps the file present so check_dedup() always has a state to read.
+	echo "IDLE:$(date -u +%Y-%m-%dT%H:%M:%SZ)" >"$PIDFILE"
 
 	local end_epoch
 	end_epoch=$(date +%s)
@@ -2225,7 +2248,8 @@ main() {
 
 	if ! run_stage_with_timeout "prefetch_state" "$PRE_RUN_STAGE_TIMEOUT" prefetch_state; then
 		echo "[pulse-wrapper] prefetch_state did not complete successfully — aborting this cycle to avoid stale dispatch decisions" >>"$LOGFILE"
-		rm -f "$PIDFILE"
+		# Write IDLE sentinel — never delete the PID file (GH#4324)
+		echo "IDLE:$(date -u +%Y-%m-%dT%H:%M:%SZ)" >"$PIDFILE"
 		return 0
 	fi
 
