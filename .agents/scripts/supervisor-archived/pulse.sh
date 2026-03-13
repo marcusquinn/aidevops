@@ -486,14 +486,17 @@ cmd_stale_gc_report() {
 		AND updated_at >= strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-${days} days');
 	" 2>/dev/null || echo "0")
 	if [[ "$has_eval_duration_data" -gt 0 ]]; then
-		echo "--- Eval Duration Analysis (t1252: AI evaluation step timing) ---"
+		# t3638: Use configured watchdog threshold so the report stays aligned with
+		# SUPERVISOR_EVAL_WATCHDOG (coderabbit review feedback on PR #1955).
+		local eval_watchdog="${SUPERVISOR_EVAL_WATCHDOG:-60}"
+		echo "--- Eval Duration Analysis (t1252: AI evaluation step timing, watchdog >= ${eval_watchdog}s) ---"
 		db -column -header "$SUPERVISOR_DB" "
 			SELECT
 				count(*) AS Evals,
 				printf('%.1f', avg(eval_duration_secs)) AS 'Avg Duration (s)',
 				max(eval_duration_secs) AS 'Max Duration (s)',
 				min(eval_duration_secs) AS 'Min Duration (s)',
-				sum(CASE WHEN eval_duration_secs >= 60 THEN 1 ELSE 0 END) AS 'Watchdog Threshold Exceeded'
+				sum(CASE WHEN eval_duration_secs >= ${eval_watchdog} THEN 1 ELSE 0 END) AS 'Watchdog Threshold Exceeded'
 			FROM tasks
 			WHERE eval_duration_secs IS NOT NULL
 			AND updated_at >= strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-${days} days');

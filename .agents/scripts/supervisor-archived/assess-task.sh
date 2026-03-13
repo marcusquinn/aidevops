@@ -301,6 +301,13 @@ assess_task_with_metadata() {
 	local task_id="$1"
 	local _skip_ai="${2:-false}" # ignored — we always use our own AI path
 
+	# t3638: Reset eval_duration_secs to NULL at evaluation start so non-AI paths
+	# (retry, skip-AI) don't carry a stale value from a previous run into the
+	# pattern record description/tags (coderabbit review feedback on PR #1955).
+	if [[ -n "${SUPERVISOR_DB:-}" ]]; then
+		db "$SUPERVISOR_DB" "UPDATE tasks SET eval_duration_secs = NULL WHERE id = '$(sql_escape "$task_id")';" 2>/dev/null || true
+	fi
+
 	local verdict
 	verdict=$(assess_task "$task_id")
 
