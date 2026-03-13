@@ -436,8 +436,12 @@ register_skill() {
 		_save_cleanup_scope
 		trap '_run_cleanups' RETURN
 		push_cleanup "rm -f '${tmp_file}'"
-		jq --arg name "$name" '.skills = [.skills[] | select(.name != $name)]' "$SKILL_SOURCES" >"$tmp_file" && mv "$tmp_file" "$SKILL_SOURCES"
-		rm -f "$tmp_file"
+		if ! jq --arg name "$name" '.skills = [.skills[] | select(.name != $name)]' "$SKILL_SOURCES" >"$tmp_file"; then
+			log_error "Failed to process skill sources JSON. Update aborted."
+			rm -f "$tmp_file"
+			return 1
+		fi
+		mv "$tmp_file" "$SKILL_SOURCES"
 	fi
 
 	local timestamp
@@ -1546,7 +1550,12 @@ cmd_remove() {
 	_save_cleanup_scope
 	trap '_run_cleanups' RETURN
 	push_cleanup "rm -f '${tmp_file}'"
-	jq --arg name "$name" '.skills = [.skills[] | select(.name != $name)]' "$SKILL_SOURCES" >"$tmp_file" && mv "$tmp_file" "$SKILL_SOURCES"
+	if ! jq --arg name "$name" '.skills = [.skills[] | select(.name != $name)]' "$SKILL_SOURCES" >"$tmp_file"; then
+		log_error "Failed to process skill sources JSON. Remove aborted."
+		rm -f "$tmp_file"
+		return 1
+	fi
+	mv "$tmp_file" "$SKILL_SOURCES"
 
 	log_success "Skill '$name' removed"
 
