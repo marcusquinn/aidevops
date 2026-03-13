@@ -959,13 +959,14 @@ cmd_auto_pickup() {
 
 		# Auto-batch: assign picked-up tasks to a batch (t296, t1314)
 		# Find unbatched queued tasks (just added by auto-pickup)
+		# Uses parameterized queries (db_param) to prevent SQL injection (GH#3527).
 		local unbatched_queued
 		unbatched_queued=$(db -separator '|' "$SUPERVISOR_DB" "
             SELECT t.id, t.repo FROM tasks t
             WHERE t.status = 'queued'
               AND t.id NOT IN (SELECT task_id FROM batch_tasks)
             ORDER BY t.created_at;
-        " 2>/dev/null || true)
+        " 2>>"${SUPERVISOR_LOG:-/dev/null}" || true)
 
 		if [[ -n "$unbatched_queued" ]]; then
 			# t1314: Batch affinity check — only absorb tasks into a batch if
@@ -978,34 +979,39 @@ cmd_auto_pickup() {
 			while IFS='|' read -r tid trepo_path; do
 				[[ -z "$tid" ]] && continue
 
-				# Find an active batch with repo affinity (same repo)
+				# Find an active batch with repo affinity (same repo).
+				# Uses :repo parameter to prevent SQL injection from repo paths
+				# sourced from the database (which may originate from TODO.md).
 				local affinity_batch_id
-				affinity_batch_id=$(db "$SUPERVISOR_DB" "
+				affinity_batch_id=$(db_param "$SUPERVISOR_DB" "
 					SELECT b.id FROM batches b
 					WHERE b.status IN ('active', 'running')
 					AND EXISTS (
 						SELECT 1 FROM batch_tasks bt
 						JOIN tasks t ON bt.task_id = t.id
 						WHERE bt.batch_id = b.id
-						AND t.repo = '$(sql_escape "${trepo_path:-}")'
+						AND t.repo = :repo
 						AND t.status NOT IN ('complete','deployed','verified','verify_failed','merged','cancelled','failed','blocked')
 					)
 					ORDER BY b.created_at DESC
 					LIMIT 1;
-				" 2>/dev/null || true)
+				" "repo=${trepo_path:-}" 2>>"${SUPERVISOR_LOG:-/dev/null}" || true)
 
 				if [[ -n "$affinity_batch_id" ]]; then
-					# Add to existing batch with repo affinity
+					# Add to existing batch with repo affinity.
+					# Uses :batch_id parameter to prevent SQL injection from
+					# batch IDs returned by the database query above.
 					local max_pos
-					max_pos=$(db "$SUPERVISOR_DB" "
+					max_pos=$(db_param "$SUPERVISOR_DB" "
 						SELECT COALESCE(MAX(position), -1) FROM batch_tasks
-						WHERE batch_id = '$(sql_escape "$affinity_batch_id")';
-					" 2>/dev/null || echo "-1")
+						WHERE batch_id = :batch_id;
+					" "batch_id=$affinity_batch_id" 2>>"${SUPERVISOR_LOG:-/dev/null}" || echo "-1")
 					local pos=$((max_pos + 1))
-					db "$SUPERVISOR_DB" "
+					db_param "$SUPERVISOR_DB" "
 						INSERT OR IGNORE INTO batch_tasks (batch_id, task_id, position)
-						VALUES ('$(sql_escape "$affinity_batch_id")', '$(sql_escape "$tid")', $pos);
-					"
+						VALUES (:batch_id, :task_id, $pos);
+					" "batch_id=$affinity_batch_id" "task_id=$tid" \
+						2>>"${SUPERVISOR_LOG:-/dev/null}"
 					added_to_existing=$((added_to_existing + 1))
 					log_verbose "  Auto-batch: $tid → batch $affinity_batch_id (repo affinity: $(basename "${trepo_path:-.}")) (t1314)"
 				fi
@@ -1022,7 +1028,7 @@ cmd_auto_pickup() {
 				WHERE t.status = 'queued'
 				AND t.id NOT IN (SELECT task_id FROM batch_tasks)
 				ORDER BY t.created_at;
-			" 2>/dev/null || true)
+			" 2>>"${SUPERVISOR_LOG:-/dev/null}" || true)
 
 			if [[ -n "$still_unbatched" ]]; then
 				# Create a new auto-batch for remaining unbatched tasks (t1314)
@@ -1043,7 +1049,7 @@ cmd_auto_pickup() {
 				local still_unbatched_count
 				still_unbatched_count=$(echo "$still_unbatched" | wc -l | tr -d ' ')
 				local auto_batch_id
-				auto_batch_id=$(cmd_batch "$auto_batch_name" --concurrency "$auto_base_concurrency" --tasks "$task_csv" 2>/dev/null)
+				auto_batch_id=$(cmd_batch "$auto_batch_name" --concurrency "$auto_base_concurrency" --tasks "$task_csv" 2>>"${SUPERVISOR_LOG:-/dev/null}")
 				if [[ -n "$auto_batch_id" ]]; then
 					log_success "Auto-batch: created '$auto_batch_name' ($auto_batch_id) with $still_unbatched_count tasks (t1314)"
 				fi

@@ -27,6 +27,42 @@ db() {
 }
 
 #######################################
+# Parameterized SQLite query — prevents SQL injection (GH#3527)
+# Uses SQLite's .param mechanism to bind values separately from query logic.
+# Arguments:
+#   $1 - database path
+#   $2 - SQL query with :name placeholders (e.g. "SELECT * FROM t WHERE id = :id")
+#   $3+ - name=value pairs for each placeholder (e.g. "id=some-value")
+# Example:
+#   db_param "$DB" "SELECT id FROM tasks WHERE id = :tid" "tid=$task_id"
+#   db_param "$DB" "INSERT INTO batch_tasks VALUES (:bid, :tid, :pos)" \
+#       "bid=$batch_id" "tid=$task_id" "pos=$position"
+#######################################
+db_param() {
+	local db_path="$1"
+	local query="$2"
+	shift 2
+
+	# Build .param set commands for each name=value argument.
+	# Uses double-quoted values so single quotes (apostrophes) in task IDs,
+	# descriptions, and repo paths are handled safely without shell escaping
+	# issues. Double-quotes within values are escaped as \".
+	local param_cmds=()
+	local pair name value escaped
+	for pair in "$@"; do
+		name="${pair%%=*}"
+		value="${pair#*=}"
+		# Escape any double-quotes in the value
+		escaped="${value//\"/\\\"}"
+		param_cmds+=(-cmd ".param set :${name} \"${escaped}\"")
+	done
+
+	sqlite3 -cmd ".timeout 5000" "${param_cmds[@]}" "$db_path" "$query"
+	local rc=$?
+	return $rc
+}
+
+#######################################
 # Structured logging functions
 # All output to stderr with color-coded prefixes.
 # Uses printf to safely handle arbitrary message content (avoids echo -e
