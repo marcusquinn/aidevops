@@ -327,6 +327,14 @@ execute_wp_via_ssh() {
 			return 1
 		fi
 
+		# Warn if password file has insecure permissions (should be 600)
+		local file_perms
+		file_perms=$(stat -c "%a" "$expanded_password_file" 2>/dev/null || stat -f "%OLp" "$expanded_password_file" 2>/dev/null || echo "")
+		if [[ -n "$file_perms" && "$file_perms" != "600" ]]; then
+			print_warning "Password file has insecure permissions ($file_perms): $expanded_password_file"
+			print_info "Fix with: chmod 600 $expanded_password_file"
+		fi
+
 		# Pass wp args as positional parameters to avoid shell interpolation issues
 		# shellcheck disable=SC2016 # $1/$@ expand on the remote shell, not locally
 		sshpass -f "$expanded_password_file" ssh -n "${ssh_identity_flag[@]}" -p "$ssh_port" "${ssh_user}@${ssh_host}" bash -lc 'cd "$1" && shift && wp "$@"' _ "$wp_path" "${wp_args[@]}"
