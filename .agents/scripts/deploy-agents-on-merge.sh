@@ -417,7 +417,7 @@ deploy_changed_files() {
 		esac
 
 		local plugin_namespace
-		for plugin_namespace in "${PLUGIN_NAMESPACES[@]}"; do
+		for plugin_namespace in "${PLUGIN_NAMESPACES[@]+"${PLUGIN_NAMESPACES[@]}"}"; do
 			case "$rel_path" in
 			"$plugin_namespace"/*)
 				continue 2
