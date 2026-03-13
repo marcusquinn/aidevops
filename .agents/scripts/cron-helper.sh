@@ -47,17 +47,17 @@ LOG_PREFIX="CRON"
 # Ensure directories and config exist
 #######################################
 ensure_setup() {
-	mkdir -p "$CONFIG_DIR" "$CRON_LOG_DIR"
+    mkdir -p "$CONFIG_DIR" "$CRON_LOG_DIR"
 
-	if [[ ! -f "$CONFIG_FILE" ]]; then
-		cat >"$CONFIG_FILE" <<'EOF'
+    if [[ ! -f "$CONFIG_FILE" ]]; then
+        cat > "$CONFIG_FILE" << 'EOF'
 {
   "version": "1.0",
   "jobs": []
 }
 EOF
-		log_info "Created config file: $CONFIG_FILE"
-	fi
+        log_info "Created config file: $CONFIG_FILE"
+    fi
 }
 
 #######################################
