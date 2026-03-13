@@ -440,7 +440,7 @@ const API_POLL_MAX_WAIT_MS = 10 * 60 * 1000; // 10 minutes max wait
 // Discovered from docs + cloud dashboard model gallery.
 // Not all web UI models have API equivalents — only those listed here.
 // Verified 2026-02-10 by probing platform.higgsfield.ai (404 = not found, else exists).
-// Web-UI-only models (no API): Nano Banana Pro, GPT Image, Flux Kontext, Seedream 4.5, Wan, Sora, Veo, Minimax Hailuo, Grok Video.
+// Web-UI-only models (no API): Nano Banana Pro, GPT Image, Flux Kontext, Seedream 4.5, Wan, Sora, Veo, Minimax Hailuo, Grok Imagine.
 const API_MODEL_MAP = {
   // Text-to-image models (verified: 403 "Not enough credits" = exists)
   'soul':           'higgsfield-ai/soul/standard',
