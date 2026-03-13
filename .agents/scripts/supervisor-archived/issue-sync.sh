@@ -498,7 +498,9 @@ sync_issue_status_label() {
 	blocked)
 		# Read the error/blocked reason from DB
 		local blocked_error=""
-		blocked_error=$(db "$SUPERVISOR_DB" "SELECT error FROM tasks WHERE id='$(sql_escape "$task_id")';" 2>/dev/null || echo "")
+		local escaped_task_id
+		escaped_task_id=$(sql_escape "$task_id")
+		blocked_error=$(db "$SUPERVISOR_DB" "SELECT error FROM tasks WHERE id='${escaped_task_id}';" 2>/dev/null || echo "")
 		if [[ -z "$blocked_error" || "$blocked_error" == "null" ]]; then
 			blocked_error="Task blocked — reason not specified"
 		fi
