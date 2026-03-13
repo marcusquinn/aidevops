@@ -1325,12 +1325,17 @@ EOF
 	log_success "Migrated $count entries from '$from_ns' to '$to_ns'"
 
 	# If --move, delete from source (with backup — t188)
+	# All DELETEs in a single transaction for atomicity (GH#3776)
 	if [[ "$move" == true ]]; then
 		backup_sqlite_db "$from_db" "pre-move-to-${to_ns}" >/dev/null 2>&1 || log_warn "Backup of source failed before move"
-		db "$from_db" "DELETE FROM learning_relations;"
-		db "$from_db" "DELETE FROM learning_access;"
-		db "$from_db" "DELETE FROM learnings;"
-		db "$from_db" "INSERT INTO learnings(learnings) VALUES('rebuild');"
+		db "$from_db" <<'EOF'
+BEGIN TRANSACTION;
+DELETE FROM learning_relations;
+DELETE FROM learning_access;
+DELETE FROM learnings;
+INSERT INTO learnings(learnings) VALUES('rebuild');
+COMMIT;
+EOF
 		log_info "Cleared source: $from_ns"
 	fi
 

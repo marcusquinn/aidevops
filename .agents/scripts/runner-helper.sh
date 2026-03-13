@@ -1084,7 +1084,7 @@ cmd_destroy() {
 	rm -rf "$dir"
 
 	# Clean up memory namespace if it exists
-	local ns_dir="$HOME/.aidevops/.agent-workspace/memory/namespaces/$name"
+	local ns_dir="${AIDEVOPS_MEMORY_DIR:-$HOME/.aidevops/.agent-workspace/memory}/namespaces/$name"
 	if [[ -d "$ns_dir" ]]; then
 		rm -rf "$ns_dir"
 		log_info "Removed memory namespace: $name"
