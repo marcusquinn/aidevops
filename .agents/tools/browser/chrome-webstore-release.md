@@ -291,10 +291,7 @@ Create a script dedicated to "what is the latest submission state?".
   - `localVersion`
   - `publishedVersion`
   - `publishedState`
-  - `submittedVersion`
-  - `submittedState`
   - `upToDate`
-  - `pendingReview`
 - Exits non-zero on auth/API/input errors
 
 **Helpful checks to include**:
