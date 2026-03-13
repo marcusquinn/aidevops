@@ -78,6 +78,7 @@ PULSE_IDLE_CPU_THRESHOLD="${PULSE_IDLE_CPU_THRESHOLD:-5}"                       
 PULSE_PROGRESS_TIMEOUT="${PULSE_PROGRESS_TIMEOUT:-600}"                                                 # 10 min no log output = stuck (GH#2958)
 PULSE_COLD_START_TIMEOUT="${PULSE_COLD_START_TIMEOUT:-1200}"                                            # 20 min grace before first output (prevents false early watchdog kills)
 PULSE_COLD_START_TIMEOUT_UNDERFILLED="${PULSE_COLD_START_TIMEOUT_UNDERFILLED:-600}"                     # 10 min grace when below worker target to recover capacity faster
+PULSE_UNDERFILLED_STALE_RECOVERY_TIMEOUT="${PULSE_UNDERFILLED_STALE_RECOVERY_TIMEOUT:-900}"             # 15 min stale-process cutoff when worker pool is underfilled
 ORPHAN_MAX_AGE="${ORPHAN_MAX_AGE:-7200}"                                                                # 2 hours — kill orphans older than this
 RAM_PER_WORKER_MB="${RAM_PER_WORKER_MB:-1024}"                                                          # 1 GB per worker
 RAM_RESERVE_MB="${RAM_RESERVE_MB:-8192}"                                                                # 8 GB reserved for OS + user apps
@@ -108,6 +109,7 @@ PULSE_IDLE_CPU_THRESHOLD=$(_validate_int PULSE_IDLE_CPU_THRESHOLD "$PULSE_IDLE_C
 PULSE_PROGRESS_TIMEOUT=$(_validate_int PULSE_PROGRESS_TIMEOUT "$PULSE_PROGRESS_TIMEOUT" 600 120)
 PULSE_COLD_START_TIMEOUT=$(_validate_int PULSE_COLD_START_TIMEOUT "$PULSE_COLD_START_TIMEOUT" 1200 300)
 PULSE_COLD_START_TIMEOUT_UNDERFILLED=$(_validate_int PULSE_COLD_START_TIMEOUT_UNDERFILLED "$PULSE_COLD_START_TIMEOUT_UNDERFILLED" 600 120)
+PULSE_UNDERFILLED_STALE_RECOVERY_TIMEOUT=$(_validate_int PULSE_UNDERFILLED_STALE_RECOVERY_TIMEOUT "$PULSE_UNDERFILLED_STALE_RECOVERY_TIMEOUT" 900 300)
 ORPHAN_MAX_AGE=$(_validate_int ORPHAN_MAX_AGE "$ORPHAN_MAX_AGE" 7200)
 RAM_PER_WORKER_MB=$(_validate_int RAM_PER_WORKER_MB "$RAM_PER_WORKER_MB" 1024 1)
 RAM_RESERVE_MB=$(_validate_int RAM_RESERVE_MB "$RAM_RESERVE_MB" 8192)
@@ -194,6 +196,27 @@ check_dedup() {
 		_kill_tree "$old_pid" || true
 		sleep 2
 		# Force kill if still alive
+		if kill -0 "$old_pid" 2>/dev/null; then
+			_force_kill_tree "$old_pid" || true
+		fi
+		rm -f "$PIDFILE"
+		return 0
+	fi
+
+	# Underfilled stale recovery: if the pulse process has been running long
+	# enough and worker pool is below target, recycle now instead of waiting
+	# for the full stale threshold. This prevents prolonged underfill windows
+	# when a pulse session is alive but not generating new workers.
+	local max_workers active_workers
+	max_workers=$(get_max_workers_target)
+	active_workers=$(count_active_workers)
+	[[ "$max_workers" =~ ^[0-9]+$ ]] || max_workers=1
+	[[ "$active_workers" =~ ^[0-9]+$ ]] || active_workers=0
+
+	if [[ "$elapsed_seconds" -gt "$PULSE_UNDERFILLED_STALE_RECOVERY_TIMEOUT" && "$active_workers" -lt "$max_workers" ]]; then
+		echo "[pulse-wrapper] Recycling stale pulse process $old_pid early (running ${elapsed_seconds}s, underfilled ${active_workers}/${max_workers}, threshold ${PULSE_UNDERFILLED_STALE_RECOVERY_TIMEOUT}s)" >>"$LOGFILE"
+		_kill_tree "$old_pid" || true
+		sleep 2
 		if kill -0 "$old_pid" 2>/dev/null; then
 			_force_kill_tree "$old_pid" || true
 		fi
