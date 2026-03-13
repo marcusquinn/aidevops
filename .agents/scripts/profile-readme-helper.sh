@@ -1080,32 +1080,18 @@ cmd_update() {
 	local new_stats
 	new_stats=$(cmd_generate)
 
-	# Build dynamic README first (badges, projects, contributions), then inject stats
-	# Fallback to existing README if GitHub API/auth is unavailable.
+	# Preserve manually maintained sections and only update stats markers.
+	# Do not regenerate badges/projects/contributions during periodic updates.
 	local source_file
-	local dynamic_tmp
-	dynamic_tmp=$(mktemp)
 	source_file="$readme_path"
-
-	if command -v gh &>/dev/null && gh auth status &>/dev/null; then
-		local gh_user
-		gh_user=$(_resolve_profile_user "$profile_repo")
-		if [[ -n "$gh_user" ]]; then
-			if _generate_rich_readme "$gh_user" "$dynamic_tmp"; then
-				source_file="$dynamic_tmp"
-			fi
-		fi
-	fi
 
 	# Ensure markers exist in the source content
 	if ! grep -q '<!-- STATS-START -->' "$source_file"; then
 		echo "Error: <!-- STATS-START --> marker not found in source content" >&2
-		rm -f "$dynamic_tmp"
 		return 1
 	fi
 	if ! grep -q '<!-- STATS-END -->' "$source_file"; then
 		echo "Error: <!-- STATS-END --> marker not found in source content" >&2
-		rm -f "$dynamic_tmp"
 		return 1
 	fi
 
@@ -1135,7 +1121,7 @@ cmd_update() {
 	new_normalized=$(_normalize_readme_for_compare "$tmp_file")
 	if [[ "$old_normalized" == "$new_normalized" ]]; then
 		echo "No changes to profile content — skipping commit"
-		rm -f "$tmp_file" "$dynamic_tmp"
+		rm -f "$tmp_file"
 		return 0
 	fi
 
@@ -1165,13 +1151,12 @@ cmd_update() {
 	if [[ "$dry_run" == true ]]; then
 		echo "--- DRY RUN: would write to $readme_path ---"
 		diff "$readme_path" "$tmp_file" || true
-		rm -f "$tmp_file" "$dynamic_tmp"
+		rm -f "$tmp_file"
 		return 0
 	fi
 
 	# Apply changes
 	mv "$tmp_file" "$readme_path"
-	rm -f "$dynamic_tmp"
 
 	# Commit and push
 	local commit_msg
