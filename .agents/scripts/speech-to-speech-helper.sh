@@ -363,7 +363,7 @@ cmd_stop() {
         print_info "No PID file found"
     fi
 
-    # Stop Docker if running
+    # Stop Docker if running (guard docker availability to avoid set -e failures on non-Docker hosts)
     if command -v docker &>/dev/null && [[ -f "${S2S_DIR}/docker-compose.yml" ]] && \
        docker compose -f "${S2S_DIR}/docker-compose.yml" ps --quiet 2>>"$S2S_LOG_FILE" | grep -q .; then
         print_info "Stopping Docker containers..."
