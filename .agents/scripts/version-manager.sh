@@ -723,17 +723,19 @@ validate_version_consistency() {
 }
 
 # Function to update version in files
+# All diagnostic output goes to stderr so callers that capture stdout
+# as a version string (e.g. auto-version-bump.sh) are not polluted.
 update_version_in_files() {
 	local new_version="$1"
 	local errors=0
 
-	print_info "Updating version references in files..."
+	print_info "Updating version references in files..." >&2
 
 	# Update VERSION file
 	if [[ -f "$VERSION_FILE" ]]; then
 		echo "$new_version" >"$VERSION_FILE"
 		if [[ "$(cat "$VERSION_FILE")" == "$new_version" ]]; then
-			print_success "Updated VERSION file"
+			print_success "Updated VERSION file" >&2
 		else
 			print_error "Failed to update VERSION file"
 			errors=$((errors + 1))
@@ -742,9 +744,9 @@ update_version_in_files() {
 
 	# Update package.json if it exists
 	if [[ -f "$REPO_ROOT/package.json" ]]; then
-		sed_inplace "s/\"version\": \"[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\"/\"version\": \"$new_version\"/" "$REPO_ROOT/package.json"
+		sed_inplace "s/\"version\": *\"[^\"]*\"/\"version\": \"$new_version\"/" "$REPO_ROOT/package.json"
 		if grep -q "\"version\": \"$new_version\"" "$REPO_ROOT/package.json"; then
-			print_success "Updated package.json"
+			print_success "Updated package.json" >&2
 		else
 			print_error "Failed to update package.json"
 			errors=$((errors + 1))
@@ -755,7 +757,7 @@ update_version_in_files() {
 	if [[ -f "$REPO_ROOT/sonar-project.properties" ]]; then
 		sed_inplace "s/sonar\.projectVersion=.*/sonar.projectVersion=$new_version/" "$REPO_ROOT/sonar-project.properties"
 		if grep -q "sonar.projectVersion=$new_version" "$REPO_ROOT/sonar-project.properties"; then
-			print_success "Updated sonar-project.properties"
+			print_success "Updated sonar-project.properties" >&2
 		else
 			print_error "Failed to update sonar-project.properties"
 			errors=$((errors + 1))
@@ -775,24 +777,24 @@ update_version_in_files() {
 	if [[ -f "$REPO_ROOT/README.md" ]]; then
 		if grep -q "img.shields.io/github/v/release" "$REPO_ROOT/README.md"; then
 			# Dynamic badge - no update needed, GitHub handles it automatically
-			print_success "README.md uses dynamic GitHub release badge (no update needed)"
+			print_success "README.md uses dynamic GitHub release badge (no update needed)" >&2
 		elif grep -q "Version-[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*-blue" "$REPO_ROOT/README.md"; then
 			# Hardcoded badge - update it
 			sed_inplace "s/Version-[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*-blue/Version-$new_version-blue/" "$REPO_ROOT/README.md"
 
 			# Validate the update was successful
 			if grep -q "Version-$new_version-blue" "$REPO_ROOT/README.md"; then
-				print_success "Updated README.md version badge to $new_version"
+				print_success "Updated README.md version badge to $new_version" >&2
 			else
 				print_error "Failed to update README.md version badge"
 				errors=$((errors + 1))
 			fi
 		else
 			# No version badge found - that's okay, just warn
-			print_warning "README.md has no version badge (consider adding dynamic GitHub release badge)"
+			print_warning "README.md has no version badge (consider adding dynamic GitHub release badge)" >&2
 		fi
 	else
-		print_warning "README.md not found, skipping version badge update"
+		print_warning "README.md not found, skipping version badge update" >&2
 	fi
 
 	# Update Homebrew formula version (SHA256 is updated by CI publish-packages.yml)
@@ -801,7 +803,7 @@ update_version_in_files() {
 		sed_inplace "s|url \"https://github.com/marcusquinn/aidevops/archive/refs/tags/v[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\.tar\.gz\"|url \"https://github.com/marcusquinn/aidevops/archive/refs/tags/v${new_version}.tar.gz\"|" "$formula_file"
 
 		if grep -q "v${new_version}.tar.gz" "$formula_file"; then
-			print_success "Updated homebrew/aidevops.rb version URL"
+			print_success "Updated homebrew/aidevops.rb version URL" >&2
 		else
 			print_error "Failed to update homebrew/aidevops.rb"
 			errors=$((errors + 1))
@@ -810,11 +812,11 @@ update_version_in_files() {
 
 	# Update Claude Code plugin marketplace.json
 	if [[ -f "$REPO_ROOT/.claude-plugin/marketplace.json" ]]; then
-		sed_inplace "s/\"version\": \"[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\"/\"version\": \"$new_version\"/" "$REPO_ROOT/.claude-plugin/marketplace.json"
+		sed_inplace "s/\"version\": *\"[^\"]*\"/\"version\": \"$new_version\"/" "$REPO_ROOT/.claude-plugin/marketplace.json"
 
 		# Validate the update was successful
 		if grep -q "\"version\": \"$new_version\"" "$REPO_ROOT/.claude-plugin/marketplace.json"; then
-			print_success "Updated .claude-plugin/marketplace.json"
+			print_success "Updated .claude-plugin/marketplace.json" >&2
 		else
 			print_error "Failed to update .claude-plugin/marketplace.json"
 			errors=$((errors + 1))
@@ -827,7 +829,7 @@ update_version_in_files() {
 		return 1
 	fi
 
-	print_success "All version files updated to $new_version"
+	print_success "All version files updated to $new_version" >&2
 	return 0
 }
 
@@ -842,7 +844,7 @@ update_script_version_reference() {
 
 	sed_inplace "s/# Version: .*/# Version: $new_version/" "$script_path"
 	if grep -Fq "# Version: $new_version" "$script_path"; then
-		print_success "Updated $script_name"
+		print_success "Updated $script_name" >&2
 		return 0
 	fi
 
