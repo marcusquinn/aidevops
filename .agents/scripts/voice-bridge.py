@@ -373,8 +373,9 @@ class VoiceBridge:
         audio = np.frombuffer(indata, dtype=np.int16).copy()
 
         # Mute mic during TTS playback to prevent speaker-to-mic feedback.
-        # Without hardware echo cancellation, the TTS audio bleeds into the
-        # mic and triggers false barge-in. Use headphones to enable barge-in.
+        # Without acoustic echo cancellation (AEC), TTS audio bleeds into the
+        # mic and triggers false speech detection. Barge-in is not supported;
+        # implementing it would require hardware AEC or a software AEC library.
         if self.is_speaking:
             return
 
