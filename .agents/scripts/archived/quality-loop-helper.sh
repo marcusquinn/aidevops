@@ -500,8 +500,16 @@ preflight_loop() {
 		echo ""
 		print_info "=== Preflight Iteration $iteration / $max_iterations ==="
 
-		local result_status
-		result_status=$(run_preflight_checks "$auto_fix" 2>/dev/null | tail -n 1 | tr -d '\r')
+		local output exit_code result_status
+		output=$(run_preflight_checks "$auto_fix" 2>/dev/null) || exit_code=$?
+		exit_code="${exit_code:-0}"
+
+		if ((exit_code != 0)); then
+			print_error "Preflight checks failed to run (exit code: $exit_code)."
+			continue
+		fi
+
+		result_status=$(printf '%s' "$output" | tail -n 1 | tr -d '\r')
 
 		if [[ "$result_status" == "PASS" ]]; then
 			echo ""
