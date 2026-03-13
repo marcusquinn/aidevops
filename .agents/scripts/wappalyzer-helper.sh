@@ -179,6 +179,7 @@ cache_set() {
 	local cache_file="$WAPPALYZER_CACHE_DIR/$key.json"
 
 	echo "$data" >"$cache_file"
+	return 0
 }
 
 # ============================================================================
@@ -194,6 +195,7 @@ cmd_detect() {
 	fi
 
 	wappalyzer_detect "$url"
+	return 0
 }
 
 cmd_detect_cached() {
@@ -223,6 +225,7 @@ cmd_detect_cached() {
 
 cmd_install() {
 	install_deps
+	return 0
 }
 
 cmd_status() {
@@ -249,12 +252,14 @@ cmd_status() {
 	local cache_count
 	cache_count=$(find "$WAPPALYZER_CACHE_DIR" -name "*.json" 2>/dev/null | wc -l | tr -d ' ')
 	print_info "Cached results: $cache_count"
+	return 0
 }
 
 cmd_cache_clear() {
 	print_info "Clearing Wappalyzer cache..."
 	rm -rf "${WAPPALYZER_CACHE_DIR:?}"/*
 	print_success "Cache cleared"
+	return 0
 }
 
 cmd_help() {
@@ -305,6 +310,7 @@ Related:
   - Task: t1067
 
 EOF
+	return 0
 }
 
 # ============================================================================
