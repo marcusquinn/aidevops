@@ -631,14 +631,16 @@ _scan_single_pr() {
 	local findings="[]"
 
 	# --- Fetch inline review comments (file-level) ---
+	# --paginate returns multiple arrays (one per page), use jq -s add to merge all pages
 	local comments
 	comments=$(gh api "repos/${repo_slug}/pulls/${pr_num}/comments" \
-		--paginate --jq '.') || comments="[]"
+		--paginate --jq '.' | jq -s 'add // []') || comments="[]"
 
 	# --- Fetch review bodies (top-level reviews) ---
+	# --paginate returns multiple arrays (one per page), use jq -s add to merge all pages
 	local reviews
 	reviews=$(gh api "repos/${repo_slug}/pulls/${pr_num}/reviews" \
-		--paginate --jq '.') || reviews="[]"
+		--paginate --jq '.' | jq -s 'add // []') || reviews="[]"
 
 	# Process inline comments
 	local inline_findings

@@ -284,13 +284,13 @@ Git is the primary audit trail for all work. Every change should be discoverable
 # This is a judgment call, not a deterministic check. Read the templates and
 # contributing guidelines, then format your submission accordingly.
 - Before `gh issue create --repo <slug>` on a repo NOT in `~/.config/aidevops/repos.json`:
-  1. Check for issue templates: `gh api repos/{slug}/contents/.github/ISSUE_TEMPLATE/ --jq '.[].name' || true`
-  2. If templates exist, fetch the relevant one (e.g., `bug-report.yml` for bugs): `gh api repos/{slug}/contents/.github/ISSUE_TEMPLATE/bug-report.yml --jq '.content' | base64 -d || true`
-  3. Check for contributing guidelines: `gh api repos/{slug}/contents/CONTRIBUTING.md --jq '.content' | base64 -d || true`
+  1. Check for issue templates: `response=$(gh api repos/{slug}/contents/.github/ISSUE_TEMPLATE/ --include 2>&1); status=$(echo "$response" | head -n1 | grep -oP 'HTTP/[0-9.]+ \K[0-9]+'); if [[ "$status" == "404" ]]; then echo "No templates"; elif [[ "$status" =~ ^2 ]]; then echo "$response" | sed '1,/^$/d' | jq -r '.[].name'; else echo "Error: HTTP $status" >&2; exit 1; fi`
+  2. If templates exist, fetch the relevant one (e.g., `bug-report.yml` for bugs): `response=$(gh api repos/{slug}/contents/.github/ISSUE_TEMPLATE/bug-report.yml --include 2>&1); status=$(echo "$response" | head -n1 | grep -oP 'HTTP/[0-9.]+ \K[0-9]+'); if [[ "$status" == "404" ]]; then echo "Template not found"; elif [[ "$status" =~ ^2 ]]; then echo "$response" | sed '1,/^$/d' | jq -r '.content' | base64 -d; else echo "Error: HTTP $status" >&2; exit 1; fi`
+  3. Check for contributing guidelines: `response=$(gh api repos/{slug}/contents/CONTRIBUTING.md --include 2>&1); status=$(echo "$response" | head -n1 | grep -oP 'HTTP/[0-9.]+ \K[0-9]+'); if [[ "$status" == "404" ]]; then echo "No CONTRIBUTING.md"; elif [[ "$status" =~ ^2 ]]; then echo "$response" | sed '1,/^$/d' | jq -r '.content' | base64 -d; else echo "Error: HTTP $status" >&2; exit 1; fi`
   4. Format the issue body to match the required template structure. YAML form templates (`.yml`) generate `### Label` section headers when submitted via the web UI — replicate this structure in your `--body`.
   5. If no templates exist, use a clear, well-structured format (title, description, steps to reproduce, expected/actual behaviour).
 - Before `gh pr create` targeting an external repo:
-  1. Check for PR templates: `gh api repos/{slug}/contents/.github/PULL_REQUEST_TEMPLATE.md --jq '.content' | base64 -d || true`
+  1. Check for PR templates: `response=$(gh api repos/{slug}/contents/.github/PULL_REQUEST_TEMPLATE.md --include 2>&1); status=$(echo "$response" | head -n1 | grep -oP 'HTTP/[0-9.]+ \K[0-9]+'); if [[ "$status" == "404" ]]; then echo "No PR template"; elif [[ "$status" =~ ^2 ]]; then echo "$response" | sed '1,/^$/d' | jq -r '.content' | base64 -d; else echo "Error: HTTP $status" >&2; exit 1; fi`
   2. Check `CONTRIBUTING.md` for PR requirements (branch naming, commit format, CLA, etc.)
   3. Format the PR body to match their template and follow their contributing guidelines.
 - If a submission is auto-closed by a compliance bot, read the bot's comment for formatting requirements, then resubmit with the correct format.

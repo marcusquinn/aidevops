@@ -682,7 +682,9 @@ bq_reverse_lookup() {
 		local kw_conditions=""
 		local IFS=','
 		for kw in $keywords; do
-			kw=$(printf '%s' "$kw" | xargs)
+			# Safe bash trimming: remove leading/trailing whitespace
+			kw="${kw#"${kw%%[![:space:]]*}"}"
+			kw="${kw%"${kw##*[![:space:]]}"}"
 			# Sanitize via shared function (strips quotes, backslashes, semicolons)
 			kw=$(sanitize_sql_value "$kw")
 			# Additional LIKE-specific sanitization: escape % and _ wildcards in user input
@@ -696,7 +698,10 @@ bq_reverse_lookup() {
 			fi
 			kw_conditions="${kw_conditions}LOWER(page) LIKE '%${kw}%' ESCAPE '\\\\'"
 		done
-		keyword_clause="AND (${kw_conditions})"
+		# Only add keyword clause if we have conditions
+		if [[ -n "$kw_conditions" ]]; then
+			keyword_clause="AND (${kw_conditions})"
+		fi
 	fi
 
 	local query
