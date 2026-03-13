@@ -391,18 +391,18 @@ wp scaffold block my-block --plugin=my-plugin
 ```php
 <?php
 /**
-- Plugin Name: My Plugin
-- Plugin URI: https://example.com/my-plugin
-- Description: Plugin description
-- Version: 1.0.0
-- Author: Your Name
-- Author URI: https://example.com
-- License: GPL-2.0+
-- License URI: https://www.gnu.org/licenses/gpl-2.0.txt
-- Text Domain: my-plugin
-- Domain Path: /languages
-- Requires at least: 6.0
-- Requires PHP: 7.4
+ * Plugin Name: My Plugin
+ * Plugin URI: https://example.com/my-plugin
+ * Description: Plugin description
+ * Version: 1.0.0
+ * Author: Your Name
+ * Author URI: https://example.com
+ * License: GPL-2.0+
+ * License URI: https://www.gnu.org/licenses/gpl-2.0.txt
+ * Text Domain: my-plugin
+ * Domain Path: /languages
+ * Requires at least: 6.0
+ * Requires PHP: 7.4
  */
 ```text
 
@@ -519,10 +519,10 @@ For premium plugins or plugins where PRs aren't accepted, create a companion plu
    ```php
    <?php
    /**
-- Plugin Name: Plugin Slug Fix
-- Description: Patches and fixes for Plugin Slug that survive updates
-- Version: 1.0.0
-- Requires Plugins: plugin-slug
+    * Plugin Name: Plugin Slug Fix
+    * Description: Patches and fixes for Plugin Slug that survive updates
+    * Version: 1.0.0
+    * Requires Plugins: plugin-slug
     */
 
    // Ensure original plugin is loaded first
@@ -587,10 +587,10 @@ For premium plugins or plugins where PRs aren't accepted, create a companion plu
 
    ```php
    /**
-- Fix: Original plugin doesn't handle multisite correctly
-- Issue: https://github.com/original/plugin/issues/123
-- Affects: v2.0.0 - v2.3.0
-- Remove when: Fixed in upstream
+    * Fix: Original plugin doesn't handle multisite correctly
+    * Issue: https://github.com/original/plugin/issues/123
+    * Affects: v2.0.0 - v2.3.0
+    * Remove when: Fixed in upstream
     */
    ```
 
