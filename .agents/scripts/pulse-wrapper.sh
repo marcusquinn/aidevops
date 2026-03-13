@@ -1425,9 +1425,16 @@ run_stage_with_timeout() {
 #######################################
 run_pulse() {
 	local underfilled_mode="${1:-0}"
+	local underfill_pct="${2:-0}"
 	local effective_cold_start_timeout="$PULSE_COLD_START_TIMEOUT"
 	if [[ "$underfilled_mode" == "1" ]]; then
 		effective_cold_start_timeout="$PULSE_COLD_START_TIMEOUT_UNDERFILLED"
+		[[ "$underfill_pct" =~ ^[0-9]+$ ]] || underfill_pct=0
+		if [[ "$underfill_pct" -ge 50 ]]; then
+			effective_cold_start_timeout=300
+		elif [[ "$underfill_pct" -ge 25 ]]; then
+			effective_cold_start_timeout=450
+		fi
 	fi
 	if [[ "$effective_cold_start_timeout" -gt "$PULSE_COLD_START_TIMEOUT" ]]; then
 		effective_cold_start_timeout="$PULSE_COLD_START_TIMEOUT"
@@ -1436,7 +1443,7 @@ run_pulse() {
 	local start_epoch
 	start_epoch=$(date +%s)
 	echo "[pulse-wrapper] Starting pulse at $(date -u +%Y-%m-%dT%H:%M:%SZ)" >>"$WRAPPER_LOGFILE"
-	echo "[pulse-wrapper] Watchdog cold-start timeout: ${effective_cold_start_timeout}s (underfilled_mode=${underfilled_mode})" >>"$LOGFILE"
+	echo "[pulse-wrapper] Watchdog cold-start timeout: ${effective_cold_start_timeout}s (underfilled_mode=${underfilled_mode}, underfill_pct=${underfill_pct})" >>"$LOGFILE"
 
 	# Build the prompt: /pulse + reference to pre-fetched state file.
 	# The state is NOT inlined into the prompt — on Linux, execve() enforces
@@ -2280,10 +2287,12 @@ enforce_utilization_invariants() {
 		# Refresh prompt state before each backfill cycle so pulse sees latest context.
 		prefetch_state || true
 		local underfilled_mode=0
+		local underfill_pct=0
 		if [[ "$active_workers" -lt "$max_workers" ]]; then
 			underfilled_mode=1
+			underfill_pct=$(((max_workers - active_workers) * 100 / max_workers))
 		fi
-		run_pulse "$underfilled_mode"
+		run_pulse "$underfilled_mode" "$underfill_pct"
 	done
 
 	echo "[pulse-wrapper] Reached backfill attempt cap (${max_attempts}) before utilization invariant converged" >>"$LOGFILE"
@@ -2363,11 +2372,13 @@ main() {
 	[[ "$initial_max_workers" =~ ^[0-9]+$ ]] || initial_max_workers=1
 	[[ "$initial_active_workers" =~ ^[0-9]+$ ]] || initial_active_workers=0
 	initial_underfilled_mode=0
+	local initial_underfill_pct=0
 	if [[ "$initial_active_workers" -lt "$initial_max_workers" ]]; then
 		initial_underfilled_mode=1
+		initial_underfill_pct=$(((initial_max_workers - initial_active_workers) * 100 / initial_max_workers))
 	fi
 
-	run_pulse "$initial_underfilled_mode"
+	run_pulse "$initial_underfilled_mode" "$initial_underfill_pct"
 	enforce_utilization_invariants
 	return 0
 }
