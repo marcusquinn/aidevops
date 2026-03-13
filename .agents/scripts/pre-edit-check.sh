@@ -307,7 +307,7 @@ if [[ "$current_branch" == "main" || "$current_branch" == "master" ]]; then
 	# In headless mode, output a concise machine-readable error and exit 2
 	# (worktree needed) instead of the verbose interactive prompt.
 	if [[ ! -t 0 ]] || [[ "${FULL_LOOP_HEADLESS:-false}" == "true" ]]; then
-		echo -e "${RED}BLOCKED${NC}: On protected branch '$current_branch' — cannot edit."
+		echo -e "${RED}BLOCKED${NC}: Canonical repo directory is on protected '$current_branch'; move code edits into a linked worktree."
 		echo "HEADLESS_BLOCKED=true"
 		echo "ACTION_REQUIRED=create_worktree"
 		echo "HINT: Use --loop-mode --task 'description' to auto-create a worktree,"
