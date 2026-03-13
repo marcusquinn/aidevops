@@ -26,7 +26,14 @@ try {
 const log = (msg = '') => {
     const line = msg + '\n';
     if (ttyFd !== null) {
-        fs.writeSync(ttyFd, line);
+        try {
+            fs.writeSync(ttyFd, line);
+        } catch {
+            // TTY write failed. Fall back to stderr for this and subsequent calls.
+            try { fs.closeSync(ttyFd); } catch { /* best effort to close */ }
+            ttyFd = null;
+            process.stderr.write(line);
+        }
     } else {
         process.stderr.write(line);
     }
@@ -72,5 +79,9 @@ log('');
 
 // Clean up
 if (ttyFd !== null) {
-    fs.closeSync(ttyFd);
+    try {
+        fs.closeSync(ttyFd);
+    } catch {
+        // Ignore errors on close, as there's nothing more to do.
+    }
 }
