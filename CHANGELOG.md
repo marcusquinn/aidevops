@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.172.9] - 2026-03-13
+
+### Fixed
+
+- avoid false pulse idle kills during cold start (#4312)
+
 ## [2.172.8] - 2026-03-13
 
 ### Changed
