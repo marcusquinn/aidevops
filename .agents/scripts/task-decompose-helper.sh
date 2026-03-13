@@ -71,11 +71,12 @@ check_existing_subtasks() {
 		return 0
 	fi
 
-	# Escape regex metacharacters in task_id to prevent injection
+	# Escape regex metacharacters in task_id to prevent injection.
+	# Pattern covers all ERE special chars including ] and {}.
 	local escaped_id
 	# Single quotes intentional: sed pattern must not expand
 	# shellcheck disable=SC2016
-	escaped_id=$(printf '%s' "$task_id" | sed 's/[.[\*^$()+?{|\\]/\\&/g')
+	escaped_id=$(printf '%s' "$task_id" | sed 's/[][\\.^$*+?(){}|]/\\&/g')
 
 	local parent_pattern="^- \\[[ x-]\\] ${escaped_id} "
 	local child_pattern="^  - \\[[ x-]\\] ${escaped_id}\\."
@@ -204,7 +205,7 @@ Respond with ONLY a JSON object (no markdown, no explanation outside the JSON):
 {\"kind\": \"atomic\" or \"composite\", \"confidence\": 0.0-1.0, \"reasoning\": \"one sentence explanation\"}"
 
 		local result
-		result=$("$AI_HELPER" --prompt "$prompt" --model haiku --max-tokens 200 2>/dev/null || echo "")
+		result=$("$AI_HELPER" --prompt "$prompt" --model haiku --max-tokens 200 || echo "")
 
 		if [[ -n "$result" ]]; then
 			local json_result
@@ -450,7 +451,7 @@ Respond with ONLY a JSON object (no markdown, no explanation outside the JSON):
 }"
 
 		local result
-		result=$("$AI_HELPER" --prompt "$prompt" --model haiku --max-tokens 600 2>/dev/null || echo "")
+		result=$("$AI_HELPER" --prompt "$prompt" --model haiku --max-tokens 600 || echo "")
 
 		if [[ -n "$result" ]]; then
 			local json_result
