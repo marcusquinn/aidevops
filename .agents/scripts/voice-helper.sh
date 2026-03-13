@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC2034,SC2155
+# shellcheck disable=SC2034,SC2155,SC1091
 
 # Voice Helper Script
 # Manages the aidevops voice bridge (talk to OpenCode via speech)
