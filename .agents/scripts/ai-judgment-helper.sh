@@ -891,7 +891,11 @@ ${user_message}"
 		raw_result=$("$AI_HELPER" --prompt "$full_prompt" --model haiku --max-tokens 200 || echo "")
 
 		if [[ -n "$raw_result" ]]; then
-			# Extract JSON from response: handle fenced blocks and embedded wrapper text
+			# Extract JSON from response: handle fenced blocks, wrapper text, and details
+			# containing braces. Three strategies in order:
+			#   1. Parse the whole response as JSON (plain response)
+			#   2. Strip fences, then try each line (JSON on its own line after wrapper text)
+			#   3. Strip fences, greedy capture (last resort; validated by fromjson?)
 			local json_result
 			json_result=$(printf '%s' "$raw_result" | jq -Rrs '
 				. as $text
@@ -901,8 +905,18 @@ ${user_message}"
 						$text
 						| gsub("(?m)^```[A-Za-z0-9_-]*\\n"; "")
 						| gsub("(?m)^```$"; "")
-						| capture("(?s)(?<json>\\{.*\\})").json
-						| fromjson?
+						| . as $stripped
+						| (
+							($stripped | fromjson?)
+							// (
+								($stripped | split("\n")
+								 | map(fromjson? | select(type == "object" and has("score")))
+								 | first)
+							)
+							// (
+								($stripped | capture("(?s)(?<json>\\{.*\\})").json | fromjson?)
+							)
+						)
 					)
 				) // empty
 				| select(type == "object" and has("score"))
