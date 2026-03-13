@@ -38,22 +38,13 @@ tools:
 
 ```bash
 # Full analysis (tech stack + Lighthouse + meta tags)
-tech-stack-helper.sh scan example.com
-
-# Tech stack detection only
-tech-stack-helper.sh techs example.com
-
-# Lighthouse scores only
-tech-stack-helper.sh lighthouse example.com
-
-# Meta tag preview
-tech-stack-helper.sh meta example.com
+tech-stack-helper.sh lookup example.com --provider crft
 
 # JSON output
-tech-stack-helper.sh scan example.com --json
+tech-stack-helper.sh lookup example.com --provider crft --json
 
-# Compare two sites
-tech-stack-helper.sh compare site1.com site2.com
+# Markdown report
+tech-stack-helper.sh report example.com --provider crft
 ```
 
 **Complementary Tools**:
@@ -105,6 +96,8 @@ The gallery page shows pre-generated reports. For fresh scans, the tool submits 
 
 ### Lighthouse Scores
 
+Lighthouse scores are included in CRFT reports but are not available as a standalone command via `tech-stack-helper.sh`. For dedicated Lighthouse analysis, use `pagespeed-helper.sh` or the PageSpeed Insights MCP tool.
+
 Four categories scored 0-100 for both desktop and mobile:
 
 | Category | What It Measures |
@@ -124,78 +117,48 @@ Four categories scored 0-100 for both desktop and mobile:
 
 ## Usage
 
-### Basic Scan
+### Basic Lookup
 
 ```bash
-# Scan a website (returns tech stack + Lighthouse + meta)
-tech-stack-helper.sh scan example.com
+# Lookup a website (returns tech stack via all available providers)
+tech-stack-helper.sh lookup example.com
+
+# Use CRFT provider specifically
+tech-stack-helper.sh lookup example.com --provider crft
 
 # Output includes:
 # - Detected technologies grouped by category
-# - Lighthouse scores (desktop + mobile)
-# - Meta tag summary
-# - Report URL for full details
+# - Confidence scores based on provider agreement
+# - Report URL for full details (CRFT provider)
 ```
 
-### Technology Detection
+### Markdown Report
 
 ```bash
-# List detected technologies
-tech-stack-helper.sh techs example.com
-
-# Filter by category
-tech-stack-helper.sh techs example.com --category frameworks
-tech-stack-helper.sh techs example.com --category analytics
-tech-stack-helper.sh techs example.com --category cms
-```
-
-### Lighthouse Scores
-
-```bash
-# Get Lighthouse scores
-tech-stack-helper.sh lighthouse example.com
-
-# Desktop only
-tech-stack-helper.sh lighthouse example.com --strategy desktop
-
-# Mobile only
-tech-stack-helper.sh lighthouse example.com --strategy mobile
-```
-
-### Comparison
-
-```bash
-# Compare tech stacks of two sites
-tech-stack-helper.sh compare site1.com site2.com
-
-# Output shows:
-# - Technologies unique to each site
-# - Technologies in common
-# - Lighthouse score comparison
+# Generate a full markdown report
+tech-stack-helper.sh report example.com --provider crft
 ```
 
 ### JSON Output
 
 ```bash
 # Machine-readable output
-tech-stack-helper.sh scan example.com --json
+tech-stack-helper.sh lookup example.com --provider crft --json
 
-# JSON schema:
+# JSON schema (merged multi-provider output):
 # {
-#   "url": "example.com",
-#   "report_url": "https://crft.studio/lookup/gallery/example",
+#   "url": "https://example.com",
+#   "domain": "example.com",
+#   "scan_time": "2025-01-15T12:00:00Z",
+#   "provider_count": 1,
+#   "providers": ["crft"],
+#   "technology_count": 5,
 #   "technologies": [
-#     {"name": "React", "category": "JavaScript frameworks", "description": "..."}
+#     {"name": "React", "category": "ui-libs", "version": "18.2", "confidence": 1.0}
 #   ],
-#   "lighthouse": {
-#     "desktop": {"performance": 98, "accessibility": 100, "best_practices": 100, "seo": 100},
-#     "mobile": {"performance": 74, "accessibility": 100, "best_practices": 100, "seo": 100}
-#   },
-#   "meta": {
-#     "title": "...",
-#     "description": "...",
-#     "og_image": "..."
-#   }
+#   "categories": [
+#     {"category": "ui-libs", "count": 1, "technologies": ["React"]}
+#   ]
 # }
 ```
 
@@ -204,10 +167,10 @@ tech-stack-helper.sh scan example.com --json
 ### With SEO Analysis
 
 ```bash
-# Get tech stack and Lighthouse scores for SEO audit
-tech-stack-helper.sh scan client-site.com --json | jq '.lighthouse'
+# Get tech stack for SEO audit
+tech-stack-helper.sh lookup client-site.com --provider crft --json | jq '.technologies'
 
-# Cross-reference with PageSpeed for detailed metrics
+# Cross-reference with PageSpeed for detailed Lighthouse metrics
 pagespeed-helper.sh run client-site.com
 ```
 
@@ -216,11 +179,8 @@ pagespeed-helper.sh run client-site.com
 ```bash
 # Analyze competitor tech stacks
 for site in competitor1.com competitor2.com competitor3.com; do
-  tech-stack-helper.sh techs "$site" --json
+  tech-stack-helper.sh lookup "$site" --provider crft --json
 done
-
-# Compare your site against a competitor
-tech-stack-helper.sh compare mysite.com competitor.com
 ```
 
 ### With Domain Research
@@ -228,7 +188,7 @@ tech-stack-helper.sh compare mysite.com competitor.com
 ```bash
 # Discover subdomains, then check their tech stacks
 domain-research-helper.sh subdomains example.com | while read -r sub; do
-  tech-stack-helper.sh techs "$sub" 2>/dev/null
+  tech-stack-helper.sh lookup "$sub" --provider crft 2>/dev/null
 done
 ```
 
