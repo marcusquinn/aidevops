@@ -1997,6 +1997,44 @@ has_worker_for_repo_issue() {
 }
 
 #######################################
+# Check if dispatching a worker would be a duplicate (GH#4400)
+#
+# Two-layer dedup:
+#   1. has_worker_for_repo_issue() — exact repo+issue process match
+#   2. dispatch-dedup-helper.sh is-duplicate — normalized title key match
+#
+# Arguments:
+#   $1 - issue number
+#   $2 - repo slug (owner/repo)
+#   $3 - dispatch title (e.g., "Issue #42: Fix auth")
+# Exit codes:
+#   0 - duplicate detected (do NOT dispatch)
+#   1 - no duplicate (safe to dispatch)
+#######################################
+check_dispatch_dedup() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local title="$3"
+
+	# Layer 1: exact repo+issue process match
+	if has_worker_for_repo_issue "$issue_number" "$repo_slug"; then
+		echo "[pulse-wrapper] Dedup: worker already running for #${issue_number} in ${repo_slug}" >>"$LOGFILE"
+		return 0
+	fi
+
+	# Layer 2: normalized title key match via dispatch-dedup-helper
+	local dedup_helper="${SCRIPT_DIR}/dispatch-dedup-helper.sh"
+	if [[ -x "$dedup_helper" ]] && [[ -n "$title" ]]; then
+		if "$dedup_helper" is-duplicate "$title" >/dev/null 2>&1; then
+			echo "[pulse-wrapper] Dedup: title match for '${title}' — worker already running" >>"$LOGFILE"
+			return 0
+		fi
+	fi
+
+	return 1
+}
+
+#######################################
 # Append adaptive queue-governor guidance to pre-fetched state
 #
 # Uses observed queue totals and trend vs previous cycle to derive an

@@ -36,8 +36,8 @@
 #   WORKER_IDLE_TIMEOUT          Seconds of low CPU before kill (default: 300)
 #   WORKER_IDLE_CPU_THRESHOLD    CPU% below this = idle (default: 5)
 #   WORKER_PROGRESS_TIMEOUT      Seconds without log growth = stuck (default: 600)
-#   WORKER_THRASH_ELAPSED_THRESHOLD  Minimum runtime before thrash check (default: 7200)
-#   WORKER_THRASH_MESSAGE_THRESHOLD  Minimum messages for thrash check (default: 180)
+#   WORKER_THRASH_ELAPSED_THRESHOLD  Minimum runtime before thrash check (default: 3600)
+#   WORKER_THRASH_MESSAGE_THRESHOLD  Minimum messages for thrash check (default: 120)
 #   WORKER_MAX_RUNTIME           Hard ceiling in seconds (default: 10800 = 3h)
 #   WORKER_DRY_RUN               Set to "true" to log but not kill (default: false)
 #   WORKER_WATCHDOG_NOTIFY       Set to "false" to disable macOS notifications
@@ -65,8 +65,8 @@ readonly SCRIPT_VERSION="1.0.0"
 WORKER_IDLE_TIMEOUT="${WORKER_IDLE_TIMEOUT:-300}"                          # 5 min idle = completed, sitting in file watcher
 WORKER_IDLE_CPU_THRESHOLD="${WORKER_IDLE_CPU_THRESHOLD:-5}"                # CPU% below this = idle
 WORKER_PROGRESS_TIMEOUT="${WORKER_PROGRESS_TIMEOUT:-600}"                  # 10 min no log output = stuck
-WORKER_THRASH_ELAPSED_THRESHOLD="${WORKER_THRASH_ELAPSED_THRESHOLD:-7200}" # 2h minimum runtime before zero-commit thrash checks
-WORKER_THRASH_MESSAGE_THRESHOLD="${WORKER_THRASH_MESSAGE_THRESHOLD:-180}"  # ~1.5 messages/min over 2h before thrash checks
+WORKER_THRASH_ELAPSED_THRESHOLD="${WORKER_THRASH_ELAPSED_THRESHOLD:-3600}" # 1h minimum runtime before zero-commit thrash checks (GH#4400: lowered from 2h)
+WORKER_THRASH_MESSAGE_THRESHOLD="${WORKER_THRASH_MESSAGE_THRESHOLD:-120}"  # ~2 messages/min over 1h before thrash checks (GH#4400: lowered from 180)
 WORKER_MAX_RUNTIME="${WORKER_MAX_RUNTIME:-10800}"                          # 3 hour hard ceiling
 WORKER_DRY_RUN="${WORKER_DRY_RUN:-false}"
 WORKER_WATCHDOG_NOTIFY="${WORKER_WATCHDOG_NOTIFY:-true}"
@@ -76,8 +76,8 @@ WORKER_PROCESS_PATTERN="${WORKER_PROCESS_PATTERN:-opencode}" # CLI name to match
 WORKER_IDLE_TIMEOUT=$(_validate_int WORKER_IDLE_TIMEOUT "$WORKER_IDLE_TIMEOUT" 300 60)
 WORKER_IDLE_CPU_THRESHOLD=$(_validate_int WORKER_IDLE_CPU_THRESHOLD "$WORKER_IDLE_CPU_THRESHOLD" 5)
 WORKER_PROGRESS_TIMEOUT=$(_validate_int WORKER_PROGRESS_TIMEOUT "$WORKER_PROGRESS_TIMEOUT" 600 120)
-WORKER_THRASH_ELAPSED_THRESHOLD=$(_validate_int WORKER_THRASH_ELAPSED_THRESHOLD "$WORKER_THRASH_ELAPSED_THRESHOLD" 7200 600)
-WORKER_THRASH_MESSAGE_THRESHOLD=$(_validate_int WORKER_THRASH_MESSAGE_THRESHOLD "$WORKER_THRASH_MESSAGE_THRESHOLD" 180 30)
+WORKER_THRASH_ELAPSED_THRESHOLD=$(_validate_int WORKER_THRASH_ELAPSED_THRESHOLD "$WORKER_THRASH_ELAPSED_THRESHOLD" 3600 600)
+WORKER_THRASH_MESSAGE_THRESHOLD=$(_validate_int WORKER_THRASH_MESSAGE_THRESHOLD "$WORKER_THRASH_MESSAGE_THRESHOLD" 120 30)
 WORKER_MAX_RUNTIME=$(_validate_int WORKER_MAX_RUNTIME "$WORKER_MAX_RUNTIME" 10800 600)
 
 # Paths
@@ -910,8 +910,8 @@ Environment variables:
   WORKER_IDLE_TIMEOUT          Idle detection window (default: 300s)
   WORKER_IDLE_CPU_THRESHOLD    CPU% idle threshold (default: 5)
   WORKER_PROGRESS_TIMEOUT      Stall detection window (default: 600s)
-  WORKER_THRASH_ELAPSED_THRESHOLD  Minimum runtime for thrash guardrail (default: 7200s)
-  WORKER_THRASH_MESSAGE_THRESHOLD  Minimum messages for thrash guardrail (default: 180)
+  WORKER_THRASH_ELAPSED_THRESHOLD  Minimum runtime for thrash guardrail (default: 3600s)
+  WORKER_THRASH_MESSAGE_THRESHOLD  Minimum messages for thrash guardrail (default: 120)
   WORKER_MAX_RUNTIME           Hard runtime ceiling (default: 10800s = 3h)
   WORKER_DRY_RUN               Log but don't kill (default: false)
   WORKER_WATCHDOG_NOTIFY       macOS notifications (default: true)

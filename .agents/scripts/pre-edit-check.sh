@@ -301,6 +301,20 @@ if [[ "$current_branch" == "main" || "$current_branch" == "master" ]]; then
 		fi
 	fi
 
+	# Detect headless mode (GH#4400): workers dispatched without --loop-mode
+	# get the interactive prompt and loop forever trying to edit. Detect
+	# headless by checking if stdin is not a terminal (no TTY = headless).
+	# In headless mode, output a concise machine-readable error and exit 2
+	# (worktree needed) instead of the verbose interactive prompt.
+	if [[ ! -t 0 ]] || [[ "${FULL_LOOP_HEADLESS:-false}" == "true" ]]; then
+		echo -e "${RED}BLOCKED${NC}: On protected branch '$current_branch' — cannot edit."
+		echo "HEADLESS_BLOCKED=true"
+		echo "ACTION_REQUIRED=create_worktree"
+		echo "HINT: Use --loop-mode --task 'description' to auto-create a worktree,"
+		echo "or dispatch with --dir pointing to an existing worktree, not the main repo."
+		exit 2
+	fi
+
 	# Interactive mode: show warning and exit
 	echo ""
 	echo -e "${RED}${BOLD}======================================================${NC}"

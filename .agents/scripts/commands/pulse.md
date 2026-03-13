@@ -556,13 +556,30 @@ ISSUE_DISPATCH_BUDGET=$(((AVAILABLE * NEW_ISSUE_DISPATCH_PCT) / 100))
 
 If budget is exhausted, stop opening new issue workers and continue PR advancement work.
 
-1. Skip if a worker is already running for it locally (check `ps` output for the issue number)
+1. **Dedup guard (MANDATORY, GH#4400):** Before dispatching, check if a worker is already running for this issue using the deterministic helper. This prevents the duplicate-dispatch thrashing pattern where multiple workers compete for the same issue/worktree.
+
+```bash
+# Source once per pulse run (provides has_worker_for_repo_issue and dispatch-dedup)
+source ~/.aidevops/agents/scripts/pulse-wrapper.sh
+
+# Check 1: exact repo+issue match via process list
+if has_worker_for_repo_issue <number> <slug>; then
+  echo "Worker already running for #<number> in <slug> — skipping"
+  continue
+fi
+
+# Check 2: normalized dedup via dispatch-dedup-helper (catches title variants)
+if ~/.aidevops/agents/scripts/dispatch-dedup-helper.sh is-duplicate "Issue #<number>: <title>"; then
+  echo "Duplicate dispatch detected for #<number> — skipping"
+  continue
+fi
+```
+
+Both checks MUST pass before dispatch. The first catches exact repo+issue matches; the second catches title variants (e.g., `issue-3502` vs `Issue #3502: description`). Skipping these checks was the root cause of the 26-worker thrashing incident (GH#4400).
+
 1.5. **Apply per-repo worker cap before dispatch:** default `MAX_WORKERS_PER_REPO=5` (override via env var only when you have a clear reason). If the target repo already has `MAX_WORKERS_PER_REPO` active workers, skip dispatch for that repo this cycle and continue with other repos.
 
 ```bash
-# Source once per pulse run
-source ~/.aidevops/agents/scripts/pulse-wrapper.sh
-
 MAX_WORKERS_PER_REPO=${MAX_WORKERS_PER_REPO:-5}
 ACTIVE_FOR_REPO=$(list_active_worker_processes | awk -v path="<path>" '
   BEGIN { esc=path; gsub(/[][(){}.^$*+?|\\]/, "\\\\&", esc) }
