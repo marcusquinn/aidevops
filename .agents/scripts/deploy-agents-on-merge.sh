@@ -293,7 +293,7 @@ deploy_all_agents() {
 			"--exclude=draft/"
 		)
 		local plugin_namespace
-		for plugin_namespace in "${PLUGIN_NAMESPACES[@]}"; do
+		for plugin_namespace in "${PLUGIN_NAMESPACES[@]+"${PLUGIN_NAMESPACES[@]}"}"; do
 			rsync_excludes+=("--exclude=${plugin_namespace}/")
 		done
 		rsync -a "${rsync_excludes[@]}" "$source_dir/" "$TARGET_DIR/"
@@ -304,7 +304,7 @@ deploy_all_agents() {
 		local preserve_ok=true
 		local -a preserved_dirs=("custom" "draft")
 		local plugin_namespace
-		for plugin_namespace in "${PLUGIN_NAMESPACES[@]}"; do
+		for plugin_namespace in "${PLUGIN_NAMESPACES[@]+"${PLUGIN_NAMESPACES[@]}"}"; do
 			preserved_dirs+=("$plugin_namespace")
 		done
 
@@ -334,7 +334,7 @@ deploy_all_agents() {
 			! -name 'draft'
 			! -name 'loop-state'
 		)
-		for plugin_namespace in "${PLUGIN_NAMESPACES[@]}"; do
+		for plugin_namespace in "${PLUGIN_NAMESPACES[@]+"${PLUGIN_NAMESPACES[@]}"}"; do
 			find_args+=(! -name "$plugin_namespace")
 		done
 		find_args+=(-exec rm -rf {} +)
@@ -346,7 +346,7 @@ deploy_all_agents() {
 
 		# Copy all agents
 		local -a tar_excludes=("--exclude=loop-state" "--exclude=custom" "--exclude=draft")
-		for plugin_namespace in "${PLUGIN_NAMESPACES[@]}"; do
+		for plugin_namespace in "${PLUGIN_NAMESPACES[@]+"${PLUGIN_NAMESPACES[@]}"}"; do
 			tar_excludes+=("--exclude=$plugin_namespace")
 		done
 		(cd "$source_dir" && tar cf - "${tar_excludes[@]}" .) |
