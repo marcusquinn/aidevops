@@ -768,8 +768,7 @@ cmd_usage() {
 			--arg startDate "$start_date" \
 			--arg beforeDate "$end_date" \
 			'if $startDate != "" then {startDate: $startDate} else {} end
-         + if $beforeDate != "" then {beforeDate: $beforeDate} else {} end
-         | if . == {} then {} else . end'
+         + if $beforeDate != "" then {beforeDate: $beforeDate} else {} end'
 	)"
 
 	local result
