@@ -1919,7 +1919,10 @@ count_active_workers() {
 	count=$(ps axo command | awk '
 		index($0, ".opencode run") > 0 &&
 		index($0, "/full-loop") > 0 &&
-		!(index($0, "--role pulse") > 0 && index($0, "--session-key supervisor-pulse") > 0) {
+		!(
+			$0 ~ /(^|[[:space:]])--role([=[:space:]])pulse([[:space:]]|$)/ &&
+			$0 ~ /(^|[[:space:]])--session-key([=[:space:]])supervisor-pulse([[:space:]]|$)/
+		) {
 			count++
 		}
 		END {
