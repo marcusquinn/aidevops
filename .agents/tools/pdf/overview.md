@@ -42,7 +42,7 @@ tools:
 | File | Purpose |
 |------|---------|
 | `libpdf.md` | LibPDF library - form filling, signing, manipulation |
-| `tools/conversion/mineru.md` | MinerU - PDF to markdown/JSON for LLM workflows |
+| `../conversion/mineru.md` | MinerU - PDF to markdown/JSON for LLM workflows |
 
 <!-- AI-CONTEXT-END -->
 
@@ -141,9 +141,9 @@ const { bytes: signed } = await pdf.sign({
 ## Related
 
 - `libpdf.md` - Detailed LibPDF usage guide
-- `tools/document/document-creation.md` - Unified document format conversion and creation
-- `tools/conversion/mineru.md` - PDF to markdown/JSON (layout-aware, OCR)
-- `tools/ocr/overview.md` - OCR tool selection guide (PaddleOCR, GLM-OCR, MinerU, Docling)
-- `tools/ocr/paddleocr.md` - PaddleOCR scene text OCR for scanned PDFs and images
-- `tools/conversion/pandoc.md` - General document format conversion
-- `tools/browser/playwright.md` - For PDF rendering/screenshots
+- `../document/document-creation.md` - Unified document format conversion and creation
+- `../conversion/mineru.md` - PDF to markdown/JSON (layout-aware, OCR)
+- `../ocr/overview.md` - OCR tool selection guide (PaddleOCR, GLM-OCR, MinerU, Docling)
+- `../ocr/paddleocr.md` - PaddleOCR scene text OCR for scanned PDFs and images
+- `../conversion/pandoc.md` - General document format conversion
+- `../browser/playwright.md` - For PDF rendering/screenshots
