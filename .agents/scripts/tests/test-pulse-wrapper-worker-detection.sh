@@ -148,14 +148,13 @@ JSON
 }
 
 main() {
+	trap teardown_test_env EXIT
 	setup_test_env
 	# shellcheck source=/dev/null
 	source "$PULSE_WRAPPER_SCRIPT"
 
 	test_counts_plain_and_dot_prefixed_opencode_workers
 	test_repo_issue_detection_uses_filtered_worker_list
-
-	teardown_test_env
 
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then
