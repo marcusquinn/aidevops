@@ -545,10 +545,15 @@ LAZY_MCPS = {'claude-code-mcp', 'outscraper', 'dataforseo', 'shadcn', 'macos-aut
 # Apply loading policy to existing MCPs and warn about uncategorized ones
 uncategorized = []
 for mcp_name in list(config.get('mcp', {}).keys()):
+    mcp_cfg = config['mcp'].get(mcp_name, {})
+    if not isinstance(mcp_cfg, dict):
+        print(f"  Warning: MCP '{mcp_name}' has non-dict config ({type(mcp_cfg).__name__}), skipping", file=sys.stderr)
+        continue
+
     if mcp_name in EAGER_MCPS:
-        config['mcp'][mcp_name]['enabled'] = True
+        mcp_cfg['enabled'] = True
     elif mcp_name in LAZY_MCPS:
-        config['mcp'][mcp_name]['enabled'] = False
+        mcp_cfg['enabled'] = False
     else:
         uncategorized.append(mcp_name)
 
@@ -709,7 +714,7 @@ if 'openapi-search_*' not in config['tools']:
 # MCPs are disabled via LAZY_MCPS above, but we also need to disable tools
 omo_tool_patterns = ['grep_app_*', 'websearch_*', 'gh_grep_*']
 for tool_pattern in omo_tool_patterns:
-    if tool_pattern not in config.get('tools', {}):
+    if config['tools'].get(tool_pattern) is not False:
         config['tools'][tool_pattern] = False
         print(f"  Disabled {tool_pattern} tools globally (use @github-search subagent)")
 
@@ -869,7 +874,8 @@ echo "Tab order: Build+ → (alphabetical)"
 echo "  Note: Plan+ and AI-DevOps consolidated into Build+ (available as @plan-plus, @aidevops)"
 echo ""
 echo "MCP Loading Strategy:"
-echo "  - MCPs disabled globally, enabled per-agent (reduces context tokens)"
+echo "  - Eager MCPs: Start at launch when explicitly categorized"
+echo "  - Lazy MCPs: Start on-demand via subagents (default policy)"
 echo "  - Use 'mcp-index-helper.sh search <query>' to discover tools on-demand"
 echo "  - Subagents enable specific MCPs via frontmatter tools: section"
 echo ""

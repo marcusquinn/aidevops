@@ -59,7 +59,7 @@ When this subagent is invoked, these tools become available:
 
 | Tool | Description |
 |------|-------------|
-| `claude_code` | Execute a prompt via Claude Code CLI |
+| `claude-code-mcp_*` | MCP-exposed Claude Code tools (use the generated tool name from your runtime) |
 
 ## Example Prompts
 
@@ -87,7 +87,7 @@ The MCP is configured in `opencode.json`:
   "mcp": {
     "claude-code-mcp": {
       "type": "local",
-      "command": ["npx", "-y", "@steipete/claude-code-mcp"],
+      "command": ["npx", "-y", "github:marcusquinn/claude-code-mcp"],
       "enabled": false
     }
   },
@@ -104,7 +104,7 @@ The MCP starts on-demand when this subagent is invoked, avoiding startup overhea
 1. **Be specific**: Provide clear, detailed prompts for best results
 2. **Scope appropriately**: Don't use for trivial tasks
 3. **Check results**: Review sub-agent output before proceeding
-4. **Avoid loops**: Don't have sub-agents spawn more sub-agents
+4. **Avoid loops**: Don't have sub-agents spawn more sub-agents; nested invocations multiply token usage and cost quickly
 
 ## Related
 
