@@ -1980,7 +1980,12 @@ has_worker_for_repo_issue() {
 
 	local matches
 	matches=$(list_active_worker_processes | awk -v issue="$issue_number" -v path="$repo_path" '
-		index($0, path) > 0 && ($0 ~ ("issue-" issue "([^0-9]|$)") || $0 ~ ("Issue #" issue "([^0-9]|$)")) { count++ }
+		BEGIN {
+			esc = path
+			gsub(/[][(){}.^$*+?|\\]/, "\\\\&", esc)
+		}
+		$0 ~ ("--dir[[:space:]]+" esc "([[:space:]]|$)") &&
+		($0 ~ ("issue-" issue "([^0-9]|$)") || $0 ~ ("Issue #" issue "([^0-9]|$)")) { count++ }
 		END { print count + 0 }
 	') || matches=0
 	[[ "$matches" =~ ^[0-9]+$ ]] || matches=0

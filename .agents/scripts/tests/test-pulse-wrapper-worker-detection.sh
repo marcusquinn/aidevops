@@ -78,25 +78,30 @@ ps() {
 }
 
 test_counts_plain_and_dot_prefixed_opencode_workers() {
+	# Line 125: supervisor /pulse — excluded by standalone /pulse filter
+	# Line 126: worker whose session-key contains /pulse-related (not standalone) — must be counted
 	set_ps_fixture "123 00:10 opencode run --dir /tmp/aidevops --title Issue #4342 \"/full-loop Implement issue #4342\"
 124 00:11 /Users/test/.opencode/bin/opencode run --dir /tmp/aidevops --title Issue #4343 \"/full-loop Implement issue #4343\"
-125 00:20 opencode run --dir /tmp/aidevops --title Supervisor Pulse \"/pulse\""
+125 00:20 opencode run --dir /tmp/aidevops --title Supervisor Pulse \"/pulse\"
+126 00:05 opencode run --dir /tmp/aidevops --session-key issue-4344 --title Issue #4344 \"/full-loop Implement issue #4344 -- fix /pulse-related bug\""
 
 	local count
 	count=$(count_active_workers)
-	if [[ "$count" != "2" ]]; then
-		print_result "count_active_workers matches plain and dot-prefixed opencode" 1 "Expected 2, got ${count}"
+	# Lines 123, 124, 126 are workers; line 125 is the supervisor /pulse (excluded)
+	if [[ "$count" != "3" ]]; then
+		print_result "count_active_workers excludes supervisor /pulse but counts worker with /pulse in args" 1 "Expected 3, got ${count}"
 		return 0
 	fi
 
-	print_result "count_active_workers matches plain and dot-prefixed opencode" 0
+	print_result "count_active_workers excludes supervisor /pulse but counts worker with /pulse in args" 0
 	return 0
 }
 
 test_repo_issue_detection_uses_filtered_worker_list() {
 	set_ps_fixture "211 00:31 opencode run --dir /tmp/aidevops --session-key issue-4342 --title Issue #4342: fix \"/full-loop Implement issue #4342\"
 212 00:31 opencode run --dir /tmp/other --session-key issue-4342 --title Issue #4342: other \"/full-loop Implement issue #4342\"
-213 00:05 opencode run --dir /tmp/aidevops --title Supervisor Pulse \"/pulse\""
+213 00:05 opencode run --dir /tmp/aidevops --title Supervisor Pulse \"/pulse\"
+214 00:12 opencode run --dir /tmp/aidevops-tools --session-key issue-4342 --title Issue #4342: tools \"/full-loop Implement issue #4342\""
 
 	if ! has_worker_for_repo_issue "4342" "marcusquinn/aidevops"; then
 		print_result "has_worker_for_repo_issue matches scoped worker process" 1 "Expected worker match for repo issue"
@@ -108,8 +113,37 @@ test_repo_issue_detection_uses_filtered_worker_list() {
 		return 0
 	fi
 
+	# Line 214 uses /tmp/aidevops-tools — a prefix of /tmp/aidevops — must NOT match
+	# Add a second repo entry for aidevops-tools to verify exact path matching
+	cat >"${REPOS_JSON}" <<'JSON'
+{
+  "initialized_repos": [
+    {
+      "slug": "marcusquinn/aidevops",
+      "path": "/tmp/aidevops"
+    },
+    {
+      "slug": "marcusquinn/aidevops-tools",
+      "path": "/tmp/aidevops-tools"
+    }
+  ]
+}
+JSON
+	# Worker 214 is for aidevops-tools, not aidevops — should not count for aidevops
+	local count_aidevops
+	count_aidevops=$(list_active_worker_processes | awk -v path="/tmp/aidevops" '
+		BEGIN { esc = path; gsub(/[][(){}.^$*+?|\\]/, "\\\\&", esc) }
+		$0 ~ ("--dir[[:space:]]+" esc "([[:space:]]|$)") { count++ }
+		END { print count + 0 }
+	')
+	if [[ "$count_aidevops" != "1" ]]; then
+		print_result "has_worker_for_repo_issue does not match prefix-sibling repo path" 1 "Expected 1 match for /tmp/aidevops, got ${count_aidevops}"
+		return 0
+	fi
+
 	print_result "has_worker_for_repo_issue matches scoped worker process" 0
 	print_result "has_worker_for_repo_issue rejects unrelated issues" 0
+	print_result "has_worker_for_repo_issue does not match prefix-sibling repo path" 0
 	return 0
 }
 
