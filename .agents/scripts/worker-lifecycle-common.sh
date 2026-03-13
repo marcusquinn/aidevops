@@ -422,10 +422,11 @@ _extract_session_title_from_cmd() {
 #######################################
 _resolve_session_id_from_cmd() {
 	local cmd="$1"
-	local db_path="${HOME}/.local/share/opencode/opencode.db"
+	local db_path
+	db_path=$(_opencode_db_path)
 	local session_id=""
 
-	if [[ "$cmd" =~ --session[[:space:]]+([^[:space:]]+) ]]; then
+	if [[ "$cmd" =~ --session[[:space:]]+([^[:space:]]+) ]] || [[ "$cmd" =~ --session=([^[:space:]]+) ]]; then
 		session_id="${BASH_REMATCH[1]}"
 		printf '%s' "$session_id"
 		return 0
