@@ -17,7 +17,7 @@ tools:
 
 ## Quick Reference
 
-- **Purpose**: Test emails against spam filters, verify inbox placement, and analyse content deliverability
+- **Purpose**: Test emails against spam filters, verify inbox placement, and analyze content deliverability
 - **Scripts**: `email-test-suite-helper.sh check-placement [domain]`, `email-health-check-helper.sh check [domain]`
 - **Focus**: Content-level spam triggers, provider-specific filtering, seed list testing, reputation signals
 - **Complements**: `email-health-check.md` (DNS auth), `email-testing.md` (design rendering + infrastructure)
@@ -207,7 +207,7 @@ email-test-suite-helper.sh check-placement example.com
 # 4. Check each seed account for placement
 # Record: provider, folder, spam score (if visible in headers)
 
-# 5. If landing in spam, analyse headers from the spam copy
+# 5. If landing in spam, analyze headers from the spam copy
 email-test-suite-helper.sh analyze-headers spam-copy-headers.txt
 ```
 
@@ -437,7 +437,7 @@ email-test-suite-helper.sh test-design newsletter.html
 # Step 6: Send to seed accounts across providers
 # (manual: check inbox vs spam placement)
 
-# Step 7: Analyse headers from any spam-folder copies
+# Step 7: Analyze headers from any spam-folder copies
 email-test-suite-helper.sh analyze-headers spam-headers.txt
 
 # Step 8: Monitor post-send
@@ -454,7 +454,7 @@ email-test-suite-helper.sh analyze-headers spam-headers.txt
 
 1. Check authentication: `email-health-check-helper.sh check example.com`
 2. Check blacklists: `email-test-suite-helper.sh check-placement example.com`
-3. Analyse spam copy headers: `email-test-suite-helper.sh analyze-headers headers.txt`
+3. Analyze spam copy headers: `email-test-suite-helper.sh analyze-headers headers.txt`
 4. Review content for trigger words (see checklist above)
 5. Check sender reputation via Google Postmaster / SNDS
 

@@ -96,7 +96,7 @@ Checks deliverability requirements for each major email provider:
 ### Spam Content Analysis
 
 ```bash
-# Analyse email HTML for spam triggers
+# Analyze email HTML for spam triggers
 email-delivery-test-helper.sh spam-check newsletter.html
 
 # Use SpamAssassin if installed
@@ -192,7 +192,7 @@ For new IPs/domains, follow this gradual volume increase:
 # 1. Check DNS authentication
 email-health-check-helper.sh check example.com
 
-# 2. Analyse content for spam triggers
+# 2. Analyze content for spam triggers
 email-delivery-test-helper.sh spam-check newsletter.html
 
 # 3. Check provider-specific deliverability

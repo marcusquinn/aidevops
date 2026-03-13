@@ -720,9 +720,9 @@ check_email_a11y() {
 
 	# Check: inline styles with small font sizes
 	local small_fonts
-	small_fonts=$(_grep_count 'font-size:\s*(([0-9]|1[01])px|0\.[0-9]+em)' "$file")
+	small_fonts=$(_grep_count 'font-size:\s*(([0-9]|1[0-3])px|0\.(0[0-9]*|[1-7][0-9]*|8([0-6][0-9]*|7[0-5]?))em)' "$file")
 	if [[ "$small_fonts" -gt 0 ]]; then
-		_append "WARN: $small_fonts instance(s) of font-size below 12px"
+		_append "WARN: $small_fonts instance(s) of font-size below 14px"
 		_append "  WCAG 1.4.4 — Text should be resizable; small fonts harm readability"
 		warnings=$((warnings + 1))
 	else

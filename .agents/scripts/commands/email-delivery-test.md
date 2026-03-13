@@ -55,7 +55,7 @@ Format the output as a clear report with:
 Actions:
 1. Run full deliverability report
 2. Check specific provider (Gmail/Outlook/Yahoo)
-3. Analyse email content for spam triggers
+3. Analyze email content for spam triggers
 4. View warm-up schedule
 5. Run seed-list placement test
 ```

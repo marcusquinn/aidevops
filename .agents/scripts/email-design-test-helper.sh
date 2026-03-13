@@ -79,11 +79,6 @@ load_eoa_credentials() {
 	return 0
 }
 
-# Build authorization header for curl
-eoa_auth_args() {
-	echo "-H" "Authorization: Basic ${EOA_AUTH_HEADER}"
-}
-
 print_header() {
 	local msg="$1"
 	echo ""

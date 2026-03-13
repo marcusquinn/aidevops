@@ -35,7 +35,6 @@ async function detect(url) {
     };
     
     console.log(JSON.stringify(output, null, 2));
-    process.exit(0);
   } catch (error) {
     console.error(`Error detecting technologies: ${error.message}`);
     process.exit(1);
