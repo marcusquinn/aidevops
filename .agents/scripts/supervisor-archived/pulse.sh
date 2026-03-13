@@ -555,6 +555,21 @@ _update_task_heartbeat() {
 }
 
 #######################################
+# Remove eval checkpoint file for a task if it exists (t3637)
+# Extracted from Phase 0.7/1c/4b to eliminate duplicated cleanup logic.
+# Args: $1 = task_id, $2 = phase_name (e.g. "Phase 0.7")
+#######################################
+_cleanup_eval_checkpoint() {
+	local task_id="$1"
+	local phase_name="$2"
+	local eval_checkpoint="${SUPERVISOR_DIR}/eval-checkpoints/${task_id}.eval"
+	if [[ -f "$eval_checkpoint" ]]; then
+		rm -f "$eval_checkpoint" || true
+		log_verbose "  $phase_name: removed eval checkpoint for $task_id"
+	fi
+}
+
+#######################################
 # Check if a task has had a prompt-repeat attempt (t1097)
 # Args: $1 = task_id
 # Returns: 0 if attempted, 1 if not
@@ -1208,14 +1223,10 @@ cmd_pulse() {
 			# Clean up worker process tree (in case of zombie children)
 			cleanup_worker_processes "$stale_id" 2>>"$SUPERVISOR_LOG" || true
 
-			# t1256: Clean up eval checkpoint file if it exists — the task has been
+			# t1256/t3637: Clean up eval checkpoint file if it exists — the task has been
 			# recovered, so the checkpoint is no longer needed. Prevents accumulation
 			# of stale checkpoint files from pulse_killed_mid_eval recoveries.
-			local stale_eval_checkpoint="${SUPERVISOR_DIR}/eval-checkpoints/${stale_id}.eval"
-			if [[ -f "$stale_eval_checkpoint" ]]; then
-				rm -f "$stale_eval_checkpoint" 2>/dev/null || true
-				log_verbose "  Phase 0.7: removed eval checkpoint for $stale_id"
-			fi
+			_cleanup_eval_checkpoint "$stale_id" "Phase 0.7"
 
 			stale_recovered=$((stale_recovered + 1))
 		done <<<"$stale_active_tasks"
@@ -1870,12 +1881,8 @@ cmd_pulse() {
 			# Clean up PID file
 			cleanup_worker_processes "$stuck_id" 2>>"$SUPERVISOR_LOG" || true
 
-			# t1256: Clean up eval checkpoint file (matches Phase 0.7 cleanup)
-			local stuck_eval_checkpoint="${SUPERVISOR_DIR}/eval-checkpoints/${stuck_id}.eval"
-			if [[ -f "$stuck_eval_checkpoint" ]]; then
-				rm -f "$stuck_eval_checkpoint" 2>/dev/null || true
-				log_verbose "  Phase 1c: removed eval checkpoint for $stuck_id"
-			fi
+			# t1256/t3637: Clean up eval checkpoint file (matches Phase 0.7 cleanup)
+			_cleanup_eval_checkpoint "$stuck_id" "Phase 1c"
 		done <<<"$stuck_evaluating"
 	fi
 
@@ -2459,14 +2466,10 @@ cmd_pulse() {
 					attempt_self_heal "$orphan_id" "failed" "No worker process found" "${batch_id:-}" 2>>"$SUPERVISOR_LOG" || true
 				}
 
-				# t1256: Clean up eval checkpoint file if it exists (matches Phase 0.7 cleanup)
+				# t1256/t3637: Clean up eval checkpoint file if it exists (matches Phase 0.7 cleanup)
 				# Only evaluating tasks can have checkpoint files; cmd_evaluate may recreate them.
 				if [[ "$orphan_status" == "evaluating" ]]; then
-					local orphan_eval_checkpoint="${SUPERVISOR_DIR}/eval-checkpoints/${orphan_id}.eval"
-					if [[ -f "$orphan_eval_checkpoint" ]]; then
-						rm -f "$orphan_eval_checkpoint" 2>/dev/null || true
-						log_verbose "  Phase 4b: removed eval checkpoint for $orphan_id"
-					fi
+					_cleanup_eval_checkpoint "$orphan_id" "Phase 4b"
 				fi
 			fi
 		done <<<"$db_orphans"
