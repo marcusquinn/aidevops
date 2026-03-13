@@ -287,6 +287,7 @@ PYEOF
 
 #######################################
 # Search for tools matching a query
+# Uses Python with parameterized queries to prevent SQL injection
 #######################################
 search_tools() {
 	local query="$1"
@@ -302,28 +303,58 @@ search_tools() {
 	echo -e "${CYAN}Searching for tools matching: ${NC}$query"
 	echo ""
 
-	# Escape single quotes for SQL injection prevention
-	local query_esc="${query//\'/\'\'}"
-
 	# Validate limit is a positive integer
 	if ! [[ "$limit" =~ ^[0-9]+$ ]]; then
 		log_error "Limit must be a positive integer"
 		return 1
 	fi
 
-	# FTS5 search with ranking
-	sqlite3 -header -column "$INDEX_DB" <<EOF
-SELECT 
-    mcp_name as MCP,
-    tool_name as Tool,
-    description as Description,
-    category as Category,
-    CASE enabled_globally WHEN 1 THEN 'Yes' ELSE 'No' END as Global
-FROM mcp_tools_fts
-WHERE mcp_tools_fts MATCH '$query_esc'
-ORDER BY rank
-LIMIT $limit;
-EOF
+	# Use Python with parameterized queries to prevent FTS5 injection
+	python3 - "$INDEX_DB" "$query" "$limit" <<'PYEOF'
+import sys
+import sqlite3
+
+db_path, query, limit = sys.argv[1], sys.argv[2], int(sys.argv[3])
+
+conn = sqlite3.connect(db_path)
+conn.row_factory = sqlite3.Row
+cursor = conn.cursor()
+
+try:
+    cursor.execute('''
+        SELECT
+            mcp_name AS MCP,
+            tool_name AS Tool,
+            description AS Description,
+            category AS Category,
+            CASE enabled_globally WHEN 1 THEN 'Yes' ELSE 'No' END AS Global
+        FROM mcp_tools_fts
+        WHERE mcp_tools_fts MATCH ?
+        ORDER BY rank
+        LIMIT ?
+    ''', (query, limit))
+    rows = cursor.fetchall()
+except sqlite3.OperationalError as e:
+    print(f"Search error (invalid query syntax): {e}", file=sys.stderr)
+    conn.close()
+    sys.exit(1)
+
+if not rows:
+    print("No results found.")
+    conn.close()
+    sys.exit(0)
+
+# Print column-aligned output
+cols = ['MCP', 'Tool', 'Description', 'Category', 'Global']
+widths = [max(len(str(r[c])) for r in rows + [dict(zip(cols, cols))]) for c in cols]
+header = '  '.join(c.ljust(w) for c, w in zip(cols, widths))
+print(header)
+print('  '.join('-' * w for w in widths))
+for row in rows:
+    print('  '.join(str(row[c]).ljust(w) for c, w in zip(cols, widths)))
+
+conn.close()
+PYEOF
 	return 0
 }
 
@@ -350,20 +381,44 @@ GROUP BY mcp_name
 ORDER BY mcp_name;
 EOF
 	else
-		# List tools for specific MCP
+		# List tools for specific MCP using parameterized query
 		echo -e "${CYAN}Tools for MCP: ${NC}$mcp_name"
 		echo ""
-		# Escape single quotes for SQL injection prevention
-		local mcp_name_esc="${mcp_name//\'/\'\'}"
-		sqlite3 -header -column "$INDEX_DB" <<EOF
-SELECT 
-    tool_name as Tool,
-    description as Description,
-    CASE enabled_globally WHEN 1 THEN 'Yes' ELSE 'No' END as Global
-FROM mcp_tools
-WHERE mcp_name = '$mcp_name_esc'
-ORDER BY tool_name;
-EOF
+		python3 - "$INDEX_DB" "$mcp_name" <<'PYEOF'
+import sys
+import sqlite3
+
+db_path, mcp_name = sys.argv[1], sys.argv[2]
+
+conn = sqlite3.connect(db_path)
+conn.row_factory = sqlite3.Row
+cursor = conn.cursor()
+
+cursor.execute('''
+    SELECT
+        tool_name AS Tool,
+        description AS Description,
+        CASE enabled_globally WHEN 1 THEN 'Yes' ELSE 'No' END AS Global
+    FROM mcp_tools
+    WHERE mcp_name = ?
+    ORDER BY tool_name
+''', (mcp_name,))
+
+rows = cursor.fetchall()
+conn.close()
+
+if not rows:
+    print("No tools found for this MCP.")
+    sys.exit(0)
+
+cols = ['Tool', 'Description', 'Global']
+widths = [max(len(str(r[c])) for r in rows + [dict(zip(cols, cols))]) for c in cols]
+header = '  '.join(c.ljust(w) for c, w in zip(cols, widths))
+print(header)
+print('  '.join('-' * w for w in widths))
+for row in rows:
+    print('  '.join(str(row[c]).ljust(w) for c, w in zip(cols, widths)))
+PYEOF
 	fi
 	return 0
 }
@@ -431,23 +486,39 @@ rebuild_index() {
 
 #######################################
 # Get MCP for a tool (for lazy-loading)
+# Uses Python with parameterized queries to prevent SQL injection
 #######################################
 get_mcp_for_tool() {
 	local tool_query="$1"
 
 	init_db
 
-	# Escape single quotes and percent signs for SQL injection prevention
-	local tool_query_esc="${tool_query//\'/\'\'}"
-	tool_query_esc="${tool_query_esc//%/%%}"
+	# Use Python with parameterized queries to prevent LIKE injection
+	# (shell escaping of %, _, and ' in LIKE patterns is error-prone)
+	python3 - "$INDEX_DB" "$tool_query" <<'PYEOF'
+import sys
+import sqlite3
 
-	# Find which MCP provides this tool
-	sqlite3 "$INDEX_DB" <<EOF
-SELECT DISTINCT mcp_name
-FROM mcp_tools
-WHERE tool_name LIKE '%$tool_query_esc%'
-LIMIT 1;
-EOF
+db_path, tool_query = sys.argv[1], sys.argv[2]
+
+conn = sqlite3.connect(db_path)
+cursor = conn.cursor()
+
+# Parameterized LIKE: bind the pattern as a parameter, not via interpolation
+pattern = f"%{tool_query}%"
+cursor.execute('''
+    SELECT DISTINCT mcp_name
+    FROM mcp_tools
+    WHERE tool_name LIKE ?
+    LIMIT 1
+''', (pattern,))
+
+row = cursor.fetchone()
+if row:
+    print(row[0])
+
+conn.close()
+PYEOF
 	return 0
 }
 
