@@ -228,7 +228,7 @@ app.get("/api/stream", (c) => {
 app.post("/api/upload", async (c) => {
   const body = await c.req.parseBody();
   const file = body["file"] as File;
-  
+
   if (!file) {
     return c.json({ error: "No file" }, 400);
   }
@@ -244,7 +244,7 @@ app.post("/api/upload", async (c) => {
   if (!ALLOWED_TYPES.includes(file.type)) {
     return c.json({ error: "Invalid file type" }, 400);
   }
-  
+
   // Sanitize filename: strip path segments, normalize characters
   const sanitizedBase = file.name
     .replace(/[/\\]/g, "")           // Remove path separators
@@ -257,7 +257,7 @@ app.post("/api/upload", async (c) => {
 
   const buffer = await file.arrayBuffer();
   // Process file with safeName...
-  
+
   return c.json({ filename: safeName, size: file.size });
 });
 ```
