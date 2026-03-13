@@ -109,26 +109,14 @@ update_opencode_config() {
 	print_info "Updating OpenCode configuration..."
 
 	# Generate OpenCode commands (independent of opencode.json — writes to ~/.config/opencode/command/)
-	# Run this first so /onboarding and other commands exist even if opencode.json hasn't been created yet
 	_run_generator ".agents/scripts/generate-opencode-commands.sh" \
 		"Generating OpenCode commands..." \
 		"OpenCode commands configured" \
 		"OpenCode command generation encountered issues"
 
-	# Generate OpenCode agent configuration (requires opencode.json)
+	# Generate OpenCode agent configuration (creates opencode.json if missing)
 	# - Primary agents: Added to opencode.json (for Tab order & MCP control)
 	# - Subagents: Generated as markdown in ~/.config/opencode/agent/
-	local opencode_config
-	if ! opencode_config=$(find_opencode_config); then
-		print_info "OpenCode config (opencode.json) not found — agent configuration skipped (commands still generated)"
-		return 0
-	fi
-
-	print_info "Found OpenCode config at: $opencode_config"
-
-	# Create backup (with rotation)
-	create_backup_with_rotation "$opencode_config" "opencode"
-
 	_run_generator ".agents/scripts/generate-opencode-agents.sh" \
 		"Generating OpenCode agent configuration..." \
 		"OpenCode agents configured (11 primary in JSON, subagents as markdown)" \
