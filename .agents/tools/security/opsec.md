@@ -171,8 +171,16 @@ Platforms that use or may use your data for AI training:
 [NetBird](https://netbird.io) (Apache-2.0, Go) creates encrypted peer-to-peer overlays using WireGuard:
 
 ```bash
-# Install
-curl -fsSL https://pkgs.netbird.io/install.sh | sh
+# Install — download and review before executing (never pipe curl directly to sh)
+curl -fsSL https://pkgs.netbird.io/install.sh -o netbird-install.sh
+# Review the script before running:
+less netbird-install.sh
+# Then execute only if satisfied:
+sh netbird-install.sh
+rm netbird-install.sh
+
+# Alternative: use the official package repository for your distro
+# (avoids script execution entirely — see https://pkgs.netbird.io)
 
 # Connect
 netbird up --setup-key YOUR_SETUP_KEY
