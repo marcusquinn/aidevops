@@ -287,6 +287,7 @@ run();
 ```bash
 #!/bin/bash
 # bench-agent-browser.sh
+set -euo pipefail
 
 TESTS=("navigate" "formFill" "extract" "multiStep")
 declare -A RESULTS
@@ -294,47 +295,47 @@ declare -A RESULTS
 bench_navigate() {
   local start end
   start=$(python3 -c 'import time; print(time.time())')
-  agent-browser open "https://the-internet.herokuapp.com/" 2>/dev/null
-  agent-browser screenshot /tmp/bench-ab-nav.png 2>/dev/null
+  agent-browser open "https://the-internet.herokuapp.com/"
+  agent-browser screenshot /tmp/bench-ab-nav.png
   end=$(python3 -c 'import time; print(time.time())')
   echo "$(python3 -c "print(f'{$end - $start:.2f}')")"
-  agent-browser close 2>/dev/null
+  agent-browser close
 }
 
 bench_formFill() {
   local start end
   start=$(python3 -c 'import time; print(time.time())')
-  agent-browser open "https://the-internet.herokuapp.com/login" 2>/dev/null
-  agent-browser snapshot -i 2>/dev/null
-  agent-browser fill '#username' 'tomsmith' 2>/dev/null
-  agent-browser fill '#password' 'SuperSecretPassword!' 2>/dev/null
-  agent-browser click 'button[type="submit"]' 2>/dev/null
-  agent-browser wait url '**/secure' 2>/dev/null
+  agent-browser open "https://the-internet.herokuapp.com/login"
+  agent-browser snapshot -i
+  agent-browser fill '@username' 'tomsmith'
+  agent-browser fill '@password' 'SuperSecretPassword!'
+  agent-browser click '@submit'
+  agent-browser wait --url '**/secure'
   end=$(python3 -c 'import time; print(time.time())')
   echo "$(python3 -c "print(f'{$end - $start:.2f}')")"
-  agent-browser close 2>/dev/null
+  agent-browser close
 }
 
 bench_extract() {
   local start end
   start=$(python3 -c 'import time; print(time.time())')
-  agent-browser open "https://the-internet.herokuapp.com/challenging_dom" 2>/dev/null
-  agent-browser eval "JSON.stringify([...document.querySelectorAll('table tbody tr')].slice(0,5).map(r=>r.textContent.trim()))" 2>/dev/null
+  agent-browser open "https://the-internet.herokuapp.com/challenging_dom"
+  agent-browser eval "JSON.stringify([...document.querySelectorAll('table tbody tr')].slice(0,5).map(r=>r.textContent.trim()))"
   end=$(python3 -c 'import time; print(time.time())')
   echo "$(python3 -c "print(f'{$end - $start:.2f}')")"
-  agent-browser close 2>/dev/null
+  agent-browser close
 }
 
 bench_multiStep() {
   local start end
   start=$(python3 -c 'import time; print(time.time())')
-  agent-browser open "https://the-internet.herokuapp.com/" 2>/dev/null
-  agent-browser click 'a[href="/abtest"]' 2>/dev/null
-  agent-browser wait url '**/abtest' 2>/dev/null
-  agent-browser get url 2>/dev/null
+  agent-browser open "https://the-internet.herokuapp.com/"
+  agent-browser click 'a[href="/abtest"]'
+  agent-browser wait --url '**/abtest'
+  agent-browser get url
   end=$(python3 -c 'import time; print(time.time())')
   echo "$(python3 -c "print(f'{$end - $start:.2f}')")"
-  agent-browser close 2>/dev/null
+  agent-browser close
 }
 
 echo "=== agent-browser Benchmark ==="
@@ -585,22 +586,23 @@ benchParallel();
 ```bash
 #!/bin/bash
 # bench-parallel-ab.sh
+set -euo pipefail
 start=$(python3 -c 'import time; print(time.time())')
-agent-browser --session s1 open "https://the-internet.herokuapp.com/login" 2>/dev/null &
-agent-browser --session s2 open "https://the-internet.herokuapp.com/checkboxes" 2>/dev/null &
-agent-browser --session s3 open "https://the-internet.herokuapp.com/dropdown" 2>/dev/null &
+agent-browser --session s1 open "https://the-internet.herokuapp.com/login" &
+agent-browser --session s2 open "https://the-internet.herokuapp.com/checkboxes" &
+agent-browser --session s3 open "https://the-internet.herokuapp.com/dropdown" &
 wait
 end=$(python3 -c 'import time; print(time.time())')
 echo "3 parallel sessions: $(python3 -c "print(f'{$end - $start:.2f}')")s"
 
 # Verify isolation
-echo "s1: $(agent-browser --session s1 get url 2>/dev/null)"
-echo "s2: $(agent-browser --session s2 get url 2>/dev/null)"
-echo "s3: $(agent-browser --session s3 get url 2>/dev/null)"
+echo "s1: $(agent-browser --session s1 get url)"
+echo "s2: $(agent-browser --session s2 get url)"
+echo "s3: $(agent-browser --session s3 get url)"
 
-agent-browser --session s1 close 2>/dev/null
-agent-browser --session s2 close 2>/dev/null
-agent-browser --session s3 close 2>/dev/null
+agent-browser --session s1 close
+agent-browser --session s2 close
+agent-browser --session s3 close
 ```
 
 ### Crawl4AI Parallel Test

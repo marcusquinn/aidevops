@@ -50,7 +50,7 @@ npx chrome-devtools-mcp@latest --autoConnect
 
 **Capabilities**:
 - Performance: `lighthouse()`, `measureWebVitals()` (LCP, FID, CLS, TTFB)
-- Network: `monitorNetwork()`, `throttleRequest()` (individual request throttling, Chrome 136+)
+- Network: `monitorNetwork()`, global network throttling via `emulate` tool with `networkConditions`
 - Scraping: `extractData()`, `screenshot()` (fullPage, element)
 - Debug: `captureConsole()`, CSS coverage, visual regression
 - Mobile: `emulateDevice()`, `simulateTouch()` (tap, swipe)

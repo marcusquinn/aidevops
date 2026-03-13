@@ -50,7 +50,7 @@ Purpose-built for extraction. Limited interaction via `js_code` parameter or C4A
 
 **AI Page Understanding**: Returns LLM-ready markdown by default. Use `JsonCssExtractionStrategy` for structured data or `LLMExtractionStrategy` for AI-parsed content. No need for screenshots or ARIA - output is already AI-optimized.
 
-**Limitations**: No extensions, no form filling, no interactive automation. No Chrome DevTools MCP pairing.
+**Limitations**: No extensions. Limited interaction via `js_code` parameter or C4A-Script DSL (CLICK, TYPE, PRESS commands) — for complex interactive flows, use Playwright. No Chrome DevTools MCP pairing.
 
 **Install**: `python3 -m venv ~/.aidevops/crawl4ai-venv && source ~/.aidevops/crawl4ai-venv/bin/activate && pip install crawl4ai && crawl4ai-setup`
 
