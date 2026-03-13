@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.172.21] - 2026-03-13
+
+### Changed
+
+- Tests: guard worktree-first pre-edit guidance in release preflight (#2208)
+- Maintenance: claim t1476
+- Maintenance: claim t1475
+
 ## [2.172.20] - 2026-03-13
 
 ### Changed
