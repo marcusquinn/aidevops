@@ -887,6 +887,7 @@ _pg_record_session_signal() {
 # Sets global variables: PG_STDIN_CONTENT (file path), PG_STDIN_TRUNCATED (true/false), PG_STDIN_BYTES (count)
 # Caller must clean up the temp file (trap is set by this function)
 # Returns: 0 on success, 1 on error
+# shellcheck disable=SC2120 # $1 is an optional max_bytes override with a default
 _pg_read_stdin_capped() {
 	local max_bytes=${1:-$((10 * 1024 * 1024))} # Default 10MB
 
@@ -944,12 +945,13 @@ cmd_scan_stdin() {
 	fi
 
 	# Read stdin with size cap using shared helper
+	# shellcheck disable=SC2119
 	if ! _pg_read_stdin_capped; then
 		return 1
 	fi
 
 	local content
-	content=$(cat "$PG_STDIN_CONTENT")
+	content=$(<"$PG_STDIN_CONTENT")
 
 	if [[ -z "$content" ]]; then
 		_pg_log_error "No content received on stdin"
@@ -1890,30 +1892,45 @@ main() {
 			_pg_log_error "check-stdin requires piped input, not a TTY"
 			return 1
 		fi
+		# shellcheck disable=SC2119
 		if ! _pg_read_stdin_capped; then
 			return 1
 		fi
 		local content
-		content=$(cat "$PG_STDIN_CONTENT")
+		content=$(<"$PG_STDIN_CONTENT")
 		if [[ -z "$content" ]]; then
 			_pg_log_error "No input received on stdin"
 			return 1
 		fi
+		if [[ "$PG_STDIN_TRUNCATED" == "true" ]]; then
+			_pg_log_warn "Input was truncated at $PG_STDIN_BYTES bytes — check result may be incomplete"
+		fi
 		cmd_check "$content"
+		local rc=$?
+		# Return exit code 2 (truncated) if check passed but input was truncated,
+		# so callers know the clean result covers partial input only
+		if [[ $rc -eq 0 && "$PG_STDIN_TRUNCATED" == "true" ]]; then
+			return 2
+		fi
+		return $rc
 		;;
 	sanitize-stdin)
 		if [[ -t 0 ]]; then
 			_pg_log_error "sanitize-stdin requires piped input, not a TTY"
 			return 1
 		fi
+		# shellcheck disable=SC2119
 		if ! _pg_read_stdin_capped; then
 			return 1
 		fi
 		local content
-		content=$(cat "$PG_STDIN_CONTENT")
+		content=$(<"$PG_STDIN_CONTENT")
 		if [[ -z "$content" ]]; then
 			_pg_log_error "No input received on stdin"
 			return 1
+		fi
+		if [[ "$PG_STDIN_TRUNCATED" == "true" ]]; then
+			_pg_log_warn "Input was truncated at $PG_STDIN_BYTES bytes — sanitized output may be incomplete"
 		fi
 		cmd_sanitize "$content"
 		;;
