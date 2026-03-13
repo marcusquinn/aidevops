@@ -1020,8 +1020,8 @@ test_mail_tls() {
 	not_after=$(echo "$dates" | grep 'notAfter' | cut -d= -f2 || true)
 	if [[ -n "$not_after" ]]; then
 		local expiry_epoch
-		expiry_epoch=$(date -j -f "%b %d %H:%M:%S %Y %Z" "$not_after" "+%s" 2>/dev/null || date -d "$not_after" "+%s" 2>/dev/null || echo "0")
-		if [[ "$expiry_epoch" == "0" ]]; then
+		expiry_epoch=$(date -j -f "%b %d %H:%M:%S %Y %Z" "$not_after" "+%s" 2>/dev/null || date -d "$not_after" "+%s" 2>/dev/null)
+		if [[ -z "$expiry_epoch" ]]; then
 			print_warning "Unable to parse certificate expiry date: $not_after"
 		else
 			local now_epoch
