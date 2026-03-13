@@ -518,12 +518,12 @@ For premium plugins or plugins where PRs aren't accepted, create a companion plu
 
    ```php
    <?php
-   /**
-    * Plugin Name: Plugin Slug Fix
-    * Description: Patches and fixes for Plugin Slug that survive updates
-    * Version: 1.0.0
-    * Requires Plugins: plugin-slug
-    */
+    /**
+     * Plugin Name: Plugin Slug Fix
+     * Description: Patches and fixes for Plugin Slug that survive updates
+     * Version: 1.0.0
+     * Requires Plugins: plugin-slug
+     */
 
    // Ensure original plugin is loaded first
    add_action('plugins_loaded', 'plugin_slug_fix_init', 20);
@@ -586,12 +586,12 @@ For premium plugins or plugins where PRs aren't accepted, create a companion plu
 3. **Document what you're fixing**:
 
    ```php
-   /**
-    * Fix: Original plugin doesn't handle multisite correctly
-    * Issue: https://github.com/original/plugin/issues/123
-    * Affects: v2.0.0 - v2.3.0
-    * Remove when: Fixed in upstream
-    */
+    /**
+     * Fix: Original plugin doesn't handle multisite correctly
+     * Issue: https://github.com/original/plugin/issues/123
+     * Affects: v2.0.0 - v2.3.0
+     * Remove when: Fixed in upstream
+     */
    ```
 
 4. **Version compatibility checks**:
