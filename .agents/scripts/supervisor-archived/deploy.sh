@@ -1430,6 +1430,7 @@ Instructions:
 		echo ''
 		echo "'${dispatch_script}' >> '${log_file}' 2>&1"
 		echo "rc=\$?"
+		echo "rm -f '${dispatch_script}' || true"
 		echo "echo \"EXIT:\${rc}\" >> '${log_file}'"
 		echo "if [ \$rc -ne 0 ]; then"
 		echo "  echo \"WORKER_DISPATCH_ERROR: review-fix script exited with code \${rc}\" >> '${log_file}'"

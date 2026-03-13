@@ -1238,6 +1238,7 @@ EOF
 		echo 'trap cleanup_children EXIT INT TERM'
 		echo "'${dispatch_script}' >> '${worker_log}' 2>&1"
 		echo "rc=\$?"
+		echo "rm -f '${dispatch_script}' || true"
 		echo "echo \"EXIT:\${rc}\" >> '${worker_log}'"
 		echo "if [ \$rc -ne 0 ]; then"
 		echo "  echo \"DECOMPOSE_WORKER_ERROR: dispatch exited with code \${rc}\" >> '${worker_log}'"
