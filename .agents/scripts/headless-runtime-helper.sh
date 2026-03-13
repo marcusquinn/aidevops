@@ -23,7 +23,7 @@ readonly SANDBOX_EXEC_HELPER="${SCRIPT_DIR}/sandbox-exec-helper.sh"
 readonly HEADLESS_SANDBOX_TIMEOUT_DEFAULT="${AIDEVOPS_HEADLESS_SANDBOX_TIMEOUT:-3600}"
 
 build_sandbox_passthrough_csv() {
-	local passthrough_csv=""
+	local names=()
 	local seen_names=" "
 	local name
 
@@ -34,16 +34,13 @@ build_sandbox_passthrough_csv() {
 				continue
 			fi
 			seen_names+="${name} "
-			if [[ -z "$passthrough_csv" ]]; then
-				passthrough_csv="$name"
-			else
-				passthrough_csv+=",$name"
-			fi
+			names+=("$name")
 			;;
 		esac
 	done < <(env)
 
-	printf '%s' "$passthrough_csv"
+	local IFS=,
+	printf '%s' "${names[*]}"
 	return 0
 }
 
@@ -746,11 +743,11 @@ cmd_run() {
 				printf -v escaped_cmd '%q ' "${cmd[@]}"
 				escaped_cmd="${escaped_cmd% }"
 				passthrough_csv="$(build_sandbox_passthrough_csv)"
+				local sandbox_args=()
 				if [[ -n "$passthrough_csv" ]]; then
-					"$SANDBOX_EXEC_HELPER" run --timeout "$HEADLESS_SANDBOX_TIMEOUT_DEFAULT" --allow-secret-io --passthrough "$passthrough_csv" -- "$escaped_cmd" 2>&1 | tee "$output_file"
-				else
-					"$SANDBOX_EXEC_HELPER" run --timeout "$HEADLESS_SANDBOX_TIMEOUT_DEFAULT" --allow-secret-io -- "$escaped_cmd" 2>&1 | tee "$output_file"
+					sandbox_args=(--passthrough "$passthrough_csv")
 				fi
+				"$SANDBOX_EXEC_HELPER" run --timeout "$HEADLESS_SANDBOX_TIMEOUT_DEFAULT" --allow-secret-io "${sandbox_args[@]}" -- "$escaped_cmd" 2>&1 | tee "$output_file"
 				echo "${PIPESTATUS[0]}"
 			else
 				"${cmd[@]}" 2>&1 | tee "$output_file"
