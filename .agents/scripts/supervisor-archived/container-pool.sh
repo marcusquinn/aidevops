@@ -187,8 +187,12 @@ pool_spawn() {
 			token_value=$(gopass show "$token_ref" 2>/dev/null || echo "")
 		fi
 		if [[ -z "$token_value" ]]; then
-			# Try as env var name
-			token_value="${!token_ref:-}"
+			# Try as env var name only when token_ref is a valid identifier
+			# (indirect expansion ${!token_ref} aborts under set -u if token_ref
+			# contains path characters like "foo/bar")
+			if [[ "$token_ref" =~ ^[A-Za-z_][A-Za-z0-9_]*$ ]]; then
+				token_value="${!token_ref:-}"
+			fi
 		fi
 		if [[ -n "$token_value" ]]; then
 			docker_args+=("-e" "CLAUDE_CODE_OAUTH_TOKEN=$token_value")
@@ -567,6 +571,13 @@ pool_record_completion() {
 pool_mark_rate_limited() {
 	local container_id="$1"
 	local cooldown="${2:-$CONTAINER_POOL_RATE_LIMIT_COOLDOWN}"
+
+	# Validate cooldown is a non-negative integer to prevent SQL injection
+	# via malformed timestamp expressions
+	if ! [[ "$cooldown" =~ ^[0-9]+$ ]]; then
+		log_warn "Invalid cooldown '$cooldown' — falling back to default ($CONTAINER_POOL_RATE_LIMIT_COOLDOWN)"
+		cooldown="$CONTAINER_POOL_RATE_LIMIT_COOLDOWN"
+	fi
 
 	db "$SUPERVISOR_DB" "
 		UPDATE container_pool

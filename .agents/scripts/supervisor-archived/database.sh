@@ -771,8 +771,14 @@ CONTEST_SQL
 	has_container_pool=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM sqlite_master WHERE type='table' AND name='container_pool';" 2>/dev/null || echo "0")
 	if [[ "$has_container_pool" -eq 0 ]]; then
 		log_info "Creating container_pool tables (t1165.2)..."
-		_create_container_pool_schema
-		log_success "Created container_pool and container_dispatch_log tables (t1165.2)"
+		# _create_container_pool_schema is defined in container-pool.sh; guard
+		# against callers that source database.sh without container-pool.sh
+		if declare -f _create_container_pool_schema >/dev/null 2>&1; then
+			_create_container_pool_schema
+			log_success "Created container_pool and container_dispatch_log tables (t1165.2)"
+		else
+			log_warn "_create_container_pool_schema not defined — source container-pool.sh before database.sh to create container_pool tables (t1165.2)"
+		fi
 	fi
 
 	# Migrate: create stuck_detection_log table if missing (t1332)
@@ -940,7 +946,12 @@ SQL
 	_create_action_dedup_log_schema
 
 	# Container pool — schema defined in _create_container_pool_schema() (t1165.2)
-	_create_container_pool_schema
+	# Guard against callers that source database.sh without container-pool.sh
+	if declare -f _create_container_pool_schema >/dev/null 2>&1; then
+		_create_container_pool_schema
+	else
+		log_warn "_create_container_pool_schema not defined — source container-pool.sh before database.sh (t1165.2)"
+	fi
 
 	# Stuck detection log — schema defined in _create_stuck_detection_schema() (t1332)
 	_create_stuck_detection_schema

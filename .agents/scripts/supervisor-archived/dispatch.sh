@@ -3233,7 +3233,7 @@ cmd_dispatch() {
 		pool_container_id=$(pool_select_container 2>/dev/null) || pool_container_id=""
 		if [[ -n "$pool_container_id" ]]; then
 			log_info "Container pool: selected $pool_container_id for $task_id (t1165.2)"
-			pool_record_dispatch "$pool_container_id" "$task_id" 2>/dev/null || true
+			pool_record_dispatch "$pool_container_id" "$task_id" || true
 		fi
 	fi
 
