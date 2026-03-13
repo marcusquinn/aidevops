@@ -6,26 +6,12 @@
 
 set -euo pipefail
 
-# VERSION file locations - check in order of preference:
-# 1. Deployed agents directory (setup.sh copies here)
-# 2. Legacy location (some older installs)
-# 3. Source repo for developers
-VERSION_FILE_AGENTS="$HOME/.aidevops/agents/VERSION"
-VERSION_FILE_LEGACY="$HOME/.aidevops/VERSION"
-VERSION_FILE_DEV="$HOME/Git/aidevops/VERSION"
+# Shared version-finding logic (avoids duplication with log-issue-helper.sh)
+# shellcheck source=lib/version.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib/version.sh"
 
 get_version() {
-	# Use -r to check readability, not just existence (avoids cat failure under set -e)
-	if [[ -r "$VERSION_FILE_AGENTS" ]]; then
-		cat "$VERSION_FILE_AGENTS"
-	elif [[ -r "$VERSION_FILE_LEGACY" ]]; then
-		cat "$VERSION_FILE_LEGACY"
-	elif [[ -r "$VERSION_FILE_DEV" ]]; then
-		cat "$VERSION_FILE_DEV"
-	else
-		echo "unknown"
-	fi
-	return 0
+	aidevops_find_version
 }
 
 detect_app() {
