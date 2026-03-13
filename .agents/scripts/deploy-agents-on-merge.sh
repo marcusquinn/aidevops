@@ -277,9 +277,10 @@ deploy_all_agents() {
 	if [[ "$DRY_RUN" == "true" ]]; then
 		log_info "[dry-run] Would sync $source_dir/ -> $TARGET_DIR/"
 		local preserve_display="custom/, draft/, loop-state/"
-		if [[ ${#PLUGIN_NAMESPACES[@]} -gt 0 ]]; then
-			preserve_display+=", ${PLUGIN_NAMESPACES[*]}"
-		fi
+		local plugin_namespace
+		for plugin_namespace in ${PLUGIN_NAMESPACES+"${PLUGIN_NAMESPACES[@]}"}; do
+			preserve_display+=", $plugin_namespace"
+		done
 		log_info "[dry-run] Preserving: $preserve_display"
 		return 0
 	fi
