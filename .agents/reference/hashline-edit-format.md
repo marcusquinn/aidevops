@@ -55,7 +55,7 @@ Example: `"5#aa"` — line 5 with hash `aa`.
 ZPMQVRWSNKTXJBYH
 ```
 
-Each byte of the xxHash32 result is encoded as two characters from this 16-character alphabet. The low byte of the hash (`& 0xff`) selects one entry from a 256-entry lookup table (`DICT`), where each entry is a 2-char string formed from the high nibble and low nibble of the byte index.
+The hash is generated using only the low byte of the 32-bit xxHash32 result. This byte (`& 0xff`) selects one entry from a 256-entry lookup table (`DICT`), where each entry is a 2-char string formed by mapping the high and low nibbles of the byte's value to the custom alphabet.
 
 **Why a custom alphabet?** The characters `Z P M Q V R W S N K T X J B Y H` are visually distinct and unlikely to appear in common code tokens, reducing false-positive matches when parsing references from model output.
 
@@ -116,7 +116,7 @@ No partial mutations occur — either all references are valid or none are appli
 Thrown when one or more references are stale. The error message is grep-style output:
 
 ```
-2 lines have changed since last read. Use the updated LINE#ID references shown below (>>> marks changed lines).
+2 lines have changed since last read. Use the updated LINE#HASH references shown below (>>> marks changed lines).
 
     3#ZP:function hi() {
 >>> 4#QV:  return value;
@@ -213,7 +213,7 @@ Used for `insert` operations. Strips both boundaries if echoed:
 - If `dstLines[last]` equals `beforeLine`, strip last
 
 #### `stripRangeBoundaryEcho(fileLines, startLine, endLine, dstLines)`
-Used for `set` and `replace`. Strips the line immediately before `startLine` and immediately after `endLine` if echoed in `dstLines`. Only activates when `dstLines.length > 1` and `dstLines.length > count` (the model grew the edit), to avoid turning a single-line replacement into a deletion.
+Used for `set` and `replace`. Strips the line immediately before `startLine` and immediately after `endLine` if they are echoed as the first and last lines of `dstLines`, respectively. Only activates when `dstLines.length > 1` and `dstLines.length > count` (the model grew the edit), to avoid turning a single-line replacement into a deletion.
 
 ### 2. Line merge detection: `maybeExpandSingleLineMerge`
 
@@ -325,7 +325,7 @@ Edits must be applied bottom-up (highest line first). Applying top-down would sh
 ```
 "s:{line}:{content}"         // set
 "r:{first}:{last}:{content}" // replace
-"i:{after}:{content}"        // append
+"i:{after}:{content}"        // append (uses `i` in implementation)
 "ib:{before}:{content}"      // prepend
 "ix:{after}:{before}:{content}" // insert
 ```
