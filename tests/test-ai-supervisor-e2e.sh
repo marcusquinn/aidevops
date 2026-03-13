@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC2034,SC1090,SC2030,SC2317,SC2329
+# shellcheck disable=SC2034,SC1090,SC2030,SC2031,SC2317,SC2329
 # SC2034: Variables set for sourced scripts (BLUE, SUPERVISOR_DB, etc.)
 # SC1090: Non-constant source paths (test harness pattern)
 # SC2030: PATH modification inside subshells is intentional — each test
 #         runs in a ( ... ) subshell for isolation, and export PATH is
 #         needed so sourced scripts and child processes see mock binaries.
+# SC2031: Companion to SC2030 — PATH changes in subshells are intentional;
+#         each test subshell is isolated by design, so the change not
+#         persisting to the parent is the expected and desired behaviour.
 # SC2317: Commands inside subshell test functions appear unreachable to ShellCheck
 # SC2329: _test_* functions defined and called inline; ShellCheck cannot trace subshell calls
 #
