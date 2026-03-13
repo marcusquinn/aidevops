@@ -6,171 +6,95 @@ tools: [bash, read, write]
 
 # Wappalyzer OSS Provider
 
-Local/offline technology stack detection using Wappalyzer's open-source detection engine.
+Local/offline technology stack detection using `@ryntab/wappalyzer-node` via `wappalyzer-helper.sh`.
 
 ## Overview
 
-Wappalyzer is a technology profiler that identifies software on websites: CMS, frameworks, analytics, CDN, hosting, JavaScript libraries, UI frameworks, and more. The core detection engine was open-source before acquisition and remains available through maintained forks and npm packages.
+Wappalyzer is a technology profiler that identifies software on websites: CMS, frameworks, analytics,
+CDN, hosting, JavaScript libraries, UI frameworks, and more. This provider uses the
+`@ryntab/wappalyzer-node` npm package (a maintained fork of the original Wappalyzer engine) with a
+custom shell helper and Node.js wrapper for local, offline detection.
 
 **Strengths**:
+
 - Comprehensive technology database (2000+ technologies)
 - Local/offline detection (no API dependencies)
-- Headless browser support
-- JSON output for programmatic use
-- Active maintenance via official npm package
+- 7-day result cache for repeated lookups
+- JSON output in common schema for `tech-stack-helper.sh` integration
 
 **Use cases**:
+
 - Tech stack audits
 - Competitor analysis
 - Security assessments
 - Migration planning
 
+## Implementation
+
+The provider consists of three files:
+
+| File | Purpose |
+|------|---------|
+| `.agents/scripts/wappalyzer-helper.sh` | CLI entry point — commands, caching, dependency management |
+| `.agents/scripts/wappalyzer-detect.mjs` | Node.js ES module — calls `@ryntab/wappalyzer-node`, transforms output to common schema |
+| `.agents/scripts/package.json` | npm manifest declaring `@ryntab/wappalyzer-node` dependency |
+
 ## Installation
 
 ### Prerequisites
 
-- Node.js 18+ and npm
-- Chrome/Chromium (for headless browser detection)
+- Node.js 18+
+- npm
+- jq
 
-### Install Wappalyzer CLI
+### Install via helper script
 
 ```bash
-npm install -g wappalyzer
+.agents/scripts/wappalyzer-helper.sh install
 ```
 
-Verify installation:
+This installs `jq` (via Homebrew if available) and `@ryntab/wappalyzer-node` globally via npm.
+
+### Verify installation
 
 ```bash
-wappalyzer --version
+.agents/scripts/wappalyzer-helper.sh status
 ```
 
 ## Usage
 
-### Basic Detection
+All interaction goes through `wappalyzer-helper.sh`:
 
 ```bash
-# Analyze a URL and output JSON
-wappalyzer https://example.com --format=json
+# Detect technologies for a URL (no cache)
+.agents/scripts/wappalyzer-helper.sh detect https://example.com
 
-# Pretty-printed output
-wappalyzer https://example.com --format=json --pretty
+# Detect with 7-day cache
+.agents/scripts/wappalyzer-helper.sh detect-cached https://example.com
 
-# Increase timeout for slow sites
-wappalyzer https://example.com --max-wait=10000
+# Install dependencies
+.agents/scripts/wappalyzer-helper.sh install
+
+# Show installation and cache status
+.agents/scripts/wappalyzer-helper.sh status
+
+# Clear cached results
+.agents/scripts/wappalyzer-helper.sh cache-clear
+
+# Show help
+.agents/scripts/wappalyzer-helper.sh help
 ```
 
-### Advanced Options
+### Environment Variables
 
-```bash
-# Custom user agent
-wappalyzer https://example.com --user-agent="Custom Bot 1.0"
-
-# Recursive crawling (analyze multiple pages)
-wappalyzer https://example.com --recursive --max-depth=3 --max-urls=10
-
-# Debug mode
-wappalyzer https://example.com --debug
-
-# Probe additional endpoints
-wappalyzer https://example.com --probe
-```
-
-### Programmatic Usage
-
-```javascript
-const Wappalyzer = require('wappalyzer');
-
-const options = {
-  debug: false,
-  delay: 500,
-  headers: {},
-  maxDepth: 3,
-  maxUrls: 10,
-  maxWait: 5000,
-  recursive: false,
-  probe: true,
-  pretty: false,
-  userAgent: 'Wappalyzer',
-};
-
-const wappalyzer = new Wappalyzer(options);
-
-(async function() {
-  try {
-    await wappalyzer.init();
-    
-    const site = await wappalyzer.open('https://example.com');
-    const results = await site.analyze();
-    
-    console.log(JSON.stringify(results, null, 2));
-    
-    await wappalyzer.destroy();
-  } catch (error) {
-    console.error(error);
-  }
-})();
-```
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `WAPPALYZER_MAX_WAIT` | `5000` | Max wait time in ms |
+| `WAPPALYZER_TIMEOUT` | `30` | Command timeout in seconds |
 
 ## Output Format
 
-Wappalyzer returns a structured JSON object:
-
-```json
-{
-  "urls": {
-    "https://example.com": {
-      "status": 200,
-      "technologies": [
-        {
-          "slug": "react",
-          "name": "React",
-          "description": "React is an open-source JavaScript library for building user interfaces.",
-          "confidence": 100,
-          "version": "18.2.0",
-          "icon": "React.svg",
-          "website": "https://reactjs.org",
-          "cpe": "cpe:/a:facebook:react",
-          "categories": [
-            {
-              "id": 12,
-              "slug": "javascript-frameworks",
-              "name": "JavaScript frameworks"
-            }
-          ]
-        },
-        {
-          "slug": "webpack",
-          "name": "Webpack",
-          "confidence": 100,
-          "version": "5.88.2",
-          "categories": [
-            {
-              "id": 19,
-              "slug": "miscellaneous",
-              "name": "Miscellaneous"
-            }
-          ]
-        }
-      ]
-    }
-  }
-}
-```
-
-### Key Fields
-
-- **slug**: Technology identifier (lowercase, hyphenated)
-- **name**: Human-readable technology name
-- **confidence**: Detection confidence (0-100)
-- **version**: Detected version (if available)
-- **categories**: Technology categories (framework, CMS, analytics, etc.)
-- **description**: Technology description
-- **website**: Official website URL
-- **cpe**: Common Platform Enumeration identifier (for security scanning)
-
-## Common Schema Mapping
-
-For integration with tech-stack-helper.sh, map Wappalyzer output to the common schema:
+All commands output JSON in the common schema:
 
 ```json
 {
@@ -184,111 +108,107 @@ For integration with tech-stack-helper.sh, map Wappalyzer output to the common s
       "version": "18.2.0",
       "category": "JavaScript frameworks",
       "confidence": 100,
+      "description": "React is an open-source JavaScript library for building user interfaces.",
+      "website": "https://reactjs.org",
       "source": "wappalyzer"
     }
   ]
 }
 ```
 
+### Key Fields
+
+- **slug**: Technology identifier (lowercase, hyphenated)
+- **name**: Human-readable technology name
+- **confidence**: Detection confidence (0–100)
+- **version**: Detected version (if available, otherwise `null`)
+- **category**: Primary technology category (from `@ryntab/wappalyzer-node`)
+- **description**: Technology description (if available, otherwise `null`)
+- **website**: Official website URL (if available, otherwise `null`)
+- **source**: Always `"wappalyzer"`
+
 ## Integration with tech-stack-helper.sh
 
-The tech-stack-helper.sh orchestrator calls this provider via:
+The `tech-stack-helper.sh` orchestrator calls this provider via the helper script:
 
 ```bash
-# Single-site detection
-wappalyzer-detect() {
-  local url="$1"
-  local output_file="${2:-/dev/stdout}"
-  
-  # Run Wappalyzer with JSON output
-  wappalyzer "$url" --format=json --pretty > "$output_file" 2>/dev/null
-  
-  return $?
-}
+# Single-site detection (no cache)
+.agents/scripts/wappalyzer-helper.sh detect "$url"
 
-# Parse and normalize to common schema
-wappalyzer-normalize() {
-  local input_file="$1"
-  
-  jq '{
-    provider: "wappalyzer",
-    url: (.urls | keys[0]),
-    timestamp: (now | strftime("%Y-%m-%dT%H:%M:%SZ")),
-    technologies: [
-      (.urls | to_entries[0].value.technologies[] | {
-        name: .name,
-        slug: .slug,
-        version: .version // null,
-        category: (.categories[0].name // "Unknown"),
-        confidence: .confidence,
-        source: "wappalyzer"
-      })
-    ]
-  }' "$input_file"
-}
+# Cached detection (recommended for repeated lookups)
+.agents/scripts/wappalyzer-helper.sh detect-cached "$url"
+```
+
+Output is already in the common schema — no normalization step required.
+
+## Caching
+
+Results are cached in `~/.aidevops/cache/wappalyzer/` as SHA-256-keyed JSON files.
+Cache TTL is 7 days. Use `detect-cached` for repeated lookups; use `detect` to bypass the cache.
+
+```bash
+# Clear all cached results
+.agents/scripts/wappalyzer-helper.sh cache-clear
 ```
 
 ## Troubleshooting
 
-### Chrome/Chromium Not Found
+### `@ryntab/wappalyzer-node` not found
 
-Wappalyzer requires Chrome/Chromium for headless detection. Install via:
+Run the install command:
+
+```bash
+.agents/scripts/wappalyzer-helper.sh install
+```
+
+Or install manually:
+
+```bash
+npm install -g @ryntab/wappalyzer-node
+```
+
+### Node.js not found
+
+Install Node.js 18+:
 
 ```bash
 # macOS
-brew install --cask google-chrome
+brew install node
 
 # Linux (Debian/Ubuntu)
-sudo apt-get install chromium-browser
-
-# Set custom Chrome path if needed
-export CHROME_BIN=/path/to/chrome
+sudo apt-get install nodejs npm
 ```
 
-### Timeout Errors
+### Timeout errors
 
-Increase `--max-wait` for slow sites:
+Increase `WAPPALYZER_TIMEOUT` for slow sites:
 
 ```bash
-wappalyzer https://slow-site.com --max-wait=15000
+WAPPALYZER_TIMEOUT=60 .agents/scripts/wappalyzer-helper.sh detect https://slow-site.com
 ```
 
-### Detection Accuracy
+### ES module import errors
 
-- **Probe mode** (`--probe`): Checks additional endpoints like `/robots.txt`, `/sitemap.xml`
-- **Recursive mode** (`--recursive`): Analyzes multiple pages for better coverage
-- **Confidence threshold**: Filter results by confidence score (e.g., `confidence >= 75`)
-
-### Rate Limiting
-
-For bulk analysis, add delays between requests:
-
-```bash
-for url in $(cat urls.txt); do
-  wappalyzer "$url" --format=json > "results/${url//\//_}.json"
-  sleep 2
-done
-```
+`wappalyzer-detect.mjs` uses ES module syntax (`import`). Ensure Node.js 18+ is installed.
+The helper sets `NODE_PATH` to the global npm modules directory automatically.
 
 ## Alternatives
 
-If Wappalyzer doesn't meet your needs:
+If this provider doesn't meet your needs:
 
-- **Unbuilt.app** (t1064): Specialized in bundler/minifier detection
+- **Unbuilt.app** (t1064): Specialised in bundler/minifier detection
 - **CRFT Lookup** (t1065): Cloudflare Radar tech detection
-- **Webtech**: Alternative CLI using Wappalyzer rules
-- **BuiltWith API**: Commercial service (requires API key)
+- **BuiltWith API** (t1066): Commercial service (requires API key)
 
 ## References
 
-- **Official npm package**: https://www.npmjs.com/package/wappalyzer
-- **GitHub repository**: https://github.com/wappalyzer/wappalyzer
-- **Technology database**: https://github.com/wappalyzer/wappalyzer/tree/master/src/technologies
-- **Original archived repo**: https://github.com/AliasIO/wappalyzer (historical reference)
+- **npm package**: https://www.npmjs.com/package/@ryntab/wappalyzer-node
+- **Original Wappalyzer repo** (archived): https://github.com/wappalyzer/wappalyzer
 
 ## Related Tasks
 
-- t1063: Tech stack lookup orchestrator
+- t1063: Tech stack lookup orchestrator (`tech-stack-helper.sh`)
 - t1064: Unbuilt.app provider
 - t1065: CRFT Lookup provider
 - t1066: BuiltWith provider
+- t1067: This provider (Wappalyzer OSS)
