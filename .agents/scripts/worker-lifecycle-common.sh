@@ -443,24 +443,22 @@ _resolve_session_id_from_cmd() {
 		return 0
 	}
 
-	local escaped_title="${session_title//\'/\'\'}"
-	session_id=$(sqlite3 "$db_path" "
-		SELECT id
-		FROM session
-		WHERE title = '${escaped_title}'
-		ORDER BY time_created DESC
-		LIMIT 1
-	" 2>/dev/null || printf '%s' "")
-
-	if [[ -z "$session_id" ]]; then
-		session_id=$(sqlite3 "$db_path" "
-			SELECT id
-			FROM session
-			WHERE title LIKE '%${escaped_title}%'
-			ORDER BY time_created DESC
-			LIMIT 1
-		" 2>/dev/null || printf '%s' "")
-	fi
+	session_id=$(
+		DB_PATH="$db_path" TITLE="$session_title" python3 - <<'PY'
+import os, sqlite3
+db = os.environ["DB_PATH"]
+title = os.environ["TITLE"]
+conn = sqlite3.connect(db)
+conn.execute("PRAGMA busy_timeout=5000")
+cur = conn.cursor()
+cur.execute("SELECT id FROM session WHERE title = ? ORDER BY time_created DESC LIMIT 1", (title,))
+row = cur.fetchone()
+if not row:
+    cur.execute("SELECT id FROM session WHERE title LIKE ? ORDER BY time_created DESC LIMIT 1", (f"%{title}%",))
+    row = cur.fetchone()
+print(row[0] if row else "")
+PY
+	) 2>/dev/null || session_id=""
 
 	printf '%s' "$session_id"
 	return 0
@@ -489,15 +487,23 @@ _count_recent_opencode_messages() {
 		return 0
 	fi
 
-	local escaped_match="${session_match//\'/\'\'}"
 	local recent_count
-	recent_count=$(sqlite3 "$db_path" "
-		SELECT COUNT(*)
-		FROM message m
-		JOIN session s ON m.session_id = s.id
-		WHERE s.title LIKE '%${escaped_match}%'
-		AND (CASE WHEN m.time_created > 20000000000 THEN m.time_created / 1000 ELSE m.time_created END) >= strftime('%s', 'now') - ${recent_window}
-	" 2>/dev/null || printf '%s' "0")
+	recent_count=$(
+		DB_PATH="$db_path" MATCH="$session_match" WINDOW="$recent_window" python3 - <<'PY'
+import os, sqlite3
+conn = sqlite3.connect(os.environ["DB_PATH"])
+conn.execute("PRAGMA busy_timeout=5000")
+cur = conn.cursor()
+cur.execute(
+    "SELECT COUNT(*) FROM message m JOIN session s ON m.session_id = s.id"
+    " WHERE s.title LIKE ?"
+    " AND (CASE WHEN m.time_created > 20000000000 THEN m.time_created / 1000 ELSE m.time_created END)"
+    " >= strftime('%s', 'now') - ?",
+    (f"%{os.environ['MATCH']}%", int(os.environ["WINDOW"])),
+)
+print(cur.fetchone()[0] or 0)
+PY
+	) 2>/dev/null || recent_count=0
 	[[ "$recent_count" =~ ^[0-9]+$ ]] || recent_count=0
 
 	printf '%s' "$recent_count"
@@ -706,13 +712,22 @@ _compute_struggle_ratio() {
 		session_id=$(_resolve_session_id_from_cmd "$cmd")
 
 		if [[ -n "$session_id" ]]; then
-			local escaped_session_id="${session_id//\'/\'\'}"
-			messages=$(sqlite3 "$db_path" "
-				SELECT COUNT(*)
-				FROM message m
-				WHERE m.session_id = '${escaped_session_id}'
-				AND (CASE WHEN m.time_created > 20000000000 THEN m.time_created / 1000 ELSE m.time_created END) > strftime('%s', 'now') - ${elapsed_seconds}
-			" || echo 0)
+			messages=$(
+				DB_PATH="$db_path" SID="$session_id" ELAPSED="$elapsed_seconds" python3 - <<'PY'
+import os, sqlite3
+conn = sqlite3.connect(os.environ["DB_PATH"])
+conn.execute("PRAGMA busy_timeout=5000")
+cur = conn.cursor()
+cur.execute(
+    "SELECT COUNT(*) FROM message m"
+    " WHERE m.session_id = ?"
+    " AND (CASE WHEN m.time_created > 20000000000 THEN m.time_created / 1000 ELSE m.time_created END)"
+    " > strftime('%s', 'now') - ?",
+    (os.environ["SID"], int(os.environ["ELAPSED"])),
+)
+print(cur.fetchone()[0] or 0)
+PY
+			) 2>/dev/null || messages=0
 		fi
 	fi
 
