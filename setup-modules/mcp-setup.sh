@@ -528,19 +528,19 @@ setup_seo_mcps() {
 		# shellcheck source=/dev/null
 		source "$HOME/.config/aidevops/credentials.sh"
 
-		if [[ -n "$DATAFORSEO_USERNAME" ]]; then
+		if [[ -n "${DATAFORSEO_USERNAME:-}" ]]; then
 			print_success "DataForSEO credentials configured"
 		else
 			print_info "DataForSEO: set DATAFORSEO_USERNAME and DATAFORSEO_PASSWORD in credentials.sh"
 		fi
 
-		if [[ -n "$SERPER_API_KEY" ]]; then
+		if [[ -n "${SERPER_API_KEY:-}" ]]; then
 			print_success "Serper API key configured"
 		else
 			print_info "Serper: set SERPER_API_KEY in credentials.sh"
 		fi
 
-		if [[ -n "$AHREFS_API_KEY" ]]; then
+		if [[ -n "${AHREFS_API_KEY:-}" ]]; then
 			print_success "Ahrefs API key configured"
 		else
 			print_info "Ahrefs: set AHREFS_API_KEY in credentials.sh"
