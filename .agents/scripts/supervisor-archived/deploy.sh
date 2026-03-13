@@ -2612,13 +2612,14 @@ merge_task_pr() {
 
 	# Squash merge without --delete-branch (worktree handles branch cleanup)
 	# t227: Add --admin flag if SonarCloud external gate failed
+	# GH#3565: Use bash array instead of eval to prevent command injection (style guide: no eval)
 	local merge_output
-	local merge_cmd="gh pr merge \"$pr_number\" --repo \"$repo_slug\" --squash"
+	local -a merge_args=("pr" "merge" "$pr_number" "--repo" "$repo_slug" "--squash")
 	if [[ "$use_admin_flag" == "true" ]]; then
-		merge_cmd="$merge_cmd --admin"
+		merge_args+=("--admin")
 	fi
 
-	if ! merge_output=$(eval "$merge_cmd" 2>&1); then
+	if ! merge_output=$(gh "${merge_args[@]}" 2>&1); then
 		log_error "Failed to merge PR #$pr_number. Output from gh:"
 		log_error "$merge_output"
 		return 1
