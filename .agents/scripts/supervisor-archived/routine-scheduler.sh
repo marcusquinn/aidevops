@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+set -euo pipefail
 # routine-scheduler.sh - AI-driven routine scheduling for supervisor pulse (t1093, t1317)
 #
 # Phase 14: AI-driven routine scheduling that adapts frequency and priority
