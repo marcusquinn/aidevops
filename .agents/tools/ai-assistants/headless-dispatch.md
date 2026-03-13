@@ -1062,8 +1062,8 @@ For complex workflows, combine both:
 
 ```bash
 # Phase 1: Parallel analysis
-runner-helper.sh run security-reviewer "Audit src/" --attach :4096 &
-runner-helper.sh run perf-analyzer "Profile src/" --attach :4096 &
+runner-helper.sh run security-reviewer "Audit src/" --attach http://localhost:4096 &
+runner-helper.sh run perf-analyzer "Profile src/" --attach http://localhost:4096 &
 wait
 
 # Phase 2: Sequential implementation (based on analysis)
