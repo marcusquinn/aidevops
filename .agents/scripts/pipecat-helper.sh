@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # shellcheck disable=SC2034,SC2155
+# shellcheck source=shared-constants.sh
 
 # Pipecat Helper Script
 # Manages the Pipecat local voice agent: setup, start, stop, status, client
@@ -492,12 +493,12 @@ BOTEOF
 	if [[ "${llm_provider}" != "anthropic" ]]; then
 		local tmp_bot
 		tmp_bot="$(mktemp)"
-		sed "s/DEFAULT_LLM = \"anthropic\"/DEFAULT_LLM = \"${llm_provider}\"/" "${PIPECAT_BOT}" >"$tmp_bot" && mv "$tmp_bot" "${PIPECAT_BOT}"
+		sed "s/DEFAULT_LLM = \"anthropic\"/DEFAULT_LLM = \"${llm_provider}\"/" "${PIPECAT_BOT}" >"${tmp_bot}" && mv "${tmp_bot}" "${PIPECAT_BOT}"
 	fi
 	if [[ "${voice_id}" != "${DEFAULT_CARTESIA_VOICE_ID}" ]]; then
 		local tmp_bot2
 		tmp_bot2="$(mktemp)"
-		sed "s/${DEFAULT_CARTESIA_VOICE_ID}/${voice_id}/g" "${PIPECAT_BOT}" >"$tmp_bot2" && mv "$tmp_bot2" "${PIPECAT_BOT}"
+		sed "s/${DEFAULT_CARTESIA_VOICE_ID}/${voice_id}/g" "${PIPECAT_BOT}" >"${tmp_bot2}" && mv "${tmp_bot2}" "${PIPECAT_BOT}"
 	fi
 
 	print_success "Bot template generated: ${PIPECAT_BOT}"
@@ -517,8 +518,12 @@ cmd_setup() {
 	# Check Python
 	local python_cmd
 	python_cmd=$(find_python)
-	check_python "${python_cmd}" || return 1
-	print_success "Python: $(${python_cmd} --version 2>&1)"
+	check_python "${python_cmd}"
+	local _cp_rc=$?
+	[[ ${_cp_rc} -eq 0 ]] || return 1
+	local python_version
+	python_version=$("${python_cmd}" --version 2>&1) || true
+	print_success "Python: ${python_version}"
 
 	# Create project directory
 	mkdir -p "${PIPECAT_DIR}"
@@ -622,8 +627,12 @@ cmd_setup_client() {
 	echo ""
 	echo "--- Web Client Setup ---"
 
-	check_node || return 1
-	check_npm || return 1
+	check_node
+	local _cn_rc=$?
+	[[ ${_cn_rc} -eq 0 ]] || return 1
+	check_npm
+	local _cnpm_rc=$?
+	[[ ${_cnpm_rc} -eq 0 ]] || return 1
 
 	if [[ -d "${CLIENT_DIR}/node_modules" ]]; then
 		print_success "Web client already installed: ${CLIENT_DIR}"
@@ -772,8 +781,12 @@ cmd_start() {
 	local voice_id="${3:-${DEFAULT_CARTESIA_VOICE_ID}}"
 	local with_client="${4:-true}"
 
-	check_venv || return 1
-	check_pipecat_installed || return 1
+	check_venv
+	local _cv_rc=$?
+	[[ ${_cv_rc} -eq 0 ]] || return 1
+	check_pipecat_installed
+	local _cpi_rc=$?
+	[[ ${_cpi_rc} -eq 0 ]] || return 1
 
 	# Check if already running
 	if [[ -f "${PIPECAT_PID_FILE}" ]]; then
@@ -789,12 +802,17 @@ cmd_start() {
 
 	# Load API keys from secure storage
 	local keys_ok=true
-	if ! has_api_key "SONIOX_API_KEY"; then
+	local _key_check
+	has_api_key "SONIOX_API_KEY"
+	_key_check=$?
+	if [[ ${_key_check} -ne 0 ]]; then
 		print_error "SONIOX_API_KEY not found"
 		print_info "Set it: aidevops secret set SONIOX_API_KEY"
 		keys_ok=false
 	fi
-	if ! has_api_key "CARTESIA_API_KEY"; then
+	has_api_key "CARTESIA_API_KEY"
+	_key_check=$?
+	if [[ ${_key_check} -ne 0 ]]; then
 		print_error "CARTESIA_API_KEY not found"
 		print_info "Set it: aidevops secret set CARTESIA_API_KEY"
 		keys_ok=false
@@ -802,14 +820,18 @@ cmd_start() {
 
 	case "${llm_provider}" in
 	anthropic)
-		if ! has_api_key "ANTHROPIC_API_KEY"; then
+		has_api_key "ANTHROPIC_API_KEY"
+		_key_check=$?
+		if [[ ${_key_check} -ne 0 ]]; then
 			print_error "ANTHROPIC_API_KEY not found"
 			print_info "Set it: aidevops secret set ANTHROPIC_API_KEY"
 			keys_ok=false
 		fi
 		;;
 	openai)
-		if ! has_api_key "OPENAI_API_KEY"; then
+		has_api_key "OPENAI_API_KEY"
+		_key_check=$?
+		if [[ ${_key_check} -ne 0 ]]; then
 			print_error "OPENAI_API_KEY not found"
 			print_info "Set it: aidevops secret set OPENAI_API_KEY"
 			keys_ok=false
@@ -817,6 +839,10 @@ cmd_start() {
 		;;
 	local)
 		print_info "Using local LLM — ensure it's running at ${PIPECAT_LOCAL_LLM_URL:-http://127.0.0.1:1234/v1}"
+		;;
+	*)
+		print_error "Unknown LLM provider: ${llm_provider}"
+		return 1
 		;;
 	esac
 
@@ -1080,25 +1106,34 @@ cmd_status() {
 cmd_keys() {
 	echo "--- API Keys ---"
 
-	if has_api_key "SONIOX_API_KEY"; then
+	local _key_rc
+	has_api_key "SONIOX_API_KEY"
+	_key_rc=$?
+	if [[ ${_key_rc} -eq 0 ]]; then
 		print_success "SONIOX_API_KEY: configured"
 	else
 		print_error "SONIOX_API_KEY: not found"
 	fi
 
-	if has_api_key "CARTESIA_API_KEY"; then
+	has_api_key "CARTESIA_API_KEY"
+	_key_rc=$?
+	if [[ ${_key_rc} -eq 0 ]]; then
 		print_success "CARTESIA_API_KEY: configured"
 	else
 		print_error "CARTESIA_API_KEY: not found"
 	fi
 
-	if has_api_key "ANTHROPIC_API_KEY"; then
+	has_api_key "ANTHROPIC_API_KEY"
+	_key_rc=$?
+	if [[ ${_key_rc} -eq 0 ]]; then
 		print_success "ANTHROPIC_API_KEY: configured"
 	else
 		print_warning "ANTHROPIC_API_KEY: not found (needed for Anthropic LLM)"
 	fi
 
-	if has_api_key "OPENAI_API_KEY"; then
+	has_api_key "OPENAI_API_KEY"
+	_key_rc=$?
+	if [[ ${_key_rc} -eq 0 ]]; then
 		print_success "OPENAI_API_KEY: configured"
 	else
 		print_warning "OPENAI_API_KEY: not found (needed for OpenAI LLM)"
@@ -1129,7 +1164,9 @@ cmd_client() {
 
 	if [[ ! -d "${CLIENT_DIR}/node_modules" ]]; then
 		print_info "Web client not installed. Setting up..."
-		cmd_setup_client || return 1
+		cmd_setup_client
+		local _csc_rc=$?
+		[[ ${_csc_rc} -eq 0 ]] || return 1
 	fi
 
 	cmd_start_client "${client_port}"
@@ -1236,7 +1273,7 @@ main() {
 		cmd_help
 		;;
 	*)
-		print_error "${ERROR_UNKNOWN_COMMAND}: ${command}"
+		print_error "${ERROR_UNKNOWN_COMMAND:-Unknown command}: ${command}"
 		cmd_help
 		return 1
 		;;
