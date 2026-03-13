@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.172.16] - 2026-03-13
+
+### Changed
+
+- Maintenance: claim t1470
+
+### Fixed
+
+- trim pulse prefetch issue payload to avoid cold-start stalls (#4350)
+
 ## [2.172.15] - 2026-03-13
 
 ### Fixed
