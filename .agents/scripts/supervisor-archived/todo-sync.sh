@@ -51,9 +51,12 @@ _sanitize_filename() {
 # Args: $1=repo_path $2=commit_message $3=max_retries (default 3)
 #######################################
 commit_and_push_todo() {
-	local repo_path="$1"
-	local commit_msg="$2"
-	local max_retries="${3:-3}"
+	local repo_path
+	repo_path="$1"
+	local commit_msg
+	commit_msg="$2"
+	local max_retries
+	max_retries="${3:-3}"
 
 	if git -C "$repo_path" diff --quiet -- TODO.md 2>>"$SUPERVISOR_LOG"; then
 		log_info "No changes to commit (TODO.md unchanged)"
@@ -325,9 +328,12 @@ recover_stale_claims() {
 # Args: $1=repo_path $2=commit_message $3=max_retries (default 3)
 #######################################
 commit_and_push_verify() {
-	local repo_path="$1"
-	local commit_msg="$2"
-	local max_retries="${3:-3}"
+	local repo_path
+	repo_path="$1"
+	local commit_msg
+	commit_msg="$2"
+	local max_retries
+	max_retries="${3:-3}"
 
 	local verify_rel="todo/VERIFY.md"
 
@@ -927,11 +933,11 @@ generate_verify_entry() {
 
 	if [[ -n "$pr_number" ]] && command -v gh &>/dev/null && check_gh_auth; then
 		local repo_slug=""
-		repo_slug=$(detect_repo_slug "$trepo" 2>/dev/null || echo "")
+		repo_slug=$(detect_repo_slug "$trepo" 2>>"$SUPERVISOR_LOG" || echo "")
 		if [[ -n "$repo_slug" ]]; then
 			# Single gh call — store result for both file list and check generation
 			local pr_files_raw=""
-			pr_files_raw=$(gh pr view "$pr_number" --repo "$repo_slug" --json files --jq '.files[].path' 2>/dev/null || echo "")
+			pr_files_raw=$(gh pr view "$pr_number" --repo "$repo_slug" --json files --jq '.files[].path' 2>>"$SUPERVISOR_LOG" || echo "")
 
 			while IFS= read -r fpath; do
 				[[ -z "$fpath" ]] && continue
