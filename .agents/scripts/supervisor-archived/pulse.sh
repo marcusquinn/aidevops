@@ -2714,6 +2714,13 @@ cmd_pulse() {
 				if echo " ${protected_pids} " | grep -q " ${epid} "; then
 					continue
 				fi
+				# Skip processes that still have a live parent (not reparented to init)
+				# — protects interactive sessions not tracked by the supervisor.
+				local eppid
+				eppid=$(ps -o ppid= -p "$epid" 2>/dev/null | tr -d ' ')
+				if [[ -n "$eppid" && "$eppid" != "1" ]]; then
+					continue
+				fi
 				local ecmd
 				ecmd=$(ps -o args= -p "$epid" 2>/dev/null | head -c 100)
 				log_warn "  Emergency kill PID $epid: $ecmd"
