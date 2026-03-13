@@ -342,13 +342,13 @@ Tags: ${tags}"
 
 	# Ask AI to classify
 	local ai_cli
-	ai_cli=$(resolve_ai_cli 2>/dev/null) || {
+	ai_cli=$(resolve_ai_cli) || {
 		echo "opus"
 		return 0
 	}
 
 	local ai_model
-	ai_model=$(resolve_model "sonnet" "$ai_cli" 2>/dev/null) || {
+	ai_model=$(resolve_model "sonnet" "$ai_cli") || {
 		echo "opus"
 		return 0
 	}
@@ -375,14 +375,14 @@ RULES:
 			-m "$ai_model" \
 			--format default \
 			--title "classify-$$" \
-			"$prompt" 2>/dev/null || echo "")
+			"$prompt" || echo "")
 		ai_result=$(printf '%s' "$ai_result" | sed 's/\x1b\[[0-9;]*[mGKHF]//g; s/\x1b\[[0-9;]*[A-Za-z]//g; s/\x1b\]//g; s/\x07//g')
 	else
 		local claude_model="${ai_model#*/}"
 		ai_result=$(portable_timeout 15 claude \
 			-p "$prompt" \
 			--model "$claude_model" \
-			--output-format text 2>/dev/null || echo "")
+			--output-format text || echo "")
 	fi
 
 	if [[ -n "$ai_result" ]]; then
@@ -390,11 +390,11 @@ RULES:
 		json_block=$(printf '%s' "$ai_result" | grep -oE '\{[^}]+\}' | head -1)
 		if [[ -n "$json_block" ]]; then
 			local tier
-			tier=$(printf '%s' "$json_block" | jq -r '.tier // ""' 2>/dev/null || echo "")
+			tier=$(printf '%s' "$json_block" | jq -r '.tier // ""' || echo "")
 			case "$tier" in
 			haiku | sonnet | opus)
 				local reason
-				reason=$(printf '%s' "$json_block" | jq -r '.reason // ""' 2>/dev/null || echo "")
+				reason=$(printf '%s' "$json_block" | jq -r '.reason // ""' || echo "")
 				log_verbose "classify_task_complexity: AI classified as $tier — $reason"
 				echo "$tier"
 				return 0
@@ -694,18 +694,18 @@ should_prompt_repeat() {
 	local pattern_helper="${SCRIPT_DIR}/pattern-tracker-helper.sh"
 	if [[ -x "$pattern_helper" ]]; then
 		local stats_output
-		stats_output=$("$pattern_helper" stats 2>/dev/null || echo "")
+		stats_output=$("$pattern_helper" stats || echo "")
 		local pr_success pr_failure
 		pr_success=$(echo "$stats_output" |
-			grep -c 'prompt_repeat.*SUCCESS\|SUCCESS.*prompt_repeat' 2>/dev/null || echo "0")
+			grep -c 'prompt_repeat.*SUCCESS\|SUCCESS.*prompt_repeat' || echo "0")
 		pr_failure=$(echo "$stats_output" |
-			grep -c 'prompt_repeat.*FAILURE\|FAILURE.*prompt_repeat' 2>/dev/null || echo "0")
+			grep -c 'prompt_repeat.*FAILURE\|FAILURE.*prompt_repeat' || echo "0")
 		pattern_stats="prompt_repeat success: ${pr_success}, failure: ${pr_failure}"
 	fi
 
 	# Ask AI
 	local ai_cli
-	ai_cli=$(resolve_ai_cli 2>/dev/null) || {
+	ai_cli=$(resolve_ai_cli) || {
 		# AI unavailable — use simple heuristic: eligible if not already attempted
 		if [[ "$prompt_repeat_done" -ge 1 ]]; then
 			echo "already_attempted"
@@ -716,7 +716,7 @@ should_prompt_repeat() {
 	}
 
 	local ai_model
-	ai_model=$(resolve_model "sonnet" "$ai_cli" 2>/dev/null) || {
+	ai_model=$(resolve_model "sonnet" "$ai_cli") || {
 		if [[ "$prompt_repeat_done" -ge 1 ]]; then
 			echo "already_attempted"
 			return 1
@@ -749,14 +749,14 @@ Respond with ONLY a JSON object: {\"decision\": \"eligible|skip\", \"reason\": \
 			-m "$ai_model" \
 			--format default \
 			--title "retry-${task_id}-$$" \
-			"$prompt" 2>/dev/null || echo "")
+			"$prompt" || echo "")
 		ai_result=$(printf '%s' "$ai_result" | sed 's/\x1b\[[0-9;]*[mGKHF]//g; s/\x1b\[[0-9;]*[A-Za-z]//g; s/\x1b\]//g; s/\x07//g')
 	else
 		local claude_model="${ai_model#*/}"
 		ai_result=$(portable_timeout 15 claude \
 			-p "$prompt" \
 			--model "$claude_model" \
-			--output-format text 2>/dev/null || echo "")
+			--output-format text || echo "")
 	fi
 
 	if [[ -n "$ai_result" ]]; then
@@ -764,9 +764,9 @@ Respond with ONLY a JSON object: {\"decision\": \"eligible|skip\", \"reason\": \
 		json_block=$(printf '%s' "$ai_result" | grep -oE '\{[^}]+\}' | head -1)
 		if [[ -n "$json_block" ]]; then
 			local decision
-			decision=$(printf '%s' "$json_block" | jq -r '.decision // ""' 2>/dev/null || echo "")
+			decision=$(printf '%s' "$json_block" | jq -r '.decision // ""' || echo "")
 			local reason
-			reason=$(printf '%s' "$json_block" | jq -r '.reason // ""' 2>/dev/null || echo "")
+			reason=$(printf '%s' "$json_block" | jq -r '.reason // ""' || echo "")
 			case "$decision" in
 			eligible)
 				log_verbose "should_prompt_repeat: AI says eligible — $reason"
@@ -1205,16 +1205,16 @@ PR URL: ${tpr_url:-none}"
 	# Log file signals
 	if [[ -n "$tlog" && -f "$tlog" ]]; then
 		local log_size
-		log_size=$(wc -c <"$tlog" 2>/dev/null | tr -d ' ')
+		log_size=$(wc -c <"$tlog" | tr -d ' ')
 		local pr_signals
-		pr_signals=$(grep -c 'WORKER_PR_CREATED\|WORKER_COMPLETE\|PR_URL' "$tlog" 2>/dev/null || echo "0")
+		pr_signals=$(grep -c 'WORKER_PR_CREATED\|WORKER_COMPLETE\|PR_URL' "$tlog" || echo "0")
 		local error_count
-		error_count=$(grep -ciE 'panic|fatal|unhandled.*exception|segfault|SIGKILL|out of memory|OOM' "$tlog" 2>/dev/null || echo "0")
+		error_count=$(grep -ciE 'panic|fatal|unhandled.*exception|segfault|SIGKILL|out of memory|OOM' "$tlog" || echo "0")
 		local substance_markers
-		substance_markers=$(grep -ciE 'WORKER_COMPLETE|WORKER_PR_CREATED|PR_URL|commit|merged|created file|wrote file' "$tlog" 2>/dev/null || echo "0")
+		substance_markers=$(grep -ciE 'WORKER_COMPLETE|WORKER_PR_CREATED|PR_URL|commit|merged|created file|wrote file' "$tlog" || echo "0")
 		# Last 20 lines of log for context
 		local log_tail
-		log_tail=$(tail -20 "$tlog" 2>/dev/null || echo "(unreadable)")
+		log_tail=$(tail -20 "$tlog" || echo "(unreadable)")
 
 		facts="${facts}
 Log file size: ${log_size} bytes
@@ -1231,12 +1231,12 @@ Log file: not found"
 	# Git diff signals
 	if [[ -n "$tworktree" && -d "$tworktree" ]]; then
 		local diff_stat
-		diff_stat=$(git -C "$tworktree" diff --stat "main..HEAD" 2>/dev/null || echo "(no changes)")
+		diff_stat=$(git -C "$tworktree" diff --stat "main..HEAD" || echo "(no changes)")
 		local changed_files_count
-		changed_files_count=$(git -C "$tworktree" diff --name-only "main..HEAD" 2>/dev/null | wc -l | tr -d ' ')
+		changed_files_count=$(git -C "$tworktree" diff --name-only "main..HEAD" | wc -l | tr -d ' ')
 		local syntax_errors=0
 		local changed_sh_files
-		changed_sh_files=$(git -C "$tworktree" diff --name-only "main..HEAD" 2>/dev/null | grep '\.sh$' || true)
+		changed_sh_files=$(git -C "$tworktree" diff --name-only "main..HEAD" | grep '\.sh$' || true)
 		if [[ -n "$changed_sh_files" ]]; then
 			while IFS= read -r sh_file; do
 				[[ -z "$sh_file" ]] && continue
@@ -1259,18 +1259,19 @@ Worktree: not found"
 
 	# Ask AI to assess quality
 	local ai_cli
-	ai_cli=$(resolve_ai_cli 2>/dev/null) || {
+	ai_cli=$(resolve_ai_cli) || {
 		# AI unavailable — pass if PR exists, fail if no changes
 		if [[ -n "$tpr_url" && "$tpr_url" != "no_pr" && "$tpr_url" != "task_only" ]]; then
 			echo "pass"
+			return 0
 		else
-			echo "pass"
+			echo "fail:no_pr_no_ai"
+			return 1
 		fi
-		return 0
 	}
 
 	local ai_model
-	ai_model=$(resolve_model "sonnet" "$ai_cli" 2>/dev/null) || {
+	ai_model=$(resolve_model "sonnet" "$ai_cli") || {
 		echo "pass"
 		return 0
 	}
@@ -1298,14 +1299,14 @@ Respond with ONLY a JSON object: {\"result\": \"pass|fail\", \"reason\": \"one s
 			-m "$ai_model" \
 			--format default \
 			--title "quality-${task_id}-$$" \
-			"$prompt" 2>/dev/null || echo "")
+			"$prompt" || echo "")
 		ai_result=$(printf '%s' "$ai_result" | sed 's/\x1b\[[0-9;]*[mGKHF]//g; s/\x1b\[[0-9;]*[A-Za-z]//g; s/\x1b\]//g; s/\x07//g')
 	else
 		local claude_model="${ai_model#*/}"
 		ai_result=$(portable_timeout 15 claude \
 			-p "$prompt" \
 			--model "$claude_model" \
-			--output-format text 2>/dev/null || echo "")
+			--output-format text || echo "")
 	fi
 
 	if [[ -n "$ai_result" ]]; then
@@ -1313,11 +1314,11 @@ Respond with ONLY a JSON object: {\"result\": \"pass|fail\", \"reason\": \"one s
 		json_block=$(printf '%s' "$ai_result" | grep -oE '\{[^}]+\}' | head -1)
 		if [[ -n "$json_block" ]]; then
 			local result
-			result=$(printf '%s' "$json_block" | jq -r '.result // ""' 2>/dev/null || echo "")
+			result=$(printf '%s' "$json_block" | jq -r '.result // ""' || echo "")
 			local reason
-			reason=$(printf '%s' "$json_block" | jq -r '.reason // ""' 2>/dev/null || echo "")
+			reason=$(printf '%s' "$json_block" | jq -r '.reason // ""' || echo "")
 			local fail_code
-			fail_code=$(printf '%s' "$json_block" | jq -r '.fail_code // ""' 2>/dev/null || echo "")
+			fail_code=$(printf '%s' "$json_block" | jq -r '.fail_code // ""' || echo "")
 			case "$result" in
 			pass)
 				log_verbose "check_output_quality: AI says pass — $reason"
