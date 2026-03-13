@@ -197,7 +197,7 @@ cat ./converted/paper/paper.md
 ```bash
 # Convert all PDFs in a directory
 for pdf in ./documents/*.pdf; do
-  mineru -p "$pdf" -o ./markdown
+  [ -f "$pdf" ] && mineru -p "$pdf" -o ./markdown
 done
 ```
 
@@ -258,6 +258,6 @@ mineru -p input.pdf -o output_dir --lang zh  # Chinese
 ## Related
 
 - `pandoc.md` - General-purpose document conversion (broader format support)
-- `tools/pdf/overview.md` - PDF manipulation tools (form filling, signing)
-- `tools/data-extraction/` - Data extraction from web sources
-- `tools/ocr/` - OCR-specific tools
+- `../pdf/overview.md` - PDF manipulation tools (form filling, signing)
+- `../data-extraction/` - Data extraction from web sources
+- `../ocr/` - OCR-specific tools
