@@ -189,7 +189,7 @@ else
 fi
 
 # Test 11: Rollback creates pre-rollback safety backup
-pre_rollback_count=$(ls -1 "$TEMP_DIR"/test1-backup-*-pre-rollback.db 2>/dev/null | wc -l | tr -d ' ')
+pre_rollback_count=$(find "$TEMP_DIR" -maxdepth 1 -type f -name 'test1-backup-*-pre-rollback.db' | wc -l | tr -d ' ')
 if [[ "$pre_rollback_count" -ge 1 ]]; then
 	pass "rollback creates pre-rollback safety backup"
 else
@@ -215,9 +215,9 @@ for i in 1 2 3 4 5 6 7; do
 	backup_sqlite_db "$cleanup_db" "test-$i" >/dev/null 2>&1
 done
 
-pre_cleanup_count=$(ls -1 "$TEMP_DIR"/cleanup-test-backup-*.db 2>/dev/null | wc -l | tr -d ' ')
+pre_cleanup_count=$(find "$TEMP_DIR" -maxdepth 1 -type f -name 'cleanup-test-backup-*.db' | wc -l | tr -d ' ')
 cleanup_sqlite_backups "$cleanup_db" 3
-post_cleanup_count=$(ls -1 "$TEMP_DIR"/cleanup-test-backup-*.db 2>/dev/null | wc -l | tr -d ' ')
+post_cleanup_count=$(find "$TEMP_DIR" -maxdepth 1 -type f -name 'cleanup-test-backup-*.db' | wc -l | tr -d ' ')
 
 if [[ "$post_cleanup_count" -le 3 ]]; then
 	pass "cleanup_sqlite_backups keeps at most N backups ($pre_cleanup_count -> $post_cleanup_count)"
@@ -321,7 +321,7 @@ else
 fi
 
 # Verify backup file exists
-sup_backup_count=$(ls -1 "$AIDEVOPS_SUPERVISOR_DIR"/supervisor-backup-*.db 2>/dev/null | wc -l | tr -d ' ')
+sup_backup_count=$(find "$AIDEVOPS_SUPERVISOR_DIR" -maxdepth 1 -type f -name 'supervisor-backup-*.db' | wc -l | tr -d ' ')
 if [[ "$sup_backup_count" -ge 1 ]]; then
 	pass "supervisor backup creates file ($sup_backup_count backups)"
 else
