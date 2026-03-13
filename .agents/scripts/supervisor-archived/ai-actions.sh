@@ -947,7 +947,7 @@ execute_action_plan() {
 		# (commit_and_push_todo) can leak stdout noise (e.g. "Updating ...",
 		# "Fast-forward", "Created autostash") before the final JSON line.
 		local exec_result_json
-		exec_result_json=$(printf '%s' "$exec_result" | grep -E '^\{' | tail -1)
+		exec_result_json=$(tac <<<"$exec_result" | grep -E -m 1 '^\{' || echo '{}')
 		if [[ -z "$exec_result_json" ]] || ! printf '%s' "$exec_result_json" | jq '.' &>/dev/null; then
 			# Not valid JSON — wrap the entire result as a JSON string value
 			exec_result_json=$(jq -Rn --arg v "$exec_result" '$v')
