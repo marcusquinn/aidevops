@@ -1916,7 +1916,16 @@ normalize_active_issue_assignments() {
 #######################################
 count_active_workers() {
 	local count
-	count=$(ps axo command | grep '\.opencode run' | grep '/full-loop' | grep -v '/pulse' | grep -v 'Supervisor Pulse' | grep -c -v grep) || count=0
+	count=$(ps axo command | awk '
+		index($0, ".opencode run") > 0 &&
+		index($0, "/full-loop") > 0 &&
+		!(index($0, "--role pulse") > 0 && index($0, "--session-key supervisor-pulse") > 0) {
+			count++
+		}
+		END {
+			print count + 0
+		}
+	') || count=0
 	echo "$count"
 	return 0
 }
