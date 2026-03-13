@@ -1866,6 +1866,13 @@ cmd_pulse() {
 
 			# Clean up PID file
 			cleanup_worker_processes "$stuck_id" 2>>"$SUPERVISOR_LOG" || true
+
+			# t1256: Clean up eval checkpoint file (matches Phase 0.7 cleanup)
+			local stuck_eval_checkpoint="${SUPERVISOR_DIR}/eval-checkpoints/${stuck_id}.eval"
+			if [[ -f "$stuck_eval_checkpoint" ]]; then
+				rm -f "$stuck_eval_checkpoint" 2>/dev/null || true
+				log_verbose "  Phase 1c: removed eval checkpoint for $stuck_id"
+			fi
 		done <<<"$stuck_evaluating"
 	fi
 
@@ -2448,6 +2455,16 @@ cmd_pulse() {
 					escalate_model_on_failure "$orphan_id" 2>>"$SUPERVISOR_LOG" || true
 					attempt_self_heal "$orphan_id" "failed" "No worker process found" "${batch_id:-}" 2>>"$SUPERVISOR_LOG" || true
 				}
+
+				# t1256: Clean up eval checkpoint file if it exists (matches Phase 0.7 cleanup)
+				# Only evaluating tasks can have checkpoint files; cmd_evaluate may recreate them.
+				if [[ "$orphan_status" == "evaluating" ]]; then
+					local orphan_eval_checkpoint="${SUPERVISOR_DIR}/eval-checkpoints/${orphan_id}.eval"
+					if [[ -f "$orphan_eval_checkpoint" ]]; then
+						rm -f "$orphan_eval_checkpoint" 2>/dev/null || true
+						log_verbose "  Phase 4b: removed eval checkpoint for $orphan_id"
+					fi
+				fi
 			fi
 		done <<<"$db_orphans"
 	fi
