@@ -613,7 +613,8 @@ gh issue edit <number> --repo <slug> --add-assignee "$RUNNER_USER" --add-label "
 
 DISPATCH_PROMPT="/full-loop Implement issue #<number> (<url>) -- <brief description>"
 # For ops issues, replace DISPATCH_PROMPT with a direct command (no /full-loop)
-# Example: DISPATCH_PROMPT="/seo-export --account <account> --format summary"
+# Example: DISPATCH_PROMPT="/seo-export all <domain> --days 30"
+[[ -n "$DISPATCH_PROMPT" ]] || DISPATCH_PROMPT="/full-loop Implement issue #<number> (<url>) -- <brief description>"
 
 ~/.aidevops/agents/scripts/headless-runtime-helper.sh run \
   --role worker \
@@ -698,6 +699,7 @@ If you dispatch an unassigned issue without `auto-dispatch`/`status:available`, 
 
   DISPATCH_PROMPT="/full-loop Implement issue #<number> (<url>) -- <brief description>"
   # For operational subtasks, set DISPATCH_PROMPT to a direct command instead.
+  [[ -n "$DISPATCH_PROMPT" ]] || DISPATCH_PROMPT="/full-loop Implement issue #<number> (<url>) -- <brief description>"
 
   ~/.aidevops/agents/scripts/headless-runtime-helper.sh run \
     --role worker \
@@ -755,6 +757,7 @@ echo "$NEXT_BATCH" | jq -r '.[]' | while read -r task_id; do
   # Then dispatch as normal (see dispatch rules above)
   DISPATCH_PROMPT="/full-loop Implement issue #<number> (<url>) -- <brief description>"
   # For operational tasks in the batch, set DISPATCH_PROMPT to a direct command.
+  [[ -n "$DISPATCH_PROMPT" ]] || DISPATCH_PROMPT="/full-loop Implement issue #<number> (<url>) -- <brief description>"
   ~/.aidevops/agents/scripts/headless-runtime-helper.sh run \
     --role worker \
     --session-key "task-${task_id}" \
