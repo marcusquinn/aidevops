@@ -47,7 +47,7 @@ wt switch -c feature/my-feature   # Worktrunk (preferred)
 worktree-helper.sh add feature/x  # Fallback
 ```
 
-**After switching to a worktree**: Re-read any file at its worktree path before editing. The Edit tool tracks reads by exact absolute path — a read from the main repo path does NOT satisfy the worktree path.
+**After switching to a worktree**: Re-read any file at its worktree path before editing. The Edit tool tracks files by their exact absolute path, so a read from the main repository path is not recognized for the same file in the worktree.
 
 **After completing changes**, offer: 1) Preflight checks 2) Skip preflight 3) Continue editing
 
