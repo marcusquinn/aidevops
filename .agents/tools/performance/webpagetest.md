@@ -109,6 +109,7 @@ Key metrics in the response at `data.median.firstView`:
 | `firstContentfulPaint` | First Contentful Paint (ms) |
 | `chromeUserTiming.LargestContentfulPaint` | LCP (ms) |
 | `chromeUserTiming.CumulativeLayoutShift` | CLS |
+| `chromeUserTiming.InteractionToNextPaint` | INP (ms) — lab support varies by WPT version |
 | `TotalBlockingTime` | Total Blocking Time (ms) |
 | `SpeedIndex` | Speed Index |
 | `fullyLoaded` | Fully Loaded Time (ms) |
