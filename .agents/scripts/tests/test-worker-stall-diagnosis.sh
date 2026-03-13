@@ -367,6 +367,56 @@ test_post_kill_marks_runtime_as_available() {
 	return 0
 }
 
+test_extract_session_title_handles_unquoted_multiword_titles() {
+	reset_fixture
+	local cmd='opencode run --dir /tmp/aidevops --title Issue #999: Multi Word Session Title --format json /full-loop "Implement issue #999"'
+	local extracted
+	local expected='Issue #999: Multi Word Session Title'
+	extracted=$(_extract_session_title "$cmd")
+
+	if [[ "$extracted" == "$expected" ]]; then
+		print_result "session title parser preserves multiword unquoted title" 0
+		return 0
+	fi
+
+	print_result "session title parser preserves multiword unquoted title" 1 "Expected '${expected}', got '${extracted}'"
+	return 0
+}
+
+test_transcript_gate_defers_active_sessions() {
+	reset_fixture
+
+	_get_session_tail_evidence() {
+		printf '%s' 'active|session="Issue #500"; recent_messages=4; newest_part_age=8s; tail=tool:bash(completed) "Run tests"'
+		return 0
+	}
+
+	if transcript_allows_intervention "runtime" "cmd" 7200; then
+		print_result "transcript gate defers active sessions" 1 "Expected active transcript evidence to defer intervention"
+		return 0
+	fi
+
+	print_result "transcript gate defers active sessions" 0
+	return 0
+}
+
+test_transcript_gate_allows_stalled_sessions() {
+	reset_fixture
+
+	_get_session_tail_evidence() {
+		printf '%s' 'stalled|session="Issue #501"; recent_messages=0; newest_part_age=1210s; tail=text:"No progress"'
+		return 0
+	}
+
+	if ! transcript_allows_intervention "stall" "cmd" 1900; then
+		print_result "transcript gate allows stalled sessions" 1 "Expected stalled transcript evidence to allow intervention"
+		return 0
+	fi
+
+	print_result "transcript gate allows stalled sessions" 0
+	return 0
+}
+
 main() {
 	setup_test_env
 	test_recent_message_clears_stall
@@ -377,6 +427,9 @@ main() {
 	test_thrashing_guard_skips_workers_with_commits
 	test_post_kill_marks_thrash_as_blocked
 	test_post_kill_marks_runtime_as_available
+	test_extract_session_title_handles_unquoted_multiword_titles
+	test_transcript_gate_defers_active_sessions
+	test_transcript_gate_allows_stalled_sessions
 	teardown_test_env
 
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"

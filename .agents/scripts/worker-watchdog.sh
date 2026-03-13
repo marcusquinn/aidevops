@@ -88,6 +88,8 @@ readonly IDLE_STATE_DIR="${STATE_DIR}/worker-idle-tracking"
 
 STALL_EVIDENCE_CLASS=""
 STALL_EVIDENCE_SUMMARY=""
+INTERVENTION_EVIDENCE_CLASS=""
+INTERVENTION_EVIDENCE_SUMMARY=""
 THRASH_RATIO=""
 THRASH_COMMITS=""
 THRASH_MESSAGES=""
@@ -317,18 +319,18 @@ check_progress_stall() {
 	local has_recent_activity=false
 
 	if [[ -f "$db_path" ]]; then
-		local session_title=""
-		session_title=$(_extract_session_title "$cmd")
+		local session_id=""
+		session_id=$(_resolve_session_id_from_cmd "$cmd")
 
-		if [[ -n "$session_title" ]]; then
+		if [[ -n "$session_id" ]]; then
 			local recent_count
 			recent_count=$(
-				SESSION_WATCHDOG_DB_PATH="$db_path" SESSION_WATCHDOG_TITLE="$session_title" SESSION_WATCHDOG_TIMEOUT="$WORKER_PROGRESS_TIMEOUT" python3 - <<'PY'
+				SESSION_WATCHDOG_DB_PATH="$db_path" SESSION_WATCHDOG_ID="$session_id" SESSION_WATCHDOG_TIMEOUT="$WORKER_PROGRESS_TIMEOUT" python3 - <<'PY'
 import os
 import sqlite3
 
 db_path = os.environ["SESSION_WATCHDOG_DB_PATH"]
-session_title = os.environ["SESSION_WATCHDOG_TITLE"]
+session_id = os.environ["SESSION_WATCHDOG_ID"]
 timeout_seconds = int(os.environ["SESSION_WATCHDOG_TIMEOUT"])
 
 conn = sqlite3.connect(db_path)
@@ -337,12 +339,11 @@ cursor = conn.cursor()
 cursor.execute(
     """
     SELECT COUNT(*)
-    FROM message m
-    JOIN session s ON m.session_id = s.id
-    WHERE s.title LIKE ?
-      AND m.time_created > strftime('%s', 'now') - ?
+    FROM message
+    WHERE session_id = ?
+      AND (CASE WHEN time_created > 20000000000 THEN time_created / 1000 ELSE time_created END) > strftime('%s', 'now') - ?
     """,
-    (f"%{session_title}%", timeout_seconds),
+    (session_id, timeout_seconds),
 )
 row = cursor.fetchone()
 print(int(row[0] or 0))
@@ -409,6 +410,53 @@ PY
 		return 0 # Stalled long enough — kill
 	fi
 	return 1
+}
+
+#######################################
+# Transcript-first intervention gate
+#
+# Every kill action must be justified by transcript evidence. Metrics can
+# propose candidates, but transcript evidence decides whether intervention
+# is permitted in this cycle.
+#
+# Arguments:
+#   $1 - signal type (runtime|thrash|idle|stall)
+#   $2 - worker command line
+#   $3 - elapsed seconds
+# Returns: 0 if intervention is allowed, 1 if it should be deferred
+#######################################
+transcript_allows_intervention() {
+	local signal_type="$1"
+	local cmd="$2"
+	local elapsed_seconds="$3"
+
+	INTERVENTION_EVIDENCE_CLASS=""
+	INTERVENTION_EVIDENCE_SUMMARY=""
+
+	local evidence_result
+	evidence_result=$(_get_session_tail_evidence "$cmd" "$WORKER_PROGRESS_TIMEOUT" 12)
+	IFS='|' read -r INTERVENTION_EVIDENCE_CLASS INTERVENTION_EVIDENCE_SUMMARY <<<"$evidence_result"
+
+	local safe_evidence
+	safe_evidence=$(_sanitize_log_field "$INTERVENTION_EVIDENCE_SUMMARY")
+
+	if [[ -z "$INTERVENTION_EVIDENCE_CLASS" || "$INTERVENTION_EVIDENCE_CLASS" == "none" ]]; then
+		log_msg "TRANSCRIPT DEFER: signal=${signal_type} elapsed=${elapsed_seconds}s reason=no-session-evidence evidence=${safe_evidence}"
+		return 1
+	fi
+
+	case "$INTERVENTION_EVIDENCE_CLASS" in
+	active)
+		log_msg "TRANSCRIPT DEFER: signal=${signal_type} elapsed=${elapsed_seconds}s reason=active-session evidence=${safe_evidence}"
+		return 1
+		;;
+	provider-waiting)
+		log_msg "TRANSCRIPT DEFER: signal=${signal_type} elapsed=${elapsed_seconds}s reason=provider-wait evidence=${safe_evidence}"
+		return 1
+		;;
+	esac
+
+	return 0
 }
 
 #######################################
@@ -626,21 +674,30 @@ cmd_check() {
 		local duration
 		duration=$(_format_duration "$elapsed_seconds")
 
-		# Check 1: Runtime ceiling (highest priority — unconditional kill)
+		# Check 1: Runtime ceiling candidate (transcript gate decides kill/defer)
 		if [[ "$elapsed_seconds" -ge "$WORKER_MAX_RUNTIME" ]]; then
+			if ! transcript_allows_intervention "runtime" "$cmd" "$elapsed_seconds"; then
+				continue
+			fi
 			log_msg "RUNTIME CEILING: PID=${pid} elapsed=${duration} (max=$(_format_duration "$WORKER_MAX_RUNTIME"))"
-			kill_worker "$pid" "runtime" "$cmd" "$elapsed_seconds"
+			kill_worker "$pid" "runtime" "$cmd" "$elapsed_seconds" "$INTERVENTION_EVIDENCE_SUMMARY"
 			killed_count=$((killed_count + 1))
 			continue
 		fi
 
 		# Check 2: zero-commit high-message thrash detection
 		if check_zero_commit_thrashing "$pid" "$cmd" "$elapsed_seconds"; then
+			if ! transcript_allows_intervention "thrash" "$cmd" "$elapsed_seconds"; then
+				continue
+			fi
 			local thrash_evidence="ratio=${THRASH_RATIO} messages=${THRASH_MESSAGES} commits=${THRASH_COMMITS} flag=${THRASH_FLAG:-none}"
 			local session_title
 			session_title=$(_extract_session_title "$cmd")
 			if [[ -n "$session_title" ]]; then
 				thrash_evidence="${thrash_evidence}; objective=${session_title}"
+			fi
+			if [[ -n "$INTERVENTION_EVIDENCE_SUMMARY" ]]; then
+				thrash_evidence="${thrash_evidence}; transcript=${INTERVENTION_EVIDENCE_SUMMARY}"
 			fi
 			log_msg "THRASH DETECTED: PID=${pid} elapsed=${duration} ${thrash_evidence}"
 			kill_worker "$pid" "thrash" "$cmd" "$elapsed_seconds" "$thrash_evidence"
@@ -650,14 +707,20 @@ cmd_check() {
 
 		# Check 3: CPU idle detection
 		if check_idle "$pid" "$tree_cpu"; then
+			if ! transcript_allows_intervention "idle" "$cmd" "$elapsed_seconds"; then
+				continue
+			fi
 			log_msg "IDLE DETECTED: PID=${pid} cpu=${tree_cpu}% elapsed=${duration}"
-			kill_worker "$pid" "idle" "$cmd" "$elapsed_seconds"
+			kill_worker "$pid" "idle" "$cmd" "$elapsed_seconds" "$INTERVENTION_EVIDENCE_SUMMARY"
 			killed_count=$((killed_count + 1))
 			continue
 		fi
 
 		# Check 4: Progress stall detection
 		if check_progress_stall "$pid" "$cmd" "$elapsed_seconds"; then
+			if ! transcript_allows_intervention "stall" "$cmd" "$elapsed_seconds"; then
+				continue
+			fi
 			local sanitized_evidence=""
 			if [[ -n "$STALL_EVIDENCE_SUMMARY" ]]; then
 				sanitized_evidence=$(_sanitize_log_field "$STALL_EVIDENCE_SUMMARY")

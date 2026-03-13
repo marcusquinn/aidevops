@@ -229,37 +229,18 @@ check_dedup() {
 		return 0
 	fi
 
-	# Underfilled stale recovery: if the pulse process has been running long
-	# enough and worker pool is below target, recycle now instead of waiting
-	# for the full stale threshold. Adapt timeout by underfill severity to
-	# recover capacity faster during deep underfill while keeping tolerance
-	# for minor underfill blips.
-	local max_workers active_workers deficit_pct adaptive_timeout
+	# Underfill is now intelligence-managed by the pulse session itself.
+	# Do not recycle running pulse processes based only on elapsed time while
+	# underfilled — that creates churn loops and suppresses transcript analysis.
+	local max_workers active_workers deficit_pct
 	max_workers=$(get_max_workers_target)
 	active_workers=$(count_active_workers)
 	[[ "$max_workers" =~ ^[0-9]+$ ]] || max_workers=1
 	[[ "$active_workers" =~ ^[0-9]+$ ]] || active_workers=0
 	deficit_pct=0
-	adaptive_timeout="$PULSE_UNDERFILLED_STALE_RECOVERY_TIMEOUT"
-
 	if [[ "$active_workers" -lt "$max_workers" ]]; then
 		deficit_pct=$(((max_workers - active_workers) * 100 / max_workers))
-		if [[ "$deficit_pct" -ge 50 ]]; then
-			adaptive_timeout=300
-		elif [[ "$deficit_pct" -ge 25 ]]; then
-			adaptive_timeout=450
-		fi
-	fi
-
-	if [[ "$elapsed_seconds" -gt "$adaptive_timeout" && "$active_workers" -lt "$max_workers" ]]; then
-		echo "[pulse-wrapper] Recycling stale pulse process $old_pid early (running ${elapsed_seconds}s, underfilled ${active_workers}/${max_workers} [${deficit_pct}%], threshold ${adaptive_timeout}s)" >>"$LOGFILE"
-		_kill_tree "$old_pid" || true
-		sleep 2
-		if kill -0 "$old_pid" 2>/dev/null; then
-			_force_kill_tree "$old_pid" || true
-		fi
-		rm -f "$PIDFILE"
-		return 0
+		echo "[pulse-wrapper] Underfilled ${active_workers}/${max_workers} (${deficit_pct}%) but preserving active pulse PID $old_pid for transcript-driven decisions" >>"$LOGFILE"
 	fi
 
 	# Process is running and within time limit — genuine dedup
@@ -1452,13 +1433,8 @@ run_pulse() {
 	local effective_cold_start_timeout="$PULSE_COLD_START_TIMEOUT"
 	if [[ "$underfilled_mode" == "1" ]]; then
 		effective_cold_start_timeout="$PULSE_COLD_START_TIMEOUT_UNDERFILLED"
-		[[ "$underfill_pct" =~ ^[0-9]+$ ]] || underfill_pct=0
-		if [[ "$underfill_pct" -ge 50 ]]; then
-			effective_cold_start_timeout=300
-		elif [[ "$underfill_pct" -ge 25 ]]; then
-			effective_cold_start_timeout=450
-		fi
 	fi
+	[[ "$underfill_pct" =~ ^[0-9]+$ ]] || underfill_pct=0
 	if [[ "$effective_cold_start_timeout" -gt "$PULSE_COLD_START_TIMEOUT" ]]; then
 		effective_cold_start_timeout="$PULSE_COLD_START_TIMEOUT"
 	fi
