@@ -600,7 +600,9 @@ _Auto-updated by ${runner_role} stats process. Do not edit manually._"
 	# Only update title if stats changed
 	local current_title=""
 	local view_output
-	if view_output=$(gh issue view "$health_issue_number" --repo "$repo_slug" --json title --jq '.title' 2>&1); then
+	view_output=$(gh issue view "$health_issue_number" --repo "$repo_slug" --json title --jq '.title' 2>&1)
+	local view_exit_code=$?
+	if [[ $view_exit_code -eq 0 ]]; then
 		current_title="$view_output"
 	else
 		echo "[stats] Health issue: failed to view title for #${health_issue_number}: ${view_output}" >>"$LOGFILE"
@@ -609,9 +611,11 @@ _Auto-updated by ${runner_role} stats process. Do not edit manually._"
 	local new_stats="${health_title% at [0-9][0-9]:[0-9][0-9] UTC}"
 	if [[ "$current_stats" != "$new_stats" ]]; then
 		local title_edit_stderr
-		title_edit_stderr=$(gh issue edit "$health_issue_number" --repo "$repo_slug" --title "$health_title" 2>&1 >/dev/null) || {
+		title_edit_stderr=$(gh issue edit "$health_issue_number" --repo "$repo_slug" --title "$health_title" 2>&1 >/dev/null)
+		local title_edit_exit_code=$?
+		if [[ $title_edit_exit_code -ne 0 ]]; then
 			echo "[stats] Health issue: failed to update title for #${health_issue_number}: ${title_edit_stderr}" >>"$LOGFILE"
-		}
+		fi
 	fi
 
 	return 0
