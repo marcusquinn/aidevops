@@ -30,6 +30,31 @@ verbose() {
 	return 0
 }
 
+# Run a single check_pr_task_id test case using a temporary TODO file.
+# Creates the temp file, registers a trap for cleanup, runs the test, then
+# removes the file.  This ensures the temp file is always cleaned up even if
+# the script exits unexpectedly (style-guide line 33).
+#
+# Usage: run_with_temp_todo "<todo_content>" "<pr_title>" "<pr_branch>" "<expected>"
+run_with_temp_todo() {
+	local todo_content="$1"
+	local pr_title="$2"
+	local pr_branch="$3"
+	local expected="$4"
+
+	local temp_todo
+	temp_todo=$(mktemp)
+	# shellcheck disable=SC2064  # intentional: expand $temp_todo now so the
+	#                              trap removes the correct file even if the
+	#                              variable is later reassigned.
+	trap "rm -f '$temp_todo'" EXIT
+	printf '%s\n' "$todo_content" >"$temp_todo"
+	check_pr_task_id "$pr_title" "$pr_branch" "$temp_todo" "$expected"
+	rm -f "$temp_todo"
+	trap - EXIT
+	return 0
+}
+
 # --- Core logic extracted from code-quality.yml pr-task-check job ---
 
 check_pr_task_id() {
@@ -220,64 +245,46 @@ log ""
 log "--- Test Group 5: Edge cases ---"
 
 # Task ID t318 should NOT match t318.5 (boundary check)
-TEMP_TODO=$(mktemp)
-echo "- [ ] t318.5 Test task" >"$TEMP_TODO"
-check_pr_task_id \
+run_with_temp_todo \
+	"- [ ] t318.5 Test task" \
 	"t318: Parent task" \
 	"feature/t318" \
-	"$TEMP_TODO" \
 	"fail-not-found"
-rm -f "$TEMP_TODO"
 
 # Task ID t318.5 should NOT match t318.50
-TEMP_TODO=$(mktemp)
-echo "- [ ] t318.50 Different task" >"$TEMP_TODO"
-check_pr_task_id \
+run_with_temp_todo \
+	"- [ ] t318.50 Different task" \
 	"t318.5: Should not match t318.50" \
 	"feature/t318.5" \
-	"$TEMP_TODO" \
 	"fail-not-found"
-rm -f "$TEMP_TODO"
 
 # Completed task [x] should still pass
-TEMP_TODO=$(mktemp)
-echo "- [x] t999 Completed task" >"$TEMP_TODO"
-check_pr_task_id \
+run_with_temp_todo \
+	"- [x] t999 Completed task" \
 	"t999: Work on completed task" \
 	"feature/t999" \
-	"$TEMP_TODO" \
 	"pass"
-rm -f "$TEMP_TODO"
 
 # Declined task [-] should fail
-TEMP_TODO=$(mktemp)
-echo "- [-] t888 Declined task" >"$TEMP_TODO"
-check_pr_task_id \
+run_with_temp_todo \
+	"- [-] t888 Declined task" \
 	"t888: Work on declined task" \
 	"feature/t888" \
-	"$TEMP_TODO" \
 	"fail-declined"
-rm -f "$TEMP_TODO"
 
 # Subtask with indentation
-TEMP_TODO=$(mktemp)
-echo "  - [ ] t100.1 Indented subtask" >"$TEMP_TODO"
-check_pr_task_id \
+run_with_temp_todo \
+	"  - [ ] t100.1 Indented subtask" \
 	"t100.1: Subtask" \
 	"feature/t100.1" \
-	"$TEMP_TODO" \
 	"pass"
-rm -f "$TEMP_TODO"
 
 # Sub-subtask (t100.1.1)
-TEMP_TODO=$(mktemp)
-echo "    - [ ] t100.1.1 Deep subtask" >"$TEMP_TODO"
-check_pr_task_id \
+run_with_temp_todo \
+	"    - [ ] t100.1.1 Deep subtask" \
 	"t100.1.1: Deep subtask" \
 	"feature/t100.1.1" \
-	"$TEMP_TODO" \
 	"pass"
-rm -f "$TEMP_TODO"
 
 # --- Test Group 6: Supervisor-created PR patterns ---
 log ""
