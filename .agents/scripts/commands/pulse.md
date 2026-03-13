@@ -556,6 +556,20 @@ ISSUE_DISPATCH_BUDGET=$(((AVAILABLE * NEW_ISSUE_DISPATCH_PCT) / 100))
 If budget is exhausted, stop opening new issue workers and continue PR advancement work.
 
 1. Skip if a worker is already running for it locally (check `ps` output for the issue number)
+1.5. **Apply per-repo worker cap before dispatch:** default `MAX_WORKERS_PER_REPO=5` (override via env var only when you have a clear reason). If the target repo already has `MAX_WORKERS_PER_REPO` active workers, skip dispatch for that repo this cycle and continue with other repos.
+
+```bash
+# Source once per pulse run
+source ~/.aidevops/agents/scripts/pulse-wrapper.sh
+
+MAX_WORKERS_PER_REPO=${MAX_WORKERS_PER_REPO:-5}
+ACTIVE_FOR_REPO=$(list_active_worker_processes | awk -v path="<path>" 'index($0, path) > 0 { count++ } END { print count + 0 }')
+if [[ "$ACTIVE_FOR_REPO" -ge "$MAX_WORKERS_PER_REPO" ]]; then
+  echo "Repo at worker cap (${ACTIVE_FOR_REPO}/${MAX_WORKERS_PER_REPO}) — skipping dispatch for <slug> this cycle"
+  continue
+fi
+```
+
 2. Skip if an open PR already exists for it (check PR list)
 3. Treat labels as hints, not gates. `status:queued`, `status:in-progress`, and `status:in-review` suggest active work, but verify with evidence (active worker, recent PR updates, recent commits) before skipping.
 4. Treat unassigned + non-blocked issues as available by default. `status:available` is optional metadata, not a requirement.

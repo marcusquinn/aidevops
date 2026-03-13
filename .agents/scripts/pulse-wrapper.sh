@@ -956,9 +956,21 @@ This PR modifies \`.github/workflows/\` files but the GitHub OAuth token used by
 #
 # Output: worker summary to stdout (appended to STATE_FILE by caller)
 #######################################
+list_active_worker_processes() {
+	ps axo pid,etime,command | awk '
+		/\/full-loop/ &&
+		$0 !~ /\/pulse/ &&
+		$0 !~ /Supervisor Pulse/ &&
+		$0 ~ /(^|[[:space:]\/])\.?opencode([[:space:]]|$)/ {
+			print
+		}
+	'
+	return 0
+}
+
 prefetch_active_workers() {
 	local worker_lines
-	worker_lines=$(ps axo pid,etime,command | grep '/full-loop' | grep '[.]opencode' || true)
+	worker_lines=$(list_active_worker_processes || true)
 
 	echo ""
 	echo "# Active Workers"
@@ -1916,19 +1928,7 @@ normalize_active_issue_assignments() {
 #######################################
 count_active_workers() {
 	local count
-	count=$(ps axo command | awk '
-		index($0, ".opencode run") > 0 &&
-		index($0, "/full-loop") > 0 &&
-		!(
-			$0 ~ /(^|[[:space:]])--role([=[:space:]])pulse([[:space:]]|$)/ &&
-			$0 ~ /(^|[[:space:]])--session-key([=[:space:]])supervisor-pulse([[:space:]]|$)/
-		) {
-			count++
-		}
-		END {
-			print count + 0
-		}
-	') || count=0
+	count=$(list_active_worker_processes | wc -l | tr -d ' ') || count=0
 	echo "$count"
 	return 0
 }
@@ -1979,7 +1979,7 @@ has_worker_for_repo_issue() {
 	fi
 
 	local matches
-	matches=$(ps axo command | awk -v issue="$issue_number" -v path="$repo_path" '
+	matches=$(list_active_worker_processes | awk -v issue="$issue_number" -v path="$repo_path" '
 		index($0, path) > 0 && ($0 ~ ("issue-" issue "([^0-9]|$)") || $0 ~ ("Issue #" issue "([^0-9]|$)")) { count++ }
 		END { print count + 0 }
 	') || matches=0
