@@ -3807,7 +3807,7 @@ cmd_triage() {
 		fi
 
 		local pr_state
-		pr_state=$(echo "$pr_json" | grep -o '"state":"[^"]*"' | cut -d'"' -f4 || echo "")
+		pr_state=$(echo "$pr_json" | grep -o '"state":"[^"]*"' | cut -d'"' -f4 || true)
 
 		case "$pr_state" in
 		MERGED)
