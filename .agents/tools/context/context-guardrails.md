@@ -32,7 +32,7 @@ tools:
 
 ## The Problem
 
-Claude's context window is 200K tokens. Context-heavy operations can easily exceed this:
+The active model's context window has a finite limit (refer to the current model's documented capacity). Context-heavy operations can easily exceed it:
 
 | Tool | Typical Output | Risk Level |
 |------|----------------|------------|
