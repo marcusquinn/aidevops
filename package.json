@@ -58,6 +58,7 @@
     "bin/",
     "aidevops.sh",
     "setup.sh",
+    "setup-modules/",
     "VERSION",
     "scripts/npm-postinstall.cjs",
     "templates/"
