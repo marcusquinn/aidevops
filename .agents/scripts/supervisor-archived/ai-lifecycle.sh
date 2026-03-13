@@ -85,34 +85,34 @@ gather_task_state() {
 				local pr_json
 				pr_json=$(gh pr view "$pr_number" --repo "$pr_repo_slug" \
 					--json state,isDraft,reviewDecision,mergeable,mergeStateStatus,statusCheckRollup,baseRefName \
-					2>/dev/null || echo "")
+					2>>"$SUPERVISOR_LOG" || echo "")
 
 				if [[ -n "$pr_json" ]]; then
-					pr_state=$(printf '%s' "$pr_json" | jq -r '.state // "UNKNOWN"' 2>/dev/null || echo "UNKNOWN")
-					pr_merge_state=$(printf '%s' "$pr_json" | jq -r '.mergeStateStatus // "UNKNOWN"' 2>/dev/null || echo "UNKNOWN")
-					pr_review_decision=$(printf '%s' "$pr_json" | jq -r '.reviewDecision // "NONE"' 2>/dev/null || echo "NONE")
-					pr_base_ref=$(printf '%s' "$pr_json" | jq -r '.baseRefName // "main"' 2>/dev/null || echo "main")
+					pr_state=$(printf '%s' "$pr_json" | jq -r '.state // "UNKNOWN"' || echo "UNKNOWN")
+					pr_merge_state=$(printf '%s' "$pr_json" | jq -r '.mergeStateStatus // "UNKNOWN"' || echo "UNKNOWN")
+					pr_review_decision=$(printf '%s' "$pr_json" | jq -r '.reviewDecision // "NONE"' || echo "NONE")
+					pr_base_ref=$(printf '%s' "$pr_json" | jq -r '.baseRefName // "main"' || echo "main")
 
 					local is_draft
-					is_draft=$(printf '%s' "$pr_json" | jq -r '.isDraft // false' 2>/dev/null || echo "false")
+					is_draft=$(printf '%s' "$pr_json" | jq -r '.isDraft // false' || echo "false")
 					if [[ "$is_draft" == "true" ]]; then
 						pr_state="DRAFT"
 					fi
 
 					# CI summary
 					local check_rollup
-					check_rollup=$(printf '%s' "$pr_json" | jq -r '.statusCheckRollup // []' 2>/dev/null || echo "[]")
+					check_rollup=$(printf '%s' "$pr_json" | jq -r '.statusCheckRollup // []' || echo "[]")
 					if [[ "$check_rollup" != "[]" && "$check_rollup" != "null" ]]; then
 						local pending failed passed total
-						pending=$(printf '%s' "$check_rollup" | jq '[.[] | select(.status == "IN_PROGRESS" or .status == "QUEUED" or .status == "PENDING")] | length' 2>/dev/null || echo "0")
-						failed=$(printf '%s' "$check_rollup" | jq '[.[] | select((.conclusion | test("FAILURE|TIMED_OUT|ACTION_REQUIRED")) or .state == "FAILURE" or .state == "ERROR")] | length' 2>/dev/null || echo "0")
-						passed=$(printf '%s' "$check_rollup" | jq '[.[] | select(.conclusion == "SUCCESS" or .state == "SUCCESS")] | length' 2>/dev/null || echo "0")
-						total=$(printf '%s' "$check_rollup" | jq 'length' 2>/dev/null || echo "0")
+						pending=$(printf '%s' "$check_rollup" | jq '[.[] | select(.status == "IN_PROGRESS" or .status == "QUEUED" or .status == "PENDING")] | length' || echo "0")
+						failed=$(printf '%s' "$check_rollup" | jq '[.[] | select((.conclusion | test("FAILURE|TIMED_OUT|ACTION_REQUIRED")) or .state == "FAILURE" or .state == "ERROR")] | length' || echo "0")
+						passed=$(printf '%s' "$check_rollup" | jq '[.[] | select(.conclusion == "SUCCESS" or .state == "SUCCESS")] | length' || echo "0")
+						total=$(printf '%s' "$check_rollup" | jq 'length' || echo "0")
 						pr_ci_summary="total:${total} passed:${passed} failed:${failed} pending:${pending}"
 
 						# Names of failed checks
 						local failed_names
-						failed_names=$(printf '%s' "$check_rollup" | jq -r '[.[] | select((.conclusion | test("FAILURE|TIMED_OUT|ACTION_REQUIRED")) or .state == "FAILURE" or .state == "ERROR") | .name] | join(", ")' 2>/dev/null || echo "")
+						failed_names=$(printf '%s' "$check_rollup" | jq -r '[.[] | select((.conclusion | test("FAILURE|TIMED_OUT|ACTION_REQUIRED")) or .state == "FAILURE" or .state == "ERROR") | .name] | join(", ")' || echo "")
 						if [[ -n "$failed_names" ]]; then
 							pr_ci_failed_names="$failed_names"
 						fi
@@ -259,7 +259,7 @@ Respond with ONLY a JSON object (no markdown, no explanation outside the JSON):
 			-m "$ai_model" \
 			--format default \
 			--title "lifecycle-${task_id}-$$" \
-			"$prompt" 2>/dev/null || echo "")
+			"$prompt" 2>>"$SUPERVISOR_LOG" || echo "")
 		# Strip ANSI codes
 		ai_result=$(printf '%s' "$ai_result" | sed 's/\x1b\[[0-9;]*[mGKHF]//g; s/\x1b\[[0-9;]*[A-Za-z]//g; s/\x1b\]//g; s/\x07//g')
 	else
@@ -267,7 +267,7 @@ Respond with ONLY a JSON object (no markdown, no explanation outside the JSON):
 		ai_result=$(portable_timeout "$AI_LIFECYCLE_TIMEOUT" claude \
 			-p "$prompt" \
 			--model "$claude_model" \
-			--output-format text 2>/dev/null || echo "")
+			--output-format text 2>>"$SUPERVISOR_LOG" || echo "")
 	fi
 
 	if [[ -z "$ai_result" ]]; then
@@ -286,7 +286,7 @@ Respond with ONLY a JSON object (no markdown, no explanation outside the JSON):
 	fi
 
 	local action
-	action=$(printf '%s' "$json_block" | jq -r '.action // ""' 2>/dev/null || echo "")
+	action=$(printf '%s' "$json_block" | jq -r '.action // ""' || echo "")
 	if [[ -z "$action" ]]; then
 		log_warn "ai-lifecycle: no action field in response for $task_id"
 		return 1
@@ -299,7 +299,7 @@ Respond with ONLY a JSON object (no markdown, no explanation outside the JSON):
 	{
 		echo "# Decision: $task_id @ $timestamp"
 		echo "Action: $action"
-		echo "Reason: $(printf '%s' "$json_block" | jq -r '.reason // ""' 2>/dev/null)"
+		echo "Reason: $(printf '%s' "$json_block" | jq -r '.reason // ""' || true)"
 		echo ""
 		echo "## State"
 		echo "$task_state"
@@ -350,7 +350,7 @@ execute_action() {
 			pr_number="${parsed_pr##*|}"
 			local base_ref
 			base_ref=$(gh pr view "$pr_number" --repo "$pr_repo_slug" \
-				--json baseRefName --jq '.baseRefName' 2>/dev/null) || base_ref=""
+				--json baseRefName --jq '.baseRefName' 2>>"$SUPERVISOR_LOG") || base_ref=""
 			if [[ -n "$base_ref" ]]; then
 				pr_base_branch="$base_ref"
 			fi
@@ -375,7 +375,7 @@ execute_action() {
 			local current_review_decision="NONE"
 			if [[ -n "$pr_number" && -n "$pr_repo_slug" ]] && command -v gh &>/dev/null; then
 				current_review_decision=$(gh pr view "$pr_number" --repo "$pr_repo_slug" \
-					--json reviewDecision --jq '.reviewDecision // "NONE"' 2>/dev/null || echo "NONE")
+					--json reviewDecision --jq '.reviewDecision // "NONE"' 2>>"$SUPERVISOR_LOG" || echo "NONE")
 			fi
 			if [[ "$current_review_decision" != "APPROVED" ]]; then
 				log_info "ai-lifecycle: $task_id merge blocked — human review required (reviewDecision=$current_review_decision, set SUPERVISOR_AUTO_MERGE_ENABLED=true to bypass) (t1314)"
@@ -418,11 +418,13 @@ execute_action() {
 		;;
 
 	rebase_branch)
+		# Increment rebase_attempts on every attempt (success or failure) so the
+		# "rebase_attempts > 3 → resolve_conflicts" guard in the AI prompt can trigger.
+		local current_attempts
+		current_attempts=$(db "$SUPERVISOR_DB" "SELECT rebase_attempts FROM tasks WHERE id = '$escaped_id';" 2>/dev/null || echo "0")
+		db "$SUPERVISOR_DB" "UPDATE tasks SET rebase_attempts = $((current_attempts + 1)) WHERE id = '$escaped_id';" 2>/dev/null || true
 		if rebase_sibling_pr "$task_id" 2>>"$SUPERVISOR_LOG"; then
 			log_success "ai-lifecycle: rebase succeeded for $task_id"
-			local current_attempts
-			current_attempts=$(db "$SUPERVISOR_DB" "SELECT rebase_attempts FROM tasks WHERE id = '$escaped_id';" 2>/dev/null || echo "0")
-			db "$SUPERVISOR_DB" "UPDATE tasks SET rebase_attempts = $((current_attempts + 1)) WHERE id = '$escaped_id';" 2>/dev/null || true
 			return 0
 		fi
 		log_warn "ai-lifecycle: rebase failed for $task_id"
