@@ -606,6 +606,8 @@ fi
    - If the issue body includes an explicit command/SOP, run that command directly. If not, infer the best direct command from the issue domain + assigned agent.
 8. Dispatch:
 
+> **Quality-debt issues:** Do NOT use the standard `--dir <path>` dispatch below. Instead, follow the "Quality-debt worktree dispatch" protocol (see below) — pre-create a worktree and pass `--dir <worktree_path>`. This is mandatory to prevent branch conflicts in the canonical repo directory (t1479).
+
 ```bash
 # Assign the issue to prevent duplicate work by other runners/humans
 RUNNER_USER=$(gh api user --jq '.login' 2>/dev/null || whoami)
@@ -792,7 +794,7 @@ batch-strategy-helper.sh validate --tasks "$TASKS_JSON"
 4. Active mission features (keeps multi-day projects moving — see Step 3.5)
 5. Product repos (`"priority": "product"` in repos.json) over tooling — **enforced by priority-class reservations (t1423)**. Product repos have `PRODUCT_MIN` reserved slots; tooling cannot consume them when product work is pending. See "Priority-class enforcement" in Step 1.
 6. Smaller/simpler tasks over large ones (faster throughput)
-7. `quality-debt` issues (unactioned review feedback from merged PRs)
+7. `quality-debt` issues (unactioned review feedback from merged PRs) — **use worktree dispatch** (see "Quality-debt worktree dispatch" below)
 8. `simplification-debt` issues (human-approved simplification opportunities)
 9. Oldest issues
 
@@ -814,6 +816,72 @@ QUALITY_DEBT_MAX=$(( MAX_WORKERS * QUALITY_DEBT_CAP_PCT / 100 ))
 ```
 
 If `QUALITY_DEBT_CURRENT >= QUALITY_DEBT_MAX`, do not dispatch more quality-debt issues this cycle.
+
+### Pre-dispatch canonical-repo check for quality-debt (t1479, MANDATORY)
+
+**Before dispatching any quality-debt worker**, verify the canonical repo directory is on `main`. If it is not, skip all quality-debt dispatches for that repo this cycle and log a warning. This prevents the branch-conflict cascade where multiple workers race to create branches in the same canonical directory, leaving it on a non-main branch.
+
+```bash
+# Check canonical repo is on main before any quality-debt dispatch
+CANONICAL_BRANCH=$(git -C <path> rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")
+if [[ "$CANONICAL_BRANCH" != "main" && "$CANONICAL_BRANCH" != "master" ]]; then
+  echo "WARN: Skipping quality-debt dispatch for <slug> — canonical repo is on branch '$CANONICAL_BRANCH', not main. Manual cleanup required before quality-debt workers can be dispatched."
+  # Skip all quality-debt dispatches for this repo this cycle
+  continue
+fi
+```
+
+### Quality-debt worktree dispatch (t1479, MANDATORY)
+
+**Quality-debt workers MUST be dispatched to a pre-created worktree, not the canonical repo directory.** Dispatching multiple workers to the same canonical dir causes them to race for branch creation, leaving the canonical repo on a non-main branch and producing struggle ratios in the thousands.
+
+**For each quality-debt issue dispatch:**
+
+1. Generate a branch name from the issue number and title slug.
+2. Pre-create a worktree for that branch using `worktree-helper.sh`.
+3. Pass `--dir <worktree_path>` (not `--dir <canonical_path>`) to the headless runtime helper.
+
+```bash
+# 1. Generate branch name from issue number + title slug (max 40 chars)
+QD_BRANCH_SLUG=$(echo "<title>" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g' | cut -c1-30)
+QD_BRANCH="bugfix/qd-<number>-${QD_BRANCH_SLUG}"
+
+# 2. Pre-create worktree (idempotent — if branch already exists, reuse it)
+QD_WT_PATH=$(git -C <path> worktree list --porcelain \
+  | grep -B2 "branch refs/heads/${QD_BRANCH}$" \
+  | grep "^worktree " | cut -d' ' -f2- 2>/dev/null || true)
+
+if [[ -z "$QD_WT_PATH" ]]; then
+  # Worktree does not exist — create it using git -C to target the correct repo
+  # (worktree-helper.sh uses cwd; use git directly to avoid cwd dependency)
+  REPO_NAME=$(basename <path>)
+  PARENT_DIR=$(dirname <path>)
+  QD_WT_SLUG=$(echo "$QD_BRANCH" | tr '/' '-' | tr '[:upper:]' '[:lower:]')
+  QD_WT_PATH="${PARENT_DIR}/${REPO_NAME}-${QD_WT_SLUG}"
+  git -C <path> worktree add -b "$QD_BRANCH" "$QD_WT_PATH" 2>/dev/null || {
+    echo "WARN: Failed to create worktree for quality-debt #<number> — skipping dispatch"
+    continue
+  }
+fi
+
+if [[ -z "$QD_WT_PATH" || ! -d "$QD_WT_PATH" ]]; then
+  echo "WARN: Could not determine worktree path for quality-debt #<number> — skipping dispatch"
+  continue
+fi
+
+# 3. Dispatch worker to the worktree path, not the canonical repo path
+~/.aidevops/agents/scripts/headless-runtime-helper.sh run \
+  --role worker \
+  --session-key "issue-<number>" \
+  --dir "$QD_WT_PATH" \
+  --title "Issue #<number>: <title>" \
+  --prompt "/full-loop Implement issue #<number> (<url>) -- <brief description>" &
+sleep 2
+```
+
+**Why worktrees, not canonical dir:** When the pulse dispatches N quality-debt workers all pointing to the same canonical repo path, each worker's `full-loop.md` Step 1 tries to create a branch in that directory. The first worker succeeds; subsequent workers find the repo already on a non-main branch and either fail or compound the problem. Worktrees give each worker an isolated directory with its own branch, so they never interfere with each other or with the canonical repo.
+
+**`git -C <path>` for worktree creation:** The pulse runs from its own working directory (not the target repo). Use `git -C <path>` to create worktrees in the correct repo without changing the pulse's cwd. Do NOT call `worktree-helper.sh` for this — it uses `get_repo_root()` which depends on cwd and would target the wrong repo.
 
 ### Quality-debt PR blast radius cap (t1422)
 
