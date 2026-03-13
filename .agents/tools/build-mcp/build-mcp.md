@@ -254,10 +254,10 @@ Key fields: `type` (`local` | `remote`), `url` (Streamable HTTP endpoint), `head
 Never paste API keys into conversation context. Inject them into the config file from gopass:
 
 ```bash
+tmpfile=$(mktemp)
 jq --arg key "$(gopass show -o provider/api-key)" \
   '.mcp["provider-name"].headers.Authorization = "Bearer " + $key' \
-  ~/.config/opencode/opencode.json > /tmp/oc.json \
-  && mv /tmp/oc.json ~/.config/opencode/opencode.json
+  ~/.config/opencode/opencode.json > "$tmpfile" && mv "$tmpfile" ~/.config/opencode/opencode.json
 ```
 
 This keeps the key out of conversation transcripts and shell history (gopass prompts for GPG passphrase, not the key itself).
