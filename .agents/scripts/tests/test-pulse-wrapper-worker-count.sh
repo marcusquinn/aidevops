@@ -107,8 +107,8 @@ test_does_not_exclude_non_supervisor_role_pulse_commands() {
 }
 
 main() {
-	setup_test_env
 	trap teardown_test_env EXIT
+	setup_test_env
 
 	test_counts_workers_and_ignores_supervisor_session
 	test_returns_zero_when_no_full_loop_workers
