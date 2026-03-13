@@ -500,16 +500,17 @@ preflight_loop() {
 		echo ""
 		print_info "=== Preflight Iteration $iteration / $max_iterations ==="
 
-		local output exit_code result_status
-		output=$(run_preflight_checks "$auto_fix" 2>/dev/null) || exit_code=$?
-		exit_code="${exit_code:-0}"
+		local preflight_output
+		preflight_output=$(run_preflight_checks "$auto_fix" 2>/dev/null)
+		local preflight_exit=$?
 
-		if ((exit_code != 0)); then
-			print_error "Preflight checks failed to run (exit code: $exit_code)."
+		if ((preflight_exit != 0)); then
+			print_error "Preflight checks failed to run (exit code: $preflight_exit)."
 			continue
 		fi
 
-		result_status=$(printf '%s' "$output" | tail -n 1 | tr -d '\r')
+		local result_status
+		result_status=$(printf '%s' "$preflight_output" | tail -n 1 | tr -d '\r')
 
 		if [[ "$result_status" == "PASS" ]]; then
 			echo ""
@@ -773,44 +774,22 @@ check_unresolved_review_comments() {
 	fi
 
 	# shellcheck disable=SC2016 # GraphQL variables, not shell - single quotes intentional
-	# Include author login so we can filter to AI reviewer threads only (GH#3585)
 	api_response=$(gh api graphql -f query='
       query($owner:String!, $repo:String!, $number:Int!) {
         repository(owner:$owner, name:$repo) {
           pullRequest(number:$number) {
-            reviewThreads(first:100) {
-              nodes {
-                isResolved
-                comments(first:1) { nodes { author { login } } }
-              }
-            }
+            reviewThreads(first:100) { nodes { isResolved } }
           }
         }
-      }' -f owner="$repo_owner" -f repo="$repo_name" -F number="$pr_number" 2>&1)
+      }' -f owner="$repo_owner" -f repo="$repo_name" -F number="$pr_number" 2>/dev/null)
 
 	if [[ -z "$api_response" ]]; then
 		print_error "Failed to fetch PR review threads from GitHub API - cannot verify review status"
 		return 2
 	fi
 
-	# Check for GraphQL errors in the response body
-	if printf '%s' "$api_response" | jq -e '.errors' >/dev/null 2>&1; then
-		local gql_error
-		gql_error=$(printf '%s' "$api_response" | jq -r '.errors[0].message // "unknown error"' 2>/dev/null)
-		print_error "GitHub API error fetching review threads: $gql_error"
-		return 2
-	fi
-
-	# Count unresolved threads where the first comment author matches AI reviewer pattern
-	# This prevents human-authored threads from blocking the PR loop (GH#3585)
 	unresolved_count=$(printf '%s' "$api_response" | jq -r \
-		--arg bots "$AI_REVIEWERS" \
-		'[.data.repository.pullRequest.reviewThreads.nodes[]
-		  | select(.isResolved == false)
-		  | select(
-		      (.comments.nodes[0].author.login // "") | test($bots; "i")
-		    )
-		] | length' 2>/dev/null)
+		'[.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false)] | length' 2>/dev/null)
 
 	if ! [[ "$unresolved_count" =~ ^[0-9]+$ ]]; then
 		print_error "Failed to parse unresolved thread count - cannot proceed safely"
@@ -818,7 +797,7 @@ check_unresolved_review_comments() {
 	fi
 
 	if [[ "$unresolved_count" -gt 0 ]]; then
-		print_warning "Found $unresolved_count unresolved AI reviewer threads"
+		print_warning "Found $unresolved_count unresolved review threads"
 		return 1
 	fi
 	return 0
@@ -887,8 +866,17 @@ pr_review_loop() {
 		echo ""
 		print_info "=== PR Review Iteration $iteration / $max_iterations ==="
 
+		local pr_status_output
+		pr_status_output=$(check_pr_status "$pr_number" "$wait_for_ci" 2>/dev/null)
+		local pr_status_exit=$?
+
+		if ((pr_status_exit != 0)); then
+			print_error "Failed to check PR status (exit code: $pr_status_exit)."
+			continue
+		fi
+
 		local status
-		status=$(check_pr_status "$pr_number" "$wait_for_ci" | tail -n 1 | tr -d '\r')
+		status=$(printf '%s' "$pr_status_output" | tail -n 1 | tr -d '\r')
 
 		case "$status" in
 		MERGED)
