@@ -8,7 +8,7 @@
 # Target: ~/.config/opencode/command/
 #
 # Commands are generated from:
-#   - build-agent/agent-review.md -> /agent-review
+#   - tools/build-agent/agent-review.md -> /agent-review
 #   - workflows/*.md -> /workflow-name
 #   - Other agents as needed
 # =============================================================================
@@ -87,7 +87,7 @@ create_command() {
 create_command "agent-review" \
 	"Systematic review and improvement of agent instructions" \
 	"$AGENT_BUILD" "true" <<'BODY'
-Read ~/.aidevops/agents/tools/build-agent/agent-review.md and follow its instructions.
+Read $HOME/.aidevops/agents/tools/build-agent/agent-review.md and follow its instructions.
 
 Review the agent file(s) specified: $ARGUMENTS
 
