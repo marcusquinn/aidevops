@@ -415,7 +415,7 @@ SELECT
   region,
   traffic_tier
 FROM `httparchive.technologies.2026_02_01`
-WHERE technologies LIKE '%React%'
+WHERE EXISTS(SELECT 1 FROM UNNEST(technologies) tech WHERE tech.name = 'React')
   AND region = 'US'
   AND traffic_tier = 'high'
 LIMIT 100
