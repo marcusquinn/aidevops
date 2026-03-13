@@ -335,13 +335,18 @@ prefetch_state() {
 
 				echo ""
 
-				# Daily PR cap (GH#3821) — count PRs created today to prevent
-				# CodeRabbit quota exhaustion from too many PRs in one day.
-				# Reuses pr_json already fetched above (no extra API call).
+				# Daily PR cap (GH#3821, GH#4412) — count ALL PRs created today
+				# (open, merged, and closed) to prevent CodeRabbit quota exhaustion.
+				# Must use --state all because PRs merged/closed earlier today are
+				# excluded from the open-only pr_json, causing an undercount that
+				# lets the pulse dispatch workers past the real cap.
 				local today_utc
 				today_utc=$(date -u +%Y-%m-%d)
+				local daily_cap_json
+				daily_cap_json=$(gh pr list --repo "$slug" --state all \
+					--json createdAt --limit 200 2>/dev/null) || daily_cap_json="[]"
 				local daily_pr_count
-				daily_pr_count=$(echo "$pr_json" | jq --arg today "$today_utc" \
+				daily_pr_count=$(echo "$daily_cap_json" | jq --arg today "$today_utc" \
 					'[.[] | select(.createdAt | startswith($today))] | length') || daily_pr_count=0
 				[[ "$daily_pr_count" =~ ^[0-9]+$ ]] || daily_pr_count=0
 				local daily_pr_remaining=$((DAILY_PR_CAP - daily_pr_count))
@@ -2670,7 +2675,8 @@ calculate_priority_allocations() {
 		while IFS= read -r slug; do
 			[[ -n "$slug" ]] || continue
 			local pr_json daily_pr_count
-			pr_json=$(gh pr list --repo "$slug" --state open --json createdAt --limit 100 2>/dev/null) || pr_json="[]"
+			# GH#4412: use --state all to count merged/closed PRs too
+			pr_json=$(gh pr list --repo "$slug" --state all --json createdAt --limit 200 2>/dev/null) || pr_json="[]"
 			daily_pr_count=$(echo "$pr_json" | jq --arg today "$today_utc" '[.[] | select(.createdAt | startswith($today))] | length' 2>/dev/null) || daily_pr_count=0
 			[[ "$daily_pr_count" =~ ^[0-9]+$ ]] || daily_pr_count=0
 			if [[ "$daily_pr_count" -lt "$DAILY_PR_CAP" ]]; then
