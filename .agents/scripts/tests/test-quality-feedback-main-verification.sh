@@ -90,6 +90,10 @@ _mock_gh_api() {
 		esac
 	done
 
+	# contents/* — file fetch used by _finding_still_exists_on_main
+	# Route purely by env-var flags, not by endpoint URL, so tests are not
+	# accidentally coupled to filenames that happen to contain "diff" or
+	# "suggestion".  Priority: GH_DELETED > GH_RAW_CONTENT > GH_DIFF > GH_SUGGESTION
 	if [[ "$endpoint" == repos/*/contents/* ]]; then
 		GH_LAST_CONTENT_ENDPOINT="$endpoint"
 		[[ -n "$GH_API_LOG" ]] && printf '%s\n' "$endpoint" >>"$GH_API_LOG"
@@ -104,16 +108,6 @@ _mock_gh_api() {
 			# Simulate a transient API error (non-404) — no "404" in stderr
 			echo "500 Internal Server Error" >&2
 			return 1
-		fi
-
-		if [[ "$endpoint" == *"diff"* && -n "$GH_DIFF" ]]; then
-			printf '%s' "$GH_DIFF"
-			return 0
-		fi
-
-		if [[ "$endpoint" == *"suggestion"* && -n "$GH_SUGGESTION" ]]; then
-			printf '%s' "$GH_SUGGESTION"
-			return 0
 		fi
 
 		if [[ -n "$GH_RAW_CONTENT" ]]; then
@@ -134,20 +128,7 @@ _mock_gh_api() {
 		return 1
 	fi
 
-	if [[ "$endpoint" == repos/*/pulls/*/files ]]; then
-		if [[ -n "$GH_DIFF" ]]; then
-			printf '%s' "$GH_DIFF"
-			return 0
-		fi
-
-		if [[ -n "$GH_SUGGESTION" ]]; then
-			printf '%s' "$GH_SUGGESTION"
-			return 0
-		fi
-
-		return 0
-	fi
-
+	# repos/* (no sub-path) — default-branch lookup
 	if [[ "$endpoint" == repos/* ]]; then
 		echo "main"
 		return 0
@@ -264,11 +245,17 @@ test_skips_deleted_file() {
 }
 
 test_handles_diff_fence_without_false_positive() {
+	# The finding body contains a ```diff fence.  The snippet extractor must
+	# skip the +/- lines and extract the context line ("context stable
+	# verification marker").  The file on main (GH_RAW_CONTENT) contains that
+	# context line, so the finding is verified and an issue is created.
+	# GH_RAW_CONTENT is used for the file payload; the diff fence is only in
+	# body_full and does not affect which env var the mock returns.
 	reset_mock_state
-	GH_DIFF=$'#!/usr/bin/env bash\ncontext stable verification marker\nreturn 0\n'
+	GH_RAW_CONTENT=$'#!/usr/bin/env bash\ncontext stable verification marker\nreturn 0\n'
 
 	local findings
-	findings='[{"file":".agents/scripts/diff-example.sh","line":2,"body_full":"```diff\n- return 1\n+ return 2\n context stable verification marker\n```","reviewer":"coderabbit","reviewer_login":"coderabbitai","severity":"high","url":"https://example.test/comment"}]'
+	findings='[{"file":".agents/scripts/example.sh","line":2,"body_full":"```diff\n- return 1\n+ return 2\n context stable verification marker\n```","reviewer":"coderabbit","reviewer_login":"coderabbitai","severity":"high","url":"https://example.test/comment"}]'
 
 	local out_file
 	out_file=$(mktemp)
@@ -291,11 +278,16 @@ test_handles_diff_fence_without_false_positive() {
 }
 
 test_handles_suggestion_fence_and_comments() {
+	# The finding body contains a ```suggestion fence with comment lines.
+	# The snippet extractor must skip comment-only lines (// and #) and extract
+	# the first substantive code line ("this is stable suggestion code").
+	# The file on main (GH_RAW_CONTENT) contains that line, so the finding is
+	# verified and an issue is created.
 	reset_mock_state
-	GH_SUGGESTION=$'#!/usr/bin/env bash\nthis is stable suggestion code\n'
+	GH_RAW_CONTENT=$'#!/usr/bin/env bash\nthis is stable suggestion code\n'
 
 	local findings
-	findings='[{"file":".agents/scripts/suggestion-example.sh","line":2,"body_full":"```suggestion\n// reviewer note\n# inline comment\nthis is stable suggestion code\n```","reviewer":"coderabbit","reviewer_login":"coderabbitai","severity":"high","url":"https://example.test/comment"}]'
+	findings='[{"file":".agents/scripts/example.sh","line":2,"body_full":"```suggestion\n// reviewer note\n# inline comment\nthis is stable suggestion code\n```","reviewer":"coderabbit","reviewer_login":"coderabbitai","severity":"high","url":"https://example.test/comment"}]'
 
 	local out_file
 	out_file=$(mktemp)
