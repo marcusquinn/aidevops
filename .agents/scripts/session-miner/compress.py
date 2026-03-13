@@ -25,6 +25,11 @@ from pathlib import Path
 CHUNKS_DIR = Path(sys.argv[1]) if len(sys.argv) > 1 else (
     Path.home() / ".aidevops/.agent-workspace/work/session-miner"
 )
+
+if not CHUNKS_DIR.exists():
+    print(f"Error: Chunks directory not found at {CHUNKS_DIR}", file=sys.stderr)
+    sys.exit(1)
+
 OUTPUT = CHUNKS_DIR.parent / "compressed_signals.json"
 
 
@@ -291,6 +296,7 @@ def main():
         "git_correlation": git_correlation,
     }
 
+    OUTPUT.parent.mkdir(parents=True, exist_ok=True)
     OUTPUT.write_text(json.dumps(output, indent=2, ensure_ascii=False), encoding="utf-8")
 
     total_steerage = sum(len(v) for v in steerage.values())

@@ -894,6 +894,9 @@ def main():
     args = parser.parse_args()
 
     print(f"Session Miner — Extracting from {args.db}", file=sys.stderr)
+    if not args.db.exists():
+        print(f"Error: Database not found at {args.db}", file=sys.stderr)
+        sys.exit(1)
     print(f"  DB size: {args.db.stat().st_size / 1024 / 1024:.1f} MB", file=sys.stderr)
 
     conn = connect_db(args.db)

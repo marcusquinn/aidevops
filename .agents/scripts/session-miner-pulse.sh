@@ -644,6 +644,13 @@ main() {
 	local feedback_report_file="${MINER_DIR}/feedback_actions.md"
 	local feedback_metrics_file="${MINER_DIR}/feedback_metrics.json"
 
+	# Verify compressed output exists before proceeding
+	if [[ ! -f "${compressed_file}" ]]; then
+		log_error "Compressed signals file not produced at ${compressed_file}"
+		release_lock
+		return 1
+	fi
+
 	# Generate summary
 	local summary
 	summary=$(generate_summary "${compressed_file}" 2>&1)
