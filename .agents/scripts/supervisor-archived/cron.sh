@@ -1032,23 +1032,24 @@ cmd_auto_pickup() {
 
 			if [[ -n "$still_unbatched" ]]; then
 				# Create a new auto-batch for remaining unbatched tasks (t1314)
-				local auto_batch_name
+				# Declarations grouped; assigned separately per SC2155.
+				local auto_batch_name auto_cores auto_base_concurrency
+				local task_csv still_unbatched_count auto_batch_id
+
 				auto_batch_name="auto-$(date +%Y%m%d-%H%M%S)"
-				local task_csv
 				task_csv=$(echo "$still_unbatched" | tr '\n' ',' | sed 's/,$//')
+
 				# Derive base concurrency from CPU cores (cores / 2, min 2)
 				# A 10-core Mac gets 5, a 32-core server gets 16, etc.
 				# The adaptive scaling in calculate_adaptive_concurrency() then
 				# adjusts up/down from this base depending on actual load.
-				local auto_cores
 				auto_cores="$(get_cpu_cores)"
-				local auto_base_concurrency=$((auto_cores / 2))
+				auto_base_concurrency=$((auto_cores / 2))
 				if [[ "$auto_base_concurrency" -lt 2 ]]; then
 					auto_base_concurrency=2
 				fi
-				local still_unbatched_count
+
 				still_unbatched_count=$(echo "$still_unbatched" | wc -l | tr -d ' ')
-				local auto_batch_id
 				auto_batch_id=$(cmd_batch "$auto_batch_name" --concurrency "$auto_base_concurrency" --tasks "$task_csv" 2>>"${SUPERVISOR_LOG:-/dev/null}")
 				if [[ -n "$auto_batch_id" ]]; then
 					log_success "Auto-batch: created '$auto_batch_name' ($auto_batch_id) with $still_unbatched_count tasks (t1314)"
