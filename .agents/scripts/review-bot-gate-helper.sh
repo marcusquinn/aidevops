@@ -86,12 +86,20 @@ usage() {
 get_pr_age_seconds() {
 	# Return the age of a PR in seconds since creation.
 	# Falls back to 0 if the creation time cannot be determined.
+	# GH#4361: GraphQL (gh pr view --json) may be rate-limited independently
+	# of the REST API. Try GraphQL first; fall back to REST on empty result.
 	local pr_number="$1"
 	local repo="$2"
 
 	local created_at
 	created_at=$(gh pr view "$pr_number" --repo "$repo" \
 		--json createdAt -q '.createdAt' 2>/dev/null || echo "")
+	if [[ -z "$created_at" ]]; then
+		# GH#4361: GraphQL rate-limited — fall back to REST API which has a
+		# separate rate limit and is typically available when GraphQL is exhausted.
+		created_at=$(gh api "repos/${repo}/pulls/${pr_number}" \
+			--jq '.created_at' 2>/dev/null || echo "")
+	fi
 	if [[ -z "$created_at" ]]; then
 		echo "0"
 		return 0
@@ -195,7 +203,12 @@ any_bot_has_success_status() {
 
 	local head_sha
 	head_sha=$(gh pr view "$pr_number" --repo "$repo" \
-		--json headRefOid -q '.headRefOid' || echo "")
+		--json headRefOid -q '.headRefOid' 2>/dev/null || echo "")
+	if [[ -z "$head_sha" ]]; then
+		# GH#4361: GraphQL rate-limited — fall back to REST API.
+		head_sha=$(gh api "repos/${repo}/pulls/${pr_number}" \
+			--jq '.head.sha' 2>/dev/null || echo "")
+	fi
 	if [[ -z "$head_sha" ]]; then
 		return 1
 	fi
