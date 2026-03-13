@@ -1436,13 +1436,13 @@ run_quality_gate() {
 #
 # Rules enforced:
 #   1. 10-minute cooldown after any failure before re-dispatch of the same task
-#   2. After 2 consecutive identical failures, move task to 'blocked' with diagnostic note
+#   2. After 2 consecutive identical failures, move task to 'cancelled' with diagnostic note
 #   3. Log a warning when the same task fails with the same error code twice in succession
 #
 # Usage: check_dispatch_dedup_guard <task_id>
 # Returns:
 #   0 = proceed with dispatch
-#   1 = blocked (task transitioned to blocked state, caller should return 1)
+#   1 = cancelled (task transitioned to cancelled state, caller should return 1)
 #   2 = cooldown active (defer dispatch, caller should return 3 to pulse)
 #######################################
 check_dispatch_dedup_guard() {
@@ -1483,14 +1483,15 @@ check_dispatch_dedup_guard() {
 	local cooldown_secs="${SUPERVISOR_FAILURE_COOLDOWN_SECS:-600}" # 10 minutes default
 	local max_consecutive="${SUPERVISOR_MAX_CONSECUTIVE_FAILURES:-2}"
 
-	# Rule 2: Cancel after max_consecutive identical failures
-	# Note: queued->blocked is not a valid transition; use cancelled instead.
-	# The task can be manually re-queued after investigation.
+	# Rule 2: Cancel after max_consecutive identical failures.
+	# queued->blocked is not a valid transition per VALID_TRANSITIONS; the task
+	# is moved to 'cancelled' so it stops being dispatched. It can be manually
+	# re-queued after investigation.
 	if [[ "$consecutive_count" -ge "$max_consecutive" ]]; then
 		local block_reason="Dispatch dedup guard: $consecutive_count consecutive identical failures (error: ${last_error:-unknown}) — manual intervention required (t1206)"
 		log_warn "  $task_id: CANCELLED by dedup guard — $consecutive_count consecutive identical failures with error '${last_error:-unknown}'"
 		cmd_transition "$task_id" "cancelled" --error "$block_reason" 2>/dev/null || true
-		update_todo_on_blocked "$task_id" "$block_reason" 2>/dev/null || true
+		update_todo_on_cancelled "$task_id" "$block_reason" 2>/dev/null || true
 		send_task_notification "$task_id" "cancelled" "$block_reason" 2>/dev/null || true
 		store_failure_pattern "$task_id" "cancelled" "$block_reason" "dispatch-dedup-guard" 2>/dev/null || true
 		return 1
