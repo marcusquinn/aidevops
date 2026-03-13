@@ -20,6 +20,7 @@ AI_REASON_LOG_DIR="${AI_REASON_LOG_DIR:-$HOME/.aidevops/logs/ai-supervisor}"
 # Portable timeout: uses portable_timeout from _common.sh (which delegates to
 # timeout_sec from shared-constants.sh). For standalone execution, source
 # shared-constants.sh directly to get timeout_sec.
+# Exit codes: 124 = timeout (GNU convention); 137 = 128+SIGKILL; 143 = 128+SIGTERM.
 if ! declare -f portable_timeout &>/dev/null; then
 	_AI_REASON_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 	source "${_AI_REASON_DIR}/../shared-constants.sh"

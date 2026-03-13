@@ -1650,7 +1650,9 @@ check_cli_health() {
 	eval "version_cmd=($(build_cli_cmd --cli "$ai_cli" --action version --output array))"
 	version_output=$(timeout_sec 10 "${version_cmd[@]}" 2>&1) || version_exit=$?
 
-	# If version command succeeded (exit 0) or produced output, CLI is working
+	# If version command succeeded (exit 0) or produced output, CLI is working.
+	# Exit codes 124 (timeout) and 137 (128+SIGKILL — hard-killed) both indicate
+	# the CLI did not respond in time and should not be treated as healthy output.
 	if [[ "$version_exit" -eq 0 ]] || [[ -n "$version_output" && "$version_exit" -ne 124 && "$version_exit" -ne 137 ]]; then
 		# Cache the healthy result
 		date +%s >"$cli_cache_file" 2>/dev/null || true
@@ -1659,7 +1661,8 @@ check_cli_health() {
 		return 0
 	fi
 
-	# Version check failed
+	# Version check failed — distinguish timeout from other errors.
+	# 124 = GNU timeout convention; 137 = 128+SIGKILL (process hard-killed by OS or watchdog)
 	if [[ "$version_exit" -eq 124 || "$version_exit" -eq 137 ]]; then
 		log_error "CLI health check FAILED: '$ai_cli' timed out (10s)"
 		echo "cli_timeout:${ai_cli}"

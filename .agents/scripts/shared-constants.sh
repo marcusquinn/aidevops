@@ -174,6 +174,13 @@ readonly SECURE_PORT=443
 # Usage: timeout_sec 5 your_command arg1 arg2
 # Returns: command exit code, or 124 on timeout (matches coreutils convention)
 #
+# Exit code mapping (POSIX: signal exits are 128 + signal number):
+#   124  — timeout (GNU coreutils convention; returned by all paths below)
+#   137  — killed by SIGKILL  (128 + 9)  — hard kill, process did not exit cleanly
+#   143  — killed by SIGTERM  (128 + 15) — graceful termination signal
+# Callers that check for timeout should test for 124. Codes 137/143 indicate
+# the process was killed externally (e.g., by the OS or a concurrent pulse).
+#
 # NOTE: Do NOT pipe timeout_sec to head/grep — on macOS the background
 # process may not be properly cleaned up when the pipe closes early.
 # Instead, redirect to a temp file and process afterward.
@@ -204,11 +211,11 @@ timeout_sec() {
 		local half_secs_remaining=$((secs * 2))
 		while kill -0 "$cmd_pid" 2>/dev/null; do
 			if ((half_secs_remaining <= 0)); then
-				kill -TERM "$cmd_pid" 2>/dev/null
+				kill -TERM "$cmd_pid" 2>/dev/null # SIGTERM (15) — graceful shutdown
 				sleep 0.2
-				kill -KILL "$cmd_pid" 2>/dev/null || true
+				kill -KILL "$cmd_pid" 2>/dev/null || true # SIGKILL (9) — hard kill
 				wait "$cmd_pid" 2>/dev/null || true
-				return 124
+				return 124 # Normalise to GNU timeout convention
 			fi
 			sleep 0.5
 			((half_secs_remaining--)) || true

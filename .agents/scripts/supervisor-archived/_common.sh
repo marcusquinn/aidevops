@@ -178,6 +178,7 @@ get_task_hung_timeout() {
 
 # portable_timeout delegates to timeout_sec from shared-constants.sh (t1504).
 # Kept as a wrapper for backward compatibility with archived supervisor modules.
+# Exit codes: 124 = timeout (GNU convention); 137 = 128+SIGKILL; 143 = 128+SIGTERM.
 portable_timeout() {
 	timeout_sec "$@"
 	return $?
