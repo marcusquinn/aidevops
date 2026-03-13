@@ -564,7 +564,11 @@ If budget is exhausted, stop opening new issue workers and continue PR advanceme
 source ~/.aidevops/agents/scripts/pulse-wrapper.sh
 
 MAX_WORKERS_PER_REPO=${MAX_WORKERS_PER_REPO:-5}
-ACTIVE_FOR_REPO=$(list_active_worker_processes | awk -v path="<path>" '$0 ~ " --dir " path "( |$)" { count++ } END { print count + 0 }')
+ACTIVE_FOR_REPO=$(list_active_worker_processes | awk -v path="<path>" '
+  BEGIN { esc=path; gsub(/[][(){}.^$*+?|\\]/, "\\\\&", esc) }
+  $0 ~ ("--dir[[:space:]]+" esc "([[:space:]]|$)") { count++ }
+  END { print count + 0 }
+')
 if [[ "$ACTIVE_FOR_REPO" -ge "$MAX_WORKERS_PER_REPO" ]]; then
   echo "Repo at worker cap (${ACTIVE_FOR_REPO}/${MAX_WORKERS_PER_REPO}) — skipping dispatch for <slug> this cycle"
   continue
