@@ -129,7 +129,13 @@ run_ai_reasoning() {
 	if [[ -f "$lock_file" ]]; then
 		local lock_pid lock_age
 		lock_pid=$(head -1 "$lock_file" 2>/dev/null || echo 0)
-		lock_age=$(($(date +%s) - $(stat -f %m "$lock_file" 2>/dev/null || stat -c %Y "$lock_file" 2>/dev/null || echo 0)))
+		local lock_mtime
+		if [[ "$(uname)" == "Darwin" ]]; then
+			lock_mtime=$(stat -f '%m' "$lock_file" 2>/dev/null || echo "0")
+		else
+			lock_mtime=$(stat -c '%Y' "$lock_file" 2>/dev/null || echo "0")
+		fi
+		lock_age=$(($(date +%s) - lock_mtime))
 		# If lock holder is still alive and lock is not stale (< 5 min), skip
 		if kill -0 "$lock_pid" 2>/dev/null && [[ "$lock_age" -lt 300 ]]; then
 			log_info "AI Reasoning: already running (PID $lock_pid, ${lock_age}s old) — skipping"
