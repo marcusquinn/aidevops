@@ -1,7 +1,7 @@
 {
   "chrome_profile_dir": "~/.aidevops/.agent-workspace/chrome-gsc-profile",
   "default_sitemap_path": "sitemap.xml",
-  "screenshot_dir": "/tmp/gsc-screenshots",
+  "screenshot_dir": "~/.aidevops/.agent-workspace/gsc-screenshots",
   "timeout_ms": 60000,
   "headless": false,
   "notes": {

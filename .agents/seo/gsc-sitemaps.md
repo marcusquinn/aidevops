@@ -23,7 +23,7 @@ tools:
 - **Script**: `~/.aidevops/agents/scripts/gsc-sitemap-helper.sh`
 - **Config**: `~/.config/aidevops/gsc-config.json`
 - **Profile**: `~/.aidevops/.agent-workspace/chrome-gsc-profile/`
-- **Screenshots**: `/tmp/gsc-screenshots/` (verification)
+- **Screenshots**: `~/.aidevops/.agent-workspace/gsc-screenshots/` (verification)
 
 **Commands**:
 
@@ -131,7 +131,7 @@ Store in `~/.config/aidevops/gsc-config.json`:
 {
   "chrome_profile_dir": "~/.aidevops/.agent-workspace/chrome-gsc-profile",
   "default_sitemap_path": "sitemap.xml",
-  "screenshot_dir": "/tmp/gsc-screenshots",
+  "screenshot_dir": "~/.aidevops/.agent-workspace/gsc-screenshots",
   "timeout_ms": 60000,
   "headless": false
 }
@@ -159,45 +159,48 @@ Store in `~/.config/aidevops/gsc-config.json`:
 
 ## Usage Examples
 
+> **Note**: Use the full path `~/.aidevops/agents/scripts/gsc-sitemap-helper.sh`, or add
+> `~/.aidevops/agents/scripts` to your `PATH` for shorter commands.
+
 ### Single Domain
 
 ```bash
 # Submit sitemap for one domain
-gsc-sitemap-helper.sh submit example.com
+~/.aidevops/agents/scripts/gsc-sitemap-helper.sh submit example.com
 
 # With custom sitemap path
-gsc-sitemap-helper.sh submit example.com --sitemap news-sitemap.xml
+~/.aidevops/agents/scripts/gsc-sitemap-helper.sh submit example.com --sitemap news-sitemap.xml
 ```
 
 ### Multiple Domains
 
 ```bash
 # Submit to multiple domains
-gsc-sitemap-helper.sh submit example.com example.net example.org
+~/.aidevops/agents/scripts/gsc-sitemap-helper.sh submit example.com example.net example.org
 
 # From file
-echo -e "example.com\nexample.net\nexample.org" > domains.txt
-gsc-sitemap-helper.sh submit --file domains.txt
+printf 'example.com\nexample.net\nexample.org\n' > domains.txt
+~/.aidevops/agents/scripts/gsc-sitemap-helper.sh submit --file domains.txt
 ```
 
 ### Status Checking
 
 ```bash
 # Check if sitemap is submitted
-gsc-sitemap-helper.sh status example.com
+~/.aidevops/agents/scripts/gsc-sitemap-helper.sh status example.com
 
 # List all sitemaps for a domain
-gsc-sitemap-helper.sh list example.com
+~/.aidevops/agents/scripts/gsc-sitemap-helper.sh list example.com
 ```
 
 ### Batch Operations
 
 ```bash
 # Dry run (show what would be done)
-gsc-sitemap-helper.sh submit --dry-run example.com example.net
+~/.aidevops/agents/scripts/gsc-sitemap-helper.sh submit --dry-run example.com example.net
 
 # Skip already-submitted domains
-gsc-sitemap-helper.sh submit --skip-existing example.com example.net
+~/.aidevops/agents/scripts/gsc-sitemap-helper.sh submit --skip-existing example.com example.net
 ```
 
 ## Troubleshooting
@@ -208,7 +211,7 @@ The script uses stealth flags to prevent this. If it still appears:
 
 1. Close all Chrome instances
 2. Delete the profile: `rm -rf ~/.aidevops/.agent-workspace/chrome-gsc-profile`
-3. Run `gsc-sitemap-helper.sh login` to create fresh profile
+3. Run `~/.aidevops/agents/scripts/gsc-sitemap-helper.sh login` to create fresh profile
 
 ### "No access" Error
 
@@ -217,7 +220,7 @@ The script uses stealth flags to prevent this. If it still appears:
 
 ### Submit Button Not Clicking
 
-- Check screenshot in `/tmp/gsc-screenshots/`
+- Check screenshot in `~/.aidevops/.agent-workspace/gsc-screenshots/`
 - May be clicking feedback button instead of submit
 - Script uses DOM traversal to find correct button
 
@@ -225,7 +228,7 @@ The script uses stealth flags to prevent this. If it still appears:
 
 ```bash
 # Re-login to refresh session
-gsc-sitemap-helper.sh login
+~/.aidevops/agents/scripts/gsc-sitemap-helper.sh login
 ```
 
 ### Sitemap Not Accessible
@@ -245,10 +248,10 @@ After crawling a site, submit its sitemap:
 
 ```bash
 # Crawl site
-site-crawler-helper.sh crawl https://example.com
+~/.aidevops/agents/scripts/site-crawler-helper.sh crawl https://example.com
 
 # Submit sitemap
-gsc-sitemap-helper.sh submit example.com
+~/.aidevops/agents/scripts/gsc-sitemap-helper.sh submit example.com
 ```
 
 ### With MainWP (WordPress Fleet)
@@ -257,10 +260,10 @@ Submit sitemaps for all managed WordPress sites:
 
 ```bash
 # Get domains from MainWP
-mainwp-helper.sh list-sites | awk '{print $2}' > wp-domains.txt
+~/.aidevops/agents/scripts/mainwp-helper.sh list-sites | awk '{print $2}' > wp-domains.txt
 
 # Submit sitemaps
-gsc-sitemap-helper.sh submit --file wp-domains.txt
+~/.aidevops/agents/scripts/gsc-sitemap-helper.sh submit --file wp-domains.txt
 ```
 
 ### With Coolify Deployments
@@ -269,10 +272,10 @@ After deploying a new site:
 
 ```bash
 # Deploy site
-coolify-helper.sh deploy my-app
+~/.aidevops/agents/scripts/coolify-helper.sh deploy my-app
 
 # Submit sitemap
-gsc-sitemap-helper.sh submit my-app.example.com
+~/.aidevops/agents/scripts/gsc-sitemap-helper.sh submit my-app.example.com
 ```
 
 ## Related

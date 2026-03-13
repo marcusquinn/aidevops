@@ -9,13 +9,30 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/shared-constants.sh" 2>/dev/null || true
 
-# Configuration
+# Configuration (defaults — overridden by CONFIG_FILE if present)
 readonly CONFIG_FILE="${HOME}/.config/aidevops/gsc-config.json"
 readonly WORK_DIR="${HOME}/.aidevops/.agent-workspace/tmp"
 readonly GSC_SCRIPT="${WORK_DIR}/gsc-sitemap-submit.js"
-readonly CHROME_PROFILE="${HOME}/.aidevops/.agent-workspace/chrome-gsc-profile"
-readonly SCREENSHOT_DIR="/tmp/gsc-screenshots"
-readonly DEFAULT_SITEMAP="sitemap.xml"
+# These may be overridden by load_config() — do not declare readonly
+CHROME_PROFILE="${HOME}/.aidevops/.agent-workspace/chrome-gsc-profile"
+SCREENSHOT_DIR="${HOME}/.aidevops/.agent-workspace/gsc-screenshots"
+DEFAULT_SITEMAP="sitemap.xml"
+
+# Load user config overrides from CONFIG_FILE (if it exists and jq is available)
+load_config() {
+	if [[ ! -f "$CONFIG_FILE" ]]; then
+		return 0
+	fi
+	if ! command -v jq &>/dev/null; then
+		return 0
+	fi
+	local val
+	val="$(jq -r '.chrome_profile_dir // empty' "$CONFIG_FILE" 2>/dev/null)" && [[ -n "$val" ]] && CHROME_PROFILE="${val/#\~/$HOME}"
+	val="$(jq -r '.screenshot_dir // empty' "$CONFIG_FILE" 2>/dev/null)" && [[ -n "$val" ]] && SCREENSHOT_DIR="${val/#\~/$HOME}"
+	val="$(jq -r '.default_sitemap_path // empty' "$CONFIG_FILE" 2>/dev/null)" && [[ -n "$val" ]] && DEFAULT_SITEMAP="$val"
+	return 0
+}
+load_config
 
 # Colors (fallback if shared-constants.sh not loaded)
 [[ -z "${RED+x}" ]] && RED='\033[0;31m'
@@ -626,7 +643,7 @@ cmd_setup() {
 {
   "chrome_profile_dir": "~/.aidevops/.agent-workspace/chrome-gsc-profile",
   "default_sitemap_path": "sitemap.xml",
-  "screenshot_dir": "/tmp/gsc-screenshots",
+  "screenshot_dir": "~/.aidevops/.agent-workspace/gsc-screenshots",
   "timeout_ms": 60000,
   "headless": false
 }
