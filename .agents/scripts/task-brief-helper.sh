@@ -37,12 +37,13 @@ usage() {
 	echo ""
 	echo "Generates a task brief from OpenCode session history."
 	echo "Output: {project_root}/todo/tasks/{task_id}-brief.md"
-	exit 1
+	return 1
 }
 
 # Validate task_id format to prevent injection
 validate_task_id() {
-	local task_id="$1"
+	local task_id
+	task_id="$1"
 	if [[ ! "$task_id" =~ ^t[0-9]+(\.[0-9]+)*$ ]]; then
 		log_error "Invalid task ID format: $task_id (expected tNNN or tNNN.N)"
 		return 1
@@ -53,8 +54,10 @@ validate_task_id() {
 # --- Step 1: Find creation commit ---
 
 find_creation_commit() {
-	local task_id="$1"
-	local project_root="$2"
+	local task_id
+	local project_root
+	task_id="$1"
+	project_root="$2"
 
 	# Find the first commit that introduced this task ID in TODO.md
 	local commit
@@ -70,8 +73,10 @@ find_creation_commit() {
 }
 
 get_commit_info() {
-	local commit="$1"
-	local project_root="$2"
+	local commit
+	local project_root
+	commit="$1"
+	project_root="$2"
 
 	git -C "$project_root" log -1 --format="COMMIT_DATE=%ai%nCOMMIT_AUTHOR=%an%nCOMMIT_MSG=%s%nCOMMIT_EPOCH=%ct" "$commit" 2>/dev/null || true
 	return 0
@@ -80,7 +85,8 @@ get_commit_info() {
 # --- Step 2: Find OpenCode session ---
 
 find_opencode_project_id() {
-	local project_root="$1"
+	local project_root
+	project_root="$1"
 
 	if [[ ! -f "$OPENCODE_DB" ]]; then
 		return 1
@@ -103,9 +109,12 @@ db.close()
 }
 
 find_session_by_timestamp() {
-	local project_id="$1"
-	local epoch_secs="$2"
-	local epoch_ms=$((epoch_secs * 1000))
+	local project_id
+	local epoch_secs
+	local epoch_ms
+	project_id="$1"
+	epoch_secs="$2"
+	epoch_ms=$((epoch_secs * 1000))
 
 	if [[ ! -f "$OPENCODE_DB" ]]; then
 		return 1
@@ -140,7 +149,8 @@ db.close()
 }
 
 find_parent_session() {
-	local session_id="$1"
+	local session_id
+	session_id="$1"
 
 	if [[ ! -f "$OPENCODE_DB" ]]; then
 		return 1
@@ -168,8 +178,10 @@ db.close()
 # --- Step 3: Extract conversation context ---
 
 extract_session_context() {
-	local session_id="$1"
-	local task_id="$2"
+	local session_id
+	local task_id
+	session_id="$1"
+	task_id="$2"
 
 	if [[ ! -f "$OPENCODE_DB" ]]; then
 		return 1
@@ -273,7 +285,8 @@ else:
 # --- Step 4: Check supervisor DB ---
 
 find_supervisor_context() {
-	local task_id="$1"
+	local task_id
+	task_id="$1"
 
 	if [[ ! -f "$SUPERVISOR_DB" ]]; then
 		return 0
@@ -300,9 +313,12 @@ db.close()
 # --- Step 5: Generate brief ---
 
 generate_brief() {
-	local task_id="$1"
-	local project_root="$2"
-	local output_file="$project_root/todo/tasks/${task_id}-brief.md"
+	local task_id
+	local project_root
+	local output_file
+	task_id="$1"
+	project_root="$2"
+	output_file="$project_root/todo/tasks/${task_id}-brief.md"
 
 	validate_task_id "$task_id" || return 1
 
@@ -317,10 +333,14 @@ generate_brief() {
 	fi
 
 	# Get commit info — separate declaration from assignment per style guide
-	local commit_date=""
-	local commit_author=""
-	local commit_msg=""
-	local commit_epoch=""
+	local commit_date
+	local commit_author
+	local commit_msg
+	local commit_epoch
+	commit_date=""
+	commit_author=""
+	commit_msg=""
+	commit_epoch=""
 	while IFS='=' read -r key value; do
 		case "$key" in
 		COMMIT_DATE) commit_date="$value" ;;
@@ -333,10 +353,13 @@ generate_brief() {
 	log_info "$task_id: commit $commit ($commit_date) by $commit_author"
 
 	# Find OpenCode session
-	local session_id=""
-	local session_title=""
-	local parent_session=""
+	local session_id
+	local session_title
+	local parent_session
 	local project_id
+	session_id=""
+	session_title=""
+	parent_session=""
 	project_id=$(find_opencode_project_id "$project_root") || true
 
 	if [[ -n "$project_id" && -n "$commit_epoch" ]]; then
@@ -357,8 +380,10 @@ generate_brief() {
 	fi
 
 	# Extract conversation context
-	local context="NO_CONTEXT_FOUND"
-	local search_session="${session_id}"
+	local context
+	local search_session
+	context="NO_CONTEXT_FOUND"
+	search_session="${session_id}"
 
 	# If this was a subagent commit session, search the parent
 	if [[ "$session_title" == *"subagent"* && -n "$parent_session" ]]; then
@@ -373,18 +398,22 @@ generate_brief() {
 	fi
 
 	# Check supervisor DB
-	local supervisor_info=""
+	local supervisor_info
+	supervisor_info=""
 	supervisor_info=$(find_supervisor_context "$task_id") || true
 
 	# Extract task description from TODO.md
-	local task_line=""
+	local task_line
+	task_line=""
 	task_line=$(grep -E "^\s*- \[.\] ${task_id} " "$project_root/TODO.md" 2>/dev/null | head -1) || true
-	local task_title=""
+	local task_title
+	task_title=""
 	task_title=$(echo "$task_line" | sed -E 's/^.*\] t[0-9]+(\.[0-9]+)* //' | sed -E 's/ #.*//' | sed -E 's/ ~//')
 
 	# Extract task block (subtasks/notes) from TODO.md
 	# Captures the task line and all lines more indented than it
-	local task_block=""
+	local task_block
+	task_block=""
 	task_block=$(BRIEF_TASK_ID="$task_id" BRIEF_TODO_FILE="$project_root/TODO.md" python3 -c "
 import re, os
 task_id = os.environ['BRIEF_TASK_ID']
@@ -422,11 +451,13 @@ print('\n'.join(block))
 " 2>/dev/null) || true
 
 	# Extract REBASE comment
-	local rebase_note=""
+	local rebase_note
+	rebase_note=""
 	rebase_note=$(echo "$task_line" | grep -oE '<!-- REBASE:[^>]+-->' | sed 's/<!-- REBASE: //;s/ -->//' || true)
 
 	# Determine session origin string
-	local session_origin="unknown"
+	local session_origin
+	session_origin="unknown"
 	if [[ -n "$session_id" ]]; then
 		if [[ -n "$parent_session" ]]; then
 			local p_id
@@ -446,8 +477,10 @@ print('\n'.join(block))
 	fi
 
 	# Determine created_by — supervisor match must be exact (id field only)
-	local created_by="ai-interactive"
-	local sup_id=""
+	local created_by
+	local sup_id
+	created_by="ai-interactive"
+	sup_id=""
 	if [[ -n "$supervisor_info" ]]; then
 		sup_id=$(echo "$supervisor_info" | cut -d'|' -f1)
 	fi
@@ -458,13 +491,15 @@ print('\n'.join(block))
 	fi
 
 	# Check for parent task
-	local parent_task=""
+	local parent_task
+	parent_task=""
 	if echo "$task_id" | grep -qE '\.'; then
 		parent_task=$(echo "$task_id" | sed -E 's/\.[0-9]+$//')
 	fi
 
 	# Extract context block from session data
-	local context_block=""
+	local context_block
+	context_block=""
 	if [[ "$context" != "NO_CONTEXT_FOUND" ]]; then
 		local msg_title
 		msg_title=$(echo "$context" | grep '^MESSAGE_TITLE=' | head -1 | sed 's/MESSAGE_TITLE=//')
@@ -479,7 +514,8 @@ print('\n'.join(block))
 	fi
 
 	# Prefer session context block over TODO.md extraction (session has original rich content)
-	local best_block="${context_block:-${task_block:-${task_line}}}"
+	local best_block
+	best_block="${context_block:-${task_block:-${task_line}}}"
 
 	# Write the brief
 	cat >"$output_file" <<BRIEF
@@ -540,8 +576,9 @@ BRIEF
 # --- Main ---
 
 main() {
-	local task_id="${1:-}"
+	local task_id
 	local project_root
+	task_id="${1:-}"
 	project_root="${2:-$(git rev-parse --show-toplevel 2>/dev/null || pwd)}"
 
 	if [[ -z "$task_id" ]]; then
@@ -550,7 +587,8 @@ main() {
 
 	if [[ "$task_id" == "--all" ]]; then
 		# Generate briefs for all open tasks without briefs
-		local count=0
+		local count
+		count=0
 		while IFS= read -r line; do
 			local tid
 			tid=$(echo "$line" | grep -oE 't[0-9]+(\.[0-9]+)*' | head -1)
