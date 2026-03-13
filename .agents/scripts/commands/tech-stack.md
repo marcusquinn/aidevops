@@ -29,8 +29,24 @@ Parse `$ARGUMENTS` to determine what to run:
 
 **Reverse lookup:**
 
+Parse the technology name and optional filters from arguments using portable shell patterns
+(no `eval`, no `grep -P`/PCRE — safe for all POSIX-compatible shells):
+
 ```bash
-~/.aidevops/agents/scripts/tech-stack-helper.sh reverse "$ARGUMENTS"
+# Parse: tech-stack reverse <tech> [--region X] [--industry Y] [--traffic Z]
+# Use awk with ' --' delimiter to capture full multi-word tech names (e.g. "Google Analytics")
+tech_name=$(echo "${ARGUMENTS#reverse }" | awk -F ' --' '{print $1}')
+region=$(echo "$ARGUMENTS" | sed -n 's/.*--region \([^ ]*\).*/\1/p')
+industry=$(echo "$ARGUMENTS" | sed -n 's/.*--industry \([^ ]*\).*/\1/p')
+traffic=$(echo "$ARGUMENTS" | sed -n 's/.*--traffic \([^ ]*\).*/\1/p')
+
+# Build command using a bash array — never use eval for dynamic command construction
+cmd_array=(~/.aidevops/agents/scripts/tech-stack-helper.sh reverse "$tech_name")
+[[ -n "$region" ]] && cmd_array+=(--region "$region")
+[[ -n "$industry" ]] && cmd_array+=(--industry "$industry")
+[[ -n "$traffic" ]] && cmd_array+=(--traffic "$traffic")
+
+"${cmd_array[@]}"
 ```
 
 **Cache management:**
