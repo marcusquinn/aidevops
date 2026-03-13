@@ -40,8 +40,9 @@ This is idempotent — safe to run even when PATH is already correct. All subseq
 # Max workers (dynamic, from available RAM)
 MAX_WORKERS=$(cat ~/.aidevops/logs/pulse-max-workers 2>/dev/null || echo 4)
 
-# Count all full-loop workers (issue + PR advancement), excluding supervisor /pulse noise
-WORKER_COUNT=$(ps axo command | grep '\.opencode run' | grep '/full-loop' | grep -v '/pulse' | grep -v 'Supervisor Pulse' | grep -v grep | wc -l | tr -d ' ')
+# Count all full-loop workers using the same matcher as per-repo caps (unifies global capacity counting)
+source ~/.aidevops/agents/scripts/pulse-wrapper.sh
+WORKER_COUNT=$(list_active_worker_processes | wc -l | tr -d ' ')
 AVAILABLE=$((MAX_WORKERS - WORKER_COUNT))
 
 # Priority-class allocations (t1423) — read from pre-fetched state
@@ -563,7 +564,7 @@ If budget is exhausted, stop opening new issue workers and continue PR advanceme
 source ~/.aidevops/agents/scripts/pulse-wrapper.sh
 
 MAX_WORKERS_PER_REPO=${MAX_WORKERS_PER_REPO:-5}
-ACTIVE_FOR_REPO=$(list_active_worker_processes | awk -v path="<path>" 'index($0, path) > 0 { count++ } END { print count + 0 }')
+ACTIVE_FOR_REPO=$(list_active_worker_processes | awk -v path="<path>" '$0 ~ " --dir " path "( |$)" { count++ } END { print count + 0 }')
 if [[ "$ACTIVE_FOR_REPO" -ge "$MAX_WORKERS_PER_REPO" ]]; then
   echo "Repo at worker cap (${ACTIVE_FOR_REPO}/${MAX_WORKERS_PER_REPO}) — skipping dispatch for <slug> this cycle"
   continue

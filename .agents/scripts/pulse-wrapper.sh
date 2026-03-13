@@ -959,7 +959,7 @@ This PR modifies \`.github/workflows/\` files but the GitHub OAuth token used by
 list_active_worker_processes() {
 	ps axo pid,etime,command | awk '
 		/\/full-loop/ &&
-		$0 !~ /\/pulse/ &&
+		$0 !~ /(^|[[:space:]])\/pulse([[:space:]]|$)/ &&
 		$0 !~ /Supervisor Pulse/ &&
 		$0 ~ /(^|[[:space:]\/])\.?opencode([[:space:]]|$)/ {
 			print
