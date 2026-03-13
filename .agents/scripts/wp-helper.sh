@@ -299,6 +299,11 @@ execute_wp_via_ssh() {
 		ssh_identity_flag=(-i "$expanded_identity")
 	fi
 
+	# Quote each word of wp_command for safe remote shell execution
+	# shellcheck disable=SC2086 # word-split is intentional: wp_command is a space-separated arg list
+	local quoted_wp_command
+	quoted_wp_command=$(printf '%q ' $wp_command)
+
 	case "$site_type" in
 	localwp)
 		# LocalWP - direct local access
@@ -327,13 +332,14 @@ execute_wp_via_ssh() {
 			return 1
 		fi
 
-		# Use array for sshpass + ssh command (-n prevents stdin consumption in loops)
-		sshpass -f "$expanded_password_file" ssh -n "${ssh_identity_flag[@]}" -p "$ssh_port" "${ssh_user}@${ssh_host}" "cd $(printf %q "$wp_path") && wp $wp_command"
+		# Use quoted wp_command to prevent command injection via shell metacharacters
+		sshpass -f "$expanded_password_file" ssh -n "${ssh_identity_flag[@]}" -p "$ssh_port" "${ssh_user}@${ssh_host}" "cd $(printf %q "$wp_path") && wp $quoted_wp_command"
 		return $?
 		;;
 	hetzner | cloudways | cloudron)
 		# SSH key-based authentication (preferred, -n prevents stdin consumption in loops)
-		ssh -n "${ssh_identity_flag[@]}" -p "$ssh_port" "${ssh_user}@${ssh_host}" "cd $(printf %q "$wp_path") && wp $wp_command"
+		# Use quoted wp_command to prevent command injection via shell metacharacters
+		ssh -n "${ssh_identity_flag[@]}" -p "$ssh_port" "${ssh_user}@${ssh_host}" "cd $(printf %q "$wp_path") && wp $quoted_wp_command"
 		return $?
 		;;
 	*)
