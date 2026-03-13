@@ -76,6 +76,7 @@ PULSE_STALE_THRESHOLD="${PULSE_STALE_THRESHOLD:-3600}"                          
 PULSE_IDLE_TIMEOUT="${PULSE_IDLE_TIMEOUT:-600}"                                                         # 10 min idle before kill (reduces false positives during active triage)
 PULSE_IDLE_CPU_THRESHOLD="${PULSE_IDLE_CPU_THRESHOLD:-5}"                                               # CPU% below this = idle (0-100 scale)
 PULSE_PROGRESS_TIMEOUT="${PULSE_PROGRESS_TIMEOUT:-600}"                                                 # 10 min no log output = stuck (GH#2958)
+PULSE_COLD_START_TIMEOUT="${PULSE_COLD_START_TIMEOUT:-1200}"                                            # 20 min grace before first output (prevents false early watchdog kills)
 ORPHAN_MAX_AGE="${ORPHAN_MAX_AGE:-7200}"                                                                # 2 hours — kill orphans older than this
 RAM_PER_WORKER_MB="${RAM_PER_WORKER_MB:-1024}"                                                          # 1 GB per worker
 RAM_RESERVE_MB="${RAM_RESERVE_MB:-8192}"                                                                # 8 GB reserved for OS + user apps
@@ -104,6 +105,7 @@ PULSE_STALE_THRESHOLD=$(_validate_int PULSE_STALE_THRESHOLD "$PULSE_STALE_THRESH
 PULSE_IDLE_TIMEOUT=$(_validate_int PULSE_IDLE_TIMEOUT "$PULSE_IDLE_TIMEOUT" 300 60)
 PULSE_IDLE_CPU_THRESHOLD=$(_validate_int PULSE_IDLE_CPU_THRESHOLD "$PULSE_IDLE_CPU_THRESHOLD" 5)
 PULSE_PROGRESS_TIMEOUT=$(_validate_int PULSE_PROGRESS_TIMEOUT "$PULSE_PROGRESS_TIMEOUT" 600 120)
+PULSE_COLD_START_TIMEOUT=$(_validate_int PULSE_COLD_START_TIMEOUT "$PULSE_COLD_START_TIMEOUT" 1200 300)
 ORPHAN_MAX_AGE=$(_validate_int ORPHAN_MAX_AGE "$ORPHAN_MAX_AGE" 7200)
 RAM_PER_WORKER_MB=$(_validate_int RAM_PER_WORKER_MB "$RAM_PER_WORKER_MB" 1024 1)
 RAM_RESERVE_MB=$(_validate_int RAM_RESERVE_MB "$RAM_RESERVE_MB" 8192)
@@ -1410,6 +1412,7 @@ gathered by pulse-wrapper.sh BEFORE this session started."
 	# detection misses (e.g., network I/O wait, API rate limiting loops).
 	local last_log_size=0
 	local progress_stall_seconds=0
+	local has_seen_progress=false
 	if [[ -f "$LOGFILE" ]]; then
 		last_log_size=$(wc -c <"$LOGFILE" 2>/dev/null || echo "0")
 		# Strip whitespace from wc output (macOS wc pads with spaces)
@@ -1439,23 +1442,7 @@ gathered by pulse-wrapper.sh BEFORE this session started."
 			kill_reason="Pulse exceeded stale threshold (${elapsed}s > ${PULSE_STALE_THRESHOLD}s)"
 		# Skip checks 2 and 3 during the first 3 minutes to allow startup/init.
 		elif [[ "$elapsed" -ge 180 ]]; then
-			# Check 2: Idle detection — CPU usage of the process tree (t1398.3)
-			local tree_cpu
-			tree_cpu=$(_get_process_tree_cpu "$opencode_pid")
-			if [[ "$tree_cpu" -lt "$PULSE_IDLE_CPU_THRESHOLD" ]]; then
-				idle_seconds=$((idle_seconds + 60))
-				if [[ "$idle_seconds" -ge "$PULSE_IDLE_TIMEOUT" ]]; then
-					kill_reason="Pulse idle for ${idle_seconds}s (CPU ${tree_cpu}% < ${PULSE_IDLE_CPU_THRESHOLD}%, threshold ${PULSE_IDLE_TIMEOUT}s) (t1398.3)"
-				fi
-			else
-				# Process is active — reset idle counter
-				if [[ "$idle_seconds" -gt 0 ]]; then
-					echo "[pulse-wrapper] Pulse active again (CPU ${tree_cpu}%) after ${idle_seconds}s idle — resetting idle counter" >>"$LOGFILE"
-				fi
-				idle_seconds=0
-			fi
-
-			# Check 3: Progress detection — is the log file growing? (GH#2958)
+			# Check 2: Progress detection — is the log file growing? (GH#2958)
 			# A process that's running (CPU > 0) but producing no output for
 			# PULSE_PROGRESS_TIMEOUT is stuck in a loop (API retries, rate
 			# limiting, infinite wait). This is the "busy but unproductive" case.
@@ -1469,6 +1456,7 @@ gathered by pulse-wrapper.sh BEFORE this session started."
 
 				if [[ "$current_log_size" -gt "$last_log_size" ]]; then
 					# Log grew — process is making progress
+					has_seen_progress=true
 					if [[ "$progress_stall_seconds" -gt 0 ]]; then
 						echo "[pulse-wrapper] Progress resumed after ${progress_stall_seconds}s stall (log grew by $((current_log_size - last_log_size)) bytes)" >>"$LOGFILE"
 					fi
@@ -1477,9 +1465,42 @@ gathered by pulse-wrapper.sh BEFORE this session started."
 				else
 					# Log hasn't grown — increment stall counter
 					progress_stall_seconds=$((progress_stall_seconds + 60))
-					if [[ "$progress_stall_seconds" -ge "$PULSE_PROGRESS_TIMEOUT" ]]; then
-						kill_reason="Pulse stalled for ${progress_stall_seconds}s — no log output (log size: ${current_log_size} bytes, threshold: ${PULSE_PROGRESS_TIMEOUT}s) (GH#2958)"
+					local progress_timeout="$PULSE_PROGRESS_TIMEOUT"
+					if [[ "$has_seen_progress" == false ]]; then
+						progress_timeout="$PULSE_COLD_START_TIMEOUT"
 					fi
+					if [[ "$progress_stall_seconds" -ge "$progress_timeout" ]]; then
+						if [[ "$has_seen_progress" == false ]]; then
+							kill_reason="Pulse cold-start stalled for ${progress_stall_seconds}s — no first output (log size: ${current_log_size} bytes, threshold: ${PULSE_COLD_START_TIMEOUT}s)"
+						else
+							kill_reason="Pulse stalled for ${progress_stall_seconds}s — no log output (log size: ${current_log_size} bytes, threshold: ${PULSE_PROGRESS_TIMEOUT}s) (GH#2958)"
+						fi
+					fi
+				fi
+			fi
+
+			# Check 3: Idle detection — CPU usage of the process tree (t1398.3)
+			# Only enforce after at least one output/progress event. Before first
+			# output, some model/tooling paths stay near 0% CPU while still making
+			# progress toward initial dispatch decisions.
+			if [[ -z "$kill_reason" ]]; then
+				if [[ "$has_seen_progress" == true ]]; then
+					local tree_cpu
+					tree_cpu=$(_get_process_tree_cpu "$opencode_pid")
+					if [[ "$tree_cpu" -lt "$PULSE_IDLE_CPU_THRESHOLD" ]]; then
+						idle_seconds=$((idle_seconds + 60))
+						if [[ "$idle_seconds" -ge "$PULSE_IDLE_TIMEOUT" ]]; then
+							kill_reason="Pulse idle for ${idle_seconds}s (CPU ${tree_cpu}% < ${PULSE_IDLE_CPU_THRESHOLD}%, threshold ${PULSE_IDLE_TIMEOUT}s) (t1398.3)"
+						fi
+					else
+						# Process is active — reset idle counter
+						if [[ "$idle_seconds" -gt 0 ]]; then
+							echo "[pulse-wrapper] Pulse active again (CPU ${tree_cpu}%) after ${idle_seconds}s idle — resetting idle counter" >>"$LOGFILE"
+						fi
+						idle_seconds=0
+					fi
+				else
+					idle_seconds=0
 				fi
 			fi
 		fi
