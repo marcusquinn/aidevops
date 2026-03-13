@@ -58,7 +58,7 @@ _iso_to_epoch() {
 #######################################
 _record_stale_recovery() {
 	local task_id="" phase="" from_state="" to_state="" stale_secs=0
-	local root_cause="" had_pr=0 retries=0 max_retries=3 batch_id=""
+	local root_cause="" had_pr=0 retries=0 max_retries="${SUPERVISOR_DEFAULT_MAX_RETRIES:-3}" batch_id=""
 	local worker_completed_at="" eval_started_at="" eval_lag_secs="NULL"
 
 	while [[ $# -gt 0 ]]; do
@@ -1098,7 +1098,7 @@ cmd_pulse() {
 
 			local stale_retries stale_max_retries stale_pr_url
 			stale_retries=$(db "$SUPERVISOR_DB" "SELECT retries FROM tasks WHERE id = '$(sql_escape "$stale_id")';" 2>/dev/null || echo "0")
-			stale_max_retries=$(db "$SUPERVISOR_DB" "SELECT max_retries FROM tasks WHERE id = '$(sql_escape "$stale_id")';" 2>/dev/null || echo "3")
+			stale_max_retries=$(db "$SUPERVISOR_DB" "SELECT max_retries FROM tasks WHERE id = '$(sql_escape "$stale_id")';" 2>/dev/null || echo "${SUPERVISOR_DEFAULT_MAX_RETRIES:-3}")
 			stale_pr_url=$(db "$SUPERVISOR_DB" "SELECT pr_url FROM tasks WHERE id = '$(sql_escape "$stale_id")';" 2>/dev/null || echo "")
 
 			local had_pr_flag=0
@@ -1576,7 +1576,7 @@ cmd_pulse() {
 					local current_retries
 					current_retries=$(db "$SUPERVISOR_DB" "SELECT retries FROM tasks WHERE id = '$(sql_escape "$tid")';" 2>/dev/null || echo 0)
 					local max_retries_val
-					max_retries_val=$(db "$SUPERVISOR_DB" "SELECT max_retries FROM tasks WHERE id = '$(sql_escape "$tid")';" 2>/dev/null || echo 3)
+					max_retries_val=$(db "$SUPERVISOR_DB" "SELECT max_retries FROM tasks WHERE id = '$(sql_escape "$tid")';" 2>/dev/null || echo "${SUPERVISOR_DEFAULT_MAX_RETRIES:-3}")
 					if [[ "$current_retries" -ge "$max_retries_val" ]]; then
 						log_error "  $tid: max retries exceeded ($current_retries/$max_retries_val), marking blocked"
 						cmd_transition "$tid" "blocked" --error "Max retries exceeded: $outcome_detail" 2>>"$SUPERVISOR_LOG" || true
@@ -1723,7 +1723,7 @@ cmd_pulse() {
 				local current_retries
 				current_retries=$(db "$SUPERVISOR_DB" "SELECT retries FROM tasks WHERE id = '$(sql_escape "$tid")';" 2>/dev/null || echo 0)
 				local max_retries_val
-				max_retries_val=$(db "$SUPERVISOR_DB" "SELECT max_retries FROM tasks WHERE id = '$(sql_escape "$tid")';" 2>/dev/null || echo 3)
+				max_retries_val=$(db "$SUPERVISOR_DB" "SELECT max_retries FROM tasks WHERE id = '$(sql_escape "$tid")';" 2>/dev/null || echo "${SUPERVISOR_DEFAULT_MAX_RETRIES:-3}")
 				if [[ "$current_retries" -ge "$max_retries_val" ]]; then
 					cmd_transition "$tid" "blocked" --error "Max retries exceeded during deferred re-prompt" 2>>"$SUPERVISOR_LOG" || true
 					attempt_self_heal "$tid" "blocked" "Max retries exceeded during deferred re-prompt" "${batch_id:-}" 2>>"$SUPERVISOR_LOG" || true
@@ -1833,7 +1833,7 @@ cmd_pulse() {
 				# Check retry count
 				local stuck_retries stuck_max_retries
 				stuck_retries=$(db "$SUPERVISOR_DB" "SELECT retries FROM tasks WHERE id = '$(sql_escape "$stuck_id")';" 2>/dev/null || echo 0)
-				stuck_max_retries=$(db "$SUPERVISOR_DB" "SELECT max_retries FROM tasks WHERE id = '$(sql_escape "$stuck_id")';" 2>/dev/null || echo 3)
+				stuck_max_retries=$(db "$SUPERVISOR_DB" "SELECT max_retries FROM tasks WHERE id = '$(sql_escape "$stuck_id")';" 2>/dev/null || echo "${SUPERVISOR_DEFAULT_MAX_RETRIES:-3}")
 
 				if [[ "$stuck_retries" -lt "$stuck_max_retries" ]]; then
 					# Transition to retrying so it gets re-dispatched
@@ -1853,7 +1853,7 @@ cmd_pulse() {
 			local stuck_retries_val
 			stuck_retries_val=$(db "$SUPERVISOR_DB" "SELECT retries FROM tasks WHERE id = '$(sql_escape "$stuck_id")';" 2>/dev/null || echo 0)
 			local stuck_max_val
-			stuck_max_val=$(db "$SUPERVISOR_DB" "SELECT max_retries FROM tasks WHERE id = '$(sql_escape "$stuck_id")';" 2>/dev/null || echo 3)
+			stuck_max_val=$(db "$SUPERVISOR_DB" "SELECT max_retries FROM tasks WHERE id = '$(sql_escape "$stuck_id")';" 2>/dev/null || echo "${SUPERVISOR_DEFAULT_MAX_RETRIES:-3}")
 			_record_stale_recovery \
 				--task "$stuck_id" --phase "1c" \
 				--from "evaluating" --to "$stuck_to_state" \
@@ -2222,7 +2222,7 @@ cmd_pulse() {
 		WHERE status IN ('blocked', 'verify_failed')
 		  AND pr_url IN ('task_obsolete')
 		ORDER BY id;
-	" 2>/dev/null || echo "")
+	" 2>>"$SUPERVISOR_LOG" || echo "")
 
 	if [[ -n "$obsolete_tasks" ]]; then
 		while IFS='|' read -r obs_id obs_status obs_pr; do
@@ -2401,7 +2401,7 @@ cmd_pulse() {
 						# If so, transition to pr_review instead of re-queuing from scratch.
 						local task_retries task_max_retries task_pr_url
 						task_retries=$(db "$SUPERVISOR_DB" "SELECT retries FROM tasks WHERE id = '$(sql_escape "$health_task")';" 2>/dev/null || echo "0")
-						task_max_retries=$(db "$SUPERVISOR_DB" "SELECT max_retries FROM tasks WHERE id = '$(sql_escape "$health_task")';" 2>/dev/null || echo "3")
+						task_max_retries=$(db "$SUPERVISOR_DB" "SELECT max_retries FROM tasks WHERE id = '$(sql_escape "$health_task")';" 2>/dev/null || echo "${SUPERVISOR_DEFAULT_MAX_RETRIES:-3}")
 						task_pr_url=$(db "$SUPERVISOR_DB" "SELECT pr_url FROM tasks WHERE id = '$(sql_escape "$health_task")';" 2>/dev/null || echo "")
 
 						if [[ -n "$task_pr_url" && "$task_pr_url" != "null" ]]; then

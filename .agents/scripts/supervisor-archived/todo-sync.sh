@@ -590,30 +590,32 @@ process_verify_queue() {
 
 	# Recover tasks stuck in 'verifying' state (t1075)
 	# If a pulse crashes mid-verification, tasks stay in 'verifying' forever.
-	# Reset any task that has been in 'verifying' for more than 5 minutes back to 'deployed'.
+	# Reset any task stuck in 'verifying' beyond the timeout back to 'deployed'.
+	# Configurable via SUPERVISOR_STUCK_VERIFYING_TIMEOUT_MINUTES (default: 5).
+	local stuck_verifying_timeout_minutes="${SUPERVISOR_STUCK_VERIFYING_TIMEOUT_MINUTES:-5}"
 	local stuck_verifying
 	stuck_verifying=$(db -separator '|' "$SUPERVISOR_DB" "
 		SELECT id FROM tasks
 		WHERE status = 'verifying'
-		  AND updated_at < strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-5 minutes')
+		  AND updated_at < strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-${stuck_verifying_timeout_minutes} minutes')
 		ORDER BY id;
-	" || echo "")
+	" 2>>"${SUPERVISOR_LOG:-/dev/stderr}" || echo "")
 
 	if [[ -n "$stuck_verifying" ]]; then
 		while IFS='|' read -r stuck_id; do
 			[[ -z "$stuck_id" ]] && continue
-			log_warn "  $stuck_id: stuck in 'verifying' for >5min — resetting to 'deployed'"
+			log_warn "  $stuck_id: stuck in 'verifying' for >${stuck_verifying_timeout_minutes}min — resetting to 'deployed'"
 			local escaped_stuck_id
 			escaped_stuck_id=$(sql_escape "$stuck_id")
 			db "$SUPERVISOR_DB" "UPDATE tasks SET
 				status = 'deployed',
 				error = NULL,
 				updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
-		WHERE id = '$escaped_stuck_id';" || true
+		WHERE id = '$escaped_stuck_id';" 2>>"${SUPERVISOR_LOG:-/dev/stderr}" || true
 			db "$SUPERVISOR_DB" "INSERT INTO state_log (task_id, from_state, to_state, timestamp, reason)
 		VALUES ('$escaped_stuck_id', 'verifying', 'deployed',
 			strftime('%Y-%m-%dT%H:%M:%SZ','now'),
-			'process_verify_queue: recovered from stuck verifying state (>5min timeout)');" || true
+			'process_verify_queue: recovered from stuck verifying state (>${stuck_verifying_timeout_minutes}min timeout)');" 2>>"${SUPERVISOR_LOG:-/dev/stderr}" || true
 		done <<<"$stuck_verifying"
 	fi
 
