@@ -2332,7 +2332,11 @@ cmd_pulse() {
 						if [[ -n "$log_file" && -f "$log_file" ]]; then
 							local log_age_seconds=0
 							local log_mtime
-							log_mtime=$(stat -c %Y "$log_file" 2>/dev/null || stat -f %m "$log_file" 2>/dev/null || echo "0")
+							if [[ "$(uname)" == "Darwin" ]]; then
+								log_mtime=$(stat -f '%m' "$log_file" 2>/dev/null || echo "0")
+							else
+								log_mtime=$(stat -c '%Y' "$log_file" 2>/dev/null || echo "0")
+							fi
 							local now_epoch
 							now_epoch=$(date +%s)
 							log_age_seconds=$((now_epoch - log_mtime))

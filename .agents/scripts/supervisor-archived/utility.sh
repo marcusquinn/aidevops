@@ -204,7 +204,11 @@ check_gh_auth() {
 	if [[ -f "$cache_file" ]]; then
 		local cache_age
 		local cache_mtime
-		cache_mtime=$(stat -c '%Y' "$cache_file" 2>/dev/null || stat -f '%m' "$cache_file" 2>/dev/null || echo "0")
+		if [[ "$(uname)" == "Darwin" ]]; then
+			cache_mtime=$(stat -f '%m' "$cache_file" 2>/dev/null || echo "0")
+		else
+			cache_mtime=$(stat -c '%Y' "$cache_file" 2>/dev/null || echo "0")
+		fi
 		cache_age=$(($(date +%s) - cache_mtime))
 		if [[ "$cache_age" -lt "$cache_ttl" ]]; then
 			local cached_result
