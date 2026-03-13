@@ -169,7 +169,7 @@ Finance and legal runners should use dedicated worktrees and PR review gates:
 
 ```bash
 # Dispatch via full-loop with PR review gate
-Claude run --dir ~/Git/<repo> --agent Business --title "Process monthly invoices" \
+opencode run --dir ~/Git/<repo> --agent Business --title "Process monthly invoices" \
   "/full-loop Process monthly invoices — review Q1 expense reports" &
 ```
 
