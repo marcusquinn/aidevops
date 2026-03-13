@@ -863,8 +863,8 @@ scan_legacy_pulse_findings() {
 	while IFS= read -r finding; do
 		local finding_id file severity description
 		while IFS='=' read -r key value; do
-			declare "$key=$value"
-		done <<<"$(jq -r '{finding_id: .id, file, severity, description} | to_entries | .[] | "\(.key)=\(.value)"' <<<"$finding")"
+			declare "$key=$(base64 -d <<<"$value")"
+		done <<<"$(jq -r '{finding_id: .id, file, severity, description} | to_entries | .[] | "\(.key)=\(.value | @base64)"' <<<"$finding")"
 
 		local existing
 		existing=$(db "$active_db" "
@@ -1148,8 +1148,8 @@ cmd_create() {
 	while IFS= read -r finding; do
 		local finding_id severity category path description pr_number source_tool
 		while IFS='=' read -r key value; do
-			declare "$key=$value"
-		done <<<"$(jq -r '{finding_id: .id, severity, category, path: (.path // ""), description, pr_number: (.pr_number // ""), source_tool: (.source_tool // "unknown")} | to_entries | .[] | "\(.key)=\(.value)"' <<<"$finding")"
+			declare "$key=$(base64 -d <<<"$value")"
+		done <<<"$(jq -r '{finding_id: .id, severity, category, path: (.path // ""), description, pr_number: (.pr_number // ""), source_tool: (.source_tool // "unknown")} | to_entries | .[] | "\(.key)=\(.value | @base64)"' <<<"$finding")"
 
 		# Validate finding_id is an integer (defense-in-depth)
 		if ! [[ "$finding_id" =~ ^[0-9]+$ ]]; then
