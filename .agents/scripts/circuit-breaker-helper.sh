@@ -158,8 +158,8 @@ cb_read_state() {
 
 	if [[ -f "$state_file" ]]; then
 		local content
-		content=$(cat "$state_file" 2>/dev/null) || content=""
-		if printf '%s' "$content" | jq empty 2>/dev/null; then
+		content=$(cat "$state_file") || content=""
+		if printf '%s' "$content" | jq empty; then
 			echo "$content"
 		else
 			_cb_log_warn "corrupted state file, returning defaults"
@@ -178,14 +178,14 @@ cb_write_state() {
 
 	# Atomic write via temp file + mv
 	local tmp_file="${state_file}.tmp.$$"
-	if ! printf '%s\n' "$state_json" >"$tmp_file" 2>/dev/null; then
+	if ! printf '%s\n' "$state_json" >"$tmp_file"; then
 		_cb_log_warn "failed to write temp state file: $tmp_file"
-		rm -f "$tmp_file" 2>/dev/null || true
+		rm -f "$tmp_file" || true
 		return 1
 	fi
-	if ! mv -f "$tmp_file" "$state_file" 2>/dev/null; then
+	if ! mv -f "$tmp_file" "$state_file"; then
 		_cb_log_warn "failed to move temp state to: $state_file"
-		rm -f "$tmp_file" 2>/dev/null || true
+		rm -f "$tmp_file" || true
 		return 1
 	fi
 	return 0
@@ -460,7 +460,7 @@ _cb_resolve_repo_slug() {
 		return 0
 	fi
 	local repo_slug
-	repo_slug=$(gh repo view --json nameWithOwner -q '.nameWithOwner' 2>/dev/null) || repo_slug=""
+	repo_slug=$(gh repo view --json nameWithOwner -q '.nameWithOwner') || repo_slug=""
 	echo "$repo_slug"
 	return 0
 }
@@ -495,7 +495,7 @@ _cb_create_or_update_issue() {
 		--label "circuit-breaker" \
 		--state open \
 		--json number \
-		--jq '.[0].number // empty' 2>/dev/null) || existing_issue=""
+		--jq '.[0].number // empty') || existing_issue=""
 
 	local now
 	now=$(_cb_now_iso)
@@ -536,7 +536,7 @@ Supervisor dispatch is **paused**. No new tasks will be dispatched until the cir
 
 - Consecutive failures: ${failure_count}
 - Last failed task: \`${last_task_id}\`
-- Reason: \`${last_failure_reason}\`" 2>/dev/null || {
+- Reason: \`${last_failure_reason}\`" || {
 			_cb_log_warn "failed to comment on issue #$existing_issue"
 			return 1
 		}
@@ -554,7 +554,7 @@ Supervisor dispatch is **paused**. No new tasks will be dispatched until the cir
 			--repo "$repo_slug" \
 			--title "Supervisor circuit breaker tripped — ${failure_count} consecutive failures" \
 			--body "$body" \
-			--label "circuit-breaker" 2>/dev/null) || {
+			--label "circuit-breaker") || {
 			_cb_log_warn "failed to create GitHub issue"
 			return 1
 		}
@@ -588,7 +588,7 @@ _cb_close_issue() {
 		--label "circuit-breaker" \
 		--state open \
 		--json number \
-		--jq '.[0].number // empty' 2>/dev/null) || existing_issue=""
+		--jq '.[0].number // empty') || existing_issue=""
 
 	if [[ -z "$existing_issue" ]]; then
 		return 0
@@ -596,7 +596,7 @@ _cb_close_issue() {
 
 	gh issue close "$existing_issue" \
 		--repo "$repo_slug" \
-		--comment "Circuit breaker reset: ${reason}" 2>/dev/null || {
+		--comment "Circuit breaker reset: ${reason}" || {
 		_cb_log_warn "failed to close issue #$existing_issue"
 		return 1
 	}
