@@ -801,38 +801,28 @@ generate_subagent_stub() {
 	*) ;; # No extra tools for other agents
 	esac
 
-	if [[ -n "$extra_tools" ]]; then
-		cat >"$OPENCODE_AGENT_DIR/$name.md" <<EOF
----
-description: ${src_desc}
-mode: subagent
-temperature: 0.2
-permission:
-  external_directory: allow
-tools:
-  read: true
-  bash: true
-$extra_tools
----
-
-**MANDATORY**: Your first action MUST be to read ~/.aidevops/agents/${rel_path} and follow ALL rules within it.
-EOF
-	else
-		cat >"$OPENCODE_AGENT_DIR/$name.md" <<EOF
----
-description: ${src_desc}
-mode: subagent
-temperature: 0.2
-permission:
-  external_directory: allow
-tools:
-  read: true
-  bash: true
----
-
-**MANDATORY**: Your first action MUST be to read ~/.aidevops/agents/${rel_path} and follow ALL rules within it.
-EOF
-	fi
+	# GH#3601: Use printf to write stub content — avoids unquoted heredoc expansion.
+	# src_desc and rel_path come from filesystem (frontmatter sed extraction / path
+	# stripping) and could contain shell metacharacters that would execute inside
+	# an unquoted <<EOF heredoc. printf '%s\n' treats its argument as literal data,
+	# so $(…) or backticks in a description field are never executed.
+	{
+		printf '%s\n' \
+			"---" \
+			"description: ${src_desc}" \
+			"mode: subagent" \
+			"temperature: 0.2" \
+			"permission:" \
+			"  external_directory: allow" \
+			"tools:" \
+			"  read: true" \
+			"  bash: true"
+		[[ -n "$extra_tools" ]] && printf '%s\n' "$extra_tools"
+		printf '%s\n' \
+			"---" \
+			"" \
+			"**MANDATORY**: Your first action MUST be to read ~/.aidevops/agents/${rel_path} and follow ALL rules within it."
+	} >"$OPENCODE_AGENT_DIR/$name.md"
 	echo 1 # Return 1 for counting
 }
 
