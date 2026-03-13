@@ -77,6 +77,7 @@ PULSE_IDLE_TIMEOUT="${PULSE_IDLE_TIMEOUT:-600}"                                 
 PULSE_IDLE_CPU_THRESHOLD="${PULSE_IDLE_CPU_THRESHOLD:-5}"                                               # CPU% below this = idle (0-100 scale)
 PULSE_PROGRESS_TIMEOUT="${PULSE_PROGRESS_TIMEOUT:-600}"                                                 # 10 min no log output = stuck (GH#2958)
 PULSE_COLD_START_TIMEOUT="${PULSE_COLD_START_TIMEOUT:-1200}"                                            # 20 min grace before first output (prevents false early watchdog kills)
+PULSE_COLD_START_TIMEOUT_UNDERFILLED="${PULSE_COLD_START_TIMEOUT_UNDERFILLED:-600}"                     # 10 min grace when below worker target to recover capacity faster
 ORPHAN_MAX_AGE="${ORPHAN_MAX_AGE:-7200}"                                                                # 2 hours — kill orphans older than this
 RAM_PER_WORKER_MB="${RAM_PER_WORKER_MB:-1024}"                                                          # 1 GB per worker
 RAM_RESERVE_MB="${RAM_RESERVE_MB:-8192}"                                                                # 8 GB reserved for OS + user apps
@@ -106,6 +107,7 @@ PULSE_IDLE_TIMEOUT=$(_validate_int PULSE_IDLE_TIMEOUT "$PULSE_IDLE_TIMEOUT" 300 
 PULSE_IDLE_CPU_THRESHOLD=$(_validate_int PULSE_IDLE_CPU_THRESHOLD "$PULSE_IDLE_CPU_THRESHOLD" 5)
 PULSE_PROGRESS_TIMEOUT=$(_validate_int PULSE_PROGRESS_TIMEOUT "$PULSE_PROGRESS_TIMEOUT" 600 120)
 PULSE_COLD_START_TIMEOUT=$(_validate_int PULSE_COLD_START_TIMEOUT "$PULSE_COLD_START_TIMEOUT" 1200 300)
+PULSE_COLD_START_TIMEOUT_UNDERFILLED=$(_validate_int PULSE_COLD_START_TIMEOUT_UNDERFILLED "$PULSE_COLD_START_TIMEOUT_UNDERFILLED" 600 120)
 ORPHAN_MAX_AGE=$(_validate_int ORPHAN_MAX_AGE "$ORPHAN_MAX_AGE" 7200)
 RAM_PER_WORKER_MB=$(_validate_int RAM_PER_WORKER_MB "$RAM_PER_WORKER_MB" 1024 1)
 RAM_RESERVE_MB=$(_validate_int RAM_RESERVE_MB "$RAM_RESERVE_MB" 8192)
@@ -1367,9 +1369,19 @@ run_stage_with_timeout() {
 # internal to the same process that spawned opencode.
 #######################################
 run_pulse() {
+	local underfilled_mode="${1:-0}"
+	local effective_cold_start_timeout="$PULSE_COLD_START_TIMEOUT"
+	if [[ "$underfilled_mode" == "1" ]]; then
+		effective_cold_start_timeout="$PULSE_COLD_START_TIMEOUT_UNDERFILLED"
+	fi
+	if [[ "$effective_cold_start_timeout" -gt "$PULSE_COLD_START_TIMEOUT" ]]; then
+		effective_cold_start_timeout="$PULSE_COLD_START_TIMEOUT"
+	fi
+
 	local start_epoch
 	start_epoch=$(date +%s)
 	echo "[pulse-wrapper] Starting pulse at $(date -u +%Y-%m-%dT%H:%M:%SZ)" >>"$WRAPPER_LOGFILE"
+	echo "[pulse-wrapper] Watchdog cold-start timeout: ${effective_cold_start_timeout}s (underfilled_mode=${underfilled_mode})" >>"$LOGFILE"
 
 	# Build the prompt: /pulse + reference to pre-fetched state file.
 	# The state is NOT inlined into the prompt — on Linux, execve() enforces
@@ -1467,11 +1479,11 @@ gathered by pulse-wrapper.sh BEFORE this session started."
 					progress_stall_seconds=$((progress_stall_seconds + 60))
 					local progress_timeout="$PULSE_PROGRESS_TIMEOUT"
 					if [[ "$has_seen_progress" == false ]]; then
-						progress_timeout="$PULSE_COLD_START_TIMEOUT"
+						progress_timeout="$effective_cold_start_timeout"
 					fi
 					if [[ "$progress_stall_seconds" -ge "$progress_timeout" ]]; then
 						if [[ "$has_seen_progress" == false ]]; then
-							kill_reason="Pulse cold-start stalled for ${progress_stall_seconds}s — no first output (log size: ${current_log_size} bytes, threshold: ${PULSE_COLD_START_TIMEOUT}s)"
+							kill_reason="Pulse cold-start stalled for ${progress_stall_seconds}s — no first output (log size: ${current_log_size} bytes, threshold: ${effective_cold_start_timeout}s)"
 						else
 							kill_reason="Pulse stalled for ${progress_stall_seconds}s — no log output (log size: ${current_log_size} bytes, threshold: ${PULSE_PROGRESS_TIMEOUT}s) (GH#2958)"
 						fi
@@ -2159,7 +2171,11 @@ enforce_utilization_invariants() {
 
 		# Refresh prompt state before each backfill cycle so pulse sees latest context.
 		prefetch_state || true
-		run_pulse
+		local underfilled_mode=0
+		if [[ "$active_workers" -lt "$max_workers" ]]; then
+			underfilled_mode=1
+		fi
+		run_pulse "$underfilled_mode"
 	done
 
 	echo "[pulse-wrapper] Reached backfill attempt cap (${max_attempts}) before utilization invariant converged" >>"$LOGFILE"
@@ -2229,7 +2245,17 @@ main() {
 		return 0
 	fi
 
-	run_pulse
+	local initial_max_workers initial_active_workers initial_underfilled_mode
+	initial_max_workers=$(get_max_workers_target)
+	initial_active_workers=$(count_active_workers)
+	[[ "$initial_max_workers" =~ ^[0-9]+$ ]] || initial_max_workers=1
+	[[ "$initial_active_workers" =~ ^[0-9]+$ ]] || initial_active_workers=0
+	initial_underfilled_mode=0
+	if [[ "$initial_active_workers" -lt "$initial_max_workers" ]]; then
+		initial_underfilled_mode=1
+	fi
+
+	run_pulse "$initial_underfilled_mode"
 	enforce_utilization_invariants
 	return 0
 }
