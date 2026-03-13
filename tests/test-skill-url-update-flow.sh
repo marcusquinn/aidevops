@@ -197,11 +197,15 @@ mkdir -p "$PROJECT_DIR_1/.agents" "$AGENTS_DIR_1/configs"
 )
 
 SOURCES_FILE_1="$AGENTS_DIR_1/configs/skill-sources.json"
-format_detected_1="$(safe_jq_file '.skills[0].format_detected' "$SOURCES_FILE_1" 'Imported format_detected is readable' || true)"
-upstream_hash_1="$(safe_jq_file '.skills[0].upstream_hash' "$SOURCES_FILE_1" 'Imported upstream_hash is readable' || true)"
-upstream_etag_1="$(safe_jq_file '.skills[0].upstream_etag' "$SOURCES_FILE_1" 'Imported upstream_etag is readable' || true)"
-upstream_last_modified_1="$(safe_jq_file '.skills[0].upstream_last_modified' "$SOURCES_FILE_1" 'Imported upstream_last_modified is readable' || true)"
-local_path_1="$(safe_jq_file '.skills[0].local_path' "$SOURCES_FILE_1" 'Imported local_path is readable' || true)"
+source_values_1=()
+while IFS= read -r value; do
+	source_values_1+=("$value")
+done < <(jq -r '.skills[0] | .format_detected, .upstream_hash, .upstream_etag, .upstream_last_modified, .local_path' "$SOURCES_FILE_1")
+format_detected_1="${source_values_1[0]:-}"
+upstream_hash_1="${source_values_1[1]:-}"
+upstream_etag_1="${source_values_1[2]:-}"
+upstream_last_modified_1="${source_values_1[3]:-}"
+local_path_1="${source_values_1[4]:-}"
 
 assert_eq "url" "$format_detected_1" "URL import sets format_detected to url"
 assert_eq "\"etag-import-1\"" "$upstream_etag_1" "URL import stores ETag header"
@@ -252,9 +256,13 @@ CHECK_EXIT_2=$?
 set -e
 
 JSON_OUTPUT_2="$(printf '%s\n' "$CHECK_OUTPUT_2" | sed -n '/^{/,$p')"
-updates_available_2="$(safe_jq_json '.updates_available' "$JSON_OUTPUT_2" '304 check updates_available is readable' || true)"
-up_to_date_2="$(safe_jq_json '.up_to_date' "$JSON_OUTPUT_2" '304 check up_to_date is readable' || true)"
-status_2="$(safe_jq_json '.results[0].status' "$JSON_OUTPUT_2" '304 check result status is readable' || true)"
+json_values_2=()
+while IFS= read -r value; do
+	json_values_2+=("$value")
+done < <(jq -r '.updates_available, .up_to_date, .results[0].status' <<<"$JSON_OUTPUT_2")
+updates_available_2="${json_values_2[0]:-}"
+up_to_date_2="${json_values_2[1]:-}"
+status_2="${json_values_2[2]:-}"
 last_checked_2="$(safe_jq_file '.skills[0].last_checked // ""' "$AGENTS_DIR_2/configs/skill-sources.json" '304 check last_checked is readable' || true)"
 
 assert_eq "0" "$CHECK_EXIT_2" "URL check returns success when upstream is 304"
@@ -314,9 +322,13 @@ CHECK_EXIT_3=$?
 set -e
 
 JSON_OUTPUT_3="$(printf '%s\n' "$CHECK_OUTPUT_3" | sed -n '/^{/,$p')"
-updates_available_3="$(safe_jq_json '.updates_available' "$JSON_OUTPUT_3" 'Changed-content check updates_available is readable' || true)"
-status_3="$(safe_jq_json '.results[0].status' "$JSON_OUTPUT_3" 'Changed-content check result status is readable' || true)"
-latest_hash_3="$(safe_jq_json '.results[0].latest' "$JSON_OUTPUT_3" 'Changed-content check latest hash is readable' || true)"
+json_values_3=()
+while IFS= read -r value; do
+	json_values_3+=("$value")
+done < <(jq -r '.updates_available, .results[0].status, .results[0].latest' <<<"$JSON_OUTPUT_3")
+updates_available_3="${json_values_3[0]:-}"
+status_3="${json_values_3[1]:-}"
+latest_hash_3="${json_values_3[2]:-}"
 
 assert_eq "1" "$CHECK_EXIT_3" "URL check exits non-zero when update is available"
 assert_eq "1" "$updates_available_3" "URL check reports one available update"
