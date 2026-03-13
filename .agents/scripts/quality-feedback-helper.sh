@@ -1138,28 +1138,39 @@ _create_quality_debt_issues() {
 	while IFS= read -r finding; do
 		[[ -z "$finding" ]] && continue
 
-		local file_path
-		local line_num
-		local body_full
-		local verification_json
-		local verification_result
-		local verification_status
-		local verification_fields
-		local finding_with_status
+		local file_path=""
+		local line_num=""
+		local body_full=""
+		local verification_json=""
+		local verification_result=""
+		local verification_status=""
+		local finding_fields=""
+		local finding_with_status=""
 
-		file_path=$(echo "$finding" | jq -r '.file // ""')
-		line_num=$(echo "$finding" | jq -r '.line // "?"')
-		body_full=$(echo "$finding" | jq -r '.body_full // .body // ""')
+		# Single jq call to extract all three fields (body_full base64-encoded to preserve newlines)
+		finding_fields=$(printf '%s' "$finding" | jq -r '"\(.file // "")\t\(.line // "?")\t\(.body_full // .body // "" | @base64)"')
+		IFS=$'\t' read -r file_path line_num body_full <<<"$finding_fields"
+		body_full=$(printf '%s' "$body_full" | base64 -d)
 
 		verification_json=$(_finding_still_exists_on_main "$repo_slug" "$file_path" "$line_num" "$body_full" || true)
-		verification_fields=$(echo "$verification_json" | jq -r '[(.result // false), (.status // "verified")] | @tsv')
-		IFS=$'\t' read -r verification_result verification_status <<<"$verification_fields"
+
+		# Parse fixed-format JSON without jq — format is {"result":bool,"status":"str"}
+		verification_result="false"
+		verification_status="verified"
+		if [[ "$verification_json" == *'"result":true'* ]]; then
+			verification_result="true"
+		fi
+		if [[ "$verification_json" == *'"status":"unverifiable"'* ]]; then
+			verification_status="unverifiable"
+		elif [[ "$verification_json" == *'"status":"resolved"'* ]]; then
+			verification_status="resolved"
+		fi
 
 		if [[ "$verification_result" == "true" ]]; then
-			finding_with_status=$(echo "$finding" | jq --arg status "$verification_status" '. + {verification_status: $status}')
+			finding_with_status=$(printf '%s' "$finding" | jq --arg status "$verification_status" '. + {verification_status: $status}')
 			verified_findings_stream+="${finding_with_status}"$'\n'
 		fi
-	done < <(echo "$findings" | jq -c '.[]')
+	done < <(printf '%s' "$findings" | jq -c '.[]')
 
 	if [[ -n "$verified_findings_stream" ]]; then
 		findings=$(printf '%s' "$verified_findings_stream" | jq -s '.')
