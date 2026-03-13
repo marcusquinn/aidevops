@@ -5,14 +5,15 @@
 # but never exits, blocking all future pulses via the pgrep dedup guard.
 #
 # This wrapper:
-#   1. Uses a PID file with staleness check (not pgrep) for dedup
-#   2. Cleans up orphaned opencode processes before each pulse
-#   3. Kills runaway processes exceeding RSS or runtime limits (t1398.1)
-#   4. Calculates dynamic worker concurrency from available RAM
-#   5. Internal watchdog kills stuck pulses after PULSE_STALE_THRESHOLD (t1397)
-#   6. Self-watchdog: idle detection kills pulse when CPU drops to zero (t1398.3)
-#   7. Progress-based watchdog: kills if log output stalls for PULSE_PROGRESS_TIMEOUT (GH#2958)
-#   8. Provider-aware pulse sessions via headless-runtime-helper.sh
+#   1. flock-based instance lock prevents concurrent pulses (GH#4409)
+#   2. Uses a PID file with staleness check (not pgrep) for dedup
+#   3. Cleans up orphaned opencode processes before each pulse
+#   4. Kills runaway processes exceeding RSS or runtime limits (t1398.1)
+#   5. Calculates dynamic worker concurrency from available RAM
+#   6. Internal watchdog kills stuck pulses after PULSE_STALE_THRESHOLD (t1397)
+#   7. Self-watchdog: idle detection kills pulse when CPU drops to zero (t1398.3)
+#   8. Progress-based watchdog: kills if log output stalls for PULSE_PROGRESS_TIMEOUT (GH#2958)
+#   9. Provider-aware pulse sessions via headless-runtime-helper.sh
 #
 # Lifecycle: launchd fires every 120s. If a pulse is still running, the
 # dedup check skips. run_pulse() has an internal watchdog that polls every
@@ -28,7 +29,7 @@
 #      PULSE_PROGRESS_TIMEOUT seconds. A process that's running but producing
 #      no output is stuck — not productive. This catches cases where CPU is
 #      nonzero (network I/O, spinning) but no actual work is being done.
-# check_dedup() serves as a tertiary safety net for edge cases where the
+# check_dedup() serves as a secondary safety net for edge cases where the
 # wrapper itself gets stuck.
 #
 # PID file sentinel protocol (GH#4324):
@@ -149,6 +150,7 @@ SESSION_COUNT_WARN=$(_validate_int SESSION_COUNT_WARN "$SESSION_COUNT_WARN" 5 1)
 # _sanitize_markdown and _sanitize_log_field provided by worker-lifecycle-common.sh
 
 PIDFILE="${HOME}/.aidevops/logs/pulse.pid"
+LOCKFILE="${HOME}/.aidevops/logs/pulse-wrapper.lock"
 LOGFILE="${HOME}/.aidevops/logs/pulse.log"
 WRAPPER_LOGFILE="${HOME}/.aidevops/logs/pulse-wrapper.log"
 SESSION_FLAG="${HOME}/.aidevops/logs/pulse-session.flag"
@@ -172,6 +174,43 @@ fi
 # Ensure log directory exists
 #######################################
 mkdir -p "$(dirname "$PIDFILE")"
+
+#######################################
+# Acquire an exclusive instance lock using flock (GH#4409)
+#
+# Primary defense against concurrent pulse instances. Uses flock(1)
+# with -n (non-blocking) so a second instance exits immediately if
+# the lock is held. The lock is automatically released when the
+# process exits (including crashes, OOM kills, SIGKILL).
+#
+# The lock file descriptor (FD 9) is held for the entire lifetime
+# of the process. The caller must exec this via:
+#   exec 9>"$LOCKFILE"
+#   acquire_instance_lock
+#
+# On systems without flock (e.g., macOS without util-linux), falls
+# back to check_dedup() which uses PID-file-based dedup. The flock
+# guard is strictly superior (atomic, no TOCTOU race) but the PID
+# fallback is better than nothing.
+#
+# Returns: 0 if lock acquired, 1 if another instance holds the lock
+#######################################
+acquire_instance_lock() {
+	if ! command -v flock &>/dev/null; then
+		# flock not available — fall back to PID-based dedup only.
+		# Log once so the user knows the stronger guard is missing.
+		echo "[pulse-wrapper] flock not available — relying on PID-based dedup only (install util-linux for atomic locking)" >>"$WRAPPER_LOGFILE"
+		return 0
+	fi
+
+	if ! flock -n 9; then
+		echo "[pulse-wrapper] Another pulse instance holds the lock — exiting immediately (GH#4409)" >>"$WRAPPER_LOGFILE"
+		return 1
+	fi
+
+	echo "[pulse-wrapper] Instance lock acquired (PID $$)" >>"$WRAPPER_LOGFILE"
+	return 0
+}
 
 #######################################
 # Check for stale PID file and clean up
@@ -2404,7 +2443,8 @@ run_underfill_worker_recycler() {
 #######################################
 # Main
 #
-# Execution order (t1429):
+# Execution order (t1429, GH#4409):
+#   0. Instance lock (flock — atomic, prevents concurrent pulses)
 #   1. Gate checks (consent, dedup)
 #   2. Cleanup (orphans, worktrees, stashes)
 #   3. Prefetch state (parallel gh API calls)
@@ -2418,6 +2458,15 @@ run_underfill_worker_recycler() {
 # even the API calls themselves add latency that delays dispatch.
 #######################################
 main() {
+	# GH#4409: Acquire exclusive instance lock FIRST — before any other
+	# check. This is the primary defense against concurrent pulses. The
+	# flock is atomic (no TOCTOU race) and auto-releases on process exit.
+	# Open the lock file on FD 9 so flock can hold it for the process lifetime.
+	exec 9>"$LOCKFILE"
+	if ! acquire_instance_lock; then
+		return 0
+	fi
+
 	if ! check_session_gate; then
 		return 0
 	fi
