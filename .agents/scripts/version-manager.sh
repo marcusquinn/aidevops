@@ -745,26 +745,13 @@ update_version_in_files() {
 		fi
 	fi
 
-	# Update setup.sh if it exists
-	if [[ -f "$REPO_ROOT/setup.sh" ]]; then
-		sed_inplace "s/# Version: .*/# Version: $new_version/" "$REPO_ROOT/setup.sh"
-		if grep -q "# Version: $new_version" "$REPO_ROOT/setup.sh"; then
-			print_success "Updated setup.sh"
-		else
-			print_error "Failed to update setup.sh"
-			errors=$((errors + 1))
-		fi
+	# Update setup.sh and aidevops.sh with shared logic
+	if ! update_script_version_reference "$REPO_ROOT/setup.sh" "$new_version" "setup.sh"; then
+		errors=$((errors + 1))
 	fi
 
-	# Update aidevops.sh CLI if it exists
-	if [[ -f "$REPO_ROOT/aidevops.sh" ]]; then
-		sed_inplace "s/# Version: .*/# Version: $new_version/" "$REPO_ROOT/aidevops.sh"
-		if grep -q "# Version: $new_version" "$REPO_ROOT/aidevops.sh"; then
-			print_success "Updated aidevops.sh"
-		else
-			print_error "Failed to update aidevops.sh"
-			errors=$((errors + 1))
-		fi
+	if ! update_script_version_reference "$REPO_ROOT/aidevops.sh" "$new_version" "aidevops.sh"; then
+		errors=$((errors + 1))
 	fi
 
 	# Update README version badge (skip if using dynamic GitHub release badge)
@@ -825,6 +812,25 @@ update_version_in_files() {
 
 	print_success "All version files updated to $new_version"
 	return 0
+}
+
+update_script_version_reference() {
+	local script_path="$1"
+	local new_version="$2"
+	local script_name="$3"
+
+	if [[ ! -f "$script_path" ]]; then
+		return 0
+	fi
+
+	sed_inplace "s/# Version: .*/# Version: $new_version/" "$script_path"
+	if grep -Fq "# Version: $new_version" "$script_path"; then
+		print_success "Updated $script_name"
+		return 0
+	fi
+
+	print_error "Failed to update $script_name"
+	return 1
 }
 
 # Function to verify local branch is in sync with remote
