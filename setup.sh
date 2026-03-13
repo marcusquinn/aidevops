@@ -37,7 +37,9 @@ export PLATFORM_MACOS PLATFORM_ARM64
 readonly PLATFORM_MACOS PLATFORM_ARM64
 # Repo constants — exported; consumed by setup-modules/core.sh, agent-deploy.sh
 REPO_URL="https://github.com/marcusquinn/aidevops.git"
-INSTALL_DIR="$HOME/Git/aidevops"
+# INSTALL_DIR: resolve from the directory where setup.sh is executed (supports worktrees)
+# For bootstrap (curl install), this will be /dev/fd/NN and trigger re-exec after clone
+INSTALL_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 export REPO_URL INSTALL_DIR
 
 # Source modular setup functions (t316.2)
@@ -506,32 +508,34 @@ if [[ ! -d "$_setup_script_dir/setup-modules" ]]; then
 		fi
 	fi
 
-	# Clone or update the repo
-	mkdir -p "$(dirname "$INSTALL_DIR")"
-	if [[ -d "$INSTALL_DIR/.git" ]]; then
+	# Clone or update the repo (use hardcoded path for bootstrap)
+	# After clone, INSTALL_DIR will be set correctly by the re-exec
+	_bootstrap_install_dir="$HOME/Git/aidevops"
+	mkdir -p "$(dirname "$_bootstrap_install_dir")"
+	if [[ -d "$_bootstrap_install_dir/.git" ]]; then
 		print_info "Existing installation found — updating..."
-		cd "$INSTALL_DIR" || exit 1
+		cd "$_bootstrap_install_dir" || exit 1
 		git pull --ff-only || {
 			print_warning "Git pull failed — resetting to origin/main"
 			git fetch origin
 			git reset --hard origin/main
 		}
 	else
-		if [[ -d "$INSTALL_DIR" ]]; then
+		if [[ -d "$_bootstrap_install_dir" ]]; then
 			print_warning "Directory exists but is not a git repo — backing up"
-			mv "$INSTALL_DIR" "$INSTALL_DIR.backup.$(date +%Y%m%d_%H%M%S)"
+			mv "$_bootstrap_install_dir" "$_bootstrap_install_dir.backup.$(date +%Y%m%d_%H%M%S)"
 		fi
-		print_info "Cloning aidevops to $INSTALL_DIR..."
-		git clone "$REPO_URL" "$INSTALL_DIR" || {
+		print_info "Cloning aidevops to $_bootstrap_install_dir..."
+		git clone "$REPO_URL" "$_bootstrap_install_dir" || {
 			print_error "Failed to clone repository"
 			exit 1
 		}
 	fi
 
-	print_success "Repository ready at $INSTALL_DIR"
+	print_success "Repository ready at $_bootstrap_install_dir"
 
 	# Re-execute the local copy (which has setup-modules/ available)
-	cd "$INSTALL_DIR" || exit 1
+	cd "$_bootstrap_install_dir" || exit 1
 	exec bash "./setup.sh" "$@"
 fi
 unset _setup_script_dir
