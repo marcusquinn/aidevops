@@ -1020,10 +1020,8 @@ do_prompt_repeat() {
 	if [[ "$ai_cli" == "claude" && -n "$worker_mcp_config" ]]; then
 		build_cmd_args+=(--mcp-config "$worker_mcp_config")
 	fi
-	local -a cmd_parts=()
-	while IFS= read -r -d '' part; do
-		cmd_parts+=("$part")
-	done < <(build_cli_cmd "${build_cmd_args[@]}")
+	local -a cmd_parts
+	mapfile -d '' -t cmd_parts < <(build_cli_cmd "${build_cmd_args[@]}")
 
 	# t1412.1: Create sandboxed HOME for prompt-repeat worker
 	local sandbox_dir="" sandbox_env_lines=""
@@ -3070,15 +3068,11 @@ cmd_dispatch() {
 		claude_mcp_config="$worker_mcp_config"
 	fi
 
-	local -a cmd_parts=()
+	local -a cmd_parts
 	if [[ "$verify_mode" == "true" ]]; then
-		while IFS= read -r -d '' part; do
-			cmd_parts+=("$part")
-		done < <(build_verify_dispatch_cmd "$task_id" "$worktree_path" "$log_file" "$ai_cli" "$memory_context" "$resolved_model" "$tdesc" "$verify_reason" "$claude_mcp_config")
+		mapfile -d '' -t cmd_parts < <(build_verify_dispatch_cmd "$task_id" "$worktree_path" "$log_file" "$ai_cli" "$memory_context" "$resolved_model" "$tdesc" "$verify_reason" "$claude_mcp_config")
 	else
-		while IFS= read -r -d '' part; do
-			cmd_parts+=("$part")
-		done < <(build_dispatch_cmd "$task_id" "$worktree_path" "$log_file" "$ai_cli" "$memory_context" "$resolved_model" "$tdesc" "$claude_mcp_config")
+		mapfile -d '' -t cmd_parts < <(build_dispatch_cmd "$task_id" "$worktree_path" "$log_file" "$ai_cli" "$memory_context" "$resolved_model" "$tdesc" "$claude_mcp_config")
 	fi
 
 	# Set FULL_LOOP_HEADLESS for all supervisor-dispatched workers (t174)
@@ -3686,10 +3680,8 @@ Task description: ${tdesc:-$task_id}"
 	if [[ "$ai_cli" == "claude" && -n "$worker_mcp_config" ]]; then
 		build_cmd_args+=(--mcp-config "$worker_mcp_config")
 	fi
-	local -a cmd_parts=()
-	while IFS= read -r -d '' part; do
-		cmd_parts+=("$part")
-	done < <(build_cli_cmd "${build_cmd_args[@]}")
+	local -a cmd_parts
+	mapfile -d '' -t cmd_parts < <(build_cli_cmd "${build_cmd_args[@]}")
 
 	# t1412.1: Create sandboxed HOME for reprompt worker
 	local sandbox_dir="" sandbox_env_lines=""
