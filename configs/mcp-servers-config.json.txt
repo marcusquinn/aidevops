@@ -2,13 +2,15 @@
   "mcpServers": {
     "hostinger-api": {
       "command": "hostinger-api-mcp",
+      "enabled": false,
       "env": {
-        "APITOKEN": "YOUR_HOSTINGER_API_TOKEN_HERE"
+        "HOSTINGER_API_TOKEN": "YOUR_HOSTINGER_API_TOKEN_HERE"
       },
       "description": "Hostinger API MCP server for managing shared hosting"
     },
     "hetzner-main": {
       "command": "mcp-hetzner",
+      "enabled": false,
       "env": {
         "HCLOUD_TOKEN": "YOUR_MAIN_HETZNER_API_TOKEN_HERE"
       },
