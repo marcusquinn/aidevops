@@ -12,8 +12,10 @@ init_log_file
 
 readonly SCREENSHOTS_DIR="${HOME}/.aidevops/.agent-workspace/tmp/browser-qa"
 readonly QA_RESULTS_DIR="${HOME}/.aidevops/.agent-workspace/tmp/browser-qa/results"
-readonly DEFAULT_TIMEOUT=30000
-readonly DEFAULT_VIEWPORTS="desktop,mobile"
+readonly BROWSER_QA_DEFAULT_TIMEOUT=30000
+readonly BROWSER_QA_DEFAULT_VIEWPORTS="desktop,mobile"
+readonly BROWSER_QA_DEFAULT_MAX_IMAGE_DIM=4000
+readonly BROWSER_QA_ANTHROPIC_MAX_IMAGE_DIM=8000
 
 # =============================================================================
 # Viewport Definitions
@@ -45,6 +47,149 @@ js_escape_string() {
 	raw="${raw//\$/\\\$}"
 	raw="${raw//$'\n'/\\n}"
 	printf '%s' "$raw"
+	return 0
+}
+
+# Resolve max image dimension guardrail from optional user input.
+# Args: $1 = requested max dimension (optional)
+# Output: validated max dimension integer
+resolve_max_image_dim() {
+	local requested="${1:-}"
+	local resolved="$BROWSER_QA_DEFAULT_MAX_IMAGE_DIM"
+
+	if [[ -n "$requested" ]]; then
+		if [[ "$requested" =~ ^[0-9]+$ ]] && [[ "$requested" -gt 0 ]]; then
+			resolved="$requested"
+		else
+			log_warn "Invalid --max-dim '${requested}', using default ${BROWSER_QA_DEFAULT_MAX_IMAGE_DIM}"
+		fi
+	fi
+
+	if [[ "$resolved" -gt "$BROWSER_QA_ANTHROPIC_MAX_IMAGE_DIM" ]]; then
+		log_warn "--max-dim ${resolved} exceeds Anthropic limit ${BROWSER_QA_ANTHROPIC_MAX_IMAGE_DIM}; clamping to ${BROWSER_QA_ANTHROPIC_MAX_IMAGE_DIM}"
+		resolved="$BROWSER_QA_ANTHROPIC_MAX_IMAGE_DIM"
+	fi
+
+	echo "$resolved"
+	return 0
+}
+
+# Get image dimensions as "widthxheight".
+# Args: $1 = image path
+# Output: widthxheight
+get_image_dimensions() {
+	local image_path="$1"
+	local width=""
+	local height=""
+
+	if command -v sips &>/dev/null; then
+		local sips_output
+		sips_output=$(sips -g pixelWidth -g pixelHeight "$image_path" 2>/dev/null) || return 1
+		while IFS= read -r line; do
+			case "$line" in
+			*pixelWidth:*) width="${line##*: }" ;;
+			*pixelHeight:*) height="${line##*: }" ;;
+			esac
+		done <<<"$sips_output"
+	elif command -v magick &>/dev/null; then
+		local identify_output
+		identify_output=$(magick identify -format '%w %h' "$image_path" 2>/dev/null) || return 1
+		width="${identify_output%% *}"
+		height="${identify_output##* }"
+	else
+		return 1
+	fi
+
+	if [[ -z "$width" || -z "$height" || ! "$width" =~ ^[0-9]+$ || ! "$height" =~ ^[0-9]+$ ]]; then
+		return 1
+	fi
+
+	echo "${width}x${height}"
+	return 0
+}
+
+# Resize an image down to a max dimension.
+# Args: $1 = image path, $2 = max dimension
+resize_image_to_max_dim() {
+	local image_path="$1"
+	local max_dim="$2"
+
+	if command -v sips &>/dev/null; then
+		sips --resampleHeightWidthMax "$max_dim" "$image_path" --out "$image_path" >/dev/null
+		return 0
+	fi
+
+	if command -v magick &>/dev/null; then
+		magick "$image_path" -resize "${max_dim}x${max_dim}>" "$image_path"
+		return 0
+	fi
+
+	return 1
+}
+
+# Enforce screenshot size guardrails for Anthropic vision compatibility.
+# Args: $1 = output directory, $2 = target max dimension
+enforce_screenshot_size_guardrails() {
+	local output_dir="$1"
+	local max_dim="$2"
+	local checked_count=0
+	local resized_count=0
+	local hard_limit_violations=0
+
+	if ! command -v sips &>/dev/null && ! command -v magick &>/dev/null; then
+		log_error "No supported image tool found for guardrails (need sips or magick)"
+		return 1
+	fi
+
+	local image_found=0
+	for image_path in "$output_dir"/*.png; do
+		if [[ ! -f "$image_path" ]]; then
+			continue
+		fi
+		image_found=1
+		checked_count=$((checked_count + 1))
+
+		local dimensions
+		dimensions=$(get_image_dimensions "$image_path") || {
+			log_error "Failed to read image dimensions: ${image_path}"
+			return 1
+		}
+
+		local width="${dimensions%%x*}"
+		local height="${dimensions##*x}"
+
+		if [[ "$width" -gt "$max_dim" || "$height" -gt "$max_dim" ]]; then
+			if ! resize_image_to_max_dim "$image_path" "$max_dim"; then
+				log_error "Failed to resize screenshot: ${image_path}"
+				return 1
+			fi
+			resized_count=$((resized_count + 1))
+			local resized_dimensions
+			resized_dimensions=$(get_image_dimensions "$image_path") || {
+				log_error "Failed to read resized image dimensions: ${image_path}"
+				return 1
+			}
+			width="${resized_dimensions%%x*}"
+			height="${resized_dimensions##*x}"
+		fi
+
+		if [[ "$width" -gt "$BROWSER_QA_ANTHROPIC_MAX_IMAGE_DIM" || "$height" -gt "$BROWSER_QA_ANTHROPIC_MAX_IMAGE_DIM" ]]; then
+			hard_limit_violations=$((hard_limit_violations + 1))
+			log_error "Image exceeds Anthropic hard limit (${BROWSER_QA_ANTHROPIC_MAX_IMAGE_DIM}px): ${image_path} (${width}x${height})"
+		fi
+	done
+
+	if [[ "$image_found" -eq 0 ]]; then
+		log_warn "No PNG screenshots found in ${output_dir} to guardrail-check"
+		return 0
+	fi
+
+	log_info "Screenshot guardrails checked ${checked_count} image(s), resized ${resized_count}, max dimension ${max_dim}px"
+
+	if [[ "$hard_limit_violations" -gt 0 ]]; then
+		return 1
+	fi
+
 	return 0
 }
 
@@ -97,10 +242,11 @@ wait_for_url() {
 cmd_screenshot() {
 	local url=""
 	local pages="/"
-	local viewports="$DEFAULT_VIEWPORTS"
+	local viewports="$BROWSER_QA_DEFAULT_VIEWPORTS"
 	local output_dir="$SCREENSHOTS_DIR"
-	local timeout="$DEFAULT_TIMEOUT"
+	local timeout="$BROWSER_QA_DEFAULT_TIMEOUT"
 	local full_page="false"
+	local max_dim=""
 
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
@@ -128,6 +274,10 @@ cmd_screenshot() {
 			full_page="true"
 			shift
 			;;
+		--max-dim)
+			max_dim="$2"
+			shift 2
+			;;
 		*)
 			log_error "Unknown option: $1"
 			return 1
@@ -139,6 +289,8 @@ cmd_screenshot() {
 		log_error "URL is required. Use --url http://localhost:3000"
 		return 1
 	fi
+
+	max_dim=$(resolve_max_image_dim "$max_dim")
 
 	mkdir -p "$output_dir"
 
@@ -221,7 +373,17 @@ SCRIPT
 	local exit_code=0
 	node "$script_file" || exit_code=$?
 	rm -f "$script_file"
-	return $exit_code
+
+	if [[ "$exit_code" -ne 0 ]]; then
+		return "$exit_code"
+	fi
+
+	if ! enforce_screenshot_size_guardrails "$output_dir" "$max_dim"; then
+		log_error "Screenshot guardrail enforcement failed"
+		return 1
+	fi
+
+	return 0
 }
 
 # =============================================================================
@@ -234,7 +396,7 @@ SCRIPT
 cmd_links() {
 	local url=""
 	local depth=2
-	local timeout="$DEFAULT_TIMEOUT"
+	local timeout="$BROWSER_QA_DEFAULT_TIMEOUT"
 
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
@@ -577,7 +739,7 @@ cmd_smoke() {
 	local url=""
 	local pages="/"
 	local format="json"
-	local timeout="$DEFAULT_TIMEOUT"
+	local timeout="$BROWSER_QA_DEFAULT_TIMEOUT"
 
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
@@ -729,10 +891,11 @@ SCRIPT
 cmd_run() {
 	local url=""
 	local pages="/"
-	local viewports="$DEFAULT_VIEWPORTS"
+	local viewports="$BROWSER_QA_DEFAULT_VIEWPORTS"
 	local format="json"
 	local output_dir="$QA_RESULTS_DIR"
-	local timeout="$DEFAULT_TIMEOUT"
+	local timeout="$BROWSER_QA_DEFAULT_TIMEOUT"
+	local max_dim=""
 
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
@@ -758,6 +921,10 @@ cmd_run() {
 			;;
 		--timeout)
 			timeout="$2"
+			shift 2
+			;;
+		--max-dim)
+			max_dim="$2"
 			shift 2
 			;;
 		*)
@@ -791,7 +958,7 @@ cmd_run() {
 	log_info "--- Phase 2: Screenshots ---"
 	local screenshot_dir="${output_dir}/screenshots-${timestamp}"
 	local screenshot_result
-	screenshot_result=$(cmd_screenshot --url "$url" --pages "$pages" --viewports "$viewports" --output-dir "$screenshot_dir" --timeout "$timeout" 2>/dev/null) || screenshot_result='{"error": "screenshot capture failed"}'
+	screenshot_result=$(cmd_screenshot --url "$url" --pages "$pages" --viewports "$viewports" --output-dir "$screenshot_dir" --timeout "$timeout" --max-dim "$max_dim" 2>/dev/null) || screenshot_result='{"error": "screenshot capture failed"}'
 
 	# Phase 3: Broken links
 	log_info "--- Phase 3: Broken Link Check ---"
@@ -906,10 +1073,11 @@ Common Options:
   --format FMT        Output format: json or markdown (default: json)
   --timeout MS        Navigation timeout in milliseconds (default: 30000)
   --output-dir DIR    Directory for screenshots and reports
+  --max-dim PX        Resize screenshots to this max dimension (default: 4000, Anthropic hard limit: 8000)
 
 Examples:
   browser-qa-helper.sh run --url http://localhost:3000 --pages "/ /about /dashboard"
-  browser-qa-helper.sh screenshot --url http://localhost:3000 --viewports desktop,tablet,mobile
+  browser-qa-helper.sh screenshot --url http://localhost:3000 --viewports desktop,tablet,mobile --max-dim 4000
   browser-qa-helper.sh links --url http://localhost:3000 --depth 3
   browser-qa-helper.sh a11y --url http://localhost:3000 --level AAA
   browser-qa-helper.sh smoke --url http://localhost:3000 --pages "/ /login"
@@ -948,4 +1116,6 @@ main() {
 	esac
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+	main "$@"
+fi

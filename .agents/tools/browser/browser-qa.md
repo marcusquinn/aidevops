@@ -100,8 +100,16 @@ browser-qa-helper.sh screenshot --url http://localhost:3000 \
 browser-qa-helper.sh screenshot --url http://localhost:3000 \
   --pages "/ /about /dashboard" \
   --viewports desktop,tablet,mobile \
-  --full-page
+  --full-page \
+  --max-dim 4000
 ```
+
+**Vision-size guardrails**:
+- `browser-qa-helper.sh screenshot` now enforces a post-capture image-size guardrail
+- Default resize target is `4000px` max dimension (`--max-dim` to override)
+- Anthropic hard limit is `8000px` per dimension; values above this are rejected
+- The helper uses `sips` (macOS) or `magick` (ImageMagick) to inspect/resize screenshots
+- If guardrail checks fail, the command exits non-zero instead of passing oversized images downstream
 
 **Viewport definitions**:
 

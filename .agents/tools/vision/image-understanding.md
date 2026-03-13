@@ -136,6 +136,24 @@ curl https://api.anthropic.com/v1/messages \
 
 **Supported formats**: JPEG, PNG, GIF, WebP. Max 5MB per image (API), 10MB (Claude.ai).
 
+**Dimension limit (critical)**: Anthropic rejects base64 images where any dimension exceeds `8000px`.
+
+Recommended safety margin for screenshots:
+
+```bash
+# macOS (built-in)
+sips --resampleHeightWidthMax 4000 input.png --out output.png
+
+# Cross-platform (ImageMagick)
+magick input.png -resize '4000x4000>' output.png
+```
+
+The Browser QA helper enforces this by default:
+
+```bash
+browser-qa-helper.sh screenshot --url http://localhost:3000 --full-page --max-dim 4000
+```
+
 ### Google (Gemini Vision)
 
 ```bash
