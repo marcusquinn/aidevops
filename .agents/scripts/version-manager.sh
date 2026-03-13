@@ -1143,6 +1143,35 @@ create_github_release() {
 	return 0
 }
 
+run_post_release_agent_sync() {
+	local sync_repo_root="${AIDEVOPS_SYNC_REPO_ROOT:-$REPO_ROOT}"
+	local remote_url
+	remote_url=$(git -C "$sync_repo_root" remote get-url origin 2>/dev/null || echo "")
+
+	if [[ "$remote_url" != *"marcusquinn/aidevops"* ]]; then
+		return 0
+	fi
+
+	local deploy_script="${AIDEVOPS_SYNC_DEPLOY_SCRIPT:-$sync_repo_root/.agents/scripts/deploy-agents-on-merge.sh}"
+	if [[ ! -f "$deploy_script" ]]; then
+		print_warning "Post-release sync skipped: deploy script not found at $deploy_script"
+		return 0
+	fi
+
+	print_info "Running post-release aidevops agent sync..."
+	local sync_output=""
+	local sync_exit=0
+	sync_output=$(bash "$deploy_script" --repo "$sync_repo_root" --quiet 2>&1) || sync_exit=$?
+
+	if [[ "$sync_exit" -eq 0 || "$sync_exit" -eq 2 ]]; then
+		print_success "Post-release aidevops agent sync completed"
+		return 0
+	fi
+
+	print_warning "Post-release aidevops agent sync failed (non-blocking): $sync_output"
+	return 0
+}
+
 # Function to generate release notes
 generate_release_notes() {
 	local version="$1"
@@ -1348,6 +1377,7 @@ main() {
 					exit 1
 				fi
 				create_github_release "$new_version"
+				run_post_release_agent_sync
 				print_success "Release $new_version created successfully!"
 			else
 				print_error "Version validation failed. Please fix inconsistencies before creating release."
@@ -1437,4 +1467,6 @@ main() {
 	return 0
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+	main "$@"
+fi

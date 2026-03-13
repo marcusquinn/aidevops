@@ -759,32 +759,32 @@ build_evaluator_message() {
 	local context_text="${4:-}"
 	local expected_text="${5:-}"
 
-	local msg=""
-
-	# Include context for evaluators that need it
+	# Build message using printf to avoid echo -e interpreting backslash escapes
+	# in untrusted input (prompt injection via \n, \t, etc.)
 	case "$eval_type" in
 	faithfulness)
 		if [[ -n "$context_text" ]]; then
-			msg="Context: ${context_text}\n\n"
+			printf 'Context: %s\n\nOutput to evaluate: %s' "$context_text" "$output_text"
+		else
+			printf 'Output to evaluate: %s' "$output_text"
 		fi
-		msg="${msg}Output to evaluate: ${output_text}"
 		;;
 	format-validity)
-		msg="Format specification: ${input_text}\n\nOutput to evaluate: ${output_text}"
+		printf 'Format specification: %s\n\nOutput to evaluate: %s' "$input_text" "$output_text"
 		;;
 	safety)
-		msg="Output to evaluate: ${output_text}"
+		printf 'Output to evaluate: %s' "$output_text"
 		;;
 	*)
-		msg="Input/Request: ${input_text}\n\nOutput to evaluate: ${output_text}"
+		printf 'Input/Request: %s\n\nOutput to evaluate: %s' "$input_text" "$output_text"
 		;;
 	esac
 
 	if [[ -n "$expected_text" ]]; then
-		msg="${msg}\n\nExpected output: ${expected_text}"
+		printf '\n\nExpected output: %s' "$expected_text"
 	fi
 
-	echo -e "$msg"
+	printf '\n'
 	return 0
 }
 
@@ -888,19 +888,33 @@ run_single_evaluator() {
 ${user_message}"
 
 		local raw_result
-		raw_result=$("$AI_HELPER" --prompt "$full_prompt" --model haiku --max-tokens 200 2>/dev/null || echo "")
+		raw_result=$("$AI_HELPER" --prompt "$full_prompt" --model haiku --max-tokens 200 || echo "")
 
 		if [[ -n "$raw_result" ]]; then
-			# Extract JSON from response (handle markdown code blocks)
+			# Extract JSON from response: handle fenced blocks and embedded wrapper text
 			local json_result
-			json_result=$(echo "$raw_result" | sed -n 's/.*\({[^}]*"score"[^}]*}\).*/\1/p' | head -1)
+			json_result=$(printf '%s' "$raw_result" | jq -Rrs '
+				. as $text
+				| (
+					($text | fromjson?)
+					// (
+						$text
+						| gsub("(?m)^```[A-Za-z0-9_-]*\\n"; "")
+						| gsub("(?m)^```$"; "")
+						| capture("(?s)(?<json>\\{.*\\})").json
+						| fromjson?
+					)
+				) // empty
+				| select(type == "object" and has("score"))
+				| @json
+			' 2>/dev/null)
 
 			if [[ -n "$json_result" ]]; then
-				# Parse score from JSON
+				# Parse score and details from JSON using jq (robust, handles whitespace/key order)
 				local score
-				score=$(echo "$json_result" | sed -n 's/.*"score"[[:space:]]*:[[:space:]]*\([0-9.]*\).*/\1/p')
+				score=$(printf '%s' "$json_result" | jq -r '.score // ""')
 				local details
-				details=$(echo "$json_result" | sed -n 's/.*"details"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
+				details=$(printf '%s' "$json_result" | jq -r '.details // ""')
 
 				if [[ -n "$score" ]]; then
 					# Determine pass/fail using awk for float comparison
@@ -908,7 +922,7 @@ ${user_message}"
 					passed=$(awk -v s="$score" -v t="$threshold" 'BEGIN { print (s >= t) ? "true" : "false" }')
 
 					local result_json
-					result_json=$(jq -cn --arg type "$eval_type" --argjson score "${score:-null}" --argjson passed "$passed" --arg details "$details" '{evaluator: $type, score: $score, passed: $passed, details: $details}')
+					result_json=$(jq -cn --arg type "$eval_type" --argjson score "${score}" --argjson passed "$passed" --arg details "$details" '{evaluator: $type, score: $score, passed: $passed, details: $details}')
 
 					# Cache the result
 					cache_judgment "$cache_key" "$result_json" "" "haiku"
@@ -1043,18 +1057,8 @@ cmd_evaluate() {
 	if [[ ${#results[@]} -eq 1 ]]; then
 		echo "${results[0]}"
 	else
-		# Multiple evaluators: output as JSON array
-		echo -n "["
-		local first=true
-		for r in "${results[@]}"; do
-			if [[ "$first" == true ]]; then
-				first=false
-			else
-				echo -n ","
-			fi
-			echo -n "$r"
-		done
-		echo "]"
+		# Multiple evaluators: output as JSON array using jq --slurp for safety
+		printf '%s\n' "${results[@]}" | jq -s .
 	fi
 
 	return 0
@@ -1090,13 +1094,13 @@ eval_dataset() {
 		[[ -z "$line" || "$line" == "#"* ]] && continue
 		row_num=$((row_num + 1))
 
-		# Parse JSONL fields using lightweight extraction
+		# Parse JSONL fields using jq (robust: handles whitespace, key order, escapes)
 		# Supports: input, output, context, expected
 		local row_input row_output row_context row_expected
-		row_input=$(echo "$line" | sed -n 's/.*"input"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
-		row_output=$(echo "$line" | sed -n 's/.*"output"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
-		row_context=$(echo "$line" | sed -n 's/.*"context"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
-		row_expected=$(echo "$line" | sed -n 's/.*"expected"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
+		row_input=$(echo "$line" | jq -r '.input // ""')
+		row_output=$(echo "$line" | jq -r '.output // ""')
+		row_context=$(echo "$line" | jq -r '.context // ""')
+		row_expected=$(echo "$line" | jq -r '.expected // ""')
 
 		if [[ -z "$row_output" ]]; then
 			log_warn "Row $row_num: missing 'output' field, skipping"
@@ -1121,16 +1125,16 @@ eval_dataset() {
 				--threshold "$threshold" \
 				--prompt-file "$prompt_file")
 
-			# Add row number to result
-			echo "{\"row\": ${row_num}, \"result\": ${result}}"
+			# Add row number to result (use jq --argjson for proper nested JSON object)
+			jq -n --argjson row "$row_num" --argjson result "$result" '{"row": $row, "result": $result}'
 
-			# Track aggregate stats
+			# Track aggregate stats using jq (robust JSON field extraction)
 			local score
-			score=$(echo "$result" | sed -n 's/.*"score"[[:space:]]*:[[:space:]]*\([0-9.]*\).*/\1/p')
+			score=$(echo "$result" | jq -r '.score // ""')
 			local passed
-			passed=$(echo "$result" | sed -n 's/.*"passed"[[:space:]]*:[[:space:]]*\(true\|false\).*/\1/p')
+			passed=$(echo "$result" | jq -r '.passed // ""')
 
-			if [[ -n "$score" && "$score" != "null" ]]; then
+			if [[ -n "$score" ]]; then
 				total_score=$(awk "BEGIN { print $total_score + $score }")
 				total_count=$((total_count + 1))
 				if [[ "$passed" == "true" ]]; then
@@ -1143,15 +1147,25 @@ eval_dataset() {
 		done
 	done <"$dataset_path"
 
-	# Output summary
+	# Output summary using jq for safe, well-formed JSON construction
 	if [[ "$total_count" -gt 0 ]]; then
 		local avg_score
 		avg_score=$(awk "BEGIN { printf \"%.3f\", $total_score / $total_count }")
 		local pass_rate
 		pass_rate=$(awk "BEGIN { printf \"%.1f\", ($pass_count / $total_count) * 100 }")
-		echo "{\"summary\": {\"rows\": ${row_num}, \"evaluations\": ${total_count}, \"avg_score\": ${avg_score}, \"pass_rate\": \"${pass_rate}%\", \"passed\": ${pass_count}, \"failed\": $((total_count - pass_count))}}"
+		local failed_count
+		failed_count=$((total_count - pass_count))
+		jq -n \
+			--argjson r "$row_num" \
+			--argjson tc "$total_count" \
+			--argjson as "$avg_score" \
+			--arg pr "${pass_rate}%" \
+			--argjson p "$pass_count" \
+			--argjson f "$failed_count" \
+			'{summary: {rows: $r, evaluations: $tc, avg_score: $as, pass_rate: $pr, passed: $p, failed: $f}}'
 	else
-		echo "{\"summary\": {\"rows\": ${row_num}, \"evaluations\": 0, \"avg_score\": null, \"pass_rate\": null, \"passed\": 0, \"failed\": 0}}"
+		jq -n --argjson r "$row_num" \
+			'{summary: {rows: $r, evaluations: 0, avg_score: null, pass_rate: null, passed: 0, failed: 0}}'
 	fi
 
 	return 0

@@ -307,6 +307,15 @@ cmd_set() {
 	# Normalize to uppercase
 	name=$(echo "$name" | tr '[:lower:]-' '[:upper:]_')
 
+	print_info "Setting secret: $name"
+	print_warning "WARNING: Never paste secret values into AI chat"
+	print_warning "Run this command in your terminal and enter the value at the hidden prompt"
+	echo ""
+	echo "  1) When prompted, paste ONLY the secret value"
+	echo "  2) Do NOT paste the command, key name, or an export line"
+	echo "  3) Input is hidden; press Enter when done"
+	echo ""
+
 	local value
 	if ! value=$(read_secret_input "$name"); then
 		return 1
@@ -347,6 +356,7 @@ cmd_set() {
 		print_success "Stored $name in credentials.sh"
 		print_info "Recommend: aidevops secret init (to enable encrypted storage)"
 	fi
+	print_info "Verify key name only: aidevops secret list"
 
 	return 0
 }
@@ -663,8 +673,18 @@ cmd_help() {
 	echo ""
 	print_info "Examples:"
 	echo ""
+	echo "  # WARNING: Never paste secret values into AI chat"
+	echo "  # Run secret set in your terminal and enter the value at hidden prompt"
+	echo ""
 	echo "  # Store a secret (value entered at terminal, hidden)"
 	echo "  aidevops secret set STRIPE_KEY"
+	echo ""
+	echo "  # Secret set flow"
+	echo "  # 1) Run set command"
+	echo "  # 2) At hidden prompt, paste only the secret value"
+	echo "  # 3) Press Enter"
+	echo "  # 4) Verify key name only"
+	echo "  aidevops secret list"
 	echo ""
 	echo "  # Run a command with secrets injected (output redacted)"
 	echo "  aidevops secret run curl -H 'Authorization: Bearer \$STRIPE_KEY' https://api.stripe.com/v1/charges"

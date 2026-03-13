@@ -426,6 +426,7 @@ validate_repo_root_files() {
 		".markdownlint-cli2.jsonc"
 		".markdownlint.json"
 		".markdownlintignore"
+		".qlty/qlty.toml"
 		".qlty.toml"
 		".qltyignore"
 		".repomixignore"

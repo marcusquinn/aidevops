@@ -100,6 +100,16 @@ _q_validate_value() {
 	return 1
 }
 
+# Compute integer percentage with an internal divide-by-zero guard.
+_q_compute_percentage() {
+	local numerator="$1"
+	local denominator="$2"
+
+	awk -v numerator="$numerator" -v denominator="$denominator" \
+		'BEGIN { if (denominator > 0) printf "%.0f", (numerator / denominator) * 100; else print 0 }'
+	return 0
+}
+
 # =============================================================================
 # Add Command
 # =============================================================================
@@ -768,15 +778,15 @@ cmd_stats() {
 		deny_count="$(jq -r 'select(.decision=="deny") | .id' "$QUARANTINE_REVIEWED" 2>/dev/null | wc -l | tr -d ' ')"
 		trust_count="$(jq -r 'select(.decision=="trust") | .id' "$QUARANTINE_REVIEWED" 2>/dev/null | wc -l | tr -d ' ')"
 		dismiss_count="$(jq -r 'select(.decision=="dismiss") | .id' "$QUARANTINE_REVIEWED" 2>/dev/null | wc -l | tr -d ' ')"
+		local total_decisions
+		total_decisions=$((allow_count + deny_count + trust_count + dismiss_count))
 		echo "  Allowed (Tier 3):  ${allow_count}"
 		echo "  Denied (Tier 5):   ${deny_count}"
 		echo "  Trusted (MCP):     ${trust_count}"
 		echo "  Dismissed (FP):    ${dismiss_count}"
 
-		# reviewed_count > 0 already guaranteed by outer guard (line 758)
 		local fp_rate
-		fp_rate="$(awk -v dismissed="$dismiss_count" -v total="$reviewed_count" \
-			'BEGIN { if (total > 0) printf "%.0f", (dismissed / total) * 100; else print 0 }')"
+		fp_rate="$(_q_compute_percentage "$dismiss_count" "$total_decisions")"
 		echo "  False positive rate: ${fp_rate}%"
 	fi
 

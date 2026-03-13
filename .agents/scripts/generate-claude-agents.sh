@@ -777,6 +777,8 @@ deny_rules = [
 
     # --- Secret exposure prevention ---
     "Bash(gopass show *)",
+    "Bash(pass show *)",
+    "Bash(op read *)",
     "Bash(cat ~/.config/aidevops/credentials.sh)",
 ]
 

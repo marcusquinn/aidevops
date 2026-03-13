@@ -1,9 +1,10 @@
 #!/usr/bin/env bash
-# contribution-watch-helper.sh — Monitor external issues/PRs for new comments (t1419)
+# contribution-watch-helper.sh — Monitor external issues/PRs for new activity (t1419)
 #
-# Auto-discovers and monitors all external GitHub issues/PRs where the
-# authenticated user has contributed (authored or commented). Surfaces
-# items needing attention with prompt-injection-safe architecture.
+# Auto-discovers and monitors external GitHub issues/PRs where the
+# authenticated user has contributed (authored or commented). Uses
+# GitHub Notifications API for low-cost polling, with managed-repo
+# exclusion to suppress aidevops automation noise.
 #
 # Architecture principle: the automated system (pulse/launchd) NEVER
 # processes untrusted comment bodies through an LLM. It only performs
@@ -12,7 +13,7 @@
 #
 # Usage:
 #   contribution-watch-helper.sh seed [--dry-run]     Discover all external contributions
-#   contribution-watch-helper.sh scan                 Check for new comments since last scan
+#   contribution-watch-helper.sh scan                 Check notifications for new external activity
 #   contribution-watch-helper.sh status               Show watched items and their state
 #   contribution-watch-helper.sh install               Install launchd plist
 #   contribution-watch-helper.sh uninstall             Remove launchd plist
@@ -60,6 +61,10 @@ DORMANT_THRESHOLD=604800 # 7 days
 
 # GitHub API page size
 API_PAGE_SIZE=100
+
+# Notification reasons that are likely to need a human response.
+# Excludes low-signal reasons such as ci_activity and state_change.
+SIGNAL_REASONS="author|comment|mention|review_requested|subscribed"
 
 # =============================================================================
 # Logging
@@ -186,6 +191,90 @@ _seconds_since() {
 	local now_epoch
 	now_epoch=$(date +%s)
 	echo $((now_epoch - then_epoch))
+	return 0
+}
+
+_get_managed_repo_slugs() {
+	if [[ ! -f "$REPOS_JSON" ]]; then
+		return 0
+	fi
+
+	jq -r '.initialized_repos[] | select(.pulse == true and .slug != null and .slug != "") | .slug' "$REPOS_JSON" 2>/dev/null || true
+	return 0
+}
+
+_is_managed_repo() {
+	local repo_slug="$1"
+	local managed_slugs="$2"
+
+	if [[ -z "$repo_slug" || -z "$managed_slugs" ]]; then
+		return 1
+	fi
+
+	while IFS= read -r managed_slug; do
+		if [[ -n "$managed_slug" && "$repo_slug" == "$managed_slug" ]]; then
+			return 0
+		fi
+	done <<<"$managed_slugs"
+
+	return 1
+}
+
+_is_signal_reason() {
+	local reason="$1"
+	if [[ -z "$reason" ]]; then
+		return 1
+	fi
+	if [[ "$reason" =~ ^(${SIGNAL_REASONS})$ ]]; then
+		return 0
+	fi
+	return 1
+}
+
+_extract_item_key() {
+	local subject_url="$1"
+	if [[ -z "$subject_url" ]]; then
+		echo ""
+		return 0
+	fi
+
+	# Expected formats:
+	#   https://api.github.com/repos/owner/repo/issues/123
+	#   https://api.github.com/repos/owner/repo/pulls/456
+	local path
+	path="${subject_url#https://api.github.com/repos/}"
+	if [[ "$path" == "$subject_url" ]]; then
+		echo ""
+		return 0
+	fi
+
+	local owner repo kind number
+	owner=$(echo "$path" | cut -d'/' -f1)
+	repo=$(echo "$path" | cut -d'/' -f2)
+	kind=$(echo "$path" | cut -d'/' -f3)
+	number=$(echo "$path" | cut -d'/' -f4)
+
+	if [[ -z "$owner" || -z "$repo" || -z "$number" ]]; then
+		echo ""
+		return 0
+	fi
+
+	if [[ "$kind" != "issues" && "$kind" != "pulls" ]]; then
+		echo ""
+		return 0
+	fi
+
+	echo "${owner}/${repo}#${number}"
+	return 0
+}
+
+_notification_item_type() {
+	local subject_type="$1"
+	if [[ "$subject_type" == "PullRequest" ]]; then
+		echo "pr"
+		return 0
+	fi
+	echo "issue"
 	return 0
 }
 
@@ -371,97 +460,108 @@ cmd_scan() {
 
 	_log_info "Scan started (last_scan: ${last_scan})"
 
-	local items_keys
-	items_keys=$(echo "$state" | jq -r '.items | keys[]' 2>/dev/null) || items_keys=""
+	local managed_slugs
+	managed_slugs=$(_get_managed_repo_slugs)
 
-	if [[ -z "$items_keys" ]]; then
-		echo "No items being watched. Run 'seed' first."
+	local since_arg=""
+	if [[ -n "$last_scan" ]]; then
+		since_arg="&since=${last_scan}"
+	fi
+
+	# Notifications API is the primary signal: one paginated API stream instead
+	# of one API call per tracked issue/PR.
+	local notifications
+	notifications=$(gh api --paginate "notifications?participating=true&all=true&per_page=${API_PAGE_SIZE}${since_arg}" 2>/dev/null) || notifications=""
+
+	if [[ -z "$notifications" ]]; then
+		echo -e "${GREEN}All caught up — no external contributions need attention${NC}"
+		echo "Checked 0 notifications."
+		local now_iso_no_data
+		now_iso_no_data=$(_now_iso)
+		state=$(echo "$state" | jq --arg ts "$now_iso_no_data" '.last_scan = $ts')
+		_write_state "$state"
+		echo "CONTRIBUTION_WATCH_COUNT=0"
 		return 0
 	fi
 
 	local needs_attention=0
 	local items_checked=0
 	local attention_items=""
+	local notifications_checked=0
 
-	while IFS= read -r key; do
-		[[ -z "$key" ]] && continue
+	while IFS= read -r row; do
+		[[ -z "$row" ]] && continue
 
-		# Parse key: owner/repo#number
-		local repo_slug="${key%#*}"
-		local number="${key##*#}"
+		notifications_checked=$((notifications_checked + 1))
 
-		# Fetch latest comments (only metadata — NOT bodies)
-		# This is the prompt-injection safety boundary: we only fetch
-		# timestamps and authors, never comment bodies in automated context.
-		local comments_meta
-		comments_meta=$(gh api "repos/${repo_slug}/issues/${number}/comments" \
-			--jq '[.[] | {author: .user.login, created: .created_at, id: .id}] | sort_by(.created) | reverse | .[0:5]' \
-			2>/dev/null) || comments_meta="[]"
-
-		local latest_comment_author
-		latest_comment_author=$(echo "$comments_meta" | jq -r '.[0].author // ""')
-		local latest_comment_time
-		latest_comment_time=$(echo "$comments_meta" | jq -r '.[0].created // ""')
-
-		if [[ -z "$latest_comment_author" || -z "$latest_comment_time" ]]; then
-			items_checked=$((items_checked + 1))
+		local repo_slug
+		repo_slug=$(echo "$row" | jq -r '.repository.full_name // ""')
+		if [[ -z "$repo_slug" ]]; then
 			continue
 		fi
 
-		# Update last_any_comment
+		# Suppress managed repos (aidevops automation noise belongs to pulse stream).
+		if _is_managed_repo "$repo_slug" "$managed_slugs"; then
+			continue
+		fi
+
+		local reason
+		reason=$(echo "$row" | jq -r '.reason // ""')
+		if ! _is_signal_reason "$reason"; then
+			continue
+		fi
+
+		local subject_url
+		subject_url=$(echo "$row" | jq -r '.subject.url // ""')
+		local item_key
+		item_key=$(_extract_item_key "$subject_url")
+		if [[ -z "$item_key" ]]; then
+			continue
+		fi
+
+		local item_type
+		item_type=$(_notification_item_type "$(echo "$row" | jq -r '.subject.type // "Issue"')")
+		local title
+		title=$(echo "$row" | jq -r '.subject.title // "unknown"')
+		local updated
+		updated=$(echo "$row" | jq -r '.updated_at // ""')
+		if [[ -z "$updated" ]]; then
+			continue
+		fi
+
+		# Create or update tracked item from notification metadata only.
 		state=$(echo "$state" | jq \
-			--arg key "$key" \
-			--arg time "$latest_comment_time" \
-			'
-			if .items[$key] != null then
-				.items[$key].last_any_comment = $time
-			else . end
-		')
+			--arg key "$item_key" \
+			--arg type "$item_type" \
+			--arg title "$title" \
+			--arg updated "$updated" \
+			'.items[$key] = ((.items[$key] // {type: $type, role: "participant", title: $title, last_our_comment: "", last_any_comment: "", last_notified: "", hot_until: ""})
+				| .type = $type
+				| .title = $title
+				| .last_any_comment = (if .last_any_comment == "" or $updated > .last_any_comment then $updated else .last_any_comment end)
+			)')
 
-		# Check if latest commenter is us — if so, we have the last word
-		if [[ "$latest_comment_author" == "$username" ]]; then
-			# Update our last comment time
-			state=$(echo "$state" | jq \
-				--arg key "$key" \
-				--arg time "$latest_comment_time" \
-				'.items[$key].last_our_comment = $time')
-			items_checked=$((items_checked + 1))
+		local last_notified
+		last_notified=$(echo "$state" | jq -r --arg key "$item_key" '.items[$key].last_notified // ""')
+		# ISO 8601 UTC timestamps sort lexicographically, so string compare is valid.
+		if [[ -n "$last_notified" ]] && [[ ! "$updated" > "$last_notified" ]]; then
 			continue
 		fi
 
-		# Someone else commented after us — check if it's new since last scan
-		local our_last
-		our_last=$(echo "$state" | jq -r --arg key "$key" '.items[$key].last_our_comment // ""')
-		local last_notified
-		last_notified=$(echo "$state" | jq -r --arg key "$key" '.items[$key].last_notified // ""')
+		needs_attention=$((needs_attention + 1))
+		attention_items="${attention_items}  ${item_key} (${item_type}): ${title} — reason: ${reason}\n"
 
-		# Needs attention if:
-		# 1. Someone else has the latest comment (already checked above)
-		# 2. Their comment is newer than our last notification
-		local needs_notify=false
-		if [[ -z "$last_notified" || "$latest_comment_time" > "$last_notified" ]]; then
-			needs_notify=true
-		fi
-
-		if [[ "$needs_notify" == "true" ]]; then
-			needs_attention=$((needs_attention + 1))
-			local title
-			title=$(echo "$state" | jq -r --arg key "$key" '.items[$key].title // "unknown"')
-			local item_type
-			item_type=$(echo "$state" | jq -r --arg key "$key" '.items[$key].type // "issue"')
-			attention_items="${attention_items}  ${key} (${item_type}): ${title} — reply from @${latest_comment_author}\n"
-
-			# Mark as hot (activity within 24h)
-			local hot_until
-			hot_until=$(date -u -v+24H +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d '+24 hours' +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo "")
-			state=$(echo "$state" | jq \
-				--arg key "$key" \
-				--arg hot "$hot_until" \
-				'.items[$key].hot_until = $hot')
-		fi
+		# Mark as notified and hot.
+		local hot_until
+		hot_until=$(date -u -v+24H +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d '+24 hours' +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo "")
+		state=$(echo "$state" | jq \
+			--arg key "$item_key" \
+			--arg updated "$updated" \
+			--arg hot "$hot_until" \
+			'.items[$key].last_notified = $updated | .items[$key].hot_until = $hot')
 
 		items_checked=$((items_checked + 1))
-	done <<<"$items_keys"
+	done < <(echo "$notifications" | jq -c '.[]?')
 
 	# Update scan timestamp
 	local now_iso
@@ -482,8 +582,8 @@ cmd_scan() {
 		echo -e "${GREEN}All caught up — no external contributions need attention${NC}"
 	fi
 
-	echo "Checked ${items_checked} items."
-	_log_info "Scan complete: ${items_checked} checked, ${needs_attention} need attention"
+	echo "Checked ${notifications_checked} notifications (${items_checked} actionable external threads)."
+	_log_info "Scan complete: notifications=${notifications_checked}, actionable=${items_checked}, needs_attention=${needs_attention}"
 
 	# Output machine-readable count for pulse integration
 	echo "CONTRIBUTION_WATCH_COUNT=${needs_attention}"
@@ -689,11 +789,11 @@ cmd_uninstall() {
 # =============================================================================
 
 cmd_help() {
-	echo "contribution-watch-helper.sh — Monitor external issues/PRs for new comments"
+	echo "contribution-watch-helper.sh — Monitor external issues/PRs for new activity"
 	echo ""
 	echo "Usage:"
 	echo "  contribution-watch-helper.sh seed [--dry-run]   Discover all external contributions"
-	echo "  contribution-watch-helper.sh scan               Check for new comments since last scan"
+	echo "  contribution-watch-helper.sh scan               Check notifications for new external activity"
 	echo "  contribution-watch-helper.sh status             Show watched items and their state"
 	echo "  contribution-watch-helper.sh install            Install launchd plist"
 	echo "  contribution-watch-helper.sh uninstall          Remove launchd plist"
@@ -702,7 +802,8 @@ cmd_help() {
 	echo "State file: ${STATE_FILE}"
 	echo "Log file:   ${LOGFILE}"
 	echo ""
-	echo "Architecture: Automated scans are deterministic (timestamp/authorship only)."
+	echo "Architecture: Automated scans are deterministic (notification metadata only)."
+	echo "Managed repos (pulse=true in repos.json) are excluded to suppress internal automation noise."
 	echo "Comment bodies are NEVER processed by LLM in automated context."
 	echo "Use prompt-guard-helper.sh scan before showing comment bodies interactively."
 	return 0

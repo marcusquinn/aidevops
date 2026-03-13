@@ -34,12 +34,12 @@
       "openai": {
         "enabled": true,
         "api_key_env": "OPENAI_API_KEY",
-        "default_model": "gpt-4o-mini"
+        "default_model": "gpt-4.1-mini"
       },
       "anthropic": {
         "enabled": true,
         "api_key_env": "ANTHROPIC_API_KEY",
-        "default_model": "claude-3-5-sonnet-20241022"
+        "default_model": "claude-sonnet-4-6"
       },
       "ollama": {
         "enabled": true,

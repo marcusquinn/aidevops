@@ -1021,16 +1021,20 @@ test_mail_tls() {
 	if [[ -n "$not_after" ]]; then
 		local expiry_epoch
 		expiry_epoch=$(date -j -f "%b %d %H:%M:%S %Y %Z" "$not_after" "+%s" 2>/dev/null || date -d "$not_after" "+%s" 2>/dev/null || echo "0")
-		local now_epoch
-		now_epoch=$(date "+%s")
-		local days_left=$(((expiry_epoch - now_epoch) / 86400))
-
-		if [[ "$days_left" -lt 0 ]]; then
-			print_error "Certificate EXPIRED ($days_left days ago)"
-		elif [[ "$days_left" -lt 30 ]]; then
-			print_warning "Certificate expires in $days_left days"
+		if [[ "$expiry_epoch" == "0" ]]; then
+			print_warning "Unable to parse certificate expiry date: $not_after"
 		else
-			print_success "Certificate valid for $days_left days"
+			local now_epoch
+			now_epoch=$(date "+%s")
+			local days_left=$(((expiry_epoch - now_epoch) / 86400))
+
+			if [[ "$days_left" -lt 0 ]]; then
+				print_error "Certificate EXPIRED ($days_left days ago)"
+			elif [[ "$days_left" -lt 30 ]]; then
+				print_warning "Certificate expires in $days_left days"
+			else
+				print_success "Certificate valid for $days_left days"
+			fi
 		fi
 	fi
 

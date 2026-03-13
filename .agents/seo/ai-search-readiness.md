@@ -1,6 +1,6 @@
 ---
 name: ai-search-readiness
-description: Orchestrate AI search readiness across grounding triage, fan-out modeling, GEO, SRO, integrity hardening, discoverability checks, and citation monitoring
+description: Orchestrate end-to-end AI search readiness across seven phases from grounding eligibility through citation monitoring
 mode: subagent
 tools:
   read: true

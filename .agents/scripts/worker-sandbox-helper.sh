@@ -30,6 +30,40 @@ set -euo pipefail
 # Resolve real HOME before anything else — workers may already have HOME overridden
 readonly REAL_HOME="${REAL_HOME:-$HOME}"
 readonly SANDBOX_BASE="${WORKER_SANDBOX_BASE:-/tmp/aidevops-worker}"
+WORKER_SANDBOX_HELPER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+readonly WORKER_SANDBOX_HELPER_DIR
+
+#######################################
+# Best-effort sandbox audit logging
+#
+# Emits tamper-evident security.event records when worker sandboxes are
+# created or cleaned up. This is best-effort: worker sandboxing must still
+# function when audit logging is unavailable.
+#
+# Args:
+#   $1 = action (created|cleaned)
+#   $2 = task_id
+#   $3 = sandbox_dir
+#
+# Returns: 0 always
+#######################################
+log_worker_sandbox_event() {
+	local action="$1"
+	local task_id="$2"
+	local sandbox_dir="$3"
+	local audit_helper="${WORKER_SANDBOX_HELPER_DIR}/audit-log-helper.sh"
+
+	if [[ ! -x "$audit_helper" ]]; then
+		return 0
+	fi
+
+	"$audit_helper" log security.event "worker_sandbox_${action}" \
+		--detail task_id="$task_id" \
+		--detail sandbox_dir="$sandbox_dir" \
+		>/dev/null 2>&1 || true
+
+	return 0
+}
 
 #######################################
 # Create a sandboxed HOME directory for a worker
@@ -150,6 +184,8 @@ create_worker_sandbox() {
 		real_home=${REAL_HOME}
 	SENTINEL
 
+	log_worker_sandbox_event "created" "$task_id" "$sandbox_dir"
+
 	echo "$sandbox_dir"
 	return 0
 }
@@ -222,6 +258,7 @@ generate_sandbox_env() {
 #######################################
 cleanup_worker_sandbox() {
 	local sandbox_dir="$1"
+	local sandbox_task_id="unknown"
 
 	if [[ -z "$sandbox_dir" ]]; then
 		echo "ERROR: sandbox_dir required" >&2
@@ -241,7 +278,11 @@ cleanup_worker_sandbox() {
 		return 1
 	fi
 
+	sandbox_task_id=$(grep '^task_id=' "$sandbox_dir/.aidevops-sandbox" 2>/dev/null | cut -d= -f2- || true)
+	sandbox_task_id="${sandbox_task_id:-unknown}"
+
 	rm -rf "$sandbox_dir"
+	log_worker_sandbox_event "cleaned" "$sandbox_task_id" "$sandbox_dir"
 	return 0
 }
 

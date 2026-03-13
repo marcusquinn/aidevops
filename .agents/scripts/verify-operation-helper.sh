@@ -56,9 +56,9 @@ select_verifier() {
 	local primary_provider="$1"
 
 	# Provider preference chains (cheapest tier of each)
-	local -a anthropic_chain=("google|gemini-2.5-flash-preview-05-20" "openai|gpt-4.1-mini")
-	local -a google_chain=("anthropic|claude-haiku-4-5-20251001" "openai|gpt-4.1-mini")
-	local -a openai_chain=("anthropic|claude-haiku-4-5-20251001" "google|gemini-2.5-flash-preview-05-20")
+	local -a anthropic_chain=("google|gemini-2.5-flash" "openai|gpt-4.1-mini")
+	local -a google_chain=("anthropic|claude-haiku-4-5" "openai|gpt-4.1-mini")
+	local -a openai_chain=("anthropic|claude-haiku-4-5" "google|gemini-2.5-flash")
 
 	local -a chain
 	case "$primary_provider" in
@@ -67,7 +67,7 @@ select_verifier() {
 	openai) chain=("${openai_chain[@]}") ;;
 	*)
 		# Unknown primary — try anthropic first, then google
-		chain=("anthropic|claude-haiku-4-5-20251001" "google|gemini-2.5-flash-preview-05-20")
+		chain=("anthropic|claude-haiku-4-5" "google|gemini-2.5-flash")
 		;;
 	esac
 
@@ -149,8 +149,8 @@ _has_api_key() {
 _get_same_provider_fallback() {
 	local provider="$1"
 	case "$provider" in
-	anthropic) echo "claude-haiku-4-5-20251001" ;;
-	google) echo "gemini-2.5-flash-preview-05-20" ;;
+	anthropic) echo "claude-haiku-4-5" ;;
+	google) echo "gemini-2.5-flash" ;;
 	openai) echo "gpt-4.1-mini" ;;
 	*) echo "" ;;
 	esac
@@ -512,7 +512,7 @@ cmd_verify() {
 	if [[ "$verifier_provider" != "anthropic" ]]; then
 		log_info "Note: Using Anthropic API for verification call (multi-provider API support planned in t1364.3)"
 		verifier_provider="anthropic"
-		verifier_model="claude-haiku-4-5-20251001"
+		verifier_model="claude-haiku-4-5"
 		model_short="haiku"
 	fi
 

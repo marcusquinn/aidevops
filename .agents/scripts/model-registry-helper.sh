@@ -115,7 +115,7 @@ init_db() {
 # Model Name Normalization
 # =============================================================================
 # Normalizes model names for fuzzy matching across different naming conventions.
-# e.g., "claude-haiku-4-5" and "claude-3-5-haiku" both normalize to "claude-haiku"
+# Example: provider/version variants normalize to a stable family label.
 
 normalize_model_name() {
 	local name="$1"
@@ -123,7 +123,7 @@ normalize_model_name() {
 	name="${name#*/}"
 	# Strip date suffixes (e.g., -20250514, -20241022)
 	name="${name%-[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]}"
-	# Strip preview suffixes (e.g., -preview-05-20)
+	# Strip preview suffixes
 	name=$(echo "$name" | sed -E 's/-preview-[0-9]{2}-[0-9]{2}$//')
 	# Strip version numbers (e.g., -3-5, -3.5, -4, -2.5, -2.0)
 	name=$(echo "$name" | sed -E 's/-[0-9]+(\.[0-9]+)?//g')
@@ -1241,11 +1241,11 @@ cmd_route() {
 	# Defaults if registry is empty
 	case "$tier" in
 	haiku)
-		primary_model="${primary_model:-claude-haiku-4-5-20251001}"
-		fallback_model="${fallback_model:-gemini-2.5-flash-preview-05-20}"
+		primary_model="${primary_model:-claude-haiku-4-5}"
+		fallback_model="${fallback_model:-gemini-2.5-flash}"
 		;;
 	flash)
-		primary_model="${primary_model:-gemini-2.5-flash-preview-05-20}"
+		primary_model="${primary_model:-gemini-2.5-flash}"
 		fallback_model="${fallback_model:-gpt-4.1-mini}"
 		;;
 	sonnet)
@@ -1253,7 +1253,7 @@ cmd_route() {
 		fallback_model="${fallback_model:-gpt-4.1}"
 		;;
 	pro)
-		primary_model="${primary_model:-gemini-2.5-pro-preview-06-05}"
+		primary_model="${primary_model:-gemini-2.5-pro}"
 		fallback_model="${fallback_model:-claude-sonnet-4-6}"
 		;;
 	opus)

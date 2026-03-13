@@ -261,9 +261,11 @@ def extract_errors(conn: sqlite3.Connection, limit: Optional[int] = None) -> lis
         json_extract(p.data, '$.tool') as tool_name,
         json_extract(p.data, '$.state.error') as error_text,
         json_extract(p.data, '$.state.input') as tool_input_json,
+        json_extract(m.data, '$.modelID') as model_id,
         s.title as session_title,
         s.directory as session_dir
     FROM part p
+    JOIN message m ON p.message_id = m.id
     JOIN session s ON p.session_id = s.id
     WHERE json_extract(p.data, '$.type') = 'tool'
       AND json_extract(p.data, '$.state.status') = 'error'
@@ -336,6 +338,7 @@ def extract_errors(conn: sqlite3.Connection, limit: Optional[int] = None) -> lis
             "session_title": row["session_title"] or "",
             "session_dir": _sanitize_path(row["session_dir"] or ""),
             "timestamp": row["time_created"],
+            "model": row["model_id"] or "unknown",
             "tool": tool_name,
             "error_category": error_category,
             "error_text": error_text[:500],

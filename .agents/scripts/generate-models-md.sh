@@ -200,8 +200,8 @@ generate_routing_tiers() {
 	echo "|------|---------------|---------------|"
 
 	# Resolve canonical model names from the models table.
-	# subagent_models may store preview/versioned names (e.g. gemini-2.5-flash-preview-05-20)
-	# while models stores canonical names (e.g. gemini-2.5-flash).
+	# subagent_models may store versioned provider-specific names,
+	# while models stores canonical names.
 	# Use a correlated subquery to find the longest matching canonical name,
 	# falling back to sm.model_id if no match or if already canonical.
 	sqlite3 -separator '|' "$REGISTRY_DB" "

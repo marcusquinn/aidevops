@@ -1,4 +1,4 @@
-# systemd user timer for profile README auto-update — runs daily at 06:00
+# systemd user timer for profile README auto-update — runs hourly
 #
 # Install:
 #   mkdir -p ~/.config/systemd/user
@@ -8,10 +8,10 @@
 #   systemctl --user enable --now aidevops-profile-readme-update.timer
 
 [Unit]
-Description=aidevops profile README update timer (daily at 06:00)
+Description=aidevops profile README update timer (hourly)
 
 [Timer]
-OnCalendar=*-*-* 06:00:00
+OnCalendar=hourly
 Persistent=true
 
 [Install]

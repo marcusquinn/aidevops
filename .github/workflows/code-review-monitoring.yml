@@ -57,17 +57,27 @@ jobs:
         pip install --upgrade pip pyyaml
     
     - name: 🔍 Install Quality Tools
+      env:
+        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       run: |
-        # Install Qlty CLI
-        curl -sSL https://github.com/qltysh/qlty/releases/latest/download/qlty-x86_64-unknown-linux-gnu.tar.xz -o qlty.tar.xz
-        tar xf qlty.tar.xz
-        sudo mv qlty-*/qlty /usr/local/bin/
-        rm -rf qlty*
-        
-        # Install Codacy CLI
-        curl -L https://github.com/codacy/codacy-analysis-cli/releases/latest/download/codacy-analysis-cli-linux -o codacy-analysis-cli
-        chmod +x codacy-analysis-cli
-        sudo mv codacy-analysis-cli /usr/local/bin/
+        # Install Qlty CLI via gh release download (uses GITHUB_TOKEN, avoids
+        # redirect/rate-limit issues with curl on /releases/latest/download/ URLs).
+        # Fail-open: transient failures must not block CI (root cause of GH#4216).
+        if gh release download --repo qltysh/qlty --pattern "qlty-x86_64-unknown-linux-gnu.tar.xz" --output qlty.tar.xz 2>&1; then
+          if tar xf qlty.tar.xz 2>&1; then
+            sudo mv qlty-x86_64-unknown-linux-gnu/qlty /usr/local/bin/ 2>/dev/null || true
+            echo "Qlty CLI installed: $(qlty --version 2>/dev/null || echo 'version unknown')"
+          else
+            echo "::warning::Qlty tar extraction failed — skipping qlty analysis"
+          fi
+        else
+          echo "::warning::Qlty download failed — skipping qlty analysis"
+        fi
+        rm -rf qlty.tar.xz qlty-x86_64-unknown-linux-gnu 2>/dev/null || true
+
+        # Codacy CLI: the Linux binary was removed from releases (only JAR remains).
+        # Skip install — codacy-analysis-cli is not used in monitor-code-review.sh.
+        echo "Codacy CLI binary no longer available as a release asset; skipping."
     
     - name: 🏃 Run Code Review Monitoring
       env:

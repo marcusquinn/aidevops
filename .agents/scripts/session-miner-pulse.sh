@@ -254,12 +254,296 @@ if git_summary:
 	return $?
 }
 
+generate_feedback_actions() {
+	local compressed_file="$1"
+	local actions_file="$2"
+	local report_file="$3"
+	local metrics_file="$4"
+
+	if [[ ! -f "${compressed_file}" ]]; then
+		log_error "Compressed signals file not found"
+		return 1
+	fi
+
+	python3 - "${compressed_file}" "${actions_file}" "${report_file}" "${metrics_file}" <<'PY'
+import json
+import sys
+from datetime import datetime, timezone
+from pathlib import Path
+
+compressed_path = Path(sys.argv[1])
+actions_path = Path(sys.argv[2])
+report_path = Path(sys.argv[3])
+metrics_path = Path(sys.argv[4])
+
+data = json.loads(compressed_path.read_text())
+errors = data.get("errors", {}).get("patterns", [])
+
+severity_weights = {
+    "high": 4,
+    "medium": 2,
+    "low": 1,
+}
+
+high_impact_categories = {
+    "permission",
+    "not_read_first",
+    "edit_stale_read",
+}
+
+def action_kind(pattern):
+    count = pattern.get("count", 0)
+    model_count = pattern.get("model_count", 0)
+    category = pattern.get("error_category", "other")
+    severity = pattern.get("severity", "low")
+
+    is_common = count >= 8 or (count >= 4 and model_count >= 2)
+    is_outlier = (category in high_impact_categories and count >= 1) or (severity == "high" and model_count >= 1)
+
+    if is_common:
+        return "common"
+    if is_outlier:
+        return "outlier"
+    return None
+
+
+def build_actions(patterns):
+    actions = []
+    for p in patterns:
+        kind = action_kind(p)
+        if kind is None:
+            continue
+
+        tool = p.get("tool", "unknown")
+        category = p.get("error_category", "other")
+        count = int(p.get("count", 0))
+        models = p.get("models", [])
+        model_count = int(p.get("model_count", 0))
+        severity = p.get("severity", "low")
+        score = (count * severity_weights.get(severity, 1)) + (model_count * 3)
+
+        tag = f"session-miner:{tool}:{category}"
+        title = f"session-miner: reduce {tool} {category} failures"
+        why = "Cross-model recurring failure pattern" if model_count >= 2 else "High-impact outlier requiring harness hardening"
+
+        body = "\n".join([
+            "## Summary",
+            f"- Source: session-miner feedback loop ({kind} lane)",
+            f"- Pattern: `{tool}:{category}`",
+            f"- Frequency: {count}",
+            f"- Models affected: {model_count} ({', '.join(models) if models else 'unknown'})",
+            f"- Severity: {severity}",
+            "",
+            "## Why This Matters",
+            f"- {why}",
+            "- Improvements should remain model-agnostic: fix the harness/process, not a model-specific workaround.",
+            "",
+            "## Suggested Actions",
+            "- Add or tighten preventive guidance in prompts/scripts",
+            "- Add/expand validation checks for this error class",
+            "- Add regression verification for this failure mode",
+            "",
+            "## Verification",
+            "- Re-run session-miner pulse and compare this pattern's frequency against baseline",
+            "",
+            f"Signal tag: `{tag}`",
+        ])
+
+        actions.append({
+            "title": title,
+            "tag": tag,
+            "kind": kind,
+            "tool": tool,
+            "error_category": category,
+            "count": count,
+            "models": models,
+            "model_count": model_count,
+            "severity": severity,
+            "score": score,
+            "body": body,
+        })
+
+    actions.sort(key=lambda x: (-x["score"], -x["count"], x["title"]))
+    return actions
+
+
+actions = build_actions(errors)
+
+metrics = {
+    "generated_at": datetime.now(timezone.utc).isoformat(),
+    "patterns": {
+        f"{p.get('tool', 'unknown')}:{p.get('error_category', 'other')}": {
+            "count": int(p.get("count", 0)),
+            "model_count": int(p.get("model_count", 0)),
+            "severity": p.get("severity", "low"),
+        }
+        for p in errors
+    },
+}
+
+previous_metrics = {}
+if metrics_path.exists():
+    try:
+        previous_metrics = json.loads(metrics_path.read_text())
+    except (OSError, json.JSONDecodeError):
+        previous_metrics = {}
+
+previous_patterns = previous_metrics.get("patterns", {})
+delta_lines = []
+for key, cur in sorted(metrics["patterns"].items()):
+    prev_count = int(previous_patterns.get(key, {}).get("count", 0))
+    diff = cur["count"] - prev_count
+    if diff != 0:
+        trend = "increased" if diff > 0 else "decreased"
+        delta_lines.append(f"- `{key}` {trend} by {abs(diff)} ({prev_count} -> {cur['count']})")
+
+payload = {
+    "generated_at": metrics["generated_at"],
+    "total_actions": len(actions),
+    "actions": actions,
+    "delta": delta_lines,
+}
+
+actions_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+metrics_path.write_text(json.dumps(metrics, indent=2), encoding="utf-8")
+
+lines = [
+    "# Session Miner Feedback Actions",
+    "",
+    f"Generated: {metrics['generated_at']}",
+    f"Total candidate actions: {len(actions)}",
+    "",
+    "## Candidate Actions",
+]
+
+if actions:
+    for action in actions:
+        lines.extend([
+            f"- [{action['kind']}] {action['title']}",
+            f"  - pattern: `{action['tool']}:{action['error_category']}`",
+            f"  - count: {action['count']}, models: {action['model_count']}, severity: {action['severity']}",
+            f"  - tag: `{action['tag']}`",
+        ])
+else:
+    lines.append("- No action candidates matched current thresholds")
+
+lines.extend(["", "## Pattern Delta Since Last Pulse"])
+if delta_lines:
+    lines.extend(delta_lines)
+else:
+    lines.append("- No count changes detected from previous pulse")
+
+report_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+print(f"Generated {len(actions)} action candidates")
+print(f"Actions file: {actions_path}")
+print(f"Report file: {report_path}")
+print(f"Metrics baseline: {metrics_path}")
+PY
+
+	return $?
+}
+
+create_feedback_issues() {
+	local actions_file="$1"
+	local dry_run="$2"
+	local auto_issue="${SESSION_MINER_AUTO_ISSUES:-0}"
+
+	if [[ "${auto_issue}" != "1" ]]; then
+		log_info "Auto-issue creation disabled (set SESSION_MINER_AUTO_ISSUES=1 to enable)"
+		return 0
+	fi
+
+	if [[ ! -f "${actions_file}" ]]; then
+		log_error "Actions file not found: ${actions_file}"
+		return 1
+	fi
+
+	if ! command -v gh >/dev/null 2>&1; then
+		log_info "gh CLI not found, skipping auto-issue creation"
+		return 0
+	fi
+
+	local max_issues="${SESSION_MINER_MAX_ISSUES:-3}"
+	python3 - "${actions_file}" "${max_issues}" "${dry_run}" <<'PY'
+import json
+import subprocess
+import sys
+
+actions_file = sys.argv[1]
+max_issues = int(sys.argv[2])
+dry_run = sys.argv[3].lower() == "true"
+
+payload = json.load(open(actions_file, encoding="utf-8"))
+actions = payload.get("actions", [])
+
+if not actions:
+    print("No action candidates to file")
+    sys.exit(0)
+
+repo_cmd = ["gh", "repo", "view", "--json", "nameWithOwner", "--jq", ".nameWithOwner"]
+repo = subprocess.run(repo_cmd, capture_output=True, text=True)
+if repo.returncode != 0:
+    print("Unable to resolve repository slug; skipping issue creation")
+    sys.exit(0)
+
+slug = repo.stdout.strip()
+created = 0
+
+for action in actions:
+    if created >= max_issues:
+        break
+
+    tag = action["tag"]
+    title = action["title"]
+    body = action["body"]
+
+    dedup_cmd = [
+        "gh", "issue", "list",
+        "--repo", slug,
+        "--state", "open",
+        "--search", f'"{tag}" in:body',
+        "--limit", "1",
+        "--json", "number",
+    ]
+    dedup = subprocess.run(dedup_cmd, capture_output=True, text=True)
+    if dedup.returncode == 0:
+        try:
+            existing = json.loads(dedup.stdout)
+        except json.JSONDecodeError:
+            existing = []
+        if existing:
+            continue
+
+    if dry_run:
+        print(f"DRY RUN: would create issue: {title}")
+        created += 1
+        continue
+
+    create_cmd = [
+        "gh", "issue", "create",
+        "--repo", slug,
+        "--title", title,
+        "--body", body,
+        "--label", "self-improvement",
+    ]
+    created_proc = subprocess.run(create_cmd, capture_output=True, text=True)
+    if created_proc.returncode == 0:
+        print(f"Created issue: {title}")
+        created += 1
+
+print(f"Issue creation complete: {created} created (cap={max_issues})")
+PY
+
+	return $?
+}
+
 # --- Main ---
 
 main() {
 	local db_override=""
 	local dry_run=false
 	local force=false
+	local create_issues=false
 
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
@@ -273,6 +557,10 @@ main() {
 			;;
 		--force)
 			force=true
+			shift
+			;;
+		--create-issues)
+			create_issues=true
 			shift
 			;;
 		--since)
@@ -351,21 +639,41 @@ main() {
 		return 1
 	}
 
-	local compressed_file="${MINER_DIR}/compressed_signals.json"
+	local compressed_file="${output_dir}/compressed_signals.json"
+	local feedback_actions_file="${MINER_DIR}/feedback_actions.json"
+	local feedback_report_file="${MINER_DIR}/feedback_actions.md"
+	local feedback_metrics_file="${MINER_DIR}/feedback_metrics.json"
 
 	# Generate summary
 	local summary
 	summary=$(generate_summary "${compressed_file}" 2>&1)
 
+	local feedback_output
+	feedback_output=$(generate_feedback_actions "${compressed_file}" "${feedback_actions_file}" "${feedback_report_file}" "${feedback_metrics_file}" 2>&1) || {
+		log_error "Feedback action generation failed: ${feedback_output}"
+		release_lock
+		return 1
+	}
+
 	if [[ "${dry_run}" == true ]]; then
 		echo "--- DRY RUN ---"
 		echo "${summary}"
+		echo "${feedback_output}"
+		if [[ "${create_issues}" == true ]]; then
+			create_feedback_issues "${feedback_actions_file}" "${dry_run}" || true
+		fi
 		echo "--- Would log TODO suggestions to relevant repos ---"
 	else
 		echo "${summary}"
+		echo "${feedback_output}"
+		if [[ "${create_issues}" == true ]]; then
+			create_feedback_issues "${feedback_actions_file}" "${dry_run}" || true
+		fi
 		record_pulse
 		log_info "Pulse complete. Output: ${output_dir}"
 		log_info "Compressed signals: ${compressed_file}"
+		log_info "Feedback actions: ${feedback_actions_file}"
+		log_info "Feedback report: ${feedback_report_file}"
 		log_info "Run 'opencode run --dir ~/Git/REPO --title \"Session miner analysis\" \"Analyse ${compressed_file} against the current harness and suggest improvements\"' for deep analysis."
 	fi
 

@@ -20,6 +20,7 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 METRICS_FILE="${HOME}/.aidevops/.agent-workspace/observability/metrics.jsonl"
+OBS_DB_FILE="${HOME}/.aidevops/.agent-workspace/observability/llm-requests.db"
 
 # --- Resolve profile repo path from repos.json ---
 _resolve_profile_repo() {
@@ -112,6 +113,49 @@ _get_session_time() {
 
 # --- Gather model usage stats ---
 _get_model_usage() {
+	# Primary source: OpenCode real-time observability SQLite database.
+	if command -v sqlite3 &>/dev/null && [[ -f "$OBS_DB_FILE" ]]; then
+		local sqlite_json
+		sqlite_json=$(sqlite3 "$OBS_DB_FILE" "
+			SELECT COALESCE(
+				json_group_array(
+					json_object(
+						'model', model_id,
+						'requests', requests,
+						'input_tokens', input_tokens,
+						'output_tokens', output_tokens,
+						'cache_read_tokens', cache_read_tokens,
+						'cache_write_tokens', cache_write_tokens,
+						'cost_total', ROUND(cost_total, 2)
+					)
+				),
+				'[]'
+			)
+			FROM (
+				SELECT
+					model_id,
+					COUNT(*) AS requests,
+					COALESCE(SUM(tokens_input), 0) AS input_tokens,
+					COALESCE(SUM(tokens_output), 0) AS output_tokens,
+					COALESCE(SUM(tokens_cache_read), 0) AS cache_read_tokens,
+					COALESCE(SUM(tokens_cache_write), 0) AS cache_write_tokens,
+					COALESCE(SUM(cost), 0.0) AS cost_total
+				FROM llm_requests
+				WHERE model_id IS NOT NULL
+				  AND model_id != ''
+				  AND timestamp >= strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-30 days')
+				GROUP BY model_id
+				ORDER BY cost_total DESC
+			);
+		" 2>/dev/null || true)
+
+		if [[ -n "$sqlite_json" ]]; then
+			echo "$sqlite_json" | jq -c '.' 2>/dev/null || echo "[]"
+			return 0
+		fi
+	fi
+
+	# Legacy fallback: JSONL metrics file.
 	if [[ ! -f "$METRICS_FILE" ]]; then
 		echo "[]"
 		return 0
@@ -140,6 +184,30 @@ _get_model_usage() {
 
 # --- Get total token stats for footer ---
 _get_token_totals() {
+	# Primary source: OpenCode real-time observability SQLite database.
+	if command -v sqlite3 &>/dev/null && [[ -f "$OBS_DB_FILE" ]]; then
+		local sqlite_totals
+		sqlite_totals=$(sqlite3 "$OBS_DB_FILE" "
+			SELECT json_object(
+				'total_input', COALESCE(SUM(tokens_input), 0),
+				'total_output', COALESCE(SUM(tokens_output), 0),
+				'total_cache_read', COALESCE(SUM(tokens_cache_read), 0),
+				'total_cache_write', COALESCE(SUM(tokens_cache_write), 0)
+			)
+			FROM llm_requests
+			WHERE timestamp >= strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-30 days');
+		" 2>/dev/null || true)
+
+		if [[ -n "$sqlite_totals" ]]; then
+			echo "$sqlite_totals" | jq -c '
+				. + {total_all: (.total_input + .total_output + .total_cache_read + .total_cache_write)}
+				| . + {cache_hit_pct: (if .total_all > 0 then ((.total_cache_read / .total_all * 1000 | round) / 10) else 0 end)}
+			' 2>/dev/null || echo '{"total_all":0,"cache_hit_pct":0}'
+			return 0
+		fi
+	fi
+
+	# Legacy fallback: JSONL metrics file.
 	if [[ ! -f "$METRICS_FILE" ]]; then
 		echo '{"total_all":0,"cache_hit_pct":0}'
 		return 0
@@ -682,6 +750,48 @@ _sanitize_url() {
 	return 0
 }
 
+# --- Resolve GitHub username for profile repo ---
+_resolve_profile_user() {
+	local profile_repo="$1"
+
+	# Try origin remote first (owner/repo)
+	local origin_url
+	origin_url=$(git -C "$profile_repo" remote get-url origin 2>/dev/null || true)
+	if [[ -n "$origin_url" ]]; then
+		local slug
+		slug=$(echo "$origin_url" | sed -E 's#(git@github.com:|https://github.com/)##; s#\.git$##')
+		local owner repo
+		owner="${slug%%/*}"
+		repo="${slug##*/}"
+		if [[ -n "$owner" && "$owner" == "$repo" ]]; then
+			echo "$owner"
+			return 0
+		fi
+	fi
+
+	# Fallback to directory basename
+	local base
+	base=$(basename "$profile_repo")
+	if [[ -n "$base" ]]; then
+		echo "$base"
+		return 0
+	fi
+
+	echo ""
+	return 0
+}
+
+# --- Normalize README for no-op comparison ---
+_normalize_readme_for_compare() {
+	local file="$1"
+	awk '
+		/<!-- UPDATED-START -->/ { print; skip = 1; next }
+		/<!-- UPDATED-END -->/ { skip = 0; print; next }
+		!skip { print }
+	' "$file"
+	return 0
+}
+
 # --- Generate rich profile README from GitHub data ---
 _generate_rich_readme() {
 	local gh_user="$1"
@@ -944,7 +1054,7 @@ cmd_init() {
 	echo "  https://github.com/${repo_slug}"
 	echo "and click the 'Show on profile' button if prompted."
 	echo ""
-	echo "Stats will auto-update daily at 06:00 (configured by setup.sh)."
+	echo "Stats will auto-update hourly (configured by setup.sh)."
 
 	return 0
 }
@@ -966,40 +1076,42 @@ cmd_update() {
 		return 1
 	fi
 
-	# Check for markers
-	if ! grep -q '<!-- STATS-START -->' "$readme_path"; then
-		echo "Error: <!-- STATS-START --> marker not found in $readme_path" >&2
-		return 1
-	fi
-	if ! grep -q '<!-- STATS-END -->' "$readme_path"; then
-		echo "Error: <!-- STATS-END --> marker not found in $readme_path" >&2
-		return 1
-	fi
-
-	# Generate new stats
+	# Generate new stats section
 	local new_stats
 	new_stats=$(cmd_generate)
+
+	# Build dynamic README first (badges, projects, contributions), then inject stats
+	# Fallback to existing README if GitHub API/auth is unavailable.
+	local source_file
+	local dynamic_tmp
+	dynamic_tmp=$(mktemp)
+	source_file="$readme_path"
+
+	if command -v gh &>/dev/null && gh auth status &>/dev/null; then
+		local gh_user
+		gh_user=$(_resolve_profile_user "$profile_repo")
+		if [[ -n "$gh_user" ]]; then
+			if _generate_rich_readme "$gh_user" "$dynamic_tmp"; then
+				source_file="$dynamic_tmp"
+			fi
+		fi
+	fi
+
+	# Ensure markers exist in the source content
+	if ! grep -q '<!-- STATS-START -->' "$source_file"; then
+		echo "Error: <!-- STATS-START --> marker not found in source content" >&2
+		rm -f "$dynamic_tmp"
+		return 1
+	fi
+	if ! grep -q '<!-- STATS-END -->' "$source_file"; then
+		echo "Error: <!-- STATS-END --> marker not found in source content" >&2
+		rm -f "$dynamic_tmp"
+		return 1
+	fi
 
 	# Replace content between markers
 	local tmp_file
 	tmp_file=$(mktemp)
-
-	# Use awk to replace between markers (bash 3.2 compatible)
-	awk '
-		/<!-- STATS-START -->/ {
-			print "<!-- STATS-START -->"
-			skip = 1
-			next
-		}
-		/<!-- STATS-END -->/ {
-			skip = 0
-			# Print the new stats (will be injected via variable)
-			print ENVIRON["NEW_STATS"]
-			print "<!-- STATS-END -->"
-			next
-		}
-		!skip { print }
-	' "$readme_path" >"$tmp_file"
 
 	# Inject the stats via env var and re-run
 	NEW_STATS="$new_stats" awk '
@@ -1015,10 +1127,20 @@ cmd_update() {
 			next
 		}
 		!skip { print }
-	' "$readme_path" >"$tmp_file"
+	' "$source_file" >"$tmp_file"
+
+	# Check if content changed, ignoring UPDATED marker block
+	local old_normalized new_normalized
+	old_normalized=$(_normalize_readme_for_compare "$readme_path")
+	new_normalized=$(_normalize_readme_for_compare "$tmp_file")
+	if [[ "$old_normalized" == "$new_normalized" ]]; then
+		echo "No changes to profile content — skipping commit"
+		rm -f "$tmp_file" "$dynamic_tmp"
+		return 0
+	fi
 
 	# Update timestamp if markers exist
-	if grep -q '<!-- UPDATED-START -->' "$readme_path"; then
+	if grep -q '<!-- UPDATED-START -->' "$tmp_file"; then
 		local updated_at
 		updated_at=$(date -u +"%Y-%m-%d %H:%M UTC")
 		local updated_tmp
@@ -1043,23 +1165,13 @@ cmd_update() {
 	if [[ "$dry_run" == true ]]; then
 		echo "--- DRY RUN: would write to $readme_path ---"
 		diff "$readme_path" "$tmp_file" || true
-		rm -f "$tmp_file"
-		return 0
-	fi
-
-	# Check if content actually changed (ignore timestamp-only changes)
-	local old_stats new_stats_check
-	old_stats=$(awk '/<!-- STATS-START -->/{f=1;next}/<!-- STATS-END -->/{f=0}f' "$readme_path")
-	new_stats_check=$(awk '/<!-- STATS-START -->/{f=1;next}/<!-- STATS-END -->/{f=0}f' "$tmp_file")
-
-	if [[ "$old_stats" == "$new_stats_check" ]]; then
-		echo "No changes to stats — skipping commit"
-		rm -f "$tmp_file"
+		rm -f "$tmp_file" "$dynamic_tmp"
 		return 0
 	fi
 
 	# Apply changes
 	mv "$tmp_file" "$readme_path"
+	rm -f "$dynamic_tmp"
 
 	# Commit and push
 	local commit_msg

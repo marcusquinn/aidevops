@@ -4,7 +4,10 @@ agent: Build+
 mode: subagent
 ---
 
-Dispatch one or more workers to handle tasks. Each worker runs `/full-loop` in its own session.
+Dispatch one or more workers to handle tasks. Pick the execution mode per task type:
+
+- **Code-change work** (repo edits, tests, PRs) -> `/full-loop`
+- **Operational work** (reports, audits, monitoring, outreach) -> direct command execution (no PR ceremony)
 
 Arguments: $ARGUMENTS
 
@@ -13,11 +16,12 @@ Arguments: $ARGUMENTS
 The runners system is intentionally simple:
 
 1. **You tell it what to work on** (task IDs, PR numbers, issue URLs, or descriptions)
-2. **It dispatches `opencode run "/full-loop ..."` for each item** — one worker per task
-3. **Each worker handles everything end-to-end** — branching, implementation, PR, CI, merge, deploy
+2. **It dispatches `opencode run` for each item** — one worker per task
+3. **Code workers** handle branch -> implementation -> PR -> CI -> merge
+4. **Ops workers** execute the requested SOP/command and report outcomes
 4. **No databases, no state machines, no complex bash pipelines**
 
-The `/full-loop` command is the worker. It already works. Runners just launches it.
+The supervisor handles dispatch. The worker command depends on the work type.
 
 ## Automated Mode: `/pulse`
 
@@ -27,7 +31,7 @@ For unattended operation, the `/pulse` command runs every 2 minutes via launchd.
 2. Fetches open issues and PRs from managed repos via `gh`
 3. Observes outcomes — files improvement issues for stuck/failed work
 4. Uses AI (sonnet) to pick the highest-value items to fill available slots
-5. Dispatches workers via `opencode run "/full-loop ..."`, routing to the right agent
+5. Dispatches workers via `opencode run`, routing to the right agent and execution mode
 
 See `scripts/commands/pulse.md` for the full spec.
 
@@ -172,16 +176,23 @@ gh issue view 42 --repo user/repo --json number,title,url
 
 ### Step 2: Dispatch Workers
 
-For each resolved item, launch a worker. Route to the appropriate agent based on the task domain (see `AGENTS.md` "Agent Routing"):
+For each resolved item, launch a worker. Route to the appropriate agent based on the task domain (see `AGENTS.md` "Agent Routing") and pick the execution mode:
 
 ```bash
 # For code tasks (Build+ is default — omit --agent)
 opencode run --dir ~/Git/<repo> --title "t083: <description>" \
   "/full-loop t083 -- <description>" &
 
-# For domain-specific tasks (route to specialist agent)
+# For code tasks in a specialist domain
 opencode run --dir ~/Git/<repo> --agent SEO --title "t084: <description>" \
   "/full-loop t084 -- <description>" &
+
+# For non-code operational tasks (no /full-loop)
+opencode run --dir ~/Git/<repo> --agent SEO --title "Weekly rankings" \
+  "/seo-export --account client-a --format summary" &
+
+# For recurring operations, schedule this command via launchd/cron
+# instead of queueing repeating TODO items
 
 # For PRs
 opencode run --dir ~/Git/<repo> --title "PR #382: <title>" \
@@ -196,9 +207,11 @@ opencode run --dir ~/Git/<repo> --title "Issue #42: <title>" \
 - Use `--dir ~/Git/<repo-name>` matching the repo the task belongs to
 - Use `--agent <name>` to route to a specialist (SEO, Content, Marketing, etc.)
 - Omit `--agent` for code tasks — defaults to Build+
-- Do NOT add `--model` — let `/full-loop` use its default (opus)
+- Use `/full-loop` only when the task needs repo code changes and PR traceability
+- For non-code operations, run the task command directly (for example `/seo-export ...`)
+- Do NOT add `--model` unless escalation is required by workflow policy
 - **Background each dispatch with `&`** so multiple workers launch concurrently
-- Workers handle everything: branching, implementation, PR, CI, merge, deploy
+- Code workers handle branch/PR lifecycle; ops workers execute and report outcomes
 
 ### Step 3: Monitor
 
@@ -224,11 +237,11 @@ The supervisor (whether `/pulse` or `/runners`) NEVER does task work itself:
 - **Never** reads source code or implements features
 - **Never** runs tests or linters on behalf of workers
 - **Never** pushes branches or resolves merge conflicts for workers
-- **Always** dispatches workers via `opencode run "/full-loop ..."`
+- **Always** dispatches workers via `opencode run` with the command chosen by task type
 - **Always** routes to the right agent — not every task is code
 
-If a worker fails, the fix is to improve the worker's instructions (`/full-loop`),
-not to do the work for it. Each failure that gets fixed makes the next run more reliable.
+If a worker fails, improve the worker instructions/command definition,
+not the supervisor role. Each fixed failure improves the next run.
 
 **Self-improvement:** The supervisor observes outcomes from GitHub state (PRs, issues, timelines) and files improvement issues for systemic problems. See `AGENTS.md` "Self-Improvement" for the universal principle. The supervisor never maintains separate state — TODO.md, PLANS.md, and GitHub are the database.
 

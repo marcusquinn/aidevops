@@ -127,6 +127,19 @@ def compress_errors(chunks_dir: Path) -> dict:
     pattern_counts = Counter()
     pattern_examples = defaultdict(list)
     recovery_patterns = defaultdict(list)
+    pattern_models = defaultdict(set)
+
+    severity_rank = {
+        "permission": "high",
+        "not_read_first": "high",
+        "edit_stale_read": "medium",
+        "edit_mismatch": "medium",
+        "edit_multiple": "medium",
+        "file_not_found": "medium",
+        "timeout": "low",
+        "exit_code": "low",
+        "other": "low",
+    }
     
     for chunk_file in sorted(chunks_dir.glob("error_*.json")):
         try:
@@ -138,8 +151,10 @@ def compress_errors(chunks_dir: Path) -> dict:
             tool = record.get("tool", "unknown")
             cat = record.get("error_category", "other")
             key = f"{tool}:{cat}"
-            
+
             pattern_counts[key] += 1
+            model_id = record.get("model") or "unknown"
+            pattern_models[key].add(model_id)
             
             # Keep up to 3 examples per pattern
             if len(pattern_examples[key]) < 3:
@@ -161,10 +176,16 @@ def compress_errors(chunks_dir: Path) -> dict:
     error_patterns = []
     for key, count in pattern_counts.most_common():
         tool, cat = key.split(":", 1)
+        models = sorted(pattern_models.get(key, set()))
+        model_count = len(models)
         error_patterns.append({
             "tool": tool,
             "error_category": cat,
             "count": count,
+            "models": models,
+            "model_count": model_count,
+            "cross_model": model_count >= 2,
+            "severity": severity_rank.get(cat, "low"),
             "examples": pattern_examples[key],
             "recovery_patterns": recovery_patterns.get(key, [])[:3],
         })

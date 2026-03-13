@@ -34,6 +34,50 @@ STATS_LOGFILE="${HOME}/.aidevops/logs/stats.log"
 mkdir -p "$(dirname "$STATS_PIDFILE")"
 
 #######################################
+# Portable elapsed-seconds lookup for a running PID
+#######################################
+_stats_process_elapsed_seconds() {
+	local pid="$1"
+	local elapsed=""
+
+	elapsed=$(ps -p "$pid" -o etimes= 2>/dev/null | tr -d '[:space:]' || true)
+	if [[ "$elapsed" =~ ^[0-9]+$ ]]; then
+		printf '%s\n' "$elapsed"
+		return 0
+	fi
+
+	local etime=""
+	etime=$(ps -p "$pid" -o etime= 2>/dev/null | tr -d '[:space:]' || true)
+	if [[ -z "$etime" ]]; then
+		return 1
+	fi
+
+	elapsed=$(awk -v value="$etime" '
+		BEGIN {
+			n = split(value, parts, /[-:]/)
+			if (index(value, "-") > 0) {
+				if (n != 4) { exit 1 }
+				total = (parts[1] * 86400) + (parts[2] * 3600) + (parts[3] * 60) + parts[4]
+			} else if (n == 3) {
+				total = (parts[1] * 3600) + (parts[2] * 60) + parts[3]
+			} else if (n == 2) {
+				total = (parts[1] * 60) + parts[2]
+			} else {
+				exit 1
+			}
+			print total
+		}
+	' || true)
+
+	if [[ "$elapsed" =~ ^[0-9]+$ ]]; then
+		printf '%s\n' "$elapsed"
+		return 0
+	fi
+
+	return 1
+}
+
+#######################################
 # PID-based dedup — same pattern as pulse-wrapper check_dedup()
 #######################################
 check_stats_dedup() {
@@ -58,11 +102,22 @@ check_stats_dedup() {
 		return 0
 	fi
 
-	# Check age using stored epoch (portable — no date -d / _get_process_age)
-	old_epoch="${old_epoch:-0}"
-	local now
+	# Prefer stored epoch, but validate it before use. Invalid epochs used to
+	# compute huge elapsed values and incorrectly kill healthy stats workers.
+	local now elapsed
 	now=$(date +%s)
-	local elapsed=$((now - old_epoch))
+	if [[ "$old_epoch" =~ ^[0-9]+$ ]] && [[ "$old_epoch" -gt 0 ]] && [[ "$old_epoch" -le "$now" ]]; then
+		elapsed=$((now - old_epoch))
+	else
+		elapsed=$(_stats_process_elapsed_seconds "$old_pid") || {
+			if kill -0 "$old_pid" 2>/dev/null; then
+				echo "[stats-wrapper] Unable to determine elapsed time for live PID $old_pid; preserving pidfile and skipping." >>"$STATS_LOGFILE"
+				return 1
+			fi
+			rm -f "$STATS_PIDFILE"
+			return 0
+		}
+	fi
 
 	if [[ "$elapsed" -gt "$STATS_TIMEOUT" ]]; then
 		echo "[stats-wrapper] Killing stale stats process $old_pid (${elapsed}s)" >>"$STATS_LOGFILE"

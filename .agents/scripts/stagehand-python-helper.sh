@@ -169,7 +169,7 @@ STAGEHAND_VERBOSE=1
 STAGEHAND_DEBUG_DOM=true
 
 # Model Configuration
-MODEL_NAME=google/gemini-2.5-flash-preview-05-20
+MODEL_NAME=google/gemini-2.5-flash
 MODEL_API_KEY=${GOOGLE_API_KEY}
 
 # Logging Configuration

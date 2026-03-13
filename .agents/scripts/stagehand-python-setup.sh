@@ -54,7 +54,7 @@ async def main():
         env="LOCAL",  # or "BROWSERBASE"
         api_key=os.getenv("BROWSERBASE_API_KEY"),
         project_id=os.getenv("BROWSERBASE_PROJECT_ID"),
-        model_name="google/gemini-2.5-flash-preview-05-20",
+        model_name="google/gemini-2.5-flash",
         model_api_key=os.getenv("GOOGLE_API_KEY"),
         headless=False,
         verbose=1
@@ -146,7 +146,7 @@ async def search_products(query: str, max_results: int = 5) -> ProductResults:
     
     config = StagehandConfig(
         env="LOCAL",
-        model_name="google/gemini-2.5-flash-preview-05-20",
+        model_name="google/gemini-2.5-flash",
         model_api_key=os.getenv("GOOGLE_API_KEY"),
         headless=True,  # Run headless for automation
         verbose=1
@@ -252,7 +252,7 @@ async def scrape_website(url: str, extraction_prompt: str, max_items: int = 10) 
     
     config = StagehandConfig(
         env="LOCAL",
-        model_name="google/gemini-2.5-flash-preview-05-20",
+        model_name="google/gemini-2.5-flash",
         model_api_key=os.getenv("GOOGLE_API_KEY"),
         headless=True,
         verbose=1

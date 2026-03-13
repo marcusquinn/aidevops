@@ -391,18 +391,18 @@ wp scaffold block my-block --plugin=my-plugin
 ```php
 <?php
 /**
- * Plugin Name: My Plugin
- * Plugin URI: https://example.com/my-plugin
- * Description: Plugin description
- * Version: 1.0.0
- * Author: Your Name
- * Author URI: https://example.com
- * License: GPL-2.0+
- * License URI: https://www.gnu.org/licenses/gpl-2.0.txt
- * Text Domain: my-plugin
- * Domain Path: /languages
- * Requires at least: 6.0
- * Requires PHP: 7.4
+- Plugin Name: My Plugin
+- Plugin URI: https://example.com/my-plugin
+- Description: Plugin description
+- Version: 1.0.0
+- Author: Your Name
+- Author URI: https://example.com
+- License: GPL-2.0+
+- License URI: https://www.gnu.org/licenses/gpl-2.0.txt
+- Text Domain: my-plugin
+- Domain Path: /languages
+- Requires at least: 6.0
+- Requires PHP: 7.4
  */
 ```text
 
@@ -446,7 +446,7 @@ All plugin and theme development/analysis happens in `~/Git/wordpress/`:
    # From WordPress plugin directory or GitHub
    cd ~/Git/wordpress
    git clone https://github.com/developer/plugin-slug.git
-   
+
    # Or extract from zip (for pro plugins)
    unzip ~/Downloads/plugin-name.zip -d ~/Git/wordpress/
    mv ~/Git/wordpress/plugin-name ~/Git/wordpress/plugin-slug
@@ -519,28 +519,28 @@ For premium plugins or plugins where PRs aren't accepted, create a companion plu
    ```php
    <?php
    /**
-    * Plugin Name: Plugin Slug Fix
-    * Description: Patches and fixes for Plugin Slug that survive updates
-    * Version: 1.0.0
-    * Requires Plugins: plugin-slug
+- Plugin Name: Plugin Slug Fix
+- Description: Patches and fixes for Plugin Slug that survive updates
+- Version: 1.0.0
+- Requires Plugins: plugin-slug
     */
-   
+
    // Ensure original plugin is loaded first
    add_action('plugins_loaded', 'plugin_slug_fix_init', 20);
-   
+
    function plugin_slug_fix_init() {
        // Only run if original plugin is active
        if (!class_exists('Original_Plugin_Class')) {
            return;
        }
-       
+
        // Remove problematic hook
        remove_action('init', 'original_problematic_function');
-       
+
        // Add fixed version
        add_action('init', 'fixed_function');
    }
-   
+
    function fixed_function() {
        // Your fixed implementation
    }
@@ -551,7 +551,7 @@ For premium plugins or plugins where PRs aren't accepted, create a companion plu
    ```php
    // Override a filter with higher priority
    add_filter('original_filter', 'my_fixed_filter', 999);
-   
+
    function my_fixed_filter($value) {
        // Your fixed logic
        return $modified_value;
@@ -587,17 +587,17 @@ For premium plugins or plugins where PRs aren't accepted, create a companion plu
 
    ```php
    /**
-    * Fix: Original plugin doesn't handle multisite correctly
-    * Issue: https://github.com/original/plugin/issues/123
-    * Affects: v2.0.0 - v2.3.0
-    * Remove when: Fixed in upstream
+- Fix: Original plugin doesn't handle multisite correctly
+- Issue: https://github.com/original/plugin/issues/123
+- Affects: v2.0.0 - v2.3.0
+- Remove when: Fixed in upstream
     */
    ```
 
 4. **Version compatibility checks**:
 
    ```php
-   if (defined('ORIGINAL_PLUGIN_VERSION') && 
+   if (defined('ORIGINAL_PLUGIN_VERSION') &&
        version_compare(ORIGINAL_PLUGIN_VERSION, '2.4.0', '<')) {
        // Apply fix only for versions before 2.4.0
    }
@@ -680,6 +680,47 @@ Shows:
 - Hooks and actions
 - Template hierarchy
 - Memory usage
+
+### OpenCode PHP LSP (Intelephense + WordPress)
+
+If WordPress symbols are unresolved in OpenCode (for example `add_action`, `WP_Query`, globals), prefer OpenCode's runtime LSP config as the source of truth.
+
+1. Configure `~/.config/opencode/config.json` with an explicit Intelephense server and WordPress stubs.
+2. Ensure the `command` path points to the actual Intelephense binary installed for OpenCode.
+3. Restart the OpenCode session/LSP process after saving config changes.
+4. If diagnostics persist, clear/rebuild Intelephense cache and reindex the workspace.
+
+Example:
+
+```json
+{
+  "lsp": {
+    "intelephense": {
+      "command": [
+        "/home/USER/.local/share/opencode/bin/node_modules/.bin/intelephense",
+        "--stdio"
+      ],
+      "extensions": ["php"],
+      "initialization": {
+        "intelephense.stubs": [
+          "Core",
+          "json",
+          "mbstring",
+          "mysqli",
+          "PDO",
+          "SPL",
+          "standard",
+          "wordpress"
+        ]
+      }
+    }
+  }
+}
+```
+
+Notes:
+- Use your local Intelephense path; do not assume `/home/USER/...` exists.
+- In OpenCode sessions, do not suggest Claude-specific commands such as `/lsp-restart`.
 
 ### Error Diagnosis Workflow
 
@@ -778,27 +819,27 @@ vendor/bin/phpunit
 ```php
 <?php
 class Test_My_Plugin extends WP_UnitTestCase {
-    
+
     public function setUp(): void {
         parent::setUp();
         // Setup code
     }
-    
+
     public function tearDown(): void {
         parent::tearDown();
         // Cleanup code
     }
-    
+
     public function test_example() {
         $this->assertTrue(true);
     }
-    
+
     public function test_post_creation() {
         $post_id = $this->factory->post->create([
             'post_title' => 'Test Post',
             'post_status' => 'publish'
         ]);
-        
+
         $this->assertIsInt($post_id);
         $this->assertEquals('Test Post', get_the_title($post_id));
     }

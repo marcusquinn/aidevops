@@ -10,13 +10,8 @@
 		<string>-c</string>
 		<string>$HOME/.aidevops/agents/scripts/profile-readme-helper.sh update >> $HOME/.aidevops/.agent-workspace/logs/profile-readme-update.log 2>&1</string>
 	</array>
-	<key>StartCalendarInterval</key>
-	<dict>
-		<key>Hour</key>
-		<integer>6</integer>
-		<key>Minute</key>
-		<integer>0</integer>
-	</dict>
+	<key>StartInterval</key>
+	<integer>3600</integer>
 	<key>RunAtLoad</key>
 	<false/>
 	<key>StandardOutPath</key>

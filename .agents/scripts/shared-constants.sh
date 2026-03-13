@@ -1252,10 +1252,10 @@ resolve_model_tier() {
 		echo "anthropic/claude-haiku-4-5"
 		;;
 	flash)
-		echo "google/gemini-2.5-flash-preview-05-20"
+		echo "google/gemini-2.5-flash"
 		;;
 	pro)
-		echo "google/gemini-2.5-pro-preview-06-05"
+		echo "google/gemini-2.5-pro"
 		;;
 	grok)
 		echo "xai/grok-3"

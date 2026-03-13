@@ -87,6 +87,14 @@ aidevops secret status
 
 ### Storing Secrets
 
+Exact flow for each key:
+
+1. Run `aidevops secret set SECRET_NAME` in your own terminal
+2. Wait for hidden input prompt
+3. Paste only the raw secret value (not a command, not `export KEY=...`, not the key name)
+4. Press Enter once
+5. Verify key names only with `aidevops secret list`
+
 ```bash
 # Interactive hidden input (value never visible)
 aidevops secret set GITHUB_TOKEN
@@ -136,6 +144,10 @@ gopass sync
 ## Agent Instructions
 
 When an AI agent needs a secret:
+
+Agent should start with this warning in chat:
+
+`WARNING: Never paste secret values into AI chat. Run aidevops secret set SECRET_NAME in your terminal, then enter the value at the hidden prompt.`
 
 1. Agent instructs user: "Please run: `aidevops secret set SECRET_NAME`"
 2. User runs command at terminal (value entered with hidden input)

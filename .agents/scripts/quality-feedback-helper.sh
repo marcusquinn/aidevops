@@ -427,6 +427,10 @@ cmd_scan_merged() {
 		repo_slug=$(get_repo) || return 1
 	fi
 
+	# Shared PR-level marker to prevent duplicate scans across users/runners
+	gh label create "review-feedback-scanned" --repo "$repo_slug" --color "5319E7" \
+		--description "Merged PR already scanned for quality feedback" --force 2>/dev/null || true
+
 	# State file for tracking scanned PRs
 	local state_dir="${HOME}/.aidevops/logs"
 	mkdir -p "$state_dir"
@@ -444,15 +448,15 @@ cmd_scan_merged() {
 	if [[ "$backfill" == true ]]; then
 		echo "Backfill mode: fetching ALL merged PRs for ${repo_slug}..." >&2
 		merged_prs=$(gh api "repos/${repo_slug}/pulls?state=closed&per_page=100&sort=updated&direction=desc" \
-			--paginate --jq '.[] | select(.merged_at != null) | .number') || {
+			--paginate --jq '.[] | select(.merged_at != null) | "\(.number)|\(((.labels // []) | map(.name) | index("review-feedback-scanned")) != null)"') || {
 			echo "Error: Failed to fetch merged PRs from ${repo_slug}" >&2
 			return 1
 		}
 	else
 		merged_prs=$(gh pr list --repo "$repo_slug" --state merged \
 			--limit "$((batch_size * 2))" \
-			--json number,title,mergedAt,headRefName \
-			--jq 'sort_by(.mergedAt) | reverse | .[].number') || {
+			--json number,mergedAt,labels \
+			--jq 'sort_by(.mergedAt) | reverse | .[] | "\(.number)|\(([.labels[].name] | index("review-feedback-scanned")) != null)"') || {
 			echo "Error: Failed to fetch merged PRs from ${repo_slug}" >&2
 			return 1
 		}
@@ -471,8 +475,17 @@ cmd_scan_merged() {
 	# In backfill mode, process ALL unscanned PRs in batches with rate limiting
 	local prs_to_scan=()
 	local count=0
-	while IFS= read -r pr_num; do
+	while IFS= read -r pr_record; do
+		local pr_num="${pr_record%%|*}"
+		local scanned_label="${pr_record#*|}"
 		[[ -z "$pr_num" ]] && continue
+
+		# Global dedup: if PR already marked scanned on GitHub, skip.
+		# This protects against duplicate scans across different HOME/state files.
+		if [[ "$scanned_label" == "true" ]]; then
+			continue
+		fi
+
 		# Skip if already scanned (use jq for reliable lookup)
 		if jq -e --argjson pr "$pr_num" '.scanned_prs | index($pr) != null' "$state_file" >/dev/null 2>&1; then
 			continue
@@ -539,10 +552,12 @@ cmd_scan_merged() {
 
 		local findings
 		findings=$(_scan_single_pr "$repo_slug" "$pr_num" "$min_severity") || {
+			gh pr edit "$pr_num" --repo "$repo_slug" --add-label "review-feedback-scanned" >/dev/null 2>&1 || true
 			newly_scanned+=("$pr_num")
 			batch_count=$((batch_count + 1))
 			continue
 		}
+		gh pr edit "$pr_num" --repo "$repo_slug" --add-label "review-feedback-scanned" >/dev/null 2>&1 || true
 		newly_scanned+=("$pr_num")
 		batch_count=$((batch_count + 1))
 
@@ -714,21 +729,26 @@ _scan_single_pr() {
 
 		select($sev_num >= $min_num) |
 
-		# Filter out approving reviews with no actionable feedback (t1406).
-		# APPROVED reviews from bots often contain long summaries/walkthroughs
-		# that are purely positive — these should not create quality-debt issues.
-		# Keep the review only if: (a) not APPROVED, or (b) body contains
-		# actionable language (suggestions, warnings, bugs, fix proposals).
-		(if .state == "APPROVED" then
-			($body | test(
-				"\\bshould\\b|\\bconsider\\b|\\binstead\\b|\\bsuggest|\\brecommend|" +
-				"\\bwarning\\b|\\bcaution\\b|\\bavoid\\b|\\b(don ?'"'"'?t|do not)\\b|" +
-				"\\bvulnerab|\\binsecure|\\binjection\\b|\\bxss\\b|\\bcsrf\\b|" +
-				"\\bnit:|\\btodo:|\\bfixme|\\bhardcoded|\\bdeprecated|" +
-				"\\brace.condition|\\bdeadlock|\\bleak|\\boverflow|" +
-				"\\bworkaround\\b|\\bhack\\b|" +
-				"```\\s*(suggestion|diff)"; "i"))
-		 else true
+		# Filter out review-body summaries that do not contain concrete fixes.
+		# Bots frequently post high-level walkthroughs that mention suggestions
+		# but do not include actionable details tied to a file/line.
+		($body | test(
+			"\\bshould\\b|\\bconsider\\b|\\binstead\\b|\\bsuggest|\\brecommend|" +
+			"\\bwarning\\b|\\bcaution\\b|\\bavoid\\b|\\b(don ?'"'"'?t|do not)\\b|" +
+			"\\bvulnerab|\\binsecure|\\binjection\\b|\\bxss\\b|\\bcsrf\\b|" +
+			"\\bbug\\b|\\berror\\b|\\bproblem\\b|\\bfail\\b|\\bincorrect\\b|\\bwrong\\b|\\bmissing\\b|\\bbroken\\b|" +
+			"\\bnit:|\\btodo:|\\bfixme|\\bhardcoded|\\bdeprecated|" +
+			"\\brace.condition|\\bdeadlock|\\bleak|\\boverflow|" +
+			"\\bworkaround\\b|\\bhack\\b|" +
+			"```\\s*(suggestion|diff)"; "i")) as $actionable |
+		(if $reviewer == "human" then
+			true
+		 elif .state == "APPROVED" then
+			$actionable
+		 else
+			($actionable and ($body | test(
+				"\\*\\*File\\*\\*|```\\s*(suggestion|diff)|" +
+				"\\bline\\s+[0-9]+\\b|\\bL[0-9]+\\b"; "i")))
 		 end) |
 		select(.) |
 
@@ -957,11 +977,14 @@ _create_quality_debt_issues() {
 		--description "Medium severity — moderate quality issue" --force 2>/dev/null || true
 
 	# Check existing quality-debt issues to avoid duplicates.
-	# Fetch both title and number so we can append to existing file-level issues (t1411).
+	# Fetch title/number/state so we can dedupe against both open and closed history.
 	local existing_issues_json
 	existing_issues_json=$(gh issue list --repo "$repo_slug" \
-		--label "quality-debt" --state open --limit 1000 \
-		--json title,number || echo "[]")
+		--label "quality-debt" --state all --limit 1000 \
+		--json title,number,state || echo "[]")
+
+	local existing_open_issues_json
+	existing_open_issues_json=$(echo "$existing_issues_json" | jq '[.[] | select(.state == "OPEN")]' 2>/dev/null || echo "[]")
 
 	# Group findings by file (null files grouped as "general")
 	local files
@@ -1016,12 +1039,20 @@ _create_quality_debt_issues() {
 			"---\n"
 		')
 
-		# Skip if exact duplicate (same PR + file combination)
+		# Skip if exact duplicate (same PR + file combination), including closed history.
+		# This prevents re-creating previously resolved issues when backfill/scan state resets.
 		local exact_title_match
+		local exact_title_state
 		exact_title_match=$(echo "$existing_issues_json" | jq -r --arg t "$issue_title" \
-			'.[] | select(.title == $t) | .number' | head -1 || echo "")
+			'[.[] | select(.title == $t)][0].number // empty' 2>/dev/null || echo "")
+		exact_title_state=$(echo "$existing_issues_json" | jq -r --arg t "$issue_title" \
+			'[.[] | select(.title == $t)][0].state // empty' 2>/dev/null || echo "")
 		if [[ -n "$exact_title_match" ]]; then
-			echo "  Skipping duplicate: ${issue_title}" >&2
+			if [[ "$exact_title_state" == "CLOSED" ]]; then
+				echo "  Skipping previously closed quality-debt issue #${exact_title_match}: ${issue_title}" >&2
+			else
+				echo "  Skipping duplicate: ${issue_title}" >&2
+			fi
 			continue
 		fi
 
@@ -1032,7 +1063,7 @@ _create_quality_debt_issues() {
 		# saving worker sessions (one worker fixes all feedback for a file).
 		local existing_file_issue=""
 		if [[ "$file" != "general" ]]; then
-			existing_file_issue=$(echo "$existing_issues_json" | jq -r --arg f "$file" \
+			existing_file_issue=$(echo "$existing_open_issues_json" | jq -r --arg f "$file" \
 				'[.[] | select(.title | startswith("quality-debt: \($f) —"))] | .[0].number // empty' ||
 				echo "")
 		fi
@@ -1055,7 +1086,6 @@ _Appended by \`quality-feedback-helper.sh scan-merged\` (cross-PR file dedup, t1
 			gh issue comment "$existing_file_issue" --repo "$repo_slug" \
 				--body "$comment_body" >/dev/null || true
 			echo "  Appended to existing #${existing_file_issue} for ${file} (PR #${pr_num})" >&2
-			created=$((created + 1))
 			continue
 		fi
 

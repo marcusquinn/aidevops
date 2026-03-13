@@ -36,7 +36,7 @@ BOLD='\033[1m'
 NC='\033[0m'
 
 # Default contest models — top 3 from different providers for diversity
-DEFAULT_CONTEST_MODELS="anthropic/claude-opus-4-6,anthropic/claude-sonnet-4-6,google/gemini-2.5-pro-preview-06-05"
+DEFAULT_CONTEST_MODELS="anthropic/claude-opus-4-6,anthropic/claude-sonnet-4-6,google/gemini-2.5-pro"
 
 # Scoring weights (match response-scoring-helper.sh)
 WEIGHT_CORRECTNESS=30

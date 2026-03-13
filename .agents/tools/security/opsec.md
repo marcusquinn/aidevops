@@ -70,6 +70,17 @@ AI agents that process untrusted content (web pages, MCP tool outputs, user uplo
 
 **Full reference**: `tools/security/prompt-injection-defender.md` — detailed threat model, integration patterns for any agentic app, pattern database, credential isolation, and developer guidance for building injection-resistant applications.
 
+## Secret-Safe Command Policy
+
+Session safety model for AI-assisted terminals:
+
+- Treat tool commands and tool output as transcript-visible. If stdout/stderr contains a secret, assume it is exposed.
+- In cloud-model mode, transcript-visible content may be sent to the model provider.
+- Start secret setup instructions with: `WARNING: Never paste secret values into AI chat. Run the command in your terminal and enter the value at the hidden prompt.`
+- Prefer key-name checks, masked previews, or fingerprints over raw value display.
+- Avoid writing raw secrets to temporary files (`/tmp/*`) where possible; prefer in-memory handling and immediate cleanup.
+- If a command cannot be made secret-safe, do not run it via AI tools. Instruct the user to run it locally and never ask them to paste the output.
+
 ## Platform Trust Matrix
 
 ### Messaging Platforms — Privacy Comparison

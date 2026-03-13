@@ -579,9 +579,10 @@ ${cross_repo_person_stats_md:-_Cross-repo person stats unavailable._}
 ---
 _Auto-updated by ${runner_role} stats process. Do not edit manually._"
 
-	# Update the issue body
-	gh issue edit "$health_issue_number" --repo "$repo_slug" --body "$body" >/dev/null 2>&1 || {
-		echo "[stats] Health issue: failed to update body for #${health_issue_number}" >>"$LOGFILE"
+	# Update the issue body — capture stderr for debugging auth/API failures
+	local body_edit_stderr
+	body_edit_stderr=$(gh issue edit "$health_issue_number" --repo "$repo_slug" --body "$body" 2>&1 >/dev/null) || {
+		echo "[stats] Health issue: failed to update body for #${health_issue_number}: ${body_edit_stderr}" >>"$LOGFILE"
 		return 0
 	}
 
@@ -597,12 +598,20 @@ _Auto-updated by ${runner_role} stats process. Do not edit manually._"
 	local health_title="${runner_prefix} ${title_parts} at ${title_time} UTC"
 
 	# Only update title if stats changed
-	local current_title
-	current_title=$(gh issue view "$health_issue_number" --repo "$repo_slug" --json title --jq '.title' 2>/dev/null || echo "")
+	local current_title=""
+	local view_output
+	if view_output=$(gh issue view "$health_issue_number" --repo "$repo_slug" --json title --jq '.title' 2>&1); then
+		current_title="$view_output"
+	else
+		echo "[stats] Health issue: failed to view title for #${health_issue_number}: ${view_output}" >>"$LOGFILE"
+	fi
 	local current_stats="${current_title% at [0-9][0-9]:[0-9][0-9] UTC}"
 	local new_stats="${health_title% at [0-9][0-9]:[0-9][0-9] UTC}"
 	if [[ "$current_stats" != "$new_stats" ]]; then
-		gh issue edit "$health_issue_number" --repo "$repo_slug" --title "$health_title" >/dev/null 2>&1 || true
+		local title_edit_stderr
+		title_edit_stderr=$(gh issue edit "$health_issue_number" --repo "$repo_slug" --title "$health_title" 2>&1 >/dev/null) || {
+			echo "[stats] Health issue: failed to update title for #${health_issue_number}: ${title_edit_stderr}" >>"$LOGFILE"
+		}
 	fi
 
 	return 0
@@ -1164,7 +1173,7 @@ _All clear — no issues found._
 	# --- 2. Qlty CLI ---
 	local qlty_section=""
 	local qlty_bin="${HOME}/.qlty/bin/qlty"
-	if [[ -x "$qlty_bin" ]] && [[ -f "${repo_path}/.qlty.toml" ]]; then
+	if [[ -x "$qlty_bin" ]] && [[ -f "${repo_path}/.qlty/qlty.toml" || -f "${repo_path}/.qlty.toml" ]]; then
 		local qlty_output
 		qlty_output=$("$qlty_bin" smells --all 2>/dev/null | head -50) || qlty_output=""
 
@@ -1583,10 +1592,16 @@ _update_quality_issue_body() {
 		prs_waiting="UNKNOWN"
 	fi
 	if [[ "$helper_available" == true ]]; then
-		local pr_numbers
-		pr_numbers=$(echo "$open_prs_json" | jq -r '.[].number')
-		while IFS= read -r pr_num; do
-			[[ -z "$pr_num" ]] && continue
+		# Parse open_prs_json once into per-PR objects to avoid re-parsing the
+		# full JSON array on every iteration (Gemini review feedback — GH#3153).
+		# Each line is a compact JSON object: {"number":N,"title":"...","createdAt":"..."}
+		local pr_objects
+		pr_objects=$(echo "$open_prs_json" | jq -c '.[]')
+		while IFS= read -r pr_obj; do
+			[[ -z "$pr_obj" ]] && continue
+			local pr_num
+			pr_num=$(echo "$pr_obj" | jq -r '.number')
+			[[ -z "$pr_num" || "$pr_num" == "null" ]] && continue
 			local gate_result
 			gate_result=$("$review_helper" check "$pr_num" "$repo_slug" 2>>"$LOGFILE" || echo "UNKNOWN")
 			case "$gate_result" in
@@ -1595,9 +1610,10 @@ _update_quality_issue_body() {
 				;;
 			WAITING* | UNKNOWN*)
 				prs_waiting=$((prs_waiting + 1))
-				# Check if PR is older than 2 hours (stale waiting)
+				# Check if PR is older than 2 hours (stale waiting).
+				# Fields already extracted from pr_obj — no re-parse of open_prs_json.
 				local pr_created
-				pr_created=$(echo "$open_prs_json" | jq -r --argjson n "$pr_num" '.[] | select(.number == $n) | .createdAt' || echo "")
+				pr_created=$(echo "$pr_obj" | jq -r '.createdAt // empty')
 				if [[ -n "$pr_created" ]]; then
 					local pr_epoch
 					pr_epoch=$(date -j -f "%Y-%m-%dT%H:%M:%SZ" "$pr_created" +%s 2>/dev/null || date -d "$pr_created" +%s 2>/dev/null || echo "0")
@@ -1610,7 +1626,7 @@ _update_quality_issue_body() {
 						local pr_age_hours=$(((now_epoch - pr_epoch) / 3600))
 						if [[ "$pr_age_hours" -ge 2 ]]; then
 							local pr_title
-							pr_title=$(echo "$open_prs_json" | jq -r --argjson n "$pr_num" '.[] | select(.number == $n) | .title[:50]' || echo "")
+							pr_title=$(echo "$pr_obj" | jq -r '.title[:50] // empty')
 							# Sanitise PR title — untrusted GitHub content could
 							# contain @ mentions or markdown that leaks into the dashboard
 							pr_title=$(_sanitize_markdown "$pr_title")
@@ -1624,7 +1640,7 @@ _update_quality_issue_body() {
 				prs_with_reviews=$((prs_with_reviews + 1))
 				;;
 			esac
-		done <<<"$pr_numbers"
+		done <<<"$pr_objects"
 	fi
 
 	# Build bot coverage section — show N/A when helper is unavailable

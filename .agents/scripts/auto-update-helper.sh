@@ -299,10 +299,29 @@ get_local_version() {
 
 #######################################
 # Get remote version (from GitHub API)
-# Uses API endpoint (not raw.githubusercontent.com) to avoid CDN cache
+# Tries authenticated gh api first (5000 req/hr), then unauthenticated curl
+# (60 req/hr), then raw.githubusercontent.com CDN fallback.
+# See: #4142 — 106 "remote=unknown" failures from rate-limited unauth API
 #######################################
 get_remote_version() {
 	local version=""
+
+	# Prefer authenticated gh api (higher rate limit: 5000/hr vs 60/hr)
+	# This avoids the "remote=unknown" failures seen during overnight polling
+	# when unauthenticated API quota is exhausted.
+	# See: https://github.com/marcusquinn/aidevops/issues/4142
+	if command -v gh &>/dev/null && gh auth status &>/dev/null; then
+		version=$(gh api repos/marcusquinn/aidevops/contents/VERSION \
+			--jq '.content' 2>/dev/null |
+			base64 -d 2>/dev/null |
+			tr -d '\n')
+		if [[ -n "$version" ]]; then
+			echo "$version"
+			return 0
+		fi
+	fi
+
+	# Fallback: unauthenticated curl (60 req/hr limit)
 	if command -v jq &>/dev/null; then
 		version=$(curl --proto '=https' -fsSL --max-time 10 \
 			"https://api.github.com/repos/marcusquinn/aidevops/contents/VERSION" 2>/dev/null |
@@ -314,7 +333,8 @@ get_remote_version() {
 			return 0
 		fi
 	fi
-	# Fallback to raw (CDN-cached, may be up to 5 min stale)
+
+	# Last resort: raw.githubusercontent.com (CDN-cached, may be up to 5 min stale)
 	curl --proto '=https' -fsSL --max-time 10 \
 		"https://raw.githubusercontent.com/marcusquinn/aidevops/main/VERSION" 2>/dev/null |
 		tr -d '\n' || echo "unknown"
@@ -382,6 +402,18 @@ update_state() {
 		fi
 	fi
 	return 0
+}
+
+#######################################
+# Run all periodic freshness checks (skills, OpenClaw, tools, upstream watch).
+# Extracted to avoid duplicating the same 4-call block at every exit point
+# in cmd_check(). Each check has its own internal time gate.
+#######################################
+run_freshness_checks() {
+	check_skill_freshness
+	check_openclaw_freshness
+	check_tool_freshness
+	check_upstream_watch
 }
 
 #######################################
@@ -1011,10 +1043,7 @@ cmd_check() {
 	if [[ "$current" == "unknown" || "$remote" == "unknown" ]]; then
 		log_warn "Could not determine versions (local=$current, remote=$remote)"
 		update_state "check" "$current" "version_unknown"
-		check_skill_freshness
-		check_openclaw_freshness
-		check_tool_freshness
-		check_upstream_watch
+		run_freshness_checks
 		return 0
 	fi
 
@@ -1042,10 +1071,7 @@ cmd_check() {
 			fi
 		fi
 
-		check_skill_freshness
-		check_openclaw_freshness
-		check_tool_freshness
-		check_upstream_watch
+		run_freshness_checks
 		return 0
 	fi
 
@@ -1057,32 +1083,62 @@ cmd_check() {
 	if [[ ! -d "$INSTALL_DIR/.git" ]]; then
 		log_error "Install directory is not a git repo: $INSTALL_DIR"
 		update_state "update" "$remote" "no_git_repo"
-		check_skill_freshness
-		check_openclaw_freshness
-		check_tool_freshness
-		check_upstream_watch
+		run_freshness_checks
 		return 1
+	fi
+
+	# Clean up any working tree changes left by setup.sh or other processes
+	# (e.g., chmod on tracked scripts, scan results written to repo)
+	# This ensures git pull --ff-only won't be blocked by dirty files.
+	# See: https://github.com/marcusquinn/aidevops/issues/2286
+	if ! git -C "$INSTALL_DIR" diff --quiet 2>/dev/null || ! git -C "$INSTALL_DIR" diff --cached --quiet 2>/dev/null; then
+		log_info "Cleaning up stale working tree changes..."
+		if ! git -C "$INSTALL_DIR" reset HEAD -- . 2>>"$LOG_FILE"; then
+			log_warn "git reset HEAD failed during working tree cleanup"
+		fi
+		if ! git -C "$INSTALL_DIR" checkout -- . 2>>"$LOG_FILE"; then
+			log_warn "git checkout -- . failed during working tree cleanup"
+		fi
+	fi
+
+	# Ensure we're on the main branch (detached HEAD or stale branch blocks pull)
+	# Mirrors recovery logic from aidevops.sh cmd_update()
+	# See: https://github.com/marcusquinn/aidevops/issues/4142
+	local current_branch
+	current_branch=$(git -C "$INSTALL_DIR" branch --show-current 2>/dev/null || echo "")
+	if [[ "$current_branch" != "main" ]]; then
+		log_info "Not on main branch ($current_branch), switching..."
+		if ! git -C "$INSTALL_DIR" checkout main --quiet 2>>"$LOG_FILE" &&
+			! git -C "$INSTALL_DIR" checkout -b main origin/main --quiet 2>>"$LOG_FILE"; then
+			log_error "Failed to switch to main branch from '$current_branch' in $INSTALL_DIR"
+			update_state "update" "$remote" "branch_switch_failed"
+			run_freshness_checks
+			return 1
+		fi
 	fi
 
 	# Pull latest changes
 	if ! git -C "$INSTALL_DIR" fetch origin main --quiet 2>>"$LOG_FILE"; then
 		log_error "git fetch failed"
 		update_state "update" "$remote" "fetch_failed"
-		check_skill_freshness
-		check_openclaw_freshness
-		check_tool_freshness
-		check_upstream_watch
+		run_freshness_checks
 		return 1
 	fi
 
 	if ! git -C "$INSTALL_DIR" pull --ff-only origin main --quiet 2>>"$LOG_FILE"; then
-		log_error "git pull --ff-only failed (local changes?)"
-		update_state "update" "$remote" "pull_failed"
-		check_skill_freshness
-		check_openclaw_freshness
-		check_tool_freshness
-		check_upstream_watch
-		return 1
+		# Fast-forward failed (diverged history or persistent dirty state).
+		# Since we just fetched origin/main, reset to it — the repo is managed
+		# by aidevops and should always track origin/main exactly.
+		# See: https://github.com/marcusquinn/aidevops/issues/2288
+		log_warn "git pull --ff-only failed — falling back to reset"
+		if git -C "$INSTALL_DIR" reset --hard origin/main --quiet 2>>"$LOG_FILE"; then
+			log_info "Reset to origin/main succeeded"
+		else
+			log_error "git reset --hard origin/main also failed"
+			update_state "update" "$remote" "pull_failed"
+			run_freshness_checks
+			return 1
+		fi
 	fi
 
 	# Run setup.sh non-interactively to deploy agents
@@ -1105,24 +1161,20 @@ cmd_check() {
 	else
 		log_error "setup.sh failed (exit code: $?)"
 		update_state "update" "$remote" "setup_failed"
-		check_skill_freshness
-		check_openclaw_freshness
-		check_tool_freshness
-		check_upstream_watch
+		run_freshness_checks
 		return 1
 	fi
 
-	# Run daily skill freshness check (24h gate)
-	check_skill_freshness
+	# Clean up any working tree changes setup.sh may have introduced
+	# (e.g., chmod on tracked scripts, scan results written to repo)
+	# Prevents dirty tree from blocking the next update cycle.
+	# See: https://github.com/marcusquinn/aidevops/issues/2286
+	if ! git -C "$INSTALL_DIR" checkout -- . 2>>"$LOG_FILE"; then
+		log_warn "Post-setup working tree cleanup failed — next update cycle may see dirty state"
+	fi
 
-	# Run daily OpenClaw update check (24h gate)
-	check_openclaw_freshness
-
-	# Run 6-hourly tool freshness check (idle-gated)
-	check_tool_freshness
-
-	# Run daily upstream watch check (24h gate)
-	check_upstream_watch
+	# Run periodic freshness checks (skills, OpenClaw, tools, upstream watch)
+	run_freshness_checks
 
 	return 0
 }

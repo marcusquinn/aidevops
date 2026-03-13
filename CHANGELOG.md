@@ -7,6 +7,63 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.172.7] - 2026-03-12
+
+### Fixed
+
+- reduce contribution-watch noise with notification filtering
+
+## [2.172.6] - 2026-03-12
+
+### Changed
+
+- Version bump and maintenance updates
+
+
+## [2.172.5] - 2026-03-12
+
+### Changed
+
+- Documentation: add remote MCP consumer configuration guide to build-mcp.md (#4247)
+- Performance: consolidate multiple jq calls into single invocations (#4249)
+- Refactor: extract run_freshness_checks(), replace silent || true with error logging
+
+### Fixed
+
+- correct phase count in ai-search-readiness.md description (#4246)
+- add pipefail to codacy-collector SQL pipeline subshell (#4248)
+- address quality-debt review feedback (#4221, #4222, #4224) (#4253)
+- pass state file path instead of content to avoid Linux E2BIG (#4258)
+- make safety policy check work without ripgrep
+- enforce secret-safe worker command pipeline
+- address quality-debt review feedback (#4225, #4226, #4224) (#4244)
+- auto-block zero-commit worker thrashing (#4208)
+- harden ai-research.ts OAuth token management
+- detect unparseable certificate expiry dates in email-test-suite
+- remove redundant null check in eval_dataset score guard
+- apply Gemini review suggestions — contextual error logging for title view/edit (GH#3153)
+- harden evaluator JSON extraction and simplify score guard
+- parse open_prs_json once before loop to avoid O(n) re-parsing (GH#3153)
+- remove blanket stderr suppression from gh calls in health issue update (GH#3153)
+- address critical review feedback on ai-judgment-helper.sh (GH#3179)
+- include install path in branch-switch error log
+- clean working tree before branch-switch recovery
+- auto-update recovery for dirty tree, diverged branch, and API rate limits
+
+## [2.172.3] - 2026-03-12
+
+### Fixed
+
+- validate fallback secret input values
+- clarify secret set terminal-only flow
+- make qlty/codacy install fail-open in CI (GH#4216) (#4238)
+
+## [2.172.2] - 2026-03-12
+
+### Fixed
+
+- count full-loop PR workers in pulse occupancy
+
 ## [2.172.1] - 2026-03-12
 
 ### Fixed
