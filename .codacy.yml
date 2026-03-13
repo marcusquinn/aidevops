@@ -1,0 +1,32 @@
+# Codacy Static Analysis Configuration
+# Aligns Codacy's analysis with the project's existing shellcheck and quality settings.
+#
+# Reference: https://docs.codacy.com/repositories-configure/codacy-configuration-file/
+#
+# Root cause context (GH#4346):
+# - Codacy flagged SC2086 (unquoted variable) in code that was being REMOVED by a PR fix.
+# - Codacy also returned "not_collected" on a transient service issue.
+# - This config excludes archived/ (same as CI shellcheck) and aligns tool settings.
+
+---
+engines:
+  shellcheck:
+    enabled: true
+  semgrep:
+    enabled: true
+  trivy:
+    enabled: true
+  pylint:
+    enabled: true
+  eslint:
+    enabled: true
+
+exclude_paths:
+  # Archived code is versioned for reference but not actively maintained.
+  # Matches the shellcheck exclusion in .github/workflows/code-quality.yml.
+  - "archived/**"
+  # Generated/vendor files
+  - "node_modules/**"
+  - ".git/**"
+  # Config templates (not executable code)
+  - "configs/*.json.txt"
