@@ -1,4 +1,8 @@
 {
+  "_comment": "FluentCRM MCP template. NOTE: @netflyapp/fluentcrm-mcp-server is not published on npm. Requires local build from https://github.com/netflyapp/fluentcrm-mcp-server before enabling.",
+  "_setup": "git clone https://github.com/netflyapp/fluentcrm-mcp-server ~/.local/share/mcp-servers/fluentcrm-mcp-server && cd ~/.local/share/mcp-servers/fluentcrm-mcp-server && npm install && npm run build",
+  "_env": "Set FLUENTCRM_API_URL, FLUENTCRM_API_USERNAME, FLUENTCRM_API_PASSWORD in ~/.config/aidevops/credentials.sh",
+  "_docs": ".agents/services/crm/fluentcrm.md",
   "fluentcrm": {
     "type": "local",
     "command": [
@@ -7,6 +11,6 @@
       "source ~/.config/aidevops/credentials.sh && node ~/.local/share/mcp-servers/fluentcrm-mcp-server/dist/fluentcrm-mcp-server.js"
     ],
     "enabled": false,
-    "_comment": "Disabled globally. Enabled via fluentcrm_*: true in services/crm/fluentcrm.md subagent. Requires local build - see .agents/services/crm/fluentcrm.md for setup."
+    "_comment": "Disabled by default. Enable after completing local build (see _setup above). Docs: .agents/services/crm/fluentcrm.md"
   }
 }
