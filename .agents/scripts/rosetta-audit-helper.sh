@@ -23,6 +23,10 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 source "${SCRIPT_DIR}/shared-constants.sh"
 
+# Temp file registry — populated by cmd_scan; cleaned up on EXIT (style guide rule #33)
+_SCAN_CLEANUP_FILES=()
+trap 'rm -f "${_SCAN_CLEANUP_FILES[@]}"' EXIT
+
 # =============================================================================
 # Constants
 # =============================================================================
@@ -159,6 +163,7 @@ cmd_scan() {
 	local migratable_file non_migratable_file
 	migratable_file=$(mktemp "${TMPDIR:-/tmp}/rosetta-migrate.XXXXXX")
 	non_migratable_file=$(mktemp "${TMPDIR:-/tmp}/rosetta-nomigrate.XXXXXX")
+	_SCAN_CLEANUP_FILES=("$migratable_file" "$non_migratable_file")
 	_save_cleanup_scope
 	trap '_run_cleanups' RETURN
 	push_cleanup "rm -f '$migratable_file' '$non_migratable_file'"
@@ -336,7 +341,7 @@ cmd_migrate() {
 
 			if [[ ${#x86_list[@]} -gt 0 ]]; then
 				print_info "Removing ${#x86_list[@]} x86 packages..."
-				if "$X86_BREW" uninstall --force --ignore-dependencies "${x86_list[@]}" 2>&1 | tail -3; then
+				if "$X86_BREW" uninstall --force --ignore-dependencies "${x86_list[@]}"; then
 					removed_dups=${#x86_list[@]}
 					print_success "Removed ${#x86_list[@]} x86 packages"
 				else
