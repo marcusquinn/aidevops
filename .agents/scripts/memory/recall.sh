@@ -176,7 +176,7 @@ cmd_recall() {
 		return $?
 	fi
 
-	# Escape query for FTS5 — tokenise into individual words joined by AND.
+	# Build FTS5 query — tokenise into individual words joined by AND.
 	# Previous approach wrapped the entire query in double quotes, making it a
 	# phrase search (words must appear adjacent and in order). This caused most
 	# multi-word queries to return zero results — e.g., "shellcheck memory"
@@ -186,14 +186,16 @@ cmd_recall() {
 	# each word must appear somewhere in the document, but not necessarily
 	# adjacent. Special characters (hyphens, asterisks) are handled by
 	# quoting individual tokens that contain them.
-	local escaped_query="${query//"'"/"''"}"
+	#
+	# The tokenised query is passed to sqlite3 via .param set (parameterized
+	# binding) rather than string interpolation to prevent SQL injection.
 	# Quote each token individually to handle special chars (hyphens = NOT in FTS5)
 	# "foo-bar baz" → "\"foo-bar\" \"baz\"" (each token quoted, joined by implicit AND)
 	local tokenised_query=""
 	local token
 	set -f # Disable globbing during tokenization (SC2086)
-	for token in $escaped_query; do
-		# Escape embedded double quotes within each token
+	for token in $query; do
+		# Escape embedded double quotes within each token for FTS5 syntax
 		token="${token//\"/\"\"}"
 		if [[ -n "$tokenised_query" ]]; then
 			tokenised_query="$tokenised_query \"$token\""
@@ -202,7 +204,7 @@ cmd_recall() {
 		fi
 	done
 	set +f # Re-enable globbing
-	escaped_query="$tokenised_query"
+	local escaped_query="$tokenised_query"
 
 	# Build filters with validation
 	local extra_filters=""
@@ -253,9 +255,11 @@ cmd_recall() {
 
 	# Search using FTS5 with BM25 ranking
 	# Note: FTS5 tables require special handling - can't use table alias in bm25()
+	# The FTS5 query is bound via .param set to prevent SQL injection (GH#3155).
 	local results
 	results=$(
 		db -json "$MEMORY_DB" <<EOF
+.param set :query "$escaped_query"
 SELECT 
     learnings.id,
     learnings.content,
@@ -270,7 +274,7 @@ SELECT
 FROM learnings
 LEFT JOIN learning_access ON learnings.id = learning_access.id
 $entity_fts_join
-WHERE learnings MATCH '$escaped_query' $extra_filters $auto_join_filter $entity_fts_where
+WHERE learnings MATCH :query $extra_filters $auto_join_filter $entity_fts_where
 ORDER BY score
 LIMIT $limit;
 EOF
