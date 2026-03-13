@@ -81,11 +81,12 @@ Model selection: `--stt_model_name <model>` (any Whisper checkpoint on HF Hub)
 
 Model selection: `--lm_model_name <model>` or `--mlx_lm_model_name <model>`
 
-> **Security:** When using `--llm open_api`, store `OPENAI_API_KEY` via
-> `aidevops secret set OPENAI_API_KEY` (gopass encrypted, preferred) or in
-> `~/.config/aidevops/credentials.sh` (600 permissions, plaintext fallback).
+> **Security:** When using `--llm open_api`, store `OPENAI_API_KEY` with
+> `aidevops secret set OPENAI_API_KEY` (gopass encrypted, preferred). Use
+> `~/.config/aidevops/credentials.sh` only as a 600-permission plaintext fallback.
 >
-> Never hardcode API keys in scripts or config files.
+> Never hardcode API keys in scripts or config files; if a key is committed or
+> shared in logs/transcripts, treat it as compromised and rotate it immediately.
 >
 > See `tools/credentials/api-key-setup.md` for setup.
 
