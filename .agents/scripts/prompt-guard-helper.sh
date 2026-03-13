@@ -883,6 +883,55 @@ _pg_record_session_signal() {
 	return 0
 }
 
+# Internal helper: Read stdin with size cap and return temp file path
+# Sets global variables: PG_STDIN_CONTENT (file path), PG_STDIN_TRUNCATED (true/false), PG_STDIN_BYTES (count)
+# Caller must clean up the temp file (trap is set by this function)
+# Returns: 0 on success, 1 on error
+_pg_read_stdin_capped() {
+	local max_bytes=${1:-$((10 * 1024 * 1024))} # Default 10MB
+
+	local tmp_file
+	tmp_file=$(mktemp) || {
+		_pg_log_error "Failed to create temp file for stdin buffering"
+		return 1
+	}
+
+	# Read stdin into temp file with size cap; use trap to ensure cleanup
+	# shellcheck disable=SC2064
+	trap "rm -f '$tmp_file'" RETURN
+
+	if ! head -c "$max_bytes" >"$tmp_file"; then
+		_pg_log_error "Failed to read from stdin"
+		return 1
+	fi
+
+	# Use the temp file's true byte size (not command-substitution output, which
+	# strips trailing newlines) to reliably detect truncation.
+	local byte_count
+	byte_count=$(wc -c <"$tmp_file" | tr -d ' ')
+	local truncated=false
+	# Detect truncation by probing for one more byte on stdin after head -c consumed
+	# max_bytes. If stdin still has data, the input was longer than the cap.
+	# This correctly handles the edge case where input is exactly max_bytes (not
+	# truncated) vs. longer than max_bytes (truncated) — both produce byte_count ==
+	# max_bytes in the file, so a size comparison alone cannot distinguish them.
+	if [[ "$byte_count" -ge "$max_bytes" ]]; then
+		local probe_byte
+		probe_byte=$(dd bs=1 count=1 2>/dev/null | wc -c | tr -d ' ')
+		if [[ "$probe_byte" -gt 0 ]]; then
+			_pg_log_warn "Input truncated at ${max_bytes} bytes — content may be incomplete"
+			truncated=true
+		fi
+	fi
+
+	# Export results via global variables
+	PG_STDIN_CONTENT="$tmp_file"
+	PG_STDIN_TRUNCATED="$truncated"
+	PG_STDIN_BYTES="$byte_count"
+
+	return 0
+}
+
 # Scan stdin input (pipeline use)
 # Reads all of stdin, scans it, outputs findings.
 # Exit codes: 0=clean, 1=findings detected
@@ -894,45 +943,26 @@ cmd_scan_stdin() {
 		return 1
 	fi
 
-	# Limit stdin to 10MB to prevent DoS via memory exhaustion from untrusted input
-	local max_bytes=$((10 * 1024 * 1024))
-	local tmp_file
-	tmp_file=$(mktemp) || {
-		_pg_log_error "Failed to create temp file for stdin buffering"
-		return 1
-	}
-	# Read stdin into temp file with size cap; use trap to ensure cleanup
-	# shellcheck disable=SC2064
-	trap "rm -f '$tmp_file'" RETURN
-	if ! head -c "$max_bytes" >"$tmp_file"; then
-		_pg_log_error "Failed to read from stdin"
+	# Read stdin with size cap using shared helper
+	if ! _pg_read_stdin_capped; then
 		return 1
 	fi
 
 	local content
-	content=$(cat "$tmp_file")
+	content=$(cat "$PG_STDIN_CONTENT")
 
 	if [[ -z "$content" ]]; then
 		_pg_log_error "No content received on stdin"
 		return 1
 	fi
 
-	# Use the temp file's true byte size (not command-substitution output, which
-	# strips trailing newlines) to reliably detect truncation
-	local byte_count
-	byte_count=$(wc -c <"$tmp_file" | tr -d ' ')
-	local truncated=false
-	if [[ "$byte_count" -ge "$max_bytes" ]]; then
-		_pg_log_warn "Input truncated at ${max_bytes} bytes — content may be incomplete"
-		truncated=true
-	fi
-	_pg_log_info "Scanning stdin content ($byte_count bytes)"
+	_pg_log_info "Scanning stdin content ($PG_STDIN_BYTES bytes)"
 
 	local results
 	results=$(_pg_scan_message "$content") || true
 
 	if [[ -z "$results" ]]; then
-		if [[ "$truncated" == "true" ]]; then
+		if [[ "$PG_STDIN_TRUNCATED" == "true" ]]; then
 			_pg_log_warn "No patterns detected, but input was truncated — scan may be incomplete"
 			echo "TRUNCATED"
 			return 2
@@ -953,7 +983,7 @@ cmd_scan_stdin() {
 	_pg_print_findings "$results"
 
 	# Log the attempt
-	_pg_log_attempt "[stdin:${byte_count}bytes]" "$results" "SCAN-STDIN" "$max_severity"
+	_pg_log_attempt "[stdin:${PG_STDIN_BYTES}bytes]" "$results" "SCAN-STDIN" "$max_severity"
 
 	return 1
 }
@@ -1856,8 +1886,15 @@ main() {
 		cmd_sanitize "$content"
 		;;
 	check-stdin)
+		if [[ -t 0 ]]; then
+			_pg_log_error "check-stdin requires piped input, not a TTY"
+			return 1
+		fi
+		if ! _pg_read_stdin_capped; then
+			return 1
+		fi
 		local content
-		content=$(cat)
+		content=$(cat "$PG_STDIN_CONTENT")
 		if [[ -z "$content" ]]; then
 			_pg_log_error "No input received on stdin"
 			return 1
@@ -1865,8 +1902,15 @@ main() {
 		cmd_check "$content"
 		;;
 	sanitize-stdin)
+		if [[ -t 0 ]]; then
+			_pg_log_error "sanitize-stdin requires piped input, not a TTY"
+			return 1
+		fi
+		if ! _pg_read_stdin_capped; then
+			return 1
+		fi
 		local content
-		content=$(cat)
+		content=$(cat "$PG_STDIN_CONTENT")
 		if [[ -z "$content" ]]; then
 			_pg_log_error "No input received on stdin"
 			return 1
