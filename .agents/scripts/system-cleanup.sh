@@ -186,16 +186,9 @@ cleanup_directory() {
 	# Exclude common directories
 	find_args+=("-not" "-path" "*/.git/*" "-not" "-path" "*/node_modules/*")
 
-	# Execute find with safe array expansion
-	local files_found
-	files_found=$(find "${find_args[@]}" 2>/dev/null || echo "")
-
-	if [[ -z "$files_found" ]]; then
-		log "DEBUG" "No matching files found for $desc"
-		return 0
-	fi
-
-	# Process matches
+	# Process matches — use process substitution to handle filenames with
+	# spaces, tabs, or other special characters safely. Process substitution
+	# (< <(...)) keeps the loop in the current shell so $count is accessible.
 	local count=0
 	while IFS= read -r file; do
 		if [[ -z "$file" ]]; then continue; fi
@@ -210,9 +203,11 @@ cleanup_directory() {
 			fi
 		fi
 		count=$((count + 1))
-	done <<<"$files_found"
+	done < <(find "${find_args[@]}" 2>/dev/null)
 
-	if [[ "$count" -gt 0 ]]; then
+	if [[ "$count" -eq 0 ]]; then
+		log "DEBUG" "No matching files found for $desc"
+	else
 		log "INFO" "Processed $count files in $desc"
 	fi
 
@@ -234,17 +229,12 @@ cleanup_tmp_dir() {
 	# Exclude README.md
 	find_args+=("-not" "-name" "README.md")
 
-	# Execute find with safe array expansion
-	local items
-	items=$(find "${find_args[@]}" 2>/dev/null || echo "")
-
-	if [[ -z "$items" ]]; then
-		log "DEBUG" "No old temporary items found"
-		return 0
-	fi
-
+	# Process items — use process substitution to handle filenames with
+	# spaces, tabs, or other special characters safely.
+	local found=0
 	while IFS= read -r item; do
 		if [[ -z "$item" ]]; then continue; fi
+		found=1
 
 		if [[ "$DRY_RUN" == "true" ]]; then
 			log "INFO" "[DRY-RUN] Would delete: $item"
@@ -256,7 +246,11 @@ cleanup_tmp_dir() {
 				log "ERROR" "Failed to delete: $item"
 			fi
 		fi
-	done <<<"$items"
+	done < <(find "${find_args[@]}" 2>/dev/null)
+
+	if [[ "$found" -eq 0 ]]; then
+		log "DEBUG" "No old temporary items found"
+	fi
 
 	return 0
 }
