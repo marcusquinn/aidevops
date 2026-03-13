@@ -45,7 +45,6 @@ The provider consists of three files:
 
 - Node.js 18+
 - npm
-- jq
 
 ### Install via helper script
 
@@ -53,7 +52,9 @@ The provider consists of three files:
 .agents/scripts/wappalyzer-helper.sh install
 ```
 
-This installs `jq` (via Homebrew if available) and `@ryntab/wappalyzer-node` globally via npm.
+This installs `@ryntab/wappalyzer-node` globally via npm. The helper script also requires `jq`
+and will attempt to install it via Homebrew on macOS. On other systems, install `jq` manually
+before running this command.
 
 ### Verify installation
 
@@ -176,7 +177,9 @@ Install Node.js 18+:
 brew install node
 
 # Linux (Debian/Ubuntu)
-sudo apt-get install nodejs npm
+# The 'nodejs' package in default repositories is often outdated.
+# Please follow official instructions to install Node.js 18+.
+# See: https://nodejs.org/en/download/package-manager
 ```
 
 ### Timeout errors
@@ -196,7 +199,7 @@ The helper sets `NODE_PATH` to the global npm modules directory automatically.
 
 If this provider doesn't meet your needs:
 
-- **Unbuilt.app** (t1064): Specialised in bundler/minifier detection
+- **Unbuilt.app** (t1064): Specialized in bundler/minifier detection
 - **CRFT Lookup** (t1065): Cloudflare Radar tech detection
 - **BuiltWith API** (t1066): Commercial service (requires API key)
 
