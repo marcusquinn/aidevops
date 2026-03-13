@@ -99,6 +99,9 @@ resolve_server_ref() {
 	server_def=$(jq -r --arg ref "$server_ref" '.servers[$ref] // empty' "$CONFIG_FILE" 2>/dev/null)
 
 	if [[ -z "$server_def" ]]; then
+		# >&2 is required: resolve_server_ref() is called via $() in execute_wp_via_ssh().
+		# Without >&2, the warning text is captured into the substitution, prepended to the
+		# JSON output, and causes downstream jq parse errors (stdout pollution bug).
 		print_warning "server_ref '$server_ref' not found in servers section — using site config as-is" >&2
 		echo "$site_config"
 		return 0
@@ -351,6 +354,10 @@ run_wp_command() {
 		exit 1
 	fi
 
+	# load_config must be called before get_site_config() to ensure CONFIG_FILE is set
+	# in the current shell. get_site_config() runs in a subshell via $(); any CONFIG_FILE
+	# assignment inside that subshell is lost when it exits, leaving CONFIG_FILE empty
+	# for the subsequent execute_wp_via_ssh() → resolve_server_ref() call.
 	load_config
 
 	local site_config
