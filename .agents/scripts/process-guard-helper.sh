@@ -76,6 +76,22 @@ LOGFILE="${HOME}/.aidevops/logs/process-guard.log"
 mkdir -p "$(dirname "$LOGFILE")" || true
 
 #######################################
+# List aidevops-related processes using pgrep (SC2009: avoids ps|grep)
+# Output: ps fields (pid,ppid,tty,rss,etime,command) for matching processes
+#######################################
+_list_ai_processes() {
+	# pgrep -f matches against the full command line; -d, separates PIDs with commas.
+	# We use pgrep to find PIDs, then pass them directly to ps — no grep needed.
+	local pids
+	pids=$(pgrep -f 'opencode|shellcheck|node.*opencode' 2>/dev/null | tr '\n' ',' | sed 's/,$//')
+	if [[ -z "$pids" ]]; then
+		return 0
+	fi
+	ps -p "$pids" -o pid=,ppid=,tty=,rss=,etime=,command= 2>/dev/null || true
+	return 0
+}
+
+#######################################
 # Get process age in seconds (portable macOS + Linux)
 # Arguments:
 #   $1 - PID
@@ -191,7 +207,7 @@ cmd_scan() {
 		fi
 
 		printf "%-8s %-6s %-6s %-10s %-5s %-12s %-8s %s\n" "$pid" "$ppid" "${rss_mb}MB" "$etime" "$tty" "$cmd_base" "$status" "$detail"
-	done < <(ps axo pid,ppid,tty,rss,etime,command | grep -E 'opencode|shellcheck|node.*opencode' | grep -v grep || true)
+	done < <(_list_ai_processes)
 
 	echo ""
 	echo "Total: ${process_count} processes, $((total_rss_kb / 1024))MB RSS, ${violations} violation(s)"
@@ -277,7 +293,7 @@ cmd_kill_runaways() {
 			killed=$((killed + 1))
 			total_freed_mb=$((total_freed_mb + rss_mb))
 		fi
-	done < <(ps axo pid,ppid,tty,rss,etime,command | grep -E 'opencode|shellcheck|node.*opencode' | grep -v grep || true)
+	done < <(_list_ai_processes)
 
 	if [[ "$killed" -gt 0 ]]; then
 		echo "Killed $killed process(es), freed ~${total_freed_mb}MB"
@@ -349,7 +365,7 @@ cmd_status() {
 				violations=$((violations + 1))
 			fi
 		fi
-	done < <(ps axo pid,ppid,tty,rss,etime,command | grep -E 'opencode|shellcheck|node.*opencode' | grep -v grep || true)
+	done < <(_list_ai_processes)
 
 	local session_count
 	session_count=$(ps axo tty,command | awk '
