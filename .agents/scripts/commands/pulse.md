@@ -599,6 +599,11 @@ fi
 6. Read the issue body briefly — if it has `blocked-by:` references, check if those are resolved (merged PR exists). If not, skip it.
 6.5. **Classify and decompose (t1408.2):** Run the task decomposition check described in "Task decomposition before dispatch" above. If the task is composite, create child tasks and skip direct dispatch. If atomic (or classification unavailable), proceed to dispatch.
 7. Prioritize by value density and flow efficiency, not label perfection: unblock merge-ready PRs first, then critical/high issues, then best-next backlog items that keep worker slots full.
+7.5. **Choose execution mode per issue type (code vs ops):** Ad-hoc issue dispatch is not always `/full-loop`.
+
+   - **Code-change issue** (repo edits/tests/PR expected): use `/full-loop Implement issue #<number> ...`
+   - **Operational issue** (reports, audits, monitoring, outreach, account ops): use a direct domain command (no `/full-loop`), for example `/seo-export ...` or another issue-defined SOP command
+   - If the issue body includes an explicit command/SOP, run that command directly. If not, infer the best direct command from the issue domain + assigned agent.
 8. Dispatch:
 
 ```bash
@@ -606,12 +611,16 @@ fi
 RUNNER_USER=$(gh api user --jq '.login' 2>/dev/null || whoami)
 gh issue edit <number> --repo <slug> --add-assignee "$RUNNER_USER" --add-label "status:queued" --remove-label "status:available" 2>/dev/null || gh issue edit <number> --repo <slug> --add-assignee "$RUNNER_USER" --add-label "status:queued" 2>/dev/null || true
 
+DISPATCH_PROMPT="/full-loop Implement issue #<number> (<url>) -- <brief description>"
+# For ops issues, replace DISPATCH_PROMPT with a direct command (no /full-loop)
+# Example: DISPATCH_PROMPT="/seo-export --account <account> --format summary"
+
 ~/.aidevops/agents/scripts/headless-runtime-helper.sh run \
   --role worker \
   --session-key "issue-<number>" \
   --dir <path> \
   --title "Issue #<number>: <title>" \
-  --prompt "/full-loop Implement issue #<number> (<url>) -- <brief description>" &
+  --prompt "$DISPATCH_PROMPT" &
 sleep 2
 ```
 
@@ -687,12 +696,15 @@ If you dispatch an unassigned issue without `auto-dispatch`/`status:available`, 
   # Build lineage block (see headless-dispatch.md for full assembly)
   # Or use: LINEAGE_BLOCK=$(task-decompose-helper.sh format-lineage "$TASK_ID")
 
+  DISPATCH_PROMPT="/full-loop Implement issue #<number> (<url>) -- <brief description>"
+  # For operational subtasks, set DISPATCH_PROMPT to a direct command instead.
+
   ~/.aidevops/agents/scripts/headless-runtime-helper.sh run \
     --role worker \
     --session-key "issue-<number>" \
     --dir <path> \
     --title "Issue #<number>: <title>" \
-    --prompt "/full-loop Implement issue #<number> (<url>) -- <brief description>
+    --prompt "$DISPATCH_PROMPT
 
   TASK LINEAGE:
     0. [parent] ${PARENT_DESC} (${PARENT_ID})
@@ -736,15 +748,19 @@ NEXT_BATCH=$(batch-strategy-helper.sh next-batch \
   --concurrency "$AVAILABLE")
 
 # Dispatch each task in the batch
+# Use the same mode-selection rule as standard issue dispatch:
+# code tasks => /full-loop, operational tasks => direct command
 echo "$NEXT_BATCH" | jq -r '.[]' | while read -r task_id; do
   # Look up the issue number and repo for this task_id
   # Then dispatch as normal (see dispatch rules above)
+  DISPATCH_PROMPT="/full-loop Implement issue #<number> (<url>) -- <brief description>"
+  # For operational tasks in the batch, set DISPATCH_PROMPT to a direct command.
   ~/.aidevops/agents/scripts/headless-runtime-helper.sh run \
     --role worker \
     --session-key "task-${task_id}" \
     --dir <path> \
     --title "Issue #<number>: <title>" \
-    --prompt "/full-loop Implement issue #<number> (<url>) -- <brief description>" &
+    --prompt "$DISPATCH_PROMPT" &
   sleep 2
 done
 ```
