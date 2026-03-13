@@ -163,7 +163,7 @@ cmd_scan() {
 	local migratable_file non_migratable_file
 	migratable_file=$(mktemp "${TMPDIR:-/tmp}/rosetta-migrate.XXXXXX")
 	non_migratable_file=$(mktemp "${TMPDIR:-/tmp}/rosetta-nomigrate.XXXXXX")
-	_SCAN_CLEANUP_FILES=("$migratable_file" "$non_migratable_file")
+	_SCAN_CLEANUP_FILES+=("$migratable_file" "$non_migratable_file")
 	_save_cleanup_scope
 	trap '_run_cleanups' RETURN
 	push_cleanup "rm -f '$migratable_file' '$non_migratable_file'"
