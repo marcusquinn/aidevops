@@ -765,22 +765,44 @@ check_unresolved_review_comments() {
 	fi
 
 	# shellcheck disable=SC2016 # GraphQL variables, not shell - single quotes intentional
+	# Include author login so we can filter to AI reviewer threads only (GH#3585)
 	api_response=$(gh api graphql -f query='
       query($owner:String!, $repo:String!, $number:Int!) {
         repository(owner:$owner, name:$repo) {
           pullRequest(number:$number) {
-            reviewThreads(first:100) { nodes { isResolved } }
+            reviewThreads(first:100) {
+              nodes {
+                isResolved
+                comments(first:1) { nodes { author { login } } }
+              }
+            }
           }
         }
-      }' -f owner="$repo_owner" -f repo="$repo_name" -F number="$pr_number" 2>/dev/null)
+      }' -f owner="$repo_owner" -f repo="$repo_name" -F number="$pr_number" 2>&1)
 
 	if [[ -z "$api_response" ]]; then
 		print_error "Failed to fetch PR review threads from GitHub API - cannot verify review status"
 		return 2
 	fi
 
+	# Check for GraphQL errors in the response body
+	if printf '%s' "$api_response" | jq -e '.errors' >/dev/null 2>&1; then
+		local gql_error
+		gql_error=$(printf '%s' "$api_response" | jq -r '.errors[0].message // "unknown error"' 2>/dev/null)
+		print_error "GitHub API error fetching review threads: $gql_error"
+		return 2
+	fi
+
+	# Count unresolved threads where the first comment author matches AI reviewer pattern
+	# This prevents human-authored threads from blocking the PR loop (GH#3585)
 	unresolved_count=$(printf '%s' "$api_response" | jq -r \
-		'[.data.repository.pullRequest.reviewThreads.nodes[] | select(.isResolved == false)] | length' 2>/dev/null)
+		--arg bots "$AI_REVIEWERS" \
+		'[.data.repository.pullRequest.reviewThreads.nodes[]
+		  | select(.isResolved == false)
+		  | select(
+		      (.comments.nodes[0].author.login // "") | test($bots; "i")
+		    )
+		] | length' 2>/dev/null)
 
 	if ! [[ "$unresolved_count" =~ ^[0-9]+$ ]]; then
 		print_error "Failed to parse unresolved thread count - cannot proceed safely"
@@ -788,7 +810,7 @@ check_unresolved_review_comments() {
 	fi
 
 	if [[ "$unresolved_count" -gt 0 ]]; then
-		print_warning "Found $unresolved_count unresolved review threads"
+		print_warning "Found $unresolved_count unresolved AI reviewer threads"
 		return 1
 	fi
 	return 0
