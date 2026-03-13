@@ -34,7 +34,7 @@ Subagent write restrictions: on `main`/`master`, subagents may ONLY write to `RE
 2. Brief file at `todo/tasks/{task_id}-brief.md` is MANDATORY (see `templates/brief-template.md`)
 3. Brief must include: session origin, what, why, how, acceptance criteria, context
 4. Ask user: implement now or queue for runner?
-5. Full-loop: branch/worktree → implement → test → verify → commit/PR
+5. Full-loop: keep canonical repo on `main` → create/use linked worktree → implement → test → verify → commit/PR
 6. Queue: add to TODO.md for supervisor dispatch
 7. Never skip testing. Never declare "done" without verification.
 
@@ -46,7 +46,7 @@ Subagent write restrictions: on `main`/`master`, subagents may ONLY write to `RE
 
 Not every autonomous task should use `/full-loop`. Use this decision rule:
 - **Code change needed** (repo files, tests, PRs) → `/full-loop`
-- **Operational execution** (reports, audits, monitoring, outreach, client ops) → run a domain agent/command directly, with no branch/PR ceremony
+- **Operational execution** (reports, audits, monitoring, outreach, client ops) → run a domain agent/command directly, with no worktree/PR ceremony
 
 For setup workflow, safety gates, and scheduling patterns, use `/routine` or read `.agents/scripts/commands/routine.md`.
 
@@ -74,7 +74,7 @@ Every agent session — interactive, worker, or supervisor — should improve th
 
 If uncertain, ask: "Would this fix apply to every repo the framework manages, or only this one?" Framework-wide problems go to aidevops; project-specific problems stay local. Never create framework tasks in a project repo — they become invisible to framework maintainers and pollute the project's task namespace.
 
-**Scope boundary for code changes (t1405, GH#2928).** Separate "observe and report" from "observe and fix". When dispatched by the pulse, the `PULSE_SCOPE_REPOS` env var lists the repo slugs where you may create branches and PRs. Filing issues is always allowed on any repo — cross-repo bug reports are valuable. But code changes (branches, PRs, commits) are restricted to repos in `PULSE_SCOPE_REPOS`. If the target repo is not in scope, file the issue and stop. The issue enters that repo's queue for their maintainers (or their own pulse) to handle. If `PULSE_SCOPE_REPOS` is empty or unset (interactive mode), no scope restriction applies.
+**Scope boundary for code changes (t1405, GH#2928).** Separate "observe and report" from "observe and fix". When dispatched by the pulse, the `PULSE_SCOPE_REPOS` env var lists the repo slugs where you may create worktrees and PRs. Filing issues is always allowed on any repo — cross-repo bug reports are valuable. But code changes (worktrees, PRs, commits) are restricted to repos in `PULSE_SCOPE_REPOS`. If the target repo is not in scope, file the issue and stop. The issue enters that repo's queue for their maintainers (or their own pulse) to handle. If `PULSE_SCOPE_REPOS` is empty or unset (interactive mode), no scope restriction applies.
 
 **What counts as self-improvement:**
 - Filing issues for repeated failure patterns
@@ -190,11 +190,11 @@ Full rules: `reference/planning-detail.md`
 
 ## Git Workflow
 
-Branches: `feature/`, `bugfix/`, `hotfix/`, `refactor/`, `chore/`, `experiment/`, `release/`
+Worktree naming prefixes: `feature/`, `bugfix/`, `hotfix/`, `refactor/`, `chore/`, `experiment/`, `release/`
 
 PR title: `{task-id}: {description}`. Create TODO entry first for unplanned work.
 
-Worktrees: `wt switch -c {type}/{name}`. Re-read files at worktree path before editing. NEVER remove others' worktrees.
+Worktrees: `wt switch -c {type}/{name}`. Keep the canonical repo directory on `main`, and treat the Git ref as an internal detail inside the linked worktree. User-facing guidance should talk about the worktree path, not "using a branch". Re-read files at worktree path before editing. NEVER remove others' worktrees.
 
 Full workflow: `workflows/git-workflow.md`, `reference/session.md`
 

@@ -275,7 +275,7 @@ When referencing specific functions or code include the pattern `file_path:line_
 - Full docs: `tools/security/tamper-evident-audit.md`.
 
 # Git Workflow and Traceability
-Git is the primary audit trail for all work. Every change should be discoverable through the chain: TODO task -> GitHub issue -> branch -> PR -> merge commit. A PR without a TODO entry, or an issue closed without a PR link, is an audit gap.
+Git is the primary audit trail for all work. Every change should be discoverable through the chain: TODO task -> GitHub issue -> worktree/ref -> PR -> merge commit. A PR without a TODO entry, or an issue closed without a PR link, is an audit gap.
 
 **Traceability rules:**
 - Every PR MUST have a task ID in the title (`{task-id}: {description}`). No exceptions — even 1-line fixes. For unplanned work, create the TODO entry first, then the PR.
@@ -333,8 +333,9 @@ Git is the primary audit trail for all work. Every change should be discoverable
 
 **Pre-edit rules:**
 - Before ANY file modification: run `~/.aidevops/agents/scripts/pre-edit-check.sh`
-- Exit 0 = proceed, Exit 1 = STOP (on main), Exit 2 = create worktree, Exit 3 = warn
-- NEVER edit on main/master. Main repo stays on `main`; feature work in worktrees (`~/Git/{repo}-{type}-{name}/`)
+- Exit 0 = proceed, Exit 1 = STOP (on main), Exit 2 = create worktree, Exit 3 = warn that the canonical repo directory is off main
+- NEVER edit on main/master. The canonical repo directory stays on `main`; all code work happens from linked worktree paths (`~/Git/{repo}-{type}-{name}/`)
+- In user-facing output, describe the workflow as `worktree-first`. Do not tell the user to "create a branch" or to keep working in the canonical repo directory on a non-main ref. If a Git ref name must be mentioned, frame it as implementation detail inside the worktree.
 - Loop mode: `pre-edit-check.sh --loop-mode --task "description"`
 - NEVER revert others' changes or use `git reset --hard` / `git checkout -- <file>` without explicit user request
 

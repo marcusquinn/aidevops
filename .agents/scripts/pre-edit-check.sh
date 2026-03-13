@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # =============================================================================
-# Pre-Edit Git Branch Check
+# Pre-Edit Git Worktree Check
 # =============================================================================
-# Run this BEFORE any file edit to enforce the git workflow.
-# Returns exit code 1 if on main/master branch (should create branch first).
+# Run this BEFORE any file edit to enforce the canonical-repo-on-main + linked-worktree workflow.
+# Returns exit code 1 if on main/master (should create a dedicated worktree first).
 #
 # Usage:
 #   ~/.aidevops/agents/scripts/pre-edit-check.sh
@@ -12,10 +12,10 @@
 #   ~/.aidevops/agents/scripts/pre-edit-check.sh --verify-op "git push --force origin main"
 #
 # Exit codes:
-#   0 - OK to proceed (on feature branch in worktree, or docs-only on main)
-#   1 - STOP (on protected branch main/master, interactive mode)
+#   0 - OK to proceed (in a linked worktree, or docs-only on main)
+#   1 - STOP (on protected main/master, interactive mode)
 #   2 - Create worktree (loop mode detected code task on main)
-#   3 - WARNING (on feature branch in main repo - should use worktree instead)
+#   3 - WARNING (canonical repo directory is not on main - move it back and continue from a linked worktree)
 #
 # High-stakes detection (--check-command):
 #   When --check-command is passed, the script checks the command against
@@ -29,8 +29,8 @@
 #   verification for high-stakes operations.
 #
 # AI assistants should call this before any Edit/Write tool and:
-# - Exit 1: STOP and present branch creation options
-# - Exit 3: Present options to user (continue, create worktree, or switch main back)
+# - Exit 1: STOP and present worktree creation instructions
+# - Exit 3: Warn that the canonical repo directory is off main and move work to a linked worktree path
 # - Exit 0: Proceed with edits
 # =============================================================================
 
@@ -97,7 +97,7 @@ is_docs_only() {
 		return 0 # Is docs-only
 	fi
 
-	# Default: not docs-only (safer to create branch)
+	# Default: not docs-only (safer to require a worktree)
 	return 1
 }
 
@@ -273,15 +273,15 @@ run_operation_verification() {
 
 # Check if we're in a git repository
 if ! git rev-parse --is-inside-work-tree &>/dev/null; then
-	echo -e "${YELLOW}Not in a git repository - no branch check needed${NC}"
+	echo -e "${YELLOW}Not in a git repository - no worktree check needed${NC}"
 	exit 0
 fi
 
-# Get current branch
+# Get current ref name
 current_branch=$(git branch --show-current 2>/dev/null || echo "")
 
 if [[ -z "$current_branch" ]]; then
-	echo -e "${YELLOW}Detached HEAD state - consider creating a branch${NC}"
+	echo -e "${YELLOW}Detached HEAD state - prefer creating a dedicated worktree before editing${NC}"
 	exit 0
 fi
 
@@ -318,17 +318,10 @@ if [[ "$current_branch" == "main" || "$current_branch" == "master" ]]; then
 	# Interactive mode: show warning and exit
 	echo ""
 	echo -e "${RED}${BOLD}======================================================${NC}"
-	echo -e "${RED}${BOLD}  STOP - ON PROTECTED BRANCH: $current_branch${NC}"
+	echo -e "${RED}${BOLD}  STOP - ON PROTECTED MAIN WORKTREE: $current_branch${NC}"
 	echo -e "${RED}${BOLD}======================================================${NC}"
 	echo ""
-	echo -e "${YELLOW}You must create a branch before making changes.${NC}"
-	echo ""
-	echo "Suggested branch names based on change type:"
-	echo "  feature/description  - New functionality"
-	echo "  bugfix/description   - Bug fixes"
-	echo "  chore/description    - Maintenance, docs, config"
-	echo "  hotfix/description   - Urgent production fixes"
-	echo "  refactor/description - Code restructuring"
+	echo -e "${YELLOW}Leave the canonical repo on 'main' and create a linked worktree before making code changes here.${NC}"
 	echo ""
 	echo -e "${BOLD}Create a worktree (keeps main repo on main):${NC}"
 	echo ""
@@ -347,11 +340,11 @@ if [[ "$current_branch" == "main" || "$current_branch" == "master" ]]; then
 	echo -e "${YELLOW}Using 'git checkout -b' here leaves the repo on a feature branch,${NC}"
 	echo -e "${YELLOW}which breaks parallel sessions and causes merge conflicts.${NC}"
 	echo ""
-	echo -e "${RED}DO NOT proceed with edits until on a feature branch.${NC}"
+	echo -e "${RED}DO NOT proceed with edits until you are inside a linked worktree.${NC}"
 	echo ""
 	exit 1
 else
-	# Check if this is the main repo directory (not a worktree) on a feature branch
+	# Check if this is the main repo directory (not a linked worktree) on a non-main ref
 	# This is a warning - the main repo should stay on main
 	git_common_dir=$(git rev-parse --git-common-dir 2>/dev/null)
 	git_dir=$(git rev-parse --git-dir 2>/dev/null)
@@ -364,6 +357,7 @@ else
 
 	# Sync terminal tab title with repo/branch (silent, non-blocking)
 	SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
+	# shellcheck source=/dev/null
 	source "${SCRIPT_DIR}/shared-constants.sh"
 
 	if [[ -x "$SCRIPT_DIR/terminal-title-helper.sh" ]]; then
@@ -371,15 +365,15 @@ else
 	fi
 
 	if [[ "$is_main_worktree" == "true" ]]; then
-		# Loop mode: auto-decide for feature branch in main repo
+		# Loop mode: auto-decide for canonical repo directory off main
 		if [[ "$LOOP_MODE" == "true" ]]; then
 			if is_docs_only "$TASK_DESC"; then
-				echo -e "${YELLOW}LOOP-AUTO${NC}: Docs-only task on feature branch, continuing"
+				echo -e "${YELLOW}LOOP-AUTO${NC}: Docs-only task in main repo directory, continuing"
 				echo "LOOP_DECISION=continue"
 				exit 0
 			else
-				# For code tasks, warn but continue (already on feature branch)
-				echo -e "${YELLOW}LOOP-AUTO${NC}: On feature branch in main repo (not ideal but continuing)"
+				# For code tasks, warn but continue so the caller can relocate into a worktree.
+				echo -e "${YELLOW}LOOP-AUTO${NC}: Main repo directory is off main (not ideal - relocate to a linked worktree)"
 				echo "LOOP_DECISION=continue_warning"
 				exit 0
 			fi
@@ -388,20 +382,20 @@ else
 		# Interactive mode: show warning with options
 		echo ""
 		echo -e "${YELLOW}${BOLD}======================================================${NC}"
-		echo -e "${YELLOW}${BOLD}  WARNING - MAIN REPO ON FEATURE BRANCH${NC}"
+		echo -e "${YELLOW}${BOLD}  WARNING - MAIN REPO DIRECTORY IS OFF MAIN${NC}"
 		echo -e "${YELLOW}${BOLD}======================================================${NC}"
 		echo ""
-		echo -e "Current branch: ${BOLD}$current_branch${NC}"
+		echo -e "Current ref: ${BOLD}$current_branch${NC}"
 		echo ""
-		echo -e "${YELLOW}The main repo directory should stay on 'main' for parallel safety.${NC}"
-		echo -e "${YELLOW}Working directly here can cause issues with parallel sessions.${NC}"
+		echo -e "${YELLOW}The canonical repo directory should stay on 'main' for parallel safety.${NC}"
+		echo -e "${YELLOW}Move code work into a linked worktree path, not this canonical repo directory.${NC}"
 		echo ""
 		echo "Options:"
 		echo "  1. Create worktree for this task (recommended)"
-		echo "  2. Continue on current branch (not recommended for code)"
-		echo "  3. Switch main repo back to main, then create worktree"
+		echo "  2. Switch the canonical repo directory back to main"
+		echo "  3. Continue here temporarily (not recommended for code)"
 		echo ""
-		echo "FEATURE_BRANCH_WARNING=$current_branch"
+		echo "MAIN_REPO_OFF_MAIN_WARNING=$current_branch"
 		exit 3
 	else
 		# Check if task is claimed by someone else via TODO.md assignee: field (t165)
@@ -439,7 +433,7 @@ else
 			fi
 		fi
 
-		echo -e "${GREEN}OK${NC} - On branch: ${BOLD}$current_branch${NC} (in worktree)"
+		echo -e "${GREEN}OK${NC} - In linked worktree on ref: ${BOLD}$current_branch${NC}"
 		exit 0
 	fi
 fi
