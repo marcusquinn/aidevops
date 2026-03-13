@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.172.12] - 2026-03-13
+
+### Fixed
+
+- normalize active issue assignment in pulse (#4345)
+- preserve manual profile README sections during stats updates
+
 ## [2.172.11] - 2026-03-13
 
 ### Fixed
