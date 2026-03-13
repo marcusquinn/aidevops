@@ -196,9 +196,7 @@ check_pipecat_installed() {
 # Generate the bot.py file with the specified LLM provider
 generate_bot_template() {
 	local llm_provider="${1:-${DEFAULT_LLM_PROVIDER}}"
-	# $2 (server_port) is accepted for API compatibility but not used in the template
-	# (the heredoc uses single-quoted delimiter, so the bot reads --port from argparse)
-	local voice_id="${3:-${DEFAULT_CARTESIA_VOICE_ID}}"
+	local voice_id="${2:-${DEFAULT_CARTESIA_VOICE_ID}}"
 
 	mkdir -p "$(dirname "${PIPECAT_BOT}")"
 
@@ -574,7 +572,7 @@ cmd_setup() {
 
 	# Generate bot template
 	print_info "Generating bot template..."
-	generate_bot_template "${llm_provider}" "${DEFAULT_SERVER_PORT}" "${DEFAULT_CARTESIA_VOICE_ID}"
+	generate_bot_template "${llm_provider}" "${DEFAULT_CARTESIA_VOICE_ID}"
 
 	# Create .env template (without actual keys)
 	if [[ ! -f "${PIPECAT_DIR}/.env" ]]; then
@@ -827,7 +825,7 @@ cmd_start() {
 
 	# Regenerate bot if needed
 	if [[ ! -f "${PIPECAT_BOT}" ]]; then
-		generate_bot_template "${llm_provider}" "${server_port}" "${voice_id}"
+		generate_bot_template "${llm_provider}" "${voice_id}"
 	fi
 
 	echo ""
