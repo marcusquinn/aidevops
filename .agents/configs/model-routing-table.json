@@ -27,6 +27,14 @@
       "key_env": "ANTHROPIC_API_KEY",
       "probe_path": "/v1/messages",
       "probe_timeout_seconds": 10
+    },
+    "openai": {
+      "endpoint": "https://api.openai.com/v1/chat/completions",
+      "key_env": "OPENAI_API_KEY",
+      "oauth_auth_file": "~/.local/share/opencode/auth.json",
+      "probe_path": "/v1/models",
+      "probe_timeout_seconds": 10,
+      "_comment": "API key OR OpenCode OAuth subscription (includes Codex). Auth checked via OPENAI_API_KEY env var or opencode auth.json."
     }
   },
 

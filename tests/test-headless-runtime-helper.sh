@@ -42,6 +42,10 @@ section() {
 TEST_TMP_DIR=$(mktemp -d)
 export AIDEVOPS_HEADLESS_RUNTIME_DIR="$TEST_TMP_DIR/runtime"
 export STUB_LOG_FILE="$TEST_TMP_DIR/opencode-args.log"
+# Provide a fake OpenAI API key so provider_auth_available("openai") returns true
+# in tests that exercise OpenAI model selection. Tests for the no-auth path
+# explicitly unset this and remove the auth file.
+export OPENAI_API_KEY="test-key-for-provider-auth-check"
 
 cleanup() {
 	rm -rf "$TEST_TMP_DIR"
@@ -96,6 +100,33 @@ if [[ "$allowlisted_model" == "openai/gpt-5.3-codex" ]]; then
 else
 	fail "openai allowlist restricts selection" "got: $allowlisted_model"
 fi
+
+section "Auth Pre-check"
+# When OpenAI has no auth configured, Codex must be skipped silently (no error,
+# no backoff recorded). The selection should fall back to Anthropic.
+no_auth_model=$(
+	unset OPENAI_API_KEY
+	AIDEVOPS_HEADLESS_AUTH_SIGNATURE_OPENAI="" \
+		bash "$HELPER" select --role worker 2>/dev/null || true
+)
+if [[ "$no_auth_model" == "anthropic/claude-sonnet-4-6" ]]; then
+	pass "no OpenAI auth: Codex skipped silently, Anthropic selected"
+else
+	fail "no OpenAI auth: Codex skipped silently, Anthropic selected" "got: $no_auth_model"
+fi
+# Verify no backoff was recorded for openai (silent skip, not a failure)
+no_auth_backoff=$(
+	unset OPENAI_API_KEY
+	AIDEVOPS_HEADLESS_AUTH_SIGNATURE_OPENAI="" \
+		bash "$HELPER" backoff status 2>/dev/null || true
+)
+if [[ "$no_auth_backoff" != *"openai|"* ]]; then
+	pass "no OpenAI auth: no backoff recorded (silent skip)"
+else
+	fail "no OpenAI auth: no backoff recorded (silent skip)" "backoff state: $no_auth_backoff"
+fi
+# Restore OpenAI auth for subsequent tests
+export OPENAI_API_KEY="test-key-for-provider-auth-check"
 
 section "Backoff"
 bash "$HELPER" backoff set anthropic rate_limit 3600 >/dev/null

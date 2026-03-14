@@ -162,9 +162,13 @@ get_auth_signature() {
 		if [[ -n "${OPENAI_API_KEY:-}" ]]; then
 			auth_material="${auth_material}|env=$(sha256_text "$OPENAI_API_KEY")"
 		else
-			local auth_status
+			# OpenAI can also be authenticated via OpenCode OAuth (no direct API key needed).
+			# Include the OAuth auth status in the signature so backoff clears on re-auth.
+			local auth_status auth_file auth_mtime
 			auth_status=$(timeout_sec 10 "$OPENCODE_BIN_DEFAULT" auth status 2>/dev/null || true)
-			auth_material="${auth_material}|status=${auth_status}|env=missing"
+			auth_file="${HOME}/.local/share/opencode/auth.json"
+			auth_mtime=$(file_mtime "$auth_file")
+			auth_material="${auth_material}|status=${auth_status}|mtime=${auth_mtime}|env=missing"
 		fi
 		;;
 	*)
@@ -387,6 +391,42 @@ provider_backoff_active() {
 	return 0
 }
 
+provider_auth_available() {
+	local provider="$1"
+	case "$provider" in
+	anthropic)
+		# Anthropic: API key env var OR OpenCode OAuth session
+		if [[ -n "${ANTHROPIC_API_KEY:-}" ]]; then
+			return 0
+		fi
+		local auth_file="${HOME}/.local/share/opencode/auth.json"
+		if [[ -f "$auth_file" ]]; then
+			return 0
+		fi
+		return 1
+		;;
+	openai)
+		# OpenAI: API key env var OR OpenCode OAuth session (OAuth subscription includes Codex)
+		if [[ -n "${OPENAI_API_KEY:-}" ]]; then
+			return 0
+		fi
+		local auth_file="${HOME}/.local/share/opencode/auth.json"
+		if [[ -f "$auth_file" ]]; then
+			return 0
+		fi
+		return 1
+		;;
+	local)
+		# Local provider is always considered available (no auth needed)
+		return 0
+		;;
+	*)
+		# Unknown provider: assume available (don't silently drop unknown providers)
+		return 0
+		;;
+	esac
+}
+
 classify_failure_reason() {
 	local file_path="$1"
 	local lowered
@@ -511,6 +551,12 @@ choose_model() {
 		idx=$(((start_index + i) % ${#models[@]}))
 		current_model="${models[$idx]}"
 		current_provider=$(extract_provider "$current_model")
+		# Skip providers with no auth configured — silent skip, no backoff recorded.
+		# This keeps Codex in the default list for users with OpenAI OAuth while
+		# being invisible to users who have no OpenAI auth at all.
+		if ! provider_auth_available "$current_provider"; then
+			continue
+		fi
 		if provider_backoff_active "$current_provider"; then
 			continue
 		fi
