@@ -77,7 +77,7 @@ AI: Storing memory:
     Content: "Fixed CORS by adding Access-Control-Allow-Origin header to nginx.conf location block"
     Tags: cors,nginx,headers
     Project: api-gateway
-    
+
     1. Confirm  2. Change type  3. Edit  4. Cancel
 User: 1
 AI: Remembered: "Fixed CORS by adding..." (WORKING_SOLUTION)
@@ -93,7 +93,7 @@ AI: Storing memory:
     Content: "Avoid moment.js - large bundle size (300KB+) and deprecated. Use date-fns or dayjs instead"
     Tags: javascript,dates,bundle-size
     Project: global
-    
+
     1. Confirm  2. Change type  3. Edit  4. Cancel
 User: 1
 AI: Remembered: "Avoid moment.js..." (FAILED_APPROACH)
@@ -108,7 +108,7 @@ AI: Storing memory:
     Content: "Use conventional commit format: type(scope): description"
     Tags: git,commits,style
     Project: global
-    
+
     1. Confirm  2. Change type  3. Edit  4. Cancel
 ```
 
@@ -147,9 +147,9 @@ That worked! Want me to remember this for future sessions?
 ```text
 User: Adding --legacy-peer-deps fixed the npm install
 AI: That worked! Want me to remember this for future sessions?
-    
+
     /remember Use --legacy-peer-deps flag when npm install fails with peer dependency conflicts
-    
+
     (Reply 'y' to confirm, or edit the description)
 ```
 
@@ -158,9 +158,9 @@ AI: That worked! Want me to remember this for future sessions?
 ```text
 User: I always use pnpm instead of npm
 AI: Got it! Want me to remember this preference?
-    
+
     /remember User prefers pnpm over npm for package management
-    
+
     (Reply 'y' to confirm)
 ```
 
@@ -169,9 +169,9 @@ AI: Got it! Want me to remember this preference?
 ```text
 User: That approach with setTimeout didn't work at all
 AI: Noted. Want me to remember to avoid this approach?
-    
+
     /remember Avoid using setTimeout for async coordination - use proper async/await or Promises instead
-    
+
     (Reply 'y' to confirm)
 ```
 
