@@ -1024,6 +1024,7 @@ _scan_single_pr() {
 
 		($body | test(
 			"\\bsuccessfully addresses?\\b|\\beffectively\\b|\\bimproves?\\b|\\benhances?\\b|" +
+			"\\bcorrectly (removes?|implements?|fixes?|handles?|addresses?)\\b|\\bvaluable change\\b|" +
 			"\\bconsistent\\b|\\brobust(ness)?\\b|\\buser experience\\b|" +
 			"\\breduces? (external )?requirements?\\b|\\bwell-implemented\\b"; "i")) as $summary_praise_only |
 

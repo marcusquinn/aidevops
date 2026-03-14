@@ -1043,6 +1043,75 @@ JSON
 	return 0
 }
 
+test_scan_single_pr_filters_issue3173_positive_review_body() {
+	reset_mock_state
+
+	gh() {
+		local command="$1"
+		shift
+		case "$command" in
+		api)
+			while [[ $# -gt 0 ]]; do
+				case "$1" in
+				repos/*/pulls/*/comments)
+					echo "[]"
+					return 0
+					;;
+				repos/*/pulls/*/reviews)
+					printf '%s' '[{"id":1,"user":{"login":"gemini-code-assist"},"state":"COMMENTED","body":"## Code Review\n\nThis pull request correctly removes the suppression of stderr from the version check command in `tool-version-check.sh`. This is a valuable change that improves debuggability by ensuring that error messages from underlying tool commands are no longer hidden. The implementation is correct and aligns with the project\u0027s general rules against blanket error suppression.","submitted_at":"2024-01-01T00:00:00Z","html_url":"https://github.com/example/repo/pull/1#pullrequestreview-1"}]'
+					return 0
+					;;
+				repos/*/git/trees/*)
+					echo '{"tree":[]}'
+					return 0
+					;;
+				repos/*)
+					echo "main"
+					return 0
+					;;
+				esac
+				shift
+			done
+			echo "[]"
+			return 0
+			;;
+		label | pr) return 0 ;;
+		esac
+		echo "[]"
+		return 0
+	}
+
+	local findings
+	findings=$(_scan_single_pr "owner/repo" "1" "medium" "false" 2>/dev/null)
+	local count
+	count=$(printf '%s' "$findings" | jq 'length' 2>/dev/null || echo "0")
+
+	if [[ "$count" -eq 0 ]]; then
+		print_result "issue #3173 review body is filtered as non-actionable" 0
+	else
+		print_result "issue #3173 review body is filtered as non-actionable" 1 "expected 0 findings, got ${count}"
+	fi
+
+	gh() {
+		local command="$1"
+		shift
+		case "$command" in
+		api)
+			_mock_gh_api "$@"
+			return $?
+			;;
+		label) return 0 ;;
+		issue)
+			_mock_gh_issue "$@"
+			return $?
+			;;
+		esac
+		echo "unexpected gh call: ${command}" >&2
+		return 1
+	}
+	return 0
+}
+
 # Regression test for GH#4814 / incident: issue #3343 filed for PR #2166.
 # The exact Gemini review body that triggered the false-positive issue creation.
 # Review state: COMMENTED, no inline comments, bot reviewer.
@@ -1396,6 +1465,7 @@ main() {
 	test_scan_single_pr_filters_issue3188_review_body
 	test_scan_single_pr_filters_issue3363_review_body
 	test_scan_single_pr_filters_issue3303_review_body
+	test_scan_single_pr_filters_issue3173_positive_review_body
 	test_scan_single_pr_filters_issue3325_review_body
 	test_scan_single_pr_filters_pr2647_positive_review_body
 
