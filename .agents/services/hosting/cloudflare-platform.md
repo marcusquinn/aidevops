@@ -8,9 +8,9 @@ imported_from: external
 
 # Cloudflare Platform Skill
 
-**Role**: Development guidance for building on the Cloudflare platform — patterns, gotchas, decision trees, SDK usage, and API references. This skill is for **developers writing code that runs on Cloudflare** (Workers, Pages, D1, R2, KV, Durable Objects, AI, etc.).
+**Role**: Development guidance for building on the Cloudflare platform — patterns, gotchas, decision trees, and SDK usage. This skill is for **developers writing code that runs on Cloudflare** (Workers, Pages, D1, R2, KV, Durable Objects, AI, etc.).
 
-> **Not for API operations**: To manage, configure, or update Cloudflare resources (DNS records, zone settings, deployments) use the Cloudflare Code Mode MCP — see `tools/api/cloudflare-mcp.md`.
+> **Not for API operations**: To manage, configure, or update Cloudflare resources (DNS records, zone settings, deployments) use the Cloudflare Code Mode MCP — see `../../tools/api/cloudflare-mcp.md`.
 
 <!-- AI-CONTEXT-START -->
 
@@ -18,7 +18,7 @@ imported_from: external
 
 - **Role**: Development guidance — patterns, gotchas, SDK usage, decision trees
 - **Scope**: Building code that runs ON Cloudflare (Workers, Pages, D1, R2, KV, DO, AI, etc.)
-- **Not for**: Managing/configuring CF resources → use `tools/api/cloudflare-mcp.md` (Code Mode MCP)
+- **Not for**: Managing/configuring CF resources → use `../../tools/api/cloudflare-mcp.md` (Code Mode MCP)
 - **Entry point**: Use decision trees below to find the right product, then load `./references/<product>/README.md`
 - **Reference format**: Multi-file (`patterns.md`, `gotchas.md`) or single-file; `api.md`/`configuration.md` superseded by Code Mode live OpenAPI queries
 - **60+ products** indexed below with direct entry-point paths
@@ -54,7 +54,7 @@ Each product in `./references/<product>/` contains a `README.md` as the entry po
 | `patterns.md` | Common patterns, best practices | Implementation guidance |
 | `gotchas.md` | Pitfalls, limitations, edge cases | Debugging, avoiding mistakes |
 
-> **API & configuration details**: Use the Cloudflare Code Mode MCP (`tools/api/cloudflare-mcp.md`) for live OpenAPI spec queries — `api.md` and `configuration.md` files have been removed as they are superseded by Code Mode's real-time spec access.
+> **API & configuration details**: Use the Cloudflare Code Mode MCP (`../../tools/api/cloudflare-mcp.md`) for live OpenAPI spec queries — `api.md` and `configuration.md` files have been removed as they are superseded by Code Mode's real-time spec access.
 
 **Single-file format:** All information consolidated in `README.md`.
 
