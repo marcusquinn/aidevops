@@ -809,11 +809,13 @@ function validatePositionalParams(filePath) {
         //   - $N/billing-unit (e.g. $5/mo, $9/year) — but NOT $1/config (path)
         //   - $N followed by space + pricing/unit word (e.g. $5 flat, $3 fee, $9 per month)
         //   - Markdown table rows (lines starting with |)
+        //   - $N followed by pipe (pipe-delimited cells, e.g. $5 | next column)
         if (
           /\$[1-9][0-9.,]/.test(stripped) ||
           /\$[1-9]\/(?:mo(?:nth)?|yr|year|day|week|hr|hour)\b/.test(stripped) ||
           /\$[1-9]\s+(?:per|mo(?:nth)?|year|yr|day|week|hr|hour|flat|each|off|fee|plan|tier|user|seat|unit|addon|setup|trial|credit|annual|quarterly|monthly)\b/.test(stripped) ||
-          /^\s*\|/.test(line)
+          /^\s*\|/.test(line) ||
+          /\$[1-9]\s*\|/.test(stripped)
         ) {
           continue;
         }
