@@ -145,7 +145,8 @@ Protocol-level consent system:
 ```bash
 # Create project
 mkdir my-agent && cd my-agent
-npm init --init-type=module -y
+npm init -y
+npm pkg set type=module
 
 # Install SDK and TypeScript tooling
 npm i @xmtp/agent-sdk
