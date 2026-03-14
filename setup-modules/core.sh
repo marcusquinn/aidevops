@@ -437,10 +437,6 @@ check_requirements() {
 		missing_deps+=("curl")
 		missing_packages+=("curl")
 	fi
-	if ! command -v ssh >/dev/null 2>&1; then
-		missing_deps+=("ssh")
-		missing_packages+=("ssh")
-	fi
 	if ! command -v rg >/dev/null 2>&1; then
 		missing_deps+=("rg")
 		missing_packages+=("ripgrep")
