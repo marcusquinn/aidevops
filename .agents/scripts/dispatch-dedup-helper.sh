@@ -85,7 +85,7 @@ extract_keys() {
 
 	# Pattern 4: Branch-style "issue-NNN-" or "pr-NNN-" (from worktree names)
 	local branch_issue_nums
-	branch_issue_nums=$(printf '%s' "$lower_title" | grep -oE 'issue-([0-9]+)' | grep -oE '[0-9]+' || true)
+	branch_issue_nums=$(printf '%s' "$lower_title" | grep -oP 'issue-\K[0-9]+' || true)
 	if [[ -n "$branch_issue_nums" ]]; then
 		while IFS= read -r num; do
 			[[ -n "$num" ]] && keys+=("issue-${num}")
