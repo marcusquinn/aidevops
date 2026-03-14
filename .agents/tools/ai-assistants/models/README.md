@@ -90,7 +90,7 @@ The registry runs automatically on `aidevops update` and can be added to cron fo
 
 - `tools/ai-assistants/fallback-chains.md` — Fallback chain configuration and gateway providers
 - `tools/context/model-routing.md` — Cost-aware routing rules
-- `compare-models-helper.sh discover` — Detect available providers
+- `scripts/compare-models-helper.sh discover --probe` — Detect available providers
 - `model-registry-helper.sh` — Provider/model registry with periodic sync
 - `fallback-chain-helper.sh` — Fallback chain resolution with trigger detection
 - `tools/ai-assistants/headless-dispatch.md` — CLI dispatch with model selection
