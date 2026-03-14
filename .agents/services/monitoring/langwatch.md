@@ -222,7 +222,7 @@ Docker Compose stack:
   langwatch/opensearch-lite      → Trace storage + search on :9200
 ```
 
-**Port conflicts**: The default ports (5432, 6379) may conflict with existing local services. If using the shared localdev Postgres, update `DATABASE_URL` in `.env` to point at the shared instance and remove the `postgres` service from `compose.yml`.
+**Port conflicts**: The default ports (5432, 6379) may conflict with existing local services. If using the shared localdev Postgres, update `DATABASE_URL` in `.env` to point at the shared instance and remove the `postgres` service from `docker-compose.yml`.
 
 ## Troubleshooting
 
@@ -235,14 +235,14 @@ lsof -i :6379  # Redis
 lsof -i :9200  # OpenSearch
 ```
 
-Either stop the conflicting service or remap ports in `compose.yml`.
+Either stop the conflicting service or remap ports in `docker-compose.yml`.
 
 ### OpenSearch out of memory
 
 The default config limits OpenSearch to 256MB. If it OOMs on large trace volumes:
 
 ```yaml
-# In compose.yml, increase the limit
+# In docker-compose.yml, increase the limit
 environment:
   - "OPENSEARCH_JAVA_OPTS=-Xms512m -Xmx512m"
 deploy:
