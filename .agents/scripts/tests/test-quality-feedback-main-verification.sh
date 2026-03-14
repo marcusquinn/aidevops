@@ -429,6 +429,156 @@ test_plain_fence_skips_diff_marker_lines() {
 	return 0
 }
 
+# Helper: run the approval-detection jq filter against a review body.
+# Returns "skip" if the review would be skipped, "keep" if it would be kept.
+# Mirrors the $approval_only + $actionable logic in _scan_single_pr.
+_test_approval_filter() {
+	local body="$1"
+	local state="${2:-COMMENTED}"
+	local reviewer="${3:-coderabbit}"
+
+	# Replicate the jq filter from _scan_single_pr review_findings block
+	local result
+	result=$(jq -rn \
+		--arg body "$body" \
+		--arg state "$state" \
+		--arg reviewer "$reviewer" '
+		($body | test(
+			"^[\\s\\n]*(lgtm|looks good( to me)?|ship it|shipit|:shipit:|:\\+1:|👍|" +
+			"approved?|great (work|job|change|pr|patch)|nice (work|job|change|pr|patch)|" +
+			"good (work|job|change|pr|patch|catch|call|stuff)|well done|" +
+			"no (further |more )?(comments?|issues?|concerns?|feedback|changes? (needed|required))|" +
+			"nothing (further|else|more) (to (add|comment|say|note))?|" +
+			"(all |everything )?(looks?|seems?) (good|fine|correct|great|solid|clean)|" +
+			"(this |the )?(pr|patch|change|diff|code) (looks?|seems?) (good|fine|correct|great|solid|clean)|" +
+			"(i have )?no (objections?|issues?|concerns?|comments?)|" +
+			"(thanks?|thank you)[,.]?\\s*(for the (pr|patch|fix|change|contribution))?[.!]?\\s*$"; "i")) as $approval_only |
+
+		($body | test(
+			"\\bshould\\b|\\bconsider\\b|\\binstead\\b|\\bsuggest|\\brecommend|" +
+			"\\bwarning\\b|\\bcaution\\b|\\bavoid\\b|\\b(don ?'"'"'?t|do not)\\b|" +
+			"\\bvulnerab|\\binsecure|\\binjection\\b|\\bxss\\b|\\bcsrf\\b|" +
+			"\\bbug\\b|\\berror\\b|\\bproblem\\b|\\bfail\\b|\\bincorrect\\b|\\bwrong\\b|\\bmissing\\b|\\bbroken\\b|" +
+			"\\bnit:|\\btodo:|\\bfixme|\\bhardcoded|\\bdeprecated|" +
+			"\\brace.condition|\\bdeadlock|\\bleak|\\boverflow|" +
+			"\\bworkaround\\b|\\bhack\\b|" +
+			"```\\s*(suggestion|diff)"; "i")) as $actionable |
+
+		# skip = approval_only AND NOT actionable
+		if ($approval_only and ($actionable | not)) then "skip"
+		else "keep"
+		end
+	')
+	echo "$result"
+	return 0
+}
+
+test_skips_lgtm_review() {
+	local result
+	result=$(_test_approval_filter "LGTM")
+	if [[ "$result" == "skip" ]]; then
+		print_result "skip LGTM review" 0
+	else
+		print_result "skip LGTM review" 1 "expected skip, got ${result}"
+	fi
+	return 0
+}
+
+test_skips_no_further_comments_review() {
+	local result
+	result=$(_test_approval_filter "I've reviewed the changes and have no further comments. Good work.")
+	if [[ "$result" == "skip" ]]; then
+		print_result "skip 'no further comments' review" 0
+	else
+		print_result "skip 'no further comments' review" 1 "expected skip, got ${result}"
+	fi
+	return 0
+}
+
+test_skips_looks_good_review() {
+	local result
+	result=$(_test_approval_filter "Looks good to me!")
+	if [[ "$result" == "skip" ]]; then
+		print_result "skip 'looks good to me' review" 0
+	else
+		print_result "skip 'looks good to me' review" 1 "expected skip, got ${result}"
+	fi
+	return 0
+}
+
+test_skips_good_work_review() {
+	local result
+	result=$(_test_approval_filter "Good work on this PR.")
+	if [[ "$result" == "skip" ]]; then
+		print_result "skip 'good work' review" 0
+	else
+		print_result "skip 'good work' review" 1 "expected skip, got ${result}"
+	fi
+	return 0
+}
+
+test_skips_no_issues_review() {
+	local result
+	result=$(_test_approval_filter "No issues found. Everything looks good.")
+	if [[ "$result" == "skip" ]]; then
+		print_result "skip 'no issues' review" 0
+	else
+		print_result "skip 'no issues' review" 1 "expected skip, got ${result}"
+	fi
+	return 0
+}
+
+test_keeps_actionable_approved_review() {
+	# APPROVED review that also contains actionable critique — must be kept
+	local result
+	result=$(_test_approval_filter "Looks good overall, but you should consider adding error handling for the null case." "APPROVED")
+	if [[ "$result" == "keep" ]]; then
+		print_result "keep APPROVED review with actionable critique" 0
+	else
+		print_result "keep APPROVED review with actionable critique" 1 "expected keep, got ${result}"
+	fi
+	return 0
+}
+
+test_keeps_changes_requested_review() {
+	# CHANGES_REQUESTED review — must always be kept
+	local result
+	result=$(_test_approval_filter "This looks wrong. The function is missing error handling." "CHANGES_REQUESTED")
+	if [[ "$result" == "keep" ]]; then
+		print_result "keep CHANGES_REQUESTED review with critique" 0
+	else
+		print_result "keep CHANGES_REQUESTED review with critique" 1 "expected keep, got ${result}"
+	fi
+	return 0
+}
+
+test_keeps_review_with_bug_report() {
+	# Review mentioning a bug — must be kept even if it starts positively
+	local result
+	result=$(_test_approval_filter "Good work overall, but there's a bug in the error handler — it fails when input is null.")
+	if [[ "$result" == "keep" ]]; then
+		print_result "keep review with bug report despite positive opener" 0
+	else
+		print_result "keep review with bug report despite positive opener" 1 "expected keep, got ${result}"
+	fi
+	return 0
+}
+
+test_keeps_review_with_suggestion_fence() {
+	# Review with a suggestion code fence — must be kept
+	local result
+	result=$(_test_approval_filter 'Looks good, but consider this change:
+```suggestion
+return nil, fmt.Errorf("invalid input: %w", err)
+```')
+	if [[ "$result" == "keep" ]]; then
+		print_result "keep review with suggestion fence" 0
+	else
+		print_result "keep review with suggestion fence" 1 "expected keep, got ${result}"
+	fi
+	return 0
+}
+
 main() {
 	source "$HELPER"
 
@@ -442,6 +592,18 @@ main() {
 	test_transient_api_error_keeps_finding_as_unverifiable
 	test_uses_default_branch_ref_for_contents_lookup
 	test_plain_fence_skips_diff_marker_lines
+
+	echo ""
+	echo "Running approval/sentiment detection tests (GH#4604)"
+	test_skips_lgtm_review
+	test_skips_no_further_comments_review
+	test_skips_looks_good_review
+	test_skips_good_work_review
+	test_skips_no_issues_review
+	test_keeps_actionable_approved_review
+	test_keeps_changes_requested_review
+	test_keeps_review_with_bug_report
+	test_keeps_review_with_suggestion_fence
 
 	echo "Results: ${TESTS_PASSED}/${TESTS_RUN} passed, ${TESTS_FAILED} failed"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then

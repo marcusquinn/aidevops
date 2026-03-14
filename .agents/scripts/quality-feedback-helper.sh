@@ -562,6 +562,8 @@ cmd_watch() {
 #   --create-issues   Actually create GitHub issues for findings
 #   --min-severity    Minimum severity to report: critical|high|medium (default: medium)
 #   --json            Output findings as JSON instead of human-readable
+#   --dry-run         Scan and report findings without creating issues or marking
+#                     PRs as scanned. Useful for identifying false-positive issues.
 #
 # Returns: 0 on success, 1 on error
 #######################################
@@ -573,6 +575,7 @@ cmd_scan_merged() {
 	local json_output=false
 	local backfill=false
 	local tag_actioned=false
+	local dry_run=false
 
 	# Parse flags
 	while [[ $# -gt 0 ]]; do
@@ -603,6 +606,10 @@ cmd_scan_merged() {
 			;;
 		--tag-actioned)
 			tag_actioned=true
+			shift
+			;;
+		--dry-run)
+			dry_run=true
 			shift
 			;;
 		*)
@@ -711,7 +718,9 @@ cmd_scan_merged() {
 	if [[ "$json_output" != "true" ]]; then
 		echo -e "${BLUE:-}=== Scanning ${total_to_scan} merged PRs for unactioned review feedback ===${NC:-}"
 		echo "Repository: ${repo_slug}"
-		if [[ "$backfill" == true ]]; then
+		if [[ "$dry_run" == true ]]; then
+			echo "Mode: dry-run (no issues will be created, PRs will not be marked scanned)"
+		elif [[ "$backfill" == true ]]; then
 			echo "Mode: backfill (processing in batches of ${batch_size} with rate limiting)"
 		fi
 		echo ""
@@ -748,13 +757,18 @@ cmd_scan_merged() {
 
 		local findings
 		findings=$(_scan_single_pr "$repo_slug" "$pr_num" "$min_severity") || {
-			gh pr edit "$pr_num" --repo "$repo_slug" --add-label "review-feedback-scanned" >/dev/null 2>&1 || true
-			newly_scanned+=("$pr_num")
+			# In dry-run mode, don't mark PRs as scanned so they can be re-scanned
+			if [[ "$dry_run" != true ]]; then
+				gh pr edit "$pr_num" --repo "$repo_slug" --add-label "review-feedback-scanned" >/dev/null 2>&1 || true
+				newly_scanned+=("$pr_num")
+			fi
 			batch_count=$((batch_count + 1))
 			continue
 		}
-		gh pr edit "$pr_num" --repo "$repo_slug" --add-label "review-feedback-scanned" >/dev/null 2>&1 || true
-		newly_scanned+=("$pr_num")
+		if [[ "$dry_run" != true ]]; then
+			gh pr edit "$pr_num" --repo "$repo_slug" --add-label "review-feedback-scanned" >/dev/null 2>&1 || true
+			newly_scanned+=("$pr_num")
+		fi
 		batch_count=$((batch_count + 1))
 
 		local finding_count
@@ -766,21 +780,24 @@ cmd_scan_merged() {
 
 		total_findings=$((total_findings + finding_count))
 
-		# Merge into all_findings_json (skip in backfill to save memory)
-		if [[ "$backfill" != true ]]; then
+		# Merge into all_findings_json (skip in backfill to save memory, unless dry-run)
+		if [[ "$backfill" != true || "$dry_run" == true ]]; then
 			all_findings_json=$(echo "$all_findings_json" "$findings" | jq -s '.[0] + .[1]')
 		fi
 
-		# Create issues if requested
-		if [[ "$create_issues" == "true" ]]; then
+		# Create issues if requested (never in dry-run mode)
+		if [[ "$create_issues" == "true" && "$dry_run" != true ]]; then
 			local created
 			created=$(_create_quality_debt_issues "$repo_slug" "$pr_num" "$findings")
 			total_issues_created=$((total_issues_created + created))
+		elif [[ "$dry_run" == true && "$json_output" != "true" ]]; then
+			# In dry-run mode, print what would be created
+			printf '%s' "$findings" | jq -r '.[] | "  [dry-run] PR #\(.pr) \(.reviewer) (\(.severity)): \(.body | .[0:120])"'
 		fi
 	done
 
-	# Update state file with newly scanned PRs (final save)
-	if [[ ${#newly_scanned[@]} -gt 0 ]]; then
+	# Update state file with newly scanned PRs (final save) — skipped in dry-run
+	if [[ "$dry_run" != true && ${#newly_scanned[@]} -gt 0 ]]; then
 		local new_scanned_json
 		new_scanned_json=$(printf '%s\n' "${newly_scanned[@]}" | jq -R 'tonumber' | jq -s '.')
 		local now_iso
@@ -800,19 +817,24 @@ cmd_scan_merged() {
 	# Output
 	if [[ "$json_output" == "true" ]]; then
 		local details_json="$all_findings_json"
-		[[ "$backfill" == true ]] && details_json="[]"
+		[[ "$backfill" == true && "$dry_run" != true ]] && details_json="[]"
 		jq -n \
 			--argjson scanned "$batch_count" \
 			--argjson findings "$total_findings" \
 			--argjson issues_created "$total_issues_created" \
 			--argjson details "$details_json" \
-			'{scanned: $scanned, findings: $findings, issues_created: $issues_created, details: $details}'
+			--argjson dry_run "$([[ "$dry_run" == true ]] && echo 'true' || echo 'false')" \
+			'{scanned: $scanned, findings: $findings, issues_created: $issues_created, details: $details, dry_run: $dry_run}'
 	else
 		echo ""
 		echo -e "${BLUE:-}=== Scan Summary ===${NC:-}"
 		echo "PRs scanned: ${batch_count}"
 		echo "Findings: ${total_findings}"
-		echo "Issues created: ${total_issues_created}"
+		if [[ "$dry_run" == true ]]; then
+			echo "Issues that would be created: ${total_findings} (dry-run — none created)"
+		else
+			echo "Issues created: ${total_issues_created}"
+		fi
 	fi
 	return 0
 }
@@ -946,6 +968,21 @@ _scan_single_pr() {
 
 		select($sev_num >= $min_num) |
 
+		# Detect purely positive/approving reviews with no actionable critique.
+		# These are false positives — filing quality-debt issues for "LGTM" or
+		# "no further comments" wastes worker time (GH#4604, incident: issue #3704 / PR #1484).
+		# Applies to all reviewer types including humans.
+		($body | test(
+			"^[\\s\\n]*(lgtm|looks good( to me)?|ship it|shipit|:shipit:|:\\+1:|👍|" +
+			"approved?|great (work|job|change|pr|patch)|nice (work|job|change|pr|patch)|" +
+			"good (work|job|change|pr|patch|catch|call|stuff)|well done|" +
+			"no (further |more )?(comments?|issues?|concerns?|feedback|changes? (needed|required))|" +
+			"nothing (further|else|more) (to (add|comment|say|note))?|" +
+			"(all |everything )?(looks?|seems?) (good|fine|correct|great|solid|clean)|" +
+			"(this |the )?(pr|patch|change|diff|code) (looks?|seems?) (good|fine|correct|great|solid|clean)|" +
+			"(i have )?no (objections?|issues?|concerns?|comments?)|" +
+			"(thanks?|thank you)[,.]?\\s*(for the (pr|patch|fix|change|contribution))?[.!]?)[\\s\\n]*$"; "i")) as $approval_only |
+
 		# Filter out review-body summaries that do not contain concrete fixes.
 		# Bots frequently post high-level walkthroughs that mention suggestions
 		# but do not include actionable details tied to a file/line.
@@ -958,6 +995,12 @@ _scan_single_pr() {
 			"\\brace.condition|\\bdeadlock|\\bleak|\\boverflow|" +
 			"\\bworkaround\\b|\\bhack\\b|" +
 			"```\\s*(suggestion|diff)"; "i")) as $actionable |
+
+		# Skip purely approving reviews: no actionable critique AND body matches
+		# approval-only patterns. This catches "LGTM", "good work", "no further
+		# comments", etc. regardless of reviewer type or review state.
+		select(($approval_only and ($actionable | not)) | not) |
+
 		(if $reviewer == "human" then
 			true
 		 elif .state == "APPROVED" then
@@ -1449,6 +1492,9 @@ scan-merged options:
                     incrementally so interrupted runs can resume.
   --tag-actioned    Label scanned PRs as "code-reviews-actioned" when all
                     quality-debt issues for that PR are closed (or none exist).
+  --dry-run         Scan and report findings without creating issues or marking
+                    PRs as scanned. Use to identify false-positive issues before
+                    committing to issue creation.
 
 Examples:
   quality-feedback-helper.sh status
@@ -1459,6 +1505,7 @@ Examples:
   quality-feedback-helper.sh scan-merged --repo owner/repo --batch 20
   quality-feedback-helper.sh scan-merged --repo owner/repo --create-issues
   quality-feedback-helper.sh scan-merged --repo owner/repo --backfill --create-issues --tag-actioned
+  quality-feedback-helper.sh scan-merged --repo owner/repo --dry-run
 
 Requirements:
   - GitHub CLI (gh) installed and authenticated
