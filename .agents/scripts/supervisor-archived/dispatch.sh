@@ -566,9 +566,11 @@ record_dispatch_model_tiers() {
 
 	# Store to DB (non-blocking)
 	if [[ -n "${SUPERVISOR_DB:-}" ]]; then
-		local escaped_id
-		escaped_id=$(sql_escape "$task_id")
-		db "$SUPERVISOR_DB" "UPDATE tasks SET requested_tier = '$(sql_escape "$requested_tier")', actual_tier = '$(sql_escape "$actual_tier")' WHERE id = '$escaped_id';" 2>/dev/null || true
+		db_param "$SUPERVISOR_DB" \
+			"UPDATE tasks SET requested_tier = :requested_tier, actual_tier = :actual_tier WHERE id = :task_id;" \
+			"requested_tier=$requested_tier" \
+			"actual_tier=$actual_tier" \
+			"task_id=$task_id" 2>/dev/null || true
 	fi
 
 	# Log tier delta for immediate visibility
