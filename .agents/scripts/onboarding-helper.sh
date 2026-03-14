@@ -43,7 +43,7 @@ fi
 # Ensure settings.json exists with defaults
 _ensure_settings() {
 	if [[ -x "$SETTINGS_HELPER" ]]; then
-		bash "$SETTINGS_HELPER" init >/dev/null 2>&1
+		bash "$SETTINGS_HELPER" init >/dev/null
 	fi
 	return 0
 }
@@ -52,7 +52,7 @@ _ensure_settings() {
 _get_setting() {
 	local key="$1"
 	if [[ -x "$SETTINGS_HELPER" ]]; then
-		bash "$SETTINGS_HELPER" get "$key" 2>/dev/null
+		bash "$SETTINGS_HELPER" get "$key"
 	else
 		echo "null"
 	fi
@@ -64,7 +64,7 @@ _set_setting() {
 	local key="$1"
 	local value="$2"
 	if [[ -x "$SETTINGS_HELPER" ]]; then
-		bash "$SETTINGS_HELPER" set "$key" "$value" >/dev/null 2>&1
+		bash "$SETTINGS_HELPER" set "$key" "$value" >/dev/null
 	fi
 	return 0
 }
@@ -615,7 +615,7 @@ _sync_dirs_to_settings() {
 	fi
 
 	local dirs_json
-	dirs_json=$(jq -c '[.git_parent_dirs[]? // empty]' "$config_file" 2>/dev/null || echo '["~/Git"]')
+	dirs_json=$(jq -c '[.git_parent_dirs[]? // empty]' "$config_file" || echo '["~/Git"]')
 
 	_set_setting "repo_sync.directories" "$dirs_json"
 	_set_setting "repo_sync.enabled" "true"
@@ -994,7 +994,7 @@ save_concepts() {
 	else
 		# Convert comma-separated to JSON array
 		local json_array
-		json_array=$(echo "$concepts" | tr ',' '\n' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | jq -R . | jq -s .)
+		json_array=$(jq -n --arg concepts "$concepts" '$concepts | split(",") | map(gsub("^[[:space:]]+|[[:space:]]+$"; ""))')
 		_set_setting "user.familiar_concepts" "$json_array"
 	fi
 	echo "Saved familiar concepts"
@@ -1025,7 +1025,7 @@ show_settings() {
 	else
 		echo "Settings helper not found. Settings file: $SETTINGS_FILE"
 		if [[ -f "$SETTINGS_FILE" ]]; then
-			jq '.' "$SETTINGS_FILE" 2>/dev/null || cat "$SETTINGS_FILE"
+			jq '.' "$SETTINGS_FILE" || cat "$SETTINGS_FILE"
 		else
 			echo "(not created yet — run /onboarding)"
 		fi
