@@ -169,13 +169,11 @@ EOF
 		db "$MEMORY_DB" "ALTER TABLE learning_access ADD COLUMN graduated_at TEXT DEFAULT NULL;" || echo "[WARN] Failed to add graduated_at column (may already exist)" >&2
 	fi
 
-	# Create pattern_metadata table if missing (t1095 migration)
-	# Companion table for pattern records — stores strategy, quality, failure_mode, tokens
-	local has_pattern_metadata
-	has_pattern_metadata=$(db "$MEMORY_DB" "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='pattern_metadata';" 2>/dev/null || echo "0")
-	if [[ "$has_pattern_metadata" == "0" ]]; then
-		log_info "Creating pattern_metadata table (t1095)..."
-		db "$MEMORY_DB" <<'EOF'
+	# Ensure pattern_metadata table exists (t1095 migration)
+	# Schema is authoritative in init_db; migrate_db only ensures existence for
+	# pre-t1095 databases and backfills existing pattern records.
+	# Full DDL lives in init_db to avoid duplication (GH#3663).
+	db "$MEMORY_DB" <<'EOF'
 CREATE TABLE IF NOT EXISTS pattern_metadata (
     id TEXT PRIMARY KEY,
     strategy TEXT DEFAULT 'normal' CHECK(strategy IN ('normal', 'prompt-repeat', 'escalated')),
@@ -186,15 +184,14 @@ CREATE TABLE IF NOT EXISTS pattern_metadata (
     estimated_cost REAL DEFAULT NULL
 );
 EOF
-		# Backfill existing pattern records with default strategy='normal'
-		local pattern_types="$PATTERN_TYPES_SQL"
-		local backfill_count
-		backfill_count=$(db "$MEMORY_DB" "SELECT COUNT(*) FROM learnings WHERE type IN ($pattern_types);" 2>/dev/null || echo "0")
-		if [[ "$backfill_count" -gt 0 ]]; then
-			db "$MEMORY_DB" "INSERT OR IGNORE INTO pattern_metadata (id, strategy) SELECT id, 'normal' FROM learnings WHERE type IN ($pattern_types);"
-			log_success "Backfilled $backfill_count existing pattern records into pattern_metadata"
-		fi
-		log_success "pattern_metadata table created (t1095)"
+
+	# Backfill existing pattern records with default strategy='normal' (t1095)
+	local pattern_types="$PATTERN_TYPES_SQL"
+	local backfill_count
+	backfill_count=$(db "$MEMORY_DB" "SELECT COUNT(*) FROM learnings WHERE type IN ($pattern_types) AND id NOT IN (SELECT id FROM pattern_metadata);" 2>/dev/null || echo "0")
+	if [[ "$backfill_count" -gt 0 ]]; then
+		db "$MEMORY_DB" "INSERT OR IGNORE INTO pattern_metadata (id, strategy) SELECT id, 'normal' FROM learnings WHERE type IN ($pattern_types);"
+		log_success "Backfilled $backfill_count existing pattern records into pattern_metadata"
 	fi
 
 	# Add estimated_cost column to pattern_metadata if missing (t1114 migration)
