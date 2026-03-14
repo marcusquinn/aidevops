@@ -763,7 +763,7 @@ process_ai_lifecycle() {
 	local merged_parents=""
 
 	local total_eligible
-	total_eligible=$(printf '%s\n' "$eligible_tasks" | grep -c '.' || echo "0")
+	total_eligible=$(grep -c . <<<"$eligible_tasks" || true)
 	log_info "ai-lifecycle: $total_eligible tasks to evaluate"
 
 	while IFS='|' read -r tid tstatus tpr trepo; do
