@@ -181,6 +181,10 @@ main() {
 		version_str="aidevops v$current (unable to check for updates)"
 	elif [[ "$current" != "$remote" ]]; then
 		# Special format for update available - parsed by AGENTS.md
+		# Cache the update-available string so no-Bash agents can display it too
+		local cache_dir="$HOME/.aidevops/cache"
+		mkdir -p "$cache_dir"
+		echo "UPDATE_AVAILABLE|$current|$remote|$app_name" >"$cache_dir/session-greeting.txt"
 		echo "UPDATE_AVAILABLE|$current|$remote|$app_name"
 		return 0
 	else
