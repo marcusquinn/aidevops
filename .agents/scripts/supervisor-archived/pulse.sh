@@ -3348,8 +3348,7 @@ cmd_pulse() {
 				local viewer_permission=""
 				if [[ -n "$skill_update_repo_root" ]] && command -v gh &>/dev/null; then
 					viewer_permission=$(gh repo view --json viewerPermission --jq '.viewerPermission' \
-						-R "$(git -C "$skill_update_repo_root" remote get-url origin 2>/dev/null |
-							sed 's|.*github\.com[:/]\([^/]*/[^/]*\)\.git|\1|; s|.*github\.com[:/]\([^/]*/[^/]*\)$|\1|')" \
+						-R "$(git -C "$skill_update_repo_root" remote get-url origin 2>/dev/null)" \
 						2>/dev/null || echo "")
 				fi
 				if [[ "$viewer_permission" == "ADMIN" || "$viewer_permission" == "WRITE" ]]; then
