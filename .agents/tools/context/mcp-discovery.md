@@ -73,7 +73,7 @@ npx mcporter call context7.resolve-library-id libraryName=react
 
 | MCP | Subagent | Notes |
 |-----|----------|-------|
-| `grep_app` / `gh_grep` | `@github-search` | CLI-based, zero tokens |
+| `grep_app` / `gh_grep` | `@github-search` | For GitHub code search (no MCP used) |
 
 **Primary search**: `rg`/`fd` (local, instant). Use `@augment-context-engine` for semantic search.
 
