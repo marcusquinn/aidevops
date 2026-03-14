@@ -898,9 +898,21 @@ _scan_single_pr() {
 		}]
 	') || inline_findings="[]"
 
+	# Build a per-reviewer inline comment count map from the already-fetched comments.
+	# Used below to detect summary-only reviews (state=COMMENTED, no inline comments).
+	local inline_counts_json
+	inline_counts_json=$(printf '%s' "$comments" | jq '
+		group_by(.user.login) |
+		map({key: .[0].user.login, value: length}) |
+		from_entries
+	') || inline_counts_json="{}"
+
 	# Process review bodies (for substantive reviews with body content)
 	local review_findings
-	review_findings=$(echo "$reviews" | jq --arg pr "$pr_num" --arg min_sev "$min_severity" '
+	review_findings=$(printf '%s' "$reviews" | jq \
+		--arg pr "$pr_num" \
+		--arg min_sev "$min_severity" \
+		--argjson inline_counts "$inline_counts_json" '
 		[.[] |
 		select(.body != null and .body != "" and (.body | length) > 50) |
 
@@ -910,6 +922,15 @@ _scan_single_pr() {
 		 elif ($login | test("codacy"; "i")) then "codacy"
 		 else "human"
 		 end) as $reviewer |
+
+		# Skip summary-only bot reviews: state=COMMENTED with no inline comments.
+		# Gemini Code Assist (and similar bots) post a high-level PR walkthrough as
+		# a COMMENTED review with zero inline file comments. These are descriptive
+		# summaries, not actionable findings — capturing them creates false-positive
+		# quality-debt issues (see GH#4528, incident: issue #3744 / PR #1121).
+		# Humans and CHANGES_REQUESTED reviews are never skipped by this rule.
+		(($inline_counts[$login] // 0) == 0 and .state == "COMMENTED" and $reviewer != "human") as $summary_only |
+		select($summary_only | not) |
 
 		(.body) as $body |
 		(if ($body | test("security-critical\\.svg|🔴.*critical|CRITICAL"; "i")) then "critical"
@@ -962,6 +983,25 @@ _scan_single_pr() {
 			created_at: .submitted_at
 		}]
 	') || review_findings="[]"
+
+	# Log skipped summary-only reviews at DEBUG level for traceability
+	if [[ "${AIDEVOPS_DEBUG:-}" == "1" ]]; then
+		local skipped_summaries
+		skipped_summaries=$(printf '%s' "$reviews" | jq \
+			--argjson inline_counts "$inline_counts_json" '
+			[.[] |
+			select(.body != null and .body != "" and (.body | length) > 50) |
+			(.user.login) as $login |
+			select(
+				($inline_counts[$login] // 0) == 0 and
+				.state == "COMMENTED" and
+				($login | test("coderabbit|gemini|google|codacy"; "i"))
+			) |
+			"[DEBUG] Skipped summary-only review: id=\(.id) login=\(.login // .user.login) state=\(.state) body_len=\(.body | length)"
+			] | .[]
+		' -r 2>/dev/null || true)
+		[[ -n "$skipped_summaries" ]] && printf '%s\n' "$skipped_summaries" >&2
+	fi
 
 	# Merge and deduplicate
 	findings=$(printf '%s\n%s' "$inline_findings" "$review_findings" | jq -s '.[0] + .[1]')
