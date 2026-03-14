@@ -1,4 +1,7 @@
 #!/bin/bash
+# Intentionally using /bin/bash (not /usr/bin/env bash) for headless compatibility.
+# Some MCP/headless runners provide a stripped PATH where env cannot resolve bash.
+# Keep this exception aligned with issue #2610 and t135.14 standardization context.
 # shellcheck disable=SC2155
 # =============================================================================
 # aidevops Issue Sync Helper (Simplified)
