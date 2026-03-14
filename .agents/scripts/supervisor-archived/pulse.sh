@@ -2289,7 +2289,7 @@ cmd_pulse() {
 				# Dead worker: PID no longer exists
 				rm -f "$pid_file"
 				# t1222: Clean up hang warning marker for dead workers
-				rm -f "$SUPERVISOR_DIR/pids/${health_task}.hang-warned"
+				rm -f "$SUPERVISOR_DIR/pids/${health_task}.hang-warned" 2>/dev/null || true
 				if [[ "$health_status" == "running" || "$health_status" == "dispatched" ]]; then
 					log_warn "  Dead worker for $health_task (PID $health_pid gone, was $health_status) — evaluating"
 					cmd_evaluate "$health_task" --no-ai 2>>"$SUPERVISOR_LOG" || {
@@ -2420,7 +2420,7 @@ cmd_pulse() {
 						fi
 						rm -f "$pid_file"
 						# t1222: Clean up hang warning marker on kill
-						rm -f "$SUPERVISOR_DIR/pids/${health_task}.hang-warned"
+						rm -f "$SUPERVISOR_DIR/pids/${health_task}.hang-warned" 2>/dev/null || true
 
 						# t1074: Auto-retry timed-out workers up to max_retries before marking failed.
 						# Check if the task has a PR already (worker may have created one before timeout).
