@@ -28,22 +28,22 @@ note: Uses repomix CLI directly (not MCP) for better control and reliability
 
 ```bash
 # Compress mode (recommended) - extracts code structure only
-context-builder-helper.sh compress [path]
+~/.aidevops/agents/scripts/context-builder-helper.sh compress [path]
 
 # Full pack with smart defaults
-context-builder-helper.sh pack [path] [xml|markdown|json]
+~/.aidevops/agents/scripts/context-builder-helper.sh pack [path] [xml|markdown|json]
 
 # Quick mode - auto-copies to clipboard
-context-builder-helper.sh quick [path] [pattern]
+~/.aidevops/agents/scripts/context-builder-helper.sh quick [path] [pattern]
 
 # Analyze token usage per file
-context-builder-helper.sh analyze [path] [threshold]
+~/.aidevops/agents/scripts/context-builder-helper.sh analyze [path] [threshold]
 
 # Pack remote GitHub repo
-context-builder-helper.sh remote user/repo [branch]
+~/.aidevops/agents/scripts/context-builder-helper.sh remote user/repo [branch]
 
 # Compare full vs compressed
-context-builder-helper.sh compare [path]
+~/.aidevops/agents/scripts/context-builder-helper.sh compare [path]
 ```
 
 **Direct CLI Commands** (when helper unavailable):

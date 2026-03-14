@@ -22,7 +22,7 @@ tools:
 | Repo Size (KB) | Est. Tokens | Action |
 |----------------|-------------|--------|
 | < 500 | < 50K | Safe for compressed pack |
-| 500-2000 | 50-200K | Use `includePatterns` only |
+| 500-2000 | 50-200K | Use `--include` patterns only |
 | > 2000 | > 200K | **NEVER full pack** - targeted files only |
 
 **Self-check before context-heavy operations**:
@@ -67,7 +67,7 @@ START
   |
   +-- < 500 KB --> Safe for compressed pack
   |
-  +-- 500KB-2MB --> Use includePatterns only
+  +-- 500KB-2MB --> Use --include patterns only
   |
   +-- > 2MB --> STOP - targeted files only
 ```
@@ -98,7 +98,7 @@ npx repomix@latest --remote https://github.com/small/repo --compress
 npx repomix@latest --remote https://github.com/large/repo --include "README.md,src/**/*.ts,docs/**" --compress
 
 # Or use helper script:
-context-builder-helper.sh remote large/repo main  # Auto-compresses
+~/.aidevops/agents/scripts/context-builder-helper.sh remote large/repo main  # Auto-compresses
 ```
 
 ### Searching packed output
@@ -143,7 +143,7 @@ If you hit "prompt is too long":
 
    ```text
    /remember FAILED_APPROACH: Attempted to pack {repo} without size check. 
-   Repo was {size}KB (~{tokens} tokens). Use includePatterns next time.
+   Repo was {size}KB (~{tokens} tokens). Use --include patterns next time.
    ```
 
 ## File Discovery Guardrails
