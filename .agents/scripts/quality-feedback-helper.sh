@@ -991,6 +991,9 @@ _scan_single_pr() {
 		($body | test(
 			"\\blgtm\\b|\\blooks good( to me)?\\b|\\bgood work\\b|" +
 			"\\bno (further |more )?(comments?|issues?|concerns?|feedback)\\b|" +
+			"\\bfound no (issues?|problems?|concerns?)\\b|" +
+			"\\bno (issues?|problems?|concerns?) (found|detected)\\b|" +
+			"\\b(found|detected) nothing (to )?(fix|change|address)\\b|" +
 			"\\beverything (looks?|seems?) (good|fine|correct|great|solid|clean)\\b"; "i")) as $no_actionable_sentiment |
 
 		# Filter out review-body summaries that do not contain concrete fixes.

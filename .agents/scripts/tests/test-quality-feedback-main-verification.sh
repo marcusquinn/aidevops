@@ -538,6 +538,17 @@ test_skips_no_issues_review() {
 	return 0
 }
 
+test_skips_found_no_issues_long_review() {
+	local result
+	result=$(_test_approval_filter "This pull request enhances the AI supervisor's reasoning capabilities by introducing self-improvement and efficiency analysis. It adds two new action types, create_improvement and escalate_model, along with corresponding analysis frameworks and examples in the system prompt. The updates to the prompt are clear and consistent with the stated goals. I've reviewed the changes and found no issues. The new capabilities are a strong step toward a more intelligent supervisor.")
+	if [[ "$result" == "skip" ]]; then
+		print_result "skip long summary review with 'found no issues'" 0
+	else
+		print_result "skip long summary review with 'found no issues'" 1 "expected skip, got ${result}"
+	fi
+	return 0
+}
+
 test_skips_no_further_recommendations_review() {
 	local result
 	result=$(_test_approval_filter "The pull request is well-documented and the fixes are implemented correctly. I have no further recommendations.")
@@ -621,6 +632,7 @@ main() {
 	test_skips_looks_good_review
 	test_skips_good_work_review
 	test_skips_no_issues_review
+	test_skips_found_no_issues_long_review
 	test_skips_no_further_recommendations_review
 	test_keeps_actionable_approved_review
 	test_keeps_changes_requested_review
