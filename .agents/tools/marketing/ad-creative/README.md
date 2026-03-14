@@ -17,10 +17,9 @@ This skill teaches you to create scroll-stopping ad creative that drives results
 - Dynamic Creative Optimization (DCO)
 - Ad fatigue prevention strategies
 
-## Installation
+## Usage in aidevops
 
-1. Copy the `ad-creative/` folder into your OpenClaw skills directory
-2. Restart OpenClaw
+This skill is available at `tools/marketing/ad-creative/`. Reference via the Marketing agent or directly in your prompts.
 
 ## Usage
 

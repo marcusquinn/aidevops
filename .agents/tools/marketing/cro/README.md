@@ -18,10 +18,9 @@ This skill provides comprehensive CRO knowledge—from landing page optimization
 - Cart abandonment recovery strategies
 - Mobile CRO and thumb-zone optimization
 
-## Installation
+## Usage in aidevops
 
-1. Copy the `cro/` folder into your OpenClaw skills directory
-2. Restart OpenClaw
+This skill is available at `tools/marketing/cro/`. Reference via the Marketing agent or directly in your prompts.
 
 ## Usage
 
@@ -36,6 +35,6 @@ Use this skill when:
 ## Requirements
 
 - Analytics platform (Google Analytics, Mixpanel, or similar)
-- A/B testing tool (Optimizely, VWO, Google Optimize)
+- A/B testing tool (Optimizely, VWO, or similar)
 - Heatmap/session recording tool (Hotjar, FullStory)
 - Sufficient traffic volume for statistical significance

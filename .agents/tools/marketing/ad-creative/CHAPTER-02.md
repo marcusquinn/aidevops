@@ -406,7 +406,7 @@ Built specifically for marketing, Jasper offers templates and workflows designed
 **Key Features:**
 - Marketing-specific templates
 - Brand voice training
-- SEO optimization
+- SEO
 - Campaign workspace
 - Team collaboration tools
 - Integration with Surfer SEO

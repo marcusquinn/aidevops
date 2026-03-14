@@ -217,7 +217,7 @@ Now, Today, Instant, Fast, Quick, Limited, Deadline, Hurry, Before, Last Chance,
 Secret, Insider, Private, Members-Only, VIP, Exclusive, Hidden, Underground, Classified
 
 ### Curiosity Words
-Surprising, Shocking, Unusual, Strange, Weird, Unexpected, Counter-intuitive, Little-Known
+Surprising, Shocking, Unusual, Strange, Weird, Unexpected, Counterintuitive, Little-Known
 
 ### Safety/Trust Words
 Proven, Guaranteed, Tested, Secure, Safe, Risk-Free, Certified, Official, Authentic

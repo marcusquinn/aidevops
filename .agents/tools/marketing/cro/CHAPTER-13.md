@@ -271,7 +271,6 @@ This chapter continues from the foundational CRO concepts covered in Chapters 1-
 **Testing:**
 - Optimizely (enterprise)
 - VWO (mid-market)
-- Google Optimize (free, limited)
 
 **Research:**
 - Hotjar (heatmaps, recordings)

@@ -2,11 +2,9 @@
 
 Write high-converting copy for landing pages, emails, ads, and VSLs using proven direct response frameworks.
 
-## Installation
+## Usage in aidevops
 
-```bash
-npx degit indexsy/skills/direct-response-copy ~/.clawdbot/skills/direct-response-copy
-```
+This skill is available at `tools/marketing/direct-response-copy/`. Reference SKILL.md directly or via the Marketing agent's Paid Advertising & CRO domain index.
 
 ## What's Included
 

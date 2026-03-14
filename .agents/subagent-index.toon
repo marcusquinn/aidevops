@@ -5,7 +5,7 @@ Business,business.md,Company orchestration - AI agents managing company function
 Content,content.md,Content creation workflows,opus
 Health,health.md,Health and wellness,opus
 Legal,legal.md,Legal compliance,opus
-Marketing,marketing.md,Marketing strategy email campaigns (FluentCRM) paid ads (Meta) CRO and direct response copy,opus
+Marketing,marketing.md,Marketing strategy, email campaigns (FluentCRM), paid ads (Meta), CRO, and direct response copy,opus
 Research,research.md,Research and analysis tasks,gemini/grok
 Sales,sales.md,Sales operations and CRM pipeline (FluentCRM),opus
 SEO,seo.md,SEO optimization and analysis,opus

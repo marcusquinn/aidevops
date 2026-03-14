@@ -995,7 +995,7 @@ Instantly recognizable in feed
 
 **Character Consistency:**
 
-*Example - Progressive (Flo):**
+*Example - Progressive (Flo):*
 ```
 Same character across 15+ years of ads
 Consistent wardrobe (white apron, name tag)

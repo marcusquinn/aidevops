@@ -235,7 +235,7 @@ Next steps: [Follow-up actions]
 
 ### Sharing Learnings
 
- institutionalize knowledge sharing:
+Institutionalize knowledge sharing:
 - Weekly creative review meetings
 - Monthly testing retrospectives
 - Quarterly creative strategy sessions
@@ -270,7 +270,7 @@ Use Bayesian statistics instead of frequentist:
 - Allows for continuous monitoring without p-hacking concerns
 - More intuitive interpretation for business decisions
 
-Tools: Google Optimize, VWO, and Optimizely offer Bayesian options.
+Tools: VWO and Optimizely offer Bayesian options.
 
 ## 12.8 Testing Program Maturity
 

@@ -404,19 +404,19 @@ Research from the University of California, Berkeley, analyzed thousands of stor
 
 1. **Rags to Riches** (rise): Starting low, ending high
    - Perfect for: Transformation stories, success testimonials, before/after
-   
+
 2. **Tragedy** (fall): Starting high, ending low
    - Use sparingly in ads; effective for PSA or awareness campaigns
-   
+
 3. **Man in a Hole** (fall then rise): Dip followed by recovery
    - Classic problem-solution structure
-   
+
 4. **Icarus** (rise then fall): Success followed by failure
    - Warning stories, "don't make this mistake" narratives
-   
+
 5. **Cinderella** (rise then fall then rise): Hope, despair, triumph
    - Full journey narratives, comeback stories
-   
+
 6. **Oedipus** (fall then rise then fall): Complex emotional journeys
    - Advanced storytelling for brand documentaries
 

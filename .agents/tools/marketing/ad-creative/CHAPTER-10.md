@@ -170,7 +170,7 @@ Ensure creative conclusions are statistically valid:
 
 Expand winning creative reach:
 - **Budget Increase**: Gradual 20-30% daily increases to avoid algorithm shock
-- **Audience Expansion**: Broen targeting while maintaining performance
+- **Audience Expansion**: Broaden targeting while maintaining performance
 - **Geographic Expansion**: Roll out to new markets
 - **Platform Expansion**: Adapt winning creative for additional platforms
 

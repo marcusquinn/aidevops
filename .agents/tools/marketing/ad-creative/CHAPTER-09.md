@@ -317,7 +317,7 @@ Systematically test creative variations across audience segments:
 - Create 3-5 creative concepts per audience segment
 - Test each concept against all segments
 - Identify cross-segment winners (broad appeal)
-- Identify segment-specific winners (nicle optimization)
+- Identify segment-specific winners (niche optimization)
 
 ### Competitive Creative Intelligence
 
