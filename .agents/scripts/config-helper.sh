@@ -29,7 +29,10 @@ if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
 fi
 
 # Resolve script directory (works when sourced or executed)
-_CONFIG_HELPER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || return 2>/dev/null || exit
+_CONFIG_HELPER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || {
+	echo "[config] Failed to resolve script directory" >&2
+	return 1 2>/dev/null || exit 1
+}
 
 # Only source shared-constants.sh when running standalone (not when sourced by it).
 # IMPORTANT: source=/dev/null tells ShellCheck NOT to follow this source directive.
@@ -557,6 +560,9 @@ cmd_get() {
 
 	# Support legacy flat keys
 	dotpath=$(_legacy_key_to_dotpath "$dotpath")
+
+	# Validate dotpath contains only safe characters
+	_validate_dotpath "$dotpath" || return 1
 
 	local value
 	value=$(config_get "$dotpath" "")
