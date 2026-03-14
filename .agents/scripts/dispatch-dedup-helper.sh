@@ -126,9 +126,8 @@ normalize_title() {
 list_running_keys() {
 	local worker_procs
 	# Get full command lines of running worker processes
-	# macOS ps -eo pid,args works; Linux ps -eo pid,args works too
-	# shellcheck disable=SC2009  # Need ps+grep for full cmdline; pgrep can't return args
-	worker_procs=$(ps -eo pid,args 2>/dev/null | grep -E '/full-loop|opencode run|claude.*run' | grep -v grep || true)
+	# pgrep -af matches against the full command line and excludes itself from results
+	worker_procs=$(pgrep -af '/full-loop|opencode run|claude.*run' || true)
 
 	if [[ -z "$worker_procs" ]]; then
 		return 0
