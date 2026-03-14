@@ -150,7 +150,7 @@ detect_claude_oauth() {
 #   SUPERVISOR_CLI — explicit CLI override (opencode|claude)
 #######################################
 resolve_ai_cli() {
-	local resolved_model="${1:-}"
+	local _resolved_model="${1:-}" # unused; kept for API compat
 
 	# Allow env var override for explicit CLI preference
 	if [[ -n "${SUPERVISOR_CLI:-}" ]]; then
@@ -173,11 +173,11 @@ resolve_ai_cli() {
 	fi
 	# Last-resort fallback only if opencode is not installed
 	if command -v claude &>/dev/null; then
-		log_warn "opencode not found, falling back to claude CLI. Install opencode: npm i -g opencode"
+		log_warn "opencode not found, falling back to claude CLI. Install OpenCode: npm install -g opencode-ai"
 		echo "claude"
 		return 0
 	fi
-	log_error "No supported AI CLI found. Install opencode: npm i -g opencode"
+	log_error "No supported AI CLI found. Install OpenCode: npm install -g opencode-ai"
 	log_error "See: https://opencode.ai/docs/installation/"
 	return 1
 }
