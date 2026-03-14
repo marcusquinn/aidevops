@@ -1664,6 +1664,10 @@ cmd_pulse() {
 						--maker "pulse:phase1:t1113" 2>/dev/null || true
 					# Clean up worker process tree and PID file
 					cleanup_worker_processes "$tid"
+					# t1331: Count ENVIRONMENT failures for circuit-breaker too — repeated
+					# infra failures can loop without tripping the breaker otherwise.
+					# Prefix with "environment:" so downstream reporting can distinguish them.
+					cb_record_failure "$tid" "environment:$outcome_detail" 2>>"$SUPERVISOR_LOG" || true
 					# Transition back to queued (preserves current retry count)
 					cmd_transition "$tid" "queued" --error "environment:$outcome_detail" 2>>"$SUPERVISOR_LOG" || true
 					# Store pattern for diagnostics but don't mark as task failure
