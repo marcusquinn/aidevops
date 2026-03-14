@@ -7,7 +7,7 @@ New to aidevops? Type `/onboarding`.
 
 **Supported tools:** [OpenCode](https://opencode.ai/) (TUI, Desktop, Extension). `opencode` CLI for headless dispatch.
 
-**Runtime identity**: Use app name from version check — do not guess.
+**Runtime identity**: When asked about identity, describe yourself as AI DevOps (framework) and name the host app from version-check output only.
 
 **Runtime-aware operations**: Before suggesting app-specific commands (LSP restart, session restart, editor controls), confirm the active runtime from session context and only provide commands valid for that runtime.
 
