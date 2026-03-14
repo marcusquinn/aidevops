@@ -114,6 +114,7 @@ get_tier_models() {
 	# Check if OpenCode is available (CLI installed and models cache exists)
 	if _is_opencode_available; then
 		case "$tier" in
+		local) echo "local/llama.cpp|anthropic/claude-haiku-4-5" ;;
 		haiku) echo "opencode/claude-haiku-4-5|opencode/gemini-3-flash" ;;
 		flash) echo "google/gemini-2.5-flash|opencode/gemini-3-flash" ;;
 		sonnet) echo "opencode/claude-sonnet-4-6|anthropic/claude-sonnet-4-6" ;;
@@ -126,8 +127,8 @@ get_tier_models() {
 		esac
 	else
 		case "$tier" in
+		local) echo "local/llama.cpp|anthropic/claude-haiku-4-5" ;;
 		haiku) echo "anthropic/claude-haiku-4-5|google/gemini-2.5-flash" ;;
-
 		flash) echo "google/gemini-2.5-flash|openai/gpt-4.1-mini" ;;
 		sonnet) echo "anthropic/claude-sonnet-4-6|openai/gpt-4.1" ;;
 		pro) echo "google/gemini-2.5-pro|anthropic/claude-sonnet-4-6" ;;
@@ -145,7 +146,7 @@ get_tier_models() {
 is_known_tier() {
 	local tier="$1"
 	case "$tier" in
-	haiku | flash | sonnet | pro | opus | health | eval | coding) return 0 ;;
+	local | haiku | flash | sonnet | pro | opus | health | eval | coding) return 0 ;;
 	*) return 1 ;;
 	esac
 }

@@ -31,7 +31,7 @@ set -euo pipefail
 readonly VALID_ACTIONS="planned researched implemented reviewed verified documented failed retried"
 
 # Valid model tiers (matches model-routing.md and pattern-tracker)
-readonly VALID_MODELS="haiku flash sonnet pro opus"
+readonly VALID_MODELS="local haiku flash sonnet pro opus"
 
 #######################################
 # Show help
@@ -56,7 +56,7 @@ ACTIONS:
     planned, researched, implemented, reviewed, verified, documented, failed, retried
 
 MODELS:
-    haiku, flash, sonnet, pro, opus (or concrete model names like claude-sonnet-4-6)
+    local, haiku, flash, sonnet, pro, opus (or concrete model names like claude-sonnet-4-6)
 
 EXAMPLES:
     # Add label when dispatching a task

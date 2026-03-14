@@ -22,7 +22,7 @@ model: haiku
 - **Purpose**: Route tasks to the cheapest model that can handle them well
 - **Philosophy**: Use the smallest model that produces acceptable quality
 - **Default**: sonnet (best balance of cost/capability for most tasks)
-- **Cost spectrum**: local (free) -> haiku -> flash -> sonnet -> pro -> opus (highest)
+- **Cost spectrum**: local (free) -> flash -> haiku -> sonnet -> pro -> opus (highest)
 
 ## Model Tiers
 
