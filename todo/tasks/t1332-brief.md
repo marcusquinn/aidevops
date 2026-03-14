@@ -24,20 +24,20 @@ Long-running supervisor tasks can stall silently — spinning on merge conflicts
 ## How (Approach)
 
 1. Define milestone thresholds in config (`SUPERVISOR_STUCK_CHECK_MINUTES`, default: 30,60,120)
-2. In `supervisor/pulse.sh` Phase 4 (worker health), check task duration against milestones
+2. In `supervisor/pulse.sh` Phase 0.75 (advisory stuck detection), check task duration against milestones
 3. At each milestone, use AI reasoning (haiku-tier, cheap) to evaluate task progress:
    - Input: task description, time elapsed, last N log lines, PR status if any
-   - Output: `{stuck: boolean, confidence: float, reason: string, suggestions: [string]}`
+   - Output: `{stuck: boolean, confidence: float, reason: string, suggested_actions: string}`
 4. If stuck detected with confidence > 0.7:
    - Add `stuck-detection` label to GitHub issue
-   - Post comment with reason and suggestions
+   - Post comment with reason and suggested actions
    - Log to supervisor log
 5. Do NOT pause, cancel, or modify the task — advisory only
 6. If task later succeeds, remove the label
 
 Key files:
-- `.agents/scripts/supervisor/pulse.sh` — Phase 4 worker health checks
-- `.agents/scripts/supervisor/ai-reason.sh` — AI reasoning infrastructure
+- `.agents/scripts/supervisor/pulse.sh` — Phase 0.75 advisory stuck detection
+- `.agents/scripts/supervisor/dispatch.sh` — AI CLI resolution (`resolve_ai_cli`, `resolve_model`)
 - `.agents/scripts/supervisor/issue-sync.sh` — issue labeling
 - `.agents/scripts/supervisor/evaluate.sh` — task evaluation (related)
 
@@ -87,8 +87,8 @@ Key files:
 
 ## Relevant Files
 
-- `.agents/scripts/supervisor/pulse.sh` — Phase 4, add milestone checks
-- `.agents/scripts/supervisor/ai-reason.sh` — AI reasoning calls
+- `.agents/scripts/supervisor/pulse.sh` — Phase 0.75, advisory stuck detection
+- `.agents/scripts/supervisor/dispatch.sh` — AI CLI resolution (`resolve_ai_cli`, `resolve_model`)
 - `.agents/scripts/supervisor/issue-sync.sh` — issue labeling
 - `.agents/scripts/supervisor/evaluate.sh` — task evaluation patterns
 
@@ -102,7 +102,7 @@ Key files:
 
 | Phase | Time | Notes |
 |-------|------|-------|
-| Research/read | 15m | Review Phase 4 health checks and ai-reason patterns |
+| Research/read | 15m | Review Phase 0.75 stuck detection and dispatch.sh patterns |
 | Implementation | 1.5h | Milestone tracking, AI evaluation, issue labeling |
 | Testing | 15m | Simulate long-running stuck task |
 | **Total** | **~2h** | |
