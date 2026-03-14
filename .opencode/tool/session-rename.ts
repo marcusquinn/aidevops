@@ -1,5 +1,8 @@
 import { tool } from "@opencode-ai/plugin"
 
+const OPENCODE_PORTS = ["4096", "4097", "4098", "4099"]
+const PORT_SCAN_TIMEOUT_MS = 500
+
 /**
  * Auto-detect the OpenCode API port by scanning common ports.
  * OpenCode typically runs on 4096, but may use 4097-4099 if ports are busy.
@@ -9,30 +12,27 @@ async function findOpenCodePort(): Promise<string | null> {
   if (process.env.OPENCODE_PORT) {
     return process.env.OPENCODE_PORT
   }
-  
-  // Scan common ports
-  const ports = ["4096", "4097", "4098", "4099"]
-  for (const port of ports) {
+
+  // Scan common ports in parallel
+  const checkPort = async (port: string): Promise<string | null> => {
     try {
       const controller = new AbortController()
-      const timeout = setTimeout(() => controller.abort(), 500)
-      
+      const timeout = setTimeout(() => controller.abort(), PORT_SCAN_TIMEOUT_MS)
+
       const response = await fetch(`http://localhost:${port}/session`, {
         method: "GET",
         signal: controller.signal,
       })
-      
+
       clearTimeout(timeout)
-      
-      if (response.ok) {
-        return port
-      }
+      return response.ok ? port : null
     } catch {
-      // Port not responding, try next
+      return null
     }
   }
-  
-  return null
+
+  const results = await Promise.all(OPENCODE_PORTS.map(checkPort))
+  return results.find((port) => port !== null) ?? null
 }
 
 /**
@@ -49,7 +49,7 @@ async function renameSession(sessionID: string, title: string, directory: string
   if (!port) {
     return { 
       success: false, 
-      message: "Unable to find OpenCode API. Tried ports 4096-4099. Set OPENCODE_PORT env var if using a different port." 
+      message: `Unable to find OpenCode API. Tried ports ${OPENCODE_PORTS.join(", ")}. Set OPENCODE_PORT env var if using a different port.` 
     }
   }
   
