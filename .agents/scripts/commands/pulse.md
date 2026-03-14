@@ -127,7 +127,8 @@ After the initial dispatch, enter a monitoring loop. Each cycle:
    - No runnable work remains AND all slots are filled
    - Circuit breaker or stop flag detected
 
-On exit, run:
+On exit, run these best-effort cleanup commands (the wrapper's watchdog may hard-kill
+before these complete — that's fine, they are opportunistic telemetry, not critical state):
 
 ```bash
 ~/.aidevops/agents/scripts/circuit-breaker-helper.sh record-success
@@ -261,7 +262,7 @@ This is informational, not an auto-kill trigger. Workers doing legitimate resear
 
 ### Model escalation
 
-After 2+ failed attempts on the same issue (count kill/failure comments), escalate to `--model anthropic/claude-opus-4-6`. This overrides any `tier:` label on the issue. At 3+ failures, also add a summary of what previous workers attempted. See "Model tier selection" under Dispatch Refinements for the full precedence chain.
+After 2+ failed attempts on the same issue (count kill/failure comments), escalate by resolving the `opus` tier via `model-availability-helper.sh resolve opus` and passing `--model <resolved>`. This overrides any `tier:` label on the issue. At 3+ failures, also add a summary of what previous workers attempted. See "Model tier selection" under Dispatch Refinements for the full precedence chain.
 
 ## Dispatch Refinements
 
@@ -297,20 +298,29 @@ Also check for bundle-level agent routing overrides: `bundle-helper.sh get agent
 
 ### Model tier selection
 
-Before dispatching, determine the appropriate model tier. Check these sources in precedence order:
+Before dispatching, determine the appropriate model tier. Resolve tier names to concrete model IDs via the availability helper — never hardcode provider/model IDs in dispatch commands.
 
-1. **Failure escalation** (highest priority): Count kill/failure comments on the issue. After 2+ failed attempts → `--model anthropic/claude-opus-4-6`. This overrides all other tier signals.
-2. **Issue labels**: `tier:thinking` → `--model anthropic/claude-opus-4-6`, `tier:simple` → `--model anthropic/claude-haiku-4-5-20251001`. These labels are set at task creation time.
-3. **Bundle defaults**: `bundle-helper.sh get model_defaults.implementation <repo-path>`. If the bundle says `opus` for this task type, respect it.
+**Resolve a tier to a model:**
+
+```bash
+RESOLVED_MODEL=$(~/.aidevops/agents/scripts/model-availability-helper.sh resolve <tier>)
+# Then pass: --model "$RESOLVED_MODEL"
+```
+
+This handles provider backoff and cross-provider fallback automatically (e.g., if Anthropic is backed off, `resolve opus` returns o3).
+
+**Precedence order:**
+
+1. **Failure escalation** (highest priority): Count kill/failure comments on the issue. After 2+ failed attempts → resolve `opus` tier. This overrides all other tier signals.
+2. **Issue labels**: `tier:thinking` → resolve `opus`, `tier:simple` → resolve `haiku`. These labels are set at task creation time.
+3. **Bundle defaults**: `bundle-helper.sh get model_defaults.implementation <repo-path>`. If the bundle says `opus` for this task type, resolve that tier.
 4. **No signal** → omit `--model` (default round-robin, currently sonnet-tier).
 
-| Label | Model Flag | Use Case |
-|-------|-----------|----------|
-| `tier:thinking` | `--model anthropic/claude-opus-4-6` | Architecture, novel design, complex trade-offs |
-| `tier:simple` | `--model anthropic/claude-haiku-4-5-20251001` | Docs, formatting, config, simple renames |
+| Label | Tier to Resolve | Use Case |
+|-------|----------------|----------|
+| `tier:thinking` | `opus` | Architecture, novel design, complex trade-offs |
+| `tier:simple` | `haiku` | Docs, formatting, config, simple renames |
 | *(no tier label)* | *(omit — default round-robin)* | Standard coding — features, bug fixes, refactors |
-
-Use `model-availability-helper.sh resolve <tier>` to get the best available model for a tier when the primary provider is backed off. For example, if Anthropic is backed off, `resolve opus` returns the cross-provider fallback (o3).
 
 **Cost justification**: One opus dispatch (~3x sonnet) is cheaper than 3 failed sonnet dispatches. One haiku dispatch (~0.25x sonnet) saves 75% on tasks that don't need sonnet's reasoning. The tier labels make this automatic — no per-dispatch analysis needed.
 
