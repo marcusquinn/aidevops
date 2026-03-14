@@ -509,9 +509,9 @@ check_markdown_lint() {
 	fi
 
 	if [[ -n "$markdownlint_cmd" ]]; then
-		# Run markdownlint and capture output
-		local lint_output
-		lint_output=$($markdownlint_cmd $md_files 2>&1) || true
+		# Run markdownlint and capture output; preserve exit code separately
+		local lint_output lint_exit=0
+		lint_output=$($markdownlint_cmd $md_files 2>&1) || lint_exit=$?
 
 		if [[ -n "$lint_output" ]]; then
 			# Count violations - ensure single integer (grep -c can fail, use wc -l as fallback)
@@ -539,6 +539,24 @@ check_markdown_lint() {
 					print_warning "Markdown: $violations style issues found (advisory)"
 					return 0
 				fi
+			elif [[ $lint_exit -ne 0 ]]; then
+				# markdownlint failed for a non-rule reason (bad config, invalid args, etc.)
+				# Output doesn't match MD[0-9] pattern so violation_count=0, but the tool itself errored
+				print_error "Markdown: markdownlint failed with exit code $lint_exit (non-rule error)"
+				echo "$lint_output"
+				if [[ "$check_mode" == "changed" ]]; then
+					return 1
+				else
+					return 0
+				fi
+			fi
+		elif [[ $lint_exit -ne 0 ]]; then
+			# markdownlint failed with no output (e.g., config parse error with no stderr)
+			print_error "Markdown: markdownlint failed with exit code $lint_exit (no output)"
+			if [[ "$check_mode" == "changed" ]]; then
+				return 1
+			else
+				return 0
 			fi
 		fi
 		print_success "Markdown: No style issues found"
