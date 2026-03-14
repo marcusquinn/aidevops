@@ -594,6 +594,33 @@ _cb_close_issue() {
 # ============================================================
 
 #######################################
+# Internal implementation for manual trip — must be called under state lock.
+# Args: $1 = task_id, $2 = reason
+# Returns: 0 on success, 1 on error
+#######################################
+_cb_trip_impl() {
+	local task_id="$1"
+	local reason="$2"
+	# Force trip by setting count to threshold
+	local now
+	now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+	local state
+	state=$(jq -n \
+		--argjson count "$CIRCUIT_BREAKER_THRESHOLD" \
+		--arg now "$now" \
+		--arg task "$task_id" \
+		--arg reason "$reason" \
+		'{consecutive_failures: $count, tripped: true, tripped_at: $now, last_failure_at: $now, last_failure_task: $task, last_failure_reason: $reason}') || {
+		log_error "circuit-breaker: failed to build trip state JSON"
+		return 1
+	}
+	cb_write_state "$state" || return 1
+	log_warn "circuit-breaker: manually tripped (task: $task_id, reason: $reason)"
+	_cb_create_or_update_issue "$CIRCUIT_BREAKER_THRESHOLD" "$task_id" "$reason" || true
+	return 0
+}
+
+#######################################
 # Handle circuit-breaker subcommand from supervisor-helper.sh
 # Args: $1 = action (status|reset|trip|check)
 # Returns: 0 on success, 1 on error
@@ -621,22 +648,9 @@ cmd_circuit_breaker() {
 		# Manual trip for testing
 		local task_id="${1:-manual}"
 		local reason="${2:-manual_trip}"
-		# Force trip by setting count to threshold
-		local now
-		now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-		local state
-		state=$(jq -n \
-			--argjson count "$CIRCUIT_BREAKER_THRESHOLD" \
-			--arg now "$now" \
-			--arg task "$task_id" \
-			--arg reason "$reason" \
-			'{consecutive_failures: $count, tripped: true, tripped_at: $now, last_failure_at: $now, last_failure_task: $task, last_failure_reason: $reason}') || {
-			log_error "circuit-breaker: failed to build trip state JSON"
-			return 1
-		}
-		cb_write_state "$state" || return 1
-		log_warn "circuit-breaker: manually tripped (task: $task_id, reason: $reason)"
-		_cb_create_or_update_issue "$CIRCUIT_BREAKER_THRESHOLD" "$task_id" "$reason" || true
+		# Serialize the write with the state lock to prevent interleaving with
+		# concurrent pulse invocations (t3391 review feedback)
+		_cb_with_state_lock _cb_trip_impl "$task_id" "$reason" || return 1
 		;;
 	*)
 		echo "Usage: supervisor-helper.sh circuit-breaker <status|reset|check|trip>"
