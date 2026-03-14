@@ -1299,6 +1299,13 @@ cmd_pr_single() {
 		return 0
 	fi
 
+	if ! gh auth status &>/dev/null; then
+		log_warning "gh auth unavailable — branch pushed but PR not created for $skill_name"
+		log_info "Authenticate with: gh auth login"
+		log_info "Create PR manually: gh pr create --head $branch_name"
+		return 1
+	fi
+
 	local pr_url
 	local pr_create_output
 	pr_create_output=$(gh pr create \
@@ -1668,6 +1675,13 @@ cmd_pr_batch() {
 		log_warning "gh CLI not available — branch pushed but PR not created"
 		log_info "Create PR manually: gh pr create --head $branch_name"
 		return 0
+	fi
+
+	if ! gh auth status &>/dev/null; then
+		log_warning "gh auth unavailable — branch pushed but batch PR not created"
+		log_info "Authenticate with: gh auth login"
+		log_info "Create PR manually: gh pr create --head $branch_name"
+		return 1
 	fi
 
 	# Build PR body with table of all updated skills
