@@ -41,8 +41,9 @@ def strip_file_content(text: str) -> str:
     # Remove <file>...</file> blocks
     text = re.sub(r'<file>.*?</file>', '[file content]', text, flags=re.DOTALL)
     
-    # Remove diff blocks
-    text = re.sub(r'diff --git.*?(?=\n[^\n+-@]|\Z)', '[diff]', text, flags=re.DOTALL)
+    # Remove diff blocks — match from "diff --git" to the next "diff --git" header
+    # or end of string, capturing the full block (index line, ---, +++, @@ hunks, etc.)
+    text = re.sub(r'diff --git .*?(?=\ndiff --git |\Z)', '[diff]', text, flags=re.DOTALL)
     
     # Remove lines that are clearly file content (numbered lines like "00001| ...")
     text = re.sub(r'\n\d{5}\|.*', '', text)
@@ -286,7 +287,10 @@ def main():
     stats_file = CHUNKS_DIR / "stats.json"
     stats = {}
     if stats_file.exists():
-        stats = json.loads(stats_file.read_text(encoding="utf-8")).get("data", {})
+        try:
+            stats = json.loads(stats_file.read_text(encoding="utf-8")).get("data", {})
+        except json.JSONDecodeError:
+            print(f"Warning: Could not parse {stats_file}, skipping stats.", file=sys.stderr)
 
     output = {
         "steerage": steerage,
