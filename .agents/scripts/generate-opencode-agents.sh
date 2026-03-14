@@ -157,15 +157,18 @@ AGENT_TOOLS = {
         "openapi-search_*": True
     },
     "Onboarding": {
-        "write": True, "edit": True, "bash": True, "read": True, "glob": True, "grep": True,
+        "write": True, "edit": True, "bash": True,
+        "read": True, "glob": True, "grep": True,
         "webfetch": True, "task": True
     },
     "Accounts": {
-        "write": True, "edit": True, "bash": True, "read": True, "glob": True, "grep": True,
+        "write": True, "edit": True, "bash": True,
+        "read": True, "glob": True, "grep": True,
         "webfetch": True, "task": True, "quickfile_*": True
     },
     "Social-Media": {
-        "write": True, "edit": True, "bash": True, "read": True, "glob": True, "grep": True,
+        "write": True, "edit": True, "bash": True,
+        "read": True, "glob": True, "grep": True,
         "webfetch": True, "task": True
     },
     "SEO": {
@@ -173,7 +176,8 @@ AGENT_TOOLS = {
         "gsc_*": True, "ahrefs_*": True, "dataforseo_*": True
     },
     "WordPress": {
-        "write": True, "edit": True, "bash": True, "read": True, "glob": True, "grep": True,
+        "write": True, "edit": True, "bash": True,
+        "read": True, "glob": True, "grep": True,
         "localwp_*": True
     },
     "Content": {
