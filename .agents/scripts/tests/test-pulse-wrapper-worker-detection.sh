@@ -14,6 +14,7 @@ TESTS_FAILED=0
 
 TEST_ROOT=""
 PS_FIXTURE_FILE=""
+GH_SEARCH_FIXTURES=""
 
 print_result() {
 	local test_name="$1"
@@ -74,6 +75,47 @@ ps() {
 		return 0
 	fi
 	command ps "$@"
+	return 0
+}
+
+set_gh_search_fixtures() {
+	local fixtures="$1"
+	GH_SEARCH_FIXTURES="$fixtures"
+	return 0
+}
+
+gh() {
+	if [[ "${1:-}" == "pr" && "${2:-}" == "list" ]]; then
+		local search_query=""
+		shift 2
+		while [[ $# -gt 0 ]]; do
+			case "$1" in
+			--search)
+				search_query="${2:-}"
+				shift 2
+				;;
+			*)
+				shift
+				;;
+			esac
+		done
+
+		local line key payload
+		while IFS= read -r line; do
+			[[ -n "$line" ]] || continue
+			key="${line%%|*}"
+			payload="${line#*|}"
+			if [[ "$key" == "$search_query" ]]; then
+				printf '%s\n' "$payload"
+				return 0
+			fi
+		done <<<"$GH_SEARCH_FIXTURES"
+
+		printf '[]\n'
+		return 0
+	fi
+
+	command gh "$@"
 	return 0
 }
 
@@ -147,6 +189,43 @@ JSON
 	return 0
 }
 
+test_has_merged_pr_for_issue_detects_closing_keyword() {
+	set_gh_search_fixtures "closes #4527 in:body|[{\"number\":1145}]"
+
+	if has_merged_pr_for_issue "4527" "marcusquinn/aidevops" "t4527: prevent duplicate dispatch"; then
+		print_result "has_merged_pr_for_issue detects merged PR via closes keyword" 0
+		return 0
+	fi
+
+	print_result "has_merged_pr_for_issue detects merged PR via closes keyword" 1 "Expected merged PR match for issue #4527"
+	return 0
+}
+
+test_has_merged_pr_for_issue_detects_task_id_fallback() {
+	set_gh_search_fixtures "t063.1 in:title|[{\"number\":1059}]"
+
+	if has_merged_pr_for_issue "9999" "marcusquinn/aidevops" "t063.1: fix awardsapp duplicate PR dispatch"; then
+		print_result "has_merged_pr_for_issue detects merged PR via task-id fallback" 0
+		return 0
+	fi
+
+	print_result "has_merged_pr_for_issue detects merged PR via task-id fallback" 1 "Expected merged PR match via task ID fallback"
+	return 0
+}
+
+test_check_dispatch_dedup_treats_merged_pr_as_duplicate() {
+	set_ps_fixture ""
+	set_gh_search_fixtures "closes #4527 in:body|[{\"number\":1145}]"
+
+	if check_dispatch_dedup "4527" "marcusquinn/aidevops" "Issue #4527: prevent redispatch" "t4527: prevent redispatch"; then
+		print_result "check_dispatch_dedup skips dispatch when merged PR exists" 0
+		return 0
+	fi
+
+	print_result "check_dispatch_dedup skips dispatch when merged PR exists" 1 "Expected dedup check to block merged issue"
+	return 0
+}
+
 main() {
 	trap teardown_test_env EXIT
 	setup_test_env
@@ -155,6 +234,9 @@ main() {
 
 	test_counts_plain_and_dot_prefixed_opencode_workers
 	test_repo_issue_detection_uses_filtered_worker_list
+	test_has_merged_pr_for_issue_detects_closing_keyword
+	test_has_merged_pr_for_issue_detects_task_id_fallback
+	test_check_dispatch_dedup_treats_merged_pr_as_duplicate
 
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then

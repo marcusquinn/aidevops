@@ -279,6 +279,671 @@ Close quality-debt PRs that have been CONFLICTING for 24+ hours with a comment e
 Issue creation (push) is handled exclusively by CI. The pulse runs pull and close only:
 
 ```bash
+# Get the maintainer for this repo
+MAINTAINER=$(jq -r '.initialized_repos[] | select(.slug == "<slug>") | .maintainer // empty' ~/.config/aidevops/repos.json)
+if [[ -z "$MAINTAINER" ]]; then
+  MAINTAINER=$(echo "<slug>" | cut -d/ -f1)
+fi
+
+# Fetch comments and check for maintainer approval/decline
+# Works for both issues and PRs (GitHub's issues API handles both)
+COMMENT_DATA=$(gh api "repos/<slug>/issues/<number>/comments" \
+  --jq "[.[] | select(.user.login == \"$MAINTAINER\")] | last | {body: .body, id: .id}")
+COMMENT_BODY=$(echo "$COMMENT_DATA" | jq -r '.body // empty' | tr '[:upper:]' '[:lower:]' | xargs)
+```
+
+**Three outcomes:**
+
+1. **Comment starts with `approved`** (case-insensitive) — the maintainer approves:
+
+For **issues** (simplification-debt, feature requests):
+
+```bash
+gh issue edit <number> --repo <slug> \
+  --remove-label "needs-maintainer-review" \
+  --add-label "auto-dispatch"
+gh issue comment <number> --repo <slug> \
+  --body "Maintainer approved via comment. Removed \`needs-maintainer-review\`, added \`auto-dispatch\`. Issue is now in the dispatch queue."
+```
+
+For **PRs** (external contributor PRs):
+
+```bash
+gh issue edit <number> --repo <slug> \
+  --remove-label "needs-maintainer-review"
+gh pr comment <number> --repo <slug> \
+  --body "Maintainer approved via comment. Removed \`needs-maintainer-review\`. PR is now eligible for merge (CI permitting)."
+```
+
+The PR then follows the normal merge flow — if CI is green and reviews pass, the pulse merges it this cycle or the next.
+
+2. **Comment starts with `declined`** (case-insensitive) — the maintainer rejects:
+
+For **issues**:
+
+```bash
+REASON=$(echo "$COMMENT_BODY" | sed -E 's/^declined:?\s*//')
+gh issue close <number> --repo <slug> \
+  -c "Closed per maintainer decision. Reason: ${REASON:-no reason given}"
+```
+
+For **PRs**:
+
+```bash
+REASON=$(echo "$COMMENT_BODY" | sed -E 's/^declined:?\s*//')
+gh pr close <number> --repo <slug> \
+  -c "Closed per maintainer decision. Reason: ${REASON:-no reason given}"
+```
+
+3. **No matching comment from maintainer** — skip, check again next cycle.
+
+**How to distinguish issues from PRs:** Check the pre-fetched state — PRs have a `headRefName` field, issues don't. Alternatively, use `gh api repos/<slug>/issues/<number> --jq '.pull_request // empty'` — non-empty means it's a PR.
+
+**Guard rails:**
+
+- Only process comments from the repo maintainer (from `repos.json` or slug owner). Ignore comments from bots, other contributors, or the agent itself.
+- Only check the maintainer's **most recent** comment — earlier comments may have been superseded.
+- This is additive — direct label manipulation still works. If the maintainer has already removed `needs-maintainer-review` via labels, the item won't appear in this scan.
+- Keep this lightweight — one API call per `needs-maintainer-review` item per cycle. These items are low-volume by design.
+
+### Kill stuck workers
+
+Check `ps axo pid,etime,command | grep '\.opencode run' | grep '/full-loop Implement issue #' | grep -v '/pulse'`. Any worker running 3+ hours with no open PR is likely stuck. Kill it: `kill <pid>`. Comment on the issue with the full audit-quality fields (model, branch, reason, diagnosis, next action — see "Audit-quality state in issue and PR comments" below). This frees a slot. If the worker has recent commits or an open PR with activity, leave it alone — it's making progress.
+
+Before killing a worker for thrash, read the latest worker transcript/log tail and attempt one targeted coaching intervention unless the worker is clearly hard-stuck (for example: repeated identical fatal error, no commits for many hours, or provider backoff exhaustion). Coaching intervention means: post a concise issue comment with the exact blocker pattern, then re-dispatch with a narrower acceptance target and explicit checkpoint deadline. If that coached retry still fails to produce a checkpoint, then kill/requeue and comment why completion was not possible.
+
+### Struggle-ratio check (t1367)
+
+The "Active Workers" section in the pre-fetched state includes a `struggle_ratio` for each worker that has a worktree. This metric is `messages / max(1, commits)` — a high ratio means the worker is sending many messages but producing few commits (thrashing).
+
+**How to interpret the flags:**
+
+- **No flag**: Worker is operating normally. No action needed.
+- **`struggling`**: ratio > threshold (default 30), elapsed > 30 min, zero commits. The worker is active but has produced nothing. Consider checking its PR/branch for signs of a loop (repeated CI failures, same error in multiple commits). If the issue is clearly beyond the worker's capability, kill it and re-file with more context.
+- **`thrashing`**: ratio > 50, elapsed > 1 hour. The worker has been unproductive for a long time. Strongly consider killing it (`kill <pid>`) and re-dispatching with a simpler scope or more context in the issue body.
+
+**This is an informational signal, not an auto-kill trigger.** Workers doing legitimate research or planning may have high message counts with few commits — that's expected for the first 30 minutes. The flags only activate after the minimum elapsed time. Use your judgment: a worker with `struggle_ratio: 45` at 35 minutes that just made its first commit is recovering, not stuck.
+
+**Configuration** (env vars in pulse-wrapper.sh):
+- `STRUGGLE_RATIO_THRESHOLD` — ratio above which to flag (default: 30)
+- `STRUGGLE_MIN_ELAPSED_MINUTES` — minimum runtime before flagging (default: 30)
+
+### Model escalation after repeated failures (t1416)
+
+When a worker fails on an issue (killed for thrashing, PR closed without merge, or 0 commits after timeout), the supervisor must track the failure count and escalate the model tier after 2 failed attempts. Blindly re-dispatching at the same tier wastes compute — the t748 incident burned 7 workers over 30+ hours on a task that required codebase archaeology beyond sonnet's capability.
+
+**How to count failures:** Read the issue comments. Each kill/re-dispatch comment from the supervisor counts as one failure. Count comments matching patterns like "Worker killed", "Worker (PID", "Re-opening for dispatch", "Re-dispatching". If the count is >= 2, escalate.
+
+**Escalation tiers:**
+
+| Failures | Action |
+|----------|--------|
+| 0-1 | Dispatch at default tier (bundle default or sonnet) |
+| 2 | Escalate to opus: add `--model anthropic/claude-opus-4-6` to the dispatch command |
+| 3+ | Escalate to opus AND simplify scope — add a comment on the issue summarising what previous workers attempted and where they got stuck, so the next worker doesn't repeat the same analysis |
+
+**Override the no-model dispatch rule:** The default dispatch rule says "Do NOT add `--model`". This escalation rule overrides it — when failure count >= 2, you MUST add `--model anthropic/claude-opus-4-6`. The cost of one opus dispatch (~3x sonnet) is far less than the cost of 5+ failed sonnet dispatches. Do NOT post a separate escalation comment — the dispatch comment's "Attempt" field captures escalation context (e.g., "Attempt: 3 of 3 (escalated to opus after 2 failed sonnet attempts)").
+
+**This is a judgment call, not a hard threshold.** If the first failure was clearly a transient issue (OOM, network timeout, CI flake) rather than a capability gap, resetting the counter is appropriate. But if the worker thrashed with high struggle ratio and 0 commits, that's a capability signal — escalate.
+
+### Audit-quality state in issue and PR comments (t1416)
+
+Every comment the supervisor posts on an issue or PR must be **sufficient for a human or future agent to audit and understand the work without reading logs**. The issue timeline and PR comments are the primary audit trail — if the information isn't there, it's invisible.
+
+**Required fields in dispatch comments:**
+
+When dispatching a worker, comment on the issue with:
+
+```bash
+gh issue comment <number> --repo <slug> --body "Dispatching worker.
+- **Model**: <tier and full model ID, e.g., sonnet (anthropic/claude-sonnet-4-6)>
+- **Branch**: <branch name, e.g., fix/t748-ai-migration>
+- **Scope**: <1-line description of what the worker should do>
+- **Attempt**: <N of M, e.g., 1 of 1, or 3 of 3 (escalated to opus)>
+- **Direction**: <any specific guidance, e.g., 'focus on migration chain from PR #213'>"
+```
+
+**Required fields in kill/failure comments:**
+
+When killing a worker or closing a failed PR, comment with:
+
+```bash
+gh issue comment <number> --repo <slug> --body "Worker killed after <duration> with <N> commits (struggle_ratio: <ratio>).
+- **Model**: <tier used>
+- **Branch**: <branch name>
+- **Reason**: <why it was killed — thrashing, timeout, CI loop, etc.>
+- **Diagnosis**: <1-line hypothesis of what went wrong>
+- **Next action**: <re-dispatch at same tier / escalate to opus / needs manual review>"
+```
+
+**Required fields in merge/completion comments:**
+
+When merging a PR or closing an issue as done:
+
+```bash
+gh issue comment <number> --repo <slug> --body "Completed via PR #<N>.
+- **Model**: <tier that succeeded>
+- **Attempts**: <total attempts including failures>
+- **Duration**: <wall-clock from first dispatch to merge>"
+```
+
+**Why this matters:** Without these fields, auditing a task requires reading pulse logs, cross-referencing `ps` output timestamps, and guessing which model was used. The t748 incident had 7 kill comments that all said "Worker killed after Xh with 0 commits" but none recorded the model tier, making it impossible to determine whether escalation was attempted. Issue comments are the state dashboard — they must be self-contained.
+
+### Self-improvement on information gaps (t1416)
+
+When the supervisor encounters a situation where it cannot determine what happened (missing model tier, unclear failure reason, no branch name in comments, ambiguous state labels), this is an **information gap**. Information gaps cause audit failures and prevent effective re-dispatch.
+
+**Response:** File a self-improvement issue in the aidevops repo describing:
+1. What information was missing
+2. Where it should have been recorded
+3. What went wrong because it was missing (e.g., "could not determine if model was escalated, re-dispatched at same tier 5 more times")
+
+This is a one-time observation — don't file duplicate issues for the same gap. Check existing issues first: `gh issue list --repo <aidevops-slug> --search "information gap" --state open`.
+
+### Task decomposition before dispatch (t1408.2)
+
+Before dispatching a worker for an issue, classify the task to determine if it's too large for a single worker session. This catches over-scoped tasks before they waste a worker slot.
+
+**When to classify:** For each dispatchable issue (after passing the skip checks below), run the classify step. Skip classification for issues that already have subtask issues (check if issues with `tNNN.1`, `tNNN.2` etc. exist in the title search).
+
+**How to classify:**
+
+```bash
+# Extract task description from the issue title/body
+TASK_DESC="<issue title and first paragraph of body>"
+
+# Classify — uses haiku-tier LLM call (~$0.001)
+CLASSIFY_RESULT=$(/bin/bash ~/.aidevops/agents/scripts/task-decompose-helper.sh classify \
+  "$TASK_DESC" --depth 0) || CLASSIFY_RESULT=""
+
+# Parse result
+TASK_KIND=$(echo "$CLASSIFY_RESULT" | jq -r '.kind // "atomic"' || echo "atomic")
+```
+
+**If atomic:** Dispatch the worker directly (unchanged flow — proceed to step 6 below).
+
+**If composite:** Auto-decompose and create child tasks instead of dispatching:
+
+```bash
+# Decompose into subtasks
+DECOMPOSE_RESULT=$(/bin/bash ~/.aidevops/agents/scripts/task-decompose-helper.sh decompose \
+  "$TASK_DESC" --max-subtasks "${DECOMPOSE_MAX_SUBTASKS:-5}") || DECOMPOSE_RESULT=""
+
+SUBTASK_COUNT=$(echo "$DECOMPOSE_RESULT" | jq '.subtasks | length' || echo 0)
+```
+
+If decomposition succeeds (`SUBTASK_COUNT >= 2`):
+
+1. For each subtask, create a child task using `claim-task-id.sh`:
+
+   ```bash
+   for i in $(seq 0 $((SUBTASK_COUNT - 1))); do
+     SUB_DESC=$(echo "$DECOMPOSE_RESULT" | jq -r ".subtasks[$i].description")
+     SUB_ESTIMATE=$(echo "$DECOMPOSE_RESULT" | jq -r ".subtasks[$i].estimate // \"~2h\"")
+     SUB_DEPS=$(echo "$DECOMPOSE_RESULT" | jq -r ".subtasks[$i].depends_on | map(\"blocked-by:${TASK_ID}.\" + tostring) | join(\" \")" || echo "")
+
+     # Claim child task ID
+     CHILD_OUTPUT=$(/bin/bash ~/.aidevops/agents/scripts/claim-task-id.sh \
+       --repo-path "$path" --title "${TASK_ID}.${i+1}: $SUB_DESC" --parent "$TASK_ID")
+     CHILD_ID=$(echo "$CHILD_OUTPUT" | grep '^TASK_ID=' | cut -d= -f2)
+
+     # Add to TODO.md (planning-commit-helper handles commit+push)
+     # Format: - [ ] tNNN.N Description ~Nh blocked-by:tNNN.M ref:GH#NNN
+   done
+   ```
+
+2. Label the parent issue `status:blocked` with a comment explaining the decomposition
+3. Create a brief for each child task from the parent brief + decomposition context
+4. The child tasks enter the normal dispatch queue — the next pulse cycle picks up the leaves (tasks with no unresolved `blocked-by:` refs)
+
+**Depth limit:** `DECOMPOSE_MAX_DEPTH` env var (default: 3). Tasks at depth 3+ are always treated as atomic. This prevents infinite decomposition.
+
+**Skip decomposition when:**
+
+- The issue already has subtask issues (titles matching `tNNN.N:`)
+- The issue body contains `skip-decompose` or `atomic` markers
+- Classification fails (API unavailable) — default to atomic and dispatch directly
+- The task is a bug fix, CI fix, or docs update (these are almost always atomic)
+
+**Cost:** ~$0.001-0.005 per classify+decompose call (haiku tier). A single avoided over-scoped worker failure saves $0.50-5.00 in wasted compute.
+
+### Dispatch workers for open issues
+
+For each dispatchable issue (intelligence-first):
+
+When `PULSE_QUEUE_MODE` is `pr-heavy` or `merge-heavy`, limit issue dispatches to the current cycle budget:
+
+```bash
+ISSUE_DISPATCH_BUDGET=$(((AVAILABLE * NEW_ISSUE_DISPATCH_PCT) / 100))
+```
+
+If budget is exhausted, stop opening new issue workers and continue PR advancement work.
+
+1. **Dedup guard (MANDATORY, GH#4400 + GH#4527):** Before dispatching, run deterministic checks for active workers, duplicate titles, and already-merged work. This prevents duplicate-dispatch thrashing and stale re-dispatches after a task is already merged.
+
+```bash
+# Source once per pulse run (provides has_worker_for_repo_issue, has_merged_pr_for_issue, and check_dispatch_dedup)
+source ~/.aidevops/agents/scripts/pulse-wrapper.sh
+
+# Check 1: exact repo+issue match via process list
+if has_worker_for_repo_issue <number> <slug>; then
+  echo "Worker already running for #<number> in <slug> — skipping"
+  continue
+fi
+
+# Check 2: normalized dedup via dispatch-dedup-helper (catches title variants)
+if ~/.aidevops/agents/scripts/dispatch-dedup-helper.sh is-duplicate "Issue #<number>: <title>"; then
+  echo "Duplicate dispatch detected for #<number> — skipping"
+  continue
+fi
+
+# Check 3: merged-PR evidence (direct close keyword OR task-id fallback)
+if has_merged_pr_for_issue <number> <slug> "<issue title>"; then
+  echo "Issue #<number> already has merged PR evidence — skipping dispatch"
+  continue
+fi
+```
+
+All three checks MUST pass before dispatch. The first catches exact repo+issue process overlap; the second catches title variants (e.g., `issue-3502` vs `Issue #3502: description`); the third catches already-merged implementations (including duplicate issue/task-ID patterns where the current issue was not the one auto-closed by the merge). Skipping these checks caused both the 26-worker thrashing incident (GH#4400) and the awardsapp duplicate-PR pattern (GH#4527).
+
+1.5. **Apply per-repo worker cap before dispatch:** default `MAX_WORKERS_PER_REPO=5` (override via env var only when you have a clear reason). If the target repo already has `MAX_WORKERS_PER_REPO` active workers, skip dispatch for that repo this cycle and continue with other repos.
+
+```bash
+MAX_WORKERS_PER_REPO=${MAX_WORKERS_PER_REPO:-5}
+ACTIVE_FOR_REPO=$(list_active_worker_processes | awk -v path="<path>" '
+  BEGIN { esc=path; gsub(/[][(){}.^$*+?|\\]/, "\\\\&", esc) }
+  $0 ~ ("--dir[[:space:]]+" esc "([[:space:]]|$)") { count++ }
+  END { print count + 0 }
+')
+if [[ "$ACTIVE_FOR_REPO" -ge "$MAX_WORKERS_PER_REPO" ]]; then
+  echo "Repo at worker cap (${ACTIVE_FOR_REPO}/${MAX_WORKERS_PER_REPO}) — skipping dispatch for <slug> this cycle"
+  continue
+fi
+```
+
+2. Skip if an open PR already exists for it, or merged-PR evidence already exists (check PR list / `has_merged_pr_for_issue`)
+3. Treat labels as hints, not gates. `status:queued`, `status:in-progress`, and `status:in-review` suggest active work, but verify with evidence (active worker, recent PR updates, recent commits) before skipping.
+4. Treat unassigned + non-blocked issues as available by default. `status:available` is optional metadata, not a requirement.
+5. If an issue is assigned and recently updated (<3h), usually skip it. If assigned but stale (3+h, no active PR/worker evidence), treat it as abandoned: unassign and comment the recovery; make it dispatchable this cycle.
+6. Read the issue body briefly — if it has `blocked-by:` references, check if those are resolved (merged PR exists). If not, skip it.
+6.5. **Classify and decompose (t1408.2):** Run the task decomposition check described in "Task decomposition before dispatch" above. If the task is composite, create child tasks and skip direct dispatch. If atomic (or classification unavailable), proceed to dispatch.
+7. Prioritize by value density and flow efficiency, not label perfection: unblock merge-ready PRs first, then critical/high issues, then best-next backlog items that keep worker slots full.
+7.5. **Choose execution mode per issue type (code vs ops):** Ad-hoc issue dispatch is not always `/full-loop`.
+
+   - **Code-change issue** (repo edits/tests/PR expected): use `/full-loop Implement issue #<number> ...`
+   - **Operational issue** (reports, audits, monitoring, outreach, account ops): use a direct domain command (no `/full-loop`), for example `/seo-export ...` or another issue-defined SOP command
+   - If the issue body includes an explicit command/SOP, run that command directly. If not, infer the best direct command from the issue domain + assigned agent.
+8. Dispatch:
+
+> **Quality-debt issues:** Do NOT use the standard `--dir <path>` dispatch below. Instead, follow the "Quality-debt worktree dispatch" protocol (see below) — pre-create a worktree and pass `--dir <worktree_path>`. This is mandatory to prevent branch conflicts in the canonical repo directory (t1479).
+
+```bash
+# Assign the issue to prevent duplicate work by other runners/humans
+RUNNER_USER=$(gh api user --jq '.login' 2>/dev/null || whoami)
+gh issue edit <number> --repo <slug> --add-assignee "$RUNNER_USER" --add-label "status:queued" --remove-label "status:available" 2>/dev/null || gh issue edit <number> --repo <slug> --add-assignee "$RUNNER_USER" --add-label "status:queued" 2>/dev/null || true
+
+DISPATCH_PROMPT="/full-loop Implement issue #<number> (<url>) -- <brief description>"
+# For ops issues, replace DISPATCH_PROMPT with a direct command (no /full-loop)
+# Example: DISPATCH_PROMPT="/seo-export all <domain> --days 30"
+[[ -n "$DISPATCH_PROMPT" ]] || DISPATCH_PROMPT="/full-loop Implement issue #<number> (<url>) -- <brief description>"
+
+~/.aidevops/agents/scripts/headless-runtime-helper.sh run \
+  --role worker \
+  --session-key "issue-<number>" \
+  --dir <path> \
+  --title "Issue #<number>: <title>" \
+  --prompt "$DISPATCH_PROMPT" &
+sleep 2
+```
+
+If a dispatch attempt exits immediately with provider/auth failure (for example `Token refresh failed`, `authentication`, `401`, `403`, `400` in startup logs), do not wait for next cycle. Re-dispatch in the same cycle via `headless-runtime-helper.sh run` with an explicit alternate model/provider and continue filling remaining slots.
+
+**Launch validation is mandatory (t1452/t1453):** after each dispatch, validate the launch with the wrapper helper. This keeps the gate deterministic and aligned with wrapper-side enforcement.
+
+```bash
+# Source wrapper helper once per pulse run (safe when sourced)
+source ~/.aidevops/agents/scripts/pulse-wrapper.sh
+
+# check_worker_launch returns 0 only when the worker process appears
+# and no CLI usage-output markers are detected in known startup logs.
+if ! check_worker_launch <number> <slug>; then
+  echo "Invalid worker launch for #<number>"
+  # Relaunch immediately via helper (never leave this for next pulse)
+fi
+```
+
+If validation fails, re-dispatch immediately via `headless-runtime-helper.sh run`, add a short issue comment noting the failed launch and correction, and continue filling slots.
+
+9. **Fill-to-cap post-condition (t1449/t1453):** before ending the pulse cycle, compare active workers vs `MAX_WORKERS`. If below cap and runnable scoped issues/PR work exists in any repo class, continue dispatching until cap is reached or no runnable candidates remain. Do not leave slots idle because of class reservations when one class is PR-capped or empty.
+
+   `pulse-wrapper.sh` now enforces this invariant after the LLM pulse pass via bounded backfill cycles (until max workers or no runnable work) and treats queued issues without live workers as launch-validation failures to backfill immediately.
+
+### Candidate discovery baseline (t1443 + t1448)
+
+Do NOT treat `auto-dispatch` or `status:available` as hard gates. They are hints only.
+
+In every pulse cycle, build candidates from unassigned, non-blocked issues first, then apply judgment and safeguards.
+
+1. Search for open issues in scoped repos that are not blocked and have no active PR/worker evidence.
+2. Prioritize `priority:critical`, `priority:high`, and `bug` labels first.
+3. Include `quality-debt` candidates when they are the highest-value available work, even without `auto-dispatch`/`status:available` labels.
+4. Respect existing caps and safeguards (quality-debt concurrency cap, blast-radius guidance, stale-label recovery).
+
+Example discovery query:
+
+```bash
+gh issue list --repo <slug> --state open \
+  --search "(label:priority:critical OR label:priority:high OR label:bug OR label:quality-debt) -label:status:blocked no:assignee" \
+  --limit 100
+```
+
+If you dispatch an unassigned issue without `auto-dispatch`/`status:available`, add a short issue comment such as:
+
+"Dispatching via intelligence-first backlog selection (t1448): issue is unassigned, non-blocked, and highest-value available work this cycle."
+
+**Dispatch rules:**
+- ALWAYS use `~/.aidevops/agents/scripts/headless-runtime-helper.sh run` for headless dispatches — NEVER `claude`, `claude -p`, or raw `opencode run`
+- Background with `&`, sleep 2 between dispatches
+- The helper alternates the default headless providers/models (`anthropic/claude-sonnet-4-6`, `openai/gpt-5.3-codex`), persists session IDs per provider + session key, honors provider backoff, and rejects `opencode/*` gateway models (no Zen fallback for headless runs)
+- Do NOT add `--model` for first attempts — let the helper choose the alternating default. **Exception:** when escalating after 2+ failed attempts on the same issue, pass `--model anthropic/claude-opus-4-6` to the helper (see "Model escalation after repeated failures" above).
+- If you must run raw `opencode run` for diagnosis, use only documented flags from `opencode run --help` and NEVER pass unsupported options (for example `--max-iterations`); unsupported flags cause usage-output false starts that burn worker slots.
+- If helper-selected launch fails at startup with auth/provider errors, immediately retry with explicit alternate provider in the same cycle (for example `--model openai/gpt-5.3-codex` after anthropic auth failure) and log the fallback in an issue comment.
+- After every dispatch, run launch validation (live process + no CLI usage output in startup log) before counting the slot as filled.
+- Use `--dir <path>` from repos.json
+- Route non-code tasks with `--agent`: SEO, Content, Marketing, Business, Research (see AGENTS.md "Agent Routing")
+- If a dispatched worker later looks stalled, `worker-watchdog.sh` now inspects the recent OpenCode transcript tail before killing it, includes that diagnostic evidence in the retry trail, and gives provider-wait evidence one extra timeout window before re-queueing the issue.
+- Product/tooling reservations are soft optimization targets. When product repos are at daily PR cap (or otherwise non-dispatchable), immediately reallocate those slots to tooling/system work.
+- **Bundle-aware agent routing (t1364.6):** Before dispatching, check if the target repo has a bundle with `agent_routing` overrides. Run `bundle-helper.sh get agent_routing <repo-path>` — if the task domain (code, seo, content, marketing) has a non-default agent, use `--agent <name>`. Example: a content-site bundle routes `marketing` tasks to the Marketing agent instead of Build+. Explicit `--agent` flags in the issue body always override bundle defaults.
+- **Scope boundary (t1405, GH#2928):** ONLY dispatch workers for repos in the pre-fetched state (i.e., repos with `pulse: true` in repos.json). The `PULSE_SCOPE_REPOS` env var (set by `pulse-wrapper.sh`) contains the comma-separated list of in-scope repo slugs. Workers inherit this env var and use it to restrict code changes (branches, PRs) to scoped repos. Workers CAN still file issues on any repo (cross-repo self-improvement), but the pulse must NEVER dispatch a worker to implement a fix on a repo outside this scope — even if an issue exists there. Issues on non-pulse repos enter that repo's queue for their own maintainers to handle.
+- **Lineage context for subtasks (t1408.3):** When dispatching a subtask (task ID contains a dot, e.g., `t1408.3`), include a lineage context block in the dispatch prompt. This tells the worker what the parent task is, what sibling tasks exist, and to focus only on its specific scope. See `tools/ai-assistants/headless-dispatch.md` "Lineage Context for Subtask Workers" for the full format and assembly instructions. Example dispatch with lineage:
+
+  ```bash
+  # Subtask dispatch with lineage context
+  PARENT_ID="${TASK_ID%.*}"
+  PARENT_DESC=$(grep -E "^- \[.\] ${PARENT_ID} " "$path/TODO.md" | head -1 \
+    | sed -E 's/^- \[.\] [^ ]+ //' | sed -E 's/ #[^ ]+//g' | cut -c1-120)
+  SIBLINGS=$(grep -E "^  - \[.\] ${PARENT_ID}\.[0-9]+" "$path/TODO.md" \
+    | sed -E 's/^  - \[.\] ([^ ]+) (.*)/\1: \2/' | sed -E 's/ #[^ ]+//g')
+
+  # Build lineage block (see headless-dispatch.md for full assembly)
+  # Or use: LINEAGE_BLOCK=$(task-decompose-helper.sh format-lineage "$TASK_ID")
+
+  DISPATCH_PROMPT="/full-loop Implement issue #<number> (<url>) -- <brief description>"
+  # For operational subtasks, set DISPATCH_PROMPT to a direct command instead.
+  [[ -n "$DISPATCH_PROMPT" ]] || DISPATCH_PROMPT="/full-loop Implement issue #<number> (<url>) -- <brief description>"
+
+  ~/.aidevops/agents/scripts/headless-runtime-helper.sh run \
+    --role worker \
+    --session-key "issue-<number>" \
+    --dir <path> \
+    --title "Issue #<number>: <title>" \
+    --prompt "$DISPATCH_PROMPT
+
+  TASK LINEAGE:
+    0. [parent] ${PARENT_DESC} (${PARENT_ID})
+      1. <sibling 1 desc> (${PARENT_ID}.1)
+      2. <sibling 2 desc> (${PARENT_ID}.2)  <-- THIS TASK
+      3. <sibling 3 desc> (${PARENT_ID}.3)
+
+  LINEAGE RULES:
+  - You are one of several agents working in parallel on sibling tasks under the same parent.
+  - Focus ONLY on your specific task (marked with '<-- THIS TASK').
+  - Do NOT duplicate work that sibling tasks would handle.
+  - If your task depends on interfaces or APIs from sibling tasks, define reasonable stubs.
+  - If blocked by a sibling task, exit with BLOCKED and specify which sibling." &
+  sleep 2
+  ```
+
+### Batch execution strategies for decomposed tasks (t1408.4)
+
+When the task decomposition pipeline (t1408) produces subtasks grouped under parent tasks, use `batch-strategy-helper.sh` to determine dispatch order. This integrates with the existing `MAX_WORKERS` concurrency limit — batch sizes never exceed available worker slots.
+
+**Two strategies:**
+
+- **depth-first** (default): Complete all subtasks under one parent branch before starting the next. Tasks within each branch run concurrently up to the concurrency limit. Good for dependent work where branch B builds on branch A's output.
+- **breadth-first**: One subtask from each parent branch per batch, spreading progress evenly across all branches. Good for independent work where all branches can proceed in parallel.
+
+**When to use batch strategies:**
+
+Only when dispatching subtasks from a decomposed parent task (tasks sharing a `parent_id` in their issue body or TODO.md hierarchy). For regular unrelated issues, use the standard priority-based dispatch above — batch strategies add no value for independent tasks.
+
+**How to use:**
+
+```bash
+# Build the tasks JSON from decomposed subtasks in TODO.md or issue bodies.
+# Each task needs: id, parent_id, status, blocked_by, depth.
+TASKS_JSON='[{"id":"t1408.1","parent_id":"t1408","status":"pending","depth":1,"blocked_by":[]}, ...]'
+
+# Get the next batch to dispatch (respects blocked_by dependencies)
+NEXT_BATCH=$(batch-strategy-helper.sh next-batch \
+  --strategy "${BATCH_STRATEGY:-depth-first}" \
+  --tasks "$TASKS_JSON" \
+  --concurrency "$AVAILABLE")
+
+# Dispatch each task in the batch
+# Use the same mode-selection rule as standard issue dispatch:
+# code tasks => /full-loop, operational tasks => direct command
+echo "$NEXT_BATCH" | jq -r '.[]' | while read -r task_id; do
+  # Look up the issue number and repo for this task_id
+  # Then dispatch as normal (see dispatch rules above)
+  DISPATCH_PROMPT="/full-loop Implement issue #<number> (<url>) -- <brief description>"
+  # For operational tasks in the batch, set DISPATCH_PROMPT to a direct command.
+  [[ -n "$DISPATCH_PROMPT" ]] || DISPATCH_PROMPT="/full-loop Implement issue #<number> (<url>) -- <brief description>"
+  ~/.aidevops/agents/scripts/headless-runtime-helper.sh run \
+    --role worker \
+    --session-key "task-${task_id}" \
+    --dir <path> \
+    --title "Issue #<number>: <title>" \
+    --prompt "$DISPATCH_PROMPT" &
+  sleep 2
+done
+```
+
+**Configuration:**
+
+- `BATCH_STRATEGY` env var: `depth-first` (default) or `breadth-first`. Set in `pulse-wrapper.sh` or per-repo via bundle config.
+- Concurrency per batch is capped by `AVAILABLE` worker slots (from Step 1) and the helper's `MAX_BATCH_SIZE` (8).
+- The helper automatically skips blocked tasks (`blocked_by:` references to non-completed siblings).
+
+**Validation:** Before dispatching, optionally validate the dependency graph:
+
+```bash
+batch-strategy-helper.sh validate --tasks "$TASKS_JSON"
+# Returns JSON with {valid: bool, errors: [...], warnings: [...]}
+# Detects: circular dependencies, missing blocker references, excessive depth
+```
+
+**This is guidance, not enforcement.** The batch strategy is a recommendation for the pulse supervisor's dispatch ordering. Use judgment — if a breadth-first batch would dispatch 5 tasks but only 2 worker slots are available, dispatch the 2 highest-priority tasks regardless of strategy. The helper respects concurrency limits, but the supervisor has final say on what to dispatch.
+
+### Priority order
+
+1. PRs with green CI → merge (free — no worker slot needed)
+2. PRs with failing CI or review feedback → fix (uses a slot, but closer to done than new issues)
+3. Issues labelled `priority:high` or `bug`
+4. Active mission features (keeps multi-day projects moving — see Step 3.5)
+5. Product repos (`"priority": "product"` in repos.json) over tooling — **enforced by priority-class reservations (t1423)**. Product repos have `PRODUCT_MIN` reserved slots; tooling cannot consume them when product work is pending. See "Priority-class enforcement" in Step 1.
+6. Smaller/simpler tasks over large ones (faster throughput)
+7. `quality-debt` issues (unactioned review feedback from merged PRs) — **use worktree dispatch** (see "Quality-debt worktree dispatch" below)
+8. `simplification-debt` issues (human-approved simplification opportunities)
+9. Oldest issues
+
+### Quality-debt concurrency cap (configurable, default 30%)
+
+Issues labelled `quality-debt` (created by `quality-feedback-helper.sh scan-merged`) represent unactioned review feedback from merged PRs. These are important but should not crowd out new feature work.
+
+**Rule: quality-debt issues may consume at most `QUALITY_DEBT_CAP_PCT` of available worker slots.** Default is 30%. Pulse pre-fetched state includes the active cap as `Quality-debt cap: **X%** of worker pool` from `pulse-wrapper.sh`. Calculate: `QUALITY_DEBT_MAX = floor(MAX_WORKERS * QUALITY_DEBT_CAP_PCT / 100)` (minimum 1). Count running workers whose command line contains a `quality-debt` issue number, plus open `quality-debt` issues with `status:in-progress` or `status:queued` labels. If the count >= `QUALITY_DEBT_MAX`, skip remaining quality-debt issues and dispatch higher-priority work instead.
+
+```bash
+# Count active quality-debt workers
+QUALITY_DEBT_ACTIVE=$(gh issue list --repo <slug> --label "quality-debt" --label "status:in-progress" --state open --json number --jq 'length' || echo 0)
+QUALITY_DEBT_QUEUED=$(gh issue list --repo <slug> --label "quality-debt" --label "status:queued" --state open --json number --jq 'length' || echo 0)
+QUALITY_DEBT_CURRENT=$((QUALITY_DEBT_ACTIVE + QUALITY_DEBT_QUEUED))
+# Read from pre-fetched state section (default 30 if unavailable)
+QUALITY_DEBT_CAP_PCT=<from pre-fetched "Quality-debt cap: **X%**" line, default 30>
+QUALITY_DEBT_MAX=$(( MAX_WORKERS * QUALITY_DEBT_CAP_PCT / 100 ))
+[[ "$QUALITY_DEBT_MAX" -lt 1 ]] && QUALITY_DEBT_MAX=1
+```
+
+If `QUALITY_DEBT_CURRENT >= QUALITY_DEBT_MAX`, do not dispatch more quality-debt issues this cycle.
+
+### Pre-dispatch canonical-repo check for quality-debt (t1479, MANDATORY)
+
+**Before dispatching any quality-debt worker**, verify the canonical repo directory is on `main`. If it is not, skip all quality-debt dispatches for that repo this cycle and log a warning. This prevents the branch-conflict cascade where multiple workers race to create branches in the same canonical directory, leaving it on a non-main branch.
+
+```bash
+# Check canonical repo is on main before any quality-debt dispatch
+CANONICAL_BRANCH=$(git -C <path> rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")
+if [[ "$CANONICAL_BRANCH" != "main" && "$CANONICAL_BRANCH" != "master" ]]; then
+  echo "WARN: Skipping quality-debt dispatch for <slug> — canonical repo is on branch '$CANONICAL_BRANCH', not main. Manual cleanup required before quality-debt workers can be dispatched."
+  # Skip all quality-debt dispatches for this repo this cycle
+  continue
+fi
+```
+
+### Quality-debt worktree dispatch (t1479, MANDATORY)
+
+**Quality-debt workers MUST be dispatched to a pre-created worktree, not the canonical repo directory.** Dispatching multiple workers to the same canonical dir causes them to race for branch creation, leaving the canonical repo on a non-main branch and producing struggle ratios in the thousands.
+
+**For each quality-debt issue dispatch:**
+
+1. Generate a branch name from the issue number and title slug.
+2. Pre-create a worktree for that branch using `worktree-helper.sh`.
+3. Pass `--dir <worktree_path>` (not `--dir <canonical_path>`) to the headless runtime helper.
+
+```bash
+# 1. Generate branch name from issue number + title slug (max 40 chars)
+QD_BRANCH_SLUG=$(echo "<title>" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g' | cut -c1-30)
+QD_BRANCH="bugfix/qd-<number>-${QD_BRANCH_SLUG}"
+
+# 2. Pre-create worktree (idempotent — if branch already exists, reuse it)
+QD_WT_PATH=$(git -C <path> worktree list --porcelain \
+  | grep -B2 "branch refs/heads/${QD_BRANCH}$" \
+  | grep "^worktree " | cut -d' ' -f2- 2>/dev/null || true)
+
+if [[ -z "$QD_WT_PATH" ]]; then
+  # Worktree does not exist — create it using git -C to target the correct repo
+  # (worktree-helper.sh uses cwd; use git directly to avoid cwd dependency)
+  REPO_NAME=$(basename <path>)
+  PARENT_DIR=$(dirname <path>)
+  QD_WT_SLUG=$(echo "$QD_BRANCH" | tr '/' '-' | tr '[:upper:]' '[:lower:]')
+  QD_WT_PATH="${PARENT_DIR}/${REPO_NAME}-${QD_WT_SLUG}"
+  git -C <path> worktree add -b "$QD_BRANCH" "$QD_WT_PATH" 2>/dev/null || {
+    echo "WARN: Failed to create worktree for quality-debt #<number> — skipping dispatch"
+    continue
+  }
+fi
+
+if [[ -z "$QD_WT_PATH" || ! -d "$QD_WT_PATH" ]]; then
+  echo "WARN: Could not determine worktree path for quality-debt #<number> — skipping dispatch"
+  continue
+fi
+
+# 3. Dispatch worker to the worktree path, not the canonical repo path
+~/.aidevops/agents/scripts/headless-runtime-helper.sh run \
+  --role worker \
+  --session-key "issue-<number>" \
+  --dir "$QD_WT_PATH" \
+  --title "Issue #<number>: <title>" \
+  --prompt "/full-loop Implement issue #<number> (<url>) -- <brief description>" &
+sleep 2
+```
+
+**Why worktrees, not canonical dir:** When the pulse dispatches N quality-debt workers all pointing to the same canonical repo path, each worker's `full-loop.md` Step 1 tries to create a branch in that directory. The first worker succeeds; subsequent workers find the repo already on a non-main branch and either fail or compound the problem. Worktrees give each worker an isolated directory with its own branch, so they never interfere with each other or with the canonical repo.
+
+**`git -C <path>` for worktree creation:** The pulse runs from its own working directory (not the target repo). Use `git -C <path>` to create worktrees in the correct repo without changing the pulse's cwd. Do NOT call `worktree-helper.sh` for this — it uses `get_repo_root()` which depends on cwd and would target the wrong repo.
+
+### Quality-debt PR blast radius cap (t1422)
+
+Quality-debt PRs that touch many files conflict with every other PR in flight. When multiple large-batch quality-debt PRs are created concurrently, they cascade into merge conflicts — each merge moves main, invalidating the next PR's base. This was observed in March 2026: 19 of 30 open PRs were conflicting, with individual PRs touching up to 69 files.
+
+**Rule: quality-debt PRs must touch at most 5 files.** This is a hard cap enforced by the worker (see `full-loop.md` "Quality-debt blast radius cap"). The pulse enforces it at dispatch time by scoping issue descriptions:
+
+1. **Per-file issues preferred.** When creating quality-debt issues (via `quality-feedback-helper.sh`, code-simplifier, or manual filing), create one issue per file or per tightly-coupled file group (max 5 files). An issue titled "Fix shellcheck violations in dispatch.sh" will produce a 1-file PR that conflicts with nothing. An issue titled "Fix shellcheck violations across 20 scripts" will produce a 20-file PR that conflicts with everything.
+
+2. **File-level dedup before dispatch.** Before dispatching a quality-debt worker, check whether any open PR already touches the same files. If overlap exists, skip the issue this cycle — the existing PR must merge first.
+
+   ```bash
+   # Get files that would be touched by this issue (from issue body or title)
+   # Then check open PRs for overlap
+   OPEN_PR_FILES=$(gh pr list --repo <slug> --state open --json number,files \
+     --jq '[.[].files[].path] | unique | .[]')
+
+   # If the issue mentions specific files, check for overlap
+   # This is a judgment call — read the issue body for file paths
+   # If overlap is found, skip: "Skipping quality-debt #NNN — files overlap with open PR #MMM"
+   ```
+
+3. **Serial merge for quality-debt.** Do not dispatch a second quality-debt worker for the same repo while a quality-debt PR is open and mergeable. Wait for the first to merge, then dispatch the next. This prevents the conflict cascade at the source. Feature PRs are unaffected — they touch different files by nature.
+
+   ```bash
+   # Check for open quality-debt PRs in this repo
+   OPEN_DEBT_PRS=$(gh pr list --repo <slug> --state open \
+     --json number,title,labels \
+     --jq '[.[] | select(.labels[]?.name == "quality-debt" or (.title | test("quality.debt|fix:.*batch|fix:.*harden"; "i")))] | length' \
+     || echo 0)
+
+   # If there's already an open quality-debt PR, skip dispatching more
+   if [[ "$OPEN_DEBT_PRS" -gt 0 ]]; then
+     echo "Skipping quality-debt dispatch — $OPEN_DEBT_PRS quality-debt PR(s) already open for <slug>"
+     # Focus on merging the existing PR instead
+   fi
+   ```
+
+**Why 5 files?** A 5-file PR has a ~10% chance of conflicting with another random 5-file PR in a 200-file repo. A 50-file PR has a ~95% chance. The conflict probability scales quadratically with file count — small PRs are exponentially safer.
+
+### Stale quality-debt PR cleanup
+
+When the pulse detects quality-debt PRs that have been `CONFLICTING` for 24+ hours, close them with a comment explaining they'll be superseded by smaller, atomic PRs:
+
+```bash
+# For each conflicting quality-debt PR older than 24 hours:
+gh pr close <number> --repo <slug> \
+  -c "Closing — this PR has merge conflicts and touches too many files (blast radius issue, see t1422). The underlying fixes will be re-created as smaller PRs (max 5 files each) to prevent conflict cascades."
+```
+
+After closing, ensure the corresponding issues are relabelled `status:available` so they re-enter the dispatch queue. The next dispatch cycle will create properly-scoped PRs.
+
+### Simplification-debt concurrency cap (10%)
+
+Issues labelled `simplification-debt` (created by `/code-simplifier` analysis, approved by a human) represent maintainability improvements that preserve all functionality and knowledge. These are the lowest-priority automated work -- post-deployment nice-to-haves.
+
+**Rule: simplification-debt issues may consume at most 10% of available worker slots** (minimum 1, but only when no higher-priority work exists). These issues share the combined debt cap with quality-debt -- total debt work (quality-debt + simplification-debt) should not exceed 30% of slots.
+
+```bash
+# Count active simplification-debt workers
+SIMPLIFICATION_DEBT_ACTIVE=$(gh issue list --repo <slug> --label "simplification-debt" --label "status:in-progress" --state open --json number --jq 'length' || echo 0)
+SIMPLIFICATION_DEBT_QUEUED=$(gh issue list --repo <slug> --label "simplification-debt" --label "status:queued" --state open --json number --jq 'length' || echo 0)
+SIMPLIFICATION_DEBT_CURRENT=$((SIMPLIFICATION_DEBT_ACTIVE + SIMPLIFICATION_DEBT_QUEUED))
+SIMPLIFICATION_DEBT_MAX=$(( MAX_WORKERS * 10 / 100 ))
+[[ "$SIMPLIFICATION_DEBT_MAX" -lt 1 ]] && SIMPLIFICATION_DEBT_MAX=1
+
+# Combined debt cap -- quality-debt + simplification-debt together
+# Recalculate quality-debt here so this snippet is self-contained
+QUALITY_DEBT_ACTIVE=$(gh issue list --repo <slug> --label "quality-debt" --label "status:in-progress" --state open --json number --jq 'length' || echo 0)
+QUALITY_DEBT_QUEUED=$(gh issue list --repo <slug> --label "quality-debt" --label "status:queued" --state open --json number --jq 'length' || echo 0)
+QUALITY_DEBT_CURRENT=$((QUALITY_DEBT_ACTIVE + QUALITY_DEBT_QUEUED))
+TOTAL_DEBT_CURRENT=$((QUALITY_DEBT_CURRENT + SIMPLIFICATION_DEBT_CURRENT))
+TOTAL_DEBT_MAX=$(( MAX_WORKERS * 30 / 100 ))
+[[ "$TOTAL_DEBT_MAX" -lt 1 ]] && TOTAL_DEBT_MAX=1
+```
+
+If `SIMPLIFICATION_DEBT_CURRENT >= SIMPLIFICATION_DEBT_MAX` or `TOTAL_DEBT_CURRENT >= TOTAL_DEBT_MAX`, do not dispatch more simplification-debt issues this cycle.
+
+**Codacy maintainability signal:** When Codacy reports a maintainability grade drop (B or below) for a repo, simplification-debt issues for that repo get a temporary priority boost -- treat them as priority 7 (same as quality-debt) until the grade recovers. Check the daily quality sweep comment on the persistent quality-review issue for Codacy grade data.
+
+**Label lifecycle** (for your awareness — workers manage their own transitions): `available` → `queued` (you dispatch) → `in-progress` (worker starts) → `in-review` (PR opened) → `done` (PR merged)
+
+### Cross-repo TODO sync
+
+Sync GitHub issue refs and close completed issues. **Issue creation (push) is handled
+exclusively by CI** (GitHub Actions `issue-sync.yml` on TODO.md push to main) to prevent
+duplicate issues from concurrent local + CI execution. Local sessions use `pull` (sync
+refs back to TODO.md) and `close` (close issues for completed tasks).
+
+**Note:** Helper scripts use `#!/usr/bin/env bash` shebangs which fail in the MCP shell if PATH is incomplete. Step 0's `export PATH=...` fixes this for the session. If you still see `env: bash: No such file or directory`, call scripts with an explicit `/bin/bash` prefix as shown below:
+
+```bash
+# Pull: sync issue refs from GitHub to TODO.md (safe, idempotent)
 /bin/bash ~/.aidevops/agents/scripts/issue-sync-helper.sh pull --repo "$slug" 2>&1 || true
 /bin/bash ~/.aidevops/agents/scripts/issue-sync-helper.sh close --repo "$slug" 2>&1 || true
 git -C "$path" diff --quiet TODO.md 2>/dev/null || {
