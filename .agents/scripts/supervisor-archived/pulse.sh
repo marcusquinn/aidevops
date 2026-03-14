@@ -228,7 +228,7 @@ _diagnose_stale_root_cause() {
 		# heartbeat subshell is unexpectedly killed or stalled.
 		local eval_timeout_cfg="${SUPERVISOR_EVAL_TIMEOUT:-90}"
 		if ! [[ "$eval_timeout_cfg" =~ ^[0-9]+$ ]]; then
-			log_warn "SUPERVISOR_EVAL_TIMEOUT is non-numeric ('$eval_timeout_cfg'); defaulting to 90"
+			log_warn "_diagnose_stale_root_cause: SUPERVISOR_EVAL_TIMEOUT is non-numeric ('$eval_timeout_cfg'); defaulting to 90"
 			eval_timeout_cfg=90
 		fi
 		local heartbeat_window=$((eval_timeout_cfg * 2 + 60))
