@@ -425,9 +425,9 @@ document-creation-helper.sh convert report.md --to pdf --engine xelatex
 document-creation-helper.sh convert letter.odt --to pdf --tool libreoffice
 document-creation-helper.sh convert complex.pdf --to md --tool mineru
 
-# Batch conversion
-document-creation-helper.sh convert ./documents/*.docx --to pdf
-document-creation-helper.sh convert ./reports/*.md --to odt
+# Batch conversion (use a for loop — the script processes one file at a time)
+for f in ./documents/*.docx; do document-creation-helper.sh convert "$f" --to pdf; done
+for f in ./reports/*.md; do document-creation-helper.sh convert "$f" --to odt; done
 
 # Force a specific tool
 document-creation-helper.sh convert file.odt --to pdf --tool pandoc
