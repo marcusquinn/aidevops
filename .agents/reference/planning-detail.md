@@ -62,7 +62,7 @@ The supervisor updates a `status:` tag on each task's TODO.md line at every deci
 | `status:changes-requested` | Human reviewer requested changes |
 | `status:blocked:<reason>` | Cannot proceed, reason given |
 
-The AI lifecycle engine (`SUPERVISOR_AI_LIFECYCLE=true`, default) replaces hardcoded bash heuristics with intelligence-first decision making. For each active task, it gathers real-world state (DB, GitHub PR, CI, git), decides the next action, executes it, and updates the status tag. Set `SUPERVISOR_AI_LIFECYCLE=false` to fall back to the legacy `cmd_pr_lifecycle` bash heuristics.
+The AI lifecycle engine (`SUPERVISOR_AI_LIFECYCLE=true`, default) replaces hardcoded bash heuristics with intelligence-first decision-making. For each active task, it gathers real-world state (DB, GitHub PR, CI, git), decides the next action, executes it, and updates the status tag. Set `SUPERVISOR_AI_LIFECYCLE=false` to fall back to the legacy `cmd_pr_lifecycle` bash heuristics.
 
 ## Blocker Statuses
 
