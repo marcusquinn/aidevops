@@ -33,9 +33,12 @@ _worker_hang_evidence() {
 #######################################
 _iso_to_epoch() {
 	local iso_ts="$1"
-	date -j -f "%Y-%m-%dT%H:%M:%SZ" "$iso_ts" "+%s" 2>/dev/null ||
+	local epoch
+	epoch=$(date -j -f "%Y-%m-%dT%H:%M:%SZ" "$iso_ts" "+%s" 2>/dev/null ||
 		date -d "$iso_ts" "+%s" 2>/dev/null ||
-		echo "0"
+		echo "0")
+	echo "$epoch"
+	return 0
 }
 
 #######################################
@@ -1091,7 +1094,7 @@ cmd_pulse() {
 			local stale_secs=0
 			if [[ -n "$stale_updated" ]]; then
 				local updated_epoch
-				updated_epoch=$(date -j -f "%Y-%m-%dT%H:%M:%SZ" "$stale_updated" "+%s" 2>/dev/null || date -d "$stale_updated" "+%s" 2>/dev/null || echo "0")
+				updated_epoch=$(_iso_to_epoch "$stale_updated")
 				local now_epoch
 				now_epoch=$(date "+%s")
 				if [[ "$updated_epoch" -gt 0 ]]; then
@@ -1823,7 +1826,7 @@ cmd_pulse() {
 			local stuck_stale_secs=0
 			if [[ -n "$stuck_updated" ]]; then
 				local stuck_epoch
-				stuck_epoch=$(date -j -f "%Y-%m-%dT%H:%M:%SZ" "$stuck_updated" "+%s" 2>/dev/null || date -d "$stuck_updated" "+%s" 2>/dev/null || echo "0")
+				stuck_epoch=$(_iso_to_epoch "$stuck_updated")
 				local stuck_now
 				stuck_now=$(date "+%s")
 				if [[ "$stuck_epoch" -gt 0 ]]; then
@@ -2321,7 +2324,7 @@ cmd_pulse() {
 					started_at=$(db "$SUPERVISOR_DB" "SELECT started_at FROM tasks WHERE id = '$(sql_escape "$health_task")';" 2>/dev/null || echo "")
 					if [[ -n "$started_at" ]]; then
 						local started_epoch
-						started_epoch=$(date -j -f "%Y-%m-%dT%H:%M:%SZ" "$started_at" +%s 2>/dev/null || date -d "$started_at" +%s 2>/dev/null || echo "0")
+						started_epoch=$(_iso_to_epoch "$started_at")
 						local now_epoch
 						now_epoch=$(date +%s)
 						local runtime_seconds=$((now_epoch - started_epoch))
