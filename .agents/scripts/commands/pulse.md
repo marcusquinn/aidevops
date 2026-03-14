@@ -525,26 +525,14 @@ If budget is exhausted, stop opening new issue workers and continue PR advanceme
 # Source once per pulse run (provides has_worker_for_repo_issue, has_merged_pr_for_issue, and check_dispatch_dedup)
 source ~/.aidevops/agents/scripts/pulse-wrapper.sh
 
-# Check 1: exact repo+issue match via process list
-if has_worker_for_repo_issue <number> <slug>; then
-  echo "Worker already running for #<number> in <slug> — skipping"
-  continue
-fi
-
-# Check 2: normalized dedup via dispatch-dedup-helper (catches title variants)
-if ~/.aidevops/agents/scripts/dispatch-dedup-helper.sh is-duplicate "Issue #<number>: <title>"; then
-  echo "Duplicate dispatch detected for #<number> — skipping"
-  continue
-fi
-
-# Check 3: merged-PR evidence (direct close keyword OR task-id fallback)
-if has_merged_pr_for_issue <number> <slug> "<issue title>"; then
-  echo "Issue #<number> already has merged PR evidence — skipping dispatch"
+# Single dedup guard: checks active worker, title variants, and merged-PR evidence
+if check_dispatch_dedup <number> <slug> "Issue #<number>: <title>" "<task-id>: <title>"; then
+  echo "Dedup guard blocked dispatch for #<number> in <slug> — skipping"
   continue
 fi
 ```
 
-All three checks MUST pass before dispatch. The first catches exact repo+issue process overlap; the second catches title variants (e.g., `issue-3502` vs `Issue #3502: description`); the third catches already-merged implementations (including duplicate issue/task-ID patterns where the current issue was not the one auto-closed by the merge). Skipping these checks caused both the 26-worker thrashing incident (GH#4400) and the awardsapp duplicate-PR pattern (GH#4527).
+`check_dispatch_dedup` runs all three checks in sequence: (1) exact repo+issue process overlap, (2) title variants via dispatch-dedup-helper (e.g., `issue-3502` vs `Issue #3502: description`), and (3) merged-PR evidence via close keywords and task-ID fallback. Skipping this guard caused both the 26-worker thrashing incident (GH#4400) and the awardsapp duplicate-PR pattern (GH#4527).
 
 1.5. **Apply per-repo worker cap before dispatch:** default `MAX_WORKERS_PER_REPO=5` (override via env var only when you have a clear reason). If the target repo already has `MAX_WORKERS_PER_REPO` active workers, skip dispatch for that repo this cycle and continue with other repos.
 

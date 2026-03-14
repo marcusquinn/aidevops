@@ -2190,7 +2190,7 @@ has_merged_pr_for_issue() {
 	fi
 
 	local query pr_json pr_count
-	for keyword in closes fixes resolves; do
+	for keyword in close closes closed fix fixes fixed resolve resolves resolved; do
 		query="${keyword} #${issue_number} in:body"
 		pr_json=$(gh pr list --repo "$repo_slug" --state merged --search "$query" --limit 1 --json number 2>/dev/null) || pr_json="[]"
 		pr_count=$(echo "$pr_json" | jq 'length' 2>/dev/null) || pr_count=0

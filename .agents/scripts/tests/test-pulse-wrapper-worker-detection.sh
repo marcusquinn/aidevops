@@ -86,10 +86,18 @@ set_gh_search_fixtures() {
 
 gh() {
 	if [[ "${1:-}" == "pr" && "${2:-}" == "list" ]]; then
-		local search_query=""
+		local repo_slug="" state_filter="" search_query=""
 		shift 2
 		while [[ $# -gt 0 ]]; do
 			case "$1" in
+			--repo)
+				repo_slug="${2:-}"
+				shift 2
+				;;
+			--state)
+				state_filter="${2:-}"
+				shift 2
+				;;
 			--search)
 				search_query="${2:-}"
 				shift 2
@@ -100,13 +108,16 @@ gh() {
 			esac
 		done
 
-		local line key payload
+		local compound_key="${repo_slug}|${state_filter}|${search_query}"
+		local line fixture_key fixture_payload
 		while IFS= read -r line; do
 			[[ -n "$line" ]] || continue
-			key="${line%%|*}"
-			payload="${line#*|}"
-			if [[ "$key" == "$search_query" ]]; then
-				printf '%s\n' "$payload"
+			# Fixture format: repo|state|query|payload
+			# Strip last field to get the compound key; last field is the payload
+			fixture_key="${line%|*}"
+			fixture_payload="${line##*|}"
+			if [[ "$fixture_key" == "$compound_key" ]]; then
+				printf '%s\n' "$fixture_payload"
 				return 0
 			fi
 		done <<<"$GH_SEARCH_FIXTURES"
@@ -190,7 +201,7 @@ JSON
 }
 
 test_has_merged_pr_for_issue_detects_closing_keyword() {
-	set_gh_search_fixtures "closes #4527 in:body|[{\"number\":1145}]"
+	set_gh_search_fixtures "marcusquinn/aidevops|merged|closes #4527 in:body|[{\"number\":1145}]"
 
 	if has_merged_pr_for_issue "4527" "marcusquinn/aidevops" "t4527: prevent duplicate dispatch"; then
 		print_result "has_merged_pr_for_issue detects merged PR via closes keyword" 0
@@ -202,7 +213,7 @@ test_has_merged_pr_for_issue_detects_closing_keyword() {
 }
 
 test_has_merged_pr_for_issue_detects_task_id_fallback() {
-	set_gh_search_fixtures "t063.1 in:title|[{\"number\":1059}]"
+	set_gh_search_fixtures "marcusquinn/aidevops|merged|t063.1 in:title|[{\"number\":1059}]"
 
 	if has_merged_pr_for_issue "9999" "marcusquinn/aidevops" "t063.1: fix awardsapp duplicate PR dispatch"; then
 		print_result "has_merged_pr_for_issue detects merged PR via task-id fallback" 0
@@ -215,7 +226,7 @@ test_has_merged_pr_for_issue_detects_task_id_fallback() {
 
 test_check_dispatch_dedup_treats_merged_pr_as_duplicate() {
 	set_ps_fixture ""
-	set_gh_search_fixtures "closes #4527 in:body|[{\"number\":1145}]"
+	set_gh_search_fixtures "marcusquinn/aidevops|merged|closes #4527 in:body|[{\"number\":1145}]"
 
 	if check_dispatch_dedup "4527" "marcusquinn/aidevops" "Issue #4527: prevent redispatch" "t4527: prevent redispatch"; then
 		print_result "check_dispatch_dedup skips dispatch when merged PR exists" 0
