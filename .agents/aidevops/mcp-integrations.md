@@ -188,7 +188,11 @@ claude mcp add --scope user openapi-search --transport http https://openapi-mcp.
 }
 ```
 
-**For Claude Desktop** (`~/Library/Application Support/Claude/claude_desktop_config.json`):
+**For Claude Desktop** (config path by OS):
+
+- **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
+- **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
+- **Linux**: `~/.config/Claude/claude_desktop_config.json`
 
 ```json
 {
@@ -223,7 +227,11 @@ No installation required — this is a remote MCP server authenticated via OAuth
 
 On first connection, your MCP client opens a browser OAuth flow to `dash.cloudflare.com`. After authorizing, the token is stored automatically — no manual API key setup needed.
 
-**For Claude Desktop** (`~/Library/Application Support/Claude/claude_desktop_config.json`):
+**For Claude Desktop** (config path by OS):
+
+- **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
+- **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
+- **Linux**: `~/.config/Claude/claude_desktop_config.json`
 
 ```json
 {
