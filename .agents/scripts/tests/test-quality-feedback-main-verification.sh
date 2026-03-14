@@ -521,6 +521,19 @@ test_skips_no_further_comments_review() {
 	return 0
 }
 
+test_skips_gemini_no_further_comments_summary_review() {
+	local result
+	result=$(_test_approval_filter '## Code Review
+
+This pull request correctly adds blocked-by dependencies to subtasks in TODO.md, establishing a sequential chain t1120.1 -> t1120.2 -> t1120.4. This change prevents the subtasks from being dispatched in parallel, which could lead to wasted CI cycles. The modification is minimal, accurate, and adheres to the task dependency format used in the project. The implementation is sound and I have no further comments.')
+	if [[ "$result" == "skip" ]]; then
+		print_result "skip Gemini summary with 'no further comments'" 0
+	else
+		print_result "skip Gemini summary with 'no further comments'" 1 "expected skip, got ${result}"
+	fi
+	return 0
+}
+
 test_skips_looks_good_review() {
 	local result
 	result=$(_test_approval_filter "Looks good to me!")
@@ -869,6 +882,7 @@ main() {
 	echo "Running approval/sentiment detection tests (GH#4604)"
 	test_skips_lgtm_review
 	test_skips_no_further_comments_review
+	test_skips_gemini_no_further_comments_summary_review
 	test_skips_looks_good_review
 	test_skips_good_work_review
 	test_skips_no_issues_review
