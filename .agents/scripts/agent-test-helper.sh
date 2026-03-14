@@ -64,16 +64,16 @@ readonly REPO_SUITES_DIR="${SCRIPT_DIR}/../tests"
 
 # CLI detection - opencode is the only supported CLI
 detect_cli() {
-	local cli="${AGENT_TEST_CLI:-}"
-	if [[ -n "$cli" ]]; then
-		echo "$cli"
-		return 0
-	fi
-	if command -v opencode >/dev/null 2>&1; then
-		echo "opencode"
-	else
-		echo ""
-	fi
+    local cli="${AGENT_TEST_CLI:-}"
+    if [[ -n "$cli" ]]; then
+        echo "$cli"
+        return 0
+    fi
+    if command -v opencode >/dev/null 2>&1; then
+        echo "opencode"
+    else
+        echo ""
+    fi
 }
 
 AI_CLI="$(detect_cli)"
