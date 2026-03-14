@@ -425,11 +425,26 @@ check_requirements() {
 	fi
 
 	local missing_deps=()
+	local missing_packages=()
 
 	# Check for required commands
-	command -v jq >/dev/null 2>&1 || missing_deps+=("jq")
-	command -v curl >/dev/null 2>&1 || missing_deps+=("curl")
-	command -v ssh >/dev/null 2>&1 || missing_deps+=("ssh")
+	# Format: command-name package-name (same when identical)
+	if ! command -v jq >/dev/null 2>&1; then
+		missing_deps+=("jq")
+		missing_packages+=("jq")
+	fi
+	if ! command -v curl >/dev/null 2>&1; then
+		missing_deps+=("curl")
+		missing_packages+=("curl")
+	fi
+	if ! command -v ssh >/dev/null 2>&1; then
+		missing_deps+=("ssh")
+		missing_packages+=("ssh")
+	fi
+	if ! command -v rg >/dev/null 2>&1; then
+		missing_deps+=("rg")
+		missing_packages+=("ripgrep")
+	fi
 
 	if [[ ${#missing_deps[@]} -gt 0 ]]; then
 		print_warning "Missing required dependencies: ${missing_deps[*]}"
@@ -441,12 +456,12 @@ check_requirements() {
 			print_error "Could not detect package manager"
 			echo ""
 			echo "Please install manually:"
-			echo "  macOS: brew install ${missing_deps[*]}"
-			echo "  Ubuntu/Debian: sudo apt-get install ${missing_deps[*]}"
-			echo "  Fedora: sudo dnf install ${missing_deps[*]}"
-			echo "  CentOS/RHEL: sudo yum install ${missing_deps[*]}"
-			echo "  Arch: sudo pacman -S ${missing_deps[*]}"
-			echo "  Alpine: sudo apk add ${missing_deps[*]}"
+			echo "  macOS: brew install ${missing_packages[*]}"
+			echo "  Ubuntu/Debian: sudo apt-get install ${missing_packages[*]}"
+			echo "  Fedora: sudo dnf install ${missing_packages[*]}"
+			echo "  CentOS/RHEL: sudo yum install ${missing_packages[*]}"
+			echo "  Arch: sudo pacman -S ${missing_packages[*]}"
+			echo "  Alpine: sudo apk add ${missing_packages[*]}"
 			exit 1
 		fi
 
@@ -460,8 +475,8 @@ check_requirements() {
 		read -r -p "Install missing dependencies using $pkg_manager? [Y/n]: " install_deps
 
 		if [[ "$install_deps" =~ ^[Yy]?$ ]]; then
-			print_info "Installing ${missing_deps[*]}..."
-			if install_packages "$pkg_manager" "${missing_deps[@]}"; then
+			print_info "Installing ${missing_packages[*]}..."
+			if install_packages "$pkg_manager" "${missing_packages[@]}"; then
 				print_success "Dependencies installed successfully"
 			else
 				print_error "Failed to install dependencies"
