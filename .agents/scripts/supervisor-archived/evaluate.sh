@@ -230,14 +230,14 @@ validate_pr_belongs_to_task() {
 	pr_branch=$(echo "$pr_info" | jq -r '.headRefName // ""' 2>/dev/null || echo "")
 
 	# Check if task ID appears in title or branch (case-insensitive).
-	# Uses word boundary \b so "t195" matches "feature/t195", "(t195)",
+	# Use portable ERE token boundaries so "t195" matches "feature/t195", "(t195)",
 	# "t195-fix-auth" but NOT "t1950" or "t1195".
-	if echo "$pr_title" | grep -qi "\b${task_id}\b" 2>/dev/null; then
+	if echo "$pr_title" | grep -Eqi "(^|[^[:alnum:]_])${task_id}([^[:alnum:]_]|$)" 2>/dev/null; then
 		echo "$pr_url"
 		return 0
 	fi
 
-	if echo "$pr_branch" | grep -qi "\b${task_id}\b" 2>/dev/null; then
+	if echo "$pr_branch" | grep -Eqi "(^|[^[:alnum:]_])${task_id}([^[:alnum:]_]|$)" 2>/dev/null; then
 		echo "$pr_url"
 		return 0
 	fi
