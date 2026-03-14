@@ -774,13 +774,15 @@ update_version_in_files() {
 	fi
 
 	# Update README version badge (skip if using dynamic GitHub release badge)
+	local dynamic_badge_pattern="img.shields.io/github/v/release"
+	local hardcoded_badge_pattern="Version-[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*-blue"
 	if [[ -f "$REPO_ROOT/README.md" ]]; then
-		if grep -q "img.shields.io/github/v/release" "$REPO_ROOT/README.md"; then
+		if grep -q "$dynamic_badge_pattern" "$REPO_ROOT/README.md"; then
 			# Dynamic badge - no update needed, GitHub handles it automatically
 			print_success "README.md uses dynamic GitHub release badge (no update needed)" >&2
-		elif grep -q "Version-[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*-blue" "$REPO_ROOT/README.md"; then
+		elif grep -q "$hardcoded_badge_pattern" "$REPO_ROOT/README.md"; then
 			# Hardcoded badge - update it
-			sed_inplace "s/Version-[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*-blue/Version-$new_version-blue/" "$REPO_ROOT/README.md"
+			sed_inplace "s/$hardcoded_badge_pattern/Version-$new_version-blue/" "$REPO_ROOT/README.md"
 
 			# Validate the update was successful
 			if grep -q "Version-$new_version-blue" "$REPO_ROOT/README.md"; then
