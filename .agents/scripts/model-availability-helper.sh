@@ -115,7 +115,7 @@ get_tier_models() {
 	if _is_opencode_available; then
 		case "$tier" in
 		local) echo "local/llama.cpp|anthropic/claude-haiku-4-5" ;;
-		haiku) echo "opencode/claude-haiku-4-5|opencode/gemini-3-flash" ;;
+		haiku) echo "opencode/claude-haiku-4-5-20251001|opencode/gemini-3-flash" ;;
 		flash) echo "google/gemini-2.5-flash|opencode/gemini-3-flash" ;;
 		sonnet) echo "opencode/claude-sonnet-4-6|anthropic/claude-sonnet-4-6" ;;
 		pro) echo "google/gemini-2.5-pro|opencode/gemini-3-pro" ;;
