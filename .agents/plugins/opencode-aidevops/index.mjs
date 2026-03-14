@@ -1067,6 +1067,16 @@ async function toolExecuteBefore(input, output) {
   if (filePath.endsWith(".sh")) {
     const result = runShellQualityPipeline(filePath);
     logQualityGateResult("Quality gate", filePath, result.totalViolations, result.report);
+    const secretResult = scanForSecrets(filePath);
+    if (secretResult.violations > 0) {
+      logQualityGateResult(
+        "SECURITY",
+        filePath,
+        secretResult.violations,
+        secretResult.details.join("\n"),
+        "ERROR",
+      );
+    }
     return;
   }
 
