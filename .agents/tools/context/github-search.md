@@ -160,4 +160,4 @@ rg '"scripts"' package.json -A 10
 
 This subagent provides the same functionality as `grep_app` (Oh-My-OpenCode) or `gh_grep` MCPs without the token overhead.
 
-**Note**: aidevops does not install GitHub search MCPs. If you have Oh-My-OpenCode installed, it provides `grep_app`. Use this `@github-search` subagent instead for zero-overhead GitHub code search.
+**Note**: aidevops does not install GitHub search MCPs. If you have Oh-My-OpenCode installed, it provides `grep_app`. This `@github-search` subagent is the built-in aidevops tool for zero-overhead GitHub code search — use it when you don't have Oh-My-OpenCode, or prefer a CLI-native approach.
