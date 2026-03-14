@@ -1145,8 +1145,9 @@ aidevops includes autonomous orchestration features that can work in the backgro
 1. Supervisor pulse    - Dispatches AI workers every 2 min to implement tasks from TODO.md
 2. Auto-pickup         - Workers claim #auto-dispatch tasks automatically
 3. Cross-repo visibility - Manages tasks, issues, and PRs across all repos in repos.json
-4. Strategic review    - Every 4h, an opus-tier review checks queue health, finds stuck
-                         chains, identifies root causes, and creates self-improvement tasks
+4. Strategic review    - Separate scheduled process (every 4h) — opus-tier review checks
+                         queue health, finds stuck chains, identifies root causes, and
+                         creates self-improvement tasks (see scripts/commands/runners.md)
 5. Model routing       - Cost-aware dispatch: local > haiku > flash > sonnet > pro > opus
 6. Budget tracking     - Per-provider spend limits, subscription-aware routing
 7. Session miner       - Daily extraction of learning signals from past sessions
@@ -1169,9 +1170,10 @@ Here's how it works:
 - Cross-repo: the supervisor sees tasks, issues, and PRs across all repos in repos.json
 - Model routing picks the cheapest model that can handle each task (haiku for simple, opus for complex)
 - Budget tracking prevents overspend — set daily limits per provider
-- Every 4 hours, an opus-tier strategic review assesses the whole operation:
-  finds blocked chains, stale state, idle capacity, and systemic issues
-- It creates self-improvement tasks when it finds root causes in the framework
+- Every 4 hours, a separate opus-tier strategic review assesses the whole operation:
+  finds blocked chains, stale state, idle capacity, and systemic issues.
+  This runs as its own scheduled process (see scripts/commands/runners.md for setup),
+  not as a step within the pulse itself.
 
 Cost depends on how you access the models:
 
@@ -1212,8 +1214,9 @@ If **no**:
 No problem. You can enable it anytime — see scripts/commands/runners.md
 for setup instructions (launchd on macOS, cron on Linux).
 
-The strategic review, session miner, and circuit breaker all run as steps
-within the pulse — enabling the pulse enables everything.
+The session miner and circuit breaker run as exit steps within the pulse.
+The strategic review runs as a separate scheduled process — see
+scripts/commands/runners.md for setup instructions for both.
 ```
 
 ## Settings File
