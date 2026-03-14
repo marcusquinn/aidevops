@@ -182,8 +182,13 @@ Use Playwright (`tools/browser/browser-automation.md`) to visit the URL and extr
 2. Wait for fonts and images to load (networkidle)
 3. Take full-page screenshot for reference
 4. Extract computed styles from representative elements:
-   - Traverse the DOM to find a small, representative set of styled elements (not limited to a fixed tag list).
-   - Group elements by similar computed styles to identify unique patterns efficiently.
+   - Traverse the DOM and collect a representative sample across headings,
+     body text, containers/cards (including div-based components), form controls,
+     navigation, and interactive elements (buttons, links, chips, badges).
+   - Skip hidden/offscreen/zero-size nodes and deduplicate by a normalised style
+     signature to avoid brute-force per-element extraction on large pages.
+   - Keep enough examples to cover unique visual patterns (typically 20-40 nodes),
+     prioritising above-the-fold and repeated UI components.
    - For each unique pattern, record: font-family, font-size, font-weight,
      line-height, letter-spacing, color, background-color, border,
      border-radius, padding, margin, box-shadow
