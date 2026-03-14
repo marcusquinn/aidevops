@@ -113,8 +113,8 @@ load_config() {
 	fi
 
 	# Default to local URL if self-hosted, otherwise cloud
-	if [[ -z "$WATERCRAWL_API_URL" ]]; then
-		if [[ -d "$WATERCRAWL_DIR" ]] && docker ps -q -f name=watercrawl 2>/dev/null | grep -q .; then
+	if [[ -z "${WATERCRAWL_API_URL:-}" ]]; then
+		if [[ -d "${WATERCRAWL_DIR:-}" ]] && docker ps -q -f name=watercrawl 2>/dev/null | grep -q .; then
 			WATERCRAWL_API_URL="$WATERCRAWL_LOCAL_URL"
 		else
 			WATERCRAWL_API_URL="$WATERCRAWL_CLOUD_URL"
@@ -128,7 +128,7 @@ load_config() {
 load_api_key() {
 	load_config
 
-	if [[ -z "$WATERCRAWL_API_KEY" ]]; then
+	if [[ -z "${WATERCRAWL_API_KEY:-}" ]]; then
 		return 1
 	fi
 
@@ -540,19 +540,19 @@ check_status() {
 	# Check API configuration
 	print_info "API URL: ${WATERCRAWL_API_URL:-not configured}"
 
-	if [[ -n "$WATERCRAWL_API_KEY" ]]; then
+	if [[ -n "${WATERCRAWL_API_KEY:-}" ]]; then
 		print_success "API Key: Configured"
 
 		# Test API connectivity
 		local response
 		response=$(curl -s -o /dev/null -w "%{http_code}" \
-			-H "Authorization: Bearer $WATERCRAWL_API_KEY" \
-			"${WATERCRAWL_API_URL}/api/v1/core/crawl-requests/" 2>/dev/null)
+			-H "Authorization: Bearer ${WATERCRAWL_API_KEY:-}" \
+			"${WATERCRAWL_API_URL:-}/api/v1/core/crawl-requests/" 2>/dev/null)
 
 		if [[ "$response" == "200" ]]; then
 			print_success "API: Connected"
 		elif [[ "$response" == "000" ]]; then
-			print_warning "API: Cannot connect to $WATERCRAWL_API_URL"
+			print_warning "API: Cannot connect to ${WATERCRAWL_API_URL:-}"
 		else
 			print_warning "API: HTTP $response"
 		fi
@@ -585,7 +585,7 @@ scrape_url() {
 	fi
 
 	print_header "Scraping: $url"
-	print_info "Using API: $WATERCRAWL_API_URL"
+	print_info "Using API: ${WATERCRAWL_API_URL:-}"
 
 	# Create Node.js script for scraping
 	local temp_script
@@ -629,7 +629,7 @@ try {
 SCRIPT
 
 	local result
-	if result=$(WATERCRAWL_API_KEY="$WATERCRAWL_API_KEY" WATERCRAWL_API_URL="$WATERCRAWL_API_URL" node "$temp_script" "$url" 2>&1); then
+	if result=$(WATERCRAWL_API_KEY="${WATERCRAWL_API_KEY:-}" WATERCRAWL_API_URL="${WATERCRAWL_API_URL:-}" node "$temp_script" "$url" 2>&1); then
 		if [[ -n "$output_file" ]]; then
 			echo "$result" >"$output_file"
 			print_success "Results saved to: $output_file"
@@ -667,7 +667,7 @@ crawl_website() {
 	fi
 
 	print_header "Crawling: $url"
-	print_info "Using API: $WATERCRAWL_API_URL"
+	print_info "Using API: ${WATERCRAWL_API_URL:-}"
 	print_info "Max depth: $max_depth, Page limit: $page_limit"
 
 	# Create Node.js script for crawling
@@ -744,7 +744,7 @@ try {
 SCRIPT
 
 	local result
-	if result=$(WATERCRAWL_API_KEY="$WATERCRAWL_API_KEY" WATERCRAWL_API_URL="$WATERCRAWL_API_URL" node "$temp_script" "$url" "$max_depth" "$page_limit" 2>&1); then
+	if result=$(WATERCRAWL_API_KEY="${WATERCRAWL_API_KEY:-}" WATERCRAWL_API_URL="${WATERCRAWL_API_URL:-}" node "$temp_script" "$url" "$max_depth" "$page_limit" 2>&1); then
 		if [[ -n "$output_file" ]]; then
 			echo "$result" | grep -v "^\(Status:\|Crawled:\|Creating\|Crawl started\|Monitoring\)" >"$output_file"
 			print_success "Results saved to: $output_file"
@@ -782,7 +782,7 @@ search_web() {
 	fi
 
 	print_header "Searching: $query"
-	print_info "Using API: $WATERCRAWL_API_URL"
+	print_info "Using API: ${WATERCRAWL_API_URL:-}"
 	print_info "Result limit: $limit"
 
 	# Create Node.js script for searching
@@ -835,7 +835,7 @@ try {
 SCRIPT
 
 	local result
-	if result=$(WATERCRAWL_API_KEY="$WATERCRAWL_API_KEY" WATERCRAWL_API_URL="$WATERCRAWL_API_URL" node "$temp_script" "$query" "$limit" 2>&1); then
+	if result=$(WATERCRAWL_API_KEY="${WATERCRAWL_API_KEY:-}" WATERCRAWL_API_URL="${WATERCRAWL_API_URL:-}" node "$temp_script" "$query" "$limit" 2>&1); then
 		if [[ -n "$output_file" ]]; then
 			echo "$result" | grep -v "^Searching" >"$output_file"
 			print_success "Results saved to: $output_file"
@@ -873,7 +873,7 @@ generate_sitemap() {
 	fi
 
 	print_header "Generating sitemap: $url"
-	print_info "Using API: $WATERCRAWL_API_URL"
+	print_info "Using API: ${WATERCRAWL_API_URL:-}"
 	print_info "Format: $format"
 
 	# Create Node.js script for sitemap
@@ -940,7 +940,7 @@ try {
 SCRIPT
 
 	local result
-	if result=$(WATERCRAWL_API_KEY="$WATERCRAWL_API_KEY" WATERCRAWL_API_URL="$WATERCRAWL_API_URL" node "$temp_script" "$url" "$format" 2>&1); then
+	if result=$(WATERCRAWL_API_KEY="${WATERCRAWL_API_KEY:-}" WATERCRAWL_API_URL="${WATERCRAWL_API_URL:-}" node "$temp_script" "$url" "$format" 2>&1); then
 		if [[ -n "$output_file" ]]; then
 			echo "$result" | grep -v "^Creating sitemap" >"$output_file"
 			print_success "Sitemap saved to: $output_file"
