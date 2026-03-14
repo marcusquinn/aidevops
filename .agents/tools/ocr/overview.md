@@ -81,7 +81,7 @@ What is your input?
 
 ### Detailed Comparison
 
-| Feature | PaddleOCR | MinerU | Docling + ET | GLM-OCR | LibPDF |
+| Feature | PaddleOCR | MinerU | Docling + ExtractThinker | GLM-OCR | LibPDF |
 |---------|-----------|--------|--------------|---------|--------|
 | **Primary use** | Scene text OCR | PDF to markdown | Structured extraction | Quick local OCR | PDF manipulation |
 | **Input types** | Any image | PDF only | PDF, DOCX, images | Any image | PDF only |
@@ -164,6 +164,7 @@ Docling (IBM, 52.7k stars, MIT) parses document layout, then ExtractThinker uses
 - Privacy modes (fully local via Ollama, edge via Cloudflare, cloud)
 - PII detection and redaction (Presidio)
 - UK VAT-aware schemas with QuickFile integration
+- Native MCP server for agent framework integration
 
 **Weaknesses**:
 
