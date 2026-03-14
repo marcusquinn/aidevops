@@ -560,21 +560,21 @@ cmd_run() {
 		claude_model=$(model_for_claude_cli "$model")
 		cmd_args+=("--model" "$claude_model")
 
-		# Output format (Claude CLI supports --output-format)
-		if [[ -n "$format" ]]; then
-			cmd_args+=("--output-format" "$format")
-		else
-			cmd_args+=("--output-format" "text")
-		fi
+		# Output format (Claude CLI only accepts: text, json, stream-json)
+		# Normalize format to a Claude-valid value; default to text for
+		# OpenCode-only values (e.g. "terminal") that would fail at runtime.
+		local claude_format
+		case "${format:-text}" in
+		text | json | stream-json) claude_format="${format:-text}" ;;
+		*) claude_format="text" ;;
+		esac
+		cmd_args+=("--output-format" "$claude_format")
 
 		# Continue previous session if requested
 		if [[ "$continue_session" == "true" ]]; then
-			local session_id=""
-			if [[ -f "$dir/session.id" ]]; then
-				session_id=$(cat "$dir/session.id")
-			fi
-			if [[ -n "$session_id" ]]; then
-				cmd_args+=("--resume" "$session_id")
+			local session_file="$dir/session.id"
+			if [[ -s "$session_file" ]]; then
+				cmd_args+=("--resume" "$(cat "$session_file")")
 			else
 				log_warn "No previous session found for $name, starting fresh"
 			fi
