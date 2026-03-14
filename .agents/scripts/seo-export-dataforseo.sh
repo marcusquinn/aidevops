@@ -284,13 +284,14 @@ main() {
     local days="$DEFAULT_DAYS"
     local location="2840"
     local language="en"
+    local next_arg=""
     local arg
     
     while [[ $# -gt 0 ]]; do
         arg="$1"
         case "$arg" in
             --days)
-                local next_arg="${2:-}"
+                next_arg="${2:-}"
                 if [[ -z "$next_arg" ]] || [[ "$next_arg" == -* ]]; then
                     print_error "--days requires a numeric value"
                     return 1
@@ -299,7 +300,7 @@ main() {
                 shift 2
                 ;;
             --location)
-                local next_arg="${2:-}"
+                next_arg="${2:-}"
                 if [[ -z "$next_arg" ]] || [[ "$next_arg" == -* ]]; then
                     print_error "--location requires a value"
                     return 1
@@ -308,7 +309,7 @@ main() {
                 shift 2
                 ;;
             --language)
-                local next_arg="${2:-}"
+                next_arg="${2:-}"
                 if [[ -z "$next_arg" ]] || [[ "$next_arg" == -* ]]; then
                     print_error "--language requires a value"
                     return 1
