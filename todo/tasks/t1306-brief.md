@@ -34,7 +34,7 @@ Full TTSR (real-time stream policy enforcement) is blocked without stream-level 
 6. Add tests in `packages/opencode/test/session/stream-hooks.test.ts`
 
 Key files:
-- `packages/opencode/src/session/processor.ts` — streaming loop (two locations: reasoning and text delta handlers)
+- `packages/opencode/src/session/processor.ts` — streaming loop (handlers for text-delta, reasoning-delta, and tool-input-delta)
 - `packages/plugin/src/index.ts:231` — Hooks interface extension
 - `packages/opencode/test/session/stream-hooks.test.ts` — new test file
 
@@ -84,10 +84,10 @@ Key files:
 
 ## Context & Decisions
 
-- **v2 branch**: First attempt (`feature/stream-hooks`, PR #14701/#14727) was closed due to stale base. Rebased onto latest dev as `feature/stream-hooks-v2` (PR #14741).
+- **v2 branch**: First attempt (`feature/stream-hooks`, PR #14701/#14727) was closed due to stale base. Rebased onto latest dev as `feature/stream-hooks-v2` (PR #14741). **Staleness guard for future upstream PRs:** run `git fetch upstream && git rebase upstream/dev` and force-push before opening — or rebase after >3 days without merge to avoid stale-base closure.
 - **AbortController vs custom error**: Chose `StreamAbortedError` custom error class over AbortController exposure — simpler, doesn't require plumbing AbortController through the plugin API.
-- **Max retries = 3**: Hardcoded constant `STREAM_ABORT_MAX_RETRIES = 3` to prevent infinite retry loops.
-- **Type assertions for tool-input-delta**: Used `(value as any).id` and `(value as any).delta` because the upstream SDK types don't expose these fields on tool-input-delta events yet.
+- **Max retries = 3**: Hardcoded constant `STREAM_ABORT_MAX_RETRIES = 3` to prevent infinite retry loops. **Known design limitation:** this budget is not plugin-configurable — all plugins share the same ceiling regardless of use case. Follow-up: expose `maxRetries` in the `stream.aborted` hook output type so plugins can override (track as a separate upstream issue when the PR merges).
+- **Type assertions for tool-input-delta**: Used `(value as any).id` and `(value as any).delta` because the upstream SDK types don't expose these fields on tool-input-delta events yet. **Follow-up:** once upstream ships proper types for tool-input-delta, remove these casts. Track as a follow-up task (suggested: t1315 — upstream SDK types PR for tool-input-delta fields).
 - **Accumulated text tracking**: Added `toolInputAccumulated` record to track accumulated tool input per tool call ID, matching the pattern used for text and reasoning deltas.
 
 ## Relevant Files
@@ -112,7 +112,9 @@ Key files:
 | PR iteration | 30m | Rebase onto latest dev, address CI flakiness |
 | **Total** | **4h** | |
 
-## Completion Evidence
+## Delivery Evidence
+
+> ⚠️ Merge is pending upstream maintainer review. Task status reflects delivery of the PoC PR, not upstream adoption. Re-engage if the PR is closed or requests rework.
 
 - **Upstream PR:** [anomalyco/opencode#14741](https://github.com/anomalyco/opencode/pull/14741) — OPEN, MERGEABLE, 9/9 CI checks pass
 - **Upstream issue:** [anomalyco/opencode#14740](https://github.com/anomalyco/opencode/issues/14740) — OPEN
