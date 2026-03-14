@@ -50,8 +50,6 @@ preferences:
 - **POC**: Skip ceremony (briefs, PRs, reviews). Commit to main (dedicated repo) or single branch (existing repo). Fast iteration, exploration-first.
 - **Full**: Standard worktree + PR workflow. Briefs required. Code review. Production-quality output.
 
-**Selected mode:** `{poc|full}`
-
 ### Non-Goals
 
 - {Explicitly out of scope — prevents scope creep}
@@ -132,11 +130,11 @@ Milestones are sequential. Features within each milestone are parallelisable.
 
 | Category | Budget | Spent | Remaining | % Used |
 |----------|--------|-------|-----------|--------|
-| Time (hours) | {X}h | 0h | {X}h | 0% |
-| Money (USD) | ${X} | $0 | ${X} | 0% |
-| Tokens | {X} | 0 | {X} | 0% |
+| Time (hours) | 0h   | 0h | 0h   | 0% |
+| Money (USD)  | $0   | $0 | $0   | 0% |
+| Tokens       | 0    | 0  | 0    | 0% |
 
-**Alert threshold:** {80}% — pause and report when any category exceeds this.
+**Alert threshold:** 80% — pause and report when any category exceeds this.
 
 ### Spend Log
 
