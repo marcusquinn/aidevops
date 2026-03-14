@@ -461,9 +461,11 @@ _test_approval_filter() {
 			"\\bnothing (further|more) to recommend\\b"; "i")) as $no_actionable_recommendation |
 
 		($body | test(
+			"\\bno (further |more )?suggestions?\\b|" +
+			"\\bno additional suggestions?\\b|" +
 			"\\bno suggestions? (at this time|for now|currently)?\\b|" +
 			"\\bwithout suggestions?\\b|" +
-			"\\bhas no suggestions?\\b"; "i")) as $no_actionable_suggestion |
+			"\\bhas no suggestions?\\b"; "i")) as $no_actionable_suggestions |
 
 		($body | test(
 			"\\blgtm\\b|\\blooks good( to me)?\\b|\\bgood work\\b|" +
@@ -483,10 +485,13 @@ _test_approval_filter() {
 			"\\bnit:|\\btodo:|\\bfixme|\\bhardcoded|\\bdeprecated|" +
 			"\\brace.condition|\\bdeadlock|\\bleak|\\boverflow|" +
 			"\\bworkaround\\b|\\bhack\\b|" +
-			"```\\s*(suggestion|diff)"; "i")) as $actionable |
+			"```\\s*(suggestion|diff)"; "i")) as $actionable_raw |
 
-		# skip = explicit no-suggestions OR approval-only/no-recommendation/summary-praise with no actionable critique
-		if ($no_actionable_suggestion or (($approval_only or $no_actionable_recommendation or $no_actionable_sentiment or $summary_praise_only) and ($actionable | not))) then "skip"
+		($actionable_raw and ($no_actionable_recommendation | not) and ($no_actionable_suggestions | not)) as $actionable |
+
+		# skip = approval-only/no-recommendation/no-suggestions/no-actionable sentiment
+		# or summary praise with no actionable critique
+		if (($approval_only or $no_actionable_recommendation or $no_actionable_suggestions or $no_actionable_sentiment or $summary_praise_only) and ($actionable | not)) then "skip"
 		else "keep"
 		end
 	')

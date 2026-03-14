@@ -895,6 +895,7 @@ _scan_single_pr() {
 		(.user.login) as $login |
 		(if ($login | test("coderabbit"; "i")) then "coderabbit"
 		 elif ($login | test("gemini|google"; "i")) then "gemini"
+		 elif ($login | test("augment"; "i")) then "augment"
 		 elif ($login | test("codacy"; "i")) then "codacy"
 		 elif ($login | test("sonar"; "i")) then "sonarcloud"
 		 else "human"
@@ -956,6 +957,7 @@ _scan_single_pr() {
 		(.user.login) as $login |
 		(if ($login | test("coderabbit"; "i")) then "coderabbit"
 		 elif ($login | test("gemini|google"; "i")) then "gemini"
+		 elif ($login | test("augment"; "i")) then "augment"
 		 elif ($login | test("codacy"; "i")) then "codacy"
 		 else "human"
 		 end) as $reviewer |
@@ -1006,9 +1008,11 @@ _scan_single_pr() {
 			"\\bnothing (further|more) to recommend\\b"; "i")) as $no_actionable_recommendation |
 
 		($body | test(
+			"\\bno (further |more )?suggestions?\\b|" +
+			"\\bno additional suggestions?\\b|" +
 			"\\bno suggestions? (at this time|for now|currently)?\\b|" +
 			"\\bwithout suggestions?\\b|" +
-			"\\bhas no suggestions?\\b"; "i")) as $no_actionable_suggestion |
+			"\\bhas no suggestions?\\b"; "i")) as $no_actionable_suggestions |
 
 		($body | test(
 			"\\blgtm\\b|\\blooks good( to me)?\\b|\\bgood work\\b|" +
@@ -1034,7 +1038,9 @@ _scan_single_pr() {
 			"\\bnit:|\\btodo:|\\bfixme|\\bhardcoded|\\bdeprecated|" +
 			"\\brace.condition|\\bdeadlock|\\bleak|\\boverflow|" +
 			"\\bworkaround\\b|\\bhack\\b|" +
-			"```\\s*(suggestion|diff)"; "i")) as $actionable |
+			"```\\s*(suggestion|diff)"; "i")) as $actionable_raw |
+
+		($actionable_raw and ($no_actionable_recommendation | not) and ($no_actionable_suggestions | not)) as $actionable |
 
 		# Skip purely approving reviews unless --include-positive is set.
 		# Explicit "no suggestions" statements are always non-actionable and should
@@ -1042,7 +1048,7 @@ _scan_single_pr() {
 		# otherwise trip the actionable heuristic.
 		# Other approval/sentiment patterns are skipped only when no actionable
 		# critique appears in the body.
-		select($include_positive or (($no_actionable_suggestion or ((($approval_only or $no_actionable_recommendation or $no_actionable_sentiment or $summary_praise_only) and ($actionable | not))) ) | not)) |
+		select($include_positive or (((($approval_only or $no_actionable_recommendation or $no_actionable_suggestions or $no_actionable_sentiment or $summary_praise_only) and ($actionable | not))) | not)) |
 
 		select(
 			if $include_positive then true
@@ -1081,7 +1087,7 @@ _scan_single_pr() {
 			select(
 				($inline_counts[$login] // 0) == 0 and
 				.state == "COMMENTED" and
-				($login | test("coderabbit|gemini|google|codacy"; "i"))
+				($login | test("coderabbit|gemini|google|codacy|augment"; "i"))
 			) |
 			"[DEBUG] Skipped summary-only review: id=\(.id) login=\(.login // .user.login) state=\(.state) body_len=\(.body | length)"
 			] | .[]
