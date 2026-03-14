@@ -282,9 +282,9 @@ The budget analysis engine uses model pricing from `shared-constants.sh`, task c
 
 ```bash
 # Check if we're in a git repo
-if git rev-parse --show-toplevel 2>/dev/null; then
+if top_level=$(git rev-parse --show-toplevel 2>/dev/null); then
   # Repo-attached mission
-  MISSION_HOME="$(git rev-parse --show-toplevel)/todo/missions"
+  MISSION_HOME="$top_level/todo/missions"
 else
   # Homeless mission (no repo yet)
   MISSION_HOME="$HOME/.aidevops/missions"
@@ -401,9 +401,10 @@ REPO_NAME="{sanitized mission desc or user input}"
 REPO_DIR="$HOME/Git/$REPO_NAME"
 
 mkdir -p "$REPO_DIR"
-git -C "$REPO_DIR" init
+git -C "$REPO_DIR" init -q
 
 # Move mission from homeless to repo-attached
+mkdir -p "$REPO_DIR/todo/missions"
 mv "$MISSION_DIR" "$REPO_DIR/todo/missions/$MISSION_ID"
 MISSION_DIR="$REPO_DIR/todo/missions/$MISSION_ID"
 
@@ -418,11 +419,13 @@ If option 2, move the mission directory into the specified repo's `todo/missions
 In Full mode, create TODO.md entries and task briefs for each feature:
 
 ```bash
-for feature in features; do
+repo_path=$(git rev-parse --show-toplevel)
+
+while IFS= read -r feature_title; do
   # Claim task ID
   output=$(~/.aidevops/agents/scripts/claim-task-id.sh \
     --title "$feature_title" \
-    --repo-path "$(git rev-parse --show-toplevel)")
+    --repo-path "$repo_path")
 
   task_id=$(echo "$output" | grep '^TASK_ID=' | cut -d= -f2)
 
@@ -432,7 +435,7 @@ for feature in features; do
 
   # Add to TODO.md
   # Format: - [ ] {task_id} {feature_title} #mission:{mission_id} ~{est} ref:{ref}
-done
+done < <(awk '/^- \[ \] F[0-9]+:/{sub(/^- \[ \] F[0-9]+: /,""); print}' "$MISSION_DIR/mission.md")
 ```
 
 In POC mode, skip task creation. The mission orchestrator dispatches features directly from the mission state file without TODO.md entries.
