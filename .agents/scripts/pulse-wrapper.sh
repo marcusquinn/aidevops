@@ -2920,11 +2920,89 @@ main() {
 		initial_underfill_pct=0
 	fi
 
+	local pulse_start_epoch
+	pulse_start_epoch=$(date +%s)
 	run_pulse "$initial_underfilled_mode" "$initial_underfill_pct"
-	# enforce_utilization_invariants removed — the LLM pulse session now runs
-	# a monitoring loop (sleep 60s, check slots, backfill) for up to 60 minutes,
-	# making the wrapper's backfill loop redundant. The wrapper's watchdog still
-	# enforces the hard 60-minute ceiling via PULSE_STALE_THRESHOLD.
+
+	# Early-exit recycle: if the LLM exited quickly without entering the
+	# monitoring loop (< 5 min runtime) and the pool is still underfilled
+	# with runnable work, restart the pulse immediately. This catches models
+	# that treat the dispatch as single-turn and stop instead of looping.
+	# Capped at PULSE_BACKFILL_MAX_ATTEMPTS to prevent infinite restarts.
+	local pulse_end_epoch
+	pulse_end_epoch=$(date +%s)
+	local pulse_duration=$((pulse_end_epoch - pulse_start_epoch))
+	local recycle_attempt=0
+
+	while [[ "$recycle_attempt" -lt "$PULSE_BACKFILL_MAX_ATTEMPTS" ]]; do
+		# Only recycle if the pulse ran for less than 5 minutes — a pulse
+		# that ran longer likely entered the monitoring loop and exited
+		# normally (all slots filled, no runnable work, or stale threshold).
+		if [[ "$pulse_duration" -ge 300 ]]; then
+			break
+		fi
+
+		# Check if stop flag was set during the pulse
+		if [[ -f "$STOP_FLAG" ]]; then
+			echo "[pulse-wrapper] Stop flag set — skipping early-exit recycle" >>"$LOGFILE"
+			break
+		fi
+
+		# Re-check worker state
+		local post_max post_active post_runnable post_queued
+		post_max=$(get_max_workers_target)
+		post_active=$(count_active_workers)
+		post_runnable=$(count_runnable_candidates)
+		post_queued=$(count_queued_without_worker)
+		[[ "$post_max" =~ ^[0-9]+$ ]] || post_max=1
+		[[ "$post_active" =~ ^[0-9]+$ ]] || post_active=0
+		[[ "$post_runnable" =~ ^[0-9]+$ ]] || post_runnable=0
+		[[ "$post_queued" =~ ^[0-9]+$ ]] || post_queued=0
+
+		# Exit if pool is full or no runnable work
+		if [[ "$post_active" -ge "$post_max" ]]; then
+			break
+		fi
+		if [[ "$post_runnable" -eq 0 && "$post_queued" -eq 0 ]]; then
+			break
+		fi
+
+		local post_deficit_pct=$(((post_max - post_active) * 100 / post_max))
+		recycle_attempt=$((recycle_attempt + 1))
+		echo "[pulse-wrapper] Early-exit recycle attempt ${recycle_attempt}/${PULSE_BACKFILL_MAX_ATTEMPTS}: pulse ran ${pulse_duration}s (<300s), pool underfilled (active ${post_active}/${post_max}, deficit ${post_deficit_pct}%, runnable=${post_runnable}, queued=${post_queued})" >>"$LOGFILE"
+
+		# Re-run the underfill recycler to clear stale workers before restarting
+		run_underfill_worker_recycler "$post_max" "$post_active" "$post_runnable" "$post_queued"
+
+		# Re-prefetch state for the new pulse attempt
+		if ! run_stage_with_timeout "prefetch_state" "$PRE_RUN_STAGE_TIMEOUT" prefetch_state; then
+			echo "[pulse-wrapper] Early-exit recycle: prefetch_state failed — aborting recycle" >>"$LOGFILE"
+			break
+		fi
+
+		# Recalculate underfill for the new pulse
+		post_active=$(count_active_workers)
+		[[ "$post_active" =~ ^[0-9]+$ ]] || post_active=0
+		local recycle_underfilled_mode=0
+		local recycle_underfill_pct=0
+		if [[ "$post_active" -lt "$post_max" ]]; then
+			recycle_underfilled_mode=1
+			recycle_underfill_pct=$(((post_max - post_active) * 100 / post_max))
+		fi
+
+		local recycle_start_epoch
+		recycle_start_epoch=$(date +%s)
+		run_pulse "$recycle_underfilled_mode" "$recycle_underfill_pct"
+
+		local recycle_end_epoch
+		recycle_end_epoch=$(date +%s)
+		pulse_duration=$((recycle_end_epoch - recycle_start_epoch))
+	done
+
+	if [[ "$recycle_attempt" -gt 0 ]]; then
+		echo "[pulse-wrapper] Early-exit recycle completed after ${recycle_attempt} attempt(s)" >>"$LOGFILE"
+	fi
+
 	return 0
 }
 
