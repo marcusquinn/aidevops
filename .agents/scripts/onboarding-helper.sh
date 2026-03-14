@@ -334,9 +334,13 @@ check_context_tools() {
 	# Context7 is MCP-only, no auth needed
 	print_service "Context7" "ready" "MCP (no auth needed)"
 
-	# sqlite3 is required for memory system
+	# sqlite3 is required for memory system (FTS5 required for full-text search)
 	if is_installed "sqlite3"; then
-		print_service "sqlite3" "ready" "memory system ready"
+		if sqlite3 :memory: 'CREATE VIRTUAL TABLE t USING fts5(content);' &>/dev/null; then
+			print_service "sqlite3" "ready" "memory system ready"
+		else
+			print_service "sqlite3" "partial" "installed, missing FTS5 (required for memory)"
+		fi
 	else
 		print_service "sqlite3" "needs-setup" "required for memory system"
 	fi
@@ -1123,9 +1127,15 @@ output_json() {
 	is_installed "auggie" && json+='true' || json+='false'
 	json+=',"authenticated":'
 	is_cli_authenticated "auggie" && json+='true' || json+='false'
-	json+='},"sqlite3":{"installed":'
-	is_installed "sqlite3" && json+='true' || json+='false'
-	json+='}},'
+	local _sqlite3_installed=false _sqlite3_fts5=false
+	if is_installed "sqlite3"; then
+		_sqlite3_installed=true
+		sqlite3 :memory: 'CREATE VIRTUAL TABLE t USING fts5(content);' &>/dev/null && _sqlite3_fts5=true
+	fi
+	json+="},"
+	json+="$(jq -n --argjson inst "$_sqlite3_installed" --argjson fts5 "$_sqlite3_fts5" \
+		'"sqlite3":{"installed":$inst,"fts5":$fts5}')"
+	json+='},'
 
 	# Containers
 	json+='"containers":{'

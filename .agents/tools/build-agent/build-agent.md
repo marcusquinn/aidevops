@@ -501,14 +501,8 @@ Where agents reference `npm` or `npx`, consider if `bun` would be faster:
 - Prefer `bunx` over `npx` for one-off executions
 
 **Node.js-based helper scripts:**
-If your helper script uses `node -e` with globally installed npm packages, add this near the top:
-
-```bash
-# Set NODE_PATH so Node.js can find globally installed modules
-export NODE_PATH="$(npm root -g):$NODE_PATH"
-```
-
-This is required because Node.js doesn't automatically search the global npm prefix when using inline evaluation (`node -e`).
+If your helper script uses `node -e` with globally installed npm packages, set `NODE_PATH` near the top of the script.
+See `tools/build-agent/node-helpers.md:13` for the snippet and explanation.
 
 ### Information Quality (All Domains)
 
