@@ -2289,12 +2289,12 @@ fi
 This catches CI failures 5-10 min earlier. Do NOT push .sh files with ShellCheck violations.
 If \`shellcheck\` is not installed, skip this gate and note it in the PR body.
 
-**3b. PR title MUST contain task ID (MANDATORY — t318.2)**
+**PR title MUST contain task ID (MANDATORY — t318.2)**
 When creating a PR, the title MUST start with the task ID: \`<task-id>: <description>\`.
 Example: \`t318.2: Verify supervisor worker PRs include task ID\`
 The CI pipeline and supervisor both validate this. PRs without task IDs fail the check.
 If you used \`gh pr create --draft --title '<task-id>: <description>'\` as instructed above,
-this is already handled. This note reinforces: NEVER omit the task ID from the PR title.
+this is already handled. This note reinforces step 3: NEVER omit the task ID from the PR title.
 
 **4. Offload research to ai_research tool (saves context for implementation)**
 Reading large files (500+ lines) consumes your context budget fast. Instead of reading
