@@ -162,6 +162,21 @@ cmd_check() {
 		return 1
 	fi
 
+	local declared_rows
+	declared_rows=$(sed -n 's/^<!--TOON:subagents\[\([0-9][0-9]*\)\]{folder,purpose,key_files}:$/\1/p' "$INDEX_FILE")
+	if [[ -z "$declared_rows" ]]; then
+		echo "Error: Could not parse declared subagent row count from ${INDEX_FILE}" >&2
+		return 1
+	fi
+
+	local actual_block_rows
+	actual_block_rows=$(sed -n '/^<!--TOON:subagents\[/,/^-->/p' "$INDEX_FILE" |
+		awk 'BEGIN { in_block = 0; count = 0 }
+			/^<!--TOON:subagents\[/ { in_block = 1; next }
+			/^-->/ { if (in_block) { in_block = 0 }; next }
+			{ if (in_block && NF > 0) { count++ } }
+			END { print count }')
+
 	# Cross-platform file mtime: Linux (stat -c) first, macOS (stat -f) fallback
 	local index_mtime
 	index_mtime=$(stat -c %Y "$INDEX_FILE" 2>/dev/null || stat -f %m "$INDEX_FILE" 2>/dev/null || echo "0")
@@ -169,6 +184,15 @@ cmd_check() {
 
 	echo "Index: ${INDEX_FILE}"
 	echo "Age: $((index_age / 3600))h $((index_age % 3600 / 60))m"
+	echo "Declared subagent rows: ${declared_rows}"
+	echo "Actual TOON rows: ${actual_block_rows}"
+
+	if [[ "$declared_rows" != "$actual_block_rows" ]]; then
+		echo ""
+		echo "Error: TOON header cardinality mismatch (declared ${declared_rows}, actual ${actual_block_rows})."
+		echo "Run: subagent-index-helper.sh generate"
+		return 1
+	fi
 
 	# Count actual .md files
 	local actual_count=0
@@ -221,12 +245,14 @@ EOF
 # Main
 # ---------------------------------------------------------------------------
 
-case "${1:-help}" in
+command_arg="${1:-help}"
+
+case "$command_arg" in
 generate) cmd_generate ;;
 check) cmd_check ;;
 help | --help | -h) cmd_help ;;
 *)
-	echo "Unknown command: $1" >&2
+	echo "Unknown command: ${command_arg}" >&2
 	cmd_help >&2
 	exit 1
 	;;
