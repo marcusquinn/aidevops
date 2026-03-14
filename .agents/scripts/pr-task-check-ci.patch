@@ -25,6 +25,7 @@ index b4a1f41b..8db3a441 100644
 +        PR_NUMBER: ${{ github.event.pull_request.number }}
 +        GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 +      run: |
++        set -euo pipefail
 +        echo "PR Task ID Validation"
 +        echo "====================="
 +        echo "PR #${PR_NUMBER}: ${PR_TITLE}"
@@ -77,19 +78,19 @@ index b4a1f41b..8db3a441 100644
 +          # Post comment on PR with fix instructions
 +          gh pr comment "$PR_NUMBER" --body "## PR Task ID Check Failed
 +
-+        This PR does not reference a task ID (\`tNNN\`) in its title or branch name.
++This PR does not reference a task ID (\`tNNN\`) in its title or branch name.
 +
-+        Every PR must be traceable to a planned task in TODO.md. This ensures:
-+        - All work is planned before implementation
-+        - Every PR can be traced back to its task
-+        - Every task can be traced forward to its PR
++Every PR must be traceable to a planned task in TODO.md. This ensures:
++- All work is planned before implementation
++- Every PR can be traced back to its task
++- Every task can be traced forward to its PR
 +
-+        **How to fix:**
-+        1. If a task exists, add its ID to the PR title (e.g., \`t001: Fix the thing\`)
-+        2. If no task exists, create one in TODO.md first
-+        3. Then update the PR title to include the task ID
++**How to fix:**
++1. If a task exists, add its ID to the PR title (e.g., \`t001: Fix the thing\`)
++2. If no task exists, create one in TODO.md first
++3. Then update the PR title to include the task ID
 +
-+        **Exempted branches:** \`dependabot/*\`, \`auto-fix/*\`, \`release/*\`, \`hotfix/*-emergency-*\`" || echo "Warning: Could not post PR comment"
++**Exempted branches:** \`dependabot/*\`, \`auto-fix/*\`, \`release/*\`, \`hotfix/*-emergency-*\`" || echo "Warning: Could not post PR comment"
 +
 +          exit 1
 +        fi
@@ -128,13 +129,13 @@ index b4a1f41b..8db3a441 100644
 +          # Post comment on PR
 +          gh pr comment "$PR_NUMBER" --body "## PR Task ID Check Failed
 +
-+        Task \`${task_id}\` was found in the PR title/branch but does not exist in TODO.md.
++Task \`${task_id}\` was found in the PR title/branch but does not exist in TODO.md.
 +
-+        Please add the task to TODO.md on the main branch:
-+        \`\`\`
-+        - [ ] ${task_id} Description of the work
-+        \`\`\`
-+        Then re-run this check." || echo "Warning: Could not post PR comment"
++Please add the task to TODO.md on the main branch:
++\`\`\`
++- [ ] ${task_id} Description of the work
++\`\`\`
++Then re-run this check." || echo "Warning: Could not post PR comment"
 +
 +          exit 1
 +        fi
