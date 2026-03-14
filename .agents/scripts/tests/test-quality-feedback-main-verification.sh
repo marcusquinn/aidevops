@@ -864,6 +864,23 @@ test_scan_single_pr_default_filters_positive_review() {
 	return 0
 }
 
+test_scan_single_pr_filters_issue3188_review_body() {
+	# Regression: PR #2887 Gemini approval review — "I approve of this refactoring"
+	# with summary praise (improves, consistent, good improvement) must be filtered
+	# as non-actionable. The scanner incorrectly created issue #3188 before the
+	# summary_praise_only filter was added.
+	local result
+	result=$(_test_approval_filter '## Code Review
+
+This pull request refactors the CodeRabbit trigger logic in `pulse-wrapper.sh` to reduce code duplication. The changes hoist the `_save_sweep_state()` call and `tool_count` increment out of two conditional branches into a single, common call site. A new boolean flag, `is_baseline_run`, is introduced to improve the readability and intent of the conditional logic that handles the first sweep run. These changes are a good improvement to the code'"'"'s structure and maintainability, and the logic remains functionally equivalent. I approve of this refactoring.')
+	if [[ "$result" == "skip" ]]; then
+		print_result "issue #3188 PR #2887 Gemini approval review is filtered as non-actionable" 0
+	else
+		print_result "issue #3188 PR #2887 Gemini approval review is filtered as non-actionable" 1 "expected skip, got ${result}"
+	fi
+	return 0
+}
+
 test_scan_single_pr_filters_issue3363_review_body() {
 	reset_mock_state
 
@@ -971,6 +988,7 @@ main() {
 	test_include_positive_keeps_no_suggestions_review
 	test_scan_single_pr_include_positive_returns_positive_review
 	test_scan_single_pr_default_filters_positive_review
+	test_scan_single_pr_filters_issue3188_review_body
 	test_scan_single_pr_filters_issue3363_review_body
 
 	echo "Results: ${TESTS_PASSED}/${TESTS_RUN} passed, ${TESTS_FAILED} failed"
