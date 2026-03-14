@@ -67,11 +67,11 @@ When running multiple OpenCode sessions on the same repo:
 
 ```bash
 # Create separate working directory for a branch
-~/.aidevops/agents/scripts/worktree-helper.sh add feature/my-feature
+${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/worktree-helper.sh add feature/my-feature
 # Creates: ~/Git/{repo}-feature-my-feature/
 
 # List all worktrees
-~/.aidevops/agents/scripts/worktree-helper.sh list
+${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/worktree-helper.sh list
 
 # Each terminal/session works in its own directory
 # No branch switching affects other sessions
@@ -394,7 +394,7 @@ fi
 
 # 4. Create worktree for the issue (main repo stays on main)
 git checkout main && git pull origin main
-~/.aidevops/agents/scripts/worktree-helper.sh add {type}/{issue_number}-{slug-from-title}
+${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/worktree-helper.sh add {type}/{issue_number}-{slug-from-title}
 # Creates: ~/Git/{repo}-{type}-{issue_number}-{slug}/
 # Example: ~/Git/myapp-feature-42-add-user-dashboard/
 
@@ -602,11 +602,14 @@ After completing file changes, run preflight automatically:
 **For unplanned work** (hotfixes, quick fixes discovered during development):
 
 1. **Create TODO entry first** with `~15m` estimate:
+
    ```bash
    # Add to TODO.md:
    - [ ] t999 Fix typo in error message ~15m #hotfix
    ```
+
 2. **Then create PR** with the task ID:
+
    ```bash
    gh pr create --title "t999: Fix typo in error message" --body "Quick fix"
    ```
