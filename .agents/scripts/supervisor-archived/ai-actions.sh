@@ -1124,13 +1124,10 @@ validate_action_fields() {
 		# The executor infers priority from reasoning text when the field is absent,
 		# but if the field IS present it must be a valid value (t1197).
 		if [[ -n "$new_priority" && "$new_priority" != "null" ]]; then
-			case "$new_priority" in
-			high | medium | low | critical) ;;
-			*)
+			if ! [[ "$new_priority" =~ ^(high|medium|low|critical)$ ]]; then
 				echo "invalid new_priority: $new_priority (must be high|medium|low|critical)"
 				return 0
-				;;
-			esac
+			fi
 		fi
 		;;
 	close_verified)
