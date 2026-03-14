@@ -512,7 +512,7 @@ setup_multi_tenant_credentials() {
 	# Check if there are existing credentials to migrate
 	if [[ -f "$HOME/.config/aidevops/credentials.sh" ]]; then
 		local key_count
-		key_count=$(grep -c "^export " "$HOME/.config/aidevops/credentials.sh" 2>/dev/null || echo "0")
+		key_count=$(grep -c "^export " "$HOME/.config/aidevops/credentials.sh" 2>/dev/null) || true
 		print_info "Found $key_count existing API keys in credentials.sh"
 		print_info "Multi-tenant enables managing separate credential sets for:"
 		echo "  - Multiple clients (agency/freelance work)"

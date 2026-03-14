@@ -866,8 +866,8 @@ setup_terminal_title() {
 	local tabby_config="$HOME/Library/Application Support/tabby/config.yaml"
 	if [[ -f "$tabby_config" ]]; then
 		local disabled_count
-		disabled_count=$(grep -c "disableDynamicTitle: true" "$tabby_config" || echo "0")
-		if [[ "$disabled_count" -gt 0 ]]; then
+		disabled_count=$(grep -c "disableDynamicTitle: true" "$tabby_config") || true
+		if [[ "${disabled_count:-0}" -gt 0 ]]; then
 			echo "  Tabby: detected, dynamic titles disabled in $disabled_count profile(s) (will fix)"
 		else
 			echo "  Tabby: detected, dynamic titles enabled"
