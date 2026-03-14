@@ -183,23 +183,15 @@ extract_learnings() {
 		done <<<"$doc_commits"
 	fi
 
-	# Build learnings JSON
-	local learnings_json="["
-	local first=true
-	for learning in "${learnings[@]}"; do
-		if [[ "$first" == "true" ]]; then
-			first=false
-		else
-			learnings_json+=","
-		fi
-		learnings_json+="$learning"
-	done
-	learnings_json+="]"
-
-	echo "$learnings_json" | jq '.' >"$learnings_file"
+	# Build learnings JSON safely without string concatenation
+	if [[ ${#learnings[@]} -eq 0 ]]; then
+		printf '%s\n' '[]' >"$learnings_file"
+	else
+		printf '%s\n' "${learnings[@]}" | jq -s '.' >"$learnings_file"
+	fi
 
 	local count
-	count=$(echo "$learnings_json" | jq 'length')
+	count=$(jq 'length' "$learnings_file")
 	log_success "Extracted $count learnings to $learnings_file"
 
 	cat "$learnings_file"

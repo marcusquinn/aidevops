@@ -705,6 +705,10 @@ cmd_consolidate() {
 			shift
 			;;
 		--threshold)
+			if [[ $# -lt 2 ]]; then
+				log_error "--threshold requires a value"
+				return 1
+			fi
 			similarity_threshold="$2"
 			shift 2
 			;;
@@ -715,6 +719,11 @@ cmd_consolidate() {
 	# Validate similarity_threshold is a valid decimal
 	if ! [[ "$similarity_threshold" =~ ^[0-9]*\.?[0-9]+$ ]]; then
 		log_error "--threshold must be a decimal number (e.g., 0.5)"
+		return 1
+	fi
+
+	if ! awk "BEGIN { exit !($similarity_threshold >= 0 && $similarity_threshold <= 1) }"; then
+		log_error "--threshold must be between 0 and 1"
 		return 1
 	fi
 
@@ -836,6 +845,7 @@ EOF
 		# Clean up old backups (t188)
 		cleanup_sqlite_backups "$MEMORY_DB" 5
 	fi
+	return 0
 }
 
 #######################################

@@ -853,8 +853,11 @@ echo -e "${BLUE}Syncing MCP tool index for on-demand discovery...${NC}"
 
 MCP_INDEX_HELPER="$AGENTS_DIR/scripts/mcp-index-helper.sh"
 if [[ -x "$MCP_INDEX_HELPER" ]]; then
-	"$MCP_INDEX_HELPER" sync 2>/dev/null || echo -e "  ${YELLOW}⚠${NC} MCP index sync skipped (non-critical)"
-	echo -e "  ${GREEN}✓${NC} MCP tool index updated"
+	if "$MCP_INDEX_HELPER" sync 2>/dev/null; then
+		echo -e "  ${GREEN}✓${NC} MCP tool index updated"
+	else
+		echo -e "  ${YELLOW}⚠${NC} MCP index sync skipped (non-critical)"
+	fi
 else
 	echo -e "  ${YELLOW}⚠${NC} MCP index helper not found (install with setup.sh)"
 fi
