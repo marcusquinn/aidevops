@@ -15,6 +15,14 @@ import {
   formatLeakWarning,
   LEAK_PATTERNS,
 } from "./leak-detector";
+import type { LeakDetectionConfig } from "./types";
+
+/** Default config used across tests — mirrors DEFAULT_LEAK_DETECTION_CONFIG */
+const DEFAULT_CONFIG: LeakDetectionConfig = {
+  enabled: true,
+  entropyThreshold: 4.0,
+  minTokenLength: 20,
+};
 
 // =============================================================================
 // Shannon Entropy
@@ -449,5 +457,117 @@ describe("edge cases", () => {
     // Should have two [REDACTED] markers
     const count = (redacted.match(/\[REDACTED\]/g) ?? []).length;
     expect(count).toBe(2);
+  });
+});
+
+// =============================================================================
+// Config-Driven Thresholds (t3395 — HIGH finding)
+// =============================================================================
+
+describe("scanForLeaks — config-driven thresholds", () => {
+  test("uses entropyThreshold from config — high threshold suppresses detection", () => {
+    // A token with entropy ~4.2 — detected at default 4.0 but not at 4.5
+    const token = "xK9mB2nR7pL4qW8sT3vY6zA1cF5dG0hJ";
+    const text = `Token: ${token}`;
+    const strictConfig: LeakDetectionConfig = { ...DEFAULT_CONFIG, entropyThreshold: 5.5 };
+    const result = scanForLeaks(text, strictConfig);
+    // With a very high threshold, this token should not be flagged as high_entropy
+    expect(result.matches.some((m) => m.patternName === "high_entropy")).toBe(false);
+  });
+
+  test("uses entropyThreshold from config — low threshold increases detection", () => {
+    const token = "xK9mB2nR7pL4qW8sT3vY6zA1cF5dG0hJ";
+    const text = `Token: ${token}`;
+    const looseConfig: LeakDetectionConfig = { ...DEFAULT_CONFIG, entropyThreshold: 3.0 };
+    const result = scanForLeaks(text, looseConfig);
+    expect(result.matches.some((m) => m.patternName === "high_entropy")).toBe(true);
+  });
+
+  test("uses minTokenLength from config — longer minimum skips short tokens", () => {
+    // A 25-char high-entropy token — detected at default minTokenLength=20 but not at 30
+    const token = "aB3kL9mNpQ2rStUvWxYz12345";
+    const text = `Token: ${token}`;
+    const longMinConfig: LeakDetectionConfig = { ...DEFAULT_CONFIG, minTokenLength: 30 };
+    const result = scanForLeaks(text, longMinConfig);
+    expect(result.matches.some((m) => m.patternName === "high_entropy")).toBe(false);
+  });
+
+  test("default config (no arg) behaves identically to passing DEFAULT_CONFIG", () => {
+    const text = "Token: xK9mB2nR7pL4qW8sT3vY6zA1cF5dG0hJ";
+    const resultDefault = scanForLeaks(text);
+    const resultExplicit = scanForLeaks(text, DEFAULT_CONFIG);
+    expect(resultDefault.hasLeaks).toBe(resultExplicit.hasLeaks);
+    expect(resultDefault.matches.length).toBe(resultExplicit.matches.length);
+  });
+});
+
+// =============================================================================
+// AWS Secret Key — contextual keyword requirement (t3395 — MEDIUM finding)
+// =============================================================================
+
+describe("scanForLeaks — aws_secret_key contextual keyword", () => {
+  test("detects AWS secret key with contextual keyword", () => {
+    // 40-char high-entropy base64 string with keyword context
+    const text = "aws_secret_access_key=wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY";
+    const result = scanForLeaks(text);
+    expect(result.matches.some((m) => m.patternName === "aws_secret_key")).toBe(true);
+  });
+
+  test("does NOT flag bare 40-char base64 without keyword context", () => {
+    // Same 40-char string but no surrounding keyword — should not match aws_secret_key
+    const text = "The value is wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY here";
+    const result = scanForLeaks(text);
+    expect(result.matches.some((m) => m.patternName === "aws_secret_key")).toBe(false);
+  });
+});
+
+// =============================================================================
+// Bearer Token — captures only token value, not prefix (t3395 — MEDIUM finding)
+// =============================================================================
+
+describe("scanForLeaks — bearer_token captures only token value", () => {
+  test("matchedText does not include 'Bearer ' prefix", () => {
+    const token = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U";
+    const text = `Authorization: Bearer ${token}`;
+    const result = scanForLeaks(text);
+    const bearerMatch = result.matches.find((m) => m.patternName === "bearer_token");
+    expect(bearerMatch).toBeDefined();
+    expect(bearerMatch?.matchedText).not.toMatch(/^Bearer\s/i);
+    expect(bearerMatch?.matchedText).toBe(token);
+  });
+
+  test("detects bearer token case-insensitively", () => {
+    const token = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U";
+    const text = `Authorization: bearer ${token}`;
+    const result = scanForLeaks(text);
+    expect(result.matches.some((m) => m.patternName === "bearer_token")).toBe(true);
+  });
+});
+
+// =============================================================================
+// High-Entropy Index Correctness (t3395 — HIGH finding)
+// =============================================================================
+
+describe("scanForLeaks — high-entropy token index correctness", () => {
+  test("index points to the correct occurrence when token appears multiple times", () => {
+    const token = "xK9mB2nR7pL4qW8sT3vY6zA1cF5dG0hJ";
+    // Place the token at a known position (not the start)
+    const prefix = "safe text here: ";
+    const text = `${prefix}${token}`;
+    const result = scanForLeaks(text);
+    const match = result.matches.find((m) => m.patternName === "high_entropy");
+    expect(match).toBeDefined();
+    // Index should point to where the token actually starts
+    expect(match?.index).toBe(prefix.length);
+  });
+
+  test("high-entropy token that is substring of a pattern match is not double-reported", () => {
+    // A GitHub token contains a high-entropy substring — should only appear as github_token
+    const token = "ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijkl";
+    const text = `Token: ${token}`;
+    const result = scanForLeaks(text);
+    // Should be detected as github_token, not also as high_entropy
+    expect(result.matches.some((m) => m.patternName === "github_token")).toBe(true);
+    expect(result.matches.some((m) => m.patternName === "high_entropy")).toBe(false);
   });
 });

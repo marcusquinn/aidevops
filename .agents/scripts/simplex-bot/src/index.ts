@@ -296,7 +296,7 @@ export class SimplexAdapter {
       return text;
     }
 
-    const result = scanForLeaks(text);
+    const result = scanForLeaks(text, this.config.leakDetection);
     if (!result.hasLeaks) {
       return text;
     }

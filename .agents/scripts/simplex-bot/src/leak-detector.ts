@@ -15,17 +15,12 @@
  * Reference: t1327.9 outbound leak detection specification
  */
 
-import type { LeakDetectionResult, LeakMatch, LeakPatternName } from "./types";
+import type { LeakDetectionConfig, LeakDetectionResult, LeakMatch, LeakPatternName } from "./types";
+import { DEFAULT_LEAK_DETECTION_CONFIG } from "./types";
 
 // =============================================================================
 // Shannon Entropy
 // =============================================================================
-
-/** Minimum token length to evaluate for entropy (shorter strings have unreliable entropy) */
-const MIN_ENTROPY_TOKEN_LENGTH = 20;
-
-/** Entropy threshold in bits/char — English text ~3.5, base64 random ~5.5 */
-const ENTROPY_THRESHOLD = 4.0;
 
 /**
  * Calculate Shannon entropy of a string in bits per character.
@@ -75,8 +70,8 @@ export const LEAK_PATTERNS: ReadonlyArray<{
   },
   {
     name: "aws_secret_key",
-    pattern: /\b([0-9a-zA-Z/+]{40})\b/g,
-    description: "AWS Secret Access Key (40-char base64)",
+    pattern: /(?:aws_secret_access_key|aws_secret|secret_access_key|secret|key)\s*[:=]\s*["']?([0-9a-zA-Z/+]{40})["']?/gi,
+    description: "AWS Secret Access Key (40-char base64 with contextual keyword)",
   },
 
   // --- Git platform tokens ---
@@ -116,7 +111,7 @@ export const LEAK_PATTERNS: ReadonlyArray<{
   },
   {
     name: "bearer_token",
-    pattern: /\b(Bearer\s+[A-Za-z0-9_\-/.+]{20,})\b/g,
+    pattern: /\bBearer\s+([A-Za-z0-9_\-/.+=]{20,})\b/gi,
     description: "Bearer authentication token",
   },
 
@@ -170,10 +165,18 @@ export const LEAK_PATTERNS: ReadonlyArray<{
 /**
  * Scan text for potential credential/secret leaks.
  *
+ * Accepts an optional LeakDetectionConfig to allow runtime customisation of
+ * entropy thresholds and minimum token length. Defaults to
+ * DEFAULT_LEAK_DETECTION_CONFIG when not provided.
+ *
  * Returns a result with all matches found. The caller decides whether
  * to redact, block, or warn based on the results.
  */
-export function scanForLeaks(text: string): LeakDetectionResult {
+export function scanForLeaks(
+  text: string,
+  config: LeakDetectionConfig = DEFAULT_LEAK_DETECTION_CONFIG,
+): LeakDetectionResult {
+  const { entropyThreshold, minTokenLength } = config;
   const matches: LeakMatch[] = [];
 
   // --- Pattern-based detection ---
@@ -188,7 +191,7 @@ export function scanForLeaks(text: string): LeakDetectionResult {
 
       // For aws_secret_key (40-char base64), require high entropy to reduce false positives
       if (name === "aws_secret_key") {
-        if (shannonEntropy(value) < ENTROPY_THRESHOLD) {
+        if (shannonEntropy(value) < entropyThreshold) {
           continue;
         }
       }
@@ -204,31 +207,29 @@ export function scanForLeaks(text: string): LeakDetectionResult {
   }
 
   // --- High-entropy token detection (catch-all for unknown formats) ---
-  // Split on whitespace and common delimiters, check each token
-  const tokens = text.split(/[\s"'`=:,;{}[\]()]+/);
-  for (const token of tokens) {
-    if (token.length < MIN_ENTROPY_TOKEN_LENGTH) {
-      continue;
-    }
+  // Use RegExp.exec() in a loop to get both the token and its correct index,
+  // avoiding the unreliable text.indexOf() approach when tokens repeat.
+  const tokenRegex = new RegExp(`[A-Za-z0-9_\\-/.+=]{${minTokenLength},}`, "g");
+  let tokenMatch: RegExpExecArray | null;
+  while ((tokenMatch = tokenRegex.exec(text)) !== null) {
+    const token = tokenMatch[0];
+    const index = tokenMatch.index;
 
-    // Skip tokens already caught by pattern matching
-    const alreadyCaught = matches.some((m) => m.matchedText === token);
+    // Skip tokens that overlap with an already-found pattern match by checking index ranges
+    const alreadyCaught = matches.some(
+      (m) => index >= m.index && index < m.index + m.matchedText.length,
+    );
     if (alreadyCaught) {
       continue;
     }
 
-    // Only flag tokens that look like secrets (alphanumeric + special chars, no spaces)
-    if (!/^[A-Za-z0-9_\-/.+=]{20,}$/.test(token)) {
-      continue;
-    }
-
     const entropy = shannonEntropy(token);
-    if (entropy >= ENTROPY_THRESHOLD) {
+    if (entropy >= entropyThreshold) {
       matches.push({
         patternName: "high_entropy",
         description: `High-entropy token (${entropy.toFixed(2)} bits/char)`,
         matchedText: token,
-        index: text.indexOf(token),
+        index,
         entropy,
       });
     }
