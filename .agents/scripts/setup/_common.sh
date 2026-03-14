@@ -23,9 +23,13 @@ run_with_spinner() {
 	local pid
 	local spin_chars='⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏'
 	local i=0
+	local output_file
+	output_file=$(mktemp)
+	# shellcheck disable=SC2064
+	trap "rm -f '$output_file'" RETURN
 
-	# Start command in background
-	"$@" &>/dev/null &
+	# Start command in background, capturing output for failure diagnosis
+	"$@" &>"$output_file" &
 	pid=$!
 
 	# Show spinner while command runs
@@ -44,7 +48,8 @@ run_with_spinner() {
 	if [[ $exit_code -eq 0 ]]; then
 		print_success "$message done"
 	else
-		print_error "$message failed"
+		print_error "$message failed. Output:"
+		cat "$output_file"
 	fi
 
 	return $exit_code
@@ -258,7 +263,9 @@ ensure_homebrew() {
 		# Add Homebrew to PATH for this session
 		local brew_prefix="/home/linuxbrew/.linuxbrew"
 		if [[ -x "$brew_prefix/bin/brew" ]]; then
-			eval "$("$brew_prefix/bin/brew" shellenv)"
+			# Use source with process substitution instead of eval (style guide: eval is forbidden)
+			# shellcheck disable=SC1090
+			source <("$brew_prefix/bin/brew" shellenv)
 		fi
 
 		# Persist to shell rc files
