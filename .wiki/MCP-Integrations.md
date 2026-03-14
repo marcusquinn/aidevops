@@ -255,7 +255,7 @@ claude mcp add claude-code-mcp "npx -y github:marcusquinn/claude-code-mcp"
 ```
 
 **Upstream**: https://github.com/steipete/claude-code-mcp (revert if merged).
-**Local dev (optional)**: clone the fork and point the MCP command to `./start.sh`.
+**Local dev (optional)**: clone the fork and edit your MCP configuration (for example `~/.cursor/mcp.json` or `~/.config/opencode/opencode.json`) to replace the `npx` command with the local `./start.sh` script.
 
 **One-time setup**: run `claude --dangerously-skip-permissions` and accept prompts.
 
