@@ -21,7 +21,7 @@ set -euo pipefail
 
 # Configuration
 readonly SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
-source "$SCRIPT_DIR/shared-constants.sh" 2>/dev/null || true
+source "$SCRIPT_DIR/shared-constants.sh" || true
 
 # Colors for output (fallback if shared-constants.sh not loaded)
 [[ -z "${GREEN+x}" ]] && GREEN='\033[0;32m'
