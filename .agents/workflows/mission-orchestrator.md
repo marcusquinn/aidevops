@@ -83,14 +83,20 @@ For each pending feature in the current milestone:
 1. Check if a worker is already running for it (`ps axo command | grep '/full-loop' | grep '{task_id}'`)
 2. Check if an open PR already exists for it (Full mode: `gh pr list --search '{task_id}'`)
 3. **Classify before dispatch (t1408.2):** If `task-decompose-helper.sh` is available, classify the feature. If composite, decompose it into sub-features, add them to the mission state file and TODO.md (Full mode), set the parent feature to `blocked`, and dispatch the leaf sub-features instead. If atomic (or helper unavailable), dispatch directly. This uses the same pipeline as the pulse — see `tools/ai-assistants/headless-dispatch.md` "Pre-Dispatch Task Decomposition".
-4. If neither running nor composite, dispatch:
+4. If neither running nor composite, dispatch and verify startup:
 
 **Full mode dispatch:**
 
 ```bash
 opencode run --dir {repo_path} --title "Mission {mission_id} - {feature_title}" \
   "/full-loop Implement {task_id} -- {feature_description}. Mission context: {mission_goal}. Milestone: {milestone_name}. Constraints: {relevant_constraints}" &
-sleep 2
+worker_pid=$!
+
+# Verify the process is alive before marking as dispatched
+if ! kill -0 "$worker_pid" 2>/dev/null; then
+  echo "Dispatch failed for {task_id}: worker exited immediately"
+  exit 1
+fi
 ```
 
 Route non-code features with `--agent` (see AGENTS.md "Agent Routing"):
@@ -110,11 +116,17 @@ opencode run --dir {repo_path} --agent Research --title "Mission {mission_id} - 
 ```bash
 opencode run --dir {repo_path} --title "Mission {mission_id} - {feature_title}" \
   "/full-loop --poc {feature_description}. Mission context: {mission_goal}. Commit directly, skip ceremony." &
-sleep 2
+worker_pid=$!
+
+# Verify the process is alive before marking as dispatched
+if ! kill -0 "$worker_pid" 2>/dev/null; then
+  echo "Dispatch failed for {feature_title}: worker exited immediately"
+  exit 1
+fi
 ```
 
-4. Update the feature status to `dispatched` in the mission state file
-5. Respect `max_parallel_workers` — don't dispatch more than the configured limit
+4. Update the feature status to `dispatched` in the mission state file and record `worker_pid` in the feature metadata
+5. Respect `max_parallel_workers` by counting currently alive PIDs (not just previously dispatched features)
 
 ### Phase 3: Monitor Progress
 
@@ -123,7 +135,7 @@ sleep 2
 Check progress by reading git state:
 
 - **Full mode**: Check for merged PRs matching feature task IDs. A merged PR = feature complete.
-- **POC mode**: Check for commits referencing the feature. Recent commits with feature keywords = feature complete.
+- **POC mode**: Check for commits that include the trailer `Completes-feature: {feature_id}` (or `{feature_title}` when no ID exists). A commit with this trailer = feature complete.
 
 For each completed feature:
 1. Update its status to `completed` in the mission state file
@@ -131,7 +143,7 @@ For each completed feature:
 3. Check if all features in the current milestone are complete
 
 For stuck features (dispatched but no progress in 2+ hours):
-1. Check if the worker process is still running
+1. Check if the recorded `worker_pid` is still running (`kill -0 {worker_pid}`)
 2. If dead with no PR/commits, mark as `failed` and re-dispatch
 3. If running but no output, leave it — check again next cycle
 
