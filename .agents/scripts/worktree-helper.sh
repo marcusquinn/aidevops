@@ -817,17 +817,13 @@ cmd_clean() {
 		fi
 	done
 
-	# Build an associative array of merged PR branches for squash-merge detection.
+	# Build a newline-delimited list of merged PR branches for squash-merge detection.
 	# gh pr list catches squash-merged PRs that git branch --merged misses.
-	# Using an associative array gives O(1) lookup and avoids regex injection from
-	# branch names containing grep metacharacters.
-	declare -A merged_pr_lookup=()
+	# Uses grep -Fxq for exact-line matching (no regex injection risk).
+	# NOTE: bash 3.2 (macOS default) lacks declare -A — do NOT use associative arrays.
+	local merged_pr_branches=""
 	if command -v gh &>/dev/null; then
-		local merged_pr_branches_raw=""
-		merged_pr_branches_raw=$(gh pr list --state merged --limit 200 --json headRefName --jq '.[].headRefName' 2>/dev/null || echo "")
-		while IFS= read -r branch_name; do
-			[[ -n "$branch_name" ]] && merged_pr_lookup["$branch_name"]=1
-		done <<<"$merged_pr_branches_raw"
+		merged_pr_branches=$(gh pr list --state merged --limit 200 --json headRefName --jq '.[].headRefName' 2>/dev/null || echo "")
 	fi
 
 	while IFS= read -r line; do
@@ -856,8 +852,8 @@ cmd_clean() {
 				# GitHub squash merges create a new commit — the original branch is NOT
 				# an ancestor of the target, so git branch --merged misses it. The remote
 				# branch may still exist if "auto-delete head branches" is off.
-				# Use associative array lookup (O(1), no regex injection risk).
-				elif [[ -v "merged_pr_lookup[$worktree_branch]" ]]; then
+				# grep -Fxq: exact fixed-string line match (no regex injection risk).
+				elif [[ -n "$merged_pr_branches" ]] && echo "$merged_pr_branches" | grep -Fxq "$worktree_branch"; then
 					is_merged=true
 					merge_type="squash-merged PR"
 				fi
@@ -944,8 +940,8 @@ cmd_clean() {
 					# Skip if fetch failed — stale refs could cause false-positive deletion
 					elif [[ "$remote_state_unknown" == "false" ]] && branch_was_pushed "$worktree_branch" && ! _branch_exists_on_any_remote "$worktree_branch"; then
 						should_remove=true
-					# Check 3: Squash-merged PR — use associative array (O(1), no regex injection)
-					elif [[ -v "merged_pr_lookup[$worktree_branch]" ]]; then
+					# Check 3: Squash-merged PR — grep -Fxq exact-line match (no regex injection)
+					elif [[ -n "$merged_pr_branches" ]] && echo "$merged_pr_branches" | grep -Fxq "$worktree_branch"; then
 						should_remove=true
 					fi
 
