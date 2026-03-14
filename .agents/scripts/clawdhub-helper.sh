@@ -270,9 +270,9 @@ PLAYWRIGHT_SCRIPT
 
 	# Install playwright and run the fetch script
 	log_info "Installing Playwright (temporary)..."
-	if (cd "$pw_dir" && npm install --silent 2>/dev/null && npx playwright install chromium --with-deps 2>/dev/null); then
+	if (cd "$pw_dir" && npm install --silent && npx playwright install chromium --with-deps); then
 		log_info "Running browser extraction..."
-		if (cd "$pw_dir" && node fetch.mjs "$skill_url" "$output_file" 2>/dev/null); then
+		if (cd "$pw_dir" && node fetch.mjs "$skill_url" "$output_file"); then
 			rm -rf "$pw_dir"
 			if [[ -f "$output_file" && -s "$output_file" ]]; then
 				log_success "Extracted SKILL.md ($(wc -c <"$output_file" | tr -d ' ') bytes)"
@@ -287,7 +287,7 @@ PLAYWRIGHT_SCRIPT
 	# Fallback: try clawdhub CLI
 	if command -v npx &>/dev/null; then
 		log_info "Trying: npx clawdhub install $slug"
-		if (cd "$output_dir" && npx --yes clawdhub@latest install "$slug" --force 2>/dev/null); then
+		if (cd "$output_dir" && npx --yes clawdhub@latest install "$slug" --force); then
 			# clawdhub installs to ./skills/<slug>/SKILL.md
 			local installed_skill
 			installed_skill=$(find "$output_dir" -name "SKILL.md" -type f 2>/dev/null | head -1)
