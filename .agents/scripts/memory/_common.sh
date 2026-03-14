@@ -64,6 +64,27 @@ resolve_namespace() {
 }
 
 #######################################
+# Create pattern_metadata table (t1095, t1114)
+# Single authoritative DDL — called from both init_db() (fresh databases)
+# and migrate_db() (existing databases upgrading from pre-t1095 schema).
+# Extracted to eliminate DDL duplication flagged in PR #1629 review.
+#######################################
+_create_pattern_metadata_table() {
+	db "$MEMORY_DB" <<'EOF'
+CREATE TABLE IF NOT EXISTS pattern_metadata (
+    id TEXT PRIMARY KEY,
+    strategy TEXT DEFAULT 'normal' CHECK(strategy IN ('normal', 'prompt-repeat', 'escalated')),
+    quality TEXT DEFAULT NULL CHECK(quality IS NULL OR quality IN ('ci-pass-first-try', 'ci-pass-after-fix', 'needs-human')),
+    failure_mode TEXT DEFAULT NULL CHECK(failure_mode IS NULL OR failure_mode IN ('hallucination', 'context-miss', 'incomplete', 'wrong-file', 'timeout')),
+    tokens_in INTEGER DEFAULT NULL,
+    tokens_out INTEGER DEFAULT NULL,
+    estimated_cost REAL DEFAULT NULL
+);
+EOF
+	return 0
+}
+
+#######################################
 # Migrate existing database to new schema
 # With backup-before-modify pattern (t188)
 # Note: t311.4 resolved duplicate migrate_db() — this is the single
@@ -169,29 +190,23 @@ EOF
 		db "$MEMORY_DB" "ALTER TABLE learning_access ADD COLUMN graduated_at TEXT DEFAULT NULL;" || echo "[WARN] Failed to add graduated_at column (may already exist)" >&2
 	fi
 
-	# Ensure pattern_metadata table exists (t1095 migration)
-	# Schema is authoritative in init_db; migrate_db only ensures existence for
-	# pre-t1095 databases and backfills existing pattern records.
-	# Full DDL lives in init_db to avoid duplication (GH#3663).
-	db "$MEMORY_DB" <<'EOF'
-CREATE TABLE IF NOT EXISTS pattern_metadata (
-    id TEXT PRIMARY KEY,
-    strategy TEXT DEFAULT 'normal' CHECK(strategy IN ('normal', 'prompt-repeat', 'escalated')),
-    quality TEXT DEFAULT NULL CHECK(quality IS NULL OR quality IN ('ci-pass-first-try', 'ci-pass-after-fix', 'needs-human')),
-    failure_mode TEXT DEFAULT NULL CHECK(failure_mode IS NULL OR failure_mode IN ('hallucination', 'context-miss', 'incomplete', 'wrong-file', 'timeout')),
-    tokens_in INTEGER DEFAULT NULL,
-    tokens_out INTEGER DEFAULT NULL,
-    estimated_cost REAL DEFAULT NULL
-);
-EOF
-
-	# Backfill existing pattern records with default strategy='normal' (t1095)
-	local pattern_types="$PATTERN_TYPES_SQL"
-	local backfill_count
-	backfill_count=$(db "$MEMORY_DB" "SELECT COUNT(*) FROM learnings WHERE type IN ($pattern_types) AND id NOT IN (SELECT id FROM pattern_metadata);" 2>/dev/null || echo "0")
-	if [[ "$backfill_count" -gt 0 ]]; then
-		db "$MEMORY_DB" "INSERT OR IGNORE INTO pattern_metadata (id, strategy) SELECT id, 'normal' FROM learnings WHERE type IN ($pattern_types);"
-		log_success "Backfilled $backfill_count existing pattern records into pattern_metadata"
+	# Create pattern_metadata table if missing (t1095 migration)
+	# Companion table for pattern records — stores strategy, quality, failure_mode, tokens.
+	# DDL lives in _create_pattern_metadata_table() to avoid duplication with init_db().
+	local has_pattern_metadata
+	has_pattern_metadata=$(db "$MEMORY_DB" "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='pattern_metadata';" 2>/dev/null || echo "0")
+	if [[ "$has_pattern_metadata" == "0" ]]; then
+		log_info "Creating pattern_metadata table (t1095)..."
+		_create_pattern_metadata_table
+		# Backfill existing pattern records with default strategy='normal'
+		local pattern_types="$PATTERN_TYPES_SQL"
+		local backfill_count
+		backfill_count=$(db "$MEMORY_DB" "SELECT COUNT(*) FROM learnings WHERE type IN ($pattern_types);" 2>/dev/null || echo "0")
+		if [[ "$backfill_count" -gt 0 ]]; then
+			db "$MEMORY_DB" "INSERT OR IGNORE INTO pattern_metadata (id, strategy) SELECT id, 'normal' FROM learnings WHERE type IN ($pattern_types);"
+			log_success "Backfilled $backfill_count existing pattern records into pattern_metadata"
+		fi
+		log_success "pattern_metadata table created (t1095)"
 	fi
 
 	# Add estimated_cost column to pattern_metadata if missing (t1114 migration)
@@ -500,18 +515,6 @@ CREATE TABLE IF NOT EXISTS learning_entities (
 );
 CREATE INDEX IF NOT EXISTS idx_learning_entities_entity ON learning_entities(entity_id);
 
--- Extended pattern metadata (t1095, t1114) — companion table for pattern records
--- Stores structured fields that can't go in FTS5 (strategy, quality, failure_mode, tokens, cost)
-CREATE TABLE IF NOT EXISTS pattern_metadata (
-    id TEXT PRIMARY KEY,
-    strategy TEXT DEFAULT 'normal' CHECK(strategy IN ('normal', 'prompt-repeat', 'escalated')),
-    quality TEXT DEFAULT NULL CHECK(quality IS NULL OR quality IN ('ci-pass-first-try', 'ci-pass-after-fix', 'needs-human')),
-    failure_mode TEXT DEFAULT NULL CHECK(failure_mode IS NULL OR failure_mode IN ('hallucination', 'context-miss', 'incomplete', 'wrong-file', 'timeout')),
-    tokens_in INTEGER DEFAULT NULL,
-    tokens_out INTEGER DEFAULT NULL,
-    estimated_cost REAL DEFAULT NULL
-);
-
 -- Memory consolidations (t1413) — cross-memory insight generation
 -- Stores synthesized insights from LLM analysis of related memories
 CREATE TABLE IF NOT EXISTS memory_consolidations (
@@ -523,6 +526,9 @@ CREATE TABLE IF NOT EXISTS memory_consolidations (
 );
 CREATE INDEX IF NOT EXISTS idx_consolidations_created ON memory_consolidations(created_at DESC);
 EOF
+		# Extended pattern metadata (t1095, t1114) — companion table for pattern records.
+		# DDL is in _create_pattern_metadata_table() (single source of truth, also used by migrate_db).
+		_create_pattern_metadata_table
 		log_success "Database initialized with relational versioning support"
 	else
 		# Migrate existing database if needed
