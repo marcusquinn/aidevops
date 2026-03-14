@@ -66,10 +66,13 @@ chmod 600 ~/.config/aidevops/credentials.sh
 
 ```bash
 source ~/.config/aidevops/credentials.sh
+tmp_json="$(mktemp)"
 jq --arg token "$SENTRY_YOURNAME" \
-  '.mcp.sentry = {"type": "local", "command": ["npx", "@sentry/mcp-server@latest", "--access-token", $token], "enabled": false}' \
-  ~/.config/opencode/opencode.json > /tmp/oc.json && mv /tmp/oc.json ~/.config/opencode/opencode.json
+  '.mcpServers.sentry = {"command": "npx", "args": ["@sentry/mcp-server@latest", "--access-token", $token], "enabled": true}' \
+  ~/.config/opencode/opencode.json > "$tmp_json" && mv "$tmp_json" ~/.config/opencode/opencode.json
 ```
+
+`~/.config/opencode/opencode.json` is local machine config and should never be committed.
 
 ### 4. Test Connection
 
@@ -110,6 +113,8 @@ npx @sentry/wizard@latest -i react   # React
 
 The wizard creates all required config files. See [Sentry Docs](https://docs.sentry.io/) for platform-specific guides.
 
+If you manually configure SDK options, keep `sendDefaultPii` disabled unless you explicitly need user/IP metadata and have privacy coverage for it.
+
 ## Troubleshooting
 
 ### Token returns empty organizations
@@ -118,7 +123,7 @@ Create a new Personal Auth Token **after** the organization exists.
 
 ### "Not authenticated"
 
-1. Verify token: `source ~/.config/aidevops/credentials.sh && echo $SENTRY_YOURNAME`
+1. Verify key exists: `source ~/.config/aidevops/credentials.sh && printenv | cut -d= -f1 | grep '^SENTRY_YOURNAME$'`
 2. Test API: `curl -H "Authorization: Bearer $SENTRY_YOURNAME" https://sentry.io/api/0/`
 3. Restart OpenCode after config changes
 
