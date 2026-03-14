@@ -579,6 +579,7 @@ cmd_scan_merged() {
 
 	# Parse flags
 	while [[ $# -gt 0 ]]; do
+		local flag="$1"
 		case "$1" in
 		--repo)
 			repo_slug="${2:-}"
@@ -613,7 +614,7 @@ cmd_scan_merged() {
 			shift
 			;;
 		*)
-			echo "Unknown option for scan-merged: $1" >&2
+			echo "Unknown option for scan-merged: ${flag}" >&2
 			return 1
 			;;
 		esac
@@ -993,6 +994,11 @@ _scan_single_pr() {
 			"\\bno (further |more )?(comments?|issues?|concerns?|feedback)\\b|" +
 			"\\beverything (looks?|seems?) (good|fine|correct|great|solid|clean)\\b"; "i")) as $no_actionable_sentiment |
 
+		($body | test(
+			"\\bsuccessfully addresses?\\b|\\beffectively\\b|\\bimproves?\\b|\\benhances?\\b|" +
+			"\\bconsistent\\b|\\brobust(ness)?\\b|\\buser experience\\b|" +
+			"\\breduces? (external )?requirements?\\b|\\bwell-implemented\\b"; "i")) as $summary_praise_only |
+
 		# Filter out review-body summaries that do not contain concrete fixes.
 		# Bots frequently post high-level walkthroughs that mention suggestions
 		# but do not include actionable details tied to a file/line.
@@ -1009,8 +1015,9 @@ _scan_single_pr() {
 		# Skip purely approving reviews: no actionable critique AND body matches
 		# approval-only patterns. This catches "LGTM", "good work", "no further
 		# comments", and "no further recommendations" (even in long summary
-		# reviews) regardless of reviewer type or review state.
-		select((($approval_only or $no_actionable_recommendation or $no_actionable_sentiment) and ($actionable | not)) | not) |
+		# reviews), plus non-actionable praise-only summaries, regardless of
+		# reviewer type or review state.
+		select((($approval_only or $no_actionable_recommendation or $no_actionable_sentiment or $summary_praise_only) and ($actionable | not)) | not) |
 
 		(if $reviewer == "human" then
 			true
@@ -1533,14 +1540,17 @@ main() {
 
 	# scan-merged handles its own flags — pass remaining args through
 	if [[ "$command" == "scan-merged" ]]; then
-		cmd_scan_merged "$@"
-		return $?
+		if cmd_scan_merged "$@"; then
+			return 0
+		fi
+		return 1
 	fi
 
 	local pr_number=""
 	local commit_sha=""
 
 	while [[ $# -gt 0 ]]; do
+		local flag="$1"
 		case "$1" in
 		--pr)
 			pr_number="${2:-}"
@@ -1555,7 +1565,7 @@ main() {
 			exit 0
 			;;
 		*)
-			echo "Unknown option: $1" >&2
+			echo "Unknown option: ${flag}" >&2
 			show_help
 			exit 1
 			;;
