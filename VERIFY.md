@@ -14,7 +14,7 @@ t1200 (IP reputation check agent) was broken into 6 subtasks, all of which merge
 | t1200.2 Keyed providers + SQLite cache + batch mode | #1860 | MERGED |
 | t1200.3 Agent doc + slash command + index updates | #1867 | MERGED |
 | t1200.4 Core IP reputation lookup module | #1871 | MERGED |
-| t1200.5 CLI interface and agent framework integration | #1883 | MERGED |
+| t1200.5 CLI and agent framework integration | #1883 | MERGED |
 | t1200.6 Output formatting, caching layer, rate limit handling | #1911 | MERGED |
 
 **Deliverables verified on main:**
