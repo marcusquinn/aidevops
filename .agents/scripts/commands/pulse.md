@@ -104,7 +104,12 @@ After the initial dispatch, enter a monitoring loop. Each cycle:
    The last todo is always "Monitor cycle N+1" — this anchors the loop. Complete it by
    sleeping, checking state, and creating the next batch.
 
-2. **Sleep 60 seconds**: `sleep 60`
+2. **Sleep 60 seconds** — write a heartbeat log line first so the wrapper's progress detector doesn't kill the session during the sleep:
+
+   ```bash
+   echo "[pulse] Monitoring cycle $N: sleeping 60s (active $WORKER_COUNT/$MAX_WORKERS, elapsed ${ELAPSED}s)"
+   sleep 60
+   ```
 
 3. **Check capacity**:
 
