@@ -14,7 +14,7 @@ Run these commands in parallel and present a unified report:
 
 ```bash
 # 1. Active workers (count opencode /full-loop processes)
-MAX_WORKERS=$(cat ~/.aidevops/logs/pulse-max-workers 2>/dev/null || echo 4)
+MAX_WORKERS=$(test -r ~/.aidevops/logs/pulse-max-workers && cat ~/.aidevops/logs/pulse-max-workers || echo 4)
 WORKER_COUNT=$(ps axo command | grep '/full-loop' | grep -v grep | wc -l | tr -d ' ')
 AVAILABLE=$((MAX_WORKERS - WORKER_COUNT))
 echo "=== Worker Status ==="
@@ -66,9 +66,9 @@ git worktree list 2>/dev/null
 
 # 5. Pulse scheduler status
 if [[ "$(uname)" == "Darwin" ]]; then
-  launchctl list 2>/dev/null | grep -i 'aidevops.*pulse' || echo "No launchd pulse found"
+  launchctl list | grep -i 'aidevops.*pulse' || echo "No launchd pulse found"
 else
-  crontab -l 2>/dev/null | grep -i 'pulse' || echo "No cron pulse found"
+  crontab -l | grep -i 'pulse' || echo "No cron pulse found"
 fi
 ```
 
