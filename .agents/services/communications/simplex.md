@@ -377,7 +377,7 @@ See: [TypeScript SDK README](https://github.com/simplex-chat/simplex-chat/tree/s
 // Subset of types from @simplex-chat/types — see upstream for full definitions.
 // Placeholders for types defined in @simplex-chat/types
 type LinkPreview = { uri: string; title: string; description: string; image: string }
-type CryptoFile = { filePath: string; cryptoArgs?: object }
+type CryptoFile = { filePath: string; cryptoArgs?: Record<string, unknown> }
 
 // MsgContent — discriminated union (common variants; upstream also has video, report, chat, unknown)
 type MsgContent =
