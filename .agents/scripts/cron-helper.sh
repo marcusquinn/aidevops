@@ -47,17 +47,17 @@ LOG_PREFIX="CRON"
 # Ensure directories and config exist
 #######################################
 ensure_setup() {
-    mkdir -p "$CONFIG_DIR" "$CRON_LOG_DIR"
+	mkdir -p "$CONFIG_DIR" "$CRON_LOG_DIR"
 
-    if [[ ! -f "$CONFIG_FILE" ]]; then
-        cat > "$CONFIG_FILE" << 'EOF'
+	if [[ ! -f "$CONFIG_FILE" ]]; then
+		cat >"$CONFIG_FILE" <<'EOF'
 {
   "version": "1.0",
   "jobs": []
 }
 EOF
-        log_info "Created config file: $CONFIG_FILE"
-    fi
+		log_info "Created config file: $CONFIG_FILE"
+	fi
 }
 
 #######################################
@@ -96,8 +96,12 @@ get_protocol() {
 
 #######################################
 # Build curl arguments array for secure requests
+# Arguments:
+#   $1 - protocol (http|https), already resolved by caller
+# Populates CURL_ARGS array with auth and SSL options
 #######################################
 build_curl_args() {
+	local protocol="${1:-http}"
 	CURL_ARGS=(-sf)
 
 	# Add authentication if configured
@@ -107,12 +111,12 @@ build_curl_args() {
 	fi
 
 	# Add SSL options for HTTPS
-	local protocol
-	protocol=$(get_protocol "$OPENCODE_HOST")
 	if [[ "$protocol" == "https" ]] && [[ -n "$OPENCODE_INSECURE" ]]; then
 		# Allow insecure connections (self-signed certs) - use with caution
 		CURL_ARGS+=(-k)
+		log_warn "WARNING: SSL verification disabled (OPENCODE_INSECURE=1)"
 	fi
+	return 0
 }
 
 #######################################
@@ -123,7 +127,7 @@ check_server() {
 	protocol=$(get_protocol "$OPENCODE_HOST")
 	local url="${protocol}://${OPENCODE_HOST}:${OPENCODE_PORT}/global/health"
 
-	build_curl_args
+	build_curl_args "$protocol"
 
 	if curl "${CURL_ARGS[@]}" "$url" &>/dev/null; then
 		return 0

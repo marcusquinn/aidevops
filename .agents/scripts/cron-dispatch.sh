@@ -78,9 +78,12 @@ log_success() {
 
 #######################################
 # Build curl arguments array for secure requests
+# Arguments:
+#   $1 - protocol (http|https), already resolved by caller
 # Populates CURL_ARGS array with auth and SSL options
 #######################################
 build_curl_args() {
+	local protocol="${1:-http}"
 	CURL_ARGS=(-sf)
 
 	# Add authentication if configured
@@ -90,12 +93,10 @@ build_curl_args() {
 	fi
 
 	# Add SSL options for HTTPS
-	local protocol
-	protocol=$(get_protocol "$OPENCODE_HOST")
 	if [[ "$protocol" == "https" ]] && [[ -n "$OPENCODE_INSECURE" ]]; then
 		# Allow insecure connections (self-signed certs) - use with caution
 		CURL_ARGS+=(-k)
-		log_info "WARNING: SSL verification disabled (OPENCODE_INSECURE=1)"
+		log_warn "WARNING: SSL verification disabled (OPENCODE_INSECURE=1)"
 	fi
 	return 0
 }
@@ -108,7 +109,7 @@ check_server() {
 	protocol=$(get_protocol "$OPENCODE_HOST")
 	local url="${protocol}://${OPENCODE_HOST}:${OPENCODE_PORT}/global/health"
 
-	build_curl_args
+	build_curl_args "$protocol"
 
 	if curl "${CURL_ARGS[@]}" "$url" &>/dev/null; then
 		return 0
@@ -158,7 +159,7 @@ create_session() {
 	protocol=$(get_protocol "$OPENCODE_HOST")
 	local url="${protocol}://${OPENCODE_HOST}:${OPENCODE_PORT}/session"
 
-	build_curl_args
+	build_curl_args "$protocol"
 
 	curl "${CURL_ARGS[@]}" -X POST "$url" \
 		-H "Content-Type: application/json" \
@@ -198,7 +199,7 @@ send_prompt() {
             parts: [{type: "text", text: $task}]
         }')
 
-	build_curl_args
+	build_curl_args "$protocol"
 
 	# Send with timeout
 	timeout "$cmd_timeout" curl "${CURL_ARGS[@]}" -X POST "$url" \
@@ -217,7 +218,7 @@ delete_session() {
 	protocol=$(get_protocol "$OPENCODE_HOST")
 	local url="${protocol}://${OPENCODE_HOST}:${OPENCODE_PORT}/session/${session_id}"
 
-	build_curl_args
+	build_curl_args "$protocol"
 
 	curl "${CURL_ARGS[@]}" -X DELETE "$url" &>/dev/null || true
 	return 0
