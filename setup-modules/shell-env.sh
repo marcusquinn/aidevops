@@ -29,7 +29,8 @@ detect_default_shell() {
 
 # Usage: get_shell_rc "zsh" or get_shell_rc "bash"
 get_shell_rc() {
-	local shell_name="$1"
+	local shell_name
+	shell_name="$1"
 	case "$shell_name" in
 	zsh)
 		echo "$HOME/.zshrc"
