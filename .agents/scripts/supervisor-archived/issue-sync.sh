@@ -564,6 +564,58 @@ _unpin_health_issue() {
 }
 
 #######################################
+# Format a per-task alert list for blocked or verify_failed tasks.
+# Queries the DB for tasks with the given status and appends formatted
+# markdown lines to the caller's alerts_md variable.
+#
+# Args:
+#   $1 = status        (e.g. 'blocked', 'verify_failed')
+#   $2 = count         (pre-fetched count for the header line)
+#   $3 = title_text    (e.g. 'blocked task(s)', 'verify-failed task(s)')
+#   $4 = default_reason (fallback when error field is empty)
+#   $5 = supervisor_db (path to the SQLite DB)
+#   $6 = repo_filter   (SQL WHERE fragment, e.g. "repo = 'slug'")
+#
+# Appends to caller's `alerts_md` variable (via nameref-style echo capture
+# is not available in bash <4.3, so we print to stdout and let the caller
+# capture with $(...)).
+#
+# Returns: formatted markdown string on stdout; 0 always
+#######################################
+_format_task_alert_list() {
+	local status="$1"
+	local count="$2"
+	local title_text="$3"
+	local default_reason="$4"
+	local supervisor_db="$5"
+	local repo_filter="$6"
+
+	local task_list
+	task_list=$(db -separator '|' "$supervisor_db" \
+		"SELECT id, error, pr_url FROM tasks WHERE ${repo_filter} AND status = '${status}' LIMIT 10;" ||
+		echo "")
+
+	local result="- **${count} ${title_text}**:"
+	while IFS='|' read -r task_id task_err task_pr; do
+		[[ -z "$task_id" ]] && continue
+		local err_short="${task_err:0:80}"
+		[[ ${#task_err} -gt 80 ]] && err_short="${err_short}..."
+		local pr_display=""
+		if [[ -n "$task_pr" ]]; then
+			local pr_num
+			pr_num=$(echo "$task_pr" | grep -oE '[0-9]+$' || echo "")
+			[[ -n "$pr_num" ]] && pr_display=" (PR #${pr_num})"
+		fi
+		result="${result}
+  - \`${task_id}\`${pr_display}: ${err_short:-${default_reason}}"
+	done <<<"$task_list"
+	result="${result}
+"
+	echo "$result"
+	return 0
+}
+
+#######################################
 # Update pinned queue health issue with live supervisor status (t1013)
 #
 # Creates or updates a single comment on a pinned GitHub issue with:
@@ -1149,31 +1201,14 @@ ${cat_other}"
 
 	# Alert: blocked tasks (with per-task detail)
 	if [[ "${cnt_blocked:-0}" -gt 0 ]]; then
-		local blocked_list
-		blocked_list=$(db -separator '|' "$SUPERVISOR_DB" "SELECT id, error, pr_url FROM tasks WHERE ${repo_filter} AND status = 'blocked' LIMIT 10;" 2>/dev/null || echo "")
-		alerts_md="${alerts_md}- **${cnt_blocked} blocked task(s)**:"
-		while IFS='|' read -r b_id b_err b_pr; do
-			[[ -z "$b_id" ]] && continue
-			local b_err_short="${b_err:0:80}"
-			[[ ${#b_err} -gt 80 ]] && b_err_short="${b_err_short}..."
-			local b_pr_display=""
-			if [[ -n "$b_pr" ]]; then
-				local b_pr_num
-				b_pr_num=$(echo "$b_pr" | grep -oE '[0-9]+$' || echo "")
-				[[ -n "$b_pr_num" ]] && b_pr_display=" (PR #${b_pr_num})"
-			fi
-			alerts_md="${alerts_md}
-  - \`${b_id}\`${b_pr_display}: ${b_err_short:-reason unknown}"
-		done <<<"$blocked_list"
-		alerts_md="${alerts_md}
-"
+		alerts_md="${alerts_md}$(_format_task_alert_list 'blocked' "${cnt_blocked}" 'blocked task(s)' 'reason unknown' "$SUPERVISOR_DB" "$repo_filter")"
 		alert_count=$((alert_count + 1))
 	fi
 
 	# Alert: retrying tasks (with per-task detail)
 	if [[ "${cnt_retrying:-0}" -gt 0 ]]; then
 		local retrying_list
-		retrying_list=$(db -separator '|' "$SUPERVISOR_DB" "SELECT id, error, retries, max_retries FROM tasks WHERE ${repo_filter} AND status = 'retrying' LIMIT 10;" 2>/dev/null || echo "")
+		retrying_list=$(db -separator '|' "$SUPERVISOR_DB" "SELECT id, error, retries, max_retries FROM tasks WHERE ${repo_filter} AND status = 'retrying' LIMIT 10;" || echo "")
 		alerts_md="${alerts_md}- **${cnt_retrying} task(s) retrying**:"
 		while IFS='|' read -r r_id r_err r_retries r_max; do
 			[[ -z "$r_id" ]] && continue
@@ -1189,24 +1224,7 @@ ${cat_other}"
 
 	# Alert: verify_failed tasks (with per-task detail)
 	if [[ "${cnt_verify_failed:-0}" -gt 0 ]]; then
-		local vf_list
-		vf_list=$(db -separator '|' "$SUPERVISOR_DB" "SELECT id, error, pr_url FROM tasks WHERE ${repo_filter} AND status = 'verify_failed' LIMIT 10;" 2>/dev/null || echo "")
-		alerts_md="${alerts_md}- **${cnt_verify_failed} verify-failed task(s)**:"
-		while IFS='|' read -r v_id v_err v_pr; do
-			[[ -z "$v_id" ]] && continue
-			local v_err_short="${v_err:0:80}"
-			[[ ${#v_err} -gt 80 ]] && v_err_short="${v_err_short}..."
-			local v_pr_display=""
-			if [[ -n "$v_pr" ]]; then
-				local v_pr_num
-				v_pr_num=$(echo "$v_pr" | grep -oE '[0-9]+$' || echo "")
-				[[ -n "$v_pr_num" ]] && v_pr_display=" (PR #${v_pr_num})"
-			fi
-			alerts_md="${alerts_md}
-  - \`${v_id}\`${v_pr_display}: ${v_err_short:-verification failed}"
-		done <<<"$vf_list"
-		alerts_md="${alerts_md}
-"
+		alerts_md="${alerts_md}$(_format_task_alert_list 'verify_failed' "${cnt_verify_failed}" 'verify-failed task(s)' 'verification failed' "$SUPERVISOR_DB" "$repo_filter")"
 		alert_count=$((alert_count + 1))
 	fi
 
