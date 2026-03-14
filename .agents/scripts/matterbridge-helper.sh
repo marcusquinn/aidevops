@@ -78,9 +78,17 @@ detect_os_arch() {
 
 is_running() {
 	if [ -f "$PID_FILE" ]; then
-		local pid
+		local pid kill_err
 		pid="$(cat "$PID_FILE")"
-		if kill -0 "$pid" 2>/dev/null; then
+		# Capture stderr to distinguish ESRCH (no such process) from EPERM (permission denied)
+		kill_err=$(kill -0 "$pid" 2>&1) && return 0
+		# ESRCH: process gone — normal case, not an error
+		if echo "$kill_err" | grep -qiE 'no such process|ESRCH'; then
+			return 1
+		fi
+		# EPERM or other: process exists but we can't signal it — treat as running
+		if [[ -n "$kill_err" ]]; then
+			log "WARNING: kill -0 $pid: $kill_err"
 			return 0
 		fi
 	fi
