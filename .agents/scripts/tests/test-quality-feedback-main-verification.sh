@@ -1352,6 +1352,85 @@ This pull request effectively addresses ShellCheck SC2034 warnings for unused va
 	return 0
 }
 
+# Regression test for issue #3145 / PR #3077:
+# Gemini Code Assist posted a summary-only COMMENTED review with no inline
+# comments on a ShellCheck fix PR. The review body praised the changes
+# ("correctly resolve the linter warnings") with no actionable critique.
+# This must be filtered by the summary_only rule (state=COMMENTED, no inline
+# comments, bot reviewer) and also by the summary_praise_only heuristic.
+# Before the summary_only filter was added, this created a false-positive
+# quality-debt issue (#3145).
+test_scan_single_pr_filters_issue3145_pr3077_review_body() {
+	reset_mock_state
+
+	gh() {
+		local command="$1"
+		shift
+		case "$command" in
+		api)
+			while [[ $# -gt 0 ]]; do
+				case "$1" in
+				repos/*/pulls/*/comments)
+					echo "[]"
+					return 0
+					;;
+				repos/*/pulls/*/reviews)
+					# Exact review body from PR #3077 (gemini-code-assist, COMMENTED, no inline comments)
+					# shellcheck disable=SC2028  # \n is literal JSON — jq interprets it, not the shell
+					echo '[{"id":3908632650,"user":{"login":"gemini-code-assist[bot]"},"state":"COMMENTED","body":"## Code Review\n\nThis pull request addresses several ShellCheck warnings. In `generate-claude-commands.sh`, a `SC2317` disable has been added with a clear explanation for why ShellCheck incorrectly flags code as unreachable. In `setup.sh`, a comment has been updated to remove stale line number references, making it more robust. The changes are straightforward and correctly resolve the linter warnings.","submitted_at":"2024-01-01T00:00:00Z","html_url":"https://github.com/marcusquinn/aidevops/pull/3077#pullrequestreview-3908632650"}]'
+					return 0
+					;;
+				repos/*/git/trees/*)
+					echo '{"tree":[]}'
+					return 0
+					;;
+				repos/*)
+					echo "main"
+					return 0
+					;;
+				esac
+				shift
+			done
+			echo "[]"
+			return 0
+			;;
+		label | pr) return 0 ;;
+		esac
+		echo "[]"
+		return 0
+	}
+
+	local findings
+	findings=$(_scan_single_pr "owner/repo" "3077" "medium" "false" 2>/dev/null)
+	local count
+	count=$(printf '%s' "$findings" | jq 'length' 2>/dev/null || echo "0")
+
+	if [[ "$count" -eq 0 ]]; then
+		print_result "issue #3145: PR #3077 Gemini summary-only review is filtered" 0
+	else
+		print_result "issue #3145: PR #3077 Gemini summary-only review is filtered" 1 "expected 0 findings, got ${count}"
+	fi
+
+	gh() {
+		local command="$1"
+		shift
+		case "$command" in
+		api)
+			_mock_gh_api "$@"
+			return $?
+			;;
+		label) return 0 ;;
+		issue)
+			_mock_gh_issue "$@"
+			return $?
+			;;
+		esac
+		echo "unexpected gh call: ${command}" >&2
+		return 1
+	}
+	return 0
+}
+
 main() {
 	source "$HELPER"
 
@@ -1398,6 +1477,7 @@ main() {
 	test_scan_single_pr_filters_issue3303_review_body
 	test_scan_single_pr_filters_issue3325_review_body
 	test_scan_single_pr_filters_pr2647_positive_review_body
+	test_scan_single_pr_filters_issue3145_pr3077_review_body
 
 	echo ""
 	echo "Running positive-review filter regression tests (GH#4814)"
