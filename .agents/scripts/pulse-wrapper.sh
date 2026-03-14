@@ -545,13 +545,16 @@ prefetch_state() {
 
 	# Wait for all parallel fetches with a hard timeout (t1482).
 	# Each repo does 3 gh API calls (pr list, pr list --state all, issue list).
-	# Normal completion: <30s. Timeout at 120s catches hung gh connections.
+	# Normal completion: <30s. Timeout at 60s catches hung gh connections.
+	# Must be well under launchd's 120s StartInterval — the wrapper spends
+	# ~20s on cleanup/normalize before reaching prefetch, so 60s leaves ~40s
+	# for sub-helpers and pulse launch.
 	# Uses poll-based approach (kill -0) instead of blocking wait — wait $pid
 	# blocks until the process exits, so a timeout check between waits is
 	# ineffective when a single wait hangs for minutes.
 	local wait_elapsed=0
 	local all_done=false
-	while [[ "$all_done" != "true" ]] && [[ "$wait_elapsed" -lt 120 ]]; do
+	while [[ "$all_done" != "true" ]] && [[ "$wait_elapsed" -lt 60 ]]; do
 		all_done=true
 		for pid in "${pids[@]}"; do
 			if kill -0 "$pid" 2>/dev/null; then
