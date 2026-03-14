@@ -1029,7 +1029,7 @@ cmd_pulse() {
 	local fast_path_evaluating_grace="${SUPERVISOR_FAST_PATH_EVALUATING_GRACE_SECONDS:-30}"
 	local fast_path_evaluating_tasks
 	fast_path_evaluating_tasks=$(db -separator '|' "$SUPERVISOR_DB" "
-		SELECT id, status, updated_at FROM tasks
+		SELECT id, status, updated_at, retries, max_retries, pr_url FROM tasks
 		WHERE status = 'evaluating'
 		AND pr_url IS NOT NULL
 		AND pr_url != ''
@@ -1043,7 +1043,7 @@ cmd_pulse() {
 	# Query evaluating tasks without PR URL — use standard grace period
 	local stale_evaluating_tasks
 	stale_evaluating_tasks=$(db -separator '|' "$SUPERVISOR_DB" "
-		SELECT id, status, updated_at FROM tasks
+		SELECT id, status, updated_at, retries, max_retries, pr_url FROM tasks
 		WHERE status = 'evaluating'
 		AND (pr_url IS NULL OR pr_url = '' OR pr_url = 'no_pr' OR pr_url = 'task_only' OR pr_url = 'task_obsolete')
 		AND updated_at < strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '-${evaluating_grace_seconds} seconds')
@@ -1065,7 +1065,7 @@ cmd_pulse() {
 		local stale_recovered=0
 		local stale_skipped=0
 
-		while IFS='|' read -r stale_id stale_status stale_updated; do
+		while IFS='|' read -r stale_id stale_status stale_updated stale_retries stale_max_retries stale_pr_url; do
 			[[ -z "$stale_id" ]] && continue
 
 			# Check if a live worker process exists for this task
@@ -1118,10 +1118,11 @@ cmd_pulse() {
 			local diag_eval_started_at="${_DIAG_EVAL_STARTED_AT:-}"
 			local diag_eval_lag_secs="${_DIAG_EVAL_LAG_SECS:-NULL}"
 
-			local stale_retries stale_max_retries stale_pr_url
-			stale_retries=$(db "$SUPERVISOR_DB" "SELECT retries FROM tasks WHERE id = '$(sql_escape "$stale_id")';" 2>/dev/null || echo "0")
-			stale_max_retries=$(db "$SUPERVISOR_DB" "SELECT max_retries FROM tasks WHERE id = '$(sql_escape "$stale_id")';" 2>/dev/null || echo "${SUPERVISOR_DEFAULT_MAX_RETRIES:-3}")
-			stale_pr_url=$(db "$SUPERVISOR_DB" "SELECT pr_url FROM tasks WHERE id = '$(sql_escape "$stale_id")';" 2>/dev/null || echo "")
+			# stale_retries, stale_max_retries, stale_pr_url are parsed from the initial
+			# query (fetched upfront to avoid per-task DB calls inside the loop).
+			# Apply defaults in case the DB returned empty strings.
+			stale_retries="${stale_retries:-0}"
+			stale_max_retries="${stale_max_retries:-${SUPERVISOR_DEFAULT_MAX_RETRIES:-3}}"
 
 			local had_pr_flag=0
 			[[ -n "$stale_pr_url" && "$stale_pr_url" != "no_pr" && "$stale_pr_url" != "task_only" ]] && had_pr_flag=1
