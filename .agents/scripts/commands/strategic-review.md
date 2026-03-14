@@ -41,8 +41,11 @@ gh issue list --repo <owner/repo> --state open --json number,title,labels,update
 Then gather system-wide state:
 
 ```bash
-# Active worktrees (all repos share the worktree namespace)
-git worktree list
+# Active worktrees — scoped per repo; iterate over all managed repos
+jq -r '[.initialized_repos[] | select(.pulse == true and .local_only != true)] | .[].path' ~/.config/aidevops/repos.json | while read -r repo_path; do
+  echo "=== $repo_path ==="
+  git -C "$repo_path" worktree list 2>/dev/null || echo "(not a git repo or path missing)"
+done
 
 # Running workers
 pgrep -f '/full-loop' 2>/dev/null | wc -l | tr -d ' '
@@ -97,7 +100,7 @@ Based on your assessment, take action — but distinguish between safe mechanica
 ### Act directly (mechanical, reversible, no judgment needed):
 
 1. **`git worktree prune`** — safe, only removes worktrees whose directories are already gone.
-2. **Merge CI-green PRs with approved reviews** — `gh pr merge --squash`. Same as the pulse does.
+2. **Merge CI-green PRs with approved reviews** — `gh pr merge <PR_NUMBER> --squash --repo <owner/repo>`. Always supply the PR number and `--repo` explicitly; omitting them risks acting on the wrong PR in a cross-repo context. Same as the pulse does.
 3. **File GitHub issues for systemic problems** — if you see a pattern (same CI failure, same type of worker failure, same blocked chain), create an issue describing the pattern and proposed fix.
 4. **Record observations** — the report itself is the primary output.
 
