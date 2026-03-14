@@ -301,7 +301,9 @@ main() {
 	if [[ "$VERIFY_BRIEF" == "true" ]]; then
 		local brief_file="${REPO_PATH}/todo/tasks/${TASK_ID}-brief.md"
 		if [[ ! -f "$brief_file" ]]; then
-			log_warn "Brief file not found: $brief_file — skipping verification"
+			log_error "Brief file not found: $brief_file — cannot verify"
+			log_info "Remove --verify flag if this task has no brief"
+			return 1
 		else
 			local verify_script="${SCRIPT_DIR}/verify-brief.sh"
 			if [[ ! -x "$verify_script" ]]; then
