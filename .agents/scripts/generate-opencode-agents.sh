@@ -730,7 +730,7 @@ omo_tool_patterns = ['grep_app_*', 'websearch_*', 'gh_grep_*']
 for tool_pattern in omo_tool_patterns:
     if config['tools'].get(tool_pattern) is not False:
         config['tools'][tool_pattern] = False
-        print(f"  Disabled {tool_pattern} tools globally (use @github-search subagent)")
+        print(f"  Disabled {tool_pattern} tools globally (use matching subagent/CLI workflow)")
 
 if config_loaded:
     with open(config_path, 'w', encoding='utf-8') as f:
