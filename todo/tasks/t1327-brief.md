@@ -75,6 +75,7 @@ aidevops SimpleX Bot (TypeScript/Bun process)
 
 **CLI** (from docs/CLI.md):
 - Install: `curl -o- https://raw.githubusercontent.com/simplex-chat/simplex-chat/stable/install.sh | bash`
+  > ⚠️ **Opsec note:** Inspect the script before executing (`curl ... | cat`), or prefer the verified binary from [GitHub Releases](https://github.com/simplex-chat/simplex-chat/releases) with checksum verification.
 - Database: SQLite files (`simplex_v1_chat.db`, `simplex_v1_agent.db`)
 - Tor support: `-x` flag or `--socks-proxy`
 - Custom SMP servers: `-s smp://fingerprint@host`
@@ -262,7 +263,7 @@ Key decisions from the conversation:
 | Opsec agent (opsec.md) | 3h | Security guidance cross-referencing existing agents |
 | Chat security (t1327.8-10) | 6h | Prompt injection, leak detection, exec approval |
 | Integration/testing | 4h | Index updates, end-to-end tests, linting |
-| **Total** | **~29h** | (ai:22h test:4h read:3h) |
+| **Total** | **~29h** | (ai:21h test:5h read:3h) |
 
 ## Research Notes
 
