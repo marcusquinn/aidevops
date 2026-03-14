@@ -714,7 +714,15 @@ if should_generate "setup-aidevops"; then
 		'Run the aidevops setup script to deploy the latest changes.
 
 ```bash
-cd ~/Git/aidevops && ./setup.sh || exit
+AIDEVOPS_REPO="${AIDEVOPS_REPO:-$(jq -r ".initialized_repos[]?.path | select(test(\"/aidevops$\"))" ~/.config/aidevops/repos.json 2>/dev/null | head -n 1)}"
+if [[ -z "$AIDEVOPS_REPO" ]]; then
+  AIDEVOPS_REPO="$HOME/Git/aidevops"
+fi
+[[ -f "$AIDEVOPS_REPO/setup.sh" ]] || {
+  echo "Unable to find setup.sh. Set AIDEVOPS_REPO to your aidevops clone path." >&2
+  exit 1
+}
+cd "$AIDEVOPS_REPO" && ./setup.sh || exit
 ```
 
 **What this does:**
