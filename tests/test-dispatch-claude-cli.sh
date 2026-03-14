@@ -1271,7 +1271,7 @@ else
 fi
 
 # ============================================================
-# SECTION 11: Worker MCP Config Generation (t1162)
+# SECTION 12: Worker MCP Config Generation (t1162)
 # ============================================================
 section "Worker MCP Config Generation (t1162)"
 
