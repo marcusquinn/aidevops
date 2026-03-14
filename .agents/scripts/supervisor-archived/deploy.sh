@@ -573,7 +573,7 @@ cmd_pr_lifecycle() {
 				WHERE task_id = '$escaped_id'
 				  AND from_state = 'review_triage'
 				  AND to_state = 'dispatched';
-			" 2>/dev/null || echo "0")
+			" 2>>"$SUPERVISOR_LOG" || echo "0")
 
 			if [[ "$prior_fix_cycles" -gt 0 ]]; then
 				log_info "Fix cycle $prior_fix_cycles for $task_id — resolving bot threads before re-triage"
@@ -918,8 +918,10 @@ cmd_pr_lifecycle() {
 # Returns 0 on success, 1 on failure
 #######################################
 check_review_threads() {
-	local repo_slug="$1"
-	local pr_number="$2"
+	local repo_slug
+	repo_slug="$1"
+	local pr_number
+	pr_number="$2"
 
 	if ! command -v gh &>/dev/null; then
 		log_warn "gh CLI not found, cannot check review threads"
@@ -1003,8 +1005,10 @@ check_review_threads() {
 # Returns: number of threads resolved (on stdout), 0 on error
 #######################################
 resolve_bot_review_threads() {
-	local repo_slug="$1"
-	local pr_number="$2"
+	local repo_slug
+	repo_slug="$1"
+	local pr_number
+	pr_number="$2"
 
 	if ! command -v gh &>/dev/null; then
 		log_warn "gh CLI not found, cannot resolve review threads"
@@ -1058,7 +1062,7 @@ resolve_bot_review_threads() {
 		 | select(.isResolved == false)
 		 | select((.comments.nodes[0].author.login // "") | test("bot$|\\[bot\\]$|gemini|coderabbit|copilot|codacy|sonar"; "i"))
 		 | .id
-		] | .[]' 2>/dev/null || echo "")
+		] | .[]' 2>>"$SUPERVISOR_LOG" || echo "")
 
 	if [[ -z "$bot_thread_ids" ]]; then
 		log_info "No unresolved bot threads to resolve on $repo_slug#$pr_number"
