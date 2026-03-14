@@ -143,7 +143,7 @@ const { bytes: signed } = await pdf.sign({
 - `libpdf.md` - Detailed LibPDF usage guide
 - `../document/document-creation.md` - Unified document format conversion and creation
 - `../conversion/mineru.md` - PDF to markdown/JSON (layout-aware, OCR)
-- `../ocr/overview.md` - OCR tool selection guide (PaddleOCR, GLM-OCR, MinerU, Docling)
+- `../ocr/overview.md` - OCR tool selection guide (PaddleOCR, GLM-OCR, MinerU)
 - `../ocr/paddleocr.md` - PaddleOCR scene text OCR for scanned PDFs and images
 - `../conversion/pandoc.md` - General document format conversion
 - `../browser/playwright.md` - For PDF rendering/screenshots
