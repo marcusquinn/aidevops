@@ -1030,7 +1030,7 @@ setup_python_env() {
 		if [[ -d "python-env/dspy-env" ]] && [[ ! -f "python-env/dspy-env/bin/activate" ]]; then
 			rm -rf python-env/dspy-env
 		fi
-		if python3 -m venv python-env/dspy-env; then
+		if "$python3_bin" -m venv python-env/dspy-env; then
 			print_success "Python virtual environment created"
 		else
 			print_warning "Failed to create Python virtual environment - DSPy setup skipped"
