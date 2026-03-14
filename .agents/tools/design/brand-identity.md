@@ -98,7 +98,7 @@ sentence_style = ""        # "short_punchy" | "flowing" | "varied" | "academic"
 personality_traits = []    # e.g., ["confident", "warm", "witty", "direct"]
 humour = ""                # "none" | "dry" | "playful" | "self-deprecating"
 perspective = ""           # "first_person_plural" | "first_person_singular" | "second_person" | "third_person"
-formality_spectrum = ""    # 1-10 scale, 1=very casual, 10=very formal
+formality_spectrum = 0     # 1-10 scale, 1=very casual, 10=very formal
 emotional_range = ""       # "restrained" | "moderate" | "expressive"
 jargon_policy = ""         # "avoid" | "define_on_first_use" | "assume_knowledge"
 british_english = false    # Whether to use British spelling
@@ -195,7 +195,8 @@ button_variants
   secondary
     style = ""             # "outline" | "ghost" | "subtle" | "tonal"
   destructive
-    style = ""             # How delete/danger actions look
+    style = ""             # Visual style only: e.g., "red background, white text"
+    behaviour = ""         # Behavioural rules: e.g., "confirm before action"
 form_fields
   style = ""               # "outlined" | "filled" | "underlined" | "minimal"
   border_radius = ""       # e.g., "6px"
@@ -462,7 +463,7 @@ context/brand-identity.toon (per-project)
     |-- read by: content/guidelines.md
     |     When brand identity exists: guidelines.md provides structural
     |     rules (paragraph length, HTML formatting, SEO bolding).
-    |     Brand-identity.toon provides the voice.
+    |     brand-identity.toon provides the voice.
     |     When no brand identity: guidelines.md is sole authority.
     |
     |-- read by: content/platform-personas.md
@@ -543,7 +544,7 @@ sentence_style = "short_punchy"
 personality_traits = ["confident", "direct", "slightly_irreverent", "helpful"]
 humour = "dry"
 perspective = "first_person_plural"
-formality_spectrum = "4"
+formality_spectrum = 4
 emotional_range = "moderate"
 jargon_policy = "assume_knowledge"
 british_english = false
@@ -615,7 +616,8 @@ button_variants
   secondary
     style = "outline"
   destructive
-    style = "red background, white text, confirm before action"
+    style = "red background, white text"
+    behaviour = "confirm before action"
 form_fields
   style = "outlined"
   border_radius = "6px"
