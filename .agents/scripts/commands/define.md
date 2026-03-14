@@ -38,33 +38,10 @@ Parse `$ARGUMENTS` to classify the task. Use keyword signals:
 | **docs** | document, readme, guide, explain, describe | Accurate, concise, follows existing doc patterns |
 | **research** | investigate, explore, evaluate, compare, spike | Time-boxed, deliverable is a written recommendation |
 
-Also classify the **agent domain** — this determines which specialist agent handles the task at dispatch time:
-
-| Domain | Signal Words | Agent |
-|--------|-------------|-------|
-| **seo** | SEO, keywords, rankings, GSC, schema markup | SEO |
-| **content** | blog, article, newsletter, video script, copy | Content |
-| **marketing** | campaign, email blast, landing page, FluentCRM | Marketing |
-| **accounts** | invoice, receipt, financial, bookkeeping | Accounts |
-| **legal** | compliance, terms, privacy policy, GDPR | Legal |
-| **research** | market research, competitive analysis, tech spike | Research |
-| **sales** | CRM, proposal, outreach, pipeline | Sales |
-| **social-media** | social post, scheduling, engagement | Social-Media |
-| **video** | video generation, editing, animation | Video |
-| **health** | wellness, health content, nutrition | Health |
-| *(code)* | implement, fix, refactor, CI, test | Build+ (default — no label needed) |
-
-Include the domain tag (e.g., `#seo`, `#content`) in the TODO.md entry and as a GitHub label on the issue. Omit for code tasks.
-
-Also classify the **model tier** — this determines the intelligence level of the worker dispatched for this task:
-
-| Tier | Tag | Signals |
-|------|-----|---------|
-| **thinking** | `tier:thinking` | Architecture decisions, novel design with no existing patterns, complex multi-system trade-offs, security audits requiring deep reasoning |
-| **simple** | `tier:simple` | Docs-only changes, simple renames/formatting, config tweaks, label/tag updates |
-| *(coding)* | *(none)* | Standard implementation, bug fixes, refactors, tests — **default, no tag needed** |
-
-Default to no tier tag — most tasks are coding (sonnet). Only tag when the task clearly needs more reasoning power or clearly needs less.
+Also classify the **agent domain** and **model tier** using the canonical tables in
+`reference/task-taxonomy.md`. Include the domain tag (e.g., `#seo`, `#content`) in
+the TODO.md entry and as a GitHub label on the issue. Omit both for code tasks
+(Build+ is the default; coding tier is the default).
 
 If ambiguous, ask:
 

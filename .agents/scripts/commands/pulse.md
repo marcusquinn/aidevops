@@ -276,6 +276,9 @@ Do NOT treat `auto-dispatch` or `status:available` as hard gates. Build candidat
 
 ### Agent routing from labels
 
+Labels are applied at task creation time — see `reference/task-taxonomy.md` for the
+canonical domain and tier definitions. This section maps those labels to dispatch flags.
+
 Before dispatching, check issue labels for agent routing. This avoids guessing from the title:
 
 | Label | Dispatch Flag | Agent |
