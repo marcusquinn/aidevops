@@ -268,7 +268,7 @@ source "$HOME/.config/aidevops/tenants/${AIDEVOPS_ACTIVE_TENANT}/credentials.sh"
 EOF
 
 	# Test tenant loader detection
-	if grep -q 'AIDEVOPS_ACTIVE_TENANT=' "$test_config_dir/credentials.sh" 2>/dev/null; then
+	if grep -q 'AIDEVOPS_ACTIVE_TENANT=' "$test_config_dir/credentials.sh"; then
 		pass "Tenant loader correctly detected (AIDEVOPS_ACTIVE_TENANT present)"
 	else
 		fail "Tenant loader not detected"
@@ -297,7 +297,7 @@ EOF
 export DIRECT_KEY="direct-value-789"
 EOF
 
-	if ! grep -q 'AIDEVOPS_ACTIVE_TENANT=' "$direct_cred" 2>/dev/null; then
+	if ! grep -q 'AIDEVOPS_ACTIVE_TENANT=' "$direct_cred"; then
 		pass "Direct credentials.sh correctly identified as non-tenant"
 	else
 		fail "Direct credentials.sh incorrectly identified as tenant loader"
@@ -389,7 +389,7 @@ test_gopass_roundtrip() {
 	fi
 
 	# Check if gopass store is initialized
-	if ! gopass ls &>/dev/null; then
+	if ! gopass ls >/dev/null; then
 		skip "gopass store not initialized -- skipping round-trip test"
 		return 0
 	fi
@@ -402,7 +402,7 @@ test_gopass_roundtrip() {
 	test_value="roundtrip-test-value-$(date +%s)"
 
 	# Store the test secret
-	if echo "$test_value" | gopass insert --force "$test_key" &>/dev/null; then
+	if echo "$test_value" | gopass insert --force "$test_key" >/dev/null; then
 		pass "gopass insert succeeded for test key"
 	else
 		fail "gopass insert failed for test key"
@@ -411,7 +411,7 @@ test_gopass_roundtrip() {
 
 	# Retrieve and verify
 	local retrieved
-	retrieved=$(gopass show -o "$test_key" 2>/dev/null || echo "")
+	retrieved=$(gopass show -o "$test_key" || echo "")
 
 	if [[ "$retrieved" == "$test_value" ]]; then
 		pass "gopass round-trip: retrieved value matches stored value"
@@ -420,10 +420,10 @@ test_gopass_roundtrip() {
 	fi
 
 	# Clean up test secret
-	gopass rm --force "$test_key" &>/dev/null || true
+	gopass rm --force "$test_key" || true
 
 	# Verify cleanup
-	if ! gopass show -o "$test_key" &>/dev/null; then
+	if ! gopass show -o "$test_key" >/dev/null; then
 		pass "gopass test secret cleaned up successfully"
 	else
 		fail "gopass test secret not cleaned up"
@@ -452,7 +452,7 @@ EOF
 	local name="UPDATE_KEY"
 	local new_value="updated-value-new"
 
-	if grep -q "^export ${name}=" "$cred_file" 2>/dev/null; then
+	if grep -q "^export ${name}=" "$cred_file"; then
 		local tmp_file="${cred_file}.tmp"
 		grep -v "^export ${name}=" "$cred_file" >"$tmp_file"
 		echo "export ${name}=\"${new_value}\"" >>"$tmp_file"
@@ -670,7 +670,7 @@ EOF
 		if [[ ! -f "$file" ]]; then
 			return 1
 		fi
-		if grep -q '"sops"' "$file" 2>/dev/null || grep -q "sops:" "$file" 2>/dev/null; then
+		if grep -q '"sops"' "$file" || grep -q "sops:" "$file"; then
 			return 0
 		fi
 		return 1
@@ -727,7 +727,7 @@ test_sops_git_roundtrip() {
 	local age_key_dir="$TEST_DIR/sops-age-keys"
 	mkdir -p "$age_key_dir"
 	chmod 700 "$age_key_dir"
-	age-keygen -o "$age_key_dir/keys.txt" 2>/dev/null
+	age-keygen -o "$age_key_dir/keys.txt"
 
 	local pub_key
 	pub_key=$(grep "^# public key:" "$age_key_dir/keys.txt" | sed 's/^# public key: //')
@@ -776,7 +776,7 @@ EOF
 
 	export SOPS_AGE_KEY_FILE="$age_key_dir/keys.txt"
 
-	if sops encrypt -i "$test_repo/config.enc.yaml" 2>/dev/null; then
+	if sops encrypt -i "$test_repo/config.enc.yaml"; then
 		pass "SOPS encryption succeeded"
 	else
 		fail "SOPS encryption failed"
@@ -784,7 +784,7 @@ EOF
 	fi
 
 	# Verify the file is now encrypted (contains sops metadata)
-	if grep -q "sops:" "$test_repo/config.enc.yaml" 2>/dev/null; then
+	if grep -q "sops:" "$test_repo/config.enc.yaml"; then
 		pass "Encrypted file contains sops metadata"
 	else
 		fail "Encrypted file missing sops metadata"
@@ -814,7 +814,7 @@ EOF
 
 	# Decrypt and verify round-trip integrity
 	local decrypted
-	decrypted=$(sops decrypt "$test_repo/config.enc.yaml" 2>/dev/null) || true
+	decrypted=$(sops decrypt "$test_repo/config.enc.yaml") || true
 
 	if echo "$decrypted" | grep -q "super-secret-password-12345"; then
 		pass "Decrypted content contains original password"
@@ -1459,7 +1459,7 @@ test_sops_gitattributes() {
 
 	# Verify git config
 	local textconv
-	textconv=$(cd "$test_repo" && git config diff.sopsdiffer.textconv 2>/dev/null || echo "")
+	textconv=$(cd "$test_repo" && git config diff.sopsdiffer.textconv || echo "")
 
 	if [[ "$textconv" == "sops decrypt" ]]; then
 		pass "Git diff driver configured: sops decrypt"
