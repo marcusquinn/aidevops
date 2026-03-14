@@ -183,17 +183,17 @@ _ai_schedule_all_routines() {
 	critical_issues="${critical_issues:-0}"
 	recent_failures="${recent_failures:-0}"
 
-	# Build the prompt
+	# Build the prompt — inject threshold constants so prompt stays in sync with heuristic rules
 	local system_prompt
-	system_prompt='You are a DevOps scheduling optimizer. Given routine states and project signals, decide which routines should run, skip, or defer. Rules:
-- "skip" if below_min_interval or is_deferred (these are hard constraints, always skip/defer)
-- "skip" coderabbit if consecutive_zero_findings >= 3 AND elapsed < 604800 (weekly reset)
-- "skip" task_creation if consecutive_zero_findings >= 2 AND elapsed < 86400
-- "defer" cosmetic routines (models_md, skill_update, coderabbit) when critical_issues >= 3
-- "defer" skill_update when recent_failures >= 3 (prioritize self-healing)
-- "run" memory_audit unless below_min_interval (lightweight)
-- Otherwise "run"
-Respond with ONLY a JSON object: {"decisions":{"routine_name":"run|skip|defer",...}}'
+	system_prompt="You are a DevOps scheduling optimizer. Given routine states and project signals, decide which routines should run, skip, or defer. Rules:
+- \"skip\" if below_min_interval or is_deferred (these are hard constraints, always skip/defer)
+- \"skip\" coderabbit if consecutive_zero_findings >= ${ROUTINE_SKIP_THRESHOLD_CODERABBIT} AND elapsed < 604800 (weekly reset)
+- \"skip\" task_creation if consecutive_zero_findings >= ${ROUTINE_SKIP_THRESHOLD_TASK_CREATION} AND elapsed < 86400
+- \"defer\" cosmetic routines (models_md, skill_update, coderabbit) when critical_issues >= ${ROUTINE_CRITICAL_ISSUE_THRESHOLD}
+- \"defer\" skill_update when recent_failures >= ${ROUTINE_FAILURE_RATE_THRESHOLD} (prioritize self-healing)
+- \"run\" memory_audit unless below_min_interval (lightweight)
+- Otherwise \"run\"
+Respond with ONLY a JSON object: {\"decisions\":{\"routine_name\":\"run|skip|defer\",...}}"
 
 	local user_prompt
 	user_prompt=$(jq -n \
@@ -245,10 +245,11 @@ Respond with ONLY a JSON object: {"decisions":{"routine_name":"run|skip|defer",.
 		return 1
 	fi
 
-	# Extract JSON from response (AI may wrap in markdown code blocks)
+	# Extract JSON from response (AI may wrap in markdown code blocks or pretty-print)
 	local decisions_json
-	decisions_json=$(echo "$ai_text" | sed -n 's/.*\({.*}\).*/\1/p' | head -1)
-	if [[ -z "$decisions_json" ]]; then
+	# Strip markdown fences (```json ... ``` or ``` ... ```), then parse first valid JSON object
+	decisions_json=$(echo "$ai_text" | sed 's/^```[a-z]*//;s/^```//' | jq -s '.[0]' 2>/dev/null)
+	if [[ -z "$decisions_json" ]] || [[ "$decisions_json" == "null" ]]; then
 		decisions_json="$ai_text"
 	fi
 
@@ -560,7 +561,7 @@ _heuristic_should_run_routine() {
 		if [[ "$consecutive_zero" -ge "$ROUTINE_SKIP_THRESHOLD_TASK_CREATION" ]]; then
 			local daily_interval=86400
 			if [[ "$elapsed" -lt "$daily_interval" ]]; then
-				log_info "  Phase 14: [heuristic] task_creation deferred — ${consecutive_zero} consecutive empty runs"
+				log_info "  Phase 14: [heuristic] task_creation skip — ${consecutive_zero} consecutive empty runs"
 				echo "skip"
 				return 1
 			fi
@@ -763,25 +764,25 @@ run_phase14_routine_scheduler() {
 	mem_decision=$(should_run_routine "memory_audit" "$ROUTINE_MIN_INTERVAL_MEMORY_AUDIT" 2>/dev/null || true)
 	export ROUTINE_DECISION_MEMORY_AUDIT="${mem_decision:-run}"
 
-	# Evaluate coderabbit (Phase 10)
+	# Evaluate coderabbit (Phase 10) — fail-safe: skip on error (heavy routine)
 	local cr_decision
 	cr_decision=$(should_run_routine "coderabbit" "$ROUTINE_MIN_INTERVAL_CODERABBIT" 2>/dev/null || true)
-	export ROUTINE_DECISION_CODERABBIT="${cr_decision:-run}"
+	export ROUTINE_DECISION_CODERABBIT="${cr_decision:-skip}"
 
-	# Evaluate task_creation (Phase 10b)
+	# Evaluate task_creation (Phase 10b) — fail-safe: skip on error (heavy routine)
 	local tc_decision
 	tc_decision=$(should_run_routine "task_creation" "$ROUTINE_MIN_INTERVAL_TASK_CREATION" 2>/dev/null || true)
-	export ROUTINE_DECISION_TASK_CREATION="${tc_decision:-run}"
+	export ROUTINE_DECISION_TASK_CREATION="${tc_decision:-skip}"
 
-	# Evaluate models_md (Phase 12)
+	# Evaluate models_md (Phase 12) — fail-open: run on error (lightweight cosmetic update)
 	local mm_decision
 	mm_decision=$(should_run_routine "models_md" "$ROUTINE_MIN_INTERVAL_MODELS_MD" 2>/dev/null || true)
 	export ROUTINE_DECISION_MODELS_MD="${mm_decision:-run}"
 
-	# Evaluate skill_update (Phase 13)
+	# Evaluate skill_update (Phase 13) — fail-safe: skip on error (heavy routine)
 	local su_decision
 	su_decision=$(should_run_routine "skill_update" "$ROUTINE_MIN_INTERVAL_SKILL_UPDATE" 2>/dev/null || true)
-	export ROUTINE_DECISION_SKILL_UPDATE="${su_decision:-run}"
+	export ROUTINE_DECISION_SKILL_UPDATE="${su_decision:-skip}"
 
 	log_verbose "  Phase 14: Decisions [${scheduling_method}] — memory_audit=${ROUTINE_DECISION_MEMORY_AUDIT} coderabbit=${ROUTINE_DECISION_CODERABBIT} task_creation=${ROUTINE_DECISION_TASK_CREATION} models_md=${ROUTINE_DECISION_MODELS_MD} skill_update=${ROUTINE_DECISION_SKILL_UPDATE}"
 
