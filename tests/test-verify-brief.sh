@@ -20,8 +20,9 @@ set -euo pipefail
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SCRIPTS_DIR="$REPO_DIR/.agents/scripts"
 VERIFY_SCRIPT="$SCRIPTS_DIR/verify-brief.sh"
-VERBOSE="${1:-}"
-export VERBOSE # used by verify-brief.sh --verbose passthrough
+VERBOSE_FLAG="${1:-}"
+VERBOSE_ARG=""
+[[ "$VERBOSE_FLAG" == "--verbose" ]] && VERBOSE_ARG="--verbose"
 
 # --- Test Framework ---
 PASS_COUNT=0
@@ -337,7 +338,7 @@ FULL_BRIEF="$TEMP_DIR/full-brief.md"
 create_full_brief "$FULL_BRIEF"
 
 # Dry-run should parse all 4 criteria
-dry_output=$("$VERIFY_SCRIPT" "$FULL_BRIEF" --repo-path "$REPO_DIR" --dry-run 2>&1) || true
+dry_output=$("$VERIFY_SCRIPT" "$FULL_BRIEF" --repo-path "$REPO_DIR" --dry-run ${VERBOSE_ARG:+$VERBOSE_ARG} 2>&1) || true
 if echo "$dry_output" | grep -q "Total criteria: 4"; then
 	pass "Dry-run finds 4 criteria"
 else
@@ -373,7 +374,7 @@ section "Execution: bash method"
 # ============================================================
 
 # Full brief has a passing bash check (test -f /etc/hosts)
-exec_output=$("$VERIFY_SCRIPT" "$FULL_BRIEF" --repo-path "$REPO_DIR" 2>&1) || true
+exec_output=$("$VERIFY_SCRIPT" "$FULL_BRIEF" --repo-path "$REPO_DIR" ${VERBOSE_ARG:+$VERBOSE_ARG} 2>&1) || true
 if echo "$exec_output" | grep -q "\[PASS\].*File exists check"; then
 	pass "Bash method passes for existing file"
 else
@@ -385,7 +386,7 @@ FAIL_BRIEF="$TEMP_DIR/fail-brief.md"
 create_failing_brief "$FAIL_BRIEF"
 
 rc=0
-fail_output=$("$VERIFY_SCRIPT" "$FAIL_BRIEF" --repo-path "$REPO_DIR" 2>&1) || rc=$?
+fail_output=$("$VERIFY_SCRIPT" "$FAIL_BRIEF" --repo-path "$REPO_DIR" ${VERBOSE_ARG:+$VERBOSE_ARG} 2>&1) || rc=$?
 if [[ $rc -eq 1 ]]; then
 	pass "Failing bash method returns exit code 1"
 else
@@ -419,7 +420,7 @@ ABSENT_BRIEF="$TEMP_DIR/absent-brief.md"
 create_absent_brief "$ABSENT_BRIEF"
 
 rc=0
-absent_output=$("$VERIFY_SCRIPT" "$ABSENT_BRIEF" --repo-path "$REPO_DIR" 2>&1) || rc=$?
+absent_output=$("$VERIFY_SCRIPT" "$ABSENT_BRIEF" --repo-path "$REPO_DIR" ${VERBOSE_ARG:+$VERBOSE_ARG} 2>&1) || rc=$?
 if [[ $rc -eq 0 ]]; then
 	pass "Codebase absent check passes when pattern not found"
 else
@@ -468,7 +469,7 @@ BARE_BRIEF="$TEMP_DIR/bare-brief.md"
 create_bare_brief "$BARE_BRIEF"
 
 rc=0
-bare_output=$("$VERIFY_SCRIPT" "$BARE_BRIEF" --repo-path "$REPO_DIR" 2>&1) || rc=$?
+bare_output=$("$VERIFY_SCRIPT" "$BARE_BRIEF" --repo-path "$REPO_DIR" ${VERBOSE_ARG:+$VERBOSE_ARG} 2>&1) || rc=$?
 if [[ $rc -eq 0 ]]; then
 	pass "Brief with no verify blocks returns exit 0"
 else
@@ -486,7 +487,7 @@ NO_CRITERIA="$TEMP_DIR/no-criteria-brief.md"
 create_no_criteria_brief "$NO_CRITERIA"
 
 rc=0
-"$VERIFY_SCRIPT" "$NO_CRITERIA" --repo-path "$REPO_DIR" >/dev/null 2>&1 || rc=$?
+"$VERIFY_SCRIPT" "$NO_CRITERIA" --repo-path "$REPO_DIR" ${VERBOSE_ARG:+$VERBOSE_ARG} >/dev/null 2>&1 || rc=$?
 if [[ $rc -eq 0 ]]; then
 	pass "Brief with no criteria section returns exit 0"
 else
@@ -498,7 +499,7 @@ INVALID_BRIEF="$TEMP_DIR/invalid-brief.md"
 create_invalid_brief "$INVALID_BRIEF"
 
 rc=0
-invalid_output=$("$VERIFY_SCRIPT" "$INVALID_BRIEF" --repo-path "$REPO_DIR" 2>&1) || rc=$?
+invalid_output=$("$VERIFY_SCRIPT" "$INVALID_BRIEF" --repo-path "$REPO_DIR" ${VERBOSE_ARG:+$VERBOSE_ARG} 2>&1) || rc=$?
 if [[ $rc -eq 1 ]]; then
 	pass "Invalid verify block returns exit code 1"
 else
@@ -516,7 +517,7 @@ MIXED_BRIEF="$TEMP_DIR/mixed-brief.md"
 create_mixed_brief "$MIXED_BRIEF"
 
 rc=0
-mixed_output=$("$VERIFY_SCRIPT" "$MIXED_BRIEF" --repo-path "$REPO_DIR" 2>&1) || rc=$?
+mixed_output=$("$VERIFY_SCRIPT" "$MIXED_BRIEF" --repo-path "$REPO_DIR" ${VERBOSE_ARG:+$VERBOSE_ARG} 2>&1) || rc=$?
 if [[ $rc -eq 0 ]]; then
 	pass "Mixed brief with passing checks returns exit 0"
 else
@@ -540,7 +541,7 @@ ESCAPED_BRIEF="$TEMP_DIR/escaped-brief.md"
 create_escaped_brief "$ESCAPED_BRIEF"
 
 rc=0
-escaped_output=$("$VERIFY_SCRIPT" "$ESCAPED_BRIEF" --repo-path "$REPO_DIR" 2>&1) || rc=$?
+escaped_output=$("$VERIFY_SCRIPT" "$ESCAPED_BRIEF" --repo-path "$REPO_DIR" ${VERBOSE_ARG:+$VERBOSE_ARG} 2>&1) || rc=$?
 if [[ $rc -eq 0 ]]; then
 	pass "YAML double-backslash pattern is unescaped correctly"
 else
@@ -551,7 +552,7 @@ fi
 section "JSON output"
 # ============================================================
 
-json_output=$("$VERIFY_SCRIPT" "$FULL_BRIEF" --repo-path "$REPO_DIR" --json 2>/dev/null) || true
+json_output=$("$VERIFY_SCRIPT" "$FULL_BRIEF" --repo-path "$REPO_DIR" --json ${VERBOSE_ARG:+$VERBOSE_ARG} 2>/dev/null) || true
 if echo "$json_output" | grep -q '"summary"'; then
 	pass "JSON output contains summary"
 else
