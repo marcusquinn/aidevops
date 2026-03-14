@@ -156,24 +156,30 @@ describe("ApprovalManager", () => {
 
   describe("timeout", () => {
     test("expires request after timeout and notifies requester", async () => {
+      mock.timers.enable({ apis: ["setTimeout"] });
+
       const replyMock = mock(async (_text: string): Promise<void> => {});
       const shortTimeout = new ApprovalManager({ approvalTimeoutMs: 100 });
       const req = shortTimeout.createRequest("docker ps", 1, "alice", replyMock);
 
-      // Wait for timeout to fire
-      await new Promise((resolve) => setTimeout(resolve, 200));
+      try {
+        mock.timers.tick(101);
+        await Promise.resolve();
+        await Promise.resolve();
 
-      // Request should be expired and cleaned up
-      expect(shortTimeout.getRequest(req.id)).toBeUndefined();
-      expect(shortTimeout.listPending()).toHaveLength(0);
+        // Request should be expired and cleaned up
+        expect(shortTimeout.getRequest(req.id)).toBeUndefined();
+        expect(shortTimeout.listPending()).toHaveLength(0);
 
-      // Reply should have been called with expiry message
-      expect(replyMock).toHaveBeenCalledTimes(1);
-      const callArg = replyMock.mock.calls[0][0];
-      expect(callArg).toContain("expired");
-      expect(callArg).toContain(req.id);
-
-      shortTimeout.shutdown();
+        // Reply should have been called with expiry message
+        expect(replyMock).toHaveBeenCalledTimes(1);
+        const callArg = replyMock.mock.calls[0][0];
+        expect(callArg).toContain("expired");
+        expect(callArg).toContain(req.id);
+      } finally {
+        shortTimeout.shutdown();
+        mock.timers.reset();
+      }
     });
   });
 
