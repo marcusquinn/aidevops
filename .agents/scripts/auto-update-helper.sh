@@ -1073,6 +1073,28 @@ cmd_check() {
 			else
 				log_error "setup.sh failed during stale-agent re-deploy (exit code: $?)"
 			fi
+		else
+			# VERSION matches but scripts may still differ — a script fix merged without
+			# a version bump leaves the deployed copy stale until setup.sh is run manually.
+			# Detect this by comparing SHA-256 of a sentinel script that is frequently
+			# patched (gh-failure-miner-helper.sh). If it drifts, re-deploy all agents.
+			# GH#4727: Codacy not_collected false-positive recurred because the fix in
+			# PR #4704 was not deployed to ~/.aidevops/ before the next pulse cycle.
+			local sentinel_repo="$INSTALL_DIR/.agents/scripts/gh-failure-miner-helper.sh"
+			local sentinel_deployed="$HOME/.aidevops/agents/scripts/gh-failure-miner-helper.sh"
+			if [[ -f "$sentinel_repo" && -f "$sentinel_deployed" ]]; then
+				local hash_repo hash_deployed
+				hash_repo=$(sha256sum "$sentinel_repo" 2>/dev/null | awk '{print $1}' || shasum -a 256 "$sentinel_repo" 2>/dev/null | awk '{print $1}' || echo "")
+				hash_deployed=$(sha256sum "$sentinel_deployed" 2>/dev/null | awk '{print $1}' || shasum -a 256 "$sentinel_deployed" 2>/dev/null | awk '{print $1}' || echo "")
+				if [[ -n "$hash_repo" && -n "$hash_deployed" && "$hash_repo" != "$hash_deployed" ]]; then
+					log_warn "Script drift detected (sentinel hash mismatch at v$current) — re-deploying agents..."
+					if bash "$INSTALL_DIR/setup.sh" --non-interactive >>"$LOG_FILE" 2>&1; then
+						log_info "Agents re-deployed after script drift (v$current)"
+					else
+						log_error "setup.sh failed during script-drift re-deploy (exit code: $?)"
+					fi
+				fi
+			fi
 		fi
 
 		run_freshness_checks
