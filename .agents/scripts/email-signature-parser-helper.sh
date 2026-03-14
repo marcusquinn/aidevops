@@ -417,21 +417,18 @@ merge_toon_contact() {
 	local existing
 	existing=$(cat "$toon_file")
 
-	# Extract existing field values using parameter expansion (avoids grep|sed pipe)
+	# Extract existing field values in a single pass (avoids repeated grep per field)
 	local existing_name existing_title existing_company existing_phone existing_website existing_address
-	local _field_line
-	_field_line=$(echo "$existing" | grep -E "^  name: " || true)
-	existing_name="${_field_line#  name: }"
-	_field_line=$(echo "$existing" | grep -E "^  title: " || true)
-	existing_title="${_field_line#  title: }"
-	_field_line=$(echo "$existing" | grep -E "^  company: " || true)
-	existing_company="${_field_line#  company: }"
-	_field_line=$(echo "$existing" | grep -E "^  phone: " || true)
-	existing_phone="${_field_line#  phone: }"
-	_field_line=$(echo "$existing" | grep -E "^  website: " || true)
-	existing_website="${_field_line#  website: }"
-	_field_line=$(echo "$existing" | grep -E "^  address: " || true)
-	existing_address="${_field_line#  address: }"
+	while IFS= read -r _line; do
+		case "$_line" in
+		"  name: "*) existing_name="${_line#  name: }" ;;
+		"  title: "*) existing_title="${_line#  title: }" ;;
+		"  company: "*) existing_company="${_line#  company: }" ;;
+		"  phone: "*) existing_phone="${_line#  phone: }" ;;
+		"  website: "*) existing_website="${_line#  website: }" ;;
+		"  address: "*) existing_address="${_line#  address: }" ;;
+		esac
+	done <<<"$existing"
 
 	# Update last_seen
 	existing=$(echo "$existing" | sed "s/^  last_seen: .*/  last_seen: ${now}/")
@@ -521,11 +518,13 @@ resolve_contact_filename() {
 	fi
 
 	# File exists — check if it's the same person (same email or same name)
-	local existing_email existing_name _field_line
-	_field_line=$(grep -E "^  email: " "$base_file" || true)
-	existing_email="${_field_line#  email: }"
-	_field_line=$(grep -E "^  name: " "$base_file" || true)
-	existing_name="${_field_line#  name: }"
+	local existing_email existing_name
+	while IFS= read -r _line; do
+		case "$_line" in
+		"  email: "*) existing_email="${_line#  email: }" ;;
+		"  name: "*) existing_name="${_line#  name: }" ;;
+		esac
+	done <"$base_file"
 
 	# Same email = same person, use existing file
 	if [[ "$existing_email" == "$email" ]]; then
@@ -960,11 +959,15 @@ list_contacts() {
 	local count=0
 	while IFS= read -r -d '' toon_file; do
 		count=$((count + 1))
-		local email name _field_line
-		_field_line=$(grep -E "^  email: " "$toon_file" | head -1 || true)
-		email="${_field_line#  email: }"
-		_field_line=$(grep -E "^  name: " "$toon_file" | head -1 || true)
-		name="${_field_line#  name: }"
+		local email name
+		email=""
+		name=""
+		while IFS= read -r _line; do
+			case "$_line" in
+			"  email: "*) email="${_line#  email: }" ;;
+			"  name: "*) name="${_line#  name: }" ;;
+			esac
+		done <"$toon_file"
 		printf "%-40s %s\n" "${email:-<unknown>}" "${name:-<no name>}"
 	done < <(find "$contacts_dir" -name "*.toon" -type f -print0 2>/dev/null | sort -z)
 
