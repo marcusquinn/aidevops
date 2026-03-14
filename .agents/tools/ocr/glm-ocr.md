@@ -14,6 +14,8 @@ tools:
 
 # GLM-OCR - Local Document OCR
 
+> **Note:** The command examples in this guide are primarily for macOS. On Linux, use equivalent commands where needed (for example, `apt` instead of `brew`).
+
 <!-- AI-CONTEXT-START -->
 
 ## Quick Reference
@@ -95,6 +97,8 @@ done > extracted_text.txt
 
 ### PDF to Text (via ImageMagick)
 
+> **Note:** This workflow requires [ImageMagick](https://imagemagick.org/). On macOS, install with `brew install imagemagick`.
+
 ```bash
 # Convert PDF pages to images, then OCR
 convert -density 300 document.pdf -quality 90 /tmp/page-%03d.png
@@ -175,7 +179,7 @@ ollama list
 ### Slow Performance
 
 ```bash
-# Check available memory (model needs ~4GB RAM)
+# Check available memory (model needs at least 8GB RAM)
 vm_stat | head -5
 
 # For large batches, process sequentially to avoid memory pressure
