@@ -939,6 +939,15 @@ check_bash32_compat() {
 		grep -n '&>>' "$file" 2>/dev/null | grep -vE '^[0-9]+:[[:space:]]*#' | while IFS= read -r line; do
 			printf '%s:%s [&>> append — bash 4.0+]\n' "$file" "$line" >>"$tmp_file"
 		done
+
+		# "\t" or "\n" in string concatenation (likely wants $'\t' or $'\n')
+		# Only flag += or = assignments, not awk/sed/printf/echo -e/python contexts
+		grep -nE '\+="\\[tn]|="\\[tn]' "$file" 2>/dev/null |
+			grep -vE '^[0-9]+:[[:space:]]*#' |
+			grep -vE 'awk|sed|printf|echo.*-e|python|f\.write|gsub|join|split|print |replace|coords|excerpt|delimiter|regex|pattern' |
+			while IFS= read -r line; do
+				printf '%s:%s ["\t"/"\n" — use $'"'"'\\t'"'"' or $'"'"'\\n'"'"' for actual whitespace]\n' "$file" "$line" >>"$tmp_file"
+			done
 	done
 
 	if [[ -s "$tmp_file" ]]; then

@@ -1021,7 +1021,7 @@ main() {
 				_headless_xml_env+=$'\n'
 				_headless_xml_env+=$'\t\t<key>AIDEVOPS_HEADLESS_MODELS</key>'
 				_headless_xml_env+=$'\n'
-				_headless_xml_env+="\t\t<string>${_xml_headless_models}</string>"
+				_headless_xml_env+=$'\t\t'"<string>${_xml_headless_models}</string>"
 			fi
 			if [[ -n "${AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST:-}" ]]; then
 				local _xml_headless_allowlist
@@ -1029,7 +1029,7 @@ main() {
 				_headless_xml_env+=$'\n'
 				_headless_xml_env+=$'\t\t<key>AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST</key>'
 				_headless_xml_env+=$'\n'
-				_headless_xml_env+="\t\t<string>${_xml_headless_allowlist}</string>"
+				_headless_xml_env+=$'\t\t'"<string>${_xml_headless_allowlist}</string>"
 			fi
 
 			# Write the plist (always regenerated to pick up config changes)
