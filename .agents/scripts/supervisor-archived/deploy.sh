@@ -2269,15 +2269,6 @@ TASK:
 	return 0
 }
 #######################################
-# Rebase a single PR branch onto updated main (t225, t302)
-# Used after merging a sibling's PR to prevent cascading conflicts.
-# Operates on the worktree if available, otherwise creates a temp worktree.
-# On conflict, uses escalating resolution: plain -> -Xtheirs -> AI CLI (t302).
-# Args: task_id
-# Returns: 0 on success, 1 on rebase failure, 2 on force-push failure
-#######################################
-
-#######################################
 # t1072: Resolve rebase conflicts in a loop for multi-commit branches.
 # When a branch has N commits and multiple conflict with main, we need
 # to resolve each one and continue until the rebase completes.
@@ -2336,6 +2327,16 @@ _resolve_rebase_loop() {
 	return 1
 }
 
+#######################################
+# Rebase a single PR branch onto updated main (t225, t302, t1048)
+# Used after merging a sibling's PR to prevent cascading conflicts.
+# Operates on the worktree if available, otherwise creates a temp worktree.
+# On conflict, uses escalating resolution via _resolve_rebase_loop (AI CLI).
+# Detects AI-completed rebases via rebase-merge/rebase-apply directory checks
+# to avoid "fatal: no rebase in progress" on git rebase --continue.
+# Args: task_id
+# Returns: 0 on success, 1 on rebase failure, 2 on force-push failure
+#######################################
 rebase_sibling_pr() {
 	local task_id="$1"
 
