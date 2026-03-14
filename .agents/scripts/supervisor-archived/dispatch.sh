@@ -1651,6 +1651,10 @@ check_cli_health() {
 	# t1160.1: Build version command via build_cli_cmd abstraction
 	local -a version_cmd=()
 	eval "version_cmd=($(build_cli_cmd --cli "$ai_cli" --action version --output array))"
+	if [[ ${#version_cmd[@]} -eq 0 ]]; then
+		log_error "check_cli_health: build_cli_cmd produced empty command for cli=$ai_cli action=version"
+		return 1
+	fi
 	version_output=$(timeout_sec 10 "${version_cmd[@]}" 2>&1) || version_exit=$?
 
 	# If version command succeeded (exit 0) or produced output, CLI is working.
@@ -1777,6 +1781,10 @@ check_model_health() {
 	# t1160.1: Build probe command via build_cli_cmd abstraction
 	local -a probe_cmd=()
 	eval "probe_cmd=($(build_cli_cmd --cli "$ai_cli" --action probe --output array --model "$model"))"
+	if [[ ${#probe_cmd[@]} -eq 0 ]]; then
+		log_error "check_model_health: build_cli_cmd produced empty command for cli=$ai_cli action=probe model=$model"
+		return 1
+	fi
 	probe_result=$(timeout_sec 15 "${probe_cmd[@]}" 2>&1)
 	probe_exit=$?
 
@@ -2157,6 +2165,8 @@ build_cli_cmd() {
 		;;
 	esac
 
+	# Clean up nested helper to prevent global function namespace leak
+	unset -f _emit_token
 	return 0
 }
 
