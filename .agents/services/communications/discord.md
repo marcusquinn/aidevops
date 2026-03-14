@@ -52,7 +52,7 @@ tools:
 │  Browser)        │     │                  │     │                  │
 │                  │────▶│ Events:          │────▶│ 1. Parse event   │
 │ User sends:      │     │ - messageCreate  │     │ 2. Check perms   │
-│ /ask Review auth │     │ - interactionCr. │     │ 3. Route command  │
+│ /ask Review auth │     │ - interactionCreate │  │ 3. Route command  │
 │                  │◀────│ - guildMemberAdd │◀────│ 4. Dispatch       │
 │ Bot response     │     │ - threadCreate   │     │ 5. Respond        │
 └──────────────────┘     └──────────────────┘     └──────────────────┘
@@ -443,6 +443,8 @@ if (channel.isTextBased() && "threads" in channel) {
 ### Forum Channels
 
 ```typescript
+import { ChannelType } from "discord.js";
+
 // Post to a forum channel
 const forum = await client.channels.fetch("FORUM_CHANNEL_ID");
 if (forum?.type === ChannelType.GuildForum) {
@@ -514,6 +516,21 @@ Map Discord roles to aidevops runners. Users with specific roles get routed to t
 ### Routing Logic
 
 ```typescript
+import { ChatInputCommandInteraction, GuildMember, TextChannel } from "discord.js";
+
+interface BotConfig {
+  channelRouting: { [key: string]: string };
+  roleRouting: { [key: string]: string };
+  defaultRunner: string;
+  allowedGuilds?: string[];
+  allowedChannels?: string[];
+  allowedUsers?: string[];
+  allowedRoles?: string[];
+  adminRoles?: string[];
+  maxPromptLength?: number;
+  responseTimeout?: number;
+}
+
 function resolveRunner(
   interaction: ChatInputCommandInteraction,
   config: BotConfig
@@ -546,6 +563,8 @@ function resolveRunner(
 ### Guild/Channel/User/Role Allowlists
 
 ```typescript
+import { ChatInputCommandInteraction, GuildMember } from "discord.js";
+
 function checkAccess(
   interaction: ChatInputCommandInteraction,
   config: BotConfig
@@ -662,18 +681,13 @@ Users should assume:
 ### Dispatch Pattern
 
 ```typescript
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
+import { spawnSync } from "node:child_process";
 
-const execFileAsync = promisify(execFile);
-
-async function dispatchToRunner(
-  runner: string,
-  prompt: string
-): Promise<string> {
-  // Use execFile with array args to prevent command injection
-  // (never use execSync with string interpolation)
-  const { stdout } = await execFileAsync(
+function dispatchToRunner(runner: string, prompt: string): string {
+  // Use spawnSync with argument array — bypasses the shell entirely,
+  // preventing injection via ;, |, &&, $(), backticks, and all other
+  // shell metacharacters. Never use execSync with string interpolation.
+  const child = spawnSync(
     "runner-helper.sh",
     ["dispatch", runner, prompt],
     {
@@ -683,7 +697,16 @@ async function dispatchToRunner(
     }
   );
 
-  return stdout.trim();
+  if (child.error) {
+    throw child.error;
+  }
+
+  if (child.status !== 0) {
+    // Note: stderr may contain sensitive info — sanitize before surfacing to users
+    throw new Error(`Runner failed with exit code ${child.status}: ${child.stderr}`);
+  }
+
+  return child.stdout.trim();
 }
 ```
 
@@ -754,6 +777,12 @@ import {
   createAudioPlayer,
   createAudioResource,
 } from "@discordjs/voice";
+
+// Fetch the guild from the client (assuming 'client' is your Discord.js Client instance)
+const guild = client.guilds.cache.get("GUILD_ID");
+if (!guild) {
+  throw new Error("Guild not found");
+}
 
 // Join voice channel
 const connection = joinVoiceChannel({
@@ -831,7 +860,7 @@ After=network.target
 Type=simple
 User=discord-bot
 WorkingDirectory=/opt/discord-bot
-ExecStart=/usr/bin/node --import tsx src/bot.ts
+ExecStart=/opt/discord-bot/node_modules/.bin/tsx src/bot.ts
 Restart=on-failure
 RestartSec=5
 Environment=NODE_ENV=production
@@ -852,7 +881,7 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm ci --omit=dev
 COPY . .
-CMD ["node", "--import", "tsx", "src/bot.ts"]
+CMD ["./node_modules/.bin/tsx", "src/bot.ts"]
 ```
 
 ### Health Monitoring
