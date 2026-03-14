@@ -502,7 +502,7 @@ aidevops implements proven agent design patterns identified by [Lance Martin (La
 | **Compaction Resilience** | Preserve context across compaction | OpenCode plugin injects dynamic state at compaction time |
 | **Ralph Loop** | Iterative execution until complete | `/full-loop`, `full-loop-helper.sh` |
 | **Evolve Context** | Learn from sessions | `/remember`, `/recall` with SQLite FTS5 + opt-in semantic search |
-| **Pattern Tracking** | Learn what works/fails | `/patterns` command, memory system |
+| **Pattern Tracking** | Learn what works/fails | `/patterns` command, `memory-helper.sh` |
 | **Cost-Aware Routing** | Match model to task complexity | `model-routing.md` with 5-tier guidance, `/route` command |
 | **Model Comparison** | Compare models side-by-side | `/compare-models` (live data), `/compare-models-free` (offline) |
 | **Response Scoring** | Evaluate actual model outputs | `/score-responses` with structured criteria |
@@ -756,7 +756,7 @@ Agents that learn from experience and contribute improvements:
 
 | Phase | Description |
 |-------|-------------|
-| **Review** | Analyze memory for success/failure patterns (memory system) |
+| **Review** | Analyze memory for success/failure patterns (`memory-helper.sh`) |
 | **Refine** | Generate and apply improvements to agents |
 | **Test** | Validate in isolated OpenCode sessions |
 | **PR** | Contribute to community with privacy filtering |
