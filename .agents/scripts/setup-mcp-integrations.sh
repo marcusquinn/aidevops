@@ -119,7 +119,7 @@ print_mcp_security_warning() {
 	print_info "  2. Scan dependencies: npx @socketsecurity/cli npm info <package>"
 	print_info "  3. Use scoped API keys with minimal permissions"
 	print_info "  4. Pin versions -- avoid @latest in production configs"
-	print_info "  See: ~/.aidevops/agents/tools/mcp-toolkit/mcporter.md 'Security Considerations'"
+	print_info "  See: ~/.aidevops/.agents/tools/mcp-toolkit/mcporter.md 'Security Considerations'"
 	echo ""
 	return 0
 }
