@@ -69,7 +69,7 @@ OpenAPI documents into context. It uses a 3-step process:
 |------|------|---------|
 | 0 | `searchAPIs(query)` | Find APIs relevant to a use case via semantic search |
 | 1 | `getAPIOverview(apiId)` | Get a plain-language summary of all endpoints |
-| 2 | `getOperationDetails(apiId, operationId)` | Get full details for a specific endpoint |
+| 2 | `getOperationDetails(apiId, operationIdOrRoute)` | Get full details for a specific endpoint |
 
 The server converts OpenAPI specs (including Swagger 2.x) to simple language, making
 even the largest APIs navigable without overwhelming context.
