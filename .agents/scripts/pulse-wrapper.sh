@@ -978,7 +978,7 @@ check_permission_failure_pr() {
 
 	# Check for existing permission-failure comment (fail closed on API error)
 	local perm_comments
-	perm_comments=$(gh pr view "$pr_number" --repo "$repo_slug" --json comments --jq '.comments[].body' 2>/dev/null)
+	perm_comments=$(gh pr view "$pr_number" --repo "$repo_slug" --json comments --jq '.comments[].body')
 	local perm_exit=$?
 
 	if [[ $perm_exit -ne 0 ]]; then
@@ -993,8 +993,7 @@ check_permission_failure_pr() {
 
 	# Safe to post — no existing comment and API call succeeded
 	gh pr comment "$pr_number" --repo "$repo_slug" \
-		--body "Permission check failed for this PR (HTTP ${http_status} from collaborator permission API). Unable to determine if @${pr_author} is a maintainer or external contributor. **A maintainer must review and merge this PR manually.** This is a fail-closed safety measure — the pulse will not auto-merge until the permission API succeeds." \
-		2>/dev/null || true
+		--body "Permission check failed for this PR (HTTP ${http_status} from collaborator permission API). Unable to determine if @${pr_author} is a maintainer or external contributor. **A maintainer must review and merge this PR manually.** This is a fail-closed safety measure — the pulse will not auto-merge until the permission API succeeds." || true
 
 	echo "[pulse-wrapper] check_permission_failure_pr: posted permission-failure comment on PR #$pr_number in $repo_slug (HTTP $http_status)" >>"$LOGFILE"
 	return 0
