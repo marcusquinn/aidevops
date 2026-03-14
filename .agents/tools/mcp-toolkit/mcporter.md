@@ -30,7 +30,7 @@ tools:
 ```bash
 npx mcporter list                        # zero-install via npx
 pnpm add mcporter                        # project dependency
-brew tap steipete/tap && brew install steipete/tap/mcporter  # Homebrew
+brew tap steipete/tap && brew install mcporter  # Homebrew
 ```
 
 **Core Commands**:
@@ -86,7 +86,7 @@ pnpm add mcporter    # or npm install mcporter / yarn add mcporter
 
 ```bash
 brew tap steipete/tap
-brew install steipete/tap/mcporter
+brew install mcporter
 ```
 
 ## Discovery -- `mcporter list`
@@ -288,10 +288,10 @@ Connect to any MCP endpoint without editing config:
 ```bash
 # HTTP server
 mcporter list --http-url https://mcp.linear.app/mcp --name linear
-mcporter call --http-url https://mcp.linear.app/mcp.list_issues assignee=me
+mcporter call --http-url https://mcp.linear.app/mcp linear.list_issues assignee=me
 
 # Stdio server
-mcporter call --stdio "bun run ./local-server.ts" --name local-tools
+mcporter call --stdio "bun run ./local-server.ts" --name local-tools local-tools.some_tool arg=value
 
 # With environment variables
 mcporter list --stdio "npx -y some-mcp" --env API_KEY=sk_example --cwd /project
