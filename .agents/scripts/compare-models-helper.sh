@@ -2754,7 +2754,7 @@ cmd_bench() {
 			[[ -z "$line" ]] && continue
 			local p
 			# Support both dataset convention (.input) and legacy (.prompt)
-			p=$(echo "$line" | jq -r '(.input // .prompt) // empty' 2>/dev/null || echo "")
+			p=$(printf '%s' "$line" | jq -r '(.input // .prompt) // empty' || true)
 			if [[ -n "$p" ]]; then
 				prompts+=("$p")
 			fi
