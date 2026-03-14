@@ -312,7 +312,7 @@ jobs:
           # Collect linked issue numbers from PR body (Closes #NNN, Fixes #NNN, Resolves #NNN)
           LINKED_ISSUES=""
           if [[ -n "$PR_BODY" ]]; then
-            LINKED_ISSUES=$(echo "$PR_BODY" | grep -oiE '(closes?|fixes?|resolves?)\s*#[0-9]+' | grep -oE '[0-9]+' | sort -u | tr '\n' ' ' || true)
+            LINKED_ISSUES=$(echo "$PR_BODY" | grep -oiE '(closes?|fixes?|resolves?)[[:space:]]*#[0-9]+' | grep -oE '[0-9]+' | sort -u | tr '\n' ' ' || true)
           fi
           echo "linked_issues=$LINKED_ISSUES" >> "$GITHUB_OUTPUT"
 
@@ -364,7 +364,7 @@ jobs:
         run: |
           # Merge all issue numbers (from PR body + fallback search)
           ALL_ISSUES="$LINKED_ISSUES $FOUND_ISSUES"
-          ALL_ISSUES=$(echo "$ALL_ISSUES" | tr ' ' '\n' | sort -u | grep -v '^$' | tr '\n' ' ')
+          ALL_ISSUES=$(echo "$ALL_ISSUES" | tr ' ' '\n' | sort -u | { grep -v '^$' || true; } | tr '\n' ' ')
 
           if [[ -z "$ALL_ISSUES" ]]; then
             echo "No linked issues found — skipping closing hygiene"
@@ -574,7 +574,7 @@ jobs:
           fi
 
           # Check for GitHub closing keywords or ref:GH# pattern
-          if echo "$PR_BODY" | grep -qiE '(closes|fixes|resolves)\s+#[0-9]+'; then
+          if echo "$PR_BODY" | grep -qiE '(closes|fixes|resolves)[[:space:]]+#[0-9]+'; then
             echo "PR body contains issue closing keyword"
             exit 0
           fi
