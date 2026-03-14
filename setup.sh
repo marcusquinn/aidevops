@@ -671,6 +671,8 @@ main() {
 	bootstrap_repo "$@"
 
 	parse_args "$@"
+	local _os
+	_os="$(uname -s)"
 
 	# Auto-detect non-interactive terminals (CI/CD, agent shells, piped stdin)
 	# Must run after parse_args so explicit --interactive flag takes precedence
@@ -876,7 +878,7 @@ main() {
 	#
 	# Ensure crontab has a global PATH= line (Linux only; macOS uses launchd env).
 	# Must run before any cron entries are installed so they inherit the PATH.
-	if [[ "$PLATFORM_MACOS" != "true" ]]; then
+	if [[ "$_os" != "Darwin" ]]; then
 		_ensure_cron_path
 	fi
 
@@ -986,7 +988,7 @@ main() {
 	if [[ "$_do_install" == "true" ]]; then
 		mkdir -p "$HOME/.aidevops/logs"
 
-		if [[ "$(uname -s)" == "Darwin" ]]; then
+		if [[ "$_os" == "Darwin" ]]; then
 			# macOS: use launchd plist with wrapper
 			local pulse_plist="$HOME/Library/LaunchAgents/${pulse_label}.plist"
 
@@ -1113,7 +1115,7 @@ PLIST
 		fi
 	elif [[ "$_pulse_lower" == "false" && "$_pulse_installed" == "true" ]]; then
 		# User explicitly disabled but pulse is still installed — clean up
-		if [[ "$(uname -s)" == "Darwin" ]]; then
+		if [[ "$_os" == "Darwin" ]]; then
 			local pulse_plist="$HOME/Library/LaunchAgents/${pulse_label}.plist"
 			if _launchd_has_agent "$pulse_label"; then
 				launchctl unload "$pulse_plist" || true
