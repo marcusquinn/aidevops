@@ -109,8 +109,10 @@ is_model_available() {
 		return 1
 	fi
 
-	# Unknown provider — assume available (AI will handle errors)
-	return 0
+	# Unknown provider — fail explicitly so resolve_chain skips to the next model
+	# rather than emitting a model string with no credential/health verification.
+	[[ "$quiet" != "true" ]] && print_warning "Unknown provider: $provider (no availability check available)" >&2
+	return 1
 }
 
 # Walk the tier's model list and return the first available model.
