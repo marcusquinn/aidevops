@@ -314,7 +314,7 @@ rg -in '(webfetch|fetch|requests\.get|urllib|curl)' \
 
 # Check for LLM/AI framework usage (indicates prompt injection risk)
 rg -in '(openai|anthropic|langchain|llama|ollama|ai\.run|completion)' \
-  --glob '*.{js,ts,py,go,rs}' -l | head -10
+  --glob '*.{js,ts,py,go,rs,sh}' -l | head -10
 ```
 
 For aidevops projects, verify `prompt-guard-helper.sh` integration. See `tools/security/prompt-injection-defender.md` for defense patterns and integration guidance.
