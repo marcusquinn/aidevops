@@ -31,29 +31,29 @@ SKIP_COUNT=0
 TOTAL_COUNT=0
 
 pass() {
-	PASS_COUNT=$((PASS_COUNT + 1))
-	TOTAL_COUNT=$((TOTAL_COUNT + 1))
-	printf "  \033[0;32mPASS\033[0m %s\n" "$1"
+    PASS_COUNT=$((PASS_COUNT + 1))
+    TOTAL_COUNT=$((TOTAL_COUNT + 1))
+    printf "  \033[0;32mPASS\033[0m %s\n" "$1"
 }
 
 fail() {
-	FAIL_COUNT=$((FAIL_COUNT + 1))
-	TOTAL_COUNT=$((TOTAL_COUNT + 1))
-	printf "  \033[0;31mFAIL\033[0m %s\n" "$1"
-	if [[ -n "${2:-}" ]]; then
-		printf "       %s\n" "$2"
-	fi
+    FAIL_COUNT=$((FAIL_COUNT + 1))
+    TOTAL_COUNT=$((TOTAL_COUNT + 1))
+    printf "  \033[0;31mFAIL\033[0m %s\n" "$1"
+    if [[ -n "${2:-}" ]]; then
+        printf "       %s\n" "$2"
+    fi
 }
 
 skip() {
-	SKIP_COUNT=$((SKIP_COUNT + 1))
-	TOTAL_COUNT=$((TOTAL_COUNT + 1))
-	printf "  \033[0;33mSKIP\033[0m %s\n" "$1"
+    SKIP_COUNT=$((SKIP_COUNT + 1))
+    TOTAL_COUNT=$((TOTAL_COUNT + 1))
+    printf "  \033[0;33mSKIP\033[0m %s\n" "$1"
 }
 
 section() {
-	echo ""
-	printf "\033[1m=== %s ===\033[0m\n" "$1"
+    echo ""
+    printf "\033[1m=== %s ===\033[0m\n" "$1"
 }
 
 # --- Setup ---
@@ -65,10 +65,10 @@ source "$SCRIPTS_DIR/shared-constants.sh"
 
 # Create a test database with sample data
 create_test_db() {
-	local db_path="$1"
-	local row_count="${2:-10}"
+    local db_path="$1"
+    local row_count="${2:-10}"
 
-	sqlite3 "$db_path" <<SQL
+    sqlite3 "$db_path" <<SQL
 CREATE TABLE IF NOT EXISTS tasks (
     id TEXT PRIMARY KEY,
     description TEXT,
@@ -80,13 +80,13 @@ CREATE TABLE IF NOT EXISTS batches (
 );
 SQL
 
-	local i
-	for ((i = 1; i <= row_count; i++)); do
-		sqlite3 "$db_path" "INSERT OR IGNORE INTO tasks (id, description, status) VALUES ('t$i', 'Task $i', 'queued');"
-	done
-	sqlite3 "$db_path" "INSERT OR IGNORE INTO batches (id, name) VALUES ('b1', 'test-batch');"
+    local i
+    for ((i = 1; i <= row_count; i++)); do
+        sqlite3 "$db_path" "INSERT OR IGNORE INTO tasks (id, description, status) VALUES ('t$i', 'Task $i', 'queued');"
+    done
+    sqlite3 "$db_path" "INSERT OR IGNORE INTO batches (id, name) VALUES ('b1', 'test-batch');"
 
-	return 0
+    return 0
 }
 
 # ============================================================
@@ -98,32 +98,32 @@ test_db="$TEMP_DIR/test1.db"
 create_test_db "$test_db" 5
 backup_file=$(backup_sqlite_db "$test_db" "test-reason")
 if [[ -f "$backup_file" ]]; then
-	pass "backup_sqlite_db creates backup file"
+    pass "backup_sqlite_db creates backup file"
 else
-	fail "backup_sqlite_db creates backup file" "File not found: $backup_file"
+    fail "backup_sqlite_db creates backup file" "File not found: $backup_file"
 fi
 
 # Test 2: Backup filename contains reason
 if echo "$backup_file" | grep -q "test-reason"; then
-	pass "backup filename contains reason label"
+    pass "backup filename contains reason label"
 else
-	fail "backup filename contains reason label" "Got: $backup_file"
+    fail "backup filename contains reason label" "Got: $backup_file"
 fi
 
 # Test 3: Backup contains same data
 orig_count=$(sqlite3 "$test_db" "SELECT count(*) FROM tasks;")
 backup_count=$(sqlite3 "$backup_file" "SELECT count(*) FROM tasks;")
 if [[ "$orig_count" == "$backup_count" ]]; then
-	pass "backup contains same row count ($orig_count)"
+    pass "backup contains same row count ($orig_count)"
 else
-	fail "backup contains same row count" "Original: $orig_count, Backup: $backup_count"
+    fail "backup contains same row count" "Original: $orig_count, Backup: $backup_count"
 fi
 
 # Test 4: Backup of non-existent file fails
 if backup_sqlite_db "$TEMP_DIR/nonexistent.db" "test" >/dev/null 2>&1; then
-	fail "backup of non-existent file returns error"
+    fail "backup of non-existent file returns error"
 else
-	pass "backup of non-existent file returns error"
+    pass "backup of non-existent file returns error"
 fi
 
 # ============================================================
@@ -132,17 +132,17 @@ section "verify_sqlite_backup"
 
 # Test 5: Verification passes when counts match
 if verify_sqlite_backup "$test_db" "$backup_file" "tasks batches"; then
-	pass "verify_sqlite_backup passes when counts match"
+    pass "verify_sqlite_backup passes when counts match"
 else
-	fail "verify_sqlite_backup passes when counts match"
+    fail "verify_sqlite_backup passes when counts match"
 fi
 
 # Test 6: Verification fails when original has fewer rows
 sqlite3 "$test_db" "DELETE FROM tasks WHERE id = 't1';"
 if verify_sqlite_backup "$test_db" "$backup_file" "tasks" 2>/dev/null; then
-	fail "verify_sqlite_backup detects row count decrease"
+    fail "verify_sqlite_backup detects row count decrease"
 else
-	pass "verify_sqlite_backup detects row count decrease"
+    pass "verify_sqlite_backup detects row count decrease"
 fi
 
 # Restore the deleted row for subsequent tests
@@ -154,25 +154,25 @@ section "verify_migration_rowcounts"
 
 # Test 7: Migration verification passes when counts match
 if verify_migration_rowcounts "$test_db" "$backup_file" "tasks batches"; then
-	pass "verify_migration_rowcounts passes when counts match"
+    pass "verify_migration_rowcounts passes when counts match"
 else
-	fail "verify_migration_rowcounts passes when counts match"
+    fail "verify_migration_rowcounts passes when counts match"
 fi
 
 # Test 8: Migration verification passes when counts increase
 sqlite3 "$test_db" "INSERT INTO tasks (id, description, status) VALUES ('t99', 'Extra task', 'queued');"
 if verify_migration_rowcounts "$test_db" "$backup_file" "tasks"; then
-	pass "verify_migration_rowcounts passes when counts increase"
+    pass "verify_migration_rowcounts passes when counts increase"
 else
-	fail "verify_migration_rowcounts passes when counts increase"
+    fail "verify_migration_rowcounts passes when counts increase"
 fi
 
 # Test 9: Migration verification fails when counts decrease
 sqlite3 "$test_db" "DELETE FROM tasks WHERE id IN ('t1', 't2', 't3');"
 if verify_migration_rowcounts "$test_db" "$backup_file" "tasks" 2>/dev/null; then
-	fail "verify_migration_rowcounts detects data loss"
+    fail "verify_migration_rowcounts detects data loss"
 else
-	pass "verify_migration_rowcounts detects data loss"
+    pass "verify_migration_rowcounts detects data loss"
 fi
 
 # ============================================================
@@ -183,24 +183,24 @@ section "rollback_sqlite_db"
 rollback_sqlite_db "$test_db" "$backup_file" 2>/dev/null
 restored_count=$(sqlite3 "$test_db" "SELECT count(*) FROM tasks;")
 if [[ "$restored_count" == "5" ]]; then
-	pass "rollback_sqlite_db restores original data ($restored_count rows)"
+    pass "rollback_sqlite_db restores original data ($restored_count rows)"
 else
-	fail "rollback_sqlite_db restores original data" "Expected 5, got $restored_count"
+    fail "rollback_sqlite_db restores original data" "Expected 5, got $restored_count"
 fi
 
 # Test 11: Rollback creates pre-rollback safety backup
 pre_rollback_count=$(find "$TEMP_DIR" -maxdepth 1 -type f -name 'test1-backup-*-pre-rollback.db' | wc -l | tr -d ' ')
 if [[ "$pre_rollback_count" -ge 1 ]]; then
-	pass "rollback creates pre-rollback safety backup"
+    pass "rollback creates pre-rollback safety backup"
 else
-	fail "rollback creates pre-rollback safety backup" "Found $pre_rollback_count pre-rollback backups"
+    fail "rollback creates pre-rollback safety backup" "Found $pre_rollback_count pre-rollback backups"
 fi
 
 # Test 12: Rollback of non-existent backup fails
 if rollback_sqlite_db "$test_db" "$TEMP_DIR/nonexistent.db" 2>/dev/null; then
-	fail "rollback of non-existent backup returns error"
+    fail "rollback of non-existent backup returns error"
 else
-	pass "rollback of non-existent backup returns error"
+    pass "rollback of non-existent backup returns error"
 fi
 
 # ============================================================
@@ -211,8 +211,8 @@ section "cleanup_sqlite_backups"
 cleanup_db="$TEMP_DIR/cleanup-test.db"
 create_test_db "$cleanup_db" 3
 for i in 1 2 3 4 5 6 7; do
-	sleep 1 # Ensure unique timestamps
-	backup_sqlite_db "$cleanup_db" "test-$i" >/dev/null 2>&1
+    sleep 1 # Ensure unique timestamps
+    backup_sqlite_db "$cleanup_db" "test-$i" >/dev/null 2>&1
 done
 
 pre_cleanup_count=$(find "$TEMP_DIR" -maxdepth 1 -type f -name 'cleanup-test-backup-*.db' | wc -l | tr -d ' ')
@@ -220,9 +220,9 @@ cleanup_sqlite_backups "$cleanup_db" 3
 post_cleanup_count=$(find "$TEMP_DIR" -maxdepth 1 -type f -name 'cleanup-test-backup-*.db' | wc -l | tr -d ' ')
 
 if [[ "$post_cleanup_count" -le 3 ]]; then
-	pass "cleanup_sqlite_backups keeps at most N backups ($pre_cleanup_count -> $post_cleanup_count)"
+    pass "cleanup_sqlite_backups keeps at most N backups ($pre_cleanup_count -> $post_cleanup_count)"
 else
-	fail "cleanup_sqlite_backups keeps at most N backups" "Expected <=3, got $post_cleanup_count (was $pre_cleanup_count)"
+    fail "cleanup_sqlite_backups keeps at most N backups" "Expected <=3, got $post_cleanup_count (was $pre_cleanup_count)"
 fi
 
 # ============================================================
@@ -250,25 +250,25 @@ SQL
 
 post_migrate_count=$(sqlite3 "$e2e_db" "SELECT count(*) FROM tasks;")
 if [[ "$post_migrate_count" -eq 0 ]]; then
-	pass "simulated bad migration empties table (count: $post_migrate_count)"
+    pass "simulated bad migration empties table (count: $post_migrate_count)"
 else
-	fail "simulated bad migration empties table" "Expected 0, got $post_migrate_count"
+    fail "simulated bad migration empties table" "Expected 0, got $post_migrate_count"
 fi
 
 # Verify detects the problem
 if verify_migration_rowcounts "$e2e_db" "$e2e_backup" "tasks" 2>/dev/null; then
-	fail "verify_migration_rowcounts catches empty table"
+    fail "verify_migration_rowcounts catches empty table"
 else
-	pass "verify_migration_rowcounts catches empty table"
+    pass "verify_migration_rowcounts catches empty table"
 fi
 
 # Rollback
 rollback_sqlite_db "$e2e_db" "$e2e_backup" 2>/dev/null
 final_count=$(sqlite3 "$e2e_db" "SELECT count(*) FROM tasks;")
 if [[ "$final_count" -eq 20 ]]; then
-	pass "rollback restores all 20 rows after bad migration"
+    pass "rollback restores all 20 rows after bad migration"
 else
-	fail "rollback restores all 20 rows after bad migration" "Expected 20, got $final_count"
+    fail "rollback restores all 20 rows after bad migration" "Expected 20, got $final_count"
 fi
 
 # ============================================================
@@ -315,17 +315,17 @@ SQL
 
 sup_output=$("$SCRIPTS_DIR/supervisor-helper.sh" backup "test-t188" 2>&1)
 if echo "$sup_output" | grep -q "backed up"; then
-	pass "supervisor backup command succeeds"
+    pass "supervisor backup command succeeds"
 else
-	fail "supervisor backup command succeeds" "Output: $sup_output"
+    fail "supervisor backup command succeeds" "Output: $sup_output"
 fi
 
 # Verify backup file exists
 sup_backup_count=$(find "$AIDEVOPS_SUPERVISOR_DIR" -maxdepth 1 -type f -name 'supervisor-backup-*.db' | wc -l | tr -d ' ')
 if [[ "$sup_backup_count" -ge 1 ]]; then
-	pass "supervisor backup creates file ($sup_backup_count backups)"
+    pass "supervisor backup creates file ($sup_backup_count backups)"
 else
-	fail "supervisor backup creates file" "Found $sup_backup_count backups"
+    fail "supervisor backup creates file" "Found $sup_backup_count backups"
 fi
 
 # ============================================================
@@ -334,12 +334,12 @@ fi
 echo ""
 printf "\033[1m=== Results ===\033[0m\n"
 printf "  Total: %d | \033[0;32mPass: %d\033[0m | \033[0;31mFail: %d\033[0m | \033[0;33mSkip: %d\033[0m\n" \
-	"$TOTAL_COUNT" "$PASS_COUNT" "$FAIL_COUNT" "$SKIP_COUNT"
+    "$TOTAL_COUNT" "$PASS_COUNT" "$FAIL_COUNT" "$SKIP_COUNT"
 
 if [[ "$FAIL_COUNT" -gt 0 ]]; then
-	echo ""
-	printf "\033[0;31mFAILED\033[0m\n"
-	exit 1
+    echo ""
+    printf "\033[0;31mFAILED\033[0m\n"
+    exit 1
 fi
 
 echo ""
