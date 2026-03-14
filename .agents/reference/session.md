@@ -5,7 +5,10 @@ Core pointers are in `AGENTS.md`.
 
 ## Terminal Capabilities
 
-Full PTY access: run any CLI (`vim`, `psql`, `ssh`, `htop`, dev servers, `opencode -p "subtask"`). Long-running: use `&`/`nohup`/`tmux`. Parallel AI: `tools/ai-assistants/opencode-server.md`.
+Full PTY access: run any CLI (`vim`, `psql`, `ssh`, `htop`, dev servers, `opencode -p "subtask"`).
+
+- **For long-running processes**: use `&`, `nohup`, or `tmux`.
+- **For parallel AI dispatch**: use `tools/ai-assistants/opencode-server.md`.
 
 ## Session Completion
 
