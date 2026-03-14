@@ -3520,7 +3520,7 @@ adopt_untracked_prs() {
 
 	# Collect all unique repos from the DB
 	local repos
-	repos=$(db "$SUPERVISOR_DB" "SELECT DISTINCT repo FROM tasks WHERE repo IS NOT NULL AND repo != '';" 2>/dev/null || echo "")
+	repos=$(db "$SUPERVISOR_DB" "SELECT DISTINCT repo FROM tasks WHERE repo IS NOT NULL AND repo != '';" 2>>"$SUPERVISOR_LOG" || echo "")
 
 	if [[ -z "$repos" ]]; then
 		return 0
@@ -3533,7 +3533,7 @@ adopt_untracked_prs() {
 
 		# Get repo slug for gh CLI
 		local repo_slug
-		repo_slug=$(detect_repo_slug "$repo_path" 2>/dev/null || echo "")
+		repo_slug=$(detect_repo_slug "$repo_path" 2>>"$SUPERVISOR_LOG" || echo "")
 		if [[ -z "$repo_slug" ]]; then
 			continue
 		fi
@@ -3541,19 +3541,13 @@ adopt_untracked_prs() {
 		# List open PRs (limit to 20 to avoid API rate limits)
 		local open_prs
 		open_prs=$(gh pr list --repo "$repo_slug" --state open --limit 20 \
-			--json number,title,url,headRefName 2>/dev/null || echo "[]")
+			--json number,title,url,headRefName 2>>"$SUPERVISOR_LOG" || echo "[]")
 
-		local pr_count
-		pr_count=$(printf '%s' "$open_prs" | jq 'length' 2>/dev/null || echo 0)
+		local pr_rows
+		pr_rows=$(printf '%s' "$open_prs" | jq -r '.[] | [(.number // ""), (.title // ""), (.url // ""), (.headRefName // "")] | @tsv' 2>>"$SUPERVISOR_LOG" || true)
 
-		local i=0
-		while [[ "$i" -lt "$pr_count" ]]; do
-			local pr_number pr_title pr_url pr_branch
-			pr_number=$(printf '%s' "$open_prs" | jq -r ".[$i].number" 2>/dev/null || echo "")
-			pr_title=$(printf '%s' "$open_prs" | jq -r ".[$i].title" 2>/dev/null || echo "")
-			pr_url=$(printf '%s' "$open_prs" | jq -r ".[$i].url" 2>/dev/null || echo "")
-			pr_branch=$(printf '%s' "$open_prs" | jq -r ".[$i].headRefName" 2>/dev/null || echo "")
-			i=$((i + 1))
+		while IFS=$'\t' read -r pr_number pr_title pr_url pr_branch; do
+			[[ -z "$pr_number" || -z "$pr_url" ]] && continue
 
 			# Extract task ID from PR title (pattern: tNNN: or tNNN.N:)
 			local task_id=""
@@ -3573,7 +3567,7 @@ adopt_untracked_prs() {
 				local orphan_existing
 				orphan_existing=$(db "$SUPERVISOR_DB" "
 					SELECT id FROM tasks WHERE pr_url = '$(sql_escape "$pr_url")' LIMIT 1;
-				" 2>/dev/null || echo "")
+				" 2>>"$SUPERVISOR_LOG" || echo "")
 				if [[ -n "$orphan_existing" ]]; then
 					continue
 				fi
@@ -3588,7 +3582,7 @@ adopt_untracked_prs() {
 				local already_adopted
 				already_adopted=$(db "$SUPERVISOR_DB" "
 					SELECT id FROM tasks WHERE id = '$(sql_escape "$orphan_id")' LIMIT 1;
-				" 2>/dev/null || echo "")
+				" 2>>"$SUPERVISOR_LOG" || echo "")
 				if [[ -n "$already_adopted" ]]; then
 					continue
 				fi
@@ -3606,7 +3600,7 @@ adopt_untracked_prs() {
 						strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
 						strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
 					);
-				" 2>/dev/null || {
+				" 2>>"$SUPERVISOR_LOG" || {
 					log_warn "Phase 3a: Failed to adopt orphan PR #$pr_number"
 					continue
 				}
@@ -3622,7 +3616,7 @@ adopt_untracked_prs() {
 				SELECT id FROM tasks
 				WHERE pr_url = '$(sql_escape "$pr_url")'
 				LIMIT 1;
-			" 2>/dev/null || echo "")
+			" 2>>"$SUPERVISOR_LOG" || echo "")
 
 			if [[ -n "$existing_pr" ]]; then
 				continue
@@ -3634,12 +3628,12 @@ adopt_untracked_prs() {
 				SELECT id, status FROM tasks
 				WHERE id = '$(sql_escape "$task_id")'
 				LIMIT 1;
-			" 2>/dev/null || echo "")
+			" 2>>"$SUPERVISOR_LOG" || echo "")
 
 			if [[ -n "$existing_task" ]]; then
 				# Task exists but doesn't have this PR URL — link it
 				local existing_status
-				existing_status=$(echo "$existing_task" | cut -d'|' -f2)
+				existing_status=$(printf '%s' "$existing_task" | cut -d'|' -f2)
 				# Only link if the task is in a state where a PR makes sense
 				if [[ "$existing_status" =~ ^(queued|running|evaluating|retrying|complete)$ ]]; then
 					db "$SUPERVISOR_DB" "
@@ -3648,7 +3642,7 @@ adopt_untracked_prs() {
 					    status = 'complete',
 					    updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
 					WHERE id = '$(sql_escape "$task_id")';
-				" 2>/dev/null || true
+				" 2>>"$SUPERVISOR_LOG" || true
 					log_info "Phase 3a: Linked PR #$pr_number to existing task $task_id (was: $existing_status)"
 					adopted_count=$((adopted_count + 1))
 				fi
@@ -3668,7 +3662,7 @@ adopt_untracked_prs() {
 			fi
 
 			local todo_line
-			todo_line=$(grep -E "^[[:space:]]*- \[( |x|-)\] $task_id " "$todo_file" 2>/dev/null | head -1 || true)
+			todo_line=$(grep -E "^[[:space:]]*- \[( |x|-)\] $task_id " "$todo_file" 2>>"$SUPERVISOR_LOG" | head -1 || true)
 
 			if [[ -z "$todo_line" ]]; then
 				continue
@@ -3676,7 +3670,7 @@ adopt_untracked_prs() {
 
 			# Extract description from TODO.md
 			local description
-			description=$(echo "$todo_line" | sed -E 's/^[[:space:]]*- \[( |x|-)\] [^ ]* //' || true)
+			description=$(printf '%s' "$todo_line" | sed -E 's/^[[:space:]]*- \[( |x|-)\] [^ ]* //' || true)
 
 			# Adopt: create a DB entry with status=complete and the PR URL
 			# Phase 3 will then process it through review → merge → verify
@@ -3687,7 +3681,7 @@ adopt_untracked_prs() {
 				WHERE b.status IN ('active', 'running')
 				ORDER BY b.created_at DESC
 				LIMIT 1;
-			" 2>/dev/null || echo "")
+			" 2>>"$SUPERVISOR_LOG" || echo "")
 
 			db "$SUPERVISOR_DB" "
 				INSERT INTO tasks (id, status, description, repo, pr_url, model, max_retries, created_at, updated_at)
@@ -3702,7 +3696,7 @@ adopt_untracked_prs() {
 					strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
 					strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
 				);
-			" 2>/dev/null || {
+			" 2>>"$SUPERVISOR_LOG" || {
 				log_warn "Phase 3a: Failed to insert task $task_id (may already exist)"
 				continue
 			}
@@ -3712,12 +3706,12 @@ adopt_untracked_prs() {
 				db "$SUPERVISOR_DB" "
 					INSERT OR IGNORE INTO batch_tasks (batch_id, task_id)
 					VALUES ('$(sql_escape "$batch_id_for_adopt")', '$(sql_escape "$task_id")');
-				" 2>/dev/null || true
+				" 2>>"$SUPERVISOR_LOG" || true
 			fi
 
 			log_success "Phase 3a: Adopted PR #$pr_number ($pr_url) as task $task_id"
 			adopted_count=$((adopted_count + 1))
-		done
+		done <<<"$pr_rows"
 	done <<<"$repos"
 
 	if [[ "$adopted_count" -gt 0 ]]; then
