@@ -2334,16 +2334,70 @@ has_worker_for_repo_issue() {
 }
 
 #######################################
+# Check if an issue already has merged-PR evidence
+#
+# Guards against re-dispatching work that is already completed via an
+# earlier merged PR (including duplicate issue patterns where a second
+# issue exists for the same task ID).
+#
+# Arguments:
+#   $1 - issue number
+#   $2 - repo slug (owner/repo)
+#   $3 - issue title (optional; used for task-id fallback)
+# Exit codes:
+#   0 - merged PR evidence found (skip dispatch)
+#   1 - no merged PR evidence
+#######################################
+has_merged_pr_for_issue() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local issue_title="${3:-}"
+
+	if [[ ! "$issue_number" =~ ^[0-9]+$ ]] || [[ -z "$repo_slug" ]]; then
+		return 1
+	fi
+
+	local query pr_json pr_count
+	for keyword in close closes closed fix fixes fixed resolve resolves resolved; do
+		query="${keyword} #${issue_number} in:body"
+		pr_json=$(gh pr list --repo "$repo_slug" --state merged --search "$query" --limit 1 --json number 2>/dev/null) || pr_json="[]"
+		pr_count=$(echo "$pr_json" | jq 'length' 2>/dev/null) || pr_count=0
+		[[ "$pr_count" =~ ^[0-9]+$ ]] || pr_count=0
+		if [[ "$pr_count" -gt 0 ]]; then
+			return 0
+		fi
+	done
+
+	local task_id
+	task_id=$(echo "$issue_title" | grep -oE 't[0-9]+(\.[0-9]+)*' | head -1 || echo "")
+	if [[ -z "$task_id" ]]; then
+		return 1
+	fi
+
+	query="${task_id} in:title"
+	pr_json=$(gh pr list --repo "$repo_slug" --state merged --search "$query" --limit 1 --json number 2>/dev/null) || pr_json="[]"
+	pr_count=$(echo "$pr_json" | jq 'length' 2>/dev/null) || pr_count=0
+	[[ "$pr_count" =~ ^[0-9]+$ ]] || pr_count=0
+	if [[ "$pr_count" -gt 0 ]]; then
+		return 0
+	fi
+
+	return 1
+}
+
+#######################################
 # Check if dispatching a worker would be a duplicate (GH#4400)
 #
-# Two-layer dedup:
+# Three-layer dedup:
 #   1. has_worker_for_repo_issue() — exact repo+issue process match
 #   2. dispatch-dedup-helper.sh is-duplicate — normalized title key match
+#   3. has_merged_pr_for_issue() — skip issues already completed by merged PR
 #
 # Arguments:
 #   $1 - issue number
 #   $2 - repo slug (owner/repo)
 #   $3 - dispatch title (e.g., "Issue #42: Fix auth")
+#   $4 - issue title (optional; used for merged-PR task-id fallback)
 # Exit codes:
 #   0 - duplicate detected (do NOT dispatch)
 #   1 - no duplicate (safe to dispatch)
@@ -2352,6 +2406,7 @@ check_dispatch_dedup() {
 	local issue_number="$1"
 	local repo_slug="$2"
 	local title="$3"
+	local issue_title="${4:-}"
 
 	# Layer 1: exact repo+issue process match
 	if has_worker_for_repo_issue "$issue_number" "$repo_slug"; then
@@ -2366,6 +2421,12 @@ check_dispatch_dedup() {
 			echo "[pulse-wrapper] Dedup: title match for '${title}' — worker already running" >>"$LOGFILE"
 			return 0
 		fi
+	fi
+
+	# Layer 3: merged PR evidence for this issue/task
+	if has_merged_pr_for_issue "$issue_number" "$repo_slug" "$issue_title"; then
+		echo "[pulse-wrapper] Dedup: merged PR already exists for #${issue_number} in ${repo_slug}" >>"$LOGFILE"
+		return 0
 	fi
 
 	return 1
