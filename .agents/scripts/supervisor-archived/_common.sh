@@ -221,3 +221,42 @@ portable_timeout() {
 	timeout_sec "$@"
 	return $?
 }
+
+#######################################
+# Extract token counts from a worker log file (t1114)
+# Supports camelCase (opencode JSON) and snake_case (claude CLI JSON) formats.
+# Results are stored in module-level globals _EXTRACT_TOKENS_IN and
+# _EXTRACT_TOKENS_OUT. Callers copy these into their own local variables.
+#
+# Usage:
+#   local tokens_in="" tokens_out=""
+#   extract_tokens_from_log "$log_file"
+#   tokens_in="$_EXTRACT_TOKENS_IN"
+#   tokens_out="$_EXTRACT_TOKENS_OUT"
+#
+# $1: log_file path (may be empty or non-existent — handled gracefully)
+#######################################
+_EXTRACT_TOKENS_IN=""
+_EXTRACT_TOKENS_OUT=""
+extract_tokens_from_log() {
+	local log_file="$1"
+	_EXTRACT_TOKENS_IN=""
+	_EXTRACT_TOKENS_OUT=""
+
+	if [[ -z "$log_file" || ! -f "$log_file" ]]; then
+		return 0
+	fi
+
+	local raw_in raw_out
+	raw_in=$(grep -oE '"inputTokens":[0-9]+' "$log_file" 2>/dev/null | tail -1 | grep -oE '[0-9]+' || true)
+	raw_out=$(grep -oE '"outputTokens":[0-9]+' "$log_file" 2>/dev/null | tail -1 | grep -oE '[0-9]+' || true)
+	if [[ -z "$raw_in" ]]; then
+		raw_in=$(grep -oE '"input_tokens":[0-9]+' "$log_file" 2>/dev/null | tail -1 | grep -oE '[0-9]+' || true)
+	fi
+	if [[ -z "$raw_out" ]]; then
+		raw_out=$(grep -oE '"output_tokens":[0-9]+' "$log_file" 2>/dev/null | tail -1 | grep -oE '[0-9]+' || true)
+	fi
+	[[ -n "$raw_in" ]] && _EXTRACT_TOKENS_IN="$raw_in"
+	[[ -n "$raw_out" ]] && _EXTRACT_TOKENS_OUT="$raw_out"
+	return 0
+}

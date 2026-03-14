@@ -364,7 +364,7 @@ cmd_record() {
 		[[ -n "$tokens_out" ]] && sql_tokens_out="$tokens_out"
 		[[ -n "$estimated_cost" ]] && sql_estimated_cost="$estimated_cost"
 
-		sqlite3 "$MEMORY_DB" "INSERT OR REPLACE INTO pattern_metadata (id, strategy, quality, failure_mode, tokens_in, tokens_out, estimated_cost) VALUES ('$mem_id', '$sql_strategy', $sql_quality, $sql_failure_mode, $sql_tokens_in, $sql_tokens_out, $sql_estimated_cost);" 2>/dev/null || log_warn "Failed to store pattern metadata for $mem_id"
+		sqlite3 -cmd ".timeout 5000" "$MEMORY_DB" "INSERT OR REPLACE INTO pattern_metadata (id, strategy, quality, failure_mode, tokens_in, tokens_out, estimated_cost) VALUES ('$mem_id', '$sql_strategy', $sql_quality, $sql_failure_mode, $sql_tokens_in, $sql_tokens_out, $sql_estimated_cost);" 2>/dev/null || log_warn "Failed to store pattern metadata for $mem_id"
 	fi
 
 	log_success "Recorded $outcome pattern: $description"
