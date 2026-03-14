@@ -373,10 +373,24 @@ Git is the primary audit trail for all work. Every change should be discoverable
 - To pass an array to a subprocess: pass elements as separate positional arguments (`"${arr[@]}"`), never as a single escaped string (`printf -v str '%q ' "${arr[@]}"` then `"$str"` — the subprocess receives one argument, not many)
 - To receive array results from a subprocess: write to a temp file (one element per line), then read back with `while read` loop
 #
+# Escape sequence quoting (recurring production-breaking bug):
+# Bash double quotes do NOT interpret \t \n \r as whitespace. They are literal
+# two-character sequences (backslash + letter). This is unlike C, Python, JS,
+# and most other languages. Agents repeatedly write `"\t"` expecting a tab —
+# this produces broken XML/plist/JSON/YAML and is invisible until runtime.
+- `"\t"` → literal backslash-t (TWO characters). Use `$'\t'` for actual tab.
+- `"\n"` → literal backslash-n (TWO characters). Use `$'\n'` for actual newline.
+- For string concatenation with variables: `var+=$'\t'"${value}"` (ANSI-C quote for the tab, then double-quote for the variable expansion)
+- Inside heredocs (`<<EOF`), tabs are literal tab characters (typed or pasted) — `\t` is NOT interpreted. This is correct and safe.
+- `echo -e "\t"` interprets escapes but is non-portable. Prefer `printf '\t'`.
+- `printf '%s\t%s' "$a" "$b"` is the safest portable way to embed tabs.
+- When building XML/plist/JSON via string concatenation, ALWAYS use `$'\t'` for indentation — never `"\t"`. A single `"\t"` in a plist makes it unparseable and silently kills launchd jobs.
+#
 # Safe patterns:
 - Test scripts with `/bin/bash` (not `/opt/homebrew/bin/bash`) to catch 4.0+ usage
 - When in doubt, check: `bash --version` on macOS gives 3.2.57
 - ShellCheck does NOT catch most bash version incompatibilities — manual review required
+- ShellCheck does NOT catch `"\t"` vs `$'\t'` — both are valid bash, just different semantics
 
 # Write-Time Quality Enforcement
 # Inspired by Plankton (github.com/alexfazio/plankton) — adapted for runtime-agnostic use.
