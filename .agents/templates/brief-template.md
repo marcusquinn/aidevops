@@ -28,7 +28,7 @@ mode: subagent
 ## Acceptance Criteria
 
 Each criterion may include an optional `verify:` block (YAML in a fenced code block)
-that defines how to machine-check the criterion. See `scripts/verify-brief.sh` for the runner.
+that defines how to machine-check the criterion. See `.agents/scripts/verify-brief.sh` for the runner.
 
 - [ ] {Specific, testable criterion — e.g., "User can toggle sidebar with Cmd+B"}
   ```yaml
