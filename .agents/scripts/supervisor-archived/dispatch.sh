@@ -2762,7 +2762,7 @@ cmd_dispatch() {
 	# it discovers the work is incomplete, but starts cheap.
 	local resolved_model
 	if [[ "$verify_mode" == "true" ]]; then
-		resolved_model=$(resolve_model "coding" "$ai_cli" 2>/dev/null) || resolved_model=""
+		resolved_model=$(resolve_model "coding" "$ai_cli") || resolved_model=""
 		log_info "Verify mode: using coding-tier model ($resolved_model) instead of task-specific model"
 	else
 		resolved_model=$(resolve_task_model "$task_id" "$tmodel" "${trepo:-.}" "$ai_cli")
