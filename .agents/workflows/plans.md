@@ -770,7 +770,7 @@ An "always switch branches for TODO.md" rule fails the 80% universal applicabili
 
 | Actor | Before work | During work | After work |
 |-------|-------------|-------------|------------|
-| **Supervisor** | `claim` before dispatch (auto) | Worker runs | Manual `unclaim` or task completion |
+| **Supervisor** | `claim` before dispatch (auto) | Worker runs | Manual `unclaim` (task completion alone does not auto-unclaim) |
 | **Human** | `claim` or add `assignee:name` manually | Edit code | PR merge, mark `[x]` |
 | **Pre-edit check** | Warns if claimed by another | — | — |
 
