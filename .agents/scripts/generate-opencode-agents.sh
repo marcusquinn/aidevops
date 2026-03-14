@@ -43,7 +43,7 @@ Add ~/.aidevops/agents/AGENTS.md to context for AI DevOps capabilities.
 2. If no Bash tool: Read `~/.aidevops/cache/session-greeting.txt` (cached by agents with Bash) and greet with: "Hi!\n\n{content of file}.\n\nWhat would you like to work on?". If the file doesn't exist, read `~/.aidevops/agents/VERSION` to get the `{version}` and greet with: "Hi!\n\nWe're running https://aidevops.sh v{version}.\n\nWhat would you like to work on?"
 3. Then respond to the user's actual message
 
-If you ran the update check script (step 1) and the output starts with `UPDATE_AVAILABLE|` (e.g., `UPDATE_AVAILABLE|current|latest`), inform user: "Update available (current → latest). Run `aidevops update` in a terminal session to update, or type `!aidevops update` below and hit Enter." This check does not apply when falling back to reading the cache or VERSION file (step 2).
+If you ran the update check script (step 1) and the output starts with `UPDATE_AVAILABLE|` (e.g., `UPDATE_AVAILABLE|2.41.1|2.41.2|OpenCode`), inform user: "Update available (current → latest). Run `aidevops update` in a terminal session to update, or type `!aidevops update` below and hit Enter." This check does not apply when falling back to reading the cache or VERSION file (step 2).
 
 ## Pre-Edit Git Check
 

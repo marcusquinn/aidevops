@@ -50,9 +50,12 @@ detect_app() {
 		app_name="Warp"
 	else
 		# Fallback: check parent process name
-		local parent
+		# Normalize to lowercase for case-insensitive matching (ps -o comm= can
+		# return capitalized names on some platforms, e.g. "Cursor" not "cursor")
+		local parent parent_lower
 		parent=$(ps -o comm= -p "${PPID:-0}" 2>/dev/null || echo "")
-		case "$parent" in
+		parent_lower="${parent,,}"
+		case "$parent_lower" in
 		*opencode*)
 			app_name="OpenCode"
 			# Try CLI first, then npm global package.json
@@ -66,6 +69,8 @@ detect_app() {
 			app_version=$(claude --version 2>/dev/null | head -1 | sed 's/ (Claude Code)//' || echo "")
 			;;
 		*cursor*) app_name="Cursor" ;;
+		*windsurf*) app_name="Windsurf" ;;
+		*continue*) app_name="Continue" ;;
 		*aider*)
 			app_name="Aider"
 			app_version=$(aider --version 2>/dev/null | head -1 || echo "")
@@ -99,8 +104,15 @@ get_remote_version() {
 
 get_git_context() {
 	# Get current repo and branch for context
-	local repo branch
-	repo=$(basename "$(git rev-parse --show-toplevel 2>/dev/null)" 2>/dev/null || echo "")
+	# Note: basename on an empty string returns "." — capture toplevel first
+	# and only call basename when non-empty to avoid emitting "." outside a repo.
+	local repo branch toplevel
+	toplevel=$(git rev-parse --show-toplevel 2>/dev/null || true)
+	if [[ -n "$toplevel" ]]; then
+		repo=$(basename "$toplevel" 2>/dev/null || echo "")
+	else
+		repo=""
+	fi
 	branch=$(git branch --show-current 2>/dev/null || echo "")
 
 	if [[ -n "$repo" && -n "$branch" ]]; then
