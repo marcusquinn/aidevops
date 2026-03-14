@@ -1250,11 +1250,14 @@ prefetch_active_workers() {
 #######################################
 # Pre-fetch CI failure patterns from notification mining (GH#4480)
 #
-# Runs gh-failure-miner-helper.sh scan + report to detect systemic CI
-# failures across managed repos. The scan mines ci_activity notifications
-# (which contribution-watch-helper.sh explicitly excludes) and identifies
-# checks that fail on multiple PRs — indicating workflow bugs rather than
-# per-PR code issues.
+# Runs gh-failure-miner-helper.sh prefetch to detect systemic CI
+# failures across managed repos. The prefetch command mines ci_activity
+# notifications (which contribution-watch-helper.sh explicitly excludes)
+# and identifies checks that fail on multiple PRs — indicating workflow
+# bugs rather than per-PR code issues.
+#
+# Previously used the removed 'scan' command (GH#4586). Now uses
+# 'prefetch' which is the correct supported command.
 #
 # Output: CI failure summary to stdout (appended to STATE_FILE by caller)
 #######################################
@@ -1268,14 +1271,26 @@ prefetch_ci_failures() {
 		return 0
 	fi
 
-	# Run scan (updates state file), then report (outputs summary)
-	"$miner_script" scan --since 24 >>"$LOGFILE" 2>&1 || {
-		echo "[pulse-wrapper] gh-failure-miner scan failed (non-fatal)" >>"$LOGFILE"
-	}
-
-	"$miner_script" report 2>/dev/null || {
+	# Guard: verify the helper supports the 'prefetch' command before calling.
+	# If the contract drifts again, this produces a clear compatibility warning
+	# rather than a silent [ERROR] Unknown command in the log.
+	if ! "$miner_script" --help 2>&1 | grep -q 'prefetch'; then
+		echo "[pulse-wrapper] gh-failure-miner-helper.sh does not support 'prefetch' command — skipping CI failure prefetch (compatibility warning)" >>"$LOGFILE"
 		echo ""
-		echo "# CI Failure Patterns: report generation failed"
+		echo "# CI Failure Patterns: helper command contract mismatch (see pulse.log)"
+		echo ""
+		return 0
+	fi
+
+	# Run prefetch — outputs compact pulse-ready summary to stdout
+	"$miner_script" prefetch \
+		--pulse-repos \
+		--since-hours "$GH_FAILURE_PREFETCH_HOURS" \
+		--limit "$GH_FAILURE_PREFETCH_LIMIT" \
+		--systemic-threshold "$GH_FAILURE_SYSTEMIC_THRESHOLD" \
+		--max-run-logs "$GH_FAILURE_MAX_RUN_LOGS" 2>/dev/null || {
+		echo ""
+		echo "# CI Failure Patterns: prefetch failed (non-fatal)"
 		echo ""
 	}
 
