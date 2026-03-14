@@ -112,8 +112,10 @@ _extract_verification_snippet() {
 			candidate=$(_trim_whitespace "$line")
 			[[ -z "$candidate" ]] && continue
 
-			if [[ "$fence_type" == "diff" || "$fence_type" == "suggestion" ]]; then
-				# diff/suggestion fences: skip all diff markers and added/removed lines
+			if [[ "$fence_type" == "diff" ]]; then
+				# diff fences: skip unified-diff markers and added/removed lines.
+				# Lines starting with +/- are "add this" / "remove this" markers —
+				# they do not represent the post-fix file content.
 				[[ "$candidate" == "@@"* ]] && continue
 				[[ "$candidate" == "diff --git"* ]] && continue
 				[[ "$candidate" == "index "* ]] && continue
@@ -121,6 +123,18 @@ _extract_verification_snippet() {
 				[[ "$candidate" == "---"* ]] && continue
 				[[ "$candidate" == +* ]] && continue
 				[[ "$candidate" == -* ]] && continue
+			elif [[ "$fence_type" == "suggestion" ]]; then
+				# suggestion fences: the entire content is the proposed replacement
+				# text, verbatim.  Lines starting with '-' are literal content (e.g.
+				# a markdown list item "- **Enhances:** t1393"), NOT diff removal
+				# markers.  Do NOT skip them — they are the snippet we want to check
+				# against HEAD to determine whether the suggestion was already applied.
+				# Only skip unified-diff header lines that cannot appear in real code.
+				[[ "$candidate" == "@@"* ]] && continue
+				[[ "$candidate" == "diff --git"* ]] && continue
+				[[ "$candidate" == "index "* ]] && continue
+				[[ "$candidate" == "+++"* ]] && continue
+				[[ "$candidate" == "---"* ]] && continue
 			else
 				# non-diff fences: lines starting with +/- are diff markers too —
 				# skip them rather than stripping the prefix and using the content
@@ -169,6 +183,22 @@ _extract_verification_snippet() {
 	return 1
 }
 
+# _body_has_suggestion_fence: returns 0 (true) if body_full contains a
+# ```suggestion fence, 1 (false) otherwise.
+#
+# Used by _finding_still_exists_on_main to determine snippet semantics:
+# - suggestion fence → snippet is the proposed FIX text.  Finding is resolved
+#   when the snippet IS present in HEAD (fix already applied).
+# - all other sources → snippet is the PROBLEM text.  Finding is resolved
+#   when the snippet is ABSENT from HEAD (problem was fixed).
+_body_has_suggestion_fence() {
+	local body_full="$1"
+	if printf '%s\n' "$body_full" | grep -qE "^\`\`\`suggestion"; then
+		return 0
+	fi
+	return 1
+}
+
 _finding_still_exists_on_main() {
 	local repo_slug="$1"
 	local file_path="$2"
@@ -214,6 +244,16 @@ _finding_still_exists_on_main() {
 		return 0
 	fi
 
+	# Determine snippet semantics (GH#4874):
+	# - suggestion fence → snippet is the proposed FIX text.
+	#   Finding is resolved when the fix IS present in HEAD (suggestion applied).
+	# - all other sources → snippet is the PROBLEM text.
+	#   Finding is resolved when the problem is ABSENT from HEAD (problem fixed).
+	local is_suggestion_snippet="false"
+	if _body_has_suggestion_fence "$body_full"; then
+		is_suggestion_snippet="true"
+	fi
+
 	local found_in_window="false"
 	if [[ "$line_num" =~ ^[0-9]+$ && "$line_num" -gt 0 ]]; then
 		local total_lines
@@ -237,19 +277,34 @@ _finding_still_exists_on_main() {
 		fi
 	fi
 
+	local snippet_found="false"
 	if [[ "$found_in_window" == "true" ]]; then
-		echo '{"result":true,"status":"verified"}'
-		return 0
+		snippet_found="true"
+	elif printf '%s' "$file_content" | grep -Fq -e "$snippet"; then
+		snippet_found="true"
 	fi
 
-	if printf '%s' "$file_content" | grep -Fq "$snippet"; then
+	if [[ "$is_suggestion_snippet" == "true" ]]; then
+		# Suggestion snippet: found in HEAD → fix already applied → resolved → skip
+		if [[ "$snippet_found" == "true" ]]; then
+			echo "[scan] Skipping resolved finding: ${file_path}:${line_num} - suggestion already applied on ${default_branch}" >&2
+			echo '{"result":false,"status":"resolved"}'
+			return 1
+		fi
+		# Suggestion not found in HEAD → fix not yet applied → still actionable → keep
 		echo '{"result":true,"status":"verified"}'
 		return 0
+	else
+		# Problem snippet: found in HEAD → problem still exists → keep
+		if [[ "$snippet_found" == "true" ]]; then
+			echo '{"result":true,"status":"verified"}'
+			return 0
+		fi
+		# Problem snippet not found → problem was fixed → resolved → skip
+		echo "[scan] Skipping resolved finding: ${file_path}:${line_num} - snippet not found on ${default_branch}" >&2
+		echo '{"result":false,"status":"resolved"}'
+		return 1
 	fi
-
-	echo "[scan] Skipping resolved finding: ${file_path}:${line_num} - snippet not found on ${default_branch}" >&2
-	echo '{"result":false,"status":"resolved"}'
-	return 1
 }
 
 # Show status of all checks

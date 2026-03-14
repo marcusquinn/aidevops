@@ -282,8 +282,12 @@ test_handles_suggestion_fence_and_comments() {
 	# The finding body contains a ```suggestion fence with comment lines.
 	# The snippet extractor must skip comment-only lines (// and #) and extract
 	# the first substantive code line ("this is stable suggestion code").
-	# The file on main (GH_RAW_CONTENT) contains that line, so the finding is
-	# verified and an issue is created.
+	#
+	# Under GH#4874 semantics: suggestion fences contain the proposed FIX text.
+	# If the suggestion text IS present in the HEAD file, the fix was already
+	# applied before merge → finding is resolved → no issue created.
+	# This test verifies that the snippet extractor correctly skips comment lines
+	# AND that the resolved-suggestion logic fires correctly.
 	reset_mock_state
 	GH_RAW_CONTENT=$'#!/usr/bin/env bash\nthis is stable suggestion code\n'
 
@@ -302,10 +306,11 @@ test_handles_suggestion_fence_and_comments() {
 	rm -f "$GH_CREATE_LOG"
 	rm -f "$GH_API_LOG"
 
-	if [[ "$created" == "1" && "$created_count" -eq 1 ]]; then
-		print_result "suggestion fences skip comments and keep code" 0
+	# Suggestion text already in file → fix applied before merge → no issue (GH#4874)
+	if [[ "$created" == "0" && "$created_count" -eq 0 ]]; then
+		print_result "suggestion fences: skip when fix already applied (GH#4874)" 0
 	else
-		print_result "suggestion fences skip comments and keep code" 1 "created=${created}, issues=${created_count}"
+		print_result "suggestion fences: skip when fix already applied (GH#4874)" 1 "created=${created}, issues=${created_count} (expected 0 — suggestion already in file)"
 	fi
 	return 0
 }
@@ -426,6 +431,86 @@ test_plain_fence_skips_diff_marker_lines() {
 		print_result "plain fence skips +/- lines instead of stripping prefix" 0
 	else
 		print_result "plain fence skips +/- lines instead of stripping prefix" 1 "created=${created}, issues=${created_count}"
+	fi
+	return 0
+}
+
+test_suggestion_fence_with_markdown_list_item_already_applied() {
+	# Regression test for GH#4874 / false-positive issue #3183.
+	#
+	# Scenario: Gemini flagged "- **Blocks:** t1393" in PR #2871 and suggested
+	# replacing it with "- **Enhances:** t1393 (...)".  The author applied the
+	# suggestion before merging.  The merge commit already contains the fix.
+	#
+	# The comment body contains a ```suggestion fence whose content is:
+	#   - **Enhances:** t1393 (bench --judge can delegate to these evaluators)
+	#
+	# The line starts with '-', which is a markdown list item prefix, NOT a
+	# unified-diff removal marker.  The old code treated suggestion fences the
+	# same as diff fences and skipped all '-' lines, so no snippet was extracted,
+	# the finding was marked "unverifiable", and an issue was created — a false
+	# positive.
+	#
+	# The fix: suggestion fences do NOT skip '-' lines.  The snippet
+	# "- **Enhances:** t1393 ..." is extracted and found in the HEAD file, so
+	# the finding is correctly marked "resolved" and no issue is created.
+	reset_mock_state
+	# File at HEAD already contains the suggested replacement text (fix applied)
+	GH_RAW_CONTENT=$'# t1394 brief\n\n- **Enhances:** t1393 (bench --judge can delegate to these evaluators)\n'
+
+	local findings
+	# Mirrors the actual Gemini comment from PR #2871 (truncated for test clarity)
+	findings='[{"file":"todo/tasks/t1394-brief.md","line":139,"body_full":"![medium](https://www.gstatic.com/codereviewagent/medium-priority.svg)\n\nConsider rephrasing to clarify the relationship.\n\n```suggestion\n- **Enhances:** t1393 (bench --judge can delegate to these evaluators)\n```","reviewer":"gemini","reviewer_login":"gemini-code-assist[bot]","severity":"medium","url":"https://example.test/comment"}]'
+
+	local out_file
+	out_file=$(mktemp)
+	local created
+	_create_quality_debt_issues "owner/repo" "2871" "$findings" >"$out_file"
+	created=$(<"$out_file")
+	rm -f "$out_file"
+
+	local created_count
+	created_count=$(wc -l <"$GH_CREATE_LOG" | tr -d ' ')
+	rm -f "$GH_CREATE_LOG"
+	rm -f "$GH_API_LOG"
+
+	# Suggestion was already applied — no issue should be created
+	if [[ "$created" == "0" && "$created_count" -eq 0 ]]; then
+		print_result "suggestion fence: skip finding when markdown list item already applied (GH#4874)" 0
+	else
+		print_result "suggestion fence: skip finding when markdown list item already applied (GH#4874)" 1 "created=${created}, issues=${created_count} (expected 0 — fix was already applied before merge)"
+	fi
+	return 0
+}
+
+test_suggestion_fence_with_markdown_list_item_not_yet_applied() {
+	# Counterpart to the GH#4874 regression test: when the suggestion has NOT
+	# been applied (the old text is still in the file), the finding must be kept
+	# and an issue created.
+	reset_mock_state
+	# File at HEAD still contains the OLD text (suggestion not applied)
+	GH_RAW_CONTENT=$'# t1394 brief\n\n- **Blocks:** t1393 (some description)\n'
+
+	local findings
+	findings='[{"file":"todo/tasks/t1394-brief.md","line":139,"body_full":"Consider rephrasing.\n\n```suggestion\n- **Enhances:** t1393 (bench --judge can delegate to these evaluators)\n```","reviewer":"gemini","reviewer_login":"gemini-code-assist[bot]","severity":"medium","url":"https://example.test/comment"}]'
+
+	local out_file
+	out_file=$(mktemp)
+	local created
+	_create_quality_debt_issues "owner/repo" "2871" "$findings" >"$out_file"
+	created=$(<"$out_file")
+	rm -f "$out_file"
+
+	local created_count
+	created_count=$(wc -l <"$GH_CREATE_LOG" | tr -d ' ')
+	rm -f "$GH_CREATE_LOG"
+	rm -f "$GH_API_LOG"
+
+	# Suggestion not applied — issue should be created
+	if [[ "$created" == "1" && "$created_count" -eq 1 ]]; then
+		print_result "suggestion fence: create issue when markdown list item not yet applied (GH#4874)" 0
+	else
+		print_result "suggestion fence: create issue when markdown list item not yet applied (GH#4874)" 1 "created=${created}, issues=${created_count} (expected 1 — fix not yet applied)"
 	fi
 	return 0
 }
@@ -946,6 +1031,11 @@ main() {
 	test_transient_api_error_keeps_finding_as_unverifiable
 	test_uses_default_branch_ref_for_contents_lookup
 	test_plain_fence_skips_diff_marker_lines
+
+	echo ""
+	echo "Running suggestion-fence false-positive regression tests (GH#4874)"
+	test_suggestion_fence_with_markdown_list_item_already_applied
+	test_suggestion_fence_with_markdown_list_item_not_yet_applied
 
 	echo ""
 	echo "Running approval/sentiment detection tests (GH#4604)"
