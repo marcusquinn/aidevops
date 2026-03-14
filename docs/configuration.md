@@ -221,17 +221,19 @@ Each tier maps to an ordered list of models. The first available model in the li
 
 **Default tiers:**
 
-| Tier | Models | Fallback |
-|------|--------|----------|
-| `local` | `local/llama.cpp` | `haiku` |
-| `haiku` | `anthropic/claude-haiku-4-5` | -- |
-| `flash` | `anthropic/claude-haiku-4-5` | -- |
-| `sonnet` | `anthropic/claude-sonnet-4-6` | -- |
-| `pro` | `anthropic/claude-sonnet-4-6` | -- |
-| `opus` | `anthropic/claude-opus-4-6` | -- |
-| `coding` | `anthropic/claude-opus-4-6`, `anthropic/claude-sonnet-4-6` | -- |
-| `eval` | `anthropic/claude-sonnet-4-6` | -- |
-| `health` | `anthropic/claude-sonnet-4-6` | -- |
+| Tier | Models | Fallback | Purpose |
+|------|--------|----------|---------|
+| `local` | `local/llama.cpp` | `haiku` | Offline / privacy-first tasks |
+| `haiku` | `anthropic/claude-haiku-4-5` | -- | Fast, low-cost tasks (primary name) |
+| `flash` | `anthropic/claude-haiku-4-5` | -- | Alias for `haiku` — use either name interchangeably |
+| `sonnet` | `anthropic/claude-sonnet-4-6` | -- | Balanced capability/cost (primary name) |
+| `pro` | `anthropic/claude-sonnet-4-6` | -- | Alias for `sonnet` — use either name interchangeably |
+| `opus` | `anthropic/claude-opus-4-6` | -- | Highest capability, highest cost |
+| `coding` | `anthropic/claude-opus-4-6`, `anthropic/claude-sonnet-4-6` | -- | Code tasks: tries opus first, falls back to sonnet |
+| `eval` | `anthropic/claude-sonnet-4-6` | -- | Evaluation and grading tasks |
+| `health` | `anthropic/claude-sonnet-4-6` | -- | Health/wellness domain tasks |
+
+> **Tier aliases:** `haiku` and `flash` resolve to the same model, as do `sonnet` and `pro`. These aliases exist so agent configs and user preferences can use either naming convention (Anthropic-style vs Google-style tier names) without requiring separate model entries. Changing the model for `haiku` automatically applies to `flash` and vice versa.
 
 **Example -- add a custom tier with OpenAI fallback:**
 
