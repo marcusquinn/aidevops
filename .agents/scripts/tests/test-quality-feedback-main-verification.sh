@@ -1015,6 +1015,80 @@ JSON
 	return 0
 }
 
+# Regression test for GH#4814 / incident: issue #3343 filed for PR #2166.
+# The exact Gemini review body that triggered the false-positive issue creation.
+# Review state: COMMENTED, no inline comments, bot reviewer.
+# Expected: filtered by $summary_only (COMMENTED + 0 inline + bot) — 0 findings.
+test_scan_single_pr_filters_issue4814_pr2166_exact_body() {
+	reset_mock_state
+
+	gh() {
+		local command="$1"
+		shift
+		case "$command" in
+		api)
+			while [[ $# -gt 0 ]]; do
+				case "$1" in
+				repos/*/pulls/*/comments)
+					echo "[]"
+					return 0
+					;;
+				repos/*/pulls/*/reviews)
+					# Exact body from the incident that caused issue #3343 to be filed
+					echo '[{"id":1,"user":{"login":"gemini-code-assist[bot]"},"state":"COMMENTED","body":"The changes are well-implemented and improve the script'\''s robustness and quality.","submitted_at":"2024-01-01T00:00:00Z","html_url":"https://github.com/example/repo/pull/2166#pullrequestreview-1"}]'
+					return 0
+					;;
+				repos/*/git/trees/*)
+					echo '{"tree":[]}'
+					return 0
+					;;
+				repos/*)
+					echo "main"
+					return 0
+					;;
+				esac
+				shift
+			done
+			echo "[]"
+			return 0
+			;;
+		label | pr) return 0 ;;
+		esac
+		echo "[]"
+		return 0
+	}
+
+	local findings
+	findings=$(_scan_single_pr "owner/repo" "2166" "medium" "false" 2>/dev/null)
+	local count
+	count=$(printf '%s' "$findings" | jq 'length' 2>/dev/null || echo "0")
+
+	if [[ "$count" -eq 0 ]]; then
+		print_result "GH#4814: exact PR #2166 Gemini praise body filtered (0 findings)" 0
+	else
+		print_result "GH#4814: exact PR #2166 Gemini praise body filtered (0 findings)" 1 "expected 0 findings, got ${count} — would have filed false-positive issue"
+	fi
+
+	gh() {
+		local command="$1"
+		shift
+		case "$command" in
+		api)
+			_mock_gh_api "$@"
+			return $?
+			;;
+		label) return 0 ;;
+		issue)
+			_mock_gh_issue "$@"
+			return $?
+			;;
+		esac
+		echo "unexpected gh call: ${command}" >&2
+		return 1
+	}
+	return 0
+}
+
 test_scan_single_pr_filters_issue3325_review_body() {
 	reset_mock_state
 
@@ -1153,6 +1227,86 @@ test_scan_single_pr_filters_pr2647_positive_review_body() {
 	return 0
 }
 
+# Regression: COMMENTED bot review with inline comments present — the review body
+# is purely positive but the inline comments may be actionable. The $summary_only
+# filter must NOT apply here (inline_count > 0). The body-level filters
+# ($approval_only, $summary_praise_only) still apply to the review body itself.
+test_scan_single_pr_positive_body_with_inline_comments_not_summary_only() {
+	reset_mock_state
+
+	gh() {
+		local command="$1"
+		shift
+		case "$command" in
+		api)
+			while [[ $# -gt 0 ]]; do
+				case "$1" in
+				repos/*/pulls/*/comments)
+					# One inline comment with actionable content
+					echo '[{"id":10,"user":{"login":"gemini-code-assist[bot]"},"path":"src/foo.sh","line":5,"original_line":5,"position":1,"body":"You should add error handling here.","html_url":"https://github.com/example/repo/pull/1#discussion_r10","created_at":"2024-01-01T00:00:00Z"}]'
+					return 0
+					;;
+				repos/*/pulls/*/reviews)
+					# Positive review body but inline comments exist — body should be
+					# filtered by $summary_praise_only, inline comment kept separately
+					echo '[{"id":1,"user":{"login":"gemini-code-assist[bot]"},"state":"COMMENTED","body":"The changes are well-implemented and improve the script'\''s robustness and quality.","submitted_at":"2024-01-01T00:00:00Z","html_url":"https://github.com/example/repo/pull/1#pullrequestreview-1"}]'
+					return 0
+					;;
+				repos/*/git/trees/*)
+					# Return pre-processed path list (as _scan_single_pr uses --jq '[.tree[].path]')
+					echo '["src/foo.sh"]'
+					return 0
+					;;
+				repos/*)
+					echo "main"
+					return 0
+					;;
+				esac
+				shift
+			done
+			echo "[]"
+			return 0
+			;;
+		label | pr) return 0 ;;
+		esac
+		echo "[]"
+		return 0
+	}
+
+	local findings
+	findings=$(_scan_single_pr "owner/repo" "1" "medium" "false" 2>/dev/null)
+	local count
+	count=$(printf '%s' "$findings" | jq 'length' 2>/dev/null || echo "0")
+	local types
+	types=$(printf '%s' "$findings" | jq -r '[.[].type] | unique | sort | join(",")' 2>/dev/null || echo "")
+
+	# Inline comment should be kept (actionable: "should"), review body filtered
+	if [[ "$count" -eq 1 && "$types" == "inline" ]]; then
+		print_result "positive review body filtered but actionable inline comment kept" 0
+	else
+		print_result "positive review body filtered but actionable inline comment kept" 1 "expected 1 inline finding, got count=${count} types=${types}"
+	fi
+
+	gh() {
+		local command="$1"
+		shift
+		case "$command" in
+		api)
+			_mock_gh_api "$@"
+			return $?
+			;;
+		label) return 0 ;;
+		issue)
+			_mock_gh_issue "$@"
+			return $?
+			;;
+		esac
+		echo "unexpected gh call: ${command}" >&2
+		return 1
+	}
+	return 0
+}
+
 main() {
 	source "$HELPER"
 
@@ -1196,6 +1350,11 @@ main() {
 	test_scan_single_pr_filters_issue3303_review_body
 	test_scan_single_pr_filters_issue3325_review_body
 	test_scan_single_pr_filters_pr2647_positive_review_body
+
+	echo ""
+	echo "Running positive-review filter regression tests (GH#4814)"
+	test_scan_single_pr_filters_issue4814_pr2166_exact_body
+	test_scan_single_pr_positive_body_with_inline_comments_not_summary_only
 
 	echo "Results: ${TESTS_PASSED}/${TESTS_RUN} passed, ${TESTS_FAILED} failed"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then
