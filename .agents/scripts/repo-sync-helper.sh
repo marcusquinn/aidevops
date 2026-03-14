@@ -568,7 +568,10 @@ cmd_enable() {
 		# Migrate from old label if present (com.aidevops -> sh.aidevops)
 		local old_label="com.aidevops.aidevops-repo-sync"
 		local old_plist="${LAUNCHD_DIR}/${old_label}.plist"
-		if launchctl list 2>/dev/null | grep -qF "$old_label"; then
+		# Capture output first to avoid SIGPIPE (141) under set -o pipefail (t3270)
+		local launchctl_list
+		launchctl_list=$(launchctl list 2>/dev/null) || true
+		if echo "$launchctl_list" | grep -qF "$old_label"; then
 			launchctl unload -w "$old_plist" 2>/dev/null || true
 			log_info "Unloaded old LaunchAgent: $old_label"
 		fi
@@ -685,7 +688,10 @@ cmd_disable() {
 		# Also clean up old label if present (com.aidevops -> sh.aidevops migration)
 		local old_label="com.aidevops.aidevops-repo-sync"
 		local old_plist="${LAUNCHD_DIR}/${old_label}.plist"
-		if launchctl list 2>/dev/null | grep -qF "$old_label"; then
+		# Capture output first to avoid SIGPIPE (141) under set -o pipefail (t3270)
+		local launchctl_list_disable
+		launchctl_list_disable=$(launchctl list 2>/dev/null) || true
+		if echo "$launchctl_list_disable" | grep -qF "$old_label"; then
 			launchctl unload -w "$old_plist" 2>/dev/null || true
 			had_entry=true
 		fi
