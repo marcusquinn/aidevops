@@ -14,7 +14,7 @@ t1200 (IP reputation check agent) was broken into 6 subtasks, all of which merge
 | t1200.2 Keyed providers + SQLite cache + batch mode | #1860 | MERGED |
 | t1200.3 Agent doc + slash command + index updates | #1867 | MERGED |
 | t1200.4 Core IP reputation lookup module | #1871 | MERGED |
-| t1200.5 CLI interface and agent framework integration | #1883 | MERGED |
+| t1200.5 CLI and agent framework integration | #1883 | MERGED |
 | t1200.6 Output formatting, caching layer, rate limit handling | #1911 | MERGED |
 
 **Deliverables verified on main:**
@@ -30,9 +30,9 @@ complete by the supervisor since all subtasks have `pr:` proof-log entries.
 **Action taken:** No code changes needed. This PR serves as the proof-log entry for t1274.
 The supervisor should mark t1200 complete based on all subtasks being `[x]` with merged PRs.
 
-## Proof-Log
+### Proof-Log
 
-t1274 verified:2026-02-20
+t1274 verified:2026-02-20 pr:`#2020`
 
 ## t1255 Verification — Cross-Repo Dispatch Investigation (Duplicate of t1253)
 
