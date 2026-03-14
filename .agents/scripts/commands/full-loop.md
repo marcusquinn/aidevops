@@ -640,7 +640,7 @@ When running as a headless worker (dispatched by the supervisor via `opencode ru
      3. Never exceed 2 hours without either a PR or a clear exit message
 
    **Dependency detection (early exit):** At the START of task development, before writing any code, verify that the task's prerequisites exist in the codebase:
-   - If the task references tables, APIs, or schemas from another task, check if they exist: `rg 'tableName\|functionName' --type ts`
+    - If the task references tables, APIs, or schemas from another task, check if they exist with a context-appropriate search: start broad (`rg 'tableName|functionName'`) and only add file filters that match the repo/task (for example `--glob '*.sql'`, `--glob '*.py'`, `--glob '*.ts'`). Do not assume one language.
    - If the task says "blocked-by: tXXX" in TODO.md or the issue body, check if tXXX's PR is merged: `gh pr list --state merged --search "tXXX"`
    - If prerequisites are missing, exit immediately with `BLOCKED: prerequisite tXXX not merged — <specific missing item>`. Do not attempt to implement the missing prerequisite yourself.
 
