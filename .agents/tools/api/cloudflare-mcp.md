@@ -50,7 +50,11 @@ Cloudflare Code Mode MCP uses OAuth 2.0 — no API tokens to manage manually.
 
 ### Config
 
-**Claude Desktop** (`~/Library/Application Support/Claude/claude_desktop_config.json`):
+**Claude Desktop** — config file location by OS:
+
+- **macOS**: `~/Library/Application Support/Claude/claude_desktop_config.json`
+- **Windows**: `%APPDATA%\Claude\claude_desktop_config.json`
+- **Linux**: `~/.config/Claude/claude_desktop_config.json`
 
 ```json
 {
@@ -80,6 +84,8 @@ Cloudflare Code Mode MCP uses OAuth 2.0 — no API tokens to manage manually.
 ```bash
 claude mcp add cloudflare-api --transport http https://mcp.cloudflare.com/mcp
 ```
+
+> **Note**: `--transport http` refers to the MCP transport type (streamable HTTP), not the URL scheme. The value `http` is correct even though the endpoint URL uses HTTPS — the flag selects the protocol framing, not the TLS layer.
 
 ## Security Model
 
