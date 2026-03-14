@@ -348,13 +348,16 @@ launchd_install_supervisor_pulse() {
 
 	# Generate plist content
 	local new_content
-	new_content=$(_generate_supervisor_pulse_plist \
+	if ! new_content=$(_generate_supervisor_pulse_plist \
 		"$display_link" \
 		"$interval_seconds" \
 		"$log_path" \
 		"$batch_arg" \
 		"$env_path" \
-		"")
+		""); then
+		log_error "Failed to generate LaunchAgent plist: $label"
+		return 1
+	fi
 
 	# Skip if already loaded with identical config (t1265 — avoids macOS notification)
 	if _launchd_is_loaded "$label" && _plist_unchanged "$plist_path" "$new_content"; then
