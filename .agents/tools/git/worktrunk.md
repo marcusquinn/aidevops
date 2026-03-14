@@ -211,11 +211,11 @@ When creating a worktree for a project registered with `localdev add`, `worktree
 
 1. Detects the project name from the repo path
 2. Runs `localdev branch <project> <branch>` to create a subdomain route
-3. Outputs the branch-specific URL (e.g., `https://feature-xyz.myapp.local`)
+3. Outputs the branch-specific URL (e.g., `http://feature-xyz.myapp.local` — `https://` if mkcert/local CA is configured)
 
 When removing a worktree, the corresponding branch route is auto-cleaned.
 
-This works with both `worktree-helper.sh` and Worktrunk's `post-create` hook:
+Route creation works with both `worktree-helper.sh` (auto-detected) and Worktrunk's `post-create` hook (see below). **Route removal is only automatic when using `worktree-helper.sh`**; Worktrunk users should add a `pre-remove` hook for cleanup.
 
 ```bash
 # .worktrunk/hooks/post-create — add to your project repo
@@ -225,6 +225,16 @@ project="$(basename "$(git worktree list --porcelain | head -1 | cut -d' ' -f2-)
 # Adjust LOCALDEV_HELPER if aidevops is installed to a custom path
 LOCALDEV_HELPER="${AIDEVOPS_HOME:-$HOME/.aidevops}/agents/scripts/localdev-helper.sh"
 "$LOCALDEV_HELPER" branch "$project" "$branch" 2>/dev/null || true
+```
+
+```bash
+# .worktrunk/hooks/pre-remove — add to your project repo
+#!/bin/bash
+branch="$(git branch --show-current)"
+project="$(basename "$(git worktree list --porcelain | head -1 | cut -d' ' -f2-)")"
+# Adjust LOCALDEV_HELPER if aidevops is installed to a custom path
+LOCALDEV_HELPER="${AIDEVOPS_HOME:-$HOME/.aidevops}/agents/scripts/localdev-helper.sh"
+"$LOCALDEV_HELPER" branch rm "$project" "$branch" 2>/dev/null || true
 ```
 
 ### Session Naming

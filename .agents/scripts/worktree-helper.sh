@@ -144,7 +144,8 @@ localdev_auto_branch_rm() {
 
 	echo ""
 	echo -e "${BLUE}Localdev integration: removing branch route for $project/$branch...${NC}"
-	"$LOCALDEV_HELPER" branch rm "$project" "$branch" 2>&1 || true
+	"$LOCALDEV_HELPER" branch rm "$project" "$branch" 2>&1 ||
+		echo -e "${YELLOW}Localdev branch route removal failed (non-fatal)${NC}"
 	return 0
 }
 
