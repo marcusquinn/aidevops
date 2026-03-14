@@ -640,12 +640,12 @@ cmd_pr_lifecycle() {
 					# review_triage→dispatched cycles this task has been through.
 					# Cap at 3 fix cycles — after that, block for human review.
 					local fix_cycle_count=0
-					fix_cycle_count=$(db "$SUPERVISOR_DB" "
+					fix_cycle_count=$(db_param "$SUPERVISOR_DB" "
 						SELECT COUNT(*) FROM state_log
-						WHERE task_id = '$escaped_id'
+						WHERE task_id = :task_id
 						  AND from_state = 'review_triage'
 						  AND to_state = 'dispatched';
-					" 2>/dev/null || echo "0")
+					" "task_id=$task_id" 2>/dev/null || echo "0")
 					local max_fix_cycles=3
 					if [[ "$fix_cycle_count" -ge "$max_fix_cycles" ]]; then
 						log_warn "Fix worker cycle limit reached ($fix_cycle_count/$max_fix_cycles) for $task_id — blocking"
