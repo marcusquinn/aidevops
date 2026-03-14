@@ -983,11 +983,21 @@ _scan_single_pr() {
 			"(i have )?no (objections?|issues?|concerns?|comments?)|" +
 			"(thanks?|thank you)[,.]?\\s*(for the (pr|patch|fix|change|contribution))?[.!]?)[\\s\\n]*$"; "i")) as $approval_only |
 
+		($body | test(
+			"\\bno (further )?recommendations?\\b|" +
+			"\\bno additional recommendations?\\b|" +
+			"\\bnothing (further|more) to recommend\\b"; "i")) as $no_actionable_recommendation |
+
+		($body | test(
+			"\\blgtm\\b|\\blooks good( to me)?\\b|\\bgood work\\b|" +
+			"\\bno (further |more )?(comments?|issues?|concerns?|feedback)\\b|" +
+			"\\beverything (looks?|seems?) (good|fine|correct|great|solid|clean)\\b"; "i")) as $no_actionable_sentiment |
+
 		# Filter out review-body summaries that do not contain concrete fixes.
 		# Bots frequently post high-level walkthroughs that mention suggestions
 		# but do not include actionable details tied to a file/line.
 		($body | test(
-			"\\bshould\\b|\\bconsider\\b|\\binstead\\b|\\bsuggest|\\brecommend|" +
+			"\\bshould\\b|\\bconsider\\b|\\binstead\\b|\\bsuggest|\\brecommend(ed|ing)?\\b|" +
 			"\\bwarning\\b|\\bcaution\\b|\\bavoid\\b|\\b(don ?'"'"'?t|do not)\\b|" +
 			"\\bvulnerab|\\binsecure|\\binjection\\b|\\bxss\\b|\\bcsrf\\b|" +
 			"\\bbug\\b|\\berror\\b|\\bproblem\\b|\\bfail\\b|\\bincorrect\\b|\\bwrong\\b|\\bmissing\\b|\\bbroken\\b|" +
@@ -998,8 +1008,9 @@ _scan_single_pr() {
 
 		# Skip purely approving reviews: no actionable critique AND body matches
 		# approval-only patterns. This catches "LGTM", "good work", "no further
-		# comments", etc. regardless of reviewer type or review state.
-		select(($approval_only and ($actionable | not)) | not) |
+		# comments", and "no further recommendations" (even in long summary
+		# reviews) regardless of reviewer type or review state.
+		select((($approval_only or $no_actionable_recommendation or $no_actionable_sentiment) and ($actionable | not)) | not) |
 
 		(if $reviewer == "human" then
 			true
