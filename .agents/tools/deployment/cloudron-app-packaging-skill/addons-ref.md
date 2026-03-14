@@ -32,7 +32,7 @@ Options:
 
 Default charset: `utf8mb4` / `utf8mb4_unicode_ci`.
 
-Debug: `cloudron exec` then `mysql --user=$CLOUDRON_MYSQL_USERNAME --password=$CLOUDRON_MYSQL_PASSWORD --host=$CLOUDRON_MYSQL_HOST $CLOUDRON_MYSQL_DATABASE`
+Debug: `cloudron exec` then `MYSQL_PWD=$CLOUDRON_MYSQL_PASSWORD mysql --user=$CLOUDRON_MYSQL_USERNAME --host=$CLOUDRON_MYSQL_HOST $CLOUDRON_MYSQL_DATABASE`
 
 ## postgresql
 
