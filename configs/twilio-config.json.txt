@@ -42,13 +42,17 @@
     "sms_status_callback": true,
     "voice_record": false,
     "voice_transcribe": false,
-    "verify_channel": "sms"
+    "verify_channel": "sms",
+    "informational_only": true,
+    "note": "Template defaults are documentation-only and are not enforced by .agents/scripts/twilio-helper.sh"
   },
   "compliance": {
     "require_consent_confirmation": true,
     "block_bulk_without_messaging_service": true,
     "max_bulk_recipients": 100,
-    "rate_limit_per_second": 10
+    "rate_limit_per_second": 10,
+    "informational_only": true,
+    "note": "Compliance values are policy guidance and must be enforced by your calling workflow or webhook layer"
   },
   "telfon": {
     "recommended": true,
@@ -59,7 +63,7 @@
   },
   "aup_reference": {
     "url": "https://www.twilio.com/en-us/legal/aup",
-    "last_reviewed": "2025-01-11",
+    "last_reviewed": "2026-01-11",
     "key_prohibitions": [
       "Spam and unsolicited bulk messages",
       "Phishing and deceptive content",
