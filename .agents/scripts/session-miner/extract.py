@@ -488,10 +488,26 @@ def _git_log_in_window(
 
         # Get aggregate diff stats for the commit range
         hash_list = [c["hash"] for c in commits]
+        oldest_commit = hash_list[-1]
+        newest_commit = hash_list[0]
+
+        # Check if the oldest commit is a root commit (has no parent).
+        # If so, diff against the empty tree to capture initial-commit changes.
+        parent_check = subprocess.run(
+            ["git", "-C", repo_path, "rev-parse", "--verify", "--quiet", f"{oldest_commit}^"],
+            capture_output=True,
+        )
+        if parent_check.returncode == 0:
+            from_commit = f"{oldest_commit}~1"
+        else:
+            # Root commit — diff from git's canonical empty tree object.
+            from_commit = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
+
         stat_result = subprocess.run(
             [
                 "git", "-C", repo_path, "diff", "--shortstat",
-                f"{hash_list[-1]}~1..{hash_list[0]}",
+                from_commit,
+                newest_commit,
             ],
             capture_output=True, text=True, timeout=15,
         )
