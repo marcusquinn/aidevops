@@ -602,10 +602,8 @@ cmd_auto_pickup() {
 				continue
 			fi
 
-			# Skip tasks with assignee: or started: metadata fields (t1062, t1263)
-			# Match actual metadata fields, not description text containing these words.
-			# assignee: must be followed by a username (word chars), started: by ISO timestamp.
-			if [[ "$line" =~ (assignee:[a-zA-Z0-9_-]+|started:[0-9]{4}-[0-9]{2}-[0-9]{2}T) ]]; then
+			# Skip tasks already claimed or being worked on interactively (t1062, t1263).
+			if [[ "$line" =~ [[:space:]](assignee|started): ]]; then
 				log_info "  $task_id: already claimed or in progress — skipping auto-pickup"
 				continue
 			fi
@@ -654,14 +652,6 @@ cmd_auto_pickup() {
 				continue
 			fi
 
-			# Skip tasks already claimed or being worked on interactively (t1062).
-			# assignee: means someone claimed it; started: means work has begun.
-			# Without this check, the supervisor races with interactive sessions.
-			if [[ "$line" =~ [[:space:]](assignee|started): ]]; then
-				log_info "  $task_id: already claimed/started — skipping auto-pickup"
-				continue
-			fi
-
 			# Add to supervisor
 			if cmd_add "$task_id" --repo "$repo"; then
 				picked_up=$((picked_up + 1))
@@ -703,10 +693,8 @@ cmd_auto_pickup() {
 				continue
 			fi
 
-			# Skip tasks with assignee: or started: metadata fields (t1062, t1263)
-			# Match actual metadata fields, not description text containing these words.
-			# assignee: must be followed by a username (word chars), started: by ISO timestamp.
-			if [[ "$line" =~ (assignee:[a-zA-Z0-9_-]+|started:[0-9]{4}-[0-9]{2}-[0-9]{2}T) ]]; then
+			# Skip tasks already claimed or being worked on interactively (t1062, t1263).
+			if [[ "$line" =~ [[:space:]](assignee|started): ]]; then
 				log_info "  $task_id: already claimed or in progress — skipping auto-pickup"
 				continue
 			fi
@@ -747,12 +735,6 @@ cmd_auto_pickup() {
 			# Pre-pickup check: skip tasks with merged PRs (t224).
 			if check_task_already_done "$task_id" "$repo"; then
 				log_info "  $task_id: already completed (merged PR) — skipping auto-pickup"
-				continue
-			fi
-
-			# Skip tasks already claimed or being worked on interactively (t1062).
-			if [[ "$line" =~ [[:space:]](assignee|started): ]]; then
-				log_info "  $task_id: already claimed/started — skipping auto-pickup"
 				continue
 			fi
 
