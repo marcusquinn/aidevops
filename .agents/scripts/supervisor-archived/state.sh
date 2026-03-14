@@ -1038,7 +1038,7 @@ cmd_next() {
 				SELECT count(*) FROM tasks
 				WHERE id LIKE '$(sql_escape "$parent_id").%'
 				  AND id != '$(sql_escape "$cid")'
-				  AND status NOT IN ('verified','cancelled','deployed','complete','failed','blocked','queued');
+				  AND status NOT IN (${TASK_SIBLING_NON_ACTIVE_STATES_SQL});
 			" 2>/dev/null || echo "0")
 
 			if [[ "$siblings_active" -ge "$effective_max_siblings" ]]; then

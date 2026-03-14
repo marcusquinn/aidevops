@@ -165,6 +165,18 @@ readonly DEFAULT_PORT=80
 readonly SECURE_PORT=443
 
 # =============================================================================
+# Supervisor Task Status SQL Fragments
+# =============================================================================
+# Keep frequently reused status lists in one place to avoid drift between
+# supervisor modules.
+
+# Terminal states for TODO/DB reconciliation checks.
+readonly TASK_RECONCILIATION_TERMINAL_STATES_SQL="'complete', 'deployed', 'verified', 'verify_failed', 'failed', 'blocked', 'cancelled'"
+
+# States treated as non-active when checking sibling in-flight limits.
+readonly TASK_SIBLING_NON_ACTIVE_STATES_SQL="'verified','cancelled','deployed','complete','failed','blocked','queued'"
+
+# =============================================================================
 # Portable timeout function (macOS + Linux)
 # =============================================================================
 # macOS has no native `timeout` command. This function provides a portable

@@ -1778,7 +1778,7 @@ cmd_reconcile_db_todo() {
 	local all_db_tasks
 	all_db_tasks=$(db -separator '|' "$SUPERVISOR_DB" "
 		SELECT t.id, t.status FROM tasks t
-		WHERE t.status NOT IN ('complete', 'deployed', 'verified', 'verify_failed', 'failed', 'blocked', 'cancelled')
+		WHERE t.status NOT IN (${TASK_RECONCILIATION_TERMINAL_STATES_SQL})
 		$batch_filter
 		ORDER BY t.id;
 	")
