@@ -1290,10 +1290,20 @@ cmd_pulse() {
 	log_info "Phase 1: found $_phase1_task_count running/dispatched/evaluating task(s)"
 
 	if [[ -n "$running_tasks" ]]; then
+		# t3368: Best-effort cleanup on SIGTERM/SIGINT during Phase 1 evaluation.
+		# Remove eval checkpoint for the in-flight task so stale root-cause diagnosis
+		# does not report pulse_killed_mid_eval on a later unrelated stale event.
+		_phase1_cleanup_on_signal() {
+			if [[ -n "$_phase1_evaluating_tid" ]]; then
+				_cleanup_eval_checkpoint "$_phase1_evaluating_tid" "Phase 1(signal)"
+			fi
+			return 0
+		}
+
 		# No intermediate evaluating state — if pulse is killed mid-evaluation,
 		# the task stays in running/dispatched and the next pulse re-evaluates it.
 		# shellcheck disable=SC2064  # intentional: expand SUPERVISOR_DIR at definition time
-		trap "release_pulse_lock; rm -f '${SUPERVISOR_DIR}/MODELS.md.tmp' 2>/dev/null || true" TERM INT
+		trap "_phase1_cleanup_on_signal; release_pulse_lock; rm -f '${SUPERVISOR_DIR}/MODELS.md.tmp' 2>/dev/null || true" TERM INT
 
 		while IFS='|' read -r tid _; do
 			# Check if worker process is still alive
