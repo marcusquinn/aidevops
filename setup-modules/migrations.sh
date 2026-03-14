@@ -92,13 +92,13 @@ cleanup_osgrep() {
 	# 0. Kill running osgrep processes first (MCP servers, indexers)
 	# These are Node.js processes already loaded in memory — removing the
 	# binary and data won't stop them, and they may try to rebuild indexes.
-	if pgrep -f 'osgrep' >/dev/null 2>&1; then
+	if pgrep -f 'osgrep' >/dev/null; then
 		print_info "Killing running osgrep processes..."
-		pkill -f 'osgrep' 2>/dev/null || true
+		pkill -f 'osgrep' || true
 		# Give processes a moment to exit gracefully
 		sleep 1
 		# Force-kill any stragglers
-		pkill -9 -f 'osgrep' 2>/dev/null || true
+		pkill -9 -f 'osgrep' || true
 		cleaned=true
 	fi
 
