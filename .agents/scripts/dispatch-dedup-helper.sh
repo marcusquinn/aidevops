@@ -85,7 +85,13 @@ extract_keys() {
 
 	# Pattern 4: Branch-style "issue-NNN-" or "pr-NNN-" (from worktree names)
 	local branch_issue_nums
-	branch_issue_nums=$(printf '%s' "$lower_title" | grep -oP 'issue-\K[0-9]+' || true)
+	if command -v rg &>/dev/null; then
+		branch_issue_nums=$(printf '%s' "$lower_title" | rg -o 'issue-([0-9]+)' | grep -oE '[0-9]+' || true)
+	elif command -v ggrep &>/dev/null; then
+		branch_issue_nums=$(printf '%s' "$lower_title" | ggrep -oP 'issue-\K[0-9]+' || true)
+	else
+		branch_issue_nums=$(printf '%s' "$lower_title" | grep -oE 'issue-([0-9]+)' | grep -oE '[0-9]+' || true)
+	fi
 	if [[ -n "$branch_issue_nums" ]]; then
 		while IFS= read -r num; do
 			[[ -n "$num" ]] && keys+=("issue-${num}")
@@ -125,9 +131,23 @@ normalize_title() {
 #######################################
 list_running_keys() {
 	local worker_procs
-	# Get full command lines of running worker processes
-	# pgrep -af matches against the full command line and excludes itself from results
-	worker_procs=$(pgrep -af '/full-loop|opencode run|claude.*run' || true)
+	local worker_pids
+	local worker_pattern='/full-loop|opencode run|claude.*run'
+
+	# Get matching worker PIDs from the full command line, then read command per PID
+	worker_pids=$(pgrep -f "$worker_pattern" || true)
+	if [[ -z "$worker_pids" ]]; then
+		return 0
+	fi
+
+	while IFS= read -r pid; do
+		[[ -z "$pid" ]] && continue
+		local cmdline
+		cmdline=$(ps -p "$pid" -o args= 2>/dev/null || true)
+		[[ -z "$cmdline" ]] && continue
+		worker_procs+="${pid} ${cmdline}"
+		worker_procs+=$'\n'
+	done <<<"$worker_pids"
 
 	if [[ -z "$worker_procs" ]]; then
 		return 0
