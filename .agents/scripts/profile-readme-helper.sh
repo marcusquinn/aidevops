@@ -21,6 +21,7 @@ set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 METRICS_FILE="${HOME}/.aidevops/.agent-workspace/observability/metrics.jsonl"
 OBS_DB_FILE="${HOME}/.aidevops/.agent-workspace/observability/llm-requests.db"
+OPENCODE_DB_FILE="${HOME}/.local/share/opencode/opencode.db"
 
 # --- Resolve profile repo path from repos.json ---
 _resolve_profile_repo() {
@@ -120,17 +121,104 @@ _get_session_time() {
 	return 0
 }
 
+# --- Compute cost from token counts using _model_cost_rates ---
+# Takes JSON array with model/input_tokens/output_tokens/cache_read_tokens,
+# adds cost_total field computed from pricing table, sorts by cost desc.
+_compute_costs_from_tokens() {
+	local raw_json="$1"
+	local result="[]"
+
+	while IFS= read -r row; do
+		local model input output cache
+		model=$(echo "$row" | jq -r '.model')
+		input=$(echo "$row" | jq -r '.input_tokens')
+		output=$(echo "$row" | jq -r '.output_tokens')
+		cache=$(echo "$row" | jq -r '.cache_read_tokens')
+
+		local rates m_input_rate m_output_rate m_cache_rate
+		rates=$(_model_cost_rates "$model")
+		m_input_rate=$(echo "$rates" | cut -d'|' -f1)
+		m_output_rate=$(echo "$rates" | cut -d'|' -f2)
+		m_cache_rate=$(echo "$rates" | cut -d'|' -f3)
+
+		local cost
+		cost=$(echo "scale=2; $m_input_rate * $input / 1000000 + $m_output_rate * $output / 1000000 + $m_cache_rate * $cache / 1000000" | bc)
+
+		result=$(echo "$result" | jq --argjson row "$row" --argjson cost "$cost" \
+			'. + [$row + {cost_total: $cost}]')
+	done < <(echo "$raw_json" | jq -c '.[]')
+
+	echo "$result" | jq -c 'sort_by(-.cost_total)'
+	return 0
+}
+
 # --- Gather model usage stats ---
 # Usage: _get_model_usage [period]
 #   period: "30d" (default) or "all" (no date filter)
 _get_model_usage() {
 	local period="${1:-30d}"
+
+	# For "all" period, use OpenCode session DB (has full history back to first use).
+	# The observability DB (llm-requests.db) only has data from when it was created.
+	if [[ "$period" == "all" ]] && command -v sqlite3 &>/dev/null && [[ -f "$OPENCODE_DB_FILE" ]]; then
+		local raw_json
+		raw_json=$(sqlite3 "$OPENCODE_DB_FILE" "
+			SELECT COALESCE(
+				json_group_array(
+					json_object(
+						'model', model,
+						'requests', requests,
+						'input_tokens', input_tokens,
+						'output_tokens', output_tokens,
+						'cache_read_tokens', cache_read_tokens,
+						'cache_write_tokens', cache_write_tokens
+					)
+				),
+				'[]'
+			)
+			FROM (
+				SELECT
+					json_extract(data, '\$.modelID') AS model,
+					COUNT(*) AS requests,
+					COALESCE(SUM(json_extract(data, '\$.tokens.input')), 0) AS input_tokens,
+					COALESCE(SUM(json_extract(data, '\$.tokens.output')), 0) AS output_tokens,
+					COALESCE(SUM(json_extract(data, '\$.tokens.cache.read')), 0) AS cache_read_tokens,
+					COALESCE(SUM(json_extract(data, '\$.tokens.cache.write')), 0) AS cache_write_tokens
+				FROM message
+				WHERE json_extract(data, '\$.role') = 'assistant'
+				  AND json_extract(data, '\$.modelID') IS NOT NULL
+				  AND json_extract(data, '\$.modelID') != ''
+				GROUP BY model
+			);
+		" 2>/dev/null || true)
+
+		if [[ -n "$raw_json" ]] && [[ "$raw_json" != "[]" ]]; then
+			# Merge model variants (e.g., claude-opus-4-5-20251101 -> claude-opus-4-5)
+			# by cleaning names and re-aggregating
+			local merged_json
+			merged_json=$(echo "$raw_json" | jq -c '
+				[.[] | .model = (.model | gsub("-[0-9]{8}$"; ""))]
+				| group_by(.model)
+				| map({
+					model: .[0].model,
+					requests: ([.[].requests] | add),
+					input_tokens: ([.[].input_tokens] | add),
+					output_tokens: ([.[].output_tokens] | add),
+					cache_read_tokens: ([.[].cache_read_tokens] | add),
+					cache_write_tokens: ([.[].cache_write_tokens] | add)
+				})
+			')
+			_compute_costs_from_tokens "$merged_json"
+			return 0
+		fi
+	fi
+
+	# For 30d or fallback: use observability DB (has accurate cost data).
 	local date_filter=""
 	if [[ "$period" != "all" ]]; then
 		date_filter="AND timestamp >= strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-30 days')"
 	fi
 
-	# Primary source: OpenCode real-time observability SQLite database.
 	if command -v sqlite3 &>/dev/null && [[ -f "$OBS_DB_FILE" ]]; then
 		local sqlite_json
 		sqlite_json=$(sqlite3 "$OBS_DB_FILE" "
@@ -220,12 +308,38 @@ _get_model_usage() {
 #   period: "30d" (default) or "all" (no date filter)
 _get_token_totals() {
 	local period="${1:-30d}"
+
+	local jq_totals='
+		. + {total_all: (.total_input + .total_output + .total_cache_read + .total_cache_write)}
+		| . + {cache_hit_pct: (if .total_all > 0 then ((.total_cache_read / .total_all * 1000 | round) / 10) else 0 end)}
+	'
+
+	# For "all" period, use OpenCode session DB (full history).
+	if [[ "$period" == "all" ]] && command -v sqlite3 &>/dev/null && [[ -f "$OPENCODE_DB_FILE" ]]; then
+		local oc_totals
+		oc_totals=$(sqlite3 "$OPENCODE_DB_FILE" "
+			SELECT json_object(
+				'total_input', COALESCE(SUM(json_extract(data, '\$.tokens.input')), 0),
+				'total_output', COALESCE(SUM(json_extract(data, '\$.tokens.output')), 0),
+				'total_cache_read', COALESCE(SUM(json_extract(data, '\$.tokens.cache.read')), 0),
+				'total_cache_write', COALESCE(SUM(json_extract(data, '\$.tokens.cache.write')), 0)
+			)
+			FROM message
+			WHERE json_extract(data, '\$.role') = 'assistant';
+		" 2>/dev/null || true)
+
+		if [[ -n "$oc_totals" ]]; then
+			echo "$oc_totals" | jq -c "$jq_totals" 2>/dev/null || echo '{"total_all":0,"cache_hit_pct":0}'
+			return 0
+		fi
+	fi
+
+	# For 30d or fallback: use observability DB.
 	local date_filter=""
 	if [[ "$period" != "all" ]]; then
 		date_filter="WHERE timestamp >= strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-30 days')"
 	fi
 
-	# Primary source: OpenCode real-time observability SQLite database.
 	if command -v sqlite3 &>/dev/null && [[ -f "$OBS_DB_FILE" ]]; then
 		local sqlite_totals
 		sqlite_totals=$(sqlite3 "$OBS_DB_FILE" "
@@ -240,10 +354,7 @@ _get_token_totals() {
 		" 2>/dev/null || true)
 
 		if [[ -n "$sqlite_totals" ]]; then
-			echo "$sqlite_totals" | jq -c '
-				. + {total_all: (.total_input + .total_output + .total_cache_read + .total_cache_write)}
-				| . + {cache_hit_pct: (if .total_all > 0 then ((.total_cache_read / .total_all * 1000 | round) / 10) else 0 end)}
-			' 2>/dev/null || echo '{"total_all":0,"cache_hit_pct":0}'
+			echo "$sqlite_totals" | jq -c "$jq_totals" 2>/dev/null || echo '{"total_all":0,"cache_hit_pct":0}'
 			return 0
 		fi
 	fi
@@ -450,6 +561,11 @@ _model_cost_rates() {
 	*opus-4* | *claude-opus*) echo "15.0|75.0|1.50" ;;
 	*sonnet-4* | *claude-sonnet*) echo "3.0|15.0|0.30" ;;
 	*haiku-4* | *haiku-3* | *claude-haiku*) echo "0.80|4.0|0.08" ;;
+	*gpt-5.4*) echo "2.50|10.0|0.625" ;;
+	*gpt-5.3-codex*) echo "2.50|10.0|0.625" ;;
+	*gpt-5.2-codex* | *gpt-5.2*) echo "2.50|10.0|0.625" ;;
+	*gpt-5.1-codex*) echo "2.50|10.0|0.625" ;;
+	*gpt-5.1-chat*) echo "2.50|10.0|0.625" ;;
 	*gpt-4.1-mini*) echo "0.40|1.60|0.10" ;;
 	*gpt-4.1*) echo "2.0|8.0|0.50" ;;
 	*o3*) echo "10.0|40.0|2.50" ;;
@@ -458,6 +574,8 @@ _model_cost_rates() {
 	*gemini-2.5-flash* | *gemini-3-flash*) echo "0.15|0.60|0.0375" ;;
 	*deepseek-r1*) echo "0.55|2.19|0.14" ;;
 	*deepseek-v3*) echo "0.27|1.10|0.07" ;;
+	*grok*) echo "3.0|15.0|0.30" ;;
+	*kimi* | *minimax* | *big-pickle*) echo "0.0|0.0|0.0" ;;
 	*) echo "3.0|15.0|0.30" ;;
 	esac
 	return 0
