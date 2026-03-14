@@ -2527,19 +2527,17 @@ cmd_pulse() {
 	# Phase 5: Summary
 	local total_running
 	total_running=$(cmd_running_count "${batch_id:-}")
-	local total_queued
-	total_queued=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM tasks WHERE status = 'queued';")
-	local total_complete
-	total_complete=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM tasks WHERE status IN ('complete', 'deployed', 'verified');")
-	local total_pr_review
-	total_pr_review=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM tasks WHERE status IN ('pr_review', 'review_triage', 'merging', 'merged', 'deploying');")
-	local total_verifying
-	total_verifying=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM tasks WHERE status IN ('verifying', 'verify_failed');")
-
-	local total_failed
-	total_failed=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM tasks WHERE status IN ('failed', 'blocked');")
-	local total_tasks
-	total_tasks=$(db "$SUPERVISOR_DB" "SELECT count(*) FROM tasks;")
+	local total_queued total_complete total_pr_review total_verifying total_failed total_tasks
+	IFS='|' read -r total_queued total_complete total_pr_review total_verifying total_failed total_tasks < <(db -separator '|' "$SUPERVISOR_DB" "
+        SELECT
+            COALESCE(SUM(CASE WHEN status = 'queued' THEN 1 ELSE 0 END), 0),
+            COALESCE(SUM(CASE WHEN status IN ('complete', 'deployed', 'verified') THEN 1 ELSE 0 END), 0),
+            COALESCE(SUM(CASE WHEN status IN ('pr_review', 'review_triage', 'merging', 'merged', 'deploying') THEN 1 ELSE 0 END), 0),
+            COALESCE(SUM(CASE WHEN status IN ('verifying', 'verify_failed') THEN 1 ELSE 0 END), 0),
+            COALESCE(SUM(CASE WHEN status IN ('failed', 'blocked') THEN 1 ELSE 0 END), 0),
+            COUNT(*)
+        FROM tasks;
+    ")
 
 	# System resource snapshot (t135.15.3)
 	local resource_output

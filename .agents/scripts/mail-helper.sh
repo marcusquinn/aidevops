@@ -1259,15 +1259,23 @@ cmd_status() {
 		local escaped_id
 		escaped_id=$(sql_escape "$agent_id")
 		local inbox_count unread_count
-		inbox_count=$(db "$MAIL_DB" "SELECT count(*) FROM messages WHERE to_agent='$escaped_id' AND status != 'archived';")
-		unread_count=$(db "$MAIL_DB" "SELECT count(*) FROM messages WHERE to_agent='$escaped_id' AND status = 'unread';")
+		IFS='|' read -r inbox_count unread_count < <(db -separator '|' "$MAIL_DB" "
+            SELECT
+                COALESCE(SUM(CASE WHEN status != 'archived' THEN 1 ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN status = 'unread' THEN 1 ELSE 0 END), 0)
+            FROM messages WHERE to_agent='$escaped_id';
+        ")
 		echo "Agent: $agent_id"
 		echo "  Inbox: $inbox_count messages ($unread_count unread)"
 	else
 		local total_unread total_read total_archived total_agents
-		total_unread=$(db "$MAIL_DB" "SELECT count(*) FROM messages WHERE status = 'unread';")
-		total_read=$(db "$MAIL_DB" "SELECT count(*) FROM messages WHERE status = 'read';")
-		total_archived=$(db "$MAIL_DB" "SELECT count(*) FROM messages WHERE status = 'archived';")
+		IFS='|' read -r total_unread total_read total_archived < <(db -separator '|' "$MAIL_DB" "
+            SELECT
+                COALESCE(SUM(CASE WHEN status = 'unread' THEN 1 ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN status = 'read' THEN 1 ELSE 0 END), 0),
+                COALESCE(SUM(CASE WHEN status = 'archived' THEN 1 ELSE 0 END), 0)
+            FROM messages;
+        ")
 		total_agents=$(db "$MAIL_DB" "SELECT count(*) FROM agents WHERE status = 'active';")
 
 		local total_inbox=$((total_unread + total_read))
