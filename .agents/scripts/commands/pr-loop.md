@@ -70,14 +70,7 @@ RESULT=$(~/.aidevops/agents/scripts/review-bot-gate-helper.sh check "$PR_NUMBER"
 
 ### AI Bot Review Verification
 
-When a review bot (Gemini, CodeRabbit, Copilot, etc.) requests changes, **verify factual claims before implementing**. AI reviewers can hallucinate - e.g., claiming a Docker image version doesn't exist when it does, or flagging correct file paths as wrong.
-
-**Verification steps:**
-
-1. **Check factual claims** - Verify version numbers, file paths, API signatures against runtime, documentation, or project conventions
-2. **Dismiss incorrect suggestions** - Reply with evidence (e.g., "Image exists: `docker manifest inspect image:tag`")
-3. **Address valid feedback** - Implement suggestions that are technically correct
-4. **Re-request review** - Push fixes and trigger re-review for remaining items
+For handling AI code reviewer feedback, see `Bot Reviewer Feedback` guidance in `.agents/reference/session.md` and `AI Suggestion Verification` in `.agents/prompts/build.txt`.
 
 ## Completion Promises
 
@@ -167,7 +160,7 @@ If the loop times out before completion:
    ```bash
    # Re-run single review cycle
    /pr review
-   
+
    # Or restart loop
    /pr-loop
    ```
