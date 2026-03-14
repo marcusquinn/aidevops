@@ -22,9 +22,17 @@ check_python_for_skill_scanner() {
 		local ver_output
 		ver_output=$("$py_bin" --version 2>/dev/null) || return 1
 		# "Python 3.11.5" -> extract major.minor
-		local major minor
-		major=$(echo "$ver_output" | sed -E 's/Python ([0-9]+)\..*/\1/')
-		minor=$(echo "$ver_output" | sed -E 's/Python [0-9]+\.([0-9]+).*/\1/')
+		if [[ "$ver_output" != Python\ * ]]; then
+			return 1
+		fi
+		local version major remainder minor
+		version="${ver_output#Python }"
+		major="${version%%.*}"
+		remainder="${version#*.}"
+		minor="${remainder%%.*}"
+		if [[ ! "$major" =~ ^[0-9]+$ || ! "$minor" =~ ^[0-9]+$ ]]; then
+			return 1
+		fi
 		if [[ "$major" -gt "$required_major" ]] ||
 			{ [[ "$major" -eq "$required_major" ]] && [[ "$minor" -ge "$required_minor" ]]; }; then
 			return 0
@@ -61,7 +69,13 @@ check_python_for_skill_scanner() {
 				print_success "Python 3.11 installed via uv (at $uv_py)"
 				return 0
 			fi
-			print_warning "uv installed Python 3.11 but it could not be found on PATH"
+			print_warning "uv reported Python 3.11 installed, but verification failed"
+			if [[ -n "$uv_py" ]]; then
+				print_warning "Found interpreter at $uv_py, but version verification still failed"
+			else
+				print_warning "python3.11 is not on PATH and 'uv python find 3.11' did not return a usable path"
+			fi
+			print_info "Run 'uv python list' to confirm the install and update PATH if needed"
 		else
 			print_warning "uv python install 3.11 failed — see errors above"
 		fi
