@@ -122,6 +122,7 @@ check_api_key() {
 get_domain() {
 	local url="$1"
 	echo "$url" | sed -E 's|^https?://||' | sed -E 's|/.*||' | sed -E 's|:.*||'
+	return 0
 }
 
 # Create output directory structure
