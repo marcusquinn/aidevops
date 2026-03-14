@@ -100,8 +100,8 @@
       "upstream_commit": "b247b124d168730051186aa63afad87c0c1f5a52",
       "local_path": ".agents/tools/deployment/cloudron-app-packaging-skill.md",
       "format_detected": "skill-md-nested",
-      "imported_at": "2026-03-01T18:00:00Z",
-      "last_checked": "2026-03-01T18:00:00Z",
+      "imported_at": "2026-03-01T16:19:15Z",
+      "last_checked": "2026-03-01T16:19:15Z",
       "merge_strategy": "added",
       "notes": "Official Cloudron skill from git.cloudron.io/docs/skills. Includes manifest-ref.md and addons-ref.md in cloudron-app-packaging-skill/"
     },
@@ -111,8 +111,8 @@
       "upstream_commit": "b247b124d168730051186aa63afad87c0c1f5a52",
       "local_path": ".agents/tools/deployment/cloudron-app-publishing-skill.md",
       "format_detected": "skill-md",
-      "imported_at": "2026-03-01T18:00:00Z",
-      "last_checked": "2026-03-01T18:00:00Z",
+      "imported_at": "2026-03-01T16:19:15Z",
+      "last_checked": "2026-03-01T16:19:15Z",
       "merge_strategy": "added",
       "notes": "Official Cloudron skill for CloudronVersions.json publishing and community packages (9.1+)"
     },
@@ -122,8 +122,8 @@
       "upstream_commit": "b247b124d168730051186aa63afad87c0c1f5a52",
       "local_path": ".agents/tools/deployment/cloudron-server-ops-skill.md",
       "format_detected": "skill-md",
-      "imported_at": "2026-03-01T18:00:00Z",
-      "last_checked": "2026-03-01T18:00:00Z",
+      "imported_at": "2026-03-01T16:19:15Z",
+      "last_checked": "2026-03-01T16:19:15Z",
       "merge_strategy": "added",
       "notes": "Official Cloudron skill for CLI server operations (logs, exec, backups, env vars, CI/CD)"
     },
