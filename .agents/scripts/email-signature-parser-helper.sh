@@ -510,48 +510,52 @@ resolve_contact_filename() {
 	local safe_email
 	safe_email=$(echo "$email" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9@._-]/_/g')
 	local base_file="${contacts_dir}/${safe_email}.toon"
+	local file
+	local existing_email
+	local existing_name
 
-	# If file doesn't exist, use it
-	if [[ ! -f "$base_file" ]]; then
-		echo "$base_file"
-		return 0
-	fi
+	# If this contact already exists (base or suffixed), reuse that file.
+	for file in "${contacts_dir}/${safe_email}"*.toon; do
+		if [[ ! -f "$file" ]]; then
+			continue
+		fi
 
-	# File exists — check if it's the same person (same email or same name)
-	local existing_email existing_name
-	while IFS= read -r _line; do
-		case "$_line" in
-		"  email: "*) existing_email="${_line#  email: }" ;;
-		"  name: "*) existing_name="${_line#  name: }" ;;
-		esac
-	done <"$base_file"
+		existing_email=$(grep -m1 "^  email: " "$file" | sed 's/^  email: //')
+		if [[ "$existing_email" == "$email" ]]; then
+			echo "$file"
+			return 0
+		fi
+	done
 
-	# Same email = same person, use existing file
-	if [[ "$existing_email" == "$email" ]]; then
-		echo "$base_file"
-		return 0
-	fi
-
-	# Different email but same name = name collision
-	# Check if name matches (case-insensitive)
-	if [[ -n "$name" && -n "$existing_name" ]]; then
+	# Different email but same name = name collision.
+	# Scan all contacts, not just the base filename, so collisions are detected
+	# even when this email has not been seen before.
+	if [[ -n "$name" ]]; then
 		local name_lower existing_name_lower
 		name_lower=$(echo "$name" | tr '[:upper:]' '[:lower:]')
-		existing_name_lower=$(echo "$existing_name" | tr '[:upper:]' '[:lower:]')
 
-		if [[ "$name_lower" == "$existing_name_lower" ]]; then
-			# Name collision detected — find next available suffix
-			local suffix=1
-			local collision_file
-			while true; do
-				collision_file="${contacts_dir}/${safe_email}-$(printf '%03d' $suffix).toon"
-				if [[ ! -f "$collision_file" ]]; then
-					echo "$collision_file"
-					return 0
-				fi
-				suffix=$((suffix + 1))
-			done
-		fi
+		for file in "$contacts_dir"/*.toon; do
+			if [[ ! -f "$file" ]]; then
+				continue
+			fi
+
+			existing_name=$(grep -m1 "^  name: " "$file" | sed 's/^  name: //')
+			existing_email=$(grep -m1 "^  email: " "$file" | sed 's/^  email: //')
+			existing_name_lower=$(echo "$existing_name" | tr '[:upper:]' '[:lower:]')
+
+			if [[ -n "$existing_name" && "$existing_name_lower" == "$name_lower" && "$existing_email" != "$email" ]]; then
+				local suffix=1
+				local collision_file
+				while true; do
+					collision_file="${contacts_dir}/${safe_email}-$(printf '%03d' "$suffix").toon"
+					if [[ ! -f "$collision_file" ]]; then
+						echo "$collision_file"
+						return 0
+					fi
+					suffix=$((suffix + 1))
+				done
+			fi
+		done
 	fi
 
 	# No collision, use base file
