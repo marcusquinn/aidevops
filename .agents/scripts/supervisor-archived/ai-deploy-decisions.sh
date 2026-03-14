@@ -458,7 +458,7 @@ ai_triage_review_feedback() {
 
 	# Build a concise thread summary for the AI prompt
 	local thread_details
-	thread_details=$(printf '%s' "$threads_json" | jq -r '.[] | "[\(.author)] \(.path):\(.line // "?"): \(.body | split("\n")[0] | .[0:300]) (isBot: \(.isBot))"' 2>/dev/null || echo "")
+	thread_details=$(printf '%s' "$threads_json" | jq -r '.[] | "id=\(.id) [\(.author)] \(.path):\(.line // "?"): \(.body | split("\n")[0] | .[0:300]) (isBot: \(.isBot))"' 2>/dev/null || echo "")
 
 	local prompt
 	prompt="You are triaging code review feedback on a PR for an automated deployment pipeline.
@@ -485,11 +485,12 @@ DECIDE the overall action:
 
 Respond with ONLY a JSON object, no markdown fencing:
 {
-  \"threads\": [{\"author\": \"...\", \"severity\": \"...\", \"isBot\": true/false}],
+  \"threads\": [{\"id\": \"<thread_node_id>\", \"author\": \"...\", \"severity\": \"...\", \"isBot\": true/false}],
   \"summary\": {\"critical\": N, \"high\": N, \"medium\": N, \"low\": N, \"dismiss\": N, \"human_critical\": N, \"bot_critical\": N, \"human_high\": N, \"human_medium\": N, \"bot_high\": N, \"bot_medium\": N},
   \"action\": \"merge|fix|block\",
   \"reasoning\": \"brief explanation\"
-}"
+}
+The \"id\" field in each thread must match the id from the input thread data exactly."
 
 	local ai_response
 	if ai_response=$(_ai_deploy_call "$prompt" "triage-review"); then
@@ -509,10 +510,11 @@ Respond with ONLY a JSON object, no markdown fencing:
 					# so the output format matches what callers expect
 					local enriched_result
 					enriched_result=$(printf '%s' "$json_result" | jq --argjson orig "$threads_json" '
-						# Preserve original thread data, add severity from AI classification
-						.threads = [range(($orig | length)) as $i |
-							$orig[$i] + (if $i < (.threads | length) then {severity: .threads[$i].severity} else {severity: "medium"} end)
-						]
+						# Build a lookup map from thread id → severity from the AI response.
+						# This is stable even if the AI reorders or omits threads.
+						(reduce .threads[] as $t ({}; .[$t.id] = $t.severity)) as $severity_map |
+						# Preserve original thread data, merge severity by id (fallback: "medium")
+						.threads = [$orig[] | . + {severity: ($severity_map[.id] // "medium")}]
 					' 2>/dev/null || echo "")
 
 					if [[ -n "$enriched_result" ]]; then
@@ -626,6 +628,13 @@ ai_verify_task_deliverables() {
 	local pr_state
 	if ! pr_state=$(gh pr view "$pr_number" --repo "$repo_slug" --json state --jq '.state' 2>>"$SUPERVISOR_LOG"); then
 		log_warn "Failed to fetch PR state for $task_id (#$pr_number)"
+		return 1
+	fi
+
+	# Hard gate: PR must be MERGED before any verification path can set verified=true.
+	# This is a deterministic requirement — not subject to AI judgment.
+	if [[ "$pr_state" != "MERGED" ]]; then
+		log_warn "ai_verify_task_deliverables: PR #$pr_number is '$pr_state' (not MERGED) — rejecting verification for $task_id"
 		return 1
 	fi
 
