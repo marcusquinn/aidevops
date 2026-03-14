@@ -90,13 +90,27 @@ count_workers() {
 
 #######################################
 # Check if a pulse process is currently running
+# Handles SETUP:/IDLE: sentinels from pulse-wrapper.sh (GH#4575)
 # Returns: 0 if running, 1 if not
 #######################################
 is_pulse_running() {
 	if [[ -f "$PIDFILE" ]]; then
-		local pid
-		pid=$(cat "$PIDFILE" || echo "")
-		if [[ -n "$pid" ]] && ps -p "$pid" >/dev/null 2>&1; then
+		local pid_content
+		pid_content=$(cat "$PIDFILE" || echo "")
+
+		# IDLE sentinel or empty — not running
+		if [[ -z "$pid_content" ]] || [[ "$pid_content" == IDLE:* ]]; then
+			return 1
+		fi
+
+		# SETUP sentinel — extract numeric PID
+		local pid="$pid_content"
+		if [[ "$pid_content" == SETUP:* ]]; then
+			pid="${pid_content#SETUP:}"
+		fi
+
+		# Validate numeric and check process
+		if [[ "$pid" =~ ^[0-9]+$ ]] && ps -p "$pid" >/dev/null 2>&1; then
 			return 0
 		fi
 	fi
@@ -415,11 +429,18 @@ cmd_status() {
 	fi
 	echo ""
 
-	# Pulse process
+	# Pulse process — handle SETUP:/IDLE: sentinels (GH#4575)
 	if is_pulse_running; then
-		local pulse_pid
-		pulse_pid=$(cat "$PIDFILE" || echo "?")
-		echo -e "  Process:     ${GREEN}running${NC} (PID ${pulse_pid})"
+		local pulse_pid_content pulse_display_pid
+		pulse_pid_content=$(cat "$PIDFILE" || echo "?")
+		# Extract numeric PID for display
+		if [[ "$pulse_pid_content" == SETUP:* ]]; then
+			pulse_display_pid="${pulse_pid_content#SETUP:}"
+			echo -e "  Process:     ${YELLOW}setup${NC} (PID ${pulse_display_pid}, pre-flight stages)"
+		else
+			pulse_display_pid="$pulse_pid_content"
+			echo -e "  Process:     ${GREEN}running${NC} (PID ${pulse_display_pid})"
+		fi
 	else
 		echo -e "  Process:     ${BLUE}idle${NC} (waiting for next launchd cycle)"
 	fi

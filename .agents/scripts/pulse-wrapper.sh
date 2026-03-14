@@ -311,15 +311,38 @@ check_dedup() {
 	# we ARE that wrapper. Either way, safe to proceed.
 	if [[ "$pid_content" == SETUP:* ]]; then
 		local setup_pid="${pid_content#SETUP:}"
+
+		# Numeric validation — corrupt sentinel gets reset (GH#4575)
+		if ! [[ "$setup_pid" =~ ^[0-9]+$ ]]; then
+			echo "[pulse-wrapper] check_dedup: invalid SETUP sentinel '${pid_content}' — resetting to IDLE" >>"$LOGFILE"
+			echo "IDLE:$(date -u +%Y-%m-%dT%H:%M:%SZ)" >"$PIDFILE"
+			return 0
+		fi
+
 		if [[ "$setup_pid" == "$$" ]]; then
 			# We wrote this ourselves — proceed
 			return 0
 		fi
-		if ! ps -p "$setup_pid" >/dev/null 2>&1; then
+
+		# Check if the process is still alive via its cmdline (GH#4575)
+		local setup_cmd=""
+		setup_cmd=$(ps -p "$setup_pid" -o command= 2>/dev/null || echo "")
+
+		if [[ -z "$setup_cmd" ]]; then
 			echo "[pulse-wrapper] check_dedup: SETUP wrapper $setup_pid is dead — proceeding" >>"$LOGFILE"
 			echo "IDLE:$(date -u +%Y-%m-%dT%H:%M:%SZ)" >"$PIDFILE"
 			return 0
 		fi
+
+		# PID reuse guard: verify the process is actually a pulse-wrapper
+		# before killing. PID reuse can assign the old PID to an unrelated
+		# process between cycles. (GH#4575)
+		if [[ "$setup_cmd" != *"pulse-wrapper.sh"* ]]; then
+			echo "[pulse-wrapper] check_dedup: SETUP PID $setup_pid belongs to non-wrapper process ('${setup_cmd%%' '*}'); refusing kill, resetting sentinel" >>"$LOGFILE"
+			echo "IDLE:$(date -u +%Y-%m-%dT%H:%M:%SZ)" >"$PIDFILE"
+			return 0
+		fi
+
 		# SETUP wrapper is alive but we hold the instance lock — it's a zombie
 		# from a previous cycle. Kill it and proceed.
 		echo "[pulse-wrapper] check_dedup: killing zombie SETUP wrapper $setup_pid" >>"$LOGFILE"
@@ -1624,10 +1647,6 @@ run_cmd_with_timeout() {
 	return $?
 }
 
-#   0   - stage completed successfully
-#   124 - stage timed out and was killed
-#   else- stage exited with command exit code
-#######################################
 #######################################
 # Run a stage with a wall-clock timeout
 #
