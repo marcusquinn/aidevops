@@ -53,6 +53,21 @@ assert_contains() {
 	return 0
 }
 
+assert_not_contains() {
+	local file="$1"
+	local pattern="$2"
+	local description="$3"
+
+	if grep -q "$pattern" "$file" 2>/dev/null; then
+		echo -e "  ${RED}FAIL${NC}: $description (unexpected pattern '$pattern' found in $file)"
+		FAIL=$((FAIL + 1))
+	else
+		echo -e "  ${GREEN}PASS${NC}: $description"
+		PASS=$((PASS + 1))
+	fi
+	return 0
+}
+
 assert_file_exists() {
 	local file="$1"
 	local description="$2"
@@ -359,6 +374,140 @@ test_merge_existing_contact() {
 	return 0
 }
 
+test_field_change_history_tracking() {
+	echo "Test: field changes are tracked in history"
+	setup
+
+	local email_v1 email_v2
+	email_v1=$(mktemp)
+	email_v2=$(mktemp)
+
+	cat >"$email_v1" <<'EOF'
+Hi team,
+
+Best regards,
+Jane Smith
+Developer
+StartupCo
+jane.smith@startup.com
++1 (555) 987-6543
+EOF
+
+	cat >"$email_v2" <<'EOF'
+Hi team,
+
+Best regards,
+Jane Smith
+Senior Developer
+BigCorp Inc.
+jane.smith@startup.com
++1 (555) 987-6543
+EOF
+
+	"$PARSER" parse "$email_v1" "$CONTACTS_DIR" >/dev/null 2>&1 || true
+	"$PARSER" parse "$email_v2" "$CONTACTS_DIR" >/dev/null 2>&1 || true
+
+	local contact_file="${CONTACTS_DIR}/jane.smith@startup.com.toon"
+	assert_file_exists "$contact_file" "Contact file exists after updates"
+	assert_contains "$contact_file" "history:" "History section created"
+	assert_contains "$contact_file" "field: title" "Title change logged"
+	assert_contains "$contact_file" "old: Developer" "Old title value recorded"
+	assert_contains "$contact_file" "new: Senior Developer" "New title value recorded"
+	assert_contains "$contact_file" "field: company" "Company change logged"
+	assert_contains "$contact_file" "old: StartupCo" "Old company value recorded"
+	assert_contains "$contact_file" "new: BigCorp Inc." "New company value recorded"
+	assert_contains "$contact_file" "title: Senior Developer" "Current title updated"
+	assert_contains "$contact_file" "company: BigCorp Inc." "Current company updated"
+
+	rm -f "$email_v1" "$email_v2"
+	teardown
+	return 0
+}
+
+test_name_collision_suffixing() {
+	echo "Test: same-name contacts with different emails use suffixes"
+	setup
+
+	local email_a email_b
+	email_a=$(mktemp)
+	email_b=$(mktemp)
+
+	cat >"$email_a" <<'EOF'
+Hi,
+
+Best regards,
+Bob Johnson
+Engineer
+Company A
+bob.johnson@companya.com
+EOF
+
+	cat >"$email_b" <<'EOF'
+Hi,
+
+Best regards,
+Bob Johnson
+Manager
+Company B
+bob.johnson@companyb.com
+EOF
+
+	"$PARSER" parse "$email_a" "$CONTACTS_DIR" >/dev/null 2>&1 || true
+	"$PARSER" parse "$email_b" "$CONTACTS_DIR" >/dev/null 2>&1 || true
+
+	assert_file_exists "${CONTACTS_DIR}/bob.johnson@companya.com.toon" "First contact file created"
+	assert_file_exists "${CONTACTS_DIR}/bob.johnson@companyb.com-001.toon" "Second contact gets collision suffix"
+
+	rm -f "$email_a" "$email_b"
+	teardown
+	return 0
+}
+
+test_last_seen_update_without_history_on_reparse() {
+	echo "Test: reparse updates last_seen without creating history"
+	setup
+
+	local email_file
+	email_file=$(mktemp)
+
+	cat >"$email_file" <<'EOF'
+Hi,
+
+Best regards,
+Charlie Brown
+Analyst
+DataCo
+charlie.brown@dataco.com
+EOF
+
+	"$PARSER" parse "$email_file" "$CONTACTS_DIR" >/dev/null 2>&1 || true
+	local contact_file="${CONTACTS_DIR}/charlie.brown@dataco.com.toon"
+	assert_file_exists "$contact_file" "Contact file created"
+
+	local first_seen
+	first_seen=$(grep "^  last_seen:" "$contact_file" | sed 's/^  last_seen: //')
+
+	sleep 1
+	"$PARSER" parse "$email_file" "$CONTACTS_DIR" >/dev/null 2>&1 || true
+
+	local second_seen
+	second_seen=$(grep "^  last_seen:" "$contact_file" | sed 's/^  last_seen: //')
+
+	if [[ -n "$first_seen" && -n "$second_seen" && "$first_seen" != "$second_seen" ]]; then
+		echo -e "  ${GREEN}PASS${NC}: last_seen timestamp updated"
+		PASS=$((PASS + 1))
+	else
+		echo -e "  ${RED}FAIL${NC}: last_seen timestamp did not update"
+		FAIL=$((FAIL + 1))
+	fi
+
+	assert_not_contains "$contact_file" "history:" "History not added when fields are unchanged"
+
+	rm -f "$email_file"
+	teardown
+	return 0
+}
+
 # =============================================================================
 # Main
 # =============================================================================
@@ -407,6 +556,12 @@ main() {
 	test_show_command
 	echo ""
 	test_merge_existing_contact
+	echo ""
+	test_field_change_history_tracking
+	echo ""
+	test_name_collision_suffixing
+	echo ""
+	test_last_seen_update_without_history_on_reparse
 	echo ""
 
 	echo "============================================"
