@@ -75,6 +75,15 @@ _format_hours() {
 	return 0
 }
 
+# --- Format dollar amount with commas and 2 decimal places ---
+_format_cost() {
+	local val="$1"
+	local rounded
+	rounded=$(printf "%.2f" "$val")
+	_format_number "$rounded"
+	return 0
+}
+
 # --- Format token count (K/M suffix) ---
 _format_tokens() {
 	local tokens="$1"
@@ -112,7 +121,15 @@ _get_session_time() {
 }
 
 # --- Gather model usage stats ---
+# Usage: _get_model_usage [period]
+#   period: "30d" (default) or "all" (no date filter)
 _get_model_usage() {
+	local period="${1:-30d}"
+	local date_filter=""
+	if [[ "$period" != "all" ]]; then
+		date_filter="AND timestamp >= strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-30 days')"
+	fi
+
 	# Primary source: OpenCode real-time observability SQLite database.
 	if command -v sqlite3 &>/dev/null && [[ -f "$OBS_DB_FILE" ]]; then
 		local sqlite_json
@@ -143,7 +160,7 @@ _get_model_usage() {
 				FROM llm_requests
 				WHERE model_id IS NOT NULL
 				  AND model_id != ''
-				  AND timestamp >= strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-30 days')
+				  ${date_filter}
 				GROUP BY model_id
 				ORDER BY cost_total DESC
 			);
@@ -161,29 +178,53 @@ _get_model_usage() {
 		return 0
 	fi
 
-	local cutoff
-	cutoff=$(date -v-30d +%Y-%m-%d 2>/dev/null || date -d '30 days ago' +%Y-%m-%d 2>/dev/null || echo "1970-01-01")
+	if [[ "$period" == "all" ]]; then
+		jq -s '
+			group_by(.model)
+			| map({
+				model: .[0].model,
+				requests: length,
+				input_tokens: ([.[].input_tokens // 0] | add),
+				output_tokens: ([.[].output_tokens // 0] | add),
+				cache_read_tokens: ([.[].cache_read_tokens // 0] | add),
+				cache_write_tokens: ([.[].cache_write_tokens // 0] | add),
+				cost_total: ([.[].cost_total // 0] | add | . * 100 | round / 100)
+			})
+			| sort_by(-.cost_total)
+		' "$METRICS_FILE" 2>/dev/null || echo "[]"
+	else
+		local cutoff
+		cutoff=$(date -v-30d +%Y-%m-%d 2>/dev/null || date -d '30 days ago' +%Y-%m-%d 2>/dev/null || echo "1970-01-01")
 
-	jq -s --arg cutoff "$cutoff" '
-		[.[] | select(.recorded_at >= $cutoff)]
-		| group_by(.model)
-		| map({
-			model: .[0].model,
-			requests: length,
-			input_tokens: ([.[].input_tokens // 0] | add),
-			output_tokens: ([.[].output_tokens // 0] | add),
-			cache_read_tokens: ([.[].cache_read_tokens // 0] | add),
-			cache_write_tokens: ([.[].cache_write_tokens // 0] | add),
-			cost_total: ([.[].cost_total // 0] | add | . * 100 | round / 100)
-		})
-		| sort_by(-.cost_total)
-	' "$METRICS_FILE" 2>/dev/null || echo "[]"
+		jq -s --arg cutoff "$cutoff" '
+			[.[] | select(.recorded_at >= $cutoff)]
+			| group_by(.model)
+			| map({
+				model: .[0].model,
+				requests: length,
+				input_tokens: ([.[].input_tokens // 0] | add),
+				output_tokens: ([.[].output_tokens // 0] | add),
+				cache_read_tokens: ([.[].cache_read_tokens // 0] | add),
+				cache_write_tokens: ([.[].cache_write_tokens // 0] | add),
+				cost_total: ([.[].cost_total // 0] | add | . * 100 | round / 100)
+			})
+			| sort_by(-.cost_total)
+		' "$METRICS_FILE" 2>/dev/null || echo "[]"
+	fi
 
 	return 0
 }
 
 # --- Get total token stats for footer ---
+# Usage: _get_token_totals [period]
+#   period: "30d" (default) or "all" (no date filter)
 _get_token_totals() {
+	local period="${1:-30d}"
+	local date_filter=""
+	if [[ "$period" != "all" ]]; then
+		date_filter="WHERE timestamp >= strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-30 days')"
+	fi
+
 	# Primary source: OpenCode real-time observability SQLite database.
 	if command -v sqlite3 &>/dev/null && [[ -f "$OBS_DB_FILE" ]]; then
 		local sqlite_totals
@@ -195,7 +236,7 @@ _get_token_totals() {
 				'total_cache_write', COALESCE(SUM(tokens_cache_write), 0)
 			)
 			FROM llm_requests
-			WHERE timestamp >= strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-30 days');
+			${date_filter};
 		" 2>/dev/null || true)
 
 		if [[ -n "$sqlite_totals" ]]; then
@@ -213,20 +254,33 @@ _get_token_totals() {
 		return 0
 	fi
 
-	local cutoff
-	cutoff=$(date -v-30d +%Y-%m-%d 2>/dev/null || date -d '30 days ago' +%Y-%m-%d 2>/dev/null || echo "1970-01-01")
+	if [[ "$period" == "all" ]]; then
+		jq -s '
+			{
+				total_input: ([.[].input_tokens // 0] | add),
+				total_output: ([.[].output_tokens // 0] | add),
+				total_cache_read: ([.[].cache_read_tokens // 0] | add),
+				total_cache_write: ([.[].cache_write_tokens // 0] | add)
+			}
+			| . + {total_all: (.total_input + .total_output + .total_cache_read + .total_cache_write)}
+			| . + {cache_hit_pct: (if .total_all > 0 then ((.total_cache_read / .total_all * 1000 | round) / 10) else 0 end)}
+		' "$METRICS_FILE" 2>/dev/null || echo '{"total_all":0,"cache_hit_pct":0}'
+	else
+		local cutoff
+		cutoff=$(date -v-30d +%Y-%m-%d 2>/dev/null || date -d '30 days ago' +%Y-%m-%d 2>/dev/null || echo "1970-01-01")
 
-	jq -s --arg cutoff "$cutoff" '
-		[.[] | select(.recorded_at >= $cutoff)]
-		| {
-			total_input: ([.[].input_tokens // 0] | add),
-			total_output: ([.[].output_tokens // 0] | add),
-			total_cache_read: ([.[].cache_read_tokens // 0] | add),
-			total_cache_write: ([.[].cache_write_tokens // 0] | add)
-		}
-		| . + {total_all: (.total_input + .total_output + .total_cache_read + .total_cache_write)}
-		| . + {cache_hit_pct: (if .total_all > 0 then ((.total_cache_read / .total_all * 1000 | round) / 10) else 0 end)}
-	' "$METRICS_FILE" 2>/dev/null || echo '{"total_all":0,"cache_hit_pct":0}'
+		jq -s --arg cutoff "$cutoff" '
+			[.[] | select(.recorded_at >= $cutoff)]
+			| {
+				total_input: ([.[].input_tokens // 0] | add),
+				total_output: ([.[].output_tokens // 0] | add),
+				total_cache_read: ([.[].cache_read_tokens // 0] | add),
+				total_cache_write: ([.[].cache_write_tokens // 0] | add)
+			}
+			| . + {total_all: (.total_input + .total_output + .total_cache_read + .total_cache_write)}
+			| . + {cache_hit_pct: (if .total_all > 0 then ((.total_cache_read / .total_all * 1000 | round) / 10) else 0 end)}
+		' "$METRICS_FILE" 2>/dev/null || echo '{"total_all":0,"cache_hit_pct":0}'
+	fi
 
 	return 0
 }
@@ -419,6 +473,114 @@ _clean_model_name() {
 	return 0
 }
 
+# --- Render a model usage table ---
+# Usage: _render_model_usage_table <heading> <model_json> <token_totals_json>
+# Outputs a markdown table with model usage stats, savings calculations, and footer.
+_render_model_usage_table() {
+	local heading="$1"
+	local model_json="$2"
+	local token_totals="$3"
+
+	# Opus rates used as baseline for model routing savings
+	local opus_input_rate="15.0" opus_output_rate="75.0" opus_cache_rate="1.50"
+	local total_requests=0 total_input=0 total_output=0 total_cache=0 total_cost=0
+	local total_cache_savings="0" total_model_savings="0"
+	local model_rows=""
+
+	while IFS= read -r row; do
+		local model requests input output cache cost
+		model=$(echo "$row" | jq -r '.model')
+		requests=$(echo "$row" | jq -r '.requests')
+		input=$(echo "$row" | jq -r '.input_tokens')
+		output=$(echo "$row" | jq -r '.output_tokens')
+		cache=$(echo "$row" | jq -r '.cache_read_tokens')
+		cost=$(echo "$row" | jq -r '.cost_total')
+
+		total_requests=$((total_requests + requests))
+		total_input=$((total_input + input))
+		total_output=$((total_output + output))
+		total_cache=$((total_cache + cache))
+		total_cost=$(echo "$total_cost + $cost" | bc)
+
+		# Get this model's rates: input|output|cache_read
+		local rates m_input_rate m_output_rate m_cache_rate
+		rates=$(_model_cost_rates "$model")
+		m_input_rate=$(echo "$rates" | cut -d'|' -f1)
+		m_output_rate=$(echo "$rates" | cut -d'|' -f2)
+		m_cache_rate=$(echo "$rates" | cut -d'|' -f3)
+
+		# Cache savings: what caching saved vs re-sending as full input
+		# cache_read_tokens / 1M * (input_price - cache_read_price)
+		# Use scale=6 in loop to avoid rounding error accumulation; round at display
+		local row_cache_savings
+		row_cache_savings=$(echo "scale=6; $cache / 1000000 * ($m_input_rate - $m_cache_rate)" | bc)
+		total_cache_savings=$(echo "$total_cache_savings + $row_cache_savings" | bc)
+
+		# Model routing savings: what using this model saved vs Opus
+		# For each token type: (opus_rate - model_rate) * tokens / 1M
+		# Opus rows produce $0 (same rates). Sonnet/Haiku produce large savings.
+		local row_model_savings
+		row_model_savings=$(echo "scale=6; ($opus_input_rate - $m_input_rate) * $input / 1000000 + ($opus_output_rate - $m_output_rate) * $output / 1000000 + ($opus_cache_rate - $m_cache_rate) * $cache / 1000000" | bc)
+		total_model_savings=$(echo "$total_model_savings + $row_model_savings" | bc)
+
+		local clean_model
+		clean_model=$(_clean_model_name "$model")
+		local f_requests f_input f_output f_cache
+		f_requests=$(_format_number "$requests")
+		f_input=$(_format_tokens "$input")
+		f_output=$(_format_tokens "$output")
+		f_cache=$(_format_tokens "$cache")
+
+		# Format cost and both savings with commas and 2 decimal places
+		local f_cost f_csavings f_msavings
+		f_cost=$(_format_cost "$cost")
+		f_csavings=$(_format_cost "$row_cache_savings")
+		f_msavings=$(_format_cost "$row_model_savings")
+
+		model_rows="${model_rows}| ${clean_model} | ${f_requests} | ${f_input} | ${f_output} | ${f_cache} | \$${f_cost} | \$${f_csavings} | \$${f_msavings} |
+"
+	done < <(echo "$model_json" | jq -c '.[] | select(.cost_total >= 0.05)')
+
+	# Format totals
+	local f_total_req f_total_in f_total_out f_total_cache
+	local f_total_csavings f_total_msavings
+	f_total_req=$(_format_number "$total_requests")
+	f_total_in=$(_format_tokens "$total_input")
+	f_total_out=$(_format_tokens "$total_output")
+	f_total_cache=$(_format_tokens "$total_cache")
+	# Format costs and savings with commas
+	local f_total_cost
+	f_total_cost=$(_format_cost "$total_cost")
+	f_total_csavings=$(_format_cost "$total_cache_savings")
+	f_total_msavings=$(_format_cost "$total_model_savings")
+
+	# Combined savings for footer
+	local combined_savings f_combined_savings
+	combined_savings=$(echo "$total_cache_savings + $total_model_savings" | bc)
+	f_combined_savings=$(_format_cost "$combined_savings")
+
+	# Token totals for footer
+	local all_tokens cache_pct
+	all_tokens=$(echo "$token_totals" | jq -r '.total_all')
+	cache_pct=$(echo "$token_totals" | jq -r '.cache_hit_pct')
+	local f_all_tokens
+	f_all_tokens=$(_format_tokens "$all_tokens")
+
+	cat <<EOF
+
+## ${heading}
+
+| Model | Requests | Input | Output | Cache read | API Cost | Cache savings | Model savings |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+${model_rows}| **Total** | **${f_total_req}** | **${f_total_in}** | **${f_total_out}** | **${f_total_cache}** | **\$${f_total_cost}** | **\$${f_total_csavings}** | **\$${f_total_msavings}** |
+
+_${f_all_tokens} total tokens processed. ${cache_pct}% cache hit rate. \$${f_combined_savings} total saved (\$${f_total_csavings} caching + \$${f_total_msavings} model routing vs all-Opus).
+Model savings are modest because ~${cache_pct}% of tokens are cache reads, where price differences between models are small._
+EOF
+
+	return 0
+}
+
 # --- Generate the stats markdown ---
 cmd_generate() {
 	# Gather all data
@@ -431,11 +593,13 @@ cmd_generate() {
 	month_json=$(_get_session_time month)
 	year_json=$(_get_session_time year)
 
-	local model_json
-	model_json=$(_get_model_usage)
+	local model_json_30d model_json_all
+	model_json_30d=$(_get_model_usage "30d")
+	model_json_all=$(_get_model_usage "all")
 
-	local token_totals
-	token_totals=$(_get_token_totals)
+	local token_totals_30d token_totals_all
+	token_totals_30d=$(_get_token_totals "30d")
+	token_totals_all=$(_get_token_totals "all")
 
 	# Extract screen time values (round to 1 decimal, strip .0 for large numbers)
 	local screen_today screen_week screen_month screen_year
@@ -549,102 +713,9 @@ _Screen time from ${screen_source}, snapshotted daily.$([ -n "$year_suffix" ] &&
 _User AI session hours measured from AI message timestamps (reading, thinking, typing between responses)._
 EOF
 
-	# Build model usage table
-	# Opus rates used as baseline for model routing savings
-	local opus_input_rate="15.0" opus_output_rate="75.0" opus_cache_rate="1.50"
-	local total_requests=0 total_input=0 total_output=0 total_cache=0 total_cost=0
-	local total_cache_savings="0" total_model_savings="0"
-	local model_rows=""
-
-	while IFS= read -r row; do
-		local model requests input output cache cost
-		model=$(echo "$row" | jq -r '.model')
-		requests=$(echo "$row" | jq -r '.requests')
-		input=$(echo "$row" | jq -r '.input_tokens')
-		output=$(echo "$row" | jq -r '.output_tokens')
-		cache=$(echo "$row" | jq -r '.cache_read_tokens')
-		cost=$(echo "$row" | jq -r '.cost_total')
-
-		total_requests=$((total_requests + requests))
-		total_input=$((total_input + input))
-		total_output=$((total_output + output))
-		total_cache=$((total_cache + cache))
-		total_cost=$(echo "$total_cost + $cost" | bc)
-
-		# Get this model's rates: input|output|cache_read
-		local rates m_input_rate m_output_rate m_cache_rate
-		rates=$(_model_cost_rates "$model")
-		m_input_rate=$(echo "$rates" | cut -d'|' -f1)
-		m_output_rate=$(echo "$rates" | cut -d'|' -f2)
-		m_cache_rate=$(echo "$rates" | cut -d'|' -f3)
-
-		# Cache savings: what caching saved vs re-sending as full input
-		# cache_read_tokens / 1M * (input_price - cache_read_price)
-		# Use scale=6 in loop to avoid rounding error accumulation; round at display
-		local row_cache_savings
-		row_cache_savings=$(echo "scale=6; $cache / 1000000 * ($m_input_rate - $m_cache_rate)" | bc)
-		total_cache_savings=$(echo "$total_cache_savings + $row_cache_savings" | bc)
-
-		# Model routing savings: what using this model saved vs Opus
-		# For each token type: (opus_rate - model_rate) * tokens / 1M
-		# Opus rows produce $0 (same rates). Sonnet/Haiku produce large savings.
-		local row_model_savings
-		row_model_savings=$(echo "scale=6; ($opus_input_rate - $m_input_rate) * $input / 1000000 + ($opus_output_rate - $m_output_rate) * $output / 1000000 + ($opus_cache_rate - $m_cache_rate) * $cache / 1000000" | bc)
-		total_model_savings=$(echo "$total_model_savings + $row_model_savings" | bc)
-
-		local clean_model
-		clean_model=$(_clean_model_name "$model")
-		local f_requests f_input f_output f_cache
-		f_requests=$(_format_number "$requests")
-		f_input=$(_format_tokens "$input")
-		f_output=$(_format_tokens "$output")
-		f_cache=$(_format_tokens "$cache")
-
-		# Format cost and both savings with 2 decimal places
-		local f_cost f_csavings f_msavings
-		f_cost=$(printf "%.2f" "$cost")
-		f_csavings=$(printf "%.2f" "$row_cache_savings")
-		f_msavings=$(printf "%.2f" "$row_model_savings")
-
-		model_rows="${model_rows}| ${clean_model} | ${f_requests} | ${f_input} | ${f_output} | ${f_cache} | \$${f_cost} | \$${f_csavings} | \$${f_msavings} |
-"
-	done < <(echo "$model_json" | jq -c '.[] | select(.cost_total >= 0.05)')
-
-	# Format totals
-	local f_total_req f_total_in f_total_out f_total_cache
-	local f_total_csavings f_total_msavings
-	f_total_req=$(_format_number "$total_requests")
-	f_total_in=$(_format_tokens "$total_input")
-	f_total_out=$(_format_tokens "$total_output")
-	f_total_cache=$(_format_tokens "$total_cache")
-	# Round costs and savings to 2 decimal places
-	total_cost=$(printf "%.2f" "$total_cost")
-	f_total_csavings=$(printf "%.2f" "$total_cache_savings")
-	f_total_msavings=$(printf "%.2f" "$total_model_savings")
-
-	# Combined savings for footer
-	local combined_savings
-	combined_savings=$(echo "$total_cache_savings + $total_model_savings" | bc)
-	combined_savings=$(printf "%.2f" "$combined_savings")
-
-	# Token totals for footer
-	local all_tokens cache_pct
-	all_tokens=$(echo "$token_totals" | jq -r '.total_all')
-	cache_pct=$(echo "$token_totals" | jq -r '.cache_hit_pct')
-	local f_all_tokens
-	f_all_tokens=$(_format_tokens "$all_tokens")
-
-	cat <<EOF
-
-## AI Model Usage (last 30 days)
-
-| Model | Requests | Input | Output | Cache read | API Cost | Cache savings | Model savings |
-| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-${model_rows}| **Total** | **${f_total_req}** | **${f_total_in}** | **${f_total_out}** | **${f_total_cache}** | **\$${total_cost}** | **\$${f_total_csavings}** | **\$${f_total_msavings}** |
-
-_${f_all_tokens} total tokens processed. ${cache_pct}% cache hit rate. \$${combined_savings} total saved (\$${f_total_csavings} caching + \$${f_total_msavings} model routing vs all-Opus).
-Model savings are modest because ~${cache_pct}% of tokens are cache reads, where price differences between models are small._
-EOF
+	# Build model usage tables (30-day and all-time)
+	_render_model_usage_table "AI Model Usage (last 30 days)" "$model_json_30d" "$token_totals_30d"
+	_render_model_usage_table "AI Model Usage (all time)" "$model_json_all" "$token_totals_all"
 
 	# Build top apps table (macOS only — requires Knowledge DB)
 	local top_apps_json
