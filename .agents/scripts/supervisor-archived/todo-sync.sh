@@ -1605,11 +1605,15 @@ dedup_todo_task_ids() {
 		# Sort line numbers in descending order for safe deletion
 		local sorted_lines
 		sorted_lines=$(echo "$lines_to_delete" | tr ' ' '\n' | sort -rn | grep -v '^$')
+		local sed_expr=""
 
 		while IFS= read -r line_num; do
 			[[ -z "$line_num" ]] && continue
-			sed_inplace "${line_num}d" "$todo_file"
+			sed_expr+="${line_num}d;"
 		done <<<"$sorted_lines"
+
+		sed_expr="${sed_expr%;}"
+		sed_inplace "$sed_expr" "$todo_file"
 
 		log_success "Phase 0.5b: Removed $changes_made duplicate task line(s) from TODO.md"
 		commit_and_push_todo "$repo_path" "chore: remove $changes_made duplicate task line(s) from TODO.md (t1069)"
