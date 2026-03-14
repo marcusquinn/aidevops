@@ -605,7 +605,7 @@ cmd_auto_pickup() {
 			# Skip tasks with assignee: or started: metadata fields (t1062, t1263)
 			# Match actual metadata fields, not description text containing these words.
 			# assignee: must be followed by a username (word chars), started: by ISO timestamp.
-			if echo "$line" | grep -qE '(assignee:[a-zA-Z0-9_-]+|started:[0-9]{4}-[0-9]{2}-[0-9]{2}T)'; then
+			if [[ "$line" =~ (assignee:[a-zA-Z0-9_-]+|started:[0-9]{4}-[0-9]{2}-[0-9]{2}T) ]]; then
 				log_info "  $task_id: already claimed or in progress — skipping auto-pickup"
 				continue
 			fi
@@ -657,7 +657,7 @@ cmd_auto_pickup() {
 			# Skip tasks already claimed or being worked on interactively (t1062).
 			# assignee: means someone claimed it; started: means work has begun.
 			# Without this check, the supervisor races with interactive sessions.
-			if echo "$line" | grep -qE ' (assignee|started):'; then
+			if [[ "$line" =~ [[:space:]](assignee|started): ]]; then
 				log_info "  $task_id: already claimed/started — skipping auto-pickup"
 				continue
 			fi
@@ -706,7 +706,7 @@ cmd_auto_pickup() {
 			# Skip tasks with assignee: or started: metadata fields (t1062, t1263)
 			# Match actual metadata fields, not description text containing these words.
 			# assignee: must be followed by a username (word chars), started: by ISO timestamp.
-			if echo "$line" | grep -qE '(assignee:[a-zA-Z0-9_-]+|started:[0-9]{4}-[0-9]{2}-[0-9]{2}T)'; then
+			if [[ "$line" =~ (assignee:[a-zA-Z0-9_-]+|started:[0-9]{4}-[0-9]{2}-[0-9]{2}T) ]]; then
 				log_info "  $task_id: already claimed or in progress — skipping auto-pickup"
 				continue
 			fi
@@ -751,7 +751,7 @@ cmd_auto_pickup() {
 			fi
 
 			# Skip tasks already claimed or being worked on interactively (t1062).
-			if echo "$line" | grep -qE ' (assignee|started):'; then
+			if [[ "$line" =~ [[:space:]](assignee|started): ]]; then
 				log_info "  $task_id: already claimed/started — skipping auto-pickup"
 				continue
 			fi
