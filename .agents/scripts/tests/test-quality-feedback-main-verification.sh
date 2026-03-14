@@ -521,6 +521,17 @@ test_skips_no_further_comments_review() {
 	return 0
 }
 
+test_skips_no_further_feedback_review() {
+	local result
+	result=$(_test_approval_filter "The implementation is sound and I have no further feedback.")
+	if [[ "$result" == "skip" ]]; then
+		print_result "skip 'no further feedback' review" 0
+	else
+		print_result "skip 'no further feedback' review" 1 "expected skip, got ${result}"
+	fi
+	return 0
+}
+
 test_skips_gemini_no_further_comments_summary_review() {
 	local result
 	result=$(_test_approval_filter '## Code Review
@@ -951,6 +962,7 @@ main() {
 	echo "Running approval/sentiment detection tests (GH#4604)"
 	test_skips_lgtm_review
 	test_skips_no_further_comments_review
+	test_skips_no_further_feedback_review
 	test_skips_gemini_no_further_comments_summary_review
 	test_skips_looks_good_review
 	test_skips_good_work_review
