@@ -151,7 +151,7 @@ Decision framework for when to use an MCP server vs a curl-based subagent:
 **Three-tier MCP strategy**:
 
 1. **Globally enabled** (always loaded, ~2K tokens each): augment-context-engine
-2. **Enabled, tools disabled** (zero context until agent invokes): claude-code-mcp, gsc, outscraper, google-analytics-mcp, quickfile, amazon-order-history, context7, repomix, playwriter, chrome-devtools, etc.
+2. **Enabled, tools disabled** (zero context until agent invokes): amazon-order-history, chrome-devtools, claude-code-mcp, context7, google-analytics-mcp, gsc, outscraper, playwriter, quickfile, repomix, etc.
 3. **Replaced by curl subagent** (removed entirely): hetzner, serper, dataforseo, ahrefs, hostinger
 
 **Pattern for tier 2** (in `opencode.json`):
