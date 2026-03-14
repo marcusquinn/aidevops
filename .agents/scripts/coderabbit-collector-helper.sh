@@ -24,6 +24,7 @@ set -euo pipefail
 # =============================================================================
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
+# shellcheck disable=SC1091  # shared-constants path resolved at runtime
 source "${SCRIPT_DIR}/shared-constants.sh"
 init_log_file
 
