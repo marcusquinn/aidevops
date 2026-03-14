@@ -2016,12 +2016,13 @@ cmd_reconcile_queue_dispatchability() {
 			# The next git pull removes the local-only line, leaving a DB-only
 			# task that can never be dispatched (dispatch requires TODO.md claim).
 			# Cancel these orphans to prevent permanent dispatch stall.
+			phantom_count=$((phantom_count + 1))
 			if [[ "$dry_run" == "true" ]]; then
 				log_warn "[dry-run] Phase 0.6: $tid queued in DB but not in TODO.md — would cancel (orphaned, t1261)"
 			else
 				log_warn "Phase 0.6: $tid queued in DB but not in TODO.md — cancelling orphan (t1261)"
 				db "$SUPERVISOR_DB" "UPDATE tasks SET status='cancelled', error='Orphaned: queued in DB but not found in TODO.md (t1261)' WHERE id='$(sql_escape "$tid")' AND status='queued';" || true
-				phantom_count=$((phantom_count + 1))
+				cancelled_count=$((cancelled_count + 1))
 			fi
 			continue
 		fi

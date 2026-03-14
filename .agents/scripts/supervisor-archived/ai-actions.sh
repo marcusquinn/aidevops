@@ -1398,7 +1398,10 @@ _exec_create_task() {
 			local escaped_task_id
 			# shellcheck disable=SC2016 # sed replacement pattern is intentionally literal
 			escaped_task_id=$(printf '%s' "$task_id" | sed 's/[.[\*^$()+?{|\\]/\\&/g')
-			sed -i '' "/^- \[ \] ${escaped_task_id} /d" "$todo_file" 2>/dev/null || true
+			# Use sed_inplace (portable macOS/Linux wrapper from shared-constants.sh).
+			# Match task ID followed by space or end-of-line to avoid prefix collisions
+			# (e.g. t1 matching t10). Error suppression removed per style guide.
+			sed_inplace "/^- \[ \] ${escaped_task_id}\([[:space:]]\|$\)/d" "$todo_file"
 		fi
 	fi
 
