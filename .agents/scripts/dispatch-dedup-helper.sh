@@ -84,10 +84,11 @@ extract_keys() {
 	fi
 
 	# Pattern 4: Branch-style "issue-NNN-" or "pr-NNN-" (from worktree names)
+	# Use a portable fallback chain: rg (ripgrep) → ggrep -P (GNU grep on macOS) → grep -E
 	local branch_issue_nums
 	if command -v rg &>/dev/null; then
 		branch_issue_nums=$(printf '%s' "$lower_title" | rg -o 'issue-([0-9]+)' | grep -oE '[0-9]+' || true)
-	elif command -v ggrep &>/dev/null; then
+	elif command -v ggrep &>/dev/null && ggrep -P '' /dev/null 2>/dev/null; then
 		branch_issue_nums=$(printf '%s' "$lower_title" | ggrep -oP 'issue-\K[0-9]+' || true)
 	else
 		branch_issue_nums=$(printf '%s' "$lower_title" | grep -oE 'issue-([0-9]+)' | grep -oE '[0-9]+' || true)
@@ -130,44 +131,32 @@ normalize_title() {
 # Returns: one "pid|key" pair per line on stdout
 #######################################
 list_running_keys() {
-	local worker_procs
-	local worker_pids
-	local worker_pattern='/full-loop|opencode run|claude.*run'
+	# Get PIDs of running worker processes using portable pgrep -f (no -a flag).
+	# pgrep -f matches against the full command line on both Linux and macOS.
+	# We then resolve the full command line per PID via ps -p <pid> -o args=
+	# which is POSIX-compatible and works on Linux, macOS, and BSD.
+	local worker_pids=""
+	worker_pids=$(pgrep -f '/full-loop|opencode run|claude.*run' || true)
 
-	# Get matching worker PIDs from the full command line, then read command per PID
-	worker_pids=$(pgrep -f "$worker_pattern" || true)
 	if [[ -z "$worker_pids" ]]; then
 		return 0
 	fi
 
 	while IFS= read -r pid; do
 		[[ -z "$pid" ]] && continue
-		local cmdline
+		local cmdline=""
+		# ps -p <pid> -o args= prints only the command line (no header, no PID prefix)
 		cmdline=$(ps -p "$pid" -o args= 2>/dev/null || true)
 		[[ -z "$cmdline" ]] && continue
-		worker_procs+="${pid} ${cmdline}"
-		worker_procs+=$'\n'
-	done <<<"$worker_pids"
 
-	if [[ -z "$worker_procs" ]]; then
-		return 0
-	fi
-
-	while IFS= read -r proc_line; do
-		[[ -z "$proc_line" ]] && continue
-		local pid
-		pid=$(printf '%s' "$proc_line" | awk '{print $1}')
-		local cmdline
-		cmdline=$(printf '%s' "$proc_line" | sed 's/^[[:space:]]*[0-9]*[[:space:]]*//')
-
-		local keys
-		keys=$(extract_keys "$cmdline")
-		if [[ -n "$keys" ]]; then
+		local extracted_keys=""
+		extracted_keys=$(extract_keys "$cmdline")
+		if [[ -n "$extracted_keys" ]]; then
 			while IFS= read -r key; do
 				[[ -n "$key" ]] && printf '%s|%s\n' "$pid" "$key"
-			done <<<"$keys"
+			done <<<"$extracted_keys"
 		fi
-	done <<<"$worker_procs"
+	done <<<"$worker_pids"
 
 	return 0
 }
