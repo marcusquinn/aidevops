@@ -76,12 +76,13 @@ _mock_gh_api() {
 	local endpoint=""
 
 	while [[ $# -gt 0 ]]; do
+		local token="$1"
 		case "$1" in
 		-H | --jq)
 			shift 2
 			;;
 		repos/*)
-			endpoint="$1"
+			endpoint="$token"
 			shift
 			;;
 		*)
@@ -465,6 +466,11 @@ _test_approval_filter() {
 			"\\beverything (looks?|seems?) (good|fine|correct|great|solid|clean)\\b"; "i")) as $no_actionable_sentiment |
 
 		($body | test(
+			"\\bsuccessfully addresses?\\b|\\beffectively\\b|\\bimproves?\\b|\\benhances?\\b|" +
+			"\\bconsistent\\b|\\brobust(ness)?\\b|\\buser experience\\b|" +
+			"\\breduces? (external )?requirements?\\b|\\bwell-implemented\\b"; "i")) as $summary_praise_only |
+
+		($body | test(
 			"\\bshould\\b|\\bconsider\\b|\\binstead\\b|\\bsuggest|\\brecommend(ed|ing)?\\b|" +
 			"\\bwarning\\b|\\bcaution\\b|\\bavoid\\b|\\b(don ?'"'"'?t|do not)\\b|" +
 			"\\bvulnerab|\\binsecure|\\binjection\\b|\\bxss\\b|\\bcsrf\\b|" +
@@ -474,8 +480,8 @@ _test_approval_filter() {
 			"\\bworkaround\\b|\\bhack\\b|" +
 			"```\\s*(suggestion|diff)"; "i")) as $actionable |
 
-		# skip = approval-only/no-recommendation AND NOT actionable
-		if (($approval_only or $no_actionable_recommendation or $no_actionable_sentiment) and ($actionable | not)) then "skip"
+		# skip = approval-only/no-recommendation/summary-praise AND NOT actionable
+		if (($approval_only or $no_actionable_recommendation or $no_actionable_sentiment or $summary_praise_only) and ($actionable | not)) then "skip"
 		else "keep"
 		end
 	')
@@ -545,6 +551,17 @@ test_skips_no_further_recommendations_review() {
 		print_result "skip 'no further recommendations' review" 0
 	else
 		print_result "skip 'no further recommendations' review" 1 "expected skip, got ${result}"
+	fi
+	return 0
+}
+
+test_skips_gemini_style_positive_summary_review() {
+	local result
+	result=$(_test_approval_filter "This pull request successfully addresses the issue by removing an external dependency and improves robustness. The addition of no-data messaging enhances user experience.")
+	if [[ "$result" == "skip" ]]; then
+		print_result "skip Gemini-style positive summary review" 0
+	else
+		print_result "skip Gemini-style positive summary review" 1 "expected skip, got ${result}"
 	fi
 	return 0
 }
@@ -622,6 +639,7 @@ main() {
 	test_skips_good_work_review
 	test_skips_no_issues_review
 	test_skips_no_further_recommendations_review
+	test_skips_gemini_style_positive_summary_review
 	test_keeps_actionable_approved_review
 	test_keeps_changes_requested_review
 	test_keeps_review_with_bug_report
