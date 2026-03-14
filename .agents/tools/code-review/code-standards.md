@@ -333,11 +333,13 @@ echo "hello"
 
 More text.
 
-<!-- INCORRECT - Missing blank line -->
+<!-- INCORRECT - Missing blank line before code block -->
 Some text.
 ```bash
 echo "hello"
 ```
+
+More text.
 ````
 
 **Validation**:
