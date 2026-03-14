@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# shellcheck disable=SC1091
 # quality-feedback-helper.sh - Retrieve code quality feedback via GitHub API
 # Consolidates feedback from Codacy, CodeRabbit, SonarCloud, CodeFactor, etc.
 #
@@ -24,6 +25,7 @@
 #   quality-feedback-helper.sh scan-merged --repo owner/repo --batch 20 --create-issues
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
+# shellcheck source=./shared-constants.sh
 source "${SCRIPT_DIR}/shared-constants.sh"
 
 set -euo pipefail
@@ -990,6 +992,11 @@ _scan_single_pr() {
 			"\\bnothing (further|more) to recommend\\b"; "i")) as $no_actionable_recommendation |
 
 		($body | test(
+			"\\bno suggestions? (at this time|for now|currently)?\\b|" +
+			"\\bwithout suggestions?\\b|" +
+			"\\bhas no suggestions?\\b"; "i")) as $no_actionable_suggestion |
+
+		($body | test(
 			"\\blgtm\\b|\\blooks good( to me)?\\b|\\bgood work\\b|" +
 			"\\bno (further |more )?(comments?|issues?|concerns?|feedback)\\b|" +
 			"\\bfound no (issues?|problems?|concerns?)\\b|" +
@@ -1015,12 +1022,12 @@ _scan_single_pr() {
 			"\\bworkaround\\b|\\bhack\\b|" +
 			"```\\s*(suggestion|diff)"; "i")) as $actionable |
 
-		# Skip purely approving reviews: no actionable critique AND body matches
-		# approval-only patterns. This catches "LGTM", "good work", "no further
-		# comments", and "no further recommendations" (even in long summary
-		# reviews), plus non-actionable praise-only summaries, regardless of
-		# reviewer type or review state.
-		select((($approval_only or $no_actionable_recommendation or $no_actionable_sentiment or $summary_praise_only) and ($actionable | not)) | not) |
+		# Skip purely approving reviews. Explicit "no suggestions" statements are
+		# always non-actionable and should be skipped even though they contain the
+		# token "suggest", which would otherwise trip the actionable heuristic.
+		# Other approval/sentiment patterns are skipped only when no actionable
+		# critique appears in the body.
+		select(($no_actionable_suggestion or ((($approval_only or $no_actionable_recommendation or $no_actionable_sentiment or $summary_praise_only) and ($actionable | not))) ) | not) |
 
 		(if $reviewer == "human" then
 			true

@@ -461,6 +461,11 @@ _test_approval_filter() {
 			"\\bnothing (further|more) to recommend\\b"; "i")) as $no_actionable_recommendation |
 
 		($body | test(
+			"\\bno suggestions? (at this time|for now|currently)?\\b|" +
+			"\\bwithout suggestions?\\b|" +
+			"\\bhas no suggestions?\\b"; "i")) as $no_actionable_suggestion |
+
+		($body | test(
 			"\\blgtm\\b|\\blooks good( to me)?\\b|\\bgood work\\b|" +
 			"\\bno (further |more )?(comments?|issues?|concerns?|feedback)\\b|" +
 			"\\beverything (looks?|seems?) (good|fine|correct|great|solid|clean)\\b"; "i")) as $no_actionable_sentiment |
@@ -480,8 +485,8 @@ _test_approval_filter() {
 			"\\bworkaround\\b|\\bhack\\b|" +
 			"```\\s*(suggestion|diff)"; "i")) as $actionable |
 
-		# skip = approval-only/no-recommendation/summary-praise AND NOT actionable
-		if (($approval_only or $no_actionable_recommendation or $no_actionable_sentiment or $summary_praise_only) and ($actionable | not)) then "skip"
+		# skip = explicit no-suggestions OR approval-only/no-recommendation/summary-praise with no actionable critique
+		if ($no_actionable_suggestion or (($approval_only or $no_actionable_recommendation or $no_actionable_sentiment or $summary_praise_only) and ($actionable | not))) then "skip"
 		else "keep"
 		end
 	')
@@ -577,6 +582,17 @@ test_skips_gemini_style_positive_summary_review() {
 	return 0
 }
 
+test_skips_no_suggestions_at_this_time_review() {
+	local result
+	result=$(_test_approval_filter "Review completed. No suggestions at this time.")
+	if [[ "$result" == "skip" ]]; then
+		print_result "skip 'no suggestions at this time' review" 0
+	else
+		print_result "skip 'no suggestions at this time' review" 1 "expected skip, got ${result}"
+	fi
+	return 0
+}
+
 test_keeps_actionable_approved_review() {
 	# APPROVED review that also contains actionable critique — must be kept
 	local result
@@ -652,6 +668,7 @@ main() {
 	test_skips_found_no_issues_long_review
 	test_skips_no_further_recommendations_review
 	test_skips_gemini_style_positive_summary_review
+	test_skips_no_suggestions_at_this_time_review
 	test_keeps_actionable_approved_review
 	test_keeps_changes_requested_review
 	test_keeps_review_with_bug_report
