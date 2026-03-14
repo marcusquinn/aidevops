@@ -1059,13 +1059,15 @@ _save_sweep_state() {
 	local gate_status="$2"
 	local total_issues="$3"
 	local high_critical_count="$4"
+	local qlty_smells="${5:-0}"
+	local qlty_grade="${6:-UNKNOWN}"
 	local slug_safe="${repo_slug//\//-}"
 
 	mkdir -p "$QUALITY_SWEEP_STATE_DIR"
 
 	local state_file="${QUALITY_SWEEP_STATE_DIR}/${slug_safe}.json"
-	printf '{"gate_status":"%s","total_issues":%d,"high_critical_count":%d,"updated_at":"%s"}\n' \
-		"$gate_status" "$total_issues" "$high_critical_count" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+	printf '{"gate_status":"%s","total_issues":%d,"high_critical_count":%d,"qlty_smells":%d,"qlty_grade":"%s","updated_at":"%s"}\n' \
+		"$gate_status" "$total_issues" "$high_critical_count" "$qlty_smells" "$qlty_grade" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
 		>"$state_file"
 	return 0
 }
@@ -1174,35 +1176,80 @@ _All clear — no issues found._
 		fi
 	fi
 
-	# --- 2. Qlty CLI ---
+	# --- 2. Qlty CLI (structured SARIF analysis + badge grade) ---
 	local qlty_section=""
+	local qlty_smell_count=0
+	local qlty_grade="UNKNOWN"
 	local qlty_bin="${HOME}/.qlty/bin/qlty"
 	if [[ -x "$qlty_bin" ]] && [[ -f "${repo_path}/.qlty/qlty.toml" || -f "${repo_path}/.qlty.toml" ]]; then
-		local qlty_output
-		qlty_output=$("$qlty_bin" smells --all 2>/dev/null | head -50) || qlty_output=""
+		# Use SARIF output for machine-parseable smell data (structured by rule, file, location)
+		local qlty_sarif
+		qlty_sarif=$("$qlty_bin" smells --all --sarif --no-snippets --quiet 2>/dev/null) || qlty_sarif=""
 
-		if [[ -n "$qlty_output" ]]; then
-			local smell_count
-			smell_count=$(echo "$qlty_output" | wc -l | tr -d ' ')
-			qlty_section="### Qlty Maintainability Smells
+		if [[ -n "$qlty_sarif" ]] && echo "$qlty_sarif" | jq -e '.runs' &>/dev/null; then
+			# Single jq pass: extract total count, per-rule breakdown, and top files
+			local qlty_data
+			qlty_data=$(echo "$qlty_sarif" | jq -r '
+				(.runs[0].results | length) as $total |
+				([.runs[0].results[] | .ruleId] | group_by(.) | map({rule: .[0], count: length}) | sort_by(-.count)[:8] |
+					map("  - \(.rule): \(.count)") | join("\n")) as $rules |
+				([.runs[0].results[] | .locations[0].physicalLocation.artifactLocation.uri] |
+					group_by(.) | map({file: .[0], count: length}) | sort_by(-.count)[:10] |
+					map("  - `\(.file)`: \(.count) smells") | join("\n")) as $files |
+				"\($total)|\($rules)|\($files)"
+			') || qlty_data="0||"
+			qlty_smell_count="${qlty_data%%|*}"
+			local qlty_remainder="${qlty_data#*|}"
+			local qlty_rules_breakdown="${qlty_remainder%%|*}"
+			local qlty_files_breakdown="${qlty_remainder#*|}"
+			[[ "$qlty_smell_count" =~ ^[0-9]+$ ]] || qlty_smell_count=0
+			qlty_rules_breakdown=$(_sanitize_markdown "$qlty_rules_breakdown")
+			qlty_files_breakdown=$(_sanitize_markdown "$qlty_files_breakdown")
 
-- **Total smells**: ${smell_count}
+			qlty_section="### Qlty Maintainability
 
-\`\`\`
-$(echo "$qlty_output" | head -30)
-\`\`\`
+- **Total smells**: ${qlty_smell_count}
+- **By rule (fix these for maximum grade improvement)**:
+${qlty_rules_breakdown}
+- **Top files (highest smell density)**:
+${qlty_files_breakdown}
 "
-			if [[ "$smell_count" -gt 30 ]]; then
-				qlty_section="${qlty_section}
-_(showing first 30 of ${smell_count} — run \`qlty smells --all\` for full list)_
+			if [[ "$qlty_smell_count" -eq 0 ]]; then
+				qlty_section="### Qlty Maintainability
+
+_No smells detected — clean codebase._
 "
 			fi
 		else
-			qlty_section="### Qlty Maintainability Smells
+			qlty_section="### Qlty Maintainability
 
-_No smells detected or qlty analysis returned empty._
+_Qlty analysis returned empty or failed to parse._
 "
 		fi
+
+		# Fetch the Qlty Cloud badge grade (A/B/C/D/F) from the badge SVG.
+		# The grade is determined by Qlty Cloud's analysis (not local CLI),
+		# so we parse the badge colour which maps to the grade letter.
+		local badge_svg
+		badge_svg=$(curl -sS --fail --connect-timeout 5 --max-time 10 \
+			"https://qlty.sh/gh/${repo_slug}/maintainability.svg" 2>/dev/null) || badge_svg=""
+		if [[ -n "$badge_svg" ]]; then
+			# Grade colour mapping from Qlty's badge palette
+			qlty_grade=$(python3 -c "
+import sys, re
+svg = sys.stdin.read()
+colors = {'#22C55E':'A','#84CC16':'B','#EAB308':'C','#F97316':'D','#EF4444':'F'}
+for c in re.findall(r'fill=\"(#[A-F0-9]+)\"', svg):
+    if c in colors:
+        print(colors[c])
+        sys.exit(0)
+print('UNKNOWN')
+" <<<"$badge_svg" 2>/dev/null) || qlty_grade="UNKNOWN"
+		fi
+
+		qlty_section="${qlty_section}
+- **Qlty Cloud grade**: ${qlty_grade}
+"
 		tool_count=$((tool_count + 1))
 	fi
 
@@ -1484,7 +1531,7 @@ _Monitoring: ${sweep_total_issues} issues (delta: ${issue_delta}), gate ${sweep_
 	fi
 
 	# Common to all branches: save state for next sweep and count the tool
-	_save_sweep_state "$repo_slug" "$sweep_gate_status" "$sweep_total_issues" "$sweep_high_critical"
+	_save_sweep_state "$repo_slug" "$sweep_gate_status" "$sweep_total_issues" "$sweep_high_critical" "$qlty_smell_count" "$qlty_grade"
 	tool_count=$((tool_count + 1))
 
 	# --- 6. Merged PR review scanner ---
@@ -1561,7 +1608,7 @@ _Auto-generated by stats-wrapper.sh daily quality sweep. The supervisor will rev
 	# leave the dashboard stale (CodeRabbit review feedback).
 	_update_quality_issue_body "$repo_slug" "$issue_number" \
 		"$sweep_gate_status" "$sweep_total_issues" "$sweep_high_critical" \
-		"$now_iso" "$tool_count"
+		"$now_iso" "$tool_count" "$qlty_smell_count" "$qlty_grade"
 
 	# Post comment (best-effort — dashboard already updated above)
 	local comment_stderr=""
@@ -1591,6 +1638,8 @@ _Auto-generated by stats-wrapper.sh daily quality sweep. The supervisor will rev
 #   $5 - high/critical count
 #   $6 - sweep timestamp (ISO)
 #   $7 - tool count
+#   $8 - qlty smell count (optional)
+#   $9 - qlty grade (optional)
 #######################################
 _update_quality_issue_body() {
 	local repo_slug="$1"
@@ -1600,6 +1649,8 @@ _update_quality_issue_body() {
 	local high_critical="$5"
 	local sweep_time="$6"
 	local tool_count="$7"
+	local qlty_smell_count="${8:-0}"
+	local qlty_grade="${9:-UNKNOWN}"
 
 	# --- Quality-debt backlog stats ---
 	# Use GraphQL issueCount for accurate totals without pagination limits
@@ -1756,15 +1807,42 @@ ${prs_stale_waiting}"
 	fi
 
 	# --- Badge status indicator ---
-	# Translate gate status to a human-readable badge indicator so the
-	# dashboard immediately shows whether the repo's public badges are green.
+	# Translate gate status + Qlty grade to a human-readable badge indicator
+	# so the dashboard immediately shows whether the repo's public badges are green.
 	local badge_indicator="UNKNOWN"
+	# Qlty grade comes from the function-scoped variable set in section 2
+	local sweep_qlty_grade="${qlty_grade:-UNKNOWN}"
+	local sweep_qlty_smells="${qlty_smell_count:-0}"
+
+	local sonar_badge="UNKNOWN"
 	case "$gate_status" in
-	OK) badge_indicator="GREEN (all badges passing)" ;;
-	ERROR) badge_indicator="RED (SonarCloud quality gate failing)" ;;
-	WARN) badge_indicator="YELLOW (SonarCloud quality gate warning)" ;;
-	*) badge_indicator="UNKNOWN (could not determine)" ;;
+	OK) sonar_badge="GREEN" ;;
+	ERROR) sonar_badge="RED" ;;
+	WARN) sonar_badge="YELLOW" ;;
 	esac
+
+	local qlty_badge="UNKNOWN"
+	case "$sweep_qlty_grade" in
+	A) qlty_badge="GREEN" ;;
+	B) qlty_badge="GREEN" ;;
+	C) qlty_badge="YELLOW" ;;
+	D) qlty_badge="RED" ;;
+	F) qlty_badge="RED" ;;
+	esac
+
+	if [[ "$sonar_badge" == "GREEN" && "$qlty_badge" == "GREEN" ]]; then
+		badge_indicator="GREEN (all badges passing)"
+	elif [[ "$sonar_badge" == "RED" || "$qlty_badge" == "RED" ]]; then
+		local failing=""
+		[[ "$sonar_badge" == "RED" ]] && failing="SonarCloud"
+		[[ "$qlty_badge" == "RED" ]] && failing="${failing:+$failing + }Qlty"
+		badge_indicator="RED (${failing} failing)"
+	elif [[ "$sonar_badge" == "YELLOW" || "$qlty_badge" == "YELLOW" ]]; then
+		local warning=""
+		[[ "$sonar_badge" == "YELLOW" ]] && warning="SonarCloud"
+		[[ "$qlty_badge" == "YELLOW" ]] && warning="${warning:+$warning + }Qlty"
+		badge_indicator="YELLOW (${warning} needs improvement)"
+	fi
 
 	# --- Assemble dashboard body ---
 	local body="## Quality Review Dashboard
@@ -1780,6 +1858,8 @@ ${prs_stale_waiting}"
 | --- | --- |
 | SonarCloud gate | ${gate_status} |
 | SonarCloud issues | ${total_issues} (${high_critical} high/critical) |
+| Qlty grade | ${sweep_qlty_grade} |
+| Qlty smells | ${sweep_qlty_smells} |
 | Quality-debt open | ${debt_open} |
 | Quality-debt closed | ${debt_closed} |
 | Quality-debt total | ${debt_total} |
@@ -1803,7 +1883,9 @@ _Auto-updated by daily quality sweep. Comments below contain detailed findings p
 	local debt_label="debt"
 	local title_gate="${gate_status}"
 	[[ "$gate_status" == "UNKNOWN" ]] && title_gate="--"
-	local quality_title="Daily Code Quality Review — ${title_gate}, ${debt_open} ${debt_label}, ${total_issues} sonar"
+	local qlty_title="${sweep_qlty_grade}"
+	[[ "$sweep_qlty_grade" == "UNKNOWN" ]] && qlty_title="--"
+	local quality_title="Daily Code Quality Review — ${title_gate}, qlty:${qlty_title}, ${debt_open} ${debt_label}, ${total_issues} sonar"
 	# Only update title if it changed (avoid unnecessary API calls)
 	local current_title
 	current_title=$(gh issue view "$issue_number" --repo "$repo_slug" --json title --jq '.title' 2>>"$LOGFILE" || echo "")

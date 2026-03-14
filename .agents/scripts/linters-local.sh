@@ -118,6 +118,93 @@ check_sonarcloud_status() {
 	return 0
 }
 
+check_qlty_maintainability() {
+	echo -e "${BLUE}Checking Qlty Maintainability...${NC}"
+
+	local qlty_bin="${HOME}/.qlty/bin/qlty"
+	if [[ ! -x "$qlty_bin" ]]; then
+		print_warning "Qlty CLI not installed (run: curl https://qlty.sh | bash)"
+		return 0
+	fi
+
+	if [[ ! -f ".qlty/qlty.toml" && ! -f ".qlty.toml" ]]; then
+		print_warning "No qlty.toml found (run: qlty init)"
+		return 0
+	fi
+
+	# Get smell count via SARIF for accuracy
+	local sarif_output
+	sarif_output=$("$qlty_bin" smells --all --sarif --no-snippets --quiet 2>/dev/null) || sarif_output=""
+
+	if [[ -n "$sarif_output" ]]; then
+		local smell_count
+		smell_count=$(echo "$sarif_output" | jq '.runs[0].results | length' 2>/dev/null) || smell_count=0
+		[[ "$smell_count" =~ ^[0-9]+$ ]] || smell_count=0
+
+		if [[ "$smell_count" -eq 0 ]]; then
+			print_success "Qlty: 0 smells (clean)"
+		elif [[ "$smell_count" -le 20 ]]; then
+			print_success "Qlty: ${smell_count} smells (good)"
+		elif [[ "$smell_count" -le 50 ]]; then
+			print_warning "Qlty: ${smell_count} smells (needs attention)"
+		else
+			print_warning "Qlty: ${smell_count} smells (high — impacts maintainability grade)"
+		fi
+
+		# Show top rules for targeted fixes
+		if [[ "$smell_count" -gt 0 ]]; then
+			echo "Top smell types:"
+			echo "$sarif_output" | jq -r '
+				[.runs[0].results[].ruleId] | group_by(.) |
+				map({rule: .[0], count: length}) | sort_by(-.count)[:5][] |
+				"  \(.rule): \(.count)"
+			' 2>/dev/null
+
+			echo "Top files:"
+			echo "$sarif_output" | jq -r '
+				[.runs[0].results[].locations[0].physicalLocation.artifactLocation.uri] |
+				group_by(.) | map({file: .[0], count: length}) | sort_by(-.count)[:5][] |
+				"  \(.file): \(.count) smells"
+			' 2>/dev/null
+		fi
+	else
+		print_warning "Qlty analysis returned empty"
+	fi
+
+	# Check badge grade from Qlty Cloud
+	local repo_slug
+	repo_slug=$(git remote get-url origin 2>/dev/null | sed 's|.*github.com[:/]||;s|\.git$||') || repo_slug=""
+	if [[ -n "$repo_slug" ]]; then
+		local badge_svg
+		badge_svg=$(curl -sS --fail --connect-timeout 5 --max-time 10 \
+			"https://qlty.sh/gh/${repo_slug}/maintainability.svg" 2>/dev/null) || badge_svg=""
+		if [[ -n "$badge_svg" ]]; then
+			local grade
+			grade=$(python3 -c "
+import sys, re
+svg = sys.stdin.read()
+colors = {'#22C55E':'A','#84CC16':'B','#EAB308':'C','#F97316':'D','#EF4444':'F'}
+for c in re.findall(r'fill=\"(#[A-F0-9]+)\"', svg):
+    if c in colors:
+        print(colors[c])
+        sys.exit(0)
+print('UNKNOWN')
+" <<<"$badge_svg" 2>/dev/null) || grade="UNKNOWN"
+			if [[ "$grade" == "A" || "$grade" == "B" ]]; then
+				print_success "Qlty Cloud grade: ${grade}"
+			elif [[ "$grade" == "C" ]]; then
+				print_warning "Qlty Cloud grade: ${grade} (target: A)"
+			elif [[ "$grade" == "D" || "$grade" == "F" ]]; then
+				print_error "Qlty Cloud grade: ${grade} (needs significant improvement)"
+			else
+				echo "Qlty Cloud grade: ${grade}"
+			fi
+		fi
+	fi
+
+	return 0
+}
+
 check_return_statements() {
 	echo -e "${BLUE}Checking Return Statements (S7682)...${NC}"
 
@@ -860,6 +947,11 @@ main() {
 	# Run all local quality checks (respecting bundle skip_gates)
 	if ! should_skip_gate "sonarcloud"; then
 		check_sonarcloud_status || exit_code=1
+		echo ""
+	fi
+
+	if ! should_skip_gate "qlty"; then
+		check_qlty_maintainability || exit_code=1
 		echo ""
 	fi
 
