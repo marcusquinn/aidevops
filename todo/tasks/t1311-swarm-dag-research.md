@@ -241,19 +241,19 @@ Add a new function `build_task_dependency_graph()` to `todo-sync.sh`:
 build_task_dependency_graph() {
     local todo_file="$1"
     local graph="{}"
-    
+
     while IFS= read -r line; do
         local task_id blocked_by
         task_id=$(printf '%s' "$line" | grep -oE 't[0-9]+(\.[0-9]+)*' | head -1)
         blocked_by=$(printf '%s' "$line" | grep -oE 'blocked-by:[^ ]+' | head -1 | sed 's/blocked-by://')
         [[ -z "$task_id" || -z "$blocked_by" ]] && continue
-        
+
         # Add to graph as JSON
         local deps_json
         deps_json=$(printf '%s' "$blocked_by" | tr ',' '\n' | jq -R . | jq -s .)
         graph=$(printf '%s' "$graph" | jq --arg id "$task_id" --argjson deps "$deps_json" '. + {($id): $deps}')
     done < <(grep -E '^\s*- \[ \] t[0-9]+.*blocked-by:' "$todo_file" || true)
-    
+
     printf '%s' "$graph"
     return 0
 }
@@ -292,7 +292,7 @@ Add `compute_batch_waves()` to `batch.sh`:
 # Output: JSON array of arrays [["t001","t002"], ["t003"], ["t004","t005"]]
 compute_batch_waves() {
     local batch_id="$1"
-    
+
     # Get all tasks in batch with their blocked-by deps
     local tasks_json
     tasks_json=$(db -json "$SUPERVISOR_DB" "
@@ -302,13 +302,13 @@ compute_batch_waves() {
         WHERE bt.batch_id = '$(sql_escape "$batch_id")'
         ORDER BY bt.position;
     ")
-    
+
     # Build dependency graph from TODO.md blocked-by fields
     # ... use build_task_dependency_graph() ...
-    
+
     # Compute waves via topological sort
     # ... Kahn's algorithm adapted for shell ...
-    
+
     # Store waves in batch metadata
     db "$SUPERVISOR_DB" "UPDATE batches SET waves = '...' WHERE id = '...';"
 }
@@ -345,7 +345,7 @@ while IFS= read -r line; do
     task_id=$(printf '%s' "$line" | grep -oE 't[0-9]+(\.[0-9]+)*' | head -1)
     blocks_field=$(printf '%s' "$line" | grep -oE 'blocks:[^ ]+' | head -1 | sed 's/blocks://')
     [[ -z "$task_id" || -z "$blocks_field" ]] && continue
-    
+
     # For each blocked task, add this task as a dependency
     IFS=',' read -ra blocked_tasks <<< "$blocks_field"
     for blocked_id in "${blocked_tasks[@]}"; do
@@ -374,22 +374,22 @@ This is the exact equivalent of oh-my-pi's `reports_to` → `waits_for` normaliz
 cmd_dag() {
     local repo_path="${1:-.}"
     local todo_file="$repo_path/TODO.md"
-    
+
     # Build graph
     local graph_json
     graph_json=$(build_task_dependency_graph "$todo_file")
-    
+
     # Detect cycles
     local cycles
     cycles=$(detect_dependency_cycles "$graph_json")
     if [[ -n "$cycles" ]]; then
         echo "WARNING: Circular dependencies detected: $cycles"
     fi
-    
+
     # Compute waves
     local waves_json
     waves_json=$(compute_waves_from_graph "$graph_json")
-    
+
     # Render as Mermaid
     echo '```mermaid'
     echo 'graph LR'
@@ -556,7 +556,9 @@ A graph builder that validates all `blocked-by:` references point to existing ta
 
 This is the highest-value, lowest-risk change. It doesn't modify the existing unblocking or dispatch mechanics — it adds a read-only analysis layer that improves AI decision quality and catches data quality issues.
 
-**Defer Enhancements 2 and 4** until Enhancement 1 is proven in production. Enhancement 4 (visualization) is a natural follow-up once the graph builder exists.
+**Defer Enhancement 2** until Enhancement 1 is proven in production.
+
+**Stage Enhancement 4 as the next follow-up after 1+3** (not in the first rollout). Its priority remains elevated because it improves observability of AI dispatch reasoning, but it depends on validating the graph builder in production first.
 
 ### 9.6 Conclusion
 
