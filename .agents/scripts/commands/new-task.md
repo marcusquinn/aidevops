@@ -217,18 +217,26 @@ If the task clearly matches a domain, apply the label:
 
 ```bash
 # Apply labels if task_ref exists (issue was created)
-REPO_SLUG="$(gh repo view --json nameWithOwner -q .nameWithOwner)"
-if [[ -n "$task_ref" ]]; then
+REPO_SLUG="$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || true)"
+if [[ -n "$task_ref" && -n "$REPO_SLUG" ]]; then
   ISSUE_NUM="${task_ref#GH#}"
   # Apply tier label (only for non-default tiers)
   if [[ -n "$tier_label" ]]; then
-    gh label create "$tier_label" --repo "$REPO_SLUG" 2>/dev/null || true
-    gh issue edit "$ISSUE_NUM" --repo "$REPO_SLUG" --add-label "$tier_label" 2>/dev/null || true
+    gh label create "$tier_label" --repo "$REPO_SLUG" >/dev/null 2>&1 || true
+    if ! gh issue edit "$ISSUE_NUM" --repo "$REPO_SLUG" --add-label "$tier_label" >/dev/null 2>&1; then
+      echo "[new-task] WARN: failed to apply tier label '$tier_label' to ${task_ref}" >&2
+    fi
   fi
   # Apply domain label (only for non-code domains)
   if [[ -n "$domain_label" ]]; then
-    gh label create "$domain_label" --repo "$REPO_SLUG" 2>/dev/null || true
-    gh issue edit "$ISSUE_NUM" --repo "$REPO_SLUG" --add-label "$domain_label" 2>/dev/null || true
+    gh label create "$domain_label" --repo "$REPO_SLUG" >/dev/null 2>&1 || true
+    if ! gh issue edit "$ISSUE_NUM" --repo "$REPO_SLUG" --add-label "$domain_label" >/dev/null 2>&1; then
+      echo "[new-task] WARN: failed to apply domain label '$domain_label' to ${task_ref}" >&2
+    fi
+  fi
+else
+  if [[ -n "$task_ref" ]]; then
+    echo "[new-task] WARN: unable to resolve repo slug for label application" >&2
   fi
 fi
 ```
