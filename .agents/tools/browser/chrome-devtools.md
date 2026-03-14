@@ -50,7 +50,7 @@ npx chrome-devtools-mcp@latest --autoConnect
 
 **Capabilities**:
 - Performance: `lighthouse()`, `measureWebVitals()` (LCP, FID, CLS, TTFB)
-- Network: `monitorNetwork()`, global network throttling via `emulate` tool with `networkConditions`
+- Network: `monitorNetwork()`, global throttling via `emulate` with `networkConditions`, individual request throttling via `throttleRequest()` / `throttleRequests()` (Chrome 144+)
 - Scraping: `extractData()`, `screenshot()` (fullPage, element)
 - Debug: `captureConsole()`, CSS coverage, visual regression
 - Mobile: `emulateDevice()`, `simulateTouch()` (tap, swipe)
@@ -175,7 +175,72 @@ await chromeDevTools.emulate({
 });
 ```
 
-**Note**: Per-request throttling is available in Chrome DevTools UI (right-click request → "Throttle request") but is not exposed via the MCP tool API. Use global network throttling above for programmatic testing.
+### **Individual Request Throttling** (Chrome 144+)
+
+Chrome 144+ supports throttling individual network requests rather than the entire page. This enables precise testing of how your application handles slow-loading specific resources.
+
+**Manual DevTools usage**: Right-click any request in the Network panel → "Throttle request URL" (Chrome 144+).
+
+**Use cases:**
+- Test lazy-loading behavior when specific images load slowly
+- Simulate slow API responses without affecting other requests
+- Debug race conditions when certain scripts load out of order
+- Test error handling for slow third-party resources
+
+> **Note**: The `url` parameter specifies the page to navigate to before applying throttling rules. These functions first navigate to the specified `url`, then apply the throttling rules for the duration of that page load.
+
+```javascript
+// Throttle a specific API endpoint
+await chromeDevTools.throttleRequest({
+  url: "https://your-website.com",  // page to navigate to
+  requestPattern: "**/api/slow-endpoint",
+  latency: 3000,  // Add 3 second delay
+  downloadThroughput: 50 * 1024  // 50 KB/s
+});
+
+// Throttle specific image requests
+await chromeDevTools.throttleRequest({
+  url: "https://your-website.com",
+  requestPattern: "*.jpg",
+  latency: 2000,
+  downloadThroughput: 100 * 1024  // 100 KB/s
+});
+
+// Throttle multiple patterns with different conditions
+// Rules are evaluated in order — the first matching rule wins.
+// In the example below, **/api/critical matches the first rule (no throttling)
+// and is NOT further matched by the second **/api/* rule.
+await chromeDevTools.throttleRequests({
+  url: "https://your-website.com",
+  rules: [
+    {
+      pattern: "**/api/critical",
+      latency: 0,
+      downloadThroughput: -1  // No throttling (priority)
+    },
+    {
+      pattern: "**/api/*",
+      latency: 1500,
+      downloadThroughput: 200 * 1024
+    },
+    {
+      pattern: "*.woff2",
+      latency: 500,
+      downloadThroughput: 50 * 1024
+    }
+  ]
+});
+```
+
+**Comparison: Page-Level vs Individual Request Throttling**
+
+| Feature | Page-Level (`emulate`) | Individual Request (`throttleRequest`) |
+|---------|----------------------|---------------------------------------|
+| Scope | All requests | Specific URL patterns |
+| Precision | Coarse | Fine-grained |
+| Use case | General slow network | Targeted resource testing |
+| Chrome version | All versions | Chrome 144+ |
+| MCP API | `emulate` tool | `throttleRequest` / `throttleRequests` |
 
 ## 📱 **Mobile Testing**
 
