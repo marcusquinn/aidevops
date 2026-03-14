@@ -238,7 +238,7 @@ stripe_create_card() {
 		-u "${api_key}:" \
 		-d "type=virtual" \
 		-d "cardholder=${cardholder_id}" \
-		-d "currency=${currency,,}" \
+		-d "currency=$(echo "$currency" | tr '[:upper:]' '[:lower:]')" \
 		-d "spending_controls[spending_limits][0][amount]=$(echo "$amount * 100" | bc | cut -d. -f1)" \
 		-d "spending_controls[spending_limits][0][interval]=all_time" \
 		-d "metadata[description]=${description}" \

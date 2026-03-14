@@ -413,8 +413,10 @@ cmd_resolve() {
 	fi
 
 	if [[ -n "$detected" ]]; then
-		local detected_array
-		mapfile -t detected_array <<<"$detected"
+		local detected_array=()
+		while IFS= read -r _line; do
+			[[ -n "$_line" ]] && detected_array+=("$_line")
+		done <<<"$detected"
 
 		if [[ ${#detected_array[@]} -eq 1 ]]; then
 			cmd_load "${detected_array[0]}"

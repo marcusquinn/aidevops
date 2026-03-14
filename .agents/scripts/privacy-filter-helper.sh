@@ -221,8 +221,11 @@ scan_privacy() {
 	fi
 	echo ""
 
-	# Load all patterns
-	mapfile -t patterns < <(get_all_patterns)
+	# Load all patterns (bash 3.2 compatible — no mapfile)
+	local patterns=()
+	while IFS= read -r _line; do
+		[[ -n "$_line" ]] && patterns+=("$_line")
+	done < <(get_all_patterns)
 
 	print_header "Scanning for privacy patterns..."
 	print_info "Checking ${#patterns[@]} patterns"
@@ -294,8 +297,11 @@ filter_preview() {
 	print_info "Target: $target"
 	echo ""
 
-	# Load all patterns
-	mapfile -t patterns < <(get_all_patterns)
+	# Load all patterns (bash 3.2 compatible — no mapfile)
+	local patterns=()
+	while IFS= read -r _line; do
+		[[ -n "$_line" ]] && patterns+=("$_line")
+	done < <(get_all_patterns)
 
 	print_info "Showing what would be redacted..."
 	echo ""
@@ -351,8 +357,11 @@ apply_redactions() {
 		return 1
 	fi
 
-	# Load all patterns
-	mapfile -t patterns < <(get_all_patterns)
+	# Load all patterns (bash 3.2 compatible — no mapfile)
+	local patterns=()
+	while IFS= read -r _line; do
+		[[ -n "$_line" ]] && patterns+=("$_line")
+	done < <(get_all_patterns)
 
 	# Apply redactions
 	for pattern in "${patterns[@]}"; do
