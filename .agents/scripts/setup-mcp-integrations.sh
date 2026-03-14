@@ -217,7 +217,7 @@ install_mcp() {
 		print_info "Grep by Vercel MCP (grep.app) is no longer installed by aidevops"
 		print_info "Use @github-search subagent instead (CLI-based, zero token overhead)"
 		print_info "If you have Oh-My-OpenCode, it provides grep_app MCP"
-		print_info ""
+		echo
 		print_info "Usage: @github-search 'search pattern'"
 		print_info "Or directly: gh search code 'pattern' --language typescript"
 		;;
