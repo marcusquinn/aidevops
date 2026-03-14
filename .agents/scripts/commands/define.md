@@ -56,6 +56,16 @@ Also classify the **agent domain** — this determines which specialist agent ha
 
 Include the domain tag (e.g., `#seo`, `#content`) in the TODO.md entry and as a GitHub label on the issue. Omit for code tasks.
 
+Also classify the **model tier** — this determines the intelligence level of the worker dispatched for this task:
+
+| Tier | Tag | Signals |
+|------|-----|---------|
+| **thinking** | `tier:thinking` | Architecture decisions, novel design with no existing patterns, complex multi-system trade-offs, security audits requiring deep reasoning |
+| **simple** | `tier:simple` | Docs-only changes, simple renames/formatting, config tweaks, label/tag updates |
+| *(coding)* | *(none)* | Standard implementation, bug fixes, refactors, tests — **default, no tag needed** |
+
+Default to no tier tag — most tasks are coding (sonnet). Only tag when the task clearly needs more reasoning power or clearly needs less.
+
 If ambiguous, ask:
 
 ```text

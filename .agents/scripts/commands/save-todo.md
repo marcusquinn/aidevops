@@ -47,6 +47,16 @@ Every task MUST be evaluated for these pipeline tags:
 
 **`#plan`** — Add when the task needs decomposition into subtasks before implementation (multi-phase, >2h, research/design needed).
 
+**Model tier tags** — Evaluate the task's reasoning complexity:
+
+| Tier | Tag | When to Apply |
+|------|-----|---------------|
+| thinking | `tier:thinking` | Architecture, novel design, complex trade-offs, security audits |
+| simple | `tier:simple` | Docs-only, simple renames, formatting, config changes |
+| *(coding)* | *(none)* | Standard implementation, bug fixes, refactors — **default, no tag needed** |
+
+Default to no tier tag. Most tasks are coding tasks (sonnet). Only tag exceptions.
+
 **Agent domain tags** — If the task maps to a specialist agent domain, add the corresponding tag. This enables the pulse to route dispatch to the correct agent without guessing from the title:
 
 | Domain | Tag | Agent |

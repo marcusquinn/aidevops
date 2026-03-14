@@ -183,9 +183,19 @@ Format the TODO.md entry using the allocated ID:
 
 If the brief is too thin for auto-dispatch, omit the tag and note why.
 
-### Step 6.5: Apply Agent Routing Label
+### Step 6.5: Apply Model Tier and Agent Routing Labels
 
-Evaluate whether the task maps to a specialist agent domain. If it does, add the corresponding tag to the TODO.md entry AND apply the matching GitHub label to the issue (if `task_ref` exists).
+**Model tier label** — Evaluate the task's reasoning complexity and add a tier tag. This tells the pulse which model intelligence level to use at dispatch time:
+
+| Tier | TODO Tag | GitHub Label | When to Apply |
+|------|----------|--------------|---------------|
+| thinking | `tier:thinking` | `tier:thinking` | Architecture decisions, novel design, complex trade-offs, security audits, multi-system reasoning |
+| simple | `tier:simple` | `tier:simple` | Docs-only, simple renames, formatting, config changes, label/tag updates |
+| *(coding)* | *(none)* | *(none)* | Standard implementation, bug fixes, refactors, tests — **default, no label needed** |
+
+**Default to no tier label** — most tasks are coding tasks that use sonnet. Only add a tier label when the task clearly needs more reasoning power (thinking) or clearly needs less (simple). When uncertain, omit the label — sonnet handles the vast majority of work well.
+
+**Agent routing label** — Evaluate whether the task maps to a specialist agent domain. If it does, add the corresponding tag to the TODO.md entry AND apply the matching GitHub label to the issue (if `task_ref` exists).
 
 | Domain Signal | TODO Tag | GitHub Label | Agent |
 |--------------|----------|--------------|-------|
@@ -206,10 +216,20 @@ Evaluate whether the task maps to a specialist agent domain. If it does, add the
 If the task clearly matches a domain, apply the label:
 
 ```bash
-# Only if task_ref exists (issue was created) and domain is non-code
-if [[ -n "$task_ref" && -n "$domain_label" ]]; then
-  gh label create "$domain_label" --repo "$(gh repo view --json nameWithOwner -q .nameWithOwner)" 2>/dev/null || true
-  gh issue edit "${task_ref#GH#}" --repo "$(gh repo view --json nameWithOwner -q .nameWithOwner)" --add-label "$domain_label" 2>/dev/null || true
+# Apply labels if task_ref exists (issue was created)
+REPO_SLUG="$(gh repo view --json nameWithOwner -q .nameWithOwner)"
+if [[ -n "$task_ref" ]]; then
+  ISSUE_NUM="${task_ref#GH#}"
+  # Apply tier label (only for non-default tiers)
+  if [[ -n "$tier_label" ]]; then
+    gh label create "$tier_label" --repo "$REPO_SLUG" 2>/dev/null || true
+    gh issue edit "$ISSUE_NUM" --repo "$REPO_SLUG" --add-label "$tier_label" 2>/dev/null || true
+  fi
+  # Apply domain label (only for non-code domains)
+  if [[ -n "$domain_label" ]]; then
+    gh label create "$domain_label" --repo "$REPO_SLUG" 2>/dev/null || true
+    gh issue edit "$ISSUE_NUM" --repo "$REPO_SLUG" --add-label "$domain_label" 2>/dev/null || true
+  fi
 fi
 ```
 

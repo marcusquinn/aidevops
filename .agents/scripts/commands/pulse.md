@@ -261,7 +261,7 @@ This is informational, not an auto-kill trigger. Workers doing legitimate resear
 
 ### Model escalation
 
-After 2+ failed attempts on the same issue (count kill/failure comments), escalate to `--model anthropic/claude-opus-4-6`. See automate.md "Model escalation" for the tier table. At 3+ failures, also add a summary of what previous workers attempted.
+After 2+ failed attempts on the same issue (count kill/failure comments), escalate to `--model anthropic/claude-opus-4-6`. This overrides any `tier:` label on the issue. At 3+ failures, also add a summary of what previous workers attempted. See "Model tier selection" under Dispatch Refinements for the full precedence chain.
 
 ## Dispatch Refinements
 
@@ -294,6 +294,25 @@ Before dispatching, check issue labels for agent routing. This avoids guessing f
 If no domain label is present and the title/repo context is ambiguous, fetch `body[:200]` with `gh issue view NUMBER --json body --jq '.body[:200]'` for clarification. Default to Build+ when uncertain.
 
 Also check for bundle-level agent routing overrides: `bundle-helper.sh get agent_routing <repo-path>`. Explicit labels always override bundle defaults.
+
+### Model tier selection
+
+Before dispatching, determine the appropriate model tier. Check these sources in precedence order:
+
+1. **Failure escalation** (highest priority): Count kill/failure comments on the issue. After 2+ failed attempts → `--model anthropic/claude-opus-4-6`. This overrides all other tier signals.
+2. **Issue labels**: `tier:thinking` → `--model anthropic/claude-opus-4-6`, `tier:simple` → `--model anthropic/claude-haiku-4-5-20251001`. These labels are set at task creation time.
+3. **Bundle defaults**: `bundle-helper.sh get model_defaults.implementation <repo-path>`. If the bundle says `opus` for this task type, respect it.
+4. **No signal** → omit `--model` (default round-robin, currently sonnet-tier).
+
+| Label | Model Flag | Use Case |
+|-------|-----------|----------|
+| `tier:thinking` | `--model anthropic/claude-opus-4-6` | Architecture, novel design, complex trade-offs |
+| `tier:simple` | `--model anthropic/claude-haiku-4-5-20251001` | Docs, formatting, config, simple renames |
+| *(no tier label)* | *(omit — default round-robin)* | Standard coding — features, bug fixes, refactors |
+
+Use `model-availability-helper.sh resolve <tier>` to get the best available model for a tier when the primary provider is backed off. For example, if Anthropic is backed off, `resolve opus` returns the cross-provider fallback (o3).
+
+**Cost justification**: One opus dispatch (~3x sonnet) is cheaper than 3 failed sonnet dispatches. One haiku dispatch (~0.25x sonnet) saves 75% on tasks that don't need sonnet's reasoning. The tier labels make this automatic — no per-dispatch analysis needed.
 
 ### Execution mode
 
