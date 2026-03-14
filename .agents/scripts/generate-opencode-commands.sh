@@ -4,7 +4,7 @@
 # =============================================================================
 # Creates /commands in OpenCode from agent markdown files
 #
-# Source: ~/.aidevops/agents/
+# Source: ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/
 # Target: ~/.config/opencode/command/
 #
 # Commands are generated from:
@@ -87,7 +87,7 @@ create_command() {
 create_command "agent-review" \
 	"Systematic review and improvement of agent instructions" \
 	"$AGENT_BUILD" "true" <<'BODY'
-Read $HOME/.aidevops/agents/tools/build-agent/agent-review.md and follow its instructions.
+Read ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/tools/build-agent/agent-review.md and follow its instructions.
 
 Review the agent file(s) specified: $ARGUMENTS
 
@@ -105,7 +105,7 @@ BODY
 create_command "preflight" \
 	"Run quality checks before version bump and release" \
 	"$AGENT_BUILD" "true" <<'BODY'
-Read ~/.aidevops/agents/workflows/preflight.md and follow its instructions.
+Read ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/workflows/preflight.md and follow its instructions.
 
 Run preflight checks for: $ARGUMENTS
 
@@ -149,7 +149,7 @@ BODY
 create_command "review-issue-pr" \
 	"Review external issue or PR - validate problem and evaluate solution" \
 	"$AGENT_BUILD" "true" <<'BODY'
-Read ~/.aidevops/agents/workflows/review-issue-pr.md and follow its instructions.
+Read ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/workflows/review-issue-pr.md and follow its instructions.
 
 Review this issue or PR: $ARGUMENTS
 
@@ -191,7 +191,7 @@ BODY
 create_command "version-bump" \
 	"Bump project version (major, minor, or patch)" \
 	"$AGENT_BUILD" "" <<'BODY'
-Read ~/.aidevops/agents/workflows/version-bump.md and follow its instructions.
+Read ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/workflows/version-bump.md and follow its instructions.
 
 Bump type: $ARGUMENTS
 
@@ -207,7 +207,7 @@ BODY
 create_command "changelog" \
 	"Update CHANGELOG.md following Keep a Changelog format" \
 	"$AGENT_BUILD" "" <<'BODY'
-Read ~/.aidevops/agents/workflows/changelog.md and follow its instructions.
+Read ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/workflows/changelog.md and follow its instructions.
 
 Action: $ARGUMENTS
 
@@ -223,7 +223,7 @@ create_command "linters-local" \
 	"$AGENT_BUILD" "" <<'BODY'
 Run the local linters script:
 
-!`~/.aidevops/agents/scripts/linters-local.sh $ARGUMENTS`
+!`${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/linters-local.sh $ARGUMENTS`
 
 This runs fast, offline checks:
 1. ShellCheck for shell scripts
@@ -238,7 +238,7 @@ BODY
 create_command "code-audit-remote" \
 	"Run remote code auditing (CodeRabbit, Codacy, SonarCloud)" \
 	"$AGENT_BUILD" "true" <<'BODY'
-Read ~/.aidevops/agents/workflows/code-audit-remote.md and follow its instructions.
+Read ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/workflows/code-audit-remote.md and follow its instructions.
 
 Audit target: $ARGUMENTS
 
@@ -254,7 +254,7 @@ BODY
 create_command "code-standards" \
 	"Check code against documented quality standards" \
 	"$AGENT_BUILD" "true" <<'BODY'
-Read ~/.aidevops/agents/tools/code-review/code-standards.md and follow its instructions.
+Read ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/tools/code-review/code-standards.md and follow its instructions.
 
 Check target: $ARGUMENTS
 
@@ -270,7 +270,7 @@ BODY
 create_command "feature" \
 	"Create and develop a feature branch" \
 	"$AGENT_BUILD" "" <<'BODY'
-Read ~/.aidevops/agents/workflows/branch/feature.md and follow its instructions.
+Read ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/workflows/branch/feature.md and follow its instructions.
 
 Feature: $ARGUMENTS
 
@@ -284,7 +284,7 @@ BODY
 create_command "bugfix" \
 	"Create and resolve a bugfix branch" \
 	"$AGENT_BUILD" "" <<'BODY'
-Read ~/.aidevops/agents/workflows/branch/bugfix.md and follow its instructions.
+Read ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/workflows/branch/bugfix.md and follow its instructions.
 
 Bug: $ARGUMENTS
 
@@ -298,7 +298,7 @@ BODY
 create_command "hotfix" \
 	"Urgent hotfix for critical production issues" \
 	"$AGENT_BUILD" "" <<'BODY'
-Read ~/.aidevops/agents/workflows/branch/hotfix.md and follow its instructions.
+Read ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/workflows/branch/hotfix.md and follow its instructions.
 
 Issue: $ARGUMENTS
 
@@ -314,7 +314,7 @@ create_command "list-keys" \
 	"$AGENT_BUILD" "" <<'BODY'
 Run the list-keys helper script and format the output as a markdown table:
 
-!`~/.aidevops/agents/scripts/list-keys-helper.sh --json $ARGUMENTS`
+!`${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/list-keys-helper.sh --json $ARGUMENTS`
 
 Parse the JSON output and present as markdown tables grouped by source.
 
@@ -385,7 +385,7 @@ BODY
 create_command "context" \
 	"Build token-efficient AI context for complex tasks" \
 	"$AGENT_BUILD" "true" <<'BODY'
-Read ~/.aidevops/agents/tools/context/context-builder.md and follow its instructions.
+Read ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/tools/context/context-builder.md and follow its instructions.
 
 Context request: $ARGUMENTS
 
@@ -436,13 +436,13 @@ BODY
 create_command "create-prd" \
 	"Generate a Product Requirements Document for a feature" \
 	"$AGENT_BUILD" "" <<'BODY'
-Read ~/.aidevops/agents/workflows/plans.md and follow its PRD generation instructions.
+Read ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/workflows/plans.md and follow its PRD generation instructions.
 
 Feature to document: $ARGUMENTS
 
 **Workflow:**
 1. Ask 3-5 clarifying questions with numbered options (1A, 2B format)
-2. Generate PRD using template from ~/.aidevops/agents/templates/prd-template.md
+2. Generate PRD using template from ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/templates/prd-template.md
 3. Save to todo/tasks/prd-{feature-slug}.md
 4. Offer to generate tasks with /generate-tasks
 
@@ -465,7 +465,7 @@ BODY
 create_command "generate-tasks" \
 	"Generate implementation tasks from a PRD" \
 	"$AGENT_BUILD" "" <<'BODY'
-Read ~/.aidevops/agents/workflows/plans.md and follow its task generation instructions.
+Read ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/workflows/plans.md and follow its task generation instructions.
 
 PRD or feature: $ARGUMENTS
 
@@ -666,7 +666,7 @@ BODY
 create_command "keyword-research" \
 	"Keyword research with seed keyword expansion" \
 	"$AGENT_SEO" "" <<'BODY'
-Read ~/.aidevops/agents/seo/keyword-research.md and follow its instructions.
+Read ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/seo/keyword-research.md and follow its instructions.
 
 Keywords to research: $ARGUMENTS
 
@@ -699,7 +699,7 @@ BODY
 create_command "autocomplete-research" \
 	"Google autocomplete long-tail keyword expansion" \
 	"$AGENT_SEO" "" <<'BODY'
-Read ~/.aidevops/agents/seo/keyword-research.md and follow its instructions.
+Read ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/seo/keyword-research.md and follow its instructions.
 
 Seed keyword for autocomplete: $ARGUMENTS
 
@@ -729,7 +729,7 @@ BODY
 create_command "keyword-research-extended" \
 	"Full SERP analysis with weakness detection and KeywordScore" \
 	"$AGENT_SEO" "true" <<'BODY'
-Read ~/.aidevops/agents/seo/keyword-research.md and follow its instructions.
+Read ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/seo/keyword-research.md and follow its instructions.
 
 Research target: $ARGUMENTS
 
@@ -781,7 +781,7 @@ BODY
 create_command "webmaster-keywords" \
 	"Keywords from GSC + Bing for your verified sites" \
 	"$AGENT_SEO" "" <<'BODY'
-Read ~/.aidevops/agents/seo/keyword-research.md and follow its instructions.
+Read ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/seo/keyword-research.md and follow its instructions.
 
 Site URL: $ARGUMENTS
 
@@ -830,7 +830,7 @@ BODY
 create_command "seo-fanout" \
 	"Run thematic query fan-out research for AI search coverage" \
 	"$AGENT_SEO" "" <<'BODY'
-Read ~/.aidevops/agents/seo/query-fanout-research.md and follow its instructions.
+Read ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/seo/query-fanout-research.md and follow its instructions.
 
 Target: $ARGUMENTS
 
@@ -845,7 +845,7 @@ BODY
 create_command "seo-geo" \
 	"Run GEO strategy workflow for AI search visibility" \
 	"$AGENT_SEO" "" <<'BODY'
-Read ~/.aidevops/agents/seo/geo-strategy.md and follow its instructions.
+Read ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/seo/geo-strategy.md and follow its instructions.
 
 Target: $ARGUMENTS
 
@@ -859,7 +859,7 @@ BODY
 create_command "seo-sro" \
 	"Run Selection Rate Optimization workflow for grounding snippets" \
 	"$AGENT_SEO" "" <<'BODY'
-Read ~/.aidevops/agents/seo/sro-grounding.md and follow its instructions.
+Read ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/seo/sro-grounding.md and follow its instructions.
 
 Target: $ARGUMENTS
 
@@ -873,7 +873,7 @@ BODY
 create_command "seo-hallucination-defense" \
 	"Audit and reduce AI brand hallucination risk" \
 	"$AGENT_SEO" "" <<'BODY'
-Read ~/.aidevops/agents/seo/ai-hallucination-defense.md and follow its instructions.
+Read ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/seo/ai-hallucination-defense.md and follow its instructions.
 
 Target: $ARGUMENTS
 
@@ -887,7 +887,7 @@ BODY
 create_command "seo-agent-discovery" \
 	"Test AI agent discoverability across multi-turn tasks" \
 	"$AGENT_SEO" "" <<'BODY'
-Read ~/.aidevops/agents/seo/ai-agent-discovery.md and follow its instructions.
+Read ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/seo/ai-agent-discovery.md and follow its instructions.
 
 Target: $ARGUMENTS
 
@@ -901,7 +901,7 @@ BODY
 create_command "seo-ai-readiness" \
 	"Run end-to-end AI search readiness workflow" \
 	"$AGENT_SEO" "" <<'BODY'
-Read ~/.aidevops/agents/seo/ai-search-readiness.md and follow its instructions.
+Read ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/seo/ai-search-readiness.md and follow its instructions.
 
 Target: $ARGUMENTS
 
@@ -919,8 +919,8 @@ BODY
 create_command "seo-ai-baseline" \
 	"Capture AI-search baseline metrics and output KPI scorecard" \
 	"$AGENT_SEO" "" <<'BODY'
-Read ~/.aidevops/agents/seo/ai-search-readiness.md and follow its instructions.
-Read ~/.aidevops/agents/seo/ai-search-kpi-template.md and follow its format.
+Read ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/seo/ai-search-readiness.md and follow its instructions.
+Read ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/seo/ai-search-kpi-template.md and follow its format.
 
 Target: $ARGUMENTS
 
@@ -936,7 +936,7 @@ BODY
 create_command "onboarding" \
 	"Interactive onboarding wizard - discover services, configure integrations" \
 	"" "" <<'BODY'
-Read ${AIDEVOPS_HOME:-$HOME/.aidevops}/agents/onboarding.md and follow its Welcome Flow instructions to guide the user through setup. Do NOT repeat these instructions -- go straight to the Welcome Flow conversation.
+Read ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/aidevops/onboarding.md and follow its Welcome Flow instructions to guide the user through setup. Do NOT repeat these instructions -- go straight to the Welcome Flow conversation.
 
 Arguments: $ARGUMENTS
 BODY
@@ -961,7 +961,7 @@ cd "$AIDEVOPS_REPO" && ./setup.sh || exit
 ```
 
 **What this does:**
-1. Deploys agents to ~/.aidevops/agents/
+1. Deploys agents to ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/
 2. Updates OpenCode commands in ~/.config/opencode/command/
 3. Regenerates agent configurations
 4. Copies VERSION file for version checks
@@ -977,7 +977,7 @@ BODY
 create_command "ralph-loop" \
 	"Start iterative AI development loop (Ralph Wiggum technique)" \
 	"$AGENT_BUILD" "" <<'BODY'
-Read ~/.aidevops/agents/workflows/ralph-loop.md and follow its instructions.
+Read ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/workflows/ralph-loop.md and follow its instructions.
 
 Start a Ralph loop for iterative development.
 
@@ -1068,7 +1068,7 @@ Arguments: $ARGUMENTS
 **Run the checks:**
 
 ```bash
-~/.aidevops/agents/scripts/linters-local.sh
+${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/linters-local.sh
 ```
 
 **Completion promise:** `<promise>PREFLIGHT_PASS</promise>`
@@ -1104,7 +1104,7 @@ Arguments: $ARGUMENTS
 - `--wait-for-ci` - Wait for CI checks to complete
 - `--max-iterations N` - Max iterations (default: 10)
 
-Read ~/.aidevops/agents/scripts/commands/pr-loop.md and follow its instructions.
+Read ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/commands/pr-loop.md and follow its instructions.
 
 **Completion promises:**
 - `<promise>PR_APPROVED</promise>` - PR approved and ready to merge
@@ -1141,7 +1141,7 @@ Arguments: $ARGUMENTS
 - `--monitor-duration Nm` - How long to monitor (e.g., 5m, 10m, 1h)
 - `--max-iterations N` - Max checks during monitoring (default: 5)
 
-Read ~/.aidevops/agents/scripts/commands/postflight-loop.md and follow its instructions.
+Read ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/commands/postflight-loop.md and follow its instructions.
 
 **Completion promise:** `<promise>RELEASE_HEALTHY</promise>`
 
@@ -1204,7 +1204,7 @@ BODY
 create_command "full-loop" \
 	"Start end-to-end development loop (task -> preflight -> PR -> postflight -> deploy)" \
 	"$AGENT_BUILD" "" <<'BODY'
-Read ~/.aidevops/agents/scripts/commands/full-loop.md and follow its instructions.
+Read ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/commands/full-loop.md and follow its instructions.
 
 Start a full development loop for: $ARGUMENTS
 
@@ -1233,7 +1233,7 @@ BODY
 create_command "code-simplifier" \
 	"Simplify and refine code for clarity, consistency, and maintainability" \
 	"$AGENT_BUILD" "" <<'BODY'
-Read ~/.aidevops/agents/tools/code-review/code-simplifier.md and follow its instructions.
+Read ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/tools/code-review/code-simplifier.md and follow its instructions.
 
 Target: $ARGUMENTS
 
@@ -1256,7 +1256,7 @@ BODY
 create_command "session-review" \
 	"Review session for completeness before ending" \
 	"$AGENT_BUILD" "" <<'BODY'
-Read ~/.aidevops/agents/scripts/commands/session-review.md and follow its instructions.
+Read ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/commands/session-review.md and follow its instructions.
 
 Review the current session for: $ARGUMENTS
 
@@ -1277,7 +1277,7 @@ BODY
 create_command "remember" \
 	"Store a memory for cross-session recall" \
 	"$AGENT_BUILD" "" <<'BODY'
-Read ~/.aidevops/agents/scripts/commands/remember.md and follow its instructions.
+Read ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/commands/remember.md and follow its instructions.
 
 Remember: $ARGUMENTS
 
@@ -1297,14 +1297,14 @@ Remember: $ARGUMENTS
 - DECISION - Decisions made
 - CONTEXT - General context
 
-**Storage:** ~/.aidevops/.agent-workspace/memory/memory.db
+**Storage:** ${AIDEVOPS_DIR:-$HOME/.aidevops}/.agent-workspace/memory/memory.db
 BODY
 
 # --- Recall ---
 create_command "recall" \
 	"Search memories from previous sessions" \
 	"$AGENT_BUILD" "" <<'BODY'
-Read ~/.aidevops/agents/scripts/commands/recall.md and follow its instructions.
+Read ${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/commands/recall.md and follow its instructions.
 
 Search for: $ARGUMENTS
 
@@ -1316,7 +1316,7 @@ Search for: $ARGUMENTS
 /recall --type WORKING_SOLUTION  # Filter by type
 ```
 
-**Storage:** ~/.aidevops/.agent-workspace/memory/memory.db
+**Storage:** ${AIDEVOPS_DIR:-$HOME/.aidevops}/.agent-workspace/memory/memory.db
 BODY
 
 # =============================================================================
@@ -1326,7 +1326,7 @@ BODY
 # Each file should have frontmatter with description and agent
 # This prevents needing to manually add new commands to this script
 
-COMMANDS_DIR="$HOME/.aidevops/agents/scripts/commands"
+COMMANDS_DIR="${AIDEVOPS_DIR:-$HOME/.aidevops}/agents/scripts/commands"
 
 if [[ -d "$COMMANDS_DIR" ]]; then
 	for cmd_file in "$COMMANDS_DIR"/*.md; do
