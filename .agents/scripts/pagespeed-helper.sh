@@ -155,7 +155,7 @@ parse_pagespeed_report() {
 	print_header "Optimization Opportunities"
 
 	local opportunities
-	opportunities=$(jq -r '.lighthouseResult.audits | to_entries[] | select(.value.details.overallSavingsMs > 0) | "\(.key): \(.value.title) - Potential savings: \(.value.details.overallSavingsMs)ms"' "$report_file" 2>/dev/null || echo "No specific opportunities found")
+	opportunities=$(jq -r '.lighthouseResult.audits | to_entries[] | select(.value.details.overallSavingsMs > 0) | "\(.key): \(.value.title) - Potential savings: \(.value.details.overallSavingsMs)ms"' "$report_file" || echo "No specific opportunities found")
 
 	if [[ "$opportunities" != "No specific opportunities found" ]]; then
 		echo "$opportunities" | head -10
@@ -177,7 +177,7 @@ format_score() {
 
 	# Convert to percentage
 	local percentage
-	percentage=$(echo "$score * 100" | bc -l 2>/dev/null || echo "0")
+	percentage=$(echo "$score * 100" | bc -l || echo "0")
 	local int_percentage
 	int_percentage=${percentage%.*}
 
@@ -444,7 +444,7 @@ generate_actionable_report() {
                     elif .value.details.overallSavingsMs > 500 then "MEDIUM"
                     else "LOW" end)
         }
-    ' "$report_file" 2>/dev/null)
+    ' "$report_file")
 
 	if [[ -n "$recommendations" ]]; then
 		echo "$recommendations" | jq -r '"🔧 \(.title) (\(.impact) IMPACT)\n   💡 \(.description)\n   ⏱️  Potential savings: \(.savings)ms\n"'
