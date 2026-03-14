@@ -71,12 +71,18 @@ export async function handleContactConnected(
   // Create or update session
   deps.sessions.getContactSession(contactId, name);
 
-  // Send welcome message if configured
+  // Send welcome message if configured.
+  // Use contactId (not localDisplayName) as the target — display names may
+  // contain spaces or special characters that break the CLI command format.
   if (deps.config.autoAcceptContacts && deps.config.welcomeMessage) {
-    try {
-      await deps.sendCommand(`@${name} ${deps.config.welcomeMessage}`);
-    } catch (err) {
-      deps.logger.error(`Failed to send welcome message to ${name}:`, err);
+    if (contactId !== undefined) {
+      try {
+        await deps.sendCommand(`@${contactId} ${deps.config.welcomeMessage}`);
+      } catch (err) {
+        deps.logger.error(`Failed to send welcome message to ${name} (id: ${contactId}):`, err);
+      }
+    } else {
+      deps.logger.warn(`Cannot send welcome message to ${name}: contactId missing`);
     }
   }
 }
@@ -148,13 +154,15 @@ export async function handleBusinessRequest(
   const session = deps.sessions.getGroupSession(groupId, name);
   deps.sessions.updateMetadata(session.id, { businessChat: true });
 
-  // Send welcome message to the business group
+  // Send welcome message to the business group.
+  // Use groupId as the target — group display names may contain spaces that
+  // break the CLI command format.
   if (deps.config.welcomeMessage) {
     try {
-      await deps.sendCommand(`#${name} ${deps.config.welcomeMessage}`);
+      await deps.sendCommand(`#${groupId} ${deps.config.welcomeMessage}`);
     } catch (err) {
       deps.logger.error(
-        `Failed to send welcome to business group ${name}:`,
+        `Failed to send welcome to business group ${name} (id: ${groupId}):`,
         err,
       );
     }
