@@ -222,7 +222,7 @@ migrate_dynamic_yml() {
 	print_info "Backed up dynamic.yml to $BACKUP_DIR/$backup_name"
 
 	# Check if webapp route exists in dynamic.yml
-	if grep -q 'webapp' "$dynamic_yml" 2>/dev/null; then
+	if grep -q 'webapp' "$dynamic_yml"; then
 		# Extract and create webapp conf.d file
 		if [[ ! -f "$CONFD_DIR/webapp.yml" ]]; then
 			create_webapp_confd
