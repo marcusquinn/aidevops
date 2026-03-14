@@ -989,7 +989,7 @@ setup_ssh_key() {
 
 		if [[ "$generate_key" =~ ^[Yy]?$ ]]; then
 			read -r -p "Enter your email address: " email
-			mkdir -p ~/.ssh && chmod 700 ~/.ssh
+			install -d -m 700 ~/.ssh
 			ssh-keygen -t ed25519 -C "$email" -f ~/.ssh/id_ed25519
 			print_success "SSH key generated"
 		else
