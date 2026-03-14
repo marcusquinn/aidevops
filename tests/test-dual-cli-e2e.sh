@@ -175,12 +175,13 @@ cleanup() {
 		git -C "$TEST_REPO" worktree list --porcelain 2>/dev/null |
 			grep "^worktree " | cut -d' ' -f2- | while IFS= read -r wt_path; do
 			if [[ "$wt_path" != "$TEST_REPO" && -d "$wt_path" ]]; then
-				git -C "$TEST_REPO" worktree remove "$wt_path" --force 2>/dev/null || rm -rf "$wt_path"
+				git -C "$TEST_REPO" worktree remove "$wt_path" --force || rm -rf "$wt_path"
 			fi
 		done
-		git -C "$TEST_REPO" worktree prune 2>/dev/null || true
+		git -C "$TEST_REPO" worktree prune -q || true
 	fi
 	rm -rf "$TEST_DIR"
+	return 0
 }
 trap cleanup EXIT
 
@@ -193,27 +194,37 @@ sup() {
 # Helper: query the test DB directly
 test_db() {
 	sqlite3 -cmd ".timeout 5000" "$TEST_DIR/supervisor/supervisor.db" "$@"
+	return $?
 }
 
 # Helper: get task status
 get_status() {
-	test_db "SELECT status FROM tasks WHERE id = '$1';"
+	local task_id="$1"
+	test_db "SELECT status FROM tasks WHERE id = '$task_id';"
+	return $?
 }
 
 # Helper: get task field
 get_field() {
-	test_db "SELECT $2 FROM tasks WHERE id = '$1';"
+	local task_id="$1"
+	local field="$2"
+	test_db "SELECT $field FROM tasks WHERE id = '$task_id';"
+	return $?
 }
 
 # Helper: create a mock worker log file
 create_log() {
-	local task_id="$1"
-	local content="$2"
-	local log_file="$TEST_DIR/supervisor/logs/${task_id}.log"
+	local task_id
+	local content
+	local log_file
+	task_id="$1"
+	content="$2"
+	log_file="$TEST_DIR/supervisor/logs/${task_id}.log"
 	mkdir -p "$TEST_DIR/supervisor/logs"
 	echo "$content" >"$log_file"
 	test_db "UPDATE tasks SET log_file = '$log_file' WHERE id = '$task_id';"
 	echo "$log_file"
+	return 0
 }
 
 # Helper: source supervisor modules for unit-level testing
@@ -230,7 +241,8 @@ run_in_supervisor_env() {
         source '$SUPERVISOR_DIR_MODULE/_common.sh'
         source '$SUPERVISOR_DIR_MODULE/dispatch.sh'
         $1
-    " 2>/dev/null
+    "
+	return $?
 }
 
 # ============================================================
