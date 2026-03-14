@@ -8,7 +8,6 @@
  * Reference: t1327.4 bot framework specification
  */
 
-import { resolve } from "node:path";
 import { homedir } from "node:os";
 
 /** Runner dispatch result */
@@ -40,27 +39,34 @@ const MAX_OUTPUT_LENGTH = 4000;
 const DEFAULT_TIMEOUT_MS = 30_000;
 
 /**
- * Check whether a command is in the safe allowlist.
- * Safe commands can be executed without explicit approval.
+ * Check whether a command (given as a pre-split array of parts) is in the safe
+ * allowlist. Safe commands can be executed without explicit approval.
+ *
+ * The allowlist entries are full command strings (e.g. "aidevops status"), so
+ * we join the parts with a single space for the membership check.
  */
-export function isSafeCommand(command: string): boolean {
-  const normalized = command.trim().toLowerCase();
+export function isSafeCommand(parts: string[]): boolean {
+  const normalized = parts.join(" ").trim().toLowerCase();
   return SAFE_COMMANDS.has(normalized);
 }
 
 /**
  * Execute an aidevops CLI command via Bun.spawn.
+ *
+ * Accepts a pre-split array of command parts (the executable and its
+ * arguments) rather than a raw command string. This avoids the whitespace-
+ * splitting ambiguity that would incorrectly tokenise arguments containing
+ * spaces (e.g. a git commit message).
+ *
  * Returns structured result with output, error, and timing.
  */
 export async function executeCommand(
-  command: string,
+  parts: string[],
   timeoutMs: number = DEFAULT_TIMEOUT_MS,
 ): Promise<RunnerResult> {
   const startTime = Date.now();
 
   try {
-    // Split command into parts for spawn
-    const parts = command.trim().split(/\s+/);
     if (parts.length === 0) {
       return {
         success: false,
