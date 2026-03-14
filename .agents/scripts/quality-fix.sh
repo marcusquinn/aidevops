@@ -53,7 +53,12 @@ backup_files() {
 
 	cp .agents/scripts/*.sh "$backup_dir/"
 	# Also backup modularised subdirectory scripts
-	find .agents/scripts -mindepth 2 -name "*.sh" -not -path "*/_archive/*" -exec cp --parents {} "$backup_dir/" \; 2>/dev/null || true
+	while IFS= read -r -d '' file; do
+		local destination_dir
+		destination_dir="$backup_dir/$(dirname "$file")"
+		mkdir -p "$destination_dir"
+		cp "$file" "$destination_dir/"
+	done < <(find .agents/scripts -mindepth 2 -name "*.sh" -not -path "*/_archive/*" -print0 2>/dev/null)
 	print_success "Backup created in $backup_dir"
 	return 0
 }
@@ -68,6 +73,8 @@ fix_return_statements() {
 			# Find functions that don't end with return statement
 			local temp_file
 			temp_file=$(mktemp)
+			local file_mode=""
+			file_mode=$(stat -f "%Lp" "$file" 2>/dev/null || stat -c "%a" "$file" 2>/dev/null || true)
 			local in_function=false
 			local function_name=""
 			local brace_count=0
@@ -122,6 +129,9 @@ fix_return_statements() {
 
 			if [[ $fixed_functions -gt 0 ]]; then
 				mv "$temp_file" "$file"
+				if [[ -n "$file_mode" ]]; then
+					chmod "$file_mode" "$file"
+				fi
 				((++files_fixed))
 				print_success "Fixed $fixed_functions functions in $file"
 			else
@@ -157,7 +167,7 @@ fix_positional_parameters() {
                 }' "$file" >"$temp_file"
 
 				# Replace direct positional parameter usage in case statements
-				sed_inplace 's/\$_arg1/$command/g; s/\$2/$account_name/g; s/\$3/$target/g; s/\$4/$options/g' "$temp_file"
+				sed_inplace 's/\$_arg1/\${command}/g; s/\$2/\${account_name}/g; s/\$3/\${target}/g; s/\$4/\${options}/g' "$temp_file"
 
 				if ! diff -q "$file" "$temp_file" >/dev/null; then
 					mv "$temp_file" "$file"
