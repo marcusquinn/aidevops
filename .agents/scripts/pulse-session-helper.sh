@@ -173,7 +173,7 @@ cmd_start() {
 
 	if is_session_active; then
 		local started_at
-		started_at=$(grep '^started_at=' "$SESSION_FLAG" | cut -d= -f2)
+		started_at=$(grep '^started_at=' "$SESSION_FLAG" | cut -d= -f2 | tr -cd '[:alnum:]T:Z.+-')
 		print_warning "Pulse session already active (started: ${started_at:-unknown})"
 		echo ""
 		echo "  To restart: aidevops pulse stop && aidevops pulse start"
@@ -251,7 +251,7 @@ cmd_stop() {
 
 	local started_at=""
 	if is_session_active; then
-		started_at=$(grep '^started_at=' "$SESSION_FLAG" | cut -d= -f2)
+		started_at=$(grep '^started_at=' "$SESSION_FLAG" | cut -d= -f2 | tr -cd '[:alnum:]T:Z.+-')
 	fi
 
 	# Create stop flag — this overrides all consent layers immediately
