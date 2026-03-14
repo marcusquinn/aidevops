@@ -1652,16 +1652,21 @@ _exec_create_subtasks() {
 	# makes this an || list — an excepted context for set -e — so no set -e abort occurs.
 	verified_count=$(grep -c "^[[:space:]]*- \[.\] ${parent_task_id}\." "$todo_file" 2>/dev/null) || verified_count=0
 	verified_count="${verified_count:-0}"
-	if [[ "$verified_count" -lt "$subtask_count" ]]; then
+	# Compare against expected_total (pre-existing + newly added) so the mismatch warning
+	# fires correctly when pre-existing subtasks are present (not just against new count).
+	local expected_total=$((existing_subtask_count + subtask_count))
+	if [[ "$verified_count" -lt "$expected_total" ]]; then
 		jq -n --arg parent "$parent_task_id" --arg ids "$created_ids" \
 			--argjson count "$subtask_count" --argjson verified "$verified_count" \
-			'{"created":true,"parent_task_id":$parent,"subtask_ids":$ids,"count":$count,"verified_count":$verified,"warning":"subtask_count_mismatch"}'
+			--argjson expected "$expected_total" \
+			'{"created":true,"parent_task_id":$parent,"subtask_ids":$ids,"count":$count,"verified_count":$verified,"expected_total":$expected,"warning":"subtask_count_mismatch"}'
 		return 0
 	fi
 
 	jq -n --arg parent "$parent_task_id" --arg ids "$created_ids" \
 		--argjson count "$subtask_count" --argjson verified "$verified_count" \
-		'{"created":true,"parent_task_id":$parent,"subtask_ids":$ids,"count":$count,"verified_count":$verified}'
+		--argjson expected "$expected_total" \
+		'{"created":true,"parent_task_id":$parent,"subtask_ids":$ids,"count":$count,"verified_count":$verified,"expected_total":$expected}'
 	return 0
 }
 
