@@ -155,16 +155,22 @@ Cancel import. Best when:
 
 ## Category Detection
 
-The helper script analyzes skill content to determine placement:
+The helper script analyzes skill content to determine placement. Patterns are ordered from specific to generic — earlier matches take precedence.
 
 | Keywords | Category |
 |----------|----------|
 | deploy, vercel, coolify, docker, kubernetes | `tools/deployment/` |
+| cloudflare workers, cloudflare pages, wrangler | `services/hosting/` |
 | cloudflare, dns, hosting, domain | `services/hosting/` |
 | proxmox, hypervisor, virtualization | `services/hosting/` |
 | calendar, caldav, ical, scheduling | `tools/productivity/` |
+| clean architecture, hexagonal, ddd, domain-driven, cqrs, event sourcing | `tools/architecture/` |
+| feature-sliced, fsd architecture, slice organization | `tools/architecture/` |
+| postgresql, postgres, drizzle, prisma, typeorm, sequelize, knex | `services/database/` |
+| mermaid, flowchart, sequence diagram, ER diagram, UML | `tools/diagrams/` |
+| javascript, typescript, es6, es2020–es2024, ecmascript | `tools/programming/` |
 | browser, playwright, puppeteer | `tools/browser/` |
-| seo, search, ranking, keyword | `seo/` |
+| seo, search ranking, keyword research | `seo/` |
 | git, github, gitlab | `tools/git/` |
 | code review, lint, quality | `tools/code-review/` |
 | credential, secret, password | `tools/credentials/` |

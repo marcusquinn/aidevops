@@ -275,13 +275,13 @@ determine_target_path() {
 		category="tools/architecture"
 	elif echo "$content" | grep -qi "feature.sliced\|feature-sliced\|fsd.architecture\|slice.organization"; then
 		category="tools/architecture"
-	# Database and ORM
+	# Database and ORM patterns (must come before more generic service patterns)
 	elif echo "$content" | grep -qi "postgresql\|postgres\|drizzle\|prisma\|typeorm\|sequelize\|knex\|database.orm"; then
 		category="services/database"
-	# Diagrams and visualization
-	elif echo "$content" | grep -qi "mermaid\|diagram\|flowchart\|sequence.diagram\|er.diagram\|uml"; then
+	# Diagrams and visualization patterns (must come before more generic tool patterns)
+	elif echo "$content" | grep -qi "mermaid\|flowchart\|sequence.diagram\|er.diagram\|uml"; then
 		category="tools/diagrams"
-	# Programming languages (specific patterns)
+	# Programming language patterns (must come before more generic tool patterns like browser)
 	elif echo "$content" | grep -qi "javascript\|typescript\|es6\|es2020\|es2022\|es2024\|ecmascript\|modern.js"; then
 		category="tools/programming"
 	elif echo "$content" | grep -qi "browser\|playwright\|puppeteer\|selenium"; then
