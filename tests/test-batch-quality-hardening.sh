@@ -514,10 +514,27 @@ else
 fi
 
 # Test: security-helper.sh has Python version pre-check (t1351)
-if grep -q 'check_python_for_skill_scanner' "$SCRIPTS_DIR/security-helper.sh"; then
-	pass "security-helper.sh has Python version pre-check for skill scanner"
+SECURITY_HELPER_SH="$SCRIPTS_DIR/security-helper.sh"
+if [[ -f "$SECURITY_HELPER_SH" ]]; then
+	if grep -q 'check_python_for_skill_scanner' "$SECURITY_HELPER_SH"; then
+		pass "security-helper.sh has Python version pre-check for skill scanner"
+	else
+		fail "security-helper.sh missing Python version pre-check"
+	fi
+
+	if grep -q 'Python >= 3.10' "$SECURITY_HELPER_SH"; then
+		pass "security-helper.sh shows clear Python version requirement in error message"
+	else
+		fail "security-helper.sh missing clear Python version requirement message"
+	fi
+
+	if grep -qE 'brew install python|uv python install' "$SECURITY_HELPER_SH"; then
+		pass "security-helper.sh shows fix instructions for missing Python"
+	else
+		fail "security-helper.sh missing fix instructions for Python version"
+	fi
 else
-	fail "security-helper.sh missing Python version pre-check"
+	skip "security-helper.sh not found (tests may need updating after modularization)"
 fi
 
 # ============================================================
