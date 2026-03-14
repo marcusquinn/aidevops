@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC2016
+# shellcheck disable=SC2016,SC1091
 
 # 🚀 Advanced MCP Integrations Setup Script
 # Sets up powerful Model Context Protocol integrations for AI-assisted development
@@ -9,6 +9,7 @@ set -euo pipefail
 # Script directory
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 
+# shellcheck source=./shared-constants.sh
 source "${SCRIPT_DIR}/shared-constants.sh"
 
 print_header() {
@@ -43,7 +44,36 @@ get_mcp_command() {
 }
 
 # Available integrations list
-MCP_LIST="chrome-devtools playwright cloudflare-browser ahrefs perplexity nextjs-devtools google-search-console pagespeed-insights grep-vercel claude-code-mcp stagehand stagehand-python stagehand-both dataforseo unstract"
+MCP_LIST=(
+	"chrome-devtools"
+	"playwright"
+	"cloudflare-browser"
+	"ahrefs"
+	"perplexity"
+	"nextjs-devtools"
+	"google-search-console"
+	"pagespeed-insights"
+	"grep-vercel"
+	"claude-code-mcp"
+	"stagehand"
+	"stagehand-python"
+	"stagehand-both"
+	"dataforseo"
+	"unstract"
+)
+
+is_known_mcp() {
+	local candidate="$1"
+	local mcp
+
+	for mcp in "${MCP_LIST[@]}"; do
+		if [[ "$mcp" == "$candidate" ]]; then
+			return 0
+		fi
+	done
+
+	return 1
+}
 
 # Check prerequisites
 check_prerequisites() {
@@ -282,7 +312,7 @@ install_mcp() {
 		print_info "Available modules: SERP, KEYWORDS_DATA, BACKLINKS, ONPAGE, DATAFORSEO_LABS, BUSINESS_DATA, DOMAIN_ANALYTICS, CONTENT_ANALYSIS, AI_OPTIMIZATION"
 		print_info "Docs: https://docs.dataforseo.com/v3/"
 		;;
-	# "serper" - REMOVED: Uses curl subagent (.agents/seo/serper.md), no MCP needed
+	# serper - REMOVED: Uses curl subagent (.agents/seo/serper.md), no MCP needed
 	# Get API key from https://serper.dev/ and set SERPER_API_KEY in credentials.sh
 	"unstract")
 		print_info "Setting up Unstract self-hosted document processing platform..."
@@ -311,7 +341,7 @@ install_mcp() {
 		;;
 	*)
 		print_error "Unknown MCP integration: $mcp_name"
-		print_info "Available integrations: $MCP_LIST"
+		print_info "Available integrations: ${MCP_LIST[*]}"
 		return 1
 		;;
 	esac
@@ -448,7 +478,7 @@ main() {
 
 	if [[ $# -eq 0 ]]; then
 		print_info "Available MCP integrations:"
-		for mcp in $MCP_LIST; do
+		for mcp in "${MCP_LIST[@]}"; do
 			echo "  - $mcp"
 		done
 		echo
@@ -463,15 +493,15 @@ main() {
 
 	if [[ "$command" == "all" ]]; then
 		print_header "Installing All MCP Integrations"
-		for mcp in $MCP_LIST; do
+		for mcp in "${MCP_LIST[@]}"; do
 			install_mcp "$mcp"
 			echo
 		done
-	elif [[ "$MCP_LIST" == *"$command"* ]]; then
+	elif is_known_mcp "$command"; then
 		install_mcp "$command"
 	else
 		print_error "Unknown MCP integration: $command"
-		print_info "Available integrations: $MCP_LIST"
+		print_info "Available integrations: ${MCP_LIST[*]}"
 		exit 1
 	fi
 
