@@ -183,6 +183,36 @@ Format the TODO.md entry using the allocated ID:
 
 If the brief is too thin for auto-dispatch, omit the tag and note why.
 
+### Step 6.5: Apply Agent Routing Label
+
+Evaluate whether the task maps to a specialist agent domain. If it does, add the corresponding tag to the TODO.md entry AND apply the matching GitHub label to the issue (if `task_ref` exists).
+
+| Domain Signal | TODO Tag | GitHub Label | Agent |
+|--------------|----------|--------------|-------|
+| SEO audit, keywords, GSC, schema markup, rankings | `#seo` | `seo` | SEO |
+| Blog posts, video scripts, newsletters, social copy | `#content` | `content` | Content |
+| Email campaigns, FluentCRM, landing pages | `#marketing` | `marketing` | Marketing |
+| Invoicing, receipts, financial ops | `#accounts` | `accounts` | Accounts |
+| Compliance, terms of service, privacy policy | `#legal` | `legal` | Legal |
+| Tech research, competitive analysis, market research | `#research` | `research` | Research |
+| CRM pipeline, proposals, outreach | `#sales` | `sales` | Sales |
+| Social media scheduling, posting | `#social-media` | `social-media` | Social-Media |
+| Video generation, editing, prompts | `#video` | `video` | Video |
+| Health and wellness content | `#health` | `health` | Health |
+| Code: features, bug fixes, refactors, CI | *(none)* | *(none)* | Build+ (default) |
+
+**Omit the domain tag for code tasks** — Build+ is the default and needs no label.
+
+If the task clearly matches a domain, apply the label:
+
+```bash
+# Only if task_ref exists (issue was created) and domain is non-code
+if [[ -n "$task_ref" && -n "$domain_label" ]]; then
+  gh label create "$domain_label" --repo "$(gh repo view --json nameWithOwner -q .nameWithOwner)" 2>/dev/null || true
+  gh issue edit "${task_ref#GH#}" --repo "$(gh repo view --json nameWithOwner -q .nameWithOwner)" --add-label "$domain_label" 2>/dev/null || true
+fi
+```
+
 ### Step 7: Commit and Push
 
 Commit both the brief and TODO.md change, passing the commit message via a variable to prevent injection:

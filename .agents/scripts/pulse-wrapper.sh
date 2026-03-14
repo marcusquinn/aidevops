@@ -2470,66 +2470,21 @@ check_worker_launch() {
 }
 
 #######################################
-# Enforce utilization invariants post-pulse (t1453)
+# Enforce utilization invariants post-pulse (DEPRECATED — t1453)
 #
-# Invariant: keep dispatching pulse cycles until either:
-#   - active workers >= MAX_WORKERS, OR
-#   - no runnable work remains in scope
+# The LLM pulse session now runs a monitoring loop (sleep 60s, check
+# slots, backfill) for up to 60 minutes, making this wrapper-level
+# backfill loop redundant. The function is kept as a no-op stub for
+# backward compatibility (pulse.md sources this file).
 #
-# Launch validation integration:
-# queued issues with no active worker are treated as launch failures,
-# which trigger an immediate backfill cycle.
+# Previously: re-launched run_pulse() in a loop until active workers
+# >= MAX_WORKERS or no runnable work remained. Each iteration paid
+# the full LLM cold-start penalty (~125s). The monitoring loop inside
+# the LLM session eliminates this overhead — each backfill iteration
+# costs ~3K tokens instead of a full session restart.
 #######################################
 enforce_utilization_invariants() {
-	local attempts=0
-	local max_attempts="$PULSE_BACKFILL_MAX_ATTEMPTS"
-
-	while [[ "$attempts" -lt "$max_attempts" ]]; do
-		if [[ -f "$STOP_FLAG" ]]; then
-			echo "[pulse-wrapper] Stop flag present during utilization enforcement — exiting" >>"$LOGFILE"
-			return 0
-		fi
-
-		local max_workers active_workers runnable_count queued_without_worker
-		max_workers=$(get_max_workers_target)
-		active_workers=$(count_active_workers)
-		runnable_count=$(count_runnable_candidates)
-		queued_without_worker=$(count_queued_without_worker)
-
-		[[ "$max_workers" =~ ^[0-9]+$ ]] || max_workers=1
-		[[ "$active_workers" =~ ^[0-9]+$ ]] || active_workers=0
-		[[ "$runnable_count" =~ ^[0-9]+$ ]] || runnable_count=0
-		[[ "$queued_without_worker" =~ ^[0-9]+$ ]] || queued_without_worker=0
-
-		run_underfill_worker_recycler "$max_workers" "$active_workers" "$runnable_count" "$queued_without_worker"
-		active_workers=$(count_active_workers)
-		[[ "$active_workers" =~ ^[0-9]+$ ]] || active_workers=0
-
-		if [[ "$active_workers" -ge "$max_workers" && "$queued_without_worker" -eq 0 ]]; then
-			echo "[pulse-wrapper] Utilization invariant satisfied: active workers ${active_workers}/${max_workers}" >>"$LOGFILE"
-			return 0
-		fi
-
-		if [[ "$runnable_count" -eq 0 && "$queued_without_worker" -eq 0 ]]; then
-			echo "[pulse-wrapper] Utilization invariant satisfied: no runnable work remains (active ${active_workers}/${max_workers})" >>"$LOGFILE"
-			return 0
-		fi
-
-		attempts=$((attempts + 1))
-		echo "[pulse-wrapper] Backfill attempt ${attempts}/${max_attempts}: active=${active_workers}/${max_workers}, runnable=${runnable_count}, queued_without_worker=${queued_without_worker}" >>"$LOGFILE"
-
-		# Refresh prompt state before each backfill cycle so pulse sees latest context.
-		prefetch_state || true
-		local underfilled_mode=0
-		local underfill_pct=0
-		if [[ "$active_workers" -lt "$max_workers" ]]; then
-			underfilled_mode=1
-			underfill_pct=$(((max_workers - active_workers) * 100 / max_workers))
-		fi
-		run_pulse "$underfilled_mode" "$underfill_pct"
-	done
-
-	echo "[pulse-wrapper] Reached backfill attempt cap (${max_attempts}) before utilization invariant converged" >>"$LOGFILE"
+	echo "[pulse-wrapper] enforce_utilization_invariants is deprecated — LLM session handles continuous slot filling" >>"$LOGFILE"
 	return 0
 }
 
@@ -2720,7 +2675,10 @@ main() {
 	fi
 
 	run_pulse "$initial_underfilled_mode" "$initial_underfill_pct"
-	enforce_utilization_invariants
+	# enforce_utilization_invariants removed — the LLM pulse session now runs
+	# a monitoring loop (sleep 60s, check slots, backfill) for up to 60 minutes,
+	# making the wrapper's backfill loop redundant. The wrapper's watchdog still
+	# enforces the hard 60-minute ceiling via PULSE_STALE_THRESHOLD.
 	return 0
 }
 

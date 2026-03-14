@@ -47,6 +47,23 @@ Every task MUST be evaluated for these pipeline tags:
 
 **`#plan`** — Add when the task needs decomposition into subtasks before implementation (multi-phase, >2h, research/design needed).
 
+**Agent domain tags** — If the task maps to a specialist agent domain, add the corresponding tag. This enables the pulse to route dispatch to the correct agent without guessing from the title:
+
+| Domain | Tag | Agent |
+|--------|-----|-------|
+| SEO, keywords, rankings, GSC | `#seo` | SEO |
+| Blog posts, newsletters, video scripts | `#content` | Content |
+| Email campaigns, landing pages | `#marketing` | Marketing |
+| Invoicing, financial ops | `#accounts` | Accounts |
+| Compliance, legal docs | `#legal` | Legal |
+| Research, analysis, spikes | `#research` | Research |
+| CRM, proposals, outreach | `#sales` | Sales |
+| Social media management | `#social-media` | Social-Media |
+| Video generation/editing | `#video` | Video |
+| Health/wellness content | `#health` | Health |
+
+Omit domain tags for code tasks — Build+ is the default.
+
 **Default to `#auto-dispatch`** — only omit when a specific exclusion applies. This keeps the autonomous pipeline moving. See `workflows/plans.md` "Auto-Dispatch Tagging" for full criteria.
 
 ### Step 2: Determine Complexity
@@ -180,13 +197,13 @@ AI: This looks like complex work. Creating execution plan.
     Title: Authentication Overhaul
     Estimate: ~2w (ai:1w test:0.5w read:0.5w)
     Phases: 4 identified (OAuth, sessions, migration, testing)
-    
+
     1. Confirm and create plan  2. Simplify to TODO.md  3. Add context
 User: 1
 AI: Saved: "Authentication Overhaul"
     - Plan: todo/PLANS.md
     - Reference: TODO.md
     - PRD: todo/tasks/prd-auth-overhaul.md
-    
+
     Start anytime with: "Let's work on auth overhaul"
 ```

@@ -38,6 +38,24 @@ Parse `$ARGUMENTS` to classify the task. Use keyword signals:
 | **docs** | document, readme, guide, explain, describe | Accurate, concise, follows existing doc patterns |
 | **research** | investigate, explore, evaluate, compare, spike | Time-boxed, deliverable is a written recommendation |
 
+Also classify the **agent domain** — this determines which specialist agent handles the task at dispatch time:
+
+| Domain | Signal Words | Agent |
+|--------|-------------|-------|
+| **seo** | SEO, keywords, rankings, GSC, schema markup | SEO |
+| **content** | blog, article, newsletter, video script, copy | Content |
+| **marketing** | campaign, email blast, landing page, FluentCRM | Marketing |
+| **accounts** | invoice, receipt, financial, bookkeeping | Accounts |
+| **legal** | compliance, terms, privacy policy, GDPR | Legal |
+| **research** | market research, competitive analysis, tech spike | Research |
+| **sales** | CRM, proposal, outreach, pipeline | Sales |
+| **social-media** | social post, scheduling, engagement | Social-Media |
+| **video** | video generation, editing, animation | Video |
+| **health** | wellness, health content, nutrition | Health |
+| *(code)* | implement, fix, refactor, CI, test | Build+ (default — no label needed) |
+
+Include the domain tag (e.g., `#seo`, `#content`) in the TODO.md entry and as a GitHub label on the issue. Omit for code tasks.
+
 If ambiguous, ask:
 
 ```text
