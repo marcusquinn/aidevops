@@ -851,6 +851,75 @@ test_scan_single_pr_default_filters_positive_review() {
 	return 0
 }
 
+test_scan_single_pr_filters_issue3363_review_body() {
+	reset_mock_state
+
+	gh() {
+		local command="$1"
+		shift
+		case "$command" in
+		api)
+			while [[ $# -gt 0 ]]; do
+				case "$1" in
+				repos/*/pulls/*/comments)
+					echo "[]"
+					return 0
+					;;
+				repos/*/pulls/*/reviews)
+					echo '[{"id":1,"user":{"login":"gemini-code-assist[bot]"},"state":"COMMENTED","body":"This pull request introduces several important fixes to address tasks getting stuck in an '\''evaluating'\'' state. The changes include making the evaluation timeout configurable, adding a heartbeat mechanism to signal that an evaluation is still active, and adding a fast-path to skip AI evaluation if a PR already exists. The changes are well-commented and align with the stated goals.","submitted_at":"2024-01-01T00:00:00Z","html_url":"https://github.com/example/repo/pull/1#pullrequestreview-1"}]'
+					return 0
+					;;
+				repos/*/git/trees/*)
+					echo '{"tree":[]}'
+					return 0
+					;;
+				repos/*)
+					echo "main"
+					return 0
+					;;
+				esac
+				shift
+			done
+			echo "[]"
+			return 0
+			;;
+		label | pr) return 0 ;;
+		esac
+		echo "[]"
+		return 0
+	}
+
+	local findings
+	findings=$(_scan_single_pr "owner/repo" "1" "medium" "false" 2>/dev/null)
+	local count
+	count=$(printf '%s' "$findings" | jq 'length' 2>/dev/null || echo "0")
+
+	if [[ "$count" -eq 0 ]]; then
+		print_result "issue #3363 review body is filtered as non-actionable" 0
+	else
+		print_result "issue #3363 review body is filtered as non-actionable" 1 "expected 0 findings, got ${count}"
+	fi
+
+	gh() {
+		local command="$1"
+		shift
+		case "$command" in
+		api)
+			_mock_gh_api "$@"
+			return $?
+			;;
+		label) return 0 ;;
+		issue)
+			_mock_gh_issue "$@"
+			return $?
+			;;
+		esac
+		echo "unexpected gh call: ${command}" >&2
+		return 1
+	}
+	return 0
+}
+
 main() {
 	source "$HELPER"
 
@@ -888,6 +957,7 @@ main() {
 	test_include_positive_keeps_no_suggestions_review
 	test_scan_single_pr_include_positive_returns_positive_review
 	test_scan_single_pr_default_filters_positive_review
+	test_scan_single_pr_filters_issue3363_review_body
 
 	echo "Results: ${TESTS_PASSED}/${TESTS_RUN} passed, ${TESTS_FAILED} failed"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then
