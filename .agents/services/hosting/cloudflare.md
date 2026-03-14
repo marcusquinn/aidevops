@@ -18,12 +18,12 @@ tools:
 | Intent | Resource |
 |--------|----------|
 | **Manage/configure/update** Cloudflare resources (DNS, WAF, DDoS, R2, Workers, zones, rules, etc.) | `.agents/tools/mcp/cloudflare-code-mode.md` — Code Mode MCP (2,500+ endpoints, live OpenAPI) |
-| **Build/develop** on the Cloudflare platform (Workers, Pages, D1, KV, Durable Objects, AI, etc.) | `cloudflare-platform.md` — patterns, gotchas, decision trees, SDK usage |
+| **Build/develop** on the Cloudflare platform (Workers, Pages, D1, KV, Durable Objects, AI, etc.) | [`cloudflare-platform.md`](cloudflare-platform.md) — patterns, gotchas, decision trees, SDK usage |
 | **Auth/token setup** for API access | This file (below) |
 
 > **Operations** (DNS records, WAF rules, zone settings, R2 buckets, Worker deployments): use Code Mode MCP via `.agents/tools/mcp/cloudflare-code-mode.md`.
 >
-> **Development** (building Workers, integrating D1, using KV bindings, AI gateway patterns): use `cloudflare-platform.md`.
+> **Development** (building Workers, integrating D1, using KV bindings, AI gateway patterns): use [`cloudflare-platform.md`](cloudflare-platform.md).
 
 <!-- AI-CONTEXT-START -->
 
@@ -42,7 +42,7 @@ tools:
 
 <!-- AI-CONTEXT-END -->
 
-> **Building on Cloudflare?** (Workers, Pages, D1, R2, KV, Durable Objects, AI, etc.) → see `cloudflare-platform.md` which covers 60+ products with patterns, gotchas, decision trees, and SDK references.
+> **Building on Cloudflare?** (Workers, Pages, D1, R2, KV, Durable Objects, AI, etc.) → see [`cloudflare-platform.md`](cloudflare-platform.md) which covers 60+ products with patterns, gotchas, decision trees, and SDK references.
 >
 > **Managing CF resources via MCP?** (deploy Workers, run D1 SQL, manage KV, trigger Pages builds) → see `tools/api/cloudflare-mcp.md` for the Code Mode MCP (no token setup needed — uses OAuth).
 
