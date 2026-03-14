@@ -29,7 +29,8 @@
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 2
-source "${SCRIPT_DIR}/shared-constants.sh" 2>/dev/null || true
+# shellcheck source=/dev/null
+source "${SCRIPT_DIR}/shared-constants.sh" || true
 
 # Fallback colours if shared-constants.sh not loaded
 [[ -z "${RED+x}" ]] && RED='\033[0;31m'
@@ -745,12 +746,12 @@ check_prompt_guard_patterns() {
 	local file_age_days=0
 	if [[ "$(uname)" == "Darwin" ]]; then
 		local file_mod
-		file_mod=$(stat -f %m "$yaml_file" 2>/dev/null || echo "0")
+		file_mod=$(stat -f %m "$yaml_file" || echo "0")
 		local now
 		now=$(date +%s)
 		file_age_days=$(((now - file_mod) / 86400))
 	else
-		file_age_days=$((($(date +%s) - $(stat -c %Y "$yaml_file" 2>/dev/null || echo "0")) / 86400))
+		file_age_days=$((($(date +%s) - $(stat -c %Y "$yaml_file" || echo "0")) / 86400))
 	fi
 
 	if [[ "$file_age_days" -gt 30 ]]; then
@@ -783,9 +784,9 @@ check_secret_storage() {
 	if [[ -f "$CREDENTIALS_FILE" ]]; then
 		local perms
 		if [[ "$(uname)" == "Darwin" ]]; then
-			perms=$(stat -f %Lp "$CREDENTIALS_FILE" 2>/dev/null || echo "000")
+			perms=$(stat -f %Lp "$CREDENTIALS_FILE" || echo "000")
 		else
-			perms=$(stat -c %a "$CREDENTIALS_FILE" 2>/dev/null || echo "000")
+			perms=$(stat -c %a "$CREDENTIALS_FILE" || echo "000")
 		fi
 		if [[ "$perms" == "600" ]]; then
 			CHECK_LABEL="$label (credentials.sh, 600)"
@@ -841,9 +842,9 @@ check_git_signing() {
 	local label="Git commit signing"
 
 	local signing_key
-	signing_key=$(git config --global user.signingkey 2>/dev/null || echo "")
+	signing_key=$(git config --global user.signingkey || echo "")
 	local gpg_sign
-	gpg_sign=$(git config --global commit.gpgsign 2>/dev/null || echo "false")
+	gpg_sign=$(git config --global commit.gpgsign || echo "false")
 
 	if [[ -n "$signing_key" && "$gpg_sign" == "true" ]]; then
 		CHECK_LABEL="$label"
@@ -1099,7 +1100,7 @@ cmd_setup() {
 		if [[ "$response" =~ ^[Yy]$ ]]; then
 			echo ""
 			local git_email
-			git_email=$(git config --global user.email 2>/dev/null || echo "")
+			git_email=$(git config --global user.email || echo "")
 			ssh-keygen -t ed25519 -C "$git_email"
 			actions_fixed=$((actions_fixed + 1))
 			echo ""
