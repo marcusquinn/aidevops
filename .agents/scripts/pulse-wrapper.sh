@@ -297,17 +297,52 @@ check_dedup() {
 		return 0
 	fi
 
-	local old_pid
-	old_pid=$(cat "$PIDFILE" 2>/dev/null || echo "")
+	local pid_content
+	pid_content=$(cat "$PIDFILE" 2>/dev/null || echo "")
 
 	# Empty file or IDLE sentinel — safe to proceed (GH#4324)
-	if [[ -z "$old_pid" ]] || [[ "$old_pid" == IDLE:* ]]; then
+	if [[ -z "$pid_content" ]] || [[ "$pid_content" == IDLE:* ]]; then
+		return 0
+	fi
+
+	# SETUP sentinel (t1482): another wrapper is running pre-flight stages
+	# (cleanup, prefetch). The instance lock already prevents true concurrency,
+	# so if we got past acquire_instance_lock, the SETUP wrapper is dead or
+	# we ARE that wrapper. Either way, safe to proceed.
+	if [[ "$pid_content" == SETUP:* ]]; then
+		local setup_pid="${pid_content#SETUP:}"
+		if [[ "$setup_pid" == "$$" ]]; then
+			# We wrote this ourselves — proceed
+			return 0
+		fi
+		if ! ps -p "$setup_pid" >/dev/null 2>&1; then
+			echo "[pulse-wrapper] check_dedup: SETUP wrapper $setup_pid is dead — proceeding" >>"$LOGFILE"
+			echo "IDLE:$(date -u +%Y-%m-%dT%H:%M:%SZ)" >"$PIDFILE"
+			return 0
+		fi
+		# SETUP wrapper is alive but we hold the instance lock — it's a zombie
+		# from a previous cycle. Kill it and proceed.
+		echo "[pulse-wrapper] check_dedup: killing zombie SETUP wrapper $setup_pid" >>"$LOGFILE"
+		_kill_tree "$setup_pid" || true
+		sleep 1
+		if kill -0 "$setup_pid" 2>/dev/null; then
+			_force_kill_tree "$setup_pid" || true
+		fi
+		echo "IDLE:$(date -u +%Y-%m-%dT%H:%M:%SZ)" >"$PIDFILE"
 		return 0
 	fi
 
 	# Non-numeric content (corrupt/unknown) — safe to proceed
+	local old_pid="$pid_content"
 	if ! [[ "$old_pid" =~ ^[0-9]+$ ]]; then
 		echo "[pulse-wrapper] check_dedup: unrecognised PID file content '${old_pid}' — treating as idle" >>"$LOGFILE"
+		return 0
+	fi
+
+	# Self-detection (t1482): if the PID file contains our own PID, we wrote
+	# it in a previous code path (e.g., early PID write at main() entry).
+	# Never block on ourselves.
+	if [[ "$old_pid" == "$$" ]]; then
 		return 0
 	fi
 
@@ -487,8 +522,21 @@ prefetch_state() {
 		idx=$((idx + 1))
 	done <<<"$repo_entries"
 
-	# Wait for all parallel fetches
+	# Wait for all parallel fetches with a hard timeout (t1482).
+	# Each repo does 3 gh API calls (pr list, pr list --state all, issue list).
+	# Normal completion: <30s. Timeout at 120s catches hung gh connections.
+	local wait_start wait_elapsed
+	wait_start=$(date +%s)
 	for pid in "${pids[@]}"; do
+		wait_elapsed=$(($(date +%s) - wait_start))
+		if [[ "$wait_elapsed" -gt 120 ]]; then
+			echo "[pulse-wrapper] Parallel gh fetch timeout after 120s — killing remaining fetches" >>"$LOGFILE"
+			for remaining_pid in "${pids[@]}"; do
+				kill "$remaining_pid" 2>/dev/null || true
+			done
+			sleep 1
+			break
+		fi
 		wait "$pid" 2>/dev/null || true
 	done
 
@@ -509,29 +557,56 @@ prefetch_state() {
 	# Clean up
 	rm -rf "$tmpdir"
 
-	# Append mission state
+	# t1482: Sub-helpers that call external scripts (gh API, pr-salvage,
+	# gh-failure-miner) get individual timeouts via run_cmd_with_timeout.
+	# If a helper times out, the pulse proceeds without that section —
+	# degraded but functional. Shell functions that only read local state
+	# (priority allocations, queue governor, contribution watch) run
+	# directly since they complete instantly.
+
+	# Append mission state (reads local files — fast)
 	prefetch_missions "$repo_entries" >>"$STATE_FILE"
 
-	# Append active worker snapshot for orphaned PR detection (t216)
+	# Append active worker snapshot for orphaned PR detection (t216, local ps — fast)
 	prefetch_active_workers >>"$STATE_FILE"
 
 	# Append repo hygiene data for LLM triage (t1417)
-	prefetch_hygiene >>"$STATE_FILE"
+	# This includes pr-salvage-helper.sh which iterates all repos sequentially
+	# and can hang on gh API calls. Give it 120s since it does 8 repos.
+	local hygiene_tmp
+	hygiene_tmp=$(mktemp)
+	run_cmd_with_timeout 120 prefetch_hygiene >"$hygiene_tmp" 2>/dev/null || {
+		echo "[pulse-wrapper] prefetch_hygiene timed out after 120s (non-fatal)" >>"$LOGFILE"
+	}
+	cat "$hygiene_tmp" >>"$STATE_FILE"
+	rm -f "$hygiene_tmp"
 
 	# Append CI failure patterns from notification mining (GH#4480)
-	prefetch_ci_failures >>"$STATE_FILE"
+	local ci_tmp
+	ci_tmp=$(mktemp)
+	run_cmd_with_timeout 90 prefetch_ci_failures >"$ci_tmp" 2>/dev/null || {
+		echo "[pulse-wrapper] prefetch_ci_failures timed out after 90s (non-fatal)" >>"$LOGFILE"
+	}
+	cat "$ci_tmp" >>"$STATE_FILE"
+	rm -f "$ci_tmp"
 
-	# Append priority-class worker allocations (t1423)
+	# Append priority-class worker allocations (t1423, reads local file — fast)
 	_append_priority_allocations >>"$STATE_FILE"
 
-	# Append adaptive queue-governor guidance (t1455)
+	# Append adaptive queue-governor guidance (t1455, local computation — fast)
 	append_adaptive_queue_governor
 
-	# Append external contribution watch summary (t1419)
+	# Append external contribution watch summary (t1419, local state — fast)
 	prefetch_contribution_watch >>"$STATE_FILE"
 
 	# Append failed-notification systemic summary (t3960)
-	prefetch_gh_failure_notifications >>"$STATE_FILE"
+	local ghfail_tmp
+	ghfail_tmp=$(mktemp)
+	run_cmd_with_timeout 90 prefetch_gh_failure_notifications >"$ghfail_tmp" 2>/dev/null || {
+		echo "[pulse-wrapper] prefetch_gh_failure_notifications timed out after 90s (non-fatal)" >>"$LOGFILE"
+	}
+	cat "$ghfail_tmp" >>"$STATE_FILE"
+	rm -f "$ghfail_tmp"
 
 	# Export PULSE_SCOPE_REPOS — comma-separated list of repo slugs that
 	# workers are allowed to create PRs/branches on (t1405, GH#2928).
@@ -1483,6 +1558,53 @@ check_session_count() {
 	return 0
 }
 
+#######################################
+# Run a command with a per-call timeout (t1482)
+#
+# Lighter than run_stage_with_timeout — no logging, no stage semantics.
+# Designed for sub-helpers inside prefetch_state that can hang on gh API
+# calls. Kills the entire process group on timeout.
+#
+# Arguments:
+#   $1 - timeout in seconds
+#   $2..N - command and arguments
+#
+# Returns:
+#   0   - command completed successfully
+#   124 - command timed out and was killed
+#   else- command exit code
+#######################################
+run_cmd_with_timeout() {
+	local timeout_secs="$1"
+	shift
+	[[ "$timeout_secs" =~ ^[0-9]+$ ]] || timeout_secs=60
+
+	"$@" &
+	local cmd_pid=$!
+
+	local elapsed=0
+	while kill -0 "$cmd_pid" 2>/dev/null; do
+		if [[ "$elapsed" -ge "$timeout_secs" ]]; then
+			_kill_tree "$cmd_pid" || true
+			sleep 1
+			if kill -0 "$cmd_pid" 2>/dev/null; then
+				_force_kill_tree "$cmd_pid" || true
+			fi
+			wait "$cmd_pid" 2>/dev/null || true
+			return 124
+		fi
+		sleep 2
+		elapsed=$((elapsed + 2))
+	done
+
+	wait "$cmd_pid"
+	return $?
+}
+
+#   0   - stage completed successfully
+#   124 - stage timed out and was killed
+#   else- stage exited with command exit code
+#######################################
 #######################################
 # Run a stage with a wall-clock timeout
 #
@@ -2605,9 +2727,11 @@ main() {
 		return 0
 	fi
 
-	# t1425: Write PID early to prevent parallel instances during setup.
-	# run_pulse() overwrites with the opencode PID for watchdog tracking.
-	echo "$$" >"$PIDFILE"
+	# t1425, t1482: Write SETUP sentinel during pre-flight stages.
+	# Uses SETUP:$$ format so check_dedup() can distinguish "wrapper doing
+	# setup" from "opencode running pulse". run_pulse() overwrites with the
+	# plain opencode PID for watchdog tracking.
+	echo "SETUP:$$" >"$PIDFILE"
 
 	run_stage_with_timeout "cleanup_orphans" "$PRE_RUN_STAGE_TIMEOUT" cleanup_orphans || true
 	run_stage_with_timeout "cleanup_worktrees" "$PRE_RUN_STAGE_TIMEOUT" cleanup_worktrees || true
