@@ -286,7 +286,7 @@ Zvec ships with embedding functions that run locally or call APIs. No separate e
 | Function | Provider | Dimensions | Env var |
 |----------|----------|------------|---------|
 | `OpenAIDenseEmbedding` | OpenAI | 1536 (default) | `OPENAI_API_KEY` |
-| `JinaDenseEmbedding` | Jina AI | 768 (nano) / 1024 (small) | `JINA_API_KEY` |
+| `JinaDenseEmbedding` | Jina AI | 768 (v2-base) / 1024 (v5-small) | `JINA_API_KEY` |
 | `QwenDenseEmbedding` | Alibaba Qwen | varies | `DASHSCOPE_API_KEY` |
 | `QwenSparseEmbedding` | Alibaba Qwen | sparse | `DASHSCOPE_API_KEY` |
 
@@ -764,7 +764,8 @@ collection.insert([
 
 // Query (synchronous -- Node.js bindings use querySync)
 const results = collection.querySync({
-  vectors: new zvec.VectorQuery({ fieldName: "embedding", vector: [0.1, 0.2, 0.3, ...] }),
+  fieldName: "embedding",
+  vector: [0.1, 0.2, 0.3, ...],
   topk: 10,
 });
 
