@@ -933,6 +933,75 @@ test_scan_single_pr_filters_issue3363_review_body() {
 	return 0
 }
 
+test_scan_single_pr_filters_issue3326_review_body() {
+	reset_mock_state
+
+	gh() {
+		local command="$1"
+		shift
+		case "$command" in
+		api)
+			while [[ $# -gt 0 ]]; do
+				case "$1" in
+				repos/*/pulls/*/comments)
+					echo "[]"
+					return 0
+					;;
+				repos/*/pulls/*/reviews)
+					printf '%s\n' '[{"id":1,"user":{"login":"gemini-code-assist[bot]"},"state":"COMMENTED","body":"## Code Review\n\nThe pull request effectively addresses the issue of the '\''pulse'\'' agent stopping and asking for action by strengthening the directives for autonomous execution. The changes clarify that the agent must execute every step, dispatch workers to maintain a target concurrency, and report actions in the past tense. The modifications to Step 4 emphasize immediate dispatch, and the updated Step 6 reporting format provides a more comprehensive and action-oriented summary. These changes align well with the goal of ensuring the agent operates fully autonomously without human intervention.","submitted_at":"2024-01-01T00:00:00Z","html_url":"https://github.com/example/repo/pull/1#pullrequestreview-1"}]'
+					return 0
+					;;
+				repos/*/git/trees/*)
+					echo '{"tree":[]}'
+					return 0
+					;;
+				repos/*)
+					echo "main"
+					return 0
+					;;
+				esac
+				shift
+			done
+			echo "[]"
+			return 0
+			;;
+		label | pr) return 0 ;;
+		esac
+		echo "[]"
+		return 0
+	}
+
+	local findings
+	findings=$(_scan_single_pr "owner/repo" "1" "medium" "false" 2>/dev/null)
+	local count
+	count=$(printf '%s' "$findings" | jq 'length' 2>/dev/null || echo "0")
+
+	if [[ "$count" -eq 0 ]]; then
+		print_result "issue #3326 review body is filtered as non-actionable" 0
+	else
+		print_result "issue #3326 review body is filtered as non-actionable" 1 "expected 0 findings, got ${count}"
+	fi
+
+	gh() {
+		local command="$1"
+		shift
+		case "$command" in
+		api)
+			_mock_gh_api "$@"
+			return $?
+			;;
+		label) return 0 ;;
+		issue)
+			_mock_gh_issue "$@"
+			return $?
+			;;
+		esac
+		echo "unexpected gh call: ${command}" >&2
+		return 1
+	}
+	return 0
+}
+
 main() {
 	source "$HELPER"
 
@@ -972,6 +1041,7 @@ main() {
 	test_scan_single_pr_include_positive_returns_positive_review
 	test_scan_single_pr_default_filters_positive_review
 	test_scan_single_pr_filters_issue3363_review_body
+	test_scan_single_pr_filters_issue3326_review_body
 
 	echo "Results: ${TESTS_PASSED}/${TESTS_RUN} passed, ${TESTS_FAILED} failed"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then
