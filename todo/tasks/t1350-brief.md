@@ -45,3 +45,9 @@ Agents running `setup.sh` without `--non-interactive` flag get stuck or fail sil
 - Uses `[[ ! -t 0 ]]` (stdin not a tty) as the detection signal — standard POSIX approach
 - `AIDEVOPS_NON_INTERACTIVE` env var already supported (line 30 of setup.sh)
 - Codacy/SonarCloud: documentation-only changes in other PRs may flag advisory issues; these are not blocking
+
+## Resolution
+
+- **PR #2468** merged with blank lines around the fenced code block in the How section (MD031 compliant as merged)
+- **Issue #3321**: Quality-debt scanner flagged this as unactioned; the fix was included in the original PR — confirmed by `markdownlint-cli2` (0 errors)
+- No additional code changes required; brief updated to close the quality-debt loop
