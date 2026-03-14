@@ -1737,7 +1737,7 @@ Key findings that validate this approach:
 **TODO:** t1302, t1303, t1304, t1305, t1306, t1307, t1308, t1309, t1310
 **Logged:** 2026-02-22
 **Completed:** 2026-02-25
-**Reference:** https://blog.can.ac/2026/02/12/the-harness-problem/ | https://github.com/can1357/oh-my-pi (cloned to ~/Git/oh-my-pi)
+**Reference:** https://blog.can.ac/2026/02/12/the-harness-problem/ | https://github.com/can1357/oh-my-pi (cloned to <LOCAL_OH_MY_PI_PATH>; store path in user-local config or env var)
 
 <!--TOON:plan{id,title,status,phase,total_phases,owner,tags,est,est_ai,est_test,est_read,logged,started}:
 p030,Harness Engineering: oh-my-pi Learnings,completed,5,5,,feature|harness|edit-tool|observability|orchestration|opencode,20h,14h,4h,2h,2026-02-22T00:00Z,2026-02-25T00:00Z
@@ -1804,7 +1804,7 @@ Evaluate oh-my-pi's YAML-defined swarm orchestration with `reports_to`/`waits_fo
 
 - 2026-02-22: Full TTSR blocked by OpenCode plugin API -- no `stream.delta` hook exists. Pursuing soft TTSR (preventative) + upstream contribution for real TTSR.
 - 2026-02-22: Hashline edit format is valuable but only applicable where we own the full tool chain (headless dispatch, objective runner). Can't replace Claude Code's str_replace.
-- 2026-02-22: oh-my-pi cloned to ~/Git/oh-my-pi for ongoing reference. Track upstream changes.
+- 2026-02-22: oh-my-pi cloned to <LOCAL_OH_MY_PI_PATH> for ongoing reference. Track upstream changes. Store the path in user-local config or env var.
 
 ### [2026-02-21] Cloudflare Code Mode MCP Integration
 
