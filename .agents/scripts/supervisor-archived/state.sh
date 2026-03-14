@@ -842,7 +842,8 @@ check_batch_completion() {
 # Actions: retrospective, session review, distillation, auto-release
 #######################################
 _run_batch_post_completion() {
-	local batch_id="$1"
+	local batch_id
+	batch_id="$1"
 	local escaped_batch
 	escaped_batch=$(sql_escape "$batch_id")
 
@@ -889,7 +890,8 @@ _run_batch_post_completion() {
 # set by check_batch_completion() during the pulse.
 #######################################
 flush_deferred_batch_completions() {
-	local deferred_ids="${_PULSE_DEFERRED_BATCH_IDS:-}"
+	local deferred_ids
+	deferred_ids="${_PULSE_DEFERRED_BATCH_IDS:-}"
 
 	if [[ -z "$deferred_ids" ]]; then
 		return 0
@@ -897,7 +899,8 @@ flush_deferred_batch_completions() {
 
 	# Deduplicate batch IDs (a batch might appear multiple times if
 	# multiple tasks in the same batch transitioned in one pulse)
-	local seen_batches="" unique_count=0
+	local seen_batches=""
+	local unique_count=0
 	for bid in $deferred_ids; do
 		[[ -z "$bid" ]] && continue
 		# Skip if already seen (simple string search, bash 3.2 compatible)
@@ -914,9 +917,6 @@ flush_deferred_batch_completions() {
 	if [[ "$unique_count" -gt 0 ]]; then
 		log_success "Processed $unique_count deferred batch completion(s) (t1052)"
 	fi
-
-	# Clear the deferred list
-	_PULSE_DEFERRED_BATCH_IDS=""
 
 	return 0
 }
