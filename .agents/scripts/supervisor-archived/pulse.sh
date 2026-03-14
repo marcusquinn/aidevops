@@ -2710,10 +2710,10 @@ cmd_pulse() {
 				if kill -0 "$sweep_pid" 2>/dev/null; then
 					protected_pids="${protected_pids} ${sweep_pid}"
 					local sweep_descendants
-					sweep_descendants=$(_list_descendants "$sweep_pid" 2>/dev/null || true)
-					if [[ -n "$sweep_descendants" ]]; then
-						protected_pids="${protected_pids} ${sweep_descendants}"
-					fi
+					sweep_descendants=$(_list_descendants "$sweep_pid" || true)
+					while IFS= read -r _desc_pid; do
+						[[ -n "$_desc_pid" ]] && protected_pids="${protected_pids} ${_desc_pid}"
+					done <<<"$sweep_descendants"
 				fi
 			done
 		fi
@@ -3409,8 +3409,9 @@ cmd_pulse() {
 			# Write a PID file for the AI session so Phase 4e does not kill
 			# opencode/claude processes spawned during reasoning or action execution
 			# (t1301: concurrent pulses can trigger Phase 4e while AI is running).
-			local ai_pid_file="${SUPERVISOR_DIR}/pids/ai-supervisor.pid"
-			echo "$$" >"$ai_pid_file" 2>/dev/null || true
+			local ai_pid_file
+			ai_pid_file="${SUPERVISOR_DIR}/pids/ai-supervisor.pid"
+			echo "$$" >"$ai_pid_file" || true
 
 			# Record start timestamp
 			local ai_start_ts
@@ -3426,7 +3427,7 @@ cmd_pulse() {
 			ai_result=$(run_ai_actions_pipeline "$ai_repo_path" "full" 2>>"$ai_log_file") || ai_rc=$?
 
 			# Remove AI session PID file now that the pipeline has completed
-			rm -f "$ai_pid_file" 2>/dev/null || true
+			rm -f "$ai_pid_file" || true
 
 			# Record completion timestamp
 			local ai_end_ts
