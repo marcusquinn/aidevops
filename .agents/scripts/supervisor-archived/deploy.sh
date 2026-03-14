@@ -427,7 +427,7 @@ cmd_pr_lifecycle() {
 						# Rebase failed (conflicts or other error)
 						log_warn "Auto-rebase failed for $task_id — transitioning to blocked:merge_conflict"
 						if [[ "$dry_run" == "false" ]]; then
-							cmd_transition "$task_id" "blocked" --error "Merge conflict — auto-rebase failed" 2>>"$SUPERVISOR_LOG" || true
+							cmd_transition "$task_id" "blocked" --error "merge_conflict:auto_rebase_failed" 2>>"$SUPERVISOR_LOG" || true
 							send_task_notification "$task_id" "blocked" "PR has merge conflicts that require manual resolution" 2>>"$SUPERVISOR_LOG" || true
 						fi
 						return 1
