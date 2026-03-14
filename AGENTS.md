@@ -5,7 +5,7 @@
 ## Quick Reference
 
 - **User Guide**: `.agents/AGENTS.md` (deployed to `~/.aidevops/agents/`)
-- **Commands**: `./setup.sh` (deploy) | `.agents/scripts/linters-local.sh` (quality) | `version-manager.sh release [major|minor|patch]`
+- **Commands**: `./setup.sh` (deploy) | `.agents/scripts/linters-local.sh` (quality) | `.agents/scripts/version-manager.sh release [major|minor|patch]`
 - **Config**: `~/.config/opencode/opencode.json`, `~/.claude/settings.json`
 - **Quality**: `prompts/build.txt`
 
