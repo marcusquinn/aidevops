@@ -319,8 +319,8 @@ while IFS= read -r md_file; do
 	target_dir="${parent_dir}/${filename}"
 	skill_file="${target_dir}/SKILL.md"
 
-	# Skip if a matching folder already exists (handled by Pattern 1 or 2)
-	if [[ -d "$target_dir" ]]; then
+	# Skip if SKILL.md already exists (directory may exist after --clean)
+	if [[ -f "$skill_file" ]]; then
 		continue
 	fi
 
