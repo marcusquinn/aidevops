@@ -1084,6 +1084,75 @@ test_scan_single_pr_filters_issue3325_review_body() {
 	return 0
 }
 
+test_scan_single_pr_filters_pr2647_positive_review_body() {
+	reset_mock_state
+
+	gh() {
+		local command="$1"
+		shift
+		case "$command" in
+		api)
+			while [[ $# -gt 0 ]]; do
+				case "$1" in
+				repos/*/pulls/*/comments)
+					echo "[]"
+					return 0
+					;;
+				repos/*/pulls/*/reviews)
+					printf '%s\n' '[{"id":1,"user":{"login":"gemini-code-assist[bot]"},"state":"COMMENTED","body":"## Code Review\n\nThis pull request correctly addresses ShellCheck warning SC2181 by replacing indirect exit code checks with the more idiomatic `if ! cmd;` pattern in `stash-audit-helper.sh`. The changes are applied consistently across four functions, improving code readability and robustness. The implementation is sound and I found no issues with the proposed changes.","submitted_at":"2024-01-01T00:00:00Z","html_url":"https://github.com/example/repo/pull/1#pullrequestreview-1"}]'
+					return 0
+					;;
+				repos/*/git/trees/*)
+					echo '{"tree":[]}'
+					return 0
+					;;
+				repos/*)
+					echo "main"
+					return 0
+					;;
+				esac
+				shift
+			done
+			echo "[]"
+			return 0
+			;;
+		label | pr) return 0 ;;
+		esac
+		echo "[]"
+		return 0
+	}
+
+	local findings
+	findings=$(_scan_single_pr "owner/repo" "1" "medium" "false" 2>/dev/null)
+	local count
+	count=$(printf '%s' "$findings" | jq 'length' 2>/dev/null || echo "0")
+
+	if [[ "$count" -eq 0 ]]; then
+		print_result "issue #3323 review body is filtered as non-actionable" 0
+	else
+		print_result "issue #3323 review body is filtered as non-actionable" 1 "expected 0 findings, got ${count}"
+	fi
+
+	gh() {
+		local command="$1"
+		shift
+		case "$command" in
+		api)
+			_mock_gh_api "$@"
+			return $?
+			;;
+		label) return 0 ;;
+		issue)
+			_mock_gh_issue "$@"
+			return $?
+			;;
+		esac
+		echo "unexpected gh call: ${command}" >&2
+		return 1
+	}
+	return 0
+}
+
 main() {
 	source "$HELPER"
 
@@ -1126,6 +1195,7 @@ main() {
 	test_scan_single_pr_filters_issue3363_review_body
 	test_scan_single_pr_filters_issue3303_review_body
 	test_scan_single_pr_filters_issue3325_review_body
+	test_scan_single_pr_filters_pr2647_positive_review_body
 
 	echo "Results: ${TESTS_PASSED}/${TESTS_RUN} passed, ${TESTS_FAILED} failed"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then
