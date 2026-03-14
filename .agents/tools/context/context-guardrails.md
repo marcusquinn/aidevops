@@ -152,9 +152,9 @@ Before using `mcp_glob`, check if faster alternatives work:
 
 | Use Case | Preferred Tool | Fallback |
 |----------|---------------|----------|
-| Git-tracked files | `git ls-files '*.md'` | `mcp_glob` |
-| Untracked files | `fd -e md` | `mcp_glob` |
-| System-wide search | `fd -g '*.md' ~/.config/` | `mcp_glob` |
+| Git-tracked files | `git ls-files '<pattern>'` | `mcp_glob` |
+| Untracked files | `fd -e <ext>` or `fd -g '<pattern>'` | `mcp_glob` |
+| System-wide search | `fd -g '<pattern>' <dir>` | `mcp_glob` |
 | Search text file contents | `rg 'pattern'` | `mcp_grep` |
 | Search inside PDFs/DOCX/zips | `rga 'pattern'` | None (unique capability) |
 
