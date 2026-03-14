@@ -63,6 +63,7 @@ Strengthen agent guidance across build-plus.md, context-guardrails.md, and conte
     method: bash
     run: "rg 'raw\\.githubusercontent\\.com' .agents/ --type md -l | grep -v 'build.txt' | xargs -I{} rg -c 'NEVER|CAUTION|avoid|bad|wrong|DON.T' {} | grep ':0$' && exit 1 || exit 0"
   ```
+
 - [ ] Lint clean (shellcheck / markdownlint)
 
 ## Context & Decisions
