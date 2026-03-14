@@ -456,6 +456,9 @@ prefetch_state() {
 	# Append repo hygiene data for LLM triage (t1417)
 	prefetch_hygiene >>"$STATE_FILE"
 
+	# Append CI failure patterns from notification mining (GH#4480)
+	prefetch_ci_failures >>"$STATE_FILE"
+
 	# Append priority-class worker allocations (t1423)
 	_append_priority_allocations >>"$STATE_FILE"
 
@@ -1054,6 +1057,41 @@ prefetch_active_workers() {
 	fi
 
 	echo ""
+	return 0
+}
+
+#######################################
+# Pre-fetch CI failure patterns from notification mining (GH#4480)
+#
+# Runs gh-failure-miner-helper.sh scan + report to detect systemic CI
+# failures across managed repos. The scan mines ci_activity notifications
+# (which contribution-watch-helper.sh explicitly excludes) and identifies
+# checks that fail on multiple PRs — indicating workflow bugs rather than
+# per-PR code issues.
+#
+# Output: CI failure summary to stdout (appended to STATE_FILE by caller)
+#######################################
+prefetch_ci_failures() {
+	local miner_script="${SCRIPT_DIR}/gh-failure-miner-helper.sh"
+
+	if [[ ! -x "$miner_script" ]]; then
+		echo ""
+		echo "# CI Failure Patterns: miner script not found"
+		echo ""
+		return 0
+	fi
+
+	# Run scan (updates state file), then report (outputs summary)
+	"$miner_script" scan --since 24 >>"$LOGFILE" 2>&1 || {
+		echo "[pulse-wrapper] gh-failure-miner scan failed (non-fatal)" >>"$LOGFILE"
+	}
+
+	"$miner_script" report 2>/dev/null || {
+		echo ""
+		echo "# CI Failure Patterns: report generation failed"
+		echo ""
+	}
+
 	return 0
 }
 
