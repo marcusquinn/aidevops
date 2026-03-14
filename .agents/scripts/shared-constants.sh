@@ -223,9 +223,11 @@ timeout_sec() {
 		local half_secs_remaining=$((secs * 2))
 		while kill -0 "$cmd_pid" 2>/dev/null; do
 			if ((half_secs_remaining <= 0)); then
-				kill -TERM "$cmd_pid" 2>/dev/null # SIGTERM (15) — graceful shutdown
+				kill -TERM "$cmd_pid" # SIGTERM (15) — graceful shutdown
 				sleep 0.2
-				kill -KILL "$cmd_pid" 2>/dev/null || true # SIGKILL (9) — hard kill
+				if kill -0 "$cmd_pid" 2>/dev/null; then
+					kill -KILL "$cmd_pid" || true # SIGKILL (9) — hard kill
+				fi
 				wait "$cmd_pid" 2>/dev/null || true
 				return 124 # Normalise to GNU timeout convention
 			fi
