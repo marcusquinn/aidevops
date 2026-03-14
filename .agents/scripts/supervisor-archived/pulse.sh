@@ -2705,7 +2705,7 @@ cmd_pulse() {
 			for pid_file in "$SUPERVISOR_DIR/pids"/*.pid; do
 				[[ -f "$pid_file" ]] || continue
 				local sweep_pid
-				sweep_pid=$(cat "$pid_file" 2>/dev/null || echo "")
+				sweep_pid=$(cat "$pid_file" || echo "")
 				[[ -z "$sweep_pid" ]] && continue
 				if kill -0 "$sweep_pid" 2>/dev/null; then
 					protected_pids="${protected_pids} ${sweep_pid}"
@@ -2717,15 +2717,16 @@ cmd_pulse() {
 				fi
 			done
 		fi
-		local self_pid=$$
-		while [[ "$self_pid" -gt 1 ]] 2>/dev/null; do
+		local self_pid
+		self_pid=$$
+		while [[ "$self_pid" -gt 1 ]]; do
 			protected_pids="${protected_pids} ${self_pid}"
 			self_pid=$(ps -o ppid= -p "$self_pid" 2>/dev/null | tr -d ' ')
 			[[ -z "$self_pid" ]] && break
 		done
 
 		local emergency_candidates
-		emergency_candidates=$(pgrep -f 'claude|opencode|shellcheck|bash-language-server' 2>/dev/null || true)
+		emergency_candidates=$(pgrep -f 'claude|opencode|shellcheck|bash-language-server' || true)
 		if [[ -n "$emergency_candidates" ]]; then
 			while read -r epid; do
 				[[ -z "$epid" ]] && continue
