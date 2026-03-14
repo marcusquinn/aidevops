@@ -70,8 +70,9 @@ export const LEAK_PATTERNS: ReadonlyArray<{
   },
   {
     name: "aws_secret_key",
-    pattern: /(?:aws_secret_access_key|aws_secret|secret_access_key|secret|key)\s*[:=]\s*["']?([0-9a-zA-Z/+]{40})["']?/gi,
-    description: "AWS Secret Access Key (40-char base64 with contextual keyword)",
+    // Require a contextual keyword nearby to reduce false positives (e.g. git SHAs)
+    pattern: /(?:aws[_-]?secret[_-]?(?:access[_-]?)?key|secret[_-]?key|secret)\s*[:=]\s*["']?([0-9a-zA-Z/+]{40})["']?/gi,
+    description: "AWS Secret Access Key (40-char base64 with context keyword)",
   },
 
   // --- Git platform tokens ---
@@ -111,7 +112,9 @@ export const LEAK_PATTERNS: ReadonlyArray<{
   },
   {
     name: "bearer_token",
-    pattern: /\bBearer\s+([A-Za-z0-9_\-/.+=]{20,})\b/gi,
+    // Capture only the token value (not the 'Bearer ' prefix) for consistent redaction.
+    // Case-insensitive to handle 'bearer', 'BEARER', etc.
+    pattern: /\bBearer\s+([A-Za-z0-9_\-/.+]{20,})\b/gi,
     description: "Bearer authentication token",
   },
 
@@ -165,9 +168,8 @@ export const LEAK_PATTERNS: ReadonlyArray<{
 /**
  * Scan text for potential credential/secret leaks.
  *
- * Accepts an optional LeakDetectionConfig to allow runtime customisation of
- * entropy thresholds and minimum token length. Defaults to
- * DEFAULT_LEAK_DETECTION_CONFIG when not provided.
+ * Accepts a LeakDetectionConfig to allow runtime customisation of entropy
+ * thresholds and minimum token length. Defaults to DEFAULT_LEAK_DETECTION_CONFIG.
  *
  * Returns a result with all matches found. The caller decides whether
  * to redact, block, or warn based on the results.
@@ -189,7 +191,7 @@ export function scanForLeaks(
       // Use the first capture group if present, otherwise the full match
       const value = match[1] ?? match[0];
 
-      // For aws_secret_key (40-char base64), require high entropy to reduce false positives
+      // For aws_secret_key, require high entropy to further reduce false positives
       if (name === "aws_secret_key") {
         if (shannonEntropy(value) < entropyThreshold) {
           continue;
@@ -207,15 +209,17 @@ export function scanForLeaks(
   }
 
   // --- High-entropy token detection (catch-all for unknown formats) ---
-  // Use RegExp.exec() in a loop to get both the token and its correct index,
-  // avoiding the unreliable text.indexOf() approach when tokens repeat.
+  // Use RegExp.exec() in a loop to get both the token and its correct index.
+  // This avoids the incorrect index produced by text.indexOf(token) when a
+  // token appears multiple times, and is more robust than split()-based iteration.
   const tokenRegex = new RegExp(`[A-Za-z0-9_\\-/.+=]{${minTokenLength},}`, "g");
   let tokenMatch: RegExpExecArray | null;
   while ((tokenMatch = tokenRegex.exec(text)) !== null) {
     const token = tokenMatch[0];
     const index = tokenMatch.index;
 
-    // Skip tokens that overlap with an already-found pattern match by checking index ranges
+    // Skip tokens that overlap with an already-found pattern match by checking
+    // index ranges (more robust than exact text equality).
     const alreadyCaught = matches.some(
       (m) => index >= m.index && index < m.index + m.matchedText.length,
     );
