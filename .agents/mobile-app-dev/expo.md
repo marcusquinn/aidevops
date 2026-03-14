@@ -179,7 +179,7 @@ Expo provides managed access to device capabilities:
 - Use `expo-image` instead of `Image` for optimised loading
 - Implement `FlatList` with `getItemLayout` for long lists
 - Use `React.memo` for expensive list items
-- Optimise heavy components with `React.memo` or `useDeferredValue`
+- Defer non-critical renders with `useDeferredValue` for heavy components
 - Profile with React DevTools and Flipper
 
 ## EAS Build and Submit
