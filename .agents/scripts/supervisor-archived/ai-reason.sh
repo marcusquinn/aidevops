@@ -156,8 +156,12 @@ run_ai_reasoning() {
 	# Acquire lock
 	printf '%s %s\n' "$$" "$(date +%s)" >"$lock_file"
 
-	# Helper to release lock — called before every return
-	_release_ai_lock() { rm -f "$lock_file"; }
+	# Release lock on function return (success, failure, early-return)
+	_release_ai_lock() {
+		rm -f "$lock_file"
+		return 0
+	}
+	trap '_release_ai_lock; trap - RETURN' RETURN
 
 	local timestamp
 	timestamp=$(date -u '+%Y%m%d-%H%M%S')
@@ -169,7 +173,6 @@ run_ai_reasoning() {
 	local context
 	context=$(build_ai_context "$repo_path" "full" 2>/dev/null) || {
 		log_error "AI Reasoning: failed to build context"
-		_release_ai_lock
 		return 1
 	}
 
@@ -213,7 +216,6 @@ PROMPT
 	# Step 4: In dry-run mode, stop here
 	if [[ "$mode" == "dry-run" ]]; then
 		log_info "AI Reasoning: dry-run complete (log: $reason_log)"
-		_release_ai_lock
 		echo '{"mode":"dry-run","actions":[]}'
 		return 0
 	fi
@@ -223,7 +225,6 @@ PROMPT
 	ai_cli=$(resolve_ai_cli 2>/dev/null) || {
 		log_error "AI Reasoning: no AI CLI available"
 		echo '{"error":"no_ai_cli","actions":[]}' >>"$reason_log"
-		_release_ai_lock
 		return 1
 	}
 
@@ -232,7 +233,6 @@ PROMPT
 		log_warn "AI Reasoning: opus model unavailable, falling back to sonnet"
 		ai_model=$(resolve_model "sonnet" "$ai_cli" 2>/dev/null) || {
 			log_error "AI Reasoning: no model available"
-			_release_ai_lock
 			return 1
 		}
 	}
@@ -284,7 +284,6 @@ ${user_prompt}"
 			echo "Status: EMPTY — treated as empty action plan []"
 		} >>"$reason_log"
 		printf '%s' "[]"
-		_release_ai_lock
 		return 0
 	fi
 
@@ -416,7 +415,6 @@ SIMPLIFIED_PROMPT
 		} >>"$reason_log"
 		log_warn "AI Reasoning: raw response logged to $reason_log (${response_len} bytes, ${json_block_count} json blocks)"
 		printf '%s' "[]"
-		_release_ai_lock
 		return 0
 	fi
 
@@ -446,7 +444,6 @@ SIMPLIFIED_PROMPT
 
 	# Output the action plan
 	printf '%s' "$action_plan"
-	_release_ai_lock
 	return 0
 }
 
