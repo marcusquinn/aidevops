@@ -850,7 +850,7 @@ classify(task, lineage)
 
 ### Helper Script
 
-`task-decompose-helper.sh` provides three subcommands:
+`task-decompose-helper.sh` provides these subcommands (`format-lineage`, not `lineage`):
 
 ```bash
 # Classify: atomic or composite? (~$0.001, haiku tier)
@@ -865,6 +865,10 @@ task-decompose-helper.sh decompose "Build auth with login and OAuth" --max-subta
 task-decompose-helper.sh format-lineage --parent "Build auth" \
   --children '[{"description": "login"}, {"description": "OAuth"}]' --current 1
 # → formatted hierarchy with sibling tasks
+
+# Check if task already has child subtasks in TODO.md
+task-decompose-helper.sh has-subtasks t1408 --todo-file ./TODO.md
+# → true|false
 ```
 
 ### Configuration
