@@ -74,8 +74,12 @@ parse_estimate_minutes() {
 	if [[ "$estimate" =~ ^([0-9]+)\.([0-9]+)h$ ]]; then
 		local hours="${BASH_REMATCH[1]}"
 		local frac="${BASH_REMATCH[2]}"
-		# Convert fractional hours: 0.5h = 30m, 1.5h = 90m
-		echo $((hours * 60 + frac * 6))
+		# Convert fractional hours using proper decimal arithmetic.
+		# Pad frac to 2 digits so 0.5h → frac=50, 0.25h → frac=25, 0.75h → frac=75.
+		# Then minutes = hours*60 + round(frac_padded * 60 / 100).
+		local frac_padded
+		frac_padded=$(printf '%-2s' "$frac" | tr ' ' '0')
+		echo $((hours * 60 + (frac_padded * 60 + 50) / 100))
 		return 0
 	fi
 
@@ -94,7 +98,7 @@ is_task_unblocked() {
 
 	# Extract blocked-by: field
 	local blocked_by
-	blocked_by=$(echo "$task_line" | grep -oE 'blocked-by:[^ ]+' | sed 's/blocked-by://' || true)
+	blocked_by=$(echo "$task_line" | sed -nE 's/.*blocked-by:([^ ]+).*/\1/p')
 
 	if [[ -z "$blocked_by" ]]; then
 		return 0 # No dependencies — unblocked
@@ -109,7 +113,7 @@ is_task_unblocked() {
 
 		# Check if dependency is complete ([x]) in TODO.md
 		local dep_line
-		dep_line=$(grep -E "^[[:space:]]*- \[x\] ${dep} " "$todo_file" 2>/dev/null | head -1 || true)
+		dep_line=$(grep -E "^[[:space:]]*- \[x\] ${dep} " "$todo_file" 2>>"$SUPERVISOR_LOG" | head -1 || true)
 		if [[ -z "$dep_line" ]]; then
 			# Dependency not complete — task is blocked
 			return 1
@@ -138,7 +142,7 @@ scan_eligible_tasks() {
 
 	# Find all pending #chore tasks
 	local chore_tasks
-	chore_tasks=$(grep -E '^[[:space:]]*- \[ \] (t[0-9]+(\.[0-9]+)*) .*#chore' "$todo_file" 2>/dev/null || true)
+	chore_tasks=$(grep -E '^[[:space:]]*- \[ \] (t[0-9]+(\.[0-9]+)*) .*#chore' "$todo_file" 2>>"$SUPERVISOR_LOG" || true)
 
 	if [[ -z "$chore_tasks" ]]; then
 		log_info "No pending #chore tasks found"
@@ -149,8 +153,8 @@ scan_eligible_tasks() {
 	while IFS= read -r line; do
 		[[ -z "$line" ]] && continue
 
-		local task_id
-		task_id=$(echo "$line" | grep -oE 't[0-9]+(\.[0-9]+)*' | head -1)
+		local task_id=""
+		[[ "$line" =~ (t[0-9]+(\.[0-9]+)*) ]] && task_id="${BASH_REMATCH[1]}"
 		if [[ -z "$task_id" ]]; then
 			continue
 		fi
@@ -162,8 +166,8 @@ scan_eligible_tasks() {
 		fi
 
 		# Check estimate — must be <=15m
-		local estimate
-		estimate=$(echo "$line" | grep -oE '~[0-9]+(\.[0-9]+)?[mh]' | head -1 || true)
+		local estimate=""
+		[[ "$line" =~ (~[0-9]+(\.[0-9]+)?[mh]) ]] && estimate="${BASH_REMATCH[1]}"
 		if [[ -z "$estimate" ]]; then
 			log_info "  $task_id: no estimate found — skipping (batch-cleanup requires explicit estimate)"
 			continue
@@ -191,7 +195,7 @@ scan_eligible_tasks() {
 		if [[ -f "$SUPERVISOR_DB" ]]; then
 			local existing
 			existing=$(db "$SUPERVISOR_DB" "SELECT status FROM tasks WHERE id = '$(sql_escape "$task_id")';" 2>/dev/null || true)
-			if [[ -n "$existing" && "$existing" != "cancelled" && "$existing" != "complete" ]]; then
+			if [[ -n "$existing" && "$existing" != "cancelled" ]]; then
 				log_info "  $task_id: already tracked in supervisor (status: $existing) — skipping"
 				continue
 			fi
@@ -255,7 +259,7 @@ dispatch_batch_cleanup_worker() {
 	local task_id
 	for task_id in "${task_ids[@]}"; do
 		local task_line
-		task_line=$(grep -E "^[[:space:]]*- \[ \] ${task_id} " "$todo_file" 2>/dev/null | head -1 || true)
+		task_line=$(grep -E "^[[:space:]]*- \[ \] ${task_id} " "$todo_file" 2>>"$SUPERVISOR_LOG" | head -1 || true)
 		if [[ -n "$task_line" ]]; then
 			task_list+="- ${task_id}: $(echo "$task_line" | sed -E 's/^[[:space:]]*- \[ \] [^ ]+ //' | head -c 120)"$'\n'
 		else
@@ -351,6 +355,12 @@ PROMPT
 
 	log_info "Dispatching batch-cleanup worker for ${#task_ids[@]} tasks: ${task_csv}"
 	log_info "Log: $log_file"
+
+	# Ensure worker runs in the target repository so TODO.md and todo/ are found
+	cd "$repo" || {
+		log_error "Failed to cd to repo: $repo"
+		return 1
+	}
 
 	# Dispatch headless worker
 	local dispatch_cmd=("$ai_cli" run --format json)
