@@ -124,20 +124,25 @@ _find_real_shellcheck() {
 }
 
 # --- Filter arguments and extract target file ---
+# Populates the global _FILTERED_ARGS array directly to avoid newline-based
+# serialization, which is vulnerable to argument splitting when any argument
+# contains a newline character (e.g., an attacker could embed a newline in a
+# filename to inject a second argument and bypass --external-sources stripping).
+_FILTERED_ARGS=()
 _filter_args() {
-	local args=()
+	_FILTERED_ARGS=()
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--external-sources | -x)
 			# Strip this flag — it causes unbounded source chain expansion
 			;;
 		*)
-			args+=("$1")
+			_FILTERED_ARGS+=("$1")
 			;;
 		esac
 		shift
 	done
-	printf '%s\n' "${args[@]}"
+	return 0
 }
 
 # --- Respawn rate limiter ---
@@ -280,11 +285,10 @@ main() {
 	local real_shellcheck
 	real_shellcheck="$(_find_real_shellcheck)" || exit 1
 
-	# Read filtered args into array
-	local filtered_args=()
-	while IFS= read -r arg; do
-		filtered_args+=("$arg")
-	done < <(_filter_args "$@")
+	# Filter args into _FILTERED_ARGS global array (avoids newline-injection
+	# vulnerability from printf/read serialization round-trip)
+	_filter_args "$@"
+	local filtered_args=("${_FILTERED_ARGS[@]}")
 
 	# Check respawn rate limit — if we were recently killed, return empty
 	# results instead of running (prevents kill-respawn-grow cycle)
