@@ -55,7 +55,13 @@ echo -e "  ${GREEN}✓${NC} Updated AGENTS.md with version check"
 # This cleans up any legacy files from before auto-discovery
 # Also removes demoted agents that are now subagents
 # Plan+ and AI-DevOps consolidated into Build+ as of v2.50.0
-for f in Accounts.md Accounting.md accounting.md AI-DevOps.md Build+.md Content.md Health.md Legal.md Marketing.md Research.md Sales.md SEO.md WordPress.md Plan+.md Build-Agent.md Build-MCP.md build-agent.md build-mcp.md plan-plus.md aidevops.md Browser-Extension-Dev.md Mobile-App-Dev.md AGENTS.md; do
+legacy_files=(
+	"Accounts.md" "Accounting.md" "accounting.md" "AI-DevOps.md" "Build+.md" "Content.md"
+	"Health.md" "Legal.md" "Marketing.md" "Research.md" "Sales.md" "SEO.md" "WordPress.md"
+	"Plan+.md" "Build-Agent.md" "Build-MCP.md" "build-agent.md" "build-mcp.md"
+	"plan-plus.md" "aidevops.md" "Browser-Extension-Dev.md" "Mobile-App-Dev.md" "AGENTS.md"
+)
+for f in "${legacy_files[@]}"; do
 	rm -f "$OPENCODE_AGENT_DIR/$f"
 done
 
