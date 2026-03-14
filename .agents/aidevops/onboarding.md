@@ -106,7 +106,7 @@ Reply with numbers (e.g., "1, 2, 5") or "all" if you're comfortable with everyth
 If they're unfamiliar with **Git**:
 
 ```text
-Git is a version control system that tracks changes to your code. Think of it like 
+Git is a version control system that tracks changes to your code. Think of it like
 "save points" in a video game - you can always go back. Key concepts:
 - **Repository (repo)**: A project folder tracked by Git
 - **Commit**: A saved snapshot of your changes
@@ -152,7 +152,7 @@ aidevops can help manage servers across multiple providers from one conversation
 If they're unfamiliar with **SEO**:
 
 ```text
-SEO (Search Engine Optimization) is how you help people find your website through 
+SEO (Search Engine Optimization) is how you help people find your website through
 search engines like Google. Key concepts:
 - **Keywords**: Words people type when searching (e.g., "best coffee shops near me")
 - **SERP**: Search Engine Results Page - what Google shows for a search
@@ -167,7 +167,7 @@ aidevops has powerful SEO capabilities:
 - Discover what keywords competitors rank for
 - Automate SEO audits and reporting
 
-Even if you're not an SEO expert, I can help you understand and improve your 
+Even if you're not an SEO expert, I can help you understand and improve your
 site's search visibility through natural conversation.
 ```
 
@@ -188,8 +188,8 @@ If they're **new to everything**:
 
 ```text
 No problem! Everyone starts somewhere. I'll explain each concept as we go.
-The key thing to know: aidevops lets you manage complex technical tasks through 
-natural conversation. You tell me what you want to accomplish, and I'll handle 
+The key thing to know: aidevops lets you manage complex technical tasks through
+natural conversation. You tell me what you want to accomplish, and I'll handle
 the technical details - explaining each step along the way.
 
 Let's start simple and build up from there.
@@ -845,7 +845,7 @@ opencode
 
 ```bash
 # Check config is valid JSON
-jq . ~/.config/opencode/opencode.json > /dev/null && echo "Valid JSON"
+jq . ~/.config/opencode/opencode.json > /dev/null && echo "Valid JSON" || echo "Invalid JSON"
 
 # List configured agents
 jq '.agent | keys' ~/.config/opencode/opencode.json
