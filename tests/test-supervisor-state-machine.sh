@@ -23,7 +23,7 @@ set -euo pipefail
 
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SCRIPTS_DIR="$REPO_DIR/.agents/scripts"
-SUPERVISOR_SCRIPT="$SCRIPTS_DIR/supervisor-helper.sh"
+SUPERVISOR_SCRIPT="$SCRIPTS_DIR/supervisor-archived/supervisor-helper.sh"
 
 # --- Test Framework ---
 PASS_COUNT=0
@@ -1658,13 +1658,13 @@ lifecycle_output=$(bash -c "
 recovered_status=$(get_status test-t222c)
 if [[ "$recovered_status" == "deployed" ]]; then
 	pass "cmd_pr_lifecycle auto-recovers stuck deploying -> deployed (t222)"
+elif [[ "$recovered_status" == "deploying" ]]; then
+	# Recovery requires a real repo context (postflight, deploy, worktree cleanup).
+	# If the task is still in deploying, the test environment can't support full
+	# recovery — skip rather than false-pass on failed (t3756: CodeRabbit feedback).
+	skip "cmd_pr_lifecycle recovery not testable in isolation (task still deploying — no real repo context)"
 else
-	# Also acceptable: failed (if recovery transition was rejected for some reason)
-	if [[ "$recovered_status" == "failed" ]]; then
-		pass "cmd_pr_lifecycle handles stuck deploying (transitioned to failed)"
-	else
-		fail "cmd_pr_lifecycle did not recover stuck deploying task" "Status: $recovered_status, Output: $(echo "$lifecycle_output" | tail -3)"
-	fi
+	fail "cmd_pr_lifecycle did not recover stuck deploying task" "Status: $recovered_status, Output: $(echo "$lifecycle_output" | tail -3)"
 fi
 
 # Test: invalid transition from deploying (e.g., deploying -> queued)
