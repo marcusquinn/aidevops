@@ -189,7 +189,7 @@ Before merging ANY PR:
 
 ### PR triage
 
-- **Green CI + no blocking reviews** → merge: `gh pr merge <number> --repo <slug> --squash`. If the PR resolves an issue, comment on the issue to link the merged PR, then close it.
+- **Green CI + no blocking reviews** → merge: `gh pr merge <number> --repo <slug> --squash`. If the PR resolves an issue, comment on the issue to link the merged PR, then close it: `gh issue comment <number> --repo <slug> --body "Completed via PR #<N>."` then `gh issue close <number> --repo <slug>`.
 - **Green CI + WAITING on review bots** → skip, run `request-retry`
 - **Failing CI** → check if systemic (same check fails on 3+ PRs). If systemic, file a workflow issue instead of dispatching per-PR fixes. If per-PR, dispatch a fix worker.
 - **Open 6+ hours with no recent commits** → something is stuck. Comment, consider closing and re-filing.
