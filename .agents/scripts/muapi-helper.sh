@@ -758,6 +758,7 @@ cmd_face_swap() {
 	extra=$(jq -n --arg face "${face_url}" '{face_image: $face}')
 
 	submit_specialized "${endpoint}" "${image_url}" "${extra}" "${poll_interval}" "${timeout}" "${output_file}" "${webhook}"
+	return $?
 }
 
 # Image upscaling
@@ -802,6 +803,7 @@ cmd_upscale() {
 	done
 
 	submit_specialized "ai-image-upscale" "${image_url}" "{}" "${poll_interval}" "${timeout}" "${output_file}" "${webhook}"
+	return $?
 }
 
 # Background removal
@@ -846,6 +848,7 @@ cmd_bg_remove() {
 	done
 
 	submit_specialized "ai-background-remover" "${image_url}" "{}" "${poll_interval}" "${timeout}" "${output_file}" "${webhook}"
+	return $?
 }
 
 # Dress change
@@ -901,6 +904,7 @@ cmd_dress_change() {
 	fi
 
 	submit_specialized "ai-dress-change" "${image_url}" "${extra}" "${poll_interval}" "${timeout}" "${output_file}" "${webhook}"
+	return $?
 }
 
 # Stylization (Ghibli/Anime)
@@ -960,6 +964,7 @@ cmd_stylize() {
 	esac
 
 	submit_specialized "${endpoint}" "${image_url}" "{}" "${poll_interval}" "${timeout}" "${output_file}" "${webhook}"
+	return $?
 }
 
 # Product shot
@@ -1015,6 +1020,7 @@ cmd_product_shot() {
 	fi
 
 	submit_specialized "ai-product-shot" "${image_url}" "${extra}" "${poll_interval}" "${timeout}" "${output_file}" "${webhook}"
+	return $?
 }
 
 # Object eraser
@@ -1071,6 +1077,7 @@ cmd_object_erase() {
 	fi
 
 	submit_specialized "ai-object-eraser" "${image_url}" "${extra}" "${poll_interval}" "${timeout}" "${output_file}" "${webhook}"
+	return $?
 }
 
 # Image extension (outpainting)
@@ -1126,6 +1133,7 @@ cmd_image_extend() {
 	fi
 
 	submit_specialized "ai-image-extension" "${image_url}" "${extra}" "${poll_interval}" "${timeout}" "${output_file}" "${webhook}"
+	return $?
 }
 
 # Skin enhancer
@@ -1170,6 +1178,7 @@ cmd_skin_enhance() {
 	done
 
 	submit_specialized "ai-skin-enhancer" "${image_url}" "{}" "${poll_interval}" "${timeout}" "${output_file}" "${webhook}"
+	return $?
 }
 
 # --- Credits & Usage ---
