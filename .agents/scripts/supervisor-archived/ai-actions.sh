@@ -2012,7 +2012,7 @@ _exec_escalate_model() {
 	# Resolve bare tier name to full model string before DB update
 	local resolved_to_tier="$to_tier"
 	if [[ -n "$to_tier" && "$to_tier" != *"/"* ]]; then
-		resolved_to_tier=$(resolve_model "$to_tier" "opencode" 2>/dev/null) || resolved_to_tier="$to_tier"
+		resolved_to_tier=$(resolve_model "$to_tier" "opencode") || resolved_to_tier="$to_tier"
 	fi
 
 	# Update model tier in supervisor DB if task exists there

@@ -129,7 +129,7 @@ cmd_add() {
 	# cause model_config_error when passed to the CLI at dispatch time.
 	if [[ -n "$model" && "$model" != *"/"* ]]; then
 		local resolved_model
-		resolved_model=$(resolve_model "$model" "opencode" 2>/dev/null) || resolved_model=""
+		resolved_model=$(resolve_model "$model" "opencode") || resolved_model=""
 		if [[ -n "$resolved_model" ]]; then
 			log_info "Task $task_id: resolved tier '$model' to '$resolved_model' for DB storage"
 			model="$resolved_model"
