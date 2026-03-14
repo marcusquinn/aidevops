@@ -812,7 +812,10 @@ record_evaluation_metadata() {
 	local quality_score="${5:-0}"
 	local ai_evaluated="${6:-false}"
 
-	local pattern_helper="${SCRIPT_DIR}/pattern-tracker-helper.sh"
+	local pattern_helper="${SCRIPT_DIR}/../pattern-tracker-helper.sh"
+	if [[ ! -x "$pattern_helper" ]]; then
+		pattern_helper="${SCRIPT_DIR}/pattern-tracker-helper.sh"
+	fi
 	if [[ ! -x "$pattern_helper" ]]; then
 		pattern_helper="$HOME/.aidevops/agents/scripts/pattern-tracker-helper.sh"
 	fi
@@ -847,21 +850,11 @@ record_evaluation_metadata() {
 	fi
 
 	# Extract token counts from worker log for cost tracking (t1114, t1117)
-	# Supports camelCase (opencode JSON) and snake_case (claude CLI JSON) formats.
+	# Shared extraction logic lives in supervisor-archived/_common.sh (extract_tokens_from_log).
 	local tokens_in="" tokens_out=""
-	if [[ -n "$task_log_file" && -f "$task_log_file" ]]; then
-		local raw_in raw_out
-		raw_in=$(grep -oE '"inputTokens":[0-9]+' "$task_log_file" 2>/dev/null | tail -1 | grep -oE '[0-9]+' || true)
-		raw_out=$(grep -oE '"outputTokens":[0-9]+' "$task_log_file" 2>/dev/null | tail -1 | grep -oE '[0-9]+' || true)
-		if [[ -z "$raw_in" ]]; then
-			raw_in=$(grep -oE '"input_tokens":[0-9]+' "$task_log_file" 2>/dev/null | tail -1 | grep -oE '[0-9]+' || true)
-		fi
-		if [[ -z "$raw_out" ]]; then
-			raw_out=$(grep -oE '"output_tokens":[0-9]+' "$task_log_file" 2>/dev/null | tail -1 | grep -oE '[0-9]+' || true)
-		fi
-		[[ -n "$raw_in" ]] && tokens_in="$raw_in"
-		[[ -n "$raw_out" ]] && tokens_out="$raw_out"
-	fi
+	extract_tokens_from_log "$task_log_file"
+	tokens_in="$_EXTRACT_TOKENS_IN"
+	tokens_out="$_EXTRACT_TOKENS_OUT"
 
 	# Look up task type from DB tags if available, fallback to "unknown"
 	# TODO(t1096): extract real task type from TODO.md tags or DB metadata
