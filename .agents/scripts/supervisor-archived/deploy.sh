@@ -1488,7 +1488,7 @@ dismiss_bot_reviews() {
 
 	# Find bot reviews with CHANGES_REQUESTED state
 	local bot_reviews
-	bot_reviews=$(echo "$reviews_json" | jq -r '.[] | select(.state == "CHANGES_REQUESTED" and (.user.login | test("^(coderabbitai|gemini-code-assist|copilot)"))) | .id' 2>/dev/null || echo "")
+	bot_reviews=$(echo "$reviews_json" | jq -r '.[] | select(.state == "CHANGES_REQUESTED" and (.user.login | test("^(coderabbitai|gemini-code-assist|copilot)"))) | .id' 2>>"${SUPERVISOR_LOG:-/dev/null}" || echo "")
 
 	if [[ -z "$bot_reviews" ]]; then
 		log_debug "dismiss_bot_reviews: no blocking bot reviews found for PR #${pr_number}"
@@ -1706,7 +1706,7 @@ check_pr_status() {
 
 	# Check review status
 	local review_decision
-	review_decision=$(echo "$pr_json" | jq -r '.reviewDecision // "NONE"' 2>/dev/null || echo "NONE")
+	review_decision=$(echo "$pr_json" | jq -r '.reviewDecision // "NONE"' 2>>"${SUPERVISOR_LOG:-/dev/null}" || echo "NONE")
 
 	if [[ "$review_decision" == "CHANGES_REQUESTED" ]]; then
 		# t226: Try to auto-dismiss bot reviews before declaring changes_requested
@@ -1715,7 +1715,7 @@ check_pr_status() {
 			# Re-fetch PR status after dismissal
 			log_info "Re-checking PR #${pr_number} status after dismissing bot reviews"
 			pr_json=$(gh pr view "$pr_number" --repo "$repo_slug" --json state,isDraft,reviewDecision,statusCheckRollup 2>>"$SUPERVISOR_LOG" || echo "")
-			review_decision=$(echo "$pr_json" | jq -r '.reviewDecision // "NONE"' 2>/dev/null || echo "NONE")
+			review_decision=$(echo "$pr_json" | jq -r '.reviewDecision // "NONE"' 2>>"${SUPERVISOR_LOG:-/dev/null}" || echo "NONE")
 
 			# If still CHANGES_REQUESTED after dismissal, there are human reviews blocking
 			if [[ "$review_decision" == "CHANGES_REQUESTED" ]]; then
