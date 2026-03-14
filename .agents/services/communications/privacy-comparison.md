@@ -97,9 +97,9 @@ tools:
 | **Signal** | None (non-profit) | None | N/A | None |
 | **Bitchat** | None | None | N/A | None |
 | **Urbit** | None (self-hosted) | None | N/A | None |
-| **Nostr** | None (protocol-level) | None | N/A | None |
+| **Nostr** | Relay-dependent (public notes) | None | N/A | Relay-dependent |
 | **XMTP** | None | None | N/A | None |
-| **Matrix** | None (Foundation) | None | N/A | None |
+| **Matrix** | Server-dependent | Optional (bots, bridges) | Server admin control | None |
 | **Nextcloud Talk** | None (self-hosted) | Optional local AI only | Full control | None |
 | **iMessage** | None (Apple policy) | Apple Intelligence (on-device) | Yes | None |
 | **Telegram** | Unclear | Translation, AI chatbot (Premium) | Limited | Ads (channels) |
