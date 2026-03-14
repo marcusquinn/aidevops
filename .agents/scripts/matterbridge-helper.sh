@@ -125,22 +125,28 @@ cmd_setup() {
 # Matterbridge configuration
 # Docs: https://github.com/42wim/matterbridge/wiki
 # Security: chmod 600 this file — it contains credentials
+#
+# IMPORTANT: Replace all <PLACEHOLDER> values with real credentials.
+# Store secrets securely — never hardcode tokens in this file:
+#   aidevops secret set MATTERBRIDGE_MATRIX_PASSWORD
+#   aidevops secret set MATTERBRIDGE_DISCORD_TOKEN
+# See: tools/credentials/gopass.md and tools/credentials/encryption-stack.md
 
 [general]
 RemoteNickFormat="[{PROTOCOL}] <{NICK}> "
 
 # Example: Matrix <-> Discord bridge
-# Uncomment and fill in credentials to use
+# Uncomment and replace <PLACEHOLDER> values with real credentials
 
 # [matrix]
 #   [matrix.home]
 #   Server="https://matrix.example.com"
 #   Login="bridgebot"
-#   Password="secret"
+#   Password="<MATRIX_PASSWORD>"
 
 # [discord]
 #   [discord.myserver]
-#   Token="Bot YOUR_DISCORD_BOT_TOKEN"
+#   Token="Bot <DISCORD_BOT_TOKEN>"
 #   Server="My Server Name"
 
 # [[gateway]]

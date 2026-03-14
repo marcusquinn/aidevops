@@ -121,6 +121,13 @@ SimpleX (matterbridge-simplex), Delta Chat, Minecraft
     pattern: "matterbridge"
     path: "subagent-index.toon"
   ```
+- [ ] All config examples in `matterbridge.md` and `matterbridge-helper.sh` use `<PLACEHOLDER>` style values for tokens/credentials (e.g., `<DISCORD_BOT_TOKEN>`, `<MATRIX_PASSWORD>`), with a note directing users to `tools/credentials/` agents (gopass, Bitwarden, SOPS) for secure storage
+  ```yaml
+  verify:
+    method: codebase
+    pattern: "<[A-Z_]+>"
+    path: ".agents/services/communications/matterbridge.md"
+  ```
 - [ ] Lint clean (`shellcheck` for scripts, markdown lint for docs)
 
 ## Context & Decisions

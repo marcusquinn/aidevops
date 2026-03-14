@@ -134,23 +134,25 @@ Every config has three sections:
 2. **`[general]`** — global settings (nick format, etc.)
 3. **`[[gateway]]`** — bridge definitions connecting accounts to channels
 
+> **Security**: All credential values below are `<PLACEHOLDER>` examples. Store actual tokens and passwords via `aidevops secret set NAME` (gopass) or the credentials agents in `tools/credentials/`. See `tools/credentials/gopass.md` and `tools/security/opsec.md`.
+
 ```toml
 # Protocol block: one per platform instance
 [matrix]
   [matrix.home]
   Server="https://matrix.example.com"
   Login="bridgebot"
-  Password="secret"
+  Password="<MATRIX_PASSWORD>"
   RemoteNickFormat="[{PROTOCOL}] <{NICK}> "
 
 [discord]
   [discord.myserver]
-  Token="Bot YOUR_DISCORD_BOT_TOKEN"
+  Token="Bot <DISCORD_BOT_TOKEN>"
   Server="My Discord Server"
 
 [telegram]
   [telegram.main]
-  Token="YOUR_TELEGRAM_BOT_TOKEN"
+  Token="<TELEGRAM_BOT_TOKEN>"
 
 [irc]
   [irc.libera]
@@ -224,9 +226,9 @@ enable=true
   [matrix.home]
   Server="https://matrix.example.com"
   Login="bridgebot"
-  Password="secret"
-  # Or use access token (preferred)
-  # Token="syt_..."
+  Password="<MATRIX_PASSWORD>"
+  # Or use access token (preferred — store via: aidevops secret set MATTERBRIDGE_MATRIX_TOKEN)
+  # Token="<MATRIX_ACCESS_TOKEN>"
   RemoteNickFormat="[{PROTOCOL}] <{NICK}> "
   # Preserve threading
   PreserveThreading=true
@@ -237,10 +239,11 @@ enable=true
 ```toml
 [discord]
   [discord.myserver]
-  Token="Bot YOUR_BOT_TOKEN"
+  Token="Bot <DISCORD_BOT_TOKEN>"
   Server="My Server Name"
   # Use webhooks for better username/avatar spoofing
-  WebhookURL="https://discord.com/api/webhooks/..."
+  # Store webhook URL via: aidevops secret set MATTERBRIDGE_DISCORD_WEBHOOK
+  WebhookURL="<DISCORD_WEBHOOK_URL>"
   RemoteNickFormat="{NICK} [{PROTOCOL}]"
 ```
 
@@ -249,7 +252,8 @@ enable=true
 ```toml
 [telegram]
   [telegram.main]
-  Token="YOUR_BOT_TOKEN"
+  # Store via: aidevops secret set MATTERBRIDGE_TELEGRAM_TOKEN
+  Token="<TELEGRAM_BOT_TOKEN>"
   # For supergroups, use negative ID
   # Get ID: add @userinfobot to group
 ```
@@ -259,7 +263,8 @@ enable=true
 ```toml
 [slack]
   [slack.workspace]
-  Token="xoxb-YOUR-BOT-TOKEN"
+  # Store via: aidevops secret set MATTERBRIDGE_SLACK_TOKEN
+  Token="<SLACK_BOT_TOKEN>"
   # Legacy token (deprecated): xoxp-...
   # Bot token (recommended): xoxb-...
   PrefixMessagesWithNick=true
@@ -276,7 +281,8 @@ enable=true
   UseTLS=true
   SkipTLSVerify=false
   NickServNick="NickServ"
-  NickServPassword="your-nickserv-password"
+  # Store via: aidevops secret set MATTERBRIDGE_IRC_NICKSERV_PASSWORD
+  NickServPassword="<IRC_NICKSERV_PASSWORD>"
 ```
 
 #### XMPP
@@ -286,7 +292,8 @@ enable=true
   [xmpp.jabber]
   Server="jabber.example.com:5222"
   Jid="bridgebot@jabber.example.com"
-  Password="secret"
+  # Store via: aidevops secret set MATTERBRIDGE_XMPP_PASSWORD
+  Password="<XMPP_PASSWORD>"
   Muc="conference.jabber.example.com"
   Nick="matterbridge"
 ```
@@ -299,7 +306,8 @@ enable=true
   Server="mattermost.example.com"
   Team="myteam"
   Login="bridgebot@example.com"
-  Password="secret"
+  # Store via: aidevops secret set MATTERBRIDGE_MATTERMOST_PASSWORD
+  Password="<MATTERMOST_PASSWORD>"
   PrefixMessagesWithNick=true
   RemoteNickFormat="[{PROTOCOL}] <{NICK}> "
 ```
@@ -321,10 +329,11 @@ matterbridge-simplex --port 4242 --profile simplex-bridge
 
 ```toml
 # Matterbridge config: use API bridge to connect to adapter
+# Store the API token via: aidevops secret set MATTERBRIDGE_SIMPLEX_API_TOKEN
 [api]
   [api.simplex]
   BindAddress="0.0.0.0:4243"
-  Token="your-api-token"
+  Token="<SIMPLEX_API_TOKEN>"
 
 [[gateway]]
 name="simplex-matrix"
@@ -410,23 +419,25 @@ sudo journalctl -fu matterbridge
 Matterbridge exposes a simple REST API for custom integrations:
 
 ```toml
+# Store the API token via: aidevops secret set MATTERBRIDGE_API_TOKEN
 [api]
   [api.myapi]
   BindAddress="127.0.0.1:4242"
-  Token="your-secret-token"
+  Token="<MATTERBRIDGE_API_TOKEN>"
   Buffer=1000
 ```
 
 ```bash
 # Send message to bridge
+# Retrieve token: aidevops secret get MATTERBRIDGE_API_TOKEN
 curl -X POST http://localhost:4242/api/message \
-  -H "Authorization: Bearer your-secret-token" \
+  -H "Authorization: Bearer <MATTERBRIDGE_API_TOKEN>" \
   -H "Content-Type: application/json" \
   -d '{"text": "Hello from API", "username": "bot", "gateway": "mybridge"}'
 
 # Receive messages (long-poll)
 curl http://localhost:4242/api/messages \
-  -H "Authorization: Bearer your-secret-token"
+  -H "Authorization: Bearer <MATTERBRIDGE_API_TOKEN>"
 ```
 
 ## Troubleshooting
