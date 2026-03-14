@@ -1253,10 +1253,13 @@ cmd_add_clawdhub() {
 
 	# Get skill metadata from API
 	local api_response
-	api_response=$(curl -s --connect-timeout 10 --max-time 30 "${CLAWDHUB_API:-https://clawdhub.com/api/v1}/skills/${slug}" 2>/dev/null)
+	api_response=$(curl -fsS --connect-timeout 10 --max-time 30 "${CLAWDHUB_API:-https://clawdhub.com/api/v1}/skills/${slug}") || {
+		log_error "Failed to fetch skill info (HTTP/network) from ClawdHub API: $slug"
+		return 1
+	}
 
-	if [[ -z "$api_response" ]] || ! echo "$api_response" | jq -e . >/dev/null 2>&1; then
-		log_error "Could not fetch skill info from ClawdHub API: $slug"
+	if ! echo "$api_response" | jq -e . >/dev/null 2>&1; then
+		log_error "ClawdHub API returned invalid JSON for skill: $slug"
 		return 1
 	fi
 
