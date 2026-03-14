@@ -2949,7 +2949,7 @@ cmd_pulse() {
 	elif [[ -x "$legacy_task_creator" ]]; then
 		task_creator_script="$legacy_task_creator"
 	fi
-	local task_creation_cooldown_file="${SUPERVISOR_DIR}/task-creation-last-run"
+	local task_creation_cooldown_file="${SUPERVISOR_STATE_DIR:-/var/lib/supervisor}/task-creation-last-run"
 	local task_creation_cooldown=86400 # 24 hours
 	if [[ -n "$task_creator_script" ]]; then
 		local should_run_task_creation=true
@@ -2973,7 +2973,6 @@ cmd_pulse() {
 
 		if [[ "$should_run_task_creation" == "true" ]]; then
 			log_info "  Phase 10b: Auto-creating tasks from quality findings"
-			date +%s >"$task_creation_cooldown_file"
 
 			# Determine repo for TODO.md
 			local task_repo=""
@@ -3104,6 +3103,10 @@ cmd_pulse() {
 					log_verbose "  Phase 10b: No new tasks to create"
 				fi
 				routine_record_run "task_creation" "$tasks_added" 2>/dev/null || true
+				# Write cooldown timestamp only after TODO.md confirmed present and
+				# task creation has run (prevents throttling retries on failures).
+				mkdir -p "$(dirname "$task_creation_cooldown_file")" 2>/dev/null || true
+				date +%s >"$task_creation_cooldown_file"
 			fi
 		fi
 	fi
