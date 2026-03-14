@@ -799,23 +799,34 @@ cmd_clean() {
 	local default_branch
 	default_branch=$(get_default_branch)
 
+	# Identify the main worktree path — must never be cleaned up.
+	# The first entry in `git worktree list --porcelain` is always the main worktree.
+	local main_worktree_path
+	main_worktree_path=$(git worktree list --porcelain | head -1 | sed 's/^worktree //')
+
 	# Fetch to get current remote branch state (detects deleted branches)
 	# Prune all remotes, not just origin (GH#3797)
 	# Track fetch failures to avoid false-positive "remote deleted" heuristics
 	local remote_state_unknown=false
 	local remote
 	for remote in $(git remote 2>/dev/null); do
-		if ! git fetch --prune "$remote" 2>/dev/null; then
+		if ! git fetch --prune "$remote"; then
 			echo -e "${YELLOW}Warning: failed to refresh $remote; skipping remote-deleted cleanup checks${NC}"
 			remote_state_unknown=true
 		fi
 	done
 
-	# Build a lookup of merged PR branches for squash-merge detection.
-	# gh pr list only returns squash-merged PRs that git branch --merged misses.
-	local merged_pr_branches=""
+	# Build an associative array of merged PR branches for squash-merge detection.
+	# gh pr list catches squash-merged PRs that git branch --merged misses.
+	# Using an associative array gives O(1) lookup and avoids regex injection from
+	# branch names containing grep metacharacters.
+	declare -A merged_pr_lookup=()
 	if command -v gh &>/dev/null; then
-		merged_pr_branches=$(gh pr list --state merged --limit 200 --json headRefName --jq '.[].headRefName' 2>/dev/null || echo "")
+		local merged_pr_branches_raw=""
+		merged_pr_branches_raw=$(gh pr list --state merged --limit 200 --json headRefName --jq '.[].headRefName' 2>/dev/null || echo "")
+		while IFS= read -r branch_name; do
+			[[ -n "$branch_name" ]] && merged_pr_lookup["$branch_name"]=1
+		done <<<"$merged_pr_branches_raw"
 	fi
 
 	while IFS= read -r line; do
@@ -824,8 +835,8 @@ cmd_clean() {
 		elif [[ "$line" =~ ^branch\ refs/heads/(.+)$ ]]; then
 			worktree_branch="${BASH_REMATCH[1]}"
 		elif [[ -z "$line" ]]; then
-			# End of entry, check if merged (skip default branch)
-			if [[ -n "$worktree_branch" ]] && [[ "$worktree_branch" != "$default_branch" ]]; then
+			# End of entry, check if merged (skip default branch and main worktree)
+			if [[ -n "$worktree_branch" ]] && [[ "$worktree_branch" != "$default_branch" ]] && [[ "$worktree_path" != "$main_worktree_path" ]]; then
 				local is_merged=false
 				local merge_type=""
 
@@ -844,7 +855,8 @@ cmd_clean() {
 				# GitHub squash merges create a new commit — the original branch is NOT
 				# an ancestor of the target, so git branch --merged misses it. The remote
 				# branch may still exist if "auto-delete head branches" is off.
-				elif [[ -n "$merged_pr_branches" ]] && echo "$merged_pr_branches" | grep -qx "$worktree_branch"; then
+				# Use associative array lookup (O(1), no regex injection risk).
+				elif [[ -v "merged_pr_lookup[$worktree_branch]" ]]; then
 					is_merged=true
 					merge_type="squash-merged PR"
 				fi
@@ -911,7 +923,7 @@ cmd_clean() {
 			elif [[ "$line" =~ ^branch\ refs/heads/(.+)$ ]]; then
 				worktree_branch="${BASH_REMATCH[1]}"
 			elif [[ -z "$line" ]]; then
-				if [[ -n "$worktree_branch" ]] && [[ "$worktree_branch" != "$default_branch" ]]; then
+				if [[ -n "$worktree_branch" ]] && [[ "$worktree_branch" != "$default_branch" ]] && [[ "$worktree_path" != "$main_worktree_path" ]]; then
 					local should_remove=false
 					local use_force=false
 
@@ -931,8 +943,8 @@ cmd_clean() {
 					# Skip if fetch failed — stale refs could cause false-positive deletion
 					elif [[ "$remote_state_unknown" == "false" ]] && branch_was_pushed "$worktree_branch" && ! _branch_exists_on_any_remote "$worktree_branch"; then
 						should_remove=true
-					# Check 3: Squash-merged PR
-					elif [[ -n "$merged_pr_branches" ]] && echo "$merged_pr_branches" | grep -qx "$worktree_branch"; then
+					# Check 3: Squash-merged PR — use associative array (O(1), no regex injection)
+					elif [[ -v "merged_pr_lookup[$worktree_branch]" ]]; then
 						should_remove=true
 					fi
 
@@ -964,7 +976,7 @@ cmd_clean() {
 							remove_flag="--force"
 						fi
 						# shellcheck disable=SC2086
-						if ! git worktree remove $remove_flag "$worktree_path" 2>/dev/null; then
+						if ! git worktree remove $remove_flag "$worktree_path"; then
 							echo -e "${RED}Failed to remove $worktree_branch - may have uncommitted changes${NC}"
 						else
 							# Unregister ownership (t189)
