@@ -452,10 +452,20 @@ _test_approval_filter() {
 			"(all |everything )?(looks?|seems?) (good|fine|correct|great|solid|clean)|" +
 			"(this |the )?(pr|patch|change|diff|code) (looks?|seems?) (good|fine|correct|great|solid|clean)|" +
 			"(i have )?no (objections?|issues?|concerns?|comments?)|" +
-			"(thanks?|thank you)[,.]?\\s*(for the (pr|patch|fix|change|contribution))?[.!]?\\s*$"; "i")) as $approval_only |
+			"(thanks?|thank you)[,.]?\\s*(for the (pr|patch|fix|change|contribution))?[.!]?)[\\s\\n]*$"; "i")) as $approval_only |
 
 		($body | test(
-			"\\bshould\\b|\\bconsider\\b|\\binstead\\b|\\bsuggest|\\brecommend|" +
+			"\\bno (further )?recommendations?\\b|" +
+			"\\bno additional recommendations?\\b|" +
+			"\\bnothing (further|more) to recommend\\b"; "i")) as $no_actionable_recommendation |
+
+		($body | test(
+			"\\blgtm\\b|\\blooks good( to me)?\\b|\\bgood work\\b|" +
+			"\\bno (further |more )?(comments?|issues?|concerns?|feedback)\\b|" +
+			"\\beverything (looks?|seems?) (good|fine|correct|great|solid|clean)\\b"; "i")) as $no_actionable_sentiment |
+
+		($body | test(
+			"\\bshould\\b|\\bconsider\\b|\\binstead\\b|\\bsuggest|\\brecommend(ed|ing)?\\b|" +
 			"\\bwarning\\b|\\bcaution\\b|\\bavoid\\b|\\b(don ?'"'"'?t|do not)\\b|" +
 			"\\bvulnerab|\\binsecure|\\binjection\\b|\\bxss\\b|\\bcsrf\\b|" +
 			"\\bbug\\b|\\berror\\b|\\bproblem\\b|\\bfail\\b|\\bincorrect\\b|\\bwrong\\b|\\bmissing\\b|\\bbroken\\b|" +
@@ -464,8 +474,8 @@ _test_approval_filter() {
 			"\\bworkaround\\b|\\bhack\\b|" +
 			"```\\s*(suggestion|diff)"; "i")) as $actionable |
 
-		# skip = approval_only AND NOT actionable
-		if ($approval_only and ($actionable | not)) then "skip"
+		# skip = approval-only/no-recommendation AND NOT actionable
+		if (($approval_only or $no_actionable_recommendation or $no_actionable_sentiment) and ($actionable | not)) then "skip"
 		else "keep"
 		end
 	')
@@ -524,6 +534,17 @@ test_skips_no_issues_review() {
 		print_result "skip 'no issues' review" 0
 	else
 		print_result "skip 'no issues' review" 1 "expected skip, got ${result}"
+	fi
+	return 0
+}
+
+test_skips_no_further_recommendations_review() {
+	local result
+	result=$(_test_approval_filter "The pull request is well-documented and the fixes are implemented correctly. I have no further recommendations.")
+	if [[ "$result" == "skip" ]]; then
+		print_result "skip 'no further recommendations' review" 0
+	else
+		print_result "skip 'no further recommendations' review" 1 "expected skip, got ${result}"
 	fi
 	return 0
 }
@@ -600,6 +621,7 @@ main() {
 	test_skips_looks_good_review
 	test_skips_good_work_review
 	test_skips_no_issues_review
+	test_skips_no_further_recommendations_review
 	test_keeps_actionable_approved_review
 	test_keeps_changes_requested_review
 	test_keeps_review_with_bug_report
