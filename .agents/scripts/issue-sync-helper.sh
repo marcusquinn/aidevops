@@ -138,11 +138,19 @@ ensure_labels_exist() {
 	IFS="$_saved_ifs"
 }
 
+# Status labels to remove when marking an issue done (t3517: array for safe iteration).
+_DONE_REMOVE_LABELS=("status:available" "status:queued" "status:claimed" "status:in-review" "status:blocked" "status:verify-failed")
+
 _mark_issue_done() {
 	local repo="$1" num="$2"
+	local -a remove_args=()
+	local lbl
+	for lbl in "${_DONE_REMOVE_LABELS[@]}"; do
+		remove_args+=("--remove-label" "$lbl")
+	done
 	gh_create_label "$repo" "status:done" "6F42C1" "Task is complete"
 	_gh_edit_labels "add" "$repo" "$num" "status:done"
-	_gh_edit_labels "remove" "$repo" "$num" "status:available,status:queued,status:claimed,status:in-review,status:blocked,status:verify-failed"
+	[[ ${#remove_args[@]} -gt 0 ]] && gh issue edit "$num" --repo "$repo" "${remove_args[@]}" 2>/dev/null || true
 }
 
 # =============================================================================

@@ -342,8 +342,9 @@ state_to_status_label() {
 # All status labels that can be set on an issue (t1009)
 # Used to remove stale labels before applying the new one.
 # Restored from pre-modularisation supervisor-helper.sh (t1035).
+# Defined as a bash array for safe iteration without IFS/word-splitting (t3517).
 #######################################
-ALL_STATUS_LABELS="status:available,status:queued,status:claimed,status:in-review,status:blocked,status:verify-failed,status:needs-testing,status:done"
+ALL_STATUS_LABELS=("status:available" "status:queued" "status:claimed" "status:in-review" "status:blocked" "status:verify-failed" "status:needs-testing" "status:done")
 
 #######################################
 # Sync GitHub issue status label on state transition (t1009)
@@ -402,13 +403,11 @@ sync_issue_status_label() {
 	# Build remove args for all status labels except the new one
 	local -a remove_args=()
 	local label
-	while IFS=',' read -ra labels; do
-		for label in "${labels[@]}"; do
-			if [[ "$label" != "$new_label" ]]; then
-				remove_args+=("--remove-label" "$label")
-			fi
-		done
-	done <<<"$ALL_STATUS_LABELS"
+	for label in "${ALL_STATUS_LABELS[@]}"; do
+		if [[ "$label" != "$new_label" ]]; then
+			remove_args+=("--remove-label" "$label")
+		fi
+	done
 
 	# Handle terminal states that close the issue
 	case "$new_state" in
