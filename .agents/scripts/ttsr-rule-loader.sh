@@ -19,7 +19,7 @@
 #
 # Options:
 #   --rules-dir DIR     Override rules directory (default: .agents/rules/)
-#   --state-file FILE   Override state file (default: /tmp/ttsr-state-<pid>)
+#   --state-file FILE   Override state file (default: /tmp/ttsr-state-<ppid>)
 #   --turn N            Current conversation turn number (default: 1)
 #   --format json|text  Output format (default: text)
 #   -                   Read output text from stdin instead of argument
@@ -29,7 +29,7 @@
 #   1  Error (missing args, bad rule file, etc.)
 #   2  No rules matched (check command only)
 #
-# Phase 2 (future): Stream hook integration when OpenCode adds support.
+# Phase 2 (future): Stream hook integration when Claude Code adds support.
 #
 # Author: AI DevOps Framework
 # =============================================================================
@@ -45,26 +45,47 @@ SCRIPT_NAME="ttsr-rule-loader"
 
 # Default rules directory: relative to repo root (one level up from scripts/)
 DEFAULT_RULES_DIR="${SCRIPT_DIR}/../rules"
+# State file is stable within a session: based on PPID so multiple check calls
+# from the same parent process share state (required for 'once'/'after-gap').
 DEFAULT_STATE_FILE="/tmp/ttsr-state-${PPID:-$$}"
+
+# Track whether the state file is the default (auto-managed) so we can clean
+# it up on exit.  User-supplied --state-file paths are NOT auto-removed.
+_STATE_FILE_IS_DEFAULT=true
+
+# =============================================================================
+# Cleanup
+# =============================================================================
+
+_cleanup() {
+	if [[ "$_STATE_FILE_IS_DEFAULT" == "true" && -f "$DEFAULT_STATE_FILE" ]]; then
+		rm -f "$DEFAULT_STATE_FILE"
+	fi
+}
+
+trap '_cleanup' EXIT
 
 # =============================================================================
 # Utility Functions
 # =============================================================================
 
 log_error() {
-	local msg="$1"
+	local msg
+	msg="$1"
 	printf '[ERROR] %s\n' "$msg" >&2
 	return 0
 }
 
 log_warn() {
-	local msg="$1"
+	local msg
+	msg="$1"
 	printf '[WARN] %s\n' "$msg" >&2
 	return 0
 }
 
 log_info() {
-	local msg="$1"
+	local msg
+	msg="$1"
 	printf '[INFO] %s\n' "$msg" >&2
 	return 0
 }
@@ -272,7 +293,7 @@ get_last_fired() {
 	fi
 
 	local result
-	result="$(grep "^${rule_id}:" "$state_file" 2>/dev/null | tail -1 | cut -d: -f2)" || true
+	result="$(grep "^${rule_id}:" "$state_file" | tail -1 | cut -d: -f2)" || true
 	printf '%s' "$result"
 	return 0
 }
@@ -289,7 +310,7 @@ record_fired() {
 
 	# Remove old entry for this rule, append new
 	if [[ -f "$state_file" ]]; then
-		grep -v "^${rule_id}:" "$state_file" >"${state_file}.tmp" 2>/dev/null || true
+		grep -v "^${rule_id}:" "$state_file" >"${state_file}.tmp" || true
 	else
 		: >"${state_file}.tmp"
 	fi
@@ -423,8 +444,9 @@ cmd_check() {
 			continue
 		fi
 
-		# Check if trigger matches the output text
-		if printf '%s' "$output_text" | grep -qE "$rule_trigger" 2>/dev/null; then
+		# Check if trigger matches the output text.
+		# stderr is NOT suppressed so invalid regex in rule files surfaces visibly.
+		if printf '%s' "$output_text" | grep -qE "$rule_trigger"; then
 			# Check repeat policy
 			if should_fire "$rule_id" "$rule_repeat_policy" "$rule_gap_turns" "$current_turn" "$state_file"; then
 				# Record firing
@@ -438,18 +460,15 @@ cmd_check() {
 					else
 						corrections="${corrections},"
 					fi
-					# Escape body for JSON (backslashes, quotes, newlines)
-					local escaped_body
-					escaped_body="$(printf '%s' "$rule_body" | awk '
-					BEGIN { ORS="" }
-					{
-						gsub(/\\/, "\\\\")
-						gsub(/"/, "\\\"")
-						if (NR > 1) printf "\\n"
-						printf "%s", $0
-					}
-				')"
-					corrections="${corrections}{\"id\":\"${rule_id}\",\"severity\":\"${rule_severity}\",\"body\":\"${escaped_body}\"}"
+					# Use jq to safely construct JSON — handles all special
+					# characters (backslashes, quotes, control chars, etc.)
+					local json_correction
+					json_correction="$(jq -n \
+						--arg id "$rule_id" \
+						--arg severity "$rule_severity" \
+						--arg body "$rule_body" \
+						'{id: $id, severity: $severity, body: $body}')"
+					corrections="${corrections}${json_correction}"
 				else
 					local severity_upper
 					severity_upper="$(printf '%s' "$rule_severity" | tr '[:lower:]' '[:upper:]')"
@@ -548,6 +567,7 @@ main() {
 				usage
 			}
 			state_file="$2"
+			_STATE_FILE_IS_DEFAULT=false
 			shift 2
 			;;
 		--turn)
@@ -555,6 +575,10 @@ main() {
 				log_error "--turn requires a value"
 				usage
 			}
+			if ! [[ "$2" =~ ^[0-9]+$ ]] || [[ "$2" -eq 0 ]]; then
+				log_error "--turn must be a positive integer"
+				usage
+			fi
 			current_turn="$2"
 			shift 2
 			;;
