@@ -68,13 +68,16 @@ install_mcp_packages() {
 		fi
 	fi
 
-	if command -v uv &>/dev/null; then
+	if command -v uv &>/dev/null && uv tool --help &>/dev/null; then
 		print_info "Installing/updating outscraper-mcp-server via uv..."
 		if command -v outscraper-mcp-server &>/dev/null; then
 			uv tool upgrade outscraper-mcp-server >/dev/null 2>&1 || true
 		else
 			uv tool install outscraper-mcp-server >/dev/null 2>&1 || print_warning "Failed to install outscraper-mcp-server"
 		fi
+	elif command -v uv &>/dev/null; then
+		print_warning "uv is installed but too old to support 'tool' subcommand — skipping outscraper-mcp-server"
+		print_info "Update uv with: curl -LsSf https://astral.sh/uv/install.sh | sh"
 	fi
 
 	# Update opencode.json with resolved full paths for all MCP binaries

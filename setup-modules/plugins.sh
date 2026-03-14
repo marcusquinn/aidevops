@@ -424,7 +424,7 @@ scan_imported_skills() {
 		local installed=false
 
 		# 1. uv tool install (preferred - fast, isolated, manages its own Python)
-		if [[ "$installed" == "false" ]] && command -v uv &>/dev/null; then
+		if [[ "$installed" == "false" ]] && command -v uv &>/dev/null && uv tool --help &>/dev/null; then
 			print_info "Installing Cisco Skill Scanner via uv..."
 			if run_with_spinner "Installing cisco-ai-skill-scanner" uv tool install cisco-ai-skill-scanner; then
 				print_success "Cisco Skill Scanner installed via uv"
