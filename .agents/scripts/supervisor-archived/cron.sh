@@ -475,10 +475,12 @@ _register_blocked_task() {
 	local task_id="$1"
 	local repo="$2"
 	local blocker_reason="$3"
+	local escaped_error
+	escaped_error=$(sql_escape "Blocked by: ${blocker_reason}")
 
 	# Check if already in supervisor DB
 	local existing
-	existing=$(db "$SUPERVISOR_DB" "SELECT status FROM tasks WHERE id = '$(sql_escape "$task_id")';" 2>/dev/null || true)
+	existing=$(db "$SUPERVISOR_DB" "SELECT status FROM tasks WHERE id = '$(sql_escape "$task_id")';" || true)
 
 	if [[ -n "$existing" ]]; then
 		# Already tracked — update to blocked if not in a terminal state
@@ -486,17 +488,20 @@ _register_blocked_task() {
 			return 0
 		fi
 		if [[ "$existing" != "blocked" ]]; then
-			db "$SUPERVISOR_DB" "UPDATE tasks SET status='blocked', error='Blocked by: ${blocker_reason}', updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id='$(sql_escape "$task_id")';" 2>/dev/null || true
+			db "$SUPERVISOR_DB" "UPDATE tasks SET status='blocked', error='${escaped_error}', updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id='$(sql_escape "$task_id")';" || true
 			log_info "  $task_id: updated to blocked (was: $existing, blocked by: $blocker_reason)"
 		fi
 		return 0
 	fi
 
 	# Not in DB — add it first, then mark blocked
-	if cmd_add "$task_id" --repo "$repo"; then
-		db "$SUPERVISOR_DB" "UPDATE tasks SET status='blocked', error='Blocked by: ${blocker_reason}', updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id='$(sql_escape "$task_id")';" 2>/dev/null || true
-		log_info "  $task_id: registered as blocked (blocked by: $blocker_reason)"
+	if ! cmd_add "$task_id" --repo "$repo"; then
+		log_error "  $task_id: failed to add to supervisor DB"
+		return 1
 	fi
+
+	db "$SUPERVISOR_DB" "UPDATE tasks SET status='blocked', error='${escaped_error}', updated_at=strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id='$(sql_escape "$task_id")';" || true
+	log_info "  $task_id: registered as blocked (blocked by: $blocker_reason)"
 
 	return 0
 }
