@@ -708,7 +708,7 @@ allow_rules = [
     "Bash(prettier *)",
     "Bash(tsc *)",
 
-    # --- System info (read-only) ---
+    # --- Common system utilities ---
     "Bash(which *)",
     "Bash(command -v *)",
     "Bash(uname *)",
@@ -809,23 +809,17 @@ def merge_rules(existing, new_rules):
             added = True
     return added
 
-# Also clean up any expanded-path rules from prior versions
-# (e.g., /Users/foo/.aidevops/** should become ~/.aidevops/**)
+# Also clean up any expanded-path rules from prior versions.
+# These are bare paths that will be replaced by the new Tool(specifier) syntax.
 home = os.path.expanduser("~")
 existing_allow = permissions.get("allow", [])
-cleaned_allow = []
-for rule in existing_allow:
-    if rule.startswith(home + "/"):
-        # Convert expanded path to portable form
-        portable = "Read(~" + rule[len(home):] + ")"
-        # Only convert bare path patterns (not already Tool(specifier) format)
-        if "(" not in rule:
-            # This was a bare path from the old format — skip it,
-            # the new rules below use proper Tool(specifier) syntax
-            continue
-    cleaned_allow.append(rule)
+original_len = len(existing_allow)
+cleaned_allow = [
+    rule for rule in existing_allow
+    if not (rule.startswith(home + "/") and "(" not in rule)
+]
 
-if len(cleaned_allow) != len(existing_allow):
+if len(cleaned_allow) != original_len:
     permissions["allow"] = cleaned_allow
     changed = True
 
