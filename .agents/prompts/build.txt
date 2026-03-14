@@ -347,6 +347,37 @@ Git is the primary audit trail for all work. Every change should be discoverable
 - Explicit returns in all functions
 - Conventional commits: feat:, fix:, docs:, refactor:, chore:, perf:
 
+# Bash 3.2 Compatibility (macOS default shell)
+# macOS ships bash 3.2.57. All shell scripts MUST work on this version.
+# Bash 4.0+ features silently crash or produce wrong results on 3.2 — no
+# error message, just broken behaviour. This has caused repeated production
+# failures (pulse dispatch, worktree cleanup, dataset helpers, routine scheduler).
+#
+# Forbidden features (bash 4.0+):
+- `declare -A` / `local -A` (associative arrays) — use parallel indexed arrays or grep-based lookup
+- `mapfile` / `readarray` — use `while IFS= read -r line; do arr+=("$line"); done < <(cmd)`
+- `${var,,}` / `${var^^}` (case conversion) — use `tr '[:upper:]' '[:lower:]'` or `tr '[:lower:]' '[:upper:]'`
+- `${var:offset:length}` negative offsets — use `${var: -N}` (space before minus) or string manipulation
+- `|&` (pipe stderr) — use `2>&1 |`
+- `&>>` (append both) — use `>> file 2>&1`
+- `declare -n` / `local -n` (namerefs) — use eval or indirect expansion `${!var}`
+- `[[ $var =~ regex ]]` with stored regex in variables works differently — test on 3.2
+#
+# Subshell and command substitution traps:
+- `$()` captures ALL stdout — never mix `tee` or command output with exit code capture in `$()`. Write exit codes to a temp file instead: `printf '%s' "$?" > "$exit_code_file"`
+- `local -a arr=()` inside `$()` subshells — `local` in a subshell not inside a function is undefined in 3.2
+- `PIPESTATUS` — available in 3.2 but only for the immediately preceding pipeline in the current shell. Inside `$()` it reflects the subshell's pipeline, not the parent's. Capture it immediately: `cmd1 | cmd2; local ps=("${PIPESTATUS[@]}")`
+#
+# Array passing across process boundaries:
+- Arrays cannot cross subshell, `$()`, or pipe boundaries as arrays. They flatten to strings.
+- To pass an array to a subprocess: pass elements as separate positional arguments (`"${arr[@]}"`), never as a single escaped string (`printf -v str '%q ' "${arr[@]}"` then `"$str"` — the subprocess receives one argument, not many)
+- To receive array results from a subprocess: write to a temp file (one element per line), then read back with `while read` loop
+#
+# Safe patterns:
+- Test scripts with `/bin/bash` (not `/opt/homebrew/bin/bash`) to catch 4.0+ usage
+- When in doubt, check: `bash --version` on macOS gives 3.2.57
+- ShellCheck does NOT catch most bash version incompatibilities — manual review required
+
 # Write-Time Quality Enforcement
 # Inspired by Plankton (github.com/alexfazio/plankton) — adapted for runtime-agnostic use.
 # Plankton uses Claude Code PostToolUse hooks to lint on every edit. OpenCode does not yet

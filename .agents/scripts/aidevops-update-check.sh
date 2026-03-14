@@ -54,7 +54,8 @@ detect_app() {
 		# return capitalized names on some platforms, e.g. "Cursor" not "cursor")
 		local parent parent_lower
 		parent=$(ps -o comm= -p "${PPID:-0}" 2>/dev/null || echo "")
-		parent_lower="${parent,,}"
+		# Bash 3.2 compat: no ${var,,} — use tr for case conversion
+		parent_lower=$(printf '%s' "$parent" | tr '[:upper:]' '[:lower:]')
 		case "$parent_lower" in
 		*opencode*)
 			app_name="OpenCode"

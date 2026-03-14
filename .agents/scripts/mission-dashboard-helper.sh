@@ -55,12 +55,13 @@ find_mission_files() {
 	fi
 
 	# Deduplicate by realpath
-	local -A seen=()
+	# Bash 3.2 compat: no associative arrays — use string-based seen list
+	local seen=" "
 	for p in "${paths[@]}"; do
 		local rp
 		rp=$(realpath "$p" 2>/dev/null) || rp="$p"
-		if [[ -z "${seen[$rp]:-}" ]]; then
-			seen[$rp]=1
+		if [[ "$seen" != *" ${rp} "* ]]; then
+			seen="${seen}${rp} "
 			echo "$p"
 		fi
 	done

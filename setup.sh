@@ -141,12 +141,13 @@ _ensure_cron_path() {
 	current_crontab=$(crontab -l 2>/dev/null) || current_crontab=""
 
 	# Deduplicate PATH entries (preserving order)
+	# Bash 3.2 compat: no associative arrays — use string-based seen list
 	local deduped_path=""
-	local -A seen_dirs=()
+	local seen_dirs=" "
 	local IFS=':'
 	for dir in $PATH; do
-		if [[ -n "$dir" && -z "${seen_dirs[$dir]:-}" ]]; then
-			seen_dirs[$dir]=1
+		if [[ -n "$dir" && "$seen_dirs" != *" ${dir} "* ]]; then
+			seen_dirs="${seen_dirs}${dir} "
 			deduped_path="${deduped_path:+${deduped_path}:}${dir}"
 		fi
 	done

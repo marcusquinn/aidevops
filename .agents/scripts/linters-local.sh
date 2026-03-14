@@ -880,6 +880,90 @@ check_secret_policy() {
 }
 
 # =============================================================================
+# Bash 3.2 Compatibility Check
+# =============================================================================
+# macOS ships bash 3.2.57. Bash 4.0+ features silently crash or produce wrong
+# results — no error message, just broken behaviour. ShellCheck does NOT catch
+# most version incompatibilities, so this is a dedicated scanner.
+
+check_bash32_compat() {
+	echo -e "${BLUE}Checking Bash 3.2 Compatibility...${NC}"
+
+	local violations=0
+	local tmp_file
+	tmp_file=$(mktemp)
+	_save_cleanup_scope
+	trap '_run_cleanups' RETURN
+	push_cleanup "rm -f '${tmp_file}'"
+
+	# Use grep -nE (ERE) — NOT grep -nP (PCRE) — because macOS BSD grep
+	# does not support -P. This check itself must be bash 3.2 / macOS compatible.
+	# Skip this file (linters-local.sh) — its grep patterns contain the
+	# forbidden strings as search targets, not as bash code.
+	local self_basename
+	self_basename=$(basename "${BASH_SOURCE[0]}")
+	for file in "${ALL_SH_FILES[@]}"; do
+		[[ -f "$file" ]] || continue
+		[[ "$(basename "$file")" == "$self_basename" ]] && continue
+
+		# declare -A / local -A (associative arrays — bash 4.0+)
+		grep -nE '^[[:space:]]*(declare|local)[[:space:]]+-A[[:space:]]' "$file" 2>/dev/null | while IFS= read -r line; do
+			printf '%s:%s [associative array — bash 4.0+]\n' "$file" "$line" >>"$tmp_file"
+		done
+
+		# mapfile / readarray (bash 4.0+)
+		grep -nE '^[[:space:]]*(mapfile|readarray)[[:space:]]' "$file" 2>/dev/null | while IFS= read -r line; do
+			printf '%s:%s [mapfile/readarray — bash 4.0+]\n' "$file" "$line" >>"$tmp_file"
+		done
+
+		# ${var,,} / ${var^^} case conversion (bash 4.0+)
+		# Exclude comments — grep -n prefixes "NNN:" so comments appear as "NNN:\s*#"
+		grep -n ',,}' "$file" 2>/dev/null | grep '\${' | grep -vE '^[0-9]+:[[:space:]]*#' | while IFS= read -r line; do
+			printf '%s:%s [case conversion ,,} — bash 4.0+]\n' "$file" "$line" >>"$tmp_file"
+		done
+		grep -n '^^}' "$file" 2>/dev/null | grep '\${' | grep -vE '^[0-9]+:[[:space:]]*#' | while IFS= read -r line; do
+			printf '%s:%s [case conversion ^^} — bash 4.0+]\n' "$file" "$line" >>"$tmp_file"
+		done
+
+		# declare -n / local -n namerefs (bash 4.3+)
+		grep -nE '^[[:space:]]*(declare|local)[[:space:]]+-n[[:space:]]' "$file" 2>/dev/null | while IFS= read -r line; do
+			printf '%s:%s [nameref — bash 4.3+]\n' "$file" "$line" >>"$tmp_file"
+		done
+
+		# coproc (bash 4.0+)
+		grep -nE '^[[:space:]]*coproc[[:space:]]' "$file" 2>/dev/null | while IFS= read -r line; do
+			printf '%s:%s [coproc — bash 4.0+]\n' "$file" "$line" >>"$tmp_file"
+		done
+
+		# &>> append-both (bash 4.0+)
+		grep -n '&>>' "$file" 2>/dev/null | grep -vE '^[0-9]+:[[:space:]]*#' | while IFS= read -r line; do
+			printf '%s:%s [&>> append — bash 4.0+]\n' "$file" "$line" >>"$tmp_file"
+		done
+	done
+
+	if [[ -s "$tmp_file" ]]; then
+		violations=$(wc -l <"$tmp_file")
+		violations=${violations//[^0-9]/}
+		violations=${violations:-0}
+
+		if [[ "$violations" -gt 0 ]]; then
+			print_error "Bash 3.2 compatibility: $violations violations (macOS default bash)"
+			head -20 "$tmp_file"
+			if [[ "$violations" -gt 20 ]]; then
+				echo "... and $((violations - 20)) more"
+			fi
+			rm -f "$tmp_file"
+			return 1
+		fi
+	fi
+
+	rm -f "$tmp_file"
+	print_success "Bash 3.2 compatibility: no violations"
+
+	return 0
+}
+
+# =============================================================================
 # Bundle-Aware Gate Filtering (t1364.6)
 # =============================================================================
 # Resolves the project bundle and checks whether a gate should be skipped.
@@ -1002,6 +1086,11 @@ main() {
 
 	if ! should_skip_gate "secret-policy"; then
 		check_secret_policy || exit_code=1
+		echo ""
+	fi
+
+	if ! should_skip_gate "bash32-compat"; then
+		check_bash32_compat || exit_code=1
 		echo ""
 	fi
 

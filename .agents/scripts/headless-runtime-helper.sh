@@ -779,27 +779,37 @@ cmd_run() {
 
 		local output_file
 		output_file=$(mktemp)
+		local exit_code_file
+		exit_code_file=$(mktemp)
 		local exit_code=0
 		# Run in subshell to avoid fragile set +e/set -e toggling (GH#4225).
 		# Subshell localises errexit so main shell state is never modified.
-		exit_code=$(
+		# Exit code is written to a temp file — NOT captured via $() — because
+		# tee stdout would contaminate the $() capture (bash 3.2 has no clean
+		# way to separate tee output from the exit code in a single $()).
+		(
 			set +e
 			if [[ -x "$SANDBOX_EXEC_HELPER" ]]; then
-				local escaped_cmd passthrough_csv
-				printf -v escaped_cmd '%q ' "${cmd[@]}"
-				escaped_cmd="${escaped_cmd% }"
+				# Pass cmd array elements as separate arguments after --.
+				# Previous code used printf -v to build a single escaped string,
+				# which the sandbox received as one argument and passed to env as
+				# a single executable path — causing "No such file or directory".
+				# Bash 3.2 compat: no local -a in subshells, no printf -v tricks.
+				local passthrough_csv
 				passthrough_csv="$(build_sandbox_passthrough_csv)"
-				local sandbox_args=()
 				if [[ -n "$passthrough_csv" ]]; then
-					sandbox_args=(--passthrough "$passthrough_csv")
+					"$SANDBOX_EXEC_HELPER" run --timeout "$HEADLESS_SANDBOX_TIMEOUT_DEFAULT" --allow-secret-io --passthrough "$passthrough_csv" -- "${cmd[@]}" 2>&1 | tee "$output_file"
+				else
+					"$SANDBOX_EXEC_HELPER" run --timeout "$HEADLESS_SANDBOX_TIMEOUT_DEFAULT" --allow-secret-io -- "${cmd[@]}" 2>&1 | tee "$output_file"
 				fi
-				"$SANDBOX_EXEC_HELPER" run --timeout "$HEADLESS_SANDBOX_TIMEOUT_DEFAULT" --allow-secret-io "${sandbox_args[@]}" -- "$escaped_cmd" 2>&1 | tee "$output_file"
-				echo "${PIPESTATUS[0]}"
+				printf '%s' "${PIPESTATUS[0]}" >"$exit_code_file"
 			else
 				"${cmd[@]}" 2>&1 | tee "$output_file"
-				echo "${PIPESTATUS[0]}"
+				printf '%s' "${PIPESTATUS[0]}" >"$exit_code_file"
 			fi
 		) || true
+		exit_code=$(cat "$exit_code_file" 2>/dev/null) || exit_code=1
+		rm -f "$exit_code_file"
 
 		local discovered_session
 		discovered_session=$(extract_session_id_from_output "$output_file")

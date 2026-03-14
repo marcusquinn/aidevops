@@ -101,7 +101,8 @@ _extract_verification_snippet() {
 				in_fence="true"
 				fence_type=""
 				if [[ "$line" =~ ^\`\`\`([[:alnum:]_-]+) ]]; then
-					fence_type="${BASH_REMATCH[1],,}"
+					# Bash 3.2 compat: no ${var,,} — use tr for case conversion
+					fence_type=$(printf '%s' "${BASH_REMATCH[1]}" | tr '[:upper:]' '[:lower:]')
 				fi
 				continue
 			fi
