@@ -60,6 +60,7 @@ export function loadConfigFile(): Partial<BotConfig> {
 const STRING_ENV_MAP: ReadonlyArray<[string, keyof BotConfig]> = [
   ["SIMPLEX_HOST", "host"],
   ["SIMPLEX_BOT_NAME", "displayName"],
+  ["SIMPLEX_DATA_DIR", "dataDir"],
 ];
 
 /** Env var → config key mapping for boolean assignments */
@@ -67,7 +68,18 @@ const BOOLEAN_ENV_MAP: ReadonlyArray<[string, keyof BotConfig]> = [
   ["SIMPLEX_AUTO_ACCEPT", "autoAcceptContacts"],
   ["SIMPLEX_TLS", "useTls"],
   ["SIMPLEX_BUSINESS_ADDRESS", "businessAddress"],
+  ["SIMPLEX_AUTO_ACCEPT_FILES", "autoAcceptFiles"],
+  ["SIMPLEX_AUTO_JOIN_GROUPS", "autoJoinGroups"],
 ];
+
+/** Parse non-negative numeric env var, returning undefined if invalid */
+export function parseEnvNonNegativeNumber(envKey: string): number | undefined {
+  const raw = process.env[envKey];
+  if (!raw) return undefined;
+  const value = Number(raw);
+  if (!Number.isFinite(value) || value < 0) return undefined;
+  return value;
+}
 
 /** Parse port from env var, returning undefined if invalid */
 export function parseEnvPort(): number | undefined {
@@ -105,6 +117,14 @@ export function loadEnvOverrides(): Partial<BotConfig> {
   for (const [envKey, configKey] of BOOLEAN_ENV_MAP) {
     const val = process.env[envKey];
     if (val) (overrides as Record<string, unknown>)[configKey] = val === "true";
+  }
+
+  const maxFileSize = parseEnvNonNegativeNumber("SIMPLEX_MAX_FILE_SIZE");
+  if (maxFileSize !== undefined) overrides.maxFileSize = maxFileSize;
+
+  const sessionIdleTimeout = parseEnvNonNegativeNumber("SIMPLEX_SESSION_IDLE_TIMEOUT");
+  if (sessionIdleTimeout !== undefined) {
+    overrides.sessionIdleTimeout = sessionIdleTimeout;
   }
 
   return overrides;
