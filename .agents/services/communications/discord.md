@@ -519,8 +519,8 @@ Map Discord roles to aidevops runners. Users with specific roles get routed to t
 import { ChatInputCommandInteraction, GuildMember, TextChannel } from "discord.js";
 
 interface BotConfig {
-  channelRouting: Record<string, string>;
-  roleRouting: Record<string, string>;
+  channelRouting: { [key: string]: string };
+  roleRouting: { [key: string]: string };
   defaultRunner: string;
   allowedGuilds?: string[];
   allowedChannels?: string[];
@@ -564,7 +564,7 @@ function resolveRunner(
 
 ```typescript
 import { ChatInputCommandInteraction, GuildMember } from "discord.js";
-// BotConfig defined in Role-Based Routing section above
+
 
 function checkAccess(
   interaction: ChatInputCommandInteraction,
@@ -682,18 +682,13 @@ Users should assume:
 ### Dispatch Pattern
 
 ```typescript
-import { execFile } from "node:child_process";
-import { promisify } from "node:util";
+import { spawnSync } from "node:child_process";
 
-const execFileAsync = promisify(execFile);
-
-async function dispatchToRunner(
-  runner: string,
-  prompt: string
-): Promise<string> {
-  // Use execFile with array args to prevent command injection
-  // (never use execSync with string interpolation)
-  const { stdout } = await execFileAsync(
+function dispatchToRunner(runner: string, prompt: string): string {
+  // Use spawnSync with argument array — bypasses the shell entirely,
+  // preventing injection via ;, |, &&, $(), backticks, and all other
+  // shell metacharacters. Never use execSync with string interpolation.
+  const child = spawnSync(
     "runner-helper.sh",
     ["dispatch", runner, prompt],
     {
@@ -703,7 +698,16 @@ async function dispatchToRunner(
     }
   );
 
-  return stdout.trim();
+  if (child.error) {
+    throw child.error;
+  }
+
+  if (child.status !== 0) {
+    // Note: stderr may contain sensitive info — sanitize before surfacing to users
+    throw new Error(`Runner failed with exit code ${child.status}: ${child.stderr}`);
+  }
+
+  return child.stdout.trim();
 }
 ```
 
@@ -775,9 +779,11 @@ import {
   createAudioResource,
 } from "@discordjs/voice";
 
-// Obtain the guild from the client cache
+// Fetch the guild from the client (assuming 'client' is your Discord.js Client instance)
 const guild = client.guilds.cache.get("GUILD_ID");
-if (!guild) throw new Error("Guild not found");
+if (!guild) {
+  throw new Error("Guild not found");
+}
 
 // Join voice channel
 const connection = joinVoiceChannel({
