@@ -102,7 +102,7 @@ Defining verification at brief-creation time means the person/AI who understands
 
 ## Context & Decisions
 
-- Verification blocks use YAML inside fenced code blocks (not inline YAML frontmatter) to avoid breaking existing markdown parsers
+- Verification blocks use YAML inside fenced code blocks (not inline YAML frontmatter) to avoid breaking existing Markdown parsers
 - `manual` method never blocks automated completion — it reports "SKIP (manual)" and succeeds
 - `subagent` method uses ai-research MCP tool for lightweight review (not full agent dispatch)
 - Verification is optional — briefs without verify blocks still work normally
