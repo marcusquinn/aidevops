@@ -122,7 +122,7 @@ chmod +x "$MOCK_BIN/opencode"
 export MOCK_CLAUDE_LOG="$TEST_DIR/mock-claude-invocations.log"
 export MOCK_OPENCODE_LOG="$TEST_DIR/mock-opencode-invocations.log"
 
-# shellcheck disable=SC2317,SC2329
+# shellcheck disable=SC2317,SC2329 # SC2317: cleanup is registered via trap EXIT, so code after trap appears unreachable. SC2329: trap handler is not meant to be inherited by subshells.
 cleanup() {
 	# Remove all worktrees before deleting the repo
 	if [[ -d "$TEST_REPO" ]]; then
@@ -147,16 +147,19 @@ sup() {
 # Helper: query the test DB directly
 test_db() {
 	sqlite3 -cmd ".timeout 5000" "$TEST_DIR/supervisor/supervisor.db" "$@"
+	return $?
 }
 
 # Helper: get task status
 get_status() {
 	test_db "SELECT status FROM tasks WHERE id = '$1';"
+	return $?
 }
 
 # Helper: get task field
 get_field() {
 	test_db "SELECT $2 FROM tasks WHERE id = '$1';"
+	return $?
 }
 
 # Helper: create a mock worker log file
@@ -168,6 +171,7 @@ create_log() {
 	echo "$content" >"$log_file"
 	test_db "UPDATE tasks SET log_file = '$log_file' WHERE id = '$task_id';"
 	echo "$log_file"
+	return 0
 }
 
 # Helper: create a mock PID file for a running worker
@@ -176,12 +180,14 @@ create_pid_file() {
 	local pid="$2"
 	mkdir -p "$TEST_DIR/supervisor/pids"
 	echo "$pid" >"$TEST_DIR/supervisor/pids/${task_id}.pid"
+	return 0
 }
 
 # Helper: count tasks in a given status
 count_status() {
 	local status="$1"
 	test_db "SELECT count(*) FROM tasks WHERE status = '$status';"
+	return $?
 }
 
 # Helper: run a function in an isolated subshell with mock environment
@@ -325,7 +331,7 @@ mock_home=\$(mktemp -d)
 export HOME=\$mock_home
 mkdir -p "\$mock_home/.claude"
 echo '{"hasCompletedOnboarding":true}' > "\$mock_home/.claude/settings.json"
-rm -f '$TEST_DIR/supervisor/health/claude-oauth' 2>/dev/null
+rm -f '$TEST_DIR/supervisor/health/claude-oauth'
 resolve_ai_cli 'anthropic/claude-opus-4-6'
 rm -rf "\$mock_home"
 OAUTH_TEST
@@ -356,7 +362,7 @@ mock_home=\$(mktemp -d)
 export HOME=\$mock_home
 mkdir -p "\$mock_home/.claude"
 echo '{"hasCompletedOnboarding":true}' > "\$mock_home/.claude/settings.json"
-rm -f '$TEST_DIR/supervisor/health/claude-oauth' 2>/dev/null
+rm -f '$TEST_DIR/supervisor/health/claude-oauth'
 resolve_ai_cli 'anthropic/claude-sonnet-4-6'
 rm -rf "\$mock_home"
 OAUTH_TEST2
@@ -387,7 +393,7 @@ mock_home=\$(mktemp -d)
 export HOME=\$mock_home
 mkdir -p "\$mock_home/.claude"
 echo '{"hasCompletedOnboarding":true}' > "\$mock_home/.claude/settings.json"
-rm -f '$TEST_DIR/supervisor/health/claude-oauth' 2>/dev/null
+rm -f '$TEST_DIR/supervisor/health/claude-oauth'
 resolve_ai_cli 'google/gemini-2.5-pro'
 rm -rf "\$mock_home"
 OAUTH_TEST3
@@ -418,7 +424,7 @@ mock_home=\$(mktemp -d)
 export HOME=\$mock_home
 mkdir -p "\$mock_home/.claude"
 echo '{"hasCompletedOnboarding":true}' > "\$mock_home/.claude/settings.json"
-rm -f '$TEST_DIR/supervisor/health/claude-oauth' 2>/dev/null
+rm -f '$TEST_DIR/supervisor/health/claude-oauth'
 resolve_ai_cli 'anthropic/claude-opus-4-6'
 rm -rf "\$mock_home"
 OAUTH_TEST4
@@ -452,7 +458,7 @@ mock_home=\$(mktemp -d)
 export HOME=\$mock_home
 mkdir -p "\$mock_home/.claude"
 echo '{"hasCompletedOnboarding":true}' > "\$mock_home/.claude/settings.json"
-rm -f '$TEST_DIR/supervisor/health/claude-oauth' 2>/dev/null
+rm -f '$TEST_DIR/supervisor/health/claude-oauth'
 resolve_ai_cli 'haiku'
 rm -rf "\$mock_home"
 OAUTH_TEST5
@@ -483,7 +489,7 @@ mock_home=\$(mktemp -d)
 export HOME=\$mock_home
 mkdir -p "\$mock_home/.claude"
 echo '{"hasCompletedOnboarding":true}' > "\$mock_home/.claude/settings.json"
-rm -f '$TEST_DIR/supervisor/health/claude-oauth' 2>/dev/null
+rm -f '$TEST_DIR/supervisor/health/claude-oauth'
 resolve_ai_cli 'anthropic/claude-haiku-3'
 rm -rf "\$mock_home"
 OAUTH_TEST6
@@ -599,7 +605,7 @@ done
 # Verify WRAPPER_STARTED sentinel in all logs
 for tid in mc-t1 mc-t2 mc-t3; do
 	log_file=$(get_field "$tid" "log_file")
-	if grep -q "WRAPPER_STARTED task_id=$tid" "$log_file" 2>/dev/null; then
+	if grep -q "WRAPPER_STARTED task_id=$tid" "$log_file"; then
 		pass "Worker $tid: WRAPPER_STARTED sentinel present"
 	else
 		fail "Worker $tid: WRAPPER_STARTED sentinel missing"
@@ -609,7 +615,7 @@ done
 # Verify WORKER_STARTED sentinel in all logs
 for tid in mc-t1 mc-t2 mc-t3; do
 	log_file=$(get_field "$tid" "log_file")
-	if grep -q "WORKER_STARTED task_id=$tid" "$log_file" 2>/dev/null; then
+	if grep -q "WORKER_STARTED task_id=$tid" "$log_file"; then
 		pass "Worker $tid: WORKER_STARTED sentinel present"
 	else
 		fail "Worker $tid: WORKER_STARTED sentinel missing"
@@ -620,7 +626,7 @@ done
 heartbeat_count=0
 for tid in mc-t1 mc-t2 mc-t3; do
 	log_file=$(get_field "$tid" "log_file")
-	if grep -q "HEARTBEAT:" "$log_file" 2>/dev/null; then
+	if grep -q "HEARTBEAT:" "$log_file"; then
 		heartbeat_count=$((heartbeat_count + 1))
 	fi
 done
@@ -634,7 +640,7 @@ fi
 for tid in mc-t1 mc-t2 mc-t3; do
 	log_file=$(get_field "$tid" "log_file")
 	# Count how many different task_ids appear in WORKER_STARTED lines
-	other_tasks=$(grep "WORKER_STARTED" "$log_file" 2>/dev/null | grep -cv "task_id=$tid" || true)
+	other_tasks=$(grep "WORKER_STARTED" "$log_file" | grep -cv "task_id=$tid" || true)
 	other_tasks="${other_tasks:-0}"
 	other_tasks=$(echo "$other_tasks" | tr -d '[:space:]')
 	if [[ "$other_tasks" -eq 0 ]]; then
@@ -879,7 +885,7 @@ fi
 exit_sentinel_count=0
 for tid in mc-t1 mc-t2 mc-t3 mc-t4 mc-t5 mc-t6; do
 	log_file=$(get_field "$tid" "log_file")
-	if grep -q "^EXIT:" "$log_file" 2>/dev/null; then
+	if grep -q "^EXIT:" "$log_file"; then
 		exit_sentinel_count=$((exit_sentinel_count + 1))
 	fi
 done
@@ -893,7 +899,7 @@ fi
 flc_count=0
 for tid in mc-t1 mc-t2 mc-t3 mc-t4 mc-t5 mc-t6; do
 	log_file=$(get_field "$tid" "log_file")
-	if grep -q "FULL_LOOP_COMPLETE" "$log_file" 2>/dev/null; then
+	if grep -q "FULL_LOOP_COMPLETE" "$log_file"; then
 		flc_count=$((flc_count + 1))
 	fi
 done
@@ -915,10 +921,10 @@ for tid in mc-t1 mc-t2 mc-t3 mc-t4 mc-t5 mc-t6; do
 		pid_count=$((pid_count + 1))
 	fi
 done
-if [[ "$pid_count" -ge 3 ]]; then
-	pass "PID files exist for dispatched workers ($pid_count found)"
+if [[ "$pid_count" -eq 6 ]]; then
+	pass "PID files exist for all 6 dispatched workers"
 else
-	fail "Expected >= 3 PID files, got $pid_count"
+	fail "Expected 6 PID files, got $pid_count"
 fi
 
 # Test cleanup_worker_processes for a completed task
@@ -1112,7 +1118,7 @@ fi
 section "Cross-Cutting Quality"
 
 # Test: supervisor-helper.sh passes bash syntax check
-if bash -n "$SUPERVISOR_SCRIPT" 2>/dev/null; then
+if bash -n "$SUPERVISOR_SCRIPT"; then
 	pass "supervisor-helper.sh passes bash -n syntax check"
 else
 	fail "supervisor-helper.sh has syntax errors"
@@ -1121,7 +1127,7 @@ fi
 # Test: All supervisor module files pass syntax check
 module_syntax_fail=0
 for module in "$SUPERVISOR_DIR_MODULE"/*.sh; do
-	if ! bash -n "$module" 2>/dev/null; then
+	if ! bash -n "$module"; then
 		module_syntax_fail=$((module_syntax_fail + 1))
 		verbose "Syntax error: $(basename "$module")"
 	fi
