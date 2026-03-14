@@ -2485,16 +2485,18 @@ cmd_pulse() {
 
 	# Phase 4c: Cancel stale diagnostic subtasks whose parent is already resolved
 	# Diagnostic tasks (diagnostic_of != NULL) become stale when the parent task
-	# reaches a terminal state (deployed, cancelled, failed) before the diagnostic
-	# is dispatched. Cancel them to free queue slots.
+	# reaches a truly terminal state before the diagnostic is dispatched.
+	# 'failed' is intentionally excluded: diagnostics exist to self-heal failed
+	# tasks, so cancelling them when the parent is 'failed' would break self-heal.
+	# Cancel them to free queue slots only when the parent is definitively done.
 	local stale_diags
-	stale_diags=$(db "$SUPERVISOR_DB" "
+	stale_diags=$(db -separator '|' "$SUPERVISOR_DB" "
         SELECT d.id, d.diagnostic_of, p.status AS parent_status
         FROM tasks d
         JOIN tasks p ON d.diagnostic_of = p.id
         WHERE d.diagnostic_of IS NOT NULL
           AND d.status IN ('queued', 'retrying')
-          AND p.status IN ('deployed', 'cancelled', 'failed', 'complete', 'merged');
+          AND p.status IN ('deployed', 'cancelled', 'complete', 'merged');
     " 2>/dev/null || echo "")
 
 	if [[ -n "$stale_diags" ]]; then
