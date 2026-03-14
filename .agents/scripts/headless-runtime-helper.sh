@@ -15,7 +15,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)" || exit
 # shellcheck source=shared-constants.sh
 source "${SCRIPT_DIR}/shared-constants.sh"
 
-readonly DEFAULT_HEADLESS_MODELS="anthropic/claude-sonnet-4-6,openai/gpt-5.3-codex"
+readonly DEFAULT_HEADLESS_MODELS="anthropic/claude-sonnet-4-6"
 readonly STATE_DIR="${AIDEVOPS_HEADLESS_RUNTIME_DIR:-${HOME}/.aidevops/.agent-workspace/headless-runtime}"
 readonly STATE_DB="${STATE_DIR}/state.db"
 readonly OPENCODE_BIN_DEFAULT="${OPENCODE_BIN:-opencode}"
@@ -814,8 +814,8 @@ Usage:
   headless-runtime-helper.sh help
 
 Defaults:
-  AIDEVOPS_HEADLESS_MODELS defaults to anthropic/claude-sonnet-4-6,openai/gpt-5.3-codex
-  AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST can restrict selection to providers like: openai
+  AIDEVOPS_HEADLESS_MODELS defaults to anthropic/claude-sonnet-4-6
+  AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST can restrict selection to providers like: anthropic
   Gateway models (opencode/*) are rejected for headless runs.
 EOF
 	return 0

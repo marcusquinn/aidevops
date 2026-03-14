@@ -42,6 +42,8 @@ section() {
 TEST_TMP_DIR=$(mktemp -d)
 export AIDEVOPS_HEADLESS_RUNTIME_DIR="$TEST_TMP_DIR/runtime"
 export STUB_LOG_FILE="$TEST_TMP_DIR/opencode-args.log"
+# Unset any inherited override so tests exercise DEFAULT_HEADLESS_MODELS
+unset AIDEVOPS_HEADLESS_MODELS
 
 cleanup() {
 	rm -rf "$TEST_TMP_DIR"
@@ -83,27 +85,27 @@ if [[ "$first_model" == "anthropic/claude-sonnet-4-6" ]]; then
 else
 	fail "first selection uses anthropic default" "got: $first_model"
 fi
-if [[ "$second_model" == "openai/gpt-5.3-codex" ]]; then
-	pass "second selection alternates to openai"
+if [[ "$second_model" == "anthropic/claude-sonnet-4-6" ]]; then
+	pass "second selection returns anthropic (single-provider default)"
 else
-	fail "second selection alternates to openai" "got: $second_model"
+	fail "second selection returns anthropic (single-provider default)" "got: $second_model"
 fi
 
 section "Allowlist"
-allowlisted_model=$(AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST=openai bash "$HELPER" select --role worker 2>/dev/null || true)
-if [[ "$allowlisted_model" == "openai/gpt-5.3-codex" ]]; then
-	pass "openai allowlist restricts selection"
+allowlisted_model=$(AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST=anthropic bash "$HELPER" select --role worker 2>/dev/null || true)
+if [[ "$allowlisted_model" == "anthropic/claude-sonnet-4-6" ]]; then
+	pass "anthropic allowlist restricts selection"
 else
-	fail "openai allowlist restricts selection" "got: $allowlisted_model"
+	fail "anthropic allowlist restricts selection" "got: $allowlisted_model"
 fi
 
 section "Backoff"
 bash "$HELPER" backoff set anthropic rate_limit 3600 >/dev/null
 post_backoff_model=$(bash "$HELPER" select --role pulse 2>/dev/null || true)
-if [[ "$post_backoff_model" == "openai/gpt-5.3-codex" ]]; then
-	pass "backed off anthropic is skipped"
+if [[ -z "$post_backoff_model" ]]; then
+	pass "backed off anthropic is skipped (no remaining providers)"
 else
-	fail "backed off anthropic is skipped" "got: $post_backoff_model"
+	fail "backed off anthropic is skipped (no remaining providers)" "got: $post_backoff_model"
 fi
 
 if bash "$HELPER" backoff set anthropic rate_limit '10;rm -rf /' >/dev/null 2>&1; then
@@ -113,12 +115,12 @@ else
 fi
 
 section "Auth Change Clears Backoff"
-export AIDEVOPS_HEADLESS_AUTH_SIGNATURE_OPENAI="sig-old"
-bash "$HELPER" backoff set openai auth_error 3600 >/dev/null
-export AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST=openai
-export AIDEVOPS_HEADLESS_AUTH_SIGNATURE_OPENAI="sig-new"
+export AIDEVOPS_HEADLESS_AUTH_SIGNATURE_ANTHROPIC="sig-old"
+bash "$HELPER" backoff set anthropic auth_error 3600 >/dev/null
+export AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST=anthropic
+export AIDEVOPS_HEADLESS_AUTH_SIGNATURE_ANTHROPIC="sig-new"
 recovered_model=$(bash "$HELPER" select --role pulse 2>/dev/null || true)
-if [[ "$recovered_model" == "openai/gpt-5.3-codex" ]]; then
+if [[ "$recovered_model" == "anthropic/claude-sonnet-4-6" ]]; then
 	pass "auth signature change clears backoff"
 else
 	fail "auth signature change clears backoff" "got: $recovered_model"
@@ -126,23 +128,23 @@ fi
 unset AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST
 
 section "Session Persistence"
-export STUB_SESSION_ID="ses_openai_one"
+export STUB_SESSION_ID="ses_anthropic_one"
 rm -f "$STUB_LOG_FILE"
-AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST=openai bash "$HELPER" run \
+AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST=anthropic bash "$HELPER" run \
 	--role worker \
 	--session-key issue-101 \
 	--dir "$REPO_DIR" \
 	--title "Issue #101" \
 	--prompt "Reply with exactly OK" >/dev/null
-export STUB_SESSION_ID="ses_openai_two"
-AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST=openai bash "$HELPER" run \
+export STUB_SESSION_ID="ses_anthropic_two"
+AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST=anthropic bash "$HELPER" run \
 	--role worker \
 	--session-key issue-101 \
 	--dir "$REPO_DIR" \
 	--title "Issue #101" \
 	--prompt "Reply with exactly OK" >/dev/null
 
-if grep -q -- '--session ses_openai_one --continue' "$STUB_LOG_FILE"; then
+if grep -q -- '--session ses_anthropic_one --continue' "$STUB_LOG_FILE"; then
 	pass "second run reuses persisted provider session"
 else
 	fail "second run reuses persisted provider session" "logged args: $(tr '\n' ' ' <"$STUB_LOG_FILE")"
@@ -151,14 +153,14 @@ fi
 section "Pulse Runs Stay Fresh"
 export STUB_SESSION_ID="ses_pulse_one"
 rm -f "$STUB_LOG_FILE"
-AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST=openai bash "$HELPER" run \
+AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST=anthropic bash "$HELPER" run \
 	--role pulse \
 	--session-key supervisor-pulse \
 	--dir "$REPO_DIR" \
 	--title "Supervisor Pulse" \
 	--prompt "/pulse" >/dev/null
 export STUB_SESSION_ID="ses_pulse_two"
-AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST=openai bash "$HELPER" run \
+AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST=anthropic bash "$HELPER" run \
 	--role pulse \
 	--session-key supervisor-pulse \
 	--dir "$REPO_DIR" \
@@ -173,7 +175,7 @@ fi
 
 section "Zero Activity Success Is Rejected"
 export STUB_EMIT_ACTIVITY="0"
-if AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST=openai bash "$HELPER" run \
+if AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST=anthropic bash "$HELPER" run \
 	--role worker \
 	--session-key issue-202 \
 	--dir "$REPO_DIR" \
@@ -182,7 +184,7 @@ if AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST=openai bash "$HELPER" run \
 	fail "zero-activity success is rejected" "helper accepted a run with no model activity"
 else
 	backoff_state=$(bash "$HELPER" backoff status 2>/dev/null || true)
-	if [[ "$backoff_state" == *"openai|provider_error|"* ]]; then
+	if [[ "$backoff_state" == *"anthropic|provider_error|"* ]]; then
 		pass "zero-activity success is rejected"
 	else
 		fail "zero-activity success is rejected" "missing provider_error backoff state: $backoff_state"
