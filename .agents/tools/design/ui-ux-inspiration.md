@@ -181,9 +181,10 @@ Use Playwright (`tools/browser/browser-automation.md`) to visit the URL and extr
 1. Navigate to URL with Playwright (headed mode for full render)
 2. Wait for fonts and images to load (networkidle)
 3. Take full-page screenshot for reference
-4. Extract computed styles from key elements:
-   - document.querySelectorAll('h1,h2,h3,h4,h5,h6,p,a,button,input,select,textarea')
-   - getComputedStyle() for each: font-family, font-size, font-weight,
+4. Extract computed styles from representative elements:
+   - Traverse the DOM to find a small, representative set of styled elements (not limited to a fixed tag list).
+   - Group elements by similar computed styles to identify unique patterns efficiently.
+   - For each unique pattern, record: font-family, font-size, font-weight,
      line-height, letter-spacing, color, background-color, border,
      border-radius, padding, margin, box-shadow
 5. Extract CSS custom properties (design tokens):
