@@ -839,7 +839,7 @@ cmd_auto_pickup() {
 	# Previous head -50 limit caused parents beyond the 50th to be silently skipped.
 	local parent_ids
 	parent_ids=$(grep -E '^[[:space:]]*- \[ \] (t[0-9]+) .*#auto-dispatch' "$todo_file" 2>/dev/null |
-		grep -oE 't[0-9]+' | sort -u || true)
+		sed -E 's/^[[:space:]]*- \[[ ]\] (t[0-9]+).*/\1/' | sort -u || true)
 
 	if [[ -n "$parent_ids" ]]; then
 		while IFS= read -r parent_id; do
