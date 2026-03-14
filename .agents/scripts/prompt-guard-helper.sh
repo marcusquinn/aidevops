@@ -168,10 +168,6 @@ _pg_load_yaml_patterns() {
 		return 1
 	}
 
-	# Only mark loaded after successful file discovery (prevents transient failures
-	# from permanently disabling YAML loading on subsequent calls)
-	_PG_YAML_PATTERNS_LOADED="true"
-
 	local patterns=""
 	local current_category=""
 	local severity="" description="" pattern=""
@@ -228,8 +224,10 @@ _pg_load_yaml_patterns() {
 		return 1
 	fi
 
-	# Cache for subsequent calls
+	# Cache for subsequent calls — mark loaded only after successful parse+cache
+	# so transient parse failures do not permanently disable YAML loading.
 	_PG_YAML_PATTERNS_CACHE="$patterns"
+	_PG_YAML_PATTERNS_LOADED="true"
 
 	# Remove trailing newline
 	echo "${patterns%$'\n'}"

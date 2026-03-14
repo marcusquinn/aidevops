@@ -516,7 +516,10 @@ context_manipulation:
 
   - severity: LOW
     description: "Zero-width characters"
-    pattern: '[\xE2\x80\x8B\xE2\x80\x8C\xE2\x80\x8D\xEF\xBB\xBF]'
+    # Literal Unicode chars (U+200B ZWSP, U+200C ZWNJ, U+200D ZWJ, U+FEFF BOM)
+    # for portability across rg/grep/ggrep — byte-level \xNN escapes match
+    # individual bytes, not multi-byte UTF-8 codepoints.
+    pattern: '[​‌‍﻿]'
 
   # --- Lasso net-new: False authority claims ---
   - severity: HIGH
