@@ -165,6 +165,13 @@ section_helper_script() {
 		print_result "helper script is valid bash" 1 "Syntax error in simplex-helper.sh"
 	fi
 
+	# Executable bit check (separate from syntax check)
+	if [[ -x "$HELPER" ]]; then
+		print_result "helper script is executable" 0
+	else
+		print_result "helper script is executable" 1 "simplex-helper.sh is not executable"
+	fi
+
 	# Help output
 	local help_output
 	help_output="$(bash "$HELPER" help 2>&1)" || true
