@@ -40,8 +40,8 @@ Technical: [Negative prompt - elements to exclude]
 ```
 
 **Critical Techniques**:
-- Camera positioning: Include `(thats where the camera is)` for spatial anchoring
-- Dialogue format: Use colon syntax to prevent subtitle generation
+- Camera positioning: Include `(that's where the camera is)` for spatial anchoring
+- Dialogue format: `(Character Name): "Speech" (Tone: descriptor)` — colon syntax prevents subtitle generation
 - Audio: Always specify environment audio to prevent hallucinations
 - Character consistency: Use identical descriptions across a series
 - Duration: 12-15 words / 20-25 syllables for 8-second dialogue
@@ -92,7 +92,7 @@ Build characters with 15+ specific attributes for consistency across generations
 Always include spatial context for the camera:
 
 ```text
-"Close-up shot with camera positioned at counter level (thats where the camera is)
+"Close-up shot with camera positioned at counter level (that's where the camera is)
 as the character demonstrates the product"
 ```
 
