@@ -546,14 +546,32 @@ EAGER_MCPS = set()
 # Lazy-loaded (enabled: False): Subagent-only, start on-demand
 # sentry/socket: Remote MCPs requiring auth, disable until configured
 # These save ~7K+ tokens on session startup
-LAZY_MCPS = {'claude-code-mcp', 'outscraper', 'dataforseo', 'shadcn', 'macos-automator', 
-             'gsc', 'localwp', 'chrome-devtools', 'quickfile', 'amazon-order-history', 
-             'google-analytics-mcp', 'MCP_DOCKER', 'ahrefs',
-             'playwriter', 'augment-context-engine', 'context7',
-             'sentry', 'socket', 'ios-simulator',
-             'openapi-search',
-             # Oh-My-OpenCode MCPs - disable globally, use @github-search/@context7 subagents
-             'grep_app', 'websearch', 'gh_grep'}
+LAZY_MCPS = {
+    'MCP_DOCKER',
+    'ahrefs',
+    'amazon-order-history',
+    'augment-context-engine',
+    'chrome-devtools',
+    'claude-code-mcp',
+    'context7',
+    'dataforseo',
+    'gh_grep',
+    'google-analytics-mcp',
+    # Oh-My-OpenCode MCPs - disable globally, use @github-search/@context7 subagents
+    'grep_app',
+    'gsc',
+    'ios-simulator',
+    'localwp',
+    'macos-automator',
+    'openapi-search',
+    'outscraper',
+    'playwriter',
+    'quickfile',
+    'sentry',
+    'shadcn',
+    'socket',
+    'websearch',
+}
 # Note: gh_grep removed from aidevops but may exist from old configs or OmO
 
 # Apply loading policy to existing MCPs and warn about uncategorized ones
