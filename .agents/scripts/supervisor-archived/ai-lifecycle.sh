@@ -76,7 +76,7 @@ gather_task_state() {
 
 	if [[ -n "$tpr" && "$tpr" != "no_pr" && "$tpr" != "task_only" && "$tpr" != "verified_complete" ]]; then
 		local parsed_pr
-		parsed_pr=$(parse_pr_url "$tpr" 2>/dev/null) || parsed_pr=""
+		parsed_pr=$(parse_pr_url "$tpr") || parsed_pr=""
 		if [[ -n "$parsed_pr" ]]; then
 			pr_repo_slug="${parsed_pr%%|*}"
 			pr_number="${parsed_pr##*|}"
@@ -344,7 +344,7 @@ execute_action() {
 	local pr_number="" pr_repo_slug="" pr_base_branch="main"
 	if [[ -n "$tpr" && "$tpr" != "no_pr" && "$tpr" != "task_only" && "$tpr" != "verified_complete" ]]; then
 		local parsed_pr
-		parsed_pr=$(parse_pr_url "$tpr" 2>/dev/null) || parsed_pr=""
+		parsed_pr=$(parse_pr_url "$tpr") || parsed_pr=""
 		if [[ -n "$parsed_pr" ]]; then
 			pr_repo_slug="${parsed_pr%%|*}"
 			pr_number="${parsed_pr##*|}"
@@ -825,8 +825,8 @@ process_ai_lifecycle() {
 				# Pull base so subsequent PRs can merge cleanly
 				if [[ -n "$trepo" && -d "$trepo" ]]; then
 					local base_ref
-					base_ref=$(gh pr view "$tpr" --repo "$(detect_repo_slug "$trepo" 2>/dev/null || echo "")" \
-						--json baseRefName --jq '.baseRefName' 2>/dev/null) || base_ref="main"
+					base_ref=$(gh pr view "$tpr" --repo "$(detect_repo_slug "$trepo" || echo "")" \
+						--json baseRefName --jq '.baseRefName' 2>>"$SUPERVISOR_LOG") || base_ref="main"
 					git -C "$trepo" pull --rebase origin "$base_ref" 2>>"$SUPERVISOR_LOG" || true
 				fi
 				;;

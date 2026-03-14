@@ -2381,12 +2381,12 @@ rebase_sibling_pr() {
 	local rebase_target="main"
 	if [[ -n "$tpr" && "$tpr" != "no_pr" && "$tpr" != "task_only" && "$tpr" != "verified_complete" ]]; then
 		local parsed_pr_info pr_repo_slug_local pr_number_local pr_base_ref
-		parsed_pr_info=$(parse_pr_url "$tpr" 2>/dev/null) || parsed_pr_info=""
+		parsed_pr_info=$(parse_pr_url "$tpr") || parsed_pr_info=""
 		if [[ -n "$parsed_pr_info" ]]; then
 			pr_repo_slug_local="${parsed_pr_info%%|*}"
 			pr_number_local="${parsed_pr_info##*|}"
 			pr_base_ref=$(gh pr view "$pr_number_local" --repo "$pr_repo_slug_local" \
-				--json baseRefName --jq '.baseRefName' 2>/dev/null) || pr_base_ref=""
+				--json baseRefName --jq '.baseRefName' 2>>"$SUPERVISOR_LOG") || pr_base_ref=""
 			if [[ -n "$pr_base_ref" ]]; then
 				rebase_target="$pr_base_ref"
 			fi
