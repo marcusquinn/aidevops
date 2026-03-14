@@ -150,7 +150,7 @@ cmd_transition() {
 		if [[ -n "$existing_pr" && "$existing_pr" != "no_pr" && "$existing_pr" != "task_only" && "$existing_pr" != "verified_complete" ]]; then
 			# Real PR URL exists — check if it's actually merged
 			local parsed_guard pr_number_guard repo_slug_guard
-			parsed_guard=$(parse_pr_url "$existing_pr" 2>/dev/null) || parsed_guard=""
+			parsed_guard=$(parse_pr_url "$existing_pr" 2>/dev/null || true)
 			if [[ -n "$parsed_guard" ]]; then
 				repo_slug_guard="${parsed_guard%%|*}"
 				pr_number_guard="${parsed_guard##*|}"
