@@ -178,6 +178,7 @@ CREATE POLICY tenant_isolation ON embeddings
 ```typescript
 // Drizzle + pgvector example (server-side)
 import { sql } from "drizzle-orm";
+import { NodePgDatabase } from "drizzle-orm/node-postgres";
 import { pgTable, uuid, text, integer, timestamp, index } from "drizzle-orm/pg-core";
 import { vector } from "drizzle-orm/pg-core"; // Drizzle pgvector support
 
@@ -194,7 +195,7 @@ export const embeddings = pgTable("embeddings", {
 ]);
 
 // Query with tenant context
-async function searchTenant(db, orgId: string, queryEmbedding: number[], topK = 5) {
+async function searchTenant(db: NodePgDatabase, orgId: string, queryEmbedding: number[], topK = 5) {
   await db.execute(sql`SET LOCAL app.current_org_id = ${orgId}`);
   return db.execute(sql`
     SELECT id, content, source_file, chunk_index,
@@ -244,9 +245,9 @@ export default {
 
 **Cons**: Cloudflare-only, 5M vectors per index (request increase for more), no hybrid search, limited filtering.
 
-### Pattern 4: Metadata filtering (Pinecone, Qdrant, Weaviate)
+### Pattern 4: Isolation in Hosted Services (Pinecone, Qdrant, Weaviate)
 
-For hosted services, the simplest isolation is a `tenant_id` metadata field with mandatory filtering on every query.
+For hosted services, isolation can be achieved either physically via namespaces (Pinecone) or logically via metadata filtering (Qdrant, Weaviate).
 
 ```typescript
 // Pinecone example
@@ -255,7 +256,7 @@ import { Pinecone } from "@pinecone-database/pinecone";
 const pc = new Pinecone();
 const index = pc.index("my-app");
 
-// Upsert with tenant metadata
+// Upsert into the tenant's namespace
 await index.namespace(orgId).upsert([{
   id: "doc-chunk-001",
   values: embeddingVector,
@@ -337,7 +338,7 @@ zvec is the newest option and least documented elsewhere, so it gets the deepest
 An in-process C++ vector database built on Alibaba's Proxima engine. It runs inside your application process — no separate server, no network hop. Apache 2.0 licensed.
 
 - **Repo**: https://github.com/alibaba/zvec
-- **Stars**: ~8.4k (as of March 2026)
+- **Stars**: ~8.4k (check repo for current count)
 - **Created**: December 2025 — very new
 - **Platforms**: Linux (x86_64, ARM64), macOS (ARM64). No Windows.
 - **Bindings**: Python (full ecosystem), Node.js (core ops only, early stage)
@@ -439,7 +440,7 @@ Published benchmarks (Cohere 10M dataset, 16 vCPU / 64GB, INT8):
 
 ## Platform Compatibility — Verified
 
-Tested on 2026-03-02 with zvec 0.2.0 (`manylinux_2_28_x86_64` wheel), Python 3.12.3.
+Tested with zvec 0.2.0 (`manylinux_2_28_x86_64` wheel), Python 3.12.3.
 
 | Platform | Install | Import | Notes |
 |----------|---------|--------|-------|
