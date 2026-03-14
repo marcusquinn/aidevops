@@ -459,11 +459,16 @@ build_repo_clusters_json() {
 
 compute_pattern_id() {
 	local input_value="$1"
-	if command -v shasum >/dev/null 2>&1; then
-		printf '%s' "$input_value" | shasum -a 1 | awk '{print $1}' | cut -c1-12
+	if command -v sha256sum >/dev/null 2>&1; then
+		printf '%s' "$input_value" | sha256sum | awk '{print $1}' | cut -c1-12
 		return 0
 	fi
-	printf '%s' "$input_value" | md5 | cut -c1-12
+	if command -v shasum >/dev/null 2>&1; then
+		printf '%s' "$input_value" | shasum -a 256 | awk '{print $1}' | cut -c1-12
+		return 0
+	fi
+	# Fallback: use cksum (POSIX) — not cryptographic but sufficient for deduplication IDs
+	printf '%s' "$input_value" | cksum | awk '{print $1}'
 	return 0
 }
 
