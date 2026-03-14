@@ -13,14 +13,18 @@
 # See network-tier-helper.sh for the full tier model.
 #
 # Usage:
-#   sandbox-exec-helper.sh run "command args"
-#   sandbox-exec-helper.sh run --timeout 60 --no-network "curl example.com"
-#   sandbox-exec-helper.sh run --network-tiering --worker-id w123 "curl example.com"
-#   sandbox-exec-helper.sh run --allow-secret-io "gopass show path"  # explicit override
-#   sandbox-exec-helper.sh run --passthrough "GITHUB_TOKEN,NPM_TOKEN" "npm publish"
+#   sandbox-exec-helper.sh run command [args...]
+#   sandbox-exec-helper.sh run --timeout 60 --no-network curl example.com
+#   sandbox-exec-helper.sh run --network-tiering --worker-id w123 curl example.com
+#   sandbox-exec-helper.sh run --allow-secret-io gopass show path  # explicit override
+#   sandbox-exec-helper.sh run --passthrough "GITHUB_TOKEN,NPM_TOKEN" npm publish
 #   sandbox-exec-helper.sh audit [--last N]
 #   sandbox-exec-helper.sh config --show
 #   sandbox-exec-helper.sh help
+#
+# Note: command and its arguments are passed as separate shell words (not a
+# single quoted string). This avoids bash -c eval and correctly handles
+# arguments containing spaces.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 # shellcheck source=shared-constants.sh
@@ -77,15 +81,21 @@ log_execution() {
 	# Truncate command for logging (no secrets, max 500 chars)
 	local logged_cmd="${command:0:500}"
 
-	printf '{"ts":"%s","cmd":"%s","exit":%d,"duration_s":%.1f,"timeout":%d,"network_blocked":%s,"passthrough":"%s"}\n' \
-		"$timestamp" \
-		"$(printf '%s' "$logged_cmd" | sed 's/"/\\"/g')" \
-		"$exit_code" \
-		"$duration" \
-		"$timeout_used" \
-		"$network_blocked" \
-		"$passthrough_vars" \
-		>>"$SANDBOX_LOG"
+	# Use jq to safely generate the JSON log entry — prevents JSON/log injection
+	# via backslashes, newlines, or other special characters in the command string.
+	local log_entry
+	log_entry=$(jq -n \
+		--arg ts "$timestamp" \
+		--arg cmd "$logged_cmd" \
+		--argjson exit "$exit_code" \
+		--argjson duration "$duration" \
+		--argjson timeout "$timeout_used" \
+		--argjson network_blocked "$network_blocked" \
+		--arg passthrough "$passthrough_vars" \
+		'{ts: $ts, cmd: $cmd, exit: $exit, duration_s: $duration, timeout: $timeout, network_blocked: $network_blocked, passthrough: $passthrough}')
+
+	printf '%s\n' "$log_entry" >>"$SANDBOX_LOG"
+	return 0
 }
 
 # Detect high-risk commands that could expose secret values in transcript output.
@@ -421,8 +431,13 @@ sandbox_run() {
 	local allow_secret_io=false
 	local worker_id="sandbox-$$"
 	local extra_passthrough=""
-	local command=""
 	local secret_io_guard="${AIDEVOPS_BLOCK_SECRET_IO:-$SECRET_IO_GUARD_DEFAULT}"
+
+	# Capture command and its arguments as an array to avoid bash -c eval risks:
+	# - Preserves arguments with spaces correctly (no word-splitting on expansion)
+	# - Eliminates shell injection via unquoted arguments
+	# - Avoids the eval-equivalent behaviour of bash -c "$string"
+	local -a cmd_args=()
 
 	# Parse arguments
 	while [[ $# -gt 0 ]]; do
@@ -457,27 +472,32 @@ sandbox_run() {
 			;;
 		--)
 			shift
-			command="$*"
+			cmd_args=("$@")
 			break
 			;;
 		*)
-			command="$*"
+			cmd_args=("$@")
 			break
 			;;
 		esac
 	done
 
-	if [[ -z "$command" ]]; then
+	if [[ ${#cmd_args[@]} -eq 0 ]]; then
 		log_sandbox "ERROR" "No command provided"
 		return 1
 	fi
 
+	# For pattern-matching helpers (secret guard, taint check, network tiering),
+	# pass a space-joined string representation — these functions do text matching
+	# only and do not execute the command.
+	local cmd_str="${cmd_args[*]}"
+
 	if [[ "$secret_io_guard" == "true" ]] && [[ "$allow_secret_io" != "true" ]]; then
 		local block_reason
-		if block_reason="$(_sandbox_secret_block_reason "$command")"; then
+		if block_reason="$(_sandbox_secret_block_reason "$cmd_str")"; then
 			log_sandbox "ERROR" "Blocked command due to secret leak risk: ${block_reason}"
 			log_sandbox "ERROR" "Use --allow-secret-io only for explicit user-approved local operations"
-			log_execution "$command" 126 0 "$timeout_secs" "$block_network" "$extra_passthrough"
+			log_execution "$cmd_str" 126 0 "$timeout_secs" "$block_network" "$extra_passthrough"
 			return 126
 		fi
 	fi
@@ -521,7 +541,7 @@ sandbox_run() {
 	local stdout_file="${exec_tmpdir}/stdout"
 	local stderr_file="${exec_tmpdir}/stderr"
 
-	log_sandbox "INFO" "Executing (timeout=${timeout_secs}s, network_blocked=${block_network}, tiering=${network_tiering}): ${command:0:200}"
+	log_sandbox "INFO" "Executing (timeout=${timeout_secs}s, network_blocked=${block_network}, tiering=${network_tiering}): ${cmd_str:0:200}"
 
 	# Network tiering pre-check (t1412.3): extract domains from the command
 	# and check them against the tier classification before execution.
@@ -529,25 +549,28 @@ sandbox_run() {
 	# "curl evil.ngrok.io" but cannot intercept runtime DNS resolution.
 	# The primary value is logging + post-session review, not hard blocking.
 	if [[ "$network_tiering" == true ]] && [[ -x "$NET_TIER_HELPER" ]]; then
-		_sandbox_check_network_tiers "$command" "$worker_id"
+		_sandbox_check_network_tiers "$cmd_str" "$worker_id"
 	fi
 
 	local start_time
 	start_time="$(date +%s)"
 	local exit_code=0
 	local command_tainted=false
-	if _sandbox_is_secret_tainted_command "$command"; then
+	if _sandbox_is_secret_tainted_command "$cmd_str"; then
 		command_tainted=true
 	fi
 
-	# Execute with timeout and clean environment
+	# Execute with timeout and clean environment.
+	# cmd_args is expanded as an array — each element is a separate argument,
+	# preserving spaces and avoiding any additional shell interpretation.
 	if [[ "$block_network" == true ]] && command -v sandbox-exec &>/dev/null; then
-		# macOS seatbelt: deny network access
+		# macOS seatbelt: deny network access.
+		# sandbox-exec accepts program + args directly (no shell wrapper needed).
 		local seatbelt_profile="(version 1)(allow default)(deny network*)"
 		timeout_sec "$timeout_secs" \
 			sandbox-exec -p "$seatbelt_profile" \
 			"${env_args[@]}" \
-			bash -c "$command" \
+			"${cmd_args[@]}" \
 			>"$stdout_file" 2>"$stderr_file" || exit_code=$?
 	else
 		if [[ "$block_network" == true ]]; then
@@ -555,7 +578,7 @@ sandbox_run() {
 		fi
 		timeout_sec "$timeout_secs" \
 			"${env_args[@]}" \
-			bash -c "$command" \
+			"${cmd_args[@]}" \
 			>"$stdout_file" 2>"$stderr_file" || exit_code=$?
 	fi
 
@@ -573,10 +596,12 @@ sandbox_run() {
 	_sandbox_emit_redacted_output "$stderr_file" "stderr" "$command_tainted"
 
 	# Audit log
-	log_execution "$command" "$exit_code" "$duration" "$timeout_secs" "$block_network" "$extra_passthrough"
+	log_execution "$cmd_str" "$exit_code" "$duration" "$timeout_secs" "$block_network" "$extra_passthrough"
 
-	# Async cleanup of old temp dirs (older than 60 minutes)
-	find "$SANDBOX_TMP_BASE" -maxdepth 1 -type d -mmin +60 -exec rm -rf {} + 2>/dev/null &
+	# Async cleanup of old temp dirs (older than 60 minutes).
+	# stderr is not suppressed so permission errors or other persistent failures
+	# remain visible for debugging rather than silently consuming disk space.
+	find "$SANDBOX_TMP_BASE" -maxdepth 1 -type d -mmin +60 -exec rm -rf {} + &
 
 	return "$exit_code"
 }
@@ -605,14 +630,19 @@ sandbox_audit() {
 
 	echo "Last ${last_n} sandboxed executions:"
 	echo "---"
+	# Single jq call per line extracts all four fields at once via @tsv,
+	# replacing four separate jq invocations and significantly reducing overhead
+	# for large log files.
 	tail -n "$last_n" "$SANDBOX_LOG" | while IFS= read -r line; do
 		local ts cmd exit_code duration
-		ts="$(printf '%s' "$line" | jq -r '.ts // "?"')"
-		cmd="$(printf '%s' "$line" | jq -r '.cmd // "?"' | head -c 80)"
-		exit_code="$(printf '%s' "$line" | jq -r '.exit // "?"')"
-		duration="$(printf '%s' "$line" | jq -r '.duration_s // "?"')"
+		IFS=$'\t' read -r ts cmd exit_code duration < <(
+			printf '%s' "$line" | jq -r '[.ts, .cmd, .exit, .duration_s] | map(. // "?") | @tsv'
+		)
+		# Truncate command display to 80 chars
+		cmd="${cmd:0:80}"
 		printf '%s  exit=%s  %ss  %s\n' "$ts" "$exit_code" "$duration" "$cmd"
 	done
+	return 0
 }
 
 # =============================================================================
@@ -647,7 +677,7 @@ sandbox_help() {
 sandbox-exec-helper.sh — Lightweight execution sandbox
 
 Commands:
-  run "command"              Execute command in sandboxed environment
+  run command [args...]      Execute command in sandboxed environment
   audit [--last N]           Show recent sandboxed executions
   config --show              Show sandbox configuration
   help                       Show this help
@@ -660,13 +690,17 @@ Run options:
   --worker-id ID             Worker identifier for network tier logs
   --passthrough "VAR1,VAR2"  Additional env vars to pass through
 
+  Command and its arguments are passed as separate shell words — not a single
+  quoted string. This correctly handles arguments containing spaces and avoids
+  shell injection via bash -c evaluation.
+
 Examples:
-  sandbox-exec-helper.sh run "ls -la /tmp"
-  sandbox-exec-helper.sh run --timeout 60 "npm test"
-  sandbox-exec-helper.sh run --no-network "python3 script.py"
-  sandbox-exec-helper.sh run --network-tiering --worker-id w123 "curl https://api.github.com/repos"
-  sandbox-exec-helper.sh run --allow-secret-io "gopass show aidevops/EXAMPLE"
-  sandbox-exec-helper.sh run --passthrough "GITHUB_TOKEN" "gh pr list"
+  sandbox-exec-helper.sh run ls -la /tmp
+  sandbox-exec-helper.sh run --timeout 60 npm test
+  sandbox-exec-helper.sh run --no-network python3 script.py
+  sandbox-exec-helper.sh run --network-tiering --worker-id w123 curl https://api.github.com/repos
+  sandbox-exec-helper.sh run --allow-secret-io gopass show aidevops/EXAMPLE
+  sandbox-exec-helper.sh run --passthrough "GITHUB_TOKEN" gh pr list
   sandbox-exec-helper.sh audit --last 10
 
 Security model:
@@ -676,9 +710,10 @@ Security model:
   - Secret-output command guard blocks likely credential leakage patterns
   - Optional network blocking (macOS seatbelt)
   - Network domain tiering: classify, log, flag unknown domains (t1412.3)
-  - All executions logged to JSONL audit trail
+  - All executions logged to JSONL audit trail (jq-safe JSON, injection-proof)
   - Output capped at 10MB per stream
 HELP
+	return 0
 }
 
 # =============================================================================
