@@ -219,16 +219,28 @@ install_packages() {
 	shift
 	local packages=("$@")
 
+	# Cache sudo credentials before spinner commands.
+	# Backgrounded processes cannot safely prompt for passwords.
+	if [[ "$pkg_manager" =~ ^(apt|dnf|yum|pacman|apk)$ ]]; then
+		sudo -v
+	fi
+
 	case "$pkg_manager" in
 	brew)
 		# Run brew update with spinner (Homebrew auto-update is slow and silent)
-		run_with_spinner "Updating Homebrew" brew update
+		if ! run_with_spinner "Updating Homebrew" brew update; then
+			print_error "Homebrew update failed"
+			return 1
+		fi
 		# Install with auto-update disabled (we just ran it)
 		# Note: run_with_spinner auto-exports HOMEBREW_NO_AUTO_UPDATE for brew commands
 		run_with_spinner "Installing ${packages[*]}" brew install "${packages[@]}"
 		;;
 	apt)
-		run_with_spinner "Updating package lists" sudo apt-get update -qq
+		if ! run_with_spinner "Updating package lists" sudo apt-get update -qq; then
+			print_error "apt-get update failed"
+			return 1
+		fi
 		run_with_spinner "Installing ${packages[*]}" sudo apt-get install -y -qq "${packages[@]}"
 		;;
 	dnf)
@@ -247,6 +259,8 @@ install_packages() {
 		return 1
 		;;
 	esac
+
+	return 0
 }
 
 # Offer to install Homebrew (Linuxbrew) on Linux when brew is not available
