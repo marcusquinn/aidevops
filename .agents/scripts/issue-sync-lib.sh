@@ -1,4 +1,7 @@
 #!/bin/bash
+# Using /bin/bash directly (not #!/usr/bin/env bash) for compatibility with
+# headless environments where a stripped PATH can prevent env from finding bash.
+# See issue #2610. This is an intentional exception to the repo's env-bash standard (t135.14).
 # =============================================================================
 # aidevops Issue Sync Library — Platform-Agnostic Functions (t1120.1)
 # =============================================================================
