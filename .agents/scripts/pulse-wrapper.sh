@@ -5,7 +5,10 @@
 # but never exits, blocking all future pulses via the pgrep dedup guard.
 #
 # This wrapper:
-#   1. flock-based instance lock prevents concurrent pulses (GH#4409)
+#   1. mkdir-based atomic instance lock prevents concurrent pulses (GH#4513)
+#      Falls back to flock on Linux when util-linux flock is available.
+#      mkdir is POSIX-guaranteed atomic on all filesystems (APFS, HFS+, ext4)
+#      and does not require util-linux, which is absent on macOS.
 #   2. Uses a PID file with staleness check (not pgrep) for dedup
 #   3. Cleans up orphaned opencode processes before each pulse
 #   4. Kills runaway processes exceeding RSS or runtime limits (t1398.1)
@@ -38,6 +41,15 @@
 #   not a live numeric PID as "safe to proceed". This closes the race window
 #   where launchd fires between rm -f and the next write, which caused the
 #   82-concurrent-pulse incident (2026-03-13T02:06:01Z, issue #4318).
+#
+# Instance lock protocol (GH#4513):
+#   Uses mkdir atomicity as the primary lock primitive. mkdir is guaranteed
+#   atomic by POSIX on all local filesystems — the kernel ensures only one
+#   process succeeds even under concurrent invocations. The lock directory
+#   contains a PID file so stale locks (from SIGKILL/power loss) can be
+#   detected and cleared on the next startup. A trap ensures cleanup on
+#   normal exit and SIGTERM. flock (Linux util-linux) is used as an
+#   additional layer when available, but mkdir is the primary guard.
 #
 # Called by launchd every 120s via the supervisor-pulse plist.
 
@@ -151,6 +163,7 @@ SESSION_COUNT_WARN=$(_validate_int SESSION_COUNT_WARN "$SESSION_COUNT_WARN" 5 1)
 
 PIDFILE="${HOME}/.aidevops/logs/pulse.pid"
 LOCKFILE="${HOME}/.aidevops/logs/pulse-wrapper.lock"
+LOCKDIR="${HOME}/.aidevops/logs/pulse-wrapper.lockdir"
 LOGFILE="${HOME}/.aidevops/logs/pulse.log"
 WRAPPER_LOGFILE="${HOME}/.aidevops/logs/pulse-wrapper.log"
 SESSION_FLAG="${HOME}/.aidevops/logs/pulse-session.flag"
@@ -176,39 +189,88 @@ fi
 mkdir -p "$(dirname "$PIDFILE")"
 
 #######################################
-# Acquire an exclusive instance lock using flock (GH#4409)
+# Acquire an exclusive instance lock using mkdir atomicity (GH#4513)
 #
-# Primary defense against concurrent pulse instances. Uses flock(1)
-# with -n (non-blocking) so a second instance exits immediately if
-# the lock is held. The lock is automatically released when the
-# process exits (including crashes, OOM kills, SIGKILL).
+# Primary defense against concurrent pulse instances on macOS and Linux.
+# mkdir is POSIX-guaranteed atomic — the kernel ensures only one process
+# succeeds even under concurrent invocations. No TOCTOU race is possible.
 #
-# The lock file descriptor (FD 9) is held for the entire lifetime
-# of the process. The caller must exec this via:
-#   exec 9>"$LOCKFILE"
-#   acquire_instance_lock
+# The lock directory (LOCKDIR) contains a PID file so stale locks from
+# SIGKILL or power loss can be detected and cleared on the next startup.
+# A trap registered by the caller releases the lock on normal exit and
+# SIGTERM. SIGKILL cannot be trapped — the stale-lock detection handles
+# that case on the next invocation.
 #
-# On systems without flock (e.g., macOS without util-linux), falls
-# back to check_dedup() which uses PID-file-based dedup. The flock
-# guard is strictly superior (atomic, no TOCTOU race) but the PID
-# fallback is better than nothing.
+# On Linux with util-linux flock available, flock is used as an additional
+# layer on the LOCKFILE (FD 9) for belt-and-suspenders protection. The
+# mkdir guard is the primary atomic primitive; flock is supplementary.
 #
 # Returns: 0 if lock acquired, 1 if another instance holds the lock
 #######################################
 acquire_instance_lock() {
-	if ! command -v flock &>/dev/null; then
-		# flock not available — fall back to PID-based dedup only.
-		# Log once so the user knows the stronger guard is missing.
-		echo "[pulse-wrapper] flock not available — relying on PID-based dedup only (install util-linux for atomic locking)" >>"$WRAPPER_LOGFILE"
-		return 0
+	# Step 1: mkdir-based atomic lock (primary — works on macOS and Linux)
+	if ! mkdir "$LOCKDIR" 2>/dev/null; then
+		# Lock directory already exists — check if the owning process is alive
+		local lock_pid=""
+		local lock_pid_file="${LOCKDIR}/pid"
+		if [[ -f "$lock_pid_file" ]]; then
+			lock_pid=$(cat "$lock_pid_file" 2>/dev/null || echo "")
+		fi
+
+		if [[ -n "$lock_pid" ]] && [[ "$lock_pid" =~ ^[0-9]+$ ]] && ps -p "$lock_pid" >/dev/null 2>&1; then
+			# Lock owner is alive — genuine concurrent instance
+			local lock_age
+			lock_age=$(_get_process_age "$lock_pid")
+			echo "[pulse-wrapper] Another pulse instance holds the mkdir lock (PID ${lock_pid}, age ${lock_age}s) — exiting immediately (GH#4513)" >>"$WRAPPER_LOGFILE"
+			return 1
+		fi
+
+		# Lock owner is dead (SIGKILL, power loss, OOM) — stale lock
+		# Remove and re-acquire atomically. If two instances race here,
+		# only one will succeed at the mkdir below.
+		echo "[pulse-wrapper] Stale mkdir lock detected (owner PID ${lock_pid:-unknown} is dead) — clearing and re-acquiring" >>"$WRAPPER_LOGFILE"
+		rm -rf "$LOCKDIR" 2>/dev/null || true
+
+		if ! mkdir "$LOCKDIR" 2>/dev/null; then
+			# Another instance won the race to re-acquire
+			echo "[pulse-wrapper] Lost mkdir lock race after stale-lock clear — another instance acquired it first" >>"$WRAPPER_LOGFILE"
+			return 1
+		fi
 	fi
 
-	if ! flock -n 9; then
-		echo "[pulse-wrapper] Another pulse instance holds the lock — exiting immediately (GH#4409)" >>"$WRAPPER_LOGFILE"
-		return 1
+	# Write our PID into the lock directory for stale-lock detection
+	echo "$$" >"${LOCKDIR}/pid"
+
+	# Step 2: flock as supplementary layer on Linux (belt-and-suspenders)
+	# flock is not available on macOS without util-linux — skip silently.
+	if command -v flock &>/dev/null; then
+		if ! flock -n 9 2>/dev/null; then
+			# flock says another instance holds it — release our mkdir lock
+			# and exit. This handles the edge case where flock and mkdir
+			# disagree (e.g., NFS with broken mkdir atomicity).
+			echo "[pulse-wrapper] flock secondary guard: another instance holds the flock — releasing mkdir lock and exiting" >>"$WRAPPER_LOGFILE"
+			rm -rf "$LOCKDIR" 2>/dev/null || true
+			return 1
+		fi
+		echo "[pulse-wrapper] Instance lock acquired via mkdir+flock (PID $$)" >>"$WRAPPER_LOGFILE"
+	else
+		echo "[pulse-wrapper] Instance lock acquired via mkdir (PID $$, flock not available on this platform)" >>"$WRAPPER_LOGFILE"
 	fi
 
-	echo "[pulse-wrapper] Instance lock acquired (PID $$)" >>"$WRAPPER_LOGFILE"
+	return 0
+}
+
+#######################################
+# Release the instance lock (mkdir-based)
+#
+# Called by the EXIT trap to ensure the lock directory is removed
+# on normal exit and SIGTERM. SIGKILL cannot be trapped — the
+# stale-lock detection in acquire_instance_lock() handles that case.
+#
+# Safe to call multiple times (idempotent).
+#######################################
+release_instance_lock() {
+	rm -rf "$LOCKDIR" 2>/dev/null || true
 	return 0
 }
 
@@ -2462,8 +2524,8 @@ run_underfill_worker_recycler() {
 #######################################
 # Main
 #
-# Execution order (t1429, GH#4409):
-#   0. Instance lock (flock — atomic, prevents concurrent pulses)
+# Execution order (t1429, GH#4513):
+#   0. Instance lock (mkdir-based atomic — prevents concurrent pulses on macOS+Linux)
 #   1. Gate checks (consent, dedup)
 #   2. Cleanup (orphans, worktrees, stashes)
 #   3. Prefetch state (parallel gh API calls)
@@ -2477,10 +2539,17 @@ run_underfill_worker_recycler() {
 # even the API calls themselves add latency that delays dispatch.
 #######################################
 main() {
-	# GH#4409: Acquire exclusive instance lock FIRST — before any other
-	# check. This is the primary defense against concurrent pulses. The
-	# flock is atomic (no TOCTOU race) and auto-releases on process exit.
-	# Open the lock file on FD 9 so flock can hold it for the process lifetime.
+	# GH#4513: Acquire exclusive instance lock FIRST — before any other
+	# check. Uses mkdir atomicity as the primary primitive (POSIX-guaranteed,
+	# works on macOS APFS/HFS+ without util-linux). flock is used as a
+	# supplementary layer on Linux when available.
+	#
+	# Register EXIT trap BEFORE acquiring the lock so the lock is always
+	# released on exit — including set -e aborts, SIGTERM, and return paths.
+	# SIGKILL cannot be trapped; stale-lock detection handles that case.
+	trap 'release_instance_lock' EXIT
+
+	# Open FD 9 for flock supplementary layer (no-op if flock unavailable)
 	exec 9>"$LOCKFILE"
 	if ! acquire_instance_lock; then
 		return 0
