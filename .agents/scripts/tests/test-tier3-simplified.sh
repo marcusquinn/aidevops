@@ -623,7 +623,7 @@ test_shellcheck() {
 	local all_clean=true
 	for script in full-loop-helper.sh fallback-chain-helper.sh budget-tracker-helper.sh issue-sync-helper.sh observability-helper.sh tests/test-tier3-simplified.sh; do
 		local path="${SCRIPTS_DIR}/${script}"
-		if shellcheck -x -S warning "$path"; then
+		if shellcheck -x -S warning "$path" 2>&1; then
 			print_result "shellcheck: $script" 0
 		else
 			print_result "shellcheck: $script" 1 "ShellCheck violations found"
