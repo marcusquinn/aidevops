@@ -520,10 +520,12 @@ bot.command("run", adminOnly, async (ctx) => {
 
   await ctx.reply(`Dispatching: ${command}`);
 
+  const signal = AbortSignal.timeout(600_000); // 10 minutes
+
   // Dispatch via runner-helper.sh (use array args to prevent command injection)
   const proc = Bun.spawn(
     ["runner-helper.sh", "dispatch", command],
-    { stdout: "pipe", stderr: "pipe" }
+    { stdout: "pipe", stderr: "pipe", signal, env: { ...process.env, RUNNER_TIMEOUT: "600" } }
   );
   const output = await new Response(proc.stdout).text();
   await ctx.reply(`Result:\n\`\`\`\n${output.slice(0, 4000)}\n\`\`\``);
