@@ -374,7 +374,7 @@ sync_issue_status_label() {
 	local escaped_id
 	escaped_id=$(sql_escape "$task_id")
 	local repo_path
-	repo_path=$(db "$SUPERVISOR_DB" "SELECT repo FROM tasks WHERE id = '$escaped_id';" 2>/dev/null || echo "")
+	repo_path=$(db "$SUPERVISOR_DB" "SELECT repo FROM tasks WHERE id = '$escaped_id';" || echo "")
 	if [[ -z "$repo_path" ]]; then
 		repo_path=$(find_project_root 2>/dev/null || echo ".")
 	fi
@@ -417,7 +417,7 @@ sync_issue_status_label() {
 		local close_comment
 		close_comment="Task $task_id reached state: $new_state (from $old_state)"
 		local pr_url=""
-		pr_url=$(db "$SUPERVISOR_DB" "SELECT pr_url FROM tasks WHERE id='$(sql_escape "$task_id")';" 2>/dev/null || echo "")
+		pr_url=$(db "$SUPERVISOR_DB" "SELECT pr_url FROM tasks WHERE id='$(sql_escape "$task_id")';" || echo "")
 		local has_merged_pr="false"
 		if [[ -n "$pr_url" && "$pr_url" != "null" && "$pr_url" != "no_pr" && "$pr_url" != "task_only" && "$pr_url" != "task_obsolete" ]]; then
 			local pr_number=""
@@ -437,18 +437,18 @@ sync_issue_status_label() {
 		if [[ "$has_merged_pr" == "true" ]]; then
 			# Close the issue with proof-log comment — PR evidence confirmed
 			gh issue close "$issue_number" --repo "$repo_slug" \
-				--comment "$close_comment" 2>/dev/null || true
+				--comment "$close_comment" || true
 			# Add status:done and remove all other status labels
 			gh issue edit "$issue_number" --repo "$repo_slug" \
-				--add-label "status:done" "${remove_args[@]}" 2>/dev/null || true
+				--add-label "status:done" "${remove_args[@]}" || true
 			log_verbose "sync_issue_status_label: closed #$issue_number ($task_id -> $new_state) proof: ${pr_url:-none}"
 		else
 			# No merged PR evidence — do NOT auto-close. Flag for human review.
 			local review_comment="Task $task_id reached state: $new_state (from $old_state). No merged PR on record — flagged for human review instead of auto-closing."
 			gh issue comment "$issue_number" --repo "$repo_slug" \
-				--body "$review_comment" 2>/dev/null || true
+				--body "$review_comment" || true
 			gh issue edit "$issue_number" --repo "$repo_slug" \
-				--add-label "needs-review" "${remove_args[@]}" 2>/dev/null || true
+				--add-label "needs-review" "${remove_args[@]}" || true
 			log_verbose "sync_issue_status_label: flagged #$issue_number for review ($task_id -> $new_state, no merged PR)"
 		fi
 		return 0
@@ -457,16 +457,16 @@ sync_issue_status_label() {
 		# Build cancellation comment with reason from DB
 		local cancel_comment="Task $task_id cancelled (was: $old_state)"
 		local cancel_error=""
-		cancel_error=$(db "$SUPERVISOR_DB" "SELECT error FROM tasks WHERE id='$(sql_escape "$task_id")';" 2>/dev/null || echo "")
+		cancel_error=$(db "$SUPERVISOR_DB" "SELECT error FROM tasks WHERE id='$(sql_escape "$task_id")';" || echo "")
 		if [[ -n "$cancel_error" && "$cancel_error" != "null" ]]; then
 			cancel_comment="Task $task_id cancelled (was: $old_state). Reason: $cancel_error"
 		fi
 		# Close as not-planned
 		gh issue close "$issue_number" --repo "$repo_slug" --reason "not planned" \
-			--comment "$cancel_comment" 2>/dev/null || true
+			--comment "$cancel_comment" || true
 		# Remove all status labels
 		gh issue edit "$issue_number" --repo "$repo_slug" \
-			"${remove_args[@]}" 2>/dev/null || true
+			"${remove_args[@]}" || true
 		log_verbose "sync_issue_status_label: closed #$issue_number as not-planned ($task_id)"
 		return 0
 		;;
@@ -474,25 +474,26 @@ sync_issue_status_label() {
 		# Build failure comment with error from DB
 		local fail_comment="Task $task_id failed (was: $old_state)"
 		local fail_error=""
-		fail_error=$(db "$SUPERVISOR_DB" "SELECT error FROM tasks WHERE id='$(sql_escape "$task_id")';" 2>/dev/null || echo "")
+		fail_error=$(db "$SUPERVISOR_DB" "SELECT error FROM tasks WHERE id='$(sql_escape "$task_id")';" || echo "")
 		if [[ -n "$fail_error" && "$fail_error" != "null" ]]; then
 			fail_comment="Task $task_id failed (was: $old_state). Error: $fail_error"
 		fi
 		# DO NOT auto-close failed tasks — they need human review.
 		# Post failure comment and add needs-review label, keep issue OPEN.
 		gh issue comment "$issue_number" --repo "$repo_slug" \
-			--body "$fail_comment" 2>/dev/null || true
+			--body "$fail_comment" || true
 		gh issue edit "$issue_number" --repo "$repo_slug" \
-			--add-label "needs-review" "${remove_args[@]}" 2>/dev/null || true
+			--add-label "needs-review" "${remove_args[@]}" || true
 		log_verbose "sync_issue_status_label: flagged #$issue_number for review ($task_id failed)"
 		# Reopen if the issue was previously closed (e.g. verified -> failed retry)
 		local fail_issue_state
-		fail_issue_state=$(gh issue view "$issue_number" --repo "$repo_slug" --json state --jq '.state' 2>/dev/null || echo "")
+		fail_issue_state=$(gh issue view "$issue_number" --repo "$repo_slug" --json state --jq '.state' || echo "")
 		if [[ "$fail_issue_state" == "CLOSED" ]]; then
 			gh issue reopen "$issue_number" --repo "$repo_slug" \
-				--comment "Reopening: task $task_id failed and needs human review." 2>/dev/null || true
+				--comment "Reopening: task $task_id failed and needs human review." || true
 			log_verbose "sync_issue_status_label: reopened #$issue_number ($task_id failed, was closed)"
 		fi
+		# failed is a terminal state in this sync path
 		return 0
 		;;
 	blocked)
@@ -500,7 +501,7 @@ sync_issue_status_label() {
 		local blocked_error=""
 		local escaped_task_id
 		escaped_task_id=$(sql_escape "$task_id")
-		blocked_error=$(db "$SUPERVISOR_DB" "SELECT error FROM tasks WHERE id='${escaped_task_id}';" 2>/dev/null || echo "")
+		blocked_error=$(db "$SUPERVISOR_DB" "SELECT error FROM tasks WHERE id='${escaped_task_id}';" || echo "")
 		if [[ -z "$blocked_error" || "$blocked_error" == "null" ]]; then
 			blocked_error="Task blocked — reason not specified"
 		fi
@@ -514,7 +515,7 @@ sync_issue_status_label() {
 	# Non-terminal state: apply the new label, remove all others
 	if [[ -n "$new_label" ]]; then
 		gh issue edit "$issue_number" --repo "$repo_slug" \
-			--add-label "$new_label" "${remove_args[@]}" 2>/dev/null || true
+			--add-label "$new_label" "${remove_args[@]}" || true
 		log_verbose "sync_issue_status_label: #$issue_number -> $new_label ($task_id: $old_state -> $new_state)"
 	fi
 
@@ -522,10 +523,10 @@ sync_issue_status_label() {
 	# (e.g., failed -> queued for retry, blocked -> queued)
 	if [[ -n "$new_label" ]]; then
 		local issue_state
-		issue_state=$(gh issue view "$issue_number" --repo "$repo_slug" --json state --jq '.state' 2>/dev/null || echo "")
+		issue_state=$(gh issue view "$issue_number" --repo "$repo_slug" --json state --jq '.state' || echo "")
 		if [[ "$issue_state" == "CLOSED" ]]; then
 			gh issue reopen "$issue_number" --repo "$repo_slug" \
-				--comment "Task $task_id re-entered pipeline: $old_state -> $new_state" 2>/dev/null || true
+				--comment "Task $task_id re-entered pipeline: $old_state -> $new_state" || true
 			log_verbose "sync_issue_status_label: reopened #$issue_number ($task_id: $old_state -> $new_state)"
 		fi
 	fi
