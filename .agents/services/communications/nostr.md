@@ -235,7 +235,10 @@ import {
 } from "nostr-tools";
 
 // Load bot private key from secure storage (never hardcode)
-const sk = hexToBytes(process.env.NOSTR_BOT_SK_HEX!);
+// Store as nsec via: aidevops secret set NOSTR_BOT_NSEC
+const botNsec = process.env.NOSTR_BOT_NSEC;
+if (!botNsec) throw new Error("NOSTR_BOT_NSEC not set");
+const { data: sk } = nip19.decode(botNsec) as { data: Uint8Array };
 const pk = getPublicKey(sk);
 
 console.log(`Bot pubkey: ${nip19.npubEncode(pk)}`);
@@ -306,7 +309,7 @@ NOSTR_ALLOWED_PUBKEYS="<hex-pubkey-1>,<hex-pubkey-2>"
 
 ```json
 {
-  "botSkHex": "DO_NOT_STORE_HERE_USE_GOPASS",
+  "botNsecPath": "aidevops/nostr-bot/nsec",
   "allowedPubkeys": [
     "abc123...",
     "def456..."
@@ -321,7 +324,7 @@ NOSTR_ALLOWED_PUBKEYS="<hex-pubkey-1>,<hex-pubkey-2>"
 }
 ```
 
-**Note**: The `botSkHex` field should reference a gopass secret or environment variable, not contain the actual key. The config template shows the field for documentation; the actual implementation reads from `NOSTR_BOT_SK_HEX` env var or `aidevops secret get NOSTR_BOT_SK_HEX`.
+**Note**: The `botNsecPath` field is a gopass path — the actual `nsec` value is stored in gopass and never written to disk. Store it via `aidevops secret set NOSTR_BOT_NSEC`, then set `NOSTR_BOT_NSEC` in your environment from gopass at runtime. The config template shows the path for documentation; the actual implementation reads from the `NOSTR_BOT_NSEC` env var.
 
 ### NIP-17 Gift-Wrapped DMs (Planned)
 
