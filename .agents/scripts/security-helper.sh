@@ -581,7 +581,7 @@ cmd_skill_scan() {
 			fi
 
 			# Launch scan in background, write output to indexed temp file
-			$scanner_cmd scan "$scan_target" --format json >"$scan_tmpdir/$scan_index.json" 2>/dev/null &
+			$scanner_cmd scan "$scan_target" --format json >"$scan_tmpdir/$scan_index.json" 2>"$scan_tmpdir/$scan_index.err" &
 			scan_pids+=($!)
 			scan_names+=("$name")
 			scan_paths+=("$local_path")
@@ -594,6 +594,11 @@ cmd_skill_scan() {
 			wait "${scan_pids[$i]}" 2>/dev/null || true
 
 			echo -e "${CYAN}Scanning${NC}: ${scan_names[$i]} (${scan_paths[$i]})"
+
+			if [[ -s "$scan_tmpdir/$i.err" ]]; then
+				echo -e "${RED}Error scanning skill '${scan_names[$i]}':${NC}" >&2
+				cat "$scan_tmpdir/$i.err" >&2
+			fi
 
 			local scan_output=""
 			if [[ -s "$scan_tmpdir/$i.json" ]]; then
@@ -683,7 +688,7 @@ cmd_skill_scan() {
 					vt_issues=$((vt_issues + 1))
 					echo -e "  ${YELLOW}VT flagged issues${NC} for $name"
 				}
-			done < <(jq -c '.skills[]' "$skill_sources" 2>/dev/null)
+			done < <(jq -c '.skills[]' "$skill_sources")
 
 			if [[ $vt_issues -gt 0 ]]; then
 				echo ""
