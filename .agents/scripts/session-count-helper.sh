@@ -146,7 +146,7 @@ count_interactive_sessions() {
 	cursor_pids=$(pgrep -f 'Cursor\.app' || true)
 	if [[ -n "$cursor_pids" ]]; then
 		local cursor_count
-		cursor_count=$(echo "$cursor_pids" | wc -l | tr -d ' ')
+		cursor_count=$(echo "$cursor_pids" | wc -l)
 		count=$((count + cursor_count))
 	fi
 
@@ -155,7 +155,7 @@ count_interactive_sessions() {
 	windsurf_pids=$(pgrep -f 'Windsurf' || true)
 	if [[ -n "$windsurf_pids" ]]; then
 		local windsurf_count
-		windsurf_count=$(echo "$windsurf_pids" | wc -l | tr -d ' ')
+		windsurf_count=$(echo "$windsurf_pids" | wc -l)
 		count=$((count + windsurf_count))
 	fi
 
@@ -164,7 +164,7 @@ count_interactive_sessions() {
 	aider_pids=$(pgrep -f 'aider' || true)
 	if [[ -n "$aider_pids" ]]; then
 		local aider_count
-		aider_count=$(echo "$aider_pids" | wc -l | tr -d ' ')
+		aider_count=$(echo "$aider_pids" | wc -l)
 		count=$((count + aider_count))
 	fi
 
