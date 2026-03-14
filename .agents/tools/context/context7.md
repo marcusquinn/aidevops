@@ -49,7 +49,7 @@ npx ctx7 skills install /anthropics/skills pdf  # Install a skill
 
 Skills found in the Context7 registry can be imported into aidevops using `/add-skill`. See "Skill Discovery and Import" section below.
 
-**Config Location**: `~/Library/Application Support/Claude/claude_desktop_config.json`
+**Config Location**: `~/.config/opencode/opencode.json`
 <!-- AI-CONTEXT-END -->
 
 Context7 MCP provides AI assistants with real-time access to the latest documentation for thousands of development tools, frameworks, and libraries.
