@@ -810,10 +810,14 @@ do_analyze() {
 	local urls=()
 	if [[ "$input_file" == *.json ]]; then
 		# JSON format - extract URLs with status 200
-		mapfile -t urls < <(jq -r '.[] | select(.status_code == 200) | .url' "$input_file" 2>/dev/null)
+		while IFS= read -r _url; do
+			[[ -n "$_url" ]] && urls+=("$_url")
+		done < <(jq -r '.[] | select(.status_code == 200) | .url' "$input_file" 2>/dev/null)
 	elif [[ "$input_file" == *.csv ]]; then
 		# CSV format - extract URLs from first column where status is 200
-		mapfile -t urls < <(tail -n +2 "$input_file" | awk -F',' '$2 == "200" || $2 == 200 {gsub(/"/, "", $1); print $1}')
+		while IFS= read -r _url; do
+			[[ -n "$_url" ]] && urls+=("$_url")
+		done < <(tail -n +2 "$input_file" | awk -F',' '$2 == "200" || $2 == 200 {gsub(/"/, "", $1); print $1}')
 	fi
 
 	if [[ ${#urls[@]} -eq 0 ]]; then

@@ -2869,14 +2869,16 @@ cmd_bench() {
 		done
 
 		# Collect judge scores if enabled
-		declare -A judge_scores=()
+		local judge_models=()
+		local judge_scores_vals=()
 		if [[ "$judge_flag" == true ]]; then
 			echo "  Scoring with judge (haiku)..."
 			local judge_output
 			judge_output=$(_bench_judge_score "$p" "$bench_dir")
 			while IFS='|' read -r jm js; do
 				[[ -z "$jm" ]] && continue
-				judge_scores["$jm"]="$js"
+				judge_models+=("$jm")
+				judge_scores_vals+=("$js")
 			done <<<"$judge_output"
 		fi
 
@@ -2933,7 +2935,14 @@ cmd_bench() {
 			local cost_fmt
 			cost_fmt=$(printf "\$%.4f" "$cost")
 
-			local judge_score="${judge_scores[$m]:-}"
+			# Look up judge score from parallel arrays
+			local judge_score=""
+			for i in "${!judge_models[@]}"; do
+				if [[ "${judge_models[$i]}" == "$m" ]]; then
+					judge_score="${judge_scores_vals[$i]}"
+					break
+				fi
+			done
 
 			# Store result
 			_store_bench_result "$m" "$p" "$latency" "$tokens_in" "$tokens_out" "$cost" \
