@@ -222,7 +222,7 @@ After a systemic fix merges, heal stale check results on existing PRs with `gh r
 
 When closing any issue, ALWAYS comment first explaining why and linking to the PR(s) that delivered the work. An issue closed without a comment is an audit failure.
 
-- **`persistent` label** → NEVER close. Long-running tracking issues.
+- **`persistent` label** → NEVER close, and NEVER add `Closes #N` / `Fixes #N` / `Resolves #N` references to these issues. CI guard (`guard-persistent-issues` in `.github/workflows/issue-sync.yml`) auto-reopens accidental closures and removes `status:done`; treat that guard as a safety net, not normal flow.
 - **Has a merged PR that resolves it** → comment linking the PR, then close.
 - **`status:done` or body says "completed"** → find the PR(s), comment with links, close.
 - **`status:blocked` but blockers resolved** → remove `status:blocked`, add `status:available`, comment what unblocked it. Dispatchable this cycle.
