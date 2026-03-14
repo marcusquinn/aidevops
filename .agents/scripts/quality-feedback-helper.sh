@@ -22,6 +22,7 @@
 #   quality-feedback-helper.sh watch --pr 4
 #   quality-feedback-helper.sh scan-merged --repo owner/repo --batch 20
 #   quality-feedback-helper.sh scan-merged --repo owner/repo --batch 20 --create-issues
+#   quality-feedback-helper.sh scan-merged --repo owner/repo --dry-run --include-positive
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 source "${SCRIPT_DIR}/shared-constants.sh"
@@ -564,6 +565,10 @@ cmd_watch() {
 #   --json            Output findings as JSON instead of human-readable
 #   --dry-run         Scan and report findings without creating issues or marking
 #                     PRs as scanned. Useful for identifying false-positive issues.
+#   --include-positive  Disable the positive-review filter. By default, reviews
+#                     with zero inline comments and purely positive/approving body
+#                     text are skipped as false positives. Pass this flag to
+#                     include them — useful for debugging the filter itself.
 #
 # Returns: 0 on success, 1 on error
 #######################################
@@ -576,6 +581,7 @@ cmd_scan_merged() {
 	local backfill=false
 	local tag_actioned=false
 	local dry_run=false
+	local include_positive=false
 
 	# Parse flags
 	while [[ $# -gt 0 ]]; do
@@ -610,6 +616,10 @@ cmd_scan_merged() {
 			;;
 		--dry-run)
 			dry_run=true
+			shift
+			;;
+		--include-positive)
+			include_positive=true
 			shift
 			;;
 		*)
@@ -756,7 +766,7 @@ cmd_scan_merged() {
 		fi
 
 		local findings
-		findings=$(_scan_single_pr "$repo_slug" "$pr_num" "$min_severity") || {
+		findings=$(_scan_single_pr "$repo_slug" "$pr_num" "$min_severity" "$include_positive") || {
 			# In dry-run mode, don't mark PRs as scanned so they can be re-scanned
 			if [[ "$dry_run" != true ]]; then
 				gh pr edit "$pr_num" --repo "$repo_slug" --add-label "review-feedback-scanned" >/dev/null 2>&1 || true
@@ -851,6 +861,7 @@ cmd_scan_merged() {
 #   $1 - repo slug
 #   $2 - PR number
 #   $3 - minimum severity (critical|high|medium)
+#   $4 - include_positive ("true" to disable positive-review filter; default "false")
 # Output: JSON array of findings to stdout
 # Returns: 0 on success
 #######################################
@@ -858,6 +869,7 @@ _scan_single_pr() {
 	local repo_slug="$1"
 	local pr_num="$2"
 	local min_severity="$3"
+	local include_positive="${4:-false}"
 
 	echo -e "  Scanning PR #${pr_num}..." >&2
 
@@ -934,7 +946,8 @@ _scan_single_pr() {
 	review_findings=$(printf '%s' "$reviews" | jq \
 		--arg pr "$pr_num" \
 		--arg min_sev "$min_severity" \
-		--argjson inline_counts "$inline_counts_json" '
+		--argjson inline_counts "$inline_counts_json" \
+		--argjson include_positive "$([[ "$include_positive" == "true" ]] && echo 'true' || echo 'false')" '
 		[.[] |
 		select(.body != null and .body != "" and (.body | length) > 50) |
 
@@ -951,8 +964,9 @@ _scan_single_pr() {
 		# summaries, not actionable findings — capturing them creates false-positive
 		# quality-debt issues (see GH#4528, incident: issue #3744 / PR #1121).
 		# Humans and CHANGES_REQUESTED reviews are never skipped by this rule.
+		# Bypassed when $include_positive is true (--include-positive flag).
 		(($inline_counts[$login] // 0) == 0 and .state == "COMMENTED" and $reviewer != "human") as $summary_only |
-		select($summary_only | not) |
+		select($include_positive or ($summary_only | not)) |
 
 		(.body) as $body |
 		(if ($body | test("security-critical\\.svg|🔴.*critical|CRITICAL"; "i")) then "critical"
@@ -1010,7 +1024,8 @@ _scan_single_pr() {
 		# approval-only patterns. This catches "LGTM", "good work", "no further
 		# comments", and "no further recommendations" (even in long summary
 		# reviews) regardless of reviewer type or review state.
-		select((($approval_only or $no_actionable_recommendation or $no_actionable_sentiment) and ($actionable | not)) | not) |
+		# Bypassed when $include_positive is true (--include-positive flag).
+		select($include_positive or ((($approval_only or $no_actionable_recommendation or $no_actionable_sentiment) and ($actionable | not)) | not)) |
 
 		(if $reviewer == "human" then
 			true
@@ -1506,6 +1521,10 @@ scan-merged options:
   --dry-run         Scan and report findings without creating issues or marking
                     PRs as scanned. Use to identify false-positive issues before
                     committing to issue creation.
+  --include-positive  Disable the positive-review filter. By default, reviews
+                    with zero inline comments and purely positive/approving body
+                    text are skipped as false positives. Pass this flag to
+                    include them — useful for debugging the filter itself.
 
 Examples:
   quality-feedback-helper.sh status
@@ -1517,6 +1536,7 @@ Examples:
   quality-feedback-helper.sh scan-merged --repo owner/repo --create-issues
   quality-feedback-helper.sh scan-merged --repo owner/repo --backfill --create-issues --tag-actioned
   quality-feedback-helper.sh scan-merged --repo owner/repo --dry-run
+  quality-feedback-helper.sh scan-merged --repo owner/repo --dry-run --include-positive
 
 Requirements:
   - GitHub CLI (gh) installed and authenticated

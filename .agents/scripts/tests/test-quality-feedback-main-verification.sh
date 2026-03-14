@@ -432,17 +432,20 @@ test_plain_fence_skips_diff_marker_lines() {
 # Helper: run the approval-detection jq filter against a review body.
 # Returns "skip" if the review would be skipped, "keep" if it would be kept.
 # Mirrors the $approval_only + $actionable logic in _scan_single_pr.
+# $4 - include_positive: "true" to bypass all positive filters (default "false")
 _test_approval_filter() {
 	local body="$1"
 	local state="${2:-COMMENTED}"
 	local reviewer="${3:-coderabbit}"
+	local include_positive="${4:-false}"
 
 	# Replicate the jq filter from _scan_single_pr review_findings block
 	local result
 	result=$(jq -rn \
 		--arg body "$body" \
 		--arg state "$state" \
-		--arg reviewer "$reviewer" '
+		--arg reviewer "$reviewer" \
+		--argjson include_positive "$([[ "$include_positive" == "true" ]] && echo 'true' || echo 'false')" '
 		($body | test(
 			"^[\\s\\n]*(lgtm|looks good( to me)?|ship it|shipit|:shipit:|:\\+1:|👍|" +
 			"approved?|great (work|job|change|pr|patch)|nice (work|job|change|pr|patch)|" +
@@ -474,8 +477,43 @@ _test_approval_filter() {
 			"\\bworkaround\\b|\\bhack\\b|" +
 			"```\\s*(suggestion|diff)"; "i")) as $actionable |
 
-		# skip = approval-only/no-recommendation AND NOT actionable
-		if (($approval_only or $no_actionable_recommendation or $no_actionable_sentiment) and ($actionable | not)) then "skip"
+		# skip = approval-only/no-recommendation AND NOT actionable (unless include_positive)
+		if ($include_positive) then "keep"
+		elif (($approval_only or $no_actionable_recommendation or $no_actionable_sentiment) and ($actionable | not)) then "skip"
+		else "keep"
+		end
+	')
+	echo "$result"
+	return 0
+}
+
+# Helper: run the summary-only bot filter.
+# Returns "skip" if the review would be skipped as a summary-only bot review,
+# "keep" otherwise. Mirrors the $summary_only logic in _scan_single_pr.
+# $1 - reviewer login (e.g. "gemini-code-assist[bot]")
+# $2 - review state (e.g. "COMMENTED", "APPROVED")
+# $3 - inline comment count for this reviewer
+# $4 - include_positive: "true" to bypass (default "false")
+_test_summary_only_filter() {
+	local login="$1"
+	local state="${2:-COMMENTED}"
+	local inline_count="${3:-0}"
+	local include_positive="${4:-false}"
+
+	local result
+	result=$(jq -rn \
+		--arg login "$login" \
+		--arg state "$state" \
+		--argjson inline_count "$inline_count" \
+		--argjson include_positive "$([[ "$include_positive" == "true" ]] && echo 'true' || echo 'false')" '
+		(if ($login | test("coderabbit"; "i")) then "coderabbit"
+		 elif ($login | test("gemini|google"; "i")) then "gemini"
+		 elif ($login | test("codacy"; "i")) then "codacy"
+		 else "human"
+		 end) as $reviewer |
+		($inline_count == 0 and $state == "COMMENTED" and $reviewer != "human") as $summary_only |
+		if ($include_positive) then "keep"
+		elif $summary_only then "skip"
 		else "keep"
 		end
 	')
@@ -600,6 +638,113 @@ return nil, fmt.Errorf("invalid input: %w", err)
 	return 0
 }
 
+# --- GH#4733: --include-positive flag tests ---
+
+test_skips_gemini_summary_only_bot_review() {
+	# Gemini posts a COMMENTED review with 0 inline comments and a positive
+	# summary body. This is the exact false-positive pattern from issue #3723 /
+	# PR #1250: "The changes improve the auditability and reliability of task
+	# tracking." — no inline comments, no actionable language.
+	local result
+	result=$(_test_summary_only_filter "gemini-code-assist[bot]" "COMMENTED" 0)
+	if [[ "$result" == "skip" ]]; then
+		print_result "skip Gemini summary-only COMMENTED review with 0 inline comments" 0
+	else
+		print_result "skip Gemini summary-only COMMENTED review with 0 inline comments" 1 "expected skip, got ${result}"
+	fi
+	return 0
+}
+
+test_keeps_gemini_review_with_inline_comments() {
+	# Gemini COMMENTED review that also has inline comments — must be kept
+	local result
+	result=$(_test_summary_only_filter "gemini-code-assist[bot]" "COMMENTED" 3)
+	if [[ "$result" == "keep" ]]; then
+		print_result "keep Gemini COMMENTED review that has inline comments" 0
+	else
+		print_result "keep Gemini COMMENTED review that has inline comments" 1 "expected keep, got ${result}"
+	fi
+	return 0
+}
+
+test_keeps_human_summary_only_review() {
+	# Human COMMENTED review with 0 inline comments — must NOT be filtered
+	# (the summary-only filter only applies to bots)
+	local result
+	result=$(_test_summary_only_filter "alice" "COMMENTED" 0)
+	if [[ "$result" == "keep" ]]; then
+		print_result "keep human COMMENTED review even with 0 inline comments" 0
+	else
+		print_result "keep human COMMENTED review even with 0 inline comments" 1 "expected keep, got ${result}"
+	fi
+	return 0
+}
+
+test_include_positive_bypasses_lgtm_filter() {
+	# With --include-positive, a pure LGTM review must be kept (not skipped)
+	local result
+	result=$(_test_approval_filter "LGTM" "COMMENTED" "coderabbit" "true")
+	if [[ "$result" == "keep" ]]; then
+		print_result "--include-positive bypasses LGTM filter" 0
+	else
+		print_result "--include-positive bypasses LGTM filter" 1 "expected keep, got ${result}"
+	fi
+	return 0
+}
+
+test_include_positive_bypasses_no_further_comments_filter() {
+	# With --include-positive, "no further comments" review must be kept
+	local result
+	result=$(_test_approval_filter "I've reviewed the changes and have no further comments. Good work." "COMMENTED" "coderabbit" "true")
+	if [[ "$result" == "keep" ]]; then
+		print_result "--include-positive bypasses 'no further comments' filter" 0
+	else
+		print_result "--include-positive bypasses 'no further comments' filter" 1 "expected keep, got ${result}"
+	fi
+	return 0
+}
+
+test_include_positive_bypasses_summary_only_filter() {
+	# With --include-positive, a Gemini summary-only COMMENTED review must be kept
+	local result
+	result=$(_test_summary_only_filter "gemini-code-assist[bot]" "COMMENTED" 0 "true")
+	if [[ "$result" == "keep" ]]; then
+		print_result "--include-positive bypasses summary-only bot filter" 0
+	else
+		print_result "--include-positive bypasses summary-only bot filter" 1 "expected keep, got ${result}"
+	fi
+	return 0
+}
+
+test_skips_positive_confirmation_body() {
+	# The specific Gemini body from issue #3723: "The changes improve the
+	# auditability and reliability of task tracking." — positive confirmation
+	# with no actionable language. The $summary_only filter catches this when
+	# inline_count=0 + state=COMMENTED. Verify the approval filter also handles
+	# it when the body contains no actionable keywords.
+	local body="The changes improve the auditability and reliability of task tracking."
+	local actionable
+	actionable=$(jq -rn --arg body "$body" '
+		($body | test(
+			"\\bshould\\b|\\bconsider\\b|\\binstead\\b|\\bsuggest|\\brecommend(ed|ing)?\\b|" +
+			"\\bwarning\\b|\\bcaution\\b|\\bavoid\\b|\\b(don ?'"'"'?t|do not)\\b|" +
+			"\\bvulnerab|\\binsecure|\\binjection\\b|\\bxss\\b|\\bcsrf\\b|" +
+			"\\bbug\\b|\\berror\\b|\\bproblem\\b|\\bfail\\b|\\bincorrect\\b|\\bwrong\\b|\\bmissing\\b|\\bbroken\\b|" +
+			"\\bnit:|\\btodo:|\\bfixme|\\bhardcoded|\\bdeprecated|" +
+			"\\brace.condition|\\bdeadlock|\\bleak|\\boverflow|" +
+			"\\bworkaround\\b|\\bhack\\b|" +
+			"```\\s*(suggestion|diff)"; "i"))
+	')
+	# The body must NOT be actionable — confirming it would be filtered by
+	# the summary-only rule (0 inline comments + COMMENTED state for bots)
+	if [[ "$actionable" == "false" ]]; then
+		print_result "Gemini positive confirmation body has no actionable language" 0
+	else
+		print_result "Gemini positive confirmation body has no actionable language" 1 "expected false, got ${actionable}"
+	fi
+	return 0
+}
+
 main() {
 	source "$HELPER"
 
@@ -626,6 +771,16 @@ main() {
 	test_keeps_changes_requested_review
 	test_keeps_review_with_bug_report
 	test_keeps_review_with_suggestion_fence
+
+	echo ""
+	echo "Running --include-positive flag tests (GH#4733)"
+	test_skips_gemini_summary_only_bot_review
+	test_keeps_gemini_review_with_inline_comments
+	test_keeps_human_summary_only_review
+	test_include_positive_bypasses_lgtm_filter
+	test_include_positive_bypasses_no_further_comments_filter
+	test_include_positive_bypasses_summary_only_filter
+	test_skips_positive_confirmation_body
 
 	echo "Results: ${TESTS_PASSED}/${TESTS_RUN} passed, ${TESTS_FAILED} failed"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then
