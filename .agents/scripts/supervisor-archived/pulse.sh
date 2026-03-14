@@ -609,13 +609,13 @@ get_task_timeout() {
 	# to determine appropriate timeout. Falls back to default on AI failure.
 	# Timeout tiers: docs (1800s) < bugfix (3600s) < feature/security (5400s) < test/arch/refactor (7200s)
 	local ai_cli
-	ai_cli=$(resolve_ai_cli 2>/dev/null) || {
+	ai_cli=$(resolve_ai_cli 2>>"$SUPERVISOR_LOG") || {
 		echo "${SUPERVISOR_WORKER_TIMEOUT:-3600}"
 		return 0
 	}
 
 	local ai_model
-	ai_model=$(resolve_model "haiku" "$ai_cli" 2>/dev/null) || {
+	ai_model=$(resolve_model "haiku" "$ai_cli" 2>>"$SUPERVISOR_LOG") || {
 		echo "${SUPERVISOR_WORKER_TIMEOUT:-3600}"
 		return 0
 	}
@@ -623,7 +623,7 @@ get_task_timeout() {
 	local prompt
 	prompt="Classify this task into a timeout category. Task: ${task_desc}
 
-Categories (respond with ONLY the category name):
+Categories:
 - docs: documentation updates (30 min)
 - bugfix: bug fixes (60 min)
 - feature: new features, enhancements (90 min)
@@ -632,7 +632,8 @@ Categories (respond with ONLY the category name):
 - architecture: system design, large refactors (120 min)
 - default: anything else (60 min)
 
-Respond with ONLY a JSON object: {\"category\": \"<name>\"}"
+Respond with ONLY valid JSON in this exact format: {\"category\":\"<name>\"}
+Do not include markdown, explanations, or any extra keys."
 
 	local ai_result=""
 	if [[ "$ai_cli" == "opencode" ]]; then
@@ -640,14 +641,14 @@ Respond with ONLY a JSON object: {\"category\": \"<name>\"}"
 			-m "$ai_model" \
 			--format default \
 			--title "timeout-$$" \
-			"$prompt" 2>/dev/null || echo "")
+			"$prompt" 2>>"$SUPERVISOR_LOG" || echo "")
 		ai_result=$(printf '%s' "$ai_result" | sed 's/\x1b\[[0-9;]*[mGKHF]//g; s/\x1b\[[0-9;]*[A-Za-z]//g; s/\x1b\]//g; s/\x07//g')
 	else
 		local claude_model="${ai_model#*/}"
 		ai_result=$(portable_timeout 10 claude \
 			-p "$prompt" \
 			--model "$claude_model" \
-			--output-format text 2>/dev/null || echo "")
+			--output-format text 2>>"$SUPERVISOR_LOG" || echo "")
 	fi
 
 	if [[ -n "$ai_result" ]]; then
@@ -655,7 +656,7 @@ Respond with ONLY a JSON object: {\"category\": \"<name>\"}"
 		json_block=$(printf '%s' "$ai_result" | grep -oE '\{[^}]+\}' | head -1)
 		if [[ -n "$json_block" ]]; then
 			local category
-			category=$(printf '%s' "$json_block" | jq -r '.category // ""' 2>/dev/null || echo "")
+			category=$(printf '%s' "$json_block" | jq -r '.category // ""' 2>>"$SUPERVISOR_LOG" || echo "")
 			case "$category" in
 			docs)
 				echo "${SUPERVISOR_TIMEOUT_DOCS:-1800}"
