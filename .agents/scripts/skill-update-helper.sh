@@ -57,7 +57,7 @@ _log_to_file() {
 	local timestamp
 	timestamp="$(date '+%Y-%m-%d %H:%M:%S')"
 	mkdir -p "$(dirname "$SKILL_LOG_FILE")" 2>/dev/null || true
-	printf '%s\n' "[$timestamp] [skill-update] [$level] $*" >>"$SKILL_LOG_FILE"
+	printf "[%s] [skill-update] [%s] %s\n" "$timestamp" "$level" "$*" >>"$SKILL_LOG_FILE"
 	return 0
 }
 
