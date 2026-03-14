@@ -294,9 +294,21 @@ Every UI change must be evaluated against these principles. They are not suggest
 | **Clear information hierarchy** | Visual hierarchy must be established through layout position, font size, font weight, and whitespace -- not colour alone. The most important content should be the most visually prominent | Screenshot check; verify primary content/CTA is the first thing the eye is drawn to |
 | **Standard naming conventions** | CSS classes, component names, and design tokens should follow clear, hierarchical naming (e.g., BEM, utility-first, or design-token conventions). Names should be descriptive and consider future extensibility | Code review; verify naming is consistent and self-documenting |
 
+### Checklist Violation Severity
+
+All checklist violations (typography, layout, interaction/accessibility, colour/theming, information architecture, and usability) use this unified severity rubric:
+
+| Level | Label | Definition | Examples | Action |
+|-------|-------|------------|---------|--------|
+| **S1** | Blocker | Prevents use or causes legal/compliance risk | Text invisible (contrast fail), interactive element unreachable by keyboard, missing `alt` on informational image, touch target below 24px | Must fix before task is complete |
+| **S2** | Major | Significantly degrades usability or brand quality | Paragraph text wider than 740px, body text below 16px, missing hover state, broken path reference, logo not linking to home | Must fix before task is complete |
+| **S3** | Minor | Noticeable but does not block use | Single orphaned word in a heading, fourth font family, inconsistent icon sizing, widow in a paragraph | Fix if low effort; otherwise log as follow-up |
+
+Report violations in the verification report (step 6) using the format: `[S1/S2/S3] <principle> — <description>`.
+
 ### Usability (Mom Test)
 
-After all technical checks pass, evaluate the page against the Mom Test heuristic (see `seo/mom-test-ux.md`):
+After all technical checks pass, evaluate the page against the Mom Test heuristic (see `.agents/seo/mom-test-ux.md`):
 
 - **Clarity**: Can a non-technical user understand what the page wants them to do within 10 seconds?
 - **Simplicity**: Is there unnecessary complexity, clutter, or cognitive load?
@@ -305,7 +317,7 @@ After all technical checks pass, evaluate the page against the Mom Test heuristi
 - **Discoverability**: Can users find what they need without instructions?
 - **Forgiveness**: Can users recover from mistakes easily?
 
-If the page fails any Mom Test principle at severity S1 (blocker) or S2 (major), it must be fixed before the task is considered complete.
+If the page fails any Mom Test principle at S1 (blocker) or S2 (major) per the severity rubric above, it must be fixed before the task is considered complete.
 
 ## Quick Verification (Minimal)
 
