@@ -253,7 +253,7 @@ _diagnose_stale_root_cause() {
 		# a retry log that includes WORKER_FAILED from the prior attempt).
 		# Full-log grep caused worker_failed_before_eval false positives on
 		# tasks that were actively evaluating their second or third attempt.
-		if tail -20 "$log_file" 2>/dev/null | grep -q 'WORKER_FAILED\|DISPATCH_ERROR\|command not found'; then
+		if [[ -f "$log_file" ]] && tail -20 "$log_file" | grep -q 'WORKER_FAILED\|DISPATCH_ERROR\|command not found'; then
 			echo "worker_failed_before_eval"
 			return 0
 		fi
@@ -283,7 +283,7 @@ _diagnose_stale_root_cause() {
 		# contains evaluate_with_ai (it's a supervisor function). The previous check
 		# searched the wrong file and never matched, masking ai_eval_timeout cases.
 		if [[ -n "${SUPERVISOR_LOG:-}" && -f "$SUPERVISOR_LOG" ]]; then
-			if tail -100 "$SUPERVISOR_LOG" 2>/dev/null | grep -q "evaluate_with_ai.*${task_id}\|AI eval.*${task_id}"; then
+			if tail -100 "$SUPERVISOR_LOG" | grep -q "evaluate_with_ai.*${task_id}\|AI eval.*${task_id}"; then
 				echo "ai_eval_timeout"
 				return 0
 			fi
