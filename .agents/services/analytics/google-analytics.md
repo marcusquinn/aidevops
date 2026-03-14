@@ -9,7 +9,7 @@ tools:
   glob: true
   grep: true
   webfetch: true
-  google-analytics-mcp_*: true
+  google_analytics_mcp_*: true
 ---
 
 # Google Analytics MCP Integration
@@ -100,7 +100,7 @@ Add to `~/.config/opencode/opencode.json` (disabled globally for token efficienc
 }
 ```
 
-**Per-Agent Enablement**: Google Analytics tools are enabled via `google-analytics-mcp_*: true` in this subagent's `tools:` section. Main agents (`seo.md`, `marketing.md`, `sales.md`) reference this subagent for analytics operations, ensuring the MCP is only loaded when needed.
+**Per-Agent Enablement**: Google Analytics tools are enabled via `google_analytics_mcp_*: true` in this subagent's `tools:` section. Main agents (`seo.md`, `marketing.md`, `sales.md`) reference this subagent for analytics operations, ensuring the MCP is only loaded when needed.
 
 ### Gemini CLI Configuration
 
