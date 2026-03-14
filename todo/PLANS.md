@@ -22,6 +22,37 @@ Each plan includes:
 
 ## Active Plans
 
+### [2026-03-14] Restore OpenAI Codex and Enforce Model ID Conventions
+
+**Status:** Planning
+**Estimate:** ~2h
+**TODO:** t1483
+**Logged:** 2026-03-14
+**Trigger:** User review of PR#4641 and PR#4647 — both made incorrect model ID changes based on false assumptions.
+
+#### Purpose
+
+Fix two classes of model ID mismanagement by pulse workers:
+
+1. **Codex removal (PR#4641):** A worker observed `ProviderModelNotFoundError` for `openai/gpt-5.3-codex` and assumed the model doesn't exist. It does — it's available via OpenAI OAuth subscription. The real issue is likely auth/provider config (the helper only checks `OPENAI_API_KEY`, not OAuth tokens). The fix replaced Codex with `gpt-4o`, losing coding specialisation and provider diversity.
+
+2. **Haiku snapshot pinning (PR#4647/GH#3337):** A worker tried to pin `claude-haiku-4-5` to `claude-haiku-4-5-20251001` (a dated snapshot from Oct 2025). The codebase convention is to use unversioned latest aliases. PR closed.
+
+#### Phases
+
+- [ ] **Phase 1 — Revert and restore** (~30m): Revert PR#4641's model change in `headless-runtime-helper.sh` (lines 18, 817). Restore `openai/gpt-5.3-codex` in `DEFAULT_HEADLESS_MODELS`. Update tests.
+
+- [ ] **Phase 2 — Fix OpenAI auth path** (~45m): Investigate `compute_auth_signature()` (line 161) — currently only checks `OPENAI_API_KEY`. Add support for OAuth-based auth. Add OpenAI provider entry to `model-routing-table.json`.
+
+- [ ] **Phase 3 — Audit and enforce conventions** (~45m): Scan all model ID references across scripts and configs for dated snapshots. Ensure all active routing uses unversioned latest aliases. Add a note to model-routing.md documenting the convention: latest aliases for routing, dated snapshots only in normalization/parsing paths.
+
+#### Related
+
+- PR#4641 (merged, needs revert): replaced Codex with gpt-4o
+- GH#4628 (closed, needs reopen or supersede): original issue
+- PR#4647 (closed): tried to pin haiku to dated snapshot
+- GH#3337 (closed): quality-debt issue that prompted PR#4647
+
 ### [2026-03-12] Agent Runtime Sync After Merge/Release
 
 **Status:** Planning
