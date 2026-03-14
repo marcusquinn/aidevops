@@ -318,7 +318,6 @@ check_dedup() {
 			echo "IDLE:$(date -u +%Y-%m-%dT%H:%M:%SZ)" >"$PIDFILE"
 			return 0
 		fi
-
 		if [[ "$setup_pid" == "$$" ]]; then
 			# We wrote this ourselves — proceed
 			return 0
@@ -342,7 +341,6 @@ check_dedup() {
 			echo "IDLE:$(date -u +%Y-%m-%dT%H:%M:%SZ)" >"$PIDFILE"
 			return 0
 		fi
-
 		# SETUP wrapper is alive but we hold the instance lock — it's a zombie
 		# from a previous cycle. Kill it and proceed.
 		echo "[pulse-wrapper] check_dedup: killing zombie SETUP wrapper $setup_pid" >>"$LOGFILE"
