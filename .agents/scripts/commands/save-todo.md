@@ -47,31 +47,9 @@ Every task MUST be evaluated for these pipeline tags:
 
 **`#plan`** — Add when the task needs decomposition into subtasks before implementation (multi-phase, >2h, research/design needed).
 
-**Model tier tags** — Evaluate the task's reasoning complexity:
-
-| Tier | Tag | When to Apply |
-|------|-----|---------------|
-| thinking | `tier:thinking` | Architecture, novel design, complex trade-offs, security audits |
-| simple | `tier:simple` | Docs-only, simple renames, formatting, config changes |
-| *(coding)* | *(none)* | Standard implementation, bug fixes, refactors — **default, no tag needed** |
+**Model tier tags** and **agent domain tags** — See `reference/task-taxonomy.md` for the full classification tables and criteria.
 
 Default to no tier tag. Most tasks are coding tasks (sonnet). Only tag exceptions.
-
-**Agent domain tags** — If the task maps to a specialist agent domain, add the corresponding tag. This enables the pulse to route dispatch to the correct agent without guessing from the title:
-
-| Domain | Tag | Agent |
-|--------|-----|-------|
-| SEO, keywords, rankings, GSC | `#seo` | SEO |
-| Blog posts, newsletters, video scripts | `#content` | Content |
-| Email campaigns, landing pages | `#marketing` | Marketing |
-| Invoicing, financial ops | `#accounts` | Accounts |
-| Compliance, legal docs | `#legal` | Legal |
-| Research, analysis, spikes | `#research` | Research |
-| CRM, proposals, outreach | `#sales` | Sales |
-| Social media management | `#social-media` | Social-Media |
-| Video generation/editing | `#video` | Video |
-| Health/wellness content | `#health` | Health |
-
 Omit domain tags for code tasks — Build+ is the default.
 
 **Default to `#auto-dispatch`** — only omit when a specific exclusion applies. This keeps the autonomous pipeline moving. See `workflows/plans.md` "Auto-Dispatch Tagging" for full criteria.
