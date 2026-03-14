@@ -23,17 +23,19 @@ The runners system is intentionally simple:
 
 The supervisor handles dispatch. The worker command depends on the work type.
 
+> **Note:** The previous bash supervisor implementation (`supervisor-helper.sh` and `supervisor/*.sh`) has been archived to `.agents/scripts/supervisor-archived/` for reference. All active orchestration now uses the AI-driven pulse model described here. Any references to the old paths in setup scripts, tests, or docs should be treated as stale — the archived scripts are not sourced or executed by the current system.
+
 ## Automated Mode: `/pulse`
 
-For unattended operation, the `/pulse` command runs every 2 minutes via launchd. It:
+For unattended operation, the `/pulse` command runs every 2 minutes via launchd. Its prime directive is **fill all available worker slots with the highest-value work**. Each pulse cycle:
 
-1. Counts running workers (max 6 concurrent)
-2. Fetches open issues and PRs from managed repos via `gh`
-3. Observes outcomes — files improvement issues for stuck/failed work
-4. Uses AI (sonnet) to pick the highest-value items to fill available slots
-5. Dispatches workers via `opencode run`, routing to the right agent and execution mode
+1. Checks capacity: counts running workers against the configured max (default 6 concurrent)
+2. Reads pre-fetched state: open PRs and issues across all managed repos via `gh`
+3. Merges ready PRs (green CI + review gate passed) — free, no worker slot needed
+4. Dispatches workers to fill all `AVAILABLE` slots (not just one): assigns issues, routes to the right agent, and backgrounds each `opencode run` with `&`
+5. Enters a monitoring loop: sleeps 60s, re-checks capacity, backfills any freed slots immediately
 
-See `scripts/commands/pulse.md` for the full spec.
+The pulse never dispatches just one worker and stops — it fills every available slot and keeps them filled for the duration of the session (up to 60 minutes). See `scripts/commands/pulse.md` for the full spec.
 
 ### Pulse Scheduler Setup
 
@@ -247,11 +249,13 @@ not the supervisor role. Each fixed failure improves the next run.
 
 ## Examples
 
+All items in a single `/runners` invocation are dispatched concurrently — each becomes a separate `opencode run ... &` background process. They do not block each other.
+
 ```bash
-# Dispatch specific tasks
+# Dispatch specific tasks (all three launch concurrently)
 /runners t083 t084 t085
 
-# Fix specific PRs
+# Fix specific PRs (both launch concurrently)
 /runners #382 #383
 
 # Work on a GitHub issue
@@ -260,6 +264,6 @@ not the supervisor role. Each fixed failure improves the next run.
 # Free-form task
 /runners "Add rate limiting to the API endpoints"
 
-# Multiple mixed items
+# Multiple mixed items (all three launch concurrently)
 /runners t083 #382 "Fix the login bug"
 ```
