@@ -14,7 +14,7 @@
 ### Timeline
 
 1. Issue #14691 created (2026-02-22) with full research, benchmark data, code sketch
-2. PR #14727 submitted with initial implementation
+2. PR #14727 submitted (2026-02-22) with initial implementation
 3. Issue #14740 created (2026-02-23) as cleaner re-submission
 4. PR #14741 submitted (2026-02-23) with unit tests, superseding #14727
 5. Issue #14691 closed to consolidate discussion at #14740
@@ -171,6 +171,27 @@ case "text-delta":
   }
   break
 
+case "reasoning-delta":
+  if (currentText) {
+    // NEW: trigger stream.delta hook for reasoning tokens
+    const reasoningOutput = await Plugin.trigger(
+      "stream.delta",
+      {
+        sessionID: input.sessionID,
+        messageID: input.assistantMessage.id,
+        partID: currentText.id,
+        type: "reasoning",
+      },
+      { delta: value.text },
+    )
+    if (reasoningOutput.abort) {
+      abortReason = "plugin"
+      break
+    }
+    // ... existing reasoning accumulation logic
+  }
+  break
+
 case "tool-input-delta":
   // NEW: instead of `break`, accumulate and trigger hook
   const toolMatch = toolcalls[value.id]
@@ -241,9 +262,9 @@ Re-checked per task note about v1.2.7 Bun->Filesystem migration:
 
 - **`processor.ts` location**: Confirmed still in `packages/opencode/src/session/` (TypeScript codebase)
 - **Plugin system**: `packages/plugin/src/index.ts` -- `Plugin.trigger()` pattern unchanged
-- **Streaming loop**: `for await (const value of stream.fullStream)` switch statement in processor.ts
+- **Streaming loop**: `for await (const value of stream.fullStream)` switch statement in `processor.ts`
 - **v1.2.1 PartDelta SDK events**: `text-delta`, `reasoning-delta`, `tool-input-delta` events from AI SDK
-- **v1.2.7 migration**: Bun.file() -> Filesystem module (file I/O layer), does NOT affect streaming/plugin architecture
+- **v1.2.7 migration**: `Bun.file()` -> `Filesystem` module (file I/O layer), does NOT affect streaming/plugin architecture
 - **Current version**: v1.2.10 (released 2026-02-20)
 
-**Note:** There is a separate Go project `opencode-ai/opencode` (11k stars) which is a different product entirely. The target for this task is `anomalyco/opencode` (109k stars, TypeScript).
+**Note:** There is a separate Go project `opencode-ai/opencode` (11k stars) which is a different product entirely. The target for this task is `anomalyco/opencode` (109k+ stars, TypeScript).
