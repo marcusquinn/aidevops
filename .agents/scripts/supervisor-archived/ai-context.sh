@@ -180,8 +180,8 @@ build_exclusion_context() {
 	local log_dir="${AI_REASON_LOG_DIR:-$HOME/.aidevops/logs/ai-supervisor}"
 	if [[ -d "$log_dir" ]]; then
 		local action_logs
-		action_logs=$(find "$log_dir" -maxdepth 1 -name 'actions-*.md' -print0 2>/dev/null |
-			xargs -0 ls -t 2>/dev/null | head -5)
+		action_logs=$(find "$log_dir" -maxdepth 1 -name 'actions-*.md' -print0 |
+			xargs -0 ls -t | head -5)
 
 		if [[ -n "$action_logs" ]]; then
 			while IFS= read -r log_file; do
@@ -189,8 +189,7 @@ build_exclusion_context() {
 
 				# Extract issue numbers from action logs
 				local issue_nums
-				issue_nums=$(grep -oE '"issue_number":[0-9]+' "$log_file" 2>/dev/null |
-					grep -oE '[0-9]+' || true)
+				issue_nums=$(sed -n 's/.*"issue_number":\([0-9]\+\).*/\1/p' "$log_file" || true)
 				if [[ -n "$issue_nums" ]]; then
 					while IFS= read -r inum; do
 						[[ -n "$inum" ]] && excluded_issues+="$inum\n"
@@ -199,8 +198,7 @@ build_exclusion_context() {
 
 				# Extract task IDs from action logs
 				local task_ids
-				task_ids=$(grep -oE '"task_id":"t[0-9]+"' "$log_file" 2>/dev/null |
-					grep -oE 't[0-9]+' || true)
+				task_ids=$(sed -n 's/.*"task_id":"\(t[0-9]\+\)".*/\1/p' "$log_file" || true)
 				if [[ -n "$task_ids" ]]; then
 					while IFS= read -r tid; do
 						[[ -n "$tid" ]] && excluded_tasks+="$tid\n"
