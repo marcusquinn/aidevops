@@ -639,19 +639,14 @@ process_verify_queue() {
 	local verified_count=0
 	local failed_count=0
 	local auto_verified_count=0
-	local max_auto_verify_per_pulse=50
+	local MAX_AUTO_VERIFY_PER_PULSE=50
 
 	while IFS='|' read -r tid trepo; do
 		[[ -z "$tid" ]] && continue
 
 		local verify_file="$trepo/todo/VERIFY.md"
-		local has_entry=false
 
 		if [[ -f "$verify_file" ]] && grep -q -- "^- \[ \] v[0-9]* $tid " "$verify_file" 2>/dev/null; then
-			has_entry=true
-		fi
-
-		if [[ "$has_entry" == "true" ]]; then
 			# Has VERIFY.md entry — run the defined checks
 			log_info "  $tid: running verification checks"
 			cmd_transition "$tid" "verifying" 2>>"$SUPERVISOR_LOG" || {
@@ -672,7 +667,7 @@ process_verify_queue() {
 		else
 			# No VERIFY.md entry — auto-verify (PR merged + CI passed is sufficient)
 			# Rate-limit to avoid overwhelming the state machine in one pulse
-			if [[ "$auto_verified_count" -ge "$max_auto_verify_per_pulse" ]]; then
+			if [[ "$auto_verified_count" -ge "$MAX_AUTO_VERIFY_PER_PULSE" ]]; then
 				continue
 			fi
 			cmd_transition "$tid" "verified" 2>>"$SUPERVISOR_LOG" || {
@@ -680,6 +675,7 @@ process_verify_queue() {
 				continue
 			}
 			auto_verified_count=$((auto_verified_count + 1))
+			log_info "  $tid: auto-verified (no VERIFY.md entry)"
 		fi
 	done <<<"$deployed_tasks"
 
