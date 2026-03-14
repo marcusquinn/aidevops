@@ -912,7 +912,12 @@ verify_remote_sync() {
 			print_info "  Remote: $remote_sha"
 			echo ""
 			print_info "This commonly happens after a squash merge on GitHub."
-			print_info "Fix with: git fetch origin && git reset --hard origin/$branch"
+			print_info "Inspect the divergence before deciding how to proceed:"
+			print_info "  git log --oneline origin/$branch...$branch"
+			print_info "If local commits are already merged upstream (squash merge), reset is safe:"
+			print_info "  git fetch origin && git reset --hard origin/$branch"
+			print_info "If local commits are NOT yet merged, rebase instead:"
+			print_info "  git fetch origin && git rebase origin/$branch"
 			return 1
 		fi
 	fi

@@ -872,15 +872,7 @@ COMMENT
 
 **Worktree cleanup after merge:**
 
-```bash
-# When in a worktree, merge without --delete-branch
-gh pr merge --squash
-
-# Then clean up from main repo
-cd ~/Git/$(basename "$PWD" | cut -d. -f1)  # Return to main repo
-git pull origin main                        # Get merged changes
-wt prune                                    # Clean merged worktrees
-```
+See [`worktree-cleanup.md`](worktree-cleanup.md) for the full cleanup sequence (merge without `--delete-branch`, pull main, prune worktrees). Key constraint: never pass `--delete-branch` to `gh pr merge` when running from inside a worktree.
 
 ### Step 5: Human Decision Points
 
