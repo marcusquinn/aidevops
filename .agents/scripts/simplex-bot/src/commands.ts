@@ -376,14 +376,14 @@ const inviteCommand: CommandDefinition = {
 /** Set a member's role in a group (group only) */
 const roleCommand: CommandDefinition = {
   name: "role",
-  description: "Set member role (observer/member/admin)",
+  description: "Set member role (observer/author/member/moderator/admin)",
   groupEnabled: true,
   dmEnabled: false,
   handler: async (ctx: CommandContext): Promise<string> => {
     const user = ctx.args[0];
     const role = ctx.args[1];
     if (!user || !role) {
-      return "Usage: /role @username [observer|member|admin]";
+      return "Usage: /role @username [observer|author|member|moderator|admin]";
     }
     const validRoles = ["observer", "author", "member", "moderator", "admin"];
     if (!validRoles.includes(role.toLowerCase())) {
