@@ -644,6 +644,208 @@ return nil, fmt.Errorf("invalid input: %w", err)
 	return 0
 }
 
+# Helper: run the approval-detection jq filter with include_positive=true.
+# Returns "keep" for all reviews when include_positive bypasses filters.
+_test_approval_filter_include_positive() {
+	local body="$1"
+
+	# With include_positive=true the filter always returns "keep"
+	local result
+	result=$(jq -rn \
+		--arg body "$body" \
+		--argjson include_positive 'true' '
+		if $include_positive then "keep"
+		else
+			($body | test("\\bshould\\b|\\bconsider\\b"; "i")) as $actionable |
+			if $actionable then "keep" else "skip" end
+		end
+	')
+	echo "$result"
+	return 0
+}
+
+test_include_positive_keeps_lgtm_review() {
+	# With --include-positive, a pure LGTM review must be kept (not filtered)
+	local result
+	result=$(_test_approval_filter_include_positive "LGTM")
+	if [[ "$result" == "keep" ]]; then
+		print_result "--include-positive keeps LGTM review" 0
+	else
+		print_result "--include-positive keeps LGTM review" 1 "expected keep, got ${result}"
+	fi
+	return 0
+}
+
+test_include_positive_keeps_gemini_positive_summary() {
+	# With --include-positive, a Gemini-style positive summary must be kept
+	local result
+	result=$(_test_approval_filter_include_positive "This pull request successfully addresses the issue by removing an external dependency and improves robustness.")
+	if [[ "$result" == "keep" ]]; then
+		print_result "--include-positive keeps Gemini positive summary" 0
+	else
+		print_result "--include-positive keeps Gemini positive summary" 1 "expected keep, got ${result}"
+	fi
+	return 0
+}
+
+test_include_positive_keeps_no_suggestions_review() {
+	# With --include-positive, a "no suggestions" review must be kept
+	local result
+	result=$(_test_approval_filter_include_positive "Review completed. No suggestions at this time.")
+	if [[ "$result" == "keep" ]]; then
+		print_result "--include-positive keeps 'no suggestions' review" 0
+	else
+		print_result "--include-positive keeps 'no suggestions' review" 1 "expected keep, got ${result}"
+	fi
+	return 0
+}
+
+# Integration test: _scan_single_pr with include_positive=true returns findings
+# for a purely positive review that would otherwise be filtered.
+test_scan_single_pr_include_positive_returns_positive_review() {
+	reset_mock_state
+
+	# Mock gh to return a purely positive review (no inline comments, COMMENTED state)
+	gh() {
+		local command="$1"
+		shift
+		case "$command" in
+		api)
+			local endpoint=""
+			while [[ $# -gt 0 ]]; do
+				case "$1" in
+				repos/*/pulls/*/comments)
+					echo "[]"
+					return 0
+					;;
+				repos/*/pulls/*/reviews)
+					echo '[{"id":1,"user":{"login":"gemini-code-assist[bot]"},"state":"COMMENTED","body":"This pull request successfully addresses the issue and improves robustness. The changes are well-implemented and consistent with the codebase.","submitted_at":"2024-01-01T00:00:00Z","html_url":"https://github.com/example/repo/pull/1#pullrequestreview-1"}]'
+					return 0
+					;;
+				repos/*/git/trees/*)
+					echo '{"tree":[]}'
+					return 0
+					;;
+				repos/*)
+					echo "main"
+					return 0
+					;;
+				esac
+				shift
+			done
+			echo "[]"
+			return 0
+			;;
+		label | pr) return 0 ;;
+		esac
+		echo "[]"
+		return 0
+	}
+
+	local findings
+	findings=$(_scan_single_pr "owner/repo" "1" "medium" "true" 2>/dev/null)
+	local count
+	count=$(printf '%s' "$findings" | jq 'length' 2>/dev/null || echo "0")
+
+	if [[ "$count" -gt 0 ]]; then
+		print_result "--include-positive: _scan_single_pr returns positive review" 0
+	else
+		print_result "--include-positive: _scan_single_pr returns positive review" 1 "expected >0 findings, got ${count}"
+	fi
+
+	# Restore mock gh
+	gh() {
+		local command="$1"
+		shift
+		case "$command" in
+		api)
+			_mock_gh_api "$@"
+			return $?
+			;;
+		label) return 0 ;;
+		issue)
+			_mock_gh_issue "$@"
+			return $?
+			;;
+		esac
+		echo "unexpected gh call: ${command}" >&2
+		return 1
+	}
+	return 0
+}
+
+# Integration test: _scan_single_pr without include_positive filters the same review
+test_scan_single_pr_default_filters_positive_review() {
+	reset_mock_state
+
+	# Same mock as above but include_positive=false (default)
+	gh() {
+		local command="$1"
+		shift
+		case "$command" in
+		api)
+			while [[ $# -gt 0 ]]; do
+				case "$1" in
+				repos/*/pulls/*/comments)
+					echo "[]"
+					return 0
+					;;
+				repos/*/pulls/*/reviews)
+					echo '[{"id":1,"user":{"login":"gemini-code-assist[bot]"},"state":"COMMENTED","body":"This pull request successfully addresses the issue and improves robustness. The changes are well-implemented and consistent with the codebase.","submitted_at":"2024-01-01T00:00:00Z","html_url":"https://github.com/example/repo/pull/1#pullrequestreview-1"}]'
+					return 0
+					;;
+				repos/*/git/trees/*)
+					echo '{"tree":[]}'
+					return 0
+					;;
+				repos/*)
+					echo "main"
+					return 0
+					;;
+				esac
+				shift
+			done
+			echo "[]"
+			return 0
+			;;
+		label | pr) return 0 ;;
+		esac
+		echo "[]"
+		return 0
+	}
+
+	local findings
+	findings=$(_scan_single_pr "owner/repo" "1" "medium" "false" 2>/dev/null)
+	local count
+	count=$(printf '%s' "$findings" | jq 'length' 2>/dev/null || echo "0")
+
+	if [[ "$count" -eq 0 ]]; then
+		print_result "default (no --include-positive): _scan_single_pr filters positive review" 0
+	else
+		print_result "default (no --include-positive): _scan_single_pr filters positive review" 1 "expected 0 findings, got ${count}"
+	fi
+
+	# Restore mock gh
+	gh() {
+		local command="$1"
+		shift
+		case "$command" in
+		api)
+			_mock_gh_api "$@"
+			return $?
+			;;
+		label) return 0 ;;
+		issue)
+			_mock_gh_issue "$@"
+			return $?
+			;;
+		esac
+		echo "unexpected gh call: ${command}" >&2
+		return 1
+	}
+	return 0
+}
+
 main() {
 	source "$HELPER"
 
@@ -673,6 +875,14 @@ main() {
 	test_keeps_changes_requested_review
 	test_keeps_review_with_bug_report
 	test_keeps_review_with_suggestion_fence
+
+	echo ""
+	echo "Running --include-positive flag tests (GH#4733)"
+	test_include_positive_keeps_lgtm_review
+	test_include_positive_keeps_gemini_positive_summary
+	test_include_positive_keeps_no_suggestions_review
+	test_scan_single_pr_include_positive_returns_positive_review
+	test_scan_single_pr_default_filters_positive_review
 
 	echo "Results: ${TESTS_PASSED}/${TESTS_RUN} passed, ${TESTS_FAILED} failed"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then
