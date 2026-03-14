@@ -22,6 +22,12 @@ source "${SCRIPT_DIR}/shared-constants.sh"
 set -euo pipefail
 
 # Logging: uses shared log_* from shared-constants.sh
+# Override log_error to return non-zero so error chains remain detectable.
+log_error() {
+	local label="${LOG_PREFIX:+${LOG_PREFIX}}"
+	echo -e "${RED}[${label:-ERROR}]${NC} $*" >&2
+	return 1
+}
 
 # Check if cloudron CLI is installed
 check_cloudron_cli() {
