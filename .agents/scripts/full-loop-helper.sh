@@ -57,7 +57,7 @@ load_state() {
 		case "$_key" in
 		PHASE | ACTIVE | ITERATION | MAX_TASK_ITERATIONS | MAX_PREFLIGHT_ITERATIONS | \
 			MAX_PR_ITERATIONS | SKIP_PREFLIGHT | SKIP_POSTFLIGHT | NO_AUTO_PR | \
-			NO_AUTO_DEPLOY | HEADLESS)
+			NO_AUTO_DEPLOY | HEADLESS | PR_NUMBER)
 			printf -v "$_key" '%s' "$_val"
 			;;
 		esac
@@ -68,6 +68,7 @@ load_state() {
 	CURRENT_PHASE="${PHASE:-}"
 	HEADLESS="${HEADLESS:-false}"
 	SAVED_PROMPT=$(sed -n '/^---$/,/^---$/d; p' "$STATE_FILE")
+	return 0
 }
 
 is_loop_active() { [[ -f "$STATE_FILE" ]] && grep -q '^active: true' "$STATE_FILE"; }
@@ -320,12 +321,22 @@ Phases: task -> preflight -> pr-create -> pr-review -> postflight -> deploy
 EOF
 }
 
+_run_foreground() {
+	local prompt="$1"
+	local pid_file="${STATE_DIR}/full-loop.pid"
+	# On exit (normal or error), clear the PID file so status/logs don't report
+	# a background loop that is no longer running.
+	trap 'rm -f "$pid_file"' EXIT
+	emit_task_phase "$prompt"
+	return 0
+}
+
 main() {
 	local command="${1:-help}"
 	shift || true
 	case "$command" in
 	start) cmd_start "$@" ;; resume) cmd_resume ;; status) cmd_status ;;
-	cancel) cmd_cancel ;; logs) cmd_logs "$@" ;; _run_foreground) emit_task_phase "$@" ;;
+	cancel) cmd_cancel ;; logs) cmd_logs "$@" ;; _run_foreground) _run_foreground "$@" ;;
 	help | --help | -h) show_help ;;
 	*)
 		print_error "Unknown command: $command"
