@@ -2398,7 +2398,10 @@ rebase_sibling_pr() {
 	# Prevent git rebase --continue from opening an editor (nano/vim) for
 	# commit messages — in cron/headless environments TERM is unset, causing
 	# "error: there was a problem with the editor 'nano'" and aborting the rebase.
+	# Limit scope to this function to avoid side effects on callers.
 	export GIT_EDITOR=true
+	# shellcheck disable=SC2064
+	trap "unset GIT_EDITOR" RETURN
 
 	# Fetch latest base branch
 	if ! git -C "$trepo" fetch origin "$rebase_target" 2>>"$SUPERVISOR_LOG"; then
