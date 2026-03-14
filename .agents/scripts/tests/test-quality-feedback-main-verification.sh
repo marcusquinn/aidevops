@@ -944,7 +944,7 @@ test_scan_single_pr_filters_issue3363_review_body() {
 	return 0
 }
 
-test_scan_single_pr_filters_issue3326_review_body() {
+test_scan_single_pr_filters_issue3303_review_body() {
 	reset_mock_state
 
 	gh() {
@@ -959,7 +959,9 @@ test_scan_single_pr_filters_issue3326_review_body() {
 					return 0
 					;;
 				repos/*/pulls/*/reviews)
-					printf '%s\n' '[{"id":1,"user":{"login":"gemini-code-assist[bot]"},"state":"COMMENTED","body":"## Code Review\n\nThe pull request effectively addresses the issue of the '\''pulse'\'' agent stopping and asking for action by strengthening the directives for autonomous execution. The changes clarify that the agent must execute every step, dispatch workers to maintain a target concurrency, and report actions in the past tense. The modifications to Step 4 emphasize immediate dispatch, and the updated Step 6 reporting format provides a more comprehensive and action-oriented summary. These changes align well with the goal of ensuring the agent operates fully autonomously without human intervention.","submitted_at":"2024-01-01T00:00:00Z","html_url":"https://github.com/example/repo/pull/1#pullrequestreview-1"}]'
+					cat <<'JSON'
+[{"id":1,"user":{"login":"gemini-code-assist[bot]"},"state":"COMMENTED","body":"## Code Review\n\nThis pull request updates the `TODO.md` file to reflect the completion of the 'Dual-CLI Architecture' parent task (t1160). The changes include marking the task as complete and cleaning up a long, repetitive note for a subtask, improving the file's readability. The changes are accurate and align with the pull request's goal of closing out completed work.","submitted_at":"2024-01-01T00:00:00Z","html_url":"https://github.com/example/repo/pull/1#pullrequestreview-1"}]
+JSON
 					return 0
 					;;
 				repos/*/git/trees/*)
@@ -988,9 +990,9 @@ test_scan_single_pr_filters_issue3326_review_body() {
 	count=$(printf '%s' "$findings" | jq 'length' 2>/dev/null || echo "0")
 
 	if [[ "$count" -eq 0 ]]; then
-		print_result "issue #3326 review body is filtered as non-actionable" 0
+		print_result "issue #3303 review body is filtered as non-actionable" 0
 	else
-		print_result "issue #3326 review body is filtered as non-actionable" 1 "expected 0 findings, got ${count}"
+		print_result "issue #3303 review body is filtered as non-actionable" 1 "expected 0 findings, got ${count}"
 	fi
 
 	gh() {
@@ -1053,7 +1055,7 @@ main() {
 	test_scan_single_pr_include_positive_returns_positive_review
 	test_scan_single_pr_default_filters_positive_review
 	test_scan_single_pr_filters_issue3363_review_body
-	test_scan_single_pr_filters_issue3326_review_body
+	test_scan_single_pr_filters_issue3303_review_body
 
 	echo "Results: ${TESTS_PASSED}/${TESTS_RUN} passed, ${TESTS_FAILED} failed"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then
