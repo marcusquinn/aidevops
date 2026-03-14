@@ -36,7 +36,7 @@ Parse `$ARGUMENTS` to determine what to test:
 **For SMTP testing:**
 
 ```bash
-~/.aidevops/agents/scripts/email-test-suite-helper.sh test-smtp-domain "$ARGUMENTS"
+~/.aidevops/agents/scripts/email-test-suite-helper.sh smtp "$ARGUMENTS"
 ```
 
 ### Step 3: Present Results
