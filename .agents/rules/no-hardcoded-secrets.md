@@ -1,6 +1,6 @@
 ---
 id: no-hardcoded-secrets
-ttsr_trigger: (api[_-]?key|password|secret|token)\s*[:=]\s*['"][A-Za-z0-9+/=_-]{16,}
+ttsr_trigger: (api[_-]?key|password|secret|token)[[:space:]]*[:=][[:space:]]*['"][A-Za-z0-9+/=_-]{16,}
 severity: error
 repeat_policy: always
 tags: [security]
