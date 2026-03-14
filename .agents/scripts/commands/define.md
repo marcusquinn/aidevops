@@ -91,7 +91,7 @@ How will you know this is done? Pick the verification approach:
 **Type-specific questions** — load from `reference/define-probes/{type}.md`:
 
 ```bash
-probe_file="$HOME/.aidevops/agents/reference/define-probes/${task_type}.md"
+probe_file=".agents/reference/define-probes/${task_type}.md"
 ```
 
 Read the probe file for the classified type and ask 1-2 additional questions from it.
@@ -127,7 +127,7 @@ Read `templates/brief-template.md` and populate every section from interview ans
 
 ```bash
 # Read the template
-cat ~/.aidevops/agents/reference/../templates/brief-template.md
+cat templates/brief-template.md
 ```
 
 Map interview answers to brief sections:
