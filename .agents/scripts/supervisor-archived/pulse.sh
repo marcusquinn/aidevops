@@ -3836,7 +3836,7 @@ cmd_triage() {
 
 		# Extract PR number and repo slug from URL
 		local pr_num="" triage_repo_slug=""
-		if [[ "$tpr" =~ github\.com/([^/]+/[^/]+)/pull/([0-9]+)$ ]]; then
+		if [[ "$tpr" =~ github\.com/([^/]+/[^/]+)/pull/([0-9]+)(/)?([?#].*)?$ ]]; then
 			triage_repo_slug="${BASH_REMATCH[1]}"
 			pr_num="${BASH_REMATCH[2]}"
 		fi
