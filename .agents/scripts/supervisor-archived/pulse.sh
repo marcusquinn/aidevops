@@ -2521,8 +2521,17 @@ cmd_pulse() {
 	if [[ -n "$stuck_deploying" ]]; then
 		while IFS='|' read -r stuck_id stuck_updated; do
 			[[ -n "$stuck_id" ]] || continue
-			log_warn "  Stuck deploying: $stuck_id (>${deploying_timeout_seconds}s) — forcing to deployed"
-			cmd_transition "$stuck_id" "deployed" --error "Force-recovered from stuck deploying" 2>>"$SUPERVISOR_LOG" || true
+			log_warn "  Stuck deploying: $stuck_id (>${deploying_timeout_seconds}s) — evaluating fallback"
+			# t3756: Re-check current state before forcing to avoid clobbering a concurrent
+			# transition (e.g., cmd_pr_lifecycle already moved the task to deployed/failed).
+			local current_stuck_state
+			current_stuck_state=$(db "$SUPERVISOR_DB" "SELECT status FROM tasks WHERE id = '$(sql_escape "$stuck_id")';" 2>/dev/null || echo "")
+			if [[ "$current_stuck_state" == "deploying" ]]; then
+				log_warn "  Stuck deploying: $stuck_id still in deploying — forcing to deployed"
+				cmd_transition "$stuck_id" "deployed" --error "Force-recovered from stuck deploying" 2>>"$SUPERVISOR_LOG" || true
+			else
+				log_info "  Stuck deploying: $stuck_id already transitioned to $current_stuck_state — skipping force-recovery"
+			fi
 		done <<<"$stuck_deploying"
 	fi
 

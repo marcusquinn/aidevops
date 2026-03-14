@@ -794,7 +794,7 @@ cmd_pr_lifecycle() {
 		local escaped_id
 		escaped_id=$(printf '%s' "$task_id" | sed "s/'/''/g")
 		local recovery_attempts
-		recovery_attempts=$(db "$SUPERVISOR_DB" "SELECT deploying_recovery_attempts FROM tasks WHERE id = '$escaped_id';" 2>/dev/null || echo "0")
+		recovery_attempts=$(db "$SUPERVISOR_DB" "SELECT deploying_recovery_attempts FROM tasks WHERE id = '$escaped_id';" 2>>"$SUPERVISOR_LOG" || echo "")
 		recovery_attempts=${recovery_attempts:-0}
 
 		local max_global_recovery_attempts=10
@@ -853,22 +853,30 @@ cmd_pr_lifecycle() {
 				store_success_pattern "$task_id" "deployed" "" 2>>"$SUPERVISOR_LOG" || true
 				write_proof_log --task "$task_id" --event "auto_recover" --stage "deploying" \
 					--decision "deploying->deployed" --evidence "stuck_state_recovery,retries:$retry_count" \
-					--maker "pr_lifecycle:t222:t248:t263" || true
+					--maker "pr_lifecycle:t222:t248:t263" 2>>"$SUPERVISOR_LOG" || true
 
 				# t263: Reset recovery counter on success
 				db "$SUPERVISOR_DB" "UPDATE tasks SET deploying_recovery_attempts = 0 WHERE id = '$escaped_id';" 2>>"$SUPERVISOR_LOG" || true
 			else
 				log_error "Auto-recovery failed for $task_id after $max_retries attempts — last error: $transition_error (t263)"
 
-				# t263: Explicit error handling with fallback SQL
-				# If the transition itself is invalid after retries, something is deeply wrong.
-				# Transition to failed so the task doesn't stay stuck forever.
-				if ! cmd_transition "$task_id" "failed" --error "Auto-recovery failed after $max_retries attempts: $transition_error (t222, t248, t263)" 2>>"$SUPERVISOR_LOG"; then
-					log_warn "cmd_transition to failed also failed, using fallback direct SQL (t263)"
-					db "$SUPERVISOR_DB" "UPDATE tasks SET status = 'failed', error = 'Auto-recovery failed after $max_retries attempts: $transition_error — SQL fallback used (t263)', updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id = '$escaped_id';" 2>>"$SUPERVISOR_LOG" || log_error "Fallback SQL update also failed for $task_id (t263)"
+				# t263/t3756: Re-check current state before marking failed to avoid clobbering
+				# a concurrent transition (e.g., another process already moved the task out of
+				# deploying). Only transition to failed if the task is still in deploying.
+				local current_state_after_retry
+				current_state_after_retry=$(db "$SUPERVISOR_DB" "SELECT status FROM tasks WHERE id = '$escaped_id';" 2>/dev/null || echo "")
+				if [[ "$current_state_after_retry" == "deploying" ]]; then
+					# t263: Explicit error handling with fallback SQL
+					# If the transition itself is invalid after retries, something is deeply wrong.
+					# Transition to failed so the task doesn't stay stuck forever.
+					if ! cmd_transition "$task_id" "failed" --error "Auto-recovery failed after $max_retries attempts: $transition_error (t222, t248, t263)" 2>>"$SUPERVISOR_LOG"; then
+						log_warn "cmd_transition to failed also failed, using fallback direct SQL (t263)"
+						db "$SUPERVISOR_DB" "UPDATE tasks SET status = 'failed', error = 'Auto-recovery failed after $max_retries attempts: $transition_error — SQL fallback used (t263)', updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now') WHERE id = '$escaped_id';" 2>>"$SUPERVISOR_LOG" || log_error "Fallback SQL update also failed for $task_id (t263)"
+					fi
+					send_task_notification "$task_id" "failed" "Stuck in deploying, auto-recovery failed after $max_retries attempts" 2>>"$SUPERVISOR_LOG" || true
+				else
+					log_info "Auto-recovery skipped marking failed: $task_id already transitioned to $current_state_after_retry (concurrent transition)"
 				fi
-
-				send_task_notification "$task_id" "failed" "Stuck in deploying, auto-recovery failed after $max_retries attempts" 2>>"$SUPERVISOR_LOG" || true
 			fi
 		else
 			log_info "[dry-run] Would auto-recover $task_id from deploying to deployed"
