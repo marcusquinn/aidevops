@@ -900,14 +900,14 @@ Workers are injected with an efficiency protocol via the supervisor dispatch pro
 
    **When to parallelise** (use Task tool with multiple concurrent calls):
    - Reading/analyzing multiple independent files or directories
-   - Running independent quality checks (lint + typecheck + test)
+   - Running independent read-only quality checks (e.g., lint, typecheck, tests) — note: auto-fixing linters (e.g., `lint --fix`) are write operations and must be sequential if they modify the same files
    - Generating tests for separate modules that don't share state
    - Researching multiple parts of the codebase simultaneously
    - Creating independent documentation sections
    - Any two+ operations where neither depends on the other's output
 
    **When to stay sequential** (do NOT parallelise):
-   - Operations that modify the same files (merge conflicts)
+   - Operations that write to the same files, or where one task reads a file modified by another (avoids write-write, read-write, and write-read race conditions)
    - Steps where output of one feeds input of the next
    - Git operations (add → commit → push must be sequential)
    - Operations that depend on a shared resource (same DB table, same API endpoint)
