@@ -2271,8 +2271,8 @@ cmd_pulse() {
 	# t1196: Per-task-type hang timeout via get_task_timeout() — replaces single global value.
 	# Absolute max runtime: kill workers regardless of log activity.
 	# Prevents runaway workers (e.g., shellcheck on huge files) from accumulating
-	# and exhausting system memory. Default 4 hours.
-	local worker_max_runtime_seconds="${SUPERVISOR_WORKER_MAX_RUNTIME:-14400}" # 4 hour default (t314: restored after merge overwrite)
+	# and exhausting system memory. Default 4 hours (14400s).
+	local worker_max_runtime_seconds="${SUPERVISOR_WORKER_MAX_RUNTIME:-14400}" # Default 4 hours (t314: restored after merge overwrite)
 
 	if [[ -d "$SUPERVISOR_DIR/pids" ]]; then
 		for pid_file in "$SUPERVISOR_DIR/pids"/*.pid; do
