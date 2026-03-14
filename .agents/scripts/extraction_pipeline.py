@@ -533,6 +533,11 @@ def _validate_currency(data: dict, warnings: list[str]) -> str:
     return currency
 
 
+def _has_low_confidence_fields(confidence_scores: list[FieldConfidence]) -> bool:
+    """Check if any field has confidence below threshold."""
+    return any(s.confidence < 0.5 for s in confidence_scores)
+
+
 def _needs_review(
     vat_status: str,
     total_check: str,
@@ -541,13 +546,9 @@ def _needs_review(
     confidence_scores: list[FieldConfidence],
 ) -> bool:
     """Determine if extraction requires manual review."""
-    return (
-        vat_status == "fail"
-        or total_check == "fail"
-        or not date_valid
-        or overall < 0.7
-        or any(s.confidence < 0.5 for s in confidence_scores)
-    )
+    has_check_failure = vat_status == "fail" or total_check == "fail"
+    has_quality_issue = not date_valid or overall < 0.7
+    return has_check_failure or has_quality_issue or _has_low_confidence_fields(confidence_scores)
 
 
 def _auto_categorise_line_items(
@@ -826,17 +827,28 @@ def _auto_classify_file(input_file: str) -> DocumentType:
     return doc_type
 
 
-def cmd_extract(args: list[str]) -> int:
-    """Extract structured data from a file (requires Docling + ExtractThinker)."""
+def _validate_extract_preconditions(args: list[str]) -> Optional[tuple[str, str, str]]:
+    """Validate preconditions for extract command. Returns (input_file, schema, privacy) or None."""
     if not args:
         print("Usage: extraction_pipeline.py extract <file> [--schema auto|purchase-invoice|expense-receipt|credit-note] [--privacy local|cloud]", file=sys.stderr)
-        return 1
+        return None
 
     input_file, schema, privacy = _parse_extract_options(args)
 
     if not Path(input_file).is_file():
         print(f"ERROR: File not found: {input_file}", file=sys.stderr)
+        return None
+
+    return input_file, schema, privacy
+
+
+def cmd_extract(args: list[str]) -> int:
+    """Extract structured data from a file (requires Docling + ExtractThinker)."""
+    preconditions = _validate_extract_preconditions(args)
+    if not preconditions:
         return 1
+
+    input_file, schema, privacy = preconditions
 
     try:
         from extract_thinker import Extractor

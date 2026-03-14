@@ -437,26 +437,8 @@ def _summarise_with_ollama_fallback(body: str, wc: int = 0) -> str:
     return summarise_heuristic(body)
 
 
-def generate_summary(body: str, method: str = "auto") -> str:
-    """Generate a 1-2 sentence summary for an email body.
-
-    Args:
-        body: The email body text (markdown).
-        method: 'auto' (word-count heuristic decides), 'heuristic', or 'ollama'.
-
-    Returns:
-        A 1-2 sentence summary string suitable for frontmatter description.
-    """
-    if not body or not body.strip():
-        return ""
-
-    if method == "heuristic":
-        return summarise_heuristic(body)
-
-    if method == "ollama":
-        return _summarise_with_ollama_fallback(body)
-
-    # Auto mode: use word count to decide
+def _generate_auto_summary(body: str) -> str:
+    """Auto-select summarisation method based on word count."""
     cleaned = _strip_markdown(body)
     wc = _word_count(cleaned)
 
@@ -470,6 +452,30 @@ def generate_summary(body: str, method: str = "auto") -> str:
     print(f"INFO: Using heuristic summary for {wc}-word email "
           f"(Ollama unavailable)", file=sys.stderr)
     return summarise_heuristic(body)
+
+
+_SUMMARY_METHODS = {
+    "heuristic": summarise_heuristic,
+    "ollama": _summarise_with_ollama_fallback,
+    "auto": _generate_auto_summary,
+}
+
+
+def generate_summary(body: str, method: str = "auto") -> str:
+    """Generate a 1-2 sentence summary for an email body.
+
+    Args:
+        body: The email body text (markdown).
+        method: 'auto' (word-count heuristic decides), 'heuristic', or 'ollama'.
+
+    Returns:
+        A 1-2 sentence summary string suitable for frontmatter description.
+    """
+    if not body or not body.strip():
+        return ""
+
+    handler = _SUMMARY_METHODS.get(method, _generate_auto_summary)
+    return handler(body)
 
 
 # ---------------------------------------------------------------------------
