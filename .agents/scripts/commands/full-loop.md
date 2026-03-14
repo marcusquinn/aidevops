@@ -505,6 +505,32 @@ The AI will iterate on the task until outputting:
 5. **README gate passed** — required if task adds/changes user-facing features (see below)
 6. Conventional commits used — required for all commits (enables auto-changelog)
 7. **Headless rules observed** (see below)
+8. **Actionable finding coverage** — if this task produces a multi-finding report (audit/review/scan), every deferred actionable finding has a tracked follow-up (`task_id` + issue ref)
+
+**Actionable finding coverage procedure (mandatory when output includes multiple findings):**
+
+1. Build an actionable list for deferred items (one line per finding) in a temp file using this format:
+
+   ```text
+   severity|title|details
+   ```
+
+2. Convert that list into tracked tasks and issues with:
+
+   ```bash
+   ~/.aidevops/agents/scripts/findings-to-tasks-helper.sh create \
+     --input <path/to/actionable-findings.txt> \
+     --repo-path "$(git rev-parse --show-toplevel)" \
+     --source <audit|review|seo|accessibility|performance>
+   ```
+
+3. Include proof in your PR body or final report:
+   - `actionable_findings_total=<N>`
+   - `fixed_in_pr=<N>`
+   - `deferred_tasks_created=<N>`
+   - `coverage=100%`
+
+If coverage is below 100%, the task is not complete.
 
 **Parallelism rule (t217)**: When your task involves multiple independent operations (reading several files, running lint + typecheck + tests, researching separate modules), use the Task tool to run them concurrently in a single message — not one at a time. Serial execution of independent work wastes wall-clock time proportional to the number of subtasks. See `tools/ai-assistants/headless-dispatch.md` "Worker Efficiency Protocol" point 5 for criteria and examples.
 

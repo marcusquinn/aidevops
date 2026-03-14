@@ -63,6 +63,7 @@ Before executing any non-trivial task, explicitly restate: (1) the actual goal â
 - Build for change. Don't hardcode what should be parameterized. Design for variation.
 - Prefer lightweight approaches. Simpler tools over heavy dependencies.
 - Crash-resilient by default. Any process, session, or machine can die at any moment â€” power loss, OOM, network drop, stuck LLM. Every process must recover from a cold start by reading current state, not by assuming a previous step completed. Never chain processes where B depends on A having succeeded without B independently verifying A's outcome. If a process needs to know "did the last run finish?", it should check the result (does the PR exist? is the issue closed?), not rely on a flag the last run was supposed to set.
+- Finding-to-task completeness: when producing a multi-finding audit/review report (security, code review, SEO, accessibility, performance, etc.), every actionable finding must be converted to a tracked task before declaring completion. Findings fixed in the current PR are tracked by that PR; each deferred actionable finding must get its own task ID and linked issue. A report with untracked actionable findings is incomplete.
 
 # Claim discipline (turn-end gate)
 - Do not present future intent as completed work.
