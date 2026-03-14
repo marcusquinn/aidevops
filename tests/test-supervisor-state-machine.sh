@@ -97,7 +97,7 @@ fi
 
 # Test: tables exist
 tables=$(test_db "SELECT name FROM sqlite_master WHERE type='table' ORDER BY name;" | tr '\n' ',')
-if [[ "$tables" == *"tasks"* && "$tables" == *"batches"* && "$tables" == *"state_log"* ]]; then
+if [[ "$tables" == *"tasks"* && "$tables" == *"batches"* && "$tables" == *"state_log"* && "$tables" == *"batch_tasks"* ]]; then
 	pass "Required tables exist (tasks, batches, state_log, batch_tasks)"
 else
 	fail "Missing required tables" "Found: $tables"
@@ -1128,22 +1128,34 @@ sup add wt-test-001 --repo "$WORKTREE_TEST_REPO" --description "Worktree stdout 
 
 # Call create_task_worktree directly. The script calls main "$@" at the bottom
 # when sourced, so we pass "init" to avoid show_usage. We redirect the source's
-# stdout to /dev/null (suppresses cmd_init output) — function definitions still
-# register in the current shell. Then we call the function we want to test.
+# stdout/stderr to /dev/null (suppresses cmd_init chatter) — function definitions
+# still register in the current shell. Then we assert DB readiness and call the
+# function we want to test.
 worktree_output=$(bash -c "
+    set -euo pipefail
     export AIDEVOPS_SUPERVISOR_DIR='$TEST_DIR'
     set -- init
-    source '$SUPERVISOR_SCRIPT' >/dev/null
+    source '$SUPERVISOR_SCRIPT' >/dev/null 2>/dev/null
+    if [[ ! -f \"\$SUPERVISOR_DB\" ]]; then
+        echo 'DB_INIT_FAILED: supervisor.db missing' >&2
+        exit 1
+    fi
+    sqlite3 -cmd '.timeout 5000' \"\$SUPERVISOR_DB\" 'SELECT 1;' >/dev/null
     create_task_worktree 'wt-test-001' '$WORKTREE_TEST_REPO' true
 " 2>/dev/null)
 
-# Count lines — should be exactly 1 (the path)
-line_count=$(echo "$worktree_output" | wc -l | tr -d ' ')
-if [[ "$line_count" -eq 1 ]]; then
-	pass "create_task_worktree returns exactly 1 line (no stdout pollution)"
+# Guard: empty output is an immediate failure
+if [[ -z "$worktree_output" ]]; then
+	fail "create_task_worktree returned empty output"
 else
-	fail "create_task_worktree returned $line_count lines (stdout pollution detected)" \
-		"Output: $(echo "$worktree_output" | head -3)"
+	# Count lines — should be exactly 1 (the path)
+	line_count=$(echo "$worktree_output" | wc -l | tr -d ' ')
+	if [[ "$line_count" -eq 1 ]]; then
+		pass "create_task_worktree returns exactly 1 line (no stdout pollution)"
+	else
+		fail "create_task_worktree returned $line_count lines (stdout pollution detected)" \
+			"Output: $(echo "$worktree_output" | head -3)"
+	fi
 fi
 
 # Verify the returned path is a real directory
@@ -1805,7 +1817,15 @@ sup add test-t1193c --repo /tmp/test --description "Recent running task" >/dev/n
 sup transition test-t1193c dispatched >/dev/null
 sup transition test-t1193c running >/dev/null
 # started_at is recent (default) — should NOT be touched by Phase 0.8
+# Keep a live PID file so Phase 1/4b also skip this task.
+sleep 300 &
+t1193c_pid=$!
+mkdir -p "$TEST_DIR/pids"
+echo "$t1193c_pid" >"$TEST_DIR/pids/test-t1193c.pid"
 SUPERVISOR_RUNNING_STALE_SECONDS=3600 sup pulse 2>/dev/null || true
+kill "$t1193c_pid" 2>/dev/null || true
+wait "$t1193c_pid" 2>/dev/null || true
+rm -f "$TEST_DIR/pids/test-t1193c.pid"
 t1193c_status=$(get_status test-t1193c)
 if [[ "$t1193c_status" == "running" ]]; then
 	pass "Phase 0.8: recently started running task not falsely recovered (t1193)"
