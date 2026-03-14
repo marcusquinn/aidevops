@@ -1,6 +1,6 @@
 # Homebrew formula for aidevops
-# To install: brew install marcusquinn/tap/aidevops && aidevops update
-# Or: brew tap marcusquinn/tap && brew install aidevops && aidevops update
+# To install: brew install marcusquinn/tap/aidevops
+# Or: brew tap marcusquinn/tap && brew install aidevops
 
 class Aidevops < Formula
   desc "AI DevOps Framework - AI-assisted development workflows and automation"
