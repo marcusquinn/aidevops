@@ -2990,10 +2990,11 @@ cmd_pulse() {
 				# CodeFactor findings into a unified audit_findings table.
 				# Skip if the script is a stub or not yet implemented.
 				if [[ -x "$audit_collect_script" ]]; then
+					local MIN_AUDIT_SCRIPT_SIZE=100
 					local collect_size
-					collect_size=$(wc -c <"$audit_collect_script" 2>/dev/null || echo "0")
-					# Only run if the script has substantive content (>100 bytes, not a stub)
-					if [[ "$collect_size" -gt 100 ]]; then
+					collect_size=$(wc -c <"$audit_collect_script" 2>>"$SUPERVISOR_LOG" || echo "0")
+					# Only run if the script has substantive content (not a stub)
+					if [[ "$collect_size" -gt "$MIN_AUDIT_SCRIPT_SIZE" ]]; then
 						log_info "    Phase 10b: Collecting findings from all audit services"
 						bash "$audit_collect_script" collect --repo "$task_repo" 2>>"$SUPERVISOR_LOG" || {
 							log_warn "    Phase 10b: Audit collection returned non-zero (continuing with task creation)"
