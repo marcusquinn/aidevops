@@ -1107,23 +1107,31 @@ update_queue_health_issue() {
 	# Alert: failed tasks — categorized with descriptions and remediation
 	if [[ "${cnt_failed:-0}" -gt 0 ]]; then
 		local failed_list
-		failed_list=$(db -separator '|' "$SUPERVISOR_DB" "SELECT id, description, error FROM tasks WHERE ${repo_filter} AND status = 'failed' ORDER BY id;" || echo "")
+		failed_list=$(db -separator '|' "$SUPERVISOR_DB" "SELECT id, description, error, repo FROM tasks WHERE ${repo_filter} AND status = 'failed' ORDER BY id;" || echo "")
 
 		# Categorize failures by error pattern
 		local cat_stale="" cat_deploy="" cat_permission="" cat_retries="" cat_verify="" cat_superseded="" cat_other=""
 		local cnt_stale=0 cnt_deploy=0 cnt_permission=0 cnt_retries=0 cnt_verify=0 cnt_superseded=0 cnt_other=0
 
-		while IFS='|' read -r f_id f_desc f_err; do
+		while IFS='|' read -r f_id f_desc f_err f_repo; do
 			[[ -z "$f_id" ]] && continue
 			# Extract short description — strip metadata tags but preserve natural #refs
 			local f_desc_short
-			f_desc_short=$(echo "$f_desc" | sed 's/ #[a-z][a-z_-]*//g; s/ ~[0-9][0-9hm]*//g; s/ ref:[^ ]*//g; s/ model:[^ ]*//g; s/ —.*//' | head -c 80)
+			f_desc_short=$(printf '%s' "$f_desc" | sed 's/ #[a-z][a-z_-]*//g; s/ ~[0-9][0-9hm]*//g; s/ ref:[^ ]*//g; s/ model:[^ ]*//g; s/ —.*//' | head -c 80)
 			# Link task ID to its GitHub issue if ref:GH#NNNN exists in description
 			local f_issue_num
-			f_issue_num=$(echo "$f_desc" | sed -n 's/.*ref:GH#\([0-9]*\).*/\1/p' | head -1)
+			f_issue_num=$(printf '%s' "$f_desc" | grep -oE 'ref:GH#[0-9]+' | head -1 | sed 's/ref:GH#//' || echo "")
+			local f_issue_repo_slug="$repo_slug"
+			if [[ -n "$f_repo" ]]; then
+				local f_detected_repo_slug
+				f_detected_repo_slug=$(detect_repo_slug "$f_repo" 2>/dev/null || echo "")
+				if [[ -n "$f_detected_repo_slug" ]]; then
+					f_issue_repo_slug="$f_detected_repo_slug"
+				fi
+			fi
 			local f_id_display
-			if [[ -n "$f_issue_num" ]]; then
-				f_id_display="[${f_id}](https://github.com/${repo_slug}/issues/${f_issue_num})"
+			if [[ -n "$f_issue_num" && -n "$f_issue_repo_slug" ]]; then
+				f_id_display="[${f_id}](https://github.com/${f_issue_repo_slug}/issues/${f_issue_num})"
 			else
 				f_id_display="\`${f_id}\`"
 			fi
