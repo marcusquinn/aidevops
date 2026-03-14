@@ -108,6 +108,13 @@ gh() {
 			esac
 		done
 
+		# Fail loudly if the function under test omits --repo, --state, or --search
+		if [[ -z "$repo_slug" || -z "$state_filter" || -z "$search_query" ]]; then
+			printf 'unexpected gh pr list args in test stub: repo=%s state=%s search=%s\n' \
+				"$repo_slug" "$state_filter" "$search_query" >&2
+			return 1
+		fi
+
 		local compound_key="${repo_slug}|${state_filter}|${search_query}"
 		local line fixture_key fixture_payload
 		while IFS= read -r line; do
