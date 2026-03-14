@@ -138,7 +138,7 @@ See `tools/mobile/ios-simulator-mcp.md` for detailed documentation.
 ### **Claude Code MCP (Fork)**
 
 ```bash
-# Add forked MCP server via Claude Code CLI
+# Add forked MCP server via Claude Code
 claude mcp add claude-code-mcp "npx -y github:marcusquinn/claude-code-mcp"
 ```
 
