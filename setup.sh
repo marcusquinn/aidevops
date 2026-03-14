@@ -186,6 +186,47 @@ _launchd_has_agent() {
 	return $?
 }
 
+# Detect whether a scheduler is already installed via launchd or cron.
+# Optionally migrates legacy launchd labels / cron entries to launchd on macOS.
+_scheduler_detect_installed() {
+	local scheduler_name="$1"
+	local launchd_label="$2"
+	local legacy_launchd_label="$3"
+	local cron_marker="$4"
+	local migrate_script="$5"
+	local migrate_arg="$6"
+	local migrate_hint="$7"
+	local installed=false
+
+	if _launchd_has_agent "$launchd_label"; then
+		installed=true
+	elif [[ -n "$legacy_launchd_label" ]] && _launchd_has_agent "$legacy_launchd_label"; then
+		if [[ -n "$migrate_script" ]] && [[ -x "$migrate_script" ]]; then
+			if bash "$migrate_script" "$migrate_arg" >/dev/null 2>&1; then
+				print_info "$scheduler_name LaunchAgent migrated to new label"
+			else
+				print_warning "$scheduler_name label migration failed. Run: $migrate_hint"
+			fi
+		fi
+		installed=true
+	elif crontab -l 2>/dev/null | grep -qF "$cron_marker"; then
+		if [[ "$PLATFORM_MACOS" == "true" ]] && [[ -n "$migrate_script" ]] && [[ -x "$migrate_script" ]]; then
+			if bash "$migrate_script" "$migrate_arg" >/dev/null 2>&1; then
+				print_info "$scheduler_name migrated from cron to launchd"
+			else
+				print_warning "$scheduler_name cron->launchd migration failed. Run: $migrate_hint"
+			fi
+		fi
+		installed=true
+	fi
+
+	if [[ "$installed" == "true" ]]; then
+		return 0
+	fi
+
+	return 1
+}
+
 # Spinner for long-running operations
 # Usage: run_with_spinner "Installing package..." command arg1 arg2
 run_with_spinner() {
@@ -798,25 +839,14 @@ main() {
 	local auto_update_script="$HOME/.aidevops/agents/scripts/auto-update-helper.sh"
 	if [[ -x "$auto_update_script" ]] && is_feature_enabled auto_update 2>/dev/null; then
 		local _auto_update_installed=false
-		if _launchd_has_agent "com.aidevops.aidevops-auto-update"; then
-			_auto_update_installed=true
-		elif _launchd_has_agent "com.aidevops.auto-update"; then
-			# Old label — re-running enable will migrate to new label
-			if bash "$auto_update_script" enable >/dev/null 2>&1; then
-				print_info "Auto-update LaunchAgent migrated to new label"
-			else
-				print_warning "Auto-update label migration failed. Run: aidevops auto-update enable"
-			fi
-			_auto_update_installed=true
-		elif crontab -l 2>/dev/null | grep -qF "aidevops-auto-update"; then
-			if [[ "$(uname -s)" == "Darwin" ]]; then
-				# macOS: cron entry exists but no launchd plist — migrate
-				if bash "$auto_update_script" enable >/dev/null 2>&1; then
-					print_info "Auto-update migrated from cron to launchd"
-				else
-					print_warning "Auto-update cron→launchd migration failed. Run: aidevops auto-update enable"
-				fi
-			fi
+		if _scheduler_detect_installed \
+			"Auto-update" \
+			"com.aidevops.aidevops-auto-update" \
+			"com.aidevops.auto-update" \
+			"aidevops-auto-update" \
+			"$auto_update_script" \
+			"enable" \
+			"aidevops auto-update enable"; then
 			_auto_update_installed=true
 		fi
 		if [[ "$_auto_update_installed" == "false" ]]; then
@@ -847,7 +877,7 @@ main() {
 	#
 	# Ensure crontab has a global PATH= line (Linux only; macOS uses launchd env).
 	# Must run before any cron entries are installed so they inherit the PATH.
-	if [[ "$(uname -s)" != "Darwin" ]]; then
+	if [[ "$PLATFORM_MACOS" != "true" ]]; then
 		_ensure_cron_path
 	fi
 
@@ -938,13 +968,14 @@ main() {
 
 	# Detect if pulse is already installed (for upgrade messaging)
 	local _pulse_installed=false
-	if [[ "$(uname -s)" == "Darwin" ]]; then
-		local pulse_plist="$HOME/Library/LaunchAgents/${pulse_label}.plist"
-		if _launchd_has_agent "$pulse_label"; then
-			_pulse_installed=true
-		fi
-	fi
-	if [[ "$_pulse_installed" == "false" ]] && crontab -l 2>/dev/null | grep -qF "pulse-wrapper"; then
+	if _scheduler_detect_installed \
+		"Supervisor pulse" \
+		"$pulse_label" \
+		"" \
+		"pulse-wrapper" \
+		"" \
+		"" \
+		""; then
 		_pulse_installed=true
 	fi
 
