@@ -64,6 +64,20 @@ chmod 600 ~/.config/aidevops/credentials.sh
 
 ### 3. Configure OpenCode MCP
 
+`~/.config/opencode/opencode.json` should contain an `mcpServers` object similar to:
+
+```json
+{
+  "mcpServers": {
+    "sentry": {
+      "command": "npx",
+      "args": ["@sentry/mcp-server@latest", "--access-token", "${SENTRY_YOURNAME}"],
+      "enabled": true
+    }
+  }
+}
+```
+
 ```bash
 source ~/.config/aidevops/credentials.sh
 tmp_json="$(mktemp)"
@@ -119,7 +133,7 @@ If you manually configure SDK options, keep `sendDefaultPii` disabled unless you
 
 ### Token returns empty organizations
 
-Create a new Personal Auth Token **after** the organization exists.
+Create a new Personal Auth Token **after** the organization exists. Tokens created before the org don't inherit access.
 
 ### "Not authenticated"
 
