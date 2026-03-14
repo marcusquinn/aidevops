@@ -68,12 +68,12 @@ done
 # Format: category|display_name|cli_command|version_flag|package_name|update_command
 
 NPM_TOOLS=(
-	"npm|Augment CLI|auggie|--version|@augmentcode/auggie@prerelease|npm update -g @augmentcode/auggie@prerelease"
+	"npm|Augment CLI|auggie|--version|@augmentcode/auggie@prerelease|npm install -g @augmentcode/auggie@prerelease"
 	"npm|Repomix|repomix|--version|repomix|npm install -g repomix@latest"
-	"npm|DSPyGround|dspyground|--version|dspyground|npm update -g dspyground"
-	"npm|LocalWP MCP|mcp-local-wp|--version|@verygoodplugins/mcp-local-wp|npm update -g @verygoodplugins/mcp-local-wp"
-	"npm|Beads UI|beads-ui|--version|beads-ui|npm update -g beads-ui"
-	"npm|BDUI|bdui|--version|bdui|npm update -g bdui"
+	"npm|DSPyGround|dspyground|--version|dspyground|npm install -g dspyground@latest"
+	"npm|LocalWP MCP|mcp-local-wp|--version|@verygoodplugins/mcp-local-wp|npm install -g @verygoodplugins/mcp-local-wp@latest"
+	"npm|Beads UI|beads-ui|--version|beads-ui|npm install -g beads-ui@latest"
+	"npm|BDUI|bdui|--version|bdui|npm install -g bdui@latest"
 	"npm|Chrome DevTools MCP|chrome-devtools-mcp|--version|chrome-devtools-mcp|npm install -g chrome-devtools-mcp@latest"
 	"npm|GSC MCP|mcp-server-gsc|--version|mcp-server-gsc|npm install -g mcp-server-gsc@latest"
 	"npm|Playwriter MCP|playwriter|--version|playwriter|npm install -g playwriter@latest"
