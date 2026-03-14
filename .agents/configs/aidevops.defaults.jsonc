@@ -64,7 +64,15 @@
 
     // Hours between OpenClaw update checks.
     // Env override: AIDEVOPS_OPENCLAW_FRESHNESS_HOURS
-    "openclaw_freshness_hours": 24
+    "openclaw_freshness_hours": 24,
+
+    // Automatically check upstream repos (inspiration/borrowed-from) for new releases.
+    // Env override: AIDEVOPS_UPSTREAM_WATCH
+    "upstream_watch": true,
+
+    // Hours between upstream repo watch checks.
+    // Env override: AIDEVOPS_UPSTREAM_WATCH_HOURS
+    "upstream_watch_hours": 24
   },
 
   // ---------------------------------------------------------------------------

@@ -26,17 +26,21 @@
 #   auto-update-helper.sh help             Show this help
 #
 # Configuration:
-#   AIDEVOPS_AUTO_UPDATE=true|false        Override enable/disable (env var)
-#   AIDEVOPS_UPDATE_INTERVAL=10           Minutes between checks (default: 10)
-#   AIDEVOPS_SKILL_AUTO_UPDATE=false      Disable daily skill freshness check
-#   AIDEVOPS_SKILL_FRESHNESS_HOURS=24     Hours between skill checks (default: 24)
-#   AIDEVOPS_OPENCLAW_AUTO_UPDATE=false   Disable daily OpenClaw update check
-#   AIDEVOPS_OPENCLAW_FRESHNESS_HOURS=24  Hours between OpenClaw checks (default: 24)
-#   AIDEVOPS_TOOL_AUTO_UPDATE=false       Disable 6-hourly tool freshness check
-#   AIDEVOPS_TOOL_FRESHNESS_HOURS=6       Hours between tool checks (default: 6)
-#   AIDEVOPS_TOOL_IDLE_HOURS=6            Required user idle hours before tool updates (default: 6)
-#   AIDEVOPS_UPSTREAM_WATCH=false         Disable daily upstream repo watch check
-#   AIDEVOPS_UPSTREAM_WATCH_HOURS=24      Hours between upstream watch checks (default: 24)
+#   All values can be set via JSONC config (aidevops config set <key> <value>)
+#   or overridden per-session via environment variables (higher priority).
+#
+#   JSONC key                          Env override                    Default
+#   updates.auto_update                AIDEVOPS_AUTO_UPDATE            true
+#   updates.update_interval_minutes    AIDEVOPS_UPDATE_INTERVAL        10
+#   updates.skill_auto_update          AIDEVOPS_SKILL_AUTO_UPDATE      true
+#   updates.skill_freshness_hours      AIDEVOPS_SKILL_FRESHNESS_HOURS  24
+#   updates.openclaw_auto_update       AIDEVOPS_OPENCLAW_AUTO_UPDATE   true
+#   updates.openclaw_freshness_hours   AIDEVOPS_OPENCLAW_FRESHNESS_HOURS 24
+#   updates.tool_auto_update           AIDEVOPS_TOOL_AUTO_UPDATE       true
+#   updates.tool_freshness_hours       AIDEVOPS_TOOL_FRESHNESS_HOURS   6
+#   updates.tool_idle_hours            AIDEVOPS_TOOL_IDLE_HOURS        6
+#   updates.upstream_watch             AIDEVOPS_UPSTREAM_WATCH         true
+#   updates.upstream_watch_hours       AIDEVOPS_UPSTREAM_WATCH_HOURS   24
 #
 # Logs: ~/.aidevops/logs/auto-update.log
 
@@ -1564,16 +1568,22 @@ COMMANDS:
     logs --follow       Follow log output in real-time
     help                Show this help
 
-ENVIRONMENT:
-    AIDEVOPS_AUTO_UPDATE=false           Disable auto-update (overrides scheduler)
-    AIDEVOPS_UPDATE_INTERVAL=10          Minutes between checks (default: 10)
-    AIDEVOPS_SKILL_AUTO_UPDATE=false     Disable daily skill freshness check
-    AIDEVOPS_SKILL_FRESHNESS_HOURS=24    Hours between skill checks (default: 24)
-    AIDEVOPS_OPENCLAW_AUTO_UPDATE=false  Disable daily OpenClaw update check
-    AIDEVOPS_OPENCLAW_FRESHNESS_HOURS=24 Hours between OpenClaw checks (default: 24)
-    AIDEVOPS_TOOL_AUTO_UPDATE=false      Disable 6-hourly tool freshness check
-    AIDEVOPS_TOOL_FRESHNESS_HOURS=6      Hours between tool checks (default: 6)
-    AIDEVOPS_TOOL_IDLE_HOURS=6           Required user idle hours before tool updates (default: 6)
+CONFIGURATION:
+    Persistent settings: aidevops config set <key> <value>
+    Per-session overrides: set the corresponding environment variable.
+
+    JSONC key                          Env override                     Default
+    updates.auto_update                AIDEVOPS_AUTO_UPDATE             true
+    updates.update_interval_minutes    AIDEVOPS_UPDATE_INTERVAL         10
+    updates.skill_auto_update          AIDEVOPS_SKILL_AUTO_UPDATE       true
+    updates.skill_freshness_hours      AIDEVOPS_SKILL_FRESHNESS_HOURS   24
+    updates.openclaw_auto_update       AIDEVOPS_OPENCLAW_AUTO_UPDATE    true
+    updates.openclaw_freshness_hours   AIDEVOPS_OPENCLAW_FRESHNESS_HOURS 24
+    updates.tool_auto_update           AIDEVOPS_TOOL_AUTO_UPDATE        true
+    updates.tool_freshness_hours       AIDEVOPS_TOOL_FRESHNESS_HOURS    6
+    updates.tool_idle_hours            AIDEVOPS_TOOL_IDLE_HOURS         6
+    updates.upstream_watch             AIDEVOPS_UPSTREAM_WATCH          true
+    updates.upstream_watch_hours       AIDEVOPS_UPSTREAM_WATCH_HOURS    24
 
 SCHEDULER BACKENDS:
     macOS:  launchd LaunchAgent (~/Library/LaunchAgents/com.aidevops.aidevops-auto-update.plist)
@@ -1612,9 +1622,10 @@ HOW IT WORKS:
 RATE LIMITS:
     GitHub API: 60 requests/hour (unauthenticated)
     10-min interval = 6 requests/hour (well within limits)
-    Skill check: once per 24h per user (configurable via AIDEVOPS_SKILL_FRESHNESS_HOURS)
-    OpenClaw check: once per 24h per user (configurable via AIDEVOPS_OPENCLAW_FRESHNESS_HOURS)
-    Tool check: once per 6h per user, only when idle (configurable via AIDEVOPS_TOOL_FRESHNESS_HOURS)
+    Skill check: once per 24h per user (configurable via updates.skill_freshness_hours)
+    OpenClaw check: once per 24h per user (configurable via updates.openclaw_freshness_hours)
+    Tool check: once per 6h per user, only when idle (configurable via updates.tool_freshness_hours)
+    Upstream watch: once per 24h per user (configurable via updates.upstream_watch_hours)
 
 LOGS:
     ~/.aidevops/logs/auto-update.log

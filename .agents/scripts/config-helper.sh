@@ -292,6 +292,8 @@ _config_env_map() {
 	updates.tool_idle_hours) echo "AIDEVOPS_TOOL_IDLE_HOURS" ;;
 	updates.openclaw_auto_update) echo "AIDEVOPS_OPENCLAW_AUTO_UPDATE" ;;
 	updates.openclaw_freshness_hours) echo "AIDEVOPS_OPENCLAW_FRESHNESS_HOURS" ;;
+	updates.upstream_watch) echo "AIDEVOPS_UPSTREAM_WATCH" ;;
+	updates.upstream_watch_hours) echo "AIDEVOPS_UPSTREAM_WATCH_HOURS" ;;
 	orchestration.supervisor_pulse) echo "AIDEVOPS_SUPERVISOR_PULSE" ;;
 	orchestration.repo_sync) echo "AIDEVOPS_REPO_SYNC" ;;
 	orchestration.max_workers_cap) echo "AIDEVOPS_MAX_WORKERS_CAP" ;;
@@ -357,6 +359,8 @@ _legacy_key_to_dotpath() {
 	tool_idle_hours) echo "updates.tool_idle_hours" ;;
 	openclaw_auto_update) echo "updates.openclaw_auto_update" ;;
 	openclaw_freshness_hours) echo "updates.openclaw_freshness_hours" ;;
+	upstream_watch) echo "updates.upstream_watch" ;;
+	upstream_watch_hours) echo "updates.upstream_watch_hours" ;;
 	manage_opencode_config) echo "integrations.manage_opencode_config" ;;
 	manage_claude_config) echo "integrations.manage_claude_config" ;;
 	supervisor_pulse) echo "orchestration.supervisor_pulse" ;;

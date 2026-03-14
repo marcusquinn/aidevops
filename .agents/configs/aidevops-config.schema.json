@@ -63,6 +63,17 @@
           "default": 24,
           "minimum": 1,
           "description": "Hours between OpenClaw update checks. Env: AIDEVOPS_OPENCLAW_FRESHNESS_HOURS"
+        },
+        "upstream_watch": {
+          "type": "boolean",
+          "default": true,
+          "description": "Automatically check upstream repos for new releases. Env: AIDEVOPS_UPSTREAM_WATCH"
+        },
+        "upstream_watch_hours": {
+          "type": "integer",
+          "default": 24,
+          "minimum": 1,
+          "description": "Hours between upstream repo watch checks. Env: AIDEVOPS_UPSTREAM_WATCH_HOURS"
         }
       },
       "additionalProperties": false
