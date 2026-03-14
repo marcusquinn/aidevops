@@ -183,6 +183,11 @@ export interface CommandContext {
   group?: GroupInfo;
   /** The chat item that triggered this command */
   chatItem: ChatItem;
+  /**
+   * Session ID for this chat context (e.g., "direct:42" or "group:7").
+   * Sourced directly from SessionStore to avoid duplicating the ID format.
+   */
+  sessionId?: string;
   /** Send a reply to the sender */
   reply: (text: string) => Promise<void>;
 }

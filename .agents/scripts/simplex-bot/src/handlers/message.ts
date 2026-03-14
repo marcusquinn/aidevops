@@ -101,6 +101,7 @@ export async function routeCommand(
   text: string,
   chatDir: NonNullable<ChatItem["chatItem"]["chatDir"]>,
   deps: MessageHandlerDeps,
+  sessionId?: string,
 ): Promise<void> {
   const parsed = deps.router.parse(text);
   if (!parsed) {
@@ -124,7 +125,7 @@ export async function routeCommand(
     return;
   }
 
-  const ctx = buildCommandContext(item, parsed, chatDir, deps);
+  const ctx = buildCommandContext(item, parsed, chatDir, deps, sessionId);
   await executeCommand(cmdDef, ctx, deps);
 }
 
@@ -140,15 +141,15 @@ export async function processItem(
   cacheContactDisplayName(chatDir, deps);
   cacheGroupDisplayName(chatDir, deps);
 
-  // Track session activity
-  trackSession(chatDir, deps);
+  // Track session activity; capture the session ID to pass to command context
+  const sessionId = trackSession(chatDir, deps);
 
   // Extract text content (routes non-text messages internally)
   const text = await extractTextContent(item, deps);
   if (!text) return;
 
   deps.logger.debug(`Received message: ${text.substring(0, 100)}`);
-  await routeCommand(item, text, chatDir, deps);
+  await routeCommand(item, text, chatDir, deps, sessionId);
 }
 
 /** Cache a contact display name if present in the chat direction */
@@ -171,22 +172,29 @@ export function cacheGroupDisplayName(
   if (name) deps.cacheGroupName(chatDir.groupId, name);
 }
 
-/** Track session activity for the chat */
+/**
+ * Track session activity for the chat.
+ * Returns the session ID so callers can pass it to command context
+ * without reconstructing the ID format.
+ */
 export function trackSession(
   chatDir: NonNullable<ChatItem["chatItem"]["chatDir"]>,
   deps: MessageHandlerDeps,
-): void {
+): string | undefined {
   if (chatDir.contactId !== undefined) {
     const session = deps.sessions.getContactSession(
       chatDir.contactId,
       chatDir.contact?.localDisplayName,
     );
     deps.sessions.recordMessage(session.id);
+    return session.id;
   } else if (chatDir.groupId !== undefined) {
     const session = deps.sessions.getGroupSession(
       chatDir.groupId,
       chatDir.groupInfo?.localDisplayName,
     );
     deps.sessions.recordMessage(session.id);
+    return session.id;
   }
+  return undefined;
 }

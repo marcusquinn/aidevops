@@ -41,6 +41,7 @@ export function buildCommandContext(
   parsed: { command: string; args: string[] },
   chatDir: NonNullable<ChatItem["chatItem"]["chatDir"]>,
   deps: MessageHandlerDeps,
+  sessionId?: string,
 ): CommandContext {
   return {
     command: parsed.command,
@@ -55,6 +56,7 @@ export function buildCommandContext(
       chatDir.groupId !== undefined
         ? deps.buildGroupInfo(chatDir.groupId)
         : undefined,
+    sessionId,
     reply: async (replyText: string) => {
       await deps.replyToItem(item, replyText);
     },
@@ -70,14 +72,10 @@ export async function executeCommand(
   try {
     deps.logger.info(`Executing command: /${cmdDef.name}`);
 
-    // Track last command in session metadata
-    const sessionId = ctx.contact
-      ? `direct:${ctx.contact.contactId}`
-      : ctx.group
-        ? `group:${ctx.group.groupId}`
-        : null;
-    if (sessionId) {
-      deps.sessions.updateMetadata(sessionId, {
+    // Track last command in session metadata using the session ID sourced from
+    // SessionStore (via ctx.sessionId) — avoids reconstructing the ID format here.
+    if (ctx.sessionId) {
+      deps.sessions.updateMetadata(ctx.sessionId, {
         lastCommand: `/${cmdDef.name}`,
       });
     }
