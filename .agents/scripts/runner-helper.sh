@@ -686,11 +686,8 @@ $full_prompt"
 	local start_time
 	start_time=$(date +%s)
 
-	if timeout_sec "$cmd_timeout" "${cmd_args[@]}" 2>&1 | tee "$log_file"; then
-		exit_code=0
-	else
-		exit_code=$?
-	fi
+	timeout_sec "$cmd_timeout" "${cmd_args[@]}" 2>&1 | tee "$log_file"
+	exit_code=${PIPESTATUS[0]}
 
 	local end_time duration
 	end_time=$(date +%s)
