@@ -2100,19 +2100,43 @@ GUIDELINES:
 Respond with ONLY a JSON object: {\"verdict\": \"stale|uncertain|current\", \"reason\": \"one sentence explanation\"}"
 
 	local ai_result=""
+	local ai_status=0
+	local ai_error=""
+	local ai_stderr_file=""
+	ai_stderr_file=$(mktemp "${TMPDIR:-/tmp}/check-task-staleness.XXXXXX") || {
+		log_verbose "check_task_staleness: failed to allocate stderr capture file, assuming current"
+		return 1
+	}
+
 	if [[ "$ai_cli" == "opencode" ]]; then
 		ai_result=$(portable_timeout 30 opencode run \
 			-m "$ai_model" \
 			--format default \
 			--title "staleness-$$" \
-			"$prompt" 2>/dev/null || echo "")
+			"$prompt" 2>"$ai_stderr_file")
+		ai_status=$?
 		ai_result=$(printf '%s' "$ai_result" | sed 's/\x1b\[[0-9;]*[mGKHF]//g; s/\x1b\[[0-9;]*[A-Za-z]//g; s/\x1b\]//g; s/\x07//g')
 	else
 		local claude_model="${ai_model#*/}"
 		ai_result=$(portable_timeout 30 claude \
 			-p "$prompt" \
 			--model "$claude_model" \
-			--output-format text 2>/dev/null || echo "")
+			--output-format text 2>"$ai_stderr_file")
+		ai_status=$?
+	fi
+
+	if [[ -s "$ai_stderr_file" ]]; then
+		ai_error=$(<"$ai_stderr_file")
+	fi
+	rm -f "$ai_stderr_file"
+
+	if [[ "$ai_status" -ne 0 ]]; then
+		if [[ -n "$ai_error" ]]; then
+			log_verbose "check_task_staleness: AI call failed (exit $ai_status): ${ai_error:0:200}"
+		else
+			log_verbose "check_task_staleness: AI call failed (exit $ai_status), assuming current"
+		fi
+		return 1
 	fi
 
 	if [[ -n "$ai_result" ]]; then
