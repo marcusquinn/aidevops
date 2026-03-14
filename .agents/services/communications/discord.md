@@ -52,7 +52,7 @@ tools:
 │  Browser)        │     │                  │     │                  │
 │                  │────▶│ Events:          │────▶│ 1. Parse event   │
 │ User sends:      │     │ - messageCreate  │     │ 2. Check perms   │
-│ /ask Review auth │     │ - interactionCr. │     │ 3. Route command  │
+│ /ask Review auth │     │ - interactionCreate │  │ 3. Route command  │
 │                  │◀────│ - guildMemberAdd │◀────│ 4. Dispatch       │
 │ Bot response     │     │ - threadCreate   │     │ 5. Respond        │
 └──────────────────┘     └──────────────────┘     └──────────────────┘
@@ -443,6 +443,8 @@ if (channel.isTextBased() && "threads" in channel) {
 ### Forum Channels
 
 ```typescript
+import { ChannelType } from "discord.js";
+
 // Post to a forum channel
 const forum = await client.channels.fetch("FORUM_CHANNEL_ID");
 if (forum?.type === ChannelType.GuildForum) {
@@ -514,6 +516,21 @@ Map Discord roles to aidevops runners. Users with specific roles get routed to t
 ### Routing Logic
 
 ```typescript
+import { ChatInputCommandInteraction, GuildMember, TextChannel } from "discord.js";
+
+interface BotConfig {
+  channelRouting: Record<string, string>;
+  roleRouting: Record<string, string>;
+  defaultRunner: string;
+  allowedGuilds?: string[];
+  allowedChannels?: string[];
+  allowedUsers?: string[];
+  allowedRoles?: string[];
+  adminRoles?: string[];
+  maxPromptLength?: number;
+  responseTimeout?: number;
+}
+
 function resolveRunner(
   interaction: ChatInputCommandInteraction,
   config: BotConfig
@@ -546,6 +563,9 @@ function resolveRunner(
 ### Guild/Channel/User/Role Allowlists
 
 ```typescript
+import { ChatInputCommandInteraction, GuildMember } from "discord.js";
+// BotConfig defined in Role-Based Routing section above
+
 function checkAccess(
   interaction: ChatInputCommandInteraction,
   config: BotConfig
@@ -755,10 +775,14 @@ import {
   createAudioResource,
 } from "@discordjs/voice";
 
+// Obtain the guild from the client cache
+const guild = client.guilds.cache.get("GUILD_ID");
+if (!guild) throw new Error("Guild not found");
+
 // Join voice channel
 const connection = joinVoiceChannel({
   channelId: "VOICE_CHANNEL_ID",
-  guildId: "GUILD_ID",
+  guildId: guild.id,
   adapterCreator: guild.voiceAdapterCreator,
 });
 
@@ -831,7 +855,7 @@ After=network.target
 Type=simple
 User=discord-bot
 WorkingDirectory=/opt/discord-bot
-ExecStart=/usr/bin/node --import tsx src/bot.ts
+ExecStart=/opt/discord-bot/node_modules/.bin/tsx src/bot.ts
 Restart=on-failure
 RestartSec=5
 Environment=NODE_ENV=production
@@ -852,7 +876,7 @@ WORKDIR /app
 COPY package*.json ./
 RUN npm ci --omit=dev
 COPY . .
-CMD ["node", "--import", "tsx", "src/bot.ts"]
+CMD ["./node_modules/.bin/tsx", "src/bot.ts"]
 ```
 
 ### Health Monitoring
