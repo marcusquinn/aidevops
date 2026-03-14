@@ -619,11 +619,14 @@ prefetch_state() {
 
 	# Append repo hygiene data for LLM triage (t1417)
 	# This includes pr-salvage-helper.sh which iterates all repos sequentially
-	# and can hang on gh API calls. Give it 120s since it does 8 repos.
+	# and can hang on gh API calls. 30s timeout — if it can't finish fast,
+	# the pulse proceeds without hygiene data (degraded but functional).
+	# Total prefetch budget: 60s (parallel) + 30s + 30s + 30s = 150s max,
+	# well within the 600s stage timeout.
 	local hygiene_tmp
 	hygiene_tmp=$(mktemp)
-	run_cmd_with_timeout 120 prefetch_hygiene >"$hygiene_tmp" 2>/dev/null || {
-		echo "[pulse-wrapper] prefetch_hygiene timed out after 120s (non-fatal)" >>"$LOGFILE"
+	run_cmd_with_timeout 30 prefetch_hygiene >"$hygiene_tmp" 2>/dev/null || {
+		echo "[pulse-wrapper] prefetch_hygiene timed out after 30s (non-fatal)" >>"$LOGFILE"
 	}
 	cat "$hygiene_tmp" >>"$STATE_FILE"
 	rm -f "$hygiene_tmp"
@@ -631,8 +634,8 @@ prefetch_state() {
 	# Append CI failure patterns from notification mining (GH#4480)
 	local ci_tmp
 	ci_tmp=$(mktemp)
-	run_cmd_with_timeout 90 prefetch_ci_failures >"$ci_tmp" 2>/dev/null || {
-		echo "[pulse-wrapper] prefetch_ci_failures timed out after 90s (non-fatal)" >>"$LOGFILE"
+	run_cmd_with_timeout 30 prefetch_ci_failures >"$ci_tmp" 2>/dev/null || {
+		echo "[pulse-wrapper] prefetch_ci_failures timed out after 30s (non-fatal)" >>"$LOGFILE"
 	}
 	cat "$ci_tmp" >>"$STATE_FILE"
 	rm -f "$ci_tmp"
@@ -649,8 +652,8 @@ prefetch_state() {
 	# Append failed-notification systemic summary (t3960)
 	local ghfail_tmp
 	ghfail_tmp=$(mktemp)
-	run_cmd_with_timeout 90 prefetch_gh_failure_notifications >"$ghfail_tmp" 2>/dev/null || {
-		echo "[pulse-wrapper] prefetch_gh_failure_notifications timed out after 90s (non-fatal)" >>"$LOGFILE"
+	run_cmd_with_timeout 30 prefetch_gh_failure_notifications >"$ghfail_tmp" 2>/dev/null || {
+		echo "[pulse-wrapper] prefetch_gh_failure_notifications timed out after 30s (non-fatal)" >>"$LOGFILE"
 	}
 	cat "$ghfail_tmp" >>"$STATE_FILE"
 	rm -f "$ghfail_tmp"
