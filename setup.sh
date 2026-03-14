@@ -226,7 +226,6 @@ _scheduler_detect_installed() {
 
 	return 1
 }
-
 # Spinner for long-running operations
 # Usage: run_with_spinner "Installing package..." command arg1 arg2
 run_with_spinner() {
@@ -967,6 +966,7 @@ main() {
 	fi
 
 	# Detect if pulse is already installed (for upgrade messaging)
+	# Uses shared helper to check both launchd and cron consistently
 	local _pulse_installed=false
 	if _scheduler_detect_installed \
 		"Supervisor pulse" \
