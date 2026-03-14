@@ -26,6 +26,27 @@ detect_dispatch_mode() {
 }
 
 #######################################
+# Load worker efficiency protocol text from external prompt file
+#######################################
+load_worker_efficiency_protocol_prompt() {
+	local protocol_file="${SCRIPT_DIR}/../prompts/worker-efficiency-protocol.md"
+
+	if [[ -f "$protocol_file" ]]; then
+		cat "$protocol_file"
+		return 0
+	fi
+
+	log_warn "Worker efficiency protocol file missing at $protocol_file"
+	cat <<'EOF'
+Worker efficiency protocol file missing; proceed with standard headless-worker discipline:
+- Decompose work into small tracked subtasks
+- Commit and push incrementally
+- Verify changed code before completion
+EOF
+	return 0
+}
+
+#######################################
 # Detect if claude CLI has OAuth authentication (t1163)
 #
 # Claude Code CLI can authenticate via OAuth (subscription/Max plan) without
@@ -2175,6 +2196,7 @@ build_dispatch_cmd() {
 	local model="${6:-}"
 	local description="${7:-}"
 	local mcp_config="${8:-}"
+	local worker_efficiency_protocol
 
 	# Include task description in the prompt so the worker knows what to do
 	# even if TODO.md doesn't have an entry for this task (t158)
@@ -2184,6 +2206,7 @@ build_dispatch_cmd() {
 	if [[ -n "$description" ]]; then
 		prompt="/full-loop $task_id --headless -- $description"
 	fi
+	worker_efficiency_protocol="$(load_worker_efficiency_protocol_prompt)"
 
 	# t173: Explicit worker restriction — prevents TODO.md race condition
 	# t176: Uncertainty decision framework for headless workers
@@ -2219,186 +2242,7 @@ You are a headless worker with no human at the terminal. Use this framework when
 **When you exit due to uncertainty**, include a clear explanation in your final output:
 \`BLOCKED: Task says 'update the auth endpoint' but there are 3 auth endpoints (JWT, OAuth, API key). Need clarification on which one.\`
 
-## Worker Efficiency Protocol
-
-Maximise your output per token. Follow these practices to avoid wasted work:
-
-**1. Decompose with TodoWrite (MANDATORY)**
-At the START of your session, use the TodoWrite tool to break your task into 3-7 subtasks.
-Your LAST subtask must ALWAYS be: 'Push branch and create PR via gh pr create'.
-Example for 'add retry logic to API client':
-- Research: read existing API client code and error handling patterns
-- Implement: add retry with exponential backoff to the HTTP client
-- Test: write unit tests for retry behaviour (success, max retries, backoff timing)
-- Integrate: update callers if the API surface changed
-- Verify: run linters, shellcheck, and existing tests
-- Deliver: push branch and create PR via gh pr create
-
-Mark each subtask in_progress when you start it and completed when done.
-Only have ONE subtask in_progress at a time.
-
-**2. Commit early, commit often (CRITICAL — prevents lost work)**
-After EACH implementation subtask, immediately:
-\`\`\`bash
-git add -A && git commit -m 'feat: <what you just did> (<task-id>)'
-\`\`\`
-Do NOT wait until all subtasks are done. If your session ends unexpectedly (context
-exhaustion, crash, timeout), uncommitted work is LOST. Committed work survives.
-
-After your FIRST commit, push and create a draft PR immediately:
-\`\`\`bash
-git push -u origin HEAD
-# t288: Include GitHub issue reference in PR body when task has ref:GH# in TODO.md
-# Look up: grep -oE 'ref:GH#[0-9]+' TODO.md for your task ID, extract the number
-# If found, add 'Ref #NNN' to the PR body so GitHub cross-links the issue
-gh_issue=\$(grep -E '^\s*- \[.\] <task-id> ' TODO.md 2>/dev/null | grep -oE 'ref:GH#[0-9]+' | head -1 | sed 's/ref:GH#//' || true)
-pr_body='WIP - incremental commits'
-[[ -n \"\$gh_issue\" ]] && pr_body=\"\${pr_body}
-
-Ref #\${gh_issue}\"
-gh pr create --draft --title '<task-id>: <description>' --body \"\$pr_body\"
-\`\`\`
-Subsequent commits just need \`git push\`. The PR already exists.
-This ensures the supervisor can detect your PR even if you run out of context.
-The \`Ref #NNN\` line cross-links the PR to its GitHub issue for auditability.
-
-When ALL implementation is done, mark the PR as ready for review:
-\`\`\`bash
-gh pr ready
-\`\`\`
-If you run out of context before this step, the supervisor will auto-promote
-your draft PR after detecting your session has ended.
-
-**3. ShellCheck gate before push (MANDATORY for .sh files — t234)**
-Before EVERY \`git push\`, check if your commits include \`.sh\` files:
-\`\`\`bash
-sh_files=\$(git diff --name-only origin/HEAD..HEAD 2>/dev/null | grep '\\.sh\$' || true)
-if [[ -n \"\$sh_files\" ]]; then
-  echo \"Running ShellCheck on modified .sh files...\"
-  sc_failed=0
-  while IFS= read -r f; do
-    [[ -f \"\$f\" ]] || continue
-    if ! shellcheck -x -S warning \"\$f\"; then
-      sc_failed=1
-    fi
-  done <<< \"\$sh_files\"
-  if [[ \"\$sc_failed\" -eq 1 ]]; then
-    echo \"ShellCheck violations found — fix before pushing.\"
-    # Fix the violations, then git add -A && git commit --amend --no-edit
-  fi
-fi
-\`\`\`
-This catches CI failures 5-10 min earlier. Do NOT push .sh files with ShellCheck violations.
-If \`shellcheck\` is not installed, skip this gate and note it in the PR body.
-
-**PR title MUST contain task ID (MANDATORY — t318.2)**
-When creating a PR, the title MUST start with the task ID: \`<task-id>: <description>\`.
-Example: \`t318.2: Verify supervisor worker PRs include task ID\`
-The CI pipeline and supervisor both validate this. PRs without task IDs fail the check.
-If you used \`gh pr create --draft --title '<task-id>: <description>'\` as instructed above,
-this is already handled. This note reinforces step 3: NEVER omit the task ID from the PR title.
-
-**4. Offload research to ai_research tool (saves context for implementation)**
-Reading large files (500+ lines) consumes your context budget fast. Instead of reading
-entire files yourself, call the \`ai_research\` MCP tool with a focused question:
-\`\`\`
-ai_research(prompt: \"Find all functions that dispatch workers in supervisor-helper.sh. Return: function name, line number, key variables.\", domain: \"orchestration\")
-\`\`\`
-The tool spawns a sub-worker via the Anthropic API with its own context window.
-You get a concise answer that costs ~100 tokens instead of ~5000 from reading directly.
-Rate limit: 10 calls per session. Default model: haiku (cheapest).
-
-**Domain shorthand** — auto-resolves to relevant agent files:
-| Domain | Agents loaded |
-|--------|--------------|
-| git | git-workflow, github-cli, conflict-resolution |
-| planning | plans, beads |
-| code | code-standards, code-simplifier |
-| seo | seo, dataforseo, google-search-console |
-| content | content, research, writing |
-| wordpress | wp-dev, mainwp |
-| browser | browser-automation, playwright |
-| deploy | coolify, coolify-cli, vercel |
-| security | tirith, encryption-stack |
-| mcp | build-mcp, server-patterns |
-| agent | build-agent, agent-review |
-| framework | architecture, setup |
-| release | release, version-bump |
-| pr | pr, preflight |
-| orchestration | headless-dispatch |
-| context | model-routing, toon, mcp-discovery |
-| video | video-prompt-design, remotion, wavespeed |
-| voice | speech-to-speech, voice-bridge |
-| mobile | agent-device, maestro |
-| hosting | hostinger, cloudflare, hetzner |
-| email | email-testing, email-delivery-test |
-| accessibility | accessibility, accessibility-audit |
-| containers | orbstack |
-| vision | overview, image-generation |
-
-**Parameters**: \`prompt\` (required), \`domain\` (shorthand above), \`agents\` (comma-separated paths relative to ~/.aidevops/agents/), \`files\` (paths with optional line ranges e.g. \"src/foo.ts:10-50\"), \`model\` (haiku|sonnet|opus), \`max_tokens\` (default 500, max 4096).
-
-**When to offload**: Any time you would read >200 lines of a file you don't plan to edit,
-or when you need to understand a codebase pattern across multiple files.
-
-**When NOT to offload**: When you need to edit the file (you must read it yourself for
-the Edit tool to work), or when the answer is a simple grep/rg query.
-
-**5. Parallel sub-work (MANDATORY when applicable)**
-After creating your TodoWrite subtasks, check: do any two subtasks modify DIFFERENT files?
-If yes, you SHOULD parallelise where possible. Use \`ai_research\` for read-only research
-tasks that don't require file edits.
-
-**Decision heuristic**: If your TodoWrite has 3+ subtasks and any two don't modify the same
-files, the independent ones can run in parallel. Common parallelisable patterns:
-- Use \`ai_research\` to understand a codebase pattern while you implement in another file
-- Run \`ai_research(domain: \"code\")\` to check conventions while writing new code
-
-**Do NOT parallelise when**: subtasks modify the same file, or subtask B depends on
-subtask A's output (e.g., B imports a function A creates). When in doubt, run sequentially.
-
-**6. Fail fast, not late**
-Before writing any code, verify your assumptions:
-- Read the files you plan to modify (stale assumptions waste entire sessions)
-- Check that dependencies/imports you plan to use actually exist in the project
-- If the task seems already done, EXIT immediately with explanation — don't redo work
-
-**7. Minimise token waste**
-- Don't read entire large files — use line ranges from search results
-- Don't output verbose explanations in commit messages — be concise
-- If an approach fails, try ONE fundamentally different strategy before exiting BLOCKED
-
-**8. Replan when stuck, don't patch**
-If your first approach isn't working, step back and consider a fundamentally different
-strategy instead of incrementally patching the broken approach. A fresh approach often
-succeeds where incremental fixes fail. Only exit with BLOCKED after trying at least one
-alternative strategy.
-
-## Completion Self-Check (MANDATORY before FULL_LOOP_COMPLETE)
-
-Before emitting FULL_LOOP_COMPLETE or marking task complete, you MUST:
-
-1. **Requirements checklist**: List every requirement from the task description as a
-   numbered checklist. Mark each [DONE] or [TODO]. If ANY are [TODO], do NOT mark
-   complete — keep working.
-
-2. **Verification run**: Execute available verification:
-   - Run tests if the project has them
-   - Run shellcheck on any .sh files you modified
-   - Run lint/typecheck if configured
-   - Confirm output files exist and have expected content
-
-3. **Generalization check**: Would your solution still work if input values, file
-   contents, or dimensions changed? If you hardcoded something that should be
-   parameterized, fix it before completing.
-
-4. **Minimal state changes**: Only create or modify files explicitly required by the
-   task. Do not leave behind extra files, modified configs, or side effects that were
-   not requested.
-
-FULL_LOOP_COMPLETE is IRREVERSIBLE and FINAL. You have unlimited iterations but only
-one submission. Extra verification costs nothing; a wrong completion wastes an entire
-retry cycle."
+$worker_efficiency_protocol"
 
 	if [[ -n "$memory_context" ]]; then
 		prompt="$prompt
