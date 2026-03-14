@@ -5,6 +5,7 @@
 # Log: ~/.aidevops/.agent-workspace/cost-log.tsv
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
+# shellcheck disable=SC1091
 source "${SCRIPT_DIR}/shared-constants.sh"
 set -euo pipefail
 init_log_file
@@ -26,12 +27,23 @@ init_cost_log() {
 
 calculate_cost() {
 	local input_tokens="$1" output_tokens="$2" model="$3"
+	if ! [[ "$input_tokens" =~ ^[0-9]+$ && "$output_tokens" =~ ^[0-9]+$ ]]; then
+		print_error "Token counts must be non-negative integers"
+		return 1
+	fi
+
 	local pricing
 	pricing=$(get_model_pricing "$model")
-	local input_price="${pricing%%|*}"
-	local output_price
-	output_price=$(echo "$pricing" | cut -d'|' -f2)
-	awk "BEGIN { printf \"%.6f\", ($input_tokens / 1000000.0 * $input_price) + ($output_tokens / 1000000.0 * $output_price) }"
+	local input_price output_price
+	IFS='|' read -r input_price output_price _ <<<"$pricing"
+
+	if ! [[ "$input_price" =~ ^[0-9]+([.][0-9]+)?$ && "$output_price" =~ ^[0-9]+([.][0-9]+)?$ ]]; then
+		print_error "Invalid model pricing for ${model}: ${pricing}"
+		return 1
+	fi
+
+	awk -v in_tok="$input_tokens" -v out_tok="$output_tokens" -v in_price="$input_price" -v out_price="$output_price" \
+		'BEGIN { printf "%.6f", (in_tok / 1000000.0 * in_price) + (out_tok / 1000000.0 * out_price) }'
 	return 0
 }
 
@@ -183,17 +195,21 @@ cmd_burn_rate() {
 
 	local today
 	today=$(date -u +%Y-%m-%d)
+	local seven_day_cutoff
+	seven_day_cutoff=$(date -u -v-7d +%Y-%m-%d 2>/dev/null) ||
+		seven_day_cutoff=$(date -u -d '7 days ago' +%Y-%m-%d 2>/dev/null) ||
+		seven_day_cutoff="2000-01-01"
 	local hours_elapsed
 	hours_elapsed=$(date -u +%H)
 	hours_elapsed=$((hours_elapsed == 0 ? 1 : hours_elapsed))
 
-	awk -F'\t' -v today="$today" -v pf="$provider_filter" -v jf="$json_flag" -v hrs="$hours_elapsed" '
+	awk -F'\t' -v today="$today" -v cutoff="$seven_day_cutoff" -v pf="$provider_filter" -v jf="$json_flag" -v hrs="$hours_elapsed" '
 		NR == 1 { next }
 		{
 			day = substr($1, 1, 10); cost = $8 + 0
 			if (pf != "" && $2 != pf) next
 			if (day == today) { tc += cost; te++ }
-			if (day < today) { wc += cost; wd[day] = 1 }
+			if (day >= cutoff && day < today) { wc += cost; wd[day] = 1 }
 		}
 		END {
 			nd = 0; for (d in wd) nd++
@@ -201,10 +217,10 @@ cmd_burn_rate() {
 			hr = tc / hrs
 			label = (pf != "") ? pf : "all providers"
 			if (jf == "true") {
-				printf "{\"provider\":\"%s\",\"today_spend\":%.2f,\"hourly_rate\":%.2f,\"avg_daily\":%.2f,\"today_events\":%d}\n", label, tc, hr, avg, te
+				printf "{\"provider\":\"%s\",\"today_spend\":%.2f,\"hourly_rate\":%.2f,\"avg_daily_7d\":%.2f,\"days_count_7d\":%d,\"today_events\":%d}\n", label, tc, hr, avg, nd, te
 			} else {
 				printf "\nBurn Rate: %s\n=========================\n\n", label
-				printf "  Today'\''s spend:   $%.2f\n  Hourly rate:     $%.2f/hr\n  Avg daily:       $%.2f (%d days)\n  Events today:    %d\n\n", tc, hr, avg, nd, te
+				printf "  Today'\''s spend:   $%.2f\n  Hourly rate:     $%.2f/hr\n  7-day avg daily: $%.2f (%d days)\n  Events today:    %d\n\n", tc, hr, avg, nd, te
 			}
 		}
 	' "$COST_LOG"
