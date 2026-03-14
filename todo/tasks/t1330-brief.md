@@ -39,7 +39,7 @@ Key files:
 
 ## Acceptance Criteria
 
-- [ ] Rate limit definitions exist per provider (requests/min, tokens/min)
+- [x] Rate limit definitions exist per provider (requests/min, tokens/min)
 
   ```yaml
   verify:
@@ -48,9 +48,9 @@ Key files:
     path: ".agents/scripts/"
   ```
 
-- [ ] `aidevops stats rate-limits` (or equivalent) shows current utilisation per provider
-- [ ] When a provider exceeds 80% of its rate limit, model routing prefers alternatives
-- [ ] Rate limit data is derived from existing observability SQLite DB (no new data collection)
+- [x] `aidevops stats rate-limits` (or equivalent) shows current utilisation per provider
+- [x] When a provider exceeds 80% of its rate limit, model routing prefers alternatives
+- [x] Rate limit data is derived from existing observability SQLite DB (no new data collection)
 
   ```yaml
   verify:
@@ -59,8 +59,8 @@ Key files:
     path: ".agents/scripts/"
   ```
 
-- [ ] Works with both token-billed and subscription providers
-- [ ] ShellCheck clean
+- [x] Works with both token-billed and subscription providers
+- [x] ShellCheck clean
 
   ```yaml
   verify:
