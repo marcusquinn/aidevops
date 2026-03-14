@@ -18,7 +18,7 @@ set -euo pipefail
 # License: MIT
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
-# shellcheck source=shared-constants.sh
+# shellcheck source=./shared-constants.sh
 source "${SCRIPT_DIR}/shared-constants.sh"
 
 # Configuration
@@ -40,6 +40,14 @@ ensure_results_dir() {
 	return 0
 }
 
+# Create a private output file for potentially sensitive results
+create_private_output_file() {
+	local file_path="$1"
+	: >"$file_path"
+	chmod 600 "$file_path"
+	return 0
+}
+
 # Load API configuration
 load_api_config() {
 	# Check environment variable first (set via credentials.sh, sourced by .zshrc)
@@ -51,7 +59,7 @@ load_api_config() {
 	# Fallback to config file
 	if [[ -f "$AMPCODE_API_CONFIG" ]] && command -v jq >/dev/null 2>&1; then
 		local api_key
-		api_key=$(jq -r '.api_key // empty' "$AMPCODE_API_CONFIG" 2>/dev/null)
+		api_key=$(jq -r '.api_key // empty' "$AMPCODE_API_CONFIG")
 		if [[ -n "$api_key" ]]; then
 			export AMPCODE_API_KEY="$api_key"
 			print_info "Loaded AmpCode API key from configuration"
@@ -71,7 +79,7 @@ check_ampcode_cli() {
 
 	if command -v "$ampcode_cmd" &>/dev/null; then
 		local version
-		version=$("$ampcode_cmd" --version 2>/dev/null || echo "unknown")
+		version=$("$ampcode_cmd" --version || echo "unknown")
 		print_success "AmpCode CLI installed: $version"
 		return 0
 	else
@@ -221,6 +229,7 @@ run_code_scan() {
 	ensure_results_dir
 	local output_file
 	output_file="$AMPCODE_RESULTS_DIR/scan-$(date +%Y%m%d-%H%M%S).$output_format"
+	create_private_output_file "$output_file"
 
 	print_info "Scanning path: $target_path"
 	print_info "Output format: $output_format"
@@ -244,9 +253,9 @@ run_code_scan() {
 		# Show summary
 		if [[ -f "$output_file" && "$output_format" == "json" ]] && command -v jq >/dev/null 2>&1; then
 			local issues
-			issues=$(jq '.issues | length // 0' "$output_file" 2>/dev/null || echo "0")
+			issues=$(jq '.issues | length // 0' "$output_file" || echo "0")
 			local suggestions
-			suggestions=$(jq '.suggestions | length // 0' "$output_file" 2>/dev/null || echo "0")
+			suggestions=$(jq '.suggestions | length // 0' "$output_file" || echo "0")
 			print_info "Issues found: $issues"
 			print_info "AI suggestions: $suggestions"
 		fi
@@ -283,6 +292,7 @@ get_ai_review() {
 	ensure_results_dir
 	local review_file
 	review_file="$AMPCODE_RESULTS_DIR/review-$(date +%Y%m%d-%H%M%S).md"
+	create_private_output_file "$review_file"
 
 	print_info "Reviewing path: $target_path"
 	print_info "Severity level: $severity_level"
@@ -342,6 +352,7 @@ apply_fixes() {
 	ensure_results_dir
 	local fixes_file
 	fixes_file="$AMPCODE_RESULTS_DIR/fixes-$(date +%Y%m%d-%H%M%S).json"
+	create_private_output_file "$fixes_file"
 
 	print_info "Analyzing fixes for: $target_path"
 
@@ -362,7 +373,7 @@ apply_fixes() {
 
 		if command -v jq >/dev/null 2>&1; then
 			local fixes_count
-			fixes_count=$(jq '.fixes | length // 0' "$fixes_file" 2>/dev/null || echo "0")
+			fixes_count=$(jq '.fixes | length // 0' "$fixes_file" || echo "0")
 			print_info "AI fixes available: $fixes_count"
 		fi
 
@@ -425,13 +436,13 @@ show_status() {
 		local -a result_files=()
 		while IFS= read -r -d '' f; do
 			result_files+=("$f")
-		done < <(find "$AMPCODE_RESULTS_DIR" \( -name "*.json" -o -name "*.md" \) -print0 2>/dev/null | sort -z -r)
+		done < <(find "$AMPCODE_RESULTS_DIR" \( -name "*.json" -o -name "*.md" \) -print0 | sort -z -r)
 
 		local shown=0
 		local file size ext
 		for file in "${result_files[@]}"; do
 			[[ $shown -ge 3 ]] && break
-			size=$(du -h "$file" 2>/dev/null | cut -f1 || echo "unknown")
+			size=$(du -h "$file" | cut -f1 || echo "unknown")
 			ext="${file##*.}"
 			print_info "  $(basename "$file") (${ext} - $size)"
 			((++shown))
