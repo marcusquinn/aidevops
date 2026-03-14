@@ -63,6 +63,18 @@ info() {
 	return 0
 }
 
+read_counter_or_default() {
+	local counter_file="$1"
+
+	if [[ -f "$counter_file" ]]; then
+		tr -d '[:space:]' <"$counter_file"
+	else
+		printf '%s\n' "0"
+	fi
+
+	return 0
+}
+
 # =============================================================================
 # Test 1: Parallel claim-task-id.sh — two concurrent calls get different IDs
 # =============================================================================
@@ -119,7 +131,7 @@ EOF
 
 	# Verify counter file was updated
 	local final_counter
-	final_counter=$(tr -d '[:space:]' <"$test_repo/.task-counter" 2>/dev/null)
+	final_counter=$(read_counter_or_default "$test_repo/.task-counter")
 	info "Final .task-counter value: $final_counter"
 
 	if [[ "$final_counter" -gt 200 ]]; then
@@ -185,7 +197,7 @@ EOF
 
 	# Verify counter was updated locally
 	local new_counter
-	new_counter=$(tr -d '[:space:]' <"$test_repo/.task-counter" 2>/dev/null)
+	new_counter=$(read_counter_or_default "$test_repo/.task-counter")
 	if [[ "$new_counter" == "181" ]]; then
 		pass "Local counter updated to 181 (next available after t180)"
 	else
@@ -822,7 +834,7 @@ EOF
 
 	# Verify counter was updated
 	local new_counter
-	new_counter=$(tr -d '[:space:]' <"$test_repo/.task-counter" 2>/dev/null)
+	new_counter=$(read_counter_or_default "$test_repo/.task-counter")
 	if [[ "$new_counter" == "605" ]]; then
 		pass "Counter updated to 605 after batch allocation"
 	else
