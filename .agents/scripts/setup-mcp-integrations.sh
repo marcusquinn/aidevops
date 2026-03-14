@@ -70,6 +70,22 @@ check_prerequisites() {
 	npm_version=$(npm --version)
 	print_success "npm version: $npm_version"
 
+	# Check if uv is available and supports the tool subcommand
+	if command -v uv &>/dev/null; then
+		local uv_version
+		uv_version=$(uv --version 2>/dev/null | awk '{print $2}')
+		if uv tool --help &>/dev/null; then
+			print_success "uv version: $uv_version (tool subcommand supported)"
+		else
+			print_warning "uv version: $uv_version — 'uv tool' subcommand not available"
+			print_info "Upgrade uv: curl -LsSf https://astral.sh/uv/install.sh | sh"
+			print_info "Integrations using 'uv tool run' will not work with this version"
+		fi
+	else
+		print_warning "uv not found — integrations using 'uv tool run' will not work"
+		print_info "Install uv: curl -LsSf https://astral.sh/uv/install.sh | sh"
+	fi
+
 	# Check if Claude Desktop is available
 	if command -v claude &>/dev/null; then
 		print_success "Claude Desktop CLI detected"
