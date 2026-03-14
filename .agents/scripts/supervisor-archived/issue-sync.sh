@@ -1768,10 +1768,13 @@ check_task_already_done() {
 
 	# Check 2: Are there merged commits referencing this task ID?
 	# IMPORTANT: Use word-boundary matching to prevent t020 matching t020.6.
+	# Escaped task_id for regex: dots become literal dots.
+	local escaped_task_regex
+	escaped_task_regex=$(printf '%s' "$task_id" | sed 's/\./\\./g')
 	# grep -w uses word boundaries but dots aren't word chars, so for subtask IDs
 	# like t020.1 we need a custom boundary: task_id followed by non-digit or EOL.
 	# This prevents t020 from matching t020.1, t020.2, etc.
-	local boundary_pattern="${task_id}([^.0-9]|$)"
+	local boundary_pattern="${escaped_task_regex}([^.0-9]|$)"
 
 	local commit_count=0
 	commit_count=$(git -C "$project_root" log --oneline -500 --all --grep="$task_id" 2>/dev/null |
@@ -1784,7 +1787,7 @@ check_task_already_done() {
 		completion_evidence=$(git -C "$project_root" log --oneline -500 --all --grep="$task_id" 2>/dev/null |
 			grep -E "$boundary_pattern" |
 			grep -iE "\(#[0-9]+\)|PR #[0-9]+ merged" |
-			grep -ivE "add ${task_id}|claim ${task_id}|mark ${task_id}|queue ${task_id}|blocked" |
+			grep -ivE "add ${escaped_task_regex}|claim ${escaped_task_regex}|mark ${escaped_task_regex}|queue ${escaped_task_regex}|blocked" |
 			head -1) || true
 		if [[ -n "$completion_evidence" ]]; then
 			log_info "Pre-dispatch check: $task_id has completion evidence: $completion_evidence" >&2
