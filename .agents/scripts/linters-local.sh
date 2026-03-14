@@ -69,8 +69,33 @@ collect_shell_files() {
 check_sonarcloud_status() {
 	echo -e "${BLUE}Checking SonarCloud Status (remote API)...${NC}"
 
+	# Check quality gate status first — this drives the badge colour
+	local gate_response
+	if gate_response=$(curl -s "https://sonarcloud.io/api/qualitygates/project_status?projectKey=marcusquinn_aidevops"); then
+		local gate_status
+		gate_status=$(echo "$gate_response" | jq -r '.projectStatus.status // "UNKNOWN"')
+		if [[ "$gate_status" == "OK" ]]; then
+			print_success "SonarCloud Quality Gate: PASSED (badge is green)"
+		elif [[ "$gate_status" == "ERROR" ]]; then
+			print_error "SonarCloud Quality Gate: FAILED (badge is red)"
+			# Show which conditions are failing
+			local failing_conditions
+			failing_conditions=$(echo "$gate_response" | jq -r '
+				[.projectStatus.conditions[]? | select(.status == "ERROR") |
+				"  \(.metricKey): actual=\(.actualValue), required \(.comparator) \(.errorThreshold)"]
+				| join("\n")
+			') || failing_conditions=""
+			if [[ -n "$failing_conditions" ]]; then
+				echo "Failing conditions:"
+				echo "$failing_conditions"
+			fi
+		else
+			print_warning "SonarCloud Quality Gate: ${gate_status}"
+		fi
+	fi
+
 	local response
-	if response=$(curl -s "https://sonarcloud.io/api/issues/search?componentKeys=marcusquinn_aidevops&impactSoftwareQualities=MAINTAINABILITY&resolved=false&ps=1"); then
+	if response=$(curl -s "https://sonarcloud.io/api/issues/search?componentKeys=marcusquinn_aidevops&impactSoftwareQualities=MAINTAINABILITY&resolved=false&ps=1&facets=rules"); then
 		local total_issues
 		total_issues=$(echo "$response" | jq -r '.total // 0')
 
@@ -82,12 +107,9 @@ check_sonarcloud_status() {
 			print_warning "SonarCloud: $total_issues issues (exceeds threshold of $MAX_TOTAL_ISSUES)"
 		fi
 
-		# Get detailed breakdown
-		local breakdown_response
-		if breakdown_response=$(curl -s "https://sonarcloud.io/api/issues/search?componentKeys=marcusquinn_aidevops&impactSoftwareQualities=MAINTAINABILITY&resolved=false&ps=10&facets=rules"); then
-			echo "Issue Breakdown:"
-			echo "$breakdown_response" | jq -r '.facets[0].values[] | "  \(.val): \(.count) issues"'
-		fi
+		# Show top rules by issue count for targeted fixes
+		echo "Top rules (fix these for maximum badge improvement):"
+		echo "$response" | jq -r '.facets[0].values[:10][] | "  \(.val): \(.count) issues"'
 	else
 		print_error "Failed to fetch SonarCloud status"
 		return 1

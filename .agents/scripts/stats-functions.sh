@@ -1230,7 +1230,7 @@ _No smells detected or qlty analysis returned empty._
 			fi
 
 			if [[ -n "$sonar_status" ]] && echo "$sonar_status" | jq -e '.projectStatus' &>/dev/null; then
-				# Single jq pass: extract gate status and conditions together
+				# Single jq pass: extract gate status, conditions, and failing conditions with remediation
 				local gate_data
 				gate_data=$(echo "$sonar_status" | jq -r '
 					(.projectStatus.status // "UNKNOWN") as $status |
@@ -1250,17 +1250,74 @@ _No smells detected or qlty analysis returned empty._
 - **Status**: ${gate_status}
 ${conditions}
 "
+				# Badge-aware diagnostics: when the gate fails, identify the
+				# specific failing conditions and provide actionable remediation.
+				# This is the root cause improvement — previously the sweep only
+				# reported the gate status without explaining what to fix.
+				if [[ "$gate_status" == "ERROR" || "$gate_status" == "WARN" ]]; then
+					local failing_diagnostics
+					failing_diagnostics=$(echo "$sonar_status" | jq -r '
+						[.projectStatus.conditions[]? | select(.status == "ERROR" or .status == "WARN") |
+						"- **\(.metricKey)**: actual=\(.actualValue), required \(.comparator) \(.errorThreshold) -- " +
+						(if .metricKey == "new_security_hotspots_reviewed" then
+							"Review unreviewed security hotspots in SonarCloud UI (mark Safe/Fixed) or fix the flagged code"
+						elif .metricKey == "new_reliability_rating" then
+							"Fix new bugs introduced in the analysis period"
+						elif .metricKey == "new_security_rating" then
+							"Fix new vulnerabilities introduced in the analysis period"
+						elif .metricKey == "new_maintainability_rating" then
+							"Reduce new code smells (extract constants, fix unused vars, simplify conditionals)"
+						elif .metricKey == "new_duplicated_lines_density" then
+							"Reduce code duplication in new code"
+						else
+							"Check SonarCloud dashboard for details"
+						end)
+						] | join("\n")
+					') || failing_diagnostics=""
+					if [[ -n "$failing_diagnostics" ]]; then
+						failing_diagnostics=$(_sanitize_markdown "$failing_diagnostics")
+						sonar_section="${sonar_section}
+**Failing conditions (badge blockers):**
+${failing_diagnostics}
+"
+					fi
+
+					# Fetch unreviewed security hotspots count — this is the most
+					# common quality gate blocker for DevOps repos (false positives
+					# from shell patterns like curl, npm install, hash algorithms).
+					local hotspots_response=""
+					hotspots_response=$(curl -sS --fail --connect-timeout 5 --max-time 20 \
+						"https://sonarcloud.io/api/hotspots/search?projectKey=${encoded_project_key}&status=TO_REVIEW&ps=5" || echo "")
+					if [[ -n "$hotspots_response" ]] && echo "$hotspots_response" | jq -e '.paging' &>/dev/null; then
+						local hotspot_total hotspot_details
+						hotspot_total=$(echo "$hotspots_response" | jq -r '.paging.total // 0')
+						[[ "$hotspot_total" =~ ^[0-9]+$ ]] || hotspot_total=0
+						if [[ "$hotspot_total" -gt 0 ]]; then
+							hotspot_details=$(echo "$hotspots_response" | jq -r '
+								[.hotspots[:5][] |
+								"  - `\(.component | split(":") | last):\(.line)` — \(.ruleKey): \(.message | .[0:100])"]
+								| join("\n")
+							') || hotspot_details=""
+							hotspot_details=$(_sanitize_markdown "$hotspot_details")
+							sonar_section="${sonar_section}
+**Unreviewed security hotspots (${hotspot_total}):**
+${hotspot_details}
+_Review these in SonarCloud UI or fix the underlying code to pass the quality gate._
+"
+						fi
+					fi
+				fi
 			fi
 
-			# Fetch open issues summary
+			# Fetch open issues summary with rule-level breakdown for targeted fixes
 			local sonar_issues=""
 			if [[ -n "$encoded_project_key" ]]; then
 				sonar_issues=$(curl -sS --fail --connect-timeout 5 --max-time 20 \
-					"https://sonarcloud.io/api/issues/search?componentKeys=${encoded_project_key}&statuses=OPEN,CONFIRMED,REOPENED&ps=1&facets=severities,types" || echo "")
+					"https://sonarcloud.io/api/issues/search?componentKeys=${encoded_project_key}&statuses=OPEN,CONFIRMED,REOPENED&ps=1&facets=severities,types,rules" || echo "")
 			fi
 
 			if [[ -n "$sonar_issues" ]] && echo "$sonar_issues" | jq -e '.total' &>/dev/null; then
-				# Single jq pass: extract total, high/critical count, severity breakdown, and type breakdown
+				# Single jq pass: extract total, high/critical count, severity breakdown, type breakdown, and top rules
 				local issues_data
 				issues_data=$(echo "$sonar_issues" | jq -r '
 					(.total // 0) as $total |
@@ -1296,6 +1353,22 @@ ${severity_breakdown}
 - **By type**:
 ${type_breakdown}
 "
+				# Rule-level breakdown: shows which rules produce the most issues,
+				# enabling targeted batch fixes (e.g., S1192 string constants, S7688
+				# bracket style). This is the key data the supervisor needs to create
+				# actionable quality-debt issues grouped by rule rather than by file.
+				local rules_breakdown
+				rules_breakdown=$(echo "$sonar_issues" | jq -r '
+					[.facets[]? | select(.property == "rules") | .values[:10][]? |
+					"  - \(.val): \(.count) issues"] | join("\n")
+				') || rules_breakdown=""
+				if [[ -n "$rules_breakdown" ]]; then
+					rules_breakdown=$(_sanitize_markdown "$rules_breakdown")
+					sonar_section="${sonar_section}
+- **Top rules (fix these for maximum badge improvement)**:
+${rules_breakdown}
+"
+				fi
 			fi
 			tool_count=$((tool_count + 1))
 		fi
@@ -1682,12 +1755,24 @@ _No open PRs._
 ${prs_stale_waiting}"
 	fi
 
+	# --- Badge status indicator ---
+	# Translate gate status to a human-readable badge indicator so the
+	# dashboard immediately shows whether the repo's public badges are green.
+	local badge_indicator="UNKNOWN"
+	case "$gate_status" in
+	OK) badge_indicator="GREEN (all badges passing)" ;;
+	ERROR) badge_indicator="RED (SonarCloud quality gate failing)" ;;
+	WARN) badge_indicator="YELLOW (SonarCloud quality gate warning)" ;;
+	*) badge_indicator="UNKNOWN (could not determine)" ;;
+	esac
+
 	# --- Assemble dashboard body ---
 	local body="## Quality Review Dashboard
 
 **Last sweep**: \`${sweep_time}\`
 **Repo**: \`${repo_slug}\`
 **Tools run**: ${tool_count}
+**Badge status**: ${badge_indicator}
 
 ### Summary
 

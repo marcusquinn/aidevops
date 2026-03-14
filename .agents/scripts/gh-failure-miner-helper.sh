@@ -459,8 +459,10 @@ build_repo_clusters_json() {
 
 compute_pattern_id() {
 	local input_value="$1"
+	# SHA-256 for content fingerprinting (not cryptographic security).
+	# Truncated to 12 hex chars for human-readable dedup IDs.
 	if command -v shasum >/dev/null 2>&1; then
-		printf '%s' "$input_value" | shasum -a 1 | awk '{print $1}' | cut -c1-12
+		printf '%s' "$input_value" | shasum -a 256 | awk '{print $1}' | cut -c1-12
 		return 0
 	fi
 	printf '%s' "$input_value" | md5 | cut -c1-12
