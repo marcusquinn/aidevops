@@ -525,18 +525,41 @@ prefetch_state() {
 	# Wait for all parallel fetches with a hard timeout (t1482).
 	# Each repo does 3 gh API calls (pr list, pr list --state all, issue list).
 	# Normal completion: <30s. Timeout at 120s catches hung gh connections.
-	local wait_start wait_elapsed
-	wait_start=$(date +%s)
-	for pid in "${pids[@]}"; do
-		wait_elapsed=$(($(date +%s) - wait_start))
-		if [[ "$wait_elapsed" -gt 120 ]]; then
-			echo "[pulse-wrapper] Parallel gh fetch timeout after 120s — killing remaining fetches" >>"$LOGFILE"
-			for remaining_pid in "${pids[@]}"; do
-				kill "$remaining_pid" 2>/dev/null || true
-			done
-			sleep 1
-			break
+	# Uses poll-based approach (kill -0) instead of blocking wait — wait $pid
+	# blocks until the process exits, so a timeout check between waits is
+	# ineffective when a single wait hangs for minutes.
+	local wait_elapsed=0
+	local all_done=false
+	while [[ "$all_done" != "true" ]] && [[ "$wait_elapsed" -lt 120 ]]; do
+		all_done=true
+		for pid in "${pids[@]}"; do
+			if kill -0 "$pid" 2>/dev/null; then
+				all_done=false
+				break
+			fi
+		done
+		if [[ "$all_done" != "true" ]]; then
+			sleep 2
+			wait_elapsed=$((wait_elapsed + 2))
 		fi
+	done
+	if [[ "$all_done" != "true" ]]; then
+		echo "[pulse-wrapper] Parallel gh fetch timeout after ${wait_elapsed}s — killing remaining fetches" >>"$LOGFILE"
+		for pid in "${pids[@]}"; do
+			if kill -0 "$pid" 2>/dev/null; then
+				_kill_tree "$pid" || true
+			fi
+		done
+		sleep 1
+		# Force-kill any survivors
+		for pid in "${pids[@]}"; do
+			if kill -0 "$pid" 2>/dev/null; then
+				_force_kill_tree "$pid" || true
+			fi
+		done
+	fi
+	# Reap all child processes (non-blocking since they're dead or killed)
+	for pid in "${pids[@]}"; do
 		wait "$pid" 2>/dev/null || true
 	done
 
