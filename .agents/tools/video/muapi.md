@@ -284,7 +284,9 @@ Asset generation uses models like Flux and Runway. Storyboard assets can feed in
 Credit-based consumption system with Stripe integration.
 
 ```bash
-GET /api/payments/create_credits_checkout_session   # Purchase credits via Stripe
+POST /api/v1/payments/create_credits_checkout_session   # Purchase credits via Stripe
+GET  /api/v1/payments/credits                           # Check credit balance
+GET  /api/v1/payments/usage                             # Check usage history
 ```
 
 - **Credit Wallet** — Every user has a `CreditWallet`; generations deduct credits based on model cost and duration
