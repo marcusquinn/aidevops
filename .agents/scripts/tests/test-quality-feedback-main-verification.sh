@@ -463,7 +463,7 @@ _test_approval_filter() {
 		($body | test(
 			"\\bno (further |more )?suggestions?\\b|" +
 			"\\bno additional suggestions?\\b|" +
-			"\\bno suggestions? (at this time|for now|currently)?\\b|" +
+			"\\bno suggestions? (at this time|for now|currently|for improvement)?\\b|" +
 			"\\bwithout suggestions?\\b|" +
 			"\\bhas no suggestions?\\b"; "i")) as $no_actionable_suggestions |
 
@@ -607,6 +607,17 @@ test_skips_no_suggestions_at_this_time_review() {
 		print_result "skip 'no suggestions at this time' review" 0
 	else
 		print_result "skip 'no suggestions at this time' review" 1 "expected skip, got ${result}"
+	fi
+	return 0
+}
+
+test_skips_no_suggestions_for_improvement_review() {
+	local result
+	result=$(_test_approval_filter "The code is clear and consistent with the style guide. I have no suggestions for improvement.")
+	if [[ "$result" == "skip" ]]; then
+		print_result "skip 'no suggestions for improvement' review" 0
+	else
+		print_result "skip 'no suggestions for improvement' review" 1 "expected skip, got ${result}"
 	fi
 	return 0
 }
@@ -959,6 +970,7 @@ main() {
 	test_skips_no_further_recommendations_review
 	test_skips_gemini_style_positive_summary_review
 	test_skips_no_suggestions_at_this_time_review
+	test_skips_no_suggestions_for_improvement_review
 	test_keeps_actionable_approved_review
 	test_keeps_changes_requested_review
 	test_keeps_review_with_bug_report

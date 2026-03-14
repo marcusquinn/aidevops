@@ -1010,7 +1010,7 @@ _scan_single_pr() {
 		($body | test(
 			"\\bno (further |more )?suggestions?\\b|" +
 			"\\bno additional suggestions?\\b|" +
-			"\\bno suggestions? (at this time|for now|currently)?\\b|" +
+			"\\bno suggestions? (at this time|for now|currently|for improvement)?\\b|" +
 			"\\bwithout suggestions?\\b|" +
 			"\\bhas no suggestions?\\b"; "i")) as $no_actionable_suggestions |
 
