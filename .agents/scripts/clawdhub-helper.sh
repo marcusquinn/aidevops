@@ -103,9 +103,12 @@ fetch_skill_info() {
 	local slug="$1"
 
 	local response
-	response=$(curl -s --connect-timeout 10 --max-time 30 "${CLAWDHUB_API}/skills/${slug}")
+	response=$(curl -fsS --connect-timeout 10 --max-time 30 "${CLAWDHUB_API}/skills/${slug}") || {
+		log_error "Failed to fetch skill info (HTTP/network) for: $slug"
+		return 1
+	}
 
-	if echo "$response" | python3 -c "import sys,json; json.load(sys.stdin)" 2>/dev/null; then
+	if echo "$response" | jq -e . >/dev/null 2>&1; then
 		echo "$response"
 	else
 		log_error "Failed to fetch skill info for: $slug"
@@ -128,7 +131,7 @@ fetch_skill_content_playwright() {
 	info=$(fetch_skill_info "$slug") || return 1
 
 	local owner
-	owner=$(echo "$info" | python3 -c "import sys,json; print(json.load(sys.stdin).get('owner',{}).get('handle',''))" 2>/dev/null)
+	owner=$(echo "$info" | jq -r '.owner.handle // ""')
 
 	if [[ -z "$owner" ]]; then
 		log_error "Could not determine owner for skill: $slug"
@@ -141,6 +144,7 @@ fetch_skill_content_playwright() {
 	# Create a temporary Node.js project with Playwright to extract SKILL.md
 	local pw_dir
 	pw_dir=$(mktemp -d "${TMPDIR:-/tmp}/clawdhub-pw-XXXXXX")
+	trap 'rm -rf "$pw_dir"' EXIT
 	_save_cleanup_scope
 	trap '_run_cleanups' RETURN
 	push_cleanup "rm -rf '${pw_dir}'"
@@ -270,7 +274,7 @@ PLAYWRIGHT_SCRIPT
 
 	# Install playwright and run the fetch script
 	log_info "Installing Playwright (temporary)..."
-	if (cd "$pw_dir" && npm install --silent && npx playwright install chromium --with-deps); then
+	if (cd "$pw_dir" && npm install --silent && npx playwright install chromium --with-deps 2>&1); then
 		log_info "Running browser extraction..."
 		if (cd "$pw_dir" && node fetch.mjs "$skill_url" "$output_file"); then
 			rm -rf "$pw_dir"
@@ -360,33 +364,24 @@ cmd_search() {
 	log_info "Searching ClawdHub for: $query"
 
 	local encoded_query
-	encoded_query=$(python3 -c "import urllib.parse; print(urllib.parse.quote('$query'))" 2>/dev/null || echo "$query")
+	encoded_query=$(python3 -c "import sys, urllib.parse; print(urllib.parse.quote(sys.argv[1]))" "$query" 2>/dev/null || echo "$query")
 
 	local response
 	response=$(curl -s --connect-timeout 10 --max-time 30 "${CLAWDHUB_API}/search?q=${encoded_query}")
 
-	if ! echo "$response" | python3 -c "import sys,json; json.load(sys.stdin)" 2>/dev/null; then
+	if ! echo "$response" | jq -e . >/dev/null 2>&1; then
 		log_error "Search failed"
 		return 1
 	fi
 
-	echo "$response" | python3 -c "
-import sys, json
-data = json.load(sys.stdin)
-results = data.get('results', [])
-if not results:
-    print('  No results found')
-else:
-    for r in results:
-        score = r.get('score', 0)
-        slug = r.get('slug', '?')
-        name = r.get('displayName', slug)
-        summary = r.get('summary', '')[:60]
-        print(f'  {name} ({slug}) - score: {score:.2f}')
-        if summary:
-            print(f'    {summary}')
-        print()
-"
+	local results_count
+	results_count=$(echo "$response" | jq '.results | length' 2>/dev/null || echo "0")
+
+	if [[ "$results_count" -eq 0 ]]; then
+		echo "  No results found"
+	else
+		echo "$response" | jq -r '.results[] | "  \(.displayName // .slug // "?") (\(.slug // "?")) - score: \(.score // 0)\n\(if (.summary // "" | length) > 0 then "    \(.summary[:60])" else "" end)\n"'
+	fi
 	return 0
 }
 
@@ -406,24 +401,18 @@ cmd_info() {
 	local response
 	response=$(fetch_skill_info "$slug") || return 1
 
-	echo "$response" | python3 -c "
-import sys, json
-data = json.load(sys.stdin)
-skill = data.get('skill', {})
-owner = data.get('owner', {})
-version = data.get('latestVersion', {})
-stats = skill.get('stats', {})
-
-print(f'  Name: {skill.get(\"displayName\", \"?\")}')
-print(f'  Slug: {skill.get(\"slug\", \"?\")}')
-print(f'  Owner: @{owner.get(\"handle\", \"?\")}')
-print(f'  Version: {version.get(\"version\", \"?\")}')
-print(f'  Summary: {skill.get(\"summary\", \"\")}')
-print(f'  Stars: {stats.get(\"stars\", 0)}')
-print(f'  Downloads: {stats.get(\"downloads\", 0)}')
-print(f'  Installs: {stats.get(\"installsCurrent\", 0)}')
-print()
-"
+	echo "$response" | jq -r '
+      . as $data |
+      "  Name: \($data.skill.displayName // "?")",
+      "  Slug: \($data.skill.slug // "?")",
+      "  Owner: @\($data.owner.handle // "?")",
+      "  Version: \($data.latestVersion.version // "?")",
+      "  Summary: \($data.skill.summary // "")",
+      "  Stars: \($data.skill.stats.stars // 0)",
+      "  Downloads: \($data.skill.stats.downloads // 0)",
+      "  Installs: \($data.skill.stats.installsCurrent // 0)",
+      ""
+    '
 	return 0
 }
 

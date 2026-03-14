@@ -1255,17 +1255,17 @@ cmd_add_clawdhub() {
 	local api_response
 	api_response=$(curl -s --connect-timeout 10 --max-time 30 "${CLAWDHUB_API:-https://clawdhub.com/api/v1}/skills/${slug}" 2>/dev/null)
 
-	if [[ -z "$api_response" ]] || ! echo "$api_response" | python3 -c "import sys,json; json.load(sys.stdin)" 2>/dev/null; then
+	if [[ -z "$api_response" ]] || ! echo "$api_response" | jq -e . >/dev/null 2>&1; then
 		log_error "Could not fetch skill info from ClawdHub API: $slug"
 		return 1
 	fi
 
 	# Extract metadata
 	local display_name summary owner_handle version
-	display_name=$(echo "$api_response" | python3 -c "import sys,json; print(json.load(sys.stdin).get('skill',{}).get('displayName',''))" 2>/dev/null)
-	summary=$(echo "$api_response" | python3 -c "import sys,json; print(json.load(sys.stdin).get('skill',{}).get('summary',''))" 2>/dev/null)
-	owner_handle=$(echo "$api_response" | python3 -c "import sys,json; print(json.load(sys.stdin).get('owner',{}).get('handle',''))" 2>/dev/null)
-	version=$(echo "$api_response" | python3 -c "import sys,json; print(json.load(sys.stdin).get('latestVersion',{}).get('version',''))" 2>/dev/null)
+	display_name=$(echo "$api_response" | jq -r '.skill.displayName // ""')
+	summary=$(echo "$api_response" | jq -r '.skill.summary // ""')
+	owner_handle=$(echo "$api_response" | jq -r '.owner.handle // ""')
+	version=$(echo "$api_response" | jq -r '.latestVersion.version // ""')
 
 	log_info "Found: $display_name v${version} by @${owner_handle}"
 
@@ -1456,6 +1456,12 @@ cmd_check_updates() {
 
 	local name url commit owner repo
 	while IFS='|' read -r name url commit; do
+		# Skip ClawdHub skills — update checks not yet supported for clawdhub.com URLs
+		if [[ "$url" == *clawdhub.com/* ]]; then
+			log_info "Skipping ClawdHub skill ($name) — update checks not yet supported"
+			continue
+		fi
+
 		# Extract owner/repo from URL
 		local parsed
 		parsed=$(parse_github_url "$url")
