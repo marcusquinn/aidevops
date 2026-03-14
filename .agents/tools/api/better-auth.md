@@ -45,12 +45,26 @@ for (const envVar of requiredEnvVars) {
   }
 }
 
+// Server-side password validation — enforced on every signUp.email() call.
+// Client-side checks (e.g. Zod passwordSchema) are UX only; this is the
+// security boundary. Callers that bypass the client still hit this validator.
+const validatePassword = (password: string) => {
+  if (password.length < 8) return false;
+  if (!/[A-Z]/.test(password)) return false;
+  if (!/[a-z]/.test(password)) return false;
+  if (!/[0-9]/.test(password)) return false;
+  return true;
+};
+
 export const auth = betterAuth({
   database: drizzleAdapter(db, {
     provider: "pg",
   }),
   emailAndPassword: {
     enabled: true,
+    password: {
+      validate: validatePassword,
+    },
   },
   socialProviders: {
     google: {
@@ -142,10 +156,11 @@ import { signIn } from "@workspace/auth/client/react";
 import { signUp } from "@workspace/auth/client/react";
 import { z } from "zod";
 
-// Client-side password validation (UX only — server must also enforce)
-// IMPORTANT: This is not a security boundary. Callers can bypass the client
-// and hit signUp.email() directly. Your server-side auth handler must
-// revalidate password strength before creating accounts.
+// Client-side password validation — UX only, NOT a security boundary.
+// Callers can bypass this and call signUp.email() directly.
+// The server enforces the same rules via emailAndPassword.password.validate
+// in packages/auth/src/server.ts — signUp.email() returns an error if the
+// password fails server-side validation, regardless of client-side checks.
 const passwordSchema = z.string()
   .min(8, "Password must be at least 8 characters")
   .regex(/[A-Z]/, "Must contain an uppercase letter")
@@ -153,14 +168,15 @@ const passwordSchema = z.string()
   .regex(/[0-9]/, "Must contain a number");
 
 const handleSignUp = async (data: { email: string; password: string; name: string }) => {
+  // Early UX feedback — mirrors the server-side validatePassword function.
   const passwordCheck = passwordSchema.safeParse(data.password);
   if (!passwordCheck.success) {
     console.error("Weak password:", passwordCheck.error.flatten().formErrors);
     return;
   }
 
-  // Server-side: better-auth validates password in signUp.email() handler.
-  // Configure server-side password rules in your auth config (e.g., password.minLength).
+  // Server enforces password strength via emailAndPassword.password.validate.
+  // If validation fails server-side, result.error is set and no account is created.
   const result = await signUp.email({
     email: data.email,
     password: data.password,
@@ -168,7 +184,9 @@ const handleSignUp = async (data: { email: string; password: string; name: strin
   });
 
   if (result.error) {
-    console.error(result.error);
+    // Handles both server-side password validation failures and other errors
+    // (e.g., duplicate email). result.error.message contains the reason.
+    console.error("Sign-up failed:", result.error.message);
     return;
   }
 
