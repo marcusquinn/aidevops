@@ -175,16 +175,19 @@ jobs:
         echo "::warning::SONAR_TOKEN not configured — skipping SonarCloud scan"
         echo "Add SONAR_TOKEN to repository secrets to enable SonarCloud analysis"
 
-    - name: Codacy Analysis
+    - name: Codacy Integration Check
+      # Codacy analysis runs via the Codacy Production GitHub App (not this workflow).
+      # This step only verifies the API token is configured for Codacy API access.
+      # The "Codacy Static Code Analysis" check run is posted by the Codacy App
+      # independently on each PR commit.
       run: |
         if [[ -n "$CODACY_API_TOKEN" ]]; then
-          echo "Codacy Analysis Status..."
-          echo "Codacy API Token: Configured"
-          echo "Repository monitored at: https://app.codacy.com/gh/marcusquinn/aidevops"
-          echo "Codacy integration: Active"
+          echo "Codacy API token: configured"
+          echo "Codacy GitHub App: runs analysis independently on PRs"
+          echo "Dashboard: https://app.codacy.com/gh/marcusquinn/aidevops"
         else
-          echo "::notice::Codacy API token not configured, skipping analysis"
-          echo "Add CODACY_API_TOKEN to repository secrets to enable Codacy analysis"
+          echo "::notice::CODACY_API_TOKEN not configured — Codacy API access unavailable"
+          echo "Note: Codacy GitHub App analysis still runs if the app is installed"
         fi
 
     - name: Quality Analysis Summary
@@ -192,15 +195,11 @@ jobs:
         echo "Code Quality Analysis Summary"
         echo "================================"
         if [[ -n "$SONAR_TOKEN" ]]; then
-          echo "SonarCloud: Analysis completed"
+          echo "SonarCloud: Analysis completed (via workflow action)"
         else
           echo "SonarCloud: Skipped (SONAR_TOKEN not configured)"
         fi
-        if [[ -n "$CODACY_API_TOKEN" ]]; then
-          echo "Codacy: Analysis completed"
-        else
-          echo "Codacy: Skipped (token not configured)"
-        fi
+        echo "Codacy: Runs via GitHub App (independent of this workflow)"
         echo ""
         echo "View Results:"
         echo "   SonarCloud: https://sonarcloud.io/project/overview?id=marcusquinn_aidevops"

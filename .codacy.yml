@@ -3,9 +3,11 @@
 #
 # Reference: https://docs.codacy.com/repositories-configure/codacy-configuration-file/
 #
-# Root cause context (GH#4346):
+# Root cause context (GH#4346, GH#4696):
 # - Codacy flagged SC2086 (unquoted variable) in code that was being REMOVED by a PR fix.
-# - Codacy also returned "not_collected" on a transient service issue.
+# - "not_collected" reports were a failure-miner misclassification, not a Codacy issue.
+#   Codacy's action_required conclusion (= "issues found") was treated as a CI failure
+#   by gh-failure-miner-helper.sh. Fixed in GH#4696.
 # - This config excludes archived/ (same as CI shellcheck) and aligns tool settings.
 
 ---

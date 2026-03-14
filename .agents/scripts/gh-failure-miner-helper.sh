@@ -283,8 +283,19 @@ extract_failed_events_json() {
 		local checks_json
 		checks_json=$(gh api "repos/${repo_slug}/commits/${head_sha}/check-runs?per_page=100" 2>/dev/null || printf '{"check_runs":[]}')
 
+		# Filter check runs for failures. Two-pass approach:
+		# 1. Hard failures (failure, cancelled, timed_out, startup_failure) — always collected
+		# 2. action_required — only from GitHub Actions runs. External apps (Codacy, SonarCloud)
+		#    use action_required to mean "issues found for developer review", which is informational
+		#    not a CI failure. Including these creates false systemic clusters (GH#4696).
 		local failed_runs_json
-		failed_runs_json=$(printf '%s\n' "$checks_json" | jq '[.check_runs[] | select((.conclusion // "" | ascii_downcase) as $c | ["failure","cancelled","timed_out","action_required","startup_failure"] | index($c))]')
+		failed_runs_json=$(printf '%s\n' "$checks_json" | jq '[.check_runs[] | select(
+			((.conclusion // "" | ascii_downcase) as $c |
+				["failure","cancelled","timed_out","startup_failure"] | index($c))
+			or
+			((.conclusion // "" | ascii_downcase) == "action_required"
+				and (.app.slug // "" | ascii_downcase) == "github-actions")
+		)]')
 
 		local failed_count
 		failed_count=$(printf '%s\n' "$failed_runs_json" | jq 'length')
@@ -306,10 +317,20 @@ extract_failed_events_json() {
 			local run_id
 			run_id=$(parse_run_id_from_details_url "$details_url")
 
-			local signature="not_collected"
-			if [[ "$include_logs" == "true" ]] && [[ -n "$run_id" ]] && [[ "$run_logs_checked" -lt "$max_run_logs" ]]; then
+			# For non-GitHub-Actions check runs (e.g., Codacy, SonarCloud), the details_url
+			# points to the external app, not a GH Actions run — so run_id is empty and logs
+			# can't be extracted. Use the conclusion as the signature instead of "not_collected"
+			# to produce meaningful cluster grouping (GH#4696).
+			local signature
+			if [[ -z "$run_id" ]]; then
+				local app_name
+				app_name=$(printf '%s\n' "$run_json" | jq -r '.app.name // "external"')
+				signature="${conclusion}:${app_name}"
+			elif [[ "$include_logs" == "true" ]] && [[ "$run_logs_checked" -lt "$max_run_logs" ]]; then
 				signature=$(extract_failure_signature "$repo_slug" "$run_id")
 				run_logs_checked=$((run_logs_checked + 1))
+			else
+				signature="not_collected"
 			fi
 
 			jq -n \
