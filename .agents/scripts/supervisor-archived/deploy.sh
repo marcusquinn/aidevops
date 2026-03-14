@@ -2328,9 +2328,9 @@ _resolve_rebase_loop() {
 }
 
 #######################################
-# Rebase a single PR branch onto updated main (t225, t302, t1048)
+# Rebase a single PR branch onto the PR's base ref (or 'main' if absent).
 # Used after merging a sibling's PR to prevent cascading conflicts.
-# Operates on the worktree if available, otherwise creates a temp worktree.
+# Prefers using an existing worktree; creates a temporary worktree only when necessary.
 # On conflict, uses escalating resolution via _resolve_rebase_loop (AI CLI).
 # Detects AI-completed rebases via rebase-merge/rebase-apply directory checks
 # to avoid "fatal: no rebase in progress" on git rebase --continue.
