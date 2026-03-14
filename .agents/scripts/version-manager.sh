@@ -686,9 +686,9 @@ validate_version_consistency() {
 
 	print_info "Validating version consistency across files..."
 
-	if [[ -x "$validator_script" ]]; then
+	if [[ -f "$validator_script" ]]; then
 		# Use the standalone validator (single source of truth)
-		"$validator_script" "$expected_version"
+		bash "$validator_script" "$expected_version"
 		return $?
 	else
 		# Fallback: basic validation if standalone script not found
@@ -719,7 +719,6 @@ validate_version_consistency() {
 			return 1
 		fi
 	fi
-	return 0
 }
 
 # Function to update version in files
