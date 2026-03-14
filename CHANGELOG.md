@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.172.27] - 2026-03-14
+
+### Added
+
+- enforce finding-to-task conversion for all multi-finding reports (#4593)
+
+### Changed
+
+- Maintenance: mark t1481 complete (pr:#4596 completed:2026-03-14) [skip ci]
+
+### Fixed
+
+- replace bash 4.2+ associative arrays with portable grep in worktree cleanup (#4592)
+- use idiomatic parse_pr_url guard in state transition check (#4591)
+
 ## [2.172.22] - 2026-03-13
 
 ### Changed
