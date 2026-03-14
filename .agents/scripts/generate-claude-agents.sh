@@ -304,7 +304,7 @@ Show In Progress tasks, top 5 Backlog, and Active Plans with progress.'
 # --- Onboarding ---
 write_command "onboarding" \
 	"Interactive onboarding wizard - discover services, configure integrations" \
-	'Read ~/.aidevops/agents/aidevops/onboarding.md and follow its Welcome Flow instructions to guide the user through setup. Do NOT repeat these instructions — go straight to the Welcome Flow conversation.
+	'Read ${AIDEVOPS_HOME:-$HOME/.aidevops}/agents/onboarding.md and follow its Welcome Flow instructions to guide the user through setup. Do NOT repeat these instructions — go straight to the Welcome Flow conversation.
 
 Arguments: $ARGUMENTS'
 
