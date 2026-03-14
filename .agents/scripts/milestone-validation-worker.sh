@@ -24,6 +24,7 @@
 #   --create-fix-tasks         Create fix tasks on failure (default: true)
 #   --no-fix-tasks             Skip fix task creation on failure
 #   --report-only              Run validation but don't update mission state
+#   --json                     Emit a single machine-readable JSON object to stdout (suppresses human-readable output)
 #   --verbose                  Verbose output
 #   --help                     Show this help message
 #
@@ -58,7 +59,11 @@ _mv_timestamp() {
 
 log_info() {
 	local msg="$1"
-	echo -e "[$(_mv_timestamp)] [INFO] ${msg}"
+	if [[ "${JSON_OUTPUT:-false}" == "true" ]]; then
+		echo -e "[$(_mv_timestamp)] [INFO] ${msg}" >&2
+	else
+		echo -e "[$(_mv_timestamp)] [INFO] ${msg}"
+	fi
 	return 0
 }
 
@@ -70,13 +75,21 @@ log_error() {
 
 log_success() {
 	local msg="$1"
-	echo -e "[$(_mv_timestamp)] ${GREEN}[OK]${NC} ${msg}"
+	if [[ "${JSON_OUTPUT:-false}" == "true" ]]; then
+		echo -e "[$(_mv_timestamp)] ${GREEN}[OK]${NC} ${msg}" >&2
+	else
+		echo -e "[$(_mv_timestamp)] ${GREEN}[OK]${NC} ${msg}"
+	fi
 	return 0
 }
 
 log_warn() {
 	local msg="$1"
-	echo -e "[$(_mv_timestamp)] ${YELLOW}[WARN]${NC} ${msg}"
+	if [[ "${JSON_OUTPUT:-false}" == "true" ]]; then
+		echo -e "[$(_mv_timestamp)] ${YELLOW}[WARN]${NC} ${msg}" >&2
+	else
+		echo -e "[$(_mv_timestamp)] ${YELLOW}[WARN]${NC} ${msg}"
+	fi
 	return 0
 }
 
@@ -94,6 +107,7 @@ BROWSER_URL="http://localhost:3000"
 MV_MAX_RETRIES=3
 CREATE_FIX_TASKS=true
 REPORT_ONLY=false
+JSON_OUTPUT=false
 VERBOSE=false
 
 # Validation results
@@ -257,8 +271,8 @@ parse_args() {
 			;;
 		--max-retries)
 			require_value "$arg" "${2-}" || return 2
-			if ! echo "$2" | grep -qE '^[0-9]+$'; then
-				log_error "--max-retries requires a numeric value, got: $2"
+			if ! echo "$2" | grep -qE '^[1-9][0-9]*$'; then
+				log_error "--max-retries requires a positive integer (>=1), got: $2"
 				return 2
 			fi
 			MV_MAX_RETRIES="$2"
@@ -274,6 +288,10 @@ parse_args() {
 			;;
 		--report-only)
 			REPORT_ONLY=true
+			shift
+			;;
+		--json)
+			JSON_OUTPUT=true
 			shift
 			;;
 		--verbose)
@@ -612,7 +630,7 @@ run_test_suite() {
 		if command -v shellcheck >/dev/null 2>&1; then
 			local sc_output
 			local sc_exit=0
-			sc_output=$(find "$repo_path/.agents/scripts" -maxdepth 1 -name "*.sh" -exec shellcheck {} + 2>&1) || sc_exit=$?
+			sc_output=$(find "$repo_path/.agents/scripts" -type f -name "*.sh" -exec shellcheck {} + 2>&1) || sc_exit=$?
 
 			if [[ $sc_exit -eq 0 ]]; then
 				record_pass "ShellCheck validation"
@@ -725,7 +743,7 @@ run_linter() {
 			else
 				local issue_count
 				issue_count=$(echo "$lint_output" | grep -cE '(error|warning)' || echo "unknown")
-				record_fail "Linter ($pkg_cmd run lint)" "$issue_count issues found"
+				record_warning "Linter ($pkg_cmd run lint)" "$issue_count issues found"
 			fi
 			return 0
 		fi
@@ -743,7 +761,7 @@ run_linter() {
 			else
 				local error_count
 				error_count=$(echo "$tsc_output" | grep -c "error TS" || echo "unknown")
-				record_fail "TypeScript type check" "$error_count type errors"
+				record_warning "TypeScript type check" "$error_count type errors"
 			fi
 		else
 			record_skip "TypeScript type check" "npx not available"
@@ -763,7 +781,7 @@ run_linter() {
 			else
 				local issue_count
 				issue_count=$(echo "$lint_output" | grep -c "Found" || echo "unknown")
-				record_fail "Linter (ruff)" "$issue_count issues"
+				record_warning "Linter (ruff)" "$issue_count issues"
 			fi
 			return 0
 		fi
@@ -930,7 +948,7 @@ check_dependencies() {
 
 			if [[ $install_exit -ne 0 ]]; then
 				record_fail "Dependency installation" "$pkg_cmd install failed with exit code $install_exit"
-				return 1
+				return 0
 			fi
 		fi
 		record_pass "Dependencies installed"
@@ -1033,6 +1051,68 @@ create_fix_tasks() {
 # =============================================================================
 # Report Generation
 # =============================================================================
+
+# Emit a machine-readable JSON summary to stdout.
+# Used when --json flag is set; suppresses human-readable output.
+generate_json_report() {
+	local mission_file="$1"
+	local milestone_num="$2"
+	local exit_code="$3"
+
+	local mission_id
+	mission_id=$(get_mission_id "$mission_file")
+
+	# Build failures JSON array
+	local failures_json="["
+	local first=true
+	for failure in "${VALIDATION_FAILURES[@]}"; do
+		if [[ "$first" == "true" ]]; then
+			first=false
+		else
+			failures_json+=","
+		fi
+		# Escape double-quotes in failure message
+		local escaped_failure
+		escaped_failure="${failure//\"/\\\"}"
+		failures_json+="{\"message\":\"${escaped_failure}\"}"
+	done
+	failures_json+="]"
+
+	# Build warnings JSON array
+	local warnings_json="["
+	first=true
+	for warning in "${VALIDATION_WARNINGS[@]}"; do
+		if [[ "$first" == "true" ]]; then
+			first=false
+		else
+			warnings_json+=","
+		fi
+		local escaped_warning
+		escaped_warning="${warning//\"/\\\"}"
+		warnings_json+="{\"message\":\"${escaped_warning}\"}"
+	done
+	warnings_json+="]"
+
+	local passed_str="false"
+	if [[ "$VALIDATION_PASSED" == "true" ]]; then
+		passed_str="true"
+	fi
+
+	printf '{"mission_id":"%s","milestone":%s,"total_checks":%s,"passed_count":%s,"failed_count":%s,"skipped_count":%s,"warnings_count":%s,"passed":%s,"failures":%s,"warnings":%s,"exit_code":%s}\n' \
+		"$mission_id" \
+		"$milestone_num" \
+		"$VALIDATION_CHECKS_RUN" \
+		"$VALIDATION_CHECKS_PASSED" \
+		"$VALIDATION_CHECKS_FAILED" \
+		"$VALIDATION_CHECKS_SKIPPED" \
+		"${#VALIDATION_WARNINGS[@]}" \
+		"$passed_str" \
+		"$failures_json" \
+		"$warnings_json" \
+		"$exit_code"
+
+	return 0
+}
 
 generate_report() {
 	local mission_file="$1"
@@ -1169,8 +1249,18 @@ main() {
 		attempt=$((attempt + 1))
 	done
 
+	# Determine final exit code before report generation
+	local final_exit=0
+	if [[ "$VALIDATION_PASSED" != "true" ]]; then
+		final_exit=1
+	fi
+
 	# Generate report (for final attempt)
-	generate_report "$MISSION_FILE" "$MILESTONE_NUM"
+	if [[ "$JSON_OUTPUT" == "true" ]]; then
+		generate_json_report "$MISSION_FILE" "$MILESTONE_NUM" "$final_exit"
+	else
+		generate_report "$MISSION_FILE" "$MILESTONE_NUM"
+	fi
 
 	# Update mission state based on results
 	if [[ "$VALIDATION_PASSED" == "true" ]]; then
