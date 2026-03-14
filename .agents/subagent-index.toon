@@ -85,7 +85,7 @@ tools/database/,Embedded database - PGlite local-first Postgres for desktop and 
 tools/database/,Vector search decision guide - zvec pgvector Vectorize comparison and per-tenant RAG patterns,vector-search
 tools/database/vector-search/,In-process vector database - Zvec embedded similarity search hybrid dense+sparse RAG,zvec
 services/document-processing/,Document processing - LLM-powered extraction,unstract
-tools/research/,Tech stack research - frontend technology detection providers,providers/unbuilt
+tools/research/,Tech stack research - frontend technology detection providers,providers/crft-lookup|openexplorer|wappalyzer
 tools/research/,Tech stack research - open-source technology explorer provider,providers/openexplorer
 tools/research/,Tech stack research - Wappalyzer OSS technology detection provider,providers/wappalyzer
 -->

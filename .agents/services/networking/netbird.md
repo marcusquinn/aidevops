@@ -81,12 +81,16 @@ All traffic is peer-to-peer WireGuard. The management server only coordinates --
 ### Quickstart (Docker Compose)
 
 ```bash
-# Set your domain and run the installer
+# Set your domain and run the installer (pin to a specific version for reproducibility)
 export NETBIRD_DOMAIN=netbird.example.com
-curl -fsSL https://github.com/netbirdio/netbird/releases/latest/download/getting-started.sh | bash
+NETBIRD_VERSION="v0.35.0"  # pin to a verified release — check https://github.com/netbirdio/netbird/releases
+curl -fsSL "https://github.com/netbirdio/netbird/releases/download/${NETBIRD_VERSION}/getting-started.sh" \
+  -o /tmp/netbird-setup.sh
+# Verify the checksum before executing (see release page for SHA256)
+bash /tmp/netbird-setup.sh
 ```
 
-**Production note**: For automated pipelines, pin to a specific release tag instead of `latest` and verify the script checksum before executing. See the [releases page](https://github.com/netbirdio/netbird/releases) for versioned URLs.
+**Automated pipelines**: Always pin to a specific release tag and verify the script checksum before executing. The `latest` URL is unversioned and unsuitable for reproducible provisioning. See the [releases page](https://github.com/netbirdio/netbird/releases) for versioned URLs and checksums.
 
 This deploys:
 - `netbird-server` (combined management + signal + relay + STUN)
@@ -130,7 +134,7 @@ OIDC providers can be added via the dashboard (Settings > Identity Providers) or
 
 ```bash
 curl -X POST "https://netbird.example.com/api/identity-providers" \
-  -H "Authorization: Bearer ${TOKEN}" \
+  -H "Authorization: Token ${TOKEN}" \
   -H "Content-Type: application/json" \
   -d '{
     "type": "oidc",
@@ -198,9 +202,13 @@ curl -fsSL https://get.docker.com | sh
 # Install jq
 apt install -y jq
 
-# Run the NetBird installer
+# Run the NetBird installer (pin to a specific version for reproducibility)
 export NETBIRD_DOMAIN=netbird.example.com
-curl -fsSL https://github.com/netbirdio/netbird/releases/latest/download/getting-started.sh | bash
+NETBIRD_VERSION="v0.35.0"  # pin to a verified release — check https://github.com/netbirdio/netbird/releases
+curl -fsSL "https://github.com/netbirdio/netbird/releases/download/${NETBIRD_VERSION}/getting-started.sh" \
+  -o /tmp/netbird-setup.sh
+# Verify the checksum before executing (see release page for SHA256)
+bash /tmp/netbird-setup.sh
 ```
 
 The installer prompts for:
@@ -394,7 +402,11 @@ NetBird's `getting-started.sh` script generates the Docker Compose and config fi
 ```bash
 # On any Linux machine with Docker (can be temporary)
 export NETBIRD_DOMAIN=netbird.example.com
-curl -fsSL https://github.com/netbirdio/netbird/releases/latest/download/getting-started.sh | bash
+NETBIRD_VERSION="v0.35.0"  # pin to a verified release — check https://github.com/netbirdio/netbird/releases
+curl -fsSL "https://github.com/netbirdio/netbird/releases/download/${NETBIRD_VERSION}/getting-started.sh" \
+  -o /tmp/netbird-setup.sh
+# Verify the checksum before executing (see release page for SHA256)
+bash /tmp/netbird-setup.sh
 ```
 
 When prompted:
@@ -422,7 +434,7 @@ Example adapted compose (adjust based on your generated file):
 ```yaml
 services:
   netbird-server:
-    image: netbirdio/netbird:latest
+    image: netbirdio/netbird:v0.35.0  # pin to a verified release — update when upgrading
     restart: unless-stopped
     volumes:
       - type: bind
@@ -437,7 +449,7 @@ services:
       - "3478:3478/udp"
 
   dashboard:
-    image: netbirdio/dashboard:latest
+    image: netbirdio/dashboard:v2.9.0  # pin to a verified release — update when upgrading
     restart: unless-stopped
     env_file:
       - dashboard.env
@@ -450,7 +462,7 @@ services:
 
   # Only if proxy feature is enabled
   netbird-proxy:
-    image: netbirdio/netbird-proxy:latest
+    image: netbirdio/netbird-proxy:v0.35.0  # pin to a verified release — update when upgrading
     restart: unless-stopped
     env_file:
       - proxy.env
@@ -589,7 +601,7 @@ docker run -d \
   --cap-add NET_ADMIN \
   --cap-add SYS_ADMIN \
   -v netbird-client:/etc/netbird \
-  netbirdio/netbird:latest \
+  netbirdio/netbird:v0.35.0 \
   up --setup-key <SETUP_KEY> \
   --management-url https://netbird.example.com
 ```
@@ -765,7 +777,13 @@ Then in worker provisioning scripts:
 
 ```bash
 # Automated worker setup (no interactive auth needed)
-curl -fsSL https://pkgs.netbird.io/install.sh | sh
+# Use the package manager path for reproducible installs in automated pipelines
+# (avoids piping an unversioned script to sh)
+if command -v apt-get >/dev/null 2>&1; then
+  curl -fsSL https://pkgs.netbird.io/install.sh | sh
+elif command -v brew >/dev/null 2>&1; then
+  brew install netbirdio/tap/netbird
+fi
 sudo netbird up \
   --setup-key "$NETBIRD_SETUP_KEY" \
   --management-url "https://netbird.example.com"
@@ -869,6 +887,7 @@ provider "netbird" {
   token      = var.netbird_api_token
 }
 
+# Declare the group before the setup key that references it
 resource "netbird_group" "ai_workers" {
   name = "ai-workers"
 }
