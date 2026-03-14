@@ -118,7 +118,7 @@ DISPLAY_NAMES = {
 # Note: Build+ is now the single unified coding agent (Plan+ and AI-DevOps consolidated)
 # Plan+ removed: planning workflow merged into Build+ with intent detection
 # AI-DevOps removed: framework operations accessible via @aidevops subagent
-AGENT_ORDER = ["Build+"]
+AGENT_ORDER = ["Build+", "Automate"]
 
 # Files to skip (not primary agents - includes demoted agents)
 # plan-plus.md and aidevops.md are now subagents, not primary agents
@@ -178,6 +178,14 @@ AGENT_TOOLS = {
         "read": True, "webfetch": True, "bash": True,
         "openapi-search_*": True
     },
+    "Automate": {
+        # Automation/orchestration agent — dispatch, merge, monitor, schedule
+        # Needs bash for dispatch commands and process management
+        # Needs read/glob/grep for state files and configs
+        # Does NOT need write/edit — dispatches workers who modify code
+        "bash": True, "read": True, "glob": True, "grep": True,
+        "task": True, "todoread": True, "todowrite": True
+    },
 }
 
 # Default tools for agents not in AGENT_TOOLS
@@ -199,6 +207,7 @@ DEFAULT_TOOLS = {
 # Temperature settings (by display name, default 0.2)
 AGENT_TEMPS = {
     "Build+": 0.2,
+    "Automate": 0.1,
     "Accounts": 0.1,
     "Legal": 0.1,
     "Content": 0.3,

@@ -1,5 +1,6 @@
-<!--TOON:agents[12]{name,file,purpose,model_tier}:
+<!--TOON:agents[13]{name,file,purpose,model_tier}:
 Build+,build-plus.md,Enhanced Build with context tools,opus
+Automate,automate.md,Scheduling dispatch monitoring and background orchestration,sonnet
 Accounts,accounts.md,Financial operations,opus
 Business,business.md,Company orchestration - AI agents managing company functions via runners,sonnet
 Content,content.md,Content creation workflows,opus

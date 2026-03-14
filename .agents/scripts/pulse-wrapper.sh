@@ -1500,7 +1500,7 @@ gathered by pulse-wrapper.sh BEFORE this session started."
 	# Run the provider-aware headless wrapper in background.
 	# It alternates direct Anthropic/OpenAI models, persists pulse sessions per
 	# provider, and avoids opencode/* gateway models for headless runs.
-	local -a pulse_cmd=("$HEADLESS_RUNTIME_HELPER" run --role pulse --session-key supervisor-pulse --dir "$PULSE_DIR" --title "Supervisor Pulse" --prompt "$prompt")
+	local -a pulse_cmd=("$HEADLESS_RUNTIME_HELPER" run --role pulse --session-key supervisor-pulse --dir "$PULSE_DIR" --title "Supervisor Pulse" --agent Automate --prompt "$prompt")
 	if [[ -n "$PULSE_MODEL" ]]; then
 		pulse_cmd+=(--model "$PULSE_MODEL")
 	fi

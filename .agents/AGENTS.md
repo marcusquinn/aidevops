@@ -99,6 +99,7 @@ Not every task is code. The framework has multiple primary agents, each with dom
 | Agent | Use for |
 |-------|---------|
 | Build+ | Code: features, bug fixes, refactors, CI, PRs (default) |
+| Automate | Scheduling, dispatch, monitoring, background orchestration, pulse supervisor |
 | SEO | SEO audits, keyword research, GSC, schema markup |
 | Content | Blog posts, video scripts, social media, newsletters |
 | Marketing | Email campaigns, FluentCRM, landing pages |
