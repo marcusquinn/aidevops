@@ -33,6 +33,9 @@ CIRCUIT_BREAKER_THRESHOLD="${SUPERVISOR_CIRCUIT_BREAKER_THRESHOLD:-3}"
 # Validate numeric — strip non-digits, fallback to default if empty
 CIRCUIT_BREAKER_THRESHOLD="${CIRCUIT_BREAKER_THRESHOLD//[!0-9]/}"
 [[ -n "$CIRCUIT_BREAKER_THRESHOLD" ]] || CIRCUIT_BREAKER_THRESHOLD=3
+if [[ "$CIRCUIT_BREAKER_THRESHOLD" -le 0 ]]; then
+	CIRCUIT_BREAKER_THRESHOLD=3
+fi
 
 # Auto-reset cooldown in seconds (default: 30 minutes)
 CIRCUIT_BREAKER_COOLDOWN_SECS="${SUPERVISOR_CIRCUIT_BREAKER_COOLDOWN_SECS:-1800}"
@@ -59,7 +62,7 @@ NC='\033[0m'
 
 _cb_state_dir() {
 	local dir="${SUPERVISOR_DIR:-${HOME}/.aidevops/.agent-workspace/supervisor}"
-	mkdir -p "$dir" 2>/dev/null || true
+	mkdir -p "$dir" || true
 	echo "$dir"
 	return 0
 }
@@ -73,6 +76,19 @@ _cb_state_file() {
 # LOCK WRAPPER — serialise read-modify-write sequences
 # ============================================================
 
+CB_ACTIVE_LOCK_DIR=""
+
+_cb_cleanup_active_lock() {
+	local lock_dir="$CB_ACTIVE_LOCK_DIR"
+	if [[ -n "$lock_dir" && -d "$lock_dir" ]]; then
+		rmdir "$lock_dir" 2>/dev/null || true
+	fi
+	CB_ACTIVE_LOCK_DIR=""
+	return 0
+}
+
+trap _cb_cleanup_active_lock EXIT
+
 _cb_with_state_lock() {
 	local lock_dir
 	lock_dir="$(_cb_state_file).lock"
@@ -85,11 +101,17 @@ _cb_with_state_lock() {
 			return 1
 		fi
 	done
-	# Trap ensures lock cleanup even if "$@" fails under set -e
-	# shellcheck disable=SC2064
-	trap "rmdir '$lock_dir' 2>/dev/null || true" RETURN
-	"$@"
-	local rc=$?
+	CB_ACTIVE_LOCK_DIR="$lock_dir"
+	local rc=0
+	if "$@"; then
+		rc=0
+	else
+		rc=$?
+	fi
+	if [[ "$CB_ACTIVE_LOCK_DIR" == "$lock_dir" ]]; then
+		rmdir "$lock_dir" 2>/dev/null || true
+		CB_ACTIVE_LOCK_DIR=""
+	fi
 	return "$rc"
 }
 
@@ -325,8 +347,11 @@ cmd_check() {
 
 		if [[ "$elapsed" -ge "$CIRCUIT_BREAKER_COOLDOWN_SECS" ]]; then
 			_cb_log_info "auto-reset after ${elapsed}s cooldown (threshold: ${CIRCUIT_BREAKER_COOLDOWN_SECS}s)"
-			cmd_reset "auto_cooldown"
-			return 0
+			if cmd_reset "auto_cooldown"; then
+				return 0
+			fi
+			_cb_log_warn "auto-reset failed; keeping breaker open"
+			return 1
 		fi
 
 		local remaining=$((CIRCUIT_BREAKER_COOLDOWN_SECS - elapsed))
@@ -547,7 +572,7 @@ Supervisor dispatch is **paused**. No new tasks will be dispatched until the cir
 			--repo "$repo_slug" \
 			--description "Supervisor circuit breaker tripped — dispatch paused" \
 			--color "D93F0B" \
-			--force 2>/dev/null || true
+			--force || true
 
 		local issue_url
 		issue_url=$(gh issue create \

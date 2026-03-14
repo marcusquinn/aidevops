@@ -345,6 +345,30 @@ test_configurable_threshold() {
 	return 0
 }
 
+test_zero_threshold_falls_back_to_default() {
+	setup
+	export SUPERVISOR_CIRCUIT_BREAKER_THRESHOLD=0
+	"$HELPER" record-failure "t001" "f1" 2>/dev/null || true
+	"$HELPER" record-failure "t002" "f2" 2>/dev/null || true
+	local rc=0
+	"$HELPER" check 2>/dev/null || rc=$?
+	if [[ "$rc" -eq 0 ]]; then
+		print_result "zero threshold falls back to default (2/3 does not trip)" 0
+	else
+		print_result "zero threshold falls back to default (2/3 does not trip)" 1 "Expected exit 0, got: $rc"
+	fi
+	"$HELPER" record-failure "t003" "f3" 2>/dev/null || true
+	rc=0
+	"$HELPER" check 2>/dev/null || rc=$?
+	if [[ "$rc" -eq 1 ]]; then
+		print_result "zero threshold fallback trips at 3/3" 0
+	else
+		print_result "zero threshold fallback trips at 3/3" 1 "Expected exit 1, got: $rc"
+	fi
+	teardown
+	return 0
+}
+
 test_status_shows_failure_details() {
 	setup
 	"$HELPER" record-failure "t042" "API rate limit exceeded" 2>/dev/null || true
@@ -438,6 +462,7 @@ main() {
 	test_manual_trip
 	test_auto_reset_after_cooldown
 	test_configurable_threshold
+	test_zero_threshold_falls_back_to_default
 	test_status_shows_failure_details
 	test_state_file_created
 	test_unknown_command_fails
