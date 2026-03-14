@@ -140,8 +140,10 @@ The remote dispatch system forwards credentials to remote workers:
 **Security notes**:
 
 - SSH agent forwarding (`-A`) passes the local SSH agent socket, not the keys themselves
-- API keys are passed as environment variables to the remote command
-- Keys are NOT written to disk on the remote host
+- API keys are embedded as `export KEY=VALUE` lines in a shell script uploaded via SSH stdin piping — this does NOT rely on `AcceptEnv`/`SendEnv` SSH config, so env propagation cannot silently fail due to SSH server settings
+- Keys are NOT written to disk on the remote host as standalone files; they exist only within the generated dispatch script in the remote workspace
+- On Linux, environment variables of a running process are readable from `/proc/<pid>/environ` by the same user and by root — keys are not on disk but can still be read by processes with appropriate privileges while the worker is running
+- For security-conscious deployments, consider restricting remote host access to trusted users only, or use short-lived credentials (e.g., scoped tokens) that can be rotated after the task completes
 - The remote workspace is cleaned up after task completion
 
 ## Log Collection
@@ -256,10 +258,13 @@ tailscale ping hostname
 The remote host needs `opencode` or `claude` CLI installed. Install via:
 
 ```bash
-# On the remote host
-npm install -g @anthropic-ai/claude-code
+# opencode (preferred)
+npm install -g opencode-ai
 # or
 curl -fsSL https://opencode.ai/install | bash
+
+# claude CLI (alternative)
+npm install -g @anthropic-ai/claude-code
 ```
 
 ### Logs Not Collected
