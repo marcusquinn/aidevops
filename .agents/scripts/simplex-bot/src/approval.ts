@@ -230,11 +230,29 @@ export class ApprovalManager {
  * Execute a shell command and return the output.
  * Used after approval is granted.
  * Enforces a per-command timeout to prevent runaway processes.
+ *
+ * Security note — intentional use of `sh -c`:
+ * This bot's core purpose is to execute arbitrary approved shell commands
+ * (including pipes, redirects, compound expressions, and shell builtins).
+ * Array-based argument passing (e.g. `Bun.spawn([...args])`) cannot support
+ * this use case because it bypasses shell interpretation entirely.
+ *
+ * The security boundary is the three-tier approval flow in `ApprovalManager`:
+ *   1. Blocklist — patterns like `rm -rf`, `shutdown`, `dd` are always rejected.
+ *   2. Allowlist — safe read-only commands execute immediately.
+ *   3. Approval-required — everything else requires explicit human approval
+ *      via `/approve <id>` before execution.
+ *
+ * Commands only reach this function after passing classification AND receiving
+ * explicit approval. The `sh -c` pattern is therefore a deliberate design
+ * choice, not a vulnerability. See t1327.10 exec approval flow specification
+ * and the dismissal rationale in GH#3283.
  */
 export async function executeShellCommand(
   command: string,
   timeoutMs: number = 30_000,
 ): Promise<{ exitCode: number; stdout: string; stderr: string }> {
+  // sh -c is intentional — see JSDoc above for security rationale
   const proc = Bun.spawn(["sh", "-c", command], {
     stdout: "pipe",
     stderr: "pipe",
