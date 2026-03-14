@@ -123,17 +123,17 @@ get_all_bot_commenters() {
 	# 1. PR reviews (formal GitHub reviews)
 	local reviews
 	reviews=$(gh api "repos/${repo}/pulls/${pr_number}/reviews" \
-		--paginate --jq '.[].user.login' 2>/dev/null || echo "")
+		--paginate --jq '.[].user.login' || echo "")
 
 	# 2. Issue comments (some bots post as comments, not reviews)
 	local comments
 	comments=$(gh api "repos/${repo}/issues/${pr_number}/comments" \
-		--paginate --jq '.[].user.login' 2>/dev/null || echo "")
+		--paginate --jq '.[].user.login' || echo "")
 
 	# 3. Review comments (inline code comments)
 	local review_comments
 	review_comments=$(gh api "repos/${repo}/pulls/${pr_number}/comments" \
-		--paginate --jq '.[].user.login' 2>/dev/null || echo "")
+		--paginate --jq '.[].user.login' || echo "")
 
 	# Combine, deduplicate, lowercase
 	echo -e "${reviews}\n${comments}\n${review_comments}" |
@@ -174,7 +174,7 @@ bot_has_real_review() {
 
 	local endpoint encoded_bodies body
 	for endpoint in "${api_endpoints[@]}"; do
-		encoded_bodies=$(gh api "$endpoint" --paginate --jq "$jq_filter" 2>/dev/null || echo "")
+		encoded_bodies=$(gh api "$endpoint" --paginate --jq "$jq_filter" || echo "")
 		if [[ -n "$encoded_bodies" ]]; then
 			while IFS= read -r encoded; do
 				[[ -z "$encoded" ]] && continue
@@ -257,7 +257,7 @@ check_for_skip_label() {
 
 	local labels
 	labels=$(gh pr view "$pr_number" --repo "$repo" \
-		--json labels -q '.labels[].name' 2>/dev/null || echo "")
+		--json labels -q '.labels[].name' || echo "")
 
 	if echo "$labels" | grep -q "$SKIP_LABEL"; then
 		return 0
@@ -358,11 +358,22 @@ do_wait() {
 	local poll_interval="${REVIEW_BOT_POLL_INTERVAL:-60}"
 	local elapsed=0
 
+	# Validate that max_wait and poll_interval are positive integers to prevent
+	# command injection via arithmetic expansion (GH#3223).
+	if ! [[ "$max_wait" =~ ^[0-9]+$ ]]; then
+		echo "ERROR: max_wait must be a non-negative integer, got: '${max_wait}'" >&2
+		return 2
+	fi
+	if ! [[ "$poll_interval" =~ ^[0-9]+$ ]]; then
+		echo "ERROR: poll_interval must be a non-negative integer, got: '${poll_interval}'" >&2
+		return 2
+	fi
+
 	echo "Waiting up to ${max_wait}s for review bots on PR #${pr_number}..." >&2
 
 	while [[ "$elapsed" -lt "$max_wait" ]]; do
 		local result
-		result=$(do_check "$pr_number" "$repo" 2>/dev/null) || true
+		result=$(do_check "$pr_number" "$repo") || true
 
 		if [[ "$result" == "PASS" || "$result" == "PASS_RATE_LIMITED" || "$result" == "SKIP" ]]; then
 			echo "$result"
@@ -424,7 +435,7 @@ has_formal_reviews() {
 
 	local count
 	count=$(gh pr view "$pr_number" --repo "$repo" \
-		--json reviews --jq '.reviews | length' 2>/dev/null || echo "0")
+		--json reviews --jq '.reviews | length' || echo "0")
 	if [[ "$count" -gt 0 ]]; then
 		return 0
 	fi
@@ -440,7 +451,7 @@ has_retry_comment() {
 	local marker="<!-- review-bot-retry-requested -->"
 	local comments
 	comments=$(gh api "repos/${repo}/issues/${pr_number}/comments" \
-		--paginate --jq '.[].body' 2>/dev/null || echo "")
+		--paginate --jq '.[].body' || echo "")
 	if echo "$comments" | grep -qF "$marker"; then
 		return 0
 	fi
