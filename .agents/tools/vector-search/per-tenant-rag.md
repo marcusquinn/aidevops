@@ -546,7 +546,7 @@ async function rerankWithCrossEncoder(
 function reciprocalRankFusion(
   denseResults: ScoredChunk[],
   sparseResults: ScoredChunk[],
-  alpha: number = 0.7,
+  alpha: number,
   k: number = 60,
 ): ScoredChunk[] {
   const scores = new Map<string, number>();
@@ -606,15 +606,19 @@ function assembleContext(
   const includedChunks: string[] = [];
 
   for (const chunk of chunks) {
-    const chunkTokens = countTokens(chunk.content);
-    if (chunkTokens > budget) break;
-
     const attribution = config.includeAttribution
-      ? `[Source: ${chunk.metadata.sourceFile}, p.${chunk.metadata.pageNumber ?? '?'}]`
+      ? `\n[Source: ${chunk.metadata.sourceFile}, p.${chunk.metadata.pageNumber ?? '?'}]`
       : '';
+    const contentToPush = chunk.content + attribution;
 
-    includedChunks.push(`${chunk.content}\n${attribution}`);
-    budget -= chunkTokens;
+    const contentTokens = countTokens(contentToPush);
+    const separatorTokens = includedChunks.length > 0 ? countTokens('\n\n---\n\n') : 0;
+    const totalTokens = contentTokens + separatorTokens;
+
+    if (totalTokens > budget) break;
+
+    includedChunks.push(contentToPush);
+    budget -= totalTokens;
   }
 
   return [
