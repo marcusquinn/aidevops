@@ -491,9 +491,12 @@ exec /usr/bin/supervisord --configuration /app/code/supervisord.conf
 
 ## Addon Environment Variables
 
-For the full environment variable reference for all addons (mysql, postgresql, mongodb, redis, ldap, oidc, sendmail, recvmail, email, proxyauth, scheduler, tls, turn, docker) including addon-specific options, see [addons-ref.md](cloudron-app-packaging-skill/addons-ref.md).
+For the full environment variable reference for all addons (`mysql`, `postgresql`, `mongodb`, `redis`, `ldap`, `oidc`, `sendmail`, `recvmail`, `email`, `proxyauth`, `scheduler`, `tls`, `turn`, `docker`) including addon-specific options, see [addons-ref.md](cloudron-app-packaging-skill/addons-ref.md).
 
-**Key pattern**: Read env vars at runtime on every start — values can change across restarts. Run DB migrations on each start.
+**Key patterns**:
+
+- Read env vars at runtime on every start — values can change across restarts.
+- Run DB migrations on each start.
 
 ### General Variables (Always Available)
 
