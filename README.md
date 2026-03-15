@@ -1,15 +1,18 @@
 # AI DevOps Framework
 
-**[aidevops.sh](https://aidevops.sh)** — An AI operations platform for launching and managing development, business, marketing, and creative projects. 11 specialist AI agents handle the automatable work across every domain so your time is preserved for real-world discovery and decisions that AI cannot yet reach.
+**[aidevops.sh](https://aidevops.sh)** — An [OpenCode](https://opencode.ai/) plugin and AI operations platform for launching and managing development, business, marketing, and creative projects. 13 specialist AI agents handle the automatable work across every domain so your time is preserved for real-world discovery and decisions that AI cannot yet reach.
 
-*"Scope a mission to redesign the landing pages — break it into milestones, dispatch workers in parallel, validate each milestone, and track budget across the whole project"* - **One conversation, autonomous multi-day project execution.**
+> **Recommended setup:** [OpenCode](https://opencode.ai/) + [Claude](https://claude.ai/) models (Anthropic). All features, agents, and workflows are designed and tested for OpenCode first. Claude models (haiku, sonnet, opus) deliver the best results across all agent tiers.
+
+*"Scope a mission to redesign the landing pages — break it into milestones, dispatch workers in parallel, validate each milestone, and track budget across the whole project"*
+**One conversation, autonomous multi-day project execution.**
 
 ## **The Philosophy**
 
 **Maximum value for your time and money.** **[aidevops](https://aidevops.sh)** is built on these principles:
 
 - **Autonomous orchestration** - An AI supervisor runs every 2 minutes, dispatching parallel workers, merging PRs, detecting stuck processes, and advancing multi-day missions — no human babysitting required
-- **Multi-domain agents** - 11 specialist agents (code, SEO, marketing, content, legal, sales, research, video, business, accounts, health) with 780+ subagents loaded on demand
+- **Multi-domain agents** - 13 specialist agents (code, automation, SEO, marketing, content, legal, sales, research, video, business, accounts, social media, health) with 900+ subagents loaded on demand
 - **Multi-model safety** - High-stakes operations (force push, production deploy, data migration) are verified by a second cross-provider model before execution — different providers have different failure modes, so correlated hallucinations are rare
 - **Resource efficiency** - Cost-aware model routing (local → haiku → flash → sonnet → pro → opus), project-type bundles that auto-configure quality gates and model tiers, budget tracking with burn-rate analysis
 - **Self-healing** - When something breaks, diagnose the root cause, create tasks, and fix it. Every error is a live test case for a permanent solution
@@ -31,7 +34,7 @@ The result: an AI operations platform that manages projects across every busines
 **What makes it different:**
 
 - **Autonomous supervisor** - AI pulse runs every 2 minutes: merges ready PRs, dispatches workers, kills stuck processes, advances missions, triages quality findings — no human in the loop
-- **Cross-domain intelligence** - 11 agents spanning code, business, marketing, legal, sales, content, video, research, SEO, health, and accounts — each with domain expertise and specialist subagents
+- **Cross-domain intelligence** - 13 agents spanning code, automation, business, marketing, legal, sales, content, video, research, SEO, social media, health, and accounts — each with domain expertise and specialist subagents
 - **Multi-model safety** - Destructive operations verified by a second AI model from a different provider before execution
 - **30+ service integrations** - Hosting, Git platforms, DNS, security, monitoring, deployment, payments, communications
 - **Mission orchestration** - Multi-day autonomous projects broken into milestones with validation, budget tracking, and automatic advancement
@@ -99,10 +102,10 @@ The result: an AI operations platform that manages projects across every busines
 
 ### Agent Structure
 
-- 11 primary agents (Build+, SEO, Marketing, etc.) with specialist @subagents on demand
-- 780+ subagent markdown files organized by domain
-- 290+ helper scripts in `.agents/scripts/`
-- 58 slash commands for common workflows
+- 13 primary agents (Build+, Automate, SEO, Marketing, etc.) with specialist @subagents on demand
+- 900+ subagent markdown files organized by domain
+- 390+ helper scripts in `.agents/scripts/`
+- 69 slash commands for common workflows
 
 <!-- AI-CONTEXT-END -->
 
@@ -321,11 +324,12 @@ The secure workflow is included at `.github/workflows/opencode-agent.yml`.
 
 See `.agents/tools/git/opencode-github-security.md` for the full security documentation.
 
-**Supported AI Assistant:** [OpenCode](https://opencode.ai/) is the only tested and supported AI coding tool for aidevops. All features, agents, and workflows are designed and tested for OpenCode first. The claude-code CLI is used as a companion tool called from within OpenCode.
+**Supported AI tool:** [OpenCode](https://opencode.ai/) is the recommended and tested AI coding tool for aidevops. All features, agents, and workflows are designed and tested for OpenCode first. We recommend [Claude](https://claude.ai/) models (Anthropic) for the best results across all agent tiers -- haiku for triage, sonnet for implementation, opus for complex reasoning.
 
-**Recommended:**
+**Recommended stack:**
 
 - **[OpenCode](https://opencode.ai/)** - The recommended AI coding agent. Powerful agentic TUI/CLI with native MCP support, Tab-based agent switching, LSP integration, plugin ecosystem, and excellent DX. All aidevops features are designed and tested for OpenCode first.
+- **[Claude models](https://claude.ai/)** - Recommended AI models. Claude haiku, sonnet, and opus deliver the best results across all aidevops agent tiers and workflows.
 - **[Tabby](https://tabby.sh/)** - Recommended terminal. Colour-coded Profiles per project/repo, **auto-syncs tab title with git repo/branch.**
 - **[Zed](https://zed.dev/)** - Recommended editor. High-performance with AI integration (use with the OpenCode Agent Extension).
 
@@ -374,7 +378,7 @@ See `.agents/tools/terminal/terminal-title.md` for customization options.
 
 **Project Intelligence:**
 
-- **[Bundles](#project-bundles-auto-configuration)** - Project-type presets that auto-configure model tiers, quality gates, and agent routing per repo. 6 built-in bundles (web-app, library, cli-tool, content-site, infrastructure, agent) with auto-detection from marker files (`bundle-helper.sh`)
+- **[Bundles](#project-bundles-auto-configuration)** - Project-type presets that auto-configure model tiers, quality gates, and agent routing per repo. 7 built-in bundles (web-app, library, cli-tool, content-site, infrastructure, agent, schema) with auto-detection from marker files (`bundle-helper.sh`)
 - **TTSR rules** - Soft rule engine (`ttsr-rule-loader.sh`) with `.agents/rules/` directory for AI output correction (e.g., no-edit-on-main, no-glob-for-discovery)
 - **Cross-review** - `/cross-review` dispatches the same prompt to multiple AI models in parallel, diffs results, and optionally auto-scores via a judge model
 - **Local models** - Run AI models locally via llama.cpp for free, private, offline inference (`local-model-helper.sh`) with HuggingFace GGUF model management
@@ -409,7 +413,7 @@ See `.agents/tools/terminal/terminal-title.md` for customization options.
 
 - **Multi-Platform Analysis**: SonarCloud, CodeFactor, Codacy, CodeRabbit, Qlty, Gemini Code Assist, Snyk
 - **Performance Auditing**: PageSpeed Insights, Lighthouse, WebPageTest, Core Web Vitals (`/performance` command)
-- **SEO Toolchain**: 13 SEO subagents including Semrush, Ahrefs, ContentKing, Screaming Frog, Bing Webmaster Tools, Rich Results Test, programmatic SEO, analytics tracking, schema validation
+- **SEO Toolchain**: 40+ SEO subagents including Semrush, Ahrefs, ContentKing, Screaming Frog, Bing Webmaster Tools, Rich Results Test, programmatic SEO, analytics tracking, schema validation, content analysis, keyword mapping, and AI readiness
 - **SEO Debugging**: Open Graph validation, favicon checker, social preview testing
 - **Email Deliverability**: SPF/DKIM/DMARC/MX validation, blacklist checking
 - **Uptime Monitoring**: Updown.io integration for website and SSL monitoring
@@ -492,7 +496,7 @@ aidevops implements proven agent design patterns identified by [Lance Martin (La
 
 | Pattern | Description | aidevops Implementation |
 |---------|-------------|------------------------|
-| **Give Agents a Computer** | Filesystem + shell for persistent context | `~/.aidevops/.agent-workspace/`, 290+ helper scripts |
+| **Give Agents a Computer** | Filesystem + shell for persistent context | `~/.aidevops/.agent-workspace/`, 390+ helper scripts |
 | **Multi-Layer Action Space** | Few tools, push actions to computer | Per-agent MCP filtering (~12-20 tools each) |
 | **Progressive Disclosure** | Load context on-demand | Subagent routing with content summaries, YAML frontmatter, read-on-demand |
 | **Offload Context** | Write results to filesystem | `.agent-workspace/work/[project]/` for persistence |
@@ -503,7 +507,7 @@ aidevops implements proven agent design patterns identified by [Lance Martin (La
 | **Ralph Loop** | Iterative execution until complete | `/full-loop`, `full-loop-helper.sh` |
 | **Evolve Context** | Learn from sessions | `/remember`, `/recall` with SQLite FTS5 + opt-in semantic search |
 | **Pattern Tracking** | Learn what works/fails | `/patterns` command, `memory-helper.sh` |
-| **Cost-Aware Routing** | Match model to task complexity | `model-routing.md` with 5-tier guidance, `/route` command |
+| **Cost-Aware Routing** | Match model to task complexity | `model-routing.md` with 7-tier guidance, `/route` command |
 | **Model Comparison** | Compare models side-by-side | `/compare-models` (live data), `/compare-models-free` (offline) |
 | **Response Scoring** | Evaluate actual model outputs | `/score-responses` with structured criteria |
 
@@ -534,7 +538,7 @@ Supervisor (pulse loop)
 | Mailbox | `mail-helper.sh` | SQLite-backed inter-agent messaging (send, check, broadcast, archive) |
 | Supervisor | `supervisor-helper.sh` | Autonomous multi-task orchestration with SQLite state machine, batches, retry cycles, cron scheduling, auto-pickup from TODO.md |
 | Registry | `mail-helper.sh register` | Agent registration with role, branch, worktree, heartbeat |
-| Model routing | `model-routing.md`, `/route` | Cost-aware 5-tier routing guidance (haiku/flash/sonnet/pro/opus) |
+| Model routing | `model-routing.md`, `/route` | Cost-aware 7-tier routing guidance (local/haiku/flash/sonnet/pro/opus/grok) |
 | Budget tracking | `budget-tracker-helper.sh` | Append-only cost log for model routing decisions |
 | Observability | `observability.mjs` plugin | LLM request capture for cost tracking and performance analysis |
 
@@ -1580,7 +1584,7 @@ aidevops is registered as a **Claude Code plugin marketplace**. Install with two
 /plugin install aidevops@aidevops
 ```
 
-This installs the complete framework: 11 primary agents, 780+ subagents, and 290+ helper scripts.
+This installs the complete framework: 13 primary agents, 900+ subagents, and 390+ helper scripts.
 
 ### Importing External Skills
 
@@ -1646,16 +1650,18 @@ Call them in your AI assistant conversation with a simple @mention
 
 ### **Main Agents**
 
-Primary agents as registered in `subagent-index.toon` (11 total). MCPs are loaded on-demand per subagent, not per primary agent:
+Primary agents as registered in `subagent-index.toon` (13 total). MCPs are loaded on-demand per subagent, not per primary agent:
 
 | Name | File | Purpose | Model Tier |
 |------|------|---------|------------|
 | Build+ | `build-plus.md` | Enhanced Build with context tools (default agent) | opus |
+| Automate | `automate.md` | Scheduling, dispatch, monitoring, background orchestration | sonnet |
 | Accounts | `accounts.md` | Financial operations | opus |
+| Business | `business.md` | Company orchestration via AI runners | sonnet |
 | Content | `content.md` | Content creation workflows | opus |
 | Health | `health.md` | Health and wellness | opus |
 | Legal | `legal.md` | Legal compliance | opus |
-| Marketing | `marketing.md` | Marketing strategy and email campaigns | opus |
+| Marketing | `marketing.md` | Marketing strategy, email campaigns, paid ads, CRO | opus |
 | Research | `research.md` | Research and analysis tasks | gemini/grok |
 | Sales | `sales.md` | Sales operations and CRM pipeline | opus |
 | SEO | `seo.md` | SEO optimization and analysis | opus |
@@ -1666,7 +1672,7 @@ Primary agents as registered in `subagent-index.toon` (11 total). MCPs are loade
 
 ### **Example Subagents with MCP Integration**
 
-These are examples of subagents that have supporting MCPs enabled. See `.agents/` for the full list of 780+ subagents organized by domain.
+These are examples of subagents that have supporting MCPs enabled. See `.agents/` for the full list of 900+ subagents organized by domain.
 
 | Agent | Purpose | MCPs Enabled |
 |-------|---------|--------------|
@@ -2325,8 +2331,8 @@ aidevops/
 ├── AGENTS.md                      # AI agent guidance (dev)
 ├── .agents/                        # Agents and documentation
 │   ├── AGENTS.md                  # User guide (deployed to ~/.aidevops/agents/)
-│   ├── *.md                       # 11 primary agents
-│   ├── scripts/                   # 290+ helper scripts
+│   ├── *.md                       # 13 primary agents
+│   ├── scripts/                   # 390+ helper scripts
 │   ├── tools/                     # Cross-domain utilities (video, browser, git, etc.)
 │   ├── services/                  # External service integrations
 │   └── workflows/                 # Development process guides
@@ -2440,7 +2446,7 @@ See `.agents/tools/credentials/multi-tenant.md` for complete documentation.
 **For You:**
 
 - Autonomous project management — dispatch a mission and let AI agents handle milestones, validation, and delivery across days
-- Cross-domain operations — code, business, marketing, legal, sales, content, video, research, SEO, health, and accounts managed through one platform
+- Cross-domain operations — code, automation, business, marketing, legal, sales, content, video, research, SEO, social media, health, and accounts managed through one platform
 - Multi-model safety — destructive operations verified by a second AI provider before execution
 - Enterprise-grade quality — multi-platform analysis, automated security monitoring, continual improvement loops
 - Infrastructure management — 30+ service integrations with standardized commands across all providers
@@ -2449,8 +2455,8 @@ See `.agents/tools/credentials/multi-tenant.md` for complete documentation.
 
 - Autonomous supervisor — pulse runs every 2 minutes, merging PRs, dispatching workers, killing stuck processes, advancing missions
 - Operational intelligence — struggle-ratio detection, orphaned PR recovery, circuit breaker, dynamic concurrency
-- Cost-aware routing — 6-tier model selection (local → haiku → flash → sonnet → pro → opus) with budget tracking
-- Progressive context — 780+ subagents loaded on demand, project bundles auto-configuring quality gates and model tiers
+- Cost-aware routing — 7-tier model selection (local → haiku → flash → sonnet → pro → opus → grok) with budget tracking
+- Progressive context — 900+ subagents loaded on demand, project bundles auto-configuring quality gates and model tiers
 - Self-improving — session mining extracts learnings, quality findings auto-create tasks, patterns feed back into agent prompts
 
 **Get Started:**
