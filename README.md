@@ -6,7 +6,7 @@
 
 *"Scope a mission to redesign the landing pages — break it into milestones, dispatch workers in parallel, validate each milestone, and track budget across the whole project"*
 
-**One conversation, autonomous multi-day project execution.**
+**One conversation, autonomous project delivery — with enterprise-level security & quality-control.**
 
 ## **The Philosophy**
 
