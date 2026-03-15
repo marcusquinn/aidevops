@@ -70,6 +70,26 @@ die() {
 	return 1
 }
 
+require_option_value() {
+	local option_name="$1"
+	local arg_count="$2"
+	if [[ "$arg_count" -lt 2 ]]; then
+		die "${option_name} requires a value"
+		return 1
+	fi
+	return 0
+}
+
+require_positive_integer() {
+	local option_name="$1"
+	local value="$2"
+	if [[ ! "$value" =~ ^[0-9]+$ ]]; then
+		die "${option_name} must be a positive integer"
+		return 1
+	fi
+	return 0
+}
+
 require_tools() {
 	if ! command -v gh >/dev/null 2>&1; then
 		die "gh CLI is required"
@@ -196,6 +216,165 @@ resolve_repo_allowlist() {
 	return 0
 }
 
+resolve_source_from_subject() {
+	local subject_url="$1"
+	local repo_slug="$2"
+	local include_push_events="$3"
+
+	local pr_number
+	pr_number=$(printf '%s' "$subject_url" | sed -nE 's|.*/pulls/([0-9]+)$|\1|p')
+
+	if [[ -n "$pr_number" ]]; then
+		local pr_json
+		pr_json=$(gh api "repos/${repo_slug}/pulls/${pr_number}" 2>/dev/null || printf '{}')
+		local head_sha
+		head_sha=$(printf '%s\n' "$pr_json" | jq -r '.head.sha // empty')
+		printf '%s\n' "pr|#${pr_number}|https://github.com/${repo_slug}/pull/${pr_number}|${pr_number}||${head_sha}"
+		return 0
+	fi
+
+	local commit_sha
+	commit_sha=$(parse_commit_sha_from_subject_url "$subject_url")
+	if [[ "$include_push_events" != "true" ]] || [[ -z "$commit_sha" ]]; then
+		return 1
+	fi
+	printf '%s\n' "push|${commit_sha:0:12}|https://github.com/${repo_slug}/commit/${commit_sha}||${commit_sha}|${commit_sha}"
+	return 0
+}
+
+resolve_check_signature() {
+	local run_json="$1"
+	local run_id="$2"
+	local repo_slug="$3"
+	local include_logs="$4"
+	local run_logs_checked="$5"
+	local max_run_logs="$6"
+
+	# For non-GitHub-Actions check runs (e.g., Codacy, SonarCloud), the details_url
+	# points to the external app, not a GH Actions run — so run_id is empty and logs
+	# can't be extracted. Use the conclusion as the signature instead of "not_collected"
+	# to produce meaningful cluster grouping (GH#4696).
+	if [[ -z "$run_id" ]]; then
+		local app_name conclusion
+		app_name=$(printf '%s\n' "$run_json" | jq -r '.app.name // "external"')
+		conclusion=$(printf '%s\n' "$run_json" | jq -r '.conclusion // "unknown"')
+		printf '%s' "${conclusion}:${app_name}"
+		return 0
+	fi
+
+	if [[ "$include_logs" == "true" ]] && [[ "$run_logs_checked" -lt "$max_run_logs" ]]; then
+		extract_failure_signature "$repo_slug" "$run_id"
+		return 0
+	fi
+
+	printf '%s' "not_collected"
+	return 0
+}
+
+emit_event_json() {
+	local repo_slug="$1" source_kind="$2" source_ref="$3" source_url="$4"
+	local pr_number="$5" commit_sha="$6" check_name="$7" conclusion="$8"
+	local run_id="$9" html_url="${10}" details_url="${11}" completed_at="${12}"
+	local signature="${13}" notification_updated_at="${14}"
+
+	local pr_url=""
+	if [[ -n "$pr_number" ]]; then
+		pr_url="https://github.com/${repo_slug}/pull/${pr_number}"
+	fi
+
+	jq -n \
+		--arg repo "$repo_slug" \
+		--arg source_kind "$source_kind" \
+		--arg source_ref "$source_ref" \
+		--arg source_url "$source_url" \
+		--arg pr_number "$pr_number" \
+		--arg pr_url "$pr_url" \
+		--arg commit_sha "$commit_sha" \
+		--arg check_name "$check_name" \
+		--arg conclusion "$conclusion" \
+		--arg run_id "$run_id" \
+		--arg run_url "$html_url" \
+		--arg details_url "$details_url" \
+		--arg completed_at "$completed_at" \
+		--arg signature "$signature" \
+		--arg notification_updated_at "$notification_updated_at" \
+		'{
+			repo: $repo,
+			source_kind: $source_kind,
+			source_ref: $source_ref,
+			source_url: (if $source_url == "" then null else $source_url end),
+			pr_number: (if $pr_number == "" then null else ($pr_number | tonumber) end),
+			pr_url: (if $pr_url == "" then null else $pr_url end),
+			commit_sha: (if $commit_sha == "" then null else $commit_sha end),
+			check_name: $check_name,
+			conclusion: $conclusion,
+			run_id: (if $run_id == "" then null else ($run_id | tonumber) end),
+			run_url: (if $run_url == "" then null else $run_url end),
+			details_url: (if $details_url == "" then null else $details_url end),
+			completed_at: (if $completed_at == "" then null else $completed_at end),
+			signature: $signature,
+			notification_updated_at: (if $notification_updated_at == "" then null else $notification_updated_at end)
+		}'
+	return 0
+}
+
+# Filter check runs for failures. Two-pass approach:
+# 1. Hard failures (failure, cancelled, timed_out, startup_failure) — always collected
+# 2. action_required — only from GitHub Actions runs. External apps (Codacy, SonarCloud)
+#    use action_required to mean "issues found for developer review", which is informational
+#    not a CI failure. Including these creates false systemic clusters (GH#4696).
+filter_failed_check_runs() {
+	local checks_json="$1"
+	printf '%s\n' "$checks_json" | jq '[.check_runs[] | select(
+		((.conclusion // "" | ascii_downcase) as $c |
+			["failure","cancelled","timed_out","startup_failure"] | index($c))
+		or
+		((.conclusion // "" | ascii_downcase) == "action_required"
+			and (.app.slug // "" | ascii_downcase) == "github-actions")
+	)]'
+	return 0
+}
+
+process_failed_runs() {
+	local failed_runs_json="$1"
+	local repo_slug="$2" source_kind="$3" source_ref="$4" source_url="$5"
+	local pr_number="$6" commit_sha="$7" notification_updated_at="$8"
+	local include_logs="$9" run_logs_checked="${10}" max_run_logs="${11}"
+	local event_file="${12}"
+
+	local failed_count
+	failed_count=$(printf '%s\n' "$failed_runs_json" | jq "$JQ_COUNT")
+	local failed_index=0
+	while [[ "$failed_index" -lt "$failed_count" ]]; do
+		local run_json
+		run_json=$(printf '%s\n' "$failed_runs_json" | jq ".[${failed_index}]")
+
+		local check_name conclusion details_url html_url completed_at run_id
+		check_name=$(printf '%s\n' "$run_json" | jq -r '.name // "unknown-check"')
+		conclusion=$(printf '%s\n' "$run_json" | jq -r '.conclusion // "unknown"')
+		details_url=$(printf '%s\n' "$run_json" | jq -r '.details_url // empty')
+		html_url=$(printf '%s\n' "$run_json" | jq -r '.html_url // empty')
+		completed_at=$(printf '%s\n' "$run_json" | jq -r '.completed_at // empty')
+		run_id=$(parse_run_id_from_details_url "$details_url")
+
+		local signature
+		signature=$(resolve_check_signature "$run_json" "$run_id" "$repo_slug" "$include_logs" "$run_logs_checked" "$max_run_logs")
+		if [[ "$include_logs" == "true" ]] && [[ -n "$run_id" ]] && [[ "$run_logs_checked" -lt "$max_run_logs" ]]; then
+			run_logs_checked=$((run_logs_checked + 1))
+		fi
+
+		emit_event_json "$repo_slug" "$source_kind" "$source_ref" "$source_url" \
+			"$pr_number" "$commit_sha" "$check_name" "$conclusion" \
+			"$run_id" "$html_url" "$details_url" "$completed_at" \
+			"$signature" "$notification_updated_at" >>"$event_file"
+
+		failed_index=$((failed_index + 1))
+	done
+
+	printf '%s' "$run_logs_checked"
+	return 0
+}
+
 extract_failed_events_json() {
 	local since_hours="$1"
 	local limit="$2"
@@ -227,12 +406,7 @@ extract_failed_events_json() {
 
 		local repo_slug
 		repo_slug=$(printf '%s\n' "$thread_json" | jq -r '.repository.full_name // empty')
-		if [[ -z "$repo_slug" ]]; then
-			index=$((index + 1))
-			continue
-		fi
-
-		if ! repo_in_allowlist "$repo_slug" "$allowlist_csv"; then
+		if [[ -z "$repo_slug" ]] || ! repo_in_allowlist "$repo_slug" "$allowlist_csv"; then
 			index=$((index + 1))
 			continue
 		fi
@@ -244,37 +418,14 @@ extract_failed_events_json() {
 			continue
 		fi
 
-		local source_kind
-		source_kind="pr"
-		local source_ref
-		source_ref=""
-		local source_url
-		source_url=""
-		local pr_number=""
-		local commit_sha=""
+		local source_info
+		source_info=$(resolve_source_from_subject "$subject_url" "$repo_slug" "$include_push_events") || {
+			index=$((index + 1))
+			continue
+		}
 
-		pr_number=$(printf '%s' "$subject_url" | sed -nE 's|.*/pulls/([0-9]+)$|\1|p')
-
-		local head_sha
-		head_sha=""
-		if [[ -n "$pr_number" ]]; then
-			local pr_json
-			pr_json=$(gh api "repos/${repo_slug}/pulls/${pr_number}" 2>/dev/null || printf '{}')
-			head_sha=$(printf '%s\n' "$pr_json" | jq -r '.head.sha // empty')
-			source_kind="pr"
-			source_ref="#${pr_number}"
-			source_url="https://github.com/${repo_slug}/pull/${pr_number}"
-		else
-			commit_sha=$(parse_commit_sha_from_subject_url "$subject_url")
-			if [[ "$include_push_events" != "true" ]] || [[ -z "$commit_sha" ]]; then
-				index=$((index + 1))
-				continue
-			fi
-			head_sha="$commit_sha"
-			source_kind="push"
-			source_ref="${commit_sha:0:12}"
-			source_url="https://github.com/${repo_slug}/commit/${commit_sha}"
-		fi
+		local source_kind source_ref source_url pr_number commit_sha head_sha
+		IFS='|' read -r source_kind source_ref source_url pr_number commit_sha head_sha <<<"$source_info"
 
 		if [[ -z "$head_sha" ]]; then
 			index=$((index + 1))
@@ -284,92 +435,16 @@ extract_failed_events_json() {
 		local checks_json
 		checks_json=$(gh api "repos/${repo_slug}/commits/${head_sha}/check-runs?per_page=100" 2>/dev/null || printf '{"check_runs":[]}')
 
-		# Filter check runs for failures. Two-pass approach:
-		# 1. Hard failures (failure, cancelled, timed_out, startup_failure) — always collected
-		# 2. action_required — only from GitHub Actions runs. External apps (Codacy, SonarCloud)
-		#    use action_required to mean "issues found for developer review", which is informational
-		#    not a CI failure. Including these creates false systemic clusters (GH#4696).
 		local failed_runs_json
-		failed_runs_json=$(printf '%s\n' "$checks_json" | jq '[.check_runs[] | select(
-			((.conclusion // "" | ascii_downcase) as $c |
-				["failure","cancelled","timed_out","startup_failure"] | index($c))
-			or
-			((.conclusion // "" | ascii_downcase) == "action_required"
-				and (.app.slug // "" | ascii_downcase) == "github-actions")
-		)]')
+		failed_runs_json=$(filter_failed_check_runs "$checks_json")
 
-		local failed_count
-		failed_count=$(printf '%s\n' "$failed_runs_json" | jq "$JQ_COUNT")
-		local failed_index=0
-		while [[ "$failed_index" -lt "$failed_count" ]]; do
-			local run_json
-			run_json=$(printf '%s\n' "$failed_runs_json" | jq ".[${failed_index}]")
+		local notification_updated_at
+		notification_updated_at=$(printf '%s\n' "$thread_json" | jq -r '.updated_at // empty')
 
-			local check_name
-			check_name=$(printf '%s\n' "$run_json" | jq -r '.name // "unknown-check"')
-			local conclusion
-			conclusion=$(printf '%s\n' "$run_json" | jq -r '.conclusion // "unknown"')
-			local details_url
-			details_url=$(printf '%s\n' "$run_json" | jq -r '.details_url // empty')
-			local html_url
-			html_url=$(printf '%s\n' "$run_json" | jq -r '.html_url // empty')
-			local completed_at
-			completed_at=$(printf '%s\n' "$run_json" | jq -r '.completed_at // empty')
-			local run_id
-			run_id=$(parse_run_id_from_details_url "$details_url")
-
-			# For non-GitHub-Actions check runs (e.g., Codacy, SonarCloud), the details_url
-			# points to the external app, not a GH Actions run — so run_id is empty and logs
-			# can't be extracted. Use the conclusion as the signature instead of "not_collected"
-			# to produce meaningful cluster grouping (GH#4696).
-			local signature
-			if [[ -z "$run_id" ]]; then
-				local app_name
-				app_name=$(printf '%s\n' "$run_json" | jq -r '.app.name // "external"')
-				signature="${conclusion}:${app_name}"
-			elif [[ "$include_logs" == "true" ]] && [[ "$run_logs_checked" -lt "$max_run_logs" ]]; then
-				signature=$(extract_failure_signature "$repo_slug" "$run_id")
-				run_logs_checked=$((run_logs_checked + 1))
-			else
-				signature="not_collected"
-			fi
-
-			jq -n \
-				--arg repo "$repo_slug" \
-				--arg source_kind "$source_kind" \
-				--arg source_ref "$source_ref" \
-				--arg source_url "$source_url" \
-				--arg pr_number "$pr_number" \
-				--arg pr_url "$(if [[ -n "$pr_number" ]]; then printf '%s' "https://github.com/${repo_slug}/pull/${pr_number}"; fi)" \
-				--arg commit_sha "$commit_sha" \
-				--arg check_name "$check_name" \
-				--arg conclusion "$conclusion" \
-				--arg run_id "$run_id" \
-				--arg run_url "$html_url" \
-				--arg details_url "$details_url" \
-				--arg completed_at "$completed_at" \
-				--arg signature "$signature" \
-				--arg notification_updated_at "$(printf '%s\n' "$thread_json" | jq -r '.updated_at // empty')" \
-				'{
-					repo: $repo,
-					source_kind: $source_kind,
-					source_ref: $source_ref,
-					source_url: (if $source_url == "" then null else $source_url end),
-					pr_number: (if $pr_number == "" then null else ($pr_number | tonumber) end),
-					pr_url: (if $pr_url == "" then null else $pr_url end),
-					commit_sha: (if $commit_sha == "" then null else $commit_sha end),
-					check_name: $check_name,
-					conclusion: $conclusion,
-					run_id: (if $run_id == "" then null else ($run_id | tonumber) end),
-					run_url: (if $run_url == "" then null else $run_url end),
-					details_url: (if $details_url == "" then null else $details_url end),
-					completed_at: (if $completed_at == "" then null else $completed_at end),
-					signature: $signature,
-					notification_updated_at: (if $notification_updated_at == "" then null else $notification_updated_at end)
-				}' >>"$event_file"
-
-			failed_index=$((failed_index + 1))
-		done
+		run_logs_checked=$(process_failed_runs "$failed_runs_json" \
+			"$repo_slug" "$source_kind" "$source_ref" "$source_url" \
+			"$pr_number" "$commit_sha" "$notification_updated_at" \
+			"$include_logs" "$run_logs_checked" "$max_run_logs" "$event_file")
 
 		index=$((index + 1))
 	done
@@ -529,6 +604,58 @@ build_issue_body() {
 	return 0
 }
 
+ensure_repo_labels() {
+	local clusters_json="$1"
+	printf '%s\n' "$clusters_json" | jq -r '.[].repo' | sort -u | while IFS= read -r repo_entry; do
+		gh label create "source:ci-failure-miner" --repo "$repo_entry" \
+			--description "Auto-created by gh-failure-miner-helper.sh" --color "C2E0C6" --force || true
+	done
+	return 0
+}
+
+issue_already_exists() {
+	local repo_slug="$1"
+	local signal_tag="$2"
+	local existing_count
+	existing_count=$(gh issue list --repo "$repo_slug" --state open --search "\"${signal_tag}\" in:body" --json number --limit 1 2>/dev/null | jq "$JQ_COUNT") || existing_count=0
+	[[ "$existing_count" -gt 0 ]]
+}
+
+create_or_preview_issue() {
+	local cluster_json="$1"
+	local pattern_id="$2"
+	local systemic_threshold="$3"
+	local dry_run="$4"
+	shift 4
+	local extra_labels=("$@")
+
+	local repo_slug check_name count
+	repo_slug=$(printf '%s\n' "$cluster_json" | jq -r '.repo')
+	check_name=$(printf '%s\n' "$cluster_json" | jq -r '.check_name')
+	count=$(printf '%s\n' "$cluster_json" | jq -r '.count')
+
+	local title
+	title=$(build_issue_title "$check_name" "$count")
+	local body
+	body=$(build_issue_body "$cluster_json" "$pattern_id" "$systemic_threshold")
+
+	if [[ "$dry_run" == "true" ]]; then
+		echo "DRY RUN: would create issue: ${title}"
+		return 0
+	fi
+
+	local create_cmd=(gh issue create --repo "$repo_slug" --title "$title" --body "$body" --label bug --label "source:ci-failure-miner")
+	local label
+	for label in "${extra_labels[@]}"; do
+		if [[ -n "$label" ]]; then
+			create_cmd+=(--label "$label")
+		fi
+	done
+	"${create_cmd[@]}" >/dev/null
+	echo "Created issue: ${title}"
+	return 0
+}
+
 create_systemic_issues() {
 	local events_json="$1"
 	local systemic_threshold="$2"
@@ -546,11 +673,7 @@ create_systemic_issues() {
 
 	# Ensure source label exists on repos that will receive issues
 	if [[ "$dry_run" != "true" ]]; then
-		local repo_entry
-		for repo_entry in $(printf '%s\n' "$clusters_json" | jq -r '.[].repo' | sort -u); do
-			gh label create "source:ci-failure-miner" --repo "$repo_entry" \
-				--description "Auto-created by gh-failure-miner-helper.sh" --color "C2E0C6" --force || true
-		done
+		ensure_repo_labels "$clusters_json"
 	fi
 
 	local candidate_count
@@ -566,45 +689,23 @@ create_systemic_issues() {
 	while [[ "$idx" -lt "$candidate_count" ]] && [[ "$created" -lt "$max_issues" ]]; do
 		local cluster_json
 		cluster_json=$(jq ".[${idx}]" "$candidate_file")
-		local repo_slug
+
+		local repo_slug check_name signature
 		repo_slug=$(printf '%s\n' "$cluster_json" | jq -r '.repo')
-		local check_name
 		check_name=$(printf '%s\n' "$cluster_json" | jq -r '.check_name')
-		local count
-		count=$(printf '%s\n' "$cluster_json" | jq -r '.count')
-		local signature
 		signature=$(printf '%s\n' "$cluster_json" | jq -r '.signature')
 
 		local pattern_id
 		pattern_id=$(compute_pattern_id "${repo_slug}|${check_name}|${signature}")
 		local signal_tag="gh-failure-miner:${pattern_id}"
 
-		local existing_count
-		existing_count=$(gh issue list --repo "$repo_slug" --state open --search "\"${signal_tag}\" in:body" --json number --limit 1 2>/dev/null | jq "$JQ_COUNT") || existing_count=0
-		if [[ "$existing_count" -gt 0 ]]; then
+		if issue_already_exists "$repo_slug" "$signal_tag"; then
 			echo "Skipping cluster for ${check_name} - existing open issue with ${signal_tag}"
 			idx=$((idx + 1))
 			continue
 		fi
 
-		local title
-		title=$(build_issue_title "$check_name" "$count")
-		local body
-		body=$(build_issue_body "$cluster_json" "$pattern_id" "$systemic_threshold")
-
-		if [[ "$dry_run" == "true" ]]; then
-			echo "DRY RUN: would create issue: ${title}"
-		else
-			local create_cmd=(gh issue create --repo "$repo_slug" --title "$title" --body "$body" --label bug --label "source:ci-failure-miner")
-			local label
-			for label in "${extra_labels[@]}"; do
-				if [[ -n "$label" ]]; then
-					create_cmd+=(--label "$label")
-				fi
-			done
-			"${create_cmd[@]}" >/dev/null
-			echo "Created issue: ${title}"
-		fi
+		create_or_preview_issue "$cluster_json" "$pattern_id" "$systemic_threshold" "$dry_run" "${extra_labels[@]}"
 
 		created=$((created + 1))
 		idx=$((idx + 1))
@@ -661,112 +762,86 @@ build_routine_prompt() {
 	return 0
 }
 
-cmd_install_launchd_routine() {
-	local routine_name="$DEFAULT_ROUTINE_NAME"
-	local routine_schedule="$DEFAULT_ROUTINE_SCHEDULE"
-	local routine_dir
-	routine_dir=$(cd "${SCRIPT_DIR}/../.." && pwd)
-	local routine_title="$DEFAULT_ROUTINE_TITLE"
-	local since_hours="$DEFAULT_SINCE_HOURS"
-	local systemic_threshold="$DEFAULT_SYSTEMIC_THRESHOLD"
-	local max_issues="3"
-	local labels_csv="auto-dispatch"
-	local dry_run="false"
+parse_launchd_options() {
+	ROUTINE_NAME="$DEFAULT_ROUTINE_NAME"
+	ROUTINE_SCHEDULE="$DEFAULT_ROUTINE_SCHEDULE"
+	ROUTINE_DIR=$(cd "${SCRIPT_DIR}/../.." && pwd)
+	ROUTINE_TITLE="$DEFAULT_ROUTINE_TITLE"
+	LAUNCHD_SINCE_HOURS="$DEFAULT_SINCE_HOURS"
+	LAUNCHD_SYSTEMIC_THRESHOLD="$DEFAULT_SYSTEMIC_THRESHOLD"
+	LAUNCHD_MAX_ISSUES="3"
+	LAUNCHD_LABELS_CSV="auto-dispatch"
+	LAUNCHD_DRY_RUN="false"
 
 	while [[ $# -gt 0 ]]; do
-		local arg="$1"
-		case "$arg" in
+		case "$1" in
 		--name)
-			if [[ $# -lt 2 ]]; then
-				die "--name requires a value"
-				return 1
-			fi
-			routine_name="$2"
+			require_option_value "$1" "$#" || return 1
+			ROUTINE_NAME="$2"
 			shift 2
 			;;
 		--schedule)
-			if [[ $# -lt 2 ]]; then
-				die "--schedule requires a value"
-				return 1
-			fi
-			routine_schedule="$2"
+			require_option_value "$1" "$#" || return 1
+			ROUTINE_SCHEDULE="$2"
 			shift 2
 			;;
 		--dir)
-			if [[ $# -lt 2 ]]; then
-				die "--dir requires a value"
-				return 1
-			fi
-			routine_dir="$2"
+			require_option_value "$1" "$#" || return 1
+			ROUTINE_DIR="$2"
 			shift 2
 			;;
 		--title)
-			if [[ $# -lt 2 ]]; then
-				die "--title requires a value"
-				return 1
-			fi
-			routine_title="$2"
+			require_option_value "$1" "$#" || return 1
+			ROUTINE_TITLE="$2"
 			shift 2
 			;;
 		--since-hours)
-			if [[ $# -lt 2 ]]; then
-				die "--since-hours requires a value"
-				return 1
-			fi
-			since_hours="$2"
+			require_option_value "$1" "$#" || return 1
+			LAUNCHD_SINCE_HOURS="$2"
 			shift 2
 			;;
 		--systemic-threshold)
-			if [[ $# -lt 2 ]]; then
-				die "--systemic-threshold requires a value"
-				return 1
-			fi
-			systemic_threshold="$2"
+			require_option_value "$1" "$#" || return 1
+			LAUNCHD_SYSTEMIC_THRESHOLD="$2"
 			shift 2
 			;;
 		--max-issues)
-			if [[ $# -lt 2 ]]; then
-				die "--max-issues requires a value"
-				return 1
-			fi
-			max_issues="$2"
+			require_option_value "$1" "$#" || return 1
+			LAUNCHD_MAX_ISSUES="$2"
 			shift 2
 			;;
 		--labels)
-			if [[ $# -lt 2 ]]; then
-				die "--labels requires a value"
-				return 1
-			fi
-			labels_csv="$2"
+			require_option_value "$1" "$#" || return 1
+			LAUNCHD_LABELS_CSV="$2"
 			shift 2
 			;;
 		--dry-run)
-			dry_run="true"
+			LAUNCHD_DRY_RUN="true"
 			shift
 			;;
 		--help | -h)
 			print_usage
-			return 0
+			return 2
 			;;
 		*)
-			die "Unknown option for install-launchd-routine: $arg"
+			die "Unknown option for install-launchd-routine: $1"
 			return 1
 			;;
 		esac
 	done
 
-	if [[ ! "$since_hours" =~ ^[0-9]+$ ]]; then
-		die "--since-hours must be a positive integer"
+	require_positive_integer "--since-hours" "$LAUNCHD_SINCE_HOURS" || return 1
+	require_positive_integer "--systemic-threshold" "$LAUNCHD_SYSTEMIC_THRESHOLD" || return 1
+	require_positive_integer "--max-issues" "$LAUNCHD_MAX_ISSUES" || return 1
+	return 0
+}
+
+cmd_install_launchd_routine() {
+	parse_launchd_options "$@" || {
+		local rc=$?
+		if [[ "$rc" -eq 2 ]]; then return 0; fi
 		return 1
-	fi
-	if [[ ! "$systemic_threshold" =~ ^[0-9]+$ ]]; then
-		die "--systemic-threshold must be a positive integer"
-		return 1
-	fi
-	if [[ ! "$max_issues" =~ ^[0-9]+$ ]]; then
-		die "--max-issues must be a positive integer"
-		return 1
-	fi
+	}
 
 	local routine_helper="${SCRIPT_DIR}/routine-helper.sh"
 	if [[ ! -x "$routine_helper" ]]; then
@@ -775,18 +850,18 @@ cmd_install_launchd_routine() {
 	fi
 
 	local prompt
-	prompt=$(build_routine_prompt "$since_hours" "$systemic_threshold" "$max_issues" "$labels_csv")
+	prompt=$(build_routine_prompt "$LAUNCHD_SINCE_HOURS" "$LAUNCHD_SYSTEMIC_THRESHOLD" "$LAUNCHD_MAX_ISSUES" "$LAUNCHD_LABELS_CSV")
 
 	local action="install-launchd"
-	if [[ "$dry_run" == "true" ]]; then
+	if [[ "$LAUNCHD_DRY_RUN" == "true" ]]; then
 		action="plan"
 	fi
 
 	bash "$routine_helper" "$action" \
-		--name "$routine_name" \
-		--schedule "$routine_schedule" \
-		--dir "$routine_dir" \
-		--title "$routine_title" \
+		--name "$ROUTINE_NAME" \
+		--schedule "$ROUTINE_SCHEDULE" \
+		--dir "$ROUTINE_DIR" \
+		--title "$ROUTINE_TITLE" \
 		--prompt "$prompt"
 	return $?
 }
@@ -806,29 +881,19 @@ parse_common_options() {
 	EXTRA_LABELS=()
 
 	while [[ $# -gt 0 ]]; do
-		local arg="$1"
-		case "$arg" in
+		case "$1" in
 		--since-hours)
-			if [[ $# -lt 2 ]]; then
-				die "--since-hours requires a value"
-				return 1
-			fi
+			require_option_value "$1" "$#" || return 1
 			SINCE_HOURS="$2"
 			shift 2
 			;;
 		--limit)
-			if [[ $# -lt 2 ]]; then
-				die "--limit requires a value"
-				return 1
-			fi
+			require_option_value "$1" "$#" || return 1
 			LIMIT="$2"
 			shift 2
 			;;
 		--repos)
-			if [[ $# -lt 2 ]]; then
-				die "--repos requires a value"
-				return 1
-			fi
+			require_option_value "$1" "$#" || return 1
 			REPO_ALLOWLIST="$2"
 			shift 2
 			;;
@@ -837,10 +902,7 @@ parse_common_options() {
 			shift
 			;;
 		--repos-json)
-			if [[ $# -lt 2 ]]; then
-				die "--repos-json requires a value"
-				return 1
-			fi
+			require_option_value "$1" "$#" || return 1
 			REPOS_JSON_PATH="$2"
 			shift 2
 			;;
@@ -853,34 +915,22 @@ parse_common_options() {
 			shift
 			;;
 		--max-run-logs)
-			if [[ $# -lt 2 ]]; then
-				die "--max-run-logs requires a value"
-				return 1
-			fi
+			require_option_value "$1" "$#" || return 1
 			MAX_RUN_LOGS="$2"
 			shift 2
 			;;
 		--systemic-threshold)
-			if [[ $# -lt 2 ]]; then
-				die "--systemic-threshold requires a value"
-				return 1
-			fi
+			require_option_value "$1" "$#" || return 1
 			SYSTEMIC_THRESHOLD="$2"
 			shift 2
 			;;
 		--max-issues)
-			if [[ $# -lt 2 ]]; then
-				die "--max-issues requires a value"
-				return 1
-			fi
+			require_option_value "$1" "$#" || return 1
 			MAX_ISSUES="$2"
 			shift 2
 			;;
 		--label)
-			if [[ $# -lt 2 ]]; then
-				die "--label requires a value"
-				return 1
-			fi
+			require_option_value "$1" "$#" || return 1
 			EXTRA_LABELS+=("$2")
 			shift 2
 			;;
@@ -893,32 +943,17 @@ parse_common_options() {
 			return 2
 			;;
 		*)
-			die "Unknown option: $arg"
+			die "Unknown option: $1"
 			return 1
 			;;
 		esac
 	done
 
-	if [[ ! "$SINCE_HOURS" =~ ^[0-9]+$ ]]; then
-		die "--since-hours must be a positive integer"
-		return 1
-	fi
-	if [[ ! "$LIMIT" =~ ^[0-9]+$ ]]; then
-		die "--limit must be a positive integer"
-		return 1
-	fi
-	if [[ ! "$MAX_RUN_LOGS" =~ ^[0-9]+$ ]]; then
-		die "--max-run-logs must be a positive integer"
-		return 1
-	fi
-	if [[ ! "$SYSTEMIC_THRESHOLD" =~ ^[0-9]+$ ]]; then
-		die "--systemic-threshold must be a positive integer"
-		return 1
-	fi
-	if [[ ! "$MAX_ISSUES" =~ ^[0-9]+$ ]]; then
-		die "--max-issues must be a positive integer"
-		return 1
-	fi
+	require_positive_integer "--since-hours" "$SINCE_HOURS" || return 1
+	require_positive_integer "--limit" "$LIMIT" || return 1
+	require_positive_integer "--max-run-logs" "$MAX_RUN_LOGS" || return 1
+	require_positive_integer "--systemic-threshold" "$SYSTEMIC_THRESHOLD" || return 1
+	require_positive_integer "--max-issues" "$MAX_ISSUES" || return 1
 
 	if [[ "$LIMIT" -gt 100 ]]; then
 		LIMIT=100
