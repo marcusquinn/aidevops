@@ -5,6 +5,7 @@
 > **Recommended setup:** [OpenCode](https://opencode.ai/) + [Claude](https://claude.ai/) models (Anthropic). All features, agents, and workflows are designed and tested for OpenCode first. Claude models (haiku, sonnet, opus) deliver the best results across all agent tiers.
 
 *"Scope a mission to redesign the landing pages — break it into milestones, dispatch workers in parallel, validate each milestone, and track budget across the whole project"*
+
 **One conversation, autonomous multi-day project execution.**
 
 ## **The Philosophy**
