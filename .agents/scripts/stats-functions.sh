@@ -1077,6 +1077,122 @@ _save_sweep_state() {
 #
 # Gathers findings from all available tools and posts a single
 # summary comment on the persistent quality review issue.
+#######################################
+# Create simplification-debt issues for files with high Qlty smell density.
+# Bridges the daily quality sweep to the code-simplifier's human-gated
+# dispatch pipeline. Issues are created with simplification-debt +
+# needs-maintainer-review labels and assigned to the repo maintainer.
+#
+# Arguments:
+#   $1 - repo slug (owner/repo)
+#   $2 - SARIF JSON string from qlty smells
+#
+# Behaviour:
+#   - Only creates issues for files with >5 smells
+#   - Max 3 new issues per sweep (rate limiting)
+#   - Deduplicates: skips files that already have an open simplification-debt issue
+#   - Issues follow the code-simplifier.md format (needs-maintainer-review gate)
+#######################################
+_create_simplification_issues() {
+	local repo_slug="$1"
+	local sarif_json="$2"
+	local max_issues_per_sweep=3
+	local min_smells_threshold=5
+	local issues_created=0
+
+	# Extract files with smell count > threshold, sorted by count descending
+	local high_smell_files
+	high_smell_files=$(echo "$sarif_json" | jq -r --argjson threshold "$min_smells_threshold" '
+		[.runs[0].results[] | .locations[0].physicalLocation.artifactLocation.uri] |
+		group_by(.) | map({file: .[0], count: length}) |
+		[.[] | select(.count > $threshold)] | sort_by(-.count)[:10] |
+		.[] | "\(.count)\t\(.file)"
+	' 2>/dev/null) || high_smell_files=""
+
+	if [[ -z "$high_smell_files" ]]; then
+		return 0
+	fi
+
+	# Resolve maintainer for issue assignment
+	local maintainer=""
+	maintainer=$(jq -r --arg slug "$repo_slug" \
+		'.initialized_repos[]? | select(.slug == $slug) | .maintainer // empty' \
+		"${HOME}/.config/aidevops/repos.json" 2>/dev/null) || maintainer=""
+	if [[ -z "$maintainer" ]]; then
+		maintainer="${repo_slug%%/*}"
+	fi
+
+	# Fetch existing open simplification-debt issues to deduplicate
+	local existing_issues
+	existing_issues=$(gh issue list --repo "$repo_slug" \
+		--label "simplification-debt" --state open \
+		--json title --jq '.[].title' 2>/dev/null) || existing_issues=""
+
+	while IFS=$'\t' read -r smell_count file_path; do
+		[[ -z "$file_path" ]] && continue
+		[[ "$issues_created" -ge "$max_issues_per_sweep" ]] && break
+
+		# Deduplicate: check if an issue already exists for this file
+		local file_basename
+		file_basename=$(basename "$file_path")
+		if echo "$existing_issues" | grep -qF "$file_basename"; then
+			continue
+		fi
+
+		# Build per-rule breakdown for this file
+		local rule_breakdown
+		rule_breakdown=$(echo "$sarif_json" | jq -r --arg fp "$file_path" '
+			[.runs[0].results[] |
+			 select(.locations[0].physicalLocation.artifactLocation.uri == $fp) |
+			 .ruleId] | group_by(.) | map("\(.[0]): \(length)") | join(", ")
+		' 2>/dev/null) || rule_breakdown="(could not parse)"
+
+		# Create the issue with code-simplifier label convention
+		local issue_title="simplification: reduce ${smell_count} Qlty smells in ${file_basename}"
+		local issue_body
+		issue_body="## Qlty Maintainability — ${file_path}
+
+**Smells detected**: ${smell_count}
+**Rules**: ${rule_breakdown}
+
+This file was flagged by the daily quality sweep for high smell density. The smells are primarily function complexity, nested control flow, and return statement count — all reducible via extract-function refactoring.
+
+### Suggested approach
+
+1. Read the file and identify the highest-complexity functions
+2. Extract helper functions to reduce per-function complexity below the threshold (~17)
+3. Verify with \`qlty smells ${file_path}\` after each change
+4. No behavior changes — pure structural refactoring
+
+### Verification
+
+- Syntax check: \`python3 -c \"import ast; ast.parse(open('${file_path}').read())\"\` (Python) or \`node --check ${file_path}\` (JS/TS)
+- Smell check: \`qlty smells ${file_path} --no-snippets --quiet\`
+- No public API changes
+
+---
+**To approve or decline**, comment on this issue:
+- \`approved\` — removes the review gate and queues for automated dispatch
+- \`declined: <reason>\` — closes this issue (include your reason after the colon)"
+
+		if gh issue create --repo "$repo_slug" \
+			--title "$issue_title" \
+			--label "simplification-debt" --label "needs-maintainer-review" \
+			--assignee "$maintainer" \
+			--body "$issue_body" >/dev/null 2>&1; then
+			issues_created=$((issues_created + 1))
+		fi
+	done <<<"$high_smell_files"
+
+	if [[ "$issues_created" -gt 0 ]]; then
+		qlty_section="${qlty_section}
+_Created ${issues_created} simplification-debt issue(s) for high-smell files (needs maintainer review)._
+"
+	fi
+
+	return 0
+}
+
 #
 # Arguments:
 #   $1 - repo slug
@@ -1251,6 +1367,15 @@ print('UNKNOWN')
 - **Qlty Cloud grade**: ${qlty_grade}
 "
 		tool_count=$((tool_count + 1))
+
+		# --- 2b. Simplification-debt bridge (code-simplifier pipeline) ---
+		# For files with high smell density, auto-create simplification-debt issues
+		# with needs-maintainer-review label. This bridges the daily sweep to the
+		# code-simplifier's human-gated dispatch pipeline (see code-simplifier.md).
+		# Max 3 issues per sweep to avoid flooding. Deduplicates against existing issues.
+		if [[ -n "$qlty_sarif" && "$qlty_smell_count" -gt 0 ]]; then
+			_create_simplification_issues "$repo_slug" "$qlty_sarif"
+		fi
 	fi
 
 	# --- 3. SonarCloud (public API — no auth needed for public repos) ---
