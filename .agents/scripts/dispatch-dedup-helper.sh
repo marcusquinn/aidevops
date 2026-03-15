@@ -324,14 +324,17 @@ is_assigned() {
 	if [[ -n "$self_login" ]]; then
 		# Check if ALL assignees are self (could be multiple)
 		local dominated_by_self=true
-		local IFS=','
-		for assignee in $assignees; do
+		local -a assignee_array=()
+		local saved_ifs="${IFS:-}"
+		IFS=',' read -ra assignee_array <<<"$assignees"
+		IFS="$saved_ifs"
+		local assignee
+		for assignee in "${assignee_array[@]}"; do
 			if [[ "$assignee" != "$self_login" ]]; then
 				dominated_by_self=false
 				break
 			fi
 		done
-		unset IFS
 		if [[ "$dominated_by_self" == "true" ]]; then
 			return 1
 		fi

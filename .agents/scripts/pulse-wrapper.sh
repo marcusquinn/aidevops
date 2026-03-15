@@ -75,7 +75,7 @@ export PATH="/bin:/usr/bin:/usr/local/bin:/opt/homebrew/bin:${PATH}"
 # PULSE_JITTER_MAX: max jitter in seconds (default 30, set to 0 to disable)
 #######################################
 PULSE_JITTER_MAX="${PULSE_JITTER_MAX:-30}"
-if [[ "$PULSE_JITTER_MAX" -gt 0 ]]; then
+if [[ "$PULSE_JITTER_MAX" =~ ^[0-9]+$ && "$PULSE_JITTER_MAX" -gt 0 ]]; then
 	# $RANDOM is 0-32767; modulo gives 0 to PULSE_JITTER_MAX
 	jitter_seconds=$((RANDOM % (PULSE_JITTER_MAX + 1)))
 	if [[ "$jitter_seconds" -gt 0 ]]; then
