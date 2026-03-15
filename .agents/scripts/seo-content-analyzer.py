@@ -459,85 +459,94 @@ class SEOQualityRater:
             "min_h2_sections": 4,
         }
 
-    def rate(self, content: str, primary_keyword: Optional[str] = None,
-             meta_title: Optional[str] = None,
-             meta_description: Optional[str] = None) -> Dict[str, Any]:
-        structure = self._analyze_structure(content, primary_keyword)
-        scores = {}
-        issues: List[str] = []
-        warnings: List[str] = []
-        suggestions: List[str] = []
-
-        # Content score
+    def _score_content(self, structure: Dict, issues: List[str], warnings: List[str]) -> int:
         wc = structure["word_count"]
-        cs = 100
+        score = 100
         if wc < self.guidelines["min_word_count"]:
-            cs -= 30
+            score -= 30
             issues.append(f"Content too short ({wc} words). Min {self.guidelines['min_word_count']}.")
         elif wc < self.guidelines["optimal_word_count"]:
-            cs -= 10
+            score -= 10
             warnings.append(f"Content could be longer ({wc} words).")
-        scores["content"] = max(0, cs)
+        return max(0, score)
 
-        # Structure score
-        ss = 100
+    def _score_structure(self, structure: Dict, issues: List[str], warnings: List[str]) -> int:
+        score = 100
         if not structure["has_h1"]:
-            ss -= 30
+            score -= 30
             issues.append("Missing H1 heading.")
         if structure["h2_count"] < self.guidelines["min_h2_sections"]:
-            ss -= 15
+            score -= 15
             warnings.append(f"Too few H2 sections ({structure['h2_count']}). Target {self.guidelines['min_h2_sections']}+.")
-        scores["structure"] = max(0, ss)
+        return max(0, score)
 
-        # Keyword score
-        ks = 100
+    def _score_keywords(self, structure: Dict, primary_keyword: Optional[str],
+                        issues: List[str], warnings: List[str]) -> int:
+        score = 100
         if primary_keyword:
             if not structure["keyword_in_h1"]:
-                ks -= 20
+                score -= 20
                 issues.append(f"Keyword '{primary_keyword}' missing from H1.")
             if not structure["keyword_in_first_100"]:
-                ks -= 15
+                score -= 15
                 issues.append(f"Keyword '{primary_keyword}' missing from first 100 words.")
         else:
-            ks = 50
+            score = 50
             warnings.append("No primary keyword specified.")
-        scores["keywords"] = max(0, ks)
+        return max(0, score)
 
-        # Meta score
-        ms = 100
+    def _score_meta(self, primary_keyword: Optional[str], meta_title: Optional[str],
+                    meta_description: Optional[str], issues: List[str], warnings: List[str]) -> int:
+        score = 100
         if not meta_title:
-            ms -= 40
+            score -= 40
             issues.append("Meta title missing.")
         else:
             tl = len(meta_title)
             if tl < self.guidelines["meta_title_min"] or tl > self.guidelines["meta_title_max"] + 10:
-                ms -= 15
+                score -= 15
                 warnings.append(f"Meta title length ({tl}) outside {self.guidelines['meta_title_min']}-{self.guidelines['meta_title_max']} range.")
             if primary_keyword and primary_keyword.lower() not in meta_title.lower():
-                ms -= 15
+                score -= 15
                 warnings.append("Primary keyword not in meta title.")
 
         if not meta_description:
-            ms -= 40
+            score -= 40
             issues.append("Meta description missing.")
         else:
             dl = len(meta_description)
             if dl < self.guidelines["meta_desc_min"] or dl > self.guidelines["meta_desc_max"] + 10:
-                ms -= 15
+                score -= 15
                 warnings.append(f"Meta description length ({dl}) outside {self.guidelines['meta_desc_min']}-{self.guidelines['meta_desc_max']} range.")
-        scores["meta"] = max(0, ms)
+        return max(0, score)
 
-        # Links score
-        ls = 100
+    def _score_links(self, content: str, warnings: List[str]) -> tuple:
+        score = 100
         internal = len(re.findall(r"\[([^\]]+)\]\((?!http)", content))
         external = len(re.findall(r"\[([^\]]+)\]\(https?://", content))
         if internal < self.guidelines["min_internal_links"]:
-            ls -= 20
+            score -= 20
             warnings.append(f"Too few internal links ({internal}). Target {self.guidelines['min_internal_links']}+.")
         if external < self.guidelines["min_external_links"]:
-            ls -= 15
+            score -= 15
             warnings.append(f"Too few external links ({external}). Target {self.guidelines['min_external_links']}+.")
-        scores["links"] = max(0, ls)
+        return max(0, score), internal, external
+
+    def rate(self, content: str, primary_keyword: Optional[str] = None,
+             meta_title: Optional[str] = None,
+             meta_description: Optional[str] = None) -> Dict[str, Any]:
+        structure = self._analyze_structure(content, primary_keyword)
+        issues: List[str] = []
+        warnings: List[str] = []
+        suggestions: List[str] = []
+
+        scores = {}
+        scores["content"] = self._score_content(structure, issues, warnings)
+        scores["structure"] = self._score_structure(structure, issues, warnings)
+        scores["keywords"] = self._score_keywords(structure, primary_keyword, issues, warnings)
+        scores["meta"] = self._score_meta(primary_keyword, meta_title, meta_description, issues, warnings)
+        links_score, internal, external = self._score_links(content, warnings)
+        scores["links"] = links_score
 
         # Overall weighted score
         weights = {"content": 0.20, "structure": 0.15, "keywords": 0.25, "meta": 0.15, "links": 0.15}
@@ -555,7 +564,7 @@ class SEOQualityRater:
             "suggestions": suggestions,
             "publishing_ready": overall >= 80 and len(issues) == 0,
             "details": {
-                "word_count": wc,
+                "word_count": structure["word_count"],
                 "h2_count": structure["h2_count"],
                 "internal_links": internal,
                 "external_links": external,
@@ -646,37 +655,9 @@ def parse_args(args: List[str]) -> Dict[str, Any]:
     return result
 
 
-def main() -> None:
-    if len(sys.argv) < 2:
-        cmd_help()
-        sys.exit(0)
-
-    parsed = parse_args(sys.argv[1:])
-    cmd = parsed["command"]
-
-    if cmd == "help":
-        cmd_help()
-        return
-
-    if cmd == "intent":
-        query = " ".join(parsed["positional"]) if parsed["positional"] else parsed["flags"].get("keyword", "")
-        if not query:
-            print("Error: provide a search query", file=sys.stderr)
-            sys.exit(1)
-        analyzer = SearchIntentAnalyzer()
-        print_json(analyzer.analyze(query))
-        return
-
-    # Commands that need a file
-    if not parsed["positional"]:
-        print(f"Error: {cmd} requires a file path", file=sys.stderr)
-        sys.exit(1)
-
+def _run_file_command(cmd: str, parsed: Dict[str, Any]) -> None:
+    """Dispatch commands that operate on a file."""
     filepath = parsed["positional"][0]
-    if not os.path.isfile(filepath):
-        print(f"Error: file not found: {filepath}", file=sys.stderr)
-        sys.exit(1)
-
     content = read_file(filepath)
     keyword = parsed["flags"].get("keyword")
     secondary_str = parsed["flags"].get("secondary", "")
@@ -724,6 +705,40 @@ def main() -> None:
         print(f"Unknown command: {cmd}", file=sys.stderr)
         cmd_help()
         sys.exit(1)
+
+
+def main() -> None:
+    if len(sys.argv) < 2:
+        cmd_help()
+        sys.exit(0)
+
+    parsed = parse_args(sys.argv[1:])
+    cmd = parsed["command"]
+
+    if cmd == "help":
+        cmd_help()
+        return
+
+    if cmd == "intent":
+        query = " ".join(parsed["positional"]) if parsed["positional"] else parsed["flags"].get("keyword", "")
+        if not query:
+            print("Error: provide a search query", file=sys.stderr)
+            sys.exit(1)
+        analyzer = SearchIntentAnalyzer()
+        print_json(analyzer.analyze(query))
+        return
+
+    # Commands that need a file
+    if not parsed["positional"]:
+        print(f"Error: {cmd} requires a file path", file=sys.stderr)
+        sys.exit(1)
+
+    filepath = parsed["positional"][0]
+    if not os.path.isfile(filepath):
+        print(f"Error: file not found: {filepath}", file=sys.stderr)
+        sys.exit(1)
+
+    _run_file_command(cmd, parsed)
 
 
 if __name__ == "__main__":

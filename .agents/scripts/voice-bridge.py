@@ -273,8 +273,8 @@ class OpenCodeBridge:
             self.use_attach = False
             log.info("No OpenCode server found, will use standalone mode")
 
-    def query(self, text):
-        """Send text to OpenCode and return response."""
+    def _build_command(self, text):
+        """Build the opencode CLI command list."""
         cmd = ["opencode", "run", "-m", self.model]
 
         if self.use_attach:
@@ -287,6 +287,35 @@ class OpenCodeBridge:
             cmd.append("-c")
 
         cmd.append(text)
+        return cmd
+
+    @staticmethod
+    def _clean_response(raw):
+        """Strip ANSI codes and TUI artifacts from opencode output."""
+        import re
+
+        response = re.sub(r"\x1b\[[0-9;]*m", "", raw).strip()
+
+        # Remove opencode TUI artifacts from stdout. This is fragile
+        # and may need updating if opencode changes its output format.
+        # No structured output mode (e.g. --json) is available yet.
+        clean_lines = []
+        for line in response.split("\n"):
+            stripped = line.strip()
+            if stripped.startswith("> Build+"):
+                continue
+            if stripped.startswith("$") and "aidevops" in stripped:
+                continue
+            if stripped.startswith("aidevops v"):
+                continue
+            if not stripped:
+                continue
+            clean_lines.append(stripped)
+        return " ".join(clean_lines)
+
+    def query(self, text):
+        """Send text to OpenCode and return response."""
+        cmd = self._build_command(text)
 
         start = time.time()
         try:
@@ -297,30 +326,7 @@ class OpenCodeBridge:
                 timeout=120,
                 cwd=self.cwd,
             )
-            # Strip ANSI escape codes from output
-            import re
-
-            raw = result.stdout
-            response = re.sub(r"\x1b\[[0-9;]*m", "", raw).strip()
-
-            # Remove opencode TUI artifacts from stdout. This is fragile
-            # and may need updating if opencode changes its output format.
-            # No structured output mode (e.g. --json) is available yet.
-            lines = response.split("\n")
-            clean_lines = []
-            for line in lines:
-                stripped = line.strip()
-                if stripped.startswith("> Build+"):
-                    continue
-                if stripped.startswith("$") and "aidevops" in stripped:
-                    continue
-                if stripped.startswith("aidevops v"):
-                    continue
-                if not stripped:
-                    continue
-                clean_lines.append(stripped)
-            response = " ".join(clean_lines)
-
+            response = self._clean_response(result.stdout)
             elapsed = time.time() - start
 
             if not response:

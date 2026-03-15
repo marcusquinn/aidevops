@@ -85,100 +85,95 @@ def normalize_for_dedup(text: str) -> str:
     return t[:200]  # First 200 chars for comparison
 
 
+def _extract_steerage_signal(record: dict, seen: set):
+    """Extract a cleaned, deduplicated signal from a steerage record.
+
+    Returns a signal dict or None if the record should be skipped.
+    """
+    raw_text = record.get("user_text", "")
+    if not raw_text or len(raw_text) < 25:
+        return None
+
+    if is_automated_message(raw_text):
+        return None
+
+    clean_text = strip_file_content(raw_text)
+    if len(clean_text) < 20:
+        return None
+
+    norm = normalize_for_dedup(clean_text)
+    if norm in seen:
+        return None
+    seen.add(norm)
+
+    return {
+        "text": clean_text[:1000],
+        "context": record.get("preceding_context", "")[:200],
+    }
+
+
 def compress_steerage(chunks_dir: Path) -> dict:
     """Compress all steerage chunks into category-grouped unique signals."""
     categories = defaultdict(list)
     seen = set()
-    
+
     for chunk_file in sorted(chunks_dir.glob("steerage_*.json")):
         try:
             chunk = json.loads(chunk_file.read_text(encoding="utf-8"))
         except (json.JSONDecodeError, OSError):
             continue
-            
+
         category = chunk.get("category", "unknown")
-        
+
         for record in chunk.get("records", []):
-            raw_text = record.get("user_text", "")
-            if not raw_text or len(raw_text) < 25:
-                continue
-                
-            if is_automated_message(raw_text):
-                continue
-            
-            # Strip file content to get just the user's words
-            clean_text = strip_file_content(raw_text)
-            if len(clean_text) < 20:
-                continue
-            
-            # Deduplicate
-            norm = normalize_for_dedup(clean_text)
-            if norm in seen:
-                continue
-            seen.add(norm)
-            
-            # Keep only the essential fields
-            signal = {
-                "text": clean_text[:1000],  # Cap at 1000 chars
-                "context": record.get("preceding_context", "")[:200],
-            }
-            categories[category].append(signal)
-    
+            signal = _extract_steerage_signal(record, seen)
+            if signal is not None:
+                categories[category].append(signal)
+
     return dict(categories)
 
 
-def compress_errors(chunks_dir: Path) -> dict:
-    """Compress error chunks into pattern summaries."""
-    # Group by (tool, error_category) and count
-    pattern_counts = Counter()
-    pattern_examples = defaultdict(list)
-    recovery_patterns = defaultdict(list)
-    pattern_models = defaultdict(set)
+_SEVERITY_RANK = {
+    "permission": "high",
+    "not_read_first": "high",
+    "edit_stale_read": "medium",
+    "edit_mismatch": "medium",
+    "edit_multiple": "medium",
+    "file_not_found": "medium",
+    "timeout": "low",
+    "exit_code": "low",
+    "other": "low",
+}
 
-    severity_rank = {
-        "permission": "high",
-        "not_read_first": "high",
-        "edit_stale_read": "medium",
-        "edit_mismatch": "medium",
-        "edit_multiple": "medium",
-        "file_not_found": "medium",
-        "timeout": "low",
-        "exit_code": "low",
-        "other": "low",
-    }
-    
-    for chunk_file in sorted(chunks_dir.glob("error_*.json")):
-        try:
-            chunk = json.loads(chunk_file.read_text(encoding="utf-8"))
-        except (json.JSONDecodeError, OSError):
-            continue
-        
-        for record in chunk.get("records", []):
-            tool = record.get("tool", "unknown")
-            cat = record.get("error_category", "other")
-            key = f"{tool}:{cat}"
 
-            pattern_counts[key] += 1
-            model_id = record.get("model") or "unknown"
-            pattern_models[key].add(model_id)
-            
-            # Keep up to 3 examples per pattern
-            if len(pattern_examples[key]) < 3:
-                example = {
-                    "error": record.get("error_text", "")[:200],
-                    "input": record.get("tool_input_summary", ""),
-                    "user_response": record.get("user_response", "")[:200] if record.get("user_response") else None,
-                }
-                pattern_examples[key].append(example)
-            
-            # Track recovery patterns
-            recovery = record.get("recovery")
-            if recovery:
-                recovery_desc = f"{recovery.get('tool', '')}: {recovery.get('approach', '')}"
-                if recovery_desc not in recovery_patterns[key]:
-                    recovery_patterns[key].append(recovery_desc)
-    
-    # Build compressed error summary
+def _accumulate_error_record(record: dict, pattern_counts, pattern_examples,
+                             recovery_patterns, pattern_models):
+    """Accumulate a single error record into the pattern aggregation structures."""
+    tool = record.get("tool", "unknown")
+    cat = record.get("error_category", "other")
+    key = f"{tool}:{cat}"
+
+    pattern_counts[key] += 1
+    model_id = record.get("model") or "unknown"
+    pattern_models[key].add(model_id)
+
+    if len(pattern_examples[key]) < 3:
+        example = {
+            "error": record.get("error_text", "")[:200],
+            "input": record.get("tool_input_summary", ""),
+            "user_response": record.get("user_response", "")[:200] if record.get("user_response") else None,
+        }
+        pattern_examples[key].append(example)
+
+    recovery = record.get("recovery")
+    if recovery:
+        recovery_desc = f"{recovery.get('tool', '')}: {recovery.get('approach', '')}"
+        if recovery_desc not in recovery_patterns[key]:
+            recovery_patterns[key].append(recovery_desc)
+
+
+def _build_error_patterns(pattern_counts, pattern_examples, recovery_patterns, pattern_models):
+    """Build the final compressed error summary from aggregated data."""
     error_patterns = []
     for key, count in pattern_counts.most_common():
         tool, cat = key.split(":", 1)
@@ -191,12 +186,32 @@ def compress_errors(chunks_dir: Path) -> dict:
             "models": models,
             "model_count": model_count,
             "cross_model": model_count >= 2,
-            "severity": severity_rank.get(cat, "low"),
+            "severity": _SEVERITY_RANK.get(cat, "low"),
             "examples": pattern_examples[key],
             "recovery_patterns": recovery_patterns.get(key, [])[:3],
         })
-    
-    return {"patterns": error_patterns}
+    return error_patterns
+
+
+def compress_errors(chunks_dir: Path) -> dict:
+    """Compress error chunks into pattern summaries."""
+    pattern_counts = Counter()
+    pattern_examples = defaultdict(list)
+    recovery_patterns = defaultdict(list)
+    pattern_models = defaultdict(set)
+
+    for chunk_file in sorted(chunks_dir.glob("error_*.json")):
+        try:
+            chunk = json.loads(chunk_file.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            continue
+
+        for record in chunk.get("records", []):
+            _accumulate_error_record(record, pattern_counts, pattern_examples,
+                                     recovery_patterns, pattern_models)
+
+    return {"patterns": _build_error_patterns(pattern_counts, pattern_examples,
+                                               recovery_patterns, pattern_models)}
 
 
 def compress_git_correlation(chunks_dir: Path) -> dict:

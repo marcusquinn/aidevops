@@ -166,36 +166,24 @@ export const LEAK_PATTERNS: ReadonlyArray<{
 // =============================================================================
 
 /**
- * Scan text for potential credential/secret leaks.
- *
- * Accepts a LeakDetectionConfig to allow runtime customisation of entropy
- * thresholds and minimum token length. Defaults to DEFAULT_LEAK_DETECTION_CONFIG.
- *
- * Returns a result with all matches found. The caller decides whether
- * to redact, block, or warn based on the results.
+ * Run all named regex patterns against text and collect matches.
  */
-export function scanForLeaks(
+function detectPatternLeaks(
   text: string,
-  config: LeakDetectionConfig = DEFAULT_LEAK_DETECTION_CONFIG,
-): LeakDetectionResult {
-  const { entropyThreshold, minTokenLength } = config;
+  entropyThreshold: number,
+): LeakMatch[] {
   const matches: LeakMatch[] = [];
-
-  // --- Pattern-based detection ---
   for (const { name, pattern, description } of LEAK_PATTERNS) {
     // Reset lastIndex for global regexes (they're stateful)
     pattern.lastIndex = 0;
 
     let match: RegExpExecArray | null;
     while ((match = pattern.exec(text)) !== null) {
-      // Use the first capture group if present, otherwise the full match
       const value = match[1] ?? match[0];
 
       // For aws_secret_key, require high entropy to further reduce false positives
-      if (name === "aws_secret_key") {
-        if (shannonEntropy(value) < entropyThreshold) {
-          continue;
-        }
+      if (name === "aws_secret_key" && shannonEntropy(value) < entropyThreshold) {
+        continue;
       }
 
       matches.push({
@@ -207,20 +195,26 @@ export function scanForLeaks(
       });
     }
   }
+  return matches;
+}
 
-  // --- High-entropy token detection (catch-all for unknown formats) ---
-  // Use RegExp.exec() in a loop to get both the token and its correct index.
-  // This avoids the incorrect index produced by text.indexOf(token) when a
-  // token appears multiple times, and is more robust than split()-based iteration.
+/**
+ * Detect high-entropy tokens not already caught by named patterns.
+ */
+function detectHighEntropyTokens(
+  text: string,
+  existingMatches: LeakMatch[],
+  entropyThreshold: number,
+  minTokenLength: number,
+): LeakMatch[] {
+  const matches: LeakMatch[] = [];
   const tokenRegex = new RegExp(`[A-Za-z0-9_\\-/.+=]{${minTokenLength},}`, "g");
   let tokenMatch: RegExpExecArray | null;
   while ((tokenMatch = tokenRegex.exec(text)) !== null) {
     const token = tokenMatch[0];
     const index = tokenMatch.index;
 
-    // Skip tokens that overlap with an already-found pattern match by checking
-    // index ranges (more robust than exact text equality).
-    const alreadyCaught = matches.some(
+    const alreadyCaught = existingMatches.some(
       (m) => index >= m.index && index < m.index + m.matchedText.length,
     );
     if (alreadyCaught) {
@@ -238,6 +232,26 @@ export function scanForLeaks(
       });
     }
   }
+  return matches;
+}
+
+/**
+ * Scan text for potential credential/secret leaks.
+ *
+ * Accepts a LeakDetectionConfig to allow runtime customisation of entropy
+ * thresholds and minimum token length. Defaults to DEFAULT_LEAK_DETECTION_CONFIG.
+ *
+ * Returns a result with all matches found. The caller decides whether
+ * to redact, block, or warn based on the results.
+ */
+export function scanForLeaks(
+  text: string,
+  config: LeakDetectionConfig = DEFAULT_LEAK_DETECTION_CONFIG,
+): LeakDetectionResult {
+  const { entropyThreshold, minTokenLength } = config;
+  const patternMatches = detectPatternLeaks(text, entropyThreshold);
+  const entropyMatches = detectHighEntropyTokens(text, patternMatches, entropyThreshold, minTokenLength);
+  const matches = [...patternMatches, ...entropyMatches];
 
   return {
     hasLeaks: matches.length > 0,
