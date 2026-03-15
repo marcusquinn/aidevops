@@ -9,6 +9,18 @@
 #   Codacy's action_required conclusion (= "issues found") was treated as a CI failure
 #   by gh-failure-miner-helper.sh. Fixed in GH#4696.
 # - This config excludes archived/ (same as CI shellcheck) and aligns tool settings.
+#
+# Quality gate settings (GH#4910, t1489):
+# - PR and commit gates: max 10 new issues, minimum severity Warning.
+# - Rationale: gate was set to 0 max new issues, which tripped 4x during extract-function
+#   refactoring. New helper functions count as added complexity; subprocess calls in new
+#   functions count as new Bandit warnings. Project grade stays A throughout — these are
+#   not real regressions. Threshold raised to 10 Warning+ to absorb refactoring noise
+#   while still blocking genuine security/error issues.
+# - Gate settings are managed via Codacy API (not this file). This comment documents the
+#   rationale so the setting is not silently reverted to 0 in the dashboard.
+#   API endpoint: PUT /api/v3/organizations/gh/marcusquinn/repositories/aidevops/settings/quality/pull-requests
+#   Current value: {"issueThreshold":{"threshold":10,"minimumSeverity":"Warning"}}
 
 ---
 engines:

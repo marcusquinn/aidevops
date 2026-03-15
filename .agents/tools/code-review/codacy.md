@@ -26,6 +26,35 @@ tools:
 - Cannot fix: Complex logic, architecture, context-dependent, breaking changes
 - Best practices: Always review, test after, incremental batches, clean git state
 - Workflow: quality-check -> analyze --fix -> quality-check -> commit with metrics
+
+## Quality Gate Settings
+
+**Current gate (PR and commits):** max 10 new issues, minimum severity Warning.
+
+**Rationale (GH#4910, t1489):** The gate was originally set to 0 max new issues. This
+tripped 4x during extract-function refactoring sessions — new helper functions count as
+added complexity, and subprocess calls in new functions count as new Bandit warnings.
+The project grade stays A throughout; these are not real regressions. Threshold raised
+to 10 Warning+ to absorb refactoring noise while still blocking genuine security/error issues.
+
+**Do not revert to 0.** A threshold of 0 makes extract-function refactoring impossible
+without manual Codacy dashboard intervention on every PR. The project grade (A) is the
+meaningful quality signal, not the per-PR new-issue count.
+
+**Updating via API:**
+```bash
+# Update PR gate
+curl -s -H "api-token: $CODACY_API_TOKEN" \
+  "https://app.codacy.com/api/v3/organizations/gh/marcusquinn/repositories/aidevops/settings/quality/pull-requests" \
+  -X PUT -H "Content-Type: application/json" \
+  -d '{"issueThreshold":{"threshold":10,"minimumSeverity":"Warning"}}'
+
+# Update commits gate
+curl -s -H "api-token: $CODACY_API_TOKEN" \
+  "https://app.codacy.com/api/v3/organizations/gh/marcusquinn/repositories/aidevops/settings/quality/commits" \
+  -X PUT -H "Content-Type: application/json" \
+  -d '{"issueThreshold":{"threshold":10,"minimumSeverity":"Warning"}}'
+```
 <!-- AI-CONTEXT-END -->
 
 ## Automated Code Quality Fixes
