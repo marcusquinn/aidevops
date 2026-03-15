@@ -741,10 +741,11 @@ After task completion, the loop automatically:
 4. **PR Review**: Monitors CI checks and review status
 5. **Review Bot Gate (t1382)**: Wait for AI review bots before merge (see below)
 6. **Merge**: Squash merge (without `--delete-branch` when in worktree)
-7. **Issue Closing Comment**: Post a summary comment on linked issues (see below)
-8. **Worktree Cleanup**: Return to main repo, pull, clean merged worktrees
-9. **Postflight**: Verifies release health after merge
-10. **Deploy**: Runs `setup.sh --non-interactive` (aidevops repos only)
+7. **Auto-Release**: Bump patch version + create GitHub release (aidevops repo only — see below)
+8. **Issue Closing Comment**: Post a summary comment on linked issues, including release version (see below)
+9. **Worktree Cleanup**: Return to main repo, pull, clean merged worktrees
+10. **Postflight**: Verifies release health after merge
+11. **Deploy**: Runs `setup.sh --non-interactive` (aidevops repos only)
 
 **Issue-state guard before any label/comment modification (t1343 — MANDATORY):**
 
@@ -822,6 +823,44 @@ Before merging any PR, wait for AI code review bots to post their reviews. This 
 | Augment Code | `augment-code[bot]` | 2-4 minutes |
 | GitHub Copilot | `copilot[bot]` | 1-3 minutes |
 
+**Auto-release after merge (aidevops repo only — MANDATORY):**
+
+After merging a PR on the aidevops repo (`marcusquinn/aidevops`), cut a patch release so contributors and auto-update users receive the fix immediately. Without this step, fixes sit on main indefinitely until someone manually releases.
+
+```bash
+# Only for the aidevops repo — skip for all other repos
+REPO_SLUG=$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || echo "")
+if [[ "$REPO_SLUG" == "marcusquinn/aidevops" ]]; then
+  # Pull the merge commit to the canonical repo directory
+  REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null)
+  CANONICAL_DIR="${REPO_ROOT%%.*}"  # Strip worktree suffix if present
+  git -C "$CANONICAL_DIR" pull origin main
+
+  # Bump patch version (updates VERSION, package.json, setup.sh, etc.)
+  "$HOME/.aidevops/agents/scripts/version-manager.sh" bump patch
+  NEW_VERSION=$(cat "$CANONICAL_DIR/VERSION")
+
+  # Commit, tag, push, create release
+  git -C "$CANONICAL_DIR" add -A
+  git -C "$CANONICAL_DIR" commit -m "chore(release): bump version to ${NEW_VERSION}"
+  git -C "$CANONICAL_DIR" push origin main
+  git -C "$CANONICAL_DIR" tag "v${NEW_VERSION}"
+  git -C "$CANONICAL_DIR" push origin "v${NEW_VERSION}"
+
+  # Create GitHub release with auto-generated notes
+  gh release create "v${NEW_VERSION}" --repo "$REPO_SLUG" \
+    --title "v${NEW_VERSION} - AI DevOps Framework" \
+    --generate-notes
+
+  # Deploy locally
+  "$CANONICAL_DIR/setup.sh" 2>/dev/null || true
+fi
+```
+
+**Why patch (not minor/major)?** Workers cannot determine release significance — that requires human judgment about breaking changes and feature scope. Patch is always safe. The maintainer can manually cut a minor/major release when appropriate.
+
+**Headless mode:** Auto-release runs in headless mode too. The version bump is atomic (single commit + tag), and `--generate-notes` avoids the need to compose release notes.
+
 **Issue closing comment (MANDATORY — do NOT skip):**
 
 After the PR merges, post a closing comment on every linked GitHub issue. This preserves the context that would otherwise die with the worker session. The comment is the permanent record of what was done.
@@ -859,6 +898,8 @@ gh issue comment <ISSUE_NUMBER> --repo <owner/repo> --body "$(cat <<'COMMENT'
 **Follow-up needs:**
 - <anything that should be done next but was out of scope>
 - None (if complete)
+
+**Released in:** v<VERSION> — run `aidevops update` to get this fix.
 COMMENT
 )"
 ```
@@ -868,6 +909,7 @@ COMMENT
 - Be specific — "fixed the bug" is useless; "fixed race condition in worktree creation by adding `sleep 2` between dispatches" is useful
 - Include file paths with brief descriptions so future workers can find the changes
 - If the task was dispatched by the supervisor, include the original dispatch description for traceability
+- **Include the release version** in the "Released in" line if an auto-release was cut (aidevops repo). Read the version from `VERSION` after the release step. For non-aidevops repos, omit the "Released in" line.
 - This is a gate: do NOT emit `FULL_LOOP_COMPLETE` until closing comments are posted
 
 **Worktree cleanup after merge:**
