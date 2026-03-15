@@ -42,6 +42,7 @@ without manual Codacy dashboard intervention on every PR. The project grade (A) 
 meaningful quality signal, not the per-PR new-issue count.
 
 **Updating via API:**
+
 ```bash
 # Update PR gate
 curl -s -H "api-token: $CODACY_API_TOKEN" \
