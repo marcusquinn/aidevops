@@ -24,6 +24,7 @@
 #   social_engineering      — Urgency, authority claims, emotional manipulation
 #   data_exfiltration       — Attempts to leak data via URLs/encoding
 #   data_exfiltration_dns   — DNS-based data exfiltration (CVE-2025-55284)
+#   credential_exposure     — Secrets embedded in URLs/config output (t4954)
 #   context_manipulation    — Token smuggling, history manipulation, false claims
 #
 # ADDING PATTERNS:
@@ -614,3 +615,43 @@ context_manipulation:
   - severity: HIGH
     description: "Dismisses previous content as fake"
     pattern: '(?i)\bthe\s+above\s+(was|is)\s+(just\s+)?(a\s+)?(test|joke|fake|distraction)'
+
+# ================================================================
+# CREDENTIAL EXPOSURE (t4954)
+# ================================================================
+# Detects secrets embedded in URL query parameters within command output.
+# These patterns catch credential material that leaks from application
+# config tables (webhook settings, OAuth configs, integration records)
+# where authenticated callback URLs contain secrets as query params.
+credential_exposure:
+  - severity: MEDIUM
+    description: "URL query param: secret"
+    pattern: '[?&]secret=[^&\s]{8,}'
+
+  - severity: MEDIUM
+    description: "URL query param: token"
+    pattern: '[?&]token=[^&\s]{8,}'
+
+  - severity: MEDIUM
+    description: "URL query param: api_key/apikey"
+    pattern: '[?&](api_key|apikey|api-key)=[^&\s]{8,}'
+
+  - severity: MEDIUM
+    description: "URL query param: password"
+    pattern: '[?&]password=[^&\s]{8,}'
+
+  - severity: MEDIUM
+    description: "URL query param: access_token"
+    pattern: '[?&]access_token=[^&\s]{8,}'
+
+  - severity: MEDIUM
+    description: "URL query param: auth/authorization"
+    pattern: '[?&](auth|authorization)=[^&\s]{8,}'
+
+  - severity: MEDIUM
+    description: "URL query param: client_secret"
+    pattern: '[?&]client_secret=[^&\s]{8,}'
+
+  - severity: MEDIUM
+    description: "URL query param: webhook_secret"
+    pattern: '[?&]webhook_secret=[^&\s]{8,}'

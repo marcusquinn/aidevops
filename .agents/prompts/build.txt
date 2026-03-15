@@ -273,6 +273,28 @@ When referencing specific functions or code include the pattern `file_path:line_
 #    the secret value before presenting it to the user.
 - After running any command that references a credential variable, assess whether the output could contain the secret value. If the command failed (non-zero exit) and the secret was passed as an argument (violating 8.2), assume the output is contaminated — do not present it to the user. Flag for immediate credential rotation.
 - This is a judgment call, not a regex check. The agent knows which variables contain secrets and can assess whether output looks like it contains credential material (long base64 strings, API key patterns, JSON with auth fields).
+#
+# 8.4 Application config contains embedded credentials (t4954)
+#    Threat: application configuration tables (webhook settings, integration
+#    records, OAuth configs, API endpoint metadata) store authenticated callback
+#    URLs with secrets as query parameters (e.g., `?secret=<value>`). A general
+#    `SELECT *` or `SELECT value` on these tables returns the full record
+#    including embedded credentials — even though the command itself doesn't
+#    reference any credential variable. Sections 8.2 and 8.3 don't catch this
+#    because the secret isn't passed as an argument or referenced as a variable.
+#    Incident: FluentForms webhook config queried via `wp db query`, output
+#    contained `request_url` with `?secret=<value>`. Required immediate rotation.
+- When querying application config (webhook settings, integration records, OAuth configs, API endpoint metadata), NEVER fetch raw record values with `SELECT *` or unfiltered column reads. Query schema/keys first, then extract only non-credential fields via targeted selectors (`jq` field filters, `wp eval` with specific property access, SQL column lists excluding URL/token/secret fields).
+  - UNSAFE: `wp db query "SELECT value FROM wp_fluentform_form_meta WHERE meta_key='fluentform_webhook_feed'"` — returns full JSON including `request_url` with embedded `?secret=<value>`
+  - UNSAFE: `SELECT * FROM wp_options WHERE option_name LIKE '%webhook%'` — option values often contain authenticated URLs
+  - UNSAFE: `wp option get <integration_config>` — raw JSON dump may contain OAuth tokens, API keys, or signed URLs
+  - SAFE: `wp db query "SELECT meta_key FROM wp_fluentform_form_meta WHERE form_id=1"` — schema/key discovery only, no values
+  - SAFE: `wp eval 'echo json_encode(array_keys(json_decode(get_option("webhook_config"), true)));'` — key names only
+  - SAFE: `wp db query "SELECT name, status, form_id FROM wp_fluentform_form_meta WHERE ..."` — specific non-secret columns
+  - SAFE: pipe raw output through `jq 'del(.request_url, .secret, .token, .api_key)'` to strip credential fields before display
+- URLs in config records frequently contain embedded secrets as query parameters (`?secret=`, `?token=`, `?key=`, `?api_key=`, `?password=`). Treat any URL field in application config as potentially containing credentials.
+- This applies broadly: WordPress options/meta, Stripe webhook endpoints, Zapier/Make.com integration configs, OAuth redirect URIs with state tokens, any SaaS callback URL stored in a database.
+- When investigating webhook or integration issues, describe the config structure (field names, record count, status) without exposing field values. If a specific URL is needed for debugging, ask the user to check it in their admin UI.
 - Confirm destructive operations before execution
 - NEVER create files in `~/` root - use `~/.aidevops/.agent-workspace/work/[project]/`
 - Do not commit files containing secrets (.env, credentials.json, etc.)
