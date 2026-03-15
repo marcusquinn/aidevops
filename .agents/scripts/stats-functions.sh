@@ -280,11 +280,13 @@ _update_health_issue_for_repo() {
 			--description "$role_label_desc" --force 2>/dev/null || true
 		gh label create "$runner_user" --repo "$repo_slug" --color "0E8A16" \
 			--description "${role_display} runner: ${runner_user}" --force 2>/dev/null || true
+		gh label create "source:health-dashboard" --repo "$repo_slug" --color "C2E0C6" \
+			--description "Auto-created by stats-functions.sh health dashboard" --force 2>/dev/null || true
 
 		health_issue_number=$(gh issue create --repo "$repo_slug" \
 			--title "${runner_prefix} starting..." \
 			--body "Live ${runner_role} status for **${runner_user}**. Updated each pulse. Pin this issue for at-a-glance monitoring." \
-			--label "$role_label" --label "$runner_user" 2>/dev/null | grep -oE '[0-9]+$' || echo "")
+			--label "$role_label" --label "$runner_user" --label "source:health-dashboard" 2>/dev/null | grep -oE '[0-9]+$' || echo "")
 
 		if [[ -z "$health_issue_number" ]]; then
 			echo "[stats] Health issue: could not create for ${repo_slug}" >>"$LOGFILE"
@@ -983,11 +985,13 @@ _ensure_quality_issue() {
 			--description "Daily code quality review" --force 2>/dev/null || true
 		gh label create "persistent" --repo "$repo_slug" --color "FBCA04" \
 			--description "Persistent issue — do not close" --force 2>/dev/null || true
+		gh label create "source:quality-sweep" --repo "$repo_slug" --color "C2E0C6" \
+			--description "Auto-created by stats-functions.sh quality sweep" --force 2>/dev/null || true
 
 		issue_number=$(gh issue create --repo "$repo_slug" \
 			--title "Daily Code Quality Review" \
 			--body "Persistent issue for daily code quality sweeps across multiple tools (CodeRabbit, Qlty, ShellCheck, Codacy, SonarCloud). The supervisor posts findings here and creates actionable issues from them. **Do not close this issue.**" \
-			--label "quality-review" --label "persistent" 2>/dev/null | grep -oE '[0-9]+$' || echo "")
+			--label "quality-review" --label "persistent" --label "source:quality-sweep" 2>/dev/null | grep -oE '[0-9]+$' || echo "")
 
 		if [[ -z "$issue_number" ]]; then
 			echo "[stats] Quality sweep: could not create issue for ${repo_slug}" >>"$LOGFILE"
@@ -1107,6 +1111,9 @@ _create_simplification_issues() {
 	gh label create "needs-maintainer-review" --repo "$repo_slug" \
 		--description "Requires maintainer approval before automated dispatch" \
 		--color "FBCA04" 2>/dev/null || true
+	gh label create "source:quality-sweep" --repo "$repo_slug" \
+		--description "Auto-created by stats-functions.sh quality sweep" \
+		--color "C2E0C6" --force 2>/dev/null || true
 
 	# Extract files with smell count > threshold, sorted by count descending
 	local high_smell_files
@@ -1185,7 +1192,7 @@ This file was flagged by the daily quality sweep for high smell density. The sme
 
 		if gh issue create --repo "$repo_slug" \
 			--title "$issue_title" \
-			--label "simplification-debt" --label "needs-maintainer-review" \
+			--label "simplification-debt" --label "needs-maintainer-review" --label "source:quality-sweep" \
 			--assignee "$maintainer" \
 			--body "$issue_body" >/dev/null 2>&1; then
 			issues_created=$((issues_created + 1))

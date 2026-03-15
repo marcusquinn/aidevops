@@ -726,7 +726,7 @@ Gap lifecycle: detected → todo_created → resolved"
 			--repo-path "$repo_path" \
 			--title "Self-evolution: ${description}" \
 			--description "$issue_body" \
-			--labels "self-evolution,auto-dispatch" 2>&1) || {
+			--labels "self-evolution,auto-dispatch,source:self-evolution" 2>&1) || {
 			log_warn "claim-task-id.sh failed — recording gap without TODO"
 			log_warn "Output: $claim_output"
 			# Still update the gap status to avoid re-processing

@@ -573,13 +573,18 @@ Supervisor dispatch is **paused**. No new tasks will be dispatched until the cir
 			--description "Supervisor circuit breaker tripped — dispatch paused" \
 			--color "D93F0B" \
 			--force || true
+		gh label create "source:circuit-breaker" \
+			--repo "$repo_slug" \
+			--description "Auto-created by circuit-breaker-helper.sh" \
+			--color "C2E0C6" \
+			--force || true
 
 		local issue_url
 		issue_url=$(gh issue create \
 			--repo "$repo_slug" \
 			--title "Supervisor circuit breaker tripped — ${failure_count} consecutive failures" \
 			--body "$body" \
-			--label "circuit-breaker") || {
+			--label "circuit-breaker" --label "source:circuit-breaker") || {
 			_cb_log_warn "failed to create GitHub issue"
 			return 1
 		}

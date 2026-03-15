@@ -1026,10 +1026,13 @@ create_fix_tasks() {
 **Validation criteria:** Re-run milestone validation after fix to confirm resolution."
 
 				local issue_url
+				gh label create "source:mission-validation" --repo "$repo_slug" \
+					--description "Auto-created by milestone-validation-worker.sh" \
+					--color "C2E0C6" --force 2>/dev/null || true
 				issue_url=$(gh issue create --repo "$repo_slug" \
 					--title "$fix_title" \
 					--body "$issue_body" \
-					--label "bug,mission:$mission_id" 2>/dev/null || echo "")
+					--label "bug,mission:$mission_id,source:mission-validation" 2>/dev/null || echo "")
 
 				if [[ -n "$issue_url" ]]; then
 					log_success "Created fix issue: $issue_url"

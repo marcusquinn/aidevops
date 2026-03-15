@@ -79,7 +79,7 @@ normalize_label_list() {
 	local source="${2:-$DEFAULT_SOURCE}"
 	local severity="${3:-$DEFAULT_SEVERITY}"
 
-	local out="actionable-finding,${source},severity:${severity}"
+	local out="actionable-finding,${source},severity:${severity},source:findings-to-tasks"
 	local token=""
 	local token_trimmed=""
 

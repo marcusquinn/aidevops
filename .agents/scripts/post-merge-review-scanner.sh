@@ -64,6 +64,8 @@ create_issue() {
 	fi
 	gh label create "$SCANNER_LABEL" --repo "$repo" \
 		--description "Unaddressed review bot feedback" --color "D4C5F9" || true
+	gh label create "source:review-scanner" --repo "$repo" \
+		--description "Auto-created by post-merge-review-scanner.sh" --color "C2E0C6" --force || true
 	local body
 	body="## Unaddressed review bot suggestions
 
@@ -75,7 +77,7 @@ PR #${pr} was merged with unaddressed review bot feedback.
 ${summary}
 ---
 *Auto-created by post-merge-review-scanner.sh (t1386)*"
-	gh issue create --repo "$repo" --title "$title" --label "$SCANNER_LABEL" --body "$body"
+	gh issue create --repo "$repo" --title "$title" --label "$SCANNER_LABEL,source:review-scanner" --body "$body"
 }
 
 do_scan() {

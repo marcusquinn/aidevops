@@ -543,6 +543,16 @@ create_systemic_issues() {
 	candidate_file=$(mktemp)
 	printf '%s\n' "$clusters_json" | jq --argjson min_count "$systemic_threshold" '[.[] | select(.count >= $min_count)]' >"$candidate_file"
 
+	# Ensure source label exists on repos that will receive issues
+	if [[ "$dry_run" != "true" ]]; then
+		local seen_repos=""
+		local repo_entry
+		for repo_entry in $(printf '%s\n' "$clusters_json" | jq -r '.[].repo' | sort -u); do
+			gh label create "source:ci-failure-miner" --repo "$repo_entry" \
+				--description "Auto-created by gh-failure-miner-helper.sh" --color "C2E0C6" --force 2>/dev/null || true
+		done
+	fi
+
 	local candidate_count
 	candidate_count=$(jq 'length' "$candidate_file")
 	if [[ "$candidate_count" -eq 0 ]]; then
@@ -585,7 +595,7 @@ create_systemic_issues() {
 		if [[ "$dry_run" == "true" ]]; then
 			echo "DRY RUN: would create issue: ${title}"
 		else
-			local create_cmd=(gh issue create --repo "$repo_slug" --title "$title" --body "$body" --label bug)
+			local create_cmd=(gh issue create --repo "$repo_slug" --title "$title" --body "$body" --label bug --label "source:ci-failure-miner")
 			local label
 			for label in "${extra_labels[@]}"; do
 				if [[ -n "$label" ]]; then
