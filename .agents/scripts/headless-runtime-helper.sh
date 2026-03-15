@@ -50,8 +50,13 @@ init_state_db() {
 PRAGMA journal_mode=WAL;
 PRAGMA busy_timeout=5000;
 
+-- GH#4925: backoff is now per-model, not per-provider.
+-- Drop legacy provider-keyed table and recreate with model as PK.
+-- Safe: backoff rows are ephemeral (15-60 min TTL), no data loss impact.
+DROP TABLE IF EXISTS provider_backoff;
 CREATE TABLE IF NOT EXISTS provider_backoff (
-    provider       TEXT PRIMARY KEY,
+    model          TEXT PRIMARY KEY,
+    provider       TEXT NOT NULL DEFAULT '',
     reason         TEXT NOT NULL,
     retry_after    TEXT DEFAULT '',
     auth_signature TEXT DEFAULT '',
@@ -280,8 +285,14 @@ ON CONFLICT(provider, session_key) DO UPDATE SET
 }
 
 clear_provider_backoff() {
-	local provider="$1"
-	db_query "DELETE FROM provider_backoff WHERE provider = '$(sql_escape "$provider")';" >/dev/null
+	local identifier="$1"
+	if [[ "$identifier" == */* ]]; then
+		# Model-level clear (e.g. "anthropic/claude-sonnet-4-6")
+		db_query "DELETE FROM provider_backoff WHERE model = '$(sql_escape "$identifier")';" >/dev/null
+	else
+		# Provider-level clear (e.g. "anthropic") — clears all models for this provider
+		db_query "DELETE FROM provider_backoff WHERE provider = '$(sql_escape "$identifier")';" >/dev/null
+	fi
 	return 0
 }
 
@@ -320,10 +331,11 @@ PY
 }
 
 record_provider_backoff() {
-	local provider="$1"
+	local model="$1"
 	local reason="$2"
 	local details_file="$3"
-	local details retry_seconds auth_signature retry_after
+	local provider details retry_seconds auth_signature retry_after
+	provider=$(extract_provider "$model" 2>/dev/null || printf '%s' "")
 	details=$(
 		python3 - "$details_file" <<'PY'
 from pathlib import Path
@@ -344,8 +356,9 @@ PY
 	fi
 	retry_after=$(date -u -v+"${retry_seconds}"S '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || date -u -d "+${retry_seconds} seconds" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || printf '%s' "")
 	db_query "
-INSERT INTO provider_backoff (provider, reason, retry_after, auth_signature, details, updated_at)
+INSERT INTO provider_backoff (model, provider, reason, retry_after, auth_signature, details, updated_at)
 VALUES (
+    '$(sql_escape "$model")',
     '$(sql_escape "$provider")',
     '$(sql_escape "$reason")',
     '$(sql_escape "$retry_after")',
@@ -353,7 +366,8 @@ VALUES (
     '$(sql_escape "$details")',
     strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
 )
-ON CONFLICT(provider) DO UPDATE SET
+ON CONFLICT(model) DO UPDATE SET
+    provider = excluded.provider,
     reason = excluded.reason,
     retry_after = excluded.retry_after,
     auth_signature = excluded.auth_signature,
@@ -363,10 +377,21 @@ ON CONFLICT(provider) DO UPDATE SET
 	return 0
 }
 
-provider_backoff_active() {
-	local provider="$1"
-	local row stored_retry_after stored_signature current_signature
-	row=$(db_query "SELECT reason || '|' || retry_after || '|' || auth_signature FROM provider_backoff WHERE provider = '$(sql_escape "$provider")';")
+model_backoff_active() {
+	local model="$1"
+	local provider
+	provider=$(extract_provider "$model" 2>/dev/null || printf '%s' "")
+	local row stored_reason stored_retry_after stored_signature current_signature
+
+	# Check model-level backoff first (rate_limit, provider_error)
+	row=$(db_query "SELECT reason || '|' || retry_after || '|' || auth_signature FROM provider_backoff WHERE model = '$(sql_escape "$model")';")
+
+	# If no model-level backoff, check for provider-level auth_error
+	# (auth errors affect all models from the same provider)
+	if [[ -z "$row" && -n "$provider" ]]; then
+		row=$(db_query "SELECT reason || '|' || retry_after || '|' || auth_signature FROM provider_backoff WHERE provider = '$(sql_escape "$provider")' AND reason = 'auth_error' LIMIT 1;")
+	fi
+
 	if [[ -z "$row" ]]; then
 		return 1
 	fi
@@ -383,12 +408,21 @@ provider_backoff_active() {
 		now_epoch=$(date -u '+%s')
 		retry_epoch=$(date -j -f '%Y-%m-%dT%H:%M:%SZ' "$stored_retry_after" '+%s' 2>/dev/null || date -u -d "$stored_retry_after" '+%s' 2>/dev/null || printf '%s' "0")
 		if [[ "$retry_epoch" -le "$now_epoch" ]]; then
-			clear_provider_backoff "$provider"
+			if [[ "$stored_reason" == "auth_error" ]]; then
+				clear_provider_backoff "$provider"
+			else
+				clear_provider_backoff "$model"
+			fi
 			return 1
 		fi
 	fi
 
 	return 0
+}
+
+# Backward-compatible alias — callers that pass a provider name still work
+provider_backoff_active() {
+	model_backoff_active "$@"
 }
 
 provider_auth_available() {
@@ -519,8 +553,8 @@ choose_model() {
 			print_error "Model must use provider/model format: $explicit_model"
 			return 1
 		fi
-		if provider_backoff_active "$provider"; then
-			print_warning "$provider is currently backed off — refusing explicit model $explicit_model"
+		if model_backoff_active "$explicit_model"; then
+			print_warning "$explicit_model is currently backed off"
 			return 75
 		fi
 		printf '%s' "$explicit_model"
@@ -557,7 +591,7 @@ choose_model() {
 		if ! provider_auth_available "$current_provider"; then
 			continue
 		fi
-		if provider_backoff_active "$current_provider"; then
+		if model_backoff_active "$current_model"; then
 			continue
 		fi
 		set_last_provider "$role" "$current_provider"
@@ -600,30 +634,30 @@ cmd_backoff() {
 	shift || true
 	case "$action" in
 	status)
-		db_query "SELECT provider || '|' || reason || '|' || retry_after || '|' || updated_at FROM provider_backoff ORDER BY provider;"
+		db_query "SELECT model || '|' || provider || '|' || reason || '|' || retry_after || '|' || updated_at FROM provider_backoff ORDER BY model;"
 		return 0
 		;;
 	clear)
-		local provider="${1:-}"
-		[[ -n "$provider" ]] || {
-			print_error "Usage: backoff clear <provider>"
+		local identifier="${1:-}"
+		[[ -n "$identifier" ]] || {
+			print_error "Usage: backoff clear <model|provider>"
 			return 1
 		}
-		clear_provider_backoff "$provider"
+		clear_provider_backoff "$identifier"
 		return 0
 		;;
 	set)
-		local provider="${1:-}"
+		local model="${1:-}"
 		local reason="${2:-provider_error}"
 		local retry_seconds="${3:-300}"
-		[[ -n "$provider" ]] || {
-			print_error "Usage: backoff set <provider> <reason> [retry_seconds]"
+		[[ -n "$model" ]] || {
+			print_error "Usage: backoff set <provider/model> <reason> [retry_seconds]"
 			return 1
 		}
 		local tmp_file
 		tmp_file=$(mktemp)
-		printf 'manual backoff %s %s %s\n' "$provider" "$reason" "$retry_seconds" >"$tmp_file"
-		record_provider_backoff "$provider" "$reason" "$tmp_file"
+		printf 'manual backoff %s %s %s\n' "$model" "$reason" "$retry_seconds" >"$tmp_file"
+		record_provider_backoff "$model" "$reason" "$tmp_file"
 		if [[ "$retry_seconds" != "300" ]]; then
 			if [[ ! "$retry_seconds" =~ ^[0-9]+$ ]]; then
 				print_error "retry_seconds must be an integer"
@@ -631,7 +665,7 @@ cmd_backoff() {
 			fi
 			local retry_after
 			retry_after=$(date -u -v+"${retry_seconds}"S '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || date -u -d "+${retry_seconds} seconds" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || printf '%s' "")
-			db_query "UPDATE provider_backoff SET retry_after = '$(sql_escape "$retry_after")' WHERE provider = '$(sql_escape "$provider")';" >/dev/null
+			db_query "UPDATE provider_backoff SET retry_after = '$(sql_escape "$retry_after")' WHERE model = '$(sql_escape "$model")';" >/dev/null
 		fi
 		rm -f "$tmp_file"
 		return 0
@@ -817,9 +851,9 @@ cmd_run() {
 		activity_detected=$(output_has_activity "$output_file")
 		if [[ "$exit_code" -eq 0 ]]; then
 			if [[ "$activity_detected" != "1" ]]; then
-				record_provider_backoff "$provider" "provider_error" "$output_file"
+				record_provider_backoff "$selected_model" "provider_error" "$output_file"
 				rm -f "$output_file"
-				print_warning "$provider returned exit 0 without any model activity; backing off provider"
+				print_warning "$selected_model returned exit 0 without any model activity; backing off model"
 				return 75
 			fi
 			if [[ "$role" != "pulse" && -n "$discovered_session" ]]; then
@@ -831,7 +865,7 @@ cmd_run() {
 
 		local failure_reason
 		failure_reason=$(classify_failure_reason "$output_file")
-		record_provider_backoff "$provider" "$failure_reason" "$output_file"
+		record_provider_backoff "$selected_model" "$failure_reason" "$output_file"
 		rm -f "$output_file"
 
 		if [[ -n "$model_override" ]]; then
