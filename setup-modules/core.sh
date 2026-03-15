@@ -441,6 +441,16 @@ check_requirements() {
 		missing_deps+=("rg")
 		missing_packages+=("ripgrep")
 	fi
+	if ! command -v sqlite3 >/dev/null 2>&1; then
+		missing_deps+=("sqlite3")
+		# Package name varies: sqlite3 on Debian/Ubuntu/brew, sqlite on Fedora/Arch/Alpine
+		local pkg_mgr
+		pkg_mgr=$(detect_package_manager)
+		case "$pkg_mgr" in
+		apt | brew) missing_packages+=("sqlite3") ;;
+		*) missing_packages+=("sqlite") ;;
+		esac
+	fi
 
 	if [[ ${#missing_deps[@]} -gt 0 ]]; then
 		print_warning "Missing required dependencies: ${missing_deps[*]}"
