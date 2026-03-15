@@ -339,7 +339,7 @@ See `.agents/tools/git/opencode-github-security.md` for the full security docume
 
 Your terminal tab/window title automatically shows `repo/branch` context when working in git repositories. This helps identify which codebase and branch you're working on across multiple terminal sessions.
 
-**Supported terminals:** [Tabby](https://tabby.sh/), [tmux](https://github.com/tmux/tmux), [iTerm2](https://iterm2.com/), [Windows Terminal](https://github.com/microsoft/terminal), [Kitty](https://sw.kovidgoyal.net/kitty/), [Alacritty](https://alacritty.org/), [WezTerm](https://wezfurlong.org/wezterm/), [Hyper](https://hyper.is/), and most xterm-compatible terminals.
+**Supported terminals:** [Tabby](https://tabby.sh/), [cmux](https://cmux.dev/), [iTerm2](https://iterm2.com/), [Windows Terminal](https://github.com/microsoft/terminal), [Kitty](https://sw.kovidgoyal.net/kitty/), [Alacritty](https://alacritty.org/), [WezTerm](https://wezfurlong.org/wezterm/), [Hyper](https://hyper.is/), and most xterm-compatible terminals.
 
 **How it works:** The `pre-edit-check.sh` script's primary role is enforcing git workflow protection (blocking edits on main/master branches). As a secondary, non-blocking action, it updates the terminal title via escape sequences. No configuration needed - it's automatic.
 
