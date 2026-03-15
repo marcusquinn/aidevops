@@ -330,7 +330,8 @@ See `.agents/tools/git/opencode-github-security.md` for the full security docume
 **Recommended stack:**
 
 - **[OpenCode](https://opencode.ai/)** - The recommended AI coding agent. Powerful agentic TUI/CLI with native MCP support, Tab-based agent switching, LSP integration, plugin ecosystem, and excellent DX. All aidevops features are designed and tested for OpenCode first.
-- **[Claude models](https://claude.ai/)** - Recommended AI models. Claude haiku, sonnet, and opus deliver the best results across all aidevops agent tiers and workflows.
+- **[OpenCode Zen](https://opencode.ai/)** - Free tier of OpenCode with included models. Start working with AI straight away at no cost -- no API keys or subscriptions required.
+- **[Claude](https://claude.ai/)** (Anthropic) - Our most-used and tested model provider. Claude haiku, sonnet, and opus deliver the best results across all aidevops agent tiers and workflows. Recommended for users who want the highest quality output.
 - **[Tabby](https://tabby.sh/)** - Recommended terminal. Colour-coded Profiles per project/repo, **auto-syncs tab title with git repo/branch.**
 - **[Zed](https://zed.dev/)** - Recommended editor. High-performance with AI integration (use with the OpenCode Agent Extension).
 
