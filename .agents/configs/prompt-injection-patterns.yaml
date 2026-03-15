@@ -633,8 +633,8 @@ credential_exposure:
     pattern: '[?&]token=[^&\s]{8,}'
 
   - severity: MEDIUM
-    description: "URL query param: api_key/apikey"
-    pattern: '[?&](api_key|apikey|api-key)=[^&\s]{8,}'
+    description: "URL query param: key/api_key/apikey"
+    pattern: '[?&](key|api_key|apikey|api-key)=[^&\s]{8,}'
 
   - severity: MEDIUM
     description: "URL query param: password"
