@@ -10,6 +10,8 @@ import { writeFileSync } from 'fs';
 import {
   getDefaultOutputDir,
   resolveOutputDir,
+  safeJoin,
+  sanitizePathSegment,
   writeJsonSidecar,
 } from './higgsfield-common.mjs';
 
@@ -244,7 +246,7 @@ export async function apiDownloadImages(result, { modelSlug, modelId, options, s
     const imgUrl = result.images[i].url;
     const suffix = result.images.length > 1 ? `_${i + 1}` : '';
     const filename = `hf_api_${modelSlug}_${timestamp}${suffix}.png`;
-    const outputPath = join(outputDir, filename);
+    const outputPath = safeJoin(outputDir, sanitizePathSegment(filename, 'api-image.png'));
     const size = await apiDownloadFile(imgUrl, outputPath);
     console.log(`[api] Downloaded: ${outputPath} (${(size / 1024).toFixed(0)}KB)`);
     writeJsonSidecar(outputPath, {
@@ -262,7 +264,7 @@ export async function apiDownloadVideo(result, { modelSlug, modelId, options, si
   const outputDir = resolveOutputDir(baseOutput, options, 'videos');
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-').substring(0, 19);
   const filename = `hf_api_${modelSlug}_${timestamp}.mp4`;
-  const outputPath = join(outputDir, filename);
+  const outputPath = safeJoin(outputDir, sanitizePathSegment(filename, 'api-video.mp4'));
   const size = await apiDownloadFile(result.video.url, outputPath);
   console.log(`[api] Downloaded: ${outputPath} (${(size / 1024 / 1024).toFixed(1)}MB)`);
   writeJsonSidecar(outputPath, {

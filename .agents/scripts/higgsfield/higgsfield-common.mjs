@@ -160,14 +160,30 @@ export function ensureDir(dir) {
   return dir;
 }
 
+export function sanitizePathSegment(value, fallback = 'item') {
+  const raw = basename(String(value ?? fallback));
+  const cleaned = raw
+    .replace(/[^a-zA-Z0-9._-]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+  return cleaned || fallback;
+}
+
+export function safeJoin(basePath, ...segments) {
+  const base = String(basePath || '').replace(/[\\/]+$/g, '');
+  const cleanedSegments = segments
+    .map(segment => String(segment ?? '').replace(/[\\]+/g, '/').replace(/^[/]+|[/]+$/g, ''))
+    .filter(Boolean);
+  return [base, ...cleanedSegments].join('/');
+}
+
 export function findNewestFile(dir, extensions = ['.png', '.jpg', '.webp']) {
   if (!existsSync(dir)) return null;
   const extSet = new Set(extensions.map(e => e.startsWith('.') ? e : `.${e}`));
   const files = readdirSync(dir)
     .filter(f => extSet.has(extname(f).toLowerCase()))
-    .map(f => ({ name: f, time: statSync(join(dir, f)).mtimeMs }))
+    .map(f => ({ name: f, time: statSync(safeJoin(dir, f)).mtimeMs }))
     .sort((a, b) => b.time - a.time);
-  return files.length > 0 ? join(dir, files[0].name) : null;
+  return files.length > 0 ? safeJoin(dir, files[0].name) : null;
 }
 
 export function findNewestFileMatching(dir, extensions, nameFilter) {
@@ -175,9 +191,9 @@ export function findNewestFileMatching(dir, extensions, nameFilter) {
   const extSet = new Set(extensions.map(e => e.startsWith('.') ? e : `.${e}`));
   const files = readdirSync(dir)
     .filter(f => extSet.has(extname(f).toLowerCase()) && (!nameFilter || f.includes(nameFilter)))
-    .map(f => ({ name: f, time: statSync(join(dir, f)).mtimeMs }))
+    .map(f => ({ name: f, time: statSync(safeJoin(dir, f)).mtimeMs }))
     .sort((a, b) => b.time - a.time);
-  return files.length > 0 ? join(dir, files[0].name) : null;
+  return files.length > 0 ? safeJoin(dir, files[0].name) : null;
 }
 
 export function curlDownload(url, savePath, { withHttpCode = false, timeout = 120000 } = {}) {
@@ -446,7 +462,8 @@ export async function navigateTo(page, path, { waitMs = 3000, timeout = 60000 } 
 }
 
 export async function debugScreenshot(page, name, { fullPage = false } = {}) {
-  await page.screenshot({ path: join(STATE_DIR, `${name}.png`), fullPage });
+  const safeName = sanitizePathSegment(name, 'debug');
+  await page.screenshot({ path: safeJoin(STATE_DIR, `${safeName}.png`), fullPage });
 }
 
 export async function clickHistoryTab(page, { waitMs = 2000 } = {}) {
@@ -621,7 +638,7 @@ export function resolveOutputDir(baseOutput, options = {}, type = 'misc') {
       .toLowerCase()
       .replace(/[^a-z0-9]+/g, '-')
       .replace(/^-|-$/g, '');
-    dir = join(baseOutput, projectSlug, type);
+    dir = safeJoin(baseOutput, projectSlug, type);
   }
 
   return ensureDir(dir);
@@ -696,7 +713,7 @@ export function checkDuplicate(filePath, outputDir, options = {}) {
   const hash = computeFileHash(filePath);
   if (!hash) return null;
 
-  const indexPath = join(outputDir, '.dedup-index.json');
+  const indexPath = safeJoin(outputDir, '.dedup-index.json');
   let index = {};
 
   if (existsSync(indexPath)) {
@@ -706,7 +723,7 @@ export function checkDuplicate(filePath, outputDir, options = {}) {
   }
 
   if (index[hash] && index[hash] !== basename(filePath)) {
-    const existingPath = join(outputDir, index[hash]);
+    const existingPath = safeJoin(outputDir, sanitizePathSegment(index[hash], 'unknown'));
     if (existsSync(existingPath)) return existingPath;
     delete index[hash];
   }
@@ -784,7 +801,7 @@ export async function downloadImageViaDialog({ page, imgLocator, index, outputDi
 
   const origFilename = download.suggestedFilename() || `higgsfield-${Date.now()}-${index}.png`;
   const descriptiveName = buildDescriptiveFilename(metadata, origFilename, index);
-  const savePath = join(outputDir, descriptiveName);
+  const savePath = safeJoin(outputDir, descriptiveName);
   await download.saveAs(savePath);
   const result = finalizeDownload(savePath, {
     ...extraMeta, type: 'image', ...metadata, originalFilename: origFilename,
@@ -823,7 +840,7 @@ export async function downloadImagesByCDN(page, indices, outputDir, extraMeta, o
     const ext = isVideo ? '.mp4' : '.webp';
     const cdnMeta = { promptSnippet: 'cdn-fallback' };
     const filename = buildDescriptiveFilename(cdnMeta, `higgsfield-cdn-${Date.now()}${ext}`, downloaded.length);
-    const savePath = join(outputDir, filename);
+    const savePath = safeJoin(outputDir, filename);
     try {
       execFileSync('curl', ['-sL', '-o', savePath, url], { timeout: 60000 });
       const result = finalizeDownload(savePath, {
@@ -966,11 +983,11 @@ export function loadBatchManifest(filePath) {
 }
 
 export function saveBatchState(outputDir, state) {
-  writeFileSync(join(outputDir, 'batch-state.json'), JSON.stringify(state, null, 2));
+  writeFileSync(safeJoin(outputDir, 'batch-state.json'), JSON.stringify(state, null, 2));
 }
 
 export function loadBatchState(outputDir) {
-  const stateFile = join(outputDir, 'batch-state.json');
+  const stateFile = safeJoin(outputDir, 'batch-state.json');
   if (existsSync(stateFile)) {
     return JSON.parse(readFileSync(stateFile, 'utf-8'));
   }
@@ -1011,7 +1028,7 @@ export function initBatch(type, options, defaultConcurrency) {
 
   const { jobs, defaults } = loadBatchManifest(manifestPath);
   const concurrency = options.concurrency || defaultConcurrency;
-  const outputDir = ensureDir(options.output || join(getDefaultOutputDir(options), `${type}-${Date.now()}`));
+  const outputDir = ensureDir(options.output || safeJoin(getDefaultOutputDir(options), `${type}-${Date.now()}`));
 
   let completedIndices = new Set();
   if (options.resume) {

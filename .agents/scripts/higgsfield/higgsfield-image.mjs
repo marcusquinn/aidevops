@@ -2,7 +2,6 @@
 // Handles image model selection, page interaction, generation polling, and download.
 // Imported by playwright-automator.mjs.
 
-import { join } from 'path';
 import {
   BASE_URL,
   STATE_FILE,
@@ -15,6 +14,7 @@ import {
   dismissAllModals,
   debugScreenshot,
   resolveOutputDir,
+  safeJoin,
   downloadSpecificImages,
   withRetry,
   runBatchJob,
@@ -521,7 +521,7 @@ export async function generateImage(options = {}) {
     console.log('Image generation complete');
     await context.storageState({ path: STATE_FILE });
     await browser.close();
-    return { success: true, screenshot: join(STATE_DIR, 'generation-result.png') };
+    return { success: true, screenshot: safeJoin(STATE_DIR, 'generation-result.png') };
 
   } catch (error) {
     console.error('Error during image generation:', error.message);

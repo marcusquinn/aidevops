@@ -28,6 +28,8 @@ import {
   estimateCreditCost,
   checkCreditGuard,
   resolveOutputDir,
+  safeJoin,
+  sanitizePathSegment,
   parseArgs,
   launchBrowser,
   withBrowser,
@@ -292,7 +294,7 @@ async function downloadChainedImageResult(page, outputDir, action, options) {
         btn.click({ force: true }),
       ]);
       if (dl) {
-        const savePath = join(outputDir, dl.suggestedFilename() || `chained-${action}-${Date.now()}.png`);
+        const savePath = safeJoin(outputDir, sanitizePathSegment(dl.suggestedFilename() || `chained-${action}-${Date.now()}.png`, 'chained-download.png'));
         await dl.saveAs(savePath);
         console.log(`Downloaded via icon: ${savePath}`);
         return;
@@ -304,7 +306,7 @@ async function downloadChainedImageResult(page, outputDir, action, options) {
   const imgSrc = await extractLargestImageSrc(page);
   if (imgSrc) {
     const ext = imgSrc.includes('.png') ? 'png' : 'webp';
-    const savePath = join(outputDir, `chained-${action}-${Date.now()}.${ext}`);
+    const savePath = safeJoin(outputDir, sanitizePathSegment(`chained-${action}-${Date.now()}.${ext}`, `chained-${ext}`));
     try {
       curlDownload(imgSrc, savePath, { timeout: 60000 });
       console.log(`Downloaded via CDN: ${savePath}`);
@@ -575,7 +577,7 @@ function assembleWithFfmpeg(validVideos, finalPath, brief, outputDir, pipelineSt
     copyFileSync(validVideos[0], finalPath);
     console.log(`Final video (single scene, ffmpeg copy): ${finalPath}`);
   } else {
-    const concatList = join(outputDir, 'concat-list.txt');
+    const concatList = safeJoin(outputDir, 'concat-list.txt');
     const concatContent = validVideos.map(v => `file '${v}'`).join('\n');
     writeFileSync(concatList, concatContent);
 
@@ -620,12 +622,12 @@ function assembleWithFfmpeg(validVideos, finalPath, brief, outputDir, pipelineSt
 function assembleWithRemotion({ validVideos, finalPath, brief, remotionDir, outputDir, pipelineState }) {
   console.log(`Using Remotion for assembly (${validVideos.length} scenes, ${brief.captions?.length || 0} captions)`);
 
-  const publicDir = join(remotionDir, 'public');
+  const publicDir = safeJoin(remotionDir, 'public');
   ensureDir(publicDir);
   const staticVideoNames = [];
   for (let i = 0; i < validVideos.length; i++) {
     const staticName = `scene-${i}.mp4`;
-    const destPath = join(publicDir, staticName);
+    const destPath = safeJoin(publicDir, sanitizePathSegment(staticName, `scene-${i}.mp4`));
     try { if (existsSync(destPath)) { unlinkSync(destPath); } } catch { /* ignore */ }
     copyFileSync(validVideos[i], destPath);
     staticVideoNames.push(staticName);
@@ -639,7 +641,7 @@ function assembleWithRemotion({ validVideos, finalPath, brief, remotionDir, outp
     musicPath: brief.music && existsSync(brief.music) ? brief.music : undefined,
   };
 
-  const propsFile = join(outputDir, 'remotion-props.json');
+  const propsFile = safeJoin(outputDir, 'remotion-props.json');
   writeFileSync(propsFile, JSON.stringify(remotionProps));
 
   const remotionArgs = [
@@ -667,10 +669,10 @@ function pipelineAssemble(brief, validVideos, outputDir, pipelineState) {
     return;
   }
 
-  const finalPath = join(outputDir, `${brief.title.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-final.mp4`);
+  const finalPath = safeJoin(outputDir, sanitizePathSegment(`${brief.title.toLowerCase().replace(/[^a-z0-9]+/g, '-')}-final.mp4`, 'pipeline-final.mp4'));
   const __dirname = dirname(fileURLToPath(import.meta.url));
-  const remotionDir = join(__dirname, 'remotion');
-  const remotionInstalled = existsSync(join(remotionDir, 'node_modules', 'remotion'));
+  const remotionDir = safeJoin(__dirname, 'remotion');
+  const remotionInstalled = existsSync(safeJoin(remotionDir, 'node_modules', 'remotion'));
   const hasCaptions = brief.captions && brief.captions.length > 0;
 
   if (remotionInstalled && (hasCaptions || validVideos.length > 1)) {
@@ -690,7 +692,7 @@ function pipelineAssemble(brief, validVideos, outputDir, pipelineState) {
 
 export async function pipeline(options = {}) {
   const brief = loadPipelineBrief(options);
-  const outputDir = options.output || join(getDefaultOutputDir(options), `pipeline-${Date.now()}`);
+  const outputDir = options.output || safeJoin(getDefaultOutputDir(options), `pipeline-${Date.now()}`);
   ensureDir(outputDir);
 
   console.log(`\n=== Video Production Pipeline ===`);
@@ -711,7 +713,7 @@ export async function pipeline(options = {}) {
 
   const elapsed = ((Date.now() - pipelineState.startTime) / 1000).toFixed(0);
   pipelineState.elapsed = `${elapsed}s`;
-  writeFileSync(join(outputDir, 'pipeline-state.json'), JSON.stringify(pipelineState, null, 2));
+  writeFileSync(safeJoin(outputDir, 'pipeline-state.json'), JSON.stringify(pipelineState, null, 2));
 
   console.log(`\n=== Pipeline Complete ===`);
   console.log(`Duration: ${elapsed}s`);
@@ -785,7 +787,7 @@ export async function screenshot(options = {}) {
     await page.goto(url, { waitUntil: 'domcontentloaded', timeout: 60000 });
     await page.waitForTimeout(3000);
 
-    const outputPath = options.output || join(STATE_DIR, 'screenshot.png');
+    const outputPath = options.output || safeJoin(STATE_DIR, 'screenshot.png');
     await page.screenshot({ path: outputPath, fullPage: false });
     console.log(`Screenshot saved to: ${outputPath}`);
 
@@ -936,7 +938,7 @@ export async function seedBracket(options = {}) {
   console.log(`Seeds: ${seeds.join(', ')}`);
 
   const model = options.model || (options.preferUnlimited !== false && getUnlimitedModelForCommand('image')?.slug) || 'soul';
-  const outputDir = ensureDir(options.output || join(getDefaultOutputDir(options), `seed-bracket-${Date.now()}`));
+  const outputDir = ensureDir(options.output || safeJoin(getDefaultOutputDir(options), `seed-bracket-${Date.now()}`));
 
   const results = [];
 
@@ -967,8 +969,9 @@ export async function seedBracket(options = {}) {
     seeds: results.map(r => ({ seed: r.seed, success: r.success })),
     timestamp: new Date().toISOString(),
   };
-  writeFileSync(join(outputDir, 'bracket-results.json'), JSON.stringify(manifest, null, 2));
-  console.log(`Results saved to ${join(outputDir, 'bracket-results.json')}`);
+  const bracketPath = safeJoin(outputDir, 'bracket-results.json');
+  writeFileSync(bracketPath, JSON.stringify(manifest, null, 2));
+  console.log(`Results saved to ${bracketPath}`);
 
   return results;
 }

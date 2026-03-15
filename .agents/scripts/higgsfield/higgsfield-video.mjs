@@ -2,7 +2,6 @@
 // via the Higgsfield web UI (Playwright).
 // Imported by playwright-automator.mjs.
 
-import { join } from 'path';
 import {
   BASE_URL,
   STATE_FILE,
@@ -23,6 +22,8 @@ import {
   curlDownload,
   finalizeDownload,
   ensureDir,
+  safeJoin,
+  sanitizePathSegment,
   withRetry,
   runBatchJob,
   runWithConcurrency,
@@ -439,7 +440,7 @@ export function downloadVideoFromApiData(projectApiData, outputDir, combinedMeta
       if (!videoUrl.includes('cloudfront.net')) continue;
 
       const filename = buildDescriptiveFilename(combinedMeta, `higgsfield-video-${Date.now()}.mp4`, 0);
-      const savePath = join(outputDir, filename);
+      const savePath = safeJoin(outputDir, sanitizePathSegment(filename, 'video.mp4'));
       try {
         const { httpCode, size } = curlDownload(videoUrl, savePath, { withHttpCode: true });
         if (httpCode === '200' && size > 10000) {
@@ -478,7 +479,7 @@ async function downloadVideoViaCdnFallback(page, outputDir, combinedMeta, option
   if (!videoSrc) return null;
 
   const filename = buildDescriptiveFilename(combinedMeta, `higgsfield-video-${Date.now()}.mp4`, 0);
-  const savePath = join(outputDir, filename);
+  const savePath = safeJoin(outputDir, sanitizePathSegment(filename, 'video.mp4'));
   try {
     curlDownload(videoSrc, savePath);
     const result = finalizeDownload(savePath, {
@@ -711,7 +712,7 @@ export async function generateVideo(options = {}) {
     console.log('Video generation complete');
     await context.storageState({ path: STATE_FILE });
     await browser.close();
-    return { success: true, screenshot: join(STATE_DIR, 'video-result.png') };
+    return { success: true, screenshot: safeJoin(STATE_DIR, 'video-result.png') };
 
   } catch (error) {
     console.error('Error during video generation:', error.message);
@@ -861,7 +862,7 @@ export async function generateLipsync(options = {}) {
     console.log('Lipsync generation complete');
     await context.storageState({ path: STATE_FILE });
     await browser.close();
-    return { success: true, screenshot: join(STATE_DIR, 'lipsync-result.png') };
+    return { success: true, screenshot: safeJoin(STATE_DIR, 'lipsync-result.png') };
 
   } catch (error) {
     console.error('Error during lipsync generation:', error.message);
@@ -1147,7 +1148,7 @@ export function downloadMatchedVideos(submittedJobs, outputDir, results) {
       const videoUrl = j.results.raw.url;
       const meta = { model: job.model, promptSnippet: job.promptPrefix };
       const filename = buildDescriptiveFilename(meta, `scene-${job.sceneIndex + 1}-${Date.now()}.mp4`, job.sceneIndex);
-      const savePath = join(outputDir, filename);
+      const savePath = safeJoin(outputDir, sanitizePathSegment(filename, `scene-${job.sceneIndex + 1}.mp4`));
       try {
         const { httpCode, size } = curlDownload(videoUrl, savePath, { withHttpCode: true });
         if (httpCode === '200' && size > 10000) {
