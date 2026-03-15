@@ -692,8 +692,11 @@ _render_model_usage_table() {
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
 ${model_rows}| **Total** | **${f_total_req}** | **${f_total_in}** | **${f_total_out}** | **${f_total_cache}** | **\$${f_total_cost}** | **\$${f_total_csavings}** | **\$${f_total_msavings}** |
 
-_${f_all_tokens} total tokens processed. ${cache_pct}% cache hit rate. \$${f_combined_savings} total saved (\$${f_total_csavings} caching + \$${f_total_msavings} model routing vs all-Opus).
-Model savings are modest because ~${cache_pct}% of tokens are cache reads, where price differences between models are small._
+_${f_all_tokens} total tokens processed. ${cache_pct}% cache hit rate._
+
+_\$${f_combined_savings} total saved (\$${f_total_csavings} caching + \$${f_total_msavings} model routing vs all-Opus)._
+
+_Model savings are modest because ~${cache_pct}% of tokens are cache reads, where price differences between models are small._
 EOF
 
 	return 0
@@ -828,6 +831,7 @@ cmd_generate() {
 | Worker sessions | ${f_day_wrk} | ${f_week_wrk} | ${f_month_wrk} | ${f_year_wrk} |
 
 _Screen time from ${screen_source}, snapshotted daily.$([ -n "$year_suffix" ] && echo " *365-day extrapolated (accumulating real data).")_
+
 _User AI session hours measured from AI message timestamps (reading, thinking, typing between responses)._
 EOF
 
