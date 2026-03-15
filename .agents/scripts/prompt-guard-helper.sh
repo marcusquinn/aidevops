@@ -244,7 +244,7 @@ _pg_load_yaml_patterns() {
 #             data_exfiltration, data_exfiltration_dns, context_manipulation,
 #             homoglyph, unicode_manipulation, fake_role, comment_injection,
 #             priority_manipulation, fake_delimiter, split_personality,
-#             steganographic, fake_conversation
+#             steganographic, fake_conversation, credential_exposure
 
 # YAML pattern file path (Lasso-compatible format)
 PROMPT_GUARD_YAML_PATTERNS="${PROMPT_GUARD_YAML_PATTERNS:-}"
@@ -327,6 +327,14 @@ LOW|unicode_manipulation|Mixed script with injection|\p{Cyrillic}[\x00-\x7F]*(ns
 LOW|steganographic|Acrostic instruction pattern|[A-Z][a-z]+\s*\n[A-Z][a-z]+\s*\n[A-Z][a-z]+\s*\n[A-Z][a-z]+\s*\n[A-Z][a-z]+
 LOW|system_prompt_extraction|System prompt extraction variant|([Ww]rite|[Tt]ype|[Oo]utput)\s+(out\s+)?(the\s+)?(text|content|words)\s+(above|before|preceding)\s+(this|my)\s+(message|input|prompt)
 LOW|system_prompt_extraction|Prompt leak via translation|([Tt]ranslate|[Cc]onvert)\s+(your\s+)?(system\s+)?(prompt|instructions|rules)\s+(to|into)\s+(French|Spanish|Chinese|another\s+language)
+MEDIUM|credential_exposure|URL query param: secret|[?&]secret=[^&\s]{8,}
+MEDIUM|credential_exposure|URL query param: token|[?&]token=[^&\s]{8,}
+MEDIUM|credential_exposure|URL query param: key|[?&](api_key|apikey|api-key)=[^&\s]{8,}
+MEDIUM|credential_exposure|URL query param: password|[?&]password=[^&\s]{8,}
+MEDIUM|credential_exposure|URL query param: access_token|[?&]access_token=[^&\s]{8,}
+MEDIUM|credential_exposure|URL query param: auth|[?&](auth|authorization)=[^&\s]{8,}
+MEDIUM|credential_exposure|URL query param: client_secret|[?&]client_secret=[^&\s]{8,}
+MEDIUM|credential_exposure|URL query param: webhook_secret|[?&]webhook_secret=[^&\s]{8,}
 PATTERNS
 	return 0
 }
@@ -578,6 +586,10 @@ _pg_sanitize_message() {
 
 	# Strip long unicode escape sequences
 	sanitized=$(printf '%s' "$sanitized" | sed -E 's/(\\u[0-9a-fA-F]{4}){4,}/[unicode-filtered]/g')
+
+	# Redact credential values in URL query parameters (t4954)
+	# Matches ?secret=VALUE or &token=VALUE etc. and replaces VALUE with [REDACTED]
+	sanitized=$(printf '%s' "$sanitized" | sed -E 's/([?&](secret|token|api_key|apikey|api-key|password|access_token|auth|authorization|client_secret|webhook_secret)=)[^&[:space:]]{8,}/\1[REDACTED]/g')
 
 	printf '%s' "$sanitized"
 	return 0
@@ -1478,6 +1490,39 @@ cmd_test() {
 	echo ""
 	echo "Testing URL encoded payload (MEDIUM — should WARN):"
 	_test_expect "URL encoded payload" 2 "Check this: %69%67%6E%6F%72%65%20%70%72%65%76%69%6F%75%73"
+
+	echo ""
+	echo "Testing URL credential exposure (MEDIUM — should WARN, t4954):"
+	_test_expect "URL with ?secret= param" 2 "https://example.com/webhook?secret=abc123def456ghi789"
+	_test_expect "URL with &token= param" 2 "https://api.example.com/callback?id=1&token=FAKE_SK_LIVE_abcdef123456"
+	_test_expect "URL with ?api_key= param" 2 "https://hooks.example.com/v1?api_key=FAKE_AKIA_IOSFODNN7EXAMPLE"
+	_test_expect "URL with ?password= param" 2 "https://service.example.com/auth?password=SuperSecret123!"
+	_test_expect "URL with ?access_token= param" 2 "https://api.example.com/data?access_token=FAKE_JWT_aGVhZGVyLnBheWxvYWQ"
+	_test_expect "URL with ?client_secret= param" 2 "https://oauth.example.com/token?client_secret=FAKE_CS_abcdef123456789"
+	_test_expect "Short param value (no match)" 0 "https://example.com/page?secret=abc"
+
+	echo ""
+	echo "Testing URL credential sanitization (t4954):"
+	total=$((total + 1))
+	local url_sanitized
+	url_sanitized=$(PROMPT_GUARD_QUIET="true" cmd_sanitize "Webhook URL: https://example.com/hook?secret=abc123def456ghi789&name=test" 2>/dev/null)
+	if [[ "$url_sanitized" == *"[REDACTED]"* ]] && [[ "$url_sanitized" != *"abc123def456ghi789"* ]]; then
+		echo -e "  ${GREEN}PASS${NC} URL secret param redacted in sanitization"
+		passed=$((passed + 1))
+	else
+		echo -e "  ${RED}FAIL${NC} URL secret param not redacted: $url_sanitized"
+		failed=$((failed + 1))
+	fi
+
+	total=$((total + 1))
+	url_sanitized=$(PROMPT_GUARD_QUIET="true" cmd_sanitize "Config: https://api.example.com/v1?token=sk_live_abcdef123456&format=json" 2>/dev/null)
+	if [[ "$url_sanitized" == *"[REDACTED]"* ]] && [[ "$url_sanitized" == *"format=json"* ]]; then
+		echo -e "  ${GREEN}PASS${NC} URL token param redacted, non-secret params preserved"
+		passed=$((passed + 1))
+	else
+		echo -e "  ${RED}FAIL${NC} URL token sanitization incorrect: $url_sanitized"
+		failed=$((failed + 1))
+	fi
 
 	# ── scan-stdin tests ────────────────────────────────────────
 
