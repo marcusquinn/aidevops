@@ -330,7 +330,9 @@ config_get() {
 	local env_var
 	env_var=$(_config_env_map "$dotpath")
 	if [[ -n "$env_var" ]]; then
-		local env_val="${!env_var:-}"
+		# Use eval for Bash 3.2 compat — ${!var:-} causes "bad substitution" on 3.2
+		local env_val=""
+		eval "env_val=\${$env_var:-}"
 		if [[ -n "$env_val" ]]; then
 			echo "$env_val"
 			return 0
@@ -524,7 +526,8 @@ cmd_list() {
 		local env_var
 		env_var=$(_config_env_map "$dotpath")
 		if [[ -n "$env_var" ]]; then
-			env_val="${!env_var:-}"
+			# Use eval for Bash 3.2 compat — ${!var:-} causes "bad substitution" on 3.2
+			eval "env_val=\${$env_var:-}"
 		fi
 
 		# Determine source and effective value
@@ -725,11 +728,12 @@ HEADER
 	echo "[OK] Set ${dotpath}=${value}" >&2
 
 	# Show if an env var would override this
-	local env_val
+	local env_val=""
 	local env_var
 	env_var=$(_config_env_map "$dotpath")
 	if [[ -n "$env_var" ]]; then
-		env_val="${!env_var:-}"
+		# Use eval for Bash 3.2 compat — ${!var:-} causes "bad substitution" on 3.2
+		eval "env_val=\${$env_var:-}"
 		if [[ -n "$env_val" ]]; then
 			echo "[WARN] Environment variable ${env_var}=${env_val} will override this setting" >&2
 		fi
