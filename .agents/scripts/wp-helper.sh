@@ -336,15 +336,16 @@ execute_wp_via_ssh() {
 		fi
 
 		# Pass wp args as positional parameters to avoid shell interpolation issues
+		# Use bash -c (not -lc) to avoid login shell startup files that may redirect/swallow stdout
 		# shellcheck disable=SC2016 # $1/$@ expand on the remote shell, not locally
-		sshpass -f "$expanded_password_file" ssh -n "${ssh_identity_flag[@]}" -p "$ssh_port" "${ssh_user}@${ssh_host}" bash -lc 'cd "$1" && shift && wp "$@"' _ "$wp_path" "${wp_args[@]}"
+		sshpass -f "$expanded_password_file" ssh -n "${ssh_identity_flag[@]}" -p "$ssh_port" "${ssh_user}@${ssh_host}" bash -c 'cd "$1" && shift && wp "$@"' _ "$wp_path" "${wp_args[@]}"
 		return $?
 		;;
 	hetzner | cloudways | cloudron)
 		# SSH key-based authentication (preferred, -n prevents stdin consumption in loops)
-		# Pass wp args as positional parameters to avoid shell interpolation issues
+		# Use bash -c (not -lc) to avoid login shell startup files that may redirect/swallow stdout
 		# shellcheck disable=SC2016 # $1/$@ expand on the remote shell, not locally
-		ssh -n "${ssh_identity_flag[@]}" -p "$ssh_port" "${ssh_user}@${ssh_host}" bash -lc 'cd "$1" && shift && wp "$@"' _ "$wp_path" "${wp_args[@]}"
+		ssh -n "${ssh_identity_flag[@]}" -p "$ssh_port" "${ssh_user}@${ssh_host}" bash -c 'cd "$1" && shift && wp "$@"' _ "$wp_path" "${wp_args[@]}"
 		return $?
 		;;
 	*)
@@ -379,7 +380,7 @@ run_wp_command() {
 	local site_type
 	site_type=$(echo "$site_config" | jq -r '.type')
 
-	print_info "Running on $site_name ($site_type): wp ${wp_args[*]}"
+	print_info "Running on $site_name ($site_type): wp ${wp_args[*]}" >&2
 
 	# Execute directly without eval
 	execute_wp_via_ssh "$site_config" "${wp_args[@]}"
