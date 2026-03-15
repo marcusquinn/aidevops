@@ -67,6 +67,11 @@ async function runWithApiFallback(apiFn, browserFn, options, retryOpts) {
   }
 }
 
+// Factory: creates a command handler that sets a feature slug then delegates to featurePage.
+function makeFeatureHandler(feature) {
+  return (opts, r) => { opts.feature = feature; return withRetry(() => featurePage(opts), r); };
+}
+
 // Command registry: maps CLI command names to handler functions.
 const COMMAND_REGISTRY = {
   'login':              (opts) => login(opts),
@@ -110,11 +115,11 @@ const COMMAND_REGISTRY = {
   'ai-influencer':      (opts, r) => withRetry(() => aiInfluencer(opts), r),
   'character':          (opts, r) => withRetry(() => createCharacter(opts), r),
   'feature':            (opts, r) => withRetry(() => featurePage(opts), r),
-  'fashion-factory':    (opts, r) => { opts.feature = 'fashion-factory'; return withRetry(() => featurePage(opts), r); },
-  'ugc-factory':        (opts, r) => { opts.feature = 'ugc-factory'; return withRetry(() => featurePage(opts), r); },
-  'photodump':          (opts, r) => { opts.feature = 'photodump'; return withRetry(() => featurePage(opts), r); },
-  'camera-controls':    (opts, r) => { opts.feature = 'camera-controls'; return withRetry(() => featurePage(opts), r); },
-  'effects':            (opts, r) => { opts.feature = 'effects'; return withRetry(() => featurePage(opts), r); },
+  'fashion-factory':    makeFeatureHandler('fashion-factory'),
+  'ugc-factory':        makeFeatureHandler('ugc-factory'),
+  'photodump':          makeFeatureHandler('photodump'),
+  'camera-controls':    makeFeatureHandler('camera-controls'),
+  'effects':            makeFeatureHandler('effects'),
   'batch-image':        (opts) => batchImage(opts),
   'batch-video':        (opts) => batchVideo(opts),
   'batch-lipsync':      (opts) => batchLipsync(opts),
@@ -122,11 +127,9 @@ const COMMAND_REGISTRY = {
   'self-test':          () => runSelfTests(),
 };
 
-async function main() {
-  const { command, options } = parseArgs();
-
-  if (!command) {
-    console.log(`
+// Print CLI usage text.
+function printUsage() {
+  console.log(`
 Higgsfield UI Automator - Browser-based generation using subscription credits
 
 Usage: node playwright-automator.mjs <command> [options]
@@ -251,30 +254,48 @@ API mode (uses cloud.higgsfield.ai — separate credit pool from web UI):
   node playwright-automator.mjs image -p "Product shot" -m soul --api-only
   node playwright-automator.mjs video --image-file photo.jpg -p "Camera pans" --api -m dop-standard
 `);
-    return;
-  }
+}
 
-  // Run site discovery if cache is stale
+// Run site discovery unless the command does not need it.
+async function runDiscoveryIfNeeded(command, options) {
   const skipDiscoveryCommands = new Set(['login', 'discover', 'health-check', 'health', 'smoke-test', 'smoke', 'api-status']);
   if (!skipDiscoveryCommands.has(command)) {
     await ensureDiscovery(options);
   }
+}
 
-  // Credit guard: check available credits before expensive operations
-  if (!options.force) {
-    try {
-      checkCreditGuard(command, options);
-    } catch (e) {
-      if (e.message.includes('CREDIT_GUARD')) {
-        console.error(e.message);
-        process.exit(1);
-      }
+// Enforce credit guard; exits process if credits are critically low.
+function guardCredits(command, options) {
+  if (options.force) return;
+  try {
+    checkCreditGuard(command, options);
+  } catch (e) {
+    if (e.message.includes('CREDIT_GUARD')) {
+      console.error(e.message);
+      process.exit(1);
     }
   }
+}
 
-  // Retry configuration
+// Build retry configuration objects from parsed options.
+function buildRetryConfig(command, options) {
   const retryOpts = { maxRetries: options.noRetry ? 0 : 2, baseDelay: 3000, label: command };
   const retryOnce = { ...retryOpts, maxRetries: options.noRetry ? 0 : 1 };
+  return { retryOpts, retryOnce };
+}
+
+async function main() {
+  const { command, options } = parseArgs();
+
+  if (!command) {
+    printUsage();
+    return;
+  }
+
+  await runDiscoveryIfNeeded(command, options);
+  guardCredits(command, options);
+
+  const { retryOpts, retryOnce } = buildRetryConfig(command, options);
 
   const entry = COMMAND_REGISTRY[command];
   if (!entry) {
