@@ -330,7 +330,10 @@ config_get() {
 	local env_var
 	env_var=$(_config_env_map "$dotpath")
 	if [[ -n "$env_var" ]]; then
-		local env_val="${!env_var:-}"
+		local env_val=""
+		if [[ -n "${!env_var+x}" ]]; then
+			env_val="${!env_var}"
+		fi
 		if [[ -n "$env_val" ]]; then
 			echo "$env_val"
 			return 0
