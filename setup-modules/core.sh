@@ -443,11 +443,11 @@ check_requirements() {
 	fi
 	if ! command -v sqlite3 >/dev/null 2>&1; then
 		missing_deps+=("sqlite3")
-		# Package name varies: sqlite3 on Debian/Ubuntu/brew, sqlite on Fedora/Arch/Alpine
+		# Package name varies: sqlite3 on Debian/Ubuntu/apt, sqlite on brew/Fedora/Arch/Alpine
 		local pkg_mgr
 		pkg_mgr=$(detect_package_manager)
 		case "$pkg_mgr" in
-		apt | brew) missing_packages+=("sqlite3") ;;
+		apt) missing_packages+=("sqlite3") ;;
 		*) missing_packages+=("sqlite") ;;
 		esac
 	fi
