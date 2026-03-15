@@ -265,6 +265,42 @@ list_sites_by_category() {
 	return 0
 }
 
+# Build a single remote command string for SSH execution.
+# SSH concatenates all remote-command arguments with spaces and passes the result
+# to the remote shell for parsing. If we pass  bash -lc '...' _ path arg1 arg2
+# as separate local arguments, the single quotes are stripped locally and the
+# remote shell re-parses the flat string — bash -c then receives only the first
+# word ("cd") as its command, silently discarding the rest. This caused #4937:
+# WP-CLI stdout was swallowed because the remote command was truncated.
+#
+# Fix: build the entire remote command as one properly-quoted string. SSH sends
+# it as-is to the remote shell, which parses it correctly.
+#
+# Usage: build_remote_wp_cmd <wp_path> <wp_arg1> [wp_arg2 ...]
+# Output: a single string safe for: ssh user@host "$result"
+build_remote_wp_cmd() {
+	local wp_path="$1"
+	shift
+	local -a wp_args=("$@")
+
+	# printf %q produces shell-escaped strings safe for eval on the remote side.
+	# This handles spaces, quotes, semicolons, and other special characters in
+	# wp_path and wp_args without risk of injection or mis-parsing.
+	local escaped_path
+	escaped_path=$(printf '%q' "$wp_path")
+
+	local escaped_args=""
+	local arg
+	for arg in "${wp_args[@]}"; do
+		escaped_args+=" $(printf '%q' "$arg")"
+	done
+
+	# Use cd + wp directly — no bash -lc wrapper needed. SSH already invokes the
+	# user's login shell on the remote, so PATH and profile are loaded. The
+	# bash -lc wrapper was the root cause of #4937.
+	printf 'cd %s && wp%s' "$escaped_path" "$escaped_args"
+}
+
 # Execute WP-CLI command via SSH based on hosting type
 # Directly executes instead of building a string for eval
 # Applies server_ref resolution and SSH config host integration before connecting
@@ -335,16 +371,23 @@ execute_wp_via_ssh() {
 			print_info "Fix with: chmod 600 $expanded_password_file"
 		fi
 
-		# Pass wp args as positional parameters to avoid shell interpolation issues
-		# shellcheck disable=SC2016 # $1/$@ expand on the remote shell, not locally
-		sshpass -f "$expanded_password_file" ssh -n "${ssh_identity_flag[@]}" -p "$ssh_port" "${ssh_user}@${ssh_host}" bash -lc 'cd "$1" && shift && wp "$@"' _ "$wp_path" "${wp_args[@]}"
+		# Build a single remote command string with properly escaped arguments.
+		# SSH concatenates all remote-command arguments with spaces and passes the
+		# result to the remote shell. Passing bash -lc '...' arg1 arg2 as separate
+		# local arguments breaks: the remote shell re-parses the flat string and
+		# bash -c only receives the first word as its command. Instead, we build
+		# the full command as one string so SSH sends it intact.
+		local remote_cmd
+		remote_cmd=$(build_remote_wp_cmd "$wp_path" "${wp_args[@]}")
+		sshpass -f "$expanded_password_file" ssh -n "${ssh_identity_flag[@]}" -p "$ssh_port" "${ssh_user}@${ssh_host}" "$remote_cmd"
 		return $?
 		;;
 	hetzner | cloudways | cloudron)
 		# SSH key-based authentication (preferred, -n prevents stdin consumption in loops)
-		# Pass wp args as positional parameters to avoid shell interpolation issues
-		# shellcheck disable=SC2016 # $1/$@ expand on the remote shell, not locally
-		ssh -n "${ssh_identity_flag[@]}" -p "$ssh_port" "${ssh_user}@${ssh_host}" bash -lc 'cd "$1" && shift && wp "$@"' _ "$wp_path" "${wp_args[@]}"
+		# Build a single remote command string (see hostinger case for rationale)
+		local remote_cmd
+		remote_cmd=$(build_remote_wp_cmd "$wp_path" "${wp_args[@]}")
+		ssh -n "${ssh_identity_flag[@]}" -p "$ssh_port" "${ssh_user}@${ssh_host}" "$remote_cmd"
 		return $?
 		;;
 	*)
@@ -379,7 +422,9 @@ run_wp_command() {
 	local site_type
 	site_type=$(echo "$site_config" | jq -r '.type')
 
-	print_info "Running on $site_name ($site_type): wp ${wp_args[*]}"
+	# Send INFO to stderr so callers can capture just the WP-CLI stdout.
+	# Previously this went to stdout, mixing the INFO line with command output.
+	print_info "Running on $site_name ($site_type): wp ${wp_args[*]}" >&2
 
 	# Execute directly without eval
 	execute_wp_via_ssh "$site_config" "${wp_args[@]}"
