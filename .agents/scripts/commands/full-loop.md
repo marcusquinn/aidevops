@@ -837,7 +837,7 @@ if [[ "$REPO_SLUG" == "marcusquinn/aidevops" ]]; then
   git -C "$CANONICAL_DIR" pull origin main
 
   # Bump patch version (updates VERSION, package.json, setup.sh, etc.)
-  "$HOME/.aidevops/agents/scripts/version-manager.sh" bump patch
+  (cd "$CANONICAL_DIR" && "$HOME/.aidevops/agents/scripts/version-manager.sh" bump patch)
   NEW_VERSION=$(cat "$CANONICAL_DIR/VERSION")
 
   # Commit, tag, push, create release
@@ -853,7 +853,7 @@ if [[ "$REPO_SLUG" == "marcusquinn/aidevops" ]]; then
     --generate-notes
 
   # Deploy locally
-  "$CANONICAL_DIR/setup.sh" 2>/dev/null || true
+  "$CANONICAL_DIR/setup.sh" --non-interactive || true
 fi
 ```
 
