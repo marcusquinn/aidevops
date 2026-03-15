@@ -80,6 +80,7 @@ Session safety model for AI-assisted terminals:
 - Prefer key-name checks, masked previews, or fingerprints over raw value display.
 - Avoid writing raw secrets to temporary files (`/tmp/*`) where possible; prefer in-memory handling and immediate cleanup.
 - If a command cannot be made secret-safe, do not run it via AI tools. Instruct the user to run it locally and never ask them to paste the output.
+- **Env var, not argument (t4939)**: When a subprocess needs a secret, pass it as an environment variable, never as a command argument. Arguments appear in `ps`, error messages, and logs. Use `aidevops secret NAME -- cmd` (auto-injects as env var with redaction) or `MY_SECRET="$value" cmd` where the subprocess reads via `getenv()`. See `prompts/build.txt` section 8.2 for the full rule and safe/unsafe patterns.
 
 ## Platform Trust Matrix
 

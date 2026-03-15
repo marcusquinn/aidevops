@@ -290,7 +290,7 @@ docker exec -it mysql mysql -u<username> -p<password> <database>
 docker exec -it mysql mysql -uroot -p"$(cat /home/yellowtent/platformdata/mysql/root_password)"
 ```
 
-> **Security note**: The `docker inspect` command above reveals database credentials. Redact passwords before pasting output into forum posts, tickets, or chat. The `-p$(cat ...)` pattern briefly exposes the password in the process list while the command runs.
+> **Security note**: The `docker inspect` command above reveals database credentials. Redact passwords before pasting output into forum posts, tickets, or chat. The `-p$(cat ...)` pattern briefly exposes the password in the process list while the command runs. Prefer passing credentials via environment variables instead of command arguments where possible (see `prompts/build.txt` section 8.2).
 
 #### **Common Database Fixes**
 

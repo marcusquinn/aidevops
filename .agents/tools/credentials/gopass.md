@@ -154,12 +154,15 @@ Agent should start with this warning in chat:
 3. Agent uses secret via: `aidevops secret SECRET_NAME -- command`
 4. Output is automatically redacted
 
+**Env var, not argument**: When passing secrets to subprocesses, ALWAYS use environment variables, never command arguments. Arguments appear in `ps`, error messages, and logs -- even when the command's intent is safe (e.g., a DB insert). Use `aidevops secret NAME -- cmd` which injects as env var automatically, or `MY_SECRET="$value" cmd` where the subprocess reads via `getenv()`. See `prompts/build.txt` section 8.2 for the full rule.
+
 **Prohibited commands** (NEVER run in agent context):
 
 - `gopass show` / `gopass cat` -- prints secret values
 - `cat ~/.config/aidevops/credentials.sh` -- exposes plaintext
 - `echo $SECRET_NAME` -- leaks to agent context
 - `env | grep` -- exposes environment variables
+- `cmd "$SECRET"` -- secret as command argument, visible in `ps` and error output
 
 ## psst Alternative
 

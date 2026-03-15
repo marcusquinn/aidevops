@@ -246,6 +246,33 @@ When referencing specific functions or code include the pattern `file_path:line_
   - Immediately warn: "That looks like a credential. Conversation transcripts are stored on disk — treat this value as compromised. Rotate it and store the new value via `aidevops secret set NAME` in your terminal."
   - Do NOT repeat, echo, or reference the pasted credential value in your response
   - Continue helping with the task using a placeholder like `<YOUR_API_KEY>` instead
+#
+# 8.2 Secret as command argument exposure (t4939)
+#    Threat: a secret passed as a command argument (not an env var) can be echoed
+#    back in error messages, appear in `ps` output, and leak into logs — even when
+#    the command's *intent* is safe (e.g., a DB insert). The agent assesses the
+#    command as safe because it's not a `cat` or `echo`, but any program can print
+#    its argv on failure. Error paths are invisible at invocation time.
+#    Incident: qs-agency migration — WEBHOOK_SECRET interpolated into `wp db query`
+#    SQL argument, WP-CLI printed the full argument on parse failure, secret entered
+#    conversation transcript. Required immediate rotation.
+- When a subprocess needs a secret value, ALWAYS pass it as an environment variable, NEVER as a command argument. Command arguments appear in error messages, `ps` output, and logs. Environment variables do not.
+  - UNSAFE: `SECRET=$(gopass show -o name) cmd "INSERT INTO t VALUES ('$SECRET')"` — if `cmd` fails, it may print the argument including the secret
+  - UNSAFE: `curl -H "Authorization: Bearer $TOKEN" ...` — `ps` shows the full command line; error output may echo headers
+  - UNSAFE: `mysql -p"$PASSWORD" dbname` — password visible in process list
+  - SAFE: `SECRET=$(gopass show -o name) MY_SECRET="$SECRET" cmd` — subprocess reads via `getenv("MY_SECRET")`; error handlers never print env vars
+  - SAFE: `aidevops secret NAME -- cmd` — injects as env var with automatic output redaction
+  - SAFE: `SSH_AUTH_SOCK=... ssh ...` — env-based auth, no secret in argv
+  - The subprocess must read the value from its environment (`getenv()` in C/PHP, `process.env` in Node, `os.environ` in Python, `ENV[]` in Ruby), not from `$1`/`argv`.
+  - When the target program only accepts secrets as arguments (no env var support), write the secret to a temporary file (mode 0600), pass the file path as the argument, and delete the file immediately after. This is a last resort — prefer programs that support env var or stdin input.
+  - For SSH/remote commands: `ssh host "ENV_VAR='value' command"` passes the secret in the remote shell's environment, not as an argument to `ssh` itself. Alternatively, use `ssh -o SendEnv=VAR` with server-side `AcceptEnv` configuration.
+#
+# 8.3 Post-execution secret detection (t4939, layer 2)
+#    After any Bash command whose input references a credential variable (gopass,
+#    $*_SECRET, $*_TOKEN, $*_KEY, $*_PASSWORD), verify the output doesn't contain
+#    the secret value before presenting it to the user.
+- After running any command that references a credential variable, assess whether the output could contain the secret value. If the command failed (non-zero exit) and the secret was passed as an argument (violating 8.2), assume the output is contaminated — do not present it to the user. Flag for immediate credential rotation.
+- This is a judgment call, not a regex check. The agent knows which variables contain secrets and can assess whether output looks like it contains credential material (long base64 strings, API key patterns, JSON with auth fields).
 - Confirm destructive operations before execution
 - NEVER create files in `~/` root - use `~/.aidevops/.agent-workspace/work/[project]/`
 - Do not commit files containing secrets (.env, credentials.json, etc.)
