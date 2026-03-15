@@ -85,17 +85,21 @@ _format_cost() {
 	return 0
 }
 
-# --- Format token count (K/M suffix) ---
+# --- Format token count (K/M suffix, with comma thousands separators) ---
 _format_tokens() {
 	local tokens="$1"
 	if [[ "$tokens" -ge 1000000 ]]; then
 		local m
 		m=$(echo "scale=1; $tokens / 1000000" | bc)
-		echo "${m}M"
+		local formatted
+		formatted=$(_format_number "$m")
+		echo "${formatted}M"
 	elif [[ "$tokens" -ge 1000 ]]; then
 		local k
 		k=$(echo "scale=0; $tokens / 1000" | bc)
-		echo "${k}K"
+		local formatted
+		formatted=$(_format_number "$k")
+		echo "${formatted}K"
 	else
 		echo "$tokens"
 	fi
