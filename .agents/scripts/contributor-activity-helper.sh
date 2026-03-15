@@ -75,6 +75,43 @@ def is_pr_merge(committer_email):
 '
 
 #######################################
+# Resolve the default branch for a repo
+#
+# Tries origin/HEAD first (set by clone), falls back to checking for
+# main/master branches. Works correctly from worktrees on non-default
+# branches, which is critical since this script is called from headless
+# workers and worktrees.
+#
+# Arguments:
+#   $1 - repo path
+# Output: default branch name (e.g., "main") to stdout
+#######################################
+_resolve_default_branch() {
+	local repo_path="$1"
+	local default_branch=""
+
+	# Try origin/HEAD (most reliable — set by git clone)
+	default_branch=$(git -C "$repo_path" symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's@^origin/@@') || default_branch=""
+
+	# Fallback: check for common default branch names
+	if [[ -z "$default_branch" ]]; then
+		if git -C "$repo_path" rev-parse --verify main >/dev/null 2>&1; then
+			default_branch="main"
+		elif git -C "$repo_path" rev-parse --verify master >/dev/null 2>&1; then
+			default_branch="master"
+		fi
+	fi
+
+	# Last resort: use HEAD (current branch — may be wrong in worktrees)
+	if [[ -z "$default_branch" ]]; then
+		default_branch="HEAD"
+	fi
+
+	echo "$default_branch"
+	return 0
+}
+
+#######################################
 # Compute activity summary for all contributors in a repo
 #
 # Reads git log and computes per-contributor stats:
@@ -123,14 +160,16 @@ compute_activity() {
 	esac
 
 	# Get git log: author_email|committer_email|ISO-date (one line per commit)
-	# Default branch only (no --all) to avoid double-counting squash-merged PRs.
+	# Explicit default branch (no --all) to avoid double-counting squash-merged PRs.
 	# With --all, branch commits AND their squash-merge on main are both counted,
 	# inflating totals by ~12%. The committer email distinguishes commit types:
 	#   noreply@github.com = GitHub squash-merged a PR (author created the PR)
 	#   author's own email = direct push
+	local default_branch
+	default_branch=$(_resolve_default_branch "$repo_path")
 	local git_data
 	# shellcheck disable=SC2086
-	git_data=$(git -C "$repo_path" log --format='%ae|%ce|%aI' $since_arg) || git_data=""
+	git_data=$(git -C "$repo_path" log "$default_branch" --format='%ae|%ce|%aI' $since_arg) || git_data=""
 
 	if [[ -z "$git_data" ]]; then
 		if [[ "$format" == "json" ]]; then
@@ -244,8 +283,10 @@ user_activity() {
 	fi
 
 	# Get default-branch commits with author + committer emails
+	local default_branch
+	default_branch=$(_resolve_default_branch "$repo_path")
 	local git_data
-	git_data=$(git -C "$repo_path" log --format='%ae|%ce|%aI' --since='1.year.ago') || git_data=""
+	git_data=$(git -C "$repo_path" log "$default_branch" --format='%ae|%ce|%aI' --since='1.year.ago') || git_data=""
 
 	# Target login passed via sys.argv to avoid shell injection.
 	echo "$git_data" | python3 -c "
@@ -1005,10 +1046,12 @@ person_stats() {
 	if [[ -n "$logins_override" ]]; then
 		logins_csv="$logins_override"
 	else
-		# Extract unique non-bot logins from git history using the same
-		# noreply email mapping as compute_activity
+		# Extract unique non-bot logins from default-branch git history
+		# using the same noreply email mapping as compute_activity
+		local default_branch
+		default_branch=$(_resolve_default_branch "$repo_path")
 		local git_data
-		git_data=$(git -C "$repo_path" log --all --format='%ae|%ce' --since="$since_date") || git_data=""
+		git_data=$(git -C "$repo_path" log "$default_branch" --format='%ae|%ce' --since="$since_date") || git_data=""
 		logins_csv=$(echo "$git_data" | python3 -c "
 import sys
 
