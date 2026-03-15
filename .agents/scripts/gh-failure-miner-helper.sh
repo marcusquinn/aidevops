@@ -545,11 +545,10 @@ create_systemic_issues() {
 
 	# Ensure source label exists on repos that will receive issues
 	if [[ "$dry_run" != "true" ]]; then
-		local seen_repos=""
 		local repo_entry
 		for repo_entry in $(printf '%s\n' "$clusters_json" | jq -r '.[].repo' | sort -u); do
 			gh label create "source:ci-failure-miner" --repo "$repo_entry" \
-				--description "Auto-created by gh-failure-miner-helper.sh" --color "C2E0C6" --force 2>/dev/null || true
+				--description "Auto-created by gh-failure-miner-helper.sh" --color "C2E0C6" --force || true
 		done
 	fi
 
