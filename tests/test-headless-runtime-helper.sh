@@ -42,6 +42,12 @@ section() {
 TEST_TMP_DIR=$(mktemp -d)
 export AIDEVOPS_HEADLESS_RUNTIME_DIR="$TEST_TMP_DIR/runtime"
 export STUB_LOG_FILE="$TEST_TMP_DIR/opencode-args.log"
+# Set a known model list so tests are self-contained and don't depend on
+# the user's environment. Includes two providers for rotation/fallback tests.
+export AIDEVOPS_HEADLESS_MODELS="anthropic/claude-sonnet-4-6,openai/gpt-5.3-codex"
+# Disable sandbox for tests — the sandbox strips env vars (STUB_*) needed
+# by the opencode stub, causing test failures.
+export AIDEVOPS_HEADLESS_SANDBOX_DISABLED=1
 # Provide a fake OpenAI API key so provider_auth_available("openai") returns true
 # in tests that exercise OpenAI model selection. Tests for the no-auth path
 # explicitly unset this and remove the auth file.
@@ -213,13 +219,83 @@ if AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST=openai bash "$HELPER" run \
 	fail "zero-activity success is rejected" "helper accepted a run with no model activity"
 else
 	backoff_state=$(bash "$HELPER" backoff status 2>/dev/null || true)
-	if [[ "$backoff_state" == *"openai|provider_error|"* ]]; then
+	# Model-level backoff: key is the full model ID (e.g. openai/gpt-5.3-codex),
+	# not just the provider name. Check for provider_error in the backoff state.
+	if [[ "$backoff_state" == *"provider_error|"* ]]; then
 		pass "zero-activity success is rejected"
 	else
 		fail "zero-activity success is rejected" "missing provider_error backoff state: $backoff_state"
 	fi
 fi
 unset STUB_EMIT_ACTIVITY
+
+section "Model-Level Backoff"
+# Clear all backoff state for a clean test
+bash "$HELPER" backoff clear anthropic >/dev/null 2>&1 || true
+bash "$HELPER" backoff clear anthropic/claude-sonnet-4-6 >/dev/null 2>&1 || true
+bash "$HELPER" backoff clear anthropic/claude-opus-4-6 >/dev/null 2>&1 || true
+bash "$HELPER" backoff clear openai >/dev/null 2>&1 || true
+
+# Configure two Anthropic models: sonnet + opus
+# Back off sonnet (rate limit) — opus should still be available
+AIDEVOPS_HEADLESS_MODELS="anthropic/claude-sonnet-4-6,anthropic/claude-opus-4-6" \
+	bash "$HELPER" backoff set anthropic/claude-sonnet-4-6 rate_limit 3600 >/dev/null
+model_after_sonnet_backoff=$(
+	AIDEVOPS_HEADLESS_MODELS="anthropic/claude-sonnet-4-6,anthropic/claude-opus-4-6" \
+		bash "$HELPER" select --role worker 2>/dev/null || true
+)
+if [[ "$model_after_sonnet_backoff" == "anthropic/claude-opus-4-6" ]]; then
+	pass "sonnet rate-limited: opus still available from same provider"
+else
+	fail "sonnet rate-limited: opus still available from same provider" "got: $model_after_sonnet_backoff"
+fi
+
+# Back off opus too — now all models should be backed off
+AIDEVOPS_HEADLESS_MODELS="anthropic/claude-sonnet-4-6,anthropic/claude-opus-4-6" \
+	bash "$HELPER" backoff set anthropic/claude-opus-4-6 rate_limit 3600 >/dev/null
+all_backed_off=$(
+	AIDEVOPS_HEADLESS_MODELS="anthropic/claude-sonnet-4-6,anthropic/claude-opus-4-6" \
+		bash "$HELPER" select --role worker 2>/dev/null || true
+)
+if [[ -z "$all_backed_off" ]]; then
+	pass "both models backed off: no model available"
+else
+	fail "both models backed off: no model available" "got: $all_backed_off"
+fi
+
+# Clear sonnet backoff — sonnet should be available again
+AIDEVOPS_HEADLESS_MODELS="anthropic/claude-sonnet-4-6,anthropic/claude-opus-4-6" \
+	bash "$HELPER" backoff clear anthropic/claude-sonnet-4-6 >/dev/null
+model_after_clear=$(
+	AIDEVOPS_HEADLESS_MODELS="anthropic/claude-sonnet-4-6,anthropic/claude-opus-4-6" \
+		bash "$HELPER" select --role worker 2>/dev/null || true
+)
+if [[ "$model_after_clear" == "anthropic/claude-sonnet-4-6" ]]; then
+	pass "cleared sonnet backoff: sonnet available again"
+else
+	fail "cleared sonnet backoff: sonnet available again" "got: $model_after_clear"
+fi
+
+section "Auth Error Backs Off Provider"
+# Clear all backoff state
+bash "$HELPER" backoff clear anthropic >/dev/null 2>&1 || true
+bash "$HELPER" backoff clear anthropic/claude-sonnet-4-6 >/dev/null 2>&1 || true
+bash "$HELPER" backoff clear anthropic/claude-opus-4-6 >/dev/null 2>&1 || true
+
+# Auth error should back off at provider level, blocking all models
+AIDEVOPS_HEADLESS_MODELS="anthropic/claude-sonnet-4-6,anthropic/claude-opus-4-6" \
+	bash "$HELPER" backoff set anthropic auth_error 3600 >/dev/null
+auth_backoff_model=$(
+	AIDEVOPS_HEADLESS_MODELS="anthropic/claude-sonnet-4-6,anthropic/claude-opus-4-6" \
+		bash "$HELPER" select --role worker 2>/dev/null || true
+)
+if [[ -z "$auth_backoff_model" ]]; then
+	pass "auth error backs off all models from provider"
+else
+	fail "auth error backs off all models from provider" "got: $auth_backoff_model"
+fi
+# Clean up
+bash "$HELPER" backoff clear anthropic >/dev/null 2>&1 || true
 
 echo ""
 printf "Total: %d, Passed: %d, Failed: %d\n" "$TOTAL_COUNT" "$PASS_COUNT" "$FAIL_COUNT"

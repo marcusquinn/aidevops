@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 
-# headless-runtime-helper.sh - Provider-aware OpenCode wrapper for pulse/workers
+# headless-runtime-helper.sh - Model-aware OpenCode wrapper for pulse/workers
 #
 # Features:
 #   - Alternates between configured headless providers/models
 #   - Persists OpenCode session IDs per provider + session key
-#   - Records provider backoff state on auth/rate-limit/runtime failures
+#   - Records backoff state per model (rate limits) or per provider (auth errors)
 #   - Clears backoff automatically when auth changes or retry windows expire
 #   - Rejects opencode/* gateway models for headless runs (no Zen fallback)
 
@@ -136,7 +136,10 @@ file_mtime() {
 		printf '%s' "missing"
 		return 0
 	fi
-	stat -f '%m' "$path" 2>/dev/null || stat -c '%Y' "$path" 2>/dev/null || printf '%s' "unknown"
+	# Linux first (stat -c), then macOS (stat -f). On Linux, stat -f '%m'
+	# returns filesystem metadata (free blocks), not file mtime — causing
+	# auth signatures to change between calls and clearing backoff state.
+	stat -c '%Y' "$path" 2>/dev/null || stat -f '%m' "$path" 2>/dev/null || printf '%s' "unknown"
 	return 0
 }
 
@@ -323,7 +326,18 @@ record_provider_backoff() {
 	local provider="$1"
 	local reason="$2"
 	local details_file="$3"
-	local details retry_seconds auth_signature retry_after
+	local model="${4:-$provider}"
+	local details retry_seconds auth_signature retry_after backoff_key
+
+	# Auth errors back off at provider level (shared credentials).
+	# Rate limits and provider errors back off at model level so that
+	# other models from the same provider remain available as fallbacks.
+	if [[ "$reason" == "auth_error" ]]; then
+		backoff_key="$provider"
+	else
+		backoff_key="$model"
+	fi
+
 	details=$(
 		python3 - "$details_file" <<'PY'
 from pathlib import Path
@@ -346,7 +360,7 @@ PY
 	db_query "
 INSERT INTO provider_backoff (provider, reason, retry_after, auth_signature, details, updated_at)
 VALUES (
-    '$(sql_escape "$provider")',
+    '$(sql_escape "$backoff_key")',
     '$(sql_escape "$reason")',
     '$(sql_escape "$retry_after")',
     '$(sql_escape "$auth_signature")',
@@ -363,10 +377,11 @@ ON CONFLICT(provider) DO UPDATE SET
 	return 0
 }
 
-provider_backoff_active() {
-	local provider="$1"
+backoff_active_for_key() {
+	local key="$1"
+	local provider="$2"
 	local row stored_retry_after stored_signature current_signature
-	row=$(db_query "SELECT reason || '|' || retry_after || '|' || auth_signature FROM provider_backoff WHERE provider = '$(sql_escape "$provider")';")
+	row=$(db_query "SELECT reason || '|' || retry_after || '|' || auth_signature FROM provider_backoff WHERE provider = '$(sql_escape "$key")';")
 	if [[ -z "$row" ]]; then
 		return 1
 	fi
@@ -374,7 +389,7 @@ provider_backoff_active() {
 	IFS='|' read -r stored_reason stored_retry_after stored_signature <<<"$row"
 	current_signature=$(get_auth_signature "$provider")
 	if [[ -n "$stored_signature" && -n "$current_signature" && "$stored_signature" != "$current_signature" ]]; then
-		clear_provider_backoff "$provider"
+		clear_provider_backoff "$key"
 		return 1
 	fi
 
@@ -383,12 +398,39 @@ provider_backoff_active() {
 		now_epoch=$(date -u '+%s')
 		retry_epoch=$(date -j -f '%Y-%m-%dT%H:%M:%SZ' "$stored_retry_after" '+%s' 2>/dev/null || date -u -d "$stored_retry_after" '+%s' 2>/dev/null || printf '%s' "0")
 		if [[ "$retry_epoch" -le "$now_epoch" ]]; then
-			clear_provider_backoff "$provider"
+			clear_provider_backoff "$key"
 			return 1
 		fi
 	fi
 
 	return 0
+}
+
+model_backoff_active() {
+	local model="$1"
+	local provider
+	provider=$(extract_provider "$model" 2>/dev/null || printf '%s' "")
+
+	# Check model-level backoff (rate limits, provider errors)
+	if backoff_active_for_key "$model" "$provider"; then
+		return 0
+	fi
+
+	# Check provider-level backoff (auth errors affect all models)
+	if [[ -n "$provider" && "$provider" != "$model" ]]; then
+		if backoff_active_for_key "$provider" "$provider"; then
+			return 0
+		fi
+	fi
+
+	return 1
+}
+
+# Legacy wrapper — kept for backward compatibility with cmd_backoff CLI
+provider_backoff_active() {
+	local provider="$1"
+	backoff_active_for_key "$provider" "$provider"
+	return $?
 }
 
 provider_auth_available() {
@@ -519,8 +561,8 @@ choose_model() {
 			print_error "Model must use provider/model format: $explicit_model"
 			return 1
 		fi
-		if provider_backoff_active "$provider"; then
-			print_warning "$provider is currently backed off — refusing explicit model $explicit_model"
+		if model_backoff_active "$explicit_model"; then
+			print_warning "$explicit_model is currently backed off"
 			return 75
 		fi
 		printf '%s' "$explicit_model"
@@ -557,7 +599,8 @@ choose_model() {
 		if ! provider_auth_available "$current_provider"; then
 			continue
 		fi
-		if provider_backoff_active "$current_provider"; then
+		# Check model-level backoff (rate limits) and provider-level (auth errors)
+		if model_backoff_active "$current_model"; then
 			continue
 		fi
 		set_last_provider "$role" "$current_provider"
@@ -565,7 +608,7 @@ choose_model() {
 		return 0
 	done
 
-	print_warning "All configured providers are currently backed off"
+	print_warning "All configured models are currently backed off"
 	return 75
 }
 
@@ -604,26 +647,28 @@ cmd_backoff() {
 		return 0
 		;;
 	clear)
-		local provider="${1:-}"
-		[[ -n "$provider" ]] || {
-			print_error "Usage: backoff clear <provider>"
+		local key="${1:-}"
+		[[ -n "$key" ]] || {
+			print_error "Usage: backoff clear <provider-or-model>"
 			return 1
 		}
-		clear_provider_backoff "$provider"
+		clear_provider_backoff "$key"
 		return 0
 		;;
 	set)
-		local provider="${1:-}"
+		local key="${1:-}"
 		local reason="${2:-provider_error}"
 		local retry_seconds="${3:-300}"
-		[[ -n "$provider" ]] || {
-			print_error "Usage: backoff set <provider> <reason> [retry_seconds]"
+		[[ -n "$key" ]] || {
+			print_error "Usage: backoff set <provider-or-model> <reason> [retry_seconds]"
 			return 1
 		}
+		local provider
+		provider=$(extract_provider "$key" 2>/dev/null || printf '%s' "$key")
 		local tmp_file
 		tmp_file=$(mktemp)
-		printf 'manual backoff %s %s %s\n' "$provider" "$reason" "$retry_seconds" >"$tmp_file"
-		record_provider_backoff "$provider" "$reason" "$tmp_file"
+		printf 'manual backoff %s %s %s\n' "$key" "$reason" "$retry_seconds" >"$tmp_file"
+		record_provider_backoff "$provider" "$reason" "$tmp_file" "$key"
 		if [[ "$retry_seconds" != "300" ]]; then
 			if [[ ! "$retry_seconds" =~ ^[0-9]+$ ]]; then
 				print_error "retry_seconds must be an integer"
@@ -631,7 +676,7 @@ cmd_backoff() {
 			fi
 			local retry_after
 			retry_after=$(date -u -v+"${retry_seconds}"S '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || date -u -d "+${retry_seconds} seconds" '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || printf '%s' "")
-			db_query "UPDATE provider_backoff SET retry_after = '$(sql_escape "$retry_after")' WHERE provider = '$(sql_escape "$provider")';" >/dev/null
+			db_query "UPDATE provider_backoff SET retry_after = '$(sql_escape "$retry_after")' WHERE provider = '$(sql_escape "$key")';" >/dev/null
 		fi
 		rm -f "$tmp_file"
 		return 0
@@ -789,7 +834,7 @@ cmd_run() {
 		# way to separate tee output from the exit code in a single $()).
 		(
 			set +e
-			if [[ -x "$SANDBOX_EXEC_HELPER" ]]; then
+			if [[ -x "$SANDBOX_EXEC_HELPER" && "${AIDEVOPS_HEADLESS_SANDBOX_DISABLED:-}" != "1" ]]; then
 				# Pass cmd array elements as separate arguments after --.
 				# Previous code used printf -v to build a single escaped string,
 				# which the sandbox received as one argument and passed to env as
@@ -817,9 +862,9 @@ cmd_run() {
 		activity_detected=$(output_has_activity "$output_file")
 		if [[ "$exit_code" -eq 0 ]]; then
 			if [[ "$activity_detected" != "1" ]]; then
-				record_provider_backoff "$provider" "provider_error" "$output_file"
+				record_provider_backoff "$provider" "provider_error" "$output_file" "$selected_model"
 				rm -f "$output_file"
-				print_warning "$provider returned exit 0 without any model activity; backing off provider"
+				print_warning "$selected_model returned exit 0 without any model activity; backing off model"
 				return 75
 			fi
 			if [[ "$role" != "pulse" && -n "$discovered_session" ]]; then
@@ -831,7 +876,7 @@ cmd_run() {
 
 		local failure_reason
 		failure_reason=$(classify_failure_reason "$output_file")
-		record_provider_backoff "$provider" "$failure_reason" "$output_file"
+		record_provider_backoff "$provider" "$failure_reason" "$output_file" "$selected_model"
 		rm -f "$output_file"
 
 		if [[ -n "$model_override" ]]; then
@@ -860,14 +905,19 @@ cmd_run() {
 
 show_help() {
 	cat <<'EOF'
-headless-runtime-helper.sh - Provider-aware headless OpenCode runtime
+headless-runtime-helper.sh - Model-aware headless OpenCode runtime
 
 Usage:
   headless-runtime-helper.sh select [--role pulse|worker] [--model provider/model]
   headless-runtime-helper.sh run --role pulse|worker --session-key KEY --dir PATH --title TITLE (--prompt TEXT | --prompt-file FILE) [--model provider/model] [--agent NAME] [--opencode-arg ARG]
-  headless-runtime-helper.sh backoff [status|set PROVIDER REASON [SECONDS]|clear PROVIDER]
+  headless-runtime-helper.sh backoff [status|set MODEL-OR-PROVIDER REASON [SECONDS]|clear MODEL-OR-PROVIDER]
   headless-runtime-helper.sh session [status|clear PROVIDER SESSION_KEY]
   headless-runtime-helper.sh help
+
+Backoff granularity:
+  Rate limits and provider errors are recorded per model (e.g. anthropic/claude-sonnet-4-6).
+  Auth errors are recorded per provider (e.g. anthropic) since credentials are shared.
+  This allows fallback from sonnet to opus when only sonnet is rate-limited.
 
 Defaults:
   AIDEVOPS_HEADLESS_MODELS defaults to anthropic/claude-sonnet-4-6,openai/gpt-4o
