@@ -56,6 +56,7 @@ curl -s -H "api-token: $CODACY_API_TOKEN" \
   -X PUT -H "Content-Type: application/json" \
   -d '{"issueThreshold":{"threshold":10,"minimumSeverity":"Warning"}}'
 ```
+
 <!-- AI-CONTEXT-END -->
 
 ## Automated Code Quality Fixes
