@@ -478,6 +478,28 @@ function loadApiCredentials() {
   return { apiKey, apiSecret };
 }
 
+// Execute a single API fetch with abort timeout. Returns the Response or throws.
+async function apiExecuteFetch(url, fetchOpts, timeout) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeout);
+  fetchOpts.signal = controller.signal;
+  try {
+    const response = await fetch(url, fetchOpts);
+    clearTimeout(timer);
+    return response;
+  } catch (err) {
+    clearTimeout(timer);
+    if (err.name === 'AbortError') throw new Error(`API request timed out after ${timeout}ms`);
+    throw err;
+  }
+}
+
+// Parse an API error response into a descriptive string.
+function parseApiErrorDetail(text) {
+  try { return JSON.parse(text).detail || JSON.parse(text).message || text; } catch {}
+  return text;
+}
+
 // Make an authenticated API request
 async function apiRequest(method, path, { body, apiKey, apiSecret, timeout = 90000 } = {}) {
   const url = path.startsWith('http') ? path : `${API_BASE_URL}${path.startsWith('/') ? '' : '/'}${path}`;
@@ -490,16 +512,11 @@ async function apiRequest(method, path, { body, apiKey, apiSecret, timeout = 900
   const fetchOpts = { method, headers };
   if (body) fetchOpts.body = JSON.stringify(body);
 
-  // Retry on transient errors (matching Python SDK: 408, 429, 500, 502, 503, 504)
   const retryableCodes = new Set([408, 429, 500, 502, 503, 504]);
   let lastError;
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
-      const controller = new AbortController();
-      const timer = setTimeout(() => controller.abort(), timeout);
-      fetchOpts.signal = controller.signal;
-      const response = await fetch(url, fetchOpts);
-      clearTimeout(timer);
+      const response = await apiExecuteFetch(url, fetchOpts, timeout);
 
       if (!response.ok) {
         const text = await response.text().catch(() => '');
@@ -509,15 +526,13 @@ async function apiRequest(method, path, { body, apiKey, apiSecret, timeout = 900
           await new Promise(r => setTimeout(r, delay));
           continue;
         }
-        let detail = text;
-        try { detail = JSON.parse(text).detail || JSON.parse(text).message || text; } catch {}
-        throw new Error(`API ${response.status}: ${detail}`);
+        throw new Error(`API ${response.status}: ${parseApiErrorDetail(text)}`);
       }
       return await response.json();
     } catch (err) {
       lastError = err;
-      if (err.name === 'AbortError') throw new Error(`API request timed out after ${timeout}ms`);
-      if (attempt < 2 && !err.message.startsWith('API ')) {
+      if (err.message.startsWith('API request timed out') || err.message.startsWith('API ')) throw err;
+      if (attempt < 2) {
         await new Promise(r => setTimeout(r, 200 * Math.pow(2, attempt)));
         continue;
       }
@@ -1082,124 +1097,71 @@ function logNewInterruption(type, selector, detail) {
   }
 }
 
-// Comprehensive interruption dismissal - handles all known Higgsfield UI popups
-async function dismissInterruptions(page) {
-  const results = await page.evaluate(() => {
+// Dismiss modals and overlays in the browser context (categories 1-5).
+async function dismissModalsAndBanners(page) {
+  return page.evaluate(() => {
     const dismissed = [];
+    // 1-2. React-Aria modals and dismiss buttons
+    document.querySelectorAll('.react-aria-ModalOverlay, [data-rac].react-aria-ModalOverlay')
+      .forEach(o => { o.remove(); dismissed.push('react-aria-modal'); });
+    document.querySelectorAll('button[aria-label="Dismiss"]')
+      .forEach(b => { b.click(); dismissed.push('dismiss-button'); });
 
-    // --- 1. React-Aria modal overlays (promo dialogs, offers) ---
-    const overlays = document.querySelectorAll(
-      '.react-aria-ModalOverlay, [data-rac].react-aria-ModalOverlay'
-    );
-    overlays.forEach(overlay => {
-      overlay.remove();
-      dismissed.push('react-aria-modal');
-    });
-
-    // --- 2. Dismiss buttons (off-screen react-aria dismiss) ---
-    document.querySelectorAll('button[aria-label="Dismiss"]').forEach(btn => {
-      btn.click();
-      dismissed.push('dismiss-button');
-    });
-
-    // --- 3. Cookie consent / GDPR banners ---
-    const cookieSelectors = [
-      '[class*="cookie"]', '[id*="cookie"]',
-      '[class*="consent"]', '[id*="consent"]',
-      '[class*="gdpr"]', '[id*="gdpr"]',
-      '[class*="CookieBanner"]',
-    ];
-    for (const sel of cookieSelectors) {
+    // 3. Cookie banners
+    for (const sel of ['[class*="cookie"]','[id*="cookie"]','[class*="consent"]','[id*="consent"]','[class*="gdpr"]','[id*="gdpr"]','[class*="CookieBanner"]']) {
       document.querySelectorAll(sel).forEach(el => {
-        // Click accept/close button inside, or remove the banner
-        const acceptBtn = el.querySelector(
-          'button:has-text("Accept"), button:has-text("OK"), button:has-text("Got it"), button[class*="accept"]'
-        );
-        if (acceptBtn) { acceptBtn.click(); dismissed.push('cookie-accept'); }
+        const ab = el.querySelector('button:has-text("Accept"), button:has-text("OK"), button:has-text("Got it"), button[class*="accept"]');
+        if (ab) { ab.click(); dismissed.push('cookie-accept'); }
         else { el.remove(); dismissed.push('cookie-remove'); }
       });
     }
 
-    // --- 4. Notification toasts (credit alerts, system messages) ---
-    // The ARIA snapshot showed: heading "10 daily credits added" + paragraph
-    document.querySelectorAll(
-      '[role="alert"], [class*="toast"], [class*="Toast"], [class*="notification"], [class*="Notification"], [class*="snackbar"]'
-    ).forEach(el => {
-      const closeBtn = el.querySelector('button');
-      if (closeBtn) { closeBtn.click(); dismissed.push('toast-close'); }
-    });
+    // 4. Toasts
+    document.querySelectorAll('[role="alert"],[class*="toast"],[class*="Toast"],[class*="notification"],[class*="Notification"],[class*="snackbar"]')
+      .forEach(el => { const cb = el.querySelector('button'); if (cb) { cb.click(); dismissed.push('toast-close'); } });
 
-    // --- 5. Onboarding tooltips / guided tours ---
-    document.querySelectorAll(
-      '[class*="tooltip"][class*="onboard"], [class*="tour"], [class*="walkthrough"], [class*="Popover"][class*="guide"]'
-    ).forEach(el => {
-      const skipBtn = el.querySelector('button:last-child') || el.querySelector('button');
-      if (skipBtn) { skipBtn.click(); dismissed.push('onboarding-skip'); }
-      else { el.remove(); dismissed.push('onboarding-remove'); }
-    });
-
-    // --- 6. Upgrade/pricing nag overlays ---
-    document.querySelectorAll(
-      '[class*="upgrade"], [class*="paywall"], [class*="subscribe"]'
-    ).forEach(el => {
-      // Only remove if it's an overlay/modal, not inline content
-      if (el.style.position === 'fixed' || el.style.position === 'absolute' ||
-          getComputedStyle(el).position === 'fixed') {
-        el.remove();
-        dismissed.push('upgrade-overlay');
-      }
-    });
-
-    // --- 7. Generic dialog/modal elements ---
-    document.querySelectorAll('[role="dialog"]').forEach(dialog => {
-      // Check if it's a blocking modal (has an overlay parent or fixed position)
-      const parent = dialog.parentElement;
-      if (parent && (parent.classList.contains('react-aria-ModalOverlay') ||
-          getComputedStyle(parent).position === 'fixed')) {
-        parent.remove();
-        dismissed.push('generic-dialog');
-      }
-    });
-
-    // --- 8. Full-screen loading overlays inside main ---
-    document.querySelectorAll('main .size-full.flex.items-center.justify-center').forEach(el => {
-      // Only remove if it looks like a loading spinner (few/no children with content)
-      const hasRealContent = el.querySelector('textarea, input, button[type="submit"], form');
-      if (!hasRealContent && el.children.length <= 2) {
-        el.remove();
-        dismissed.push('loading-overlay');
-      }
-    });
-
-    // --- 9. Media upload agreement / Terms of Service modals ---
-    document.querySelectorAll('[role="dialog"], dialog').forEach(dialog => {
-      const agreeBtn = dialog.querySelector('button');
-      const text = dialog.textContent || '';
-      if (text.includes('Media upload agreement') || text.includes('I agree, continue') ||
-          text.includes('terms of service') || text.includes('Terms of Service')) {
-        // Find and click the agree/continue button
-        const btns = dialog.querySelectorAll('button');
-        for (const btn of btns) {
-          if (btn.textContent.includes('agree') || btn.textContent.includes('continue') ||
-              btn.textContent.includes('Accept') || btn.textContent.includes('OK')) {
-            btn.click();
-            dismissed.push('media-upload-agreement');
-            break;
-          }
-        }
-      }
-    });
-
-    // --- 10. Restore body scroll/pointer if modals locked it ---
-    if (document.body.style.overflow === 'hidden' ||
-        document.body.style.pointerEvents === 'none') {
-      document.body.style.overflow = '';
-      document.body.style.pointerEvents = '';
-      dismissed.push('body-unlock');
-    }
+    // 5. Onboarding
+    document.querySelectorAll('[class*="tooltip"][class*="onboard"],[class*="tour"],[class*="walkthrough"],[class*="Popover"][class*="guide"]')
+      .forEach(el => { const sb = el.querySelector('button:last-child') || el.querySelector('button'); if (sb) { sb.click(); dismissed.push('onboarding-skip'); } else { el.remove(); dismissed.push('onboarding-remove'); } });
 
     return dismissed;
   });
+}
+
+// Dismiss upgrade overlays, dialogs, loaders, and agreements (categories 6-10).
+async function dismissOverlaysAndAgreements(page) {
+  return page.evaluate(() => {
+    const dismissed = [];
+    // 6. Upgrade overlays
+    document.querySelectorAll('[class*="upgrade"],[class*="paywall"],[class*="subscribe"]')
+      .forEach(el => { if (el.style.position==='fixed'||el.style.position==='absolute'||getComputedStyle(el).position==='fixed') { el.remove(); dismissed.push('upgrade-overlay'); } });
+
+    // 7. Generic dialogs
+    document.querySelectorAll('[role="dialog"]').forEach(d => { const p=d.parentElement; if(p&&(p.classList.contains('react-aria-ModalOverlay')||getComputedStyle(p).position==='fixed')){p.remove();dismissed.push('generic-dialog');} });
+
+    // 8. Loading overlays
+    document.querySelectorAll('main .size-full.flex.items-center.justify-center').forEach(el => { if(!el.querySelector('textarea,input,button[type="submit"],form')&&el.children.length<=2){el.remove();dismissed.push('loading-overlay');} });
+
+    // 9. Media upload agreements
+    document.querySelectorAll('[role="dialog"],dialog').forEach(dialog => {
+      const t=dialog.textContent||'';
+      if(t.includes('Media upload agreement')||t.includes('I agree, continue')||t.includes('terms of service')||t.includes('Terms of Service')){
+        for(const btn of dialog.querySelectorAll('button')){if(btn.textContent.includes('agree')||btn.textContent.includes('continue')||btn.textContent.includes('Accept')||btn.textContent.includes('OK')){btn.click();dismissed.push('media-upload-agreement');break;}}
+      }
+    });
+
+    // 10. Body unlock
+    if(document.body.style.overflow==='hidden'||document.body.style.pointerEvents==='none'){document.body.style.overflow='';document.body.style.pointerEvents='';dismissed.push('body-unlock');}
+
+    return dismissed;
+  });
+}
+
+// Comprehensive interruption dismissal - handles all known Higgsfield UI popups
+async function dismissInterruptions(page) {
+  const part1 = await dismissModalsAndBanners(page);
+  const part2 = await dismissOverlaysAndAgreements(page);
+  const results = [...part1, ...part2];
 
   if (results.length > 0) {
     console.log(`Cleared ${results.length} interruption(s): ${[...new Set(results)].join(', ')}`);
@@ -1483,28 +1445,49 @@ async function adjustBatchSize(page, targetBatch) {
     : `WARNING: Batch size may not have changed (showing ${newBatch})`);
 }
 
+// Set aspect ratio via direct button click or dropdown selection.
+async function setAspectRatio(page, aspect) {
+  console.log(`Setting aspect ratio: ${aspect}`);
+  const aspectBtn = page.locator(`button:has-text("${aspect}")`);
+  if (await aspectBtn.count() > 0) {
+    await aspectBtn.first().click({ force: true });
+    await page.waitForTimeout(300);
+    console.log(`Selected aspect ratio: ${aspect}`);
+    return;
+  }
+  const aspectSelector = page.locator('button:has-text("Aspect"), [class*="aspect"]');
+  if (await aspectSelector.count() > 0) {
+    await aspectSelector.first().click({ force: true });
+    await page.waitForTimeout(500);
+    const option = page.locator(`[role="option"]:has-text("${aspect}"), button:has-text("${aspect}")`);
+    if (await option.count() > 0) {
+      await option.first().click({ force: true });
+      await page.waitForTimeout(300);
+      console.log(`Selected aspect ratio: ${aspect}`);
+    }
+  }
+}
+
+// Toggle the Enhance checkbox to match the desired state.
+async function setEnhanceToggle(page, enhance) {
+  const enhanceLabel = page.locator('label:has-text("Enhance"), button:has-text("Enhance")');
+  if (await enhanceLabel.count() === 0) return;
+  const isChecked = await page.evaluate(() => {
+    const el = document.querySelector('label:has(input) span:has-text("Enhance")');
+    const input = el?.closest('label')?.querySelector('input');
+    return input?.checked || false;
+  });
+  if (isChecked !== enhance) {
+    await enhanceLabel.first().click({ force: true });
+    await page.waitForTimeout(300);
+    console.log(`${enhance ? 'Enabled' : 'Disabled'} enhance`);
+  }
+}
+
 // Configure image generation options on the page (aspect ratio, quality, enhance, batch, preset)
 async function configureImageOptions(page, options) {
   if (options.aspect) {
-    console.log(`Setting aspect ratio: ${options.aspect}`);
-    const aspectBtn = page.locator(`button:has-text("${options.aspect}")`);
-    if (await aspectBtn.count() > 0) {
-      await aspectBtn.first().click({ force: true });
-      await page.waitForTimeout(300);
-      console.log(`Selected aspect ratio: ${options.aspect}`);
-    } else {
-      const aspectSelector = page.locator('button:has-text("Aspect"), [class*="aspect"]');
-      if (await aspectSelector.count() > 0) {
-        await aspectSelector.first().click({ force: true });
-        await page.waitForTimeout(500);
-        const option = page.locator(`[role="option"]:has-text("${options.aspect}"), button:has-text("${options.aspect}")`);
-        if (await option.count() > 0) {
-          await option.first().click({ force: true });
-          await page.waitForTimeout(300);
-          console.log(`Selected aspect ratio: ${options.aspect}`);
-        }
-      }
-    }
+    await setAspectRatio(page, options.aspect);
   }
 
   if (options.quality) {
@@ -1518,19 +1501,7 @@ async function configureImageOptions(page, options) {
   }
 
   if (options.enhance !== undefined) {
-    const enhanceLabel = page.locator('label:has-text("Enhance"), button:has-text("Enhance")');
-    if (await enhanceLabel.count() > 0) {
-      const isChecked = await page.evaluate(() => {
-        const el = document.querySelector('label:has(input) span:has-text("Enhance")');
-        const input = el?.closest('label')?.querySelector('input');
-        return input?.checked || false;
-      });
-      if (isChecked !== options.enhance) {
-        await enhanceLabel.first().click({ force: true });
-        await page.waitForTimeout(300);
-        console.log(`${options.enhance ? 'Enabled' : 'Disabled'} enhance`);
-      }
-    }
+    await setEnhanceToggle(page, options.enhance);
   }
 
   if (options.batch && options.batch >= 1 && options.batch <= 4) {
@@ -1720,6 +1691,59 @@ async function clickAndVerifyGenerate(page, queueBefore, existingImageCount) {
   return true;
 }
 
+// Check image generation completion conditions.
+// Returns 'complete' reason string if done, or null to continue polling.
+function checkImageGenCompletion(state, { existingImageCount, queueBefore, peakQueue, btnWasDisabled, elapsed }) {
+  // Condition 1: queue was elevated and has now dropped back
+  if (peakQueue > queueBefore && state.queueItems <= queueBefore) {
+    return `Generation complete! ${state.images} images on page (${elapsed}s)`;
+  }
+  // Condition 2: image count increased with no queue activity
+  if (state.images > existingImageCount && state.queueItems === 0 && peakQueue === queueBefore) {
+    return `Generation complete (fast)! ${state.images} images on page, ${state.images - existingImageCount} new (${elapsed}s)`;
+  }
+  // Condition 3: Generate button was disabled/spinner and is now re-enabled
+  if (btnWasDisabled && !state.btnDisabled && !state.hasSpinner) {
+    return `Generation complete (button re-enabled)! ${state.images} images on page (${elapsed}s)`;
+  }
+  return null;
+}
+
+// Retry Generate click after 30s of no activity (safety measure).
+async function retryGenerateIfStalled(page, { elapsed, state, queueBefore, existingImageCount, peakQueue, btnWasDisabled }) {
+  if (parseInt(elapsed, 10) < 30) return false;
+  if (state.queueItems !== queueBefore || state.images > existingImageCount) return false;
+  if (peakQueue !== queueBefore || btnWasDisabled) return false;
+
+  console.log('No activity detected after 30s - retrying Generate click...');
+  await dismissAllModals(page);
+  const retryBtn = page.locator('button:has-text("Generate")');
+  if (await retryBtn.count() > 0) {
+    await retryBtn.last().scrollIntoViewIfNeeded().catch(() => {});
+    await page.waitForTimeout(300);
+    await retryBtn.last().click({ force: true });
+    console.log('Retried Generate click (30s safety)');
+  }
+  return true;
+}
+
+// Reload after 60s of no queue/button activity and check for new images.
+async function reloadAndCheckImages(page, { elapsed, existingImageCount, peakQueue, queueBefore, btnWasDisabled }) {
+  if (parseInt(elapsed, 10) < 60) return null;
+  if (peakQueue !== queueBefore || btnWasDisabled) return null;
+
+  console.log('No queue or button activity after 60s - reloading to check for new images...');
+  await page.reload({ waitUntil: 'domcontentloaded', timeout: 30000 });
+  await page.waitForTimeout(5000);
+  const freshCount = await page.evaluate((imgSelector) =>
+    document.querySelectorAll(imgSelector).length
+  , GENERATED_IMAGE_SELECTOR);
+  if (freshCount > existingImageCount) {
+    return `Generation complete (post-reload)! ${freshCount} images, ${freshCount - existingImageCount} new (${elapsed}s)`;
+  }
+  return null;
+}
+
 // Poll the page until image generation completes or times out.
 // Detects completion via: queue drain, image count increase, button re-enable, or page reload.
 // Returns true if generation completed within the timeout.
@@ -1776,55 +1800,24 @@ async function waitForImageGeneration(page, existingImageCount, queueBefore, opt
     const elapsed = ((Date.now() - startTime) / 1000).toFixed(0);
     console.log(`  ${elapsed}s: queue=${state.queueItems} images=${state.images} (peak=${peakQueue}) btn=${state.btnDisabled ? 'disabled' : 'enabled'}`);
 
-    // Condition 1: queue was elevated and has now dropped back
-    if (peakQueue > queueBefore && state.queueItems <= queueBefore) {
-      console.log(`Generation complete! ${state.images} images on page (${elapsed}s)`);
+    const ctx = { existingImageCount, queueBefore, peakQueue, btnWasDisabled, elapsed };
+    const completeMsg = checkImageGenCompletion(state, ctx);
+    if (completeMsg) {
+      console.log(completeMsg);
+      if (completeMsg.includes('button re-enabled')) await page.waitForTimeout(3000);
       return true;
     }
 
-    // Condition 2: image count increased with no queue activity
-    if (state.images > existingImageCount && state.queueItems === 0 && peakQueue === queueBefore) {
-      console.log(`Generation complete (fast)! ${state.images} images on page, ${state.images - existingImageCount} new (${elapsed}s)`);
-      return true;
+    if (!retryAttempted) {
+      retryAttempted = await retryGenerateIfStalled(page, { ...ctx, state });
     }
 
-    // Condition 3: Generate button was disabled/spinner and is now re-enabled
-    if (btnWasDisabled && !state.btnDisabled && !state.hasSpinner) {
-      console.log(`Generation complete (button re-enabled)! ${state.images} images on page (${elapsed}s)`);
-      await page.waitForTimeout(3000);
-      return true;
-    }
-
-    // Safety: retry Generate click after 30s of no activity
-    if (!retryAttempted && parseInt(elapsed, 10) >= 30 &&
-        state.queueItems === queueBefore && state.images <= existingImageCount &&
-        peakQueue === queueBefore && !btnWasDisabled) {
-      console.log('No activity detected after 30s - retrying Generate click...');
-      await dismissAllModals(page);
-      const retryBtn = page.locator('button:has-text("Generate")');
-      if (await retryBtn.count() > 0) {
-        await retryBtn.last().scrollIntoViewIfNeeded().catch(() => {});
-        await page.waitForTimeout(300);
-        await retryBtn.last().click({ force: true });
-        console.log('Retried Generate click (30s safety)');
+    if (!reloadAttempted) {
+      const reloadMsg = await reloadAndCheckImages(page, ctx);
+      if (reloadMsg) { console.log(reloadMsg); return true; }
+      if (parseInt(elapsed, 10) >= 60 && peakQueue === queueBefore && !btnWasDisabled) {
+        reloadAttempted = true;
       }
-      retryAttempted = true;
-    }
-
-    // Condition 4: reload after 60s of no queue/button activity
-    if (!reloadAttempted && parseInt(elapsed, 10) >= 60 &&
-        peakQueue === queueBefore && !btnWasDisabled) {
-      console.log('No queue or button activity after 60s - reloading to check for new images...');
-      await page.reload({ waitUntil: 'domcontentloaded', timeout: 30000 });
-      await page.waitForTimeout(5000);
-      const freshCount = await page.evaluate((imgSelector) =>
-        document.querySelectorAll(imgSelector).length
-      , GENERATED_IMAGE_SELECTOR);
-      if (freshCount > existingImageCount) {
-        console.log(`Generation complete (post-reload)! ${freshCount} images, ${freshCount - existingImageCount} new (${elapsed}s)`);
-        return true;
-      }
-      reloadAttempted = true;
     }
   }
 
@@ -4992,6 +4985,55 @@ async function mixedMediaPreset(options = {}) {
 
 // Motion/VFX Presets — apply motion or VFX effects (150+ presets)
 // Presets discovered dynamically and stored in routes-cache.json
+
+// List available motion presets from the discovery cache.
+function listMotionPresets() {
+  if (!existsSync(ROUTES_CACHE)) {
+    console.log('No discovery cache found. Run "discover" first.');
+    return;
+  }
+  const cache = JSON.parse(readFileSync(ROUTES_CACHE, 'utf-8'));
+  const motions = cache.motions || {};
+  const names = Object.keys(motions);
+  console.log(`Available motion presets (${names.length}):`);
+  names.slice(0, 50).forEach(n => console.log(`  ${n} → ${motions[n]}`));
+  if (names.length > 50) console.log(`  ... and ${names.length - 50} more`);
+}
+
+// Resolve a motion preset name to its URL path. Returns null if not found.
+function resolveMotionPresetUrl(presetName) {
+  let presetUrl = null;
+
+  // Try discovery cache (exact then fuzzy)
+  if (existsSync(ROUTES_CACHE)) {
+    const cache = JSON.parse(readFileSync(ROUTES_CACHE, 'utf-8'));
+    const motions = cache.motions || {};
+    const presetKey = presetName.toLowerCase().replace(/[\s-]+/g, '_');
+
+    presetUrl = motions[presetKey];
+    if (!presetUrl) {
+      const match = Object.keys(motions).find(k =>
+        k.includes(presetKey) || presetKey.includes(k) ||
+        k.toLowerCase().includes(presetName.toLowerCase())
+      );
+      if (match) {
+        presetUrl = motions[match];
+        console.log(`Fuzzy matched: ${presetName} → ${match}`);
+      }
+    }
+  }
+
+  // Direct path or UUID
+  if (!presetUrl && presetName.includes('/')) {
+    presetUrl = presetName.startsWith('/') ? presetName : `/motion/${presetName}`;
+  }
+  if (!presetUrl && presetName.match(/^[0-9a-f-]{36}$/i)) {
+    presetUrl = `/motion/${presetName}`;
+  }
+
+  return presetUrl;
+}
+
 async function motionPreset(options = {}) {
   const { browser, context, page } = await launchBrowser(options);
 
@@ -4999,52 +5041,12 @@ async function motionPreset(options = {}) {
     const presetName = options.preset;
 
     if (!presetName) {
-      // List available presets from discovery cache
-      if (existsSync(ROUTES_CACHE)) {
-        const cache = JSON.parse(readFileSync(ROUTES_CACHE, 'utf-8'));
-        const motions = cache.motions || {};
-        const names = Object.keys(motions);
-        console.log(`Available motion presets (${names.length}):`);
-        names.slice(0, 50).forEach(n => console.log(`  ${n} → ${motions[n]}`));
-        if (names.length > 50) console.log(`  ... and ${names.length - 50} more`);
-      } else {
-        console.log('No discovery cache found. Run "discover" first.');
-      }
+      listMotionPresets();
       await browser.close();
       return { success: true, action: 'list' };
     }
 
-    // Resolve preset to URL from discovery cache
-    let presetUrl = null;
-    if (existsSync(ROUTES_CACHE)) {
-      const cache = JSON.parse(readFileSync(ROUTES_CACHE, 'utf-8'));
-      const motions = cache.motions || {};
-      const presetKey = presetName.toLowerCase().replace(/[\s-]+/g, '_');
-
-      // Exact match
-      presetUrl = motions[presetKey];
-
-      // Fuzzy match
-      if (!presetUrl) {
-        const match = Object.keys(motions).find(k =>
-          k.includes(presetKey) || presetKey.includes(k) ||
-          k.toLowerCase().includes(presetName.toLowerCase())
-        );
-        if (match) {
-          presetUrl = motions[match];
-          console.log(`Fuzzy matched: ${presetName} → ${match}`);
-        }
-      }
-    }
-
-    // If preset is a UUID or URL path, use directly
-    if (!presetUrl && presetName.includes('/')) {
-      presetUrl = presetName.startsWith('/') ? presetName : `/motion/${presetName}`;
-    }
-    if (!presetUrl && presetName.match(/^[0-9a-f-]{36}$/i)) {
-      presetUrl = `/motion/${presetName}`;
-    }
-
+    const presetUrl = resolveMotionPresetUrl(presetName);
     if (!presetUrl) {
       console.error(`Motion preset not found: ${presetName}. Run "discover" to refresh cache.`);
       await browser.close();
@@ -5592,6 +5594,64 @@ async function authHealthCheck(options = {}) {
   }
 }
 
+// Test navigation to key Higgsfield pages. Returns true if all pass.
+async function smokeTestNavigation(page) {
+  const testPages = [
+    { url: `${BASE_URL}/image/soul`, name: 'Image Generation' },
+    { url: `${BASE_URL}/video`, name: 'Video Generation' },
+    { url: `${BASE_URL}/apps`, name: 'Apps' },
+  ];
+
+  let navSuccess = true;
+  for (const testPage of testPages) {
+    try {
+      await page.goto(testPage.url, { waitUntil: 'domcontentloaded', timeout: 20000 });
+      await page.waitForTimeout(2000);
+      const currentUrl = page.url();
+
+      if (currentUrl.includes('login') || currentUrl.includes('auth')) {
+        console.log(`[smoke-test]   ❌ ${testPage.name}: Redirected to login`);
+        navSuccess = false;
+      } else {
+        console.log(`[smoke-test]   ✅ ${testPage.name}: OK`);
+      }
+    } catch (error) {
+      console.log(`[smoke-test]   ❌ ${testPage.name}: ${error.message}`);
+      navSuccess = false;
+    }
+  }
+  return navSuccess;
+}
+
+// Check if credits are visible on the image generation page. Returns true if found.
+async function smokeTestCredits(page) {
+  try {
+    await page.goto(`${BASE_URL}/image/soul`, { waitUntil: 'domcontentloaded', timeout: 20000 });
+    await page.waitForTimeout(2000);
+
+    const creditSelectors = [
+      'text=/\\d+\\s*(credits?|cr)/i',
+      '[data-testid*="credit"]',
+      'div:has-text("credits")',
+    ];
+
+    for (const selector of creditSelectors) {
+      const el = page.locator(selector);
+      if (await el.count() > 0) {
+        const text = await el.first().textContent();
+        console.log(`[smoke-test]   ✅ Credits visible: ${text?.trim()}`);
+        return true;
+      }
+    }
+
+    console.log('[smoke-test]   ⚠️  Could not find credit indicator (may still work)');
+    return false;
+  } catch (error) {
+    console.log(`[smoke-test]   ❌ Credits check failed: ${error.message}`);
+    return false;
+  }
+}
+
 // Smoke test - quick end-to-end test without consuming credits
 async function smokeTest(options = {}) {
   console.log('[smoke-test] Running smoke test...');
@@ -5619,64 +5679,11 @@ async function smokeTest(options = {}) {
     // 2. Test navigation to key pages
     console.log('\n[smoke-test] Step 2/4: Testing navigation...');
     const { browser, context, page } = await launchBrowser({ ...options, headless: true });
-    
-    const testPages = [
-      { url: `${BASE_URL}/image/soul`, name: 'Image Generation' },
-      { url: `${BASE_URL}/video`, name: 'Video Generation' },
-      { url: `${BASE_URL}/apps`, name: 'Apps' },
-    ];
-    
-    let navSuccess = true;
-    for (const testPage of testPages) {
-      try {
-        await page.goto(testPage.url, { waitUntil: 'domcontentloaded', timeout: 20000 });
-        await page.waitForTimeout(2000);
-        const currentUrl = page.url();
-        
-        if (currentUrl.includes('login') || currentUrl.includes('auth')) {
-          console.log(`[smoke-test]   ❌ ${testPage.name}: Redirected to login`);
-          navSuccess = false;
-        } else {
-          console.log(`[smoke-test]   ✅ ${testPage.name}: OK`);
-        }
-      } catch (error) {
-        console.log(`[smoke-test]   ❌ ${testPage.name}: ${error.message}`);
-        navSuccess = false;
-      }
-    }
-    results.navigation = navSuccess;
+    results.navigation = await smokeTestNavigation(page);
     
     // 3. Check credits
     console.log('\n[smoke-test] Step 3/4: Checking credits...');
-    try {
-      await page.goto(`${BASE_URL}/image/soul`, { waitUntil: 'domcontentloaded', timeout: 20000 });
-      await page.waitForTimeout(2000);
-      
-      const creditSelectors = [
-        'text=/\\d+\\s*(credits?|cr)/i',
-        '[data-testid*="credit"]',
-        'div:has-text("credits")',
-      ];
-      
-      let foundCredits = false;
-      for (const selector of creditSelectors) {
-        const el = page.locator(selector);
-        if (await el.count() > 0) {
-          const text = await el.first().textContent();
-          console.log(`[smoke-test]   ✅ Credits visible: ${text?.trim()}`);
-          foundCredits = true;
-          break;
-        }
-      }
-      
-      if (!foundCredits) {
-        console.log('[smoke-test]   ⚠️  Could not find credit indicator (may still work)');
-      }
-      results.credits = foundCredits;
-    } catch (error) {
-      console.log(`[smoke-test]   ❌ Credits check failed: ${error.message}`);
-      results.credits = false;
-    }
+    results.credits = await smokeTestCredits(page);
     
     // 4. Verify discovery cache
     console.log('\n[smoke-test] Step 4/4: Checking discovery cache...');
