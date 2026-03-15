@@ -427,6 +427,10 @@ check_requirements() {
 	local missing_deps=()
 	local missing_packages=()
 
+	# Detect package manager once for both package-name resolution and installation
+	local pkg_manager
+	pkg_manager=$(detect_package_manager)
+
 	# Check for required commands
 	# Format: command-name package-name (same when identical)
 	if ! command -v jq >/dev/null 2>&1; then
@@ -443,10 +447,8 @@ check_requirements() {
 	fi
 	if ! command -v sqlite3 >/dev/null 2>&1; then
 		missing_deps+=("sqlite3")
-		# Package name varies: sqlite3 on Debian/Ubuntu/apt, sqlite on brew/Fedora/Arch/Alpine
-		local pkg_mgr
-		pkg_mgr=$(detect_package_manager)
-		case "$pkg_mgr" in
+		# Package name varies: sqlite3 on Debian/Ubuntu (apt), sqlite on Homebrew/Fedora/Arch/Alpine
+		case "$pkg_manager" in
 		apt) missing_packages+=("sqlite3") ;;
 		*) missing_packages+=("sqlite") ;;
 		esac
@@ -454,9 +456,6 @@ check_requirements() {
 
 	if [[ ${#missing_deps[@]} -gt 0 ]]; then
 		print_warning "Missing required dependencies: ${missing_deps[*]}"
-
-		local pkg_manager
-		pkg_manager=$(detect_package_manager)
 
 		if [[ "$pkg_manager" == "unknown" ]]; then
 			print_error "Could not detect package manager"
