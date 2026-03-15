@@ -544,13 +544,13 @@ ${prs_md}
 
 ${workers_md}
 
-### Contributions to this project (last 30 days)
+### GitHub activity on this project (last 30 days)
 
-${activity_md}
+${person_stats_md:-_Person stats unavailable._}
 
-### Contributions to all projects (last 30 days)
+### GitHub activity on all projects (last 30 days)
 
-${cross_repo_md:-_Single repo or cross-repo data unavailable._}
+${cross_repo_person_stats_md:-_Cross-repo person stats unavailable._}
 
 ### Work with AI sessions on this project (${runner_user})
 
@@ -560,13 +560,13 @@ ${session_time_md}
 
 ${cross_repo_session_time_md:-_Single repo or cross-repo session data unavailable._}
 
-### Contributor output on this project (last 30 days)
+### Commits to this project (last 30 days)
 
-${person_stats_md:-_Person stats unavailable._}
+${activity_md}
 
-### Contributor output on all projects (last 30 days)
+### Commits to all projects (last 30 days)
 
-${cross_repo_person_stats_md:-_Cross-repo person stats unavailable._}
+${cross_repo_md:-_Single repo or cross-repo data unavailable._}
 
 ### System Resources
 
