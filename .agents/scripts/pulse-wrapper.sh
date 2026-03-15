@@ -3033,10 +3033,14 @@ cleanup_orphans() {
 			continue
 		fi
 
-		# Skip active workers, pulse, strategic reviews, and language servers
-		if [[ "$cmd" =~ /full-loop|Supervisor\ Pulse|Strategic\ Review|language-server|eslintServer ]]; then
+		# Skip active workers, pulse, strategic reviews, and language servers.
+		# Use case instead of [[ =~ ]] with | alternation — zsh parses the |
+		# as a pipe operator inside [[ ]], causing a parse error. See GH#4904.
+		case "$cmd" in
+		*"/full-loop"* | *"Supervisor Pulse"* | *"Strategic Review"* | *"language-server"* | *"eslintServer"*)
 			continue
-		fi
+			;;
+		esac
 
 		# Skip young processes
 		local age_seconds
@@ -3059,7 +3063,12 @@ cleanup_orphans() {
 		read -r pid tty etime rss cmd <<<"$line"
 
 		[[ "$tty" != "?" && "$tty" != "??" ]] && continue
-		[[ "$cmd" =~ /full-loop|Supervisor\ Pulse|Strategic\ Review|language-server|eslintServer ]] && continue
+		# Use case instead of [[ =~ ]] with | alternation — zsh parse error. See GH#4904.
+		case "$cmd" in
+		*"/full-loop"* | *"Supervisor Pulse"* | *"Strategic Review"* | *"language-server"* | *"eslintServer"*)
+			continue
+			;;
+		esac
 
 		local age_seconds
 		age_seconds=$(_get_process_age "$pid")

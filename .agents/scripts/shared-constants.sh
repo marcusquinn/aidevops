@@ -1251,7 +1251,11 @@ resolve_model_tier() {
 	fi
 
 	# Try fallback-chain-helper.sh for availability-aware resolution
-	local chain_helper="${BASH_SOURCE[0]%/*}/fallback-chain-helper.sh"
+	# Use ${BASH_SOURCE[0]:-$0} for shell portability — BASH_SOURCE is undefined
+	# in zsh (the MCP shell environment). The :-$0 fallback ensures SCRIPT_DIR
+	# resolves correctly whether sourced from bash or zsh. See GH#4904.
+	local _sc_self="${BASH_SOURCE[0]:-${0:-}}"
+	local chain_helper="${_sc_self%/*}/fallback-chain-helper.sh"
 	if [[ -x "$chain_helper" ]]; then
 		local resolved
 		resolved=$("$chain_helper" resolve "$tier" --quiet 2>/dev/null) || true
@@ -1335,7 +1339,10 @@ _load_model_pricing_json() {
 	_MODEL_PRICING_JSON_LOADED="attempted"
 	local json_file
 	# Try repo-relative path first (works in dev), then deployed path
-	local script_dir="${BASH_SOURCE[0]%/*}"
+	# Use ${BASH_SOURCE[0]:-$0} for shell portability — BASH_SOURCE is undefined
+	# in zsh (the MCP shell environment). See GH#4904.
+	local script_dir="${BASH_SOURCE[0]:-${0:-}}"
+	script_dir="${script_dir%/*}"
 	for json_file in \
 		"${script_dir}/../configs/model-pricing.json" \
 		"${HOME}/.aidevops/agents/configs/model-pricing.json"; do
@@ -1441,7 +1448,11 @@ get_provider_from_model() {
 # The include guard (_SHARED_CONSTANTS_LOADED at line 14) prevents infinite recursion
 # at execution time, but ShellCheck is a static analyzer and ignores runtime guards.
 # GH#3981: https://github.com/marcusquinn/aidevops/issues/3981
-_CONFIG_HELPER="${BASH_SOURCE[0]%/*}/config-helper.sh"
+# Use ${BASH_SOURCE[0]:-$0} for shell portability — BASH_SOURCE is undefined
+# in zsh (the MCP shell environment). Without this guard, sourcing from zsh
+# with set -u (nounset) fails with "BASH_SOURCE[0]: parameter not set". See GH#4904.
+_SC_SELF="${BASH_SOURCE[0]:-${0:-}}"
+_CONFIG_HELPER="${_SC_SELF%/*}/config-helper.sh"
 if [[ -r "$_CONFIG_HELPER" ]]; then
 	# shellcheck source=/dev/null
 	source "$_CONFIG_HELPER"

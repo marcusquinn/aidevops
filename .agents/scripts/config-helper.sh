@@ -23,13 +23,24 @@
 #   User config: ~/.config/aidevops/config.jsonc
 #   Old config:  ~/.config/aidevops/feature-toggles.conf (migrated on first use)
 
-# Apply strict mode only when executed directly (not when sourced by another script)
-if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+# Apply strict mode only when executed directly (not when sourced by another script).
+# Shell portability note (GH#4904):
+#   bash: BASH_SOURCE[0] == $0 when executed directly; differs when sourced.
+#   zsh:  BASH_SOURCE is always unset — the script is always being sourced when
+#         this file is loaded via `source`. Never run main() in zsh.
+# Guard: only check BASH_SOURCE when it is set (bash). In zsh, skip the check
+# entirely (we are always being sourced, never executed directly as zsh).
+_CH_SELF="${BASH_SOURCE[0]:-}"
+if [[ -n "${_CH_SELF}" && "${_CH_SELF}" == "${0}" ]]; then
 	set -euo pipefail
 fi
 
-# Resolve script directory (works when sourced or executed)
-_CONFIG_HELPER_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || {
+# Resolve script directory (works when sourced or executed).
+# Fall back to $0 when BASH_SOURCE is unset (zsh). In zsh this gives the
+# shell name ("zsh"), which is wrong for path resolution — but the deployed
+# path fallback in _load_model_pricing_json covers that case. See GH#4904.
+_CH_SELF_DIR="${BASH_SOURCE[0]:-${0:-}}"
+_CONFIG_HELPER_DIR="$(cd "$(dirname "${_CH_SELF_DIR}")" && pwd)" || {
 	echo "[config] Failed to resolve script directory" >&2
 	return 1 2>/dev/null || exit 1
 }
@@ -1008,7 +1019,10 @@ main() {
 	return 0
 }
 
-# Only run main if executed directly (not sourced)
-if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+# Only run main if executed directly (not sourced).
+# In bash: BASH_SOURCE[0] == $0 when executed directly.
+# In zsh: BASH_SOURCE is always unset — never run main when sourced from zsh.
+# See GH#4904 for the full portability rationale.
+if [[ -n "${_CH_SELF:-}" && "${_CH_SELF}" == "${0}" ]]; then
 	main "$@"
 fi
