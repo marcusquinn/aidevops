@@ -60,13 +60,20 @@ Check external contributor gate before ANY merge (see Pre-merge checks below).
 For each unassigned, non-blocked issue with no open PR and no active worker:
 
 ```bash
-# Dedup guard (MANDATORY)
+# Dedup guard (MANDATORY — all three checks required)
 source ~/.aidevops/agents/scripts/pulse-wrapper.sh
+RUNNER_USER=$(gh api user --jq '.login' 2>/dev/null || whoami)
+
+# 1. Local process dedup (same machine only)
 if has_worker_for_repo_issue NUMBER SLUG; then continue; fi
 if ~/.aidevops/agents/scripts/dispatch-dedup-helper.sh is-duplicate "Issue #NUMBER: TITLE"; then continue; fi
 
+# 2. Cross-machine assignee dedup (checks GitHub — visible to ALL runners)
+# This is the primary guard against duplicate dispatch across machines.
+# If another runner already assigned themselves, skip this issue.
+if ~/.aidevops/agents/scripts/dispatch-dedup-helper.sh is-assigned NUMBER SLUG "$RUNNER_USER"; then continue; fi
+
 # Assign and dispatch
-RUNNER_USER=$(gh api user --jq '.login' 2>/dev/null || whoami)
 gh issue edit NUMBER --repo SLUG --add-assignee "$RUNNER_USER" --add-label "status:queued" 2>/dev/null || true
 
 ~/.aidevops/agents/scripts/headless-runtime-helper.sh run \

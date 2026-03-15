@@ -279,6 +279,72 @@ is_duplicate() {
 }
 
 #######################################
+# Check if a GitHub issue is already assigned to someone else.
+#
+# This is the primary cross-machine dedup guard. Process-based checks
+# (is_duplicate, has_worker_for_repo_issue) only see local processes —
+# they miss workers running on other machines. The GitHub assignee is
+# the single source of truth visible to all runners.
+#
+# Args:
+#   $1 = issue number
+#   $2 = repo slug (owner/repo)
+#   $3 = (optional) current runner login — if assigned to self, not a dup
+# Returns:
+#   exit 0 if assigned to someone else (do NOT dispatch)
+#   exit 1 if unassigned or assigned to self (safe to dispatch)
+# Outputs: assignee info on stdout if assigned
+#######################################
+is_assigned() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local self_login="${3:-}"
+
+	if [[ -z "$issue_number" || -z "$repo_slug" ]]; then
+		# Missing args — cannot check, allow dispatch
+		return 1
+	fi
+
+	# Validate issue number is numeric
+	if [[ ! "$issue_number" =~ ^[0-9]+$ ]]; then
+		return 1
+	fi
+
+	# Query GitHub for current assignees
+	local assignees
+	assignees=$(gh issue view "$issue_number" --repo "$repo_slug" \
+		--json assignees --jq '[.assignees[].login] | join(",")' 2>/dev/null) || assignees=""
+
+	if [[ -z "$assignees" ]]; then
+		# No assignees — safe to dispatch
+		return 1
+	fi
+
+	# If assigned to self, not a duplicate
+	if [[ -n "$self_login" ]]; then
+		# Check if ALL assignees are self (could be multiple)
+		local dominated_by_self=true
+		local -a assignee_array=()
+		local saved_ifs="${IFS:-}"
+		IFS=',' read -ra assignee_array <<<"$assignees"
+		IFS="$saved_ifs"
+		local assignee
+		for assignee in "${assignee_array[@]}"; do
+			if [[ "$assignee" != "$self_login" ]]; then
+				dominated_by_self=false
+				break
+			fi
+		done
+		if [[ "$dominated_by_self" == "true" ]]; then
+			return 1
+		fi
+	fi
+
+	printf 'ASSIGNED: issue #%s in %s is assigned to %s\n' "$issue_number" "$repo_slug" "$assignees"
+	return 0
+}
+
+#######################################
 # Show help
 #######################################
 show_help() {
@@ -288,6 +354,8 @@ dispatch-dedup-helper.sh - Normalize and deduplicate worker dispatch titles (t23
 Usage:
   dispatch-dedup-helper.sh extract-keys <title>    Extract dedup keys from a title
   dispatch-dedup-helper.sh is-duplicate <title>     Check if already running (exit 0=dup, 1=safe)
+  dispatch-dedup-helper.sh is-assigned <issue> <slug> [self-login]
+                                                    Check if issue is assigned (exit 0=assigned, 1=free)
   dispatch-dedup-helper.sh list-running-keys        List keys for all running workers
   dispatch-dedup-helper.sh normalize <title>        Normalize a title for comparison
   dispatch-dedup-helper.sh help                     Show this help
@@ -298,11 +366,18 @@ Examples:
   # Output: issue-2300
   #         task-t1337
 
-  # Check before dispatching
+  # Check before dispatching (local process dedup)
   if dispatch-dedup-helper.sh is-duplicate "Issue #2300: Fix auth"; then
     echo "Already running — skip dispatch"
   else
     echo "Safe to dispatch"
+  fi
+
+  # Check before dispatching (cross-machine assignee dedup)
+  if dispatch-dedup-helper.sh is-assigned 2300 owner/repo mylogin; then
+    echo "Assigned to someone else — skip dispatch"
+  else
+    echo "Unassigned or assigned to self — safe to dispatch"
   fi
 HELP
 	return 0
@@ -329,6 +404,13 @@ main() {
 			return 1
 		}
 		is_duplicate "$1"
+		;;
+	is-assigned)
+		[[ $# -lt 2 ]] && {
+			echo "Error: is-assigned requires <issue-number> <repo-slug> [self-login]" >&2
+			return 1
+		}
+		is_assigned "$1" "$2" "${3:-}"
 		;;
 	list-running-keys)
 		list_running_keys

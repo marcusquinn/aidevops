@@ -63,6 +63,26 @@ set -euo pipefail
 #######################################
 export PATH="/bin:/usr/bin:/usr/local/bin:/opt/homebrew/bin:${PATH}"
 
+#######################################
+# Startup jitter — desynchronise concurrent pulse instances
+#
+# When multiple runners share the same launchd interval (120s), their
+# pulses fire simultaneously, creating a race window where both evaluate
+# the same issue before either can self-assign. A random 0-30s delay at
+# startup staggers the pulses so the first runner to wake assigns the
+# issue before the second runner evaluates it.
+#
+# PULSE_JITTER_MAX: max jitter in seconds (default 30, set to 0 to disable)
+#######################################
+PULSE_JITTER_MAX="${PULSE_JITTER_MAX:-30}"
+if [[ "$PULSE_JITTER_MAX" =~ ^[0-9]+$ && "$PULSE_JITTER_MAX" -gt 0 ]]; then
+	# $RANDOM is 0-32767; modulo gives 0 to PULSE_JITTER_MAX
+	jitter_seconds=$((RANDOM % (PULSE_JITTER_MAX + 1)))
+	if [[ "$jitter_seconds" -gt 0 ]]; then
+		sleep "$jitter_seconds"
+	fi
+fi
+
 # Use ${BASH_SOURCE[0]:-$0} for shell portability — BASH_SOURCE is undefined
 # in zsh, which is the MCP shell environment. This fallback ensures SCRIPT_DIR
 # resolves correctly whether the script is executed directly (bash) or sourced
