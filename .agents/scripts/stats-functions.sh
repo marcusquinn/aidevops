@@ -899,6 +899,7 @@ run_daily_quality_sweep() {
 		current_hour=$(date +%H)
 		current_hour=$((10#$current_hour)) # strip leading zero for arithmetic
 		if [[ "$current_hour" -lt 18 ]]; then
+			echo "[stats] Quality sweep deferred: hour ${current_hour} is outside off-peak window (18:00-23:59)" >>"$LOGFILE"
 			return 0
 		fi
 	fi
