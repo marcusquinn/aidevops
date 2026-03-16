@@ -1,0 +1,34 @@
+{
+  "_comment": "Email Sieve Helper configuration template. Copy to email-sieve-config.json and customise.",
+  "_doc": "Used by .agents/scripts/email-sieve-helper.sh (t1503)",
+
+  "server": {
+    "_comment": "ManageSieve server connection settings",
+    "host": "mail.example.com",
+    "port": 4190,
+    "user": "user@example.com",
+    "script_name": "aidevops-triage",
+    "_password_note": "Set SIEVE_PASSWORD env var — never store password here. Use: aidevops secret set SIEVE_PASSWORD"
+  },
+
+  "cloudron": {
+    "_comment": "Cloudron-specific defaults. Cloudron uses Dovecot with ManageSieve on port 4190.",
+    "host": "mail.yourdomain.com",
+    "port": 4190,
+    "_user_note": "Use full email address as username"
+  },
+
+  "fastmail": {
+    "_comment": "Fastmail ManageSieve settings",
+    "host": "imap.fastmail.com",
+    "port": 4190,
+    "_password_note": "Use an app-specific password, not your login password"
+  },
+
+  "generation": {
+    "_comment": "Sieve script generation defaults",
+    "output_file": "/tmp/aidevops-generated.sieve",
+    "patterns_file": "configs/email-sieve-patterns.json",
+    "default_script_name": "aidevops-triage"
+  }
+}

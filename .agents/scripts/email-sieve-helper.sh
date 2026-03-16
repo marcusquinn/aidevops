@@ -402,7 +402,12 @@ generate_sieve() {
 
 	# Write to output file
 	{
-		generate_header "${requires[@]}"
+		# Use "${requires[@]+"${requires[@]}"}" to handle empty array under set -u (bash 3.2 compat)
+		if [[ "${#requires[@]}" -gt 0 ]]; then
+			generate_header "${requires[@]}"
+		else
+			generate_header
+		fi
 
 		# Sort patterns by priority (lower number = higher priority) and generate rules
 		local sorted_patterns
@@ -501,9 +506,12 @@ validate_sieve() {
 	fi
 
 	# Check balanced braces
+	# Use grep -c to count lines with matches; returns 0 (not exit 1) when no match found
 	local open_braces close_braces
-	open_braces=$(grep -o '{' "$sieve_file" | wc -l | tr -d ' ')
-	close_braces=$(grep -o '}' "$sieve_file" | wc -l | tr -d ' ')
+	open_braces=$(grep -o '{' "$sieve_file" 2>/dev/null | wc -l | tr -d ' \n' || true)
+	close_braces=$(grep -o '}' "$sieve_file" 2>/dev/null | wc -l | tr -d ' \n' || true)
+	open_braces="${open_braces:-0}"
+	close_braces="${close_braces:-0}"
 	if [[ "$open_braces" -ne "$close_braces" ]]; then
 		print_error "Unbalanced braces: $open_braces open, $close_braces close"
 		errors=$((errors + 1))

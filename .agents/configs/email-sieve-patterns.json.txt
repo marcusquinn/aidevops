@@ -1,0 +1,73 @@
+{
+  "_comment": "Email Sieve triage patterns template. Copy to email-sieve-patterns.json and customise.",
+  "_doc": "Used by .agents/scripts/email-sieve-helper.sh generate command (t1503)",
+  "version": "1.0",
+  "description": "Email Sieve triage patterns for auto-sort rule generation",
+
+  "patterns": [
+    {
+      "_comment": "Example: route a specific sender to a priority folder and flag it",
+      "type": "sender",
+      "value": "boss@company.com",
+      "folder": "INBOX/Priority",
+      "flags": "\\Flagged",
+      "priority": 10
+    },
+    {
+      "_comment": "Example: route all GitHub notifications to a GitHub folder",
+      "type": "domain",
+      "value": "github.com",
+      "folder": "INBOX/GitHub",
+      "flags": "",
+      "priority": 20
+    },
+    {
+      "_comment": "Example: route Jira notifications by subject prefix",
+      "type": "subject",
+      "value": "[JIRA]",
+      "folder": "INBOX/Jira",
+      "flags": "",
+      "priority": 30
+    },
+    {
+      "_comment": "Example: route a specific mailing list by List-Id header",
+      "type": "list-id",
+      "value": "announce.example.com",
+      "folder": "INBOX/Lists/Announce",
+      "flags": "",
+      "priority": 40
+    },
+    {
+      "_comment": "Example: match a custom header (format: HeaderName:value)",
+      "type": "header",
+      "value": "X-Project:myproject",
+      "folder": "INBOX/Projects/MyProject",
+      "flags": "",
+      "priority": 50
+    },
+    {
+      "_comment": "Auto-detect transaction emails (receipts, invoices, order confirmations). value is unused for built-in types.",
+      "type": "transaction",
+      "value": "",
+      "folder": "INBOX/Receipts",
+      "flags": "",
+      "priority": 60
+    },
+    {
+      "_comment": "Auto-detect mailing lists via RFC 2369 headers (List-Id, List-Unsubscribe, etc.)",
+      "type": "mailing-list",
+      "value": "",
+      "folder": "INBOX/Lists",
+      "flags": "",
+      "priority": 70
+    },
+    {
+      "_comment": "Auto-detect automated notifications (noreply, auto-submitted, etc.)",
+      "type": "notification",
+      "value": "",
+      "folder": "INBOX/Notifications",
+      "flags": "",
+      "priority": 80
+    }
+  ]
+}
