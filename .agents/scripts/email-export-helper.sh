@@ -12,6 +12,9 @@ source "${SCRIPT_DIR}/shared-constants.sh"
 readonly EMAIL_TO_MD_SCRIPT="${SCRIPT_DIR}/email-to-markdown.py"
 readonly MAILBOX_HELPER_SCRIPT="${SCRIPT_DIR}/email-mailbox-helper.sh"
 readonly DEFAULT_EXPORT_BASE="${HOME}/.aidevops/.agent-workspace/email-case-exports"
+# Newline literal for bash 3.2-safe case pattern matching (RFC 4180 CSV quoting)
+LF=$'\n'
+readonly LF
 
 timestamp_utc() {
 	date -u +"%Y-%m-%dT%H:%M:%SZ"
@@ -173,11 +176,18 @@ append_attachment_manifest() {
 		while IFS= read -r -d '' file_path; do
 			local filename
 			filename=$(basename "$file_path")
+			# RFC 4180: quote fields containing comma, double-quote, or newline
+			local csv_filename="$filename"
+			case "$filename" in
+			*[,\"]* | *"$LF"*)
+				csv_filename="\"${filename//\"/\"\"}\""
+				;;
+			esac
 			local size_bytes
 			size_bytes=$(wc -c <"$file_path" | tr -d ' ')
 			local checksum
 			checksum=$(compute_sha256 "$file_path")
-			printf '%s,%s,%s\n' "$filename" "$size_bytes" "$checksum"
+			printf '%s,%s,%s\n' "$csv_filename" "$size_bytes" "$checksum"
 		done < <(find "$attachment_dir" -type f ! -name "$manifest_name" -print0 | sort -z)
 	} >"$temp_manifest"
 
@@ -235,10 +245,17 @@ append_manifest_entry() {
 - Markdown SHA-256: ${markdown_hash}
 - Export SHA-256: ${export_hash}
 - Attachment Count: ${attachment_count}
+EOF
+
+	if [[ "$attachment_count" -gt 0 ]]; then
+		cat >>"$manifest_file" <<EOF
 - Attachment Manifest: ${attachment_dir}/${manifest_name}
 - Attachment Manifest SHA-256: ${attachment_manifest_hash}
-
 EOF
+	fi
+
+	# Blank line separator between manifest entries
+	echo "" >>"$manifest_file"
 
 	return 0
 }
