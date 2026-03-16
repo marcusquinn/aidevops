@@ -101,13 +101,26 @@ readonly CRON_MARKER="# aidevops: worker-watchdog"
 
 #######################################
 # Detect scheduler backend for this OS
-# Output: "launchd" or "cron"
+# Output: "launchd", "cron", or "unsupported"
 #######################################
 _get_scheduler_backend() {
 	case "$(uname -s)" in
 	Darwin) echo "launchd" ;;
-	*) echo "cron" ;;
+	Linux) echo "cron" ;;
+	*) echo "unsupported" ;;
 	esac
+}
+
+#######################################
+# Require crontab to be available
+# Returns: 0 if available, 1 if not
+#######################################
+_require_crontab() {
+	if ! command -v crontab >/dev/null 2>&1; then
+		echo "Error: crontab is not available on this system." >&2
+		return 1
+	fi
+	return 0
 }
 
 #######################################
@@ -872,16 +885,22 @@ cmd_status() {
 		else
 			echo "  Status: not installed (run --install)"
 		fi
-	else
+	elif [[ "$backend" == "cron" ]]; then
 		# Linux: check cron (single crontab -l call)
-		local cron_entry
-		cron_entry=$(crontab -l 2>/dev/null | grep -F "$CRON_MARKER") || true
-		if [[ -n "$cron_entry" ]]; then
-			echo "  Status: installed"
-			echo "  Entry:  ${cron_entry}"
+		if ! _require_crontab; then
+			echo "  Status: crontab unavailable"
 		else
-			echo "  Status: not installed (run --install)"
+			local cron_entry
+			cron_entry=$(crontab -l 2>/dev/null | grep -F "$CRON_MARKER") || true
+			if [[ -n "$cron_entry" ]]; then
+				echo "  Status: installed"
+				echo "  Entry:  ${cron_entry}"
+			else
+				echo "  Status: not installed (run --install)"
+			fi
 		fi
+	else
+		echo "  Status: unsupported OS ($(uname -s))"
 	fi
 
 	echo ""
@@ -903,6 +922,11 @@ cmd_install() {
 
 	local backend
 	backend="$(_get_scheduler_backend)"
+
+	if [[ "$backend" == "unsupported" ]]; then
+		echo "Unsupported OS: $(uname -s). Supported backends: macOS (launchd), Linux (cron)." >&2
+		return 1
+	fi
 
 	if [[ "$backend" == "launchd" ]]; then
 		_install_launchd "$script_path"
@@ -981,6 +1005,7 @@ EOF
 #######################################
 _install_cron() {
 	local script_path="$1"
+	_require_crontab || return 1
 	local cron_line="*/2 * * * * /bin/bash ${script_path} --check >> ${LOG_FILE} 2>&1 ${CRON_MARKER}"
 
 	# Remove any existing watchdog entry, then add the new one (pipe to crontab -)
@@ -1005,6 +1030,11 @@ cmd_uninstall() {
 	local backend
 	backend="$(_get_scheduler_backend)"
 
+	if [[ "$backend" == "unsupported" ]]; then
+		echo "Unsupported OS: $(uname -s). Supported backends: macOS (launchd), Linux (cron)." >&2
+		return 1
+	fi
+
 	if [[ "$backend" == "launchd" ]]; then
 		if [[ -f "${PLIST_PATH}" ]]; then
 			launchctl bootout "gui/$(id -u)" "${PLIST_PATH}" 2>/dev/null || true
@@ -1015,6 +1045,7 @@ cmd_uninstall() {
 		fi
 	else
 		# Linux: remove cron entry (single crontab -l call)
+		_require_crontab || return 1
 		local current_crontab
 		current_crontab=$(crontab -l 2>/dev/null) || true
 		if echo "$current_crontab" | grep -qF "$CRON_MARKER"; then
