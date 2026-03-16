@@ -355,10 +355,15 @@ Track which AI-cited pages drive traffic using UTM parameters. AI models that ci
 **Implementation pattern:**
 
 ```markdown
-<!-- On pages likely to be cited by AI models -->
-<!-- Canonical URL structure for citation tracking -->
+<!-- Canonical URL (clean, no tracking params) -->
+https://yourdomain.com/product-features/
+
+<!-- Distributed/cited link variant with UTM attribution -->
 https://yourdomain.com/product-features/?utm_source=ai&utm_medium=citation&utm_campaign=[model-name]
 ```
+
+> **Note:** The canonical URL must always be clean — tracking parameters belong
+> only in distributed or cited link variants, never in the canonical itself.
 
 **Attribution strategy:**
 
