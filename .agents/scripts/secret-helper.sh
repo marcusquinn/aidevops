@@ -236,11 +236,16 @@ read_secret_input() {
 	local name="$1"
 	local value=""
 
+	# CRITICAL: All user-facing messages MUST go to stderr (>&2), not stdout.
+	# This function's stdout is captured by $() in cmd_set — any print_info
+	# or echo to stdout gets stored as part of the secret value. This was the
+	# root cause of GH#4939: prompt text was stored in gopass instead of the
+	# actual secret.
 	if [[ -t 0 ]]; then
-		print_info "Enter secret value for $name (input hidden):"
-		print_info "Paste only the secret value, then press Enter"
+		print_info "Enter secret value for $name (input hidden):" >&2
+		print_info "Paste only the secret value, then press Enter" >&2
 		IFS= read -rs value || true
-		echo ""
+		echo "" >&2
 	else
 		IFS= read -r value || true
 	fi
@@ -248,14 +253,14 @@ read_secret_input() {
 	value="${value%$'\r'}"
 
 	if [[ -z "$value" ]]; then
-		print_error "No secret value received for $name"
-		print_info "Run again and paste only the secret value"
+		print_error "No secret value received for $name" >&2
+		print_info "Run again and paste only the secret value" >&2
 		return 1
 	fi
 
 	if [[ "$value" =~ ^[[:space:]]*aidevops[[:space:]]+secret[[:space:]]+set([[:space:]]|$) ]]; then
-		print_error "Input for $name looks like a command, not a secret value"
-		print_info "Paste the secret value itself, not 'aidevops secret set ...'"
+		print_error "Input for $name looks like a command, not a secret value" >&2
+		print_info "Paste the secret value itself, not 'aidevops secret set ...'" >&2
 		return 1
 	fi
 

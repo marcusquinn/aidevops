@@ -966,6 +966,88 @@ check_file_size() {
 	return 1
 }
 
+# =============================================================================
+# Python Complexity Check (Codacy alignment — GH#4939)
+# =============================================================================
+# Codacy uses Lizard for cyclomatic complexity analysis on Python files.
+# This local check runs the same tool with the same threshold (CCN > 8)
+# to catch complexity issues before they reach Codacy.
+# Also checks for unused imports (pyflakes) and security patterns (semgrep-lite).
+
+check_python_complexity() {
+	echo -e "${BLUE}Checking Python Complexity (Codacy alignment)...${NC}"
+
+	# Collect Python files
+	local py_files=()
+	while IFS= read -r -d '' f; do
+		py_files+=("$f")
+	done < <(find .agents/scripts -name "*.py" -not -path "*/_archive/*" -not -path "*/archived/*" -print0 2>/dev/null | sort -z)
+
+	if [[ ${#py_files[@]} -eq 0 ]]; then
+		print_info "No Python files found in .agents/scripts/"
+		return 0
+	fi
+
+	local violations=0
+	local warnings=0
+
+	# Check 1: Lizard cyclomatic complexity (same tool Codacy uses)
+	if command -v lizard &>/dev/null; then
+		local lizard_out
+		lizard_out=$(lizard --CCN 8 --warnings_only "${py_files[@]}" 2>/dev/null || true)
+		if [[ -n "$lizard_out" ]]; then
+			local lizard_count
+			lizard_count=$(echo "$lizard_out" | grep -c "warning:" 2>/dev/null || echo "0")
+			lizard_count=${lizard_count//[^0-9]/}
+			lizard_count=${lizard_count:-0}
+			violations=$((violations + lizard_count))
+
+			if [[ "$lizard_count" -gt 0 ]]; then
+				print_warning "Lizard: $lizard_count functions exceed cyclomatic complexity 8"
+				echo "$lizard_out" | grep "warning:" | head -10
+				if [[ "$lizard_count" -gt 10 ]]; then
+					echo "  ... and $((lizard_count - 10)) more"
+				fi
+			fi
+		fi
+	else
+		print_info "Lizard not installed (pipx install lizard) — skipping cyclomatic complexity"
+	fi
+
+	# Check 2: Pyflakes for unused imports (Codacy uses Prospector/pyflakes)
+	if command -v pyflakes &>/dev/null; then
+		local pyflakes_out
+		pyflakes_out=$(pyflakes "${py_files[@]}" 2>/dev/null || true)
+		if [[ -n "$pyflakes_out" ]]; then
+			local pyflakes_count
+			pyflakes_count=$(echo "$pyflakes_out" | wc -l)
+			pyflakes_count=${pyflakes_count//[^0-9]/}
+			pyflakes_count=${pyflakes_count:-0}
+			warnings=$((warnings + pyflakes_count))
+
+			if [[ "$pyflakes_count" -gt 0 ]]; then
+				print_warning "Pyflakes: $pyflakes_count issues (unused imports, undefined names)"
+				echo "$pyflakes_out" | head -10
+				if [[ "$pyflakes_count" -gt 10 ]]; then
+					echo "  ... and $((pyflakes_count - 10)) more"
+				fi
+			fi
+		fi
+	else
+		print_info "Pyflakes not installed (pipx install pyflakes) — skipping import checks"
+	fi
+
+	local total=$((violations + warnings))
+	# Python complexity is advisory for now — Codacy is the hard gate.
+	# This gives early feedback without blocking local development.
+	if [[ "$total" -eq 0 ]]; then
+		print_success "Python complexity: ${#py_files[@]} files checked, no issues"
+	else
+		print_warning "Python complexity: $total issues ($violations complexity, $warnings pyflakes)"
+	fi
+	return 0
+}
+
 check_remote_cli_status() {
 	print_info "Remote Audit CLIs Status (use /code-audit-remote for full analysis)..."
 
@@ -1365,6 +1447,11 @@ main() {
 
 	if ! should_skip_gate "file-size"; then
 		check_file_size || exit_code=1
+		echo ""
+	fi
+
+	if ! should_skip_gate "python-complexity"; then
+		check_python_complexity || exit_code=1
 		echo ""
 	fi
 

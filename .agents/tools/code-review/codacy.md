@@ -52,14 +52,41 @@ catching the same issues locally before code reaches Codacy:
 | `nesting-depth` | Cyclomatic complexity | >5 levels | >8 levels | `nesting-depth` |
 | `file-size` | File length | >800 lines | >1500 lines | `file-size` |
 
+Additionally, `python-complexity` runs Lizard (same tool Codacy uses) and Pyflakes locally:
+
+| Check | Codacy tool | Threshold | Gate |
+|-------|-------------|-----------|------|
+| `python-complexity` | Lizard CCN | >8 (advisory) | `python-complexity` |
+
 These gates are set above the current baseline to catch regressions. As existing debt
 is paid down (via code-simplifier issues), reduce the thresholds. The gates also cover
 Python files in `.agents/scripts/` for file-size checks.
 
-Skip via bundle config: add `"function-complexity"`, `"nesting-depth"`, or `"file-size"`
-to `skip_gates` in the project bundle.
+CI enforcement: `.github/workflows/code-quality.yml` runs the same checks on every PR
+via the `complexity-check` job, blocking merges that exceed thresholds.
 
-**Updating via API:**
+Skip via bundle config: add `"function-complexity"`, `"nesting-depth"`, `"file-size"`,
+or `"python-complexity"` to `skip_gates` in the project bundle.
+
+## Codacy API Patterns (verified working)
+
+```bash
+# Commit delta statistics (new issues count + complexity delta)
+curl -s -H "api-token: $CODACY_API_TOKEN" \
+  "https://app.codacy.com/api/v3/analysis/organizations/gh/marcusquinn/repositories/aidevops/commits/<SHA>/deltaStatistics"
+
+# Per-file new issues (paginate with cursor)
+curl -s -H "api-token: $CODACY_API_TOKEN" \
+  "https://app.codacy.com/api/v3/analysis/organizations/gh/marcusquinn/repositories/aidevops/commits/<SHA>/files?limit=100"
+# Filter: .data[] | select(.quality.deltaNewIssues > 0)
+
+# Search all issues (POST, filter by language)
+curl -s -H "api-token: $CODACY_API_TOKEN" -H "Content-Type: application/json" \
+  -X POST "https://app.codacy.com/api/v3/analysis/organizations/gh/marcusquinn/repositories/aidevops/issues/search?limit=50" \
+  -d '{"languages": ["Python"]}'
+```
+
+**Updating quality gate via API:**
 
 ```bash
 # Update PR gate

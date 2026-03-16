@@ -144,6 +144,138 @@ jobs:
         bash .agents/scripts/tests/test-profile-readme-boundary.sh
         echo "Profile README boundary guard passed"
 
+  complexity-check:
+    name: Complexity Analysis
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+    - name: Set up Python
+      uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+      with:
+        python-version: '3.12'
+
+    - name: Install analysis tools
+      run: |
+        pip install lizard pyflakes
+
+    - name: Shell function complexity
+      run: |
+        echo "Checking shell function complexity (>100 lines = blocking)..."
+        violations=0
+        while IFS= read -r file; do
+          result=$(awk '
+            /^[a-zA-Z_][a-zA-Z0-9_]*\(\)[[:space:]]*\{/ { fname=$1; sub(/\(\)/, "", fname); start=NR; next }
+            fname && /^\}$/ { lines=NR-start; if(lines>100) printf "BLOCK %s:%d %s() %d lines\n", FILENAME, start, fname, lines; fname="" }
+          ' "$file")
+          if [ -n "$result" ]; then
+            echo "$result"
+            count=$(echo "$result" | wc -l)
+            violations=$((violations + count))
+          fi
+        done < <(git ls-files '*.sh' | grep -v 'archived/')
+
+        echo ""
+        echo "Blocking violations (>100 lines): $violations"
+        # Threshold: current baseline + margin. Reduce as debt is paid down.
+        if [ "$violations" -gt 400 ]; then
+          echo "::error::Function complexity regression: $violations violations (threshold: 400)"
+          exit 1
+        fi
+        echo "Within threshold (400)"
+
+    - name: Shell nesting depth
+      run: |
+        echo "Checking shell nesting depth (>8 levels = blocking)..."
+        violations=0
+        while IFS= read -r file; do
+          max_depth=$(awk '
+            BEGIN { depth=0; max_depth=0 }
+            /^[[:space:]]*#/ { next }
+            /[[:space:]]*(if|for|while|until|case)[[:space:]]/ { depth++; if(depth>max_depth) max_depth=depth }
+            /[[:space:]]*(fi|done|esac)[[:space:]]*$/ || /^[[:space:]]*(fi|done|esac)$/ { if(depth>0) depth-- }
+            END { print max_depth }
+          ' "$file")
+          if [ "$max_depth" -gt 8 ]; then
+            echo "BLOCK $file: nesting depth $max_depth"
+            violations=$((violations + 1))
+          fi
+        done < <(git ls-files '*.sh' | grep -v 'archived/')
+
+        echo ""
+        echo "Blocking violations (>8 depth): $violations"
+        if [ "$violations" -gt 230 ]; then
+          echo "::error::Nesting depth regression: $violations violations (threshold: 230)"
+          exit 1
+        fi
+        echo "Within threshold (230)"
+
+    - name: File size check
+      run: |
+        echo "Checking file sizes (>1500 lines = blocking)..."
+        violations=0
+        for pattern in '*.sh' '*.py'; do
+          while IFS= read -r file; do
+            lc=$(wc -l < "$file")
+            if [ "$lc" -gt 1500 ]; then
+              echo "BLOCK $file: $lc lines"
+              violations=$((violations + 1))
+            fi
+          done < <(git ls-files "$pattern" | grep -v 'archived/')
+        done
+
+        echo ""
+        echo "Blocking violations (>1500 lines): $violations"
+        if [ "$violations" -gt 30 ]; then
+          echo "::error::File size regression: $violations violations (threshold: 30)"
+          exit 1
+        fi
+        echo "Within threshold (30)"
+
+    - name: Python cyclomatic complexity (Lizard)
+      run: |
+        echo "Checking Python cyclomatic complexity (CCN > 8)..."
+        py_files=$(git ls-files '*.py' | grep -v 'archived/' || true)
+        if [ -z "$py_files" ]; then
+          echo "No Python files found"
+          exit 0
+        fi
+
+        # Run lizard with warnings-only mode (CCN > 8)
+        lizard_output=$(echo "$py_files" | xargs lizard --CCN 8 --warnings_only 2>/dev/null || true)
+        if [ -n "$lizard_output" ]; then
+          echo "$lizard_output"
+          violations=$(echo "$lizard_output" | grep -c "warning:" || echo "0")
+          echo ""
+          echo "Python complexity violations: $violations"
+          # Advisory — Codacy is the hard gate for Python
+          echo "::warning::$violations Python functions exceed cyclomatic complexity 8"
+        else
+          echo "No Python complexity violations"
+        fi
+
+    - name: Python import check (Pyflakes)
+      run: |
+        echo "Checking Python imports..."
+        py_files=$(git ls-files '*.py' | grep -v 'archived/' || true)
+        if [ -z "$py_files" ]; then
+          echo "No Python files found"
+          exit 0
+        fi
+
+        pyflakes_output=$(echo "$py_files" | xargs pyflakes 2>/dev/null || true)
+        if [ -n "$pyflakes_output" ]; then
+          echo "$pyflakes_output"
+          violations=$(echo "$pyflakes_output" | wc -l)
+          echo ""
+          echo "Pyflakes issues: $violations"
+          echo "::warning::$violations Python import/usage issues found"
+        else
+          echo "No Pyflakes issues"
+        fi
+
   sonarcloud:
     name: SonarCloud Analysis
     runs-on: ubuntu-latest
