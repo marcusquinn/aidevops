@@ -23,7 +23,7 @@ tools:
 - **Scanner**: `prompt-guard-helper.sh scan-stdin` (mandatory for all AI-processed email)
 - **DNS verification**: `email-health-check-helper.sh check <domain>` (SPF/DKIM/DMARC)
 - **Secretlint**: `secretlint --format stylish <file>` (outbound credential scanning)
-- **Related**: `tools/security/prompt-injection-defender.md`, `tools/security/opsec.md`, `services/email/email-health-check.md`, `services/email/email-agent.md`
+- **Related**: `tools/security/prompt-injection-defender.md`, `tools/security/opsec.md`, `services/email/email-health-check.md`, `services/email/email-agent.md`, `services/email/openpgp-setup.md`
 
 **Decision tree:**
 
@@ -31,7 +31,7 @@ tools:
 2. Suspicious sender? → [Phishing Detection](#phishing-detection)
 3. Email has attachments? → [Executable File Blocking](#executable-file-blocking)
 4. Sending sensitive info? → [Secure Information Sharing](#secure-information-sharing-privatebin)
-5. Need email encryption? → [S/MIME](#smime-setup) or [OpenPGP](#openpgp-setup)
+5. Need email encryption? -> [S/MIME](#smime-setup) or [OpenPGP Setup Helper](openpgp-setup.md)
 6. Receiving commands via email? → [Inbound Command Security](#inbound-command-security)
 7. Forwarding receipts/invoices? → [Transaction Email Verification](#transaction-email-phishing-verification)
 8. Sending outbound email? → [Outbound Credential Scanning](#outbound-credential-scanning-secretlint)
@@ -494,6 +494,8 @@ openssl smime -verify -in signed-email.eml -noverify -signer /dev/stdout
 ## OpenPGP Setup
 
 OpenPGP provides email encryption and signing using public-key cryptography. Unlike S/MIME, it does not require a certificate authority — users generate and distribute their own keys.
+
+For full setup workflows (key generation hardening, keyserver publishing, Thunderbird/Apple Mail/Mutt integration, key exchange, and safe agent-assisted command patterns), use `services/email/openpgp-setup.md`.
 
 ### Key Generation
 
