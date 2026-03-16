@@ -118,7 +118,7 @@ brew install node
 
 ## Composer-Based WordPress (Bedrock)
 
-For projects that manage WordPress as a Composer project (e.g., [Bedrock](https://roots.io/bedrock/)), use [WP Composer](https://wp-composer.com/) as the Composer repository for plugins and themes. It is the preferred alternative to WPackagist (which was acquired by WP Engine in March 2026).
+For projects that manage WordPress as a Composer project (e.g., [Bedrock](https://roots.io/bedrock/)), use [WP Composer](https://wp-composer.com/) as the Composer repository for plugins and themes. It is the preferred alternative to WPackagist (which was acquired by WP Engine in March 2024).
 
 **Setup:**
 
