@@ -5,9 +5,9 @@ Core pointers are in `AGENTS.md`. Full docs: `tools/ai-assistants/headless-dispa
 
 ## Supervisor
 
-`opencode` is the ONLY supported CLI for worker dispatch. Never use `claude` CLI.
+`opencode` is the ONLY supported CLI for worker dispatch. Never use `claude` CLI. Always dispatch via `headless-runtime-helper.sh run` — never bare `opencode run` (GH#5096).
 
-The `/pulse` command is the autonomous supervisor — an AI-driven agent that reads GitHub state (issues, PRs) and TODO.md directly, then dispatches workers via `opencode run "/full-loop ..."`. No SQLite state machine, no batches — GitHub and TODO.md are the database.
+The `/pulse` command is the autonomous supervisor — an AI-driven agent that reads GitHub state (issues, PRs) and TODO.md directly, then dispatches workers via `headless-runtime-helper.sh run`. No SQLite state machine, no batches — GitHub and TODO.md are the database.
 
 ```bash
 # Interactive dispatch of specific tasks

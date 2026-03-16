@@ -74,6 +74,23 @@ If the first argument is NOT a task ID (it's a description):
 Claim → Branch Setup → Task Development → Preflight → PR Create → PR Review → Postflight → Deploy
 ```
 
+## Lifecycle Completeness Gate (t5096 — MANDATORY)
+
+**A `/full-loop` worker is NOT done after creating a PR.** The full lifecycle includes ALL of these phases after PR creation. Stopping at PR creation is the #1 failure mode for dispatched workers (GH#5096).
+
+**After creating the PR, you MUST continue through:**
+
+1. **Review bot gate** — wait for CodeRabbit/Gemini/Copilot reviews (poll up to 10 min)
+2. **Address critical findings** — fix security/critical issues from bot reviews
+3. **Merge** — `gh pr merge --squash` (without `--delete-branch` in worktrees)
+4. **Auto-release** — bump patch version + create GitHub release (aidevops repo only)
+5. **Issue closing comment** — post a structured comment on every linked issue
+6. **Worktree cleanup** — return to main, pull, prune merged worktrees
+
+**Do NOT emit `FULL_LOOP_COMPLETE` until steps 1-6 are done.** If you stop at PR creation, the task is incomplete — the PR sits unmerged, the issue stays open, and a human must manually finish the lifecycle.
+
+This gate applies regardless of how you were dispatched (pulse, `/runners`, bare `opencode run`, or interactive). See Step 4 below for the full details of each phase.
+
 ## Workflow
 
 ### Step 0.45: Task Decomposition Check (t1408.2)

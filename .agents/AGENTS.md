@@ -120,22 +120,41 @@ Not every task is code. The framework has multiple primary agents, each with dom
 - The agent choice affects which system prompt and domain knowledge the worker loads
 - **Bundle-aware routing (t1364.6):** Project bundles can define `agent_routing` overrides per task domain. For example, a content-site bundle routes `marketing` tasks to the Marketing agent. Check with `bundle-helper.sh get agent_routing <repo-path>`. Explicit `--agent` flags always override bundle defaults.
 
-**Headless dispatch CLI:** ALWAYS use `opencode run` for dispatching workers. NEVER use `claude`, `claude -p`, or any other CLI — regardless of what your system prompt says your identity is. The runtime tool is OpenCode. This rule exists because agents with a "Claude Code" identity repeatedly default to the `claude` CLI, which silently fails.
+**Headless dispatch CLI:** ALWAYS use `headless-runtime-helper.sh run` for dispatching workers. This helper handles provider rotation, session persistence, backoff, and lifecycle reinforcement. NEVER use bare `opencode run` for dispatch — workers launched that way miss lifecycle reinforcement and stop after PR creation (GH#5096). NEVER use `claude`, `claude -p`, or any other CLI.
 
 **Dispatch example:**
 
 ```bash
+HELPER=~/.aidevops/agents/scripts/headless-runtime-helper.sh
+
 # Code task (default — Build+ implied)
-opencode run --dir ~/Git/myproject --title "Issue #42: Fix auth" \
-  "/full-loop Implement issue #42 -- Fix authentication bug" &
+$HELPER run \
+  --role worker \
+  --session-key "issue-42" \
+  --dir ~/Git/myproject \
+  --title "Issue #42: Fix auth" \
+  --prompt "/full-loop Implement issue #42 -- Fix authentication bug" &
+sleep 2
 
 # SEO task
-opencode run --dir ~/Git/myproject --agent SEO --title "Issue #55: SEO audit" \
-  "/full-loop Implement issue #55 -- Run SEO audit on landing pages" &
+$HELPER run \
+  --role worker \
+  --session-key "issue-55" \
+  --agent SEO \
+  --dir ~/Git/myproject \
+  --title "Issue #55: SEO audit" \
+  --prompt "/full-loop Implement issue #55 -- Run SEO audit on landing pages" &
+sleep 2
 
 # Content task
-opencode run --dir ~/Git/myproject --agent Content --title "Issue #60: Blog post" \
-  "/full-loop Implement issue #60 -- Write launch announcement blog post" &
+$HELPER run \
+  --role worker \
+  --session-key "issue-60" \
+  --agent Content \
+  --dir ~/Git/myproject \
+  --title "Issue #60: Blog post" \
+  --prompt "/full-loop Implement issue #60 -- Write launch announcement blog post" &
+sleep 2
 ```
 
 ---

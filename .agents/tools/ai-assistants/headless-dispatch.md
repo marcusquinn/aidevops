@@ -226,19 +226,25 @@ When dispatching multiple workers manually (outside the pulse supervisor), **sta
 - **MCP cold boot storms**: MCP servers (especially Node-based ones) have expensive startup. Concurrent initialization competes for CPU and I/O.
 
 ```bash
+HELPER=~/.aidevops/agents/scripts/headless-runtime-helper.sh
+
 # WRONG: Thundering herd — all 4 workers cold-boot simultaneously
 for issue in 42 43 44 45; do
-  opencode run --dir ~/Git/myproject --title "Issue #${issue}" \
-    "/full-loop Implement issue #${issue}" &
+  $HELPER run --role worker --session-key "issue-${issue}" \
+    --dir ~/Git/myproject --title "Issue #${issue}" \
+    --prompt "/full-loop Implement issue #${issue}" &
 done
 
 # RIGHT: Staggered launch — 30s between each worker
 for issue in 42 43 44 45; do
-  opencode run --dir ~/Git/myproject --title "Issue #${issue}" \
-    "/full-loop Implement issue #${issue}" &
+  $HELPER run --role worker --session-key "issue-${issue}" \
+    --dir ~/Git/myproject --title "Issue #${issue}" \
+    --prompt "/full-loop Implement issue #${issue}" &
   sleep 30
 done
 ```
+
+> **Never use bare `opencode run` for dispatch** — it skips lifecycle reinforcement, causing workers to stop after PR creation (GH#5096). Always use `headless-runtime-helper.sh run`.
 
 The pulse supervisor handles this automatically via its capacity calculation (`RAM_PER_WORKER_MB`, `RAM_RESERVE_MB`, `MAX_WORKERS_CAP`). Manual dispatch bypasses these checks.
 
@@ -783,16 +789,30 @@ LINEAGE RULES:
 
 ### Dispatch Prompt Template with Lineage
 
+> **IMPORTANT:** Always use `headless-runtime-helper.sh run` for dispatch — never bare `opencode run`. Bare dispatch skips lifecycle reinforcement, causing workers to stop after PR creation (GH#5096).
+
 ```bash
+HELPER=~/.aidevops/agents/scripts/headless-runtime-helper.sh
+
 # Standard dispatch (no lineage — top-level task)
-opencode run --dir <path> --title "Issue #<number>: <title>" \
-  "/full-loop Implement issue #<number> (<url>) -- <brief description>" &
+$HELPER run \
+  --role worker \
+  --session-key "issue-<number>" \
+  --dir <path> \
+  --title "Issue #<number>: <title>" \
+  --prompt "/full-loop Implement issue #<number> (<url>) -- <brief description>" &
+sleep 2
 
 # Subtask dispatch (with lineage context)
-opencode run --dir <path> --title "Issue #<number>: <title>" \
-  "/full-loop Implement issue #<number> (<url>) -- <brief description>
+$HELPER run \
+  --role worker \
+  --session-key "issue-<number>" \
+  --dir <path> \
+  --title "Issue #<number>: <title>" \
+  --prompt "/full-loop Implement issue #<number> (<url>) -- <brief description>
 
 ${LINEAGE_BLOCK}" &
+sleep 2
 ```
 
 ### Worker Behavior with Lineage Context
@@ -1051,9 +1071,11 @@ NEXT=$(batch-strategy-helper.sh next-batch \
   --concurrency "$AVAILABLE_SLOTS")
 
 # Dispatch each task in the batch
+HELPER=~/.aidevops/agents/scripts/headless-runtime-helper.sh
 echo "$NEXT" | jq -r '.[]' | while read -r task_id; do
-  opencode run --dir <path> --title "$task_id" \
-    "/full-loop Implement $task_id -- <description>" &
+  $HELPER run --role worker --session-key "task-${task_id}" \
+    --dir <path> --title "$task_id" \
+    --prompt "/full-loop Implement $task_id -- <description>" &
   sleep 2
 done
 ```

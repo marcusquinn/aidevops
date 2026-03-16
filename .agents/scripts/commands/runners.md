@@ -178,41 +178,68 @@ gh issue view 42 --repo user/repo --json number,title,url
 
 ### Step 2: Dispatch Workers
 
-For each resolved item, launch a worker. Route to the appropriate agent based on the task domain (see `AGENTS.md` "Agent Routing") and pick the execution mode:
+For each resolved item, launch a worker using `headless-runtime-helper.sh run`. This is the **ONLY** correct dispatch path — it constructs the full lifecycle prompt, handles provider rotation, session persistence, and backoff. NEVER use bare `opencode run` for dispatch — workers launched that way miss lifecycle reinforcement and stop after PR creation (see GH#5096).
 
 ```bash
+HELPER=~/.aidevops/agents/scripts/headless-runtime-helper.sh
+
 # For code tasks (Build+ is default — omit --agent)
-opencode run --dir ~/Git/<repo> --title "t083: <description>" \
-  "/full-loop t083 -- <description>" &
+$HELPER run \
+  --role worker \
+  --session-key "task-t083" \
+  --dir ~/Git/<repo> \
+  --title "t083: <description>" \
+  --prompt "/full-loop t083 -- <description>" &
+sleep 2
 
 # For code tasks in a specialist domain
-opencode run --dir ~/Git/<repo> --agent SEO --title "t084: <description>" \
-  "/full-loop t084 -- <description>" &
+$HELPER run \
+  --role worker \
+  --session-key "task-t084" \
+  --dir ~/Git/<repo> \
+  --agent SEO \
+  --title "t084: <description>" \
+  --prompt "/full-loop t084 -- <description>" &
+sleep 2
 
 # For non-code operational tasks (no /full-loop)
-opencode run --dir ~/Git/<repo> --agent SEO --title "Weekly rankings" \
-  "/seo-export --account client-a --format summary" &
-
-# For recurring operations, schedule this command via launchd/cron
-# instead of queueing repeating TODO items
+$HELPER run \
+  --role worker \
+  --session-key "seo-weekly" \
+  --dir ~/Git/<repo> \
+  --agent SEO \
+  --title "Weekly rankings" \
+  --prompt "/seo-export --account client-a --format summary" &
+sleep 2
 
 # For PRs
-opencode run --dir ~/Git/<repo> --title "PR #382: <title>" \
-  "/full-loop Fix PR #382 (https://github.com/user/repo/pull/382) -- <what needs fixing>" &
+$HELPER run \
+  --role worker \
+  --session-key "pr-382" \
+  --dir ~/Git/<repo> \
+  --title "PR #382: <title>" \
+  --prompt "/full-loop Fix PR #382 (https://github.com/user/repo/pull/382) -- <what needs fixing>" &
+sleep 2
 
 # For issues
-opencode run --dir ~/Git/<repo> --title "Issue #42: <title>" \
-  "/full-loop Implement issue #42 (https://github.com/user/repo/issues/42) -- <description>" &
+$HELPER run \
+  --role worker \
+  --session-key "issue-42" \
+  --dir ~/Git/<repo> \
+  --title "Issue #42: <title>" \
+  --prompt "/full-loop Implement issue #42 (https://github.com/user/repo/issues/42) -- <description>" &
+sleep 2
 ```
 
 **Dispatch rules:**
+- **ALWAYS use `headless-runtime-helper.sh run`** — never bare `opencode run`. The helper provides provider rotation, session persistence, backoff handling, and lifecycle reinforcement that bare dispatch lacks.
 - Use `--dir ~/Git/<repo-name>` matching the repo the task belongs to
 - Use `--agent <name>` to route to a specialist (SEO, Content, Marketing, etc.)
 - Omit `--agent` for code tasks — defaults to Build+
 - Use `/full-loop` only when the task needs repo code changes and PR traceability
 - For non-code operations, run the task command directly (for example `/seo-export ...`)
 - Do NOT add `--model` unless escalation is required by workflow policy
-- **Background each dispatch with `&`** so multiple workers launch concurrently
+- **Background each dispatch with `&`** and `sleep 2` between dispatches to avoid thundering herd
 - Code workers handle branch/PR lifecycle; ops workers execute and report outcomes
 
 ### Step 3: Monitor
@@ -239,7 +266,7 @@ The supervisor (whether `/pulse` or `/runners`) NEVER does task work itself:
 - **Never** reads source code or implements features
 - **Never** runs tests or linters on behalf of workers
 - **Never** pushes branches or resolves merge conflicts for workers
-- **Always** dispatches workers via `opencode run` with the command chosen by task type
+- **Always** dispatches workers via `headless-runtime-helper.sh run` (never bare `opencode run`)
 - **Always** routes to the right agent — not every task is code
 
 If a worker fails, improve the worker instructions/command definition,
