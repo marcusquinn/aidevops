@@ -79,6 +79,7 @@ NPM_TOOLS=(
 	"npm|Playwriter MCP|playwriter|--version|playwriter|npm install -g playwriter@latest"
 	"npm|macOS Automator MCP|macos-automator-mcp|--version|@steipete/macos-automator-mcp|npm install -g @steipete/macos-automator-mcp@latest"
 	"npm|Claude Code MCP|claude-code-mcp|--version|@steipete/claude-code-mcp|npm install -g @steipete/claude-code-mcp@latest"
+	"npm|Google Workspace CLI|gws|--version|@googleworkspace/cli|npm install -g @googleworkspace/cli@latest"
 )
 
 BREW_TOOLS=(

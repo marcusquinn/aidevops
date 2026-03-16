@@ -1273,6 +1273,60 @@ setup_opencode_cli() {
 	return 0
 }
 
+setup_google_workspace_cli() {
+	print_info "Setting up Google Workspace CLI (gws)..."
+
+	# Check if gws is already installed
+	if command -v gws >/dev/null 2>&1; then
+		local gws_version
+		gws_version=$(gws --version 2>/dev/null | head -1 || echo "unknown")
+		print_success "Google Workspace CLI already installed: $gws_version"
+		return 0
+	fi
+
+	# Need either bun or npm to install
+	local installer=""
+	local install_pkg="@googleworkspace/cli@latest"
+
+	if command -v bun >/dev/null 2>&1; then
+		installer="bun"
+	elif command -v npm >/dev/null 2>&1; then
+		installer="npm"
+	else
+		print_warning "Neither bun nor npm found - cannot install gws"
+		print_info "Install Node.js first, then re-run setup"
+		return 0
+	fi
+
+	print_info "Google Workspace CLI provides Gmail, Calendar, Drive, and all Workspace APIs"
+	echo "  Used by Email, Business, and Accounts agents for Google Workspace integration."
+	echo ""
+
+	local install_gws="Y"
+	if [[ "$NON_INTERACTIVE" != "true" ]]; then
+		read -r -p "Install Google Workspace CLI via $installer? [Y/n]: " install_gws || install_gws="Y"
+	fi
+	if [[ "$install_gws" =~ ^[Yy]?$ ]]; then
+		if run_with_spinner "Installing Google Workspace CLI" npm_global_install "$install_pkg"; then
+			print_success "Google Workspace CLI installed"
+
+			echo ""
+			print_info "Authentication required before use."
+			print_info "Run 'gws auth setup' to authenticate with your Google account."
+			print_info "For headless use: set GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE"
+			echo ""
+		else
+			print_warning "Google Workspace CLI installation failed"
+			print_info "Try manually: sudo npm install -g $install_pkg"
+		fi
+	else
+		print_info "Skipped Google Workspace CLI installation"
+		print_info "Install later: $installer install -g $install_pkg"
+	fi
+
+	return 0
+}
+
 setup_orbstack_vm() {
 	# Only available on macOS
 	if [[ "$(uname)" != "Darwin" ]]; then
