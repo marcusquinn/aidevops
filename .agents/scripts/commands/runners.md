@@ -21,11 +21,19 @@ The runners system is intentionally simple:
 4. **Ops workers** execute the requested SOP/command and report outcomes
 4. **No databases, no state machines, no complex bash pipelines**
 
-> **Automated mode:** For unattended operation and full supervisor behaviour (auto-pickup, capacity management, lifecycle evaluation), use `/pulse`. See `scripts/commands/pulse.md` for the full spec.
+> **Automated mode:** For unattended operation and full supervisor behaviour (auto-pickup, capacity management, lifecycle evaluation), use `/pulse`. See `.agents/scripts/commands/pulse.md` for the full spec.
 
 ## Interactive Mode: `/runners`
 
-**Scope boundary:** When invoked as `/runners`, ONLY resolve and dispatch the items explicitly specified in the arguments. Do NOT run supervisor phases, auto-pickup additional tasks, lifecycle evaluation, quality sweeps, or CodeRabbit pulse. Dispatch exactly the requested items and stop.
+**Scope boundary:** When invoked as `/runners`, ONLY resolve and dispatch the items explicitly specified in the arguments. Do NOT perform any of the following supervisor actions:
+
+- Run supervisor phases
+- Auto-pickup additional tasks
+- Perform lifecycle evaluation
+- Run quality sweeps
+- Trigger a CodeRabbit pulse
+
+Dispatch exactly the requested items and stop.
 
 For manual dispatch of specific work items.
 
@@ -119,7 +127,9 @@ The `/pulse` supervisor NEVER does task work itself:
 - **Always** dispatches workers via `opencode run` with the command chosen by task type
 - **Always** routes to the right agent — not every task is code
 
-`/runners` is a targeted dispatch tool, not a supervisor. It dispatches exactly what you specify and stops. If a worker fails, improve the worker instructions/command definition, not the dispatcher. Each fixed failure improves the next run.
+`/runners` is a targeted dispatch tool, not a supervisor. It dispatches exactly what you specify and stops.
+
+If a worker fails (whether dispatched by `/pulse` or `/runners`), improve the worker's instructions or command definition, not the dispatcher's role. Each fixed failure improves the next run.
 
 **Self-improvement:** The `/pulse` supervisor observes outcomes from GitHub state (PRs, issues, timelines) and files improvement issues for systemic problems. See `AGENTS.md` "Self-Improvement" for the universal principle. The supervisor never maintains separate state — TODO.md, PLANS.md, and GitHub are the database.
 
