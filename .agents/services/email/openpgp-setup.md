@@ -19,7 +19,7 @@ tools:
 ## Quick Reference
 
 - **Purpose**: Set up practical OpenPGP for secure email across desktop, webmail, and terminal workflows
-- **Core toolchain**: `gpg`, keyserver (`keys.openpgp.org`), client integrations (Thunderbird, Apple Mail, Mutt)
+- **Core toolchain**: `gpg`, keyserver (`keys.openpgp.org`), client integrations (Mailvelope, Thunderbird, Mutt)
 - **Output artifacts**: public key (`.asc`), encrypted private backup (`.asc`), revocation certificate
 - **Related**: `services/email/email-security.md`, `tools/credentials/encryption-stack.md`
 
@@ -28,8 +28,9 @@ tools:
 1. Need a new identity? -> [Generate and Harden Keys](#generate-and-harden-keys)
 2. Need recipient discovery? -> [Publish and Discover Public Keys](#publish-and-discover-public-keys)
 3. Need client setup? -> [Client Integration](#client-integration)
-4. Need key exchange process? -> [Key Exchange Workflows](#key-exchange-workflows)
-5. Need AI-assisted command generation? -> [Agent-Assisted Encryption Commands](#agent-assisted-encryption-commands)
+4. Need sharing guidance? -> [Public Key Distribution Guidance](#public-key-distribution-guidance)
+5. Need key exchange process? -> [Key Exchange Workflows](#key-exchange-workflows)
+6. Need AI-assisted command generation? -> [Agent-Assisted Encryption Commands](#agent-assisted-encryption-commands)
 
 <!-- AI-CONTEXT-END -->
 
@@ -101,19 +102,26 @@ Optional distribution channels:
 
 ## Client Integration
 
+### Mailvelope (browser extension)
+
+1. Install Mailvelope from the browser extension store for your browser.
+2. Open Mailvelope options and import your private key (`privatekey.asc`) plus public key (`publickey.asc`).
+3. Configure the Display Name and sender email to match the OpenPGP identity.
+4. Enable Mailvelope integration for supported webmail domains (for example Gmail, Outlook Web, or custom webmail URLs).
+5. Compose a signed test message to yourself, then send a signed+encrypted message to a recipient with a known public key.
+
+Operational notes:
+
+- Keep private key import local to trusted devices only.
+- Prefer passphrase caching with short timeout instead of no passphrase prompts.
+- Re-import updated public keys after recipient key rotations.
+
 ### Thunderbird (built-in OpenPGP)
 
 1. `Settings -> Account Settings -> End-to-End Encryption`.
 2. Add key by import or generate from Thunderbird.
 3. Set defaults: sign all outgoing mail, encrypt when recipient key is available.
 4. Validate by sending a signed mail to yourself and checking signature status.
-
-### Apple Mail (macOS)
-
-1. Install `GPG Suite` (GPGTools).
-2. Import secret key in GPG Keychain or generate there.
-3. Restart Apple Mail and confirm sign/encrypt controls appear in composer.
-4. Send signed test mail and verify signature badge on receipt.
 
 ### Mutt (terminal workflow)
 
@@ -135,6 +143,30 @@ Validation command:
 # Send a signed+encrypted test message through mutt
 echo "OpenPGP test from mutt" | mutt -s "PGP test" -e "set crypt_autosign=yes; set crypt_autoencrypt=yes" recipient@example.com
 ```
+
+## Public Key Distribution Guidance
+
+Use more than one channel so recipients can both fetch and verify your key.
+
+### Recommended distribution stack
+
+1. Publish to keyserver: `keys.openpgp.org` for machine discovery.
+2. Attach `publickey.asc` in onboarding/security docs for direct import.
+3. Publish the full fingerprint in email signature, website contact page, and support docs.
+4. If you control a domain, host OpenPGP WKD under `/.well-known/openpgpkey/`.
+
+### Verification protocol for recipients
+
+1. Recipient fetches key from keyserver or provided `.asc` file.
+2. Recipient compares fingerprint against a second channel (voice call, Signal, in-person, or verified website).
+3. Recipient imports and trusts key only after fingerprint match.
+4. First exchange is signed-only; move to signed+encrypted after signature checks pass.
+
+### Rotation and revocation distribution
+
+- Announce key rotations with a message signed by the old key containing the new fingerprint.
+- Keep old key active during overlap window to avoid delivery failures.
+- If compromised, publish revocation immediately and notify trusted contacts via verified channels.
 
 ## Key Exchange Workflows
 
