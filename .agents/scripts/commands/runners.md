@@ -33,7 +33,7 @@ It does **NOT**:
 - Run audit checks
 - Fill worker slots beyond the explicitly specified items
 
-For unattended operation that fills all available slots and runs supervisor phases, use `/pulse`. See `scripts/commands/pulse.md`.
+For unattended operation that fills all available slots and runs supervisor phases, use `/pulse`. See `.agents/scripts/commands/pulse.md`.
 
 ## How It Works
 
@@ -180,7 +180,9 @@ Then stop. Workers are independent — they succeed or fail on their own. The ne
 - **Always** routes to the right agent — not every task is code
 - **Always** stops after dispatching the explicitly specified items
 
-If a worker fails, improve the worker instructions/command definition, not the dispatch logic. Each fixed failure improves the next run.
+`/runners` is a targeted dispatch tool, not a supervisor. It dispatches exactly what you specify and stops.
+
+If a worker fails (whether dispatched by `/pulse` or `/runners`), improve the worker's instructions or command definition, not the dispatcher's role. Each fixed failure improves the next run.
 
 ## Examples
 
