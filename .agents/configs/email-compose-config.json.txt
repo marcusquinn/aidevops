@@ -1,0 +1,25 @@
+{
+  "_comment": "Email Composition Helper Configuration (t1495)",
+  "_instructions": "Copy this file to email-compose-config.json and customise. The .json file is gitignored.",
+
+  "default_from_email": "you@yourdomain.com",
+
+  "signatures": {
+    "default": "Best regards,\nYour Name\nYour Title\nyour@email.com",
+    "formal": "Yours sincerely,\nYour Full Name\nYour Title | Your Company\nT: +44 xxx xxx xxxx",
+    "brief": "Thanks,\nYour Name"
+  },
+
+  "tone_overrides": {
+    "_comment": "Override tone detection for specific domains. Values: formal | casual",
+    "example-partner.com": "casual"
+  },
+
+  "default_importance": "normal",
+
+  "_model_routing": {
+    "high": "opus (client-facing, legal, important negotiations)",
+    "normal": "sonnet (routine correspondence)",
+    "low": "haiku (acknowledgements, brief notifications)"
+  }
+}
