@@ -1,0 +1,76 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "Common email attachments library manifest. Tracks frequently-sent files so the email agent can attach them by name rather than path. Files are stored in ~/.aidevops/.agent-workspace/email-attachments/ and referenced by their 'id' field.",
+  "attachments_directory": "~/.aidevops/.agent-workspace/email-attachments/",
+  "attachments": [
+    {
+      "id": "company-info",
+      "filename": "company-info.pdf",
+      "description": "Company overview document with key facts, team, and capabilities",
+      "category": "corporate",
+      "last_updated": null,
+      "notes": "Update quarterly or after major company changes"
+    },
+    {
+      "id": "rate-card",
+      "filename": "rate-card.pdf",
+      "description": "Current pricing and rate card for services",
+      "category": "sales",
+      "last_updated": null,
+      "notes": "Update when pricing changes. Remove outdated versions immediately."
+    },
+    {
+      "id": "brochure",
+      "filename": "brochure.pdf",
+      "description": "Marketing brochure with service descriptions and case studies",
+      "category": "marketing",
+      "last_updated": null,
+      "notes": "Update annually or when services change significantly"
+    },
+    {
+      "id": "terms-of-service",
+      "filename": "terms-of-service.pdf",
+      "description": "Current terms of service document",
+      "category": "legal",
+      "last_updated": null,
+      "notes": "Must match the version published on the website"
+    },
+    {
+      "id": "privacy-policy",
+      "filename": "privacy-policy.pdf",
+      "description": "Current privacy policy document",
+      "category": "legal",
+      "last_updated": null,
+      "notes": "Must match the version published on the website"
+    },
+    {
+      "id": "nda-template",
+      "filename": "nda-template.pdf",
+      "description": "Standard mutual NDA template for new business relationships",
+      "category": "legal",
+      "last_updated": null,
+      "notes": "Have legal review before sending to new counterparties"
+    },
+    {
+      "id": "onboarding-guide",
+      "filename": "onboarding-guide.pdf",
+      "description": "Client onboarding guide with setup steps and key contacts",
+      "category": "operations",
+      "last_updated": null,
+      "notes": "Update when onboarding process changes"
+    }
+  ],
+  "categories": [
+    "corporate",
+    "sales",
+    "marketing",
+    "legal",
+    "operations",
+    "technical"
+  ],
+  "usage": {
+    "add_attachment": "Add a new entry to the 'attachments' array with a unique 'id', then place the file in the attachments_directory.",
+    "reference_in_template": "Use {{ATTACHMENT:id}} in email templates to auto-attach the file. The email agent resolves the id to the file path via this manifest.",
+    "update_file": "Replace the file in the attachments_directory and update 'last_updated' to the current ISO date."
+  }
+}
