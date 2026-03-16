@@ -72,6 +72,15 @@ Design and evaluate AI search optimization strategy with a retrieval-first appro
 - Keep a single canonical value for every critical fact across the site
 - Prefer additive edits to existing pages before creating net-new pages
 - Ensure key pages remain accessible to major AI/search crawlers
+- Build site-searchable content architecture: important product pages should
+  rank for internal domain retrieval patterns like
+  `site:yourdomain.com [category] features [year]`
+- Keep high-intent terms in title, H1, and section headings so domain-scoped
+  retrieval can match quickly without deep crawl depth
+- Maintain review platform parity (G2/Capterra/TrustRadius): keep pricing,
+  feature limits, target segment, and support model aligned with canonical site
+- Track outbound citations from profile links and comparison assets with
+  UTM conventions so third-party mention flow can be attributed
 
 ## Anti-Patterns
 
