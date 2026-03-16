@@ -767,7 +767,7 @@ check_function_complexity() {
 				start = NR
 				next
 			}
-			fname && /^\}$/ {
+			fname && /^[[:space:]]*\}[[:space:]]*$/ {
 				lines = NR - start
 				if (lines > block) {
 					printf "BLOCK %s:%d %s() %d lines (max %d)\n", file, start, fname, lines, block
@@ -803,8 +803,6 @@ check_function_complexity() {
 			fi
 		fi
 	fi
-
-	rm -f "$tmp_file"
 
 	if [[ "$block_violations" -le "$MAX_FUNCTION_LENGTH_VIOLATIONS" ]]; then
 		local total=$((block_violations + warn_violations))
@@ -844,9 +842,9 @@ check_nesting_depth() {
 			# Skip comments and strings (rough heuristic)
 			/^[[:space:]]*#/ { next }
 			# Opening control structures
-			/[[:space:]]*(if|for|while|until|case)[[:space:]]/ { depth++; if (depth > max_depth) { max_depth = depth; max_line = NR } }
+			/^[[:space:]]*(if|for|while|until|case)[[:space:]]/ { depth++; if (depth > max_depth) { max_depth = depth; max_line = NR } }
 			# Closing control structures
-			/[[:space:]]*(fi|done|esac)[[:space:]]*$/ || /^[[:space:]]*(fi|done|esac)$/ { if (depth > 0) depth-- }
+			/^[[:space:]]*(fi|done|esac)($|[[:space:]])/ { if (depth > 0) depth-- }
 			END {
 				if (max_depth > block) {
 					printf "BLOCK %s:%d max nesting depth %d (max %d)\n", file, max_line, max_depth, block
@@ -876,8 +874,6 @@ check_nesting_depth() {
 		fi
 	fi
 
-	rm -f "$tmp_file"
-
 	if [[ "$block_violations" -le "$MAX_NESTING_VIOLATIONS" ]]; then
 		local total=$((block_violations + warn_violations))
 		print_success "Nesting depth: $total files with deep nesting ($block_violations blocking, $warn_violations advisory)"
@@ -886,6 +882,28 @@ check_nesting_depth() {
 
 	print_error "Nesting depth: $block_violations blocking violations (threshold: $MAX_NESTING_VIOLATIONS)"
 	return 1
+}
+
+append_file_size_result() {
+	local file="$1"
+	local result_file="$2"
+	local warn_limit="$3"
+	local block_limit="$4"
+
+	[[ -f "$file" ]] || return 0
+
+	local line_count
+	line_count=$(wc -l <"$file")
+	line_count=${line_count//[^0-9]/}
+	line_count=${line_count:-0}
+
+	if [[ "$line_count" -gt "$block_limit" ]]; then
+		printf 'BLOCK %s: %d lines (max %d)\n' "$file" "$line_count" "$block_limit" >>"$result_file"
+	elif [[ "$line_count" -gt "$warn_limit" ]]; then
+		printf 'WARN %s: %d lines (max %d)\n' "$file" "$line_count" "$warn_limit" >>"$result_file"
+	fi
+
+	return 0
 }
 
 # =============================================================================
@@ -906,18 +924,7 @@ check_file_size() {
 	push_cleanup "rm -f '${tmp_file}'"
 
 	for file in "${ALL_SH_FILES[@]}"; do
-		[[ -f "$file" ]] || continue
-
-		local line_count
-		line_count=$(wc -l <"$file")
-		line_count=${line_count//[^0-9]/}
-		line_count=${line_count:-0}
-
-		if [[ "$line_count" -gt "$MAX_FILE_LINES_BLOCK" ]]; then
-			printf 'BLOCK %s: %d lines (max %d)\n' "$file" "$line_count" "$MAX_FILE_LINES_BLOCK" >>"$tmp_file"
-		elif [[ "$line_count" -gt "$MAX_FILE_LINES_WARN" ]]; then
-			printf 'WARN %s: %d lines (max %d)\n' "$file" "$line_count" "$MAX_FILE_LINES_WARN" >>"$tmp_file"
-		fi
+		append_file_size_result "$file" "$tmp_file" "$MAX_FILE_LINES_WARN" "$MAX_FILE_LINES_BLOCK"
 	done
 
 	# Also check Python files in the scripts directory
@@ -927,18 +934,7 @@ check_file_size() {
 	done < <(find .agents/scripts -name "*.py" -not -path "*/_archive/*" -not -path "*/archived/*" -print0 2>/dev/null | sort -z)
 
 	for file in "${py_files[@]}"; do
-		[[ -f "$file" ]] || continue
-
-		local line_count
-		line_count=$(wc -l <"$file")
-		line_count=${line_count//[^0-9]/}
-		line_count=${line_count:-0}
-
-		if [[ "$line_count" -gt "$MAX_FILE_LINES_BLOCK" ]]; then
-			printf 'BLOCK %s: %d lines (max %d)\n' "$file" "$line_count" "$MAX_FILE_LINES_BLOCK" >>"$tmp_file"
-		elif [[ "$line_count" -gt "$MAX_FILE_LINES_WARN" ]]; then
-			printf 'WARN %s: %d lines (max %d)\n' "$file" "$line_count" "$MAX_FILE_LINES_WARN" >>"$tmp_file"
-		fi
+		append_file_size_result "$file" "$tmp_file" "$MAX_FILE_LINES_WARN" "$MAX_FILE_LINES_BLOCK"
 	done
 
 	if [[ -s "$tmp_file" ]]; then
@@ -959,8 +955,6 @@ check_file_size() {
 			grep '^WARN' "$tmp_file" | sed 's/^WARN /  /' | head -5
 		fi
 	fi
-
-	rm -f "$tmp_file"
 
 	if [[ "$block_violations" -le "$MAX_FILE_SIZE_VIOLATIONS" ]]; then
 		local total=$((block_violations + warn_violations))
