@@ -37,6 +37,23 @@ Simulate how AI systems decompose broad prompts into sub-queries and use that ma
 - Tag each sub-query: high, medium, low priority
 - Include common modifiers (location, budget, urgency, compliance, integration)
 
+### 2.5) Model `site:` retrieval stages
+
+- Treat fan-out as a 3-stage retrieval model:
+  broad discovery -> site-specific deep-dive -> third-party validation
+- Stage 1 (broad discovery): open-web category and comparison queries
+  (for example, "best ATS for SMB 2026")
+- Stage 2 (site-specific deep-dive): domain-scoped checks such as
+  `site:brand.com pricing`, `site:brand.com integrations`,
+  `site:brand.com enterprise features`
+- Stage 3 (third-party validation): independent source checks such as
+  `site:g2.com brand review`, `site:capterra.com brand pricing`,
+  `site:trustradius.com brand alternatives`
+- Predict which branch needs each stage before content production;
+  product claims need Stage 2 and trust/risk claims need Stage 3
+- Build branch maps that show where open search is sufficient versus where
+  domain-scoped retrieval and review-platform corroboration are required
+
 ### 3) Map pages to branches
 
 - Link each sub-query to best existing page
@@ -54,6 +71,8 @@ Simulate how AI systems decompose broad prompts into sub-queries and use that ma
 - Re-run fan-out prompts and compare page/sentence match quality
 - Confirm top branches are answered by high-confidence sections
 - Record unresolved branches for next sprint
+- Include explicit simulation runs for each retrieval stage and record
+  citation/source mix shifts after updates
 
 ## Guardrails
 

@@ -29,6 +29,9 @@ Selection Rate Optimization (SRO) focuses on whether a source gets selected into
 - AI retrieval often works with fixed context budgets
 - Top-ranked and higher-relevance sources usually receive larger context share
 - Long pages can suffer low content survival if key facts are buried
+- Retrieval often includes domain-scoped probes (`site:brand.com ...`),
+  so selection depends on whether internal page metadata matches likely
+  category/feature modifiers
 
 ## SRO Workflow
 
@@ -71,6 +74,10 @@ Selection Rate Optimization (SRO) focuses on whether a source gets selected into
 - Use lists/tables only when they preserve factual precision
 - Keep policy, pricing, and capability statements up-to-date
 - Refresh critical sections on a defined cadence to preserve snippet freshness
+- Include category terms in title, H1, and opening paragraph to match
+  `site:` query shapes (for example: "[category] features", "[category] pricing")
+- Keep meta descriptions specific and factual so retrieval systems can
+  disambiguate similar pages during domain-scoped selection
 
 ## Common Failure Modes
 

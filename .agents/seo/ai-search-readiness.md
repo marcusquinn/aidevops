@@ -32,6 +32,10 @@ Run a complete, high-signal workflow to improve AI search citations and answer q
 - Classify target queries by likelihood of triggering search grounding
 - Prioritize intents where retrieval can be influenced by SEO changes
 - Validate crawler/bot accessibility so eligible queries can actually fetch content
+- Run site-query readiness checks for critical claims:
+  `site:yourdomain.com [product category] features`,
+  `site:yourdomain.com pricing`,
+  `site:yourdomain.com integrations`
 
 ### Phase 1: Query decomposition
 
@@ -63,6 +67,10 @@ Run a complete, high-signal workflow to improve AI search citations and answer q
 - Track citation frequency and confidence by intent cluster
 - Monitor volatility and re-run high-impact intents on schedule
 - Keep a rolling benchmark so wins are distinguished from noise
+- Audit third-party citation readiness quarterly: verify G2/Capterra/
+  TrustRadius profiles are current and fact-aligned with canonical site pages
+- Use UTM-tagged profile links and partner citations so citation-driven
+  sessions and conversion contribution are measurable
 
 ## Readiness Scorecard (Recommended)
 

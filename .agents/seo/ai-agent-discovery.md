@@ -36,6 +36,10 @@ Evaluate machine discoverability, not only human UX, using multi-turn exploratio
 - Capture sequence of search attempts, page hits, and confidence changes
 - Note where agent loops, backtracks, or stalls
 - Separate retrieval failure from comprehension failure
+- Run explicit `site:` retrieval passes against first-party domain pages
+  (`site:yourdomain.com pricing`, `site:yourdomain.com integrations`)
+- Run third-party validation passes (`site:g2.com [brand]`,
+  `site:capterra.com [brand]`) and compare fact consistency
 
 ### 3) Classify findings
 

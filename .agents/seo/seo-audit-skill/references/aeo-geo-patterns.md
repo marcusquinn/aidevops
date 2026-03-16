@@ -227,6 +227,45 @@ Evidence supporting this includes:
 [Concluding statement connecting evidence to actionable insight].
 ```
 
+### Site-Searchable Product Block
+
+Use when AI systems are likely to run domain-scoped retrieval such as
+`site:yourdomain.com [category] features [year]`.
+
+```markdown
+## [Product/Category] Features for [Audience] ([Year])
+
+**Best for**: [ICP or use case]
+**Pricing model**: [starting point / packaging logic]
+**Integrations**: [top integrations users ask about]
+**Compliance**: [SOC 2, GDPR, HIPAA, etc.]
+**Time-to-value**: [implementation timeline]
+
+### Key capabilities
+
+- **[Capability 1]**: [Specific and testable description]
+- **[Capability 2]**: [Specific and testable description]
+- **[Capability 3]**: [Specific and testable description]
+
+### Validation sources
+
+- G2: [profile URL with UTM]
+- Capterra: [profile URL with UTM]
+- TrustRadius: [profile URL with UTM]
+```
+
+**Implementation notes:**
+
+- Mirror the same canonical facts on the product page and third-party profiles
+  (pricing anchor, feature limits, support model)
+- Keep `title`, `H1`, and first section paragraph aligned to likely
+  domain-scoped query modifiers
+- Use consistent UTM parameters across profile and comparison links for
+  citation attribution (for example: `utm_source=g2`,
+  `utm_medium=referral`, `utm_campaign=ai_citation`)
+- Review profile freshness monthly to prevent stale third-party facts from
+  outranking first-party updates
+
 ---
 
 ## Domain-Specific GEO Tactics
