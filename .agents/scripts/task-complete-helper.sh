@@ -215,7 +215,9 @@ verify_pr_merged() {
 	if [[ "$pr_state" != "MERGED" ]] || [[ -z "$pr_merged_at" ]]; then
 		log_error "PR #${pr_number} is not merged (state: ${pr_state:-unknown})"
 		log_error "Task completion is only allowed after the PR is merged."
-		log_error "Wait for the PR to merge, then re-run: task-complete-helper.sh $TASK_ID --pr $pr_number"
+		local rerun_cmd="task-complete-helper.sh $TASK_ID --pr $pr_number"
+		[[ -n "$gh_repo" ]] && rerun_cmd+=" --gh-repo $gh_repo"
+		log_error "Wait for the PR to merge, then re-run: $rerun_cmd"
 		return 1
 	fi
 
