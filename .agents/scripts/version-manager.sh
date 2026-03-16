@@ -601,36 +601,47 @@ run_patch_release_preflight() {
 	local tmp_dir=""
 	tmp_dir=$(mktemp -d)
 	PATCH_PREFLIGHT_TMP_DIR="$tmp_dir"
-	local baseline_dir="$tmp_dir/baseline"
-	local current_findings="$tmp_dir/current.secretlint"
-	local baseline_findings="$tmp_dir/baseline.secretlint"
-	local new_findings="$tmp_dir/new.secretlint"
 	trap 'cleanup_temp_dir "$PATCH_PREFLIGHT_TMP_DIR"; PATCH_PREFLIGHT_TMP_DIR=""' RETURN
-	mkdir -p "$baseline_dir"
 
-	if ! git archive "$baseline_ref" | tar -x -C "$baseline_dir"; then
-		print_error "Failed to prepare baseline snapshot for $baseline_ref"
-		return 1
-	fi
+	# Scan only CHANGED files with secretlint (not the entire repo).
+	# The old approach scanned all ~2000 files twice (current + baseline archive),
+	# taking ~22 minutes (0.34s/file x 1962 files x 2). Changed-files-only runs
+	# in seconds for typical patch releases with <50 changed files.
+	local -a changed_file_list=()
+	local cf=""
+	while IFS= read -r cf; do
+		[[ -n "$cf" ]] || continue
+		# Only scan files that exist in the current tree (skip deletions)
+		[[ -f "$REPO_ROOT/$cf" ]] && changed_file_list+=("$cf")
+	done <<<"$changed_files"
 
-	if ! capture_secretlint_findings "$REPO_ROOT" "$current_findings"; then
-		return 1
-	fi
+	if [[ ${#changed_file_list[@]} -gt 0 ]]; then
+		print_info "Running secretlint on ${#changed_file_list[@]} changed files..."
+		local secretlint_failed=false
+		local sl_output=""
+		sl_output=$(
+			cd "$REPO_ROOT" || exit 1
+			"${SECRETLINT_CMD[@]}" "${changed_file_list[@]}" --format compact 2>&1
+		) || true
 
-	if ! capture_secretlint_findings "$baseline_dir" "$baseline_findings"; then
-		return 1
-	fi
-
-	comm -13 "$baseline_findings" "$current_findings" >"$new_findings" || true
-	if [[ -s "$new_findings" ]]; then
-		print_error "Secretlint: new findings introduced since $baseline_ref"
-		read -r first_new <"$new_findings" || true
-		if [[ -n "$first_new" ]]; then
-			echo "$first_new"
+		if [[ -n "$sl_output" ]] && [[ "$sl_output" =~ :\ line\ [0-9]+,\ col\ [0-9]+ ]]; then
+			print_error "Secretlint: findings in changed files since $baseline_ref"
+			echo "$sl_output" | head -5
+			secretlint_failed=true
 		fi
-		return 1
+
+		if secretlint_output_has_runtime_error <(echo "$sl_output"); then
+			print_error "Secretlint execution failed due to runtime error"
+			return 1
+		fi
+
+		if [[ "$secretlint_failed" == "true" ]]; then
+			return 1
+		fi
+		print_success "Secretlint: no findings in changed files since $baseline_ref"
+	else
+		print_info "Secretlint: no files changed since $baseline_ref"
 	fi
-	print_success "Secretlint: no new findings since $baseline_ref"
 
 	local -a changed_shell_files=()
 	local changed_file=""
