@@ -74,10 +74,14 @@ while [[ "$_applied" -lt "$_limit" && "$_skipped" -lt 2000 ]]; do
 	# Process each issue (gh --jq '.[]' already outputs one JSON object per line)
 	while IFS= read -r _issue; do
 		[[ -z "$_issue" ]] && continue
-		local_number=$(echo "$_issue" | jq -r '.number')
-		local_reason=$(echo "$_issue" | jq -r '.state_reason // "completed"')
-		local_title=$(echo "$_issue" | jq -r '.title')
-		local_labels=$(echo "$_issue" | jq -r '.labels | join(",")')
+
+		# Single jq call extracts all fields, NUL-delimited for robustness
+		{
+			IFS= read -r -d '' local_number
+			IFS= read -r -d '' local_reason
+			IFS= read -r -d '' local_title
+			IFS= read -r -d '' local_labels
+		} < <(printf '%s' "$_issue" | jq -j '.number, "\u0000", (.state_reason // "completed"), "\u0000", .title, "\u0000", (.labels | join(",")), "\u0000"')
 
 		# Skip if already has a closure reason label
 		if echo "$local_labels" | grep -qE 'duplicate|not-planned|already-fixed|wontfix|status:done'; then
