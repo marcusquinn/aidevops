@@ -25,7 +25,7 @@ The runners system is intentionally simple:
 
 ## Interactive Mode: `/runners`
 
-**Scope boundary:** When invoked as `/runners`, ONLY resolve and dispatch the items explicitly specified in the arguments. Do NOT perform any of the following supervisor actions:
+**Scope boundary:** When invoked as `/runners`, ONLY resolve and dispatch the items explicitly specified in the arguments. Do NOT:
 
 - Run supervisor phases
 - Auto-pickup additional tasks
@@ -131,7 +131,9 @@ The `/pulse` supervisor NEVER does task work itself:
 
 If a worker fails (whether dispatched by `/pulse` or `/runners`), improve the worker's instructions or command definition, not the dispatcher's role. Each fixed failure improves the next run.
 
-**Self-improvement:** The `/pulse` supervisor observes outcomes from GitHub state (PRs, issues, timelines) and files improvement issues for systemic problems. See `AGENTS.md` "Self-Improvement" for the universal principle. The supervisor never maintains separate state — TODO.md, PLANS.md, and GitHub are the database.
+---
+
+**Self-improvement** is a universal principle that applies to every agent session — interactive, worker, or supervisor — not just `/runners`. The `/pulse` supervisor observes outcomes from GitHub state (PRs, issues, timelines) and files improvement issues for systemic problems. See `AGENTS.md` "Self-Improvement" for the full principle. The supervisor never maintains separate state — TODO.md, PLANS.md, and GitHub are the database.
 
 ## Examples
 
