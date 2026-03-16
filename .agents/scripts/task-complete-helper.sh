@@ -173,6 +173,7 @@ parse_args() {
 # Arguments:
 #   $1 - PR number
 #   $2 - GitHub repo slug (owner/repo), or empty to auto-detect from git remote
+#   $3 - Repository path (used for git context when gh_repo is empty)
 #
 # Returns:
 #   0 - PR is merged
@@ -180,28 +181,38 @@ parse_args() {
 verify_pr_merged() {
 	local pr_number="$1"
 	local gh_repo="${2:-}"
-
-	# Build the gh pr view command — add --repo only when a slug is provided
-	local gh_args=("pr" "view" "$pr_number" "--json" "state,mergedAt")
-	if [[ -n "$gh_repo" ]]; then
-		gh_args+=("--repo" "$gh_repo")
-	fi
+	local repo_path="${3:-}"
 
 	log_info "Verifying PR #${pr_number} is merged${gh_repo:+ (repo: $gh_repo)}..."
 
-	local pr_json
-	if ! pr_json=$(gh "${gh_args[@]}" 2>&1); then
-		log_error "Failed to fetch PR #${pr_number}: ${pr_json}"
-		log_error "Check that the PR exists and gh CLI is authenticated."
-		return 1
+	# Use gh's built-in --jq to extract both fields in a single API call,
+	# avoiding external jq dependency. When --gh-repo is not provided, run gh
+	# from the repo directory so it picks up the correct git remote context.
+	local pr_output pr_state pr_merged_at
+	local gh_view_args=("pr" "view" "$pr_number" "--json" "state,mergedAt" "--jq" '[.state, (.mergedAt // "")] | join("\t")')
+	if [[ -n "$gh_repo" ]]; then
+		gh_view_args+=("--repo" "$gh_repo")
 	fi
 
-	local pr_state
-	local pr_merged_at
-	pr_state=$(printf '%s' "$pr_json" | jq -r '.state // ""' 2>/dev/null || true)
-	pr_merged_at=$(printf '%s' "$pr_json" | jq -r '.mergedAt // ""' 2>/dev/null || true)
+	if [[ -z "$gh_repo" ]] && [[ -n "$repo_path" ]]; then
+		if ! pr_output=$(cd "$repo_path" && gh "${gh_view_args[@]}" 2>&1); then
+			log_error "Failed to fetch PR #${pr_number}: ${pr_output}"
+			log_error "Check that the PR exists and gh CLI is authenticated."
+			return 1
+		fi
+	else
+		if ! pr_output=$(gh "${gh_view_args[@]}" 2>&1); then
+			log_error "Failed to fetch PR #${pr_number}: ${pr_output}"
+			log_error "Check that the PR exists and gh CLI is authenticated."
+			return 1
+		fi
+	fi
 
-	if [[ "$pr_state" != "MERGED" ]] || [[ -z "$pr_merged_at" ]] || [[ "$pr_merged_at" == "null" ]]; then
+	# Parse tab-separated output: state\tmergedAt
+	pr_state="${pr_output%%$'\t'*}"
+	pr_merged_at="${pr_output#*$'\t'}"
+
+	if [[ "$pr_state" != "MERGED" ]] || [[ -z "$pr_merged_at" ]]; then
 		log_error "PR #${pr_number} is not merged (state: ${pr_state:-unknown})"
 		log_error "Task completion is only allowed after the PR is merged."
 		log_error "Wait for the PR to merge, then re-run: task-complete-helper.sh $TASK_ID --pr $pr_number"
@@ -398,7 +409,7 @@ main() {
 		if [[ "$SKIP_MERGE_CHECK" == "true" ]]; then
 			log_warn "Skipping PR merge check (--skip-merge-check). Use only in tests."
 		else
-			if ! verify_pr_merged "$PR_NUMBER" "$GH_REPO"; then
+			if ! verify_pr_merged "$PR_NUMBER" "$GH_REPO" "$REPO_PATH"; then
 				return 1
 			fi
 		fi

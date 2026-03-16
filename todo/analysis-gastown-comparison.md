@@ -316,7 +316,7 @@ Fallback chain if primary runtime unavailable.
 
 ## 6. Conclusion
 
-Gastown and AI DevOps share similar goals but different philosophies. Gastown provides structure (formulas, health states, TUI); aidevops provides intelligence (no state machines, GitHub as DB). 
+Gastown and AI DevOps share similar goals but different philosophies. Gastown provides structure (formulas, health states, TUI); aidevops provides intelligence (no state machines, GitHub as DB).
 
 **The best improvements for aidevops would incorporate gastown's clarity and user experience without compromising its core intelligence-over-determinism philosophy.**
 
