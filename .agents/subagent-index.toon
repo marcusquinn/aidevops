@@ -73,7 +73,7 @@ tools/local-models/,Local AI model inference - llama.cpp setup GGUF models usage
 services/accessibility/,Unified web and email accessibility auditing - WCAG compliance remediation and monitoring,accessibility-audit
 services/hosting/,Hosting providers - DNS and cloud servers and local dev,local-hosting|localhost|hostinger|hetzner|cloudflare|cloudflare-platform|cloudron|closte
 services/networking/,Networking - mesh VPN and secure device connectivity,tailscale|netbird
-services/email/,Email services - transactional email deliverability testing and autonomous mission communication,ses|email-agent|email-health-check|email-testing|email-delivery-test|email-design-test|email-delivery-testing|email-design-testing
+services/email/,Email services - mailbox operations transactional email deliverability testing and autonomous mission communication,ses|email-agent|email-mailbox|email-health-check|email-testing|email-delivery-test|email-design-test|email-delivery-testing|email-design-testing
 services/outreach/,Cold outreach strategy - warmup, compliance, platform selection, and mailbox scaling,cold-outreach
 services/communications/,Communications - SMS voice Discord bot Matrix bot multi-platform chat bridging encrypted messaging Bluetooth mesh and Web3 messaging,bitchat|convos|discord|google-chat|imessage|matrix-bot|matterbridge|msteams|nextcloud-talk|nostr|signal|simplex|slack|telegram|telfon|twilio|urbit|whatsapp|xmtp
 services/crm/,CRM integration - contact management,fluentcrm
@@ -176,6 +176,7 @@ paddleocr-helper.sh,PaddleOCR scene text OCR (install ocr serve stop status mode
 quickfile-helper.sh,QuickFile purchase/expense recording bridge - supplier resolution and MCP instruction generation (record-purchase record-expense supplier-resolve batch-record preview status)
 cloudron-package-helper.sh,Cloudron app packaging workflow (init scaffold build test)
 email-agent-helper.sh,Autonomous email agent for mission 3rd-party communication (send poll extract-codes thread conversations status)
+email-mailbox-helper.sh,Email mailbox IMAP/JMAP adapter (accounts inbox read folders send move flag search smart-mailbox sync)
 email-health-check-helper.sh,Email health check with scoring (SPF DKIM DMARC BIMI MTA-STS TLS-RPT DANE)
 email-test-suite-helper.sh,Email testing suite (design rendering delivery testing inbox placement)
 email-delivery-test-helper.sh,Email delivery testing (spam content analysis provider deliverability inbox placement warm-up)

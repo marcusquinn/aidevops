@@ -20,7 +20,8 @@ tools:
 
 - **Purpose**: Intelligent mailbox organization, triage, flagging, and shared mailbox workflows
 - **Protocols**: IMAP4rev1 (RFC 9051), JMAP (RFC 8621), ManageSieve (RFC 5804)
-- **Helper**: `scripts/email-agent-helper.sh` (mailbox operations via configured adapter)
+- **Helper**: `scripts/email-mailbox-helper.sh` (IMAP/JMAP mailbox operations)
+- **Adapter**: `scripts/email_imap_adapter.py` (IMAP protocol layer)
 - **Related**: `services/email/email-agent.md` (mission communication), `services/email/ses.md` (sending)
 
 **Key principle**: Every mailbox action follows a decision tree. Consistent organization beats ad-hoc sorting.
