@@ -71,8 +71,9 @@ while [[ "$_applied" -lt "$_limit" && "$_skipped" -lt 2000 ]]; do
 		break
 	fi
 
-	# Process each issue
+	# Process each issue (gh --jq '.[]' already outputs one JSON object per line)
 	while IFS= read -r _issue; do
+		[[ -z "$_issue" ]] && continue
 		local_number=$(echo "$_issue" | jq -r '.number')
 		local_reason=$(echo "$_issue" | jq -r '.state_reason // "completed"')
 		local_title=$(echo "$_issue" | jq -r '.title')
@@ -84,34 +85,27 @@ while [[ "$_applied" -lt "$_limit" && "$_skipped" -lt 2000 ]]; do
 			continue
 		fi
 
-		# Determine label
-		local_label=""
-		case "$local_reason" in
-		not_planned)
-			# Check last comment for specifics
-			local_comment=$(gh api "repos/${_repo}/issues/${local_number}/comments" \
-				--jq 'last | .body // ""' 2>/dev/null || echo "")
+		# Skip completed issues without fetching comments — only not_planned needs labelling
+		# (completed issues are either status:done from PR merge, or manually closed as done)
+		if [[ "$local_reason" == "completed" || "$local_reason" == "null" ]]; then
+			_skipped=$((_skipped + 1))
+			continue
+		fi
 
-			if echo "$local_comment" | grep -qiE 'duplicate|dupe|already exists'; then
-				local_label="duplicate"
-			elif echo "$local_comment" | grep -qiE 'already.*(fixed|resolved|done|merged|implemented)'; then
-				local_label="already-fixed"
-			elif echo "$local_comment" | grep -qiE 'wontfix|won'\''t fix|will not'; then
-				local_label="wontfix"
-			else
-				local_label="not-planned"
-			fi
-			;;
-		completed)
-			# Check if there's a closing comment indicating already-fixed
-			local_comment=$(gh api "repos/${_repo}/issues/${local_number}/comments" \
-				--jq 'last | .body // ""' 2>/dev/null || echo "")
-			if echo "$local_comment" | grep -qiE 'already.*(fixed|resolved|done|merged|implemented)'; then
-				local_label="already-fixed"
-			fi
-			# Otherwise skip — completed without status:done is ambiguous
-			;;
-		esac
+		# Determine label — only not_planned issues reach here
+		local_label=""
+		local_comment=$(gh api "repos/${_repo}/issues/${local_number}/comments" \
+			--jq 'last | .body // ""' 2>/dev/null || echo "")
+
+		if echo "$local_comment" | grep -qiE 'duplicate|dupe|already exists'; then
+			local_label="duplicate"
+		elif echo "$local_comment" | grep -qiE 'already.*(fixed|resolved|done|merged|implemented)'; then
+			local_label="already-fixed"
+		elif echo "$local_comment" | grep -qiE 'wontfix|won'\''t fix|will not'; then
+			local_label="wontfix"
+		else
+			local_label="not-planned"
+		fi
 
 		if [[ -n "$local_label" ]]; then
 			if [[ "$_dry_run" == "true" ]]; then
@@ -125,10 +119,10 @@ while [[ "$_applied" -lt "$_limit" && "$_skipped" -lt 2000 ]]; do
 			_skipped=$((_skipped + 1))
 		fi
 
-		# Rate limit: 1 API call per issue for comments, be gentle
-		sleep 0.2
+		# Rate limit: gentle on API
+		sleep 0.3
 
-	done < <(echo "$_issues" | jq -c '.')
+	done <<<"$_issues"
 
 	_page=$((_page + 1))
 done
