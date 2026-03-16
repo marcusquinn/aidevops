@@ -36,6 +36,28 @@ readonly MAX_RETURN_ISSUES=10
 readonly MAX_POSITIONAL_ISSUES=300
 readonly MAX_STRING_LITERAL_ISSUES=2300
 
+# Complexity thresholds (aligned with Codacy defaults — GH#4939)
+# These catch the same issues Codacy flags so they're caught locally before push.
+# Thresholds are set above the current baseline to catch regressions, not existing debt.
+# Existing debt is tracked by the code-simplifier (priority 8, human-gated).
+#
+# Baseline (2026-03-16): 373 functions >100 lines, 222 files >8 nesting, 26 files >1500 lines
+# These thresholds allow the current baseline but block significant new additions.
+# Reduce thresholds as existing debt is paid down.
+#
+# - Function length: warn >50, block >100. Threshold allows current 373 + small margin.
+# - Nesting depth: warn >5, block >8. Threshold allows current 222 + small margin.
+# - File size: warn >800, block >1500. Threshold allows current 26 + small margin.
+readonly MAX_FUNCTION_LENGTH_WARN=50
+readonly MAX_FUNCTION_LENGTH_BLOCK=100
+readonly MAX_FUNCTION_LENGTH_VIOLATIONS=400
+readonly MAX_NESTING_DEPTH_WARN=5
+readonly MAX_NESTING_DEPTH_BLOCK=8
+readonly MAX_NESTING_VIOLATIONS=230
+readonly MAX_FILE_LINES_WARN=800
+readonly MAX_FILE_LINES_BLOCK=1500
+readonly MAX_FILE_SIZE_VIOLATIONS=30
+
 print_header() {
 	echo -e "${BLUE}Local Linters - Fast Offline Quality Checks${NC}"
 	echo -e "${BLUE}================================================================${NC}"
@@ -716,6 +738,240 @@ check_toon_syntax() {
 	return 0
 }
 
+# =============================================================================
+# Function Complexity Check (Codacy alignment — GH#4939)
+# =============================================================================
+# Codacy flags functions exceeding length thresholds. This local check catches
+# the same issues before code reaches Codacy, preventing quality gate failures.
+# Aligned with Codacy's ShellCheck + complexity engine.
+
+check_function_complexity() {
+	echo -e "${BLUE}Checking Function Complexity (Codacy alignment)...${NC}"
+
+	local block_violations=0
+	local warn_violations=0
+	local tmp_file
+	tmp_file=$(mktemp)
+	_save_cleanup_scope
+	trap '_run_cleanups' RETURN
+	push_cleanup "rm -f '${tmp_file}'"
+
+	for file in "${ALL_SH_FILES[@]}"; do
+		[[ -f "$file" ]] || continue
+
+		# Use awk to find function boundaries and measure line counts
+		awk -v file="$file" -v warn="$MAX_FUNCTION_LENGTH_WARN" -v block="$MAX_FUNCTION_LENGTH_BLOCK" '
+			/^[a-zA-Z_][a-zA-Z0-9_]*\(\)[[:space:]]*\{/ {
+				fname = $1
+				sub(/\(\)/, "", fname)
+				start = NR
+				next
+			}
+			fname && /^\}$/ {
+				lines = NR - start
+				if (lines > block) {
+					printf "BLOCK %s:%d %s() %d lines (max %d)\n", file, start, fname, lines, block
+				} else if (lines > warn) {
+					printf "WARN %s:%d %s() %d lines (max %d)\n", file, start, fname, lines, warn
+				}
+				fname = ""
+			}
+		' "$file" >>"$tmp_file"
+	done
+
+	if [[ -s "$tmp_file" ]]; then
+		block_violations=$(grep -c '^BLOCK' "$tmp_file" 2>/dev/null || echo "0")
+		warn_violations=$(grep -c '^WARN' "$tmp_file" 2>/dev/null || echo "0")
+		block_violations=${block_violations//[^0-9]/}
+		warn_violations=${warn_violations//[^0-9]/}
+		block_violations=${block_violations:-0}
+		warn_violations=${warn_violations:-0}
+
+		if [[ "$block_violations" -gt 0 ]]; then
+			print_error "Function complexity: $block_violations functions exceed ${MAX_FUNCTION_LENGTH_BLOCK} lines (must refactor)"
+			grep '^BLOCK' "$tmp_file" | sed 's/^BLOCK /  /' | head -10
+			if [[ "$block_violations" -gt 10 ]]; then
+				echo "  ... and $((block_violations - 10)) more"
+			fi
+		fi
+
+		if [[ "$warn_violations" -gt 0 ]]; then
+			print_warning "Function complexity: $warn_violations functions exceed ${MAX_FUNCTION_LENGTH_WARN} lines (advisory)"
+			grep '^WARN' "$tmp_file" | sed 's/^WARN /  /' | head -5
+			if [[ "$warn_violations" -gt 5 ]]; then
+				echo "  ... and $((warn_violations - 5)) more"
+			fi
+		fi
+	fi
+
+	rm -f "$tmp_file"
+
+	if [[ "$block_violations" -le "$MAX_FUNCTION_LENGTH_VIOLATIONS" ]]; then
+		local total=$((block_violations + warn_violations))
+		print_success "Function complexity: $total oversized functions ($block_violations blocking, $warn_violations advisory)"
+		return 0
+	fi
+
+	print_error "Function complexity: $block_violations blocking violations (threshold: $MAX_FUNCTION_LENGTH_VIOLATIONS)"
+	return 1
+}
+
+# =============================================================================
+# Nesting Depth Check (Codacy alignment — GH#4939)
+# =============================================================================
+# Codacy flags deeply nested control flow (if/for/while/case). Deep nesting
+# indicates functions that should be decomposed. This catches the same pattern
+# locally.
+
+check_nesting_depth() {
+	echo -e "${BLUE}Checking Nesting Depth (Codacy alignment)...${NC}"
+
+	local block_violations=0
+	local warn_violations=0
+	local tmp_file
+	tmp_file=$(mktemp)
+	_save_cleanup_scope
+	trap '_run_cleanups' RETURN
+	push_cleanup "rm -f '${tmp_file}'"
+
+	for file in "${ALL_SH_FILES[@]}"; do
+		[[ -f "$file" ]] || continue
+
+		# Track nesting depth through control structures
+		# This is a heuristic — not a full parser — but catches the worst offenders
+		awk -v file="$file" -v warn="$MAX_NESTING_DEPTH_WARN" -v block="$MAX_NESTING_DEPTH_BLOCK" '
+			BEGIN { depth = 0; max_depth = 0; max_line = 0 }
+			# Skip comments and strings (rough heuristic)
+			/^[[:space:]]*#/ { next }
+			# Opening control structures
+			/[[:space:]]*(if|for|while|until|case)[[:space:]]/ { depth++; if (depth > max_depth) { max_depth = depth; max_line = NR } }
+			# Closing control structures
+			/[[:space:]]*(fi|done|esac)[[:space:]]*$/ || /^[[:space:]]*(fi|done|esac)$/ { if (depth > 0) depth-- }
+			END {
+				if (max_depth > block) {
+					printf "BLOCK %s:%d max nesting depth %d (max %d)\n", file, max_line, max_depth, block
+				} else if (max_depth > warn) {
+					printf "WARN %s:%d max nesting depth %d (max %d)\n", file, max_line, max_depth, warn
+				}
+			}
+		' "$file" >>"$tmp_file"
+	done
+
+	if [[ -s "$tmp_file" ]]; then
+		block_violations=$(grep -c '^BLOCK' "$tmp_file" 2>/dev/null || echo "0")
+		warn_violations=$(grep -c '^WARN' "$tmp_file" 2>/dev/null || echo "0")
+		block_violations=${block_violations//[^0-9]/}
+		warn_violations=${warn_violations//[^0-9]/}
+		block_violations=${block_violations:-0}
+		warn_violations=${warn_violations:-0}
+
+		if [[ "$block_violations" -gt 0 ]]; then
+			print_error "Nesting depth: $block_violations files exceed depth ${MAX_NESTING_DEPTH_BLOCK} (must refactor)"
+			grep '^BLOCK' "$tmp_file" | sed 's/^BLOCK /  /' | head -10
+		fi
+
+		if [[ "$warn_violations" -gt 0 ]]; then
+			print_warning "Nesting depth: $warn_violations files exceed depth ${MAX_NESTING_DEPTH_WARN} (advisory)"
+			grep '^WARN' "$tmp_file" | sed 's/^WARN /  /' | head -5
+		fi
+	fi
+
+	rm -f "$tmp_file"
+
+	if [[ "$block_violations" -le "$MAX_NESTING_VIOLATIONS" ]]; then
+		local total=$((block_violations + warn_violations))
+		print_success "Nesting depth: $total files with deep nesting ($block_violations blocking, $warn_violations advisory)"
+		return 0
+	fi
+
+	print_error "Nesting depth: $block_violations blocking violations (threshold: $MAX_NESTING_VIOLATIONS)"
+	return 1
+}
+
+# =============================================================================
+# File Size Check (Codacy alignment — GH#4939)
+# =============================================================================
+# Codacy flags files exceeding line count thresholds. Large files are harder
+# to maintain and review. This catches monolithic scripts that should be split.
+
+check_file_size() {
+	echo -e "${BLUE}Checking File Size (Codacy alignment)...${NC}"
+
+	local block_violations=0
+	local warn_violations=0
+	local tmp_file
+	tmp_file=$(mktemp)
+	_save_cleanup_scope
+	trap '_run_cleanups' RETURN
+	push_cleanup "rm -f '${tmp_file}'"
+
+	for file in "${ALL_SH_FILES[@]}"; do
+		[[ -f "$file" ]] || continue
+
+		local line_count
+		line_count=$(wc -l <"$file")
+		line_count=${line_count//[^0-9]/}
+		line_count=${line_count:-0}
+
+		if [[ "$line_count" -gt "$MAX_FILE_LINES_BLOCK" ]]; then
+			printf 'BLOCK %s: %d lines (max %d)\n' "$file" "$line_count" "$MAX_FILE_LINES_BLOCK" >>"$tmp_file"
+		elif [[ "$line_count" -gt "$MAX_FILE_LINES_WARN" ]]; then
+			printf 'WARN %s: %d lines (max %d)\n' "$file" "$line_count" "$MAX_FILE_LINES_WARN" >>"$tmp_file"
+		fi
+	done
+
+	# Also check Python files in the scripts directory
+	local py_files=()
+	while IFS= read -r -d '' f; do
+		py_files+=("$f")
+	done < <(find .agents/scripts -name "*.py" -not -path "*/_archive/*" -not -path "*/archived/*" -print0 2>/dev/null | sort -z)
+
+	for file in "${py_files[@]}"; do
+		[[ -f "$file" ]] || continue
+
+		local line_count
+		line_count=$(wc -l <"$file")
+		line_count=${line_count//[^0-9]/}
+		line_count=${line_count:-0}
+
+		if [[ "$line_count" -gt "$MAX_FILE_LINES_BLOCK" ]]; then
+			printf 'BLOCK %s: %d lines (max %d)\n' "$file" "$line_count" "$MAX_FILE_LINES_BLOCK" >>"$tmp_file"
+		elif [[ "$line_count" -gt "$MAX_FILE_LINES_WARN" ]]; then
+			printf 'WARN %s: %d lines (max %d)\n' "$file" "$line_count" "$MAX_FILE_LINES_WARN" >>"$tmp_file"
+		fi
+	done
+
+	if [[ -s "$tmp_file" ]]; then
+		block_violations=$(grep -c '^BLOCK' "$tmp_file" 2>/dev/null || echo "0")
+		warn_violations=$(grep -c '^WARN' "$tmp_file" 2>/dev/null || echo "0")
+		block_violations=${block_violations//[^0-9]/}
+		warn_violations=${warn_violations//[^0-9]/}
+		block_violations=${block_violations:-0}
+		warn_violations=${warn_violations:-0}
+
+		if [[ "$block_violations" -gt 0 ]]; then
+			print_error "File size: $block_violations files exceed ${MAX_FILE_LINES_BLOCK} lines (should be split)"
+			grep '^BLOCK' "$tmp_file" | sed 's/^BLOCK /  /' | head -10
+		fi
+
+		if [[ "$warn_violations" -gt 0 ]]; then
+			print_warning "File size: $warn_violations files exceed ${MAX_FILE_LINES_WARN} lines (advisory)"
+			grep '^WARN' "$tmp_file" | sed 's/^WARN /  /' | head -5
+		fi
+	fi
+
+	rm -f "$tmp_file"
+
+	if [[ "$block_violations" -le "$MAX_FILE_SIZE_VIOLATIONS" ]]; then
+		local total=$((block_violations + warn_violations))
+		print_success "File size: $total oversized files ($block_violations blocking, $warn_violations advisory)"
+		return 0
+	fi
+
+	print_error "File size: $block_violations blocking violations (threshold: $MAX_FILE_SIZE_VIOLATIONS)"
+	return 1
+}
+
 check_remote_cli_status() {
 	print_info "Remote Audit CLIs Status (use /code-audit-remote for full analysis)..."
 
@@ -1100,6 +1356,21 @@ main() {
 
 	if ! should_skip_gate "bash32-compat"; then
 		check_bash32_compat || exit_code=1
+		echo ""
+	fi
+
+	if ! should_skip_gate "function-complexity"; then
+		check_function_complexity || exit_code=1
+		echo ""
+	fi
+
+	if ! should_skip_gate "nesting-depth"; then
+		check_nesting_depth || exit_code=1
+		echo ""
+	fi
+
+	if ! should_skip_gate "file-size"; then
+		check_file_size || exit_code=1
 		echo ""
 	fi
 

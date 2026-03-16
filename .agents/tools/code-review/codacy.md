@@ -41,6 +41,24 @@ to 10 Warning+ to absorb refactoring noise while still blocking genuine security
 without manual Codacy dashboard intervention on every PR. The project grade (A) is the
 meaningful quality signal, not the per-PR new-issue count.
 
+## Local Pre-Push Checks (GH#4939)
+
+`linters-local.sh` now includes three checks aligned with Codacy's complexity engine,
+catching the same issues locally before code reaches Codacy:
+
+| Check | Codacy equivalent | Warning | Blocking | Gate |
+|-------|-------------------|---------|----------|------|
+| `function-complexity` | Function length | >50 lines | >100 lines | `function-complexity` |
+| `nesting-depth` | Cyclomatic complexity | >5 levels | >8 levels | `nesting-depth` |
+| `file-size` | File length | >800 lines | >1500 lines | `file-size` |
+
+These gates are set above the current baseline to catch regressions. As existing debt
+is paid down (via code-simplifier issues), reduce the thresholds. The gates also cover
+Python files in `.agents/scripts/` for file-size checks.
+
+Skip via bundle config: add `"function-complexity"`, `"nesting-depth"`, or `"file-size"`
+to `skip_gates` in the project bundle.
+
 **Updating via API:**
 
 ```bash
