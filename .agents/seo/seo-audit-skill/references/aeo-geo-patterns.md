@@ -227,7 +227,7 @@ Evidence supporting this includes:
 [Concluding statement connecting evidence to actionable insight].
 ```
 
-### Site-Searchable Product Block
+### GEO Product Block
 
 Use when AI systems are likely to run domain-scoped retrieval such as
 `site:yourdomain.com [category] features [year]`.
