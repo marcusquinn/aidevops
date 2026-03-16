@@ -37,9 +37,10 @@ readonly AUTOCONFIG_SCHEMA_VERSION="1.1"
 
 check_deps() {
 	local missing=0
-	for cmd in jq python3; do
-		if ! command -v "$cmd" >/dev/null 2>&1; then
-			printf 'ERROR: required command not found: %s\n' "$cmd" >&2
+	local dep=""
+	for dep in jq python3; do
+		if ! command -v "$dep" >/dev/null 2>&1; then
+			printf 'ERROR: required command not found: %s\n' "$dep" >&2
 			missing=1
 		fi
 	done
