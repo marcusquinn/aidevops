@@ -338,10 +338,10 @@ generate_notification_rules() {
 	cat <<RULE_EOF
 # Automated notification detection
 if anyof (
-    address :is "from" "noreply@*",
-    address :is "from" "no-reply@*",
-    address :is "from" "notifications@*",
-    address :is "from" "donotreply@*",
+    address :matches "from" "noreply@*",
+    address :matches "from" "no-reply@*",
+    address :matches "from" "notifications@*",
+    address :matches "from" "donotreply@*",
     header :is "auto-submitted" "auto-generated",
     header :is "auto-submitted" "auto-replied",
     header :contains "x-notifications" "true"
