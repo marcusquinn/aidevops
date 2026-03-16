@@ -24,7 +24,7 @@ pro,gemini-2.5-pro,Capable large context
 grok,grok-3,Research and real-time web knowledge
 -->
 
-<!--TOON:subagents[63]{folder,purpose,key_files}:
+<!--TOON:subagents[64]{folder,purpose,key_files}:
 aidevops/,Framework internals - extending aidevops and architecture and plugins,setup|architecture|troubleshooting|self-improving-agents|claude-flow-comparison|plugins
 business/,Company orchestration - runner configs for company functions,company-runners
 memory/,Cross-session memory - SQLite FTS5 storage,README
@@ -74,6 +74,7 @@ services/accessibility/,Unified web and email accessibility auditing - WCAG comp
 services/hosting/,Hosting providers - DNS and cloud servers and local dev,local-hosting|localhost|hostinger|hetzner|cloudflare|cloudflare-platform|cloudron|closte
 services/networking/,Networking - mesh VPN and secure device connectivity,tailscale|netbird
 services/email/,Email services - transactional email deliverability testing and autonomous mission communication,ses|email-agent|email-health-check|email-testing|email-delivery-test|email-design-test|email-delivery-testing|email-design-testing
+services/outreach/,Cold outreach strategy - warmup, compliance, platform selection, and mailbox scaling,cold-outreach
 services/communications/,Communications - SMS voice Discord bot Matrix bot multi-platform chat bridging encrypted messaging Bluetooth mesh and Web3 messaging,bitchat|convos|discord|google-chat|imessage|matrix-bot|matterbridge|msteams|nextcloud-talk|nostr|signal|simplex|slack|telegram|telfon|twilio|urbit|whatsapp|xmtp
 services/crm/,CRM integration - contact management,fluentcrm
 services/analytics/,Website analytics - GA4 reporting,google-analytics
