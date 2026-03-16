@@ -143,7 +143,7 @@ t1375,Prompt injection scanner — tool-agnostic defense for aidevops and agenti
 
 ### Email System — Phase 4: Polish + Advanced
 
-- [ ] t1517 Google Workspace CLI integration — Gmail, Calendar, Contacts via gws — services/email/google-workspace.md. gws CLI (googleworkspace/cli, 20.6k stars, Rust) for Gmail +triage/+send/+reply/+watch, Calendar +insert/+agenda, Contacts sync. Evaluate as skill import. #feature #email #auto-dispatch ~3h model:sonnet logged:2026-03-16 -> [todo/tasks/t1517-brief.md]
+- [x] t1517 Google Workspace CLI integration — Gmail, Calendar, Contacts via gws — services/email/google-workspace.md. gws CLI (googleworkspace/cli, 20.6k stars, Rust) for Gmail +triage/+send/+reply/+watch, Calendar +insert/+agenda, Contacts sync. Evaluate as skill import. #feature #email #auto-dispatch ~3h model:sonnet logged:2026-03-16 -> [todo/tasks/t1517-brief.md] pr:#5014 completed:2026-03-16
 - [ ] t1518 Thunderbird integration — IMAP config generation, Sieve deployment, account setup — auto-generate IMAP configs from provider templates, deploy Sieve rules, OpenPGP key import guidance. #feature #email #auto-dispatch ~2.5h model:sonnet blocked-by:t1493,t1503 logged:2026-03-16 -> [todo/tasks/t1518-brief.md]
 - [ ] t1519 S/MIME certificate setup helper — certificate acquisition, installation per provider/client (Apple Mail, Thunderbird, Outlook). #docs #email #security #auto-dispatch ~2h model:sonnet blocked-by:t1498 logged:2026-03-16 -> [todo/tasks/t1519-brief.md]
 - [ ] t1520 OpenPGP setup helper — key generation, Mailvelope/Thunderbird config, public key distribution. #docs #email #security #auto-dispatch ~2h model:sonnet blocked-by:t1498 logged:2026-03-16 -> [todo/tasks/t1520-brief.md]
