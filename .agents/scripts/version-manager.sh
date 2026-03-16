@@ -617,25 +617,20 @@ run_patch_release_preflight() {
 
 	if [[ ${#changed_file_list[@]} -gt 0 ]]; then
 		print_info "Running secretlint on ${#changed_file_list[@]} changed files..."
-		local secretlint_failed=false
+		local sl_exit_code=0
 		local sl_output=""
 		sl_output=$(
 			cd "$REPO_ROOT" || exit 1
 			"${SECRETLINT_CMD[@]}" "${changed_file_list[@]}" --format compact 2>&1
-		) || true
+		) || sl_exit_code=$?
 
-		if [[ -n "$sl_output" ]] && [[ "$sl_output" =~ :\ line\ [0-9]+,\ col\ [0-9]+ ]]; then
+		if [[ $sl_exit_code -eq 1 ]]; then
 			print_error "Secretlint: findings in changed files since $baseline_ref"
 			echo "$sl_output" | head -5
-			secretlint_failed=true
-		fi
-
-		if secretlint_output_has_runtime_error <(echo "$sl_output"); then
-			print_error "Secretlint execution failed due to runtime error"
 			return 1
-		fi
-
-		if [[ "$secretlint_failed" == "true" ]]; then
+		elif [[ $sl_exit_code -ne 0 ]]; then
+			print_error "Secretlint execution failed with exit code $sl_exit_code"
+			echo "$sl_output" | head -5
 			return 1
 		fi
 		print_success "Secretlint: no findings in changed files since $baseline_ref"
