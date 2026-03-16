@@ -51,6 +51,7 @@ Part of aidevops email intelligence system (t1501).
 
 import argparse
 import email
+import email.errors
 import email.policy
 import email.utils
 import imaplib
@@ -122,8 +123,8 @@ STOP_WORDS = {
     "not", "no", "nor", "so", "yet", "both", "either", "neither", "each",
     "few", "more", "most", "other", "some", "such", "than", "too", "very",
     "just", "also", "as", "if", "then", "there", "when", "where", "while",
-    "how", "all", "any", "both", "each", "every", "here", "now", "only",
-    "own", "same", "than", "then", "there", "well", "re", "ve", "ll", "d",
+    "how", "all", "any", "every", "here", "now", "only",
+    "own", "same", "well", "re", "ve", "ll", "d",
     "s", "t", "m",
 }
 
@@ -136,7 +137,7 @@ def connect_imap(host: str, port: int, user: str, password: str) -> imaplib.IMAP
     """Connect and authenticate to IMAP server via SSL."""
     try:
         conn = imaplib.IMAP4_SSL(host, port)
-    except Exception as exc:
+    except (OSError, imaplib.IMAP4.error) as exc:
         print(f"ERROR: Cannot connect to {host}:{port} — {exc}", file=sys.stderr)
         sys.exit(1)
 
@@ -149,34 +150,41 @@ def connect_imap(host: str, port: int, user: str, password: str) -> imaplib.IMAP
     return conn
 
 
-def detect_sent_folder(conn: imaplib.IMAP4_SSL, verbose: bool = False) -> Optional[str]:
+def _decode_folder_entry(raw) -> str:
+    """Decode a raw IMAP LIST folder entry to a string."""
+    if isinstance(raw, (bytes, bytearray)):
+        return raw.decode("utf-8", errors="replace")
+    if isinstance(raw, (list, tuple)):
+        return b"".join(
+            p for p in raw if isinstance(p, (bytes, bytearray))
+        ).decode("utf-8", errors="replace")
+    return str(raw)
+
+
+def _extract_folder_name(decoded: str) -> Optional[str]:
+    """Extract folder name from a decoded IMAP LIST response line."""
+    match = re.search(r'"([^"]+)"\s*$', decoded)
+    if not match:
+        match = re.search(r'(\S+)\s*$', decoded)
+    return match.group(1) if match else None
+
+
+def detect_sent_folder(
+    conn: imaplib.IMAP4_SSL, verbose: bool = False,
+) -> Optional[str]:
     """Auto-detect the sent mail folder by listing IMAP folders."""
     status, folders = conn.list()
     if status != "OK":
         return None
 
-    def _decode_folder(raw) -> str:
-        """Decode a raw IMAP LIST folder entry to a string."""
-        if isinstance(raw, (bytes, bytearray)):
-            return raw.decode("utf-8", errors="replace")
-        if isinstance(raw, (list, tuple)):
-            return b"".join(p for p in raw if isinstance(p, (bytes, bytearray))).decode(
-                "utf-8", errors="replace"
-            )
-        return str(raw)
-
     available = []
     for folder_raw in folders:
         if not folder_raw:
             continue
-        # IMAP LIST response: (\Flags) "delimiter" "name"
-        decoded = _decode_folder(folder_raw)
-        # Extract folder name (last quoted or unquoted token)
-        match = re.search(r'"([^"]+)"\s*$', decoded)
-        if not match:
-            match = re.search(r'(\S+)\s*$', decoded)
-        if match:
-            available.append(match.group(1))
+        decoded = _decode_folder_entry(folder_raw)
+        name = _extract_folder_name(decoded)
+        if name:
+            available.append(name)
 
     if verbose:
         print(f"  Available folders: {available}", file=sys.stderr)
@@ -185,13 +193,11 @@ def detect_sent_folder(conn: imaplib.IMAP4_SSL, verbose: bool = False) -> Option
     for folder_raw in folders:
         if not folder_raw:
             continue
-        decoded = _decode_folder(folder_raw)
+        decoded = _decode_folder_entry(folder_raw)
         if r"\Sent" in decoded:
-            match = re.search(r'"([^"]+)"\s*$', decoded)
-            if not match:
-                match = re.search(r'(\S+)\s*$', decoded)
-            if match:
-                return match.group(1)
+            name = _extract_folder_name(decoded)
+            if name:
+                return name
 
     # Fall back to name matching
     available_lower = {f.lower(): f for f in available}
@@ -249,7 +255,7 @@ def fetch_sent_emails(
         try:
             msg = email.message_from_bytes(raw, policy=email.policy.default)
             messages.append(msg)
-        except Exception as exc:
+        except (ValueError, email.errors.MessageError) as exc:
             if verbose:
                 print(f"  WARNING: Failed to parse message {msg_id}: {exc}", file=sys.stderr)
             continue
@@ -270,14 +276,13 @@ def get_plain_body(msg) -> str:
                 try:
                     body = part.get_content()
                     break
-                except Exception:
+                except (KeyError, LookupError, UnicodeDecodeError):
                     continue
-    else:
-        if msg.get_content_type() == "text/plain":
-            try:
-                body = msg.get_content()
-            except Exception:
-                body = ""
+    elif msg.get_content_type() == "text/plain":
+        try:
+            body = msg.get_content()
+        except (KeyError, LookupError, UnicodeDecodeError):
+            body = ""
     return body or ""
 
 
@@ -332,7 +337,7 @@ def strip_quoted_content(text: str) -> str:
 
 def extract_greeting(body: str) -> Optional[str]:
     """Extract the greeting line from an email body."""
-    lines = [l.strip() for l in body.splitlines() if l.strip()]
+    lines = [line.strip() for line in body.splitlines() if line.strip()]
     if not lines:
         return None
 
@@ -348,7 +353,7 @@ def extract_greeting(body: str) -> Optional[str]:
 
 def extract_closing(body: str) -> Optional[str]:
     """Extract the closing line from an email body."""
-    lines = [l.strip() for l in body.splitlines() if l.strip()]
+    lines = [line.strip() for line in body.splitlines() if line.strip()]
     if not lines:
         return None
 
@@ -425,10 +430,9 @@ def detect_tone(text: str) -> str:
 
     if formal_score > 1.5 and casual_score < 2.0:
         return "formal"
-    elif casual_score > 3.0 or (casual_score > 1.5 and formal_score < 0.5):
+    if casual_score > 3.0 or (casual_score > 1.5 and formal_score < 0.5):
         return "casual"
-    else:
-        return "semi-formal"
+    return "semi-formal"
 
 
 def extract_recipient_type(to_header: str, cc_header: str) -> str:
@@ -439,37 +443,132 @@ def extract_recipient_type(to_header: str, cc_header: str) -> str:
 
     if total == 1:
         return "individual"
-    elif total <= 4:
+    if total <= 4:
         return "small-group"
-    else:
-        return "broadcast"
+    return "broadcast"
 
 
 # ---------------------------------------------------------------------------
 # Analysis aggregation
 # ---------------------------------------------------------------------------
 
-def analyse_emails(messages: list, user_email: str, verbose: bool = False) -> dict:
+def _normalise_phrase(text: str, max_words: int = 4) -> str:
+    """Normalise a greeting/closing phrase to a lowercase key."""
+    return " ".join(text.split()[:max_words]).rstrip(",.!").lower()
+
+
+def _has_attachment(msg) -> bool:
+    """Check whether an email message has file attachments."""
+    if not msg.is_multipart():
+        return False
+    return any(
+        part.get_content_disposition() == "attachment"
+        for part in msg.walk()
+    )
+
+
+def _analyse_body(body: str, acc: dict) -> None:
+    """Analyse a single email body and update accumulator counters."""
+    greeting = extract_greeting(body)
+    if greeting:
+        acc["has_greeting"] += 1
+        acc["greetings"][_normalise_phrase(greeting)] += 1
+
+    closing = extract_closing(body)
+    if closing:
+        acc["has_closing"] += 1
+        acc["closings"][_normalise_phrase(closing)] += 1
+
+    acc["tones"][detect_tone(body)] += 1
+    acc["sentence_counts"].append(count_sentences(body))
+    acc["word_lengths"].append(count_words(body))
+    acc["paragraph_counts"].append(
+        max(1, len([p for p in body.split("\n\n") if p.strip()]))
+    )
+
+    for word, count in extract_vocabulary(body, top_n=30):
+        acc["word_freq"][word] += count
+
+
+def _analyse_headers(msg, acc: dict) -> None:
+    """Analyse email headers and update accumulator counters."""
+    to_header = msg.get("To", "")
+    cc_header = msg.get("Cc", "")
+
+    acc["recipient_types"][extract_recipient_type(to_header, cc_header)] += 1
+
+    if cc_header:
+        acc["uses_cc"] += 1
+    if msg.get("Bcc", ""):
+        acc["uses_bcc"] += 1
+    if msg.get("In-Reply-To", ""):
+        acc["reply_count"] += 1
+    if _has_attachment(msg):
+        acc["has_attachment"] += 1
+
+
+def _build_accumulator() -> dict:
+    """Create a fresh analysis accumulator with zeroed counters."""
+    return {
+        "greetings": Counter(),
+        "closings": Counter(),
+        "tones": Counter(),
+        "recipient_types": Counter(),
+        "word_lengths": [],
+        "sentence_counts": [],
+        "paragraph_counts": [],
+        "word_freq": Counter(),
+        "has_greeting": 0,
+        "has_closing": 0,
+        "uses_cc": 0,
+        "uses_bcc": 0,
+        "has_attachment": 0,
+        "reply_count": 0,
+        "total_analysed": 0,
+    }
+
+
+def _compute_results(acc: dict) -> dict:
+    """Compute final statistics from the accumulator."""
+    total = acc["total_analysed"]
+    wl = acc["word_lengths"]
+    sc = acc["sentence_counts"]
+    pc = acc["paragraph_counts"]
+
+    return {
+        "total_analysed": total,
+        "greetings": dict(acc["greetings"].most_common(10)),
+        "closings": dict(acc["closings"].most_common(10)),
+        "has_greeting_pct": round(acc["has_greeting"] / total * 100),
+        "has_closing_pct": round(acc["has_closing"] / total * 100),
+        "tones": dict(acc["tones"]),
+        "dominant_tone": (
+            acc["tones"].most_common(1)[0][0] if acc["tones"] else "unknown"
+        ),
+        "recipient_types": dict(acc["recipient_types"]),
+        "avg_words_per_email": round(statistics.mean(wl) if wl else 0),
+        "median_words_per_email": round(statistics.median(wl) if wl else 0),
+        "avg_sentences_per_email": round(
+            statistics.mean(sc) if sc else 0, 1,
+        ),
+        "avg_paragraphs_per_email": round(
+            statistics.mean(pc) if pc else 0, 1,
+        ),
+        "uses_cc_pct": round(acc["uses_cc"] / total * 100),
+        "uses_bcc_pct": round(acc["uses_bcc"] / total * 100),
+        "reply_pct": round(acc["reply_count"] / total * 100),
+        "attachment_pct": round(acc["has_attachment"] / total * 100),
+        "top_vocabulary": [w for w, _ in acc["word_freq"].most_common(40)],
+    }
+
+
+def analyse_emails(messages: list, verbose: bool = False) -> dict:
     """Analyse a list of email messages and return aggregated pattern data.
 
     Returns a dict with all extracted patterns. No raw email content is
     included — only frequencies, distributions, and anonymised examples.
     """
-    greetings = Counter()
-    closings = Counter()
-    tones = Counter()
-    recipient_types = Counter()
-    word_lengths = []
-    sentence_counts = []
-    paragraph_counts = []
-    word_freq = Counter()
-    has_greeting = 0
-    has_closing = 0
-    uses_cc = 0
-    uses_bcc = 0
-    has_attachment = 0
-    reply_count = 0
-    total_analysed = 0
+    acc = _build_accumulator()
 
     for msg in messages:
         body_raw = get_plain_body(msg)
@@ -480,104 +579,27 @@ def analyse_emails(messages: list, user_email: str, verbose: bool = False) -> di
         if not body.strip():
             continue
 
-        total_analysed += 1
+        acc["total_analysed"] += 1
+        _analyse_body(body, acc)
+        _analyse_headers(msg, acc)
 
-        # Greeting / closing
-        greeting = extract_greeting(body)
-        if greeting:
-            has_greeting += 1
-            # Normalise: extract just the greeting word/phrase (first 4 words max)
-            greeting_key = " ".join(greeting.split()[:4]).rstrip(",.!").lower()
-            greetings[greeting_key] += 1
+        if verbose and acc["total_analysed"] % 10 == 0:
+            print(
+                f"  Analysed {acc['total_analysed']}/{len(messages)} emails...",
+                file=sys.stderr,
+            )
 
-        closing = extract_closing(body)
-        if closing:
-            has_closing += 1
-            closing_key = " ".join(closing.split()[:4]).rstrip(",.!").lower()
-            closings[closing_key] += 1
-
-        # Tone
-        tone = detect_tone(body)
-        tones[tone] += 1
-
-        # Sentence / word stats
-        sentences = count_sentences(body)
-        words = count_words(body)
-        paragraphs = max(1, len([p for p in body.split("\n\n") if p.strip()]))
-
-        sentence_counts.append(sentences)
-        word_lengths.append(words)
-        paragraph_counts.append(paragraphs)
-
-        # Vocabulary
-        vocab = extract_vocabulary(body, top_n=30)
-        for word, count in vocab:
-            word_freq[word] += count
-
-        # Headers
-        to_header = msg.get("To", "")
-        cc_header = msg.get("Cc", "")
-        bcc_header = msg.get("Bcc", "")
-        in_reply_to = msg.get("In-Reply-To", "")
-
-        rtype = extract_recipient_type(to_header, cc_header)
-        recipient_types[rtype] += 1
-
-        if cc_header:
-            uses_cc += 1
-        if bcc_header:
-            uses_bcc += 1
-        if in_reply_to:
-            reply_count += 1
-
-        # Attachments (check for non-text parts)
-        if msg.is_multipart():
-            for part in msg.walk():
-                if part.get_content_disposition() == "attachment":
-                    has_attachment += 1
-                    break
-
-        if verbose and total_analysed % 10 == 0:
-            print(f"  Analysed {total_analysed}/{len(messages)} emails...", file=sys.stderr)
-
-    if total_analysed == 0:
+    if acc["total_analysed"] == 0:
         return {}
 
-    # Compute statistics
-    avg_words = statistics.mean(word_lengths) if word_lengths else 0
-    median_words = statistics.median(word_lengths) if word_lengths else 0
-    avg_sentences = statistics.mean(sentence_counts) if sentence_counts else 0
-    avg_paragraphs = statistics.mean(paragraph_counts) if paragraph_counts else 0
-
-    # Top vocabulary (exclude very common words that slipped through)
-    top_vocab = [word for word, _ in word_freq.most_common(40)]
-
-    return {
-        "total_analysed": total_analysed,
-        "greetings": dict(greetings.most_common(10)),
-        "closings": dict(closings.most_common(10)),
-        "has_greeting_pct": round(has_greeting / total_analysed * 100),
-        "has_closing_pct": round(has_closing / total_analysed * 100),
-        "tones": dict(tones),
-        "dominant_tone": tones.most_common(1)[0][0] if tones else "unknown",
-        "recipient_types": dict(recipient_types),
-        "avg_words_per_email": round(avg_words),
-        "median_words_per_email": round(median_words),
-        "avg_sentences_per_email": round(avg_sentences, 1),
-        "avg_paragraphs_per_email": round(avg_paragraphs, 1),
-        "uses_cc_pct": round(uses_cc / total_analysed * 100),
-        "uses_bcc_pct": round(uses_bcc / total_analysed * 100),
-        "reply_pct": round(reply_count / total_analysed * 100),
-        "attachment_pct": round(has_attachment / total_analysed * 100),
-        "top_vocabulary": top_vocab,
-    }
+    return _compute_results(acc)
 
 
 # ---------------------------------------------------------------------------
 # AI synthesis (optional, uses anthropic SDK)
 # ---------------------------------------------------------------------------
 
-def synthesise_with_ai(analysis: dict, account: str) -> Optional[str]:
+def synthesise_with_ai(analysis: dict) -> Optional[str]:
     """Use Claude (sonnet) to synthesise analysis data into a narrative style guide.
 
     Returns the synthesised markdown string, or None if AI is unavailable.
@@ -652,7 +674,7 @@ Do NOT include any personal information, email addresses, or raw email content.
             messages=[{"role": "user", "content": prompt}],
         )
         return response.content[0].text
-    except Exception as exc:
+    except (anthropic.APIError, anthropic.APIConnectionError, KeyError, IndexError) as exc:
         print(f"WARNING: AI synthesis failed: {exc}", file=sys.stderr)
         return None
 
@@ -661,14 +683,94 @@ Do NOT include any personal information, email addresses, or raw email content.
 # Profile generation
 # ---------------------------------------------------------------------------
 
-def generate_profile_markdown(analysis: dict, account: str, ai_synthesis: Optional[str]) -> str:
+def _phrase_table(title: str, data: dict, pct_key: str, analysis: dict) -> List[str]:
+    """Build a markdown table section for greeting/closing patterns."""
+    lines = [
+        f"### {title} Patterns",
+        "",
+        f"Uses {title.lower()}: **{analysis.get(pct_key, 0)}%** of emails",
+        "",
+    ]
+    if data:
+        header_label = title
+        lines.append(f"| {header_label} | Count |")
+        lines.append(f"|{'─' * (len(header_label) + 2)}|-------|")
+        for phrase, count in sorted(data.items(), key=lambda x: -x[1]):
+            lines.append(f"| {phrase} | {count} |")
+    else:
+        lines.append(f"*No consistent {title.lower()} pattern detected.*")
+    lines.append("")
+    return lines
+
+
+def _tone_section(analysis: dict) -> List[str]:
+    """Build the tone distribution section."""
+    lines = ["### Tone Distribution", ""]
+    tones = analysis.get("tones", {})
+    total = sum(tones.values()) or 1
+    for tone, count in sorted(tones.items(), key=lambda x: -x[1]):
+        pct = round(count / total * 100)
+        lines.append(f"- **{tone.title()}**: {pct}% ({count} emails)")
+    lines.append("")
+    return lines
+
+
+def _length_section(analysis: dict) -> List[str]:
+    """Build the email length statistics section."""
+    return [
+        "### Email Length",
+        "",
+        f"- Average words: **{analysis.get('avg_words_per_email', 0)}**",
+        f"- Median words: **{analysis.get('median_words_per_email', 0)}**",
+        f"- Average sentences: **{analysis.get('avg_sentences_per_email', 0)}**",
+        f"- Average paragraphs: **{analysis.get('avg_paragraphs_per_email', 0)}**",
+        "",
+    ]
+
+
+def _recipient_section(analysis: dict) -> List[str]:
+    """Build the recipient and structural patterns section."""
+    lines = ["### Recipient & Structural Patterns", ""]
+    rtypes = analysis.get("recipient_types", {})
+    rtotal = sum(rtypes.values()) or 1
+    for rtype, count in sorted(rtypes.items(), key=lambda x: -x[1]):
+        pct = round(count / rtotal * 100)
+        lines.append(f"- **{rtype.title()}** recipients: {pct}%")
+    lines.extend([
+        f"- Uses CC: **{analysis.get('uses_cc_pct', 0)}%**",
+        f"- Uses BCC: **{analysis.get('uses_bcc_pct', 0)}%**",
+        f"- Replies (vs new threads): **{analysis.get('reply_pct', 0)}%**",
+        f"- Includes attachments: **{analysis.get('attachment_pct', 0)}%**",
+        "",
+    ])
+    return lines
+
+
+def _vocabulary_section(analysis: dict) -> List[str]:
+    """Build the vocabulary preferences section."""
+    lines = ["### Vocabulary Preferences", ""]
+    vocab = analysis.get("top_vocabulary", [])
+    if vocab:
+        lines.append("Frequently used distinctive words:")
+        lines.append("")
+        lines.append(", ".join(f"`{w}`" for w in vocab[:30]))
+    else:
+        lines.append("*No distinctive vocabulary patterns detected.*")
+    lines.append("")
+    return lines
+
+
+def generate_profile_markdown(
+    analysis: dict, account: str, ai_synthesis: Optional[str],
+) -> str:
     """Generate the voice profile markdown document."""
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+    total_emails = analysis.get("total_analysed", 0)
 
     lines = [
         f"# Voice Profile: {account}",
         "",
-        f"*Generated: {now} | Analysed: {analysis.get('total_analysed', 0)} sent emails*",
+        f"*Generated: {now} | Analysed: {total_emails} sent emails*",
         "",
         "> **Privacy note**: This profile contains extracted patterns only.",
         "> No raw email content, addresses, or subject lines are stored here.",
@@ -678,98 +780,32 @@ def generate_profile_markdown(analysis: dict, account: str, ai_synthesis: Option
     ]
 
     if ai_synthesis:
-        lines.append("## AI-Synthesised Style Guide")
-        lines.append("")
-        lines.append(ai_synthesis)
-        lines.append("")
-        lines.append("---")
-        lines.append("")
-        lines.append("## Raw Pattern Data")
-        lines.append("")
-        lines.append("*Source data used for the style guide above.*")
-        lines.append("")
+        lines.extend([
+            "## AI-Synthesised Style Guide", "",
+            ai_synthesis, "",
+            "---", "",
+            "## Raw Pattern Data", "",
+            "*Source data used for the style guide above.*", "",
+        ])
     else:
-        lines.append("## Writing Patterns")
-        lines.append("")
-        lines.append(
+        lines.extend([
+            "## Writing Patterns", "",
             "> AI synthesis unavailable (set ANTHROPIC_API_KEY to enable). "
-            "Raw pattern data below."
-        )
-        lines.append("")
+            "Raw pattern data below.", "",
+        ])
 
-    # Greetings
-    lines.append("### Greeting Patterns")
-    lines.append("")
-    lines.append(f"Uses greeting: **{analysis.get('has_greeting_pct', 0)}%** of emails")
-    lines.append("")
-    greetings = analysis.get("greetings", {})
-    if greetings:
-        lines.append("| Greeting | Count |")
-        lines.append("|----------|-------|")
-        for phrase, count in sorted(greetings.items(), key=lambda x: -x[1]):
-            lines.append(f"| {phrase} | {count} |")
-    else:
-        lines.append("*No consistent greeting pattern detected.*")
-    lines.append("")
-
-    # Closings
-    lines.append("### Closing Patterns")
-    lines.append("")
-    lines.append(f"Uses closing: **{analysis.get('has_closing_pct', 0)}%** of emails")
-    lines.append("")
-    closings = analysis.get("closings", {})
-    if closings:
-        lines.append("| Closing | Count |")
-        lines.append("|---------|-------|")
-        for phrase, count in sorted(closings.items(), key=lambda x: -x[1]):
-            lines.append(f"| {phrase} | {count} |")
-    else:
-        lines.append("*No consistent closing pattern detected.*")
-    lines.append("")
-
-    # Tone
-    lines.append("### Tone Distribution")
-    lines.append("")
-    tones = analysis.get("tones", {})
-    total = sum(tones.values()) or 1
-    for tone, count in sorted(tones.items(), key=lambda x: -x[1]):
-        pct = round(count / total * 100)
-        lines.append(f"- **{tone.title()}**: {pct}% ({count} emails)")
-    lines.append("")
-
-    # Length
-    lines.append("### Email Length")
-    lines.append("")
-    lines.append(f"- Average words: **{analysis.get('avg_words_per_email', 0)}**")
-    lines.append(f"- Median words: **{analysis.get('median_words_per_email', 0)}**")
-    lines.append(f"- Average sentences: **{analysis.get('avg_sentences_per_email', 0)}**")
-    lines.append(f"- Average paragraphs: **{analysis.get('avg_paragraphs_per_email', 0)}**")
-    lines.append("")
-
-    # Recipient patterns
-    lines.append("### Recipient & Structural Patterns")
-    lines.append("")
-    rtypes = analysis.get("recipient_types", {})
-    for rtype, count in sorted(rtypes.items(), key=lambda x: -x[1]):
-        pct = round(count / (sum(rtypes.values()) or 1) * 100)
-        lines.append(f"- **{rtype.title()}** recipients: {pct}%")
-    lines.append(f"- Uses CC: **{analysis.get('uses_cc_pct', 0)}%**")
-    lines.append(f"- Uses BCC: **{analysis.get('uses_bcc_pct', 0)}%**")
-    lines.append(f"- Replies (vs new threads): **{analysis.get('reply_pct', 0)}%**")
-    lines.append(f"- Includes attachments: **{analysis.get('attachment_pct', 0)}%**")
-    lines.append("")
-
-    # Vocabulary
-    lines.append("### Vocabulary Preferences")
-    lines.append("")
-    vocab = analysis.get("top_vocabulary", [])
-    if vocab:
-        lines.append("Frequently used distinctive words:")
-        lines.append("")
-        lines.append(", ".join(f"`{w}`" for w in vocab[:30]))
-    else:
-        lines.append("*No distinctive vocabulary patterns detected.*")
-    lines.append("")
+    lines.extend(_phrase_table(
+        "Greeting", analysis.get("greetings", {}),
+        "has_greeting_pct", analysis,
+    ))
+    lines.extend(_phrase_table(
+        "Closing", analysis.get("closings", {}),
+        "has_closing_pct", analysis,
+    ))
+    lines.extend(_tone_section(analysis))
+    lines.extend(_length_section(analysis))
+    lines.extend(_recipient_section(analysis))
+    lines.extend(_vocabulary_section(analysis))
 
     return "\n".join(lines)
 
@@ -793,8 +829,13 @@ def parse_args() -> argparse.Namespace:
                         help="IMAP username / email address")
     parser.add_argument("--imap-port", type=int, default=DEFAULT_IMAP_PORT,
                         help=f"IMAP port (default: {DEFAULT_IMAP_PORT})")
-    parser.add_argument("--sample-size", type=int, default=DEFAULT_SAMPLE_SIZE,
-                        help=f"Number of sent emails to analyse (default: {DEFAULT_SAMPLE_SIZE}, max: {MAX_SAMPLE_SIZE})")
+    parser.add_argument(
+        "--sample-size", type=int, default=DEFAULT_SAMPLE_SIZE,
+        help=(
+            f"Number of sent emails to analyse "
+            f"(default: {DEFAULT_SAMPLE_SIZE}, max: {MAX_SAMPLE_SIZE})"
+        ),
+    )
     parser.add_argument("--sent-folder", default=None,
                         help="IMAP folder name for sent mail (default: auto-detect)")
     parser.add_argument("--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR,
@@ -806,47 +847,86 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def _log(verbose: bool, msg: str) -> None:
+    """Print a progress message to stderr if verbose mode is enabled."""
+    if verbose:
+        print(msg, file=sys.stderr)
+
+
+def _get_imap_password() -> Optional[str]:
+    """Read IMAP password from environment. Returns None if unset."""
+    password = os.environ.get("IMAP_PASSWORD", "")
+    if not password:
+        print(
+            "ERROR: IMAP_PASSWORD environment variable is required\n"
+            "  Set it before running: "
+            "IMAP_PASSWORD='...' python3 email-voice-miner.py ...\n"
+            "  Or use gopass: "
+            "IMAP_PASSWORD=$(gopass show -o imap/account) python3 ...",
+            file=sys.stderr,
+        )
+        return None
+    return password
+
+
+def _resolve_sent_folder(
+    conn: imaplib.IMAP4_SSL,
+    explicit_folder: Optional[str],
+    verbose: bool,
+) -> Optional[str]:
+    """Return the sent folder name, auto-detecting if not specified."""
+    if explicit_folder:
+        return explicit_folder
+    _log(verbose, "Auto-detecting sent folder...")
+    folder = detect_sent_folder(conn, verbose=verbose)
+    if not folder:
+        print(
+            "ERROR: Could not auto-detect sent folder.\n"
+            "  Use --sent-folder to specify it explicitly.",
+            file=sys.stderr,
+        )
+    else:
+        _log(verbose, f"  Detected sent folder: '{folder}'")
+    return folder
+
+
+def _write_profile(
+    profile_md: str, output_dir: Path, account: str,
+) -> None:
+    """Write the voice profile to disk with secure permissions."""
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output_dir.chmod(0o700)
+
+    output_file = output_dir / f"voice-profile-{account}.md"
+    output_file.write_text(profile_md, encoding="utf-8")
+    output_file.chmod(0o600)
+
+    print(f"Voice profile written to: {output_file}")
+
+
 def main() -> int:
     """Main entry point. Returns exit code."""
     args = parse_args()
-
-    # Validate sample size
     sample_size = min(args.sample_size, MAX_SAMPLE_SIZE)
     if sample_size < 10:
-        print("WARNING: Sample size < 10 may produce unreliable patterns", file=sys.stderr)
+        print(
+            "WARNING: Sample size < 10 may produce unreliable patterns",
+            file=sys.stderr,
+        )
 
-    # Get password from environment (never CLI arg)
-    password = os.environ.get("IMAP_PASSWORD", "")
+    password = _get_imap_password()
     if not password:
-        print("ERROR: IMAP_PASSWORD environment variable is required", file=sys.stderr)
-        print("  Set it before running: IMAP_PASSWORD='...' python3 email-voice-miner.py ...", file=sys.stderr)
-        print("  Or use gopass: IMAP_PASSWORD=$(gopass show -o imap/account) python3 ...", file=sys.stderr)
         return 1
 
-    if args.verbose:
-        print(f"Connecting to {args.imap_host}:{args.imap_port} as {args.imap_user}...", file=sys.stderr)
-
-    # Connect
+    _log(args.verbose, f"Connecting to {args.imap_host}:{args.imap_port}...")
     conn = connect_imap(args.imap_host, args.imap_port, args.imap_user, password)
 
-    # Detect or use specified sent folder
-    sent_folder = args.sent_folder
+    sent_folder = _resolve_sent_folder(conn, args.sent_folder, args.verbose)
     if not sent_folder:
-        if args.verbose:
-            print("Auto-detecting sent folder...", file=sys.stderr)
-        sent_folder = detect_sent_folder(conn, verbose=args.verbose)
-        if not sent_folder:
-            print("ERROR: Could not auto-detect sent folder.", file=sys.stderr)
-            print("  Use --sent-folder to specify it explicitly.", file=sys.stderr)
-            conn.logout()
-            return 1
-        if args.verbose:
-            print(f"  Detected sent folder: '{sent_folder}'", file=sys.stderr)
+        conn.logout()
+        return 1
 
-    # Fetch emails
-    if args.verbose:
-        print(f"Fetching up to {sample_size} emails from '{sent_folder}'...", file=sys.stderr)
-
+    _log(args.verbose, f"Fetching up to {sample_size} emails from '{sent_folder}'...")
     messages = fetch_sent_emails(conn, sent_folder, sample_size, verbose=args.verbose)
     conn.logout()
 
@@ -854,47 +934,32 @@ def main() -> int:
         print("ERROR: No emails fetched from sent folder", file=sys.stderr)
         return 1
 
-    if args.verbose:
-        print(f"Fetched {len(messages)} emails. Analysing...", file=sys.stderr)
-
-    # Analyse
-    analysis = analyse_emails(messages, args.imap_user, verbose=args.verbose)
-
+    _log(args.verbose, f"Fetched {len(messages)} emails. Analysing...")
+    analysis = analyse_emails(messages, verbose=args.verbose)
     if not analysis:
-        print("ERROR: Analysis produced no results (emails may be empty or unreadable)", file=sys.stderr)
+        print(
+            "ERROR: Analysis produced no results "
+            "(emails may be empty or unreadable)",
+            file=sys.stderr,
+        )
         return 1
 
-    if args.verbose:
-        print(f"Analysis complete. {analysis['total_analysed']} emails processed.", file=sys.stderr)
+    _log(args.verbose, f"Analysis complete. {analysis['total_analysed']} emails processed.")
 
-    # AI synthesis
     ai_synthesis = None
     if not args.dry_run:
-        if args.verbose:
-            print("Running AI synthesis (requires ANTHROPIC_API_KEY)...", file=sys.stderr)
-        ai_synthesis = synthesise_with_ai(analysis, args.account)
-        if ai_synthesis and args.verbose:
-            print("AI synthesis complete.", file=sys.stderr)
+        _log(args.verbose, "Running AI synthesis (requires ANTHROPIC_API_KEY)...")
+        ai_synthesis = synthesise_with_ai(analysis)
+        if ai_synthesis:
+            _log(args.verbose, "AI synthesis complete.")
 
-    # Generate profile
     profile_md = generate_profile_markdown(analysis, args.account, ai_synthesis)
 
     if args.dry_run:
         print(profile_md)
         return 0
 
-    # Write output
-    output_dir = args.output_dir
-    output_dir.mkdir(parents=True, exist_ok=True)
-    # Set directory permissions to 700 (owner only)
-    output_dir.chmod(0o700)
-
-    output_file = output_dir / f"voice-profile-{args.account}.md"
-    output_file.write_text(profile_md, encoding="utf-8")
-    # Set file permissions to 600 (owner read/write only)
-    output_file.chmod(0o600)
-
-    print(f"Voice profile written to: {output_file}")
+    _write_profile(profile_md, args.output_dir, args.account)
     print(f"Analysed: {analysis['total_analysed']} emails")
     print(f"Dominant tone: {analysis.get('dominant_tone', 'unknown')}")
     print(f"Avg email length: {analysis.get('avg_words_per_email', 0)} words")
