@@ -18,19 +18,25 @@
 
 **Key commands**: `/new-app` (start guided flow), `/app-research` (market research), `/app-preview` (simulator preview)
 
-**Subagents** (`mobile-app-dev/`):
+**Shared product subagents** (`product/`) — universal concerns, not mobile-specific:
 
 | Subagent | When to Read |
 |----------|--------------|
-| `planning.md` | Idea validation, market research, competitive analysis, feature scoping |
+| `product/validation.md` | Idea validation, market research, competitive analysis, feature scoping |
+| `product/ui-design.md` | UI/UX design standards, aesthetics, animations, icons, branding |
+| `product/monetisation.md` | Revenue models, paywalls, subscriptions, pricing strategy |
+| `product/onboarding.md` | First-run experience, progressive disclosure, user setup |
+| `product/analytics.md` | Usage analytics, feedback loops, error tracking, iteration signals |
+| `product/growth.md` | ASO, SEO, content marketing, paid acquisition, referral, launch |
+
+**Mobile-specific subagents** (`mobile-app-dev/`):
+
+| Subagent | When to Read |
+|----------|--------------|
 | `expo.md` | Expo/React Native project setup, development, navigation, state management |
 | `swift.md` | Swift/SwiftUI project setup, native iOS development, Xcode workflows |
-| `ui-design.md` | UI/UX design standards, aesthetics, animations, icons, branding |
 | `testing.md` | Simulator/emulator/device testing, E2E flows, accessibility, QA |
 | `publishing.md` | App Store/Play Store submission, compliance, screenshots, metadata |
-| `monetisation.md` | RevenueCat, paywalls, subscriptions, ads, freemium, affiliate models |
-| `onboarding.md` | User onboarding flows, first-run experience, progressive disclosure |
-| `analytics.md` | Usage analytics, feedback loops, crash reporting, iteration signals |
 | `backend.md` | Backend services, Supabase/Firebase, Coolify self-hosted, APIs |
 | `notifications.md` | Push notifications, Expo notifications, local notifications |
 | `assets.md` | App icons, splash screens, screenshots, preview videos (Remotion) |
@@ -48,18 +54,21 @@
 - `tools/vision/overview.md` - Image generation for app assets
 - `tools/deployment/coolify.md` - Self-hosted backend deployment
 - `services/accessibility/accessibility-audit.md` - Accessibility compliance
-- `browser-extension-dev.md` - Shares planning, UI design, and monetisation subagents
+- `browser-extension-dev.md` - Shares product/ subagents for universal concerns
 
 **Existing mobile tool stack**:
 
 ```text
-Planning     -> mobile-app-dev/planning.md (market research, idea validation)
+Validation   -> product/validation.md (market research, idea validation)
 Development  -> mobile-app-dev/expo.md OR mobile-app-dev/swift.md
-UI/UX        -> mobile-app-dev/ui-design.md (aesthetics, animations, icons)
+UI/UX        -> product/ui-design.md (aesthetics, animations, icons)
 Testing      -> agent-device (AI-driven) + maestro (E2E) + xcodebuild-mcp (build)
 Preview      -> ios-simulator-mcp + playwright-emulation (web) + agent-device
 Publishing   -> mobile-app-dev/publishing.md (App Store + Play Store)
-Monetisation -> mobile-app-dev/monetisation.md (RevenueCat, ads, freemium)
+Monetisation -> product/monetisation.md (RevenueCat, ads, freemium)
+Onboarding   -> product/onboarding.md (first-run experience)
+Analytics    -> product/analytics.md (usage, crashes, iteration)
+Growth       -> product/growth.md (ASO, acquisition, launch)
 Assets       -> tools/vision/ (icons, graphics) + Remotion (preview videos)
 Backend      -> mobile-app-dev/backend.md (Supabase, Firebase, Coolify)
 ```
@@ -72,7 +81,7 @@ When a user wants to build a mobile app, follow this sequence. Ask focused quest
 
 ### Stage 1: Idea Validation
 
-Read `mobile-app-dev/planning.md` for detailed guidance.
+Read `product/validation.md` for detailed guidance.
 
 **Ask the user**:
 
@@ -103,7 +112,7 @@ Read `mobile-app-dev/planning.md` for detailed guidance.
 
 ### Stage 3: Design and Planning
 
-Read `mobile-app-dev/ui-design.md` for aesthetics standards.
+Read `product/ui-design.md` for aesthetics standards.
 
 **Before writing any code**:
 
@@ -146,13 +155,13 @@ Covers App Store and Play Store submission, compliance requirements, screenshot 
 
 ### Stage 7: Monetisation and Growth
 
-Read `mobile-app-dev/monetisation.md`.
+Read `product/monetisation.md` for revenue model selection and paywall design. Read `product/growth.md` for ASO, acquisition, and launch strategy.
 
-Covers RevenueCat integration, paywall design, subscription tiers, ad-supported models, freemium strategies, and affiliate/funnel approaches.
+Covers RevenueCat integration, paywall design, subscription tiers, ad-supported models, freemium strategies, affiliate/funnel approaches, and app store optimisation.
 
 ### Stage 8: Iteration
 
-Read `mobile-app-dev/analytics.md`.
+Read `product/analytics.md`.
 
 Use analytics and user feedback to iterate. Track retention, engagement, crash rates, and feature usage. Prioritise improvements based on data.
 

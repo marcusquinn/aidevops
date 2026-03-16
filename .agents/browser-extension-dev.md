@@ -26,15 +26,16 @@
 | `testing.md` | Extension testing, debugging, cross-browser verification |
 | `publishing.md` | Chrome Web Store, Firefox Add-ons, Edge Add-ons submission |
 
-**Shared subagents** (from `mobile-app-dev/`):
+**Shared product subagents** (from `product/`) — universal concerns, not extension-specific:
 
-| Subagent | Shared Because |
-|----------|---------------|
-| `mobile-app-dev/planning.md` | Same idea validation and market research process |
-| `mobile-app-dev/ui-design.md` | Same design principles (clean, simple, beautiful) |
-| `mobile-app-dev/monetisation.md` | Same revenue model thinking (adapted for extensions) |
-| `mobile-app-dev/onboarding.md` | Same first-run experience principles |
-| `mobile-app-dev/analytics.md` | Same analytics and iteration approach |
+| Subagent | When to Read |
+|----------|--------------|
+| `product/validation.md` | Idea validation, market research, competitive analysis, feature scoping |
+| `product/ui-design.md` | Design principles (clean, simple, beautiful) |
+| `product/monetisation.md` | Revenue model thinking (adapted for extensions) |
+| `product/onboarding.md` | First-run experience principles |
+| `product/analytics.md` | Analytics and iteration approach |
+| `product/growth.md` | Chrome Web Store optimisation, acquisition, launch |
 
 **Related agents**:
 
@@ -42,16 +43,21 @@
 - `tools/browser/playwright.md` - Extension testing with Playwright
 - `tools/browser/browser-automation.md` - Browser tool selection
 - `tools/vision/overview.md` - Icon and asset generation
-- `mobile-app-dev.md` - Shares planning, design, and monetisation subagents
+- `mobile-app-dev.md` - Shares product/ subagents for universal concerns
 
 **Existing extension tooling**:
 
 ```text
+Validation   -> product/validation.md (market research, idea validation)
 Development  -> browser-extension-dev/development.md (WXT, Plasmo, MV3)
+UI/UX        -> product/ui-design.md (design principles)
 Testing      -> browser-extension-dev/testing.md + Playwright
 Publishing   -> chrome-webstore-release.md (Chrome) + browser-extension-dev/publishing.md
-Assets       -> tools/vision/ (icons) + mobile-app-dev/ui-design.md (design)
-Analytics    -> mobile-app-dev/analytics.md (PostHog, Plausible)
+Monetisation -> product/monetisation.md (Stripe, freemium, license keys)
+Onboarding   -> product/onboarding.md (first-run experience)
+Analytics    -> product/analytics.md (PostHog, Plausible)
+Growth       -> product/growth.md (store optimisation, acquisition)
+Assets       -> tools/vision/ (icons) + product/ui-design.md (design)
 ```
 
 <!-- AI-CONTEXT-END -->
@@ -60,7 +66,7 @@ Analytics    -> mobile-app-dev/analytics.md (PostHog, Plausible)
 
 ### Stage 1: Idea Validation
 
-Read `mobile-app-dev/planning.md` — the same validation framework applies.
+Read `product/validation.md` — the same validation framework applies.
 
 **Extension-specific questions**:
 
@@ -82,7 +88,7 @@ Read `mobile-app-dev/planning.md` — the same validation framework applies.
 
 ### Stage 3: Design
 
-Read `mobile-app-dev/ui-design.md` — same design principles apply.
+Read `product/ui-design.md` — same design principles apply.
 
 **Extension-specific design considerations**:
 
@@ -107,7 +113,7 @@ Read `browser-extension-dev/publishing.md` and `tools/browser/chrome-webstore-re
 
 ### Stage 7: Monetisation
 
-Read `mobile-app-dev/monetisation.md` — adapted for extensions.
+Read `product/monetisation.md` — adapted for extensions.
 
 **Extension-specific monetisation**:
 
@@ -121,7 +127,7 @@ Read `mobile-app-dev/monetisation.md` — adapted for extensions.
 
 ### Stage 8: Iteration
 
-Read `mobile-app-dev/analytics.md` — same iteration approach.
+Read `product/analytics.md` — same iteration approach.
 
 ## Self-Improvement
 
