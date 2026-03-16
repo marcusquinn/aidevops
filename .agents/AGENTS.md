@@ -211,6 +211,7 @@ Read subagents on-demand. Full index: `subagent-index.toon`.
 | Git/PRs/Releases | `workflows/git-workflow.md`, `tools/git/github-cli.md`, `workflows/release.md` |
 | Documents/PDF | `tools/document/document-creation.md`, `tools/pdf/overview.md`, `tools/conversion/pandoc.md` |
 | OCR | `tools/ocr/overview.md`, `tools/ocr/paddleocr.md`, `tools/ocr/glm-ocr.md` |
+| Product (shared) | `product/validation.md`, `product/onboarding.md`, `product/monetisation.md`, `product/growth.md`, `product/ui-design.md`, `product/analytics.md` |
 | Browser/Mobile | `tools/browser/browser-automation.md`, `tools/browser/browser-qa.md`, `mobile-app-dev.md`, `browser-extension-dev.md` |
 | Content/Video/Voice | `content.md`, `tools/video/video-prompt-design.md`, `tools/voice/speech-to-speech.md` |
 | Design | `tools/design/ui-ux-inspiration.md`, `tools/design/ui-ux-catalogue.toon`, `tools/design/brand-identity.md` |

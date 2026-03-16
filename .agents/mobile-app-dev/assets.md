@@ -155,7 +155,7 @@ For apps that include video content or need promotional videos:
 
 ## Related
 
-- `mobile-app-dev/ui-design.md` - Design standards
+- `product/ui-design.md` - Design standards
 - `mobile-app-dev/publishing.md` - Screenshot requirements
 - `tools/vision/overview.md` - Image generation tools
 - `tools/browser/remotion-best-practices-skill.md` - Video creation

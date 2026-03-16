@@ -239,4 +239,4 @@ document.body.appendChild(host);
 - `tools/api/hono.md` - Hono API framework (for extension backends)
 - `tools/api/better-auth.md` - Authentication
 - `services/payments/stripe.md` - Stripe payments (for premium extensions)
-- `mobile-app-dev/ui-design.md` - Design standards (shared)
+- `product/ui-design.md` - Design standards (shared across all product types)

@@ -168,5 +168,5 @@ Superwall.shared.register(placement: "settings_upgrade")
 ## Related
 
 - `services/payments/revenuecat.md` - Subscription management (use alongside Superwall)
-- `mobile-app-dev/monetisation.md` - Revenue model strategy
-- `mobile-app-dev/onboarding.md` - Paywall placement in user flows
+- `product/monetisation.md` - Revenue model strategy
+- `product/onboarding.md` - Paywall placement in user flows

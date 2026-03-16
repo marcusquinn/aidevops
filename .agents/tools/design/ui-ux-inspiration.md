@@ -308,5 +308,5 @@ Before finalising any brand identity or design recommendation, validate against:
 - `tools/ui/tailwind-css.md` -- implementing extracted styles in Tailwind
 - `tools/ui/shadcn.md` -- component library for applying design tokens
 - `tools/ui/ui-skills.md` -- opinionated UI constraints
-- `mobile-app-dev/ui-design.md` -- mobile-specific design standards
+- `product/ui-design.md` -- product design standards (all platforms)
 - `workflows/ui-verification.md` -- visual regression testing

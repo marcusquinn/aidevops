@@ -1,0 +1,213 @@
+---
+description: Product UI/UX design standards - aesthetics, animations, icons, branding, accessibility for any app type
+mode: subagent
+tools:
+  read: true
+  write: false
+  edit: false
+  bash: true
+  glob: true
+  grep: true
+  webfetch: true
+  task: true
+---
+
+# Product UI Design - Beautiful by Default
+
+<!-- AI-CONTEXT-START -->
+
+## Quick Reference
+
+- **Purpose**: Ensure every product is simple, clean, stylish, and beautiful
+- **Principle**: Aesthetics drive downloads; usability drives retention
+- **Standards**: Apple HIG, Material Design 3, WCAG 2.1 AA accessibility
+- **Tools**: Vision AI for asset generation, Remotion for animated previews, Gemini for SVG design
+- **Applies to**: Mobile apps, browser extensions, desktop apps, web apps
+
+**Design pillars**:
+
+1. **Simple** - Remove everything that isn't essential
+2. **Clean** - Generous whitespace, clear hierarchy, consistent spacing
+3. **Stylish** - Modern typography, refined colour palettes, subtle animations
+4. **Beautiful** - Attention to detail in every pixel, delightful micro-interactions
+5. **Accessible** - Usable by everyone, passes WCAG 2.1 AA
+
+<!-- AI-CONTEXT-END -->
+
+## Design System Foundation
+
+### Colour Palette
+
+Every product needs a coherent colour system:
+
+| Role | Purpose | Example |
+|------|---------|---------|
+| Primary | Brand colour, CTAs, active states | Blue, purple, coral |
+| Secondary | Supporting actions, accents | Complementary to primary |
+| Background | Screen/page backgrounds | White/near-white (light), black/near-black (dark) |
+| Surface | Cards, sheets, elevated elements | Slightly tinted background |
+| Text | Primary content | Near-black (light), near-white (dark) |
+| Text secondary | Labels, captions, metadata | Grey |
+| Success | Positive actions, confirmations | Green |
+| Warning | Caution states | Amber/orange |
+| Error | Destructive actions, errors | Red |
+| Border | Dividers, input borders | Light grey |
+
+**Dark mode is mandatory**. Design both light and dark themes from the start. Use semantic colour tokens, not hardcoded values.
+
+### Typography
+
+- **System fonts preferred** (SF Pro for iOS, Roboto for Android, system-ui for web) — they render best on each platform
+- **Custom fonts** only when brand identity requires it
+- **Type scale**: Title, Headline, Body, Caption, Footnote — no more than 5 sizes
+- **Line height**: 1.4-1.6x for body text, 1.2x for headings
+- **Weight contrast**: Use weight (not size) to create hierarchy where possible
+
+### Spacing and Layout
+
+- **8px grid**: All spacing in multiples of 8 (8, 16, 24, 32, 48)
+- **Safe areas**: Respect device safe areas on mobile (notch, home indicator, status bar)
+- **Touch/click targets**: Minimum 44x44pt (iOS) / 48x48dp (Android) / 44x44px (web)
+- **Content width**: Max 600px for readability on wide screens
+- **Card padding**: 16px minimum internal padding
+
+### Icons
+
+**Product icon requirements**:
+
+- Must be distinctive at small sizes and full resolution
+- No text in the icon (illegible at small sizes)
+- Simple, recognisable silhouette
+- Consistent with product's colour palette and mood
+- Test against competitor icons — must stand out in search results
+
+**In-product icons**:
+
+- SF Symbols (iOS), Material Icons (Android), Lucide/Heroicons (web/extensions)
+- Consistent weight and size throughout the product
+- Use filled variants for selected/active states, outlined for inactive
+
+### Animations and Micro-Interactions
+
+Animations should feel natural and purposeful:
+
+| Type | When | Duration |
+|------|------|----------|
+| Page transitions | Navigation between screens/pages | 250-350ms |
+| Button feedback | Tap/click response | 100-150ms |
+| Loading states | Data fetching | Skeleton screens, not spinners |
+| Success feedback | Completed action | 200-400ms with haptics (mobile) |
+| Error feedback | Failed action | Shake animation + haptics (mobile) |
+| List items | Enter/exit | Staggered 50ms delay per item |
+| Pull to refresh | Content refresh | Spring physics (mobile) |
+
+**Haptic feedback** (mobile) should accompany meaningful interactions:
+
+- Light impact: Button taps, toggles
+- Medium impact: Successful actions, selections
+- Success: Task completion, achievement
+- Warning: Approaching limits, caution
+- Error: Failed actions, destructive confirmations
+
+## Asset Generation
+
+### Product Icons
+
+Use vision AI tools for icon generation:
+
+- `tools/vision/image-generation.md` for AI-generated icon concepts
+- Gemini Pro for SVG icon design (strong at clean vector graphics)
+- Test multiple concepts with model contests for best results
+
+### Screenshots and Preview Media
+
+- `tools/browser/remotion-best-practices-skill.md` for animated store preview videos
+- `tools/vision/` for marketing graphics and feature illustrations
+- Playwright device emulation for automated screenshot capture across devices
+
+## Design Inspiration Resources
+
+See `tools/design/design-inspiration.md` for the full catalogue of 60+ design inspiration resources. For structured design intelligence — UI styles, colour palettes, font pairings, and industry-specific patterns — see `tools/design/ui-ux-catalogue.toon`. For brand identity and style interviews, see `tools/design/brand-identity.md` and `tools/design/ui-ux-inspiration.md`.
+
+**Quick picks**:
+
+| Resource | URL | Best For |
+|----------|-----|----------|
+| **Mobbin** | https://mobbin.com | Real-world mobile UI patterns, flows, and screenshots |
+| **Screenlane** | https://screenlane.com | Mobile UI screenshots by component type (free) |
+| **Page Flows** | https://pageflows.com | Recorded user flows with annotations |
+| **PaywallPro** | https://paywallpro.app | 46,000+ iOS paywall screenshots |
+| **Dribbble** | https://dribbble.com | UI design inspiration across all platforms |
+| **Apple HIG** | https://developer.apple.com/design/ | iOS/macOS design standards |
+| **Material Design** | https://m3.material.io/ | Android/web design standards |
+
+### Illustration Style
+
+Choose one illustration style and maintain consistency:
+
+- **Flat**: Clean, modern, minimal shadows
+- **3D**: Depth, lighting, premium feel
+- **Hand-drawn**: Warm, approachable, personal
+- **Geometric**: Abstract, tech-forward, clean
+- **Photographic**: Real imagery, authentic feel
+
+## Platform-Specific Guidelines
+
+### iOS (Apple Human Interface Guidelines)
+
+- Use native navigation patterns (tab bar, navigation stack)
+- Respect system gestures (swipe back, pull down to dismiss)
+- Support Dynamic Type for accessibility
+- Use SF Symbols for consistent iconography
+
+### Android (Material Design 3)
+
+- Use Material You dynamic colour theming
+- Bottom navigation bar for primary destinations
+- FAB (Floating Action Button) for primary actions
+- Predictive back gesture support
+
+### Browser Extensions
+
+- Popup UI should be compact (max 400x600px typical)
+- Match the browser's visual language (light/dark mode)
+- Sidebar panels can be more spacious
+- Options page follows standard web design
+
+### Desktop Apps
+
+- Respect platform conventions (menu bar on macOS, title bar on Windows)
+- Support keyboard shortcuts extensively
+- Resizable windows with sensible minimum sizes
+- Native-feeling drag and drop
+
+### Web Apps
+
+- Responsive design (mobile-first)
+- Progressive enhancement
+- Fast initial load (skeleton screens)
+- Accessible navigation (keyboard, screen reader)
+
+## Accessibility Checklist
+
+- [ ] Colour contrast ratio >= 4.5:1 for text, >= 3:1 for large text
+- [ ] All interactive elements have accessibility labels
+- [ ] Screen reader navigation order is logical
+- [ ] Touch/click targets are >= 44x44pt minimum
+- [ ] Animations respect "Reduce Motion" system setting
+- [ ] Text scales with system font size settings
+- [ ] No information conveyed by colour alone
+- [ ] Focus indicators visible for keyboard/switch navigation
+
+See `services/accessibility/accessibility-audit.md` for comprehensive auditing.
+
+## Related
+
+- `product/onboarding.md` - Onboarding flow design
+- `product/validation.md` - Competitor UI research
+- `tools/vision/overview.md` - Image generation tools
+- `tools/browser/remotion-best-practices-skill.md` - Animated previews
+- `tools/ui/tailwind-css.md` - Tailwind CSS
+- `tools/ui/shadcn.md` - shadcn/ui component library
+- `tools/design/design-inspiration.md` - 60+ design resources
+- `services/accessibility/accessibility-audit.md` - Accessibility auditing

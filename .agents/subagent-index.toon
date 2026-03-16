@@ -24,7 +24,8 @@ pro,gemini-2.5-pro,Capable large context
 grok,grok-3,Research and real-time web knowledge
 -->
 
-<!--TOON:subagents[64]{folder,purpose,key_files}:
+<!--TOON:subagents[65]{folder,purpose,key_files}:
+product/,Universal product concerns - validation onboarding monetisation growth UI design and analytics for all app types,validation|onboarding|monetisation|growth|ui-design|analytics
 aidevops/,Framework internals - extending aidevops and architecture and plugins,setup|architecture|troubleshooting|self-improving-agents|claude-flow-comparison|plugins
 business/,Company orchestration - runner configs for company functions,company-runners
 memory/,Cross-session memory - SQLite FTS5 storage,README

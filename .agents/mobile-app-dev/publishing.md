@@ -170,6 +170,6 @@ tools:
 ## Related
 
 - `mobile-app-dev/testing.md` - Pre-submission testing
-- `mobile-app-dev/monetisation.md` - Payment setup
+- `product/monetisation.md` - Payment setup
 - `mobile-app-dev/assets.md` - Screenshot and icon generation
 - `tools/browser/remotion-best-practices-skill.md` - Preview video creation

@@ -6,7 +6,7 @@
 
 - **Purpose**: Guide users from idea to published, revenue-generating mobile app
 - **Platforms**: Expo (React Native) for iOS + Android, Swift for iOS-only
-- **Lifecycle**: Idea validation -> Planning -> Design -> Development -> Testing -> Publishing -> Monetisation -> Iteration
+- **Lifecycle**: Idea validation -> Planning -> Design -> Development -> Testing -> Publishing -> Monetisation -> Growth -> Iteration
 - **Philosophy**: Open-source first, beautiful by default, user-value driven, self-improving
 
 **Platform decision** (ask user early):
@@ -18,19 +18,25 @@
 
 **Key commands**: `/new-app` (start guided flow), `/app-research` (market research), `/app-preview` (simulator preview)
 
-**Subagents** (`mobile-app-dev/`):
+**Subagents** — shared product concerns (`product/`):
 
 | Subagent | When to Read |
 |----------|--------------|
-| `planning.md` | Idea validation, market research, competitive analysis, feature scoping |
+| `product/validation.md` | Idea validation, market research, competitive analysis, feature scoping |
+| `product/onboarding.md` | User onboarding flows, first-run experience, paywall placement |
+| `product/monetisation.md` | Revenue models, paywalls, subscriptions, ads, freemium |
+| `product/growth.md` | User acquisition — UGC, influencers, content, paid ads |
+| `product/ui-design.md` | UI/UX design standards, aesthetics, animations, icons, branding |
+| `product/analytics.md` | Usage analytics, feedback loops, crash reporting, iteration signals |
+
+**Subagents** — mobile-specific (`mobile-app-dev/`):
+
+| Subagent | When to Read |
+|----------|--------------|
 | `expo.md` | Expo/React Native project setup, development, navigation, state management |
 | `swift.md` | Swift/SwiftUI project setup, native iOS development, Xcode workflows |
-| `ui-design.md` | UI/UX design standards, aesthetics, animations, icons, branding |
 | `testing.md` | Simulator/emulator/device testing, E2E flows, accessibility, QA |
 | `publishing.md` | App Store/Play Store submission, compliance, screenshots, metadata |
-| `monetisation.md` | RevenueCat, paywalls, subscriptions, ads, freemium, affiliate models |
-| `onboarding.md` | User onboarding flows, first-run experience, progressive disclosure |
-| `analytics.md` | Usage analytics, feedback loops, crash reporting, iteration signals |
 | `backend.md` | Backend services, Supabase/Firebase, Coolify self-hosted, APIs |
 | `notifications.md` | Push notifications, Expo notifications, local notifications |
 | `assets.md` | App icons, splash screens, screenshots, preview videos (Remotion) |
@@ -48,18 +54,21 @@
 - `tools/vision/overview.md` - Image generation for app assets
 - `tools/deployment/coolify.md` - Self-hosted backend deployment
 - `services/accessibility/accessibility-audit.md` - Accessibility compliance
-- `browser-extension-dev.md` - Shares planning, UI design, and monetisation subagents
+- `browser-extension-dev.md` - Shares product/ subagents for cross-platform concerns
 
-**Existing mobile tool stack**:
+**Mobile tool stack**:
 
 ```text
-Planning     -> mobile-app-dev/planning.md (market research, idea validation)
+Validation   -> product/validation.md (market research, idea validation)
+Design       -> product/ui-design.md (aesthetics, animations, icons)
+Onboarding   -> product/onboarding.md (first-run experience, paywall placement)
 Development  -> mobile-app-dev/expo.md OR mobile-app-dev/swift.md
-UI/UX        -> mobile-app-dev/ui-design.md (aesthetics, animations, icons)
 Testing      -> agent-device (AI-driven) + maestro (E2E) + xcodebuild-mcp (build)
 Preview      -> ios-simulator-mcp + playwright-emulation (web) + agent-device
 Publishing   -> mobile-app-dev/publishing.md (App Store + Play Store)
-Monetisation -> mobile-app-dev/monetisation.md (RevenueCat, ads, freemium)
+Monetisation -> product/monetisation.md (RevenueCat, ads, freemium)
+Growth       -> product/growth.md (UGC, influencers, content, paid ads)
+Analytics    -> product/analytics.md (retention, engagement, revenue)
 Assets       -> tools/vision/ (icons, graphics) + Remotion (preview videos)
 Backend      -> mobile-app-dev/backend.md (Supabase, Firebase, Coolify)
 ```
@@ -72,7 +81,7 @@ When a user wants to build a mobile app, follow this sequence. Ask focused quest
 
 ### Stage 1: Idea Validation
 
-Read `mobile-app-dev/planning.md` for detailed guidance.
+Read `product/validation.md` for detailed guidance.
 
 **Ask the user**:
 
@@ -103,12 +112,12 @@ Read `mobile-app-dev/planning.md` for detailed guidance.
 
 ### Stage 3: Design and Planning
 
-Read `mobile-app-dev/ui-design.md` for aesthetics standards.
+Read `product/ui-design.md` for aesthetics standards.
 
 **Before writing any code**:
 
 1. Define the core daily action (the one thing users repeat)
-2. Map the onboarding flow (3-5 screens max)
+2. Map the onboarding flow (3-5 screens max) — see `product/onboarding.md`
 3. Design the main dashboard/home screen
 4. Plan navigation structure (tab bar, stack, drawer)
 5. Choose colour palette and typography
@@ -146,13 +155,13 @@ Covers App Store and Play Store submission, compliance requirements, screenshot 
 
 ### Stage 7: Monetisation and Growth
 
-Read `mobile-app-dev/monetisation.md`.
+Read `product/monetisation.md` for revenue models and paywall design.
 
-Covers RevenueCat integration, paywall design, subscription tiers, ad-supported models, freemium strategies, and affiliate/funnel approaches.
+Read `product/growth.md` for user acquisition across 5 channels: UGC creators, influencers, faceless content, founder-led content, and paid ads.
 
 ### Stage 8: Iteration
 
-Read `mobile-app-dev/analytics.md`.
+Read `product/analytics.md`.
 
 Use analytics and user feedback to iterate. Track retention, engagement, crash rates, and feature usage. Prioritise improvements based on data.
 

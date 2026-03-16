@@ -169,10 +169,10 @@ Component libraries, UI kits, and design file communities.
 
 ## Related
 
-- `mobile-app-dev/ui-design.md` - Mobile app design standards and principles
-- `mobile-app-dev/assets.md` - Asset generation (icons, screenshots, videos)
-- `mobile-app-dev/onboarding.md` - Onboarding flow design
-- `mobile-app-dev/monetisation.md` - Paywall design
+- `product/ui-design.md` - Product design standards and principles
+- `product/onboarding.md` - Onboarding flow design
+- `product/monetisation.md` - Paywall design
+- `mobile-app-dev/assets.md` - Mobile asset generation (icons, screenshots, videos)
 - `browser-extension-dev.md` - Extension UI design considerations
 - `tools/vision/overview.md` - AI image generation for custom assets
 - `tools/browser/remotion-best-practices-skill.md` - Animated preview videos
