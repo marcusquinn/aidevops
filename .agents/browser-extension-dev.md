@@ -48,16 +48,16 @@
 **Extension tool stack**:
 
 ```text
-Validation   -> product/validation.md (market research, idea validation)
-Design       -> product/ui-design.md (aesthetics, animations, icons)
-Onboarding   -> product/onboarding.md (first-run experience, paywall placement)
-Development  -> browser-extension-dev/development.md (WXT, Plasmo, MV3)
-Testing      -> browser-extension-dev/testing.md + Playwright
-Publishing   -> chrome-webstore-release.md (Chrome) + browser-extension-dev/publishing.md
-Monetisation -> product/monetisation.md (Stripe, freemium, subscriptions)
-Growth       -> product/growth.md (UGC, influencers, content, paid ads)
-Analytics    -> product/analytics.md (PostHog, Plausible)
-Assets       -> tools/vision/ (icons) + product/ui-design.md (design)
+Validation    -> product/validation.md (market research, idea validation)
+Design        -> product/ui-design.md (aesthetics, animations, icons)
+Onboarding    -> product/onboarding.md (first-run experience, paywall placement)
+Development   -> browser-extension-dev/development.md (WXT, Plasmo, MV3)
+Testing       -> browser-extension-dev/testing.md + Playwright
+Publishing    -> chrome-webstore-release.md (Chrome) + browser-extension-dev/publishing.md
+Monetisation  -> product/monetisation.md (Stripe, freemium, subscriptions)
+Growth        -> product/growth.md (UGC, influencers, content, paid ads)
+Analytics     -> product/analytics.md (PostHog, Plausible)
+Assets        -> tools/vision/ (icons) + product/ui-design.md (design)
 ```
 
 <!-- AI-CONTEXT-END -->
