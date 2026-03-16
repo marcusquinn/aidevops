@@ -1,5 +1,4 @@
 #!/usr/bin/env bash
-# shellcheck disable=SC2034
 set -euo pipefail
 
 # Email Export Helper for AI DevOps Framework
@@ -12,9 +11,6 @@ source "${SCRIPT_DIR}/shared-constants.sh"
 readonly EMAIL_TO_MD_SCRIPT="${SCRIPT_DIR}/email-to-markdown.py"
 readonly MAILBOX_HELPER_SCRIPT="${SCRIPT_DIR}/email-mailbox-helper.sh"
 readonly DEFAULT_EXPORT_BASE="${HOME}/.aidevops/.agent-workspace/email-case-exports"
-# Newline literal for bash 3.2-safe case pattern matching (RFC 4180 CSV quoting)
-LF=$'\n'
-readonly LF
 
 timestamp_utc() {
 	date -u +"%Y-%m-%dT%H:%M:%SZ"
@@ -176,18 +172,14 @@ append_attachment_manifest() {
 		while IFS= read -r -d '' file_path; do
 			local filename
 			filename=$(basename "$file_path")
-			# RFC 4180: quote fields containing comma, double-quote, or newline
-			local csv_filename="$filename"
-			case "$filename" in
-			*[,\"]* | *"$LF"*)
-				csv_filename="\"${filename//\"/\"\"}\""
-				;;
-			esac
+			# RFC 4180: quote all fields; double any embedded double-quotes in filename
+			local csv_filename
+			csv_filename="\"${filename//\"/\"\"}\""
 			local size_bytes
 			size_bytes=$(wc -c <"$file_path" | tr -d ' ')
 			local checksum
 			checksum=$(compute_sha256 "$file_path")
-			printf '%s,%s,%s\n' "$csv_filename" "$size_bytes" "$checksum"
+			printf '%s,"%s","%s"\n' "$csv_filename" "$size_bytes" "$checksum"
 		done < <(find "$attachment_dir" -type f ! -name "$manifest_name" -print0 | sort -z)
 	} >"$temp_manifest"
 
