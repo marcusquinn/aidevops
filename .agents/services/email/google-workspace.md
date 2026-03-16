@@ -124,6 +124,8 @@ Complete interactive auth on a machine with a browser, then export:
 # On the machine with a browser
 gws auth export --unmasked > credentials.json
 
+# WARNING: credentials.json now contains plaintext OAuth tokens.
+# Delete it after importing — do not leave it on disk unencrypted.
 # Store securely — never commit this file
 aidevops secret set GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE
 # Enter the file path at the prompt, e.g. /path/to/credentials.json
@@ -358,17 +360,17 @@ gws workflow +weekly-digest
 # List connections (contacts) with names and email addresses
 gws people connections list \
   --params '{"resourceName":"people/me","personFields":"names,emailAddresses","pageSize":100}' \
-  | jq '.connections[] | {name: .names[0].displayName, email: .emailAddresses[0].value}'
+  | jq '.connections[] | select(.names and .emailAddresses) | {name: .names[0].displayName, email: .emailAddresses[0].value}'
 
 # Search contacts
 gws people searchContacts \
   --params '{"query":"alice","readMask":"names,emailAddresses"}' \
-  | jq '.results[].person | {name: .names[0].displayName, email: .emailAddresses[0].value}'
+  | jq '.results[].person | select(.names and .emailAddresses) | {name: .names[0].displayName, email: .emailAddresses[0].value}'
 
 # Get a specific contact
 gws people people get \
   --params '{"resourceName":"people/PERSON_ID","personFields":"names,emailAddresses,phoneNumbers,organizations"}' \
-  | jq '{name: .names[0].displayName, email: .emailAddresses[0].value}'
+  | jq 'select(.names and .emailAddresses) | {name: .names[0].displayName, email: .emailAddresses[0].value}'
 
 # Create a contact
 gws people people createContact \
@@ -386,13 +388,14 @@ gws people people updateContact \
 
 ```bash
 # Dump all contacts to a local file for offline use
+mkdir -p ~/.aidevops/.agent-workspace/work/contacts
 gws people connections list \
   --params '{"resourceName":"people/me","personFields":"names,emailAddresses,phoneNumbers","pageSize":1000}' \
   --page-all \
   > ~/.aidevops/.agent-workspace/work/contacts/google-contacts.ndjson
 
 # Extract email→name mapping
-jq -r '.connections[] | "\(.emailAddresses[0].value)\t\(.names[0].displayName)"' \
+jq -r '.connections[] | select(.emailAddresses and .names) | "\(.emailAddresses[0].value)\t\(.names[0].displayName)"' \
   ~/.aidevops/.agent-workspace/work/contacts/google-contacts.ndjson
 ```
 
