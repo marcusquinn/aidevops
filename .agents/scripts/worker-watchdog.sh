@@ -25,11 +25,11 @@
 #   - Logs the action to the watchdog log file
 #
 # Usage:
-#   worker-watchdog.sh                  # Single check (for launchd)
+#   worker-watchdog.sh                  # Single check (for scheduler)
 #   worker-watchdog.sh --check          # Same as above
 #   worker-watchdog.sh --status         # Show current worker state
-#   worker-watchdog.sh --install        # Install launchd plist (runs every 120s)
-#   worker-watchdog.sh --uninstall      # Remove launchd plist
+#   worker-watchdog.sh --install        # Install scheduler (launchd on macOS, cron on Linux)
+#   worker-watchdog.sh --uninstall      # Remove scheduler entry
 #   worker-watchdog.sh --help           # Show usage
 #
 # Environment:
@@ -97,6 +97,18 @@ THRASH_FLAG=""
 
 readonly LAUNCHD_LABEL="sh.aidevops.worker-watchdog"
 readonly PLIST_PATH="${HOME}/Library/LaunchAgents/${LAUNCHD_LABEL}.plist"
+readonly CRON_MARKER="# aidevops: worker-watchdog"
+
+#######################################
+# Detect scheduler backend for this OS
+# Output: "launchd" or "cron"
+#######################################
+_get_scheduler_backend() {
+	case "$(uname -s)" in
+	Darwin) echo "launchd" ;;
+	*) echo "cron" ;;
+	esac
+}
 
 #######################################
 # Ensure directories exist
@@ -841,17 +853,35 @@ cmd_status() {
 		echo "  Total: ${count} worker(s)"
 	fi
 
+	local backend
+	backend="$(_get_scheduler_backend)"
+
 	echo ""
-	echo "--- Launchd ---"
+	echo "--- Scheduler (${backend}) ---"
 	echo ""
-	if [[ -f "${PLIST_PATH}" ]]; then
-		if launchctl list 2>/dev/null | grep -q "${LAUNCHD_LABEL}"; then
-			echo "  Status: installed and loaded"
+	if [[ "$backend" == "launchd" ]]; then
+		if [[ -f "${PLIST_PATH}" ]]; then
+			# Capture output to avoid SIGPIPE under set -o pipefail
+			local launchctl_out
+			launchctl_out=$(launchctl list 2>/dev/null) || true
+			if echo "$launchctl_out" | grep -q "${LAUNCHD_LABEL}"; then
+				echo "  Status: installed and loaded"
+			else
+				echo "  Status: installed but NOT loaded"
+			fi
 		else
-			echo "  Status: installed but NOT loaded"
+			echo "  Status: not installed (run --install)"
 		fi
 	else
-		echo "  Status: not installed (run --install)"
+		# Linux: check cron
+		if crontab -l 2>/dev/null | grep -qF "$CRON_MARKER"; then
+			local cron_entry
+			cron_entry=$(crontab -l 2>/dev/null | grep -F "$CRON_MARKER")
+			echo "  Status: installed"
+			echo "  Entry:  ${cron_entry}"
+		else
+			echo "  Status: not installed (run --install)"
+		fi
 	fi
 
 	echo ""
@@ -859,7 +889,7 @@ cmd_status() {
 }
 
 #######################################
-# Install launchd plist
+# Install scheduler (launchd on macOS, cron on Linux)
 #######################################
 cmd_install() {
 	local script_path
@@ -870,9 +900,29 @@ cmd_install() {
 	fi
 
 	ensure_dirs
-	mkdir -p "$(dirname "${PLIST_PATH}")"
 
+	local backend
+	backend="$(_get_scheduler_backend)"
+
+	if [[ "$backend" == "launchd" ]]; then
+		_install_launchd "$script_path"
+	else
+		_install_cron "$script_path"
+	fi
+
+	return 0
+}
+
+#######################################
+# Install launchd plist (macOS)
+# Arguments:
+#   $1 - script path
+#######################################
+_install_launchd() {
+	local script_path="$1"
 	local home_escaped="${HOME}"
+
+	mkdir -p "$(dirname "${PLIST_PATH}")"
 
 	cat >"${PLIST_PATH}" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
@@ -925,15 +975,60 @@ EOF
 }
 
 #######################################
-# Uninstall launchd plist
+# Install cron entry (Linux)
+# Arguments:
+#   $1 - script path
+#######################################
+_install_cron() {
+	local script_path="$1"
+	local cron_line="*/2 * * * * /bin/bash ${script_path} --check >> ${LOG_FILE} 2>&1 ${CRON_MARKER}"
+
+	local temp_cron
+	temp_cron=$(mktemp)
+	trap 'rm -f "${temp_cron:-}"' RETURN
+
+	# Remove any existing watchdog entry, then add the new one
+	crontab -l 2>/dev/null | grep -vF "$CRON_MARKER" >"$temp_cron" || true
+	echo "$cron_line" >>"$temp_cron"
+	crontab "$temp_cron"
+	rm -f "$temp_cron"
+
+	echo "Installed cron entry for worker-watchdog"
+	echo "Schedule: every 2 minutes"
+	echo "Log: ${LOG_FILE}"
+	echo ""
+	echo "  Uninstall with: ${SCRIPT_NAME}.sh --uninstall"
+	return 0
+}
+
+#######################################
+# Uninstall scheduler (launchd on macOS, cron on Linux)
 #######################################
 cmd_uninstall() {
-	if [[ -f "${PLIST_PATH}" ]]; then
-		launchctl bootout "gui/$(id -u)" "${PLIST_PATH}" 2>/dev/null || true
-		rm -f "${PLIST_PATH}"
-		echo "Uninstalled: ${LAUNCHD_LABEL}"
+	local backend
+	backend="$(_get_scheduler_backend)"
+
+	if [[ "$backend" == "launchd" ]]; then
+		if [[ -f "${PLIST_PATH}" ]]; then
+			launchctl bootout "gui/$(id -u)" "${PLIST_PATH}" 2>/dev/null || true
+			rm -f "${PLIST_PATH}"
+			echo "Uninstalled: ${LAUNCHD_LABEL}"
+		else
+			echo "Not installed (launchd)"
+		fi
 	else
-		echo "Not installed"
+		# Linux: remove cron entry
+		if crontab -l 2>/dev/null | grep -qF "$CRON_MARKER"; then
+			local temp_cron
+			temp_cron=$(mktemp)
+			trap 'rm -f "${temp_cron:-}"' RETURN
+			crontab -l 2>/dev/null | grep -vF "$CRON_MARKER" >"$temp_cron" || true
+			crontab "$temp_cron"
+			rm -f "$temp_cron"
+			echo "Uninstalled cron entry for worker-watchdog"
+		else
+			echo "Not installed (cron)"
+		fi
 	fi
 
 	# Clean up state files
@@ -950,10 +1045,10 @@ cmd_help() {
 Usage: ${SCRIPT_NAME}.sh [COMMAND]
 
 Commands:
-  --check, -c       Single check (default, for launchd)
+  --check, -c       Single check (default, for scheduler)
   --status, -s      Show current worker state
-  --install, -i     Install launchd plist (runs every 120s)
-  --uninstall, -u   Remove launchd plist and state files
+  --install, -i     Install scheduler (launchd on macOS, cron on Linux)
+  --uninstall, -u   Remove scheduler entry and state files
   --help, -h        Show this help
 
 Detection signals:
