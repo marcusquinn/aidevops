@@ -21,134 +21,11 @@ The runners system is intentionally simple:
 4. **Ops workers** execute the requested SOP/command and report outcomes
 4. **No databases, no state machines, no complex bash pipelines**
 
-The supervisor handles dispatch. The worker command depends on the work type.
-
-> **Note:** The previous bash supervisor implementation (`supervisor-helper.sh` and `supervisor/*.sh`) has been archived to `.agents/scripts/supervisor-archived/` for reference. All active orchestration now uses the AI-driven pulse model described here. Any references to the old paths in setup scripts, tests, or docs should be treated as stale — the archived scripts are not sourced or executed by the current system.
-
-## Automated Mode: `/pulse`
-
-For unattended operation, the `/pulse` command runs every 2 minutes via launchd. Its prime directive is **fill all available worker slots with the highest-value work**. Each pulse cycle:
-
-1. Checks capacity: counts running workers against the configured max (default 6 concurrent)
-2. Reads pre-fetched state: open PRs and issues across all managed repos via `gh`
-3. Merges ready PRs (green CI + review gate passed) — free, no worker slot needed
-4. Dispatches workers to fill all `AVAILABLE` slots (not just one): assigns issues, routes to the right agent, and backgrounds each `opencode run` with `&`
-5. Enters a monitoring loop: sleeps 60s, re-checks capacity, backfills any freed slots immediately
-
-The pulse never dispatches just one worker and stops — it fills every available slot and keeps them filled for the duration of the session (up to 60 minutes). See `scripts/commands/pulse.md` for the full spec.
-
-### Pulse Scheduler Setup
-
-The pulse scheduler runs every 2 minutes and dispatches workers. Setup depends on your OS.
-
-#### macOS (launchd)
-
-If the plist doesn't exist (fresh install, new machine, or after a crash that deleted it), create it:
-
-```bash
-# 1. Get the opencode binary path and user PATH for the plist
-which opencode        # e.g. /opt/homebrew/bin/opencode
-echo "$PATH"          # needed for EnvironmentVariables
-
-# 2. Create the plist
-cat > ~/Library/LaunchAgents/com.aidevops.aidevops-supervisor-pulse.plist << 'PLIST'
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-	<key>Label</key>
-	<string>com.aidevops.aidevops-supervisor-pulse</string>
-	<key>ProgramArguments</key>
-	<array>
-		<string>/bin/bash</string>
-		<string>-c</string>
-		<string>pgrep -f 'Supervisor Pulse' &gt;/dev/null &amp;&amp; exit 0; OPENCODE_PATH run "/pulse" --dir AIDEVOPS_DIR -m anthropic/claude-sonnet-4-6 --title "Supervisor Pulse"</string>
-	</array>
-	<key>StartInterval</key>
-	<integer>120</integer>
-	<key>StandardOutPath</key>
-	<string>HOME_DIR/.aidevops/logs/pulse.log</string>
-	<key>StandardErrorPath</key>
-	<string>HOME_DIR/.aidevops/logs/pulse.log</string>
-	<key>EnvironmentVariables</key>
-	<dict>
-		<key>PATH</key>
-		<string>USER_PATH</string>
-		<key>HOME</key>
-		<string>HOME_DIR</string>
-	</dict>
-	<key>RunAtLoad</key>
-	<true/>
-	<key>KeepAlive</key>
-	<false/>
-</dict>
-</plist>
-PLIST
-
-# 3. Replace placeholders with actual values
-sed -i '' "s|OPENCODE_PATH|$(which opencode)|g" ~/Library/LaunchAgents/com.aidevops.aidevops-supervisor-pulse.plist
-sed -i '' "s|AIDEVOPS_DIR|$HOME/Git/aidevops|g" ~/Library/LaunchAgents/com.aidevops.aidevops-supervisor-pulse.plist
-sed -i '' "s|HOME_DIR|$HOME|g" ~/Library/LaunchAgents/com.aidevops.aidevops-supervisor-pulse.plist
-sed -i '' "s|USER_PATH|$PATH|g" ~/Library/LaunchAgents/com.aidevops.aidevops-supervisor-pulse.plist
-
-# 4. Create log directory and load
-mkdir -p ~/.aidevops/logs
-launchctl load ~/Library/LaunchAgents/com.aidevops.aidevops-supervisor-pulse.plist
-```
-
-**Key settings:**
-- `RunAtLoad: true` — fires immediately on login/reboot (no waiting for first timer tick)
-- `KeepAlive: false` — each pulse is a one-shot run, not a long-lived daemon
-- `StartInterval: 120` — fires every 2 minutes
-- The `pgrep` guard prevents overlapping pulses (if a previous pulse is still running, skip)
-
-#### Linux (cron)
-
-One cron entry with a pgrep guard to prevent overlapping pulses:
-
-```bash
-mkdir -p ~/.aidevops/logs
-
-# Add to crontab (every 2 minutes)
-(crontab -l 2>/dev/null; echo "*/2 * * * * pgrep -f 'Supervisor Pulse' >/dev/null || $(which opencode) run \"/pulse\" --dir $HOME/Git/aidevops -m anthropic/claude-sonnet-4-6 --title \"Supervisor Pulse\" >> $HOME/.aidevops/logs/pulse.log 2>&1 # aidevops: supervisor-pulse") | crontab -
-```
-
-**Key settings:**
-- `*/2 * * * *` — fires every 2 minutes
-- `pgrep` guard prevents overlapping pulses (if a previous pulse is still running, skip)
-- Uses full path to `opencode` since cron has a minimal `PATH`
-
-### Enable / Disable / Verify
-
-```bash
-## macOS
-# Enable
-launchctl load ~/Library/LaunchAgents/com.aidevops.aidevops-supervisor-pulse.plist
-# Disable
-launchctl unload ~/Library/LaunchAgents/com.aidevops.aidevops-supervisor-pulse.plist
-# Check
-launchctl list | grep aidevops-supervisor-pulse
-
-## Linux
-# Check
-crontab -l | grep supervisor-pulse
-# Disable
-crontab -l | grep -v 'supervisor-pulse' | crontab -
-# Re-enable — run the install command above
-
-# Both platforms — check recent output
-tail -50 ~/.aidevops/logs/pulse.log
-```
-
-### After Reboot
-
-**macOS:** The pulse auto-starts on login (`RunAtLoad: true`).
-
-**Linux:** Cron runs automatically after reboot — no extra config needed.
-
-Old workers don't survive reboot on either platform — the first pulse cycle sees 0 workers, 6 empty slots, and dispatches fresh work. No manual intervention needed.
+> **Automated mode:** For unattended operation and full supervisor behaviour (auto-pickup, capacity management, lifecycle evaluation), use `/pulse`. See `scripts/commands/pulse.md` for the full spec.
 
 ## Interactive Mode: `/runners`
+
+**Scope boundary:** When invoked as `/runners`, ONLY resolve and dispatch the items explicitly specified in the arguments. Do NOT run supervisor phases, auto-pickup additional tasks, lifecycle evaluation, quality sweeps, or CodeRabbit pulse. Dispatch exactly the requested items and stop.
 
 For manual dispatch of specific work items.
 
@@ -232,9 +109,9 @@ After dispatching, show the user what was launched:
 Workers are independent. They succeed or fail on their own. The next `/pulse` cycle
 (or the user) can check on outcomes and dispatch follow-ups.
 
-## Supervisor Philosophy
+## Dispatcher Philosophy
 
-The supervisor (whether `/pulse` or `/runners`) NEVER does task work itself:
+The `/pulse` supervisor NEVER does task work itself:
 
 - **Never** reads source code or implements features
 - **Never** runs tests or linters on behalf of workers
@@ -242,10 +119,9 @@ The supervisor (whether `/pulse` or `/runners`) NEVER does task work itself:
 - **Always** dispatches workers via `opencode run` with the command chosen by task type
 - **Always** routes to the right agent — not every task is code
 
-If a worker fails, improve the worker instructions/command definition,
-not the supervisor role. Each fixed failure improves the next run.
+`/runners` is a targeted dispatch tool, not a supervisor. It dispatches exactly what you specify and stops. If a worker fails, improve the worker instructions/command definition, not the dispatcher. Each fixed failure improves the next run.
 
-**Self-improvement:** The supervisor observes outcomes from GitHub state (PRs, issues, timelines) and files improvement issues for systemic problems. See `AGENTS.md` "Self-Improvement" for the universal principle. The supervisor never maintains separate state — TODO.md, PLANS.md, and GitHub are the database.
+**Self-improvement:** The `/pulse` supervisor observes outcomes from GitHub state (PRs, issues, timelines) and files improvement issues for systemic problems. See `AGENTS.md` "Self-Improvement" for the universal principle. The supervisor never maintains separate state — TODO.md, PLANS.md, and GitHub are the database.
 
 ## Examples
 
