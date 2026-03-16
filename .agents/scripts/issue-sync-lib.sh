@@ -770,7 +770,13 @@ compose_issue_body() {
 	# Second metadata line: dates and assignment
 	local meta_line2=""
 	if [[ -n "$assignee" ]]; then
-		meta_line2="**Assignee:** @$assignee"
+		# Only add @ if assignee looks like a GitHub username (no @ in it already)
+		# This prevents @user@host or plain usernames from becoming bad mentions
+		if [[ "$assignee" =~ ^[A-Za-z0-9._-]+$ ]]; then
+			meta_line2="**Assignee:** @$assignee"
+		else
+			meta_line2="**Assignee:** $assignee"
+		fi
 	fi
 	if [[ -n "$logged" ]]; then
 		meta_line2="${meta_line2:+$meta_line2 | }**Logged:** $logged"
