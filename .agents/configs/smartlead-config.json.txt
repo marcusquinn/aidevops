@@ -1,0 +1,37 @@
+{
+  "_comment": "Smartlead configuration template. Copy to ~/.config/aidevops/smartlead-config.json and fill in values.",
+  "_docs": "https://api.smartlead.ai/reference",
+  "api_key_source": "gopass:aidevops/smartlead-api-key",
+  "base_url": "https://server.smartlead.ai/api/v1",
+  "rate_limit": {
+    "_comment": "10 requests per 2 seconds. Delay is per-request pause in seconds.",
+    "requests_per_window": 10,
+    "window_seconds": 2,
+    "delay_between_requests": 0.2
+  },
+  "defaults": {
+    "timeout_seconds": 30,
+    "max_leads_per_batch": 400,
+    "max_email_per_day_per_account": 100
+  },
+  "warmup": {
+    "_comment": "Default warmup settings for new email accounts. See cold-outreach.md for ramp schedule.",
+    "enabled": true,
+    "total_warmup_per_day": 15,
+    "daily_rampup": 5,
+    "reply_rate_percentage": 30
+  },
+  "campaign_defaults": {
+    "timezone": "America/New_York",
+    "sending_days": [1, 2, 3, 4, 5],
+    "start_hour": "09:00",
+    "end_hour": "17:00",
+    "track_opens": true,
+    "track_clicks": true,
+    "stop_on": "REPLY_TO_AN_EMAIL"
+  },
+  "webhook_defaults": {
+    "_comment": "Default events to subscribe to for campaign webhooks.",
+    "event_types": ["LEAD_REPLIED", "LEAD_BOUNCED", "LEAD_UNSUBSCRIBED"]
+  }
+}
