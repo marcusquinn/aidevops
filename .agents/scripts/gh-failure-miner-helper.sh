@@ -80,11 +80,11 @@ require_option_value() {
 	return 0
 }
 
-require_positive_integer() {
+require_non_negative_integer() {
 	local option_name="$1"
 	local value="$2"
 	if [[ ! "$value" =~ ^[0-9]+$ ]]; then
-		die "${option_name} must be a positive integer"
+		die "${option_name} must be a non-negative integer"
 		return 1
 	fi
 	return 0
@@ -830,9 +830,9 @@ parse_launchd_options() {
 		esac
 	done
 
-	require_positive_integer "--since-hours" "$LAUNCHD_SINCE_HOURS" || return 1
-	require_positive_integer "--systemic-threshold" "$LAUNCHD_SYSTEMIC_THRESHOLD" || return 1
-	require_positive_integer "--max-issues" "$LAUNCHD_MAX_ISSUES" || return 1
+	require_non_negative_integer "--since-hours" "$LAUNCHD_SINCE_HOURS" || return 1
+	require_non_negative_integer "--systemic-threshold" "$LAUNCHD_SYSTEMIC_THRESHOLD" || return 1
+	require_non_negative_integer "--max-issues" "$LAUNCHD_MAX_ISSUES" || return 1
 	return 0
 }
 
@@ -949,11 +949,11 @@ parse_common_options() {
 		esac
 	done
 
-	require_positive_integer "--since-hours" "$SINCE_HOURS" || return 1
-	require_positive_integer "--limit" "$LIMIT" || return 1
-	require_positive_integer "--max-run-logs" "$MAX_RUN_LOGS" || return 1
-	require_positive_integer "--systemic-threshold" "$SYSTEMIC_THRESHOLD" || return 1
-	require_positive_integer "--max-issues" "$MAX_ISSUES" || return 1
+	require_non_negative_integer "--since-hours" "$SINCE_HOURS" || return 1
+	require_non_negative_integer "--limit" "$LIMIT" || return 1
+	require_non_negative_integer "--max-run-logs" "$MAX_RUN_LOGS" || return 1
+	require_non_negative_integer "--systemic-threshold" "$SYSTEMIC_THRESHOLD" || return 1
+	require_non_negative_integer "--max-issues" "$MAX_ISSUES" || return 1
 
 	if [[ "$LIMIT" -gt 100 ]]; then
 		LIMIT=100
