@@ -181,7 +181,7 @@ gh issue view 42 --repo user/repo --json number,title,url
 For each resolved item, launch a worker using `headless-runtime-helper.sh run`. This is the **ONLY** correct dispatch path — it constructs the full lifecycle prompt, handles provider rotation, session persistence, and backoff. NEVER use bare `opencode run` for dispatch — workers launched that way miss lifecycle reinforcement and stop after PR creation (see GH#5096).
 
 ```bash
-HELPER=~/.aidevops/agents/scripts/headless-runtime-helper.sh
+HELPER="$(aidevops config get paths.agents_dir)/scripts/headless-runtime-helper.sh"
 
 # For code tasks (Build+ is default — omit --agent)
 $HELPER run \

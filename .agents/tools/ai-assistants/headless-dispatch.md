@@ -226,7 +226,7 @@ When dispatching multiple workers manually (outside the pulse supervisor), **sta
 - **MCP cold boot storms**: MCP servers (especially Node-based ones) have expensive startup. Concurrent initialization competes for CPU and I/O.
 
 ```bash
-HELPER=~/.aidevops/agents/scripts/headless-runtime-helper.sh
+HELPER="$(aidevops config get paths.agents_dir)/scripts/headless-runtime-helper.sh"
 
 # WRONG: Thundering herd — all 4 workers cold-boot simultaneously
 for issue in 42 43 44 45; do
@@ -792,7 +792,7 @@ LINEAGE RULES:
 > **IMPORTANT:** Always use `headless-runtime-helper.sh run` for dispatch — never bare `opencode run`. Bare dispatch skips lifecycle reinforcement, causing workers to stop after PR creation (GH#5096).
 
 ```bash
-HELPER=~/.aidevops/agents/scripts/headless-runtime-helper.sh
+HELPER="$(aidevops config get paths.agents_dir)/scripts/headless-runtime-helper.sh"
 
 # Standard dispatch (no lineage — top-level task)
 $HELPER run \
@@ -1071,7 +1071,7 @@ NEXT=$(batch-strategy-helper.sh next-batch \
   --concurrency "$AVAILABLE_SLOTS")
 
 # Dispatch each task in the batch
-HELPER=~/.aidevops/agents/scripts/headless-runtime-helper.sh
+HELPER="$(aidevops config get paths.agents_dir)/scripts/headless-runtime-helper.sh"
 echo "$NEXT" | jq -r '.[]' | while read -r task_id; do
   $HELPER run --role worker --session-key "task-${task_id}" \
     --dir <path> --title "$task_id" \

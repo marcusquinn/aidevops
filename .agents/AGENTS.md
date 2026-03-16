@@ -125,7 +125,7 @@ Not every task is code. The framework has multiple primary agents, each with dom
 **Dispatch example:**
 
 ```bash
-HELPER=~/.aidevops/agents/scripts/headless-runtime-helper.sh
+HELPER="$(aidevops config get paths.agents_dir)/scripts/headless-runtime-helper.sh"
 
 # Code task (default — Build+ implied)
 $HELPER run \
