@@ -1236,8 +1236,8 @@ list_active_worker_processes() {
 		$0 !~ /(^|[[:space:]])\/pulse([[:space:]]|$)/ &&
 		$0 !~ /Supervisor Pulse/ &&
 		$0 ~ /(^|[[:space:]\/])\.?opencode([[:space:]]|$)/ &&
-		$0 !~ /[[:space:]]node[[:space:]].*opencode/ &&
-		$0 !~ /\/\.opencode[[:space:]]/ {
+		$0 !~ /[[:space:]]node[[:space:]].*\/opencode/ &&
+		$0 !~ /\/bin\/\.opencode[[:space:]]/ {
 			print
 		}
 	'
