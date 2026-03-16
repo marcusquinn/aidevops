@@ -116,6 +116,22 @@ brew install wp-cli
 brew install node
 ```text
 
+## Composer-Based WordPress (Bedrock)
+
+For projects that manage WordPress as a Composer project (e.g., [Bedrock](https://roots.io/bedrock/)), use [WP Composer](https://wp-composer.com/) as the Composer repository for plugins and themes. It is the preferred alternative to WPackagist (which was acquired by WP Engine in March 2026).
+
+**Setup:**
+
+```bash
+composer config repositories.wp-composer composer https://repo.wp-composer.com
+```
+
+**Package naming:** `wp-plugin/{slug}` for plugins, `wp-theme/{slug}` for themes.
+
+**When to use:** Bedrock-style projects where `wp-content` is managed via `composer.json` and the entire site is version-controlled. Not applicable to traditional WordPress installations where plugins are managed via WP-CLI or the admin dashboard (e.g., Closte-hosted sites).
+
+**Migration from WPackagist:** See [migration guide](https://wp-composer.com/wp-composer-vs-wpackagist) or use the [migration script](https://github.com/roots/wp-composer/blob/main/scripts/migrate-from-wpackagist.sh).
+
 ## WordPress MCP Adapter
 
 The official WordPress MCP Adapter enables AI interaction with WordPress sites.
@@ -976,3 +992,5 @@ Before releasing a plugin/theme:
 - [PHPUnit for WordPress](https://make.wordpress.org/core/handbook/testing/automated-testing/phpunit/)
 - [WordPress MCP Adapter](https://github.com/WordPress/mcp-adapter)
 - [WP-CLI Commands](https://developer.wordpress.org/cli/commands/)
+- [WP Composer](https://wp-composer.com/) (preferred Composer repository for WP plugins/themes)
+- [Bedrock](https://roots.io/bedrock/) (Composer-based WordPress boilerplate by Roots)
