@@ -240,6 +240,72 @@ SCHEMA
 sql_escape() {
 	local val="$1"
 	echo "${val//\'/\'\'}"
+	return 0
+}
+
+#######################################
+# Normalize channel identifier for storage/lookup
+# Email addresses are case-insensitive and often include plus aliases.
+#######################################
+normalize_channel_id() {
+	local channel="$1"
+	local channel_id="$2"
+
+	if [[ "$channel" != "email" ]]; then
+		echo "$channel_id"
+		return 0
+	fi
+
+	local normalized
+	normalized=$(printf '%s' "$channel_id" | sed -E 's/^[[:space:]]+//; s/[[:space:]]+$//' | tr '[:upper:]' '[:lower:]')
+
+	if [[ "$normalized" != *"@"* ]]; then
+		echo "$normalized"
+		return 0
+	fi
+
+	local local_part
+	local_part="${normalized%@*}"
+	local_part="${local_part%%+*}"
+	local domain_part
+	domain_part="${normalized#*@}"
+
+	echo "${local_part}@${domain_part}"
+	return 0
+}
+
+#######################################
+# Resolve email identity against historical non-normalized entries
+#######################################
+resolve_email_entity_fallback() {
+	local normalized_email="$1"
+	local result=""
+
+	local rows
+	rows=$(entity_db "$ENTITY_MEMORY_DB" "SELECT entity_id || '|' || channel_id FROM entity_channels WHERE channel = 'email';")
+	if [[ -z "$rows" ]]; then
+		return 1
+	fi
+
+	while IFS='|' read -r candidate_entity candidate_channel_id; do
+		if [[ -z "$candidate_entity" || -z "$candidate_channel_id" ]]; then
+			continue
+		fi
+
+		local normalized_candidate
+		normalized_candidate=$(normalize_channel_id "email" "$candidate_channel_id")
+		if [[ "$normalized_candidate" == "$normalized_email" ]]; then
+			result="$candidate_entity"
+			break
+		fi
+	done <<<"$rows"
+
+	if [[ -z "$result" ]]; then
+		return 1
+	fi
+
+	echo "$result"
+	return 0
 }
 
 #######################################
@@ -322,13 +388,15 @@ EOF
 		if [[ ! " $VALID_CHANNELS " =~ $channel_pattern ]]; then
 			log_warn "Invalid channel: $channel. Skipping channel link."
 		else
+			local normalized_channel_id
+			normalized_channel_id=$(normalize_channel_id "$channel" "$channel_id")
 			local esc_channel_id
-			esc_channel_id=$(sql_escape "$channel_id")
+			esc_channel_id=$(sql_escape "$normalized_channel_id")
 			entity_db "$ENTITY_MEMORY_DB" <<EOF
 INSERT INTO entity_channels (entity_id, channel, channel_id, display_name, confidence)
 VALUES ('$id', '$channel', '$esc_channel_id', '$esc_display', 'confirmed');
 EOF
-			log_info "Linked to $channel: $channel_id"
+			log_info "Linked to $channel: $normalized_channel_id"
 		fi
 	fi
 
@@ -763,7 +831,9 @@ cmd_link() {
 
 	local esc_id esc_channel_id esc_display
 	esc_id=$(sql_escape "$entity_id")
-	esc_channel_id=$(sql_escape "$channel_id")
+	local normalized_channel_id
+	normalized_channel_id=$(normalize_channel_id "$channel" "$channel_id")
+	esc_channel_id=$(sql_escape "$normalized_channel_id")
 	esc_display=$(sql_escape "$display_name")
 
 	# Check entity exists
@@ -779,8 +849,8 @@ cmd_link() {
 	existing_entity=$(entity_db "$ENTITY_MEMORY_DB" \
 		"SELECT entity_id FROM entity_channels WHERE channel = '$channel' AND channel_id = '$esc_channel_id';" 2>/dev/null || echo "")
 	if [[ -n "$existing_entity" && "$existing_entity" != "$entity_id" ]]; then
-		log_error "Channel identity $channel:$channel_id is already linked to entity $existing_entity"
-		log_error "Unlink it first with: entity-helper.sh unlink $existing_entity --channel $channel --channel-id \"$channel_id\""
+		log_error "Channel identity $channel:$normalized_channel_id is already linked to entity $existing_entity"
+		log_error "Unlink it first with: entity-helper.sh unlink $existing_entity --channel $channel --channel-id \"$normalized_channel_id\""
 		return 1
 	fi
 
@@ -801,7 +871,7 @@ ON CONFLICT(channel, channel_id) DO UPDATE SET
     verified_at = $verified_at;
 EOF
 
-	log_success "Linked $channel:$channel_id -> entity $entity_id ($confidence)"
+	log_success "Linked $channel:$normalized_channel_id -> entity $entity_id ($confidence)"
 	return 0
 }
 
@@ -837,6 +907,7 @@ cmd_unlink() {
 
 	local esc_id esc_channel_id
 	esc_id=$(sql_escape "$entity_id")
+	channel_id=$(normalize_channel_id "$channel" "$channel_id")
 	esc_channel_id=$(sql_escape "$channel_id")
 
 	local deleted
@@ -872,8 +943,10 @@ cmd_suggest() {
 
 	init_entity_db
 
+	local normalized_channel_id
+	normalized_channel_id=$(normalize_channel_id "$channel" "$channel_id")
 	local esc_channel_id
-	esc_channel_id=$(sql_escape "$channel_id")
+	esc_channel_id=$(sql_escape "$normalized_channel_id")
 
 	# 1. Exact match on channel_id
 	local exact_match
@@ -913,15 +986,15 @@ EOF
 	)
 
 	if [[ -z "$suggestions" || "$suggestions" == "[]" ]]; then
-		log_info "No matching entities found for $channel:$channel_id"
-		log_info "Create one with: entity-helper.sh create --name \"Name\" --channel $channel --channel-id \"$channel_id\""
+		log_info "No matching entities found for $channel:$normalized_channel_id"
+		log_info "Create one with: entity-helper.sh create --name \"Name\" --channel $channel --channel-id \"$normalized_channel_id\""
 		return 0
 	fi
 
-	echo "Suggested matches for $channel:$channel_id:"
+	echo "Suggested matches for $channel:$normalized_channel_id:"
 	echo "$suggestions"
 	echo ""
-	log_info "To link: entity-helper.sh link <entity_id> --channel $channel --channel-id \"$channel_id\" --verified"
+	log_info "To link: entity-helper.sh link <entity_id> --channel $channel --channel-id \"$normalized_channel_id\" --verified"
 	return 0
 }
 
@@ -957,6 +1030,7 @@ cmd_verify() {
 
 	local esc_id esc_channel_id
 	esc_id=$(sql_escape "$entity_id")
+	channel_id=$(normalize_channel_id "$channel" "$channel_id")
 	esc_channel_id=$(sql_escape "$channel_id")
 
 	entity_db "$ENTITY_MEMORY_DB" <<EOF
@@ -1636,6 +1710,7 @@ cmd_resolve() {
 
 	local esc_channel
 	esc_channel=$(sql_escape "$channel")
+	channel_id=$(normalize_channel_id "$channel" "$channel_id")
 	local esc_channel_id
 	esc_channel_id=$(sql_escape "$channel_id")
 
@@ -1643,6 +1718,10 @@ cmd_resolve() {
 	entity_id=$(entity_db "$ENTITY_MEMORY_DB" \
 		"SELECT entity_id FROM entity_channels WHERE channel = '$esc_channel' AND channel_id = '$esc_channel_id' LIMIT 1;" \
 		2>/dev/null || echo "")
+
+	if [[ -z "$entity_id" && "$channel" == "email" ]]; then
+		entity_id=$(resolve_email_entity_fallback "$channel_id" 2>/dev/null || true)
+	fi
 
 	if [[ -z "$entity_id" ]]; then
 		return 1
@@ -1815,6 +1894,11 @@ CONTEXT OPTIONS:
     --limit <n>             Max interactions to show (default: 20)
     --privacy-filter        Redact emails, IPs, API keys in output
     --json                  Output as JSON
+
+EMAIL RESOLUTION:
+    Email channel IDs are normalized on create/link/suggest/resolve/verify/unlink:
+    - Trim whitespace and lowercase address
+    - Remove plus alias from local part (name+tag@example.com -> name@example.com)
 
 ARCHITECTURE:
     Layer 0: Raw interaction log (immutable, append-only)

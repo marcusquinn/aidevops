@@ -664,6 +664,7 @@ SEARCH OR (FROM "alice@example.com" SUBJECT "report") (FROM "bob@example.com" SU
 - `services/email/ses.md` -- Amazon SES sending configuration
 - `services/email/email-testing.md` -- Email deliverability testing
 - `services/email/email-health-check.md` -- Email infrastructure health checks
+- `services/communications/cross-channel-conversation-continuity.md` -- Entity-aware continuity patterns across email and chat channels
 - `scripts/email-agent-helper.sh` -- Helper script for mailbox operations
 - `scripts/email-to-markdown.py` -- Email parsing pipeline
 - `scripts/email-thread-reconstruction.py` -- Thread building from raw messages

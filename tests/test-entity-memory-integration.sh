@@ -561,6 +561,42 @@ test_cross_channel_identity() {
 }
 
 # ===========================================================================
+# Test: Email identity normalization and fallback resolution
+# ===========================================================================
+test_email_identity_normalization() {
+	echo -e "\n${YELLOW}Test: Email identity normalization and fallback resolution${NC}"
+
+	local entity_id
+	entity_id=$(create_entity "Email Normalize" "person")
+	assert_not_empty "$entity_id" "Entity created"
+
+	local rc=0
+	"$ENTITY_HELPER" link "$entity_id" --channel email \
+		--channel-id "  Normalize.Entity+alerts@Example.COM  " --verified >/dev/null 2>&1 || rc=$?
+	assert_exit_code 0 "$rc" "Email link with spaces/case/plus alias succeeds"
+
+	local stored_channel_id
+	stored_channel_id=$(db_query "SELECT channel_id FROM entity_channels WHERE entity_id = '$entity_id' AND channel = 'email' LIMIT 1;")
+	assert_eq "normalize.entity@example.com" "$stored_channel_id" "Stored email channel ID is normalized"
+
+	local resolved_json
+	resolved_json=$("$ENTITY_HELPER" resolve --channel email --channel-id "NORMALIZE.ENTITY+OPS@example.com" 2>/dev/null || true)
+	assert_contains "$resolved_json" "$entity_id" "Resolve matches normalized variant with plus alias"
+
+	# Simulate historical pre-normalization data and ensure fallback still resolves.
+	local legacy_entity
+	legacy_entity=$(create_entity "Legacy Email" "person")
+	assert_not_empty "$legacy_entity" "Legacy entity created"
+
+	db_query "INSERT INTO entity_channels (entity_id, channel, channel_id, confidence) VALUES ('$legacy_entity', 'email', 'Legacy+Tag@Example.COM', 'suggested');" >/dev/null
+
+	resolved_json=$("$ENTITY_HELPER" resolve --channel email --channel-id "legacy@example.com" 2>/dev/null || true)
+	assert_contains "$resolved_json" "$legacy_entity" "Resolve fallback matches legacy non-normalized email"
+
+	return 0
+}
+
+# ===========================================================================
 # Test: Conversation lifecycle — full cycle
 # ===========================================================================
 test_conversation_lifecycle() {
@@ -1002,6 +1038,7 @@ main() {
 	test_privacy_filtering_ingest
 	test_privacy_filtering_output
 	test_cross_channel_identity
+	test_email_identity_normalization
 	test_conversation_lifecycle
 	test_auto_resume
 	test_entity_deletion_cascade
