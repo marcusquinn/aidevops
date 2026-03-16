@@ -1,0 +1,95 @@
+{
+  "_description": "Microsoft Graph API adapter configuration for Outlook/365 shared mailboxes",
+  "_docs": "See .agents/services/email/microsoft-graph.md for setup and usage guidance",
+  "_setup": "Copy to microsoft-graph-config.json and fill in your Azure AD app details. No credentials in this template.",
+  "_version": "1.0.0",
+  "_security": "Credentials (client_id, tenant_id, client_secret) must be stored via 'aidevops secret set' or credentials.sh (600 perms). NEVER commit microsoft-graph-config.json with real values.",
+
+  "tenant_id": "YOUR_TENANT_ID",
+  "_tenant_id_note": "Azure AD tenant ID (GUID). Found in Azure Portal > Azure Active Directory > Overview.",
+
+  "client_id": "YOUR_CLIENT_ID",
+  "_client_id_note": "Azure AD app registration client ID (GUID). Found in App registrations > your app > Overview.",
+
+  "auth_flow": "device",
+  "_auth_flow_note": "OAuth2 flow: 'device' (interactive, delegated) or 'client_credentials' (app-only, requires client_secret).",
+
+  "default_mailbox": "me",
+  "_default_mailbox_note": "Default mailbox for operations. 'me' = authenticated user. Use full email address for shared mailboxes (e.g., 'support@company.com').",
+
+  "shared_mailboxes": [
+    "support@your-domain.com",
+    "info@your-domain.com",
+    "accounts@your-domain.com"
+  ],
+  "_shared_mailboxes_note": "List of shared mailbox addresses this adapter manages. Used for validation and listing.",
+
+  "default_folder": "Inbox",
+  "_default_folder_note": "Default folder for list-messages. Standard folders: Inbox, Drafts, SentItems, DeletedItems, Archive, JunkEmail.",
+
+  "message_list_limit": 25,
+  "_message_list_limit_note": "Default number of messages to return in list-messages. Max 1000 per Graph API page.",
+
+  "token_cache_dir": "",
+  "_token_cache_dir_note": "Override token cache directory. Default: ~/.aidevops/.agent-workspace/microsoft-graph/. Leave empty for default.",
+
+  "api_version": "v1.0",
+  "_api_version_note": "Graph API version. 'v1.0' (stable) or 'beta' (preview features). Use v1.0 for production.",
+
+  "permissions": {
+    "_description": "Required Azure AD API permissions for this adapter",
+    "delegated": [
+      "Mail.ReadWrite",
+      "Mail.Send",
+      "Mail.ReadWrite.Shared",
+      "Mail.Send.Shared",
+      "MailboxSettings.ReadWrite",
+      "offline_access"
+    ],
+    "application": [
+      "Mail.ReadWrite",
+      "Mail.Send",
+      "MailboxSettings.ReadWrite"
+    ],
+    "_delegated_note": "Permissions for device flow (user context). Requires user consent.",
+    "_application_note": "Permissions for client_credentials flow (app-only). Requires admin consent."
+  },
+
+  "azure_app_setup": {
+    "_description": "Steps to register an Azure AD app for this adapter",
+    "steps": [
+      "1. Go to https://portal.azure.com > Azure Active Directory > App registrations",
+      "2. Click 'New registration'. Name: 'aidevops-graph-adapter'. Account type: 'Single tenant'.",
+      "3. For device flow: no redirect URI needed. For web flow: add 'http://localhost:8080/callback'.",
+      "4. Go to 'API permissions' > 'Add a permission' > 'Microsoft Graph'.",
+      "5. Add delegated permissions: Mail.ReadWrite, Mail.Send, Mail.ReadWrite.Shared, Mail.Send.Shared, MailboxSettings.ReadWrite, offline_access.",
+      "6. For app-only: add application permissions instead. Click 'Grant admin consent'.",
+      "7. Go to 'Certificates & secrets' > 'New client secret'. Copy the value immediately.",
+      "8. Note the Application (client) ID and Directory (tenant) ID from Overview.",
+      "9. Store credentials: aidevops secret set MSGRAPH_CLIENT_ID && aidevops secret set MSGRAPH_TENANT_ID",
+      "10. For app-only: aidevops secret set MSGRAPH_CLIENT_SECRET"
+    ]
+  },
+
+  "shared_mailbox_delegation": {
+    "_description": "How to grant shared mailbox access in Microsoft 365",
+    "via_admin_center": "https://admin.microsoft.com > Users > Active users > select user > Mail > Manage mailbox delegation",
+    "via_powershell": [
+      "# Connect to Exchange Online",
+      "Connect-ExchangeOnline -UserPrincipalName admin@company.com",
+      "",
+      "# Grant FullAccess",
+      "Add-MailboxPermission -Identity 'support@company.com' -User 'user@company.com' -AccessRights FullAccess -AutoMapping $true",
+      "",
+      "# Grant SendAs",
+      "Add-RecipientPermission -Identity 'support@company.com' -Trustee 'user@company.com' -AccessRights SendAs",
+      "",
+      "# Grant SendOnBehalf",
+      "Set-Mailbox -Identity 'support@company.com' -GrantSendOnBehalfTo 'user@company.com'",
+      "",
+      "# List current permissions",
+      "Get-MailboxPermission -Identity 'support@company.com' | Where-Object {$_.IsInherited -eq $false}"
+    ],
+    "_note": "After granting access, the user can access the shared mailbox via Graph API using their own credentials. Propagation may take up to 60 minutes."
+  }
+}
