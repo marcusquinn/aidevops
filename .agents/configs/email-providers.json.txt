@@ -1,0 +1,838 @@
+{
+  "_description": "Email Provider Configuration Templates",
+  "_docs": "See .agents/services/email/email-providers.md for usage and decision guidance",
+  "_setup": "Copy to email-providers.json and customise credentials. No credentials in this template.",
+  "_version": "1.0.0",
+  "_sources": "Settings verified against provider documentation as of 2026-03. Privacy ratings informed by privacytools.io and tosdr.org.",
+  "shared_mailbox_patterns": {
+    "_description": "Common shared mailbox addresses. POP recommended for shared mailboxes where all users must read the same emails. IMAP recommended otherwise.",
+    "addresses": [
+      "info@",
+      "support@",
+      "sales@",
+      "enquiries@",
+      "accounts@",
+      "marketing@",
+      "admin@",
+      "webmaster@",
+      "buyers@",
+      "dataprotection@",
+      "legal@",
+      "billing@",
+      "noreply@",
+      "hello@",
+      "contact@",
+      "hr@",
+      "careers@",
+      "press@",
+      "abuse@",
+      "postmaster@",
+      "security@"
+    ],
+    "pop_vs_imap_guidance": {
+      "use_pop_when": "Multiple users need to read the SAME emails (shared inbox). POP downloads and optionally deletes from server, so each client gets a copy. Configure 'leave on server' with a retention window.",
+      "use_imap_when": "Users need synchronised state (read/unread, folders, flags) across devices. IMAP is the default choice for personal and most business mailboxes.",
+      "use_jmap_when": "Available and supported. JMAP is the modern replacement for IMAP — stateless, JSON-based, lower bandwidth. Currently limited to Fastmail and a few others.",
+      "never_use_pop_for": "Mobile devices, multi-device users, or when folder organisation matters. POP has no concept of folders or synchronised state."
+    }
+  },
+  "protocol_notes": {
+    "imap": "Internet Message Access Protocol. Server-side storage, multi-device sync, folder support. Port 993 (TLS) or 143 (STARTTLS).",
+    "smtp": "Simple Mail Transfer Protocol. Outbound sending only. Port 465 (TLS) or 587 (STARTTLS). Port 25 is relay-only, not for client submission.",
+    "jmap": "JSON Meta Application Protocol (RFC 8620/8621). Modern IMAP replacement. Stateless, efficient, push-capable. Limited provider support.",
+    "pop3": "Post Office Protocol v3. Download-and-delete model. Port 995 (TLS) or 110 (STARTTLS). No server-side sync.",
+    "exchange_activesync": "Microsoft proprietary. Used by Outlook.com and Exchange. Not interoperable with standard IMAP clients without bridge.",
+    "graph_api": "Microsoft Graph REST API. Modern programmatic access to Outlook/365 mailboxes. OAuth2 required. Best for automation."
+  },
+  "providers": {
+    "cloudron": {
+      "name": "Cloudron Mail",
+      "slug": "cloudron",
+      "type": "self-hosted",
+      "imap": {
+        "host": "my.yourdomain.com",
+        "port": 993,
+        "security": "TLS"
+      },
+      "smtp": {
+        "host": "my.yourdomain.com",
+        "port": 587,
+        "security": "STARTTLS"
+      },
+      "pop3": {
+        "host": "my.yourdomain.com",
+        "port": 995,
+        "security": "TLS"
+      },
+      "jmap": null,
+      "protocols_supported": ["imap", "smtp", "pop3"],
+      "auth_methods": ["password"],
+      "privacy_rating": {
+        "score": "A+",
+        "e2ee_support": "via client (GPG/S-MIME)",
+        "jurisdiction": "user-controlled",
+        "open_source": true,
+        "data_mining": "none",
+        "notes": "Self-hosted. Full control over data. Privacy depends on hosting jurisdiction and operator practices."
+      },
+      "default_folders": {
+        "inbox": "INBOX",
+        "sent": "Sent",
+        "drafts": "Drafts",
+        "trash": "Trash",
+        "junk": "Junk",
+        "archive": "Archive"
+      },
+      "shared_mailbox_support": "Full. Create mailbox aliases or separate accounts via Cloudron admin panel or CLI.",
+      "cli_management": "cloudron mail list, cloudron mail add, cloudron mail remove, cloudron mail aliases",
+      "notes": "Replace 'my.yourdomain.com' with your Cloudron domain. Supports catch-all, aliases, and multiple domains."
+    },
+    "gmail": {
+      "name": "Gmail (Personal)",
+      "slug": "gmail",
+      "type": "cloud",
+      "imap": {
+        "host": "imap.gmail.com",
+        "port": 993,
+        "security": "TLS"
+      },
+      "smtp": {
+        "host": "smtp.gmail.com",
+        "port": 465,
+        "security": "TLS"
+      },
+      "pop3": {
+        "host": "pop.gmail.com",
+        "port": 995,
+        "security": "TLS"
+      },
+      "jmap": null,
+      "protocols_supported": ["imap", "smtp", "pop3"],
+      "auth_methods": ["oauth2", "app_password"],
+      "auth_notes": "OAuth2 required for most integrations since May 2022. App passwords available with 2FA enabled. Basic password auth is disabled.",
+      "privacy_rating": {
+        "score": "D",
+        "e2ee_support": "via client (GPG/S-MIME) or Google CSE (Workspace only)",
+        "jurisdiction": "US",
+        "open_source": false,
+        "data_mining": "yes — ads targeting, content scanning for features",
+        "notes": "Google scans email content for spam, phishing, and feature suggestions. Ads are targeted based on account activity (not email content since 2017, but other signals)."
+      },
+      "default_folders": {
+        "inbox": "INBOX",
+        "sent": "[Gmail]/Sent Mail",
+        "drafts": "[Gmail]/Drafts",
+        "trash": "[Gmail]/Trash",
+        "junk": "[Gmail]/Spam",
+        "archive": "[Gmail]/All Mail",
+        "starred": "[Gmail]/Starred",
+        "important": "[Gmail]/Important"
+      },
+      "folder_notes": "Gmail uses labels, not folders. IMAP maps labels to virtual folders under [Gmail]/ prefix. A message can have multiple labels (appear in multiple IMAP folders). Deleting from one label doesn't delete the message — it removes the label. True deletion requires moving to Trash.",
+      "shared_mailbox_support": "Limited. Use Google Groups or delegate access. No true shared mailbox in free Gmail.",
+      "sending_limits": {
+        "per_day": 500,
+        "per_message_recipients": 500
+      },
+      "notes": "IMAP must be enabled in Gmail settings. OAuth2 is strongly recommended over app passwords."
+    },
+    "google_workspace": {
+      "name": "Google Workspace",
+      "slug": "google-workspace",
+      "type": "cloud",
+      "imap": {
+        "host": "imap.gmail.com",
+        "port": 993,
+        "security": "TLS"
+      },
+      "smtp": {
+        "host": "smtp.gmail.com",
+        "port": 465,
+        "security": "TLS"
+      },
+      "pop3": {
+        "host": "pop.gmail.com",
+        "port": 995,
+        "security": "TLS"
+      },
+      "jmap": null,
+      "protocols_supported": ["imap", "smtp", "pop3", "graph_api_equivalent"],
+      "auth_methods": ["oauth2", "app_password", "service_account"],
+      "privacy_rating": {
+        "score": "C",
+        "e2ee_support": "S/MIME (Enterprise), Google CSE (Enterprise Plus)",
+        "jurisdiction": "US (data processing addendum available)",
+        "open_source": false,
+        "data_mining": "no ads scanning for paid Workspace. Telemetry and feature analytics still active.",
+        "notes": "Better than free Gmail — no ad targeting. DPA available for GDPR compliance. Data residency options in Enterprise tier."
+      },
+      "default_folders": {
+        "inbox": "INBOX",
+        "sent": "[Gmail]/Sent Mail",
+        "drafts": "[Gmail]/Drafts",
+        "trash": "[Gmail]/Trash",
+        "junk": "[Gmail]/Spam",
+        "archive": "[Gmail]/All Mail"
+      },
+      "shared_mailbox_support": "Full. Collaborative inboxes via Google Groups, delegated access, or shared drives for email-attached files.",
+      "sending_limits": {
+        "per_day": 2000,
+        "per_message_recipients": 2000
+      },
+      "notes": "Same IMAP/SMTP servers as Gmail. Admin console controls IMAP access policy. Service accounts enable server-to-server access without user interaction."
+    },
+    "outlook": {
+      "name": "Outlook.com / Hotmail",
+      "slug": "outlook",
+      "type": "cloud",
+      "imap": {
+        "host": "outlook.office365.com",
+        "port": 993,
+        "security": "TLS"
+      },
+      "smtp": {
+        "host": "smtp-mail.outlook.com",
+        "port": 587,
+        "security": "STARTTLS"
+      },
+      "pop3": {
+        "host": "outlook.office365.com",
+        "port": 995,
+        "security": "TLS"
+      },
+      "jmap": null,
+      "protocols_supported": ["imap", "smtp", "pop3", "exchange_activesync", "graph_api"],
+      "auth_methods": ["oauth2", "password"],
+      "auth_notes": "Microsoft is migrating to OAuth2-only. Basic auth deprecated for most protocols. Use Microsoft Identity Platform for OAuth2.",
+      "privacy_rating": {
+        "score": "D",
+        "e2ee_support": "S/MIME (manual setup)",
+        "jurisdiction": "US",
+        "open_source": false,
+        "data_mining": "yes — ads, content scanning for features, Cortana integration",
+        "notes": "Microsoft scans email for ads targeting and feature suggestions. Privacy policy allows broad data usage."
+      },
+      "default_folders": {
+        "inbox": "Inbox",
+        "sent": "Sent",
+        "drafts": "Drafts",
+        "trash": "Deleted",
+        "junk": "Junk",
+        "archive": "Archive"
+      },
+      "shared_mailbox_support": "Limited in free tier. Full shared mailbox support in Microsoft 365 Business.",
+      "notes": "Covers outlook.com, hotmail.com, live.com, msn.com addresses. Graph API is the preferred programmatic access method."
+    },
+    "microsoft_365": {
+      "name": "Microsoft 365 (Business/Enterprise)",
+      "slug": "microsoft-365",
+      "type": "cloud",
+      "imap": {
+        "host": "outlook.office365.com",
+        "port": 993,
+        "security": "TLS"
+      },
+      "smtp": {
+        "host": "smtp.office365.com",
+        "port": 587,
+        "security": "STARTTLS"
+      },
+      "pop3": {
+        "host": "outlook.office365.com",
+        "port": 995,
+        "security": "TLS"
+      },
+      "jmap": null,
+      "protocols_supported": ["imap", "smtp", "pop3", "exchange_activesync", "graph_api"],
+      "auth_methods": ["oauth2", "service_principal"],
+      "auth_notes": "Basic auth fully deprecated since October 2022. OAuth2 via Azure AD / Microsoft Entra ID required. Service principals for automation.",
+      "privacy_rating": {
+        "score": "C",
+        "e2ee_support": "S/MIME, Microsoft Purview Message Encryption (OME)",
+        "jurisdiction": "US (DPA available, EU data boundary option)",
+        "open_source": false,
+        "data_mining": "no ads. Telemetry and compliance scanning active.",
+        "notes": "No ad targeting in business plans. DPA and EU data boundary available. Microsoft Purview provides encryption and DLP."
+      },
+      "default_folders": {
+        "inbox": "Inbox",
+        "sent": "Sent Items",
+        "drafts": "Drafts",
+        "trash": "Deleted Items",
+        "junk": "Junk Email",
+        "archive": "Archive"
+      },
+      "shared_mailbox_support": "Full. Dedicated shared mailbox feature — no license required for shared mailboxes. Supports auto-mapping, send-as, and send-on-behalf.",
+      "notes": "Graph API is the recommended integration path. IMAP/SMTP available but OAuth2 setup is complex. Shared mailboxes are a first-class feature."
+    },
+    "protonmail": {
+      "name": "Proton Mail",
+      "slug": "protonmail",
+      "type": "cloud",
+      "imap": {
+        "host": "127.0.0.1",
+        "port": 1143,
+        "security": "STARTTLS",
+        "requires_bridge": true
+      },
+      "smtp": {
+        "host": "127.0.0.1",
+        "port": 1025,
+        "security": "STARTTLS",
+        "requires_bridge": true
+      },
+      "pop3": null,
+      "jmap": null,
+      "protocols_supported": ["imap_via_bridge", "smtp_via_bridge"],
+      "auth_methods": ["bridge_password"],
+      "auth_notes": "Proton Mail Bridge required for IMAP/SMTP access. Bridge runs locally and provides a decryption proxy. Bridge generates its own password — do not use your Proton account password.",
+      "privacy_rating": {
+        "score": "A+",
+        "e2ee_support": "built-in (PGP-based, automatic for Proton-to-Proton)",
+        "jurisdiction": "Switzerland",
+        "open_source": true,
+        "data_mining": "none",
+        "notes": "Zero-access encryption. Server cannot read email content. Swiss privacy laws. Open-source clients. Independent security audits published."
+      },
+      "default_folders": {
+        "inbox": "INBOX",
+        "sent": "Sent",
+        "drafts": "Drafts",
+        "trash": "Trash",
+        "junk": "Spam",
+        "archive": "Archive",
+        "all_mail": "All Mail"
+      },
+      "shared_mailbox_support": "Limited. Proton for Business supports multi-user access and catch-all. No true shared mailbox in free/Plus plans.",
+      "notes": "Requires Proton Mail Bridge desktop app for IMAP/SMTP. Bridge must be running for email client access. Not suitable for headless/server environments without Bridge CLI (beta)."
+    },
+    "fastmail": {
+      "name": "Fastmail",
+      "slug": "fastmail",
+      "type": "cloud",
+      "imap": {
+        "host": "imap.fastmail.com",
+        "port": 993,
+        "security": "TLS"
+      },
+      "smtp": {
+        "host": "smtp.fastmail.com",
+        "port": 465,
+        "security": "TLS"
+      },
+      "pop3": {
+        "host": "pop.fastmail.com",
+        "port": 995,
+        "security": "TLS"
+      },
+      "jmap": {
+        "url": "https://api.fastmail.com/jmap/session",
+        "spec": "RFC 8620/8621",
+        "notes": "Fastmail is the JMAP reference implementation. Full JMAP support including contacts and calendars."
+      },
+      "protocols_supported": ["imap", "smtp", "pop3", "jmap"],
+      "auth_methods": ["password", "app_password"],
+      "auth_notes": "App-specific passwords recommended. Generated in Settings > Privacy & Security > App Passwords. Supports per-app and per-protocol restrictions.",
+      "privacy_rating": {
+        "score": "A",
+        "e2ee_support": "via client (GPG/S-MIME). No built-in E2EE.",
+        "jurisdiction": "Australia",
+        "open_source": false,
+        "data_mining": "none",
+        "notes": "No ads, no data mining. Privacy-focused business model (subscription-only). Australian jurisdiction — Five Eyes member, but strong privacy practices. Publishes transparency reports."
+      },
+      "default_folders": {
+        "inbox": "INBOX",
+        "sent": "Sent",
+        "drafts": "Drafts",
+        "trash": "Trash",
+        "junk": "Junk Mail",
+        "archive": "Archive"
+      },
+      "shared_mailbox_support": "Partial. Supports aliases and identities. Team plans support shared folders but not true shared mailboxes.",
+      "notes": "JMAP reference implementation — best provider for JMAP integration. Excellent CalDAV/CardDAV support. Masked email (aliases) feature for privacy."
+    },
+    "mailbox_org": {
+      "name": "mailbox.org",
+      "slug": "mailbox-org",
+      "type": "cloud",
+      "imap": {
+        "host": "imap.mailbox.org",
+        "port": 993,
+        "security": "TLS"
+      },
+      "smtp": {
+        "host": "smtp.mailbox.org",
+        "port": 465,
+        "security": "TLS"
+      },
+      "pop3": {
+        "host": "pop3.mailbox.org",
+        "port": 995,
+        "security": "TLS"
+      },
+      "jmap": null,
+      "protocols_supported": ["imap", "smtp", "pop3"],
+      "auth_methods": ["password"],
+      "privacy_rating": {
+        "score": "A",
+        "e2ee_support": "built-in PGP (Mailvelope integration in webmail), S/MIME",
+        "jurisdiction": "Germany",
+        "open_source": false,
+        "data_mining": "none",
+        "notes": "German privacy laws (GDPR). Powered by renewable energy. PGP encryption available in webmail via Guard (Mailvelope). No ads, no tracking."
+      },
+      "default_folders": {
+        "inbox": "INBOX",
+        "sent": "Sent",
+        "drafts": "Drafts",
+        "trash": "Trash",
+        "junk": "Junk",
+        "archive": "Archive"
+      },
+      "shared_mailbox_support": "Business plans support shared folders and team inboxes.",
+      "notes": "Strong privacy focus with German jurisdiction. Includes cloud storage, calendar, contacts. Business plans available with custom domains."
+    },
+    "tutanota": {
+      "name": "Tuta (formerly Tutanota)",
+      "slug": "tutanota",
+      "type": "cloud",
+      "imap": null,
+      "smtp": null,
+      "pop3": null,
+      "jmap": null,
+      "protocols_supported": [],
+      "auth_methods": ["proprietary"],
+      "auth_notes": "Tuta does NOT support IMAP, SMTP, POP3, or any standard protocol. Email access is only through Tuta's own apps (web, desktop, mobile). This is by design — their encryption architecture requires their client.",
+      "privacy_rating": {
+        "score": "A+",
+        "e2ee_support": "built-in (automatic for Tuta-to-Tuta, password-protected for external)",
+        "jurisdiction": "Germany",
+        "open_source": true,
+        "data_mining": "none",
+        "notes": "Full end-to-end encryption including subject lines. Zero-knowledge architecture. Open-source clients. German jurisdiction with strong privacy laws. No third-party client access by design."
+      },
+      "default_folders": {
+        "inbox": "Inbox",
+        "sent": "Sent",
+        "drafts": "Drafts",
+        "trash": "Trash",
+        "junk": "Spam",
+        "archive": "Archive"
+      },
+      "shared_mailbox_support": "Business plans support shared mailboxes and aliases.",
+      "notes": "No standard protocol support — cannot be used with third-party email clients. This is a deliberate security decision. Use Tuta's own apps only."
+    },
+    "yahoo": {
+      "name": "Yahoo Mail",
+      "slug": "yahoo",
+      "type": "cloud",
+      "imap": {
+        "host": "imap.mail.yahoo.com",
+        "port": 993,
+        "security": "TLS"
+      },
+      "smtp": {
+        "host": "smtp.mail.yahoo.com",
+        "port": 465,
+        "security": "TLS"
+      },
+      "pop3": {
+        "host": "pop.mail.yahoo.com",
+        "port": 995,
+        "security": "TLS"
+      },
+      "jmap": null,
+      "protocols_supported": ["imap", "smtp", "pop3"],
+      "auth_methods": ["app_password"],
+      "auth_notes": "App passwords required for third-party clients. Generate in Yahoo Account Security settings. Regular password auth is disabled for IMAP/SMTP.",
+      "privacy_rating": {
+        "score": "D",
+        "e2ee_support": "none built-in",
+        "jurisdiction": "US",
+        "open_source": false,
+        "data_mining": "yes — ads targeting, content scanning",
+        "notes": "Yahoo scans email content for ad targeting. History of security breaches (2013-2014, 3 billion accounts). Privacy policy allows broad data sharing."
+      },
+      "default_folders": {
+        "inbox": "Inbox",
+        "sent": "Sent",
+        "drafts": "Draft",
+        "trash": "Trash",
+        "junk": "Bulk Mail",
+        "archive": "Archive"
+      },
+      "shared_mailbox_support": "None in free tier.",
+      "notes": "App passwords required since 2020. Covers yahoo.com, ymail.com, rocketmail.com."
+    },
+    "zoho": {
+      "name": "Zoho Mail",
+      "slug": "zoho",
+      "type": "cloud",
+      "imap": {
+        "host": "imap.zoho.com",
+        "port": 993,
+        "security": "TLS"
+      },
+      "smtp": {
+        "host": "smtp.zoho.com",
+        "port": 465,
+        "security": "TLS"
+      },
+      "pop3": {
+        "host": "pop.zoho.com",
+        "port": 995,
+        "security": "TLS"
+      },
+      "jmap": null,
+      "protocols_supported": ["imap", "smtp", "pop3"],
+      "auth_methods": ["password", "app_password", "oauth2"],
+      "auth_notes": "IMAP access must be enabled in Zoho Mail settings. App-specific passwords available with 2FA. Regional domains: zoho.eu, zoho.in, zoho.com.au, zoho.jp.",
+      "privacy_rating": {
+        "score": "B",
+        "e2ee_support": "S/MIME (paid plans)",
+        "jurisdiction": "India (US/EU data centres available)",
+        "open_source": false,
+        "data_mining": "none — no ads in any tier",
+        "notes": "No ads even in free tier. GDPR compliant with EU data centre option. Indian company with global data centres."
+      },
+      "default_folders": {
+        "inbox": "INBOX",
+        "sent": "Sent",
+        "drafts": "Drafts",
+        "trash": "Trash",
+        "junk": "Spam",
+        "archive": "Archive"
+      },
+      "regional_hosts": {
+        "us": {"imap": "imap.zoho.com", "smtp": "smtp.zoho.com"},
+        "eu": {"imap": "imap.zoho.eu", "smtp": "smtp.zoho.eu"},
+        "in": {"imap": "imap.zoho.in", "smtp": "smtp.zoho.in"},
+        "au": {"imap": "imap.zoho.com.au", "smtp": "smtp.zoho.com.au"},
+        "jp": {"imap": "imap.zoho.jp", "smtp": "smtp.zoho.jp"}
+      },
+      "shared_mailbox_support": "Full in paid plans. Group mailboxes, shared folders, and delegated access.",
+      "notes": "Free tier supports up to 5 users with 5GB each. IMAP must be explicitly enabled. Regional domains affect server hostnames."
+    },
+    "gmx": {
+      "name": "GMX Mail",
+      "slug": "gmx",
+      "type": "cloud",
+      "imap": {
+        "host": "imap.gmx.com",
+        "port": 993,
+        "security": "TLS"
+      },
+      "smtp": {
+        "host": "mail.gmx.com",
+        "port": 465,
+        "security": "TLS"
+      },
+      "pop3": {
+        "host": "pop.gmx.com",
+        "port": 995,
+        "security": "TLS"
+      },
+      "jmap": null,
+      "protocols_supported": ["imap", "smtp", "pop3"],
+      "auth_methods": ["password"],
+      "auth_notes": "IMAP/POP must be enabled in GMX settings under E-Mail > POP3 & IMAP.",
+      "privacy_rating": {
+        "score": "C",
+        "e2ee_support": "PGP via Mailvelope integration in webmail",
+        "jurisdiction": "Germany",
+        "open_source": false,
+        "data_mining": "limited — ads in free tier, no content scanning",
+        "notes": "Owned by United Internet AG (Germany). Ads in free tier but no email content scanning. German privacy laws apply."
+      },
+      "default_folders": {
+        "inbox": "INBOX",
+        "sent": "Sent",
+        "drafts": "Drafts",
+        "trash": "Trash",
+        "junk": "Spam",
+        "archive": "Archive"
+      },
+      "shared_mailbox_support": "None.",
+      "notes": "Covers gmx.com, gmx.net, gmx.de. IMAP access must be enabled manually in settings."
+    },
+    "ionos": {
+      "name": "IONOS (1&1) Mail",
+      "slug": "ionos",
+      "type": "cloud",
+      "imap": {
+        "host": "imap.ionos.com",
+        "port": 993,
+        "security": "TLS"
+      },
+      "smtp": {
+        "host": "smtp.ionos.com",
+        "port": 465,
+        "security": "TLS"
+      },
+      "pop3": {
+        "host": "pop.ionos.com",
+        "port": 995,
+        "security": "TLS"
+      },
+      "jmap": null,
+      "protocols_supported": ["imap", "smtp", "pop3"],
+      "auth_methods": ["password"],
+      "privacy_rating": {
+        "score": "B",
+        "e2ee_support": "via client (GPG/S-MIME)",
+        "jurisdiction": "Germany",
+        "open_source": false,
+        "data_mining": "none",
+        "notes": "German hosting company. GDPR compliant. No ad-supported tier."
+      },
+      "default_folders": {
+        "inbox": "INBOX",
+        "sent": "Sent",
+        "drafts": "Drafts",
+        "trash": "Trash",
+        "junk": "Spam"
+      },
+      "shared_mailbox_support": "Business plans support shared mailboxes.",
+      "notes": "Formerly 1&1. Regional variants: ionos.de, ionos.co.uk, ionos.com. Bundled with hosting plans."
+    },
+    "namecheap": {
+      "name": "Namecheap Private Email (Titan)",
+      "slug": "namecheap",
+      "type": "cloud",
+      "imap": {
+        "host": "imap.privateemail.com",
+        "port": 993,
+        "security": "TLS"
+      },
+      "smtp": {
+        "host": "smtp.privateemail.com",
+        "port": 465,
+        "security": "TLS"
+      },
+      "pop3": {
+        "host": "pop.privateemail.com",
+        "port": 995,
+        "security": "TLS"
+      },
+      "jmap": null,
+      "protocols_supported": ["imap", "smtp", "pop3"],
+      "auth_methods": ["password"],
+      "privacy_rating": {
+        "score": "B",
+        "e2ee_support": "via client (GPG/S-MIME)",
+        "jurisdiction": "US (Namecheap) / India (Titan/Flock)",
+        "open_source": false,
+        "data_mining": "none",
+        "notes": "Powered by Titan (Flock). No ads. Privacy depends on both Namecheap and Titan policies."
+      },
+      "default_folders": {
+        "inbox": "INBOX",
+        "sent": "Sent",
+        "drafts": "Drafts",
+        "trash": "Trash",
+        "junk": "Spam"
+      },
+      "shared_mailbox_support": "None in basic plans.",
+      "notes": "Bundled with Namecheap domain purchases. Powered by Titan email platform."
+    },
+    "mail_com": {
+      "name": "mail.com",
+      "slug": "mail-com",
+      "type": "cloud",
+      "imap": {
+        "host": "imap.mail.com",
+        "port": 993,
+        "security": "TLS"
+      },
+      "smtp": {
+        "host": "smtp.mail.com",
+        "port": 465,
+        "security": "TLS"
+      },
+      "pop3": {
+        "host": "pop.mail.com",
+        "port": 995,
+        "security": "TLS"
+      },
+      "jmap": null,
+      "protocols_supported": ["imap", "smtp", "pop3"],
+      "auth_methods": ["password"],
+      "auth_notes": "IMAP/SMTP access requires Premium subscription. Free tier is webmail-only.",
+      "privacy_rating": {
+        "score": "C",
+        "e2ee_support": "PGP via Mailvelope in webmail",
+        "jurisdiction": "Germany (United Internet AG)",
+        "open_source": false,
+        "data_mining": "limited — ads in free tier",
+        "notes": "Owned by United Internet AG (same as GMX). Ads in free tier. German privacy laws apply."
+      },
+      "default_folders": {
+        "inbox": "INBOX",
+        "sent": "Sent",
+        "drafts": "Drafts",
+        "trash": "Trash",
+        "junk": "Spam"
+      },
+      "shared_mailbox_support": "None.",
+      "notes": "IMAP/SMTP access is a paid feature. Free accounts can only use webmail and mobile apps."
+    },
+    "startmail": {
+      "name": "StartMail",
+      "slug": "startmail",
+      "type": "cloud",
+      "imap": {
+        "host": "imap.startmail.com",
+        "port": 993,
+        "security": "TLS"
+      },
+      "smtp": {
+        "host": "smtp.startmail.com",
+        "port": 465,
+        "security": "TLS"
+      },
+      "pop3": null,
+      "jmap": null,
+      "protocols_supported": ["imap", "smtp"],
+      "auth_methods": ["app_password"],
+      "auth_notes": "App-specific passwords required for IMAP/SMTP. Generated in StartMail settings.",
+      "privacy_rating": {
+        "score": "A",
+        "e2ee_support": "built-in PGP (server-side key management)",
+        "jurisdiction": "Netherlands",
+        "open_source": false,
+        "data_mining": "none",
+        "notes": "By the makers of StartPage search engine. Dutch jurisdiction. Built-in PGP encryption. No ads, no tracking. Disposable aliases included."
+      },
+      "default_folders": {
+        "inbox": "INBOX",
+        "sent": "Sent",
+        "drafts": "Drafts",
+        "trash": "Trash",
+        "junk": "Spam",
+        "archive": "Archive"
+      },
+      "shared_mailbox_support": "None. Personal email service only.",
+      "notes": "Privacy-focused service from the StartPage team. Includes disposable email aliases. No free tier."
+    },
+    "disroot": {
+      "name": "Disroot",
+      "slug": "disroot",
+      "type": "cloud",
+      "imap": {
+        "host": "disroot.org",
+        "port": 993,
+        "security": "TLS"
+      },
+      "smtp": {
+        "host": "disroot.org",
+        "port": 465,
+        "security": "TLS"
+      },
+      "pop3": {
+        "host": "disroot.org",
+        "port": 995,
+        "security": "TLS"
+      },
+      "jmap": null,
+      "protocols_supported": ["imap", "smtp", "pop3"],
+      "auth_methods": ["password"],
+      "privacy_rating": {
+        "score": "A",
+        "e2ee_support": "via client (GPG/S-MIME)",
+        "jurisdiction": "Netherlands",
+        "open_source": true,
+        "data_mining": "none",
+        "notes": "Community-run, donation-funded. All services run on open-source software. Dutch jurisdiction. No tracking, no ads. Transparent operations."
+      },
+      "default_folders": {
+        "inbox": "INBOX",
+        "sent": "Sent",
+        "drafts": "Drafts",
+        "trash": "Trash",
+        "junk": "Junk"
+      },
+      "shared_mailbox_support": "None. Personal accounts only.",
+      "notes": "Community-run platform. Free accounts with 1GB storage. Donation-funded. Also provides cloud storage, forum, chat, and other services."
+    },
+    "chatmail": {
+      "name": "ChatMail",
+      "slug": "chatmail",
+      "type": "cloud",
+      "imap": {
+        "host": "varies by instance",
+        "port": 993,
+        "security": "TLS"
+      },
+      "smtp": {
+        "host": "varies by instance",
+        "port": 465,
+        "security": "TLS"
+      },
+      "pop3": null,
+      "jmap": null,
+      "protocols_supported": ["imap", "smtp"],
+      "auth_methods": ["password"],
+      "auth_notes": "ChatMail instances are designed for Delta Chat. Account creation is automatic via Delta Chat app. Minimal configuration needed.",
+      "privacy_rating": {
+        "score": "A",
+        "e2ee_support": "built-in via Autocrypt/OpenPGP (when used with Delta Chat)",
+        "jurisdiction": "varies by instance operator",
+        "open_source": true,
+        "data_mining": "none",
+        "notes": "Designed for Delta Chat messenger. Minimal metadata retention. Open-source server software. Privacy depends on instance operator."
+      },
+      "default_folders": {
+        "inbox": "INBOX",
+        "sent": "Sent",
+        "drafts": "Drafts",
+        "trash": "Trash",
+        "junk": "Junk"
+      },
+      "shared_mailbox_support": "None. Designed for personal messaging.",
+      "known_instances": [
+        "nine.testrun.org",
+        "chatmail.woodpeckersi.space"
+      ],
+      "notes": "Optimised for Delta Chat instant messaging over email. Not a traditional email provider — designed for chat-like usage with automatic E2EE."
+    },
+    "icloud": {
+      "name": "iCloud Mail",
+      "slug": "icloud",
+      "type": "cloud",
+      "imap": {
+        "host": "imap.mail.me.com",
+        "port": 993,
+        "security": "TLS"
+      },
+      "smtp": {
+        "host": "smtp.mail.me.com",
+        "port": 587,
+        "security": "STARTTLS"
+      },
+      "pop3": null,
+      "jmap": null,
+      "protocols_supported": ["imap", "smtp"],
+      "auth_methods": ["app_password"],
+      "auth_notes": "App-specific passwords required. Generate at appleid.apple.com > Sign-In and Security > App-Specific Passwords. 2FA must be enabled.",
+      "privacy_rating": {
+        "score": "B",
+        "e2ee_support": "S/MIME (manual setup). Advanced Data Protection encrypts mail backups but not mail in transit/at rest on server.",
+        "jurisdiction": "US",
+        "open_source": false,
+        "data_mining": "none — no ads, no content scanning for marketing",
+        "notes": "Apple's privacy stance is strong relative to other US tech companies. No ad targeting from email. Advanced Data Protection available but does not cover iCloud Mail content at rest."
+      },
+      "default_folders": {
+        "inbox": "INBOX",
+        "sent": "Sent Messages",
+        "drafts": "Drafts",
+        "trash": "Deleted Messages",
+        "junk": "Junk",
+        "archive": "Archive"
+      },
+      "shared_mailbox_support": "None.",
+      "notes": "Covers @icloud.com, @me.com, @mac.com addresses. Hide My Email feature provides disposable aliases (iCloud+ required)."
+    }
+  }
+}
