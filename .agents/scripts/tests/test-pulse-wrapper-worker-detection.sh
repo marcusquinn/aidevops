@@ -157,6 +157,49 @@ test_counts_plain_and_dot_prefixed_opencode_workers() {
 	return 0
 }
 
+test_deduplicates_process_chain_to_one_logical_worker() {
+	# t5072: A single opencode worker spawns a 3-process chain:
+	#   bash sandbox-exec-helper.sh run ... -- opencode run ...  (top-level launcher)
+	#   node /opt/homebrew/bin/opencode run ...                  (node child)
+	#   /path/to/.opencode run ...                               (binary grandchild)
+	# All three contain /full-loop and opencode — only the launcher must be counted.
+	set_ps_fixture "200 00:30 bash /home/user/.aidevops/agents/scripts/sandbox-exec-helper.sh run --timeout 3600 --allow-secret-io -- /opt/homebrew/bin/opencode run \"/full-loop Implement issue #5072\" --dir /tmp/aidevops --title Issue #5072
+201 00:30 node /opt/homebrew/bin/opencode run \"/full-loop Implement issue #5072\" --dir /tmp/aidevops --title Issue #5072
+202 00:30 /opt/homebrew/lib/node_modules/opencode-ai/bin/.opencode run \"/full-loop Implement issue #5072\" --dir /tmp/aidevops --title Issue #5072"
+
+	local count
+	count=$(count_active_workers)
+	# Only line 200 (sandbox launcher) should be counted; 201 and 202 are child processes
+	if [[ "$count" != "1" ]]; then
+		print_result "count_active_workers deduplicates 3-process chain to 1 logical worker" 1 "Expected 1, got ${count} (process chain not deduplicated)"
+		return 0
+	fi
+
+	print_result "count_active_workers deduplicates 3-process chain to 1 logical worker" 0
+	return 0
+}
+
+test_deduplicates_multiple_workers_with_process_chains() {
+	# t5072: Two logical workers, each spawning a 3-process chain = 6 OS processes.
+	# count_active_workers must return 2, not 6.
+	set_ps_fixture "300 01:00 bash /home/user/.aidevops/agents/scripts/sandbox-exec-helper.sh run --timeout 3600 --allow-secret-io -- /opt/homebrew/bin/opencode run \"/full-loop Implement issue #5001\" --dir /tmp/aidevops --title Issue #5001
+301 01:00 node /opt/homebrew/bin/opencode run \"/full-loop Implement issue #5001\" --dir /tmp/aidevops --title Issue #5001
+302 01:00 /opt/homebrew/lib/node_modules/opencode-ai/bin/.opencode run \"/full-loop Implement issue #5001\" --dir /tmp/aidevops --title Issue #5001
+310 00:20 bash /home/user/.aidevops/agents/scripts/sandbox-exec-helper.sh run --timeout 3600 --allow-secret-io -- /opt/homebrew/bin/opencode run \"/full-loop Implement issue #5002\" --dir /tmp/aidevops --title Issue #5002
+311 00:20 node /opt/homebrew/bin/opencode run \"/full-loop Implement issue #5002\" --dir /tmp/aidevops --title Issue #5002
+312 00:20 /opt/homebrew/lib/node_modules/opencode-ai/bin/.opencode run \"/full-loop Implement issue #5002\" --dir /tmp/aidevops --title Issue #5002"
+
+	local count
+	count=$(count_active_workers)
+	if [[ "$count" != "2" ]]; then
+		print_result "count_active_workers counts 2 logical workers from 6 process-chain entries" 1 "Expected 2, got ${count}"
+		return 0
+	fi
+
+	print_result "count_active_workers counts 2 logical workers from 6 process-chain entries" 0
+	return 0
+}
+
 test_repo_issue_detection_uses_filtered_worker_list() {
 	set_ps_fixture "211 00:31 opencode run --dir /tmp/aidevops --session-key issue-4342 --title Issue #4342: fix \"/full-loop Implement issue #4342\"
 212 00:31 opencode run --dir /tmp/other --session-key issue-4342 --title Issue #4342: other \"/full-loop Implement issue #4342\"
@@ -251,6 +294,8 @@ main() {
 	source "$PULSE_WRAPPER_SCRIPT"
 
 	test_counts_plain_and_dot_prefixed_opencode_workers
+	test_deduplicates_process_chain_to_one_logical_worker
+	test_deduplicates_multiple_workers_with_process_chains
 	test_repo_issue_detection_uses_filtered_worker_list
 	test_has_merged_pr_for_issue_detects_closing_keyword
 	test_has_merged_pr_for_issue_detects_task_id_fallback

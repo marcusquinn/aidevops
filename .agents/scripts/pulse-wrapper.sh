@@ -1219,11 +1219,25 @@ This PR modifies \`.github/workflows/\` files but the GitHub OAuth token used by
 # Output: worker summary to stdout (appended to STATE_FILE by caller)
 #######################################
 list_active_worker_processes() {
+	# t5072: Count logical workers (one per session/issue), not OS process tree nodes.
+	# A single opencode worker spawns a 3-process chain:
+	#   bash sandbox-exec-helper.sh run ... -- opencode run ...  (top-level launcher)
+	#   node /opt/homebrew/bin/opencode run ...                  (node child)
+	#   /path/to/.opencode run ...                               (binary grandchild)
+	# All three contain /full-loop and opencode in their command line.
+	# Fix: match only the top-level launcher process per logical worker:
+	#   1. Lines containing sandbox-exec-helper.sh (normal production path)
+	#   2. Direct opencode run invocations that are NOT node/binary children
+	#      (sandbox-disabled path and test fixtures)
+	# Exclude: lines starting with "node " (node child) or whose command
+	# starts with a path ending in "/.opencode " (binary grandchild).
 	ps axo pid,etime,command | awk '
 		/\/full-loop/ &&
 		$0 !~ /(^|[[:space:]])\/pulse([[:space:]]|$)/ &&
 		$0 !~ /Supervisor Pulse/ &&
-		$0 ~ /(^|[[:space:]\/])\.?opencode([[:space:]]|$)/ {
+		$0 ~ /(^|[[:space:]\/])\.?opencode([[:space:]]|$)/ &&
+		$0 !~ /[[:space:]]node[[:space:]].*opencode/ &&
+		$0 !~ /\/\.opencode[[:space:]]/ {
 			print
 		}
 	'
