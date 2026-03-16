@@ -59,18 +59,18 @@
 **Mobile tool stack**:
 
 ```text
-Validation   -> product/validation.md (market research, idea validation)
-Design       -> product/ui-design.md (aesthetics, animations, icons)
-Onboarding   -> product/onboarding.md (first-run experience, paywall placement)
-Development  -> mobile-app-dev/expo.md OR mobile-app-dev/swift.md
-Testing      -> agent-device (AI-driven) + maestro (E2E) + xcodebuild-mcp (build)
-Preview      -> ios-simulator-mcp + playwright-emulation (web) + agent-device
-Publishing   -> mobile-app-dev/publishing.md (App Store + Play Store)
-Monetisation -> product/monetisation.md (RevenueCat, ads, freemium)
-Growth       -> product/growth.md (UGC, influencers, content, paid ads)
-Analytics    -> product/analytics.md (retention, engagement, revenue)
-Assets       -> tools/vision/ (icons, graphics) + Remotion (preview videos)
-Backend      -> mobile-app-dev/backend.md (Supabase, Firebase, Coolify)
+Validation    -> product/validation.md (market research, idea validation)
+Design        -> product/ui-design.md (aesthetics, animations, icons)
+Onboarding    -> product/onboarding.md (first-run experience, paywall placement)
+Development   -> mobile-app-dev/expo.md OR mobile-app-dev/swift.md
+Testing       -> agent-device (AI-driven) + maestro (E2E) + xcodebuild-mcp (build)
+Preview       -> ios-simulator-mcp + playwright-emulation (web) + agent-device
+Publishing    -> mobile-app-dev/publishing.md (App Store + Play Store)
+Monetisation  -> product/monetisation.md (RevenueCat, ads, freemium)
+Growth        -> product/growth.md (UGC, influencers, content, paid ads)
+Analytics     -> product/analytics.md (retention, engagement, revenue)
+Assets        -> tools/vision/ (icons, graphics) + Remotion (preview videos)
+Backend       -> mobile-app-dev/backend.md (Supabase, Firebase, Coolify)
 ```
 
 <!-- AI-CONTEXT-END -->
