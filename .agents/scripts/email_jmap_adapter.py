@@ -27,6 +27,12 @@ Credentials: read from JMAP_TOKEN environment variable (never from argv).
 
 Output: JSON to stdout. Errors to stderr.
 """
+# pylint: disable=too-many-lines,too-many-locals,too-many-branches,too-many-statements
+# pylint: disable=too-many-return-statements,too-many-nested-blocks,broad-exception-caught
+# Rationale: this is a CLI adapter module. The broad-exception-caught pattern is
+# intentional — all cmd_* functions catch Exception to convert errors to JSON stderr
+# output rather than unhandled tracebacks. Complexity metrics reflect the breadth of
+# JMAP operations covered, not structural problems.
 
 import argparse
 import json
@@ -260,7 +266,7 @@ def _make_auth_header(user, auth_type, credential):
     if auth_type == "bearer":
         return "Bearer " + credential
     # Basic auth
-    import base64
+    import base64  # pylint: disable=import-outside-toplevel
     pair = user + ":" + credential
     encoded = base64.b64encode(pair.encode("utf-8")).decode("ascii")
     return "Basic " + encoded
