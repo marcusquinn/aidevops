@@ -42,7 +42,7 @@ Simulate how AI systems decompose broad prompts into sub-queries and use that ma
 - Treat fan-out as a 3-stage retrieval model:
   broad discovery -> site-specific deep-dive -> third-party validation
 - Stage 1 (broad discovery): open-web category and comparison queries
-  (for example, "best ATS for SMB 2026")
+  (for example, "best ATS for SMB [year]")
 - Stage 2 (site-specific deep-dive): domain-scoped checks such as
   `site:brand.com pricing`, `site:brand.com integrations`,
   `site:brand.com enterprise features`
@@ -82,8 +82,8 @@ Frontier AI models (observed in GPT-5.4-thinking and similar) use `site:` operat
 
 AI fan-out typically follows three stages:
 
-1. **Broad discovery** (queries 1-3): open web searches using category terms, brand names, and comparison phrases to identify relevant domains. Example: `best ATS software 2026`, `[BrandA] vs [BrandB] applicant tracking`.
-2. **Site-specific deep-dive** (queries 4-10): `site:domain.com` queries targeting each discovered brand's own site to extract product details, pricing, features, and differentiators. Example: `site:greenhouse.com enterprise ATS features`, `site:workable.com pricing plans 2026`.
+1. **Broad discovery** (queries 1-3): open web searches using category terms, brand names, and comparison phrases to identify relevant domains. Example: `best ATS software [year]`, `[BrandA] vs [BrandB] applicant tracking`.
+2. **Site-specific deep-dive** (queries 4-10): `site:domain.com` queries targeting each discovered brand's own site to extract product details, pricing, features, and differentiators. Example: `site:greenhouse.com enterprise ATS features`, `site:workable.com pricing plans [year]`.
 3. **Third-party validation** (queries 11-13): `site:` queries targeting review platforms (G2, Capterra, TrustRadius) to cross-reference claims with independent evaluations. Example: `site:g2.com greenhouse ATS reviews`, `site:capterra.com workable pricing`.
 
 ### Modelling Site-Scoped Sub-Queries
