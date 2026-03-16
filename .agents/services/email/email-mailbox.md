@@ -661,9 +661,11 @@ SEARCH OR (FROM "alice@example.com" SUBJECT "report") (FROM "bob@example.com" SU
 ## Related
 
 - `services/email/email-agent.md` -- Mission communication agent (send/receive/extract)
+- `services/email/email-mailbox-search.md` -- OS-level mailbox search (Spotlight, notmuch, mu) including attachment content
 - `services/email/ses.md` -- Amazon SES sending configuration
 - `services/email/email-testing.md` -- Email deliverability testing
 - `services/email/email-health-check.md` -- Email infrastructure health checks
 - `scripts/email-agent-helper.sh` -- Helper script for mailbox operations
+- `scripts/mailbox-search-helper.sh` -- Spotlight/notmuch/mu search helper (t1522)
 - `scripts/email-to-markdown.py` -- Email parsing pipeline
 - `scripts/email-thread-reconstruction.py` -- Thread building from raw messages
