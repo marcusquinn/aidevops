@@ -4,27 +4,32 @@ set -euo pipefail
 
 # Email Mailbox Helper Script
 # IMAP/JMAP adapter and mailbox operations for AI assistants.
-# Connects to any email provider via IMAP (JMAP planned for Phase 4).
+# Connects to any email provider via IMAP or JMAP (RFC 8620/8621).
+# Auto-detects protocol from provider config; JMAP preferred when available.
 #
 # Usage:
 #   email-mailbox-helper.sh accounts [--test]
 #   email-mailbox-helper.sh inbox [account] [--limit N] [--offset N] [--folder FOLDER]
 #   email-mailbox-helper.sh read [account] --uid UID [--folder FOLDER]
+#   email-mailbox-helper.sh read [account] --email-id ID          (JMAP)
 #   email-mailbox-helper.sh folders [account]
 #   email-mailbox-helper.sh create-folder [account] --folder PATH
 #   email-mailbox-helper.sh send [account] --to ADDR --subject SUBJ --body TEXT
 #   email-mailbox-helper.sh move [account] --uid UID --dest FOLDER [--folder FOLDER]
+#   email-mailbox-helper.sh move [account] --email-id ID --dest FOLDER  (JMAP)
 #   email-mailbox-helper.sh flag [account] --uid UID --flag NAME [--clear] [--folder FOLDER]
-#   email-mailbox-helper.sh search [account] --query "IMAP SEARCH" [--folder FOLDER] [--limit N]
+#   email-mailbox-helper.sh flag [account] --email-id ID --flag NAME [--clear]  (JMAP)
+#   email-mailbox-helper.sh search [account] --query "SEARCH" [--folder FOLDER] [--limit N]
 #   email-mailbox-helper.sh smart-mailbox [account] --name NAME --criteria "SEARCH"
 #   email-mailbox-helper.sh sync [account] [--folder FOLDER] [--full]
+#   email-mailbox-helper.sh push [account] [--types mail] [--timeout 300]  (JMAP only)
 #   email-mailbox-helper.sh help
 #
-# Requires: python3 (for IMAP operations), jq
+# Requires: python3 (for IMAP/JMAP operations), jq
 # Config: configs/email-providers.json (from .json.txt template)
-# Credentials: gopass show -o email-imap-{account} (via IMAP_PASSWORD env var)
+# Credentials: gopass show -o email-imap-{account} (IMAP) or email-jmap-{account} (JMAP)
 #
-# Part of aidevops email system (t1493)
+# Part of aidevops email system (t1493, t1525)
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 source "${SCRIPT_DIR}/shared-constants.sh"
@@ -37,6 +42,7 @@ readonly CONFIG_DIR="${SCRIPT_DIR}/../configs"
 readonly PROVIDERS_TEMPLATE="${CONFIG_DIR}/email-providers.json.txt"
 readonly PROVIDERS_CONFIG="${CONFIG_DIR}/email-providers.json"
 readonly IMAP_ADAPTER="${SCRIPT_DIR}/email_imap_adapter.py"
+readonly JMAP_ADAPTER="${SCRIPT_DIR}/email_jmap_adapter.py"
 readonly MAILBOX_WORKSPACE="${HOME}/.aidevops/.agent-workspace/email-mailbox"
 
 # ============================================================================
@@ -47,7 +53,7 @@ check_dependencies() {
 	local missing=0
 
 	if ! command -v python3 &>/dev/null; then
-		print_error "python3 is required for IMAP operations"
+		print_error "python3 is required for IMAP/JMAP operations"
 		missing=1
 	fi
 
@@ -56,8 +62,8 @@ check_dependencies() {
 		missing=1
 	fi
 
-	if [[ ! -f "$IMAP_ADAPTER" ]]; then
-		print_error "IMAP adapter not found: $IMAP_ADAPTER"
+	if [[ ! -f "$IMAP_ADAPTER" && ! -f "$JMAP_ADAPTER" ]]; then
+		print_error "No protocol adapter found (need IMAP or JMAP adapter)"
 		missing=1
 	fi
 
@@ -265,6 +271,144 @@ run_imap_adapter() {
 }
 
 # ============================================================================
+# JMAP connection helpers (t1525)
+# ============================================================================
+
+# Get JMAP session URL from provider config
+get_jmap_url() {
+	local provider_json="$1"
+
+	local url
+	url=$(echo "$provider_json" | jq -r '.jmap.url // empty')
+
+	if [[ -z "$url" ]]; then
+		return 1
+	fi
+
+	echo "$url"
+	return 0
+}
+
+# Get JMAP token from gopass (never printed, passed as env var)
+get_jmap_token() {
+	local account="$1"
+	local secret_name="email-jmap-${account}"
+
+	if command -v gopass &>/dev/null; then
+		local token
+		token=$(gopass show -o "aidevops/${secret_name}" 2>/dev/null) || token=""
+		if [[ -n "$token" ]]; then
+			echo "$token"
+			return 0
+		fi
+	fi
+
+	# Try credentials.sh fallback
+	local cred_file="${HOME}/.config/aidevops/credentials.sh"
+	if [[ -f "$cred_file" ]]; then
+		local var_name
+		var_name="JMAP_TOKEN_$(echo "$account" | tr '[:lower:]-' '[:upper:]_')"
+		local token
+		token=$(
+			# shellcheck source=/dev/null
+			source "$cred_file" 2>/dev/null
+			eval "echo \"\${${var_name}:-}\""
+		)
+		if [[ -n "$token" ]]; then
+			echo "$token"
+			return 0
+		fi
+	fi
+
+	# Fall back to IMAP password (Fastmail uses app passwords for both)
+	local password
+	password=$(get_imap_password "$account" 2>/dev/null) || password=""
+	if [[ -n "$password" ]]; then
+		echo "$password"
+		return 0
+	fi
+
+	print_error "No JMAP token found for account '$account'"
+	print_info "Store via: aidevops secret set ${secret_name}"
+	return 1
+}
+
+# Detect the preferred protocol for an account
+# Returns: "jmap" or "imap"
+get_preferred_protocol() {
+	local account="$1"
+
+	local provider_json
+	provider_json=$(get_provider_config "$account") || {
+		echo "imap"
+		return 0
+	}
+
+	# Check if JMAP is configured and adapter exists
+	local jmap_url
+	jmap_url=$(echo "$provider_json" | jq -r '.jmap.url // empty')
+
+	if [[ -n "$jmap_url" && -f "$JMAP_ADAPTER" ]]; then
+		echo "jmap"
+	else
+		echo "imap"
+	fi
+	return 0
+}
+
+# Run the JMAP adapter with connection details
+run_jmap_adapter() {
+	local account="$1"
+	local command="$2"
+	shift 2
+	local extra_args=("$@")
+
+	local provider_json
+	provider_json=$(get_provider_config "$account") || return 1
+
+	local session_url
+	session_url=$(get_jmap_url "$provider_json") || {
+		print_error "No JMAP URL configured for account '$account'"
+		return 1
+	}
+
+	local user
+	user=$(get_imap_user "$account") || return 1
+
+	local token
+	token=$(get_jmap_token "$account") || return 1
+
+	# Pass token via environment variable (never as argv)
+	JMAP_TOKEN="$token" python3 "$JMAP_ADAPTER" \
+		--session-url "$session_url" \
+		--user "$user" \
+		"$command" \
+		"${extra_args[@]}"
+
+	return $?
+}
+
+# Run the appropriate adapter (JMAP or IMAP) based on provider config
+run_adapter() {
+	local account="$1"
+	local imap_command="$2"
+	local jmap_command="$3"
+	shift 3
+	local extra_args=("$@")
+
+	local protocol
+	protocol=$(get_preferred_protocol "$account")
+
+	if [[ "$protocol" == "jmap" ]]; then
+		run_jmap_adapter "$account" "$jmap_command" "${extra_args[@]}"
+	else
+		run_imap_adapter "$account" "$imap_command" "${extra_args[@]}"
+	fi
+
+	return $?
+}
+
+# ============================================================================
 # Commands
 # ============================================================================
 
@@ -292,29 +436,47 @@ cmd_accounts() {
 
 	while IFS= read -r slug; do
 		[[ -z "$slug" ]] && continue
-		local name type imap_host
+		local name type imap_host jmap_url protocol
 		name=$(jq -r ".providers.\"$slug\".name" "$config_file")
 		type=$(jq -r ".providers.\"$slug\".type" "$config_file")
 		imap_host=$(jq -r ".providers.\"$slug\".imap.host // \"none\"" "$config_file")
+		jmap_url=$(jq -r ".providers.\"$slug\".jmap.url // empty" "$config_file")
+		protocol=$(get_preferred_protocol "$slug")
 
 		local status_icon="  "
 		if [[ "$test_connectivity" == "true" ]]; then
 			# Check if credentials exist (without printing them)
-			local has_creds="no"
-			if get_imap_user "$slug" >/dev/null 2>&1 && get_imap_password "$slug" >/dev/null 2>&1; then
-				has_creds="yes"
-				# Test actual connectivity
-				if run_imap_adapter "$slug" "connect" >/dev/null 2>&1; then
-					status_icon="OK"
+			if get_imap_user "$slug" >/dev/null 2>&1; then
+				# Test actual connectivity via preferred protocol
+				if [[ "$protocol" == "jmap" ]]; then
+					if get_jmap_token "$slug" >/dev/null 2>&1 &&
+						run_jmap_adapter "$slug" "connect" >/dev/null 2>&1; then
+						status_icon="OK(jmap)"
+					elif get_imap_password "$slug" >/dev/null 2>&1 &&
+						run_imap_adapter "$slug" "connect" >/dev/null 2>&1; then
+						status_icon="OK(imap)"
+					else
+						status_icon="FAIL"
+					fi
 				else
-					status_icon="FAIL"
+					if get_imap_password "$slug" >/dev/null 2>&1 &&
+						run_imap_adapter "$slug" "connect" >/dev/null 2>&1; then
+						status_icon="OK(imap)"
+					else
+						status_icon="FAIL"
+					fi
 				fi
 			else
 				status_icon="NO_CREDS"
 			fi
 		fi
 
-		printf "  %-20s %-30s %-12s %-25s %s\n" "$slug" "$name" "$type" "$imap_host" "$status_icon"
+		local proto_label="imap"
+		if [[ -n "$jmap_url" ]]; then
+			proto_label="jmap+imap"
+		fi
+
+		printf "  %-20s %-30s %-12s %-10s %-25s %s\n" "$slug" "$name" "$type" "$proto_label" "$imap_host" "$status_icon"
 	done <<<"$providers"
 
 	return 0
@@ -349,8 +511,16 @@ cmd_inbox() {
 		esac
 	done
 
-	run_imap_adapter "$account" "fetch_headers" \
-		--folder "$folder" --limit "$limit" --offset "$offset"
+	local protocol
+	protocol=$(get_preferred_protocol "$account")
+
+	if [[ "$protocol" == "jmap" ]]; then
+		run_jmap_adapter "$account" "fetch_headers" \
+			--mailbox "$folder" --limit "$limit" --position "$offset"
+	else
+		run_imap_adapter "$account" "fetch_headers" \
+			--folder "$folder" --limit "$limit" --offset "$offset"
+	fi
 
 	return $?
 }
@@ -364,11 +534,15 @@ cmd_read() {
 		return 1
 	fi
 
-	local uid="" folder="INBOX"
+	local uid="" email_id="" folder="INBOX"
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--uid)
 			uid="$2"
+			shift 2
+			;;
+		--email-id)
+			email_id="$2"
 			shift 2
 			;;
 		--folder)
@@ -379,8 +553,20 @@ cmd_read() {
 		esac
 	done
 
+	# JMAP email-id takes precedence
+	if [[ -n "$email_id" ]]; then
+		run_jmap_adapter "$account" "fetch_body" --email-id "$email_id"
+		return $?
+	fi
+
 	if [[ -z "$uid" ]]; then
-		print_error "--uid is required"
+		local protocol
+		protocol=$(get_preferred_protocol "$account")
+		if [[ "$protocol" == "jmap" ]]; then
+			print_error "--email-id is required for JMAP accounts (or --uid for IMAP)"
+		else
+			print_error "--uid is required"
+		fi
 		return 1
 	fi
 
@@ -396,10 +582,16 @@ cmd_folders() {
 		return 1
 	fi
 
-	local config_file
-	config_file=$(load_providers_config) || return 1
+	local protocol
+	protocol=$(get_preferred_protocol "$account")
 
-	run_imap_adapter "$account" "list_folders" --provider-config "$config_file"
+	if [[ "$protocol" == "jmap" ]]; then
+		run_jmap_adapter "$account" "list_mailboxes"
+	else
+		local config_file
+		config_file=$(load_providers_config) || return 1
+		run_imap_adapter "$account" "list_folders" --provider-config "$config_file"
+	fi
 	return $?
 }
 
@@ -428,7 +620,14 @@ cmd_create_folder() {
 		return 1
 	fi
 
-	run_imap_adapter "$account" "create_folder" --folder "$folder"
+	local protocol
+	protocol=$(get_preferred_protocol "$account")
+
+	if [[ "$protocol" == "jmap" ]]; then
+		run_jmap_adapter "$account" "create_mailbox" --name "$folder"
+	else
+		run_imap_adapter "$account" "create_folder" --folder "$folder"
+	fi
 	return $?
 }
 
@@ -531,11 +730,15 @@ cmd_move() {
 		return 1
 	fi
 
-	local uid="" dest="" folder="INBOX"
+	local uid="" email_id="" dest="" folder="INBOX"
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--uid)
 			uid="$2"
+			shift 2
+			;;
+		--email-id)
+			email_id="$2"
 			shift 2
 			;;
 		--dest)
@@ -550,8 +753,19 @@ cmd_move() {
 		esac
 	done
 
-	if [[ -z "$uid" || -z "$dest" ]]; then
-		print_error "--uid and --dest are required"
+	if [[ -z "$dest" ]]; then
+		print_error "--dest is required"
+		return 1
+	fi
+
+	# JMAP email-id takes precedence
+	if [[ -n "$email_id" ]]; then
+		run_jmap_adapter "$account" "move_email" --email-id "$email_id" --dest-mailbox "$dest"
+		return $?
+	fi
+
+	if [[ -z "$uid" ]]; then
+		print_error "--uid (IMAP) or --email-id (JMAP) is required"
 		return 1
 	fi
 
@@ -568,11 +782,15 @@ cmd_flag() {
 		return 1
 	fi
 
-	local uid="" flag="" folder="INBOX" clear=false
+	local uid="" email_id="" flag="" folder="INBOX" clear=false
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--uid)
 			uid="$2"
+			shift 2
+			;;
+		--email-id)
+			email_id="$2"
 			shift 2
 			;;
 		--flag)
@@ -591,9 +809,24 @@ cmd_flag() {
 		esac
 	done
 
-	if [[ -z "$uid" || -z "$flag" ]]; then
-		print_error "--uid and --flag are required"
+	if [[ -z "$flag" ]]; then
+		print_error "--flag is required"
 		print_info "Available flags: Reminders, Tasks, Review, Filing, Ideas, Add-to-Contacts"
+		return 1
+	fi
+
+	# JMAP email-id takes precedence
+	if [[ -n "$email_id" ]]; then
+		local jmap_command="set_keyword"
+		if [[ "$clear" == "true" ]]; then
+			jmap_command="clear_keyword"
+		fi
+		run_jmap_adapter "$account" "$jmap_command" --email-id "$email_id" --keyword "$flag"
+		return $?
+	fi
+
+	if [[ -z "$uid" ]]; then
+		print_error "--uid (IMAP) or --email-id (JMAP) is required"
 		return 1
 	fi
 
@@ -644,7 +877,14 @@ cmd_search() {
 		return 1
 	fi
 
-	run_imap_adapter "$account" "search" --query "$query" --folder "$folder" --limit "$limit"
+	local protocol
+	protocol=$(get_preferred_protocol "$account")
+
+	if [[ "$protocol" == "jmap" ]]; then
+		run_jmap_adapter "$account" "search" --filter "$query" --mailbox "$folder" --limit "$limit"
+	else
+		run_imap_adapter "$account" "search" --query "$query" --folder "$folder" --limit "$limit"
+	fi
 	return $?
 }
 
@@ -739,7 +979,59 @@ cmd_sync() {
 		extra_args+=(--full)
 	fi
 
-	run_imap_adapter "$account" "index_sync" "${extra_args[@]}"
+	local protocol
+	protocol=$(get_preferred_protocol "$account")
+
+	if [[ "$protocol" == "jmap" ]]; then
+		local jmap_args=(--mailbox "$folder")
+		if [[ "$full_sync" == "true" ]]; then
+			jmap_args+=(--full)
+		fi
+		run_jmap_adapter "$account" "index_sync" "${jmap_args[@]}"
+	else
+		run_imap_adapter "$account" "index_sync" "${extra_args[@]}"
+	fi
+	return $?
+}
+
+# ============================================================================
+# Push command (JMAP only, t1525)
+# ============================================================================
+
+cmd_push() {
+	local account="${1:-}"
+	shift || true
+
+	if [[ -z "$account" ]]; then
+		print_error "Account name is required"
+		return 1
+	fi
+
+	local types="mail" timeout=300
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--types)
+			types="$2"
+			shift 2
+			;;
+		--timeout)
+			timeout="$2"
+			shift 2
+			;;
+		*) shift ;;
+		esac
+	done
+
+	local protocol
+	protocol=$(get_preferred_protocol "$account")
+
+	if [[ "$protocol" != "jmap" ]]; then
+		print_error "Push notifications require JMAP. Account '$account' uses IMAP."
+		print_info "JMAP push is available for: Fastmail, Cyrus 3.x, Apache James, Stalwart"
+		return 1
+	fi
+
+	run_jmap_adapter "$account" "push" --types "$types" --timeout "$timeout"
 	return $?
 }
 
@@ -752,28 +1044,41 @@ Usage: email-mailbox-helper.sh <command> [account] [options]
 Commands:
   accounts [--test]              List configured accounts (--test checks connectivity)
   inbox <account> [opts]         Fetch message headers from inbox
-  read <account> --uid UID       Read a specific message body
-  folders <account>              List IMAP folders with provider mapping
-  create-folder <account> --folder PATH  Create a new IMAP folder
+  read <account> --uid UID       Read a specific message body (IMAP)
+  read <account> --email-id ID   Read a specific message body (JMAP)
+  folders <account>              List mailbox folders
+  create-folder <account> --folder PATH  Create a new folder/mailbox
   send <account> --to --subject --body   Send an email via SMTP
-  move <account> --uid --dest    Move a message to another folder
-  flag <account> --uid --flag    Set/clear a flag on a message
-  search <account> --query       Search messages using IMAP SEARCH
+  move <account> --uid --dest    Move a message (IMAP)
+  move <account> --email-id --dest  Move a message (JMAP)
+  flag <account> --uid --flag    Set/clear a flag (IMAP)
+  flag <account> --email-id --flag  Set/clear a keyword (JMAP)
+  search <account> --query       Search messages
   smart-mailbox <account> --name --criteria  Create a saved search
   sync <account> [--folder] [--full]  Sync folder headers to local index
+  push <account> [--types] [--timeout]  Push notifications (JMAP only)
   help                           Show this help
 
 Options:
   --limit N       Max messages to return (default: 50)
   --offset N      Skip N most recent messages (default: 0)
-  --folder NAME   IMAP folder name (default: INBOX)
-  --uid UID       Message UID for read/move/flag operations
+  --folder NAME   Folder/mailbox name (default: INBOX)
+  --uid UID       Message UID for IMAP operations
+  --email-id ID   Email ID for JMAP operations
   --dest FOLDER   Destination folder for move
   --flag NAME     Flag name: Reminders, Tasks, Review, Filing, Ideas, Add-to-Contacts
   --clear         Clear a flag instead of setting it
-  --query SEARCH  IMAP SEARCH criteria string
+  --query SEARCH  Search criteria (IMAP SEARCH string or JMAP filter JSON)
   --full          Full sync (not incremental)
   --test          Test connectivity when listing accounts
+  --types TYPES   Push event types, comma-separated (default: mail)
+  --timeout SECS  Push listen timeout in seconds (default: 300)
+
+Protocol Selection:
+  The helper auto-detects the best protocol from provider config:
+  - JMAP preferred when provider has jmap.url configured (e.g., Fastmail)
+  - IMAP used as fallback for all other providers
+  - Use --uid for IMAP-specific operations, --email-id for JMAP
 
 Flag Taxonomy:
   Reminders       Time-sensitive, needs attention by a date
@@ -784,14 +1089,15 @@ Flag Taxonomy:
   Add-to-Contacts New contact, save their details
 
 Credentials:
-  Store IMAP password: aidevops secret set email-imap-<account>
-  Store IMAP username: gopass edit aidevops/email-imap-<account> (add 'user: you@example.com')
+  IMAP: aidevops secret set email-imap-<account>
+  JMAP: aidevops secret set email-jmap-<account> (or falls back to IMAP password)
+  Username: gopass edit aidevops/email-imap-<account> (add 'user: you@example.com')
 
 Provider Config:
   Template: .agents/configs/email-providers.json.txt
   Working:  .agents/configs/email-providers.json (copy and customise)
 
-Examples:
+Examples (IMAP):
   email-mailbox-helper.sh accounts --test
   email-mailbox-helper.sh inbox cloudron --limit 20
   email-mailbox-helper.sh read cloudron --uid 12345
@@ -799,6 +1105,15 @@ Examples:
   email-mailbox-helper.sh flag cloudron --uid 12345 --flag Tasks
   email-mailbox-helper.sh move cloudron --uid 12345 --dest Archive
   email-mailbox-helper.sh sync cloudron --full
+
+Examples (JMAP - Fastmail):
+  email-mailbox-helper.sh inbox fastmail --limit 20
+  email-mailbox-helper.sh read fastmail --email-id Mf1234abcd
+  email-mailbox-helper.sh search fastmail --query '{"from":"client@example.com"}'
+  email-mailbox-helper.sh flag fastmail --email-id Mf1234abcd --flag Tasks
+  email-mailbox-helper.sh move fastmail --email-id Mf1234abcd --dest Archive
+  email-mailbox-helper.sh push fastmail --timeout 600
+  email-mailbox-helper.sh sync fastmail --full
 HELP
 	return 0
 }
@@ -846,6 +1161,9 @@ main() {
 		;;
 	sync)
 		cmd_sync "$@"
+		;;
+	push)
+		cmd_push "$@"
 		;;
 	help | --help | -h)
 		cmd_help

@@ -176,7 +176,7 @@ paddleocr-helper.sh,PaddleOCR scene text OCR (install ocr serve stop status mode
 quickfile-helper.sh,QuickFile purchase/expense recording bridge - supplier resolution and MCP instruction generation (record-purchase record-expense supplier-resolve batch-record preview status)
 cloudron-package-helper.sh,Cloudron app packaging workflow (init scaffold build test)
 email-agent-helper.sh,Autonomous email agent for mission 3rd-party communication (send poll extract-codes thread conversations status)
-email-mailbox-helper.sh,Email mailbox IMAP/JMAP adapter (accounts inbox read folders send move flag search smart-mailbox sync)
+email-mailbox-helper.sh,Email mailbox IMAP/JMAP adapter (accounts inbox read folders send move flag search smart-mailbox sync push) auto-detects protocol
 email-health-check-helper.sh,Email health check with scoring (SPF DKIM DMARC BIMI MTA-STS TLS-RPT DANE)
 email-test-suite-helper.sh,Email testing suite (design rendering delivery testing inbox placement)
 email-delivery-test-helper.sh,Email delivery testing (spam content analysis provider deliverability inbox placement warm-up)
