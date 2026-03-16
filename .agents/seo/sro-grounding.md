@@ -79,12 +79,24 @@ Selection Rate Optimization (SRO) focuses on whether a source gets selected into
 - Keep meta descriptions specific and factual so retrieval systems can
   disambiguate similar pages during domain-scoped selection
 
+## Optimizing for Domain-Scoped Retrieval
+
+When an AI model runs a `site:yourdomain.com` query, it is searching your site specifically — not competing against the open web. The selection dynamics differ from open-web retrieval:
+
+- **Page titles are query-match surfaces**: the model's `site:` query includes category terms and feature names. Page titles and H1s must contain these terms explicitly. A page titled "Our Platform" will not match `site:yourdomain.com enterprise ATS features` — but "Enterprise ATS Features & Capabilities" will.
+- **Meta descriptions become retrieval previews**: in domain-scoped search, the meta description helps the model decide which of your pages to read. Write meta descriptions as factual summaries containing category terms, not marketing taglines.
+- **Each page competes against your other pages, not competitors**: when the model searches your site, it picks the best-matching page from your domain. Ensure each major topic has a single authoritative page rather than spreading facts across multiple pages that partially match.
+- **Heading hierarchy signals topic structure**: the model uses headings to locate specific sections within a page. Use descriptive headings that match likely query terms (`## Pricing Plans`, `## Enterprise Features`, `## Integration Partners`) rather than creative headings (`## Why We're Different`).
+- **Standalone factual density matters more**: in domain-scoped retrieval, the model is extracting specific claims to compare against other brands. Every key fact should be a self-contained statement that makes sense without surrounding context.
+
 ## Common Failure Modes
 
 - Important claims appear only deep in the page
 - Contradictory facts across pages dilute confidence
 - Overlong narrative sections bury actionable information
 - Snippet candidates rely on pronouns and missing antecedents
+- Page titles use brand-centric language instead of category terms that match `site:` query patterns
+- Key product pages lack meta descriptions with factual summaries
 
 ## Related Subagents
 

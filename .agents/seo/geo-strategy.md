@@ -82,6 +82,27 @@ Design and evaluate AI search optimization strategy with a retrieval-first appro
 - Track outbound citations from profile links and comparison assets with
   UTM conventions so third-party mention flow can be attributed
 
+### Site-searchable content architecture
+
+AI models use `site:yourdomain.com` queries to extract detail from domains they have already identified as relevant. This bypasses traditional SERP ranking — the model is searching your site directly. Content must be structured for domain-scoped retrieval:
+
+- Key product/feature pages must return relevant results for `site:yourdomain.com [category] features [year]` query patterns
+- Each major product, feature, or service should have a dedicated page with a descriptive title containing category terms (not just brand names)
+- Page titles and H1s should include the terms an AI model would use in a `site:` query: product category, feature type, year, and pricing where applicable
+- Avoid consolidating all product information into a single page — domain-scoped search works best when each topic has its own addressable URL
+- Ensure pricing, feature lists, and comparison data are in crawlable HTML, not locked behind JavaScript rendering or gated forms
+
+### Third-party review platform strategy
+
+AI models use `site:g2.com`, `site:capterra.com`, and `site:trustradius.com` queries as a validation stage after extracting claims from brand sites. Third-party citations serve as independent confirmation:
+
+- Maintain complete, current profiles on G2, Capterra, and TrustRadius with the same canonical facts (pricing, features, integrations) as the primary site
+- Ensure review platform profiles use consistent product naming and categorization
+- Respond to reviews to demonstrate active engagement (AI models may extract vendor responses as evidence of support quality)
+- Keep category listings accurate — if the model searches `site:g2.com [your brand] [wrong category]`, it finds nothing
+- Monitor review platform profiles quarterly to ensure feature lists and pricing reflect current offerings
+- Consider TrustRadius, PeerSpot, and vertical-specific review sites for B2B categories where G2/Capterra coverage is thin
+
 ## Anti-Patterns
 
 - Prompt-rank dashboards without content remediation

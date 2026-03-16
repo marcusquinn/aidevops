@@ -227,7 +227,7 @@ Evidence supporting this includes:
 [Concluding statement connecting evidence to actionable insight].
 ```
 
-### Site-Searchable Product Block
+### GEO Product Block
 
 Use when AI systems are likely to run domain-scoped retrieval such as
 `site:yourdomain.com [category] features [year]`.
@@ -306,6 +306,80 @@ Different content domains benefit from different authority signals.
 - Reference industry research and reports
 - Add percentage changes and timeframes
 - Quote recognized thought leaders
+
+---
+
+## Site-Searchable Content Patterns
+
+These patterns optimize content for domain-scoped AI retrieval — when a model runs `site:yourdomain.com` queries to extract detail from your site specifically.
+
+### Site-Searchable Product Block
+
+Structured content block optimized for domain-scoped AI retrieval. When a model searches `site:yourdomain.com [category] features`, this block ensures the page matches and the key facts are extractable.
+
+```markdown
+## [Product Name]: [Category] [Type] for [Audience]
+
+[Product Name] is a [category term] that [core value proposition in one sentence]. [Key differentiator in one sentence].
+
+### Key Features
+
+- **[Feature category]**: [Specific capability with measurable detail]
+- **[Feature category]**: [Specific capability with measurable detail]
+- **[Feature category]**: [Specific capability with measurable detail]
+- **[Feature category]**: [Specific capability with measurable detail]
+
+### Pricing
+
+[Pricing model] starting at [price point] per [unit/period]. [Brief tier summary]. [Link to detailed pricing page].
+
+### Integrations
+
+Connects with [number] tools including [top 3-5 integration names]. [Link to full integration directory].
+
+*Last updated: [YYYY-MM]*
+```
+
+**Why this works for `site:` retrieval:**
+
+- H2 contains category terms that match `site:` query patterns (not just brand name)
+- Opening sentence is a self-contained definition extractable as a standalone claim
+- Feature list uses category vocabulary, not internal product jargon
+- Pricing and integration sections are individually addressable via heading anchors
+- Last-updated date signals freshness to the retrieval system
+
+### UTM Citation Attribution Tracking
+
+Track which AI-cited pages drive traffic using UTM parameters. AI models that cite sources often include UTM-tagged links, enabling attribution of AI-driven visits.
+
+**Implementation pattern:**
+
+```markdown
+<!-- Canonical URL (clean, no tracking params) -->
+https://yourdomain.com/product-features/
+
+<!-- Distributed/cited link variant with UTM attribution -->
+https://yourdomain.com/product-features/?utm_source=ai&utm_medium=citation&utm_campaign=[model-name]
+```
+
+> **Note:** The canonical URL must always be clean — tracking parameters belong
+> only in distributed or cited link variants, never in the canonical itself.
+
+**Attribution strategy:**
+
+- Monitor `utm_source=ai` or `utm_source=chatgpt` (and similar) traffic in analytics to measure AI citation volume
+- Track which pages receive AI-attributed visits — these are the pages models are actually citing
+- Compare cited pages against your priority page list to identify gaps (high-priority pages not being cited)
+- Use referrer analysis alongside UTM data: AI platforms often send identifiable referrer headers
+- Set up conversion tracking on AI-attributed visits to measure revenue impact, not just traffic
+- Monitor UTM coverage ratio: of all pages cited by AI models, what percentage have proper attribution tracking?
+
+**Key metrics:**
+
+- AI citation traffic volume (visits with AI-attributed UTM or referrer)
+- Citation-to-conversion rate (do AI-referred visitors convert differently?)
+- Page citation distribution (which pages get cited most/least?)
+- UTM coverage (percent of AI-cited pages with attribution tracking)
 
 ---
 

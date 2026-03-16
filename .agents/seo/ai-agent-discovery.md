@@ -66,6 +66,9 @@ Evaluate machine discoverability, not only human UX, using multi-turn exploratio
 - Site language uses internal jargon instead of user vocabulary
 - Key answers scattered across weakly-linked pages
 - High-value pages lack explicit sections for common decision questions
+- Page titles use brand-centric language that does not match `site:` query patterns (e.g., "Our Solution" instead of "[Category] Software Features")
+- Review platform profiles are outdated or incomplete, causing third-party validation queries to return stale information
+- Key product pages are consolidated into a single URL, making domain-scoped search return one page for all queries instead of topic-specific matches
 
 ## Related Subagents
 
