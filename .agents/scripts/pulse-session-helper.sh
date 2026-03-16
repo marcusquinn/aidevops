@@ -12,8 +12,9 @@
 #   pulse-session-helper.sh status   # Show consent layers, workers, repos
 #   pulse-session-helper.sh help     # Show usage
 #
-# The launchd plist stays loaded — pulse-wrapper.sh checks these consent
-# layers on each cycle and skips if none grant permission.
+# The scheduler (launchd on macOS, cron on Linux) stays loaded —
+# pulse-wrapper.sh checks these consent layers on each cycle and skips
+# if none grant permission.
 
 set -euo pipefail
 
@@ -147,6 +148,68 @@ get_pulse_repo_count() {
 }
 
 #######################################
+# Get OS-appropriate scheduler name
+# Returns: "launchd" on macOS, "cron" on Linux
+#######################################
+get_scheduler_name() {
+	local os_type
+	os_type=$(uname -s)
+	case "$os_type" in
+	Darwin) echo "launchd" ;;
+	*) echo "cron" ;;
+	esac
+	return 0
+}
+
+#######################################
+# Check if the pulse scheduler is installed
+# On macOS: checks for launchd plist
+# On Linux: checks for cron entry
+# Returns: 0 if installed, 1 if not
+#######################################
+is_scheduler_installed() {
+	local os_type
+	os_type=$(uname -s)
+	case "$os_type" in
+	Darwin)
+		# Check for launchd plist (both old and new label formats)
+		if launchctl list 2>/dev/null | grep -qF "com.aidevops.aidevops-supervisor-pulse"; then
+			return 0
+		fi
+		if launchctl list 2>/dev/null | grep -qF "com.aidevops.supervisor-pulse"; then
+			return 0
+		fi
+		return 1
+		;;
+	*)
+		# Check for cron entry
+		if crontab -l 2>/dev/null | grep -qF "aidevops-supervisor-pulse"; then
+			return 0
+		fi
+		return 1
+		;;
+	esac
+}
+
+#######################################
+# Get the install command for the pulse scheduler
+# Returns: the appropriate install command string
+#######################################
+get_scheduler_install_cmd() {
+	local os_type
+	os_type=$(uname -s)
+	case "$os_type" in
+	Darwin)
+		echo "supervisor-helper.sh cron install"
+		;;
+	*)
+		echo "supervisor-helper.sh cron install"
+		;;
+	esac
+	return 0
+}
+
+#######################################
 # Get last pulse timestamp from log
 #######################################
 get_last_pulse_time() {
@@ -200,13 +263,30 @@ EOF
 		max_workers=$(cat "$MAX_WORKERS_FILE" || echo "?")
 	fi
 
+	local scheduler_name
+	scheduler_name=$(get_scheduler_name)
+
 	print_success "Pulse session started"
 	echo ""
 	echo "  Repos in scope: ${repo_count}"
 	echo "  Max workers:    ${max_workers}"
-	echo "  Pulse interval: every 2 minutes (via launchd)"
+	echo "  Pulse interval: every 2 minutes (via ${scheduler_name})"
 	echo ""
-	echo "  The pulse will run on the next launchd cycle."
+
+	# Warn if no scheduler entry is installed (GH#5085)
+	if ! is_scheduler_installed; then
+		local install_cmd
+		install_cmd=$(get_scheduler_install_cmd)
+		print_warning "No ${scheduler_name} scheduler entry found — the pulse will not fire automatically"
+		echo ""
+		echo "  Install the scheduler with:"
+		echo "    ${install_cmd}"
+		echo ""
+		echo "  Without the scheduler, the pulse only runs when manually triggered."
+	else
+		echo "  The pulse will run on the next ${scheduler_name} cycle."
+	fi
+
 	echo "  Stop with: aidevops pulse stop"
 	return 0
 }
@@ -442,7 +522,9 @@ cmd_status() {
 			echo -e "  Process:     ${GREEN}running${NC} (PID ${pulse_display_pid})"
 		fi
 	else
-		echo -e "  Process:     ${BLUE}idle${NC} (waiting for next launchd cycle)"
+		local idle_scheduler_name
+		idle_scheduler_name=$(get_scheduler_name)
+		echo -e "  Process:     ${BLUE}idle${NC} (waiting for next ${idle_scheduler_name} cycle)"
 	fi
 
 	# Workers
