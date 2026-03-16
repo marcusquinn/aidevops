@@ -112,17 +112,31 @@ fi
 #######################################
 # Configuration
 #######################################
-PULSE_STALE_THRESHOLD="${PULSE_STALE_THRESHOLD:-3600}"                                                  # 60 min hard ceiling (raised from 30 min — GH#2958)
-PULSE_IDLE_TIMEOUT="${PULSE_IDLE_TIMEOUT:-600}"                                                         # 10 min idle before kill (reduces false positives during active triage)
-PULSE_IDLE_CPU_THRESHOLD="${PULSE_IDLE_CPU_THRESHOLD:-5}"                                               # CPU% below this = idle (0-100 scale)
-PULSE_PROGRESS_TIMEOUT="${PULSE_PROGRESS_TIMEOUT:-600}"                                                 # 10 min no log output = stuck (GH#2958)
-PULSE_COLD_START_TIMEOUT="${PULSE_COLD_START_TIMEOUT:-1200}"                                            # 20 min grace before first output (prevents false early watchdog kills)
-PULSE_COLD_START_TIMEOUT_UNDERFILLED="${PULSE_COLD_START_TIMEOUT_UNDERFILLED:-600}"                     # 10 min grace when below worker target to recover capacity faster
-PULSE_UNDERFILLED_STALE_RECOVERY_TIMEOUT="${PULSE_UNDERFILLED_STALE_RECOVERY_TIMEOUT:-900}"             # 15 min stale-process cutoff when worker pool is underfilled
-ORPHAN_MAX_AGE="${ORPHAN_MAX_AGE:-7200}"                                                                # 2 hours — kill orphans older than this
-RAM_PER_WORKER_MB="${RAM_PER_WORKER_MB:-512}"                                                           # 512 MB per worker (opencode headless is lightweight)
-RAM_RESERVE_MB="${RAM_RESERVE_MB:-6144}"                                                                # 6 GB reserved for OS + user apps
-MAX_WORKERS_CAP="${MAX_WORKERS_CAP:-$(config_get "orchestration.max_workers_cap" "8")}"                 # Hard ceiling regardless of RAM
+PULSE_STALE_THRESHOLD="${PULSE_STALE_THRESHOLD:-3600}"                                      # 60 min hard ceiling (raised from 30 min — GH#2958)
+PULSE_IDLE_TIMEOUT="${PULSE_IDLE_TIMEOUT:-600}"                                             # 10 min idle before kill (reduces false positives during active triage)
+PULSE_IDLE_CPU_THRESHOLD="${PULSE_IDLE_CPU_THRESHOLD:-5}"                                   # CPU% below this = idle (0-100 scale)
+PULSE_PROGRESS_TIMEOUT="${PULSE_PROGRESS_TIMEOUT:-600}"                                     # 10 min no log output = stuck (GH#2958)
+PULSE_COLD_START_TIMEOUT="${PULSE_COLD_START_TIMEOUT:-1200}"                                # 20 min grace before first output (prevents false early watchdog kills)
+PULSE_COLD_START_TIMEOUT_UNDERFILLED="${PULSE_COLD_START_TIMEOUT_UNDERFILLED:-600}"         # 10 min grace when below worker target to recover capacity faster
+PULSE_UNDERFILLED_STALE_RECOVERY_TIMEOUT="${PULSE_UNDERFILLED_STALE_RECOVERY_TIMEOUT:-900}" # 15 min stale-process cutoff when worker pool is underfilled
+ORPHAN_MAX_AGE="${ORPHAN_MAX_AGE:-7200}"                                                    # 2 hours — kill orphans older than this
+RAM_PER_WORKER_MB="${RAM_PER_WORKER_MB:-512}"                                               # 512 MB per worker (opencode headless is lightweight)
+RAM_RESERVE_MB="${RAM_RESERVE_MB:-6144}"                                                    # 6 GB reserved for OS + user apps
+# Compute sensible default cap from total RAM (not free RAM — that's volatile).
+# Formula: (total_ram_mb - reserve) / ram_per_worker, clamped to [4, 32].
+# This replaces the old static default of 8 which silently throttled capable machines (t1532).
+_default_cap=8
+if [[ "$(uname)" == "Darwin" ]]; then
+	_total_mb=$(sysctl -n hw.memsize 2>/dev/null | awk '{printf "%d", $1/1048576}')
+elif [[ -f /proc/meminfo ]]; then
+	_total_mb=$(awk '/MemTotal/ {printf "%d", $2/1024}' /proc/meminfo 2>/dev/null)
+fi
+if [[ "${_total_mb:-0}" -gt 0 ]]; then
+	_default_cap=$(((_total_mb - RAM_RESERVE_MB) / RAM_PER_WORKER_MB))
+	[[ "$_default_cap" -lt 4 ]] && _default_cap=4
+	[[ "$_default_cap" -gt 32 ]] && _default_cap=32
+fi
+MAX_WORKERS_CAP="${MAX_WORKERS_CAP:-$(config_get "orchestration.max_workers_cap" "$_default_cap")}"     # Derived from total RAM; override via config or env
 DAILY_PR_CAP="${DAILY_PR_CAP:-1000}"                                                                    # Max PRs created per repo per day (GH#3821)
 PRODUCT_RESERVATION_PCT="${PRODUCT_RESERVATION_PCT:-60}"                                                # % of worker slots reserved for product repos (t1423)
 QUALITY_DEBT_CAP_PCT="${QUALITY_DEBT_CAP_PCT:-$(config_get "orchestration.quality_debt_cap_pct" "30")}" # % cap for quality-debt dispatch share
@@ -158,7 +172,7 @@ PULSE_UNDERFILLED_STALE_RECOVERY_TIMEOUT=$(_validate_int PULSE_UNDERFILLED_STALE
 ORPHAN_MAX_AGE=$(_validate_int ORPHAN_MAX_AGE "$ORPHAN_MAX_AGE" 7200)
 RAM_PER_WORKER_MB=$(_validate_int RAM_PER_WORKER_MB "$RAM_PER_WORKER_MB" 512 1)
 RAM_RESERVE_MB=$(_validate_int RAM_RESERVE_MB "$RAM_RESERVE_MB" 6144)
-MAX_WORKERS_CAP=$(_validate_int MAX_WORKERS_CAP "$MAX_WORKERS_CAP" 8)
+MAX_WORKERS_CAP=$(_validate_int MAX_WORKERS_CAP "$MAX_WORKERS_CAP" "${_default_cap:-8}")
 DAILY_PR_CAP=$(_validate_int DAILY_PR_CAP "$DAILY_PR_CAP" 5 1)
 PRODUCT_RESERVATION_PCT=$(_validate_int PRODUCT_RESERVATION_PCT "$PRODUCT_RESERVATION_PCT" 60 0)
 QUALITY_DEBT_CAP_PCT=$(_validate_int QUALITY_DEBT_CAP_PCT "$QUALITY_DEBT_CAP_PCT" 30 0)
