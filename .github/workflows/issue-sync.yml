@@ -638,3 +638,101 @@ jobs:
           else
             echo "Issue #$ISSUE_NUMBER is not persistent — closure allowed"
           fi
+
+  label-closure-reason:
+    name: Label Issue Closure Reason
+    if: >-
+      github.event_name == 'issues' &&
+      github.event.action == 'closed'
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    permissions:
+      issues: write
+
+    steps:
+      - name: Apply closure reason label
+        env:
+          ISSUE_NUMBER: ${{ github.event.issue.number }}
+          ISSUE_LABELS: ${{ join(github.event.issue.labels.*.name, ',') }}
+          REPO: ${{ github.repository }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Fetch state_reason from the API (not available in event payload)
+          STATE_REASON=$(gh api "repos/${REPO}/issues/${ISSUE_NUMBER}" --jq '.state_reason // "completed"' 2>/dev/null || echo "completed")
+          echo "Issue #$ISSUE_NUMBER closed with reason: $STATE_REASON"
+
+          # Skip if already closed by a merged PR (sync-on-pr-merge handles those)
+          if echo "$ISSUE_LABELS" | grep -q 'status:done'; then
+            echo "Issue already has status:done — closed by merged PR, skipping"
+            exit 0
+          fi
+
+          # Determine label based on state_reason and existing labels
+          LABEL=""
+          case "$STATE_REASON" in
+            not_planned)
+              # Check if already labelled with a specific reason
+              if echo "$ISSUE_LABELS" | grep -q 'duplicate'; then
+                echo "Already labelled as duplicate"
+                LABEL=""
+              elif echo "$ISSUE_LABELS" | grep -q 'wontfix'; then
+                echo "Already labelled as wontfix"
+                LABEL=""
+              else
+                # Check closing comment for hints about the reason
+                LAST_COMMENT=$(gh api "repos/${REPO}/issues/${ISSUE_NUMBER}/comments" \
+                  --jq 'last | .body // ""' 2>/dev/null || echo "")
+
+                if echo "$LAST_COMMENT" | grep -qiE 'duplicate|dupe|already exists'; then
+                  LABEL="duplicate"
+                elif echo "$LAST_COMMENT" | grep -qiE 'already.*(fixed|resolved|done|merged|implemented)'; then
+                  LABEL="already-fixed"
+                elif echo "$LAST_COMMENT" | grep -qiE 'wontfix|won'\''t fix|will not'; then
+                  LABEL="wontfix"
+                else
+                  LABEL="not-planned"
+                fi
+              fi
+              ;;
+            completed)
+              # Completed but no status:done = closed manually without a PR
+              # Check if there's a linked merged PR
+              LINKED_PR=$(gh api "repos/${REPO}/issues/${ISSUE_NUMBER}/timeline" \
+                --jq '[.[] | select(.event == "cross-referenced" and .source.issue.pull_request != null and .source.issue.state == "closed")] | length' 2>/dev/null || echo "0")
+              if [[ "$LINKED_PR" == "0" ]]; then
+                # Check closing comment for already-fixed hints
+                LAST_COMMENT=$(gh api "repos/${REPO}/issues/${ISSUE_NUMBER}/comments" \
+                  --jq 'last | .body // ""' 2>/dev/null || echo "")
+                if echo "$LAST_COMMENT" | grep -qiE 'already.*(fixed|resolved|done|merged|implemented)'; then
+                  LABEL="already-fixed"
+                fi
+                # Otherwise leave unlabelled — could be manually verified as done
+              fi
+              ;;
+          esac
+
+          if [[ -n "$LABEL" ]]; then
+            # Ensure label exists
+            gh label create "$LABEL" --repo "$REPO" --force \
+              --description "$(
+                case "$LABEL" in
+                  duplicate)     echo "This issue or pull request already exists" ;;
+                  not-planned)   echo "Closed without implementation — not planned" ;;
+                  already-fixed) echo "Already fixed by another change" ;;
+                  wontfix)       echo "This will not be worked on" ;;
+                esac
+              )" \
+              --color "$(
+                case "$LABEL" in
+                  duplicate)     echo "cfd3d7" ;;
+                  not-planned)   echo "ffffff" ;;
+                  already-fixed) echo "e4e669" ;;
+                  wontfix)       echo "ffffff" ;;
+                esac
+              )" 2>/dev/null || true
+
+            gh issue edit "$ISSUE_NUMBER" --repo "$REPO" --add-label "$LABEL" 2>/dev/null || true
+            echo "Applied label '$LABEL' to issue #$ISSUE_NUMBER"
+          else
+            echo "No closure reason label needed for issue #$ISSUE_NUMBER"
+          fi

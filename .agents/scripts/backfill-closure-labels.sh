@@ -1,0 +1,138 @@
+#!/usr/bin/env bash
+# backfill-closure-labels.sh — Apply closure reason labels to existing closed issues
+#
+# Usage: bash backfill-closure-labels.sh [--repo owner/repo] [--dry-run] [--limit N]
+#
+# Scans closed issues missing closure reason labels and applies:
+#   - duplicate: state_reason=not_planned + closing comment mentions duplicate
+#   - already-fixed: closed with "already fixed/resolved/done" in comments
+#   - not-planned: state_reason=not_planned (catch-all)
+#   - wontfix: closing comment mentions wontfix/won't fix
+#
+# Issues with status:done (closed by merged PR) are skipped.
+# t1533 — one-time backfill, safe to re-run (idempotent).
+
+set -euo pipefail
+
+_repo=""
+_dry_run=false
+_limit=500
+
+while [[ $# -gt 0 ]]; do
+	case "$1" in
+	--repo)
+		_repo="$2"
+		shift 2
+		;;
+	--dry-run)
+		_dry_run=true
+		shift
+		;;
+	--limit)
+		_limit="$2"
+		shift 2
+		;;
+	*)
+		echo "Unknown option: $1" >&2
+		exit 1
+		;;
+	esac
+done
+
+if [[ -z "$_repo" ]]; then
+	_repo=$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || echo "")
+	if [[ -z "$_repo" ]]; then
+		echo "ERROR: Could not detect repo. Use --repo owner/repo" >&2
+		exit 1
+	fi
+fi
+
+echo "Backfilling closure reason labels for $_repo (limit: $_limit, dry-run: $_dry_run)"
+
+# Ensure labels exist
+if [[ "$_dry_run" == "false" ]]; then
+	gh label create "not-planned" --repo "$_repo" --force --description "Closed without implementation — not planned" --color "ffffff" 2>/dev/null || true
+	gh label create "already-fixed" --repo "$_repo" --force --description "Already fixed by another change" --color "e4e669" 2>/dev/null || true
+	# duplicate and wontfix already exist as GitHub defaults
+fi
+
+_applied=0
+_skipped=0
+_page=1
+_per_page=100
+
+while [[ "$_applied" -lt "$_limit" && "$_skipped" -lt 2000 ]]; do
+	# Fetch closed issues in batches
+	_issues=$(gh api "repos/${_repo}/issues?state=closed&per_page=${_per_page}&page=${_page}&direction=desc" \
+		--jq '.[] | {number, state_reason, title: .title[:80], labels: [.labels[].name]}' 2>/dev/null || echo "")
+
+	if [[ -z "$_issues" ]]; then
+		echo "No more issues to process (page $_page)"
+		break
+	fi
+
+	# Process each issue
+	while IFS= read -r _issue; do
+		local_number=$(echo "$_issue" | jq -r '.number')
+		local_reason=$(echo "$_issue" | jq -r '.state_reason // "completed"')
+		local_title=$(echo "$_issue" | jq -r '.title')
+		local_labels=$(echo "$_issue" | jq -r '.labels | join(",")')
+
+		# Skip if already has a closure reason label
+		if echo "$local_labels" | grep -qE 'duplicate|not-planned|already-fixed|wontfix|status:done'; then
+			_skipped=$((_skipped + 1))
+			continue
+		fi
+
+		# Determine label
+		local_label=""
+		case "$local_reason" in
+		not_planned)
+			# Check last comment for specifics
+			local_comment=$(gh api "repos/${_repo}/issues/${local_number}/comments" \
+				--jq 'last | .body // ""' 2>/dev/null || echo "")
+
+			if echo "$local_comment" | grep -qiE 'duplicate|dupe|already exists'; then
+				local_label="duplicate"
+			elif echo "$local_comment" | grep -qiE 'already.*(fixed|resolved|done|merged|implemented)'; then
+				local_label="already-fixed"
+			elif echo "$local_comment" | grep -qiE 'wontfix|won'\''t fix|will not'; then
+				local_label="wontfix"
+			else
+				local_label="not-planned"
+			fi
+			;;
+		completed)
+			# Check if there's a closing comment indicating already-fixed
+			local_comment=$(gh api "repos/${_repo}/issues/${local_number}/comments" \
+				--jq 'last | .body // ""' 2>/dev/null || echo "")
+			if echo "$local_comment" | grep -qiE 'already.*(fixed|resolved|done|merged|implemented)'; then
+				local_label="already-fixed"
+			fi
+			# Otherwise skip — completed without status:done is ambiguous
+			;;
+		esac
+
+		if [[ -n "$local_label" ]]; then
+			if [[ "$_dry_run" == "true" ]]; then
+				echo "[DRY-RUN] #$local_number ($local_reason) -> $local_label — $local_title"
+			else
+				gh issue edit "$local_number" --repo "$_repo" --add-label "$local_label" 2>/dev/null || true
+				echo "#$local_number ($local_reason) -> $local_label — $local_title"
+			fi
+			_applied=$((_applied + 1))
+		else
+			_skipped=$((_skipped + 1))
+		fi
+
+		# Rate limit: 1 API call per issue for comments, be gentle
+		sleep 0.2
+
+	done < <(echo "$_issues" | jq -c '.')
+
+	_page=$((_page + 1))
+done
+
+echo ""
+echo "Done. Applied: $_applied, Skipped: $_skipped"
+exit 0
