@@ -389,6 +389,7 @@ gws people people updateContact \
 ```bash
 # Dump all contacts to a local file for offline use
 mkdir -p ~/.aidevops/.agent-workspace/work/contacts
+
 gws people connections list \
   --params '{"resourceName":"people/me","personFields":"names,emailAddresses,phoneNumbers","pageSize":1000}' \
   --page-all \
