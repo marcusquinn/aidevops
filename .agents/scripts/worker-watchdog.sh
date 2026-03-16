@@ -873,10 +873,10 @@ cmd_status() {
 			echo "  Status: not installed (run --install)"
 		fi
 	else
-		# Linux: check cron
-		if crontab -l 2>/dev/null | grep -qF "$CRON_MARKER"; then
-			local cron_entry
-			cron_entry=$(crontab -l 2>/dev/null | grep -F "$CRON_MARKER")
+		# Linux: check cron (single crontab -l call)
+		local cron_entry
+		cron_entry=$(crontab -l 2>/dev/null | grep -F "$CRON_MARKER") || true
+		if [[ -n "$cron_entry" ]]; then
 			echo "  Status: installed"
 			echo "  Entry:  ${cron_entry}"
 		else
@@ -983,15 +983,12 @@ _install_cron() {
 	local script_path="$1"
 	local cron_line="*/2 * * * * /bin/bash ${script_path} --check >> ${LOG_FILE} 2>&1 ${CRON_MARKER}"
 
-	local temp_cron
-	temp_cron=$(mktemp)
-	trap 'rm -f "${temp_cron:-}"' RETURN
-
-	# Remove any existing watchdog entry, then add the new one
-	crontab -l 2>/dev/null | grep -vF "$CRON_MARKER" >"$temp_cron" || true
-	echo "$cron_line" >>"$temp_cron"
-	crontab "$temp_cron"
-	rm -f "$temp_cron"
+	# Remove any existing watchdog entry, then add the new one (pipe to crontab -)
+	# Note: || true guards against set -e + pipefail when crontab -l has no entries
+	(
+		crontab -l 2>/dev/null | grep -vF "$CRON_MARKER" || true
+		echo "$cron_line"
+	) | crontab -
 
 	echo "Installed cron entry for worker-watchdog"
 	echo "Schedule: every 2 minutes"
@@ -1017,14 +1014,11 @@ cmd_uninstall() {
 			echo "Not installed (launchd)"
 		fi
 	else
-		# Linux: remove cron entry
-		if crontab -l 2>/dev/null | grep -qF "$CRON_MARKER"; then
-			local temp_cron
-			temp_cron=$(mktemp)
-			trap 'rm -f "${temp_cron:-}"' RETURN
-			crontab -l 2>/dev/null | grep -vF "$CRON_MARKER" >"$temp_cron" || true
-			crontab "$temp_cron"
-			rm -f "$temp_cron"
+		# Linux: remove cron entry (single crontab -l call)
+		local current_crontab
+		current_crontab=$(crontab -l 2>/dev/null) || true
+		if echo "$current_crontab" | grep -qF "$CRON_MARKER"; then
+			echo "$current_crontab" | grep -vF "$CRON_MARKER" | crontab -
 			echo "Uninstalled cron entry for worker-watchdog"
 		else
 			echo "Not installed (cron)"
