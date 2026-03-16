@@ -297,6 +297,8 @@ migrate_agent_to_agents_folder() {
 
 					# Add runtime artifact ignores if not present
 					if ! grep -q "^\.agents/loop-state/" "$gitignore" 2>/dev/null; then
+						# Ensure trailing newline before appending (prevents malformed entries like *.zip.agents/loop-state/)
+						[[ -s "$gitignore" && $(tail -c1 "$gitignore" | wc -l) -eq 0 ]] && printf '\n' >>"$gitignore"
 						{
 							echo ""
 							echo "# aidevops runtime artifacts"
@@ -887,6 +889,8 @@ migrate_loop_state_directories() {
 		local gitignore="$repo_dir/.gitignore"
 		if [[ -f "$gitignore" ]]; then
 			if ! grep -q "^\.agents/loop-state/" "$gitignore" 2>/dev/null; then
+				# Ensure trailing newline before appending (prevents malformed entries)
+				[[ -s "$gitignore" && $(tail -c1 "$gitignore" | wc -l) -eq 0 ]] && printf '\n' >>"$gitignore"
 				echo ".agents/loop-state/" >>"$gitignore"
 				print_info "  Added .agents/loop-state/ to .gitignore"
 			fi

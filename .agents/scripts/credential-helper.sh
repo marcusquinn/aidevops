@@ -727,6 +727,8 @@ cmd_use() {
 
 	# Add to .gitignore if not already there
 	if [[ -f ".gitignore" ]] && ! grep -q "^\.aidevops-tenant$" ".gitignore" 2>/dev/null; then
+		# Ensure trailing newline before appending (prevents malformed entries)
+		[[ -s ".gitignore" && $(tail -c1 ".gitignore" | wc -l) -eq 0 ]] && printf '\n' >>".gitignore"
 		echo ".aidevops-tenant" >>".gitignore"
 		print_info "Added .aidevops-tenant to .gitignore"
 	fi

@@ -1935,6 +1935,8 @@ SOPSEOF
 
 		# Add runtime artifact ignores
 		if ! grep -q "^\.agents/loop-state/" "$gitignore" 2>/dev/null; then
+			# Ensure trailing newline before appending (prevents malformed entries like *.zip.agents/loop-state/)
+			[[ -s "$gitignore" && $(tail -c1 "$gitignore" | wc -l) -eq 0 ]] && printf '\n' >>"$gitignore"
 			{
 				echo ""
 				echo "# aidevops runtime artifacts"
@@ -1955,6 +1957,8 @@ SOPSEOF
 				git -C "$project_root" rm --cached .aidevops.json &>/dev/null || true
 				print_info "Untracked .aidevops.json from git (was committed by older version)"
 			fi
+			# Ensure trailing newline before appending
+			[[ -s "$gitignore" && $(tail -c1 "$gitignore" | wc -l) -eq 0 ]] && printf '\n' >>"$gitignore"
 			echo ".aidevops.json" >>"$gitignore"
 			gitignore_updated=true
 		fi
@@ -1962,6 +1966,8 @@ SOPSEOF
 		# Add .beads if beads is enabled
 		if [[ "$enable_beads" == "true" ]]; then
 			if ! grep -q "^\.beads$" "$gitignore" 2>/dev/null; then
+				# Ensure trailing newline before appending
+				[[ -s "$gitignore" && $(tail -c1 "$gitignore" | wc -l) -eq 0 ]] && printf '\n' >>"$gitignore"
 				echo ".beads" >>"$gitignore"
 				print_success "Added .beads to .gitignore"
 				gitignore_updated=true
