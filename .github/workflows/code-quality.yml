@@ -112,9 +112,12 @@ jobs:
         echo "Validating shell scripts with ShellCheck..."
         errors=0
 
-        # Exclude archived code from lint — these are versioned for reference
-        # but not actively maintained. Reduces noise-to-signal ratio in CI.
+        # Source shared file-discovery helper (single source of truth for exclusions)
+        source .agents/scripts/lint-file-discovery.sh
+        lint_shell_files
+
         while IFS= read -r file; do
+          [ -n "$file" ] || continue
           if shellcheck -S error "$file" > /dev/null 2>&1; then
             echo "OK $file"
           else
@@ -122,7 +125,7 @@ jobs:
             shellcheck -S error -f gcc "$file" 2>&1
             errors=$((errors + 1))
           fi
-        done < <(git ls-files '*.sh' | grep -v 'archived/')
+        done <<< "$LINT_SH_FILES"
 
         if [ "$errors" -gt 0 ]; then
           echo ""
@@ -163,9 +166,14 @@ jobs:
 
     - name: Shell function complexity
       run: |
+        # Source shared file-discovery helper (single source of truth for exclusions)
+        source .agents/scripts/lint-file-discovery.sh
+        lint_shell_files
+
         echo "Checking shell function complexity (>100 lines = blocking)..."
         violations=0
         while IFS= read -r file; do
+          [ -n "$file" ] || continue
           result=$(awk '
             /^[a-zA-Z_][a-zA-Z0-9_]*\(\)[[:space:]]*\{/ { fname=$1; sub(/\(\)/, "", fname); start=NR; next }
             fname && /^\}$/ { lines=NR-start; if(lines>100) printf "BLOCK %s:%d %s() %d lines\n", FILENAME, start, fname, lines; fname="" }
@@ -175,7 +183,7 @@ jobs:
             count=$(echo "$result" | wc -l)
             violations=$((violations + count))
           fi
-        done < <(git ls-files '*.sh' | grep -v 'archived/')
+        done <<< "$LINT_SH_FILES"
 
         echo ""
         echo "Blocking violations (>100 lines): $violations"
@@ -188,9 +196,13 @@ jobs:
 
     - name: Shell nesting depth
       run: |
+        source .agents/scripts/lint-file-discovery.sh
+        lint_shell_files
+
         echo "Checking shell nesting depth (>8 levels = blocking)..."
         violations=0
         while IFS= read -r file; do
+          [ -n "$file" ] || continue
           max_depth=$(awk '
             BEGIN { depth=0; max_depth=0 }
             /^[[:space:]]*#/ { next }
@@ -202,7 +214,7 @@ jobs:
             echo "BLOCK $file: nesting depth $max_depth"
             violations=$((violations + 1))
           fi
-        done < <(git ls-files '*.sh' | grep -v 'archived/')
+        done <<< "$LINT_SH_FILES"
 
         echo ""
         echo "Blocking violations (>8 depth): $violations"
@@ -215,16 +227,21 @@ jobs:
 
     - name: File size check
       run: |
+        source .agents/scripts/lint-file-discovery.sh
+        lint_shell_files
+        lint_python_files
+
         echo "Checking file sizes (>1500 lines = blocking)..."
         violations=0
-        for pattern in '*.sh' '*.py'; do
+        for file_list in "$LINT_SH_FILES" "$LINT_PY_FILES"; do
           while IFS= read -r file; do
+            [ -n "$file" ] || continue
             lc=$(wc -l < "$file")
             if [ "$lc" -gt 1500 ]; then
               echo "BLOCK $file: $lc lines"
               violations=$((violations + 1))
             fi
-          done < <(git ls-files "$pattern" | grep -v 'archived/')
+          done <<< "$file_list"
         done
 
         echo ""
@@ -238,15 +255,17 @@ jobs:
 
     - name: Python cyclomatic complexity (Lizard)
       run: |
+        source .agents/scripts/lint-file-discovery.sh
+        lint_python_files
+
         echo "Checking Python cyclomatic complexity (CCN > 8)..."
-        py_files=$(git ls-files '*.py' | grep -v 'archived/' || true)
-        if [ -z "$py_files" ]; then
+        if [ -z "$LINT_PY_FILES" ]; then
           echo "No Python files found"
           exit 0
         fi
 
         # Run lizard with warnings-only mode (CCN > 8)
-        lizard_output=$(echo "$py_files" | xargs lizard --CCN 8 --warnings_only 2>/dev/null || true)
+        lizard_output=$(echo "$LINT_PY_FILES" | xargs lizard --CCN 8 --warnings_only 2>/dev/null || true)
         if [ -n "$lizard_output" ]; then
           echo "$lizard_output"
           violations=$(echo "$lizard_output" | grep -c "warning:" || echo "0")
@@ -260,17 +279,19 @@ jobs:
 
     - name: Python import check (Pyflakes)
       run: |
+        source .agents/scripts/lint-file-discovery.sh
+        lint_python_files
+
         echo "Checking Python imports..."
-        py_files=$(git ls-files '*.py' | grep -v 'archived/' || true)
-        if [ -z "$py_files" ]; then
+        if [ -z "$LINT_PY_FILES" ]; then
           echo "No Python files found"
           exit 0
         fi
 
-        pyflakes_output=$(echo "$py_files" | xargs pyflakes 2>/dev/null || true)
+        pyflakes_output=$(echo "$LINT_PY_FILES" | xargs pyflakes 2>/dev/null || true)
         if [ -n "$pyflakes_output" ]; then
           echo "$pyflakes_output"
-          violations=$(echo "$pyflakes_output" | wc -l)
+          violations=$(echo "$pyflakes_output" | grep -c . || echo "0")
           echo ""
           echo "Pyflakes issues: $violations"
           echo "::warning::$violations Python import/usage issues found"

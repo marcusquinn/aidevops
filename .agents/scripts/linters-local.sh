@@ -19,6 +19,7 @@
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 source "${SCRIPT_DIR}/shared-constants.sh"
+source "${SCRIPT_DIR}/lint-file-discovery.sh"
 
 set -euo pipefail
 
@@ -64,27 +65,12 @@ print_header() {
 	return 0
 }
 
-# Collect all shell scripts to lint, including modularised subdirectories
-# (e.g. memory/, supervisor-modules/, setup/) but excluding archived code.
-# Excludes: _archive/, archived/, supervisor-archived/ — these are versioned
-# for reference but not actively maintained (reduces lint noise).
-# Also includes setup-modules/ and setup.sh from the repo root.
-# Populates the ALL_SH_FILES array for use by check functions.
+# Collect all shell scripts to lint via shared file-discovery helper.
+# Exclusion policy is centralised in lint-file-discovery.sh (single source of
+# truth shared with CI). Populates ALL_SH_FILES array for check functions.
 collect_shell_files() {
-	ALL_SH_FILES=()
-	while IFS= read -r -d '' f; do
-		ALL_SH_FILES+=("$f")
-	done < <(find .agents/scripts -name "*.sh" -not -path "*/_archive/*" -not -path "*/archived/*" -not -path "*/supervisor-archived/*" -print0 2>/dev/null | sort -z)
-
-	# Include setup-modules/ (extracted setup.sh modules) if present
-	while IFS= read -r -d '' f; do
-		ALL_SH_FILES+=("$f")
-	done < <(find setup-modules -name "*.sh" -print0 2>/dev/null | sort -z)
-
-	# Include setup.sh entry point itself
-	if [[ -f "setup.sh" ]]; then
-		ALL_SH_FILES+=("setup.sh")
-	fi
+	lint_shell_files_local
+	ALL_SH_FILES=("${LINT_SH_FILES_LOCAL[@]}")
 	return 0
 }
 
@@ -927,13 +913,9 @@ check_file_size() {
 		append_file_size_result "$file" "$tmp_file" "$MAX_FILE_LINES_WARN" "$MAX_FILE_LINES_BLOCK"
 	done
 
-	# Also check Python files in the scripts directory
-	local py_files=()
-	while IFS= read -r -d '' f; do
-		py_files+=("$f")
-	done < <(find .agents/scripts -name "*.py" -not -path "*/_archive/*" -not -path "*/archived/*" -print0 2>/dev/null | sort -z)
-
-	for file in "${py_files[@]}"; do
+	# Also check Python files in the scripts directory (shared discovery)
+	lint_python_files_local
+	for file in "${LINT_PY_FILES_LOCAL[@]}"; do
 		append_file_size_result "$file" "$tmp_file" "$MAX_FILE_LINES_WARN" "$MAX_FILE_LINES_BLOCK"
 	done
 
@@ -977,11 +959,9 @@ check_file_size() {
 check_python_complexity() {
 	echo -e "${BLUE}Checking Python Complexity (Codacy alignment)...${NC}"
 
-	# Collect Python files
-	local py_files=()
-	while IFS= read -r -d '' f; do
-		py_files+=("$f")
-	done < <(find .agents/scripts -name "*.py" -not -path "*/_archive/*" -not -path "*/archived/*" -print0 2>/dev/null | sort -z)
+	# Collect Python files (shared discovery)
+	lint_python_files_local
+	local py_files=("${LINT_PY_FILES_LOCAL[@]}")
 
 	if [[ ${#py_files[@]} -eq 0 ]]; then
 		print_info "No Python files found in .agents/scripts/"
@@ -1020,7 +1000,7 @@ check_python_complexity() {
 		pyflakes_out=$(pyflakes "${py_files[@]}" 2>/dev/null || true)
 		if [[ -n "$pyflakes_out" ]]; then
 			local pyflakes_count
-			pyflakes_count=$(echo "$pyflakes_out" | wc -l)
+			pyflakes_count=$(echo "$pyflakes_out" | grep -c . 2>/dev/null || echo "0")
 			pyflakes_count=${pyflakes_count//[^0-9]/}
 			pyflakes_count=${pyflakes_count:-0}
 			warnings=$((warnings + pyflakes_count))
