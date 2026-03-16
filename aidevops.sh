@@ -102,6 +102,12 @@ check_file() {
 	[[ -f "$1" ]]
 }
 
+# Ensure file ends with a trailing newline (prevents malformed appends)
+ensure_trailing_newline() {
+	local file="$1"
+	[[ -s "$file" && $(tail -c1 "$file" | wc -l) -eq 0 ]] && printf '\n' >>"$file"
+}
+
 # Initialize repos.json if it doesn't exist
 init_repos_file() {
 	if [[ ! -f "$REPOS_FILE" ]]; then
@@ -1936,7 +1942,7 @@ SOPSEOF
 		# Add runtime artifact ignores
 		if ! grep -q "^\.agents/loop-state/" "$gitignore" 2>/dev/null; then
 			# Ensure trailing newline before appending (prevents malformed entries like *.zip.agents/loop-state/)
-			[[ -s "$gitignore" && $(tail -c1 "$gitignore" | wc -l) -eq 0 ]] && printf '\n' >>"$gitignore"
+			ensure_trailing_newline "$gitignore"
 			{
 				echo ""
 				echo "# aidevops runtime artifacts"
@@ -1958,7 +1964,7 @@ SOPSEOF
 				print_info "Untracked .aidevops.json from git (was committed by older version)"
 			fi
 			# Ensure trailing newline before appending
-			[[ -s "$gitignore" && $(tail -c1 "$gitignore" | wc -l) -eq 0 ]] && printf '\n' >>"$gitignore"
+			ensure_trailing_newline "$gitignore"
 			echo ".aidevops.json" >>"$gitignore"
 			gitignore_updated=true
 		fi
@@ -1967,7 +1973,7 @@ SOPSEOF
 		if [[ "$enable_beads" == "true" ]]; then
 			if ! grep -q "^\.beads$" "$gitignore" 2>/dev/null; then
 				# Ensure trailing newline before appending
-				[[ -s "$gitignore" && $(tail -c1 "$gitignore" | wc -l) -eq 0 ]] && printf '\n' >>"$gitignore"
+				ensure_trailing_newline "$gitignore"
 				echo ".beads" >>"$gitignore"
 				print_success "Added .beads to .gitignore"
 				gitignore_updated=true
