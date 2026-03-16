@@ -1,0 +1,11 @@
+{
+  "trusted_report_senders": [
+    "reports@example.com",
+    "@search.google.com",
+    "@cloudflare.com"
+  ],
+  "trusted_opportunity_senders": [
+    "@linkedin.com",
+    "@partner.example"
+  ]
+}
