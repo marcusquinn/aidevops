@@ -214,8 +214,12 @@ append_manifest_entry() {
 	local attachment_count=0
 	local manifest_name
 	manifest_name="attachment-manifest.csv"
+	local attachment_manifest_hash=""
 	if [[ -d "$attachment_dir" ]]; then
 		attachment_count=$(find "$attachment_dir" -type f ! -name "$manifest_name" | wc -l | tr -d ' ')
+		if [[ -f "$attachment_dir/$manifest_name" ]]; then
+			attachment_manifest_hash=$(compute_sha256 "$attachment_dir/$manifest_name")
+		fi
 	fi
 
 	cat >>"$manifest_file" <<EOF
@@ -231,6 +235,8 @@ append_manifest_entry() {
 - Markdown SHA-256: ${markdown_hash}
 - Export SHA-256: ${export_hash}
 - Attachment Count: ${attachment_count}
+- Attachment Manifest: ${attachment_dir}/${manifest_name}
+- Attachment Manifest SHA-256: ${attachment_manifest_hash}
 
 EOF
 
@@ -260,19 +266,19 @@ export_single_message() {
 
 	python3 "$EMAIL_TO_MD_SCRIPT" "$source_file" \
 		--output "$markdown_file" \
-		--attachments-dir "$attachment_dir"
+		--attachments-dir "$attachment_dir" || return 1
 
 	local export_file="$markdown_file"
 	if [[ "$export_format" == "pdf" ]]; then
 		export_file="$case_root/threads/${stem}.pdf"
-		pandoc "$markdown_file" -o "$export_file"
+		pandoc "$markdown_file" -o "$export_file" || return 1
 	elif [[ "$export_format" == "text" ]]; then
 		export_file="$case_root/threads/${stem}.txt"
-		write_plaintext_from_markdown "$markdown_file" "$export_file"
+		write_plaintext_from_markdown "$markdown_file" "$export_file" || return 1
 	fi
 
-	append_attachment_manifest "$attachment_dir" "$attachment_dir/attachment-manifest.csv"
-	append_manifest_entry "$manifest_file" "$source_file" "$markdown_file" "$export_file" "$attachment_dir"
+	append_attachment_manifest "$attachment_dir" "$attachment_dir/attachment-manifest.csv" || return 1
+	append_manifest_entry "$manifest_file" "$source_file" "$markdown_file" "$export_file" "$attachment_dir" || return 1
 
 	return 0
 }
@@ -307,6 +313,10 @@ cmd_export() {
 	local case_root
 	if [[ -n "$output_dir" ]]; then
 		case_root="$output_dir"
+		if [[ -d "$case_root" ]] && find "$case_root" -mindepth 1 -print -quit 2>/dev/null | grep -q .; then
+			print_error "Output directory must be empty: $case_root"
+			return 1
+		fi
 	else
 		case_root="$DEFAULT_EXPORT_BASE/${case_slug}-${ts}"
 	fi
@@ -339,6 +349,7 @@ cmd_export() {
 		else
 			failed=$((failed + 1))
 			print_warning "Failed export: $source_base"
+			rm -f "$case_root/source/${prefixed_name}"
 		fi
 	done < <(find "$source_dir" -type f \( -name "*.eml" -o -name "*.msg" \) -print0 | sort -z)
 
