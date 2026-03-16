@@ -74,12 +74,41 @@ Simulate how AI systems decompose broad prompts into sub-queries and use that ma
 - Include explicit simulation runs for each retrieval stage and record
   citation/source mix shifts after updates
 
+## Site-Scoped Retrieval in Fan-Out
+
+Frontier AI models (observed in GPT-5.4-thinking and similar) use `site:` operator queries extensively during fan-out retrieval. A single user prompt can generate 10+ sub-queries, many of which target specific domains directly rather than searching the open web.
+
+### 3-Stage Retrieval Model
+
+AI fan-out typically follows three stages:
+
+1. **Broad discovery** (queries 1-3): open web searches using category terms, brand names, and comparison phrases to identify relevant domains. Example: `best ATS software 2026`, `[BrandA] vs [BrandB] applicant tracking`.
+2. **Site-specific deep-dive** (queries 4-10): `site:domain.com` queries targeting each discovered brand's own site to extract product details, pricing, features, and differentiators. Example: `site:greenhouse.com enterprise ATS features`, `site:workable.com pricing plans 2026`.
+3. **Third-party validation** (queries 11-13): `site:` queries targeting review platforms (G2, Capterra, TrustRadius) to cross-reference claims with independent evaluations. Example: `site:g2.com greenhouse ATS reviews`, `site:capterra.com workable pricing`.
+
+### Modelling Site-Scoped Sub-Queries
+
+When building a fan-out map, classify each sub-query by retrieval scope:
+
+- **Open-web sub-queries**: discovery-stage queries where the model has not yet committed to a domain. These are influenced by traditional SEO ranking.
+- **Domain-scoped sub-queries**: `site:yourdomain.com` queries where the model is searching your content specifically. These bypass SERP ranking entirely — the model already chose your domain and is extracting detail. Content architecture and on-site searchability determine success.
+- **Third-party validation sub-queries**: `site:g2.com` or `site:capterra.com` queries where the model seeks independent confirmation. Your review platform profiles, not your own site, determine what gets retrieved.
+
+### Implications for Coverage Mapping
+
+- In step 3 (Map pages to branches), tag each branch by its likely retrieval scope: open-web, domain-scoped, or third-party
+- Domain-scoped branches require pages that are individually addressable and contain self-contained answers — the model is searching your site like a database, not reading a narrative
+- Third-party branches require complete, current review platform profiles with the same canonical facts as your primary site
+- A branch marked "complete" on your site but absent from review platforms is only 2/3 covered
+
 ## Guardrails
 
 - Optimize for thematic completeness, not maximal query count
 - Avoid duplicate pages targeting near-identical branches
 - Keep branch language aligned with user phrasing from real queries
 - Re-baseline when SERP intent or product positioning changes
+- Ensure domain-scoped branches have pages that return relevant results for `site:yourdomain.com [category] [feature] [year]` query patterns
+- Verify third-party review profiles contain the same facts as primary site content
 
 ## Related Subagents
 

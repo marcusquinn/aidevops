@@ -81,6 +81,8 @@ Run a complete, high-signal workflow to improve AI search citations and answer q
 - Fact integrity: count of critical contradictions unresolved
 - Discovery success: percent of tasks completed by autonomous exploration
 - Citation stability: variance in citation frequency over repeated runs
+- Site-query readiness: percent of priority pages retrievable via `site:yourdomain.com [category]` queries
+- Third-party profile currency: percent of review platform profiles updated within last quarter
 
 ## Prioritization Rules
 
