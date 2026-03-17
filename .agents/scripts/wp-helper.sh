@@ -300,6 +300,13 @@ execute_wp_via_ssh() {
 		ssh_identity_flag=(-i "$expanded_identity")
 	fi
 
+	# Common SSH args and remote command shared across all SSH-based hosting types.
+	# Pass wp args as positional parameters to avoid shell interpolation issues.
+	# Use bash -c (not -lc) to avoid login shell startup files that may redirect/swallow stdout.
+	# shellcheck disable=SC2016 # $1/$@ expand on the remote shell, not locally
+	local ssh_cmd=(-n "${ssh_identity_flag[@]}" -p "$ssh_port" "${ssh_user}@${ssh_host}"
+		bash -c 'cd "$1" && shift && wp "$@"' _ "$wp_path" "${wp_args[@]}")
+
 	case "$site_type" in
 	localwp)
 		# LocalWP - direct local access
@@ -335,17 +342,12 @@ execute_wp_via_ssh() {
 			print_info "Fix with: chmod 600 $expanded_password_file"
 		fi
 
-		# Pass wp args as positional parameters to avoid shell interpolation issues
-		# Use bash -c (not -lc) to avoid login shell startup files that may redirect/swallow stdout
-		# shellcheck disable=SC2016 # $1/$@ expand on the remote shell, not locally
-		sshpass -f "$expanded_password_file" ssh -n "${ssh_identity_flag[@]}" -p "$ssh_port" "${ssh_user}@${ssh_host}" bash -c 'cd "$1" && shift && wp "$@"' _ "$wp_path" "${wp_args[@]}"
+		sshpass -f "$expanded_password_file" ssh "${ssh_cmd[@]}"
 		return $?
 		;;
 	hetzner | cloudways | cloudron)
 		# SSH key-based authentication (preferred, -n prevents stdin consumption in loops)
-		# Use bash -c (not -lc) to avoid login shell startup files that may redirect/swallow stdout
-		# shellcheck disable=SC2016 # $1/$@ expand on the remote shell, not locally
-		ssh -n "${ssh_identity_flag[@]}" -p "$ssh_port" "${ssh_user}@${ssh_host}" bash -c 'cd "$1" && shift && wp "$@"' _ "$wp_path" "${wp_args[@]}"
+		ssh "${ssh_cmd[@]}"
 		return $?
 		;;
 	*)
