@@ -172,14 +172,14 @@ append_attachment_manifest() {
 		while IFS= read -r -d '' file_path; do
 			local filename
 			filename=$(basename "$file_path")
-			# RFC 4180: quote all fields; double any embedded double-quotes in filename
-			local csv_filename
-			csv_filename="\"${filename//\"/\"\"}\""
+			# RFC 4180: escape embedded double-quotes in filename; quoting of all fields done in printf
+			local escaped_filename
+			escaped_filename="${filename//\"/\"\"}"
 			local size_bytes
 			size_bytes=$(wc -c <"$file_path" | tr -d ' ')
 			local checksum
 			checksum=$(compute_sha256 "$file_path")
-			printf '%s,"%s","%s"\n' "$csv_filename" "$size_bytes" "$checksum"
+			printf '"%s","%s","%s"\n' "$escaped_filename" "$size_bytes" "$checksum"
 		done < <(find "$attachment_dir" -type f ! -name "$manifest_name" -print0 | sort -z)
 	} >"$temp_manifest"
 
