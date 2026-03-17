@@ -992,8 +992,8 @@ loop_handle_workflow_push_failure() {
 
 	# Auto-detect issue number from branch name if not provided
 	if [[ -z "$issue_number" ]]; then
-		# Try patterns: issue-42, GH-42, t1234, #42
-		issue_number=$(echo "$branch" | grep -oE '(issue-|GH-|GH#)?([0-9]+)' | grep -oE '[0-9]+' | head -1 || echo "")
+		# Extract first digit sequence from branch name (handles issue-42, GH-42, t1234, #42, etc.)
+		issue_number=$(echo "$branch" | grep -oE '[0-9]+' | head -1 || echo "")
 	fi
 
 	if [[ -z "$repo_slug" || -z "$issue_number" ]]; then
