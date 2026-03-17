@@ -426,6 +426,7 @@ loop_generate_reanchor() {
 - Put task notes in commit messages or PR body, never in TODO.md.
 - Work ONLY on the assigned task described above. Do not pick tasks from TODO.md.
 - **ShellCheck before push (t234)**: Before every \`git push\`, if any committed .sh files changed, run \`shellcheck -x -S warning\` on them. Fix violations before pushing. Skip if shellcheck is not installed.
+- **Workflow scope check before push (t1540)**: If any committed files are in \`.github/workflows/\`, verify the gh token has the \`workflow\` scope by running \`gh auth status\` and checking for 'workflow' in the scopes. If missing, do NOT push — instead post a comment on the issue explaining the branch name and that \`gh auth refresh -s workflow\` is needed, then exit cleanly.
 "
 	fi
 
@@ -830,6 +831,63 @@ loop_check_context_exhaustion() {
 	return 1
 }
 
+# Pre-push workflow scope check (t1540)
+# Before pushing a branch that contains .github/workflows/ changes, verify
+# the gh token has the `workflow` scope. Without it, the push will fail with:
+#   "refusing to allow an OAuth App to create or update workflow without workflow scope"
+#
+# This catches the problem early with an actionable error instead of letting
+# the push fail with a cryptic message (or silently failing in headless mode).
+#
+# Arguments:
+#   $1 - branch name (optional, defaults to current branch)
+# Returns:
+#   0 - safe to push (no workflow files, or token has scope)
+#   1 - blocked (workflow files + missing scope, error printed)
+loop_check_workflow_scope_before_push() {
+	local branch="${1:-}"
+	if [[ -z "$branch" ]]; then
+		branch=$(git branch --show-current 2>/dev/null || echo "")
+	fi
+
+	if [[ -z "$branch" ]]; then
+		return 0 # Not in a git repo — nothing to check
+	fi
+
+	# Check if any commits on this branch (vs origin) touch workflow files
+	local changed_files
+	changed_files=$(git diff --name-only "origin/${branch}..HEAD" 2>/dev/null || git diff --name-only HEAD~1 2>/dev/null || echo "")
+
+	if [[ -z "$changed_files" ]]; then
+		return 0
+	fi
+
+	# Check if any changed files are in .github/workflows/
+	if ! echo "$changed_files" | files_include_workflow_changes; then
+		return 0 # No workflow files changed
+	fi
+
+	# Workflow files are being pushed — check token scope
+	local scope_exit=0
+	gh_token_has_workflow_scope || scope_exit=$?
+
+	if [[ "$scope_exit" -eq 0 ]]; then
+		return 0 # Token has the scope, safe to push
+	fi
+
+	if [[ "$scope_exit" -eq 2 ]]; then
+		# Unable to check (gh not installed or auth failed) — warn but don't block
+		loop_log_warn "Cannot verify workflow scope (gh auth unavailable). Push may fail if branch modifies .github/workflows/"
+		return 0
+	fi
+
+	# Token lacks workflow scope and branch modifies workflow files
+	loop_log_warn "BLOCKED: Branch '$branch' modifies .github/workflows/ files but gh token lacks 'workflow' scope"
+	loop_log_warn "Fix: run 'gh auth refresh -s workflow' then retry the push"
+	loop_log_warn "Without this scope, GitHub rejects pushes that modify workflow files"
+	return 1
+}
+
 # Emergency push: commit and push any uncommitted work before exit
 # Called when context exhaustion is detected to preserve work.
 # Arguments: none
@@ -893,6 +951,82 @@ loop_emit_completion_signal() {
 	# This is the signal the supervisor's extract_log_metadata() looks for
 	echo "<promise>FULL_LOOP_COMPLETE</promise>"
 
+	return 0
+}
+
+# Handle push failure due to missing workflow scope (t1540)
+# When a push fails because the branch modifies .github/workflows/ and the
+# token lacks the `workflow` scope, this function posts a fallback comment
+# on the associated GitHub issue with the branch name and manual instructions.
+#
+# Arguments:
+#   $1 - push_output (stderr from the failed git push)
+#   $2 - branch name
+#   $3 - repo slug (owner/repo, optional — auto-detected from git remote)
+#   $4 - issue number (optional — extracted from branch name if not provided)
+# Returns: 0 if comment posted, 1 if not a workflow scope error or unable to post
+loop_handle_workflow_push_failure() {
+	local push_output="$1"
+	local branch="$2"
+	local repo_slug="${3:-}"
+	local issue_number="${4:-}"
+
+	# Check if this is a workflow scope error
+	if ! echo "$push_output" | grep -qiF 'workflow scope'; then
+		if ! echo "$push_output" | grep -qi 'refusing to allow.*workflow'; then
+			return 1 # Not a workflow scope error
+		fi
+	fi
+
+	loop_log_warn "Push failed: workflow scope error detected for branch '$branch'"
+
+	# Auto-detect repo slug if not provided
+	if [[ -z "$repo_slug" ]]; then
+		local remote_url
+		remote_url=$(git remote get-url origin 2>/dev/null || echo "")
+		if [[ -n "$remote_url" ]]; then
+			# Extract owner/repo from SSH or HTTPS URL
+			repo_slug=$(echo "$remote_url" | sed -E 's#.*[:/]([^/]+/[^/]+?)(\.git)?$#\1#')
+		fi
+	fi
+
+	# Auto-detect issue number from branch name if not provided
+	if [[ -z "$issue_number" ]]; then
+		# Try patterns: issue-42, GH-42, t1234, #42
+		issue_number=$(echo "$branch" | grep -oE '(issue-|GH-|GH#)?([0-9]+)' | grep -oE '[0-9]+' | head -1 || echo "")
+	fi
+
+	if [[ -z "$repo_slug" || -z "$issue_number" ]]; then
+		loop_log_warn "Cannot post fallback comment: repo_slug='$repo_slug' issue_number='$issue_number'"
+		loop_log_warn "Manual fix: run 'gh auth refresh -s workflow' then 'git push origin $branch'"
+		return 1
+	fi
+
+	# Check for existing comment to avoid duplicates
+	local existing_comments
+	existing_comments=$(gh issue view "$issue_number" --repo "$repo_slug" --json comments --jq '.comments[].body' 2>/dev/null || echo "")
+	if echo "$existing_comments" | grep -qF 'workflow scope'; then
+		loop_log_info "Workflow scope fallback comment already exists on issue #$issue_number"
+		return 0
+	fi
+
+	# Post fallback comment
+	gh issue comment "$issue_number" --repo "$repo_slug" \
+		--body "**Worker push failed: missing \`workflow\` scope** (t1540)
+
+Branch \`$branch\` modifies \`.github/workflows/\` files but the GitHub OAuth token lacks the \`workflow\` scope. The implementation is complete locally but could not be pushed.
+
+**To fix:**
+1. Run \`gh auth refresh -s workflow\` to add the scope
+2. Push the branch: \`git push origin $branch\`
+3. Create the PR: \`gh pr create --head $branch\`
+
+**Permanent fix:** Run \`gh auth refresh -s workflow\` once — the scope persists across token refreshes." 2>/dev/null || {
+		loop_log_warn "Failed to post fallback comment on issue #$issue_number"
+		return 1
+	}
+
+	loop_log_info "Posted workflow scope fallback comment on issue #$issue_number in $repo_slug"
 	return 0
 }
 

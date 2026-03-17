@@ -57,7 +57,7 @@ setup_git_clis() {
 					echo "📋 Next steps - authenticate each CLI:"
 					for pkg in "${missing_packages[@]}"; do
 						case "$pkg" in
-						gh) echo "  • gh auth login" ;;
+						gh) echo "  • gh auth login -s workflow  (workflow scope required for CI PRs)" ;;
 						glab) echo "  • glab auth login" ;;
 						esac
 					done

@@ -809,7 +809,7 @@ check_gh_auth() {
 
 	if ! command -v gh &>/dev/null; then
 		CHECK_LABEL="$label: gh not installed"
-		CHECK_FIX="Run: brew install gh && gh auth login"
+		CHECK_FIX="Run: brew install gh && gh auth login -s workflow"
 		return 1
 	fi
 
@@ -819,7 +819,36 @@ check_gh_auth() {
 	fi
 
 	CHECK_LABEL="$label: not authenticated"
-	CHECK_FIX="Run: gh auth login"
+	CHECK_FIX="Run: gh auth login -s workflow"
+	return 1
+}
+
+# Check 3b: GitHub CLI token has workflow scope (t1540)
+# Without this scope, pushes/merges of PRs containing .github/workflows/
+# changes fail silently. Workers complete locally but no PR is created.
+check_gh_workflow_scope() {
+	local label="GitHub CLI workflow scope"
+
+	if ! command -v gh &>/dev/null; then
+		CHECK_LABEL="$label: gh not installed"
+		return 1
+	fi
+
+	local scope_exit=0
+	gh_token_has_workflow_scope || scope_exit=$?
+
+	if [[ "$scope_exit" -eq 0 ]]; then
+		CHECK_LABEL="$label"
+		return 0
+	fi
+
+	if [[ "$scope_exit" -eq 2 ]]; then
+		CHECK_LABEL="$label: unable to check (gh auth failed)"
+		return 1
+	fi
+
+	CHECK_LABEL="$label: missing (CI workflow PRs will fail)"
+	CHECK_FIX="Run: gh auth refresh -s workflow"
 	return 1
 }
 
@@ -893,6 +922,10 @@ cmd_startup_check() {
 		actions_needed=$((actions_needed + 1))
 	fi
 
+	if ! check_gh_workflow_scope; then
+		actions_needed=$((actions_needed + 1))
+	fi
+
 	if ! check_ssh_key; then
 		actions_needed=$((actions_needed + 1))
 	fi
@@ -948,6 +981,15 @@ cmd_status() {
 		echo -e "  ${GREEN}[OK]${NC} $CHECK_LABEL"
 	else
 		echo -e "  ${RED}[!!]${NC} $CHECK_LABEL"
+		echo -e "    Fix: $CHECK_FIX"
+		actions_needed=$((actions_needed + 1))
+	fi
+
+	# Check 3b: GitHub CLI workflow scope (t1540)
+	if check_gh_workflow_scope; then
+		echo -e "  ${GREEN}[OK]${NC} $CHECK_LABEL"
+	else
+		echo -e "  ${YELLOW}[!!]${NC} $CHECK_LABEL"
 		echo -e "    Fix: $CHECK_FIX"
 		actions_needed=$((actions_needed + 1))
 	fi
@@ -1076,13 +1118,38 @@ cmd_setup() {
 			response="${response:-y}"
 			if [[ "$response" =~ ^[Yy]$ ]]; then
 				echo ""
-				gh auth login
+				gh auth login -s workflow
 				actions_fixed=$((actions_fixed + 1))
 			else
 				actions_skipped=$((actions_skipped + 1))
 			fi
 		else
 			echo "    Install GitHub CLI first: brew install gh"
+			actions_skipped=$((actions_skipped + 1))
+		fi
+		echo ""
+	else
+		echo -e "${GREEN}[OK]${NC} $CHECK_LABEL"
+	fi
+
+	# --- GitHub CLI workflow scope (t1540) ---
+	if ! check_gh_workflow_scope; then
+		echo -e "${YELLOW}[3b]${NC} $CHECK_LABEL"
+		echo "    $CHECK_FIX"
+		echo "    Without this scope, pushes/merges of PRs with .github/workflows/ changes fail."
+		echo ""
+
+		if command -v gh &>/dev/null; then
+			read -r -p "    Run gh auth refresh -s workflow now? [Y/n] " response
+			response="${response:-y}"
+			if [[ "$response" =~ ^[Yy]$ ]]; then
+				echo ""
+				gh auth refresh -s workflow
+				actions_fixed=$((actions_fixed + 1))
+			else
+				actions_skipped=$((actions_skipped + 1))
+			fi
+		else
 			actions_skipped=$((actions_skipped + 1))
 		fi
 		echo ""

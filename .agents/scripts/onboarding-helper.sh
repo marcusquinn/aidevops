@@ -833,7 +833,8 @@ show_guide() {
 		echo -e "${BLUE}GitHub CLI Setup${NC}"
 		echo ""
 		echo "1. Install: brew install gh"
-		echo "2. Authenticate: gh auth login"
+		echo "2. Authenticate: gh auth login -s workflow"
+		echo "   (workflow scope is required for PRs that modify CI workflows)"
 		echo "3. Verify: gh auth status"
 		;;
 	openai)
