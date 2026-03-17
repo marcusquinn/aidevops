@@ -105,7 +105,9 @@ check_file() {
 # Ensure file ends with a trailing newline (prevents malformed appends)
 ensure_trailing_newline() {
 	local file="$1"
-	[[ -s "$file" && $(tail -c1 "$file" | wc -l) -eq 0 ]] && printf '\n' >>"$file"
+	local last
+	last="$(tail -c 1 "$file"; printf x)"
+	[[ -s "$file" ]] && [[ "$last" != $'\n'x ]] && printf '\n' >>"$file"
 }
 
 # Initialize repos.json if it doesn't exist
