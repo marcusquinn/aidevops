@@ -82,7 +82,7 @@ Run a complete, high-signal workflow to improve AI search citations and answer q
 - Discovery success: percent of tasks completed by autonomous exploration
 - Citation stability: variance in citation frequency over repeated runs
 - Site-query readiness: percent of priority pages retrievable via `site:yourdomain.com [category]` queries
-- Third-party profile currency: percent of review platform profiles updated within last quarter
+- Third-party profile currency: percent of review platform profiles updated within the last 90 days
 
 ## Prioritization Rules
 
