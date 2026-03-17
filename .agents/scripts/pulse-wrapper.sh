@@ -2609,7 +2609,7 @@ check_terminal_blockers() {
 		--json labels --jq '[.labels[].name] | join(",")' 2>/dev/null) || existing_labels=""
 
 	local already_blocked=false
-	if echo "$existing_labels" | grep -qF 'status:blocked'; then
+	if [[ ",${existing_labels}," == *",status:blocked,"* ]]; then
 		already_blocked=true
 	fi
 
