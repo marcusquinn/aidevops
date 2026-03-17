@@ -141,7 +141,7 @@ Not every task is code. The framework has multiple primary agents, each with dom
 
 ```bash
 AGENTS_DIR="$(aidevops config get paths.agents_dir)"
-AGENTS_DIR="${AGENTS_DIR:-$HOME/.aidevops/agents}"
+AGENTS_DIR="${AGENTS_DIR:-"$HOME/.aidevops/agents"}"
 HELPER="${AGENTS_DIR/#\~/$HOME}/scripts/headless-runtime-helper.sh"
 
 # Code task (default — Build+ implied)
