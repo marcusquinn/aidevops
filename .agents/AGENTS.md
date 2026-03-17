@@ -74,6 +74,12 @@ Every agent session — interactive, worker, or supervisor — should improve th
 
 If uncertain, ask: "Would this fix apply to every repo the framework manages, or only this one?" Framework-wide problems go to aidevops; project-specific problems stay local. Never create framework tasks in a project repo — they become invisible to framework maintainers and pollute the project's task namespace.
 
+**Structural enforcement (t1541, GH#5149).** Prose routing guidance alone is insufficient for autonomous workers. Use `framework-routing-helper.sh` for structural support:
+
+- **Before creating self-improvement tasks:** Run `framework-routing-helper.sh is-framework "task description"`. If it returns `framework` or `uncertain`, use `framework-routing-helper.sh log-framework-issue --title "..." --body "..."` to create the issue on the aidevops repo. Do NOT create a task in the current project repo.
+- **`claim-task-id.sh` guard:** When claiming a task ID, the script automatically warns if the title references framework-level concerns and the repo is not aidevops. Heed these warnings.
+- **Pulse integration:** The pulse command (`scripts/commands/pulse.md`) includes a "Self-improvement repo routing" section with the full check-and-route workflow.
+
 **Scope boundary for code changes (t1405, GH#2928).** Separate "observe and report" from "observe and fix". When dispatched by the pulse, the `PULSE_SCOPE_REPOS` env var lists the repo slugs where you may create worktrees and PRs. Filing issues is always allowed on any repo — cross-repo bug reports are valuable. But code changes (worktrees, PRs, commits) are restricted to repos in `PULSE_SCOPE_REPOS`. If the target repo is not in scope, file the issue and stop. The issue enters that repo's queue for their maintainers (or their own pulse) to handle. If `PULSE_SCOPE_REPOS` is empty or unset (interactive mode), no scope restriction applies.
 
 **What counts as self-improvement:**

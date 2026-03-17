@@ -636,6 +636,68 @@ create_gitlab_issue() {
 	return 0
 }
 
+# Check if a task appears to be framework-level but is being created in a
+# non-aidevops repo. Warns the caller so they can redirect to the correct repo.
+# This is a structural guard for GH#5149 — workers creating framework tasks
+# in project repos instead of routing to aidevops.
+#
+# Arguments:
+#   $1 - task title
+#   $2 - repo path
+# Returns:
+#   0 always (warning only, never blocks allocation)
+# Outputs:
+#   Warning on stderr if misrouted, plus routing_warning=true on stdout
+check_framework_routing() {
+	local title="$1"
+	local repo_path="$2"
+
+	if [[ -z "$title" ]]; then
+		return 0
+	fi
+
+	# Check if this IS the aidevops repo (no warning needed)
+	local repo_name
+	repo_name=$(basename "$(cd "$repo_path" && git rev-parse --show-toplevel 2>/dev/null || echo "$repo_path")")
+	if [[ "$repo_name" == "aidevops" ]]; then
+		return 0
+	fi
+
+	# Also check the remote URL for aidevops
+	local remote_url
+	remote_url=$(cd "$repo_path" && git remote get-url origin 2>/dev/null || echo "")
+	if [[ "$remote_url" == *"aidevops"* ]]; then
+		return 0
+	fi
+
+	# Use framework-routing-helper if available
+	local routing_helper="${SCRIPT_DIR}/framework-routing-helper.sh"
+	if [[ -x "$routing_helper" ]]; then
+		local result
+		result=$("$routing_helper" is-framework "$title" 2>/dev/null) || true
+		if [[ "$result" == "framework" ]]; then
+			log_warn "FRAMEWORK ROUTING: Task title references framework-level concerns"
+			log_warn "  Title: $title"
+			log_warn "  Current repo: $repo_name"
+			log_warn "  Consider using: claim-task-id.sh --repo-path <aidevops-path> --title \"...\""
+			local aidevops_path
+			aidevops_path=$("$routing_helper" get-aidevops-path 2>/dev/null) || aidevops_path=""
+			if [[ -n "$aidevops_path" ]]; then
+				log_warn "  aidevops repo: $aidevops_path"
+			fi
+			echo "routing_warning=true"
+			return 0
+		elif [[ "$result" == "uncertain" ]]; then
+			log_warn "FRAMEWORK ROUTING: Task may be framework-level — review routing"
+			log_warn "  Title: $title"
+			echo "routing_warning=uncertain"
+			return 0
+		fi
+	fi
+
+	return 0
+}
+
 # Main execution
 main() {
 	parse_args "$@"
@@ -646,6 +708,14 @@ main() {
 
 	if [[ "$DRY_RUN" == "true" ]]; then
 		log_info "DRY RUN mode - no changes will be made"
+	fi
+
+	# --- Framework routing guard (GH#5149) ---
+	# Warn if a framework-level task is being created in a non-aidevops repo.
+	# This is advisory only — it never blocks allocation, but the warning
+	# appears in stderr so callers (workers, supervisors) can see it.
+	if [[ -n "$TASK_TITLE" ]]; then
+		check_framework_routing "$TASK_TITLE" "$REPO_PATH" || true
 	fi
 
 	log_info "Using remote: ${REMOTE_NAME}, counter branch: ${COUNTER_BRANCH}"

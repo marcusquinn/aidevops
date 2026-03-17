@@ -554,6 +554,40 @@ When the supervisor encounters a situation where it cannot determine what happen
 
 This is a one-time observation — don't file duplicate issues for the same gap. Check existing issues first: `gh issue list --repo <aidevops-slug> --search "information gap" --state open`.
 
+### Self-improvement repo routing (t1541, GH#5149)
+
+When you observe a framework-level problem (supervisor pipeline bug, model tier issue, dispatch logic flaw, agent prompt deficiency), route it to the aidevops repo — NOT the project repo you're currently processing. Workers that create framework tasks in project repos pollute the project's task namespace and make the task invisible to framework maintainers.
+
+**Use `framework-routing-helper.sh` for structural enforcement:**
+
+```bash
+# Before creating any self-improvement task, check if it's framework-level
+ROUTING=$(/bin/bash ~/.aidevops/agents/scripts/framework-routing-helper.sh is-framework "$ISSUE_TITLE_OR_DESC" 2>/dev/null) || ROUTING="project"
+
+if [[ "$ROUTING" == "framework" || "$ROUTING" == "uncertain" ]]; then
+  # Route to aidevops repo — use log-framework-issue for dedup + correct targeting
+  /bin/bash ~/.aidevops/agents/scripts/framework-routing-helper.sh log-framework-issue \
+    --title "$ISSUE_TITLE" \
+    --body "$ISSUE_BODY" \
+    --labels "bug" \
+    --source-repo "$CURRENT_SLUG"
+  # Do NOT create a task in the current project repo
+else
+  # Project-specific — create in the current repo as normal
+  gh issue create --repo "$CURRENT_SLUG" --title "$ISSUE_TITLE" --body "$ISSUE_BODY"
+fi
+```
+
+**When to apply this check:** Any time the pulse or a worker is about to create a self-improvement issue (information gap, repeated failure pattern, missing automation, prompt deficiency). This does NOT apply to normal task dispatch — only to observations about the framework itself.
+
+**Indicators of framework-level work** (the helper checks these automatically):
+
+- References to `~/.aidevops/`, `.agents/`, `prompts/build.txt`
+- Framework script names: `pulse-wrapper`, `ai-lifecycle`, `dispatch`, `supervisor`, `pre-edit-check`, `claim-task-id`, `headless-runtime`
+- Framework concepts: cross-repo orchestration, task routing, model tier, pulse logic, worker dispatch
+
+**Why this matters:** GH#2849 added prose routing guidance, but autonomous workers under supervisor dispatch don't reliably follow multi-step conditional workflows. This helper gives them a deterministic check and a single action to take — `log-framework-issue` — instead of requiring them to invent the cross-repo workflow each time.
+
 ### Task decomposition before dispatch (t1408.2)
 
 Before dispatching a worker for an issue, classify the task to determine if it's too large for a single worker session. This catches over-scoped tasks before they waste a worker slot.
