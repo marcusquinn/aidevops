@@ -81,7 +81,7 @@ while [[ "$_applied" -lt "$_limit" && "$_skipped" -lt 2000 ]]; do
 			IFS= read -r -d '' local_reason
 			IFS= read -r -d '' local_title
 			IFS= read -r -d '' local_labels
-		} < <(printf '%s' "$_issue" | jq -j '.number, "\u0000", (.state_reason // "completed"), "\u0000", .title, "\u0000", (.labels | join(",")), "\u0000"')
+		} < <(jq -j -n --argjson issue "$_issue" '$issue | .number, "\u0000", (.state_reason // "completed"), "\u0000", .title, "\u0000", (.labels | join(",")), "\u0000"')
 
 		# Skip if already has a closure reason label
 		if echo "$local_labels" | grep -qE 'duplicate|not-planned|already-fixed|wontfix|status:done'; then
