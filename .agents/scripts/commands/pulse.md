@@ -232,7 +232,7 @@ When closing any issue, ALWAYS comment first explaining why and linking to the P
 - **`persistent` label** → NEVER close, and NEVER add `Closes #N` / `Fixes #N` / `Resolves #N` references to these issues. CI guard (`guard-persistent-issues` in `.github/workflows/issue-sync.yml`) auto-reopens accidental closures and removes `status:done`; treat that guard as a safety net, not normal flow.
 - **Has a merged PR that resolves it** → comment linking the PR, then close.
 - **`status:done` or body says "completed"** → find the PR(s), comment with links, close.
-- **`status:blocked` but blockers resolved** → remove `status:blocked`, add `status:available`, comment what unblocked it. Dispatchable this cycle.
+- **`status:blocked` but blockers resolved** → remove `status:blocked`, add `status:available`, comment what unblocked it. Dispatchable this cycle. Note: issues blocked by terminal blockers (GH#5141 — e.g., missing token scopes) are auto-detected during dispatch; the user must resolve the blocker and remove the label manually.
 - **Duplicate issues for same task ID** → keep the one referenced by `ref:GH#` in TODO.md, close others with a comment.
 - **Too large for one worker** → classify with `task-decompose-helper.sh classify`. If composite, decompose into subtask issues, label parent `status:blocked`. Child tasks enter the normal dispatch queue.
 - **`status:queued` or `status:in-progress`** → check `updatedAt`. If updated within 3 hours, skip. If 3+ hours with no PR and no worker, relabel `status:available`, unassign, comment the recovery.
@@ -662,6 +662,21 @@ if [[ "$ACTIVE_FOR_REPO" -ge "$MAX_WORKERS_PER_REPO" ]]; then
   continue
 fi
 ```
+
+1.7. **Terminal blocker detection (MANDATORY, GH#5141):** Before dispatching, scan the issue's recent comments for known terminal blocker patterns — conditions that workers cannot resolve (e.g., missing token scopes, user-action-required blockers). Dispatching against these issues wastes compute on guaranteed failures.
+
+```bash
+# Source once per pulse run (provides check_terminal_blockers)
+source ~/.aidevops/agents/scripts/pulse-wrapper.sh
+
+# Check for terminal blockers in the last 5 issue comments
+if check_terminal_blockers <number> <slug>; then
+  echo "Terminal blocker detected for #<number> in <slug> — skipping dispatch"
+  continue
+fi
+```
+
+`check_terminal_blockers` scans for patterns like `workflow scope`, `token lacks`, `ACTION REQUIRED`, and `refusing to allow an OAuth App`. If detected, it labels the issue `status:blocked`, posts a comment directing the user to the required action (idempotent — won't double-post), and returns 0 (skip). On API error, it fails open (returns 2, treated as no blocker). This prevents the 15+ dispatch waste pattern observed in GH#5141.
 
 2. Skip if an open PR already exists for it, or merged-PR evidence already exists (check PR list / `has_merged_pr_for_issue`)
 3. Treat labels as hints, not gates. `status:queued`, `status:in-progress`, and `status:in-review` suggest active work, but verify with evidence (active worker, recent PR updates, recent commits) before skipping.

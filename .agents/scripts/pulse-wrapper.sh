@@ -2508,6 +2508,144 @@ check_dispatch_dedup() {
 }
 
 #######################################
+# Check issue comments for terminal blocker patterns (GH#5141)
+#
+# Scans the last N comments on an issue for known patterns that indicate
+# a user-action-required blocker. Workers cannot resolve these — they
+# require the repo owner to take a manual action (e.g., refresh a token,
+# grant a scope, configure a secret). Dispatching workers against these
+# issues wastes compute on guaranteed failures.
+#
+# Known terminal blocker patterns:
+#   - workflow scope missing (token lacks `workflow` scope)
+#   - token lacks scope / missing scope
+#   - ACTION REQUIRED (supervisor-posted user-action comments)
+#   - refusing to allow an OAuth App to create or update workflow
+#   - authentication required / permission denied (persistent auth failures)
+#
+# When a blocker is detected, the function:
+#   1. Adds `status:blocked` label to the issue
+#   2. Posts a comment directing the user to the required action
+#      (idempotent — checks for existing blocker comment first)
+#
+# Arguments:
+#   $1 - issue number
+#   $2 - repo slug (owner/repo)
+#   $3 - (optional) max comments to scan (default: 5)
+#
+# Exit codes:
+#   0 - terminal blocker detected (skip dispatch)
+#   1 - no blocker found (safe to dispatch)
+#   2 - API error (fail open — allow dispatch to proceed)
+#######################################
+check_terminal_blockers() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local max_comments="${3:-5}"
+
+	if [[ -z "$issue_number" || -z "$repo_slug" ]]; then
+		echo "[pulse-wrapper] check_terminal_blockers: missing arguments" >>"$LOGFILE"
+		return 2
+	fi
+
+	if [[ ! "$issue_number" =~ ^[0-9]+$ ]]; then
+		return 2
+	fi
+
+	# Fetch the last N comments
+	local comments_json
+	comments_json=$(gh api "repos/${repo_slug}/issues/${issue_number}/comments" \
+		--jq "[ .[-${max_comments}:][] | {body: .body, created_at: .created_at} ]" 2>/dev/null)
+	local api_exit=$?
+
+	if [[ $api_exit -ne 0 ]]; then
+		echo "[pulse-wrapper] check_terminal_blockers: API error (exit=$api_exit) for #${issue_number} in ${repo_slug} — failing open" >>"$LOGFILE"
+		return 2
+	fi
+
+	if [[ -z "$comments_json" || "$comments_json" == "[]" || "$comments_json" == "null" ]]; then
+		# No comments — no blocker possible
+		return 1
+	fi
+
+	# Concatenate comment bodies for pattern matching
+	local all_bodies
+	all_bodies=$(echo "$comments_json" | jq -r '.[].body // ""' 2>/dev/null)
+
+	if [[ -z "$all_bodies" ]]; then
+		return 1
+	fi
+
+	# Check for known terminal blocker patterns (case-insensitive)
+	local blocker_reason=""
+	local user_action=""
+
+	# Pattern 1: workflow scope missing
+	if echo "$all_bodies" | grep -qiE 'workflow scope|refusing to allow an OAuth App to create or update workflow|token lacks.*workflow'; then
+		blocker_reason="GitHub token lacks \`workflow\` scope — workers cannot push workflow file changes"
+		user_action="Run \`gh auth refresh -s workflow\` to add the workflow scope to your token, then remove the \`status:blocked\` label."
+	# Pattern 2: generic token/auth scope issues
+	elif echo "$all_bodies" | grep -qiE 'token lacks.*scope|missing.*scope.*token|token.*missing.*scope'; then
+		blocker_reason="GitHub token is missing a required scope — workers cannot complete this task"
+		user_action="Check the error details in the comments above, run \`gh auth refresh -s <missing-scope>\` to add the required scope, then remove the \`status:blocked\` label."
+	# Pattern 3: ACTION REQUIRED (supervisor-posted)
+	elif echo "$all_bodies" | grep -qF 'ACTION REQUIRED'; then
+		blocker_reason="A previous supervisor comment flagged this issue as requiring user action"
+		user_action="Read the ACTION REQUIRED comment above, complete the requested action, then remove the \`status:blocked\` label."
+	# Pattern 4: persistent authentication/permission failures
+	elif echo "$all_bodies" | grep -qiE 'authentication required.*workflow|permission denied.*workflow|push declined.*workflow'; then
+		blocker_reason="Persistent authentication or permission failure for workflow files"
+		user_action="Check your GitHub token scopes with \`gh auth status\`, refresh if needed with \`gh auth refresh -s workflow\`, then remove the \`status:blocked\` label."
+	fi
+
+	if [[ -z "$blocker_reason" ]]; then
+		# No terminal blocker patterns found
+		return 1
+	fi
+
+	# Terminal blocker detected — check if already labelled and commented
+	local existing_labels
+	existing_labels=$(gh issue view "$issue_number" --repo "$repo_slug" \
+		--json labels --jq '[.labels[].name] | join(",")' 2>/dev/null) || existing_labels=""
+
+	local already_blocked=false
+	if echo "$existing_labels" | grep -qF 'status:blocked'; then
+		already_blocked=true
+	fi
+
+	# Check for existing terminal-blocker comment (idempotent)
+	local has_blocker_comment=false
+	if echo "$all_bodies" | grep -qF 'Terminal blocker detected'; then
+		has_blocker_comment=true
+	fi
+
+	# Add label if not already present
+	if [[ "$already_blocked" == "false" ]]; then
+		gh issue edit "$issue_number" --repo "$repo_slug" \
+			--add-label "status:blocked" \
+			--remove-label "status:available" --remove-label "status:queued" 2>/dev/null ||
+			gh issue edit "$issue_number" --repo "$repo_slug" \
+				--add-label "status:blocked" 2>/dev/null || true
+	fi
+
+	# Post comment if not already posted
+	if [[ "$has_blocker_comment" == "false" ]]; then
+		gh issue comment "$issue_number" --repo "$repo_slug" \
+			--body "**Terminal blocker detected** (GH#5141) — skipping dispatch.
+
+**Reason:** ${blocker_reason}
+
+**Action required:** ${user_action}
+
+---
+*This issue will not be dispatched to workers until the blocker is resolved. Once you have completed the required action, remove the \`status:blocked\` label to re-enable dispatch.*" || true
+	fi
+
+	echo "[pulse-wrapper] check_terminal_blockers: blocker detected for #${issue_number} in ${repo_slug} — ${blocker_reason}" >>"$LOGFILE"
+	return 0
+}
+
+#######################################
 # Append adaptive queue-governor guidance to pre-fetched state
 #
 # Uses observed queue totals and trend vs previous cycle to derive an
