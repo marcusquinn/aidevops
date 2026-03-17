@@ -114,11 +114,11 @@ readonly FRAMEWORK_CONCEPT_PATTERNS=(
 # is_framework_task — detect whether a description is framework-level
 # =============================================================================
 # Arguments:
-#   $1 - task title or description text
+#   $1 - task title or description text (must be non-empty; caller validates)
 # Returns:
 #   0 = framework-level (high confidence)
 #   1 = project-level (no framework indicators found)
-#   2 = uncertain or error
+#   2 = uncertain
 # Outputs:
 #   Machine-readable result on stdout: "framework", "project", or "uncertain"
 #   Match details on stderr
@@ -126,11 +126,6 @@ is_framework_task() {
 	local description="$1"
 	local match_count=0
 	local matched_patterns=""
-
-	if [[ -z "$description" ]]; then
-		echo "uncertain"
-		return 2
-	fi
 
 	# Normalise to lowercase for matching
 	local desc_lower
