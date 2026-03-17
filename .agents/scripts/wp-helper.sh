@@ -300,6 +300,18 @@ execute_wp_via_ssh() {
 		ssh_identity_flag=(-i "$expanded_identity")
 	fi
 
+	# Build remote command as a single printf-escaped string.
+	# SSH concatenates multiple args with spaces, destroying bash -c positional
+	# parameter boundaries. Instead, each arg is individually escaped with %q,
+	# preventing both injection and argument-boundary loss. (GH#5197)
+	# Built once here and shared by all SSH-based branches below.
+	local remote_cmd
+	remote_cmd="cd $(printf '%q' "$wp_path") && wp"
+	local arg
+	for arg in "${wp_args[@]}"; do
+		remote_cmd+=" $(printf '%q' "$arg")"
+	done
+
 	case "$site_type" in
 	localwp)
 		# LocalWP - direct local access
@@ -335,28 +347,11 @@ execute_wp_via_ssh() {
 			print_info "Fix with: chmod 600 $expanded_password_file"
 		fi
 
-		# Build remote command as a single printf-escaped string.
-		# SSH concatenates multiple args with spaces, destroying bash -c positional
-		# parameter boundaries. Instead, each arg is individually escaped with %q,
-		# preventing both injection and argument-boundary loss. (GH#5197)
-		local remote_cmd
-		remote_cmd="cd $(printf '%q' "$wp_path") && wp"
-		local arg
-		for arg in "${wp_args[@]}"; do
-			remote_cmd+=" $(printf '%q' "$arg")"
-		done
 		sshpass -f "$expanded_password_file" ssh -n "${ssh_identity_flag[@]}" -p "$ssh_port" "${ssh_user}@${ssh_host}" "$remote_cmd"
 		return $?
 		;;
 	hetzner | cloudways | cloudron)
 		# SSH key-based authentication (preferred, -n prevents stdin consumption in loops)
-		# Build remote command as a single printf-escaped string (see sshpass block above)
-		local remote_cmd
-		remote_cmd="cd $(printf '%q' "$wp_path") && wp"
-		local arg
-		for arg in "${wp_args[@]}"; do
-			remote_cmd+=" $(printf '%q' "$arg")"
-		done
 		ssh -n "${ssh_identity_flag[@]}" -p "$ssh_port" "${ssh_user}@${ssh_host}" "$remote_cmd"
 		return $?
 		;;
