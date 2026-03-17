@@ -1016,8 +1016,8 @@ migrate_orphaned_supervisor() {
 		if [[ -n "$new_crontab" ]]; then
 			printf '%s\n' "$new_crontab" | crontab - 2>/dev/null || true
 		else
-			# All entries were supervisor-helper.sh — clear crontab
-			echo "" | crontab - 2>/dev/null || true
+			# All entries were supervisor-helper.sh — remove crontab entirely
+			crontab -r 2>/dev/null || true
 		fi
 		print_info "Removed orphaned supervisor-helper.sh cron entries"
 		print_info "  pulse-wrapper.sh will be installed by setup.sh if supervisor pulse is enabled"
@@ -1033,7 +1033,9 @@ migrate_orphaned_supervisor() {
 		local old_label="com.aidevops.supervisor-pulse"
 		local old_plist="$HOME/Library/LaunchAgents/${old_label}.plist"
 		if [[ -f "$old_plist" ]] || _launchd_has_agent "$old_label" 2>/dev/null; then
-			launchctl unload "$old_plist" 2>/dev/null || true
+			# Use launchctl remove by label — works even when the plist file is
+			# missing (orphaned agent loaded without a backing file on disk)
+			launchctl remove "$old_label" 2>/dev/null || true
 			rm -f "$old_plist"
 			print_info "Removed orphaned supervisor-pulse LaunchAgent ($old_label)"
 			((++cleaned))
