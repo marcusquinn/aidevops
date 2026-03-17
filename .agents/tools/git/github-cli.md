@@ -62,9 +62,13 @@ sudo apt install gh
 
 ```bash
 # Login (interactive - stores token in keyring)
-gh auth login
+# Include -s workflow to enable pushing/merging PRs with CI workflow changes
+gh auth login -s workflow
 
-# Check auth status
+# Add workflow scope to existing token (if missing)
+gh auth refresh -s workflow
+
+# Check auth status (verify 'workflow' appears in Token scopes)
 gh auth status
 
 # Get current token (for scripts that need GITHUB_TOKEN)
@@ -72,6 +76,8 @@ gh auth token
 ```
 
 Authentication is stored securely in your system keyring. No need for `GITHUB_TOKEN` environment variable for normal `gh` operations.
+
+**Required scope: `workflow`** — Without the `workflow` scope, pushes and merges of PRs that modify `.github/workflows/` files fail with "refusing to allow an OAuth App to create or update workflow without workflow scope". The framework checks for this scope at setup time and before push.
 
 ## Repository Management
 
@@ -209,10 +215,12 @@ export GH_TOKEN=$(gh auth token)
 
 | Issue | Solution |
 |-------|----------|
-| "not logged in" | Run `gh auth login` |
+| "not logged in" | Run `gh auth login -s workflow` |
 | "token expired" | Run `gh auth refresh` |
 | Wrong account | Run `gh auth switch` |
 | Need token for script | Use `$(gh auth token)` |
+| "refusing to allow...workflow scope" | Run `gh auth refresh -s workflow` |
+| Push fails on .github/workflows/ changes | Run `gh auth refresh -s workflow` |
 
 ## Best Practices
 

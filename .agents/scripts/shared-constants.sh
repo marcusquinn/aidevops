@@ -628,6 +628,72 @@ _save_cleanup_scope() {
 }
 
 # =============================================================================
+# GitHub Token Workflow Scope Check (t1540)
+# =============================================================================
+# Reusable function to check if the current gh token has the `workflow` scope.
+# Without this scope, git push and gh pr merge fail for branches that modify
+# .github/workflows/ files. The error is:
+#   "refusing to allow an OAuth App to create or update workflow without workflow scope"
+#
+# Usage:
+#   if ! gh_token_has_workflow_scope; then
+#       echo "Missing workflow scope — run: gh auth refresh -s workflow"
+#   fi
+#
+# Returns: 0 if token has workflow scope, 1 if missing, 2 if unable to check
+
+gh_token_has_workflow_scope() {
+	if ! command -v gh &>/dev/null; then
+		return 2
+	fi
+
+	local auth_output
+	auth_output=$(gh auth status 2>&1) || return 2
+
+	# gh auth status outputs scopes in various formats depending on version:
+	#   Token scopes: 'admin:public_key', 'gist', 'read:org', 'repo', 'workflow'
+	#   Token scopes: admin:public_key, gist, read:org, repo, workflow
+	if echo "$auth_output" | grep -q "'workflow'"; then
+		return 0
+	fi
+	if echo "$auth_output" | grep -qiE 'Token scopes:.*workflow'; then
+		return 0
+	fi
+
+	return 1
+}
+
+# Check if a set of file paths includes .github/workflows/ changes.
+# Accepts file paths on stdin (one per line) or as arguments.
+#
+# Usage:
+#   git diff --name-only HEAD~1 | files_include_workflow_changes
+#   files_include_workflow_changes ".github/workflows/ci.yml" "src/main.sh"
+#
+# Returns: 0 if workflow files found, 1 if not
+files_include_workflow_changes() {
+	if [[ $# -gt 0 ]]; then
+		# Check arguments
+		local f
+		for f in "$@"; do
+			if [[ "$f" == .github/workflows/* ]]; then
+				return 0
+			fi
+		done
+		return 1
+	fi
+
+	# Check stdin
+	local line
+	while IFS= read -r line; do
+		if [[ "$line" == .github/workflows/* ]]; then
+			return 0
+		fi
+	done
+	return 1
+}
+
+# =============================================================================
 # TODO.md Serialized Commit+Push
 # =============================================================================
 # Provides atomic locking and pull-rebase-retry for TODO.md operations.

@@ -38,7 +38,8 @@ git diff --cached | grep -iE "(api_key|token|password|secret)" && echo "WARNING:
 
 ```bash
 # Stores tokens in system keyring (secure)
-gh auth login
+# Include -s workflow for CI workflow PR support
+gh auth login -s workflow
 glab auth login
 tea login add
 ```

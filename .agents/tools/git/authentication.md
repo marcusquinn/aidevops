@@ -37,6 +37,7 @@ tools:
 2. Click **Generate new token (classic)**
 3. Select scopes:
    - `repo` - Full control of private repositories
+   - `workflow` - Update GitHub Actions workflow files (required for CI PRs)
    - `admin:repo_hook` - Read and write repository hooks
    - `user` - Read user profile data
 4. Generate and copy token
@@ -44,8 +45,8 @@ tools:
 ### Store Securely
 
 ```bash
-# Using CLI (recommended)
-gh auth login
+# Using CLI (recommended — include workflow scope for CI PRs)
+gh auth login -s workflow
 
 # Or store for scripts
 echo "GITHUB_TOKEN=ghp_xxxx" >> ~/.config/aidevops/credentials.sh
