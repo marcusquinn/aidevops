@@ -332,7 +332,7 @@ const rows = await page.$$eval('table tr', rows =>
 await page.screenshot({ path: 'viewport.png' })
 
 // Full page screenshot -- save to disk only, resize before sending to AI
-await page.screenshot({ path: 'full.png', fullPage: true })
+// await page.screenshot({ path: 'full.png', fullPage: true })
 
 // Element screenshot (safe -- element-scoped, not full page)
 await page.locator('.chart').screenshot({ path: 'chart.png' })
