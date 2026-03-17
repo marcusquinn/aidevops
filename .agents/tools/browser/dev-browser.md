@@ -197,6 +197,8 @@ EOF
 
 ### Navigate and Screenshot
 
+> **Screenshot size limit**: Do NOT use `fullPage: true` for screenshots intended for AI vision review. Full-page captures can exceed 8000px, which crashes the session (Anthropic hard-rejects images >8000px on any dimension). Use viewport-sized screenshots for AI review. If full-page is needed for human review, resize before including in conversation: `magick tmp/full.png -resize "1568x1568>" tmp/full-resized.png`. See `prompts/build.txt` "Screenshot Size Limits".
+
 ```bash
 cd ~/.aidevops/dev-browser/skills/dev-browser && bun x tsx <<'EOF'
 import { connect, waitForPageLoad } from "@/client.js";
@@ -207,8 +209,10 @@ const page = await client.page("main");
 await page.goto("http://localhost:3000/dashboard");
 await waitForPageLoad(page);
 
+// Viewport-sized screenshot (safe for AI review)
 await page.screenshot({ path: "tmp/dashboard.png" });
-await page.screenshot({ path: "tmp/full.png", fullPage: true });
+// Full-page: save to disk only -- resize before sending to AI vision
+// await page.screenshot({ path: "tmp/full.png", fullPage: true });
 
 console.log("Screenshots saved to tmp/");
 await client.disconnect();

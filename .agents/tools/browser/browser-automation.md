@@ -417,6 +417,8 @@ npx chrome-devtools-mcp@latest --proxyServer socks5://127.0.0.1:1080
 
 Best for: Maximum speed, full Playwright API, proxy support, fresh sessions.
 
+> **Screenshot size limit**: Do NOT use `fullPage: true` for screenshots intended for AI vision review. Full-page captures can exceed 8000px, which crashes the session (Anthropic hard-rejects images >8000px). Use viewport-sized screenshots for AI review. Resize full-page captures before including in conversation: `magick screenshot.png -resize "1568x1568>" screenshot-resized.png`. See `prompts/build.txt` "Screenshot Size Limits".
+
 ```javascript
 import { chromium } from 'playwright';
 
@@ -427,7 +429,7 @@ const browser = await chromium.launch({
 const page = await browser.newPage();
 await page.goto('https://example.com');
 await page.fill('input[name="email"]', 'user@example.com');
-await page.screenshot({ path: '/tmp/screenshot.png' });
+await page.screenshot({ path: '/tmp/screenshot.png' });  // viewport-sized (safe for AI)
 
 // Save state for reuse
 await page.context().storageState({ path: 'state.json' });

@@ -40,6 +40,8 @@ tools:
 
 Before making any visual changes, capture the current state for comparison:
 
+> **Screenshot size limit**: NEVER send `fullPage: true` screenshots directly to AI vision review. Full-page captures of modern web pages routinely exceed 8000px tall, which hard-crashes the session (Anthropic rejects images >8000px on any dimension, and the oversized image is already in message history -- every subsequent API call fails). Use viewport-sized screenshots for AI review. If full-page capture is needed for human review, save to disk and resize before including in conversation. See `prompts/build.txt` "Screenshot Size Limits".
+
 ```typescript
 import { chromium, devices } from 'playwright';
 
@@ -56,7 +58,8 @@ for (const { name, config } of standardDevices) {
   const page = await context.newPage();
   await page.goto(targetUrl);
   await page.waitForLoadState('networkidle');
-  await page.screenshot({ path: `/tmp/ui-verify/before-${name}.png`, fullPage: true });
+  // Viewport-sized screenshot (safe for AI review, no resize needed)
+  await page.screenshot({ path: `/tmp/ui-verify/before-${name}.png` });
   await context.close();
 }
 await browser.close();
@@ -72,12 +75,13 @@ After changes, capture the same pages across all standard breakpoints:
 
 ```typescript
 // Same device list as baseline -- capture "after" screenshots
+// Use viewport-sized screenshots (safe for AI review -- no fullPage: true)
 for (const { name, config } of standardDevices) {
   const context = await browser.newContext({ ...config });
   const page = await context.newPage();
   await page.goto(targetUrl);
   await page.waitForLoadState('networkidle');
-  await page.screenshot({ path: `/tmp/ui-verify/after-${name}.png`, fullPage: true });
+  await page.screenshot({ path: `/tmp/ui-verify/after-${name}.png` });
   await context.close();
 }
 ```

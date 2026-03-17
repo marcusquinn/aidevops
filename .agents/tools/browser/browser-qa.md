@@ -119,14 +119,18 @@ browser-qa-helper.sh screenshot --url http://localhost:3000 \
 | tablet | 768 | 1024 | iPad portrait |
 | mobile | 375 | 667 | iPhone SE/8 |
 
-**Image size warning**: Full-page screenshots of long pages can exceed Anthropic's hard reject threshold of `8000×8000 px` (64 megapixels total area). The `1568 px` value refers to an auto-resize trigger on the long edge — images exceeding this are automatically downscaled by the API, incurring latency penalties. For optimal performance, resize screenshots to ≤1568 px on the longest side (≤1.15 megapixels) before sending to a vision API:
+**Image size warning**: Full-page screenshots of long pages can exceed Anthropic's hard reject threshold of `8000px` on any single dimension. The `1568px` value refers to an auto-resize trigger on the long edge -- images exceeding this are automatically downscaled by the API, incurring latency penalties. For optimal performance, resize screenshots to ≤1568px on the longest side before sending to a vision API:
 
 ```bash
 # Resize to max 1568px on longest side (macOS built-in, non-destructive)
 sips --resampleHeightWidthMax 1568 screenshot.png --out screenshot-resized.png
+# Cross-platform (ImageMagick)
+magick screenshot.png -resize "1568x1568>" screenshot-resized.png
 ```
 
-See `tools/vision/image-understanding.md` for per-provider limits. GH#4213 tracks adding auto-resize to `browser-qa-helper.sh`.
+See `tools/vision/image-understanding.md` for per-provider limits.
+
+**`browser-qa-helper.sh` is the ONLY screenshot path with automatic size guardrails** (GH#4213). All other screenshot paths -- Playwright MCP (`browser_screenshot`), Playwriter MCP (`execute` with `page.screenshot()`), dev-browser scripts, raw Playwright code, and the `ui-verification.md` workflow -- have zero automatic size protection. When taking screenshots through any path other than `browser-qa-helper.sh`, you must either: (1) use viewport-sized screenshots (`fullPage: false` or omit the option), or (2) manually resize full-page captures before including them in conversation context.
 
 **What to look for in screenshots**:
 - Layout breaks (overlapping elements, content overflow)

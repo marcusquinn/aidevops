@@ -325,11 +325,16 @@ const rows = await page.$$eval('table tr', rows =>
 
 ### Screenshot and PDF
 
+> **Screenshot size limit**: Do NOT use `fullPage: true` for screenshots intended for AI vision review. Full-page captures can exceed 8000px, which crashes the session (Anthropic hard-rejects images >8000px). Use viewport-sized screenshots for AI review. If full-page is needed for human review, resize before including in conversation: `magick full.png -resize "1568x1568>" full-resized.png`. See `prompts/build.txt` "Screenshot Size Limits".
+
 ```javascript
-// Full page screenshot
+// Viewport-sized screenshot (safe for AI review)
+await page.screenshot({ path: 'viewport.png' })
+
+// Full page screenshot -- save to disk only, resize before sending to AI
 await page.screenshot({ path: 'full.png', fullPage: true })
 
-// Element screenshot
+// Element screenshot (safe -- element-scoped, not full page)
 await page.locator('.chart').screenshot({ path: 'chart.png' })
 
 // PDF export

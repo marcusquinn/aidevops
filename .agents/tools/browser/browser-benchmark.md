@@ -748,9 +748,11 @@ async function benchVisual() {
     await page.goto(url);
     await page.waitForLoadState('networkidle');
 
-    // Take screenshot
+    // Take viewport-sized screenshot (safe for AI review)
+    // WARNING: Do NOT use fullPage: true for screenshots sent to AI vision.
+    // Full-page captures can exceed 8000px, crashing the session.
     const screenshotPath = `/tmp/bench-visual-${Date.now()}.png`;
-    await page.screenshot({ path: screenshotPath, fullPage: true });
+    await page.screenshot({ path: screenshotPath });
 
     // Get ARIA snapshot (text representation for AI)
     const ariaSnapshot = await page.accessibility.snapshot();
@@ -781,7 +783,7 @@ benchVisual();
 
 **Visual verification workflow** (for AI agents):
 1. Navigate to page
-2. Take screenshot (PNG, full page)
+2. Take viewport-sized screenshot (PNG) -- do NOT use `fullPage: true` for AI review (>8000px crashes session)
 3. Get ARIA accessibility snapshot (structured text)
 4. AI analyses screenshot + ARIA to understand page state
 5. Decide next action based on visual understanding
