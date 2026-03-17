@@ -331,7 +331,10 @@ const rows = await page.$$eval('table tr', rows =>
 // Viewport-sized screenshot (safe for AI review)
 await page.screenshot({ path: 'viewport.png' })
 
-// Full page screenshot -- save to disk only, resize before sending to AI
+// DANGER: fullPage:true creates screenshots that can exceed 8000px, which
+// Anthropic hard-rejects -- crashing the AI session with no recovery (the
+// oversized image is stuck in message history). Save to disk only, resize
+// before sending to AI (see "Screenshot Size Limits" in prompts/build.txt).
 // await page.screenshot({ path: 'full.png', fullPage: true })
 
 // Element screenshot (safe -- element-scoped, not full page)
