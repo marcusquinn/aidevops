@@ -335,17 +335,29 @@ execute_wp_via_ssh() {
 			print_info "Fix with: chmod 600 $expanded_password_file"
 		fi
 
-		# Pass wp args as positional parameters to avoid shell interpolation issues
-		# Use bash -c (not -lc) to avoid login shell startup files that may redirect/swallow stdout
-		# shellcheck disable=SC2016 # $1/$@ expand on the remote shell, not locally
-		sshpass -f "$expanded_password_file" ssh -n "${ssh_identity_flag[@]}" -p "$ssh_port" "${ssh_user}@${ssh_host}" bash -c 'cd "$1" && shift && wp "$@"' _ "$wp_path" "${wp_args[@]}"
+		# Build remote command as a single printf-escaped string.
+		# SSH concatenates multiple args with spaces, destroying bash -c positional
+		# parameter boundaries. Instead, each arg is individually escaped with %q,
+		# preventing both injection and argument-boundary loss. (GH#5197)
+		local remote_cmd
+		remote_cmd="cd $(printf '%q' "$wp_path") && wp"
+		local arg
+		for arg in "${wp_args[@]}"; do
+			remote_cmd+=" $(printf '%q' "$arg")"
+		done
+		sshpass -f "$expanded_password_file" ssh -n "${ssh_identity_flag[@]}" -p "$ssh_port" "${ssh_user}@${ssh_host}" "$remote_cmd"
 		return $?
 		;;
 	hetzner | cloudways | cloudron)
 		# SSH key-based authentication (preferred, -n prevents stdin consumption in loops)
-		# Use bash -c (not -lc) to avoid login shell startup files that may redirect/swallow stdout
-		# shellcheck disable=SC2016 # $1/$@ expand on the remote shell, not locally
-		ssh -n "${ssh_identity_flag[@]}" -p "$ssh_port" "${ssh_user}@${ssh_host}" bash -c 'cd "$1" && shift && wp "$@"' _ "$wp_path" "${wp_args[@]}"
+		# Build remote command as a single printf-escaped string (see sshpass block above)
+		local remote_cmd
+		remote_cmd="cd $(printf '%q' "$wp_path") && wp"
+		local arg
+		for arg in "${wp_args[@]}"; do
+			remote_cmd+=" $(printf '%q' "$arg")"
+		done
+		ssh -n "${ssh_identity_flag[@]}" -p "$ssh_port" "${ssh_user}@${ssh_host}" "$remote_cmd"
 		return $?
 		;;
 	*)
