@@ -140,8 +140,8 @@ Not every task is code. The framework has multiple primary agents, each with dom
 **Dispatch example:**
 
 ```bash
-AGENTS_DIR_FROM_CONFIG="$(aidevops config get paths.agents_dir)"
-AGENTS_DIR="${AGENTS_DIR_FROM_CONFIG:-$HOME/.aidevops/agents}"
+AGENTS_DIR="$(aidevops config get paths.agents_dir)"
+AGENTS_DIR="${AGENTS_DIR:-$HOME/.aidevops/agents}"
 HELPER="${AGENTS_DIR/#\~/$HOME}/scripts/headless-runtime-helper.sh"
 
 # Code task (default — Build+ implied)
