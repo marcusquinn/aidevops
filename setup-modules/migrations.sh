@@ -37,6 +37,22 @@ cleanup_deprecated_paths() {
 		"$agents_dir/youtube"
 		# osgrep removed — disproportionate CPU/disk cost vs rg + LLM comprehension
 		"$agents_dir/tools/context/osgrep.md"
+		# GH#5155: scripts archived upstream but orphaned in deployed installs
+		# (rsync only adds/overwrites, doesn't delete removed files)
+		"$agents_dir/scripts/pattern-tracker-helper.sh"
+		"$agents_dir/scripts/quality-sweep-helper.sh"
+		"$agents_dir/scripts/quality-loop-helper.sh"
+		"$agents_dir/scripts/review-pulse-helper.sh"
+		"$agents_dir/scripts/self-improve-helper.sh"
+		"$agents_dir/scripts/coderabbit-pulse-helper.sh"
+		"$agents_dir/scripts/coderabbit-task-creator-helper.sh"
+		"$agents_dir/scripts/audit-task-creator-helper.sh"
+		"$agents_dir/scripts/batch-cleanup-helper.sh"
+		"$agents_dir/scripts/coordinator-helper.sh"
+		"$agents_dir/scripts/finding-to-task-helper.sh"
+		"$agents_dir/scripts/objective-runner-helper.sh"
+		"$agents_dir/scripts/ralph-loop-helper.sh"
+		"$agents_dir/scripts/stale-pr-helper.sh"
 	)
 
 	for path in "${deprecated_paths[@]}"; do
