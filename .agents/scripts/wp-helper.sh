@@ -302,15 +302,13 @@ execute_wp_via_ssh() {
 
 	# Build remote command as a single printf-escaped string.
 	# SSH concatenates multiple args with spaces, destroying bash -c positional
-	# parameter boundaries. Instead, each arg is individually escaped with %q,
-	# preventing both injection and argument-boundary loss. (GH#5197)
+	# parameter boundaries. printf %q escapes each arg, preventing both
+	# injection and argument-boundary loss. (GH#5197)
 	# Built once here and shared by all SSH-based branches below.
 	local remote_cmd
 	remote_cmd="cd $(printf '%q' "$wp_path") && wp"
-	local arg
-	for arg in "${wp_args[@]}"; do
-		remote_cmd+=" $(printf '%q' "$arg")"
-	done
+	remote_cmd+=" $(printf '%q ' "${wp_args[@]}")"
+	remote_cmd="${remote_cmd% }"
 
 	case "$site_type" in
 	localwp)
