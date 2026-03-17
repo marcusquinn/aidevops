@@ -993,8 +993,16 @@ loop_handle_workflow_push_failure() {
 	# Auto-detect issue number from branch name if not provided
 	if [[ -z "$issue_number" ]]; then
 		# Extract last digit sequence from branch name — issue numbers are conventionally
-		# at the end (e.g. bugfix/t5191-fix, feature/update-v2-for-GH-5162)
-		issue_number=$(echo "$branch" | grep -oE '[0-9]+' | tail -1 || echo "")
+		# at the end (e.g. bugfix/t5191-fix, feature/update-v2-for-GH-5162).
+		# Uses pure Bash parameter expansion instead of forking echo|grep|tail.
+		# Compatible with bash 3.2 (avoids negative array index syntax).
+		local nums_only="${branch//[!0-9]/ }"
+		local -a nums_array=()
+		read -ra nums_array <<<"$nums_only"
+		local count=${#nums_array[@]}
+		if [[ $count -gt 0 ]]; then
+			issue_number="${nums_array[$((count - 1))]}"
+		fi
 	fi
 
 	if [[ -z "$repo_slug" || -z "$issue_number" ]]; then
