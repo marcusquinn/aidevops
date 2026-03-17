@@ -112,11 +112,19 @@ _get_scheduler_backend() {
 }
 
 #######################################
-# Require crontab to be available
+# Silent check: is crontab available?
+# Returns: 0 if available, 1 if not
+#######################################
+_has_crontab() {
+	command -v crontab >/dev/null 2>&1
+}
+
+#######################################
+# Require crontab to be available (with error message)
 # Returns: 0 if available, 1 if not
 #######################################
 _require_crontab() {
-	if ! command -v crontab >/dev/null 2>&1; then
+	if ! _has_crontab; then
 		echo "Error: crontab is not available on this system." >&2
 		return 1
 	fi
@@ -887,7 +895,7 @@ cmd_status() {
 		fi
 	elif [[ "$backend" == "cron" ]]; then
 		# Linux: check cron (single crontab -l call)
-		if ! _require_crontab; then
+		if ! _has_crontab; then
 			echo "  Status: crontab unavailable"
 		else
 			local cron_entry
