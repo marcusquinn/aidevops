@@ -312,7 +312,7 @@ log_framework_issue() {
 	if [[ -n "$search_terms" ]]; then
 		local existing_issue
 		existing_issue=$(gh issue list --repo "$AIDEVOPS_SLUG" \
-			--state all --search "$search_terms" \
+			--state all --search "\"$search_terms\" in:title is:issue" \
 			--json number --limit 1 -q '.[0].number' 2>/dev/null || echo "")
 		if [[ -n "$existing_issue" && "$existing_issue" != "null" ]]; then
 			log_warn "Existing issue found: ${AIDEVOPS_SLUG}#${existing_issue} — skipping duplicate creation"
