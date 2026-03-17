@@ -146,13 +146,34 @@ gws gmail +triage   # just works
 
 ```bash
 # Only use if the CLI does not support encrypted export on your version
+# On the machine with a browser:
 gws auth export --unmasked > credentials.json
 # WARNING: credentials.json contains plaintext OAuth tokens.
-# Delete it after importing — never leave it on disk unencrypted.
-# Never commit this file.
-aidevops secret set GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE
-# Enter the file path at the prompt, e.g. /path/to/credentials.json
+# Store the file CONTENT (not the path) as a secret — content is portable
+# across machines and avoids leaving plaintext on disk.
+# Preferred: store content in gopass (most secure)
+cat credentials.json | aidevops secret set GWS_CREDENTIALS_JSON
+# Then delete the plaintext file immediately
+rm credentials.json
 ```
+
+On the headless machine:
+
+```bash
+# Write credentials to a temp file at runtime, use it, then clean up
+GWS_CREDS_FILE="$(mktemp)"
+aidevops secret get GWS_CREDENTIALS_JSON > "$GWS_CREDS_FILE"
+chmod 600 "$GWS_CREDS_FILE"
+export GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE="$GWS_CREDS_FILE"
+gws gmail +triage
+rm -f "$GWS_CREDS_FILE"
+```
+
+> **Security note**: Store the credentials *content* in the secret manager, not a file path.
+> A file path is machine-specific and requires the plaintext file to persist on disk.
+> Storing content lets you reconstruct the file at runtime on any machine without
+> leaving credentials on disk between runs. Prefer the encrypted export method above
+> when available — it avoids plaintext credentials entirely.
 
 ### Service account (server-to-server)
 
@@ -376,17 +397,17 @@ gws workflow +weekly-digest
 # List connections (contacts) with names and email addresses
 gws people connections list \
   --params '{"resourceName":"people/me","personFields":"names,emailAddresses","pageSize":100}' \
-  | jq '.connections[] | select(.names[0].displayName and .emailAddresses[0].value) | {name: .names[0].displayName, email: .emailAddresses[0].value}'
+  | jq '.connections[] | select(.names[0]?.displayName and .emailAddresses[0]?.value) | {name: .names[0].displayName, email: .emailAddresses[0].value}'
 
 # Search contacts
 gws people searchContacts \
   --params '{"query":"alice","readMask":"names,emailAddresses"}' \
-  | jq '.results[].person | select(.names[0].displayName and .emailAddresses[0].value) | {name: .names[0].displayName, email: .emailAddresses[0].value}'
+  | jq '.results[].person | select(.names[0]?.displayName and .emailAddresses[0]?.value) | {name: .names[0].displayName, email: .emailAddresses[0].value}'
 
 # Get a specific contact
 gws people people get \
   --params '{"resourceName":"people/PERSON_ID","personFields":"names,emailAddresses,phoneNumbers,organizations"}' \
-  | jq 'select(.names[0].displayName and .emailAddresses[0].value) | {name: .names[0].displayName, email: .emailAddresses[0].value}'
+  | jq 'select(.names[0]?.displayName and .emailAddresses[0]?.value) | {name: .names[0].displayName, email: .emailAddresses[0].value}'
 
 # Create a contact
 gws people people createContact \
@@ -412,7 +433,7 @@ gws people connections list \
   > ~/.aidevops/.agent-workspace/work/contacts/google-contacts.ndjson
 
 # Extract email→name mapping
-jq -r '.connections[] | select(.names[0].displayName and .emailAddresses[0].value) | "\(.emailAddresses[0].value)\t\(.names[0].displayName)"' \
+jq -r '.connections[] | select(.names[0]?.displayName and .emailAddresses[0]?.value) | "\(.emailAddresses[0].value)\t\(.names[0].displayName)"' \
   ~/.aidevops/.agent-workspace/work/contacts/google-contacts.ndjson
 ```
 
