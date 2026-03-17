@@ -894,14 +894,9 @@ run_daily_quality_sweep() {
 	# and model demand is lower. Quality sweep findings trigger LLM worker
 	# dispatch via the pulse, so landing findings in this window means the
 	# resulting workers also run at 2x rates. Override: QUALITY_SWEEP_OFFPEAK=0
-	if [[ "${QUALITY_SWEEP_OFFPEAK:-1}" == "1" ]]; then
-		local current_hour
-		current_hour=$(date +%H)
-		current_hour=$((10#$current_hour)) # strip leading zero for arithmetic
-		if [[ "$current_hour" -lt 18 ]]; then
-			echo "[stats] Quality sweep deferred: hour ${current_hour} is outside off-peak window (18:00-23:59)" >>"$LOGFILE"
-			return 0
-		fi
+	if [[ "${QUALITY_SWEEP_OFFPEAK:-1}" == "1" ]] && ((10#$(date +%H) < 18)); then
+		echo "[stats] Quality sweep deferred: hour $(date +%H) is outside off-peak window (18:00-23:59)" >>"$LOGFILE"
+		return 0
 	fi
 
 	# Timestamp guard — run at most once per QUALITY_SWEEP_INTERVAL
