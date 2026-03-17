@@ -149,8 +149,7 @@ gws gmail +triage   # just works
 # On the machine with a browser:
 gws auth export --unmasked > credentials.json
 # WARNING: credentials.json contains plaintext OAuth tokens.
-# Store the file CONTENT (not the path) as a secret — content is portable
-# across machines and avoids leaving plaintext on disk.
+# Store the file CONTENT as a secret — portable and avoids plaintext on disk.
 # Preferred: store content in gopass (most secure)
 cat credentials.json | aidevops secret set GWS_CREDENTIALS_JSON
 # Then delete the plaintext file immediately
