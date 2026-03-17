@@ -554,39 +554,35 @@ When the supervisor encounters a situation where it cannot determine what happen
 
 This is a one-time observation — don't file duplicate issues for the same gap. Check existing issues first: `gh issue list --repo <aidevops-slug> --search "information gap" --state open`.
 
-### Self-improvement repo routing (t1541, GH#5149)
+### Framework issue routing (GH#5149)
 
-When you observe a framework-level problem (supervisor pipeline bug, model tier issue, dispatch logic flaw, agent prompt deficiency), route it to the aidevops repo — NOT the project repo you're currently processing. Workers that create framework tasks in project repos pollute the project's task namespace and make the task invisible to framework maintainers.
+When the supervisor or a worker observes a **framework-level** problem (references `~/.aidevops/` files, framework scripts, supervisor/pulse logic, model routing, cross-repo orchestration), use `framework-issue-helper.sh` to file the issue on `marcusquinn/aidevops` — NOT `claim-task-id.sh` in the current project repo.
 
-**Use `framework-routing-helper.sh` for structural enforcement:**
+**This is a first-class supervisor action.** Add it to your action menu alongside `merge_pr`, `fix_ci`, and `dispatch_worker`:
 
 ```bash
-# Before creating any self-improvement task, check if it's framework-level
-ROUTING=$(/bin/bash ~/.aidevops/agents/scripts/framework-routing-helper.sh is-framework "$ISSUE_TITLE_OR_DESC" 2>/dev/null) || ROUTING="project"
+# Detect if an observation is framework-level (exit 0 = framework, exit 1 = project)
+~/.aidevops/agents/scripts/framework-issue-helper.sh detect "description of the problem"
 
-if [[ "$ROUTING" == "framework" || "$ROUTING" == "uncertain" ]]; then
-  # Route to aidevops repo — use log-framework-issue for dedup + correct targeting
-  /bin/bash ~/.aidevops/agents/scripts/framework-routing-helper.sh log-framework-issue \
-    --title "$ISSUE_TITLE" \
-    --body "$ISSUE_BODY" \
-    --labels "bug" \
-    --source-repo "$CURRENT_SLUG"
-  # Do NOT create a task in the current project repo
-else
-  # Project-specific — create in the current repo as normal
-  gh issue create --repo "$CURRENT_SLUG" --title "$ISSUE_TITLE" --body "$ISSUE_BODY"
-fi
+# File a framework issue (deduplicates automatically — safe to call multiple times)
+~/.aidevops/agents/scripts/framework-issue-helper.sh log \
+  --title "Bug: <description>" \
+  --body "Observed: <evidence>. Root cause hypothesis: <theory>. Proposed fix: <action>." \
+  --label "bug"
 ```
 
-**When to apply this check:** Any time the pulse or a worker is about to create a self-improvement issue (information gap, repeated failure pattern, missing automation, prompt deficiency). This does NOT apply to normal task dispatch — only to observations about the framework itself.
+**When to use this action:**
+- Worker observes a bug in a framework script (ai-lifecycle.sh, dispatch.sh, pulse-wrapper.sh, etc.)
+- Supervisor detects a systemic pattern in the pulse infrastructure
+- Worker cannot complete a task because of a framework limitation (not a project limitation)
+- Any observation that would apply to every repo the framework manages
 
-**Indicators of framework-level work** (the helper checks these automatically):
+**When NOT to use this action:**
+- The problem is specific to this project's CI, code, or domain logic
+- The problem is in a project-level script (not a framework script)
+- You are already running in the aidevops repo (use `claim-task-id.sh` normally)
 
-- References to `~/.aidevops/`, `.agents/`, `prompts/build.txt`
-- Framework script names: `pulse-wrapper`, `ai-lifecycle`, `dispatch`, `supervisor`, `pre-edit-check`, `claim-task-id`, `headless-runtime`
-- Framework concepts: cross-repo orchestration, task routing, model tier, pulse logic, worker dispatch
-
-**Why this matters:** GH#2849 added prose routing guidance, but autonomous workers under supervisor dispatch don't reliably follow multi-step conditional workflows. This helper gives them a deterministic check and a single action to take — `log-framework-issue` — instead of requiring them to invent the cross-repo workflow each time.
+The `framework-issue-helper.sh detect` command checks for framework indicators deterministically (path patterns, script names, concept keywords) — use it when uncertain. It exits 0 for framework issues, 1 for project issues.
 
 ### Task decomposition before dispatch (t1408.2)
 
