@@ -61,7 +61,8 @@ readonly STALE_WARNING_DAYS=60
 
 # Valid learning types (matches documentation and Continuous-Claude-v3)
 # shellcheck disable=SC2034 # Used in memory/store.sh and memory/recall.sh
-readonly VALID_TYPES="WORKING_SOLUTION FAILED_APPROACH CODEBASE_PATTERN USER_PREFERENCE TOOL_CONFIG DECISION CONTEXT ARCHITECTURAL_DECISION ERROR_FIX OPEN_THREAD SUCCESS_PATTERN FAILURE_PATTERN"
+# TIER_DOWNGRADE_OK: evidence that a cheaper model tier succeeded on a task type (t5148)
+readonly VALID_TYPES="WORKING_SOLUTION FAILED_APPROACH CODEBASE_PATTERN USER_PREFERENCE TOOL_CONFIG DECISION CONTEXT ARCHITECTURAL_DECISION ERROR_FIX OPEN_THREAD SUCCESS_PATTERN FAILURE_PATTERN TIER_DOWNGRADE_OK"
 
 # Valid relation types (inspired by Supermemory's relational versioning)
 # - updates: New info supersedes old (state mutation)

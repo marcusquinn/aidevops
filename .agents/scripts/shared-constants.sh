@@ -142,7 +142,8 @@ ensure_credentials_file() {
 # =============================================================================
 # All pattern-related memory types (dedicated + supervisor-generated)
 # Used by memory/_common.sh migrate_db backfill (pattern-tracker-helper.sh archived)
-readonly PATTERN_TYPES_SQL="'SUCCESS_PATTERN','FAILURE_PATTERN','WORKING_SOLUTION','FAILED_APPROACH','ERROR_FIX'"
+# TIER_DOWNGRADE_OK: evidence that a cheaper model tier succeeded on a task type (t5148)
+readonly PATTERN_TYPES_SQL="'SUCCESS_PATTERN','FAILURE_PATTERN','WORKING_SOLUTION','FAILED_APPROACH','ERROR_FIX','TIER_DOWNGRADE_OK'"
 
 # =============================================================================
 # Common Validation Patterns

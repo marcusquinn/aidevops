@@ -1940,19 +1940,21 @@ USAGE:
     pattern-tracker-helper.sh <command> [options]
 
 COMMANDS:
-    record      Record a success or failure pattern
-    score       Record structured quality scores (unified backbone for all tools) (t1094)
-    ab-compare  Record A/B head-to-head model comparison results (t1094)
-    analyze     Analyze patterns by task type or model
-    suggest     Get suggestions based on past patterns for a task
-    recommend   Recommend model tier based on historical success rates
-    stats       Show pattern statistics (includes supervisor patterns)
-    export      Export patterns as JSON or CSV
-    report      Generate a comprehensive pattern report
-    roi         Cost-per-task-type and tier ROI analysis (t1114)
-    label-stats Correlate GitHub issue labels with pattern data (t1010)
-    tier-drift  Analyze tier escalation frequency and cost impact (t1191)
-    help        Show this help
+    record                  Record a success or failure pattern
+    record-tier-downgrade-ok  Record evidence that a cheaper tier succeeded (t5148)
+    tier-downgrade-check    Check if historical data supports a tier downgrade (t5148)
+    score                   Record structured quality scores (unified backbone for all tools) (t1094)
+    ab-compare              Record A/B head-to-head model comparison results (t1094)
+    analyze                 Analyze patterns by task type or model
+    suggest                 Get suggestions based on past patterns for a task
+    recommend               Recommend model tier based on historical success rates
+    stats                   Show pattern statistics (includes supervisor patterns)
+    export                  Export patterns as JSON or CSV
+    report                  Generate a comprehensive pattern report
+    roi                     Cost-per-task-type and tier ROI analysis (t1114)
+    label-stats             Correlate GitHub issue labels with pattern data (t1010)
+    tier-drift              Analyze tier escalation frequency and cost impact (t1191)
+    help                    Show this help
 
 RECORD OPTIONS:
     --outcome <success|failure>   Required: was this a success or failure?
@@ -2021,6 +2023,19 @@ TIER-DRIFT OPTIONS (t1191):
     --days <n>                    Look back N days (default: 30)
     --json                        Output as JSON
     --summary                     One-line summary for pulse cycle integration
+
+RECORD-TIER-DOWNGRADE-OK OPTIONS (t5148):
+    --from-tier <tier>            Tier originally requested (e.g. opus)
+    --to-tier <tier>              Tier that ran and succeeded (e.g. sonnet)
+    --task-type <type>            Task category (optional, improves matching)
+    --task-id <id>                Task identifier (optional)
+    --quality-score <n>           Output quality: 0=no_output 1=partial 2=complete
+
+TIER-DOWNGRADE-CHECK OPTIONS (t5148):
+    --requested-tier <tier>       Tier AI-classified for this task (required)
+    --task-type <type>            Task category for filtering (optional)
+    --min-samples <n>             Minimum successes required before downgrading (default: 3)
+    Output: lower tier name if downgrade is supported, empty string otherwise
 
 EXPORT OPTIONS:
     --format <json|csv>           Output format (default: json)
@@ -2101,7 +2116,235 @@ EXAMPLES:
     pattern-tracker-helper.sh tier-drift
     pattern-tracker-helper.sh tier-drift --days 7 --json
     pattern-tracker-helper.sh tier-drift --summary  # one-line for pulse cycle
+
+    # Record that opus was requested but sonnet succeeded (called by evaluate.sh) (t5148)
+    pattern-tracker-helper.sh record-tier-downgrade-ok \
+        --from-tier opus --to-tier sonnet \
+        --task-type feature --task-id t200 --quality-score 2
+
+    # Check if historical data supports downgrading opus to a cheaper tier (t5148)
+    # Returns "sonnet" if >= 3 successes and 0 failures at sonnet for this task type
+    # Returns empty string if no evidence or evidence is insufficient
+    lower_tier=$(pattern-tracker-helper.sh tier-downgrade-check \
+        --requested-tier opus --task-type feature --min-samples 3)
+    if [[ -n "$lower_tier" ]]; then
+        echo "Pattern data recommends $lower_tier over opus"
+    fi
 EOF
+	return 0
+}
+
+#######################################
+# Record a TIER_DOWNGRADE_OK pattern (t5148)
+# Called by evaluate.sh after a task completes successfully at a lower tier
+# than originally requested. Stores evidence for future dispatch decisions.
+#
+# Options:
+#   --from-tier <tier>    Tier that was originally requested (e.g. opus)
+#   --to-tier <tier>      Tier that actually ran and succeeded (e.g. sonnet)
+#   --task-type <type>    Task category (feature, bugfix, etc.)
+#   --task-id <id>        Task identifier
+#   --quality-score <n>   Output quality rating: 0=no_output 1=partial 2=complete
+#######################################
+cmd_record_tier_downgrade_ok() {
+	local from_tier="" to_tier="" task_type="" task_id="" quality_score=""
+
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--from-tier)
+			from_tier="$2"
+			shift 2
+			;;
+		--to-tier)
+			to_tier="$2"
+			shift 2
+			;;
+		--task-type)
+			task_type="$2"
+			shift 2
+			;;
+		--task-id)
+			task_id="$2"
+			shift 2
+			;;
+		--quality-score)
+			quality_score="$2"
+			shift 2
+			;;
+		*) shift ;;
+		esac
+	done
+
+	if [[ -z "$from_tier" || -z "$to_tier" ]]; then
+		log_error "Both --from-tier and --to-tier are required"
+		return 1
+	fi
+
+	# Validate tiers
+	local from_check=" $from_tier "
+	local to_check=" $to_tier "
+	if [[ ! " $VALID_MODELS " =~ $from_check ]]; then
+		log_warn "Non-standard from-tier: $from_tier"
+	fi
+	if [[ ! " $VALID_MODELS " =~ $to_check ]]; then
+		log_warn "Non-standard to-tier: $to_tier"
+	fi
+
+	# Validate quality_score if provided
+	if [[ -n "$quality_score" ]]; then
+		case "$quality_score" in
+		0 | 1 | 2) ;;
+		*)
+			log_warn "Non-standard quality_score: $quality_score (standard: 0=no_output 1=partial 2=complete)"
+			;;
+		esac
+	fi
+
+	# Build structured tags for querying
+	local all_tags="TIER_DOWNGRADE_OK,from:${from_tier},to:${to_tier}"
+	[[ -n "$task_type" ]] && all_tags="${all_tags},task_type:${task_type}"
+	[[ -n "$task_id" ]] && all_tags="${all_tags},${task_id}"
+	[[ -n "$quality_score" ]] && all_tags="${all_tags},quality:${quality_score}"
+
+	# Build content
+	local content="Tier downgrade confirmed: ${from_tier} requested, ${to_tier} succeeded"
+	[[ -n "$task_type" ]] && content="[task:${task_type}] ${content}"
+	[[ -n "$task_id" ]] && content="${content} [id:${task_id}]"
+	[[ -n "$quality_score" ]] && content="${content} [quality:${quality_score}]"
+
+	"$MEMORY_HELPER" store \
+		--content "$content" \
+		--type "TIER_DOWNGRADE_OK" \
+		--tags "$all_tags" \
+		--confidence "high" 2>/dev/null || true
+
+	log_success "Recorded TIER_DOWNGRADE_OK: ${from_tier} -> ${to_tier}${task_type:+ ($task_type)}"
+	return 0
+}
+
+#######################################
+# Check if historical evidence supports downgrading a model tier (t5148)
+# Queries TIER_DOWNGRADE_OK patterns to determine if a cheaper tier has
+# a proven track record for the given task type.
+#
+# Design properties:
+#   - Non-blocking: returns empty string on any error (dispatch never fails)
+#   - Conservative: requires --min-samples successes AND zero failures at lower tier
+#   - Monotonic: only downgrades, never upgrades
+#   - Transparent: logs recommendation reason
+#
+# Options:
+#   --requested-tier <tier>   Tier that was AI-classified (e.g. opus)
+#   --task-type <type>        Task category for filtering (optional)
+#   --min-samples <n>         Minimum successes required (default: 3)
+#
+# Output: lower tier name if downgrade is supported, empty string otherwise
+# Returns: 0 always (non-blocking)
+#######################################
+cmd_tier_downgrade_check() {
+	local requested_tier="" task_type="" min_samples=3
+
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--requested-tier)
+			requested_tier="$2"
+			shift 2
+			;;
+		--task-type)
+			task_type="$2"
+			shift 2
+			;;
+		--min-samples)
+			min_samples="$2"
+			shift 2
+			;;
+		*) shift ;;
+		esac
+	done
+
+	# Non-blocking: return empty on missing inputs
+	if [[ -z "$requested_tier" ]]; then
+		return 0
+	fi
+
+	# Non-blocking: return empty if DB unavailable
+	# Redirect all output (ensure_db uses log_warn/log_info which write to stdout)
+	if ! ensure_db >/dev/null 2>&1; then
+		return 0
+	fi
+
+	# Tier rank: lower number = cheaper tier
+	# Only check tiers cheaper than the requested one
+	local tier_rank_haiku=1
+	local tier_rank_flash=2
+	local tier_rank_sonnet=3
+	local tier_rank_pro=4
+	local tier_rank_opus=5
+
+	local requested_rank_var="tier_rank_${requested_tier}"
+	local requested_rank="${!requested_rank_var:-0}"
+
+	# If requested tier is unknown or already the cheapest, no downgrade possible
+	if [[ "$requested_rank" -le 1 ]]; then
+		return 0
+	fi
+
+	# Build task type filter for SQL
+	local type_filter=""
+	if [[ -n "$task_type" ]]; then
+		local escaped_type
+		escaped_type=$(sql_escape "$task_type")
+		type_filter="AND (tags LIKE '%task_type:${escaped_type}%' OR tags LIKE '%${escaped_type}%')"
+	fi
+
+	# Check each cheaper tier from most expensive downgrade to cheapest
+	# (prefer the smallest downgrade that has evidence — e.g. opus->sonnet before opus->haiku)
+	local candidate_tier candidate_rank candidate_rank_var
+	local best_candidate="" best_candidate_count=0
+
+	for candidate_tier in opus pro sonnet flash haiku; do
+		candidate_rank_var="tier_rank_${candidate_tier}"
+		candidate_rank="${!candidate_rank_var:-0}"
+
+		# Only consider tiers cheaper than requested
+		if [[ "$candidate_rank" -ge "$requested_rank" ]]; then
+			continue
+		fi
+
+		# Count TIER_DOWNGRADE_OK patterns for this from->to pair
+		local success_count
+		success_count=$(sqlite3 "$MEMORY_DB" "
+			SELECT COUNT(*) FROM learnings
+			WHERE type = 'TIER_DOWNGRADE_OK'
+			AND tags LIKE '%from:${requested_tier}%'
+			AND tags LIKE '%to:${candidate_tier}%'
+			${type_filter};
+		" 2>/dev/null || echo "0")
+
+		# Also count any failures at the candidate tier for this task type
+		# A single failure at the lower tier disqualifies it (conservative)
+		local failure_count
+		failure_count=$(sqlite3 "$MEMORY_DB" "
+			SELECT COUNT(*) FROM learnings
+			WHERE type IN ('FAILURE_PATTERN', 'FAILED_APPROACH')
+			AND (tags LIKE '%model:${candidate_tier}%' OR content LIKE '%model:${candidate_tier}%')
+			${type_filter};
+		" 2>/dev/null || echo "0")
+
+		# Require min_samples successes and zero failures
+		if [[ "$success_count" -ge "$min_samples" && "$failure_count" -eq 0 ]]; then
+			# Prefer the smallest downgrade (highest rank among candidates)
+			if [[ "$candidate_rank" -gt "$best_candidate_count" ]]; then
+				best_candidate="$candidate_tier"
+				best_candidate_count="$candidate_rank"
+			fi
+		fi
+	done
+
+	if [[ -n "$best_candidate" ]]; then
+		printf '%s' "$best_candidate"
+	fi
+
 	return 0
 }
 
@@ -2114,6 +2357,8 @@ main() {
 
 	case "$command" in
 	record) cmd_record "$@" ;;
+	record-tier-downgrade-ok) cmd_record_tier_downgrade_ok "$@" ;;
+	tier-downgrade-check) cmd_tier_downgrade_check "$@" ;;
 	score) cmd_score "$@" ;;
 	ab-compare) cmd_ab_compare "$@" ;;
 	analyze) cmd_analyze "$@" ;;

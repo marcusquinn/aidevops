@@ -604,6 +604,47 @@ choose_model() {
 			continue
 		fi
 		set_last_provider "$role" "$current_provider"
+
+		# Pattern-driven tier downgrade (t5148): check if historical evidence
+		# supports using a cheaper tier for this task type. Non-blocking — any
+		# failure in the pattern check falls through to the original model.
+		# Caller sets AIDEVOPS_TIER_DOWNGRADE_TASK_TYPE to enable this check.
+		local _downgrade_task_type="${AIDEVOPS_TIER_DOWNGRADE_TASK_TYPE:-}"
+		if [[ -n "$_downgrade_task_type" ]]; then
+			local _current_tier=""
+			case "$current_model" in
+			*opus*) _current_tier="opus" ;;
+			*sonnet*) _current_tier="sonnet" ;;
+			*haiku*) _current_tier="haiku" ;;
+			*flash*) _current_tier="flash" ;;
+			*pro*) _current_tier="pro" ;;
+			esac
+
+			if [[ -n "$_current_tier" ]]; then
+				local _pattern_helper="${SCRIPT_DIR}/archived/pattern-tracker-helper.sh"
+				if [[ ! -x "$_pattern_helper" ]]; then
+					_pattern_helper="${HOME}/.aidevops/agents/scripts/archived/pattern-tracker-helper.sh"
+				fi
+				if [[ -x "$_pattern_helper" ]]; then
+					local _lower_tier
+					_lower_tier=$("$_pattern_helper" tier-downgrade-check \
+						--requested-tier "$_current_tier" \
+						--task-type "$_downgrade_task_type" \
+						--min-samples "${AIDEVOPS_TIER_DOWNGRADE_MIN_SAMPLES:-3}" \
+						2>/dev/null || true)
+					if [[ -n "$_lower_tier" ]]; then
+						local _lower_model
+						_lower_model=$(resolve_model_tier "$_lower_tier" 2>/dev/null || true)
+						if [[ -n "$_lower_model" && "$_lower_model" != "$current_model" ]]; then
+							print_info "Model for dispatch: pattern data recommends ${_lower_tier} over ${_current_tier} (TIER_DOWNGRADE_OK, task_type=${_downgrade_task_type})"
+							printf '%s' "$_lower_model"
+							return 0
+						fi
+					fi
+				fi
+			fi
+		fi
+
 		printf '%s' "$current_model"
 		return 0
 	done

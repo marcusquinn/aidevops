@@ -906,6 +906,28 @@ record_evaluation_metadata() {
 
 	"$pattern_helper" record "${record_args[@]}" 2>/dev/null || true
 
+	# Record TIER_DOWNGRADE_OK when task succeeded at a cheaper tier (t5148)
+	# Conditions: success outcome, both tiers known, actual tier is cheaper than requested.
+	# Tier rank: haiku=1 < flash=2 < sonnet=3 < pro=4 < opus=5
+	# Only record when quality_score >= 2 (complete output) to avoid recording
+	# partial successes that might not represent true tier capability.
+	if [[ "$pt_outcome" == "success" && -n "$requested_tier" && -n "$actual_tier" && "$requested_tier" != "$actual_tier" && "$quality_score" -ge 2 ]]; then
+		local _tier_rank_haiku=1 _tier_rank_flash=2 _tier_rank_sonnet=3 _tier_rank_pro=4 _tier_rank_opus=5
+		local _req_rank_var="_tier_rank_${requested_tier}"
+		local _act_rank_var="_tier_rank_${actual_tier}"
+		local _req_rank="${!_req_rank_var:-0}"
+		local _act_rank="${!_act_rank_var:-0}"
+		# Only record when actual tier is strictly cheaper (lower rank) than requested
+		if [[ "$_req_rank" -gt 0 && "$_act_rank" -gt 0 && "$_act_rank" -lt "$_req_rank" ]]; then
+			"$pattern_helper" record-tier-downgrade-ok \
+				--from-tier "$requested_tier" \
+				--to-tier "$actual_tier" \
+				--task-type "$task_type" \
+				--task-id "$task_id" \
+				--quality-score "$quality_score" 2>/dev/null || true
+		fi
+	fi
+
 	# Record tier delta to budget-tracker for cost analysis (t1191)
 	# Only records when we have token data AND tier information, so the
 	# budget-tracker can calculate the cost difference between tiers.
