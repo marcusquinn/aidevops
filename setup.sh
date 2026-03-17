@@ -892,10 +892,6 @@ main() {
 	#   - Non-interactive: only installs if config explicitly says true
 	local wrapper_script="$HOME/.aidevops/agents/scripts/pulse-wrapper.sh"
 	local pulse_label="com.aidevops.aidevops-supervisor-pulse"
-	local _aidevops_dir _pulse_repo_dir
-	_aidevops_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-	_pulse_repo_dir=$(_resolve_main_worktree_dir "$_aidevops_dir")
-
 	# Read explicit user consent from config.jsonc (not merged defaults).
 	# Empty = user never configured this; "true"/"false" = explicit choice.
 	local _pulse_user_config=""
@@ -1009,12 +1005,14 @@ main() {
 
 			# XML-escape paths for safe plist embedding (prevents injection
 			# if $HOME or paths contain &, <, > characters)
-			local _xml_wrapper_script _xml_home _xml_opencode_bin _xml_aidevops_dir _xml_path
+			local _xml_wrapper_script _xml_home _xml_opencode_bin _xml_pulse_dir _xml_path
 			local _headless_xml_env=""
 			_xml_wrapper_script=$(_xml_escape "$wrapper_script")
 			_xml_home=$(_xml_escape "$HOME")
 			_xml_opencode_bin=$(_xml_escape "$opencode_bin")
-			_xml_aidevops_dir=$(_xml_escape "$_pulse_repo_dir")
+			# Use neutral workspace path for PULSE_DIR so supervisor sessions
+			# are not associated with any specific managed repo (GH#5136).
+			_xml_pulse_dir=$(_xml_escape "${HOME}/.aidevops/.agent-workspace")
 			_xml_path=$(_xml_escape "$PATH")
 			if [[ -n "${AIDEVOPS_HEADLESS_MODELS:-}" ]]; then
 				local _xml_headless_models
@@ -1061,7 +1059,7 @@ main() {
 		<key>OPENCODE_BIN</key>
 		<string>${_xml_opencode_bin}</string>
 		<key>PULSE_DIR</key>
-		<string>${_xml_aidevops_dir}</string>
+		<string>${_xml_pulse_dir}</string>
 		<key>PULSE_STALE_THRESHOLD</key>
 		<string>1800</string>
 		${_headless_xml_env}
@@ -1092,8 +1090,9 @@ PLIST
 			# PATH= here, it overrides the global line and breaks nvm/bun/cargo.
 			# OPENCODE_BIN removed — resolved from PATH at runtime via command -v.
 			# See #4099 and #4240 for history.
-			local _cron_aidevops_dir _cron_wrapper_script _cron_headless_env=""
-			_cron_aidevops_dir=$(_cron_escape "$_pulse_repo_dir")
+			local _cron_pulse_dir _cron_wrapper_script _cron_headless_env=""
+			# Use neutral workspace path for PULSE_DIR (GH#5136)
+			_cron_pulse_dir=$(_cron_escape "${HOME}/.aidevops/.agent-workspace")
 			_cron_wrapper_script=$(_cron_escape "$wrapper_script")
 			if [[ -n "${AIDEVOPS_HEADLESS_MODELS:-}" ]]; then
 				local _cron_headless_models
@@ -1107,7 +1106,7 @@ PLIST
 			fi
 			(
 				crontab -l 2>/dev/null | grep -v 'aidevops: supervisor-pulse'
-				echo "*/2 * * * * PULSE_DIR=${_cron_aidevops_dir}${_cron_headless_env} /bin/bash ${_cron_wrapper_script} >> \"\$HOME/.aidevops/logs/pulse-wrapper.log\" 2>&1 # aidevops: supervisor-pulse"
+				echo "*/2 * * * * PULSE_DIR=${_cron_pulse_dir}${_cron_headless_env} /bin/bash ${_cron_wrapper_script} >> \"\$HOME/.aidevops/logs/pulse-wrapper.log\" 2>&1 # aidevops: supervisor-pulse"
 			) | crontab - || true
 			if crontab -l 2>/dev/null | grep -qF "aidevops: supervisor-pulse"; then
 				print_info "Supervisor pulse enabled (cron, every 2 min). Disable: crontab -e and remove the supervisor-pulse line"

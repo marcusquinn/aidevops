@@ -211,7 +211,13 @@ WRAPPER_LOGFILE="${HOME}/.aidevops/logs/pulse-wrapper.log"
 SESSION_FLAG="${HOME}/.aidevops/logs/pulse-session.flag"
 STOP_FLAG="${HOME}/.aidevops/logs/pulse-session.stop"
 OPENCODE_BIN="${OPENCODE_BIN:-$(command -v opencode 2>/dev/null || echo "opencode")}"
-PULSE_DIR="${PULSE_DIR:-${HOME}/Git/aidevops}"
+# PULSE_DIR: working directory for the supervisor pulse session.
+# Defaults to a neutral workspace path so pulse sessions are not associated
+# with any specific managed repo in the host app's session database.
+# Previously defaulted to ~/Git/aidevops, which caused 155+ orphaned sessions
+# to accumulate under that project even when it had pulse:false (GH#5136).
+# Override via env var if a specific directory is needed.
+PULSE_DIR="${PULSE_DIR:-${HOME}/.aidevops/.agent-workspace}"
 PULSE_MODEL="${PULSE_MODEL:-}"
 HEADLESS_RUNTIME_HELPER="${HEADLESS_RUNTIME_HELPER:-${SCRIPT_DIR}/headless-runtime-helper.sh}"
 REPOS_JSON="${REPOS_JSON:-${HOME}/.config/aidevops/repos.json}"
@@ -226,9 +232,10 @@ if [[ ! -x "$HEADLESS_RUNTIME_HELPER" ]]; then
 fi
 
 #######################################
-# Ensure log directory exists
+# Ensure log and workspace directories exist
 #######################################
 mkdir -p "$(dirname "$PIDFILE")"
+mkdir -p "$PULSE_DIR"
 
 #######################################
 # Acquire an exclusive instance lock using mkdir atomicity (GH#4513)
@@ -1842,8 +1849,14 @@ gathered by pulse-wrapper.sh BEFORE this session started."
 	fi
 
 	# Run the provider-aware headless wrapper in background.
-	# It alternates direct Anthropic/OpenAI models, persists pulse sessions per
-	# provider, and avoids opencode/* gateway models for headless runs.
+	# It alternates direct Anthropic/OpenAI models and avoids opencode/*
+	# gateway models for headless runs.
+	# Session reuse is intentionally DISABLED for pulse role (GH#5136,
+	# headless-runtime-helper.sh line 804-809): each cycle clears the
+	# persisted session ID to avoid stale conversational context contaminating
+	# dispatch decisions. This means each cycle creates a fresh session.
+	# PULSE_DIR uses a neutral workspace path (not a managed repo) so these
+	# sessions don't pollute any project's session list.
 	local -a pulse_cmd=("$HEADLESS_RUNTIME_HELPER" run --role pulse --session-key supervisor-pulse --dir "$PULSE_DIR" --title "Supervisor Pulse" --agent Automate --prompt "$prompt")
 	if [[ -n "$PULSE_MODEL" ]]; then
 		pulse_cmd+=(--model "$PULSE_MODEL")
