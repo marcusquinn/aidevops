@@ -636,6 +636,52 @@ create_gitlab_issue() {
 	return 0
 }
 
+# Framework routing guard (GH#5149)
+# Warns when claim-task-id.sh is called from a non-aidevops repo with a title
+# that contains framework-level indicators. This catches the most common failure
+# mode: workers creating framework tasks in project repos.
+#
+# This is a WARN, not a block — the worker may have a legitimate reason to
+# allocate an ID in the current repo (e.g., a project-level task that happens
+# to mention a framework script). The warning surfaces the routing question
+# so the worker can make an explicit decision.
+check_framework_routing() {
+	local title="$1"
+	local repo_path="$2"
+
+	# Skip if no title (batch mode) or if explicitly suppressed
+	[[ -z "$title" ]] && return 0
+	[[ "${SKIP_FRAMEWORK_ROUTING_CHECK:-}" == "true" ]] && return 0
+
+	# Check if we're already in the aidevops repo — no routing needed
+	local remote_url
+	remote_url=$(git -C "$repo_path" remote get-url origin 2>/dev/null || echo "")
+	if printf '%s' "$remote_url" | grep -qE "marcusquinn/aidevops(\.git)?$"; then
+		return 0
+	fi
+
+	# Check if the title contains framework-level indicators
+	local framework_helper="${SCRIPT_DIR}/framework-issue-helper.sh"
+	if [[ ! -x "$framework_helper" ]]; then
+		return 0
+	fi
+
+	local detection_result
+	detection_result=$("$framework_helper" detect "$title" 2>/dev/null || echo "project")
+
+	if [[ "$detection_result" == "framework" ]]; then
+		log_warn "FRAMEWORK ROUTING WARNING (GH#5149):"
+		log_warn "  Title contains framework-level indicators: $title"
+		log_warn "  You are in: $repo_path"
+		log_warn "  Framework issues should be filed on marcusquinn/aidevops, not this repo."
+		log_warn "  Use instead: framework-issue-helper.sh log --title \"$title\""
+		log_warn "  To suppress this warning: SKIP_FRAMEWORK_ROUTING_CHECK=true claim-task-id.sh ..."
+		log_warn "  Proceeding with allocation in current repo (override if intentional)."
+	fi
+
+	return 0
+}
+
 # Main execution
 main() {
 	parse_args "$@"
@@ -647,6 +693,10 @@ main() {
 	if [[ "$DRY_RUN" == "true" ]]; then
 		log_info "DRY RUN mode - no changes will be made"
 	fi
+
+	# Framework routing guard: warn if title looks like a framework issue
+	# but we're not in the aidevops repo (GH#5149)
+	check_framework_routing "$TASK_TITLE" "$REPO_PATH"
 
 	log_info "Using remote: ${REMOTE_NAME}, counter branch: ${COUNTER_BRANCH}"
 

@@ -69,10 +69,25 @@ Every agent session — interactive, worker, or supervisor — should improve th
 
 **Route to the correct repo.** Not every improvement belongs in the current project. Before creating a self-improvement task, determine whether the problem is project-specific or framework-level:
 
-- **Framework-level** — route to the aidevops repo. Indicators: the observation references files under `~/.aidevops/`, framework scripts (`ai-actions.sh`, `ai-lifecycle.sh`, `supervisor/`, `dispatch.sh`, `pre-edit-check.sh`, helper scripts), agent prompt behaviour, supervisor/pulse logic, or cross-repo orchestration. Follow the "Cross-repo task creation" workflow below (claim ID → commit → issue), targeting the aidevops repo path. The fix belongs in the framework, not in the project that happened to trigger it.
+- **Framework-level** — route to the aidevops repo. Indicators: the observation references files under `~/.aidevops/`, framework scripts (`ai-actions.sh`, `ai-lifecycle.sh`, `supervisor/`, `dispatch.sh`, `pre-edit-check.sh`, helper scripts), agent prompt behaviour, supervisor/pulse logic, or cross-repo orchestration. **Use `framework-issue-helper.sh log` — not `claim-task-id.sh` — to file the issue directly on `marcusquinn/aidevops`.** The fix belongs in the framework, not in the project that happened to trigger it.
 - **Project-specific** — route to the current repo. Indicators: the observation is about this project's CI, code patterns, dependencies, or domain logic.
 
 If uncertain, ask: "Would this fix apply to every repo the framework manages, or only this one?" Framework-wide problems go to aidevops; project-specific problems stay local. Never create framework tasks in a project repo — they become invisible to framework maintainers and pollute the project's task namespace.
+
+**How to file a framework issue (GH#5149):** When you detect a framework-level problem, use the dedicated helper — not `claim-task-id.sh` in the current repo:
+
+```bash
+# Detect if a problem is framework-level (exit 0 = framework, exit 1 = project)
+~/.aidevops/agents/scripts/framework-issue-helper.sh detect "description of the problem"
+
+# File a framework issue directly on marcusquinn/aidevops (deduplicates automatically)
+~/.aidevops/agents/scripts/framework-issue-helper.sh log \
+  --title "Bug: supervisor pipeline fails when stdin is consumed" \
+  --body "Observed in ai-lifecycle.sh phase 3: ..." \
+  --label "bug"
+```
+
+This is the correct action path for framework issues. Do NOT use `claim-task-id.sh` in the project repo for framework-level observations — that pollutes the project's task namespace and makes the issue invisible to framework maintainers.
 
 **Scope boundary for code changes (t1405, GH#2928).** Separate "observe and report" from "observe and fix". When dispatched by the pulse, the `PULSE_SCOPE_REPOS` env var lists the repo slugs where you may create worktrees and PRs. Filing issues is always allowed on any repo — cross-repo bug reports are valuable. But code changes (worktrees, PRs, commits) are restricted to repos in `PULSE_SCOPE_REPOS`. If the target repo is not in scope, file the issue and stop. The issue enters that repo's queue for their maintainers (or their own pulse) to handle. If `PULSE_SCOPE_REPOS` is empty or unset (interactive mode), no scope restriction applies.
 

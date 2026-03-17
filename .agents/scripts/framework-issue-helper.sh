@@ -1,0 +1,482 @@
+#!/usr/bin/env bash
+# framework-issue-helper.sh - Route self-improvement issues to the aidevops repo
+# Part of aidevops framework: https://aidevops.sh
+#
+# Fixes GH#5149: workers creating framework tasks in project repos despite prose guidance.
+# This script provides a first-class action for workers to route framework-level issues
+# to the correct repo (marcusquinn/aidevops) instead of the current project repo.
+#
+# Usage:
+#   framework-issue-helper.sh detect "title or description text"
+#   framework-issue-helper.sh log --title "Title" --body "Body" [--label "bug"]
+#   framework-issue-helper.sh check-repo [--repo-path PATH]
+#
+# Commands:
+#   detect TEXT        Detect if text contains framework-level indicators.
+#                      Exit 0 = framework issue, exit 1 = project issue.
+#                      Prints "framework" or "project" to stdout.
+#
+#   log                Create an issue on the aidevops repo (marcusquinn/aidevops).
+#                      Gathers diagnostics automatically. Deduplicates by title.
+#                      Options:
+#                        --title TEXT      Issue title (required)
+#                        --body TEXT       Issue body (optional, auto-generated if omitted)
+#                        --label LABEL     GitHub label (default: "bug")
+#                        --dry-run         Print what would be created, don't create
+#
+#   check-repo         Check if the current repo is the aidevops framework repo.
+#                      Exit 0 = is aidevops repo, exit 1 = is a project repo.
+#                      Options:
+#                        --repo-path PATH  Path to check (default: current directory)
+#
+# Framework-level indicators (any match → framework issue):
+#   - File paths under ~/.aidevops/
+#   - Framework script names: ai-lifecycle.sh, dispatch.sh, pulse-wrapper.sh,
+#     pre-edit-check.sh, claim-task-id.sh, headless-runtime-helper.sh, etc.
+#   - Framework concepts: supervisor, pulse, worker dispatch, model routing,
+#     cross-repo orchestration, agent prompt behaviour
+#   - Explicit markers: [framework], [aidevops], framework-level
+#
+# Exit codes:
+#   0 - Success
+#   1 - Error or "not framework" (for detect command)
+#   2 - Dry run (no changes made)
+#
+# Examples:
+#   # Detect if a task is framework-level
+#   if framework-issue-helper.sh detect "Bug in ai-lifecycle.sh phase 3 pipeline"; then
+#     echo "Route to aidevops repo"
+#   fi
+#
+#   # Log a framework issue (workers use this instead of claim-task-id.sh)
+#   framework-issue-helper.sh log \
+#     --title "Phase 3 pipeline stdin consumption bug in ai-lifecycle.sh" \
+#     --body "Observed: workers fail when stdin is consumed in phase 3..."
+#
+#   # Check if we're in the aidevops repo
+#   if framework-issue-helper.sh check-repo; then
+#     echo "In aidevops repo — use claim-task-id.sh normally"
+#   else
+#     echo "In project repo — use framework-issue-helper.sh log for framework issues"
+#   fi
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit 1
+LOG_PREFIX="FRAMEWORK"
+# shellcheck source=shared-constants.sh
+source "${SCRIPT_DIR}/shared-constants.sh"
+
+set -euo pipefail
+
+# The canonical aidevops repo slug — never guess this
+readonly AIDEVOPS_SLUG="marcusquinn/aidevops"
+
+# Framework-level path indicators (files/dirs that live in ~/.aidevops/)
+readonly FRAMEWORK_PATH_PATTERNS=(
+	"\\.aidevops/"
+	"aidevops/agents/"
+	"aidevops/logs/"
+	"aidevops/cache/"
+)
+
+# Framework script names that indicate a framework-level issue
+readonly FRAMEWORK_SCRIPT_NAMES=(
+	"ai-lifecycle.sh"
+	"ai-actions.sh"
+	"dispatch.sh"
+	"pulse-wrapper.sh"
+	"pulse\.sh"
+	"pre-edit-check.sh"
+	"claim-task-id.sh"
+	"headless-runtime-helper.sh"
+	"worker-lifecycle-common.sh"
+	"circuit-breaker-helper.sh"
+	"dispatch-dedup-helper.sh"
+	"model-availability-helper.sh"
+	"task-decompose-helper.sh"
+	"review-bot-gate-helper.sh"
+	"issue-sync-helper.sh"
+	"framework-issue-helper.sh"
+	"session-miner-pulse.sh"
+	"memory-audit-pulse.sh"
+	"auto-update-helper.sh"
+	"aidevops-update-check.sh"
+	"bundle-helper.sh"
+	"batch-strategy-helper.sh"
+)
+
+# Framework concept keywords that indicate a framework-level issue
+readonly FRAMEWORK_CONCEPT_KEYWORDS=(
+	"supervisor pulse"
+	"pulse supervisor"
+	"worker dispatch"
+	"model routing"
+	"cross-repo orchestration"
+	"agent prompt"
+	"headless dispatch"
+	"pulse session"
+	"worker slot"
+	"worker lifecycle"
+	"provider rotation"
+	"provider backoff"
+	"session miner"
+	"task counter"
+	"\.task-counter"
+	"claim-task-id"
+	"PULSE_SCOPE_REPOS"
+	"PULSE_STALE_THRESHOLD"
+	"circuit.breaker"
+	"dispatch.dedup"
+	"struggle.ratio"
+	"model.escalation"
+	"framework.level"
+	"\[framework\]"
+	"\[aidevops\]"
+	"supervisor evaluate"
+	"supervisor dispatch"
+	"model tier.*supervisor"
+	"supervisor.*model tier"
+	"pulse.*evaluate"
+	"evaluate.*dispatch"
+	"worker.*evaluate"
+	"aidevops framework"
+	"aidevops repo"
+)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# detect_framework_issue TEXT
+#
+# Returns 0 (exit) and prints "framework" if TEXT contains framework indicators.
+# Returns 1 (exit) and prints "project" otherwise.
+# ─────────────────────────────────────────────────────────────────────────────
+detect_framework_issue() {
+	local text="$1"
+	local lower_text
+	lower_text=$(printf '%s' "$text" | tr '[:upper:]' '[:lower:]')
+
+	# Check path patterns
+	local pattern
+	for pattern in "${FRAMEWORK_PATH_PATTERNS[@]}"; do
+		if printf '%s' "$lower_text" | grep -qE "$pattern" 2>/dev/null; then
+			log_info "Framework indicator (path): $pattern"
+			echo "framework"
+			return 0
+		fi
+	done
+
+	# Check script names
+	for pattern in "${FRAMEWORK_SCRIPT_NAMES[@]}"; do
+		if printf '%s' "$lower_text" | grep -qiE "$pattern" 2>/dev/null; then
+			log_info "Framework indicator (script): $pattern"
+			echo "framework"
+			return 0
+		fi
+	done
+
+	# Check concept keywords
+	for pattern in "${FRAMEWORK_CONCEPT_KEYWORDS[@]}"; do
+		if printf '%s' "$lower_text" | grep -qiE "$pattern" 2>/dev/null; then
+			log_info "Framework indicator (concept): $pattern"
+			echo "framework"
+			return 0
+		fi
+	done
+
+	echo "project"
+	return 1
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# check_is_aidevops_repo [REPO_PATH]
+#
+# Returns 0 if REPO_PATH is the aidevops framework repo, 1 otherwise.
+# ─────────────────────────────────────────────────────────────────────────────
+check_is_aidevops_repo() {
+	local repo_path="${1:-$PWD}"
+
+	# Check remote URL
+	local remote_url
+	remote_url=$(git -C "$repo_path" remote get-url origin 2>/dev/null || echo "")
+
+	if printf '%s' "$remote_url" | grep -qE "marcusquinn/aidevops(\.git)?$"; then
+		return 0
+	fi
+
+	# Check repo name as fallback
+	local repo_name
+	repo_name=$(basename "$(git -C "$repo_path" rev-parse --show-toplevel 2>/dev/null || echo "")")
+	if [[ "$repo_name" == "aidevops" ]]; then
+		# Verify it's the right one by checking for framework marker files
+		if [[ -f "${repo_path}/.agents/scripts/framework-issue-helper.sh" ]] ||
+			[[ -f "${repo_path}/VERSION" && -f "${repo_path}/setup.sh" ]]; then
+			return 0
+		fi
+	fi
+
+	return 1
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# get_aidevops_repo_path
+#
+# Finds the local path to the aidevops repo from repos.json or common locations.
+# Prints the path to stdout, or empty string if not found.
+# ─────────────────────────────────────────────────────────────────────────────
+get_aidevops_repo_path() {
+	# Check repos.json first (canonical source)
+	local repos_json="${HOME}/.config/aidevops/repos.json"
+	if [[ -f "$repos_json" ]] && command -v jq &>/dev/null; then
+		local path_from_json
+		path_from_json=$(jq -r '.initialized_repos[] | select(.slug == "marcusquinn/aidevops") | .path // empty' \
+			"$repos_json" 2>/dev/null | head -1 || echo "")
+		if [[ -n "$path_from_json" && -d "$path_from_json" ]]; then
+			echo "$path_from_json"
+			return 0
+		fi
+	fi
+
+	# Common locations
+	local candidate
+	for candidate in \
+		"${HOME}/Git/aidevops" \
+		"${HOME}/git/aidevops" \
+		"${HOME}/Projects/aidevops" \
+		"${HOME}/Code/aidevops"; do
+		if [[ -d "$candidate" ]] && check_is_aidevops_repo "$candidate" 2>/dev/null; then
+			echo "$candidate"
+			return 0
+		fi
+	done
+
+	echo ""
+	return 1
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# gather_diagnostics
+#
+# Collects system info for issue body. Reuses log-issue-helper.sh if available.
+# ─────────────────────────────────────────────────────────────────────────────
+gather_diagnostics() {
+	local log_issue_helper="${SCRIPT_DIR}/log-issue-helper.sh"
+	if [[ -x "$log_issue_helper" ]]; then
+		"$log_issue_helper" diagnostics 2>/dev/null || true
+		return 0
+	fi
+
+	# Minimal fallback diagnostics
+	local version="unknown"
+	if [[ -f "${HOME}/.aidevops/agents/VERSION" ]]; then
+		version=$(cat "${HOME}/.aidevops/agents/VERSION" 2>/dev/null | tr -d '[:space:]' || echo "unknown")
+	fi
+
+	cat <<EOF
+- **aidevops version**: $version
+- **OS**: $(uname -s) $(uname -r)
+- **Working repo**: $(basename "$(git rev-parse --show-toplevel 2>/dev/null || echo 'none')")
+- **gh CLI**: $(gh --version 2>/dev/null | head -1 || echo "not installed")
+EOF
+	return 0
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# log_framework_issue TITLE BODY LABEL DRY_RUN
+#
+# Creates an issue on marcusquinn/aidevops. Deduplicates by title.
+# ─────────────────────────────────────────────────────────────────────────────
+log_framework_issue() {
+	local title="$1"
+	local body="$2"
+	local label="${3:-bug}"
+	local dry_run="${4:-false}"
+
+	if [[ -z "$title" ]]; then
+		log_error "Title is required"
+		return 1
+	fi
+
+	# Check gh CLI is available
+	if ! command -v gh &>/dev/null; then
+		log_error "GitHub CLI (gh) not installed — cannot create issue"
+		log_error "Install with: brew install gh (macOS) or apt install gh (Linux)"
+		return 1
+	fi
+
+	if ! gh auth status &>/dev/null; then
+		log_error "GitHub CLI not authenticated — run: gh auth login"
+		return 1
+	fi
+
+	# Deduplication: search for existing issues with similar title
+	local search_terms
+	search_terms=$(printf '%s' "$title" | sed 's/^[a-zA-Z0-9_-]*: *//')
+	if [[ -n "$search_terms" ]]; then
+		local existing_issue
+		existing_issue=$(gh issue list --repo "$AIDEVOPS_SLUG" \
+			--state all --search "$search_terms" \
+			--json number --limit 1 -q '.[0].number' 2>/dev/null || echo "")
+		if [[ -n "$existing_issue" && "$existing_issue" != "null" ]]; then
+			log_warn "Existing issue found: ${AIDEVOPS_SLUG}#${existing_issue} — skipping duplicate creation"
+			echo "issue_url=https://github.com/${AIDEVOPS_SLUG}/issues/${existing_issue}"
+			echo "issue_num=${existing_issue}"
+			echo "status=duplicate"
+			return 0
+		fi
+	fi
+
+	# Auto-generate body if not provided
+	if [[ -z "$body" ]]; then
+		local diagnostics
+		diagnostics=$(gather_diagnostics 2>/dev/null || echo "")
+		body="## Description
+
+${title}
+
+## Environment
+
+${diagnostics}
+
+## Context
+
+This issue was automatically routed to the aidevops framework repo by \`framework-issue-helper.sh\` because it contains framework-level indicators (references to ~/.aidevops/ files, framework scripts, or supervisor/pulse concepts).
+
+Filed from: $(git rev-parse --show-toplevel 2>/dev/null || echo 'unknown repo')"
+	fi
+
+	if [[ "$dry_run" == "true" ]]; then
+		log_info "DRY RUN — would create issue on ${AIDEVOPS_SLUG}:"
+		log_info "  Title: $title"
+		log_info "  Label: $label"
+		log_info "  Body preview: ${body:0:200}..."
+		echo "status=dry_run"
+		return 2
+	fi
+
+	log_info "Creating issue on ${AIDEVOPS_SLUG}: $title"
+
+	local issue_url
+	issue_url=$(gh issue create \
+		--repo "$AIDEVOPS_SLUG" \
+		--title "$title" \
+		--body "$body" \
+		--label "$label" 2>&1) || {
+		log_error "Failed to create issue: $issue_url"
+		return 1
+	}
+
+	local issue_num
+	issue_num=$(printf '%s' "$issue_url" | grep -oE '[0-9]+$' || echo "")
+
+	if [[ -n "$issue_num" ]]; then
+		log_success "Created framework issue: ${AIDEVOPS_SLUG}#${issue_num}"
+		log_success "URL: $issue_url"
+		echo "issue_url=${issue_url}"
+		echo "issue_num=${issue_num}"
+		echo "status=created"
+	else
+		log_warn "Issue created but could not extract number from: $issue_url"
+		echo "issue_url=${issue_url}"
+		echo "status=created"
+	fi
+
+	return 0
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# parse_and_run ARGS...
+# ─────────────────────────────────────────────────────────────────────────────
+parse_and_run() {
+	local command="${1:-help}"
+	shift || true
+
+	case "$command" in
+	detect)
+		local text="${1:-}"
+		if [[ -z "$text" ]]; then
+			log_error "Usage: framework-issue-helper.sh detect \"text to check\""
+			return 1
+		fi
+		detect_framework_issue "$text"
+		return $?
+		;;
+
+	log)
+		local title="" body="" label="bug" dry_run="false"
+		while [[ $# -gt 0 ]]; do
+			case "$1" in
+			--title)
+				title="$2"
+				shift 2
+				;;
+			--body)
+				body="$2"
+				shift 2
+				;;
+			--label)
+				label="$2"
+				shift 2
+				;;
+			--dry-run)
+				dry_run="true"
+				shift
+				;;
+			*)
+				log_error "Unknown option: $1"
+				return 1
+				;;
+			esac
+		done
+		log_framework_issue "$title" "$body" "$label" "$dry_run"
+		return $?
+		;;
+
+	check-repo)
+		local repo_path="$PWD"
+		while [[ $# -gt 0 ]]; do
+			case "$1" in
+			--repo-path)
+				repo_path="$2"
+				shift 2
+				;;
+			*)
+				log_error "Unknown option: $1"
+				return 1
+				;;
+			esac
+		done
+		if check_is_aidevops_repo "$repo_path"; then
+			log_info "Current repo IS the aidevops framework repo"
+			echo "is_aidevops=true"
+			return 0
+		else
+			log_info "Current repo is NOT the aidevops framework repo"
+			echo "is_aidevops=false"
+			return 1
+		fi
+		;;
+
+	find-repo)
+		local path
+		path=$(get_aidevops_repo_path)
+		if [[ -n "$path" ]]; then
+			echo "$path"
+			return 0
+		else
+			log_warn "Could not find local aidevops repo path"
+			return 1
+		fi
+		;;
+
+	help | --help | -h)
+		grep '^#' "$0" | grep -v '#!/usr/bin/env' | sed 's/^# //' | sed 's/^#//'
+		return 0
+		;;
+
+	*)
+		log_error "Unknown command: $command"
+		log_error "Run: framework-issue-helper.sh help"
+		return 1
+		;;
+	esac
+}
+
+parse_and_run "$@"

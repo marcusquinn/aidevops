@@ -554,6 +554,36 @@ When the supervisor encounters a situation where it cannot determine what happen
 
 This is a one-time observation — don't file duplicate issues for the same gap. Check existing issues first: `gh issue list --repo <aidevops-slug> --search "information gap" --state open`.
 
+### Framework issue routing (GH#5149)
+
+When the supervisor or a worker observes a **framework-level** problem (references `~/.aidevops/` files, framework scripts, supervisor/pulse logic, model routing, cross-repo orchestration), use `framework-issue-helper.sh` to file the issue on `marcusquinn/aidevops` — NOT `claim-task-id.sh` in the current project repo.
+
+**This is a first-class supervisor action.** Add it to your action menu alongside `merge_pr`, `fix_ci`, and `dispatch_worker`:
+
+```bash
+# Detect if an observation is framework-level (exit 0 = framework, exit 1 = project)
+~/.aidevops/agents/scripts/framework-issue-helper.sh detect "description of the problem"
+
+# File a framework issue (deduplicates automatically — safe to call multiple times)
+~/.aidevops/agents/scripts/framework-issue-helper.sh log \
+  --title "Bug: <description>" \
+  --body "Observed: <evidence>. Root cause hypothesis: <theory>. Proposed fix: <action>." \
+  --label "bug"
+```
+
+**When to use this action:**
+- Worker observes a bug in a framework script (ai-lifecycle.sh, dispatch.sh, pulse-wrapper.sh, etc.)
+- Supervisor detects a systemic pattern in the pulse infrastructure
+- Worker cannot complete a task because of a framework limitation (not a project limitation)
+- Any observation that would apply to every repo the framework manages
+
+**When NOT to use this action:**
+- The problem is specific to this project's CI, code, or domain logic
+- The problem is in a project-level script (not a framework script)
+- You are already running in the aidevops repo (use `claim-task-id.sh` normally)
+
+The `framework-issue-helper.sh detect` command checks for framework indicators deterministically (path patterns, script names, concept keywords) — use it when uncertain. It exits 0 for framework issues, 1 for project issues.
+
 ### Task decomposition before dispatch (t1408.2)
 
 Before dispatching a worker for an issue, classify the task to determine if it's too large for a single worker session. This catches over-scoped tasks before they waste a worker slot.
