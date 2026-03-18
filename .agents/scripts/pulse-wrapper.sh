@@ -2461,12 +2461,49 @@ has_merged_pr_for_issue() {
 }
 
 #######################################
-# Check if dispatching a worker would be a duplicate (GH#4400)
+# Check if an issue already has an open PR (GH#5210)
 #
-# Three-layer dedup:
+# Delegates to dispatch-dedup-helper.sh has-open-pr, which owns the
+# three-strategy search logic (title match, task-id match, body keyword
+# match). Keeping the logic in one place prevents drift between the two
+# implementations.
+#
+# Arguments:
+#   $1 - issue number
+#   $2 - repo slug (owner/repo)
+#   $3 - issue title (optional; used for task-id extraction)
+# Exit codes:
+#   0 - open PR found (skip dispatch)
+#   1 - no open PR found or helper unavailable
+#######################################
+has_open_pr_for_issue() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local issue_title="${3:-}"
+
+	local dedup_helper="${SCRIPT_DIR}/dispatch-dedup-helper.sh"
+	if [[ ! -x "$dedup_helper" ]]; then
+		echo "[pulse-wrapper] Dedup: dispatch-dedup-helper.sh not found or not executable — skipping open PR check" >>"$LOGFILE"
+		return 1
+	fi
+
+	local output
+	if output=$("$dedup_helper" has-open-pr "$issue_number" "$repo_slug" "$issue_title" 2>/dev/null); then
+		echo "[pulse-wrapper] Dedup: ${output}" >>"$LOGFILE"
+		return 0
+	fi
+
+	return 1
+}
+
+#######################################
+# Check if dispatching a worker would be a duplicate (GH#4400, GH#5210)
+#
+# Four-layer dedup:
 #   1. has_worker_for_repo_issue() — exact repo+issue process match
 #   2. dispatch-dedup-helper.sh is-duplicate — normalized title key match
-#   3. has_merged_pr_for_issue() — skip issues already completed by merged PR
+#   3. has_open_pr_for_issue() — open PR on GitHub for this issue/task (GH#5210)
+#   4. has_merged_pr_for_issue() — skip issues already completed by merged PR
 #
 # Arguments:
 #   $1 - issue number
@@ -2498,7 +2535,19 @@ check_dispatch_dedup() {
 		fi
 	fi
 
-	# Layer 3: merged PR evidence for this issue/task
+	# Layer 3: open PR on GitHub for this issue/task (GH#5210)
+	# This catches the case where a worker created a PR but the process
+	# has exited (or runs on another machine). The open PR is visible on
+	# GitHub even when no local process exists.
+	if [[ -x "$dedup_helper" ]]; then
+		local open_pr_output
+		if open_pr_output=$("$dedup_helper" has-open-pr "$issue_number" "$repo_slug" "$issue_title" 2>/dev/null); then
+			echo "[pulse-wrapper] Dedup: ${open_pr_output}" >>"$LOGFILE"
+			return 0
+		fi
+	fi
+
+	# Layer 4: merged PR evidence for this issue/task
 	if has_merged_pr_for_issue "$issue_number" "$repo_slug" "$issue_title"; then
 		echo "[pulse-wrapper] Dedup: merged PR already exists for #${issue_number} in ${repo_slug}" >>"$LOGFILE"
 		return 0
