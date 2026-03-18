@@ -24,7 +24,7 @@ You: "Help me deploy my site to Hostinger"
 AI: *reads AGENTS.md*
     *reads .agent/hostinger.md*
     *uses hostinger-helper.sh*
-    
+
 AI: "I'll help you deploy. First, let me verify your account..."
 ```
 

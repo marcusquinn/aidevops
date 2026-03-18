@@ -48,7 +48,7 @@ See [CLI Reference](CLI-Reference) for full documentation.
 Your AI assistant now has access to:
 
 - 90+ automation scripts
-- 13 MCP server integrations  
+- 13 MCP server integrations
 - Comprehensive workflow guides
 - Service-specific documentation
 

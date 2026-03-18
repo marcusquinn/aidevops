@@ -61,7 +61,7 @@ Never expose credentials in logs, output, or error messages
 ```text
 ~/.aidevops/.agent-workspace/
 ├── tmp/      # Temporary files
-├── work/     # Project files  
+├── work/     # Project files
 └── memory/   # Persistent context
 ```
 
