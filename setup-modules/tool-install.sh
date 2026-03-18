@@ -1372,14 +1372,8 @@ setup_ai_orchestration() {
 	local has_python=false
 	local python_required_major="${PYTHON_REQUIRED_MAJOR:-3}"
 	local python_required_minor="${PYTHON_REQUIRED_MINOR:-10}"
-	local recommended_python_formula="python@3.13"
-	if command -v brew >/dev/null 2>&1; then
-		local detected_python_formula
-		detected_python_formula=$(get_latest_homebrew_python_formula 2>/dev/null || true)
-		if [[ -n "$detected_python_formula" ]]; then
-			recommended_python_formula="$detected_python_formula"
-		fi
-	fi
+	local recommended_python_formula
+	recommended_python_formula=$(get_recommended_python_formula)
 
 	# Check Python (prefer Homebrew/pyenv over system)
 	local python3_bin
