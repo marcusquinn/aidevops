@@ -310,6 +310,17 @@ cmd_push() {
 			continue
 		}
 
+		# GH#5212: Skip tasks already marked [x] (completed) — prevents duplicate
+		# issues when push is called with a specific task_id that is already done.
+		# The TOON backlog cache in TODO.md can be stale, showing tasks as pending
+		# even after [x] completion. The pulse reads the stale cache and calls
+		# push <task_id>, which previously matched [x] lines via the [.] pattern.
+		if echo "$task_line" | grep -qE "^\s*- \[x\] "; then
+			print_info "Skipping $task_id — already completed ([x] in TODO.md)"
+			skipped=$((skipped + 1))
+			continue
+		fi
+
 		local parsed
 		parsed=$(parse_task_line "$task_line")
 		local description

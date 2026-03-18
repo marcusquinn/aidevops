@@ -439,6 +439,25 @@ test_issue_sync_helper() {
 	# We test those interfaces exist via help output above.
 	# The parse command tests the library functions (parse_task_line, etc.)
 
+	# GH#5212: Test that push skips completed [x] tasks.
+	# Uses DRY_RUN=true and a fake GH_TOKEN to bypass gh auth, then verifies
+	# the skip message appears before any API call is attempted.
+	local tmp_dir
+	tmp_dir=$(mktemp -d)
+	local tmp_todo="$tmp_dir/TODO.md"
+	printf '# Tasks\n\n- [x] t999 Already completed task pr:#1 verified:2026-01-01\n' >"$tmp_todo"
+	# Initialize a minimal git repo so find_project_root and detect_repo_slug work
+	git -C "$tmp_dir" init -q 2>/dev/null || true
+	git -C "$tmp_dir" remote add origin "https://github.com/example/test.git" 2>/dev/null || true
+	local push_output
+	push_output=$(cd "$tmp_dir" && GH_TOKEN=fake-token-for-test DRY_RUN=true "$helper" push t999 2>&1) || true
+	rm -rf "$tmp_dir"
+	if echo "$push_output" | grep -qiE "already completed|skip.*t999|t999.*skip"; then
+		print_result "issue-sync: push skips completed [x] task (GH#5212)" 0
+	else
+		print_result "issue-sync: push skips completed [x] task (GH#5212)" 1 "Expected skip message for completed task. output: $push_output"
+	fi
+
 	return 0
 }
 
