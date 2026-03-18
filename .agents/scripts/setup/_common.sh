@@ -7,6 +7,7 @@ GREEN='\033[0;32m'
 BLUE='\033[0;34m'
 YELLOW='\033[1;33m'
 RED='\033[0;31m'
+GRAY='\033[0;90m'
 NC='\033[0m' # No Color
 
 # Print functions
@@ -14,6 +15,111 @@ print_info() { echo -e "${BLUE}[INFO]${NC} $1"; }
 print_success() { echo -e "${GREEN}[SUCCESS]${NC} $1"; }
 print_warning() { echo -e "${YELLOW}[WARNING]${NC} $1"; }
 print_error() { echo -e "${RED}[ERROR]${NC} $1"; }
+
+# =============================================================================
+# Setup summary tracker (GH#5240)
+# Tracks what was configured, skipped, and deferred during setup so we can
+# print a clear summary at the end. Uses indexed arrays (bash 3.2 compatible).
+# =============================================================================
+_SETUP_CONFIGURED=()
+_SETUP_SKIPPED=()
+_SETUP_DEFERRED=()
+
+# Record a successfully configured item
+# Usage: setup_track_configured "Google Analytics MCP"
+setup_track_configured() {
+	_SETUP_CONFIGURED+=("$1")
+	return 0
+}
+
+# Record a skipped item with reason
+# Usage: setup_track_skipped "Google Analytics MCP" "OpenCode config not found"
+setup_track_skipped() {
+	local item="$1"
+	local reason="${2:-}"
+	if [[ -n "$reason" ]]; then
+		_SETUP_SKIPPED+=("${item}: ${reason}")
+	else
+		_SETUP_SKIPPED+=("$item")
+	fi
+	return 0
+}
+
+# Record a deferred item with action needed
+# Usage: setup_track_deferred "Google Analytics MCP" "Install pipx, then re-run setup"
+setup_track_deferred() {
+	local item="$1"
+	local action="${2:-}"
+	if [[ -n "$action" ]]; then
+		_SETUP_DEFERRED+=("${item}: ${action}")
+	else
+		_SETUP_DEFERRED+=("$item")
+	fi
+	return 0
+}
+
+# Print a prerequisite-skip message (replaces the confusing "Setting up X... skipping" pattern)
+# Shows what was skipped, why, and what to do about it — without first saying "Setting up..."
+# Usage: print_skip "Google Analytics MCP" "OpenCode not installed" "Install OpenCode first: https://opencode.ai"
+print_skip() {
+	local item="$1"
+	local reason="$2"
+	local action="${3:-}"
+	echo -e "${GRAY}[SKIP]${NC} ${item} -- ${reason}"
+	if [[ -n "$action" ]]; then
+		echo -e "       ${BLUE}>>>${NC} ${action}"
+	fi
+	return 0
+}
+
+# Print the setup summary at the end of the run
+# Shows: configured items, skipped items (with reasons), deferred items (with actions)
+print_setup_summary() {
+	local configured_count=${#_SETUP_CONFIGURED[@]}
+	local skipped_count=${#_SETUP_SKIPPED[@]}
+	local deferred_count=${#_SETUP_DEFERRED[@]}
+
+	# Only print summary if there's something to report
+	if [[ $configured_count -eq 0 && $skipped_count -eq 0 && $deferred_count -eq 0 ]]; then
+		return 0
+	fi
+
+	echo ""
+	echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+	echo -e "${BLUE}  Setup Summary${NC}"
+	echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+
+	if [[ $configured_count -gt 0 ]]; then
+		echo ""
+		echo -e "  ${GREEN}Configured ($configured_count):${NC}"
+		local item
+		for item in "${_SETUP_CONFIGURED[@]}"; do
+			echo -e "    ${GREEN}+${NC} $item"
+		done
+	fi
+
+	if [[ $skipped_count -gt 0 ]]; then
+		echo ""
+		echo -e "  ${GRAY}Skipped ($skipped_count):${NC}"
+		local item
+		for item in "${_SETUP_SKIPPED[@]}"; do
+			echo -e "    ${GRAY}-${NC} $item"
+		done
+	fi
+
+	if [[ $deferred_count -gt 0 ]]; then
+		echo ""
+		echo -e "  ${YELLOW}Deferred ($deferred_count) -- complete these to enable:${NC}"
+		local item
+		for item in "${_SETUP_DEFERRED[@]}"; do
+			echo -e "    ${YELLOW}!${NC} $item"
+		done
+	fi
+
+	echo ""
+	echo -e "${BLUE}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+	return 0
+}
 
 # Spinner for long-running operations
 # Usage: run_with_spinner "Installing package..." command arg1 arg2
