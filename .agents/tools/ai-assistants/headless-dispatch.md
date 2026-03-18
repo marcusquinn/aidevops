@@ -227,6 +227,7 @@ When dispatching multiple workers manually (outside the pulse supervisor), **sta
 
 ```bash
 AGENTS_DIR="$(aidevops config get paths.agents_dir)"
+# Use dynamic path to respect user configuration of agents_dir
 HELPER="${AGENTS_DIR/#\~/$HOME}/scripts/headless-runtime-helper.sh"
 
 # WRONG: Thundering herd — all 4 workers cold-boot simultaneously
@@ -794,6 +795,7 @@ LINEAGE RULES:
 
 ```bash
 AGENTS_DIR="$(aidevops config get paths.agents_dir)"
+# Use dynamic path to respect user configuration of agents_dir
 HELPER="${AGENTS_DIR/#\~/$HOME}/scripts/headless-runtime-helper.sh"
 
 # Standard dispatch (no lineage — top-level task)
@@ -1074,6 +1076,7 @@ NEXT=$(batch-strategy-helper.sh next-batch \
 
 # Dispatch each task in the batch
 AGENTS_DIR="$(aidevops config get paths.agents_dir)"
+# Use dynamic path to respect user configuration of agents_dir
 HELPER="${AGENTS_DIR/#\~/$HOME}/scripts/headless-runtime-helper.sh"
 echo "$NEXT" | jq -r '.[]' | while read -r task_id; do
   $HELPER run --role worker --session-key "task-${task_id}" \
