@@ -1001,6 +1001,92 @@ setup_ssh_key() {
 	return 0
 }
 
+# Check installed Python version against latest stable available from package manager.
+# Warns if an upgrade is available but never auto-upgrades (GH#5237).
+# Works on macOS (Homebrew) and Linux (apt/dnf).
+check_python_version() {
+	print_info "Checking Python version..."
+
+	# 1. Check currently installed Python
+	local python3_bin
+	if ! python3_bin=$(find_python3); then
+		print_warning "Python 3 not found"
+		echo ""
+		echo "  Install options:"
+		if [[ "$PLATFORM_MACOS" == "true" ]]; then
+			echo "    brew install python3"
+		elif command -v apt-get >/dev/null 2>&1; then
+			echo "    sudo apt install python3"
+		elif command -v dnf >/dev/null 2>&1; then
+			echo "    sudo dnf install python3"
+		else
+			echo "    Install Python 3 via your system package manager"
+		fi
+		echo ""
+		return 0
+	fi
+
+	local installed_version
+	installed_version=$("$python3_bin" --version 2>&1 | cut -d' ' -f2)
+	local installed_major installed_minor
+	installed_major=$(echo "$installed_version" | cut -d. -f1)
+	installed_minor=$(echo "$installed_version" | cut -d. -f2)
+
+	# 2. Determine latest stable version from package manager
+	local latest_version=""
+
+	if [[ "$PLATFORM_MACOS" == "true" ]] && command -v brew >/dev/null 2>&1; then
+		# Homebrew: `brew info python3` outputs "python@3.X: 3.X.Y" on the first line
+		latest_version=$(brew info --json=v2 python3 2>/dev/null |
+			python3 -c "import sys,json; d=json.load(sys.stdin); print(d['formulae'][0]['versions']['stable'])" 2>/dev/null) || latest_version=""
+	elif command -v apt-cache >/dev/null 2>&1; then
+		# Debian/Ubuntu: get candidate version from apt-cache
+		latest_version=$(apt-cache policy python3 2>/dev/null |
+			awk '/Candidate:/{print $2}' |
+			grep -oE '[0-9]+\.[0-9]+\.[0-9]+') || latest_version=""
+	elif command -v dnf >/dev/null 2>&1; then
+		# Fedora/RHEL: get available version from dnf
+		latest_version=$(dnf info python3 2>/dev/null |
+			awk '/^Version/{print $3}') || latest_version=""
+	fi
+
+	# 3. Compare versions and advise
+	if [[ -z "$latest_version" ]]; then
+		# Could not determine latest — just report installed version
+		print_success "Python $installed_version found"
+		return 0
+	fi
+
+	local latest_major latest_minor
+	latest_major=$(echo "$latest_version" | cut -d. -f1)
+	latest_minor=$(echo "$latest_version" | cut -d. -f2)
+
+	# Compare major.minor (patch differences are not worth warning about)
+	if [[ "$installed_major" -lt "$latest_major" ]] ||
+		{ [[ "$installed_major" -eq "$latest_major" ]] && [[ "$installed_minor" -lt "$latest_minor" ]]; }; then
+		print_warning "Python $installed_version installed, but $latest_version is available"
+		echo ""
+		echo "  Some tools and skills require Python 3.10+."
+		echo "  Upgrade is recommended but not required."
+		echo ""
+		if [[ "$PLATFORM_MACOS" == "true" ]]; then
+			echo "  Upgrade command:"
+			echo "    brew upgrade python3"
+		elif command -v apt-get >/dev/null 2>&1; then
+			echo "  Upgrade command:"
+			echo "    sudo apt update && sudo apt install python3"
+		elif command -v dnf >/dev/null 2>&1; then
+			echo "  Upgrade command:"
+			echo "    sudo dnf upgrade python3"
+		fi
+		echo ""
+	else
+		print_success "Python $installed_version found (latest stable: $latest_version)"
+	fi
+
+	return 0
+}
+
 setup_python_env() {
 	print_info "Setting up Python environment for DSPy..."
 

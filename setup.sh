@@ -709,6 +709,7 @@ main() {
 		print_info "Non-interactive mode: deploying agents and running safe migrations only"
 		verify_location
 		check_requirements
+		check_python_version
 		set_permissions
 		migrate_old_backups
 		migrate_loop_state_directories
@@ -773,6 +774,7 @@ main() {
 
 		# Optional steps with confirmation in interactive mode
 		confirm_step "Check optional dependencies (bun, node, python)" && check_optional_deps
+		confirm_step "Check Python version (recommend upgrade if outdated)" && check_python_version
 		confirm_step "Setup recommended tools (Tabby, Zed, etc.)" && setup_recommended_tools
 		confirm_step "Setup MiniSim (iOS/Android emulator launcher)" && setup_minisim
 		confirm_step "Setup Git CLIs (gh, glab, tea)" && setup_git_clis
