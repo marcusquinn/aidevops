@@ -1375,35 +1375,27 @@ setup_ai_orchestration() {
 	local recommended_python_formula
 	recommended_python_formula=$(get_recommended_python_formula)
 
-	# Check Python (prefer Homebrew/pyenv over system)
+	# Check Python (prefer Homebrew/pyenv over system) — uses shared helpers
+	# from _common.sh (get_recommended_python_formula, find_python3,
+	# offer_python_brew_install) to avoid duplicating version-check logic.
 	local python3_bin
 	if python3_bin=$(find_python3); then
 		local python_version
-		python_version=$("$python3_bin" --version 2>&1 | cut -d' ' -f2)
+		python_version=$("$python3_bin" -c 'import sys; print("{}.{}.{}".format(sys.version_info[0], sys.version_info[1], sys.version_info[2]))' 2>/dev/null || true)
 		local major minor
 		major=$(echo "$python_version" | cut -d. -f1)
 		minor=$(echo "$python_version" | cut -d. -f2)
 
-		if ((major > python_required_major)) || { ((major == python_required_major)) && ((minor >= python_required_minor)); }; then
+		if [[ "$major" =~ ^[0-9]+$ ]] && [[ "$minor" =~ ^[0-9]+$ ]] && { ((major > python_required_major)) || { ((major == python_required_major)) && ((minor >= python_required_minor)); }; }; then
 			has_python=true
 			print_success "Python $python_version found ($python_required_major.$python_required_minor+ required)"
 		else
 			print_warning "Python $python_required_major.$python_required_minor+ required for AI orchestration, found $python_version"
-			echo ""
-			echo "  Upgrade options:"
-			echo "    macOS (Homebrew): brew install $recommended_python_formula"
-			echo "    macOS (pyenv):    pyenv install 3.13 && pyenv global 3.13"
-			echo "    Ubuntu/Debian:    sudo apt install python3"
-			echo "    Fedora:           sudo dnf install python3"
-			echo ""
+			offer_python_brew_install "upgrade" "$recommended_python_formula" || true
 		fi
 	else
 		print_warning "Python 3 not found - AI orchestration frameworks unavailable"
-		echo ""
-		echo "  Install options:"
-		echo "    macOS: brew install $recommended_python_formula"
-		echo "    Linux: sudo apt install python3 (or dnf/pacman)"
-		echo ""
+		offer_python_brew_install "install" "$recommended_python_formula" || true
 		return 0
 	fi
 
