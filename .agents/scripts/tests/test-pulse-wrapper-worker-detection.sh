@@ -81,6 +81,7 @@ ps() {
 set_gh_search_fixtures() {
 	local fixtures="$1"
 	GH_SEARCH_FIXTURES="$fixtures"
+	export GH_SEARCH_FIXTURES
 	return 0
 }
 
@@ -136,6 +137,7 @@ gh() {
 	command gh "$@"
 	return 0
 }
+export -f gh
 
 test_counts_plain_and_dot_prefixed_opencode_workers() {
 	# Line 125: supervisor /pulse — excluded by standalone /pulse filter

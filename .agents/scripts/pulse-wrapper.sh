@@ -2463,15 +2463,10 @@ has_merged_pr_for_issue() {
 #######################################
 # Check if an issue already has an open PR (GH#5210)
 #
-# Queries GitHub for open PRs whose title contains the issue number
-# (as "#NNN") or a task ID extracted from the issue title. This is
-# the missing dedup layer: existing checks only look at local processes
-# (Layer 1-2) and merged PRs (Layer 3). A worker that has already
-# created a PR but whose process has exited (or runs on another machine)
-# is invisible to those layers — but the open PR is visible on GitHub.
-#
-# This is a deterministic check (not LLM judgment): "does an open PR
-# exist for this issue?" has exactly one correct answer.
+# Delegates to dispatch-dedup-helper.sh has-open-pr, which owns the
+# three-strategy search logic (title match, task-id match, body keyword
+# match). Keeping the logic in one place prevents drift between the two
+# implementations.
 #
 # Arguments:
 #   $1 - issue number
@@ -2479,67 +2474,24 @@ has_merged_pr_for_issue() {
 #   $3 - issue title (optional; used for task-id extraction)
 # Exit codes:
 #   0 - open PR found (skip dispatch)
-#   1 - no open PR found
+#   1 - no open PR found or helper unavailable
 #######################################
 has_open_pr_for_issue() {
 	local issue_number="$1"
 	local repo_slug="$2"
 	local issue_title="${3:-}"
 
-	if [[ ! "$issue_number" =~ ^[0-9]+$ ]] || [[ -z "$repo_slug" ]]; then
+	local dedup_helper="${SCRIPT_DIR}/dispatch-dedup-helper.sh"
+	if [[ ! -x "$dedup_helper" ]]; then
+		echo "[pulse-wrapper] Dedup: dispatch-dedup-helper.sh not found or not executable — skipping open PR check" >>"$LOGFILE"
 		return 1
 	fi
 
-	# Strategy 1: Search for open PRs referencing this issue number in title
-	# Uses "in:title" to avoid false positives from PR bodies that mention
-	# many issue numbers. The "#NNN" pattern matches the standard PR title
-	# format "{task-id}: description (Closes #NNN)".
-	local pr_json pr_count
-	pr_json=$(gh pr list --repo "$repo_slug" --state open \
-		--search "#${issue_number} in:title" \
-		--json number --limit 1 2>/dev/null) || pr_json="[]"
-	pr_count=$(echo "$pr_json" | jq 'length' 2>/dev/null) || pr_count=0
-	[[ "$pr_count" =~ ^[0-9]+$ ]] || pr_count=0
-	if [[ "$pr_count" -gt 0 ]]; then
-		local pr_num
-		pr_num=$(echo "$pr_json" | jq -r '.[0].number' 2>/dev/null) || pr_num="?"
-		echo "[pulse-wrapper] Dedup: open PR #${pr_num} found for issue #${issue_number} in ${repo_slug} (title match)" >>"$LOGFILE"
+	local output
+	if output=$("$dedup_helper" has-open-pr "$issue_number" "$repo_slug" "$issue_title" 2>/dev/null); then
+		echo "[pulse-wrapper] Dedup: ${output}" >>"$LOGFILE"
 		return 0
 	fi
-
-	# Strategy 2: Search by task ID extracted from issue title (e.g., "t1337")
-	local task_id
-	task_id=$(echo "$issue_title" | grep -oE 't[0-9]+(\.[0-9]+)*' | head -1 || echo "")
-	if [[ -n "$task_id" ]]; then
-		pr_json=$(gh pr list --repo "$repo_slug" --state open \
-			--search "${task_id} in:title" \
-			--json number --limit 1 2>/dev/null) || pr_json="[]"
-		pr_count=$(echo "$pr_json" | jq 'length' 2>/dev/null) || pr_count=0
-		[[ "$pr_count" =~ ^[0-9]+$ ]] || pr_count=0
-		if [[ "$pr_count" -gt 0 ]]; then
-			local pr_num
-			pr_num=$(echo "$pr_json" | jq -r '.[0].number' 2>/dev/null) || pr_num="?"
-			echo "[pulse-wrapper] Dedup: open PR #${pr_num} found for task ${task_id} in ${repo_slug} (task-id match)" >>"$LOGFILE"
-			return 0
-		fi
-	fi
-
-	# Strategy 3: Search by "Closes #NNN" or "Fixes #NNN" in PR body
-	# Catches PRs that reference the issue in the body but not the title.
-	local keyword
-	for keyword in closes fixes resolves; do
-		pr_json=$(gh pr list --repo "$repo_slug" --state open \
-			--search "${keyword} #${issue_number} in:body" \
-			--json number --limit 1 2>/dev/null) || pr_json="[]"
-		pr_count=$(echo "$pr_json" | jq 'length' 2>/dev/null) || pr_count=0
-		[[ "$pr_count" =~ ^[0-9]+$ ]] || pr_count=0
-		if [[ "$pr_count" -gt 0 ]]; then
-			local pr_num
-			pr_num=$(echo "$pr_json" | jq -r '.[0].number' 2>/dev/null) || pr_num="?"
-			echo "[pulse-wrapper] Dedup: open PR #${pr_num} found for issue #${issue_number} in ${repo_slug} (body '${keyword}' match)" >>"$LOGFILE"
-			return 0
-		fi
-	done
 
 	return 1
 }
@@ -2587,8 +2539,12 @@ check_dispatch_dedup() {
 	# This catches the case where a worker created a PR but the process
 	# has exited (or runs on another machine). The open PR is visible on
 	# GitHub even when no local process exists.
-	if has_open_pr_for_issue "$issue_number" "$repo_slug" "$issue_title"; then
-		return 0
+	if [[ -x "$dedup_helper" ]]; then
+		local open_pr_output
+		if open_pr_output=$("$dedup_helper" has-open-pr "$issue_number" "$repo_slug" "$issue_title" 2>/dev/null); then
+			echo "[pulse-wrapper] Dedup: ${open_pr_output}" >>"$LOGFILE"
+			return 0
+		fi
 	fi
 
 	# Layer 4: merged PR evidence for this issue/task

@@ -345,6 +345,39 @@ is_assigned() {
 }
 
 #######################################
+# Private helper: run a single open-PR GitHub query.
+#
+# Executes one `gh pr list` search and outputs the first matching PR
+# number on stdout. Centralises the query → parse → validate pattern
+# used by all three strategies in has_open_pr().
+#
+# Args:
+#   $1 = repo slug (owner/repo)
+#   $2 = search query string (passed to --search)
+# Returns:
+#   exit 0 and prints PR number if a match is found
+#   exit 1 if no match or gh/jq error
+#######################################
+_query_open_prs() {
+	local repo_slug="$1"
+	local search_query="$2"
+
+	local pr_json pr_count pr_num
+	pr_json=$(gh pr list --repo "$repo_slug" --state open \
+		--search "$search_query" \
+		--json number --limit 1 2>/dev/null) || pr_json="[]"
+	pr_count=$(printf '%s' "$pr_json" | jq 'length' 2>/dev/null) || pr_count=0
+	[[ "$pr_count" =~ ^[0-9]+$ ]] || pr_count=0
+	if [[ "$pr_count" -gt 0 ]]; then
+		pr_num=$(printf '%s' "$pr_json" | jq -r '.[0].number' 2>/dev/null) || pr_num="?"
+		printf '%s' "$pr_num"
+		return 0
+	fi
+
+	return 1
+}
+
+#######################################
 # Check if an issue already has an open PR on GitHub (GH#5210)
 #
 # Queries GitHub for open PRs whose title contains the issue number
@@ -374,16 +407,10 @@ has_open_pr() {
 		return 1
 	fi
 
-	local pr_json pr_count pr_num
+	local pr_num
 
 	# Strategy 1: Search for open PRs with issue number in title
-	pr_json=$(gh pr list --repo "$repo_slug" --state open \
-		--search "#${issue_number} in:title" \
-		--json number --limit 1 2>/dev/null) || pr_json="[]"
-	pr_count=$(echo "$pr_json" | jq 'length' 2>/dev/null) || pr_count=0
-	[[ "$pr_count" =~ ^[0-9]+$ ]] || pr_count=0
-	if [[ "$pr_count" -gt 0 ]]; then
-		pr_num=$(echo "$pr_json" | jq -r '.[0].number' 2>/dev/null) || pr_num="?"
+	if pr_num=$(_query_open_prs "$repo_slug" "#${issue_number} in:title"); then
 		printf 'OPEN_PR: issue #%s in %s has open PR #%s (title match)\n' "$issue_number" "$repo_slug" "$pr_num"
 		return 0
 	fi
@@ -392,13 +419,7 @@ has_open_pr() {
 	local task_id
 	task_id=$(printf '%s' "$issue_title" | grep -oE 't[0-9]+(\.[0-9]+)*' | head -1 || echo "")
 	if [[ -n "$task_id" ]]; then
-		pr_json=$(gh pr list --repo "$repo_slug" --state open \
-			--search "${task_id} in:title" \
-			--json number --limit 1 2>/dev/null) || pr_json="[]"
-		pr_count=$(echo "$pr_json" | jq 'length' 2>/dev/null) || pr_count=0
-		[[ "$pr_count" =~ ^[0-9]+$ ]] || pr_count=0
-		if [[ "$pr_count" -gt 0 ]]; then
-			pr_num=$(echo "$pr_json" | jq -r '.[0].number' 2>/dev/null) || pr_num="?"
+		if pr_num=$(_query_open_prs "$repo_slug" "${task_id} in:title"); then
 			printf 'OPEN_PR: task %s in %s has open PR #%s (task-id match)\n' "$task_id" "$repo_slug" "$pr_num"
 			return 0
 		fi
@@ -407,13 +428,7 @@ has_open_pr() {
 	# Strategy 3: Search by "Closes/Fixes/Resolves #NNN" in PR body
 	local keyword
 	for keyword in closes fixes resolves; do
-		pr_json=$(gh pr list --repo "$repo_slug" --state open \
-			--search "${keyword} #${issue_number} in:body" \
-			--json number --limit 1 2>/dev/null) || pr_json="[]"
-		pr_count=$(echo "$pr_json" | jq 'length' 2>/dev/null) || pr_count=0
-		[[ "$pr_count" =~ ^[0-9]+$ ]] || pr_count=0
-		if [[ "$pr_count" -gt 0 ]]; then
-			pr_num=$(echo "$pr_json" | jq -r '.[0].number' 2>/dev/null) || pr_num="?"
+		if pr_num=$(_query_open_prs "$repo_slug" "${keyword} #${issue_number} in:body"); then
 			printf 'OPEN_PR: issue #%s in %s has open PR #%s (body "%s" match)\n' "$issue_number" "$repo_slug" "$pr_num" "$keyword"
 			return 0
 		fi
