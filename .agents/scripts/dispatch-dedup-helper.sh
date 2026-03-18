@@ -345,6 +345,84 @@ is_assigned() {
 }
 
 #######################################
+# Check if an issue already has an open PR on GitHub (GH#5210)
+#
+# Queries GitHub for open PRs whose title contains the issue number
+# (as "#NNN") or a task ID extracted from the issue title. This is
+# a deterministic check — "does an open PR exist?" has exactly one
+# correct answer regardless of context.
+#
+# Args:
+#   $1 = issue number
+#   $2 = repo slug (owner/repo)
+#   $3 = (optional) issue title — used for task-id extraction
+# Returns:
+#   exit 0 if open PR found (do NOT dispatch)
+#   exit 1 if no open PR found (safe to dispatch)
+# Outputs: PR info on stdout if found
+#######################################
+has_open_pr() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local issue_title="${3:-}"
+
+	if [[ -z "$issue_number" || -z "$repo_slug" ]]; then
+		return 1
+	fi
+
+	if [[ ! "$issue_number" =~ ^[0-9]+$ ]]; then
+		return 1
+	fi
+
+	local pr_json pr_count pr_num
+
+	# Strategy 1: Search for open PRs with issue number in title
+	pr_json=$(gh pr list --repo "$repo_slug" --state open \
+		--search "#${issue_number} in:title" \
+		--json number --limit 1 2>/dev/null) || pr_json="[]"
+	pr_count=$(echo "$pr_json" | jq 'length' 2>/dev/null) || pr_count=0
+	[[ "$pr_count" =~ ^[0-9]+$ ]] || pr_count=0
+	if [[ "$pr_count" -gt 0 ]]; then
+		pr_num=$(echo "$pr_json" | jq -r '.[0].number' 2>/dev/null) || pr_num="?"
+		printf 'OPEN_PR: issue #%s in %s has open PR #%s (title match)\n' "$issue_number" "$repo_slug" "$pr_num"
+		return 0
+	fi
+
+	# Strategy 2: Search by task ID from issue title
+	local task_id
+	task_id=$(printf '%s' "$issue_title" | grep -oE 't[0-9]+(\.[0-9]+)*' | head -1 || echo "")
+	if [[ -n "$task_id" ]]; then
+		pr_json=$(gh pr list --repo "$repo_slug" --state open \
+			--search "${task_id} in:title" \
+			--json number --limit 1 2>/dev/null) || pr_json="[]"
+		pr_count=$(echo "$pr_json" | jq 'length' 2>/dev/null) || pr_count=0
+		[[ "$pr_count" =~ ^[0-9]+$ ]] || pr_count=0
+		if [[ "$pr_count" -gt 0 ]]; then
+			pr_num=$(echo "$pr_json" | jq -r '.[0].number' 2>/dev/null) || pr_num="?"
+			printf 'OPEN_PR: task %s in %s has open PR #%s (task-id match)\n' "$task_id" "$repo_slug" "$pr_num"
+			return 0
+		fi
+	fi
+
+	# Strategy 3: Search by "Closes/Fixes/Resolves #NNN" in PR body
+	local keyword
+	for keyword in closes fixes resolves; do
+		pr_json=$(gh pr list --repo "$repo_slug" --state open \
+			--search "${keyword} #${issue_number} in:body" \
+			--json number --limit 1 2>/dev/null) || pr_json="[]"
+		pr_count=$(echo "$pr_json" | jq 'length' 2>/dev/null) || pr_count=0
+		[[ "$pr_count" =~ ^[0-9]+$ ]] || pr_count=0
+		if [[ "$pr_count" -gt 0 ]]; then
+			pr_num=$(echo "$pr_json" | jq -r '.[0].number' 2>/dev/null) || pr_num="?"
+			printf 'OPEN_PR: issue #%s in %s has open PR #%s (body "%s" match)\n' "$issue_number" "$repo_slug" "$pr_num" "$keyword"
+			return 0
+		fi
+	done
+
+	return 1
+}
+
+#######################################
 # Show help
 #######################################
 show_help() {
@@ -356,6 +434,8 @@ Usage:
   dispatch-dedup-helper.sh is-duplicate <title>     Check if already running (exit 0=dup, 1=safe)
   dispatch-dedup-helper.sh is-assigned <issue> <slug> [self-login]
                                                     Check if issue is assigned (exit 0=assigned, 1=free)
+  dispatch-dedup-helper.sh has-open-pr <issue> <slug> [issue-title]
+                                                    Check if open PR exists (exit 0=found, 1=none)
   dispatch-dedup-helper.sh list-running-keys        List keys for all running workers
   dispatch-dedup-helper.sh normalize <title>        Normalize a title for comparison
   dispatch-dedup-helper.sh help                     Show this help
@@ -378,6 +458,13 @@ Examples:
     echo "Assigned to someone else — skip dispatch"
   else
     echo "Unassigned or assigned to self — safe to dispatch"
+  fi
+
+  # Check before dispatching (open PR dedup — GH#5210)
+  if dispatch-dedup-helper.sh has-open-pr 2300 owner/repo "t1337: Fix auth"; then
+    echo "Open PR exists — skip dispatch"
+  else
+    echo "No open PR — safe to dispatch"
   fi
 HELP
 	return 0
@@ -411,6 +498,13 @@ main() {
 			return 1
 		}
 		is_assigned "$1" "$2" "${3:-}"
+		;;
+	has-open-pr)
+		[[ $# -lt 2 ]] && {
+			echo "Error: has-open-pr requires <issue-number> <repo-slug> [issue-title]" >&2
+			return 1
+		}
+		has_open_pr "$1" "$2" "${3:-}"
 		;;
 	list-running-keys)
 		list_running_keys
