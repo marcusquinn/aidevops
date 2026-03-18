@@ -994,14 +994,14 @@ loop_handle_workflow_push_failure() {
 	if [[ -z "$issue_number" ]]; then
 		# Extract last digit sequence from branch name using pure bash parameter expansion.
 		# Issue numbers are conventionally at the end (e.g. bugfix/t5191-fix, feature/update-v2-for-GH-5162).
-		# Uses ${#array[@]}-1 index instead of array[-1] for bash 3.2 compatibility.
-		local _nums_only="${branch//[!0-9]/ }"
-		# shellcheck disable=SC2206  # intentional word-split to build digit array
-		local _nums_array=($_nums_only)
-		local _nums_count=${#_nums_array[@]}
-		if [[ $_nums_count -gt 0 ]]; then
-			issue_number="${_nums_array[$((_nums_count - 1))]}"
-		fi
+		# The for loop iterates over all digit sequences and keeps the last one, avoiding an intermediate array.
+		local _nums_only="${branch//[!0-9]/ }" _last_num=""
+		# The unquoted expansion is intentional to iterate over numbers.
+		# shellcheck disable=SC2086
+		for _num in $_nums_only; do
+			_last_num="$_num"
+		done
+		issue_number="$_last_num"
 	fi
 
 	if [[ -z "$repo_slug" || -z "$issue_number" ]]; then
