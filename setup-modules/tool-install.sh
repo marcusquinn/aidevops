@@ -1370,6 +1370,16 @@ setup_ai_orchestration() {
 	print_info "Setting up AI orchestration frameworks..."
 
 	local has_python=false
+	local python_required_major="${PYTHON_REQUIRED_MAJOR:-3}"
+	local python_required_minor="${PYTHON_REQUIRED_MINOR:-10}"
+	local recommended_python_formula="python@3.13"
+	if command -v brew >/dev/null 2>&1; then
+		local detected_python_formula
+		detected_python_formula=$(get_latest_homebrew_python_formula 2>/dev/null || true)
+		if [[ -n "$detected_python_formula" ]]; then
+			recommended_python_formula="$detected_python_formula"
+		fi
+	fi
 
 	# Check Python (prefer Homebrew/pyenv over system)
 	local python3_bin
@@ -1380,24 +1390,24 @@ setup_ai_orchestration() {
 		major=$(echo "$python_version" | cut -d. -f1)
 		minor=$(echo "$python_version" | cut -d. -f2)
 
-		if [[ $major -ge 3 ]] && [[ $minor -ge 10 ]]; then
+		if ((major > python_required_major)) || { ((major == python_required_major)) && ((minor >= python_required_minor)); }; then
 			has_python=true
-			print_success "Python $python_version found (3.10+ required)"
+			print_success "Python $python_version found ($python_required_major.$python_required_minor+ required)"
 		else
-			print_warning "Python 3.10+ required for AI orchestration, found $python_version"
+			print_warning "Python $python_required_major.$python_required_minor+ required for AI orchestration, found $python_version"
 			echo ""
 			echo "  Upgrade options:"
-			echo "    macOS (Homebrew): brew install python@3.12"
-			echo "    macOS (pyenv):    pyenv install 3.12 && pyenv global 3.12"
-			echo "    Ubuntu/Debian:    sudo apt install python3.12"
-			echo "    Fedora:           sudo dnf install python3.12"
+			echo "    macOS (Homebrew): brew install $recommended_python_formula"
+			echo "    macOS (pyenv):    pyenv install 3.13 && pyenv global 3.13"
+			echo "    Ubuntu/Debian:    sudo apt install python3"
+			echo "    Fedora:           sudo dnf install python3"
 			echo ""
 		fi
 	else
 		print_warning "Python 3 not found - AI orchestration frameworks unavailable"
 		echo ""
 		echo "  Install options:"
-		echo "    macOS: brew install python@3.12"
+		echo "    macOS: brew install $recommended_python_formula"
 		echo "    Linux: sudo apt install python3 (or dnf/pacman)"
 		echo ""
 		return 0

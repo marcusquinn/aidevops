@@ -29,6 +29,10 @@ CLEAN_MODE=false
 INTERACTIVE_MODE=false
 NON_INTERACTIVE="${AIDEVOPS_NON_INTERACTIVE:-false}"
 UPDATE_TOOLS_MODE=false
+# Python compatibility floor used by setup checks and skill/tool gating.
+# Keep in sync with setup-modules/plugins.sh requirements.
+PYTHON_REQUIRED_MAJOR=3
+PYTHON_REQUIRED_MINOR=10
 # Platform constants — exported for sourced setup-modules (shell-env.sh,
 # tool-install.sh) that reference them at runtime.
 PLATFORM_MACOS=$([[ "$(uname -s)" == "Darwin" ]] && echo true || echo false)
@@ -362,6 +366,34 @@ find_opencode_config() {
 	return 1
 }
 
+# Return latest Homebrew python@3.x formula (e.g. python@3.13).
+# Returns 0 and prints formula on success, 1 if unavailable.
+get_latest_homebrew_python_formula() {
+	if ! command -v brew >/dev/null 2>&1; then
+		return 1
+	fi
+
+	local latest_formula=""
+	local latest_minor=-1
+	local formula
+	while IFS= read -r formula; do
+		[[ -z "$formula" ]] && continue
+		local minor
+		minor="${formula#python@3.}"
+		if [[ "$minor" =~ ^[0-9]+$ ]] && ((minor > latest_minor)); then
+			latest_minor=$minor
+			latest_formula="$formula"
+		fi
+	done < <(brew search --formula '/^python@3\.[0-9]+$/' 2>/dev/null)
+
+	if [[ -n "$latest_formula" ]]; then
+		echo "$latest_formula"
+		return 0
+	fi
+
+	return 1
+}
+
 # Find best python3 binary (prefer Homebrew/pyenv over system)
 find_python3() {
 	local candidates=(
@@ -369,17 +401,62 @@ find_python3() {
 		"/usr/local/bin/python3"
 		"$HOME/.pyenv/shims/python3"
 	)
+
+	# Add installed Homebrew versioned Python paths (including keg-only formulae)
+	if command -v brew >/dev/null 2>&1; then
+		local formula
+		while IFS= read -r formula; do
+			[[ -z "$formula" ]] && continue
+			local prefix
+			prefix=$(brew --prefix "$formula" 2>/dev/null || true)
+			[[ -z "$prefix" ]] && continue
+			local minor
+			minor="${formula#python@3.}"
+			candidates+=("$prefix/bin/python3")
+			candidates+=("$prefix/bin/python3.${minor}")
+		done < <(brew list --formula 2>/dev/null | awk '/^python@3\.[0-9]+$/ {print}')
+	fi
+
+	# Fallback to python3 on PATH
+	if command -v python3 >/dev/null 2>&1; then
+		candidates+=("$(command -v python3)")
+	fi
+
+	# Choose newest available Python by major.minor
+	local best_candidate=""
+	local best_major=-1
+	local best_minor=-1
+	local seen_candidates=" "
+	local candidate
 	for candidate in "${candidates[@]}"; do
-		if [[ -x "$candidate" ]]; then
-			echo "$candidate"
-			return 0
+		[[ -x "$candidate" ]] || continue
+		if [[ "$seen_candidates" == *" ${candidate} "* ]]; then
+			continue
+		fi
+		seen_candidates="${seen_candidates}${candidate} "
+
+		local version
+		version=$("$candidate" -c 'import sys; print("{}.{}".format(sys.version_info[0], sys.version_info[1]))' 2>/dev/null || true)
+		local major
+		major=$(echo "$version" | cut -d. -f1)
+		local minor
+		minor=$(echo "$version" | cut -d. -f2)
+		if [[ ! "$major" =~ ^[0-9]+$ ]] || [[ ! "$minor" =~ ^[0-9]+$ ]]; then
+			continue
+		fi
+
+		if ((major > best_major)) || { ((major == best_major)) && ((minor > best_minor)); }; then
+			best_major=$major
+			best_minor=$minor
+			best_candidate="$candidate"
 		fi
 	done
-	# Fallback to PATH
-	if command -v python3 &>/dev/null; then
-		command -v python3
+
+	if [[ -n "$best_candidate" ]]; then
+		echo "$best_candidate"
 		return 0
 	fi
+
 	return 1
 }
 
