@@ -1,11 +1,11 @@
-# The .agent Directory
+# The .agents Directory
 
-Everything AI assistants need lives in `.agent/`. This page explains the structure and how to use it.
+Everything AI assistants need lives in `.agents/`. This page explains the structure and how to use it.
 
 ## Overview
 
 ```text
-.agent/
+.agents/
 ├── scripts/       # 90+ automation & helper scripts
 ├── workflows/     # Development process guides
 ├── memory/        # Context persistence templates
@@ -31,13 +31,13 @@ Everything AI assistants need lives in `.agent/`. This page explains the structu
 
 ```bash
 # List all available scripts
-ls ~/git/aidevops/.agent/scripts/
+ls ~/git/aidevops/.agents/scripts/
 
 # Get help for any script
-bash ~/git/aidevops/.agent/scripts/hostinger-helper.sh help
+bash ~/git/aidevops/.agents/scripts/hostinger-helper.sh help
 
 # Common pattern: service helper with command
-bash ~/git/aidevops/.agent/scripts/[service]-helper.sh [command] [account] [target]
+bash ~/git/aidevops/.agents/scripts/[service]-helper.sh [command] [account] [target]
 ```text
 
 ### Key Scripts
@@ -165,14 +165,14 @@ AI follows workflows for:
 
 ### Adding a New Service
 
-1. Create `service-name.md` in `.agent/`
-2. Create `service-name-helper.sh` in `.agent/scripts/`
+1. Create `service-name.md` in `.agents/`
+2. Create `service-name-helper.sh` in `.agents/scripts/`
 3. Update `AGENTS.md` service categories
 4. Add configuration template in `configs/`
 
 ### Adding a New Workflow
 
-1. Create `workflow-name.md` in `.agent/workflows/`
+1. Create `workflow-name.md` in `.agents/workflows/`
 2. Follow the template in `workflows/README.md`
 3. Update the workflows README index
 

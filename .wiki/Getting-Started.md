@@ -105,13 +105,13 @@ For services requiring authentication:
 
 ```bash
 # Use the secure key management script
-bash .agent/scripts/setup-local-api-keys.sh
+bash .agents/scripts/setup-local-api-keys.sh
 
 # Example: Add a service key
-bash .agent/scripts/setup-local-api-keys.sh set codacy-api-key YOUR_KEY
+bash .agents/scripts/setup-local-api-keys.sh set codacy-api-key YOUR_KEY
 
 # List configured services
-bash .agent/scripts/setup-local-api-keys.sh list
+bash .agents/scripts/setup-local-api-keys.sh list
 ```
 
 **Keys are stored securely in:** `~/.config/aidevops/mcp-env.sh`
@@ -123,7 +123,7 @@ bash .agent/scripts/setup-local-api-keys.sh list
 ├── AGENTS.md                # AI assistant instructions
 ├── aidevops.sh              # CLI source script
 ├── setup.sh                 # Installer/updater
-├── .agent/                  # All AI-relevant content
+├── .agents/                  # All AI-relevant content
 │   ├── scripts/             # 90+ automation scripts
 │   ├── workflows/           # Development process guides
 │   ├── memory/              # Context persistence templates
@@ -144,10 +144,10 @@ bash .agent/scripts/setup-local-api-keys.sh list
 ### Ask Your AI to Help With:
 
 1. **"Show me what services are available"**
-   - AI reads `.agent/` documentation
+   - AI reads `.agents/` documentation
 
 2. **"Help me set up Hostinger hosting"**
-   - AI uses `.agent/hostinger.md` and scripts
+   - AI uses `.agents/hostinger.md` and scripts
 
 3. **"Check code quality for this project"**
    - AI uses quality CLI helpers
@@ -161,7 +161,7 @@ bash .agent/scripts/setup-local-api-keys.sh list
 >
 > **AI:** I'll help you deploy WordPress on Hostinger. Let me check the framework documentation...
 >
-> *AI reads `.agent/hostinger.md` and uses `hostinger-helper.sh`*
+> *AI reads `.agents/hostinger.md` and uses `hostinger-helper.sh`*
 >
 > **AI:** I found the Hostinger helper. First, let's verify your account is configured...
 
@@ -186,7 +186,7 @@ The framework creates organized working directories:
 
 1. **[CLI Reference](CLI-Reference)** - Master the `aidevops` command
 2. **[Understanding AGENTS.md](Understanding-AGENTS-md)** - Learn how AI guidance works
-3. **[The .agent Directory](The-Agent-Directory)** - Explore the framework structure
+3. **[The .agents Directory](The-Agent-Directory)** - Explore the framework structure
 4. **[Workflows Guide](Workflows-Guide)** - Development processes
 
 ## Troubleshooting
@@ -210,7 +210,7 @@ ls ~/Git/aidevops/AGENTS.md
 ### Scripts Not Executable
 
 ```bash
-chmod +x ~/Git/aidevops/.agent/scripts/*.sh
+chmod +x ~/Git/aidevops/.agents/scripts/*.sh
 ```
 
 ### API Keys Not Working

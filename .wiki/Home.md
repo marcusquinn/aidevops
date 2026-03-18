@@ -57,9 +57,9 @@ Your AI assistant now has access to:
 | Concept | Description |
 |---------|-------------|
 | **AGENTS.md** | The authoritative instruction file for AI assistants |
-| **`.agent/`** | All AI-relevant content lives here |
-| **Workflows** | Step-by-step guides in `.agent/workflows/` |
-| **Scripts** | Automation helpers in `.agent/scripts/` |
+| **`.agents/`** | All AI-relevant content lives here |
+| **Workflows** | Step-by-step guides in `.agents/workflows/` |
+| **Scripts** | Automation helpers in `.agents/scripts/` |
 | **MCP Servers** | Real-time integrations for AI assistants |
 
 ## Navigation
@@ -67,7 +67,7 @@ Your AI assistant now has access to:
 - **[Getting Started](Getting-Started)** - Installation and setup
 - **[CLI Reference](CLI-Reference)** - The `aidevops` command
 - **[Understanding AGENTS.md](Understanding-AGENTS-md)** - How AI guidance works
-- **[The .agent Directory](The-Agent-Directory)** - Framework structure
+- **[The .agents Directory](The-Agent-Directory)** - Framework structure
 - **[Workflows Guide](Workflows-Guide)** - Development processes
 - **[For Humans](For-Humans)** - Non-technical overview
 

@@ -8,7 +8,7 @@ It's a comprehensive instruction file that tells AI assistants:
 
 - **What services are available** (30+ integrations)
 - **How to use them securely** (credential management, confirmation requirements)
-- **Where to find documentation** (`.agent/` directory structure)
+- **Where to find documentation** (`.agents/` directory structure)
 - **Quality standards to maintain** (code quality, testing requirements)
 - **Working directory rules** (where to create files)
 
@@ -89,8 +89,8 @@ When you mention DevOps tasks, the AI reads `AGENTS.md` to understand:
 ### 2. Task Execution
 
 For specific tasks, the AI:
-1. Reads relevant `.agent/*.md` documentation
-2. Uses appropriate `.agent/scripts/*.sh` helpers
+1. Reads relevant `.agents/*.md` documentation
+2. Uses appropriate `.agents/scripts/*.sh` helpers
 3. Follows security and quality guidelines
 
 ### 3. File Operations
@@ -124,12 +124,12 @@ When making changes:
 If building AI integrations, you can:
 
 1. **Reference AGENTS.md** in your system prompts
-2. **Use the `.agent/` structure** as context
+2. **Use the `.agents/` structure** as context
 3. **Follow the security contract** for credential handling
 4. **Adopt the working directory conventions** for file operations
 
 ## Related Pages
 
-- **[The .agent Directory](The-Agent-Directory)** - Framework structure details
+- **[The .agents Directory](The-Agent-Directory)** - Framework structure details
 - **[Workflows Guide](Workflows-Guide)** - Development processes
 - **[For Humans](For-Humans)** - Non-technical overview

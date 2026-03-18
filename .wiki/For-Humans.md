@@ -22,7 +22,7 @@ A non-technical guide to understanding and using the AI DevOps Framework.
 You: "Help me deploy my site to Hostinger"
 
 AI: *reads AGENTS.md*
-    *reads .agent/hostinger.md*
+    *reads .agents/hostinger.md*
     *uses hostinger-helper.sh*
     
 AI: "I'll help you deploy. First, let me verify your account..."
@@ -127,7 +127,7 @@ The framework handles security automatically:
 | File | What It Does |
 |------|--------------|
 | `AGENTS.md` | Main instructions for AI assistants |
-| `.agent/` folder | All documentation and scripts |
+| `.agents/` folder | All documentation and scripts |
 | `~/.aidevops/.agent-workspace/` folder | Your personal working directory |
 
 ## FAQ

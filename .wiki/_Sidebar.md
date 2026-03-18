@@ -8,7 +8,7 @@
 ### Core Concepts
 
 - [Understanding AGENTS.md](Understanding-AGENTS-md)
-- [The .agent Directory](The-Agent-Directory)
+- [The .agents Directory](The-Agent-Directory)
 - [Workflows Guide](Workflows-Guide)
 
 ### Reference

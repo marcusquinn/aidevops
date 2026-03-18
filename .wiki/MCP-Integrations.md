@@ -229,7 +229,7 @@ Website performance auditing and optimization.
 **Installation**:
 
 ```bash
-bash .agent/scripts/setup-mcp-integrations.sh pagespeed
+bash .agents/scripts/setup-mcp-integrations.sh pagespeed
 ```
 
 **Use Cases**:
@@ -294,7 +294,7 @@ Real-time documentation access for thousands of libraries.
 **Installation**:
 
 ```bash
-bash .agent/scripts/setup-mcp-integrations.sh context7
+bash .agents/scripts/setup-mcp-integrations.sh context7
 ```
 
 **Supported Libraries**: React, Vue, Angular, Node.js, Python, and 1000+ more
@@ -316,7 +316,7 @@ Direct WordPress database access for local development.
 **Installation**:
 
 ```bash
-bash .agent/scripts/setup-mcp-integrations.sh localwp
+bash .agents/scripts/setup-mcp-integrations.sh localwp
 ```
 
 **Requirements**: Local by Flywheel or similar WordPress environment
@@ -337,29 +337,29 @@ bash .agent/scripts/setup-mcp-integrations.sh localwp
 
 ```bash
 # Run comprehensive setup
-bash .agent/scripts/setup-mcp-integrations.sh all
+bash .agents/scripts/setup-mcp-integrations.sh all
 
 # Validate installation
-bash .agent/scripts/validate-mcp-integrations.sh
+bash .agents/scripts/validate-mcp-integrations.sh
 ```
 
 ### Install Specific Server
 
 ```bash
 # Chrome DevTools
-bash .agent/scripts/setup-mcp-integrations.sh chrome-devtools
+bash .agents/scripts/setup-mcp-integrations.sh chrome-devtools
 
 # Playwright
-bash .agent/scripts/setup-mcp-integrations.sh playwright
+bash .agents/scripts/setup-mcp-integrations.sh playwright
 
 # Ahrefs
-bash .agent/scripts/setup-mcp-integrations.sh ahrefs
+bash .agents/scripts/setup-mcp-integrations.sh ahrefs
 
 # Claude Code MCP (fork)
-bash .agent/scripts/setup-mcp-integrations.sh claude-code-mcp
+bash .agents/scripts/setup-mcp-integrations.sh claude-code-mcp
 
 # Context7
-bash .agent/scripts/setup-mcp-integrations.sh context7
+bash .agents/scripts/setup-mcp-integrations.sh context7
 ```
 
 ## Configuration
@@ -377,19 +377,19 @@ Store API keys securely using the helper script:
 
 ```bash
 # Initialize (creates mcp-env.sh, adds shell integration)
-bash ~/git/aidevops/.agent/scripts/setup-local-api-keys.sh setup
+bash ~/git/aidevops/.agents/scripts/setup-local-api-keys.sh setup
 
 # Add keys using service names (converted to UPPER_CASE)
-bash .agent/scripts/setup-local-api-keys.sh set ahrefs-api-key your_key
-bash .agent/scripts/setup-local-api-keys.sh set perplexity-api-key your_key
-bash .agent/scripts/setup-local-api-keys.sh set cloudflare-account-id your_id
-bash .agent/scripts/setup-local-api-keys.sh set cloudflare-api-token your_token
+bash .agents/scripts/setup-local-api-keys.sh set ahrefs-api-key your_key
+bash .agents/scripts/setup-local-api-keys.sh set perplexity-api-key your_key
+bash .agents/scripts/setup-local-api-keys.sh set cloudflare-account-id your_id
+bash .agents/scripts/setup-local-api-keys.sh set cloudflare-api-token your_token
 
 # Or paste export commands from services directly
-bash .agent/scripts/setup-local-api-keys.sh add 'export VERCEL_TOKEN="xxx"'
+bash .agents/scripts/setup-local-api-keys.sh add 'export VERCEL_TOKEN="xxx"'
 
 # List configured keys
-bash .agent/scripts/setup-local-api-keys.sh list
+bash .agents/scripts/setup-local-api-keys.sh list
 ```
 
 ### Environment Variables
@@ -454,7 +454,7 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 # AI: "Test login flow across Chrome, Firefox, and Safari"
 
 # 3. Audit with PageSpeed
-./.agent/scripts/pagespeed-helper.sh lighthouse https://example.com
+./.agents/scripts/pagespeed-helper.sh lighthouse https://example.com
 
 # 4. Look up Next.js best practices
 # AI: "Show me Next.js SSR optimization techniques"
@@ -480,7 +480,7 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 
 ```bash
 # 1. Create local site
-./.agent/scripts/localhost-helper.sh create-site mysite.local
+./.agents/scripts/localhost-helper.sh create-site mysite.local
 
 # 2. Query database via MCP
 # AI: "Show all published posts from last week"
@@ -489,7 +489,7 @@ Add to `~/Library/Application Support/Claude/claude_desktop_config.json`:
 # AI: "Find Context7 documentation for wp_enqueue_scripts"
 
 # 4. Test performance
-./.agent/scripts/pagespeed-helper.sh wordpress https://mysite.local
+./.agents/scripts/pagespeed-helper.sh wordpress https://mysite.local
 ```
 
 ## Real-World Use Cases
@@ -584,7 +584,7 @@ AI: "How do I optimize this Next.js page?"
 ### Check Installation Status
 
 ```bash
-bash .agent/scripts/validate-mcp-integrations.sh
+bash .agents/scripts/validate-mcp-integrations.sh
 ```
 
 **Expected Output**:
@@ -776,10 +776,10 @@ export PLAYWRIGHT_BROWSERS_PATH=/custom/path
 
 ### Internal Documentation
 
-- [MCP Integration Setup Script](../.agent/scripts/setup-mcp-integrations.sh)
-- [MCP Validation Script](../.agent/scripts/validate-mcp-integrations.sh)
-- [API Integrations Guide](../.agent/api-integrations.md)
-- [Browser Automation Guide](../.agent/browser-automation.md)
+- [MCP Integration Setup Script](../.agents/scripts/setup-mcp-integrations.sh)
+- [MCP Validation Script](../.agents/scripts/validate-mcp-integrations.sh)
+- [API Integrations Guide](../.agents/api-integrations.md)
+- [Browser Automation Guide](../.agents/browser-automation.md)
 
 ---
 

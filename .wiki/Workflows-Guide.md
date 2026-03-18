@@ -1,6 +1,6 @@
 # Workflows Guide
 
-The `.agent/workflows/` directory contains process guides for common development tasks. These workflows help AI assistants (and humans) follow consistent, high-quality practices.
+The `.agents/workflows/` directory contains process guides for common development tasks. These workflows help AI assistants (and humans) follow consistent, high-quality practices.
 
 ## Available Workflows
 
@@ -8,41 +8,41 @@ The `.agent/workflows/` directory contains process guides for common development
 
 | Workflow | When to Use |
 |----------|-------------|
-| **[git-workflow.md](https://github.com/marcusquinn/aidevops/blob/main/.agent/workflows/git-workflow.md)** | Branching strategies, commit conventions, collaboration |
-| **[release-process.md](https://github.com/marcusquinn/aidevops/blob/main/.agent/workflows/release-process.md)** | Version bumps, tagging, GitHub releases |
+| **[git-workflow.md](https://github.com/marcusquinn/aidevops/blob/main/.agents/workflows/git-workflow.md)** | Branching strategies, commit conventions, collaboration |
+| **[release-process.md](https://github.com/marcusquinn/aidevops/blob/main/.agents/workflows/release-process.md)** | Version bumps, tagging, GitHub releases |
 
 ### Development Lifecycle
 
 | Workflow | When to Use |
 |----------|-------------|
-| **[feature-development.md](https://github.com/marcusquinn/aidevops/blob/main/.agent/workflows/feature-development.md)** | Building new features from start to merge |
-| **[bug-fixing.md](https://github.com/marcusquinn/aidevops/blob/main/.agent/workflows/bug-fixing.md)** | Fixing bugs, including hotfix procedures |
+| **[feature-development.md](https://github.com/marcusquinn/aidevops/blob/main/.agents/workflows/feature-development.md)** | Building new features from start to merge |
+| **[bug-fixing.md](https://github.com/marcusquinn/aidevops/blob/main/.agents/workflows/bug-fixing.md)** | Fixing bugs, including hotfix procedures |
 
 ### Code Quality
 
 | Workflow | When to Use |
 |----------|-------------|
-| **[pr.md](https://github.com/marcusquinn/aidevops/blob/main/.agent/workflows/pr.md)** | Unified PR workflow (orchestrates all checks) |
-| **[code-audit-remote.md](https://github.com/marcusquinn/aidevops/blob/main/.agent/workflows/code-audit-remote.md)** | Remote auditing (CodeRabbit, Codacy, SonarCloud) |
-| **[error-checking-feedback-loops.md](https://github.com/marcusquinn/aidevops/blob/main/.agent/workflows/error-checking-feedback-loops.md)** | Monitoring CI/CD, fixing failures |
+| **[pr.md](https://github.com/marcusquinn/aidevops/blob/main/.agents/workflows/pr.md)** | Unified PR workflow (orchestrates all checks) |
+| **[code-audit-remote.md](https://github.com/marcusquinn/aidevops/blob/main/.agents/workflows/code-audit-remote.md)** | Remote auditing (CodeRabbit, Codacy, SonarCloud) |
+| **[error-checking-feedback-loops.md](https://github.com/marcusquinn/aidevops/blob/main/.agents/workflows/error-checking-feedback-loops.md)** | Monitoring CI/CD, fixing failures |
 
 ### Context & Safety
 
 | Workflow | When to Use |
 |----------|-------------|
-| **[multi-repo-workspace.md](https://github.com/marcusquinn/aidevops/blob/main/.agent/workflows/multi-repo-workspace.md)** | Working across multiple repositories safely |
+| **[multi-repo-workspace.md](https://github.com/marcusquinn/aidevops/blob/main/.agents/workflows/multi-repo-workspace.md)** | Working across multiple repositories safely |
 
 ### Documentation
 
 | Workflow | When to Use |
 |----------|-------------|
-| **[wiki-update.md](https://github.com/marcusquinn/aidevops/blob/main/.agent/workflows/wiki-update.md)** | Updating GitHub wiki from codebase changes |
+| **[wiki-update.md](https://github.com/marcusquinn/aidevops/blob/main/.agents/workflows/wiki-update.md)** | Updating GitHub wiki from codebase changes |
 
 ### Platform-Specific
 
 | Workflow | When to Use |
 |----------|-------------|
-| **[wordpress-local-testing.md](https://github.com/marcusquinn/aidevops/blob/main/.agent/workflows/wordpress-local-testing.md)** | WordPress Playground, LocalWP, wp-env |
+| **[wordpress-local-testing.md](https://github.com/marcusquinn/aidevops/blob/main/.agents/workflows/wordpress-local-testing.md)** | WordPress Playground, LocalWP, wp-env |
 
 ## Workflow Quick Reference
 
@@ -143,25 +143,25 @@ Following consistent workflows:
 
 ```bash
 # Get all quality feedback for current PR
-bash ~/git/aidevops/.agent/scripts/quality-feedback-helper.sh status --pr NUMBER
+bash ~/git/aidevops/.agents/scripts/quality-feedback-helper.sh status --pr NUMBER
 ```
 
 ### Run Local Linting
 
 ```bash
 # Run local quality checks (fast, offline)
-bash ~/git/aidevops/.agent/scripts/linters-local.sh
+bash ~/git/aidevops/.agents/scripts/linters-local.sh
 ```
 
 ### Monitor CI/CD
 
 ```bash
 # Watch for check completion
-bash ~/git/aidevops/.agent/scripts/quality-feedback-helper.sh watch --pr NUMBER
+bash ~/git/aidevops/.agents/scripts/quality-feedback-helper.sh watch --pr NUMBER
 ```
 
 ## Related Pages
 
-- **[The .agent Directory](The-Agent-Directory)** - Directory structure
+- **[The .agents Directory](The-Agent-Directory)** - Directory structure
 - **[Understanding AGENTS.md](Understanding-AGENTS-md)** - AI instruction file
 - **[Getting Started](Getting-Started)** - Installation and setup
