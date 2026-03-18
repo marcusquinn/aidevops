@@ -445,6 +445,11 @@ offer_python_brew_install() {
 	[[ "$action" == "upgrade" ]] && prompt_verb="Install/upgrade"
 	echo "  ${prompt_verb} recommendation: brew install $recommended_formula"
 
+	# Skip interactive prompt in non-interactive/CI contexts
+	if [[ "${NON_INTERACTIVE:-false}" == "true" ]] || [[ ! -t 0 ]]; then
+		return 1
+	fi
+
 	read -r -p "${prompt_verb} Python via Homebrew now? [Y/n]: " install_python
 	if [[ "$install_python" =~ ^[Yy]?$ ]]; then
 		if run_with_spinner "Installing $recommended_formula" brew install "$recommended_formula"; then
