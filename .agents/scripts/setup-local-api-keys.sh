@@ -6,7 +6,25 @@ set -euo pipefail
 # Manage API keys in ~/.config/aidevops/credentials.sh (sourced by shell configs)
 #
 # Author: AI DevOps Framework
-# Version: 2.1.0
+# Version: 2.1.1
+
+# Output helpers
+print_info() {
+	echo -e "\033[0;34m[INFO]\033[0m $*"
+	return 0
+}
+print_success() {
+	echo -e "\033[0;32m[SUCCESS]\033[0m $*"
+	return 0
+}
+print_warning() {
+	echo -e "\033[0;33m[WARN]\033[0m $*" >&2
+	return 0
+}
+print_error() {
+	echo -e "\033[0;31m[ERROR]\033[0m $*" >&2
+	return 0
+}
 
 # Common constants
 # Secure API key directory and file
@@ -108,8 +126,8 @@ parse_export_command() {
 
 # Set API key securely
 set_api_key() {
-	local service="$1"
-	local key="$2"
+	local service="${1:-}"
+	local key="${2:-}"
 
 	if [[ -z "$service" ]]; then
 		print_warning "Usage: $0 set <service> <api_key>"
@@ -262,7 +280,7 @@ show_help() {
 
 # Main execution
 main() {
-	local command="$1"
+	local command="${1:-}"
 	shift 2>/dev/null || true
 
 	case "$command" in
@@ -289,7 +307,8 @@ main() {
 		# Delegate to multi-tenant credential helper
 		local script_dir
 		script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
-		source "${SCRIPT_DIR}/shared-constants.sh"
+		# shellcheck source=/dev/null
+		source "${script_dir}/shared-constants.sh"
 
 		bash "$script_dir/credential-helper.sh" "$@" || return $?
 		;;
