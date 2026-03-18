@@ -143,7 +143,7 @@ Not every task is code. The framework has multiple primary agents, each with dom
 AGENTS_DIR="$(aidevops config get paths.agents_dir)"
 AGENTS_DIR="${AGENTS_DIR:-"$HOME/.aidevops/agents"}"
 HELPER="${AGENTS_DIR/#\~/$HOME}/scripts/headless-runtime-helper.sh"
-# Dynamic path respects user configuration of paths.agents_dir in config.jsonc
+# Resolves HELPER path dynamically to support custom agents_dir
 
 # Code task (default — Build+ implied)
 $HELPER run \
