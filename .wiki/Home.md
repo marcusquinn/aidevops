@@ -67,7 +67,7 @@ Your AI assistant now has access to:
 - **[Getting Started](Getting-Started)** - Installation and setup
 - **[CLI Reference](CLI-Reference)** - The `aidevops` command
 - **[Understanding AGENTS.md](Understanding-AGENTS-md)** - How AI guidance works
-- **[The .agents Directory](The-Agent-Directory)** - Framework structure
+- **[The .agents Directory](The-Agents-Directory)** - Framework structure
 - **[Workflows Guide](Workflows-Guide)** - Development processes
 - **[For Humans](For-Humans)** - Non-technical overview
 

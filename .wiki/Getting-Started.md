@@ -186,7 +186,7 @@ The framework creates organized working directories:
 
 1. **[CLI Reference](CLI-Reference)** - Master the `aidevops` command
 2. **[Understanding AGENTS.md](Understanding-AGENTS-md)** - Learn how AI guidance works
-3. **[The .agents Directory](The-Agent-Directory)** - Explore the framework structure
+3. **[The .agents Directory](The-Agents-Directory)** - Explore the framework structure
 4. **[Workflows Guide](Workflows-Guide)** - Development processes
 
 ## Troubleshooting

@@ -130,6 +130,6 @@ If building AI integrations, you can:
 
 ## Related Pages
 
-- **[The .agents Directory](The-Agent-Directory)** - Framework structure details
+- **[The .agents Directory](The-Agents-Directory)** - Framework structure details
 - **[Workflows Guide](Workflows-Guide)** - Development processes
 - **[For Humans](For-Humans)** - Non-technical overview

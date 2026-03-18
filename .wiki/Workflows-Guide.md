@@ -162,6 +162,6 @@ bash ~/git/aidevops/.agents/scripts/quality-feedback-helper.sh watch --pr NUMBER
 
 ## Related Pages
 
-- **[The .agents Directory](The-Agent-Directory)** - Directory structure
+- **[The .agents Directory](The-Agents-Directory)** - Directory structure
 - **[Understanding AGENTS.md](Understanding-AGENTS-md)** - AI instruction file
 - **[Getting Started](Getting-Started)** - Installation and setup
