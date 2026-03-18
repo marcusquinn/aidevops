@@ -22,6 +22,7 @@ GREEN='\033[0;32m'
 BLUE='\033[0;34m'
 YELLOW='\033[1;33m'
 RED='\033[0;31m'
+GRAY='\033[0;90m'
 NC='\033[0m' # No Color
 
 # Global flags
@@ -835,8 +836,11 @@ main() {
 		confirm_step "Disable on-demand MCPs globally" && disable_ondemand_mcps
 	fi
 
+	# Print setup summary before final success message (GH#5240)
+	print_setup_summary
+
 	echo ""
-	print_success "🎉 Setup complete!"
+	print_success "Setup complete!"
 
 	# Enable auto-update if not already enabled
 	# Check both launchd (macOS) and cron (Linux) for existing installation

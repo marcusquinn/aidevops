@@ -94,24 +94,25 @@ get_all_shell_rcs() {
 
 # Offer to install Oh My Zsh if zsh is the default shell and OMZ is not present
 setup_oh_my_zsh() {
-	# Only relevant if zsh is available
+	# Check prerequisites before announcing setup (GH#5240)
 	if ! command -v zsh >/dev/null 2>&1; then
-		print_info "zsh not found - skipping Oh My Zsh setup"
+		print_skip "Oh My Zsh" "zsh not installed" "Install zsh first, then re-run setup"
+		setup_track_skipped "Oh My Zsh" "zsh not installed"
 		return 0
 	fi
 
-	# Check if Oh My Zsh is already installed
 	if [[ -d "$HOME/.oh-my-zsh" ]]; then
 		print_success "Oh My Zsh already installed"
+		setup_track_configured "Oh My Zsh"
 		return 0
 	fi
 
 	local default_shell
 	default_shell=$(detect_default_shell)
 
-	# Only offer if zsh is the default shell (or on macOS where it's the system default)
 	if [[ "$default_shell" != "zsh" && "$(uname)" != "Darwin" ]]; then
-		print_info "Default shell is $default_shell (not zsh) - skipping Oh My Zsh"
+		print_skip "Oh My Zsh" "default shell is $default_shell (not zsh)" "Change default shell to zsh: chsh -s \$(which zsh)"
+		setup_track_skipped "Oh My Zsh" "default shell is $default_shell"
 		return 0
 	fi
 
@@ -822,12 +823,12 @@ ALIASES
 
 # Install terminal title integration that syncs tab titles with git repo/branch
 setup_terminal_title() {
-	print_info "Setting up terminal title integration..."
-
+	# Check prerequisites before announcing setup (GH#5240)
 	local setup_script=".agents/scripts/terminal-title-setup.sh"
 
 	if [[ ! -f "$setup_script" ]]; then
-		print_warning "Terminal title setup script not found - skipping"
+		print_skip "Terminal title" "setup script not found" "Deploy agents first (setup.sh), then re-run"
+		setup_track_skipped "Terminal title" "setup script not found"
 		return 0
 	fi
 
@@ -843,9 +844,13 @@ setup_terminal_title() {
 	done < <(get_all_shell_rcs)
 
 	if [[ "$title_configured" == "true" ]]; then
-		print_info "Terminal title integration already configured - Skipping"
+		print_success "Terminal title integration already configured"
+		setup_track_configured "Terminal title"
 		return 0
 	fi
+
+	# Prerequisites met — proceed with setup
+	print_info "Setting up terminal title integration..."
 
 	# Show current status before asking
 	echo ""

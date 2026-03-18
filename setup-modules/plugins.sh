@@ -117,12 +117,13 @@ deploy_plugins() {
 	local target_dir="$1"
 	local plugins_file="$2"
 
-	# Skip if no plugins.json or no jq
+	# Skip if no plugins.json or no jq (GH#5240: clear skip messages)
 	if [[ ! -f "$plugins_file" ]]; then
 		return 0
 	fi
 	if ! command -v jq &>/dev/null; then
-		print_warning "jq not found; skipping plugin deployment"
+		print_skip "Plugin deployment" "jq not installed" "Install jq: brew install jq (macOS) or apt install jq"
+		setup_track_deferred "Plugin deployment" "Install jq"
 		return 0
 	fi
 
@@ -401,14 +402,17 @@ check_skill_updates() {
 }
 
 scan_imported_skills() {
-	print_info "Running security scan on imported skills..."
-
+	# Check prerequisites before announcing setup (GH#5240)
 	local security_helper="$HOME/.aidevops/agents/scripts/security-helper.sh"
 
 	if [[ ! -f "$security_helper" ]]; then
-		print_warning "security-helper.sh not found - skipping skill scan"
+		print_skip "Skill security scan" "security-helper.sh not found" "Deploy agents first (setup.sh), then re-run"
+		setup_track_skipped "Skill security scan" "security-helper.sh not found"
 		return 0
 	fi
+
+	# Prerequisites met — proceed with setup
+	print_info "Running security scan on imported skills..."
 
 	# Install skill-scanner if not present
 	# Pre-check: cisco-ai-skill-scanner requires Python >= 3.10
@@ -484,8 +488,7 @@ scan_imported_skills() {
 }
 
 setup_multi_tenant_credentials() {
-	print_info "Multi-tenant credential storage..."
-
+	# Check prerequisites before announcing setup (GH#5240)
 	local credential_helper="$HOME/.aidevops/agents/scripts/credential-helper.sh"
 
 	if [[ ! -f "$credential_helper" ]]; then
@@ -494,9 +497,13 @@ setup_multi_tenant_credentials() {
 	fi
 
 	if [[ ! -f "$credential_helper" ]]; then
-		print_warning "credential-helper.sh not found - skipping"
+		print_skip "Multi-tenant credentials" "credential-helper.sh not found" "Deploy agents first (setup.sh), then re-run"
+		setup_track_skipped "Multi-tenant credentials" "credential-helper.sh not found"
 		return 0
 	fi
+
+	# Prerequisites met — proceed with setup
+	print_info "Multi-tenant credential storage..."
 
 	# Check if already initialized
 	if [[ -d "$HOME/.config/aidevops/tenants" ]]; then
@@ -547,8 +554,7 @@ setup_multi_tenant_credentials() {
 }
 
 check_tool_updates() {
-	print_info "Checking for tool updates..."
-
+	# Check prerequisites before announcing setup (GH#5240)
 	local tool_check_script="$HOME/.aidevops/agents/scripts/tool-version-check.sh"
 
 	if [[ ! -f "$tool_check_script" ]]; then
@@ -557,9 +563,13 @@ check_tool_updates() {
 	fi
 
 	if [[ ! -f "$tool_check_script" ]]; then
-		print_warning "Tool version check script not found - skipping update check"
+		print_skip "Tool updates" "version check script not found" "Deploy agents first (setup.sh), then re-run"
+		setup_track_skipped "Tool updates" "version check script not found"
 		return 0
 	fi
+
+	# Prerequisites met — proceed with setup
+	print_info "Checking for tool updates..."
 
 	# Run the check in quiet mode first to see if there are updates
 	# Capture both output and exit code

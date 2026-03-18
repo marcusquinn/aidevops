@@ -10,6 +10,13 @@ trap 'rc=$?; echo "[ERROR] ${BASH_SOURCE[0]}:${LINENO} exit $rc" >&2' ERR
 shopt -s inherit_errexit 2>/dev/null || true
 
 install_mcp_packages() {
+	# Check prerequisites before announcing setup (GH#5240)
+	if ! command -v bun &>/dev/null && ! command -v npm &>/dev/null; then
+		print_skip "MCP packages" "neither bun nor npm found" "Install bun: brew install oven-sh/bun/bun (or npm via Node.js)"
+		setup_track_deferred "MCP packages" "Install bun or npm"
+		return 0
+	fi
+
 	print_info "Installing MCP server packages globally (eliminates npx startup delay)..."
 
 	# Security note: MCP servers run as persistent processes with access to conversation
@@ -26,12 +33,6 @@ install_mcp_packages() {
 		"@steipete/macos-automator-mcp"
 		"@steipete/claude-code-mcp"
 	)
-
-	if ! command -v bun &>/dev/null && ! command -v npm &>/dev/null; then
-		print_warning "Neither bun nor npm found - cannot install MCP packages"
-		print_info "Install bun (recommended): npm install -g bun OR brew install oven-sh/bun/bun"
-		return 0
-	fi
 
 	local installer="npm"
 	command -v bun &>/dev/null && installer="bun"
@@ -205,36 +206,33 @@ update_mcp_paths_in_opencode() {
 }
 
 setup_localwp_mcp() {
-	print_info "Setting up LocalWP MCP server..."
-
-	# Check if LocalWP is installed
+	# Check prerequisites before announcing setup (GH#5240)
 	local localwp_found=false
 	if [[ -d "/Applications/Local.app" ]] || [[ -d "$HOME/Applications/Local.app" ]]; then
 		localwp_found=true
 	fi
 
 	if [[ "$localwp_found" != "true" ]]; then
-		print_info "LocalWP not found - skipping MCP server setup"
-		print_info "Install LocalWP from: https://localwp.com/"
+		print_skip "LocalWP MCP" "LocalWP not installed" "Install from https://localwp.com/ then re-run setup"
+		setup_track_skipped "LocalWP MCP" "LocalWP not installed"
 		return 0
 	fi
 
-	print_success "LocalWP found"
-
-	# Check if npm is available
 	if ! command -v npm &>/dev/null; then
-		print_warning "npm not found - cannot install LocalWP MCP server"
-		print_info "Install Node.js and npm first"
+		print_skip "LocalWP MCP" "npm not found" "Install Node.js and npm first"
+		setup_track_deferred "LocalWP MCP" "Install Node.js/npm, then re-run setup"
 		return 0
 	fi
 
-	# Check if mcp-local-wp is already installed
+	# Prerequisites met — proceed with setup
+	print_info "Setting up LocalWP MCP server..."
+
 	if command -v mcp-local-wp &>/dev/null; then
 		print_success "LocalWP MCP server already installed"
+		setup_track_configured "LocalWP MCP"
 		return 0
 	fi
 
-	# Offer to install mcp-local-wp
 	print_info "LocalWP MCP server enables AI assistants to query WordPress databases"
 	read -r -p "Install LocalWP MCP server (@verygoodplugins/mcp-local-wp)? [Y/n]: " install_mcp
 
@@ -242,6 +240,7 @@ setup_localwp_mcp() {
 		if run_with_spinner "Installing LocalWP MCP server" npm_global_install "@verygoodplugins/mcp-local-wp"; then
 			print_info "Start with: ~/.aidevops/agents/scripts/localhost-helper.sh start-mcp"
 			print_info "Or configure in OpenCode MCP settings for auto-start"
+			setup_track_configured "LocalWP MCP"
 		else
 			print_info "Try manually: sudo npm install -g @verygoodplugins/mcp-local-wp"
 		fi
@@ -254,48 +253,47 @@ setup_localwp_mcp() {
 }
 
 setup_augment_context_engine() {
-	print_info "Setting up Augment Context Engine MCP..."
-
-	# Check Node.js version (requires 22+)
+	# Check prerequisites before announcing setup (GH#5240)
 	if ! command -v node &>/dev/null; then
-		print_warning "Node.js not found - Augment Context Engine setup skipped"
-		print_info "Install Node.js 22+ to enable Augment Context Engine"
-		return
+		print_skip "Augment Context Engine" "Node.js not installed" "Install Node.js 22+: brew install node@22 (macOS) or nvm install 22"
+		setup_track_deferred "Augment Context Engine" "Install Node.js 22+"
+		return 0
 	fi
 
 	local node_version
 	node_version=$(node --version 2>/dev/null | cut -d'v' -f2 | cut -d'.' -f1)
 	if [[ -z "$node_version" ]] || ! [[ "$node_version" =~ ^[0-9]+$ ]]; then
-		print_warning "Could not determine Node.js version - Augment Context Engine setup skipped"
-		return
+		print_skip "Augment Context Engine" "could not determine Node.js version"
+		setup_track_skipped "Augment Context Engine" "Node.js version unknown"
+		return 0
 	fi
 	if [[ "$node_version" -lt 22 ]]; then
-		print_warning "Node.js 22+ required for Augment Context Engine, found v$node_version"
-		print_info "Install: brew install node@22 (macOS) or nvm install 22"
-		return
+		print_skip "Augment Context Engine" "requires Node.js 22+, found v$node_version" "Upgrade: brew install node@22 (macOS) or nvm install 22"
+		setup_track_deferred "Augment Context Engine" "Upgrade Node.js to 22+ (currently v$node_version)"
+		return 0
 	fi
 
-	# Check if auggie is installed
 	if ! command -v auggie &>/dev/null; then
-		print_warning "Auggie CLI not found"
-		print_info "Install with: npm install -g @augmentcode/auggie@prerelease"
-		print_info "Then run: auggie login"
-		return
+		print_skip "Augment Context Engine" "Auggie CLI not installed" "Install: npm install -g @augmentcode/auggie@prerelease && auggie login"
+		setup_track_deferred "Augment Context Engine" "Install Auggie CLI: npm install -g @augmentcode/auggie@prerelease"
+		return 0
 	fi
 
-	# Check if logged in
 	if [[ ! -f "$HOME/.augment/session.json" ]]; then
-		print_warning "Auggie not logged in"
-		print_info "Run: auggie login"
-		return
+		print_skip "Augment Context Engine" "Auggie not logged in" "Run: auggie login"
+		setup_track_deferred "Augment Context Engine" "Run: auggie login"
+		return 0
 	fi
 
+	# Prerequisites met — proceed with setup
+	print_info "Setting up Augment Context Engine MCP..."
 	print_success "Auggie CLI found and authenticated"
 
 	# MCP configuration is handled by generate-opencode-agents.sh for OpenCode
 
 	print_info "Augment Context Engine available as MCP in OpenCode"
 	print_info "Verification: 'What is this project? Please use codebase retrieval tool.'"
+	setup_track_configured "Augment Context Engine"
 
 	return 0
 }
@@ -479,34 +477,35 @@ add_opencode_plugin() {
 }
 
 setup_opencode_plugins() {
-	print_info "Setting up OpenCode plugins..."
-
-	# Check if OpenCode is installed
+	# Check prerequisites before announcing setup (GH#5240)
 	if ! command -v opencode &>/dev/null; then
-		print_warning "OpenCode not found - plugin setup skipped"
-		print_info "Install OpenCode first: https://opencode.ai"
+		print_skip "OpenCode plugins" "OpenCode not installed" "Install from https://opencode.ai"
+		setup_track_skipped "OpenCode plugins" "OpenCode not installed"
 		return 0
 	fi
 
-	# Check if config exists
 	local opencode_config
 	if ! opencode_config=$(find_opencode_config); then
-		print_warning "OpenCode config not found - plugin setup skipped"
+		print_skip "OpenCode plugins" "OpenCode config not found" "Run 'opencode' once to create config, then re-run setup"
+		setup_track_deferred "OpenCode plugins" "Run 'opencode' once to create config"
 		return 0
 	fi
 
-	# Check if jq is available
 	if ! command -v jq &>/dev/null; then
-		print_warning "jq not found - cannot update OpenCode config"
+		print_skip "OpenCode plugins" "jq not installed" "Install jq: brew install jq (macOS) or apt install jq"
+		setup_track_deferred "OpenCode plugins" "Install jq"
 		return 0
 	fi
+
+	# Prerequisites met — proceed with setup
+	print_info "Setting up OpenCode plugins..."
 
 	# Setup aidevops compaction plugin (local file plugin)
 	local aidevops_plugin_path="$HOME/.aidevops/agents/plugins/opencode-aidevops/index.mjs"
 	if [[ -f "$aidevops_plugin_path" ]]; then
-		print_info "Setting up aidevops compaction plugin..."
 		add_opencode_plugin "file://$HOME/.aidevops" "file://${aidevops_plugin_path}" "$opencode_config"
 		print_success "aidevops compaction plugin registered (preserves context across compaction)"
+		setup_track_configured "OpenCode plugins"
 	fi
 
 	# Note: opencode-anthropic-auth is built into OpenCode v1.1.36+
@@ -514,7 +513,7 @@ setup_opencode_plugins() {
 	# Removed in v2.90.0 - see PR #230.
 
 	print_info "After setup, authenticate with: opencode auth login"
-	print_info "  • For Claude OAuth: Select 'Anthropic' → 'Claude Pro/Max' (built-in)"
+	print_info "  - For Claude OAuth: Select 'Anthropic' -> 'Claude Pro/Max' (built-in)"
 
 	return 0
 }
@@ -566,31 +565,30 @@ setup_seo_mcps() {
 }
 
 setup_google_analytics_mcp() {
-	print_info "Setting up Google Analytics MCP..."
-
 	local gsc_creds="$HOME/.config/aidevops/gsc-credentials.json"
 
-	# Check if opencode.json exists
+	# Check prerequisites before announcing setup (GH#5240)
 	local opencode_config
 	if ! opencode_config=$(find_opencode_config); then
-		print_warning "OpenCode config not found - skipping Google Analytics MCP"
+		print_skip "Google Analytics MCP" "OpenCode config not found" "Run 'opencode' once to create config, then re-run setup"
+		setup_track_skipped "Google Analytics MCP" "OpenCode config not found"
 		return 0
 	fi
 
-	# Check if jq is available
 	if ! command -v jq &>/dev/null; then
-		print_warning "jq not found - cannot add Google Analytics MCP to config"
-		print_info "Install jq and re-run setup, or manually add the MCP config"
+		print_skip "Google Analytics MCP" "jq not installed" "Install jq: brew install jq (macOS) or apt install jq"
+		setup_track_deferred "Google Analytics MCP" "Install jq"
 		return 0
 	fi
 
-	# Check if pipx is available
 	if ! command -v pipx &>/dev/null; then
-		print_warning "pipx not found - Google Analytics MCP requires pipx"
-		print_info "Install pipx: brew install pipx (macOS) or pip install pipx"
-		print_info "Then re-run setup to add Google Analytics MCP"
+		print_skip "Google Analytics MCP" "pipx not installed" "Install pipx: brew install pipx (macOS) or pip install pipx"
+		setup_track_deferred "Google Analytics MCP" "Install pipx"
 		return 0
 	fi
+
+	# Prerequisites met — proceed with setup
+	print_info "Setting up Google Analytics MCP..."
 
 	# Auto-detect credentials from shared GSC service account
 	local creds_path=""
@@ -672,18 +670,19 @@ setup_google_analytics_mcp() {
 }
 
 setup_quickfile_mcp() {
-	print_info "Setting up QuickFile MCP server..."
-
 	local quickfile_dir="$HOME/Git/quickfile-mcp"
 	local credentials_dir="$HOME/.config/.quickfile-mcp"
 	local credentials_file="$credentials_dir/credentials.json"
 
-	# Check if Node.js is available
+	# Check prerequisites before announcing setup (GH#5240)
 	if ! command -v node &>/dev/null; then
-		print_warning "Node.js not found - QuickFile MCP setup skipped"
-		print_info "Install Node.js 18+ to enable QuickFile MCP"
+		print_skip "QuickFile MCP" "Node.js not installed" "Install Node.js 18+: brew install node (macOS) or nvm install 18"
+		setup_track_deferred "QuickFile MCP" "Install Node.js 18+"
 		return 0
 	fi
+
+	# Prerequisites met — proceed with setup
+	print_info "Setting up QuickFile MCP server..."
 
 	# Check if already cloned and built
 	if [[ -f "$quickfile_dir/dist/index.js" ]]; then
