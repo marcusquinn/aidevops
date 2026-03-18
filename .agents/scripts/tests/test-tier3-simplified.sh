@@ -179,7 +179,7 @@ test_full_loop_helper() {
 	# Test: start with no prompt — must fail AND produce an error message
 	local rc=0
 	output=$("$helper" start "" 2>&1) || rc=$?
-	if [[ $rc -ne 0 ]] && echo "$output" | tr '[:upper:]' '[:lower:]' | grep -q "no prompt\|usage\|required\|missing\|empty"; then
+	if [[ $rc -ne 0 ]] && echo "$output" | grep -qiE "no prompt|usage|required|missing|empty"; then
 		print_result "full-loop: start (no prompt) fails" 0
 	else
 		print_result "full-loop: start (no prompt) fails" 1 "Expected non-zero exit AND error pattern. rc=$rc, output: $output"
@@ -230,7 +230,7 @@ test_fallback_chain_helper() {
 	# Test: resolve with no tier
 	local output
 	output=$("$helper" resolve 2>&1) || true
-	if echo "$output" | tr '[:upper:]' '[:lower:]' | grep -q "usage\|tier"; then
+	if echo "$output" | grep -qiE "usage|tier"; then
 		print_result "fallback: resolve (no tier) shows usage" 0
 	else
 		print_result "fallback: resolve (no tier) shows usage" 1 "Expected usage message"
@@ -274,7 +274,7 @@ test_fallback_chain_helper() {
 	unset ANTHROPIC_API_KEY
 	local rc=0
 	output=$("$helper" resolve nonexistent --quiet 2>&1) || rc=$?
-	if [[ $rc -ne 0 ]] && echo "$output" | tr '[:upper:]' '[:lower:]' | grep -q "unknown\|unsupported\|invalid\|error\|fail\|no.*tier\|not found"; then
+	if [[ $rc -ne 0 ]] && echo "$output" | grep -qiE "unknown|unsupported|invalid|error|fail|no.*tier|not found"; then
 		print_result "fallback: unknown tier fails" 0
 	else
 		print_result "fallback: unknown tier fails" 1 "Expected non-zero exit AND error pattern. rc=$rc, output: $output"
@@ -282,7 +282,7 @@ test_fallback_chain_helper() {
 
 	# Test: unknown command
 	output=$("$helper" nonexistent 2>&1) || true
-	if echo "$output" | tr '[:upper:]' '[:lower:]' | grep -q "unknown command"; then
+	if echo "$output" | grep -qiE "unknown command"; then
 		print_result "fallback: unknown command" 0
 	else
 		print_result "fallback: unknown command" 1 "Expected 'Unknown command'"
@@ -334,7 +334,7 @@ test_budget_tracker_helper() {
 
 	# Test: status command
 	output=$("$helper" status 2>&1) || true
-	if echo "$output" | tr '[:upper:]' '[:lower:]' | grep -q 'cost\|events\|spend'; then
+	if echo "$output" | grep -qiE 'cost|events|spend'; then
 		print_result "budget: status shows summary" 0
 	else
 		print_result "budget: status shows summary" 1 "Got: $output"
@@ -350,7 +350,7 @@ test_budget_tracker_helper() {
 
 	# Test: burn-rate
 	output=$("$helper" burn-rate 2>&1) || true
-	if echo "$output" | tr '[:upper:]' '[:lower:]' | grep -q 'burn rate\|spend\|hourly'; then
+	if echo "$output" | grep -qiE 'burn rate|spend|hourly'; then
 		print_result "budget: burn-rate" 0
 	else
 		print_result "budget: burn-rate" 1 "Got: $output"
@@ -367,7 +367,7 @@ test_budget_tracker_helper() {
 	# Test: record with missing required args — must fail AND produce an error message
 	local rc_record=0
 	output=$("$helper" record 2>&1) || rc_record=$?
-	if [[ $rc_record -ne 0 ]] && echo "$output" | tr '[:upper:]' '[:lower:]' | grep -q "missing\|required\|usage\|error\|provider"; then
+	if [[ $rc_record -ne 0 ]] && echo "$output" | grep -qiE "missing|required|usage|error|provider"; then
 		print_result "budget: record (missing args) fails" 0
 	else
 		print_result "budget: record (missing args) fails" 1 "Expected non-zero exit AND error pattern. rc=$rc_record, output: $output"
@@ -429,7 +429,7 @@ test_issue_sync_helper() {
 	# Test: parse with no task ID — must fail AND produce an error message
 	local rc_parse=0
 	output=$("$helper" parse 2>&1) || rc_parse=$?
-	if [[ $rc_parse -ne 0 ]] && echo "$output" | tr '[:upper:]' '[:lower:]' | grep -q "missing\|required\|usage\|error\|task"; then
+	if [[ $rc_parse -ne 0 ]] && echo "$output" | grep -qiE "missing|required|usage|error|task"; then
 		print_result "issue-sync: parse (no task) fails" 0
 	else
 		print_result "issue-sync: parse (no task) fails" 1 "Expected non-zero exit AND error pattern. rc=$rc_parse, output: $output"
@@ -493,7 +493,7 @@ test_observability_helper() {
 	# Test: record with missing model — must fail AND produce an error message
 	local rc_obs_record=0
 	output=$("$helper" record 2>&1) || rc_obs_record=$?
-	if [[ $rc_obs_record -ne 0 ]] && echo "$output" | tr '[:upper:]' '[:lower:]' | grep -q "missing\|required\|usage\|error\|model"; then
+	if [[ $rc_obs_record -ne 0 ]] && echo "$output" | grep -qiE "missing|required|usage|error|model"; then
 		print_result "observability: record (no model) fails" 0
 	else
 		print_result "observability: record (no model) fails" 1 "Expected non-zero exit AND error pattern. rc=$rc_obs_record, output: $output"
