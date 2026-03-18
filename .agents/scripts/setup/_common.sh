@@ -445,8 +445,9 @@ offer_python_brew_install() {
 	[[ "$action" == "upgrade" ]] && prompt_verb="Install/upgrade"
 	echo "  ${prompt_verb} recommendation: brew install $recommended_formula"
 
-	# Skip interactive prompt in non-interactive/CI contexts
+	# Skip interactive prompt in CI or non-interactive runs
 	if [[ "${NON_INTERACTIVE:-false}" == "true" ]] || [[ ! -t 0 ]]; then
+		print_info "Skipped Python ${action} (non-interactive)"
 		return 1
 	fi
 
