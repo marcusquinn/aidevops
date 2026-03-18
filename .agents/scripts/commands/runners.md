@@ -95,6 +95,7 @@ For each resolved item, launch a worker using `headless-runtime-helper.sh run`. 
 ```bash
 AGENTS_DIR="$(aidevops config get paths.agents_dir)"
 HELPER="${AGENTS_DIR/#\~/$HOME}/scripts/headless-runtime-helper.sh"
+# Dynamic path respects user configuration of paths.agents_dir in config.jsonc
 
 # For code tasks (Build+ is default — omit --agent)
 $HELPER run \
