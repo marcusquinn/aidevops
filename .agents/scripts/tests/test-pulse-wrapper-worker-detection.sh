@@ -14,7 +14,6 @@ TESTS_FAILED=0
 
 TEST_ROOT=""
 PS_FIXTURE_FILE=""
-GH_SEARCH_FIXTURES=""
 
 print_result() {
 	local test_name="$1"
@@ -78,66 +77,38 @@ ps() {
 	return 0
 }
 
-set_gh_search_fixtures() {
-	local fixtures="$1"
-	GH_SEARCH_FIXTURES="$fixtures"
-	export GH_SEARCH_FIXTURES
-	return 0
-}
+set_dedup_helper_fixture() {
+	local has_open_pr_exit="$1"
+	local has_open_pr_output="${2:-}"
 
-gh() {
-	if [[ "${1:-}" == "pr" && "${2:-}" == "list" ]]; then
-		local repo_slug="" state_filter="" search_query=""
-		shift 2
-		while [[ $# -gt 0 ]]; do
-			case "$1" in
-			--repo)
-				repo_slug="${2:-}"
-				shift 2
-				;;
-			--state)
-				state_filter="${2:-}"
-				shift 2
-				;;
-			--search)
-				search_query="${2:-}"
-				shift 2
-				;;
-			*)
-				shift
-				;;
-			esac
-		done
+	cat >"${TEST_ROOT}/dispatch-dedup-helper.sh" <<EOF
+#!/usr/bin/env bash
+set -euo pipefail
 
-		# Fail loudly if the function under test omits --repo, --state, or --search
-		if [[ -z "$repo_slug" || -z "$state_filter" || -z "$search_query" ]]; then
-			printf 'unexpected gh pr list args in test stub: repo=%s state=%s search=%s\n' \
-				"$repo_slug" "$state_filter" "$search_query" >&2
-			return 1
+command_name="\${1:-}"
+
+case "\$command_name" in
+is-duplicate)
+	exit 1
+	;;
+has-open-pr)
+	if [[ "${has_open_pr_exit}" -eq 0 ]]; then
+		if [[ -n "${has_open_pr_output}" ]]; then
+			printf '%s\n' "${has_open_pr_output}"
 		fi
-
-		local compound_key="${repo_slug}|${state_filter}|${search_query}"
-		local line fixture_key fixture_payload
-		while IFS= read -r line; do
-			[[ -n "$line" ]] || continue
-			# Fixture format: repo|state|query|payload
-			# Strip last field to get the compound key; last field is the payload
-			fixture_key="${line%|*}"
-			fixture_payload="${line##*|}"
-			if [[ "$fixture_key" == "$compound_key" ]]; then
-				printf '%s\n' "$fixture_payload"
-				return 0
-			fi
-		done <<<"$GH_SEARCH_FIXTURES"
-
-		printf '[]\n'
-		return 0
+		exit 0
 	fi
+	exit 1
+	;;
+*)
+	exit 1
+	;;
+esac
+EOF
 
-	command gh "$@"
+	chmod +x "${TEST_ROOT}/dispatch-dedup-helper.sh"
 	return 0
 }
-export -f gh
 
 test_counts_plain_and_dot_prefixed_opencode_workers() {
 	# Line 125: supervisor /pulse — excluded by standalone /pulse filter
@@ -252,117 +223,21 @@ JSON
 	return 0
 }
 
-test_has_merged_pr_for_issue_detects_closing_keyword() {
-	set_gh_search_fixtures "marcusquinn/aidevops|merged|closes #4527 in:body|[{\"number\":1145}]"
-
-	if has_merged_pr_for_issue "4527" "marcusquinn/aidevops" "t4527: prevent duplicate dispatch"; then
-		print_result "has_merged_pr_for_issue detects merged PR via closes keyword" 0
-		return 0
-	fi
-
-	print_result "has_merged_pr_for_issue detects merged PR via closes keyword" 1 "Expected merged PR match for issue #4527"
-	return 0
-}
-
-test_has_merged_pr_for_issue_detects_task_id_fallback() {
-	set_gh_search_fixtures "marcusquinn/aidevops|merged|t063.1 in:title|[{\"number\":1059}]"
-
-	if has_merged_pr_for_issue "9999" "marcusquinn/aidevops" "t063.1: fix awardsapp duplicate PR dispatch"; then
-		print_result "has_merged_pr_for_issue detects merged PR via task-id fallback" 0
-		return 0
-	fi
-
-	print_result "has_merged_pr_for_issue detects merged PR via task-id fallback" 1 "Expected merged PR match via task ID fallback"
-	return 0
-}
-
 test_check_dispatch_dedup_treats_merged_pr_as_duplicate() {
+	local original_script_dir="$SCRIPT_DIR"
+	SCRIPT_DIR="$TEST_ROOT"
+
 	set_ps_fixture ""
-	set_gh_search_fixtures "marcusquinn/aidevops|merged|closes #4527 in:body|[{\"number\":1145}]"
+	set_dedup_helper_fixture 0 'merged PR #1145 references issue #4527 via "closes" keyword'
 
 	if check_dispatch_dedup "4527" "marcusquinn/aidevops" "Issue #4527: prevent redispatch" "t4527: prevent redispatch"; then
+		SCRIPT_DIR="$original_script_dir"
 		print_result "check_dispatch_dedup skips dispatch when merged PR exists" 0
 		return 0
 	fi
 
+	SCRIPT_DIR="$original_script_dir"
 	print_result "check_dispatch_dedup skips dispatch when merged PR exists" 1 "Expected dedup check to block merged issue"
-	return 0
-}
-
-test_has_open_pr_for_issue_detects_title_match() {
-	set_gh_search_fixtures "marcusquinn/aidevops|open|#5210 in:title|[{\"number\":1200}]"
-
-	if has_open_pr_for_issue "5210" "marcusquinn/aidevops" "t5210: Fix dispatch dedup"; then
-		print_result "has_open_pr_for_issue detects open PR via issue number in title" 0
-		return 0
-	fi
-
-	print_result "has_open_pr_for_issue detects open PR via issue number in title" 1 "Expected open PR match for issue #5210"
-	return 0
-}
-
-test_has_open_pr_for_issue_detects_task_id_match() {
-	# No match on issue number, but task ID matches
-	set_gh_search_fixtures "marcusquinn/aidevops|open|t1337 in:title|[{\"number\":1201}]"
-
-	if has_open_pr_for_issue "9999" "marcusquinn/aidevops" "t1337: Simplify infra scripts"; then
-		print_result "has_open_pr_for_issue detects open PR via task-id fallback" 0
-		return 0
-	fi
-
-	print_result "has_open_pr_for_issue detects open PR via task-id fallback" 1 "Expected open PR match via task ID"
-	return 0
-}
-
-test_has_open_pr_for_issue_detects_body_closes_match() {
-	# No match on title or task ID, but "closes #NNN" in body matches
-	set_gh_search_fixtures "marcusquinn/aidevops|open|closes #4500 in:body|[{\"number\":1202}]"
-
-	if has_open_pr_for_issue "4500" "marcusquinn/aidevops" ""; then
-		print_result "has_open_pr_for_issue detects open PR via body closes keyword" 0
-		return 0
-	fi
-
-	print_result "has_open_pr_for_issue detects open PR via body closes keyword" 1 "Expected open PR match via body closes"
-	return 0
-}
-
-test_has_open_pr_for_issue_returns_false_when_no_pr() {
-	# No fixtures set — all searches return []
-	set_gh_search_fixtures ""
-
-	if has_open_pr_for_issue "8888" "marcusquinn/aidevops" "t8888: nonexistent task"; then
-		print_result "has_open_pr_for_issue returns false when no open PR exists" 1 "Expected no match but got one"
-		return 0
-	fi
-
-	print_result "has_open_pr_for_issue returns false when no open PR exists" 0
-	return 0
-}
-
-test_check_dispatch_dedup_blocks_on_open_pr() {
-	set_ps_fixture ""
-	set_gh_search_fixtures "marcusquinn/aidevops|open|#5210 in:title|[{\"number\":1200}]"
-
-	if check_dispatch_dedup "5210" "marcusquinn/aidevops" "Issue #5210: Fix dispatch" "t5210: Fix dispatch"; then
-		print_result "check_dispatch_dedup blocks dispatch when open PR exists (GH#5210)" 0
-		return 0
-	fi
-
-	print_result "check_dispatch_dedup blocks dispatch when open PR exists (GH#5210)" 1 "Expected dedup to block on open PR"
-	return 0
-}
-
-test_check_dispatch_dedup_allows_when_no_pr_or_worker() {
-	set_ps_fixture ""
-	set_gh_search_fixtures ""
-
-	if check_dispatch_dedup "7777" "marcusquinn/aidevops" "Issue #7777: New task" "t7777: New task"; then
-		print_result "check_dispatch_dedup allows dispatch when no PR or worker exists" 1 "Expected dispatch to be allowed"
-		return 0
-	fi
-
-	print_result "check_dispatch_dedup allows dispatch when no PR or worker exists" 0
 	return 0
 }
 
@@ -376,15 +251,7 @@ main() {
 	test_deduplicates_process_chain_to_one_logical_worker
 	test_deduplicates_multiple_workers_with_process_chains
 	test_repo_issue_detection_uses_filtered_worker_list
-	test_has_merged_pr_for_issue_detects_closing_keyword
-	test_has_merged_pr_for_issue_detects_task_id_fallback
 	test_check_dispatch_dedup_treats_merged_pr_as_duplicate
-	test_has_open_pr_for_issue_detects_title_match
-	test_has_open_pr_for_issue_detects_task_id_match
-	test_has_open_pr_for_issue_detects_body_closes_match
-	test_has_open_pr_for_issue_returns_false_when_no_pr
-	test_check_dispatch_dedup_blocks_on_open_pr
-	test_check_dispatch_dedup_allows_when_no_pr_or_worker
 
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then

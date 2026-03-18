@@ -24,6 +24,11 @@
 #     Check if any running worker already covers the same issue/PR/task.
 #     Exit 0 = duplicate found (do NOT dispatch), exit 1 = no duplicate (safe to dispatch).
 #
+#   dispatch-dedup-helper.sh has-open-pr <issue> <slug> [issue-title]
+#     Check whether an issue already has merged PR evidence (closing keyword or
+#     task-id fallback) and should be skipped by pulse dispatch.
+#     Exit 0 = PR evidence exists (do NOT dispatch), exit 1 = no evidence.
+#
 #   dispatch-dedup-helper.sh list-running-keys
 #     List dedup keys for all currently running workers.
 #
@@ -345,95 +350,67 @@ is_assigned() {
 }
 
 #######################################
-# Private helper: run a single open-PR GitHub query.
+# Check whether an issue already has merged PR evidence.
 #
-# Executes one `gh pr list` search and outputs the first matching PR
-# number on stdout. Centralises the query → parse → validate pattern
-# used by all three strategies in has_open_pr().
-#
-# Args:
-#   $1 = repo slug (owner/repo)
-#   $2 = search query string (passed to --search)
-# Returns:
-#   exit 0 and prints PR number if a match is found
-#   exit 1 if no match or gh/jq error
-#######################################
-_query_open_prs() {
-	local repo_slug="$1"
-	local search_query="$2"
-
-	local pr_json pr_count pr_num
-	pr_json=$(gh pr list --repo "$repo_slug" --state open \
-		--search "$search_query" \
-		--json number --limit 1 2>/dev/null) || pr_json="[]"
-	pr_count=$(printf '%s' "$pr_json" | jq 'length' 2>/dev/null) || pr_count=0
-	[[ "$pr_count" =~ ^[0-9]+$ ]] || pr_count=0
-	if [[ "$pr_count" -gt 0 ]]; then
-		pr_num=$(printf '%s' "$pr_json" | jq -r '.[0].number' 2>/dev/null) || pr_num="?"
-		printf '%s' "$pr_num"
-		return 0
-	fi
-
-	return 1
-}
-
-#######################################
-# Check if an issue already has an open PR on GitHub (GH#5210)
-#
-# Queries GitHub for open PRs whose title contains the issue number
-# (as "#NNN") or a task ID extracted from the issue title. This is
-# a deterministic check — "does an open PR exist?" has exactly one
-# correct answer regardless of context.
+# Historical note: command name is `has-open-pr` to match pulse-wrapper
+# dispatch dedup call sites from review feedback, but the underlying behavior
+# checks merged PR evidence to avoid redispatching already-completed issues.
 #
 # Args:
 #   $1 = issue number
 #   $2 = repo slug (owner/repo)
-#   $3 = (optional) issue title — used for task-id extraction
+#   $3 = issue title (optional; used for task-id fallback)
 # Returns:
-#   exit 0 if open PR found (do NOT dispatch)
-#   exit 1 if no open PR found (safe to dispatch)
-# Outputs: PR info on stdout if found
+#   exit 0 if merged PR evidence exists (do NOT dispatch)
+#   exit 1 if no merged PR evidence (safe to dispatch)
+# Outputs:
+#   single-line reason when evidence is found
 #######################################
 has_open_pr() {
 	local issue_number="$1"
 	local repo_slug="$2"
 	local issue_title="${3:-}"
 
-	if [[ -z "$issue_number" || -z "$repo_slug" ]]; then
+	if [[ ! "$issue_number" =~ ^[0-9]+$ ]] || [[ -z "$repo_slug" ]]; then
 		return 1
 	fi
 
-	if [[ ! "$issue_number" =~ ^[0-9]+$ ]]; then
-		return 1
-	fi
-
-	local pr_num
-
-	# Strategy 1: Search for open PRs with issue number in title
-	if pr_num=$(_query_open_prs "$repo_slug" "#${issue_number} in:title"); then
-		printf 'OPEN_PR: issue #%s in %s has open PR #%s (title match)\n' "$issue_number" "$repo_slug" "$pr_num"
-		return 0
-	fi
-
-	# Strategy 2: Search by task ID from issue title
-	local task_id
-	task_id=$(printf '%s' "$issue_title" | grep -oE 't[0-9]+(\.[0-9]+)*' | head -1 || echo "")
-	if [[ -n "$task_id" ]]; then
-		if pr_num=$(_query_open_prs "$repo_slug" "${task_id} in:title"); then
-			printf 'OPEN_PR: task %s in %s has open PR #%s (task-id match)\n' "$task_id" "$repo_slug" "$pr_num"
-			return 0
-		fi
-	fi
-
-	# Strategy 3: Search by "Closes/Fixes/Resolves #NNN" in PR body
-	local keyword
-	for keyword in closes fixes resolves; do
-		if pr_num=$(_query_open_prs "$repo_slug" "${keyword} #${issue_number} in:body"); then
-			printf 'OPEN_PR: issue #%s in %s has open PR #%s (body "%s" match)\n' "$issue_number" "$repo_slug" "$pr_num" "$keyword"
+	local query pr_json pr_count pr_number
+	for keyword in close closes closed fix fixes fixed resolve resolves resolved; do
+		query="${keyword} #${issue_number} in:body"
+		pr_json=$(gh pr list --repo "$repo_slug" --state merged --search "$query" --limit 1 --json number 2>/dev/null) || pr_json="[]"
+		pr_count=$(printf '%s' "$pr_json" | jq 'length' 2>/dev/null) || pr_count=0
+		[[ "$pr_count" =~ ^[0-9]+$ ]] || pr_count=0
+		if [[ "$pr_count" -gt 0 ]]; then
+			pr_number=$(printf '%s' "$pr_json" | jq -r '.[0].number // empty' 2>/dev/null)
+			if [[ -n "$pr_number" ]]; then
+				printf 'merged PR #%s references issue #%s via "%s" keyword\n' "$pr_number" "$issue_number" "$keyword"
+			else
+				printf 'merged PR references issue #%s via "%s" keyword\n' "$issue_number" "$keyword"
+			fi
 			return 0
 		fi
 	done
 
+	local task_id
+	task_id=$(printf '%s' "$issue_title" | grep -oE 't[0-9]+(\.[0-9]+)*' | head -1 || true)
+	if [[ -z "$task_id" ]]; then
+		return 1
+	fi
+
+	query="${task_id} in:title"
+	pr_json=$(gh pr list --repo "$repo_slug" --state merged --search "$query" --limit 1 --json number 2>/dev/null) || pr_json="[]"
+	pr_count=$(printf '%s' "$pr_json" | jq 'length' 2>/dev/null) || pr_count=0
+	[[ "$pr_count" =~ ^[0-9]+$ ]] || pr_count=0
+	if [[ "$pr_count" -gt 0 ]]; then
+		pr_number=$(printf '%s' "$pr_json" | jq -r '.[0].number // empty' 2>/dev/null)
+		if [[ -n "$pr_number" ]]; then
+			printf 'merged PR #%s found by task id %s in title\n' "$pr_number" "$task_id"
+		else
+			printf 'merged PR found by task id %s in title\n' "$task_id"
+		fi
+		return 0
+	fi
 	return 1
 }
 
@@ -447,10 +424,10 @@ dispatch-dedup-helper.sh - Normalize and deduplicate worker dispatch titles (t23
 Usage:
   dispatch-dedup-helper.sh extract-keys <title>    Extract dedup keys from a title
   dispatch-dedup-helper.sh is-duplicate <title>     Check if already running (exit 0=dup, 1=safe)
+  dispatch-dedup-helper.sh has-open-pr <issue> <slug> [issue-title]
+                                                    Check merged PR evidence (exit 0=evidence, 1=none)
   dispatch-dedup-helper.sh is-assigned <issue> <slug> [self-login]
                                                     Check if issue is assigned (exit 0=assigned, 1=free)
-  dispatch-dedup-helper.sh has-open-pr <issue> <slug> [issue-title]
-                                                    Check if open PR exists (exit 0=found, 1=none)
   dispatch-dedup-helper.sh list-running-keys        List keys for all running workers
   dispatch-dedup-helper.sh normalize <title>        Normalize a title for comparison
   dispatch-dedup-helper.sh help                     Show this help
@@ -475,11 +452,11 @@ Examples:
     echo "Unassigned or assigned to self — safe to dispatch"
   fi
 
-  # Check before dispatching (open PR dedup — GH#5210)
-  if dispatch-dedup-helper.sh has-open-pr 2300 owner/repo "t1337: Fix auth"; then
-    echo "Open PR exists — skip dispatch"
+  # Check before dispatching (merged PR dedup)
+  if dispatch-dedup-helper.sh has-open-pr 2300 owner/repo "t2300: Fix auth"; then
+    echo "Issue already has merged PR evidence — skip dispatch"
   else
-    echo "No open PR — safe to dispatch"
+    echo "No merged PR evidence — safe to dispatch"
   fi
 HELP
 	return 0
