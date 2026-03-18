@@ -315,7 +315,7 @@ cmd_push() {
 		# The TOON backlog cache in TODO.md can be stale, showing tasks as pending
 		# even after [x] completion. The pulse reads the stale cache and calls
 		# push <task_id>, which previously matched [x] lines via the [.] pattern.
-		if echo "$task_line" | grep -qE "^\s*- \[x\] "; then
+		if [[ "$task_line" == *"[x]"* ]]; then
 			print_info "Skipping $task_id — already completed ([x] in TODO.md)"
 			skipped=$((skipped + 1))
 			continue
