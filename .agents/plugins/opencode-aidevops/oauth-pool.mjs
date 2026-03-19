@@ -815,7 +815,7 @@ export function createPoolAuthHook(client) {
               });
               if (!response.ok) return { type: "failed" };
               const credentials = await response.json();
-              const apiKeyResult = await fetch(
+              const apiKeyResponse = await fetch(
                 "https://api.anthropic.com/api/oauth/claude_cli/create_api_key",
                 {
                   method: "POST",
@@ -824,7 +824,14 @@ export function createPoolAuthHook(client) {
                     authorization: `Bearer ${credentials.access_token}`,
                   },
                 },
-              ).then((r) => r.json());
+              );
+              if (!apiKeyResponse.ok) {
+                console.error(
+                  `[aidevops] OAuth pool: API key creation failed: HTTP ${apiKeyResponse.status}`,
+                );
+                return { type: "failed" };
+              }
+              const apiKeyResult = await apiKeyResponse.json();
               return { type: "success", key: apiKeyResult.raw_key };
             },
           };
