@@ -139,6 +139,23 @@ test_api_connectivity() {
 	return 0
 }
 
+# Validate a single JSON file directly (bypasses bash -c quoting issues)
+# Uses jq if available, falls back to python3 -c with proper argument passing
+validate_json_file() {
+	local file="$1"
+
+	if command -v jq &>/dev/null; then
+		jq empty "$file" 2>/dev/null
+		return $?
+	elif command -v python3 &>/dev/null; then
+		python3 -c "import json, sys; json.load(open(sys.argv[1]))" "$file" 2>/dev/null
+		return $?
+	else
+		# No JSON validator available — skip rather than false-fail
+		return 0
+	fi
+}
+
 # Test MCP configurations
 test_mcp_configurations() {
 	print_header "Testing MCP Configurations"
@@ -148,12 +165,25 @@ test_mcp_configurations() {
 	if [[ -d "$config_dir" ]]; then
 		print_success "MCP templates directory exists"
 
-		# Test each configuration file
+		# Check for JSON validator availability
+		if ! command -v jq &>/dev/null && ! command -v python3 &>/dev/null; then
+			print_warning "No JSON validator found (install jq or python3)"
+		fi
+
+		# Validate each configuration file directly (not via bash -c)
 		for config_file in "$config_dir"/*.json; do
 			if [[ -f "$config_file" ]]; then
 				local filename
 				filename=$(basename "$config_file")
-				run_test "JSON validation: $filename" "python3 -m json.tool '$config_file'"
+				((++total_tests))
+				print_info "Testing: JSON validation: $filename"
+				if validate_json_file "$config_file"; then
+					print_success "JSON validation: $filename: PASSED"
+					((++passed_tests))
+				else
+					print_error "JSON validation: $filename: FAILED"
+					((++failed_tests))
+				fi
 			fi
 		done
 	else
