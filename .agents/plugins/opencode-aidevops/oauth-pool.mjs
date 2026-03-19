@@ -847,7 +847,17 @@ export function createPoolAuthHook(client) {
                 );
                 return { type: "failed" };
               }
-              const apiKeyResult = await apiKeyResponse.json();
+              let apiKeyResult;
+              try {
+                apiKeyResult = await apiKeyResponse.json();
+              } catch {
+                console.error("[aidevops] OAuth pool: API key creation response was not valid JSON");
+                return { type: "failed" };
+              }
+              if (!apiKeyResult || typeof apiKeyResult.raw_key !== "string") {
+                console.error("[aidevops] OAuth pool: API key creation response missing raw_key");
+                return { type: "failed" };
+              }
               return { type: "success", key: apiKeyResult.raw_key };
             },
           };
