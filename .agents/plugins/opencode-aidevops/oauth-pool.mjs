@@ -88,7 +88,10 @@ async function fetchTokenEndpoint(body, context) {
 
   const response = await fetch(TOKEN_ENDPOINT, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: {
+      "Content-Type": "application/json",
+      "User-Agent": "claude-cli/2.1.2 (external, cli)",
+    },
     body,
   });
 
