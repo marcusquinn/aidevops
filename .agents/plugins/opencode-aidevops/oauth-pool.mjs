@@ -28,10 +28,10 @@ import { createHash, randomBytes } from "crypto";
 const HOME = homedir();
 const POOL_FILE = join(HOME, ".aidevops", "oauth-pool.json");
 const CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
-const TOKEN_ENDPOINT = "https://console.anthropic.com/v1/oauth/token";
+const TOKEN_ENDPOINT = "https://platform.claude.com/v1/oauth/token";
 const OAUTH_AUTHORIZE_URL = "https://claude.ai/oauth/authorize";
 const REDIRECT_URI = "https://console.anthropic.com/oauth/code/callback";
-const OAUTH_SCOPES = "org:create_api_key user:profile user:inference";
+const OAUTH_SCOPES = "org:create_api_key user:profile user:inference user:sessions:claude_code user:mcp_servers user:file_upload";
 
 /** Default cooldown when rate limited (ms) */
 const RATE_LIMIT_COOLDOWN_MS = 60_000;
@@ -549,6 +549,8 @@ function maybeAddBetaParam(input) {
  */
 function createPoolFetch(provider) {
   return async function poolFetch(input, init) {
+    const inputUrl = typeof input === "string" ? input : (input instanceof URL ? input.toString() : (input instanceof Request ? input.url : "unknown"));
+    console.error(`[aidevops] OAuth pool: poolFetch called for ${provider}, url=${inputUrl}`);
     let currentAccount = pickAccount(provider);
     if (!currentAccount) {
       // No accounts available — fall through to default fetch (will likely fail)
@@ -575,11 +577,16 @@ function createPoolFetch(provider) {
       const body = transformRequestBody(init?.body);
       const { input: finalInput } = maybeAddBetaParam(input);
 
+      const finalUrl = typeof finalInput === "string" ? finalInput : (finalInput instanceof URL ? finalInput.toString() : (finalInput instanceof Request ? finalInput.url : "unknown"));
+      console.error(`[aidevops] OAuth pool: sending request to ${finalUrl}, has-auth=${headers.has("authorization")}, has-beta=${headers.has("anthropic-beta")}`);
+
       const response = await fetch(finalInput, {
         ...init,
         body,
         headers,
       });
+
+      console.error(`[aidevops] OAuth pool: response status=${response.status}`);
 
       // Success — transform and return
       if (response.ok || (response.status >= 200 && response.status < 400)) {
@@ -651,7 +658,7 @@ export async function initPoolAuth(client) {
   try {
     await client.auth.set({
       path: { id: "anthropic-pool" },
-      body: { type: "oauth", refresh: "", access: "", expires: 0 },
+      body: { type: "success", refresh: "", access: "", expires: 0 },
     });
     console.error("[aidevops] OAuth pool: seeded auth entry for anthropic-pool");
   } catch (err) {
@@ -676,6 +683,7 @@ export function createPoolAuthHook(client) {
      */
     async loader(getAuth, provider) {
       const accounts = getAccounts("anthropic");
+      console.error(`[aidevops] OAuth pool loader: ${accounts.length} accounts found`);
       if (accounts.length === 0) {
         return {};
       }
@@ -689,9 +697,11 @@ export function createPoolAuthHook(client) {
         };
       }
 
+      const poolFetch = createPoolFetch("anthropic");
+      console.error(`[aidevops] OAuth pool loader: returning custom fetch wrapper`);
       return {
         apiKey: "",
-        fetch: createPoolFetch("anthropic"),
+        fetch: poolFetch,
       };
     },
 
@@ -812,6 +822,24 @@ export function registerPoolProvider(config) {
     npm: "@ai-sdk/anthropic",
     api: "https://api.anthropic.com/v1",
     models: {
+      "claude-opus-4-6-20250610": {
+        name: "Claude Opus 4.6",
+        attachment: true, reasoning: true, tool_call: true,
+        temperature: true, interleaved: true,
+        modalities: { input: ["text", "image", "pdf"], output: ["text"] },
+        cost: { input: 0, output: 0, cache_read: 0, cache_write: 0 },
+        limit: { context: 200000, output: 32000 },
+        family: "claude-4",
+      },
+      "claude-sonnet-4-6-20250514": {
+        name: "Claude Sonnet 4.6",
+        attachment: true, reasoning: true, tool_call: true,
+        temperature: true, interleaved: true,
+        modalities: { input: ["text", "image", "pdf"], output: ["text"] },
+        cost: { input: 0, output: 0, cache_read: 0, cache_write: 0 },
+        limit: { context: 200000, output: 16000 },
+        family: "claude-4",
+      },
       "claude-sonnet-4-20250514": {
         name: "Claude Sonnet 4",
         attachment: true, reasoning: true, tool_call: true,
@@ -828,6 +856,14 @@ export function registerPoolProvider(config) {
         modalities: { input: ["text", "image", "pdf"], output: ["text"] },
         cost: { input: 0, output: 0, cache_read: 0, cache_write: 0 },
         limit: { context: 200000, output: 32000 },
+        family: "claude-4",
+      },
+      "claude-haiku-4-20250414": {
+        name: "Claude Haiku 4",
+        attachment: true, tool_call: true, temperature: true,
+        modalities: { input: ["text", "image", "pdf"], output: ["text"] },
+        cost: { input: 0, output: 0, cache_read: 0, cache_write: 0 },
+        limit: { context: 200000, output: 8192 },
         family: "claude-4",
       },
       "claude-3-7-sonnet-20250219": {
