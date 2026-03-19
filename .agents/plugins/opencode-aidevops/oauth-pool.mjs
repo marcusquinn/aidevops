@@ -42,10 +42,50 @@ const AUTH_FAILURE_COOLDOWN_MS = 300_000;
 /** Max retry attempts per request across pool accounts */
 const MAX_ROTATION_ATTEMPTS = 5;
 
+/** Max retries for token endpoint requests (exchange + refresh) */
+const TOKEN_MAX_RETRIES = 3;
+
+/** Initial delay for token endpoint retry backoff (ms) */
+const TOKEN_RETRY_DELAY_MS = 2000;
+
 const REQUIRED_BETAS = [
   "oauth-2025-04-20",
   "interleaved-thinking-2025-05-14",
 ];
+
+// ---------------------------------------------------------------------------
+// Token endpoint fetch with retry on 429
+// ---------------------------------------------------------------------------
+
+/**
+ * Fetch from the token endpoint with retry + exponential backoff on 429.
+ * Anthropic's OAuth token endpoint rate-limits aggressively.
+ * @param {string} body - JSON string body
+ * @param {string} context - description for logging (e.g., "token exchange", "refresh")
+ * @returns {Promise<Response>}
+ */
+async function fetchTokenEndpoint(body, context) {
+  let response = null;
+  for (let attempt = 0; attempt <= TOKEN_MAX_RETRIES; attempt++) {
+    if (attempt > 0) {
+      const delay = TOKEN_RETRY_DELAY_MS * Math.pow(2, attempt - 1);
+      console.error(
+        `[aidevops] OAuth pool: ${context} rate limited, retrying in ${delay / 1000}s (attempt ${attempt + 1}/${TOKEN_MAX_RETRIES + 1})...`,
+      );
+      await new Promise((resolve) => setTimeout(resolve, delay));
+    }
+
+    response = await fetch(TOKEN_ENDPOINT, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body,
+    });
+
+    if (response.ok || response.status !== 429) break;
+  }
+
+  return response;
+}
 
 const TOOL_PREFIX = "mcp_";
 
@@ -190,15 +230,14 @@ function patchAccount(provider, email, patch) {
  */
 async function refreshAccessToken(account) {
   try {
-    const response = await fetch(TOKEN_ENDPOINT, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
+    const response = await fetchTokenEndpoint(
+      JSON.stringify({
         grant_type: "refresh_token",
         refresh_token: account.refresh,
         client_id: CLIENT_ID,
       }),
-    });
+      `refresh for ${account.email}`,
+    );
     if (!response.ok) {
       console.error(
         `[aidevops] OAuth pool: token refresh failed for ${account.email}: HTTP ${response.status}`,
@@ -641,17 +680,16 @@ export function createPoolAuthHook(client) {
             const currentAuth = await getAuth();
             if (currentAuth?.type !== "oauth") return fetch(input, init);
 
-            // Refresh token if expired
+            // Refresh token if expired (with retry on 429)
             if (!currentAuth.access || currentAuth.expires < Date.now()) {
-              const response = await fetch(TOKEN_ENDPOINT, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
+              const response = await fetchTokenEndpoint(
+                JSON.stringify({
                   grant_type: "refresh_token",
                   refresh_token: currentAuth.refresh,
                   client_id: CLIENT_ID,
                 }),
-              });
+                "single-account refresh",
+              );
               if (!response.ok) {
                 throw new Error(`Token refresh failed: ${response.status}`);
               }
@@ -745,10 +783,8 @@ export function createPoolAuthHook(client) {
               const authCode = hashIdx >= 0 ? code.substring(0, hashIdx) : code;
               const state = hashIdx >= 0 ? code.substring(hashIdx + 1) : undefined;
 
-              const result = await fetch(TOKEN_ENDPOINT, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
+              const result = await fetchTokenEndpoint(
+                JSON.stringify({
                   code: authCode,
                   state,
                   grant_type: "authorization_code",
@@ -756,11 +792,15 @@ export function createPoolAuthHook(client) {
                   redirect_uri: REDIRECT_URI,
                   code_verifier: pkce.verifier,
                 }),
-              });
+                "token exchange",
+              );
 
               if (!result.ok) {
+                const statusText = result.status === 429
+                  ? "rate limited by Anthropic — try again in a few minutes"
+                  : `HTTP ${result.status}`;
                 console.error(
-                  `[aidevops] OAuth pool: token exchange failed: HTTP ${result.status}`,
+                  `[aidevops] OAuth pool: token exchange failed: ${statusText}`,
                 );
                 return { type: "failed" };
               }
@@ -817,10 +857,8 @@ export function createPoolAuthHook(client) {
               const hashIdx = code.indexOf("#");
               const authCode = hashIdx >= 0 ? code.substring(0, hashIdx) : code;
               const codeState = hashIdx >= 0 ? code.substring(hashIdx + 1) : undefined;
-              const response = await fetch(TOKEN_ENDPOINT, {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
+              const response = await fetchTokenEndpoint(
+                JSON.stringify({
                   code: authCode,
                   state: codeState,
                   grant_type: "authorization_code",
@@ -828,8 +866,14 @@ export function createPoolAuthHook(client) {
                   redirect_uri: REDIRECT_URI,
                   code_verifier: pkce.verifier,
                 }),
-              });
-              if (!response.ok) return { type: "failed" };
+                "API key token exchange",
+              );
+              if (!response.ok) {
+                console.error(
+                  `[aidevops] OAuth pool: API key token exchange failed: HTTP ${response.status}`,
+                );
+                return { type: "failed" };
+              }
               const credentials = await response.json();
               const apiKeyResponse = await fetch(
                 "https://api.anthropic.com/api/oauth/claude_cli/create_api_key",
