@@ -16,7 +16,7 @@ import { loadAgentIndex, applyAgentMcpTools } from "./agent-loader.mjs";
 import { validateReturnStatements, validatePositionalParams } from "./validators.mjs";
 import { runMarkdownQualityPipeline } from "./quality-pipeline.mjs";
 import { createTtsrHooks } from "./ttsr.mjs";
-import { createPoolAuthHook, registerPoolProvider, createPoolTool } from "./oauth-pool.mjs";
+import { createPoolAuthHook, registerPoolProvider, createPoolTool, initPoolAuth } from "./oauth-pool.mjs";
 
 const HOME = homedir();
 const AGENTS_DIR = join(HOME, ".aidevops", "agents");
@@ -1069,7 +1069,10 @@ export async function AidevopsPlugin({ directory, client }) {
   // Phase 6: Initialise LLM observability (t1308)
   initObservability();
 
-  // Phase 7: OAuth pool tools (t1543)
+  // Phase 7: OAuth pool — seed auth entry so provider appears in connect dialog (t1543)
+  await initPoolAuth(client);
+
+  // Phase 7b: OAuth pool tools (t1543)
   const baseTools = createTools(SCRIPTS_DIR, run, {
     runShellQualityPipeline,
     runMarkdownQualityPipeline,

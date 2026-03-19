@@ -574,6 +574,63 @@ function createPoolFetch(provider) {
 // ---------------------------------------------------------------------------
 
 /**
+ * Seed a placeholder auth entry for the pool provider in OpenCode's auth.json.
+ *
+ * OpenCode only shows providers in the "Connect a provider" dialog if they
+ * have an auth entry (auth.json) OR exist on models.dev. Since anthropic-pool
+ * is a custom provider not on models.dev, we need to seed a placeholder entry
+ * so the provider appears in the dialog for first-time setup.
+ *
+ * If pool accounts already exist, the placeholder is seeded with the first
+ * account's credentials so the loader can immediately use them.
+ *
+ * @param {any} client - OpenCode SDK client
+ */
+export async function initPoolAuth(client) {
+  try {
+    // Check if auth entry already exists
+    const existing = await client.auth.get({ path: { id: "anthropic-pool" } });
+    if (existing?.data) return; // Already seeded
+  } catch {
+    // No entry exists — proceed to seed
+  }
+
+  try {
+    const accounts = getAccounts("anthropic");
+    if (accounts.length > 0) {
+      // Seed with first account's real credentials
+      const first = accounts[0];
+      await client.auth.set({
+        path: { id: "anthropic-pool" },
+        body: {
+          type: "oauth",
+          refresh: first.refresh,
+          access: first.access,
+          expires: first.expires,
+        },
+      });
+    } else {
+      // Seed with a placeholder so the provider appears in the connect dialog.
+      // The placeholder has type "oauth" with empty tokens — the loader will
+      // detect no pool accounts and return empty options, but the provider
+      // will be visible for the user to add their first account.
+      await client.auth.set({
+        path: { id: "anthropic-pool" },
+        body: {
+          type: "oauth",
+          refresh: "",
+          access: "",
+          expires: 0,
+        },
+      });
+    }
+    console.error("[aidevops] OAuth pool: seeded auth entry for anthropic-pool provider");
+  } catch (err) {
+    console.error(`[aidevops] OAuth pool: failed to seed auth entry: ${err.message}`);
+  }
+}
+
+/**
  * Create the auth hook for the pool provider.
  * @param {any} client - OpenCode SDK client
  * @returns {import('@opencode-ai/plugin').AuthHook}
