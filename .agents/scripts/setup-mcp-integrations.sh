@@ -162,17 +162,17 @@ install_mcp() {
 		print_warning "Ahrefs MCP requires API key"
 		print_info "Get your standard 40-char API key from: https://ahrefs.com/api"
 		print_info "Note: JWT-style tokens do NOT work - use the standard API key"
-		print_info ""
+		echo ""
 		print_info "Store in ~/.config/aidevops/credentials.sh:"
 		print_info "  export AHREFS_API_KEY=\"your_40_char_key\""
-		print_info ""
+		echo ""
 		print_info "For OpenCode, use bash wrapper pattern in opencode.json:"
 		print_info '  "ahrefs": {'
 		print_info '    "type": "local",'
 		print_info '    "command": ["/bin/bash", "-c", "API_KEY=\$AHREFS_API_KEY /opt/homebrew/bin/npx -y @ahrefs/mcp@latest"],'
 		print_info '    "enabled": true'
 		print_info '  }'
-		print_info ""
+		echo ""
 		print_info "Note: The MCP expects API_KEY env var, not AHREFS_API_KEY"
 		;;
 	"perplexity")
@@ -295,22 +295,22 @@ install_mcp() {
 		print_info "Setting up DataForSEO MCP for comprehensive SEO data..."
 		print_warning "DataForSEO MCP requires API credentials"
 		print_info "Get credentials from: https://app.dataforseo.com/"
-		print_info ""
+		echo ""
 		print_info "Store in ~/.config/aidevops/credentials.sh:"
 		print_info "  export DATAFORSEO_USERNAME=\"your_username\""
 		print_info "  export DATAFORSEO_PASSWORD=\"your_password\""
-		print_info ""
+		echo ""
 		print_info "Or use the helper script:"
 		print_info "  bash ~/.aidevops/agents/scripts/setup-local-api-keys.sh set DATAFORSEO_USERNAME your_username"
 		print_info "  bash ~/.aidevops/agents/scripts/setup-local-api-keys.sh set DATAFORSEO_PASSWORD your_password"
-		print_info ""
+		echo ""
 		print_info "For OpenCode, use bash wrapper pattern in opencode.json:"
 		print_info '  "dataforseo": {'
 		print_info '    "type": "local",'
 		print_info '    "command": ["/bin/bash", "-c", "source ~/.config/aidevops/credentials.sh && DATAFORSEO_USERNAME=\$DATAFORSEO_USERNAME DATAFORSEO_PASSWORD=\$DATAFORSEO_PASSWORD npx dataforseo-mcp-server"],'
 		print_info '    "enabled": true'
 		print_info '  }'
-		print_info ""
+		echo ""
 		print_info "Available modules: SERP, KEYWORDS_DATA, BACKLINKS, ONPAGE, DATAFORSEO_LABS, BUSINESS_DATA, DOMAIN_ANALYTICS, CONTENT_ANALYSIS, AI_OPTIMIZATION"
 		print_info "Docs: https://docs.dataforseo.com/v3/"
 		;;
@@ -337,30 +337,30 @@ install_mcp() {
 		echo
 		print_info "Your existing LLM API keys can be used as Unstract adapters:"
 		print_info "  Run: unstract-helper.sh configure-llm"
-		print_info ""
+		echo ""
 		print_info "The MCP connects to your local instance by default."
 		print_info "Config template: configs/mcp-templates/unstract.json"
 		;;
 	"context7")
 		print_info "Setting up Context7 MCP for real-time library documentation..."
 		print_info "Context7 provides up-to-date docs for libraries and frameworks."
-		print_info ""
+		echo ""
 		print_info "Two setup options:"
-		print_info ""
+		echo ""
 		print_info "  1. Remote MCP (recommended — zero install):"
 		print_info '     "context7": {'
 		print_info '       "type": "remote",'
 		print_info '       "url": "https://mcp.context7.com/mcp",'
 		print_info '       "enabled": true'
 		print_info '     }'
-		print_info ""
+		echo ""
 		print_info "  2. Local MCP (via npx):"
 		print_info '     "context7": {'
 		print_info '       "type": "local",'
 		print_info '       "command": ["npx", "-y", "@upstash/context7-mcp@latest"],'
 		print_info '       "enabled": true'
 		print_info '     }'
-		print_info ""
+		echo ""
 		print_info "Disable telemetry: export CTX7_TELEMETRY_DISABLED=1"
 		print_info "CLI alternative: npx ctx7 setup --opencode --cli"
 		print_info "Docs: ~/.aidevops/agents/tools/context/context7.md"
