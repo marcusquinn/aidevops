@@ -38,6 +38,17 @@ body:
     validations:
       required: false
 
+  - type: textarea
+    id: third-party
+    attributes:
+      label: Third-party Tool Integration
+      description: |
+        Does this involve adding support for, bundling, or testing against an external tool or service?
+        Architectural decisions are made by maintainers. We welcome the suggestion but can't guarantee adoption.
+        See [CONTRIBUTING.md](../../CONTRIBUTING.md#scope-of-contributions).
+    validations:
+      required: false
+
   - type: input
     id: version
     attributes:
