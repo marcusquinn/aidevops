@@ -1455,45 +1455,9 @@ setup_orbstack_vm() {
 setup_ai_orchestration() {
 	print_info "Setting up AI orchestration frameworks..."
 
-	local has_python=false
-	local python_required_major="${PYTHON_REQUIRED_MAJOR:-3}"
-	local python_required_minor="${PYTHON_REQUIRED_MINOR:-10}"
-	local recommended_python_formula
-	recommended_python_formula=$(get_recommended_python_formula)
-	local recommended_python_version
-	recommended_python_version="${recommended_python_formula#python@}"
-
-	# Check Python (prefer Homebrew/pyenv over system) — uses shared helpers
-	# from _common.sh (get_recommended_python_formula, find_python3,
-	# offer_python_brew_install) to avoid duplicating version-check logic.
-	local python3_bin
-	if python3_bin=$(find_python3); then
-		local python_version
-		python_version=$("$python3_bin" -c 'import sys; print("{}.{}.{}".format(sys.version_info[0], sys.version_info[1], sys.version_info[2]))' 2>/dev/null || true)
-		local major minor
-		major=$(echo "$python_version" | cut -d. -f1)
-		minor=$(echo "$python_version" | cut -d. -f2)
-
-		if [[ "$major" =~ ^[0-9]+$ ]] && [[ "$minor" =~ ^[0-9]+$ ]] && { ((major > python_required_major)) || { ((major == python_required_major)) && ((minor >= python_required_minor)); }; }; then
-			has_python=true
-			print_success "Python $python_version found ($python_required_major.$python_required_minor+ required)"
-		else
-			print_warning "Python $python_required_major.$python_required_minor+ required for AI orchestration, found $python_version"
-			if [[ "${PLATFORM_MACOS:-false}" == "true" ]]; then
-				print_info "Alternative (pyenv): pyenv install ${recommended_python_version} && pyenv global ${recommended_python_version}"
-			fi
-			offer_python_brew_install "upgrade" "$recommended_python_formula" || true
-		fi
-	else
-		print_warning "Python 3 not found - AI orchestration frameworks unavailable"
-		if [[ "${PLATFORM_MACOS:-false}" == "true" ]]; then
-			print_info "Alternative (pyenv): pyenv install ${recommended_python_version} && pyenv global ${recommended_python_version}"
-		fi
-		offer_python_brew_install "install" "$recommended_python_formula" || true
-		return 0
-	fi
-
-	if [[ "$has_python" == "false" ]]; then
+	# Check Python — uses check_python_version from _common.sh to avoid
+	# duplicating find_python3 → parse → compare → offer_python_brew_install logic.
+	if ! check_python_version "" "AI orchestration" >/dev/null; then
 		return 0
 	fi
 
