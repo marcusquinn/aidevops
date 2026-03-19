@@ -774,17 +774,74 @@ export function createPoolAuthHook(client) {
 export function registerPoolProvider(config) {
   if (!config.provider) config.provider = {};
 
-  // Only register if there are accounts in the pool
-  const accounts = getAccounts("anthropic");
-  if (accounts.length === 0) return 0;
-
-  // Register the pool provider with the same models as anthropic
-  // The models are loaded from models.dev by OpenCode based on the npm package
+  // Always register — the provider must appear in the "Connect a provider"
+  // dialog even before any accounts are added (first-time setup).
   if (!config.provider["anthropic-pool"]) {
     config.provider["anthropic-pool"] = {
       name: "Anthropic Pool",
       npm: "@ai-sdk/anthropic",
       api: "https://api.anthropic.com/v1",
+      // Models must be defined explicitly — models.dev doesn't know about
+      // anthropic-pool, so OpenCode won't auto-populate them.
+      models: {
+        "claude-sonnet-4-20250514": {
+          name: "Claude Sonnet 4",
+          attachment: true,
+          reasoning: true,
+          tool_call: true,
+          temperature: true,
+          interleaved: true,
+          modalities: {
+            input: ["text", "image", "pdf"],
+            output: ["text"],
+          },
+          cost: { input: 0, output: 0, cache_read: 0, cache_write: 0 },
+          limit: { context: 200000, output: 16000 },
+          family: "claude-4",
+        },
+        "claude-opus-4-20250514": {
+          name: "Claude Opus 4",
+          attachment: true,
+          reasoning: true,
+          tool_call: true,
+          temperature: true,
+          interleaved: true,
+          modalities: {
+            input: ["text", "image", "pdf"],
+            output: ["text"],
+          },
+          cost: { input: 0, output: 0, cache_read: 0, cache_write: 0 },
+          limit: { context: 200000, output: 32000 },
+          family: "claude-4",
+        },
+        "claude-3-7-sonnet-20250219": {
+          name: "Claude 3.7 Sonnet",
+          attachment: true,
+          reasoning: true,
+          tool_call: true,
+          temperature: true,
+          modalities: {
+            input: ["text", "image", "pdf"],
+            output: ["text"],
+          },
+          cost: { input: 0, output: 0, cache_read: 0, cache_write: 0 },
+          limit: { context: 200000, output: 16384 },
+          family: "claude-3.7",
+        },
+        "claude-3-5-haiku-20241022": {
+          name: "Claude 3.5 Haiku",
+          attachment: true,
+          tool_call: true,
+          temperature: true,
+          modalities: {
+            input: ["text", "image"],
+            output: ["text"],
+          },
+          cost: { input: 0, output: 0, cache_read: 0, cache_write: 0 },
+          limit: { context: 200000, output: 8192 },
+          family: "claude-3.5",
+        },
+      },
     };
   }
 
