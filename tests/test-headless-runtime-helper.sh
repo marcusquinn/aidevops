@@ -297,6 +297,66 @@ fi
 # Clean up
 bash "$HELPER" backoff clear anthropic >/dev/null 2>&1 || true
 
+section "OpenCode Gateway Models"
+# opencode/* models should be selectable when configured and auth file exists
+# Create a fake auth file so provider_auth_available("opencode") returns true
+FAKE_AUTH_DIR="$TEST_TMP_DIR/fake-opencode-home/.local/share/opencode"
+mkdir -p "$FAKE_AUTH_DIR"
+echo '{"token":"fake"}' >"$FAKE_AUTH_DIR/auth.json"
+
+gateway_model=$(
+	HOME="$TEST_TMP_DIR/fake-opencode-home" \
+		AIDEVOPS_HEADLESS_MODELS="opencode/minimax-m2.5-free" \
+		bash "$HELPER" select --role worker 2>/dev/null || true
+)
+if [[ "$gateway_model" == "opencode/minimax-m2.5-free" ]]; then
+	pass "opencode/* gateway model is selectable when configured"
+else
+	fail "opencode/* gateway model is selectable when configured" "got: $gateway_model"
+fi
+
+# opencode/* models should be skipped when no auth file exists
+# Use ANTHROPIC_API_KEY so Anthropic passes auth check even with fake HOME
+no_auth_gateway=$(
+	HOME="$TEST_TMP_DIR/no-auth-home" \
+		ANTHROPIC_API_KEY="test-key" \
+		AIDEVOPS_HEADLESS_MODELS="opencode/minimax-m2.5-free,anthropic/claude-sonnet-4-6" \
+		bash "$HELPER" select --role worker 2>/dev/null || true
+)
+if [[ "$no_auth_gateway" == "anthropic/claude-sonnet-4-6" ]]; then
+	pass "opencode/* skipped when no auth, falls back to next provider"
+else
+	fail "opencode/* skipped when no auth, falls back to next provider" "got: $no_auth_gateway"
+fi
+
+# opencode/* models should work in cmd_run dispatch
+rm -f "$STUB_LOG_FILE"
+export STUB_SESSION_ID="ses_gateway_one"
+HOME="$TEST_TMP_DIR/fake-opencode-home" \
+	AIDEVOPS_HEADLESS_MODELS="opencode/minimax-m2.5-free" \
+	bash "$HELPER" run \
+	--role worker \
+	--session-key issue-gateway \
+	--dir "$REPO_DIR" \
+	--title "Issue Gateway" \
+	--prompt "Reply with exactly OK" >/dev/null
+if [[ -f "$STUB_LOG_FILE" ]] && grep -q 'opencode/minimax-m2.5-free' "$STUB_LOG_FILE"; then
+	pass "opencode/* gateway model dispatches via cmd_run"
+else
+	fail "opencode/* gateway model dispatches via cmd_run" "stub log: $(cat "$STUB_LOG_FILE" 2>/dev/null || echo 'missing')"
+fi
+
+# Explicit --model with opencode/* should work (no longer rejected)
+explicit_gateway=$(
+	HOME="$TEST_TMP_DIR/fake-opencode-home" \
+		bash "$HELPER" select --role worker --model opencode/minimax-m2.5-free 2>/dev/null || true
+)
+if [[ "$explicit_gateway" == "opencode/minimax-m2.5-free" ]]; then
+	pass "explicit --model opencode/* is accepted"
+else
+	fail "explicit --model opencode/* is accepted" "got: $explicit_gateway"
+fi
+
 echo ""
 printf "Total: %d, Passed: %d, Failed: %d\n" "$TOTAL_COUNT" "$PASS_COUNT" "$FAIL_COUNT"
 

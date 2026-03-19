@@ -7,7 +7,7 @@
 #   - Persists OpenCode session IDs per provider + session key
 #   - Records backoff state per model (rate limits) or per provider (auth errors)
 #   - Clears backoff automatically when auth changes or retry windows expire
-#   - Rejects opencode/* gateway models for headless runs (no Zen fallback)
+#   - Supports opencode/* gateway models when explicitly configured
 
 set -euo pipefail
 
@@ -174,6 +174,13 @@ get_auth_signature() {
 			auth_material="${auth_material}|status=${auth_status}|mtime=${auth_mtime}|env=missing"
 		fi
 		;;
+	opencode)
+		# Gateway models use OpenCode's OAuth session
+		local auth_file auth_mtime
+		auth_file="${HOME}/.local/share/opencode/auth.json"
+		auth_mtime=$(file_mtime "$auth_file")
+		auth_material="${auth_material}|mtime=${auth_mtime}"
+		;;
 	*)
 		auth_material="${auth_material}|unknown=true"
 		;;
@@ -199,9 +206,6 @@ get_configured_models() {
 	for item in "${raw_models[@]}"; do
 		item=$(trim_spaces "$item")
 		[[ -z "$item" ]] && continue
-		if [[ "$item" == opencode/* ]]; then
-			continue
-		fi
 		provider=$(extract_provider "$item" 2>/dev/null || printf '%s' "")
 		[[ -z "$provider" ]] && continue
 		if [[ ${#allowlist[@]} -gt 0 ]]; then
@@ -458,6 +462,14 @@ provider_auth_available() {
 		fi
 		return 1
 		;;
+	opencode)
+		# OpenCode gateway models use OpenCode's OAuth session
+		local auth_file="${HOME}/.local/share/opencode/auth.json"
+		if [[ -f "$auth_file" ]]; then
+			return 0
+		fi
+		return 1
+		;;
 	local)
 		# Local provider is always considered available (no auth needed)
 		return 0
@@ -552,10 +564,6 @@ choose_model() {
 	local provider last_provider start_index i idx current_model current_provider
 
 	if [[ -n "$explicit_model" ]]; then
-		if [[ "$explicit_model" == opencode/* ]]; then
-			print_error "Headless runtime rejects gateway model: $explicit_model"
-			return 1
-		fi
 		provider=$(extract_provider "$explicit_model" 2>/dev/null || printf '%s' "")
 		if [[ -z "$provider" ]]; then
 			print_error "Model must use provider/model format: $explicit_model"
@@ -963,7 +971,7 @@ Backoff granularity:
 Defaults:
   AIDEVOPS_HEADLESS_MODELS defaults to anthropic/claude-sonnet-4-6,openai/gpt-4o
   AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST can restrict selection to providers like: openai
-  Gateway models (opencode/*) are rejected for headless runs.
+  Gateway models (opencode/*) are supported when explicitly configured.
 EOF
 	return 0
 }
