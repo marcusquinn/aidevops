@@ -60,9 +60,57 @@ cloudron logs -f --app testapp
 ```
 <!-- AI-CONTEXT-END -->
 
-## Pre-Packaging Research
+## Pre-Packaging Assessment
 
-Before starting to package an app, search the Cloudron forum for existing knowledge:
+Before writing any code, assess whether the app is a good candidate for Cloudron packaging. Initial packaging is roughly 25% of total effort. The remaining 75% is SSO integration, upgrade path testing, backup correctness, and ongoing maintenance. A structured assessment upfront prevents wasted weeks on impractical candidates.
+
+### Step 1: Feasibility Assessment (Two-Axis Scoring)
+
+Score the app across two dimensions. If either score exceeds the "Hard" threshold, reconsider whether to proceed.
+
+**Axis A: Structural Difficulty** (how hard to get it running)
+
+| Sub-axis | 0 (Easy) | 1 (Moderate) | 2-3 (Hard) |
+|----------|----------|--------------|------------|
+| A1. Process count | Single process | 2-4 processes (web + worker) | 5+ processes or requires separate containers |
+| A2. Data storage | Cloudron addon or SQLite | — | Needs exotic store (Elasticsearch, Meilisearch, S3/Minio) |
+| A3. Runtime | Node.js, Python, PHP (in base image) | Go, Java, Ruby, Rust (binary available) | Must compile from source |
+| A4. Message broker | None needed | Redis works as broker (Celery/Bull) | Needs AMQP (requires LavinMQ in container) |
+| A5. Filesystem writes | 0-3 symlinks | 4-8 symlinks | 9+ or needs source patching |
+| A6. Authentication | Native LDAP/OIDC or no auth | Own auth, scriptable setup | Mandatory browser setup wizard |
+
+**Structural subtotal** (max 14): 0-2 Trivial, 3-4 Easy, 5-6 Medium, 7-9 Hard, 10+ Impractical.
+
+**Axis B: Compliance & Maintenance Cost** (how hard to keep it running well)
+
+| Sub-axis | 0 (Low) | 1-2 (Moderate) | 3 (High) |
+|----------|---------|----------------|----------|
+| B1. SSO quality | Native LDAP/OIDC works reliably | Partial SSO or proxyauth only | Auth conflicts with Cloudron (e.g., GoTrue coupling) |
+| B2. Upstream stability | Stable, semantic versioning | Active with occasional breaking changes | Pre-release, frequent breaking changes, licensing risk |
+| B3. Backup complexity | Only Cloudron-managed DB + /app/data | SQLite or custom backup needs | Internal data stores needing snapshot APIs |
+| B4. Platform fit | Standard HTTP behind reverse proxy | WebSocket (needs nginx config) | Needs raw TCP/UDP ports or assumes horizontal scaling |
+| B5. Config drift | Config from env vars, no self-modification | Plugin/extension system at runtime | Self-updating, modifies own code |
+
+**Compliance subtotal** (max 13): 0-2 Low, 3-5 Moderate, 6-8 High, 9+ Very High.
+
+**Decision rule**: If structural score is 10+ or compliance score is 9+, recommend against packaging and suggest alternatives. Document the assessment in the PR or issue for future reference.
+
+### Step 2: Gather Evidence
+
+Before scoring, fetch and read these files from the upstream repo:
+
+1. `docker-compose.yml` / `compose.yml` (reveals true dependency graph)
+2. `Dockerfile` (reveals build process and runtime)
+3. `package.json` / `requirements.txt` / `go.mod` / `Cargo.toml` / `composer.json`
+4. Auth documentation (search for "LDAP", "OIDC", "SSO", "SAML")
+5. GitHub releases page (release frequency, stability)
+6. Upstream self-hosting/deployment docs
+
+**The compose file is the single most valuable artifact.** It reveals the true dependency graph: which databases, caches, brokers, and workers the app actually needs. Ignore the monolithic Docker image if one exists.
+
+### Step 3: Pre-Packaging Research
+
+Search the Cloudron forum for existing knowledge:
 
 1. **Search by app name**: `https://forum.cloudron.io/search?term=APP_NAME&in=titles`
    Forum threads with the app name in the title often contain:
@@ -99,22 +147,45 @@ Cloudron app packaging creates Docker containers that integrate with Cloudron's 
 
 ### Base Image Selection
 
-```text
-Need web terminal access or complex deps?
-  YES -> cloudron/base:5.0.0 (recommended default)
-  NO  -> Does app provide official slim image?
-           YES -> Use official (e.g., php:8.2-fpm-bookworm)
-           NO  -> Need minimal size + no glibc deps?
-                    YES -> Alpine variant (e.g., node:20-alpine)
-                    NO  -> cloudron/base:5.0.0
-```
+**Always start from `cloudron/base:5.0.0`.** Do not start from the upstream app's Docker image.
+
+The upstream image trap: many complex apps ship monolithic Docker images that bundle their own databases, reverse proxies, and init systems. Starting from these images means fighting their assumptions. You end up disabling services, overriding configs, and debugging interactions between the app's internal process manager and Cloudron's external one. This approach has caused multi-week packaging failures (e.g., docassemble: 25 symlinks, 15-20 minute boot times, fragile result).
+
+The correct approach: read the upstream `docker-compose.yml` to understand the app's true dependencies, then install the app on `cloudron/base` using its package manager (pip, npm, composer, go build, or download binary).
+
+**When multi-stage builds are justified**: Only when the app's build toolchain is exotic or compilation from source on `cloudron/base` is impractical. Build in the upstream image, then `COPY --from` the compiled artifacts into a final stage based on `cloudron/base`.
+
+**Alpine/musl compatibility warning**: If the upstream image is Alpine-based (uses musl libc), binaries compiled inside it will NOT run on `cloudron/base` (Ubuntu/glibc). You will get `libc.musl-x86_64.so.1: cannot open shared object file` errors. Always compile in a glibc-based builder stage or use pre-built glibc binaries.
 
 **Why cloudron/base is the safe default**:
 - Pre-configured locales (prevents unicode crashes)
 - Includes `gosu` for privilege dropping
 - Web terminal compatibility (bash, utilities)
-- Consistent glibc environment
+- Consistent glibc environment (Ubuntu 24.04 LTS)
 - Security updates managed by Cloudron team
+- Shared layers across all Cloudron apps (disk efficient)
+
+**Base image contents (verified on Cloudron 9.1.3)**:
+
+| Component | Version | Notes |
+|-----------|---------|-------|
+| Ubuntu | 24.04.1 LTS | |
+| Node.js | 24.x (default PATH) | Node 22 LTS at `/usr/local/node-22.14.0` (set PATH explicitly to use) |
+| Python | 3.12.3 | pip 24.0 |
+| PHP | 8.3.6 | Extensive extensions: redis, imagick, ldap, gd, mbstring, etc. |
+| Nginx | 1.24.0 | |
+| Apache | 2.4.58 | |
+| Supervisor | 4.2.5 | For multi-process management |
+| gosu | 1.17 | |
+| gcc/g++ | 13.3.0 | Build tools available |
+| ImageMagick | 6.9.12 | |
+| ffmpeg | 6.1.1 | |
+| psql client | 16.6 | |
+| mysql client | 8.0.41 | |
+| redis-cli | 7.4.2 | |
+| mongosh | 2.4.0 | |
+
+**NOT in the base image** (install in Dockerfile if needed): Ruby, Go, Java, Rust, pandoc, wkhtmltopdf.
 
 **Version check**: https://hub.docker.com/r/cloudron/base/tags
 
@@ -247,6 +318,66 @@ touch /app/data/.initialized
 | Electron-based | 1024+ MB | |
 
 **Note**: `memoryLimit` is in bytes. 256MB = 268435456, 512MB = 536870912, 1GB = 1073741824
+
+**Reading memory limit at runtime** (for memory-aware worker counts):
+
+```bash
+if [[ -f /sys/fs/cgroup/cgroup.controllers ]]; then
+    mem=$(cat /sys/fs/cgroup/memory.max)
+    [[ "$mem" == "max" ]] && mem=$((2 * 1024 * 1024 * 1024))
+else
+    mem=$(cat /sys/fs/cgroup/memory/memory.limit_in_bytes)
+fi
+workers=$(( mem / 1024 / 1024 / 128 ))  # 1 worker per 128MB
+[[ $workers -lt 1 ]] && workers=1
+```
+
+### TCP/UDP Port Exposure
+
+Cloudron supports exposing raw TCP and UDP ports via the manifest, not just HTTP. This is required for protocols like XMPP (5222/5269), MQTT, game servers, or any non-HTTP service.
+
+```json
+{
+  "tcpPorts": {
+    "XMPP_C2S_PORT": {
+      "title": "XMPP Client",
+      "description": "XMPP client-to-server port",
+      "containerPort": 5222,
+      "defaultValue": 5222
+    }
+  },
+  "udpPorts": {
+    "STUN_PORT": {
+      "title": "STUN/TURN",
+      "description": "STUN/TURN for voice/video",
+      "containerPort": 3478,
+      "defaultValue": 3478
+    }
+  }
+}
+```
+
+The port values are exposed as environment variables (e.g., `XMPP_C2S_PORT`) so the app can read the externally mapped port. Note that apps using TCP/UDP ports must handle their own TLS termination for those ports (Cloudron's reverse proxy only handles HTTP).
+
+### 9.1+ Manifest Features
+
+**`persistentDirs`**: Directories that persist across updates without needing the `localstorage` addon. Useful for apps that write to specific paths outside `/app/data`.
+
+**`backupCommand` / `restoreCommand`**: Custom commands run during backup/restore for apps with special backup needs (e.g., consistent SQLite snapshots, application-level dump/restore).
+
+```json
+{
+  "addons": {
+    "localstorage": {
+      "sqlite": {
+        "paths": ["/app/data/db/app.db"]
+      }
+    }
+  },
+  "backupCommand": "/app/code/backup.sh",
+  "restoreCommand": "/app/code/restore.sh"
+}
+```
 
 ### Health Check Requirements
 
@@ -567,7 +698,43 @@ cloudron uninstall --app testapp
 [ ] Logs stream to stdout/stderr
 ```
 
+## The Message Broker Problem
+
+Cloudron has no AMQP addon. Apps using Celery, Sidekiq, or any AMQP-dependent task queue need a broker solution.
+
+**Option A: Redis as broker (preferred)**. If the app supports Redis as a broker backend (Celery does natively), use the Cloudron Redis addon:
+
+```python
+# Celery with Redis broker
+CELERY_BROKER_URL = os.environ['CLOUDRON_REDIS_URL']
+CELERY_RESULT_BACKEND = os.environ['CLOUDRON_REDIS_URL']
+```
+
+**Option B: LavinMQ (when AMQP is required)**. LavinMQ is a lightweight AMQP broker (~40 MB RAM, single binary, drop-in RabbitMQ replacement). Install in the Dockerfile and run under Supervisor:
+
+```dockerfile
+RUN curl -fsSL https://packagecloud.io/cloudamqp/lavinmq/gpgkey | gpg --dearmor -o /usr/share/keyrings/lavinmq.gpg && \
+    echo "deb [signed-by=/usr/share/keyrings/lavinmq.gpg] https://packagecloud.io/cloudamqp/lavinmq/ubuntu/ noble main" \
+    > /etc/apt/sources.list.d/lavinmq.list && \
+    apt-get update && apt-get install -y lavinmq && \
+    rm -rf /var/cache/apt /var/lib/apt/lists/*
+```
+
+Store data under `/app/data/lavinmq` and run as a Supervisor program.
+
 ## Anti-Patterns to Avoid
+
+### Starting from the upstream Docker image
+
+```dockerfile
+# WRONG - Fighting the image's assumptions about bundled services
+FROM someapp/monolith:latest
+# ... weeks of disabling internal postgres, redis, nginx ...
+
+# CORRECT - Install the app on cloudron/base
+FROM cloudron/base:5.0.0
+RUN pip install someapp  # or npm install, go build, download binary
+```
 
 ### Writing to /app/code
 

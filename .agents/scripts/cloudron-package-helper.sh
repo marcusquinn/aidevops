@@ -13,7 +13,7 @@
 #   debug [app]           Enable debug mode
 #   debug-off [app]       Disable debug mode
 #   test [app]            Run validation checklist
-#   scaffold [type]       Generate boilerplate (php|node|python|go|static)
+#   scaffold [type]       Generate boilerplate (php|node|python|go|static|multi-process)
 #   status                Show current package status
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
@@ -410,9 +410,12 @@ cmd_scaffold() {
 	static)
 		scaffold_static
 		;;
+	multi-process)
+		scaffold_multi_process
+		;;
 	*)
 		log_error "Usage: cloudron-package-helper.sh scaffold <type>"
-		echo "Types: php, node, python, go, static"
+		echo "Types: php, node, python, go, static, multi-process"
 		return 1
 		;;
 	esac
@@ -668,7 +671,7 @@ scaffold_go() {
 	fi
 
 	cat >Dockerfile <<'EOF'
-FROM golang:1.21 AS builder
+FROM golang:1.23 AS builder
 
 WORKDIR /build
 COPY go.* ./
@@ -797,6 +800,155 @@ EOF
 	log_success "Static site scaffold created"
 }
 
+scaffold_multi_process() {
+	log_info "Generating multi-process (supervisord) scaffold..."
+
+	# Check for existing files
+	if [[ -f "Dockerfile" || -f "start.sh" ]]; then
+		log_warn "This will overwrite existing Dockerfile, start.sh, and supervisord.conf"
+		read -rp "Continue? [y/N] " confirm
+		if ! [[ "$confirm" =~ ^[Yy]$ ]]; then
+			log_info "Scaffold cancelled."
+			return 0
+		fi
+	fi
+
+	cat >Dockerfile <<'EOF'
+FROM cloudron/base:5.0.0
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    nginx \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /app/code
+COPY --chown=cloudron:cloudron . /app/code/
+
+RUN mkdir -p /app/code/defaults
+
+# Nginx config
+COPY nginx.conf /etc/nginx/sites-available/app.conf
+RUN ln -sf /etc/nginx/sites-available/app.conf /etc/nginx/sites-enabled/app.conf && \
+    rm -f /etc/nginx/sites-enabled/default
+
+COPY start.sh /app/code/start.sh
+COPY supervisord.conf /app/code/supervisord.conf
+RUN chmod +x /app/code/start.sh
+
+EXPOSE 8000
+
+CMD ["/app/code/start.sh"]
+EOF
+
+	cat >supervisord.conf <<'EOF'
+[supervisord]
+nodaemon=true
+logfile=/dev/null
+logfile_maxbytes=0
+pidfile=/run/supervisord.pid
+
+[program:nginx]
+command=/usr/sbin/nginx -g "daemon off;"
+autostart=true
+autorestart=true
+stdout_logfile=/dev/stdout
+stdout_logfile_maxbytes=0
+stderr_logfile=/dev/stderr
+stderr_logfile_maxbytes=0
+
+[program:app]
+command=/usr/local/bin/gosu cloudron:cloudron /app/code/bin/server
+directory=/app/code
+autostart=true
+autorestart=true
+stdout_logfile=/dev/stdout
+stdout_logfile_maxbytes=0
+stderr_logfile=/dev/stderr
+stderr_logfile_maxbytes=0
+
+[program:worker]
+command=/usr/local/bin/gosu cloudron:cloudron /app/code/bin/worker
+directory=/app/code
+autostart=true
+autorestart=true
+stdout_logfile=/dev/stdout
+stdout_logfile_maxbytes=0
+stderr_logfile=/dev/stderr
+stderr_logfile_maxbytes=0
+EOF
+
+	cat >nginx.conf <<'EOF'
+client_body_temp_path /run/nginx/client_body;
+proxy_temp_path /run/nginx/proxy;
+fastcgi_temp_path /run/nginx/fastcgi;
+scgi_temp_path /run/nginx/scgi;
+uwsgi_temp_path /run/nginx/uwsgi;
+
+server {
+    listen 8000;
+
+    client_max_body_size 128m;
+
+    # Immediate health check (responds before upstream is ready)
+    location = /health {
+        access_log off;
+        return 200 'ok';
+        add_header Content-Type text/plain;
+    }
+
+    location / {
+        proxy_pass http://127.0.0.1:8001;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_read_timeout 86400;
+    }
+}
+EOF
+
+	cat >start.sh <<'EOF'
+#!/bin/bash
+set -eu
+
+echo "==> Starting Multi-Process App"
+
+# First-run detection
+if [[ ! -f /app/data/.initialized ]]; then
+    FIRST_RUN=true
+    echo "==> First run detected"
+else
+    FIRST_RUN=false
+fi
+
+# Create directories
+mkdir -p /app/data/config /app/data/storage /app/data/logs
+mkdir -p /run/app /run/nginx/client_body /run/nginx/proxy /run/nginx/fastcgi /run/nginx/scgi /run/nginx/uwsgi
+
+# First-run initialization
+if [[ "$FIRST_RUN" == "true" ]]; then
+    echo "==> Copying default configs"
+    cp -rn /app/code/defaults/* /app/data/ 2>/dev/null || true
+fi
+
+# Fix permissions
+chown -R cloudron:cloudron /app/data /run/app
+
+touch /app/data/.initialized
+
+# Launch all processes via supervisord
+echo "==> Starting supervisord"
+exec /usr/bin/supervisord --configuration /app/code/supervisord.conf
+EOF
+	chmod +x start.sh
+
+	log_success "Multi-process scaffold created (nginx + app + worker via supervisord)"
+	log_info "Edit supervisord.conf to configure your app and worker commands"
+	log_info "The nginx health check at /health responds immediately (before app is ready)"
+}
+
 # Show current package status
 cmd_status() {
 	check_app_dir || return 1
@@ -848,7 +1000,7 @@ Commands:
   debug [app]           Enable debug mode
   debug-off [app]       Disable debug mode
   test [app]            Show validation checklist
-  scaffold <type>       Generate boilerplate (php|node|python|go|static)
+  scaffold <type>       Generate boilerplate (php|node|python|go|static|multi-process)
   status                Show current package status
   help                  Show this help
 
