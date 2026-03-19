@@ -1460,6 +1460,8 @@ setup_ai_orchestration() {
 	local python_required_minor="${PYTHON_REQUIRED_MINOR:-10}"
 	local recommended_python_formula
 	recommended_python_formula=$(get_recommended_python_formula)
+	local recommended_python_version
+	recommended_python_version="${recommended_python_formula#python@}"
 
 	# Check Python (prefer Homebrew/pyenv over system) — uses shared helpers
 	# from _common.sh (get_recommended_python_formula, find_python3,
@@ -1477,10 +1479,16 @@ setup_ai_orchestration() {
 			print_success "Python $python_version found ($python_required_major.$python_required_minor+ required)"
 		else
 			print_warning "Python $python_required_major.$python_required_minor+ required for AI orchestration, found $python_version"
+			if [[ "${PLATFORM_MACOS:-false}" == "true" ]]; then
+				print_info "Alternative (pyenv): pyenv install ${recommended_python_version} && pyenv global ${recommended_python_version}"
+			fi
 			offer_python_brew_install "upgrade" "$recommended_python_formula" || true
 		fi
 	else
 		print_warning "Python 3 not found - AI orchestration frameworks unavailable"
+		if [[ "${PLATFORM_MACOS:-false}" == "true" ]]; then
+			print_info "Alternative (pyenv): pyenv install ${recommended_python_version} && pyenv global ${recommended_python_version}"
+		fi
 		offer_python_brew_install "install" "$recommended_python_formula" || true
 		return 0
 	fi
