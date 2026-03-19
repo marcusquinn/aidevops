@@ -147,29 +147,29 @@ check_rules_installed() {
 	repo_root=$(get_repo_root)
 
 	# Extract rule IDs from config and check each
-	local missing_rules=""
+	local missing_rules=()
 
 	# Check for preset-recommend (most common)
 	if grep -q "secretlint-rule-preset-recommend" "${config_file}"; then
 		if ! _is_npm_pkg_installed "@secretlint/secretlint-rule-preset-recommend" "${repo_root}"; then
-			missing_rules="${missing_rules} @secretlint/secretlint-rule-preset-recommend"
+			missing_rules+=("@secretlint/secretlint-rule-preset-recommend")
 		fi
 	fi
 
 	# Check for pattern rule
 	if grep -q "secretlint-rule-pattern" "${config_file}"; then
 		if ! _is_npm_pkg_installed "@secretlint/secretlint-rule-pattern" "${repo_root}"; then
-			missing_rules="${missing_rules} @secretlint/secretlint-rule-pattern"
+			missing_rules+=("@secretlint/secretlint-rule-pattern")
 		fi
 	fi
 
-	if [[ -n "${missing_rules}" ]]; then
+	if [[ ${#missing_rules[@]} -gt 0 ]]; then
 		print_error "Missing required secretlint rules:"
 		local rule
-		for rule in ${missing_rules}; do
+		for rule in "${missing_rules[@]}"; do
 			echo "  - ${rule}"
 		done
-		print_info "Install with: npm install --save-dev${missing_rules}"
+		print_info "Install with: npm install --save-dev ${missing_rules[*]}"
 		return 1
 	fi
 
@@ -698,16 +698,12 @@ show_status() {
 	echo ""
 
 	# Show worktree info if applicable
-	local worktree_detected=0
-	is_git_worktree && worktree_detected=1 || true
-	if [[ "${worktree_detected}" -eq 1 ]]; then
+	if is_git_worktree; then
 		local repo_root
 		repo_root=$(get_repo_root)
 		print_info "Git worktree detected"
 		print_info "Main repo: ${repo_root}"
-		local cwd
-		cwd=$(pwd)
-		print_info "Worktree: ${cwd}"
+		print_info "Worktree: $(pwd)"
 		echo ""
 	fi
 
