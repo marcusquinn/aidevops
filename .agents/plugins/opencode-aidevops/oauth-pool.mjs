@@ -39,6 +39,9 @@ const RATE_LIMIT_COOLDOWN_MS = 60_000;
 /** Default cooldown on auth failure (ms) */
 const AUTH_FAILURE_COOLDOWN_MS = 300_000;
 
+/** Cooldown after a 429 on the token endpoint (ms) — 5 minutes */
+const TOKEN_ENDPOINT_COOLDOWN_MS = 300_000;
+
 /** Max retry attempts per request across pool accounts */
 const MAX_ROTATION_ATTEMPTS = 5;
 
@@ -52,31 +55,58 @@ const REQUIRED_BETAS = [
 // ---------------------------------------------------------------------------
 
 /**
- * Fetch from the token endpoint. Single attempt — no retry.
+ * In-memory timestamp of the last 429 from the token endpoint.
+ * When set, all token endpoint calls are skipped until the cooldown expires.
+ * This prevents hammering the endpoint and extending the rate limit window.
+ * @type {number}
+ */
+let tokenEndpointCooldownUntil = 0;
+
+/**
+ * Fetch from the token endpoint. Single attempt with 429 cooldown gate.
  *
- * Why no retry:
- * - Token exchanges use single-use authorization codes. Retrying a failed
- *   exchange with the same code will always fail (code is burned on first attempt).
- * - Token refreshes that get 429 indicate sustained rate limiting. Retrying
- *   within the same request just extends the rate limit window.
- * - The caller (pool rotation or session retry) handles recovery at a higher level.
+ * If a previous call got 429 within the cooldown window, this returns a
+ * synthetic 429 response immediately — no network request made. This prevents
+ * every session start from hitting the endpoint and extending the rate limit.
  *
  * @param {string} body - JSON string body
  * @param {string} context - description for logging
  * @returns {Promise<Response>}
  */
 async function fetchTokenEndpoint(body, context) {
+  // Check cooldown gate — skip the request entirely if rate limited recently
+  const now = Date.now();
+  if (tokenEndpointCooldownUntil > now) {
+    const remainingSeconds = Math.ceil((tokenEndpointCooldownUntil - now) / 1000);
+    const remainingMinutes = Math.ceil(remainingSeconds / 60);
+    console.error(
+      `[aidevops] OAuth pool: ${context} skipped — token endpoint rate limited, cooldown ${remainingMinutes}m remaining. ` +
+      `Use /model-accounts-pool reset-cooldowns to clear manually.`,
+    );
+    return new Response(null, { status: 429, statusText: "Rate Limited (cooldown)" });
+  }
+
   const response = await fetch(TOKEN_ENDPOINT, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body,
   });
 
-  if (!response.ok) {
-    const detail = response.status === 429
-      ? "rate limited by Anthropic — wait a few minutes before trying again"
-      : `HTTP ${response.status}`;
-    console.error(`[aidevops] OAuth pool: ${context} failed: ${detail}`);
+  if (response.status === 429) {
+    // Parse Retry-After header if present, otherwise use default cooldown
+    const retryAfter = response.headers.get("retry-after");
+    const cooldownMs = retryAfter
+      ? Math.max(parseInt(retryAfter, 10) * 1000, TOKEN_ENDPOINT_COOLDOWN_MS)
+      : TOKEN_ENDPOINT_COOLDOWN_MS;
+    tokenEndpointCooldownUntil = Date.now() + cooldownMs;
+    const cooldownMinutes = Math.ceil(cooldownMs / 60000);
+    console.error(
+      `[aidevops] OAuth pool: ${context} failed: rate limited by Anthropic. ` +
+      `Cooldown set for ${cooldownMinutes}m — no further token requests until then. ` +
+      `Use /model-accounts-pool reset-cooldowns to clear manually.`,
+    );
+  } else if (!response.ok) {
+    console.error(`[aidevops] OAuth pool: ${context} failed: HTTP ${response.status}`);
   }
 
   return response;
@@ -1001,6 +1031,11 @@ export function createPoolTool() {
             (a) => !a.cooldownUntil || a.cooldownUntil <= now,
           ).length;
 
+          const tokenGated = tokenEndpointCooldownUntil > now;
+          const tokenGateInfo = tokenGated
+            ? `  TOKEN ENDPOINT: RATE LIMITED (${Math.ceil((tokenEndpointCooldownUntil - now) / 60000)}m remaining)`
+            : `  Token endpoint: OK`;
+
           return [
             `${provider} pool status:`,
             `  Total accounts: ${accounts.length}`,
@@ -1009,25 +1044,35 @@ export function createPoolTool() {
             `  Rate limited:   ${rateLimited}`,
             `  Auth errors:    ${authError}`,
             "",
+            tokenGateInfo,
             `Pool file: ${POOL_FILE}`,
           ].join("\n");
         }
 
         case "reset-cooldowns": {
+          // Reset token endpoint cooldown (in-memory)
+          const wasGated = tokenEndpointCooldownUntil > Date.now();
+          tokenEndpointCooldownUntil = 0;
+
+          // Reset per-account cooldowns (pool file)
           const pool = loadPool();
-          if (!pool[provider]) {
-            return `No accounts in the ${provider} pool.`;
-          }
           let resetCount = 0;
-          for (const account of pool[provider]) {
-            if (account.cooldownUntil) {
-              account.cooldownUntil = null;
-              account.status = "idle";
-              resetCount++;
+          if (pool[provider]) {
+            for (const account of pool[provider]) {
+              if (account.cooldownUntil) {
+                account.cooldownUntil = null;
+                account.status = "idle";
+                resetCount++;
+              }
             }
+            savePool(pool);
           }
-          savePool(pool);
-          return `Reset cooldowns for ${resetCount} account${resetCount === 1 ? "" : "s"} in ${provider} pool.`;
+
+          const parts = [];
+          if (wasGated) parts.push("token endpoint cooldown cleared");
+          if (resetCount > 0) parts.push(`${resetCount} account cooldown${resetCount === 1 ? "" : "s"} cleared`);
+          if (parts.length === 0) parts.push("no active cooldowns");
+          return `Reset: ${parts.join(", ")}. Token endpoint requests will proceed on next attempt.`;
         }
 
         default:
