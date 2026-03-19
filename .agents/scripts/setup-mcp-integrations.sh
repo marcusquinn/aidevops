@@ -38,6 +38,7 @@ get_mcp_command() {
 	"dataforseo") echo "npx dataforseo-mcp-server" ;;
 	# serper - REMOVED: Uses curl subagent (.agents/seo/serper.md), no MCP needed
 	"unstract") echo "docker:unstract/mcp-server" ;;
+	"context7") echo "npx @upstash/context7-mcp@latest" ;;
 	*) echo "" ;;
 	esac
 	return 0
@@ -60,6 +61,7 @@ MCP_LIST=(
 	"stagehand-both"
 	"dataforseo"
 	"unstract"
+	"context7"
 )
 
 is_known_mcp() {
@@ -338,6 +340,30 @@ install_mcp() {
 		print_info ""
 		print_info "The MCP connects to your local instance by default."
 		print_info "Config template: configs/mcp-templates/unstract.json"
+		;;
+	"context7")
+		print_info "Setting up Context7 MCP for real-time library documentation..."
+		print_info "Context7 provides up-to-date docs for libraries and frameworks."
+		print_info ""
+		print_info "Two setup options:"
+		print_info ""
+		print_info "  1. Remote MCP (recommended — zero install):"
+		print_info '     "context7": {'
+		print_info '       "type": "remote",'
+		print_info '       "url": "https://mcp.context7.com/mcp",'
+		print_info '       "enabled": true'
+		print_info '     }'
+		print_info ""
+		print_info "  2. Local MCP (via npx):"
+		print_info '     "context7": {'
+		print_info '       "type": "local",'
+		print_info '       "command": ["npx", "@upstash/context7-mcp@latest"],'
+		print_info '       "enabled": true'
+		print_info '     }'
+		print_info ""
+		print_info "Disable telemetry: export CTX7_TELEMETRY_DISABLED=1"
+		print_info "CLI alternative: npx ctx7 setup --opencode --cli"
+		print_info "Docs: ~/.aidevops/agents/tools/context/context7.md"
 		;;
 	*)
 		print_error "Unknown MCP integration: $mcp_name"
