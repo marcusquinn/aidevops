@@ -111,9 +111,13 @@ function loadPool() {
  * @param {PoolData} data
  */
 function savePool(data) {
-  const dir = dirname(POOL_FILE);
-  mkdirSync(dir, { recursive: true });
-  writeFileSync(POOL_FILE, JSON.stringify(data, null, 2), { mode: 0o600 });
+  try {
+    const dir = dirname(POOL_FILE);
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(POOL_FILE, JSON.stringify(data, null, 2), { mode: 0o600 });
+  } catch (err) {
+    console.error(`[aidevops] OAuth pool: failed to save pool file: ${err.message}`);
+  }
 }
 
 /**
@@ -195,14 +199,22 @@ async function refreshAccessToken(account) {
         client_id: CLIENT_ID,
       }),
     });
-    if (!response.ok) return null;
+    if (!response.ok) {
+      console.error(
+        `[aidevops] OAuth pool: token refresh failed for ${account.email}: HTTP ${response.status}`,
+      );
+      return null;
+    }
     const json = await response.json();
     return {
       access: json.access_token,
       refresh: json.refresh_token,
       expires: Date.now() + json.expires_in * 1000,
     };
-  } catch {
+  } catch (err) {
+    console.error(
+      `[aidevops] OAuth pool: token refresh error for ${account.email}: ${err.message}`,
+    );
     return null;
   }
 }
@@ -632,13 +644,18 @@ export function createPoolAuthHook(client) {
             instructions: `Adding account: ${email}\nPaste the authorization code here: `,
             method: "code",
             callback: async (code) => {
-              const splits = code.split("#");
+              // Anthropic's OAuth callback returns code#state format
+              // The # separator is part of their OAuth flow (matches built-in plugin)
+              const hashIdx = code.indexOf("#");
+              const authCode = hashIdx >= 0 ? code.substring(0, hashIdx) : code;
+              const state = hashIdx >= 0 ? code.substring(hashIdx + 1) : undefined;
+
               const result = await fetch(TOKEN_ENDPOINT, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
-                  code: splits[0],
-                  state: splits[1],
+                  code: authCode,
+                  state,
                   grant_type: "authorization_code",
                   client_id: CLIENT_ID,
                   redirect_uri: REDIRECT_URI,
@@ -647,6 +664,9 @@ export function createPoolAuthHook(client) {
               });
 
               if (!result.ok) {
+                console.error(
+                  `[aidevops] OAuth pool: token exchange failed: HTTP ${result.status}`,
+                );
                 return { type: "failed" };
               }
 
