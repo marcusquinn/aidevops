@@ -574,99 +574,122 @@ function createPoolFetch(provider) {
 // ---------------------------------------------------------------------------
 
 /**
- * Seed a placeholder auth entry for the pool provider in OpenCode's auth.json.
+ * Create the auth hook that replaces the built-in anthropic auth plugin.
  *
- * OpenCode only shows providers in the "Connect a provider" dialog if they
- * have an auth entry (auth.json) OR exist on models.dev. Since anthropic-pool
- * is a custom provider not on models.dev, we need to seed a placeholder entry
- * so the provider appears in the dialog for first-time setup.
+ * By registering provider: "anthropic", this hook overrides the built-in
+ * opencode-anthropic-auth plugin (our plugin loads after BUILTIN plugins,
+ * and Record.fromEntries gives last-writer-wins on duplicate keys).
  *
- * If pool accounts already exist, the placeholder is seeded with the first
- * account's credentials so the loader can immediately use them.
+ * Behavior:
+ *   - Pool has accounts → pool fetch wrapper with rotation on 429
+ *   - Pool empty, auth.json has OAuth → single-account fallback (same as built-in)
+ *   - Pool empty, no auth → empty (prompt to add account)
  *
- * @param {any} client - OpenCode SDK client
- */
-export async function initPoolAuth(client) {
-  try {
-    // Check if auth entry already exists
-    const existing = await client.auth.get({ path: { id: "anthropic-pool" } });
-    if (existing?.data) return; // Already seeded
-  } catch {
-    // No entry exists — proceed to seed
-  }
-
-  try {
-    const accounts = getAccounts("anthropic");
-    if (accounts.length > 0) {
-      // Seed with first account's real credentials
-      const first = accounts[0];
-      await client.auth.set({
-        path: { id: "anthropic-pool" },
-        body: {
-          type: "oauth",
-          refresh: first.refresh,
-          access: first.access,
-          expires: first.expires,
-        },
-      });
-    } else {
-      // Seed with a placeholder so the provider appears in the connect dialog.
-      // The placeholder has type "oauth" with empty tokens — the loader will
-      // detect no pool accounts and return empty options, but the provider
-      // will be visible for the user to add their first account.
-      await client.auth.set({
-        path: { id: "anthropic-pool" },
-        body: {
-          type: "oauth",
-          refresh: "",
-          access: "",
-          expires: 0,
-        },
-      });
-    }
-    console.error("[aidevops] OAuth pool: seeded auth entry for anthropic-pool provider");
-  } catch (err) {
-    console.error(`[aidevops] OAuth pool: failed to seed auth entry: ${err.message}`);
-  }
-}
-
-/**
- * Create the auth hook for the pool provider.
+ * This ensures the existing OAuth token keeps working until pool accounts
+ * are added, at which point rotation takes over seamlessly.
+ *
  * @param {any} client - OpenCode SDK client
  * @returns {import('@opencode-ai/plugin').AuthHook}
  */
 export function createPoolAuthHook(client) {
   return {
-    provider: "anthropic-pool",
+    provider: "anthropic",
 
     /**
      * Loader: called when OpenCode needs credentials for this provider.
-     * Returns provider options including a custom fetch wrapper.
+     *
+     * Three modes:
+     * 1. Pool accounts exist → pool fetch wrapper (rotation on 429)
+     * 2. No pool accounts, auth.json has OAuth → single-account fallback
+     * 3. No pool accounts, no auth → empty options
      */
     async loader(getAuth, provider) {
       const accounts = getAccounts("anthropic");
-      if (accounts.length === 0) {
-        return {};
+
+      // Zero out costs for OAuth (Max plan pricing) regardless of mode
+      const auth = await getAuth();
+      if (auth?.type === "oauth" || accounts.length > 0) {
+        for (const model of Object.values(provider.models)) {
+          model.cost = {
+            input: 0,
+            output: 0,
+            cache: { read: 0, write: 0 },
+          };
+        }
       }
 
-      // Zero out costs for OAuth (Max plan pricing)
-      for (const model of Object.values(provider.models)) {
-        model.cost = {
-          input: 0,
-          output: 0,
-          cache: { read: 0, write: 0 },
+      // Mode 1: Pool accounts exist — use rotation
+      if (accounts.length > 0) {
+        return {
+          apiKey: "",
+          fetch: createPoolFetch("anthropic"),
         };
       }
 
-      return {
-        apiKey: "",
-        fetch: createPoolFetch("anthropic"),
-      };
+      // Mode 2: No pool accounts — fall back to single-account (built-in behavior)
+      // This preserves the existing OAuth token until pool accounts are added.
+      if (auth?.type === "oauth") {
+        return {
+          apiKey: "",
+          /**
+           * Single-account fetch wrapper — replicates the built-in
+           * opencode-anthropic-auth plugin's behavior exactly.
+           * @param {any} input
+           * @param {any} init
+           */
+          async fetch(input, init) {
+            const currentAuth = await getAuth();
+            if (currentAuth?.type !== "oauth") return fetch(input, init);
+
+            // Refresh token if expired
+            if (!currentAuth.access || currentAuth.expires < Date.now()) {
+              const response = await fetch(TOKEN_ENDPOINT, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  grant_type: "refresh_token",
+                  refresh_token: currentAuth.refresh,
+                  client_id: CLIENT_ID,
+                }),
+              });
+              if (!response.ok) {
+                throw new Error(`Token refresh failed: ${response.status}`);
+              }
+              const json = await response.json();
+              await client.auth.set({
+                path: { id: "anthropic" },
+                body: {
+                  type: "oauth",
+                  refresh: json.refresh_token,
+                  access: json.access_token,
+                  expires: Date.now() + json.expires_in * 1000,
+                },
+              });
+              currentAuth.access = json.access_token;
+            }
+
+            const headers = buildOAuthHeaders(input, init, currentAuth.access);
+            const body = transformRequestBody(init?.body);
+            const { input: finalInput } = maybeAddBetaParam(input);
+
+            const response = await fetch(finalInput, {
+              ...init,
+              body,
+              headers,
+            });
+
+            return transformResponse(response);
+          },
+        };
+      }
+
+      // Mode 3: No auth at all
+      return {};
     },
 
     methods: [
       {
-        label: "Add Anthropic Account (Claude Pro/Max)",
+        label: "Add Account to Pool (Claude Pro/Max)",
         type: "oauth",
         prompts: [
           {
@@ -702,7 +725,6 @@ export function createPoolAuthHook(client) {
             method: "code",
             callback: async (code) => {
               // Anthropic's OAuth callback returns code#state format
-              // The # separator is part of their OAuth flow (matches built-in plugin)
               const hashIdx = code.indexOf("#");
               const authCode = hashIdx >= 0 ? code.substring(0, hashIdx) : code;
               const state = hashIdx >= 0 ? code.substring(hashIdx + 1) : undefined;
@@ -746,8 +768,7 @@ export function createPoolAuthHook(client) {
                 `[aidevops] OAuth pool: added ${email} (${totalAccounts} account${totalAccounts === 1 ? "" : "s"} total)`,
               );
 
-              // Return success so OpenCode stores a dummy entry in auth.json
-              // (required for the provider to be considered "authenticated")
+              // Return success — OpenCode stores this in auth.json for "anthropic"
               return {
                 type: "success",
                 refresh: json.refresh_token,
@@ -758,95 +779,78 @@ export function createPoolAuthHook(client) {
           };
         },
       },
+      {
+        label: "Create an API Key",
+        type: "oauth",
+        authorize: async () => {
+          const pkce = generatePKCE();
+          const url = new URL("https://console.anthropic.com/oauth/authorize");
+          url.searchParams.set("code", "true");
+          url.searchParams.set("client_id", CLIENT_ID);
+          url.searchParams.set("response_type", "code");
+          url.searchParams.set("redirect_uri", REDIRECT_URI);
+          url.searchParams.set("scope", OAUTH_SCOPES);
+          url.searchParams.set("code_challenge", pkce.challenge);
+          url.searchParams.set("code_challenge_method", "S256");
+          url.searchParams.set("state", pkce.verifier);
+          return {
+            url: url.toString(),
+            instructions: "Paste the authorization code here: ",
+            method: "code",
+            callback: async (code) => {
+              const hashIdx = code.indexOf("#");
+              const authCode = hashIdx >= 0 ? code.substring(0, hashIdx) : code;
+              const codeState = hashIdx >= 0 ? code.substring(hashIdx + 1) : undefined;
+              const response = await fetch(TOKEN_ENDPOINT, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  code: authCode,
+                  state: codeState,
+                  grant_type: "authorization_code",
+                  client_id: CLIENT_ID,
+                  redirect_uri: REDIRECT_URI,
+                  code_verifier: pkce.verifier,
+                }),
+              });
+              if (!response.ok) return { type: "failed" };
+              const credentials = await response.json();
+              const apiKeyResponse = await fetch(
+                "https://api.anthropic.com/api/oauth/claude_cli/create_api_key",
+                {
+                  method: "POST",
+                  headers: {
+                    "Content-Type": "application/json",
+                    authorization: `Bearer ${credentials.access_token}`,
+                  },
+                },
+              );
+              if (!apiKeyResponse.ok) {
+                console.error(
+                  `[aidevops] OAuth pool: API key creation failed: HTTP ${apiKeyResponse.status}`,
+                );
+                return { type: "failed" };
+              }
+              const apiKeyResult = await apiKeyResponse.json();
+              return { type: "success", key: apiKeyResult.raw_key };
+            },
+          };
+        },
+      },
+      {
+        provider: "anthropic",
+        label: "Manually enter API Key",
+        type: "api",
+      },
     ],
   };
 }
 
-// ---------------------------------------------------------------------------
-// Config hook helper (register pool provider models)
-// ---------------------------------------------------------------------------
-
-/**
- * Register the anthropic-pool provider with Anthropic's model list.
- * Called from the main plugin's config hook.
- * @param {any} config - OpenCode config object
- */
-export function registerPoolProvider(config) {
-  if (!config.provider) config.provider = {};
-
-  // Always register — the provider must appear in the "Connect a provider"
-  // dialog even before any accounts are added (first-time setup).
-  if (!config.provider["anthropic-pool"]) {
-    config.provider["anthropic-pool"] = {
-      name: "Anthropic Pool",
-      npm: "@ai-sdk/anthropic",
-      api: "https://api.anthropic.com/v1",
-      // Models must be defined explicitly — models.dev doesn't know about
-      // anthropic-pool, so OpenCode won't auto-populate them.
-      models: {
-        "claude-sonnet-4-20250514": {
-          name: "Claude Sonnet 4",
-          attachment: true,
-          reasoning: true,
-          tool_call: true,
-          temperature: true,
-          interleaved: true,
-          modalities: {
-            input: ["text", "image", "pdf"],
-            output: ["text"],
-          },
-          cost: { input: 0, output: 0, cache_read: 0, cache_write: 0 },
-          limit: { context: 200000, output: 16000 },
-          family: "claude-4",
-        },
-        "claude-opus-4-20250514": {
-          name: "Claude Opus 4",
-          attachment: true,
-          reasoning: true,
-          tool_call: true,
-          temperature: true,
-          interleaved: true,
-          modalities: {
-            input: ["text", "image", "pdf"],
-            output: ["text"],
-          },
-          cost: { input: 0, output: 0, cache_read: 0, cache_write: 0 },
-          limit: { context: 200000, output: 32000 },
-          family: "claude-4",
-        },
-        "claude-3-7-sonnet-20250219": {
-          name: "Claude 3.7 Sonnet",
-          attachment: true,
-          reasoning: true,
-          tool_call: true,
-          temperature: true,
-          modalities: {
-            input: ["text", "image", "pdf"],
-            output: ["text"],
-          },
-          cost: { input: 0, output: 0, cache_read: 0, cache_write: 0 },
-          limit: { context: 200000, output: 16384 },
-          family: "claude-3.7",
-        },
-        "claude-3-5-haiku-20241022": {
-          name: "Claude 3.5 Haiku",
-          attachment: true,
-          tool_call: true,
-          temperature: true,
-          modalities: {
-            input: ["text", "image"],
-            output: ["text"],
-          },
-          cost: { input: 0, output: 0, cache_read: 0, cache_write: 0 },
-          limit: { context: 200000, output: 8192 },
-          family: "claude-3.5",
-        },
-      },
-    };
-  }
-
-  return 1;
-}
+// registerPoolProvider and initPoolAuth are no longer needed.
+// By using provider: "anthropic" (same as the built-in), we inherit:
+// - All models from models.dev (auto-populated by OpenCode)
+// - The existing auth.json entry (no seeding needed)
+// - "Popular" category placement in the connect dialog
 
 // ---------------------------------------------------------------------------
 // Custom tool: /model-accounts-pool
