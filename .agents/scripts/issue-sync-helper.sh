@@ -316,7 +316,7 @@ cmd_push() {
 		# even after [x] completion. The pulse reads the stale cache and calls
 		# push <task_id>, which previously matched [x] lines via the [.] pattern.
 		# GH#5280: trailing space made optional — matches [x] at end-of-line too.
-		if [[ "$task_line" =~ ^[[:space:]]*-[[:space:]]\[x\]([[:space:]]|$) ]]; then
+		if [[ "$task_line" =~ ^[[:space:]]*-[[:space:]]+\[x\]([[:space:]]|$) ]]; then
 			print_info "Skipping $task_id — already completed ([x] in TODO.md)"
 			skipped=$((skipped + 1))
 			continue
