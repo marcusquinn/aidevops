@@ -581,6 +581,51 @@ offer_python_brew_install() {
 	fi
 }
 
+# Check Python version and offer Homebrew install/upgrade if needed.
+# Encapsulates the repeated find_python3 → parse version → compare → offer pattern.
+# Arguments:
+#   $1 - recommended formula (e.g. python@3.13); defaults to get_recommended_python_formula
+#   $2 - context label for messages (e.g. "AI orchestration"); defaults to "skills/tools"
+# Outputs version string to stdout on success (for callers that want to display it).
+# Returns:
+#   0 - Python meets the required version
+#   1 - Python not found or outdated (offer_python_brew_install already called)
+check_python_version() {
+	local recommended_formula="${1:-}"
+	local context_label="${2:-skills/tools}"
+	local python_required_major="${PYTHON_REQUIRED_MAJOR:-3}"
+	local python_required_minor="${PYTHON_REQUIRED_MINOR:-10}"
+
+	if [[ -z "$recommended_formula" ]]; then
+		recommended_formula=$(get_recommended_python_formula)
+	fi
+
+	local python3_bin
+	if python3_bin=$(find_python3); then
+		local python_version
+		python_version=$("$python3_bin" -c 'import sys; print("{}.{}.{}".format(sys.version_info[0], sys.version_info[1], sys.version_info[2]))' 2>/dev/null || true)
+		local python_major python_minor
+		python_major=$(echo "$python_version" | cut -d. -f1)
+		python_minor=$(echo "$python_version" | cut -d. -f2)
+
+		if [[ "$python_major" =~ ^[0-9]+$ ]] && [[ "$python_minor" =~ ^[0-9]+$ ]] &&
+			{ ((python_major > python_required_major)) ||
+				{ ((python_major == python_required_major)) && ((python_minor >= python_required_minor)); }; }; then
+			print_success "Python $python_version found ($python_required_major.$python_required_minor+ required)"
+			echo "$python_version"
+			return 0
+		else
+			print_warning "Python $python_required_major.$python_required_minor+ required for $context_label, found $python_version"
+			offer_python_brew_install "upgrade" "$recommended_formula" || true
+			return 1
+		fi
+	else
+		print_warning "Python 3 not found"
+		offer_python_brew_install "install" "$recommended_formula" || true
+		return 1
+	fi
+}
+
 # Install a package globally via npm or bun, with sudo when needed on Linux.
 # Usage: npm_global_install "package-name" OR npm_global_install "package@version"
 # Uses bun if available (no sudo needed), falls back to npm.
