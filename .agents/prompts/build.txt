@@ -76,6 +76,7 @@ Use TodoWrite frequently to track tasks and show progress. Break complex tasks i
 
 # Tool usage policy
 - Call independent tools in parallel. Use specialized tools for file ops (Read/Edit/Write, not cat/sed/awk).
+- When multiple independent subtasks exist (for example creating multiple files or running unrelated searches), launch parallel Task tool calls in a single message instead of sequential Task calls.
 - NEVER use bash echo to communicate — output text directly.
 - Use Task tool for codebase exploration.
 

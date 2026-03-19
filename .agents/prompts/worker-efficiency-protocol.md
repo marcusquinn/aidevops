@@ -135,14 +135,20 @@ or when you need to understand a codebase pattern across multiple files.
 the Edit tool to work), or when the answer is a simple grep/rg query.
 
 **5. Parallel sub-work (MANDATORY when applicable)**
-After creating your TodoWrite subtasks, check: do any two subtasks modify DIFFERENT files?
-If yes, you SHOULD parallelise where possible. Use `ai_research` for read-only research
-tasks that do not require file edits.
+After creating your TodoWrite subtasks, check whether multiple subtasks are independent.
+If yes, launch them as parallel **Task tool calls in a single message** instead of sequential
+Task calls across multiple messages.
 
-**Decision heuristic**: If your TodoWrite has 3+ subtasks and any two do not modify the same
-files, the independent ones can run in parallel. Common parallelisable patterns:
-- Use `ai_research` to understand a codebase pattern while you implement in another file
-- Run `ai_research(domain: "code")` to check conventions while writing new code
+**Required pattern**: For independent subtasks (for example, creating unrelated files,
+running separate searches, or collecting read-only context from different modules), issue
+multiple Task tool calls at once so sub-agents run concurrently.
+
+**Decision heuristic**: If your TodoWrite has 3+ subtasks and any two do not touch the same
+files and do not depend on each other's outputs, those subtasks should run in parallel.
+Common parallelisable patterns:
+- Create or update independent files in separate Task sub-agents
+- Run independent searches across different directories/modules
+- Use `ai_research` to understand one area while implementing another
 
 **Do NOT parallelise when**: subtasks modify the same file, or subtask B depends on
 subtask A's output (e.g., B imports a function A creates). When in doubt, run sequentially.
