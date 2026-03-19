@@ -804,8 +804,8 @@ scaffold_multi_process() {
 	log_info "Generating multi-process (supervisord) scaffold..."
 
 	# Check for existing files
-	if [[ -f "Dockerfile" || -f "start.sh" ]]; then
-		log_warn "This will overwrite existing Dockerfile, start.sh, and supervisord.conf"
+	if [[ -f "Dockerfile" || -f "start.sh" || -f "supervisord.conf" || -f "nginx.conf" ]]; then
+		log_warn "This will overwrite existing Dockerfile, start.sh, supervisord.conf, and nginx.conf"
 		read -rp "Continue? [y/N] " confirm
 		if ! [[ "$confirm" =~ ^[Yy]$ ]]; then
 			log_info "Scaffold cancelled."
