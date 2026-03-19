@@ -42,46 +42,41 @@ const AUTH_FAILURE_COOLDOWN_MS = 300_000;
 /** Max retry attempts per request across pool accounts */
 const MAX_ROTATION_ATTEMPTS = 5;
 
-/** Max retries for token endpoint requests (exchange + refresh) */
-const TOKEN_MAX_RETRIES = 3;
-
-/** Initial delay for token endpoint retry backoff (ms) */
-const TOKEN_RETRY_DELAY_MS = 2000;
-
 const REQUIRED_BETAS = [
   "oauth-2025-04-20",
   "interleaved-thinking-2025-05-14",
 ];
 
 // ---------------------------------------------------------------------------
-// Token endpoint fetch with retry on 429
+// Token endpoint helpers
 // ---------------------------------------------------------------------------
 
 /**
- * Fetch from the token endpoint with retry + exponential backoff on 429.
- * Anthropic's OAuth token endpoint rate-limits aggressively.
+ * Fetch from the token endpoint. Single attempt — no retry.
+ *
+ * Why no retry:
+ * - Token exchanges use single-use authorization codes. Retrying a failed
+ *   exchange with the same code will always fail (code is burned on first attempt).
+ * - Token refreshes that get 429 indicate sustained rate limiting. Retrying
+ *   within the same request just extends the rate limit window.
+ * - The caller (pool rotation or session retry) handles recovery at a higher level.
+ *
  * @param {string} body - JSON string body
- * @param {string} context - description for logging (e.g., "token exchange", "refresh")
+ * @param {string} context - description for logging
  * @returns {Promise<Response>}
  */
 async function fetchTokenEndpoint(body, context) {
-  let response = null;
-  for (let attempt = 0; attempt <= TOKEN_MAX_RETRIES; attempt++) {
-    if (attempt > 0) {
-      const delay = TOKEN_RETRY_DELAY_MS * Math.pow(2, attempt - 1);
-      console.error(
-        `[aidevops] OAuth pool: ${context} rate limited, retrying in ${delay / 1000}s (attempt ${attempt + 1}/${TOKEN_MAX_RETRIES + 1})...`,
-      );
-      await new Promise((resolve) => setTimeout(resolve, delay));
-    }
+  const response = await fetch(TOKEN_ENDPOINT, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body,
+  });
 
-    response = await fetch(TOKEN_ENDPOINT, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body,
-    });
-
-    if (response.ok || response.status !== 429) break;
+  if (!response.ok) {
+    const detail = response.status === 429
+      ? "rate limited by Anthropic — wait a few minutes before trying again"
+      : `HTTP ${response.status}`;
+    console.error(`[aidevops] OAuth pool: ${context} failed: ${detail}`);
   }
 
   return response;
@@ -239,9 +234,7 @@ async function refreshAccessToken(account) {
       `refresh for ${account.email}`,
     );
     if (!response.ok) {
-      console.error(
-        `[aidevops] OAuth pool: token refresh failed for ${account.email}: HTTP ${response.status}`,
-      );
+      // fetchTokenEndpoint already logged the error
       return null;
     }
     const json = await response.json();
@@ -796,12 +789,7 @@ export function createPoolAuthHook(client) {
               );
 
               if (!result.ok) {
-                const statusText = result.status === 429
-                  ? "rate limited by Anthropic — try again in a few minutes"
-                  : `HTTP ${result.status}`;
-                console.error(
-                  `[aidevops] OAuth pool: token exchange failed: ${statusText}`,
-                );
+                // fetchTokenEndpoint already logged the error
                 return { type: "failed" };
               }
 
@@ -869,9 +857,7 @@ export function createPoolAuthHook(client) {
                 "API key token exchange",
               );
               if (!response.ok) {
-                console.error(
-                  `[aidevops] OAuth pool: API key token exchange failed: HTTP ${response.status}`,
-                );
+                // fetchTokenEndpoint already logged the error
                 return { type: "failed" };
               }
               const credentials = await response.json();
