@@ -2,6 +2,17 @@
 
 Thanks for your interest in contributing! This guide will help you get started.
 
+## Reporting Issues
+
+**Preferred method:** Use `/log-issue-aidevops` in your AI assistant session. This command:
+
+- Gathers diagnostic information automatically (version, OS, shell, assistant)
+- Checks for duplicate issues before filing
+- Produces a well-structured report with all required fields
+- Submits directly via GitHub CLI
+
+If you cannot use the CLI command, use the issue templates on GitHub. Blank issues are disabled — all reports must use a template. External issues are reviewed by a maintainer before entering the development pipeline.
+
 ## Quick Start
 
 1. Fork the repository

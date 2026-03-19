@@ -1,0 +1,112 @@
+name: Issue Triage Gate
+
+on:
+  issues:
+    types: [opened]
+
+permissions:
+  issues: write
+
+jobs:
+  triage:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    concurrency:
+      group: issue-triage-${{ github.event.issue.number }}
+      cancel-in-progress: true
+    steps:
+      - name: Check author association and apply triage label
+        uses: actions/github-script@f28e40c7f34bde8b3046d885e986cb6290c5673b # v7
+        with:
+          script: |
+            const issue = context.payload.issue;
+            const author = issue.user.login;
+            const association = issue.author_association;
+            const title = issue.title || '';
+
+            // Bot accounts always bypass triage (github-actions[bot], dependabot, etc.)
+            if (issue.user.type === 'Bot') {
+              console.log(`Author ${author} is a bot — bypassing triage`);
+              return;
+            }
+
+            // Issues with task ID prefix (t1234: ...) are from internal tooling — bypass
+            if (/^t\d+/.test(title)) {
+              console.log(`Issue "${title}" has task ID prefix — bypassing triage`);
+              return;
+            }
+
+            // Maintainers and collaborators bypass triage
+            // OWNER, MEMBER, COLLABORATOR are trusted roles
+            const trustedRoles = ['OWNER', 'MEMBER', 'COLLABORATOR'];
+
+            if (trustedRoles.includes(association)) {
+              console.log(`Author ${author} has role ${association} — bypassing triage`);
+
+              // Remove needs-triage if the YAML form template added it
+              try {
+                await github.rest.issues.removeLabel({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: issue.number,
+                  name: 'needs-triage'
+                });
+              } catch (e) {
+                // Label may not exist yet — that's fine
+              }
+              return;
+            }
+
+            console.log(`Author ${author} has role ${association} — applying triage gate`);
+
+            // Ensure needs-triage label exists
+            try {
+              await github.rest.issues.createLabel({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                name: 'needs-triage',
+                description: 'External issue awaiting maintainer review before pipeline pickup',
+                color: 'FBCA04'
+              });
+            } catch (e) {
+              // Label already exists — expected
+            }
+
+            // Ensure the label is applied (template may have added it, but belt-and-suspenders)
+            await github.rest.issues.addLabels({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issue.number,
+              labels: ['needs-triage']
+            });
+
+            // Remove any auto-dispatch labels that could trigger the pipeline
+            for (const label of ['status:available', 'auto-dispatch']) {
+              try {
+                await github.rest.issues.removeLabel({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: issue.number,
+                  name: label
+                });
+              } catch (e) {
+                // Label not present — fine
+              }
+            }
+
+            // Post a welcome comment
+            await github.rest.issues.createComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: issue.number,
+              body: [
+                `Thanks for the report, @${author}.`,
+                '',
+                'This issue has been queued for maintainer review. A maintainer will review it and either:',
+                '- **Approve** it for the development pipeline (`status:available`)',
+                '- **Ask for more information** if the report needs clarification',
+                '- **Close** it if it\'s a duplicate or out of scope',
+                '',
+                '**Tip:** For faster, higher-quality issue reporting, use `/log-issue-aidevops` in your AI assistant session. It gathers diagnostics automatically and checks for duplicates.'
+              ].join('\n')
+            });

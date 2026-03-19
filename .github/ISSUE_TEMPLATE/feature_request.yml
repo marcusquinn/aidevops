@@ -1,0 +1,59 @@
+name: Feature Request
+description: Suggest an improvement or new feature
+title: "Feature: "
+labels: ["enhancement", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## Preferred: Use `/log-issue-aidevops`
+
+        If you're using aidevops with an AI assistant, type `/log-issue-aidevops` in your session.
+        It checks for duplicates and helps structure your request.
+
+        Only use this web form if you cannot use the CLI command.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What problem does this solve? What's the pain point?
+      placeholder: "I frequently need to ... but currently ..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed Solution
+      description: How would you like it to work?
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives Considered
+      description: Any other approaches you've thought about, or workarounds you're currently using
+    validations:
+      required: false
+
+  - type: input
+    id: version
+    attributes:
+      label: aidevops Version
+      description: "Run `aidevops --version` or check ~/.aidevops/agents/VERSION"
+      placeholder: "3.1.0"
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Scope Check
+      description: "Architectural decisions are made by maintainers. See [CONTRIBUTING.md](../../CONTRIBUTING.md#scope-of-contributions)."
+      options:
+        - label: I understand this may require maintainer approval before implementation
+          required: true
+        - label: I searched existing issues and this is not a duplicate
+          required: true

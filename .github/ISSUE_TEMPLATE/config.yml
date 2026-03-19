@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report via /log-issue-aidevops (recommended)
+    url: https://github.com/marcusquinn/aidevops#readme
+    about: |
+      The best way to report issues is via /log-issue-aidevops in your AI assistant session.
+      It gathers diagnostics automatically, checks for duplicates, and produces structured reports.
+      See the README for setup instructions.
+  - name: Ask a question
+    url: https://github.com/marcusquinn/aidevops/discussions
+    about: Use Discussions for questions, ideas, and general help.

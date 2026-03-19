@@ -57,7 +57,7 @@ Check external contributor gate before ANY merge (see Pre-merge checks below).
 
 ### 4. Dispatch workers for open issues
 
-For each unassigned, non-blocked issue with no open PR and no active worker:
+For each unassigned, non-blocked issue with no open PR, no active worker, and **no `needs-triage` label**:
 
 ```bash
 # Dedup guard (MANDATORY — all three checks required)
@@ -236,11 +236,26 @@ When closing any issue, ALWAYS comment first explaining why and linking to the P
 - **Duplicate issues for same task ID** → keep the one referenced by `ref:GH#` in TODO.md, close others with a comment.
 - **Too large for one worker** → classify with `task-decompose-helper.sh classify`. If composite, decompose into subtask issues, label parent `status:blocked`. Child tasks enter the normal dispatch queue.
 - **`status:queued` or `status:in-progress`** → check `updatedAt`. If updated within 3 hours, skip. If 3+ hours with no PR and no worker, relabel `status:available`, unassign, comment the recovery.
-- **`status:available` or no status** → dispatch a worker.
+- **`needs-triage`** → SKIP. External issue awaiting maintainer review. Do NOT dispatch.
+- **`status:available` or no status (without `needs-triage`)** → dispatch a worker.
 
-### External issues and PRs — scope check
+### External issues and PRs — triage gate (t1545)
 
-Issues/PRs from non-maintainers (check `authorAssociation`) require a scope check:
+**NEVER dispatch a worker for an issue with the `needs-triage` label.** This label is applied automatically by the `issue-triage-gate.yml` workflow to all issues from non-collaborators. It is the hard gate that prevents external issues from entering the pipeline without maintainer review.
+
+**Triage flow:**
+
+1. External user files issue (web form or `/log-issue-aidevops`)
+2. `issue-triage-gate.yml` checks `authorAssociation` — if not OWNER/MEMBER/COLLABORATOR, applies `needs-triage` label and posts a welcome comment
+3. Pulse sees `needs-triage` → **skip, do not dispatch**
+4. Maintainer reviews the issue and either:
+   - Removes `needs-triage` and adds `status:available` → dispatchable next cycle
+   - Adds `needs-maintainer-review` for scope decisions → requires explicit approval
+   - Closes as duplicate/invalid/out-of-scope
+
+**Scope check for approved external issues:**
+
+Once `needs-triage` is removed, apply the scope check:
 
 - **Destructive behaviour reports** → valid bug, dispatch a fix
 - **Feature requests for third-party integrations** → label `needs-maintainer-review`, do NOT dispatch
@@ -251,7 +266,7 @@ Issues/PRs from non-maintainers (check `authorAssociation`) require a scope chec
 
 Issues/PRs with `needs-maintainer-review` can be approved or declined by the maintainer commenting. Each cycle, fetch the maintainer's most recent comment on these items:
 
-- **"approved"** → remove `needs-maintainer-review`, add `auto-dispatch` (issues) or allow merge (PRs)
+- **"approved"** → remove `needs-maintainer-review`, add `status:available` (issues) or allow merge (PRs)
 - **"declined"** → close with the maintainer's reason
 - **No matching comment** → skip, check next cycle
 

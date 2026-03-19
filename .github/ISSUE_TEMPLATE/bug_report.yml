@@ -1,0 +1,127 @@
+name: Bug Report
+description: Report a bug — please use /log-issue-aidevops in your AI assistant for best results
+title: "Bug: "
+labels: ["bug", "needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        ## Preferred: Use `/log-issue-aidevops`
+
+        If you're using aidevops with an AI assistant, type `/log-issue-aidevops` in your session.
+        It gathers diagnostics automatically, checks for duplicates, and produces a well-structured report.
+
+        Only use this web form if you cannot use the CLI command.
+
+  - type: textarea
+    id: description
+    attributes:
+      label: Description
+      description: A clear description of the bug. What went wrong?
+      placeholder: "When I run X, Y happens instead of Z..."
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to Reproduce
+      description: Exact commands or steps to trigger the bug
+      placeholder: |
+        1. Run `aidevops ...`
+        2. See error: ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected Behavior
+      description: What should have happened instead?
+    validations:
+      required: true
+
+  - type: textarea
+    id: error-output
+    attributes:
+      label: Error Output
+      description: |
+        Paste the actual error message or output (if any).
+        Do NOT paste raw terminal output with ANSI escape codes — copy clean text only.
+      render: shell
+    validations:
+      required: false
+
+  - type: input
+    id: version
+    attributes:
+      label: aidevops Version
+      description: "Run `aidevops --version` or check ~/.aidevops/agents/VERSION"
+      placeholder: "3.1.0"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating System
+      options:
+        - macOS (Apple Silicon)
+        - macOS (Intel)
+        - Ubuntu / Debian
+        - Fedora / RHEL
+        - Arch Linux
+        - Other Linux
+        - Windows (WSL)
+        - Other
+    validations:
+      required: true
+
+  - type: dropdown
+    id: assistant
+    attributes:
+      label: AI Assistant
+      description: Which AI coding assistant are you using?
+      options:
+        - Claude Code
+        - OpenCode
+        - Cursor
+        - Windsurf
+        - Aider
+        - GitHub Copilot
+        - Cody
+        - Augment
+        - Kilo Code
+        - Continue
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: third-party
+    attributes:
+      label: Third-party Tool Involvement
+      description: |
+        Does this bug involve a clash with another tool? If so, name the tool and describe the conflict.
+        We fix destructive behaviour on our side but don't guarantee compatibility with external tools.
+        See [CONTRIBUTING.md](../../CONTRIBUTING.md#scope-of-contributions).
+    validations:
+      required: false
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Additional Context
+      description: Any other relevant information (screenshots, related issues, etc.)
+    validations:
+      required: false
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Pre-submission Checklist
+      options:
+        - label: I searched existing issues and this is not a duplicate
+          required: true
+        - label: I am running the latest version of aidevops (or noted my version above)
+          required: true
