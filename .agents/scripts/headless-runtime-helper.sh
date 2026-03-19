@@ -21,6 +21,7 @@ readonly STATE_DB="${STATE_DIR}/state.db"
 readonly OPENCODE_BIN_DEFAULT="${OPENCODE_BIN:-opencode}"
 readonly SANDBOX_EXEC_HELPER="${SCRIPT_DIR}/sandbox-exec-helper.sh"
 readonly HEADLESS_SANDBOX_TIMEOUT_DEFAULT="${AIDEVOPS_HEADLESS_SANDBOX_TIMEOUT:-3600}"
+readonly OPENCODE_AUTH_FILE="${HOME}/.local/share/opencode/auth.json"
 
 build_sandbox_passthrough_csv() {
 	local names=()
@@ -155,10 +156,9 @@ get_auth_signature() {
 	local auth_material="provider=${provider}"
 	case "$provider" in
 	anthropic)
-		local auth_status auth_file auth_mtime
+		local auth_status auth_mtime
 		auth_status=$(timeout_sec 10 "$OPENCODE_BIN_DEFAULT" auth status 2>/dev/null || true)
-		auth_file="${HOME}/.local/share/opencode/auth.json"
-		auth_mtime=$(file_mtime "$auth_file")
+		auth_mtime=$(file_mtime "$OPENCODE_AUTH_FILE")
 		auth_material="${auth_material}|status=${auth_status}|mtime=${auth_mtime}"
 		;;
 	openai)
@@ -167,18 +167,16 @@ get_auth_signature() {
 		else
 			# OpenAI can also be authenticated via OpenCode OAuth (no direct API key needed).
 			# Include the OAuth auth status in the signature so backoff clears on re-auth.
-			local auth_status auth_file auth_mtime
+			local auth_status auth_mtime
 			auth_status=$(timeout_sec 10 "$OPENCODE_BIN_DEFAULT" auth status 2>/dev/null || true)
-			auth_file="${HOME}/.local/share/opencode/auth.json"
-			auth_mtime=$(file_mtime "$auth_file")
+			auth_mtime=$(file_mtime "$OPENCODE_AUTH_FILE")
 			auth_material="${auth_material}|status=${auth_status}|mtime=${auth_mtime}|env=missing"
 		fi
 		;;
 	opencode)
 		# Gateway models use OpenCode's OAuth session
-		local auth_file auth_mtime
-		auth_file="${HOME}/.local/share/opencode/auth.json"
-		auth_mtime=$(file_mtime "$auth_file")
+		local auth_mtime
+		auth_mtime=$(file_mtime "$OPENCODE_AUTH_FILE")
 		auth_material="${auth_material}|mtime=${auth_mtime}"
 		;;
 	*)
@@ -445,8 +443,7 @@ provider_auth_available() {
 		if [[ -n "${ANTHROPIC_API_KEY:-}" ]]; then
 			return 0
 		fi
-		local auth_file="${HOME}/.local/share/opencode/auth.json"
-		if [[ -f "$auth_file" ]]; then
+		if [[ -f "$OPENCODE_AUTH_FILE" ]]; then
 			return 0
 		fi
 		return 1
@@ -456,16 +453,14 @@ provider_auth_available() {
 		if [[ -n "${OPENAI_API_KEY:-}" ]]; then
 			return 0
 		fi
-		local auth_file="${HOME}/.local/share/opencode/auth.json"
-		if [[ -f "$auth_file" ]]; then
+		if [[ -f "$OPENCODE_AUTH_FILE" ]]; then
 			return 0
 		fi
 		return 1
 		;;
 	opencode)
 		# OpenCode gateway models use OpenCode's OAuth session
-		local auth_file="${HOME}/.local/share/opencode/auth.json"
-		if [[ -f "$auth_file" ]]; then
+		if [[ -f "$OPENCODE_AUTH_FILE" ]]; then
 			return 0
 		fi
 		return 1
