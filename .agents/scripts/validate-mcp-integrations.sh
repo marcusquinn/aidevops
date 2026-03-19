@@ -162,6 +162,27 @@ test_mcp_configurations() {
 	return 0
 }
 
+# Test Context7 MCP
+test_context7() {
+	print_header "Testing Context7 MCP"
+
+	# Test remote MCP URL reachability
+	run_test "Context7 MCP URL reachability" "curl -s --connect-timeout 10 -o /dev/null -w '%{http_code}' https://mcp.context7.com/mcp | grep -qE '^[23]'"
+
+	# Test Context7 MCP npm package availability
+	run_test "Context7 MCP package" "npm list -g @context7/mcp-server || npm info @context7/mcp-server"
+
+	# Validate context7-mcp-config.json.txt template if it exists
+	local config_template="configs/context7-mcp-config.json.txt"
+	if [[ -f "$config_template" ]]; then
+		run_test "Context7 config template JSON validation" "python3 -m json.tool '$config_template'"
+		print_success "Context7 config template found: $config_template"
+	else
+		print_warning "Context7 config template not found: $config_template"
+	fi
+	return 0
+}
+
 # Test network connectivity
 test_network() {
 	print_header "Testing Network Connectivity"
@@ -232,6 +253,9 @@ main() {
 	echo
 
 	test_api_connectivity
+	echo
+
+	test_context7
 	echo
 
 	test_mcp_configurations
