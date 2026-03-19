@@ -247,25 +247,25 @@ install_secretlint() {
 		print_warning "Node.js 20+ recommended. Current version: ${node_v}"
 	fi
 
-	local repo_root
+	local repo_root install_exit=0
 	case "${install_type}" in
 	"global")
 		print_info "Installing Secretlint globally..."
-		npm install -g secretlint @secretlint/secretlint-rule-preset-recommend
+		npm install -g secretlint @secretlint/secretlint-rule-preset-recommend || install_exit=$?
 		;;
 	"local" | *)
 		repo_root=$(get_repo_root)
 		if [[ "${repo_root}" != "$(pwd)" ]] && [[ -f "${repo_root}/package.json" ]]; then
 			print_info "Worktree detected. Installing in main repo: ${repo_root}"
-			npm install --prefix "${repo_root}" --save-dev secretlint @secretlint/secretlint-rule-preset-recommend
+			npm install --prefix "${repo_root}" --save-dev secretlint @secretlint/secretlint-rule-preset-recommend || install_exit=$?
 		else
 			print_info "Installing Secretlint locally..."
-			npm install --save-dev secretlint @secretlint/secretlint-rule-preset-recommend
+			npm install --save-dev secretlint @secretlint/secretlint-rule-preset-recommend || install_exit=$?
 		fi
 		;;
 	esac
 
-	if [[ $? -eq 0 ]]; then
+	if [[ ${install_exit} -eq 0 ]]; then
 		print_success "Secretlint installed successfully"
 
 		# Initialize if config doesn't exist
@@ -303,16 +303,17 @@ install_additional_rules() {
 		fi
 	fi
 
+	local install_exit=0
 	case "${rules}" in
 	"pattern")
 		print_info "Installing custom pattern rule..."
 		# shellcheck disable=SC2086
-		npm install ${npm_prefix} @secretlint/secretlint-rule-pattern
+		npm install ${npm_prefix} @secretlint/secretlint-rule-pattern || install_exit=$?
 		;;
 	"sarif")
 		print_info "Installing SARIF formatter..."
 		# shellcheck disable=SC2086
-		npm install ${npm_prefix} @secretlint/secretlint-formatter-sarif
+		npm install ${npm_prefix} @secretlint/secretlint-formatter-sarif || install_exit=$?
 		;;
 	"all")
 		print_info "Installing all recommended additional rules..."
@@ -322,16 +323,16 @@ install_additional_rules() {
 			@secretlint/secretlint-rule-no-k8s-kind-secret \
 			@secretlint/secretlint-rule-no-homedir \
 			@secretlint/secretlint-rule-no-dotenv \
-			@secretlint/secretlint-formatter-sarif
+			@secretlint/secretlint-formatter-sarif || install_exit=$?
 		;;
 	*)
 		print_info "Installing rule: ${rules}"
 		# shellcheck disable=SC2086
-		npm install ${npm_prefix} "${rules}"
+		npm install ${npm_prefix} "${rules}" || install_exit=$?
 		;;
 	esac
 
-	if [[ $? -eq 0 ]]; then
+	if [[ ${install_exit} -eq 0 ]]; then
 		print_success "Additional rules installed"
 		return 0
 	else
@@ -543,8 +544,8 @@ run_secretlint_scan() {
 	fi
 
 	# Validate that required rules are installed
-	check_rules_installed "${SECRETLINT_CONFIG_FILE}"
-	local rules_check=$?
+	local rules_check=0
+	check_rules_installed "${SECRETLINT_CONFIG_FILE}" || rules_check=$?
 	if [[ "${rules_check}" -eq 1 ]]; then
 		print_error "Secretlint rules not properly installed. Run: $0 install"
 		return 2
@@ -681,9 +682,10 @@ mask_secrets() {
 	print_info "Input: ${input_file}"
 	print_info "Output: ${output_file}"
 
-	${cmd} "${input_file}" --format=mask-result --output="${output_file}"
+	local mask_exit=0
+	${cmd} "${input_file}" --format=mask-result --output="${output_file}" || mask_exit=$?
 
-	if [[ $? -eq 0 ]]; then
+	if [[ ${mask_exit} -eq 0 ]]; then
 		print_success "Secrets masked successfully"
 		return 0
 	else
@@ -811,9 +813,10 @@ generate_sarif() {
 	local cmd
 	cmd=$(get_secretlint_cmd)
 
-	${cmd} "${target}" --format @secretlint/secretlint-formatter-sarif >"${output_file}"
+	local sarif_exit=0
+	${cmd} "${target}" --format @secretlint/secretlint-formatter-sarif >"${output_file}" || sarif_exit=$?
 
-	if [[ $? -eq 0 ]]; then
+	if [[ ${sarif_exit} -eq 0 ]]; then
 		print_success "SARIF output saved: ${output_file}"
 		return 0
 	else
@@ -917,9 +920,10 @@ setup_husky_integration() {
 	if command -v jq &>/dev/null; then
 		local tmp_file
 		tmp_file=$(mktemp)
-		# Ensure temp file is cleaned up on exit
+		# Ensure temp file is cleaned up on exit; clear trap after successful mv
 		trap 'rm -f "${tmp_file}"' EXIT
 		jq '. + {"lint-staged": {"*": ["secretlint"]}}' package.json >"${tmp_file}" && mv "${tmp_file}" package.json
+		trap - EXIT
 		print_success "Added lint-staged configuration"
 	else
 		print_warning "jq not available. Please add manually to package.json:"
