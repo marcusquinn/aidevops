@@ -833,6 +833,7 @@ export function registerPoolProvider(config) {
       "claude-3-7-sonnet-20250219": {
         name: "Claude 3.7 Sonnet",
         attachment: true, reasoning: true, tool_call: true, temperature: true,
+        interleaved: true,
         modalities: { input: ["text", "image", "pdf"], output: ["text"] },
         cost: { input: 0, output: 0, cache_read: 0, cache_write: 0 },
         limit: { context: 200000, output: 16384 },
@@ -840,7 +841,8 @@ export function registerPoolProvider(config) {
       },
       "claude-3-5-haiku-20241022": {
         name: "Claude 3.5 Haiku",
-        attachment: true, tool_call: true, temperature: true,
+        attachment: true, reasoning: true, tool_call: true, temperature: true,
+        interleaved: true,
         modalities: { input: ["text", "image"], output: ["text"] },
         cost: { input: 0, output: 0, cache_read: 0, cache_write: 0 },
         limit: { context: 200000, output: 8192 },
