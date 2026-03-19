@@ -1902,8 +1902,8 @@ scan_orphaned_prs() {
 #######################################
 # Eager orphaned PR scan for a single task (t216).
 #
-# Called immediately after worker evaluation when the outcome is
-# retry/failed/blocked and no PR was linked. Unlike scan_orphaned_prs()
+# Called immediately after worker evaluation when the task still has
+# pr_url markers (`task_only`/`no_pr`). Unlike scan_orphaned_prs()
 # which is a throttled batch sweep (Phase 6), this does a targeted
 # single-task lookup — one repo, one API call — with no throttle.
 #
@@ -1914,7 +1914,7 @@ scan_orphaned_prs() {
 # $1: task_id
 #
 # Returns 0 on success. Sets pr_url in DB and transitions task to
-# complete if a matching PR is found.
+# pr_review if a matching PR is found.
 #######################################
 scan_orphaned_pr_for_task() {
 	local task_id="$1"
@@ -1935,11 +1935,11 @@ scan_orphaned_pr_for_task() {
 		return 0
 	fi
 
-	local tstatus trepo tbranch tpr_url
-	IFS='|' read -r tstatus trepo tbranch tpr_url <<<"$task_row"
+	local _tstatus trepo _tbranch tpr_url
+	IFS='|' read -r _tstatus trepo _tbranch tpr_url <<<"$task_row"
 
-	# Skip if PR already linked (not orphaned)
-	if [[ -n "$tpr_url" && "$tpr_url" != "no_pr" && "$tpr_url" != "task_only" && "$tpr_url" != "task_obsolete" && "$tpr_url" != "" ]]; then
+	# Only scan for explicit orphan markers from evaluation.
+	if [[ "$tpr_url" != "no_pr" && "$tpr_url" != "task_only" ]]; then
 		return 0
 	fi
 
@@ -1954,44 +1954,41 @@ scan_orphaned_pr_for_task() {
 		return 0
 	fi
 
-	# Fetch open PRs for this repo (single API call)
-	local pr_list
-	pr_list=$(gh pr list --repo "$repo_slug" --state open --limit 100 \
-		--json number,title,headRefName,url 2>>"$SUPERVISOR_LOG" || echo "")
-
-	# Also check recently merged PRs
-	local merged_pr_list
-	merged_pr_list=$(gh pr list --repo "$repo_slug" --state merged --limit 50 \
-		--json number,title,headRefName,url 2>>"$SUPERVISOR_LOG" || echo "")
-
-	# Combine open and merged PR lists
-	local all_prs
-	if [[ -n "$merged_pr_list" && "$merged_pr_list" != "[]" && -n "$pr_list" && "$pr_list" != "[]" ]]; then
-		all_prs=$(echo "$pr_list" "$merged_pr_list" | jq -s 'add' 2>/dev/null || echo "$pr_list")
-	elif [[ -n "$pr_list" && "$pr_list" != "[]" ]]; then
-		all_prs="$pr_list"
-	elif [[ -n "$merged_pr_list" && "$merged_pr_list" != "[]" ]]; then
-		all_prs="$merged_pr_list"
-	else
-		return 0
-	fi
-
-	# Match PRs to this task by task ID in title or branch name
+	# Targeted lookup: t216 requires checking the canonical worker branch.
 	local matched_pr_url
-	matched_pr_url=$(echo "$all_prs" | jq -r --arg tid "$task_id" '
-        .[] | select(
-            (.title | test("\\b" + $tid + "\\b"; "i")) or
-            (.headRefName | test("\\b" + $tid + "\\b"; "i"))
-        ) | .url
-    ' 2>/dev/null | head -1 || echo "")
+	matched_pr_url=$(gh pr list --repo "$repo_slug" --state open --head "feature/${task_id}" \
+		--json url --jq '.[0].url' 2>>"$SUPERVISOR_LOG" || echo "")
 
 	if [[ -z "$matched_pr_url" ]]; then
 		return 0
 	fi
 
-	# Validate, persist, and optionally transition via centralized link_pr_to_task() (t232)
-	link_pr_to_task "$task_id" --url "$matched_pr_url" --transition --notify \
-		--caller "scan_orphaned_pr_for_task" 2>>"${SUPERVISOR_LOG:-/dev/null}" || true
+	# Validate and persist via centralized link_pr_to_task() (t232).
+	if ! link_pr_to_task "$task_id" --url "$matched_pr_url" \
+		--caller "scan_orphaned_pr_for_task" 2>>"${SUPERVISOR_LOG:-/dev/null}"; then
+		return 0
+	fi
+
+	# Move task into review lifecycle immediately after linking orphaned PR.
+	local current_status
+	current_status=$(db "$SUPERVISOR_DB" "SELECT status FROM tasks WHERE id = '$escaped_id';" 2>/dev/null || echo "")
+
+	case "$current_status" in
+	pr_review | review_triage | merging | merged | deploying | deployed | verifying | verified)
+		# Already in post-PR pipeline.
+		;;
+	dispatched)
+		cmd_transition "$task_id" "running" --pr-url "$matched_pr_url" 2>>"${SUPERVISOR_LOG:-/dev/null}" || true
+		cmd_transition "$task_id" "pr_review" --pr-url "$matched_pr_url" 2>>"${SUPERVISOR_LOG:-/dev/null}" || true
+		;;
+	running | evaluating | blocked | complete)
+		cmd_transition "$task_id" "pr_review" --pr-url "$matched_pr_url" 2>>"${SUPERVISOR_LOG:-/dev/null}" || true
+		;;
+	*)
+		# Keep PR linkage even if state machine disallows immediate review transition.
+		log_verbose "scan_orphaned_pr_for_task: linked PR for $task_id but skipped pr_review transition from state '$current_status'"
+		;;
+	esac
 
 	return 0
 }

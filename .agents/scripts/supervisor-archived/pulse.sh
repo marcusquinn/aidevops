@@ -1417,21 +1417,21 @@ cmd_pulse() {
 			# Budget tracking: record spend from worker log (t1100)
 			record_worker_spend "$tid" "$tid_model" 2>>"$SUPERVISOR_LOG" || true
 
-			# Eager orphaned PR scan (t216): if evaluation didn't find a PR,
-			# immediately check GitHub before retrying/failing. This catches
-			# PRs that assess_task() missed (API timeout, non-standard
-			# branch, etc.) without waiting for the Phase 6 throttled sweep.
-			if [[ "$outcome_type" != "complete" ]]; then
+			# Eager orphaned PR scan (t216): for task_only/no_pr results,
+			# immediately check GitHub head branch feature/tNNN before
+			# applying retry/blocked transitions.
+			local post_eval_pr_url
+			post_eval_pr_url=$(db "$SUPERVISOR_DB" "SELECT pr_url FROM tasks WHERE id = '$(sql_escape "$tid")';" 2>/dev/null || echo "")
+			if [[ "$post_eval_pr_url" == "task_only" || "$post_eval_pr_url" == "no_pr" ]]; then
 				scan_orphaned_pr_for_task "$tid" 2>>"$SUPERVISOR_LOG" || true
-				# Re-check: if the eager scan found a PR and transitioned
-				# the task to complete, update our outcome to match
+				# Re-check: if the eager scan linked a PR and moved the task
+				# into review lifecycle, stop here and let Phase 3 take over.
 				local post_scan_status
 				post_scan_status=$(db "$SUPERVISOR_DB" "SELECT status FROM tasks WHERE id = '$(sql_escape "$tid")';" 2>/dev/null || echo "")
-				if [[ "$post_scan_status" == "complete" ]]; then
+				if [[ "$post_scan_status" == "pr_review" || "$post_scan_status" == "review_triage" || "$post_scan_status" == "merging" || "$post_scan_status" == "merged" ]]; then
 					local post_scan_pr
 					post_scan_pr=$(db "$SUPERVISOR_DB" "SELECT pr_url FROM tasks WHERE id = '$(sql_escape "$tid")';" 2>/dev/null || echo "")
-					log_success "  $tid: COMPLETE via eager orphaned PR scan ($post_scan_pr)"
-					completed_count=$((completed_count + 1))
+					log_success "  $tid: PR_REVIEW via eager orphaned PR scan ($post_scan_pr)"
 					cleanup_worker_processes "$tid"
 					# t1331: Reset circuit breaker counter on early-success path
 					cb_record_success 2>>"$SUPERVISOR_LOG" || true
