@@ -1004,7 +1004,9 @@ setup_ssh_key() {
 # Check installed Python version against latest stable available from package manager.
 # Warns if an upgrade is available but never auto-upgrades (GH#5237).
 # Works on macOS (Homebrew) and Linux (apt/dnf).
-check_python_version() {
+# Named check_python_upgrade_available() to avoid collision with the shared
+# check_python_version() in _common.sh (which validates minimum required version).
+check_python_upgrade_available() {
 	print_info "Checking Python version..."
 
 	# 1. Check currently installed Python
