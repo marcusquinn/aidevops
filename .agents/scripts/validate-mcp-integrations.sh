@@ -205,7 +205,7 @@ test_context7() {
 	# Validate context7-mcp-config.json.txt template if it exists
 	local config_template="configs/context7-mcp-config.json.txt"
 	if [[ -f "$config_template" ]]; then
-		run_test "Context7 config template JSON validation" "python3 -m json.tool '$config_template'"
+		run_test "Context7 config template JSON validation" "jq . >/dev/null < \"$config_template\""
 		print_success "Context7 config template found: $config_template"
 	else
 		print_warning "Context7 config template not found: $config_template"
