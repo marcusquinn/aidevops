@@ -387,10 +387,6 @@ check_optional_deps() {
 	print_info "Checking optional dependencies..."
 
 	local missing_optional=()
-	local recommended_python_formula
-	recommended_python_formula=$(get_recommended_python_formula)
-	local python_required_major="${PYTHON_REQUIRED_MAJOR:-3}"
-	local python_required_minor="${PYTHON_REQUIRED_MINOR:-10}"
 
 	if ! command -v sshpass >/dev/null 2>&1; then
 		missing_optional+=("sshpass")
@@ -398,25 +394,7 @@ check_optional_deps() {
 		print_success "sshpass found"
 	fi
 
-	local python3_bin=""
-	if python3_bin=$(find_python3); then
-		local python_version
-		python_version=$("$python3_bin" -c 'import sys; print("{}.{}.{}".format(sys.version_info[0], sys.version_info[1], sys.version_info[2]))' 2>/dev/null || true)
-		local python_major
-		python_major=$(echo "$python_version" | cut -d. -f1)
-		local python_minor
-		python_minor=$(echo "$python_version" | cut -d. -f2)
-
-		if [[ "$python_major" =~ ^[0-9]+$ ]] && [[ "$python_minor" =~ ^[0-9]+$ ]] && { ((python_major > python_required_major)) || { ((python_major == python_required_major)) && ((python_minor >= python_required_minor)); }; }; then
-			print_success "Python $python_version found ($python_required_major.$python_required_minor+ required)"
-		else
-			print_warning "Python $python_version found, but $python_required_major.$python_required_minor+ is recommended for all skills/tools"
-			offer_python_brew_install "upgrade" "$recommended_python_formula" || true
-		fi
-	else
-		print_warning "Python 3 not found"
-		offer_python_brew_install "install" "$recommended_python_formula" || true
-	fi
+	check_python_version "" "skills/tools" >/dev/null || true
 
 	if [[ ${#missing_optional[@]} -gt 0 ]]; then
 		print_warning "Missing optional dependencies: ${missing_optional[*]}"
