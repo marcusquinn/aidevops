@@ -38,7 +38,7 @@ get_mcp_command() {
 	"dataforseo") echo "npx dataforseo-mcp-server" ;;
 	# serper - REMOVED: Uses curl subagent (.agents/seo/serper.md), no MCP needed
 	"unstract") echo "docker:unstract/mcp-server" ;;
-	"context7") echo "npx @upstash/context7-mcp@latest" ;;
+	"context7") echo "npx -y @upstash/context7-mcp@latest" ;;
 	*) echo "" ;;
 	esac
 	return 0
@@ -357,7 +357,7 @@ install_mcp() {
 		print_info "  2. Local MCP (via npx):"
 		print_info '     "context7": {'
 		print_info '       "type": "local",'
-		print_info '       "command": ["npx", "@upstash/context7-mcp@latest"],'
+		print_info '       "command": ["npx", "-y", "@upstash/context7-mcp@latest"],'
 		print_info '       "enabled": true'
 		print_info '     }'
 		print_info ""
