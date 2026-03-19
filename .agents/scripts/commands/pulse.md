@@ -253,7 +253,7 @@ When closing any issue, ALWAYS comment first explaining why and linking to the P
    - Asks for more information → keeps label
    - Closes as duplicate/invalid/out-of-scope
 
-**Manually applied by the pulse for scope decisions:**
+**Scope decision guidelines:**
 
 - **Feature requests for third-party integrations** → label `needs-maintainer-review`, do NOT dispatch
 - **PRs adding dependencies or changing architecture** → label `needs-maintainer-review`, require explicit maintainer approval
