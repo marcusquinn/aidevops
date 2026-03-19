@@ -334,8 +334,8 @@ ensure_homebrew() {
 		return 1
 	fi
 
-	# Non-interactive mode: skip
-	if [[ "$NON_INTERACTIVE" == "true" ]]; then
+	# Non-interactive mode or non-TTY stdin: skip
+	if [[ "${NON_INTERACTIVE:-false}" == "true" ]] || [[ ! -t 0 ]]; then
 		return 1
 	fi
 
