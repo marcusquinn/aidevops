@@ -57,7 +57,7 @@ Check external contributor gate before ANY merge (see Pre-merge checks below).
 
 ### 4. Dispatch workers for open issues
 
-For each unassigned, non-blocked issue with no open PR, no active worker, and **no `needs-triage` label**:
+For each unassigned, non-blocked issue with no open PR, no active worker, and **no `needs-maintainer-review` label**:
 
 ```bash
 # Dedup guard (MANDATORY — all three checks required)
@@ -236,30 +236,28 @@ When closing any issue, ALWAYS comment first explaining why and linking to the P
 - **Duplicate issues for same task ID** → keep the one referenced by `ref:GH#` in TODO.md, close others with a comment.
 - **Too large for one worker** → classify with `task-decompose-helper.sh classify`. If composite, decompose into subtask issues, label parent `status:blocked`. Child tasks enter the normal dispatch queue.
 - **`status:queued` or `status:in-progress`** → check `updatedAt`. If updated within 3 hours, skip. If 3+ hours with no PR and no worker, relabel `status:available`, unassign, comment the recovery.
-- **`needs-triage`** → SKIP. External issue awaiting maintainer review. Do NOT dispatch.
-- **`status:available` or no status (without `needs-triage`)** → dispatch a worker.
+- **`needs-maintainer-review`** → SKIP. Awaiting maintainer review. Do NOT dispatch.
+- **`status:available` or no status (without `needs-maintainer-review`)** → dispatch a worker.
 
-### External issues and PRs — triage gate (t1545)
+### External issues and PRs — maintainer review gate (t1545)
 
-**NEVER dispatch a worker for an issue with the `needs-triage` label.** This label is applied automatically by the `issue-triage-gate.yml` workflow to all issues from non-collaborators. It is the hard gate that prevents external issues from entering the pipeline without maintainer review.
+**NEVER dispatch a worker for an issue with the `needs-maintainer-review` label.** This label is applied automatically by the `issue-triage-gate.yml` workflow to all issues from non-collaborators, and manually by the pulse for scope-sensitive items (third-party integrations, architecture changes). It is the hard gate that prevents work from entering the pipeline without maintainer approval.
 
-**Triage flow:**
+**Auto-applied by `issue-triage-gate.yml`:**
 
 1. External user files issue (web form or `/log-issue-aidevops`)
-2. `issue-triage-gate.yml` checks `authorAssociation` — if not OWNER/MEMBER/COLLABORATOR, applies `needs-triage` label and posts a welcome comment
-3. Pulse sees `needs-triage` → **skip, do not dispatch**
+2. Workflow checks `authorAssociation` — if not OWNER/MEMBER/COLLABORATOR, applies `needs-maintainer-review` label and posts a welcome comment
+3. Pulse sees `needs-maintainer-review` → **skip, do not dispatch**
 4. Maintainer reviews the issue and either:
-   - Removes `needs-triage` and adds `status:available` → dispatchable next cycle
-   - Adds `needs-maintainer-review` for scope decisions → requires explicit approval
+   - Removes `needs-maintainer-review` and adds `status:available` → dispatchable next cycle
+   - Asks for more information → keeps label
    - Closes as duplicate/invalid/out-of-scope
 
-**Scope check for approved external issues:**
+**Manually applied by the pulse for scope decisions:**
 
-Once `needs-triage` is removed, apply the scope check:
-
-- **Destructive behaviour reports** → valid bug, dispatch a fix
 - **Feature requests for third-party integrations** → label `needs-maintainer-review`, do NOT dispatch
 - **PRs adding dependencies or changing architecture** → label `needs-maintainer-review`, require explicit maintainer approval
+- **Destructive behaviour reports** → valid bug, dispatch a fix (no label needed)
 - **Bug fixes and docs PRs** → normal review process
 
 ### Comment-based approval

@@ -1,7 +1,7 @@
 name: Bug Report
 description: Report a bug — please use /log-issue-aidevops in your AI assistant for best results
 title: "Bug: "
-labels: ["bug", "needs-triage"]
+labels: ["bug", "needs-maintainer-review"]
 body:
   - type: markdown
     attributes:

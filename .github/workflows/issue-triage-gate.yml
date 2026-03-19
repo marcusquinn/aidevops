@@ -43,13 +43,13 @@ jobs:
             if (trustedRoles.includes(association)) {
               console.log(`Author ${author} has role ${association} — bypassing triage`);
 
-              // Remove needs-triage if the YAML form template added it
+              // Remove needs-maintainer-review if the YAML form template added it
               try {
                 await github.rest.issues.removeLabel({
                   owner: context.repo.owner,
                   repo: context.repo.repo,
                   issue_number: issue.number,
-                  name: 'needs-triage'
+                  name: 'needs-maintainer-review'
                 });
               } catch (e) {
                 // Label may not exist yet — that's fine
@@ -59,12 +59,12 @@ jobs:
 
             console.log(`Author ${author} has role ${association} — applying triage gate`);
 
-            // Ensure needs-triage label exists
+            // Ensure needs-maintainer-review label exists
             try {
               await github.rest.issues.createLabel({
                 owner: context.repo.owner,
                 repo: context.repo.repo,
-                name: 'needs-triage',
+                name: 'needs-maintainer-review',
                 description: 'External issue awaiting maintainer review before pipeline pickup',
                 color: 'FBCA04'
               });
@@ -77,7 +77,7 @@ jobs:
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: issue.number,
-              labels: ['needs-triage']
+              labels: ['needs-maintainer-review']
             });
 
             // Remove any auto-dispatch labels that could trigger the pipeline

@@ -15,7 +15,7 @@ tools:
 
 Log an issue with the aidevops framework to GitHub.
 
-**This is the recommended way to report issues.** All issues from non-collaborators are gated behind maintainer triage (`needs-triage` label) regardless of how they are filed — a maintainer must approve them before the development pipeline picks them up. This command produces higher-quality reports than the web form because the AI assistant gathers diagnostics, checks for duplicates, and validates the report before submission, which helps maintainers approve issues faster.
+**This is the recommended way to report issues.** All issues from non-collaborators are gated behind maintainer review (`needs-maintainer-review` label) regardless of how they are filed — a maintainer must approve them before the development pipeline picks them up. This command produces higher-quality reports than the web form because the AI assistant gathers diagnostics, checks for duplicates, and validates the report before submission, which helps maintainers approve issues faster.
 
 **Arguments**: Optional issue title in quotes, e.g., `/log-issue-aidevops "Update check not working"`
 
