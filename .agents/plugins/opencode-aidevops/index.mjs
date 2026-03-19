@@ -16,7 +16,7 @@ import { loadAgentIndex, applyAgentMcpTools } from "./agent-loader.mjs";
 import { validateReturnStatements, validatePositionalParams } from "./validators.mjs";
 import { runMarkdownQualityPipeline } from "./quality-pipeline.mjs";
 import { createTtsrHooks } from "./ttsr.mjs";
-import { createPoolAuthHook, createPoolTool } from "./oauth-pool.mjs";
+import { createPoolAuthHook, createPoolTool, initPoolAuth, registerPoolProvider } from "./oauth-pool.mjs";
 
 const HOME = homedir();
 const AGENTS_DIR = join(HOME, ".aidevops", "agents");
@@ -361,11 +361,15 @@ async function configHook(config) {
   const mcpsRegistered = registerMcpServers(config);
   const agentToolsUpdated = applyAgentMcpTools(config);
 
+  // --- OAuth pool provider registration (t1543) ---
+  const poolRegistered = registerPoolProvider(config);
+
   // Silent unless something was actually changed (avoids TUI flash on startup)
   const parts = [];
   if (agentsInjected > 0) parts.push(`${agentsInjected} agents`);
   if (mcpsRegistered > 0) parts.push(`${mcpsRegistered} MCPs`);
   if (agentToolsUpdated > 0) parts.push(`${agentToolsUpdated} agent tool perms`);
+  if (poolRegistered > 0) parts.push(`${poolRegistered} pool provider`);
 
   if (parts.length > 0) {
     console.error(`[aidevops] Config hook: ${parts.join(", ")}`);
@@ -1065,7 +1069,10 @@ export async function AidevopsPlugin({ directory, client }) {
   // Phase 6: Initialise LLM observability (t1308)
   initObservability();
 
-  // Phase 7: OAuth pool tools (t1543)
+  // Phase 7: OAuth pool — seed auth entry so provider appears in connect dialog (t1543)
+  await initPoolAuth(client);
+
+  // Phase 7b: OAuth pool tools (t1543)
   const baseTools = createTools(SCRIPTS_DIR, run, {
     runShellQualityPipeline,
     runMarkdownQualityPipeline,
