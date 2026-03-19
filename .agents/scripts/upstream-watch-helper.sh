@@ -597,10 +597,11 @@ cmd_check() {
 			local last_seen_value
 			last_seen_value=$(echo "$state" | jq -r --arg name "$entry_name" '.non_github[$name].last_seen // ""')
 
-			# Run the check command (curl + jq)
+			# Run the check command (curl + jq) in a subshell for isolation
+			# Note: check_command comes from a committed config file, not user input
 			local current_value=""
 			local probe_failed=false
-			current_value=$(eval "$check_cmd" 2>/dev/null) || {
+			current_value=$(bash -c "$check_cmd" 2>/dev/null) || {
 				_log_warn "check_command failed for ${entry_name}"
 				echo -e "${YELLOW}Warning${NC}: Could not check ${entry_name} (${source_type})" >&2
 				probe_failed=true
@@ -820,7 +821,7 @@ cmd_ack() {
 
 		local current_value=""
 		if [[ -n "$check_cmd" ]]; then
-			current_value=$(eval "$check_cmd" 2>/dev/null | tr -d '[:space:]') || current_value=""
+			current_value=$(bash -c "$check_cmd" 2>/dev/null | tr -d '[:space:]') || current_value=""
 		fi
 
 		# Also update last_seen_commit in config if the entry has one
