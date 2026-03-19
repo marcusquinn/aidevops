@@ -15,7 +15,7 @@ New to aidevops? Type `/onboarding`.
 
 <!-- Relocated from build.txt to keep the system prompt runtime-agnostic -->
 
-**Upstream prompt base:** `anomalyco/opencode` `anthropic.txt @ 3c41e4e8f12b` — the original template build.txt was derived from.
+**Upstream prompt base:** `anomalyco/Claude` `anthropic.txt @ 3c41e4e8f12b` — the original template build.txt was derived from.
 
 **Session databases** (for conversational memory lookup, Tier 2):
 - **OpenCode**: `~/.local/share/opencode/opencode.db` — SQLite with session + message tables. Schema: `session(id,title,directory,time_created)`, `message(id,session_id,data)`. Example: `sqlite3 ~/.local/share/opencode/opencode.db "SELECT id,title FROM session WHERE title LIKE '%keyword%' ORDER BY time_created DESC LIMIT 5"`

@@ -549,8 +549,6 @@ function maybeAddBetaParam(input) {
  */
 function createPoolFetch(provider) {
   return async function poolFetch(input, init) {
-    const inputUrl = typeof input === "string" ? input : (input instanceof URL ? input.toString() : (input instanceof Request ? input.url : "unknown"));
-    console.error(`[aidevops] OAuth pool: poolFetch called for ${provider}, url=${inputUrl}`);
     let currentAccount = pickAccount(provider);
     if (!currentAccount) {
       // No accounts available — fall through to default fetch (will likely fail)
@@ -577,16 +575,11 @@ function createPoolFetch(provider) {
       const body = transformRequestBody(init?.body);
       const { input: finalInput } = maybeAddBetaParam(input);
 
-      const finalUrl = typeof finalInput === "string" ? finalInput : (finalInput instanceof URL ? finalInput.toString() : (finalInput instanceof Request ? finalInput.url : "unknown"));
-      console.error(`[aidevops] OAuth pool: sending request to ${finalUrl}, has-auth=${headers.has("authorization")}, has-beta=${headers.has("anthropic-beta")}`);
-
       const response = await fetch(finalInput, {
         ...init,
         body,
         headers,
       });
-
-      console.error(`[aidevops] OAuth pool: response status=${response.status}`);
 
       // Success — transform and return
       if (response.ok || (response.status >= 200 && response.status < 400)) {
@@ -683,7 +676,6 @@ export function createPoolAuthHook(client) {
      */
     async loader(getAuth, provider) {
       const accounts = getAccounts("anthropic");
-      console.error(`[aidevops] OAuth pool loader: ${accounts.length} accounts found`);
       if (accounts.length === 0) {
         return {};
       }
@@ -697,11 +689,9 @@ export function createPoolAuthHook(client) {
         };
       }
 
-      const poolFetch = createPoolFetch("anthropic");
-      console.error(`[aidevops] OAuth pool loader: returning custom fetch wrapper`);
       return {
         apiKey: "",
-        fetch: poolFetch,
+        fetch: createPoolFetch("anthropic"),
       };
     },
 
@@ -822,7 +812,7 @@ export function registerPoolProvider(config) {
     npm: "@ai-sdk/anthropic",
     api: "https://api.anthropic.com/v1",
     models: {
-      "claude-opus-4-6-20250610": {
+      "claude-opus-4-6": {
         name: "Claude Opus 4.6",
         attachment: true, reasoning: true, tool_call: true,
         temperature: true, interleaved: true,
@@ -831,7 +821,7 @@ export function registerPoolProvider(config) {
         limit: { context: 200000, output: 32000 },
         family: "claude-4",
       },
-      "claude-sonnet-4-6-20250514": {
+      "claude-sonnet-4-6": {
         name: "Claude Sonnet 4.6",
         attachment: true, reasoning: true, tool_call: true,
         temperature: true, interleaved: true,
@@ -840,25 +830,7 @@ export function registerPoolProvider(config) {
         limit: { context: 200000, output: 16000 },
         family: "claude-4",
       },
-      "claude-sonnet-4-20250514": {
-        name: "Claude Sonnet 4",
-        attachment: true, reasoning: true, tool_call: true,
-        temperature: true, interleaved: true,
-        modalities: { input: ["text", "image", "pdf"], output: ["text"] },
-        cost: { input: 0, output: 0, cache_read: 0, cache_write: 0 },
-        limit: { context: 200000, output: 16000 },
-        family: "claude-4",
-      },
-      "claude-opus-4-20250514": {
-        name: "Claude Opus 4",
-        attachment: true, reasoning: true, tool_call: true,
-        temperature: true, interleaved: true,
-        modalities: { input: ["text", "image", "pdf"], output: ["text"] },
-        cost: { input: 0, output: 0, cache_read: 0, cache_write: 0 },
-        limit: { context: 200000, output: 32000 },
-        family: "claude-4",
-      },
-      "claude-haiku-4-20250414": {
+      "claude-haiku-4": {
         name: "Claude Haiku 4",
         attachment: true, tool_call: true, temperature: true,
         modalities: { input: ["text", "image", "pdf"], output: ["text"] },
@@ -866,24 +838,7 @@ export function registerPoolProvider(config) {
         limit: { context: 200000, output: 8192 },
         family: "claude-4",
       },
-      "claude-3-7-sonnet-20250219": {
-        name: "Claude 3.7 Sonnet",
-        attachment: true, reasoning: true, tool_call: true, temperature: true,
-        interleaved: true,
-        modalities: { input: ["text", "image", "pdf"], output: ["text"] },
-        cost: { input: 0, output: 0, cache_read: 0, cache_write: 0 },
-        limit: { context: 200000, output: 16384 },
-        family: "claude-3.7",
-      },
-      "claude-3-5-haiku-20241022": {
-        name: "Claude 3.5 Haiku",
-        attachment: true, reasoning: true, tool_call: true, temperature: true,
-        interleaved: true,
-        modalities: { input: ["text", "image"], output: ["text"] },
-        cost: { input: 0, output: 0, cache_read: 0, cache_write: 0 },
-        limit: { context: 200000, output: 8192 },
-        family: "claude-3.5",
-      },
+
     },
   };
 
