@@ -137,7 +137,9 @@ the Edit tool to work), or when the answer is a simple grep/rg query.
 **5. Parallel sub-work (MANDATORY when applicable)**
 After creating your TodoWrite subtasks, check whether multiple subtasks are independent.
 If yes, launch them as parallel **Task tool calls in a single message** instead of sequential
-Task calls across multiple messages.
+Task calls across multiple messages. Your TodoWrite still tracks ONE `in_progress` subtask
+at a time (Section 1) — parallel Task calls are how you *delegate* independent work to
+sub-agents concurrently, not how you track your own focus.
 
 **Required pattern**: For independent subtasks (for example, creating unrelated files,
 running separate searches, or collecting read-only context from different modules), issue
@@ -148,7 +150,7 @@ files and do not depend on each other's outputs, those subtasks should run in pa
 Common parallelisable patterns:
 - Create or update independent files in separate Task sub-agents
 - Run independent searches across different directories/modules
-- Use `ai_research` to understand one area while implementing another
+- Delegate `ai_research` calls to gather context while a Task sub-agent implements
 
 **Do NOT parallelise when**: subtasks modify the same file, or subtask B depends on
 subtask A's output (e.g., B imports a function A creates). When in doubt, run sequentially.
