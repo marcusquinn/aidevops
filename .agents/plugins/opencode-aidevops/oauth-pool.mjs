@@ -204,7 +204,15 @@ function getAccounts(provider) {
 function upsertAccount(provider, account) {
   const pool = loadPool();
   if (!pool[provider]) pool[provider] = [];
-  const idx = pool[provider].findIndex((a) => a.email === account.email);
+
+  // Match by email. When email is "unknown" and there's exactly one existing
+  // account (also "unknown"), replace it rather than creating duplicates.
+  let idx = pool[provider].findIndex((a) => a.email === account.email);
+  if (idx < 0 && account.email === "unknown") {
+    const unknownIdx = pool[provider].findIndex((a) => a.email === "unknown");
+    if (unknownIdx >= 0) idx = unknownIdx;
+  }
+
   if (idx >= 0) {
     pool[provider][idx] = account;
   } else {
@@ -651,7 +659,7 @@ export async function initPoolAuth(client) {
   try {
     await client.auth.set({
       path: { id: "anthropic-pool" },
-      body: { type: "success", refresh: "", access: "", expires: 0 },
+      body: { type: "pending", refresh: "", access: "", expires: 0 },
     });
     console.error("[aidevops] OAuth pool: seeded auth entry for anthropic-pool");
   } catch (err) {
@@ -767,8 +775,43 @@ export function createPoolAuthHook(client) {
 
               const json = await result.json();
 
+              // Resolve account email from user profile if prompts were skipped
+              let resolvedEmail = email;
+              if (resolvedEmail === "unknown" && json.access_token) {
+                const profileEndpoints = [
+                  "https://console.anthropic.com/api/auth/user",
+                  "https://api.anthropic.com/api/auth/user",
+                ];
+                for (const endpoint of profileEndpoints) {
+                  try {
+                    const profileResp = await fetch(endpoint, {
+                      headers: {
+                        "Authorization": `Bearer ${json.access_token}`,
+                        "User-Agent": "claude-cli/2.1.2 (external, cli)",
+                      },
+                      redirect: "follow",
+                    });
+                    if (profileResp.ok) {
+                      const profile = await profileResp.json();
+                      const found = profile.email || profile.email_address
+                        || profile.user?.email || profile.account?.email;
+                      if (found) {
+                        resolvedEmail = found;
+                        console.error(`[aidevops] OAuth pool: resolved email ${found} from ${endpoint}`);
+                        break;
+                      }
+                    }
+                  } catch {
+                    // Try next endpoint
+                  }
+                }
+                if (resolvedEmail === "unknown") {
+                  console.error("[aidevops] OAuth pool: could not resolve email from profile API — account stored as 'unknown'");
+                }
+              }
+
               upsertAccount("anthropic", {
-                email,
+                email: resolvedEmail,
                 refresh: json.refresh_token,
                 access: json.access_token,
                 expires: Date.now() + json.expires_in * 1000,
@@ -780,7 +823,7 @@ export function createPoolAuthHook(client) {
 
               const totalAccounts = getAccounts("anthropic").length;
               console.error(
-                `[aidevops] OAuth pool: added ${email} (${totalAccounts} account${totalAccounts === 1 ? "" : "s"} total)`,
+                `[aidevops] OAuth pool: added ${resolvedEmail} (${totalAccounts} account${totalAccounts === 1 ? "" : "s"} total)`,
               );
 
               return {
