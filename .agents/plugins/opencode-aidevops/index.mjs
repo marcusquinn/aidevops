@@ -16,6 +16,7 @@ import { loadAgentIndex, applyAgentMcpTools } from "./agent-loader.mjs";
 import { validateReturnStatements, validatePositionalParams } from "./validators.mjs";
 import { runMarkdownQualityPipeline } from "./quality-pipeline.mjs";
 import { createTtsrHooks } from "./ttsr.mjs";
+import { createPoolAuthHook, registerPoolProvider, createPoolTool } from "./oauth-pool.mjs";
 
 const HOME = homedir();
 const AGENTS_DIR = join(HOME, ".aidevops", "agents");
@@ -360,11 +361,15 @@ async function configHook(config) {
   const mcpsRegistered = registerMcpServers(config);
   const agentToolsUpdated = applyAgentMcpTools(config);
 
+  // --- OAuth pool provider registration (t1543) ---
+  const poolRegistered = registerPoolProvider(config);
+
   // Silent unless something was actually changed (avoids TUI flash on startup)
   const parts = [];
   if (agentsInjected > 0) parts.push(`${agentsInjected} agents`);
   if (mcpsRegistered > 0) parts.push(`${mcpsRegistered} MCPs`);
   if (agentToolsUpdated > 0) parts.push(`${agentToolsUpdated} agent tool perms`);
+  if (poolRegistered > 0) parts.push(`${poolRegistered} pool provider`);
 
   if (parts.length > 0) {
     console.error(`[aidevops] Config hook: ${parts.join(", ")}`);
@@ -1060,19 +1065,24 @@ const {
  *
  * @type {import('@opencode-ai/plugin').Plugin}
  */
-export async function AidevopsPlugin({ directory }) {
+export async function AidevopsPlugin({ directory, client }) {
   // Phase 6: Initialise LLM observability (t1308)
   initObservability();
+
+  // Phase 7: OAuth pool tools (t1543)
+  const baseTools = createTools(SCRIPTS_DIR, run, {
+    runShellQualityPipeline,
+    runMarkdownQualityPipeline,
+    scanForSecrets,
+  });
+  baseTools["model-accounts-pool"] = createPoolTool();
+
   return {
     // Phase 1+2: Lightweight agent index + MCP registration
     config: async (config) => configHook(config),
 
-    // Phase 1: Custom tools (extracted to tools.mjs)
-    tool: createTools(SCRIPTS_DIR, run, {
-      runShellQualityPipeline,
-      runMarkdownQualityPipeline,
-      scanForSecrets,
-    }),
+    // Phase 1+7: Custom tools (extracted to tools.mjs) + pool management (t1543)
+    tool: baseTools,
 
     // Phase 3: Quality hooks
     "tool.execute.before": toolExecuteBefore,
@@ -1088,6 +1098,9 @@ export async function AidevopsPlugin({ directory }) {
 
     // Phase 6: LLM observability — capture assistant message metadata (t1308)
     event: async (input) => handleEvent(input),
+
+    // Phase 7: OAuth multi-account pool (t1543)
+    auth: createPoolAuthHook(client),
 
     // Compaction context (includes OMOC state when detected)
     "experimental.session.compacting": async (input, output) =>
