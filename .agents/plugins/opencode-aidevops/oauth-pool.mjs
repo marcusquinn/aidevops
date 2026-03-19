@@ -689,13 +689,29 @@ export function createPoolAuthHook(client) {
 
     methods: [
       {
-        label: "Add Account to Pool (Claude Pro/Max)",
+        // Dynamic label — shows pool account count each time the dialog opens.
+        // Uses a getter so the label is recomputed on every access.
+        get label() {
+          const accounts = getAccounts("anthropic");
+          if (accounts.length === 0) {
+            return "Add Account to Pool (Claude Pro/Max)";
+          }
+          return `Add Account to Pool (${accounts.length} account${accounts.length === 1 ? "" : "s"})`;
+        },
         type: "oauth",
         prompts: [
           {
             type: "text",
             key: "email",
-            message: "Account email",
+            // Dynamic message — shows existing account emails as context.
+            get message() {
+              const accounts = getAccounts("anthropic");
+              if (accounts.length === 0) {
+                return "Account email";
+              }
+              const emails = accounts.map((a) => a.email).join(", ");
+              return `Current: ${emails}\nNew account email`;
+            },
             placeholder: "you@example.com",
             validate: (value) => {
               if (!value || !value.includes("@")) {
