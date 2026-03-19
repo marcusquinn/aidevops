@@ -221,9 +221,9 @@ cp configs/cloudron-config.json.txt configs/cloudron-config.json
 ./.agents/scripts/cloudron-helper.sh audit-users production
 ```
 
-## 🔍 **Troubleshooting**
+## Troubleshooting
 
-### **Troubleshooting Resources**
+### Troubleshooting Resources
 
 **Cloudron Forum**: Always check [forum.cloudron.io](https://forum.cloudron.io) for known issues:
 
@@ -232,7 +232,116 @@ cp configs/cloudron-config.json.txt configs/cloudron-config.json
 - Look for official workarounds from Cloudron staff
 - Common post-update issues often have forum threads with solutions
 
-### **SSH Diagnostic Access**
+### Post-Reboot / Post-Update Diagnostic Playbook
+
+When apps show "restarting" or "not responding" after a reboot or Cloudron update, follow this systematic triage. The order matters — each step narrows the diagnosis.
+
+**Step 1: Establish context** — Was this a reboot, a Cloudron update, or both?
+
+```bash
+ssh root@my.cloudron.domain.com
+
+# How long has the server been up? If <10 min, apps may still be starting normally.
+uptime
+
+# Check reboot history — was this a manual reboot or automatic?
+last reboot | head -5
+
+# Check if Cloudron updated before the reboot
+journalctl -b -1 --no-pager | grep -i -E 'cloudron.*update|cloudron-updater'
+
+# Get the current Cloudron version
+grep '"version"' /home/yellowtent/box/package.json
+```
+
+**Step 2: Assess system resources** — Rule out OOM, disk full, or CPU saturation.
+
+```bash
+# Memory (is there enough for all apps to start?)
+free -h
+
+# Disk (Cloudron needs space for Docker images, logs, backups)
+df -h /
+
+# Load average (high is expected during startup — 5-15 is normal post-reboot)
+uptime
+```
+
+**Step 3: Container state summary** — Get the big picture before diving into specifics.
+
+```bash
+# Count containers by state
+docker ps -a --format '{{.State}}' | sort | uniq -c | sort -rn
+
+# List non-running containers (exclude helper/cleanup containers)
+docker ps -a --filter 'status=exited' --format '{{.Names}}\t{{.Status}}' \
+  | grep -v -E 'cleanup|archive|housekeeping|previewcleanup|jobs'
+```
+
+**Step 4: Read the box.log** — This is the primary diagnostic log. It shows exactly what Cloudron is doing.
+
+```bash
+# Last 100 lines of the box service log
+tail -100 /home/yellowtent/platformdata/logs/box.log
+
+# Check the box service status
+systemctl status box.service
+```
+
+**Step 5: Check the health monitor** — Shows how many apps Cloudron considers healthy.
+
+```bash
+# Look for the health summary lines
+grep 'app health:' /home/yellowtent/platformdata/logs/box.log | tail -5
+```
+
+**Step 6: Monitor progress** — If apps are still starting, check again after 2-3 minutes.
+
+```bash
+# Quick progress check (run this every 60 seconds)
+echo "=== $(date) ===" && \
+docker ps -a --format '{{.State}}' | sort | uniq -c | sort -rn && \
+tail -1 /home/yellowtent/platformdata/logs/box.log
+```
+
+### Cloudron Startup Architecture (Why It Takes Time)
+
+Understanding the startup sequence prevents premature intervention:
+
+1. **Infrastructure services start first** (2-3 min): `box.service` starts, then MySQL, PostgreSQL, MongoDB, mail, graphite, sftp, turn — sequentially.
+2. **Redis sidecars start sequentially** (3-5 min for many apps): Each app with a Redis addon gets its own Redis container. Cloudron starts these **one at a time**, ~16 seconds each. A server with 15+ Redis instances takes 4-5 minutes just for this phase. Each Redis gets an initial `ECONNREFUSED` on attempt 1 — this is normal, not an error.
+3. **App containers start with concurrency limit** (2-5 min): After Redis is up, Cloudron starts app containers with a concurrency limit (typically 15). The box.log shows `At concurrency limit, cannot drain anymore` and `N apptasks pending` — this is normal queuing, not a stuck state.
+4. **Health checks run after containers start** (1-2 min): Apps need time to initialize internally. The health monitor reports `unresponsive` until the app's HTTP endpoint responds.
+
+**Expected total recovery time**: 8-15 minutes for a server with 30+ apps. During this time, load average will be high (5-15) and the dashboard will show apps as "restarting" or "not responding". This is normal.
+
+**When to intervene**: If after 15 minutes the box.log shows the same Redis container failing repeatedly (>5 attempts), or the container state counts aren't changing, something is genuinely stuck.
+
+### Identifying Stuck vs Normal Startup
+
+| Symptom | Normal Startup | Genuinely Stuck |
+|---------|---------------|-----------------|
+| `ECONNREFUSED` in box.log | Attempt 1-2 per Redis, then moves on | Same container >5 attempts, never moves to next |
+| `At concurrency limit` | Pending count decreases over time | Pending count stays the same for >5 min |
+| High load average | Decreasing over 5-10 min | Sustained >10 after 15 min |
+| Exited containers | Count decreasing as apps start | Count not changing after 10 min |
+| `created` state containers | Transitioning to `running` | Stuck in `created` for >10 min |
+
+### Known Cloudron 9.x Post-Update Issues (from forum)
+
+These are recurring patterns reported on [forum.cloudron.io](https://forum.cloudron.io) for Cloudron 9.x. When diagnosing, check if the symptoms match:
+
+**Redis not starting (9.1.3+)**: Redis containers fail with `Permission denied` writing PID file to `/run/redis`. One stuck Redis blocks the entire sequential startup chain. Forum: search "redis not starting 9.1".
+
+**DB migration failures (8.x to 9.x upgrade)**: The `oidcClients` migration fails if any app's `cloudronManifest.json` has no `addons` object (declared optional in docs but required by migration code). Symptoms: box.log shows `Cannot read properties of undefined (reading 'oidc')` or `Unknown column 'pending'/'completed' in 'field list'`. Fix: manually add empty addons objects to the MySQL `apps` table, then run `cloudron-support --apply-db-migrations`. Forum: search "Error accessing Dashboard after update from 8.x to 9.x".
+
+**Docker network removal failure**: Infrastructure upgrade from 49.8.0 to 49.9.0 fails because Docker reports "network has active endpoints" when trying to remove the `cloudron` network. All apps stuck in "Configuring" / "Removing containers for upgrade". Fix: manually disconnect endpoints and remove the network, then restart box service. Forum: search "Apps stuck in Configuring due to failed infrastructure upgrade".
+
+**Services stuck in "Starting services"**: After 9.0.11 update, services (graphite, mongodb, mysql, postgresql, sftp) never finish starting. Box.log shows infinite `grep -q avx /proc/cpuinfo` loops. Related to CPU feature detection on VMs without AVX support. Forum: search "Update 9.0.11 Broke Services".
+
+**Health monitor stuck**: Apps work fine but dashboard shows permanent "Starting..." status. The health monitor gets stuck when one app lacks health checks, causing cascading health check failures for subsequently updated apps. Fix: `systemctl restart box`. Forum: search "apps responsive but showing a permanent Starting status".
+
+### SSH Diagnostic Access
 
 For deep troubleshooting, SSH directly into the Cloudron server:
 
@@ -259,14 +368,27 @@ docker inspect <container_name>
 docker exec -it <container_name> /bin/bash
 ```
 
-### **Container State Diagnosis**
+### Container State Diagnosis
 
 | State | Meaning | Action |
 |-------|---------|--------|
 | `Up` | Healthy | Normal operation |
 | `Restarting` | Crash loop | Check logs, likely app/db issue |
-| `Exited` | Stopped | May need manual restart or fix |
-| `Created` | Never started | Check for startup errors |
+| `Exited (0)` | Clean shutdown | Cloudron hasn't started it yet (normal post-reboot) |
+| `Exited (1)` | Error exit | Check `docker logs <container>` for the error |
+| `Exited (137)` | Killed (SIGKILL/OOM) | Check `dmesg | grep -i oom` and memory limits |
+| `Created` | Never started | Waiting in Cloudron's startup queue |
+
+### Key Log Files and Services
+
+| Log/Service | Location | Purpose |
+|-------------|----------|---------|
+| Box service log | `/home/yellowtent/platformdata/logs/box.log` | Primary diagnostic — shows all startup, health, and error activity |
+| Box service status | `systemctl status box.service` | Is the Cloudron platform itself running? |
+| App-specific logs | `docker logs <container_name>` | Individual app startup/runtime errors |
+| System journal (previous boot) | `journalctl -b -1 --no-pager -n 50 -p warning` | What happened before the reboot |
+| Cloudron troubleshoot | `cloudron-support --troubleshoot` | Built-in diagnostic checks (DNS, certs, services, migrations) |
+| Cloudron version | `grep '"version"' /home/yellowtent/box/package.json` | Current Cloudron version |
 
 ### **Database Troubleshooting (MySQL)**
 
