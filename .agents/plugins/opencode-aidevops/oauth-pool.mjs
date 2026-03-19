@@ -873,8 +873,8 @@ export function registerPoolProvider(config) {
         limit: { context: 200000, output: 16000 },
         family: "claude-4",
       },
-      "claude-haiku-4": {
-        name: "Claude Haiku 4",
+      "claude-haiku-4-5": {
+        name: "Claude Haiku 4.5",
         attachment: true, tool_call: true, temperature: true,
         modalities: { input: ["text", "image", "pdf"], output: ["text"] },
         cost: { input: 0, output: 0, cache_read: 0, cache_write: 0 },
