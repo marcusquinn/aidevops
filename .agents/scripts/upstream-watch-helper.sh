@@ -138,8 +138,14 @@ _ensure_state_file() {
 	mkdir -p "$state_dir" 2>/dev/null || true
 
 	if [[ ! -f "$STATE_FILE" ]]; then
-		echo '{"last_check":"","repos":{}}' >"$STATE_FILE"
+		echo '{"last_check":"","repos":{},"non_github":{}}' >"$STATE_FILE"
 		_log_info "Created new state file: $STATE_FILE"
+	fi
+	# Migrate existing state files that lack the non_github key
+	if ! jq -e '.non_github' "$STATE_FILE" >/dev/null 2>&1; then
+		local migrated
+		migrated=$(jq '. + {non_github: {}}' "$STATE_FILE")
+		echo "$migrated" >"$STATE_FILE"
 	fi
 	return 0
 }
@@ -383,8 +389,10 @@ cmd_remove() {
 # Compares current GitHub state against last-seen state. Reports new
 # releases with changelog diffs and new commits. Does NOT advance
 # last_seen — that requires explicit ack. Returns 1 if any probe failed.
+# Also checks non-GitHub upstreams (Docker Hub, GitLab, Forgejo) via
+# their configured check_command.
 # Arguments:
-#   $1 - Optional target slug to check a single repo
+#   $1 - Optional target slug/name to check a single repo
 # Globals:
 #   VERBOSE - Show commit-level detail when true
 #######################################
@@ -399,19 +407,34 @@ cmd_check() {
 	local state
 	state=$(_read_state)
 
-	local slugs
+	# Check if target is a non-GitHub upstream name
+	local target_is_non_github=false
 	if [[ -n "$target_slug" ]]; then
-		# Validate that the target slug is on the watchlist
+		if echo "$config" | jq -e --arg name "$target_slug" '.non_github_upstreams // [] | .[] | select(.name == $name)' >/dev/null 2>&1; then
+			target_is_non_github=true
+		fi
+	fi
+
+	local slugs=""
+	if [[ -n "$target_slug" && "$target_is_non_github" != true ]]; then
+		# Validate that the target slug is on the GitHub watchlist
 		if ! echo "$config" | jq -e --arg slug "$target_slug" '.repos[] | select(.slug == $slug)' >/dev/null 2>&1; then
 			echo -e "${RED}Error: Not watching ${target_slug}. Add it first with 'upstream-watch-helper.sh add ${target_slug}'.${NC}" >&2
 			return 1
 		fi
 		slugs="$target_slug"
-	else
+	elif [[ "$target_is_non_github" != true ]]; then
 		slugs=$(echo "$config" | jq -r '.repos[].slug')
 	fi
 
-	if [[ -z "$slugs" ]]; then
+	local has_github_repos=false
+	local has_non_github=false
+	[[ -n "$slugs" ]] && has_github_repos=true
+	if echo "$config" | jq -e '.non_github_upstreams // [] | length > 0' >/dev/null 2>&1; then
+		has_non_github=true
+	fi
+
+	if [[ "$has_github_repos" != true && "$has_non_github" != true ]]; then
 		echo -e "${BLUE}No repos being watched. Use 'add' to start watching.${NC}"
 		return 0
 	fi
@@ -540,6 +563,94 @@ cmd_check() {
 		fi
 
 	done <<<"$slugs"
+
+	# =========================================================================
+	# Non-GitHub upstreams (Docker Hub, GitLab, Forgejo, etc.)
+	# =========================================================================
+	if [[ "$has_non_github" == true ]]; then
+		local non_github_names
+		if [[ "$target_is_non_github" == true ]]; then
+			non_github_names="$target_slug"
+		else
+			non_github_names=$(echo "$config" | jq -r '.non_github_upstreams // [] | .[].name')
+		fi
+
+		while IFS= read -r entry_name; do
+			[[ -z "$entry_name" ]] && continue
+
+			local entry_json
+			entry_json=$(echo "$config" | jq --arg name "$entry_name" '.non_github_upstreams[] | select(.name == $name)')
+
+			local check_cmd source_type description relevance entry_url
+			check_cmd=$(echo "$entry_json" | jq -r '.check_command // ""')
+			source_type=$(echo "$entry_json" | jq -r '.source_type // "unknown"')
+			description=$(echo "$entry_json" | jq -r '.description // ""')
+			relevance=$(echo "$entry_json" | jq -r '.relevance // ""')
+			entry_url=$(echo "$entry_json" | jq -r '.url // ""')
+
+			if [[ -z "$check_cmd" ]]; then
+				echo -e "${YELLOW}Warning${NC}: No check_command for ${entry_name}, skipping" >&2
+				continue
+			fi
+
+			# Get last-seen state
+			local last_seen_value
+			last_seen_value=$(echo "$state" | jq -r --arg name "$entry_name" '.non_github[$name].last_seen // ""')
+
+			# Run the check command (curl + jq)
+			local current_value=""
+			local probe_failed=false
+			current_value=$(eval "$check_cmd" 2>/dev/null) || {
+				_log_warn "check_command failed for ${entry_name}"
+				echo -e "${YELLOW}Warning${NC}: Could not check ${entry_name} (${source_type})" >&2
+				probe_failed=true
+			}
+
+			# Trim whitespace
+			current_value=$(echo "$current_value" | tr -d '[:space:]')
+
+			local has_update=false
+			if [[ "$probe_failed" != true && -n "$current_value" && "$current_value" != "$last_seen_value" ]]; then
+				has_update=true
+			fi
+
+			if [[ "$has_update" == true ]]; then
+				updates_found=$((updates_found + 1))
+				echo ""
+				echo -e "${YELLOW}UPDATE DETECTED${NC}: ${entry_name} (${source_type})"
+				echo "  Description: ${description}"
+				[[ -n "$relevance" ]] && echo -e "  Relevance:   ${CYAN}${relevance}${NC}"
+				echo "  Previous:    ${last_seen_value:-none}"
+				echo "  Current:     ${current_value}"
+				[[ -n "$entry_url" ]] && echo "  URL:         ${entry_url}"
+
+				# Show affected files
+				local affects
+				affects=$(echo "$entry_json" | jq -r '.affects // [] | .[]' 2>/dev/null)
+				if [[ -n "$affects" ]]; then
+					echo "  Affects:"
+					while IFS= read -r affected_file; do
+						[[ -n "$affected_file" ]] && echo "    - ${affected_file}"
+					done <<<"$affects"
+				fi
+
+				echo "  Action:      Review changes, then run: upstream-watch-helper.sh ack ${entry_name}"
+			elif [[ "$probe_failed" != true ]]; then
+				echo -e "${GREEN}Up to date${NC}: ${entry_name} (${source_type}: ${current_value:-unknown})"
+			fi
+
+			# Update state (but not last_seen — that requires explicit ack)
+			if [[ "$probe_failed" != true ]]; then
+				state=$(echo "$state" | jq --arg name "$entry_name" --arg now "$now" \
+					--arg current "$current_value" \
+					--argjson pending "$([[ "$has_update" == true ]] && echo 1 || echo 0)" \
+					'.non_github[$name].last_checked = $now | .non_github[$name].current_value = $current | .non_github[$name].updates_pending = $pending')
+			else
+				had_probe_failure=true
+			fi
+
+		done <<<"$non_github_names"
+	fi
 
 	# Only advance global last_check if all probes succeeded — partial failures
 	# should not advance the 24h gate so the caller retries on the next cycle
@@ -690,22 +801,54 @@ cmd_ack() {
 	local slug="$1"
 
 	if [[ -z "$slug" ]]; then
-		echo -e "${RED}Error: Repository slug required (owner/repo)${NC}" >&2
+		echo -e "${RED}Error: Repository slug or upstream name required${NC}" >&2
 		return 1
 	fi
 
+	local config
+	config=$(_read_config)
+	local state
+	state=$(_read_state)
+	local now
+	now=$(_now_iso)
+
+	# Check if this is a non-GitHub upstream name
+	if echo "$config" | jq -e --arg name "$slug" '.non_github_upstreams // [] | .[] | select(.name == $name)' >/dev/null 2>&1; then
+		# Non-GitHub upstream — run check_command to get current value and store as last_seen
+		local check_cmd
+		check_cmd=$(echo "$config" | jq -r --arg name "$slug" '.non_github_upstreams[] | select(.name == $name) | .check_command // ""')
+
+		local current_value=""
+		if [[ -n "$check_cmd" ]]; then
+			current_value=$(eval "$check_cmd" 2>/dev/null | tr -d '[:space:]') || current_value=""
+		fi
+
+		# Also update last_seen_commit in config if the entry has one
+		local has_last_seen_commit
+		has_last_seen_commit=$(echo "$config" | jq -r --arg name "$slug" '.non_github_upstreams[] | select(.name == $name) | .last_seen_commit // ""')
+		if [[ -n "$has_last_seen_commit" ]]; then
+			config=$(echo "$config" | jq --arg name "$slug" --arg commit "$current_value" \
+				'(.non_github_upstreams[] | select(.name == $name) | .last_seen_commit) = $commit')
+			_write_config "$config"
+		fi
+
+		state=$(echo "$state" | jq --arg name "$slug" --arg value "$current_value" --arg now "$now" \
+			'.non_github[$name].last_seen = $value | .non_github[$name].last_checked = $now | .non_github[$name].updates_pending = 0')
+		_write_state "$state"
+
+		echo -e "${GREEN}Acknowledged: ${slug} at ${current_value:-unknown}${NC}"
+		_log_info "Acknowledged non-GitHub upstream: ${slug} at ${current_value:-unknown}"
+		return 0
+	fi
+
+	# GitHub repo — original logic
 	_check_prerequisites || return 1
 
 	# Validate against config watchlist (consistent with cmd_check)
-	local config
-	config=$(_read_config)
 	if ! echo "$config" | jq -e --arg slug "$slug" '.repos[] | select(.slug == $slug)' >/dev/null 2>&1; then
 		echo -e "${RED}Error: Not watching ${slug}. Add it first with 'upstream-watch-helper.sh add ${slug}'.${NC}" >&2
 		return 1
 	fi
-
-	local state
-	state=$(_read_state)
 
 	# Get current latest release
 	local latest_tag
@@ -713,9 +856,6 @@ cmd_ack() {
 
 	local latest_commit
 	latest_commit=$(gh api "repos/${slug}/commits?per_page=1" --jq '.[0].sha // empty' 2>/dev/null) || latest_commit=""
-
-	local now
-	now=$(_now_iso)
 
 	state=$(echo "$state" | jq --arg slug "$slug" --arg tag "$latest_tag" \
 		--arg commit "${latest_commit:0:7}" --arg now "$now" \
@@ -738,10 +878,12 @@ cmd_status() {
 	local state
 	state=$(_read_state)
 
-	local repo_count
+	local repo_count non_github_count
 	repo_count=$(echo "$config" | jq '.repos | length')
+	non_github_count=$(echo "$config" | jq '.non_github_upstreams // [] | length')
+	local total_count=$((repo_count + non_github_count))
 
-	if [[ "$repo_count" -eq 0 ]]; then
+	if [[ "$total_count" -eq 0 ]]; then
 		echo -e "${BLUE}No repos being watched.${NC}"
 		echo ""
 		echo "Add repos with: upstream-watch-helper.sh add <owner/repo> --relevance \"why we care\""
@@ -752,32 +894,66 @@ cmd_status() {
 	last_check=$(echo "$state" | jq -r '.last_check // "never"')
 
 	echo -e "${BLUE}Upstream Watch Status${NC}"
-	echo "Repos watched: ${repo_count}"
-	echo "Last check:    ${last_check}"
+	echo "GitHub repos:          ${repo_count}"
+	echo "Non-GitHub upstreams:  ${non_github_count}"
+	echo "Last check:            ${last_check}"
 	echo ""
 
-	echo "$config" | jq -r '.repos[] | .slug' | while IFS= read -r slug; do
-		[[ -z "$slug" ]] && continue
+	# GitHub repos
+	if [[ "$repo_count" -gt 0 ]]; then
+		echo -e "${BLUE}GitHub Repos${NC}"
+		echo "$config" | jq -r '.repos[] | .slug' | while IFS= read -r slug; do
+			[[ -z "$slug" ]] && continue
 
-		local relevance
-		relevance=$(echo "$config" | jq -r --arg slug "$slug" '.repos[] | select(.slug == $slug) | .relevance // ""')
-		local last_release last_commit last_checked pending
-		last_release=$(echo "$state" | jq -r --arg slug "$slug" '.repos[$slug].last_release_seen // "none"')
-		last_commit=$(echo "$state" | jq -r --arg slug "$slug" '.repos[$slug].last_commit_seen // "none"')
-		last_checked=$(echo "$state" | jq -r --arg slug "$slug" '.repos[$slug].last_checked // "never"')
-		pending=$(echo "$state" | jq -r --arg slug "$slug" '.repos[$slug].updates_pending // 0')
+			local relevance
+			relevance=$(echo "$config" | jq -r --arg slug "$slug" '.repos[] | select(.slug == $slug) | .relevance // ""')
+			local last_release last_commit last_checked pending
+			last_release=$(echo "$state" | jq -r --arg slug "$slug" '.repos[$slug].last_release_seen // "none"')
+			last_commit=$(echo "$state" | jq -r --arg slug "$slug" '.repos[$slug].last_commit_seen // "none"')
+			last_checked=$(echo "$state" | jq -r --arg slug "$slug" '.repos[$slug].last_checked // "never"')
+			pending=$(echo "$state" | jq -r --arg slug "$slug" '.repos[$slug].updates_pending // 0')
 
-		if [[ "$pending" -gt 0 ]]; then
-			echo -e "  ${YELLOW}*${NC} ${slug}"
-		else
-			echo -e "  ${GREEN}-${NC} ${slug}"
-		fi
-		echo "    Last release seen: ${last_release}"
-		echo "    Last commit seen:  ${last_commit}"
-		echo "    Last checked:      ${last_checked:0:10}"
-		[[ -n "$relevance" ]] && echo "    Relevance:         ${relevance}"
-		echo ""
-	done
+			if [[ "$pending" -gt 0 ]]; then
+				echo -e "  ${YELLOW}*${NC} ${slug}"
+			else
+				echo -e "  ${GREEN}-${NC} ${slug}"
+			fi
+			echo "    Last release seen: ${last_release}"
+			echo "    Last commit seen:  ${last_commit}"
+			echo "    Last checked:      ${last_checked:0:10}"
+			[[ -n "$relevance" ]] && echo "    Relevance:         ${relevance}"
+			echo ""
+		done
+	fi
+
+	# Non-GitHub upstreams
+	if [[ "$non_github_count" -gt 0 ]]; then
+		echo -e "${BLUE}Non-GitHub Upstreams${NC}"
+		echo "$config" | jq -r '.non_github_upstreams[] | .name' | while IFS= read -r entry_name; do
+			[[ -z "$entry_name" ]] && continue
+
+			local source_type description relevance
+			source_type=$(echo "$config" | jq -r --arg name "$entry_name" '.non_github_upstreams[] | select(.name == $name) | .source_type // "unknown"')
+			description=$(echo "$config" | jq -r --arg name "$entry_name" '.non_github_upstreams[] | select(.name == $name) | .description // ""')
+			relevance=$(echo "$config" | jq -r --arg name "$entry_name" '.non_github_upstreams[] | select(.name == $name) | .relevance // ""')
+
+			local last_seen last_checked pending
+			last_seen=$(echo "$state" | jq -r --arg name "$entry_name" '.non_github[$name].last_seen // "none"')
+			last_checked=$(echo "$state" | jq -r --arg name "$entry_name" '.non_github[$name].last_checked // "never"')
+			pending=$(echo "$state" | jq -r --arg name "$entry_name" '.non_github[$name].updates_pending // 0')
+
+			if [[ "$pending" -gt 0 ]]; then
+				echo -e "  ${YELLOW}*${NC} ${entry_name} (${source_type})"
+			else
+				echo -e "  ${GREEN}-${NC} ${entry_name} (${source_type})"
+			fi
+			echo "    Description:  ${description}"
+			echo "    Last seen:    ${last_seen}"
+			echo "    Last checked: ${last_checked:0:10}"
+			[[ -n "$relevance" ]] && echo "    Relevance:    ${relevance}"
+			echo ""
+		done
+	fi
 
 	return 0
 }
@@ -821,10 +997,20 @@ CONFIG:
     State:     ~/.aidevops/cache/upstream-watch-state.json
     Log:       ~/.aidevops/logs/upstream-watch.log
 
+NON-GITHUB UPSTREAMS:
+    Repos on Docker Hub, GitLab, Forgejo, etc. are configured in
+    upstream-watch.json under "non_github_upstreams". Each entry has
+    a "check_command" (curl + jq) that returns the current version
+    or commit SHA. Use the entry "name" for check/ack commands:
+
+    upstream-watch-helper.sh check cloudron-base-image
+    upstream-watch-helper.sh ack cloudron-official-skills
+
 INTEGRATION:
     The pulse can call 'upstream-watch-helper.sh check' to surface
     updates during supervisor sweeps. New releases appear as
-    informational items for human review.
+    informational items for human review. Both GitHub repos and
+    non-GitHub upstreams are checked in a single pass.
 
     Skill imports (skill-sources.json) are tracked separately by
     add-skill-helper.sh. This tool is for repos we haven't imported
