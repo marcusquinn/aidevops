@@ -160,5 +160,5 @@ Open-source push notification service, deployable on Coolify:
 
 - `product/onboarding.md` - Permission request timing
 - `product/analytics.md` - Notification engagement tracking
-- `mobile-app-dev/backend.md` - Server-side notification sending
+- `tools/mobile/app-dev/backend.md` - Server-side notification sending
 - `tools/deployment/coolify.md` - Self-hosting ntfy

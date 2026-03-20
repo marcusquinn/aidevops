@@ -327,7 +327,7 @@ Or use `xcodebuild-mcp` device tools for direct device deployment during develop
 
 ## Related
 
-- `mobile-app-dev/expo.md` - Expo alternative for cross-platform
-- `mobile-app-dev/testing.md` - Full testing guide
-- `mobile-app-dev/publishing.md` - App Store submission
+- `tools/mobile/app-dev/expo.md` - Expo alternative for cross-platform
+- `tools/mobile/app-dev/testing.md` - Full testing guide
+- `tools/mobile/app-dev/publishing.md` - App Store submission
 - `tools/mobile/xcodebuild-mcp.md` - Xcode build integration

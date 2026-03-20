@@ -172,8 +172,8 @@ Component libraries, UI kits, and design file communities.
 - `product/ui-design.md` - Product design standards and principles
 - `product/onboarding.md` - Onboarding flow design
 - `product/monetisation.md` - Paywall design
-- `mobile-app-dev/assets.md` - Mobile asset generation (icons, screenshots, videos)
-- `browser-extension-dev.md` - Extension UI design considerations
+- `tools/mobile/app-dev/assets.md` - Mobile asset generation (icons, screenshots, videos)
+- `tools/browser/extension-dev.md` - Extension UI design considerations
 - `tools/vision/overview.md` - AI image generation for custom assets
 - `tools/browser/remotion-best-practices-skill.md` - Animated preview videos
 - `tools/ui/tailwind-css.md` - Styling implementation

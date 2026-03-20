@@ -102,7 +102,7 @@ agent-device screenshot ./screenshots/home-6.9.png
 
 ### Required Sizes
 
-See `mobile-app-dev/publishing.md` for full screenshot size requirements.
+See `tools/mobile/app-dev/publishing.md` for full screenshot size requirements.
 
 ## App Store Preview Videos
 
@@ -156,7 +156,7 @@ For apps that include video content or need promotional videos:
 ## Related
 
 - `product/ui-design.md` - Design standards
-- `mobile-app-dev/publishing.md` - Screenshot requirements
+- `tools/mobile/app-dev/publishing.md` - Screenshot requirements
 - `tools/vision/overview.md` - Image generation tools
 - `tools/browser/remotion-best-practices-skill.md` - Video creation
 - `tools/video/` - Video generation and enhancement

@@ -155,7 +155,7 @@ Edge accepts Chrome extensions with minimal or no changes.
 - 128x128 PNG (required for Chrome Web Store)
 - Simple, recognisable at small sizes
 - Consistent with extension's brand
-- See `mobile-app-dev/assets.md` for icon generation guidance, `product/ui-design.md` for design standards
+- See `tools/mobile/app-dev/assets.md` for icon generation guidance, `product/ui-design.md` for design standards
 
 ## Version Management
 
@@ -167,6 +167,6 @@ Edge accepts Chrome extensions with minimal or no changes.
 ## Related
 
 - `tools/browser/chrome-webstore-release.md` - Chrome Web Store automation
-- `browser-extension-dev/testing.md` - Pre-submission testing
-- `mobile-app-dev/assets.md` - Icon and screenshot generation
+- `tools/browser/extension-dev/testing.md` - Pre-submission testing
+- `tools/mobile/app-dev/assets.md` - Icon and screenshot generation
 - `product/monetisation.md` - Revenue models for extensions

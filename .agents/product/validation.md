@@ -171,5 +171,5 @@ Use crawl4ai or browser tools to extract reviews. Focus on:
 - `product/growth.md` - User acquisition channels
 - `product/ui-design.md` - Design standards
 - `product/analytics.md` - Metrics and iteration
-- `mobile-app-dev.md` - Mobile-specific development
-- `browser-extension-dev.md` - Extension-specific development
+- `tools/mobile/app-dev.md` - Mobile-specific development
+- `tools/browser/extension-dev.md` - Extension-specific development

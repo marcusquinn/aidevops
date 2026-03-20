@@ -29,7 +29,7 @@
 | `product/ui-design.md` | UI/UX design standards, aesthetics, animations, icons, branding |
 | `product/analytics.md` | Usage analytics, feedback loops, crash reporting, iteration signals |
 
-**Subagents** — extension-specific (`browser-extension-dev/`):
+**Subagents** — extension-specific (`tools/browser/extension-dev/`):
 
 | Subagent | When to Read |
 |----------|--------------|
@@ -43,7 +43,7 @@
 - `tools/browser/playwright.md` - Extension testing with Playwright
 - `tools/browser/browser-automation.md` - Browser tool selection
 - `tools/vision/overview.md` - Icon and asset generation
-- `mobile-app-dev.md` - Shares product/ subagents for cross-platform concerns
+- `tools/mobile/app-dev.md` - Shares product/ subagents for cross-platform concerns
 
 **Extension tool stack**:
 
@@ -51,9 +51,9 @@
 Validation    -> product/validation.md (market research, idea validation)
 Design        -> product/ui-design.md (aesthetics, animations, icons)
 Onboarding    -> product/onboarding.md (first-run experience, paywall placement)
-Development   -> browser-extension-dev/development.md (WXT, Plasmo, MV3)
-Testing       -> browser-extension-dev/testing.md + Playwright
-Publishing    -> chrome-webstore-release.md (Chrome) + browser-extension-dev/publishing.md
+Development   -> tools/browser/extension-dev/development.md (WXT, Plasmo, MV3)
+Testing       -> tools/browser/extension-dev/testing.md + Playwright
+Publishing    -> chrome-webstore-release.md (Chrome) + tools/browser/extension-dev/publishing.md
 Monetisation  -> product/monetisation.md (Stripe, freemium, subscriptions)
 Growth        -> product/growth.md (UGC, influencers, content, paid ads)
 Analytics     -> product/analytics.md (PostHog, Plausible)
@@ -101,15 +101,15 @@ Read `product/ui-design.md` for universal design principles.
 
 ### Stage 4: Development
 
-Read `browser-extension-dev/development.md`.
+Read `tools/browser/extension-dev/development.md`.
 
 ### Stage 5: Testing
 
-Read `browser-extension-dev/testing.md`.
+Read `tools/browser/extension-dev/testing.md`.
 
 ### Stage 6: Publishing
 
-Read `browser-extension-dev/publishing.md` and `tools/browser/chrome-webstore-release.md`.
+Read `tools/browser/extension-dev/publishing.md` and `tools/browser/chrome-webstore-release.md`.
 
 ### Stage 7: Monetisation and Growth
 

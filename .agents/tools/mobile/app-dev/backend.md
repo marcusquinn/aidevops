@@ -125,7 +125,7 @@ For custom backends, follow these patterns:
 
 ## Notifications Backend
 
-See `mobile-app-dev/notifications.md` for push notification setup.
+See `tools/mobile/app-dev/notifications.md` for push notification setup.
 
 Options:
 
@@ -142,4 +142,4 @@ Options:
 - `services/database/postgres-drizzle-skill.md` - Postgres + Drizzle deep reference
 - `services/database/multi-org-isolation.md` - Multi-tenant patterns
 - `tools/deployment/coolify.md` - Self-hosted deployment
-- `mobile-app-dev/notifications.md` - Push notification setup
+- `tools/mobile/app-dev/notifications.md` - Push notification setup

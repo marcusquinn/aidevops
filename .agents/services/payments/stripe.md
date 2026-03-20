@@ -192,5 +192,5 @@ const validateLicense = async (key: string) => {
 - `services/payments/revenuecat.md` - Mobile app subscriptions
 - `services/payments/superwall.md` - Paywall A/B testing
 - `product/monetisation.md` - Revenue model strategy
-- `browser-extension-dev/publishing.md` - Extension monetisation
+- `tools/browser/extension-dev/publishing.md` - Extension monetisation
 - `tools/api/hono.md` - API framework for webhook handlers
