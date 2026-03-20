@@ -462,13 +462,25 @@ function upsertAccount(provider, account) {
   const pool = loadPool();
   if (!pool[provider]) pool[provider] = [];
 
-  // Match by email. When email is "unknown" and there's exactly one existing
-  // account (also "unknown"), replace it rather than creating duplicates.
-  let idx = pool[provider].findIndex((a) => a.email === account.email);
-  if (idx < 0 && account.email === "unknown") {
-    const unknownIdx = pool[provider].findIndex((a) => a.email === "unknown");
-    if (unknownIdx >= 0) idx = unknownIdx;
+  // Refuse to save "unknown" email when named accounts already exist.
+  // This prevents phantom entries when the auth UI skips the email prompt
+  // and the profile API fails to resolve the email.
+  if (account.email === "unknown") {
+    const namedAccounts = pool[provider].filter((a) => a.email !== "unknown");
+    if (namedAccounts.length > 0) {
+      const emails = namedAccounts.map((a) => a.email).join(", ");
+      console.error(
+        `[aidevops] OAuth pool: REFUSED to save account with unknown email. ` +
+        `${namedAccounts.length} named account(s) exist: ${emails}. ` +
+        `Re-auth via "Add Account to Pool" and enter the email when prompted, ` +
+        `or use /model-accounts-pool to manage accounts.`,
+      );
+      return false;
+    }
   }
+
+  // Match by email
+  const idx = pool[provider].findIndex((a) => a.email === account.email);
 
   if (idx >= 0) {
     pool[provider][idx] = account;
@@ -476,6 +488,73 @@ function upsertAccount(provider, account) {
     pool[provider].push(account);
   }
   savePool(pool);
+  return true;
+}
+
+/**
+ * Save a token to the pending area when email couldn't be resolved.
+ * Pending tokens are stored in the pool file under a `_pending` key
+ * so they survive restarts. The user assigns them to accounts via
+ * the MCP tool or they are offered on next session start.
+ * @param {string} provider
+ * @param {object} tokenData - { refresh, access, expires, added, ... }
+ */
+function savePendingToken(provider, tokenData) {
+  const pool = loadPool();
+  const pendingKey = `_pending_${provider}`;
+  pool[pendingKey] = tokenData;
+  savePool(pool);
+  const existing = (pool[provider] || []).map((a) => a.email).join(", ");
+  console.error(
+    `[aidevops] OAuth pool: token saved to pending for ${provider}. ` +
+    `Existing accounts: ${existing}. ` +
+    `Use /model-accounts-pool to assign this token to an account.`,
+  );
+}
+
+/**
+ * Get a pending token for a provider, if one exists.
+ * @param {string} provider
+ * @returns {object|null}
+ */
+function getPendingToken(provider) {
+  const pool = loadPool();
+  return pool[`_pending_${provider}`] || null;
+}
+
+/**
+ * Assign a pending token to an existing account by email.
+ * Removes the pending entry after assignment.
+ * @param {string} provider
+ * @param {string} email
+ * @returns {boolean} true if assigned
+ */
+function assignPendingToken(provider, email) {
+  const pool = loadPool();
+  const pendingKey = `_pending_${provider}`;
+  const pending = pool[pendingKey];
+  if (!pending) return false;
+
+  if (!pool[provider]) pool[provider] = [];
+  const idx = pool[provider].findIndex((a) => a.email === email);
+  if (idx < 0) return false;
+
+  // Update the existing account with the pending token
+  pool[provider][idx].refresh = pending.refresh;
+  pool[provider][idx].access = pending.access;
+  pool[provider][idx].expires = pending.expires;
+  pool[provider][idx].lastUsed = new Date().toISOString();
+  pool[provider][idx].status = "active";
+  pool[provider][idx].cooldownUntil = null;
+  if (pending.accountId) {
+    pool[provider][idx].accountId = pending.accountId;
+  }
+
+  // Remove pending entry
+  delete pool[pendingKey];
+  savePool(pool);
+  console.error(`[aidevops] OAuth pool: assigned pending token to ${email}`);
+  return true;
 }
 
 /**
@@ -893,10 +972,10 @@ export function createPoolAuthHook(client) {
             get message() {
               const accounts = getAccounts("anthropic");
               if (accounts.length === 0) {
-                return "Account email";
+                return "Account email (required to match tokens to accounts)";
               }
-              const emails = accounts.map((a) => a.email).join(", ");
-              return `Current: ${emails}\nNew account email`;
+              const emails = accounts.map((a, i) => `  ${i + 1}. ${a.email}`).join("\n");
+              return `Existing accounts:\n${emails}\nEnter email (existing to re-auth, or new to add)`;
             },
             placeholder: "you@example.com",
             validate: (value) => {
@@ -979,11 +1058,11 @@ export function createPoolAuthHook(client) {
                   }
                 }
                 if (resolvedEmail === "unknown") {
-                  console.error("[aidevops] OAuth pool: could not resolve email from profile API — account stored as 'unknown'");
+                  console.error("[aidevops] OAuth pool: could not resolve email from profile API");
                 }
               }
 
-              upsertAccount("anthropic", {
+              const saved = upsertAccount("anthropic", {
                 email: resolvedEmail,
                 refresh: json.refresh_token,
                 access: json.access_token,
@@ -993,6 +1072,39 @@ export function createPoolAuthHook(client) {
                 status: "active",
                 cooldownUntil: null,
               });
+
+              if (!saved) {
+                // upsertAccount refused — unknown email with named accounts.
+                // Save to pending so the token isn't lost. The user can assign
+                // it to an account via /model-accounts-pool or it will be
+                // offered on next session start.
+                savePendingToken("anthropic", {
+                  refresh: json.refresh_token,
+                  access: json.access_token,
+                  expires: Date.now() + json.expires_in * 1000,
+                  added: new Date().toISOString(),
+                });
+                // Also inject into the built-in provider for this session
+                try {
+                  await client.auth.set({
+                    path: { id: "anthropic" },
+                    body: {
+                      type: "oauth",
+                      refresh: json.refresh_token,
+                      access: json.access_token,
+                      expires: Date.now() + json.expires_in * 1000,
+                    },
+                  });
+                } catch {
+                  // Best-effort session injection
+                }
+                return {
+                  type: "success",
+                  refresh: json.refresh_token,
+                  access: json.access_token,
+                  expires: Date.now() + json.expires_in * 1000,
+                };
+              }
 
               const totalAccounts = getAccounts("anthropic").length;
               console.error(
@@ -1050,10 +1162,10 @@ export function createOpenAIPoolAuthHook(client) {
             get message() {
               const accounts = getAccounts("openai");
               if (accounts.length === 0) {
-                return "Account email";
+                return "Account email (required to match tokens to accounts)";
               }
-              const emails = accounts.map((a) => a.email).join(", ");
-              return `Current: ${emails}\nNew account email`;
+              const emails = accounts.map((a, i) => `  ${i + 1}. ${a.email}`).join("\n");
+              return `Existing accounts:\n${emails}\nEnter email (existing to re-auth, or new to add)`;
             },
             placeholder: "you@example.com",
             validate: (value) => {
@@ -1209,7 +1321,7 @@ export function createOpenAIPoolAuthHook(client) {
                 }
               }
 
-              upsertAccount("openai", {
+              const saved = upsertAccount("openai", {
                 email: resolvedEmail,
                 refresh: json.refresh_token || "",
                 access: json.access_token,
@@ -1220,6 +1332,39 @@ export function createOpenAIPoolAuthHook(client) {
                 cooldownUntil: null,
                 accountId,
               });
+
+              if (!saved) {
+                // upsertAccount refused — unknown email with named accounts.
+                // Save to pending so the token isn't lost.
+                savePendingToken("openai", {
+                  refresh: json.refresh_token || "",
+                  access: json.access_token,
+                  expires: Date.now() + (json.expires_in || 3600) * 1000,
+                  added: new Date().toISOString(),
+                  accountId,
+                });
+                // Also inject into the built-in provider for this session
+                try {
+                  await client.auth.set({
+                    path: { id: "openai" },
+                    body: {
+                      type: "oauth",
+                      refresh: json.refresh_token || "",
+                      access: json.access_token,
+                      expires: Date.now() + (json.expires_in || 3600) * 1000,
+                      accountId,
+                    },
+                  });
+                } catch {
+                  // Best-effort session injection
+                }
+                return {
+                  type: "success",
+                  refresh: json.refresh_token || "",
+                  access: json.access_token,
+                  expires: Date.now() + (json.expires_in || 3600) * 1000,
+                };
+              }
 
               const totalAccounts = getAccounts("openai").length;
               console.error(
@@ -1264,39 +1409,51 @@ export function createOpenAIPoolAuthHook(client) {
  */
 export function registerPoolProvider(config) {
   if (!config.provider) config.provider = {};
-  let changes = 0;
+  let registered = 0;
 
-  // Register with display name but NO models — appears in auth dialog
-  // but not in model picker. Previous versions had dummy models that
-  // showed up as broken selectable models.
-  const desired = {
-    name: "OAuth Account Pool",
-    models: {},
-  };
-
-  const existing = config.provider["anthropic-pool"];
-  if (!existing) {
-    config.provider["anthropic-pool"] = desired;
-    changes++;
-  } else {
-    // Clean up: remove dummy models from previous versions, update name
-    if (existing.models && Object.keys(existing.models).length > 0) {
-      existing.models = {};
-      changes++;
-    }
-    if (existing.name !== desired.name) {
-      existing.name = desired.name;
-      changes++;
-    }
+  // A dummy model is required for the provider to appear in the "Connect a
+  // provider" auth dialog (Ctrl+A). Without at least one model entry, OpenCode
+  // filters the provider out of the dialog entirely. The model uses minimal
+  // limits and zero cost so it doesn't appear as a usable model in the picker.
+  if (!config.provider["anthropic-pool"]) {
+    config.provider["anthropic-pool"] = {
+      name: "Anthropic Pool (Account Management)",
+      npm: "@ai-sdk/anthropic",
+      api: "https://api.anthropic.com/v1",
+      models: {
+        "pool-account-management": {
+          name: "Add/Manage Accounts (select models from Anthropic provider)",
+          attachment: false, tool_call: false, temperature: false,
+          modalities: { input: ["text"], output: ["text"] },
+          cost: { input: 0, output: 0, cache_read: 0, cache_write: 0 },
+          limit: { context: 1000, output: 100 },
+          family: "pool",
+        },
+      },
+    };
+    registered++;
   }
 
-  // Clean up stale "openai-pool" provider from previous versions (t1548).
-  if (config.provider["openai-pool"]) {
-    delete config.provider["openai-pool"];
-    changes++;
+  if (!config.provider["openai-pool"]) {
+    config.provider["openai-pool"] = {
+      name: "OpenAI Pool (Account Management)",
+      npm: "@ai-sdk/openai",
+      api: "https://api.openai.com/v1",
+      models: {
+        "pool-account-management": {
+          name: "Add/Manage Accounts (select models from OpenAI provider)",
+          attachment: false, tool_call: false, temperature: false,
+          modalities: { input: ["text"], output: ["text"] },
+          cost: { input: 0, output: 0, cache_read: 0, cache_write: 0 },
+          limit: { context: 1000, output: 100 },
+          family: "pool",
+        },
+      },
+    };
+    registered++;
   }
 
-  return changes;
+  return registered;
 }
 
 // ---------------------------------------------------------------------------
@@ -1315,6 +1472,7 @@ export function createPoolTool(client) {
       "Use 'list' to see all accounts and their status, " +
       "'rotate' to switch to the next pool account, " +
       "'remove <email>' to remove an account, " +
+      "'assign-pending <email>' to assign a pending unidentified token to an account, " +
       "'status' for rotation statistics. " +
       "Supports providers: anthropic (Claude Pro/Max) and openai (ChatGPT Plus/Pro). " +
       "The agent should route natural language requests about managing " +
@@ -1324,13 +1482,13 @@ export function createPoolTool(client) {
       properties: {
         action: {
           type: "string",
-          enum: ["list", "remove", "status", "reset-cooldowns", "rotate"],
+          enum: ["list", "remove", "status", "reset-cooldowns", "rotate", "assign-pending"],
           description:
-            "Action to perform: list accounts, remove an account, show status, reset cooldowns, or rotate to next account",
+            "Action to perform: list accounts, remove an account, show status, reset cooldowns, rotate to next account, or assign a pending token to an account",
         },
         email: {
           type: "string",
-          description: "Account email (required for 'remove' action)",
+          description: "Account email (required for 'remove' and 'assign-pending' actions)",
         },
         provider: {
           type: "string",
@@ -1371,7 +1529,12 @@ export function createPoolTool(client) {
             const accountIdSuffix = a.accountId ? ` | id: ${a.accountId.slice(0, 8)}...` : "";
             return `${i + 1}. ${a.email} [${a.status}]${cooldown}${lastUsed}${accountIdSuffix}`;
           });
-          return `${provider} pool (${accounts.length} account${accounts.length === 1 ? "" : "s"}):\n\n${lines.join("\n")}`;
+          // Check for pending unassigned tokens
+          const pending = getPendingToken(provider);
+          const pendingLine = pending
+            ? `\n\nPENDING: Unassigned token (added: ${pending.added}). Use assign-pending <email> to assign it.`
+            : "";
+          return `${provider} pool (${accounts.length} account${accounts.length === 1 ? "" : "s"}):\n\n${lines.join("\n")}${pendingLine}`;
         }
 
         case "remove": {
@@ -1478,6 +1641,22 @@ export function createPoolTool(client) {
             return `Rotated (${provider}): now using ${newest?.email || "unknown"}. Previous: ${current?.email || "unknown"}.`;
           }
           return `Rotation failed (${provider}) — no other active accounts available.`;
+        }
+
+        case "assign-pending": {
+          const pending = getPendingToken(provider);
+          if (!pending) {
+            return `No pending token for ${provider}. Pending tokens are created when you re-auth via the Pool provider but the email couldn't be identified.`;
+          }
+          if (!args.email) {
+            const emails = accounts.map((a) => a.email).join(", ");
+            return `Pending ${provider} token found (added: ${pending.added}). Assign it to one of: ${emails}\n\nUsage: assign-pending with email parameter.`;
+          }
+          const assigned = assignPendingToken(provider, args.email);
+          if (assigned) {
+            return `Assigned pending token to ${args.email} in ${provider} pool. Token is now active.`;
+          }
+          return `Failed to assign: account ${args.email} not found in ${provider} pool. Available: ${accounts.map((a) => a.email).join(", ")}`;
         }
 
         default:
