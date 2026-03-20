@@ -1205,57 +1205,39 @@ export function createOpenAIPoolAuthHook(client) {
 }
 
 /**
- * Register pool providers (auth-only, no models).
- * These providers exist solely to provide the "Add Account to Pool" OAuth flows.
- * Models are served by the built-in providers, which use pool tokens
- * injected into auth.json by initPoolAuth/injectPoolToken/injectOpenAIPoolToken.
+ * Clean up stale pool provider entries from config.
+ *
+ * The pool auth hook (provider: "anthropic-pool") automatically appears in
+ * the Ctrl+A auth dialog via OpenCode's resolvePluginProviders() — it does
+ * NOT need a config.provider entry. Previous versions registered pool
+ * providers in config, which caused them to appear in the model picker as
+ * selectable (but non-functional) models. This function removes those stale
+ * entries.
+ *
+ * Models are served by the built-in providers ("anthropic", "openai"), which
+ * use pool tokens injected into auth.json by initPoolAuth/injectPoolToken/
+ * injectOpenAIPoolToken.
+ *
  * @param {any} config - OpenCode config object
- * @returns {number} number of providers newly registered (0, 1, or 2)
+ * @returns {number} number of stale providers removed
  */
 export function registerPoolProvider(config) {
-  if (!config.provider) config.provider = {};
-  let registered = 0;
+  if (!config.provider) return 0;
+  let cleaned = 0;
 
-  if (!config.provider["anthropic-pool"]) {
-    config.provider["anthropic-pool"] = {
-      name: "Anthropic Pool (Account Management)",
-      npm: "@ai-sdk/anthropic",
-      api: "https://api.anthropic.com/v1",
-      models: {
-        "pool-account-management": {
-          name: "Add/Manage Accounts (select models from Anthropic provider)",
-          attachment: false, tool_call: false, temperature: false,
-          modalities: { input: ["text"], output: ["text"] },
-          cost: { input: 0, output: 0, cache_read: 0, cache_write: 0 },
-          limit: { context: 1000, output: 100 },
-          family: "pool",
-        },
-      },
-    };
-    registered++;
+  // Remove stale pool providers that were registered by previous versions.
+  // These showed up in the model picker with dummy models, confusing users.
+  // The auth hook's provider field is sufficient for the auth dialog.
+  if (config.provider["anthropic-pool"]) {
+    delete config.provider["anthropic-pool"];
+    cleaned++;
+  }
+  if (config.provider["openai-pool"]) {
+    delete config.provider["openai-pool"];
+    cleaned++;
   }
 
-  // Register OpenAI pool provider (t1548)
-  if (!config.provider["openai-pool"]) {
-    config.provider["openai-pool"] = {
-      name: "OpenAI Pool (Account Management)",
-      npm: "@ai-sdk/openai",
-      api: "https://api.openai.com/v1",
-      models: {
-        "pool-account-management": {
-          name: "Add/Manage Accounts (select models from OpenAI provider)",
-          attachment: false, tool_call: false, temperature: false,
-          modalities: { input: ["text"], output: ["text"] },
-          cost: { input: 0, output: 0, cache_read: 0, cache_write: 0 },
-          limit: { context: 1000, output: 100 },
-          family: "pool",
-        },
-      },
-    };
-    registered++;
-  }
-
-  return registered;
+  return cleaned;
 }
 
 // ---------------------------------------------------------------------------

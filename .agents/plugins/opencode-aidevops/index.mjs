@@ -362,15 +362,15 @@ async function configHook(config) {
   const mcpsRegistered = registerMcpServers(config);
   const agentToolsUpdated = applyAgentMcpTools(config);
 
-  // --- OAuth pool provider registration (t1543, t1548) ---
-  const poolRegistered = registerPoolProvider(config);
+  // --- OAuth pool: clean up stale provider entries (t1543, t1548) ---
+  const poolCleaned = registerPoolProvider(config);
 
   // Silent unless something was actually changed (avoids TUI flash on startup)
   const parts = [];
   if (agentsInjected > 0) parts.push(`${agentsInjected} agents`);
   if (mcpsRegistered > 0) parts.push(`${mcpsRegistered} MCPs`);
   if (agentToolsUpdated > 0) parts.push(`${agentToolsUpdated} agent tool perms`);
-  if (poolRegistered > 0) parts.push(`${poolRegistered} pool provider${poolRegistered === 1 ? "" : "s"}`);
+  if (poolCleaned > 0) parts.push(`cleaned ${poolCleaned} stale pool provider${poolCleaned === 1 ? "" : "s"}`);
 
   if (parts.length > 0) {
     console.error(`[aidevops] Config hook: ${parts.join(", ")}`);
