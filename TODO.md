@@ -108,6 +108,11 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 
 ## Backlog
 
+### Runtime Parity (Claude Code CLI + OpenCode)
+
+- [ ] t1546 Setup/update: guide users to configure OAuth pool when built-in anthropic-auth is removed in OpenCode v1.2.30 #feature #setup ~2h logged:2026-03-20
+- [ ] t1547 Deploy aidevops primary agents as Claude Code CLI slash commands; ensure setup.sh and update deploy MCP servers, AGENTS.md, commands, and settings to both Claude Code and OpenCode with feature parity #feature #setup ~8h logged:2026-03-20
+
 ### SEO/GEO Agent Intelligence
 
 - [x] t1536 Add site: query optimization intelligence to GEO agents — update query-fanout-research.md, geo-strategy.md, sro-grounding.md, ai-search-readiness.md, and aeo-geo-patterns.md with GPT-5.4 site: operator retrieval patterns: 3-stage retrieval model (broad discovery -> site-specific deep-dive -> third-party validation), site-searchable content architecture, review platform citation strategy (G2/Capterra), UTM citation attribution tracking #feature #seo #geo ~4h model:sonnet ref:GH#5088 logged:2026-03-16 -> [todo/tasks/t1536-brief.md] pr:#5093 completed:2026-03-16
