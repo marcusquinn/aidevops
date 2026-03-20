@@ -112,7 +112,7 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 
 - [x] t1546 Setup/update: guide users to configure OAuth pool when built-in anthropic-auth is removed in OpenCode v1.2.30 #feature #setup ~2h ref:GH#5311 logged:2026-03-20 pr:#5315 completed:2026-03-20
 - [x] t1547 Deploy aidevops primary agents as Claude Code CLI slash commands; ensure setup.sh and update deploy MCP servers, AGENTS.md, commands, and settings to both Claude Code and OpenCode with feature parity #feature #setup ~8h ref:GH#5314 logged:2026-03-20 pr:#5316 completed:2026-03-20
-- [ ] t1548 OAuth pool: add OpenAI Pro multi-account rotation — fix: merge into single auth hook (OpenCode doesn't support auth arrays) #feature #auth ~2h ref:GH#5318 logged:2026-03-20
+- [x] t1548 OAuth pool: add OpenAI Pro multi-account rotation — fix: merge into single auth hook (OpenCode doesn't support auth arrays) #feature #auth ~2h ref:GH#5318 logged:2026-03-20 pr:#5324 completed:2026-03-20
 
 ### SEO/GEO Agent Intelligence
 
