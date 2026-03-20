@@ -565,6 +565,7 @@ For aidevops users:
 
 ## Related Documentation
 
+- `tools/opencode/opencode-openai-auth.md` - OpenAI Pro pool (same architecture, ChatGPT Plus/Pro)
 - `tools/opencode/opencode.md` - OpenCode integration overview
 - `tools/ai-assistants/configuration.md` - AI assistant configuration
 - `tools/credentials/api-key-management.md` - API key management

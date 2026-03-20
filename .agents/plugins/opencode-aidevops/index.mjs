@@ -16,7 +16,7 @@ import { loadAgentIndex, applyAgentMcpTools } from "./agent-loader.mjs";
 import { validateReturnStatements, validatePositionalParams } from "./validators.mjs";
 import { runMarkdownQualityPipeline } from "./quality-pipeline.mjs";
 import { createTtsrHooks } from "./ttsr.mjs";
-import { createPoolAuthHook, createPoolTool, initPoolAuth, registerPoolProvider } from "./oauth-pool.mjs";
+import { createPoolAuthHook, createOpenAIPoolAuthHook, createPoolTool, initPoolAuth, registerPoolProvider } from "./oauth-pool.mjs";
 import { createProviderAuthHook } from "./provider-auth.mjs";
 
 const HOME = homedir();
@@ -362,7 +362,7 @@ async function configHook(config) {
   const mcpsRegistered = registerMcpServers(config);
   const agentToolsUpdated = applyAgentMcpTools(config);
 
-  // --- OAuth pool provider registration (t1543) ---
+  // --- OAuth pool provider registration (t1543, t1548) ---
   const poolRegistered = registerPoolProvider(config);
 
   // Silent unless something was actually changed (avoids TUI flash on startup)
@@ -370,7 +370,7 @@ async function configHook(config) {
   if (agentsInjected > 0) parts.push(`${agentsInjected} agents`);
   if (mcpsRegistered > 0) parts.push(`${mcpsRegistered} MCPs`);
   if (agentToolsUpdated > 0) parts.push(`${agentToolsUpdated} agent tool perms`);
-  if (poolRegistered > 0) parts.push(`${poolRegistered} pool provider`);
+  if (poolRegistered > 0) parts.push(`${poolRegistered} pool provider${poolRegistered === 1 ? "" : "s"}`);
 
   if (parts.length > 0) {
     console.error(`[aidevops] Config hook: ${parts.join(", ")}`);
@@ -1056,6 +1056,9 @@ const {
  *    describing its intent in present participle form. Extracted in
  *    `tool.execute.before`, stored in the `tool_calls` table `intent` column.
  * 8. Compaction context — preserves operational state across context resets
+ * 9. OpenAI Pro pool — multi-account rotation for ChatGPT Plus/Pro accounts (t1548)
+ *    Same token injection architecture as Anthropic pool. Adds "openai-pool" provider
+ *    for account management and injects tokens into the built-in "openai" provider.
  *
  * MCP registration (Phase 2, t008.2):
  * - Registers all known MCP servers from a data-driven registry
@@ -1070,10 +1073,10 @@ export async function AidevopsPlugin({ directory, client }) {
   // Phase 6: Initialise LLM observability (t1308)
   initObservability();
 
-  // Phase 7: OAuth pool — seed auth entry so provider appears in connect dialog (t1543)
+  // Phase 7: OAuth pool — seed auth entries so providers appear in connect dialog (t1543, t1548)
   await initPoolAuth(client);
 
-  // Phase 7b: OAuth pool tools (t1543)
+  // Phase 7b: OAuth pool tools (t1543, t1548)
   const baseTools = createTools(SCRIPTS_DIR, run, {
     runShellQualityPipeline,
     runMarkdownQualityPipeline,
@@ -1103,10 +1106,11 @@ export async function AidevopsPlugin({ directory, client }) {
     // Phase 6: LLM observability — capture assistant message metadata (t1308)
     event: async (input) => handleEvent(input),
 
-    // Phase 7: OAuth — built-in anthropic provider auth + pool account management (t1543)
+    // Phase 7: OAuth — built-in provider auth + pool account management (t1543, t1548)
     auth: [
       createProviderAuthHook(client),
       createPoolAuthHook(client),
+      createOpenAIPoolAuthHook(client),
     ],
 
     // Compaction context (includes OMOC state when detected)

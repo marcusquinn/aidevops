@@ -1,19 +1,24 @@
 /**
- * OAuth Multi-Account Pool (t1543)
+ * OAuth Multi-Account Pool (t1543, t1548)
  *
  * Enables multiple OAuth accounts per provider with automatic credential
  * rotation on rate limits (429). Stores credentials in a separate pool file
  * (~/.aidevops/oauth-pool.json) to avoid conflicts with OpenCode's auth.json.
  *
  * Architecture:
- *   - auth hook: registers "anthropic-pool" provider with OAuth login flow
+ *   - auth hook: registers "anthropic-pool" and "openai-pool" providers with OAuth login flow
  *   - loader: returns a custom fetch wrapper that rotates credentials on 429
  *   - tool: /model-accounts-pool for listing/removing accounts
+ *
+ * Supported providers:
+ *   - anthropic: Claude Pro/Max accounts (claude.ai OAuth)
+ *   - openai: ChatGPT Plus/Pro accounts (auth.openai.com OAuth)
  *
  * References:
  *   - Built-in auth plugin: opencode-anthropic-auth@0.0.13
  *   - OpenCode PR #11832 (upstream multi-account proposal)
  *   - Plugin API: @opencode-ai/plugin AuthHook type
+ *   - OpenAI OAuth: CLIENT_ID=app_EMoamEEZ73f0CkXaXp7hrann, ISSUER=https://auth.openai.com
  */
 
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "fs";
@@ -27,11 +32,36 @@ import { createHash, randomBytes } from "crypto";
 
 const HOME = homedir();
 const POOL_FILE = join(HOME, ".aidevops", "oauth-pool.json");
-const CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
-const TOKEN_ENDPOINT = "https://platform.claude.com/v1/oauth/token";
-const OAUTH_AUTHORIZE_URL = "https://claude.ai/oauth/authorize";
-const REDIRECT_URI = "https://console.anthropic.com/oauth/code/callback";
-const OAUTH_SCOPES = "org:create_api_key user:profile user:inference user:sessions:claude_code user:mcp_servers user:file_upload";
+
+// ---------------------------------------------------------------------------
+// Anthropic OAuth constants
+// ---------------------------------------------------------------------------
+
+const ANTHROPIC_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
+const ANTHROPIC_TOKEN_ENDPOINT = "https://platform.claude.com/v1/oauth/token";
+const ANTHROPIC_OAUTH_AUTHORIZE_URL = "https://claude.ai/oauth/authorize";
+const ANTHROPIC_REDIRECT_URI = "https://console.anthropic.com/oauth/code/callback";
+const ANTHROPIC_OAUTH_SCOPES = "org:create_api_key user:profile user:inference user:sessions:claude_code user:mcp_servers user:file_upload";
+
+// ---------------------------------------------------------------------------
+// OpenAI OAuth constants (t1548)
+// Extracted from OpenCode binary: CLIENT_ID=app_EMoamEEZ73f0CkXaXp7hrann
+// ISSUER=https://auth.openai.com, OAUTH_PORT=1455
+// ---------------------------------------------------------------------------
+
+const OPENAI_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
+const OPENAI_ISSUER = "https://auth.openai.com";
+const OPENAI_TOKEN_ENDPOINT = `${OPENAI_ISSUER}/oauth/token`;
+const OPENAI_OAUTH_AUTHORIZE_URL = `${OPENAI_ISSUER}/oauth/authorize`;
+/** OpenAI uses a local redirect server at port 1455 for its built-in flow.
+ *  For the pool's add-account flow we use the same redirect URI so the
+ *  authorization code can be pasted back into the terminal prompt. */
+const OPENAI_REDIRECT_URI = "http://localhost:1455/auth/callback";
+const OPENAI_OAUTH_SCOPES = "openid profile email offline_access";
+
+// ---------------------------------------------------------------------------
+// Shared cooldown constants
+// ---------------------------------------------------------------------------
 
 /** Default cooldown when rate limited (ms) */
 const RATE_LIMIT_COOLDOWN_MS = 60_000;
@@ -43,19 +73,34 @@ const AUTH_FAILURE_COOLDOWN_MS = 300_000;
 const TOKEN_ENDPOINT_COOLDOWN_MS = 300_000;
 
 // ---------------------------------------------------------------------------
+// Legacy aliases (kept for backward compatibility — Anthropic was the only
+// provider before t1548, so existing code used bare constant names)
+// ---------------------------------------------------------------------------
+
+/** @deprecated Use ANTHROPIC_CLIENT_ID */
+const CLIENT_ID = ANTHROPIC_CLIENT_ID;
+/** @deprecated Use ANTHROPIC_TOKEN_ENDPOINT */
+const TOKEN_ENDPOINT = ANTHROPIC_TOKEN_ENDPOINT;
+
+// ---------------------------------------------------------------------------
 // Token endpoint helpers
 // ---------------------------------------------------------------------------
 
 /**
- * In-memory timestamp of the last 429 from the token endpoint.
- * When set, all token endpoint calls are skipped until the cooldown expires.
- * This prevents hammering the endpoint and extending the rate limit window.
+ * In-memory timestamp of the last 429 from the Anthropic token endpoint.
+ * When set, all Anthropic token endpoint calls are skipped until the cooldown expires.
  * @type {number}
  */
 let tokenEndpointCooldownUntil = 0;
 
 /**
- * Fetch from the token endpoint. Single attempt with 429 cooldown gate.
+ * In-memory timestamp of the last 429 from the OpenAI token endpoint (t1548).
+ * @type {number}
+ */
+let openaiTokenEndpointCooldownUntil = 0;
+
+/**
+ * Fetch from the Anthropic token endpoint. Single attempt with 429 cooldown gate.
  *
  * If a previous call got 429 within the cooldown window, this returns a
  * synthetic 429 response immediately — no network request made. This prevents
@@ -78,7 +123,7 @@ async function fetchTokenEndpoint(body, context) {
     return new Response(null, { status: 429, statusText: "Rate Limited (cooldown)" });
   }
 
-  const response = await fetch(TOKEN_ENDPOINT, {
+  const response = await fetch(ANTHROPIC_TOKEN_ENDPOINT, {
     method: "POST",
     headers: {
       "Content-Type": "application/json",
@@ -97,6 +142,53 @@ async function fetchTokenEndpoint(body, context) {
     const cooldownMinutes = Math.ceil(cooldownMs / 60000);
     console.error(
       `[aidevops] OAuth pool: ${context} failed: rate limited by Anthropic. ` +
+      `Cooldown set for ${cooldownMinutes}m — no further token requests until then. ` +
+      `Use /model-accounts-pool reset-cooldowns to clear manually.`,
+    );
+  } else if (!response.ok) {
+    console.error(`[aidevops] OAuth pool: ${context} failed: HTTP ${response.status}`);
+  }
+
+  return response;
+}
+
+/**
+ * Fetch from the OpenAI token endpoint using form-encoded body (t1548).
+ * OpenAI uses application/x-www-form-urlencoded, not JSON.
+ *
+ * @param {URLSearchParams} params - Form parameters
+ * @param {string} context - description for logging
+ * @returns {Promise<Response>}
+ */
+async function fetchOpenAITokenEndpoint(params, context) {
+  const now = Date.now();
+  if (openaiTokenEndpointCooldownUntil > now) {
+    const remainingMinutes = Math.ceil((openaiTokenEndpointCooldownUntil - now) / 60000);
+    console.error(
+      `[aidevops] OAuth pool: ${context} skipped — OpenAI token endpoint rate limited, cooldown ${remainingMinutes}m remaining. ` +
+      `Use /model-accounts-pool reset-cooldowns to clear manually.`,
+    );
+    return new Response(null, { status: 429, statusText: "Rate Limited (cooldown)" });
+  }
+
+  const response = await fetch(OPENAI_TOKEN_ENDPOINT, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/x-www-form-urlencoded",
+      "User-Agent": "opencode/1.2.27",
+    },
+    body: params.toString(),
+  });
+
+  if (response.status === 429) {
+    const retryAfter = response.headers.get("retry-after");
+    const cooldownMs = retryAfter
+      ? Math.max(parseInt(retryAfter, 10) * 1000, TOKEN_ENDPOINT_COOLDOWN_MS)
+      : TOKEN_ENDPOINT_COOLDOWN_MS;
+    openaiTokenEndpointCooldownUntil = Date.now() + cooldownMs;
+    const cooldownMinutes = Math.ceil(cooldownMs / 60000);
+    console.error(
+      `[aidevops] OAuth pool: ${context} failed: rate limited by OpenAI. ` +
       `Cooldown set for ${cooldownMinutes}m — no further token requests until then. ` +
       `Use /model-accounts-pool reset-cooldowns to clear manually.`,
     );
@@ -141,11 +233,13 @@ function generatePKCE() {
  * @property {string} lastUsed
  * @property {"active"|"idle"|"rate-limited"|"auth-error"} status
  * @property {number|null} cooldownUntil
+ * @property {string} [accountId] - OpenAI account ID (chatgpt_account_id from JWT claims)
  */
 
 /**
  * @typedef {Object} PoolData
  * @property {PoolAccount[]} [anthropic]
+ * @property {PoolAccount[]} [openai]
  */
 
 /**
@@ -250,7 +344,7 @@ function patchAccount(provider, email, patch) {
 // ---------------------------------------------------------------------------
 
 /**
- * Refresh an expired access token using the refresh token.
+ * Refresh an expired Anthropic access token using the refresh token.
  * @param {PoolAccount} account
  * @returns {Promise<{access: string, refresh: string, expires: number} | null>}
  */
@@ -260,7 +354,7 @@ async function refreshAccessToken(account) {
       JSON.stringify({
         grant_type: "refresh_token",
         refresh_token: account.refresh,
-        client_id: CLIENT_ID,
+        client_id: ANTHROPIC_CLIENT_ID,
       }),
       `refresh for ${account.email}`,
     );
@@ -283,8 +377,39 @@ async function refreshAccessToken(account) {
 }
 
 /**
+ * Refresh an expired OpenAI access token using the refresh token (t1548).
+ * OpenAI uses form-encoded bodies, not JSON.
+ * @param {PoolAccount} account
+ * @returns {Promise<{access: string, refresh: string, expires: number} | null>}
+ */
+async function refreshOpenAIAccessToken(account) {
+  try {
+    const params = new URLSearchParams({
+      grant_type: "refresh_token",
+      refresh_token: account.refresh,
+      client_id: OPENAI_CLIENT_ID,
+    });
+    const response = await fetchOpenAITokenEndpoint(params, `refresh for ${account.email}`);
+    if (!response.ok) {
+      return null;
+    }
+    const json = await response.json();
+    return {
+      access: json.access_token,
+      refresh: json.refresh_token || account.refresh,
+      expires: Date.now() + (json.expires_in || 3600) * 1000,
+    };
+  } catch (err) {
+    console.error(
+      `[aidevops] OAuth pool: OpenAI token refresh error for ${account.email}: ${err.message}`,
+    );
+    return null;
+  }
+}
+
+/**
  * Ensure an account has a valid (non-expired) access token.
- * Refreshes if needed and updates the pool file.
+ * Routes to the correct refresh function based on provider.
  * @param {string} provider
  * @param {PoolAccount} account
  * @returns {Promise<string|null>} access token or null on failure
@@ -293,7 +418,9 @@ async function ensureValidToken(provider, account) {
   if (account.access && account.expires > Date.now()) {
     return account.access;
   }
-  const tokens = await refreshAccessToken(account);
+  const tokens = provider === "openai"
+    ? await refreshOpenAIAccessToken(account)
+    : await refreshAccessToken(account);
   if (!tokens) {
     patchAccount(provider, account.email, {
       status: "auth-error",
@@ -365,37 +492,46 @@ function pickNextAccount(provider, excludeEmail) {
 // ---------------------------------------------------------------------------
 
 /**
- * Inject a pool token into the built-in "anthropic" provider's auth.json entry.
- * On session start, picks the least-recently-used account and writes its token
- * so the built-in provider uses it with all its SDK magic (headers, streaming, etc).
- * Also seeds a placeholder for the "anthropic-pool" provider (auth flow only).
+ * Seed a pool provider auth entry so it appears in the connect dialog.
  * @param {any} client - OpenCode SDK client
+ * @param {string} providerId - e.g. "anthropic-pool" or "openai-pool"
  */
-export async function initPoolAuth(client) {
-  // Seed the pool provider entry (for "Add Account" OAuth flow)
+async function seedPoolAuthEntry(client, providerId) {
   try {
-    const existing = await client.auth.get({ path: { id: "anthropic-pool" } });
+    const existing = await client.auth.get({ path: { id: providerId } });
     if (!existing?.data) {
       await client.auth.set({
-        path: { id: "anthropic-pool" },
+        path: { id: providerId },
         body: { type: "pending", refresh: "", access: "", expires: 0 },
       });
-      console.error("[aidevops] OAuth pool: seeded auth entry for anthropic-pool");
+      console.error(`[aidevops] OAuth pool: seeded auth entry for ${providerId}`);
     }
   } catch {
     try {
       await client.auth.set({
-        path: { id: "anthropic-pool" },
+        path: { id: providerId },
         body: { type: "pending", refresh: "", access: "", expires: 0 },
       });
-      console.error("[aidevops] OAuth pool: seeded auth entry for anthropic-pool");
+      console.error(`[aidevops] OAuth pool: seeded auth entry for ${providerId}`);
     } catch (err) {
-      console.error(`[aidevops] OAuth pool: failed to seed auth entry: ${err.message}`);
+      console.error(`[aidevops] OAuth pool: failed to seed auth entry for ${providerId}: ${err.message}`);
     }
   }
+}
 
-  // Inject pool token into built-in anthropic provider
+/**
+ * Inject pool tokens into built-in providers on session start.
+ * Seeds auth entries for both anthropic-pool and openai-pool providers.
+ * @param {any} client - OpenCode SDK client
+ */
+export async function initPoolAuth(client) {
+  // Seed pool provider entries (for "Add Account" OAuth flows)
+  await seedPoolAuthEntry(client, "anthropic-pool");
+  await seedPoolAuthEntry(client, "openai-pool");
+
+  // Inject pool tokens into built-in providers
   await injectPoolToken(client);
+  await injectOpenAIPoolToken(client);
 }
 
 /**
@@ -458,6 +594,66 @@ export async function injectPoolToken(client, skipEmail) {
 }
 
 /**
+ * Pick the best OpenAI pool account and inject its token into the built-in "openai"
+ * provider's auth.json entry (t1548). Same token injection architecture as Anthropic pool.
+ * @param {any} client - OpenCode SDK client
+ * @param {string} [skipEmail] - email to skip (for rotation on 429)
+ * @returns {boolean} true if a token was injected
+ */
+export async function injectOpenAIPoolToken(client, skipEmail) {
+  const accounts = getAccounts("openai");
+  if (accounts.length === 0) return false;
+
+  // Pick least-recently-used account, optionally skipping one
+  let account = null;
+  const sorted = [...accounts]
+    .filter((a) => a.status === "active" && a.email !== skipEmail)
+    .sort((a, b) => new Date(a.lastUsed || 0) - new Date(b.lastUsed || 0));
+
+  if (sorted.length === 0) {
+    account = accounts.find((a) => a.status === "active");
+  } else {
+    account = sorted[0];
+  }
+
+  if (!account) return false;
+
+  // Ensure token is valid (refresh if needed)
+  const accessToken = await ensureValidToken("openai", account);
+  if (!accessToken) {
+    console.error(`[aidevops] OAuth pool: failed to get valid OpenAI token for ${account.email}`);
+    return false;
+  }
+
+  // Write to built-in openai provider's auth entry
+  // OpenAI auth.json structure: { type, access, refresh, expires, accountId }
+  try {
+    await client.auth.set({
+      path: { id: "openai" },
+      body: {
+        type: "oauth",
+        refresh: account.refresh,
+        access: account.access,
+        expires: account.expires,
+        accountId: account.accountId || "",
+      },
+    });
+
+    // Mark as used
+    patchAccount("openai", account.email, {
+      lastUsed: new Date().toISOString(),
+      status: "active",
+    });
+
+    console.error(`[aidevops] OAuth pool: injected token for ${account.email} into built-in openai provider`);
+    return true;
+  } catch (err) {
+    console.error(`[aidevops] OAuth pool: failed to inject OpenAI token: ${err.message}`);
+    return false;
+  }
+}
+
+/**
  * Create the auth hook for the anthropic-pool provider.
  * This provider exists solely for the "Add Account to Pool" OAuth flow.
  * It has no models — users select models from the built-in "anthropic" provider,
@@ -504,12 +700,12 @@ export function createPoolAuthHook(client) {
           const email = inputs?.email || "unknown";
           const pkce = generatePKCE();
 
-          const url = new URL(OAUTH_AUTHORIZE_URL);
+          const url = new URL(ANTHROPIC_OAUTH_AUTHORIZE_URL);
           url.searchParams.set("code", "true");
-          url.searchParams.set("client_id", CLIENT_ID);
+          url.searchParams.set("client_id", ANTHROPIC_CLIENT_ID);
           url.searchParams.set("response_type", "code");
-          url.searchParams.set("redirect_uri", REDIRECT_URI);
-          url.searchParams.set("scope", OAUTH_SCOPES);
+          url.searchParams.set("redirect_uri", ANTHROPIC_REDIRECT_URI);
+          url.searchParams.set("scope", ANTHROPIC_OAUTH_SCOPES);
           url.searchParams.set("code_challenge", pkce.challenge);
           url.searchParams.set("code_challenge_method", "S256");
           url.searchParams.set("state", pkce.verifier);
@@ -528,8 +724,8 @@ export function createPoolAuthHook(client) {
                   code: authCode,
                   state,
                   grant_type: "authorization_code",
-                  client_id: CLIENT_ID,
-                  redirect_uri: REDIRECT_URI,
+                  client_id: ANTHROPIC_CLIENT_ID,
+                  redirect_uri: ANTHROPIC_REDIRECT_URI,
                   code_verifier: pkce.verifier,
                 }),
                 "token exchange",
@@ -610,25 +806,209 @@ export function createPoolAuthHook(client) {
 }
 
 /**
- * Register the anthropic-pool provider (auth-only, no models).
- * This provider exists solely to provide the "Add Account to Pool" OAuth flow.
- * Models are served by the built-in "anthropic" provider, which uses pool tokens
- * injected into auth.json.
+ * Create the auth hook for the openai-pool provider (t1548).
+ * This provider exists solely for the "Add Account to Pool" OAuth flow.
+ * It has no models — users select models from the built-in "openai" provider,
+ * which uses pool tokens injected into auth.json by injectOpenAIPoolToken.
+ *
+ * OpenAI OAuth uses form-encoded bodies and a local redirect server (port 1455)
+ * for its built-in flow. For the pool's add-account flow we use the same
+ * redirect URI with a code-paste UX (same as Anthropic pool).
+ *
+ * @param {any} client - OpenCode SDK client
+ * @returns {import('@opencode-ai/plugin').AuthHook}
+ */
+export function createOpenAIPoolAuthHook(client) {
+  return {
+    provider: "openai-pool",
+
+    methods: [
+      {
+        get label() {
+          const accounts = getAccounts("openai");
+          if (accounts.length === 0) {
+            return "Add Account to Pool (ChatGPT Plus/Pro)";
+          }
+          return `Add Account to Pool (${accounts.length} account${accounts.length === 1 ? "" : "s"})`;
+        },
+        type: "oauth",
+        prompts: [
+          {
+            type: "text",
+            key: "email",
+            get message() {
+              const accounts = getAccounts("openai");
+              if (accounts.length === 0) {
+                return "Account email";
+              }
+              const emails = accounts.map((a) => a.email).join(", ");
+              return `Current: ${emails}\nNew account email`;
+            },
+            placeholder: "you@example.com",
+            validate: (value) => {
+              if (!value || !value.includes("@")) {
+                return "Please enter a valid email address";
+              }
+              return undefined;
+            },
+          },
+        ],
+        authorize: async (inputs) => {
+          const email = inputs?.email || "unknown";
+          const pkce = generatePKCE();
+
+          const url = new URL(OPENAI_OAUTH_AUTHORIZE_URL);
+          url.searchParams.set("client_id", OPENAI_CLIENT_ID);
+          url.searchParams.set("response_type", "code");
+          url.searchParams.set("redirect_uri", OPENAI_REDIRECT_URI);
+          url.searchParams.set("scope", OPENAI_OAUTH_SCOPES);
+          url.searchParams.set("code_challenge", pkce.challenge);
+          url.searchParams.set("code_challenge_method", "S256");
+
+          return {
+            url: url.toString(),
+            instructions: [
+              `Adding OpenAI account: ${email}`,
+              `1. A browser window will open to auth.openai.com`,
+              `2. Sign in with your ChatGPT Plus/Pro account`,
+              `3. After authorizing, you will be redirected to http://localhost:1455/auth/callback`,
+              `4. Copy the "code" query parameter from the redirect URL`,
+              `5. Paste the authorization code here: `,
+            ].join("\n"),
+            method: "code",
+            callback: async (code) => {
+              // Strip any URL fragment or extra parameters
+              const cleanCode = code.trim().split(/[&#?]/)[0];
+
+              const params = new URLSearchParams({
+                grant_type: "authorization_code",
+                code: cleanCode,
+                redirect_uri: OPENAI_REDIRECT_URI,
+                client_id: OPENAI_CLIENT_ID,
+                code_verifier: pkce.verifier,
+              });
+
+              const result = await fetchOpenAITokenEndpoint(params, "token exchange");
+
+              if (!result.ok) {
+                return { type: "failed" };
+              }
+
+              const json = await result.json();
+
+              // Resolve account email and accountId from JWT claims
+              let resolvedEmail = email;
+              let accountId = "";
+              if (json.access_token) {
+                try {
+                  // Decode JWT payload (base64url, no verification needed here)
+                  const parts = json.access_token.split(".");
+                  if (parts.length >= 2) {
+                    const payload = JSON.parse(
+                      Buffer.from(parts[1], "base64url").toString("utf-8"),
+                    );
+                    // OpenAI JWT claims: chatgpt_account_id or https://api.openai.com/auth.chatgpt_account_id
+                    accountId = payload.chatgpt_account_id
+                      || payload["https://api.openai.com/auth"]?.chatgpt_account_id
+                      || payload.organizations?.[0]?.id
+                      || "";
+                    // Email from standard OIDC claims
+                    if (resolvedEmail === "unknown") {
+                      resolvedEmail = payload.email || payload.sub || "unknown";
+                    }
+                  }
+                } catch {
+                  // JWT decode failed — continue with provided email
+                }
+
+                // Fallback: try OpenAI userinfo endpoint
+                if (resolvedEmail === "unknown") {
+                  try {
+                    const userResp = await fetch(`${OPENAI_ISSUER}/userinfo`, {
+                      headers: {
+                        "Authorization": `Bearer ${json.access_token}`,
+                        "User-Agent": "opencode/1.2.27",
+                      },
+                    });
+                    if (userResp.ok) {
+                      const userInfo = await userResp.json();
+                      resolvedEmail = userInfo.email || userInfo.sub || "unknown";
+                      console.error(`[aidevops] OAuth pool: resolved OpenAI email ${resolvedEmail} from userinfo`);
+                    }
+                  } catch {
+                    // Userinfo endpoint unavailable
+                  }
+                }
+              }
+
+              upsertAccount("openai", {
+                email: resolvedEmail,
+                refresh: json.refresh_token || "",
+                access: json.access_token,
+                expires: Date.now() + (json.expires_in || 3600) * 1000,
+                added: new Date().toISOString(),
+                lastUsed: new Date().toISOString(),
+                status: "active",
+                cooldownUntil: null,
+                accountId,
+              });
+
+              const totalAccounts = getAccounts("openai").length;
+              console.error(
+                `[aidevops] OAuth pool: added OpenAI ${resolvedEmail} (${totalAccounts} account${totalAccounts === 1 ? "" : "s"} total)`,
+              );
+
+              // Inject the new token into the built-in openai provider
+              await injectOpenAIPoolToken(client);
+
+              return {
+                type: "success",
+                refresh: json.refresh_token || "",
+                access: json.access_token,
+                expires: Date.now() + (json.expires_in || 3600) * 1000,
+              };
+            },
+          };
+        },
+      },
+    ],
+  };
+}
+
+/**
+ * Register pool providers (auth-only, no models).
+ * These providers exist solely to provide the "Add Account to Pool" OAuth flows.
+ * Models are served by the built-in providers, which use pool tokens
+ * injected into auth.json by initPoolAuth/injectPoolToken/injectOpenAIPoolToken.
  * @param {any} config - OpenCode config object
- * @returns {number} 1 if registered, 0 if already exists
+ * @returns {number} number of providers newly registered (0, 1, or 2)
  */
 export function registerPoolProvider(config) {
   if (!config.provider) config.provider = {};
-  if (config.provider["anthropic-pool"]) return 0;
+  let registered = 0;
 
-  config.provider["anthropic-pool"] = {
-    name: "Anthropic Pool (Account Management)",
-    npm: "@ai-sdk/anthropic",
-    api: "https://api.anthropic.com/v1",
-    models: {},
-  };
+  if (!config.provider["anthropic-pool"]) {
+    config.provider["anthropic-pool"] = {
+      name: "Anthropic Pool (Account Management)",
+      npm: "@ai-sdk/anthropic",
+      api: "https://api.anthropic.com/v1",
+      models: {},
+    };
+    registered++;
+  }
 
-  return 1;
+  // Register OpenAI pool provider (t1548)
+  if (!config.provider["openai-pool"]) {
+    config.provider["openai-pool"] = {
+      name: "OpenAI Pool (Account Management)",
+      npm: "@ai-sdk/openai",
+      api: "https://api.openai.com/v1",
+      models: {},
+    };
+    registered++;
+  }
+
+  return registered;
 }
 
 // ---------------------------------------------------------------------------
@@ -648,6 +1028,7 @@ export function createPoolTool(client) {
       "'rotate' to switch to the next pool account, " +
       "'remove <email>' to remove an account, " +
       "'status' for rotation statistics. " +
+      "Supports providers: anthropic (Claude Pro/Max) and openai (ChatGPT Plus/Pro). " +
       "The agent should route natural language requests about managing " +
       "provider accounts, OAuth pools, or credential rotation to this tool.",
     parameters: {
@@ -655,9 +1036,9 @@ export function createPoolTool(client) {
       properties: {
         action: {
           type: "string",
-          enum: ["list", "remove", "status", "reset-cooldowns"],
+          enum: ["list", "remove", "status", "reset-cooldowns", "rotate"],
           description:
-            "Action to perform: list accounts, remove an account, show status, or reset cooldowns",
+            "Action to perform: list accounts, remove an account, show status, reset cooldowns, or rotate to next account",
         },
         email: {
           type: "string",
@@ -665,7 +1046,8 @@ export function createPoolTool(client) {
         },
         provider: {
           type: "string",
-          description: "Provider name (default: anthropic)",
+          enum: ["anthropic", "openai"],
+          description: "Provider name: 'anthropic' (default) or 'openai'",
         },
       },
       required: ["action"],
@@ -674,12 +1056,22 @@ export function createPoolTool(client) {
       const provider = args.provider || "anthropic";
       const accounts = getAccounts(provider);
 
+      // Provider-specific add-account instructions
+      const addAccountHint = provider === "openai"
+        ? `To add an account: run \`opencode auth login\` and select "OpenAI Pool".`
+        : `To add an account: run \`opencode auth login\` and select "Anthropic Pool".`;
+
+      // Provider-specific token endpoint cooldown
+      const now = Date.now();
+      const endpointCooldownUntil = provider === "openai"
+        ? openaiTokenEndpointCooldownUntil
+        : tokenEndpointCooldownUntil;
+
       switch (args.action) {
         case "list": {
           if (accounts.length === 0) {
-            return `No accounts in the ${provider} pool.\n\nTo add an account: run \`opencode auth login\` and select "Anthropic Pool".`;
+            return `No accounts in the ${provider} pool.\n\n${addAccountHint}`;
           }
-          const now = Date.now();
           const lines = accounts.map((a, i) => {
             const cooldown =
               a.cooldownUntil && a.cooldownUntil > now
@@ -688,7 +1080,8 @@ export function createPoolTool(client) {
             const lastUsed = a.lastUsed
               ? ` | last used: ${new Date(a.lastUsed).toLocaleString()}`
               : "";
-            return `${i + 1}. ${a.email} [${a.status}]${cooldown}${lastUsed}`;
+            const accountIdSuffix = a.accountId ? ` | id: ${a.accountId.slice(0, 8)}...` : "";
+            return `${i + 1}. ${a.email} [${a.status}]${cooldown}${lastUsed}${accountIdSuffix}`;
           });
           return `${provider} pool (${accounts.length} account${accounts.length === 1 ? "" : "s"}):\n\n${lines.join("\n")}`;
         }
@@ -707,9 +1100,8 @@ export function createPoolTool(client) {
 
         case "status": {
           if (accounts.length === 0) {
-            return `No accounts in the ${provider} pool.`;
+            return `No accounts in the ${provider} pool.\n\n${addAccountHint}`;
           }
-          const now = Date.now();
           const active = accounts.filter(
             (a) => a.status === "active" || a.status === "idle",
           ).length;
@@ -726,9 +1118,9 @@ export function createPoolTool(client) {
             (a) => !a.cooldownUntil || a.cooldownUntil <= now,
           ).length;
 
-          const tokenGated = tokenEndpointCooldownUntil > now;
+          const tokenGated = endpointCooldownUntil > now;
           const tokenGateInfo = tokenGated
-            ? `  TOKEN ENDPOINT: RATE LIMITED (${Math.ceil((tokenEndpointCooldownUntil - now) / 60000)}m remaining)`
+            ? `  TOKEN ENDPOINT: RATE LIMITED (${Math.ceil((endpointCooldownUntil - now) / 60000)}m remaining)`
             : `  Token endpoint: OK`;
 
           return [
@@ -745,9 +1137,15 @@ export function createPoolTool(client) {
         }
 
         case "reset-cooldowns": {
-          // Reset token endpoint cooldown (in-memory)
-          const wasGated = tokenEndpointCooldownUntil > Date.now();
-          tokenEndpointCooldownUntil = 0;
+          // Reset token endpoint cooldown (in-memory) for the selected provider
+          let wasGated = false;
+          if (provider === "openai") {
+            wasGated = openaiTokenEndpointCooldownUntil > Date.now();
+            openaiTokenEndpointCooldownUntil = 0;
+          } else {
+            wasGated = tokenEndpointCooldownUntil > Date.now();
+            tokenEndpointCooldownUntil = 0;
+          }
 
           // Reset per-account cooldowns (pool file)
           const pool = loadPool();
@@ -767,12 +1165,13 @@ export function createPoolTool(client) {
           if (wasGated) parts.push("token endpoint cooldown cleared");
           if (resetCount > 0) parts.push(`${resetCount} account cooldown${resetCount === 1 ? "" : "s"} cleared`);
           if (parts.length === 0) parts.push("no active cooldowns");
-          return `Reset: ${parts.join(", ")}. Token endpoint requests will proceed on next attempt.`;
+          return `Reset (${provider}): ${parts.join(", ")}. Token endpoint requests will proceed on next attempt.`;
         }
 
         case "rotate": {
           if (accounts.length < 2) {
-            return `Cannot rotate: only ${accounts.length} account(s) in pool. Add more accounts via Ctrl+A → Anthropic Pool.`;
+            const poolName = provider === "openai" ? "OpenAI Pool" : "Anthropic Pool";
+            return `Cannot rotate: only ${accounts.length} account(s) in pool. Add more accounts via Ctrl+A → ${poolName}.`;
           }
 
           // Find which account is currently injected (most recently used)
@@ -780,16 +1179,17 @@ export function createPoolTool(client) {
             (a, b) => new Date(b.lastUsed || 0) - new Date(a.lastUsed || 0),
           )[0];
 
-          const injected = await injectPoolToken(client, current?.email);
+          const injectFn = provider === "openai" ? injectOpenAIPoolToken : injectPoolToken;
+          const injected = await injectFn(client, current?.email);
           if (injected) {
             // Find which account was injected
             const nowAccounts = getAccounts(provider);
             const newest = [...nowAccounts].sort(
               (a, b) => new Date(b.lastUsed || 0) - new Date(a.lastUsed || 0),
             )[0];
-            return `Rotated: now using ${newest?.email || "unknown"}. Previous: ${current?.email || "unknown"}.`;
+            return `Rotated (${provider}): now using ${newest?.email || "unknown"}. Previous: ${current?.email || "unknown"}.`;
           }
-          return "Rotation failed — no other active accounts available.";
+          return `Rotation failed (${provider}) — no other active accounts available.`;
         }
 
         default:
