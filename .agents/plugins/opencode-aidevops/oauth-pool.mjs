@@ -6,7 +6,8 @@
  * (~/.aidevops/oauth-pool.json) to avoid conflicts with OpenCode's auth.json.
  *
  * Architecture:
- *   - auth hook: registers "anthropic-pool" and "openai-pool" providers with OAuth login flow
+ *   - auth hook: single "anthropic-pool" provider with both Anthropic and OpenAI
+ *     OAuth methods (OpenCode 1.2.27 only supports one auth hook per plugin)
  *   - loader: returns a custom fetch wrapper that rotates credentials on 429
  *   - tool: /model-accounts-pool for listing/removing accounts
  *
@@ -578,13 +579,13 @@ async function seedPoolAuthEntry(client, providerId) {
 
 /**
  * Inject pool tokens into built-in providers on session start.
- * Seeds auth entries for both anthropic-pool and openai-pool providers.
+ * Seeds the anthropic-pool auth entry (which hosts both Anthropic and OpenAI
+ * OAuth methods — OpenCode 1.2.27 only supports one auth hook per plugin).
  * @param {any} client - OpenCode SDK client
  */
 export async function initPoolAuth(client) {
-  // Seed pool provider entries (for "Add Account" OAuth flows)
+  // Seed pool provider entry (hosts both Anthropic + OpenAI OAuth methods)
   await seedPoolAuthEntry(client, "anthropic-pool");
-  await seedPoolAuthEntry(client, "openai-pool");
 
   // Inject pool tokens into built-in providers
   await injectPoolToken(client);
@@ -1028,12 +1029,18 @@ export function createPoolAuthHook(client) {
 }
 
 /**
- * Register pool providers (auth-only, no models).
- * These providers exist solely to provide the "Add Account to Pool" OAuth flows.
- * Models are served by the built-in providers, which use pool tokens
- * injected into auth.json by initPoolAuth/injectPoolToken/injectOpenAIPoolToken.
+ * Register the pool provider (auth-only, no real models).
+ *
+ * A single "anthropic-pool" provider hosts both Anthropic and OpenAI OAuth
+ * methods (OpenCode 1.2.27 only supports one auth hook per plugin). The
+ * provider name is "OAuth Account Pool" to reflect that it handles both.
+ *
+ * Models are served by the built-in providers ("anthropic", "openai"), which
+ * use pool tokens injected into auth.json by initPoolAuth/injectPoolToken/
+ * injectOpenAIPoolToken.
+ *
  * @param {any} config - OpenCode config object
- * @returns {number} number of providers newly registered (0, 1, or 2)
+ * @returns {number} number of providers newly registered (0 or 1)
  */
 export function registerPoolProvider(config) {
   if (!config.provider) config.provider = {};
@@ -1041,12 +1048,12 @@ export function registerPoolProvider(config) {
 
   if (!config.provider["anthropic-pool"]) {
     config.provider["anthropic-pool"] = {
-      name: "Anthropic Pool (Account Management)",
+      name: "OAuth Account Pool (Anthropic + OpenAI)",
       npm: "@ai-sdk/anthropic",
       api: "https://api.anthropic.com/v1",
       models: {
         "pool-account-management": {
-          name: "Add/Manage Accounts (select models from Anthropic provider)",
+          name: "Add/Manage Accounts (select models from Anthropic or OpenAI provider)",
           attachment: false, tool_call: false, temperature: false,
           modalities: { input: ["text"], output: ["text"] },
           cost: { input: 0, output: 0, cache_read: 0, cache_write: 0 },
@@ -1056,26 +1063,16 @@ export function registerPoolProvider(config) {
       },
     };
     registered++;
+  } else {
+    // Update name from old "Anthropic Pool (Account Management)" to new unified name
+    config.provider["anthropic-pool"].name = "OAuth Account Pool (Anthropic + OpenAI)";
   }
 
-  // Register OpenAI pool provider (t1548)
-  if (!config.provider["openai-pool"]) {
-    config.provider["openai-pool"] = {
-      name: "OpenAI Pool (Account Management)",
-      npm: "@ai-sdk/openai",
-      api: "https://api.openai.com/v1",
-      models: {
-        "pool-account-management": {
-          name: "Add/Manage Accounts (select models from OpenAI provider)",
-          attachment: false, tool_call: false, temperature: false,
-          modalities: { input: ["text"], output: ["text"] },
-          cost: { input: 0, output: 0, cache_read: 0, cache_write: 0 },
-          limit: { context: 1000, output: 100 },
-          family: "pool",
-        },
-      },
-    };
-    registered++;
+  // Clean up stale "openai-pool" provider from previous versions (t1548).
+  // It had no auth hook and showed a confusing API key input. Both OAuth
+  // methods are now in the single "anthropic-pool" auth hook above.
+  if (config.provider["openai-pool"]) {
+    delete config.provider["openai-pool"];
   }
 
   return registered;
@@ -1126,10 +1123,9 @@ export function createPoolTool(client) {
       const provider = args.provider || "anthropic";
       const accounts = getAccounts(provider);
 
-      // Provider-specific add-account instructions
-      const addAccountHint = provider === "openai"
-        ? `To add an account: run \`opencode auth login\` and select "OpenAI Pool".`
-        : `To add an account: run \`opencode auth login\` and select "Anthropic Pool".`;
+      // Add-account instructions (both providers use the same pool auth dialog)
+      const providerLabel = provider === "openai" ? "ChatGPT Plus/Pro" : "Claude Pro/Max";
+      const addAccountHint = `To add an account: run \`opencode auth login\` and select "OAuth Account Pool" → "${providerLabel}".`;
 
       // Provider-specific token endpoint cooldown
       const now = Date.now();
@@ -1240,8 +1236,7 @@ export function createPoolTool(client) {
 
         case "rotate": {
           if (accounts.length < 2) {
-            const poolName = provider === "openai" ? "OpenAI Pool" : "Anthropic Pool";
-            return `Cannot rotate: only ${accounts.length} account(s) in pool. Add more accounts via Ctrl+A → ${poolName}.`;
+            return `Cannot rotate: only ${accounts.length} account(s) in pool. Add more accounts via Ctrl+A → OAuth Account Pool.`;
           }
 
           // Find which account is currently injected (most recently used)
