@@ -118,7 +118,7 @@ Or use the MCP tool directly:
 
 ```bash
 # List accounts (key names only — never expose values)
-cat ~/.aidevops/oauth-pool.json | jq -r '.anthropic[].email'
+jq -r '.anthropic[].email' ~/.aidevops/oauth-pool.json
 ```
 
 ### Pool File
@@ -314,7 +314,7 @@ npm list -g opencode-anthropic-auth
 $(npm root -g)/opencode-anthropic-auth
 ```
 
-### OpenCode Detection
+### OpenCode Detection (pre-v1.1.36 external plugin only)
 
 OpenCode automatically discovers the plugin through the `@opencode-ai/plugin` package interface. No manual configuration needed.
 
@@ -336,11 +336,16 @@ OAuth tokens are stored securely by OpenCode in:
 
 ### Basic Authentication
 
+> **v1.2.30+**: Use `opencode auth login` and select **Anthropic Pool**.
+> **v1.1.36–v1.2.29**: Use built-in **Anthropic → Claude Pro/Max**.
+> **pre-v1.1.36**: Install `opencode-anthropic-auth` first, then use Anthropic OAuth.
+
 ```bash
 # First-time setup
 opencode auth login
 
-# Select Anthropic → Claude Pro/Max
+# Select Anthropic → Claude Pro/Max (v1.1.36–v1.2.29)
+# Or select Anthropic Pool (v1.2.30+)
 # Complete OAuth flow
 # Plugin handles everything automatically
 ```
@@ -502,7 +507,7 @@ Enable verbose logging to troubleshoot authentication issues:
 DEBUG=opencode:* opencode run "test" --model anthropic/claude-sonnet-4-6
 
 # Check token expiration
-cat ~/.config/opencode/auth.json | jq '.anthropic'
+jq '.anthropic' ~/.config/opencode/auth.json
 
 # Monitor API requests (requires network inspection tools)
 # Use browser DevTools on OAuth flow to inspect requests
