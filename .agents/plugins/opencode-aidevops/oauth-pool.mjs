@@ -266,8 +266,9 @@ const OAUTH_CALLBACK_TIMEOUT_MS = 300_000; // 5 minutes
  *   5. Resolves the returned promise with the code
  *   6. Auto-closes after the first request or after timeout
  *
- * @returns {{ promise: Promise<string>, close: () => void }}
+ * @returns {{ promise: Promise<string>, ready: Promise<boolean>, close: () => void }}
  *   - promise: resolves with the authorization code, rejects on timeout/error
+ *   - ready: resolves true when listening, rejects on startup failure (EADDRINUSE)
  *   - close: manually close the server (cleanup)
  */
 function startOAuthCallbackServer() {
@@ -275,11 +276,27 @@ function startOAuthCallbackServer() {
   let rejectCode;
   let server;
   let timeoutId;
+  let resolveReady;
+  let rejectReady;
 
   const promise = new Promise((resolve, reject) => {
     resolveCode = resolve;
     rejectCode = reject;
   });
+
+  /** Resolves true when the server is listening, false on startup failure. */
+  const ready = new Promise((resolve, reject) => {
+    resolveReady = resolve;
+    rejectReady = reject;
+  });
+
+  /** Escape HTML special characters to prevent injection in error pages. */
+  const escapeHtml = (value = "") => value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
 
   server = createServer((req, res) => {
     // Parse the URL to extract query parameters
@@ -292,15 +309,24 @@ function startOAuthCallbackServer() {
       return;
     }
 
+    // Only handle the OAuth callback path — reject everything else
+    if (reqUrl.pathname !== "/auth/callback") {
+      res.writeHead(404, { "Content-Type": "text/plain" });
+      res.end("Not found");
+      return;
+    }
+
     const code = reqUrl.searchParams.get("code");
     const error = reqUrl.searchParams.get("error");
 
     if (error) {
+      const safeError = escapeHtml(error);
+      const safeDescription = escapeHtml(reqUrl.searchParams.get("error_description") || "");
       res.writeHead(200, { "Content-Type": "text/html" });
       res.end(`<!DOCTYPE html><html><body>
         <h2>Authorization Failed</h2>
-        <p>Error: ${error}</p>
-        <p>${reqUrl.searchParams.get("error_description") || ""}</p>
+        <p>Error: ${safeError}</p>
+        <p>${safeDescription}</p>
         <p>You can close this tab.</p>
       </body></html>`);
       cleanup();
@@ -321,7 +347,7 @@ function startOAuthCallbackServer() {
       return;
     }
 
-    // No code or error — probably a favicon request or similar
+    // No code or error on the callback path
     res.writeHead(200, { "Content-Type": "text/plain" });
     res.end("Waiting for OAuth callback...");
   });
@@ -333,24 +359,25 @@ function startOAuthCallbackServer() {
     }
   }
 
-  // Handle port-in-use (OpenCode's built-in auth may have it)
   server.on("error", (err) => {
+    cleanup();
     if (err.code === "EADDRINUSE") {
       console.error(
         `[aidevops] OAuth pool: port ${OAUTH_CALLBACK_PORT} in use — ` +
         `OpenCode's built-in auth may be running. The user will need to ` +
         `copy the code from the browser URL bar manually.`,
       );
-      // Don't reject — let the user paste the code manually
     } else {
       console.error(`[aidevops] OAuth pool: callback server error: ${err.message}`);
     }
-    cleanup();
+    // Reject to let the caller fall back to manual code entry.
     rejectCode(err);
+    rejectReady(err);
   });
 
   server.listen(OAUTH_CALLBACK_PORT, "127.0.0.1", () => {
     console.error(`[aidevops] OAuth pool: callback server listening on port ${OAUTH_CALLBACK_PORT}`);
+    resolveReady(true);
   });
 
   // Auto-close after timeout
@@ -360,7 +387,7 @@ function startOAuthCallbackServer() {
     rejectCode(new Error("OAuth callback timeout"));
   }, OAUTH_CALLBACK_TIMEOUT_MS);
 
-  return { promise, close: cleanup };
+  return { promise, ready, close: cleanup };
 }
 
 // ---------------------------------------------------------------------------
@@ -1047,15 +1074,24 @@ export function createOpenAIPoolAuthHook(client) {
           // browser shows "connection refused" and the user can't get the code.
           let callbackServer = null;
           let serverCode = null;
+          let autoCaptureReady = false;
           try {
             callbackServer = startOAuthCallbackServer();
-            // Store the code when the server catches it (non-blocking)
-            callbackServer.promise
-              .then((code) => { serverCode = code; })
-              .catch(() => { /* timeout or error — user can paste manually */ });
+            autoCaptureReady = await callbackServer.ready.catch(() => false);
+            if (autoCaptureReady) {
+              // Store the code when the server catches it (non-blocking)
+              callbackServer.promise
+                .then((code) => { serverCode = code; })
+                .catch(() => { /* timeout or error — user can paste manually */ });
+            } else {
+              // Server failed to bind (EADDRINUSE etc.) — fall back to manual paste
+              console.error("[aidevops] OAuth pool: callback server failed to start — manual code paste required");
+              callbackServer = null;
+            }
           } catch {
-            // Server failed to start (port in use, etc.) — fall back to manual paste
+            // Server construction failed — fall back to manual paste
             console.error("[aidevops] OAuth pool: callback server failed to start — manual code paste required");
+            callbackServer = null;
           }
 
           const url = new URL(OPENAI_OAUTH_AUTHORIZE_URL);
@@ -1072,8 +1108,12 @@ export function createOpenAIPoolAuthHook(client) {
               `Adding OpenAI account: ${email}`,
               `1. A browser window will open to auth.openai.com`,
               `2. Sign in with your ChatGPT Plus/Pro account`,
-              `3. After authorizing, the code will be captured automatically`,
-              `4. Press Enter here to complete (or paste the code manually if needed): `,
+              autoCaptureReady
+                ? `3. After authorizing, the code will be captured automatically`
+                : `3. After authorizing, copy the authorization code from the browser URL`,
+              autoCaptureReady
+                ? `4. Press Enter here to complete (or paste the code manually if needed): `
+                : `4. Paste the authorization code here: `,
             ].join("\n"),
             method: "code",
             callback: async (code) => {
@@ -1082,7 +1122,7 @@ export function createOpenAIPoolAuthHook(client) {
               if ((!authCode || authCode.length < 5) && serverCode) {
                 authCode = serverCode;
                 console.error("[aidevops] OAuth pool: using auto-captured code from callback server");
-              } else if ((!authCode || authCode.length < 5) && callbackServer) {
+              } else if ((!authCode || authCode.length < 5) && autoCaptureReady && callbackServer) {
                 // Server hasn't caught the code yet — wait briefly
                 try {
                   authCode = await Promise.race([
