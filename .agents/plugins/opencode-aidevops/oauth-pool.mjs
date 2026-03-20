@@ -268,7 +268,7 @@ const OAUTH_CALLBACK_TIMEOUT_MS = 300_000; // 5 minutes
  *
  * @returns {{ promise: Promise<string>, ready: Promise<boolean>, close: () => void }}
  *   - promise: resolves with the authorization code, rejects on timeout/error
- *   - ready: resolves true when listening, rejects on startup failure (EADDRINUSE)
+ *   - ready: resolves true when listening, false on startup failure
  *   - close: manually close the server (cleanup)
  */
 function startOAuthCallbackServer() {
@@ -277,7 +277,6 @@ function startOAuthCallbackServer() {
   let server;
   let timeoutId;
   let resolveReady;
-  let rejectReady;
 
   const promise = new Promise((resolve, reject) => {
     resolveCode = resolve;
@@ -285,9 +284,8 @@ function startOAuthCallbackServer() {
   });
 
   /** Resolves true when the server is listening, false on startup failure. */
-  const ready = new Promise((resolve, reject) => {
+  const ready = new Promise((resolve) => {
     resolveReady = resolve;
-    rejectReady = reject;
   });
 
   /** Escape HTML special characters to prevent injection in error pages. */
@@ -367,12 +365,13 @@ function startOAuthCallbackServer() {
         `OpenCode's built-in auth may be running. The user will need to ` +
         `copy the code from the browser URL bar manually.`,
       );
+      resolveReady(false);
+      return;
     } else {
       console.error(`[aidevops] OAuth pool: callback server error: ${err.message}`);
     }
-    // Reject to let the caller fall back to manual code entry.
+    resolveReady(false);
     rejectCode(err);
-    rejectReady(err);
   });
 
   server.listen(OAUTH_CALLBACK_PORT, "127.0.0.1", () => {
