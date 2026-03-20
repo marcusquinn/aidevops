@@ -289,12 +289,12 @@ function startOAuthCallbackServer() {
   });
 
   /** Escape HTML special characters to prevent injection in error pages. */
-  const escapeHtml = (value = "") => value
+  const escapeHtml = (unsafe) => unsafe
     .replace(/&/g, "&amp;")
     .replace(/</g, "&lt;")
     .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
+    .replace(/\"/g, "&quot;")
+    .replace(/'/g, "&#039;");
 
   server = createServer((req, res) => {
     // Parse the URL to extract query parameters
@@ -1193,7 +1193,10 @@ export function createOpenAIPoolAuthHook(client) {
               // Store the code when the server catches it (non-blocking)
               callbackServer.promise
                 .then((code) => { serverCode = code; })
-                .catch(() => { /* timeout or error — user can paste manually */ });
+                .catch(() => {
+                  /* timeout or error — user can paste manually */
+                  callbackServer = null;
+                });
             } else {
               // Server failed to bind (EADDRINUSE etc.) — fall back to manual paste
               console.error("[aidevops] OAuth pool: callback server failed to start — manual code paste required");
