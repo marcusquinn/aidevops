@@ -1057,8 +1057,9 @@ const {
  *    `tool.execute.before`, stored in the `tool_calls` table `intent` column.
  * 8. Compaction context — preserves operational state across context resets
  * 9. OpenAI Pro pool — multi-account rotation for ChatGPT Plus/Pro accounts (t1548)
- *    Same token injection architecture as Anthropic pool. Adds "openai-pool" provider
- *    for account management and injects tokens into the built-in "openai" provider.
+ *    Same token injection architecture as Anthropic pool. Both Anthropic and OpenAI
+ *    pool OAuth methods are merged into a single auth hook (OpenCode 1.2.27 only
+ *    supports one auth hook per plugin). Injects tokens into built-in providers.
  *
  * MCP registration (Phase 2, t008.2):
  * - Registers all known MCP servers from a data-driven registry
@@ -1106,7 +1107,9 @@ export async function AidevopsPlugin({ directory, client }) {
     // Phase 6: LLM observability — capture assistant message metadata (t1308)
     event: async (input) => handleEvent(input),
 
-    // Phase 7: OAuth multi-account pool (t1543)
+    // Phase 7: OAuth multi-account pool — single hook, both providers (t1543, t1548)
+    // OpenCode 1.2.27 only supports one auth hook per plugin (arrays crash).
+    // Both Anthropic and OpenAI pool methods are merged into one hook's methods array.
     auth: createPoolAuthHook(client),
 
     // Compaction context (includes OMOC state when detected)
