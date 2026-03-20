@@ -743,9 +743,9 @@ export function createPoolAuthHook(client) {
         get label() {
           const accounts = getAccounts("anthropic");
           if (accounts.length === 0) {
-            return "Add Account to Pool (Claude Pro/Max)";
+            return "Add Anthropic Account (Claude Pro/Max)";
           }
-          return `Add Account to Pool (${accounts.length} account${accounts.length === 1 ? "" : "s"})`;
+          return `Add Anthropic Account (${accounts.length} account${accounts.length === 1 ? "" : "s"})`;
         },
         type: "oauth",
         prompts: [
@@ -880,7 +880,7 @@ export function createPoolAuthHook(client) {
         get label() {
           const accounts = getAccounts("openai");
           if (accounts.length === 0) {
-            return "Add Account to Pool (ChatGPT Plus/Pro)";
+            return "Add OpenAI Account (ChatGPT Plus/Pro)";
           }
           return `Add OpenAI Account (${accounts.length} account${accounts.length === 1 ? "" : "s"})`;
         },
