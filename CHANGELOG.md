@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.1.27] - 2026-03-20
+
+### Fixed
+
+- add role identity to 8 primary agents to prevent task declination (#5352)
+
 ## [3.1.26] - 2026-03-20
 
 ### Fixed
