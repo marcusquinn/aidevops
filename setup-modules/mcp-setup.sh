@@ -502,10 +502,12 @@ setup_opencode_plugins() {
 
 	# Setup aidevops compaction plugin (local file plugin)
 	local aidevops_plugin_path="$HOME/.aidevops/agents/plugins/opencode-aidevops/index.mjs"
+	local pool_plugin_registered="false"
 	if [[ -f "$aidevops_plugin_path" ]]; then
 		add_opencode_plugin "file://$HOME/.aidevops" "file://${aidevops_plugin_path}" "$opencode_config"
 		print_success "aidevops compaction plugin registered (preserves context across compaction)"
 		setup_track_configured "OpenCode plugins"
+		pool_plugin_registered="true"
 	fi
 
 	# Note: opencode-anthropic-auth is built into OpenCode v1.1.36+
@@ -538,17 +540,22 @@ setup_opencode_plugins() {
 
 	if [[ "$builtin_auth_removed" == "true" ]]; then
 		print_info "OpenCode v${oc_raw_version}: built-in Anthropic OAuth removed in v1.2.30"
-		print_info "Use the aidevops OAuth pool (provided by the aidevops plugin above):"
-		print_info "  1. Run: opencode auth login"
-		print_info "  2. Select: 'Anthropic Pool' (added by aidevops plugin)"
-		print_info "  3. Enter your Claude account email"
-		print_info "  4. Complete the OAuth flow in your browser"
-		print_info "  5. Repeat to add more accounts for automatic rotation"
-		print_info "  Manage accounts: /model-accounts-pool list|status|remove"
-		print_info "  Docs: ~/.aidevops/agents/tools/opencode/opencode-anthropic-auth.md"
+		if [[ "$pool_plugin_registered" == "true" ]]; then
+			print_info "Use the aidevops OAuth pool (provided by the aidevops plugin above):"
+			print_info "  1. Run: opencode auth login"
+			print_info "  2. Select: 'Anthropic Pool' (added by aidevops plugin)"
+			print_info "  3. Enter your Claude account email"
+			print_info "  4. Complete the OAuth flow in your browser"
+			print_info "  5. Repeat to add more accounts for automatic rotation"
+			print_info "  Manage accounts: /model-accounts-pool list|status|remove"
+			print_info "  Docs: ~/.aidevops/agents/tools/opencode/opencode-anthropic-auth.md"
+		else
+			print_warning "aidevops OpenCode plugin was not registered; 'Anthropic Pool' may be unavailable"
+			print_info "Re-run aidevops setup to register the plugin, then run: opencode auth login"
+		fi
 	else
 		print_info "After setup, authenticate with: opencode auth login"
-		print_info "  - For Claude OAuth: Select 'Anthropic' -> 'Claude Pro/Max' (built-in)"
+		print_info "  - For Claude OAuth (v1.1.36-v1.2.29): Select 'Anthropic' -> 'Claude Pro/Max' (built-in)"
 		print_info "  - Or use the aidevops OAuth pool: Select 'Anthropic Pool' for multi-account rotation"
 	fi
 

@@ -152,9 +152,11 @@ The `opencode-anthropic-auth` plugin enables OAuth authentication for Anthropic'
 
 ## Installation
 
-### Built-in (OpenCode v1.1.36+)
+### Built-in (OpenCode v1.1.36–v1.2.29)
 
-Anthropic OAuth is built into OpenCode v1.1.36+. No installation needed — just run:
+> **v1.2.30+**: Built-in auth was removed. Use the [aidevops OAuth pool](#oauth-pool-setup-v1230) instead.
+
+Anthropic OAuth is built into OpenCode v1.1.36–v1.2.29. No installation needed — just run:
 
 ```bash
 opencode auth login
@@ -172,9 +174,11 @@ npm install -g opencode-anthropic-auth
 
 ## Authentication Methods
 
-### 1. Claude Pro/Max OAuth (Recommended for Subscribers)
+### 1. Claude Pro/Max OAuth — Built-in (v1.1.36–v1.2.29 only)
 
-Best for users with active Claude Pro or Max subscriptions who want free API usage.
+> **v1.2.30+**: This built-in option was removed. Use the [aidevops OAuth pool](#oauth-pool-setup-v1230) instead — it provides the same OAuth flow with multi-account rotation.
+
+Best for users on OpenCode v1.1.36–v1.2.29 with active Claude Pro or Max subscriptions who want free API usage.
 
 **Setup**:
 
@@ -381,9 +385,12 @@ opencode run "Hello, Claude!" --model anthropic/claude-sonnet-4-6
 3. Verify refresh_token is present and valid
 4. Check network connectivity to console.anthropic.com
 
-### Plugin Not Detected
+### Plugin Not Detected (pre-v1.1.36 only)
 
-**Symptoms**: Anthropic OAuth options not shown in `opencode auth login`.
+> **v1.2.30+**: The `opencode-anthropic-auth` npm package is not used. If "Anthropic Pool" is missing, the aidevops plugin was not registered — re-run `aidevops setup`.
+> **v1.1.36–v1.2.29**: Built-in auth is native; the npm package is not needed and must NOT be installed.
+
+**Symptoms** (pre-v1.1.36 only): Anthropic OAuth options not shown in `opencode auth login`.
 
 **Solutions**:
 1. Verify installation: `npm list -g opencode-anthropic-auth`
@@ -413,13 +420,14 @@ opencode run "Hello, Claude!" --model anthropic/claude-sonnet-4-6
 
 ## Comparison with Other Auth Methods
 
-| Feature | Anthropic OAuth (built-in) | Manual API Key |
-|---------|---------------------------|----------------|
-| **Claude Pro/Max cost** | $0 (subscription) | Standard rates |
-| **Auto token refresh** | Yes | N/A |
-| **Beta features** | Auto-enabled | Manual |
-| **Setup complexity** | Low (OAuth flow) | Lowest (paste key) |
-| **Best for** | Claude subscribers | API-only users |
+| Feature | Anthropic OAuth built-in (v1.1.36–v1.2.29) | aidevops OAuth Pool (v1.2.30+, all versions) | Manual API Key |
+|---------|---------------------------------------------|----------------------------------------------|----------------|
+| **Claude Pro/Max cost** | $0 (subscription) | $0 (subscription) | Standard rates |
+| **Auto token refresh** | Yes | Yes | N/A |
+| **Beta features** | Auto-enabled | Auto-enabled | Manual |
+| **Multi-account rotation** | No | Yes | No |
+| **Setup complexity** | Low (OAuth flow) | Low (OAuth flow) | Lowest (paste key) |
+| **Best for** | v1.1.36–v1.2.29 subscribers | v1.2.30+ (required); all versions (recommended) | API-only users |
 
 ## Security Considerations
 
