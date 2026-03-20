@@ -1205,39 +1205,59 @@ export function createOpenAIPoolAuthHook(client) {
 }
 
 /**
- * Clean up stale pool provider entries from config.
+ * Register the pool provider for the auth dialog display name.
  *
- * The pool auth hook (provider: "anthropic-pool") automatically appears in
- * the Ctrl+A auth dialog via OpenCode's resolvePluginProviders() — it does
- * NOT need a config.provider entry. Previous versions registered pool
- * providers in config, which caused them to appear in the model picker as
- * selectable (but non-functional) models. This function removes those stale
- * entries.
+ * The auth hook (provider: "anthropic-pool") automatically appears in the
+ * Ctrl+A auth dialog via OpenCode's resolvePluginProviders(). However, the
+ * display name comes from config.provider[id].name — without a config entry
+ * it shows the raw ID "anthropic-pool".
+ *
+ * We register a config entry with NO models so it provides the display name
+ * but doesn't appear in the model picker. Previous versions had dummy models
+ * which caused the provider to show up as a selectable (but broken) model.
  *
  * Models are served by the built-in providers ("anthropic", "openai"), which
  * use pool tokens injected into auth.json by initPoolAuth/injectPoolToken/
  * injectOpenAIPoolToken.
  *
  * @param {any} config - OpenCode config object
- * @returns {number} number of stale providers removed
+ * @returns {number} number of changes made
  */
 export function registerPoolProvider(config) {
-  if (!config.provider) return 0;
-  let cleaned = 0;
+  if (!config.provider) config.provider = {};
+  let changes = 0;
 
-  // Remove stale pool providers that were registered by previous versions.
-  // These showed up in the model picker with dummy models, confusing users.
-  // The auth hook's provider field is sufficient for the auth dialog.
-  if (config.provider["anthropic-pool"]) {
-    delete config.provider["anthropic-pool"];
-    cleaned++;
+  // Register with display name but NO models — appears in auth dialog
+  // but not in model picker. Previous versions had dummy models that
+  // showed up as broken selectable models.
+  const desired = {
+    name: "OAuth Account Pool",
+    models: {},
+  };
+
+  const existing = config.provider["anthropic-pool"];
+  if (!existing) {
+    config.provider["anthropic-pool"] = desired;
+    changes++;
+  } else {
+    // Clean up: remove dummy models from previous versions, update name
+    if (existing.models && Object.keys(existing.models).length > 0) {
+      existing.models = {};
+      changes++;
+    }
+    if (existing.name !== desired.name) {
+      existing.name = desired.name;
+      changes++;
+    }
   }
+
+  // Clean up stale "openai-pool" provider from previous versions (t1548).
   if (config.provider["openai-pool"]) {
     delete config.provider["openai-pool"];
-    cleaned++;
+    changes++;
   }
 
-  return cleaned;
+  return changes;
 }
 
 // ---------------------------------------------------------------------------
