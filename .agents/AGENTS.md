@@ -237,8 +237,8 @@ Planning files go direct to main. Code changes need worktree + PR. Workers NEVER
 **Cross-repo task creation**: When a session creates a task in a *different* repo (e.g., adding an aidevops TODO while working in another project), follow the full workflow — not just the TODO edit:
 
 1. **Claim the ID atomically**: Run `claim-task-id.sh --repo-path <target-repo> --title "description"`. This allocates the next ID via CAS on the counter branch and optionally creates the GitHub issue. NEVER grep TODO.md to guess the next ID — concurrent sessions will collide.
-2. **Add the TODO entry and commit+push immediately**: Planning files go direct to main. The supervisor/pulse only sees remote state, so an uncommitted TODO entry is invisible to dispatch. Push right after committing.
-3. **Create a GitHub issue only if needed**: Only run `gh issue create --repo <slug> --title "tNNN: description" --body "..."` when `claim-task-id.sh` was invoked with `--no-issue` or its output did not include a `ref=GH#` (or `ref=GL#` for GitLab) token. If the issue already exists, skip this step — a second `gh issue create` would produce a duplicate. Record the issue number in TODO.md as `ref=GH#NNN`.
+2. **Create the GitHub issue BEFORE pushing TODO.md**: Either let `claim-task-id.sh` create it (default), or run `gh issue create` manually. Get the issue number first.
+3. **Add the TODO entry WITH `ref:GH#NNN` and commit+push in a single commit**: The issue-sync workflow triggers on TODO.md pushes and creates issues for entries without `ref:GH#`. If you push a TODO entry without the ref and then add it in a second commit, the workflow will create a duplicate issue in the gap between pushes. Always include the ref in the same commit as the TODO entry.
 4. **Code changes still need a worktree + PR**: The TODO/issue creation above is planning — it goes direct to main. If the task also involves code changes in the *current* repo, those follow the normal worktree + PR flow.
 
 Full rules: `reference/planning-detail.md`
