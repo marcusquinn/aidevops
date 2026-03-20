@@ -430,47 +430,57 @@ add_opencode_plugin() {
 	plugin_spec="$2"
 	opencode_config="$3"
 
-	# Check if plugin array exists and if plugin is already configured
-	local has_plugin_array
-	if jq -e '.plugin' "$opencode_config" >/dev/null 2>&1; then
-		has_plugin_array="true"
+	# Normalize OpenCode plugin config (legacy "plugins" object -> "plugin" array).
+	# OpenCode expects .plugin as an array of plugin spec strings.
+	local temp_file
+	temp_file=$(mktemp)
+	trap 'rm -f "${temp_file:-}"' RETURN
+	jq '
+		def as_string_array:
+			if type == "array" then [ .[] | strings ]
+			elif type == "string" then [ . ]
+			else []
+			end;
+
+		.plugin = ((.plugin // []) | as_string_array)
+		| if (.plugins | type) == "object" then
+			.plugin += [
+				.plugins
+				| to_entries[]
+				| select((.value | type) != "object" or (if (.value | has("enabled")) then .value.enabled else true end))
+				| .key
+			]
+		elif (.plugins | type) == "array" then
+			.plugin += ((.plugins) | as_string_array)
+		else
+			.
+		end
+		| del(.plugins)
+		| .plugin |= unique
+	' "$opencode_config" >"$temp_file" && mv "$temp_file" "$opencode_config"
+
+	# Check if plugin is already in the array (string entries only)
+	local plugin_exists
+	if jq -e --arg p "$plugin_name" '.plugin | map(select(type == "string" and startswith($p))) | length > 0' "$opencode_config" >/dev/null 2>&1; then
+		plugin_exists="true"
 	else
-		has_plugin_array="false"
+		plugin_exists="false"
 	fi
 
-	if [[ "$has_plugin_array" == "true" ]]; then
-		# Check if plugin is already in the array
-		local plugin_exists
-		if jq -e --arg p "$plugin_name" '.plugin | map(select(startswith($p))) | length > 0' "$opencode_config" >/dev/null 2>&1; then
-			plugin_exists="true"
-		else
-			plugin_exists="false"
-		fi
-
-		if [[ "$plugin_exists" == "true" ]]; then
-			# Update existing plugin to latest version
-			local temp_file
-			temp_file=$(mktemp)
-			trap 'rm -f "${temp_file:-}"' RETURN
-			jq --arg old "$plugin_name" --arg new "$plugin_spec" \
-				'.plugin = [.plugin[] | if startswith($old) then $new else . end]' \
-				"$opencode_config" >"$temp_file" && mv "$temp_file" "$opencode_config"
-			print_success "Updated $plugin_name to latest version"
-		else
-			# Add plugin to existing array
-			local temp_file
-			temp_file=$(mktemp)
-			trap 'rm -f "${temp_file:-}"' RETURN
-			jq --arg p "$plugin_spec" '.plugin += [$p]' "$opencode_config" >"$temp_file" && mv "$temp_file" "$opencode_config"
-			print_success "Added $plugin_name plugin to OpenCode config"
-		fi
-	else
-		# Create plugin array with the plugin
-		local temp_file
+	if [[ "$plugin_exists" == "true" ]]; then
+		# Update existing plugin to latest version
 		temp_file=$(mktemp)
 		trap 'rm -f "${temp_file:-}"' RETURN
-		jq --arg p "$plugin_spec" '. + {plugin: [$p]}' "$opencode_config" >"$temp_file" && mv "$temp_file" "$opencode_config"
-		print_success "Created plugin array with $plugin_name"
+		jq --arg old "$plugin_name" --arg new "$plugin_spec" \
+			'.plugin = [.plugin[] | if type == "string" and startswith($old) then $new else . end]' \
+			"$opencode_config" >"$temp_file" && mv "$temp_file" "$opencode_config"
+		print_success "Updated $plugin_name to latest version"
+	else
+		# Add plugin to existing array
+		temp_file=$(mktemp)
+		trap 'rm -f "${temp_file:-}"' RETURN
+		jq --arg p "$plugin_spec" '.plugin += [$p] | .plugin |= unique' "$opencode_config" >"$temp_file" && mv "$temp_file" "$opencode_config"
+		print_success "Added $plugin_name plugin to OpenCode config"
 	fi
 
 	return 0

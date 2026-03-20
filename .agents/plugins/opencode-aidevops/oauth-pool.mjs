@@ -1037,6 +1037,18 @@ export function createOpenAIPoolAuthHook(client) {
 }
 
 /**
+ * Backward-compatible alias used by older integrations.
+ * @deprecated Use createPoolAuthHook(client)
+ */
+export const poolAuthHook = createPoolAuthHook;
+
+/**
+ * Backward-compatible alias used by older integrations.
+ * @deprecated Use createOpenAIPoolAuthHook(client)
+ */
+export const openaiPoolAuthHook = createOpenAIPoolAuthHook;
+
+/**
  * Register pool providers (auth-only, no models).
  * These providers exist solely to provide the "Add Account to Pool" OAuth flows.
  * Models are served by the built-in providers, which use pool tokens

@@ -1114,3 +1114,5 @@ export async function AidevopsPlugin({ directory, client }) {
       compactingHook(input, output, directory),
   };
 }
+
+export default AidevopsPlugin;
