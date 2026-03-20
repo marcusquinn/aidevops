@@ -139,12 +139,6 @@ update_claude_config() {
 		return 0
 	fi
 
-	# Guard: only run if claude binary exists (t1161)
-	if ! command -v claude &>/dev/null; then
-		print_info "Claude Code not found — skipping Claude config (install: https://claude.ai/download)"
-		return 0
-	fi
-
 	print_info "Updating Claude Code configuration..."
 
 	# Generate Claude Code commands (writes to ~/.claude/commands/)

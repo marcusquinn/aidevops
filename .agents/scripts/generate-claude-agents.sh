@@ -11,7 +11,7 @@
 # Architecture mirrors generate-opencode-agents.sh / generate-opencode-commands.sh
 # but targets Claude Code's native configuration system.
 #
-# Prerequisites: `claude` binary must be in PATH
+# Prerequisites: none (if `claude` is missing, MCP registration is skipped)
 # Called by: setup.sh update_claude_config()
 # =============================================================================
 
@@ -28,13 +28,9 @@ set -euo pipefail
 CLAUDE_COMMANDS_DIR="$HOME/.claude/commands"
 CLAUDE_SETTINGS="$HOME/.claude/settings.json"
 
-# =============================================================================
-# GUARD: claude binary must exist
-# =============================================================================
-
-if ! command -v claude &>/dev/null; then
-	echo -e "${YELLOW}[SKIP]${NC} claude binary not found — Claude Code config skipped"
-	exit 0
+has_claude=false
+if command -v claude &>/dev/null; then
+	has_claude=true
 fi
 
 echo -e "${BLUE}Generating Claude Code configuration...${NC}"
@@ -483,64 +479,68 @@ echo -e "  ${GREEN}Done${NC} — $command_count slash commands in $CLAUDE_COMMAN
 # Only adds servers not already registered (idempotent).
 # =============================================================================
 
-echo -e "${BLUE}Registering MCP servers with Claude Code...${NC}"
-
 mcp_count=0
 
-# Get currently registered MCP servers (parse names from `claude mcp list`)
-existing_mcps=""
-if claude mcp list &>/dev/null; then
-	existing_mcps=$(claude mcp list 2>/dev/null | grep -oE '^[a-zA-Z0-9_-]+:' | tr -d ':' || true)
-fi
+if [[ "$has_claude" == "true" ]]; then
+	echo -e "${BLUE}Registering MCP servers with Claude Code...${NC}"
 
-# Helper: register an MCP server if not already present
-# Args: $1=name, $2=json_config
-register_mcp() {
-	local name="$1"
-	local json_config="$2"
+	# Get currently registered MCP servers (parse names from `claude mcp list`)
+	existing_mcps=""
+	if claude mcp list &>/dev/null; then
+		existing_mcps=$(claude mcp list 2>/dev/null | grep -oE '^[a-zA-Z0-9_-]+:' | tr -d ':' || true)
+	fi
 
-	# Check if already registered
-	if echo "$existing_mcps" | grep -qx "$name" 2>/dev/null; then
-		echo -e "  ${BLUE}=${NC} $name (already registered)"
+	# Helper: register an MCP server if not already present
+	# Args: $1=name, $2=json_config
+	register_mcp() {
+		local name="$1"
+		local json_config="$2"
+
+		# Check if already registered
+		if echo "$existing_mcps" | grep -qx "$name" 2>/dev/null; then
+			echo -e "  ${BLUE}=${NC} $name (already registered)"
+			return 0
+		fi
+
+		if claude mcp add-json "$name" "$json_config" -s user 2>/dev/null; then
+			((++mcp_count))
+			echo -e "  ${GREEN}+${NC} $name"
+		else
+			echo -e "  ${YELLOW}!${NC} $name (registration failed)"
+		fi
 		return 0
+	}
+
+	# --- Augment Context Engine ---
+	if command -v auggie &>/dev/null; then
+		local_auggie=$(command -v auggie)
+		register_mcp "auggie-mcp" "{\"type\":\"stdio\",\"command\":\"$local_auggie\",\"args\":[\"--mcp\"]}"
 	fi
 
-	if claude mcp add-json "$name" "$json_config" -s user 2>/dev/null; then
-		((++mcp_count))
-		echo -e "  ${GREEN}+${NC} $name"
-	else
-		echo -e "  ${YELLOW}!${NC} $name (registration failed)"
+	# --- context7 (library docs) ---
+	register_mcp "context7" "{\"type\":\"stdio\",\"command\":\"npx\",\"args\":[\"-y\",\"@upstash/context7-mcp@latest\"]}"
+
+	# --- Playwright MCP ---
+	register_mcp "playwright" "{\"type\":\"stdio\",\"command\":\"npx\",\"args\":[\"-y\",\"@anthropic-ai/mcp-server-playwright@latest\"]}"
+
+	# --- shadcn UI ---
+	register_mcp "shadcn" "{\"type\":\"stdio\",\"command\":\"npx\",\"args\":[\"shadcn@latest\",\"mcp\"]}"
+
+	# --- OpenAPI Search (remote, zero install) ---
+	register_mcp "openapi-search" "{\"type\":\"sse\",\"url\":\"https://openapi-mcp.openapisearch.com/mcp\"}"
+
+	# --- macOS Automator (macOS only) ---
+	if [[ "$(uname -s)" == "Darwin" ]]; then
+		register_mcp "macos-automator" "{\"type\":\"stdio\",\"command\":\"npx\",\"args\":[\"-y\",\"@steipete/macos-automator-mcp@latest\"]}"
 	fi
-	return 0
-}
 
-# --- Augment Context Engine ---
-if command -v auggie &>/dev/null; then
-	local_auggie=$(command -v auggie)
-	register_mcp "auggie-mcp" "{\"type\":\"stdio\",\"command\":\"$local_auggie\",\"args\":[\"--mcp\"]}"
+	# --- Cloudflare API (remote) ---
+	register_mcp "cloudflare-api" "{\"type\":\"sse\",\"url\":\"https://mcp.cloudflare.com/mcp\"}"
+
+	echo -e "  ${GREEN}Done${NC} — $mcp_count new MCP servers registered"
+else
+	echo -e "${YELLOW}[SKIP]${NC} Claude CLI not found — skipping MCP registration"
 fi
-
-# --- context7 (library docs) ---
-register_mcp "context7" "{\"type\":\"stdio\",\"command\":\"npx\",\"args\":[\"-y\",\"@upstash/context7-mcp@latest\"]}"
-
-# --- Playwright MCP ---
-register_mcp "playwright" "{\"type\":\"stdio\",\"command\":\"npx\",\"args\":[\"-y\",\"@anthropic-ai/mcp-server-playwright@latest\"]}"
-
-# --- shadcn UI ---
-register_mcp "shadcn" "{\"type\":\"stdio\",\"command\":\"npx\",\"args\":[\"shadcn@latest\",\"mcp\"]}"
-
-# --- OpenAPI Search (remote, zero install) ---
-register_mcp "openapi-search" "{\"type\":\"sse\",\"url\":\"https://openapi-mcp.openapisearch.com/mcp\"}"
-
-# --- macOS Automator (macOS only) ---
-if [[ "$(uname -s)" == "Darwin" ]]; then
-	register_mcp "macos-automator" "{\"type\":\"stdio\",\"command\":\"npx\",\"args\":[\"-y\",\"@steipete/macos-automator-mcp@latest\"]}"
-fi
-
-# --- Cloudflare API (remote) ---
-register_mcp "cloudflare-api" "{\"type\":\"sse\",\"url\":\"https://mcp.cloudflare.com/mcp\"}"
-
-echo -e "  ${GREEN}Done${NC} — $mcp_count new MCP servers registered"
 
 # =============================================================================
 # PHASE 3: SETTINGS.JSON
