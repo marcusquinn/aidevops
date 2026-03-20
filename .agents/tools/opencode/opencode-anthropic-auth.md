@@ -9,41 +9,133 @@ tools:
 
 # OpenCode Anthropic Auth Plugin
 
-> **DEPRECATED**: As of OpenCode v1.1.36+, Anthropic OAuth is built into OpenCode natively.
-> The external `opencode-anthropic-auth` plugin is no longer needed and must NOT be added
+> **v1.2.30+**: The built-in `anthropic-auth` plugin was removed in OpenCode v1.2.30.
+> Use the **aidevops OAuth pool** instead — run `opencode auth login` and select
+> **"Anthropic Pool"** (provided by the aidevops plugin). See [OAuth Pool Setup](#oauth-pool-setup-v1230) below.
+>
+> **v1.1.36–v1.2.29**: Anthropic OAuth is built into OpenCode natively.
+> The external `opencode-anthropic-auth` npm package is not needed and must NOT be added
 > to `opencode.json` plugins — doing so causes a TypeError due to double-loading.
-> Use `opencode auth login` directly. This document is retained for historical reference.
 
 <!-- AI-CONTEXT-START -->
 
 ## Quick Reference
 
 - **Purpose**: OAuth authentication for Claude Pro/Max accounts in OpenCode
-- **Status**: **DEPRECATED** — built into OpenCode v1.1.36+, do not install as external plugin
-- **Repository**: https://github.com/anomalyco/opencode-anthropic-auth
-- **Installation**: Built-in to OpenCode v1.1.36+ (no installation needed)
+- **Status (v1.2.30+)**: Built-in auth removed — use aidevops OAuth pool (`opencode auth login` → "Anthropic Pool")
+- **Status (v1.1.36–v1.2.29)**: Built-in to OpenCode, no external plugin needed
+- **Repository**: https://github.com/anomalyco/opencode-anthropic-auth (historical reference only)
 
 **Authentication Methods**:
 
-| Method | Use Case | Requirements |
-|--------|----------|--------------|
-| **Claude Pro/Max OAuth** | Free API usage for subscribers | Active Claude Pro/Max subscription |
-| **Create API Key** | Traditional API key via OAuth | Anthropic Console access |
-| **Manual API Key** | Existing API keys | API key from console.anthropic.com |
+| Method | OpenCode Version | Use Case | Requirements |
+|--------|-----------------|----------|--------------|
+| **Anthropic Pool** (aidevops) | v1.2.30+ (required), all versions (recommended) | Multi-account OAuth with rotation | Claude Pro/Max subscription |
+| **Claude Pro/Max OAuth** (built-in) | v1.1.36–v1.2.29 | Single-account OAuth | Claude Pro/Max subscription |
+| **Manual API Key** | All versions | Existing API keys | API key from console.anthropic.com |
 
-**Quick Setup**:
+**Quick Setup (v1.2.30+)**:
 
 ```bash
-# Install plugin (auto-installed by aidevops setup.sh)
-npm install -g opencode-anthropic-auth
+# 1. Ensure aidevops plugin is registered (done by aidevops setup.sh)
+# 2. Add your first account to the pool
+opencode auth login
+# Select: Anthropic Pool
+# Enter your Claude account email
+# Complete OAuth flow in browser
 
-# Authenticate in OpenCode
+# 3. Optionally add more accounts for automatic rotation
+opencode auth login
+# Select: Anthropic Pool → enter second account email
+
+# 4. Manage accounts
+# /model-accounts-pool list
+# /model-accounts-pool status
+# /model-accounts-pool remove user@example.com
+```
+
+**Quick Setup (v1.1.36–v1.2.29)**:
+
+```bash
+# Built-in OAuth (single account)
 opencode auth login
 # Select: Anthropic → Claude Pro/Max (or Create an API Key)
 # Follow OAuth flow in browser
+
+# Or use the aidevops pool for multi-account rotation (recommended)
+opencode auth login
+# Select: Anthropic Pool
 ```
 
 <!-- AI-CONTEXT-END -->
+
+## OAuth Pool Setup (v1.2.30+)
+
+OpenCode v1.2.30 removed the built-in `anthropic-auth` plugin. The aidevops OAuth pool
+(`oauth-pool.mjs`) is the replacement. It provides the same OAuth flow with the addition
+of multi-account rotation — when one account hits a rate limit (429), requests automatically
+switch to the next available account.
+
+### Prerequisites
+
+The aidevops plugin must be registered in OpenCode. This is done automatically by `aidevops setup.sh`.
+Verify with:
+
+```bash
+grep -q "opencode-aidevops" ~/.config/opencode/opencode.json && echo "Plugin registered" || echo "Run: aidevops setup"
+```
+
+### Adding Accounts
+
+```bash
+opencode auth login
+# Select: "Anthropic Pool" (or "Add Account to Pool (Claude Pro/Max)")
+# Enter your Claude account email when prompted
+# A browser window opens to claude.ai/oauth/authorize
+# Sign in and authorize the application
+# Copy the authorization code from the callback URL
+# Paste into the OpenCode prompt
+```
+
+Repeat to add additional accounts. Each account is stored in `~/.aidevops/oauth-pool.json`.
+
+### Managing the Pool
+
+Use the `/model-accounts-pool` tool inside any OpenCode session:
+
+```text
+/model-accounts-pool list              # Show all accounts with status
+/model-accounts-pool status            # Rotation statistics
+/model-accounts-pool remove user@example.com  # Remove an account
+/model-accounts-pool reset-cooldowns   # Clear rate-limit cooldowns
+```
+
+Or use the MCP tool directly:
+
+```bash
+# List accounts (key names only — never expose values)
+cat ~/.aidevops/oauth-pool.json | jq -r '.anthropic[].email'
+```
+
+### Pool File
+
+Credentials are stored in `~/.aidevops/oauth-pool.json` (separate from OpenCode's `auth.json`).
+This file contains OAuth tokens — do not commit to version control.
+
+```bash
+# Check file permissions (should be 600)
+ls -la ~/.aidevops/oauth-pool.json
+```
+
+### Using Pool Models
+
+After adding accounts, pool models appear in the model picker as `anthropic-pool/claude-*`:
+
+- `anthropic-pool/claude-opus-4-6`
+- `anthropic-pool/claude-sonnet-4-6`
+- `anthropic-pool/claude-haiku-4-5`
+
+All models show $0 cost (covered by Claude Pro/Max subscription).
 
 ## Overview
 
@@ -356,13 +448,23 @@ opencode run "Hello, Claude!" --model anthropic/claude-sonnet-4-6
 
 ### Multi-Account Setup
 
-For teams or multi-account scenarios:
+The aidevops OAuth pool supports automatic multi-account rotation. Add multiple accounts:
 
-1. **Different users**: Each user authenticates with their own account
-2. **Account switching**: Use `opencode auth logout && opencode auth login`
-3. **Organization accounts**: Ensure organization members have API access enabled
+```bash
+# Add first account
+opencode auth login
+# Select: Anthropic Pool → enter first account email
 
-**Note**: This plugin does not support automatic multi-account load balancing. Use separate OpenCode profiles or environments for true multi-account rotation.
+# Add second account
+opencode auth login
+# Select: Anthropic Pool → enter second account email
+```
+
+The pool automatically rotates to the next available account when one hits a rate limit (429).
+Accounts are stored in `~/.aidevops/oauth-pool.json` and persist across sessions.
+
+For teams: each user runs their own aidevops setup and manages their own pool. OAuth tokens
+are personal and cannot be shared across users.
 
 ### Beta Feature Customization
 
@@ -398,32 +500,44 @@ cat ~/.config/opencode/auth.json | jq '.anthropic'
 
 ### Automatic Setup
 
-As of aidevops v2.90.0, `setup.sh` no longer installs this plugin (it's built into OpenCode v1.1.36+).
+`setup.sh` registers the aidevops plugin (which includes the OAuth pool) automatically.
+The external `opencode-anthropic-auth` npm package is not installed — it was removed in
+aidevops v2.90.0 when OpenCode v1.1.36 made it redundant.
 
 After setup:
-1. OpenCode's built-in Anthropic OAuth is ready to use
-2. Authenticate with `opencode auth login`
+
+- **OpenCode v1.2.30+**: Run `opencode auth login` → select "Anthropic Pool" to add accounts
+- **OpenCode v1.1.36–v1.2.29**: Run `opencode auth login` → select "Anthropic → Claude Pro/Max"
+  (built-in), or use "Anthropic Pool" for multi-account rotation
 
 ### Recommended Configuration
 
 For aidevops users:
 
-- **Primary agent** (Build+): Use Claude Pro/Max OAuth for zero-cost API usage
+- **Primary agent** (Build+): Use the aidevops OAuth pool for zero-cost API usage with rotation
 - **Specialized agents**: Same authentication applies to all agents
 - **CI/CD workflows**: Use manual API key method for GitHub Actions, etc.
+- **Multiple accounts**: Add 2–3 Claude Pro/Max accounts to the pool for uninterrupted sessions
 
 ### Credential Storage
 
-aidevops follows OpenCode's credential storage:
-
-- OAuth tokens: `~/.config/opencode/auth.json`
-- API keys (if using manual method): Same location
-- Environment variables: Not used by this plugin (OAuth tokens only)
+- **OAuth pool tokens**: `~/.aidevops/oauth-pool.json` (aidevops pool, 0600 permissions)
+- **Built-in OAuth tokens** (v1.1.36–v1.2.29): `~/.config/opencode/auth.json`
+- **API keys** (manual method): `~/.config/opencode/auth.json`
+- **Environment variables**: Not used by OAuth methods
 
 ## Version History
 
+### OpenCode Built-in Auth Timeline
+
+- **OpenCode v1.2.30+**: Built-in `anthropic-auth` removed entirely. Use aidevops OAuth pool.
+- **OpenCode v1.1.36–v1.2.29**: Built-in `anthropic-auth` included natively. External plugin not needed.
+- **OpenCode pre-v1.1.36**: External `opencode-anthropic-auth` npm package required.
+
+### External Plugin (`opencode-anthropic-auth` npm package)
+
 - **0.0.9** (latest): Current version in repository
-  - **DEPRECATED** — functionality now built into OpenCode v1.1.36+
+  - **DEPRECATED** — functionality built into OpenCode v1.1.36+, removed in v1.2.30
   - Maintained by Anomaly (anomalyco)
   - Dependencies: `@opencode-ai/plugin`, `@openauthjs/openauth`
 - **0.0.8**: Updated dependencies and compatibility
