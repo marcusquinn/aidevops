@@ -74,12 +74,17 @@ If the first argument is NOT a task ID (it's a description):
 Claim → Branch Setup → Task Development → Preflight → PR Create → PR Review → Postflight → Deploy
 ```
 
-## Lifecycle Completeness Gate (t5096 — MANDATORY)
+## Lifecycle Completeness Gate (t5096 + GH#5317 — MANDATORY)
 
-**A `/full-loop` worker is NOT done after creating a PR.** The full lifecycle includes ALL of these phases after PR creation. Stopping at PR creation is the #1 failure mode for dispatched workers (GH#5096).
+**Two distinct failure modes exist. Both are equally fatal:**
 
-**After creating the PR, you MUST continue through:**
+**Failure mode 1 (GH#5317):** Worker exits after implementation WITHOUT committing or creating a PR. Files left uncommitted in the worktree. The supervisor cannot detect or recover uncommitted work. This is the earlier failure — it happens before PR creation.
 
+**Failure mode 2 (GH#5096):** Worker exits after PR creation WITHOUT completing the post-PR lifecycle (review, merge, release, cleanup). The PR sits unmerged indefinitely.
+
+**The full lifecycle in order — do NOT skip any step:**
+
+0. **Commit+PR gate (GH#5317)** — Before emitting `TASK_COMPLETE`, verify all changes are committed (`git status --porcelain` is empty) and a PR exists. If not, commit and create the PR first. This step happens at the END of Step 3, before Step 4.
 1. **Review bot gate** — wait for CodeRabbit/Gemini/Copilot reviews (poll up to 10 min)
 2. **Address critical findings** — fix security/critical issues from bot reviews
 3. **Merge** — `gh pr merge --squash` (without `--delete-branch` in worktrees)
@@ -87,7 +92,7 @@ Claim → Branch Setup → Task Development → Preflight → PR Create → PR R
 5. **Issue closing comment** — post a structured comment on every linked issue
 6. **Worktree cleanup** — return to main, pull, prune merged worktrees
 
-**Do NOT emit `FULL_LOOP_COMPLETE` until steps 1-6 are done.** If you stop at PR creation, the task is incomplete — the PR sits unmerged, the issue stays open, and a human must manually finish the lifecycle.
+**Do NOT emit `FULL_LOOP_COMPLETE` until step 0 through step 6 are done.** If you stop at implementation without a PR, or stop at PR creation without merging, the task is incomplete.
 
 This gate applies regardless of how you were dispatched (pulse, `/runners`, bare `opencode run`, or interactive). See Step 4 below for the full details of each phase.
 
@@ -523,6 +528,30 @@ The AI will iterate on the task until outputting:
 6. Conventional commits used — required for all commits (enables auto-changelog)
 7. **Headless rules observed** (see below)
 8. **Actionable finding coverage** — if this task produces a multi-finding report (audit/review/scan), every deferred actionable finding has a tracked follow-up (`task_id` + issue ref)
+9. **Commit+PR gate (GH#5317 — MANDATORY)** — ALL changes committed and a PR exists before emitting `TASK_COMPLETE`. This is the #1 failure mode: workers print "Implementation complete" and exit without committing or creating a PR, leaving files uncommitted in the worktree. Run this check immediately before emitting `TASK_COMPLETE`:
+
+   ```bash
+   # Verify no uncommitted changes remain
+   UNCOMMITTED=$(git status --porcelain | wc -l | tr -d ' ')
+   if [[ "$UNCOMMITTED" -gt 0 ]]; then
+     echo "[GH#5317] Uncommitted changes detected — committing before TASK_COMPLETE"
+     git add -A
+     git commit -m "feat: complete implementation (GH#5317 commit gate)"
+   fi
+
+   # Verify a PR exists (create one if not)
+   CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
+   if [[ "$CURRENT_BRANCH" != "main" && "$CURRENT_BRANCH" != "master" ]]; then
+     git push -u origin HEAD 2>/dev/null || git push origin HEAD
+     EXISTING_PR=$(gh pr list --head "$CURRENT_BRANCH" --json number --jq '.[0].number' 2>/dev/null || true)
+     if [[ -z "$EXISTING_PR" || "$EXISTING_PR" == "null" ]]; then
+       echo "[GH#5317] No PR found — creating PR before TASK_COMPLETE"
+       # PR creation happens in Step 4 — proceed there now, do NOT emit TASK_COMPLETE yet
+     fi
+   fi
+   ```
+
+   **Do NOT emit `TASK_COMPLETE` if there are uncommitted changes or no PR.** Fix the gap first, then emit the signal. `TASK_COMPLETE` means "implementation done AND PR exists" — not just "implementation done".
 
 **Actionable finding coverage procedure (mandatory when output includes multiple findings):**
 

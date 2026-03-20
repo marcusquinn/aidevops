@@ -194,6 +194,15 @@ Before emitting FULL_LOOP_COMPLETE or marking task complete, you MUST:
    task. Do not leave behind extra files, modified configs, or side effects that were
    not requested.
 
+5. **Commit+PR gate (GH#5317 — MANDATORY)**: Before emitting ANY completion signal
+   (`TASK_COMPLETE` or `FULL_LOOP_COMPLETE`), verify:
+   - `git status --porcelain` returns empty (no uncommitted changes). If not, commit first.
+   - A PR exists for the current branch: `gh pr list --head "$(git rev-parse --abbrev-ref HEAD)"`.
+     If no PR exists, create one before completing.
+   This is the #1 failure mode: workers print "Implementation complete" and exit
+   without committing or creating a PR, leaving files uncommitted in the worktree.
+   The supervisor cannot detect or recover work that was never committed.
+
 FULL_LOOP_COMPLETE is IRREVERSIBLE and FINAL. You have unlimited iterations but only
 one submission. Extra verification costs nothing; a wrong completion wastes an entire
 retry cycle.
