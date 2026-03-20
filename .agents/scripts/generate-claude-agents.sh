@@ -28,11 +28,6 @@ set -euo pipefail
 CLAUDE_COMMANDS_DIR="$HOME/.claude/commands"
 CLAUDE_SETTINGS="$HOME/.claude/settings.json"
 
-has_claude=false
-if command -v claude &>/dev/null; then
-	has_claude=true
-fi
-
 echo -e "${BLUE}Generating Claude Code configuration...${NC}"
 
 # =============================================================================
@@ -481,7 +476,7 @@ echo -e "  ${GREEN}Done${NC} — $command_count slash commands in $CLAUDE_COMMAN
 
 mcp_count=0
 
-if [[ "$has_claude" == "true" ]]; then
+if command -v claude &>/dev/null; then
 	echo -e "${BLUE}Registering MCP servers with Claude Code...${NC}"
 
 	# Get currently registered MCP servers (parse names from `claude mcp list`)
