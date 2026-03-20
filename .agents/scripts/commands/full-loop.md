@@ -84,7 +84,7 @@ Claim → Branch Setup → Task Development → Preflight → PR Create → PR R
 
 **The full lifecycle in order — do NOT skip any step:**
 
-0. **Commit+PR gate (GH#5317)** — Before emitting `TASK_COMPLETE`, verify all changes are committed (`git status --porcelain` is empty) and a PR exists. If not, commit and create the PR first. This step happens at the END of Step 3, before Step 4.
+0. **Commit+PR gate (GH#5317)** — At the end of implementation in Step 3, verify all changes are committed (`git status --porcelain` is empty) and create/confirm the PR. Only after this gate passes may `TASK_COMPLETE` be emitted. (`TASK_COMPLETE` now means: implementation done + all changes committed + PR exists.)
 1. **Review bot gate** — wait for CodeRabbit/Gemini/Copilot reviews (poll up to 10 min)
 2. **Address critical findings** — fix security/critical issues from bot reviews
 3. **Merge** — `gh pr merge --squash` (without `--delete-branch` in worktrees)
@@ -92,7 +92,7 @@ Claim → Branch Setup → Task Development → Preflight → PR Create → PR R
 5. **Issue closing comment** — post a structured comment on every linked issue
 6. **Worktree cleanup** — return to main, pull, prune merged worktrees
 
-**Do NOT emit `FULL_LOOP_COMPLETE` until step 0 through step 6 are done.** If you stop at implementation without a PR, or stop at PR creation without merging, the task is incomplete.
+**Do NOT emit `FULL_LOOP_COMPLETE` until step 0 through step 6 are done.** If you stop at implementation without a PR, or stop at PR creation without merging, the task is incomplete. (`TASK_COMPLETE` = implementation + commit/PR gate complete; `FULL_LOOP_COMPLETE` = all 7 steps complete.)
 
 This gate applies regardless of how you were dispatched (pulse, `/runners`, bare `opencode run`, or interactive). See Step 4 below for the full details of each phase.
 
@@ -771,10 +771,10 @@ If README update is needed:
 
 ### Step 4: Automatic Phase Progression
 
-After task completion, the loop automatically:
+After `TASK_COMPLETE` (which requires the commit+PR gate from Step 3 criterion 9 to have already passed), the loop continues through the post-PR lifecycle:
 
 1. **Preflight**: Runs quality checks, auto-fixes issues
-2. **PR Create**: Verifies `gh auth`, rebases onto `origin/main`, pushes branch, creates PR with proper title/body
+2. **PR Create**: Verifies `gh auth`, rebases onto `origin/main`, pushes branch, creates PR with proper title/body. **Note:** If the commit+PR gate in Step 3 already created the PR, this step confirms it exists and ensures the PR body has proper issue linkage — it does not create a duplicate.
    **Issue linkage in PR body (MANDATORY):** The PR body MUST include `Closes #NNN` (or `Fixes`/`Resolves`) for every related issue — this is the ONLY mechanism that creates a GitHub PR-issue link.
 
    **Primary source: use `$ISSUE_NUM` from Step 0.** The issue number resolved during dispatch (from arguments, TODO.md `ref:GH#`, or `gh issue list` by task ID) is the authoritative source. Always include `Closes #$ISSUE_NUM` in the PR body. Do NOT re-search by keywords — keyword search across issues with similar titles (e.g., multiple subtasks of the same parent) returns wrong matches.
