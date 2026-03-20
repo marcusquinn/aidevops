@@ -53,6 +53,7 @@ const OPENAI_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
 const OPENAI_ISSUER = "https://auth.openai.com";
 const OPENAI_TOKEN_ENDPOINT = `${OPENAI_ISSUER}/oauth/token`;
 const OPENAI_OAUTH_AUTHORIZE_URL = `${OPENAI_ISSUER}/oauth/authorize`;
+const OPENCODE_USER_AGENT = "opencode/1.2.27";
 /** OpenAI uses a local redirect server at port 1455 for its built-in flow.
  *  For the pool's add-account flow we use the same redirect URI so the
  *  authorization code can be pasted back into the terminal prompt. */
@@ -85,6 +86,29 @@ const TOKEN_ENDPOINT = ANTHROPIC_TOKEN_ENDPOINT;
 // ---------------------------------------------------------------------------
 // Token endpoint helpers
 // ---------------------------------------------------------------------------
+
+/**
+ * Parse Retry-After header and return a bounded cooldown.
+ * Supports both integer seconds and HTTP-date formats.
+ * @param {string|null} retryAfter
+ * @returns {number}
+ */
+function parseRetryAfterCooldown(retryAfter) {
+  if (!retryAfter) return TOKEN_ENDPOINT_COOLDOWN_MS;
+
+  const seconds = Number.parseInt(retryAfter, 10);
+  if (Number.isFinite(seconds)) {
+    return Math.max(seconds * 1000, TOKEN_ENDPOINT_COOLDOWN_MS);
+  }
+
+  const retryAt = Date.parse(retryAfter);
+  if (Number.isFinite(retryAt)) {
+    const remainingMs = Math.max(retryAt - Date.now(), 0);
+    return Math.max(remainingMs, TOKEN_ENDPOINT_COOLDOWN_MS);
+  }
+
+  return TOKEN_ENDPOINT_COOLDOWN_MS;
+}
 
 /**
  * In-memory timestamp of the last 429 from the Anthropic token endpoint.
@@ -135,9 +159,7 @@ async function fetchTokenEndpoint(body, context) {
   if (response.status === 429) {
     // Parse Retry-After header if present, otherwise use default cooldown
     const retryAfter = response.headers.get("retry-after");
-    const cooldownMs = retryAfter
-      ? Math.max(parseInt(retryAfter, 10) * 1000, TOKEN_ENDPOINT_COOLDOWN_MS)
-      : TOKEN_ENDPOINT_COOLDOWN_MS;
+    const cooldownMs = parseRetryAfterCooldown(retryAfter);
     tokenEndpointCooldownUntil = Date.now() + cooldownMs;
     const cooldownMinutes = Math.ceil(cooldownMs / 60000);
     console.error(
@@ -175,16 +197,14 @@ async function fetchOpenAITokenEndpoint(params, context) {
     method: "POST",
     headers: {
       "Content-Type": "application/x-www-form-urlencoded",
-      "User-Agent": "opencode/1.2.27",
+      "User-Agent": OPENCODE_USER_AGENT,
     },
     body: params.toString(),
   });
 
   if (response.status === 429) {
     const retryAfter = response.headers.get("retry-after");
-    const cooldownMs = retryAfter
-      ? Math.max(parseInt(retryAfter, 10) * 1000, TOKEN_ENDPOINT_COOLDOWN_MS)
-      : TOKEN_ENDPOINT_COOLDOWN_MS;
+    const cooldownMs = parseRetryAfterCooldown(retryAfter);
     openaiTokenEndpointCooldownUntil = Date.now() + cooldownMs;
     const cooldownMinutes = Math.ceil(cooldownMs / 60000);
     console.error(
@@ -486,6 +506,43 @@ function pickNextAccount(provider, excludeEmail) {
   return available[0];
 }
 
+/**
+ * Execute a fetch with one-time pool failover on HTTP 429.
+ * Marks the current account rate-limited, rotates to the next account, then retries once.
+ *
+ * @param {any} client - OpenCode SDK client
+ * @param {"anthropic"|"openai"} provider
+ * @param {string} currentEmail - current account email to skip on rotation
+ * @param {() => Promise<Response>} request
+ * @returns {Promise<Response>}
+ */
+export async function fetchWithPoolFailover(client, provider, currentEmail, request) {
+  const response = await request();
+  if (response.status !== 429 || !currentEmail) {
+    return response;
+  }
+
+  patchAccount(provider, currentEmail, {
+    status: "rate-limited",
+    cooldownUntil: Date.now() + RATE_LIMIT_COOLDOWN_MS,
+  });
+
+  const injectFn = provider === "openai" ? injectOpenAIPoolToken : injectPoolToken;
+  const rotated = await injectFn(client, currentEmail);
+  if (!rotated) {
+    console.error(
+      `[aidevops] OAuth pool: ${provider} 429 for ${currentEmail}; no alternate account available for failover.`,
+    );
+    return response;
+  }
+
+  console.error(
+    `[aidevops] OAuth pool: ${provider} 429 for ${currentEmail}; rotated account and retrying once.`,
+  );
+
+  return request();
+}
+
 // ---------------------------------------------------------------------------
 // ---------------------------------------------------------------------------
 // Auth hook (registers the pool provider for account management only)
@@ -604,26 +661,30 @@ export async function injectOpenAIPoolToken(client, skipEmail) {
   const accounts = getAccounts("openai");
   if (accounts.length === 0) return false;
 
-  // Pick least-recently-used account, optionally skipping one
+  const now = Date.now();
+  // Pick least-recently-used eligible account, optionally skipping one.
+  // Retry token validation across all candidates before failing.
   let account = null;
   const sorted = [...accounts]
-    .filter((a) => a.status === "active" && a.email !== skipEmail)
+    .filter(
+      (a) =>
+        (a.status === "active" || a.status === "idle") &&
+        a.email !== skipEmail &&
+        (!a.cooldownUntil || a.cooldownUntil <= now),
+    )
     .sort((a, b) => new Date(a.lastUsed || 0) - new Date(b.lastUsed || 0));
 
-  if (sorted.length === 0) {
-    account = accounts.find((a) => a.status === "active");
-  } else {
-    account = sorted[0];
+  for (const candidate of sorted) {
+    const accessToken = await ensureValidToken("openai", candidate);
+    if (!accessToken) {
+      console.error(`[aidevops] OAuth pool: skipping invalid OpenAI token for ${candidate.email}`);
+      continue;
+    }
+    account = candidate;
+    break;
   }
 
   if (!account) return false;
-
-  // Ensure token is valid (refresh if needed)
-  const accessToken = await ensureValidToken("openai", account);
-  if (!accessToken) {
-    console.error(`[aidevops] OAuth pool: failed to get valid OpenAI token for ${account.email}`);
-    return false;
-  }
 
   // Write to built-in openai provider's auth entry
   // OpenAI auth.json structure: { type, access, refresh, expires, accountId }
@@ -927,7 +988,7 @@ export function createOpenAIPoolAuthHook(client) {
                     const userResp = await fetch(`${OPENAI_ISSUER}/userinfo`, {
                       headers: {
                         "Authorization": `Bearer ${json.access_token}`,
-                        "User-Agent": "opencode/1.2.27",
+                        "User-Agent": OPENCODE_USER_AGENT,
                       },
                     });
                     if (userResp.ok) {
