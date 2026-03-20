@@ -26,6 +26,7 @@ import { readFileSync, writeFileSync, existsSync, mkdirSync } from "fs";
 import { join, dirname } from "path";
 import { homedir } from "os";
 import { createHash, randomBytes } from "crypto";
+import { createServer } from "http";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -238,6 +239,129 @@ function generatePKCE() {
     .update(verifier)
     .digest("base64url");
   return { verifier, challenge };
+}
+
+// ---------------------------------------------------------------------------
+// OAuth callback server (t1548)
+// ---------------------------------------------------------------------------
+
+/** Port for the OpenAI OAuth callback server (matches OpenCode's built-in) */
+const OAUTH_CALLBACK_PORT = 1455;
+
+/** Timeout for the callback server (ms) — auto-closes if no callback received */
+const OAUTH_CALLBACK_TIMEOUT_MS = 300_000; // 5 minutes
+
+/**
+ * Start a temporary HTTP server to catch the OpenAI OAuth callback.
+ *
+ * OpenAI's OAuth redirects to http://localhost:1455/auth/callback?code=XXX.
+ * OpenCode's built-in auth spins up a server on that port, but our pool flow
+ * runs through the plugin auth hook which doesn't. Without this server, the
+ * browser shows "connection refused" and the user can't get the code.
+ *
+ * The server:
+ *   1. Listens on port 1455
+ *   2. Catches the /auth/callback redirect
+ *   3. Extracts the `code` query parameter
+ *   4. Shows a success page telling the user the code was captured
+ *   5. Resolves the returned promise with the code
+ *   6. Auto-closes after the first request or after timeout
+ *
+ * @returns {{ promise: Promise<string>, close: () => void }}
+ *   - promise: resolves with the authorization code, rejects on timeout/error
+ *   - close: manually close the server (cleanup)
+ */
+function startOAuthCallbackServer() {
+  let resolveCode;
+  let rejectCode;
+  let server;
+  let timeoutId;
+
+  const promise = new Promise((resolve, reject) => {
+    resolveCode = resolve;
+    rejectCode = reject;
+  });
+
+  server = createServer((req, res) => {
+    // Parse the URL to extract query parameters
+    let reqUrl;
+    try {
+      reqUrl = new URL(req.url, `http://localhost:${OAUTH_CALLBACK_PORT}`);
+    } catch {
+      res.writeHead(400, { "Content-Type": "text/plain" });
+      res.end("Bad request");
+      return;
+    }
+
+    const code = reqUrl.searchParams.get("code");
+    const error = reqUrl.searchParams.get("error");
+
+    if (error) {
+      res.writeHead(200, { "Content-Type": "text/html" });
+      res.end(`<!DOCTYPE html><html><body>
+        <h2>Authorization Failed</h2>
+        <p>Error: ${error}</p>
+        <p>${reqUrl.searchParams.get("error_description") || ""}</p>
+        <p>You can close this tab.</p>
+      </body></html>`);
+      cleanup();
+      rejectCode(new Error(`OAuth error: ${error}`));
+      return;
+    }
+
+    if (code) {
+      res.writeHead(200, { "Content-Type": "text/html" });
+      res.end(`<!DOCTYPE html><html><body>
+        <h2>Authorization Successful</h2>
+        <p>The authorization code has been captured.</p>
+        <p>Return to OpenCode — the code will be submitted automatically.</p>
+        <p>You can close this tab.</p>
+      </body></html>`);
+      cleanup();
+      resolveCode(code);
+      return;
+    }
+
+    // No code or error — probably a favicon request or similar
+    res.writeHead(200, { "Content-Type": "text/plain" });
+    res.end("Waiting for OAuth callback...");
+  });
+
+  function cleanup() {
+    if (timeoutId) clearTimeout(timeoutId);
+    if (server) {
+      try { server.close(); } catch { /* ignore */ }
+    }
+  }
+
+  // Handle port-in-use (OpenCode's built-in auth may have it)
+  server.on("error", (err) => {
+    if (err.code === "EADDRINUSE") {
+      console.error(
+        `[aidevops] OAuth pool: port ${OAUTH_CALLBACK_PORT} in use — ` +
+        `OpenCode's built-in auth may be running. The user will need to ` +
+        `copy the code from the browser URL bar manually.`,
+      );
+      // Don't reject — let the user paste the code manually
+    } else {
+      console.error(`[aidevops] OAuth pool: callback server error: ${err.message}`);
+    }
+    cleanup();
+    rejectCode(err);
+  });
+
+  server.listen(OAUTH_CALLBACK_PORT, "127.0.0.1", () => {
+    console.error(`[aidevops] OAuth pool: callback server listening on port ${OAUTH_CALLBACK_PORT}`);
+  });
+
+  // Auto-close after timeout
+  timeoutId = setTimeout(() => {
+    console.error(`[aidevops] OAuth pool: callback server timed out after ${OAUTH_CALLBACK_TIMEOUT_MS / 1000}s`);
+    cleanup();
+    rejectCode(new Error("OAuth callback timeout"));
+  }, OAUTH_CALLBACK_TIMEOUT_MS);
+
+  return { promise, close: cleanup };
 }
 
 // ---------------------------------------------------------------------------
@@ -910,6 +1034,22 @@ export function createPoolAuthHook(client) {
           const email = inputs?.email || "unknown";
           const pkce = generatePKCE();
 
+          // Start a local callback server to catch the OAuth redirect.
+          // OpenAI redirects to localhost:1455 — without this server the
+          // browser shows "connection refused" and the user can't get the code.
+          let callbackServer = null;
+          let serverCode = null;
+          try {
+            callbackServer = startOAuthCallbackServer();
+            // Store the code when the server catches it (non-blocking)
+            callbackServer.promise
+              .then((code) => { serverCode = code; })
+              .catch(() => { /* timeout or error — user can paste manually */ });
+          } catch {
+            // Server failed to start (port in use, etc.) — fall back to manual paste
+            console.error("[aidevops] OAuth pool: callback server failed to start — manual code paste required");
+          }
+
           const url = new URL(OPENAI_OAUTH_AUTHORIZE_URL);
           url.searchParams.set("client_id", OPENAI_CLIENT_ID);
           url.searchParams.set("response_type", "code");
@@ -924,14 +1064,42 @@ export function createPoolAuthHook(client) {
               `Adding OpenAI account: ${email}`,
               `1. A browser window will open to auth.openai.com`,
               `2. Sign in with your ChatGPT Plus/Pro account`,
-              `3. After authorizing, you will be redirected to http://localhost:1455/auth/callback`,
-              `4. Copy the "code" query parameter from the redirect URL`,
-              `5. Paste the authorization code here: `,
+              `3. After authorizing, the code will be captured automatically`,
+              `4. Press Enter here to complete (or paste the code manually if needed): `,
             ].join("\n"),
             method: "code",
             callback: async (code) => {
+              // Use server-captured code if available, otherwise use manual input
+              let authCode = code?.trim();
+              if ((!authCode || authCode.length < 5) && serverCode) {
+                authCode = serverCode;
+                console.error("[aidevops] OAuth pool: using auto-captured code from callback server");
+              } else if ((!authCode || authCode.length < 5) && callbackServer) {
+                // Server hasn't caught the code yet — wait briefly
+                try {
+                  authCode = await Promise.race([
+                    callbackServer.promise,
+                    new Promise((_, reject) =>
+                      setTimeout(() => reject(new Error("timeout")), 30_000),
+                    ),
+                  ]);
+                  console.error("[aidevops] OAuth pool: received code from callback server");
+                } catch {
+                  console.error("[aidevops] OAuth pool: no code received — authorization failed");
+                  if (callbackServer) callbackServer.close();
+                  return { type: "failed" };
+                }
+              }
+
+              // Clean up the callback server
+              if (callbackServer) callbackServer.close();
+
+              if (!authCode || authCode.length < 5) {
+                return { type: "failed" };
+              }
+
               // Strip any URL fragment or extra parameters
-              const cleanCode = code.trim().split(/[&#?]/)[0];
+              const cleanCode = authCode.split(/[&#?]/)[0];
 
               const params = new URLSearchParams({
                 grant_type: "authorization_code",
