@@ -543,8 +543,7 @@ The AI will iterate on the task until outputting:
    CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
    if [[ "$CURRENT_BRANCH" != "main" && "$CURRENT_BRANCH" != "master" ]]; then
      git push -u origin HEAD 2>/dev/null || git push origin HEAD
-     EXISTING_PR=$(gh pr list --head "$CURRENT_BRANCH" --json number --jq '.[0].number' 2>/dev/null || true)
-     if [[ -z "$EXISTING_PR" || "$EXISTING_PR" == "null" ]]; then
+     if ! gh pr view >/dev/null 2>&1; then
        echo "[GH#5317] No PR found — creating PR before TASK_COMPLETE"
        # PR creation happens in Step 4 — proceed there now, do NOT emit TASK_COMPLETE yet
      fi
