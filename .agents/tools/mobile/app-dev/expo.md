@@ -244,9 +244,9 @@ After building, use the aidevops mobile testing stack:
 
 ## Related
 
-- `mobile-app-dev/swift.md` - Swift alternative for iOS-only
-- `mobile-app-dev/testing.md` - Full testing guide
-- `mobile-app-dev/publishing.md` - Store submission
+- `tools/mobile/app-dev/swift.md` - Swift alternative for iOS-only
+- `tools/mobile/app-dev/testing.md` - Full testing guide
+- `tools/mobile/app-dev/publishing.md` - Store submission
 - `tools/mobile/` - Mobile testing tools
 - `tools/api/better-auth.md` - Authentication (has `@better-auth/expo` package)
 - `tools/ui/tailwind-css.md` - Tailwind CSS (via NativeWind for React Native)

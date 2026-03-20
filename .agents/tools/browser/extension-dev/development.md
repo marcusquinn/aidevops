@@ -229,8 +229,8 @@ document.body.appendChild(host);
 
 ## Related
 
-- `browser-extension-dev/testing.md` - Testing extensions
-- `browser-extension-dev/publishing.md` - Store submission
+- `tools/browser/extension-dev/testing.md` - Testing extensions
+- `tools/browser/extension-dev/publishing.md` - Store submission
 - `tools/browser/chrome-webstore-release.md` - Chrome Web Store automation
 - `tools/ui/wxt.md` - Dedicated WXT framework agent
 - `tools/ui/tailwind-css.md` - Tailwind CSS styling

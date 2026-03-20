@@ -196,7 +196,7 @@ Before submitting to stores:
 
 ## Related
 
-- `browser-extension-dev/development.md` - Development setup
-- `browser-extension-dev/publishing.md` - Store submission
+- `tools/browser/extension-dev/development.md` - Development setup
+- `tools/browser/extension-dev/publishing.md` - Store submission
 - `tools/browser/playwright.md` - Playwright testing
 - `tools/browser/chrome-devtools.md` - Chrome DevTools

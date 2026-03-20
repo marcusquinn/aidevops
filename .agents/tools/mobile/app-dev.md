@@ -29,7 +29,7 @@
 | `product/ui-design.md` | UI/UX design standards, aesthetics, animations, icons, branding |
 | `product/analytics.md` | Usage analytics, feedback loops, crash reporting, iteration signals |
 
-**Subagents** — mobile-specific (`mobile-app-dev/`):
+**Subagents** — mobile-specific (`tools/mobile/app-dev/`):
 
 | Subagent | When to Read |
 |----------|--------------|
@@ -54,7 +54,7 @@
 - `tools/vision/overview.md` - Image generation for app assets
 - `tools/deployment/coolify.md` - Self-hosted backend deployment
 - `services/accessibility/accessibility-audit.md` - Accessibility compliance
-- `browser-extension-dev.md` - Shares product/ subagents for cross-platform concerns
+- `tools/browser/extension-dev.md` - Shares product/ subagents for cross-platform concerns
 
 **Mobile tool stack**:
 
@@ -62,15 +62,15 @@
 Validation    -> product/validation.md (market research, idea validation)
 Design        -> product/ui-design.md (aesthetics, animations, icons)
 Onboarding    -> product/onboarding.md (first-run experience, paywall placement)
-Development   -> mobile-app-dev/expo.md OR mobile-app-dev/swift.md
+Development   -> tools/mobile/app-dev/expo.md OR tools/mobile/app-dev/swift.md
 Testing       -> agent-device (AI-driven) + maestro (E2E) + xcodebuild-mcp (build)
 Preview       -> ios-simulator-mcp + playwright-emulation (web) + agent-device
-Publishing    -> mobile-app-dev/publishing.md (App Store + Play Store)
+Publishing    -> tools/mobile/app-dev/publishing.md (App Store + Play Store)
 Monetisation  -> product/monetisation.md (RevenueCat, ads, freemium)
 Growth        -> product/growth.md (UGC, influencers, content, paid ads)
 Analytics     -> product/analytics.md (retention, engagement, revenue)
 Assets        -> tools/vision/ (icons, graphics) + Remotion (preview videos)
-Backend       -> mobile-app-dev/backend.md (Supabase, Firebase, Coolify)
+Backend       -> tools/mobile/app-dev/backend.md (Supabase, Firebase, Coolify)
 ```
 
 <!-- AI-CONTEXT-END -->
@@ -129,14 +129,14 @@ Read `product/ui-design.md` for aesthetics standards.
 
 Read the appropriate subagent:
 
-- Expo: `mobile-app-dev/expo.md`
-- Swift: `mobile-app-dev/swift.md`
+- Expo: `tools/mobile/app-dev/expo.md`
+- Swift: `tools/mobile/app-dev/swift.md`
 
 **MVP discipline**: Build the minimum viable product first. One core function, one clean onboarding, one monetisation path. Resist feature creep.
 
 ### Stage 5: Testing
 
-Read `mobile-app-dev/testing.md`.
+Read `tools/mobile/app-dev/testing.md`.
 
 Use the full testing stack:
 
@@ -149,7 +149,7 @@ Use the full testing stack:
 
 ### Stage 6: Publishing
 
-Read `mobile-app-dev/publishing.md`.
+Read `tools/mobile/app-dev/publishing.md`.
 
 Covers App Store and Play Store submission, compliance requirements, screenshot generation, metadata optimisation, and common rejection reasons.
 

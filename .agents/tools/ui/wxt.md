@@ -271,10 +271,10 @@ if (import.meta.env.BROWSER === 'firefox') {
 
 ## Related
 
-- `browser-extension-dev.md` - Full extension development lifecycle
-- `browser-extension-dev/development.md` - Architecture and patterns
-- `browser-extension-dev/testing.md` - Testing extensions
-- `browser-extension-dev/publishing.md` - Store submission
+- `tools/browser/extension-dev.md` - Full extension development lifecycle
+- `tools/browser/extension-dev/development.md` - Architecture and patterns
+- `tools/browser/extension-dev/testing.md` - Testing extensions
+- `tools/browser/extension-dev/publishing.md` - Store submission
 - `tools/browser/chrome-webstore-release.md` - Chrome Web Store CI/CD
 - `tools/ui/tailwind-css.md` - Styling with Tailwind
 - `tools/ui/shadcn.md` - UI components

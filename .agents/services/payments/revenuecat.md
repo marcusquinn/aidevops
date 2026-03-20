@@ -281,4 +281,4 @@ console.log(JSON.stringify(info, null, 2));
 - `product/monetisation.md` - Revenue model strategy and paywall design
 - `services/payments/superwall.md` - Advanced paywall A/B testing
 - `services/payments/stripe.md` - Web payment processing
-- `mobile-app-dev/publishing.md` - App Store submission with payments
+- `tools/mobile/app-dev/publishing.md` - App Store submission with payments
