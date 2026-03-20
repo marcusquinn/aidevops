@@ -488,20 +488,16 @@ setup_opencode_plugins() {
 	oc_raw_version=$(opencode --version 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || echo "0.0.0")
 
 	local oc_major oc_minor oc_patch
-	oc_major=$(printf '%s' "$oc_raw_version" | cut -d. -f1)
-	oc_minor=$(printf '%s' "$oc_raw_version" | cut -d. -f2)
-	oc_patch=$(printf '%s' "$oc_raw_version" | cut -d. -f3)
+	IFS='.' read -r oc_major oc_minor oc_patch <<<"$oc_raw_version"
 	oc_major="${oc_major:-0}"
 	oc_minor="${oc_minor:-0}"
 	oc_patch="${oc_patch:-0}"
 
 	# Compare against 1.2.30 (where built-in anthropic-auth was removed)
 	local builtin_auth_removed="false"
-	if [[ "$oc_major" -gt 1 ]]; then
-		builtin_auth_removed="true"
-	elif [[ "$oc_major" -eq 1 && "$oc_minor" -gt 2 ]]; then
-		builtin_auth_removed="true"
-	elif [[ "$oc_major" -eq 1 && "$oc_minor" -eq 2 && "$oc_patch" -ge 30 ]]; then
+	if [[ "$oc_major" -gt 1 ]] ||
+		[[ "$oc_major" -eq 1 && "$oc_minor" -gt 2 ]] ||
+		[[ "$oc_major" -eq 1 && "$oc_minor" -eq 2 && "$oc_patch" -ge 30 ]]; then
 		builtin_auth_removed="true"
 	fi
 
