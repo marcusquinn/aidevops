@@ -715,10 +715,20 @@ export async function injectOpenAIPoolToken(client, skipEmail) {
 }
 
 /**
- * Create the auth hook for the anthropic-pool provider.
- * This provider exists solely for the "Add Account to Pool" OAuth flow.
- * It has no models — users select models from the built-in "anthropic" provider,
- * which uses pool tokens injected into auth.json by initPoolAuth/injectPoolToken.
+ * Create the unified auth hook for the pool provider (t1543, t1548).
+ *
+ * OpenCode 1.2.27 only supports a single auth hook object per plugin — arrays
+ * crash with "Expected string, got undefined". This function returns one auth
+ * hook with both Anthropic and OpenAI OAuth methods in its `methods` array.
+ *
+ * The `provider` field ("anthropic-pool") determines which provider entry the
+ * auth dialog shows under. Both methods appear as selectable options. The actual
+ * token injection targets the correct built-in providers ("anthropic" and
+ * "openai") via client.auth.set() inside each method's callback.
+ *
+ * When OpenCode supports auth arrays (v1.2.30+), this can be split back into
+ * separate hooks per provider if desired — but the merged approach is simpler.
+ *
  * @param {any} client - OpenCode SDK client
  * @returns {import('@opencode-ai/plugin').AuthHook}
  */
@@ -727,6 +737,7 @@ export function createPoolAuthHook(client) {
     provider: "anthropic-pool",
 
     methods: [
+      // --- Anthropic pool method (Claude Pro/Max) ---
       {
         get label() {
           const accounts = getAccounts("anthropic");
@@ -862,35 +873,15 @@ export function createPoolAuthHook(client) {
           };
         },
       },
-    ],
-  };
-}
 
-/**
- * Create the auth hook for the openai-pool provider (t1548).
- * This provider exists solely for the "Add Account to Pool" OAuth flow.
- * It has no models — users select models from the built-in "openai" provider,
- * which uses pool tokens injected into auth.json by injectOpenAIPoolToken.
- *
- * OpenAI OAuth uses form-encoded bodies and a local redirect server (port 1455)
- * for its built-in flow. For the pool's add-account flow we use the same
- * redirect URI with a code-paste UX (same as Anthropic pool).
- *
- * @param {any} client - OpenCode SDK client
- * @returns {import('@opencode-ai/plugin').AuthHook}
- */
-export function createOpenAIPoolAuthHook(client) {
-  return {
-    provider: "openai-pool",
-
-    methods: [
+      // --- OpenAI pool method (ChatGPT Plus/Pro) (t1548) ---
       {
         get label() {
           const accounts = getAccounts("openai");
           if (accounts.length === 0) {
             return "Add Account to Pool (ChatGPT Plus/Pro)";
           }
-          return `Add Account to Pool (${accounts.length} account${accounts.length === 1 ? "" : "s"})`;
+          return `Add OpenAI Account (${accounts.length} account${accounts.length === 1 ? "" : "s"})`;
         },
         type: "oauth",
         prompts: [
