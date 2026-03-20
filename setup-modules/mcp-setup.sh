@@ -460,7 +460,7 @@ setup_opencode_plugins() {
 		[[ -d "$aidevops_plugin_dst" && -f "$aidevops_plugin_dst/index.mjs" ]]; then
 		print_success "aidevops plugin already registered at ~/.config/opencode/plugins/"
 	else
-		if [[ -L "$aidevops_plugin_dst" ]]; then
+		if [[ -L "$aidevops_plugin_dst" ]]; then # This implies a broken symlink
 			print_warning "Broken aidevops plugin symlink detected; recreating ~/.config/opencode/plugins/opencode-aidevops"
 		fi
 		ln -sfn "$aidevops_plugin_src" "$aidevops_plugin_dst"
