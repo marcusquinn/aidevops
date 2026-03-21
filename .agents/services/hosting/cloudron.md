@@ -251,7 +251,7 @@ last reboot | head -5
 journalctl -b -1 --no-pager | grep -i -E 'cloudron.*update|cloudron-updater'
 
 # Get the current Cloudron version
-jq -r '.version' /home/yellowtent/box/package.json
+jq '.version' /home/yellowtent/box/package.json
 ```
 
 **Step 2: Assess system resources** — Rule out OOM, disk full, or CPU saturation.
@@ -376,7 +376,7 @@ docker exec -it <container_name> /bin/bash
 | `Restarting` | Crash loop | Check logs, likely app/db issue |
 | `Exited (0)` | Clean shutdown | Cloudron hasn't started it yet (normal post-reboot) |
 | `Exited (1)` | Error exit | Check `docker logs <container>` for the error |
-| `Exited (137)` | Killed (SIGKILL/OOM) | Check `dmesg | grep -i oom` and memory limits |
+| `Exited (137)` | Killed (SIGKILL/OOM) | Check `dmesg \| grep -i oom` and memory limits |
 | `Created` | Never started | Waiting in Cloudron's startup queue |
 
 ### Key Log Files and Services
@@ -388,7 +388,7 @@ docker exec -it <container_name> /bin/bash
 | App-specific logs | `docker logs <container_name>` | Individual app startup/runtime errors |
 | System journal (previous boot) | `journalctl -b -1 --no-pager -n 50 -p warning` | What happened before the reboot |
 | Cloudron troubleshoot | `cloudron-support --troubleshoot` | Built-in diagnostic checks (DNS, certs, services, migrations) |
-| Cloudron version | `jq -r '.version' /home/yellowtent/box/package.json` | Current Cloudron version |
+| Cloudron version | `jq '.version' /home/yellowtent/box/package.json` | Current Cloudron version |
 
 ### **Database Troubleshooting (MySQL)**
 
