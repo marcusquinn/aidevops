@@ -803,6 +803,11 @@ function decodeCursorJWT(token) {
  * @returns {string|null}
  */
 function readCursorStateDbValue(dbPath, key) {
+  // Validate key to prevent SQL injection — keys are dotted identifiers
+  // like "cursorAuth/accessToken" or "storage.serviceMachineId"
+  if (!/^[\w./:@-]+$/.test(key)) {
+    return null;
+  }
   try {
     const result = execSync(
       `sqlite3 "${dbPath}" "SELECT value FROM ItemTable WHERE key = '${key}'" 2>/dev/null`,
@@ -1250,6 +1255,26 @@ export async function ensureCursorProxy(workspaceDir) {
         child.on("close", (code) => {
           const content = stdout.trim() || stderr.trim() || "(empty response)";
 
+          // On non-zero exit, return a proper OpenAI-compatible error response
+          // instead of wrapping stderr in a chat completion body.
+          if (code !== 0) {
+            const errorMsg = stderr.trim() || `cursor-agent exited with code ${code}`;
+            res.writeHead(502, { "Content-Type": "application/json" });
+            res.end(JSON.stringify({
+              error: {
+                message: errorMsg,
+                type: "server_error",
+                code: 502,
+              },
+            }));
+            return;
+          }
+
+          // NOTE: Streaming limitation — cursor-agent writes its entire response
+          // to stdout on exit, so we cannot stream incrementally. The full response
+          // is buffered and sent as a single SSE chunk. True incremental streaming
+          // would require cursor-agent to support a streaming output mode (e.g.,
+          // writing partial results to stdout as they arrive from the upstream model).
           if (isStream) {
             res.writeHead(200, {
               "Content-Type": "text/event-stream",
@@ -1282,7 +1307,7 @@ export async function ensureCursorProxy(workspaceDir) {
                 finish_reason: "stop",
               }],
             };
-            res.writeHead(code === 0 ? 200 : 502, { "Content-Type": "application/json" });
+            res.writeHead(200, { "Content-Type": "application/json" });
             res.end(JSON.stringify(payload));
           }
         });
