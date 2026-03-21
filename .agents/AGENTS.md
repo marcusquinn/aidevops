@@ -218,9 +218,15 @@ Task IDs: `/new-task` or `claim-task-id.sh`. NEVER grep TODO.md for next ID.
 
 **Task briefs are MANDATORY.** Every task must have `todo/tasks/{task_id}-brief.md` capturing: session origin, what, why, how, acceptance criteria, and conversation context. Use `/define` for interactive brief generation with latent criteria probing, or `/new-task` for quick creation from `templates/brief-template.md`. A task without a brief loses the knowledge that created it.
 
-**Auto-dispatch default**: Always add `#auto-dispatch` unless a specific exclusion applies (needs credentials, needs decomposition, needs user preference). Brief quality gate: 2+ acceptance criteria, file references in How section, clear deliverable in What section. Add `assignee:` before pushing if working interactively. See `workflows/plans.md` "Auto-Dispatch Tagging".
+**Auto-dispatch default**: Always add `#auto-dispatch` unless an exclusion applies. See `workflows/plans.md` "Auto-Dispatch Tagging".
+- **Exclusions**: Needs credentials, decomposition, or user preference.
+- **Quality gate**: 2+ acceptance criteria, file references in How section, clear deliverable in What section.
+- **Interactive workflow**: Add `assignee:` before pushing if working interactively.
 
-**Model tiers**: Add `tier:thinking` GitHub label for opus-tier tasks, `tier:simple` for haiku-tier. Default (no label) = sonnet. The pulse reads issue labels for tier routing, not `model:` in TODO.md. See `reference/task-taxonomy.md`.
+**Model tiers**: Use GitHub labels to set the model tier. The pulse reads these labels for tier routing, not `model:` in `TODO.md`. See `reference/task-taxonomy.md`.
+- `tier:thinking`: For opus-tier tasks.
+- `tier:simple`: For haiku-tier tasks.
+- **Default (no label)**: sonnet.
 
 Completion: NEVER mark `[x]` without merged PR (`pr:#NNN`) or `verified:YYYY-MM-DD`. Use `task-complete-helper.sh`. Every completed task must link to its verification evidence — work without an audit trail is unverifiable and may be reverted.
 
