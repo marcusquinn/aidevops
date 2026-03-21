@@ -41,6 +41,8 @@ check_opencode_prompt_drift() {
 	local drift_script=".agents/scripts/opencode-prompt-drift-check.sh"
 	if [[ -f "$drift_script" ]]; then
 		local output exit_code=0
+		# 2>/dev/null is intentional: --quiet mode suppresses expected output; all exit
+		# codes (0=in-sync, 1=drift, other=error) are handled explicitly below.
 		output=$(bash "$drift_script" --quiet 2>/dev/null) || exit_code=$?
 		if [[ "$exit_code" -eq 1 && "$output" == PROMPT_DRIFT* ]]; then
 			local local_hash upstream_hash
