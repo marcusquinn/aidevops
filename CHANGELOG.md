@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.1.30] - 2026-03-21
+
+### Changed
+
+- Maintenance: archive completed plans from PLANS.md and add cleanup helper (#5355)
+
+### Fixed
+
+- make profile README init resilient to missing repos and stale entries (#5358)
+- revert plans-cleanup, add maintainer gate, label protection, and PLANS.md auto-sync (#5357)
+
 ## [3.1.28] - 2026-03-20
 
 ### Changed
