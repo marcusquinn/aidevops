@@ -60,7 +60,7 @@ When referencing models in docs, scripts, or dispatch commands, use the full ID 
 **Fallback behaviour**: If a local model is not running or not installed, the routing depends on why `local` was selected:
 
 - **Privacy/on-device requirement**: FAIL — do not route to cloud. Return an error instructing the user to start the local server or pass `--allow-cloud` to explicitly override.
-- **Cost optimisation or experimentation**: Fall back to `haiku` (next tier in the routing chain). Local has no same-tier fallback — it skips directly to the cheapest cloud tier.
+- **Cost optimisation or experimentation**: Fall back to `composer2` (next tier in the routing chain). Local has no same-tier fallback — it skips directly to the cheapest cloud tier.
 
 ### Use `flash` when:
 
@@ -154,7 +154,7 @@ Concrete model subagents are defined across these paths (`tools/ai-assistants/mo
 
 | Tier | Subagent | Primary Model | Fallback |
 |------|----------|---------------|----------|
-| `local` | `tools/local-models/local-models.md` | llama.cpp (user GGUF) | FAIL (privacy) or haiku (cost) |
+| `local` | `tools/local-models/local-models.md` | llama.cpp (user GGUF) | FAIL (privacy) or composer2 (cost) |
 | `flash` | `models/flash.md` | gemini-2.5-flash-preview-05-20 | gpt-4.1-mini |
 | `haiku` | `models/haiku.md` | claude-haiku-4-5-20251001 | gemini-2.5-flash-preview-05-20 |
 | `composer2` | `models/composer2.md` | cursor/composer-2 | claude-sonnet-4-6 |
@@ -214,7 +214,7 @@ Each tier defines a primary model and a fallback from a different provider. When
 
 | Tier | Primary | Fallback | When to Fallback |
 |------|---------|----------|------------------|
-| `local` | llama.cpp (localhost) | haiku (cost-only) or FAIL (privacy) | Server not running, no model installed. Fails closed for privacy/on-device tasks; falls back to haiku (next tier in chain) for cost-optimisation use cases. No same-tier fallback exists — local skips directly to cloud. |
+| `local` | llama.cpp (localhost) | composer2 (cost-only) or FAIL (privacy) | Server not running, no model installed. Fails closed for privacy/on-device tasks; falls back to composer2 (next tier in chain) for cost-optimisation use cases. No same-tier fallback exists — local skips directly to cloud. |
 | `flash` | gemini-2.5-flash-preview-05-20 | gpt-4.1-mini | No Google key |
 | `haiku` | claude-haiku-4-5-20251001 | gemini-2.5-flash-preview-05-20 | No Anthropic key |
 | `composer2` | cursor/composer-2 | claude-sonnet-4-6 | No Cursor OAuth pool configured (t1549) or pool exhausted |
@@ -304,7 +304,7 @@ Is the task privacy/on-device constrained?
   → NO: Is the task bulk/offline where local saves cost?
     → YES: Is a local model running and capable enough?
       → YES: local
-      → NO: haiku (next tier in chain — local has no same-tier fallback)
+      → NO: composer2 (next tier in chain — local has no same-tier fallback)
     → NO: Is the task simple classification/formatting?
       → YES: haiku
       → NO: Does it need >50K tokens of context?
