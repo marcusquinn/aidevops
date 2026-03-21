@@ -16,7 +16,7 @@ import { loadAgentIndex, applyAgentMcpTools } from "./agent-loader.mjs";
 import { validateReturnStatements, validatePositionalParams } from "./validators.mjs";
 import { runMarkdownQualityPipeline } from "./quality-pipeline.mjs";
 import { createTtsrHooks } from "./ttsr.mjs";
-import { createPoolAuthHook, createPoolTool, initPoolAuth, registerPoolProvider } from "./oauth-pool.mjs";
+import { createPoolAuthHook, createOpenAIPoolAuthHook, createCursorPoolAuthHook, createPoolTool, initPoolAuth, registerPoolProvider } from "./oauth-pool.mjs";
 import { createProviderAuthHook } from "./provider-auth.mjs";
 
 const HOME = homedir();
@@ -1059,6 +1059,11 @@ const {
  * 9. OpenAI Pro pool — multi-account rotation for ChatGPT Plus/Pro accounts (t1548)
  *    Same token injection architecture as Anthropic pool. Adds "openai-pool" provider
  *    for account management and injects tokens into the built-in "openai" provider.
+ * 10. Cursor Pro pool — multi-account rotation for Cursor Pro accounts (t1549)
+ *    Extracts credentials from cursor-agent CLI or Cursor IDE's local state DB.
+ *    Manages a proxy sidecar (HTTP server) that translates OpenAI-compatible
+ *    requests to cursor-agent CLI calls. Adds "cursor-pool" provider for account
+ *    management with LRU rotation and 429 failover.
  *
  * MCP registration (Phase 2, t008.2):
  * - Registers all known MCP servers from a data-driven registry
@@ -1073,10 +1078,10 @@ export async function AidevopsPlugin({ directory, client }) {
   // Phase 6: Initialise LLM observability (t1308)
   initObservability();
 
-  // Phase 7: OAuth pool — seed auth entries so providers appear in connect dialog (t1543, t1548)
+  // Phase 7: OAuth pool — seed auth entries so providers appear in connect dialog (t1543, t1548, t1549)
   await initPoolAuth(client);
 
-  // Phase 7b: OAuth pool tools (t1543, t1548)
+  // Phase 7b: OAuth pool tools (t1543, t1548, t1549)
   const baseTools = createTools(SCRIPTS_DIR, run, {
     runShellQualityPipeline,
     runMarkdownQualityPipeline,
@@ -1106,8 +1111,12 @@ export async function AidevopsPlugin({ directory, client }) {
     // Phase 6: LLM observability — capture assistant message metadata (t1308)
     event: async (input) => handleEvent(input),
 
-    // Phase 7: OAuth multi-account pool (t1543)
-    auth: createPoolAuthHook(client),
+    // Phase 7: OAuth multi-account pool (t1543, t1548, t1549)
+    auth: [
+      createPoolAuthHook(client),
+      createOpenAIPoolAuthHook(client),
+      createCursorPoolAuthHook(client),
+    ],
 
     // Compaction context (includes OMOC state when detected)
     "experimental.session.compacting": async (input, output) =>

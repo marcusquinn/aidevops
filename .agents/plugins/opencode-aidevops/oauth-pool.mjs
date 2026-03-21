@@ -1,31 +1,35 @@
 /**
- * OAuth Multi-Account Pool (t1543, t1548)
+ * OAuth Multi-Account Pool (t1543, t1548, t1549)
  *
  * Enables multiple OAuth accounts per provider with automatic credential
  * rotation on rate limits (429). Stores credentials in a separate pool file
  * (~/.aidevops/oauth-pool.json) to avoid conflicts with OpenCode's auth.json.
  *
  * Architecture:
- *   - auth hook: registers "anthropic-pool" and "openai-pool" providers with OAuth login flow
+ *   - auth hook: registers "anthropic-pool", "openai-pool", and "cursor-pool"
+ *     providers with OAuth/credential login flows
  *   - loader: returns a custom fetch wrapper that rotates credentials on 429
  *   - tool: /model-accounts-pool for listing/removing accounts
  *
  * Supported providers:
  *   - anthropic: Claude Pro/Max accounts (claude.ai OAuth)
  *   - openai: ChatGPT Plus/Pro accounts (auth.openai.com OAuth)
+ *   - cursor: Cursor Pro accounts (cursor-agent CLI + local proxy sidecar)
  *
  * References:
  *   - Built-in auth plugin: opencode-anthropic-auth@0.0.13
  *   - OpenCode PR #11832 (upstream multi-account proposal)
  *   - Plugin API: @opencode-ai/plugin AuthHook type
  *   - OpenAI OAuth: CLIENT_ID=app_EMoamEEZ73f0CkXaXp7hrann, ISSUER=https://auth.openai.com
+ *   - Cursor: opencode-cursor-auth@1.0.16 (POSO-PocketSolutions/opencode-cursor-auth)
  */
 
 import { readFileSync, writeFileSync, existsSync, mkdirSync } from "fs";
 import { join, dirname } from "path";
-import { homedir } from "os";
+import { homedir, platform } from "os";
 import { createHash, randomBytes } from "crypto";
 import { createServer } from "http";
+import { execSync, spawn } from "child_process";
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -60,6 +64,54 @@ const OPENCODE_USER_AGENT = "opencode/1.2.27";
  *  authorization code can be pasted back into the terminal prompt. */
 const OPENAI_REDIRECT_URI = "http://localhost:1455/auth/callback";
 const OPENAI_OAUTH_SCOPES = "openid profile email offline_access";
+
+// ---------------------------------------------------------------------------
+// Cursor constants (t1549)
+// Cursor uses cursor-agent CLI for authentication and a local HTTP proxy
+// sidecar that translates OpenAI-compatible requests to cursor-agent calls.
+// Credentials are extracted from the local Cursor installation (SQLite DB
+// on Linux, auth.json on macOS) or via `cursor-agent login`.
+// ---------------------------------------------------------------------------
+
+const CURSOR_PROVIDER_ID = "cursor";
+const CURSOR_PROXY_HOST = "127.0.0.1";
+const CURSOR_PROXY_DEFAULT_PORT = 32123;
+const CURSOR_PROXY_BASE_URL = `http://${CURSOR_PROXY_HOST}:${CURSOR_PROXY_DEFAULT_PORT}/v1`;
+
+/**
+ * Get the path to cursor-agent's auth.json based on platform.
+ * @returns {string}
+ */
+function getCursorAgentAuthPath() {
+  const plat = platform();
+  if (plat === "darwin") {
+    return join(HOME, ".cursor", "auth.json");
+  }
+  if (plat === "win32") {
+    const appData = process.env.APPDATA || join(HOME, "AppData", "Roaming");
+    return join(appData, "Cursor", "auth.json");
+  }
+  // Linux and others
+  const configDir = process.env.XDG_CONFIG_HOME || join(HOME, ".config");
+  return join(configDir, "cursor", "auth.json");
+}
+
+/**
+ * Get the path to Cursor IDE's state database (for local credential extraction).
+ * @returns {string}
+ */
+function getCursorStateDbPath() {
+  const plat = platform();
+  if (plat === "darwin") {
+    return join(HOME, "Library", "Application Support", "Cursor", "User", "globalStorage", "state.vscdb");
+  }
+  if (plat === "win32") {
+    const appData = process.env.APPDATA || join(HOME, "AppData", "Roaming");
+    return join(appData, "Cursor", "User", "globalStorage", "state.vscdb");
+  }
+  // Linux
+  return join(HOME, ".config", "Cursor", "User", "globalStorage", "state.vscdb");
+}
 
 // ---------------------------------------------------------------------------
 // Shared cooldown constants
@@ -123,6 +175,12 @@ let tokenEndpointCooldownUntil = 0;
  * @type {number}
  */
 let openaiTokenEndpointCooldownUntil = 0;
+
+/**
+ * In-memory timestamp of the last 429 from the Cursor proxy (t1549).
+ * @type {number}
+ */
+let cursorProxyCooldownUntil = 0;
 
 /**
  * Fetch from the Anthropic token endpoint. Single attempt with 429 cooldown gate.
@@ -410,6 +468,7 @@ function startOAuthCallbackServer() {
  * @typedef {Object} PoolData
  * @property {PoolAccount[]} [anthropic]
  * @property {PoolAccount[]} [openai]
+ * @property {PoolAccount[]} [cursor]
  */
 
 /**
@@ -660,6 +719,102 @@ async function refreshOpenAIAccessToken(account) {
 }
 
 /**
+ * Refresh a Cursor access token by re-reading from cursor-agent's local store (t1549).
+ * Cursor doesn't have a standard OAuth refresh endpoint — tokens are managed
+ * by the Cursor IDE and cursor-agent CLI. We re-read the local auth file
+ * to pick up any token refreshes done by the IDE.
+ * @param {PoolAccount} account
+ * @returns {Promise<{access: string, refresh: string, expires: number} | null>}
+ */
+async function refreshCursorAccessToken(account) {
+  try {
+    // Try cursor-agent auth.json first
+    const authPath = getCursorAgentAuthPath();
+    if (existsSync(authPath)) {
+      const content = readFileSync(authPath, "utf-8");
+      const data = JSON.parse(content);
+      if (data.accessToken) {
+        const tokenInfo = decodeCursorJWT(data.accessToken);
+        // Only use this token if it matches the account email (or email is unknown)
+        if (!tokenInfo.email || tokenInfo.email === account.email || account.email === "unknown") {
+          return {
+            access: data.accessToken,
+            refresh: data.refreshToken || account.refresh,
+            expires: tokenInfo.expiresAt || (Date.now() + 3600_000),
+          };
+        }
+      }
+    }
+
+    // Fallback: try Cursor IDE's state database (SQLite)
+    const dbPath = getCursorStateDbPath();
+    if (existsSync(dbPath)) {
+      const accessToken = readCursorStateDbValue(dbPath, "cursorAuth/accessToken");
+      if (accessToken) {
+        const refreshToken = readCursorStateDbValue(dbPath, "cursorAuth/refreshToken") || account.refresh;
+        const tokenInfo = decodeCursorJWT(accessToken);
+        if (!tokenInfo.email || tokenInfo.email === account.email || account.email === "unknown") {
+          return {
+            access: accessToken,
+            refresh: refreshToken,
+            expires: tokenInfo.expiresAt || (Date.now() + 3600_000),
+          };
+        }
+      }
+    }
+
+    console.error(
+      `[aidevops] OAuth pool: Cursor token refresh failed for ${account.email} — ` +
+      `no valid token found in cursor-agent auth or Cursor IDE state`,
+    );
+    return null;
+  } catch (err) {
+    console.error(
+      `[aidevops] OAuth pool: Cursor token refresh error for ${account.email}: ${err.message}`,
+    );
+    return null;
+  }
+}
+
+/**
+ * Decode a Cursor JWT to extract email and expiry. No signature verification.
+ * @param {string} token
+ * @returns {{ email: string|undefined, expiresAt: number|undefined }}
+ */
+function decodeCursorJWT(token) {
+  try {
+    const parts = token.split(".");
+    if (parts.length < 2) return {};
+    const payload = JSON.parse(Buffer.from(parts[1], "base64url").toString("utf-8"));
+    return {
+      email: payload.email || undefined,
+      expiresAt: typeof payload.exp === "number" ? payload.exp * 1000 : undefined,
+    };
+  } catch {
+    return {};
+  }
+}
+
+/**
+ * Read a value from Cursor's state.vscdb SQLite database.
+ * Uses sqlite3 CLI to avoid native module dependencies.
+ * @param {string} dbPath
+ * @param {string} key
+ * @returns {string|null}
+ */
+function readCursorStateDbValue(dbPath, key) {
+  try {
+    const result = execSync(
+      `sqlite3 "${dbPath}" "SELECT value FROM ItemTable WHERE key = '${key}'" 2>/dev/null`,
+      { encoding: "utf-8", timeout: 5000 },
+    ).trim();
+    return result || null;
+  } catch {
+    return null;
+  }
+}
+
+/**
  * Ensure an account has a valid (non-expired) access token.
  * Routes to the correct refresh function based on provider.
  * @param {string} provider
@@ -670,9 +825,14 @@ export async function ensureValidToken(provider, account) {
   if (account.access && account.expires > Date.now()) {
     return account.access;
   }
-  const tokens = provider === "openai"
-    ? await refreshOpenAIAccessToken(account)
-    : await refreshAccessToken(account);
+  let tokens;
+  if (provider === "cursor") {
+    tokens = await refreshCursorAccessToken(account);
+  } else if (provider === "openai") {
+    tokens = await refreshOpenAIAccessToken(account);
+  } else {
+    tokens = await refreshAccessToken(account);
+  }
   if (!tokens) {
     patchAccount(provider, account.email, {
       status: "auth-error",
@@ -743,7 +903,7 @@ function pickNextAccount(provider, excludeEmail) {
  * Marks the current account rate-limited, rotates to the next account, then retries once.
  *
  * @param {any} client - OpenCode SDK client
- * @param {"anthropic"|"openai"} provider
+ * @param {"anthropic"|"openai"|"cursor"} provider
  * @param {string} currentEmail - current account email to skip on rotation
  * @param {() => Promise<Response>} request
  * @returns {Promise<Response>}
@@ -759,7 +919,14 @@ export async function fetchWithPoolFailover(client, provider, currentEmail, requ
     cooldownUntil: Date.now() + RATE_LIMIT_COOLDOWN_MS,
   });
 
-  const injectFn = provider === "openai" ? injectOpenAIPoolToken : injectPoolToken;
+  let injectFn;
+  if (provider === "cursor") {
+    injectFn = injectCursorPoolToken;
+  } else if (provider === "openai") {
+    injectFn = injectOpenAIPoolToken;
+  } else {
+    injectFn = injectPoolToken;
+  }
   const rotated = await injectFn(client, currentEmail);
   if (!rotated) {
     console.error(
@@ -810,17 +977,19 @@ async function seedPoolAuthEntry(client, providerId) {
 
 /**
  * Inject pool tokens into built-in providers on session start.
- * Seeds auth entries for both anthropic-pool and openai-pool providers.
+ * Seeds auth entries for anthropic-pool, openai-pool, and cursor-pool providers.
  * @param {any} client - OpenCode SDK client
  */
 export async function initPoolAuth(client) {
-  // Seed pool provider entries (for "Add Account" OAuth flows)
+  // Seed pool provider entries (for "Add Account" flows)
   await seedPoolAuthEntry(client, "anthropic-pool");
   await seedPoolAuthEntry(client, "openai-pool");
+  await seedPoolAuthEntry(client, "cursor-pool");
 
   // Inject pool tokens into built-in providers
   await injectPoolToken(client);
   await injectOpenAIPoolToken(client);
+  await injectCursorPoolToken(client);
 }
 
 /**
@@ -942,6 +1111,315 @@ export async function injectOpenAIPoolToken(client, skipEmail) {
     return true;
   } catch (err) {
     console.error(`[aidevops] OAuth pool: failed to inject OpenAI token: ${err.message}`);
+    return false;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Cursor proxy sidecar lifecycle (t1549)
+// ---------------------------------------------------------------------------
+
+/**
+ * In-memory reference to the cursor-agent proxy sidecar process.
+ * The proxy translates OpenAI-compatible HTTP requests to cursor-agent CLI calls.
+ * @type {{ process: import("child_process").ChildProcess | null, port: number, baseURL: string }}
+ */
+const cursorProxy = {
+  process: null,
+  port: CURSOR_PROXY_DEFAULT_PORT,
+  baseURL: CURSOR_PROXY_BASE_URL,
+};
+
+/**
+ * Check if cursor-agent CLI is available.
+ * @returns {boolean}
+ */
+function isCursorAgentAvailable() {
+  try {
+    execSync("cursor-agent --version", {
+      encoding: "utf-8",
+      timeout: 5000,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Check if the cursor proxy sidecar is healthy.
+ * @returns {Promise<boolean>}
+ */
+async function isCursorProxyHealthy() {
+  try {
+    const res = await fetch(`http://${CURSOR_PROXY_HOST}:${cursorProxy.port}/health`, {
+      signal: AbortSignal.timeout(2000),
+    });
+    return res.ok;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Start the cursor-agent proxy sidecar if not already running.
+ * The proxy is a lightweight HTTP server that spawns cursor-agent for each request.
+ * Uses Node's built-in http.createServer (no Bun dependency).
+ *
+ * @param {string} [workspaceDir] - Workspace directory for cursor-agent
+ * @returns {Promise<string>} Base URL of the proxy
+ */
+export async function ensureCursorProxy(workspaceDir) {
+  // Check if proxy is already running (ours or external)
+  if (await isCursorProxyHealthy()) {
+    return cursorProxy.baseURL;
+  }
+
+  if (!isCursorAgentAvailable()) {
+    throw new Error(
+      "cursor-agent not found. Install it: curl -fsS https://cursor.com/install | bash",
+    );
+  }
+
+  const effectiveWorkspace = workspaceDir || process.cwd();
+
+  return new Promise((resolve, reject) => {
+    const server = createServer(async (req, res) => {
+      // Health check endpoint
+      if (req.url === "/health") {
+        res.writeHead(200, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ ok: true, provider: "cursor-pool" }));
+        return;
+      }
+
+      // Only handle chat completions
+      if (req.url !== "/v1/chat/completions" && req.url !== "/chat/completions") {
+        res.writeHead(404, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: { message: `Unsupported path: ${req.url}` } }));
+        return;
+      }
+
+      // Read request body
+      let body = "";
+      for await (const chunk of req) {
+        body += chunk;
+      }
+
+      let parsed;
+      try {
+        parsed = JSON.parse(body);
+      } catch {
+        res.writeHead(400, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: { message: "Invalid JSON body" } }));
+        return;
+      }
+
+      const model = normalizeCursorModel(parsed.model || "auto");
+      const messages = Array.isArray(parsed.messages) ? parsed.messages : [];
+      const isStream = parsed.stream === true;
+
+      // Build prompt from messages
+      const prompt = messages.map((m) => {
+        const role = (m.role || "user").toUpperCase();
+        const content = typeof m.content === "string"
+          ? m.content
+          : Array.isArray(m.content)
+            ? m.content.filter((p) => p.type === "text").map((p) => p.text).join("\n")
+            : "";
+        return `${role}: ${content}`;
+      }).join("\n\n");
+
+      try {
+        const child = spawn("cursor-agent", [
+          "--print",
+          "--output-format", "text",
+          "--workspace", effectiveWorkspace,
+          "--model", model,
+          prompt,
+        ], {
+          stdio: ["pipe", "pipe", "pipe"],
+          env: process.env,
+        });
+
+        let stdout = "";
+        let stderr = "";
+        child.stdout.on("data", (data) => { stdout += data.toString(); });
+        child.stderr.on("data", (data) => { stderr += data.toString(); });
+
+        child.on("close", (code) => {
+          const content = stdout.trim() || stderr.trim() || "(empty response)";
+
+          if (isStream) {
+            res.writeHead(200, {
+              "Content-Type": "text/event-stream",
+              "Cache-Control": "no-cache",
+              "Connection": "keep-alive",
+            });
+            const chunk = {
+              id: `cursor-pool-${Date.now()}`,
+              object: "chat.completion.chunk",
+              created: Math.floor(Date.now() / 1000),
+              model,
+              choices: [{
+                index: 0,
+                delta: { content },
+                finish_reason: "stop",
+              }],
+            };
+            res.write(`data: ${JSON.stringify(chunk)}\n\n`);
+            res.write("data: [DONE]\n\n");
+            res.end();
+          } else {
+            const payload = {
+              id: `cursor-pool-${Date.now()}`,
+              object: "chat.completion",
+              created: Math.floor(Date.now() / 1000),
+              model,
+              choices: [{
+                index: 0,
+                message: { role: "assistant", content },
+                finish_reason: "stop",
+              }],
+            };
+            res.writeHead(code === 0 ? 200 : 502, { "Content-Type": "application/json" });
+            res.end(JSON.stringify(payload));
+          }
+        });
+
+        child.on("error", (err) => {
+          res.writeHead(500, { "Content-Type": "application/json" });
+          res.end(JSON.stringify({ error: { message: `cursor-agent error: ${err.message}` } }));
+        });
+      } catch (err) {
+        res.writeHead(500, { "Content-Type": "application/json" });
+        res.end(JSON.stringify({ error: { message: `Proxy error: ${err.message}` } }));
+      }
+    });
+
+    server.on("error", (err) => {
+      if (err.code === "EADDRINUSE") {
+        // Port in use — check if it's our proxy
+        isCursorProxyHealthy().then((healthy) => {
+          if (healthy) {
+            resolve(cursorProxy.baseURL);
+          } else {
+            // Try a random port
+            server.listen(0, CURSOR_PROXY_HOST, () => {
+              const addr = server.address();
+              cursorProxy.port = addr.port;
+              cursorProxy.baseURL = `http://${CURSOR_PROXY_HOST}:${addr.port}/v1`;
+              console.error(`[aidevops] OAuth pool: cursor proxy started on port ${addr.port} (default port in use)`);
+              resolve(cursorProxy.baseURL);
+            });
+          }
+        });
+        return;
+      }
+      reject(err);
+    });
+
+    server.listen(CURSOR_PROXY_DEFAULT_PORT, CURSOR_PROXY_HOST, () => {
+      cursorProxy.port = CURSOR_PROXY_DEFAULT_PORT;
+      cursorProxy.baseURL = CURSOR_PROXY_BASE_URL;
+      console.error(`[aidevops] OAuth pool: cursor proxy started on port ${CURSOR_PROXY_DEFAULT_PORT}`);
+      resolve(cursorProxy.baseURL);
+    });
+
+    // Store server reference for cleanup
+    cursorProxy.process = server;
+  });
+}
+
+/**
+ * Normalize Cursor model names (aliases).
+ * @param {string} model
+ * @returns {string}
+ */
+function normalizeCursorModel(model) {
+  const aliases = {
+    "gpt-5": "gpt-5.2",
+    "sonnet-4": "sonnet-4.5",
+  };
+  return aliases[model] || model;
+}
+
+/**
+ * Stop the cursor proxy sidecar if running.
+ */
+export function stopCursorProxy() {
+  if (cursorProxy.process) {
+    try {
+      cursorProxy.process.close();
+    } catch {
+      // ignore
+    }
+    cursorProxy.process = null;
+    console.error("[aidevops] OAuth pool: cursor proxy stopped");
+  }
+}
+
+/**
+ * Pick the best Cursor pool account and inject its token into the built-in "cursor"
+ * provider's auth entry (t1549). Also ensures the proxy sidecar is running.
+ * @param {any} client - OpenCode SDK client
+ * @param {string} [skipEmail] - email to skip (for rotation on 429)
+ * @returns {Promise<boolean>} true if a token was injected
+ */
+export async function injectCursorPoolToken(client, skipEmail) {
+  const accounts = getAccounts("cursor");
+  if (accounts.length === 0) return false;
+
+  const now = Date.now();
+  let account = null;
+  const sorted = [...accounts]
+    .filter(
+      (a) =>
+        (a.status === "active" || a.status === "idle") &&
+        a.email !== skipEmail &&
+        (!a.cooldownUntil || a.cooldownUntil <= now),
+    )
+    .sort((a, b) => new Date(a.lastUsed || 0) - new Date(b.lastUsed || 0));
+
+  for (const candidate of sorted) {
+    const accessToken = await ensureValidToken("cursor", candidate);
+    if (!accessToken) {
+      console.error(`[aidevops] OAuth pool: skipping invalid Cursor token for ${candidate.email}`);
+      continue;
+    }
+    account = candidate;
+    break;
+  }
+
+  if (!account) return false;
+
+  // Ensure the proxy sidecar is running
+  try {
+    await ensureCursorProxy();
+  } catch (err) {
+    console.error(`[aidevops] OAuth pool: cursor proxy failed to start: ${err.message}`);
+    // Continue anyway — the proxy might be started externally
+  }
+
+  // Write to the cursor provider's auth entry
+  try {
+    await client.auth.set({
+      path: { id: CURSOR_PROVIDER_ID },
+      body: {
+        type: "api",
+        key: "cursor-pool",
+      },
+    });
+
+    patchAccount("cursor", account.email, {
+      lastUsed: new Date().toISOString(),
+      status: "active",
+    });
+
+    console.error(`[aidevops] OAuth pool: injected Cursor token for ${account.email}`);
+    return true;
+  } catch (err) {
+    console.error(`[aidevops] OAuth pool: failed to inject Cursor token: ${err.message}`);
     return false;
   }
 }
@@ -1368,6 +1846,183 @@ export function createOpenAIPoolAuthHook(client) {
 }
 
 /**
+ * Create the auth hook for the cursor-pool provider (t1549).
+ * This provider exists solely for the "Add Account to Pool" flow.
+ * It has no models — users select models from the built-in "cursor" provider,
+ * which uses pool tokens injected by injectCursorPoolToken.
+ *
+ * Cursor authentication works differently from Anthropic/OpenAI:
+ *   1. Credentials are extracted from the local Cursor installation
+ *      (cursor-agent auth.json or Cursor IDE's state.vscdb)
+ *   2. If no local credentials exist, `cursor-agent login` opens a browser
+ *   3. The proxy sidecar translates OpenAI-compatible requests to cursor-agent CLI calls
+ *
+ * @param {any} client - OpenCode SDK client
+ * @returns {import('@opencode-ai/plugin').AuthHook}
+ */
+export function createCursorPoolAuthHook(client) {
+  return {
+    provider: "cursor-pool",
+
+    methods: [
+      {
+        get label() {
+          const accounts = getAccounts("cursor");
+          if (accounts.length === 0) {
+            return "Add Account to Pool (Cursor Pro)";
+          }
+          return `Add Account to Pool (${accounts.length} account${accounts.length === 1 ? "" : "s"})`;
+        },
+        type: "api",
+        prompts: [
+          {
+            type: "text",
+            key: "email",
+            get message() {
+              const accounts = getAccounts("cursor");
+              if (accounts.length === 0) {
+                return "Account email (required to match tokens to accounts)";
+              }
+              const emails = accounts.map((a, i) => `  ${i + 1}. ${a.email}`).join("\n");
+              return `Existing accounts:\n${emails}\nEnter email (existing to re-auth, or new to add)`;
+            },
+            placeholder: "you@example.com",
+            validate: (value) => {
+              if (!value || !value.includes("@")) {
+                return "Please enter a valid email address";
+              }
+              return undefined;
+            },
+          },
+        ],
+        authorize: async (inputs) => {
+          const email = inputs?.email || "unknown";
+
+          // Strategy 1: Extract from cursor-agent auth.json
+          const authPath = getCursorAgentAuthPath();
+          let accessToken = null;
+          let refreshToken = "";
+          let resolvedEmail = email;
+
+          if (existsSync(authPath)) {
+            try {
+              const content = readFileSync(authPath, "utf-8");
+              const data = JSON.parse(content);
+              if (data.accessToken) {
+                accessToken = data.accessToken;
+                refreshToken = data.refreshToken || "";
+                const tokenInfo = decodeCursorJWT(accessToken);
+                if (tokenInfo.email && resolvedEmail === "unknown") {
+                  resolvedEmail = tokenInfo.email;
+                }
+                console.error(`[aidevops] OAuth pool: found Cursor credentials in ${authPath}`);
+              }
+            } catch (err) {
+              console.error(`[aidevops] OAuth pool: failed to read cursor-agent auth: ${err.message}`);
+            }
+          }
+
+          // Strategy 2: Try Cursor IDE's state database
+          if (!accessToken) {
+            const dbPath = getCursorStateDbPath();
+            if (existsSync(dbPath)) {
+              accessToken = readCursorStateDbValue(dbPath, "cursorAuth/accessToken");
+              refreshToken = readCursorStateDbValue(dbPath, "cursorAuth/refreshToken") || "";
+              if (accessToken) {
+                const cachedEmail = readCursorStateDbValue(dbPath, "cursorAuth/cachedEmail");
+                if (cachedEmail && resolvedEmail === "unknown") {
+                  resolvedEmail = cachedEmail;
+                }
+                if (resolvedEmail === "unknown") {
+                  const tokenInfo = decodeCursorJWT(accessToken);
+                  if (tokenInfo.email) resolvedEmail = tokenInfo.email;
+                }
+                console.error(`[aidevops] OAuth pool: found Cursor credentials in state DB`);
+              }
+            }
+          }
+
+          // Strategy 3: Run cursor-agent login (opens browser)
+          if (!accessToken) {
+            if (!isCursorAgentAvailable()) {
+              console.error(
+                "[aidevops] OAuth pool: cursor-agent not found. " +
+                "Install it: curl -fsS https://cursor.com/install | bash",
+              );
+              return { type: "failed" };
+            }
+
+            console.error("[aidevops] OAuth pool: no local Cursor credentials found, running cursor-agent login...");
+            try {
+              execSync("cursor-agent login", {
+                encoding: "utf-8",
+                timeout: 120_000,
+                stdio: ["inherit", "pipe", "pipe"],
+              });
+              // Re-read auth after login
+              if (existsSync(authPath)) {
+                const content = readFileSync(authPath, "utf-8");
+                const data = JSON.parse(content);
+                if (data.accessToken) {
+                  accessToken = data.accessToken;
+                  refreshToken = data.refreshToken || "";
+                  const tokenInfo = decodeCursorJWT(accessToken);
+                  if (tokenInfo.email && resolvedEmail === "unknown") {
+                    resolvedEmail = tokenInfo.email;
+                  }
+                }
+              }
+            } catch (err) {
+              console.error(`[aidevops] OAuth pool: cursor-agent login failed: ${err.message}`);
+              return { type: "failed" };
+            }
+          }
+
+          if (!accessToken) {
+            console.error("[aidevops] OAuth pool: no Cursor access token obtained");
+            return { type: "failed" };
+          }
+
+          const tokenInfo = decodeCursorJWT(accessToken);
+          const tokenData = {
+            refresh: refreshToken,
+            access: accessToken,
+            expires: tokenInfo.expiresAt || (Date.now() + 3600_000),
+          };
+
+          const saved = upsertAccount("cursor", {
+            email: resolvedEmail,
+            ...tokenData,
+            added: new Date().toISOString(),
+            lastUsed: new Date().toISOString(),
+            status: "active",
+            cooldownUntil: null,
+          });
+
+          if (!saved) {
+            savePendingToken("cursor", {
+              ...tokenData,
+              added: new Date().toISOString(),
+            });
+            return { type: "success", key: "cursor-pool" };
+          }
+
+          const totalAccounts = getAccounts("cursor").length;
+          console.error(
+            `[aidevops] OAuth pool: added Cursor ${resolvedEmail} (${totalAccounts} account${totalAccounts === 1 ? "" : "s"} total)`,
+          );
+
+          // Inject the new token and start proxy
+          await injectCursorPoolToken(client);
+
+          return { type: "success", key: "cursor-pool" };
+        },
+      },
+    ],
+  };
+}
+
+/**
  * Register the pool provider for the auth dialog display name.
  *
  * The auth hook (provider: "anthropic-pool") automatically appears in the
@@ -1379,9 +2034,9 @@ export function createOpenAIPoolAuthHook(client) {
  * but doesn't appear in the model picker. Previous versions had dummy models
  * which caused the provider to show up as a selectable (but broken) model.
  *
- * Models are served by the built-in providers ("anthropic", "openai"), which
- * use pool tokens injected into auth.json by initPoolAuth/injectPoolToken/
- * injectOpenAIPoolToken.
+ * Models are served by the built-in providers ("anthropic", "openai", "cursor"),
+ * which use pool tokens injected into auth.json by initPoolAuth/injectPoolToken/
+ * injectOpenAIPoolToken/injectCursorPoolToken.
  *
  * @param {any} config - OpenCode config object
  * @returns {number} number of changes made
@@ -1442,6 +2097,30 @@ export function registerPoolProvider(config) {
     registered++;
   }
 
+  // Cursor pool provider (t1549)
+  const cursorPoolAccountModel = {
+    "pool-account-management": {
+      name: "Add/Manage Accounts (select models from Cursor provider)",
+      attachment: false, tool_call: false, temperature: false,
+      modalities: { input: ["text"], output: ["text"] },
+      cost: { input: 0, output: 0, cache_read: 0, cache_write: 0 },
+      limit: { context: 1000, output: 100 },
+      family: "pool",
+    },
+  };
+
+  if (!config.provider["cursor-pool"] ||
+      !config.provider["cursor-pool"].models ||
+      Object.keys(config.provider["cursor-pool"].models).length === 0) {
+    config.provider["cursor-pool"] = {
+      name: "Cursor Pool (Account Management)",
+      npm: "@ai-sdk/openai-compatible",
+      api: CURSOR_PROXY_BASE_URL,
+      models: cursorPoolAccountModel,
+    };
+    registered++;
+  }
+
   return registered;
 }
 
@@ -1463,7 +2142,8 @@ export function createPoolTool(client) {
       "'remove <email>' to remove an account, " +
       "'assign-pending <email>' to assign a pending unidentified token to an account, " +
       "'status' for rotation statistics. " +
-      "Supports providers: anthropic (Claude Pro/Max) and openai (ChatGPT Plus/Pro). " +
+      "Supports providers: anthropic (Claude Pro/Max), openai (ChatGPT Plus/Pro), " +
+      "and cursor (Cursor Pro). " +
       "The agent should route natural language requests about managing " +
       "provider accounts, OAuth pools, or credential rotation to this tool.",
     parameters: {
@@ -1481,8 +2161,8 @@ export function createPoolTool(client) {
         },
         provider: {
           type: "string",
-          enum: ["anthropic", "openai"],
-          description: "Provider name: 'anthropic' (default) or 'openai'",
+          enum: ["anthropic", "openai", "cursor"],
+          description: "Provider name: 'anthropic' (default), 'openai', or 'cursor'",
         },
       },
       required: ["action"],
@@ -1492,15 +2172,21 @@ export function createPoolTool(client) {
       const accounts = getAccounts(provider);
 
       // Provider-specific add-account instructions
-      const addAccountHint = provider === "openai"
-        ? `To add an account: run \`opencode auth login\` and select "OpenAI Pool".`
-        : `To add an account: run \`opencode auth login\` and select "Anthropic Pool".`;
+      const addAccountHints = {
+        anthropic: `To add an account: run \`opencode auth login\` and select "Anthropic Pool".`,
+        openai: `To add an account: run \`opencode auth login\` and select "OpenAI Pool".`,
+        cursor: `To add an account: run \`opencode auth login\` and select "Cursor Pool". Requires cursor-agent CLI.`,
+      };
+      const addAccountHint = addAccountHints[provider] || addAccountHints.anthropic;
 
       // Provider-specific token endpoint cooldown
       const now = Date.now();
-      const endpointCooldownUntil = provider === "openai"
-        ? openaiTokenEndpointCooldownUntil
-        : tokenEndpointCooldownUntil;
+      const endpointCooldowns = {
+        anthropic: tokenEndpointCooldownUntil,
+        openai: openaiTokenEndpointCooldownUntil,
+        cursor: cursorProxyCooldownUntil,
+      };
+      const endpointCooldownUntil = endpointCooldowns[provider] || 0;
 
       switch (args.action) {
         case "list": {
@@ -1579,7 +2265,10 @@ export function createPoolTool(client) {
         case "reset-cooldowns": {
           // Reset token endpoint cooldown (in-memory) for the selected provider
           let wasGated = false;
-          if (provider === "openai") {
+          if (provider === "cursor") {
+            wasGated = cursorProxyCooldownUntil > Date.now();
+            cursorProxyCooldownUntil = 0;
+          } else if (provider === "openai") {
             wasGated = openaiTokenEndpointCooldownUntil > Date.now();
             openaiTokenEndpointCooldownUntil = 0;
           } else {
@@ -1610,7 +2299,8 @@ export function createPoolTool(client) {
 
         case "rotate": {
           if (accounts.length < 2) {
-            const poolName = provider === "openai" ? "OpenAI Pool" : "Anthropic Pool";
+            const poolNames = { anthropic: "Anthropic Pool", openai: "OpenAI Pool", cursor: "Cursor Pool" };
+            const poolName = poolNames[provider] || "Pool";
             return `Cannot rotate: only ${accounts.length} account(s) in pool. Add more accounts via Ctrl+A → ${poolName}.`;
           }
 
@@ -1619,7 +2309,14 @@ export function createPoolTool(client) {
             (a, b) => new Date(b.lastUsed || 0) - new Date(a.lastUsed || 0),
           )[0];
 
-          const injectFn = provider === "openai" ? injectOpenAIPoolToken : injectPoolToken;
+          let injectFn;
+          if (provider === "cursor") {
+            injectFn = injectCursorPoolToken;
+          } else if (provider === "openai") {
+            injectFn = injectOpenAIPoolToken;
+          } else {
+            injectFn = injectPoolToken;
+          }
           const injected = await injectFn(client, current?.email);
           if (injected) {
             // Find which account was injected
