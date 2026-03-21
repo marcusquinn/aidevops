@@ -2332,8 +2332,10 @@ export function registerPoolProvider(config) {
         models,
       };
     } else {
-      // Force-update model definitions (fixes stale names from prior versions)
+      // Force-update model definitions and provider name (fixes stale labels
+      // from prior versions that persist in OpenCode's runtime config)
       config.provider[def.id].models = models;
+      config.provider[def.id].name = def.name;
     }
     registered++;
   }

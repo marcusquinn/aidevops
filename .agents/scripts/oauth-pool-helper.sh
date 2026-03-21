@@ -93,6 +93,9 @@ load_pool() {
 # Save pool JSON (atomic write, 600 perms)
 save_pool() {
 	local json="$1"
+	local pool_dir
+	pool_dir=$(dirname "$POOL_FILE")
+	mkdir -p "$pool_dir"
 	local tmp_file="${POOL_FILE}.tmp.$$"
 	printf '%s\n' "$json" >"$tmp_file"
 	chmod 600 "$tmp_file"
@@ -198,7 +201,9 @@ cmd_add() {
 		token_endpoint="$OPENAI_TOKEN_ENDPOINT"
 		content_type="application/x-www-form-urlencoded"
 		ua_header="opencode/1.2.27"
-		token_body="code=${code}&grant_type=authorization_code&client_id=${client_id}&redirect_uri=$(urlencode "$redirect_uri")&code_verifier=${verifier}"
+		local encoded_code
+		encoded_code=$(urlencode "$code")
+		token_body="code=${encoded_code}&grant_type=authorization_code&client_id=${client_id}&redirect_uri=$(urlencode "$redirect_uri")&code_verifier=${verifier}"
 	fi
 
 	# Use curl with stdin for body (keeps secrets off argv)
@@ -338,12 +343,17 @@ cmd_check() {
 
 		printf '\n## %s (%s account%s)\n' "$prov" "$count" "$([ "$count" = "1" ] && echo "" || echo "s")"
 
-		# Use python3 to format account details (no token values exposed)
-		printf '%s' "$pool" | NOW_MS="$now_ms" PROV="$prov" python3 -c "
-import sys, json, os
+		# Single python3 pass: format details + test validity per account
+		# Token values are passed via stdin (pool JSON) and used only for
+		# curl subprocess calls — never printed to stdout.
+		printf '%s' "$pool" | NOW_MS="$now_ms" PROV="$prov" UA="$USER_AGENT" python3 -c "
+import sys, json, os, subprocess
+from datetime import datetime
+
 pool = json.load(sys.stdin)
 now = int(os.environ['NOW_MS'])
 prov = os.environ['PROV']
+ua = os.environ['UA']
 
 for a in pool.get(prov, []):
     print(f\"  {a['email']}:\")
@@ -364,7 +374,6 @@ for a in pool.get(prov, []):
         print(f\"    Cooldown: {cd_mins}m remaining\")
     lu = a.get('lastUsed')
     if lu:
-        from datetime import datetime
         try:
             lu_ts = datetime.fromisoformat(lu.replace('Z','+00:00')).timestamp() * 1000
             ago = now - lu_ts
@@ -377,43 +386,34 @@ for a in pool.get(prov, []):
         except:
             print(f\"    Last used: {lu}\")
     print(f\"    Refresh token: {'present' if a.get('refresh') else 'MISSING'}\")
-"
 
-		# Test token validity for anthropic accounts
-		if [[ "$prov" == "anthropic" ]]; then
-			printf '%s' "$pool" | PROV="$prov" UA="$USER_AGENT" python3 -c "
-import sys, json, os, subprocess
-pool = json.load(sys.stdin)
-prov = os.environ['PROV']
-ua = os.environ['UA']
-
-for a in pool.get(prov, []):
-    token = a.get('access', '')
-    if not token:
-        print(f\"    Validity: no access token\")
-        continue
-    try:
-        result = subprocess.run([
-            'curl', '-sS', '-w', '\n%{http_code}', '-X', 'GET',
-            '-H', f'Authorization: Bearer {token}',
-            '-H', f'User-Agent: {ua}',
-            '-H', 'anthropic-version: 2023-06-01',
-            '-H', 'anthropic-beta: oauth-2025-04-20',
-            '--max-time', '10',
-            'https://api.anthropic.com/v1/models',
-        ], capture_output=True, text=True, timeout=15)
-        lines = result.stdout.strip().split('\n')
-        status = int(lines[-1]) if lines else 0
-        if status == 401:
-            print(f\"    Validity: INVALID (401 - needs refresh)\")
-        elif 200 <= status < 400:
-            print(f\"    Validity: OK\")
+    # Test token validity inline (anthropic only)
+    if prov == 'anthropic':
+        token = a.get('access', '')
+        if not token or expires_in <= 0:
+            print(f\"    Validity: {'EXPIRED' if expires_in <= 0 else 'no access token'}\")
         else:
-            print(f\"    Validity: HTTP {status}\")
-    except Exception as e:
-        print(f\"    Validity: ERROR\")
+            try:
+                result = subprocess.run([
+                    'curl', '-sS', '-w', '\n%{http_code}', '-X', 'GET',
+                    '-H', f'Authorization: Bearer {token}',
+                    '-H', f'User-Agent: {ua}',
+                    '-H', 'anthropic-version: 2023-06-01',
+                    '-H', 'anthropic-beta: oauth-2025-04-20',
+                    '--max-time', '10',
+                    'https://api.anthropic.com/v1/models',
+                ], capture_output=True, text=True, timeout=15)
+                lines = result.stdout.strip().split('\n')
+                status = int(lines[-1]) if lines else 0
+                if status == 401:
+                    print(f\"    Validity: INVALID (401 - needs refresh)\")
+                elif 200 <= status < 400:
+                    print(f\"    Validity: OK\")
+                else:
+                    print(f\"    Validity: HTTP {status}\")
+            except:
+                print(f\"    Validity: ERROR\")
 " 2>/dev/null
-		fi
 
 		printf '  Token endpoint: OK\n'
 	done
