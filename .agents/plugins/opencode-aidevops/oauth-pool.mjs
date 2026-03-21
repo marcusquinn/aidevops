@@ -277,7 +277,7 @@ function curlTokenEndpoint(url, options, context) {
     "-w", "\n%{http_code}",        // append HTTP status on last line
     "-X", "POST",
     "-H", `Content-Type: ${options.contentType || "application/json"}`,
-    "-H", `User-Agent: ${options.headers["User-Agent"] || ANTHROPIC_USER_AGENT}`,
+    "-H", `User-Agent: ${options.headers["User-Agent"]}`,
     "-d", options.body,
     "--max-time", "15",             // hard timeout
     url,
@@ -356,7 +356,14 @@ async function fetchTokenEndpoint(body, context) {
       `[aidevops] OAuth pool: ${context} skipped — token endpoint rate limited, cooldown ${remainingMinutes}m remaining. ` +
       `Use /model-accounts-pool reset-cooldowns to clear manually.`,
     );
-    return new Response(null, { status: 429, statusText: "Rate Limited (cooldown)" });
+    return {
+      ok: false,
+      status: 429,
+      statusText: "Rate Limited (cooldown)",
+      headers: { get() { return null; } },
+      async json() { return { error: "Rate limited (cooldown)" }; },
+      async text() { return "Rate limited (cooldown)"; },
+    };
   }
 
   const response = curlTokenEndpoint(ANTHROPIC_TOKEN_ENDPOINT, {
@@ -398,7 +405,14 @@ async function fetchOpenAITokenEndpoint(params, context) {
       `[aidevops] OAuth pool: ${context} skipped — OpenAI token endpoint rate limited, cooldown ${remainingMinutes}m remaining. ` +
       `Use /model-accounts-pool reset-cooldowns to clear manually.`,
     );
-    return new Response(null, { status: 429, statusText: "Rate Limited (cooldown)" });
+    return {
+      ok: false,
+      status: 429,
+      statusText: "Rate Limited (cooldown)",
+      headers: { get() { return null; } },
+      async json() { return { error: "Rate limited (cooldown)" }; },
+      async text() { return "Rate limited (cooldown)"; },
+    };
   }
 
   const response = curlTokenEndpoint(OPENAI_TOKEN_ENDPOINT, {
