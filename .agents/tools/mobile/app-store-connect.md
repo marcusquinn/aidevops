@@ -207,7 +207,7 @@ The `asc` CLI includes an embedded web server with three web apps:
 localdev-helper.sh add asc
 
 # Run the asc web server via localdev
-localdev-helper.sh run --app asc -- asc tui --port \$PORT
+localdev-helper.sh run --app asc -- asc tui --port $PORT
 # → https://asc.local/command-center (dashboard)
 # → https://asc.local/console (CLI reference)
 # → https://asc.local/editor (screenshot studio)
