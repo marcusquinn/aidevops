@@ -801,7 +801,10 @@ main() {
 				local _plans_cleanup="${INSTALL_DIR}/.agents/scripts/plans-cleanup-helper.sh"
 				if [[ -x "$_plans_cleanup" ]]; then
 					local _plans_exit=0
-					"$_plans_cleanup" archive || _plans_exit=$?
+					PLANS_FILE="${INSTALL_DIR}/todo/PLANS.md" \
+						ARCHIVE_FILE="${INSTALL_DIR}/todo/PLANS-ARCHIVE.md" \
+						TODO_FILE="${INSTALL_DIR}/TODO.md" \
+						"$_plans_cleanup" archive || _plans_exit=$?
 					if [[ "$_plans_exit" -ne 0 ]]; then
 						print_warning "plans-cleanup-helper.sh archive exited $_plans_exit"
 					fi

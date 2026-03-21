@@ -255,13 +255,18 @@ deploy_aidevops_agents() {
 		local todo_file="$repo_dir/TODO.md"
 		if [[ -x "$plans_cleanup" ]] && [[ -f "$plans_file" ]]; then
 			local plans_exit=0
+			local plans_err_file
+			plans_err_file=$(mktemp)
 			PLANS_FILE="$plans_file" ARCHIVE_FILE="$archive_file" TODO_FILE="$todo_file" \
-				"$plans_cleanup" archive || plans_exit=$?
+				"$plans_cleanup" archive 2>"$plans_err_file" || plans_exit=$?
 			if [[ "$plans_exit" -eq 0 ]]; then
 				print_info "Archived completed plans from PLANS.md"
 			else
-				print_warn "plans-cleanup-helper.sh archive exited $plans_exit (non-critical)"
+				local plans_err_msg
+				plans_err_msg=$(cat "$plans_err_file")
+				print_warning "plans-cleanup-helper.sh archive exited $plans_exit (non-critical)${plans_err_msg:+: $plans_err_msg}"
 			fi
+			rm -f "$plans_err_file"
 		fi
 	else
 		print_error "Failed to deploy agents"
