@@ -32,13 +32,13 @@ _resolve_profile_repo() {
 		local profile_path
 		profile_path=$(jq -r '
 			if .initialized_repos then
-				.initialized_repos[] | select(.priority == "profile") | .path
+				.initialized_repos[] | select(.priority == "profile") | .path // empty
 			else
-				to_entries[] | select(.value.priority == "profile") | .value.path
+				to_entries[] | select(.value.priority == "profile") | .value.path // empty
 			end
-		' "$repos_json" 2>/dev/null | head -1)
+		' "$repos_json" | head -1)
 
-		if [[ -n "$profile_path" && "$profile_path" != "null" && -d "$profile_path" ]]; then
+		if [[ -n "$profile_path" && -d "$profile_path" ]]; then
 			echo "$profile_path"
 			return 0
 		fi
@@ -1235,12 +1235,12 @@ cmd_init() {
 		local existing_profile
 		existing_profile=$(jq -r '
 			if .initialized_repos then
-				.initialized_repos[] | select(.priority == "profile") | .path
+				.initialized_repos[] | select(.priority == "profile") | .path // empty
 			else
-				to_entries[] | select(.value.priority == "profile") | .value.path
+				to_entries[] | select(.value.priority == "profile") | .value.path // empty
 			end
-		' "$repos_json" 2>/dev/null | head -1)
-		if [[ -n "$existing_profile" && "$existing_profile" != "null" ]]; then
+		' "$repos_json" | head -1)
+		if [[ -n "$existing_profile" ]]; then
 			if [[ -d "$existing_profile" ]] &&
 				[[ -f "${existing_profile}/README.md" ]] &&
 				grep -q '<!-- STATS-START -->' "${existing_profile}/README.md" 2>/dev/null; then
