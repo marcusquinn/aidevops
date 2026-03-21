@@ -22,7 +22,7 @@ model: haiku
 - **Purpose**: Route tasks to the cheapest model that can handle them well
 - **Philosophy**: Use the smallest model that produces acceptable quality
 - **Default**: sonnet (best balance of cost/capability for most tasks)
-- **Cost spectrum**: local (free) -> flash -> haiku -> composer2 -> sonnet -> pro -> opus (highest)
+- **Cost spectrum**: local (free) -> composer2 -> flash -> haiku -> sonnet -> pro -> opus (highest)
 
 ## Model Tiers
 
@@ -124,7 +124,7 @@ tools:
 ---
 ```
 
-Valid values: `local`, `haiku`, `flash`, `sonnet`, `composer2`, `pro`, `opus`
+Valid values: `local`, `composer2`, `flash`, `haiku`, `sonnet`, `pro`, `opus`
 
 > **Note**: The `local` tier requires `local-model-helper.sh` to be set up and a model server running. If no local server is available, `local` in frontmatter falls back to `haiku` (next tier in the routing chain — local has no same-tier fallback). See `tools/local-models/local-models.md` for setup.
 

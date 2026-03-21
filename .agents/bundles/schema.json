@@ -133,7 +133,7 @@
   "$defs": {
     "model_tier": {
       "type": "string",
-      "enum": ["local", "haiku", "flash", "sonnet", "composer2", "pro", "opus"],
+      "enum": ["local", "composer2", "flash", "haiku", "sonnet", "pro", "opus"],
       "description": "Model routing tier. See .agents/tools/context/model-routing.md for tier definitions."
     },
     "quality_gate": {
