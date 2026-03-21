@@ -16,8 +16,9 @@ import { loadAgentIndex, applyAgentMcpTools } from "./agent-loader.mjs";
 import { validateReturnStatements, validatePositionalParams } from "./validators.mjs";
 import { runMarkdownQualityPipeline } from "./quality-pipeline.mjs";
 import { createTtsrHooks } from "./ttsr.mjs";
-import { createPoolAuthHook, createOpenAIPoolAuthHook, createCursorPoolAuthHook, createPoolTool, initPoolAuth, registerPoolProvider } from "./oauth-pool.mjs";
+import { createPoolAuthHook, createOpenAIPoolAuthHook, createCursorPoolAuthHook, createPoolTool, initPoolAuth, registerPoolProvider, getAccounts } from "./oauth-pool.mjs";
 import { createProviderAuthHook } from "./provider-auth.mjs";
+import { startCursorProxy, registerCursorProvider, getCursorProxyPort } from "./cursor-proxy.mjs";
 
 const HOME = homedir();
 const AGENTS_DIR = join(HOME, ".aidevops", "agents");
@@ -365,12 +366,44 @@ async function configHook(config) {
   // --- OAuth pool: clean up stale provider entries (t1543, t1548) ---
   const poolCleaned = registerPoolProvider(config);
 
+  // --- Cursor gRPC proxy: register provider with discovered models (t1551) ---
+  let cursorModelsRegistered = 0;
+  const cursorPort = getCursorProxyPort();
+  if (cursorPort) {
+    try {
+      // Re-import to get the latest models (may have been discovered after config hook first ran)
+      const { getCursorModels } = await import("./cursor/models.js");
+      const { getAccounts: getPoolAccounts, ensureValidToken: ensureToken } = await import("./oauth-pool.mjs");
+      const accounts = getPoolAccounts("cursor");
+      let models = [];
+
+      // Try to get models from cache or discover them
+      if (accounts.length > 0) {
+        const account = accounts.find((a) => a.status === "active");
+        if (account) {
+          const token = await ensureToken("cursor", account);
+          if (token) {
+            models = await getCursorModels(token);
+          }
+        }
+      }
+
+      if (models.length > 0 && registerCursorProvider(config, cursorPort, models)) {
+        cursorModelsRegistered = models.length;
+      }
+    } catch (err) {
+      // Non-fatal — cursor models just won't appear in the picker
+      console.error(`[aidevops] Config hook: cursor model registration failed: ${err.message}`);
+    }
+  }
+
   // Silent unless something was actually changed (avoids TUI flash on startup)
   const parts = [];
   if (agentsInjected > 0) parts.push(`${agentsInjected} agents`);
   if (mcpsRegistered > 0) parts.push(`${mcpsRegistered} MCPs`);
   if (agentToolsUpdated > 0) parts.push(`${agentToolsUpdated} agent tool perms`);
   if (poolCleaned > 0) parts.push(`cleaned ${poolCleaned} stale pool provider${poolCleaned === 1 ? "" : "s"}`);
+  if (cursorModelsRegistered > 0) parts.push(`${cursorModelsRegistered} Cursor models`);
 
   if (parts.length > 0) {
     console.error(`[aidevops] Config hook: ${parts.join(", ")}`);
@@ -1059,11 +1092,13 @@ const {
  * 9. OpenAI Pro pool — multi-account rotation for ChatGPT Plus/Pro accounts (t1548)
  *    Same token injection architecture as Anthropic pool. Adds "openai-pool" provider
  *    for account management and injects tokens into the built-in "openai" provider.
- * 10. Cursor Pro pool — multi-account rotation for Cursor Pro accounts (t1549)
- *    Extracts credentials from cursor-agent CLI or Cursor IDE's local state DB.
- *    Manages a proxy sidecar (HTTP server) that translates OpenAI-compatible
- *    requests to cursor-agent CLI calls. Adds "cursor-pool" provider for account
- *    management with LRU rotation and 429 failover.
+ * 10. Cursor Pro pool — multi-account rotation for Cursor Pro accounts (t1549, t1551)
+ *    Extracts credentials from Cursor IDE's local state DB or cursor-agent auth.
+ *    Manages a gRPC proxy (vendored from opencode-cursor-oauth) that translates
+ *    OpenAI-compatible requests to Cursor's protobuf/HTTP2 Connect protocol via
+ *    a Node.js H2 bridge subprocess. Supports true streaming, tool calling, and
+ *    model discovery via gRPC. Adds "cursor-pool" provider for account management
+ *    with LRU rotation and 429 failover. Bypasses OpenCode's broken auth hooks.
  *
  * MCP registration (Phase 2, t008.2):
  * - Registers all known MCP servers from a data-driven registry
@@ -1080,6 +1115,23 @@ export async function AidevopsPlugin({ directory, client }) {
 
   // Phase 7: OAuth pool — seed auth entries so providers appear in connect dialog (t1543, t1548, t1549)
   await initPoolAuth(client);
+
+  // Phase 8: Cursor gRPC proxy (t1551)
+  // Start the gRPC proxy if Cursor accounts exist in the pool.
+  // This runs after initPoolAuth so pool tokens are already seeded.
+  // The proxy translates OpenAI-compatible requests to Cursor's protobuf/HTTP2 protocol.
+  let cursorProxyResult = null;
+  const cursorAccounts = getAccounts("cursor");
+  if (cursorAccounts.length > 0) {
+    try {
+      cursorProxyResult = await startCursorProxy(client);
+      if (cursorProxyResult) {
+        console.error(`[aidevops] Cursor gRPC proxy started on port ${cursorProxyResult.port} with ${cursorProxyResult.models.length} models`);
+      }
+    } catch (err) {
+      console.error(`[aidevops] Cursor gRPC proxy failed to start: ${err.message}`);
+    }
+  }
 
   // Phase 7b: OAuth pool tools (t1543, t1548, t1549)
   const baseTools = createTools(SCRIPTS_DIR, run, {
