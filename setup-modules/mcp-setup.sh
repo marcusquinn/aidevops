@@ -479,39 +479,29 @@ setup_opencode_plugins() {
 		fi
 		pool_plugin_registered="true"
 
-		# --- Register opencode-cursor-oauth plugin (npm, auto-installed by OpenCode) ---
+		# --- opencode-cursor-oauth plugin (DISABLED) ---
+		# The opencode-cursor-oauth npm plugin crashes during startup and
+		# silently prevents ALL plugins from loading (including ours).
+		# Filed: https://github.com/ephraimduncan/opencode-cursor/issues/15
+		# Re-enable when the upstream fix is released.
+		# For now, Cursor accounts can be added via: oauth-pool-helper.sh add cursor
+		#
+		# If the plugin was previously registered, remove it to prevent the crash
 		local cursor_plugin="opencode-cursor-oauth"
-		local cursor_already
-		cursor_already=$(jq --arg p "$cursor_plugin" \
+		local cursor_present
+		cursor_present=$(jq --arg p "$cursor_plugin" \
 			'(.plugin // []) | map(select(. == $p)) | length' \
 			"$opencode_config" 2>/dev/null || echo "0")
-
-		if [[ "$cursor_already" -eq 0 ]]; then
+		if [[ "$cursor_present" -gt 0 ]]; then
 			local tmp_cursor="${opencode_config}.tmp.$$"
 			if jq --arg p "$cursor_plugin" \
-				'.plugin = ((.plugin // []) + [$p] | unique)' \
+				'.plugin = [.plugin[] | select(. != $p)]' \
 				"$opencode_config" >"$tmp_cursor" 2>/dev/null; then
 				mv "$tmp_cursor" "$opencode_config"
-				print_success "Cursor OAuth plugin registered in opencode.json"
+				print_warning "Removed opencode-cursor-oauth plugin (crashes all plugin loading)"
+				print_info "  Filed: https://github.com/ephraimduncan/opencode-cursor/issues/15"
 			else
 				rm -f "$tmp_cursor"
-				print_warning "Failed to register Cursor OAuth plugin"
-			fi
-		else
-			print_success "Cursor OAuth plugin already registered"
-		fi
-
-		# --- Ensure cursor provider stub exists (required by opencode-cursor-oauth) ---
-		local has_cursor_provider
-		has_cursor_provider=$(jq '.provider.cursor // empty' "$opencode_config" 2>/dev/null || true)
-		if [[ -z "$has_cursor_provider" ]]; then
-			local tmp_cursor_prov="${opencode_config}.tmp.$$"
-			if jq '.provider.cursor = {"name": "Cursor"}' \
-				"$opencode_config" >"$tmp_cursor_prov" 2>/dev/null; then
-				mv "$tmp_cursor_prov" "$opencode_config"
-				print_success "Cursor provider stub added to opencode.json"
-			else
-				rm -f "$tmp_cursor_prov"
 			fi
 		fi
 	else
