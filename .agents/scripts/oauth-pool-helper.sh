@@ -107,19 +107,13 @@ save_pool() {
 # Open URL in browser (best-effort, never fatal — cascades on failure)
 open_browser() {
 	local url="$1"
-	local opened="false"
-	if command -v open &>/dev/null; then
-		open "$url" 2>/dev/null && opened="true"
-	fi
-	if [[ "$opened" == "false" ]] && command -v xdg-open &>/dev/null; then
-		xdg-open "$url" 2>/dev/null && opened="true"
-	fi
-	if [[ "$opened" == "false" ]] && command -v wslview &>/dev/null; then
-		wslview "$url" 2>/dev/null && opened="true"
-	fi
-	if [[ "$opened" == "false" ]]; then
-		print_warning "Cannot open browser automatically."
-	fi
+	local cmd
+	for cmd in open xdg-open wslview; do
+		if command -v "$cmd" &>/dev/null && "$cmd" "$url" 2>/dev/null; then
+			return 0
+		fi
+	done
+	print_warning "Cannot open browser automatically."
 	# Always print URL so user can open manually if browser launch failed
 	print_info "If the browser didn't open, visit this URL:"
 	printf '%s\n' "$url" >&2
