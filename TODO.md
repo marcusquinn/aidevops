@@ -113,6 +113,8 @@ Tasks with no open blockers - ready to work on. Use `/ready` to refresh this lis
 - [x] t1546 Setup/update: guide users to configure OAuth pool when built-in anthropic-auth is removed in OpenCode v1.2.30 #feature #setup ~2h ref:GH#5311 logged:2026-03-20 pr:#5315 completed:2026-03-20
 - [x] t1547 Deploy aidevops primary agents as Claude Code CLI slash commands; ensure setup.sh and update deploy MCP servers, AGENTS.md, commands, and settings to both Claude Code and OpenCode with feature parity #feature #setup ~8h ref:GH#5314 logged:2026-03-20 pr:#5316 completed:2026-03-20
 - [x] t1548 OAuth pool: add OpenAI Pro multi-account rotation — fix: merge into single auth hook (OpenCode doesn't support auth arrays) #feature #auth ~2h ref:GH#5318 logged:2026-03-20 pr:#5324 completed:2026-03-20
+- [ ] t1549 Add Cursor as third OAuth pool provider in oauth-pool.mjs for Composer 2 access — extract OAuth PKCE flow + gRPC proxy from opencode-cursor plugin, wire pool rotation (LRU, 429 failover, cooldown) for Cursor accounts, manage proxy sidecar lifecycle #feature #auth ~8h ref:GH#5362 logged:2026-03-21
+- [ ] t1550 Add Composer 2 to model routing tiers and bundle presets — update tools/context/model-routing.md with Cursor Composer 2 positioning ($0.50/$2.50 per M tokens, frontier-level coding), add to bundle presets as cost-effective coding tier #feature #model-routing ~2h ref:GH#5363 logged:2026-03-21 blocked-by:t1549
 
 ### SEO/GEO Agent Intelligence
 
