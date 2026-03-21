@@ -1328,265 +1328,86 @@ export async function injectOpenAIPoolToken(client, skipEmail) {
 }
 
 // ---------------------------------------------------------------------------
-// Cursor proxy sidecar lifecycle (t1549)
+// Cursor gRPC proxy lifecycle (t1549, t1551)
+//
+// t1551: Replaced cursor-agent CLI proxy with gRPC proxy from
+// opencode-cursor-oauth. The gRPC proxy translates OpenAI-compatible
+// requests directly to Cursor's protobuf/HTTP2 Connect protocol via
+// a Node.js H2 bridge subprocess. This provides:
+//   - True streaming (SSE chunks as they arrive from Cursor)
+//   - Tool calling support (Cursor's native MCP tool protocol)
+//   - Model discovery via gRPC (GetUsableModels RPC)
+//   - No dependency on cursor-agent CLI
+//
+// The proxy is started by cursor-proxy.mjs and managed here for
+// backward compatibility with the pool injection flow.
 // ---------------------------------------------------------------------------
 
 /**
- * In-memory reference to the cursor-agent proxy sidecar process.
- * The proxy translates OpenAI-compatible HTTP requests to cursor-agent CLI calls.
- * @type {{ process: import("child_process").ChildProcess | null, port: number, baseURL: string }}
+ * In-memory reference to the cursor gRPC proxy state.
+ * @type {{ port: number | null, baseURL: string }}
  */
 const cursorProxy = {
-  process: null,
-  port: CURSOR_PROXY_DEFAULT_PORT,
+  port: null,
   baseURL: CURSOR_PROXY_BASE_URL,
 };
 
 /**
- * Check if cursor-agent CLI is available.
- * @returns {boolean}
- */
-function isCursorAgentAvailable() {
-  try {
-    execSync("cursor-agent --version", {
-      encoding: "utf-8",
-      timeout: 5000,
-      stdio: ["pipe", "pipe", "pipe"],
-    });
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Check if the cursor proxy sidecar is healthy.
- * @returns {Promise<boolean>}
- */
-async function isCursorProxyHealthy() {
-  try {
-    const res = await fetch(`http://${CURSOR_PROXY_HOST}:${cursorProxy.port}/health`, {
-      signal: AbortSignal.timeout(2000),
-    });
-    return res.ok;
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Start the cursor-agent proxy sidecar if not already running.
- * The proxy is a lightweight HTTP server that spawns cursor-agent for each request.
- * Uses Node's built-in http.createServer (no Bun dependency).
+ * Ensure the Cursor gRPC proxy is running (t1551).
+ * Delegates to cursor-proxy.mjs which manages the vendored
+ * opencode-cursor-oauth proxy. Falls back gracefully if the
+ * gRPC proxy cannot start.
  *
- * @param {string} [workspaceDir] - Workspace directory for cursor-agent
+ * @param {any} [client] - OpenCode SDK client (optional, for model registration)
  * @returns {Promise<string>} Base URL of the proxy
  */
-export async function ensureCursorProxy(workspaceDir) {
-  // Check if proxy is already running (ours or external)
-  if (await isCursorProxyHealthy()) {
+export async function ensureCursorProxy(client) {
+  // If proxy is already known to be running, return its URL
+  if (cursorProxy.port) {
     return cursorProxy.baseURL;
   }
 
-  if (!isCursorAgentAvailable()) {
-    throw new Error(
-      "cursor-agent not found. Install it: curl -fsS https://cursor.com/install | bash",
-    );
+  try {
+    const { startCursorProxy, getCursorProxyPort } = await import("./cursor-proxy.mjs");
+
+    // Check if already started by a prior call
+    const existingPort = getCursorProxyPort();
+    if (existingPort) {
+      cursorProxy.port = existingPort;
+      cursorProxy.baseURL = `http://${CURSOR_PROXY_HOST}:${existingPort}/v1`;
+      return cursorProxy.baseURL;
+    }
+
+    // Start the gRPC proxy
+    const result = await startCursorProxy(client);
+    if (result && result.port) {
+      cursorProxy.port = result.port;
+      cursorProxy.baseURL = `http://${CURSOR_PROXY_HOST}:${result.port}/v1`;
+      console.error(`[aidevops] OAuth pool: cursor gRPC proxy running on port ${result.port}`);
+      return cursorProxy.baseURL;
+    }
+
+    throw new Error("gRPC proxy returned no port");
+  } catch (err) {
+    console.error(`[aidevops] OAuth pool: cursor gRPC proxy failed: ${err.message}`);
+    throw err;
   }
-
-  const effectiveWorkspace = workspaceDir || process.cwd();
-
-  return new Promise((resolve, reject) => {
-    const server = createServer(async (req, res) => {
-      // Health check endpoint
-      if (req.url === "/health") {
-        res.writeHead(200, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ ok: true, provider: "cursor-pool" }));
-        return;
-      }
-
-      // Only handle chat completions
-      if (req.url !== "/v1/chat/completions" && req.url !== "/chat/completions") {
-        res.writeHead(404, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: { message: `Unsupported path: ${req.url}` } }));
-        return;
-      }
-
-      // Read request body
-      let body = "";
-      for await (const chunk of req) {
-        body += chunk;
-      }
-
-      let parsed;
-      try {
-        parsed = JSON.parse(body);
-      } catch {
-        res.writeHead(400, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: { message: "Invalid JSON body" } }));
-        return;
-      }
-
-      const model = normalizeCursorModel(parsed.model || "auto");
-      const messages = Array.isArray(parsed.messages) ? parsed.messages : [];
-      const isStream = parsed.stream === true;
-
-      // Build prompt from messages
-      const prompt = messages.map((m) => {
-        const role = (m.role || "user").toUpperCase();
-        const content = typeof m.content === "string"
-          ? m.content
-          : Array.isArray(m.content)
-            ? m.content.filter((p) => p.type === "text").map((p) => p.text).join("\n")
-            : "";
-        return `${role}: ${content}`;
-      }).join("\n\n");
-
-      try {
-        const child = spawn("cursor-agent", [
-          "--print",
-          "--output-format", "text",
-          "--workspace", effectiveWorkspace,
-          "--model", model,
-          prompt,
-        ], {
-          stdio: ["pipe", "pipe", "pipe"],
-          env: process.env,
-        });
-
-        let stdout = "";
-        let stderr = "";
-        child.stdout.on("data", (data) => { stdout += data.toString(); });
-        child.stderr.on("data", (data) => { stderr += data.toString(); });
-
-        child.on("close", (code) => {
-          const content = stdout.trim() || stderr.trim() || "(empty response)";
-
-          // On non-zero exit, return a proper OpenAI-compatible error response
-          // instead of wrapping stderr in a chat completion body.
-          if (code !== 0) {
-            const errorMsg = stderr.trim() || `cursor-agent exited with code ${code}`;
-            res.writeHead(502, { "Content-Type": "application/json" });
-            res.end(JSON.stringify({
-              error: {
-                message: errorMsg,
-                type: "server_error",
-                code: 502,
-              },
-            }));
-            return;
-          }
-
-          // NOTE: Streaming limitation — cursor-agent writes its entire response
-          // to stdout on exit, so we cannot stream incrementally. The full response
-          // is buffered and sent as a single SSE chunk. True incremental streaming
-          // would require cursor-agent to support a streaming output mode (e.g.,
-          // writing partial results to stdout as they arrive from the upstream model).
-          if (isStream) {
-            res.writeHead(200, {
-              "Content-Type": "text/event-stream",
-              "Cache-Control": "no-cache",
-              "Connection": "keep-alive",
-            });
-            const chunk = {
-              id: `cursor-pool-${Date.now()}`,
-              object: "chat.completion.chunk",
-              created: Math.floor(Date.now() / 1000),
-              model,
-              choices: [{
-                index: 0,
-                delta: { content },
-                finish_reason: "stop",
-              }],
-            };
-            res.write(`data: ${JSON.stringify(chunk)}\n\n`);
-            res.write("data: [DONE]\n\n");
-            res.end();
-          } else {
-            const payload = {
-              id: `cursor-pool-${Date.now()}`,
-              object: "chat.completion",
-              created: Math.floor(Date.now() / 1000),
-              model,
-              choices: [{
-                index: 0,
-                message: { role: "assistant", content },
-                finish_reason: "stop",
-              }],
-            };
-            res.writeHead(200, { "Content-Type": "application/json" });
-            res.end(JSON.stringify(payload));
-          }
-        });
-
-        child.on("error", (err) => {
-          res.writeHead(500, { "Content-Type": "application/json" });
-          res.end(JSON.stringify({ error: { message: `cursor-agent error: ${err.message}` } }));
-        });
-      } catch (err) {
-        res.writeHead(500, { "Content-Type": "application/json" });
-        res.end(JSON.stringify({ error: { message: `Proxy error: ${err.message}` } }));
-      }
-    });
-
-    server.on("error", (err) => {
-      if (err.code === "EADDRINUSE") {
-        // Port in use — check if it's our proxy
-        isCursorProxyHealthy().then((healthy) => {
-          if (healthy) {
-            resolve(cursorProxy.baseURL);
-          } else {
-            // Try a random port
-            server.listen(0, CURSOR_PROXY_HOST, () => {
-              const addr = server.address();
-              cursorProxy.port = addr.port;
-              cursorProxy.baseURL = `http://${CURSOR_PROXY_HOST}:${addr.port}/v1`;
-              console.error(`[aidevops] OAuth pool: cursor proxy started on port ${addr.port} (default port in use)`);
-              resolve(cursorProxy.baseURL);
-            });
-          }
-        });
-        return;
-      }
-      reject(err);
-    });
-
-    server.listen(CURSOR_PROXY_DEFAULT_PORT, CURSOR_PROXY_HOST, () => {
-      cursorProxy.port = CURSOR_PROXY_DEFAULT_PORT;
-      cursorProxy.baseURL = CURSOR_PROXY_BASE_URL;
-      console.error(`[aidevops] OAuth pool: cursor proxy started on port ${CURSOR_PROXY_DEFAULT_PORT}`);
-      resolve(cursorProxy.baseURL);
-    });
-
-    // Store server reference for cleanup
-    cursorProxy.process = server;
-  });
 }
 
 /**
- * Normalize Cursor model names (aliases).
- * @param {string} model
- * @returns {string}
- */
-function normalizeCursorModel(model) {
-  const aliases = {
-    "gpt-5": "gpt-5.2",
-    "sonnet-4": "sonnet-4.5",
-  };
-  return aliases[model] || model;
-}
-
-/**
- * Stop the cursor proxy sidecar if running.
+ * Stop the cursor gRPC proxy if running (t1551).
  */
 export function stopCursorProxy() {
-  if (cursorProxy.process) {
+  if (cursorProxy.port) {
     try {
-      cursorProxy.process.close();
+      import("./cursor-proxy.mjs").then(({ stopCursorGrpcProxy }) => {
+        stopCursorGrpcProxy();
+      }).catch(() => {});
     } catch {
       // ignore
     }
-    cursorProxy.process = null;
+    cursorProxy.port = null;
+    cursorProxy.baseURL = CURSOR_PROXY_BASE_URL;
     console.error("[aidevops] OAuth pool: cursor proxy stopped");
   }
 }
@@ -1625,9 +1446,9 @@ export async function injectCursorPoolToken(client, skipEmail) {
 
   if (!account) return false;
 
-  // Ensure the proxy sidecar is running
+  // Ensure the gRPC proxy is running (t1551)
   try {
-    await ensureCursorProxy();
+    await ensureCursorProxy(client);
   } catch (err) {
     console.error(`[aidevops] OAuth pool: cursor proxy failed to start: ${err.message}`);
     // Continue anyway — the proxy might be started externally

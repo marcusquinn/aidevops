@@ -289,6 +289,35 @@ opencode auth login
 - **Automatic token refresh** - No manual re-authentication needed
 - **Beta features enabled** - Extended thinking modes and latest features
 
+### Cursor Models via Pool Proxy
+
+Access Cursor Pro models (Composer 2, Claude 4.6 Opus/Sonnet, GPT-5.x, Gemini 3.1 Pro) in OpenCode through a local gRPC proxy that translates OpenAI-compatible requests to Cursor's protobuf/HTTP2 protocol.
+
+**Setup:**
+
+```bash
+# Add your Cursor account to the pool (reads from local Cursor IDE)
+oauth-pool-helper.sh add cursor
+
+# Restart OpenCode — Cursor models appear in Ctrl+T model picker
+```
+
+**How it works:**
+
+- Reads Cursor credentials from the local IDE state database
+- Starts a gRPC proxy that speaks Cursor's native protocol (not the cursor-agent CLI)
+- Discovers available models via gRPC and registers them as an OpenCode provider
+- Supports true streaming, tool calling, and automatic token refresh
+- Falls back gracefully if no Cursor accounts are in the pool
+
+**Benefits:**
+
+- **Zero additional cost** for Cursor Pro subscribers
+- **True streaming** — responses stream as they arrive (not buffered)
+- **Tool calling** — Cursor's native MCP tool protocol works through the proxy
+- **Model discovery** — automatically detects all models available to your account
+- **Pool rotation** — multiple accounts with LRU rotation and 429 failover
+
 ### GitHub AI Agent Integration
 
 Enable AI-powered issue resolution directly from GitHub. Comment `/oc fix this` on any issue and the AI creates a branch, implements the fix, and opens a PR.
