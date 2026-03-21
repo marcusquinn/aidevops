@@ -386,20 +386,16 @@ cmd_add_cursor() {
 	# Source 1: cursor-agent auth.json
 	if [[ -f "$cursor_auth_json" ]]; then
 		print_info "Reading from Cursor auth.json..."
-		access_token=$(python3 -c "
+		local auth_tokens
+		auth_tokens=$(python3 -c "
 import json, sys
 try:
     d = json.load(open(sys.argv[1]))
-    print(d.get('accessToken', ''))
+    print(d.get('accessToken', '') + '\n' + d.get('refreshToken', ''))
 except: pass
 " "$cursor_auth_json" 2>/dev/null || true)
-		refresh_token=$(python3 -c "
-import json, sys
-try:
-    d = json.load(open(sys.argv[1]))
-    print(d.get('refreshToken', ''))
-except: pass
-" "$cursor_auth_json" 2>/dev/null || true)
+		access_token=$(printf '%s' "$auth_tokens" | head -1)
+		refresh_token=$(printf '%s' "$auth_tokens" | tail -1)
 	fi
 
 	# Source 2: Cursor IDE state database (fallback or supplement)
@@ -447,9 +443,15 @@ else:
     print(json.dumps({'email': '', 'exp': 0}))
 " 2>/dev/null || echo '{"email":"","exp":0}')
 
-	local jwt_email jwt_exp
-	jwt_email=$(printf '%s' "$jwt_info" | python3 -c "import sys,json; print(json.load(sys.stdin).get('email',''))" 2>/dev/null || true)
-	jwt_exp=$(printf '%s' "$jwt_info" | python3 -c "import sys,json; print(json.load(sys.stdin).get('exp',0))" 2>/dev/null || echo "0")
+	local jwt_parsed jwt_email jwt_exp
+	jwt_parsed=$(printf '%s' "$jwt_info" | python3 -c "
+import sys, json
+d = json.load(sys.stdin)
+print(d.get('email', ''))
+print(d.get('exp', 0))
+" 2>/dev/null || printf '\n0')
+	jwt_email=$(printf '%s' "$jwt_parsed" | head -1)
+	jwt_exp=$(printf '%s' "$jwt_parsed" | tail -1)
 
 	# Use JWT email if we didn't get one from the state DB
 	if [[ -z "$email" && -n "$jwt_email" ]]; then
