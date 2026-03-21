@@ -2360,18 +2360,19 @@ export function registerPoolProvider(config) {
  */
 export function createPoolTool(client) {
   return {
-    description:
-      `Manage OAuth account pool for provider credential rotation. ` +
-      `Use 'list' to see all accounts and their status, ` +
-      `'rotate' to switch to the next pool account, ` +
-      `'remove <email>' to remove an account, ` +
-      `'assign-pending <email>' to assign a pending unidentified token to an account, ` +
-      `'check' to test token validity for all accounts, ` +
-      `'status' for rotation statistics. ` +
-      `Supports providers: anthropic (Claude Pro/Max), openai (ChatGPT Plus/Pro), ` +
-      `and cursor (Cursor Pro). ` +
-      `The agent should route natural language requests about managing ` +
-      `provider accounts, OAuth pools, or credential rotation to this tool.`,
+    description: [
+      "Manage OAuth account pool for provider credential rotation.",
+      "Use 'list' to see all accounts and their status,",
+      "'rotate' to switch to the next pool account,",
+      "'remove <email>' to remove an account,",
+      "'assign-pending <email>' to assign a pending unidentified token to an account,",
+      "'check' to test token validity for all accounts,",
+      "'status' for rotation statistics.",
+      "Supports providers: anthropic (Claude Pro/Max), openai (ChatGPT Plus/Pro),",
+      "and cursor (Cursor Pro).",
+      "The agent should route natural language requests about managing",
+      "provider accounts, OAuth pools, or credential rotation to this tool.",
+    ].join(" "),
     parameters: {
       type: "object",
       properties: {
