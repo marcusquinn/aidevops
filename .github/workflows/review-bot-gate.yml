@@ -30,7 +30,6 @@ concurrency:
 
 jobs:
   review-bot-gate:
-    name: Wait for AI Review Bots
     runs-on: ubuntu-latest
     # Only run on PRs (issue_comment fires for PR comments too).
     # GH#4002: Skip pull_request_review events from known review bots.
