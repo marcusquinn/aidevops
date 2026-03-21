@@ -26,28 +26,74 @@ OPENCODE_DB_FILE="${HOME}/.local/share/opencode/opencode.db"
 # --- Resolve profile repo path from repos.json ---
 _resolve_profile_repo() {
 	local repos_json="${HOME}/.config/aidevops/repos.json"
-	if [[ ! -f "$repos_json" ]]; then
-		echo "Error: repos.json not found at $repos_json" >&2
+
+	# Try repos.json first (primary lookup)
+	if [[ -f "$repos_json" ]] && command -v jq &>/dev/null; then
+		local profile_path
+		profile_path=$(jq -r '
+			if .initialized_repos then
+				.initialized_repos[] | select(.priority == "profile") | .path
+			else
+				to_entries[] | select(.value.priority == "profile") | .value.path
+			end
+		' "$repos_json" 2>/dev/null | head -1)
+
+		if [[ -n "$profile_path" && "$profile_path" != "null" && -d "$profile_path" ]]; then
+			echo "$profile_path"
+			return 0
+		fi
+	fi
+
+	# Self-healing fallback: find profile repo by convention (~/Git/$username).
+	# This handles the case where cmd_init created the repo but repos.json
+	# registration failed or was lost. The hourly update job would otherwise
+	# silently fail forever.
+	local gh_user=""
+	if command -v gh &>/dev/null; then
+		gh_user=$(gh api user --jq '.login' 2>/dev/null) || true
+	fi
+	if [[ -z "$gh_user" ]]; then
+		echo "Error: no profile repo in repos.json and gh CLI unavailable for fallback" >&2
 		return 1
 	fi
 
-	# Find repo with priority "profile" — supports both flat and nested repos.json formats
-	local profile_path
-	profile_path=$(jq -r '
-		if .initialized_repos then
-			.initialized_repos[] | select(.priority == "profile") | .path
-		else
-			to_entries[] | select(.value.priority == "profile") | .value.path
-		end
-	' "$repos_json" 2>/dev/null | head -1)
-
-	if [[ -z "$profile_path" || "$profile_path" == "null" ]]; then
-		echo "Error: no profile repo found in repos.json (set priority: \"profile\")" >&2
-		return 1
+	local convention_path="${HOME}/Git/${gh_user}"
+	if [[ -d "$convention_path" ]] && [[ -f "${convention_path}/README.md" ]] &&
+		grep -q '<!-- STATS-START -->' "${convention_path}/README.md" 2>/dev/null; then
+		# Found it — auto-register in repos.json so future lookups are fast
+		echo "Auto-registering profile repo at $convention_path" >&2
+		if [[ -f "$repos_json" ]] && command -v jq &>/dev/null; then
+			local tmp_json
+			tmp_json=$(mktemp)
+			jq --arg path "$convention_path" --arg slug "${gh_user}/${gh_user}" '
+				.initialized_repos += [{
+					"path": $path,
+					"slug": $slug,
+					"priority": "profile",
+					"pulse": false,
+					"maintainer": ($slug | split("/")[0])
+				}]
+			' "$repos_json" >"$tmp_json" && mv "$tmp_json" "$repos_json"
+		fi
+		echo "$convention_path"
+		return 0
 	fi
 
-	echo "$profile_path"
-	return 0
+	# Last resort: try cmd_init to create/clone/register everything
+	if command -v gh &>/dev/null && gh auth status &>/dev/null; then
+		echo "No profile repo found — running init to create one" >&2
+		if cmd_init >&2; then
+			# Re-resolve after init
+			local init_path="${HOME}/Git/${gh_user}"
+			if [[ -d "$init_path" ]]; then
+				echo "$init_path"
+				return 0
+			fi
+		fi
+	fi
+
+	echo "Error: no profile repo found and could not auto-create one" >&2
+	return 1
 }
 
 # --- Format number with commas (bash 3.2 compatible) ---
