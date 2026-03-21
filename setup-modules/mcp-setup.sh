@@ -435,11 +435,10 @@ setup_opencode_plugins() {
 	# Prerequisites met — proceed with setup
 	print_info "Setting up OpenCode plugins..."
 
-	# Setup aidevops plugin via local plugin directory (not opencode.json plugin array).
-	# OpenCode's plugin array is npm-only. Local plugins must be symlinked to:
-	#   ~/.config/opencode/plugins/  (global)
-	#   .opencode/plugins/           (project-level)
-	# See: https://opencode.ai/docs/plugins/
+	# Register aidevops plugin using two complementary mechanisms:
+	#   1. file:// URL in opencode.json "plugin" array (works on all tested versions)
+	#   2. Symlink in ~/.config/opencode/plugins/ (newer OpenCode convention)
+	# Both are idempotent — the plugin's registerPoolProvider() checks before adding.
 	local plugins_dir="$HOME/.config/opencode/plugins"
 	local aidevops_plugin_src="$HOME/.aidevops/agents/plugins/opencode-aidevops"
 	local aidevops_plugin_dst="$plugins_dir/opencode-aidevops"
@@ -452,22 +451,52 @@ setup_opencode_plugins() {
 		return 0
 	fi
 
-	# Create plugins directory if needed
-	mkdir -p "$plugins_dir"
+	# --- Mechanism 1: file:// URL in opencode.json plugin array ---
+	# This is the primary mechanism — proven to work on OpenCode 1.2.x.
+	local opencode_config
+	local plugin_url="file://${aidevops_plugin_entrypoint}"
+	if opencode_config=$(find_opencode_config) && command -v jq &>/dev/null; then
+		# Check if the plugin URL is already in the array
+		local already_registered
+		already_registered=$(jq --arg url "$plugin_url" \
+			'(.plugin // []) | map(select(. == $url)) | length' \
+			"$opencode_config" 2>/dev/null || echo "0")
 
-	# Register plugin if needed; treat broken symlinks as unregistered.
+		if [[ "$already_registered" -eq 0 ]]; then
+			# Add the plugin URL to the array (create array if absent)
+			local tmp_config="${opencode_config}.tmp.$$"
+			if jq --arg url "$plugin_url" \
+				'.plugin = ((.plugin // []) + [$url] | unique)' \
+				"$opencode_config" >"$tmp_config" 2>/dev/null; then
+				mv "$tmp_config" "$opencode_config"
+				print_success "aidevops plugin registered in opencode.json"
+			else
+				rm -f "$tmp_config"
+				print_warning "Failed to update opencode.json plugin array"
+			fi
+		else
+			print_success "aidevops plugin already registered in opencode.json"
+		fi
+		pool_plugin_registered="true"
+	else
+		if [[ -z "${opencode_config:-}" ]]; then
+			print_info "opencode.json not found — run 'opencode' once to create it, then re-run setup"
+		else
+			print_info "jq not installed — cannot update opencode.json plugin array"
+		fi
+	fi
+
+	# --- Mechanism 2: symlink in plugins directory (belt-and-suspenders) ---
+	mkdir -p "$plugins_dir"
 	if [[ -L "$aidevops_plugin_dst" ]]; then
 		if [[ ! -e "$aidevops_plugin_dst" ]]; then
-			print_warning "Broken aidevops plugin symlink detected; recreating ~/.config/opencode/plugins/opencode-aidevops"
+			print_warning "Broken aidevops plugin symlink detected; recreating"
 			ln -sfn "$aidevops_plugin_src" "$aidevops_plugin_dst"
 		fi
-		print_success "aidevops plugin already registered at ~/.config/opencode/plugins/"
-	elif [[ -d "$aidevops_plugin_dst" && -f "$aidevops_plugin_dst/index.mjs" ]]; then
-		print_success "aidevops plugin already registered at ~/.config/opencode/plugins/"
-	else
+	elif [[ ! -d "$aidevops_plugin_dst" ]]; then
 		ln -sfn "$aidevops_plugin_src" "$aidevops_plugin_dst"
-		print_success "aidevops plugin registered at ~/.config/opencode/plugins/"
 	fi
+
 	setup_track_configured "OpenCode plugins"
 	pool_plugin_registered="true"
 
