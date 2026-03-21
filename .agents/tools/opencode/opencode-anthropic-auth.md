@@ -338,7 +338,7 @@ OAuth tokens are stored securely by OpenCode in:
 
 > **v1.2.30+**: Use `opencode auth login` and select **Anthropic Pool**.
 > **v1.1.36–v1.2.29**: Use built-in **Anthropic → Claude Pro/Max**.
-> **pre-v1.1.36**: Install `opencode-anthropic-auth` first, then use Anthropic OAuth.
+> **pre-v1.1.36**: See [Legacy Installation](#legacy-installation-pre-v1136-only) for external plugin setup.
 
 ```bash
 # First-time setup
