@@ -20,17 +20,17 @@ get_plan_sections() {
 
 get_plan_status() {
 	local line="$1"
-	sed -n "$((line+1)),$((line+5))p" "$PLANS_FILE" | grep "Status:" | head -1 | sed 's/.*Status:\s*//'
+	sed -n "$((line + 1)),$((line + 5))p" "$PLANS_FILE" | grep "Status:" | head -1 | sed 's/.*Status:\s*//'
 }
 
 get_plan_todos() {
 	local line="$1"
-	sed -n "$((line+1)),$((line+10))p" "$PLANS_FILE" | grep -oE "t[0-9]+" | sort -u
+	sed -n "$((line + 1)),$((line + 10))p" "$PLANS_FILE" | grep -oE "t[0-9]+" | sort -u
 }
 
 check_todo_completed() {
 	local todo_id="$1"
-	grep -c "\[x\].*${todo_id}" "$TODO_FILE" 2>/dev/null || echo 0
+	grep -c "\[x\].*${todo_id}" "$TODO_FILE" 2>/dev/null
 }
 
 check_plan_completed() {
@@ -90,21 +90,21 @@ cmd_check() {
 		total=$((total + 1))
 
 		case "$status" in
-			completed|all_todos_done)
-				completed=$((completed + 1))
-				echo "✅ $title"
-				;;
-			active)
-				active=$((active + 1))
-				echo "🔄 $title"
-				;;
-			has_pending)
-				pending=$((pending + 1))
-				echo "⏳ $title"
-				;;
-			no_todos)
-				echo "❓ $title (no TODOs found)"
-				;;
+		completed | all_todos_done)
+			completed=$((completed + 1))
+			echo "✅ $title"
+			;;
+		active)
+			active=$((active + 1))
+			echo "🔄 $title"
+			;;
+		has_pending)
+			pending=$((pending + 1))
+			echo "⏳ $title"
+			;;
+		no_todos)
+			echo "❓ $title (no TODOs found)"
+			;;
 		esac
 	done < <(get_plan_sections)
 
@@ -119,18 +119,35 @@ cmd_archive() {
 	fi
 
 	if [ ! -f "$ARCHIVE_FILE" ]; then
-		echo "# Archived Plans" > "$ARCHIVE_FILE"
-		echo "" >> "$ARCHIVE_FILE"
-		echo "Completed plans moved from PLANS.md during setup/cleanup." >> "$ARCHIVE_FILE"
-		echo "" >> "$ARCHIVE_FILE"
+		echo "# Archived Plans" >"$ARCHIVE_FILE"
+		echo "" >>"$ARCHIVE_FILE"
+		echo "Completed plans moved from PLANS.md during setup/cleanup." >>"$ARCHIVE_FILE"
+		echo "" >>"$ARCHIVE_FILE"
 	fi
+
+	# Collect all section headers into an immutable snapshot before any deletions.
+	# Processing the live file inside the loop would invalidate line offsets after
+	# each sed deletion, causing data corruption.
+	local -a section_lines=()
+	while IFS= read -r header_line; do
+		section_lines+=("$header_line")
+	done < <(get_plan_sections)
 
 	local archived=0
 	local temp_file
 	temp_file=$(mktemp)
 	cp "$PLANS_FILE" "$temp_file"
 
-	while IFS= read -r header_line; do
+	# Identify completed sections and record their line ranges.
+	local -a to_archive_starts=()
+	local -a to_archive_ends=()
+	local -a to_archive_titles=()
+	local total_lines
+	total_lines=$(wc -l <"$temp_file")
+
+	local i
+	for i in "${!section_lines[@]}"; do
+		local header_line="${section_lines[$i]}"
 		local line_num
 		line_num=$(echo "$header_line" | cut -d: -f1)
 		local status
@@ -140,23 +157,43 @@ cmd_archive() {
 			local title
 			title=$(echo "$header_line" | cut -d: -f2- | sed 's/^### //')
 
-			local next_header
-			next_header=$(tail -n +$((line_num + 1)) "$temp_file" | grep -n "^### \[" | head -1 | cut -d: -f1)
-			if [ -n "$next_header" ]; then
-				local end_line=$((line_num + next_header - 1))
-			else
-				local end_line
-				end_line=$(wc -l < "$temp_file")
-			fi
+			# Find the start of the next section to determine end of this one.
+			local end_line="$total_lines"
+			local j
+			for j in "${!section_lines[@]}"; do
+				if [ "$j" -gt "$i" ]; then
+					local next_num
+					next_num=$(echo "${section_lines[$j]}" | cut -d: -f1)
+					end_line=$((next_num - 1))
+					break
+				fi
+			done
 
-			echo "" >> "$ARCHIVE_FILE"
-			sed -n "${line_num},${end_line}p" "$temp_file" >> "$ARCHIVE_FILE"
-
-			sed -i "${line_num},${end_line}d" "$temp_file" 2>/dev/null || true
-			archived=$((archived + 1))
-			echo "Archived: $title"
+			to_archive_starts+=("$line_num")
+			to_archive_ends+=("$end_line")
+			to_archive_titles+=("$title")
 		fi
-	done < <(get_plan_sections)
+	done
+
+	# Append completed sections to archive file.
+	for i in "${!to_archive_starts[@]}"; do
+		echo "" >>"$ARCHIVE_FILE"
+		sed -n "${to_archive_starts[$i]},${to_archive_ends[$i]}p" "$temp_file" >>"$ARCHIVE_FILE"
+		echo "Archived: ${to_archive_titles[$i]}"
+	done
+
+	# Delete completed sections from temp file in reverse order so earlier line
+	# numbers remain valid after each deletion.
+	local idx
+	for idx in $(seq $((${#to_archive_starts[@]} - 1)) -1 0); do
+		local sed_exit=0
+		sed -i "${to_archive_starts[$idx]},${to_archive_ends[$idx]}d" "$temp_file" || sed_exit=$?
+		if [ "$sed_exit" -eq 0 ]; then
+			archived=$((archived + 1))
+		else
+			echo "WARNING: sed failed deleting lines ${to_archive_starts[$idx]}-${to_archive_ends[$idx]}" >&2
+		fi
+	done
 
 	mv "$temp_file" "$PLANS_FILE"
 	echo ""
@@ -169,12 +206,29 @@ cmd_remove() {
 		exit 1
 	fi
 
+	# Collect all section headers into an immutable snapshot before any deletions.
+	# Processing the live file inside the loop would invalidate line offsets after
+	# each sed deletion, causing data corruption.
+	local -a section_lines=()
+	while IFS= read -r header_line; do
+		section_lines+=("$header_line")
+	done < <(get_plan_sections)
+
 	local removed=0
 	local temp_file
 	temp_file=$(mktemp)
 	cp "$PLANS_FILE" "$temp_file"
 
-	while IFS= read -r header_line; do
+	# Identify completed sections and record their line ranges.
+	local -a to_remove_starts=()
+	local -a to_remove_ends=()
+	local -a to_remove_titles=()
+	local total_lines
+	total_lines=$(wc -l <"$temp_file")
+
+	local i
+	for i in "${!section_lines[@]}"; do
+		local header_line="${section_lines[$i]}"
 		local line_num
 		line_num=$(echo "$header_line" | cut -d: -f1)
 		local status
@@ -184,20 +238,37 @@ cmd_remove() {
 			local title
 			title=$(echo "$header_line" | cut -d: -f2- | sed 's/^### //')
 
-			local next_header
-			next_header=$(tail -n +$((line_num + 1)) "$temp_file" | grep -n "^### \[" | head -1 | cut -d: -f1)
-			if [ -n "$next_header" ]; then
-				local end_line=$((line_num + next_header - 1))
-			else
-				local end_line
-				end_line=$(wc -l < "$temp_file")
-			fi
+			# Find the start of the next section to determine end of this one.
+			local end_line="$total_lines"
+			local j
+			for j in "${!section_lines[@]}"; do
+				if [ "$j" -gt "$i" ]; then
+					local next_num
+					next_num=$(echo "${section_lines[$j]}" | cut -d: -f1)
+					end_line=$((next_num - 1))
+					break
+				fi
+			done
 
-			sed -i "${line_num},${end_line}d" "$temp_file" 2>/dev/null || true
-			removed=$((removed + 1))
-			echo "Removed: $title"
+			to_remove_starts+=("$line_num")
+			to_remove_ends+=("$end_line")
+			to_remove_titles+=("$title")
 		fi
-	done < <(get_plan_sections)
+	done
+
+	# Delete completed sections from temp file in reverse order so earlier line
+	# numbers remain valid after each deletion.
+	local idx
+	for idx in $(seq $((${#to_remove_starts[@]} - 1)) -1 0); do
+		local sed_exit=0
+		sed -i "${to_remove_starts[$idx]},${to_remove_ends[$idx]}d" "$temp_file" || sed_exit=$?
+		if [ "$sed_exit" -eq 0 ]; then
+			removed=$((removed + 1))
+			echo "Removed: ${to_remove_titles[$idx]}"
+		else
+			echo "WARNING: sed failed deleting lines ${to_remove_starts[$idx]}-${to_remove_ends[$idx]}" >&2
+		fi
+	done
 
 	mv "$temp_file" "$PLANS_FILE"
 	echo ""
@@ -232,20 +303,20 @@ command="${1:-help}"
 shift || true
 
 case "$command" in
-	check)
-		cmd_check
-		;;
-	archive)
-		cmd_archive
-		;;
-	remove)
-		cmd_remove
-		;;
-	status)
-		cmd_status
-		;;
-	help|--help|-h)
-		cat <<USAGE
+check)
+	cmd_check
+	;;
+archive)
+	cmd_archive
+	;;
+remove)
+	cmd_remove
+	;;
+status)
+	cmd_status
+	;;
+help | --help | -h)
+	cat <<USAGE
 Plans Cleanup Helper — Archive completed plans from PLANS.md
 
 Usage:
@@ -259,10 +330,10 @@ Environment:
   TODO_FILE     Path to TODO.md (default: TODO.md)
   ARCHIVE_FILE  Path to archive (default: todo/PLANS-ARCHIVE.md)
 USAGE
-		;;
-	*)
-		echo "Unknown command: $command" >&2
-		echo "Run: plans-cleanup-helper.sh help" >&2
-		exit 2
-		;;
+	;;
+*)
+	echo "Unknown command: $command" >&2
+	echo "Run: plans-cleanup-helper.sh help" >&2
+	exit 2
+	;;
 esac

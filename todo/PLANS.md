@@ -446,7 +446,7 @@ t1408.1 runs first (no dependencies). t1408.2 and t1408.3 can start after t1408.
 **Estimate:** ~10h (ai:7h test:1.25h read:1h doc:0.75h)
 **TODO:** t1393 ✅, t1394 ✅, t1395 ✅, t1396 ✅
 **PRs:** #2914, #2916, #2917, #3079
-**Issues:** GH#2914 MERGED, GH#2916 MERGED, GH#2917 MERGED
+**Issues:** GH#2914 CLOSED, GH#2916 CLOSED, GH#2917 CLOSED
 **Logged:** 2026-03-05
 **Briefs:** [t1393](tasks/t1393-brief.md), [t1394](tasks/t1394-brief.md), [t1395](tasks/t1395-brief.md), [t1396](tasks/t1396-brief.md)
 
