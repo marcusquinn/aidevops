@@ -603,6 +603,13 @@ _render_model_usage_table() {
 	local model_json="$2"
 	local token_totals="$3"
 
+	# Skip entirely if no model data
+	local model_count
+	model_count=$(echo "$model_json" | jq -r 'if type == "array" then [.[] | select(.cost_total >= 0.05)] | length else 0 end' 2>/dev/null)
+	if [[ "${model_count:-0}" == "0" ]]; then
+		return 0
+	fi
+
 	# Opus rates used as baseline for model routing savings
 	local opus_input_rate="15.0" opus_output_rate="75.0" opus_cache_rate="1.50"
 	local total_requests=0 total_input=0 total_output=0 total_cache=0 total_cost=0
@@ -725,6 +732,32 @@ cmd_generate() {
 	local token_totals_30d token_totals_all
 	token_totals_30d=$(_get_token_totals "30d")
 	token_totals_all=$(_get_token_totals "all")
+
+	# Detect if there's any meaningful data to display.
+	# Check: any session time > 0, any model usage, or any screen time.
+	# If all sources are empty, show a clean "getting started" message instead
+	# of tables full of zeros — which looks broken to new users.
+	# Use jq for numeric comparisons to handle floats (e.g., 0.0) correctly.
+	local has_data=false
+	local has_session_time has_model_usage has_screen_time
+	has_session_time=$(echo "$month_json" | jq -r '((.total_human_hours + .total_machine_hours) // 0) > 0')
+	has_model_usage=$(echo "$model_json_all" | jq -r '((if type == "array" then length else 0 end) // 0) > 0')
+	has_screen_time=$(echo "$screen_json" | jq -r '(.month_hours // 0) > 0')
+
+	if [[ "$has_session_time" == "true" ]] ||
+		[[ "$has_model_usage" == "true" ]] ||
+		[[ "$has_screen_time" == "true" ]]; then
+		has_data=true
+	fi
+
+	if [[ "$has_data" == "false" ]]; then
+		cat <<'EOF'
+## Work with AI
+
+_Stats will appear here automatically once [aidevops](https://aidevops.sh) has been running locally. Includes AI session hours, model usage, token costs, and screen time._
+EOF
+		return 0
+	fi
 
 	# Extract screen time values (round to 1 decimal, strip .0 for large numbers)
 	local screen_today screen_week screen_month screen_year
