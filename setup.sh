@@ -1534,9 +1534,10 @@ ST_PLIST
 	fi
 
 	# Profile README auto-update scheduled job.
-	# Only installed if user has a profile repo (priority: "profile") in repos.json.
+	# Installed whenever gh CLI is available — the update script self-heals
+	# (discovers/creates the profile repo on first run via _resolve_profile_repo).
 	# macOS: launchd plist (hourly) | Linux: cron (hourly)
-	if [[ -x "$pr_script" ]] && [[ "$has_profile_repo" == "true" ]]; then
+	if [[ -x "$pr_script" ]] && command -v gh &>/dev/null; then
 		mkdir -p "$HOME/.aidevops/.agent-workspace/logs"
 
 		if [[ "$(uname -s)" == "Darwin" ]]; then
