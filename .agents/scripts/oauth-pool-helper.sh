@@ -41,7 +41,7 @@ OPENAI_SCOPES="openid profile email offline_access"
 # User-Agent (detect Claude CLI version)
 CLAUDE_VERSION="2.1.80"
 if command -v claude &>/dev/null; then
-	local_ver=$(claude --version 2>/dev/null | grep -oE '^[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+	local_ver=$(claude --version 2>/dev/null | grep -oE '^[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)
 	if [[ -n "${local_ver:-}" ]]; then
 		CLAUDE_VERSION="$local_ver"
 	fi
@@ -103,19 +103,21 @@ save_pool() {
 	return 0
 }
 
-# Open URL in browser (cross-platform)
+# Open URL in browser (best-effort, never fatal)
 open_browser() {
 	local url="$1"
 	if command -v open &>/dev/null; then
-		open "$url"
+		open "$url" 2>/dev/null || true
 	elif command -v xdg-open &>/dev/null; then
-		xdg-open "$url"
+		xdg-open "$url" 2>/dev/null || true
 	elif command -v wslview &>/dev/null; then
-		wslview "$url"
+		wslview "$url" 2>/dev/null || true
 	else
-		print_warning "Cannot open browser automatically. Open this URL manually:"
-		printf '%s\n' "$url" >&2
+		print_warning "Cannot open browser automatically."
 	fi
+	# Always print URL so user can open manually if browser launch failed
+	print_info "If the browser didn't open, visit this URL:"
+	printf '%s\n' "$url" >&2
 	return 0
 }
 
@@ -140,10 +142,11 @@ cmd_add() {
 		return 1
 	fi
 
-	# Generate PKCE
-	local verifier challenge
+	# Generate PKCE + separate state nonce (verifier must not double as state)
+	local verifier challenge state_nonce
 	verifier=$(generate_verifier)
 	challenge=$(generate_challenge "$verifier")
+	state_nonce=$(openssl rand -hex 16)
 
 	# Build authorize URL
 	local authorize_url client_id redirect_uri scopes
@@ -163,16 +166,13 @@ cmd_add() {
 	encoded_scopes=$(urlencode "$scopes")
 	encoded_redirect=$(urlencode "$redirect_uri")
 
-	local full_url="${authorize_url}?client_id=${client_id}&response_type=code&redirect_uri=${encoded_redirect}&scope=${encoded_scopes}&code_challenge=${challenge}&code_challenge_method=S256&state=${verifier}"
+	local full_url="${authorize_url}?client_id=${client_id}&response_type=code&redirect_uri=${encoded_redirect}&scope=${encoded_scopes}&code_challenge=${challenge}&code_challenge_method=S256&state=${state_nonce}"
 
 	if [[ "$provider" == "anthropic" ]]; then
 		full_url="${full_url}&code=true"
 	fi
 
 	print_info "Opening browser for ${provider} OAuth..."
-	print_info "If the browser doesn't open, visit this URL:"
-	printf '%s\n' "$full_url" >&2
-	echo "" >&2
 	open_browser "$full_url"
 
 	# Wait for authorization code
@@ -184,8 +184,18 @@ cmd_add() {
 		return 1
 	fi
 
-	# Strip fragment if present (code#state format)
-	local code="${auth_code%%#*}"
+	# Strip fragment if present (code#state format) and validate state
+	local code returned_state
+	if [[ "$auth_code" == *"#"* ]]; then
+		code="${auth_code%%#*}"
+		returned_state="${auth_code#*#}"
+		if [[ "$returned_state" != "$state_nonce" ]]; then
+			print_error "State mismatch — possible CSRF. Expected ${state_nonce}, got ${returned_state}"
+			return 1
+		fi
+	else
+		code="$auth_code"
+	fi
 
 	# Exchange code for tokens
 	print_info "Exchanging authorization code for tokens..."
@@ -195,8 +205,18 @@ cmd_add() {
 		token_endpoint="$ANTHROPIC_TOKEN_ENDPOINT"
 		content_type="application/json"
 		ua_header="$USER_AGENT"
-		token_body=$(printf '{"code":"%s","grant_type":"authorization_code","client_id":"%s","redirect_uri":"%s","code_verifier":"%s"}' \
-			"$code" "$client_id" "$redirect_uri" "$verifier")
+		# Build JSON via Python to safely encode the auth code (may contain
+		# characters that break printf-based JSON construction)
+		token_body=$(CODE="$code" CLIENT_ID="$client_id" REDIR="$redirect_uri" \
+			VERIFIER="$verifier" python3 -c "
+import json, os
+print(json.dumps({
+    'code': os.environ['CODE'],
+    'grant_type': 'authorization_code',
+    'client_id': os.environ['CLIENT_ID'],
+    'redirect_uri': os.environ['REDIR'],
+    'code_verifier': os.environ['VERIFIER'],
+}))")
 	else
 		token_endpoint="$OPENAI_TOKEN_ENDPOINT"
 		content_type="application/x-www-form-urlencoded"
@@ -319,6 +339,16 @@ json.dump(pool, sys.stdout, indent=2)
 
 cmd_check() {
 	local provider="${1:-all}"
+
+	# Validate provider to prevent injection into python3 inline code
+	case "$provider" in
+	all | anthropic | openai | cursor) ;;
+	*)
+		print_error "Invalid provider: $provider (valid: anthropic, openai, cursor, all)"
+		return 1
+		;;
+	esac
+
 	local pool
 	pool=$(load_pool)
 
@@ -344,13 +374,13 @@ cmd_check() {
 		printf '\n## %s (%s account%s)\n' "$prov" "$count" "$([ "$count" = "1" ] && echo "" || echo "s")"
 
 		# Single python3 pass: format details + test validity per account.
-		# Validity probe uses urllib.request so the Authorization header stays
-		# in-process and never appears on argv (unlike curl subprocess).
+		# Validity probe uses urllib.request so the token stays in-process
+		# and never appears on argv (unlike curl subprocess).
 		printf '%s' "$pool" | NOW_MS="$now_ms" PROV="$prov" UA="$USER_AGENT" python3 -c "
 import sys, json, os
 from datetime import datetime
 from urllib.request import Request, urlopen
-from urllib.error import HTTPError
+from urllib.error import HTTPError, URLError
 
 pool = json.load(sys.stdin)
 now = int(os.environ['NOW_MS'])
@@ -410,6 +440,8 @@ for a in pool.get(prov, []):
                     print(f\"    Validity: INVALID (401 - needs refresh)\")
                 else:
                     print(f\"    Validity: HTTP {e.code}\")
+            except (URLError, OSError):
+                print(f\"    Validity: ERROR (network)\")
             except Exception:
                 print(f\"    Validity: ERROR\")
 " 2>/dev/null
@@ -433,6 +465,15 @@ for a in pool.get(prov, []):
 
 cmd_list() {
 	local provider="${1:-all}"
+
+	case "$provider" in
+	all | anthropic | openai | cursor) ;;
+	*)
+		print_error "Invalid provider: $provider (valid: anthropic, openai, cursor, all)"
+		return 1
+		;;
+	esac
+
 	local pool
 	pool=$(load_pool)
 

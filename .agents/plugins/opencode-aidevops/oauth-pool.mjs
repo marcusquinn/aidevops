@@ -2331,13 +2331,20 @@ export function registerPoolProvider(config) {
         api: def.api,
         models,
       };
+      registered++;
     } else {
-      // Force-update model definitions and provider name (fixes stale labels
-      // from prior versions that persist in OpenCode's runtime config)
-      config.provider[def.id].models = models;
-      config.provider[def.id].name = def.name;
+      // Compare full provider object — only update+increment when any field differs
+      const existing = config.provider[def.id];
+      const modelsChanged = JSON.stringify(existing.models) !== JSON.stringify(models);
+      if (existing.name !== def.name || existing.npm !== def.npm ||
+          existing.api !== def.api || modelsChanged) {
+        existing.name = def.name;
+        existing.npm = def.npm;
+        existing.api = def.api;
+        existing.models = models;
+        registered++;
+      }
     }
-    registered++;
   }
 
   return registered;
