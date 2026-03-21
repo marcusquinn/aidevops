@@ -28,6 +28,9 @@ const DEPRECATED_BETAS = new Set([
   "extended-cache-ttl-2025-04-11",
 ]);
 
+/** Priority order for account status during pool rotation (lower = tried first). */
+const STATUS_ORDER = { active: 0, idle: 1, "rate-limited": 2, "auth-error": 3 };
+
 /**
  * Create the auth hook for the built-in "anthropic" provider.
  * Provides OAuth loader with custom fetch that handles:
@@ -77,9 +80,8 @@ export function createProviderAuthHook(client) {
             // Sort accounts: active first (by LRU), then others
             const sorted = [...accounts].sort((a, b) => {
               // Prefer active/idle accounts over rate-limited/auth-error
-              const statusOrder = { active: 0, idle: 1, "rate-limited": 2, "auth-error": 3 };
-              const aOrder = statusOrder[a.status] ?? 99;
-              const bOrder = statusOrder[b.status] ?? 99;
+              const aOrder = STATUS_ORDER[a.status] ?? 99;
+              const bOrder = STATUS_ORDER[b.status] ?? 99;
               if (aOrder !== bOrder) return aOrder - bOrder;
               // Within same status, prefer least recently used
               return new Date(a.lastUsed || 0) - new Date(b.lastUsed || 0);
