@@ -245,6 +245,14 @@ deploy_aidevops_agents() {
 
 		# Deploy enabled plugins from plugins.json
 		deploy_plugins "$target_dir" "$plugins_file"
+
+		# Cleanup completed plans from PLANS.md (keeps new installs clean)
+		local plans_cleanup="$repo_dir/.agents/scripts/plans-cleanup-helper.sh"
+		if [[ -x "$plans_cleanup" ]] && [[ -f "$repo_dir/todo/PLANS.md" ]]; then
+			if "$plans_cleanup" archive 2>/dev/null; then
+				print_info "Archived completed plans from PLANS.md"
+			fi
+		fi
 	else
 		print_error "Failed to deploy agents"
 		return 1

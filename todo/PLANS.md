@@ -24,9 +24,11 @@ Each plan includes:
 
 ### [2026-03-14] Restore OpenAI Codex and Enforce Model ID Conventions
 
-**Status:** Planning
+**Status:** Completed
 **Estimate:** ~2.5h
-**TODO:** t1483
+**TODO:** t1483 ✅
+**PR:** #4660
+**Issue:** GH#4656 CLOSED
 **Logged:** 2026-03-14
 **Trigger:** User review of PR#4641 and PR#4647 — both made incorrect model ID changes based on false assumptions.
 
@@ -57,9 +59,11 @@ Fix two classes of model ID mismanagement by pulse workers, and make the default
 
 ### [2026-03-12] Agent Runtime Sync After Merge/Release
 
-**Status:** Planning
+**Status:** Completed
 **Estimate:** ~3h (ai:1.75h test:45m read:30m)
-**TODO:** t1453
+**TODO:** t1453 ✅
+**PR:** #4256
+**Issue:** GH#4205 CLOSED
 **Logged:** 2026-03-12
 **Trigger:** Issue [GH#4205](https://github.com/marcusquinn/aidevops/issues/4205) plus observed post-release drift where new SEO subagent and slash-command docs were present in repo but missing in `~/.aidevops/agents/` until manual `rsync`.
 
@@ -106,9 +110,11 @@ This is a framework reliability issue, not only a one-off docs problem. If runti
 
 ### [2026-03-11] gh Mutation `/bin/zsh` `posix_spawn` Failure
 
-**Status:** Planning
+**Status:** Completed
 **Estimate:** ~3h (ai:2h test:45m read:15m)
-**TODO:** t1434
+**TODO:** t1434 ✅
+**PR:** #4127
+**Issue:** GH#4122 CLOSED
 **Logged:** 2026-03-11
 **Trigger:** Provider-aware headless runtime release session hit `gh` write-path failures during merge and issue lifecycle steps.
 
@@ -154,9 +160,11 @@ This is a framework-level reliability issue because full-loop, release, and supe
 
 ### [2026-03-09] Grith-Inspired Security Enhancements
 
-**Status:** Planning
+**Status:** Completed
 **Estimate:** ~18h (ai:14h test:2.5h read:1.5h)
-**TODO:** t1428 (parent), t1428.1-t1428.5 (subtasks)
+**TODO:** t1428 ✅ (parent), t1428.1-t1428.5 ✅ (subtasks)
+**PRs:** #4030, #4031, #4035, #4036, #4042
+**Issue:** GH#4025 CLOSED
 **Logged:** 2026-03-09
 **Inspiration:** [grith.ai](https://grith.ai) — zero-trust AI agent security proxy. Blog analysis of 9 posts covering: 7-agent security audit, MCP tool poisoning, skill supply chain attacks, Clinejection, DNS exfiltration (CVE-2025-55284), IDEsaster 24 CVEs, OpenClaw bans, vibe coding OSS impact.
 
@@ -199,9 +207,11 @@ Gap analysis of aidevops security stack against Grith.ai's zero-trust AI agent s
 
 ### [2026-03-07] Convos Encrypted Messaging Agent
 
-**Status:** Planning
+**Status:** Completed
 **Estimate:** ~2h (ai:1.5h read:30m)
-**TODO:** t1414 (parent), t1414.1-t1414.2 (subtasks)
+**TODO:** t1414 ✅ (parent), t1414.1-t1414.2 ✅ (subtasks)
+**PRs:** #3140, #3143, #3187
+**Issue:** GH#3126 CLOSED
 **Logged:** 2026-03-07
 **Upstream skill:** `https://convos.org/skill.md`
 
@@ -235,9 +245,11 @@ The skill is published at `https://convos.org/skill.md` — a raw URL, not a Git
 
 ### [2026-03-07] URL-Based Skill Update Checking for Non-GitHub Sources
 
-**Status:** Planning
+**Status:** Completed
 **Estimate:** ~3h (ai:2.5h test:30m)
-**TODO:** t1415 (parent), t1415.1-t1415.3 (subtasks)
+**TODO:** t1415 ✅ (parent), t1415.1-t1415.3 ✅ (subtasks)
+**PRs:** #3139, #3141, #3886
+**Issue:** GH#3131 CLOSED
 **Logged:** 2026-03-07
 **Depends on:** None
 **Enables:** t1414.3 (Convos upstream tracking)
@@ -285,9 +297,11 @@ Existing GitHub-sourced skills continue using `upstream_commit` — no breaking 
 
 ### [2026-03-06] Recursive Task Decomposition for Dispatch — Classify/Decompose Pipeline
 
-**Status:** Planning
+**Status:** Completed
 **Estimate:** ~10h (ai:7h test:2h read:1h)
-**TODO:** t1408 (parent), t1408.1-t1408.5 (subtasks)
+**TODO:** t1408 ✅ (parent), t1408.1-t1408.5 ✅ (subtasks)
+**PRs:** #2989, #2997, #2999, #3000, #3091
+**Issue:** GH#2983 CLOSED
 **Logged:** 2026-03-06
 **Brief:** [todo/tasks/t1408-brief.md](tasks/t1408-brief.md)
 **Inspired by:** [TinyAGI/fractals](https://github.com/TinyAGI/fractals) (recursive agentic task orchestrator, 146 stars, MIT)
@@ -428,9 +442,11 @@ t1408.1 runs first (no dependencies). t1408.2 and t1408.3 can start after t1408.
 
 ### [2026-03-05] LLM Evaluation Suite — Benchmarking, Evaluators, Datasets, and Prompt Version Tracking
 
-**Status:** Planning
+**Status:** Completed
 **Estimate:** ~10h (ai:7h test:1.25h read:1h doc:0.75h)
-**TODO:** t1393, t1394, t1395, t1396
+**TODO:** t1393 ✅, t1394 ✅, t1395 ✅, t1396 ✅
+**PRs:** #2914, #2916, #2917, #3079
+**Issues:** GH#2914 MERGED, GH#2916 MERGED, GH#2917 MERGED
 **Logged:** 2026-03-05
 **Briefs:** [t1393](tasks/t1393-brief.md), [t1394](tasks/t1394-brief.md), [t1395](tasks/t1395-brief.md), [t1396](tasks/t1396-brief.md)
 
@@ -524,11 +540,11 @@ A LangWatch subagent doc (`services/monitoring/langwatch.md`) was also created i
 
 ### [2026-03-05] Fix Runaway Memory Consumption — Process Guards, ShellCheck Limits, Session Awareness
 
-**Status:** Planning
+**Status:** Completed
 **Estimate:** ~6h (ai:4h test:1.5h read:30m)
-**TODO:** t1398 (parent), t1398.1-t1398.5 (subtasks)
+**TODO:** t1398 ✅ (parent), t1398.1-t1398.5 ✅ (subtasks)
 **Logged:** 2026-03-05
-**Issue:** [GH#2854](https://github.com/marcusquinn/aidevops/issues/2854)
+**Issue:** [GH#2854](https://github.com/marcusquinn/aidevops/issues/2854) CLOSED
 **Replaces:** PR #2792 (declined)
 
 #### Purpose
@@ -565,9 +581,9 @@ Root-cause fix for the March 3 kernel panic and ongoing memory pressure. Analysi
 
 ### [2026-03-02] Prompt Injection Scanner — Tool-Agnostic Defense for aidevops and Agentic Apps
 
-**Status:** Planning
+**Status:** Completed
 **Estimate:** ~7.5h (ai:5.5h test:1h read:1h)
-**TODO:** t1375 (parent), t1375.1-t1375.5 (subtasks)
+**TODO:** t1375 ✅ (parent), t1375.1-t1375.5 ✅ (subtasks)
 **Logged:** 2026-03-02
 **Brief:** [todo/tasks/t1375-brief.md](tasks/t1375-brief.md)
 
@@ -685,9 +701,9 @@ t1375.1 and t1375.2 can run in parallel. t1375.3 and t1375.4 depend on the agent
 
 ### [2026-03-01] Vector Search Agent — zvec and Per-Tenant RAG for SaaS
 
-**Status:** Planning
+**Status:** Completed
 **Estimate:** ~7h (ai:5h test:1h read:1h)
-**TODO:** t1370 (parent), t1370.1-t1370.5 (subtasks)
+**TODO:** t1370 ✅ (parent), t1370.1-t1370.5 ✅ (subtasks)
 **Logged:** 2026-03-01
 **Brief:** [todo/tasks/t1370-brief.md](tasks/t1370-brief.md)
 
@@ -831,9 +847,9 @@ t1370.1 and t1370.2 can run in parallel. t1370.3 depends on the decision guide s
 
 ### [2026-03-01] UI/UX Inspiration Skill and Brand Identity System
 
-**Status:** Planning
-**Estimate:** ~11.75h (ai:8h test:2h read:1.75h)
-**TODO:** t1371 (catalogue), t1372 (skill + interview), t1373 (brand identity), t1374 (wiring)
+**Status:** Completed
+**Estimate:** ~10h (ai:8h test:1h read:1h)
+**TODO:** t1371 ✅ (catalogue), t1372 ✅ (skill + interview), t1373 ✅ (brand identity), t1374 ✅ (wiring)
 **Logged:** 2026-03-01
 **Briefs:** [t1371](tasks/t1371-brief.md), [t1372](tasks/t1372-brief.md), [t1373](tasks/t1373-brief.md), [t1374](tasks/t1374-brief.md)
 
@@ -972,9 +988,9 @@ t1371 runs first (no dependencies). t1373 can start after t1371 (needs catalogue
 
 ### [2026-03-01] PaddleOCR Integration — Screenshot and Scene Text OCR
 
-**Status:** Planning
-**Estimate:** ~5h (ai:3.5h test:1h read:30m)
-**TODO:** t1369 (parent), t1369.1-t1369.5 (subtasks)
+**Status:** Completed
+**Estimate:** ~8h (ai:6h test:1h read:1h)
+**TODO:** t1369 ✅ (parent), t1369.1-t1369.5 ✅ (subtasks)
 **Logged:** 2026-03-01
 **Brief:** [todo/tasks/t1369-brief.md](tasks/t1369-brief.md)
 
@@ -1064,9 +1080,9 @@ t1369.1-t1369.3 can run in parallel. t1369.4 depends on docs being written. t136
 
 ### [2026-02-28] Multi-Model Orchestration Improvements — Parallel Verification + Bundle Presets
 
-**Status:** Planning
-**Estimate:** ~20h (ai:14h test:4h read:2h)
-**TODO:** t1364 (parent), t1364.1-t1364.3 (verification), t1364.4-t1364.6 (bundles)
+**Status:** Completed
+**Estimate:** ~10h (ai:7h test:2h read:1h)
+**TODO:** t1364 ✅ (parent), t1364.1-t1364.3 ✅ (verification), t1364.4-t1364.6 ✅ (bundles)
 **Logged:** 2026-02-28
 **Brief:** [todo/tasks/t1364-brief.md](tasks/t1364-brief.md)
 **Research:** [#2558](https://github.com/marcusquinn/aidevops/issues/2558) — Perplexity Computer + Microsoft Amplifier comparison
@@ -1144,9 +1160,9 @@ Workstream 2: Bundle-Based Project Presets
 
 ### [2026-02-27] Mission System — Autonomous Long-Running Project Orchestration
 
-**Status:** Planning
-**Estimate:** ~28h core + ~24h dependent features = ~52h total
-**TODO:** t1357 (core), t1358-t1362 (dependent features)
+**Status:** Completed
+**Estimate:** ~28h (ai:20h test:5h read:3h)
+**TODO:** t1357 ✅ (core), t1358 ✅-t1362 ✅ (dependent features)
 **Logged:** 2026-02-27
 **Brief:** [todo/tasks/t1357-brief.md](tasks/t1357-brief.md)
 
@@ -1274,9 +1290,9 @@ Phase 4: COMPLETION
 
 ### [2026-02-27] Conversational Memory and Entity Relationship System
 
-**Status:** Planning
+**Status:** Completed
 **Estimate:** ~27h (ai:20h test:4h read:3h)
-**TODO:** t1363
+**TODO:** t1363 ✅
 **Logged:** 2026-02-27
 **Brief:** [todo/tasks/t1363-brief.md](tasks/t1363-brief.md)
 

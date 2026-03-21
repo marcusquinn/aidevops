@@ -793,6 +793,7 @@ main() {
 		confirm_step "Extract OpenCode prompts" && extract_opencode_prompts
 		confirm_step "Check OpenCode prompt drift" && check_opencode_prompt_drift
 		confirm_step "Deploy aidevops agents to ~/.aidevops/agents/" && deploy_aidevops_agents
+		confirm_step "Archive completed plans from PLANS.md" && { [[ -x .agents/scripts/plans-cleanup-helper.sh ]] && .agents/scripts/plans-cleanup-helper.sh archive || true; }
 		confirm_step "Sync agents from private repositories" && sync_agent_sources
 		setup_shellcheck_wrapper
 		confirm_step "Install Claude Code safety hooks (block destructive commands)" && setup_safety_hooks
