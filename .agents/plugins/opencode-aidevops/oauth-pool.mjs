@@ -50,15 +50,17 @@ const FALLBACK_OPENCODE_VERSION = "1.2.27";
 
 /**
  * Detect the installed Claude CLI version.
+ * Uses execFileSync (no shell) to avoid metacharacter issues on Windows
+ * and maintain consistency with curlTokenEndpoint().
  * Returns just the version number (e.g. "2.1.80").
  * @returns {string}
  */
 function detectClaudeCliVersion() {
   try {
-    const raw = execSync("claude --version 2>/dev/null", {
+    const raw = execFileSync("claude", ["--version"], {
       timeout: 3000,
       encoding: "utf-8",
-      shell: true,
+      stdio: ["ignore", "pipe", "ignore"],
     }).trim();
     // Output is like "2.1.80 (Claude Code)" or just "2.1.80"
     const match = raw.match(/^(\d+\.\d+\.\d+)/);
@@ -71,20 +73,24 @@ function detectClaudeCliVersion() {
 
 /**
  * Detect the installed OpenCode CLI version.
+ * Tries "opencode" first, then "oc" as fallback.
+ * Uses execFileSync (no shell) for cross-platform safety.
  * Returns just the version number (e.g. "1.2.27").
  * @returns {string}
  */
 function detectOpenCodeVersion() {
-  try {
-    const raw = execSync("opencode --version 2>/dev/null || oc --version 2>/dev/null", {
-      timeout: 3000,
-      encoding: "utf-8",
-      shell: true,
-    }).trim();
-    const match = raw.match(/^(\d+\.\d+\.\d+)/);
-    if (match) return match[1];
-  } catch {
-    // CLI not installed or timed out
+  for (const bin of ["opencode", "oc"]) {
+    try {
+      const raw = execFileSync(bin, ["--version"], {
+        timeout: 3000,
+        encoding: "utf-8",
+        stdio: ["ignore", "pipe", "ignore"],
+      }).trim();
+      const match = raw.match(/^(\d+\.\d+\.\d+)/);
+      if (match) return match[1];
+    } catch {
+      // Try next binary
+    }
   }
   return FALLBACK_OPENCODE_VERSION;
 }
@@ -273,29 +279,53 @@ let cursorProxyCooldownUntil = 0;
  */
 function curlTokenEndpoint(url, options, context) {
   const args = [
-    "-s",
-    "-w", "\n%{http_code}",        // append HTTP status on last line
+    "-sS",                          // silent but show errors
+    "-i",                           // include response headers in output
+    "-w", "\n%{http_code}",         // append HTTP status on last line
     "-X", "POST",
     "-H", `Content-Type: ${options.contentType || "application/json"}`,
     "-H", `User-Agent: ${options.headers["User-Agent"]}`,
-    "-d", options.body,
+    "--data-binary", "@-",          // read body from stdin (keeps secrets off argv/ps)
     "--max-time", "15",             // hard timeout
     url,
   ];
 
   try {
     // Use execFileSync (no shell) to avoid metacharacter issues with
-    // parentheses in User-Agent and JSON in body. Each array element
-    // is passed as a separate argv entry — no quoting needed.
+    // parentheses in User-Agent. Body is passed via stdin to keep
+    // OAuth secrets (refresh_token, authorization_code) off the process
+    // command line where they'd be visible via ps/proc.
     const raw = execFileSync("curl", args, {
       encoding: "utf-8",
       timeout: 20_000,
+      input: options.body,
     });
 
-    // Last line is the HTTP status code, everything before is the body
+    // Output format with -i: headers\r\n\r\nbody\n<http_code>
+    // Last line is the HTTP status code from -w
     const lines = raw.trimEnd().split("\n");
     const statusCode = parseInt(lines.pop(), 10) || 500;
-    const responseBody = lines.join("\n");
+    const fullOutput = lines.join("\n");
+
+    // Split headers from body at the blank line (\r\n\r\n)
+    const headerBodySplit = fullOutput.indexOf("\r\n\r\n");
+    let responseHeaders = {};
+    let responseBody = fullOutput;
+
+    if (headerBodySplit !== -1) {
+      const headerBlock = fullOutput.substring(0, headerBodySplit);
+      responseBody = fullOutput.substring(headerBodySplit + 4);
+
+      // Parse response headers into a case-insensitive map
+      for (const line of headerBlock.split("\r\n")) {
+        const colonIdx = line.indexOf(":");
+        if (colonIdx > 0) {
+          const key = line.substring(0, colonIdx).trim().toLowerCase();
+          const value = line.substring(colonIdx + 1).trim();
+          responseHeaders[key] = value;
+        }
+      }
+    }
 
     const statusText = statusCode === 200 ? "OK"
       : statusCode === 429 ? "Too Many Requests"
@@ -303,31 +333,30 @@ function curlTokenEndpoint(url, options, context) {
       : statusCode === 400 ? "Bad Request"
       : `HTTP ${statusCode}`;
 
-    // Parse response headers we care about from curl
-    // For Retry-After, we'd need -D or -i; for now use the default cooldown
     return {
       ok: statusCode >= 200 && statusCode < 300,
       status: statusCode,
       statusText,
       headers: {
-        get(_key) {
-          // curl -s doesn't capture response headers; return null
-          // Retry-After handling falls back to default cooldown
-          return null;
+        get(key) {
+          return responseHeaders[key.toLowerCase()] ?? null;
         },
       },
       async json() { return JSON.parse(responseBody); },
       async text() { return responseBody; },
     };
   } catch (err) {
-    console.error(`[aidevops] OAuth pool: ${context} curl failed: ${err.message}`);
+    // Log only the error code/status — never err.message which may
+    // contain the request body with OAuth secrets
+    const reason = err?.code || `exit ${err?.status ?? "unknown"}`;
+    console.error(`[aidevops] OAuth pool: ${context} curl failed (${reason})`);
     return {
       ok: false,
       status: 500,
       statusText: "curl failed",
       headers: { get() { return null; } },
-      async json() { return { error: err.message }; },
-      async text() { return err.message; },
+      async json() { return { error: reason }; },
+      async text() { return reason; },
     };
   }
 }
@@ -372,8 +401,8 @@ async function fetchTokenEndpoint(body, context) {
   }, context);
 
   if (response.status === 429) {
-    // curl doesn't capture response headers with -s, use default cooldown
-    const cooldownMs = TOKEN_ENDPOINT_COOLDOWN_MS;
+    const retryAfter = response.headers.get("retry-after");
+    const cooldownMs = parseRetryAfterCooldown(retryAfter);
     tokenEndpointCooldownUntil = Date.now() + cooldownMs;
     const cooldownMinutes = Math.ceil(cooldownMs / 60000);
     console.error(
@@ -422,7 +451,8 @@ async function fetchOpenAITokenEndpoint(params, context) {
   }, context);
 
   if (response.status === 429) {
-    const cooldownMs = TOKEN_ENDPOINT_COOLDOWN_MS;
+    const retryAfter = response.headers.get("retry-after");
+    const cooldownMs = parseRetryAfterCooldown(retryAfter);
     openaiTokenEndpointCooldownUntil = Date.now() + cooldownMs;
     const cooldownMinutes = Math.ceil(cooldownMs / 60000);
     console.error(
