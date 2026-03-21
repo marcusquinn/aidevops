@@ -17,6 +17,9 @@
  * Dependencies: @bufbuild/protobuf, zod (available in OpenCode's node_modules)
  */
 
+import { readFileSync, writeFileSync } from "fs";
+import { join } from "path";
+import { homedir } from "os";
 import { getAccounts, ensureValidToken, patchAccount } from "./oauth-pool.mjs";
 
 // ---------------------------------------------------------------------------
@@ -152,7 +155,19 @@ export async function startCursorProxy(client) {
       console.error(`[aidevops] Cursor proxy: failed to set auth entry: ${err.message}`);
     }
 
-    return { port, models: models || [] };
+    // Persist cursor provider + models to opencode.json so they appear in
+    // the model picker. The config hook only modifies the in-memory config;
+    // OpenCode reads opencode.json from disk for the model list.
+    const effectiveModels = models || [];
+    if (effectiveModels.length > 0) {
+      try {
+        persistCursorProvider(port, effectiveModels);
+      } catch (err) {
+        console.error(`[aidevops] Cursor proxy: failed to persist provider to opencode.json: ${err.message}`);
+      }
+    }
+
+    return { port, models: effectiveModels };
   } catch (err) {
     console.error(`[aidevops] Cursor proxy: failed to start: ${err.message}`);
     return null;
@@ -248,4 +263,53 @@ export function registerCursorProvider(config, port, models) {
   }
 
   return false;
+}
+
+// ---------------------------------------------------------------------------
+// Persist cursor provider to opencode.json on disk
+// ---------------------------------------------------------------------------
+
+const OPENCODE_CONFIG_PATH = join(homedir(), ".config", "opencode", "opencode.json");
+
+/**
+ * Write the cursor provider entry (with models) to opencode.json on disk.
+ *
+ * OpenCode reads opencode.json from disk for the model list — the config hook
+ * only modifies the in-memory config. Without this, Cursor models don't appear
+ * in the Ctrl+T model picker.
+ *
+ * The port changes on every startup (Bun.serve port: 0), so this must run
+ * every time the proxy starts. We read-modify-write the JSON file atomically.
+ *
+ * @param {number} port - Proxy port
+ * @param {Array<{ id: string, name: string, reasoning?: boolean, contextWindow?: number, maxTokens?: number }>} models
+ */
+function persistCursorProvider(port, models) {
+  let config;
+  try {
+    const raw = readFileSync(OPENCODE_CONFIG_PATH, "utf-8");
+    config = JSON.parse(raw);
+  } catch {
+    console.error("[aidevops] Cursor proxy: cannot read opencode.json, skipping persist");
+    return;
+  }
+
+  if (!config.provider) config.provider = {};
+
+  const providerModels = buildCursorProviderModels(models, port);
+  const baseURL = `http://127.0.0.1:${port}/v1`;
+
+  config.provider.cursor = {
+    name: "Cursor (via aidevops proxy)",
+    npm: "@ai-sdk/openai-compatible",
+    api: baseURL,
+    models: providerModels,
+  };
+
+  try {
+    writeFileSync(OPENCODE_CONFIG_PATH, JSON.stringify(config, null, 2) + "\n", "utf-8");
+    console.error(`[aidevops] Cursor proxy: persisted ${models.length} models to opencode.json (port ${port})`);
+  } catch (err) {
+    console.error(`[aidevops] Cursor proxy: failed to write opencode.json: ${err.message}`);
+  }
 }
