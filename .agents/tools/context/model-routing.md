@@ -60,7 +60,7 @@ When referencing models in docs, scripts, or dispatch commands, use the full ID 
 **Fallback behaviour**: If a local model is not running or not installed, the routing depends on why `local` was selected:
 
 - **Privacy/on-device requirement**: FAIL — do not route to cloud. Return an error instructing the user to start the local server or pass `--allow-cloud` to explicitly override.
-- **Cost optimisation or experimentation**: Fall back to `composer2` (next tier in the routing chain). Local has no same-tier fallback — it skips directly to the cheapest cloud tier.
+- **Cost optimisation or experimentation**: Fall back to `composer2` (next tier in the routing chain). Local has no same-tier fallback — it skips directly to the next cloud tier.
 
 ### Use `flash` when:
 
