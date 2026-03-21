@@ -29,7 +29,81 @@ import { join, dirname } from "path";
 import { homedir, platform } from "os";
 import { createHash, randomBytes } from "crypto";
 import { createServer } from "http";
-import { execSync, spawn } from "child_process";
+import { execSync, execFileSync, spawn } from "child_process";
+
+// ---------------------------------------------------------------------------
+// Dynamic CLI version detection (GH#18329 fix)
+//
+// Anthropic blanket-rejects token endpoint requests with unrecognised
+// User-Agent strings (429). Hardcoding the version means we silently break
+// when the CLI updates. Detect at module load time (~50ms), cache for the
+// process lifetime, fall back to a known-good version if the CLI isn't found.
+//
+// Bun's fetch() also injects Origin, Referer, and Sec-Fetch-* headers that
+// Anthropic rate-limits on. Token endpoint calls use execSync("curl ...")
+// instead of fetch() to send exactly the headers we specify — nothing more.
+// See: https://github.com/vinzabe/PERMANENT-opencode-anthropic-oauth-fix
+// ---------------------------------------------------------------------------
+
+const FALLBACK_CLAUDE_VERSION = "2.1.80";
+const FALLBACK_OPENCODE_VERSION = "1.2.27";
+
+/**
+ * Detect the installed Claude CLI version.
+ * Returns just the version number (e.g. "2.1.80").
+ * @returns {string}
+ */
+function detectClaudeCliVersion() {
+  try {
+    const raw = execSync("claude --version 2>/dev/null", {
+      timeout: 3000,
+      encoding: "utf-8",
+      shell: true,
+    }).trim();
+    // Output is like "2.1.80 (Claude Code)" or just "2.1.80"
+    const match = raw.match(/^(\d+\.\d+\.\d+)/);
+    if (match) return match[1];
+  } catch {
+    // CLI not installed or timed out
+  }
+  return FALLBACK_CLAUDE_VERSION;
+}
+
+/**
+ * Detect the installed OpenCode CLI version.
+ * Returns just the version number (e.g. "1.2.27").
+ * @returns {string}
+ */
+function detectOpenCodeVersion() {
+  try {
+    const raw = execSync("opencode --version 2>/dev/null || oc --version 2>/dev/null", {
+      timeout: 3000,
+      encoding: "utf-8",
+      shell: true,
+    }).trim();
+    const match = raw.match(/^(\d+\.\d+\.\d+)/);
+    if (match) return match[1];
+  } catch {
+    // CLI not installed or timed out
+  }
+  return FALLBACK_OPENCODE_VERSION;
+}
+
+// Detect once at module load — cached for process lifetime
+const DETECTED_CLAUDE_VERSION = detectClaudeCliVersion();
+const DETECTED_OPENCODE_VERSION = detectOpenCodeVersion();
+const ANTHROPIC_USER_AGENT = `claude-cli/${DETECTED_CLAUDE_VERSION} (external, cli)`;
+
+console.error(`[aidevops] OAuth pool: detected Claude CLI v${DETECTED_CLAUDE_VERSION}, OpenCode v${DETECTED_OPENCODE_VERSION}`);
+
+/**
+ * Get the dynamically-detected Anthropic User-Agent string.
+ * Exported for use by provider-auth.mjs on API requests.
+ * @returns {string}
+ */
+export function getAnthropicUserAgent() {
+  return ANTHROPIC_USER_AGENT;
+}
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -58,7 +132,7 @@ const OPENAI_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
 const OPENAI_ISSUER = "https://auth.openai.com";
 const OPENAI_TOKEN_ENDPOINT = `${OPENAI_ISSUER}/oauth/token`;
 const OPENAI_OAUTH_AUTHORIZE_URL = `${OPENAI_ISSUER}/oauth/authorize`;
-const OPENCODE_USER_AGENT = "opencode/1.2.27";
+const OPENCODE_USER_AGENT = `opencode/${DETECTED_OPENCODE_VERSION}`;
 /** OpenAI uses a local redirect server at port 1455 for its built-in flow.
  *  For the pool's add-account flow we use the same redirect URI so the
  *  authorization code can be pasted back into the terminal prompt. */
@@ -183,15 +257,94 @@ let openaiTokenEndpointCooldownUntil = 0;
 let cursorProxyCooldownUntil = 0;
 
 /**
+ * Execute a curl request to a token endpoint, returning a Response-like object.
+ *
+ * Uses curl instead of fetch() because Bun's fetch injects Origin, Referer,
+ * and Sec-Fetch-* headers automatically. Anthropic's token endpoint
+ * rate-limits/blocks requests with these extra browser-like headers (429).
+ * curl only sends exactly the headers we specify.
+ *
+ * See: https://github.com/vinzabe/PERMANENT-opencode-anthropic-oauth-fix (Bug 3)
+ *
+ * @param {string} url - Token endpoint URL
+ * @param {Object} options - { headers: Record<string,string>, body: string, contentType?: string }
+ * @param {string} context - description for logging
+ * @returns {{ ok: boolean, status: number, statusText: string, headers: { get(k: string): string|null }, json(): Promise<any>, text(): Promise<string> }}
+ */
+function curlTokenEndpoint(url, options, context) {
+  const args = [
+    "-s",
+    "-w", "\n%{http_code}",        // append HTTP status on last line
+    "-X", "POST",
+    "-H", `Content-Type: ${options.contentType || "application/json"}`,
+    "-H", `User-Agent: ${options.headers["User-Agent"] || ANTHROPIC_USER_AGENT}`,
+    "-d", options.body,
+    "--max-time", "15",             // hard timeout
+    url,
+  ];
+
+  try {
+    // Use execFileSync (no shell) to avoid metacharacter issues with
+    // parentheses in User-Agent and JSON in body. Each array element
+    // is passed as a separate argv entry — no quoting needed.
+    const raw = execFileSync("curl", args, {
+      encoding: "utf-8",
+      timeout: 20_000,
+    });
+
+    // Last line is the HTTP status code, everything before is the body
+    const lines = raw.trimEnd().split("\n");
+    const statusCode = parseInt(lines.pop(), 10) || 500;
+    const responseBody = lines.join("\n");
+
+    const statusText = statusCode === 200 ? "OK"
+      : statusCode === 429 ? "Too Many Requests"
+      : statusCode === 401 ? "Unauthorized"
+      : statusCode === 400 ? "Bad Request"
+      : `HTTP ${statusCode}`;
+
+    // Parse response headers we care about from curl
+    // For Retry-After, we'd need -D or -i; for now use the default cooldown
+    return {
+      ok: statusCode >= 200 && statusCode < 300,
+      status: statusCode,
+      statusText,
+      headers: {
+        get(_key) {
+          // curl -s doesn't capture response headers; return null
+          // Retry-After handling falls back to default cooldown
+          return null;
+        },
+      },
+      async json() { return JSON.parse(responseBody); },
+      async text() { return responseBody; },
+    };
+  } catch (err) {
+    console.error(`[aidevops] OAuth pool: ${context} curl failed: ${err.message}`);
+    return {
+      ok: false,
+      status: 500,
+      statusText: "curl failed",
+      headers: { get() { return null; } },
+      async json() { return { error: err.message }; },
+      async text() { return err.message; },
+    };
+  }
+}
+
+/**
  * Fetch from the Anthropic token endpoint. Single attempt with 429 cooldown gate.
  *
  * If a previous call got 429 within the cooldown window, this returns a
  * synthetic 429 response immediately — no network request made. This prevents
  * every session start from hitting the endpoint and extending the rate limit.
  *
+ * Uses curl instead of fetch() to avoid Bun's automatic header injection
+ * (Origin, Referer, Sec-Fetch-*) which Anthropic rate-limits on.
+ *
  * @param {string} body - JSON string body
  * @param {string} context - description for logging
- * @returns {Promise<Response>}
+ * @returns {Promise<{ ok: boolean, status: number, statusText: string, headers: { get(k: string): string|null }, json(): Promise<any>, text(): Promise<string> }>}
  */
 async function fetchTokenEndpoint(body, context) {
   // Check cooldown gate — skip the request entirely if rate limited recently
@@ -206,19 +359,14 @@ async function fetchTokenEndpoint(body, context) {
     return new Response(null, { status: 429, statusText: "Rate Limited (cooldown)" });
   }
 
-  const response = await fetch(ANTHROPIC_TOKEN_ENDPOINT, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "User-Agent": "claude-cli/2.1.80 (external, cli)",
-    },
+  const response = curlTokenEndpoint(ANTHROPIC_TOKEN_ENDPOINT, {
+    headers: { "User-Agent": ANTHROPIC_USER_AGENT },
     body,
-  });
+  }, context);
 
   if (response.status === 429) {
-    // Parse Retry-After header if present, otherwise use default cooldown
-    const retryAfter = response.headers.get("retry-after");
-    const cooldownMs = parseRetryAfterCooldown(retryAfter);
+    // curl doesn't capture response headers with -s, use default cooldown
+    const cooldownMs = TOKEN_ENDPOINT_COOLDOWN_MS;
     tokenEndpointCooldownUntil = Date.now() + cooldownMs;
     const cooldownMinutes = Math.ceil(cooldownMs / 60000);
     console.error(
@@ -236,10 +384,11 @@ async function fetchTokenEndpoint(body, context) {
 /**
  * Fetch from the OpenAI token endpoint using form-encoded body (t1548).
  * OpenAI uses application/x-www-form-urlencoded, not JSON.
+ * Uses curl to avoid Bun's automatic header injection.
  *
  * @param {URLSearchParams} params - Form parameters
  * @param {string} context - description for logging
- * @returns {Promise<Response>}
+ * @returns {Promise<{ ok: boolean, status: number, statusText: string, headers: { get(k: string): string|null }, json(): Promise<any>, text(): Promise<string> }>}
  */
 async function fetchOpenAITokenEndpoint(params, context) {
   const now = Date.now();
@@ -252,18 +401,14 @@ async function fetchOpenAITokenEndpoint(params, context) {
     return new Response(null, { status: 429, statusText: "Rate Limited (cooldown)" });
   }
 
-  const response = await fetch(OPENAI_TOKEN_ENDPOINT, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/x-www-form-urlencoded",
-      "User-Agent": OPENCODE_USER_AGENT,
-    },
+  const response = curlTokenEndpoint(OPENAI_TOKEN_ENDPOINT, {
+    headers: { "User-Agent": OPENCODE_USER_AGENT },
     body: params.toString(),
-  });
+    contentType: "application/x-www-form-urlencoded",
+  }, context);
 
   if (response.status === 429) {
-    const retryAfter = response.headers.get("retry-after");
-    const cooldownMs = parseRetryAfterCooldown(retryAfter);
+    const cooldownMs = TOKEN_ENDPOINT_COOLDOWN_MS;
     openaiTokenEndpointCooldownUntil = Date.now() + cooldownMs;
     const cooldownMinutes = Math.ceil(cooldownMs / 60000);
     console.error(
@@ -1545,7 +1690,7 @@ export function createPoolAuthHook(client) {
                     const profileResp = await fetch(endpoint, {
                       headers: {
                         "Authorization": `Bearer ${json.access_token}`,
-                        "User-Agent": "claude-cli/2.1.80 (external, cli)",
+                        "User-Agent": ANTHROPIC_USER_AGENT,
                       },
                       redirect: "follow",
                     });

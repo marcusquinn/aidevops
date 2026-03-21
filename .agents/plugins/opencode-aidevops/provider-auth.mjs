@@ -14,7 +14,7 @@
  * This module makes the built-in provider use them correctly.
  */
 
-import { ensureValidToken, getAccounts, patchAccount } from "./oauth-pool.mjs";
+import { ensureValidToken, getAccounts, patchAccount, getAnthropicUserAgent } from "./oauth-pool.mjs";
 
 const TOKEN_ENDPOINT = "https://platform.claude.com/v1/oauth/token";
 const CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
@@ -179,7 +179,7 @@ export function createProviderAuthHook(client) {
 
           requestHeaders.set("authorization", `Bearer ${accessToken}`);
           requestHeaders.set("anthropic-beta", mergedBetas);
-          requestHeaders.set("user-agent", "claude-cli/2.1.80 (external, cli)");
+          requestHeaders.set("user-agent", getAnthropicUserAgent());
           requestHeaders.delete("x-api-key");
 
           // Transform request body
