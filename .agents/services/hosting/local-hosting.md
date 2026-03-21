@@ -894,17 +894,25 @@ localdev-helper.sh init
 
 ### App Store Connect Web Dashboard (asc-web)
 
-The `asc` CLI (App Store Connect) includes an embedded web server with a dashboard, CLI console, and screenshot studio. See `tools/mobile/app-store-connect.md` for full documentation.
+The `asc` CLI (App Store Connect) includes a web server with a dashboard and CLI console. A screenshot studio is served separately as a static app. See `tools/mobile/app-store-connect.md` for full setup (including a required one-time sparse clone of web app files).
 
 ```bash
-# Register with localdev (one-time)
-localdev-helper.sh add asc
+# Register two apps with localdev (one-time)
+# Leave a port gap of 3+ — asc web-server binds --port AND --port+1
+localdev-helper.sh add asc-web          # e.g. port 3109
+localdev-helper.sh add asc-editor 3112  # skip 3110-3111
 
-# Run the asc web server via localdev
-localdev-helper.sh run --app asc -- asc tui --port $PORT
-# → https://asc.local/command-center (interactive ASC dashboard)
-# → https://asc.local/console (CLI reference + terminal)
-# → https://asc.local/editor (screenshot studio)
+# Start servers on assigned ports
+ASC_PORT=$(jq -r '.apps["asc-web"].port' ~/.local-dev-proxy/ports.json)
+nohup asc web-server --port "$ASC_PORT" > /tmp/asc-web.log 2>&1 &
+
+EDITOR_PORT=$(jq -r '.apps["asc-editor"].port' ~/.local-dev-proxy/ports.json)
+nohup npx -y http-server ~/.asc/web/homepage -p "$EDITOR_PORT" --silent > /tmp/asc-editor.log 2>&1 &
+
+# Access via HTTPS:
+# → https://asc-web.local/command-center/ (dashboard)
+# → https://asc-web.local/console/ (CLI reference + terminal)
+# → https://asc-editor.local/editor/ (screenshot studio)
 ```
 
 ## File Locations

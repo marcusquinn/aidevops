@@ -190,32 +190,89 @@ asc app-shots translate --to zh --to ja       # localise all screens
 
 ## Web Apps (Local Hosting)
 
-The `asc` CLI includes an embedded web server with three web apps:
+The `asc` CLI includes a web server (`asc web-server`) with two web apps. A third app (Screenshot Studio) lives in the homepage repo and is served separately.
 
-| App | Path | Purpose |
-|-----|------|---------|
-| **Command Center** | `/command-center` | Interactive ASC dashboard — apps, builds, TestFlight, screenshots, subscriptions, reviews |
-| **Console** | `/console` | CLI reference + embedded terminal, Cmd+K search |
-| **Screenshot Studio** | `/editor` | Visual App Store screenshot builder with device bezels, text layers, gradient backgrounds |
+| App | Server | Purpose |
+|-----|--------|---------|
+| **Command Center** | `asc web-server` | Interactive ASC dashboard — apps, builds, TestFlight, screenshots, subscriptions, reviews |
+| **Console** | `asc web-server` | CLI reference + embedded terminal, Cmd+K search |
+| **Screenshot Studio** | Static (separate) | Visual App Store screenshot builder with device bezels, text layers, gradient backgrounds |
 
 **Live demos**: https://asccli.app/command-center, https://asccli.app/console, https://asccli.app/editor
 
-### Local hosting with localdev
+### Setup (one-time)
+
+The Homebrew bottle installs the `asc` binary but `asc web-server` extracts only `server.js` to a temp directory — the web app static files (HTML/CSS/JS) are not included. You must clone them separately:
 
 ```bash
-# Register with localdev (one-time)
-localdev-helper.sh add asc
+# 1. Clone web app files (sparse — only the web apps, not the full repo)
+mkdir -p ~/.asc/web
+git clone --depth 1 --filter=blob:none --sparse \
+  https://github.com/tddworks/asc-cli.git ~/.asc/web
+git -C ~/.asc/web sparse-checkout set apps/asc-web homepage/editor homepage/static
 
-# Run the asc web server via localdev
-localdev-helper.sh run --app asc -- asc tui --port $PORT
-# → https://asc.local/command-center (dashboard)
-# → https://asc.local/console (CLI reference)
-# → https://asc.local/editor (screenshot studio)
+# 2. Start asc web-server once to create the temp directory, then kill it
+asc web-server --port 18420 &
+ASC_PID=$!
+sleep 2
+kill "$ASC_PID" 2>/dev/null
+wait "$ASC_PID" 2>/dev/null
+
+# 3. Find the temp directory and symlink web app files into it
+TEMP_DIR=$(find /private/var/folders /tmp -name "server.js" -path "*/asc-web-server/*" \
+  -exec dirname {} \; 2>/dev/null | head -1)
+if [[ -n "$TEMP_DIR" ]]; then
+  ln -sf ~/.asc/web/apps/asc-web/command-center "$TEMP_DIR/command-center"
+  ln -sf ~/.asc/web/apps/asc-web/console "$TEMP_DIR/console"
+  ln -sf ~/.asc/web/apps/asc-web/shared "$TEMP_DIR/shared"
+  echo "Symlinked web apps into $TEMP_DIR"
+else
+  echo "ERROR: Could not find asc-web-server temp directory"
+fi
 ```
 
-The Command Center and Console require the `asc` server backend to execute commands. The Screenshot Studio is fully static and works without any backend — it can also be served standalone.
+### Local hosting with localdev
 
-**Server details**: Node.js HTTP server on port 8420 (configurable via `--port`). Routes: `/api/run` executes `asc` commands, static files served for all three apps. Commands are validated (blocks shell metacharacters).
+Register two apps with localdev — one for the asc web-server (Command Center + Console), one for the Screenshot Studio (static):
+
+```bash
+# Register apps (one-time). Use ports with a gap of 3+ between them
+# because asc web-server binds BOTH --port AND --port+1 (built-in HTTPS).
+localdev-helper.sh add asc-web          # e.g. port 3109
+localdev-helper.sh add asc-editor 3112  # skip 3110-3111 to avoid collision
+
+# Add /etc/hosts entries (requires sudo — run in your terminal)
+sudo sh -c 'echo "127.0.0.1 asc-web.local" >> /etc/hosts'
+sudo sh -c 'echo "127.0.0.1 asc-editor.local" >> /etc/hosts'
+```
+
+Start the servers on their assigned localdev ports:
+
+```bash
+# Command Center + Console (asc web-server on localdev port)
+ASC_PORT=$(jq -r '.apps["asc-web"].port' ~/.local-dev-proxy/ports.json)
+nohup asc web-server --port "$ASC_PORT" > /tmp/asc-web.log 2>&1 &
+
+# Screenshot Studio (static file server on localdev port)
+EDITOR_PORT=$(jq -r '.apps["asc-editor"].port' ~/.local-dev-proxy/ports.json)
+nohup npx -y http-server ~/.asc/web/homepage -p "$EDITOR_PORT" --silent > /tmp/asc-editor.log 2>&1 &
+```
+
+Access via HTTPS through Traefik:
+
+| App | URL |
+|-----|-----|
+| **Command Center** | https://asc-web.local/command-center/ |
+| **Console** | https://asc-web.local/console/ |
+| **Screenshot Studio** | https://asc-editor.local/editor/ |
+
+### Port collision warning
+
+`asc web-server --port N` binds **two** ports: `N` (HTTP) and `N+1` (its own built-in HTTPS). When assigning localdev ports, leave a gap of at least 2 between asc-web and the next app to avoid `EADDRINUSE` errors. Traefik handles TLS termination for the `.local` domains — the built-in HTTPS on port N+1 is unused but still binds.
+
+### Server details
+
+The `asc web-server` runs a Node.js HTTP server. Routes: `/api/run` executes `asc` CLI commands (validated — blocks shell metacharacters), static files served for Command Center and Console. The Screenshot Studio is fully static and works without any backend — it only needs a file server.
 
 ## Agent Skills
 
