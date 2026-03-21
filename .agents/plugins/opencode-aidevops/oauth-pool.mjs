@@ -2631,6 +2631,7 @@ export function createPoolTool(client) {
                         "anthropic-version": "2023-06-01",
                         "anthropic-beta": "oauth-2025-04-20",
                       },
+                      signal: AbortSignal.timeout(10_000),
                     });
                     testOk = testResp.ok || testResp.status === 403;
                     // 403 means token is valid but lacks scope — still proves auth works
@@ -2647,6 +2648,7 @@ export function createPoolTool(client) {
                         "Authorization": `Bearer ${account.access}`,
                         "User-Agent": OPENCODE_USER_AGENT,
                       },
+                      signal: AbortSignal.timeout(10_000),
                     });
                     testOk = testResp.ok;
                     if (testResp.status === 401) {
