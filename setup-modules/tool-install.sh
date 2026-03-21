@@ -1042,6 +1042,7 @@ setup_minisim() {
 }
 
 setup_claudebar() {
+	local claudebar_release_url="https://github.com/tddworks/ClaudeBar/releases/latest"
 	# Only available on macOS (native Swift menu bar app)
 	if [[ "$(uname)" != "Darwin" ]]; then
 		return 0
@@ -1058,7 +1059,7 @@ setup_claudebar() {
 	# Check if Homebrew is available (required for cask install)
 	if ! command -v brew >/dev/null 2>&1; then
 		print_warning "Homebrew not found - cannot install ClaudeBar automatically"
-		echo "  Download manually: https://github.com/tddworks/ClaudeBar/releases/latest"
+		echo "  Download manually: $claudebar_release_url"
 		return 0
 	fi
 
@@ -1077,7 +1078,7 @@ setup_claudebar() {
 			print_info "Launch from Applications or Spotlight to start monitoring quotas"
 		else
 			print_warning "Failed to install ClaudeBar via Homebrew"
-			echo "  Download manually: https://github.com/tddworks/ClaudeBar/releases/latest"
+			echo "  Download manually: $claudebar_release_url"
 		fi
 	else
 		print_info "Skipped ClaudeBar installation"
