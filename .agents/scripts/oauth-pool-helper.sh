@@ -133,9 +133,15 @@ open_browser() {
 cmd_add() {
 	local provider="${1:-anthropic}"
 
-	if [[ "$provider" != "anthropic" && "$provider" != "openai" ]]; then
-		print_error "Unsupported provider: $provider (supported: anthropic, openai)"
+	if [[ "$provider" != "anthropic" && "$provider" != "openai" && "$provider" != "cursor" ]]; then
+		print_error "Unsupported provider: $provider (supported: anthropic, openai, cursor)"
 		return 1
+	fi
+
+	# Cursor uses a different flow — read from local IDE installation
+	if [[ "$provider" == "cursor" ]]; then
+		cmd_add_cursor
+		return $?
 	fi
 
 	# Prompt for email
@@ -339,6 +345,190 @@ json.dump(pool, sys.stdout, indent=2)
 }
 
 # ---------------------------------------------------------------------------
+# Add Cursor account (reads from local Cursor IDE installation)
+# ---------------------------------------------------------------------------
+
+cmd_add_cursor() {
+	# Cursor doesn't use a browser OAuth flow. Instead, credentials are
+	# managed by the Cursor IDE and stored locally. We read them from:
+	#   1. ~/.cursor/auth.json (cursor-agent CLI)
+	#   2. Cursor IDE's SQLite state database (fallback)
+
+	local cursor_auth_json=""
+	local cursor_state_db=""
+
+	# Determine paths based on platform
+	case "$(uname -s)" in
+	Darwin)
+		cursor_auth_json="${HOME}/.cursor/auth.json"
+		cursor_state_db="${HOME}/Library/Application Support/Cursor/User/globalStorage/state.vscdb"
+		;;
+	Linux)
+		local config_dir="${XDG_CONFIG_HOME:-${HOME}/.config}"
+		cursor_auth_json="${config_dir}/cursor/auth.json"
+		cursor_state_db="${HOME}/.config/Cursor/User/globalStorage/state.vscdb"
+		;;
+	MINGW* | MSYS* | CYGWIN*)
+		local app_data="${APPDATA:-${HOME}/AppData/Roaming}"
+		cursor_auth_json="${app_data}/Cursor/auth.json"
+		cursor_state_db="${app_data}/Cursor/User/globalStorage/state.vscdb"
+		;;
+	*)
+		print_error "Unsupported platform for Cursor: $(uname -s)"
+		return 1
+		;;
+	esac
+
+	local access_token=""
+	local refresh_token=""
+	local email=""
+
+	# Source 1: cursor-agent auth.json
+	if [[ -f "$cursor_auth_json" ]]; then
+		print_info "Reading from Cursor auth.json..."
+		access_token=$(python3 -c "
+import json, sys
+try:
+    d = json.load(open(sys.argv[1]))
+    print(d.get('accessToken', ''))
+except: pass
+" "$cursor_auth_json" 2>/dev/null || true)
+		refresh_token=$(python3 -c "
+import json, sys
+try:
+    d = json.load(open(sys.argv[1]))
+    print(d.get('refreshToken', ''))
+except: pass
+" "$cursor_auth_json" 2>/dev/null || true)
+	fi
+
+	# Source 2: Cursor IDE state database (fallback or supplement)
+	if [[ -z "$access_token" && -f "$cursor_state_db" ]]; then
+		print_info "Reading from Cursor IDE state database..."
+		if ! command -v sqlite3 &>/dev/null; then
+			print_error "sqlite3 is required to read Cursor credentials but is not installed"
+			return 1
+		fi
+		access_token=$(sqlite3 "$cursor_state_db" "SELECT value FROM ItemTable WHERE key = 'cursorAuth/accessToken'" 2>/dev/null || true)
+		if [[ -z "$refresh_token" ]]; then
+			refresh_token=$(sqlite3 "$cursor_state_db" "SELECT value FROM ItemTable WHERE key = 'cursorAuth/refreshToken'" 2>/dev/null || true)
+		fi
+		if [[ -z "$email" ]]; then
+			email=$(sqlite3 "$cursor_state_db" "SELECT value FROM ItemTable WHERE key = 'cursorAuth/cachedEmail'" 2>/dev/null || true)
+		fi
+	fi
+
+	if [[ -z "$access_token" ]]; then
+		print_error "No Cursor credentials found."
+		echo "" >&2
+		echo "Make sure you:" >&2
+		echo "  1. Have Cursor IDE installed" >&2
+		echo "  2. Are logged into your Cursor account in the IDE" >&2
+		echo "  3. Have an active Cursor Pro subscription" >&2
+		echo "" >&2
+		echo "After logging in, run this command again." >&2
+		return 1
+	fi
+
+	# Decode JWT to get email and expiry (no secrets printed)
+	local jwt_info
+	jwt_info=$(ACCESS="$access_token" python3 -c "
+import os, json, base64
+token = os.environ['ACCESS']
+parts = token.split('.')
+if len(parts) >= 2:
+    # Add padding for base64
+    payload = parts[1] + '=' * (4 - len(parts[1]) % 4)
+    data = json.loads(base64.urlsafe_b64decode(payload))
+    email = data.get('email', '')
+    exp = data.get('exp', 0)
+    print(json.dumps({'email': email, 'exp': exp}))
+else:
+    print(json.dumps({'email': '', 'exp': 0}))
+" 2>/dev/null || echo '{"email":"","exp":0}')
+
+	local jwt_email jwt_exp
+	jwt_email=$(printf '%s' "$jwt_info" | python3 -c "import sys,json; print(json.load(sys.stdin).get('email',''))" 2>/dev/null || true)
+	jwt_exp=$(printf '%s' "$jwt_info" | python3 -c "import sys,json; print(json.load(sys.stdin).get('exp',0))" 2>/dev/null || echo "0")
+
+	# Use JWT email if we didn't get one from the state DB
+	if [[ -z "$email" && -n "$jwt_email" ]]; then
+		email="$jwt_email"
+	fi
+	if [[ -z "$email" ]]; then
+		email="unknown"
+	fi
+
+	# Calculate expiry in milliseconds
+	local expires_ms
+	if [[ "$jwt_exp" != "0" && -n "$jwt_exp" ]]; then
+		expires_ms=$((jwt_exp * 1000))
+	else
+		# Default: 1 hour from now
+		local now_ms
+		now_ms=$(python3 -c "import time; print(int(time.time() * 1000))")
+		expires_ms=$((now_ms + 3600000))
+	fi
+
+	# Upsert into pool file
+	local pool now_iso
+	pool=$(load_pool)
+	now_iso=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+	pool=$(printf '%s' "$pool" | PROVIDER="cursor" EMAIL="$email" \
+		ACCESS="$access_token" REFRESH="${refresh_token:-}" \
+		EXPIRES="$expires_ms" NOW_ISO="$now_iso" \
+		python3 -c "
+import sys, json, os
+pool = json.load(sys.stdin)
+provider = os.environ['PROVIDER']
+email = os.environ['EMAIL']
+access = os.environ['ACCESS']
+refresh = os.environ['REFRESH']
+expires = int(os.environ['EXPIRES'])
+now_iso = os.environ['NOW_ISO']
+
+if provider not in pool:
+    pool[provider] = []
+
+found = False
+for account in pool[provider]:
+    if account.get('email') == email:
+        account['access'] = access
+        account['refresh'] = refresh
+        account['expires'] = expires
+        account['lastUsed'] = now_iso
+        account['status'] = 'active'
+        account['cooldownUntil'] = None
+        found = True
+        break
+
+if not found:
+    pool[provider].append({
+        'email': email,
+        'access': access,
+        'refresh': refresh,
+        'expires': expires,
+        'added': now_iso,
+        'lastUsed': now_iso,
+        'status': 'active',
+        'cooldownUntil': None,
+    })
+
+json.dump(pool, sys.stdout, indent=2)
+")
+
+	save_pool "$pool"
+
+	local count
+	count=$(printf '%s' "$pool" | python3 -c "import sys,json; print(len(json.load(sys.stdin).get('cursor',[])))")
+
+	print_success "Added Cursor account ${email} to pool (${count} account(s) total)"
+	print_info "Restart OpenCode to use the Cursor provider."
+	return 0
+}
+
+# ---------------------------------------------------------------------------
 # Check accounts
 # ---------------------------------------------------------------------------
 
@@ -460,6 +650,7 @@ for a in pool.get(prov, []):
 		echo "To add an account:"
 		echo "  oauth-pool-helper.sh add anthropic    # Claude Pro/Max"
 		echo "  oauth-pool-helper.sh add openai       # ChatGPT Plus/Pro"
+		echo "  oauth-pool-helper.sh add cursor       # Cursor Pro (reads from IDE)"
 	fi
 	return 0
 }
@@ -565,16 +756,17 @@ cmd_help() {
 oauth-pool-helper.sh — Manage OAuth pool accounts from the shell
 
 Commands:
-  add [anthropic|openai]       Add an account via OAuth browser flow
-  check [anthropic|openai|all] Health check accounts (token expiry, validity)
-  list [anthropic|openai|all]  List accounts and their status
-  remove <provider> <email>    Remove an account from the pool
+  add [anthropic|openai|cursor] Add an account
+  check [anthropic|openai|all]  Health check accounts (token expiry, validity)
+  list [anthropic|openai|all]   List accounts and their status
+  remove <provider> <email>     Remove an account from the pool
 
 Examples:
-  oauth-pool-helper.sh add anthropic       # Add a Claude Pro/Max account
-  oauth-pool-helper.sh add openai          # Add a ChatGPT Plus/Pro account
+  oauth-pool-helper.sh add anthropic       # Claude Pro/Max (browser OAuth)
+  oauth-pool-helper.sh add openai          # ChatGPT Plus/Pro (browser OAuth)
+  oauth-pool-helper.sh add cursor          # Cursor Pro (reads from IDE)
   oauth-pool-helper.sh check               # Check all accounts
-  oauth-pool-helper.sh list anthropic      # List Anthropic accounts
+  oauth-pool-helper.sh list                # List all accounts
   oauth-pool-helper.sh remove anthropic user@example.com
 
 Notes:
@@ -582,6 +774,7 @@ Notes:
   - After adding an account, restart OpenCode to use the new token
   - Tokens refresh automatically; use 'add' with the same email to re-auth
   - The pool auto-rotates between accounts when one hits rate limits
+  - Cursor reads credentials from your local Cursor IDE — log in there first
 HELP
 	return 0
 }
