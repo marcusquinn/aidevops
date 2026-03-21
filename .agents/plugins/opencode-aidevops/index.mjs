@@ -1112,11 +1112,16 @@ export async function AidevopsPlugin({ directory, client }) {
     event: async (input) => handleEvent(input),
 
     // Phase 7: OAuth multi-account pool (t1543, t1548, t1549)
-    auth: [
-      createPoolAuthHook(client),
-      createOpenAIPoolAuthHook(client),
-      createCursorPoolAuthHook(client),
-    ],
+    // DISABLED: OpenCode v1.2.27 crashes when plugin returns `auth` key
+    // (Expected string, got undefined at worker.js:40673).
+    // Filed: https://github.com/anomalyco/opencode/issues/18536
+    // Pool tokens still work via initPoolAuth() injection above.
+    // Re-enable when OpenCode fixes this regression.
+    // auth: [
+    //   createPoolAuthHook(client),
+    //   createOpenAIPoolAuthHook(client),
+    //   createCursorPoolAuthHook(client),
+    // ],
 
     // Compaction context (includes OMOC state when detected)
     "experimental.session.compacting": async (input, output) =>
