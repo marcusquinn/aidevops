@@ -376,7 +376,7 @@ docker exec -it <container_name> /bin/bash
 | `Restarting` | Crash loop | Check logs, likely app/db issue |
 | `Exited (0)` | Clean shutdown | Cloudron hasn't started it yet (normal post-reboot) |
 | `Exited (1)` | Error exit | Check `docker logs <container>` for the error |
-| `Exited (137)` | Killed (SIGKILL/OOM) | Check `dmesg | grep -i oom` and memory limits |
+| `Exited (137)` | Killed (SIGKILL/OOM) | Check `dmesg \| grep -i oom` and memory limits |
 | `Created` | Never started | Waiting in Cloudron's startup queue |
 
 ### Key Log Files and Services
