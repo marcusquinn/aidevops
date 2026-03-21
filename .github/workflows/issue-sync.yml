@@ -456,11 +456,143 @@ jobs:
             git pull --rebase origin main || true
             if git push; then
               echo "Push succeeded on attempt $i"
-              exit 0
+              break
             fi
             sleep $((i * 3))
           done
-          echo "::warning::Could not push TODO.md proof-log update (branch protection). Hygiene completed successfully."
+
+      - name: Sync PLANS.md status from TODO.md completions
+        if: steps.extract.outputs.task_id != ''
+        env:
+          TASK_ID: ${{ steps.extract.outputs.task_id }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+        run: |
+          # When a task is marked complete in TODO.md, check if it belongs to
+          # a plan in PLANS.md and update that plan's status if all its tasks
+          # are now complete. Plans are institutional memory — they stay in
+          # PLANS.md marked as Completed, never removed.
+
+          if [[ ! -f "todo/PLANS.md" ]] || [[ ! -f "TODO.md" ]]; then
+            echo "PLANS.md or TODO.md not found — skipping plan sync"
+            exit 0
+          fi
+
+          PLANS_CHANGED=false
+
+          # Find all plans that reference this task ID
+          # Plans reference tasks as: **TODO:** t1234 or **TODO:** t1234, t1235
+          PLAN_LINES=$(grep -n "^\*\*TODO:\*\*.*${TASK_ID}" todo/PLANS.md | cut -d: -f1 || true)
+
+          if [[ -z "$PLAN_LINES" ]]; then
+            echo "Task $TASK_ID not referenced in any PLANS.md plan — skipping"
+            exit 0
+          fi
+
+          echo "Task $TASK_ID found in PLANS.md at line(s): $PLAN_LINES"
+
+          for TODO_LINE in $PLAN_LINES; do
+            # Extract all task IDs from this plan's TODO line
+            TODO_CONTENT=$(sed -n "${TODO_LINE}p" todo/PLANS.md)
+            PLAN_TASKS=$(echo "$TODO_CONTENT" | grep -oE 't[0-9]+(\.[0-9]+)*' | sort -u)
+
+            if [[ -z "$PLAN_TASKS" ]]; then
+              echo "No task IDs found on line $TODO_LINE — skipping"
+              continue
+            fi
+
+            echo "Plan tasks: $PLAN_TASKS"
+
+            # Check if ALL tasks in this plan are complete in TODO.md
+            ALL_DONE=true
+            for PTASK in $PLAN_TASKS; do
+              if grep -qE "^[[:space:]]*- \[ \] ${PTASK}( |$)" TODO.md; then
+                echo "Task $PTASK is still open — plan not complete"
+                ALL_DONE=false
+                break
+              fi
+              # Also check if the task exists at all (might be a subtask range)
+              if ! grep -qE "^[[:space:]]*- \[.\] ${PTASK}( |$)" TODO.md; then
+                echo "Task $PTASK not found in TODO.md — assuming complete (may be subtask)"
+              fi
+            done
+
+            if [[ "$ALL_DONE" != "true" ]]; then
+              continue
+            fi
+
+            # Find the plan's Status line (within 5 lines above the TODO line)
+            STATUS_LINE=""
+            for OFFSET in 1 2 3 4 5; do
+              CHECK_LINE=$((TODO_LINE - OFFSET))
+              if [[ "$CHECK_LINE" -lt 1 ]]; then break; fi
+              LINE_CONTENT=$(sed -n "${CHECK_LINE}p" todo/PLANS.md)
+              if echo "$LINE_CONTENT" | grep -q '^\*\*Status:\*\*'; then
+                STATUS_LINE="$CHECK_LINE"
+                break
+              fi
+            done
+
+            if [[ -z "$STATUS_LINE" ]]; then
+              echo "Could not find Status line for plan near line $TODO_LINE — skipping"
+              continue
+            fi
+
+            CURRENT_STATUS=$(sed -n "${STATUS_LINE}p" todo/PLANS.md)
+            echo "Current status (line $STATUS_LINE): $CURRENT_STATUS"
+
+            # Skip if already completed
+            if echo "$CURRENT_STATUS" | grep -qi 'Completed'; then
+              echo "Plan already marked Completed — skipping"
+              continue
+            fi
+
+            # Update status to Completed
+            sed -i "${STATUS_LINE}s/\*\*Status:\*\*.*/\*\*Status:\*\* Completed/" todo/PLANS.md
+
+            # Add PR reference to the TODO line if not already present
+            if ! grep -q "PR.*#${PR_NUMBER}" todo/PLANS.md | head -1; then
+              # Find if there's already a **PR:** line after the TODO line
+              PR_LINE=""
+              for OFFSET in 1 2 3; do
+                CHECK_LINE=$((TODO_LINE + OFFSET))
+                LINE_CONTENT=$(sed -n "${CHECK_LINE}p" todo/PLANS.md)
+                if echo "$LINE_CONTENT" | grep -q '^\*\*PR'; then
+                  PR_LINE="$CHECK_LINE"
+                  break
+                fi
+                # Stop if we hit another field or section
+                if echo "$LINE_CONTENT" | grep -qE '^\*\*|^###'; then
+                  break
+                fi
+              done
+
+              if [[ -z "$PR_LINE" ]]; then
+                # Insert a PR line after the TODO line
+                sed -i "${TODO_LINE}a\\**PR:** #${PR_NUMBER}" todo/PLANS.md
+              fi
+            fi
+
+            PLANS_CHANGED=true
+            echo "Updated plan status to Completed (line $STATUS_LINE)"
+          done
+
+          if [[ "$PLANS_CHANGED" == "true" ]]; then
+            git add todo/PLANS.md
+            if git diff --cached --quiet todo/PLANS.md 2>/dev/null; then
+              echo "No PLANS.md changes to commit"
+            else
+              git commit -m "chore: sync PLANS.md status for $TASK_ID (PR #${PR_NUMBER}) [skip ci]"
+              for i in 1 2 3; do
+                echo "Push attempt $i..."
+                git pull --rebase origin main || true
+                if git push; then
+                  echo "PLANS.md sync pushed on attempt $i"
+                  break
+                fi
+                sleep $((i * 3))
+              done
+            fi
+          fi
 
   # =========================================================================
   # t1339: Apply conventional-commit labels to PRs

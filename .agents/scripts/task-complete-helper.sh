@@ -326,7 +326,106 @@ complete_task() {
 	return 0
 }
 
-# Commit and push TODO.md
+# Sync PLANS.md status when a task is completed.
+# If all tasks referenced by a plan are now [x] in TODO.md,
+# update the plan's Status to Completed. Plans stay in PLANS.md
+# as institutional memory — never removed.
+sync_plans_status() {
+	local task_id="$1"
+	local proof_log="$2"
+	local repo_path="$3"
+
+	local plans_file="$repo_path/todo/PLANS.md"
+	local todo_file="$repo_path/TODO.md"
+
+	if [[ ! -f "$plans_file" ]]; then
+		return 0
+	fi
+
+	# Find plans that reference this task ID
+	local plan_lines
+	plan_lines=$(grep -n "^\*\*TODO:\*\*.*${task_id}" "$plans_file" 2>/dev/null | cut -d: -f1 || true)
+
+	if [[ -z "$plan_lines" ]]; then
+		return 0
+	fi
+
+	log_info "Task $task_id found in PLANS.md — checking plan completion"
+
+	local plans_changed=false
+	local todo_line=""
+
+	for todo_line in $plan_lines; do
+		# Extract all task IDs from this plan's TODO line
+		local todo_content
+		todo_content=$(sed -n "${todo_line}p" "$plans_file")
+		local plan_tasks
+		plan_tasks=$(echo "$todo_content" | grep -oE 't[0-9]+(\.[0-9]+)*' | sort -u)
+
+		if [[ -z "$plan_tasks" ]]; then
+			continue
+		fi
+
+		# Check if ALL tasks in this plan are complete in TODO.md
+		local all_done=true
+		local ptask=""
+		for ptask in $plan_tasks; do
+			if grep -qE "^[[:space:]]*- \[ \] ${ptask}( |$)" "$todo_file"; then
+				log_info "Task $ptask is still open — plan not complete"
+				all_done=false
+				break
+			fi
+		done
+
+		if [[ "$all_done" != "true" ]]; then
+			continue
+		fi
+
+		# Find the plan's Status line (within 5 lines above the TODO line)
+		local status_line=""
+		local offset=0
+		for offset in 1 2 3 4 5; do
+			local check_line=$((todo_line - offset))
+			if [[ "$check_line" -lt 1 ]]; then break; fi
+			local line_content
+			line_content=$(sed -n "${check_line}p" "$plans_file")
+			if echo "$line_content" | grep -q '^\*\*Status:\*\*'; then
+				status_line="$check_line"
+				break
+			fi
+		done
+
+		if [[ -z "$status_line" ]]; then
+			continue
+		fi
+
+		local current_status
+		current_status=$(sed -n "${status_line}p" "$plans_file")
+
+		# Skip if already completed
+		if echo "$current_status" | grep -qi 'Completed'; then
+			continue
+		fi
+
+		# Update status to Completed
+		if [[ "$OSTYPE" == "darwin"* ]]; then
+			sed -i '' "${status_line}s/\*\*Status:\*\*.*/\*\*Status:\*\* Completed/" "$plans_file"
+		else
+			sed -i "${status_line}s/\*\*Status:\*\*.*/\*\*Status:\*\* Completed/" "$plans_file"
+		fi
+
+		plans_changed=true
+		log_success "Updated plan status to Completed (PLANS.md line $status_line)"
+	done
+
+	if [[ "$plans_changed" == "true" ]]; then
+		log_info "PLANS.md updated — will be included in commit"
+	fi
+
+	return 0
+}
+
+# Commit and push TODO.md (and PLANS.md if changed)
 commit_and_push() {
 	local task_id="$1"
 	local proof_log="$2"
@@ -342,6 +441,12 @@ commit_and_push() {
 	if ! git add TODO.md; then
 		log_error "Failed to stage TODO.md"
 		return 1
+	fi
+
+	# Stage PLANS.md if it was modified by sync_plans_status
+	if [[ -f "todo/PLANS.md" ]] && ! git diff --quiet todo/PLANS.md 2>/dev/null; then
+		git add todo/PLANS.md
+		log_info "Staged PLANS.md (plan status updated)"
 	fi
 
 	# Commit
@@ -425,7 +530,10 @@ main() {
 		return 1
 	fi
 
-	# Commit and push
+	# Sync PLANS.md status (non-fatal — plans sync is best-effort)
+	sync_plans_status "$TASK_ID" "$proof_log" "$REPO_PATH" || true
+
+	# Commit and push (includes PLANS.md if modified)
 	if ! commit_and_push "$TASK_ID" "$proof_log" "$REPO_PATH" "$NO_PUSH"; then
 		return 1
 	fi

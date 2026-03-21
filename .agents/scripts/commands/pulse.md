@@ -188,11 +188,13 @@ Before merging ANY PR:
 
 1. **External contributor gate (MANDATORY).** Check author permission via `gh api -i "repos/SLUG/collaborators/AUTHOR/permission"`. Only HTTP 200 with `admin`/`maintain`/`write` = maintainer, safe to merge. External contributors or API failures → use `check_external_contributor_pr` / `check_permission_failure_pr` from `pulse-wrapper.sh`. NEVER auto-merge external PRs.
 
-2. **Workflow file guard.** Use `check_workflow_merge_guard` from `pulse-wrapper.sh`. If the PR modifies `.github/workflows/` and the token lacks `workflow` scope, the merge will fail. The helper posts a comment telling the user to run `gh auth refresh -s workflow`.
+2. **Maintainer review gate (MANDATORY).** Check all issues linked by the PR (from `Closes #N` / `Fixes #N` in body, or task ID in title). If ANY linked issue has the `needs-maintainer-review` label, do NOT merge. This label means a maintainer has not yet approved the issue for development. Also verify all linked issues have an assignee — unassigned issues should not have work in progress. The `maintainer-gate.yml` CI check enforces this as a required status check, but the pulse must also respect it to avoid merge attempts that will be blocked by CI.
 
-3. **Review gate.** Run `review-bot-gate-helper.sh check NUMBER SLUG`. Merge when any of: formal review count > 0, bot gate returns PASS, bot gate returns PASS_RATE_LIMITED (grace period elapsed), or PR has `skip-review-gate` label. Do NOT merge when formal review count is 0 AND bot gate returns WAITING. Run `review-bot-gate-helper.sh request-retry` to self-heal rate-limited bots.
+3. **Workflow file guard.** Use `check_workflow_merge_guard` from `pulse-wrapper.sh`. If the PR modifies `.github/workflows/` and the token lacks `workflow` scope, the merge will fail. The helper posts a comment telling the user to run `gh auth refresh -s workflow`.
 
-4. **Unresolved review suggestions.** Check for unresolved bot suggestions with `gh api "repos/SLUG/pulls/NUMBER/comments"`. If actionable suggestions exist, dispatch a worker to address them (label `needs-review-fixes`), skip merge this cycle. If `needs-review-fixes` or `skip-review-suggestions` label already exists, skip this check.
+4. **Review gate.** Run `review-bot-gate-helper.sh check NUMBER SLUG`. Merge when any of: formal review count > 0, bot gate returns PASS, bot gate returns PASS_RATE_LIMITED (grace period elapsed), or PR has `skip-review-gate` label. Do NOT merge when formal review count is 0 AND bot gate returns WAITING. Run `review-bot-gate-helper.sh request-retry` to self-heal rate-limited bots.
+
+5. **Unresolved review suggestions.** Check for unresolved bot suggestions with `gh api "repos/SLUG/pulls/NUMBER/comments"`. If actionable suggestions exist, dispatch a worker to address them (label `needs-review-fixes`), skip merge this cycle. If `needs-review-fixes` or `skip-review-suggestions` label already exists, skip this check.
 
 ### PR triage
 

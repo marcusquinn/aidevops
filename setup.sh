@@ -792,22 +792,7 @@ main() {
 		confirm_step "Validate and repair OpenCode config schema" && validate_opencode_config
 		confirm_step "Extract OpenCode prompts" && extract_opencode_prompts
 		confirm_step "Check OpenCode prompt drift" && check_opencode_prompt_drift
-		local _agents_deployed=false
-		confirm_step "Deploy aidevops agents to ~/.aidevops/agents/" && { deploy_aidevops_agents && _agents_deployed=true; }
-		# Archive step only runs when deploy was skipped; deploy_aidevops_agents handles
-		# cleanup internally when it runs, so running it again would be a double-run.
-		if [[ "$_agents_deployed" == "false" ]]; then
-			confirm_step "Archive completed plans from PLANS.md (deploy was skipped)" && {
-				local _plans_cleanup=".agents/scripts/plans-cleanup-helper.sh"
-				if [[ -x "$_plans_cleanup" ]]; then
-					local _plans_exit=0
-					"$_plans_cleanup" archive || _plans_exit=$?
-					if [[ "$_plans_exit" -ne 0 ]]; then
-						print_warning "plans-cleanup-helper.sh archive exited $_plans_exit"
-					fi
-				fi
-			}
-		fi
+		confirm_step "Deploy aidevops agents to ~/.aidevops/agents/" && deploy_aidevops_agents
 		confirm_step "Sync agents from private repositories" && sync_agent_sources
 		setup_shellcheck_wrapper
 		confirm_step "Install Claude Code safety hooks (block destructive commands)" && setup_safety_hooks
