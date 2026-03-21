@@ -1511,13 +1511,28 @@ ST_PLIST
 	local repos_json="$HOME/.config/aidevops/repos.json"
 	local has_profile_repo="false"
 	if [[ -x "$pr_script" ]] && command -v gh &>/dev/null && gh auth status &>/dev/null; then
-		# Initialize profile repo if not already set up
+		# Initialize profile repo if not already set up.
+		# Verify the entry is valid: local dir exists AND README has stat markers.
+		# If the repo was deleted or local clone removed, re-run init to recreate.
+		local profile_needs_init="true"
 		if [[ -f "$repos_json" ]] && command -v jq &>/dev/null; then
-			if jq -e '.initialized_repos[]? | select(.priority == "profile")' "$repos_json" >/dev/null 2>&1; then
+			local profile_path
+			profile_path=$(jq -r '
+				if .initialized_repos then
+					.initialized_repos[] | select(.priority == "profile") | .path
+				else
+					to_entries[] | select(.value.priority == "profile") | .value.path
+				end
+			' "$repos_json" 2>/dev/null | head -1)
+			if [[ -n "$profile_path" && "$profile_path" != "null" ]] &&
+				[[ -d "$profile_path" ]] &&
+				[[ -f "${profile_path}/README.md" ]] &&
+				grep -q '<!-- STATS-START -->' "${profile_path}/README.md" 2>/dev/null; then
+				profile_needs_init="false"
 				has_profile_repo="true"
 			fi
 		fi
-		if [[ "$has_profile_repo" == "false" ]]; then
+		if [[ "$profile_needs_init" == "true" ]]; then
 			print_info "Setting up GitHub profile README..."
 			if bash "$pr_script" init; then
 				has_profile_repo="true"
@@ -1525,8 +1540,6 @@ ST_PLIST
 			else
 				print_warning "Profile README setup failed (non-fatal, skipping)"
 			fi
-		else
-			has_profile_repo="true"
 		fi
 	elif [[ -f "$repos_json" ]] && command -v jq &>/dev/null; then
 		# No gh CLI but check if profile repo already registered

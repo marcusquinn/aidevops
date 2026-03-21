@@ -1150,7 +1150,8 @@ cmd_init() {
 	local repo_dir="${HOME}/Git/${gh_user}"
 	local repos_json="${HOME}/.config/aidevops/repos.json"
 
-	# Check if already initialized
+	# Check if already fully initialized: repos.json entry + local dir + README with markers.
+	# If any piece is missing, fall through to recreate what's needed.
 	if [[ -f "$repos_json" ]] && command -v jq &>/dev/null; then
 		local existing_profile
 		existing_profile=$(jq -r '
@@ -1161,9 +1162,15 @@ cmd_init() {
 			end
 		' "$repos_json" 2>/dev/null | head -1)
 		if [[ -n "$existing_profile" && "$existing_profile" != "null" ]]; then
-			if [[ -d "$existing_profile" ]]; then
+			if [[ -d "$existing_profile" ]] &&
+				[[ -f "${existing_profile}/README.md" ]] &&
+				grep -q '<!-- STATS-START -->' "${existing_profile}/README.md" 2>/dev/null; then
 				echo "Profile repo already initialized at $existing_profile"
 				return 0
+			fi
+			# Use existing path if directory exists (may just need README seeding)
+			if [[ -d "$existing_profile" ]]; then
+				repo_dir="$existing_profile"
 			fi
 		fi
 	fi
@@ -1175,11 +1182,13 @@ cmd_init() {
 			echo "Error: failed to create repo $repo_slug" >&2
 			return 1
 		}
+		# Give GitHub a moment to initialize the repo before cloning
+		sleep 2
 	else
 		echo "GitHub repo $repo_slug already exists"
 	fi
 
-	# Clone if not already local
+	# Clone if not already local, otherwise pull latest
 	if [[ ! -d "$repo_dir" ]]; then
 		echo "Cloning $repo_slug to $repo_dir"
 		git clone "git@github.com:${repo_slug}.git" "$repo_dir" 2>/dev/null ||
@@ -1189,6 +1198,10 @@ cmd_init() {
 		}
 	else
 		echo "Local repo already exists at $repo_dir"
+		# Pull latest to avoid conflicts when seeding README
+		git -C "$repo_dir" pull --ff-only origin main 2>/dev/null ||
+			git -C "$repo_dir" pull --ff-only origin master 2>/dev/null ||
+			true
 	fi
 
 	# Seed README.md if it doesn't have stat markers
