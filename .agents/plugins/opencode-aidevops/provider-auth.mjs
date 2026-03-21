@@ -14,7 +14,7 @@
  * This module makes the built-in provider use them correctly.
  */
 
-import { ensureValidToken, getAccounts, patchAccount, injectPoolToken } from "./oauth-pool.mjs";
+import { ensureValidToken, getAccounts, patchAccount } from "./oauth-pool.mjs";
 
 const TOKEN_ENDPOINT = "https://platform.claude.com/v1/oauth/token";
 const CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
@@ -69,11 +69,30 @@ export function createProviderAuthHook(client) {
           // Refresh token if expired
           let accessToken = auth.access;
           if (!accessToken || auth.expires < Date.now()) {
-            // Try refreshing via the pool's ensureValidToken first (handles
-            // rotation across multiple accounts and cooldown logic)
+            // Try refreshing via the pool's ensureValidToken (handles
+            // rotation across multiple accounts and cooldown logic).
+            // Sort by least-recently-used so we try the freshest account
+            // first, maximising the chance of finding one not rate-limited.
             const accounts = getAccounts("anthropic");
             let refreshed = false;
-            for (const account of accounts) {
+
+            // Sort accounts: active first (by LRU), then others
+            const sorted = [...accounts].sort((a, b) => {
+              // Prefer active/idle accounts over rate-limited/auth-error
+              const statusOrder = { active: 0, idle: 1, "rate-limited": 2, "auth-error": 3 };
+              const aOrder = statusOrder[a.status] ?? 2;
+              const bOrder = statusOrder[b.status] ?? 2;
+              if (aOrder !== bOrder) return aOrder - bOrder;
+              // Within same status, prefer least recently used
+              return new Date(a.lastUsed || 0) - new Date(b.lastUsed || 0);
+            });
+
+            for (const account of sorted) {
+              // Skip accounts in cooldown
+              if (account.cooldownUntil && account.cooldownUntil > Date.now()) {
+                console.error(`[aidevops] provider-auth: skipping ${account.email} — cooldown active`);
+                continue;
+              }
               const token = await ensureValidToken("anthropic", account);
               if (token) {
                 await client.auth.set({
@@ -97,69 +116,25 @@ export function createProviderAuthHook(client) {
             }
 
             if (!refreshed) {
-              // Fallback: direct refresh with current token
-              const response = await fetch(TOKEN_ENDPOINT, {
-                method: "POST",
-                headers: {
-                  "Content-Type": "application/json",
-                  "User-Agent": "claude-cli/2.1.80 (external, cli)",
-                },
-                body: JSON.stringify({
-                  grant_type: "refresh_token",
-                  refresh_token: auth.refresh,
-                  client_id: CLIENT_ID,
-                }),
-              });
-              if (!response.ok) {
-                // On 429, wait and retry once
-                if (response.status === 429) {
-                  const retryAfter = parseInt(response.headers.get("retry-after") || "30", 10);
-                  console.error(`[aidevops] provider-auth: token refresh rate limited, waiting ${retryAfter}s`);
-                  await new Promise((resolve) => setTimeout(resolve, retryAfter * 1000));
-                  const retry = await fetch(TOKEN_ENDPOINT, {
-                    method: "POST",
-                    headers: {
-                      "Content-Type": "application/json",
-                      "User-Agent": "claude-cli/2.1.80 (external, cli)",
-                    },
-                    body: JSON.stringify({
-                      grant_type: "refresh_token",
-                      refresh_token: auth.refresh,
-                      client_id: CLIENT_ID,
-                    }),
-                  });
-                  if (!retry.ok) {
-                    throw new Error(`Token refresh failed after retry: ${retry.status}`);
-                  }
-                  const retryJson = await retry.json();
-                  await client.auth.set({
-                    path: { id: "anthropic" },
-                    body: {
-                      type: "oauth",
-                      refresh: retryJson.refresh_token,
-                      access: retryJson.access_token,
-                      expires: Date.now() + retryJson.expires_in * 1000,
-                    },
-                  });
-                  accessToken = retryJson.access_token;
-                } else {
-                  throw new Error(`Token refresh failed: ${response.status}`);
-                }
-              } else {
-                const json = await response.json();
-                await client.auth.set({
-                  path: { id: "anthropic" },
-                  body: {
-                    type: "oauth",
-                    refresh: json.refresh_token,
-                    access: json.access_token,
-                    expires: Date.now() + json.expires_in * 1000,
-                  },
-                });
-                accessToken = json.access_token;
-              }
+              // All pool accounts exhausted (rate-limited or auth-error).
+              // Log which accounts were tried and their status for debugging.
+              const accountSummary = accounts.map((a) => {
+                const cooldown = a.cooldownUntil && a.cooldownUntil > Date.now()
+                  ? ` (cooldown: ${Math.ceil((a.cooldownUntil - Date.now()) / 60000)}m)`
+                  : "";
+                return `${a.email}[${a.status}${cooldown}]`;
+              }).join(", ");
+              console.error(
+                `[aidevops] provider-auth: all pool accounts exhausted. ` +
+                `Accounts: ${accountSummary || "none"}. ` +
+                `Use /model-accounts-pool reset-cooldowns to clear cooldowns, ` +
+                `or wait for cooldowns to expire.`,
+              );
+              throw new Error(
+                `Token refresh failed: all ${accounts.length} pool account(s) exhausted ` +
+                `(rate-limited or auth-error). Use /model-accounts-pool reset-cooldowns to retry.`,
+              );
             }
-            accessToken = json.access_token;
           }
 
           // Build headers
