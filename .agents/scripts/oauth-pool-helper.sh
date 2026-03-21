@@ -106,12 +106,12 @@ save_pool() {
 # Open URL in browser (best-effort, never fatal)
 open_browser() {
 	local url="$1"
-	if command -v open &>/dev/null; then
-		open "$url" 2>/dev/null || true
-	elif command -v xdg-open &>/dev/null; then
-		xdg-open "$url" 2>/dev/null || true
-	elif command -v wslview &>/dev/null; then
-		wslview "$url" 2>/dev/null || true
+	if command -v open &>/dev/null && open "$url" 2>/dev/null; then
+		: # opened via macOS open
+	elif command -v xdg-open &>/dev/null && xdg-open "$url" 2>/dev/null; then
+		: # opened via xdg-open
+	elif command -v wslview &>/dev/null && wslview "$url" 2>/dev/null; then
+		: # opened via wslview
 	else
 		print_warning "Cannot open browser automatically."
 	fi
