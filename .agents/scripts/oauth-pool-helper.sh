@@ -343,12 +343,14 @@ cmd_check() {
 
 		printf '\n## %s (%s account%s)\n' "$prov" "$count" "$([ "$count" = "1" ] && echo "" || echo "s")"
 
-		# Single python3 pass: format details + test validity per account
-		# Token values are passed via stdin (pool JSON) and used only for
-		# curl subprocess calls — never printed to stdout.
+		# Single python3 pass: format details + test validity per account.
+		# Validity probe uses urllib.request so the Authorization header stays
+		# in-process and never appears on argv (unlike curl subprocess).
 		printf '%s' "$pool" | NOW_MS="$now_ms" PROV="$prov" UA="$USER_AGENT" python3 -c "
-import sys, json, os, subprocess
+import sys, json, os
 from datetime import datetime
+from urllib.request import Request, urlopen
+from urllib.error import HTTPError
 
 pool = json.load(sys.stdin)
 now = int(os.environ['NOW_MS'])
@@ -383,35 +385,32 @@ for a in pool.get(prov, []):
                 print(f\"    Last used: {ago_hours}h {ago_mins % 60}m ago\")
             else:
                 print(f\"    Last used: {ago_mins}m ago\")
-        except:
+        except Exception:
             print(f\"    Last used: {lu}\")
     print(f\"    Refresh token: {'present' if a.get('refresh') else 'MISSING'}\")
 
-    # Test token validity inline (anthropic only)
+    # Test token validity inline (anthropic only, in-process via urllib)
     if prov == 'anthropic':
         token = a.get('access', '')
-        if not token or expires_in <= 0:
-            print(f\"    Validity: {'EXPIRED' if expires_in <= 0 else 'no access token'}\")
+        if not token:
+            print(f\"    Validity: no access token\")
+        elif expires_in <= 0:
+            print(f\"    Validity: EXPIRED - will auto-refresh on next use\")
         else:
             try:
-                result = subprocess.run([
-                    'curl', '-sS', '-w', '\n%{http_code}', '-X', 'GET',
-                    '-H', f'Authorization: Bearer {token}',
-                    '-H', f'User-Agent: {ua}',
-                    '-H', 'anthropic-version: 2023-06-01',
-                    '-H', 'anthropic-beta: oauth-2025-04-20',
-                    '--max-time', '10',
-                    'https://api.anthropic.com/v1/models',
-                ], capture_output=True, text=True, timeout=15)
-                lines = result.stdout.strip().split('\n')
-                status = int(lines[-1]) if lines else 0
-                if status == 401:
+                req = Request('https://api.anthropic.com/v1/models', method='GET')
+                req.add_header('Authorization', f'Bearer {token}')
+                req.add_header('User-Agent', ua)
+                req.add_header('anthropic-version', '2023-06-01')
+                req.add_header('anthropic-beta', 'oauth-2025-04-20')
+                urlopen(req, timeout=10)
+                print(f\"    Validity: OK\")
+            except HTTPError as e:
+                if e.code == 401:
                     print(f\"    Validity: INVALID (401 - needs refresh)\")
-                elif 200 <= status < 400:
-                    print(f\"    Validity: OK\")
                 else:
-                    print(f\"    Validity: HTTP {status}\")
-            except:
+                    print(f\"    Validity: HTTP {e.code}\")
+            except Exception:
                 print(f\"    Validity: ERROR\")
 " 2>/dev/null
 
