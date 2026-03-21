@@ -29,7 +29,87 @@ import { join, dirname } from "path";
 import { homedir, platform } from "os";
 import { createHash, randomBytes } from "crypto";
 import { createServer } from "http";
-import { execSync, spawn } from "child_process";
+import { execSync, execFileSync, spawn } from "child_process";
+
+// ---------------------------------------------------------------------------
+// Dynamic CLI version detection (GH#18329 fix)
+//
+// Anthropic blanket-rejects token endpoint requests with unrecognised
+// User-Agent strings (429). Hardcoding the version means we silently break
+// when the CLI updates. Detect at module load time (~50ms), cache for the
+// process lifetime, fall back to a known-good version if the CLI isn't found.
+//
+// Bun's fetch() also injects Origin, Referer, and Sec-Fetch-* headers that
+// Anthropic rate-limits on. Token endpoint calls use execSync("curl ...")
+// instead of fetch() to send exactly the headers we specify — nothing more.
+// See: https://github.com/vinzabe/PERMANENT-opencode-anthropic-oauth-fix
+// ---------------------------------------------------------------------------
+
+const FALLBACK_CLAUDE_VERSION = "2.1.80";
+const FALLBACK_OPENCODE_VERSION = "1.2.27";
+
+/**
+ * Detect the installed Claude CLI version.
+ * Uses execFileSync (no shell) to avoid metacharacter issues on Windows
+ * and maintain consistency with curlTokenEndpoint().
+ * Returns just the version number (e.g. "2.1.80").
+ * @returns {string}
+ */
+function detectClaudeCliVersion() {
+  try {
+    const raw = execFileSync("claude", ["--version"], {
+      timeout: 3000,
+      encoding: "utf-8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }).trim();
+    // Output is like "2.1.80 (Claude Code)" or just "2.1.80"
+    const match = raw.match(/^(\d+\.\d+\.\d+)/);
+    if (match) return match[1];
+  } catch {
+    // CLI not installed or timed out
+  }
+  return FALLBACK_CLAUDE_VERSION;
+}
+
+/**
+ * Detect the installed OpenCode CLI version.
+ * Tries "opencode" first, then "oc" as fallback.
+ * Uses execFileSync (no shell) for cross-platform safety.
+ * Returns just the version number (e.g. "1.2.27").
+ * @returns {string}
+ */
+function detectOpenCodeVersion() {
+  for (const bin of ["opencode", "oc"]) {
+    try {
+      const raw = execFileSync(bin, ["--version"], {
+        timeout: 3000,
+        encoding: "utf-8",
+        stdio: ["ignore", "pipe", "ignore"],
+      }).trim();
+      const match = raw.match(/^(\d+\.\d+\.\d+)/);
+      if (match) return match[1];
+    } catch {
+      // Try next binary
+    }
+  }
+  return FALLBACK_OPENCODE_VERSION;
+}
+
+// Detect once at module load — cached for process lifetime
+const DETECTED_CLAUDE_VERSION = detectClaudeCliVersion();
+const DETECTED_OPENCODE_VERSION = detectOpenCodeVersion();
+const ANTHROPIC_USER_AGENT = `claude-cli/${DETECTED_CLAUDE_VERSION} (external, cli)`;
+
+console.error(`[aidevops] OAuth pool: detected Claude CLI v${DETECTED_CLAUDE_VERSION}, OpenCode v${DETECTED_OPENCODE_VERSION}`);
+
+/**
+ * Get the dynamically-detected Anthropic User-Agent string.
+ * Exported for use by provider-auth.mjs on API requests.
+ * @returns {string}
+ */
+export function getAnthropicUserAgent() {
+  return ANTHROPIC_USER_AGENT;
+}
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -58,7 +138,7 @@ const OPENAI_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann";
 const OPENAI_ISSUER = "https://auth.openai.com";
 const OPENAI_TOKEN_ENDPOINT = `${OPENAI_ISSUER}/oauth/token`;
 const OPENAI_OAUTH_AUTHORIZE_URL = `${OPENAI_ISSUER}/oauth/authorize`;
-const OPENCODE_USER_AGENT = "opencode/1.2.27";
+const OPENCODE_USER_AGENT = `opencode/${DETECTED_OPENCODE_VERSION}`;
 /** OpenAI uses a local redirect server at port 1455 for its built-in flow.
  *  For the pool's add-account flow we use the same redirect URI so the
  *  authorization code can be pasted back into the terminal prompt. */
@@ -183,15 +263,117 @@ let openaiTokenEndpointCooldownUntil = 0;
 let cursorProxyCooldownUntil = 0;
 
 /**
+ * Execute a curl request to a token endpoint, returning a Response-like object.
+ *
+ * Uses curl instead of fetch() because Bun's fetch injects Origin, Referer,
+ * and Sec-Fetch-* headers automatically. Anthropic's token endpoint
+ * rate-limits/blocks requests with these extra browser-like headers (429).
+ * curl only sends exactly the headers we specify.
+ *
+ * See: https://github.com/vinzabe/PERMANENT-opencode-anthropic-oauth-fix (Bug 3)
+ *
+ * @param {string} url - Token endpoint URL
+ * @param {Object} options - { headers: Record<string,string>, body: string, contentType?: string }
+ * @param {string} context - description for logging
+ * @returns {{ ok: boolean, status: number, statusText: string, headers: { get(k: string): string|null }, json(): Promise<any>, text(): Promise<string> }}
+ */
+function curlTokenEndpoint(url, options, context) {
+  const args = [
+    "-sS",                          // silent but show errors
+    "-i",                           // include response headers in output
+    "-w", "\n%{http_code}",         // append HTTP status on last line
+    "-X", "POST",
+    "-H", `Content-Type: ${options.contentType || "application/json"}`,
+    "-H", `User-Agent: ${options.headers["User-Agent"]}`,
+    "--data-binary", "@-",          // read body from stdin (keeps secrets off argv/ps)
+    "--max-time", "15",             // hard timeout
+    url,
+  ];
+
+  try {
+    // Use execFileSync (no shell) to avoid metacharacter issues with
+    // parentheses in User-Agent. Body is passed via stdin to keep
+    // OAuth secrets (refresh_token, authorization_code) off the process
+    // command line where they'd be visible via ps/proc.
+    const raw = execFileSync("curl", args, {
+      encoding: "utf-8",
+      timeout: 20_000,
+      input: options.body,
+    });
+
+    // Output format with -i: headers\r\n\r\nbody\n<http_code>
+    // Last line is the HTTP status code from -w
+    const lines = raw.trimEnd().split("\n");
+    const statusCode = parseInt(lines.pop(), 10) || 500;
+    const fullOutput = lines.join("\n");
+
+    // Split headers from body at the blank line (\r\n\r\n)
+    const headerBodySplit = fullOutput.indexOf("\r\n\r\n");
+    let responseHeaders = {};
+    let responseBody = fullOutput;
+
+    if (headerBodySplit !== -1) {
+      const headerBlock = fullOutput.substring(0, headerBodySplit);
+      responseBody = fullOutput.substring(headerBodySplit + 4);
+
+      // Parse response headers into a case-insensitive map
+      for (const line of headerBlock.split("\r\n")) {
+        const colonIdx = line.indexOf(":");
+        if (colonIdx > 0) {
+          const key = line.substring(0, colonIdx).trim().toLowerCase();
+          const value = line.substring(colonIdx + 1).trim();
+          responseHeaders[key] = value;
+        }
+      }
+    }
+
+    const statusText = statusCode === 200 ? "OK"
+      : statusCode === 429 ? "Too Many Requests"
+      : statusCode === 401 ? "Unauthorized"
+      : statusCode === 400 ? "Bad Request"
+      : `HTTP ${statusCode}`;
+
+    return {
+      ok: statusCode >= 200 && statusCode < 300,
+      status: statusCode,
+      statusText,
+      headers: {
+        get(key) {
+          return responseHeaders[key.toLowerCase()] ?? null;
+        },
+      },
+      async json() { return JSON.parse(responseBody); },
+      async text() { return responseBody; },
+    };
+  } catch (err) {
+    // Log only the error code/status — never err.message which may
+    // contain the request body with OAuth secrets
+    const reason = err?.code || `exit ${err?.status ?? "unknown"}`;
+    console.error(`[aidevops] OAuth pool: ${context} curl failed (${reason})`);
+    return {
+      ok: false,
+      status: 500,
+      statusText: "curl failed",
+      headers: { get() { return null; } },
+      async json() { return { error: reason }; },
+      async text() { return reason; },
+    };
+  }
+}
+
+/**
  * Fetch from the Anthropic token endpoint. Single attempt with 429 cooldown gate.
  *
  * If a previous call got 429 within the cooldown window, this returns a
  * synthetic 429 response immediately — no network request made. This prevents
  * every session start from hitting the endpoint and extending the rate limit.
  *
+ * Uses curl instead of fetch() to avoid Bun's automatic header injection
+ * (Origin, Referer, Sec-Fetch-*) which Anthropic rate-limits on.
+ *
  * @param {string} body - JSON string body
  * @param {string} context - description for logging
- * @returns {Promise<Response>}
+ * @returns {Promise<{ ok: boolean, status: number, statusText: string, headers: { get(k: string): string|null }, json(): Promise<any>, text(): Promise<string> }>}
  */
 async function fetchTokenEndpoint(body, context) {
   // Check cooldown gate — skip the request entirely if rate limited recently
@@ -203,20 +385,22 @@ async function fetchTokenEndpoint(body, context) {
       `[aidevops] OAuth pool: ${context} skipped — token endpoint rate limited, cooldown ${remainingMinutes}m remaining. ` +
       `Use /model-accounts-pool reset-cooldowns to clear manually.`,
     );
-    return new Response(null, { status: 429, statusText: "Rate Limited (cooldown)" });
+    return {
+      ok: false,
+      status: 429,
+      statusText: "Rate Limited (cooldown)",
+      headers: { get() { return null; } },
+      async json() { return { error: "Rate limited (cooldown)" }; },
+      async text() { return "Rate limited (cooldown)"; },
+    };
   }
 
-  const response = await fetch(ANTHROPIC_TOKEN_ENDPOINT, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "User-Agent": "claude-cli/2.1.80 (external, cli)",
-    },
+  const response = curlTokenEndpoint(ANTHROPIC_TOKEN_ENDPOINT, {
+    headers: { "User-Agent": ANTHROPIC_USER_AGENT },
     body,
-  });
+  }, context);
 
   if (response.status === 429) {
-    // Parse Retry-After header if present, otherwise use default cooldown
     const retryAfter = response.headers.get("retry-after");
     const cooldownMs = parseRetryAfterCooldown(retryAfter);
     tokenEndpointCooldownUntil = Date.now() + cooldownMs;
@@ -236,10 +420,11 @@ async function fetchTokenEndpoint(body, context) {
 /**
  * Fetch from the OpenAI token endpoint using form-encoded body (t1548).
  * OpenAI uses application/x-www-form-urlencoded, not JSON.
+ * Uses curl to avoid Bun's automatic header injection.
  *
  * @param {URLSearchParams} params - Form parameters
  * @param {string} context - description for logging
- * @returns {Promise<Response>}
+ * @returns {Promise<{ ok: boolean, status: number, statusText: string, headers: { get(k: string): string|null }, json(): Promise<any>, text(): Promise<string> }>}
  */
 async function fetchOpenAITokenEndpoint(params, context) {
   const now = Date.now();
@@ -249,17 +434,21 @@ async function fetchOpenAITokenEndpoint(params, context) {
       `[aidevops] OAuth pool: ${context} skipped — OpenAI token endpoint rate limited, cooldown ${remainingMinutes}m remaining. ` +
       `Use /model-accounts-pool reset-cooldowns to clear manually.`,
     );
-    return new Response(null, { status: 429, statusText: "Rate Limited (cooldown)" });
+    return {
+      ok: false,
+      status: 429,
+      statusText: "Rate Limited (cooldown)",
+      headers: { get() { return null; } },
+      async json() { return { error: "Rate limited (cooldown)" }; },
+      async text() { return "Rate limited (cooldown)"; },
+    };
   }
 
-  const response = await fetch(OPENAI_TOKEN_ENDPOINT, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/x-www-form-urlencoded",
-      "User-Agent": OPENCODE_USER_AGENT,
-    },
+  const response = curlTokenEndpoint(OPENAI_TOKEN_ENDPOINT, {
+    headers: { "User-Agent": OPENCODE_USER_AGENT },
     body: params.toString(),
-  });
+    contentType: "application/x-www-form-urlencoded",
+  }, context);
 
   if (response.status === 429) {
     const retryAfter = response.headers.get("retry-after");
@@ -1545,7 +1734,7 @@ export function createPoolAuthHook(client) {
                     const profileResp = await fetch(endpoint, {
                       headers: {
                         "Authorization": `Bearer ${json.access_token}`,
-                        "User-Agent": "claude-cli/2.1.80 (external, cli)",
+                        "User-Agent": ANTHROPIC_USER_AGENT,
                       },
                       redirect: "follow",
                     });
