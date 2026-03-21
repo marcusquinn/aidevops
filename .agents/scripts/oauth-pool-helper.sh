@@ -75,7 +75,8 @@ generate_challenge() {
 # URL-encode a string
 urlencode() {
 	local string="$1"
-	python3 -c "import urllib.parse; print(urllib.parse.quote('$string', safe=''))"
+	# Pass via env to avoid shell injection in python3 -c string
+	INPUT="$string" python3 -c "import urllib.parse, os; print(urllib.parse.quote(os.environ['INPUT'], safe=''))"
 	return 0
 }
 
