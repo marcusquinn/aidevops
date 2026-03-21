@@ -35,6 +35,13 @@
       "relevance": "Visual quota monitoring complementing our headless model-accounts-pool rotation. New provider support and multi-account features (GH#86) directly relevant. Installed via brew cask in setup.sh.",
       "default_branch": "main",
       "added_at": "2026-03-21"
+    },
+    {
+      "slug": "blitzdotdev/blitz-mac",
+      "description": "Native macOS app for iOS development with 30+ MCP tools — simulator management, App Store Connect, build pipeline",
+      "relevance": "Optional MCP server alternative to asc CLI. New MCP tools may extend our ios-simulator-mcp and xcodebuild-mcp coverage. Documented as optional in tools/mobile/app-store-connect.md.",
+      "default_branch": "master",
+      "added_at": "2026-03-21"
     }
   ],
   "non_github_upstreams": [
