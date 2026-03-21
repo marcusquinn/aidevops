@@ -106,7 +106,10 @@ check_file() {
 ensure_trailing_newline() {
 	local file="$1"
 	local last
-	last="$(tail -c 1 "$file"; printf x)"
+	last="$(
+		tail -c 1 "$file"
+		printf x
+	)"
 	[[ -s "$file" ]] && [[ "$last" != $'\n'x ]] && printf '\n' >>"$file"
 }
 
@@ -662,6 +665,14 @@ cmd_status() {
 
 # Update/upgrade command
 cmd_update() {
+	local skip_project_sync=false
+	local arg
+	for arg in "$@"; do
+		case "$arg" in
+		--skip-project-sync) skip_project_sync=true ;;
+		esac
+	done
+
 	print_header "Updating AI DevOps Framework"
 	echo ""
 
@@ -811,57 +822,87 @@ cmd_update() {
 		fi
 	fi
 
-	# Check registered repos for updates
+	# Auto-sync registered projects (t1552)
+	# Updates .aidevops.json version stamp and repos.json entry for each
+	# initialized project whose version is older than the current framework.
+	# Skip with --skip-project-sync if needed.
 	echo ""
-	print_header "Checking Initialized Projects"
+	print_header "Syncing Initialized Projects"
 
-	local repos_needing_upgrade=()
-	local current_ver
-	current_ver=$(get_version)
-
-	while IFS= read -r repo_path; do
-		[[ -z "$repo_path" ]] && continue
-
-		if [[ -d "$repo_path" ]]; then
-			if check_repo_needs_upgrade "$repo_path"; then
-				repos_needing_upgrade+=("$repo_path")
-			fi
-		fi
-	done < <(get_registered_repos)
-
-	if [[ ${#repos_needing_upgrade[@]} -eq 0 ]]; then
-		print_success "All registered projects are up to date"
+	if [[ "$skip_project_sync" == "true" ]]; then
+		print_info "Project sync skipped (--skip-project-sync)"
 	else
-		echo ""
-		print_warning "${#repos_needing_upgrade[@]} project(s) may need updates:"
-		for repo in "${repos_needing_upgrade[@]}"; do
-			local repo_name
-			repo_name=$(basename "$repo")
-			echo "  - $repo_name ($repo)"
-		done
-		echo ""
-		read -r -p "Update .aidevops.json version in these projects? [y/N] " response
-		if [[ "$response" =~ ^[Yy]$ ]]; then
+		local repos_needing_upgrade=()
+		local current_ver
+		current_ver=$(get_version)
+
+		while IFS= read -r repo_path; do
+			[[ -z "$repo_path" ]] && continue
+
+			if [[ -d "$repo_path" ]]; then
+				if check_repo_needs_upgrade "$repo_path"; then
+					repos_needing_upgrade+=("$repo_path")
+				fi
+			fi
+		done < <(get_registered_repos)
+
+		if [[ ${#repos_needing_upgrade[@]} -eq 0 ]]; then
+			print_success "All registered projects are up to date"
+		else
+			local synced=0
+			local skipped=0
+			local failed=0
 			for repo in "${repos_needing_upgrade[@]}"; do
-				if [[ -f "$repo/.aidevops.json" ]]; then
-					print_info "Updating $repo..."
-					# Update version in .aidevops.json
-					if command -v jq &>/dev/null; then
-						local temp_file="${repo}/.aidevops.json.tmp"
-						jq --arg version "$current_ver" '.version = $version' "$repo/.aidevops.json" >"$temp_file" &&
-							mv "$temp_file" "$repo/.aidevops.json"
+				if [[ ! -f "$repo/.aidevops.json" ]]; then
+					# Not initialized with aidevops — skip silently
+					skipped=$((skipped + 1))
+					continue
+				fi
+
+				# Try jq first (preserves formatting), fall back to sed
+				# (some .aidevops.json files have minor structural issues
+				# that jq rejects but sed handles fine for version updates)
+				local did_sync=false
+				if command -v jq &>/dev/null; then
+					local temp_file="${repo}/.aidevops.json.tmp"
+					if jq --arg version "$current_ver" '.version = $version' "$repo/.aidevops.json" >"$temp_file" 2>/dev/null &&
+						[[ -s "$temp_file" ]]; then
+						mv "$temp_file" "$repo/.aidevops.json"
 
 						# Update repos.json entry
 						local features
 						features=$(jq -r '[.features | to_entries[] | select(.value == true) | .key] | join(",")' "$repo/.aidevops.json" 2>/dev/null || echo "")
 						register_repo "$repo" "$current_ver" "$features"
 
-						print_success "Updated $(basename "$repo")"
+						did_sync=true
 					else
-						print_warning "jq not installed - manual update needed for $repo"
+						rm -f "$temp_file"
 					fi
 				fi
+
+				# Fallback: sed-based version update (handles malformed JSON)
+				if [[ "$did_sync" != "true" ]]; then
+					if sed -i '' "s/\"version\": *\"[^\"]*\"/\"version\": \"$current_ver\"/" "$repo/.aidevops.json" 2>/dev/null; then
+						did_sync=true
+					fi
+				fi
+
+				if [[ "$did_sync" == "true" ]]; then
+					synced=$((synced + 1))
+				else
+					failed=$((failed + 1))
+				fi
 			done
+
+			if [[ $synced -gt 0 ]]; then
+				print_success "Synced $synced project(s) to v$current_ver"
+			fi
+			if [[ $skipped -gt 0 ]]; then
+				print_info "Skipped $skipped uninitialized project(s) (run 'aidevops init' in each to enable)"
+			fi
+			if [[ $failed -gt 0 ]]; then
+				print_warning "$failed project(s) failed to sync (jq missing or write error)"
+			fi
 		fi
 	fi
 
@@ -3739,7 +3780,8 @@ main() {
 		cmd_status
 		;;
 	update | upgrade | u)
-		cmd_update
+		shift
+		cmd_update "$@"
 		;;
 	auto-update | autoupdate)
 		shift
