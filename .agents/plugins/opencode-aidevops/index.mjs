@@ -1112,14 +1112,10 @@ export async function AidevopsPlugin({ directory, client }) {
     event: async (input) => handleEvent(input),
 
     // Phase 7: OAuth multi-account pool (t1543, t1548, t1549)
-    // FIXME: Re-enable once anomalyco/opencode#18536 is fixed.
-    // The `auth` hook is temporarily disabled due to a regression in OpenCode v1.2.27
-    // that causes a crash. Pool tokens continue to work via `initPoolAuth()`.
-    // auth: [
-    //   createPoolAuthHook(client),
-    //   createOpenAIPoolAuthHook(client),
-    //   createCursorPoolAuthHook(client),
-    // ],
+    // OpenCode v1.2.27 only supports auth as a single object, not an array.
+    // Using the Anthropic pool hook as the primary — it's the most-used provider.
+    // OpenAI and Cursor accounts are added via oauth-pool-helper.sh instead.
+    auth: createPoolAuthHook(client),
 
     // Compaction context (includes OMOC state when detected)
     "experimental.session.compacting": async (input, output) =>
