@@ -20,17 +20,31 @@ get_plan_sections() {
 
 get_plan_status() {
 	local line="$1"
-	sed -n "$((line + 1)),$((line + 5))p" "$PLANS_FILE" | grep "Status:" | head -1 | sed 's/.*Status:\s*//' || echo ''
+	local status_line
+	status_line=$(sed -n "$((line + 1)),$((line + 5))p" "$PLANS_FILE" | grep "Status:" | head -1 || true)
+	if [[ -n "$status_line" ]]; then
+		printf '%s\n' "$status_line" | sed 's/.*Status:[[:space:]]*//'
+	else
+		echo ''
+	fi
+	return 0
 }
 
 get_plan_todos() {
 	local line="$1"
-	sed -n "$((line + 1)),$((line + 10))p" "$PLANS_FILE" | grep -oE "t[0-9]+(\.[0-9]+)*" | sort -u || true
+	# Capture dotted task IDs like t316.2 as well as plain t316
+	sed -n "$((line + 1)),$((line + 10))p" "$PLANS_FILE" | grep -oE 't[0-9]+(\.[0-9]+)*' | sort -u || true
+	return 0
 }
 
 check_todo_completed() {
 	local todo_id="$1"
-	grep -c "\[x\].*${todo_id}" "$TODO_FILE" 2>/dev/null || echo '0'
+	local count=0
+	if [[ -f "$TODO_FILE" ]]; then
+		count=$(grep -c "\[x\].*${todo_id}" "$TODO_FILE" 2>/dev/null) || count=0
+	fi
+	printf '%s\n' "$count"
+	return 0
 }
 
 check_plan_completed() {
