@@ -36,11 +36,11 @@ For Anthropic: `oauth-pool-helper.sh add anthropic`
 
 For OpenAI: `oauth-pool-helper.sh add openai`
 
-For Cursor: `oauth-pool-helper.sh add cursor`
+For Cursor: `opencode auth login --provider cursor`
 
 For Anthropic/OpenAI, explain: "This will open your browser to log in. After you authorize, you'll get a code to paste back into the terminal. Once done, restart OpenCode and your account will be active."
 
-For Cursor, explain: "This reads your credentials from the Cursor IDE — make sure you're logged in there first. No browser step needed, it's instant."
+For Cursor, explain: "This opens your browser to log into Cursor. After you authorize, tokens are saved automatically. Restart OpenCode and Cursor models will appear when you press Ctrl+T."
 
 After they confirm it worked, tell them to restart OpenCode, then use Ctrl+T to select a model from the provider.
 

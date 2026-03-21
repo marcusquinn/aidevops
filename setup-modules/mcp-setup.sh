@@ -478,6 +478,42 @@ setup_opencode_plugins() {
 			print_success "aidevops plugin already registered in opencode.json"
 		fi
 		pool_plugin_registered="true"
+
+		# --- Register opencode-cursor-oauth plugin (npm, auto-installed by OpenCode) ---
+		local cursor_plugin="opencode-cursor-oauth"
+		local cursor_already
+		cursor_already=$(jq --arg p "$cursor_plugin" \
+			'(.plugin // []) | map(select(. == $p)) | length' \
+			"$opencode_config" 2>/dev/null || echo "0")
+
+		if [[ "$cursor_already" -eq 0 ]]; then
+			local tmp_cursor="${opencode_config}.tmp.$$"
+			if jq --arg p "$cursor_plugin" \
+				'.plugin = ((.plugin // []) + [$p] | unique)' \
+				"$opencode_config" >"$tmp_cursor" 2>/dev/null; then
+				mv "$tmp_cursor" "$opencode_config"
+				print_success "Cursor OAuth plugin registered in opencode.json"
+			else
+				rm -f "$tmp_cursor"
+				print_warning "Failed to register Cursor OAuth plugin"
+			fi
+		else
+			print_success "Cursor OAuth plugin already registered"
+		fi
+
+		# --- Ensure cursor provider stub exists (required by opencode-cursor-oauth) ---
+		local has_cursor_provider
+		has_cursor_provider=$(jq '.provider.cursor // empty' "$opencode_config" 2>/dev/null || true)
+		if [[ -z "$has_cursor_provider" ]]; then
+			local tmp_cursor_prov="${opencode_config}.tmp.$$"
+			if jq '.provider.cursor = {"name": "Cursor"}' \
+				"$opencode_config" >"$tmp_cursor_prov" 2>/dev/null; then
+				mv "$tmp_cursor_prov" "$opencode_config"
+				print_success "Cursor provider stub added to opencode.json"
+			else
+				rm -f "$tmp_cursor_prov"
+			fi
+		fi
 	else
 		if [[ -z "${opencode_config:-}" ]]; then
 			print_info "opencode.json not found — run 'opencode' once to create it, then re-run setup"
@@ -534,9 +570,13 @@ setup_opencode_plugins() {
 			print_info "  4. Complete the OAuth flow in your browser"
 			print_info "  5. Repeat to add more accounts for automatic rotation"
 			print_info "  6. Switch to 'Anthropic' provider and select a model to start chatting"
+			print_info ""
+			print_info "For Cursor Pro accounts:"
+			print_info "  Run: opencode auth login --provider cursor"
+			print_info "  Or from shell: oauth-pool-helper.sh add cursor"
+			print_info ""
 			print_info "  Health check: /models-pool-check"
 			print_info "  Manage accounts: /model-accounts-pool list|status|remove"
-			print_info "  Docs: ~/.aidevops/agents/tools/opencode/opencode-anthropic-auth.md"
 		else
 			print_warning "aidevops OpenCode plugin was not registered; 'Anthropic Pool' may be unavailable"
 			print_info "Re-run aidevops setup to register the plugin, then run: opencode auth login"
