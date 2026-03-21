@@ -509,8 +509,8 @@ for i, a in enumerate(pool.get('$prov', []), 1):
 # ---------------------------------------------------------------------------
 
 cmd_remove() {
-	local provider="$1"
-	local email="$2"
+	local provider="${1:-}"
+	local email="${2:-}"
 
 	if [[ -z "$provider" || -z "$email" ]]; then
 		print_error "Usage: oauth-pool-helper.sh remove <provider> <email>"
