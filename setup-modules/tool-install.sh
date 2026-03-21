@@ -896,6 +896,63 @@ setup_recommended_tools() {
 		print_success "All recommended tools installed!"
 	fi
 
+	# Check for Cursor CLI (agent) — independent of the missing_tools flow
+	# since it uses a curl installer, not brew
+	setup_cursor_cli
+
+	return 0
+}
+
+setup_cursor_cli() {
+	print_info "Checking Cursor CLI (agent)..."
+
+	if command -v agent >/dev/null 2>&1; then
+		local cursor_version
+		cursor_version=$(agent --version 2>/dev/null || echo "unknown")
+		print_success "Cursor CLI found: $cursor_version"
+		return 0
+	fi
+
+	# Check ~/.local/bin specifically (may not be in PATH yet)
+	if [[ -x "$HOME/.local/bin/agent" ]]; then
+		local cursor_version
+		cursor_version=$("$HOME/.local/bin/agent" --version 2>/dev/null || echo "unknown")
+		print_success "Cursor CLI found at ~/.local/bin/agent: $cursor_version"
+		print_info "Ensure ~/.local/bin is in your PATH"
+		return 0
+	fi
+
+	echo "  Cursor CLI provides access to Cursor's AI models (including Composer 2)"
+	echo "  from the terminal. Also usable as an OpenCode provider via the"
+	echo "  opencode-cursor plugin for OAuth-based model access."
+	echo ""
+
+	local install_cursor
+	read -r -p "Install Cursor CLI? [Y/n]: " install_cursor
+
+	if [[ "$install_cursor" =~ ^[Yy]?$ ]]; then
+		print_info "Installing Cursor CLI..."
+		if curl https://cursor.com/install -fsS | bash 2>&1; then
+			# Ensure ~/.local/bin is in PATH for this session
+			if [[ ":$PATH:" != *":$HOME/.local/bin:"* ]]; then
+				export PATH="$HOME/.local/bin:$PATH"
+				print_info "Added ~/.local/bin to PATH for this session"
+			fi
+			print_success "Cursor CLI installed"
+			echo ""
+			echo "  Next steps:"
+			echo "    agent login     # Authenticate with your Cursor account"
+			echo "    agent models    # List available models"
+			echo "    agent status    # Check auth status"
+		else
+			print_warning "Failed to install Cursor CLI"
+			echo "  Install manually: curl https://cursor.com/install -fsS | bash"
+		fi
+	else
+		print_info "Skipped Cursor CLI installation"
+		echo "  Install later: curl https://cursor.com/install -fsS | bash"
+	fi
+
 	return 0
 }
 

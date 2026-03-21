@@ -100,6 +100,13 @@ PIP_TOOLS=(
 	"pip|Outscraper MCP|outscraper-mcp-server|--version|outscraper-mcp-server|uv tool upgrade outscraper-mcp-server"
 )
 
+# Tools installed via curl/custom installers (not in brew/npm/pip registries)
+# Latest version cannot be checked via registry — use "self" category
+# which skips latest-version lookup and just reports installed version
+CUSTOM_TOOLS=(
+	"self|Cursor CLI|agent|--version|cursor-agent|agent update"
+)
+
 # Counters
 OUTDATED_COUNT=0
 INSTALLED_COUNT=0
@@ -277,6 +284,7 @@ check_tool() {
 	npm) latest=$(get_npm_latest "$pkg") ;;
 	brew) latest=$(get_brew_latest "$pkg") ;;
 	pip) latest=$(get_pip_latest "$pkg") ;;
+	self) latest="$installed" ;; # Self-updating tools — no registry to check
 	*) latest="unknown" ;;
 	esac
 
@@ -386,6 +394,9 @@ main() {
 	pip)
 		check_category "Python/Pip" "${PIP_TOOLS[@]}"
 		;;
+	custom)
+		check_category "Custom/Self-Updating" "${CUSTOM_TOOLS[@]}"
+		;;
 	all | *)
 		if [[ ${#NPM_TOOLS[@]} -gt 0 ]]; then
 			check_category "NPM" "${NPM_TOOLS[@]}"
@@ -395,6 +406,9 @@ main() {
 		fi
 		if command -v pip &>/dev/null && [[ ${#PIP_TOOLS[@]} -gt 0 ]]; then
 			check_category "Python/Pip" "${PIP_TOOLS[@]}"
+		fi
+		if [[ ${#CUSTOM_TOOLS[@]} -gt 0 ]]; then
+			check_category "Custom/Self-Updating" "${CUSTOM_TOOLS[@]}"
 		fi
 		;;
 	esac
