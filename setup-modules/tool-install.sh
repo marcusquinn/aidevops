@@ -932,7 +932,7 @@ setup_cursor_cli() {
 
 	if [[ "$install_cursor" =~ ^[Yy]?$ ]]; then
 		print_info "Installing Cursor CLI..."
-		if curl https://cursor.com/install -fsS | bash 2>&1; then
+		if verified_install "Cursor CLI" "https://cursor.com/install"; then
 			# Ensure ~/.local/bin is in PATH for this session
 			if [[ ":$PATH:" != *":$HOME/.local/bin:"* ]]; then
 				export PATH="$HOME/.local/bin:$PATH"
