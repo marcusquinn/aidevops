@@ -386,16 +386,28 @@ cmd_add_cursor() {
 	# Source 1: cursor-agent auth.json
 	if [[ -f "$cursor_auth_json" ]]; then
 		print_info "Reading from Cursor auth.json..."
-		local auth_tokens
-		auth_tokens=$(python3 -c "
+		local _at _rt _line _count
+		_count=0
+		while IFS= read -r _line; do
+			_count=$((_count + 1))
+			if [[ $_count -eq 1 ]]; then
+				_at="$_line"
+			elif [[ $_count -eq 2 ]]; then
+				_rt="$_line"
+			fi
+		done < <(python3 -c "
 import json, sys
 try:
-    d = json.load(open(sys.argv[1]))
-    print(d.get('accessToken', '') + '\n' + d.get('refreshToken', ''))
-except: pass
-" "$cursor_auth_json" 2>/dev/null || true)
-		access_token=$(printf '%s' "$auth_tokens" | head -1)
-		refresh_token=$(printf '%s' "$auth_tokens" | tail -1)
+    with open(sys.argv[1]) as f:
+        d = json.load(f)
+    print(d.get('accessToken', ''))
+    print(d.get('refreshToken', ''))
+except Exception:
+    print('')
+    print('')
+" "$cursor_auth_json" 2>/dev/null)
+		access_token="${_at:-}"
+		refresh_token="${_rt:-}"
 	fi
 
 	# Source 2: Cursor IDE state database (fallback or supplement)
@@ -427,31 +439,35 @@ except: pass
 	fi
 
 	# Decode JWT to get email and expiry (no secrets printed)
-	local jwt_info
-	jwt_info=$(ACCESS="$access_token" python3 -c "
+	local jwt_email jwt_exp
+	local _je _jx _jline _jcount
+	_jcount=0
+	while IFS= read -r _jline; do
+		_jcount=$((_jcount + 1))
+		if [[ $_jcount -eq 1 ]]; then
+			_je="$_jline"
+		elif [[ $_jcount -eq 2 ]]; then
+			_jx="$_jline"
+		fi
+	done < <(ACCESS="$access_token" python3 -c "
 import os, json, base64
 token = os.environ['ACCESS']
 parts = token.split('.')
 if len(parts) >= 2:
-    # Add padding for base64
     payload = parts[1] + '=' * (4 - len(parts[1]) % 4)
-    data = json.loads(base64.urlsafe_b64decode(payload))
-    email = data.get('email', '')
-    exp = data.get('exp', 0)
-    print(json.dumps({'email': email, 'exp': exp}))
+    try:
+        data = json.loads(base64.urlsafe_b64decode(payload))
+        print(data.get('email', ''))
+        print(data.get('exp', 0))
+    except Exception:
+        print('')
+        print(0)
 else:
-    print(json.dumps({'email': '', 'exp': 0}))
-" 2>/dev/null || echo '{"email":"","exp":0}')
-
-	local jwt_parsed jwt_email jwt_exp
-	jwt_parsed=$(printf '%s' "$jwt_info" | python3 -c "
-import sys, json
-d = json.load(sys.stdin)
-print(d.get('email', ''))
-print(d.get('exp', 0))
-" 2>/dev/null || printf '\n0')
-	jwt_email=$(printf '%s' "$jwt_parsed" | head -1)
-	jwt_exp=$(printf '%s' "$jwt_parsed" | tail -1)
+    print('')
+    print(0)
+" 2>/dev/null)
+	jwt_email="${_je:-}"
+	jwt_exp="${_jx:-0}"
 
 	# Use JWT email if we didn't get one from the state DB
 	if [[ -z "$email" && -n "$jwt_email" ]]; then
