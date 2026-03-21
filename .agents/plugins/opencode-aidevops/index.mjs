@@ -1112,11 +1112,9 @@ export async function AidevopsPlugin({ directory, client }) {
     event: async (input) => handleEvent(input),
 
     // Phase 7: OAuth multi-account pool (t1543, t1548, t1549)
-    // DISABLED: OpenCode v1.2.27 crashes when plugin returns `auth` key
-    // (Expected string, got undefined at worker.js:40673).
-    // Filed: https://github.com/anomalyco/opencode/issues/18536
-    // Pool tokens still work via initPoolAuth() injection above.
-    // Re-enable when OpenCode fixes this regression.
+    // FIXME: Re-enable once anomalyco/opencode#18536 is fixed.
+    // The `auth` hook is temporarily disabled due to a regression in OpenCode v1.2.27
+    // that causes a crash. Pool tokens continue to work via `initPoolAuth()`.
     // auth: [
     //   createPoolAuthHook(client),
     //   createOpenAIPoolAuthHook(client),
