@@ -96,6 +96,7 @@ save_pool() {
 	local pool_dir
 	pool_dir=$(dirname "$POOL_FILE")
 	mkdir -p "$pool_dir"
+	chmod 700 "$pool_dir"
 	local tmp_file="${POOL_FILE}.tmp.$$"
 	printf '%s\n' "$json" >"$tmp_file"
 	chmod 600 "$tmp_file"
@@ -103,16 +104,20 @@ save_pool() {
 	return 0
 }
 
-# Open URL in browser (best-effort, never fatal)
+# Open URL in browser (best-effort, never fatal — cascades on failure)
 open_browser() {
 	local url="$1"
+	local opened="false"
 	if command -v open &>/dev/null; then
-		open "$url" 2>/dev/null || true
-	elif command -v xdg-open &>/dev/null; then
-		xdg-open "$url" 2>/dev/null || true
-	elif command -v wslview &>/dev/null; then
-		wslview "$url" 2>/dev/null || true
-	else
+		open "$url" 2>/dev/null && opened="true"
+	fi
+	if [[ "$opened" == "false" ]] && command -v xdg-open &>/dev/null; then
+		xdg-open "$url" 2>/dev/null && opened="true"
+	fi
+	if [[ "$opened" == "false" ]] && command -v wslview &>/dev/null; then
+		wslview "$url" 2>/dev/null && opened="true"
+	fi
+	if [[ "$opened" == "false" ]]; then
 		print_warning "Cannot open browser automatically."
 	fi
 	# Always print URL so user can open manually if browser launch failed
@@ -146,7 +151,7 @@ cmd_add() {
 	local verifier challenge state_nonce
 	verifier=$(generate_verifier)
 	challenge=$(generate_challenge "$verifier")
-	state_nonce=$(openssl rand -hex 16)
+	state_nonce=$(openssl rand -hex 24)
 
 	# Build authorize URL
 	local authorize_url client_id redirect_uri scopes
@@ -325,7 +330,7 @@ json.dump(pool, sys.stdout, indent=2)
 	save_pool "$pool"
 
 	local count
-	count=$(printf '%s' "$pool" | python3 -c "import sys,json; print(len(json.load(sys.stdin).get('$provider',[])))")
+	count=$(printf '%s' "$pool" | PROVIDER="$provider" python3 -c "import sys,json,os; print(len(json.load(sys.stdin).get(os.environ['PROVIDER'],[])))")
 
 	print_success "Added ${email} to ${provider} pool (${count} account(s) total)"
 	print_info "Restart OpenCode to use the new token."
@@ -365,7 +370,7 @@ cmd_check() {
 
 	for prov in "${providers_to_check[@]}"; do
 		local count
-		count=$(printf '%s' "$pool" | python3 -c "import sys,json; print(len(json.load(sys.stdin).get('$prov',[])))" 2>/dev/null || echo "0")
+		count=$(printf '%s' "$pool" | PROVIDER="$prov" python3 -c "import sys,json,os; print(len(json.load(sys.stdin).get(os.environ['PROVIDER'],[])))" 2>/dev/null || echo "0")
 		if [[ "$count" == "0" ]]; then
 			continue
 		fi
@@ -486,16 +491,17 @@ cmd_list() {
 
 	for prov in "${providers_to_list[@]}"; do
 		local count
-		count=$(printf '%s' "$pool" | python3 -c "import sys,json; print(len(json.load(sys.stdin).get('$prov',[])))" 2>/dev/null || echo "0")
+		count=$(printf '%s' "$pool" | PROVIDER="$prov" python3 -c "import sys,json,os; print(len(json.load(sys.stdin).get(os.environ['PROVIDER'],[])))" 2>/dev/null || echo "0")
 		if [[ "$count" == "0" ]]; then
 			continue
 		fi
 
 		printf '%s (%s account%s):\n' "$prov" "$count" "$([ "$count" = "1" ] && echo "" || echo "s")"
-		printf '%s' "$pool" | python3 -c "
-import sys, json
+		printf '%s' "$pool" | PROVIDER="$prov" python3 -c "
+import sys, json, os
 pool = json.load(sys.stdin)
-for i, a in enumerate(pool.get('$prov', []), 1):
+prov = os.environ['PROVIDER']
+for i, a in enumerate(pool.get(prov, []), 1):
     status = a.get('status', 'unknown')
     email = a.get('email', 'unknown')
     print(f'  {i}. {email} [{status}]')
