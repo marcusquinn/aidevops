@@ -12,21 +12,51 @@ Check the health and status of all OAuth pool accounts across providers.
 2. Present the results to the user
 3. If the tool returns a message about no accounts, include the "Adding an account" guide below
 
+## Shell Commands
+
+Users can also manage accounts directly from the terminal:
+
+```bash
+# Add an account (opens browser for OAuth)
+oauth-pool-helper.sh add anthropic       # Claude Pro/Max
+oauth-pool-helper.sh add openai          # ChatGPT Plus/Pro
+
+# Health check (token expiry, validity, status)
+oauth-pool-helper.sh check               # All providers
+oauth-pool-helper.sh check anthropic     # Specific provider
+
+# List accounts
+oauth-pool-helper.sh list
+
+# Remove an account
+oauth-pool-helper.sh remove anthropic user@example.com
+```
+
 ## Account Management Guide
 
 When reporting results, include relevant guidance from this section based on what the user needs.
 
 ### Adding an account
 
-1. Run `opencode auth login` (or press Ctrl+A in the TUI)
-2. Select the pool provider:
-   - **Anthropic Pool** — for Claude Pro/Max subscriptions
-   - **OpenAI Pool** — for ChatGPT Plus/Pro subscriptions
-   - **Cursor Pool** — for Cursor Pro subscriptions
+**Option A — Shell (recommended):**
+
+Run in your terminal:
+
+```bash
+oauth-pool-helper.sh add anthropic    # Claude Pro/Max
+oauth-pool-helper.sh add openai       # ChatGPT Plus/Pro
+```
+
+This opens your browser for OAuth, then saves the token to the pool. Restart OpenCode after adding.
+
+**Option B — OpenCode TUI:**
+
+1. Press Ctrl+A in the TUI
+2. Select the pool provider (Anthropic Pool, OpenAI Pool, Cursor Pool)
 3. Enter your account email when prompted
 4. Complete the OAuth flow in your browser
-5. Paste the authorization code back into the terminal
-6. After success, switch to the main provider (Anthropic/OpenAI) and select a model — the pool provider is for account management only, not for chatting
+5. Paste the authorization code back
+6. After success, switch to the main provider (Anthropic/OpenAI) and select a model — the pool provider is for account management only
 
 Repeat to add multiple accounts. The pool rotates between them automatically when one hits rate limits.
 
@@ -34,13 +64,15 @@ Repeat to add multiple accounts. The pool rotates between them automatically whe
 
 Tokens refresh automatically. If an account shows `auth-error`:
 
-1. Run `opencode auth login` and select the same pool provider
-2. Enter the same email address
-3. Complete the OAuth flow — the existing account will be updated with fresh tokens
+Run `oauth-pool-helper.sh add <provider>` with the same email address — the existing account will be updated with fresh tokens.
 
 ### Removing an account
 
-Use the `model-accounts-pool` tool: `{"action": "remove", "provider": "<provider>", "email": "<email>"}`
+```bash
+oauth-pool-helper.sh remove anthropic user@example.com
+```
+
+Or use the `model-accounts-pool` tool: `{"action": "remove", "provider": "<provider>", "email": "<email>"}`
 
 ### Rotating manually
 
@@ -64,7 +96,7 @@ If the pool providers (Anthropic Pool, OpenAI Pool, Cursor Pool) don't appear:
 
 3. **Check symlink exists**: `ls -la ~/.config/opencode/plugins/opencode-aidevops`
 4. **Restart OpenCode**: The plugin loads at startup — changes require a restart
-5. **Check OpenCode version**: Pool providers require OpenCode v1.2.30+
+5. **Use shell commands instead**: `oauth-pool-helper.sh add anthropic` works independently of the TUI
 
 ## Notes
 
@@ -73,3 +105,4 @@ If the pool providers (Anthropic Pool, OpenAI Pool, Cursor Pool) don't appear:
 - The pool auto-rotates on rate limiting — manual rotation is rarely needed
 - Token endpoint cooldowns are in-memory (reset on OpenCode restart)
 - Per-account cooldowns persist in the pool file
+- Shell commands work independently of OpenCode — use them when the TUI auth flow is unavailable

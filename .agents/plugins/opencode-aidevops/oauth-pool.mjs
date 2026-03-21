@@ -2285,15 +2285,18 @@ export function registerPoolProvider(config) {
     },
   };
 
-  if (!config.provider["anthropic-pool"] ||
-      !config.provider["anthropic-pool"].models ||
-      Object.keys(config.provider["anthropic-pool"].models).length === 0) {
+  // Always update — ensures stale model names from previous versions are replaced
+  if (!config.provider["anthropic-pool"]) {
     config.provider["anthropic-pool"] = {
       name: "Anthropic Pool (Account Management)",
       npm: "@ai-sdk/anthropic",
       api: "https://api.anthropic.com/v1",
       models: poolAccountModel,
     };
+    registered++;
+  } else {
+    // Force-update model definitions (fixes stale names from prior versions)
+    config.provider["anthropic-pool"].models = poolAccountModel;
     registered++;
   }
 
@@ -2308,15 +2311,16 @@ export function registerPoolProvider(config) {
     },
   };
 
-  if (!config.provider["openai-pool"] ||
-      !config.provider["openai-pool"].models ||
-      Object.keys(config.provider["openai-pool"].models).length === 0) {
+  if (!config.provider["openai-pool"]) {
     config.provider["openai-pool"] = {
       name: "OpenAI Pool (Account Management)",
       npm: "@ai-sdk/openai",
       api: "https://api.openai.com/v1",
       models: openaiPoolAccountModel,
     };
+    registered++;
+  } else {
+    config.provider["openai-pool"].models = openaiPoolAccountModel;
     registered++;
   }
 
@@ -2332,15 +2336,16 @@ export function registerPoolProvider(config) {
     },
   };
 
-  if (!config.provider["cursor-pool"] ||
-      !config.provider["cursor-pool"].models ||
-      Object.keys(config.provider["cursor-pool"].models).length === 0) {
+  if (!config.provider["cursor-pool"]) {
     config.provider["cursor-pool"] = {
       name: "Cursor Pool (Account Management)",
       npm: "@ai-sdk/openai-compatible",
       api: CURSOR_PROXY_BASE_URL,
       models: cursorPoolAccountModel,
     };
+    registered++;
+  } else {
+    config.provider["cursor-pool"].models = cursorPoolAccountModel;
     registered++;
   }
 
