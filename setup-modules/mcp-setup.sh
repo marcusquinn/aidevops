@@ -460,19 +460,19 @@ setup_opencode_plugins() {
 		local already_registered
 		already_registered=$(jq --arg url "$plugin_url" \
 			'(.plugin // []) | map(select(. == $url)) | length' \
-			"$opencode_config" 2>/dev/null || echo "0")
+			"$opencode_config" || echo "0")
 
 		if [[ "$already_registered" -eq 0 ]]; then
 			# Add the plugin URL to the array (create array if absent)
 			local tmp_config="${opencode_config}.tmp.$$"
 			if jq --arg url "$plugin_url" \
 				'.plugin = ((.plugin // []) + [$url] | unique)' \
-				"$opencode_config" >"$tmp_config" 2>/dev/null; then
+				"$opencode_config" >"$tmp_config"; then
 				mv "$tmp_config" "$opencode_config"
 				print_success "aidevops plugin registered in opencode.json"
 			else
 				rm -f "$tmp_config"
-				print_warning "Failed to update opencode.json plugin array"
+				print_warning "Failed to update opencode.json plugin array (file: $opencode_config)"
 			fi
 		else
 			print_success "aidevops plugin already registered in opencode.json"
@@ -498,7 +498,6 @@ setup_opencode_plugins() {
 	fi
 
 	setup_track_configured "OpenCode plugins"
-	pool_plugin_registered="true"
 
 	# Note: opencode-anthropic-auth is built into OpenCode v1.1.36+
 	# Adding it as an external plugin causes TypeError due to double-loading.
