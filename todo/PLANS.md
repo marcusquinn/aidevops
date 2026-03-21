@@ -4,6 +4,11 @@ Complex, multi-session work requiring research, design decisions, and detailed t
 
 Based on [OpenAI's PLANS.md](https://cookbook.openai.com/articles/codex_exec_plans) and [plan.md](https://github.com/Digital-Tvilling/plan.md), with TOON-enhanced parsing.
 
+> **Policy:** All plans are retained as permanent documentary memory. Completed plans
+> are marked `Status: Completed` — never archived, moved, or deleted. This file is the
+> institutional record of what was planned, why, and how it was delivered. Plan status
+> is updated automatically when all referenced TODO tasks are marked complete.
+
 <!--TOON:meta{version,format,updated}:
 1.0,plans-md+toon,2025-12-20T00:00:00Z
 -->
