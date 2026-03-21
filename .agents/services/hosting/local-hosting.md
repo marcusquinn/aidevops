@@ -890,6 +890,23 @@ Then run the one-time setup:
 localdev-helper.sh init
 ```
 
+## Tool-Specific Examples
+
+### App Store Connect Web Dashboard (asc-web)
+
+The `asc` CLI (App Store Connect) includes an embedded web server with a dashboard, CLI console, and screenshot studio. See `tools/mobile/app-store-connect.md` for full documentation.
+
+```bash
+# Register with localdev (one-time)
+localdev-helper.sh add asc
+
+# Run the asc web server via localdev
+localdev-helper.sh run --app asc -- asc tui --port $PORT
+# → https://asc.local/command-center (interactive ASC dashboard)
+# → https://asc.local/console (CLI reference + terminal)
+# → https://asc.local/editor (screenshot studio)
+```
+
 ## File Locations
 
 | Path | Purpose |

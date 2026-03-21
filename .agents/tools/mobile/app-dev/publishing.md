@@ -32,6 +32,18 @@ tools:
 
 <!-- AI-CONTEXT-END -->
 
+## CLI Automation — asc
+
+For programmatic App Store Connect management (builds, TestFlight, metadata, screenshots, subscriptions, submissions), use the `asc` CLI. See `tools/mobile/app-store-connect.md` for full documentation.
+
+```bash
+brew install tddworks/tap/asccli
+asc auth login --key-id KEY --issuer-id ISSUER --private-key-path ~/.asc/AuthKey.p8
+asc apps list
+```
+
+The checklists below cover compliance requirements. The `asc` CLI automates the execution.
+
 ## Apple App Store
 
 ### Pre-Submission Checklist
@@ -169,6 +181,7 @@ tools:
 
 ## Related
 
+- `tools/mobile/app-store-connect.md` - App Store Connect CLI (asc) — programmatic ASC management
 - `tools/mobile/app-dev/testing.md` - Pre-submission testing
 - `product/monetisation.md` - Payment setup
 - `tools/mobile/app-dev/assets.md` - Screenshot and icon generation

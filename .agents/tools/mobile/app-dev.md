@@ -43,6 +43,7 @@
 
 **Related agents**:
 
+- `tools/mobile/app-store-connect.md` - App Store Connect CLI (asc) — builds, TestFlight, metadata, subscriptions, submissions, web dashboard
 - `tools/mobile/agent-device.md` - AI-driven mobile device automation
 - `tools/mobile/xcodebuild-mcp.md` - Xcode build/test/deploy
 - `tools/mobile/maestro.md` - E2E test flows
@@ -65,7 +66,7 @@ Onboarding    -> product/onboarding.md (first-run experience, paywall placement)
 Development   -> tools/mobile/app-dev/expo.md OR tools/mobile/app-dev/swift.md
 Testing       -> agent-device (AI-driven) + maestro (E2E) + xcodebuild-mcp (build)
 Preview       -> ios-simulator-mcp + playwright-emulation (web) + agent-device
-Publishing    -> tools/mobile/app-dev/publishing.md (App Store + Play Store)
+Publishing    -> tools/mobile/app-dev/publishing.md (checklists) + app-store-connect.md (asc CLI)
 Monetisation  -> product/monetisation.md (RevenueCat, ads, freemium)
 Growth        -> product/growth.md (UGC, influencers, content, paid ads)
 Analytics     -> product/analytics.md (retention, engagement, revenue)

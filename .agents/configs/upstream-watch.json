@@ -7,6 +7,27 @@
       "relevance": "Token cost optimization for agent bash operations (git, gh, test runners). Evaluated in t1430.",
       "default_branch": "master",
       "added_at": "2026-03-10"
+    },
+    {
+      "slug": "tddworks/asc-cli",
+      "description": "App Store Connect CLI — Swift CLI for managing iOS/macOS apps, builds, TestFlight, metadata, subscriptions, screenshots",
+      "relevance": "Primary CLI tool for App Store Connect automation. New releases add commands, API coverage, and agent affordances. Documented in tools/mobile/app-store-connect.md.",
+      "default_branch": "main",
+      "added_at": "2026-03-21"
+    },
+    {
+      "slug": "tddworks/asc-cli-skills",
+      "description": "Official agent skills for the asc CLI — per-command-group reference with flags, output schemas, error tables",
+      "relevance": "27 skills covering auth, builds, TestFlight, IAP, subscriptions, code signing, reports, Game Center, Xcode Cloud. New skills extend agent capabilities.",
+      "default_branch": "main",
+      "added_at": "2026-03-21"
+    },
+    {
+      "slug": "rudrankriyam/app-store-connect-cli-skills",
+      "description": "Community workflow skills for asc CLI — release flows, ASO audit, localization, RevenueCat sync, crash triage",
+      "relevance": "22 higher-level workflow skills complementing the official per-command skills. New skills add orchestration patterns.",
+      "default_branch": "main",
+      "added_at": "2026-03-21"
     }
   ],
   "non_github_upstreams": [
