@@ -8,7 +8,7 @@
 #   tool-version-check.sh --category npm  # Check only npm tools
 #   tool-version-check.sh --json       # Output as JSON
 #
-# Categories: npm, brew, pip, all (default)
+# Categories: npm, brew, pip, custom, all (default)
 
 # shellcheck disable=SC1091
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
@@ -32,7 +32,7 @@ while [[ $# -gt 0 ]]; do
 		;;
 	--category | -c)
 		if [[ -z "${2:-}" ]]; then
-			echo "Error: --category requires a value (npm, brew, pip, all)"
+			echo "Error: --category requires a value (npm, brew, pip, custom, all)"
 			exit 1
 		fi
 		CATEGORY="$2"
@@ -51,7 +51,7 @@ while [[ $# -gt 0 ]]; do
 		echo ""
 		echo "Options:"
 		echo "  --update, -u       Automatically update outdated tools"
-		echo "  --category, -c     Check only specific category (npm, brew, pip, all)"
+		echo "  --category, -c     Check only specific category (npm, brew, pip, custom, all)"
 		echo "  --json, -j         Output results as JSON"
 		echo "  --quiet, -q        Only show outdated tools"
 		echo "  --help, -h         Show this help"

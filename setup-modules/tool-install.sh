@@ -928,7 +928,11 @@ setup_cursor_cli() {
 	echo ""
 
 	local install_cursor
-	read -r -p "Install Cursor CLI? [Y/n]: " install_cursor
+	if [[ "${NON_INTERACTIVE:-}" != "true" ]]; then
+		read -r -p "Install Cursor CLI? [Y/n]: " install_cursor
+	else
+		install_cursor="Y"
+	fi
 
 	if [[ "$install_cursor" =~ ^[Yy]?$ ]]; then
 		print_info "Installing Cursor CLI..."
