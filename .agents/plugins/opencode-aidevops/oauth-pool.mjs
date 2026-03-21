@@ -382,8 +382,11 @@ async function fetchTokenEndpoint(body, context) {
     const remainingSeconds = Math.ceil((tokenEndpointCooldownUntil - now) / 1000);
     const remainingMinutes = Math.ceil(remainingSeconds / 60);
     console.error(
-      `[aidevops] OAuth pool: ${context} skipped — token endpoint rate limited, cooldown ${remainingMinutes}m remaining. ` +
-      `Use /model-accounts-pool reset-cooldowns to clear manually.`,
+      [
+        `[aidevops] OAuth pool: ${context} skipped — token endpoint rate limited,`,
+        `cooldown ${remainingMinutes}m remaining.`,
+        "Use /model-accounts-pool reset-cooldowns to clear manually.",
+      ].join(" "),
     );
     return {
       ok: false,
@@ -406,9 +409,11 @@ async function fetchTokenEndpoint(body, context) {
     tokenEndpointCooldownUntil = Date.now() + cooldownMs;
     const cooldownMinutes = Math.ceil(cooldownMs / 60000);
     console.error(
-      `[aidevops] OAuth pool: ${context} failed: rate limited by Anthropic. ` +
-      `Cooldown set for ${cooldownMinutes}m — no further token requests until then. ` +
-      `Use /model-accounts-pool reset-cooldowns to clear manually.`,
+      [
+        `[aidevops] OAuth pool: ${context} failed: rate limited by Anthropic.`,
+        `Cooldown set for ${cooldownMinutes}m — no further token requests until then.`,
+        "Use /model-accounts-pool reset-cooldowns to clear manually.",
+      ].join(" "),
     );
   } else if (!response.ok) {
     console.error(`[aidevops] OAuth pool: ${context} failed: HTTP ${response.status}`);
@@ -431,8 +436,11 @@ async function fetchOpenAITokenEndpoint(params, context) {
   if (openaiTokenEndpointCooldownUntil > now) {
     const remainingMinutes = Math.ceil((openaiTokenEndpointCooldownUntil - now) / 60000);
     console.error(
-      `[aidevops] OAuth pool: ${context} skipped — OpenAI token endpoint rate limited, cooldown ${remainingMinutes}m remaining. ` +
-      `Use /model-accounts-pool reset-cooldowns to clear manually.`,
+      [
+        `[aidevops] OAuth pool: ${context} skipped — OpenAI token endpoint rate limited,`,
+        `cooldown ${remainingMinutes}m remaining.`,
+        "Use /model-accounts-pool reset-cooldowns to clear manually.",
+      ].join(" "),
     );
     return {
       ok: false,
@@ -456,9 +464,11 @@ async function fetchOpenAITokenEndpoint(params, context) {
     openaiTokenEndpointCooldownUntil = Date.now() + cooldownMs;
     const cooldownMinutes = Math.ceil(cooldownMs / 60000);
     console.error(
-      `[aidevops] OAuth pool: ${context} failed: rate limited by OpenAI. ` +
-      `Cooldown set for ${cooldownMinutes}m — no further token requests until then. ` +
-      `Use /model-accounts-pool reset-cooldowns to clear manually.`,
+      [
+        `[aidevops] OAuth pool: ${context} failed: rate limited by OpenAI.`,
+        `Cooldown set for ${cooldownMinutes}m — no further token requests until then.`,
+        "Use /model-accounts-pool reset-cooldowns to clear manually.",
+      ].join(" "),
     );
   } else if (!response.ok) {
     console.error(`[aidevops] OAuth pool: ${context} failed: HTTP ${response.status}`);
@@ -608,9 +618,11 @@ function startOAuthCallbackServer() {
     cleanup();
     if (err.code === "EADDRINUSE") {
       console.error(
-        `[aidevops] OAuth pool: port ${OAUTH_CALLBACK_PORT} in use — ` +
-          `OpenCode's built-in auth may be running. The user will need to ` +
-          `copy the code from the browser URL bar manually.`,
+        [
+          `[aidevops] OAuth pool: port ${OAUTH_CALLBACK_PORT} in use —`,
+          "OpenCode's built-in auth may be running.",
+          "The user will need to copy the code from the browser URL bar manually.",
+        ].join(" "),
       );
       resolveReady(false);
       return;
@@ -718,10 +730,12 @@ function upsertAccount(provider, account) {
     if (namedAccounts.length > 0) {
       const emails = namedAccounts.map((a) => a.email).join(", ");
       console.error(
-        `[aidevops] OAuth pool: REFUSED to save account with unknown email. ` +
-          `${namedAccounts.length} named account(s) exist: ${emails}. ` +
-          `Re-auth via "Add Account to Pool" and enter the email when prompted, ` +
-          `or use /model-accounts-pool to manage accounts.`,
+        [
+          "[aidevops] OAuth pool: REFUSED to save account with unknown email.",
+          `${namedAccounts.length} named account(s) exist: ${emails}.`,
+          'Re-auth via "Add Account to Pool" and enter the email when prompted,',
+          "or use /model-accounts-pool to manage accounts.",
+        ].join(" "),
       );
       return false;
     }
@@ -754,9 +768,11 @@ function savePendingToken(provider, tokenData) {
   savePool(pool);
   const existing = (pool[provider] || []).map((a) => a.email).join(", ");
   console.error(
-    `[aidevops] OAuth pool: token saved to pending for ${provider}. ` +
-    `Existing accounts: ${existing}. ` +
-    `Use /model-accounts-pool to assign this token to an account.`,
+    [
+      `[aidevops] OAuth pool: token saved to pending for ${provider}.`,
+      `Existing accounts: ${existing}.`,
+      "Use /model-accounts-pool to assign this token to an account.",
+    ].join(" "),
   );
 }
 
@@ -953,8 +969,10 @@ async function refreshCursorAccessToken(account) {
     }
 
     console.error(
-      `[aidevops] OAuth pool: Cursor token refresh failed for ${account.email} — ` +
-      `no valid token found in cursor-agent auth or Cursor IDE state`,
+      [
+        `[aidevops] OAuth pool: Cursor token refresh failed for ${account.email} —`,
+        "no valid token found in cursor-agent auth or Cursor IDE state",
+      ].join(" "),
     );
     return null;
   } catch (err) {
