@@ -12,7 +12,7 @@
     "go.mod"
   ],
   "model_defaults": {
-    "implementation": "sonnet",
+    "implementation": "composer2",
     "review": "sonnet",
     "triage": "haiku",
     "architecture": "sonnet",

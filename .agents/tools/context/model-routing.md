@@ -22,7 +22,7 @@ model: haiku
 - **Purpose**: Route tasks to the cheapest model that can handle them well
 - **Philosophy**: Use the smallest model that produces acceptable quality
 - **Default**: sonnet (best balance of cost/capability for most tasks)
-- **Cost spectrum**: local (free) -> flash -> haiku -> sonnet -> pro -> opus (highest)
+- **Cost spectrum**: local (free) -> flash -> haiku -> composer2 -> sonnet -> pro -> opus (highest)
 
 ## Model Tiers
 
@@ -31,6 +31,7 @@ model: haiku
 | `local` | llama.cpp (user-selected GGUF) | Free ($0) | Privacy-sensitive tasks, offline work, bulk processing, experimentation |
 | `flash` | gemini-2.5-flash-preview-05-20 | Lowest (~0.20x) | Large context reads, summarization, bulk processing |
 | `haiku` | claude-haiku-4-5-20251001 | Low (~0.25x) | Triage, classification, simple transforms, formatting |
+| `composer2` | cursor/composer-2 | Low (~0.17x) | Frontier-level coding: complex multi-file implementation, large refactors, high-quality code generation |
 | `sonnet` | claude-sonnet-4-6 | Medium | Code implementation, review, most development tasks |
 | `pro` | gemini-2.5-pro | Medium-High | Large codebase analysis, complex reasoning with big context |
 | `opus` | claude-opus-4-6 | Highest | Architecture decisions, complex multi-step reasoning, novel problems |
@@ -84,6 +85,17 @@ When referencing models in docs, scripts, or dispatch commands, use the full ID 
 - Creating documentation from code
 - Most interactive development tasks
 
+### Use `composer2` when:
+
+- Implementing complex features spanning multiple files where coding quality is the priority
+- Large refactors requiring deep understanding of existing code patterns
+- Code generation tasks where frontier-level accuracy reduces review cycles
+- Projects where Cursor OAuth pool is configured (t1549) — at ~0.17x sonnet cost, it is the best value coding tier when available
+- Prefer over `sonnet` for complex coding tasks when Cursor pool is configured (cheaper and higher quality)
+- Prefer over `pro` when the task is primarily code (not large-context analysis)
+
+**Requires**: Cursor OAuth pool configured via `oauth-pool.mjs` (t1549). Falls back to `sonnet` if no Cursor account is available.
+
 ### Use `pro` when:
 
 - Analyzing very large codebases (>100K tokens)
@@ -112,7 +124,7 @@ tools:
 ---
 ```
 
-Valid values: `local`, `haiku`, `flash`, `sonnet`, `pro`, `opus`
+Valid values: `local`, `haiku`, `flash`, `sonnet`, `composer2`, `pro`, `opus`
 
 > **Note**: The `local` tier requires `local-model-helper.sh` to be set up and a model server running. If no local server is available, `local` in frontmatter falls back to `haiku` (next tier in the routing chain — local has no same-tier fallback). See `tools/local-models/local-models.md` for setup.
 
@@ -129,9 +141,12 @@ Approximate relative API costs (sonnet = 1x baseline):
 | local | 0x | 0x | $0 (electricity only) |
 | flash | 0.15x | 0.30x | ~0.20x |
 | haiku | 0.25x | 0.25x | ~0.25x |
+| composer2 | 0.17x | 0.17x | ~0.17x |
 | sonnet | 1x | 1x | 1x |
 | pro | 1.25x | 2.5x | ~1.5x |
 | opus | 3x | 3x | ~3x |
+
+> **composer2 pricing note**: Cursor Composer 2 is priced at $0.50/$2.50 per M tokens (input/output). Relative to sonnet ($3/$15 per M), both input and output are ~0.17x — making it significantly cheaper than sonnet while delivering frontier-level coding capability. Requires Cursor OAuth pool (t1549).
 
 ## Model-Specific Subagents
 
@@ -142,6 +157,7 @@ Concrete model subagents are defined across these paths (`tools/ai-assistants/mo
 | `local` | `tools/local-models/local-models.md` | llama.cpp (user GGUF) | FAIL (privacy) or haiku (cost) |
 | `flash` | `models/flash.md` | gemini-2.5-flash-preview-05-20 | gpt-4.1-mini |
 | `haiku` | `models/haiku.md` | claude-haiku-4-5-20251001 | gemini-2.5-flash-preview-05-20 |
+| `composer2` | `models/composer2.md` | cursor/composer-2 | claude-sonnet-4-6 |
 | `sonnet` | `models/sonnet.md` | claude-sonnet-4-6 | gpt-4.1 |
 | `pro` | `models/pro.md` | gemini-2.5-pro | claude-sonnet-4-6 |
 | `opus` | `models/opus.md` | claude-opus-4-6 | o3 |
@@ -201,6 +217,7 @@ Each tier defines a primary model and a fallback from a different provider. When
 | `local` | llama.cpp (localhost) | haiku (cost-only) or FAIL (privacy) | Server not running, no model installed. Fails closed for privacy/on-device tasks; falls back to haiku (next tier in chain) for cost-optimisation use cases. No same-tier fallback exists — local skips directly to cloud. |
 | `flash` | gemini-2.5-flash-preview-05-20 | gpt-4.1-mini | No Google key |
 | `haiku` | claude-haiku-4-5-20251001 | gemini-2.5-flash-preview-05-20 | No Anthropic key |
+| `composer2` | cursor/composer-2 | claude-sonnet-4-6 | No Cursor OAuth pool configured (t1549) or pool exhausted |
 | `sonnet` | claude-sonnet-4-6 | gpt-4.1 | No Anthropic key |
 | `pro` | gemini-2.5-pro | claude-sonnet-4-6 | No Google key |
 | `opus` | claude-opus-4-6 | o3 | No Anthropic key |
@@ -296,7 +313,9 @@ Is the task privacy/on-device constrained?
           → NO: flash
         → NO: Is it a novel architecture/design problem?
           → YES: opus
-          → NO: sonnet
+          → NO: Is Cursor OAuth pool configured (t1549)?
+            → YES: composer2 (cheaper than sonnet, frontier coding quality)
+            → NO: sonnet
 ```
 
 ## Examples
@@ -309,6 +328,8 @@ Is the task privacy/on-device constrained?
 | "Rename variable X to Y across files" | haiku | Simple text transform |
 | "Summarize this 200-page PDF" | flash | Large context, low reasoning |
 | "Fix this React component bug" | sonnet | Code + reasoning |
+| "Implement a new auth module across 10 files" | composer2 | Frontier coding, multi-file, quality matters |
+| "Refactor the entire data layer to use Drizzle" | composer2 | Complex refactor, frontier coding accuracy |
 | "Review this 500-file PR" | pro | Large context + reasoning |
 | "Design the auth system architecture" | opus | Novel design, trade-offs |
 | "Generate a commit message" | haiku | Simple text generation |
@@ -335,6 +356,8 @@ Each bundle defines `model_defaults` — a mapping from task type to recommended
   }
 }
 ```
+
+For coding-intensive project types (e.g., `agent`, `cli-tool`), bundles may use `composer2` for `implementation` to get frontier-level coding quality when Cursor OAuth pool is configured.
 
 ### Precedence (highest wins)
 

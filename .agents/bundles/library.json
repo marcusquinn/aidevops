@@ -15,7 +15,7 @@
     "src/lib.rs"
   ],
   "model_defaults": {
-    "implementation": "sonnet",
+    "implementation": "composer2",
     "review": "opus",
     "triage": "haiku",
     "architecture": "opus",

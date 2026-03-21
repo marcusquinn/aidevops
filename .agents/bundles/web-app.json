@@ -13,7 +13,7 @@
     "angular.json"
   ],
   "model_defaults": {
-    "implementation": "sonnet",
+    "implementation": "composer2",
     "review": "sonnet",
     "triage": "haiku",
     "architecture": "opus",
