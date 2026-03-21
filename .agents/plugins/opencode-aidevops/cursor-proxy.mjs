@@ -23,6 +23,21 @@ import { homedir } from "os";
 import { getAccounts, ensureValidToken, patchAccount } from "./oauth-pool.mjs";
 
 // ---------------------------------------------------------------------------
+// Constants
+// ---------------------------------------------------------------------------
+
+/**
+ * Fixed port for the Cursor proxy. Using a deterministic port ensures the
+ * URL in opencode.json survives across sessions — the proxy always starts
+ * on the same port, so OpenCode can connect immediately without waiting
+ * for the plugin to update the config.
+ *
+ * Override with CURSOR_PROXY_PORT env var if port 32123 conflicts.
+ * (Nomadcxx/opencode-cursor uses 32124, so we use 32123 to avoid collision.)
+ */
+const CURSOR_PROXY_DEFAULT_PORT = parseInt(process.env.CURSOR_PROXY_PORT || "32123", 10);
+
+// ---------------------------------------------------------------------------
 // State
 // ---------------------------------------------------------------------------
 

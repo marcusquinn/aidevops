@@ -188,7 +188,7 @@ export async function startProxy(getAccessToken, models = []) {
     if (proxyServer && proxyPort)
         return proxyPort;
     proxyServer = Bun.serve({
-        port: 0,
+        port: parseInt(process.env.CURSOR_PROXY_PORT || "32123", 10),
         idleTimeout: 255, // max — Cursor responses can take 30s+
         async fetch(req) {
             const url = new URL(req.url);
