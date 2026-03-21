@@ -1,81 +1,140 @@
 ---
-description: Check OAuth pool health, test token validity, and walk users through setup
+description: Check OAuth pool health, test token validity, and manage provider accounts
 agent: Build+
 mode: subagent
 ---
 
-This command is the single entry point for users to understand and manage their AI model provider accounts. Assume the user knows nothing about OAuth, pools, tokens, or providers. Your job is to diagnose their situation and guide them through exactly what they need — step by step, one thing at a time.
+Check the health and status of all OAuth pool accounts across providers.
 
 ## Workflow
 
-### Step 1: Diagnose
+1. Call the `model-accounts-pool` tool with `{"action": "check"}` to run a comprehensive health check across all providers
+2. Route based on the check output:
 
-Run `oauth-pool-helper.sh check` via Bash to get the current state. This works on any model, including free OpenCode models — it doesn't require a paid provider to run.
+### Routing rules
 
-### Step 2: Interpret and act
+**Path A — No accounts configured:**
+The check output contains "No accounts in any pool." Present the "Adding an account" guide below.
 
-Based on the output, follow the appropriate path:
+**Path B — All accounts healthy:**
+Every account shows `Status: active`, `Token: expires in ...`, and `Validity: OK` (no `EXPIRED`, `INVALID`, `auth-error`, or `Refresh token: MISSING` lines). Report the health summary — no action needed.
 
-**Path A — No accounts exist:**
+**Path C — One or more accounts unhealthy:**
+Any account shows one of: `Token: EXPIRED`, `Validity: INVALID`, `Status: auth-error`, or `Refresh token: MISSING`. Present the specific issues and guide the user to the relevant fix:
+- `EXPIRED` / `INVALID` → "Updating/refreshing an account" section
+- `Refresh token: MISSING` → re-add the account with `oauth-pool-helper.sh add <provider>`
+- `Status: auth-error` → "Updating/refreshing an account" section
 
-Tell the user:
+## Shell Commands
 
-> You don't have any AI provider accounts connected yet. Let's set one up.
->
-> You'll need a paid subscription to one of these:
->
-> - **Claude Pro or Max** ($20-100/mo from anthropic.com) — for Claude models
-> - **ChatGPT Plus or Pro** ($20-200/mo from openai.com) — for GPT/o-series models
->
-> Which provider do you have a subscription with?
+Users can also manage accounts directly from the terminal:
 
-Once they answer, give them the exact command to run in a separate terminal (not in this chat):
+```bash
+# Add an account (opens browser for OAuth)
+oauth-pool-helper.sh add anthropic       # Claude Pro/Max
+oauth-pool-helper.sh add openai          # ChatGPT Plus/Pro
 
-For Anthropic: `oauth-pool-helper.sh add anthropic`
+# Health check (token expiry, validity, status)
+oauth-pool-helper.sh check               # All providers
+oauth-pool-helper.sh check anthropic     # Specific provider
+oauth-pool-helper.sh check openai        # Specific provider
 
-For OpenAI: `oauth-pool-helper.sh add openai`
+# List accounts
+oauth-pool-helper.sh list
 
-Then explain simply: "This will open your browser to log in. After you authorize, you'll get a code to paste back into the terminal. Once done, restart OpenCode and your account will be active."
+# Remove an account (provider is required)
+oauth-pool-helper.sh remove anthropic user@example.com
+oauth-pool-helper.sh remove openai user@example.com
+```
 
-After they confirm it worked, tell them to restart OpenCode, then use Ctrl+T to select a model from the Anthropic or OpenAI provider.
+Rotate and reset-cooldowns are MCP-tool-only (no CLI equivalent):
 
-**Path B — Accounts exist and are healthy:**
+```text
+model-accounts-pool {"action": "rotate", "provider": "anthropic"}
+model-accounts-pool {"action": "rotate", "provider": "openai"}
+model-accounts-pool {"action": "reset-cooldowns", "provider": "anthropic"}
+model-accounts-pool {"action": "reset-cooldowns", "provider": "openai"}
+```
 
-Show a clean summary:
+## Account Management Guide
 
-| Account | Provider | Status | Token | Validity |
-|---------|----------|--------|-------|----------|
-| user@example.com | anthropic | active | 2h remaining | OK |
+When reporting results, include relevant guidance from this section based on what the user needs.
 
-Then: "Everything looks good. Your pool has N account(s) and will auto-rotate between them if one hits rate limits."
+### Adding an account
 
-If they only have one account, suggest: "Consider adding a second account for automatic failover when rate limited. Run `oauth-pool-helper.sh add <provider>` in a separate terminal to add another."
+**Option A — Shell (recommended):**
 
-**Path C — Accounts exist but have problems:**
+Run in your terminal:
 
-For each problem, give the specific fix — one at a time:
+```bash
+oauth-pool-helper.sh add anthropic    # Claude Pro/Max
+oauth-pool-helper.sh add openai       # ChatGPT Plus/Pro
+```
 
-- **EXPIRED token**: "Your token for X expired. It should auto-refresh on next use. If it keeps failing, run `oauth-pool-helper.sh add <provider>` in a separate terminal using the same email to re-authenticate."
-- **auth-error status**: "Account X has an authentication error. Run `oauth-pool-helper.sh add <provider>` in a separate terminal with the same email to fix it."
-- **INVALID (401)**: "Token for X is invalid. Run `oauth-pool-helper.sh add <provider>` in a separate terminal with the same email to get a fresh token."
-- **Missing refresh token**: "Account X can't auto-renew. Remove it first with `oauth-pool-helper.sh remove <provider> <email>`, then re-add it with `oauth-pool-helper.sh add <provider>`."
-- **All rate-limited**: "All accounts are currently rate-limited. You can wait for cooldowns to expire, or I can reset them for you now." If they say yes, use the `model-accounts-pool` tool with `{"action": "reset-cooldowns"}`.
+This opens your browser for OAuth, then saves the token to the pool. Restart OpenCode after adding.
 
-**Path D — User asks about removing or managing:**
+**Option B — OpenCode TUI:**
 
-- To remove: `oauth-pool-helper.sh remove <provider> <email>`
-- To list: `oauth-pool-helper.sh list`
-- To manually rotate: use the `model-accounts-pool` tool with `{"action": "rotate"}`
+1. Press Ctrl+A in the TUI
+2. Select the pool provider (Anthropic Pool, OpenAI Pool, Cursor Pool)
+3. Enter your account email when prompted
+4. Complete the OAuth flow in your browser
+5. Paste the authorization code back
+6. After success, switch to the main provider (Anthropic/OpenAI) and select a model — the pool provider is for account management only
 
-### Step 3: Verify
+Repeat to add multiple accounts. The pool rotates between them automatically when one hits rate limits.
 
-After any change (add/remove/re-auth), run `oauth-pool-helper.sh check` again to confirm the fix worked. Tell the user the result.
+### Updating/refreshing an account
 
-## Key principles
+Tokens refresh automatically. If an account shows `auth-error`:
 
-- **One step at a time.** Don't dump all commands at once. Guide through the immediate next action, wait for confirmation, then proceed.
-- **Separate terminal for OAuth.** The `oauth-pool-helper.sh add` command requires an interactive terminal for the browser flow. Always say "run this in a separate terminal" — never suggest pasting tokens or codes into this chat.
-- **Explain why, not just what.** "This connects your Claude subscription so you can use Claude models here" is better than "This adds an OAuth token to the pool."
-- **Any model can run this.** The diagnostic uses `oauth-pool-helper.sh` (a shell script). It works even on free OpenCode models with no provider configured. The user doesn't need a working paid provider to check their setup.
-- **Don't mention internals.** Users don't need to know about pool.json, PKCE, token endpoints, auth hooks, or OAuth flows. They need "run this command, then restart."
-- **After adding, always remind:** restart OpenCode, then Ctrl+T to pick a model.
+Run `oauth-pool-helper.sh add <provider>` with the same email address — the existing account will be updated with fresh tokens.
+
+### Removing an account
+
+```bash
+oauth-pool-helper.sh remove anthropic user@example.com
+```
+
+Or use the `model-accounts-pool` tool:
+
+- `{"action": "remove", "provider": "anthropic", "email": "<email>"}`
+- `{"action": "remove", "provider": "openai", "email": "<email>"}`
+
+### Rotating manually
+
+Always specify the provider — omitting it may rotate the wrong pool in multi-provider setups:
+
+- `{"action": "rotate", "provider": "anthropic"}`
+- `{"action": "rotate", "provider": "openai"}`
+
+### Resetting cooldowns
+
+If all accounts are rate-limited and you want to retry immediately — specify the provider:
+
+- `{"action": "reset-cooldowns", "provider": "anthropic"}`
+- `{"action": "reset-cooldowns", "provider": "openai"}`
+
+### Troubleshooting: Pool providers not showing in Ctrl+A
+
+If the pool providers (Anthropic Pool, OpenAI Pool, Cursor Pool) don't appear:
+
+1. **Check plugin is installed**: Run `aidevops setup` — this registers the plugin in opencode.json
+2. **Check opencode.json**: Verify `~/.config/opencode/opencode.json` has the plugin in its `"plugin"` array:
+
+   ```json
+   "plugin": ["file:///Users/<you>/.aidevops/agents/plugins/opencode-aidevops/index.mjs"]
+   ```
+
+3. **Check symlink exists**: `ls -la ~/.config/opencode/plugins/opencode-aidevops`
+4. **Restart OpenCode**: The plugin loads at startup — changes require a restart
+5. **Use shell commands instead**: `oauth-pool-helper.sh add anthropic` works independently of the TUI
+
+## Notes
+
+- Pool file: `~/.aidevops/oauth-pool.json` (600 permissions, never commit)
+- Tokens are provider-specific: Anthropic tokens work with Claude models, OpenAI tokens with GPT/o-series models
+- The pool auto-rotates on rate limiting — manual rotation is rarely needed
+- Token endpoint cooldowns are in-memory (reset on OpenCode restart)
+- Per-account cooldowns persist in the pool file
+- Shell commands work independently of OpenCode — use them when the TUI auth flow is unavailable
