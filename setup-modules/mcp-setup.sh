@@ -502,6 +502,7 @@ setup_opencode_plugins() {
 				print_info "  Filed: https://github.com/ephraimduncan/opencode-cursor/issues/15"
 			else
 				rm -f "$tmp_cursor"
+				print_warning "Failed to remove opencode-cursor-oauth plugin from opencode.json (file: $opencode_config)"
 			fi
 		fi
 	else
@@ -562,7 +563,6 @@ setup_opencode_plugins() {
 			print_info ""
 			print_info "For Cursor Pro accounts:"
 			print_info "  Run: opencode auth login --provider cursor"
-			print_info "  Or from shell: oauth-pool-helper.sh add cursor"
 			print_info ""
 			print_info "  Health check: /models-pool-check"
 			print_info "  Manage accounts: /model-accounts-pool list|status|remove"
