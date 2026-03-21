@@ -16,8 +16,6 @@
 
 import { ensureValidToken, getAccounts, patchAccount, getAnthropicUserAgent } from "./oauth-pool.mjs";
 
-const TOKEN_ENDPOINT = "https://platform.claude.com/v1/oauth/token";
-const CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
 const TOOL_PREFIX = "mcp_";
 
 const REQUIRED_BETAS = [
@@ -80,8 +78,8 @@ export function createProviderAuthHook(client) {
             const sorted = [...accounts].sort((a, b) => {
               // Prefer active/idle accounts over rate-limited/auth-error
               const statusOrder = { active: 0, idle: 1, "rate-limited": 2, "auth-error": 3 };
-              const aOrder = statusOrder[a.status] ?? 2;
-              const bOrder = statusOrder[b.status] ?? 2;
+              const aOrder = statusOrder[a.status] ?? 99;
+              const bOrder = statusOrder[b.status] ?? 99;
               if (aOrder !== bOrder) return aOrder - bOrder;
               // Within same status, prefer least recently used
               return new Date(a.lastUsed || 0) - new Date(b.lastUsed || 0);
