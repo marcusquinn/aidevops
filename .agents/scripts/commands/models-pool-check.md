@@ -8,11 +8,9 @@ Check the health and status of all OAuth pool accounts across providers.
 
 ## Workflow
 
-1. Call the `model-accounts-pool` tool with `{"action": "list"}` for each provider (anthropic, openai, cursor) that has accounts
-2. Call the `model-accounts-pool` tool with `{"action": "status"}` for each provider with accounts
-3. For each account, report: email, status, token expiry (human-readable time remaining), last used, cooldown state
-4. Summarise: total accounts, healthy vs unhealthy, any requiring attention
-5. If no accounts exist for any provider, show the setup instructions below
+1. Call the `model-accounts-pool` tool with `{"action": "check"}` to run a comprehensive health check across all providers
+2. Present the results to the user
+3. If the tool returns a message about no accounts, include the "Adding an account" guide below
 
 ## Account Management Guide
 
@@ -59,9 +57,11 @@ If the pool providers (Anthropic Pool, OpenAI Pool, Cursor Pool) don't appear:
 
 1. **Check plugin is installed**: Run `aidevops setup` — this registers the plugin in opencode.json
 2. **Check opencode.json**: Verify `~/.config/opencode/opencode.json` has the plugin in its `"plugin"` array:
+
    ```json
    "plugin": ["file:///Users/<you>/.aidevops/agents/plugins/opencode-aidevops/index.mjs"]
    ```
+
 3. **Check symlink exists**: `ls -la ~/.config/opencode/plugins/opencode-aidevops`
 4. **Restart OpenCode**: The plugin loads at startup — changes require a restart
 5. **Check OpenCode version**: Pool providers require OpenCode v1.2.30+

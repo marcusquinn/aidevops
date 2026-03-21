@@ -1798,9 +1798,7 @@ export function createPoolAuthHook(client) {
                 `[aidevops] OAuth pool: added ${resolvedEmail} (${totalAccounts} account${totalAccounts === 1 ? "" : "s"} total)`,
               );
               console.error(
-                `[aidevops] OAuth pool: Account added successfully. ` +
-                `Now switch to the "Anthropic" provider and select a model (e.g. claude-sonnet) to start chatting. ` +
-                `The "Anthropic Pool" provider is for account management only.`,
+                `[aidevops] OAuth pool: Account added successfully. Now switch to the "Anthropic" provider and select a model (e.g. claude-sonnet) to start chatting. The "Anthropic Pool" provider is for account management only.`,
               );
 
               // Inject the new token into the built-in anthropic provider
@@ -2052,9 +2050,7 @@ export function createOpenAIPoolAuthHook(client) {
                 `[aidevops] OAuth pool: added OpenAI ${resolvedEmail} (${totalAccounts} account${totalAccounts === 1 ? "" : "s"} total)`,
               );
               console.error(
-                `[aidevops] OAuth pool: Account added successfully. ` +
-                `Now switch to the "OpenAI" provider and select a model (e.g. gpt-4o) to start chatting. ` +
-                `The "OpenAI Pool" provider is for account management only.`,
+                `[aidevops] OAuth pool: Account added successfully. Now switch to the "OpenAI" provider and select a model (e.g. gpt-4o) to start chatting. The "OpenAI Pool" provider is for account management only.`,
               );
 
               // Inject the new token into the built-in openai provider
@@ -2236,9 +2232,7 @@ export function createCursorPoolAuthHook(client) {
             `[aidevops] OAuth pool: added Cursor ${resolvedEmail} (${totalAccounts} account${totalAccounts === 1 ? "" : "s"} total)`,
           );
           console.error(
-            `[aidevops] OAuth pool: Account added successfully. ` +
-            `Now switch to the "Cursor" provider and select a model to start chatting. ` +
-            `The "Cursor Pool" provider is for account management only.`,
+            `[aidevops] OAuth pool: Account added successfully. Now switch to the "Cursor" provider and select a model to start chatting. The "Cursor Pool" provider is for account management only.`,
           );
 
           // Inject the new token and start proxy
@@ -2624,13 +2618,11 @@ export function createPoolTool(client) {
               // Refresh token presence (not the value)
               lines.push(`    Refresh token: ${account.refresh ? "present" : "MISSING"}`);
 
-              // Test token validity via a lightweight API call
+              // Test token validity via a lightweight /v1/models GET request
               if (account.access && expiresIn > 0) {
                 try {
                   let testOk = false;
                   if (prov === "anthropic") {
-                    // Test with a minimal /v1/messages call that returns quickly
-                    // Use the profile endpoint instead — lighter weight
                     const testResp = await fetch("https://api.anthropic.com/v1/models", {
                       method: "GET",
                       headers: {
