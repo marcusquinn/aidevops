@@ -606,7 +606,7 @@ _render_model_usage_table() {
 	# Skip entirely if no model data
 	local model_count
 	model_count=$(echo "$model_json" | jq -r 'if type == "array" then [.[] | select(.cost_total >= 0.05)] | length else 0 end' 2>/dev/null)
-	if [[ "${model_count:-0}" == "0" ]] || [[ "${model_count:-0}" == "null" ]]; then
+	if [[ "${model_count:-0}" == "0" ]]; then
 		return 0
 	fi
 
@@ -737,19 +737,16 @@ cmd_generate() {
 	# Check: any session time > 0, any model usage, or any screen time.
 	# If all sources are empty, show a clean "getting started" message instead
 	# of tables full of zeros — which looks broken to new users.
+	# Use jq for numeric comparisons to handle floats (e.g., 0.0) correctly.
 	local has_data=false
-	local month_total_hours
-	month_total_hours=$(echo "$month_json" | jq -r '(.total_human_hours + .total_machine_hours) // 0' 2>/dev/null)
-	local all_model_count
-	all_model_count=$(echo "$model_json_all" | jq -r 'if type == "array" then length else 0 end' 2>/dev/null)
-	local screen_month_hours
-	screen_month_hours=$(echo "$screen_json" | jq -r '.month_hours // 0' 2>/dev/null)
+	local has_session_time has_model_usage has_screen_time
+	has_session_time=$(echo "$month_json" | jq -r '((.total_human_hours + .total_machine_hours) // 0) > 0')
+	has_model_usage=$(echo "$model_json_all" | jq -r '((if type == "array" then length else 0 end) // 0) > 0')
+	has_screen_time=$(echo "$screen_json" | jq -r '(.month_hours // 0) > 0')
 
-	if [[ "${month_total_hours:-0}" != "0" ]] && [[ "${month_total_hours:-0}" != "null" ]]; then
-		has_data=true
-	elif [[ "${all_model_count:-0}" != "0" ]] && [[ "${all_model_count:-0}" != "null" ]]; then
-		has_data=true
-	elif [[ "${screen_month_hours:-0}" != "0" ]] && [[ "${screen_month_hours:-0}" != "null" ]]; then
+	if [[ "$has_session_time" == "true" ]] ||
+		[[ "$has_model_usage" == "true" ]] ||
+		[[ "$has_screen_time" == "true" ]]; then
 		has_data=true
 	fi
 
