@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.1.33] - 2026-03-21
+
+### Added
+
+- add Cursor CLI to setup and tool version checks (#5361)
+
+### Changed
+
+- Maintenance: mark t1549 and t1550 as completed (PRs #5367, #5369 merged)
+- Documentation: add model tier and auto-dispatch default guidance to Planning section (#5368)
+
+### Fixed
+
+- dynamic OAuth User-Agent detection and curl-based token endpoints (#5371)
+- make profile update self-healing when repos.json entry is missing (#5372)
+- remove job name field so check name matches branch protection (GH#5365) (#5366)
+
 ## [3.1.32] - 2026-03-21
 
 ### Changed
