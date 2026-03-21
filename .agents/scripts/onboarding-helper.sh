@@ -664,7 +664,7 @@ check_orchestration() {
 	fi
 
 	# Model routing is always available
-	print_service "Model Routing" "ready" "cost-aware: local>haiku>flash>sonnet>pro>opus"
+	print_service "Model Routing" "ready" "cost-aware: local>haiku>flash>composer>sonnet>pro>opus"
 
 	# Budget tracking
 	local budget_script="$HOME/.aidevops/agents/scripts/budget-tracker-helper.sh"

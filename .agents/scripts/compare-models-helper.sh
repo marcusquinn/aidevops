@@ -34,7 +34,7 @@ set -euo pipefail
 # Same DB as pattern-tracker-helper.sh — no duplication of storage.
 
 readonly PATTERN_DB="${AIDEVOPS_MEMORY_DIR:-$HOME/.aidevops/.agent-workspace/memory}/memory.db"
-readonly -a PATTERN_VALID_MODELS=(haiku flash sonnet pro opus)
+readonly -a PATTERN_VALID_MODELS=(haiku flash composer sonnet pro opus)
 
 # Check if pattern data is available
 has_pattern_data() {

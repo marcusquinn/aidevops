@@ -233,7 +233,7 @@ cmd_help() {
 Fallback Chain Helper v2.0 — Simplified model routing
 
 Usage: fallback-chain-helper.sh <command> [options]
-  resolve <tier>  Resolve best available model (tiers: haiku flash sonnet pro opus coding eval health)
+  resolve <tier>  Resolve best available model (tiers: haiku flash composer sonnet pro opus coding eval health)
   table           Print the routing table (JSON)
   help            Show this help
 Options: --config PATH | --quiet | --json

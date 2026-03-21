@@ -29,11 +29,11 @@ readonly MEMORY_DB="${AIDEVOPS_MEMORY_DIR:-$HOME/.aidevops/.agent-workspace/memo
 # Model tier pricing (USD per 1M tokens) — input/output rates (t1114)
 # Sources: Anthropic, OpenAI, Google official pricing pages (Feb 2026)
 # Format: tier:input_per_1m:output_per_1m
-readonly TIER_PRICING="haiku:0.80:4.00 flash:0.15:0.60 sonnet:3.00:15.00 pro:3.50:10.50 opus:15.00:75.00"
+readonly TIER_PRICING="haiku:0.80:4.00 flash:0.15:0.60 composer:0.50:2.50 sonnet:3.00:15.00 pro:3.50:10.50 opus:15.00:75.00"
 
 #######################################
 # Calculate estimated cost in USD from token counts and model tier (t1114)
-# $1: model_tier (haiku|flash|sonnet|pro|opus)
+# $1: model_tier (haiku|flash|composer|sonnet|pro|opus)
 # $2: tokens_in (integer)
 # $3: tokens_out (integer)
 # Outputs: cost as decimal string (e.g. "0.012345") or empty if unknown
@@ -98,7 +98,7 @@ log_error() {
 readonly VALID_TASK_TYPES="code-review refactor bugfix feature docs testing deployment security architecture planning research content seo"
 
 # Valid model tiers
-readonly VALID_MODELS="haiku flash sonnet pro opus"
+readonly VALID_MODELS="haiku flash composer sonnet pro opus"
 
 #######################################
 # Ensure memory database exists
@@ -1175,7 +1175,7 @@ cmd_label_stats() {
 		return 0
 	fi
 
-	for tier in haiku flash sonnet pro opus; do
+	for tier in haiku flash composer sonnet pro opus; do
 		if [[ -n "$model_filter" && "$tier" != "$model_filter" ]]; then
 			continue
 		fi
@@ -1594,7 +1594,7 @@ ENDJSON
 # evaluate.sh, and dispatch.sh to record A/B comparison data (t1094).
 #
 # Options:
-#   --model <tier>          Model tier (haiku|flash|sonnet|pro|opus)
+#   --model <tier>          Model tier (haiku|flash|composer|sonnet|pro|opus)
 #   --task-type <type>      Task category
 #   --task-id <id>          Task identifier
 #   --correctness <1-5>     Factual accuracy score
@@ -1959,7 +1959,7 @@ COMMANDS:
 RECORD OPTIONS:
     --outcome <success|failure>   Required: was this a success or failure?
     --task-type <type>            Task category (code-review, refactor, bugfix, etc.)
-    --model <tier>                Model used (haiku, flash, sonnet, pro, opus)
+    --model <tier>                Model used (haiku, flash, composer, sonnet, pro, opus)
     --description <text>          What happened (required)
     --task-id <id>                Task identifier (e.g., t102.3)
     --duration <seconds>          How long the task took
@@ -1976,7 +1976,7 @@ RECORD OPTIONS:
     --estimated-cost <usd>        Explicit cost in USD (t1114; auto-calculated from tokens+model if omitted)
 
 SCORE OPTIONS (t1094 — unified backbone):
-    --model <tier>                Model tier (haiku|flash|sonnet|pro|opus)
+    --model <tier>                Model tier (haiku|flash|composer|sonnet|pro|opus)
     --task-type <type>            Task category
     --task-id <id>                Task identifier
     --correctness <1-5>           Factual accuracy score

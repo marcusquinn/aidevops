@@ -11,6 +11,9 @@
     "flash": [
       "anthropic/claude-haiku-4-5"
     ],
+    "composer": [
+      "anthropic/claude-sonnet-4-6"
+    ],
     "sonnet": [
       "anthropic/claude-sonnet-4-6"
     ],

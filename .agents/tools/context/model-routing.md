@@ -22,7 +22,7 @@ model: haiku
 - **Purpose**: Route tasks to the cheapest model that can handle them well
 - **Philosophy**: Use the smallest model that produces acceptable quality
 - **Default**: sonnet (best balance of cost/capability for most tasks)
-- **Cost spectrum**: local (free) -> flash -> haiku -> sonnet -> pro -> opus (highest)
+- **Cost spectrum**: local (free) -> flash -> haiku -> composer -> sonnet -> pro -> opus (highest)
 
 ## Model Tiers
 
@@ -31,6 +31,7 @@ model: haiku
 | `local` | llama.cpp (user-selected GGUF) | Free ($0) | Privacy-sensitive tasks, offline work, bulk processing, experimentation |
 | `flash` | gemini-2.5-flash-preview-05-20 | Lowest (~0.20x) | Large context reads, summarization, bulk processing |
 | `haiku` | claude-haiku-4-5-20251001 | Low (~0.25x) | Triage, classification, simple transforms, formatting |
+| `composer` | cursor/composer-2 | Low-Medium (~0.17x) | Cost-effective code implementation (Cursor runtime only) |
 | `sonnet` | claude-sonnet-4-6 | Medium | Code implementation, review, most development tasks |
 | `pro` | gemini-2.5-pro | Medium-High | Large codebase analysis, complex reasoning with big context |
 | `opus` | claude-opus-4-6 | Highest | Architecture decisions, complex multi-step reasoning, novel problems |
@@ -42,6 +43,8 @@ model: haiku
 When referencing models in docs, scripts, or dispatch commands, use the full ID from the subagent frontmatter (e.g., `claude-sonnet-4-6`, not `claude-sonnet-4`). For provider-prefixed contexts (CLI `--model` flags, fallback chains), use `anthropic/claude-sonnet-4-6` or `google/gemini-2.5-pro`.
 
 **Tier names vs model IDs**: Tier names (`haiku`, `sonnet`, `opus`) are abstract routing labels. They are resolved to concrete model IDs at dispatch time by reading the corresponding subagent frontmatter. Never pass a tier name where a model ID is expected.
+
+**Runtime-specific tiers**: The `composer` tier is only available in Cursor. When routing to `composer` outside Cursor, fall back to `sonnet` (the next general-purpose tier). Bundle presets that use `composer` should always have a non-Cursor fallback path.
 
 ## Routing Rules
 
@@ -75,6 +78,15 @@ When referencing models in docs, scripts, or dispatch commands, use the full ID 
 - Generating commit messages from diffs
 - Answering factual questions about code (no reasoning needed)
 - Routing decisions (which subagent to use)
+
+### Use `composer` when:
+
+- Writing or modifying code in Cursor (Composer 2 is Cursor-only)
+- Cost-sensitive code implementation where sonnet is overkill
+- Routine code changes: bug fixes, feature additions, test writing
+- The task is clearly code-focused (not architecture, review, or reasoning-heavy)
+
+> **Runtime constraint**: Composer 2 is only available in Cursor. If the runtime is not Cursor (Claude Code, headless dispatch, etc.), fall back to `sonnet`. Do not route to `composer` in headless dispatch — workers use Claude Code or OpenCode, not Cursor.
 
 ### Use `sonnet` when (default):
 
@@ -112,7 +124,7 @@ tools:
 ---
 ```
 
-Valid values: `local`, `haiku`, `flash`, `sonnet`, `pro`, `opus`
+Valid values: `local`, `haiku`, `flash`, `composer`, `sonnet`, `pro`, `opus`
 
 > **Note**: The `local` tier requires `local-model-helper.sh` to be set up and a model server running. If no local server is available, `local` in frontmatter falls back to `haiku` (next tier in the routing chain — local has no same-tier fallback). See `tools/local-models/local-models.md` for setup.
 
@@ -129,6 +141,7 @@ Approximate relative API costs (sonnet = 1x baseline):
 | local | 0x | 0x | $0 (electricity only) |
 | flash | 0.15x | 0.30x | ~0.20x |
 | haiku | 0.25x | 0.25x | ~0.25x |
+| composer | 0.17x | 0.17x | ~0.17x |
 | sonnet | 1x | 1x | 1x |
 | pro | 1.25x | 2.5x | ~1.5x |
 | opus | 3x | 3x | ~3x |
@@ -142,6 +155,7 @@ Concrete model subagents are defined across these paths (`tools/ai-assistants/mo
 | `local` | `tools/local-models/local-models.md` | llama.cpp (user GGUF) | FAIL (privacy) or haiku (cost) |
 | `flash` | `models/flash.md` | gemini-2.5-flash-preview-05-20 | gpt-4.1-mini |
 | `haiku` | `models/haiku.md` | claude-haiku-4-5-20251001 | gemini-2.5-flash-preview-05-20 |
+| `composer` | `models/composer.md` | cursor/composer-2 | claude-sonnet-4-6 |
 | `sonnet` | `models/sonnet.md` | claude-sonnet-4-6 | gpt-4.1 |
 | `pro` | `models/pro.md` | gemini-2.5-pro | claude-sonnet-4-6 |
 | `opus` | `models/opus.md` | claude-opus-4-6 | o3 |
@@ -201,6 +215,7 @@ Each tier defines a primary model and a fallback from a different provider. When
 | `local` | llama.cpp (localhost) | haiku (cost-only) or FAIL (privacy) | Server not running, no model installed. Fails closed for privacy/on-device tasks; falls back to haiku (next tier in chain) for cost-optimisation use cases. No same-tier fallback exists — local skips directly to cloud. |
 | `flash` | gemini-2.5-flash-preview-05-20 | gpt-4.1-mini | No Google key |
 | `haiku` | claude-haiku-4-5-20251001 | gemini-2.5-flash-preview-05-20 | No Anthropic key |
+| `composer` | cursor/composer-2 | claude-sonnet-4-6 | Not in Cursor runtime |
 | `sonnet` | claude-sonnet-4-6 | gpt-4.1 | No Anthropic key |
 | `pro` | gemini-2.5-pro | claude-sonnet-4-6 | No Google key |
 | `opus` | claude-opus-4-6 | o3 | No Anthropic key |
@@ -296,7 +311,9 @@ Is the task privacy/on-device constrained?
           → NO: flash
         → NO: Is it a novel architecture/design problem?
           → YES: opus
-          → NO: sonnet
+          → NO: Is the runtime Cursor and the task is routine coding?
+            → YES: composer
+            → NO: sonnet
 ```
 
 ## Examples
@@ -309,6 +326,7 @@ Is the task privacy/on-device constrained?
 | "Rename variable X to Y across files" | haiku | Simple text transform |
 | "Summarize this 200-page PDF" | flash | Large context, low reasoning |
 | "Fix this React component bug" | sonnet | Code + reasoning |
+| "Add a new API endpoint" (in Cursor) | composer | Routine coding, Cursor runtime |
 | "Review this 500-file PR" | pro | Large context + reasoning |
 | "Design the auth system architecture" | opus | Novel design, trade-offs |
 | "Generate a commit message" | haiku | Simple text generation |
@@ -375,6 +393,31 @@ bundle-helper.sh resolve ~/Git/my-project
 # List available bundles
 bundle-helper.sh list
 ```
+
+### Runtime-Specific Tiers in Bundles
+
+The `composer` tier can be used in bundle `model_defaults` for projects where Cursor is the primary development environment. Since `composer` is Cursor-only, the resolution flow adds a runtime check:
+
+```text
+Bundle says model_defaults.implementation = "composer"
+  ├── Runtime is Cursor? → Use composer (cursor/composer-2)
+  └── Runtime is NOT Cursor? → Fall back to sonnet (next general-purpose tier)
+```
+
+Example bundle override for a Cursor-primary web-app project:
+
+```json
+{
+  "model_defaults": {
+    "implementation": "composer",
+    "review": "sonnet",
+    "triage": "haiku",
+    "architecture": "opus"
+  }
+}
+```
+
+This saves ~83% on implementation costs vs sonnet when working in Cursor, with automatic fallback to sonnet for headless dispatch and other runtimes.
 
 ### Integration Points
 

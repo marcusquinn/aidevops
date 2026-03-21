@@ -1204,9 +1204,9 @@ validate_action_fields() {
 		fi
 		# Validate model tier
 		case "$recommended_model" in
-		haiku | flash | sonnet | pro | opus) ;;
+		haiku | flash | composer | sonnet | pro | opus) ;;
 		*)
-			echo "invalid recommended_model: $recommended_model (must be haiku|flash|sonnet|pro|opus)"
+			echo "invalid recommended_model: $recommended_model (must be haiku|flash|composer|sonnet|pro|opus)"
 			return 0
 			;;
 		esac

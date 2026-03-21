@@ -117,6 +117,7 @@ get_tier_models() {
 		local) echo "local/llama.cpp|anthropic/claude-haiku-4-5" ;;
 		haiku) echo "opencode/claude-haiku-4-5|opencode/gemini-3-flash" ;;
 		flash) echo "google/gemini-2.5-flash|opencode/gemini-3-flash" ;;
+		composer) echo "cursor/composer-2|anthropic/claude-sonnet-4-6" ;;
 		sonnet) echo "opencode/claude-sonnet-4-6|anthropic/claude-sonnet-4-6" ;;
 		pro) echo "google/gemini-2.5-pro|opencode/gemini-3-pro" ;;
 		opus) echo "opencode/claude-opus-4-6|anthropic/claude-opus-4-6" ;;
@@ -130,6 +131,7 @@ get_tier_models() {
 		local) echo "local/llama.cpp|anthropic/claude-haiku-4-5" ;;
 		haiku) echo "anthropic/claude-haiku-4-5|google/gemini-2.5-flash" ;;
 		flash) echo "google/gemini-2.5-flash|openai/gpt-4.1-mini" ;;
+		composer) echo "cursor/composer-2|anthropic/claude-sonnet-4-6" ;;
 		sonnet) echo "anthropic/claude-sonnet-4-6|openai/gpt-4.1" ;;
 		pro) echo "google/gemini-2.5-pro|anthropic/claude-sonnet-4-6" ;;
 		opus) echo "anthropic/claude-opus-4-6|openai/o3" ;;
@@ -146,7 +148,7 @@ get_tier_models() {
 is_known_tier() {
 	local tier="$1"
 	case "$tier" in
-	local | haiku | flash | sonnet | pro | opus | health | eval | coding) return 0 ;;
+	local | haiku | flash | composer | sonnet | pro | opus | health | eval | coding) return 0 ;;
 	*) return 1 ;;
 	esac
 }
@@ -1273,7 +1275,7 @@ cmd_status() {
 	echo ""
 	printf "  %-8s %-35s %-35s\n" "Tier" "Primary" "Fallback"
 	printf "  %-8s %-35s %-35s\n" "----" "-------" "--------"
-	for tier in haiku flash sonnet pro opus health eval coding; do
+	for tier in haiku flash composer sonnet pro opus health eval coding; do
 		local spec
 		spec=$(get_tier_models "$tier" 2>/dev/null) || spec=""
 		local primary="${spec%%|*}"
@@ -1388,7 +1390,7 @@ cmd_resolve() {
 
 	if [[ -z "$tier" ]]; then
 		print_error "Usage: model-availability-helper.sh resolve <tier>"
-		print_info "Available tiers: haiku flash sonnet pro opus health eval coding"
+		print_info "Available tiers: haiku flash composer sonnet pro opus health eval coding"
 		return 1
 	fi
 
@@ -1455,7 +1457,7 @@ cmd_resolve_chain() {
 
 	if [[ -z "$tier" ]]; then
 		print_error "Usage: model-availability-helper.sh resolve-chain <tier> [--agent file]"
-		print_info "Available tiers: haiku flash sonnet pro opus health eval coding"
+		print_info "Available tiers: haiku flash composer sonnet pro opus health eval coding"
 		return 1
 	fi
 

@@ -32,7 +32,7 @@ ensure_status_labels() {
 
 #######################################
 # Extract model tier name from a full model string (t1010)
-# Maps provider/model strings to tier names (haiku, flash, sonnet, pro, opus).
+# Maps provider/model strings to tier names (haiku, flash, composer, sonnet, pro, opus).
 # $1: model string (e.g. "anthropic/claude-opus-4-6")
 # Outputs tier name on stdout, empty if unrecognised.
 #######################################
@@ -47,6 +47,7 @@ model_to_tier() {
 	*gpt-4.1*) echo "sonnet" ;;
 	*gemini-2.5-flash*) echo "flash" ;;
 	*gemini-2.5-pro*) echo "pro" ;;
+	*composer-2* | cursor/composer*) echo "composer" ;;
 	*haiku*) echo "haiku" ;;
 	*flash*) echo "flash" ;;
 	*sonnet*) echo "sonnet" ;;
@@ -94,7 +95,7 @@ add_model_label() {
 	# Resolve model tier from full model string if needed
 	local tier="$model_input"
 	case "$model_input" in
-	haiku | flash | sonnet | pro | opus) ;; # Already a tier name
+	haiku | flash | composer | sonnet | pro | opus) ;; # Already a tier name
 	*)
 		tier=$(model_to_tier "$model_input")
 		if [[ -z "$tier" ]]; then
@@ -258,7 +259,7 @@ cmd_labels() {
 		local first_entry="true"
 		printf '['
 		for act in $valid_actions; do
-			for tier in haiku flash sonnet pro opus; do
+			for tier in haiku flash composer sonnet pro opus; do
 				local lbl="${act}:${tier}"
 				# Skip if doesn't match filter
 				if [[ -n "$label_pattern" && "$lbl" != *"$label_pattern"* ]]; then
@@ -285,7 +286,7 @@ cmd_labels() {
 		local found=0
 		for act in $valid_actions; do
 			local act_found=0
-			for tier in haiku flash sonnet pro opus; do
+			for tier in haiku flash composer sonnet pro opus; do
 				local lbl="${act}:${tier}"
 				if [[ -n "$label_pattern" && "$lbl" != *"$label_pattern"* ]]; then
 					continue

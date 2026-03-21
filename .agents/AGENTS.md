@@ -297,7 +297,7 @@ Read subagents on-demand. Full index: `subagent-index.toon`.
 
 Key capabilities (details in `reference/orchestration.md`, `reference/services.md`, `reference/session.md`):
 
-- **Model routing**: local→haiku→flash→sonnet→pro→opus (cost-aware). See `tools/context/model-routing.md`.
+- **Model routing**: local→haiku→flash→composer→sonnet→pro→opus (cost-aware; composer is Cursor-only). See `tools/context/model-routing.md`.
 - **Bundle presets**: Project-type-aware defaults for model tiers, quality gates, and agent routing. Auto-detected from marker files or explicit in repos.json. See `bundles/` and `scripts/bundle-helper.sh`.
 - **Memory**: cross-session SQLite FTS5 (`/remember`, `/recall`)
 - **Orchestration**: supervisor dispatch, pulse scheduler, auto-pickup, cross-repo issue/PR/TODO visibility

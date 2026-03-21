@@ -36,7 +36,7 @@
     },
     "model_defaults": {
       "type": "object",
-      "description": "Default model tier for each task type. Tiers: local, haiku, flash, sonnet, pro, opus. During composition (multiple bundles), the most-restrictive (highest) tier wins.",
+      "description": "Default model tier for each task type. Tiers: local, haiku, flash, composer, sonnet, pro, opus. During composition (multiple bundles), the most-restrictive (highest) tier wins. The 'composer' tier is Cursor-only.",
       "properties": {
         "implementation": {
           "$ref": "#/$defs/model_tier",
@@ -133,8 +133,8 @@
   "$defs": {
     "model_tier": {
       "type": "string",
-      "enum": ["local", "haiku", "flash", "sonnet", "pro", "opus"],
-      "description": "Model routing tier. See .agents/tools/context/model-routing.md for tier definitions."
+      "enum": ["local", "haiku", "flash", "composer", "sonnet", "pro", "opus"],
+      "description": "Model routing tier. See .agents/tools/context/model-routing.md for tier definitions. The 'composer' tier is Cursor-only; falls back to 'sonnet' outside Cursor."
     },
     "quality_gate": {
       "type": "string",

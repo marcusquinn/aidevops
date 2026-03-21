@@ -1148,7 +1148,7 @@ aidevops includes autonomous orchestration features that can work in the backgro
 4. Strategic review    - Separate scheduled process (every 4h) — opus-tier review checks
                          queue health, finds stuck chains, identifies root causes, and
                          creates self-improvement tasks (see scripts/commands/runners.md)
-5. Model routing       - Cost-aware dispatch: local > haiku > flash > sonnet > pro > opus
+5. Model routing       - Cost-aware dispatch: local > haiku > flash > composer > sonnet > pro > opus
 6. Budget tracking     - Per-provider spend limits, subscription-aware routing
 7. Session miner       - Daily extraction of learning signals from past sessions
 8. Circuit breaker     - Auto-pauses dispatch if workers fail consecutively

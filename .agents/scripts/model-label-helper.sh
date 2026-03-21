@@ -9,7 +9,7 @@
 #   model-label-helper.sh help
 #
 # Actions: planned, researched, implemented, reviewed, verified, documented, failed, retried
-# Models: haiku, flash, sonnet, pro, opus (or concrete model names)
+# Models: haiku, flash, composer, sonnet, pro, opus (or concrete model names)
 #
 # Labels are append-only (history, not state). Examples:
 #   implemented:sonnet - Task was implemented using sonnet tier
@@ -31,7 +31,7 @@ set -euo pipefail
 readonly VALID_ACTIONS="planned researched implemented reviewed verified documented failed retried"
 
 # Valid model tiers (matches model-routing.md and pattern-tracker)
-readonly VALID_MODELS="local haiku flash sonnet pro opus"
+readonly VALID_MODELS="local haiku flash composer sonnet pro opus"
 
 #######################################
 # Show help
@@ -56,7 +56,7 @@ ACTIONS:
     planned, researched, implemented, reviewed, verified, documented, failed, retried
 
 MODELS:
-    local, haiku, flash, sonnet, pro, opus (or concrete model names like claude-sonnet-4-6)
+    local, haiku, flash, composer, sonnet, pro, opus (or concrete model names like claude-sonnet-4-6)
 
 EXAMPLES:
     # Add label when dispatching a task
@@ -94,7 +94,7 @@ EOF
 # Arguments:
 #   $1 - Model name (e.g., claude-sonnet-4-6, sonnet, gpt-4)
 # Returns:
-#   Normalized tier name (haiku, flash, sonnet, pro, opus)
+#   Normalized tier name (haiku, flash, composer, sonnet, pro, opus)
 #######################################
 normalize_model() {
 	local model="$1"
@@ -114,6 +114,9 @@ normalize_model() {
 	gemini-*-flash*)
 		echo "flash"
 		;;
+	composer-2* | cursor/composer*)
+		echo "composer"
+		;;
 	claude-sonnet-4* | claude-3-sonnet* | claude-3-5-sonnet*)
 		echo "sonnet"
 		;;
@@ -128,6 +131,9 @@ normalize_model() {
 		;;
 	*flash*)
 		echo "flash"
+		;;
+	*composer*)
+		echo "composer"
 		;;
 	*sonnet*)
 		echo "sonnet"
