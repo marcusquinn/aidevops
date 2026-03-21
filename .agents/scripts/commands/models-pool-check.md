@@ -60,9 +60,7 @@ If they only have one account, suggest: "Consider adding a second account for au
 
 For each problem, give the specific fix — one at a time:
 
-- **EXPIRED token**: "Your token for X expired. It should auto-refresh on next use. If it keeps failing, run `oauth-pool-helper.sh add <provider>` in a separate terminal using the same email to re-authenticate." For Cursor accounts, expired tokens are normal — Cursor tokens are short-lived and the plugin re-reads fresh ones from the Cursor IDE automatically. Only flag it if the status is also `auth-error`.
-- **auth-error status**: "Account X has an authentication error. Run `oauth-pool-helper.sh add <provider>` in a separate terminal with the same email to fix it."
-- **INVALID (401)**: "Token for X is invalid. Run `oauth-pool-helper.sh add <provider>` in a separate terminal with the same email to get a fresh token."
+- **EXPIRED / INVALID (401) / auth-error**: "Your token for X needs re-authentication. Run `oauth-pool-helper.sh add <provider>` in a separate terminal with the same email to get a fresh token." For Cursor accounts, expired tokens are normal — Cursor tokens are short-lived and the plugin re-reads fresh ones from the Cursor IDE automatically. Only flag it if the status is also `auth-error`.
 - **Missing refresh token**: "Account X can't auto-renew. Remove it first with `oauth-pool-helper.sh remove <provider> <email>`, then re-add it with `oauth-pool-helper.sh add <provider>`."
 - **All rate-limited**: "All accounts are currently rate-limited. You can wait for cooldowns to expire, or I can reset them for you now." If they say yes, use the `model-accounts-pool` tool with `{"action": "reset-cooldowns"}`.
 
