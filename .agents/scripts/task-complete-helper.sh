@@ -381,19 +381,36 @@ sync_plans_status() {
 			continue
 		fi
 
-		# Find the plan's Status line (within 5 lines above the TODO line)
+		# Find the plan's Status line by locating the preceding ### header,
+		# then searching within the header-to-TODO range. This is robust
+		# against additional metadata fields being added between Status and
+		# TODO lines. (GH#5392 — review feedback from PR#5357)
 		local status_line=""
-		local offset=0
-		for offset in 1 2 3 4 5; do
-			local check_line=$((todo_line - offset))
-			if [[ "$check_line" -lt 1 ]]; then break; fi
+		local header_line=""
+		local search_line=$((todo_line - 1))
+		while [[ "$search_line" -ge 1 ]]; do
 			local line_content
-			line_content=$(sed -n "${check_line}p" "$plans_file")
-			if echo "$line_content" | grep -q '^\*\*Status:\*\*'; then
-				status_line="$check_line"
+			line_content=$(sed -n "${search_line}p" "$plans_file")
+			if echo "$line_content" | grep -q '^### \['; then
+				header_line="$search_line"
 				break
 			fi
+			search_line=$((search_line - 1))
 		done
+
+		# Search for Status line between header and TODO line
+		if [[ -n "$header_line" ]]; then
+			local scan_line=$((header_line + 1))
+			while [[ "$scan_line" -lt "$todo_line" ]]; do
+				local line_content
+				line_content=$(sed -n "${scan_line}p" "$plans_file")
+				if echo "$line_content" | grep -q '^\*\*Status:\*\*'; then
+					status_line="$scan_line"
+					break
+				fi
+				scan_line=$((scan_line + 1))
+			done
+		fi
 
 		if [[ -z "$status_line" ]]; then
 			continue
