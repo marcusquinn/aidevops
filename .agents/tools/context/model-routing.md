@@ -126,7 +126,7 @@ tools:
 
 Valid values: `local`, `composer2`, `flash`, `haiku`, `sonnet`, `pro`, `opus`
 
-> **Note**: The `local` tier requires `local-model-helper.sh` to be set up and a model server running. If no local server is available, `local` in frontmatter falls back to `haiku` (next tier in the routing chain — local has no same-tier fallback). See `tools/local-models/local-models.md` for setup.
+> **Note**: The `local` tier requires `local-model-helper.sh` to be set up and a model server running. If no local server is available, `local` in frontmatter falls back to `composer2` (next tier in the routing chain — local has no same-tier fallback). See `tools/local-models/local-models.md` for setup.
 
 When `model:` is absent, `sonnet` is assumed (the default tier).
 
