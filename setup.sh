@@ -765,6 +765,7 @@ main() {
 		confirm_step "Check Python version (recommend upgrade if outdated)" && check_python_upgrade_available
 		confirm_step "Setup recommended tools (Tabby, Zed, etc.)" && setup_recommended_tools
 		confirm_step "Setup MiniSim (iOS/Android emulator launcher)" && setup_minisim
+		confirm_step "Setup ClaudeBar (AI quota monitor in menu bar)" && setup_claudebar
 		confirm_step "Setup Git CLIs (gh, glab, tea)" && setup_git_clis
 		confirm_step "Setup file discovery tools (fd, ripgrep, ripgrep-all)" && setup_file_discovery_tools
 		confirm_step "Setup rtk (token-optimized CLI output, 60-90% savings)" && setup_rtk

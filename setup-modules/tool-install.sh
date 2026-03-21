@@ -1041,6 +1041,52 @@ setup_minisim() {
 	return 0
 }
 
+setup_claudebar() {
+	# Only available on macOS (native Swift menu bar app)
+	if [[ "$(uname)" != "Darwin" ]]; then
+		return 0
+	fi
+
+	print_info "Setting up ClaudeBar (AI quota monitor)..."
+
+	# Check if ClaudeBar is already installed
+	if [[ -d "/Applications/ClaudeBar.app" ]]; then
+		print_success "ClaudeBar already installed"
+		return 0
+	fi
+
+	# Check if Homebrew is available (required for cask install)
+	if ! command -v brew >/dev/null 2>&1; then
+		print_warning "Homebrew not found - cannot install ClaudeBar automatically"
+		echo "  Download manually: https://github.com/tddworks/ClaudeBar/releases/latest"
+		return 0
+	fi
+
+	print_info "ClaudeBar monitors AI coding assistant usage quotas in your menu bar"
+	echo "  Supports: Claude, Codex, Gemini, Copilot, Antigravity, Kimi, Kiro, Amp"
+	echo "  Features: real-time quota tracking, status notifications, multiple themes"
+	echo "  Requires: macOS 15+, CLI tools for providers you want to monitor"
+	echo ""
+
+	local install_claudebar
+	read -r -p "Install ClaudeBar? [Y/n]: " install_claudebar
+
+	if [[ "$install_claudebar" =~ ^[Yy]?$ ]]; then
+		if run_with_spinner "Installing ClaudeBar" brew install --cask claudebar; then
+			print_success "ClaudeBar installed"
+			print_info "Launch from Applications or Spotlight to start monitoring quotas"
+		else
+			print_warning "Failed to install ClaudeBar via Homebrew"
+			echo "  Download manually: https://github.com/tddworks/ClaudeBar/releases/latest"
+		fi
+	else
+		print_info "Skipped ClaudeBar installation"
+		print_info "Install later: brew install --cask claudebar"
+	fi
+
+	return 0
+}
+
 setup_ssh_key() {
 	print_info "Checking SSH key setup..."
 
