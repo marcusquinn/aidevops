@@ -186,6 +186,16 @@ deploy_aidevops_agents() {
 
 		print_info "Deployed $agent_count agent files and $script_count scripts"
 
+		# Symlink OpenCode's node_modules into the plugin directory (t1551)
+		# The cursor proxy vendored files import @bufbuild/protobuf and zod,
+		# which are installed in OpenCode's config node_modules but not
+		# resolvable from the deployed plugin path (~/.aidevops/agents/).
+		local oc_node_modules="$HOME/.config/opencode/node_modules"
+		local plugin_dir="$target_dir/plugins/opencode-aidevops"
+		if [[ -d "$oc_node_modules" && -d "$plugin_dir" ]]; then
+			ln -sf "$oc_node_modules" "$plugin_dir/node_modules" 2>/dev/null || true
+		fi
+
 		# Copy VERSION file from repo root to deployed agents
 		if [[ -f "$repo_dir/VERSION" ]]; then
 			if cp "$repo_dir/VERSION" "$target_dir/VERSION"; then
