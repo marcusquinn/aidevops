@@ -12,13 +12,16 @@
 # shown in interactive sessions after prompt-guard-helper.sh scanning.
 #
 # Usage:
-#   contribution-watch-helper.sh seed [--dry-run]     Discover all external contributions
-#   contribution-watch-helper.sh scan [--backfill]    Check notifications for new external activity
-#                                                    Optional: metadata-only safety-net sweep of tracked threads
-#   contribution-watch-helper.sh status               Show watched items and their state
-#   contribution-watch-helper.sh install               Install launchd plist
-#   contribution-watch-helper.sh uninstall             Remove launchd plist
-#   contribution-watch-helper.sh help                  Show usage
+#   contribution-watch-helper.sh seed [--dry-run]          Discover all external contributions
+#   contribution-watch-helper.sh scan [--backfill]         Check notifications for new external activity
+#                                                         Optional: metadata-only safety-net sweep of tracked threads
+#   contribution-watch-helper.sh scan [--auto-draft]       Also create draft replies for items needing attention
+#                                                         Drafts stored in ~/.aidevops/.agent-workspace/draft-responses/
+#                                                         Use draft-response-helper.sh to review and approve (t1555)
+#   contribution-watch-helper.sh status                    Show watched items and their state
+#   contribution-watch-helper.sh install                   Install launchd plist
+#   contribution-watch-helper.sh uninstall                 Remove launchd plist
+#   contribution-watch-helper.sh help                      Show usage
 #
 # State file: ~/.aidevops/cache/contribution-watch.json
 # Launchd label: sh.aidevops.contribution-watch
@@ -445,11 +448,13 @@ cmd_seed() {
 cmd_scan() {
 	local run_backfill=false
 	local auto_backfill=false
+	local auto_draft=false
 	local scan_arg
 	for scan_arg in "$@"; do
-		if [[ "$scan_arg" == "--backfill" ]]; then
-			run_backfill=true
-		fi
+		case "$scan_arg" in
+		--backfill) run_backfill=true ;;
+		--auto-draft) auto_draft=true ;;
+		esac
 	done
 
 	_check_prerequisites || return 1
@@ -706,26 +711,17 @@ cmd_scan() {
 	fi
 	_write_state "$state"
 
-	# Create draft response issues for items needing reply (t1555)
-	# Only runs if draft_responses is enabled and the helper exists.
-	# Reads shared-constants for is_feature_enabled; falls back to enabled if
-	# shared-constants is not available (standalone execution).
+	# Auto-draft: create draft replies for items needing attention (t1555)
+	# Triggered by --auto-draft flag. Calls draft-response-helper.sh draft
+	# for each item that has new activity since our last comment.
+	# Drafts are stored locally and NEVER posted without explicit user approval.
 	local _draft_helper
-	_draft_helper="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/draft-response-helper.sh"
-	local _draft_enabled=false
-	if type is_feature_enabled &>/dev/null; then
-		if is_feature_enabled draft_responses 2>/dev/null; then
-			_draft_enabled=true
-		fi
-	else
-		_draft_enabled=true
-	fi
-	if [[ "$needs_attention" -gt 0 && "$_draft_enabled" == "true" && -x "$_draft_helper" ]]; then
+	_draft_helper="${SCRIPT_DIR}/draft-response-helper.sh"
+	if [[ "$auto_draft" == "true" && "$needs_attention" -gt 0 && -x "$_draft_helper" ]]; then
 		local _draft_keys
 		_draft_keys=$(echo "$state" | jq -r '
 			.items | to_entries[] |
 			select(.value.last_any_comment > (.value.last_our_comment // "")) |
-			select(.value.last_notified == "" or .value.last_any_comment > .value.last_notified) |
 			.key
 		' 2>/dev/null) || _draft_keys=""
 		local _draft_created=0
@@ -737,13 +733,9 @@ cmd_scan() {
 			fi
 		done <<<"$_draft_keys"
 		if [[ "$_draft_created" -gt 0 ]]; then
-			_log_info "Created ${_draft_created} draft response issue(s)"
+			echo "Created ${_draft_created} draft reply file(s). Review with: draft-response-helper.sh list --pending"
+			_log_info "Auto-draft: created ${_draft_created} draft(s)"
 		fi
-	fi
-
-	# Scan for approved drafts and post them (runs on every scan cycle)
-	if [[ "$_draft_enabled" == "true" && -x "$_draft_helper" ]]; then
-		bash "$_draft_helper" approve-scan >/dev/null 2>&1 || true
 	fi
 
 	# Output results
@@ -976,13 +968,16 @@ cmd_help() {
 	echo "contribution-watch-helper.sh — Monitor external issues/PRs for new activity"
 	echo ""
 	echo "Usage:"
-	echo "  contribution-watch-helper.sh seed [--dry-run]   Discover all external contributions"
-	echo "  contribution-watch-helper.sh scan [--backfill]  Check notifications for new external activity"
-	echo "                                                  --backfill adds a metadata-only safety-net sweep"
-	echo "  contribution-watch-helper.sh status             Show watched items and their state"
-	echo "  contribution-watch-helper.sh install            Install launchd plist"
-	echo "  contribution-watch-helper.sh uninstall          Remove launchd plist"
-	echo "  contribution-watch-helper.sh help               Show this help"
+	echo "  contribution-watch-helper.sh seed [--dry-run]              Discover all external contributions"
+	echo "  contribution-watch-helper.sh scan [--backfill]             Check notifications for new external activity"
+	echo "                                                             --backfill adds a metadata-only safety-net sweep"
+	echo "  contribution-watch-helper.sh scan [--auto-draft]           Also create draft replies for items needing attention"
+	echo "                                                             Drafts stored in ~/.aidevops/.agent-workspace/draft-responses/"
+	echo "                                                             Use draft-response-helper.sh to review and approve"
+	echo "  contribution-watch-helper.sh status                        Show watched items and their state"
+	echo "  contribution-watch-helper.sh install                       Install launchd plist"
+	echo "  contribution-watch-helper.sh uninstall                     Remove launchd plist"
+	echo "  contribution-watch-helper.sh help                          Show this help"
 	echo ""
 	echo "State file: ${STATE_FILE}"
 	echo "Log file:   ${LOGFILE}"
@@ -992,6 +987,10 @@ cmd_help() {
 	echo "Default scan auto-runs a low-frequency backfill sweep every ${BACKFILL_FRESHNESS_HOURS}h."
 	echo "Comment bodies are NEVER processed by LLM in automated context."
 	echo "Use prompt-guard-helper.sh scan before showing comment bodies interactively."
+	echo ""
+	echo "Draft responses (t1555):"
+	echo "  scan --auto-draft creates draft reply files for items needing attention."
+	echo "  Drafts are NEVER posted automatically — use draft-response-helper.sh approve <id>."
 	return 0
 }
 
