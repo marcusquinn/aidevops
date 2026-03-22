@@ -149,9 +149,10 @@ _ensure_draft_repo() {
 	gh label create "declined" --repo "$slug" --description "Declined" --color "B60205" 2>/dev/null || true
 
 	# Watch the repo so issue creation triggers GitHub notifications
-	if ! gh api "repos/${slug}/subscription" --method PUT \
-		--input - <<<'{"subscribed":true,"ignored":false}' >/dev/null 2>&1; then
-		_log_warn "Failed to subscribe to repository ${slug} for notifications"
+	local gh_output
+	if ! gh_output=$(gh api "repos/${slug}/subscription" --method PUT \
+		--input - <<<'{"subscribed":true,"ignored":false}' 2>&1); then
+		_log_warn "Failed to subscribe to repository ${slug} for notifications: ${gh_output}"
 	fi
 
 	_log_info "Created private repo: ${slug}"
