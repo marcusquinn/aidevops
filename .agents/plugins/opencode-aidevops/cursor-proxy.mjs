@@ -234,7 +234,7 @@ export function buildCursorProviderModels(models, port) {
     entries[model.id] = {
       name: model.name,
       attachment: false,
-      tool_call: true,
+      tool_call: false,
       temperature: true,
       reasoning: model.reasoning || false,
       modalities: { input: ["text"], output: ["text"] },

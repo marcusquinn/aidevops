@@ -284,7 +284,15 @@ function handleChatCompletion(body, accessToken) {
     evictStaleConversations();
     // Build the request. When tool results are present but the bridge died,
     // we must still include the last user text so Cursor has context.
-    const mcpTools = buildMcpToolDefinitions(tools);
+    // Do NOT forward OpenAI tools to Cursor as MCP tools.
+    // OpenCode handles tool calling at its own layer — it sends tool definitions
+    // to the model, the model returns tool_calls in the response, and OpenCode
+    // executes them. If we forward tools to Cursor as MCP tools, Cursor tries
+    // to execute them via its own MCP protocol (mcpArgs exec messages), which
+    // requires a tool execution loop that OpenCode's ai-sdk provider doesn't
+    // support. Instead, let Cursor see the tools only in the system prompt
+    // (OpenCode includes tool descriptions there) and generate text responses.
+    const mcpTools = [];
     const effectiveUserText = userText || (toolResults.length > 0
         ? toolResults.map((r) => r.content).join("\n")
         : "");
