@@ -747,7 +747,11 @@ cmd_scan() {
 	# ensures no LLM cost for issues without new user comments.
 	if [[ "$_draft_enabled" == "true" && -x "$_draft_helper" ]]; then
 		_log_info "Running check-approvals scan"
-		bash "$_draft_helper" check-approvals 2>&1 || _log_warn "check-approvals returned non-zero"
+		local _approval_output
+		if ! _approval_output=$(bash "$_draft_helper" check-approvals 2>&1); then
+			_log_warn "check-approvals failed: ${_approval_output}"
+			echo "Approval scan failed; see ${LOGFILE}."
+		fi
 	fi
 
 	# Output results
