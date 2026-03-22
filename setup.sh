@@ -193,6 +193,38 @@ _launchd_has_agent() {
 	return $?
 }
 
+# Install a launchd plist only if its content has changed.
+# Avoids unnecessary unload/reload which resets StartInterval timers.
+# Usage: _launchd_install_if_changed <label> <plist_path> <new_content>
+# Returns: 0 = installed or unchanged, 1 = failed to load
+_launchd_install_if_changed() {
+	local label="$1"
+	local plist_path="$2"
+	local new_content="$3"
+
+	# Compare with existing plist — skip reload if identical
+	if [[ -f "$plist_path" ]]; then
+		local existing_content
+		existing_content=$(cat "$plist_path")
+		if [[ "$existing_content" == "$new_content" ]]; then
+			# Ensure it's loaded even if content unchanged
+			if ! _launchd_has_agent "$label"; then
+				launchctl load "$plist_path" 2>/dev/null || return 1
+			fi
+			return 0
+		fi
+		# Content changed — unload before replacing
+		if _launchd_has_agent "$label"; then
+			launchctl unload "$plist_path" 2>/dev/null || true
+		fi
+	fi
+
+	# Write new plist and load
+	printf '%s\n' "$new_content" >"$plist_path"
+	launchctl load "$plist_path" 2>/dev/null || return 1
+	return 0
+}
+
 # Detect whether a scheduler is already installed via launchd or cron.
 # Optionally migrates legacy launchd labels / cron entries to launchd on macOS.
 _scheduler_detect_installed() {
@@ -1138,15 +1170,13 @@ PLIST
 		if [[ "$(uname -s)" == "Darwin" ]]; then
 			local stats_plist="$HOME/Library/LaunchAgents/${stats_label}.plist"
 
-			if _launchd_has_agent "$stats_label"; then
-				launchctl unload "$stats_plist" 2>/dev/null || true
-			fi
-
 			local _xml_stats_script _xml_stats_home _xml_stats_path
 			_xml_stats_script=$(_xml_escape "$stats_script")
 			_xml_stats_home=$(_xml_escape "$HOME")
 			_xml_stats_path=$(_xml_escape "$PATH")
-			cat >"$stats_plist" <<PLIST
+			local stats_plist_content
+			stats_plist_content=$(
+				cat <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -1178,7 +1208,8 @@ PLIST
 </dict>
 </plist>
 PLIST
-			if launchctl load "$stats_plist"; then
+			)
+			if _launchd_install_if_changed "$stats_label" "$stats_plist" "$stats_plist_content"; then
 				print_info "Stats wrapper enabled (launchd, every 15 min)"
 			else
 				print_warning "Failed to load stats wrapper LaunchAgent"
@@ -1253,11 +1284,6 @@ PLIST
 		if [[ "$(uname -s)" == "Darwin" ]]; then
 			local guard_plist="$HOME/Library/LaunchAgents/${guard_label}.plist"
 
-			# Unload old plist if upgrading
-			if _launchd_has_agent "$guard_label"; then
-				launchctl unload "$guard_plist" || true
-			fi
-
 			# XML-escape paths for safe plist embedding (prevents injection
 			# if $HOME or paths contain &, <, > characters)
 			local _xml_guard_script _xml_guard_home _xml_guard_path
@@ -1265,7 +1291,9 @@ PLIST
 			_xml_guard_home=$(_xml_escape "$HOME")
 			_xml_guard_path=$(_xml_escape "$PATH")
 
-			cat >"$guard_plist" <<GUARD_PLIST
+			local guard_plist_content
+			guard_plist_content=$(
+				cat <<GUARD_PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -1306,8 +1334,9 @@ PLIST
 </dict>
 </plist>
 GUARD_PLIST
+			)
 
-			if launchctl load "$guard_plist"; then
+			if _launchd_install_if_changed "$guard_label" "$guard_plist" "$guard_plist_content"; then
 				print_info "Process guard enabled (launchd, every 30s, survives reboot)"
 			else
 				print_warning "Failed to load process guard LaunchAgent"
@@ -1343,12 +1372,9 @@ GUARD_PLIST
 		if [[ "$(uname -s)" == "Darwin" ]]; then
 			local monitor_plist="$HOME/Library/LaunchAgents/${monitor_label}.plist"
 
-			# Unload old plist if upgrading
-			if _launchd_has_agent "$monitor_label"; then
-				launchctl unload "$monitor_plist" 2>/dev/null || true
-			fi
-
-			cat >"$monitor_plist" <<MONITOR_PLIST
+			local monitor_plist_content
+			monitor_plist_content=$(
+				cat <<MONITOR_PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -1386,8 +1412,9 @@ GUARD_PLIST
 </dict>
 </plist>
 MONITOR_PLIST
+			)
 
-			if launchctl load "$monitor_plist" 2>/dev/null; then
+			if _launchd_install_if_changed "$monitor_label" "$monitor_plist" "$monitor_plist_content"; then
 				print_info "Memory pressure monitor enabled (launchd, every 60s, survives reboot)"
 			else
 				print_warning "Failed to load memory pressure monitor LaunchAgent"
@@ -1418,17 +1445,14 @@ MONITOR_PLIST
 		if [[ "$(uname -s)" == "Darwin" ]]; then
 			local st_plist="$HOME/Library/LaunchAgents/${st_label}.plist"
 
-			# Unload old plist if upgrading
-			if _launchd_has_agent "$st_label"; then
-				launchctl unload "$st_plist" 2>/dev/null || true
-			fi
-
 			# XML-escape paths for safe plist embedding
 			local _xml_st_script _xml_st_home
 			_xml_st_script=$(_xml_escape "$st_script")
 			_xml_st_home=$(_xml_escape "$HOME")
 
-			cat >"$st_plist" <<ST_PLIST
+			local st_plist_content
+			st_plist_content=$(
+				cat <<ST_PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -1467,8 +1491,9 @@ MONITOR_PLIST
 </dict>
 </plist>
 ST_PLIST
+			)
 
-			if launchctl load "$st_plist" 2>/dev/null; then
+			if _launchd_install_if_changed "$st_label" "$st_plist" "$st_plist_content"; then
 				print_info "Screen time snapshot enabled (launchd, every 6h, survives reboot)"
 			else
 				print_warning "Failed to load screen time snapshot LaunchAgent"
@@ -1544,17 +1569,14 @@ ST_PLIST
 		if [[ "$(uname -s)" == "Darwin" ]]; then
 			local pr_plist="$HOME/Library/LaunchAgents/${pr_label}.plist"
 
-			# Unload old plist if upgrading
-			if _launchd_has_agent "$pr_label"; then
-				launchctl unload "$pr_plist" 2>/dev/null || true
-			fi
-
 			# XML-escape paths for safe plist embedding
 			local _xml_pr_script _xml_pr_home
 			_xml_pr_script=$(_xml_escape "$pr_script")
 			_xml_pr_home=$(_xml_escape "$HOME")
 
-			cat >"$pr_plist" <<PR_PLIST
+			local pr_plist_content
+			pr_plist_content=$(
+				cat <<PR_PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -1593,8 +1615,9 @@ ST_PLIST
 </dict>
 </plist>
 PR_PLIST
+			)
 
-			if launchctl load "$pr_plist" 2>/dev/null; then
+			if _launchd_install_if_changed "$pr_label" "$pr_plist" "$pr_plist_content"; then
 				print_info "Profile README update enabled (launchd, hourly)"
 			else
 				print_warning "Failed to load profile README update LaunchAgent"
