@@ -1276,10 +1276,22 @@ cmd_init() {
 	else
 		echo "Local repo already exists at $repo_dir"
 		# Pull latest to avoid conflicts when seeding README
-		git -C "$repo_dir" pull --ff-only origin main 2>/dev/null ||
-			git -C "$repo_dir" pull --ff-only origin master 2>/dev/null ||
-			true
+		local init_branch
+		init_branch=$(git -C "$repo_dir" symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's|refs/remotes/origin/||' || true)
+		if [[ -z "$init_branch" ]]; then
+			init_branch=$(git -C "$repo_dir" branch --show-current 2>/dev/null || true)
+		fi
+		init_branch="${init_branch:-main}"
+		git -C "$repo_dir" pull --ff-only origin "$init_branch" 2>/dev/null || true
 	fi
+
+	# Detect default branch for push operations
+	local default_branch
+	default_branch=$(git -C "$repo_dir" symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's|refs/remotes/origin/||' || true)
+	if [[ -z "$default_branch" ]]; then
+		default_branch=$(git -C "$repo_dir" branch --show-current 2>/dev/null || true)
+	fi
+	default_branch="${default_branch:-main}"
 
 	# Seed README.md if it doesn't have stat markers
 	local readme_path="${repo_dir}/README.md"
@@ -1289,7 +1301,7 @@ cmd_init() {
 
 		git -C "$repo_dir" add README.md
 		git -C "$repo_dir" commit -m "feat: initialize profile README with aidevops stat markers" --no-verify 2>/dev/null || true
-		git -C "$repo_dir" push origin main 2>/dev/null || git -C "$repo_dir" push origin master 2>/dev/null || {
+		git -C "$repo_dir" push origin "$default_branch" 2>/dev/null || {
 			echo "Warning: failed to push initial README — push manually" >&2
 		}
 	fi
@@ -1454,7 +1466,14 @@ cmd_update() {
 		echo "No changes to commit"
 		return 0
 	}
-	git -C "$profile_repo" push origin main 2>/dev/null || {
+	# Push to whichever default branch the repo uses (main or master)
+	local default_branch
+	default_branch=$(git -C "$profile_repo" symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's|refs/remotes/origin/||' || true)
+	if [[ -z "$default_branch" ]]; then
+		default_branch=$(git -C "$profile_repo" branch --show-current 2>/dev/null || true)
+	fi
+	default_branch="${default_branch:-main}"
+	git -C "$profile_repo" push origin "$default_branch" 2>/dev/null || {
 		echo "Warning: push failed — changes committed locally" >&2
 		return 0
 	}
