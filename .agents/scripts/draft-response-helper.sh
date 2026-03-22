@@ -147,6 +147,11 @@ _ensure_draft_repo() {
 	gh label create "draft" --repo "$slug" --description "Pending draft response" --color "FBCA04" 2>/dev/null || true
 	gh label create "approved" --repo "$slug" --description "Approved and posted" --color "0E8A16" 2>/dev/null || true
 	gh label create "declined" --repo "$slug" --description "Declined" --color "B60205" 2>/dev/null || true
+
+	# Watch the repo so issue creation triggers GitHub notifications
+	gh api "repos/${slug}/subscription" --method PUT \
+		--input - <<<'{"subscribed":true,"ignored":false}' >/dev/null 2>&1 || true
+
 	_log_info "Created private repo: ${slug}"
 	return 0
 }
@@ -237,6 +242,18 @@ _create_notification_issue() {
 
 	local issue_number
 	issue_number=$(echo "$issue_url" | grep -oE '[0-9]+$') || issue_number=""
+
+	# Post a comment mentioning the user to trigger a GitHub notification.
+	# GitHub does NOT notify you for issues you create yourself — even as assignee.
+	# A self-mention in a comment is the only way to get the notification.
+	if [[ -n "$issue_number" ]]; then
+		local username
+		username=$(_get_username)
+		gh issue comment "$issue_number" --repo "$slug" \
+			--body "@${username} — draft reply ready for review." \
+			>/dev/null 2>&1 || true
+	fi
+
 	echo "$issue_number"
 	return 0
 }
