@@ -59,8 +59,6 @@ print_info() { echo "[INFO] $1"; }
 print_success() { echo "[SUCCESS] $1"; }
 # shellcheck disable=SC2329
 print_warning() { echo "[WARNING] $1"; }
-# shellcheck disable=SC2329
-print_error() { echo "[ERROR] $1"; }
 # _launchd_has_agent is defined in setup.sh; stub it for Linux tests
 # shellcheck disable=SC2329
 _launchd_has_agent() { return 1; }
@@ -84,7 +82,7 @@ sanitize_plugin_namespace() {
 	return 0
 }
 # Export stubs so sourced script can find them
-export -f print_info print_success print_warning print_error _launchd_has_agent
+export -f print_info print_success print_warning _launchd_has_agent
 export -f find_opencode_config create_backup_with_rotation should_overwrite_user_file
 export -f resolve_mcp_binary_path update_mcp_paths_in_opencode sanitize_plugin_namespace
 
