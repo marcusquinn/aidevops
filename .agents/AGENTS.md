@@ -275,7 +275,7 @@ Read subagents on-demand. Full index: `subagent-index.toon`.
 | OCR | `tools/ocr/overview.md`, `tools/ocr/paddleocr.md`, `tools/ocr/glm-ocr.md` |
 | Product (shared) | `product/validation.md`, `product/onboarding.md`, `product/monetisation.md`, `product/growth.md`, `product/ui-design.md`, `product/analytics.md` |
 | Browser/Mobile | `tools/browser/browser-automation.md`, `tools/browser/browser-qa.md`, `tools/browser/browser-use.md`, `tools/browser/skyvern.md`, `tools/mobile/app-dev.md`, `tools/mobile/app-store-connect.md`, `tools/browser/extension-dev.md` |
-| Content/Video/Voice | `content.md`, `tools/video/video-prompt-design.md`, `tools/voice/speech-to-speech.md` |
+| Content/Video/Voice | `content.md`, `tools/video/video-prompt-design.md`, `tools/voice/speech-to-speech.md`, `tools/voice/transcription.md` |
 | Design | `tools/design/ui-ux-inspiration.md`, `tools/design/ui-ux-catalogue.toon`, `tools/design/brand-identity.md` |
 | SEO | `seo/dataforseo.md`, `seo/google-search-console.md` |
 | Paid Ads/CRO | `tools/marketing/meta-ads/SKILL.md`, `tools/marketing/ad-creative/SKILL.md`, `tools/marketing/direct-response-copy/SKILL.md`, `tools/marketing/cro/SKILL.md` |
