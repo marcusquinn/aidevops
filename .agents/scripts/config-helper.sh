@@ -381,8 +381,6 @@ _legacy_key_to_dotpath() {
 	manage_claude_config) echo "integrations.manage_claude_config" ;;
 	supervisor_pulse) echo "orchestration.supervisor_pulse" ;;
 	repo_sync) echo "orchestration.repo_sync" ;;
-	contribution_watch) echo "orchestration.contribution_watch" ;;
-	draft_responses) echo "orchestration.draft_responses" ;;
 	session_greeting) echo "ui.session_greeting" ;;
 	safety_hooks) echo "safety.hooks_enabled" ;;
 	shell_aliases) echo "ui.shell_aliases" ;;

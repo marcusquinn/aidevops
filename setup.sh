@@ -1522,7 +1522,7 @@ ST_PLIST
 	local cw_script="$HOME/.aidevops/agents/scripts/contribution-watch-helper.sh"
 	local cw_label="sh.aidevops.contribution-watch"
 	local cw_state="$HOME/.aidevops/cache/contribution-watch.json"
-	if [[ -x "$cw_script" ]] && is_feature_enabled contribution_watch 2>/dev/null && command -v gh &>/dev/null && gh auth status &>/dev/null 2>&1; then
+	if [[ -x "$cw_script" ]] && is_feature_enabled orchestration.contribution_watch 2>/dev/null && command -v gh &>/dev/null && gh auth status &>/dev/null 2>&1; then
 		# Resolve log directory from config (paths.log_dir), expanding ~ to $HOME.
 		# Falls back to the default if config is unavailable or jq is missing.
 		# Validate before expansion to guard against shell metacharacter injection.
