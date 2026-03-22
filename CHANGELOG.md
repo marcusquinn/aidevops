@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.1.55] - 2026-03-22
+
+### Fixed
+
+- detect default branch for profile repo push instead of hardcoding main (#5462)
+
 ## [3.1.43] - 2026-03-21
 
 ### Changed
