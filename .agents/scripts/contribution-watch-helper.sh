@@ -717,7 +717,11 @@ cmd_scan() {
 	# Drafts are stored locally and NEVER posted without explicit user approval.
 	local _draft_helper
 	_draft_helper="${SCRIPT_DIR}/draft-response-helper.sh"
-	if [[ "$auto_draft" == "true" && "$needs_attention" -gt 0 && -x "$_draft_helper" ]]; then
+	local _draft_enabled=false
+	if ! type is_feature_enabled &>/dev/null || is_feature_enabled draft_responses 2>/dev/null; then
+		_draft_enabled=true
+	fi
+	if [[ "$auto_draft" == "true" && "$_draft_enabled" == "true" && "$needs_attention" -gt 0 && -x "$_draft_helper" ]]; then
 		local _draft_keys
 		_draft_keys=$(echo "$state" | jq -r '
 			.items | to_entries[] |
