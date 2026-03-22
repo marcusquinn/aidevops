@@ -1416,6 +1416,120 @@ cmd_status() {
 }
 
 # =============================================================================
+# cmd_process_approved: scan draft-responses repo for approved issues, post & close
+# =============================================================================
+
+cmd_process_approved() {
+	_check_prerequisites || return 1
+
+	local slug
+	slug=$(_get_draft_repo_slug)
+
+	# Fetch all open issues with the 'approved' label in one API call
+	local issues_json
+	issues_json=$(gh issue list --repo "$slug" --state open --label "approved" \
+		--json number,title,body 2>/dev/null) || issues_json="[]"
+
+	local issue_count
+	issue_count=$(echo "$issues_json" | jq 'length' 2>/dev/null) || issue_count=0
+
+	if [[ "$issue_count" -eq 0 ]]; then
+		echo "No approved drafts awaiting posting."
+		return 0
+	fi
+
+	local count=0
+	local failed=0
+
+	# Iterate over the cached JSON — no redundant API call
+	while IFS= read -r issue; do
+		[[ -z "$issue" ]] && continue
+
+		# Single jq call to extract all fields
+		local issue_number issue_body
+		issue_number=$(echo "$issue" | jq -r '.number')
+		issue_body=$(echo "$issue" | jq -r '.body // ""')
+
+		# Extract draft text: everything between "## Draft Reply" and "---"
+		local draft_text
+		draft_text=$(echo "$issue_body" | sed -n '/^## Draft Reply$/,/^---$/p' | sed '1d;$d')
+
+		if [[ -z "$(echo "$draft_text" | tr -d '[:space:]')" ]]; then
+			echo -e "${YELLOW}Issue #${issue_number}: could not extract draft text, skipping${NC}"
+			failed=$((failed + 1))
+			continue
+		fi
+
+		# Check for placeholder text
+		if echo "$draft_text" | grep -q "Draft pending"; then
+			echo -e "${YELLOW}Issue #${issue_number}: draft not yet composed, skipping${NC}"
+			failed=$((failed + 1))
+			continue
+		fi
+
+		# Extract source URL components in a single rg call
+		local source_parts
+		source_parts=$(echo "$issue_body" | rg -o 'Source \| `https://github.com/([^/]+/[^/]+)/(issues|pull)/(\d+)`' -r '$1 $2 $3' 2>/dev/null | head -1) || source_parts=""
+
+		if [[ -z "$source_parts" ]]; then
+			echo -e "${YELLOW}Issue #${issue_number}: could not extract source URL, skipping${NC}"
+			failed=$((failed + 1))
+			continue
+		fi
+
+		local source_repo source_type source_number
+		source_repo=$(echo "$source_parts" | cut -d' ' -f1)
+		source_type=$(echo "$source_parts" | cut -d' ' -f2)
+		source_number=$(echo "$source_parts" | cut -d' ' -f3)
+
+		if [[ -z "$source_repo" || -z "$source_number" ]]; then
+			echo -e "${YELLOW}Issue #${issue_number}: could not parse source repo/number, skipping${NC}"
+			failed=$((failed + 1))
+			continue
+		fi
+
+		echo -e "${CYAN}Issue #${issue_number}: posting reply to ${source_repo}#${source_number}...${NC}"
+
+		# Write draft to temp file for --body-file (avoids argument injection)
+		local tmp_body
+		tmp_body=$(mktemp) || {
+			failed=$((failed + 1))
+			continue
+		}
+		echo "$draft_text" >"$tmp_body"
+
+		local post_output post_exit=0
+		if [[ "$source_type" == "pull" ]]; then
+			post_output=$(gh pr comment "$source_number" --repo "$source_repo" --body-file "$tmp_body" 2>&1) || post_exit=$?
+		else
+			post_output=$(gh issue comment "$source_number" --repo "$source_repo" --body-file "$tmp_body" 2>&1) || post_exit=$?
+		fi
+		rm -f "$tmp_body"
+
+		if [[ "$post_exit" -ne 0 ]]; then
+			echo -e "${RED}Issue #${issue_number}: failed to post reply${NC}"
+			echo "  ${post_output}" >&2
+			_log_error "process-approved: failed to post for issue #${issue_number}: ${post_output}"
+			failed=$((failed + 1))
+			continue
+		fi
+
+		# Close the draft issue — no URL in the comment to avoid cross-references
+		gh issue close "$issue_number" --repo "$slug" \
+			--comment "Reply posted." >/dev/null 2>&1 || true
+
+		echo -e "${GREEN}Issue #${issue_number}: reply posted and issue closed${NC}"
+		_log_info "process-approved: posted reply for issue #${issue_number} to ${source_repo}#${source_number}"
+		count=$((count + 1))
+
+	done < <(echo "$issues_json" | jq -c '.[]')
+
+	echo ""
+	echo "Processed: ${count} posted, ${failed} skipped"
+	return 0
+}
+
+# =============================================================================
 # cmd_help
 # =============================================================================
 
@@ -1445,6 +1559,10 @@ cmd_help() {
 	echo "      Deterministic gate: no LLM cost for issues without new user comments"
 	echo "      Intelligence layer: interprets user intent (approve/decline/redraft/custom)"
 	echo "      Bot comments are filtered out; role-based compose caps enforced"
+	echo ""
+	echo "  draft-response-helper.sh process-approved"
+	echo "      Post all approved drafts and close their notification issues"
+	echo "      Handles issues labeled 'approved' by the GitHub Actions workflow"
 	echo ""
 	echo "  draft-response-helper.sh status"
 	echo "      Show summary of all drafts"
@@ -1486,6 +1604,7 @@ main() {
 	reject) cmd_reject "$@" ;;
 	status) cmd_status "$@" ;;
 	check-approvals) cmd_check_approvals "$@" ;;
+	process-approved) cmd_process_approved "$@" ;;
 	help | --help | -h) cmd_help ;;
 	*)
 		echo -e "${RED}Unknown command: ${cmd}${NC}" >&2
