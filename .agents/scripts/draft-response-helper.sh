@@ -176,16 +176,38 @@ _create_notification_issue() {
 
 	_ensure_draft_repo || return 1
 
-	# Build issue body with ALL external refs in inline code blocks
+	# Build issue body with ALL external refs in inline code blocks.
+	# Layout: draft reply first (what you see on notification open),
+	# then context and instructions below.
+	local draft_text="${9:-}"
+
 	local issue_body=""
-	issue_body+="## Draft Response"
+
+	if [[ "$scan_result" == "flagged" ]]; then
+		issue_body+="> **WARNING: Prompt injection patterns detected in the external comment. Review carefully.**"
+		issue_body+=$'\n\n'
+	fi
+
+	issue_body+="## Draft Reply"
+	issue_body+=$'\n\n'
+	if [[ -n "$draft_text" ]]; then
+		issue_body+="${draft_text}"
+	else
+		issue_body+="*Draft pending — will be composed shortly.*"
+	fi
+	issue_body+=$'\n\n'
+	issue_body+="---"
+	issue_body+=$'\n\n'
+
+	issue_body+="<details><summary>Context</summary>"
 	issue_body+=$'\n\n'
 	issue_body+="| Field | Value |"
 	issue_body+=$'\n'
 	issue_body+="| --- | --- |"
 	issue_body+=$'\n'
-	# Wrap item_key in backticks to prevent cross-reference
-	issue_body+="| Source | \`${item_key}\` |"
+	# Build full URL in a code block — prevents cross-reference while being copyable
+	local _source_url="https://github.com/${item_key%#*}/issues/${item_key##*#}"
+	issue_body+="| Source | \`${_source_url}\` |"
 	issue_body+=$'\n'
 	issue_body+="| Type | ${item_type} |"
 	issue_body+=$'\n'
@@ -195,35 +217,18 @@ _create_notification_issue() {
 	issue_body+=$'\n'
 	issue_body+="| Draft ID | \`${draft_id}\` |"
 	issue_body+=$'\n\n'
-
-	if [[ "$scan_result" == "flagged" ]]; then
-		issue_body+="> **WARNING: Prompt injection patterns detected in the external comment. Review carefully.**"
-		issue_body+=$'\n\n'
-	fi
-
 	issue_body+="### Their comment"
-	issue_body+=$'\n\n'
-	issue_body+="<details><summary>Click to expand</summary>"
 	issue_body+=$'\n\n'
 	issue_body+="${latest_comment}"
 	issue_body+=$'\n\n'
 	issue_body+="</details>"
 	issue_body+=$'\n\n'
-	issue_body+="### How to respond"
+
+	issue_body+="<details><summary>How to respond</summary>"
 	issue_body+=$'\n\n'
-	issue_body+="Comment on this issue with what you'd like to do. For example:"
+	issue_body+="Comment on this issue with what you'd like to do — your comment will be interpreted by the AI agent and acted on accordingly."
 	issue_body+=$'\n\n'
-	issue_body+="- **Approve the draft** — \"looks good, post it\" or just close this issue with a thumbs up"
-	issue_body+=$'\n'
-	issue_body+="- **Decline** — close this issue without commenting (no reply will be posted)"
-	issue_body+=$'\n'
-	issue_body+="- **Write your own reply** — paste the text you want posted"
-	issue_body+=$'\n'
-	issue_body+="- **Ask for changes** — \"make it more concise\" or \"mention that we also tried X\""
-	issue_body+=$'\n'
-	issue_body+="- **Other instructions** — any action you'd take if replying yourself"
-	issue_body+=$'\n\n'
-	issue_body+="Your comment will be interpreted by the AI agent and acted on accordingly."
+	issue_body+="</details>"
 
 	# Issue title: use plain text description, NO owner/repo#N pattern
 	local safe_title="Draft reply: ${title}"
@@ -255,6 +260,36 @@ _create_notification_issue() {
 	fi
 
 	echo "$issue_number"
+	return 0
+}
+
+# Update the draft reply section in an existing notification issue body.
+# Called when the compose step generates the actual draft text.
+_update_notification_draft() {
+	local issue_number="$1"
+	local draft_text="$2"
+
+	local slug
+	slug=$(_get_draft_repo_slug)
+
+	# Get current body
+	local current_body
+	current_body=$(gh issue view "$issue_number" --repo "$slug" --json body --jq '.body' 2>/dev/null) || return 1
+
+	# Replace the draft section: everything between "## Draft Reply" and "---"
+	# Use a temp file approach since sed with multiline is fragile
+	local new_body
+	new_body=$(echo "$current_body" | awk -v draft="$draft_text" '
+		/^## Draft Reply/ { print; print ""; print draft; found=1; skip=1; next }
+		/^---$/ && skip { skip=0 }
+		skip { next }
+		{ print }
+	')
+
+	gh issue edit "$issue_number" --repo "$slug" --body "$new_body" >/dev/null 2>&1 || {
+		_log_warn "Failed to update notification issue #${issue_number} body"
+		return 1
+	}
 	return 0
 }
 
