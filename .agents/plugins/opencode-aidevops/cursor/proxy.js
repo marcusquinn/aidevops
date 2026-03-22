@@ -32,6 +32,44 @@ const SSE_HEADERS = {
 const activeBridges = new Map();
 const conversationStates = new Map();
 const CONVERSATION_TTL_MS = 30 * 60 * 1000; // 30 minutes
+// Tool name alias map (t1553) — Cursor models may use variant names for tools.
+// Ported from Nomadcxx/opencode-cursor src/proxy/tool-loop.ts TOOL_NAME_ALIASES.
+// Keys are lowercased; values are the canonical OpenCode tool names.
+const TOOL_NAME_ALIASES = new Map([
+    // bash aliases
+    ["runcommand", "bash"], ["executecommand", "bash"], ["runterminalcommand", "bash"],
+    ["terminalcommand", "bash"], ["shellcommand", "bash"], ["shell", "bash"],
+    ["terminal", "bash"], ["bashcommand", "bash"], ["runbash", "bash"],
+    ["executebash", "bash"],
+    // read aliases
+    ["readfile", "read"], ["getfile", "read"], ["filecontent", "read"],
+    ["readfilecontent", "read"],
+    // write aliases
+    ["writefile", "write"], ["createfile", "write"], ["savefile", "write"],
+    // edit aliases
+    ["editfile", "edit"], ["modifyfile", "edit"], ["updatefile", "edit"],
+    ["replaceinfile", "edit"],
+    // grep aliases
+    ["searchcontent", "grep"], ["searchcode", "grep"], ["findcontent", "grep"],
+    ["grepfiles", "grep"], ["searchfiles", "grep"],
+    // glob aliases
+    ["findfiles", "glob"], ["globfiles", "glob"], ["fileglob", "glob"],
+    ["matchfiles", "glob"],
+    // ls aliases
+    ["listdirectory", "ls"], ["listfiles", "ls"], ["listdir", "ls"],
+    ["readdir", "ls"],
+]);
+/**
+ * Resolve a tool name through the alias map.
+ * Returns the canonical name if an alias matches, otherwise the original name.
+ * @param {string} name - Tool name from Cursor's response
+ * @returns {string} Resolved canonical tool name
+ */
+function resolveToolAlias(name) {
+    if (!name) return name;
+    const lower = name.toLowerCase().replace(/[_\-\s]/g, "");
+    return TOOL_NAME_ALIASES.get(lower) || name;
+}
 function evictStaleConversations() {
     const now = Date.now();
     for (const [key, stored] of conversationStates) {
@@ -282,17 +320,15 @@ function handleChatCompletion(body, accessToken) {
     }
     stored.lastAccessMs = Date.now();
     evictStaleConversations();
-    // Build the request. When tool results are present but the bridge died,
-    // we must still include the last user text so Cursor has context.
-    // Do NOT forward OpenAI tools to Cursor as MCP tools.
-    // OpenCode handles tool calling at its own layer — it sends tool definitions
-    // to the model, the model returns tool_calls in the response, and OpenCode
-    // executes them. If we forward tools to Cursor as MCP tools, Cursor tries
-    // to execute them via its own MCP protocol (mcpArgs exec messages), which
-    // requires a tool execution loop that OpenCode's ai-sdk provider doesn't
-    // support. Instead, let Cursor see the tools only in the system prompt
-    // (OpenCode includes tool descriptions there) and generate text responses.
-    const mcpTools = [];
+    // Build the request. Forward OpenAI tools to Cursor as MCP tools (t1553).
+    // Cursor's gRPC protocol uses MCP tool definitions in the RequestContext.
+    // When the model wants to use a tool, Cursor sends an mcpArgs exec message
+    // which our proxy translates back to OpenAI tool_calls format. OpenCode
+    // then executes the tool and sends the result back, which we forward to
+    // Cursor as an mcpResult message. This enables the full tool loop:
+    //   OpenCode → proxy → Cursor (mcpArgs) → proxy (tool_calls) → OpenCode
+    //   OpenCode (tool result) → proxy (mcpResult) → Cursor → continues
+    const mcpTools = tools.length > 0 ? buildMcpToolDefinitions(tools) : [];
     const effectiveUserText = userText || (toolResults.length > 0
         ? toolResults.map((r) => r.content).join("\n")
         : "");
@@ -661,11 +697,17 @@ function handleExecMessage(execMsg, mcpTools, sendFrame, onMcpExec) {
     if (execCase === "mcpArgs") {
         const mcpArgs = execMsg.message.value;
         const decoded = decodeMcpArgsMap(mcpArgs.args ?? {});
+        // Resolve tool name aliases (t1553) — Cursor models may use variant
+        // names like "runcommand" instead of "bash". The alias map normalises
+        // these back to the canonical OpenCode tool names that OpenCode's
+        // ai-sdk layer expects in the tool_calls response.
+        const rawToolName = mcpArgs.toolName || mcpArgs.name;
+        const resolvedToolName = resolveToolAlias(rawToolName);
         onMcpExec({
             execId: execMsg.execId,
             execMsgId: execMsg.id,
             toolCallId: mcpArgs.toolCallId || crypto.randomUUID(),
-            toolName: mcpArgs.toolName || mcpArgs.name,
+            toolName: resolvedToolName,
             decodedArgs: JSON.stringify(decoded),
         });
         return;
