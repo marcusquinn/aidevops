@@ -42,7 +42,7 @@ Use this to pick the right tool before starting.
 | Criterion | Whisper (local) | Buzz (GUI) | AssemblyAI | Deepgram |
 |-----------|----------------|------------|------------|----------|
 | **Privacy** | Full (no data leaves device) | Full (offline) | Cloud (data sent) | Cloud (data sent) |
-| **Cost** | Free | Free | $0.37/hr (Nano) – $0.65/hr (Best) | $0.0043/min (Nova-3) |
+| **Cost** | Free | Free | $0.12/hr (Nano) – $0.65/hr (Best) | $0.0043/min (Nova-3) |
 | **Setup** | pip + ffmpeg | brew install | API key only | API key only |
 | **Accuracy** | 9.0–9.8 (model-dependent) | 9.0–9.8 | 9.6 (Universal-2) | 9.5 (Nova-3) |
 | **Speed** | Slow–medium (CPU/GPU) | Medium (GUI) | Fast (async) | Real-time capable |
@@ -210,6 +210,7 @@ Store API key: `aidevops secret set ASSEMBLYAI_API_KEY`
 
 ```python
 import assemblyai as aai
+import os
 
 aai.settings.api_key = os.environ["ASSEMBLYAI_API_KEY"]
 transcriber = aai.Transcriber()
@@ -319,13 +320,13 @@ response = deepgram.listen.rest.v("1").transcribe_url(
 
 ```python
 from deepgram import DeepgramClient, LiveTranscriptionEvents, LiveOptions
-import asyncio, pyaudio
+import asyncio
 
 async def stream_microphone():
     dg = DeepgramClient(os.environ["DEEPGRAM_API_KEY"])
     connection = dg.listen.asyncwebsocket.v("1")
 
-    async def on_message(self, result, **kwargs):
+    async def on_message(result, **kwargs):
         sentence = result.channel.alternatives[0].transcript
         if sentence:
             print(sentence)
@@ -344,7 +345,7 @@ options = PrerecordedOptions(
     diarize=True,
     punctuate=True
 )
-response = deepgram.listen.rest.v("1").transcribe_url({"url": url}, options)
+response = deepgram.listen.rest.v("1").transcribe_url({"url": "https://example.com/audio.mp3"}, options)
 words = response.results.channels[0].alternatives[0].words
 for word in words:
     print(f"[Speaker {word.speaker}] {word.word}")
@@ -464,6 +465,7 @@ from deepgram import DeepgramClient, PrerecordedOptions
 
 dg = DeepgramClient(os.environ["DEEPGRAM_API_KEY"])
 options = PrerecordedOptions(model="nova-3", punctuate=True, smart_format=True)
+os.makedirs("transcripts", exist_ok=True)
 
 for path in glob.glob("recordings/*.mp3"):
     with open(path, "rb") as f:
@@ -479,8 +481,8 @@ EOF
 
 ```bash
 # Download audio then transcribe
-yt-dlp -x --audio-format mp3 -o "%(title)s.%(ext)s" "https://youtu.be/VIDEO_ID"
-whisper "Video Title.mp3" --model medium --language en --output_format txt
+yt-dlp -x --audio-format mp3 -o "youtube_video.%(ext)s" "https://youtu.be/VIDEO_ID"
+whisper "youtube_video.mp3" --model medium --language en --output_format txt
 
 # Or use the helper (handles download + transcription)
 transcription-helper.sh transcribe "https://youtu.be/VIDEO_ID"
