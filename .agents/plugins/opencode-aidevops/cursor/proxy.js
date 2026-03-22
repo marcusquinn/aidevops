@@ -229,6 +229,11 @@ export async function startProxy(getAccessToken, models = []) {
     }));
     if (proxyServer && proxyPort)
         return proxyPort;
+    // Clear stale conversation states from previous sessions (t1553).
+    // Stale checkpoints reference blobs that Cursor's server has evicted,
+    // causing "Blob not found" errors on the first request.
+    conversationStates.clear();
+    activeBridges.clear();
     proxyServer = Bun.serve({
         port: parseInt(process.env.CURSOR_PROXY_PORT || "32123", 10),
         idleTimeout: 255, // max — Cursor responses can take 30s+
@@ -344,6 +349,8 @@ function handleChatCompletion(body, accessToken) {
     const { systemPrompt, userText, turns, toolResults } = parseMessages(body.messages);
     const modelId = body.model;
     const tools = body.tools ?? [];
+    // Debug logging (t1553) — log what OpenCode sends us
+    console.error(`[proxy] handleChatCompletion: model=${modelId}, tools=${tools.length}, toolNames=[${tools.map(t => t.function?.name || '?').join(',')}], userText=${(userText || '').slice(0, 80)}, toolResults=${toolResults.length}, messages=${body.messages?.length || 0}, stream=${body.stream}`);
     if (!userText && toolResults.length === 0) {
         return new Response(JSON.stringify({
             error: {
@@ -369,7 +376,15 @@ function handleChatCompletion(body, accessToken) {
     if (toolsExhausted) {
         console.error(`[proxy] Tool loop guard: conversation ${bridgeKey} exceeded ${MAX_TOOL_ROUNDS} tool rounds, disabling tools`);
     }
-    const mcpTools = (!toolsExhausted && tools.length > 0) ? buildMcpToolDefinitions(tools) : [];
+    // Do NOT forward OpenAI tools to Cursor as MCP tools (t1553 finding).
+    // Sending MCP tools via RequestContext causes Cursor's gRPC agent to
+    // enter a tool execution loop that hangs indefinitely — the server
+    // sends native tool exec messages (readArgs, shellArgs, etc.), we
+    // reject them, but the server never falls through to text generation.
+    // Tool calling for Cursor models requires a different approach (e.g.,
+    // Nomadcxx-style text prompt flattening with structured text parsing).
+    const mcpTools = [];
+    console.error(`[proxy] tools from OpenCode: ${tools.length}, mcpTools forwarded: ${mcpTools.length} (MCP forwarding disabled — causes gRPC hang)`);
     const effectiveUserText = userText || (toolResults.length > 0
         ? toolResults.map((r) => r.content).join("\n")
         : "");
@@ -715,6 +730,7 @@ function handleKvMessage(kvMsg, blobStore, sendFrame) {
 }
 /** Handle requestContextArgs — provide MCP tools to Cursor. */
 function handleRequestContext(execMsg, mcpTools, sendFrame) {
+    console.error(`[proxy] requestContextArgs: providing ${mcpTools.length} MCP tools to Cursor`);
     const requestContext = create(RequestContextSchema, {
         rules: [],
         repositoryInfo: [],
@@ -847,6 +863,7 @@ function rejectNativeCursorTool(execCase, execMsg, sendFrame) {
 }
 function handleExecMessage(execMsg, mcpTools, sendFrame, onMcpExec) {
     const execCase = execMsg.message.case;
+    console.error(`[proxy] execMessage: case=${execCase}`);
     if (execCase === "requestContextArgs") {
         handleRequestContext(execMsg, mcpTools, sendFrame);
         return;
