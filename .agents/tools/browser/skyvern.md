@@ -99,7 +99,11 @@ while True:
     time.sleep(2)
 
 if task["status"] == "completed":
-    print(task.get("extracted_information"))
+    extracted = task.get("extracted_information")
+    if extracted is not None:
+        print(extracted)
+    else:
+        print("Task completed but no data was extracted (data_extraction_goal may not have been set).")
 else:
     print(f"Task ended with status '{task['status']}'.")
     if task.get("error_message"):
