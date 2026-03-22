@@ -706,6 +706,46 @@ cmd_scan() {
 	fi
 	_write_state "$state"
 
+	# Create draft response issues for items needing reply (t1555)
+	# Only runs if draft_responses is enabled and the helper exists.
+	# Reads shared-constants for is_feature_enabled; falls back to enabled if
+	# shared-constants is not available (standalone execution).
+	local _draft_helper
+	_draft_helper="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/draft-response-helper.sh"
+	local _draft_enabled=false
+	if type is_feature_enabled &>/dev/null; then
+		if is_feature_enabled draft_responses 2>/dev/null; then
+			_draft_enabled=true
+		fi
+	else
+		_draft_enabled=true
+	fi
+	if [[ "$needs_attention" -gt 0 && "$_draft_enabled" == "true" && -x "$_draft_helper" ]]; then
+		local _draft_keys
+		_draft_keys=$(echo "$state" | jq -r '
+			.items | to_entries[] |
+			select(.value.last_any_comment > (.value.last_our_comment // "")) |
+			select(.value.last_notified == "" or .value.last_any_comment > .value.last_notified) |
+			.key
+		' 2>/dev/null) || _draft_keys=""
+		local _draft_created=0
+		local _dk
+		while IFS= read -r _dk; do
+			[[ -z "$_dk" ]] && continue
+			if bash "$_draft_helper" draft "$_dk" >/dev/null 2>&1; then
+				_draft_created=$((_draft_created + 1))
+			fi
+		done <<<"$_draft_keys"
+		if [[ "$_draft_created" -gt 0 ]]; then
+			_log_info "Created ${_draft_created} draft response issue(s)"
+		fi
+	fi
+
+	# Scan for approved drafts and post them (runs on every scan cycle)
+	if [[ "$_draft_enabled" == "true" && -x "$_draft_helper" ]]; then
+		bash "$_draft_helper" approve-scan >/dev/null 2>&1 || true
+	fi
+
 	# Output results
 	if [[ "$needs_attention" -gt 0 ]]; then
 		echo -e "${YELLOW}${needs_attention} external contribution(s) need your reply:${NC}"

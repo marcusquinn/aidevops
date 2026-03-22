@@ -108,6 +108,12 @@
     // Env override: AIDEVOPS_CONTRIBUTION_WATCH
     "contribution_watch": true,
 
+    // Create draft response issues in a private repo for contribution watch
+    // items needing reply. User approves via GitHub notification comments.
+    // Requires contribution_watch to be enabled.
+    // Env override: AIDEVOPS_DRAFT_RESPONSES
+    "draft_responses": true,
+
     // Hard ceiling for pulse worker pool size after RAM-based calculation.
     // Default 8 preserves current behavior.
     // Env override: AIDEVOPS_MAX_WORKERS_CAP
