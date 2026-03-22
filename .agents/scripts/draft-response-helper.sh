@@ -1445,10 +1445,13 @@ cmd_process_approved() {
 	while IFS= read -r issue; do
 		[[ -z "$issue" ]] && continue
 
-		# Single jq call to extract all fields
-		local issue_number issue_body
-		issue_number=$(echo "$issue" | jq -r '.number')
-		issue_body=$(echo "$issue" | jq -r '.body // ""')
+		# Single jq call: output number on line 1, body on remaining lines.
+		# Parameter expansion strips the first line to get the body.
+		# Bash-3.2-compatible — no mapfile, no declare -A.
+		local issue_number issue_body issue_raw
+		issue_raw=$(echo "$issue" | jq -r '"\(.number)\n\(.body // "")"')
+		issue_number=${issue_raw%%$'\n'*}
+		issue_body=${issue_raw#*$'\n'}
 
 		# Extract draft text: everything between "## Draft Reply" and "---"
 		local draft_text
