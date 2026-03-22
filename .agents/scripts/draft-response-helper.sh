@@ -743,18 +743,22 @@ cmd_check_approvals() {
 			echo "    Note: additional action requested — ${action_extra} (queued for interactive session)"
 		fi
 
-		# Persist last_handled_comment timestamp to prevent reprocessing
-		# agent follow-up comments on the next scan cycle.
-		# CRITICAL: This breaks the self-consumption loop — without it, every
-		# hourly scan would re-trigger an LLM call on the same comment.
-		if [[ -n "$latest_user_comment_time" ]]; then
-			local updated_meta
-			updated_meta=$(_read_meta "$draft_id")
-			updated_meta=$(echo "$updated_meta" | jq \
-				--arg ts "$latest_user_comment_time" \
-				'.last_handled_comment = $ts')
-			_write_meta "$draft_id" "$updated_meta"
-		fi
+		# Persist last_handled_comment timestamp to prevent reprocessing.
+		# CRITICAL: Use the current time (after the action), not the user's
+		# comment time. Actions like cmd_approve post follow-up comments
+		# (e.g., "Reply posted.") under the user's auth — those comments
+		# have timestamps AFTER the user's comment. If we only set the
+		# cutoff to the user's comment time, the agent's own follow-up
+		# would be picked up as a "new user comment" on the next scan,
+		# causing an infinite self-consumption loop.
+		local post_action_time
+		post_action_time=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+		local updated_meta
+		updated_meta=$(_read_meta "$draft_id")
+		updated_meta=$(echo "$updated_meta" | jq \
+			--arg ts "$post_action_time" \
+			'.last_handled_comment = $ts')
+		_write_meta "$draft_id" "$updated_meta"
 	done < <(echo "$open_issues" | jq -c '.[]')
 
 	echo "check-approvals complete: ${actions_taken} action(s) taken from ${issue_count} issue(s)."
