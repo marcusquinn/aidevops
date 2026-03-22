@@ -102,6 +102,12 @@
     // Env override: AIDEVOPS_REPO_SYNC
     "repo_sync": true,
 
+    // Monitor external issues/PRs for new activity needing reply.
+    // Auto-seeds on first setup, then scans hourly via launchd/cron.
+    // Read-only (GitHub Notifications API), no autonomous replies.
+    // Env override: AIDEVOPS_CONTRIBUTION_WATCH
+    "contribution_watch": true,
+
     // Hard ceiling for pulse worker pool size after RAM-based calculation.
     // Default 8 preserves current behavior.
     // Env override: AIDEVOPS_MAX_WORKERS_CAP

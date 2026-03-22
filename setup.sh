@@ -1514,6 +1514,100 @@ ST_PLIST
 		fi
 	fi
 
+	# Contribution watch — monitors external issues/PRs for new activity (t1554).
+	# Auto-seeds on first run (discovers authored/commented issues/PRs), then installs
+	# a launchd/cron job to scan periodically. Requires gh CLI authenticated.
+	# No consent needed — this is passive monitoring (read-only notifications API),
+	# not autonomous action. Comment bodies are never processed by LLM in automated context.
+	# Respects config: aidevops config set orchestration.contribution_watch false
+	local cw_script="$HOME/.aidevops/agents/scripts/contribution-watch-helper.sh"
+	local cw_label="sh.aidevops.contribution-watch"
+	local cw_state="$HOME/.aidevops/cache/contribution-watch.json"
+	if [[ -x "$cw_script" ]] && is_feature_enabled contribution_watch 2>/dev/null && command -v gh &>/dev/null && gh auth status &>/dev/null 2>&1; then
+		mkdir -p "$HOME/.aidevops/cache" "$HOME/.aidevops/logs"
+
+		# Auto-seed on first run (populates state file with existing contributions)
+		if [[ ! -f "$cw_state" ]]; then
+			print_info "Discovering external contributions for contribution watch..."
+			if bash "$cw_script" seed >/dev/null 2>&1; then
+				print_info "Contribution watch seeded (external issues/PRs discovered)"
+			else
+				print_warning "Contribution watch seed failed (non-fatal, will retry on next run)"
+			fi
+		fi
+
+		# Install/update scheduled scanner
+		if [[ "$(uname -s)" == "Darwin" ]]; then
+			local cw_plist="$HOME/Library/LaunchAgents/${cw_label}.plist"
+
+			local _xml_cw_script _xml_cw_home
+			_xml_cw_script=$(_xml_escape "$cw_script")
+			_xml_cw_home=$(_xml_escape "$HOME")
+
+			local cw_plist_content
+			cw_plist_content=$(
+				cat <<CW_PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>${cw_label}</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/bin/bash</string>
+		<string>${_xml_cw_script}</string>
+		<string>scan</string>
+	</array>
+	<key>StartInterval</key>
+	<integer>3600</integer>
+	<key>StandardOutPath</key>
+	<string>${_xml_cw_home}/.aidevops/logs/contribution-watch.log</string>
+	<key>StandardErrorPath</key>
+	<string>${_xml_cw_home}/.aidevops/logs/contribution-watch.log</string>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>PATH</key>
+		<string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+		<key>HOME</key>
+		<string>${_xml_cw_home}</string>
+	</dict>
+	<key>RunAtLoad</key>
+	<false/>
+	<key>KeepAlive</key>
+	<false/>
+	<key>ProcessType</key>
+	<string>Background</string>
+	<key>LowPriorityBackgroundIO</key>
+	<true/>
+	<key>Nice</key>
+	<integer>10</integer>
+</dict>
+</plist>
+CW_PLIST
+			)
+
+			if _launchd_install_if_changed "$cw_label" "$cw_plist" "$cw_plist_content"; then
+				print_info "Contribution watch enabled (launchd, hourly scan)"
+			else
+				print_warning "Failed to load contribution watch LaunchAgent"
+			fi
+		else
+			# Linux: cron entry (hourly)
+			local _cron_cw_script
+			_cron_cw_script=$(_cron_escape "$cw_script")
+			(
+				crontab -l 2>/dev/null | grep -v 'aidevops: contribution-watch'
+				echo "0 * * * * /bin/bash ${_cron_cw_script} scan >> \"\$HOME/.aidevops/logs/contribution-watch.log\" 2>&1 # aidevops: contribution-watch"
+			) | crontab - 2>/dev/null || true
+			if crontab -l 2>/dev/null | grep -qF "aidevops: contribution-watch" 2>/dev/null; then
+				print_info "Contribution watch enabled (cron, hourly scan)"
+			else
+				print_warning "Failed to install contribution watch cron entry"
+			fi
+		fi
+	fi
+
 	# Profile README — auto-create repo and seed README if not already set up.
 	# Requires gh CLI authenticated. Creates username/username repo, seeds README
 	# with stat markers, registers in repos.json with priority: "profile".
