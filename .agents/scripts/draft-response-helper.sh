@@ -248,16 +248,10 @@ _create_notification_issue() {
 	local issue_number
 	issue_number=$(echo "$issue_url" | grep -oE '[0-9]+$') || issue_number=""
 
-	# Post a comment mentioning the user to trigger a GitHub notification.
-	# GitHub does NOT notify you for issues you create yourself — even as assignee.
-	# A self-mention in a comment is the only way to get the notification.
-	if [[ -n "$issue_number" ]]; then
-		local username
-		username=$(_get_username)
-		gh issue comment "$issue_number" --repo "$slug" \
-			--body "@${username} — draft reply ready for review." \
-			>/dev/null 2>&1 || true
-	fi
+	# Notification is handled by the GitHub Actions workflow in the draft-responses
+	# repo (.github/workflows/notify.yml). The workflow posts a @mention comment
+	# from github-actions[bot], which triggers a real GitHub notification.
+	# Self-mentions (same user creating the issue) are suppressed by GitHub.
 
 	echo "$issue_number"
 	return 0
