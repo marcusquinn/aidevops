@@ -42,7 +42,7 @@ Use this to pick the right tool before starting.
 | Criterion | Whisper (local) | Buzz (GUI) | AssemblyAI | Deepgram |
 |-----------|----------------|------------|------------|----------|
 | **Privacy** | Full (no data leaves device) | Full (offline) | Cloud (data sent) | Cloud (data sent) |
-| **Cost** | Free | Free | $0.12/hr (Nano) – $0.65/hr (Best) | $0.0043/min (Nova-3) |
+| **Cost** | Free | Free | $0.15/hr (Universal-2) – $0.45/hr (U3 Pro streaming) | $0.0077/min (Nova-3) |
 | **Setup** | pip + ffmpeg | brew install | API key only | API key only |
 | **Accuracy** | 9.0–9.8 (model-dependent) | 9.0–9.8 | 9.6 (Universal-2) | 9.5 (Nova-3) |
 | **Speed** | Slow–medium (CPU/GPU) | Medium (GUI) | Fast (async) | Real-time capable |
@@ -50,7 +50,7 @@ Use this to pick the right tool before starting.
 | **Timestamps** | Word-level (JSON) | Yes | Word-level | Word-level |
 | **Batch/async** | Yes (CLI loop) | No | Yes (webhooks) | Yes |
 | **Real-time streaming** | No | No | Yes (WebSocket) | Yes (WebSocket) |
-| **Language detection** | Auto (99 languages) | Auto | Auto (99 languages) | Auto (36 languages) |
+| **Language detection** | Auto (99 languages) | Auto | Auto (99 languages) | Auto (45+ languages) |
 | **Best for** | Private/offline, long files | macOS GUI users | Speaker ID, meetings | Real-time, low latency |
 
 **Decision flow**:
@@ -58,7 +58,7 @@ Use this to pick the right tool before starting.
 1. **Privacy required or no internet** → Whisper local or Buzz
 2. **Need speaker diarization** → AssemblyAI or Deepgram
 3. **Real-time streaming** → Deepgram
-4. **Highest accuracy, cloud OK** → AssemblyAI Universal-2
+4. **Highest accuracy, cloud OK** → AssemblyAI Universal-3 Pro
 5. **Free, good enough** → Whisper medium or large-v3-turbo locally
 
 ---
@@ -266,13 +266,17 @@ transcript = transcriber.submit("audio.mp3", config=config)
 print(transcript.id)  # poll later
 ```
 
-### Pricing (2025)
+### Pricing
 
-| Tier | Model | Cost |
-|------|-------|------|
-| Nano | Best/Nano | $0.12/hr |
-| Default | Universal-2 | $0.37/hr |
-| Best | Universal-2 + features | $0.65/hr |
+| Model | Batch | Streaming | Notes |
+|-------|-------|-----------|-------|
+| Universal-3 Pro | $0.21/hr | $0.45/hr | Promptable, 6 languages |
+| Universal-2 | $0.15/hr | — | 99 languages, general-purpose |
+| Universal-Streaming | — | $0.15/hr | English-only, fastest |
+| Universal-Streaming Multilingual | — | $0.15/hr | 6 languages |
+| Whisper-Streaming | — | $0.30/hr | 99+ languages, open-source model |
+
+> Last verified: March 2026 — [assemblyai.com/pricing](https://www.assemblyai.com/pricing)
 
 ---
 
@@ -321,6 +325,7 @@ response = deepgram.listen.rest.v("1").transcribe_url(
 ```python
 from deepgram import DeepgramClient, LiveTranscriptionEvents, LiveOptions
 import asyncio
+import os
 
 async def stream_microphone():
     dg = DeepgramClient(os.environ["DEEPGRAM_API_KEY"])
@@ -361,13 +366,16 @@ for word in words:
 | `enhanced` | 9.0/10 | Medium | Legacy |
 | `base` | 8.5/10 | Fastest | Lowest cost |
 
-### Pricing (2025)
+### Pricing
 
-| Model | Cost |
-|-------|------|
-| Nova-3 | $0.0043/min |
-| Nova-3 Medical | $0.0059/min |
-| Nova-2 | $0.0043/min |
+| Model | Cost (pay-as-you-go) | Notes |
+|-------|---------------------|-------|
+| Flux | $0.0077/min | Voice agent optimised |
+| Nova-3 (Monolingual) | $0.0077/min | Highest accuracy |
+| Nova-3 (Multilingual) | $0.0092/min | 45+ languages |
+| Nova-1 & 2 | $0.0058/min | Non-English recommended |
+
+> Last verified: March 2026 — [deepgram.com/pricing](https://deepgram.com/pricing)
 
 ---
 
@@ -381,6 +389,8 @@ for word in words:
 | **OpenAI** | Whisper API | 9.5/10 | Fast | $0.006/min | Reference implementation |
 | **Google** | Gemini 2.5 Pro | 9.7/10 | Fast | Pay/token | Multimodal input |
 | **Soniox** | stt-async-v3 | 9.6/10 | Async | Batch | Batch processing |
+
+> Rates for Groq, ElevenLabs, Mistral, Google, and Soniox vary by plan — check provider pricing pages for current rates.
 
 Store API keys: `aidevops secret set <PROVIDER>_API_KEY`
 
@@ -494,7 +504,7 @@ transcription-helper.sh transcribe "https://youtu.be/VIDEO_ID"
 
 ### Whisper (OpenAI) — 99 Languages
 
-Auto-detects language by default (`--language auto`). Specify for accuracy:
+Auto-detects language by default (when `--language` is omitted). Specify for accuracy:
 
 ```bash
 whisper audio.mp3 --language fr   # French
