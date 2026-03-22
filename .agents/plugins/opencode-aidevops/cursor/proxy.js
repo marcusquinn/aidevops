@@ -32,6 +32,10 @@ const SSE_HEADERS = {
 const activeBridges = new Map();
 const conversationStates = new Map();
 const CONVERSATION_TTL_MS = 30 * 60 * 1000; // 30 minutes
+// Tool loop guard (t1553) — prevent infinite tool call loops.
+// If a conversation exceeds this many tool call rounds, the proxy stops
+// forwarding tools and lets the model generate a text-only response.
+const MAX_TOOL_ROUNDS = 25;
 // Tool name alias map (t1553) — Cursor models may use variant names for tools.
 // Ported from Nomadcxx/opencode-cursor src/proxy/tool-loop.ts TOOL_NAME_ALIASES.
 // Keys are lowercased; values are the canonical OpenCode tool names.
@@ -293,16 +297,25 @@ function handleChatCompletion(body, accessToken) {
     const activeBridge = activeBridges.get(bridgeKey);
     if (activeBridge && toolResults.length > 0) {
         activeBridges.delete(bridgeKey);
-        if (activeBridge.bridge.alive) {
+        // Tool loop guard (t1553): increment round counter for resume path.
+        const resumeState = conversationStates.get(bridgeKey);
+        if (resumeState) {
+            resumeState.toolRounds = (resumeState.toolRounds || 0) + 1;
+        }
+        const loopGuardTripped = resumeState && resumeState.toolRounds >= MAX_TOOL_ROUNDS;
+        if (loopGuardTripped) {
+            console.error(`[proxy] Tool loop guard: conversation ${bridgeKey} exceeded ${MAX_TOOL_ROUNDS} tool rounds on resume, killing bridge`);
+        }
+        if (!loopGuardTripped && activeBridge.bridge.alive) {
             // Resume the live bridge with tool results
             return handleToolResultResume(activeBridge, toolResults, modelId, bridgeKey);
         }
-        // Bridge died (timeout, server disconnect, etc.).
-        // Clean up and fall through to start a fresh bridge.
+        // Bridge died, or loop guard tripped — clean up and fall through
+        // to start a fresh bridge (without tools if guard tripped).
         clearInterval(activeBridge.heartbeatTimer);
         activeBridge.bridge.end();
     }
-    // Clean up stale bridge if present
+    // Clean up stale bridge if present (no tool results but bridge exists)
     if (activeBridge && activeBridges.has(bridgeKey)) {
         clearInterval(activeBridge.heartbeatTimer);
         activeBridge.bridge.end();
@@ -315,11 +328,22 @@ function handleChatCompletion(body, accessToken) {
             checkpoint: null,
             blobStore: new Map(),
             lastAccessMs: Date.now(),
+            toolRounds: 0,
         };
         conversationStates.set(bridgeKey, stored);
     }
     stored.lastAccessMs = Date.now();
     evictStaleConversations();
+    // Tool loop guard (t1553): track tool call rounds per conversation.
+    // A new user message (no tool results) resets the counter — it's a fresh
+    // interaction. Tool result rounds are incremented in the resume path above;
+    // only increment here for the "dead bridge" fallthrough case where the
+    // resume path didn't run (no activeBridge existed).
+    if (toolResults.length > 0 && !activeBridge) {
+        stored.toolRounds = (stored.toolRounds || 0) + 1;
+    } else if (userText && toolResults.length === 0) {
+        stored.toolRounds = 0;
+    }
     // Build the request. Forward OpenAI tools to Cursor as MCP tools (t1553).
     // Cursor's gRPC protocol uses MCP tool definitions in the RequestContext.
     // When the model wants to use a tool, Cursor sends an mcpArgs exec message
@@ -328,7 +352,13 @@ function handleChatCompletion(body, accessToken) {
     // Cursor as an mcpResult message. This enables the full tool loop:
     //   OpenCode → proxy → Cursor (mcpArgs) → proxy (tool_calls) → OpenCode
     //   OpenCode (tool result) → proxy (mcpResult) → Cursor → continues
-    const mcpTools = tools.length > 0 ? buildMcpToolDefinitions(tools) : [];
+    // If the tool loop guard fires, stop forwarding tools so the model
+    // generates a text-only response instead of requesting more tool calls.
+    const toolsExhausted = (stored.toolRounds || 0) >= MAX_TOOL_ROUNDS;
+    if (toolsExhausted) {
+        console.error(`[proxy] Tool loop guard: conversation ${bridgeKey} exceeded ${MAX_TOOL_ROUNDS} tool rounds, disabling tools`);
+    }
+    const mcpTools = (!toolsExhausted && tools.length > 0) ? buildMcpToolDefinitions(tools) : [];
     const effectiveUserText = userText || (toolResults.length > 0
         ? toolResults.map((r) => r.content).join("\n")
         : "");
