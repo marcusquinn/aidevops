@@ -65,21 +65,6 @@ safe_jq_file() {
 	return 1
 }
 
-safe_jq_json() {
-	local filter="$1"
-	local json="$2"
-	local name="$3"
-	local value=""
-	if value="$(jq -er "$filter" <<<"$json" 2>/dev/null)"; then
-		printf '%s\n' "$value"
-		return 0
-	fi
-
-	fail "$name" "Could not read '$filter' from helper JSON output"
-	printf '\n'
-	return 1
-}
-
 TMP_DIR="$(mktemp -d)"
 trap 'rm -rf "$TMP_DIR"' EXIT
 

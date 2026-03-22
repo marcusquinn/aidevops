@@ -50,22 +50,35 @@ AGENTS_DIR="$TEST_HOME/.aidevops/agents"
 SCRIPTS_DIR="$AGENTS_DIR/scripts"
 mkdir -p "$SCRIPTS_DIR"
 
-# Stub functions that migrations.sh expects from setup.sh
+# Stub functions that migrations.sh expects from setup.sh.
+# These are never called directly in this file — they exist so that
+# `source "$MIGRATIONS_SCRIPT"` succeeds. SC2329 is expected.
+# shellcheck disable=SC2329
 print_info() { echo "[INFO] $1"; }
+# shellcheck disable=SC2329
 print_success() { echo "[SUCCESS] $1"; }
+# shellcheck disable=SC2329
 print_warning() { echo "[WARNING] $1"; }
+# shellcheck disable=SC2329
 print_error() { echo "[ERROR] $1"; }
 # _launchd_has_agent is defined in setup.sh; stub it for Linux tests
+# shellcheck disable=SC2329
 _launchd_has_agent() { return 1; }
 # Stubs for other functions referenced by migrations.sh
+# shellcheck disable=SC2329
 find_opencode_config() { return 1; }
+# shellcheck disable=SC2329
 create_backup_with_rotation() { return 0; }
+# shellcheck disable=SC2329
 should_overwrite_user_file() { return 0; }
+# shellcheck disable=SC2329
 resolve_mcp_binary_path() {
 	echo ""
 	return 1
 }
+# shellcheck disable=SC2329
 update_mcp_paths_in_opencode() { return 0; }
+# shellcheck disable=SC2329
 sanitize_plugin_namespace() {
 	echo "$1"
 	return 0

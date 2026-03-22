@@ -94,18 +94,6 @@ get_ext() {
 	printf '%s' "$ext" | tr '[:upper:]' '[:lower:]'
 }
 
-# Sanitize string for filename (remove/replace unsafe chars)
-sanitize_filename() {
-	local str="$1"
-	# Remove leading/trailing whitespace
-	str=$(printf '%s' "$str" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
-	# Replace unsafe chars with dash
-	str=$(printf '%s' "$str" | tr -c '[:alnum:]._-' '-' | tr -s '-')
-	# Limit length to 100 chars
-	str=$(printf '%s' "$str" | cut -c1-100)
-	printf '%s' "$str"
-}
-
 # Activate Python venv if it exists
 activate_venv() {
 	if [[ -f "${VENV_DIR}/bin/activate" ]]; then
@@ -327,95 +315,6 @@ ocr_scanned_pdf() {
 # ============================================================================
 # Tool detection
 # ============================================================================
-
-detect_tools() {
-	local tools_available=()
-	local tools_missing=()
-
-	# Tier 1: Minimal
-	if has_cmd pandoc; then
-		tools_available+=("pandoc")
-	else
-		tools_missing+=("pandoc")
-	fi
-
-	if has_cmd pdftotext; then
-		tools_available+=("poppler")
-	else
-		tools_missing+=("poppler")
-	fi
-
-	# Tier 2: Standard (Python libs)
-	if has_python_pkg odf 2>/dev/null; then
-		tools_available+=("odfpy")
-	else
-		tools_missing+=("odfpy")
-	fi
-
-	if has_python_pkg docx 2>/dev/null; then
-		tools_available+=("python-docx")
-	else
-		tools_missing+=("python-docx")
-	fi
-
-	if has_python_pkg openpyxl 2>/dev/null; then
-		tools_available+=("openpyxl")
-	else
-		tools_missing+=("openpyxl")
-	fi
-
-	# Tier 3: Full
-	if has_cmd soffice || has_cmd libreoffice; then
-		tools_available+=("libreoffice")
-	else
-		tools_missing+=("libreoffice")
-	fi
-
-	# Tier 3: Full
-	# (already checked above)
-
-	# OCR tools
-	if has_cmd tesseract; then
-		tools_available+=("tesseract")
-	else
-		tools_missing+=("tesseract")
-	fi
-
-	if has_python_pkg easyocr 2>/dev/null; then
-		tools_available+=("easyocr")
-	else
-		tools_missing+=("easyocr")
-	fi
-
-	if has_cmd ollama && ollama list 2>/dev/null | grep -q "glm-ocr"; then
-		tools_available+=("glm-ocr")
-	else
-		tools_missing+=("glm-ocr")
-	fi
-
-	# Specialist tools
-	if has_cmd mineru; then
-		tools_available+=("mineru")
-	else
-		tools_missing+=("mineru")
-	fi
-
-	# Advanced conversion providers
-	if has_reader_lm; then
-		tools_available+=("reader-lm")
-	else
-		tools_missing+=("reader-lm")
-	fi
-
-	if has_rolm_ocr; then
-		tools_available+=("rolm-ocr")
-	else
-		tools_missing+=("rolm-ocr")
-	fi
-
-	printf '%s\n' "AVAILABLE:${tools_available[*]:-none}"
-	printf '%s\n' "MISSING:${tools_missing[*]:-none}"
-}
 
 # ============================================================================
 # Status command
