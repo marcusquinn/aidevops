@@ -298,7 +298,7 @@ _update_notification_draft() {
 # Known bot account suffixes and exact names to skip when scanning comments.
 # No point drafting replies to automated messages.
 BOT_SUFFIXES="[bot]"
-BOT_EXACT_NAMES="github-actions dependabot renovate codecov sonarcloud"
+BOT_EXACT_NAMES=("github-actions" "dependabot" "renovate" "codecov" "sonarcloud")
 
 _is_bot_account() {
 	local login="$1"
@@ -315,7 +315,7 @@ _is_bot_account() {
 
 	# Check exact name match
 	local bot_name
-	for bot_name in $BOT_EXACT_NAMES; do
+	for bot_name in "${BOT_EXACT_NAMES[@]}"; do
 		if [[ "$lower_login" == "$bot_name" ]]; then
 			return 0
 		fi
@@ -507,10 +507,13 @@ cmd_check_approvals() {
 	echo "Scanning ${issue_count} open draft issue(s) for user comments..."
 
 	local actions_taken=0
-	local i=0
-	while [[ "$i" -lt "$issue_count" ]]; do
-		local issue
-		issue=$(echo "$open_issues" | jq ".[$i]")
+
+	# Iterate using jq -c '.[]' with process substitution instead of
+	# index-based access — avoids re-parsing the full JSON array on each
+	# iteration (Gemini review suggestion).
+	while IFS= read -r issue; do
+		[[ -z "$issue" ]] && continue
+
 		local issue_number
 		issue_number=$(echo "$issue" | jq -r '.number')
 		local issue_title
@@ -518,15 +521,15 @@ cmd_check_approvals() {
 		local issue_body
 		issue_body=$(echo "$issue" | jq -r '.body // ""')
 
-		# Extract draft_id from issue body (in the Context table)
-		# Portable: avoid grep -P (Perl regex, not available on macOS default grep)
+		# Extract draft_id from issue body (in the Context table).
+		# Single sed pass — avoids multi-process grep|sed|tr pipeline.
+		# SC2016: single quotes are intentional — backticks are literal markdown, not shell expansion.
 		local draft_id
-		# shellcheck disable=SC2001
-		draft_id=$(echo "$issue_body" | sed -n 's/.*Draft ID | `\([^`]*\)`.*/\1/p' | head -1) || draft_id=""
+		# shellcheck disable=SC2016
+		draft_id=$(echo "$issue_body" | sed -n 's/.*Draft ID | `\([^`]*\)`.*/\1/p;T;q') || draft_id=""
 
 		if [[ -z "$draft_id" ]]; then
 			_log_warn "check-approvals: issue #${issue_number} has no draft_id in body, skipping"
-			i=$((i + 1))
 			continue
 		fi
 
@@ -540,7 +543,6 @@ cmd_check_approvals() {
 		comment_count=$(echo "$comments" | jq 'length' 2>/dev/null) || comment_count=0
 
 		if [[ "$comment_count" -eq 0 ]]; then
-			i=$((i + 1))
 			continue
 		fi
 
@@ -553,7 +555,9 @@ cmd_check_approvals() {
 
 		# Read last_handled_comment from draft meta to avoid reprocessing
 		# agent follow-up comments (e.g., redraft status updates posted by
-		# the agent itself appear as the same $username)
+		# the agent itself appear as the same $username).
+		# This is the primary guard against the self-consumption loop: every
+		# hourly scan checks this timestamp and skips comments already handled.
 		local meta_for_handled
 		meta_for_handled=$(_read_meta "$draft_id")
 		local last_handled
@@ -589,7 +593,6 @@ cmd_check_approvals() {
 		user_comment_count=$(echo "$user_comments" | jq 'length' 2>/dev/null) || user_comment_count=0
 
 		if [[ "$user_comment_count" -eq 0 ]]; then
-			i=$((i + 1))
 			continue
 		fi
 
@@ -600,7 +603,6 @@ cmd_check_approvals() {
 		latest_user_comment_time=$(echo "$user_comments" | jq -r 'sort_by(.created) | last | .created // ""' 2>/dev/null) || latest_user_comment_time=""
 
 		if [[ -z "$latest_user_comment" ]]; then
-			i=$((i + 1))
 			continue
 		fi
 
@@ -638,7 +640,6 @@ cmd_check_approvals() {
 		# Skip if draft is no longer pending
 		if [[ "$draft_status" != "pending" ]]; then
 			_log_info "check-approvals: draft ${draft_id} is ${draft_status}, skipping"
-			i=$((i + 1))
 			continue
 		fi
 
@@ -647,7 +648,16 @@ cmd_check_approvals() {
 		local interpretation
 		interpretation=$(_interpret_approval_comment "$latest_user_comment" "$draft_text" "$item_key" "$role") || {
 			_log_error "check-approvals: interpretation failed for issue #${issue_number}"
-			i=$((i + 1))
+			# Still persist last_handled to avoid re-triggering on the same
+			# comment if the LLM is temporarily unavailable
+			if [[ -n "$latest_user_comment_time" ]]; then
+				local err_meta
+				err_meta=$(_read_meta "$draft_id")
+				err_meta=$(echo "$err_meta" | jq \
+					--arg ts "$latest_user_comment_time" \
+					'.last_handled_comment = $ts')
+				_write_meta "$draft_id" "$err_meta"
+			fi
 			continue
 		}
 
@@ -683,7 +693,6 @@ cmd_check_approvals() {
 			if [[ "$cap_role" == "participant" && "$current_compose_count" -ge 1 ]]; then
 				echo "    Action: redraft — blocked by compose cap (participant, compose_count=${current_compose_count})"
 				_log_info "check-approvals: redraft blocked for ${draft_id} (participant cap, compose_count=${current_compose_count})"
-				i=$((i + 1))
 				continue
 			fi
 			echo "    Action: redraft — composing new draft with user instructions"
@@ -735,7 +744,9 @@ cmd_check_approvals() {
 		fi
 
 		# Persist last_handled_comment timestamp to prevent reprocessing
-		# agent follow-up comments on the next scan cycle
+		# agent follow-up comments on the next scan cycle.
+		# CRITICAL: This breaks the self-consumption loop — without it, every
+		# hourly scan would re-trigger an LLM call on the same comment.
 		if [[ -n "$latest_user_comment_time" ]]; then
 			local updated_meta
 			updated_meta=$(_read_meta "$draft_id")
@@ -744,9 +755,7 @@ cmd_check_approvals() {
 				'.last_handled_comment = $ts')
 			_write_meta "$draft_id" "$updated_meta"
 		fi
-
-		i=$((i + 1))
-	done
+	done < <(echo "$open_issues" | jq -c '.[]')
 
 	echo "check-approvals complete: ${actions_taken} action(s) taken from ${issue_count} issue(s)."
 	_log_info "check-approvals complete: actions=${actions_taken}, issues_scanned=${issue_count}"
@@ -897,9 +906,11 @@ cmd_draft() {
 	ext_repo="${item_key%#*}"
 	ext_number="${item_key##*#}"
 
-	# Fetch latest comment metadata (author + body) for context in the draft
+	# Fetch latest comment metadata (author + body) for context in the draft.
+	# Use per_page=100 to get the most recent comment without needing full
+	# pagination (GitHub default is only 30).
 	local comments_json
-	comments_json=$(gh api "repos/${ext_repo}/issues/${ext_number}/comments" \
+	comments_json=$(gh api "repos/${ext_repo}/issues/${ext_number}/comments?per_page=100" \
 		--jq '.[-1] | {author: .user.login, body: .body}' 2>/dev/null) || comments_json=""
 
 	if [[ -n "$comments_json" && "$comments_json" != "null" ]]; then
