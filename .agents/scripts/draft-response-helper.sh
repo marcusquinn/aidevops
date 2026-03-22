@@ -17,10 +17,13 @@
 #
 # Architecture:
 #   1. contribution-watch-helper.sh detects "needs reply" items
-#   2. 'draft <key>' creates {draft_id}.md + {draft_id}.meta.json in DRAFT_DIR
-#   3. User reviews with 'show', then 'approve' or 'reject'
-#   4. 'approve' posts the draft body to GitHub via gh CLI (body-file, no arg injection)
-#   5. Drafts are NEVER posted automatically — explicit approval always required
+#   2. 'draft <key>' creates local draft + notification issue in private repo
+#   3. User gets GitHub notification, reviews draft, comments with instructions
+#   4. Pulse/agent reads comment, interprets intent (intelligence-led, not keyword-matching)
+#   5. 'approve' posts the draft body to GitHub; 'reject' discards it
+#   6. Closing the notification issue without comment = no action (decline)
+#   7. Any other comment = agent interprets and acts (re-draft, alternative, etc.)
+#   8. Drafts are NEVER posted automatically — explicit approval always required
 #
 # Security:
 #   - Draft bodies are scanned by prompt-guard-helper.sh before display
@@ -59,6 +62,7 @@ DRAFT_DIR="${HOME}/.aidevops/.agent-workspace/draft-responses"
 LOGFILE="${HOME}/.aidevops/logs/draft-response.log"
 CW_STATE="${HOME}/.aidevops/cache/contribution-watch.json"
 PROMPT_GUARD="${SCRIPT_DIR}/prompt-guard-helper.sh"
+DRAFT_REPO_NAME="draft-responses"
 
 # =============================================================================
 # Logging
@@ -112,6 +116,128 @@ _check_prerequisites() {
 _ensure_draft_dir() {
 	mkdir -p "$DRAFT_DIR" 2>/dev/null || true
 	mkdir -p "$(dirname "$LOGFILE")" 2>/dev/null || true
+	return 0
+}
+
+_get_username() {
+	gh api user --jq '.login' 2>/dev/null
+}
+
+_get_draft_repo_slug() {
+	local username
+	username=$(_get_username)
+	echo "${username}/${DRAFT_REPO_NAME}"
+	return 0
+}
+
+# Ensure the private draft-responses repo exists. Idempotent.
+_ensure_draft_repo() {
+	local slug
+	slug=$(_get_draft_repo_slug)
+	if gh repo view "$slug" --json name &>/dev/null 2>&1; then
+		return 0
+	fi
+	_log_info "Creating private repo: ${slug}"
+	gh repo create "$DRAFT_REPO_NAME" --private \
+		--description "Private draft responses for external contribution replies (managed by aidevops)" \
+		--clone=false >/dev/null 2>&1 || {
+		_log_error "Failed to create repo: ${slug}"
+		return 1
+	}
+	gh label create "draft" --repo "$slug" --description "Pending draft response" --color "FBCA04" 2>/dev/null || true
+	gh label create "approved" --repo "$slug" --description "Approved and posted" --color "0E8A16" 2>/dev/null || true
+	gh label create "declined" --repo "$slug" --description "Declined" --color "B60205" 2>/dev/null || true
+	_log_info "Created private repo: ${slug}"
+	return 0
+}
+
+# Create a notification issue in the draft-responses repo.
+# CRITICAL: All external refs (owner/repo#N, GitHub URLs) MUST be wrapped in
+# inline code backticks to prevent GitHub from creating cross-reference timeline
+# entries on the external repo. Without this, the external maintainer sees a
+# "mentioned this" link pointing to our private repo — revealing our workflow.
+_create_notification_issue() {
+	local item_key="$1"
+	local title="$2"
+	local item_type="$3"
+	local role="$4"
+	local latest_author="$5"
+	local latest_comment="$6"
+	local scan_result="$7"
+	local draft_id="$8"
+
+	local slug
+	slug=$(_get_draft_repo_slug)
+
+	_ensure_draft_repo || return 1
+
+	# Build issue body with ALL external refs in inline code blocks
+	local issue_body=""
+	issue_body+="## Draft Response"
+	issue_body+=$'\n\n'
+	issue_body+="| Field | Value |"
+	issue_body+=$'\n'
+	issue_body+="| --- | --- |"
+	issue_body+=$'\n'
+	# Wrap item_key in backticks to prevent cross-reference
+	issue_body+="| Source | \`${item_key}\` |"
+	issue_body+=$'\n'
+	issue_body+="| Type | ${item_type} |"
+	issue_body+=$'\n'
+	issue_body+="| Role | ${role} |"
+	issue_body+=$'\n'
+	issue_body+="| Latest by | ${latest_author} |"
+	issue_body+=$'\n'
+	issue_body+="| Draft ID | \`${draft_id}\` |"
+	issue_body+=$'\n\n'
+
+	if [[ "$scan_result" == "flagged" ]]; then
+		issue_body+="> **WARNING: Prompt injection patterns detected in the external comment. Review carefully.**"
+		issue_body+=$'\n\n'
+	fi
+
+	issue_body+="### Their comment"
+	issue_body+=$'\n\n'
+	issue_body+="<details><summary>Click to expand</summary>"
+	issue_body+=$'\n\n'
+	issue_body+="${latest_comment}"
+	issue_body+=$'\n\n'
+	issue_body+="</details>"
+	issue_body+=$'\n\n'
+	issue_body+="### How to respond"
+	issue_body+=$'\n\n'
+	issue_body+="Comment on this issue with what you'd like to do. For example:"
+	issue_body+=$'\n\n'
+	issue_body+="- **Approve the draft** — \"looks good, post it\" or just close this issue with a thumbs up"
+	issue_body+=$'\n'
+	issue_body+="- **Decline** — close this issue without commenting (no reply will be posted)"
+	issue_body+=$'\n'
+	issue_body+="- **Write your own reply** — paste the text you want posted"
+	issue_body+=$'\n'
+	issue_body+="- **Ask for changes** — \"make it more concise\" or \"mention that we also tried X\""
+	issue_body+=$'\n'
+	issue_body+="- **Other instructions** — any action you'd take if replying yourself"
+	issue_body+=$'\n\n'
+	issue_body+="Your comment will be interpreted by the AI agent and acted on accordingly."
+
+	# Issue title: use plain text description, NO owner/repo#N pattern
+	local safe_title="Draft reply: ${title}"
+
+	local issue_url
+	issue_url=$(gh issue create \
+		--repo "$slug" \
+		--title "$safe_title" \
+		--body "$issue_body" \
+		--assignee "$(_get_username)" \
+		--label "draft" 2>&1) || {
+		_log_warn "Failed to create notification issue (non-fatal)"
+		echo ""
+		return 0
+	}
+
+	local issue_number
+	issue_number=$(echo "$issue_url" | grep -oE '[0-9]+$') || issue_number=""
+	echo "$issue_number"
 	return 0
 }
 
@@ -316,6 +442,10 @@ cmd_draft() {
 		} >"$body_path"
 	fi
 
+	# Create notification issue in draft-responses repo (non-fatal if it fails)
+	local notification_issue=""
+	notification_issue=$(_create_notification_issue "$item_key" "$title" "$item_type" "$role" "$latest_author" "$latest_comment" "$scan_result" "$draft_id") || notification_issue=""
+
 	local now_iso
 	now_iso=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 
@@ -332,6 +462,7 @@ cmd_draft() {
 		--arg scan_result "$scan_result" \
 		--arg created "$now_iso" \
 		--arg status "pending" \
+		--arg notification_issue "$notification_issue" \
 		'{
 			id: $id,
 			item_key: $item_key,
@@ -344,6 +475,7 @@ cmd_draft() {
 			scan_result: $scan_result,
 			created: $created,
 			status: $status,
+			notification_issue: $notification_issue,
 			approved_at: "",
 			rejected_at: "",
 			reject_reason: "",
@@ -598,6 +730,18 @@ cmd_approve() {
 		echo "  URL: ${posted_url}"
 	fi
 
+	# Close notification issue if one exists
+	local notification_issue
+	notification_issue=$(echo "$meta" | jq -r '.notification_issue // ""')
+	if [[ -n "$notification_issue" ]]; then
+		local slug
+		slug=$(_get_draft_repo_slug)
+		gh issue close "$notification_issue" --repo "$slug" \
+			--comment "Reply posted." >/dev/null 2>&1 || true
+		gh issue edit "$notification_issue" --repo "$slug" \
+			--remove-label "draft" --add-label "approved" >/dev/null 2>&1 || true
+	fi
+
 	_log_info "Draft approved: ${draft_id} -> ${repo_slug}#${item_number} (${posted_url})"
 
 	return 0
@@ -646,6 +790,18 @@ cmd_reject() {
 	echo -e "${YELLOW}Draft rejected: ${draft_id}${NC}"
 	if [[ -n "$reason" ]]; then
 		echo "  Reason: ${reason}"
+	fi
+
+	# Close notification issue if one exists
+	local notification_issue
+	notification_issue=$(echo "$meta" | jq -r '.notification_issue // ""')
+	if [[ -n "$notification_issue" ]]; then
+		local slug
+		slug=$(_get_draft_repo_slug)
+		gh issue close "$notification_issue" --repo "$slug" \
+			--comment "Draft declined." >/dev/null 2>&1 || true
+		gh issue edit "$notification_issue" --repo "$slug" \
+			--remove-label "draft" --add-label "declined" >/dev/null 2>&1 || true
 	fi
 
 	_log_info "Draft rejected: ${draft_id} (reason: ${reason:-none})"
@@ -768,6 +924,7 @@ main() {
 	mkdir -p "$(dirname "$LOGFILE")" 2>/dev/null || true
 
 	case "$cmd" in
+	init) _check_prerequisites && _ensure_draft_repo ;;
 	draft) cmd_draft "$@" ;;
 	list) cmd_list "$@" ;;
 	show) cmd_show "$@" ;;
