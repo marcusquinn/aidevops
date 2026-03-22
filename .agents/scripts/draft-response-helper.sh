@@ -337,15 +337,37 @@ _check_compose_cap() {
 	local item_key="$1"
 	local role="$2"
 
-	# participant items: check if ANY draft exists (any status)
-	if [[ "$role" == "participant" || "$role" == "commenter" ]]; then
+	# Normalize 'commenter' to 'participant' — both have the same cap behaviour
+	if [[ "$role" == "commenter" ]]; then
+		role="participant"
+	fi
+
+	# participant items: check compose_count in meta (default 1 when draft exists,
+	# meaning the initial draft creation already counts as the first compose)
+	if [[ "$role" == "participant" ]]; then
 		local slug_check
 		slug_check=$(printf '%s' "$item_key" | tr '/#' '-' | tr -cd '[:alnum:]-' | tr '[:upper:]' '[:lower:]')
 		local all_ids
 		all_ids=$(_list_draft_ids "")
-		if printf '%s' "$all_ids" | grep -q "$slug_check"; then
-			_log_info "Compose cap reached for participant item ${item_key}"
-			return 1
+		local found_id=""
+		while IFS= read -r _id; do
+			[[ -z "$_id" ]] && continue
+			if printf '%s' "$_id" | grep -q "$slug_check"; then
+				found_id="$_id"
+				break
+			fi
+		done <<<"$all_ids"
+
+		if [[ -n "$found_id" ]]; then
+			# Read compose_count from meta — defaults to 1 (initial draft = first compose)
+			local _meta
+			_meta=$(_read_meta "$found_id")
+			local compose_count
+			compose_count=$(echo "$_meta" | jq -r '.compose_count // 1') || compose_count=1
+			if [[ "$compose_count" -ge 1 ]]; then
+				_log_info "Compose cap reached for participant item ${item_key} (compose_count=${compose_count})"
+				return 1
+			fi
 		fi
 	fi
 
@@ -508,9 +530,9 @@ cmd_check_approvals() {
 			continue
 		fi
 
-		# Get comments on this notification issue (paginate to handle >30 comments)
+		# Get comments on this notification issue (paginate with max page size)
 		local comments
-		comments=$(gh api --paginate "repos/${slug}/issues/${issue_number}/comments" \
+		comments=$(gh api --paginate "repos/${slug}/issues/${issue_number}/comments?per_page=100" \
 			--jq '[.[] | {author: .user.login, body: .body, created: .created_at, author_type: .user.type}]' \
 			2>/dev/null) || comments="[]"
 
@@ -650,6 +672,20 @@ cmd_check_approvals() {
 			actions_taken=$((actions_taken + 1))
 			;;
 		redraft)
+			# Normalize role for cap check: 'commenter' -> 'participant'
+			local cap_role="$role"
+			if [[ "$cap_role" == "commenter" ]]; then
+				cap_role="participant"
+			fi
+			# Enforce compose cap on redraft — participants get 1 total compose
+			local current_compose_count
+			current_compose_count=$(echo "$meta" | jq -r '.compose_count // 1') || current_compose_count=1
+			if [[ "$cap_role" == "participant" && "$current_compose_count" -ge 1 ]]; then
+				echo "    Action: redraft — blocked by compose cap (participant, compose_count=${current_compose_count})"
+				_log_info "check-approvals: redraft blocked for ${draft_id} (participant cap, compose_count=${current_compose_count})"
+				i=$((i + 1))
+				continue
+			fi
 			echo "    Action: redraft — composing new draft with user instructions"
 			# Update the notification issue body with a note that re-draft is pending
 			_update_notification_draft "$issue_number" "*Re-drafting based on your instructions: ${action_text}*"
@@ -659,10 +695,13 @@ cmd_check_approvals() {
 			# interactive session or pulse worker to pick up.
 			local now_iso
 			now_iso=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+			# Increment compose_count to track re-drafts
+			local new_compose_count=$((current_compose_count + 1))
 			meta=$(echo "$meta" | jq \
 				--arg instructions "$action_text" \
 				--arg ts "$now_iso" \
-				'.redraft_requested = $ts | .redraft_instructions = $instructions')
+				--argjson cc "$new_compose_count" \
+				'.redraft_requested = $ts | .redraft_instructions = $instructions | .compose_count = $cc')
 			_write_meta "$draft_id" "$meta"
 			actions_taken=$((actions_taken + 1))
 			;;
@@ -964,6 +1003,7 @@ cmd_draft() {
 			created: $created,
 			status: $status,
 			notification_issue: $notification_issue,
+			compose_count: 1,
 			approved_at: "",
 			rejected_at: "",
 			reject_reason: "",
