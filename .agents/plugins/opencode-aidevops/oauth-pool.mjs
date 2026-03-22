@@ -968,10 +968,39 @@ async function refreshCursorAccessToken(account) {
       }
     }
 
+    // Fallback 2: try macOS Keychain (cursor-agent stores tokens here)
+    if (platform() === "darwin") {
+      try {
+        const accessToken = execSync(
+          'security find-generic-password -s "cursor-access-token" -a "cursor-user" -w 2>/dev/null',
+          { encoding: "utf-8", timeout: 5000 },
+        ).trim();
+        if (accessToken && accessToken.length > 10) {
+          let refreshToken;
+          try {
+            refreshToken = execSync(
+              'security find-generic-password -s "cursor-refresh-token" -a "cursor-user" -w 2>/dev/null',
+              { encoding: "utf-8", timeout: 5000 },
+            ).trim();
+          } catch {
+            refreshToken = account.refresh;
+          }
+          const tokenInfo = decodeCursorJWT(accessToken);
+          return {
+            access: accessToken,
+            refresh: refreshToken || account.refresh,
+            expires: tokenInfo.expiresAt || (Date.now() + 3600_000),
+          };
+        }
+      } catch {
+        // Keychain entry not found or access denied — continue to error
+      }
+    }
+
     console.error(
       [
         `[aidevops] OAuth pool: Cursor token refresh failed for ${account.email} —`,
-        "no valid token found in cursor-agent auth or Cursor IDE state",
+        "no valid token found in cursor-agent auth, Cursor IDE state, or macOS Keychain",
       ].join(" "),
     );
     return null;
