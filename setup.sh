@@ -1525,13 +1525,19 @@ ST_PLIST
 	if [[ -x "$cw_script" ]] && is_feature_enabled contribution_watch 2>/dev/null && command -v gh &>/dev/null && gh auth status &>/dev/null 2>&1; then
 		# Resolve log directory from config (paths.log_dir), expanding ~ to $HOME.
 		# Falls back to the default if config is unavailable or jq is missing.
+		# Validate before expansion to guard against shell metacharacter injection.
 		local _cw_log_dir
+		# shellcheck disable=SC2088  # Tilde is intentionally literal here; expanded below via ${/#\~/$HOME}
 		if type _jsonc_get &>/dev/null; then
-			_cw_log_dir=$(_jsonc_get "paths.log_dir" "$HOME/.aidevops/logs")
-			_cw_log_dir="${_cw_log_dir/#\~/$HOME}"
+			_cw_log_dir=$(_jsonc_get "paths.log_dir" "~/.aidevops/logs")
 		else
-			_cw_log_dir="$HOME/.aidevops/logs"
+			_cw_log_dir="~/.aidevops/logs"
 		fi
+		if [[ "$_cw_log_dir" == *['`$']* ]]; then
+			print_error "Invalid characters in paths.log_dir: $_cw_log_dir"
+			return 1
+		fi
+		_cw_log_dir="${_cw_log_dir/#\~/$HOME}"
 		mkdir -p "$HOME/.aidevops/cache" "$_cw_log_dir"
 
 		# Auto-seed on first run (populates state file with existing contributions)
