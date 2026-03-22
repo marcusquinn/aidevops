@@ -392,8 +392,7 @@ scan_content() {
 	fi
 
 	local pg_exit=0
-	local pg_output
-	pg_output=$("$PROMPT_GUARD" check "$normalized" 2>&1) || pg_exit=$?
+	"$PROMPT_GUARD" check "$normalized" >/dev/null 2>&1 || pg_exit=$?
 
 	case "$pg_exit" in
 	0)

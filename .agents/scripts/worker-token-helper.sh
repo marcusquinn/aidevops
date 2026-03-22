@@ -252,22 +252,20 @@ create_delegated_token() {
 	fi
 
 	# Check token type and scopes
-	local token_info
-	token_info=$(curl -sf \
+	curl -sf \
 		"https://api.github.com/user" \
 		-H "Authorization: Bearer ${current_token}" \
 		-H "Accept: application/vnd.github+json" \
-		-D /dev/stderr 2>&1 1>/dev/null) || {
+		-D /dev/stderr >/dev/null 2>&1 || {
 		log_token "WARN" "Cannot validate current token"
 		return 1
 	}
 
 	# Check if the token has access to the target repo
-	local repo_check
-	repo_check=$(curl -sf \
+	curl -sf \
 		"https://api.github.com/repos/${repo}" \
 		-H "Authorization: Bearer ${current_token}" \
-		-H "Accept: application/vnd.github+json" 2>/dev/null) || {
+		-H "Accept: application/vnd.github+json" >/dev/null 2>/dev/null || {
 		log_token "WARN" "Current token cannot access repo ${repo}"
 		return 1
 	}

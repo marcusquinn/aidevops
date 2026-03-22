@@ -38,8 +38,6 @@ set -euo pipefail
 
 readonly DEFAULT_LIMIT=50
 readonly DEFAULT_MAILDIR="${HOME}/Maildir"
-readonly NOTMUCH_CONFIG_DEFAULT="${HOME}/.notmuch-config"
-readonly MU_MUHOME_DEFAULT="${HOME}/.mu"
 readonly WORKSPACE_DIR="${MAILBOX_SEARCH_WORKSPACE:-${HOME}/.aidevops/.agent-workspace/mailbox-search}"
 readonly RESULTS_DB="${WORKSPACE_DIR}/search-cache.db"
 

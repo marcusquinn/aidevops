@@ -22,7 +22,6 @@ GREEN='\033[0;32m'
 BLUE='\033[0;34m'
 YELLOW='\033[1;33m'
 RED='\033[0;31m'
-GRAY='\033[0;90m'
 NC='\033[0m' # No Color
 
 # Global flags
@@ -1614,7 +1613,6 @@ CW_PLIST
 	local pr_script="$HOME/.aidevops/agents/scripts/profile-readme-helper.sh"
 	local pr_label="sh.aidevops.profile-readme-update"
 	local repos_json="$HOME/.config/aidevops/repos.json"
-	local has_profile_repo="false"
 	if [[ -x "$pr_script" ]] && command -v gh &>/dev/null && gh auth status &>/dev/null; then
 		# Initialize profile repo if not already set up.
 		# Verify the entry is valid: local dir exists AND README has stat markers.
@@ -1634,22 +1632,15 @@ CW_PLIST
 				[[ -f "${profile_path}/README.md" ]] &&
 				grep -q '<!-- STATS-START -->' "${profile_path}/README.md" 2>/dev/null; then
 				profile_needs_init="false"
-				has_profile_repo="true"
 			fi
 		fi
 		if [[ "$profile_needs_init" == "true" ]]; then
 			print_info "Setting up GitHub profile README..."
 			if bash "$pr_script" init; then
-				has_profile_repo="true"
 				print_info "Profile README created. Visit your profile repo and click 'Show on profile'."
 			else
 				print_warning "Profile README setup failed (non-fatal, skipping)"
 			fi
-		fi
-	elif [[ -f "$repos_json" ]] && command -v jq &>/dev/null; then
-		# No gh CLI but check if profile repo already registered
-		if jq -e '.initialized_repos[]? | select(.priority == "profile")' "$repos_json" >/dev/null 2>&1; then
-			has_profile_repo="true"
 		fi
 	fi
 
