@@ -1356,10 +1356,338 @@ async function isCursorProxyHealthy() {
   }
 }
 
+// ---------------------------------------------------------------------------
+// Cursor proxy helpers — tool call handling (t1553)
+// ---------------------------------------------------------------------------
+
+/**
+ * Build a prompt string from OpenAI-compatible messages, including tool results.
+ * Handles multi-turn conversations with tool_calls and tool results.
+ *
+ * @param {Array<object>} messages - OpenAI-compatible message array
+ * @returns {string} Formatted prompt for cursor-agent
+ */
+function buildCursorPrompt(messages) {
+  return messages.map((m) => {
+    const role = (m.role || "user").toUpperCase();
+
+    // Tool result messages (role: "tool") — format as tool output
+    if (m.role === "tool") {
+      const toolCallId = m.tool_call_id || "unknown";
+      const content = typeof m.content === "string" ? m.content : JSON.stringify(m.content);
+      return `TOOL_RESULT (call_id: ${toolCallId}):\n${content}`;
+    }
+
+    // Assistant messages with tool_calls — format the tool call request
+    if (m.role === "assistant" && Array.isArray(m.tool_calls) && m.tool_calls.length > 0) {
+      const toolCallsStr = m.tool_calls.map((tc) => {
+        const fn = tc.function || {};
+        return `TOOL_CALL (id: ${tc.id}, name: ${fn.name}): ${fn.arguments || "{}"}`;
+      }).join("\n");
+      const textContent = typeof m.content === "string" ? m.content : "";
+      return textContent
+        ? `ASSISTANT: ${textContent}\n${toolCallsStr}`
+        : `ASSISTANT:\n${toolCallsStr}`;
+    }
+
+    // Regular messages
+    const content = typeof m.content === "string"
+      ? m.content
+      : Array.isArray(m.content)
+        ? m.content.filter((p) => p.type === "text").map((p) => p.text).join("\n")
+        : "";
+    return `${role}: ${content}`;
+  }).join("\n\n");
+}
+
+/**
+ * Try to parse cursor-agent output as JSON to detect tool_calls.
+ *
+ * cursor-agent may return:
+ *   1. Plain text (no tool calls)
+ *   2. JSON with tool_calls array (model wants to call tools)
+ *   3. JSON with choices[].message.tool_calls (OpenAI format)
+ *
+ * @param {string} rawOutput - Raw stdout from cursor-agent
+ * @returns {{ hasToolCalls: boolean, toolCalls: Array<object>, content: string }}
+ */
+function tryParseToolCallResponse(rawOutput) {
+  const result = { hasToolCalls: false, toolCalls: [], content: rawOutput };
+
+  // Try JSON parse
+  let parsed;
+  try {
+    parsed = JSON.parse(rawOutput);
+  } catch {
+    // Not JSON — check for inline tool call patterns in text output
+    return tryParseInlineToolCalls(rawOutput);
+  }
+
+  // OpenAI-compatible format: { choices: [{ message: { tool_calls: [...] } }] }
+  if (parsed.choices && Array.isArray(parsed.choices)) {
+    const choice = parsed.choices[0];
+    const msg = choice?.message || choice?.delta;
+    if (msg?.tool_calls && Array.isArray(msg.tool_calls) && msg.tool_calls.length > 0) {
+      result.hasToolCalls = true;
+      result.toolCalls = msg.tool_calls.map(normalizeToolCall);
+      result.content = msg.content || "";
+      return result;
+    }
+    result.content = msg?.content || rawOutput;
+    return result;
+  }
+
+  // Direct tool_calls array
+  if (parsed.tool_calls && Array.isArray(parsed.tool_calls) && parsed.tool_calls.length > 0) {
+    result.hasToolCalls = true;
+    result.toolCalls = parsed.tool_calls.map(normalizeToolCall);
+    result.content = parsed.content || "";
+    return result;
+  }
+
+  // Cursor-specific format: { tool_call: { toolName: { args: {...} } } }
+  if (parsed.tool_call && typeof parsed.tool_call === "object") {
+    const entries = Object.entries(parsed.tool_call);
+    if (entries.length > 0) {
+      result.hasToolCalls = true;
+      result.toolCalls = entries.map(([name, payload], idx) => {
+        const args = (payload && typeof payload === "object" && payload.args)
+          ? payload.args
+          : payload;
+        return {
+          id: `call_cursor_${Date.now()}_${idx}`,
+          type: "function",
+          function: {
+            name: normalizeToolName(name),
+            arguments: typeof args === "string" ? args : JSON.stringify(args || {}),
+          },
+        };
+      });
+      result.content = parsed.content || "";
+      return result;
+    }
+  }
+
+  // Plain JSON content
+  result.content = parsed.content || parsed.text || parsed.message || rawOutput;
+  return result;
+}
+
+/**
+ * Try to detect inline tool call patterns in text output.
+ * Some cursor-agent versions emit tool calls as structured text.
+ *
+ * @param {string} text - Raw text output
+ * @returns {{ hasToolCalls: boolean, toolCalls: Array<object>, content: string }}
+ */
+function tryParseInlineToolCalls(text) {
+  const result = { hasToolCalls: false, toolCalls: [], content: text };
+
+  // Look for JSON blocks that might contain tool calls
+  // Pattern: ```json\n{...tool_calls...}\n```
+  const jsonBlockMatch = text.match(/```json\s*\n([\s\S]*?)\n```/);
+  if (jsonBlockMatch) {
+    try {
+      const blockParsed = JSON.parse(jsonBlockMatch[1]);
+      if (blockParsed.tool_calls && Array.isArray(blockParsed.tool_calls)) {
+        result.hasToolCalls = true;
+        result.toolCalls = blockParsed.tool_calls.map(normalizeToolCall);
+        // Content is everything outside the JSON block
+        result.content = text.replace(jsonBlockMatch[0], "").trim();
+        return result;
+      }
+    } catch {
+      // Not valid JSON in the block
+    }
+  }
+
+  return result;
+}
+
+/**
+ * Normalize a tool call to OpenAI format.
+ * @param {object} tc - Raw tool call object
+ * @returns {object} Normalized OpenAI tool call
+ */
+function normalizeToolCall(tc) {
+  const fn = tc.function || {};
+  return {
+    id: tc.id || `call_cursor_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+    type: "function",
+    function: {
+      name: normalizeToolName(fn.name || tc.name || "unknown"),
+      arguments: typeof fn.arguments === "string"
+        ? fn.arguments
+        : JSON.stringify(fn.arguments || fn.args || tc.args || {}),
+    },
+  };
+}
+
+/**
+ * Normalize a tool name — strip ToolCall suffix, handle camelCase.
+ * @param {string} raw - Raw tool name
+ * @returns {string}
+ */
+function normalizeToolName(raw) {
+  if (!raw) return "unknown";
+  let name = raw;
+  if (name.endsWith("ToolCall")) {
+    name = name.slice(0, -"ToolCall".length);
+  }
+  // Convert camelCase to lowercase (e.g., "runCommand" → "runcommand")
+  // but preserve underscores
+  return name.charAt(0).toLowerCase() + name.slice(1);
+}
+
+/**
+ * Send a text-only response (no tool calls).
+ * @param {import("http").ServerResponse} res
+ * @param {boolean} isStream
+ * @param {string} model
+ * @param {string} content
+ */
+function sendTextResponse(res, isStream, model, content) {
+  const id = `cursor-pool-${Date.now()}`;
+  const created = Math.floor(Date.now() / 1000);
+
+  if (isStream) {
+    res.writeHead(200, {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      "Connection": "keep-alive",
+    });
+    const chunk = {
+      id,
+      object: "chat.completion.chunk",
+      created,
+      model,
+      choices: [{
+        index: 0,
+        delta: { content },
+        finish_reason: "stop",
+      }],
+    };
+    res.write(`data: ${JSON.stringify(chunk)}\n\n`);
+    res.write("data: [DONE]\n\n");
+    res.end();
+  } else {
+    const payload = {
+      id,
+      object: "chat.completion",
+      created,
+      model,
+      choices: [{
+        index: 0,
+        message: { role: "assistant", content },
+        finish_reason: "stop",
+      }],
+    };
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify(payload));
+  }
+}
+
+/**
+ * Send a response with tool_calls (t1553).
+ * Emits tool_calls in OpenAI-compatible format so OpenCode can drive the tool loop.
+ *
+ * @param {import("http").ServerResponse} res
+ * @param {boolean} isStream
+ * @param {string} model
+ * @param {Array<object>} toolCalls - Normalized OpenAI tool_calls
+ * @param {string} [textContent] - Optional text content alongside tool calls
+ */
+function sendToolCallResponse(res, isStream, model, toolCalls, textContent) {
+  const id = `cursor-pool-${Date.now()}`;
+  const created = Math.floor(Date.now() / 1000);
+
+  if (isStream) {
+    res.writeHead(200, {
+      "Content-Type": "text/event-stream",
+      "Cache-Control": "no-cache",
+      "Connection": "keep-alive",
+    });
+
+    // If there's text content, send it first
+    if (textContent) {
+      const textChunk = {
+        id,
+        object: "chat.completion.chunk",
+        created,
+        model,
+        choices: [{
+          index: 0,
+          delta: { role: "assistant", content: textContent },
+          finish_reason: null,
+        }],
+      };
+      res.write(`data: ${JSON.stringify(textChunk)}\n\n`);
+    }
+
+    // Send tool_calls chunk
+    const toolCallChunk = {
+      id,
+      object: "chat.completion.chunk",
+      created,
+      model,
+      choices: [{
+        index: 0,
+        delta: {
+          role: "assistant",
+          tool_calls: toolCalls.map((tc, idx) => ({
+            index: idx,
+            ...tc,
+          })),
+        },
+        finish_reason: null,
+      }],
+    };
+    res.write(`data: ${JSON.stringify(toolCallChunk)}\n\n`);
+
+    // Send finish chunk with tool_calls reason
+    const finishChunk = {
+      id,
+      object: "chat.completion.chunk",
+      created,
+      model,
+      choices: [{
+        index: 0,
+        delta: {},
+        finish_reason: "tool_calls",
+      }],
+    };
+    res.write(`data: ${JSON.stringify(finishChunk)}\n\n`);
+    res.write("data: [DONE]\n\n");
+    res.end();
+  } else {
+    const payload = {
+      id,
+      object: "chat.completion",
+      created,
+      model,
+      choices: [{
+        index: 0,
+        message: {
+          role: "assistant",
+          content: textContent || null,
+          tool_calls: toolCalls,
+        },
+        finish_reason: "tool_calls",
+      }],
+    };
+    res.writeHead(200, { "Content-Type": "application/json" });
+    res.end(JSON.stringify(payload));
+  }
+}
+
 /**
  * Start the cursor-agent proxy sidecar if not already running.
  * The proxy is a lightweight HTTP server that spawns cursor-agent for each request.
  * Uses Node's built-in http.createServer (no Bun dependency).
+ *
+ * Supports tool calling (t1553): when the request includes tool definitions,
+ * the proxy passes them to cursor-agent and parses tool_calls from the response.
+ * OpenCode drives the tool loop — the proxy just translates the protocol.
  *
  * @param {string} [workspaceDir] - Workspace directory for cursor-agent
  * @returns {Promise<string>} Base URL of the proxy
@@ -1413,25 +1741,32 @@ export async function ensureCursorProxy(workspaceDir) {
       const messages = Array.isArray(parsed.messages) ? parsed.messages : [];
       const isStream = parsed.stream === true;
 
-      // Build prompt from messages
-      const prompt = messages.map((m) => {
-        const role = (m.role || "user").toUpperCase();
-        const content = typeof m.content === "string"
-          ? m.content
-          : Array.isArray(m.content)
-            ? m.content.filter((p) => p.type === "text").map((p) => p.text).join("\n")
-            : "";
-        return `${role}: ${content}`;
-      }).join("\n\n");
+      // Build prompt from messages, including tool results (t1553)
+      const prompt = buildCursorPrompt(messages);
+
+      // Extract tool definitions from the request (if any)
+      const tools = Array.isArray(parsed.tools) ? parsed.tools : [];
+      const hasTools = tools.length > 0;
 
       try {
-        const child = spawn("cursor-agent", [
+        // Build cursor-agent args — use JSON output format when tools are
+        // available so we can detect tool_calls in the response
+        const agentArgs = [
           "--print",
-          "--output-format", "text",
+          "--output-format", hasTools ? "json" : "text",
           "--workspace", effectiveWorkspace,
           "--model", model,
-          prompt,
-        ], {
+        ];
+
+        // Pass tool definitions to cursor-agent via --tools flag if supported
+        // cursor-agent accepts tool definitions as a JSON string
+        if (hasTools) {
+          agentArgs.push("--tools", JSON.stringify(tools));
+        }
+
+        agentArgs.push(prompt);
+
+        const child = spawn("cursor-agent", agentArgs, {
           stdio: ["pipe", "pipe", "pipe"],
           env: process.env,
         });
@@ -1442,10 +1777,7 @@ export async function ensureCursorProxy(workspaceDir) {
         child.stderr.on("data", (data) => { stderr += data.toString(); });
 
         child.on("close", (code) => {
-          const content = stdout.trim() || stderr.trim() || "(empty response)";
-
           // On non-zero exit, return a proper OpenAI-compatible error response
-          // instead of wrapping stderr in a chat completion body.
           if (code !== 0) {
             const errorMsg = stderr.trim() || `cursor-agent exited with code ${code}`;
             res.writeHead(502, { "Content-Type": "application/json" });
@@ -1459,45 +1791,18 @@ export async function ensureCursorProxy(workspaceDir) {
             return;
           }
 
-          // NOTE: Streaming limitation — cursor-agent writes its entire response
-          // to stdout on exit, so we cannot stream incrementally. The full response
-          // is buffered and sent as a single SSE chunk. True incremental streaming
-          // would require cursor-agent to support a streaming output mode (e.g.,
-          // writing partial results to stdout as they arrive from the upstream model).
-          if (isStream) {
-            res.writeHead(200, {
-              "Content-Type": "text/event-stream",
-              "Cache-Control": "no-cache",
-              "Connection": "keep-alive",
-            });
-            const chunk = {
-              id: `cursor-pool-${Date.now()}`,
-              object: "chat.completion.chunk",
-              created: Math.floor(Date.now() / 1000),
-              model,
-              choices: [{
-                index: 0,
-                delta: { content },
-                finish_reason: "stop",
-              }],
-            };
-            res.write(`data: ${JSON.stringify(chunk)}\n\n`);
-            res.write("data: [DONE]\n\n");
-            res.end();
+          const rawOutput = stdout.trim() || stderr.trim() || "(empty response)";
+
+          // Try to parse as JSON to detect tool_calls (t1553)
+          const parsedResponse = tryParseToolCallResponse(rawOutput);
+
+          if (parsedResponse.hasToolCalls) {
+            // Model wants to call tools — emit tool_calls response
+            sendToolCallResponse(res, isStream, model, parsedResponse.toolCalls, parsedResponse.content);
           } else {
-            const payload = {
-              id: `cursor-pool-${Date.now()}`,
-              object: "chat.completion",
-              created: Math.floor(Date.now() / 1000),
-              model,
-              choices: [{
-                index: 0,
-                message: { role: "assistant", content },
-                finish_reason: "stop",
-              }],
-            };
-            res.writeHead(200, { "Content-Type": "application/json" });
-            res.end(JSON.stringify(payload));
+            // Plain text response — emit as content
+            const content = parsedResponse.content || rawOutput;
+            sendTextResponse(res, isStream, model, content);
           }
         });
 

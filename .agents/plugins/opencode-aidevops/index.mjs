@@ -18,6 +18,7 @@ import { runMarkdownQualityPipeline } from "./quality-pipeline.mjs";
 import { createTtsrHooks } from "./ttsr.mjs";
 import { createPoolAuthHook, createOpenAIPoolAuthHook, createCursorPoolAuthHook, createPoolTool, initPoolAuth, registerPoolProvider } from "./oauth-pool.mjs";
 import { createProviderAuthHook } from "./provider-auth.mjs";
+import { createCursorTools } from "./cursor-tools.mjs";
 
 const HOME = homedir();
 const AGENTS_DIR = join(HOME, ".aidevops", "agents");
@@ -332,6 +333,44 @@ function registerMcpServers(config) {
 // Agent MCP tool permissions extracted to agent-loader.mjs
 
 /**
+ * Enable tool_call on Cursor provider models (t1553).
+ *
+ * The Cursor proxy now supports tool calling — when a model returns tool_calls,
+ * the proxy translates them to OpenAI SSE format and OpenCode drives the tool
+ * loop via registered cursor_* tool handlers.
+ *
+ * Previously tool_call was set to false as a workaround (GH#5454) because the
+ * proxy couldn't handle tool calls. This function re-enables it.
+ *
+ * @param {object} config - OpenCode Config object (mutable)
+ * @returns {number} Number of models updated
+ */
+function enableCursorToolCalling(config) {
+  if (!config.provider) return 0;
+
+  let updated = 0;
+
+  // Look for cursor and cursor-pool providers
+  for (const providerId of ["cursor", "cursor-pool"]) {
+    const provider = config.provider[providerId];
+    if (!provider || !provider.models) continue;
+
+    for (const [modelId, model] of Object.entries(provider.models)) {
+      // Skip the pool-account-management dummy model
+      if (modelId === "pool-account-management") continue;
+
+      // Enable tool_call if it was explicitly disabled
+      if (model.tool_call === false) {
+        model.tool_call = true;
+        updated++;
+      }
+    }
+  }
+
+  return updated;
+}
+
+/**
  * Modify OpenCode config to register aidevops subagents, MCP servers,
  * and per-agent tool permissions.
  *
@@ -365,12 +404,16 @@ async function configHook(config) {
   // --- OAuth pool: clean up stale provider entries (t1543, t1548) ---
   const poolCleaned = registerPoolProvider(config);
 
+  // --- Cursor tool calling: enable tool_call on cursor models (t1553) ---
+  const cursorToolsEnabled = enableCursorToolCalling(config);
+
   // Silent unless something was actually changed (avoids TUI flash on startup)
   const parts = [];
   if (agentsInjected > 0) parts.push(`${agentsInjected} agents`);
   if (mcpsRegistered > 0) parts.push(`${mcpsRegistered} MCPs`);
   if (agentToolsUpdated > 0) parts.push(`${agentToolsUpdated} agent tool perms`);
   if (poolCleaned > 0) parts.push(`cleaned ${poolCleaned} stale pool provider${poolCleaned === 1 ? "" : "s"}`);
+  if (cursorToolsEnabled > 0) parts.push(`enabled tool_call on ${cursorToolsEnabled} cursor model${cursorToolsEnabled === 1 ? "" : "s"}`);
 
   if (parts.length > 0) {
     console.error(`[aidevops] Config hook: ${parts.join(", ")}`);
@@ -1064,6 +1107,12 @@ const {
  *    Manages a proxy sidecar (HTTP server) that translates OpenAI-compatible
  *    requests to cursor-agent CLI calls. Adds "cursor-pool" provider for account
  *    management with LRU rotation and 429 failover.
+ * 11. Cursor tool execution — tool handlers for Cursor models (t1553)
+ *    Registers cursor_* tool handlers (bash, read, write, edit, grep, ls, glob)
+ *    via the plugin `tool` hook. When a Cursor model returns tool_calls, OpenCode
+ *    calls these handlers to execute tools locally, then sends results back.
+ *    The proxy translates cursor-agent output to OpenAI SSE format with tool_calls.
+ *    Config hook enables tool_call: true on cursor models (reverting GH#5454 workaround).
  *
  * MCP registration (Phase 2, t008.2):
  * - Registers all known MCP servers from a data-driven registry
@@ -1089,11 +1138,17 @@ export async function AidevopsPlugin({ directory, client }) {
   });
   baseTools["model-accounts-pool"] = createPoolTool(client);
 
+  // Phase 8: Cursor tool handlers (t1553)
+  // Register tool handlers so OpenCode can drive the tool loop when Cursor
+  // models return tool_calls. These execute locally (fs, child_process).
+  const cursorTools = createCursorTools();
+  Object.assign(baseTools, cursorTools);
+
   return {
     // Phase 1+2: Lightweight agent index + MCP registration
     config: async (config) => configHook(config),
 
-    // Phase 1+7: Custom tools (extracted to tools.mjs) + pool management (t1543)
+    // Phase 1+7+8: Custom tools + pool management + cursor tools (t1543, t1553)
     tool: baseTools,
 
     // Phase 3: Quality hooks
