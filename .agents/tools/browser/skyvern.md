@@ -58,6 +58,7 @@ skyvern up
 # .env
 OPENAI_API_KEY=your-key          # Required for vision LLM
 # ANTHROPIC_API_KEY=your-key     # Alternative LLM provider
+API_KEY=your-secret-key          # Optional: API key for self-hosted server (defaults to 'skyvern')
 SKYVERN_API_KEY=your-key         # For Skyvern Cloud
 ```
 
@@ -98,7 +99,12 @@ while True:
         break
     time.sleep(2)
 
-print(task["extracted_information"])
+if task["status"] == "completed":
+    print(task.get("extracted_information"))
+else:
+    print(f"Task ended with status '{task['status']}'.")
+    if task.get("error_message"):
+        print(f"Error: {task['error_message']}")
 ```
 
 ### Task Status Values
