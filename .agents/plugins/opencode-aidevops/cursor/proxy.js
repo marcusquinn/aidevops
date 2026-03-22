@@ -990,7 +990,13 @@ function handleToolResultResume(active, toolResults, modelId, bridgeKey) {
 async function handleNonStreamingResponse(payload, accessToken, modelId, bridgeKey) {
     const completionId = `chatcmpl-${crypto.randomUUID().replace(/-/g, "").slice(0, 28)}`;
     const created = Math.floor(Date.now() / 1000);
-    const fullText = await collectFullResponse(payload, accessToken, bridgeKey);
+    const result = await collectFullResponse(payload, accessToken, bridgeKey);
+    const message = { role: "assistant", content: result.text || "" };
+    let finishReason = "stop";
+    if (result.toolCalls && result.toolCalls.length > 0) {
+        message.tool_calls = result.toolCalls;
+        finishReason = "tool_calls";
+    }
     return new Response(JSON.stringify({
         id: completionId,
         object: "chat.completion",
@@ -999,8 +1005,8 @@ async function handleNonStreamingResponse(payload, accessToken, modelId, bridgeK
         choices: [
             {
                 index: 0,
-                message: { role: "assistant", content: fullText },
-                finish_reason: "stop",
+                message,
+                finish_reason: finishReason,
             },
         ],
         usage: {
@@ -1013,6 +1019,7 @@ async function handleNonStreamingResponse(payload, accessToken, modelId, bridgeK
 async function collectFullResponse(payload, accessToken, bridgeKey) {
     const { promise, resolve } = Promise.withResolvers();
     let fullText = "";
+    let resolved = false;
     const { bridge, heartbeatTimer } = startBridge(accessToken, payload.requestBytes);
     const state = {
         toolCallIndex: 0,
@@ -1027,7 +1034,33 @@ async function collectFullResponse(payload, accessToken, bridgeKey) {
                     return;
                 const { content } = tagFilter.process(text);
                 fullText += content;
-            }, () => { }, (checkpointBytes) => {
+            }, (exec) => {
+                // Tool call received — resolve immediately with tool_calls
+                // and keep the bridge alive for tool result continuation.
+                if (resolved) return;
+                resolved = true;
+                state.pendingExecs.push(exec);
+                const flushed = tagFilter.flush();
+                fullText += flushed.content;
+                const toolCallIndex = state.toolCallIndex++;
+                const toolCalls = [{
+                    id: exec.toolCallId,
+                    type: "function",
+                    function: {
+                        name: exec.toolName,
+                        arguments: exec.decodedArgs,
+                    },
+                }];
+                // Keep the bridge alive for tool result continuation.
+                activeBridges.set(bridgeKey, {
+                    bridge,
+                    heartbeatTimer,
+                    blobStore: payload.blobStore,
+                    mcpTools: payload.mcpTools,
+                    pendingExecs: state.pendingExecs,
+                });
+                resolve({ text: fullText, toolCalls });
+            }, (checkpointBytes) => {
                 const stored = conversationStates.get(bridgeKey);
                 if (stored) {
                     stored.checkpoint = checkpointBytes;
@@ -1047,9 +1080,12 @@ async function collectFullResponse(payload, accessToken, bridgeKey) {
                 stored.blobStore.set(k, v);
             stored.lastAccessMs = Date.now();
         }
-        const flushed = tagFilter.flush();
-        fullText += flushed.content;
-        resolve(fullText);
+        if (!resolved) {
+            resolved = true;
+            const flushed = tagFilter.flush();
+            fullText += flushed.content;
+            resolve({ text: fullText, toolCalls: null });
+        }
     });
     return promise;
 }
