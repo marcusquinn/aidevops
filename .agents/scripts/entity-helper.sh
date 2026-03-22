@@ -1565,13 +1565,11 @@ EOF
 			echo "  (no interactions)"
 		else
 			if [[ "$privacy_filter" == true ]]; then
-				# Apply privacy filtering to output (sed required: regex quantifiers/char classes)
-				# shellcheck disable=SC2001
-				interactions=$(echo "$interactions" | sed 's/[a-zA-Z0-9._%+-]\+@[a-zA-Z0-9.-]\+\.[a-zA-Z]\{2,\}/[EMAIL]/g')
-				# shellcheck disable=SC2001
-				interactions=$(echo "$interactions" | sed 's/\b[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\b/[IP]/g')
-				# shellcheck disable=SC2001
-				interactions=$(echo "$interactions" | sed 's/sk-[a-zA-Z0-9_-]\{20,\}/[API_KEY]/g')
+				# Apply privacy filtering to output (sed required: regex quantifiers/char classes/word boundaries)
+				interactions=$(sed \
+					-e 's/[a-zA-Z0-9._%+-]\+@[a-zA-Z0-9.-]\+\.[a-zA-Z]\{2,\}/[EMAIL]/g' \
+					-e 's/\b[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\b/[IP]/g' \
+					-e 's/sk-[a-zA-Z0-9_-]\{20,\}/[API_KEY]/g' <<<"$interactions")
 			fi
 			echo "$interactions"
 		fi
