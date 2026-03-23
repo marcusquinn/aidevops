@@ -78,8 +78,8 @@ _sandbox_bin() {
 _latest_sandbox() {
 	local latest=""
 	local latest_time=0
+	shopt -s nullglob
 	for dir in "${SANDBOX_ROOT}"/*/; do
-		[[ ! -d "$dir" ]] && continue
 		local ver
 		ver=$(basename "$dir")
 		local mtime
@@ -89,6 +89,7 @@ _latest_sandbox() {
 			latest="$ver"
 		fi
 	done
+	shopt -u nullglob
 	echo "$latest"
 	return 0
 }
@@ -199,8 +200,8 @@ cmd_list() {
 	fi
 
 	local found="false"
+	shopt -s nullglob
 	for dir in "${SANDBOX_ROOT}"/*/; do
-		[[ ! -d "$dir" ]] && continue
 		local ver
 		ver=$(basename "$dir")
 		local bin_path
@@ -216,6 +217,7 @@ cmd_list() {
 		printf '  %-12s  version=%-10s  auth.json=%s\n' "$ver" "$installed_ver" "$has_auth"
 		found="true"
 	done
+	shopt -u nullglob
 
 	if [[ "$found" == "false" ]]; then
 		print_info "No sandbox versions installed"
@@ -298,7 +300,7 @@ cmd_clean() {
 
 main() {
 	local cmd="${1:-help}"
-	shift 2>/dev/null || true
+	if [[ $# -gt 0 ]]; then shift; fi
 
 	case "$cmd" in
 	install) cmd_install "$@" ;;
