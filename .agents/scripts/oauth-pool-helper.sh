@@ -84,6 +84,14 @@ urlencode() {
 	return 0
 }
 
+# Count accounts for a provider in the pool JSON (stdin)
+# Usage: printf '%s' "$pool" | count_provider_accounts "$provider"
+count_provider_accounts() {
+	local provider="$1"
+	PROVIDER="$provider" python3 -c "import sys,json,os; print(len(json.load(sys.stdin).get(os.environ['PROVIDER'],[])))" 2>/dev/null || echo "0"
+	return 0
+}
+
 # Load pool JSON (create if missing)
 load_pool() {
 	if [[ -f "$POOL_FILE" ]]; then
@@ -340,7 +348,7 @@ json.dump(pool, sys.stdout, indent=2)
 	save_pool "$pool"
 
 	local count
-	count=$(printf '%s' "$pool" | PROVIDER="$provider" python3 -c "import sys,json,os; print(len(json.load(sys.stdin).get(os.environ['PROVIDER'],[])))")
+	count=$(printf '%s' "$pool" | count_provider_accounts "$provider")
 
 	print_success "Added ${email} to ${provider} pool (${count} account(s) total)"
 	print_info "Restart OpenCode to use the new token."
@@ -582,7 +590,7 @@ cmd_check() {
 
 	for prov in "${providers_to_check[@]}"; do
 		local count
-		count=$(printf '%s' "$pool" | PROVIDER="$prov" python3 -c "import sys,json,os; print(len(json.load(sys.stdin).get(os.environ['PROVIDER'],[])))" 2>/dev/null || echo "0")
+		count=$(printf '%s' "$pool" | count_provider_accounts "$prov")
 		if [[ "$count" == "0" ]]; then
 			continue
 		fi
@@ -704,7 +712,7 @@ cmd_list() {
 
 	for prov in "${providers_to_list[@]}"; do
 		local count
-		count=$(printf '%s' "$pool" | PROVIDER="$prov" python3 -c "import sys,json,os; print(len(json.load(sys.stdin).get(os.environ['PROVIDER'],[])))" 2>/dev/null || echo "0")
+		count=$(printf '%s' "$pool" | count_provider_accounts "$prov")
 		if [[ "$count" == "0" ]]; then
 			continue
 		fi
@@ -789,7 +797,7 @@ cmd_rotate() {
 
 	# Count accounts for this provider
 	local account_count
-	account_count=$(printf '%s' "$pool" | PROVIDER="$provider" python3 -c "import sys,json,os; print(len(json.load(sys.stdin).get(os.environ['PROVIDER'],[])))" 2>/dev/null || echo "0")
+	account_count=$(printf '%s' "$pool" | count_provider_accounts "$provider")
 
 	if [[ "$account_count" -lt 2 ]]; then
 		print_error "Cannot rotate: only ${account_count} account(s) in ${provider} pool. Need at least 2."
@@ -811,10 +819,11 @@ cmd_rotate() {
 	#   4. Write the new account's tokens into auth.json
 	#   5. Update lastUsed in the pool file
 	# All token handling stays in-process — no secrets on argv or stdout.
-	local result
+	local result py_stderr_file
+	py_stderr_file=$(mktemp "${TMPDIR:-/tmp}/oauth-rotate-err.XXXXXX")
 	result=$(POOL_FILE_PATH="$POOL_FILE" AUTH_FILE_PATH="$OPENCODE_AUTH_FILE" \
 		PROVIDER="$provider" python3 -c "
-import sys, json, os, fcntl
+import sys, json, os, fcntl, tempfile
 from datetime import datetime, timezone
 
 pool_path = os.environ['POOL_FILE_PATH']
@@ -889,9 +898,20 @@ try:
         'expires': next_account.get('expires', 0),
     }
 
-    with open(auth_path, 'w') as f:
-        json.dump(auth, f, indent=2)
-    os.chmod(auth_path, 0o600)
+    # Atomic write to auth.json (temp-file + rename)
+    auth_dir = os.path.dirname(auth_path)
+    fd_auth, tmp_auth = tempfile.mkstemp(dir=auth_dir, prefix='.auth-', suffix='.tmp')
+    try:
+        with os.fdopen(fd_auth, 'w') as f:
+            json.dump(auth, f, indent=2)
+        os.chmod(tmp_auth, 0o600)
+        os.rename(tmp_auth, auth_path)
+    except BaseException:
+        try:
+            os.unlink(tmp_auth)
+        except OSError:
+            pass
+        raise
 
     # Update lastUsed in pool file for the new account
     now_iso = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
@@ -900,9 +920,20 @@ try:
             a['lastUsed'] = now_iso
             break
 
-    with open(pool_path, 'w') as f:
-        json.dump(pool, f, indent=2)
-    os.chmod(pool_path, 0o600)
+    # Atomic write to pool file (temp-file + rename)
+    pool_dir = os.path.dirname(pool_path)
+    fd_pool, tmp_pool = tempfile.mkstemp(dir=pool_dir, prefix='.pool-', suffix='.tmp')
+    try:
+        with os.fdopen(fd_pool, 'w') as f:
+            json.dump(pool, f, indent=2)
+        os.chmod(tmp_pool, 0o600)
+        os.rename(tmp_pool, pool_path)
+    except BaseException:
+        try:
+            os.unlink(tmp_pool)
+        except OSError:
+            pass
+        raise
 
 finally:
     fcntl.flock(lock_fd, fcntl.LOCK_UN)
@@ -911,10 +942,17 @@ finally:
 print('OK')
 print(current_email)
 print(next_email)
-" 2>/dev/null) || {
+" 2>"$py_stderr_file") || {
+		local py_err
+		py_err=$(cat "$py_stderr_file" 2>/dev/null)
+		rm -f "$py_stderr_file"
 		print_error "Rotation failed — python3 error"
+		if [[ -n "${py_err:-}" ]]; then
+			print_error "Detail: ${py_err}"
+		fi
 		return 1
 	}
+	rm -f "$py_stderr_file"
 
 	# Parse result — one field per line to avoid delimiter issues in emails
 	local first_line
@@ -974,7 +1012,7 @@ cmd_status() {
 
 	for prov in "${providers_to_check[@]}"; do
 		local count
-		count=$(printf '%s' "$pool" | PROVIDER="$prov" python3 -c "import sys,json,os; print(len(json.load(sys.stdin).get(os.environ['PROVIDER'],[])))" 2>/dev/null || echo "0")
+		count=$(printf '%s' "$pool" | count_provider_accounts "$prov")
 		if [[ "$count" == "0" ]]; then
 			continue
 		fi
@@ -991,7 +1029,7 @@ accounts = pool.get(prov, [])
 active = sum(1 for a in accounts if a.get('status') in ('active', 'idle'))
 rate_limited = sum(1 for a in accounts if a.get('status') == 'rate-limited' and a.get('cooldownUntil', 0) > now)
 auth_error = sum(1 for a in accounts if a.get('status') == 'auth-error')
-available = sum(1 for a in accounts if not a.get('cooldownUntil') or a['cooldownUntil'] <= now)
+available = sum(1 for a in accounts if a.get('status') != 'auth-error' and (not a.get('cooldownUntil') or a['cooldownUntil'] <= now))
 
 print(f'{prov} pool status:')
 print(f'  Total accounts: {len(accounts)}')
@@ -1105,11 +1143,11 @@ del pool[pending_key]
 json.dump(pool, sys.stdout, indent=2)
 " 2>/dev/null)
 
-	if printf '%s' "$assign_result" | grep -q "^ERROR:no_pending"; then
+	if printf '%s' "$assign_result" | grep -q '^ERROR:no_pending$'; then
 		print_error "No pending token for ${provider}"
 		return 1
 	fi
-	if printf '%s' "$assign_result" | grep -q "^ERROR:not_found"; then
+	if printf '%s' "$assign_result" | grep -q '^ERROR:not_found$'; then
 		print_error "Account ${email} not found in ${provider} pool"
 		return 1
 	fi
