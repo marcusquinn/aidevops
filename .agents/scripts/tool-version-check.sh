@@ -64,10 +64,15 @@ while [[ $# -gt 0 ]]; do
 	esac
 done
 
+# Detect how OpenCode was installed — build the right upgrade command.
+# update_cmd is executed via `bash -c` so it must be a self-contained string.
+_oc_upgrade_cmd="if r=\$(readlink -f \"\$(command -v opencode)\" 2>/dev/null || readlink \"\$(command -v opencode)\" 2>/dev/null) && [[ \"\$r\" == *bun* ]]; then bun install -g opencode-ai@latest; else npm install -g opencode-ai@latest; fi"
+
 # Tool definitions
 # Format: category|display_name|cli_command|version_flag|package_name|update_command
 
 NPM_TOOLS=(
+	"npm|OpenCode|opencode|--version|opencode-ai|${_oc_upgrade_cmd}"
 	"npm|Claude Code CLI|claude|--version|@anthropic-ai/claude-code|npm install -g @anthropic-ai/claude-code@latest"
 	"npm|Augment CLI|auggie|--version|@augmentcode/auggie@prerelease|npm install -g @augmentcode/auggie@prerelease"
 	"npm|Repomix|repomix|--version|repomix|npm install -g repomix@latest"
@@ -84,7 +89,6 @@ NPM_TOOLS=(
 )
 
 BREW_TOOLS=(
-	"brew|OpenCode|opencode|--version|anomalyco/tap/opencode|brew upgrade anomalyco/tap/opencode"
 	"brew|GitHub CLI|gh|--version|gh|brew upgrade gh"
 	"brew|GitLab CLI|glab|--version|glab|brew upgrade glab"
 	"brew|Worktrunk|wt|--version|max-sixty/worktrunk/wt|brew upgrade max-sixty/worktrunk/wt"
