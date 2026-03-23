@@ -1,18 +1,15 @@
 #!/usr/bin/env bash
 # oauth-pool-helper.sh — Shell-based OAuth pool account management
 #
-# Provides add/check/list/remove/rotate/status/assign-pending for OAuth pool
-# accounts when the OpenCode TUI auth hooks are unavailable.
+# Provides add/check/list/remove for OAuth pool accounts when the OpenCode
+# TUI auth hooks are unavailable (e.g., OpenCode v1.2.27 regression).
 #
 # Usage:
-#   oauth-pool-helper.sh add [anthropic|openai|cursor]           # Add account via OAuth
-#   oauth-pool-helper.sh check [anthropic|openai|cursor|all]     # Health check all accounts
-#   oauth-pool-helper.sh list [anthropic|openai|cursor|all]      # List accounts
-#   oauth-pool-helper.sh remove <provider> <email>               # Remove an account
-#   oauth-pool-helper.sh rotate [anthropic|openai|cursor]        # Switch active account
-#   oauth-pool-helper.sh status [anthropic|openai|cursor|all]    # Pool rotation statistics
-#   oauth-pool-helper.sh assign-pending <provider> [email]       # Assign pending token
-#   oauth-pool-helper.sh help                                    # Show usage
+#   oauth-pool-helper.sh add [anthropic|openai]    # Add account via OAuth
+#   oauth-pool-helper.sh check [anthropic|openai]   # Health check all accounts
+#   oauth-pool-helper.sh list [anthropic|openai]     # List accounts
+#   oauth-pool-helper.sh remove <provider> <email>   # Remove an account
+#   oauth-pool-helper.sh help                        # Show usage
 #
 # Security: Tokens are written to ~/.aidevops/oauth-pool.json (600 perms).
 #           Secrets are passed via stdin/env, never as command arguments.
@@ -26,7 +23,6 @@ IFS=$'\n\t'
 # ---------------------------------------------------------------------------
 
 POOL_FILE="${HOME}/.aidevops/oauth-pool.json"
-OPENCODE_AUTH_FILE="${HOME}/.local/share/opencode/auth.json"
 
 # Anthropic OAuth
 ANTHROPIC_CLIENT_ID="9d1c250a-e61b-44d9-88ed-5944d1962f5e"
@@ -81,20 +77,6 @@ urlencode() {
 	local string="$1"
 	# Pass via env to avoid shell injection in python3 -c string
 	INPUT="$string" python3 -c "import urllib.parse, os; print(urllib.parse.quote(os.environ['INPUT'], safe=''))"
-	return 0
-}
-
-# Count accounts for a provider in the pool JSON (stdin)
-# Usage: printf '%s' "$pool" | count_provider_accounts "$provider"
-count_provider_accounts() {
-	local provider="$1"
-	PROVIDER="$provider" python3 -c "import sys,json,os; print(len(json.load(sys.stdin).get(os.environ['PROVIDER'],[])))" 2>/dev/null || echo "0"
-	return 0
-}
-
-# Current time in milliseconds (epoch)
-get_now_ms() {
-	python3 -c "import time; print(int(time.time() * 1000))"
 	return 0
 }
 
@@ -296,7 +278,7 @@ print(json.dumps({
 
 	# Calculate expiry timestamp (milliseconds)
 	local now_ms expires_ms
-	now_ms=$(get_now_ms)
+	now_ms=$(python3 -c "import time; print(int(time.time() * 1000))")
 	expires_ms=$((now_ms + expires_in * 1000))
 
 	# Upsert into pool file
@@ -354,7 +336,7 @@ json.dump(pool, sys.stdout, indent=2)
 	save_pool "$pool"
 
 	local count
-	count=$(printf '%s' "$pool" | count_provider_accounts "$provider")
+	count=$(printf '%s' "$pool" | PROVIDER="$provider" python3 -c "import sys,json,os; print(len(json.load(sys.stdin).get(os.environ['PROVIDER'],[])))")
 
 	print_success "Added ${email} to ${provider} pool (${count} account(s) total)"
 	print_info "Restart OpenCode to use the new token."
@@ -502,7 +484,7 @@ else:
 	else
 		# Default: 1 hour from now
 		local now_ms
-		now_ms=$(get_now_ms)
+		now_ms=$(python3 -c "import time; print(int(time.time() * 1000))")
 		expires_ms=$((now_ms + 3600000))
 	fi
 
@@ -557,7 +539,7 @@ json.dump(pool, sys.stdout, indent=2)
 	save_pool "$pool"
 
 	local count
-	count=$(printf '%s' "$pool" | count_provider_accounts "cursor")
+	count=$(printf '%s' "$pool" | python3 -c "import sys,json; print(len(json.load(sys.stdin).get('cursor',[])))")
 
 	print_success "Added Cursor account ${email} to pool (${count} account(s) total)"
 	print_info "Restart OpenCode to use the Cursor provider."
@@ -592,11 +574,11 @@ cmd_check() {
 
 	local found_any="false"
 	local now_ms
-	now_ms=$(get_now_ms)
+	now_ms=$(python3 -c "import time; print(int(time.time() * 1000))")
 
 	for prov in "${providers_to_check[@]}"; do
 		local count
-		count=$(printf '%s' "$pool" | count_provider_accounts "$prov")
+		count=$(printf '%s' "$pool" | PROVIDER="$prov" python3 -c "import sys,json,os; print(len(json.load(sys.stdin).get(os.environ['PROVIDER'],[])))" 2>/dev/null || echo "0")
 		if [[ "$count" == "0" ]]; then
 			continue
 		fi
@@ -718,7 +700,7 @@ cmd_list() {
 
 	for prov in "${providers_to_list[@]}"; do
 		local count
-		count=$(printf '%s' "$pool" | count_provider_accounts "$prov")
+		count=$(printf '%s' "$pool" | PROVIDER="$prov" python3 -c "import sys,json,os; print(len(json.load(sys.stdin).get(os.environ['PROVIDER'],[])))" 2>/dev/null || echo "0")
 		if [[ "$count" == "0" ]]; then
 			continue
 		fi
@@ -784,7 +766,7 @@ json.dump(pool, sys.stdout, indent=2)
 }
 
 # ---------------------------------------------------------------------------
-# Rotate active account
+# Rotate — mark current account rate-limited, promote next available
 # ---------------------------------------------------------------------------
 
 cmd_rotate() {
@@ -801,197 +783,84 @@ cmd_rotate() {
 	local pool
 	pool=$(load_pool)
 
-	# Count accounts for this provider
-	local account_count
-	account_count=$(printf '%s' "$pool" | count_provider_accounts "$provider")
+	local count
+	count=$(printf '%s' "$pool" | PROVIDER="$provider" python3 -c "import sys,json,os; print(len(json.load(sys.stdin).get(os.environ['PROVIDER'],[])))" 2>/dev/null || echo "0")
 
-	if [[ "$account_count" -lt 2 ]]; then
-		print_error "Cannot rotate: only ${account_count} account(s) in ${provider} pool. Need at least 2."
-		print_info "Add more accounts: oauth-pool-helper.sh add ${provider}"
+	if [[ "$count" == "0" ]]; then
+		print_error "No accounts in ${provider} pool. Add one with: aidevops model-accounts-pool add ${provider}"
 		return 1
 	fi
 
-	if [[ ! -f "$OPENCODE_AUTH_FILE" ]]; then
-		print_error "OpenCode auth file not found: ${OPENCODE_AUTH_FILE}"
-		print_info "Is OpenCode installed? The auth file is created on first login."
-		return 1
+	if [[ "$count" == "1" ]]; then
+		print_warning "Only one account in pool — rotation has no effect. Add another account to enable rotation."
+		return 0
 	fi
 
-	# Identify the current active account and rotate to the next one.
-	# Uses python3 to:
-	#   1. Read the current token from auth.json (access field under provider key)
-	#   2. Find which pool account matches (by access token prefix comparison)
-	#   3. Pick the next account that is NOT the current one
-	#   4. Write the new account's tokens into auth.json
-	#   5. Update lastUsed in the pool file
-	# All token handling stays in-process — no secrets on argv or stdout.
-	local result py_stderr_file
-	py_stderr_file=$(mktemp "${TMPDIR:-/tmp}/oauth-rotate-err.XXXXXX")
-	result=$(POOL_FILE_PATH="$POOL_FILE" AUTH_FILE_PATH="$OPENCODE_AUTH_FILE" \
-		PROVIDER="$provider" python3 -c "
-import sys, json, os, fcntl, tempfile
-from datetime import datetime, timezone
+	local now_ms
+	now_ms=$(python3 -c "import time; print(int(time.time() * 1000))")
 
-pool_path = os.environ['POOL_FILE_PATH']
-auth_path = os.environ['AUTH_FILE_PATH']
+	local new_pool
+	new_pool=$(printf '%s' "$pool" | NOW_MS="$now_ms" PROVIDER="$provider" COOLDOWN_MS="60000" python3 -c "
+import sys, json, os
+pool = json.load(sys.stdin)
 provider = os.environ['PROVIDER']
+now = int(os.environ['NOW_MS'])
+cooldown_ms = int(os.environ['COOLDOWN_MS'])
 
-# Advisory lock on pool file to serialize concurrent rotations.
-# Covers the full read-modify-write cycle for both pool and auth files.
-lock_path = pool_path + '.lock'
-lock_fd = open(lock_path, 'w')
-try:
-    fcntl.flock(lock_fd, fcntl.LOCK_EX)
+accounts = pool.get(provider, [])
+if not accounts:
+    sys.exit(1)
 
-    # Load pool
-    with open(pool_path) as f:
-        pool = json.load(f)
+# Find the current active account (most recently used)
+active = [a for a in accounts if a.get('status') in ('active', 'idle') and (not a.get('cooldownUntil') or a['cooldownUntil'] <= now)]
+if not active:
+    print('no-active', file=sys.stderr)
+    sys.exit(2)
 
-    accounts = pool.get(provider, [])
-    if len(accounts) < 2:
-        print('ERROR:need_accounts')
-        sys.exit(0)
+active.sort(key=lambda a: a.get('lastUsed', ''), reverse=True)
+current = active[0]
+current['status'] = 'rate-limited'
+current['cooldownUntil'] = now + cooldown_ms
 
-    # Load auth.json
-    with open(auth_path) as f:
-        auth = json.load(f)
+# Find next available
+remaining = [a for a in accounts if a.get('email') != current['email'] and (not a.get('cooldownUntil') or a['cooldownUntil'] <= now)]
+if remaining:
+    remaining.sort(key=lambda a: a.get('lastUsed', ''))
+    remaining[0]['status'] = 'active'
+    print(remaining[0]['email'], file=sys.stderr)
 
-    # Get current access token from auth.json for this provider
-    current_auth = auth.get(provider, {})
-    current_access = current_auth.get('access', '')
-
-    # Find which pool account is currently active by matching access token
-    current_email = None
-    for a in accounts:
-        if a.get('access', '') == current_access and current_access:
-            current_email = a.get('email', 'unknown')
-            break
-
-    # If no match by access token, fall back to most-recently-used
-    if current_email is None:
-        sorted_by_used = sorted(accounts, key=lambda a: a.get('lastUsed', ''), reverse=True)
-        current_email = sorted_by_used[0].get('email', 'unknown')
-
-    # Pick the next account: first available account that is NOT the current one
-    # Prefer active/idle accounts, skip rate-limited or auth-error
-    import time
-    now_ms = int(time.time() * 1000)
-    candidates = [
-        a for a in accounts
-        if a.get('email') != current_email
-        and a.get('status', 'active') in ('active', 'idle')
-        and (not a.get('cooldownUntil') or a['cooldownUntil'] <= now_ms)
-    ]
-
-    # If no active candidates, try any non-current account
-    if not candidates:
-        candidates = [a for a in accounts if a.get('email') != current_email]
-
-    if not candidates:
-        print('ERROR:no_alternate')
-        sys.exit(0)
-
-    # Sort by least-recently-used
-    candidates.sort(key=lambda a: a.get('lastUsed', ''))
-    next_account = candidates[0]
-    next_email = next_account.get('email', 'unknown')
-
-    # Write the new account's tokens into auth.json (atomic: temp + os.replace)
-    auth[provider] = {
-        'type': current_auth.get('type', 'oauth'),
-        'refresh': next_account.get('refresh', ''),
-        'access': next_account.get('access', ''),
-        'expires': next_account.get('expires', 0),
-    }
-
-    # Atomic write to auth.json (temp-file + rename)
-    auth_dir = os.path.dirname(auth_path)
-    fd_auth, tmp_auth = tempfile.mkstemp(dir=auth_dir, prefix='.auth-', suffix='.tmp')
-    try:
-        with os.fdopen(fd_auth, 'w') as f:
-            json.dump(auth, f, indent=2)
-        os.chmod(tmp_auth, 0o600)
-        os.replace(tmp_auth, auth_path)
-    except BaseException:
-        try:
-            os.unlink(tmp_auth)
-        except OSError:
-            pass
-        raise
-
-    # Update lastUsed in pool file for the new account (atomic: temp + os.replace)
-    now_iso = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
-    for a in pool[provider]:
-        if a.get('email') == next_email:
-            a['lastUsed'] = now_iso
-            break
-
-    # Atomic write to pool file (temp-file + os.replace)
-    pool_dir = os.path.dirname(pool_path)
-    fd_pool, tmp_pool = tempfile.mkstemp(dir=pool_dir, prefix='.pool-', suffix='.tmp')
-    try:
-        with os.fdopen(fd_pool, 'w') as f:
-            json.dump(pool, f, indent=2)
-        os.chmod(tmp_pool, 0o600)
-        os.replace(tmp_pool, pool_path)
-    except BaseException:
-        try:
-            os.unlink(tmp_pool)
-        except OSError:
-            pass
-        raise
-
-finally:
-    fcntl.flock(lock_fd, fcntl.LOCK_UN)
-    lock_fd.close()
-
-print('OK')
-print(current_email)
-print(next_email)
-" 2>"$py_stderr_file") || {
-		local py_err
-		py_err=$(cat "$py_stderr_file" 2>/dev/null)
-		rm -f "$py_stderr_file"
-		print_error "Rotation failed — python3 error"
-		if [[ -n "${py_err:-}" ]]; then
-			print_error "Detail: ${py_err}"
+pool[provider] = accounts
+json.dump(pool, sys.stdout, indent=2)
+" 2>/tmp/oauth-rotate-out) || {
+		local exit_code=$?
+		if [[ "$exit_code" == "2" ]]; then
+			print_warning "No active accounts to rotate from. Use 'aidevops model-accounts-pool check' to see status."
+		else
+			print_error "Rotation failed"
 		fi
 		return 1
 	}
-	rm -f "$py_stderr_file"
 
-	# Parse result — one field per line to avoid delimiter issues in emails
-	local first_line
-	first_line=$(printf '%s\n' "$result" | sed -n '1p')
-	case "$first_line" in
-	ERROR:need_accounts)
-		print_error "Cannot rotate: need at least 2 accounts in ${provider} pool"
-		return 1
-		;;
-	ERROR:no_alternate)
-		print_error "No alternate account available for ${provider} (all others may be in cooldown)"
-		return 1
-		;;
-	OK)
-		local prev_email next_email
-		prev_email=$(printf '%s\n' "$result" | sed -n '2p')
-		next_email=$(printf '%s\n' "$result" | sed -n '3p')
-		print_success "Rotated ${provider}: ${prev_email} -> ${next_email}"
-		print_info "Restart OpenCode sessions to pick up the new credentials."
-		return 0
-		;;
-	*)
-		print_error "Unexpected result from rotation"
-		return 1
-		;;
-	esac
+	local next_email
+	next_email=$(cat /tmp/oauth-rotate-out 2>/dev/null || echo "")
+	rm -f /tmp/oauth-rotate-out
+
+	save_pool "$new_pool"
+
+	if [[ -n "$next_email" ]]; then
+		print_success "Rotated ${provider} pool — next active account: ${next_email}"
+	else
+		print_success "Rotated ${provider} pool — all remaining accounts in cooldown, will auto-recover"
+	fi
+	print_info "Restart OpenCode to pick up the new active account."
+	return 0
 }
 
 # ---------------------------------------------------------------------------
-# Status (rotation statistics)
+# Reset cooldowns — clear rate-limit cooldowns so all accounts are retried
 # ---------------------------------------------------------------------------
 
-cmd_status() {
+cmd_reset_cooldowns() {
 	local provider="${1:-all}"
 
 	case "$provider" in
@@ -1005,161 +874,35 @@ cmd_status() {
 	local pool
 	pool=$(load_pool)
 
-	local -a providers_to_check
-	if [[ "$provider" == "all" ]]; then
-		providers_to_check=(anthropic openai cursor)
-	else
-		providers_to_check=("$provider")
-	fi
-
-	local found_any="false"
-	local now_ms
-	now_ms=$(get_now_ms)
-
-	for prov in "${providers_to_check[@]}"; do
-		local count
-		count=$(printf '%s' "$pool" | count_provider_accounts "$prov")
-		if [[ "$count" == "0" ]]; then
-			continue
-		fi
-		found_any="true"
-
-		printf '%s' "$pool" | NOW_MS="$now_ms" PROV="$prov" python3 -c "
-import sys, json, os
-
-pool = json.load(sys.stdin)
-now = int(os.environ['NOW_MS'])
-prov = os.environ['PROV']
-accounts = pool.get(prov, [])
-
-active = sum(1 for a in accounts if a.get('status') in ('active', 'idle'))
-rate_limited = sum(1 for a in accounts if a.get('status') == 'rate-limited' and a.get('cooldownUntil', 0) > now)
-auth_error = sum(1 for a in accounts if a.get('status') == 'auth-error')
-available = sum(1 for a in accounts if a.get('status', 'active') in ('active', 'idle') and (not a.get('cooldownUntil') or a['cooldownUntil'] <= now))
-
-print(f'{prov} pool status:')
-print(f'  Total accounts: {len(accounts)}')
-print(f'  Available now:  {available}')
-print(f'  Active/idle:    {active}')
-print(f'  Rate limited:   {rate_limited}')
-print(f'  Auth errors:    {auth_error}')
-" 2>/dev/null
-	done
-
-	if [[ "$found_any" == "false" ]]; then
-		print_info "No accounts in any pool."
-		echo ""
-		echo "To add an account:"
-		echo "  oauth-pool-helper.sh add anthropic    # Claude Pro/Max"
-		echo "  oauth-pool-helper.sh add openai       # ChatGPT Plus/Pro"
-		echo "  oauth-pool-helper.sh add cursor       # Cursor Pro (reads from IDE)"
-	fi
-
-	printf 'Pool file: %s\n' "$POOL_FILE"
-	return 0
-}
-
-# ---------------------------------------------------------------------------
-# Assign pending token to an account
-# ---------------------------------------------------------------------------
-
-cmd_assign_pending() {
-	local provider="${1:-anthropic}"
-	local email="${2:-}"
-
-	case "$provider" in
-	anthropic | openai | cursor) ;;
-	*)
-		print_error "Invalid provider: $provider (valid: anthropic, openai, cursor)"
-		return 1
-		;;
-	esac
-
-	local pool
-	pool=$(load_pool)
-
-	# Check if a pending token exists for this provider
-	local pending_info
-	pending_info=$(printf '%s' "$pool" | PROVIDER="$provider" python3 -c "
+	local new_pool
+	new_pool=$(printf '%s' "$pool" | PROVIDER="$provider" python3 -c "
 import sys, json, os
 pool = json.load(sys.stdin)
-provider = os.environ['PROVIDER']
-pending_key = '_pending_' + provider
-pending = pool.get(pending_key)
-if pending:
-    print('FOUND:' + pending.get('added', 'unknown'))
-else:
-    print('NONE')
-" 2>/dev/null)
-
-	if [[ "$pending_info" == "NONE" ]]; then
-		print_info "No pending token for ${provider}."
-		print_info "Pending tokens are created when you re-auth via the Pool provider but the email could not be identified."
-		return 0
-	fi
-
-	local pending_added
-	pending_added=$(printf '%s' "$pending_info" | cut -d: -f2-)
-
-	if [[ -z "$email" ]]; then
-		# Show available accounts and pending token info
-		print_info "Pending ${provider} token found (added: ${pending_added})"
-		print_info "Available accounts to assign to:"
-		printf '%s' "$pool" | PROVIDER="$provider" python3 -c "
-import sys, json, os
-pool = json.load(sys.stdin)
-provider = os.environ['PROVIDER']
-for i, a in enumerate(pool.get(provider, []), 1):
-    print(f'  {i}. {a[\"email\"]}')
-" 2>/dev/null
-		echo ""
-		echo "Usage: oauth-pool-helper.sh assign-pending ${provider} <email>"
-		return 0
-	fi
-
-	# Assign the pending token to the specified account
-	local assign_result
-	assign_result=$(printf '%s' "$pool" | PROVIDER="$provider" EMAIL="$email" python3 -c "
-import sys, json, os
-pool = json.load(sys.stdin)
-provider = os.environ['PROVIDER']
-email = os.environ['EMAIL']
-pending_key = '_pending_' + provider
-pending = pool.get(pending_key)
-
-if not pending:
-    print('ERROR:no_pending')
-    sys.exit(0)
-
-accounts = pool.get(provider, [])
-idx = next((i for i, a in enumerate(accounts) if a.get('email') == email), -1)
-if idx < 0:
-    print('ERROR:not_found')
-    sys.exit(0)
-
-# Apply pending token fields to the account
-accounts[idx]['refresh'] = pending.get('refresh', accounts[idx].get('refresh', ''))
-accounts[idx]['access'] = pending.get('access', accounts[idx].get('access', ''))
-accounts[idx]['expires'] = pending.get('expires', accounts[idx].get('expires', 0))
-accounts[idx]['status'] = 'active'
-accounts[idx]['cooldownUntil'] = None
-
-# Remove pending entry
-del pool[pending_key]
+target = os.environ['PROVIDER']
+providers = list(pool.keys()) if target == 'all' else [target]
+cleared = 0
+for prov in providers:
+    for a in pool.get(prov, []):
+        if a.get('cooldownUntil') or a.get('status') in ('rate-limited', 'auth-error'):
+            a['cooldownUntil'] = None
+            a['status'] = 'idle'
+            cleared += 1
+print(cleared, file=sys.stderr)
 json.dump(pool, sys.stdout, indent=2)
-" 2>/dev/null)
+" 2>/tmp/oauth-reset-out)
 
-	if printf '%s' "$assign_result" | grep -q '^ERROR:no_pending$'; then
-		print_error "No pending token for ${provider}"
-		return 1
-	fi
-	if printf '%s' "$assign_result" | grep -q '^ERROR:not_found$'; then
-		print_error "Account ${email} not found in ${provider} pool"
-		return 1
-	fi
+	local cleared
+	cleared=$(cat /tmp/oauth-reset-out 2>/dev/null || echo "0")
+	rm -f /tmp/oauth-reset-out
 
-	save_pool "$assign_result"
-	print_success "Assigned pending token to ${email} in ${provider} pool. Token is now active."
+	save_pool "$new_pool"
+
+	if [[ "$cleared" == "0" ]]; then
+		print_info "No cooldowns to clear — all accounts already active."
+	else
+		print_success "Cleared cooldowns on ${cleared} account(s). All accounts set to idle."
+	fi
+	print_info "Restart OpenCode to pick up the reset state."
 	return 0
 }
 
@@ -1262,37 +1005,41 @@ cmd_help() {
 	cat >&2 <<'HELP'
 oauth-pool-helper.sh — Manage OAuth pool accounts from the shell
 
+Preferred CLI (same commands, no path needed):
+  aidevops model-accounts-pool <command>
+
 Commands:
-  add [anthropic|openai|cursor]            Add an account via OAuth
-  check [anthropic|openai|cursor|all]      Health check accounts (token expiry, validity)
-  list [anthropic|openai|cursor|all]       List accounts and their status
-  remove <provider> <email>                Remove an account from the pool
-  rotate [anthropic|openai|cursor]         Switch active account in OpenCode auth.json
-  status [anthropic|openai|cursor|all]     Pool rotation statistics
-  assign-pending <provider> [email]        Assign a pending unidentified token to an account
-  import [claude-cli]                      Import account from Claude CLI auth
+  add [anthropic|openai|cursor]       Add an account (browser OAuth flow)
+  check [anthropic|openai|cursor|all] Health check: token expiry + live validity
+  list [anthropic|openai|cursor|all]  List accounts and their status
+  rotate [anthropic|openai|cursor]    Mark current account rate-limited, promote next
+  reset-cooldowns [provider|all]      Clear rate-limit cooldowns so all accounts retry
+  remove <provider> <email>           Remove an account from the pool
+  import [claude-cli]                 Import account from Claude CLI auth
+
+Quickstart (if you see "Key Missing" or auth errors):
+  aidevops model-accounts-pool list              # 1. See what's in the pool
+  aidevops model-accounts-pool check             # 2. Test token validity
+  aidevops model-accounts-pool reset-cooldowns   # 3. Clear any cooldowns
+  aidevops model-accounts-pool add anthropic     # 4. Re-add account if pool empty
 
 Examples:
-  oauth-pool-helper.sh add anthropic                      # Claude Pro/Max (browser OAuth)
-  oauth-pool-helper.sh add openai                         # ChatGPT Plus/Pro (browser OAuth)
-  oauth-pool-helper.sh add cursor                         # Cursor Pro (reads from IDE)
-  oauth-pool-helper.sh import claude-cli                  # Import from Claude CLI auth
-  oauth-pool-helper.sh check                              # Check all accounts
-  oauth-pool-helper.sh list                               # List all accounts
-  oauth-pool-helper.sh rotate anthropic                   # Switch to next Anthropic account
-  oauth-pool-helper.sh status                             # Show pool statistics
+  oauth-pool-helper.sh add anthropic             # Claude Pro/Max (browser OAuth)
+  oauth-pool-helper.sh add openai                # ChatGPT Plus/Pro (browser OAuth)
+  oauth-pool-helper.sh add cursor                # Cursor Pro (reads from IDE)
+  oauth-pool-helper.sh import claude-cli         # Import from Claude CLI auth
+  oauth-pool-helper.sh check                     # Check all accounts
+  oauth-pool-helper.sh list                      # List all accounts
+  oauth-pool-helper.sh rotate anthropic          # Rotate to next Anthropic account
+  oauth-pool-helper.sh reset-cooldowns           # Clear all cooldowns
   oauth-pool-helper.sh remove anthropic user@example.com
-  oauth-pool-helper.sh assign-pending anthropic           # Show pending token info
-  oauth-pool-helper.sh assign-pending anthropic user@example.com  # Assign pending token
 
 Notes:
   - Pool file: ~/.aidevops/oauth-pool.json (600 permissions)
-  - Auth file: ~/.local/share/opencode/auth.json (written by rotate)
-  - After adding/rotating an account, restart OpenCode to use the new token
+  - After adding an account, restart OpenCode to use the new token
   - Tokens refresh automatically; use 'add' with the same email to re-auth
   - The pool auto-rotates between accounts when one hits rate limits
   - Cursor reads credentials from your local Cursor IDE — log in there first
-  - 'assign-pending' assigns tokens saved when email could not be identified during OAuth
   - 'import claude-cli' detects your Claude CLI account and pre-fills the email
 HELP
 	return 0
@@ -1308,13 +1055,12 @@ main() {
 
 	case "$cmd" in
 	add) cmd_add "$@" ;;
-	assign-pending) cmd_assign_pending "$@" ;;
-	check) cmd_check "$@" ;;
+	check | test) cmd_check "$@" ;;
 	import) cmd_import "$@" ;;
-	list) cmd_list "$@" ;;
-	remove) cmd_remove "$@" ;;
+	list | status) cmd_list "$@" ;;
 	rotate) cmd_rotate "$@" ;;
-	status) cmd_status "$@" ;;
+	reset-cooldowns | reset_cooldowns | reset) cmd_reset_cooldowns "$@" ;;
+	remove) cmd_remove "$@" ;;
 	help | -h | --help) cmd_help ;;
 	*)
 		print_error "Unknown command: $cmd"

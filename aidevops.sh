@@ -3606,6 +3606,7 @@ cmd_help() {
 	echo "  repo-sync <cmd>    Daily git pull for repos in parent dirs (enable/disable/status/dirs)"
 	echo "  update-tools       Check for outdated tools (--update to auto-update)"
 	echo "  repos [cmd]        Manage registered projects (list/add/remove/clean)"
+	echo "  model-accounts-pool OAuth account pool (list/check/add/rotate/reset-cooldowns)"
 	echo "  security <cmd>     Security posture (check/audit/setup/status/summary)"
 	echo "  ip-check <cmd>     IP reputation checks (check/batch/report/providers)"
 	echo "  secret <cmd>       Manage secrets (set/list/run/init/import/status)"
@@ -3643,6 +3644,23 @@ cmd_help() {
 	echo "  aidevops ip-check report <ip># Generate markdown report"
 	echo "  aidevops ip-check providers  # List available providers"
 	echo "  aidevops ip-check cache-stats# Show cache statistics"
+	echo ""
+	echo "Model Accounts Pool (OAuth):"
+	echo "  aidevops model-accounts-pool list              # List accounts + status"
+	echo "  aidevops model-accounts-pool check             # Test token validity (live)"
+	echo "  aidevops model-accounts-pool add anthropic     # Add Claude Pro/Max account"
+	echo "  aidevops model-accounts-pool add openai        # Add ChatGPT Plus/Pro account"
+	echo "  aidevops model-accounts-pool add cursor        # Add Cursor Pro account"
+	echo "  aidevops model-accounts-pool import claude-cli # Import from Claude CLI auth"
+	echo "  aidevops model-accounts-pool rotate [provider] # Rotate to next account"
+	echo "  aidevops model-accounts-pool reset-cooldowns   # Clear rate-limit cooldowns"
+	echo "  aidevops model-accounts-pool remove <p> <email># Remove an account"
+	echo ""
+	echo "  If you see 'Key Missing' or auth errors:"
+	echo "    aidevops model-accounts-pool list            # 1. See what's in the pool"
+	echo "    aidevops model-accounts-pool check           # 2. Test token validity"
+	echo "    aidevops model-accounts-pool reset-cooldowns # 3. Clear any cooldowns"
+	echo "    aidevops model-accounts-pool add anthropic   # 4. Re-add if pool empty"
 	echo ""
 	echo "Secrets:"
 	echo "  aidevops secret set NAME     # Store a secret (hidden input)"
@@ -3890,6 +3908,19 @@ main() {
 			bash "$ip_rep_helper" "$@"
 		else
 			print_error "ip-reputation-helper.sh not found. Run: aidevops update"
+			exit 1
+		fi
+		;;
+	model-accounts-pool | map)
+		shift
+		local oauth_pool_helper="$AGENTS_DIR/scripts/oauth-pool-helper.sh"
+		if [[ ! -f "$oauth_pool_helper" ]]; then
+			oauth_pool_helper="$INSTALL_DIR/.agents/scripts/oauth-pool-helper.sh"
+		fi
+		if [[ -f "$oauth_pool_helper" ]]; then
+			bash "$oauth_pool_helper" "$@"
+		else
+			print_error "oauth-pool-helper.sh not found. Run: aidevops update"
 			exit 1
 		fi
 		;;
