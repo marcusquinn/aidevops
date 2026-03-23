@@ -230,7 +230,8 @@ timeout_sec() {
 		set -m
 		"$@" &
 		local cmd_pid=$!
-		$monitor_was_enabled || set +m
+		# Restore monitor mode to its original state (set -m or set +m as appropriate)
+		$monitor_was_enabled && set -m || set +m
 		# PGID equals the PID of the process group leader (the background job)
 		local cmd_pgid="$cmd_pid"
 		# Poll every 0.5s; count half-seconds to avoid floating-point math
