@@ -563,30 +563,112 @@ sandbox_run() {
 	# Execute with timeout and clean environment.
 	# cmd_args is expanded as an array — each element is a separate argument,
 	# preserving spaces and avoiding any additional shell interpretation.
+	#
+	# Process group lifecycle (GH#5530):
+	# The worker process (e.g. opencode run) spawns its own child processes
+	# (MCP servers, node workers, etc.). A plain `timeout` only kills its direct
+	# child — grandchildren survive and keep the bash wrapper alive indefinitely.
+	# Fix: run the command in a new process group via `setsid` (Linux/macOS),
+	# then kill the entire group (kill -- -PGID) on timeout or exit.
+	# The trap fires on any exit path: normal completion, timeout, or signal.
+	# _sandbox_exec_with_pgkill t_secs stdout_file stderr_file cmd [args...]
+	# Runs cmd in a new process group (via setsid) and kills the entire group
+	# when the timeout expires or the function exits. This ensures that worker
+	# child processes (MCP servers, node workers, etc.) are also terminated —
+	# a plain `timeout` only kills its direct child (GH#5530).
+	#
+	# stdout/stderr are passed as file paths (not via shell redirection on the
+	# function call) so the redirection applies to the backgrounded child, not
+	# to the polling loop in this function.
+	_sandbox_exec_with_pgkill() {
+		local t_secs="$1"
+		local t_stdout_file="$2"
+		local t_stderr_file="$3"
+		shift 3
+		local child_pid=""
+		local child_pgid=""
+		local t_exit_code=0
+
+		# Kill the child process group on any exit from this function.
+		# Uses kill -- -PGID to send SIGTERM to every process in the group,
+		# followed by SIGKILL after a short grace period.
+		_pgkill_cleanup() {
+			if [[ -n "$child_pgid" ]]; then
+				# SIGTERM first — allow graceful shutdown
+				kill -- "-${child_pgid}" 2>/dev/null || true
+				# Brief grace period, then SIGKILL any survivors
+				sleep 0.5
+				kill -0 -- "-${child_pgid}" 2>/dev/null &&
+					kill -9 -- "-${child_pgid}" 2>/dev/null || true
+			fi
+			return 0
+		}
+		trap '_pgkill_cleanup' EXIT
+
+		# Start the command in a new process group.
+		# setsid creates a new session (and process group) so the child and all
+		# its descendants share a PGID distinct from the wrapper's PGID.
+		# stdout/stderr are redirected here so the redirection applies to the
+		# backgrounded child process, not to the polling loop below.
+		# Fallback: if setsid is unavailable, run directly (best-effort).
+		if command -v setsid &>/dev/null; then
+			setsid "$@" >"$t_stdout_file" 2>"$t_stderr_file" &
+		else
+			"$@" >"$t_stdout_file" 2>"$t_stderr_file" &
+		fi
+		child_pid=$!
+		# Retrieve the process group ID of the child.
+		# On Linux: ps -o pgid= returns the PGID. On macOS: same flag works.
+		# If ps fails (race: child already exited), default to child_pid so
+		# the kill below targets at least the direct child.
+		child_pgid="$(ps -o pgid= -p "$child_pid" 2>/dev/null | tr -d ' ')" || true
+		if [[ -z "$child_pgid" ]] || [[ "$child_pgid" == "0" ]]; then
+			child_pgid="$child_pid"
+		fi
+
+		# Poll until the child exits or the deadline is reached.
+		local half_secs_remaining=$((t_secs * 2))
+		while kill -0 "$child_pid" 2>/dev/null; do
+			if ((half_secs_remaining <= 0)); then
+				log_sandbox "WARN" "Command timed out after ${t_secs}s — killing process group ${child_pgid}"
+				_pgkill_cleanup
+				# Reap the child after killing it
+				wait "$child_pid" 2>/dev/null || true
+				trap - EXIT
+				return 124
+			fi
+			sleep 0.5
+			((half_secs_remaining--)) || true
+		done
+
+		wait "$child_pid" 2>/dev/null
+		t_exit_code=$?
+		trap - EXIT
+		return "$t_exit_code"
+	}
+
 	if [[ "$block_network" == true ]] && command -v sandbox-exec &>/dev/null; then
 		# macOS seatbelt: deny network access.
 		# sandbox-exec accepts program + args directly (no shell wrapper needed).
 		local seatbelt_profile="(version 1)(allow default)(deny network*)"
-		timeout_sec "$timeout_secs" \
+		_sandbox_exec_with_pgkill "$timeout_secs" "$stdout_file" "$stderr_file" \
 			sandbox-exec -p "$seatbelt_profile" \
 			"${env_args[@]}" \
-			"${cmd_args[@]}" \
-			>"$stdout_file" 2>"$stderr_file" || exit_code=$?
+			"${cmd_args[@]}" || exit_code=$?
 	else
 		if [[ "$block_network" == true ]]; then
 			log_sandbox "WARN" "Network blocking requested but sandbox-exec not available (non-macOS); proceeding without"
 		fi
-		timeout_sec "$timeout_secs" \
+		_sandbox_exec_with_pgkill "$timeout_secs" "$stdout_file" "$stderr_file" \
 			"${env_args[@]}" \
-			"${cmd_args[@]}" \
-			>"$stdout_file" 2>"$stderr_file" || exit_code=$?
+			"${cmd_args[@]}" || exit_code=$?
 	fi
 
 	local end_time
 	end_time="$(date +%s)"
 	local duration=$((end_time - start_time))
 
-	# Handle timeout (exit code 124 from timeout command)
+	# Handle timeout (exit code 124 from _sandbox_exec_with_pgkill)
 	if [[ $exit_code -eq 124 ]]; then
 		log_sandbox "WARN" "Command timed out after ${timeout_secs}s"
 	fi
