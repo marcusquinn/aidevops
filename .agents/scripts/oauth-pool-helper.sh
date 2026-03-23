@@ -881,7 +881,7 @@ try:
     next_account = candidates[0]
     next_email = next_account.get('email', 'unknown')
 
-    # Write the new account's tokens into auth.json
+    # Write the new account's tokens into auth.json (atomic: temp + os.replace)
     auth[provider] = {
         'type': current_auth.get('type', 'oauth'),
         'refresh': next_account.get('refresh', ''),
@@ -889,20 +889,26 @@ try:
         'expires': next_account.get('expires', 0),
     }
 
-    with open(auth_path, 'w') as f:
+    import tempfile
+    auth_dir = os.path.dirname(auth_path)
+    fd, tmp_auth = tempfile.mkstemp(dir=auth_dir)
+    with os.fdopen(fd, 'w') as f:
         json.dump(auth, f, indent=2)
-    os.chmod(auth_path, 0o600)
+    os.chmod(tmp_auth, 0o600)
+    os.replace(tmp_auth, auth_path)
 
-    # Update lastUsed in pool file for the new account
+    # Update lastUsed in pool file for the new account (atomic: temp + os.replace)
     now_iso = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
     for a in pool[provider]:
         if a.get('email') == next_email:
             a['lastUsed'] = now_iso
             break
 
-    with open(pool_path, 'w') as f:
+    fd, tmp_pool = tempfile.mkstemp(dir=os.path.dirname(pool_path))
+    with os.fdopen(fd, 'w') as f:
         json.dump(pool, f, indent=2)
-    os.chmod(pool_path, 0o600)
+    os.chmod(tmp_pool, 0o600)
+    os.replace(tmp_pool, pool_path)
 
 finally:
     fcntl.flock(lock_fd, fcntl.LOCK_UN)
