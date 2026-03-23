@@ -9,7 +9,8 @@
  *   - auth hook: registers "anthropic-pool", "openai-pool", and "cursor-pool"
  *     providers with OAuth/credential login flows
  *   - loader: returns a custom fetch wrapper that rotates credentials on 429
- *   - tool: /model-accounts-pool for listing/removing accounts
+ *   - tool: /model-accounts-pool for list/rotate/remove/check/status/assign-pending/reset-cooldowns
+ *   - shell: oauth-pool-helper.sh for add/check/list/remove/rotate/status (no OpenCode SDK needed)
  *
  * Supported providers:
  *   - anthropic: Claude Pro/Max accounts (claude.ai OAuth)
