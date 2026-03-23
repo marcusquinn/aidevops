@@ -1311,7 +1311,7 @@ export async function injectPoolToken(client, skipEmail) {
   const sorted = [...accounts]
     .filter(
       (a) =>
-        (a.status === "active" || a.status === "idle") &&
+        ["active", "idle"].includes(a.status) &&
         a.email !== skipEmail &&
         (!a.cooldownUntil || a.cooldownUntil <= now),
     )
@@ -1322,7 +1322,7 @@ export async function injectPoolToken(client, skipEmail) {
     // Must still respect cooldown to avoid using accounts that should be resting (GH#5552)
     account = accounts.find(
       (a) =>
-        (a.status === "active" || a.status === "idle") &&
+        ["active", "idle"].includes(a.status) &&
         (!a.cooldownUntil || a.cooldownUntil <= now),
     );
   } else {
@@ -1388,7 +1388,7 @@ export async function injectOpenAIPoolToken(client, skipEmail) {
   const sorted = [...accounts]
     .filter(
       (a) =>
-        (a.status === "active" || a.status === "idle") &&
+        ["active", "idle"].includes(a.status) &&
         a.email !== skipEmail &&
         (!a.cooldownUntil || a.cooldownUntil <= now),
     )
@@ -1543,7 +1543,7 @@ export async function injectCursorPoolToken(client, skipEmail) {
   const sorted = [...accounts]
     .filter(
       (a) =>
-        (a.status === "active" || a.status === "idle") &&
+        ["active", "idle"].includes(a.status) &&
         a.email !== skipEmail &&
         (!a.cooldownUntil || a.cooldownUntil <= now),
     )
@@ -2414,7 +2414,7 @@ export function createPoolTool(client) {
             return `No accounts in the ${provider} pool.\n\n${addAccountHint}`;
           }
           const active = accounts.filter(
-            (a) => a.status === "active" || a.status === "idle",
+            (a) => ["active", "idle"].includes(a.status),
           ).length;
           const rateLimited = accounts.filter(
             (a) =>
