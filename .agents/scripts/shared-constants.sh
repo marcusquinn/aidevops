@@ -222,10 +222,15 @@ timeout_sec() {
 		# GH#5530: the previous implementation used kill "$cmd_pid" which only
 		# killed the direct child. Wrapper processes (e.g., bash sandbox-exec-helper.sh)
 		# survived because they are parents of the killed process, not children.
+		#
+		# Save whether monitor mode was already active before enabling it, so we
+		# can restore the original shell state rather than unconditionally disabling it.
+		local monitor_was_enabled=false
+		[[ $- == *m* ]] && monitor_was_enabled=true
 		set -m
 		"$@" &
 		local cmd_pid=$!
-		set +m
+		$monitor_was_enabled || set +m
 		# PGID equals the PID of the process group leader (the background job)
 		local cmd_pgid="$cmd_pid"
 		# Poll every 0.5s; count half-seconds to avoid floating-point math
