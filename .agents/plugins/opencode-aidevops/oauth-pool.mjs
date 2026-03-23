@@ -1200,8 +1200,14 @@ function pickNextAccount(provider, excludeEmail) {
 }
 
 /**
- * Execute a fetch with one-time pool failover on HTTP 429.
- * Marks the current account rate-limited, rotates to the next account, then retries once.
+ * Execute a fetch with one-time pool failover on HTTP 429 or auth errors (401/403).
+ *
+ * On 429 (rate limit): marks the current account rate-limited, rotates to the
+ * next account, then retries once.
+ *
+ * On 401/403 (auth error — expired/invalid token): first attempts to refresh
+ * the current account's token. If refresh succeeds, retries with the same
+ * account. If refresh fails, rotates to the next account and retries once.
  *
  * @param {any} client - OpenCode SDK client
  * @param {"anthropic"|"openai"|"cursor"} provider
@@ -1211,36 +1217,101 @@ function pickNextAccount(provider, excludeEmail) {
  */
 export async function fetchWithPoolFailover(client, provider, currentEmail, request) {
   const response = await request();
-  if (response.status !== 429 || !currentEmail) {
+  if (!currentEmail) {
     return response;
   }
 
-  patchAccount(provider, currentEmail, {
-    status: "rate-limited",
-    cooldownUntil: Date.now() + RATE_LIMIT_COOLDOWN_MS,
-  });
-
-  let injectFn;
-  if (provider === "cursor") {
-    injectFn = injectCursorPoolToken;
-  } else if (provider === "openai") {
-    injectFn = injectOpenAIPoolToken;
-  } else {
-    injectFn = injectPoolToken;
-  }
-  const rotated = await injectFn(client, currentEmail);
-  if (!rotated) {
+  // Handle auth errors (401/403) — token expired or invalidated mid-session
+  if (response.status === 401 || response.status === 403) {
     console.error(
-      `[aidevops] OAuth pool: ${provider} 429 for ${currentEmail}; no alternate account available for failover.`,
+      `[aidevops] OAuth pool: ${provider} ${response.status} for ${currentEmail}; attempting token refresh...`,
     );
-    return response;
+
+    // Try refreshing the current account's token first
+    const accounts = getAccounts(provider);
+    const currentAccount = accounts.find((a) => a.email === currentEmail);
+    if (currentAccount) {
+      const refreshedToken = await ensureValidToken(provider, {
+        ...currentAccount,
+        // Force refresh by setting expires to 0
+        expires: 0,
+      });
+      if (refreshedToken) {
+        // Refresh succeeded — update env var and retry with same account
+        if (provider === "anthropic") {
+          process.env.ANTHROPIC_API_KEY = refreshedToken;
+        } else if (provider === "openai") {
+          process.env.OPENAI_API_KEY = refreshedToken;
+        }
+        console.error(
+          `[aidevops] OAuth pool: ${provider} token refreshed for ${currentEmail}; retrying request.`,
+        );
+        return request();
+      }
+    }
+
+    // Refresh failed — mark as auth-error and rotate to next account
+    console.error(
+      `[aidevops] OAuth pool: ${provider} token refresh failed for ${currentEmail}; rotating to next account.`,
+    );
+    patchAccount(provider, currentEmail, {
+      status: "auth-error",
+      cooldownUntil: Date.now() + AUTH_FAILURE_COOLDOWN_MS,
+    });
+
+    let injectFn;
+    if (provider === "cursor") {
+      injectFn = injectCursorPoolToken;
+    } else if (provider === "openai") {
+      injectFn = injectOpenAIPoolToken;
+    } else {
+      injectFn = injectPoolToken;
+    }
+    const rotated = await injectFn(client, currentEmail);
+    if (!rotated) {
+      console.error(
+        `[aidevops] OAuth pool: ${provider} ${response.status} for ${currentEmail}; no alternate account available for failover.`,
+      );
+      return response;
+    }
+
+    console.error(
+      `[aidevops] OAuth pool: ${provider} ${response.status} for ${currentEmail}; rotated account and retrying once.`,
+    );
+    return request();
   }
 
-  console.error(
-    `[aidevops] OAuth pool: ${provider} 429 for ${currentEmail}; rotated account and retrying once.`,
-  );
+  // Handle rate limits (429) — rotate to next account immediately
+  if (response.status === 429) {
+    patchAccount(provider, currentEmail, {
+      status: "rate-limited",
+      cooldownUntil: Date.now() + RATE_LIMIT_COOLDOWN_MS,
+    });
 
-  return request();
+    let injectFn;
+    if (provider === "cursor") {
+      injectFn = injectCursorPoolToken;
+    } else if (provider === "openai") {
+      injectFn = injectOpenAIPoolToken;
+    } else {
+      injectFn = injectPoolToken;
+    }
+    const rotated = await injectFn(client, currentEmail);
+    if (!rotated) {
+      console.error(
+        `[aidevops] OAuth pool: ${provider} 429 for ${currentEmail}; no alternate account available for failover.`,
+      );
+      return response;
+    }
+
+    console.error(
+      `[aidevops] OAuth pool: ${provider} 429 for ${currentEmail}; rotated account and retrying once.`,
+    );
+
+    return request();
+  }
+
+  return response;
 }
 
 // ---------------------------------------------------------------------------
