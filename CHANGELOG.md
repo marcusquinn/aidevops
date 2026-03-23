@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.1.68] - 2026-03-23
+
+### Added
+
+- add aidevops model-accounts-pool CLI command with rotate and reset-cooldowns (#5535)
+
 ## [3.1.63] - 2026-03-22
 
 ### Added
