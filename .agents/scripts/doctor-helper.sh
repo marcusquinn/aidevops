@@ -437,6 +437,7 @@ run_fix() {
 		npm) remove_cmd="npm uninstall -g $binary_name" ;;
 		bun) remove_cmd="bun remove -g $binary_name" ;;
 		brew) remove_cmd="brew uninstall $binary_name" ;;
+		cargo) remove_cmd="cargo uninstall $binary_name" ;;
 		*) remove_cmd="rm \"$path\"" ;;
 		esac
 
@@ -447,7 +448,25 @@ run_fix() {
 		read -r confirm
 		if [[ "$confirm" =~ ^[Yy]$ ]]; then
 			echo -e "  ${BLUE}Running:${NC} $remove_cmd"
-			if eval "$remove_cmd" 2>&1; then
+			local success=false
+			case "$method" in
+			npm)
+				if npm uninstall -g "$binary_name" 2>&1; then success=true; fi
+				;;
+			bun)
+				if bun remove -g "$binary_name" 2>&1; then success=true; fi
+				;;
+			brew)
+				if brew uninstall "$binary_name" 2>&1; then success=true; fi
+				;;
+			cargo)
+				if cargo uninstall "$binary_name" 2>&1; then success=true; fi
+				;;
+			*)
+				if rm "$path" 2>&1; then success=true; fi
+				;;
+			esac
+			if $success; then
 				print_success "Removed $binary_name [$method]"
 			else
 				print_error "Failed to remove $binary_name [$method]"
@@ -509,14 +528,16 @@ json_diagnose_binary() {
 			entries="${entries},"
 		fi
 
+		local current_entry
+		current_entry=$(jq -n \
+			--arg path "$loc" \
+			--arg resolved "$resolved" \
+			--arg method "$method" \
+			--arg version "$version" \
+			--argjson active "$is_active" \
+			'{path: $path, resolved: $resolved, method: $method, version: $version, active: $active}')
 		entries="${entries}
-      {
-        \"path\": \"$loc\",
-        \"resolved\": \"$resolved\",
-        \"method\": \"$method\",
-        \"version\": \"$version\",
-        \"active\": $is_active
-      }"
+      ${current_entry}"
 	done <<<"$locations_raw"
 
 	local has_conflicts="false"
