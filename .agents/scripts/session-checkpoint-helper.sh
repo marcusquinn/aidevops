@@ -93,7 +93,10 @@ readonly -a CREDENTIAL_PATTERNS=(
 	"token${_ASSIGN_SUFFIX}"
 	# Private keys
 	'-----BEGIN (RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----'
-	# Gopass output (command invocations that may include or precede secret values)
+	# Gopass command invocations — redacts the command itself (e.g., "gopass show path/to/secret").
+	# Limitation: gopass outputs the secret value on a *separate line* after the command.
+	# That subsequent line is not caught here; it relies on the password/token/key patterns
+	# above to match the value. Avoid pasting raw gopass output into checkpoint notes.
 	'gopass show [a-zA-Z0-9/_.-]+'
 )
 
