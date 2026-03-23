@@ -1418,17 +1418,56 @@ setup_nodejs() {
 setup_opencode_cli() {
 	print_info "Setting up OpenCode CLI..."
 
+	# PINNED VERSION: OpenCode >1.2.27 breaks OAuth token injection.
+	# See install_pkg comment below for details.
+	local pinned_version="1.2.27"
+
 	# Check if OpenCode is already installed
 	if command -v opencode >/dev/null 2>&1; then
 		local oc_version
 		oc_version=$(opencode --version 2>/dev/null | head -1 || echo "unknown")
+
+		# Check if installed version is newer than pinned (needs downgrade)
+		if [[ "$oc_version" != "unknown" ]] && [[ "$oc_version" != "$pinned_version" ]]; then
+			# Compare versions: if installed > pinned, downgrade
+			local installed_major installed_minor installed_patch
+			IFS='.' read -r installed_major installed_minor installed_patch <<<"$oc_version"
+			local pinned_major pinned_minor pinned_patch
+			IFS='.' read -r pinned_major pinned_minor pinned_patch <<<"$pinned_version"
+			installed_patch="${installed_patch%%[^0-9]*}"
+			pinned_patch="${pinned_patch%%[^0-9]*}"
+
+			local needs_downgrade="false"
+			if [[ "${installed_major:-0}" -gt "${pinned_major:-0}" ]]; then
+				needs_downgrade="true"
+			elif [[ "${installed_major:-0}" -eq "${pinned_major:-0}" ]] && [[ "${installed_minor:-0}" -gt "${pinned_minor:-0}" ]]; then
+				needs_downgrade="true"
+			elif [[ "${installed_major:-0}" -eq "${pinned_major:-0}" ]] && [[ "${installed_minor:-0}" -eq "${pinned_minor:-0}" ]] && [[ "${installed_patch:-0}" -gt "${pinned_patch:-0}" ]]; then
+				needs_downgrade="true"
+			fi
+
+			if [[ "$needs_downgrade" == "true" ]]; then
+				print_warning "OpenCode $oc_version has an OAuth regression — downgrading to $pinned_version"
+				if npm_global_install "opencode-ai@${pinned_version}"; then
+					print_success "OpenCode downgraded to $pinned_version (OAuth working)"
+				else
+					print_warning "Downgrade failed — run manually: npm install -g opencode-ai@${pinned_version}"
+				fi
+				return 0
+			fi
+		fi
+
 		print_success "OpenCode already installed: $oc_version"
 		return 0
 	fi
 
 	# Need either bun or npm to install
 	local installer=""
-	local install_pkg="opencode-ai@latest"
+	# PINNED: OpenCode >1.2.27 has a regression where the built-in anthropic
+	# provider ignores OAuth tokens from auth.json, causing "API key missing"
+	# errors for all OAuth users. Pin to 1.2.27 until the upstream fix lands.
+	# Track: https://github.com/marcusquinn/aidevops/issues/5546
+	local install_pkg="opencode-ai@1.2.27"
 
 	if command -v bun >/dev/null 2>&1; then
 		installer="bun"
