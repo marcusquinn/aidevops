@@ -50,6 +50,11 @@ readonly BOLD='\033[1m'
 # non-secret identifiers (e.g., CSS classes like "sk-navigation-section-main-content").
 # The 20-char minimum reduces this, but security-first: false redaction is acceptable.
 # To tighten later, consider word-boundary anchors (\b) or entropy checks.
+
+# Shared suffix for key=value assignment patterns (password, secret, token, etc.)
+# Matches: separator (quotes, whitespace, colon, equals) + 8+ non-space chars
+readonly _ASSIGN_SUFFIX='["'"'"'[:space:]:=]+[^[:space:]"]{8,}'
+
 readonly -a CREDENTIAL_PATTERNS=(
 	# API keys (generic) — see false-positive note above re: sk-/pk- prefixes
 	'sk-[a-zA-Z0-9]{20,}'
@@ -81,11 +86,11 @@ readonly -a CREDENTIAL_PATTERNS=(
 	'postgres(ql)?://[^[:space:]]+'
 	'mysql://[^[:space:]]+'
 	'redis://[^[:space:]]+'
-	# Password/secret assignments
-	'password["'"'"'[:space:]:=]+[^[:space:]"]{8,}'
-	'passwd["'"'"'[:space:]:=]+[^[:space:]"]{8,}'
-	'secret["'"'"'[:space:]:=]+[^[:space:]"]{8,}'
-	'token["'"'"'[:space:]:=]+[^[:space:]"]{8,}'
+	# Password/secret assignments (suffix extracted to _ASSIGN_SUFFIX)
+	"password${_ASSIGN_SUFFIX}"
+	"passwd${_ASSIGN_SUFFIX}"
+	"secret${_ASSIGN_SUFFIX}"
+	"token${_ASSIGN_SUFFIX}"
 	# Private keys
 	'-----BEGIN (RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----'
 	# Gopass output (command invocations that may include or precede secret values)
@@ -110,8 +115,13 @@ sanitize_checkpoint() {
 	local pattern
 
 	for pattern in "${CREDENTIAL_PATTERNS[@]}"; do
-		# Check if pattern matches before attempting redaction
-		if grep -qE "$pattern" "$target_file" 2>/dev/null; then
+		# Check if pattern matches before attempting redaction.
+		# Capture exit code once to avoid running grep twice in debug mode:
+		# 0 = match, 1 = no match, 2 = regex/file error.
+		local grep_rc=0
+		grep -qE "$pattern" "$target_file" 2>/dev/null || grep_rc=$?
+
+		if [[ "$grep_rc" -eq 0 ]]; then
 			# Use perl -pi for in-place regex substitution — avoids delimiter
 			# conflicts that sed has with patterns containing / # or other chars.
 			# The {} delimiters in s{}{} are safe since no patterns use braces
@@ -121,16 +131,10 @@ sanitize_checkpoint() {
 			else
 				[[ -n "${DEBUG:-}" ]] && print_warning "Failed to redact pattern: ${pattern:0:30}..."
 			fi
-		else
-			# Pattern didn't match — in debug mode, distinguish "no match" (exit 1)
-			# from "regex error" (exit 2) to surface malformed patterns
-			if [[ -n "${DEBUG:-}" ]]; then
-				grep -qE "$pattern" "$target_file" 2>/dev/null
-				local grep_rc=$?
-				if [[ "$grep_rc" -eq 2 ]]; then
-					print_warning "Regex error in pattern: ${pattern:0:30}..."
-				fi
-			fi
+		elif [[ -n "${DEBUG:-}" && "$grep_rc" -eq 2 ]]; then
+			# Distinguish "no match" (exit 1) from "regex error" (exit 2)
+			# to surface malformed patterns in debug mode
+			print_warning "Regex error in pattern: ${pattern:0:30}..."
 		fi
 	done
 
@@ -306,7 +310,11 @@ cmd_save() {
 	# Write checkpoint to temp file, sanitize it, then atomically move
 	_write_checkpoint_file "$temp_file"
 	sanitize_checkpoint "$temp_file"
-	mv "$temp_file" "$CHECKPOINT_FILE"
+	if ! mv "$temp_file" "$CHECKPOINT_FILE"; then
+		rm -f "$temp_file"
+		print_error "Failed to write checkpoint to ${CHECKPOINT_FILE}"
+		return 1
+	fi
 
 	print_success "Checkpoint saved: ${CHECKPOINT_FILE}"
 	print_info "Task: ${_save_task:-none} | Branch: ${_save_branch} | ${_save_timestamp}"
