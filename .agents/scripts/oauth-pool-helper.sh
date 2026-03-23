@@ -551,7 +551,7 @@ json.dump(pool, sys.stdout, indent=2)
 	save_pool "$pool"
 
 	local count
-	count=$(printf '%s' "$pool" | python3 -c "import sys,json; print(len(json.load(sys.stdin).get('cursor',[])))")
+	count=$(printf '%s' "$pool" | count_provider_accounts "cursor")
 
 	print_success "Added Cursor account ${email} to pool (${count} account(s) total)"
 	print_info "Restart OpenCode to use the Cursor provider."
