@@ -907,6 +907,186 @@ json.dump(pool, sys.stdout, indent=2)
 }
 
 # ---------------------------------------------------------------------------
+# Status — pool aggregate stats per provider (distinct from list)
+# ---------------------------------------------------------------------------
+
+cmd_status() {
+	local provider="${1:-all}"
+
+	case "$provider" in
+	all | anthropic | openai | cursor) ;;
+	*)
+		print_error "Invalid provider: $provider (valid: anthropic, openai, cursor, all)"
+		return 1
+		;;
+	esac
+
+	local pool
+	pool=$(load_pool)
+
+	local now_ms
+	now_ms=$(python3 -c "import time; print(int(time.time() * 1000))")
+
+	local -a providers_to_check
+	if [[ "$provider" == "all" ]]; then
+		providers_to_check=(anthropic openai cursor)
+	else
+		providers_to_check=("$provider")
+	fi
+
+	local found_any="false"
+
+	for prov in "${providers_to_check[@]}"; do
+		local count
+		count=$(printf '%s' "$pool" | PROVIDER="$prov" python3 -c \
+			"import sys,json,os; print(len(json.load(sys.stdin).get(os.environ['PROVIDER'],[])))" \
+			2>/dev/null || echo "0")
+		[[ "$count" == "0" ]] && continue
+		found_any="true"
+
+		printf '%s' "$pool" | NOW_MS="$now_ms" PROV="$prov" python3 -c "
+import sys, json, os
+pool = json.load(sys.stdin)
+now = int(os.environ['NOW_MS'])
+prov = os.environ['PROV']
+accounts = pool.get(prov, [])
+
+total      = len(accounts)
+available  = sum(1 for a in accounts if not a.get('cooldownUntil') or a['cooldownUntil'] <= now)
+active     = sum(1 for a in accounts if a.get('status') in ('active', 'idle'))
+rate_lim   = sum(1 for a in accounts if a.get('status') == 'rate-limited' and a.get('cooldownUntil', 0) > now)
+auth_err   = sum(1 for a in accounts if a.get('status') == 'auth-error')
+
+print(f'{prov} pool:')
+print(f'  Total accounts : {total}')
+print(f'  Available now  : {available}')
+print(f'  Active/idle    : {active}')
+print(f'  Rate limited   : {rate_lim}')
+print(f'  Auth errors    : {auth_err}')
+if available == 0 and total > 0:
+    print(f'  WARNING: no accounts available — run reset-cooldowns or add an account')
+" 2>/dev/null
+	done
+
+	if [[ "$found_any" == "false" ]]; then
+		print_info "No accounts in any pool."
+		echo ""
+		echo "Add an account:"
+		echo "  aidevops model-accounts-pool add anthropic    # Claude Pro/Max"
+		echo "  aidevops model-accounts-pool add openai       # ChatGPT Plus/Pro"
+		echo "  aidevops model-accounts-pool add cursor       # Cursor Pro"
+		echo "  aidevops model-accounts-pool import claude-cli"
+	fi
+
+	printf 'Pool file: %s\n' "$POOL_FILE"
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# Assign pending — assign a stranded _pending_ token to a named account
+# ---------------------------------------------------------------------------
+
+cmd_assign_pending() {
+	local provider="${1:-anthropic}"
+	local email="${2:-}"
+
+	case "$provider" in
+	anthropic | openai | cursor) ;;
+	*)
+		print_error "Invalid provider: $provider (valid: anthropic, openai, cursor)"
+		return 1
+		;;
+	esac
+
+	local pool
+	pool=$(load_pool)
+
+	# Check whether a pending token exists for this provider
+	local pending_info
+	pending_info=$(printf '%s' "$pool" | PROVIDER="$provider" python3 -c "
+import sys, json, os
+pool = json.load(sys.stdin)
+provider = os.environ['PROVIDER']
+pending = pool.get('_pending_' + provider)
+if pending:
+    print('FOUND:' + pending.get('added', 'unknown'))
+else:
+    print('NONE')
+" 2>/dev/null)
+
+	if [[ "$pending_info" == "NONE" ]]; then
+		print_info "No pending token for ${provider}."
+		print_info "Pending tokens are created when OAuth completes but the email cannot be identified."
+		print_info "If you recently re-authenticated and it didn't take effect, try:"
+		print_info "  aidevops model-accounts-pool add ${provider}"
+		return 0
+	fi
+
+	local pending_added
+	pending_added=$(printf '%s' "$pending_info" | cut -d: -f2-)
+
+	if [[ -z "$email" ]]; then
+		print_info "Pending ${provider} token found (added: ${pending_added})"
+		print_info "Existing accounts to assign to:"
+		printf '%s' "$pool" | PROVIDER="$provider" python3 -c "
+import sys, json, os
+pool = json.load(sys.stdin)
+provider = os.environ['PROVIDER']
+for i, a in enumerate(pool.get(provider, []), 1):
+    print(f'  {i}. {a[\"email\"]}')
+" 2>/dev/null
+		echo ""
+		echo "Usage: aidevops model-accounts-pool assign-pending ${provider} <email>"
+		return 0
+	fi
+
+	local new_pool
+	new_pool=$(printf '%s' "$pool" | PROVIDER="$provider" EMAIL="$email" python3 -c "
+import sys, json, os
+pool = json.load(sys.stdin)
+provider = os.environ['PROVIDER']
+email = os.environ['EMAIL']
+pending_key = '_pending_' + provider
+pending = pool.get(pending_key)
+
+if not pending:
+    print('ERROR:no_pending')
+    sys.exit(0)
+
+accounts = pool.get(provider, [])
+idx = next((i for i, a in enumerate(accounts) if a.get('email') == email), -1)
+if idx < 0:
+    print('ERROR:not_found')
+    sys.exit(0)
+
+accounts[idx]['refresh']      = pending.get('refresh', accounts[idx].get('refresh', ''))
+accounts[idx]['access']       = pending.get('access',  accounts[idx].get('access', ''))
+accounts[idx]['expires']      = pending.get('expires',  accounts[idx].get('expires', 0))
+accounts[idx]['status']       = 'active'
+accounts[idx]['cooldownUntil'] = None
+del pool[pending_key]
+json.dump(pool, sys.stdout, indent=2)
+" 2>/dev/null)
+
+	case "$new_pool" in
+	ERROR:no_pending)
+		print_error "No pending token for ${provider}"
+		return 1
+		;;
+	ERROR:not_found)
+		print_error "Account ${email} not found in ${provider} pool"
+		print_info "Run 'aidevops model-accounts-pool list' to see existing accounts"
+		return 1
+		;;
+	esac
+
+	save_pool "$new_pool"
+	print_success "Assigned pending token to ${email} in ${provider} pool — account is now active."
+	print_info "Restart OpenCode to pick up the new credentials."
+	return 0
+}
+
+# ---------------------------------------------------------------------------
 # Import from Claude CLI
 # ---------------------------------------------------------------------------
 
@@ -1009,19 +1189,22 @@ Preferred CLI (same commands, no path needed):
   aidevops model-accounts-pool <command>
 
 Commands:
-  add [anthropic|openai|cursor]       Add an account (browser OAuth flow)
-  check [anthropic|openai|cursor|all] Health check: token expiry + live validity
-  list [anthropic|openai|cursor|all]  List accounts and their status
-  rotate [anthropic|openai|cursor]    Mark current account rate-limited, promote next
-  reset-cooldowns [provider|all]      Clear rate-limit cooldowns so all accounts retry
-  remove <provider> <email>           Remove an account from the pool
-  import [claude-cli]                 Import account from Claude CLI auth
+  add [anthropic|openai|cursor]            Add an account (browser OAuth flow)
+  check [anthropic|openai|cursor|all]      Health check: token expiry + live validity
+  list [anthropic|openai|cursor|all]       List accounts with per-account status
+  status [anthropic|openai|cursor|all]     Pool aggregate stats (counts, availability)
+  rotate [anthropic|openai|cursor]         Switch to next available account NOW (use when rate-limited)
+  reset-cooldowns [provider|all]           Clear rate-limit cooldowns so all accounts retry
+  assign-pending <provider> [email]        Assign a stranded pending token to an account
+  remove <provider> <email>               Remove an account from the pool
+  import [claude-cli]                      Import account from Claude CLI auth
 
 Quickstart (if you see "Key Missing" or auth errors):
-  aidevops model-accounts-pool list              # 1. See what's in the pool
-  aidevops model-accounts-pool check             # 2. Test token validity
-  aidevops model-accounts-pool reset-cooldowns   # 3. Clear any cooldowns
-  aidevops model-accounts-pool add anthropic     # 4. Re-add account if pool empty
+  aidevops model-accounts-pool status            # 1. See pool health at a glance
+  aidevops model-accounts-pool check             # 2. Test token validity live
+  aidevops model-accounts-pool rotate anthropic  # 3. Switch to next account if rate-limited
+  aidevops model-accounts-pool reset-cooldowns   # 4. Clear cooldowns if all accounts stuck
+  aidevops model-accounts-pool add anthropic     # 5. Re-add account if pool empty
 
 Examples:
   oauth-pool-helper.sh add anthropic             # Claude Pro/Max (browser OAuth)
@@ -1055,12 +1238,14 @@ main() {
 
 	case "$cmd" in
 	add) cmd_add "$@" ;;
+	assign-pending | assign_pending) cmd_assign_pending "$@" ;;
 	check | test) cmd_check "$@" ;;
 	import) cmd_import "$@" ;;
-	list | status) cmd_list "$@" ;;
+	list) cmd_list "$@" ;;
 	rotate) cmd_rotate "$@" ;;
 	reset-cooldowns | reset_cooldowns | reset) cmd_reset_cooldowns "$@" ;;
 	remove) cmd_remove "$@" ;;
+	status) cmd_status "$@" ;;
 	help | -h | --help) cmd_help ;;
 	*)
 		print_error "Unknown command: $cmd"

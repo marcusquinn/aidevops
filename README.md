@@ -366,6 +366,52 @@ See `.agents/tools/git/opencode-github-security.md` for the full security docume
 - **[Tabby](https://tabby.sh/)** - Recommended terminal. Colour-coded Profiles per project/repo, **auto-syncs tab title with git repo/branch.**
 - **[Zed](https://zed.dev/)** - Recommended editor. High-performance with AI integration (use with the OpenCode Agent Extension).
 
+### Troubleshooting Auth
+
+If you see **"Anthropic Key Missing"**, **"OpenAI Key Missing"**, or the model stops responding, run these commands from any terminal — no working model session required.
+
+**Step 1 — Check pool health**
+
+```bash
+aidevops model-accounts-pool status       # counts: available / rate-limited / auth-error
+aidevops model-accounts-pool check        # live token validity test per account
+```
+
+**Step 2 — Fix based on what you see**
+
+| Symptom | Command |
+|---------|---------|
+| Account shows `rate-limited` | `aidevops model-accounts-pool rotate anthropic` |
+| All accounts in cooldown | `aidevops model-accounts-pool reset-cooldowns` |
+| Account shows `auth-error` | `aidevops model-accounts-pool add anthropic` (re-auth) |
+| Pool is empty (no accounts) | `aidevops model-accounts-pool add anthropic` |
+| Recently re-authed, still broken | `aidevops model-accounts-pool assign-pending anthropic` |
+
+**Step 3 — If still broken, re-add the account**
+
+```bash
+aidevops model-accounts-pool add anthropic     # Claude Pro/Max — opens browser OAuth
+aidevops model-accounts-pool add openai        # ChatGPT Plus/Pro
+aidevops model-accounts-pool add cursor        # Cursor Pro (reads from local IDE)
+aidevops model-accounts-pool import claude-cli # Import from existing Claude CLI auth
+```
+
+Restart OpenCode after any `add`, `rotate`, or `reset-cooldowns` to pick up the new credentials.
+
+**Full command reference**
+
+```bash
+aidevops model-accounts-pool status            # Pool health at a glance
+aidevops model-accounts-pool list              # Per-account detail + expiry
+aidevops model-accounts-pool check             # Live API validity test
+aidevops model-accounts-pool rotate [provider] # Switch to next available account NOW
+aidevops model-accounts-pool reset-cooldowns   # Clear all rate-limit cooldowns
+aidevops model-accounts-pool assign-pending <p># Assign stranded pending token
+aidevops model-accounts-pool remove <p> <email># Remove an account
+```
+
+> **Note:** `reset-cooldowns` clears cooldowns in the pool file. If OpenCode is already running, the in-memory token endpoint cooldown is only cleared when OpenCode restarts or when you use the `/model-accounts-pool reset-cooldowns` slash command inside an active session.
+
 ### Terminal Tab Title Sync
 
 Your terminal tab/window title automatically shows `repo/branch` context when working in git repositories. This helps identify which codebase and branch you're working on across multiple terminal sessions.
