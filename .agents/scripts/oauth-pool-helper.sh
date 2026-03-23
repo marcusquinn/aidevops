@@ -88,7 +88,7 @@ urlencode() {
 # Usage: printf '%s' "$pool" | count_provider_accounts "$provider"
 count_provider_accounts() {
 	local provider="$1"
-	PROVIDER="$provider" python3 -c "import sys,json,os; print(len(json.load(sys.stdin).get(os.environ['PROVIDER'],[])))" 2>/dev/null || echo "0"
+	jq -r --arg p "$provider" '.[$p] | length // 0' 2>/dev/null || echo "0"
 	return 0
 }
 
@@ -1181,8 +1181,8 @@ cmd_reset_cooldowns() {
 	local pool
 	pool=$(load_pool)
 
-	local new_pool
-	new_pool=$(printf '%s' "$pool" | PROVIDER="$provider" python3 -c "
+	local result
+	result=$(printf '%s' "$pool" | PROVIDER="$provider" python3 -c "
 import sys, json, os
 pool = json.load(sys.stdin)
 target = os.environ['PROVIDER']
@@ -1194,13 +1194,12 @@ for prov in providers:
             a['cooldownUntil'] = None
             a['status'] = 'idle'
             cleared += 1
-print(cleared, file=sys.stderr)
-json.dump(pool, sys.stdout, indent=2)
-" 2>/tmp/oauth-reset-out)
+json.dump({'cleared': cleared, 'pool': pool}, sys.stdout, indent=2)
+")
 
-	local cleared
-	cleared=$(cat /tmp/oauth-reset-out 2>/dev/null || echo "0")
-	rm -f /tmp/oauth-reset-out
+	local cleared new_pool
+	cleared=$(printf '%s' "$result" | jq -r '.cleared')
+	new_pool=$(printf '%s' "$result" | jq -c '.pool')
 
 	save_pool "$new_pool"
 
@@ -1245,9 +1244,7 @@ cmd_status() {
 
 	for prov in "${providers_to_check[@]}"; do
 		local count
-		count=$(printf '%s' "$pool" | PROVIDER="$prov" python3 -c \
-			"import sys,json,os; print(len(json.load(sys.stdin).get(os.environ['PROVIDER'],[])))" \
-			2>/dev/null || echo "0")
+		count=$(printf '%s' "$pool" | count_provider_accounts "$prov")
 		[[ "$count" == "0" ]] && continue
 		found_any="true"
 
