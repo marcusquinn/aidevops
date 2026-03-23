@@ -910,6 +910,56 @@ try:
     next_account = candidates[0]
     next_email = next_account.get('email', 'unknown')
 
+    # Auto-refresh expired tokens before writing to auth.json
+    # If the selected account's access token is expired and it has a refresh
+    # token, exchange it for a new access token via the token endpoint.
+    next_expires = next_account.get('expires', 0)
+    next_refresh = next_account.get('refresh', '')
+    if next_expires and next_expires <= now_ms and next_refresh:
+        import urllib.request, urllib.error
+        token_urls = {
+            'anthropic': 'https://platform.claude.com/v1/oauth/token',
+            'openai': 'https://auth.openai.com/oauth/token',
+        }
+        client_ids = {
+            'anthropic': '9d1c250a-e61b-44d9-88ed-5944d1962f5e',
+            'openai': 'app_EMoamEEZ73f0CkXaXp7hrann',
+        }
+        token_url = token_urls.get(provider, '')
+        client_id = client_ids.get(provider, '')
+        if token_url and client_id:
+            refresh_body = json.dumps({
+                'grant_type': 'refresh_token',
+                'refresh_token': next_refresh,
+                'client_id': client_id,
+            }).encode('utf-8')
+            req = urllib.request.Request(
+                token_url,
+                data=refresh_body,
+                headers={
+                    'Content-Type': 'application/json',
+                    'User-Agent': os.environ.get('UA_HEADER', 'aidevops/1.0'),
+                },
+                method='POST',
+            )
+            try:
+                with urllib.request.urlopen(req, timeout=15) as resp:
+                    rdata = json.loads(resp.read().decode('utf-8'))
+                new_access = rdata.get('access_token', '')
+                new_refresh = rdata.get('refresh_token', next_refresh)
+                new_expires_in = int(rdata.get('expires_in', 3600))
+                new_expires_ms = now_ms + new_expires_in * 1000
+                if new_access:
+                    next_account['access'] = new_access
+                    next_account['refresh'] = new_refresh
+                    next_account['expires'] = new_expires_ms
+                    next_account['status'] = 'active'
+                    print('REFRESHED', file=sys.stderr)
+            except (urllib.error.URLError, urllib.error.HTTPError) as e:
+                # Refresh failed — write the expired token anyway; user will
+                # see the error and can re-auth manually
+                print(f'REFRESH_FAILED:{e}', file=sys.stderr)
+
     # Write the new account's tokens into auth.json (atomic: temp + os.replace)
     auth[provider] = {
         'type': current_auth.get('type', 'oauth'),
@@ -999,6 +1049,211 @@ print(next_email)
 		return 1
 		;;
 	esac
+}
+
+# ---------------------------------------------------------------------------
+# Refresh — exchange refresh tokens for new access tokens
+# ---------------------------------------------------------------------------
+
+cmd_refresh() {
+	local provider="${1:-anthropic}"
+	local target_email="${2:-all}"
+
+	case "$provider" in
+	anthropic | openai) ;;
+	cursor)
+		print_info "Cursor tokens are long-lived and don't use refresh flow"
+		return 0
+		;;
+	*)
+		print_error "Invalid provider: $provider (valid: anthropic, openai)"
+		return 1
+		;;
+	esac
+
+	local pool
+	pool=$(load_pool)
+
+	# Refresh expired accounts that have refresh tokens
+	local result
+	result=$(POOL_FILE_PATH="$POOL_FILE" AUTH_FILE_PATH="$OPENCODE_AUTH_FILE" \
+		PROVIDER="$provider" TARGET_EMAIL="$target_email" \
+		UA_HEADER="$USER_AGENT" python3 -c "
+import sys, json, os, fcntl, tempfile, urllib.request, urllib.error, time
+
+pool_path = os.environ['POOL_FILE_PATH']
+auth_path = os.environ['AUTH_FILE_PATH']
+provider = os.environ['PROVIDER']
+target_email = os.environ['TARGET_EMAIL']
+ua_header = os.environ.get('UA_HEADER', 'aidevops/1.0')
+
+token_urls = {
+    'anthropic': 'https://platform.claude.com/v1/oauth/token',
+    'openai': 'https://auth.openai.com/oauth/token',
+}
+client_ids = {
+    'anthropic': '9d1c250a-e61b-44d9-88ed-5944d1962f5e',
+    'openai': 'app_EMoamEEZ73f0CkXaXp7hrann',
+}
+
+token_url = token_urls.get(provider, '')
+client_id = client_ids.get(provider, '')
+if not token_url or not client_id:
+    print('ERROR:no_endpoint')
+    sys.exit(0)
+
+lock_path = pool_path + '.lock'
+lock_fd = open(lock_path, 'w')
+try:
+    fcntl.flock(lock_fd, fcntl.LOCK_EX)
+
+    with open(pool_path) as f:
+        pool = json.load(f)
+
+    accounts = pool.get(provider, [])
+    now_ms = int(time.time() * 1000)
+    refreshed = []
+    failed = []
+
+    for acct in accounts:
+        email = acct.get('email', 'unknown')
+        if target_email != 'all' and email != target_email:
+            continue
+
+        refresh_tok = acct.get('refresh', '')
+        expires = acct.get('expires', 0)
+
+        if not refresh_tok:
+            continue
+
+        # Only refresh if expired or expiring within 5 minutes
+        if expires and expires > now_ms + 300000:
+            continue
+
+        body = json.dumps({
+            'grant_type': 'refresh_token',
+            'refresh_token': refresh_tok,
+            'client_id': client_id,
+        }).encode('utf-8')
+
+        req = urllib.request.Request(
+            token_url,
+            data=body,
+            headers={
+                'Content-Type': 'application/json',
+                'User-Agent': ua_header,
+            },
+            method='POST',
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=15) as resp:
+                rdata = json.loads(resp.read().decode('utf-8'))
+            new_access = rdata.get('access_token', '')
+            new_refresh = rdata.get('refresh_token', refresh_tok)
+            new_expires_in = int(rdata.get('expires_in', 3600))
+            if new_access:
+                acct['access'] = new_access
+                acct['refresh'] = new_refresh
+                acct['expires'] = now_ms + new_expires_in * 1000
+                acct['status'] = 'active'
+                refreshed.append(email)
+            else:
+                failed.append(email)
+        except (urllib.error.URLError, urllib.error.HTTPError) as e:
+            failed.append(f'{email}({e})')
+
+    # Write updated pool
+    if refreshed:
+        pool_dir = os.path.dirname(pool_path)
+        fd, tmp = tempfile.mkstemp(dir=pool_dir, prefix='.pool-', suffix='.tmp')
+        try:
+            with os.fdopen(fd, 'w') as f:
+                json.dump(pool, f, indent=2)
+            os.chmod(tmp, 0o600)
+            os.replace(tmp, pool_path)
+        except BaseException:
+            try: os.unlink(tmp)
+            except OSError: pass
+            raise
+
+        # Also update auth.json if the currently-active account was refreshed
+        if os.path.exists(auth_path):
+            with open(auth_path) as f:
+                auth = json.load(f)
+            current_access = auth.get(provider, {}).get('access', '')
+            for acct in accounts:
+                if acct.get('email') in refreshed:
+                    # Check if this was the active account by old token match
+                    # (the old token is gone now, so match by email in refreshed list
+                    # and check if auth still has the expired token)
+                    auth_expires = auth.get(provider, {}).get('expires', 0)
+                    if auth_expires and auth_expires <= now_ms:
+                        auth[provider] = {
+                            'type': 'oauth',
+                            'refresh': acct.get('refresh', ''),
+                            'access': acct.get('access', ''),
+                            'expires': acct.get('expires', 0),
+                        }
+                        auth_dir = os.path.dirname(auth_path)
+                        fd2, tmp2 = tempfile.mkstemp(dir=auth_dir, prefix='.auth-', suffix='.tmp')
+                        try:
+                            with os.fdopen(fd2, 'w') as f:
+                                json.dump(auth, f, indent=2)
+                            os.chmod(tmp2, 0o600)
+                            os.replace(tmp2, auth_path)
+                        except BaseException:
+                            try: os.unlink(tmp2)
+                            except OSError: pass
+                        break
+
+finally:
+    fcntl.flock(lock_fd, fcntl.LOCK_UN)
+    lock_fd.close()
+
+for e in refreshed:
+    print(f'REFRESHED:{e}')
+for e in failed:
+    print(f'FAILED:{e}')
+if not refreshed and not failed:
+    print('NONE')
+" 2>/dev/null) || {
+		print_error "Refresh failed — python3 error"
+		return 1
+	}
+
+	# Parse results
+	local had_refresh=false
+	local had_failure=false
+	while IFS= read -r line; do
+		case "$line" in
+		REFRESHED:*)
+			had_refresh=true
+			local email="${line#REFRESHED:}"
+			print_success "Refreshed ${provider} token for ${email}"
+			;;
+		FAILED:*)
+			had_failure=true
+			local detail="${line#FAILED:}"
+			print_error "Failed to refresh: ${detail}"
+			;;
+		NONE)
+			print_info "No ${provider} accounts need refreshing"
+			;;
+		ERROR:no_endpoint)
+			print_error "No token endpoint for provider: ${provider}"
+			return 1
+			;;
+		esac
+	done <<<"$result"
+
+	if [[ "$had_refresh" == "true" ]]; then
+		print_info "Restart OpenCode sessions to pick up refreshed credentials."
+	fi
+	if [[ "$had_failure" == "true" ]]; then
+		print_warning "Some accounts failed to refresh — may need re-auth via: oauth-pool-helper.sh add ${provider}"
+	fi
+
+	return 0
 }
 
 # ---------------------------------------------------------------------------
@@ -1511,7 +1766,8 @@ Commands:
   check [anthropic|openai|cursor|all]      Health check: token expiry + live validity
   list [anthropic|openai|cursor|all]       List accounts with per-account status
   status [anthropic|openai|cursor|all]     Pool aggregate stats (counts, availability)
-  rotate [anthropic|openai|cursor]         Switch to next available account NOW (use when rate-limited)
+  refresh [anthropic|openai] [email|all]    Refresh expired tokens without re-auth (uses refresh_token)
+  rotate [anthropic|openai|cursor]         Switch to next available account NOW (auto-refreshes expired tokens)
   reset-cooldowns [provider|all]           Clear rate-limit cooldowns so all accounts retry
   assign-pending <provider> [email]        Assign a stranded pending token to an account
   remove <provider> <email>               Remove an account from the pool
@@ -1542,7 +1798,8 @@ Notes:
   - Pool file: ~/.aidevops/oauth-pool.json (600 permissions)
   - Auth file: ~/.local/share/opencode/auth.json (written by rotate)
   - After adding/rotating an account, restart OpenCode to use the new token
-  - Tokens refresh automatically; use 'add' with the same email to re-auth
+  - Expired tokens auto-refresh on rotate; use 'refresh' to refresh manually
+  - If refresh fails, re-auth with 'add' using the same email
   - The pool auto-rotates between accounts when one hits rate limits
   - Cursor reads credentials from your local Cursor IDE — log in there first
   - 'assign-pending' assigns tokens saved when email could not be identified during OAuth
@@ -1565,6 +1822,7 @@ main() {
 	check | test) cmd_check "$@" ;;
 	import) cmd_import "$@" ;;
 	list) cmd_list "$@" ;;
+	refresh) cmd_refresh "$@" ;;
 	rotate) cmd_rotate "$@" ;;
 	reset-cooldowns | reset_cooldowns | reset) cmd_reset_cooldowns "$@" ;;
 	remove) cmd_remove "$@" ;;
