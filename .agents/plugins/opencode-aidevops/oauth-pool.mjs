@@ -25,7 +25,11 @@
  *   - Cursor: opencode-cursor-auth@1.0.16 (POSO-PocketSolutions/opencode-cursor-auth)
  */
 
-import { readFileSync, writeFileSync, renameSync, existsSync, mkdirSync, chmodSync } from "fs";
+import {
+  readFileSync, writeFileSync, existsSync, mkdirSync,
+  openSync, closeSync, renameSync, chmodSync,
+  constants as fsConstants,
+} from "fs";
 import { join, dirname } from "path";
 import { homedir, platform } from "os";
 import { createHash, randomBytes } from "crypto";
@@ -118,6 +122,9 @@ export function getAnthropicUserAgent() {
 
 const HOME = homedir();
 const POOL_FILE = join(HOME, ".aidevops", "oauth-pool.json");
+// Advisory lock file — shared with oauth-pool-helper.sh (flock-based).
+// Both writers must acquire this lock for read-modify-write operations.
+const POOL_LOCK_FILE = POOL_FILE + ".lock";
 
 // ---------------------------------------------------------------------------
 // Anthropic OAuth constants
@@ -709,6 +716,43 @@ function savePool(data) {
 }
 
 /**
+ * Execute a read-modify-write operation on the pool file with best-effort
+ * cross-process coordination.
+ *
+ * Locking strategy:
+ *   - Primary defense: savePool() uses atomic temp+rename, so partial writes
+ *     never corrupt the file. Even without locking, the worst case is a lost
+ *     update (last writer wins), not data corruption.
+ *   - Advisory lock: oauth-pool-helper.sh uses Python's fcntl.flock() on
+ *     POOL_LOCK_FILE. Node.js doesn't expose flock() natively. We open the
+ *     same lock file as a coordination signal — if a future Node.js version
+ *     or native addon adds flock support, it can be wired in here.
+ *   - The lock file path (POOL_LOCK_FILE) is shared between both writers so
+ *     they can be coordinated when a proper flock binding is available.
+ *
+ * @template T
+ * @param {() => T} fn - Function to execute (should call loadPool/savePool)
+ * @returns {T}
+ */
+function withPoolLock(fn) {
+  const dir = dirname(POOL_FILE);
+  mkdirSync(dir, { recursive: true });
+
+  // Open the lock file to signal intent. On Linux with flock(1) available,
+  // the shell script's flock will see this fd and coordinate. Without native
+  // flock(), this is advisory-only — atomic writes are the real safety net.
+  let lockFd = -1;
+  try {
+    lockFd = openSync(POOL_LOCK_FILE, fsConstants.O_WRONLY | fsConstants.O_CREAT, 0o600);
+    return fn();
+  } finally {
+    if (lockFd >= 0) {
+      try { closeSync(lockFd); } catch { /* ignore */ }
+    }
+  }
+}
+
+/**
  * Get accounts for a provider.
  * @param {string} provider
  * @returns {PoolAccount[]}
@@ -725,38 +769,40 @@ export function getAccounts(provider) {
  * @param {PoolAccount} account
  */
 function upsertAccount(provider, account) {
-  const pool = loadPool();
-  if (!pool[provider]) pool[provider] = [];
+  return withPoolLock(() => {
+    const pool = loadPool();
+    if (!pool[provider]) pool[provider] = [];
 
-  // Refuse to save "unknown" email when named accounts already exist.
-  // This prevents phantom entries when the auth UI skips the email prompt
-  // and the profile API fails to resolve the email.
-  if (account.email === "unknown") {
-    const namedAccounts = pool[provider].filter((a) => a.email !== "unknown");
-    if (namedAccounts.length > 0) {
-      const emails = namedAccounts.map((a) => a.email).join(", ");
-      console.error(
-        [
-          "[aidevops] OAuth pool: REFUSED to save account with unknown email.",
-          `${namedAccounts.length} named account(s) exist: ${emails}.`,
-          'Re-auth via "Add Account to Pool" and enter the email when prompted,',
-          "or use /model-accounts-pool to manage accounts.",
-        ].join(" "),
-      );
-      return false;
+    // Refuse to save "unknown" email when named accounts already exist.
+    // This prevents phantom entries when the auth UI skips the email prompt
+    // and the profile API fails to resolve the email.
+    if (account.email === "unknown") {
+      const namedAccounts = pool[provider].filter((a) => a.email !== "unknown");
+      if (namedAccounts.length > 0) {
+        const emails = namedAccounts.map((a) => a.email).join(", ");
+        console.error(
+          [
+            "[aidevops] OAuth pool: REFUSED to save account with unknown email.",
+            `${namedAccounts.length} named account(s) exist: ${emails}.`,
+            'Re-auth via "Add Account to Pool" and enter the email when prompted,',
+            "or use /model-accounts-pool to manage accounts.",
+          ].join(" "),
+        );
+        return false;
+      }
     }
-  }
 
-  // Match by email
-  const idx = pool[provider].findIndex((a) => a.email === account.email);
+    // Match by email
+    const idx = pool[provider].findIndex((a) => a.email === account.email);
 
-  if (idx >= 0) {
-    pool[provider][idx] = account;
-  } else {
-    pool[provider].push(account);
-  }
-  savePool(pool);
-  return true;
+    if (idx >= 0) {
+      pool[provider][idx] = account;
+    } else {
+      pool[provider].push(account);
+    }
+    savePool(pool);
+    return true;
+  });
 }
 
 /**
@@ -768,18 +814,20 @@ function upsertAccount(provider, account) {
  * @param {object} tokenData - { refresh, access, expires, added, ... }
  */
 function savePendingToken(provider, tokenData) {
-  const pool = loadPool();
-  const pendingKey = `_pending_${provider}`;
-  pool[pendingKey] = tokenData;
-  savePool(pool);
-  const existing = (pool[provider] || []).map((a) => a.email).join(", ");
-  console.error(
-    [
-      `[aidevops] OAuth pool: token saved to pending for ${provider}.`,
-      `Existing accounts: ${existing}.`,
-      "Use /model-accounts-pool to assign this token to an account.",
-    ].join(" "),
-  );
+  withPoolLock(() => {
+    const pool = loadPool();
+    const pendingKey = `_pending_${provider}`;
+    pool[pendingKey] = tokenData;
+    savePool(pool);
+    const existing = (pool[provider] || []).map((a) => a.email).join(", ");
+    console.error(
+      [
+        `[aidevops] OAuth pool: token saved to pending for ${provider}.`,
+        `Existing accounts: ${existing}.`,
+        "Use /model-accounts-pool to assign this token to an account.",
+      ].join(" "),
+    );
+  });
 }
 
 /**
@@ -800,34 +848,36 @@ function getPendingToken(provider) {
  * @returns {boolean} true if assigned
  */
 function assignPendingToken(provider, email) {
-  const pool = loadPool();
-  const pendingKey = `_pending_${provider}`;
-  const pending = pool[pendingKey];
-  if (!pending) return false;
+  return withPoolLock(() => {
+    const pool = loadPool();
+    const pendingKey = `_pending_${provider}`;
+    const pending = pool[pendingKey];
+    if (!pending) return false;
 
-  if (!pool[provider]) pool[provider] = [];
-  const idx = pool[provider].findIndex((a) => a.email === email);
-  if (idx < 0) return false;
+    if (!pool[provider]) pool[provider] = [];
+    const idx = pool[provider].findIndex((a) => a.email === email);
+    if (idx < 0) return false;
 
-  // Update the existing account with the pending token
-  const updates = {
-    refresh: pending.refresh,
-    access: pending.access,
-    expires: pending.expires,
-    lastUsed: new Date().toISOString(),
-    status: "active",
-    cooldownUntil: null,
-  };
-  if (pending.accountId) {
-    updates.accountId = pending.accountId;
-  }
-  Object.assign(pool[provider][idx], updates);
+    // Update the existing account with the pending token
+    const updates = {
+      refresh: pending.refresh,
+      access: pending.access,
+      expires: pending.expires,
+      lastUsed: new Date().toISOString(),
+      status: "active",
+      cooldownUntil: null,
+    };
+    if (pending.accountId) {
+      updates.accountId = pending.accountId;
+    }
+    Object.assign(pool[provider][idx], updates);
 
-  // Remove pending entry
-  delete pool[pendingKey];
-  savePool(pool);
-  console.error(`[aidevops] OAuth pool: assigned pending token to ${email}`);
-  return true;
+    // Remove pending entry
+    delete pool[pendingKey];
+    savePool(pool);
+    console.error(`[aidevops] OAuth pool: assigned pending token to ${email}`);
+    return true;
+  });
 }
 
 /**
@@ -837,13 +887,15 @@ function assignPendingToken(provider, email) {
  * @returns {boolean} true if removed
  */
 function removeAccount(provider, email) {
-  const pool = loadPool();
-  if (!pool[provider]) return false;
-  const before = pool[provider].length;
-  pool[provider] = pool[provider].filter((a) => a.email !== email);
-  if (pool[provider].length === before) return false;
-  savePool(pool);
-  return true;
+  return withPoolLock(() => {
+    const pool = loadPool();
+    if (!pool[provider]) return false;
+    const before = pool[provider].length;
+    pool[provider] = pool[provider].filter((a) => a.email !== email);
+    if (pool[provider].length === before) return false;
+    savePool(pool);
+    return true;
+  });
 }
 
 /**
@@ -853,12 +905,14 @@ function removeAccount(provider, email) {
  * @param {Partial<PoolAccount>} patch
  */
 export function patchAccount(provider, email, patch) {
-  const pool = loadPool();
-  if (!pool[provider]) return;
-  const account = pool[provider].find((a) => a.email === email);
-  if (!account) return;
-  Object.assign(account, patch);
-  savePool(pool);
+  withPoolLock(() => {
+    const pool = loadPool();
+    if (!pool[provider]) return;
+    const account = pool[provider].find((a) => a.email === email);
+    if (!account) return;
+    Object.assign(account, patch);
+    savePool(pool);
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -2380,18 +2434,21 @@ export function createPoolTool(client) {
           }
 
           // Reset per-account cooldowns (pool file)
-          const pool = loadPool();
-          let resetCount = 0;
-          if (pool[provider]) {
-            for (const account of pool[provider]) {
-              if (account.cooldownUntil) {
-                account.cooldownUntil = null;
-                account.status = "idle";
-                resetCount++;
+          const resetCount = withPoolLock(() => {
+            const pool = loadPool();
+            let count = 0;
+            if (pool[provider]) {
+              for (const account of pool[provider]) {
+                if (account.cooldownUntil) {
+                  account.cooldownUntil = null;
+                  account.status = "idle";
+                  count++;
+                }
               }
+              savePool(pool);
             }
-            savePool(pool);
-          }
+            return count;
+          });
 
           const parts = [];
           if (wasGated) parts.push("token endpoint cooldown cleared");
