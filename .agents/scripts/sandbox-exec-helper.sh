@@ -570,7 +570,9 @@ sandbox_run() {
 	# child — grandchildren survive and keep the bash wrapper alive indefinitely.
 	# Fix: run the command in a new process group via `setsid` (Linux/macOS),
 	# then kill the entire group (kill -- -PGID) on timeout or exit.
-	# The trap fires on any exit path: normal completion, timeout, or signal.
+	# _pgkill_cleanup is called explicitly on all exit paths (timeout, normal,
+	# signal) — the EXIT trap is cleared before return, so explicit calls are
+	# required. The trap is a safety net for unexpected exits only.
 	# _sandbox_exec_with_pgkill t_secs stdout_file stderr_file cmd [args...]
 	# Runs cmd in a new process group (via setsid) and kills the entire group
 	# when the timeout expires or the function exits. This ensures that worker
@@ -600,6 +602,12 @@ sandbox_run() {
 				sleep 0.5
 				kill -0 -- "-${child_pgid}" 2>/dev/null &&
 					kill -9 -- "-${child_pgid}" 2>/dev/null || true
+			elif [[ -n "$child_pid" ]]; then
+				# Fallback: setsid unavailable — kill direct child process only
+				kill "$child_pid" 2>/dev/null || true
+				sleep 0.5
+				kill -0 "$child_pid" 2>/dev/null &&
+					kill -9 "$child_pid" 2>/dev/null || true
 			fi
 			return 0
 		}
@@ -610,20 +618,27 @@ sandbox_run() {
 		# its descendants share a PGID distinct from the wrapper's PGID.
 		# stdout/stderr are redirected here so the redirection applies to the
 		# backgrounded child process, not to the polling loop below.
-		# Fallback: if setsid is unavailable, run directly (best-effort).
+		# Fallback: if setsid is unavailable, run directly and clear child_pgid
+		# so _pgkill_cleanup falls back to killing child_pid directly.
 		if command -v setsid &>/dev/null; then
 			setsid "$@" >"$t_stdout_file" 2>"$t_stderr_file" &
+			child_pid=$!
+			# Retrieve the process group ID of the child.
+			# On Linux: ps -o pgid= returns the PGID. On macOS: same flag works.
+			# If ps fails (race: child already exited), clear pgid to fall back
+			# to killing child_pid directly in _pgkill_cleanup.
+			child_pgid="$(ps -o pgid= -p "$child_pid" 2>/dev/null | tr -d ' ')" || true
+			if [[ -z "$child_pgid" ]] || [[ "$child_pgid" == "0" ]]; then
+				child_pgid=""
+			fi
 		else
 			"$@" >"$t_stdout_file" 2>"$t_stderr_file" &
-		fi
-		child_pid=$!
-		# Retrieve the process group ID of the child.
-		# On Linux: ps -o pgid= returns the PGID. On macOS: same flag works.
-		# If ps fails (race: child already exited), default to child_pid so
-		# the kill below targets at least the direct child.
-		child_pgid="$(ps -o pgid= -p "$child_pid" 2>/dev/null | tr -d ' ')" || true
-		if [[ -z "$child_pgid" ]] || [[ "$child_pgid" == "0" ]]; then
-			child_pgid="$child_pid"
+			child_pid=$!
+			# setsid not available — child shares the script's process group.
+			# Do NOT read the PGID here: ps would return the script's own PGID,
+			# causing _pgkill_cleanup to kill the wrapper itself.
+			# Leave child_pgid empty so _pgkill_cleanup kills child_pid directly.
+			child_pgid=""
 		fi
 
 		# Poll until the child exits or the deadline is reached.
@@ -643,6 +658,10 @@ sandbox_run() {
 
 		wait "$child_pid" 2>/dev/null
 		t_exit_code=$?
+		# Explicitly clean up any remaining descendants in the process group.
+		# The EXIT trap is cleared below, so cleanup must be called explicitly
+		# here — the trap does not fire on a normal function return.
+		_pgkill_cleanup
 		trap - EXIT
 		return "$t_exit_code"
 	}
