@@ -808,97 +808,112 @@ cmd_rotate() {
 	local result
 	result=$(POOL_FILE_PATH="$POOL_FILE" AUTH_FILE_PATH="$OPENCODE_AUTH_FILE" \
 		PROVIDER="$provider" python3 -c "
-import sys, json, os
+import sys, json, os, fcntl
 from datetime import datetime, timezone
 
 pool_path = os.environ['POOL_FILE_PATH']
 auth_path = os.environ['AUTH_FILE_PATH']
 provider = os.environ['PROVIDER']
 
-# Load pool
-with open(pool_path) as f:
-    pool = json.load(f)
+# Advisory lock on pool file to serialize concurrent rotations.
+# Covers the full read-modify-write cycle for both pool and auth files.
+lock_path = pool_path + '.lock'
+lock_fd = open(lock_path, 'w')
+try:
+    fcntl.flock(lock_fd, fcntl.LOCK_EX)
 
-accounts = pool.get(provider, [])
-if len(accounts) < 2:
-    print('ERROR:need_accounts')
-    sys.exit(0)
+    # Load pool
+    with open(pool_path) as f:
+        pool = json.load(f)
 
-# Load auth.json
-with open(auth_path) as f:
-    auth = json.load(f)
+    accounts = pool.get(provider, [])
+    if len(accounts) < 2:
+        print('ERROR:need_accounts')
+        sys.exit(0)
 
-# Get current access token from auth.json for this provider
-current_auth = auth.get(provider, {})
-current_access = current_auth.get('access', '')
+    # Load auth.json
+    with open(auth_path) as f:
+        auth = json.load(f)
 
-# Find which pool account is currently active by matching access token
-current_email = None
-for a in accounts:
-    if a.get('access', '') == current_access and current_access:
-        current_email = a.get('email', 'unknown')
-        break
+    # Get current access token from auth.json for this provider
+    current_auth = auth.get(provider, {})
+    current_access = current_auth.get('access', '')
 
-# If no match by access token, fall back to most-recently-used
-if current_email is None:
-    sorted_by_used = sorted(accounts, key=lambda a: a.get('lastUsed', ''), reverse=True)
-    current_email = sorted_by_used[0].get('email', 'unknown')
+    # Find which pool account is currently active by matching access token
+    current_email = None
+    for a in accounts:
+        if a.get('access', '') == current_access and current_access:
+            current_email = a.get('email', 'unknown')
+            break
 
-# Pick the next account: first available account that is NOT the current one
-# Prefer active/idle accounts, skip rate-limited or auth-error
-import time
-now_ms = int(time.time() * 1000)
-candidates = [
-    a for a in accounts
-    if a.get('email') != current_email
-    and a.get('status', 'active') in ('active', 'idle')
-    and (not a.get('cooldownUntil') or a['cooldownUntil'] <= now_ms)
-]
+    # If no match by access token, fall back to most-recently-used
+    if current_email is None:
+        sorted_by_used = sorted(accounts, key=lambda a: a.get('lastUsed', ''), reverse=True)
+        current_email = sorted_by_used[0].get('email', 'unknown')
 
-# If no active candidates, try any non-current account
-if not candidates:
-    candidates = [a for a in accounts if a.get('email') != current_email]
+    # Pick the next account: first available account that is NOT the current one
+    # Prefer active/idle accounts, skip rate-limited or auth-error
+    import time
+    now_ms = int(time.time() * 1000)
+    candidates = [
+        a for a in accounts
+        if a.get('email') != current_email
+        and a.get('status', 'active') in ('active', 'idle')
+        and (not a.get('cooldownUntil') or a['cooldownUntil'] <= now_ms)
+    ]
 
-if not candidates:
-    print('ERROR:no_alternate')
-    sys.exit(0)
+    # If no active candidates, try any non-current account
+    if not candidates:
+        candidates = [a for a in accounts if a.get('email') != current_email]
 
-# Sort by least-recently-used
-candidates.sort(key=lambda a: a.get('lastUsed', ''))
-next_account = candidates[0]
-next_email = next_account.get('email', 'unknown')
+    if not candidates:
+        print('ERROR:no_alternate')
+        sys.exit(0)
 
-# Write the new account's tokens into auth.json
-auth[provider] = {
-    'type': current_auth.get('type', 'oauth'),
-    'refresh': next_account.get('refresh', ''),
-    'access': next_account.get('access', ''),
-    'expires': next_account.get('expires', 0),
-}
+    # Sort by least-recently-used
+    candidates.sort(key=lambda a: a.get('lastUsed', ''))
+    next_account = candidates[0]
+    next_email = next_account.get('email', 'unknown')
 
-with open(auth_path, 'w') as f:
-    json.dump(auth, f, indent=2)
-os.chmod(auth_path, 0o600)
+    # Write the new account's tokens into auth.json
+    auth[provider] = {
+        'type': current_auth.get('type', 'oauth'),
+        'refresh': next_account.get('refresh', ''),
+        'access': next_account.get('access', ''),
+        'expires': next_account.get('expires', 0),
+    }
 
-# Update lastUsed in pool file for the new account
-now_iso = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
-for a in pool[provider]:
-    if a.get('email') == next_email:
-        a['lastUsed'] = now_iso
-        break
+    with open(auth_path, 'w') as f:
+        json.dump(auth, f, indent=2)
+    os.chmod(auth_path, 0o600)
 
-with open(pool_path, 'w') as f:
-    json.dump(pool, f, indent=2)
-os.chmod(pool_path, 0o600)
+    # Update lastUsed in pool file for the new account
+    now_iso = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
+    for a in pool[provider]:
+        if a.get('email') == next_email:
+            a['lastUsed'] = now_iso
+            break
 
-print(f'OK:{current_email}:{next_email}')
+    with open(pool_path, 'w') as f:
+        json.dump(pool, f, indent=2)
+    os.chmod(pool_path, 0o600)
+
+finally:
+    fcntl.flock(lock_fd, fcntl.LOCK_UN)
+    lock_fd.close()
+
+print('OK')
+print(current_email)
+print(next_email)
 " 2>/dev/null) || {
 		print_error "Rotation failed — python3 error"
 		return 1
 	}
 
-	# Parse result
-	case "$result" in
+	# Parse result — one field per line to avoid delimiter issues in emails
+	local first_line
+	first_line=$(printf '%s\n' "$result" | sed -n '1p')
+	case "$first_line" in
 	ERROR:need_accounts)
 		print_error "Cannot rotate: need at least 2 accounts in ${provider} pool"
 		return 1
@@ -907,10 +922,10 @@ print(f'OK:{current_email}:{next_email}')
 		print_error "No alternate account available for ${provider} (all others may be in cooldown)"
 		return 1
 		;;
-	OK:*:*)
+	OK)
 		local prev_email next_email
-		prev_email=$(printf '%s' "$result" | cut -d: -f2)
-		next_email=$(printf '%s' "$result" | cut -d: -f3)
+		prev_email=$(printf '%s\n' "$result" | sed -n '2p')
+		next_email=$(printf '%s\n' "$result" | sed -n '3p')
 		print_success "Rotated ${provider}: ${prev_email} -> ${next_email}"
 		print_info "Restart OpenCode sessions to pick up the new credentials."
 		return 0
