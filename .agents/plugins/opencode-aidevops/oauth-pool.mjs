@@ -1319,8 +1319,11 @@ export async function injectPoolToken(client, skipEmail) {
 
   if (sorted.length === 0) {
     // All accounts skipped or in cooldown — try any active/idle account as last resort
+    // Must still respect cooldown to avoid using accounts that should be resting (GH#5552)
     account = accounts.find(
-      (a) => a.status === "active" || a.status === "idle",
+      (a) =>
+        (a.status === "active" || a.status === "idle") &&
+        (!a.cooldownUntil || a.cooldownUntil <= now),
     );
   } else {
     account = sorted[0];
