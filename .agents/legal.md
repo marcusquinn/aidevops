@@ -28,7 +28,7 @@ You are NOT a DevOps or software engineering assistant in this role. You are a l
 ## Quick Reference
 
 - **Purpose**: Legal compliance, case management, and litigation support
-- **Status**: Active - core workflows defined
+- **Status**: Active - workflows defined, architecture specified for future implementation
 
 **Typical Tasks**:
 - Contract review assistance
@@ -88,12 +88,12 @@ Checklists for:
 - **Timeline reconstruction**: Build chronological event timelines from case documents, identifying gaps, inconsistencies, and sequences that support or undermine claims.
 - **Evidence mapping**: Track which evidence supports which claims, identify unsupported assertions, and flag areas needing additional discovery.
 
-**Architecture requirements:**
+**Architecture requirements (design targets for implementation):**
 
 - Per-case document store with citation-level chunking (page, paragraph, line numbers preserved in metadata)
 - Document types: pleadings, motions, depositions, interrogatories, exhibits, correspondence, court orders
 - Full-text search across the entire case history with source attribution
-- Citation fidelity is a hard requirement — hallucinated page numbers in legal work are malpractice-grade failures. Every citation must be verifiable against the source document.
+- Citation fidelity is a hard requirement — hallucinated page numbers in legal work are malpractice-grade failures. Every citation must be verifiable against the source document. Until automated verification is implemented, all AI-generated citations must be manually verified before use.
 
 ### Opposing Counsel Profiling
 
