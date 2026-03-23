@@ -1753,6 +1753,86 @@ PR_PLIST
 		fi
 	fi
 
+	# OAuth token refresh scheduled job.
+	# Refreshes expired/expiring tokens every 30 min so sessions never hit
+	# "invalid x-api-key". Also runs at load to catch tokens that expired
+	# while the machine was off.
+	local tr_script="$HOME/.aidevops/agents/scripts/oauth-pool-helper.sh"
+	local tr_label="sh.aidevops.token-refresh"
+	if [[ -x "$tr_script" ]] && [[ -f "$HOME/.aidevops/oauth-pool.json" ]]; then
+		mkdir -p "$HOME/.aidevops/.agent-workspace/logs"
+
+		if [[ "$(uname -s)" == "Darwin" ]]; then
+			local tr_plist="$HOME/Library/LaunchAgents/${tr_label}.plist"
+
+			local _xml_tr_script _xml_tr_home
+			_xml_tr_script=$(_xml_escape "$tr_script")
+			_xml_tr_home=$(_xml_escape "$HOME")
+
+			local tr_plist_content
+			tr_plist_content=$(
+				cat <<TR_PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>Label</key>
+	<string>${tr_label}</string>
+	<key>ProgramArguments</key>
+	<array>
+		<string>/bin/bash</string>
+		<string>-c</string>
+		<string>${_xml_tr_script} refresh anthropic; ${_xml_tr_script} refresh openai</string>
+	</array>
+	<key>StartInterval</key>
+	<integer>1800</integer>
+	<key>StandardOutPath</key>
+	<string>${_xml_tr_home}/.aidevops/.agent-workspace/logs/token-refresh.log</string>
+	<key>StandardErrorPath</key>
+	<string>${_xml_tr_home}/.aidevops/.agent-workspace/logs/token-refresh.log</string>
+	<key>EnvironmentVariables</key>
+	<dict>
+		<key>PATH</key>
+		<string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
+		<key>HOME</key>
+		<string>${_xml_tr_home}</string>
+	</dict>
+	<key>RunAtLoad</key>
+	<true/>
+	<key>KeepAlive</key>
+	<false/>
+	<key>ProcessType</key>
+	<string>Background</string>
+	<key>LowPriorityBackgroundIO</key>
+	<true/>
+	<key>Nice</key>
+	<integer>10</integer>
+</dict>
+</plist>
+TR_PLIST
+			)
+
+			if _launchd_install_if_changed "$tr_label" "$tr_plist" "$tr_plist_content"; then
+				print_info "OAuth token refresh enabled (launchd, every 30 min)"
+			else
+				print_warning "Failed to load token refresh LaunchAgent"
+			fi
+		else
+			# Linux: cron entry (every 30 min)
+			local _cron_tr_script
+			_cron_tr_script=$(_cron_escape "$tr_script")
+			(
+				crontab -l 2>/dev/null | grep -v 'aidevops: token-refresh'
+				echo "*/30 * * * * /bin/bash ${_cron_tr_script} refresh anthropic >> \"\$HOME/.aidevops/.agent-workspace/logs/token-refresh.log\" 2>&1; /bin/bash ${_cron_tr_script} refresh openai >> \"\$HOME/.aidevops/.agent-workspace/logs/token-refresh.log\" 2>&1 # aidevops: token-refresh"
+			) | crontab - 2>/dev/null || true
+			if crontab -l 2>/dev/null | grep -qF "aidevops: token-refresh" 2>/dev/null; then
+				print_info "OAuth token refresh enabled (cron, every 30 min)"
+			else
+				print_warning "Failed to install token refresh cron entry"
+			fi
+		fi
+	fi
+
 	echo ""
 	echo "CLI Command:"
 	echo "  aidevops init         - Initialize aidevops in a project"

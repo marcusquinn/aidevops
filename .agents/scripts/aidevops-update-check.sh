@@ -304,6 +304,18 @@ main() {
 		[[ -n "$contribution_watch" ]] && echo "$contribution_watch"
 	} >"$cache_dir/session-greeting.txt"
 
+	# Pre-emptive token refresh on session startup (background, non-blocking).
+	# Refreshes any OAuth tokens expiring within 1 hour — catches tokens that
+	# expired while the machine was off. Runs silently; failures are harmless.
+	local agents_dir="${AIDEVOPS_DIR:-$HOME/.aidevops}/agents"
+	local oauth_helper="$agents_dir/scripts/oauth-pool-helper.sh"
+	if [[ -f "$oauth_helper" && -f "$HOME/.aidevops/oauth-pool.json" ]]; then
+		(
+			bash "$oauth_helper" refresh anthropic >/dev/null 2>&1
+			bash "$oauth_helper" refresh openai >/dev/null 2>&1
+		) &
+	fi
+
 	return 0
 }
 

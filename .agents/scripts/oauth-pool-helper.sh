@@ -1126,8 +1126,8 @@ try:
         if not refresh_tok:
             continue
 
-        # Only refresh if expired or expiring within 5 minutes
-        if expires and expires > now_ms + 300000:
+        # Only refresh if expired or expiring within 1 hour (3600000ms)
+        if expires and expires > now_ms + 3600000:
             continue
 
         body = json.dumps({
