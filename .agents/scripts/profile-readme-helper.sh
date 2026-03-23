@@ -1098,7 +1098,7 @@ _generate_contributions() {
 		while IFS=$'\t' read -r rname rdesc rurl; do
 			[[ -z "$rname" ]] && continue
 			# Deduplicate within forks (xargs -P can return duplicates)
-			if [[ -n "$seen_repos" ]] && printf '%s\n' "$seen_repos" | grep -qxF "$rname" 2>/dev/null; then
+			if [[ -n "$seen_repos" ]] && grep -qxF "$rname" <<<"$seen_repos" 2>/dev/null; then
 				continue
 			fi
 			rname=$(_sanitize_md "$rname")
@@ -1125,7 +1125,7 @@ _generate_contributions() {
 			local repo_name
 			repo_name="${slug##*/}"
 			# Deduplicate against all previously seen repos (forks + earlier entries)
-			if [[ -n "$seen_repos" ]] && printf '%s\n' "$seen_repos" | grep -qxF "$repo_name" 2>/dev/null; then
+			if [[ -n "$seen_repos" ]] && grep -qxF "$repo_name" <<<"$seen_repos" 2>/dev/null; then
 				continue
 			fi
 			# Fetch description from GitHub API (1 call per contributed repo)
