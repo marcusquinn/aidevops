@@ -235,9 +235,11 @@ cmd_add() {
 		content_type="application/json"
 		ua_header="$USER_AGENT"
 		# Build JSON via Python to safely encode the auth code (may contain
-		# characters that break printf-based JSON construction)
+		# characters that break printf-based JSON construction).
+		# The 'state' field is required by Anthropic's token endpoint as of
+		# Claude CLI v2.1.x — omitting it causes HTTP 400 "Invalid request format".
 		token_body=$(CODE="$code" CLIENT_ID="$client_id" REDIR="$redirect_uri" \
-			VERIFIER="$verifier" python3 -c "
+			VERIFIER="$verifier" STATE="$state_nonce" python3 -c "
 import json, os
 print(json.dumps({
     'code': os.environ['CODE'],
@@ -245,6 +247,7 @@ print(json.dumps({
     'client_id': os.environ['CLIENT_ID'],
     'redirect_uri': os.environ['REDIR'],
     'code_verifier': os.environ['VERIFIER'],
+    'state': os.environ['STATE'],
 }))")
 	else
 		token_endpoint="$OPENAI_TOKEN_ENDPOINT"
@@ -276,9 +279,20 @@ print(json.dumps({
 
 	if [[ "$http_status" != "200" ]]; then
 		print_error "Token exchange failed: HTTP ${http_status}"
-		# Show error message but NOT any token values
+		# Show error details but NOT any token values
+		# Anthropic returns {type, message}, OpenAI returns {error, error_description}
 		local error_msg
-		error_msg=$(printf '%s' "$body" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('error','unknown'))" 2>/dev/null || echo "unknown")
+		error_msg=$(printf '%s' "$body" | python3 -c "
+import sys, json
+try:
+    d = json.load(sys.stdin)
+    parts = []
+    for k in ('type', 'error', 'message', 'error_description'):
+        if k in d and d[k]:
+            parts.append(str(d[k]))
+    print(': '.join(parts) if parts else 'unknown')
+except: print('unknown')
+" 2>/dev/null || echo "unknown")
 		print_error "Error: ${error_msg}"
 		return 1
 	fi
