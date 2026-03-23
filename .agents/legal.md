@@ -85,6 +85,7 @@ Checklists for:
 **Core capabilities:**
 
 - **Contradiction detection**: Cross-reference new testimony (depositions, affidavits, interrogatory responses) against all prior statements in the case. Flag every contradiction with exact page/line citations. What takes a paralegal team days should take seconds.
+- **Testimony shift tracking**: Beyond direct contradictions, flag subtle changes in phrasing or certainty over time (e.g., "I don't recall" shifting to "I'm not sure", or qualifiers appearing where previously absent). These narrative evolution patterns are not contradictions per se, but they signal areas a litigator should probe.
 - **Timeline reconstruction**: Build chronological event timelines from case documents, identifying gaps, inconsistencies, and sequences that support or undermine claims.
 - **Evidence mapping**: Track which evidence supports which claims, identify unsupported assertions, and flag areas needing additional discovery.
 
@@ -105,6 +106,7 @@ Maintain separate analysis notebooks for opposing counsel. Upload their past fil
 - **Weakness mapping**: Where have those arguments failed in court before? What judges rejected them and why?
 - **Style and strategy**: Do they bluff on motions to compel? Do they settle early or push to trial? How do they handle depositions?
 - **Citation habits**: What authorities do they rely on? Are any outdated, overruled, or distinguishable?
+- **Expert witness patterns**: What types of expert witnesses does this attorney typically retain? Are there recurring experts across cases? How have those experts' testimonies been challenged or excluded (e.g., via *Daubert* or *Frye* challenges)? Knowing their expert bench enables pre-prepared cross-examination strategies.
 
 **Objective**: Walk into every hearing already knowing how the other side thinks. Preparation advantage compounds — knowing their playbook means preparing counter-arguments before they file.
 
@@ -117,6 +119,7 @@ Draft and review legal communications with appropriate tone, precision, and stra
 - **Client communications**: Plain-language case updates that accurately convey legal status without creating discoverable admissions
 - **Court filings**: Proper formatting, citation style, and procedural compliance for the relevant jurisdiction
 - **Discovery requests/responses**: Precisely scoped interrogatories, document requests, and responses that protect privilege while meeting disclosure obligations
+- **Privilege notices**: Include appropriate privilege headers on communications where applicable (e.g., `ATTORNEY-CLIENT PRIVILEGED COMMUNICATION`, `WORK PRODUCT DOCTRINE`). Client communications and internal strategy memos should carry these notices to reinforce their non-discoverable status. The agent should prompt for or auto-suggest the correct privilege designation based on the communication type and recipients.
 
 ### Important Notice
 
