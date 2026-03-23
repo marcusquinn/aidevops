@@ -560,26 +560,108 @@ sandbox_run() {
 		command_tainted=true
 	fi
 
-	# Execute with timeout and clean environment.
+	# Execute with process-group-aware timeout and clean environment.
+	#
+	# Root cause of GH#5530: timeout_sec (and the underlying `timeout` command)
+	# only kills its direct child process. When the sandbox wrapper is a bash
+	# script, the process tree is:
+	#
+	#   bash sandbox-exec-helper.sh  (PID A — the wrapper)
+	#     └── timeout 3600           (PID B — direct child of wrapper)
+	#           └── opencode run     (PID C — direct child of timeout)
+	#
+	# When the deadline expires, `timeout` kills PID C. PID A (the bash wrapper)
+	# survives because it is the *parent* of `timeout`, not a child. Workers ran
+	# 7-9h past the 1h deadline because the wrapper kept the session alive.
+	#
+	# Fix: run the command in a new process group (setsid on Linux, or bash
+	# job-control via set -m on macOS). A background watchdog kills the entire
+	# process group (kill -- -PGID) after the deadline, which terminates the
+	# wrapper, the timeout child, and all grandchildren in one shot.
+	#
 	# cmd_args is expanded as an array — each element is a separate argument,
 	# preserving spaces and avoiding any additional shell interpretation.
+
+	# _sandbox_run_with_pgkill: run command in a new process group and kill the
+	# entire group on timeout. Returns 124 on timeout, command exit code otherwise.
+	# Arguments: $1=timeout_secs, $2=stdout_file, $3=stderr_file, $4+=command
+	_sandbox_run_with_pgkill() {
+		local _timeout_secs="$1"
+		local _stdout_file="$2"
+		local _stderr_file="$3"
+		shift 3
+
+		local _cmd_pid _watchdog_pid _cmd_exit _pgid
+
+		# Start command in a new process group.
+		# setsid (Linux) creates a new session (and thus new process group).
+		# On macOS without setsid, set -m enables job control which puts each
+		# background job in its own process group.
+		if command -v setsid &>/dev/null; then
+			setsid "$@" >"$_stdout_file" 2>"$_stderr_file" &
+			_cmd_pid=$!
+		else
+			# macOS: enable job control so the background job gets its own PGID
+			set -m
+			"$@" >"$_stdout_file" 2>"$_stderr_file" &
+			_cmd_pid=$!
+			set +m
+		fi
+
+		# The process group ID equals the PID of the process group leader.
+		# For setsid, the child becomes the group leader (PGID == child PID).
+		# For set -m, bash assigns the background job its own PGID == child PID.
+		_pgid="$_cmd_pid"
+
+		# Background watchdog: sleep for the deadline, then kill the process group.
+		# Uses kill -- -PGID to send SIGTERM to every process in the group, then
+		# SIGKILL after a 10s grace period for processes that ignore SIGTERM.
+		(
+			sleep "$_timeout_secs"
+			# Only act if the process group still exists
+			if kill -0 -- "-${_pgid}" 2>/dev/null; then
+				kill -TERM -- "-${_pgid}" 2>/dev/null || true
+				sleep 10
+				kill -KILL -- "-${_pgid}" 2>/dev/null || true
+			fi
+		) &
+		_watchdog_pid=$!
+
+		# Wait for the command to finish (naturally or killed by watchdog)
+		_cmd_exit=0
+		wait "$_cmd_pid" 2>/dev/null || _cmd_exit=$?
+
+		# Cancel the watchdog — it is no longer needed
+		kill "$_watchdog_pid" 2>/dev/null || true
+		wait "$_watchdog_pid" 2>/dev/null || true
+
+		# Normalise: SIGTERM exit (143) and SIGKILL exit (137) after a timeout
+		# are reported as 124 to match GNU coreutils `timeout` convention.
+		# We distinguish timeout-kill from external kill by checking whether the
+		# deadline elapsed (duration >= timeout_secs).
+		local _elapsed
+		_elapsed=$(($(date +%s) - start_time))
+		if [[ $_cmd_exit -eq 143 || $_cmd_exit -eq 137 ]] && ((_elapsed >= _timeout_secs)); then
+			return 124
+		fi
+		return "$_cmd_exit"
+	}
+
 	if [[ "$block_network" == true ]] && command -v sandbox-exec &>/dev/null; then
 		# macOS seatbelt: deny network access.
 		# sandbox-exec accepts program + args directly (no shell wrapper needed).
 		local seatbelt_profile="(version 1)(allow default)(deny network*)"
-		timeout_sec "$timeout_secs" \
+		_sandbox_run_with_pgkill "$timeout_secs" "$stdout_file" "$stderr_file" \
 			sandbox-exec -p "$seatbelt_profile" \
 			"${env_args[@]}" \
-			"${cmd_args[@]}" \
-			>"$stdout_file" 2>"$stderr_file" || exit_code=$?
+			"${cmd_args[@]}" || exit_code=$?
 	else
 		if [[ "$block_network" == true ]]; then
 			log_sandbox "WARN" "Network blocking requested but sandbox-exec not available (non-macOS); proceeding without"
 		fi
-		timeout_sec "$timeout_secs" \
+		_sandbox_run_with_pgkill "$timeout_secs" "$stdout_file" "$stderr_file" \
 			"${env_args[@]}" \
-			"${cmd_args[@]}" \
-			>"$stdout_file" 2>"$stderr_file" || exit_code=$?
+			"${cmd_args[@]}" || exit_code=$?
 	fi
 
 	local end_time
@@ -588,7 +670,7 @@ sandbox_run() {
 
 	# Handle timeout (exit code 124 from timeout command)
 	if [[ $exit_code -eq 124 ]]; then
-		log_sandbox "WARN" "Command timed out after ${timeout_secs}s"
+		log_sandbox "WARN" "Command timed out after ${timeout_secs}s — process group killed"
 	fi
 
 	# Output results with redaction and taint-aware handling
