@@ -832,15 +832,19 @@ cmd_check_approvals() {
 			fi
 		fi
 
-		# Check for user comments on this notification issue
+		# Check for comments from ANY non-bot user on this notification issue.
+		# The safety net should NOT auto-decline if any human has commented —
+		# not just the repo owner ($username). A comment from any non-bot user
+		# indicates human engagement that should block auto-decline.
+		# (GH#5559: was incorrectly filtering to only $username's comments)
 		local sa_comments
 		sa_comments=$(gh api --paginate "repos/${slug}/issues/${sa_issue_number}/comments?per_page=100" \
-			--jq "[.[] | select(.user.login == \"${username}\") | select(.user.login | test(\"\\\\[bot\\\\]\$\"; \"i\") | not)]" \
+			--jq '[.[] | select(.user.login | test("\\[bot\\]$"; "i") | not)]' \
 			2>/dev/null) || sa_comments="[]"
 		local sa_user_comment_count
 		sa_user_comment_count=$(echo "$sa_comments" | jq 'length' 2>/dev/null) || sa_user_comment_count=0
 
-		# Only auto-decline if no user comment exists
+		# Only auto-decline if no non-bot user comment exists
 		if [[ "$sa_user_comment_count" -gt 0 ]]; then
 			continue
 		fi
