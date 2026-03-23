@@ -9,12 +9,17 @@
  *   - User-Agent matching current Claude CLI version
  *   - Deprecated beta header filtering
  *   - Pool token injection on session start
+ *   - Mid-session 429 rotation: on rate limit, marks current account as
+ *     rate-limited, rotates to next pool account, and retries once
  *
  * The pool (oauth-pool.mjs) manages multiple account tokens.
  * This module makes the built-in provider use them correctly.
  */
 
 import { ensureValidToken, getAccounts, patchAccount, getAnthropicUserAgent } from "./oauth-pool.mjs";
+
+/** Default cooldown when rate limited mid-session (ms) — 1 minute */
+const RATE_LIMIT_COOLDOWN_MS = 60_000;
 
 const TOOL_PREFIX = "mcp_";
 
@@ -257,11 +262,104 @@ export function createProviderAuthHook(client) {
                 : requestUrl;
           }
 
-          const response = await fetch(requestInput, {
+          let response = await fetch(requestInput, {
             ...requestInit,
             body,
             headers: requestHeaders,
           });
+
+          // --- 429 mid-session rotation (GH#XXXX) ---
+          // If the API returns 429 (rate limited), mark the current account
+          // as rate-limited, rotate to the next pool account, and retry once.
+          // Previously, fetchWithPoolFailover() existed but was never called.
+          if (response.status === 429) {
+            const accounts = getAccounts("anthropic");
+            // Find which account we just used (by matching the access token)
+            const currentAccount = accounts.find((a) => a.access === accessToken);
+            const currentEmail = currentAccount?.email || "unknown";
+
+            console.error(
+              `[aidevops] provider-auth: 429 rate limit hit for ${currentEmail} mid-session — attempting pool rotation`,
+            );
+
+            // Mark current account as rate-limited with cooldown
+            if (currentAccount) {
+              patchAccount("anthropic", currentEmail, {
+                status: "rate-limited",
+                cooldownUntil: Date.now() + RATE_LIMIT_COOLDOWN_MS,
+              });
+            }
+
+            // Try to find another active account
+            const now = Date.now();
+            const alternates = [...accounts]
+              .filter(
+                (a) =>
+                  a.email !== currentEmail &&
+                  (a.status === "active" || a.status === "idle") &&
+                  (!a.cooldownUntil || a.cooldownUntil <= now),
+              )
+              .sort((a, b) => new Date(a.lastUsed || 0) - new Date(b.lastUsed || 0));
+
+            let rotated = false;
+            for (const alt of alternates) {
+              let altToken;
+              try {
+                altToken = await ensureValidToken("anthropic", alt);
+              } catch (err) {
+                console.error(`[aidevops] provider-auth: ensureValidToken failed for ${alt.email}: ${err.message}`);
+                continue;
+              }
+              if (!altToken) continue;
+
+              // Inject the validated alternate account directly into the
+              // built-in provider — do NOT use injectPoolToken() here because
+              // it does its own LRU selection and may inject a different account
+              // than the one we just validated (token mismatch bug).
+              try {
+                await client.auth.set({
+                  path: { id: "anthropic" },
+                  body: {
+                    type: "oauth",
+                    refresh: alt.refresh,
+                    access: alt.access,
+                    expires: alt.expires,
+                  },
+                });
+              } catch (err) {
+                console.error(`[aidevops] provider-auth: failed to inject token for ${alt.email}: ${err.message}`);
+                continue;
+              }
+
+              // Update the Authorization header for the retry
+              requestHeaders.set("authorization", `Bearer ${altToken}`);
+
+              patchAccount("anthropic", alt.email, {
+                lastUsed: new Date().toISOString(),
+                status: "active",
+              });
+
+              console.error(
+                `[aidevops] provider-auth: rotated to ${alt.email} — retrying request once`,
+              );
+
+              // Retry the request with the new account's token
+              response = await fetch(requestInput, {
+                ...requestInit,
+                body,
+                headers: requestHeaders,
+              });
+              rotated = true;
+              break;
+            }
+
+            if (!rotated) {
+              console.error(
+                `[aidevops] provider-auth: 429 for ${currentEmail} — no alternate account available. ` +
+                `Pool has ${accounts.length} account(s). Use /model-accounts-pool to check status.`,
+              );
+            }
+          }
 
           // Transform streaming response — strip mcp_ prefix from tool names
           if (response.body) {

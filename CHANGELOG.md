@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.1.63] - 2026-03-22
+
+### Added
+
+- add process-approved command to draft-response-helper
+
+### Changed
+
+- Maintenance: claim t1556
+
+### Fixed
+
+- use post-action timestamp for self-consumption loop guard (#5518)
+- capture gh api error output in draft-response subscription warning (GH#5511) (#5514)
+- simplify draft_responses feature flag to default-true pattern (GH#5508) (#5513)
+- simplify draft_responses feature flag check per Gemini review (GH#5492) (#5500)
+- remove unused print_error stub from test-migrate-orphaned-supervisor.sh (#5501)
+
 ## [3.1.56] - 2026-03-22
 
 ### Changed

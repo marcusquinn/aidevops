@@ -10,7 +10,12 @@ This command is the single entry point for users to understand and manage their 
 
 ### Step 1: Diagnose
 
-Run `oauth-pool-helper.sh check` via Bash to get the current state. This works on any model, including free OpenCode models — it doesn't require a paid provider to run.
+Run two checks in parallel via Bash:
+
+1. `oauth-pool-helper.sh check` — current pool state
+2. `claude auth status --json 2>/dev/null` — check if Claude CLI is already authenticated
+
+This works on any model, including free OpenCode models — it doesn't require a paid provider to run.
 
 ### Step 2: Interpret and act
 
@@ -18,7 +23,19 @@ Based on the output, follow the appropriate path:
 
 **Path A — No accounts exist:**
 
-Tell the user:
+First, check the Claude CLI auth result. If `claude auth status --json` returned `loggedIn: true` with a `pro` or `max` subscription, the user already has a working Claude account — they just haven't connected it to the pool yet. Skip the "which provider?" interview and go straight to the import:
+
+> You're already logged into Claude CLI with a **{subscriptionType}** account ({email}). Let's connect that same account here.
+>
+> Run this in a separate terminal:
+>
+> ```
+> oauth-pool-helper.sh import claude-cli
+> ```
+>
+> It will detect your account and open the browser to authorize. Since you're already logged in, it should be quick.
+
+If Claude CLI is not installed or not logged in, fall back to the standard interview:
 
 > You don't have any AI provider accounts connected yet. Let's set one up.
 >
@@ -55,6 +72,8 @@ Show a clean summary:
 Then: "Everything looks good. Your pool has N account(s) and will auto-rotate between them if one hits rate limits."
 
 If they only have one account, suggest: "Consider adding a second account for automatic failover when rate limited. Run `oauth-pool-helper.sh add <provider>` in a separate terminal to add another."
+
+Additionally, if `claude auth status --json` shows a logged-in account whose email is NOT already in the anthropic pool, mention: "I also noticed you have a Claude {subscriptionType} account ({email}) logged in via the CLI that isn't in your pool yet. Run `oauth-pool-helper.sh import claude-cli` in a separate terminal to add it."
 
 **Path C — Accounts exist but have problems:**
 

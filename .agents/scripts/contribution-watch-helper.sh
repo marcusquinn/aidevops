@@ -715,6 +715,15 @@ cmd_scan() {
 	# Triggered by --auto-draft flag. Calls draft-response-helper.sh draft
 	# for each item that has new activity since our last comment.
 	# Drafts are stored locally and NEVER posted without explicit user approval.
+	#
+	# AGENT COMPOSE INSTRUCTION (t5520): After composing a draft reply, assess
+	# whether a reply is actually needed. If the recommendation is "no reply
+	# needed", "no action required", or "decline", call:
+	#   draft-response-helper.sh reject <draft_id> "No reply needed"
+	# instead of leaving the notification issue open. This avoids requiring
+	# manual closure of no-reply drafts. The deterministic safety net in
+	# check-approvals will also auto-decline after 24h if the draft body
+	# contains clear no-reply indicators and no user comment exists.
 	local _draft_helper
 	_draft_helper="${SCRIPT_DIR}/draft-response-helper.sh"
 	local _draft_enabled=true
@@ -739,6 +748,20 @@ cmd_scan() {
 		if [[ "$_draft_created" -gt 0 ]]; then
 			echo "Created ${_draft_created} draft reply file(s). Review with: draft-response-helper.sh list --pending"
 			_log_info "Auto-draft: created ${_draft_created} draft(s)"
+		fi
+	fi
+
+	# Check-approvals: scan notification issues for user comments (t1556)
+	# Runs every scan cycle when draft_responses is enabled. Deterministic gate
+	# ensures no LLM cost for issues without new user comments.
+	if [[ "$_draft_enabled" == "true" && -x "$_draft_helper" ]]; then
+		_log_info "Running check-approvals scan"
+		local _approval_output=""
+		if ! _approval_output=$(bash "$_draft_helper" check-approvals 2>&1); then
+			_log_warn "Approval scan failed (exit $?): ${_approval_output}"
+			echo "Approval scan failed; see ${LOGFILE}."
+		else
+			echo "$_approval_output"
 		fi
 	fi
 
@@ -995,6 +1018,12 @@ cmd_help() {
 	echo "Draft responses (t1555):"
 	echo "  scan --auto-draft creates draft reply files for items needing attention."
 	echo "  Drafts are NEVER posted automatically — use draft-response-helper.sh approve <id>."
+	echo ""
+	echo "Approval scanning (t1556):"
+	echo "  Every scan cycle checks notification issues for user comments."
+	echo "  When found, an LLM interprets the user's intent (approve/decline/redraft/custom)."
+	echo "  Bot comments are filtered out. Role-based compose caps enforced."
+	echo "  Run manually: draft-response-helper.sh check-approvals"
 	return 0
 }
 

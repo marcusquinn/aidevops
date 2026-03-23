@@ -1056,13 +1056,86 @@ _resolve_profile_user() {
 }
 
 # --- Normalize README for no-op comparison ---
+# Strips UPDATED and CONTRIBUTIONS blocks so timestamp/contribution changes
+# don't suppress real stats diffs (and vice versa).
 _normalize_readme_for_compare() {
 	local file="$1"
 	awk '
 		/<!-- UPDATED-START -->/ { print; skip = 1; next }
 		/<!-- UPDATED-END -->/ { skip = 0; print; next }
+		/<!-- CONTRIBUTIONS-START -->/ { print; skip = 1; next }
+		/<!-- CONTRIBUTIONS-END -->/ { skip = 0; print; next }
 		!skip { print }
 	' "$file"
+	return 0
+}
+
+# --- Generate contributions list from forks + repos.json contributed entries ---
+# Outputs markdown lines (one per contributed repo), or empty string if none.
+# Uses core API only (no search API) — ~11 calls per run.
+_generate_contributions() {
+	local gh_user="$1"
+	local contrib_repos=""
+
+	# Source 1: forks — resolve parent URLs
+	local repos_json
+	repos_json=$(gh api "users/${gh_user}/repos?per_page=100&sort=updated" --paginate 2>/dev/null) || repos_json="[]"
+
+	local fork_names
+	fork_names=$(echo "$repos_json" | jq -r '.[] | select(.fork == true) | .name')
+	if [[ -n "$fork_names" ]]; then
+		local fork_details
+		# shellcheck disable=SC2016
+		fork_details=$(echo "$fork_names" | xargs -P 6 -I{} gh api "repos/${gh_user}/{}" --jq '
+			"\(.name | gsub("[\\[\\]()`]"; ""))\t\((.description // "No description") | gsub("[\\t\\n]"; " ") | gsub("[\\[\\]()`]"; ""))\t\(.parent.html_url // .html_url)"
+		' 2>/dev/null || true)
+		while IFS=$'\t' read -r rname rdesc rurl; do
+			[[ -z "$rname" ]] && continue
+			rname=$(_sanitize_md "$rname")
+			rdesc=$(_sanitize_md "$rdesc")
+			rurl=$(_sanitize_url "$rurl")
+			[[ -z "$rurl" ]] && continue
+			contrib_repos="${contrib_repos}- **[${rname}](${rurl})** -- ${rdesc}"$'\n'
+		done <<<"$fork_details"
+	fi
+
+	# Source 2: repos.json "contributed: true" entries (non-fork contributions)
+	local repos_config="${HOME}/.config/aidevops/repos.json"
+	if [[ -f "$repos_config" ]] && command -v jq &>/dev/null; then
+		local contributed_slugs
+		contributed_slugs=$(jq -r '
+			(.initialized_repos // (to_entries | map(.value)))[]
+			| select(.contributed == true)
+			| .slug // empty
+		' "$repos_config" 2>/dev/null || true)
+
+		while IFS= read -r slug; do
+			[[ -z "$slug" ]] && continue
+			local repo_name
+			repo_name="${slug##*/}"
+			# Skip if already listed from forks
+			if echo "$contrib_repos" | grep -qF "/${repo_name})" 2>/dev/null; then
+				continue
+			fi
+			# Fetch description from GitHub API (1 call per contributed repo)
+			local desc
+			desc=$(gh api "repos/${slug}" --jq '.description // "No description"' 2>/dev/null || echo "No description")
+			desc=$(_sanitize_md "$desc")
+			local url="https://github.com/${slug}"
+			repo_name=$(_sanitize_md "$repo_name")
+			contrib_repos="${contrib_repos}- **[${repo_name}](${url})** -- ${desc}"$'\n'
+		done <<<"$contributed_slugs"
+	fi
+
+	# Sort alphabetically for deterministic output (prevents unnecessary commits
+	# when the API returns results in a different order)
+	if [[ -n "$contrib_repos" ]]; then
+		contrib_repos=$(printf '%s' "$contrib_repos" | sort -f)
+		# Ensure trailing newline
+		contrib_repos="${contrib_repos}"$'\n'
+	fi
+
+	printf '%s' "$contrib_repos"
 	return 0
 }
 
@@ -1121,30 +1194,9 @@ _generate_rich_readme() {
 		.[]
 	')
 
-	# Build contributions section — batch-fetch parent URLs for forks
-	local fork_names
-	fork_names=$(echo "$repos_json" | jq -r '.[] | select(.fork == true) | .name')
-	local contrib_repos=""
-	if [[ -n "$fork_names" ]]; then
-		# Fetch all fork details in parallel (up to 6 concurrent) to get parent URLs
-		local fork_details
-		# Backticks in jq gsub pattern are literal, not shell expansion
-		# shellcheck disable=SC2016
-		fork_details=$(echo "$fork_names" | xargs -P 6 -I{} gh api "repos/${gh_user}/{}" --jq '
-			"\(.name | gsub("[\\[\\]()`]"; ""))\t\((.description // "No description") | gsub("[\\t\\n]"; " ") | gsub("[\\[\\]()`]"; ""))\t\(.parent.html_url // .html_url)"
-		' || true)
-		while IFS=$'\t' read -r rname rdesc rurl; do
-			[[ -z "$rname" ]] && continue
-			# Names and descriptions already sanitized in jq above;
-			# apply _sanitize_md as defense-in-depth for any residual chars
-			rname=$(_sanitize_md "$rname")
-			rdesc=$(_sanitize_md "$rdesc")
-			# Validate fork URL before embedding in markdown
-			rurl=$(_sanitize_url "$rurl")
-			[[ -z "$rurl" ]] && continue
-			contrib_repos="${contrib_repos}- **[${rname}](${rurl})** -- ${rdesc}"$'\n'
-		done <<<"$fork_details"
-	fi
+	# Build contributions section using shared helper
+	local contrib_repos
+	contrib_repos=$(_generate_contributions "$gh_user")
 
 	# Build connect section
 	local connect=""
@@ -1185,13 +1237,15 @@ _generate_rich_readme() {
 			printf '%s' "$own_repos"
 			echo ""
 		fi
-		# Contributions
+		# Contributions (auto-updated daily)
+		echo "<!-- CONTRIBUTIONS-START -->"
 		if [[ -n "$contrib_repos" ]]; then
 			echo "## Contributions"
 			echo ""
 			printf '%s' "$contrib_repos"
-			echo ""
 		fi
+		echo "<!-- CONTRIBUTIONS-END -->"
+		echo ""
 		# Connect
 		echo "## Connect"
 		echo ""
@@ -1380,8 +1434,31 @@ cmd_update() {
 	local new_stats
 	new_stats=$(cmd_generate)
 
-	# Preserve manually maintained sections and only update stats markers.
-	# Do not regenerate badges/projects/contributions during periodic updates.
+	# Daily contributions refresh — piggyback on the hourly stats job.
+	# Only runs once per day to keep API costs low (~11 core API calls/run).
+	local cache_dir="${HOME}/.aidevops/cache"
+	local last_contrib_file="${cache_dir}/contributions-last-update"
+	local today
+	today=$(date -u +"%Y-%m-%d")
+	local last_contrib_date=""
+	if [[ -f "$last_contrib_file" ]]; then
+		last_contrib_date=$(cat "$last_contrib_file" 2>/dev/null || true)
+	fi
+	if [[ "$last_contrib_date" != "$today" ]] && grep -q '<!-- CONTRIBUTIONS-START -->' "$readme_path" 2>/dev/null; then
+		echo "Daily contributions refresh triggered..."
+		# Run contributions update first (it commits+pushes independently if changed)
+		if [[ "$dry_run" == true ]]; then
+			cmd_update_contributions "--dry-run" || echo "Warning: contributions update failed — continuing with stats" >&2
+		else
+			cmd_update_contributions || echo "Warning: contributions update failed — continuing with stats" >&2
+		fi
+		# Re-read the readme in case contributions update modified it
+		if [[ "$dry_run" != true ]]; then
+			git -C "$profile_repo" pull --rebase --quiet 2>/dev/null || true
+		fi
+	fi
+
+	# Update stats markers only — preserve all other sections.
 	local source_file
 	source_file="$readme_path"
 
@@ -1482,6 +1559,178 @@ cmd_update() {
 	return 0
 }
 
+# --- Update contributions section between markers ---
+# Can be called standalone or from cmd_update with daily throttle.
+# Uses _generate_contributions() to fetch fork parent URLs + repos.json entries.
+cmd_update_contributions() {
+	local dry_run=false
+	if [[ "${1:-}" == "--dry-run" ]]; then
+		dry_run=true
+	fi
+
+	# Resolve profile repo and user
+	local profile_repo
+	profile_repo=$(_resolve_profile_repo) || return 1
+	local readme_path="${profile_repo}/README.md"
+
+	if [[ ! -f "$readme_path" ]]; then
+		echo "Error: README.md not found at $readme_path" >&2
+		return 1
+	fi
+
+	# Check for CONTRIBUTIONS markers — if missing, migrate from static section.
+	# Removes the old static "## Contributions" block and replaces it with markers.
+	if ! grep -q '<!-- CONTRIBUTIONS-START -->' "$readme_path"; then
+		if [[ "$dry_run" == true ]]; then
+			echo "Note: CONTRIBUTIONS markers not found — would migrate static section"
+		else
+			echo "Migrating static Contributions section to auto-updated markers..."
+			local inject_tmp
+			inject_tmp=$(mktemp)
+			awk '
+				# Skip the old static "## Contributions" section entirely
+				/^## Contributions/ { in_old_contrib = 1; next }
+				in_old_contrib && /^## / {
+					# Hit the next heading — end of old section
+					in_old_contrib = 0
+					print "<!-- CONTRIBUTIONS-START -->"
+					print "<!-- CONTRIBUTIONS-END -->"
+					print ""
+					print $0
+					next
+				}
+				in_old_contrib { next }
+				{ print }
+			' "$readme_path" >"$inject_tmp"
+			# If we reached EOF while still in old contrib section (no ## Connect after it),
+			# append the markers at the end
+			if ! grep -q '<!-- CONTRIBUTIONS-START -->' "$inject_tmp"; then
+				{
+					echo "<!-- CONTRIBUTIONS-START -->"
+					echo "<!-- CONTRIBUTIONS-END -->"
+				} >>"$inject_tmp"
+			fi
+			mv "$inject_tmp" "$readme_path"
+		fi
+	fi
+
+	if ! grep -q '<!-- CONTRIBUTIONS-END -->' "$readme_path"; then
+		# In dry-run mode, markers may not exist yet — that's expected
+		if [[ "$dry_run" == true ]]; then
+			echo "Note: markers would be injected on actual run"
+			return 0
+		fi
+		echo "Error: <!-- CONTRIBUTIONS-END --> marker not found" >&2
+		return 1
+	fi
+
+	# Resolve GitHub username
+	local gh_user
+	gh_user=$(_resolve_profile_user "$profile_repo")
+	if [[ -z "$gh_user" ]]; then
+		echo "Error: could not resolve GitHub username for profile repo" >&2
+		return 1
+	fi
+
+	# Generate new contributions content
+	local new_contribs
+	new_contribs=$(_generate_contributions "$gh_user")
+
+	# Build the replacement block
+	local contribs_block=""
+	if [[ -n "$new_contribs" ]]; then
+		contribs_block="## Contributions"$'\n'$'\n'"${new_contribs}"
+	fi
+
+	# Replace content between markers
+	local tmp_file
+	tmp_file=$(mktemp)
+	CONTRIBS_BLOCK="$contribs_block" awk '
+		/<!-- CONTRIBUTIONS-START -->/ {
+			print "<!-- CONTRIBUTIONS-START -->"
+			skip = 1
+			next
+		}
+		/<!-- CONTRIBUTIONS-END -->/ {
+			skip = 0
+			block = ENVIRON["CONTRIBS_BLOCK"]
+			if (block != "") {
+				printf "%s\n", block
+			}
+			print "<!-- CONTRIBUTIONS-END -->"
+			next
+		}
+		!skip { print }
+	' "$readme_path" >"$tmp_file"
+
+	# Check if content actually changed
+	if diff -q "$readme_path" "$tmp_file" >/dev/null 2>&1; then
+		echo "Contributions unchanged — skipping"
+		rm -f "$tmp_file"
+		return 0
+	fi
+
+	if [[ "$dry_run" == true ]]; then
+		echo "--- DRY RUN: contributions changes ---"
+		diff "$readme_path" "$tmp_file" || true
+		rm -f "$tmp_file"
+		return 0
+	fi
+
+	# Apply changes
+	mv "$tmp_file" "$readme_path"
+
+	# Update timestamp
+	if grep -q '<!-- UPDATED-START -->' "$readme_path"; then
+		local updated_at
+		updated_at=$(date -u +"%Y-%m-%d %H:%M UTC")
+		local updated_tmp
+		updated_tmp=$(mktemp)
+		awk -v ts="$updated_at" '
+			/<!-- UPDATED-START -->/ {
+				print "<!-- UPDATED-START -->"
+				skip = 1
+				next
+			}
+			/<!-- UPDATED-END -->/ {
+				skip = 0
+				printf "_Stats auto-updated %s by [aidevops](https://aidevops.sh) pulse._\n", ts
+				print "<!-- UPDATED-END -->"
+				next
+			}
+			!skip { print }
+		' "$readme_path" >"$updated_tmp"
+		mv "$updated_tmp" "$readme_path"
+	fi
+
+	# Commit and push
+	local commit_msg
+	commit_msg="chore: update profile contributions ($(date -u +%Y-%m-%d))"
+	git -C "$profile_repo" add README.md
+	git -C "$profile_repo" commit -m "$commit_msg" --no-verify 2>/dev/null || {
+		echo "No changes to commit"
+		return 0
+	}
+	local default_branch
+	default_branch=$(git -C "$profile_repo" symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's|refs/remotes/origin/||' || true)
+	if [[ -z "$default_branch" ]]; then
+		default_branch=$(git -C "$profile_repo" branch --show-current 2>/dev/null || true)
+	fi
+	default_branch="${default_branch:-main}"
+	git -C "$profile_repo" push origin "$default_branch" 2>/dev/null || {
+		echo "Warning: push failed — contributions committed locally" >&2
+		return 0
+	}
+
+	# Record last-run timestamp for daily throttle
+	local cache_dir="${HOME}/.aidevops/cache"
+	mkdir -p "$cache_dir"
+	date -u +"%Y-%m-%d" >"${cache_dir}/contributions-last-update"
+
+	echo "Profile contributions updated and pushed"
+	return 0
+}
+
 # --- Main dispatch ---
 case "${1:-help}" in
 init) cmd_init ;;
@@ -1490,13 +1739,21 @@ update)
 	shift
 	cmd_update "$@"
 	;;
+update-contributions)
+	shift
+	cmd_update_contributions "$@"
+	;;
 help | *)
-	echo "Usage: profile-readme-helper.sh {init|update [--dry-run]|generate|help}"
+	echo "Usage: profile-readme-helper.sh {init|update|update-contributions|generate|help}"
 	echo ""
 	echo "Commands:"
-	echo "  init                Create profile repo, seed README, register in repos.json"
-	echo "  update [--dry-run]  Update profile README with live stats and push"
-	echo "  generate            Print generated stats section to stdout"
-	echo "  help                Show this help"
+	echo "  init                          Create profile repo, seed README, register in repos.json"
+	echo "  update [--dry-run]            Update profile README with live stats and push"
+	echo "  update-contributions [--dry-run]  Refresh contributions list from forks + repos.json"
+	echo "  generate                      Print generated stats section to stdout"
+	echo "  help                          Show this help"
+	echo ""
+	echo "The 'update' command automatically refreshes contributions once per day."
+	echo "Use 'update-contributions' to force an immediate refresh."
 	;;
 esac

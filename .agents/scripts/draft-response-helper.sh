@@ -12,6 +12,7 @@
 #   draft-response-helper.sh approve <draft_id> Post draft to GitHub
 #   draft-response-helper.sh reject <draft_id> [reason]
 #                                              Discard draft without posting
+#   draft-response-helper.sh check-approvals   Scan notification issues for user comments (t1556)
 #   draft-response-helper.sh status            Summary of all drafts
 #   draft-response-helper.sh help              Show usage
 #
@@ -231,6 +232,14 @@ _create_notification_issue() {
 	issue_body+=$'\n\n'
 	issue_body+="Comment on this issue with what you'd like to do — your comment will be interpreted by the AI agent and acted on accordingly."
 	issue_body+=$'\n\n'
+	issue_body+="To approve and post the draft reply, comment: **approve** or **send it**."
+	issue_body+=$'\n\n'
+	issue_body+="To decline without replying, comment: **no reply**, **decline**, or **close**. The issue will be closed automatically."
+	issue_body+=$'\n\n'
+	issue_body+="To request a rewrite, describe the changes you want."
+	issue_body+=$'\n\n'
+	issue_body+="**Note:** If the draft itself recommends no reply, the agent will auto-decline this issue without requiring your input."
+	issue_body+=$'\n\n'
 	issue_body+="</details>"
 
 	# Issue title: use plain text description, NO owner/repo#N pattern
@@ -287,6 +296,591 @@ _update_notification_draft() {
 		_log_warn "Failed to update notification issue #${issue_number} body"
 		return 1
 	}
+	return 0
+}
+
+# =============================================================================
+# Bot filtering (t1556)
+# =============================================================================
+
+# Known bot account suffixes and exact names to skip when scanning comments.
+# No point drafting replies to automated messages.
+BOT_SUFFIXES="[bot]"
+BOT_EXACT_NAMES=("github-actions" "dependabot" "renovate" "codecov" "sonarcloud")
+
+_is_bot_account() {
+	local login="$1"
+	if [[ -z "$login" ]]; then
+		return 1
+	fi
+
+	# Check suffix match (e.g., "dependabot[bot]", "github-actions[bot]")
+	local lower_login
+	lower_login=$(printf '%s' "$login" | tr '[:upper:]' '[:lower:]')
+	if [[ "$lower_login" == *"$BOT_SUFFIXES" ]]; then
+		return 0
+	fi
+
+	# Check exact name match
+	local bot_name
+	for bot_name in "${BOT_EXACT_NAMES[@]}"; do
+		if [[ "$lower_login" == "$bot_name" ]]; then
+			return 0
+		fi
+	done
+
+	return 1
+}
+
+# =============================================================================
+# Role-based compose caps (t1556)
+# =============================================================================
+
+# Track compose counts per item in the meta file.
+# - author role: 1 compose per new external comment (unlimited total, but
+#   only re-compose when new activity arrives)
+# - participant role: 1 compose total (never auto-recompose)
+
+_check_compose_cap() {
+	local item_key="$1"
+	local role="$2"
+
+	# Normalize 'commenter' to 'participant' — both have the same cap behaviour
+	if [[ "$role" == "commenter" ]]; then
+		role="participant"
+	fi
+
+	# participant items: check compose_count in meta (default 1 when draft exists,
+	# meaning the initial draft creation already counts as the first compose)
+	if [[ "$role" == "participant" ]]; then
+		local slug_check
+		slug_check=$(printf '%s' "$item_key" | tr '/#' '-' | tr -cd '[:alnum:]-' | tr '[:upper:]' '[:lower:]')
+		local all_ids
+		all_ids=$(_list_draft_ids "")
+		local found_id=""
+		while IFS= read -r _id; do
+			[[ -z "$_id" ]] && continue
+			if printf '%s' "$_id" | grep -q "$slug_check"; then
+				found_id="$_id"
+				break
+			fi
+		done <<<"$all_ids"
+
+		if [[ -n "$found_id" ]]; then
+			# Read compose_count from meta — defaults to 1 (initial draft = first compose)
+			local _meta
+			_meta=$(_read_meta "$found_id")
+			local compose_count
+			compose_count=$(echo "$_meta" | jq -r '.compose_count // 1') || compose_count=1
+			if [[ "$compose_count" -ge 1 ]]; then
+				_log_info "Compose cap reached for participant item ${item_key} (compose_count=${compose_count})"
+				return 1
+			fi
+		fi
+	fi
+
+	# author items: always allowed (capped by caller — only compose when
+	# new external comment arrives since last compose)
+	return 0
+}
+
+# =============================================================================
+# Intelligent layer: LLM-based comment interpretation (t1556)
+# =============================================================================
+
+# Interprets a user's comment on a notification issue to determine the action.
+# Uses ai-research-helper.sh with sonnet tier (good balance of cost and quality
+# for structured interpretation tasks).
+#
+# Returns a JSON object on stdout:
+#   {"action": "approve|decline|redraft|custom|other", "text": "...", "extra": "..."}
+#
+# - approve: post the current draft as-is
+# - decline: close without posting
+# - redraft: compose a new draft using the instructions in "text"
+# - custom: user provided the exact reply text in "text" — post it directly
+# - other: additional action described in "extra" (e.g., "also close the external issue")
+
+_interpret_approval_comment() {
+	local user_comment="$1"
+	local draft_text="$2"
+	local item_key="$3"
+	local role="$4"
+
+	local ai_helper="${SCRIPT_DIR}/ai-research-helper.sh"
+	if [[ ! -x "$ai_helper" ]]; then
+		_log_error "ai-research-helper.sh not found or not executable"
+		echo '{"action":"error","text":"ai-research-helper.sh not available","extra":""}'
+		return 1
+	fi
+
+	# Build the interpretation prompt
+	local prompt
+	prompt="You are interpreting a user's comment on a draft-response notification issue.
+
+The user was shown a draft reply to an external GitHub thread and asked to review it.
+They commented on the notification issue with instructions.
+
+Your job: determine what action the user wants.
+
+Context:
+- External thread: ${item_key}
+- User's role: ${role} (author = created the thread, participant = commented on it)
+- Current draft reply that was shown to the user:
+---
+${draft_text}
+---
+
+User's comment on the notification issue:
+---
+${user_comment}
+---
+
+Respond with EXACTLY one JSON object (no markdown, no explanation, just JSON):
+{
+  \"action\": \"approve|decline|redraft|custom|other\",
+  \"text\": \"<reply text for custom, or redraft instructions, or empty>\",
+  \"extra\": \"<additional action description if any, or empty>\"
+}
+
+Decision rules:
+- If the comment means 'yes', 'approved', 'lgtm', 'send it', 'post it', 'go ahead', or similar affirmative → action: approve
+- If the comment means 'no', 'don't send', 'skip', 'decline', 'cancel', 'nevermind' → action: decline
+- If the comment asks to change/rewrite/modify the draft (e.g., 'make it shorter', 'add a thank you', 'be more formal') → action: redraft, text: the instructions
+- If the comment IS the reply itself (the user wrote out exactly what to post) → action: custom, text: the exact reply to post
+- If the comment requests an additional action beyond replying (e.g., 'approve and also close the issue', 'post it and subscribe to the repo') → action: approve (or custom), extra: description of the additional action
+- If unclear → action: decline (safe default — never post without clear intent)"
+
+	local response
+	response=$("$ai_helper" --prompt "$prompt" --model sonnet --max-tokens 500 2>/dev/null) || {
+		_log_error "LLM interpretation call failed"
+		echo '{"action":"error","text":"LLM call failed","extra":""}'
+		return 1
+	}
+
+	# Validate JSON response
+	if ! echo "$response" | jq -e '.action' &>/dev/null 2>&1; then
+		_log_error "LLM returned invalid JSON: ${response}"
+		echo '{"action":"error","text":"Invalid LLM response","extra":""}'
+		return 1
+	fi
+
+	echo "$response"
+	return 0
+}
+
+# =============================================================================
+# check-approvals: scan notification issues for user comments (t1556)
+# =============================================================================
+
+# Deterministic layer: list open draft-label issues in the draft-responses repo,
+# find user comments newer than the last bot comment, and pass actionable ones
+# to the intelligent layer for interpretation.
+#
+# This runs as part of the contribution-watch scan cycle (hourly via launchd).
+# No LLM cost for issues with no new user comments.
+
+cmd_check_approvals() {
+	_check_prerequisites || return 1
+	_ensure_draft_dir
+
+	local username
+	username=$(_get_username) || return 1
+
+	local slug
+	slug=$(_get_draft_repo_slug)
+
+	# Verify the draft-responses repo exists
+	if ! gh repo view "$slug" --json name &>/dev/null 2>&1; then
+		_log_info "Draft-responses repo does not exist yet, skipping check-approvals"
+		echo "No draft-responses repo found. Nothing to check."
+		return 0
+	fi
+
+	# List open issues with 'draft' label
+	local open_issues
+	open_issues=$(gh issue list --repo "$slug" --label "draft" --state open \
+		--json number,title,body --limit 100 2>/dev/null) || open_issues="[]"
+
+	local issue_count
+	issue_count=$(echo "$open_issues" | jq 'length' 2>/dev/null) || issue_count=0
+
+	if [[ "$issue_count" -eq 0 ]]; then
+		echo "No open draft issues to check."
+		_log_info "check-approvals: no open draft issues"
+		return 0
+	fi
+
+	_log_info "check-approvals: scanning ${issue_count} open draft issue(s)"
+	echo "Scanning ${issue_count} open draft issue(s) for user comments..."
+
+	local actions_taken=0
+
+	# Iterate using jq -c '.[]' with process substitution instead of
+	# index-based access — avoids re-parsing the full JSON array on each
+	# iteration (Gemini review suggestion).
+	while IFS= read -r issue; do
+		[[ -z "$issue" ]] && continue
+
+		local issue_number
+		issue_number=$(echo "$issue" | jq -r '.number')
+		local issue_title
+		issue_title=$(echo "$issue" | jq -r '.title // "unknown"')
+		local issue_body
+		issue_body=$(echo "$issue" | jq -r '.body // ""')
+
+		# Extract draft_id from issue body (in the Context table).
+		# Single sed pass — avoids multi-process grep|sed|tr pipeline.
+		# SC2016: single quotes are intentional — backticks are literal markdown, not shell expansion.
+		local draft_id
+		# shellcheck disable=SC2016
+		draft_id=$(echo "$issue_body" | sed -n 's/.*Draft ID | `\([^`]*\)`.*/\1/p;T;q') || draft_id=""
+
+		if [[ -z "$draft_id" ]]; then
+			_log_warn "check-approvals: issue #${issue_number} has no draft_id in body, skipping"
+			continue
+		fi
+
+		# Get comments on this notification issue (paginate with max page size)
+		local comments
+		comments=$(gh api --paginate "repos/${slug}/issues/${issue_number}/comments?per_page=100" \
+			--jq '[.[] | {author: .user.login, body: .body, created: .created_at, author_type: .user.type}]' \
+			2>/dev/null) || comments="[]"
+
+		local comment_count
+		comment_count=$(echo "$comments" | jq 'length' 2>/dev/null) || comment_count=0
+
+		if [[ "$comment_count" -eq 0 ]]; then
+			continue
+		fi
+
+		# Find the last bot comment timestamp (github-actions[bot] or any [bot])
+		local last_bot_time
+		last_bot_time=$(echo "$comments" | jq -r '
+			[.[] | select(.author | test("\\[bot\\]$"; "i") or . == "github-actions")] |
+			sort_by(.created) | last | .created // ""
+		' 2>/dev/null) || last_bot_time=""
+
+		# Read last_handled_comment from draft meta to avoid reprocessing
+		# agent follow-up comments (e.g., redraft status updates posted by
+		# the agent itself appear as the same $username).
+		# This is the primary guard against the self-consumption loop: every
+		# hourly scan checks this timestamp and skips comments already handled.
+		local meta_for_handled
+		meta_for_handled=$(_read_meta "$draft_id")
+		local last_handled
+		last_handled=$(echo "$meta_for_handled" | jq -r '.last_handled_comment // ""')
+
+		# Determine the cutoff: the later of last_bot_time and last_handled
+		local cutoff_time="$last_bot_time"
+		if [[ -n "$last_handled" ]] && [[ "$last_handled" > "$cutoff_time" ]]; then
+			cutoff_time="$last_handled"
+		fi
+
+		# Find user comments newer than the cutoff
+		local user_comments
+		if [[ -n "$cutoff_time" ]]; then
+			user_comments=$(echo "$comments" | jq -c --arg cutoff "$cutoff_time" --arg user "$username" '
+				[.[] |
+				 select(.author == $user) |
+				 select(.created > $cutoff) |
+				 select(.author | test("\\[bot\\]$"; "i") | not)
+				]
+			' 2>/dev/null) || user_comments="[]"
+		else
+			# No cutoff — any user comment is actionable
+			user_comments=$(echo "$comments" | jq -c --arg user "$username" '
+				[.[] |
+				 select(.author == $user) |
+				 select(.author | test("\\[bot\\]$"; "i") | not)
+				]
+			' 2>/dev/null) || user_comments="[]"
+		fi
+
+		local user_comment_count
+		user_comment_count=$(echo "$user_comments" | jq 'length' 2>/dev/null) || user_comment_count=0
+
+		if [[ "$user_comment_count" -eq 0 ]]; then
+			continue
+		fi
+
+		# Take the latest user comment (body and timestamp)
+		local latest_user_comment
+		latest_user_comment=$(echo "$user_comments" | jq -r 'sort_by(.created) | last | .body // ""' 2>/dev/null) || latest_user_comment=""
+		local latest_user_comment_time
+		latest_user_comment_time=$(echo "$user_comments" | jq -r 'sort_by(.created) | last | .created // ""' 2>/dev/null) || latest_user_comment_time=""
+
+		if [[ -z "$latest_user_comment" ]]; then
+			continue
+		fi
+
+		_log_info "check-approvals: issue #${issue_number} has actionable user comment for draft ${draft_id}"
+
+		# Prompt-guard scan on user comment before LLM processing
+		local scan_clean=true
+		if [[ -x "$PROMPT_GUARD" ]]; then
+			local guard_out
+			guard_out=$(echo "$latest_user_comment" | "$PROMPT_GUARD" scan-stdin 2>/dev/null) || guard_out=""
+			if echo "$guard_out" | grep -qi "WARN\|INJECT\|SUSPICIOUS"; then
+				scan_clean=false
+				_log_warn "check-approvals: prompt injection detected in user comment on issue #${issue_number}"
+			fi
+		fi
+
+		# Read the current draft text
+		local body_path
+		body_path=$(_draft_body_path "$draft_id")
+		local draft_text=""
+		if [[ -f "$body_path" ]]; then
+			draft_text=$(cat "$body_path")
+		fi
+
+		# Read draft meta for role info
+		local meta
+		meta=$(_read_meta "$draft_id")
+		local role
+		role=$(echo "$meta" | jq -r '.role // "participant"')
+		local item_key
+		item_key=$(echo "$meta" | jq -r '.item_key // ""')
+		local draft_status
+		draft_status=$(echo "$meta" | jq -r '.status // "pending"')
+
+		# Skip if draft is no longer pending
+		if [[ "$draft_status" != "pending" ]]; then
+			_log_info "check-approvals: draft ${draft_id} is ${draft_status}, skipping"
+			continue
+		fi
+
+		# Pass to intelligent layer for interpretation
+		echo "  Processing issue #${issue_number}: ${issue_title}"
+		local interpretation
+		interpretation=$(_interpret_approval_comment "$latest_user_comment" "$draft_text" "$item_key" "$role") || {
+			_log_error "check-approvals: interpretation failed for issue #${issue_number}"
+			# Still persist last_handled to avoid re-triggering on the same
+			# comment if the LLM is temporarily unavailable
+			if [[ -n "$latest_user_comment_time" ]]; then
+				local err_meta
+				err_meta=$(_read_meta "$draft_id")
+				err_meta=$(echo "$err_meta" | jq \
+					--arg ts "$latest_user_comment_time" \
+					'.last_handled_comment = $ts')
+				_write_meta "$draft_id" "$err_meta"
+			fi
+			continue
+		}
+
+		local action
+		action=$(echo "$interpretation" | jq -r '.action // "error"')
+		local action_text
+		action_text=$(echo "$interpretation" | jq -r '.text // ""')
+		local action_extra
+		action_extra=$(echo "$interpretation" | jq -r '.extra // ""')
+
+		_log_info "check-approvals: issue #${issue_number} action=${action} extra=${action_extra}"
+
+		case "$action" in
+		approve)
+			echo "    Action: approve — posting draft to external repo"
+			cmd_approve "$draft_id"
+			actions_taken=$((actions_taken + 1))
+			;;
+		decline)
+			echo "    Action: decline — closing without posting"
+			cmd_reject "$draft_id" "User declined via notification comment"
+			actions_taken=$((actions_taken + 1))
+			;;
+		redraft)
+			# Normalize role for cap check: 'commenter' -> 'participant'
+			local cap_role="$role"
+			if [[ "$cap_role" == "commenter" ]]; then
+				cap_role="participant"
+			fi
+			# Enforce compose cap on redraft — participants get 1 total compose
+			local current_compose_count
+			current_compose_count=$(echo "$meta" | jq -r '.compose_count // 1') || current_compose_count=1
+			if [[ "$cap_role" == "participant" && "$current_compose_count" -ge 1 ]]; then
+				echo "    Action: redraft — blocked by compose cap (participant, compose_count=${current_compose_count})"
+				_log_info "check-approvals: redraft blocked for ${draft_id} (participant cap, compose_count=${current_compose_count})"
+				continue
+			fi
+			echo "    Action: redraft — composing new draft with user instructions"
+			# Update the notification issue body with a note that re-draft is pending
+			_update_notification_draft "$issue_number" "*Re-drafting based on your instructions: ${action_text}*"
+			_log_info "check-approvals: redraft requested for ${draft_id}, instructions: ${action_text}"
+			# The actual re-drafting requires an LLM compose call which is beyond
+			# the scope of this deterministic helper. Log the request for the next
+			# interactive session or pulse worker to pick up.
+			local now_iso
+			now_iso=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+			# Increment compose_count to track re-drafts
+			local new_compose_count=$((current_compose_count + 1))
+			meta=$(echo "$meta" | jq \
+				--arg instructions "$action_text" \
+				--arg ts "$now_iso" \
+				--argjson cc "$new_compose_count" \
+				'.redraft_requested = $ts | .redraft_instructions = $instructions | .compose_count = $cc')
+			_write_meta "$draft_id" "$meta"
+			actions_taken=$((actions_taken + 1))
+			;;
+		custom)
+			echo "    Action: custom reply — posting user-provided text verbatim"
+			# Post the user's raw comment verbatim — bypass LLM rewriting.
+			# The classifier identified this as "the user wrote the exact reply",
+			# so we use the original comment, not the LLM's interpretation.
+			if [[ -n "$latest_user_comment" ]]; then
+				printf '%s' "$latest_user_comment" >"$body_path"
+				cmd_approve "$draft_id"
+				actions_taken=$((actions_taken + 1))
+			else
+				_log_warn "check-approvals: custom action but no user comment text"
+			fi
+			;;
+		error)
+			_log_error "check-approvals: interpretation error for issue #${issue_number}: ${action_text}"
+			;;
+		*)
+			_log_warn "check-approvals: unknown action '${action}' for issue #${issue_number}"
+			;;
+		esac
+
+		# Handle extra actions if any
+		if [[ -n "$action_extra" && "$action_extra" != "null" ]]; then
+			_log_info "check-approvals: extra action requested: ${action_extra}"
+			# Extra actions are logged for the next interactive session to handle.
+			# We don't execute arbitrary actions from LLM output in automated context.
+			echo "    Note: additional action requested — ${action_extra} (queued for interactive session)"
+		fi
+
+		# Persist last_handled_comment timestamp to prevent reprocessing.
+		# CRITICAL: Use the current time (after the action), not the user's
+		# comment time. Actions like cmd_approve post follow-up comments
+		# (e.g., "Reply posted.") under the user's auth — those comments
+		# have timestamps AFTER the user's comment. If we only set the
+		# cutoff to the user's comment time, the agent's own follow-up
+		# would be picked up as a "new user comment" on the next scan,
+		# causing an infinite self-consumption loop.
+		local post_action_time
+		post_action_time=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+		local updated_meta
+		updated_meta=$(_read_meta "$draft_id")
+		updated_meta=$(echo "$updated_meta" | jq \
+			--arg ts "$post_action_time" \
+			'.last_handled_comment = $ts')
+		_write_meta "$draft_id" "$updated_meta"
+	done < <(echo "$open_issues" | jq -c '.[]')
+
+	# ==========================================================================
+	# Deterministic safety net (t5520): auto-decline no-reply drafts after 24h
+	# ==========================================================================
+	# When the compose agent determines no reply is needed, it should call
+	# 'reject' immediately (Change 1). This safety net catches cases where the
+	# agent failed to do so: if the draft body contains clear no-reply indicators
+	# AND no user comment exists on the notification issue, auto-decline after
+	# a 24h grace period.
+	#
+	# No-reply indicators (case-insensitive, matched against local draft body):
+	#   "no reply needed", "no action needed", "no action required",
+	#   "recommendation: decline", "no reply is needed", "decline this draft",
+	#   "not necessary to reply", "no response needed", "no response required"
+	#
+	# Grace period: 24h from draft creation time (stored in meta .created field).
+	# This prevents premature auto-decline of drafts that are still being composed.
+	local auto_declined=0
+	local grace_seconds=86400 # 24 hours
+
+	local now_epoch
+	now_epoch=$(date -u +%s 2>/dev/null) || now_epoch=0
+
+	while IFS= read -r issue; do
+		[[ -z "$issue" ]] && continue
+
+		local sa_issue_number sa_issue_body
+		sa_issue_number=$(echo "$issue" | jq -r '.number')
+		sa_issue_body=$(echo "$issue" | jq -r '.body // ""')
+
+		# Extract draft_id from issue body
+		local sa_draft_id
+		# shellcheck disable=SC2016
+		sa_draft_id=$(echo "$sa_issue_body" | sed -n 's/.*Draft ID | `\([^`]*\)`.*/\1/p;T;q') || sa_draft_id=""
+		[[ -z "$sa_draft_id" ]] && continue
+
+		# Read draft meta
+		local sa_meta
+		sa_meta=$(_read_meta "$sa_draft_id")
+		local sa_status
+		sa_status=$(echo "$sa_meta" | jq -r '.status // "pending"')
+		[[ "$sa_status" != "pending" ]] && continue
+
+		# Check grace period: skip if draft was created less than 24h ago
+		local sa_created
+		sa_created=$(echo "$sa_meta" | jq -r '.created // ""')
+		if [[ -n "$sa_created" && "$now_epoch" -gt 0 ]]; then
+			# Convert ISO8601 to epoch (macOS date -j -f)
+			local sa_created_epoch=0
+			if date -j -f "%Y-%m-%dT%H:%M:%SZ" "$sa_created" +%s &>/dev/null 2>&1; then
+				sa_created_epoch=$(date -j -f "%Y-%m-%dT%H:%M:%SZ" "$sa_created" +%s 2>/dev/null) || sa_created_epoch=0
+			elif date -d "$sa_created" +%s &>/dev/null 2>&1; then
+				# GNU date fallback (Linux)
+				sa_created_epoch=$(date -d "$sa_created" +%s 2>/dev/null) || sa_created_epoch=0
+			fi
+			if [[ "$sa_created_epoch" -gt 0 ]]; then
+				local sa_age=$((now_epoch - sa_created_epoch))
+				if [[ "$sa_age" -lt "$grace_seconds" ]]; then
+					_log_info "check-approvals safety-net: draft ${sa_draft_id} is only ${sa_age}s old (grace=${grace_seconds}s), skipping"
+					continue
+				fi
+			fi
+		fi
+
+		# Check for user comments on this notification issue
+		local sa_comments
+		sa_comments=$(gh api --paginate "repos/${slug}/issues/${sa_issue_number}/comments?per_page=100" \
+			--jq "[.[] | select(.user.login == \"${username}\") | select(.user.login | test(\"\\\\[bot\\\\]\$\"; \"i\") | not)]" \
+			2>/dev/null) || sa_comments="[]"
+		local sa_user_comment_count
+		sa_user_comment_count=$(echo "$sa_comments" | jq 'length' 2>/dev/null) || sa_user_comment_count=0
+
+		# Only auto-decline if no user comment exists
+		if [[ "$sa_user_comment_count" -gt 0 ]]; then
+			continue
+		fi
+
+		# Check draft body for no-reply indicators
+		local sa_body_path
+		sa_body_path=$(_draft_body_path "$sa_draft_id")
+		local sa_body_text=""
+		if [[ -f "$sa_body_path" ]]; then
+			sa_body_text=$(cat "$sa_body_path")
+		fi
+
+		# Also check the notification issue body (compose agent may have updated it)
+		local sa_combined_text="${sa_body_text}"$'\n'"${sa_issue_body}"
+
+		# Match no-reply indicators (case-insensitive)
+		local sa_no_reply=false
+		if echo "$sa_combined_text" | grep -qi \
+			"no reply needed\|no action needed\|no action required\|recommendation: decline\|no reply is needed\|decline this draft\|not necessary to reply\|no response needed\|no response required\|no reply necessary"; then
+			sa_no_reply=true
+		fi
+
+		if [[ "$sa_no_reply" == "true" ]]; then
+			_log_info "check-approvals safety-net: auto-declining draft ${sa_draft_id} (no-reply indicators found, no user comment, grace period elapsed)"
+			echo "  Safety net: auto-declining draft ${sa_draft_id} (no-reply indicators, no user comment, 24h elapsed)"
+			cmd_reject "$sa_draft_id" "Auto-declined: no-reply indicators in draft body, no user comment after 24h grace period"
+			auto_declined=$((auto_declined + 1))
+			actions_taken=$((actions_taken + 1))
+		fi
+	done < <(echo "$open_issues" | jq -c '.[]')
+
+	if [[ "$auto_declined" -gt 0 ]]; then
+		echo "Safety net auto-declined ${auto_declined} no-reply draft(s)."
+		_log_info "check-approvals safety-net: auto_declined=${auto_declined}"
+	fi
+
+	echo "check-approvals complete: ${actions_taken} action(s) taken from ${issue_count} issue(s)."
+	_log_info "check-approvals complete: actions=${actions_taken}, issues_scanned=${issue_count}"
+	echo "DRAFT_APPROVALS_PROCESSED=${actions_taken}"
+
 	return 0
 }
 
@@ -421,19 +1015,34 @@ cmd_draft() {
 		fi
 	fi
 
+	# Enforce role-based compose caps (t1556)
+	if ! _check_compose_cap "$item_key" "$role"; then
+		echo -e "${YELLOW}Compose cap reached for ${item_key} (role: ${role}). Skipping draft creation.${NC}"
+		return 0
+	fi
+
 	# Parse owner/repo#number from item_key
 	local ext_repo ext_number
 	ext_repo="${item_key%#*}"
 	ext_number="${item_key##*#}"
 
-	# Fetch latest comment metadata (author + body) for context in the draft
+	# Fetch latest comment metadata (author + body) for context in the draft.
+	# Use per_page=100 to get the most recent comment without needing full
+	# pagination (GitHub default is only 30).
 	local comments_json
-	comments_json=$(gh api "repos/${ext_repo}/issues/${ext_number}/comments" \
+	comments_json=$(gh api "repos/${ext_repo}/issues/${ext_number}/comments?per_page=100" \
 		--jq '.[-1] | {author: .user.login, body: .body}' 2>/dev/null) || comments_json=""
 
 	if [[ -n "$comments_json" && "$comments_json" != "null" ]]; then
 		latest_author=$(echo "$comments_json" | jq -r '.author // ""')
 		latest_comment=$(echo "$comments_json" | jq -r '.body // ""')
+	fi
+
+	# Bot filtering (t1556): skip drafting when the latest comment is from a bot
+	if [[ -n "$latest_author" ]] && _is_bot_account "$latest_author"; then
+		echo -e "${CYAN}Skipping ${item_key}: latest comment is from bot @${latest_author}${NC}"
+		_log_info "Skipping draft for ${item_key}: bot comment from ${latest_author}"
+		return 0
 	fi
 
 	# Fall back to issue/PR body if no comments
@@ -477,6 +1086,10 @@ cmd_draft() {
 		{
 			echo "<!-- Draft reply for ${item_key} -->"
 			echo "<!-- Edit this file, then run: draft-response-helper.sh approve ${draft_id} -->"
+			echo "<!-- If no reply is needed, run: draft-response-helper.sh reject ${draft_id} \"No reply needed\" -->"
+			echo "<!-- AGENT INSTRUCTION: After composing, if your recommendation is no reply / no action / decline, -->"
+			echo "<!-- call: draft-response-helper.sh reject ${draft_id} \"No reply needed\" -->"
+			echo "<!-- Do NOT leave the notification issue open for no-reply cases. -->"
 			echo ""
 			if [[ "$scan_result" == "flagged" ]]; then
 				echo "> **WARNING: Prompt injection patterns detected in the external comment.**"
@@ -525,6 +1138,7 @@ cmd_draft() {
 			created: $created,
 			status: $status,
 			notification_issue: $notification_issue,
+			compose_count: 1,
 			approved_at: "",
 			rejected_at: "",
 			reject_reason: "",
@@ -922,6 +1536,123 @@ cmd_status() {
 }
 
 # =============================================================================
+# cmd_process_approved: scan draft-responses repo for approved issues, post & close
+# =============================================================================
+
+cmd_process_approved() {
+	_check_prerequisites || return 1
+
+	local slug
+	slug=$(_get_draft_repo_slug)
+
+	# Fetch all open issues with the 'approved' label in one API call
+	local issues_json
+	issues_json=$(gh issue list --repo "$slug" --state open --label "approved" \
+		--json number,title,body 2>/dev/null) || issues_json="[]"
+
+	local issue_count
+	issue_count=$(echo "$issues_json" | jq 'length' 2>/dev/null) || issue_count=0
+
+	if [[ "$issue_count" -eq 0 ]]; then
+		echo "No approved drafts awaiting posting."
+		return 0
+	fi
+
+	local count=0
+	local failed=0
+
+	# Iterate over the cached JSON — no redundant API call
+	while IFS= read -r issue; do
+		[[ -z "$issue" ]] && continue
+
+		# Single jq call: output number on line 1, body on remaining lines.
+		# Parameter expansion strips the first line to get the body.
+		# Bash-3.2-compatible — no mapfile, no declare -A.
+		local issue_number issue_body issue_raw
+		issue_raw=$(echo "$issue" | jq -r '"\(.number)\n\(.body // "")"')
+		issue_number=${issue_raw%%$'\n'*}
+		issue_body=${issue_raw#*$'\n'}
+
+		# Extract draft text: everything between "## Draft Reply" and "---"
+		local draft_text
+		draft_text=$(echo "$issue_body" | sed -n '/^## Draft Reply$/,/^---$/p' | sed '1d;$d')
+
+		if [[ -z "$(echo "$draft_text" | tr -d '[:space:]')" ]]; then
+			echo -e "${YELLOW}Issue #${issue_number}: could not extract draft text, skipping${NC}"
+			failed=$((failed + 1))
+			continue
+		fi
+
+		# Check for placeholder text
+		if echo "$draft_text" | grep -q "Draft pending"; then
+			echo -e "${YELLOW}Issue #${issue_number}: draft not yet composed, skipping${NC}"
+			failed=$((failed + 1))
+			continue
+		fi
+
+		# Extract source URL components in a single rg call
+		local source_parts
+		source_parts=$(echo "$issue_body" | rg -o 'Source \| `https://github.com/([^/]+/[^/]+)/(issues|pull)/(\d+)`' -r '$1 $2 $3' 2>/dev/null | head -1) || source_parts=""
+
+		if [[ -z "$source_parts" ]]; then
+			echo -e "${YELLOW}Issue #${issue_number}: could not extract source URL, skipping${NC}"
+			failed=$((failed + 1))
+			continue
+		fi
+
+		local source_repo source_type source_number
+		source_repo=$(echo "$source_parts" | cut -d' ' -f1)
+		source_type=$(echo "$source_parts" | cut -d' ' -f2)
+		source_number=$(echo "$source_parts" | cut -d' ' -f3)
+
+		if [[ -z "$source_repo" || -z "$source_number" ]]; then
+			echo -e "${YELLOW}Issue #${issue_number}: could not parse source repo/number, skipping${NC}"
+			failed=$((failed + 1))
+			continue
+		fi
+
+		echo -e "${CYAN}Issue #${issue_number}: posting reply to ${source_repo}#${source_number}...${NC}"
+
+		# Write draft to temp file for --body-file (avoids argument injection)
+		local tmp_body
+		tmp_body=$(mktemp) || {
+			failed=$((failed + 1))
+			continue
+		}
+		echo "$draft_text" >"$tmp_body"
+
+		local post_output post_exit=0
+		if [[ "$source_type" == "pull" ]]; then
+			post_output=$(gh pr comment "$source_number" --repo "$source_repo" --body-file "$tmp_body" 2>&1) || post_exit=$?
+		else
+			post_output=$(gh issue comment "$source_number" --repo "$source_repo" --body-file "$tmp_body" 2>&1) || post_exit=$?
+		fi
+		rm -f "$tmp_body"
+
+		if [[ "$post_exit" -ne 0 ]]; then
+			echo -e "${RED}Issue #${issue_number}: failed to post reply${NC}"
+			echo "  ${post_output}" >&2
+			_log_error "process-approved: failed to post for issue #${issue_number}: ${post_output}"
+			failed=$((failed + 1))
+			continue
+		fi
+
+		# Close the draft issue — no URL in the comment to avoid cross-references
+		gh issue close "$issue_number" --repo "$slug" \
+			--comment "Reply posted." >/dev/null 2>&1 || true
+
+		echo -e "${GREEN}Issue #${issue_number}: reply posted and issue closed${NC}"
+		_log_info "process-approved: posted reply for issue #${issue_number} to ${source_repo}#${source_number}"
+		count=$((count + 1))
+
+	done < <(echo "$issues_json" | jq -c '.[]')
+
+	echo ""
+	echo "Processed: ${count} posted, ${failed} skipped"
+	return 0
+}
+
+# =============================================================================
 # cmd_help
 # =============================================================================
 
@@ -946,6 +1677,16 @@ cmd_help() {
 	echo "  draft-response-helper.sh reject <draft_id> [reason]"
 	echo "      Discard the draft (optionally with a reason)"
 	echo ""
+	echo "  draft-response-helper.sh check-approvals"
+	echo "      Scan notification issues for user comments and act on them (t1556)"
+	echo "      Deterministic gate: no LLM cost for issues without new user comments"
+	echo "      Intelligence layer: interprets user intent (approve/decline/redraft/custom)"
+	echo "      Bot comments are filtered out; role-based compose caps enforced"
+	echo ""
+	echo "  draft-response-helper.sh process-approved"
+	echo "      Post all approved drafts and close their notification issues"
+	echo "      Handles issues labeled 'approved' by the GitHub Actions workflow"
+	echo ""
 	echo "  draft-response-helper.sh status"
 	echo "      Show summary of all drafts"
 	echo ""
@@ -959,6 +1700,19 @@ cmd_help() {
 	echo "  contribution-watch-helper.sh scan --auto-draft"
 	echo "  Automatically creates drafts when new activity is detected on tracked threads."
 	echo "  Drafts are NEVER posted automatically — user approval is always required."
+	echo ""
+	echo "Approval scanning (t1556):"
+	echo "  check-approvals scans open notification issues for user comments."
+	echo "  When found, an LLM interprets the user's intent and acts accordingly."
+	echo "  Runs as part of the hourly contribution-watch scan cycle."
+	echo ""
+	echo "Auto-decline safety net (t5520):"
+	echo "  check-approvals also auto-declines drafts where:"
+	echo "    1. The draft body contains no-reply indicators (e.g. 'no reply needed')"
+	echo "    2. No user comment exists on the notification issue"
+	echo "    3. The draft was created more than 24h ago (grace period)"
+	echo "  This catches cases where the compose agent failed to call 'reject' directly."
+	echo "  Primary path: agent calls 'reject <draft_id> \"No reply needed\"' immediately."
 	return 0
 }
 
@@ -980,6 +1734,8 @@ main() {
 	approve) cmd_approve "$@" ;;
 	reject) cmd_reject "$@" ;;
 	status) cmd_status "$@" ;;
+	check-approvals) cmd_check_approvals "$@" ;;
+	process-approved) cmd_process_approved "$@" ;;
 	help | --help | -h) cmd_help ;;
 	*)
 		echo -e "${RED}Unknown command: ${cmd}${NC}" >&2
