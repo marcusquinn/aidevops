@@ -16,7 +16,7 @@
  * This module makes the built-in provider use them correctly.
  */
 
-import { ensureValidToken, getAccounts, patchAccount, getAnthropicUserAgent, injectPoolToken } from "./oauth-pool.mjs";
+import { ensureValidToken, getAccounts, patchAccount, getAnthropicUserAgent } from "./oauth-pool.mjs";
 
 /** Default cooldown when rate limited mid-session (ms) — 1 minute */
 const RATE_LIMIT_COOLDOWN_MS = 60_000;
@@ -303,11 +303,33 @@ export function createProviderAuthHook(client) {
 
             let rotated = false;
             for (const alt of alternates) {
-              const altToken = await ensureValidToken("anthropic", alt);
+              let altToken;
+              try {
+                altToken = await ensureValidToken("anthropic", alt);
+              } catch (err) {
+                console.error(`[aidevops] provider-auth: ensureValidToken failed for ${alt.email}: ${err.message}`);
+                continue;
+              }
               if (!altToken) continue;
 
-              // Inject the new account into the built-in provider
-              await injectPoolToken(client, currentEmail);
+              // Inject the validated alternate account directly into the
+              // built-in provider — do NOT use injectPoolToken() here because
+              // it does its own LRU selection and may inject a different account
+              // than the one we just validated (token mismatch bug).
+              try {
+                await client.auth.set({
+                  path: { id: "anthropic" },
+                  body: {
+                    type: "oauth",
+                    refresh: alt.refresh,
+                    access: alt.access,
+                    expires: alt.expires,
+                  },
+                });
+              } catch (err) {
+                console.error(`[aidevops] provider-auth: failed to inject token for ${alt.email}: ${err.message}`);
+                continue;
+              }
 
               // Update the Authorization header for the retry
               requestHeaders.set("authorization", `Bearer ${altToken}`);
