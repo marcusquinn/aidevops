@@ -4,9 +4,9 @@ Use this when a user reports "Key Missing", auth errors, or the model has stoppe
 
 All recovery commands work from any terminal — no working model session required.
 
-## Important: OAuth only — no API keys
+## Important: Anthropic integration uses OAuth only — no API keys
 
-The pool uses **OAuth only** (Claude Pro/Max subscription). API keys are not used and not needed.
+The pool's Anthropic integration uses **OAuth only** (Claude Pro/Max subscription). API keys are not used and not needed.
 
 - `opencode auth login` prompts for an API key — **do not use this for OAuth**
 - The correct OAuth setup path is `aidevops model-accounts-pool add anthropic` (opens browser)
