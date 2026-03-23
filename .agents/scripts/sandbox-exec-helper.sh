@@ -592,6 +592,7 @@ sandbox_run() {
 		shift 3
 
 		local _cmd_pid _watchdog_pid _cmd_exit _pgid
+		local _timed_out_file="${_stderr_file}.timed_out"
 
 		# Start command in a new process group.
 		# setsid (Linux) creates a new session (and thus new process group).
@@ -620,9 +621,13 @@ sandbox_run() {
 			sleep "$_timeout_secs"
 			# Only act if the process group still exists
 			if kill -0 -- "-${_pgid}" 2>/dev/null; then
+				: >"$_timed_out_file"
 				kill -TERM -- "-${_pgid}" 2>/dev/null || true
 				sleep 10
-				kill -KILL -- "-${_pgid}" 2>/dev/null || true
+				# Re-check before SIGKILL to avoid PID/PGID recycling races
+				if kill -0 -- "-${_pgid}" 2>/dev/null; then
+					kill -KILL -- "-${_pgid}" 2>/dev/null || true
+				fi
 			fi
 		) &
 		_watchdog_pid=$!
@@ -635,15 +640,16 @@ sandbox_run() {
 		kill "$_watchdog_pid" 2>/dev/null || true
 		wait "$_watchdog_pid" 2>/dev/null || true
 
-		# Normalise: SIGTERM exit (143) and SIGKILL exit (137) after a timeout
-		# are reported as 124 to match GNU coreutils `timeout` convention.
-		# We distinguish timeout-kill from external kill by checking whether the
-		# deadline elapsed (duration >= timeout_secs).
-		local _elapsed
-		_elapsed=$(($(date +%s) - start_time))
-		if [[ $_cmd_exit -eq 143 || $_cmd_exit -eq 137 ]] && ((_elapsed >= _timeout_secs)); then
+		# Normalise: if the watchdog fired (marker file exists), return 124
+		# to match GNU coreutils `timeout` convention.  Using an explicit
+		# marker is more reliable than inferring from child exit codes —
+		# TERM-aware children may exit 0/1/130 after the deadline, and
+		# elapsed-time checks are racy on heavily loaded systems.
+		if [[ -f "$_timed_out_file" ]]; then
+			rm -f "$_timed_out_file"
 			return 124
 		fi
+		rm -f "$_timed_out_file"
 		return "$_cmd_exit"
 	}
 
