@@ -1073,9 +1073,15 @@ _normalize_readme_for_compare() {
 # --- Generate contributions list from forks + repos.json contributed entries ---
 # Outputs markdown lines (one per contributed repo), or empty string if none.
 # Uses core API only (no search API) — ~11 calls per run.
+# Deduplicates across all sources using a newline-delimited "seen" list with
+# exact matching (bash 3.2 compatible — no associative arrays).
 _generate_contributions() {
 	local gh_user="$1"
 	local contrib_repos=""
+	# Newline-delimited list of repo names already added (for O(1)-ish dedup).
+	# Each entry is stored as a full line for exact grep -x matching, avoiding
+	# false positives from partial name matches (e.g., "app" vs "webapp").
+	local seen_repos=""
 
 	# Source 1: forks — resolve parent URLs
 	local repos_json
@@ -1091,10 +1097,15 @@ _generate_contributions() {
 		' 2>/dev/null || true)
 		while IFS=$'\t' read -r rname rdesc rurl; do
 			[[ -z "$rname" ]] && continue
+			# Deduplicate within forks (xargs -P can return duplicates)
+			if [[ -n "$seen_repos" ]] && printf '%s\n' "$seen_repos" | grep -qxF "$rname" 2>/dev/null; then
+				continue
+			fi
 			rname=$(_sanitize_md "$rname")
 			rdesc=$(_sanitize_md "$rdesc")
 			rurl=$(_sanitize_url "$rurl")
 			[[ -z "$rurl" ]] && continue
+			seen_repos="${seen_repos}${rname}"$'\n'
 			contrib_repos="${contrib_repos}- **[${rname}](${rurl})** -- ${rdesc}"$'\n'
 		done <<<"$fork_details"
 	fi
@@ -1113,8 +1124,8 @@ _generate_contributions() {
 			[[ -z "$slug" ]] && continue
 			local repo_name
 			repo_name="${slug##*/}"
-			# Skip if already listed from forks
-			if echo "$contrib_repos" | grep -qF "/${repo_name})" 2>/dev/null; then
+			# Deduplicate against all previously seen repos (forks + earlier entries)
+			if [[ -n "$seen_repos" ]] && printf '%s\n' "$seen_repos" | grep -qxF "$repo_name" 2>/dev/null; then
 				continue
 			fi
 			# Fetch description from GitHub API (1 call per contributed repo)
@@ -1123,6 +1134,7 @@ _generate_contributions() {
 			desc=$(_sanitize_md "$desc")
 			local url="https://github.com/${slug}"
 			repo_name=$(_sanitize_md "$repo_name")
+			seen_repos="${seen_repos}${repo_name}"$'\n'
 			contrib_repos="${contrib_repos}- **[${repo_name}](${url})** -- ${desc}"$'\n'
 		done <<<"$contributed_slugs"
 	fi
@@ -1655,7 +1667,7 @@ cmd_update_contributions() {
 			skip = 0
 			block = ENVIRON["CONTRIBS_BLOCK"]
 			if (block != "") {
-				printf "%s\n", block
+				printf "%s", block
 			}
 			print "<!-- CONTRIBUTIONS-END -->"
 			next
