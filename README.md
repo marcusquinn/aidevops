@@ -273,21 +273,28 @@ See `.agents/tools/task-management/beads.md` for complete documentation and inst
 
 ### OpenCode Anthropic OAuth (Built-in)
 
-OpenCode v1.1.36+ includes Anthropic OAuth authentication natively. No external plugin is needed.
+OpenCode includes Anthropic OAuth authentication natively — no API key needed. OAuth is covered by your Claude Pro/Max subscription at zero additional cost.
 
-**After setup, authenticate:**
+**Authenticate via the pool (recommended):**
 
 ```bash
-opencode auth login
-# Select: Anthropic → Claude Pro/Max
-# Follow OAuth flow in browser
+aidevops model-accounts-pool add anthropic
+# Opens browser OAuth flow — no API key required
+# Restart OpenCode after adding
 ```
+
+**Or via the OpenCode TUI:**
+
+Open OpenCode → `Ctrl+A` → Select **Anthropic** → **Login with Claude.ai** → follow browser OAuth flow.
+
+> **Note:** `opencode auth login` prompts for an API key, not OAuth. Use the commands above for subscription-based OAuth access.
 
 **Benefits:**
 
 - **Zero cost** for Claude Pro/Max subscribers (covered by subscription)
-- **Automatic token refresh** - No manual re-authentication needed
-- **Beta features enabled** - Extended thinking modes and latest features
+- **Automatic token refresh** — no manual re-authentication needed
+- **Multiple accounts** — add more accounts to the pool for automatic rotation when one hits rate limits
+- **Beta features enabled** — extended thinking modes and latest features
 
 ### Cursor Models via Pool Proxy
 
