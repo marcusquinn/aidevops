@@ -3660,7 +3660,7 @@ cmd_help() {
 	echo "  aidevops model-accounts-pool add cursor        # Add Cursor Pro account"
 	echo "  aidevops model-accounts-pool import claude-cli # Import from Claude CLI auth"
 	echo "  aidevops model-accounts-pool assign-pending <provider># Assign stranded token"
-	echo "  aidevops model-accounts-pool remove <p> <email># Remove an account"
+	echo "  aidevops model-accounts-pool remove <provider> <email># Remove an account"
 	echo ""
 	echo "  Auth recovery (run these in order if model is broken):"
 	echo "    aidevops model-accounts-pool status          # 1. Check pool health"
