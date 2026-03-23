@@ -4,7 +4,7 @@ Use this when a user reports "Key Missing", auth errors, or the model has stoppe
 
 All recovery commands work from any terminal — no working model session required.
 
-## Important: Anthropic integration uses OAuth only — no API keys
+## Important: Anthropic Integration (OAuth only)
 
 The pool's Anthropic integration uses **OAuth only** (Claude Pro/Max subscription). API keys are not used and not needed.
 
