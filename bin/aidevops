@@ -1,30 +1,36 @@
 #!/usr/bin/env bash
 # AI DevOps Framework CLI wrapper
-# This wrapper handles both npm global install and local development
+# This wrapper handles both npm global install and local development.
+#
+# Priority order (highest to lowest):
+#   1. ~/Git/aidevops/aidevops.sh  — git repo, always current via 'aidevops update'
+#   2. npm-bundled aidevops.sh     — snapshot at npm publish time, may be stale
+#
+# The repo copy is preferred so that 'aidevops update' (git pull) immediately
+# takes effect without requiring 'npm update -g aidevops'.
 
 set -euo pipefail
 
-# Resolve symlinks to find the actual script location
+# 1. Prefer the git repo copy — always current via 'aidevops update'
+if [[ -f "$HOME/Git/aidevops/aidevops.sh" ]]; then
+    exec bash "$HOME/Git/aidevops/aidevops.sh" "$@"
+fi
+
+# 2. Fall back to the npm-bundled copy (resolve symlinks first)
 # npm install -g creates a symlink: /usr/local/bin/aidevops -> .../node_modules/aidevops/bin/aidevops
 # BASH_SOURCE[0] returns the symlink path, not the target, so we must resolve it
 SOURCE="${BASH_SOURCE[0]}"
 while [[ -L "$SOURCE" ]]; do
     DIR="$(cd "$(dirname "$SOURCE")" && pwd)"
     SOURCE="$(readlink "$SOURCE")"
-    # If readlink returned a relative path, resolve it relative to the symlink's directory
     [[ "$SOURCE" != /* ]] && SOURCE="$DIR/$SOURCE"
 done
 SCRIPT_DIR="$(cd "$(dirname "$SOURCE")" && pwd)"
 
-# Check if we're in an npm global install or local development
 if [[ -f "$SCRIPT_DIR/../aidevops.sh" ]]; then
-    # npm install -g or local development
     exec bash "$SCRIPT_DIR/../aidevops.sh" "$@"
-elif [[ -f "$HOME/Git/aidevops/aidevops.sh" ]]; then
-    # Fallback to standard install location
-    exec bash "$HOME/Git/aidevops/aidevops.sh" "$@"
-else
-    echo "Error: aidevops.sh not found"
-    echo "Please run: bash <(curl -fsSL https://aidevops.sh/install)"
-    exit 1
 fi
+
+echo "Error: aidevops.sh not found"
+echo "Please run: bash <(curl -fsSL https://aidevops.sh/install)"
+exit 1
