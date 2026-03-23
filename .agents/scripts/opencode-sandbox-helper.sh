@@ -76,21 +76,24 @@ _sandbox_bin() {
 
 # Get the most recently installed sandbox version
 _latest_sandbox() {
-	local latest=""
-	local latest_time=0
-	shopt -s nullglob
-	for dir in "${SANDBOX_ROOT}"/*/; do
-		local ver
-		ver=$(basename "$dir")
-		local mtime
-		mtime=$(stat -f '%m' "$dir" 2>/dev/null || stat -c '%Y' "$dir" 2>/dev/null || echo "0")
-		if [[ "$mtime" -gt "$latest_time" ]]; then
-			latest_time="$mtime"
-			latest="$ver"
-		fi
-	done
-	shopt -u nullglob
-	echo "$latest"
+	# Run in a subshell to contain shopt -s nullglob — prevents leakage if
+	# set -e causes early exit before shopt -u nullglob can restore the option.
+	(
+		shopt -s nullglob
+		local latest=""
+		local latest_time=0
+		for dir in "${SANDBOX_ROOT}"/*/; do
+			local ver
+			ver=$(basename "$dir")
+			local mtime
+			mtime=$(stat -f '%m' "$dir" 2>/dev/null || stat -c '%Y' "$dir" 2>/dev/null || echo "0")
+			if [[ "$mtime" -gt "$latest_time" ]]; then
+				latest_time="$mtime"
+				latest="$ver"
+			fi
+		done
+		echo "$latest"
+	)
 	return 0
 }
 
@@ -199,28 +202,32 @@ cmd_list() {
 		return 0
 	fi
 
-	local found="false"
-	shopt -s nullglob
-	for dir in "${SANDBOX_ROOT}"/*/; do
-		local ver
-		ver=$(basename "$dir")
-		local bin_path
-		bin_path=$(_sandbox_bin "$ver") || true
-		local installed_ver="(binary not found)"
-		if [[ -n "$bin_path" ]]; then
-			installed_ver=$("$bin_path" --version 2>/dev/null || echo "unknown")
-		fi
-		local has_auth="no"
-		if [[ -f "${dir}/data/opencode/auth.json" ]]; then
-			has_auth="yes"
-		fi
-		printf '  %-12s  version=%-10s  auth.json=%s\n' "$ver" "$installed_ver" "$has_auth"
-		found="true"
-	done
-	shopt -u nullglob
+	# Run the glob loop in a subshell to contain shopt -s nullglob — prevents
+	# leakage if set -e causes early exit before shopt -u nullglob can restore.
+	local list_output
+	list_output=$(
+		shopt -s nullglob
+		for dir in "${SANDBOX_ROOT}"/*/; do
+			local ver
+			ver=$(basename "$dir")
+			local bin_path
+			bin_path=$(_sandbox_bin "$ver") || true
+			local installed_ver="(binary not found)"
+			if [[ -n "$bin_path" ]]; then
+				installed_ver=$("$bin_path" --version 2>/dev/null || echo "unknown")
+			fi
+			local has_auth="no"
+			if [[ -f "${dir}/data/opencode/auth.json" ]]; then
+				has_auth="yes"
+			fi
+			printf '  %-12s  version=%-10s  auth.json=%s\n' "$ver" "$installed_ver" "$has_auth"
+		done
+	)
 
-	if [[ "$found" == "false" ]]; then
+	if [[ -z "$list_output" ]]; then
 		print_info "No sandbox versions installed"
+	else
+		printf '%s\n' "$list_output"
 	fi
 
 	local prod_ver
