@@ -1304,15 +1304,24 @@ export async function injectPoolToken(client, skipEmail) {
   const accounts = getAccounts("anthropic");
   if (accounts.length === 0) return false;
 
-  // Pick least-recently-used account, optionally skipping one
+  // Pick least-recently-used account, optionally skipping one.
+  // Accept both "active" and "idle" — idle accounts are valid (cooldowns cleared).
+  const now = Date.now();
   let account = null;
   const sorted = [...accounts]
-    .filter((a) => a.status === "active" && a.email !== skipEmail)
+    .filter(
+      (a) =>
+        (a.status === "active" || a.status === "idle") &&
+        a.email !== skipEmail &&
+        (!a.cooldownUntil || a.cooldownUntil <= now),
+    )
     .sort((a, b) => new Date(a.lastUsed || 0) - new Date(b.lastUsed || 0));
 
   if (sorted.length === 0) {
-    // All accounts skipped or inactive — try any active account
-    account = accounts.find((a) => a.status === "active");
+    // All accounts skipped or in cooldown — try any active/idle account as last resort
+    account = accounts.find(
+      (a) => a.status === "active" || a.status === "idle",
+    );
   } else {
     account = sorted[0];
   }

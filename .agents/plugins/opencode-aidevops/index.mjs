@@ -1113,12 +1113,8 @@ export async function AidevopsPlugin({ directory, client }) {
   // Phase 6: Initialise LLM observability (t1308)
   initObservability();
 
-  // Phase 7: OAuth pool — seed auth entries so providers appear in connect dialog (t1543, t1548, t1549)
-  await initPoolAuth(client);
-
   // Phase 8: Cursor gRPC proxy (t1551)
-  // Start the gRPC proxy if Cursor accounts exist in the pool.
-  // This runs after initPoolAuth so pool tokens are already seeded.
+  // Started after config hook runs (which calls initPoolAuth), so pool tokens are seeded.
   // The proxy translates OpenAI-compatible requests to Cursor's protobuf/HTTP2 protocol.
   let cursorProxyResult = null;
   const cursorAccounts = getAccounts("cursor");
@@ -1142,8 +1138,14 @@ export async function AidevopsPlugin({ directory, client }) {
   baseTools["model-accounts-pool"] = createPoolTool(client);
 
   return {
-    // Phase 1+2: Lightweight agent index + MCP registration
-    config: async (config) => configHook(config),
+    // Phase 1+2+7: Agent index, MCP registration, and OAuth pool injection.
+    // initPoolAuth runs here (inside OpenCode's config phase) so tokens are
+    // written to auth.json before the first provider call — fixes headless
+    // dispatch race condition where injection arrived after the first API call.
+    config: async (config) => {
+      await initPoolAuth(client);
+      return configHook(config);
+    },
 
     // Phase 1+7: Custom tools (extracted to tools.mjs) + pool management (t1543)
     tool: baseTools,
