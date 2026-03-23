@@ -419,7 +419,7 @@ aidevops model-accounts-pool remove <p> <email># Remove an account
 
 > **Note:** `reset-cooldowns` clears cooldowns in the pool file. If OpenCode is already running, the in-memory token endpoint cooldown is only cleared when OpenCode restarts or when you use the `/model-accounts-pool reset-cooldowns` slash command inside an active session.
 
-**If you prefer guided help:** Open OpenCode with a free model (OpenCode Zen includes free models that don't require any API key or subscription) and ask it to read the auth troubleshooting agent:
+**If you prefer guided help:** Open OpenCode with a free model (OpenCode Zen includes free models that don't require any API key or subscription) and run the auth troubleshooting agent by typing:
 
 ```
 @auth-troubleshooting
