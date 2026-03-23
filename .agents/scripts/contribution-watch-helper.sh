@@ -715,6 +715,15 @@ cmd_scan() {
 	# Triggered by --auto-draft flag. Calls draft-response-helper.sh draft
 	# for each item that has new activity since our last comment.
 	# Drafts are stored locally and NEVER posted without explicit user approval.
+	#
+	# AGENT COMPOSE INSTRUCTION (t5520): After composing a draft reply, assess
+	# whether a reply is actually needed. If the recommendation is "no reply
+	# needed", "no action required", or "decline", call:
+	#   draft-response-helper.sh reject <draft_id> "No reply needed"
+	# instead of leaving the notification issue open. This avoids requiring
+	# manual closure of no-reply drafts. The deterministic safety net in
+	# check-approvals will also auto-decline after 24h if the draft body
+	# contains clear no-reply indicators and no user comment exists.
 	local _draft_helper
 	_draft_helper="${SCRIPT_DIR}/draft-response-helper.sh"
 	local _draft_enabled=true

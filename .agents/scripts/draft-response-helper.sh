@@ -232,6 +232,14 @@ _create_notification_issue() {
 	issue_body+=$'\n\n'
 	issue_body+="Comment on this issue with what you'd like to do — your comment will be interpreted by the AI agent and acted on accordingly."
 	issue_body+=$'\n\n'
+	issue_body+="To approve and post the draft reply, comment: **approve** or **send it**."
+	issue_body+=$'\n\n'
+	issue_body+="To decline without replying, comment: **no reply**, **decline**, or **close**. The issue will be closed automatically."
+	issue_body+=$'\n\n'
+	issue_body+="To request a rewrite, describe the changes you want."
+	issue_body+=$'\n\n'
+	issue_body+="**Note:** If the draft itself recommends no reply, the agent will auto-decline this issue without requiring your input."
+	issue_body+=$'\n\n'
 	issue_body+="</details>"
 
 	# Issue title: use plain text description, NO owner/repo#N pattern
@@ -761,6 +769,114 @@ cmd_check_approvals() {
 		_write_meta "$draft_id" "$updated_meta"
 	done < <(echo "$open_issues" | jq -c '.[]')
 
+	# ==========================================================================
+	# Deterministic safety net (t5520): auto-decline no-reply drafts after 24h
+	# ==========================================================================
+	# When the compose agent determines no reply is needed, it should call
+	# 'reject' immediately (Change 1). This safety net catches cases where the
+	# agent failed to do so: if the draft body contains clear no-reply indicators
+	# AND no user comment exists on the notification issue, auto-decline after
+	# a 24h grace period.
+	#
+	# No-reply indicators (case-insensitive, matched against local draft body):
+	#   "no reply needed", "no action needed", "no action required",
+	#   "recommendation: decline", "no reply is needed", "decline this draft",
+	#   "not necessary to reply", "no response needed", "no response required"
+	#
+	# Grace period: 24h from draft creation time (stored in meta .created field).
+	# This prevents premature auto-decline of drafts that are still being composed.
+	local auto_declined=0
+	local grace_seconds=86400 # 24 hours
+
+	local now_epoch
+	now_epoch=$(date -u +%s 2>/dev/null) || now_epoch=0
+
+	while IFS= read -r issue; do
+		[[ -z "$issue" ]] && continue
+
+		local sa_issue_number sa_issue_body
+		sa_issue_number=$(echo "$issue" | jq -r '.number')
+		sa_issue_body=$(echo "$issue" | jq -r '.body // ""')
+
+		# Extract draft_id from issue body
+		local sa_draft_id
+		# shellcheck disable=SC2016
+		sa_draft_id=$(echo "$sa_issue_body" | sed -n 's/.*Draft ID | `\([^`]*\)`.*/\1/p;T;q') || sa_draft_id=""
+		[[ -z "$sa_draft_id" ]] && continue
+
+		# Read draft meta
+		local sa_meta
+		sa_meta=$(_read_meta "$sa_draft_id")
+		local sa_status
+		sa_status=$(echo "$sa_meta" | jq -r '.status // "pending"')
+		[[ "$sa_status" != "pending" ]] && continue
+
+		# Check grace period: skip if draft was created less than 24h ago
+		local sa_created
+		sa_created=$(echo "$sa_meta" | jq -r '.created // ""')
+		if [[ -n "$sa_created" && "$now_epoch" -gt 0 ]]; then
+			# Convert ISO8601 to epoch (macOS date -j -f)
+			local sa_created_epoch=0
+			if date -j -f "%Y-%m-%dT%H:%M:%SZ" "$sa_created" +%s &>/dev/null 2>&1; then
+				sa_created_epoch=$(date -j -f "%Y-%m-%dT%H:%M:%SZ" "$sa_created" +%s 2>/dev/null) || sa_created_epoch=0
+			elif date -d "$sa_created" +%s &>/dev/null 2>&1; then
+				# GNU date fallback (Linux)
+				sa_created_epoch=$(date -d "$sa_created" +%s 2>/dev/null) || sa_created_epoch=0
+			fi
+			if [[ "$sa_created_epoch" -gt 0 ]]; then
+				local sa_age=$((now_epoch - sa_created_epoch))
+				if [[ "$sa_age" -lt "$grace_seconds" ]]; then
+					_log_info "check-approvals safety-net: draft ${sa_draft_id} is only ${sa_age}s old (grace=${grace_seconds}s), skipping"
+					continue
+				fi
+			fi
+		fi
+
+		# Check for user comments on this notification issue
+		local sa_comments
+		sa_comments=$(gh api --paginate "repos/${slug}/issues/${sa_issue_number}/comments?per_page=100" \
+			--jq "[.[] | select(.user.login == \"${username}\") | select(.user.login | test(\"\\\\[bot\\\\]\$\"; \"i\") | not)]" \
+			2>/dev/null) || sa_comments="[]"
+		local sa_user_comment_count
+		sa_user_comment_count=$(echo "$sa_comments" | jq 'length' 2>/dev/null) || sa_user_comment_count=0
+
+		# Only auto-decline if no user comment exists
+		if [[ "$sa_user_comment_count" -gt 0 ]]; then
+			continue
+		fi
+
+		# Check draft body for no-reply indicators
+		local sa_body_path
+		sa_body_path=$(_draft_body_path "$sa_draft_id")
+		local sa_body_text=""
+		if [[ -f "$sa_body_path" ]]; then
+			sa_body_text=$(cat "$sa_body_path")
+		fi
+
+		# Also check the notification issue body (compose agent may have updated it)
+		local sa_combined_text="${sa_body_text}"$'\n'"${sa_issue_body}"
+
+		# Match no-reply indicators (case-insensitive)
+		local sa_no_reply=false
+		if echo "$sa_combined_text" | grep -qi \
+			"no reply needed\|no action needed\|no action required\|recommendation: decline\|no reply is needed\|decline this draft\|not necessary to reply\|no response needed\|no response required\|no reply necessary"; then
+			sa_no_reply=true
+		fi
+
+		if [[ "$sa_no_reply" == "true" ]]; then
+			_log_info "check-approvals safety-net: auto-declining draft ${sa_draft_id} (no-reply indicators found, no user comment, grace period elapsed)"
+			echo "  Safety net: auto-declining draft ${sa_draft_id} (no-reply indicators, no user comment, 24h elapsed)"
+			cmd_reject "$sa_draft_id" "Auto-declined: no-reply indicators in draft body, no user comment after 24h grace period"
+			auto_declined=$((auto_declined + 1))
+			actions_taken=$((actions_taken + 1))
+		fi
+	done < <(echo "$open_issues" | jq -c '.[]')
+
+	if [[ "$auto_declined" -gt 0 ]]; then
+		echo "Safety net auto-declined ${auto_declined} no-reply draft(s)."
+		_log_info "check-approvals safety-net: auto_declined=${auto_declined}"
+	fi
+
 	echo "check-approvals complete: ${actions_taken} action(s) taken from ${issue_count} issue(s)."
 	_log_info "check-approvals complete: actions=${actions_taken}, issues_scanned=${issue_count}"
 	echo "DRAFT_APPROVALS_PROCESSED=${actions_taken}"
@@ -970,6 +1086,10 @@ cmd_draft() {
 		{
 			echo "<!-- Draft reply for ${item_key} -->"
 			echo "<!-- Edit this file, then run: draft-response-helper.sh approve ${draft_id} -->"
+			echo "<!-- If no reply is needed, run: draft-response-helper.sh reject ${draft_id} \"No reply needed\" -->"
+			echo "<!-- AGENT INSTRUCTION: After composing, if your recommendation is no reply / no action / decline, -->"
+			echo "<!-- call: draft-response-helper.sh reject ${draft_id} \"No reply needed\" -->"
+			echo "<!-- Do NOT leave the notification issue open for no-reply cases. -->"
 			echo ""
 			if [[ "$scan_result" == "flagged" ]]; then
 				echo "> **WARNING: Prompt injection patterns detected in the external comment.**"
@@ -1585,6 +1705,14 @@ cmd_help() {
 	echo "  check-approvals scans open notification issues for user comments."
 	echo "  When found, an LLM interprets the user's intent and acts accordingly."
 	echo "  Runs as part of the hourly contribution-watch scan cycle."
+	echo ""
+	echo "Auto-decline safety net (t5520):"
+	echo "  check-approvals also auto-declines drafts where:"
+	echo "    1. The draft body contains no-reply indicators (e.g. 'no reply needed')"
+	echo "    2. No user comment exists on the notification issue"
+	echo "    3. The draft was created more than 24h ago (grace period)"
+	echo "  This catches cases where the compose agent failed to call 'reject' directly."
+	echo "  Primary path: agent calls 'reject <draft_id> \"No reply needed\"' immediately."
 	return 0
 }
 
