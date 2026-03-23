@@ -116,12 +116,13 @@ sanitize_checkpoint() {
 
 	local redacted=0
 	local pattern
+	local grep_rc
 
 	for pattern in "${CREDENTIAL_PATTERNS[@]}"; do
 		# Check if pattern matches before attempting redaction.
 		# Capture exit code once to avoid running grep twice in debug mode:
 		# 0 = match, 1 = no match, 2 = regex/file error.
-		local grep_rc=0
+		grep_rc=0
 		grep -qE "$pattern" "$target_file" 2>/dev/null || grep_rc=$?
 
 		if [[ "$grep_rc" -eq 0 ]]; then
