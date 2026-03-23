@@ -412,6 +412,14 @@ aidevops model-accounts-pool remove <p> <email># Remove an account
 
 > **Note:** `reset-cooldowns` clears cooldowns in the pool file. If OpenCode is already running, the in-memory token endpoint cooldown is only cleared when OpenCode restarts or when you use the `/model-accounts-pool reset-cooldowns` slash command inside an active session.
 
+**If you prefer guided help:** Open OpenCode with a free model (OpenCode Zen includes free models that don't require any API key or subscription) and ask it to read the auth troubleshooting agent:
+
+```
+@auth-troubleshooting
+```
+
+The agent contains the full recovery flow and symptom table. Free models work fine for this — no paid subscription needed.
+
 ### Terminal Tab Title Sync
 
 Your terminal tab/window title automatically shows `repo/branch` context when working in git repositories. This helps identify which codebase and branch you're working on across multiple terminal sessions.
