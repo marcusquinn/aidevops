@@ -3607,6 +3607,7 @@ cmd_help() {
 	echo "  update-tools       Check for outdated tools (--update to auto-update)"
 	echo "  repos [cmd]        Manage registered projects (list/add/remove/clean)"
 	echo "  model-accounts-pool OAuth account pool (list/check/add/rotate/reset-cooldowns)"
+	echo "  opencode-sandbox   Test OpenCode versions in isolation (install/run/check/clean)"
 	echo "  security <cmd>     Security posture (check/audit/setup/status/summary)"
 	echo "  ip-check <cmd>     IP reputation checks (check/batch/report/providers)"
 	echo "  secret <cmd>       Manage secrets (set/list/run/init/import/status)"
@@ -3924,6 +3925,19 @@ main() {
 			bash "$oauth_pool_helper" "$@"
 		else
 			print_error "oauth-pool-helper.sh not found. Run: aidevops update"
+			exit 1
+		fi
+		;;
+	opencode-sandbox | oc-sandbox)
+		shift
+		local sandbox_helper="$AGENTS_DIR/scripts/opencode-sandbox-helper.sh"
+		if [[ ! -f "$sandbox_helper" ]]; then
+			sandbox_helper="$INSTALL_DIR/.agents/scripts/opencode-sandbox-helper.sh"
+		fi
+		if [[ -f "$sandbox_helper" ]]; then
+			bash "$sandbox_helper" "$@"
+		else
+			print_error "opencode-sandbox-helper.sh not found. Run: aidevops update"
 			exit 1
 		fi
 		;;
