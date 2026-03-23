@@ -126,6 +126,7 @@ open_browser() {
 
 cmd_add() {
 	local provider="${1:-anthropic}"
+	local prefill_email="${2:-}"
 
 	if [[ "$provider" != "anthropic" && "$provider" != "openai" && "$provider" != "cursor" ]]; then
 		print_error "Unsupported provider: $provider (supported: anthropic, openai, cursor)"
@@ -138,10 +139,15 @@ cmd_add() {
 		return $?
 	fi
 
-	# Prompt for email
-	printf 'Account email: ' >&2
+	# Prompt for email (pre-filled if provided, e.g. from import)
 	local email
-	read -r email
+	if [[ -n "$prefill_email" ]]; then
+		email="$prefill_email"
+		print_info "Using email: ${email}"
+	else
+		printf 'Account email: ' >&2
+		read -r email
+	fi
 	if [[ -z "$email" || "$email" != *@* ]]; then
 		print_error "Invalid email address"
 		return 1
@@ -760,6 +766,97 @@ json.dump(pool, sys.stdout, indent=2)
 }
 
 # ---------------------------------------------------------------------------
+# Import from Claude CLI
+# ---------------------------------------------------------------------------
+
+cmd_import() {
+	local source="${1:-claude-cli}"
+
+	if [[ "$source" != "claude-cli" ]]; then
+		print_error "Unsupported import source: $source (supported: claude-cli)"
+		return 1
+	fi
+
+	# Check if claude CLI is installed
+	if ! command -v claude &>/dev/null; then
+		print_error "Claude CLI not found in PATH"
+		print_info "Install it from https://claude.ai/code or run: npm install -g @anthropic-ai/claude-code"
+		return 1
+	fi
+
+	# Get auth status from Claude CLI
+	print_info "Checking Claude CLI auth status..."
+	local auth_json
+	auth_json=$(claude auth status --json 2>/dev/null) || {
+		print_error "Failed to get Claude CLI auth status"
+		print_info "Run 'claude auth login' first to authenticate the CLI"
+		return 1
+	}
+
+	# Parse auth status (use env vars to avoid secrets on argv)
+	local logged_in email sub_type
+	logged_in=$(printf '%s' "$auth_json" | python3 -c "import sys,json; print(json.load(sys.stdin).get('loggedIn', False))" 2>/dev/null)
+	email=$(printf '%s' "$auth_json" | python3 -c "import sys,json; print(json.load(sys.stdin).get('email', ''))" 2>/dev/null)
+	sub_type=$(printf '%s' "$auth_json" | python3 -c "import sys,json; print(json.load(sys.stdin).get('subscriptionType', ''))" 2>/dev/null)
+
+	if [[ "$logged_in" != "True" ]]; then
+		print_error "Claude CLI is not logged in"
+		print_info "Run 'claude auth login' first, then retry this import"
+		return 1
+	fi
+
+	if [[ -z "$email" || "$email" == "None" ]]; then
+		print_error "Could not determine email from Claude CLI auth"
+		return 1
+	fi
+
+	if [[ "$sub_type" != "pro" && "$sub_type" != "max" ]]; then
+		print_warning "Claude CLI subscription type is '${sub_type}' (expected 'pro' or 'max')"
+		print_info "OAuth pool models require a Claude Pro or Max subscription"
+		printf 'Continue anyway? [y/N] ' >&2
+		local confirm
+		read -r confirm
+		if [[ "$confirm" != "y" && "$confirm" != "Y" ]]; then
+			print_info "Aborted"
+			return 0
+		fi
+	fi
+
+	# Check if this email already exists in the anthropic pool
+	local pool
+	pool=$(load_pool)
+	local already_exists
+	already_exists=$(printf '%s' "$pool" | EMAIL="$email" python3 -c "
+import sys, json, os
+pool = json.load(sys.stdin)
+email = os.environ['EMAIL']
+for acc in pool.get('anthropic', []):
+    if acc.get('email') == email:
+        print('yes')
+        sys.exit(0)
+print('no')
+" 2>/dev/null)
+
+	if [[ "$already_exists" == "yes" ]]; then
+		print_info "Account ${email} already exists in the Anthropic pool"
+		print_info "Use 'oauth-pool-helper.sh check anthropic' to verify token health"
+		return 0
+	fi
+
+	# Account not in pool — guide user through OAuth to add it
+	print_success "Found Claude ${sub_type} account: ${email}"
+	print_info "Adding to Anthropic OAuth pool..."
+	print_info ""
+	print_info "This will open your browser to authorize the same account."
+	print_info "Since you're already logged in to claude.ai, it should be quick."
+	print_info ""
+
+	# Run the standard add flow with the email pre-filled
+	cmd_add "anthropic" "$email"
+	return $?
+}
+
+# ---------------------------------------------------------------------------
 # Help
 # ---------------------------------------------------------------------------
 
@@ -772,11 +869,13 @@ Commands:
   check [anthropic|openai|all]  Health check accounts (token expiry, validity)
   list [anthropic|openai|all]   List accounts and their status
   remove <provider> <email>     Remove an account from the pool
+  import [claude-cli]           Import account from Claude CLI auth
 
 Examples:
   oauth-pool-helper.sh add anthropic       # Claude Pro/Max (browser OAuth)
   oauth-pool-helper.sh add openai          # ChatGPT Plus/Pro (browser OAuth)
   oauth-pool-helper.sh add cursor          # Cursor Pro (reads from IDE)
+  oauth-pool-helper.sh import claude-cli   # Import from Claude CLI auth
   oauth-pool-helper.sh check               # Check all accounts
   oauth-pool-helper.sh list                # List all accounts
   oauth-pool-helper.sh remove anthropic user@example.com
@@ -787,6 +886,7 @@ Notes:
   - Tokens refresh automatically; use 'add' with the same email to re-auth
   - The pool auto-rotates between accounts when one hits rate limits
   - Cursor reads credentials from your local Cursor IDE — log in there first
+  - 'import claude-cli' detects your Claude CLI account and pre-fills the email
 HELP
 	return 0
 }
@@ -802,6 +902,7 @@ main() {
 	case "$cmd" in
 	add) cmd_add "$@" ;;
 	check) cmd_check "$@" ;;
+	import) cmd_import "$@" ;;
 	list) cmd_list "$@" ;;
 	remove) cmd_remove "$@" ;;
 	help | -h | --help) cmd_help ;;
