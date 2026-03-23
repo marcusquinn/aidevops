@@ -1,22 +1,48 @@
 #!/usr/bin/env bash
 # AI DevOps Framework CLI wrapper
-# This wrapper handles both npm global install and local development.
+# This wrapper handles npm/brew/bun global installs and local development.
 #
 # Priority order (highest to lowest):
 #   1. ~/Git/aidevops/aidevops.sh  — git repo, always current via 'aidevops update'
-#   2. npm-bundled aidevops.sh     — snapshot at npm publish time, may be stale
+#   2. Auto-clone the git repo     — first-run bootstrap for package manager installs
+#   3. npm-bundled aidevops.sh     — snapshot at npm publish time, may be stale
 #
 # The repo copy is preferred so that 'aidevops update' (git pull) immediately
 # takes effect without requiring 'npm update -g aidevops'.
 
 set -euo pipefail
 
+REPO_DIR="$HOME/Git/aidevops"
+REPO_URL="https://github.com/marcusquinn/aidevops.git"
+
 # 1. Prefer the git repo copy — always current via 'aidevops update'
-if [[ -f "$HOME/Git/aidevops/aidevops.sh" ]]; then
-    exec bash "$HOME/Git/aidevops/aidevops.sh" "$@"
+if [[ -f "$REPO_DIR/aidevops.sh" ]]; then
+    exec bash "$REPO_DIR/aidevops.sh" "$@"
 fi
 
-# 2. Fall back to the npm-bundled copy (resolve symlinks first)
+# 2. Git repo not found — bootstrap it automatically
+# This runs once on first use after a package manager install (npm/brew/bun).
+# After this, step 1 will always match and the git repo runs directly.
+if command -v git >/dev/null 2>&1; then
+    echo "[aidevops] First run — cloning git repo to $REPO_DIR for transparent updates..."
+    mkdir -p "$(dirname "$REPO_DIR")"
+    if git clone "$REPO_URL" "$REPO_DIR" 2>/dev/null; then
+        echo "[aidevops] Running setup..."
+        if [[ -f "$REPO_DIR/setup.sh" ]]; then
+            bash "$REPO_DIR/setup.sh" --non-interactive
+        fi
+        echo ""
+        echo "[aidevops] Setup complete. The git repo at $REPO_DIR is now your canonical install."
+        echo "[aidevops] Run 'aidevops update' to stay current. You can safely remove the"
+        echo "[aidevops] package manager copy (npm/brew/bun) — it's no longer needed."
+        echo ""
+        exec bash "$REPO_DIR/aidevops.sh" "$@"
+    else
+        echo "[aidevops] Git clone failed — falling back to bundled copy." >&2
+    fi
+fi
+
+# 3. Fall back to the npm-bundled copy (resolve symlinks first)
 # npm install -g creates a symlink: /usr/local/bin/aidevops -> .../node_modules/aidevops/bin/aidevops
 # BASH_SOURCE[0] returns the symlink path, not the target, so we must resolve it
 SOURCE="${BASH_SOURCE[0]}"
