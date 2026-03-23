@@ -45,8 +45,13 @@ readonly BOLD='\033[1m'
 # Focused on secrets (API keys, tokens, passwords, connection strings).
 # Does NOT include emails/IPs/home paths — those are fine in checkpoints.
 # Patterns sourced from privacy-filter-helper.sh DEFAULT_PATTERNS (credential subset).
+#
+# Note on false positives: sk-/pk- prefixes with 20+ alphanumeric chars may match
+# non-secret identifiers (e.g., CSS classes like "sk-navigation-section-main-content").
+# The 20-char minimum reduces this, but security-first: false redaction is acceptable.
+# To tighten later, consider word-boundary anchors (\b) or entropy checks.
 readonly -a CREDENTIAL_PATTERNS=(
-	# API keys (generic)
+	# API keys (generic) — see false-positive note above re: sk-/pk- prefixes
 	'sk-[a-zA-Z0-9]{20,}'
 	'pk-[a-zA-Z0-9]{20,}'
 	# AWS keys
@@ -67,31 +72,37 @@ readonly -a CREDENTIAL_PATTERNS=(
 	# SendGrid
 	'SG\.[a-zA-Z0-9_-]{22}\.[a-zA-Z0-9_-]{43}'
 	# Generic long hex/base64 tokens (API tokens, Cloudflare, etc.)
-	'api[_-]?key["\x27[:space:]:=]+[a-zA-Z0-9_-]{16,}'
-	'api[_-]?secret["\x27[:space:]:=]+[a-zA-Z0-9_-]{16,}'
-	'api[_-]?token["\x27[:space:]:=]+[a-zA-Z0-9_-]{16,}'
+	# Note: use shell quote-concatenation instead of \x27 for single-quote matching (POSIX-portable)
+	'api[_-]?key["'"'"'[:space:]:=]+[a-zA-Z0-9_-]{16,}'
+	'api[_-]?secret["'"'"'[:space:]:=]+[a-zA-Z0-9_-]{16,}'
+	'api[_-]?token["'"'"'[:space:]:=]+[a-zA-Z0-9_-]{16,}'
 	# Database connection strings with credentials
 	'mongodb(\+srv)?://[^[:space:]]+'
 	'postgres(ql)?://[^[:space:]]+'
 	'mysql://[^[:space:]]+'
 	'redis://[^[:space:]]+'
 	# Password/secret assignments
-	'password["\x27[:space:]:=]+[^[:space:]"]{8,}'
-	'passwd["\x27[:space:]:=]+[^[:space:]"]{8,}'
-	'secret["\x27[:space:]:=]+[^[:space:]"]{8,}'
-	'token["\x27[:space:]:=]+[^[:space:]"]{8,}'
+	'password["'"'"'[:space:]:=]+[^[:space:]"]{8,}'
+	'passwd["'"'"'[:space:]:=]+[^[:space:]"]{8,}'
+	'secret["'"'"'[:space:]:=]+[^[:space:]"]{8,}'
+	'token["'"'"'[:space:]:=]+[^[:space:]"]{8,}'
 	# Private keys
 	'-----BEGIN (RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----'
-	# Gopass output (raw secret values after gopass show)
-	'gopass show[^|]*\|[^[:space:]]+'
+	# Gopass output (command invocations that may include or precede secret values)
+	'gopass show [a-zA-Z0-9/_.-]+'
 )
 
-# Sanitize checkpoint file by redacting credential patterns.
-# Runs after the checkpoint is written to disk.
-# Arguments: none (operates on CHECKPOINT_FILE)
+# Sanitize a file by redacting credential patterns.
+# Uses perl for regex substitution to avoid sed delimiter conflicts —
+# CREDENTIAL_PATTERNS contain metacharacters and URL slashes that conflict
+# with any fixed sed delimiter (/, #, etc.).
+# Arguments:
+#   $1 - file path to sanitize (defaults to CHECKPOINT_FILE)
 # Returns: 0 always (redaction failure is non-fatal)
 sanitize_checkpoint() {
-	if [[ ! -f "$CHECKPOINT_FILE" ]]; then
+	local target_file="${1:-$CHECKPOINT_FILE}"
+
+	if [[ ! -f "$target_file" ]]; then
 		return 0
 	fi
 
@@ -100,10 +111,26 @@ sanitize_checkpoint() {
 
 	for pattern in "${CREDENTIAL_PATTERNS[@]}"; do
 		# Check if pattern matches before attempting redaction
-		if grep -qE "$pattern" "$CHECKPOINT_FILE" 2>/dev/null; then
-			# Use # as sed delimiter to avoid conflicts with / in URL patterns
-			sed_inplace -E "s#${pattern}#[REDACTED]#g" "$CHECKPOINT_FILE" 2>/dev/null || true
-			redacted=1
+		if grep -qE "$pattern" "$target_file" 2>/dev/null; then
+			# Use perl -pi for in-place regex substitution — avoids delimiter
+			# conflicts that sed has with patterns containing / # or other chars.
+			# The {} delimiters in s{}{} are safe since no patterns use braces
+			# as literal characters (they're always regex quantifiers).
+			if perl -pi -e "s{$pattern}{[REDACTED]}g" "$target_file" 2>/dev/null; then
+				redacted=1
+			else
+				[[ -n "${DEBUG:-}" ]] && print_warning "Failed to redact pattern: ${pattern:0:30}..."
+			fi
+		else
+			# Pattern didn't match — in debug mode, distinguish "no match" (exit 1)
+			# from "regex error" (exit 2) to surface malformed patterns
+			if [[ -n "${DEBUG:-}" ]]; then
+				grep -qE "$pattern" "$target_file" 2>/dev/null
+				local grep_rc=$?
+				if [[ "$grep_rc" -eq 2 ]]; then
+					print_warning "Regex error in pattern: ${pattern:0:30}..."
+				fi
+			fi
 		fi
 	done
 
@@ -135,15 +162,74 @@ _parse_save_args() {
 
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
-		--task)     [[ $# -lt 2 ]] && { print_error "--task requires a value"; return 1; };     _save_task="$2";     shift 2 ;;
-		--next)     [[ $# -lt 2 ]] && { print_error "--next requires a value"; return 1; };     _save_next="$2";     shift 2 ;;
-		--worktree) [[ $# -lt 2 ]] && { print_error "--worktree requires a value"; return 1; }; _save_worktree="$2"; shift 2 ;;
-		--branch)   [[ $# -lt 2 ]] && { print_error "--branch requires a value"; return 1; };   _save_branch="$2";   shift 2 ;;
-		--batch)    [[ $# -lt 2 ]] && { print_error "--batch requires a value"; return 1; };    _save_batch="$2";    shift 2 ;;
-		--note)     [[ $# -lt 2 ]] && { print_error "--note requires a value"; return 1; };     _save_note="$2";     shift 2 ;;
-		--elapsed)  [[ $# -lt 2 ]] && { print_error "--elapsed requires a value"; return 1; };  _save_elapsed="$2";  shift 2 ;;
-		--target)   [[ $# -lt 2 ]] && { print_error "--target requires a value"; return 1; };   _save_target="$2";   shift 2 ;;
-		*) print_error "Unknown option: $1"; return 1 ;;
+		--task)
+			[[ $# -lt 2 ]] && {
+				print_error "--task requires a value"
+				return 1
+			}
+			_save_task="$2"
+			shift 2
+			;;
+		--next)
+			[[ $# -lt 2 ]] && {
+				print_error "--next requires a value"
+				return 1
+			}
+			_save_next="$2"
+			shift 2
+			;;
+		--worktree)
+			[[ $# -lt 2 ]] && {
+				print_error "--worktree requires a value"
+				return 1
+			}
+			_save_worktree="$2"
+			shift 2
+			;;
+		--branch)
+			[[ $# -lt 2 ]] && {
+				print_error "--branch requires a value"
+				return 1
+			}
+			_save_branch="$2"
+			shift 2
+			;;
+		--batch)
+			[[ $# -lt 2 ]] && {
+				print_error "--batch requires a value"
+				return 1
+			}
+			_save_batch="$2"
+			shift 2
+			;;
+		--note)
+			[[ $# -lt 2 ]] && {
+				print_error "--note requires a value"
+				return 1
+			}
+			_save_note="$2"
+			shift 2
+			;;
+		--elapsed)
+			[[ $# -lt 2 ]] && {
+				print_error "--elapsed requires a value"
+				return 1
+			}
+			_save_elapsed="$2"
+			shift 2
+			;;
+		--target)
+			[[ $# -lt 2 ]] && {
+				print_error "--target requires a value"
+				return 1
+			}
+			_save_target="$2"
+			shift 2
+			;;
+		*)
+			print_error "Unknown option: $1"
+			return 1
+			;;
 		esac
 	done
 	return 0
@@ -151,8 +237,11 @@ _parse_save_args() {
 
 # Write the checkpoint markdown file using current _save_* variables.
 # Expects _save_branch and _save_timestamp to be set by caller.
+# Arguments:
+#   $1 - output file path (defaults to CHECKPOINT_FILE)
 _write_checkpoint_file() {
-	cat >"$CHECKPOINT_FILE" <<EOF
+	local output_file="${1:-$CHECKPOINT_FILE}"
+	cat >"$output_file" <<EOF
 # Session Checkpoint
 
 Updated: ${_save_timestamp}
@@ -203,10 +292,21 @@ cmd_save() {
 		_save_branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")"
 	fi
 
-	_write_checkpoint_file
+	# Atomic write: write to temp file, sanitize, then mv to final location.
+	# This avoids a window where credentials exist unredacted on disk —
+	# if the script is interrupted between write and sanitize, the temp file
+	# is cleaned up (or left orphaned in tmp/) rather than persisting as the
+	# checkpoint with raw credentials.
+	local temp_file
+	temp_file="$(mktemp "${CHECKPOINT_DIR}/checkpoint.XXXXXX")" || {
+		print_error "Failed to create temp file for checkpoint"
+		return 1
+	}
 
-	# Sanitize checkpoint content — strip any credential patterns before persisting
-	sanitize_checkpoint
+	# Write checkpoint to temp file, sanitize it, then atomically move
+	_write_checkpoint_file "$temp_file"
+	sanitize_checkpoint "$temp_file"
+	mv "$temp_file" "$CHECKPOINT_FILE"
 
 	print_success "Checkpoint saved: ${CHECKPOINT_FILE}"
 	print_info "Task: ${_save_task:-none} | Branch: ${_save_branch} | ${_save_timestamp}"
@@ -223,7 +323,7 @@ cmd_load() {
 	cat "$CHECKPOINT_FILE"
 
 	# Auto-recall relevant memories after loading checkpoint
-	local memory_helper="$HOME/.aidevops/agents/scripts/memory-helper.sh"
+	local memory_helper="${SCRIPT_DIR}/memory-helper.sh"
 	if [[ -x "$memory_helper" ]]; then
 		echo ""
 		echo "## Relevant Memories (from prior sessions)"
@@ -352,7 +452,16 @@ cmd_continuation() {
 
 	_gather_continuation_state
 
-	cat <<CONTINUATION_EOF
+	# Write to temp file so we can sanitize before outputting — continuation
+	# state may include PR titles, TODO content, or memory recall that
+	# inadvertently contains credential material.
+	local temp_file
+	temp_file="$(mktemp "${CHECKPOINT_DIR}/continuation.XXXXXX")" || {
+		print_error "Failed to create temp file for continuation" >&2
+		return 1
+	}
+
+	cat >"$temp_file" <<CONTINUATION_EOF
 ## Session Continuation Prompt
 
 **Generated**: $(date -u +%Y-%m-%dT%H:%M:%SZ)
@@ -396,6 +505,11 @@ Run \`session-checkpoint-helper.sh load\` for the last checkpoint.
 Run \`pre-edit-check.sh\` before any file modifications.
 CONTINUATION_EOF
 
+	# Sanitize before outputting to stdout
+	sanitize_checkpoint "$temp_file"
+	cat "$temp_file"
+	rm -f "$temp_file"
+
 	# Note: output goes to stdout for piping/capture. Status messages go to stderr.
 	print_success "Continuation prompt generated" >&2
 	return 0
@@ -412,10 +526,34 @@ cmd_auto_save() {
 
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
-		--task) [[ $# -lt 2 ]] && { print_error "--task requires a value"; return 1; }; current_task="$2"; shift 2 ;;
-		--next) [[ $# -lt 2 ]] && { print_error "--next requires a value"; return 1; }; next_tasks="$2"; shift 2 ;;
-		--note) [[ $# -lt 2 ]] && { print_error "--note requires a value"; return 1; }; note="$2"; shift 2 ;;
-		*) print_error "Unknown option: $1"; return 1 ;;
+		--task)
+			[[ $# -lt 2 ]] && {
+				print_error "--task requires a value"
+				return 1
+			}
+			current_task="$2"
+			shift 2
+			;;
+		--next)
+			[[ $# -lt 2 ]] && {
+				print_error "--next requires a value"
+				return 1
+			}
+			next_tasks="$2"
+			shift 2
+			;;
+		--note)
+			[[ $# -lt 2 ]] && {
+				print_error "--note requires a value"
+				return 1
+			}
+			note="$2"
+			shift 2
+			;;
+		*)
+			print_error "Unknown option: $1"
+			return 1
+			;;
 		esac
 	done
 
