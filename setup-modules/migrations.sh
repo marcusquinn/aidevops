@@ -81,6 +81,11 @@ cleanup_deprecated_paths() {
 	# rg + fd + LLM comprehension covers the same ground at zero resource cost
 	cleanup_osgrep
 
+	# Remove opencode-antigravity-auth — third-party Google OAuth plugin removed from aidevops.
+	# When present but unresolvable it breaks the OpenCode plugin chain, preventing the
+	# aidevops pool from injecting tokens and causing "API key missing" errors for all providers.
+	cleanup_antigravity_plugin
+
 	# Remove oh-my-opencode from plugin array if present — guarded by same setting
 	local opencode_config
 	opencode_config=$(find_opencode_config 2>/dev/null) || true
@@ -179,6 +184,59 @@ cleanup_osgrep() {
 
 	if [[ "$cleaned" == "true" ]]; then
 		print_success "osgrep removed (freed CPU cores and disk space)"
+	fi
+
+	return 0
+}
+
+# Remove opencode-antigravity-auth plugin — third-party Google OAuth plugin removed from aidevops.
+# When present but unresolvable it breaks the OpenCode plugin chain, preventing the aidevops
+# pool from injecting tokens and causing "API key missing" errors for all providers.
+# Affects: opencode.json plugin array, Claude Code settings enabledPlugins.
+cleanup_antigravity_plugin() {
+	local cleaned=false
+	local plugin_id="opencode-antigravity-auth"
+
+	# 1. Remove from OpenCode config plugin array
+	local opencode_config
+	opencode_config=$(find_opencode_config 2>/dev/null) || true
+	if [[ -n "$opencode_config" ]] && [[ -f "$opencode_config" ]] && command -v jq &>/dev/null; then
+		# Plugin may appear as bare name or with @version suffix
+		if jq -e --arg p "$plugin_id" '.plugin // [] | map(. | startswith($p)) | any' "$opencode_config" >/dev/null 2>&1; then
+			local tmp_file
+			tmp_file=$(mktemp)
+			if jq --arg p "$plugin_id" '.plugin = [(.plugin // [])[] | select(startswith($p) | not)]' \
+				"$opencode_config" >"$tmp_file" 2>/dev/null; then
+				mv "$tmp_file" "$opencode_config"
+				print_success "Removed ${plugin_id} from OpenCode plugin list"
+				cleaned=true
+			else
+				rm -f "$tmp_file"
+			fi
+		fi
+	fi
+
+	# 2. Remove from Claude Code settings enabledPlugins (if present)
+	local claude_settings="$HOME/.claude/settings.json"
+	if [[ -f "$claude_settings" ]] && command -v jq &>/dev/null; then
+		if jq -e --arg p "$plugin_id" '.enabledPlugins // {} | keys[] | startswith($p)' \
+			"$claude_settings" >/dev/null 2>&1; then
+			local tmp_file
+			tmp_file=$(mktemp)
+			if jq --arg p "$plugin_id" \
+				'del(.enabledPlugins[(.enabledPlugins // {} | keys[] | select(startswith($p)))])' \
+				"$claude_settings" >"$tmp_file" 2>/dev/null; then
+				mv "$tmp_file" "$claude_settings"
+				print_success "Removed ${plugin_id} from Claude Code settings"
+				cleaned=true
+			else
+				rm -f "$tmp_file"
+			fi
+		fi
+	fi
+
+	if [[ "$cleaned" == "false" ]]; then
+		print_info "${plugin_id} not present — nothing to remove"
 	fi
 
 	return 0
