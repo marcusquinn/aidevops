@@ -1645,32 +1645,16 @@ CW_PLIST
 	local repos_json="$HOME/.config/aidevops/repos.json"
 	if [[ -x "$pr_script" ]] && command -v gh &>/dev/null && gh auth status &>/dev/null; then
 		# Initialize profile repo if not already set up.
-		# Verify the entry is valid: local dir exists AND README has stat markers.
-		# If the repo was deleted or local clone removed, re-run init to recreate.
-		local profile_needs_init="true"
-		if [[ -f "$repos_json" ]] && command -v jq &>/dev/null; then
-			local profile_path
-			profile_path=$(jq -r '
-				if .initialized_repos then
-					.initialized_repos[] | select(.priority == "profile") | .path
-				else
-					to_entries[] | select(.value.priority == "profile") | .value.path
-				end
-			' "$repos_json" 2>/dev/null | head -1)
-			if [[ -n "$profile_path" && "$profile_path" != "null" ]] &&
-				[[ -d "$profile_path" ]] &&
-				[[ -f "${profile_path}/README.md" ]] &&
-				grep -q '<!-- STATS-START -->' "${profile_path}/README.md" 2>/dev/null; then
-				profile_needs_init="false"
-			fi
-		fi
-		if [[ "$profile_needs_init" == "true" ]]; then
-			print_info "Setting up GitHub profile README..."
-			if bash "$pr_script" init; then
-				print_info "Profile README created. Visit your profile repo and click 'Show on profile'."
-			else
-				print_warning "Profile README setup failed (non-fatal, skipping)"
-			fi
+		# Always run init — it's idempotent and handles:
+		#   - Fresh installs (no profile repo)
+		#   - Missing markers (injects them into existing README)
+		#   - Diverged history (repo deleted and recreated on GitHub)
+		#   - Already-initialized repos (returns early with no changes)
+		print_info "Checking GitHub profile README..."
+		if bash "$pr_script" init; then
+			print_info "Profile README ready."
+		else
+			print_warning "Profile README setup failed (non-fatal, skipping)"
 		fi
 	fi
 

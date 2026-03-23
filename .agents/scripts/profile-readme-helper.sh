@@ -56,9 +56,9 @@ _resolve_profile_repo() {
 	fi
 
 	local convention_path="${HOME}/Git/${gh_user}"
-	if [[ -d "$convention_path" ]] && [[ -f "${convention_path}/README.md" ]] &&
-		grep -q '<!-- STATS-START -->' "${convention_path}/README.md" 2>/dev/null; then
-		# Found it — auto-register in repos.json so future lookups are fast
+	if [[ -d "$convention_path" ]] && [[ -f "${convention_path}/README.md" ]]; then
+		# Found it — auto-register in repos.json so future lookups are fast.
+		# Don't require markers — cmd_init/cmd_update will inject them if missing.
 		echo "Auto-registering profile repo at $convention_path" >&2
 		if [[ -f "$repos_json" ]] && command -v jq &>/dev/null; then
 			local tmp_json
@@ -1151,6 +1151,94 @@ _generate_contributions() {
 	return 0
 }
 
+# --- Inject aidevops markers into an existing README that lacks them ---
+# Preserves all existing content and appends marker blocks at the end.
+# This handles the case where a user has manually written their README
+# (or GitHub created the default template) and we need to add our stats.
+_inject_markers_into_readme() {
+	local readme_path="$1"
+	local tmp_file
+	tmp_file=$(mktemp)
+
+	# Copy existing content
+	cat "$readme_path" >"$tmp_file"
+
+	# Ensure trailing newline before appending
+	if [[ -s "$tmp_file" ]] && [[ "$(tail -c 1 "$tmp_file" | wc -l)" -eq 0 ]]; then
+		echo "" >>"$tmp_file"
+	fi
+
+	# Append marker blocks
+	{
+		echo ""
+		echo "<!-- STATS-START -->"
+		echo "<!-- Stats will be populated on next update -->"
+		echo "<!-- STATS-END -->"
+		echo ""
+		echo "<!-- CONTRIBUTIONS-START -->"
+		echo "<!-- CONTRIBUTIONS-END -->"
+		echo ""
+		echo "---"
+		echo ""
+		echo "<!-- UPDATED-START -->"
+		echo "<!-- UPDATED-END -->"
+	} >>"$tmp_file"
+
+	mv "$tmp_file" "$readme_path"
+	return 0
+}
+
+# --- Recover from diverged git history on the profile repo ---
+# When the remote repo was deleted and recreated, the local clone has a
+# different history. This function re-clones the repo and re-seeds the README.
+_recover_diverged_profile() {
+	local repo_dir="$1"
+	local repo_slug="$2"
+	local default_branch="$3"
+	local gh_user="$4"
+
+	echo "Recovering profile repo from diverged history..." >&2
+
+	# Back up the local directory and re-clone
+	local backup_dir="${repo_dir}.bak.$$"
+	mv "$repo_dir" "$backup_dir"
+
+	if git clone "git@github.com:${repo_slug}.git" "$repo_dir" 2>/dev/null ||
+		git clone "https://github.com/${repo_slug}.git" "$repo_dir" 2>/dev/null; then
+		# Re-seed the README with markers
+		local readme_path="${repo_dir}/README.md"
+		if [[ -f "$readme_path" ]] && grep -q '<!-- STATS-START -->' "$readme_path" 2>/dev/null; then
+			echo "Remote README already has markers — no seeding needed"
+		elif [[ -f "$readme_path" ]]; then
+			echo "Injecting markers into remote README..."
+			_inject_markers_into_readme "$readme_path"
+		else
+			echo "Creating rich profile README..."
+			_generate_rich_readme "$gh_user" "$readme_path"
+		fi
+
+		# Commit and push the seeded README
+		if [[ -n "$(git -C "$repo_dir" status --porcelain README.md 2>/dev/null)" ]]; then
+			git -C "$repo_dir" add README.md
+			git -C "$repo_dir" commit -m "feat: initialize profile README with aidevops stat markers" --no-verify 2>/dev/null || true
+			git -C "$repo_dir" push origin "$default_branch" 2>/dev/null || {
+				echo "Warning: push failed after re-clone — push manually" >&2
+			}
+		fi
+
+		# Clean up backup
+		rm -rf "$backup_dir"
+		echo "Profile repo recovered successfully"
+	else
+		# Re-clone failed — restore backup
+		echo "Error: re-clone failed — restoring backup" >&2
+		rm -rf "$repo_dir"
+		mv "$backup_dir" "$repo_dir"
+	fi
+
+	return 0
+}
+
 # --- Generate rich profile README from GitHub data ---
 _generate_rich_readme() {
 	local gh_user="$1"
@@ -1294,6 +1382,7 @@ cmd_init() {
 	local repos_json="${HOME}/.config/aidevops/repos.json"
 
 	# Check if already fully initialized: repos.json entry + local dir + README with markers.
+	# Also verify the local clone is in sync with the remote (catches repo deletion/recreation).
 	# If any piece is missing, fall through to recreate what's needed.
 	if [[ -f "$repos_json" ]] && command -v jq &>/dev/null; then
 		local existing_profile
@@ -1308,6 +1397,22 @@ cmd_init() {
 			if [[ -d "$existing_profile" ]] &&
 				[[ -f "${existing_profile}/README.md" ]] &&
 				grep -q '<!-- STATS-START -->' "${existing_profile}/README.md" 2>/dev/null; then
+				# Local looks good — verify we can still push (catches diverged history)
+				if git -C "$existing_profile" fetch origin 2>/dev/null; then
+					local local_head remote_head merge_base
+					local_head=$(git -C "$existing_profile" rev-parse HEAD 2>/dev/null || true)
+					remote_head=$(git -C "$existing_profile" rev-parse FETCH_HEAD 2>/dev/null || true)
+					if [[ -n "$local_head" && -n "$remote_head" ]]; then
+						merge_base=$(git -C "$existing_profile" merge-base "$local_head" "$remote_head" 2>/dev/null || true)
+						if [[ -z "$merge_base" ]]; then
+							# No common ancestor — histories have diverged (repo was recreated)
+							echo "Diverged history detected — re-initializing profile repo..."
+							_recover_diverged_profile "$existing_profile" "$repo_slug" "main" "$gh_user"
+							echo "Profile repo recovered at $existing_profile"
+							return 0
+						fi
+					fi
+				fi
 				echo "Profile repo already initialized at $existing_profile"
 				return 0
 			fi
@@ -1359,17 +1464,28 @@ cmd_init() {
 	fi
 	default_branch="${default_branch:-main}"
 
-	# Seed README.md if it doesn't have stat markers
+	# Seed README.md with stat markers.
+	# If the file doesn't exist or is the default GitHub template, generate a full README.
+	# If the file exists with user content but lacks markers, inject markers into it.
 	local readme_path="${repo_dir}/README.md"
-	if [[ ! -f "$readme_path" ]] || ! grep -q '<!-- STATS-START -->' "$readme_path"; then
+	if [[ ! -f "$readme_path" ]]; then
 		echo "Creating rich profile README..."
 		_generate_rich_readme "$gh_user" "$readme_path"
+	elif ! grep -q '<!-- STATS-START -->' "$readme_path"; then
+		echo "Injecting stat markers into existing README..."
+		_inject_markers_into_readme "$readme_path"
+	fi
 
+	# Commit and push if there are changes
+	if [[ -n "$(git -C "$repo_dir" status --porcelain README.md 2>/dev/null)" ]]; then
 		git -C "$repo_dir" add README.md
 		git -C "$repo_dir" commit -m "feat: initialize profile README with aidevops stat markers" --no-verify 2>/dev/null || true
-		git -C "$repo_dir" push origin "$default_branch" 2>/dev/null || {
-			echo "Warning: failed to push initial README — push manually" >&2
-		}
+		if ! git -C "$repo_dir" push origin "$default_branch" 2>/dev/null; then
+			# Push failed — likely diverged history (repo was deleted and recreated).
+			# Re-clone to get the new remote history, then re-seed.
+			echo "Push failed — attempting recovery from diverged history..." >&2
+			_recover_diverged_profile "$repo_dir" "$repo_slug" "$default_branch" "$gh_user"
+		fi
 	fi
 
 	# Register in repos.json
@@ -1474,14 +1590,13 @@ cmd_update() {
 	local source_file
 	source_file="$readme_path"
 
-	# Ensure markers exist in the source content
-	if ! grep -q '<!-- STATS-START -->' "$source_file"; then
-		echo "Error: <!-- STATS-START --> marker not found in source content" >&2
-		return 1
-	fi
-	if ! grep -q '<!-- STATS-END -->' "$source_file"; then
-		echo "Error: <!-- STATS-END --> marker not found in source content" >&2
-		return 1
+	# Ensure markers exist in the source content — inject them if missing
+	if ! grep -q '<!-- STATS-START -->' "$source_file" || ! grep -q '<!-- STATS-END -->' "$source_file"; then
+		echo "Markers missing from README — injecting them..."
+		_inject_markers_into_readme "$source_file"
+		# Commit the marker injection before proceeding with stats update
+		git -C "$profile_repo" add README.md
+		git -C "$profile_repo" commit -m "feat: inject aidevops stat markers into profile README" --no-verify 2>/dev/null || true
 	fi
 
 	# Replace content between markers
@@ -1562,10 +1677,23 @@ cmd_update() {
 		default_branch=$(git -C "$profile_repo" branch --show-current 2>/dev/null || true)
 	fi
 	default_branch="${default_branch:-main}"
-	git -C "$profile_repo" push origin "$default_branch" 2>/dev/null || {
-		echo "Warning: push failed — changes committed locally" >&2
+	if ! git -C "$profile_repo" push origin "$default_branch" 2>/dev/null; then
+		# Push failed — likely diverged history (repo was deleted and recreated).
+		# Resolve the GitHub username and attempt recovery.
+		echo "Push failed — attempting recovery from diverged history..." >&2
+		local gh_user
+		gh_user=$(_resolve_profile_user "$profile_repo")
+		if [[ -n "$gh_user" ]]; then
+			local repo_slug="${gh_user}/${gh_user}"
+			_recover_diverged_profile "$profile_repo" "$repo_slug" "$default_branch" "$gh_user"
+			# After recovery, run a fresh update cycle to populate stats
+			echo "Running fresh stats update after recovery..."
+			cmd_update "$@"
+		else
+			echo "Warning: push failed and could not resolve username for recovery" >&2
+		fi
 		return 0
-	}
+	fi
 
 	echo "Profile README updated and pushed"
 	return 0
