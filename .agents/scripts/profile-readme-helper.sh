@@ -1076,6 +1076,9 @@ _normalize_readme_for_compare() {
 _generate_contributions() {
 	local gh_user="$1"
 	local contrib_repos=""
+	# Bash 3.2-compatible seen-set: "|name1|name2|" — O(1) append, O(N) lookup
+	# (associative arrays require bash 4.0+, unavailable on macOS default shell)
+	local seen_repos="|"
 
 	# Source 1: forks — resolve parent URLs
 	local repos_json
@@ -1091,10 +1094,14 @@ _generate_contributions() {
 		' 2>/dev/null || true)
 		while IFS=$'\t' read -r rname rdesc rurl; do
 			[[ -z "$rname" ]] && continue
+			if [[ "$seen_repos" == *"|${rname}|"* ]]; then
+				continue
+			fi
 			rname=$(_sanitize_md "$rname")
 			rdesc=$(_sanitize_md "$rdesc")
 			rurl=$(_sanitize_url "$rurl")
 			[[ -z "$rurl" ]] && continue
+			seen_repos="${seen_repos}${rname}|"
 			contrib_repos="${contrib_repos}- **[${rname}](${rurl})** -- ${rdesc}"$'\n'
 		done <<<"$fork_details"
 	fi
@@ -1113,8 +1120,8 @@ _generate_contributions() {
 			[[ -z "$slug" ]] && continue
 			local repo_name
 			repo_name="${slug##*/}"
-			# Skip if already listed from forks
-			if echo "$contrib_repos" | grep -qF "/${repo_name})" 2>/dev/null; then
+			# Skip if already seen from any source (forks or prior repos.json entries)
+			if [[ "$seen_repos" == *"|${repo_name}|"* ]]; then
 				continue
 			fi
 			# Fetch description from GitHub API (1 call per contributed repo)
@@ -1123,6 +1130,7 @@ _generate_contributions() {
 			desc=$(_sanitize_md "$desc")
 			local url="https://github.com/${slug}"
 			repo_name=$(_sanitize_md "$repo_name")
+			seen_repos="${seen_repos}${repo_name}|"
 			contrib_repos="${contrib_repos}- **[${repo_name}](${url})** -- ${desc}"$'\n'
 		done <<<"$contributed_slugs"
 	fi
@@ -1655,7 +1663,7 @@ cmd_update_contributions() {
 			skip = 0
 			block = ENVIRON["CONTRIBS_BLOCK"]
 			if (block != "") {
-				printf "%s\n", block
+				printf "%s", block
 			}
 			print "<!-- CONTRIBUTIONS-END -->"
 			next
