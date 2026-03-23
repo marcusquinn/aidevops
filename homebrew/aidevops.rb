@@ -27,9 +27,15 @@ class Aidevops < Formula
     (share/"aidevops").install ".agents"
     (share/"aidevops").install "VERSION"
     
-    # Create wrapper in bin that calls the libexec script
+    # Create wrapper in bin that prefers the git repo copy (always current
+    # via 'aidevops update') over the Homebrew-installed snapshot.
     (bin/"aidevops").write <<~EOS
       #!/usr/bin/env bash
+      # Prefer git repo copy — always current via 'aidevops update'
+      if [[ -f "$HOME/Git/aidevops/aidevops.sh" ]]; then
+        exec bash "$HOME/Git/aidevops/aidevops.sh" "$@"
+      fi
+      # Fall back to Homebrew-installed copy
       export AIDEVOPS_SHARE="#{share}/aidevops"
       exec "#{libexec}/aidevops.sh" "$@"
     EOS
