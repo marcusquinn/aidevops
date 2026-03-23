@@ -84,8 +84,7 @@ NPM_TOOLS=(
 )
 
 BREW_TOOLS=(
-	# OpenCode PINNED to 1.2.27 — do NOT auto-upgrade. See tool-install.sh for details.
-	# "brew|OpenCode|opencode|--version|anomalyco/tap/opencode|brew upgrade anomalyco/tap/opencode"
+	"brew|OpenCode|opencode|--version|anomalyco/tap/opencode|brew upgrade anomalyco/tap/opencode"
 	"brew|GitHub CLI|gh|--version|gh|brew upgrade gh"
 	"brew|GitLab CLI|glab|--version|glab|brew upgrade glab"
 	"brew|Worktrunk|wt|--version|max-sixty/worktrunk/wt|brew upgrade max-sixty/worktrunk/wt"

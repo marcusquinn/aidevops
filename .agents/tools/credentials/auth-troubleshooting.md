@@ -52,8 +52,10 @@ aidevops model-accounts-pool remove <p> <email>   # remove an account
 
 ## Key diagnostic facts
 
-- `rotate` writes the new account into `auth.json` immediately — OpenCode must restart to pick it up
+- Token injection uses `process.env.ANTHROPIC_API_KEY` (and `OPENAI_API_KEY`) — works on all OpenCode versions. The env var is set by the plugin at startup and updated on rotation/refresh.
+- `rotate` updates the env var and `auth.json` immediately — takes effect on the next API call without restart
 - `reset-cooldowns` clears the **pool file** cooldowns only; the in-memory token endpoint cooldown in a running OpenCode process requires a restart or `/model-accounts-pool reset-cooldowns` inside an active session
 - Pool file: `~/.aidevops/oauth-pool.json` — if corrupt or missing, `add` recreates it
-- "Key Missing" means the loader returned `{}`: pool is empty, all tokens expired/errored, or OpenCode's auth state was reset
+- "Key Missing" means the plugin didn't load or the pool is empty — check `aidevops model-accounts-pool status`
 - `assign-pending` is needed when OAuth completes but the email lookup fails — the token is saved as `_pending_<provider>` and stranded until assigned
+- If `ANTHROPIC_API_KEY` is set in your shell environment (e.g. `.bashrc`), the pool injection will override it at startup. Remove any manual API key env vars to avoid confusion.

@@ -1335,7 +1335,14 @@ export async function injectPoolToken(client, skipEmail) {
     return false;
   }
 
-  // Write to built-in anthropic provider's auth entry
+  // Inject via env var — works on all OpenCode versions including 1.3.0+
+  // where the bundled @ai-sdk/anthropic reads ANTHROPIC_API_KEY directly
+  // and ignores auth.json. OAuth access tokens are accepted in the same
+  // x-api-key header as API keys.
+  process.env.ANTHROPIC_API_KEY = accessToken;
+
+  // Also write to auth.json via client.auth.set — works on OpenCode <=1.2.27
+  // where the provider layer reads auth entries. Harmless on 1.3.0+.
   try {
     await client.auth.set({
       path: { id: "anthropic" },
@@ -1346,19 +1353,18 @@ export async function injectPoolToken(client, skipEmail) {
         expires: account.expires,
       },
     });
-
-    // Mark as used
-    patchAccount("anthropic", account.email, {
-      lastUsed: new Date().toISOString(),
-      status: "active",
-    });
-
-    console.error(`[aidevops] OAuth pool: injected token for ${account.email} into built-in anthropic provider`);
-    return true;
-  } catch (err) {
-    console.error(`[aidevops] OAuth pool: failed to inject token: ${err.message}`);
-    return false;
+  } catch {
+    // Best-effort — env var injection is the primary path
   }
+
+  // Mark as used
+  patchAccount("anthropic", account.email, {
+    lastUsed: new Date().toISOString(),
+    status: "active",
+  });
+
+  console.error(`[aidevops] OAuth pool: injected token for ${account.email} into built-in anthropic provider`);
+  return true;
 }
 
 /**
@@ -1397,8 +1403,17 @@ export async function injectOpenAIPoolToken(client, skipEmail) {
 
   if (!account) return false;
 
-  // Write to built-in openai provider's auth entry
-  // OpenAI auth.json structure: { type, access, refresh, expires, accountId }
+  // Ensure we have a valid access token
+  const accessToken = await ensureValidToken("openai", account);
+  if (!accessToken) {
+    console.error(`[aidevops] OAuth pool: failed to get valid OpenAI token for ${account.email}`);
+    return false;
+  }
+
+  // Inject via env var — works on all OpenCode versions including 1.3.0+
+  process.env.OPENAI_API_KEY = accessToken;
+
+  // Also write to auth.json via client.auth.set — works on OpenCode <=1.2.27
   try {
     await client.auth.set({
       path: { id: "openai" },
@@ -1410,19 +1425,18 @@ export async function injectOpenAIPoolToken(client, skipEmail) {
         accountId: account.accountId || "",
       },
     });
-
-    // Mark as used
-    patchAccount("openai", account.email, {
-      lastUsed: new Date().toISOString(),
-      status: "active",
-    });
-
-    console.error(`[aidevops] OAuth pool: injected token for ${account.email} into built-in openai provider`);
-    return true;
-  } catch (err) {
-    console.error(`[aidevops] OAuth pool: failed to inject OpenAI token: ${err.message}`);
-    return false;
+  } catch {
+    // Best-effort — env var injection is the primary path
   }
+
+  // Mark as used
+  patchAccount("openai", account.email, {
+    lastUsed: new Date().toISOString(),
+    status: "active",
+  });
+
+  console.error(`[aidevops] OAuth pool: injected token for ${account.email} into built-in openai provider`);
+  return true;
 }
 
 // ---------------------------------------------------------------------------
@@ -1719,13 +1733,14 @@ export function createPoolAuthHook(client) {
                   added: new Date().toISOString(),
                 });
                 // Also inject into the built-in provider for this session
+                if (tokenData.access) process.env.ANTHROPIC_API_KEY = tokenData.access;
                 try {
                   await client.auth.set({
                     path: { id: "anthropic" },
                     body: { type: "oauth", ...tokenData },
                   });
                 } catch {
-                  // Best-effort session injection
+                  // Best-effort — env var injection is the primary path
                 }
                 return { type: "success", ...tokenData };
               }
@@ -1971,13 +1986,14 @@ export function createOpenAIPoolAuthHook(client) {
                   accountId,
                 });
                 // Also inject into the built-in provider for this session
+                if (tokenData.access) process.env.OPENAI_API_KEY = tokenData.access;
                 try {
                   await client.auth.set({
                     path: { id: "openai" },
                     body: { type: "oauth", ...tokenData, accountId },
                   });
                 } catch {
-                  // Best-effort session injection
+                  // Best-effort — env var injection is the primary path
                 }
                 return { type: "success", ...tokenData };
               }
