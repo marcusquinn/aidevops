@@ -3599,6 +3599,7 @@ cmd_help() {
 	echo "  skills <cmd>       Discover skills (search/browse/describe/recommend)"
 	echo "  plugin <cmd>       Manage plugins (add/list/update/enable/disable/remove)"
 	echo "  status             Check installation status of all components"
+	echo "  doctor             Detect duplicate installs and PATH conflicts (--fix to resolve)"
 	echo "  update             Update aidevops to the latest version (alias: upgrade)"
 	echo "  upgrade            Alias for update"
 	echo "  pulse <cmd>        Session-based pulse control (start/stop/status)"
@@ -3624,6 +3625,8 @@ cmd_help() {
 	echo "  aidevops upgrade-planning    # Upgrade planning files to latest"
 	echo "  aidevops features            # List available features"
 	echo "  aidevops status              # Check what's installed"
+	echo "  aidevops doctor              # Find duplicate/conflicting installs"
+	echo "  aidevops doctor --fix        # Interactively remove duplicates"
 	echo "  aidevops update              # Update framework + check projects"
 	echo "  aidevops repos               # List registered projects"
 	echo "  aidevops repos add           # Register current project"
@@ -3896,6 +3899,19 @@ main() {
 			fi
 		else
 			print_error "security-posture-helper.sh not found. Run: aidevops update"
+			exit 1
+		fi
+		;;
+	doctor | doc)
+		shift
+		local doctor_helper="$AGENTS_DIR/scripts/doctor-helper.sh"
+		if [[ ! -f "$doctor_helper" ]]; then
+			doctor_helper="$INSTALL_DIR/.agents/scripts/doctor-helper.sh"
+		fi
+		if [[ -f "$doctor_helper" ]]; then
+			bash "$doctor_helper" "$@"
+		else
+			print_error "doctor-helper.sh not found. Run: aidevops update"
 			exit 1
 		fi
 		;;

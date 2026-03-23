@@ -179,6 +179,7 @@ git clone https://github.com/marcusquinn/aidevops.git ~/Git/aidevops
 
 ```bash
 aidevops status           # Check what's installed
+aidevops doctor           # Detect duplicate installs and PATH conflicts
 aidevops update           # Update framework + check registered projects
 aidevops auto-update      # Manage automatic update polling (every 10 min)
 aidevops init             # Initialize aidevops in any project
