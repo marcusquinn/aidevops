@@ -1,17 +1,18 @@
 #!/usr/bin/env bash
 # oauth-pool-helper.sh — Shell-based OAuth pool account management
 #
-# Provides add/check/list/remove/rotate for OAuth pool accounts when the
-# OpenCode TUI auth hooks are unavailable (e.g., OpenCode v1.2.27 regression).
+# Provides add/check/list/remove/rotate/status/assign-pending for OAuth pool
+# accounts when the OpenCode TUI auth hooks are unavailable.
 #
 # Usage:
-#   oauth-pool-helper.sh add [anthropic|openai]    # Add account via OAuth
-#   oauth-pool-helper.sh check [anthropic|openai]   # Health check all accounts
-#   oauth-pool-helper.sh list [anthropic|openai]     # List accounts
-#   oauth-pool-helper.sh remove <provider> <email>   # Remove an account
-#   oauth-pool-helper.sh rotate [anthropic|openai]   # Switch active account
-#   oauth-pool-helper.sh status [anthropic|openai]   # Pool rotation statistics
-#   oauth-pool-helper.sh help                        # Show usage
+#   oauth-pool-helper.sh add [anthropic|openai|cursor]           # Add account via OAuth
+#   oauth-pool-helper.sh check [anthropic|openai|cursor|all]     # Health check all accounts
+#   oauth-pool-helper.sh list [anthropic|openai|cursor|all]      # List accounts
+#   oauth-pool-helper.sh remove <provider> <email>               # Remove an account
+#   oauth-pool-helper.sh rotate [anthropic|openai|cursor]        # Switch active account
+#   oauth-pool-helper.sh status [anthropic|openai|cursor|all]    # Pool rotation statistics
+#   oauth-pool-helper.sh assign-pending <provider> [email]       # Assign pending token
+#   oauth-pool-helper.sh help                                    # Show usage
 #
 # Security: Tokens are written to ~/.aidevops/oauth-pool.json (600 perms).
 #           Secrets are passed via stdin/env, never as command arguments.
@@ -994,6 +995,110 @@ print(f'  Auth errors:    {auth_error}')
 }
 
 # ---------------------------------------------------------------------------
+# Assign pending token to an account
+# ---------------------------------------------------------------------------
+
+cmd_assign_pending() {
+	local provider="${1:-anthropic}"
+	local email="${2:-}"
+
+	case "$provider" in
+	anthropic | openai | cursor) ;;
+	*)
+		print_error "Invalid provider: $provider (valid: anthropic, openai, cursor)"
+		return 1
+		;;
+	esac
+
+	local pool
+	pool=$(load_pool)
+
+	# Check if a pending token exists for this provider
+	local pending_info
+	pending_info=$(printf '%s' "$pool" | PROVIDER="$provider" python3 -c "
+import sys, json, os
+pool = json.load(sys.stdin)
+provider = os.environ['PROVIDER']
+pending_key = '_pending_' + provider
+pending = pool.get(pending_key)
+if pending:
+    print('FOUND:' + pending.get('added', 'unknown'))
+else:
+    print('NONE')
+" 2>/dev/null)
+
+	if [[ "$pending_info" == "NONE" ]]; then
+		print_info "No pending token for ${provider}."
+		print_info "Pending tokens are created when you re-auth via the Pool provider but the email could not be identified."
+		return 0
+	fi
+
+	local pending_added
+	pending_added=$(printf '%s' "$pending_info" | cut -d: -f2-)
+
+	if [[ -z "$email" ]]; then
+		# Show available accounts and pending token info
+		print_info "Pending ${provider} token found (added: ${pending_added})"
+		print_info "Available accounts to assign to:"
+		printf '%s' "$pool" | PROVIDER="$provider" python3 -c "
+import sys, json, os
+pool = json.load(sys.stdin)
+provider = os.environ['PROVIDER']
+for i, a in enumerate(pool.get(provider, []), 1):
+    print(f'  {i}. {a[\"email\"]}')
+" 2>/dev/null
+		echo ""
+		echo "Usage: oauth-pool-helper.sh assign-pending ${provider} <email>"
+		return 0
+	fi
+
+	# Assign the pending token to the specified account
+	local assign_result
+	assign_result=$(printf '%s' "$pool" | PROVIDER="$provider" EMAIL="$email" python3 -c "
+import sys, json, os
+pool = json.load(sys.stdin)
+provider = os.environ['PROVIDER']
+email = os.environ['EMAIL']
+pending_key = '_pending_' + provider
+pending = pool.get(pending_key)
+
+if not pending:
+    print('ERROR:no_pending')
+    sys.exit(0)
+
+accounts = pool.get(provider, [])
+idx = next((i for i, a in enumerate(accounts) if a.get('email') == email), -1)
+if idx < 0:
+    print('ERROR:not_found')
+    sys.exit(0)
+
+# Apply pending token fields to the account
+accounts[idx]['refresh'] = pending.get('refresh', accounts[idx].get('refresh', ''))
+accounts[idx]['access'] = pending.get('access', accounts[idx].get('access', ''))
+accounts[idx]['expires'] = pending.get('expires', accounts[idx].get('expires', 0))
+accounts[idx]['status'] = 'active'
+accounts[idx]['cooldownUntil'] = None
+
+# Remove pending entry
+del pool[pending_key]
+json.dump(pool, sys.stdout, indent=2)
+" 2>/dev/null)
+
+	if printf '%s' "$assign_result" | grep -q "^ERROR:no_pending"; then
+		print_error "No pending token for ${provider}"
+		return 1
+	fi
+	if printf '%s' "$assign_result" | grep -q "^ERROR:not_found"; then
+		print_error "Account ${email} not found in ${provider} pool"
+		return 1
+	fi
+
+	save_pool "$assign_result"
+	print_success "Assigned pending token to ${email} in ${provider} pool. Token is now active."
+	return 0
+}
+
+# ---------------------------------------------------------------------------
 # Help
 # ---------------------------------------------------------------------------
 
@@ -1002,22 +1107,25 @@ cmd_help() {
 oauth-pool-helper.sh — Manage OAuth pool accounts from the shell
 
 Commands:
-  add [anthropic|openai|cursor]  Add an account
-  check [anthropic|openai|all]   Health check accounts (token expiry, validity)
-  list [anthropic|openai|all]    List accounts and their status
-  remove <provider> <email>      Remove an account from the pool
-  rotate [anthropic|openai]      Switch active account in OpenCode auth.json
-  status [anthropic|openai|all]  Pool rotation statistics
+  add [anthropic|openai|cursor]            Add an account via OAuth
+  check [anthropic|openai|cursor|all]      Health check accounts (token expiry, validity)
+  list [anthropic|openai|cursor|all]       List accounts and their status
+  remove <provider> <email>                Remove an account from the pool
+  rotate [anthropic|openai|cursor]         Switch active account in OpenCode auth.json
+  status [anthropic|openai|cursor|all]     Pool rotation statistics
+  assign-pending <provider> [email]        Assign a pending unidentified token to an account
 
 Examples:
-  oauth-pool-helper.sh add anthropic       # Claude Pro/Max (browser OAuth)
-  oauth-pool-helper.sh add openai          # ChatGPT Plus/Pro (browser OAuth)
-  oauth-pool-helper.sh add cursor          # Cursor Pro (reads from IDE)
-  oauth-pool-helper.sh check               # Check all accounts
-  oauth-pool-helper.sh list                # List all accounts
-  oauth-pool-helper.sh rotate anthropic    # Switch to next Anthropic account
-  oauth-pool-helper.sh status              # Show pool statistics
+  oauth-pool-helper.sh add anthropic                      # Claude Pro/Max (browser OAuth)
+  oauth-pool-helper.sh add openai                         # ChatGPT Plus/Pro (browser OAuth)
+  oauth-pool-helper.sh add cursor                         # Cursor Pro (reads from IDE)
+  oauth-pool-helper.sh check                              # Check all accounts
+  oauth-pool-helper.sh list                               # List all accounts
+  oauth-pool-helper.sh rotate anthropic                   # Switch to next Anthropic account
+  oauth-pool-helper.sh status                             # Show pool statistics
   oauth-pool-helper.sh remove anthropic user@example.com
+  oauth-pool-helper.sh assign-pending anthropic           # Show pending token info
+  oauth-pool-helper.sh assign-pending anthropic user@example.com  # Assign pending token
 
 Notes:
   - Pool file: ~/.aidevops/oauth-pool.json (600 permissions)
@@ -1026,6 +1134,7 @@ Notes:
   - Tokens refresh automatically; use 'add' with the same email to re-auth
   - The pool auto-rotates between accounts when one hits rate limits
   - Cursor reads credentials from your local Cursor IDE — log in there first
+  - 'assign-pending' assigns tokens saved when email could not be identified during OAuth
 HELP
 	return 0
 }
@@ -1040,6 +1149,7 @@ main() {
 
 	case "$cmd" in
 	add) cmd_add "$@" ;;
+	assign-pending) cmd_assign_pending "$@" ;;
 	check) cmd_check "$@" ;;
 	list) cmd_list "$@" ;;
 	remove) cmd_remove "$@" ;;

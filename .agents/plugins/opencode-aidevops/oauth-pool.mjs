@@ -2241,6 +2241,8 @@ export function createPoolTool(client) {
       "and cursor (Cursor Pro).",
       "The agent should route natural language requests about managing",
       "provider accounts, OAuth pools, or credential rotation to this tool.",
+      "Shell equivalent: oauth-pool-helper.sh supports the same actions",
+      "(rotate, status, assign-pending, check, list, remove, add).",
     ].join(" "),
     parameters: {
       type: "object",
