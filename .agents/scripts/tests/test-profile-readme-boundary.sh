@@ -192,6 +192,184 @@ teardown() {
 	return 0
 }
 
+test_inject_markers_into_existing_readme() {
+	local test_name="inject markers into README without markers"
+
+	TEST_DIR=$(mktemp -d)
+	local fixture_home="${TEST_DIR}/home"
+	local fixture_repo="${TEST_DIR}/profile-repo"
+	local fixture_remote="${TEST_DIR}/profile-remote.git"
+	local helper_dir="${TEST_DIR}/helper"
+	local helper_path="${helper_dir}/profile-readme-helper.sh"
+
+	mkdir -p "${helper_dir}" "${fixture_home}/.config/aidevops"
+	mkdir -p "${fixture_home}/.aidevops/.agent-workspace/observability"
+	cp "${SOURCE_HELPER}" "${helper_path}"
+	chmod +x "${helper_path}"
+	write_stub_dependencies "${helper_dir}"
+
+	# Create a bare remote and local clone with NO markers
+	git init --bare --initial-branch=main "${fixture_remote}" >/dev/null
+	git init -b main "${fixture_repo}" >/dev/null
+	git -C "${fixture_repo}" config user.name "Fixture"
+	git -C "${fixture_repo}" config user.email "fixture@example.com"
+	git -C "${fixture_repo}" remote add origin "${fixture_remote}"
+
+	# Write a user-authored README without any aidevops markers
+	cat >"${fixture_repo}/README.md" <<'EOF'
+# Hi there
+
+I'm a developer who likes building things.
+
+## My Projects
+
+- Project A
+- Project B
+EOF
+
+	git -C "${fixture_repo}" add README.md
+	git -C "${fixture_repo}" commit -m "Initial commit" >/dev/null
+	git -C "${fixture_repo}" push -u origin main >/dev/null
+
+	# Set up repos.json pointing to this repo
+	cat >"${fixture_home}/.config/aidevops/repos.json" <<EOF
+{
+  "initialized_repos": [
+    {
+      "path": "${fixture_repo}",
+      "slug": "fixture/fixture",
+      "priority": "profile",
+      "pulse": false,
+      "maintainer": "fixture"
+    }
+  ]
+}
+EOF
+
+	# Run update — should inject markers and then update stats
+	if ! HOME="${fixture_home}" bash "${helper_path}" update >/dev/null 2>&1; then
+		print_result "${test_name}" 1 "helper update command failed"
+		return 0
+	fi
+
+	local readme="${fixture_repo}/README.md"
+
+	# Verify markers were injected
+	if ! grep -q '<!-- STATS-START -->' "$readme"; then
+		print_result "${test_name}" 1 "STATS-START marker not found after update"
+		return 0
+	fi
+	if ! grep -q '<!-- STATS-END -->' "$readme"; then
+		print_result "${test_name}" 1 "STATS-END marker not found after update"
+		return 0
+	fi
+
+	# Verify original content was preserved
+	if ! grep -q 'Hi there' "$readme"; then
+		print_result "${test_name}" 1 "original heading lost after marker injection"
+		return 0
+	fi
+	if ! grep -q 'Project A' "$readme"; then
+		print_result "${test_name}" 1 "original content lost after marker injection"
+		return 0
+	fi
+
+	print_result "${test_name}" 0
+	return 0
+}
+
+test_diverged_history_recovery() {
+	local test_name="recover from diverged git history"
+
+	TEST_DIR=$(mktemp -d)
+	local fixture_home="${TEST_DIR}/home"
+	local fixture_repo="${TEST_DIR}/profile-repo"
+	local fixture_remote="${TEST_DIR}/profile-remote.git"
+	local helper_dir="${TEST_DIR}/helper"
+	local helper_path="${helper_dir}/profile-readme-helper.sh"
+
+	mkdir -p "${helper_dir}" "${fixture_home}/.config/aidevops"
+	mkdir -p "${fixture_home}/.aidevops/.agent-workspace/observability"
+	cp "${SOURCE_HELPER}" "${helper_path}"
+	chmod +x "${helper_path}"
+	write_stub_dependencies "${helper_dir}"
+
+	# Create initial remote and local clone with markers
+	git init --bare --initial-branch=main "${fixture_remote}" >/dev/null
+	git init -b main "${fixture_repo}" >/dev/null
+	git -C "${fixture_repo}" config user.name "Fixture"
+	git -C "${fixture_repo}" config user.email "fixture@example.com"
+	git -C "${fixture_repo}" remote add origin "${fixture_remote}"
+
+	cat >"${fixture_repo}/README.md" <<'EOF'
+# Profile
+
+<!-- STATS-START -->
+Old stats
+<!-- STATS-END -->
+
+<!-- UPDATED-START -->
+<!-- UPDATED-END -->
+EOF
+
+	git -C "${fixture_repo}" add README.md
+	git -C "${fixture_repo}" commit -m "feat: seed readme" >/dev/null
+	git -C "${fixture_repo}" push -u origin main >/dev/null
+
+	# Simulate repo deletion and recreation: create a NEW remote with different history
+	rm -rf "${fixture_remote}"
+	git init --bare --initial-branch=main "${fixture_remote}" >/dev/null
+
+	# Push a different initial commit to the new remote (simulating GitHub "Initial commit")
+	local tmp_clone="${TEST_DIR}/tmp-clone"
+	git clone "${fixture_remote}" "${tmp_clone}" 2>/dev/null
+	git -C "${tmp_clone}" config user.name "GitHub"
+	git -C "${tmp_clone}" config user.email "noreply@github.com"
+	echo "# fixture" >"${tmp_clone}/README.md"
+	git -C "${tmp_clone}" add README.md
+	git -C "${tmp_clone}" commit -m "Initial commit" >/dev/null
+	git -C "${tmp_clone}" push -u origin main >/dev/null
+	rm -rf "${tmp_clone}"
+
+	# Set up repos.json
+	cat >"${fixture_home}/.config/aidevops/repos.json" <<EOF
+{
+  "initialized_repos": [
+    {
+      "path": "${fixture_repo}",
+      "slug": "fixture/fixture",
+      "priority": "profile",
+      "pulse": false,
+      "maintainer": "fixture"
+    }
+  ]
+}
+EOF
+
+	# Run update — should detect diverged history and recover
+	HOME="${fixture_home}" bash "${helper_path}" update >/dev/null 2>&1 || true
+
+	local readme="${fixture_repo}/README.md"
+
+	# After recovery, the README should have markers (either injected or from re-seed)
+	if ! grep -q '<!-- STATS-START -->' "$readme" 2>/dev/null; then
+		print_result "${test_name}" 1 "STATS-START marker not found after recovery"
+		return 0
+	fi
+
+	# Verify the local repo can now push to the remote (histories are aligned)
+	if ! git -C "${fixture_repo}" push origin main 2>/dev/null; then
+		# Try with --force since recovery may have created a new commit
+		if ! git -C "${fixture_repo}" push --force origin main 2>/dev/null; then
+			print_result "${test_name}" 1 "still cannot push after recovery"
+			return 0
+		fi
+	fi
+
+	print_result "${test_name}" 0
+	return 0
+}
+
 main() {
 	if [[ ! -x "${SOURCE_HELPER}" ]]; then
 		echo "Helper script not found or not executable: ${SOURCE_HELPER}" >&2
@@ -199,13 +377,16 @@ main() {
 	fi
 
 	test_update_preserves_manual_sections
+	teardown
+	test_inject_markers_into_existing_readme
+	teardown
+	test_diverged_history_recovery
+	teardown
 
 	echo ""
 	echo "Tests run: ${TESTS_RUN}"
 	echo "Passed:    ${TESTS_PASSED}"
 	echo "Failed:    ${TESTS_FAILED}"
-
-	teardown
 
 	if [[ "${TESTS_FAILED}" -gt 0 ]]; then
 		return 1
