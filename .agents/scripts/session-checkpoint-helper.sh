@@ -121,123 +121,60 @@ ensure_dir() {
 	return 0
 }
 
-cmd_save() {
-	local current_task=""
-	local next_tasks=""
-	local worktree_path=""
-	local branch_name=""
-	local batch_name=""
-	local note=""
-	local elapsed_mins=""
-	local target_mins=""
+# Parse --flag value pairs for the save command.
+# Sets module-scoped _save_* variables. Returns 1 on invalid args.
+_parse_save_args() {
+	_save_task=""
+	_save_next=""
+	_save_worktree=""
+	_save_branch=""
+	_save_batch=""
+	_save_note=""
+	_save_elapsed=""
+	_save_target=""
 
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
-		--task)
-			[[ $# -lt 2 ]] && {
-				print_error "--task requires a value"
-				return 1
-			}
-			current_task="$2"
-			shift 2
-			;;
-		--next)
-			[[ $# -lt 2 ]] && {
-				print_error "--next requires a value"
-				return 1
-			}
-			next_tasks="$2"
-			shift 2
-			;;
-		--worktree)
-			[[ $# -lt 2 ]] && {
-				print_error "--worktree requires a value"
-				return 1
-			}
-			worktree_path="$2"
-			shift 2
-			;;
-		--branch)
-			[[ $# -lt 2 ]] && {
-				print_error "--branch requires a value"
-				return 1
-			}
-			branch_name="$2"
-			shift 2
-			;;
-		--batch)
-			[[ $# -lt 2 ]] && {
-				print_error "--batch requires a value"
-				return 1
-			}
-			batch_name="$2"
-			shift 2
-			;;
-		--note)
-			[[ $# -lt 2 ]] && {
-				print_error "--note requires a value"
-				return 1
-			}
-			note="$2"
-			shift 2
-			;;
-		--elapsed)
-			[[ $# -lt 2 ]] && {
-				print_error "--elapsed requires a value"
-				return 1
-			}
-			elapsed_mins="$2"
-			shift 2
-			;;
-		--target)
-			[[ $# -lt 2 ]] && {
-				print_error "--target requires a value"
-				return 1
-			}
-			target_mins="$2"
-			shift 2
-			;;
-		*)
-			print_error "Unknown option: $1"
-			return 1
-			;;
+		--task)     [[ $# -lt 2 ]] && { print_error "--task requires a value"; return 1; };     _save_task="$2";     shift 2 ;;
+		--next)     [[ $# -lt 2 ]] && { print_error "--next requires a value"; return 1; };     _save_next="$2";     shift 2 ;;
+		--worktree) [[ $# -lt 2 ]] && { print_error "--worktree requires a value"; return 1; }; _save_worktree="$2"; shift 2 ;;
+		--branch)   [[ $# -lt 2 ]] && { print_error "--branch requires a value"; return 1; };   _save_branch="$2";   shift 2 ;;
+		--batch)    [[ $# -lt 2 ]] && { print_error "--batch requires a value"; return 1; };    _save_batch="$2";    shift 2 ;;
+		--note)     [[ $# -lt 2 ]] && { print_error "--note requires a value"; return 1; };     _save_note="$2";     shift 2 ;;
+		--elapsed)  [[ $# -lt 2 ]] && { print_error "--elapsed requires a value"; return 1; };  _save_elapsed="$2";  shift 2 ;;
+		--target)   [[ $# -lt 2 ]] && { print_error "--target requires a value"; return 1; };   _save_target="$2";   shift 2 ;;
+		*) print_error "Unknown option: $1"; return 1 ;;
 		esac
 	done
+	return 0
+}
 
-	ensure_dir
-
-	local timestamp
-	timestamp="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-
-	# Auto-detect git state if not provided
-	if [[ -z "$branch_name" ]]; then
-		branch_name="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")"
-	fi
-
-	# Build checkpoint file
+# Write the checkpoint markdown file using current _save_* variables.
+# Expects _save_branch and _save_timestamp to be set by caller.
+_write_checkpoint_file() {
 	cat >"$CHECKPOINT_FILE" <<EOF
 # Session Checkpoint
 
-Updated: ${timestamp}
+Updated: ${_save_timestamp}
 
 ## Current State
 
 | Field | Value |
 |-------|-------|
-| Current Task | ${current_task:-none} |
-| Branch | ${branch_name} |
-| Worktree | ${worktree_path:-not set} |
-| Batch/PR | ${batch_name:-not set} |
-| Elapsed | ${elapsed_mins:-unknown} min |
-| Target | ${target_mins:-unknown} min |
+| Current Task | ${_save_task:-none} |
+| Branch | ${_save_branch} |
+| Worktree | ${_save_worktree:-not set} |
+| Batch/PR | ${_save_batch:-not set} |
+| Elapsed | ${_save_elapsed:-unknown} min |
+| Target | ${_save_target:-unknown} min |
 
 ## Next Tasks
 
-${next_tasks:-No next tasks specified}
+${_save_next:-No next tasks specified}
 
 ## Context Note
 
-${note:-No additional context}
+${_save_note:-No additional context}
 
 ## Git Status
 
@@ -251,12 +188,28 @@ $(git log --oneline -5 2>/dev/null || echo "No commits")
 
 $(git worktree list 2>/dev/null || echo "No worktrees")
 EOF
+	return 0
+}
+
+cmd_save() {
+	_parse_save_args "$@" || return 1
+
+	ensure_dir
+
+	_save_timestamp="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+	# Auto-detect git state if not provided
+	if [[ -z "$_save_branch" ]]; then
+		_save_branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")"
+	fi
+
+	_write_checkpoint_file
 
 	# Sanitize checkpoint content — strip any credential patterns before persisting
 	sanitize_checkpoint
 
 	print_success "Checkpoint saved: ${CHECKPOINT_FILE}"
-	print_info "Task: ${current_task:-none} | Branch: ${branch_name} | ${timestamp}"
+	print_info "Task: ${_save_task:-none} | Branch: ${_save_branch} | ${_save_timestamp}"
 	return 0
 }
 
@@ -345,97 +298,96 @@ cmd_status() {
 	return 0
 }
 
-cmd_continuation() {
-	# Generate a structured continuation prompt that can be fed to a new session
-	# to fully reconstruct operational state. This is the single highest-impact
-	# factor for session continuity through context compaction.
+# Gather all state needed for a continuation prompt.
+# Sets module-scoped _cont_* variables for use by cmd_continuation().
+_gather_continuation_state() {
+	_cont_repo_root="$(git rev-parse --show-toplevel 2>/dev/null || echo "unknown")"
+	_cont_branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")"
+	_cont_repo_name="$(basename "$_cont_repo_root")"
 
-	local repo_root
-	repo_root="$(git rev-parse --show-toplevel 2>/dev/null || echo "unknown")"
-	local branch
-	branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")"
-	local repo_name
-	repo_name="$(basename "$repo_root")"
+	# Git state
+	_cont_uncommitted="$(git status --short 2>/dev/null || echo "")"
+	_cont_recent_commits="$(git log --oneline -5 2>/dev/null || echo "none")"
+	_cont_worktrees="$(git worktree list 2>/dev/null || echo "none")"
 
-	# Gather git state
-	local uncommitted
-	uncommitted="$(git status --short 2>/dev/null || echo "")"
-	local recent_commits
-	recent_commits="$(git log --oneline -5 2>/dev/null || echo "none")"
-	local worktrees
-	worktrees="$(git worktree list 2>/dev/null || echo "none")"
+	# Open PRs
+	_cont_open_prs="$(gh pr list --state open --json number,title,headRefName --jq '.[] | "#\(.number) [\(.headRefName)] \(.title)"' 2>/dev/null || echo "none")"
 
-	# Gather open PRs for this branch
-	local open_prs
-	open_prs="$(gh pr list --state open --json number,title,headRefName --jq '.[] | "#\(.number) [\(.headRefName)] \(.title)"' 2>/dev/null || echo "none")"
-
-	# Gather supervisor batch state (if supervisor DB exists)
-	local batch_state="none"
+	# Supervisor batch state
+	_cont_batch_state="none"
 	local supervisor_helper="${SCRIPT_DIR}/supervisor-helper.sh"
 	if [[ -x "$supervisor_helper" ]]; then
-		batch_state="$(bash "$supervisor_helper" list --active 2>/dev/null || echo "none")"
+		_cont_batch_state="$(bash "$supervisor_helper" list --active 2>/dev/null || echo "none")"
 	fi
 
-	# Gather TODO.md in-progress tasks
-	local todo_tasks="none"
+	# TODO.md in-progress tasks
+	_cont_todo_tasks="none"
 	local todo_file
-	for todo_file in "${repo_root}/TODO.md" "$(pwd)/TODO.md"; do
+	for todo_file in "${_cont_repo_root}/TODO.md" "$(pwd)/TODO.md"; do
 		if [[ -f "$todo_file" ]]; then
-			todo_tasks="$(grep -E '^\s*- \[ \] ' "$todo_file" 2>/dev/null | head -10 || echo "none")"
+			_cont_todo_tasks="$(grep -E '^\s*- \[ \] ' "$todo_file" 2>/dev/null | head -10 || echo "none")"
 			break
 		fi
 	done
 
-	# Load existing checkpoint note if available
-	local checkpoint_note="none"
+	# Checkpoint note
+	_cont_checkpoint_note="none"
 	if [[ -f "$CHECKPOINT_FILE" ]]; then
-		checkpoint_note="$(awk '/^## Context Note$/,/^## /' "$CHECKPOINT_FILE" | sed '1d;/^## /d' | sed '/^$/d' || echo "none")"
+		_cont_checkpoint_note="$(awk '/^## Context Note$/,/^## /' "$CHECKPOINT_FILE" | sed '1d;/^## /d' | sed '/^$/d' || echo "none")"
 	fi
 
-	# Gather memory recall for recent session context
-	local recent_memories="none"
+	# Memory recall
+	_cont_recent_memories="none"
 	local memory_helper="${SCRIPT_DIR}/memory-helper.sh"
 	if [[ -x "$memory_helper" ]]; then
-		recent_memories="$(bash "$memory_helper" recall --recent --limit 3 2>/dev/null || echo "none")"
+		_cont_recent_memories="$(bash "$memory_helper" recall --recent --limit 3 2>/dev/null || echo "none")"
 	fi
 
-	# Output the continuation prompt
+	return 0
+}
+
+cmd_continuation() {
+	# Generate a structured continuation prompt that can be fed to a new session
+	# to fully reconstruct operational state.
+
+	_gather_continuation_state
+
 	cat <<CONTINUATION_EOF
 ## Session Continuation Prompt
 
 **Generated**: $(date -u +%Y-%m-%dT%H:%M:%SZ)
-**Repository**: ${repo_name} (${repo_root})
-**Branch**: ${branch}
+**Repository**: ${_cont_repo_name} (${_cont_repo_root})
+**Branch**: ${_cont_branch}
 
 ### Operational State
 
 **Active tasks (from TODO.md)**:
-${todo_tasks}
+${_cont_todo_tasks}
 
 **Supervisor batch state**:
-${batch_state}
+${_cont_batch_state}
 
 **Open PRs**:
-${open_prs}
+${_cont_open_prs}
 
 ### Git State
 
 **Uncommitted changes**:
-${uncommitted:-clean working tree}
+${_cont_uncommitted:-clean working tree}
 
 **Recent commits**:
-${recent_commits}
+${_cont_recent_commits}
 
 **Active worktrees**:
-${worktrees}
+${_cont_worktrees}
 
 ### Context
 
 **Last checkpoint note**:
-${checkpoint_note}
+${_cont_checkpoint_note}
 
 **Recent memories**:
-${recent_memories}
+${_cont_recent_memories}
 
 ### Instructions
 
@@ -460,34 +412,10 @@ cmd_auto_save() {
 
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
-		--task)
-			[[ $# -lt 2 ]] && {
-				print_error "--task requires a value"
-				return 1
-			}
-			current_task="$2"
-			shift 2
-			;;
-		--next)
-			[[ $# -lt 2 ]] && {
-				print_error "--next requires a value"
-				return 1
-			}
-			next_tasks="$2"
-			shift 2
-			;;
-		--note)
-			[[ $# -lt 2 ]] && {
-				print_error "--note requires a value"
-				return 1
-			}
-			note="$2"
-			shift 2
-			;;
-		*)
-			print_error "Unknown option: $1"
-			return 1
-			;;
+		--task) [[ $# -lt 2 ]] && { print_error "--task requires a value"; return 1; }; current_task="$2"; shift 2 ;;
+		--next) [[ $# -lt 2 ]] && { print_error "--next requires a value"; return 1; }; next_tasks="$2"; shift 2 ;;
+		--note) [[ $# -lt 2 ]] && { print_error "--note requires a value"; return 1; }; note="$2"; shift 2 ;;
+		*) print_error "Unknown option: $1"; return 1 ;;
 		esac
 	done
 
