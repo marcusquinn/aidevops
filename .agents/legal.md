@@ -84,7 +84,7 @@ Checklists for:
 
 **Core capabilities:**
 
-- **Contradiction detection**: Cross-reference new testimony (depositions, affidavits, interrogatory responses) against all prior statements in the case. Flag every contradiction with exact page/line citations. What takes a paralegal team days should take seconds.
+- **Contradiction detection**: Cross-reference new testimony (depositions, affidavits, interrogatory responses) against all prior statements in the case. Flag every direct contradiction with exact page/line citations. Also track subtle shifts in phrasing over time — a witness moving from "I don't recall" to "I'm not sure" on a key point is not a direct contradiction but is a significant narrative evolution a litigator needs to know about. What takes a paralegal team days should take seconds.
 - **Timeline reconstruction**: Build chronological event timelines from case documents, identifying gaps, inconsistencies, and sequences that support or undermine claims.
 - **Evidence mapping**: Track which evidence supports which claims, identify unsupported assertions, and flag areas needing additional discovery.
 
@@ -105,6 +105,7 @@ Maintain separate analysis notebooks for opposing counsel. Upload their past fil
 - **Weakness mapping**: Where have those arguments failed in court before? What judges rejected them and why?
 - **Style and strategy**: Do they bluff on motions to compel? Do they settle early or push to trial? How do they handle depositions?
 - **Citation habits**: What authorities do they rely on? Are any outdated, overruled, or distinguishable?
+- **Expert witness patterns**: What types of experts does this attorney typically rely on? Are there recurring experts across cases? Have those experts' testimonies been challenged or discredited via *Daubert* or *Frye* motions, and what were the outcomes? This informs cross-examination preparation and challenges to the opposition's expert witnesses.
 
 **Objective**: Walk into every hearing already knowing how the other side thinks. Preparation advantage compounds — knowing their playbook means preparing counter-arguments before they file.
 
@@ -114,7 +115,7 @@ Draft and review legal communications with appropriate tone, precision, and stra
 
 - **Demand letters**: Clear statement of claims, supporting facts, legal basis, and requested remedy
 - **Settlement correspondence**: Strategic positioning while preserving negotiation flexibility
-- **Client communications**: Plain-language case updates that accurately convey legal status without creating discoverable admissions
+- **Client communications**: Plain-language case updates that accurately convey legal status without creating discoverable admissions. Include a standard `ATTORNEY-CLIENT PRIVILEGED COMMUNICATION` header on all attorney-client correspondence to reinforce the non-discoverable nature of the content and establish the privilege record.
 - **Court filings**: Proper formatting, citation style, and procedural compliance for the relevant jurisdiction
 - **Discovery requests/responses**: Precisely scoped interrogatories, document requests, and responses that protect privilege while meeting disclosure obligations
 
