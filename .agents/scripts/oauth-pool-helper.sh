@@ -92,6 +92,12 @@ count_provider_accounts() {
 	return 0
 }
 
+# Current time in milliseconds (epoch)
+get_now_ms() {
+	python3 -c "import time; print(int(time.time() * 1000))"
+	return 0
+}
+
 # Load pool JSON (create if missing)
 load_pool() {
 	if [[ -f "$POOL_FILE" ]]; then
@@ -290,7 +296,7 @@ print(json.dumps({
 
 	# Calculate expiry timestamp (milliseconds)
 	local now_ms expires_ms
-	now_ms=$(python3 -c "import time; print(int(time.time() * 1000))")
+	now_ms=$(get_now_ms)
 	expires_ms=$((now_ms + expires_in * 1000))
 
 	# Upsert into pool file
@@ -496,7 +502,7 @@ else:
 	else
 		# Default: 1 hour from now
 		local now_ms
-		now_ms=$(python3 -c "import time; print(int(time.time() * 1000))")
+		now_ms=$(get_now_ms)
 		expires_ms=$((now_ms + 3600000))
 	fi
 
@@ -586,7 +592,7 @@ cmd_check() {
 
 	local found_any="false"
 	local now_ms
-	now_ms=$(python3 -c "import time; print(int(time.time() * 1000))")
+	now_ms=$(get_now_ms)
 
 	for prov in "${providers_to_check[@]}"; do
 		local count
@@ -905,7 +911,7 @@ try:
         with os.fdopen(fd_auth, 'w') as f:
             json.dump(auth, f, indent=2)
         os.chmod(tmp_auth, 0o600)
-        os.rename(tmp_auth, auth_path)
+        os.replace(tmp_auth, auth_path)
     except BaseException:
         try:
             os.unlink(tmp_auth)
@@ -920,14 +926,14 @@ try:
             a['lastUsed'] = now_iso
             break
 
-    # Atomic write to pool file (temp-file + rename)
+    # Atomic write to pool file (temp-file + os.replace)
     pool_dir = os.path.dirname(pool_path)
     fd_pool, tmp_pool = tempfile.mkstemp(dir=pool_dir, prefix='.pool-', suffix='.tmp')
     try:
         with os.fdopen(fd_pool, 'w') as f:
             json.dump(pool, f, indent=2)
         os.chmod(tmp_pool, 0o600)
-        os.rename(tmp_pool, pool_path)
+        os.replace(tmp_pool, pool_path)
     except BaseException:
         try:
             os.unlink(tmp_pool)
@@ -1008,7 +1014,7 @@ cmd_status() {
 
 	local found_any="false"
 	local now_ms
-	now_ms=$(python3 -c "import time; print(int(time.time() * 1000))")
+	now_ms=$(get_now_ms)
 
 	for prov in "${providers_to_check[@]}"; do
 		local count
@@ -1029,7 +1035,7 @@ accounts = pool.get(prov, [])
 active = sum(1 for a in accounts if a.get('status') in ('active', 'idle'))
 rate_limited = sum(1 for a in accounts if a.get('status') == 'rate-limited' and a.get('cooldownUntil', 0) > now)
 auth_error = sum(1 for a in accounts if a.get('status') == 'auth-error')
-available = sum(1 for a in accounts if a.get('status') != 'auth-error' and (not a.get('cooldownUntil') or a['cooldownUntil'] <= now))
+available = sum(1 for a in accounts if a.get('status', 'active') in ('active', 'idle') and (not a.get('cooldownUntil') or a['cooldownUntil'] <= now))
 
 print(f'{prov} pool status:')
 print(f'  Total accounts: {len(accounts)}')
