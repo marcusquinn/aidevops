@@ -9,6 +9,9 @@
  *   - User-Agent matching current Claude CLI version
  *   - Deprecated beta header filtering
  *   - Pool token injection on session start
+ *   - Mid-session 401/403 recovery: on invalid/revoked token, force-refreshes
+ *     the current account's token first; if that fails, rotates to next pool
+ *     account with force-refresh, and retries once
  *   - Mid-session 429 rotation: on rate limit, marks current account as
  *     rate-limited, rotates to next pool account, and retries once
  *
@@ -20,6 +23,9 @@ import { ensureValidToken, getAccounts, patchAccount, getAnthropicUserAgent } fr
 
 /** Default cooldown when rate limited mid-session (ms) — 1 minute */
 const RATE_LIMIT_COOLDOWN_MS = 60_000;
+
+/** Default cooldown on auth failure (ms) — 5 minutes */
+const AUTH_FAILURE_COOLDOWN_MS = 300_000;
 
 const TOOL_PREFIX = "mcp_";
 
@@ -268,13 +274,161 @@ export function createProviderAuthHook(client) {
             headers: requestHeaders,
           });
 
-          // --- 429 mid-session rotation (GH#XXXX) ---
-          // If the API returns 429 (rate limited), mark the current account
-          // as rate-limited, rotate to the next pool account, and retry once.
-          // Previously, fetchWithPoolFailover() existed but was never called.
+          // --- Error recovery: 401/403 (invalid/revoked token) and 429 (rate limit) ---
+          //
+          // 401/403: Anthropic revokes access tokens server-side before our local
+          // expiry timestamp (observed: tokens claimed 8h validity but rejected
+          // after ~1-2h idle). The local `expires` field is unreliable — we must
+          // handle server-side rejection. Strategy: force-refresh the current
+          // account's token first (cheap, same account). If that fails, rotate
+          // to the next pool account.
+          //
+          // 429: Rate limited — rotate to next pool account immediately.
+          //
+          // Both paths retry the request exactly once after recovery.
+          if (response.status === 401 || response.status === 403) {
+            const accounts = getAccounts("anthropic");
+            const currentAccount = accounts.find((a) => a.access === accessToken);
+            const currentEmail = currentAccount?.email || "unknown";
+
+            console.error(
+              `[aidevops] provider-auth: ${response.status} (invalid/revoked token) for ${currentEmail} — attempting refresh...`,
+            );
+
+            // Step 1: Try force-refreshing the current account's token.
+            // The token may have been revoked server-side while our local
+            // expiry says it's still valid. Force a refresh via the refresh token.
+            let recovered = false;
+            if (currentAccount && currentAccount.refresh) {
+              const freshToken = await ensureValidToken("anthropic", {
+                ...currentAccount,
+                expires: 0, // Force refresh by pretending it's expired
+              });
+              if (freshToken) {
+                // Refresh succeeded — update header and retry
+                requestHeaders.set("authorization", `Bearer ${freshToken}`);
+                accessToken = freshToken;
+
+                try {
+                  await client.auth.set({
+                    path: { id: "anthropic" },
+                    body: {
+                      type: "oauth",
+                      refresh: currentAccount.refresh,
+                      access: currentAccount.access,
+                      expires: currentAccount.expires,
+                    },
+                  });
+                } catch {
+                  // Best-effort — env var is the primary path
+                }
+                process.env.ANTHROPIC_API_KEY = freshToken;
+
+                patchAccount("anthropic", currentEmail, {
+                  lastUsed: new Date().toISOString(),
+                  status: "active",
+                });
+
+                console.error(
+                  `[aidevops] provider-auth: token refreshed for ${currentEmail} — retrying request`,
+                );
+
+                response = await fetch(requestInput, {
+                  ...requestInit,
+                  body,
+                  headers: requestHeaders,
+                });
+                recovered = true;
+              }
+            }
+
+            // Step 2: If refresh failed, mark as auth-error and rotate to next account
+            if (!recovered) {
+              console.error(
+                `[aidevops] provider-auth: refresh failed for ${currentEmail} — rotating to next account`,
+              );
+
+              if (currentAccount) {
+                patchAccount("anthropic", currentEmail, {
+                  status: "auth-error",
+                  cooldownUntil: Date.now() + AUTH_FAILURE_COOLDOWN_MS,
+                });
+              }
+
+              const now = Date.now();
+              const alternates = [...accounts]
+                .filter(
+                  (a) =>
+                    a.email !== currentEmail &&
+                    (a.status === "active" || a.status === "idle") &&
+                    (!a.cooldownUntil || a.cooldownUntil <= now),
+                )
+                .sort((a, b) => new Date(a.lastUsed || 0) - new Date(b.lastUsed || 0));
+
+              for (const alt of alternates) {
+                // Force-refresh alternate accounts too — their tokens may
+                // also be revoked if Anthropic invalidated a batch
+                let altToken;
+                try {
+                  altToken = await ensureValidToken("anthropic", {
+                    ...alt,
+                    expires: 0, // Force refresh
+                  });
+                } catch (err) {
+                  console.error(`[aidevops] provider-auth: ensureValidToken failed for ${alt.email}: ${err.message}`);
+                  continue;
+                }
+                if (!altToken) continue;
+
+                try {
+                  await client.auth.set({
+                    path: { id: "anthropic" },
+                    body: {
+                      type: "oauth",
+                      refresh: alt.refresh,
+                      access: alt.access,
+                      expires: alt.expires,
+                    },
+                  });
+                } catch (err) {
+                  console.error(`[aidevops] provider-auth: failed to inject token for ${alt.email}: ${err.message}`);
+                  continue;
+                }
+
+                requestHeaders.set("authorization", `Bearer ${altToken}`);
+                process.env.ANTHROPIC_API_KEY = altToken;
+
+                patchAccount("anthropic", alt.email, {
+                  lastUsed: new Date().toISOString(),
+                  status: "active",
+                });
+
+                console.error(
+                  `[aidevops] provider-auth: rotated to ${alt.email} — retrying request once`,
+                );
+
+                response = await fetch(requestInput, {
+                  ...requestInit,
+                  body,
+                  headers: requestHeaders,
+                });
+                recovered = true;
+                break;
+              }
+
+              if (!recovered) {
+                console.error(
+                  `[aidevops] provider-auth: ${response.status} for ${currentEmail} — all accounts exhausted. ` +
+                  `Pool has ${accounts.length} account(s). Use /model-accounts-pool to check status.`,
+                );
+              }
+            }
+          }
+
+          // --- 429 mid-session rotation ---
+          // Rate limited — rotate to next pool account immediately (no refresh attempt).
           if (response.status === 429) {
             const accounts = getAccounts("anthropic");
-            // Find which account we just used (by matching the access token)
             const currentAccount = accounts.find((a) => a.access === accessToken);
             const currentEmail = currentAccount?.email || "unknown";
 
@@ -282,7 +436,6 @@ export function createProviderAuthHook(client) {
               `[aidevops] provider-auth: 429 rate limit hit for ${currentEmail} mid-session — attempting pool rotation`,
             );
 
-            // Mark current account as rate-limited with cooldown
             if (currentAccount) {
               patchAccount("anthropic", currentEmail, {
                 status: "rate-limited",
@@ -290,7 +443,6 @@ export function createProviderAuthHook(client) {
               });
             }
 
-            // Try to find another active account
             const now = Date.now();
             const alternates = [...accounts]
               .filter(
@@ -312,10 +464,6 @@ export function createProviderAuthHook(client) {
               }
               if (!altToken) continue;
 
-              // Inject the validated alternate account directly into the
-              // built-in provider — do NOT use injectPoolToken() here because
-              // it does its own LRU selection and may inject a different account
-              // than the one we just validated (token mismatch bug).
               try {
                 await client.auth.set({
                   path: { id: "anthropic" },
@@ -331,8 +479,8 @@ export function createProviderAuthHook(client) {
                 continue;
               }
 
-              // Update the Authorization header for the retry
               requestHeaders.set("authorization", `Bearer ${altToken}`);
+              process.env.ANTHROPIC_API_KEY = altToken;
 
               patchAccount("anthropic", alt.email, {
                 lastUsed: new Date().toISOString(),
@@ -343,7 +491,6 @@ export function createProviderAuthHook(client) {
                 `[aidevops] provider-auth: rotated to ${alt.email} — retrying request once`,
               );
 
-              // Retry the request with the new account's token
               response = await fetch(requestInput, {
                 ...requestInit,
                 body,
