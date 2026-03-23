@@ -66,7 +66,11 @@ done
 
 # Detect how OpenCode was installed — build the right upgrade command.
 # update_cmd is executed via `bash -c` so it must be a self-contained string.
-_oc_upgrade_cmd="if r=\$(readlink -f \"\$(command -v opencode)\" 2>/dev/null || readlink \"\$(command -v opencode)\" 2>/dev/null) && [[ \"\$r\" == *bun* ]]; then bun install -g opencode-ai@latest; else npm install -g opencode-ai@latest; fi"
+# Use `command -v` path directly: bun-installed binaries live under ~/.bun/bin/,
+# so the path itself contains "bun". This avoids `readlink -f` which is a GNU
+# extension not available on macOS by default.
+# shellcheck disable=SC2016  # Single quotes intentional: string is a bash -c payload, must not expand at assignment time
+_oc_upgrade_cmd='if r=$(command -v opencode 2>/dev/null); [[ "$r" == *bun* ]]; then bun install -g opencode-ai@latest; else npm install -g opencode-ai@latest; fi'
 
 # Tool definitions
 # Format: category|display_name|cli_command|version_flag|package_name|update_command
