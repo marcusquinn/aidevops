@@ -25,7 +25,7 @@
  *   - Cursor: opencode-cursor-auth@1.0.16 (POSO-PocketSolutions/opencode-cursor-auth)
  */
 
-import { readFileSync, writeFileSync, existsSync, mkdirSync } from "fs";
+import { readFileSync, writeFileSync, renameSync, existsSync, mkdirSync, chmodSync } from "fs";
 import { join, dirname } from "path";
 import { homedir, platform } from "os";
 import { createHash, randomBytes } from "crypto";
@@ -690,14 +690,19 @@ function loadPool() {
 }
 
 /**
- * Save the pool file with 0600 permissions.
+ * Save the pool file with 0600 permissions using an atomic write
+ * (temp file in the same directory + renameSync) so a mid-write crash
+ * cannot corrupt the pool file.
  * @param {PoolData} data
  */
 function savePool(data) {
   try {
     const dir = dirname(POOL_FILE);
     mkdirSync(dir, { recursive: true });
-    writeFileSync(POOL_FILE, JSON.stringify(data, null, 2), { mode: 0o600 });
+    const tmp = POOL_FILE + ".tmp." + process.pid;
+    writeFileSync(tmp, JSON.stringify(data, null, 2), { mode: 0o600 });
+    chmodSync(tmp, 0o600);
+    renameSync(tmp, POOL_FILE);
   } catch (err) {
     console.error(`[aidevops] OAuth pool: failed to save pool file: ${err.message}`);
   }
