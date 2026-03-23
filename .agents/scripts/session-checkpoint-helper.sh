@@ -15,14 +15,17 @@
 #   help              Show this help
 #
 # Options:
-#   --task <id>       Current task ID (e.g., t135.9)
-#   --next <ids>      Comma-separated next task IDs
-#   --worktree <path> Active worktree path
-#   --branch <name>   Active branch name
-#   --batch <name>    Batch/PR name
-#   --note <text>     Free-form context note
-#   --elapsed <mins>  Minutes elapsed in session
-#   --target <mins>   Target session duration in minutes
+#   --task <id>         Current task ID (e.g., t135.9)
+#   --next <ids>        Comma-separated next task IDs
+#   --worktree <path>   Active worktree path
+#   --branch <name>     Active branch name
+#   --batch <name>      Batch/PR name
+#   --note <text>       Free-form context note
+#   --elapsed <mins>    Minutes elapsed in session
+#   --target <mins>     Target session duration in minutes
+#   --privacy-filter    Scan checkpoint content for secrets before writing;
+#                       fail save if any secrets are detected (uses
+#                       privacy-filter-helper.sh scan)
 #
 # The checkpoint file is written to:
 #   ~/.aidevops/.agent-workspace/tmp/session-checkpoint.md
@@ -42,48 +45,116 @@ readonly CHECKPOINT_FILE="${CHECKPOINT_DIR}/session-checkpoint.md"
 readonly BOLD='\033[1m'
 
 ensure_dir() {
-    if [[ ! -d "$CHECKPOINT_DIR" ]]; then
-        mkdir -p "$CHECKPOINT_DIR"
-    fi
-    return 0
+	if [[ ! -d "$CHECKPOINT_DIR" ]]; then
+		mkdir -p "$CHECKPOINT_DIR"
+	fi
+	return 0
 }
 
 cmd_save() {
-    local current_task=""
-    local next_tasks=""
-    local worktree_path=""
-    local branch_name=""
-    local batch_name=""
-    local note=""
-    local elapsed_mins=""
-    local target_mins=""
+	local current_task=""
+	local next_tasks=""
+	local worktree_path=""
+	local branch_name=""
+	local batch_name=""
+	local note=""
+	local elapsed_mins=""
+	local target_mins=""
+	local privacy_filter=0
 
-    while [[ $# -gt 0 ]]; do
-        case "$1" in
-            --task) [[ $# -lt 2 ]] && { print_error "--task requires a value"; return 1; }; current_task="$2"; shift 2 ;;
-            --next) [[ $# -lt 2 ]] && { print_error "--next requires a value"; return 1; }; next_tasks="$2"; shift 2 ;;
-            --worktree) [[ $# -lt 2 ]] && { print_error "--worktree requires a value"; return 1; }; worktree_path="$2"; shift 2 ;;
-            --branch) [[ $# -lt 2 ]] && { print_error "--branch requires a value"; return 1; }; branch_name="$2"; shift 2 ;;
-            --batch) [[ $# -lt 2 ]] && { print_error "--batch requires a value"; return 1; }; batch_name="$2"; shift 2 ;;
-            --note) [[ $# -lt 2 ]] && { print_error "--note requires a value"; return 1; }; note="$2"; shift 2 ;;
-            --elapsed) [[ $# -lt 2 ]] && { print_error "--elapsed requires a value"; return 1; }; elapsed_mins="$2"; shift 2 ;;
-            --target) [[ $# -lt 2 ]] && { print_error "--target requires a value"; return 1; }; target_mins="$2"; shift 2 ;;
-            *) print_error "Unknown option: $1"; return 1 ;;
-        esac
-    done
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--task)
+			[[ $# -lt 2 ]] && {
+				print_error "--task requires a value"
+				return 1
+			}
+			current_task="$2"
+			shift 2
+			;;
+		--next)
+			[[ $# -lt 2 ]] && {
+				print_error "--next requires a value"
+				return 1
+			}
+			next_tasks="$2"
+			shift 2
+			;;
+		--worktree)
+			[[ $# -lt 2 ]] && {
+				print_error "--worktree requires a value"
+				return 1
+			}
+			worktree_path="$2"
+			shift 2
+			;;
+		--branch)
+			[[ $# -lt 2 ]] && {
+				print_error "--branch requires a value"
+				return 1
+			}
+			branch_name="$2"
+			shift 2
+			;;
+		--batch)
+			[[ $# -lt 2 ]] && {
+				print_error "--batch requires a value"
+				return 1
+			}
+			batch_name="$2"
+			shift 2
+			;;
+		--note)
+			[[ $# -lt 2 ]] && {
+				print_error "--note requires a value"
+				return 1
+			}
+			note="$2"
+			shift 2
+			;;
+		--elapsed)
+			[[ $# -lt 2 ]] && {
+				print_error "--elapsed requires a value"
+				return 1
+			}
+			elapsed_mins="$2"
+			shift 2
+			;;
+		--target)
+			[[ $# -lt 2 ]] && {
+				print_error "--target requires a value"
+				return 1
+			}
+			target_mins="$2"
+			shift 2
+			;;
+		--privacy-filter)
+			privacy_filter=1
+			shift
+			;;
+		*)
+			print_error "Unknown option: $1"
+			return 1
+			;;
+		esac
+	done
 
-    ensure_dir
+	ensure_dir
 
-    local timestamp
-    timestamp="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+	local timestamp
+	timestamp="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
-    # Auto-detect git state if not provided
-    if [[ -z "$branch_name" ]]; then
-        branch_name="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")"
-    fi
+	# Auto-detect git state if not provided
+	if [[ -z "$branch_name" ]]; then
+		branch_name="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")"
+	fi
 
-    # Build checkpoint file
-    cat > "$CHECKPOINT_FILE" <<EOF
+	# Write to a temp file first so we can scan before committing to disk
+	local tmp_checkpoint
+	tmp_checkpoint="$(mktemp "${CHECKPOINT_DIR}/session-checkpoint-tmp.XXXXXX")"
+
+	# Build checkpoint content into temp file
+	cat >"$tmp_checkpoint" <<EOF
 # Session Checkpoint
 
 Updated: ${timestamp}
@@ -120,152 +191,176 @@ $(git log --oneline -5 2>/dev/null || echo "No commits")
 $(git worktree list 2>/dev/null || echo "No worktrees")
 EOF
 
-    print_success "Checkpoint saved: ${CHECKPOINT_FILE}"
-    print_info "Task: ${current_task:-none} | Branch: ${branch_name} | ${timestamp}"
-    return 0
+	# Run privacy filter scan if requested
+	if [[ "$privacy_filter" -eq 1 ]]; then
+		local privacy_helper="${SCRIPT_DIR}/privacy-filter-helper.sh"
+		if [[ ! -x "$privacy_helper" ]]; then
+			rm -f "$tmp_checkpoint"
+			print_error "privacy-filter-helper.sh not found or not executable: ${privacy_helper}"
+			return 1
+		fi
+
+		print_info "Running privacy filter scan on checkpoint content..."
+		if ! "$privacy_helper" scan "$tmp_checkpoint" >/dev/null 2>&1; then
+			# Re-run with output visible so the caller can see what was found
+			"$privacy_helper" scan "$tmp_checkpoint" >&2 || true
+			rm -f "$tmp_checkpoint"
+			print_error "Privacy filter detected secrets in checkpoint content — save aborted"
+			print_info "Remove sensitive content from --note or other fields and retry"
+			return 1
+		fi
+		print_success "Privacy filter: no secrets detected"
+	fi
+
+	# Move temp file to final location atomically
+	mv "$tmp_checkpoint" "$CHECKPOINT_FILE"
+
+	print_success "Checkpoint saved: ${CHECKPOINT_FILE}"
+	print_info "Task: ${current_task:-none} | Branch: ${branch_name} | ${timestamp}"
+	return 0
 }
 
 cmd_load() {
-    if [[ ! -f "$CHECKPOINT_FILE" ]]; then
-        print_warning "No checkpoint found at ${CHECKPOINT_FILE}"
-        print_info "Run: session-checkpoint-helper.sh save --task <id> --next <ids>"
-        return 1
-    fi
+	if [[ ! -f "$CHECKPOINT_FILE" ]]; then
+		print_warning "No checkpoint found at ${CHECKPOINT_FILE}"
+		print_info "Run: session-checkpoint-helper.sh save --task <id> --next <ids>"
+		return 1
+	fi
 
-    cat "$CHECKPOINT_FILE"
-    
-    # Auto-recall relevant memories after loading checkpoint
-    local memory_helper="$HOME/.aidevops/agents/scripts/memory-helper.sh"
-    if [[ -x "$memory_helper" ]]; then
-        echo ""
-        echo "## Relevant Memories (from prior sessions)"
-        echo ""
-        
-        # Recall recent memories to provide context for resumed session
-        local memories
-        memories=$("$memory_helper" recall --recent --limit 5 --format text 2>/dev/null || echo "")
-        
-        if [[ -n "$memories" && "$memories" != *"No memories found"* ]]; then
-            echo "$memories"
-        else
-            echo "No recent memories found."
-        fi
-    fi
-    
-    return 0
+	cat "$CHECKPOINT_FILE"
+
+	# Auto-recall relevant memories after loading checkpoint
+	local memory_helper="$HOME/.aidevops/agents/scripts/memory-helper.sh"
+	if [[ -x "$memory_helper" ]]; then
+		echo ""
+		echo "## Relevant Memories (from prior sessions)"
+		echo ""
+
+		# Recall recent memories to provide context for resumed session
+		local memories
+		memories=$("$memory_helper" recall --recent --limit 5 --format text 2>/dev/null || echo "")
+
+		if [[ -n "$memories" && "$memories" != *"No memories found"* ]]; then
+			echo "$memories"
+		else
+			echo "No recent memories found."
+		fi
+	fi
+
+	return 0
 }
 
 cmd_clear() {
-    if [[ -f "$CHECKPOINT_FILE" ]]; then
-        rm "$CHECKPOINT_FILE"
-        print_success "Checkpoint cleared"
-    else
-        print_info "No checkpoint to clear"
-    fi
-    return 0
+	if [[ -f "$CHECKPOINT_FILE" ]]; then
+		rm "$CHECKPOINT_FILE"
+		print_success "Checkpoint cleared"
+	else
+		print_info "No checkpoint to clear"
+	fi
+	return 0
 }
 
 cmd_status() {
-    if [[ ! -f "$CHECKPOINT_FILE" ]]; then
-        print_warning "No active checkpoint"
-        return 1
-    fi
+	if [[ ! -f "$CHECKPOINT_FILE" ]]; then
+		print_warning "No active checkpoint"
+		return 1
+	fi
 
-    local file_age_seconds
-    local now
-    local file_mtime
+	local file_age_seconds
+	local now
+	local file_mtime
 
-    now="$(date +%s)"
-    if [[ "$(uname)" == "Darwin" ]]; then
-        file_mtime="$(stat -f %m "$CHECKPOINT_FILE")"
-    else
-        file_mtime="$(stat -c %Y "$CHECKPOINT_FILE")"
-    fi
-    file_age_seconds=$(( now - file_mtime ))
+	now="$(date +%s)"
+	if [[ "$(uname)" == "Darwin" ]]; then
+		file_mtime="$(stat -f %m "$CHECKPOINT_FILE")"
+	else
+		file_mtime="$(stat -c %Y "$CHECKPOINT_FILE")"
+	fi
+	file_age_seconds=$((now - file_mtime))
 
-    local age_display
-    if [[ $file_age_seconds -lt 60 ]]; then
-        age_display="${file_age_seconds}s ago"
-    elif [[ $file_age_seconds -lt 3600 ]]; then
-        age_display="$(( file_age_seconds / 60 ))m ago"
-    else
-        age_display="$(( file_age_seconds / 3600 ))h $(( (file_age_seconds % 3600) / 60 ))m ago"
-    fi
+	local age_display
+	if [[ $file_age_seconds -lt 60 ]]; then
+		age_display="${file_age_seconds}s ago"
+	elif [[ $file_age_seconds -lt 3600 ]]; then
+		age_display="$((file_age_seconds / 60))m ago"
+	else
+		age_display="$((file_age_seconds / 3600))h $(((file_age_seconds % 3600) / 60))m ago"
+	fi
 
-    # Extract key fields
-    local current_task
-    current_task="$(awk -F'|' '/Current Task/ {gsub(/^[ \t]+|[ \t]+$/, "", $3); print $3; exit}' "$CHECKPOINT_FILE" || echo "unknown")"
-    local branch
-    branch="$(awk -F'|' '/Branch/ {gsub(/^[ \t]+|[ \t]+$/, "", $3); print $3; exit}' "$CHECKPOINT_FILE" || echo "unknown")"
+	# Extract key fields
+	local current_task
+	current_task="$(awk -F'|' '/Current Task/ {gsub(/^[ \t]+|[ \t]+$/, "", $3); print $3; exit}' "$CHECKPOINT_FILE" || echo "unknown")"
+	local branch
+	branch="$(awk -F'|' '/Branch/ {gsub(/^[ \t]+|[ \t]+$/, "", $3); print $3; exit}' "$CHECKPOINT_FILE" || echo "unknown")"
 
-    printf '%b\n' "${BOLD}Checkpoint Status${NC}"
-    printf "  Age:    %s\n" "$age_display"
-    printf "  Task:   %s\n" "$current_task"
-    printf "  Branch: %s\n" "$branch"
-    printf "  File:   %s\n" "$CHECKPOINT_FILE"
+	printf '%b\n' "${BOLD}Checkpoint Status${NC}"
+	printf "  Age:    %s\n" "$age_display"
+	printf "  Task:   %s\n" "$current_task"
+	printf "  Branch: %s\n" "$branch"
+	printf "  File:   %s\n" "$CHECKPOINT_FILE"
 
-    if [[ $file_age_seconds -gt 1800 ]]; then
-        print_warning "  Warning: Checkpoint is stale (>30min). Consider updating."
-    fi
-    return 0
+	if [[ $file_age_seconds -gt 1800 ]]; then
+		print_warning "  Warning: Checkpoint is stale (>30min). Consider updating."
+	fi
+	return 0
 }
 
 cmd_continuation() {
-    # Generate a structured continuation prompt that can be fed to a new session
-    # to fully reconstruct operational state. This is the single highest-impact
-    # factor for session continuity through context compaction.
+	# Generate a structured continuation prompt that can be fed to a new session
+	# to fully reconstruct operational state. This is the single highest-impact
+	# factor for session continuity through context compaction.
 
-    local repo_root
-    repo_root="$(git rev-parse --show-toplevel 2>/dev/null || echo "unknown")"
-    local branch
-    branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")"
-    local repo_name
-    repo_name="$(basename "$repo_root")"
+	local repo_root
+	repo_root="$(git rev-parse --show-toplevel 2>/dev/null || echo "unknown")"
+	local branch
+	branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")"
+	local repo_name
+	repo_name="$(basename "$repo_root")"
 
-    # Gather git state
-    local uncommitted
-    uncommitted="$(git status --short 2>/dev/null || echo "")"
-    local recent_commits
-    recent_commits="$(git log --oneline -5 2>/dev/null || echo "none")"
-    local worktrees
-    worktrees="$(git worktree list 2>/dev/null || echo "none")"
+	# Gather git state
+	local uncommitted
+	uncommitted="$(git status --short 2>/dev/null || echo "")"
+	local recent_commits
+	recent_commits="$(git log --oneline -5 2>/dev/null || echo "none")"
+	local worktrees
+	worktrees="$(git worktree list 2>/dev/null || echo "none")"
 
-    # Gather open PRs for this branch
-    local open_prs
-    open_prs="$(gh pr list --state open --json number,title,headRefName --jq '.[] | "#\(.number) [\(.headRefName)] \(.title)"' 2>/dev/null || echo "none")"
+	# Gather open PRs for this branch
+	local open_prs
+	open_prs="$(gh pr list --state open --json number,title,headRefName --jq '.[] | "#\(.number) [\(.headRefName)] \(.title)"' 2>/dev/null || echo "none")"
 
-    # Gather supervisor batch state (if supervisor DB exists)
-    local batch_state="none"
-    local supervisor_helper="${SCRIPT_DIR}/supervisor-helper.sh"
-    if [[ -x "$supervisor_helper" ]]; then
-        batch_state="$(bash "$supervisor_helper" list --active 2>/dev/null || echo "none")"
-    fi
+	# Gather supervisor batch state (if supervisor DB exists)
+	local batch_state="none"
+	local supervisor_helper="${SCRIPT_DIR}/supervisor-helper.sh"
+	if [[ -x "$supervisor_helper" ]]; then
+		batch_state="$(bash "$supervisor_helper" list --active 2>/dev/null || echo "none")"
+	fi
 
-    # Gather TODO.md in-progress tasks
-    local todo_tasks="none"
-    local todo_file
-    for todo_file in "${repo_root}/TODO.md" "$(pwd)/TODO.md"; do
-        if [[ -f "$todo_file" ]]; then
-            todo_tasks="$(grep -E '^\s*- \[ \] ' "$todo_file" 2>/dev/null | head -10 || echo "none")"
-            break
-        fi
-    done
+	# Gather TODO.md in-progress tasks
+	local todo_tasks="none"
+	local todo_file
+	for todo_file in "${repo_root}/TODO.md" "$(pwd)/TODO.md"; do
+		if [[ -f "$todo_file" ]]; then
+			todo_tasks="$(grep -E '^\s*- \[ \] ' "$todo_file" 2>/dev/null | head -10 || echo "none")"
+			break
+		fi
+	done
 
-    # Load existing checkpoint note if available
-    local checkpoint_note="none"
-    if [[ -f "$CHECKPOINT_FILE" ]]; then
-        checkpoint_note="$(awk '/^## Context Note$/,/^## /' "$CHECKPOINT_FILE" | sed '1d;/^## /d' | sed '/^$/d' || echo "none")"
-    fi
+	# Load existing checkpoint note if available
+	local checkpoint_note="none"
+	if [[ -f "$CHECKPOINT_FILE" ]]; then
+		checkpoint_note="$(awk '/^## Context Note$/,/^## /' "$CHECKPOINT_FILE" | sed '1d;/^## /d' | sed '/^$/d' || echo "none")"
+	fi
 
-    # Gather memory recall for recent session context
-    local recent_memories="none"
-    local memory_helper="${SCRIPT_DIR}/memory-helper.sh"
-    if [[ -x "$memory_helper" ]]; then
-        recent_memories="$(bash "$memory_helper" recall --recent --limit 3 2>/dev/null || echo "none")"
-    fi
+	# Gather memory recall for recent session context
+	local recent_memories="none"
+	local memory_helper="${SCRIPT_DIR}/memory-helper.sh"
+	if [[ -x "$memory_helper" ]]; then
+		recent_memories="$(bash "$memory_helper" recall --recent --limit 3 2>/dev/null || echo "none")"
+	fi
 
-    # Output the continuation prompt
-    cat <<CONTINUATION_EOF
+	# Output the continuation prompt
+	cat <<CONTINUATION_EOF
 ## Session Continuation Prompt
 
 **Generated**: $(date -u +%Y-%m-%dT%H:%M:%SZ)
@@ -309,91 +404,115 @@ Run \`session-checkpoint-helper.sh load\` for the last checkpoint.
 Run \`pre-edit-check.sh\` before any file modifications.
 CONTINUATION_EOF
 
-    # Note: output goes to stdout for piping/capture. Status messages go to stderr.
-    print_success "Continuation prompt generated" >&2
-    return 0
+	# Note: output goes to stdout for piping/capture. Status messages go to stderr.
+	print_success "Continuation prompt generated" >&2
+	return 0
 }
 
 cmd_auto_save() {
-    # Auto-detect state and save checkpoint without requiring manual flags.
-    # Designed for use in autonomous loops where the agent calls this after
-    # each task completion without needing to know the exact flags.
+	# Auto-detect state and save checkpoint without requiring manual flags.
+	# Designed for use in autonomous loops where the agent calls this after
+	# each task completion without needing to know the exact flags.
 
-    local current_task=""
-    local next_tasks=""
-    local note=""
+	local current_task=""
+	local next_tasks=""
+	local note=""
 
-    while [[ $# -gt 0 ]]; do
-        case "$1" in
-            --task) [[ $# -lt 2 ]] && { print_error "--task requires a value"; return 1; }; current_task="$2"; shift 2 ;;
-            --next) [[ $# -lt 2 ]] && { print_error "--next requires a value"; return 1; }; next_tasks="$2"; shift 2 ;;
-            --note) [[ $# -lt 2 ]] && { print_error "--note requires a value"; return 1; }; note="$2"; shift 2 ;;
-            *) print_error "Unknown option: $1"; return 1 ;;
-        esac
-    done
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--task)
+			[[ $# -lt 2 ]] && {
+				print_error "--task requires a value"
+				return 1
+			}
+			current_task="$2"
+			shift 2
+			;;
+		--next)
+			[[ $# -lt 2 ]] && {
+				print_error "--next requires a value"
+				return 1
+			}
+			next_tasks="$2"
+			shift 2
+			;;
+		--note)
+			[[ $# -lt 2 ]] && {
+				print_error "--note requires a value"
+				return 1
+			}
+			note="$2"
+			shift 2
+			;;
+		*)
+			print_error "Unknown option: $1"
+			return 1
+			;;
+		esac
+	done
 
-    # Auto-detect branch and worktree
-    local branch
-    branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")"
-    local worktree
-    worktree="$(git rev-parse --show-toplevel 2>/dev/null || echo "")"
+	# Auto-detect branch and worktree
+	local branch
+	branch="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "unknown")"
+	local worktree
+	worktree="$(git rev-parse --show-toplevel 2>/dev/null || echo "")"
 
-    # Auto-detect batch from supervisor if not provided
-    local batch=""
-    local supervisor_helper="${SCRIPT_DIR}/supervisor-helper.sh"
-    if [[ -x "$supervisor_helper" ]]; then
-        batch="$(bash "$supervisor_helper" list --active --format=id 2>/dev/null | head -1 || echo "")"
-    fi
+	# Auto-detect batch from supervisor if not provided
+	local batch=""
+	local supervisor_helper="${SCRIPT_DIR}/supervisor-helper.sh"
+	if [[ -x "$supervisor_helper" ]]; then
+		batch="$(bash "$supervisor_helper" list --active --format=id 2>/dev/null | head -1 || echo "")"
+	fi
 
-    # Auto-detect next tasks from TODO.md if not provided
-    if [[ -z "$next_tasks" ]]; then
-        local todo_file
-        for todo_file in "$(pwd)/TODO.md" "${worktree}/TODO.md"; do
-            if [[ -f "$todo_file" ]]; then
-                next_tasks="$(grep -E '^\s*- \[ \] t[0-9]' "$todo_file" 2>/dev/null | head -3 | sed 's/.*\(t[0-9][0-9]*[^ ]*\).*/\1/' | tr '\n' ',' | sed 's/,$//' || echo "")"
-                break
-            fi
-        done
-    fi
+	# Auto-detect next tasks from TODO.md if not provided
+	if [[ -z "$next_tasks" ]]; then
+		local todo_file
+		for todo_file in "$(pwd)/TODO.md" "${worktree}/TODO.md"; do
+			if [[ -f "$todo_file" ]]; then
+				next_tasks="$(grep -E '^\s*- \[ \] t[0-9]' "$todo_file" 2>/dev/null | head -3 | sed 's/.*\(t[0-9][0-9]*[^ ]*\).*/\1/' | tr '\n' ',' | sed 's/,$//' || echo "")"
+				break
+			fi
+		done
+	fi
 
-    # Build save command args
-    local -a save_args=()
-    [[ -n "$current_task" ]] && save_args+=(--task "$current_task")
-    [[ -n "$next_tasks" ]] && save_args+=(--next "$next_tasks")
-    [[ -n "$worktree" ]] && save_args+=(--worktree "$worktree")
-    [[ -n "$branch" ]] && save_args+=(--branch "$branch")
-    [[ -n "$batch" ]] && save_args+=(--batch "$batch")
-    [[ -n "$note" ]] && save_args+=(--note "$note")
+	# Build save command args
+	local -a save_args=()
+	[[ -n "$current_task" ]] && save_args+=(--task "$current_task")
+	[[ -n "$next_tasks" ]] && save_args+=(--next "$next_tasks")
+	[[ -n "$worktree" ]] && save_args+=(--worktree "$worktree")
+	[[ -n "$branch" ]] && save_args+=(--branch "$branch")
+	[[ -n "$batch" ]] && save_args+=(--batch "$batch")
+	[[ -n "$note" ]] && save_args+=(--note "$note")
 
-    cmd_save "${save_args[@]}"
-    return $?
+	cmd_save "${save_args[@]}"
+	return $?
 }
 
 cmd_help() {
-    # Extract header comment block as help text
-    sed -n '2,/^$/p' "$0" | sed 's/^# \?//'
-    return 0
+	# Extract header comment block as help text
+	sed -n '2,/^$/p' "$0" | sed 's/^# \?//'
+	return 0
 }
 
 # Main dispatch
 main() {
-    local command="${1:-help}"
-    shift 2>/dev/null || true
+	local command="${1:-help}"
+	shift 2>/dev/null || true
 
-    case "$command" in
-        save)         cmd_save "$@" ;;
-        load)         cmd_load ;;
-        continuation) cmd_continuation ;;
-        auto-save)    cmd_auto_save "$@" ;;
-        clear)        cmd_clear ;;
-        status)       cmd_status ;;
-        help|-h|--help) cmd_help ;;
-        *)
-            print_error "Unknown command: ${command}"
-            cmd_help
-            return 1
-            ;;
-    esac
+	case "$command" in
+	save) cmd_save "$@" ;;
+	load) cmd_load ;;
+	continuation) cmd_continuation ;;
+	auto-save) cmd_auto_save "$@" ;;
+	clear) cmd_clear ;;
+	status) cmd_status ;;
+	help | -h | --help) cmd_help ;;
+	*)
+		print_error "Unknown command: ${command}"
+		cmd_help
+		return 1
+		;;
+	esac
 }
 
 main "$@"
