@@ -1115,59 +1115,52 @@ function readCursorStateDbValue(dbPath, key) {
   }
 }
 
-/**
- * Maximum token age before proactive refresh (ms).
- *
- * Anthropic claims 8h (28800s) token validity but revokes tokens server-side
- * much sooner — observed failures after <1h idle. We refresh any token older
- * than 30 minutes to stay well ahead of server-side revocation.
- *
- * This is cheap: refresh token exchange is a single HTTP call (~200ms) and
- * Anthropic issues a new refresh token each time, so the refresh token itself
- * never expires as long as we keep using it.
- * @type {number}
- */
-const PROACTIVE_REFRESH_MAX_AGE_MS = 30 * 60_000; // 30 minutes
+// ---------------------------------------------------------------------------
+// Proactive refresh (DISABLED — kept for future use)
+//
+// Initially added when we thought Anthropic was revoking tokens server-side
+// before the 8h local expiry. The actual root cause was the provider auth
+// hook not being wired into the plugin export — tokens were sent as
+// x-api-key (API key mode) instead of Authorization: Bearer (OAuth mode).
+// With the auth hook fix in index.mjs, tokens last their full claimed
+// lifetime and proactive refresh is unnecessary.
+//
+// If server-side revocation is ever confirmed as a real issue (not a header
+// bug), uncomment this constant and the age check inside ensureValidToken()
+// below. The 401/403 handler in provider-auth.mjs is the primary safety net.
+//
+// const PROACTIVE_REFRESH_MAX_AGE_MS = 30 * 60_000; // 30 minutes
+// ---------------------------------------------------------------------------
 
 /**
  * Ensure an account has a valid (non-expired) access token.
  * Routes to the correct refresh function based on provider.
  *
- * Proactive refresh: tokens older than 30 minutes are refreshed on every
- * session start, regardless of their claimed expiry. Anthropic revokes
- * tokens server-side well before the 8h local expiry — the `expires` field
- * is unreliable. Refreshing aggressively is cheap (one HTTP call) and
- * prevents the "invalid x-api-key" error on session start after a break.
+ * Relies on the local `expires` timestamp to decide when to refresh.
+ * If Anthropic revokes a token server-side before local expiry, the
+ * 401/403 handler in provider-auth.mjs catches it and force-refreshes
+ * by calling this function with `expires: 0`.
  *
  * @param {string} provider
  * @param {PoolAccount} account
  * @returns {Promise<string|null>} access token or null on failure
  */
 export async function ensureValidToken(provider, account) {
-  const now = Date.now();
-
-  if (account.access && account.expires > now) {
-    // Proactive refresh: estimate token age from the claimed 8h lifetime.
-    // age = totalLifetime - remaining. If age > 30min, refresh.
-    const totalLifetime = 28800_000; // 8h in ms (Anthropic default)
-    const remaining = account.expires - now;
-    const age = totalLifetime - remaining;
-
-    if (age < PROACTIVE_REFRESH_MAX_AGE_MS) {
-      // Token is fresh (< 30 min old) — use as-is
-      return account.access;
-    }
-
-    // Token is stale (> 30 min old) — refresh proactively.
-    // If refresh fails, still return the existing token (it may still work).
-    console.error(
-      `[aidevops] OAuth pool: proactive refresh for ${account.email} — ` +
-      `token ~${Math.round(age / 60000)}m old, ${Math.round(remaining / 60000)}m remaining locally`,
-    );
+  if (account.access && account.expires > Date.now()) {
+    // Proactive refresh (DISABLED — uncomment if server-side revocation recurs):
+    // const totalLifetime = 28800_000; // 8h in ms (Anthropic default)
+    // const remaining = account.expires - Date.now();
+    // const age = totalLifetime - remaining;
+    // if (age >= PROACTIVE_REFRESH_MAX_AGE_MS) {
+    //   console.error(
+    //     `[aidevops] OAuth pool: proactive refresh for ${account.email} — ` +
+    //     `token ~${Math.round(age / 60000)}m old`,
+    //   );
+    //   // Fall through to refresh below
+    // } else {
+    return account.access;
+    // }
   }
-  // Track whether this is a proactive refresh (token not yet expired locally)
-  const isProactive = account.access && account.expires > now;
-
   let tokens;
   if (provider === "cursor") {
     tokens = await refreshCursorAccessToken(account);
@@ -1177,17 +1170,6 @@ export async function ensureValidToken(provider, account) {
     tokens = await refreshAccessToken(account);
   }
   if (!tokens) {
-    if (isProactive) {
-      // Proactive refresh failed — the existing token may still work.
-      // Don't mark as auth-error; let the caller try with the current token.
-      // If it's actually revoked, the 401 handler in provider-auth.mjs
-      // will force-refresh with expires=0 (non-proactive path).
-      console.error(
-        `[aidevops] OAuth pool: proactive refresh failed for ${account.email} — ` +
-        `using existing token (${Math.round((account.expires - now) / 60000)}m remaining)`,
-      );
-      return account.access;
-    }
     patchAccount(provider, account.email, {
       status: "auth-error",
       cooldownUntil: Date.now() + AUTH_FAILURE_COOLDOWN_MS,
