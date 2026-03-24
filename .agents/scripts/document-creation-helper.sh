@@ -1295,6 +1295,140 @@ convert_email() {
 	return 0
 }
 
+
+# ============================================================================
+# Extracted helpers for complexity reduction (t1044.12)
+# ============================================================================
+
+# Helpers for cmd_convert - extract argument parsing
+_convert_parse_args() {
+	local -n input_ref=$1 to_ext_ref=$2 output_ref=$3 force_tool_ref=$4
+	local -n template_ref=$5 extra_args_ref=$6 ocr_provider_ref=$7
+	local -n run_normalise_ref=$8 dedup_registry_ref=$9
+	shift 9
+	
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--to) to_ext_ref="$(printf '%s' "$2" | tr '[:upper:]' '[:lower:]')"; shift 2 ;;
+		--output | -o) output_ref="$2"; shift 2 ;;
+		--tool) force_tool_ref="$2"; shift 2 ;;
+		--template) template_ref="$2"; shift 2 ;;
+		--engine) extra_args_ref="--pdf-engine=$2"; shift 2 ;;
+		--dedup-registry) dedup_registry_ref="$2"; shift 2 ;;
+		--ocr) ocr_provider_ref="${2:-auto}"; shift; [[ $# -gt 0 && "$1" != --* ]] && { ocr_provider_ref="$1"; shift; } ;;
+		--no-normalise | --no-normalize) run_normalise_ref=false; shift ;;
+		--*) extra_args_ref="${extra_args_ref} $1"; shift ;;
+		*) [[ -z "${input_ref}" ]] && input_ref="$1"; shift ;;
+		esac
+	done
+	return 0
+}
+
+# Helpers for cmd_create - extract argument parsing
+_create_parse_args() {
+	local -n template_ref=$1 data_ref=$2 output_ref=$3 script_ref=$4
+	shift 4
+	
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--data) data_ref="$2"; shift 2 ;;
+		--output | -o) output_ref="$2"; shift 2 ;;
+		--script) script_ref="$2"; shift 2 ;;
+		--*) shift ;;
+		*) [[ -z "${template_ref}" ]] && template_ref="$1"; shift ;;
+		esac
+	done
+	return 0
+}
+
+# Helpers for cmd_import_emails - extract argument parsing
+_import_parse_args() {
+	local -n input_path_ref=$1 output_dir_ref=$2 skip_contacts_ref=$3
+	shift 3
+	
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--output | -o) output_dir_ref="$2"; shift 2 ;;
+		--skip-contacts) skip_contacts_ref=true; shift ;;
+		--*) log_warn "Unknown option: $1"; shift ;;
+		*) [[ -z "${input_path_ref}" ]] && input_path_ref="$1"; shift ;;
+		esac
+	done
+	return 0
+}
+
+# Helpers for cmd_template - extract argument parsing
+_template_parse_args() {
+	local -n doc_type_ref=$1 format_ref=$2 fields_ref=$3
+	local -n header_logo_ref=$4 footer_text_ref=$5 output_ref=$6
+	shift 6
+	
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--type) doc_type_ref="$2"; shift 2 ;;
+		--format) format_ref="$2"; shift 2 ;;
+		--fields) fields_ref="$2"; shift 2 ;;
+		--header-logo) header_logo_ref="$2"; shift 2 ;;
+		--footer-text) footer_text_ref="$2"; shift 2 ;;
+		--output) output_ref="$2"; shift 2 ;;
+		*) shift ;;
+		esac
+	done
+	return 0
+}
+
+# Helpers for cmd_normalise - extract argument parsing
+_normalise_parse_args() {
+	local -n input_ref=$1 output_ref=$2 inplace_ref=$3
+	local -n generate_pageindex_ref=$4 email_mode_ref=$5
+	shift 5
+	
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--output | -o) output_ref="$2"; shift 2 ;;
+		--inplace | -i) inplace_ref=true; shift ;;
+		--pageindex) generate_pageindex_ref=true; shift ;;
+		--email | -e) email_mode_ref=true; shift ;;
+		--*) shift ;;
+		*) [[ -z "${input_ref}" ]] && input_ref="$1"; shift ;;
+		esac
+	done
+	return 0
+}
+
+# Helpers for cmd_pageindex - extract argument parsing
+_pageindex_parse_args() {
+	local -n input_ref=$1 output_ref=$2 source_pdf_ref=$3 ollama_model_ref=$4
+	shift 4
+	
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--output | -o) output_ref="$2"; shift 2 ;;
+		--source-pdf) source_pdf_ref="$2"; shift 2 ;;
+		--ollama-model) ollama_model_ref="$2"; shift 2 ;;
+		--*) shift ;;
+		*) [[ -z "${input_ref}" ]] && input_ref="$1"; shift ;;
+		esac
+	done
+	return 0
+}
+
+# Helpers for cmd_generate_manifest - extract argument parsing
+_manifest_parse_args() {
+	local -n output_dir_ref=$1
+	shift
+	
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--*) log_warn "Unknown option: $1"; shift ;;
+		*) [[ -z "${output_dir_ref}" ]] && output_dir_ref="$1"; shift ;;
+		esac
+	done
+	return 0
+}
+
+
+
 cmd_convert() {
 	local input=""
 	local to_ext=""
@@ -1763,6 +1897,47 @@ PYEOF
 # ============================================================================
 # Create command (fill template with data)
 # ============================================================================
+
+
+# ============================================================================
+# Helper functions for cmd_create (extracted for complexity reduction)
+# ============================================================================
+
+_create_parse_args() {
+	local -n args_ref=$1
+	local -n template_ref=$2
+	local -n data_ref=$3
+	local -n output_ref=$4
+	local -n script_ref=$5
+	
+	while [[ $# -gt 1 ]]; do
+		case "$2" in
+		--data)
+			data_ref="$3"
+			shift 2
+			;;
+		--output | -o)
+			output_ref="$3"
+			shift 2
+			;;
+		--script)
+			script_ref="$3"
+			shift 2
+			;;
+		--*)
+			shift
+			;;
+		*)
+			if [[ -z "${template_ref}" ]]; then
+				template_ref="$2"
+			fi
+			shift
+			;;
+		esac
+	done
+	return 0
+}
+
 
 cmd_create() {
 	local template=""
