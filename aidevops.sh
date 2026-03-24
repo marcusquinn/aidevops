@@ -716,112 +716,47 @@ cmd_update() {
 	_update_check_tools
 	return 0
 }
+# Uninstall helpers (extracted for complexity reduction)
+_uninstall_cleanup_refs() {
+	print_info "Removing AI assistant configuration references..."
+	local ai_agent_files=("$HOME/.config/opencode/agent/AGENTS.md" "$HOME/.claude/commands/AGENTS.md" "$HOME/.opencode/AGENTS.md")
+	for file in "${ai_agent_files[@]}"; do
+		if check_file "$file"; then
+			grep -q "Add ~/.aidevops/agents/AGENTS.md" "$file" 2>/dev/null && { rm -f "$file"; print_success "Removed $file"; }
+		fi
+	done
+	print_info "Removing shell aliases..."
+	for rc_file in "$HOME/.zshrc" "$HOME/.bashrc" "$HOME/.bash_profile"; do
+		if check_file "$rc_file" && grep -q "# AI Assistant Server Access Framework" "$rc_file" 2>/dev/null; then
+			cp "$rc_file" "$rc_file.bak"; sed_inplace '/# AI Assistant Server Access Framework/,/^$/d' "$rc_file"
+			print_success "Removed aliases from $rc_file"
+		fi
+	done
+	print_info "Removing AI memory files..."
+	for file in "$HOME/CLAUDE.md"; do check_file "$file" && { rm -f "$file"; print_success "Removed $file"; }; done
+	return 0
+}
 
 # Uninstall command
 cmd_uninstall() {
-	print_header "Uninstall AI DevOps Framework"
-	echo ""
-
+	print_header "Uninstall AI DevOps Framework"; echo ""
 	print_warning "This will remove:"
-	echo "  - $AGENTS_DIR (deployed agents)"
-	echo "  - $INSTALL_DIR (repository)"
-	echo "  - AI assistant configuration references"
-	echo "  - Shell aliases (if added)"
-	echo ""
+	echo "  - $AGENTS_DIR (deployed agents)"; echo "  - $INSTALL_DIR (repository)"
+	echo "  - AI assistant configuration references"; echo "  - Shell aliases (if added)"; echo ""
 	print_warning "This will NOT remove:"
-	echo "  - Installed tools (Tabby, Zed, gh, glab, etc.)"
-	echo "  - SSH keys"
-	echo "  - Python/Node environments"
-	echo ""
-
+	echo "  - Installed tools (Tabby, Zed, gh, glab, etc.)"; echo "  - SSH keys"; echo "  - Python/Node environments"; echo ""
 	read -r -p "Are you sure you want to uninstall? (yes/no): " confirm
-
-	if [[ "$confirm" != "yes" ]]; then
-		print_info "Uninstall cancelled"
-		return 0
-	fi
-
+	[[ "$confirm" != "yes" ]] && { print_info "Uninstall cancelled"; return 0; }
 	echo ""
-
-	# Remove agents directory
-	if check_dir "$AGENTS_DIR"; then
-		print_info "Removing $AGENTS_DIR..."
-		rm -rf "$AGENTS_DIR"
-		print_success "Removed agents directory"
-	fi
-
-	# Remove config backups
-	if check_dir "$HOME/.aidevops"; then
-		print_info "Removing $HOME/.aidevops..."
-		rm -rf "$HOME/.aidevops"
-		print_success "Removed aidevops config directory"
-	fi
-
-	# Remove AI assistant references
-	print_info "Removing AI assistant configuration references..."
-
-	local ai_agent_files=(
-		"$HOME/.config/opencode/agent/AGENTS.md"
-		"$HOME/.claude/commands/AGENTS.md"
-		"$HOME/.opencode/AGENTS.md"
-	)
-
-	for file in "${ai_agent_files[@]}"; do
-		if check_file "$file"; then
-			# Check if it only contains our reference
-			if grep -q "Add ~/.aidevops/agents/AGENTS.md" "$file" 2>/dev/null; then
-				rm -f "$file"
-				print_success "Removed $file"
-			fi
-		fi
-	done
-
-	# Remove shell aliases
-	print_info "Removing shell aliases..."
-	for rc_file in "$HOME/.zshrc" "$HOME/.bashrc" "$HOME/.bash_profile"; do
-		if check_file "$rc_file"; then
-			if grep -q "# AI Assistant Server Access Framework" "$rc_file" 2>/dev/null; then
-				# Create backup
-				cp "$rc_file" "$rc_file.bak"
-				# Remove our alias block (from comment to empty line)
-				sed_inplace '/# AI Assistant Server Access Framework/,/^$/d' "$rc_file"
-				print_success "Removed aliases from $rc_file"
-			fi
-		fi
-	done
-
-	# Remove memory files
-	print_info "Removing AI memory files..."
-	local memory_files=(
-		"$HOME/CLAUDE.md"
-	)
-
-	for file in "${memory_files[@]}"; do
-		if check_file "$file"; then
-			rm -f "$file"
-			print_success "Removed $file"
-		fi
-	done
-
-	# Remove repository (ask separately)
-	echo ""
-	read -r -p "Also remove the repository at $INSTALL_DIR? (yes/no): " remove_repo
-
+	check_dir "$AGENTS_DIR" && { print_info "Removing $AGENTS_DIR..."; rm -rf "$AGENTS_DIR"; print_success "Removed agents directory"; }
+	check_dir "$HOME/.aidevops" && { print_info "Removing $HOME/.aidevops..."; rm -rf "$HOME/.aidevops"; print_success "Removed aidevops config directory"; }
+	_uninstall_cleanup_refs
+	echo ""; read -r -p "Also remove the repository at $INSTALL_DIR? (yes/no): " remove_repo
 	if [[ "$remove_repo" == "yes" ]]; then
-		if check_dir "$INSTALL_DIR"; then
-			print_info "Removing $INSTALL_DIR..."
-			rm -rf "$INSTALL_DIR"
-			print_success "Removed repository"
-		fi
-	else
-		print_info "Keeping repository at $INSTALL_DIR"
-	fi
-
-	echo ""
-	print_success "Uninstall complete!"
-	print_info "To reinstall, run:"
-	echo "  npm install -g aidevops && aidevops update"
-	echo "  OR: brew install marcusquinn/tap/aidevops && aidevops update"
+		check_dir "$INSTALL_DIR" && { print_info "Removing $INSTALL_DIR..."; rm -rf "$INSTALL_DIR"; print_success "Removed repository"; }
+	else print_info "Keeping repository at $INSTALL_DIR"; fi
+	echo ""; print_success "Uninstall complete!"; print_info "To reinstall, run:"
+	echo "  npm install -g aidevops && aidevops update"; echo "  OR: brew install marcusquinn/tap/aidevops && aidevops update"
 }
 
 # Scaffold standard repo courtesy files if they don't exist
@@ -1150,6 +1085,30 @@ _update_agents_md_security() {
 	return 0
 }
 
+# Init helpers (extracted for complexity reduction)
+_init_parse_features() {
+	local features="$1"
+	case "$features" in
+	all) echo "planning git_workflow code_quality time_tracking database beads security" ;;
+	planning) echo "planning" ;; git-workflow) echo "git_workflow" ;; code-quality) echo "code_quality" ;;
+	time-tracking) echo "time_tracking planning" ;; database) echo "database" ;;
+	beads) echo "beads planning" ;; sops) echo "sops" ;; security) echo "security" ;;
+	*)
+		local result=""
+		IFS=',' read -ra FL <<<"$features"
+		for f in "${FL[@]}"; do
+			case "$f" in
+			planning) result="$result planning" ;; git-workflow) result="$result git_workflow" ;;
+			code-quality) result="$result code_quality" ;; time-tracking) result="$result time_tracking planning" ;;
+			database) result="$result database" ;; beads) result="$result beads planning" ;;
+			sops) result="$result sops" ;; security) result="$result security" ;;
+			esac
+		done
+		echo "$result" ;;
+	esac
+	return 0
+}
+
 # Init command - initialize aidevops in a project
 cmd_init() {
 	local features="${1:-all}"
@@ -1174,75 +1133,19 @@ cmd_init() {
 	print_info "Project root: $project_root"
 	echo ""
 
-	# Parse features
-	local enable_planning=false
-	local enable_git_workflow=false
-	local enable_code_quality=false
-	local enable_time_tracking=false
-	local enable_database=false
-	local enable_beads=false
-	local enable_sops=false
-	local enable_security=false
-
-	case "$features" in
-	all)
-		enable_planning=true
-		enable_git_workflow=true
-		enable_code_quality=true
-		enable_time_tracking=true
-		enable_database=true
-		enable_beads=true
-		enable_security=true
-		;;
-	planning)
-		enable_planning=true
-		;;
-	git-workflow)
-		enable_git_workflow=true
-		;;
-	code-quality)
-		enable_code_quality=true
-		;;
-	time-tracking)
-		enable_time_tracking=true
-		enable_planning=true # time-tracking requires planning
-		;;
-	database)
-		enable_database=true
-		;;
-	beads)
-		enable_beads=true
-		enable_planning=true # beads requires planning
-		;;
-	sops)
-		enable_sops=true
-		;;
-	security)
-		enable_security=true
-		;;
-	*)
-		# Comma-separated list
-		IFS=',' read -ra FEATURE_LIST <<<"$features"
-		for feature in "${FEATURE_LIST[@]}"; do
-			case "$feature" in
-			planning) enable_planning=true ;;
-			git-workflow) enable_git_workflow=true ;;
-			code-quality) enable_code_quality=true ;;
-			time-tracking)
-				enable_time_tracking=true
-				enable_planning=true
-				;;
-			database) enable_database=true ;;
-			beads)
-				enable_beads=true
-				enable_planning=true
-				;;
-			sops) enable_sops=true ;;
-			security) enable_security=true ;;
-			esac
-		done
-		;;
-	esac
+	# Parse features using helper
+	local parsed; parsed=$(_init_parse_features "$features")
+	local enable_planning=false enable_git_workflow=false enable_code_quality=false
+	local enable_time_tracking=false enable_database=false enable_beads=false
+	local enable_sops=false enable_security=false
+	local _f; for _f in $parsed; do
+		case "$_f" in
+		planning) enable_planning=true ;; git_workflow) enable_git_workflow=true ;;
+		code_quality) enable_code_quality=true ;; time_tracking) enable_time_tracking=true ;;
+		database) enable_database=true ;; beads) enable_beads=true ;;
+		sops) enable_sops=true ;; security) enable_security=true ;;
+		esac
+	done
 
 	# Create .aidevops.json config
 	local config_file="$project_root/.aidevops.json"
