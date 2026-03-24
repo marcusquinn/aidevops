@@ -41,7 +41,7 @@ If Claude CLI is not installed or not logged in, fall back to the standard inter
 >
 > You'll need a paid subscription to one of these:
 >
- > - **Claude Pro or Max** ($20-100/mo from anthropic.com) — for Claude models
+> - **Claude Pro or Max** ($20-100/mo from anthropic.com) — for Claude models
 > - **ChatGPT Plus or Pro** ($20-200/mo from openai.com) — for GPT/o-series models
 > - **Cursor Pro** ($20/mo from cursor.com) — for models via Cursor's proxy
 > - **Google AI Pro or Ultra** ($25-65/mo from one.google.com) — for Gemini models via Gemini CLI
