@@ -1274,13 +1274,13 @@ _quality_sweep_for_repo() {
 
 			while IFS= read -r shfile; do
 				[[ -z "$shfile" ]] && continue
-				# GH#5663: git ls-files returns relative paths — resolve to absolute.
+				# GH#5663: git ls-files returns repo-relative paths. Resolve to
+				# absolute so ShellCheck receives a valid path, and guard against
+				# tracked-but-deleted files (index vs working tree mismatch) by
+				# skipping with a log entry rather than running on a missing path.
 				if [[ "$shfile" != /* ]]; then
 					shfile="${repo_path}/${shfile}"
 				fi
-				# GH#5663: Guard against tracked-but-deleted files (index vs working
-				# tree mismatch). Skip with a log entry rather than running ShellCheck
-				# on a path that does not exist.
 				if [[ ! -f "$shfile" ]]; then
 					echo "[stats] ShellCheck: skipping missing file: ${shfile}" >>"$LOGFILE"
 					continue
