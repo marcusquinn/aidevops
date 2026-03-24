@@ -165,6 +165,169 @@ hours_ago_iso() {
 }
 
 #######################################
+# Parse arguments for scan-patterns command
+# Outputs: entity_filter, since, limit, format (via stdout assignments)
+#######################################
+_scan_patterns_parse_args() {
+	# Callers set these variables before calling; we modify them in place
+	# by echoing "KEY=VALUE" lines that the caller evals.
+	local _entity_filter=""
+	local _since=""
+	local _limit=100
+	local _format="text"
+
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--entity)
+			_entity_filter="$2"
+			shift 2
+			;;
+		--since)
+			_since="$2"
+			shift 2
+			;;
+		--limit)
+			_limit="$2"
+			shift 2
+			;;
+		--json)
+			_format="json"
+			shift
+			;;
+		*)
+			log_warn "scan-patterns: unknown option: $1"
+			shift
+			;;
+		esac
+	done
+
+	printf 'entity_filter=%s\nsince=%s\nlimit=%s\nformat=%s\n' \
+		"$_entity_filter" "$_since" "$_limit" "$_format"
+	return 0
+}
+
+#######################################
+# Fetch interactions from DB for pattern scanning
+# Arguments: $1=since, $2=entity_filter, $3=limit
+# Outputs interaction rows to stdout
+#######################################
+_scan_patterns_fetch_interactions() {
+	local since="$1"
+	local entity_filter="$2"
+	local limit="$3"
+
+	local where_clause
+	where_clause="i.created_at >= '$(evol_sql_escape "$since")'"
+	if [[ -n "$entity_filter" ]]; then
+		where_clause="$where_clause AND i.entity_id = '$(evol_sql_escape "$entity_filter")'"
+	fi
+
+	evol_db "$EVOL_MEMORY_DB" <<EOF
+SELECT i.id, i.entity_id, i.channel, i.direction, i.content, i.created_at,
+    COALESCE(e.name, 'Unknown') as entity_name
+FROM interactions i
+LEFT JOIN entities e ON i.entity_id = e.id
+WHERE $where_clause
+ORDER BY i.created_at ASC
+LIMIT $limit;
+EOF
+	return 0
+}
+
+#######################################
+# Format interactions for AI prompt
+# Arguments: $1=interactions (pipe-delimited rows)
+# Outputs formatted text to stdout
+#######################################
+_scan_patterns_format_for_ai() {
+	local interactions="$1"
+	local formatted=""
+
+	while IFS='|' read -r int_id entity_id channel direction content timestamp entity_name; do
+		local truncated_content
+		truncated_content=$(echo "$content" | head -c 200)
+		formatted="${formatted}[${int_id}] ${direction} ${channel} (${entity_name}) ${timestamp}: ${truncated_content}
+"
+	done <<<"$interactions"
+
+	echo "$formatted"
+	return 0
+}
+
+#######################################
+# Run AI-powered pattern detection
+# Arguments: $1=formatted_interactions, $2=interaction_count
+# Outputs JSON array of patterns (or empty string on failure)
+#######################################
+_scan_patterns_run_ai() {
+	local formatted="$1"
+	local interaction_count="$2"
+
+	if [[ ! -x "$EVOL_AI_RESEARCH_SCRIPT" ]]; then
+		echo ""
+		return 0
+	fi
+
+	local ai_prompt
+	ai_prompt="Analyse these ${interaction_count} recent interactions from an AI assistant system. Identify capability gaps — things users needed that the system couldn't do well, or patterns suggesting missing features.
+
+Interactions:
+${formatted}
+
+Respond with ONLY a JSON array of detected patterns. Each pattern:
+{
+  \"description\": \"What capability is missing or inadequate\",
+  \"evidence_ids\": [\"int_xxx\", \"int_yyy\"],
+  \"severity\": \"high|medium|low\",
+  \"category\": \"missing_feature|workflow_gap|knowledge_gap|integration_gap|ux_friction\",
+  \"frequency_hint\": 1
+}
+
+Rules:
+- Only include genuine capability gaps, not normal conversation
+- Evidence IDs must be from the interaction list above
+- If no gaps detected, return empty array []
+- Respond with ONLY the JSON array, no markdown fences
+- Maximum 10 patterns per scan"
+
+	"$EVOL_AI_RESEARCH_SCRIPT" --model haiku --prompt "$ai_prompt" 2>/dev/null || echo ""
+	return 0
+}
+
+#######################################
+# Output scan results in requested format
+# Arguments: $1=patterns_json, $2=interaction_count, $3=since, $4=method, $5=format
+#######################################
+_scan_patterns_output() {
+	local patterns="$1"
+	local interaction_count="$2"
+	local since="$3"
+	local method="$4"
+	local format="$5"
+
+	local pattern_count
+	pattern_count=$(echo "$patterns" | jq 'length' 2>/dev/null || echo "0")
+
+	if [[ "$format" == "json" ]]; then
+		echo "{\"patterns\":${patterns},\"interaction_count\":${interaction_count},\"scan_window\":\"${since}\",\"method\":\"${method}\"}"
+	else
+		echo ""
+		echo "=== Pattern Scan Results ==="
+		echo "Window: since $since ($interaction_count interactions)"
+		echo "Method: ${method}"
+		echo "Patterns found: $pattern_count"
+		echo ""
+
+		if [[ "$pattern_count" -gt 0 ]]; then
+			echo "$patterns" | jq -r '.[] | "[\(.severity)] \(.category): \(.description)\n  Evidence: \(.evidence_ids | join(", "))\n"' 2>/dev/null
+		else
+			echo "No capability gaps detected in this window."
+		fi
+	fi
+	return 0
+}
+
+#######################################
 # Scan interaction patterns using AI judgment
 # Analyses recent interactions to identify:
 #   - Repeated requests the system couldn't fulfil
@@ -176,35 +339,19 @@ hours_ago_iso() {
 # Falls back to heuristic scanning when AI is unavailable.
 #######################################
 cmd_scan_patterns() {
-	local entity_filter=""
-	local since=""
-	local limit=100
-	local format="text"
+	local entity_filter="" since="" limit=100 format="text"
 
-	while [[ $# -gt 0 ]]; do
-		case "$1" in
-		--entity)
-			entity_filter="$2"
-			shift 2
-			;;
-		--since)
-			since="$2"
-			shift 2
-			;;
-		--limit)
-			limit="$2"
-			shift 2
-			;;
-		--json)
-			format="json"
-			shift
-			;;
-		*)
-			log_warn "scan-patterns: unknown option: $1"
-			shift
-			;;
+	# Parse args via helper (eval the key=value output)
+	local parsed
+	parsed=$(_scan_patterns_parse_args "$@")
+	while IFS='=' read -r key val; do
+		case "$key" in
+		entity_filter) entity_filter="$val" ;;
+		since) since="$val" ;;
+		limit) limit="$val" ;;
+		format) format="$val" ;;
 		esac
-	done
+	done <<<"$parsed"
 
 	init_evol_db
 
@@ -213,26 +360,9 @@ cmd_scan_patterns() {
 		since=$(hours_ago_iso "$DEFAULT_SCAN_WINDOW_HOURS")
 	fi
 
-	# Build query filters
-	local where_clause
-	where_clause="i.created_at >= '$(evol_sql_escape "$since")'"
-	if [[ -n "$entity_filter" ]]; then
-		where_clause="$where_clause AND i.entity_id = '$(evol_sql_escape "$entity_filter")'"
-	fi
-
 	# Fetch recent interactions
 	local interactions
-	interactions=$(
-		evol_db "$EVOL_MEMORY_DB" <<EOF
-SELECT i.id, i.entity_id, i.channel, i.direction, i.content, i.created_at,
-    COALESCE(e.name, 'Unknown') as entity_name
-FROM interactions i
-LEFT JOIN entities e ON i.entity_id = e.id
-WHERE $where_clause
-ORDER BY i.created_at ASC
-LIMIT $limit;
-EOF
-	)
+	interactions=$(_scan_patterns_fetch_interactions "$since" "$entity_filter" "$limit")
 
 	if [[ -z "$interactions" ]]; then
 		log_info "No interactions found since $since"
@@ -254,66 +384,17 @@ EOF
 	fi
 
 	# Format interactions for AI analysis
-	local formatted=""
-	while IFS='|' read -r int_id entity_id channel direction content timestamp entity_name; do
-		# Truncate long messages for the AI prompt
-		local truncated_content
-		truncated_content=$(echo "$content" | head -c 200)
-		formatted="${formatted}[${int_id}] ${direction} ${channel} (${entity_name}) ${timestamp}: ${truncated_content}
-"
-	done <<<"$interactions"
+	local formatted
+	formatted=$(_scan_patterns_format_for_ai "$interactions")
 
 	# Try AI-powered pattern detection
-	local ai_result=""
-	if [[ -x "$EVOL_AI_RESEARCH_SCRIPT" ]]; then
-		local ai_prompt
-		ai_prompt="Analyse these ${interaction_count} recent interactions from an AI assistant system. Identify capability gaps — things users needed that the system couldn't do well, or patterns suggesting missing features.
+	local ai_result
+	ai_result=$(_scan_patterns_run_ai "$formatted" "$interaction_count")
 
-Interactions:
-${formatted}
-
-Respond with ONLY a JSON array of detected patterns. Each pattern:
-{
-  \"description\": \"What capability is missing or inadequate\",
-  \"evidence_ids\": [\"int_xxx\", \"int_yyy\"],
-  \"severity\": \"high|medium|low\",
-  \"category\": \"missing_feature|workflow_gap|knowledge_gap|integration_gap|ux_friction\",
-  \"frequency_hint\": 1
-}
-
-Rules:
-- Only include genuine capability gaps, not normal conversation
-- Evidence IDs must be from the interaction list above
-- If no gaps detected, return empty array []
-- Respond with ONLY the JSON array, no markdown fences
-- Maximum 10 patterns per scan"
-
-		ai_result=$("$EVOL_AI_RESEARCH_SCRIPT" --model haiku --prompt "$ai_prompt" 2>/dev/null || echo "")
-	fi
-
-	# Parse AI result or use heuristic fallback
+	# Use AI result if valid JSON array
 	if [[ -n "$ai_result" ]] && command -v jq &>/dev/null; then
-		# Validate JSON
 		if echo "$ai_result" | jq -e 'type == "array"' >/dev/null 2>&1; then
-			local pattern_count
-			pattern_count=$(echo "$ai_result" | jq 'length')
-
-			if [[ "$format" == "json" ]]; then
-				echo "{\"patterns\":${ai_result},\"interaction_count\":${interaction_count},\"scan_window\":\"${since}\",\"method\":\"ai\"}"
-			else
-				echo ""
-				echo "=== Pattern Scan Results ==="
-				echo "Window: since $since ($interaction_count interactions)"
-				echo "Method: AI-judged (haiku)"
-				echo "Patterns found: $pattern_count"
-				echo ""
-
-				if [[ "$pattern_count" -gt 0 ]]; then
-					echo "$ai_result" | jq -r '.[] | "[\(.severity)] \(.category): \(.description)\n  Evidence: \(.evidence_ids | join(", "))\n"' 2>/dev/null
-				else
-					echo "No capability gaps detected in this window."
-				fi
-			fi
+			_scan_patterns_output "$ai_result" "$interaction_count" "$since" "AI-judged (haiku)" "$format"
 			return 0
 		fi
 	fi
@@ -322,22 +403,7 @@ Rules:
 	local patterns
 	patterns=$(scan_patterns_heuristic "$interactions")
 
-	if [[ "$format" == "json" ]]; then
-		echo "{\"patterns\":${patterns:-[]},\"interaction_count\":${interaction_count},\"scan_window\":\"${since}\",\"method\":\"heuristic\"}"
-	else
-		echo ""
-		echo "=== Pattern Scan Results ==="
-		echo "Window: since $since ($interaction_count interactions)"
-		echo "Method: heuristic (AI unavailable)"
-		echo ""
-
-		if [[ "$patterns" == "[]" || -z "$patterns" ]]; then
-			echo "No capability gaps detected in this window."
-		else
-			echo "$patterns" | jq -r '.[] | "[\(.severity)] \(.category): \(.description)\n  Evidence: \(.evidence_ids | join(", "))\n"' 2>/dev/null || echo "$patterns"
-		fi
-	fi
-
+	_scan_patterns_output "${patterns:-[]}" "$interaction_count" "$since" "heuristic (AI unavailable)" "$format"
 	return 0
 }
 
@@ -386,27 +452,98 @@ scan_patterns_heuristic() {
 }
 
 #######################################
-# Detect capability gaps from interaction patterns
-# Runs scan-patterns and records detected gaps in the database.
-# Deduplicates against existing gaps (increments frequency if similar).
+# Upsert a single detected pattern into capability_gaps
+# Arguments: $1=description, $2=severity, $3=category,
+#            $4=evidence_ids (JSON array), $5=frequency_hint,
+#            $6=entity_filter (optional)
+# Outputs: "new" or "updated" to stdout
 #######################################
-cmd_detect_gaps() {
-	local entity_filter=""
-	local since=""
-	local dry_run=false
+_detect_gaps_upsert_gap() {
+	local description="$1"
+	local severity="$2"
+	local category="$3"
+	local evidence_ids="$4"
+	local frequency_hint="$5"
+	local entity_filter="${6:-}"
+
+	local esc_desc
+	esc_desc=$(evol_sql_escape "$description")
+
+	# Check for existing similar gap (deduplication by exact description)
+	local existing_gap_id
+	existing_gap_id=$(
+		evol_db "$EVOL_MEMORY_DB" <<EOF
+SELECT id FROM capability_gaps
+WHERE description = '$esc_desc'
+  AND status IN ('detected', 'todo_created')
+LIMIT 1;
+EOF
+	)
+
+	if [[ -n "$existing_gap_id" ]]; then
+		evol_db "$EVOL_MEMORY_DB" <<EOF
+UPDATE capability_gaps SET
+    frequency = frequency + $frequency_hint,
+    updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+WHERE id = '$(evol_sql_escape "$existing_gap_id")';
+EOF
+		record_gap_evidence "$existing_gap_id" "$evidence_ids"
+		echo "updated:$existing_gap_id"
+	else
+		local gap_id
+		gap_id=$(generate_gap_id)
+		local esc_evidence
+		esc_evidence=$(evol_sql_escape "$evidence_ids")
+
+		# Determine entity_id from evidence interactions
+		local gap_entity_id=""
+		if [[ -n "$entity_filter" ]]; then
+			gap_entity_id="$entity_filter"
+		else
+			local first_evidence_id
+			first_evidence_id=$(echo "$evidence_ids" | jq -r '.[0] // ""' 2>/dev/null || echo "")
+			if [[ -n "$first_evidence_id" ]]; then
+				gap_entity_id=$(evol_db "$EVOL_MEMORY_DB" \
+					"SELECT entity_id FROM interactions WHERE id = '$(evol_sql_escape "$first_evidence_id")' LIMIT 1;" 2>/dev/null || echo "")
+			fi
+		fi
+
+		local entity_clause="NULL"
+		if [[ -n "$gap_entity_id" ]]; then
+			entity_clause="'$(evol_sql_escape "$gap_entity_id")'"
+		fi
+
+		evol_db "$EVOL_MEMORY_DB" <<EOF
+INSERT INTO capability_gaps (id, entity_id, description, evidence, frequency, status)
+VALUES ('$gap_id', $entity_clause, '$esc_desc', '$esc_evidence', $frequency_hint, 'detected');
+EOF
+		record_gap_evidence "$gap_id" "$evidence_ids"
+		echo "new:$gap_id"
+	fi
+	return 0
+}
+
+#######################################
+# Parse arguments for detect-gaps command
+# Outputs key=value lines for eval
+#######################################
+_detect_gaps_parse_args() {
+	local _entity_filter=""
+	local _since=""
+	local _dry_run=false
 
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--entity)
-			entity_filter="$2"
+			_entity_filter="$2"
 			shift 2
 			;;
 		--since)
-			since="$2"
+			_since="$2"
 			shift 2
 			;;
 		--dry-run)
-			dry_run=true
+			_dry_run=true
 			shift
 			;;
 		*)
@@ -415,6 +552,92 @@ cmd_detect_gaps() {
 			;;
 		esac
 	done
+
+	printf 'entity_filter=%s\nsince=%s\ndry_run=%s\n' \
+		"$_entity_filter" "$_since" "$_dry_run"
+	return 0
+}
+
+#######################################
+# Process detected patterns: upsert each into capability_gaps
+# Arguments: $1=patterns (JSON array), $2=pattern_count,
+#            $3=dry_run (true/false), $4=entity_filter
+#######################################
+_detect_gaps_process_patterns() {
+	local patterns="$1"
+	local pattern_count="$2"
+	local dry_run="$3"
+	local entity_filter="$4"
+
+	log_info "Processing $pattern_count detected patterns..."
+
+	local new_gaps=0 updated_gaps=0 skipped=0 i=0
+
+	while [[ "$i" -lt "$pattern_count" ]]; do
+		local pattern
+		pattern=$(echo "$patterns" | jq -c ".[$i]")
+		local description severity category evidence_ids frequency_hint
+		description=$(echo "$pattern" | jq -r '.description // ""')
+		severity=$(echo "$pattern" | jq -r '.severity // "medium"')
+		category=$(echo "$pattern" | jq -r '.category // "missing_feature"')
+		evidence_ids=$(echo "$pattern" | jq -c '.evidence_ids // []')
+		frequency_hint=$(echo "$pattern" | jq -r '.frequency_hint // 1')
+
+		if [[ -z "$description" ]]; then
+			skipped=$((skipped + 1))
+			i=$((i + 1))
+			continue
+		fi
+
+		if [[ "$dry_run" == true ]]; then
+			log_info "[DRY RUN] Would record gap: $description (severity: $severity, category: $category)"
+			i=$((i + 1))
+			continue
+		fi
+
+		local upsert_result
+		upsert_result=$(_detect_gaps_upsert_gap \
+			"$description" "$severity" "$category" \
+			"$evidence_ids" "$frequency_hint" "$entity_filter")
+
+		case "${upsert_result%%:*}" in
+		new)
+			local gap_id="${upsert_result#new:}"
+			new_gaps=$((new_gaps + 1))
+			log_success "New gap detected: $gap_id — $description"
+			;;
+		updated)
+			local existing_id="${upsert_result#updated:}"
+			updated_gaps=$((updated_gaps + 1))
+			log_info "Updated existing gap: $existing_id (frequency +$frequency_hint)"
+			;;
+		esac
+
+		i=$((i + 1))
+	done
+
+	echo ""
+	log_success "Gap detection complete: $new_gaps new, $updated_gaps updated, $skipped skipped"
+	return 0
+}
+
+#######################################
+# Detect capability gaps from interaction patterns
+# Runs scan-patterns and records detected gaps in the database.
+# Deduplicates against existing gaps (increments frequency if similar).
+#######################################
+cmd_detect_gaps() {
+	local entity_filter="" since="" dry_run=false
+
+	local parsed
+	parsed=$(_detect_gaps_parse_args "$@")
+	while IFS='=' read -r key val; do
+		case "$key" in
+		entity_filter) entity_filter="$val" ;;
+		since) since="$val" ;;
+		dry_run) dry_run="$val" ;;
+		esac
+	done <<<"$parsed"
 
 	init_evol_db
 
@@ -446,106 +669,7 @@ cmd_detect_gaps() {
 		return 0
 	fi
 
-	log_info "Processing $pattern_count detected patterns..."
-
-	local new_gaps=0
-	local updated_gaps=0
-	local skipped=0
-
-	# Process each pattern
-	local i=0
-	while [[ "$i" -lt "$pattern_count" ]]; do
-		local pattern
-		pattern=$(echo "$patterns" | jq -c ".[$i]")
-		local description severity category evidence_ids frequency_hint
-		description=$(echo "$pattern" | jq -r '.description // ""')
-		severity=$(echo "$pattern" | jq -r '.severity // "medium"')
-		category=$(echo "$pattern" | jq -r '.category // "missing_feature"')
-		evidence_ids=$(echo "$pattern" | jq -c '.evidence_ids // []')
-		frequency_hint=$(echo "$pattern" | jq -r '.frequency_hint // 1')
-
-		if [[ -z "$description" ]]; then
-			skipped=$((skipped + 1))
-			i=$((i + 1))
-			continue
-		fi
-
-		if [[ "$dry_run" == true ]]; then
-			log_info "[DRY RUN] Would record gap: $description (severity: $severity, category: $category)"
-			i=$((i + 1))
-			continue
-		fi
-
-		# Check for existing similar gap (deduplication)
-		# Exact match on description — AI dedup would be better but this is
-		# the heuristic fallback. The key insight: if the same gap description
-		# appears again, increment frequency rather than creating a duplicate.
-		# For fuzzy matching, use evol_sql_escape_like() with LIKE queries.
-		local esc_desc
-		esc_desc=$(evol_sql_escape "$description")
-		local existing_gap_id
-		existing_gap_id=$(
-			evol_db "$EVOL_MEMORY_DB" <<EOF
-SELECT id FROM capability_gaps
-WHERE description = '$esc_desc'
-  AND status IN ('detected', 'todo_created')
-LIMIT 1;
-EOF
-		)
-
-		if [[ -n "$existing_gap_id" ]]; then
-			# Increment frequency and add new evidence
-			evol_db "$EVOL_MEMORY_DB" <<EOF
-UPDATE capability_gaps SET
-    frequency = frequency + $frequency_hint,
-    updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
-WHERE id = '$(evol_sql_escape "$existing_gap_id")';
-EOF
-			# Add evidence links
-			record_gap_evidence "$existing_gap_id" "$evidence_ids"
-			updated_gaps=$((updated_gaps + 1))
-			log_info "Updated existing gap: $existing_gap_id (frequency +$frequency_hint)"
-		else
-			# Create new gap
-			local gap_id
-			gap_id=$(generate_gap_id)
-			local esc_evidence
-			esc_evidence=$(evol_sql_escape "$evidence_ids")
-
-			# Determine entity_id from evidence interactions
-			local gap_entity_id=""
-			if [[ -n "$entity_filter" ]]; then
-				gap_entity_id="$entity_filter"
-			else
-				# Try to get entity from first evidence interaction
-				local first_evidence_id
-				first_evidence_id=$(echo "$evidence_ids" | jq -r '.[0] // ""' 2>/dev/null || echo "")
-				if [[ -n "$first_evidence_id" ]]; then
-					gap_entity_id=$(evol_db "$EVOL_MEMORY_DB" \
-						"SELECT entity_id FROM interactions WHERE id = '$(evol_sql_escape "$first_evidence_id")' LIMIT 1;" 2>/dev/null || echo "")
-				fi
-			fi
-
-			local entity_clause="NULL"
-			if [[ -n "$gap_entity_id" ]]; then
-				entity_clause="'$(evol_sql_escape "$gap_entity_id")'"
-			fi
-
-			evol_db "$EVOL_MEMORY_DB" <<EOF
-INSERT INTO capability_gaps (id, entity_id, description, evidence, frequency, status)
-VALUES ('$gap_id', $entity_clause, '$esc_desc', '$esc_evidence', $frequency_hint, 'detected');
-EOF
-			# Record evidence links
-			record_gap_evidence "$gap_id" "$evidence_ids"
-			new_gaps=$((new_gaps + 1))
-			log_success "New gap detected: $gap_id — $description"
-		fi
-
-		i=$((i + 1))
-	done
-
-	echo ""
-	log_success "Gap detection complete: $new_gaps new, $updated_gaps updated, $skipped skipped"
+	_detect_gaps_process_patterns "$patterns" "$pattern_count" "$dry_run" "$entity_filter"
 	return 0
 }
 
@@ -585,39 +709,15 @@ EOF
 }
 
 #######################################
-# Create a TODO task for a capability gap
-# Uses claim-task-id.sh for atomic ID allocation and creates a GitHub issue.
-# The gap is updated with the TODO reference.
+# Fetch and validate gap record for create-todo
+# Arguments: $1=gap_id
+# Outputs JSON gap data to stdout; returns 1 if not found or already processed
 #######################################
-cmd_create_todo() {
-	local gap_id="${1:-}"
-	local repo_path=""
-
-	shift || true
-	while [[ $# -gt 0 ]]; do
-		case "$1" in
-		--repo-path)
-			repo_path="$2"
-			shift 2
-			;;
-		*)
-			log_warn "create-todo: unknown option: $1"
-			shift
-			;;
-		esac
-	done
-
-	if [[ -z "$gap_id" ]]; then
-		log_error "Gap ID is required. Usage: self-evolution-helper.sh create-todo <gap_id>"
-		return 1
-	fi
-
-	init_evol_db
-
+_create_todo_fetch_gap() {
+	local gap_id="$1"
 	local esc_id
 	esc_id=$(evol_sql_escape "$gap_id")
 
-	# Fetch gap details
 	local gap_data
 	gap_data=$(evol_db -json "$EVOL_MEMORY_DB" "SELECT * FROM capability_gaps WHERE id = '$esc_id';" 2>/dev/null)
 
@@ -626,24 +726,41 @@ cmd_create_todo() {
 		return 1
 	fi
 
-	local description status frequency evidence entity_id
-	description=$(echo "$gap_data" | jq -r '.[0].description // ""')
+	local status
 	status=$(echo "$gap_data" | jq -r '.[0].status // ""')
-	frequency=$(echo "$gap_data" | jq -r '.[0].frequency // 1')
-	evidence=$(echo "$gap_data" | jq -r '.[0].evidence // ""')
-	entity_id=$(echo "$gap_data" | jq -r '.[0].entity_id // ""')
 
 	if [[ "$status" == "todo_created" ]]; then
 		local existing_ref
 		existing_ref=$(echo "$gap_data" | jq -r '.[0].todo_ref // ""')
 		log_warn "TODO already created for this gap: $existing_ref"
-		return 0
+		return 1
 	fi
 
 	if [[ "$status" == "resolved" || "$status" == "wont_fix" ]]; then
 		log_warn "Gap is already $status"
-		return 0
+		return 1
 	fi
+
+	echo "$gap_data"
+	return 0
+}
+
+#######################################
+# Build GitHub issue body for a capability gap TODO
+# Arguments: $1=gap_id, $2=gap_data (JSON), $3=esc_id
+# Outputs issue body text to stdout
+#######################################
+_create_todo_build_issue_body() {
+	local gap_id="$1"
+	local gap_data="$2"
+	local esc_id="$3"
+
+	local description frequency evidence entity_id detected_at
+	description=$(echo "$gap_data" | jq -r '.[0].description // ""')
+	frequency=$(echo "$gap_data" | jq -r '.[0].frequency // 1')
+	evidence=$(echo "$gap_data" | jq -r '.[0].evidence // ""')
+	entity_id=$(echo "$gap_data" | jq -r '.[0].entity_id // ""')
+	detected_at=$(echo "$gap_data" | jq -r '.[0].created_at // "unknown"')
 
 	# Get evidence interaction IDs for the issue body
 	local evidence_interactions=""
@@ -666,10 +783,7 @@ EOF
 			"SELECT name FROM entities WHERE id = '$(evol_sql_escape "$entity_id")';" 2>/dev/null || echo "")
 	fi
 
-	# Build issue body
 	local issue_body
-	local detected_at
-	detected_at=$(echo "$gap_data" | jq -r '.[0].created_at // "unknown"')
 	issue_body="## Capability Gap (auto-detected)
 
 **Description:** ${description}
@@ -707,56 +821,124 @@ Evidence IDs: ${evidence}"
 Auto-created by self-evolution-helper.sh from entity interaction pattern analysis.
 Gap lifecycle: detected → todo_created → resolved"
 
+	echo "$issue_body"
+	return 0
+}
+
+#######################################
+# Claim a task ID for a gap TODO via claim-task-id.sh
+# Arguments: $1=gap_id, $2=description, $3=issue_body, $4=repo_path
+# Outputs todo_ref to stdout; returns 1 on failure
+#######################################
+_create_todo_claim_task() {
+	local gap_id="$1"
+	local description="$2"
+	local issue_body="$3"
+	local repo_path="$4"
+	local esc_id
+	esc_id=$(evol_sql_escape "$gap_id")
+
+	local claim_script="${SCRIPT_DIR}/claim-task-id.sh"
+
+	if [[ ! -x "$claim_script" ]]; then
+		log_warn "claim-task-id.sh not found — creating gap record without TODO"
+		echo "manual-required"
+		return 0
+	fi
+
+	local claim_output
+	claim_output=$("$claim_script" \
+		--repo-path "$repo_path" \
+		--title "Self-evolution: ${description}" \
+		--description "$issue_body" \
+		--labels "self-evolution,auto-dispatch,source:self-evolution" 2>&1) || {
+		log_warn "claim-task-id.sh failed — recording gap without TODO"
+		log_warn "Output: $claim_output"
+		# Still update the gap status to avoid re-processing
+		evol_db "$EVOL_MEMORY_DB" <<EOF
+UPDATE capability_gaps SET
+    status = 'detected',
+    updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+WHERE id = '$esc_id';
+EOF
+		return 1
+	}
+
+	# Parse claim output for task_id and ref
+	local task_id
+	task_id=$(echo "$claim_output" | grep -o 'task_id=t[0-9]*' | head -1 | cut -d= -f2 || echo "")
+	local gh_ref
+	gh_ref=$(echo "$claim_output" | grep -o 'ref=GH#[0-9]*' | head -1 | cut -d= -f2 || echo "")
+
+	local todo_ref
+	if [[ -n "$task_id" ]]; then
+		todo_ref="$task_id"
+		if [[ -n "$gh_ref" ]]; then
+			todo_ref="${task_id} (${gh_ref})"
+		fi
+	else
+		todo_ref="claim-pending"
+	fi
+
+	echo "$todo_ref"
+	return 0
+}
+
+#######################################
+# Create a TODO task for a capability gap
+# Uses claim-task-id.sh for atomic ID allocation and creates a GitHub issue.
+# The gap is updated with the TODO reference.
+#######################################
+cmd_create_todo() {
+	local gap_id="${1:-}"
+	local repo_path=""
+
+	shift || true
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--repo-path)
+			repo_path="$2"
+			shift 2
+			;;
+		*)
+			log_warn "create-todo: unknown option: $1"
+			shift
+			;;
+		esac
+	done
+
+	if [[ -z "$gap_id" ]]; then
+		log_error "Gap ID is required. Usage: self-evolution-helper.sh create-todo <gap_id>"
+		return 1
+	fi
+
+	init_evol_db
+
+	local esc_id
+	esc_id=$(evol_sql_escape "$gap_id")
+
+	# Fetch and validate gap
+	local gap_data
+	gap_data=$(_create_todo_fetch_gap "$gap_id") || return 0
+
+	local description
+	description=$(echo "$gap_data" | jq -r '.[0].description // ""')
+
 	# Determine repo path
 	if [[ -z "$repo_path" ]]; then
-		# Default to aidevops repo
 		repo_path="${HOME}/Git/aidevops"
 		if [[ ! -d "$repo_path" ]]; then
 			repo_path="$(pwd)"
 		fi
 	fi
 
-	# Use claim-task-id.sh if available
-	local claim_script="${SCRIPT_DIR}/claim-task-id.sh"
-	local todo_ref=""
+	# Build issue body
+	local issue_body
+	issue_body=$(_create_todo_build_issue_body "$gap_id" "$gap_data" "$esc_id")
 
-	if [[ -x "$claim_script" ]]; then
-		local claim_output
-		claim_output=$("$claim_script" \
-			--repo-path "$repo_path" \
-			--title "Self-evolution: ${description}" \
-			--description "$issue_body" \
-			--labels "self-evolution,auto-dispatch,source:self-evolution" 2>&1) || {
-			log_warn "claim-task-id.sh failed — recording gap without TODO"
-			log_warn "Output: $claim_output"
-			# Still update the gap status to avoid re-processing
-			evol_db "$EVOL_MEMORY_DB" <<EOF
-UPDATE capability_gaps SET
-    status = 'detected',
-    updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
-WHERE id = '$esc_id';
-EOF
-			return 1
-		}
-
-		# Parse claim output for task_id and ref
-		local task_id
-		task_id=$(echo "$claim_output" | grep -o 'task_id=t[0-9]*' | head -1 | cut -d= -f2 || echo "")
-		local gh_ref
-		gh_ref=$(echo "$claim_output" | grep -o 'ref=GH#[0-9]*' | head -1 | cut -d= -f2 || echo "")
-
-		if [[ -n "$task_id" ]]; then
-			todo_ref="$task_id"
-			if [[ -n "$gh_ref" ]]; then
-				todo_ref="${task_id} (${gh_ref})"
-			fi
-		else
-			todo_ref="claim-pending"
-		fi
-	else
-		log_warn "claim-task-id.sh not found — creating gap record without TODO"
-		todo_ref="manual-required"
-	fi
+	# Claim task ID
+	local todo_ref
+	todo_ref=$(_create_todo_claim_task "$gap_id" "$description" "$issue_body" "$repo_path") || return 1
 
 	# Update gap with TODO reference
 	local esc_ref
@@ -775,35 +957,36 @@ EOF
 }
 
 #######################################
-# List capability gaps
+# Parse arguments and build WHERE/ORDER clauses for list-gaps
+# Outputs key=value lines for eval
 #######################################
-cmd_list_gaps() {
-	local status_filter=""
-	local entity_filter=""
-	local format="text"
-	local limit=50
-	local sort_by="frequency"
+_list_gaps_parse_args() {
+	local _status_filter=""
+	local _entity_filter=""
+	local _format="text"
+	local _limit=50
+	local _sort_by="frequency"
 
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--status)
-			status_filter="$2"
+			_status_filter="$2"
 			shift 2
 			;;
 		--entity)
-			entity_filter="$2"
+			_entity_filter="$2"
 			shift 2
 			;;
 		--json)
-			format="json"
+			_format="json"
 			shift
 			;;
 		--limit)
-			limit="$2"
+			_limit="$2"
 			shift 2
 			;;
 		--sort)
-			sort_by="$2"
+			_sort_by="$2"
 			shift 2
 			;;
 		*)
@@ -813,7 +996,20 @@ cmd_list_gaps() {
 		esac
 	done
 
-	init_evol_db
+	printf 'status_filter=%s\nentity_filter=%s\nformat=%s\nlimit=%s\nsort_by=%s\n' \
+		"$_status_filter" "$_entity_filter" "$_format" "$_limit" "$_sort_by"
+	return 0
+}
+
+#######################################
+# Build SQL WHERE and ORDER clauses for list-gaps
+# Arguments: $1=status_filter, $2=entity_filter, $3=sort_by
+# Outputs: "WHERE_CLAUSE|ORDER_CLAUSE" to stdout; returns 1 on invalid status
+#######################################
+_list_gaps_build_query() {
+	local status_filter="$1"
+	local entity_filter="$2"
+	local sort_by="$3"
 
 	local where_clause="1=1"
 	if [[ -n "$status_filter" ]]; then
@@ -834,6 +1030,36 @@ cmd_list_gaps() {
 	elif [[ "$sort_by" == "status" ]]; then
 		order_clause="cg.status, cg.frequency DESC"
 	fi
+
+	echo "${where_clause}|${order_clause}"
+	return 0
+}
+
+#######################################
+# List capability gaps
+#######################################
+cmd_list_gaps() {
+	local status_filter="" entity_filter="" format="text" limit=50 sort_by="frequency"
+
+	local parsed
+	parsed=$(_list_gaps_parse_args "$@")
+	while IFS='=' read -r key val; do
+		case "$key" in
+		status_filter) status_filter="$val" ;;
+		entity_filter) entity_filter="$val" ;;
+		format) format="$val" ;;
+		limit) limit="$val" ;;
+		sort_by) sort_by="$val" ;;
+		esac
+	done <<<"$parsed"
+
+	init_evol_db
+
+	local query_parts
+	query_parts=$(_list_gaps_build_query "$status_filter" "$entity_filter" "$sort_by") || return 1
+
+	local where_clause="${query_parts%%|*}"
+	local order_clause="${query_parts##*|}"
 
 	if [[ "$format" == "json" ]]; then
 		evol_db -json "$EVOL_MEMORY_DB" <<EOF
@@ -1047,6 +1273,160 @@ record_scan_timestamp() {
 }
 
 #######################################
+# Parse arguments for pulse-scan command
+# Outputs key=value lines for eval
+#######################################
+_pulse_scan_parse_args() {
+	local _since=""
+	local _auto_todo_threshold=3
+	local _repo_path=""
+	local _dry_run=false
+	local _force=false
+
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--since)
+			_since="$2"
+			shift 2
+			;;
+		--auto-todo-threshold)
+			_auto_todo_threshold="$2"
+			shift 2
+			;;
+		--repo-path)
+			_repo_path="$2"
+			shift 2
+			;;
+		--dry-run)
+			_dry_run=true
+			shift
+			;;
+		--force)
+			_force=true
+			shift
+			;;
+		*)
+			log_warn "pulse-scan: unknown option: $1"
+			shift
+			;;
+		esac
+	done
+
+	printf 'since=%s\nauto_todo_threshold=%s\nrepo_path=%s\ndry_run=%s\nforce=%s\n' \
+		"$_since" "$_auto_todo_threshold" "$_repo_path" "$_dry_run" "$_force"
+	return 0
+}
+
+#######################################
+# Auto-create TODOs for high-frequency gaps (pulse-scan step 2)
+# Arguments: $1=auto_todo_threshold, $2=repo_path
+#######################################
+_pulse_scan_auto_todos() {
+	local auto_todo_threshold="$1"
+	local repo_path="$2"
+
+	log_info "Step 2: Checking for gaps above auto-TODO threshold (frequency >= $auto_todo_threshold)..."
+
+	local high_freq_gaps
+	high_freq_gaps=$(
+		evol_db "$EVOL_MEMORY_DB" <<EOF
+SELECT id, description, frequency FROM capability_gaps
+WHERE status = 'detected'
+  AND frequency >= $auto_todo_threshold
+ORDER BY frequency DESC
+LIMIT 5;
+EOF
+	)
+
+	if [[ -z "$high_freq_gaps" ]]; then
+		log_info "No gaps above auto-TODO threshold"
+		return 0
+	fi
+
+	local todo_count=0
+	while IFS='|' read -r gap_id description frequency; do
+		[[ -z "$gap_id" ]] && continue
+		log_info "Creating TODO for gap $gap_id (frequency: $frequency): $description"
+
+		local todo_args=("$gap_id")
+		if [[ -n "$repo_path" ]]; then
+			todo_args+=("--repo-path" "$repo_path")
+		fi
+
+		if cmd_create_todo "${todo_args[@]}"; then
+			todo_count=$((todo_count + 1))
+		else
+			log_warn "Failed to create TODO for gap $gap_id"
+		fi
+	done <<<"$high_freq_gaps"
+
+	log_success "Created $todo_count TODO(s) from high-frequency gaps"
+	return 0
+}
+
+#######################################
+# Resolve gaps whose TODOs are completed (pulse-scan step 3)
+# Arguments: $1=repo_path
+#######################################
+_pulse_scan_resolve_completed() {
+	local repo_path="$1"
+
+	log_info "Step 3: Checking for resolvable gaps..."
+
+	local todo_created_gaps
+	todo_created_gaps=$(
+		evol_db "$EVOL_MEMORY_DB" <<EOF
+SELECT id, todo_ref FROM capability_gaps
+WHERE status = 'todo_created'
+  AND todo_ref IS NOT NULL
+  AND todo_ref != '';
+EOF
+	)
+
+	if [[ -z "$todo_created_gaps" ]]; then
+		return 0
+	fi
+
+	local resolved_count=0
+	while IFS='|' read -r gap_id todo_ref; do
+		[[ -z "$gap_id" ]] && continue
+		local task_id
+		task_id=$(echo "$todo_ref" | grep -o 't[0-9]*' | head -1 || echo "")
+		if [[ -z "$task_id" ]]; then
+			continue
+		fi
+
+		if [[ -n "$repo_path" && -f "${repo_path}/TODO.md" ]]; then
+			if grep -q "\[x\].*${task_id}" "${repo_path}/TODO.md" 2>/dev/null; then
+				cmd_resolve_gap "$gap_id" --todo-ref "$todo_ref"
+				resolved_count=$((resolved_count + 1))
+			fi
+		fi
+	done <<<"$todo_created_gaps"
+
+	if [[ "$resolved_count" -gt 0 ]]; then
+		log_success "Resolved $resolved_count gap(s) with completed TODOs"
+	fi
+	return 0
+}
+
+#######################################
+# Print pulse-scan summary (step 4)
+#######################################
+_pulse_scan_summary() {
+	echo ""
+	log_info "=== Pulse Scan Summary ==="
+	evol_db "$EVOL_MEMORY_DB" <<'EOF'
+SELECT '  Detected: ' || (SELECT COUNT(*) FROM capability_gaps WHERE status = 'detected') ||
+    char(10) || '  TODO created: ' || (SELECT COUNT(*) FROM capability_gaps WHERE status = 'todo_created') ||
+    char(10) || '  Resolved: ' || (SELECT COUNT(*) FROM capability_gaps WHERE status = 'resolved') ||
+    char(10) || '  Won''t fix: ' || (SELECT COUNT(*) FROM capability_gaps WHERE status = 'wont_fix') ||
+    char(10) || '  Total evidence links: ' || (SELECT COUNT(*) FROM gap_evidence);
+EOF
+	return 0
+}
+
+#######################################
 # Pulse scan — integration point for supervisor pulse
 # Runs the full self-evolution cycle:
 #   1. Scan recent interactions for patterns
@@ -1057,40 +1437,19 @@ record_scan_timestamp() {
 # Designed to be called from pulse.md Step 3.5 or similar.
 #######################################
 cmd_pulse_scan() {
-	local since=""
-	local auto_todo_threshold=3
-	local repo_path=""
-	local dry_run=false
-	local force=false
+	local since="" auto_todo_threshold=3 repo_path="" dry_run=false force=false
 
-	while [[ $# -gt 0 ]]; do
-		case "$1" in
-		--since)
-			since="$2"
-			shift 2
-			;;
-		--auto-todo-threshold)
-			auto_todo_threshold="$2"
-			shift 2
-			;;
-		--repo-path)
-			repo_path="$2"
-			shift 2
-			;;
-		--dry-run)
-			dry_run=true
-			shift
-			;;
-		--force)
-			force=true
-			shift
-			;;
-		*)
-			log_warn "pulse-scan: unknown option: $1"
-			shift
-			;;
+	local parsed
+	parsed=$(_pulse_scan_parse_args "$@")
+	while IFS='=' read -r key val; do
+		case "$key" in
+		since) since="$val" ;;
+		auto_todo_threshold) auto_todo_threshold="$val" ;;
+		repo_path) repo_path="$val" ;;
+		dry_run) dry_run="$val" ;;
+		force) force="$val" ;;
 		esac
-	done
+	done <<<"$parsed"
 
 	# Interval guard — skip if scanned recently (unless --force)
 	if [[ "$force" != true ]] && ! check_scan_interval; then
@@ -1122,89 +1481,13 @@ cmd_pulse_scan() {
 	fi
 
 	# Step 2: Auto-create TODOs for high-frequency gaps
-	log_info "Step 2: Checking for gaps above auto-TODO threshold (frequency >= $auto_todo_threshold)..."
-
-	local high_freq_gaps
-	high_freq_gaps=$(
-		evol_db "$EVOL_MEMORY_DB" <<EOF
-SELECT id, description, frequency FROM capability_gaps
-WHERE status = 'detected'
-  AND frequency >= $auto_todo_threshold
-ORDER BY frequency DESC
-LIMIT 5;
-EOF
-	)
-
-	if [[ -z "$high_freq_gaps" ]]; then
-		log_info "No gaps above auto-TODO threshold"
-	else
-		local todo_count=0
-		while IFS='|' read -r gap_id description frequency; do
-			[[ -z "$gap_id" ]] && continue
-			log_info "Creating TODO for gap $gap_id (frequency: $frequency): $description"
-
-			local todo_args=("$gap_id")
-			if [[ -n "$repo_path" ]]; then
-				todo_args+=("--repo-path" "$repo_path")
-			fi
-
-			if cmd_create_todo "${todo_args[@]}"; then
-				todo_count=$((todo_count + 1))
-			else
-				log_warn "Failed to create TODO for gap $gap_id"
-			fi
-		done <<<"$high_freq_gaps"
-
-		log_success "Created $todo_count TODO(s) from high-frequency gaps"
-	fi
+	_pulse_scan_auto_todos "$auto_todo_threshold" "$repo_path"
 
 	# Step 3: Check for resolved gaps (gaps with merged PRs)
-	log_info "Step 3: Checking for resolvable gaps..."
-	local todo_created_gaps
-	todo_created_gaps=$(
-		evol_db "$EVOL_MEMORY_DB" <<EOF
-SELECT id, todo_ref FROM capability_gaps
-WHERE status = 'todo_created'
-  AND todo_ref IS NOT NULL
-  AND todo_ref != '';
-EOF
-	)
-
-	if [[ -n "$todo_created_gaps" ]]; then
-		local resolved_count=0
-		while IFS='|' read -r gap_id todo_ref; do
-			[[ -z "$gap_id" ]] && continue
-			# Extract task ID from todo_ref (format: "tNNN" or "tNNN (GH#NNN)")
-			local task_id
-			task_id=$(echo "$todo_ref" | grep -o 't[0-9]*' | head -1 || echo "")
-			if [[ -z "$task_id" ]]; then
-				continue
-			fi
-
-			# Check if the task is marked complete in TODO.md
-			if [[ -n "$repo_path" && -f "${repo_path}/TODO.md" ]]; then
-				if grep -q "\[x\].*${task_id}" "${repo_path}/TODO.md" 2>/dev/null; then
-					cmd_resolve_gap "$gap_id" --todo-ref "$todo_ref"
-					resolved_count=$((resolved_count + 1))
-				fi
-			fi
-		done <<<"$todo_created_gaps"
-
-		if [[ "$resolved_count" -gt 0 ]]; then
-			log_success "Resolved $resolved_count gap(s) with completed TODOs"
-		fi
-	fi
+	_pulse_scan_resolve_completed "$repo_path"
 
 	# Step 4: Summary
-	echo ""
-	log_info "=== Pulse Scan Summary ==="
-	evol_db "$EVOL_MEMORY_DB" <<'EOF'
-SELECT '  Detected: ' || (SELECT COUNT(*) FROM capability_gaps WHERE status = 'detected') ||
-    char(10) || '  TODO created: ' || (SELECT COUNT(*) FROM capability_gaps WHERE status = 'todo_created') ||
-    char(10) || '  Resolved: ' || (SELECT COUNT(*) FROM capability_gaps WHERE status = 'resolved') ||
-    char(10) || '  Won''t fix: ' || (SELECT COUNT(*) FROM capability_gaps WHERE status = 'wont_fix') ||
-    char(10) || '  Total evidence links: ' || (SELECT COUNT(*) FROM gap_evidence);
-EOF
+	_pulse_scan_summary
 
 	# Record scan timestamp for interval guard (always succeeds — errors logged internally)
 	record_scan_timestamp
@@ -1323,16 +1606,10 @@ EOF
 }
 
 #######################################
-# Show help
+# Print command reference section of help
 #######################################
-cmd_help() {
+_help_commands() {
 	cat <<'EOF'
-self-evolution-helper.sh - Self-evolution loop for aidevops
-
-Part of the conversational memory system (p035 / t1363).
-Detects capability gaps from entity interaction patterns, creates TODO tasks
-with evidence trails, tracks gap frequency, and manages resolution lifecycle.
-
 USAGE:
     self-evolution-helper.sh <command> [options]
 
@@ -1383,7 +1660,15 @@ PULSE-SCAN OPTIONS:
     --repo-path <path>  Repository path for TODO creation
     --dry-run           Scan without creating TODOs
     --force             Skip interval guard (default: 6h between scans)
+EOF
+	return 0
+}
 
+#######################################
+# Print concepts and examples section of help
+#######################################
+_help_concepts() {
+	cat <<'EOF'
 SELF-EVOLUTION LOOP:
     The self-evolution loop is the core differentiator of the entity memory
     system. It works as follows:
@@ -1454,6 +1739,24 @@ EXAMPLES:
     # View statistics
     self-evolution-helper.sh stats --json
 EOF
+	return 0
+}
+
+#######################################
+# Show help
+#######################################
+cmd_help() {
+	cat <<'EOF'
+self-evolution-helper.sh - Self-evolution loop for aidevops
+
+Part of the conversational memory system (p035 / t1363).
+Detects capability gaps from entity interaction patterns, creates TODO tasks
+with evidence trails, tracks gap frequency, and manages resolution lifecycle.
+
+EOF
+	_help_commands
+	echo ""
+	_help_concepts
 	return 0
 }
 
