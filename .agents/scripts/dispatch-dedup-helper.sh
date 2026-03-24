@@ -149,6 +149,14 @@ list_running_keys() {
 
 	while IFS= read -r pid; do
 		[[ -z "$pid" ]] && continue
+
+		# Verify PID is actually alive — not a zombie or recycled PID (GH#5662).
+		# pgrep can return PIDs for processes that are zombies or about to exit.
+		# kill -0 checks if the process exists AND we can signal it.
+		if ! kill -0 "$pid" 2>/dev/null; then
+			continue
+		fi
+
 		local cmdline=""
 		# ps -p <pid> -o args= prints only the command line (no header, no PID prefix)
 		cmdline=$(ps -p "$pid" -o args= 2>/dev/null || true)
@@ -221,14 +229,23 @@ is_duplicate() {
 			if [[ -n "$match" ]]; then
 				local match_pid
 				match_pid=$(printf '%s' "$match" | cut -d'|' -f1)
-				printf 'DUPLICATE: key=%s matches running %s (PID %s)\n' "$candidate_key" "$pattern" "$match_pid"
-				return 0
+				# Double-check PID is still alive before reporting duplicate (GH#5662).
+				# The PID may have died between list_running_keys and this check,
+				# or pgrep may have matched a zombie/recycled PID.
+				if kill -0 "$match_pid" 2>/dev/null; then
+					printf 'DUPLICATE: key=%s matches running %s (PID %s)\n' "$candidate_key" "$pattern" "$match_pid"
+					return 0
+				fi
 			fi
 		done
 	done <<<"$candidate_keys"
 
-	# Also check the supervisor DB if available
+	# Also check the supervisor DB if available.
+	# Only consider tasks that were updated recently — stale entries from dead
+	# workers should not block new dispatch (GH#5662). The staleness threshold
+	# matches the max worker runtime (default 2h = 7200s).
 	local supervisor_db="${SUPERVISOR_DIR:-${HOME}/.aidevops/.agent-workspace/supervisor}/supervisor.db"
+	local db_staleness_seconds="${DEDUP_DB_STALENESS_SECONDS:-7200}"
 	if [[ -f "$supervisor_db" ]] && command -v sqlite3 &>/dev/null; then
 		while IFS= read -r candidate_key; do
 			[[ -z "$candidate_key" ]] && continue
@@ -241,12 +258,14 @@ is_duplicate() {
 			case "$key_type" in
 			issue)
 				# Check if any running/dispatched task references this issue number
+				# Exclude stale entries older than the staleness threshold
 				db_match=$(sqlite3 "$supervisor_db" "
 					SELECT id FROM tasks
 					WHERE status IN ('running', 'dispatched', 'evaluating')
 					AND (description LIKE '%#${key_num}%'
 					     OR description LIKE '%issue ${key_num}%'
 					     OR description LIKE '%issue-${key_num}%')
+					AND updated_at > datetime('now', '-${db_staleness_seconds} seconds')
 					LIMIT 1;
 				" 2>/dev/null || true)
 				;;
@@ -256,6 +275,7 @@ is_duplicate() {
 					SELECT id FROM tasks
 					WHERE status IN ('running', 'dispatched', 'evaluating')
 					AND id = '${key_num}'
+					AND updated_at > datetime('now', '-${db_staleness_seconds} seconds')
 					LIMIT 1;
 				" 2>/dev/null || true)
 				;;
@@ -267,6 +287,7 @@ is_duplicate() {
 					AND (pr_url LIKE '%/${key_num}'
 					     OR description LIKE '%PR #${key_num}%'
 					     OR description LIKE '%pr-${key_num}%')
+					AND updated_at > datetime('now', '-${db_staleness_seconds} seconds')
 					LIMIT 1;
 				" 2>/dev/null || true)
 				;;
