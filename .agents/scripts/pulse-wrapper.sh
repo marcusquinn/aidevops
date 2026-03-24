@@ -2630,30 +2630,38 @@ _complexity_scan_create_issues() {
 	local aidevops_slug="$3"
 	local issues_created=0
 	local issues_skipped=0
+
+	# Fetch existing simplification-debt issues once, outside the per-file loop.
+	# Using repo-relative file paths for dedup to avoid false matches when
+	# different files share the same basename (e.g. helper.sh in multiple dirs).
+	# No --limit flag: gh paginates automatically; a hard limit risks missing
+	# existing issues and creating duplicates.
+	local existing_issues
+	existing_issues=$(gh issue list --repo "$aidevops_slug" \
+		--label "simplification-debt" --state open \
+		--json number,title 2>/dev/null) || existing_issues="[]"
+
+	local maintainer
+	maintainer=$(jq -r --arg slug "$aidevops_slug" \
+		'.initialized_repos[] | select(.slug == $slug) | .maintainer // empty' \
+		"$repos_json" 2>/dev/null)
+	if [[ -z "$maintainer" ]]; then
+		maintainer=$(echo "$aidevops_slug" | cut -d/ -f1)
+	fi
+
 	while IFS='|' read -r file_path violation_count details; do
 		[[ -n "$file_path" ]] || continue
-		local basename_file
-		basename_file=$(basename "$file_path")
-		local existing_issues
-		existing_issues=$(gh issue list --repo "$aidevops_slug" \
-			--label "simplification-debt" --state open \
-			--json number,title --limit 50 2>/dev/null) || existing_issues="[]"
+		# Use repo-relative path for dedup — avoids false matches when different
+		# files share the same basename (e.g. scripts/helper.sh vs tools/helper.sh).
 		local has_existing="false"
-		if echo "$existing_issues" | jq -e --arg fname "$basename_file" \
-			'.[] | select(.title | test($fname))' >/dev/null 2>&1; then
+		if echo "$existing_issues" | jq -e --arg fpath "$file_path" \
+			'.[] | select(.title | test($fpath; "x"))' >/dev/null 2>&1; then
 			has_existing="true"
 		fi
 		if [[ "$has_existing" == "true" ]]; then
-			echo "[pulse-wrapper] Complexity scan: skipping ${basename_file} — existing open issue" >>"$LOGFILE"
+			echo "[pulse-wrapper] Complexity scan: skipping ${file_path} — existing open issue" >>"$LOGFILE"
 			issues_skipped=$((issues_skipped + 1))
 			continue
-		fi
-		local maintainer
-		maintainer=$(jq -r --arg slug "$aidevops_slug" \
-			'.initialized_repos[] | select(.slug == $slug) | .maintainer // empty' \
-			"$repos_json" 2>/dev/null)
-		if [[ -z "$maintainer" ]]; then
-			maintainer=$(echo "$aidevops_slug" | cut -d/ -f1)
 		fi
 		local issue_body
 		issue_body="## Complexity scan finding (automated, GH#5628)
@@ -2686,15 +2694,17 @@ This is an automated scan. The function lengths are factual, but the best decomp
 **To approve or decline**, comment on this issue:
 - \`approved\` — removes the review gate and queues for automated dispatch
 - \`declined: <reason>\` — closes this issue (include your reason after the colon)"
+		# Use repo-relative path in the issue title so the dedup check above
+		# can match it reliably on subsequent scans.
 		if gh issue create --repo "$aidevops_slug" \
-			--title "simplification: reduce function complexity in ${basename_file} (${violation_count} functions >${COMPLEXITY_FUNC_LINE_THRESHOLD} lines)" \
+			--title "simplification: reduce function complexity in ${file_path} (${violation_count} functions >${COMPLEXITY_FUNC_LINE_THRESHOLD} lines)" \
 			--label "simplification-debt" --label "needs-maintainer-review" \
 			--assignee "$maintainer" \
 			--body "$issue_body" >/dev/null 2>&1; then
 			issues_created=$((issues_created + 1))
-			echo "[pulse-wrapper] Complexity scan: created issue for ${basename_file} (${violation_count} violations)" >>"$LOGFILE"
+			echo "[pulse-wrapper] Complexity scan: created issue for ${file_path} (${violation_count} violations)" >>"$LOGFILE"
 		else
-			echo "[pulse-wrapper] Complexity scan: failed to create issue for ${basename_file}" >>"$LOGFILE"
+			echo "[pulse-wrapper] Complexity scan: failed to create issue for ${file_path}" >>"$LOGFILE"
 		fi
 	done <<<"$scan_results"
 	echo "[pulse-wrapper] Complexity scan complete: ${issues_created} issues created, ${issues_skipped} skipped (existing)" >>"$LOGFILE"
