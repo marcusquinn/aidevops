@@ -518,17 +518,25 @@ _status_ai_configs() {
 
 # Status command
 cmd_status() {
-	print_header "AI DevOps Framework Status"; echo "=========================="; echo ""
-	local current_version; current_version=$(get_version)
-	local remote_version; remote_version=$(get_remote_version)
-	print_header "Version"; echo "  Installed: $current_version"; echo "  Latest:    $remote_version"
-	if [[ "$current_version" != "$remote_version" && "$remote_version" != "unknown" ]]; then print_warning "Update available! Run: aidevops update"
+	print_header "AI DevOps Framework Status"
+	echo "=========================="
+	echo ""
+	local current_version
+	current_version=$(get_version)
+	local remote_version
+	remote_version=$(get_remote_version)
+	print_header "Version"
+	echo "  Installed: $current_version"
+	echo "  Latest:    $remote_version"
+	if [[ "$current_version" != "$remote_version" && "$remote_version" != "unknown" ]]; then
+		print_warning "Update available! Run: aidevops update"
 	elif [[ "$current_version" == "$remote_version" ]]; then print_success "Up to date"; fi
 	echo ""
 	print_header "Installation"
 	check_dir "$INSTALL_DIR" && print_success "Repository: $INSTALL_DIR" || print_error "Repository: Not found at $INSTALL_DIR"
 	if check_dir "$AGENTS_DIR"; then
-		local agent_count; agent_count=$(find "$AGENTS_DIR" -name "*.md" -type f 2>/dev/null | wc -l | tr -d ' ')
+		local agent_count
+		agent_count=$(find "$AGENTS_DIR" -name "*.md" -type f 2>/dev/null | wc -l | tr -d ' ')
 		print_success "Agents: $AGENTS_DIR ($agent_count files)"
 	else print_error "Agents: Not deployed"; fi
 	echo ""
@@ -554,26 +562,61 @@ cmd_status() {
 
 # Update helpers (extracted for complexity reduction)
 
+_update_fresh_install() {
+	print_warning "Repository not found, performing fresh install..."
+	local tmp_setup
+	tmp_setup=$(mktemp "${TMPDIR:-/tmp}/aidevops-setup-XXXXXX.sh") || {
+		print_error "Failed to create temp file for setup script"
+		return 1
+	}
+	trap 'rm -f "${tmp_setup:-}"' RETURN
+	if curl -fsSL "https://raw.githubusercontent.com/marcusquinn/aidevops/main/setup.sh" -o "$tmp_setup" 2>/dev/null && [[ -s "$tmp_setup" ]]; then
+		chmod +x "$tmp_setup"
+		bash "$tmp_setup"
+		local setup_exit=$?
+		rm -f "$tmp_setup"
+		[[ $setup_exit -ne 0 ]] && return 1
+	else
+		rm -f "$tmp_setup"
+		print_error "Failed to download setup script"
+		print_info "Try: git clone https://github.com/marcusquinn/aidevops.git $INSTALL_DIR && bash $INSTALL_DIR/setup.sh"
+		return 1
+	fi
+	return 0
+}
+
 _update_sync_projects() {
 	local skip="$1" current_ver="$2"
-	echo ""; print_header "Syncing Initialized Projects"
-	if [[ "$skip" == "true" ]]; then print_info "Project sync skipped (--skip-project-sync)"; return 0; fi
+	echo ""
+	print_header "Syncing Initialized Projects"
+	if [[ "$skip" == "true" ]]; then
+		print_info "Project sync skipped (--skip-project-sync)"
+		return 0
+	fi
 	local repos_needing_upgrade=()
 	while IFS= read -r repo_path; do
 		[[ -z "$repo_path" ]] && continue
 		[[ -d "$repo_path" ]] && check_repo_needs_upgrade "$repo_path" && repos_needing_upgrade+=("$repo_path")
 	done < <(get_registered_repos)
-	if [[ ${#repos_needing_upgrade[@]} -eq 0 ]]; then print_success "All registered projects are up to date"; return 0; fi
+	if [[ ${#repos_needing_upgrade[@]} -eq 0 ]]; then
+		print_success "All registered projects are up to date"
+		return 0
+	fi
 	local synced=0 skipped=0 failed=0
 	for repo in "${repos_needing_upgrade[@]}"; do
-		[[ ! -f "$repo/.aidevops.json" ]] && { skipped=$((skipped + 1)); continue; }
+		[[ ! -f "$repo/.aidevops.json" ]] && {
+			skipped=$((skipped + 1))
+			continue
+		}
 		local did_sync=false
 		if command -v jq &>/dev/null; then
 			local temp_file="${repo}/.aidevops.json.tmp"
 			if jq --arg version "$current_ver" '.version = $version' "$repo/.aidevops.json" >"$temp_file" 2>/dev/null && [[ -s "$temp_file" ]]; then
 				mv "$temp_file" "$repo/.aidevops.json"
-				local features; features=$(jq -r '[.features | to_entries[] | select(.value == true) | .key] | join(",")' "$repo/.aidevops.json" 2>/dev/null || echo "")
-				register_repo "$repo" "$current_ver" "$features"; did_sync=true
+				local features
+				features=$(jq -r '[.features | to_entries[] | select(.value == true) | .key] | join(",")' "$repo/.aidevops.json" 2>/dev/null || echo "")
+				register_repo "$repo" "$current_ver" "$features"
+				did_sync=true
 			else rm -f "$temp_file"; fi
 		fi
 		if [[ "$did_sync" != "true" ]]; then
@@ -588,24 +631,35 @@ _update_sync_projects() {
 }
 
 _update_check_planning() {
-	echo ""; print_header "Checking Planning Templates"
+	echo ""
+	print_header "Checking Planning Templates"
 	local repos_needing_planning=()
 	while IFS= read -r repo_path; do
 		[[ -z "$repo_path" || ! -d "$repo_path" ]] && continue
 		if [[ -f "$repo_path/.aidevops.json" ]]; then
-			local has_planning; has_planning=$(grep -o '"planning": *true' "$repo_path/.aidevops.json" 2>/dev/null || true)
+			local has_planning
+			has_planning=$(grep -o '"planning": *true' "$repo_path/.aidevops.json" 2>/dev/null || true)
 			[[ -n "$has_planning" ]] && check_planning_needs_upgrade "$repo_path" && repos_needing_planning+=("$repo_path")
 		fi
 	done < <(get_registered_repos)
-	if [[ ${#repos_needing_planning[@]} -eq 0 ]]; then print_success "All planning templates are up to date"; return 0; fi
-	echo ""; print_warning "${#repos_needing_planning[@]} project(s) have outdated planning templates:"
+	if [[ ${#repos_needing_planning[@]} -eq 0 ]]; then
+		print_success "All planning templates are up to date"
+		return 0
+	fi
+	echo ""
+	print_warning "${#repos_needing_planning[@]} project(s) have outdated planning templates:"
 	for repo in "${repos_needing_planning[@]}"; do
-		local repo_name; repo_name=$(basename "$repo")
-		local todo_ver; todo_ver=$(grep -A1 "TOON:meta" "$repo/TODO.md" 2>/dev/null | tail -1 | cut -d',' -f1)
+		local repo_name
+		repo_name=$(basename "$repo")
+		local todo_ver
+		todo_ver=$(grep -A1 "TOON:meta" "$repo/TODO.md" 2>/dev/null | tail -1 | cut -d',' -f1)
 		echo "  - $repo_name (v${todo_ver:-none})"
 	done
-	local template_ver; template_ver=$(grep -A1 "TOON:meta" "$AGENTS_DIR/templates/todo-template.md" 2>/dev/null | tail -1 | cut -d',' -f1)
-	echo ""; echo "  Latest template: v${template_ver} (adds risk field, active session time estimates)"; echo ""
+	local template_ver
+	template_ver=$(grep -A1 "TOON:meta" "$AGENTS_DIR/templates/todo-template.md" 2>/dev/null | tail -1 | cut -d',' -f1)
+	echo ""
+	echo "  Latest template: v${template_ver} (adds risk field, active session time estimates)"
+	echo ""
 	read -r -p "Upgrade planning templates in these projects? [y/N] " response
 	if [[ "$response" =~ ^[Yy]$ ]]; then
 		for repo in "${repos_needing_planning[@]}"; do
@@ -617,30 +671,44 @@ _update_check_planning() {
 }
 
 _update_check_tools() {
-	echo ""; print_header "Checking Key Tools"
+	echo ""
+	print_header "Checking Key Tools"
 	local tool_check_script="$AGENTS_DIR/scripts/tool-version-check.sh"
-	if [[ ! -f "$tool_check_script" ]]; then print_info "Tool version check not available (run setup first)"; return 0; fi
+	if [[ ! -f "$tool_check_script" ]]; then
+		print_info "Tool version check not available (run setup first)"
+		return 0
+	fi
 	local stale_count=0 stale_tools=""
-	local key_tool_cmds="opencode gh"; local key_tool_pkgs="opencode-ai brew:gh"
+	local key_tool_cmds="opencode gh"
+	local key_tool_pkgs="opencode-ai brew:gh"
 	local idx=0
 	for cmd_name in $key_tool_cmds; do
-		local pkg_ref; pkg_ref=$(echo "$key_tool_pkgs" | cut -d' ' -f$((idx + 1))); idx=$((idx + 1))
+		local pkg_ref
+		pkg_ref=$(echo "$key_tool_pkgs" | cut -d' ' -f$((idx + 1)))
+		idx=$((idx + 1))
 		local installed="" latest=""
 		command -v "$cmd_name" &>/dev/null || continue
 		installed=$("$cmd_name" --version 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
 		[[ -z "$installed" ]] && continue
 		if [[ "$pkg_ref" == brew:* ]]; then
-			local brew_pkg="${pkg_ref#brew:}"; local brew_bin=""; brew_bin=$(command -v brew 2>/dev/null || true)
+			local brew_pkg="${pkg_ref#brew:}"
+			local brew_bin=""
+			brew_bin=$(command -v brew 2>/dev/null || true)
 			if [[ -n "$brew_bin" && -x "$brew_bin" ]]; then
 				latest=$(_timeout_cmd 30 "$brew_bin" info --json=v2 "$brew_pkg" | jq -r '.formulae[0].versions.stable // empty' || true)
 			elif [[ "$brew_pkg" == "gh" ]] && command -v gh &>/dev/null; then latest=$(get_public_release_tag "cli/cli"); fi
 		else latest=$(_timeout_cmd 30 npm view "$pkg_ref" version || true); fi
 		[[ -z "$latest" ]] && continue
-		[[ "$installed" != "$latest" ]] && { stale_tools="${stale_tools:+$stale_tools, }$cmd_name ($installed -> $latest)"; ((++stale_count)); }
+		[[ "$installed" != "$latest" ]] && {
+			stale_tools="${stale_tools:+$stale_tools, }$cmd_name ($installed -> $latest)"
+			((++stale_count))
+		}
 	done
-	if [[ "$stale_count" -eq 0 ]]; then print_success "Key tools are up to date"
+	if [[ "$stale_count" -eq 0 ]]; then
+		print_success "Key tools are up to date"
 	else
-		print_warning "$stale_count tool(s) have updates: $stale_tools"; echo ""
+		print_warning "$stale_count tool(s) have updates: $stale_tools"
+		echo ""
 		read -r -p "Run full tool update check? [y/N] " response
 		[[ "$response" =~ ^[Yy]$ ]] && bash "$tool_check_script" --update || print_info "Run 'aidevops update-tools --update' to update later"
 	fi
@@ -650,50 +718,79 @@ _update_check_tools() {
 # Update/upgrade command
 cmd_update() {
 	local skip_project_sync=false
-	local arg; for arg in "$@"; do case "$arg" in --skip-project-sync) skip_project_sync=true ;; esac; done
-	print_header "Updating AI DevOps Framework"; echo ""
-	local current_version; current_version=$(get_version)
-	print_info "Current version: $current_version"; print_info "Fetching latest version..."
+	local arg
+	for arg in "$@"; do case "$arg" in --skip-project-sync) skip_project_sync=true ;; esac done
+	print_header "Updating AI DevOps Framework"
+	echo ""
+	local current_version
+	current_version=$(get_version)
+	print_info "Current version: $current_version"
+	print_info "Fetching latest version..."
 
 	if check_dir "$INSTALL_DIR/.git"; then
 		cd "$INSTALL_DIR" || exit 1
-		local current_branch; current_branch=$(git branch --show-current 2>/dev/null || echo "")
-		[[ "$current_branch" != "main" ]] && { print_info "Switching to main branch..."; git checkout main --quiet 2>/dev/null || git checkout -b main origin/main --quiet 2>/dev/null || true; }
+		local current_branch
+		current_branch=$(git branch --show-current 2>/dev/null || echo "")
+		[[ "$current_branch" != "main" ]] && {
+			print_info "Switching to main branch..."
+			git checkout main --quiet 2>/dev/null || git checkout -b main origin/main --quiet 2>/dev/null || true
+		}
 		if ! git diff --quiet 2>/dev/null || ! git diff --cached --quiet 2>/dev/null; then
-			print_info "Cleaning up stale working tree changes..."; git reset HEAD -- . 2>/dev/null || true; git checkout -- . 2>/dev/null || true
+			print_info "Cleaning up stale working tree changes..."
+			git reset HEAD -- . 2>/dev/null || true
+			git checkout -- . 2>/dev/null || true
 		fi
 		git fetch origin main --tags --quiet
-		local local_hash; local_hash=$(git rev-parse HEAD); local remote_hash; remote_hash=$(git rev-parse origin/main)
+		local local_hash
+		local_hash=$(git rev-parse HEAD)
+		local remote_hash
+		remote_hash=$(git rev-parse origin/main)
 		if [[ "$local_hash" == "$remote_hash" ]]; then
 			print_success "Framework already up to date!"
 			local repo_version deployed_version
-			repo_version=$(cat "$INSTALL_DIR/VERSION" 2>/dev/null || echo "unknown"); deployed_version=$(cat "$HOME/.aidevops/agents/VERSION" 2>/dev/null || echo "none")
+			repo_version=$(cat "$INSTALL_DIR/VERSION" 2>/dev/null || echo "unknown")
+			deployed_version=$(cat "$HOME/.aidevops/agents/VERSION" 2>/dev/null || echo "none")
 			if [[ "$repo_version" != "$deployed_version" ]]; then
-				print_warning "Deployed agents ($deployed_version) don't match repo ($repo_version)"; print_info "Re-running setup to sync agents..."
+				print_warning "Deployed agents ($deployed_version) don't match repo ($repo_version)"
+				print_info "Re-running setup to sync agents..."
 				bash "$INSTALL_DIR/setup.sh" --non-interactive
 			fi
 			git checkout -- . 2>/dev/null || true
 		else
-			print_info "Pulling latest changes..."; local old_hash; old_hash=$(git rev-parse HEAD)
-			if git pull --ff-only origin main --quiet; then :
+			print_info "Pulling latest changes..."
+			local old_hash
+			old_hash=$(git rev-parse HEAD)
+			if git pull --ff-only origin main --quiet; then
+				:
 			else
 				print_warning "Fast-forward pull failed — resetting to origin/main..."
-				git reset --hard origin/main --quiet 2>/dev/null || { print_error "Failed to reset to origin/main"; print_info "Try: cd $INSTALL_DIR && git fetch origin && git reset --hard origin/main"; return 1; }
+				git reset --hard origin/main --quiet 2>/dev/null || {
+					print_error "Failed to reset to origin/main"
+					print_info "Try: cd $INSTALL_DIR && git fetch origin && git reset --hard origin/main"
+					return 1
+				}
 			fi
-			local new_version new_hash; new_version=$(get_version); new_hash=$(git rev-parse HEAD)
+			local new_version new_hash
+			new_version=$(get_version)
+			new_hash=$(git rev-parse HEAD)
 			if [[ "$old_hash" != "$new_hash" ]]; then
-				local total_commits; total_commits=$(git rev-list --count "$old_hash..$new_hash" 2>/dev/null || echo "0")
+				local total_commits
+				total_commits=$(git rev-list --count "$old_hash..$new_hash" 2>/dev/null || echo "0")
 				if [[ "$total_commits" -gt 0 ]]; then
-					echo ""; print_info "Changes since $current_version ($total_commits commits):"
+					echo ""
+					print_info "Changes since $current_version ($total_commits commits):"
 					git log --oneline "$old_hash..$new_hash" | grep -E '^[a-f0-9]+ (feat|fix|refactor|perf|docs):' | head -20
 					[[ "$total_commits" -gt 20 ]] && echo "  ... and more (run 'git log --oneline' in $INSTALL_DIR for full list)"
 				fi
 			fi
-			echo ""; print_info "Running setup to apply changes..."
-			local setup_exit=0; bash "$INSTALL_DIR/setup.sh" --non-interactive || setup_exit=$?
+			echo ""
+			print_info "Running setup to apply changes..."
+			local setup_exit=0
+			bash "$INSTALL_DIR/setup.sh" --non-interactive || setup_exit=$?
 			git checkout -- . 2>/dev/null || true
 			local repo_version deployed_version
-			repo_version=$(cat "$INSTALL_DIR/VERSION" 2>/dev/null || echo "unknown"); deployed_version=$(cat "$HOME/.aidevops/agents/VERSION" 2>/dev/null || echo "none")
+			repo_version=$(cat "$INSTALL_DIR/VERSION" 2>/dev/null || echo "unknown")
+			deployed_version=$(cat "$HOME/.aidevops/agents/VERSION" 2>/dev/null || echo "none")
 			[[ "$setup_exit" -ne 0 ]] && print_warning "Setup exited with code $setup_exit"
 			if [[ "$repo_version" != "$deployed_version" ]]; then
 				print_warning "Agent deployment incomplete: repo=$repo_version, deployed=$deployed_version"
@@ -701,14 +798,7 @@ cmd_update() {
 			else print_success "Updated to version $new_version (agents deployed)"; fi
 		fi
 	else
-		print_warning "Repository not found, performing fresh install..."
-		local tmp_setup; tmp_setup=$(mktemp "${TMPDIR:-/tmp}/aidevops-setup-XXXXXX.sh") || { print_error "Failed to create temp file for setup script"; return 1; }
-		trap 'rm -f "${tmp_setup:-}"' RETURN
-		if curl -fsSL "https://raw.githubusercontent.com/marcusquinn/aidevops/main/setup.sh" -o "$tmp_setup" 2>/dev/null && [[ -s "$tmp_setup" ]]; then
-			chmod +x "$tmp_setup"; bash "$tmp_setup"; local setup_exit=$?; rm -f "$tmp_setup"; [[ $setup_exit -ne 0 ]] && return 1
-		else rm -f "$tmp_setup"; print_error "Failed to download setup script"
-			print_info "Try: git clone https://github.com/marcusquinn/aidevops.git $INSTALL_DIR && bash $INSTALL_DIR/setup.sh"; return 1
-		fi
+		_update_fresh_install || return 1
 	fi
 
 	_update_sync_projects "$skip_project_sync" "$(get_version)"
@@ -722,41 +812,75 @@ _uninstall_cleanup_refs() {
 	local ai_agent_files=("$HOME/.config/opencode/agent/AGENTS.md" "$HOME/.claude/commands/AGENTS.md" "$HOME/.opencode/AGENTS.md")
 	for file in "${ai_agent_files[@]}"; do
 		if check_file "$file"; then
-			grep -q "Add ~/.aidevops/agents/AGENTS.md" "$file" 2>/dev/null && { rm -f "$file"; print_success "Removed $file"; }
+			grep -q "Add ~/.aidevops/agents/AGENTS.md" "$file" 2>/dev/null && {
+				rm -f "$file"
+				print_success "Removed $file"
+			}
 		fi
 	done
 	print_info "Removing shell aliases..."
 	for rc_file in "$HOME/.zshrc" "$HOME/.bashrc" "$HOME/.bash_profile"; do
 		if check_file "$rc_file" && grep -q "# AI Assistant Server Access Framework" "$rc_file" 2>/dev/null; then
-			cp "$rc_file" "$rc_file.bak"; sed_inplace '/# AI Assistant Server Access Framework/,/^$/d' "$rc_file"
+			cp "$rc_file" "$rc_file.bak"
+			sed_inplace '/# AI Assistant Server Access Framework/,/^$/d' "$rc_file"
 			print_success "Removed aliases from $rc_file"
 		fi
 	done
 	print_info "Removing AI memory files..."
-	for file in "$HOME/CLAUDE.md"; do check_file "$file" && { rm -f "$file"; print_success "Removed $file"; }; done
+	local mf="$HOME/CLAUDE.md"
+	check_file "$mf" && {
+		rm -f "$mf"
+		print_success "Removed $mf"
+	}
 	return 0
 }
 
 # Uninstall command
 cmd_uninstall() {
-	print_header "Uninstall AI DevOps Framework"; echo ""
-	print_warning "This will remove:"
-	echo "  - $AGENTS_DIR (deployed agents)"; echo "  - $INSTALL_DIR (repository)"
-	echo "  - AI assistant configuration references"; echo "  - Shell aliases (if added)"; echo ""
-	print_warning "This will NOT remove:"
-	echo "  - Installed tools (Tabby, Zed, gh, glab, etc.)"; echo "  - SSH keys"; echo "  - Python/Node environments"; echo ""
-	read -r -p "Are you sure you want to uninstall? (yes/no): " confirm
-	[[ "$confirm" != "yes" ]] && { print_info "Uninstall cancelled"; return 0; }
+	print_header "Uninstall AI DevOps Framework"
 	echo ""
-	check_dir "$AGENTS_DIR" && { print_info "Removing $AGENTS_DIR..."; rm -rf "$AGENTS_DIR"; print_success "Removed agents directory"; }
-	check_dir "$HOME/.aidevops" && { print_info "Removing $HOME/.aidevops..."; rm -rf "$HOME/.aidevops"; print_success "Removed aidevops config directory"; }
+	print_warning "This will remove:"
+	echo "  - $AGENTS_DIR (deployed agents)"
+	echo "  - $INSTALL_DIR (repository)"
+	echo "  - AI assistant configuration references"
+	echo "  - Shell aliases (if added)"
+	echo ""
+	print_warning "This will NOT remove:"
+	echo "  - Installed tools (Tabby, Zed, gh, glab, etc.)"
+	echo "  - SSH keys"
+	echo "  - Python/Node environments"
+	echo ""
+	read -r -p "Are you sure you want to uninstall? (yes/no): " confirm
+	[[ "$confirm" != "yes" ]] && {
+		print_info "Uninstall cancelled"
+		return 0
+	}
+	echo ""
+	check_dir "$AGENTS_DIR" && {
+		print_info "Removing $AGENTS_DIR..."
+		rm -rf "$AGENTS_DIR"
+		print_success "Removed agents directory"
+	}
+	check_dir "$HOME/.aidevops" && {
+		print_info "Removing $HOME/.aidevops..."
+		rm -rf "$HOME/.aidevops"
+		print_success "Removed aidevops config directory"
+	}
 	_uninstall_cleanup_refs
-	echo ""; read -r -p "Also remove the repository at $INSTALL_DIR? (yes/no): " remove_repo
+	echo ""
+	read -r -p "Also remove the repository at $INSTALL_DIR? (yes/no): " remove_repo
 	if [[ "$remove_repo" == "yes" ]]; then
-		check_dir "$INSTALL_DIR" && { print_info "Removing $INSTALL_DIR..."; rm -rf "$INSTALL_DIR"; print_success "Removed repository"; }
+		check_dir "$INSTALL_DIR" && {
+			print_info "Removing $INSTALL_DIR..."
+			rm -rf "$INSTALL_DIR"
+			print_success "Removed repository"
+		}
 	else print_info "Keeping repository at $INSTALL_DIR"; fi
-	echo ""; print_success "Uninstall complete!"; print_info "To reinstall, run:"
-	echo "  npm install -g aidevops && aidevops update"; echo "  OR: brew install marcusquinn/tap/aidevops && aidevops update"
+	echo ""
+	print_success "Uninstall complete!"
+	print_info "To reinstall, run:"
+	echo "  npm install -g aidevops && aidevops update"
+	echo "  OR: brew install marcusquinn/tap/aidevops && aidevops update"
 }
 
 # Scaffold standard repo courtesy files if they don't exist
@@ -781,7 +905,9 @@ _scaffold_contributing() {
 _scaffold_security() {
 	local project_root="$1"
 	[[ -f "$project_root/SECURITY.md" ]] && return 1
-	local se="" ge; ge=$(git -C "$project_root" config user.email 2>/dev/null || echo ""); [[ -n "$ge" ]] && se="$ge"
+	local se="" ge
+	ge=$(git -C "$project_root" config user.email 2>/dev/null || echo "")
+	[[ -n "$ge" ]] && se="$ge"
 	cat >"$project_root/SECURITY.md" <<SECEOF
 # Security Policy
 
@@ -829,19 +955,25 @@ COCEOF
 # Scaffold standard repo courtesy files if they don't exist
 # Creates: README.md, LICENCE, CHANGELOG.md, CONTRIBUTING.md, SECURITY.md, CODE_OF_CONDUCT.md
 scaffold_repo_courtesy_files() {
-	local project_root="$1"; local created=0
-	local repo_name; repo_name=$(basename "$project_root")
-	local author_name; author_name=$(git -C "$project_root" config user.name 2>/dev/null || echo "")
-	local current_year; current_year=$(date +%Y)
+	local project_root="$1"
+	local created=0
+	local repo_name
+	repo_name=$(basename "$project_root")
+	local author_name
+	author_name=$(git -C "$project_root" config user.name 2>/dev/null || echo "")
+	local current_year
+	current_year=$(date +%Y)
 	print_info "Checking repo courtesy files..."
 	if [[ ! -f "$project_root/README.md" ]]; then
 		local rc="# $repo_name"
 		if [[ -f "$project_root/.aidevops.json" ]]; then
-			local desc; desc=$(jq -r '.description // empty' "$project_root/.aidevops.json" 2>/dev/null || echo "")
+			local desc
+			desc=$(jq -r '.description // empty' "$project_root/.aidevops.json" 2>/dev/null || echo "")
 			[[ -n "$desc" ]] && rc="$rc"$'\n\n'"$desc"
 		fi
 		{ [[ -f "$project_root/LICENCE" ]] || [[ -f "$project_root/LICENSE" ]]; } && rc="$rc"$'\n\n'"## Licence"$'\n\n'"See [LICENCE](LICENCE) for details."
-		printf '%s\n' "$rc" >"$project_root/README.md"; ((++created))
+		printf '%s\n' "$rc" >"$project_root/README.md"
+		((++created))
 	fi
 	if [[ ! -f "$project_root/LICENCE" ]] && [[ ! -f "$project_root/LICENSE" ]]; then
 		local lh="${author_name:-$(whoami)}"
@@ -1104,7 +1236,8 @@ _init_parse_features() {
 			sops) result="$result sops" ;; security) result="$result security" ;;
 			esac
 		done
-		echo "$result" ;;
+		echo "$result"
+		;;
 	esac
 	return 0
 }
@@ -1134,11 +1267,13 @@ cmd_init() {
 	echo ""
 
 	# Parse features using helper
-	local parsed; parsed=$(_init_parse_features "$features")
+	local parsed
+	parsed=$(_init_parse_features "$features")
 	local enable_planning=false enable_git_workflow=false enable_code_quality=false
 	local enable_time_tracking=false enable_database=false enable_beads=false
 	local enable_sops=false enable_security=false
-	local _f; for _f in $parsed; do
+	local _f
+	for _f in $parsed; do
 		case "$_f" in
 		planning) enable_planning=true ;; git_workflow) enable_git_workflow=true ;;
 		code_quality) enable_code_quality=true ;; time_tracking) enable_time_tracking=true ;;
@@ -1741,15 +1876,34 @@ SOPSEOF
 
 _upgrade_validate() {
 	local project_root="$1"
-	[[ ! -f "$project_root/.aidevops.json" ]] && { print_error "aidevops not initialized in this project"; print_info "Run 'aidevops init' first"; return 1; }
+	[[ ! -f "$project_root/.aidevops.json" ]] && {
+		print_error "aidevops not initialized in this project"
+		print_info "Run 'aidevops init' first"
+		return 1
+	}
 	if command -v jq &>/dev/null; then
-		jq -e '.features.planning == true' "$project_root/.aidevops.json" &>/dev/null || { print_error "Planning feature not enabled"; print_info "Run 'aidevops init planning' to enable"; return 1; }
+		jq -e '.features.planning == true' "$project_root/.aidevops.json" &>/dev/null || {
+			print_error "Planning feature not enabled"
+			print_info "Run 'aidevops init planning' to enable"
+			return 1
+		}
 	else
-		local pe; pe=$(grep -o '"planning": *true' "$project_root/.aidevops.json" 2>/dev/null || echo "")
-		[[ -z "$pe" ]] && { print_error "Planning feature not enabled"; print_info "Run 'aidevops init planning' to enable"; return 1; }
+		local pe
+		pe=$(grep -o '"planning": *true' "$project_root/.aidevops.json" 2>/dev/null || echo "")
+		[[ -z "$pe" ]] && {
+			print_error "Planning feature not enabled"
+			print_info "Run 'aidevops init planning' to enable"
+			return 1
+		}
 	fi
-	[[ ! -f "$AGENTS_DIR/templates/todo-template.md" ]] && { print_error "TODO template not found: $AGENTS_DIR/templates/todo-template.md"; return 1; }
-	[[ ! -f "$AGENTS_DIR/templates/plans-template.md" ]] && { print_error "PLANS template not found: $AGENTS_DIR/templates/plans-template.md"; return 1; }
+	[[ ! -f "$AGENTS_DIR/templates/todo-template.md" ]] && {
+		print_error "TODO template not found: $AGENTS_DIR/templates/todo-template.md"
+		return 1
+	}
+	[[ ! -f "$AGENTS_DIR/templates/plans-template.md" ]] && {
+		print_error "PLANS template not found: $AGENTS_DIR/templates/plans-template.md"
+		return 1
+	}
 	return 0
 }
 
@@ -1757,17 +1911,21 @@ _upgrade_check_version() {
 	local file="$1" template="$2" label="$3"
 	if check_planning_file_version "$file" "$template"; then
 		if [[ -f "$file" ]]; then
-			if ! grep -q "TOON:meta" "$file" 2>/dev/null; then print_warning "$label uses minimal template (missing TOON markers)"
+			if ! grep -q "TOON:meta" "$file" 2>/dev/null; then
+				print_warning "$label uses minimal template (missing TOON markers)"
 			else
-				local cv tv; cv=$(grep -A1 "TOON:meta" "$file" 2>/dev/null | tail -1 | cut -d',' -f1)
+				local cv tv
+				cv=$(grep -A1 "TOON:meta" "$file" 2>/dev/null | tail -1 | cut -d',' -f1)
 				tv=$(grep -A1 "TOON:meta" "$template" 2>/dev/null | tail -1 | cut -d',' -f1)
 				print_warning "$label format version $cv -> $tv"
 			fi
 		else print_info "$label not found - will create from template"; fi
 		return 0
 	else
-		local cv; cv=$(grep -A1 "TOON:meta" "$file" 2>/dev/null | tail -1 | cut -d',' -f1)
-		print_success "$label already up to date (v${cv})"; return 1
+		local cv
+		cv=$(grep -A1 "TOON:meta" "$file" 2>/dev/null | tail -1 | cut -d',' -f1)
+		print_success "$label already up to date (v${cv})"
+		return 1
 	fi
 }
 
@@ -1777,24 +1935,39 @@ _upgrade_todo() {
 	local existing_tasks=""
 	if [[ -f "$todo_file" ]]; then
 		existing_tasks=$(grep -E "^[[:space:]]*- \[([ x-])\]" "$todo_file" 2>/dev/null || echo "")
-		[[ "$backup" == "true" ]] && { cp "$todo_file" "${todo_file}.bak"; print_success "Backup created: TODO.md.bak"; }
+		[[ "$backup" == "true" ]] && {
+			cp "$todo_file" "${todo_file}.bak"
+			print_success "Backup created: TODO.md.bak"
+		}
 	fi
 	local temp_todo="${todo_file}.new"
 	if awk '/^---$/ && !p {c++; if(c==2) p=1; next} p' "$todo_template" >"$temp_todo" 2>/dev/null && [[ -s "$temp_todo" ]]; then
 		mv "$temp_todo" "$todo_file"
-	else rm -f "$temp_todo"; cp "$todo_template" "$todo_file"; fi
+	else
+		rm -f "$temp_todo"
+		cp "$todo_template" "$todo_file"
+	fi
 	sed_inplace "s/{{DATE}}/$(date +%Y-%m-%d)/" "$todo_file" 2>/dev/null || true
 	if [[ -n "$existing_tasks" ]] && grep -q "<!--TOON:backlog" "$todo_file"; then
-		local temp_file="${todo_file}.merge" tasks_file; tasks_file=$(mktemp)
+		local temp_file="${todo_file}.merge" tasks_file
+		tasks_file=$(mktemp)
 		trap 'rm -f "${tasks_file:-}"' RETURN
 		printf '%s\n' "$existing_tasks" >"$tasks_file"
 		local in_backlog=false
 		while IFS= read -r line || [[ -n "$line" ]]; do
 			[[ "$line" == *"<!--TOON:backlog"* ]] && in_backlog=true
-			if [[ "$in_backlog" == true && "$line" == "-->" ]]; then echo "$line"; echo ""; cat "$tasks_file"; in_backlog=false; continue; fi
+			if [[ "$in_backlog" == true && "$line" == "-->" ]]; then
+				echo "$line"
+				echo ""
+				cat "$tasks_file"
+				in_backlog=false
+				continue
+			fi
 			echo "$line"
 		done <"$todo_file" >"$temp_file"
-		rm -f "$tasks_file"; mv "$temp_file" "$todo_file"; print_success "Merged existing tasks into Backlog"
+		rm -f "$tasks_file"
+		mv "$temp_file" "$todo_file"
+		print_success "Merged existing tasks into Backlog"
 	fi
 	print_success "TODO.md upgraded to TOON-enhanced template"
 	return 0
@@ -1802,37 +1975,56 @@ _upgrade_todo() {
 
 _upgrade_plans() {
 	local plans_file="$1" plans_template="$2" backup="$3" project_root="$4"
-	print_info "Upgrading todo/PLANS.md..."; mkdir -p "$project_root/todo/tasks"
+	print_info "Upgrading todo/PLANS.md..."
+	mkdir -p "$project_root/todo/tasks"
 	local existing_plans=""
 	if [[ -f "$plans_file" ]]; then
 		existing_plans=$(awk '/^### /{found=1} found{print}' "$plans_file" 2>/dev/null || echo "")
-		[[ "$backup" == "true" ]] && { cp "$plans_file" "${plans_file}.bak"; print_success "Backup created: todo/PLANS.md.bak"; }
+		[[ "$backup" == "true" ]] && {
+			cp "$plans_file" "${plans_file}.bak"
+			print_success "Backup created: todo/PLANS.md.bak"
+		}
 	fi
 	local temp_plans="${plans_file}.new"
 	if awk '/^---$/ && !p {c++; if(c==2) p=1; next} p' "$plans_template" >"$temp_plans" 2>/dev/null && [[ -s "$temp_plans" ]]; then
 		mv "$temp_plans" "$plans_file"
-	else rm -f "$temp_plans"; cp "$plans_template" "$plans_file"; fi
+	else
+		rm -f "$temp_plans"
+		cp "$plans_template" "$plans_file"
+	fi
 	sed_inplace "s/{{DATE}}/$(date +%Y-%m-%d)/" "$plans_file" 2>/dev/null || true
 	if [[ -n "$existing_plans" ]] && grep -q "<!--TOON:active_plans" "$plans_file"; then
-		local temp_file="${plans_file}.merge" pcf; pcf=$(mktemp)
+		local temp_file="${plans_file}.merge" pcf
+		pcf=$(mktemp)
 		trap 'rm -f "${pcf:-}"' RETURN
 		printf '%s\n' "$existing_plans" >"$pcf"
 		local in_active=false
 		while IFS= read -r line || [[ -n "$line" ]]; do
 			[[ "$line" == *"<!--TOON:active_plans"* ]] && in_active=true
-			if [[ "$in_active" == true && "$line" == "-->" ]]; then echo "$line"; echo ""; cat "$pcf"; in_active=false; continue; fi
+			if [[ "$in_active" == true && "$line" == "-->" ]]; then
+				echo "$line"
+				echo ""
+				cat "$pcf"
+				in_active=false
+				continue
+			fi
 			echo "$line"
 		done <"$plans_file" >"$temp_file"
-		rm -f "$pcf"; mv "$temp_file" "$plans_file"; print_success "Merged existing plans into Active Plans"
+		rm -f "$pcf"
+		mv "$temp_file" "$plans_file"
+		print_success "Merged existing plans into Active Plans"
 	fi
 	print_success "todo/PLANS.md upgraded to TOON-enhanced template"
 	return 0
 }
 
 _upgrade_config_version() {
-	local config_file="$1"; local av; av=$(get_version)
+	local config_file="$1"
+	local av
+	av=$(get_version)
 	if command -v jq &>/dev/null; then
-		local tj="${config_file}.tmp"; jq --arg version "$av" '.templates_version = $version' "$config_file" >"$tj" && mv "$tj" "$config_file"
+		local tj="${config_file}.tmp"
+		jq --arg version "$av" '.templates_version = $version' "$config_file" >"$tj" && mv "$tj" "$config_file"
 	else
 		if ! grep -q '"templates_version"' "$config_file" 2>/dev/null; then
 			local tj="${config_file}.tmp"
@@ -1846,39 +2038,84 @@ _upgrade_config_version() {
 cmd_upgrade_planning() {
 	local force=false backup=true dry_run=false
 	while [[ $# -gt 0 ]]; do
-		case "$1" in --force | -f) force=true; shift ;; --no-backup) backup=false; shift ;; --dry-run | -n) dry_run=true; shift ;; *) shift ;; esac
+		case "$1" in --force | -f)
+			force=true
+			shift
+			;;
+		--no-backup)
+			backup=false
+			shift
+			;;
+		--dry-run | -n)
+			dry_run=true
+			shift
+			;;
+		*) shift ;; esac
 	done
-	print_header "Upgrade Planning Files"; echo ""
-	git rev-parse --is-inside-work-tree &>/dev/null || { print_error "Not in a git repository"; return 1; }
+	print_header "Upgrade Planning Files"
+	echo ""
+	git rev-parse --is-inside-work-tree &>/dev/null || {
+		print_error "Not in a git repository"
+		return 1
+	}
 	[[ "$dry_run" != "true" ]] && { check_protected_branch "chore" "upgrade-planning" || return 1; }
-	local project_root; project_root=$(git rev-parse --show-toplevel)
+	local project_root
+	project_root=$(git rev-parse --show-toplevel)
 	_upgrade_validate "$project_root" || return 1
 	local todo_file="$project_root/TODO.md" plans_file="$project_root/todo/PLANS.md"
 	local todo_template="$AGENTS_DIR/templates/todo-template.md" plans_template="$AGENTS_DIR/templates/plans-template.md"
 	local needs_upgrade=false todo_needs=false plans_needs=false
-	_upgrade_check_version "$todo_file" "$todo_template" "TODO.md" && { todo_needs=true; needs_upgrade=true; }
-	_upgrade_check_version "$plans_file" "$plans_template" "todo/PLANS.md" && { plans_needs=true; needs_upgrade=true; }
-	[[ "$needs_upgrade" == "false" ]] && { echo ""; print_success "Planning files are up to date!"; return 0; }
+	_upgrade_check_version "$todo_file" "$todo_template" "TODO.md" && {
+		todo_needs=true
+		needs_upgrade=true
+	}
+	_upgrade_check_version "$plans_file" "$plans_template" "todo/PLANS.md" && {
+		plans_needs=true
+		needs_upgrade=true
+	}
+	[[ "$needs_upgrade" == "false" ]] && {
+		echo ""
+		print_success "Planning files are up to date!"
+		return 0
+	}
 	echo ""
 	if [[ "$dry_run" == "true" ]]; then
-		print_info "Dry run - no changes will be made"; echo ""
+		print_info "Dry run - no changes will be made"
+		echo ""
 		[[ "$todo_needs" == "true" ]] && echo "  Would upgrade: TODO.md"
-		[[ "$plans_needs" == "true" ]] && echo "  Would upgrade: todo/PLANS.md"; return 0
+		[[ "$plans_needs" == "true" ]] && echo "  Would upgrade: todo/PLANS.md"
+		return 0
 	fi
 	if [[ "$force" == "false" ]]; then
-		echo "Files to upgrade:"; [[ "$todo_needs" == "true" ]] && echo "  - TODO.md"; [[ "$plans_needs" == "true" ]] && echo "  - todo/PLANS.md"
-		echo ""; echo "This will:"; echo "  1. Extract existing tasks from current files"; echo "  2. Create backups (.bak files)"
-		echo "  3. Apply new TOON-enhanced templates"; echo "  4. Merge existing tasks into new structure"; echo ""
-		read -r -p "Continue? [y/N] " response; [[ ! "$response" =~ ^[Yy]$ ]] && { print_info "Upgrade cancelled"; return 0; }
+		echo "Files to upgrade:"
+		[[ "$todo_needs" == "true" ]] && echo "  - TODO.md"
+		[[ "$plans_needs" == "true" ]] && echo "  - todo/PLANS.md"
+		echo ""
+		echo "This will:"
+		echo "  1. Extract existing tasks from current files"
+		echo "  2. Create backups (.bak files)"
+		echo "  3. Apply new TOON-enhanced templates"
+		echo "  4. Merge existing tasks into new structure"
+		echo ""
+		read -r -p "Continue? [y/N] " response
+		[[ ! "$response" =~ ^[Yy]$ ]] && {
+			print_info "Upgrade cancelled"
+			return 0
+		}
 	fi
 	echo ""
 	[[ "$todo_needs" == "true" ]] && _upgrade_todo "$todo_file" "$todo_template" "$backup"
 	[[ "$plans_needs" == "true" ]] && _upgrade_plans "$plans_file" "$plans_template" "$backup" "$project_root"
 	_upgrade_config_version "$project_root/.aidevops.json"
-	echo ""; print_success "Planning files upgraded!"; echo ""
-	echo "Next steps:"; echo "  1. Review the upgraded files"; echo "  2. Verify your tasks were preserved"
+	echo ""
+	print_success "Planning files upgraded!"
+	echo ""
+	echo "Next steps:"
+	echo "  1. Review the upgraded files"
+	echo "  2. Verify your tasks were preserved"
 	if [[ "$backup" == "true" ]]; then
-		echo "  3. Remove .bak files when satisfied"; echo ""
+		echo "  3. Remove .bak files when satisfied"
+		echo ""
 		echo "If issues occurred, restore from backups:"
 		[[ "$todo_needs" == "true" ]] && echo "  mv TODO.md.bak TODO.md"
 		[[ "$plans_needs" == "true" ]] && echo "  mv todo/PLANS.md.bak todo/PLANS.md"
@@ -1978,44 +2215,83 @@ cmd_update_tools() {
 
 # Repos helpers (extracted for complexity reduction)
 _repos_list() {
-	print_header "Registered AI DevOps Projects"; echo ""
+	print_header "Registered AI DevOps Projects"
+	echo ""
 	init_repos_file
-	command -v jq &>/dev/null || { print_error "jq required for repo management"; return 1; }
-	local count; count=$(jq '.initialized_repos | length' "$REPOS_FILE" 2>/dev/null || echo "0")
-	if [[ "$count" == "0" ]]; then print_info "No projects registered yet"; echo ""; echo "Initialize a project with: aidevops init"; return 0; fi
-	local current_ver; current_ver=$(get_version)
+	command -v jq &>/dev/null || {
+		print_error "jq required for repo management"
+		return 1
+	}
+	local count
+	count=$(jq '.initialized_repos | length' "$REPOS_FILE" 2>/dev/null || echo "0")
+	if [[ "$count" == "0" ]]; then
+		print_info "No projects registered yet"
+		echo ""
+		echo "Initialize a project with: aidevops init"
+		return 0
+	fi
+	local current_ver
+	current_ver=$(get_version)
 	jq -r '.initialized_repos[] | "\(.path)|\(.version)|\(.features | join(","))"' "$REPOS_FILE" 2>/dev/null | while IFS='|' read -r path version features; do
-		local name; name=$(basename "$path"); local status="✓" status_color="$GREEN"
-		[[ "$version" != "$current_ver" ]] && { status="↑"; status_color="$YELLOW"; }
-		[[ ! -d "$path" ]] && { status="✗"; status_color="$RED"; }
+		local name
+		name=$(basename "$path")
+		local status="✓" status_color="$GREEN"
+		[[ "$version" != "$current_ver" ]] && {
+			status="↑"
+			status_color="$YELLOW"
+		}
+		[[ ! -d "$path" ]] && {
+			status="✗"
+			status_color="$RED"
+		}
 		echo -e "${status_color}${status}${NC} ${BOLD}$name${NC}"
-		echo "    Path: $path"; echo "    Version: $version"; echo "    Features: $features"; echo ""
+		echo "    Path: $path"
+		echo "    Version: $version"
+		echo "    Features: $features"
+		echo ""
 	done
 	echo "Legend: ✓ up-to-date  ↑ update available  ✗ not found"
 	return 0
 }
 
 _repos_add() {
-	git rev-parse --is-inside-work-tree &>/dev/null || { print_error "Not in a git repository"; return 1; }
-	local project_root; project_root=$(git rev-parse --show-toplevel)
-	[[ ! -f "$project_root/.aidevops.json" ]] && { print_error "No .aidevops.json found - run 'aidevops init' first"; return 1; }
+	git rev-parse --is-inside-work-tree &>/dev/null || {
+		print_error "Not in a git repository"
+		return 1
+	}
+	local project_root
+	project_root=$(git rev-parse --show-toplevel)
+	[[ ! -f "$project_root/.aidevops.json" ]] && {
+		print_error "No .aidevops.json found - run 'aidevops init' first"
+		return 1
+	}
 	local version features
 	if command -v jq &>/dev/null; then
 		version=$(jq -r '.version' "$project_root/.aidevops.json" 2>/dev/null || echo "unknown")
 		features=$(jq -r '[.features | to_entries[] | select(.value == true) | .key] | join(",")' "$project_root/.aidevops.json" 2>/dev/null || echo "")
-	else version="unknown"; features=""; fi
+	else
+		version="unknown"
+		features=""
+	fi
 	register_repo "$project_root" "$version" "$features"
 	print_success "Registered $(basename "$project_root")"
 	return 0
 }
 
 _repos_remove() {
-	local repo_path="${1:-}" original_path="$repo_path"
+	local repo_path="${1:-}"
+	local original_path="$repo_path"
 	if [[ -z "$repo_path" ]]; then
-		git rev-parse --is-inside-work-tree &>/dev/null && repo_path=$(git rev-parse --show-toplevel) && original_path="$repo_path" || { print_error "Specify a repo path or run from within a git repo"; return 1; }
+		git rev-parse --is-inside-work-tree &>/dev/null && repo_path=$(git rev-parse --show-toplevel) && original_path="$repo_path" || {
+			print_error "Specify a repo path or run from within a git repo"
+			return 1
+		}
 	fi
 	repo_path=$(cd "$repo_path" 2>/dev/null && pwd -P) || repo_path="$original_path"
-	command -v jq &>/dev/null || { print_error "jq required for repo management"; return 1; }
+	command -v jq &>/dev/null || {
+		print_error "jq required for repo management"
+		return 1
+	}
 	local temp_file="${REPOS_FILE}.tmp"
 	jq --arg path "$repo_path" '.initialized_repos |= map(select(.path != $path))' "$REPOS_FILE" >"$temp_file" && mv "$temp_file" "$REPOS_FILE"
 	print_success "Removed $repo_path from registry"
@@ -2024,13 +2300,17 @@ _repos_remove() {
 
 _repos_clean() {
 	print_info "Cleaning up stale repo entries..."
-	command -v jq &>/dev/null || { print_error "jq required for repo management"; return 1; }
+	command -v jq &>/dev/null || {
+		print_error "jq required for repo management"
+		return 1
+	}
 	local removed=0 temp_file="${REPOS_FILE}.tmp"
 	while IFS= read -r repo_path; do
 		[[ -z "$repo_path" ]] && continue
 		if [[ ! -d "$repo_path" ]]; then
 			jq --arg path "$repo_path" '.initialized_repos |= map(select(.path != $path))' "$REPOS_FILE" >"$temp_file" && mv "$temp_file" "$REPOS_FILE"
-			print_info "Removed: $repo_path"; removed=$((removed + 1))
+			print_info "Removed: $repo_path"
+			removed=$((removed + 1))
 		fi
 	done < <(get_registered_repos)
 	[[ $removed -eq 0 ]] && print_success "No stale entries found" || print_success "Removed $removed stale entries"
@@ -2045,9 +2325,15 @@ cmd_repos() {
 	add) _repos_add ;;
 	remove | rm) _repos_remove "${2:-}" ;;
 	clean) _repos_clean ;;
-	*) echo "Usage: aidevops repos <command>"; echo ""; echo "Commands:"
-		echo "  list     List all registered projects (default)"; echo "  add      Register current project"
-		echo "  remove   Remove project from registry"; echo "  clean    Remove entries for non-existent projects" ;;
+	*)
+		echo "Usage: aidevops repos <command>"
+		echo ""
+		echo "Commands:"
+		echo "  list     List all registered projects (default)"
+		echo "  add      Register current project"
+		echo "  remove   Remove project from registry"
+		echo "  clean    Remove entries for non-existent projects"
+		;;
 	esac
 }
 
@@ -2136,70 +2422,160 @@ cmd_detect() {
 
 # Skill help text (extracted for complexity reduction)
 _skill_help() {
-	print_header "Agent Skills Management"; echo ""
+	print_header "Agent Skills Management"
+	echo ""
 	echo "Import and manage reusable AI agent skills from the community."
 	echo "Skills are converted to aidevops format with upstream tracking."
 	echo "Telemetry is disabled - no data sent to third parties."
-	echo ""; echo "Usage: aidevops skill <command> [options]"; echo ""
-	echo "Commands:"; echo "  add <source>     Import a skill from GitHub (saved as *-skill.md)"
-	echo "  list             List all imported skills"; echo "  check            Check for upstream updates"
-	echo "  update [name]    Update specific or all skills"; echo "  remove <name>    Remove an imported skill"
+	echo ""
+	echo "Usage: aidevops skill <command> [options]"
+	echo ""
+	echo "Commands:"
+	echo "  add <source>     Import a skill from GitHub (saved as *-skill.md)"
+	echo "  list             List all imported skills"
+	echo "  check            Check for upstream updates"
+	echo "  update [name]    Update specific or all skills"
+	echo "  remove <name>    Remove an imported skill"
 	echo "  scan [name]      Security scan imported skills (Cisco Skill Scanner)"
 	echo "  status           Show detailed skill status"
 	echo "  generate         Generate SKILL.md stubs for cross-tool discovery"
 	echo "  clean            Remove generated SKILL.md stubs"
-	echo ""; echo "Source formats:"; echo "  owner/repo                    GitHub shorthand"
+	echo ""
+	echo "Source formats:"
+	echo "  owner/repo                    GitHub shorthand"
 	echo "  owner/repo/path/to/skill      Specific skill in multi-skill repo"
 	echo "  https://github.com/owner/repo Full URL"
-	echo ""; echo "Examples:"; echo "  aidevops skill add vercel-labs/agent-skills"
-	echo "  aidevops skill add anthropics/skills/pdf"; echo "  aidevops skill add expo/skills --name expo-dev"
-	echo "  aidevops skill check"; echo "  aidevops skill update"; echo "  aidevops skill scan"
-	echo "  aidevops skill scan cloudflare-platform"; echo "  aidevops skill generate --dry-run"
-	echo ""; echo "Imported skills are saved with a -skill suffix to distinguish"
+	echo ""
+	echo "Examples:"
+	echo "  aidevops skill add vercel-labs/agent-skills"
+	echo "  aidevops skill add anthropics/skills/pdf"
+	echo "  aidevops skill add expo/skills --name expo-dev"
+	echo "  aidevops skill check"
+	echo "  aidevops skill update"
+	echo "  aidevops skill scan"
+	echo "  aidevops skill scan cloudflare-platform"
+	echo "  aidevops skill generate --dry-run"
+	echo ""
+	echo "Imported skills are saved with a -skill suffix to distinguish"
 	echo "from native aidevops subagents (e.g., playwright-skill.md vs playwright.md)."
-	echo ""; echo "Browse community skills: https://skills.sh"
+	echo ""
+	echo "Browse community skills: https://skills.sh"
 	echo "Agent Skills specification: https://agentskills.io"
 	return 0
 }
 
 _skill_add_usage() {
-	print_error "Source required (owner/repo or URL)"; echo ""
-	echo "Usage: aidevops skill add <source> [options]"; echo ""
-	echo "Examples:"; echo "  aidevops skill add vercel-labs/agent-skills"
-	echo "  aidevops skill add anthropics/skills/pdf"; echo "  aidevops skill add https://github.com/owner/repo"
-	echo ""; echo "Options:"; echo "  --name <name>   Override the skill name"
-	echo "  --force         Overwrite existing skill"; echo "  --dry-run       Preview without making changes"
-	echo ""; echo "Browse skills: https://skills.sh"
+	print_error "Source required (owner/repo or URL)"
+	echo ""
+	echo "Usage: aidevops skill add <source> [options]"
+	echo ""
+	echo "Examples:"
+	echo "  aidevops skill add vercel-labs/agent-skills"
+	echo "  aidevops skill add anthropics/skills/pdf"
+	echo "  aidevops skill add https://github.com/owner/repo"
+	echo ""
+	echo "Options:"
+	echo "  --name <name>   Override the skill name"
+	echo "  --force         Overwrite existing skill"
+	echo "  --dry-run       Preview without making changes"
+	echo ""
+	echo "Browse skills: https://skills.sh"
 	return 0
 }
 
 # Skill management command
 cmd_skill() {
-	local action="${1:-help}"; shift || true
+	local action="${1:-help}"
+	shift || true
 	export DISABLE_TELEMETRY=1 DO_NOT_TRACK=1 SKILLS_NO_TELEMETRY=1
 	local add_skill_script="$AGENTS_DIR/scripts/add-skill-helper.sh"
 	local update_skill_script="$AGENTS_DIR/scripts/skill-update-helper.sh"
 	case "$action" in
 	add | a)
-		if [[ $# -lt 1 ]]; then _skill_add_usage; return 1; fi
-		[[ ! -f "$add_skill_script" ]] && { print_error "add-skill-helper.sh not found"; print_info "Run 'aidevops update' to get the latest scripts"; return 1; }
-		bash "$add_skill_script" add "$@" ;;
-	list | ls | l) [[ ! -f "$add_skill_script" ]] && { print_error "add-skill-helper.sh not found"; return 1; }; bash "$add_skill_script" list ;;
-	check | c) [[ ! -f "$update_skill_script" ]] && { print_error "skill-update-helper.sh not found"; return 1; }; bash "$update_skill_script" check "$@" ;;
-	update | u) [[ ! -f "$update_skill_script" ]] && { print_error "skill-update-helper.sh not found"; return 1; }; bash "$update_skill_script" update "$@" ;;
-	remove | rm) [[ $# -lt 1 ]] && { print_error "Skill name required"; echo "Usage: aidevops skill remove <name>"; return 1; }
-		[[ ! -f "$add_skill_script" ]] && { print_error "add-skill-helper.sh not found"; return 1; }; bash "$add_skill_script" remove "$@" ;;
-	status | s) [[ ! -f "$update_skill_script" ]] && { print_error "skill-update-helper.sh not found"; return 1; }; bash "$update_skill_script" status "$@" ;;
-	generate | gen | g) local gs="$AGENTS_DIR/scripts/generate-skills.sh"
-		[[ ! -f "$gs" ]] && { print_error "generate-skills.sh not found"; print_info "Run 'aidevops update' to get the latest scripts"; return 1; }
-		print_info "Generating SKILL.md stubs for cross-tool discovery..."; bash "$gs" "$@" ;;
-	scan) local ss="$AGENTS_DIR/scripts/security-helper.sh"
-		[[ ! -f "$ss" ]] && { print_error "security-helper.sh not found"; print_info "Run 'aidevops update' to get the latest scripts"; return 1; }
-		bash "$ss" skill-scan "$@" ;;
-	clean) local gs="$AGENTS_DIR/scripts/generate-skills.sh"
-		[[ ! -f "$gs" ]] && { print_error "generate-skills.sh not found"; return 1; }; bash "$gs" --clean "$@" ;;
+		if [[ $# -lt 1 ]]; then
+			_skill_add_usage
+			return 1
+		fi
+		[[ ! -f "$add_skill_script" ]] && {
+			print_error "add-skill-helper.sh not found"
+			print_info "Run 'aidevops update' to get the latest scripts"
+			return 1
+		}
+		bash "$add_skill_script" add "$@"
+		;;
+	list | ls | l)
+		[[ ! -f "$add_skill_script" ]] && {
+			print_error "add-skill-helper.sh not found"
+			return 1
+		}
+		bash "$add_skill_script" list
+		;;
+	check | c)
+		[[ ! -f "$update_skill_script" ]] && {
+			print_error "skill-update-helper.sh not found"
+			return 1
+		}
+		bash "$update_skill_script" check "$@"
+		;;
+	update | u)
+		[[ ! -f "$update_skill_script" ]] && {
+			print_error "skill-update-helper.sh not found"
+			return 1
+		}
+		bash "$update_skill_script" update "$@"
+		;;
+	remove | rm)
+		[[ $# -lt 1 ]] && {
+			print_error "Skill name required"
+			echo "Usage: aidevops skill remove <name>"
+			return 1
+		}
+		[[ ! -f "$add_skill_script" ]] && {
+			print_error "add-skill-helper.sh not found"
+			return 1
+		}
+		bash "$add_skill_script" remove "$@"
+		;;
+	status | s)
+		[[ ! -f "$update_skill_script" ]] && {
+			print_error "skill-update-helper.sh not found"
+			return 1
+		}
+		bash "$update_skill_script" status "$@"
+		;;
+	generate | gen | g)
+		local gs="$AGENTS_DIR/scripts/generate-skills.sh"
+		[[ ! -f "$gs" ]] && {
+			print_error "generate-skills.sh not found"
+			print_info "Run 'aidevops update' to get the latest scripts"
+			return 1
+		}
+		print_info "Generating SKILL.md stubs for cross-tool discovery..."
+		bash "$gs" "$@"
+		;;
+	scan)
+		local ss="$AGENTS_DIR/scripts/security-helper.sh"
+		[[ ! -f "$ss" ]] && {
+			print_error "security-helper.sh not found"
+			print_info "Run 'aidevops update' to get the latest scripts"
+			return 1
+		}
+		bash "$ss" skill-scan "$@"
+		;;
+	clean)
+		local gs="$AGENTS_DIR/scripts/generate-skills.sh"
+		[[ ! -f "$gs" ]] && {
+			print_error "generate-skills.sh not found"
+			return 1
+		}
+		bash "$gs" --clean "$@"
+		;;
 	help | --help | -h) _skill_help ;;
-	*) print_error "Unknown skill command: $action"; echo "Run 'aidevops skill help' for usage information."; return 1 ;;
+	*)
+		print_error "Unknown skill command: $action"
+		echo "Run 'aidevops skill help' for usage information."
+		return 1
+		;;
 	esac
 }
 
@@ -2212,7 +2588,11 @@ _plugin_validate_ns() {
 		print_error "Invalid namespace '$ns': must be lowercase alphanumeric with hyphens, starting with a letter"
 		return 1
 	fi
-	local r; for r in $_PLUGIN_RESERVED; do [[ "$ns" == "$r" ]] && { print_error "Namespace '$ns' is reserved."; return 1; }; done
+	local r
+	for r in $_PLUGIN_RESERVED; do [[ "$ns" == "$r" ]] && {
+		print_error "Namespace '$ns' is reserved."
+		return 1
+	}; done
 	return 0
 }
 
@@ -2222,59 +2602,109 @@ _plugin_field() {
 }
 
 _plugin_add() {
-	local pf="$1" ad="$2"; shift 2
+	local pf="$1" ad="$2"
+	shift 2
 	if [[ $# -lt 1 ]]; then
-		print_error "Repository URL required"; echo ""
-		echo "Usage: aidevops plugin add <repo-url> [options]"; echo ""
-		echo "Options:"; echo "  --namespace <name>   Namespace directory (default: derived from repo name)"
+		print_error "Repository URL required"
+		echo ""
+		echo "Usage: aidevops plugin add <repo-url> [options]"
+		echo ""
+		echo "Options:"
+		echo "  --namespace <name>   Namespace directory (default: derived from repo name)"
 		echo "  --branch <branch>    Branch to track (default: main)"
-		echo "  --name <name>        Human-readable name (default: derived from repo)"; echo ""
-		echo "Examples:"; echo "  aidevops plugin add https://github.com/marcusquinn/aidevops-pro.git --namespace pro"
+		echo "  --name <name>        Human-readable name (default: derived from repo)"
+		echo ""
+		echo "Examples:"
+		echo "  aidevops plugin add https://github.com/marcusquinn/aidevops-pro.git --namespace pro"
 		echo "  aidevops plugin add https://github.com/marcusquinn/aidevops-anon.git --namespace anon"
 		return 1
 	fi
-	local repo_url="$1"; shift; local namespace="" branch="main" plugin_name=""
+	local repo_url="$1"
+	shift
+	local namespace="" branch="main" plugin_name=""
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
-		--namespace | --ns) namespace="$2"; shift 2 ;; --branch | -b) branch="$2"; shift 2 ;;
-		--name | -n) plugin_name="$2"; shift 2 ;; *) print_error "Unknown option: $1"; return 1 ;;
+		--namespace | --ns)
+			namespace="$2"
+			shift 2
+			;;
+		--branch | -b)
+			branch="$2"
+			shift 2
+			;;
+		--name | -n)
+			plugin_name="$2"
+			shift 2
+			;;
+		*)
+			print_error "Unknown option: $1"
+			return 1
+			;;
 		esac
 	done
-	[[ -z "$namespace" ]] && { namespace=$(basename "$repo_url" .git | sed 's/^aidevops-//'); namespace=$(echo "$namespace" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9-]/-/g'); }
+	[[ -z "$namespace" ]] && {
+		namespace=$(basename "$repo_url" .git | sed 's/^aidevops-//')
+		namespace=$(echo "$namespace" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9-]/-/g')
+	}
 	[[ -z "$plugin_name" ]] && plugin_name="$namespace"
 	_plugin_validate_ns "$namespace" || return 1
-	local existing; existing=$(jq -r --arg n "$plugin_name" '.plugins[] | select(.name == $n) | .name' "$pf" 2>/dev/null || echo "")
-	[[ -n "$existing" ]] && { print_error "Plugin '$plugin_name' already exists. Use 'aidevops plugin update $plugin_name' to update."; return 1; }
+	local existing
+	existing=$(jq -r --arg n "$plugin_name" '.plugins[] | select(.name == $n) | .name' "$pf" 2>/dev/null || echo "")
+	[[ -n "$existing" ]] && {
+		print_error "Plugin '$plugin_name' already exists. Use 'aidevops plugin update $plugin_name' to update."
+		return 1
+	}
 	if [[ -d "$ad/$namespace" ]]; then
-		local ns_owner; ns_owner=$(jq -r --arg ns "$namespace" '.plugins[] | select(.namespace == $ns) | .name' "$pf" 2>/dev/null || echo "")
-		[[ -n "$ns_owner" ]] && print_error "Namespace '$namespace' is already used by plugin '$ns_owner'" || { print_error "Directory '$ad/$namespace/' already exists"; echo "  Choose a different namespace with --namespace <name>"; }
+		local ns_owner
+		ns_owner=$(jq -r --arg ns "$namespace" '.plugins[] | select(.namespace == $ns) | .name' "$pf" 2>/dev/null || echo "")
+		[[ -n "$ns_owner" ]] && print_error "Namespace '$namespace' is already used by plugin '$ns_owner'" || {
+			print_error "Directory '$ad/$namespace/' already exists"
+			echo "  Choose a different namespace with --namespace <name>"
+		}
 		return 1
 	fi
-	print_info "Adding plugin '$plugin_name' from $repo_url..."; print_info "  Namespace: $namespace"; print_info "  Branch: $branch"
+	print_info "Adding plugin '$plugin_name' from $repo_url..."
+	print_info "  Namespace: $namespace"
+	print_info "  Branch: $branch"
 	local clone_dir="$ad/$namespace"
 	if ! git clone --branch "$branch" --depth 1 "$repo_url" "$clone_dir" 2>&1; then
-		print_error "Failed to clone repository"; rm -rf "$clone_dir" 2>/dev/null || true; return 1
+		print_error "Failed to clone repository"
+		rm -rf "$clone_dir" 2>/dev/null || true
+		return 1
 	fi
 	rm -rf "$clone_dir/.git"
 	local tmp="${pf}.tmp"
 	jq --arg name "$plugin_name" --arg repo "$repo_url" --arg branch "$branch" --arg ns "$namespace" \
 		'.plugins += [{"name": $name, "repo": $repo, "branch": $branch, "namespace": $ns, "enabled": true}]' "$pf" >"$tmp" && mv "$tmp" "$pf"
-	local loader="$ad/scripts/plugin-loader-helper.sh"; [[ -f "$loader" ]] && bash "$loader" hooks "$namespace" init 2>/dev/null || true
-	print_success "Plugin '$plugin_name' installed to $clone_dir"; echo ""
+	local loader="$ad/scripts/plugin-loader-helper.sh"
+	[[ -f "$loader" ]] && bash "$loader" hooks "$namespace" init 2>/dev/null || true
+	print_success "Plugin '$plugin_name' installed to $clone_dir"
+	echo ""
 	echo "  Agents available at: ~/.aidevops/agents/$namespace/"
-	echo "  Update: aidevops plugin update $plugin_name"; echo "  Remove: aidevops plugin remove $plugin_name"
+	echo "  Update: aidevops plugin update $plugin_name"
+	echo "  Remove: aidevops plugin remove $plugin_name"
 	return 0
 }
 
 _plugin_list() {
-	local pf="$1"; local count; count=$(jq '.plugins | length' "$pf" 2>/dev/null || echo "0")
-	if [[ "$count" == "0" ]]; then echo "No plugins installed."; echo ""; echo "Add a plugin: aidevops plugin add <repo-url> --namespace <name>"; return 0; fi
-	echo "Installed plugins ($count):"; echo ""
+	local pf="$1"
+	local count
+	count=$(jq '.plugins | length' "$pf" 2>/dev/null || echo "0")
+	if [[ "$count" == "0" ]]; then
+		echo "No plugins installed."
+		echo ""
+		echo "Add a plugin: aidevops plugin add <repo-url> --namespace <name>"
+		return 0
+	fi
+	echo "Installed plugins ($count):"
+	echo ""
 	printf "  %-15s %-10s %-8s %s\n" "NAME" "NAMESPACE" "ENABLED" "REPO"
 	printf "  %-15s %-10s %-8s %s\n" "----" "---------" "-------" "----"
 	jq -r '.plugins[] | "  \(.name)\t\(.namespace)\t\(.enabled // true)\t\(.repo)"' "$pf" 2>/dev/null |
 		while IFS=$'\t' read -r name ns enabled repo; do
-			local si="yes"; [[ "$enabled" == "false" ]] && si="no"; printf "  %-15s %-10s %-8s %s\n" "$name" "$ns" "$si" "$repo"
+			local si="yes"
+			[[ "$enabled" == "false" ]] && si="no"
+			printf "  %-15s %-10s %-8s %s\n" "$name" "$ns" "$si" "$repo"
 		done
 	return 0
 }
@@ -2282,25 +2712,55 @@ _plugin_list() {
 _plugin_update() {
 	local pf="$1" ad="$2" target="${3:-}"
 	if [[ -n "$target" ]]; then
-		local repo ns bn; repo=$(_plugin_field "$pf" "$target" "repo"); ns=$(_plugin_field "$pf" "$target" "namespace")
-		bn=$(_plugin_field "$pf" "$target" "branch"); bn="${bn:-main}"
-		[[ -z "$repo" ]] && { print_error "Plugin '$target' not found"; return 1; }
-		print_info "Updating plugin '$target'..."; local cd2="$ad/$ns"; rm -rf "$cd2"
-		if git clone --branch "$bn" --depth 1 "$repo" "$cd2" 2>&1; then rm -rf "$cd2/.git"; print_success "Plugin '$target' updated"
-		else print_error "Failed to update plugin '$target'"; return 1; fi
+		local repo ns bn
+		repo=$(_plugin_field "$pf" "$target" "repo")
+		ns=$(_plugin_field "$pf" "$target" "namespace")
+		bn=$(_plugin_field "$pf" "$target" "branch")
+		bn="${bn:-main}"
+		[[ -z "$repo" ]] && {
+			print_error "Plugin '$target' not found"
+			return 1
+		}
+		print_info "Updating plugin '$target'..."
+		local cd2="$ad/$ns"
+		rm -rf "$cd2"
+		if git clone --branch "$bn" --depth 1 "$repo" "$cd2" 2>&1; then
+			rm -rf "$cd2/.git"
+			print_success "Plugin '$target' updated"
+		else
+			print_error "Failed to update plugin '$target'"
+			return 1
+		fi
 	else
-		local names; names=$(jq -r '.plugins[] | select(.enabled != false) | .name' "$pf" 2>/dev/null || echo "")
-		[[ -z "$names" ]] && { echo "No enabled plugins to update."; return 0; }
+		local names
+		names=$(jq -r '.plugins[] | select(.enabled != false) | .name' "$pf" 2>/dev/null || echo "")
+		[[ -z "$names" ]] && {
+			echo "No enabled plugins to update."
+			return 0
+		}
 		local failed=0
 		while IFS= read -r pn; do
-			[[ -z "$pn" ]] && continue; local pr pns pb
-			pr=$(_plugin_field "$pf" "$pn" "repo"); pns=$(_plugin_field "$pf" "$pn" "namespace")
-			pb=$(_plugin_field "$pf" "$pn" "branch"); pb="${pb:-main}"
-			print_info "Updating '$pn'..."; local pd="$ad/$pns"; rm -rf "$pd"
-			if git clone --branch "$pb" --depth 1 "$pr" "$pd" 2>/dev/null; then rm -rf "$pd/.git"; print_success "  '$pn' updated"
-			else print_error "  '$pn' failed to update"; failed=$((failed + 1)); fi
+			[[ -z "$pn" ]] && continue
+			local pr pns pb
+			pr=$(_plugin_field "$pf" "$pn" "repo")
+			pns=$(_plugin_field "$pf" "$pn" "namespace")
+			pb=$(_plugin_field "$pf" "$pn" "branch")
+			pb="${pb:-main}"
+			print_info "Updating '$pn'..."
+			local pd="$ad/$pns"
+			rm -rf "$pd"
+			if git clone --branch "$pb" --depth 1 "$pr" "$pd" 2>/dev/null; then
+				rm -rf "$pd/.git"
+				print_success "  '$pn' updated"
+			else
+				print_error "  '$pn' failed to update"
+				failed=$((failed + 1))
+			fi
 		done <<<"$names"
-		[[ "$failed" -gt 0 ]] && { print_warning "$failed plugin(s) failed to update"; return 1; }
+		[[ "$failed" -gt 0 ]] && {
+			print_warning "$failed plugin(s) failed to update"
+			return 1
+		}
 		print_success "All plugins updated"
 	fi
 	return 0
@@ -2309,17 +2769,37 @@ _plugin_update() {
 _plugin_toggle() {
 	local pf="$1" ad="$2" tn="$3" action="$4"
 	if [[ "$action" == "enable" ]]; then
-		local tr; tr=$(_plugin_field "$pf" "$tn" "repo"); [[ -z "$tr" ]] && { print_error "Plugin '$tn' not found"; return 1; }
-		local tns; tns=$(_plugin_field "$pf" "$tn" "namespace"); local tb; tb=$(_plugin_field "$pf" "$tn" "branch"); tb="${tb:-main}"
-		local tmp="${pf}.tmp"; jq --arg n "$tn" '(.plugins[] | select(.name == $n)).enabled = true' "$pf" >"$tmp" && mv "$tmp" "$pf"
-		[[ ! -d "$ad/$tns" ]] && { print_info "Deploying plugin '$tn'..."; git clone --branch "$tb" --depth 1 "$tr" "$ad/$tns" 2>/dev/null && rm -rf "$ad/$tns/.git"; }
-		local loader="$ad/scripts/plugin-loader-helper.sh"; [[ -f "$loader" ]] && bash "$loader" hooks "$tns" init 2>/dev/null || true
+		local tr
+		tr=$(_plugin_field "$pf" "$tn" "repo")
+		[[ -z "$tr" ]] && {
+			print_error "Plugin '$tn' not found"
+			return 1
+		}
+		local tns
+		tns=$(_plugin_field "$pf" "$tn" "namespace")
+		local tb
+		tb=$(_plugin_field "$pf" "$tn" "branch")
+		tb="${tb:-main}"
+		local tmp="${pf}.tmp"
+		jq --arg n "$tn" '(.plugins[] | select(.name == $n)).enabled = true' "$pf" >"$tmp" && mv "$tmp" "$pf"
+		[[ ! -d "$ad/$tns" ]] && {
+			print_info "Deploying plugin '$tn'..."
+			git clone --branch "$tb" --depth 1 "$tr" "$ad/$tns" 2>/dev/null && rm -rf "$ad/$tns/.git"
+		}
+		local loader="$ad/scripts/plugin-loader-helper.sh"
+		[[ -f "$loader" ]] && bash "$loader" hooks "$tns" init 2>/dev/null || true
 		print_success "Plugin '$tn' enabled"
 	else
-		local tns; tns=$(_plugin_field "$pf" "$tn" "namespace"); [[ -z "$tns" ]] && { print_error "Plugin '$tn' not found"; return 1; }
+		local tns
+		tns=$(_plugin_field "$pf" "$tn" "namespace")
+		[[ -z "$tns" ]] && {
+			print_error "Plugin '$tn' not found"
+			return 1
+		}
 		local loader="$ad/scripts/plugin-loader-helper.sh"
 		[[ -f "$loader" && -d "$ad/$tns" ]] && bash "$loader" hooks "$tns" unload 2>/dev/null || true
-		local tmp="${pf}.tmp"; jq --arg n "$tn" '(.plugins[] | select(.name == $n)).enabled = false' "$pf" >"$tmp" && mv "$tmp" "$pf"
+		local tmp="${pf}.tmp"
+		jq --arg n "$tn" '(.plugins[] | select(.name == $n)).enabled = false' "$pf" >"$tmp" && mv "$tmp" "$pf"
 		[[ -d "$ad/${tns:?}" ]] && rm -rf "$ad/${tns:?}"
 		print_success "Plugin '$tn' disabled (config preserved)"
 	fi
@@ -2328,83 +2808,161 @@ _plugin_toggle() {
 
 _plugin_remove() {
 	local pf="$1" ad="$2" tn="$3"
-	local tns; tns=$(_plugin_field "$pf" "$tn" "namespace"); [[ -z "$tns" ]] && { print_error "Plugin '$tn' not found"; return 1; }
+	local tns
+	tns=$(_plugin_field "$pf" "$tn" "namespace")
+	[[ -z "$tns" ]] && {
+		print_error "Plugin '$tn' not found"
+		return 1
+	}
 	local loader="$ad/scripts/plugin-loader-helper.sh"
 	[[ -f "$loader" && -d "$ad/$tns" ]] && bash "$loader" hooks "$tns" unload 2>/dev/null || true
-	[[ -d "$ad/${tns:?}" ]] && { rm -rf "$ad/${tns:?}"; print_info "Removed $ad/$tns/"; }
-	local tmp="${pf}.tmp"; jq --arg n "$tn" '.plugins = [.plugins[] | select(.name != $n)]' "$pf" >"$tmp" && mv "$tmp" "$pf"
-	print_success "Plugin '$tn' removed"; return 0
+	[[ -d "$ad/${tns:?}" ]] && {
+		rm -rf "$ad/${tns:?}"
+		print_info "Removed $ad/$tns/"
+	}
+	local tmp="${pf}.tmp"
+	jq --arg n "$tn" '.plugins = [.plugins[] | select(.name != $n)]' "$pf" >"$tmp" && mv "$tmp" "$pf"
+	print_success "Plugin '$tn' removed"
+	return 0
 }
 
 _plugin_scaffold() {
-	local ad="$1" td="${2:-.}" pn="${3:-my-plugin}" ns="${4:-$pn}"
+	local ad="$1" td="${2:-.}" pn="${3:-my-plugin}"
+	local ns="${4:-$pn}"
 	if [[ "$td" != "." && -d "$td" ]]; then
-		local ec; ec=$(find "$td" -maxdepth 1 -type f | wc -l | tr -d ' ')
-		[[ "$ec" -gt 0 ]] && { print_error "Directory '$td' already has files. Use an empty directory."; return 1; }
+		local ec
+		ec=$(find "$td" -maxdepth 1 -type f | wc -l | tr -d ' ')
+		[[ "$ec" -gt 0 ]] && {
+			print_error "Directory '$td' already has files. Use an empty directory."
+			return 1
+		}
 	fi
 	mkdir -p "$td"
 	local tpl="$ad/templates/plugin-template"
-	[[ ! -d "$tpl" ]] && { print_error "Plugin template not found at $tpl"; print_info "Run 'aidevops update' to get the latest templates."; return 1; }
-	local pnu; pnu=$(echo "$pn" | tr '[:lower:]' '[:upper:]' | tr '-' '_')
+	[[ ! -d "$tpl" ]] && {
+		print_error "Plugin template not found at $tpl"
+		print_info "Run 'aidevops update' to get the latest templates."
+		return 1
+	}
+	local pnu
+	pnu=$(echo "$pn" | tr '[:lower:]' '[:upper:]' | tr '-' '_')
 	sed -e "s|{{PLUGIN_NAME}}|$pn|g" -e "s|{{PLUGIN_NAME_UPPER}}|$pnu|g" -e "s|{{NAMESPACE}}|$ns|g" -e "s|{{REPO_URL}}|https://github.com/user/aidevops-$ns.git|g" "$tpl/AGENTS.md" >"$td/AGENTS.md"
 	sed -e "s|{{PLUGIN_NAME}}|$pn|g" -e "s|{{PLUGIN_DESCRIPTION}}|$pn plugin for aidevops|g" -e "s|{{NAMESPACE}}|$ns|g" "$tpl/main-agent.md" >"$td/$ns.md"
-	mkdir -p "$td/$ns"; sed -e "s|{{PLUGIN_NAME}}|$pn|g" -e "s|{{NAMESPACE}}|$ns|g" "$tpl/example-subagent.md" >"$td/$ns/example.md"
+	mkdir -p "$td/$ns"
+	sed -e "s|{{PLUGIN_NAME}}|$pn|g" -e "s|{{NAMESPACE}}|$ns|g" "$tpl/example-subagent.md" >"$td/$ns/example.md"
 	mkdir -p "$td/scripts"
 	if [[ -d "$tpl/scripts" ]]; then
-		for hf in "$tpl/scripts"/on-*.sh; do [[ -f "$hf" ]] || continue; local hb; hb=$(basename "$hf")
-			sed -e "s|{{PLUGIN_NAME}}|$pn|g" -e "s|{{NAMESPACE}}|$ns|g" "$hf" >"$td/scripts/$hb"; chmod +x "$td/scripts/$hb"; done
+		for hf in "$tpl/scripts"/on-*.sh; do
+			[[ -f "$hf" ]] || continue
+			local hb
+			hb=$(basename "$hf")
+			sed -e "s|{{PLUGIN_NAME}}|$pn|g" -e "s|{{NAMESPACE}}|$ns|g" "$hf" >"$td/scripts/$hb"
+			chmod +x "$td/scripts/$hb"
+		done
 	fi
 	[[ -f "$tpl/plugin.json" ]] && sed -e "s|{{PLUGIN_NAME}}|$pn|g" -e "s|{{PLUGIN_DESCRIPTION}}|$pn plugin for aidevops|g" -e "s|{{NAMESPACE}}|$ns|g" "$tpl/plugin.json" >"$td/plugin.json"
-	print_success "Plugin scaffolded in $td/"; echo ""
-	echo "Structure:"; echo "  $td/"; echo "  ├── AGENTS.md              # Plugin documentation"
-	echo "  ├── plugin.json            # Plugin manifest"; echo "  ├── $ns.md           # Main agent"
-	echo "  ├── $ns/"; echo "  │   └── example.md          # Example subagent"
-	echo "  └── scripts/"; echo "      ├── on-init.sh          # Init lifecycle hook"
-	echo "      ├── on-load.sh          # Load lifecycle hook"; echo "      └── on-unload.sh        # Unload lifecycle hook"
-	echo ""; echo "Next steps:"; echo "  1. Edit plugin.json with your plugin metadata"
-	echo "  2. Edit $ns.md with your agent instructions"; echo "  3. Add subagents to $ns/"
-	echo "  4. Push to a git repo"; echo "  5. Install: aidevops plugin add <repo-url> --namespace $ns"
+	print_success "Plugin scaffolded in $td/"
+	echo ""
+	echo "Structure:"
+	echo "  $td/"
+	echo "  ├── AGENTS.md              # Plugin documentation"
+	echo "  ├── plugin.json            # Plugin manifest"
+	echo "  ├── $ns.md           # Main agent"
+	echo "  ├── $ns/"
+	echo "  │   └── example.md          # Example subagent"
+	echo "  └── scripts/"
+	echo "      ├── on-init.sh          # Init lifecycle hook"
+	echo "      ├── on-load.sh          # Load lifecycle hook"
+	echo "      └── on-unload.sh        # Unload lifecycle hook"
+	echo ""
+	echo "Next steps:"
+	echo "  1. Edit plugin.json with your plugin metadata"
+	echo "  2. Edit $ns.md with your agent instructions"
+	echo "  3. Add subagents to $ns/"
+	echo "  4. Push to a git repo"
+	echo "  5. Install: aidevops plugin add <repo-url> --namespace $ns"
 	return 0
 }
 
 _plugin_help() {
-	print_header "Plugin Management"; echo ""
+	print_header "Plugin Management"
+	echo ""
 	echo "Manage third-party agent plugins that extend aidevops."
 	echo "Plugins deploy to ~/.aidevops/agents/<namespace>/ (isolated from core)."
-	echo ""; echo "Usage: aidevops plugin <command> [options]"; echo ""
-	echo "Commands:"; echo "  add <repo-url>     Install a plugin from a git repository"
-	echo "  list               List installed plugins"; echo "  update [name]      Update specific or all plugins"
+	echo ""
+	echo "Usage: aidevops plugin <command> [options]"
+	echo ""
+	echo "Commands:"
+	echo "  add <repo-url>     Install a plugin from a git repository"
+	echo "  list               List installed plugins"
+	echo "  update [name]      Update specific or all plugins"
 	echo "  enable <name>      Enable a disabled plugin (redeploys files)"
 	echo "  disable <name>     Disable a plugin (removes files, keeps config)"
 	echo "  remove <name>      Remove a plugin entirely"
 	echo "  init [dir] [name] [namespace]  Scaffold a new plugin from template"
-	echo ""; echo "Options for 'add':"; echo "  --namespace <name>   Directory name under ~/.aidevops/agents/"
-	echo "  --branch <branch>    Branch to track (default: main)"; echo "  --name <name>        Human-readable plugin name"
-	echo ""; echo "Examples:"
+	echo ""
+	echo "Options for 'add':"
+	echo "  --namespace <name>   Directory name under ~/.aidevops/agents/"
+	echo "  --branch <branch>    Branch to track (default: main)"
+	echo "  --name <name>        Human-readable plugin name"
+	echo ""
+	echo "Examples:"
 	echo "  aidevops plugin add https://github.com/marcusquinn/aidevops-pro.git --namespace pro"
 	echo "  aidevops plugin add https://github.com/marcusquinn/aidevops-anon.git --namespace anon"
-	echo "  aidevops plugin list"; echo "  aidevops plugin update"; echo "  aidevops plugin update pro"
-	echo "  aidevops plugin disable pro"; echo "  aidevops plugin enable pro"; echo "  aidevops plugin remove pro"
+	echo "  aidevops plugin list"
+	echo "  aidevops plugin update"
+	echo "  aidevops plugin update pro"
+	echo "  aidevops plugin disable pro"
+	echo "  aidevops plugin enable pro"
+	echo "  aidevops plugin remove pro"
 	echo "  aidevops plugin init ./my-plugin my-plugin my-plugin"
-	echo ""; echo "Plugin docs: ~/.aidevops/agents/aidevops/plugins.md"
+	echo ""
+	echo "Plugin docs: ~/.aidevops/agents/aidevops/plugins.md"
 	return 0
 }
 
 # Plugin management command
 cmd_plugin() {
-	local action="${1:-help}"; shift || true
+	local action="${1:-help}"
+	shift || true
 	local pf="$CONFIG_DIR/plugins.json" ad="$AGENTS_DIR"
-	mkdir -p "$CONFIG_DIR"; [[ ! -f "$pf" ]] && echo '{"plugins":[]}' >"$pf"
+	mkdir -p "$CONFIG_DIR"
+	[[ ! -f "$pf" ]] && echo '{"plugins":[]}' >"$pf"
 	case "$action" in
 	add | a) _plugin_add "$pf" "$ad" "$@" ;;
 	list | ls | l) _plugin_list "$pf" ;;
 	update | u) _plugin_update "$pf" "$ad" "$@" ;;
-	enable) [[ $# -lt 1 ]] && { print_error "Plugin name required"; echo "Usage: aidevops plugin enable <name>"; return 1; }; _plugin_toggle "$pf" "$ad" "$1" enable ;;
-	disable) [[ $# -lt 1 ]] && { print_error "Plugin name required"; echo "Usage: aidevops plugin disable <name>"; return 1; }; _plugin_toggle "$pf" "$ad" "$1" disable ;;
-	remove | rm) [[ $# -lt 1 ]] && { print_error "Plugin name required"; echo "Usage: aidevops plugin remove <name>"; return 1; }; _plugin_remove "$pf" "$ad" "$1" ;;
+	enable)
+		[[ $# -lt 1 ]] && {
+			print_error "Plugin name required"
+			echo "Usage: aidevops plugin enable <name>"
+			return 1
+		}
+		_plugin_toggle "$pf" "$ad" "$1" enable
+		;;
+	disable)
+		[[ $# -lt 1 ]] && {
+			print_error "Plugin name required"
+			echo "Usage: aidevops plugin disable <name>"
+			return 1
+		}
+		_plugin_toggle "$pf" "$ad" "$1" disable
+		;;
+	remove | rm)
+		[[ $# -lt 1 ]] && {
+			print_error "Plugin name required"
+			echo "Usage: aidevops plugin remove <name>"
+			return 1
+		}
+		_plugin_remove "$pf" "$ad" "$1"
+		;;
 	init) _plugin_scaffold "$ad" "$@" ;;
 	help | --help | -h) _plugin_help ;;
-	*) print_error "Unknown plugin command: $action"; echo "Run 'aidevops plugin help' for usage information."; return 1 ;;
+	*)
+		print_error "Unknown plugin command: $action"
+		echo "Run 'aidevops plugin help' for usage information."
+		return 1
+		;;
 	esac
 	return 0
 }
@@ -2587,33 +3145,55 @@ _help_detailed_sections() {
 	echo "  aidevops stats ingest        # Parse new Claude JSONL log entries"
 	echo "  aidevops stats sync-budget   # Sync to budget tracker (t1100)"
 	echo ""
-	echo "Auto-Update:"; echo "  aidevops auto-update enable  # Poll for updates every 10 min"
-	echo "  aidevops auto-update disable # Stop auto-updating"; echo "  aidevops auto-update status  # Show auto-update state"
+	_help_management_sections
+	return 0
+}
+
+_help_management_sections() {
+	echo "Auto-Update:"
+	echo "  aidevops auto-update enable  # Poll for updates every 10 min"
+	echo "  aidevops auto-update disable # Stop auto-updating"
+	echo "  aidevops auto-update status  # Show auto-update state"
 	echo "  aidevops auto-update check   # One-shot check and update now"
 	echo ""
-	echo "Repo Sync:"; echo "  aidevops repo-sync enable    # Enable daily git pull for repos"
-	echo "  aidevops repo-sync disable   # Disable daily sync"; echo "  aidevops repo-sync status    # Show sync state and last results"
+	echo "Repo Sync:"
+	echo "  aidevops repo-sync enable    # Enable daily git pull for repos"
+	echo "  aidevops repo-sync disable   # Disable daily sync"
+	echo "  aidevops repo-sync status    # Show sync state and last results"
 	echo "  aidevops repo-sync check     # One-shot sync all repos now"
 	echo "  aidevops repo-sync dirs list # List configured parent directories"
-	echo "  aidevops repo-sync dirs add  # Add a parent directory"; echo "  aidevops repo-sync dirs rm   # Remove a parent directory"
-	echo "  aidevops repo-sync config    # Show/edit configuration"; echo "  aidevops repo-sync logs      # View sync logs"
+	echo "  aidevops repo-sync dirs add  # Add a parent directory"
+	echo "  aidevops repo-sync dirs rm   # Remove a parent directory"
+	echo "  aidevops repo-sync config    # Show/edit configuration"
+	echo "  aidevops repo-sync logs      # View sync logs"
 	echo ""
-	echo "Agent Sources (private repos):"; echo "  aidevops sources add <path>  # Add a local repo as agent source"
+	echo "Agent Sources (private repos):"
+	echo "  aidevops sources add <path>  # Add a local repo as agent source"
 	echo "  aidevops sources add-remote <url> # Clone and add remote repo"
-	echo "  aidevops sources remove <n>  # Remove a source (keeps agents)"; echo "  aidevops sources list        # List configured sources"
-	echo "  aidevops sources status      # Show sync status"; echo "  aidevops sources sync        # Sync all sources to custom/"
+	echo "  aidevops sources remove <n>  # Remove a source (keeps agents)"
+	echo "  aidevops sources list        # List configured sources"
+	echo "  aidevops sources status      # Show sync status"
+	echo "  aidevops sources sync        # Sync all sources to custom/"
 	echo ""
-	echo "Plugins:"; echo "  aidevops plugin add <url>    # Install a plugin from git repo"
-	echo "  aidevops plugin list         # List installed plugins"; echo "  aidevops plugin update       # Update all plugins"
+	echo "Plugins:"
+	echo "  aidevops plugin add <url>    # Install a plugin from git repo"
+	echo "  aidevops plugin list         # List installed plugins"
+	echo "  aidevops plugin update       # Update all plugins"
 	echo "  aidevops plugin remove <n>   # Remove a plugin"
 	echo ""
-	echo "Skill Management:"; echo "  aidevops skill add <source>  # Import a skill from GitHub"
-	echo "  aidevops skill list          # List imported skills"; echo "  aidevops skill check         # Check for upstream updates"
-	echo "  aidevops skill update [name] # Update skills to latest"; echo "  aidevops skill remove <name> # Remove an imported skill"
+	echo "Skill Management:"
+	echo "  aidevops skill add <source>  # Import a skill from GitHub"
+	echo "  aidevops skill list          # List imported skills"
+	echo "  aidevops skill check         # Check for upstream updates"
+	echo "  aidevops skill update [name] # Update skills to latest"
+	echo "  aidevops skill remove <name> # Remove an imported skill"
 	echo ""
-	echo "Skill Discovery:"; echo "  aidevops skills search <q>   # Search skills by keyword"
-	echo "  aidevops skills browse       # Browse skills by category"; echo "  aidevops skills describe <n> # Show skill description"
-	echo "  aidevops skills recommend <t># Suggest skills for a task"; echo "  aidevops skills categories   # List all categories"
+	echo "Skill Discovery:"
+	echo "  aidevops skills search <q>   # Search skills by keyword"
+	echo "  aidevops skills browse       # Browse skills by category"
+	echo "  aidevops skills describe <n> # Show skill description"
+	echo "  aidevops skills recommend <t># Suggest skills for a task"
+	echo "  aidevops skills categories   # List all categories"
 	echo ""
 	echo "Installation:"
 	echo "  npm install -g aidevops && aidevops update      # via npm (recommended)"
@@ -2626,9 +3206,12 @@ _help_detailed_sections() {
 
 # Help command
 cmd_help() {
-	local version; version=$(get_version)
-	echo "AI DevOps Framework CLI v$version"; echo ""
-	echo "Usage: aidevops <command> [options]"; echo ""
+	local version
+	version=$(get_version)
+	echo "AI DevOps Framework CLI v$version"
+	echo ""
+	echo "Usage: aidevops <command> [options]"
+	echo ""
 	_help_commands
 	echo ""
 	echo "Examples:"
@@ -2666,11 +3249,16 @@ cmd_version() {
 
 # Helper dispatch (extracted from main for complexity reduction)
 _dispatch_helper() {
-	local script_name="$1" error_name="$2"; shift 2
+	local script_name="$1" error_name="$2"
+	shift 2
 	local hp="$AGENTS_DIR/scripts/$script_name"
 	[[ ! -f "$hp" ]] && hp="$INSTALL_DIR/.agents/scripts/$script_name"
-	if [[ -f "$hp" ]]; then bash "$hp" "$@"
-	else print_error "$error_name not found. Run: aidevops update"; exit 1; fi
+	if [[ -f "$hp" ]]; then
+		bash "$hp" "$@"
+	else
+		print_error "$error_name not found. Run: aidevops update"
+		exit 1
+	fi
 	return 0
 }
 
@@ -2679,8 +3267,12 @@ _dispatch_config() {
 	[[ ! -f "$ch" ]] && ch="$INSTALL_DIR/.agents/scripts/config-helper.sh"
 	[[ ! -f "$ch" ]] && ch="$AGENTS_DIR/scripts/feature-toggle-helper.sh"
 	[[ ! -f "$ch" ]] && ch="$INSTALL_DIR/.agents/scripts/feature-toggle-helper.sh"
-	if [[ -f "$ch" ]]; then bash "$ch" "$@"
-	else print_error "config-helper.sh not found. Run: aidevops update"; exit 1; fi
+	if [[ -f "$ch" ]]; then
+		bash "$ch" "$@"
+	else
+		print_error "config-helper.sh not found. Run: aidevops update"
+		exit 1
+	fi
 	return 0
 }
 
@@ -2689,17 +3281,26 @@ main() {
 	local command="${1:-help}"
 
 	# Auto-detect unregistered repo on any command (silent check)
-	local unregistered; unregistered=$(detect_unregistered_repo 2>/dev/null) || true
+	local unregistered
+	unregistered=$(detect_unregistered_repo 2>/dev/null) || true
 	if [[ -n "$unregistered" && "$command" != "detect" && "$command" != "repos" ]]; then
-		echo -e "${YELLOW}[TIP]${NC} This project uses aidevops but isn't registered. Run: aidevops repos add"; echo ""
+		echo -e "${YELLOW}[TIP]${NC} This project uses aidevops but isn't registered. Run: aidevops repos add"
+		echo ""
 	fi
 
 	# Check if agents need updating (skip for update command itself)
 	if [[ "$command" != "update" && "$command" != "upgrade" && "$command" != "u" ]]; then
-		local cli_version agents_version; cli_version=$(get_version)
+		local cli_version agents_version
+		cli_version=$(get_version)
 		[[ -f "$AGENTS_DIR/VERSION" ]] && agents_version=$(cat "$AGENTS_DIR/VERSION") || agents_version="not installed"
-		if [[ "$agents_version" == "not installed" ]]; then echo -e "${YELLOW}[WARN]${NC} Agents not installed. Run: aidevops update"; echo ""
-		elif [[ "$cli_version" != "$agents_version" ]]; then echo -e "${YELLOW}[WARN]${NC} Version mismatch - CLI: $cli_version, Agents: $agents_version"; echo -e "       Run: aidevops update"; echo ""; fi
+		if [[ "$agents_version" == "not installed" ]]; then
+			echo -e "${YELLOW}[WARN]${NC} Agents not installed. Run: aidevops update"
+			echo ""
+		elif [[ "$cli_version" != "$agents_version" ]]; then
+			echo -e "${YELLOW}[WARN]${NC} Version mismatch - CLI: $cli_version, Agents: $agents_version"
+			echo -e "       Run: aidevops update"
+			echo ""
+		fi
 	fi
 
 	shift || true
@@ -2730,7 +3331,12 @@ main() {
 	uninstall | remove) cmd_uninstall ;;
 	version | v | -v | --version) cmd_version ;;
 	help | h | -h | --help) cmd_help ;;
-	*) print_error "Unknown command: $command"; echo ""; cmd_help; exit 1 ;;
+	*)
+		print_error "Unknown command: $command"
+		echo ""
+		cmd_help
+		exit 1
+		;;
 	esac
 }
 
