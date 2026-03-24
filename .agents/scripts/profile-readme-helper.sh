@@ -200,6 +200,121 @@ _compute_costs_from_tokens() {
 	return 0
 }
 
+# --- Gather model usage from OpenCode session DB (full history) ---
+# Returns JSON array with cost_total computed, or empty string if unavailable.
+_get_model_usage_from_opencode() {
+	if ! command -v sqlite3 &>/dev/null || [[ ! -f "$OPENCODE_DB_FILE" ]]; then
+		echo ""
+		return 0
+	fi
+
+	local raw_json
+	raw_json=$(sqlite3 "$OPENCODE_DB_FILE" "
+		SELECT COALESCE(
+			json_group_array(
+				json_object(
+					'model', model,
+					'requests', requests,
+					'input_tokens', input_tokens,
+					'output_tokens', output_tokens,
+					'cache_read_tokens', cache_read_tokens,
+					'cache_write_tokens', cache_write_tokens
+				)
+			),
+			'[]'
+		)
+		FROM (
+			SELECT
+				json_extract(data, '\$.modelID') AS model,
+				COUNT(*) AS requests,
+				COALESCE(SUM(json_extract(data, '\$.tokens.input')), 0) AS input_tokens,
+				COALESCE(SUM(json_extract(data, '\$.tokens.output')), 0) AS output_tokens,
+				COALESCE(SUM(json_extract(data, '\$.tokens.cache.read')), 0) AS cache_read_tokens,
+				COALESCE(SUM(json_extract(data, '\$.tokens.cache.write')), 0) AS cache_write_tokens
+			FROM message
+			WHERE json_extract(data, '\$.role') = 'assistant'
+			  AND json_extract(data, '\$.modelID') IS NOT NULL
+			  AND json_extract(data, '\$.modelID') != ''
+			GROUP BY model
+		);
+	" 2>/dev/null || true)
+
+	if [[ -z "$raw_json" ]] || [[ "$raw_json" == "[]" ]]; then
+		echo ""
+		return 0
+	fi
+
+	# Merge model variants (e.g., claude-opus-4-5-20251101 -> claude-opus-4-5)
+	local merged_json
+	merged_json=$(echo "$raw_json" | jq -c '
+		[.[] | .model = (.model | gsub("-[0-9]{8}$"; ""))]
+		| group_by(.model)
+		| map({
+			model: .[0].model,
+			requests: ([.[].requests] | add),
+			input_tokens: ([.[].input_tokens] | add),
+			output_tokens: ([.[].output_tokens] | add),
+			cache_read_tokens: ([.[].cache_read_tokens] | add),
+			cache_write_tokens: ([.[].cache_write_tokens] | add)
+		})
+	')
+	_compute_costs_from_tokens "$merged_json"
+	return 0
+}
+
+# --- Gather model usage from observability DB (accurate cost data) ---
+# date_filter: optional SQL WHERE clause fragment (e.g. "AND timestamp >= ...")
+# Returns JSON array or empty string if unavailable.
+_get_model_usage_from_obs_db() {
+	local date_filter="${1:-}"
+
+	if ! command -v sqlite3 &>/dev/null || [[ ! -f "$OBS_DB_FILE" ]]; then
+		echo ""
+		return 0
+	fi
+
+	local sqlite_json
+	sqlite_json=$(sqlite3 "$OBS_DB_FILE" "
+		SELECT COALESCE(
+			json_group_array(
+				json_object(
+					'model', model_id,
+					'requests', requests,
+					'input_tokens', input_tokens,
+					'output_tokens', output_tokens,
+					'cache_read_tokens', cache_read_tokens,
+					'cache_write_tokens', cache_write_tokens,
+					'cost_total', ROUND(cost_total, 2)
+				)
+			),
+			'[]'
+		)
+		FROM (
+			SELECT
+				model_id,
+				COUNT(*) AS requests,
+				COALESCE(SUM(tokens_input), 0) AS input_tokens,
+				COALESCE(SUM(tokens_output), 0) AS output_tokens,
+				COALESCE(SUM(tokens_cache_read), 0) AS cache_read_tokens,
+				COALESCE(SUM(tokens_cache_write), 0) AS cache_write_tokens,
+				COALESCE(SUM(cost), 0.0) AS cost_total
+			FROM llm_requests
+			WHERE model_id IS NOT NULL
+			  AND model_id != ''
+			  ${date_filter}
+			GROUP BY model_id
+			ORDER BY cost_total DESC
+		);
+	" 2>/dev/null || true)
+
+	if [[ -n "$sqlite_json" ]]; then
+		echo "$sqlite_json" | jq -c '.' 2>/dev/null || echo "[]"
+	else
+		echo ""
+	fi
+	return 0
+}
+
 # --- Gather model usage stats ---
 # Usage: _get_model_usage [period]
 #   period: "30d" (default) or "all" (no date filter)
@@ -208,55 +323,11 @@ _get_model_usage() {
 
 	# For "all" period, use OpenCode session DB (has full history back to first use).
 	# The observability DB (llm-requests.db) only has data from when it was created.
-	if [[ "$period" == "all" ]] && command -v sqlite3 &>/dev/null && [[ -f "$OPENCODE_DB_FILE" ]]; then
-		local raw_json
-		raw_json=$(sqlite3 "$OPENCODE_DB_FILE" "
-			SELECT COALESCE(
-				json_group_array(
-					json_object(
-						'model', model,
-						'requests', requests,
-						'input_tokens', input_tokens,
-						'output_tokens', output_tokens,
-						'cache_read_tokens', cache_read_tokens,
-						'cache_write_tokens', cache_write_tokens
-					)
-				),
-				'[]'
-			)
-			FROM (
-				SELECT
-					json_extract(data, '\$.modelID') AS model,
-					COUNT(*) AS requests,
-					COALESCE(SUM(json_extract(data, '\$.tokens.input')), 0) AS input_tokens,
-					COALESCE(SUM(json_extract(data, '\$.tokens.output')), 0) AS output_tokens,
-					COALESCE(SUM(json_extract(data, '\$.tokens.cache.read')), 0) AS cache_read_tokens,
-					COALESCE(SUM(json_extract(data, '\$.tokens.cache.write')), 0) AS cache_write_tokens
-				FROM message
-				WHERE json_extract(data, '\$.role') = 'assistant'
-				  AND json_extract(data, '\$.modelID') IS NOT NULL
-				  AND json_extract(data, '\$.modelID') != ''
-				GROUP BY model
-			);
-		" 2>/dev/null || true)
-
-		if [[ -n "$raw_json" ]] && [[ "$raw_json" != "[]" ]]; then
-			# Merge model variants (e.g., claude-opus-4-5-20251101 -> claude-opus-4-5)
-			# by cleaning names and re-aggregating
-			local merged_json
-			merged_json=$(echo "$raw_json" | jq -c '
-				[.[] | .model = (.model | gsub("-[0-9]{8}$"; ""))]
-				| group_by(.model)
-				| map({
-					model: .[0].model,
-					requests: ([.[].requests] | add),
-					input_tokens: ([.[].input_tokens] | add),
-					output_tokens: ([.[].output_tokens] | add),
-					cache_read_tokens: ([.[].cache_read_tokens] | add),
-					cache_write_tokens: ([.[].cache_write_tokens] | add)
-				})
-			')
-			_compute_costs_from_tokens "$merged_json"
+	if [[ "$period" == "all" ]]; then
+		local oc_result
+		oc_result=$(_get_model_usage_from_opencode)
+		if [[ -n "$oc_result" ]]; then
+			echo "$oc_result"
 			return 0
 		fi
 	fi
@@ -267,45 +338,11 @@ _get_model_usage() {
 		date_filter="AND timestamp >= strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-30 days')"
 	fi
 
-	if command -v sqlite3 &>/dev/null && [[ -f "$OBS_DB_FILE" ]]; then
-		local sqlite_json
-		sqlite_json=$(sqlite3 "$OBS_DB_FILE" "
-			SELECT COALESCE(
-				json_group_array(
-					json_object(
-						'model', model_id,
-						'requests', requests,
-						'input_tokens', input_tokens,
-						'output_tokens', output_tokens,
-						'cache_read_tokens', cache_read_tokens,
-						'cache_write_tokens', cache_write_tokens,
-						'cost_total', ROUND(cost_total, 2)
-					)
-				),
-				'[]'
-			)
-			FROM (
-				SELECT
-					model_id,
-					COUNT(*) AS requests,
-					COALESCE(SUM(tokens_input), 0) AS input_tokens,
-					COALESCE(SUM(tokens_output), 0) AS output_tokens,
-					COALESCE(SUM(tokens_cache_read), 0) AS cache_read_tokens,
-					COALESCE(SUM(tokens_cache_write), 0) AS cache_write_tokens,
-					COALESCE(SUM(cost), 0.0) AS cost_total
-				FROM llm_requests
-				WHERE model_id IS NOT NULL
-				  AND model_id != ''
-				  ${date_filter}
-				GROUP BY model_id
-				ORDER BY cost_total DESC
-			);
-		" 2>/dev/null || true)
-
-		if [[ -n "$sqlite_json" ]]; then
-			echo "$sqlite_json" | jq -c '.' 2>/dev/null || echo "[]"
-			return 0
-		fi
+	local obs_result
+	obs_result=$(_get_model_usage_from_obs_db "$date_filter")
+	if [[ -n "$obs_result" ]]; then
+		echo "$obs_result"
+		return 0
 	fi
 
 	# Legacy fallback: JSONL metrics file.
@@ -639,6 +676,32 @@ _clean_model_name() {
 	return 0
 }
 
+# --- Compute per-row cache and model-routing savings ---
+# Usage: _compute_model_row_savings <model> <input_tokens> <output_tokens> <cache_tokens>
+# Prints: cache_savings|model_savings  (scale=6 for accumulation accuracy)
+_compute_model_row_savings() {
+	local model="$1"
+	local input="$2"
+	local output="$3"
+	local cache="$4"
+
+	# Opus rates used as baseline for model routing savings
+	local opus_input_rate="15.0" opus_output_rate="75.0" opus_cache_rate="1.50"
+
+	local rates m_input_rate m_output_rate m_cache_rate
+	rates=$(_model_cost_rates "$model")
+	m_input_rate=$(echo "$rates" | cut -d'|' -f1)
+	m_output_rate=$(echo "$rates" | cut -d'|' -f2)
+	m_cache_rate=$(echo "$rates" | cut -d'|' -f3)
+
+	local row_cache_savings row_model_savings
+	row_cache_savings=$(echo "scale=6; $cache / 1000000 * ($m_input_rate - $m_cache_rate)" | bc)
+	row_model_savings=$(echo "scale=6; ($opus_input_rate - $m_input_rate) * $input / 1000000 + ($opus_output_rate - $m_output_rate) * $output / 1000000 + ($opus_cache_rate - $m_cache_rate) * $cache / 1000000" | bc)
+
+	echo "${row_cache_savings}|${row_model_savings}"
+	return 0
+}
+
 # --- Render a model usage table ---
 # Usage: _render_model_usage_table <heading> <model_json> <token_totals_json>
 # Outputs a markdown table with model usage stats, savings calculations, and footer.
@@ -654,8 +717,6 @@ _render_model_usage_table() {
 		return 0
 	fi
 
-	# Opus rates used as baseline for model routing savings
-	local opus_input_rate="15.0" opus_output_rate="75.0" opus_cache_rate="1.50"
 	local total_requests=0 total_input=0 total_output=0 total_cache=0 total_cost=0
 	local total_cache_savings="0" total_model_savings="0"
 	local model_rows=""
@@ -675,25 +736,12 @@ _render_model_usage_table() {
 		total_cache=$((total_cache + cache))
 		total_cost=$(echo "$total_cost + $cost" | bc)
 
-		# Get this model's rates: input|output|cache_read
-		local rates m_input_rate m_output_rate m_cache_rate
-		rates=$(_model_cost_rates "$model")
-		m_input_rate=$(echo "$rates" | cut -d'|' -f1)
-		m_output_rate=$(echo "$rates" | cut -d'|' -f2)
-		m_cache_rate=$(echo "$rates" | cut -d'|' -f3)
-
-		# Cache savings: what caching saved vs re-sending as full input
-		# cache_read_tokens / 1M * (input_price - cache_read_price)
-		# Use scale=6 in loop to avoid rounding error accumulation; round at display
-		local row_cache_savings
-		row_cache_savings=$(echo "scale=6; $cache / 1000000 * ($m_input_rate - $m_cache_rate)" | bc)
+		# Compute per-row savings (cache + model routing vs all-Opus baseline)
+		local savings row_cache_savings row_model_savings
+		savings=$(_compute_model_row_savings "$model" "$input" "$output" "$cache")
+		row_cache_savings=$(echo "$savings" | cut -d'|' -f1)
+		row_model_savings=$(echo "$savings" | cut -d'|' -f2)
 		total_cache_savings=$(echo "$total_cache_savings + $row_cache_savings" | bc)
-
-		# Model routing savings: what using this model saved vs Opus
-		# For each token type: (opus_rate - model_rate) * tokens / 1M
-		# Opus rows produce $0 (same rates). Sonnet/Haiku produce large savings.
-		local row_model_savings
-		row_model_savings=$(echo "scale=6; ($opus_input_rate - $m_input_rate) * $input / 1000000 + ($opus_output_rate - $m_output_rate) * $output / 1000000 + ($opus_cache_rate - $m_cache_rate) * $cache / 1000000" | bc)
 		total_model_savings=$(echo "$total_model_savings + $row_model_savings" | bc)
 
 		local clean_model
@@ -721,7 +769,6 @@ _render_model_usage_table() {
 	f_total_in=$(_format_tokens "$total_input")
 	f_total_out=$(_format_tokens "$total_output")
 	f_total_cache=$(_format_tokens "$total_cache")
-	# Format costs and savings with commas
 	local f_total_cost
 	f_total_cost=$(_format_cost "$total_cost")
 	f_total_csavings=$(_format_cost "$total_cache_savings")
@@ -757,77 +804,15 @@ EOF
 	return 0
 }
 
-# --- Generate the stats markdown ---
-cmd_generate() {
-	# Gather all data
-	local screen_json
-	screen_json=$(_get_screen_time)
+# --- Extract and format session time variables for all periods ---
+# Populates variables in the caller's scope via stdout as shell assignments.
+# Usage: eval "$(_generate_session_time_vars <day_json> <week_json> <month_json> <year_json>)"
+_generate_session_time_vars() {
+	local day_json="$1"
+	local week_json="$2"
+	local month_json="$3"
+	local year_json="$4"
 
-	local day_json week_json month_json year_json
-	day_json=$(_get_session_time day)
-	week_json=$(_get_session_time week)
-	month_json=$(_get_session_time month)
-	year_json=$(_get_session_time year)
-
-	local model_json_30d model_json_all
-	model_json_30d=$(_get_model_usage "30d")
-	model_json_all=$(_get_model_usage "all")
-
-	local token_totals_30d token_totals_all
-	token_totals_30d=$(_get_token_totals "30d")
-	token_totals_all=$(_get_token_totals "all")
-
-	# Detect if there's any meaningful data to display.
-	# Check: any session time > 0, any model usage, or any screen time.
-	# If all sources are empty, show a clean "getting started" message instead
-	# of tables full of zeros — which looks broken to new users.
-	# Use jq for numeric comparisons to handle floats (e.g., 0.0) correctly.
-	local has_data=false
-	local has_session_time has_model_usage has_screen_time
-	has_session_time=$(echo "$month_json" | jq -r '((.total_human_hours + .total_machine_hours) // 0) > 0')
-	has_model_usage=$(echo "$model_json_all" | jq -r '((if type == "array" then length else 0 end) // 0) > 0')
-	has_screen_time=$(echo "$screen_json" | jq -r '(.month_hours // 0) > 0')
-
-	if [[ "$has_session_time" == "true" ]] ||
-		[[ "$has_model_usage" == "true" ]] ||
-		[[ "$has_screen_time" == "true" ]]; then
-		has_data=true
-	fi
-
-	if [[ "$has_data" == "false" ]]; then
-		cat <<'EOF'
-## Work with AI
-
-_Stats will appear here automatically once [aidevops](https://aidevops.sh) has been running locally. Includes AI session hours, model usage, token costs, and screen time._
-EOF
-		return 0
-	fi
-
-	# Extract screen time values (round to 1 decimal, strip .0 for large numbers)
-	local screen_today screen_week screen_month screen_year
-	screen_today=$(echo "$screen_json" | jq -r '.today_hours | . * 10 | round / 10')
-	screen_week=$(echo "$screen_json" | jq -r '.week_hours | . * 10 | round / 10')
-	screen_month=$(echo "$screen_json" | jq -r '.month_hours | . * 10 | round / 10')
-	screen_year=$(echo "$screen_json" | jq -r '.year_hours | round')
-
-	# Check if year is extrapolated (history file has < 365 days)
-	local history_file="${HOME}/.aidevops/.agent-workspace/observability/screen-time.jsonl"
-	local year_prefix=""
-	local year_suffix=""
-	if [[ -f "$history_file" ]]; then
-		local history_days
-		history_days=$(wc -l <"$history_file" | tr -d ' ')
-		if [[ "$history_days" -lt 365 ]]; then
-			year_prefix="~"
-			year_suffix="*"
-		fi
-	else
-		year_prefix="~"
-		year_suffix="*"
-	fi
-
-	# Extract session time values per period (1 decimal place for hours)
-	# Worker hours = worker_human + worker_machine (from worker sessions)
 	local day_human day_worker day_total day_interactive day_workers
 	day_human=$(_format_hours "$(echo "$day_json" | jq -r '.interactive_human_hours')")
 	day_worker=$(_format_hours "$(echo "$day_json" | jq -r '.worker_human_hours + .worker_machine_hours')")
@@ -856,12 +841,102 @@ EOF
 	year_interactive=$(echo "$year_json" | jq -r '.interactive_sessions')
 	year_workers=$(echo "$year_json" | jq -r '.worker_sessions')
 
-	# Format screen time with commas
+	# Emit as shell variable assignments for eval
+	printf 'day_human=%q day_worker=%q day_total=%q day_interactive=%q day_workers=%q\n' \
+		"$day_human" "$day_worker" "$day_total" "$day_interactive" "$day_workers"
+	printf 'week_human=%q week_worker=%q week_total=%q week_interactive=%q week_workers=%q\n' \
+		"$week_human" "$week_worker" "$week_total" "$week_interactive" "$week_workers"
+	printf 'month_human=%q month_worker=%q month_total=%q month_interactive=%q month_workers=%q\n' \
+		"$month_human" "$month_worker" "$month_total" "$month_interactive" "$month_workers"
+	printf 'year_human=%q year_worker=%q year_total=%q year_interactive=%q year_workers=%q\n' \
+		"$year_human" "$year_worker" "$year_total" "$year_interactive" "$year_workers"
+	return 0
+}
+
+# --- Generate the Top Apps by Screen Time markdown section ---
+# Outputs the full markdown block, or nothing if no app data available.
+_generate_top_apps_section() {
+	local top_apps_json
+	top_apps_json=$(_get_top_apps)
+
+	local app_count
+	app_count=$(echo "$top_apps_json" | jq 'length')
+	if [[ "$app_count" -eq 0 ]]; then
+		return 0
+	fi
+
+	local app_rows=""
+	while IFS= read -r row; do
+		local app today_pct week_pct month_pct
+		app=$(echo "$row" | jq -r '.app')
+		today_pct=$(echo "$row" | jq -r '.today_pct')
+		week_pct=$(echo "$row" | jq -r '.week_pct')
+		month_pct=$(echo "$row" | jq -r '.month_pct')
+
+		local today_str week_str month_str
+		if [[ "$today_pct" -eq 0 ]]; then today_str="--"; else today_str="${today_pct}%"; fi
+		if [[ "$week_pct" -eq 0 ]]; then week_str="--"; else week_str="${week_pct}%"; fi
+		if [[ "$month_pct" -eq 0 ]]; then month_str="--"; else month_str="${month_pct}%"; fi
+
+		app_rows="${app_rows}| ${app} | ${today_str} | ${week_str} | ${month_str} |
+"
+	done < <(echo "$top_apps_json" | jq -c '.[]')
+
+	cat <<EOF
+
+## Top Apps by Screen Time
+
+| App | 24h | 7 Days | 28 Days |
+| --- | ---: | ---: | ---: |
+${app_rows}
+_Top 10 apps by foreground time share. Mac only._
+EOF
+	return 0
+}
+
+# --- Generate the Work with AI markdown table ---
+# Usage: _generate_work_with_ai_table <screen_json> <day_json> <week_json> <month_json> <year_json>
+_generate_work_with_ai_table() {
+	local screen_json="$1"
+	local day_json="$2"
+	local week_json="$3"
+	local month_json="$4"
+	local year_json="$5"
+
+	# Extract screen time values
+	local screen_today screen_week screen_month screen_year
+	screen_today=$(echo "$screen_json" | jq -r '.today_hours | . * 10 | round / 10')
+	screen_week=$(echo "$screen_json" | jq -r '.week_hours | . * 10 | round / 10')
+	screen_month=$(echo "$screen_json" | jq -r '.month_hours | . * 10 | round / 10')
+	screen_year=$(echo "$screen_json" | jq -r '.year_hours | round')
+
+	# Check if year is extrapolated (history file has < 365 days)
+	local history_file="${HOME}/.aidevops/.agent-workspace/observability/screen-time.jsonl"
+	local year_prefix="" year_suffix=""
+	if [[ -f "$history_file" ]]; then
+		local history_days
+		history_days=$(wc -l <"$history_file" | tr -d ' ')
+		if [[ "$history_days" -lt 365 ]]; then
+			year_prefix="~"
+			year_suffix="*"
+		fi
+	else
+		year_prefix="~"
+		year_suffix="*"
+	fi
+
+	# Extract and format session time variables for all periods
+	local day_human day_worker day_total day_interactive day_workers
+	local week_human week_worker week_total week_interactive week_workers
+	local month_human month_worker month_total month_interactive month_workers
+	local year_human year_worker year_total year_interactive year_workers
+	eval "$(_generate_session_time_vars "$day_json" "$week_json" "$month_json" "$year_json")"
+
+	# Format screen time and session counts with commas
 	local f_screen_month f_screen_year
 	f_screen_month=$(_format_number "$screen_month")
 	f_screen_year=$(_format_number "$screen_year")
 
-	# Format session counts with commas
 	local f_day_int f_week_int f_month_int f_year_int
 	f_day_int=$(_format_number "$day_interactive")
 	f_week_int=$(_format_number "$week_interactive")
@@ -874,15 +949,13 @@ EOF
 	f_month_wrk=$(_format_number "$month_workers")
 	f_year_wrk=$(_format_number "$year_workers")
 
-	# Format totals with commas
 	local f_month_total f_year_total
 	f_month_total=$(_format_number "$month_total")
 	f_year_total=$(_format_number "$year_total")
 
 	# Determine platform label for screen time row
-	local os_type
+	local os_type screen_label screen_source
 	os_type="$(uname -s)"
-	local screen_label screen_source
 	case "$os_type" in
 	Darwin)
 		screen_label="Screen time (Mac)"
@@ -898,7 +971,6 @@ EOF
 		;;
 	esac
 
-	# Build Work with AI table
 	cat <<EOF
 ## Work with AI
 
@@ -915,47 +987,55 @@ _Screen time from ${screen_source}, snapshotted daily.$([ -n "$year_suffix" ] &&
 
 _User AI session hours measured from AI message timestamps (reading, thinking, typing between responses)._
 EOF
+	return 0
+}
 
-	# Build model usage tables (30-day and all-time)
+# --- Generate the stats markdown ---
+cmd_generate() {
+	# Gather all data
+	local screen_json
+	screen_json=$(_get_screen_time)
+
+	local day_json week_json month_json year_json
+	day_json=$(_get_session_time day)
+	week_json=$(_get_session_time week)
+	month_json=$(_get_session_time month)
+	year_json=$(_get_session_time year)
+
+	local model_json_30d model_json_all
+	model_json_30d=$(_get_model_usage "30d")
+	model_json_all=$(_get_model_usage "all")
+
+	local token_totals_30d token_totals_all
+	token_totals_30d=$(_get_token_totals "30d")
+	token_totals_all=$(_get_token_totals "all")
+
+	# Detect if there's any meaningful data to display.
+	local has_data=false
+	local has_session_time has_model_usage has_screen_time
+	has_session_time=$(echo "$month_json" | jq -r '((.total_human_hours + .total_machine_hours) // 0) > 0')
+	has_model_usage=$(echo "$model_json_all" | jq -r '((if type == "array" then length else 0 end) // 0) > 0')
+	has_screen_time=$(echo "$screen_json" | jq -r '(.month_hours // 0) > 0')
+
+	if [[ "$has_session_time" == "true" ]] ||
+		[[ "$has_model_usage" == "true" ]] ||
+		[[ "$has_screen_time" == "true" ]]; then
+		has_data=true
+	fi
+
+	if [[ "$has_data" == "false" ]]; then
+		cat <<'EOF'
+## Work with AI
+
+_Stats will appear here automatically once [aidevops](https://aidevops.sh) has been running locally. Includes AI session hours, model usage, token costs, and screen time._
+EOF
+		return 0
+	fi
+
+	_generate_work_with_ai_table "$screen_json" "$day_json" "$week_json" "$month_json" "$year_json"
 	_render_model_usage_table "AI Model Usage (last 30 days)" "$model_json_30d" "$token_totals_30d"
 	_render_model_usage_table "AI Model Usage (all time)" "$model_json_all" "$token_totals_all"
-
-	# Build top apps table (macOS only — requires Knowledge DB)
-	local top_apps_json
-	top_apps_json=$(_get_top_apps)
-
-	local app_count
-	app_count=$(echo "$top_apps_json" | jq 'length')
-
-	if [[ "$app_count" -gt 0 ]]; then
-		local app_rows=""
-		while IFS= read -r row; do
-			local app today_pct week_pct month_pct
-			app=$(echo "$row" | jq -r '.app')
-			today_pct=$(echo "$row" | jq -r '.today_pct')
-			week_pct=$(echo "$row" | jq -r '.week_pct')
-			month_pct=$(echo "$row" | jq -r '.month_pct')
-
-			# Show "--" for 0% (app not used in that period)
-			local today_str week_str month_str
-			if [[ "$today_pct" -eq 0 ]]; then today_str="--"; else today_str="${today_pct}%"; fi
-			if [[ "$week_pct" -eq 0 ]]; then week_str="--"; else week_str="${week_pct}%"; fi
-			if [[ "$month_pct" -eq 0 ]]; then month_str="--"; else month_str="${month_pct}%"; fi
-
-			app_rows="${app_rows}| ${app} | ${today_str} | ${week_str} | ${month_str} |
-"
-		done < <(echo "$top_apps_json" | jq -c '.[]')
-
-		cat <<EOF
-
-## Top Apps by Screen Time
-
-| App | 24h | 7 Days | 28 Days |
-| --- | ---: | ---: | ---: |
-${app_rows}
-_Top 10 apps by foreground time share. Mac only._
-EOF
-	fi
+	_generate_top_apps_section
 
 	return 0
 }
@@ -1264,6 +1344,55 @@ _recover_diverged_profile() {
 	return 0
 }
 
+# --- Build language + tooling badge line for a user's repos ---
+# Usage: _build_readme_badges <repos_json>
+# Outputs badge markdown lines (one per badge).
+_build_readme_badges() {
+	local repos_json="$1"
+
+	local languages
+	languages=$(echo "$repos_json" | jq -r '[.[].language | select(. != null)] | unique | .[]')
+
+	local badges=""
+	while IFS= read -r lang; do
+		[[ -z "$lang" ]] && continue
+		local badge
+		badge=$(_lang_badge "$lang")
+		badges="${badges}${badge}"$'\n'
+	done <<<"$languages"
+	# Always add common tooling badges
+	badges="${badges}"'![Docker](https://img.shields.io/badge/-Docker-2496ED?style=flat-square&logo=docker&logoColor=white)'$'\n'
+	badges="${badges}"'![Linux](https://img.shields.io/badge/-Linux-FCC624?style=flat-square&logo=linux&logoColor=black)'$'\n'
+	badges="${badges}"'![Git](https://img.shields.io/badge/-Git-F05032?style=flat-square&logo=git&logoColor=white)'$'\n'
+
+	printf '%s' "$badges"
+	return 0
+}
+
+# --- Build the Connect section badges for a user ---
+# Usage: _build_readme_connect <gh_user> <blog> <twitter>
+# Outputs badge markdown lines.
+_build_readme_connect() {
+	local gh_user="$1"
+	local blog="$2"
+	local twitter="$3"
+
+	local connect=""
+	if [[ -n "$blog" ]]; then
+		local blog_display
+		blog_display="${blog##*//}"
+		blog_display=$(_sanitize_md "$blog_display")
+		connect="${connect}[![Website](https://img.shields.io/badge/-${blog_display}-FF5722?style=flat-square&logo=data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI+PHBhdGggZmlsbD0id2hpdGUiIGQ9Ik0xMiAyQzYuNDggMiAyIDYuNDggMiAxMnM0LjQ4IDEwIDEwIDEwIDEwLTQuNDggMTAtMTBTMTcuNTIgMiAxMiAyem0tMSAxNy45M2MtMy45NS0uNDktNy0zLjg1LTctNy45MyAwLS42Mi4wOC0xLjIxLjIxLTEuNzlMOSAxNXY1YzAgLjU1LjQ1IDEgMSAxdjEuOTN6bTYuOS0yLjU0Yy0uMjYtLjgxLTEtMS4zOS0xLjktMS4zOWgtMXYtM2MwLS41NS0uNDUtMS0xLTFIOHYtMmgyYy41NSAwIDEtLjQ1IDEtMVY3aDJjMS4xIDAgMi0uOSAyLTJ2LS40MWMyLjkzIDEuMTkgNSA0LjA2IDUgNy40MSAwIDIuMDgtLjggMy45Ny0yLjEgNS4zOXoiLz48L3N2Zz4=&logoColor=white)](${blog})"$'\n'
+	fi
+	if [[ -n "$twitter" ]]; then
+		connect="${connect}[![X](https://img.shields.io/badge/-@${twitter}-000000?style=flat-square&logo=x&logoColor=white)](https://twitter.com/${twitter})"$'\n'
+	fi
+	connect="${connect}[![GitHub](https://img.shields.io/badge/-Follow-181717?style=flat-square&logo=github&logoColor=white)](https://github.com/${gh_user})"$'\n'
+
+	printf '%s' "$connect"
+	return 0
+}
+
 # --- Generate rich profile README from GitHub data ---
 _generate_rich_readme() {
 	local gh_user="$1"
@@ -1294,22 +1423,9 @@ _generate_rich_readme() {
 	local repos_json
 	repos_json=$(gh api "users/${gh_user}/repos?per_page=100&sort=updated" --paginate) || repos_json="[]"
 
-	# Unique languages from all repos (sorted)
-	local languages
-	languages=$(echo "$repos_json" | jq -r '[.[].language | select(. != null)] | unique | .[]')
-
-	# Build badge line
-	local badges=""
-	while IFS= read -r lang; do
-		[[ -z "$lang" ]] && continue
-		local badge
-		badge=$(_lang_badge "$lang")
-		badges="${badges}${badge}"$'\n'
-	done <<<"$languages"
-	# Always add common tooling badges
-	badges="${badges}"'![Docker](https://img.shields.io/badge/-Docker-2496ED?style=flat-square&logo=docker&logoColor=white)'$'\n'
-	badges="${badges}"'![Linux](https://img.shields.io/badge/-Linux-FCC624?style=flat-square&logo=linux&logoColor=black)'$'\n'
-	badges="${badges}"'![Git](https://img.shields.io/badge/-Git-F05032?style=flat-square&logo=git&logoColor=white)'$'\n'
+	# Build badge line and connect section via helpers
+	local badges
+	badges=$(_build_readme_badges "$repos_json")
 
 	# Build own repos section — single jq pass (no loop)
 	local own_repos
@@ -1324,17 +1440,8 @@ _generate_rich_readme() {
 	contrib_repos=$(_generate_contributions "$gh_user")
 
 	# Build connect section
-	local connect=""
-	if [[ -n "$blog" ]]; then
-		local blog_display
-		blog_display="${blog##*//}"
-		blog_display=$(_sanitize_md "$blog_display")
-		connect="${connect}[![Website](https://img.shields.io/badge/-${blog_display}-FF5722?style=flat-square&logo=data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI+PHBhdGggZmlsbD0id2hpdGUiIGQ9Ik0xMiAyQzYuNDggMiAyIDYuNDggMiAxMnM0LjQ4IDEwIDEwIDEwIDEwLTQuNDggMTAtMTBTMTcuNTIgMiAxMiAyem0tMSAxNy45M2MtMy45NS0uNDktNy0zLjg1LTctNy45MyAwLS42Mi4wOC0xLjIxLjIxLTEuNzlMOSAxNXY1YzAgLjU1LjQ1IDEgMSAxdjEuOTN6bTYuOS0yLjU0Yy0uMjYtLjgxLTEtMS4zOS0xLjktMS4zOWgtMXYtM2MwLS41NS0uNDUtMS0xLTFIOHYtMmgyYy41NSAwIDEtLjQ1IDEtMVY3aDJjMS4xIDAgMi0uOSAyLTJ2LS40MWMyLjkzIDEuMTkgNSA0LjA2IDUgNy40MSAwIDIuMDgtLjggMy45Ny0yLjEgNS4zOXoiLz48L3N2Zz4=&logoColor=white)](${blog})"$'\n'
-	fi
-	if [[ -n "$twitter" ]]; then
-		connect="${connect}[![X](https://img.shields.io/badge/-@${twitter}-000000?style=flat-square&logo=x&logoColor=white)](https://twitter.com/${twitter})"$'\n'
-	fi
-	connect="${connect}[![GitHub](https://img.shields.io/badge/-Follow-181717?style=flat-square&logo=github&logoColor=white)](https://github.com/${gh_user})"$'\n'
+	local connect
+	connect=$(_build_readme_connect "$gh_user" "$blog" "$twitter")
 
 	# Compose the README
 	{
@@ -1385,6 +1492,140 @@ _generate_rich_readme() {
 	return 0
 }
 
+# --- Clone or pull the profile repo to a local directory ---
+# Usage: _init_clone_or_pull <repo_slug> <repo_dir>
+# Returns 0 on success, 1 on failure.
+_init_clone_or_pull() {
+	local repo_slug="$1"
+	local repo_dir="$2"
+
+	if [[ ! -d "$repo_dir" ]]; then
+		echo "Cloning $repo_slug to $repo_dir"
+		git clone "git@github.com:${repo_slug}.git" "$repo_dir" 2>/dev/null ||
+			git clone "https://github.com/${repo_slug}.git" "$repo_dir" || {
+			echo "Error: failed to clone $repo_slug" >&2
+			return 1
+		}
+	else
+		echo "Local repo already exists at $repo_dir"
+		local init_branch
+		init_branch=$(git -C "$repo_dir" symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's|refs/remotes/origin/||' || true)
+		if [[ -z "$init_branch" ]]; then
+			init_branch=$(git -C "$repo_dir" branch --show-current 2>/dev/null || true)
+		fi
+		init_branch="${init_branch:-main}"
+		git -C "$repo_dir" pull --ff-only origin "$init_branch" 2>/dev/null || true
+	fi
+	return 0
+}
+
+# --- Register or update the profile repo entry in repos.json ---
+# Usage: _init_register_repos_json <repos_json> <repo_dir> <repo_slug>
+_init_register_repos_json() {
+	local repos_json="$1"
+	local repo_dir="$2"
+	local repo_slug="$3"
+
+	if [[ ! -f "$repos_json" ]] || ! command -v jq &>/dev/null; then
+		return 0
+	fi
+
+	local already_registered
+	already_registered=$(jq -r --arg path "$repo_dir" '
+		if .initialized_repos then
+			[.initialized_repos[] | select(.path == $path)] | length
+		else
+			[to_entries[] | select(.value.path == $path)] | length
+		end
+	' "$repos_json" 2>/dev/null)
+
+	local tmp_json
+	tmp_json=$(mktemp)
+	if [[ "$already_registered" == "0" ]]; then
+		echo "Registering profile repo in repos.json"
+		jq --arg path "$repo_dir" --arg slug "$repo_slug" '
+			.initialized_repos += [{
+				"path": $path,
+				"slug": $slug,
+				"priority": "profile",
+				"pulse": false,
+				"maintainer": ($slug | split("/")[0])
+			}]
+		' "$repos_json" >"$tmp_json" && mv "$tmp_json" "$repos_json"
+	else
+		# Ensure priority is set to "profile"
+		jq --arg path "$repo_dir" '
+			.initialized_repos |= map(
+				if .path == $path then .priority = "profile" else . end
+			)
+		' "$repos_json" >"$tmp_json" && mv "$tmp_json" "$repos_json"
+	fi
+	return 0
+}
+
+# --- Check if profile repo is already fully initialized ---
+# Usage: _init_check_already_initialized <repos_json> <repo_slug> <gh_user> <default_repo_dir>
+# Prints the effective repo_dir to stdout (may differ from default if repos.json has a path).
+# Exit codes: 0 = already done (caller should return 0), 1 = not done (caller should continue),
+#             2 = recovered from diverged history (caller should return 0).
+_init_check_already_initialized() {
+	local repos_json="$1"
+	local repo_slug="$2"
+	local gh_user="$3"
+	local default_repo_dir="$4"
+
+	if [[ ! -f "$repos_json" ]] || ! command -v jq &>/dev/null; then
+		echo "$default_repo_dir"
+		return 1
+	fi
+
+	local existing_profile
+	existing_profile=$(jq -r '
+		if .initialized_repos then
+			.initialized_repos[] | select(.priority == "profile") | .path // empty
+		else
+			to_entries[] | select(.value.priority == "profile") | .value.path // empty
+		end
+	' "$repos_json" | head -1)
+
+	if [[ -z "$existing_profile" ]]; then
+		echo "$default_repo_dir"
+		return 1
+	fi
+
+	if [[ -d "$existing_profile" ]] &&
+		[[ -f "${existing_profile}/README.md" ]] &&
+		grep -q '<!-- STATS-START -->' "${existing_profile}/README.md" 2>/dev/null; then
+		# Local looks good — verify we can still push (catches diverged history)
+		if git -C "$existing_profile" fetch origin 2>/dev/null; then
+			local local_head remote_head merge_base
+			local_head=$(git -C "$existing_profile" rev-parse HEAD 2>/dev/null || true)
+			remote_head=$(git -C "$existing_profile" rev-parse FETCH_HEAD 2>/dev/null || true)
+			if [[ -n "$local_head" && -n "$remote_head" ]]; then
+				merge_base=$(git -C "$existing_profile" merge-base "$local_head" "$remote_head" 2>/dev/null || true)
+				if [[ -z "$merge_base" ]]; then
+					echo "Diverged history detected — re-initializing profile repo..." >&2
+					_recover_diverged_profile "$existing_profile" "$repo_slug" "main" "$gh_user"
+					echo "Profile repo recovered at $existing_profile" >&2
+					echo "$existing_profile"
+					return 2
+				fi
+			fi
+		fi
+		echo "Profile repo already initialized at $existing_profile" >&2
+		echo "$existing_profile"
+		return 0
+	fi
+
+	# Use existing path if directory exists (may just need README seeding)
+	if [[ -d "$existing_profile" ]]; then
+		echo "$existing_profile"
+	else
+		echo "$default_repo_dir"
+	fi
+	return 1
+}
+
 # --- Initialize profile README repo ---
 # Creates the username/username GitHub repo if it doesn't exist, clones it,
 # seeds a starter README with stat markers, and registers it in repos.json.
@@ -1403,49 +1644,14 @@ cmd_init() {
 	}
 
 	local repo_slug="${gh_user}/${gh_user}"
-	local repo_dir="${HOME}/Git/${gh_user}"
 	local repos_json="${HOME}/.config/aidevops/repos.json"
 
-	# Check if already fully initialized: repos.json entry + local dir + README with markers.
-	# Also verify the local clone is in sync with the remote (catches repo deletion/recreation).
-	# If any piece is missing, fall through to recreate what's needed.
-	if [[ -f "$repos_json" ]] && command -v jq &>/dev/null; then
-		local existing_profile
-		existing_profile=$(jq -r '
-			if .initialized_repos then
-				.initialized_repos[] | select(.priority == "profile") | .path // empty
-			else
-				to_entries[] | select(.value.priority == "profile") | .value.path // empty
-			end
-		' "$repos_json" | head -1)
-		if [[ -n "$existing_profile" ]]; then
-			if [[ -d "$existing_profile" ]] &&
-				[[ -f "${existing_profile}/README.md" ]] &&
-				grep -q '<!-- STATS-START -->' "${existing_profile}/README.md" 2>/dev/null; then
-				# Local looks good — verify we can still push (catches diverged history)
-				if git -C "$existing_profile" fetch origin 2>/dev/null; then
-					local local_head remote_head merge_base
-					local_head=$(git -C "$existing_profile" rev-parse HEAD 2>/dev/null || true)
-					remote_head=$(git -C "$existing_profile" rev-parse FETCH_HEAD 2>/dev/null || true)
-					if [[ -n "$local_head" && -n "$remote_head" ]]; then
-						merge_base=$(git -C "$existing_profile" merge-base "$local_head" "$remote_head" 2>/dev/null || true)
-						if [[ -z "$merge_base" ]]; then
-							# No common ancestor — histories have diverged (repo was recreated)
-							echo "Diverged history detected — re-initializing profile repo..."
-							_recover_diverged_profile "$existing_profile" "$repo_slug" "main" "$gh_user"
-							echo "Profile repo recovered at $existing_profile"
-							return 0
-						fi
-					fi
-				fi
-				echo "Profile repo already initialized at $existing_profile"
-				return 0
-			fi
-			# Use existing path if directory exists (may just need README seeding)
-			if [[ -d "$existing_profile" ]]; then
-				repo_dir="$existing_profile"
-			fi
-		fi
+	# Check if already fully initialized
+	local repo_dir
+	repo_dir=$(_init_check_already_initialized "$repos_json" "$repo_slug" "$gh_user" "${HOME}/Git/${gh_user}")
+	local check_rc=$?
+	if [[ "$check_rc" -eq 0 || "$check_rc" -eq 2 ]]; then
+		return 0
 	fi
 
 	# Create the repo on GitHub if it doesn't exist
@@ -1455,31 +1661,13 @@ cmd_init() {
 			echo "Error: failed to create repo $repo_slug" >&2
 			return 1
 		}
-		# Give GitHub a moment to initialize the repo before cloning
 		sleep 2
 	else
 		echo "GitHub repo $repo_slug already exists"
 	fi
 
-	# Clone if not already local, otherwise pull latest
-	if [[ ! -d "$repo_dir" ]]; then
-		echo "Cloning $repo_slug to $repo_dir"
-		git clone "git@github.com:${repo_slug}.git" "$repo_dir" 2>/dev/null ||
-			git clone "https://github.com/${repo_slug}.git" "$repo_dir" || {
-			echo "Error: failed to clone $repo_slug" >&2
-			return 1
-		}
-	else
-		echo "Local repo already exists at $repo_dir"
-		# Pull latest to avoid conflicts when seeding README
-		local init_branch
-		init_branch=$(git -C "$repo_dir" symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's|refs/remotes/origin/||' || true)
-		if [[ -z "$init_branch" ]]; then
-			init_branch=$(git -C "$repo_dir" branch --show-current 2>/dev/null || true)
-		fi
-		init_branch="${init_branch:-main}"
-		git -C "$repo_dir" pull --ff-only origin "$init_branch" 2>/dev/null || true
-	fi
+	# Clone or pull the local copy
+	_init_clone_or_pull "$repo_slug" "$repo_dir" || return 1
 
 	# Detect default branch for push operations
 	local default_branch
@@ -1490,8 +1678,6 @@ cmd_init() {
 	default_branch="${default_branch:-main}"
 
 	# Seed README.md with stat markers.
-	# If the file doesn't exist or is the default GitHub template, generate a full README.
-	# If the file exists with real user content but lacks markers, inject markers into it.
 	local readme_path="${repo_dir}/README.md"
 	if [[ ! -f "$readme_path" ]]; then
 		echo "Creating rich profile README..."
@@ -1509,49 +1695,13 @@ cmd_init() {
 		git -C "$repo_dir" add README.md
 		git -C "$repo_dir" commit -m "feat: initialize profile README with aidevops stat markers" --no-verify 2>/dev/null || true
 		if ! git -C "$repo_dir" push origin "$default_branch" 2>/dev/null; then
-			# Push failed — likely diverged history (repo was deleted and recreated).
-			# Re-clone to get the new remote history, then re-seed.
 			echo "Push failed — attempting recovery from diverged history..." >&2
 			_recover_diverged_profile "$repo_dir" "$repo_slug" "$default_branch" "$gh_user"
 		fi
 	fi
 
 	# Register in repos.json
-	if [[ -f "$repos_json" ]] && command -v jq &>/dev/null; then
-		# Check if already registered
-		local already_registered
-		already_registered=$(jq -r --arg path "$repo_dir" '
-			if .initialized_repos then
-				[.initialized_repos[] | select(.path == $path)] | length
-			else
-				[to_entries[] | select(.value.path == $path)] | length
-			end
-		' "$repos_json" 2>/dev/null)
-
-		if [[ "$already_registered" == "0" ]]; then
-			echo "Registering profile repo in repos.json"
-			local tmp_json
-			tmp_json=$(mktemp)
-			jq --arg path "$repo_dir" --arg slug "$repo_slug" '
-				.initialized_repos += [{
-					"path": $path,
-					"slug": $slug,
-					"priority": "profile",
-					"pulse": false,
-					"maintainer": ($slug | split("/")[0])
-				}]
-			' "$repos_json" >"$tmp_json" && mv "$tmp_json" "$repos_json"
-		else
-			# Ensure priority is set to "profile"
-			local tmp_json
-			tmp_json=$(mktemp)
-			jq --arg path "$repo_dir" '
-				.initialized_repos |= map(
-					if .path == $path then .priority = "profile" else . end
-				)
-			' "$repos_json" >"$tmp_json" && mv "$tmp_json" "$repos_json"
-		fi
-	fi
+	_init_register_repos_json "$repos_json" "$repo_dir" "$repo_slug"
 
 	# Run first update
 	echo "Running first stats update..."
@@ -1566,6 +1716,104 @@ cmd_init() {
 	echo ""
 	echo "Stats will auto-update hourly (configured by setup.sh)."
 
+	return 0
+}
+
+# --- Inject the UPDATED timestamp into a README file in-place ---
+# Usage: _update_inject_timestamp <file>
+# Replaces content between <!-- UPDATED-START --> and <!-- UPDATED-END --> markers.
+_update_inject_timestamp() {
+	local file="$1"
+	if ! grep -q '<!-- UPDATED-START -->' "$file"; then
+		return 0
+	fi
+	local updated_at
+	updated_at=$(date -u +"%Y-%m-%d %H:%M UTC")
+	local updated_tmp
+	updated_tmp=$(mktemp)
+	awk -v ts="$updated_at" '
+		/<!-- UPDATED-START -->/ {
+			print "<!-- UPDATED-START -->"
+			skip = 1
+			next
+		}
+		/<!-- UPDATED-END -->/ {
+			skip = 0
+			printf "_Stats auto-updated %s by [aidevops](https://aidevops.sh) pulse._\n", ts
+			print "<!-- UPDATED-END -->"
+			next
+		}
+		!skip { print }
+	' "$file" >"$updated_tmp"
+	mv "$updated_tmp" "$file"
+	return 0
+}
+
+# --- Ensure STATS markers exist in a README, injecting or regenerating as needed ---
+# Usage: _update_inject_markers_if_needed <profile_repo> <readme_path>
+# Commits the injection to the profile repo if changes were made.
+_update_inject_markers_if_needed() {
+	local profile_repo="$1"
+	local readme_path="$2"
+
+	if grep -q '<!-- STATS-START -->' "$readme_path" && grep -q '<!-- STATS-END -->' "$readme_path"; then
+		return 0
+	fi
+
+	if _is_default_github_template "$readme_path"; then
+		echo "Default GitHub template detected — replacing with rich profile README..."
+		local gh_user
+		gh_user=$(_resolve_profile_user "$profile_repo")
+		if [[ -n "$gh_user" ]]; then
+			_generate_rich_readme "$gh_user" "$readme_path"
+		else
+			echo "Could not resolve username — injecting markers only..."
+			_inject_markers_into_readme "$readme_path"
+		fi
+	else
+		echo "Markers missing from README — injecting them..."
+		_inject_markers_into_readme "$readme_path"
+	fi
+	git -C "$profile_repo" add README.md
+	git -C "$profile_repo" commit -m "feat: initialize profile README with aidevops stat markers" --no-verify 2>/dev/null || true
+	return 0
+}
+
+# --- Push a profile repo commit, recovering from diverged history if needed ---
+# Usage: _update_push_with_recovery <profile_repo> <commit_msg> [extra_args...]
+# Returns 0 always (recovery is attempted on push failure).
+_update_push_with_recovery() {
+	local profile_repo="$1"
+	local commit_msg="$2"
+	shift 2
+	local extra_args=("$@")
+
+	git -C "$profile_repo" add README.md
+	git -C "$profile_repo" commit -m "$commit_msg" --no-verify 2>/dev/null || {
+		echo "No changes to commit"
+		return 0
+	}
+
+	local default_branch
+	default_branch=$(git -C "$profile_repo" symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's|refs/remotes/origin/||' || true)
+	if [[ -z "$default_branch" ]]; then
+		default_branch=$(git -C "$profile_repo" branch --show-current 2>/dev/null || true)
+	fi
+	default_branch="${default_branch:-main}"
+
+	if ! git -C "$profile_repo" push origin "$default_branch" 2>/dev/null; then
+		echo "Push failed — attempting recovery from diverged history..." >&2
+		local gh_user
+		gh_user=$(_resolve_profile_user "$profile_repo")
+		if [[ -n "$gh_user" ]]; then
+			local repo_slug="${gh_user}/${gh_user}"
+			_recover_diverged_profile "$profile_repo" "$repo_slug" "$default_branch" "$gh_user"
+			echo "Running fresh stats update after recovery..."
+			cmd_update "${extra_args[@]}"
+		else
+			echo "Warning: push failed and could not resolve username for recovery" >&2
+		fi
+	fi
 	return 0
 }
 
@@ -1602,48 +1850,22 @@ cmd_update() {
 	fi
 	if [[ "$last_contrib_date" != "$today" ]] && grep -q '<!-- CONTRIBUTIONS-START -->' "$readme_path" 2>/dev/null; then
 		echo "Daily contributions refresh triggered..."
-		# Run contributions update first (it commits+pushes independently if changed)
 		if [[ "$dry_run" == true ]]; then
 			cmd_update_contributions "--dry-run" || echo "Warning: contributions update failed — continuing with stats" >&2
 		else
 			cmd_update_contributions || echo "Warning: contributions update failed — continuing with stats" >&2
 		fi
-		# Re-read the readme in case contributions update modified it
 		if [[ "$dry_run" != true ]]; then
 			git -C "$profile_repo" pull --rebase --quiet 2>/dev/null || true
 		fi
 	fi
 
-	# Update stats markers only — preserve all other sections.
-	local source_file
-	source_file="$readme_path"
-
-	# Ensure markers exist in the source content — replace default template or inject into custom content
-	if ! grep -q '<!-- STATS-START -->' "$source_file" || ! grep -q '<!-- STATS-END -->' "$source_file"; then
-		if _is_default_github_template "$source_file"; then
-			echo "Default GitHub template detected — replacing with rich profile README..."
-			local gh_user
-			gh_user=$(_resolve_profile_user "$profile_repo")
-			if [[ -n "$gh_user" ]]; then
-				_generate_rich_readme "$gh_user" "$source_file"
-			else
-				echo "Could not resolve username — injecting markers only..."
-				_inject_markers_into_readme "$source_file"
-			fi
-		else
-			echo "Markers missing from README — injecting them..."
-			_inject_markers_into_readme "$source_file"
-		fi
-		# Commit the marker injection/replacement before proceeding with stats update
-		git -C "$profile_repo" add README.md
-		git -C "$profile_repo" commit -m "feat: initialize profile README with aidevops stat markers" --no-verify 2>/dev/null || true
-	fi
+	# Ensure markers exist — inject or regenerate if missing
+	_update_inject_markers_if_needed "$profile_repo" "$readme_path"
 
 	# Replace content between markers
 	local tmp_file
 	tmp_file=$(mktemp)
-
-	# Inject the stats via env var and re-run
 	NEW_STATS="$new_stats" awk '
 		/<!-- STATS-START -->/ {
 			print "<!-- STATS-START -->"
@@ -1657,7 +1879,7 @@ cmd_update() {
 			next
 		}
 		!skip { print }
-	' "$source_file" >"$tmp_file"
+	' "$readme_path" >"$tmp_file"
 
 	# Check if content changed, ignoring UPDATED marker block
 	local old_normalized new_normalized
@@ -1669,28 +1891,8 @@ cmd_update() {
 		return 0
 	fi
 
-	# Update timestamp if markers exist
-	if grep -q '<!-- UPDATED-START -->' "$tmp_file"; then
-		local updated_at
-		updated_at=$(date -u +"%Y-%m-%d %H:%M UTC")
-		local updated_tmp
-		updated_tmp=$(mktemp)
-		awk -v ts="$updated_at" '
-			/<!-- UPDATED-START -->/ {
-				print "<!-- UPDATED-START -->"
-				skip = 1
-				next
-			}
-			/<!-- UPDATED-END -->/ {
-				skip = 0
-				printf "_Stats auto-updated %s by [aidevops](https://aidevops.sh) pulse._\n", ts
-				print "<!-- UPDATED-END -->"
-				next
-			}
-			!skip { print }
-		' "$tmp_file" >"$updated_tmp"
-		mv "$updated_tmp" "$tmp_file"
-	fi
+	# Update timestamp
+	_update_inject_timestamp "$tmp_file"
 
 	if [[ "$dry_run" == true ]]; then
 		echo "--- DRY RUN: would write to $readme_path ---"
@@ -1699,43 +1901,105 @@ cmd_update() {
 		return 0
 	fi
 
-	# Apply changes
+	# Apply changes and push
 	mv "$tmp_file" "$readme_path"
+	_update_push_with_recovery "$profile_repo" "chore: update profile stats ($(date -u +%Y-%m-%d))" "$@"
 
-	# Commit and push
+	echo "Profile README updated and pushed"
+	return 0
+}
+
+# --- Migrate static Contributions section to auto-updated markers ---
+# Usage: _update_contributions_migrate_markers <readme_path> <dry_run>
+# Returns 0 on success, 1 if END marker still missing after migration.
+_update_contributions_migrate_markers() {
+	local readme_path="$1"
+	local dry_run="$2"
+
+	if grep -q '<!-- CONTRIBUTIONS-START -->' "$readme_path"; then
+		# Markers already present — check for END marker
+		if ! grep -q '<!-- CONTRIBUTIONS-END -->' "$readme_path"; then
+			if [[ "$dry_run" == true ]]; then
+				echo "Note: markers would be injected on actual run"
+				return 1
+			fi
+			echo "Error: <!-- CONTRIBUTIONS-END --> marker not found" >&2
+			return 1
+		fi
+		return 0
+	fi
+
+	if [[ "$dry_run" == true ]]; then
+		echo "Note: CONTRIBUTIONS markers not found — would migrate static section"
+		return 1
+	fi
+
+	echo "Migrating static Contributions section to auto-updated markers..."
+	local inject_tmp
+	inject_tmp=$(mktemp)
+	awk '
+		/^## Contributions/ { in_old_contrib = 1; next }
+		in_old_contrib && /^## / {
+			in_old_contrib = 0
+			print "<!-- CONTRIBUTIONS-START -->"
+			print "<!-- CONTRIBUTIONS-END -->"
+			print ""
+			print $0
+			next
+		}
+		in_old_contrib { next }
+		{ print }
+	' "$readme_path" >"$inject_tmp"
+	# If EOF reached while still in old section, append markers
+	if ! grep -q '<!-- CONTRIBUTIONS-START -->' "$inject_tmp"; then
+		{
+			echo "<!-- CONTRIBUTIONS-START -->"
+			echo "<!-- CONTRIBUTIONS-END -->"
+		} >>"$inject_tmp"
+	fi
+	mv "$inject_tmp" "$readme_path"
+
+	if ! grep -q '<!-- CONTRIBUTIONS-END -->' "$readme_path"; then
+		echo "Error: <!-- CONTRIBUTIONS-END --> marker not found after migration" >&2
+		return 1
+	fi
+	return 0
+}
+
+# --- Commit and push contributions update, recording daily throttle timestamp ---
+# Usage: _update_contributions_push <profile_repo>
+_update_contributions_push() {
+	local profile_repo="$1"
+	local readme_path="${profile_repo}/README.md"
+
+	# Update timestamp
+	_update_inject_timestamp "$readme_path"
+
 	local commit_msg
-	commit_msg="chore: update profile stats ($(date -u +%Y-%m-%d))"
+	commit_msg="chore: update profile contributions ($(date -u +%Y-%m-%d))"
 	git -C "$profile_repo" add README.md
 	git -C "$profile_repo" commit -m "$commit_msg" --no-verify 2>/dev/null || {
 		echo "No changes to commit"
 		return 0
 	}
-	# Push to whichever default branch the repo uses (main or master)
+
 	local default_branch
 	default_branch=$(git -C "$profile_repo" symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's|refs/remotes/origin/||' || true)
 	if [[ -z "$default_branch" ]]; then
 		default_branch=$(git -C "$profile_repo" branch --show-current 2>/dev/null || true)
 	fi
 	default_branch="${default_branch:-main}"
-	if ! git -C "$profile_repo" push origin "$default_branch" 2>/dev/null; then
-		# Push failed — likely diverged history (repo was deleted and recreated).
-		# Resolve the GitHub username and attempt recovery.
-		echo "Push failed — attempting recovery from diverged history..." >&2
-		local gh_user
-		gh_user=$(_resolve_profile_user "$profile_repo")
-		if [[ -n "$gh_user" ]]; then
-			local repo_slug="${gh_user}/${gh_user}"
-			_recover_diverged_profile "$profile_repo" "$repo_slug" "$default_branch" "$gh_user"
-			# After recovery, run a fresh update cycle to populate stats
-			echo "Running fresh stats update after recovery..."
-			cmd_update "$@"
-		else
-			echo "Warning: push failed and could not resolve username for recovery" >&2
-		fi
+	git -C "$profile_repo" push origin "$default_branch" 2>/dev/null || {
+		echo "Warning: push failed — contributions committed locally" >&2
 		return 0
-	fi
+	}
 
-	echo "Profile README updated and pushed"
+	# Record last-run timestamp for daily throttle
+	local cache_dir="${HOME}/.aidevops/cache"
+	mkdir -p "$cache_dir"
+	date -u +"%Y-%m-%d" >"${cache_dir}/contributions-last-update"
+
+	echo "Profile contributions updated and pushed"
 	return 0
 }
 
@@ -1758,51 +2022,8 @@ cmd_update_contributions() {
 		return 1
 	fi
 
-	# Check for CONTRIBUTIONS markers — if missing, migrate from static section.
-	# Removes the old static "## Contributions" block and replaces it with markers.
-	if ! grep -q '<!-- CONTRIBUTIONS-START -->' "$readme_path"; then
-		if [[ "$dry_run" == true ]]; then
-			echo "Note: CONTRIBUTIONS markers not found — would migrate static section"
-		else
-			echo "Migrating static Contributions section to auto-updated markers..."
-			local inject_tmp
-			inject_tmp=$(mktemp)
-			awk '
-				# Skip the old static "## Contributions" section entirely
-				/^## Contributions/ { in_old_contrib = 1; next }
-				in_old_contrib && /^## / {
-					# Hit the next heading — end of old section
-					in_old_contrib = 0
-					print "<!-- CONTRIBUTIONS-START -->"
-					print "<!-- CONTRIBUTIONS-END -->"
-					print ""
-					print $0
-					next
-				}
-				in_old_contrib { next }
-				{ print }
-			' "$readme_path" >"$inject_tmp"
-			# If we reached EOF while still in old contrib section (no ## Connect after it),
-			# append the markers at the end
-			if ! grep -q '<!-- CONTRIBUTIONS-START -->' "$inject_tmp"; then
-				{
-					echo "<!-- CONTRIBUTIONS-START -->"
-					echo "<!-- CONTRIBUTIONS-END -->"
-				} >>"$inject_tmp"
-			fi
-			mv "$inject_tmp" "$readme_path"
-		fi
-	fi
-
-	if ! grep -q '<!-- CONTRIBUTIONS-END -->' "$readme_path"; then
-		# In dry-run mode, markers may not exist yet — that's expected
-		if [[ "$dry_run" == true ]]; then
-			echo "Note: markers would be injected on actual run"
-			return 0
-		fi
-		echo "Error: <!-- CONTRIBUTIONS-END --> marker not found" >&2
-		return 1
-	fi
+	# Ensure CONTRIBUTIONS markers exist (migrate from static section if needed)
+	_update_contributions_migrate_markers "$readme_path" "$dry_run" || return 0
 
 	# Resolve GitHub username
 	local gh_user
@@ -1857,57 +2078,9 @@ cmd_update_contributions() {
 		return 0
 	fi
 
-	# Apply changes
+	# Apply changes and push
 	mv "$tmp_file" "$readme_path"
-
-	# Update timestamp
-	if grep -q '<!-- UPDATED-START -->' "$readme_path"; then
-		local updated_at
-		updated_at=$(date -u +"%Y-%m-%d %H:%M UTC")
-		local updated_tmp
-		updated_tmp=$(mktemp)
-		awk -v ts="$updated_at" '
-			/<!-- UPDATED-START -->/ {
-				print "<!-- UPDATED-START -->"
-				skip = 1
-				next
-			}
-			/<!-- UPDATED-END -->/ {
-				skip = 0
-				printf "_Stats auto-updated %s by [aidevops](https://aidevops.sh) pulse._\n", ts
-				print "<!-- UPDATED-END -->"
-				next
-			}
-			!skip { print }
-		' "$readme_path" >"$updated_tmp"
-		mv "$updated_tmp" "$readme_path"
-	fi
-
-	# Commit and push
-	local commit_msg
-	commit_msg="chore: update profile contributions ($(date -u +%Y-%m-%d))"
-	git -C "$profile_repo" add README.md
-	git -C "$profile_repo" commit -m "$commit_msg" --no-verify 2>/dev/null || {
-		echo "No changes to commit"
-		return 0
-	}
-	local default_branch
-	default_branch=$(git -C "$profile_repo" symbolic-ref refs/remotes/origin/HEAD 2>/dev/null | sed 's|refs/remotes/origin/||' || true)
-	if [[ -z "$default_branch" ]]; then
-		default_branch=$(git -C "$profile_repo" branch --show-current 2>/dev/null || true)
-	fi
-	default_branch="${default_branch:-main}"
-	git -C "$profile_repo" push origin "$default_branch" 2>/dev/null || {
-		echo "Warning: push failed — contributions committed locally" >&2
-		return 0
-	}
-
-	# Record last-run timestamp for daily throttle
-	local cache_dir="${HOME}/.aidevops/cache"
-	mkdir -p "$cache_dir"
-	date -u +"%Y-%m-%d" >"${cache_dir}/contributions-last-update"
-
-	echo "Profile contributions updated and pushed"
+	_update_contributions_push "$profile_repo"
 	return 0
 }
 
