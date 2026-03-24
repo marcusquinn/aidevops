@@ -259,7 +259,7 @@ cmd_recall() {
 	local results
 	results=$(
 		db -json "$MEMORY_DB" <<EOF
-.param set :query "$escaped_query"
+.param set :query '${escaped_query}'
 SELECT 
     learnings.id,
     learnings.content,
@@ -316,6 +316,7 @@ EOF
 		if [[ -f "$global_db" ]]; then
 			shared_results=$(
 				db -json "$global_db" <<EOF
+.param set :query '${escaped_query}'
 SELECT 
     learnings.id,
     learnings.content,
@@ -328,7 +329,7 @@ SELECT
     bm25(learnings) as score
 FROM learnings
 LEFT JOIN learning_access ON learnings.id = learning_access.id
-WHERE learnings MATCH '$escaped_query' $extra_filters
+WHERE learnings MATCH :query $extra_filters
 ORDER BY score
 LIMIT $limit;
 EOF
