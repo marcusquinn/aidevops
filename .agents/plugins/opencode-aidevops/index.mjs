@@ -19,6 +19,7 @@ import { createTtsrHooks } from "./ttsr.mjs";
 import { createPoolAuthHook, createOpenAIPoolAuthHook, createCursorPoolAuthHook, createPoolTool, initPoolAuth, registerPoolProvider, getAccounts } from "./oauth-pool.mjs";
 import { createProviderAuthHook } from "./provider-auth.mjs";
 import { startCursorProxy, registerCursorProvider, getCursorProxyPort } from "./cursor-proxy.mjs";
+import { startGoogleProxy, registerGoogleProvider, getGoogleProxyPort } from "./google-proxy.mjs";
 
 const HOME = homedir();
 const AGENTS_DIR = join(HOME, ".aidevops", "agents");
@@ -397,6 +398,35 @@ async function configHook(config) {
     }
   }
 
+  // --- Google proxy: register provider with discovered models (issue #5622) ---
+  let googleModelsRegistered = 0;
+  const googlePort = getGoogleProxyPort();
+  if (googlePort) {
+    try {
+      const { discoverGoogleModels } = await import("./google-proxy.mjs");
+      const { getAccounts: getPoolAccounts, ensureValidToken: ensureToken } = await import("./oauth-pool.mjs");
+      const accounts = getPoolAccounts("google");
+      let models = [];
+
+      if (accounts.length > 0) {
+        const account = accounts.find((a) => a.status === "active");
+        if (account) {
+          const token = await ensureToken("google", account);
+          if (token) {
+            models = await discoverGoogleModels(token);
+          }
+        }
+      }
+
+      if (models.length > 0 && registerGoogleProvider(config, googlePort, models)) {
+        googleModelsRegistered = models.length;
+      }
+    } catch (err) {
+      // Non-fatal — Google models just won't appear in the picker
+      console.error(`[aidevops] Config hook: Google model registration failed: ${err.message}`);
+    }
+  }
+
   // Silent unless something was actually changed (avoids TUI flash on startup)
   const parts = [];
   if (agentsInjected > 0) parts.push(`${agentsInjected} agents`);
@@ -404,6 +434,7 @@ async function configHook(config) {
   if (agentToolsUpdated > 0) parts.push(`${agentToolsUpdated} agent tool perms`);
   if (poolCleaned > 0) parts.push(`cleaned ${poolCleaned} stale pool provider${poolCleaned === 1 ? "" : "s"}`);
   if (cursorModelsRegistered > 0) parts.push(`${cursorModelsRegistered} Cursor models`);
+  if (googleModelsRegistered > 0) parts.push(`${googleModelsRegistered} Google models`);
 
   if (parts.length > 0) {
     console.error(`[aidevops] Config hook: ${parts.join(", ")}`);
@@ -1099,6 +1130,12 @@ const {
  *    a Node.js H2 bridge subprocess. Supports true streaming, tool calling, and
  *    model discovery via gRPC. Adds "cursor-pool" provider for account management
  *    with LRU rotation and 429 failover. Bypasses OpenCode's broken auth hooks.
+ * 11. Google proxy — auth-translating HTTP proxy for Google Generative AI (issue #5622)
+ *    Bridges OAuth pool tokens to OpenCode's built-in Google provider (@ai-sdk/google).
+ *    The SDK sends x-goog-api-key but pool tokens are OAuth Bearer — the proxy
+ *    rewrites headers (strips x-goog-api-key, adds Authorization: Bearer).
+ *    Discovers models from the API on startup. Supports SSE streaming for
+ *    streamGenerateContent. Pool rotation on 429. Port 32124 (fixed).
  *
  * MCP registration (Phase 2, t008.2):
  * - Registers all known MCP servers from a data-driven registry
@@ -1126,6 +1163,29 @@ export async function AidevopsPlugin({ directory, client }) {
       }
     } catch (err) {
       console.error(`[aidevops] Cursor gRPC proxy failed to start: ${err.message}`);
+    }
+  }
+
+  // Phase 9: Google auth-translating proxy (issue #5622)
+  // Bridges OAuth pool tokens to OpenCode's built-in Google provider (@ai-sdk/google).
+  // The SDK sends x-goog-api-key but our pool has OAuth Bearer tokens — the proxy
+  // translates between the two auth methods (HTTP-to-HTTP header rewriting).
+  let googleProxyResult = null;
+  const googleAccounts = getAccounts("google");
+  if (googleAccounts.length > 0) {
+    try {
+      googleProxyResult = await startGoogleProxy(client);
+      if (googleProxyResult) {
+        // Set placeholder API key so @ai-sdk/google doesn't reject requests
+        // with "missing key" before they reach the proxy. The proxy handles
+        // real auth via OAuth Bearer tokens from the pool.
+        if (!process.env.GOOGLE_GENERATIVE_AI_API_KEY) {
+          process.env.GOOGLE_GENERATIVE_AI_API_KEY = "google-pool-proxy";
+        }
+        console.error(`[aidevops] Google proxy started on port ${googleProxyResult.port} with ${googleProxyResult.models.length} models`);
+      }
+    } catch (err) {
+      console.error(`[aidevops] Google proxy failed to start: ${err.message}`);
     }
   }
 
