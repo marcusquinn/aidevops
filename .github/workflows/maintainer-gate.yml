@@ -214,7 +214,7 @@ jobs:
             gh issue comment "$ISSUE_NUMBER" --repo "$REPO" --body "<!-- label-protection-notice -->
           The \`needs-maintainer-review\` label was re-applied automatically.
 
-          Only repository maintainers (admin/maintain permission) can remove triage labels from external issues. This prevents the development pipeline from picking up unreviewed external contributions.
+          Only repository collaborators with write access or higher (write/maintain/admin permission) can remove triage labels from external issues. This prevents the development pipeline from picking up unreviewed external contributions.
 
           If you believe this issue is ready for development, please ask a maintainer to review and approve it."
           fi
