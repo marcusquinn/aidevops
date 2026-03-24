@@ -1165,11 +1165,26 @@ export async function AidevopsPlugin({ directory, client }) {
     // Phase 6: LLM observability — capture assistant message metadata (t1308)
     event: async (input) => handleEvent(input),
 
-    // Phase 7: OAuth multi-account pool (t1543, t1548, t1549)
-    // OpenCode v1.2.27 only supports auth as a single object, not an array.
-    // Using the Anthropic pool hook as the primary — it's the most-used provider.
-    // OpenAI and Cursor accounts are added via oauth-pool-helper.sh instead.
-    auth: createPoolAuthHook(client),
+    // Phase 7: OAuth multi-account pool + provider auth (t1543, t1548, t1549)
+    //
+    // OpenCode only supports a single auth hook. We must merge:
+    //   - createPoolAuthHook: provides `methods` (OAuth flow UI for adding accounts)
+    //   - createProviderAuthHook: provides `loader` (custom fetch with Bearer auth,
+    //     beta headers, tool prefixing, 401/403/429 recovery)
+    //
+    // The hook MUST use provider: "anthropic" to intercept the built-in provider.
+    // Using "anthropic-pool" only registers a custom provider for the management
+    // UI — it doesn't intercept actual API calls, causing OpenCode to send the
+    // OAuth token as x-api-key (wrong) instead of Authorization: Bearer (correct).
+    auth: (() => {
+      const poolHook = createPoolAuthHook(client);
+      const providerHook = createProviderAuthHook(client);
+      return {
+        provider: "anthropic", // MUST be "anthropic" to intercept the built-in provider
+        methods: poolHook.methods, // OAuth flow UI from pool hook
+        loader: providerHook.loader, // Custom fetch with Bearer auth from provider hook
+      };
+    })(),
 
     // Compaction context (includes OMOC state when detected)
     "experimental.session.compacting": async (input, output) =>
