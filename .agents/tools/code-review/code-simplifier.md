@@ -387,21 +387,49 @@ The pulse already skips `needs-maintainer-review` issues (see pulse.md "External
 
 ## Integration with Quality Workflow
 
-Code simplification analysis fits into the quality workflow as a periodic review, not a per-commit gate:
+Code simplification analysis fits into the quality workflow via two input paths:
+
+### 1. Automated weekly scan (GH#5628)
+
+`pulse-wrapper.sh` runs a weekly complexity scan that uses the same awk-based function complexity check as CI. It creates `simplification-debt` issues for files exceeding the per-file violation threshold (default: 5+ functions >100 lines). Issues are deduplicated against existing open issues by repo-relative file path.
 
 ```text
-Periodic review --> /code-simplifier (analyse)
-                        |
-                    Issues created (needs-maintainer-review)
-                        |
-                    Maintainer comments "approved" or "declined: reason"
-                        |
-                    Pulse processes comment (labels + close)
-                        |
-                    Approved items dispatched (priority 8)
-                        |
-                    Worker implements in worktree + PR
+pulse-wrapper.sh (weekly) --> awk complexity scan
+                                  |
+                              Files with 5+ violations
+                                  |
+                              Dedup against open issues (by repo-relative path)
+                                  |
+                              Create issues (simplification-debt + needs-maintainer-review)
 ```
+
+Configuration: `COMPLEXITY_SCAN_INTERVAL` (default 7 days), `COMPLEXITY_FILE_VIOLATION_THRESHOLD` (default 5).
+
+### 2. Manual analysis
+
+```text
+/code-simplifier (analyse) --> Issues created (needs-maintainer-review)
+```
+
+### Common pipeline (both paths)
+
+```text
+Issues created (needs-maintainer-review)
+    |
+Maintainer comments "approved" or "declined: reason"
+    |
+Pulse processes comment (labels + close)
+    |
+Approved items dispatched (priority 8)
+    |
+Worker implements in worktree + PR
+    |
+CI threshold ratchets down (.agents/configs/complexity-thresholds.conf)
+```
+
+### CI threshold ratchet (GH#5628)
+
+CI complexity thresholds are stored in `.agents/configs/complexity-thresholds.conf` instead of being hardcoded. After each batch of simplification PRs merges, lower the thresholds in a chore commit to prevent regression. The file contains `FUNCTION_COMPLEXITY_THRESHOLD`, `NESTING_DEPTH_THRESHOLD`, and `FILE_SIZE_THRESHOLD`.
 
 ## Pulse and Supervisor Integration
 

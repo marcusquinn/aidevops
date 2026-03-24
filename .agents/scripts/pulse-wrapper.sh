@@ -224,7 +224,16 @@ REPOS_JSON="${REPOS_JSON:-${HOME}/.config/aidevops/repos.json}"
 STATE_FILE="${HOME}/.aidevops/logs/pulse-state.txt"
 QUEUE_METRICS_FILE="${HOME}/.aidevops/logs/pulse-queue-metrics"
 SCOPE_FILE="${HOME}/.aidevops/logs/pulse-scope-repos"
+COMPLEXITY_SCAN_LAST_RUN="${HOME}/.aidevops/logs/complexity-scan-last-run"
+COMPLEXITY_SCAN_INTERVAL="${COMPLEXITY_SCAN_INTERVAL:-604800}"                  # 7 days in seconds
+COMPLEXITY_FUNC_LINE_THRESHOLD="${COMPLEXITY_FUNC_LINE_THRESHOLD:-100}"         # Functions longer than this are violations
+COMPLEXITY_FILE_VIOLATION_THRESHOLD="${COMPLEXITY_FILE_VIOLATION_THRESHOLD:-5}" # Files with >= this many violations get an issue
 WORKER_WATCHDOG_HELPER="${SCRIPT_DIR}/worker-watchdog.sh"
+
+# Validate complexity scan configuration (defined above, validated here)
+COMPLEXITY_SCAN_INTERVAL=$(_validate_int COMPLEXITY_SCAN_INTERVAL "$COMPLEXITY_SCAN_INTERVAL" 604800 3600)
+COMPLEXITY_FUNC_LINE_THRESHOLD=$(_validate_int COMPLEXITY_FUNC_LINE_THRESHOLD "$COMPLEXITY_FUNC_LINE_THRESHOLD" 100 50)
+COMPLEXITY_FILE_VIOLATION_THRESHOLD=$(_validate_int COMPLEXITY_FILE_VIOLATION_THRESHOLD "$COMPLEXITY_FILE_VIOLATION_THRESHOLD" 5 1)
 
 if [[ ! -x "$HEADLESS_RUNTIME_HELPER" ]]; then
 	printf '[pulse-wrapper] ERROR: headless runtime helper is missing or not executable: %s (SCRIPT_DIR=%s)\n' "$HEADLESS_RUNTIME_HELPER" "$SCRIPT_DIR" >&2
@@ -2482,6 +2491,247 @@ normalize_active_issue_assignments() {
 }
 
 #######################################
+# Weekly complexity scan helpers (GH#5628)
+#######################################
+
+# Check if the complexity scan interval has elapsed.
+# Arguments: $1 - now_epoch (current epoch seconds)
+# Returns: 0 if scan is due, 1 if not yet due
+_complexity_scan_check_interval() {
+	local now_epoch="$1"
+	if [[ ! -f "$COMPLEXITY_SCAN_LAST_RUN" ]]; then
+		return 0
+	fi
+	local last_run
+	last_run=$(cat "$COMPLEXITY_SCAN_LAST_RUN" 2>/dev/null || echo "0")
+	[[ "$last_run" =~ ^[0-9]+$ ]] || last_run=0
+	local elapsed=$((now_epoch - last_run))
+	if [[ "$elapsed" -lt "$COMPLEXITY_SCAN_INTERVAL" ]]; then
+		local remaining=$(((COMPLEXITY_SCAN_INTERVAL - elapsed) / 3600))
+		echo "[pulse-wrapper] Complexity scan not due yet (${remaining}h remaining)" >>"$LOGFILE"
+		return 1
+	fi
+	return 0
+}
+
+# Resolve the aidevops repo path and validate lint-file-discovery.sh exists.
+# Arguments: $1 - repos_json path, $2 - aidevops_slug, $3 - now_epoch
+# Outputs: aidevops_path via stdout (empty on failure)
+# Returns: 0 on success, 1 on failure (also writes last-run timestamp on failure)
+_complexity_scan_find_repo() {
+	local repos_json="$1"
+	local aidevops_slug="$2"
+	local now_epoch="$3"
+	local aidevops_path=""
+	if [[ -f "$repos_json" ]] && command -v jq &>/dev/null; then
+		aidevops_path=$(jq -r --arg slug "$aidevops_slug" \
+			'.initialized_repos[] | select(.slug == $slug) | .path' \
+			"$repos_json" 2>/dev/null | head -n 1)
+	fi
+	if [[ -z "$aidevops_path" || "$aidevops_path" == "null" || ! -d "$aidevops_path" ]]; then
+		echo "[pulse-wrapper] Complexity scan: aidevops repo path not found — skipping" >>"$LOGFILE"
+		echo "$now_epoch" >"$COMPLEXITY_SCAN_LAST_RUN"
+		return 1
+	fi
+	local lint_discovery="${aidevops_path}/.agents/scripts/lint-file-discovery.sh"
+	if [[ ! -f "$lint_discovery" ]]; then
+		echo "[pulse-wrapper] Complexity scan: lint-file-discovery.sh not found — skipping" >>"$LOGFILE"
+		echo "$now_epoch" >"$COMPLEXITY_SCAN_LAST_RUN"
+		return 1
+	fi
+	echo "$aidevops_path"
+	return 0
+}
+
+# Collect per-file violation counts from shell files in the repo.
+# Arguments: $1 - aidevops_path, $2 - now_epoch
+# Outputs: scan_results (pipe-delimited lines: file_path|count) via stdout
+# Side effect: logs total violation count; writes last-run on no files found
+_complexity_scan_collect_violations() {
+	local aidevops_path="$1"
+	local now_epoch="$2"
+	local shell_files
+	shell_files=$(git -C "$aidevops_path" ls-files '*.sh' | grep -Ev '_archive/|archived/|supervisor-archived/' || true)
+	if [[ -z "$shell_files" ]]; then
+		echo "[pulse-wrapper] Complexity scan: no shell files found — skipping" >>"$LOGFILE"
+		echo "$now_epoch" >"$COMPLEXITY_SCAN_LAST_RUN"
+		return 1
+	fi
+	local scan_results=""
+	local total_violations=0
+	local files_with_violations=0
+	while IFS= read -r file; do
+		[[ -n "$file" ]] || continue
+		local full_path="${aidevops_path}/${file}"
+		[[ -f "$full_path" ]] || continue
+		local result
+		result=$(awk '
+			/^[a-zA-Z_][a-zA-Z0-9_]*\(\)[[:space:]]*\{/ { fname=$1; sub(/\(\)/, "", fname); start=NR; next }
+			fname && /^\}$/ { lines=NR-start; if(lines>'"$COMPLEXITY_FUNC_LINE_THRESHOLD"') printf "%s() %d lines\n", fname, lines; fname="" }
+		' "$full_path")
+		if [[ -n "$result" ]]; then
+			local count
+			count=$(echo "$result" | wc -l | tr -d ' ')
+			total_violations=$((total_violations + count))
+			files_with_violations=$((files_with_violations + 1))
+			if [[ "$count" -ge "$COMPLEXITY_FILE_VIOLATION_THRESHOLD" ]]; then
+				# Use repo-relative path as dedup key (not basename — avoids collisions
+				# between files with the same name in different directories, GH#5630)
+				scan_results="${scan_results}${file}|${count}"$'\n'
+			fi
+		fi
+	done <<<"$shell_files"
+	echo "[pulse-wrapper] Complexity scan: ${total_violations} violations across ${files_with_violations} files" >>"$LOGFILE"
+	printf '%s' "$scan_results"
+	return 0
+}
+
+# Create GitHub issues for qualifying files (dedup against existing open issues).
+# Fetches existing issues once before the loop to reduce API traffic.
+# Arguments: $1 - scan_results (pipe-delimited: file_path|count), $2 - repos_json, $3 - aidevops_slug
+# Returns: 0 always
+_complexity_scan_create_issues() {
+	local scan_results="$1"
+	local repos_json="$2"
+	local aidevops_slug="$3"
+	local issues_created=0
+	local issues_skipped=0
+
+	# Fetch existing open simplification-debt issues once (reduces API traffic)
+	local existing_issues
+	existing_issues=$(gh issue list --repo "$aidevops_slug" \
+		--label "simplification-debt" --state open \
+		--json number,title,body --limit 200 2>/dev/null) || existing_issues="[]"
+
+	local maintainer
+	maintainer=$(jq -r --arg slug "$aidevops_slug" \
+		'.initialized_repos[] | select(.slug == $slug) | .maintainer // empty' \
+		"$repos_json" 2>/dev/null)
+	if [[ -z "$maintainer" ]]; then
+		maintainer=$(echo "$aidevops_slug" | cut -d/ -f1)
+	fi
+
+	while IFS='|' read -r file_path violation_count; do
+		[[ -n "$file_path" ]] || continue
+
+		# Dedup on repo-relative path (not basename) to avoid collisions between
+		# files with the same name in different directories (GH#5630)
+		local issue_key="$file_path"
+		local has_existing="false"
+		if echo "$existing_issues" | jq -e --arg key "$issue_key" \
+			'.[] | select((.title // "" | contains($key)) or (.body // "" | contains("**File:** `" + $key + "`")))' \
+			>/dev/null 2>&1; then
+			has_existing="true"
+		fi
+
+		if [[ "$has_existing" == "true" ]]; then
+			echo "[pulse-wrapper] Complexity scan: skipping ${file_path} — existing open issue" >>"$LOGFILE"
+			issues_skipped=$((issues_skipped + 1))
+			continue
+		fi
+
+		# Compute details inside the issue-creation loop (not stored in scan_results
+		# to avoid multiline values breaking the IFS='|' parser, GH#5630)
+		local aidevops_path
+		aidevops_path=$(jq -r --arg slug "$aidevops_slug" \
+			'.initialized_repos[] | select(.slug == $slug) | .path' \
+			"$repos_json" 2>/dev/null | head -n 1)
+		local details=""
+		if [[ -n "$aidevops_path" && -f "${aidevops_path}/${file_path}" ]]; then
+			details=$(awk '
+				/^[a-zA-Z_][a-zA-Z0-9_]*\(\)[[:space:]]*\{/ { fname=$1; sub(/\(\)/, "", fname); start=NR; next }
+				fname && /^\}$/ { lines=NR-start; if(lines>'"$COMPLEXITY_FUNC_LINE_THRESHOLD"') printf "%s() %d lines\n", fname, lines; fname="" }
+			' "${aidevops_path}/${file_path}" | head -10)
+		fi
+
+		local issue_body
+		issue_body="## Complexity scan finding (automated, GH#5628)
+
+**File:** \`${file_path}\`
+**Violations:** ${violation_count} functions exceed ${COMPLEXITY_FUNC_LINE_THRESHOLD} lines
+
+### Functions exceeding threshold
+
+\`\`\`
+${details}
+\`\`\`
+
+### Proposed action
+
+Break down the listed functions into smaller, focused helper functions. Each function should ideally be under ${COMPLEXITY_FUNC_LINE_THRESHOLD} lines.
+
+### Verification
+
+- \`bash -n <file>\` (syntax check)
+- \`shellcheck <file>\` (lint)
+- Run existing tests if present
+- Confirm no functionality is lost
+
+### Confidence: medium
+
+This is an automated scan. The function lengths are factual, but the best decomposition strategy requires human judgment.
+
+---
+**To approve or decline**, comment on this issue:
+- \`approved\` — removes the review gate and queues for automated dispatch
+- \`declined: <reason>\` — closes this issue (include your reason after the colon)"
+		if gh issue create --repo "$aidevops_slug" \
+			--title "simplification: reduce function complexity in ${issue_key} (${violation_count} functions >${COMPLEXITY_FUNC_LINE_THRESHOLD} lines)" \
+			--label "simplification-debt" --label "needs-maintainer-review" \
+			--assignee "$maintainer" \
+			--body "$issue_body" >/dev/null 2>&1; then
+			issues_created=$((issues_created + 1))
+			echo "[pulse-wrapper] Complexity scan: created issue for ${file_path} (${violation_count} violations)" >>"$LOGFILE"
+		else
+			echo "[pulse-wrapper] Complexity scan: failed to create issue for ${file_path}" >>"$LOGFILE"
+		fi
+	done <<<"$scan_results"
+	echo "[pulse-wrapper] Complexity scan complete: ${issues_created} issues created, ${issues_skipped} skipped (existing)" >>"$LOGFILE"
+	return 0
+}
+
+#######################################
+# Weekly complexity scan (GH#5628)
+#
+# Runs the same awk-based function complexity check used by CI
+# (code-quality.yml "Shell function complexity" step) and creates
+# simplification-debt issues for files that exceed the per-file
+# violation threshold. Runs at most once per COMPLEXITY_SCAN_INTERVAL
+# (default 7 days), tracked via a timestamp file.
+#
+# This is the "periodic trigger" that feeds the simplification pipeline:
+#   scan → issue (needs-maintainer-review) → maintainer approves →
+#   pulse dispatches worker → PR → merge → threshold ratchets down
+#
+# Deduplication: checks for existing open simplification-debt issues
+# matching the same repo-relative file path before creating a new one.
+#
+# Returns: 0 always (best-effort, never breaks the pulse)
+#######################################
+run_weekly_complexity_scan() {
+	local repos_json="$REPOS_JSON"
+	local aidevops_slug="marcusquinn/aidevops"
+
+	local now_epoch
+	now_epoch=$(date +%s)
+
+	_complexity_scan_check_interval "$now_epoch" || return 0
+
+	echo "[pulse-wrapper] Running weekly complexity scan (GH#5628)..." >>"$LOGFILE"
+
+	local aidevops_path
+	aidevops_path=$(_complexity_scan_find_repo "$repos_json" "$aidevops_slug" "$now_epoch") || return 0
+
+	local scan_results
+	scan_results=$(_complexity_scan_collect_violations "$aidevops_path" "$now_epoch") || return 0
+
+	_complexity_scan_create_issues "$scan_results" "$repos_json" "$aidevops_slug"
+
+	echo "$now_epoch" >"$COMPLEXITY_SCAN_LAST_RUN"
+	return 0
+}
+
+#######################################
 # Pre-fetch failed notification summary (t3960)
 #
 # Uses gh-failure-miner-helper.sh to mine ci_activity notifications,
@@ -3240,10 +3490,11 @@ run_underfill_worker_recycler() {
 #######################################
 # Main
 #
-# Execution order (t1429, GH#4513):
+# Execution order (t1429, GH#4513, GH#5628):
 #   0. Instance lock (mkdir-based atomic — prevents concurrent pulses on macOS+Linux)
 #   1. Gate checks (consent, dedup)
 #   2. Cleanup (orphans, worktrees, stashes)
+#   2.5. Weekly complexity scan (creates simplification-debt issues)
 #   3. Prefetch state (parallel gh API calls)
 #   4. Run pulse (LLM session — dispatch workers, merge PRs)
 #
@@ -3269,6 +3520,11 @@ _run_preflight_stages() {
 	calculate_max_workers
 	calculate_priority_allocations
 	check_session_count >/dev/null
+
+	# Weekly complexity scan (GH#5628): creates simplification-debt issues
+	# for files with many complex functions. Runs at most once per week.
+	# Non-fatal — pulse proceeds even if the scan fails.
+	run_stage_with_timeout "complexity_scan" "$PRE_RUN_STAGE_TIMEOUT" run_weekly_complexity_scan || true
 
 	# Contribution watch: lightweight scan of external issues/PRs (t1419).
 	prefetch_contribution_watch
