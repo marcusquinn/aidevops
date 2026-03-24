@@ -192,14 +192,10 @@ cmd_recall() {
 	# Quote each token individually to handle special chars (hyphens = NOT in FTS5)
 	# "foo-bar baz" → "\"foo-bar\" \"baz\"" (each token quoted, joined by implicit AND)
 	#
-	# Apostrophes and backslashes are replaced with spaces before tokenization.
-	# Apostrophes inside FTS5 double-quoted tokens cannot be SQL-escaped (doubling
-	# them to '' produces invalid FTS5 syntax). Backslashes are not valid FTS5 query
-	# syntax and cause a parse error. Replacing both with spaces splits e.g.
-	# "O'Reilly" into "O" and "Reilly", which still matches stored content because
-	# FTS5 tokenizes stored content the same way (GH#5678).
-	local query_clean="${query//"'"/" "}"
-	query_clean="${query_clean//\\/  }"
+	# Backslashes are stripped before tokenization — they are not valid FTS5 query
+	# syntax and cause a parse error. Apostrophes are preserved through proper
+	# quoting (see param_query construction below).
+	local query_clean="${query//\\/  }"
 	local tokenised_query=""
 	local token
 	set -f # Disable globbing during tokenization (SC2086)
@@ -215,9 +211,20 @@ cmd_recall() {
 	set +f # Re-enable globbing
 	# Build an SQL single-quoted literal for .param set, then escape it for the
 	# sqlite3 dot-command's outer double-quoted argument (GH#5678).
-	# tokenised_query contains no apostrophes or backslashes (stripped above), so
-	# the SQL literal needs no internal single-quote escaping. The FTS5 double-quote
-	# tokens are escaped as \" for the outer double-quoted dot-command argument.
+	#
+	# The sqlite3 dot-command parser has its own quoting rules separate from SQL:
+	# - Single-quoted args: the parser does NOT support '' escaping, so embedded
+	#   apostrophes (e.g., O'Reilly) break the argument boundary.
+	# - Double-quoted args: the parser supports \" for literal double quotes.
+	#
+	# Strategy: build an SQL single-quoted literal (with '' for apostrophes),
+	# then escape backslashes and double quotes for the outer double-quoted
+	# dot-command argument. The result is passed as: .param set :query "VALUE"
+	# where VALUE is the SQL expression (e.g., '\"O''Reilly\" \"guide\"').
+	#
+	# Step 1: Double single quotes for SQL literal (sed avoids bash quoting issues)
+	# Step 2: Wrap in SQL single quotes via printf
+	# Step 3: Escape \ and " for dot-command double-quoted argument (sed)
 	#
 	# Security note: the heredoc uses <<EOF (not <<'EOF'), so ${param_query} is
 	# expanded by the shell. This is safe because shell variable expansion is NOT
@@ -225,8 +232,8 @@ cmd_recall() {
 	# command-substitution syntax ($(…), `…`) or variable references inside the
 	# value are NOT re-evaluated. The :query parameter binding then isolates the
 	# value from SQL execution, preventing injection at the SQLite layer.
-	local param_query="'${tokenised_query}'"
-	param_query="${param_query//\"/\\\"}"
+	local param_query
+	param_query=$(printf "'%s'" "$(printf '%s' "$tokenised_query" | sed "s/'/''/g")" | sed 's/\\/\\\\/g; s/"/\\"/g')
 
 	# Build filters with validation
 	local extra_filters=""
