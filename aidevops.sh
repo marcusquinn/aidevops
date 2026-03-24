@@ -2407,157 +2407,78 @@ cmd_update_tools() {
 	bash "$tool_check_script" "$@"
 }
 
-# Repos command - list and manage registered repos
+# Repos helpers (extracted for complexity reduction)
+_repos_list() {
+	print_header "Registered AI DevOps Projects"; echo ""
+	init_repos_file
+	command -v jq &>/dev/null || { print_error "jq required for repo management"; return 1; }
+	local count; count=$(jq '.initialized_repos | length' "$REPOS_FILE" 2>/dev/null || echo "0")
+	if [[ "$count" == "0" ]]; then print_info "No projects registered yet"; echo ""; echo "Initialize a project with: aidevops init"; return 0; fi
+	local current_ver; current_ver=$(get_version)
+	jq -r '.initialized_repos[] | "\(.path)|\(.version)|\(.features | join(","))"' "$REPOS_FILE" 2>/dev/null | while IFS='|' read -r path version features; do
+		local name; name=$(basename "$path"); local status="✓" status_color="$GREEN"
+		[[ "$version" != "$current_ver" ]] && { status="↑"; status_color="$YELLOW"; }
+		[[ ! -d "$path" ]] && { status="✗"; status_color="$RED"; }
+		echo -e "${status_color}${status}${NC} ${BOLD}$name${NC}"
+		echo "    Path: $path"; echo "    Version: $version"; echo "    Features: $features"; echo ""
+	done
+	echo "Legend: ✓ up-to-date  ↑ update available  ✗ not found"
+	return 0
+}
+
+_repos_add() {
+	git rev-parse --is-inside-work-tree &>/dev/null || { print_error "Not in a git repository"; return 1; }
+	local project_root; project_root=$(git rev-parse --show-toplevel)
+	[[ ! -f "$project_root/.aidevops.json" ]] && { print_error "No .aidevops.json found - run 'aidevops init' first"; return 1; }
+	local version features
+	if command -v jq &>/dev/null; then
+		version=$(jq -r '.version' "$project_root/.aidevops.json" 2>/dev/null || echo "unknown")
+		features=$(jq -r '[.features | to_entries[] | select(.value == true) | .key] | join(",")' "$project_root/.aidevops.json" 2>/dev/null || echo "")
+	else version="unknown"; features=""; fi
+	register_repo "$project_root" "$version" "$features"
+	print_success "Registered $(basename "$project_root")"
+	return 0
+}
+
+_repos_remove() {
+	local repo_path="${1:-}" original_path="$repo_path"
+	if [[ -z "$repo_path" ]]; then
+		git rev-parse --is-inside-work-tree &>/dev/null && repo_path=$(git rev-parse --show-toplevel) && original_path="$repo_path" || { print_error "Specify a repo path or run from within a git repo"; return 1; }
+	fi
+	repo_path=$(cd "$repo_path" 2>/dev/null && pwd -P) || repo_path="$original_path"
+	command -v jq &>/dev/null || { print_error "jq required for repo management"; return 1; }
+	local temp_file="${REPOS_FILE}.tmp"
+	jq --arg path "$repo_path" '.initialized_repos |= map(select(.path != $path))' "$REPOS_FILE" >"$temp_file" && mv "$temp_file" "$REPOS_FILE"
+	print_success "Removed $repo_path from registry"
+	return 0
+}
+
+_repos_clean() {
+	print_info "Cleaning up stale repo entries..."
+	command -v jq &>/dev/null || { print_error "jq required for repo management"; return 1; }
+	local removed=0 temp_file="${REPOS_FILE}.tmp"
+	while IFS= read -r repo_path; do
+		[[ -z "$repo_path" ]] && continue
+		if [[ ! -d "$repo_path" ]]; then
+			jq --arg path "$repo_path" '.initialized_repos |= map(select(.path != $path))' "$REPOS_FILE" >"$temp_file" && mv "$temp_file" "$REPOS_FILE"
+			print_info "Removed: $repo_path"; removed=$((removed + 1))
+		fi
+	done < <(get_registered_repos)
+	[[ $removed -eq 0 ]] && print_success "No stale entries found" || print_success "Removed $removed stale entries"
+	return 0
+}
+
+# Repos management command
 cmd_repos() {
 	local action="${1:-list}"
-
 	case "$action" in
-	list | ls)
-		print_header "Registered AI DevOps Projects"
-		echo ""
-
-		init_repos_file
-
-		if ! command -v jq &>/dev/null; then
-			print_error "jq required for repo management"
-			return 1
-		fi
-
-		local count
-		count=$(jq '.initialized_repos | length' "$REPOS_FILE" 2>/dev/null || echo "0")
-
-		if [[ "$count" == "0" ]]; then
-			print_info "No projects registered yet"
-			echo ""
-			echo "Initialize a project with: aidevops init"
-			return 0
-		fi
-
-		local current_ver
-		current_ver=$(get_version)
-
-		jq -r '.initialized_repos[] | "\(.path)|\(.version)|\(.features | join(","))"' "$REPOS_FILE" 2>/dev/null | while IFS='|' read -r path version features; do
-			local name
-			name=$(basename "$path")
-			local status="✓"
-			local status_color="$GREEN"
-
-			if [[ "$version" != "$current_ver" ]]; then
-				status="↑"
-				status_color="$YELLOW"
-			fi
-
-			if [[ ! -d "$path" ]]; then
-				status="✗"
-				status_color="$RED"
-			fi
-
-			echo -e "${status_color}${status}${NC} ${BOLD}$name${NC}"
-			echo "    Path: $path"
-			echo "    Version: $version"
-			echo "    Features: $features"
-			echo ""
-		done
-
-		echo "Legend: ✓ up-to-date  ↑ update available  ✗ not found"
-		;;
-
-	add)
-		# Register current directory
-		if ! git rev-parse --is-inside-work-tree &>/dev/null; then
-			print_error "Not in a git repository"
-			return 1
-		fi
-
-		local project_root
-		project_root=$(git rev-parse --show-toplevel)
-
-		if [[ ! -f "$project_root/.aidevops.json" ]]; then
-			print_error "No .aidevops.json found - run 'aidevops init' first"
-			return 1
-		fi
-
-		local version features
-		if command -v jq &>/dev/null; then
-			version=$(jq -r '.version' "$project_root/.aidevops.json" 2>/dev/null || echo "unknown")
-			features=$(jq -r '[.features | to_entries[] | select(.value == true) | .key] | join(",")' "$project_root/.aidevops.json" 2>/dev/null || echo "")
-		else
-			version="unknown"
-			features=""
-		fi
-
-		register_repo "$project_root" "$version" "$features"
-		print_success "Registered $(basename "$project_root")"
-		;;
-
-	remove | rm)
-		local repo_path="${2:-}"
-		local original_path="$repo_path"
-
-		if [[ -z "$repo_path" ]]; then
-			# Use current directory
-			if git rev-parse --is-inside-work-tree &>/dev/null; then
-				repo_path=$(git rev-parse --show-toplevel)
-				original_path="$repo_path"
-			else
-				print_error "Specify a repo path or run from within a git repo"
-				return 1
-			fi
-		fi
-
-		# Normalize path (keep original if normalization fails)
-		repo_path=$(cd "$repo_path" 2>/dev/null && pwd -P) || repo_path="$original_path"
-
-		if ! command -v jq &>/dev/null; then
-			print_error "jq required for repo management"
-			return 1
-		fi
-
-		local temp_file="${REPOS_FILE}.tmp"
-		jq --arg path "$repo_path" '.initialized_repos |= map(select(.path != $path))' "$REPOS_FILE" >"$temp_file" &&
-			mv "$temp_file" "$REPOS_FILE"
-
-		print_success "Removed $repo_path from registry"
-		;;
-
-	clean)
-		# Remove entries for repos that no longer exist
-		print_info "Cleaning up stale repo entries..."
-
-		if ! command -v jq &>/dev/null; then
-			print_error "jq required for repo management"
-			return 1
-		fi
-
-		local removed=0
-		local temp_file="${REPOS_FILE}.tmp"
-
-		while IFS= read -r repo_path; do
-			[[ -z "$repo_path" ]] && continue
-			if [[ ! -d "$repo_path" ]]; then
-				jq --arg path "$repo_path" '.initialized_repos |= map(select(.path != $path))' "$REPOS_FILE" >"$temp_file" &&
-					mv "$temp_file" "$REPOS_FILE"
-				print_info "Removed: $repo_path"
-				removed=$((removed + 1))
-			fi
-		done < <(get_registered_repos)
-
-		if [[ $removed -eq 0 ]]; then
-			print_success "No stale entries found"
-		else
-			print_success "Removed $removed stale entries"
-		fi
-		;;
-
-	*)
-		echo "Usage: aidevops repos <command>"
-		echo ""
-		echo "Commands:"
-		echo "  list     List all registered projects (default)"
-		echo "  add      Register current project"
-		echo "  remove   Remove project from registry"
-		echo "  clean    Remove entries for non-existent projects"
-		;;
+	list | ls) _repos_list ;;
+	add) _repos_add ;;
+	remove | rm) _repos_remove "${2:-}" ;;
+	clean) _repos_clean ;;
+	*) echo "Usage: aidevops repos <command>"; echo ""; echo "Commands:"
+		echo "  list     List all registered projects (default)"; echo "  add      Register current project"
+		echo "  remove   Remove project from registry"; echo "  clean    Remove entries for non-existent projects" ;;
 	esac
 }
 
@@ -2644,161 +2565,72 @@ cmd_detect() {
 	return 0
 }
 
-# Skill command - manage agent skills
+# Skill help text (extracted for complexity reduction)
+_skill_help() {
+	print_header "Agent Skills Management"; echo ""
+	echo "Import and manage reusable AI agent skills from the community."
+	echo "Skills are converted to aidevops format with upstream tracking."
+	echo "Telemetry is disabled - no data sent to third parties."
+	echo ""; echo "Usage: aidevops skill <command> [options]"; echo ""
+	echo "Commands:"; echo "  add <source>     Import a skill from GitHub (saved as *-skill.md)"
+	echo "  list             List all imported skills"; echo "  check            Check for upstream updates"
+	echo "  update [name]    Update specific or all skills"; echo "  remove <name>    Remove an imported skill"
+	echo "  scan [name]      Security scan imported skills (Cisco Skill Scanner)"
+	echo "  status           Show detailed skill status"
+	echo "  generate         Generate SKILL.md stubs for cross-tool discovery"
+	echo "  clean            Remove generated SKILL.md stubs"
+	echo ""; echo "Source formats:"; echo "  owner/repo                    GitHub shorthand"
+	echo "  owner/repo/path/to/skill      Specific skill in multi-skill repo"
+	echo "  https://github.com/owner/repo Full URL"
+	echo ""; echo "Examples:"; echo "  aidevops skill add vercel-labs/agent-skills"
+	echo "  aidevops skill add anthropics/skills/pdf"; echo "  aidevops skill add expo/skills --name expo-dev"
+	echo "  aidevops skill check"; echo "  aidevops skill update"; echo "  aidevops skill scan"
+	echo "  aidevops skill scan cloudflare-platform"; echo "  aidevops skill generate --dry-run"
+	echo ""; echo "Imported skills are saved with a -skill suffix to distinguish"
+	echo "from native aidevops subagents (e.g., playwright-skill.md vs playwright.md)."
+	echo ""; echo "Browse community skills: https://skills.sh"
+	echo "Agent Skills specification: https://agentskills.io"
+	return 0
+}
+
+_skill_add_usage() {
+	print_error "Source required (owner/repo or URL)"; echo ""
+	echo "Usage: aidevops skill add <source> [options]"; echo ""
+	echo "Examples:"; echo "  aidevops skill add vercel-labs/agent-skills"
+	echo "  aidevops skill add anthropics/skills/pdf"; echo "  aidevops skill add https://github.com/owner/repo"
+	echo ""; echo "Options:"; echo "  --name <name>   Override the skill name"
+	echo "  --force         Overwrite existing skill"; echo "  --dry-run       Preview without making changes"
+	echo ""; echo "Browse skills: https://skills.sh"
+	return 0
+}
+
+# Skill management command
 cmd_skill() {
-	local action="${1:-help}"
-	shift || true
-
-	# Disable telemetry for any downstream tools (add-skill, skills CLI)
-	export DISABLE_TELEMETRY=1
-	export DO_NOT_TRACK=1
-	export SKILLS_NO_TELEMETRY=1
-
+	local action="${1:-help}"; shift || true
+	export DISABLE_TELEMETRY=1 DO_NOT_TRACK=1 SKILLS_NO_TELEMETRY=1
 	local add_skill_script="$AGENTS_DIR/scripts/add-skill-helper.sh"
 	local update_skill_script="$AGENTS_DIR/scripts/skill-update-helper.sh"
-
 	case "$action" in
 	add | a)
-		if [[ $# -lt 1 ]]; then
-			print_error "Source required (owner/repo or URL)"
-			echo ""
-			echo "Usage: aidevops skill add <source> [options]"
-			echo ""
-			echo "Examples:"
-			echo "  aidevops skill add vercel-labs/agent-skills"
-			echo "  aidevops skill add anthropics/skills/pdf"
-			echo "  aidevops skill add https://github.com/owner/repo"
-			echo ""
-			echo "Options:"
-			echo "  --name <name>   Override the skill name"
-			echo "  --force         Overwrite existing skill"
-			echo "  --dry-run       Preview without making changes"
-			echo ""
-			echo "Browse skills: https://skills.sh"
-			return 1
-		fi
-
-		if [[ ! -f "$add_skill_script" ]]; then
-			print_error "add-skill-helper.sh not found"
-			print_info "Run 'aidevops update' to get the latest scripts"
-			return 1
-		fi
-
-		bash "$add_skill_script" add "$@"
-		;;
-	list | ls | l)
-		if [[ ! -f "$add_skill_script" ]]; then
-			print_error "add-skill-helper.sh not found"
-			return 1
-		fi
-		bash "$add_skill_script" list
-		;;
-	check | c)
-		if [[ ! -f "$update_skill_script" ]]; then
-			print_error "skill-update-helper.sh not found"
-			return 1
-		fi
-		bash "$update_skill_script" check "$@"
-		;;
-	update | u)
-		if [[ ! -f "$update_skill_script" ]]; then
-			print_error "skill-update-helper.sh not found"
-			return 1
-		fi
-		bash "$update_skill_script" update "$@"
-		;;
-	remove | rm)
-		if [[ $# -lt 1 ]]; then
-			print_error "Skill name required"
-			echo "Usage: aidevops skill remove <name>"
-			return 1
-		fi
-		if [[ ! -f "$add_skill_script" ]]; then
-			print_error "add-skill-helper.sh not found"
-			return 1
-		fi
-		bash "$add_skill_script" remove "$@"
-		;;
-	status | s)
-		if [[ ! -f "$update_skill_script" ]]; then
-			print_error "skill-update-helper.sh not found"
-			return 1
-		fi
-		bash "$update_skill_script" status "$@"
-		;;
-	generate | gen | g)
-		local generate_script="$AGENTS_DIR/scripts/generate-skills.sh"
-		if [[ ! -f "$generate_script" ]]; then
-			print_error "generate-skills.sh not found"
-			print_info "Run 'aidevops update' to get the latest scripts"
-			return 1
-		fi
-		print_info "Generating SKILL.md stubs for cross-tool discovery..."
-		bash "$generate_script" "$@"
-		;;
-	scan)
-		local security_script="$AGENTS_DIR/scripts/security-helper.sh"
-		if [[ ! -f "$security_script" ]]; then
-			print_error "security-helper.sh not found"
-			print_info "Run 'aidevops update' to get the latest scripts"
-			return 1
-		fi
-		bash "$security_script" skill-scan "$@"
-		;;
-	clean)
-		local generate_script="$AGENTS_DIR/scripts/generate-skills.sh"
-		if [[ ! -f "$generate_script" ]]; then
-			print_error "generate-skills.sh not found"
-			return 1
-		fi
-		bash "$generate_script" --clean "$@"
-		;;
-	help | --help | -h)
-		print_header "Agent Skills Management"
-		echo ""
-		echo "Import and manage reusable AI agent skills from the community."
-		echo "Skills are converted to aidevops format with upstream tracking."
-		echo "Telemetry is disabled - no data sent to third parties."
-		echo ""
-		echo "Usage: aidevops skill <command> [options]"
-		echo ""
-		echo "Commands:"
-		echo "  add <source>     Import a skill from GitHub (saved as *-skill.md)"
-		echo "  list             List all imported skills"
-		echo "  check            Check for upstream updates"
-		echo "  update [name]    Update specific or all skills"
-		echo "  remove <name>    Remove an imported skill"
-		echo "  scan [name]      Security scan imported skills (Cisco Skill Scanner)"
-		echo "  status           Show detailed skill status"
-		echo "  generate         Generate SKILL.md stubs for cross-tool discovery"
-		echo "  clean            Remove generated SKILL.md stubs"
-		echo ""
-		echo "Source formats:"
-		echo "  owner/repo                    GitHub shorthand"
-		echo "  owner/repo/path/to/skill      Specific skill in multi-skill repo"
-		echo "  https://github.com/owner/repo Full URL"
-		echo ""
-		echo "Examples:"
-		echo "  aidevops skill add vercel-labs/agent-skills"
-		echo "  aidevops skill add anthropics/skills/pdf"
-		echo "  aidevops skill add expo/skills --name expo-dev"
-		echo "  aidevops skill check"
-		echo "  aidevops skill update"
-		echo "  aidevops skill scan"
-		echo "  aidevops skill scan cloudflare-platform"
-		echo "  aidevops skill generate --dry-run"
-		echo ""
-		echo "Imported skills are saved with a -skill suffix to distinguish"
-		echo "from native aidevops subagents (e.g., playwright-skill.md vs playwright.md)."
-		echo ""
-		echo "Browse community skills: https://skills.sh"
-		echo "Agent Skills specification: https://agentskills.io"
-		;;
-	*)
-		print_error "Unknown skill command: $action"
-		echo "Run 'aidevops skill help' for usage information."
-		return 1
-		;;
+		if [[ $# -lt 1 ]]; then _skill_add_usage; return 1; fi
+		[[ ! -f "$add_skill_script" ]] && { print_error "add-skill-helper.sh not found"; print_info "Run 'aidevops update' to get the latest scripts"; return 1; }
+		bash "$add_skill_script" add "$@" ;;
+	list | ls | l) [[ ! -f "$add_skill_script" ]] && { print_error "add-skill-helper.sh not found"; return 1; }; bash "$add_skill_script" list ;;
+	check | c) [[ ! -f "$update_skill_script" ]] && { print_error "skill-update-helper.sh not found"; return 1; }; bash "$update_skill_script" check "$@" ;;
+	update | u) [[ ! -f "$update_skill_script" ]] && { print_error "skill-update-helper.sh not found"; return 1; }; bash "$update_skill_script" update "$@" ;;
+	remove | rm) [[ $# -lt 1 ]] && { print_error "Skill name required"; echo "Usage: aidevops skill remove <name>"; return 1; }
+		[[ ! -f "$add_skill_script" ]] && { print_error "add-skill-helper.sh not found"; return 1; }; bash "$add_skill_script" remove "$@" ;;
+	status | s) [[ ! -f "$update_skill_script" ]] && { print_error "skill-update-helper.sh not found"; return 1; }; bash "$update_skill_script" status "$@" ;;
+	generate | gen | g) local gs="$AGENTS_DIR/scripts/generate-skills.sh"
+		[[ ! -f "$gs" ]] && { print_error "generate-skills.sh not found"; print_info "Run 'aidevops update' to get the latest scripts"; return 1; }
+		print_info "Generating SKILL.md stubs for cross-tool discovery..."; bash "$gs" "$@" ;;
+	scan) local ss="$AGENTS_DIR/scripts/security-helper.sh"
+		[[ ! -f "$ss" ]] && { print_error "security-helper.sh not found"; print_info "Run 'aidevops update' to get the latest scripts"; return 1; }
+		bash "$ss" skill-scan "$@" ;;
+	clean) local gs="$AGENTS_DIR/scripts/generate-skills.sh"
+		[[ ! -f "$gs" ]] && { print_error "generate-skills.sh not found"; return 1; }; bash "$gs" --clean "$@" ;;
+	help | --help | -h) _skill_help ;;
+	*) print_error "Unknown skill command: $action"; echo "Run 'aidevops skill help' for usage information."; return 1 ;;
 	esac
 }
 
