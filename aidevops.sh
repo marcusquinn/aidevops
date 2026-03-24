@@ -466,200 +466,89 @@ check_protected_branch() {
 	esac
 }
 
-# Status command - check all installations
-cmd_status() {
-	print_header "AI DevOps Framework Status"
-	echo "=========================="
-	echo ""
-
-	local current_version
-	current_version=$(get_version)
-	local remote_version
-	remote_version=$(get_remote_version)
-
-	# Version info
-	print_header "Version"
-	echo "  Installed: $current_version"
-	echo "  Latest:    $remote_version"
-	if [[ "$current_version" != "$remote_version" && "$remote_version" != "unknown" ]]; then
-		print_warning "Update available! Run: aidevops update"
-	elif [[ "$current_version" == "$remote_version" ]]; then
-		print_success "Up to date"
-	fi
-	echo ""
-
-	# Installation paths
-	print_header "Installation"
-	if check_dir "$INSTALL_DIR"; then
-		print_success "Repository: $INSTALL_DIR"
-	else
-		print_error "Repository: Not found at $INSTALL_DIR"
-	fi
-
-	if check_dir "$AGENTS_DIR"; then
-		local agent_count
-		agent_count=$(find "$AGENTS_DIR" -name "*.md" -type f 2>/dev/null | wc -l | tr -d ' ')
-		print_success "Agents: $AGENTS_DIR ($agent_count files)"
-	else
-		print_error "Agents: Not deployed"
-	fi
-	echo ""
-
-	# Required dependencies
-	print_header "Required Dependencies"
-	for cmd in git curl jq ssh; do
-		if check_cmd "$cmd"; then
-			print_success "$cmd"
-		else
-			print_error "$cmd - not installed"
-		fi
-	done
-	echo ""
-
-	# Optional dependencies
-	print_header "Optional Dependencies"
-	if check_cmd sshpass; then
-		print_success "sshpass"
-	else
-		print_warning "sshpass - not installed (needed for password SSH)"
-	fi
-	echo ""
-
-	# Recommended tools
+# Status helpers (extracted for complexity reduction)
+_status_recommended_tools() {
 	print_header "Recommended Tools"
-
-	# Tabby
 	if [[ "$(uname)" == "Darwin" ]]; then
-		if check_dir "/Applications/Tabby.app"; then
-			print_success "Tabby terminal"
-		else
-			print_warning "Tabby terminal - not installed"
-		fi
-	else
-		if check_cmd tabby; then
-			print_success "Tabby terminal"
-		else
-			print_warning "Tabby terminal - not installed"
-		fi
-	fi
-
-	# Zed
-	if [[ "$(uname)" == "Darwin" ]]; then
+		check_dir "/Applications/Tabby.app" && print_success "Tabby terminal" || print_warning "Tabby terminal - not installed"
 		if check_dir "/Applications/Zed.app"; then
 			print_success "Zed editor"
-			# Check OpenCode extension
-			if check_dir "$HOME/Library/Application Support/Zed/extensions/installed/opencode"; then
-				print_success "  └─ OpenCode extension"
-			else
-				print_warning "  └─ OpenCode extension - not installed"
-			fi
-		else
-			print_warning "Zed editor - not installed"
-		fi
+			check_dir "$HOME/Library/Application Support/Zed/extensions/installed/opencode" && print_success "  └─ OpenCode extension" || print_warning "  └─ OpenCode extension - not installed"
+		else print_warning "Zed editor - not installed"; fi
 	else
+		check_cmd tabby && print_success "Tabby terminal" || print_warning "Tabby terminal - not installed"
 		if check_cmd zed; then
 			print_success "Zed editor"
-			if check_dir "$HOME/.local/share/zed/extensions/installed/opencode"; then
-				print_success "  └─ OpenCode extension"
-			else
-				print_warning "  └─ OpenCode extension - not installed"
-			fi
-		else
-			print_warning "Zed editor - not installed"
-		fi
+			check_dir "$HOME/.local/share/zed/extensions/installed/opencode" && print_success "  └─ OpenCode extension" || print_warning "  └─ OpenCode extension - not installed"
+		else print_warning "Zed editor - not installed"; fi
 	fi
 	echo ""
+	return 0
+}
 
-	# Git CLI tools
-	print_header "Git CLI Tools"
-	if check_cmd gh; then
-		print_success "GitHub CLI (gh)"
-	else
-		print_warning "GitHub CLI (gh) - not installed"
-	fi
-
-	if check_cmd glab; then
-		print_success "GitLab CLI (glab)"
-	else
-		print_warning "GitLab CLI (glab) - not installed"
-	fi
-
-	if check_cmd tea; then
-		print_success "Gitea CLI (tea)"
-	else
-		print_warning "Gitea CLI (tea) - not installed"
-	fi
-	echo ""
-
-	# AI Tools
+_status_ai_tools() {
 	print_header "AI Tools & MCPs"
-
-	if check_cmd opencode; then
-		print_success "OpenCode CLI"
-	else
-		print_warning "OpenCode CLI - not installed"
-	fi
-
+	check_cmd opencode && print_success "OpenCode CLI" || print_warning "OpenCode CLI - not installed"
 	if check_cmd auggie; then
-		if check_file "$HOME/.augment/session.json"; then
-			print_success "Augment Context Engine (authenticated)"
-		else
-			print_warning "Augment Context Engine (not authenticated)"
-		fi
-	else
-		print_warning "Augment Context Engine - not installed"
-	fi
-
-	if check_cmd bd; then
-		print_success "Beads CLI (task graph)"
-	else
-		print_warning "Beads CLI (bd) - not installed"
-	fi
+		check_file "$HOME/.augment/session.json" && print_success "Augment Context Engine (authenticated)" || print_warning "Augment Context Engine (not authenticated)"
+	else print_warning "Augment Context Engine - not installed"; fi
+	check_cmd bd && print_success "Beads CLI (task graph)" || print_warning "Beads CLI (bd) - not installed"
 	echo ""
+	return 0
+}
 
-	# Python/Node environments
+_status_dev_envs() {
 	print_header "Development Environments"
-
-	if check_dir "$INSTALL_DIR/python-env/dspy-env"; then
-		print_success "DSPy Python environment"
-	else
-		print_warning "DSPy Python environment - not created"
-	fi
-
-	if check_cmd dspyground; then
-		print_success "DSPyGround"
-	else
-		print_warning "DSPyGround - not installed"
-	fi
+	check_dir "$INSTALL_DIR/python-env/dspy-env" && print_success "DSPy Python environment" || print_warning "DSPy Python environment - not created"
+	check_cmd dspyground && print_success "DSPyGround" || print_warning "DSPyGround - not installed"
 	echo ""
+	return 0
+}
 
-	# AI Assistant configs
+_status_ai_configs() {
 	print_header "AI Assistant Configurations"
-
-	local ai_configs=(
-		"$HOME/.config/opencode/opencode.json:OpenCode"
-		"$HOME/.claude/commands:Claude Code CLI"
-		"$HOME/CLAUDE.md:Claude Code memory"
-	)
-
+	local ai_configs=("$HOME/.config/opencode/opencode.json:OpenCode" "$HOME/.claude/commands:Claude Code CLI" "$HOME/CLAUDE.md:Claude Code memory")
 	for config in "${ai_configs[@]}"; do
-		local path="${config%%:*}"
-		local name="${config##*:}"
-		if [[ -e "$path" ]]; then
-			print_success "$name"
-		else
-			print_warning "$name - not configured"
-		fi
+		local path="${config%%:*}" name="${config##*:}"
+		[[ -e "$path" ]] && print_success "$name" || print_warning "$name - not configured"
 	done
 	echo ""
+	return 0
+}
 
-	# SSH key
+# Status command
+cmd_status() {
+	print_header "AI DevOps Framework Status"; echo "=========================="; echo ""
+	local current_version; current_version=$(get_version)
+	local remote_version; remote_version=$(get_remote_version)
+	print_header "Version"; echo "  Installed: $current_version"; echo "  Latest:    $remote_version"
+	if [[ "$current_version" != "$remote_version" && "$remote_version" != "unknown" ]]; then print_warning "Update available! Run: aidevops update"
+	elif [[ "$current_version" == "$remote_version" ]]; then print_success "Up to date"; fi
+	echo ""
+	print_header "Installation"
+	check_dir "$INSTALL_DIR" && print_success "Repository: $INSTALL_DIR" || print_error "Repository: Not found at $INSTALL_DIR"
+	if check_dir "$AGENTS_DIR"; then
+		local agent_count; agent_count=$(find "$AGENTS_DIR" -name "*.md" -type f 2>/dev/null | wc -l | tr -d ' ')
+		print_success "Agents: $AGENTS_DIR ($agent_count files)"
+	else print_error "Agents: Not deployed"; fi
+	echo ""
+	print_header "Required Dependencies"
+	for cmd in git curl jq ssh; do check_cmd "$cmd" && print_success "$cmd" || print_error "$cmd - not installed"; done
+	echo ""
+	print_header "Optional Dependencies"
+	check_cmd sshpass && print_success "sshpass" || print_warning "sshpass - not installed (needed for password SSH)"
+	echo ""
+	_status_recommended_tools
+	print_header "Git CLI Tools"
+	check_cmd gh && print_success "GitHub CLI (gh)" || print_warning "GitHub CLI (gh) - not installed"
+	check_cmd glab && print_success "GitLab CLI (glab)" || print_warning "GitLab CLI (glab) - not installed"
+	check_cmd tea && print_success "Gitea CLI (tea)" || print_warning "Gitea CLI (tea) - not installed"
+	echo ""
+	_status_ai_tools
+	_status_dev_envs
+	_status_ai_configs
 	print_header "SSH Configuration"
-	if check_file "$HOME/.ssh/id_ed25519"; then
-		print_success "Ed25519 SSH key"
-	else
-		print_warning "Ed25519 SSH key - not found"
-	fi
+	check_file "$HOME/.ssh/id_ed25519" && print_success "Ed25519 SSH key" || print_warning "Ed25519 SSH key - not found"
 	echo ""
 }
 
@@ -936,135 +825,48 @@ cmd_uninstall() {
 }
 
 # Scaffold standard repo courtesy files if they don't exist
-# Creates: README.md, LICENCE, CHANGELOG.md, CONTRIBUTING.md, SECURITY.md, CODE_OF_CONDUCT.md
-scaffold_repo_courtesy_files() {
+# Scaffold helpers (extracted for complexity reduction)
+_scaffold_contributing() {
+	local project_root="$1" repo_name="$2"
+	[[ -f "$project_root/CONTRIBUTING.md" ]] && return 1
+	local c="# Contributing to $repo_name"
+	c="$c"$'\n\n'"Thanks for your interest in contributing!"
+	c="$c"$'\n\n'"## Quick Start"$'\n\n'"1. Fork the repository"
+	c="$c"$'\n'"2. Create a branch: \`git checkout -b feature/your-feature\`"
+	c="$c"$'\n'"3. Make your changes"
+	c="$c"$'\n'"4. Commit with conventional commits: \`git commit -m \"feat: add new feature\"\`"
+	c="$c"$'\n'"5. Push and open a PR"
+	c="$c"$'\n\n'"## Commit Messages"$'\n\n'"We use [Conventional Commits](https://www.conventionalcommits.org/):"
+	c="$c"$'\n\n'"- \`feat:\` - New feature"$'\n'"- \`fix:\` - Bug fix"$'\n'"- \`docs:\` - Documentation only"
+	c="$c"$'\n'"- \`refactor:\` - Code change that neither fixes a bug nor adds a feature"$'\n'"- \`chore:\` - Maintenance tasks"
+	printf '%s\n' "$c" >"$project_root/CONTRIBUTING.md"
+	return 0
+}
+
+_scaffold_security() {
 	local project_root="$1"
-	local created=0
-
-	# Derive repo name from directory
-	local repo_name
-	repo_name=$(basename "$project_root")
-
-	# Try to get author from git config
-	local author_name
-	author_name=$(git -C "$project_root" config user.name 2>/dev/null || echo "")
-
-	local current_year
-	current_year=$(date +%Y)
-
-	print_info "Checking repo courtesy files..."
-
-	# README.md
-	if [[ ! -f "$project_root/README.md" ]]; then
-		local readme_content="# $repo_name"
-		if [[ -f "$project_root/.aidevops.json" ]]; then
-			local description
-			description=$(jq -r '.description // empty' "$project_root/.aidevops.json" 2>/dev/null || echo "")
-			if [[ -n "$description" ]]; then
-				readme_content="$readme_content"$'\n\n'"$description"
-			fi
-		fi
-		if [[ -f "$project_root/LICENCE" ]] || [[ -f "$project_root/LICENSE" ]]; then
-			readme_content="$readme_content"$'\n\n'"## Licence"$'\n\n'"See [LICENCE](LICENCE) for details."
-		fi
-		printf '%s\n' "$readme_content" >"$project_root/README.md"
-		((++created))
-	fi
-
-	# LICENCE (MIT default)
-	if [[ ! -f "$project_root/LICENCE" ]] && [[ ! -f "$project_root/LICENSE" ]]; then
-		local licence_holder="${author_name:-$(whoami)}"
-		cat >"$project_root/LICENCE" <<LICEOF
-MIT License
-
-Copyright (c) $current_year $licence_holder
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-
-The above copyright notice and this permission notice shall be included in all
-copies or substantial portions of the Software.
-
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
-SOFTWARE.
-LICEOF
-		((++created))
-	fi
-
-	# CHANGELOG.md
-	if [[ ! -f "$project_root/CHANGELOG.md" ]]; then
-		cat >"$project_root/CHANGELOG.md" <<'CHEOF'
-# Changelog
-
-All notable changes to this project will be documented in this file.
-
-The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
-and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
-
-## [Unreleased]
-CHEOF
-		((++created))
-	fi
-
-	# CONTRIBUTING.md
-	if [[ ! -f "$project_root/CONTRIBUTING.md" ]]; then
-		local contrib_content="# Contributing to $repo_name"
-		contrib_content="$contrib_content"$'\n\n'"Thanks for your interest in contributing!"
-		contrib_content="$contrib_content"$'\n\n'"## Quick Start"
-		contrib_content="$contrib_content"$'\n\n'"1. Fork the repository"
-		contrib_content="$contrib_content"$'\n'"2. Create a branch: \`git checkout -b feature/your-feature\`"
-		contrib_content="$contrib_content"$'\n'"3. Make your changes"
-		contrib_content="$contrib_content"$'\n'"4. Commit with conventional commits: \`git commit -m \"feat: add new feature\"\`"
-		contrib_content="$contrib_content"$'\n'"5. Push and open a PR"
-		contrib_content="$contrib_content"$'\n\n'"## Commit Messages"
-		contrib_content="$contrib_content"$'\n\n'"We use [Conventional Commits](https://www.conventionalcommits.org/):"
-		contrib_content="$contrib_content"$'\n\n'"- \`feat:\` - New feature"
-		contrib_content="$contrib_content"$'\n'"- \`fix:\` - Bug fix"
-		contrib_content="$contrib_content"$'\n'"- \`docs:\` - Documentation only"
-		contrib_content="$contrib_content"$'\n'"- \`refactor:\` - Code change that neither fixes a bug nor adds a feature"
-		contrib_content="$contrib_content"$'\n'"- \`chore:\` - Maintenance tasks"
-		printf '%s\n' "$contrib_content" >"$project_root/CONTRIBUTING.md"
-		((++created))
-	fi
-
-	# SECURITY.md
-	if [[ ! -f "$project_root/SECURITY.md" ]]; then
-		local security_email=""
-		local git_email
-		git_email=$(git -C "$project_root" config user.email 2>/dev/null || echo "")
-		if [[ -n "$git_email" ]]; then
-			security_email="$git_email"
-		fi
-		cat >"$project_root/SECURITY.md" <<SECEOF
+	[[ -f "$project_root/SECURITY.md" ]] && return 1
+	local se="" ge; ge=$(git -C "$project_root" config user.email 2>/dev/null || echo ""); [[ -n "$ge" ]] && se="$ge"
+	cat >"$project_root/SECURITY.md" <<SECEOF
 # Security Policy
 
 ## Reporting a Vulnerability
 
 If you discover a security vulnerability, please report it privately.
 SECEOF
-		if [[ -n "$security_email" ]]; then
-			cat >>"$project_root/SECURITY.md" <<SECEOF
+	[[ -n "$se" ]] && cat >>"$project_root/SECURITY.md" <<SECEOF
 
-**Email:** $security_email
+**Email:** $se
 
 Please do not open public issues for security vulnerabilities.
 SECEOF
-		fi
-		((++created))
-	fi
+	return 0
+}
 
-	# CODE_OF_CONDUCT.md
-	if [[ ! -f "$project_root/CODE_OF_CONDUCT.md" ]]; then
-		cat >"$project_root/CODE_OF_CONDUCT.md" <<'COCEOF'
+_scaffold_coc() {
+	local project_root="$1"
+	[[ -f "$project_root/CODE_OF_CONDUCT.md" ]] && return 1
+	cat >"$project_root/CODE_OF_CONDUCT.md" <<'COCEOF'
 # Contributor Covenant Code of Conduct
 
 ## Our Pledge
@@ -1086,15 +888,70 @@ Examples of behavior that contributes to a positive environment:
 This Code of Conduct is adapted from the [Contributor Covenant](https://www.contributor-covenant.org),
 version 2.1.
 COCEOF
+	return 0
+}
+
+# Scaffold standard repo courtesy files if they don't exist
+# Creates: README.md, LICENCE, CHANGELOG.md, CONTRIBUTING.md, SECURITY.md, CODE_OF_CONDUCT.md
+scaffold_repo_courtesy_files() {
+	local project_root="$1"; local created=0
+	local repo_name; repo_name=$(basename "$project_root")
+	local author_name; author_name=$(git -C "$project_root" config user.name 2>/dev/null || echo "")
+	local current_year; current_year=$(date +%Y)
+	print_info "Checking repo courtesy files..."
+	if [[ ! -f "$project_root/README.md" ]]; then
+		local rc="# $repo_name"
+		if [[ -f "$project_root/.aidevops.json" ]]; then
+			local desc; desc=$(jq -r '.description // empty' "$project_root/.aidevops.json" 2>/dev/null || echo "")
+			[[ -n "$desc" ]] && rc="$rc"$'\n\n'"$desc"
+		fi
+		{ [[ -f "$project_root/LICENCE" ]] || [[ -f "$project_root/LICENSE" ]]; } && rc="$rc"$'\n\n'"## Licence"$'\n\n'"See [LICENCE](LICENCE) for details."
+		printf '%s\n' "$rc" >"$project_root/README.md"; ((++created))
+	fi
+	if [[ ! -f "$project_root/LICENCE" ]] && [[ ! -f "$project_root/LICENSE" ]]; then
+		local lh="${author_name:-$(whoami)}"
+		cat >"$project_root/LICENCE" <<LICEOF
+MIT License
+
+Copyright (c) $current_year $lh
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+LICEOF
 		((++created))
 	fi
+	if [[ ! -f "$project_root/CHANGELOG.md" ]]; then
+		cat >"$project_root/CHANGELOG.md" <<'CHEOF'
+# Changelog
 
-	if [[ $created -gt 0 ]]; then
-		print_success "Created $created repo courtesy file(s) (README, LICENCE, CHANGELOG, etc.)"
-	else
-		print_info "Repo courtesy files already exist"
+All notable changes to this project will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
+and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
+
+## [Unreleased]
+CHEOF
+		((++created))
 	fi
-
+	_scaffold_contributing "$project_root" "$repo_name" && ((++created))
+	_scaffold_security "$project_root" && ((++created))
+	_scaffold_coc "$project_root" && ((++created))
+	[[ $created -gt 0 ]] && print_success "Created $created repo courtesy file(s) (README, LICENCE, CHANGELOG, etc.)" || print_info "Repo courtesy files already exist"
 	return 0
 }
 
