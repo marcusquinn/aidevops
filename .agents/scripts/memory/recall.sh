@@ -262,7 +262,7 @@ cmd_recall() {
 	local results
 	results=$(
 		db -json "$MEMORY_DB" <<EOF
-.param set :query '${escaped_query}'
+.param set :query "${escaped_query}"
 SELECT 
     learnings.id,
     learnings.content,
@@ -319,7 +319,7 @@ EOF
 		if [[ -f "$global_db" ]]; then
 			shared_results=$(
 				db -json "$global_db" <<EOF
-.param set :query '${escaped_query}'
+.param set :query "${escaped_query}"
 SELECT 
     learnings.id,
     learnings.content,
