@@ -1251,7 +1251,15 @@ _quality_sweep_for_repo() {
 	local shellcheck_section=""
 	if command -v shellcheck &>/dev/null; then
 		local sh_files
-		sh_files=$(find "$repo_path" -name "*.sh" -not -path "*/archived/*" -not -path "*/node_modules/*" -not -path "*/.git/*" -type f 2>/dev/null | head -100)
+		# GH#5663: Use git ls-files to discover only tracked shell scripts.
+		# find can return deleted files still on disk, stale worktree paths, or
+		# build artifacts — causing false ShellCheck findings on non-existent files.
+		if git -C "$repo_path" rev-parse --git-dir >/dev/null 2>&1; then
+			sh_files=$(git -C "$repo_path" ls-files '*.sh' 2>/dev/null | head -100)
+		else
+			# Fallback for non-git directories (should not occur for pulse repos)
+			sh_files=$(find "$repo_path" -name "*.sh" -not -path "*/archived/*" -not -path "*/node_modules/*" -not -path "*/.git/*" -type f 2>/dev/null | head -100)
+		fi
 
 		if [[ -n "$sh_files" ]]; then
 			local sc_errors=0
@@ -1266,6 +1274,17 @@ _quality_sweep_for_repo() {
 
 			while IFS= read -r shfile; do
 				[[ -z "$shfile" ]] && continue
+				# GH#5663: git ls-files returns relative paths — resolve to absolute.
+				if [[ "$shfile" != /* ]]; then
+					shfile="${repo_path}/${shfile}"
+				fi
+				# GH#5663: Guard against tracked-but-deleted files (index vs working
+				# tree mismatch). Skip with a log entry rather than running ShellCheck
+				# on a path that does not exist.
+				if [[ ! -f "$shfile" ]]; then
+					echo "[stats] ShellCheck: skipping missing file: ${shfile}" >>"$LOGFILE"
+					continue
+				fi
 				local result
 				# t1398.2: hardened invocation — no -x, --norc, per-file timeout,
 				# ulimit -v in subshell to cap RSS per shellcheck process.
