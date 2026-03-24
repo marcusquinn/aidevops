@@ -25,8 +25,8 @@
  *   - Google Generative AI API: https://ai.google.dev/api/rest
  */
 
-import { readFileSync, writeFileSync } from "fs";
-import { join } from "path";
+import { readFileSync, writeFileSync, mkdirSync } from "fs";
+import { join, dirname } from "path";
 import { homedir } from "os";
 import { getAccounts, ensureValidToken, patchAccount } from "./oauth-pool.mjs";
 
@@ -63,8 +63,8 @@ let proxyPort = null;
 /** @type {boolean} */
 let proxyStarting = false;
 
-/** @type {string | null} */
-let activeAccountEmail = null;
+// activeAccountEmail removed — each request now tracks its own email via
+// getAccessToken() return value to avoid concurrent-request misattribution.
 
 // ---------------------------------------------------------------------------
 // Token provider for the proxy
@@ -73,9 +73,11 @@ let activeAccountEmail = null;
 /**
  * Get a valid Google access token from the pool.
  * Called on every proxied request to get the current token.
- * Handles rotation: if the current account is rate-limited, picks the next.
+ * Returns both the token and the selected account email so callers can
+ * pass the email to rotateOnRateLimit() — avoiding the module-global
+ * activeAccountEmail that caused concurrent-request misattribution.
  *
- * @returns {Promise<string>}
+ * @returns {Promise<{ token: string, email: string }>}
  */
 async function getAccessToken() {
   const accounts = getAccounts("google");
@@ -85,16 +87,7 @@ async function getAccessToken() {
 
   const now = Date.now();
 
-  // Try the active account first
-  if (activeAccountEmail) {
-    const active = accounts.find((a) => a.email === activeAccountEmail);
-    if (active && active.status === "active" && (!active.cooldownUntil || active.cooldownUntil <= now)) {
-      const token = await ensureValidToken("google", active);
-      if (token) return token;
-    }
-  }
-
-  // Rotate to the best available account (LRU)
+  // Pick the best available account (LRU, skip rate-limited)
   const sorted = [...accounts]
     .filter(
       (a) =>
@@ -106,12 +99,11 @@ async function getAccessToken() {
   for (const candidate of sorted) {
     const token = await ensureValidToken("google", candidate);
     if (token) {
-      activeAccountEmail = candidate.email;
       patchAccount("google", candidate.email, {
         lastUsed: new Date().toISOString(),
         status: "active",
       });
-      return token;
+      return { token, email: candidate.email };
     }
   }
 
@@ -120,12 +112,14 @@ async function getAccessToken() {
 
 /**
  * Handle a 429 response by rotating to the next account.
- * Marks the current account as rate-limited and picks the next one.
+ * Marks the throttled account as rate-limited and picks the next one.
+ * Accepts the email of the account that produced the 429 so concurrent
+ * requests don't misattribute cooldowns via a shared global.
  *
- * @returns {Promise<string | null>} New access token, or null if no accounts available
+ * @param {string | null} currentEmail - Email of the account that got rate-limited
+ * @returns {Promise<{ token: string, email: string } | null>} New token+email, or null
  */
-async function rotateOnRateLimit() {
-  const currentEmail = activeAccountEmail;
+async function rotateOnRateLimit(currentEmail) {
   if (currentEmail) {
     patchAccount("google", currentEmail, {
       status: "rate-limited",
@@ -147,13 +141,12 @@ async function rotateOnRateLimit() {
   for (const candidate of available) {
     const token = await ensureValidToken("google", candidate);
     if (token) {
-      activeAccountEmail = candidate.email;
       patchAccount("google", candidate.email, {
         lastUsed: new Date().toISOString(),
         status: "active",
       });
       console.error(`[aidevops] Google proxy: rotated to ${candidate.email} after 429`);
-      return token;
+      return { token, email: candidate.email };
     }
   }
 
@@ -260,7 +253,7 @@ export async function startGoogleProxy(client) {
 
   try {
     // Get an initial valid token for model discovery
-    const initialToken = await getAccessToken();
+    const { token: initialToken } = await getAccessToken();
 
     // Discover available models
     let models;
@@ -290,10 +283,14 @@ export async function startGoogleProxy(client) {
         try {
           const targetUrl = `${GOOGLE_API_BASE}${url.pathname}${url.search}`;
 
-          // Get a valid pool token
+          // Get a valid pool token — returns {token, email} so the 429 handler
+          // can mark the correct account without relying on a shared global.
           let accessToken;
+          let accountEmail;
           try {
-            accessToken = await getAccessToken();
+            const result = await getAccessToken();
+            accessToken = result.token;
+            accountEmail = result.email;
           } catch (err) {
             return new Response(JSON.stringify({
               error: { message: `Google proxy: ${err.message}`, status: "UNAVAILABLE" },
@@ -316,39 +313,31 @@ export async function startGoogleProxy(client) {
           }
           forwardHeaders.set("Authorization", `Bearer ${accessToken}`);
 
-          // Forward the request
+          // Buffer the request body up-front so the 429 retry can reuse it.
+          // req.body is a one-shot ReadableStream per the WHATWG Fetch spec —
+          // once consumed by the first fetch() call, it cannot be read again.
           let body = null;
           if (req.method !== "GET" && req.method !== "HEAD") {
-            body = req.body;
+            body = await req.arrayBuffer();
           }
 
           let response = await fetch(targetUrl, {
             method: req.method,
             headers: forwardHeaders,
             body,
-            // @ts-ignore — Bun supports duplex for streaming request bodies
-            duplex: body ? "half" : undefined,
           });
 
-          // Handle 429 — rotate account and retry once
+          // Handle 429 — rotate account and retry once with the buffered body
           if (response.status === 429) {
             console.error(`[aidevops] Google proxy: 429 from Google API, attempting rotation`);
-            const newToken = await rotateOnRateLimit();
-            if (newToken) {
-              forwardHeaders.set("Authorization", `Bearer ${newToken}`);
-
-              // Re-read body for retry if it was consumed
-              // For streaming bodies, we can't retry — return the 429
-              if (body && typeof body !== "string" && !(body instanceof ArrayBuffer)) {
-                // Body was a ReadableStream and is consumed — return original 429
-                console.error("[aidevops] Google proxy: cannot retry streaming request body");
-              } else {
-                response = await fetch(targetUrl, {
-                  method: req.method,
-                  headers: forwardHeaders,
-                  body: req.method !== "GET" && req.method !== "HEAD" ? body : null,
-                });
-              }
+            const rotated = await rotateOnRateLimit(accountEmail);
+            if (rotated) {
+              forwardHeaders.set("Authorization", `Bearer ${rotated.token}`);
+              response = await fetch(targetUrl, {
+                method: req.method,
+                headers: forwardHeaders,
+                body,
+              });
             }
           }
 
@@ -408,7 +397,6 @@ export function stopGoogleProxy() {
     }
     proxyServer = null;
     proxyPort = null;
-    activeAccountEmail = null;
     console.error("[aidevops] Google proxy: stopped");
   }
 }
@@ -504,13 +492,18 @@ const OPENCODE_CONFIG_PATH = join(homedir(), ".config", "opencode", "opencode.js
  * @param {Array<{ id: string, name: string, contextWindow?: number, maxTokens?: number }>} models
  */
 function persistGoogleProvider(port, models) {
-  let config;
+  // Start from an empty config on first run (ENOENT) so fresh setups get
+  // Google models registered even before opencode.json exists.
+  let config = {};
   try {
     const raw = readFileSync(OPENCODE_CONFIG_PATH, "utf-8");
     config = JSON.parse(raw);
-  } catch {
-    console.error("[aidevops] Google proxy: cannot read opencode.json, skipping persist");
-    return;
+  } catch (err) {
+    if (err.code !== "ENOENT") {
+      console.error(`[aidevops] Google proxy: cannot read opencode.json: ${err.message}`);
+      return;
+    }
+    // ENOENT — file doesn't exist yet; proceed with empty config
   }
 
   if (!config.provider) config.provider = {};
@@ -532,6 +525,8 @@ function persistGoogleProvider(port, models) {
   }
 
   try {
+    // Ensure parent directory exists (e.g., ~/.config/opencode/ on first run)
+    mkdirSync(dirname(OPENCODE_CONFIG_PATH), { recursive: true });
     writeFileSync(OPENCODE_CONFIG_PATH, JSON.stringify(config, null, 2) + "\n", "utf-8");
     console.error(`[aidevops] Google proxy: persisted ${models.length} models to opencode.json (port ${port})`);
   } catch (err) {
