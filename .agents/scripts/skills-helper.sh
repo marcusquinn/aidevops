@@ -43,6 +43,396 @@ SKILL_SOURCES="${AGENTS_DIR}/configs/skill-sources.json"
 # shellcheck disable=SC2034  # Used by shared-constants.sh log_* functions
 LOG_PREFIX="skills"
 
+# Return 0 (true) if rel_path should be skipped (non-skill file), 1 otherwise.
+# Pass allow_custom=1 to let custom/skills/* through.
+_is_skipped_path() {
+	local rel_path="$1"
+	local allow_custom="${2:-0}"
+
+	if [[ "$allow_custom" == "1" ]]; then
+		case "$rel_path" in
+		custom/skills/*) return 1 ;;
+		esac
+	fi
+
+	case "$rel_path" in
+	scripts/* | templates/* | memory/* | configs/* | custom/* | draft/* | AGENTS.md | VERSION | subagent-index.toon)
+		return 0
+		;;
+	esac
+	return 1
+}
+
+# Print a single skill entry line (used by search, browse, recommend).
+_print_skill_entry() {
+	local filename="$1"
+	local category="$2"
+	local desc="$3"
+	local is_imported="$4"
+
+	local type_label="native"
+	if [[ "$is_imported" == "true" ]]; then
+		type_label="imported"
+	fi
+	echo -e "  ${BOLD}${filename}${NC} ${CYAN}[$category]${NC} ${YELLOW}($type_label)${NC}"
+	if [[ -n "$desc" ]]; then
+		echo "    $desc"
+	fi
+	return 0
+}
+
+# Find a skill file by name.  Sets the caller's skill_file variable via stdout.
+# Prints the matched path, or empty string if not found.
+# Pass allow_partial=1 to fall back to partial-name matches.
+_find_skill_file() {
+	local name="$1"
+	local allow_partial="${2:-0}"
+
+	local exact_match=""
+	local candidates=()
+
+	while IFS= read -r md_file; do
+		local filename
+		filename=$(basename "$md_file" .md)
+		local rel_path="${md_file#"$AGENTS_DIR/"}"
+
+		case "$rel_path" in
+		scripts/* | templates/* | memory/* | configs/* | AGENTS.md | VERSION | subagent-index.toon)
+			continue
+			;;
+		esac
+
+		if [[ "$filename" == "$name" ]]; then
+			exact_match="$md_file"
+			break
+		elif [[ "$allow_partial" == "1" && "$filename" == *"$name"* ]]; then
+			candidates+=("$md_file")
+		fi
+	done < <(find -L "$AGENTS_DIR" -name "*.md" -type f | sort)
+
+	if [[ -n "$exact_match" ]]; then
+		echo "$exact_match"
+	elif [[ "$allow_partial" == "1" && ${#candidates[@]} -gt 0 ]]; then
+		echo "${candidates[0]}"
+	fi
+	return 0
+}
+
+# Scan AGENTS_DIR for skills matching query_lower; emit JSON entries or display lines.
+# Arguments: query_lower json_output
+# Outputs: increments found count via stdout lines; caller counts them.
+_search_local_skills() {
+	local query_lower="$1"
+	local json_output="$2"
+
+	local found=0
+	local results=()
+
+	while IFS= read -r md_file; do
+		local rel_path="${md_file#"$AGENTS_DIR/"}"
+		local filename
+		filename=$(basename "$md_file" .md)
+		local category
+		category=$(path_to_category "$rel_path")
+
+		# Skip non-skill files (custom/skills/* allowed through)
+		if _is_skipped_path "$rel_path" "1"; then
+			continue
+		fi
+
+		local desc
+		desc=$(extract_description "$md_file")
+		local title
+		title=$(extract_title "$md_file")
+
+		local match_text="${filename} ${desc} ${title} ${category}"
+		local match_lower
+		match_lower=$(echo "$match_text" | tr '[:upper:]' '[:lower:]')
+
+		local matched=false
+		local word
+		for word in $query_lower; do
+			if [[ "$match_lower" == *"$word"* ]]; then
+				matched=true
+				break
+			fi
+		done
+
+		if [[ "$matched" == true ]]; then
+			((++found))
+			local is_imported="false"
+			if [[ "$filename" == *-skill ]]; then
+				is_imported="true"
+			fi
+
+			if [[ "$json_output" == true ]]; then
+				results+=("{\"name\":\"$filename\",\"category\":\"$category\",\"description\":\"${desc//\"/\\\"}\",\"imported\":$is_imported,\"path\":\"$rel_path\"}")
+			else
+				_print_skill_entry "$filename" "$category" "$desc" "$is_imported"
+			fi
+		fi
+	done < <(find -L "$AGENTS_DIR" -name "*.md" -type f | sort)
+
+	if [[ "$json_output" == true ]]; then
+		local results_json
+		results_json=$(printf '%s,' "${results[@]}" || true)
+		results_json="${results_json%,}"
+		printf '%s\t%s' "$found" "$results_json"
+	else
+		echo "$found"
+	fi
+	return 0
+}
+
+# Display top-level category listing (no-arg branch of cmd_browse).
+_browse_categories() {
+	echo ""
+	echo -e "${BOLD}Skill Categories${NC}"
+	echo "================"
+	echo ""
+
+	local cat_counts_file
+	cat_counts_file=$(mktemp)
+	# Intentional: expand now to capture temp path
+	# shellcheck disable=SC2064
+	trap "rm -f '$cat_counts_file'" RETURN
+
+	while IFS= read -r md_file; do
+		local rel_path="${md_file#"$AGENTS_DIR/"}"
+		if _is_skipped_path "$rel_path" "0"; then
+			continue
+		fi
+		local cat
+		cat=$(path_to_category "$rel_path")
+		local top_cat="${cat%%/*}"
+		if [[ -n "$top_cat" && "$top_cat" != "root" ]]; then
+			echo "$top_cat" >>"$cat_counts_file"
+		fi
+	done < <(find -L "$AGENTS_DIR" -name "*.md" -type f)
+
+	if [[ -s "$cat_counts_file" ]]; then
+		sort "$cat_counts_file" | uniq -c | sort -rn | while read -r count cat_name; do
+			printf "  %-25s %s skill(s)\n" "$cat_name" "$count"
+		done
+	fi
+	rm -f "$cat_counts_file"
+
+	echo ""
+	echo "Usage: skills-helper.sh browse <category>"
+	echo "  e.g., skills-helper.sh browse tools"
+	echo "        skills-helper.sh browse services"
+	echo "        skills-helper.sh browse tools/browser"
+	return 0
+}
+
+# Print the header and metadata block for cmd_describe.
+# Arguments: skill_file filename rel_path category desc title model_tier
+_describe_print_header() {
+	local skill_file="$1"
+	local filename="$2"
+	local rel_path="$3"
+	local category="$4"
+	local desc="$5"
+	local title="$6"
+	local model_tier="$7"
+
+	echo ""
+	echo -e "${BOLD}${title:-$filename}${NC}"
+	printf '=%.0s' $(seq 1 ${#filename})
+	echo
+	echo ""
+
+	if [[ -n "$desc" ]]; then
+		echo -e "  ${CYAN}Description:${NC} $desc"
+	fi
+	echo -e "  ${CYAN}Category:${NC}    $category"
+	echo -e "  ${CYAN}Path:${NC}        $rel_path"
+
+	if [[ -n "$model_tier" ]]; then
+		echo -e "  ${CYAN}Model tier:${NC}  $model_tier"
+	fi
+
+	if [[ "$filename" == *-skill ]]; then
+		echo -e "  ${CYAN}Type:${NC}        imported (community skill)"
+		if [[ -f "$SKILL_SOURCES" ]] && command -v jq &>/dev/null; then
+			local base_name="${filename%-skill}"
+			local upstream
+			upstream=$(jq -r --arg n "$base_name" '.skills[] | select(.name == $n) | .upstream_url // empty' "$SKILL_SOURCES" || true)
+			if [[ -n "$upstream" ]]; then
+				echo -e "  ${CYAN}Upstream:${NC}    $upstream"
+			fi
+			local imported_at
+			imported_at=$(jq -r --arg n "$base_name" '.skills[] | select(.name == $n) | .imported_at // empty' "$SKILL_SOURCES" || true)
+			if [[ -n "$imported_at" ]]; then
+				echo -e "  ${CYAN}Imported:${NC}    $imported_at"
+			fi
+		fi
+	else
+		echo -e "  ${CYAN}Type:${NC}        native (aidevops built-in)"
+	fi
+	return 0
+}
+
+# Print the subagents block and content preview for cmd_describe.
+# Arguments: skill_file
+_describe_print_subagents_and_preview() {
+	local skill_file="$1"
+
+	local companion_dir="${skill_file%.md}"
+	if [[ -d "$companion_dir" ]]; then
+		local sub_count
+		sub_count=$(find "$companion_dir" -maxdepth 1 -name "*.md" -type f | wc -l | tr -d ' ')
+		if [[ "$sub_count" -gt 0 ]]; then
+			echo ""
+			echo -e "  ${CYAN}Subagents ($sub_count):${NC}"
+			while IFS= read -r sub_file; do
+				local sub_name
+				sub_name=$(basename "$sub_file" .md)
+				local sub_desc
+				sub_desc=$(extract_description "$sub_file")
+				if [[ -n "$sub_desc" ]]; then
+					echo "    - $sub_name: $sub_desc"
+				else
+					echo "    - $sub_name"
+				fi
+			done < <(find "$companion_dir" -maxdepth 1 -name "*.md" -type f | sort)
+		fi
+	fi
+
+	echo ""
+	echo -e "  ${CYAN}Preview:${NC}"
+	awk '
+		/^---$/ { in_fm = !in_fm; next }
+		in_fm { next }
+		/^#/ { next }
+		/^$/ { if (found) exit; next }
+		{ found = 1; print "    " $0 }
+	' "$skill_file" | head -5
+
+	echo ""
+	echo "Full content: $skill_file"
+	return 0
+}
+
+# Match task description against keyword map; print matched categories one per line.
+# Arguments: task_lower
+_match_categories_from_task() {
+	local task_lower="$1"
+
+	local keyword_map
+	keyword_map="browser=tools/browser
+scrape=tools/browser
+crawl=tools/browser
+playwright=tools/browser
+seo=seo
+search engine=seo
+keyword=seo
+ranking=seo
+deploy=tools/deployment
+vercel=tools/deployment
+coolify=tools/deployment
+docker=tools/containers
+container=tools/containers
+wordpress=tools/wordpress
+wp=tools/wordpress
+git=tools/git
+github=tools/git
+pr=tools/git
+pull request=tools/git
+email=services/email
+video=tools/video
+image=tools/vision
+pdf=tools/pdf
+database=services/database
+postgres=services/database
+security=tools/security
+secret=tools/credentials
+api key=tools/credentials
+voice=tools/voice
+speech=tools/voice
+mobile=tools/mobile
+ios=tools/mobile
+accessibility=tools/accessibility
+wcag=tools/accessibility
+content=content
+blog=content
+article=content
+youtube=content
+code review=tools/code-review
+lint=tools/code-review
+quality=tools/code-review
+hosting=services/hosting
+cloudflare=services/hosting
+dns=services/hosting
+monitor=services/monitoring
+sentry=services/monitoring
+document=tools/document
+extract=tools/document
+ocr=tools/ocr
+receipt=tools/accounts"
+
+	local matched_categories=()
+	local line
+	while IFS= read -r line; do
+		local kw="${line%%=*}"
+		local cat="${line#*=}"
+		if [[ "$task_lower" == *"$kw"* ]]; then
+			local already=false
+			local existing
+			for existing in "${matched_categories[@]+"${matched_categories[@]}"}"; do
+				if [[ "$existing" == "$cat" ]]; then
+					already=true
+					break
+				fi
+			done
+			if [[ "$already" == false ]]; then
+				matched_categories+=("$cat")
+			fi
+		fi
+	done <<<"$keyword_map"
+
+	local c
+	for c in "${matched_categories[@]+"${matched_categories[@]}"}"; do
+		echo "$c"
+	done
+	return 0
+}
+
+# List skills in a specific category (used by cmd_browse and cmd_recommend).
+# Arguments: category
+_list_skills_in_category() {
+	local category="$1"
+
+	local found=0
+	while IFS= read -r md_file; do
+		local rel_path="${md_file#"$AGENTS_DIR/"}"
+
+		# Skip non-skill files (custom/skills/* allowed through)
+		if _is_skipped_path "$rel_path" "1"; then
+			continue
+		fi
+
+		local cat
+		cat=$(path_to_category "$rel_path")
+
+		if [[ "$cat" == "$category" || "$cat" == "$category/"* ]]; then
+			local filename
+			filename=$(basename "$md_file" .md)
+			local desc
+			desc=$(extract_description "$md_file")
+			local is_imported="false"
+			if [[ "$filename" == *-skill ]]; then
+				is_imported="true"
+			fi
+			_print_skill_entry "$filename" "$category" "$desc" "$is_imported"
+			((++found))
+		fi
+	done < <(find -L "$AGENTS_DIR" -name "*.md" -type f | sort)
+
+	echo "$found"
+	return 0
+}
+
 show_help() {
 	cat <<'EOF'
 Skills Discovery & Management - Find, explore, and manage AI agent skills
@@ -278,80 +668,21 @@ cmd_search() {
 		return $?
 	fi
 
-	# Convert query to lowercase for case-insensitive matching
 	local query_lower
 	query_lower=$(echo "$query" | tr '[:upper:]' '[:lower:]')
 
-	local found=0
-	local results=()
-
-	# Search through all .md files in AGENTS_DIR (excluding scripts, templates, memory)
-	while IFS= read -r md_file; do
-		local rel_path="${md_file#"$AGENTS_DIR/"}"
-		local filename
-		filename=$(basename "$md_file" .md)
-		local category
-		category=$(path_to_category "$rel_path")
-
-		# Skip non-skill files (custom/skills/* is allowed through)
-		case "$rel_path" in
-		custom/skills/*) ;;
-		scripts/* | templates/* | memory/* | configs/* | custom/* | draft/* | AGENTS.md | VERSION | subagent-index.toon)
-			continue
-			;;
-		esac
-
-		# Search in filename, description, and first heading
-		local desc
-		desc=$(extract_description "$md_file")
-		local title
-		title=$(extract_title "$md_file")
-
-		local match_text="${filename} ${desc} ${title} ${category}"
-		local match_lower
-		match_lower=$(echo "$match_text" | tr '[:upper:]' '[:lower:]')
-
-		# Check if any query word matches
-		local matched=false
-		local word
-		for word in $query_lower; do
-			if [[ "$match_lower" == *"$word"* ]]; then
-				matched=true
-				break
-			fi
-		done
-
-		if [[ "$matched" == true ]]; then
-			((++found))
-
-			local is_imported="false"
-			if [[ "$filename" == *-skill ]]; then
-				is_imported="true"
-			fi
-
-			if [[ "$json_output" == true ]]; then
-				results+=("{\"name\":\"$filename\",\"category\":\"$category\",\"description\":\"${desc//\"/\\\"}\",\"imported\":$is_imported,\"path\":\"$rel_path\"}")
-			else
-				local type_label="native"
-				if [[ "$is_imported" == "true" ]]; then
-					type_label="imported"
-				fi
-				echo -e "  ${BOLD}${filename}${NC} ${CYAN}[$category]${NC} ${YELLOW}($type_label)${NC}"
-				if [[ -n "$desc" ]]; then
-					echo "    $desc"
-				fi
-			fi
-		fi
-	done < <(find -L "$AGENTS_DIR" -name "*.md" -type f | sort)
+	local scan_result
+	scan_result=$(_search_local_skills "$query_lower" "$json_output")
 
 	if [[ "$json_output" == true ]]; then
-		local results_json
-		results_json=$(printf '%s,' "${results[@]}" || true)
-		results_json="${results_json%,}"
+		local found results_json
+		found="${scan_result%%	*}"
+		results_json="${scan_result#*	}"
 		echo "{\"query\":\"${query//\"/\\\"}\",\"count\":$found,\"results\":[$results_json]}"
 	else
+		local found="$scan_result"
 		echo ""
-		if [[ $found -eq 0 ]]; then
+		if [[ "$found" -eq 0 ]]; then
 			log_warning "No local skills found matching '$query'"
 			echo ""
 			echo "Try:"
@@ -376,50 +707,8 @@ cmd_browse() {
 	local json_output="${2:-false}"
 
 	if [[ -z "$category" ]]; then
-		# Show top-level categories
-		echo ""
-		echo -e "${BOLD}Skill Categories${NC}"
-		echo "================"
-		echo ""
-
-		local cat_counts_file
-		cat_counts_file=$(mktemp)
-		# Intentional: expand now to capture temp path
-		# shellcheck disable=SC2064
-		trap "rm -f '$cat_counts_file'" RETURN
-		while IFS= read -r md_file; do
-			local rel_path="${md_file#"$AGENTS_DIR/"}"
-
-			# Skip non-skill files
-			case "$rel_path" in
-			scripts/* | templates/* | memory/* | configs/* | custom/* | draft/* | AGENTS.md | VERSION | subagent-index.toon)
-				continue
-				;;
-			esac
-
-			local cat
-			cat=$(path_to_category "$rel_path")
-			# Get top-level category
-			local top_cat="${cat%%/*}"
-			if [[ -n "$top_cat" && "$top_cat" != "root" ]]; then
-				echo "$top_cat" >>"$cat_counts_file"
-			fi
-		done < <(find -L "$AGENTS_DIR" -name "*.md" -type f)
-
-		# Sort, count, and display
-		if [[ -s "$cat_counts_file" ]]; then
-			sort "$cat_counts_file" | uniq -c | sort -rn | while read -r count cat_name; do
-				printf "  %-25s %s skill(s)\n" "$cat_name" "$count"
-			done
-		fi
-		rm -f "$cat_counts_file"
-
-		echo ""
-		echo "Usage: skills-helper.sh browse <category>"
-		echo "  e.g., skills-helper.sh browse tools"
-		echo "        skills-helper.sh browse services"
-		echo "        skills-helper.sh browse tools/browser"
-		return 0
+		_browse_categories
+		return $?
 	fi
 
 	# Browse specific category
@@ -429,43 +718,11 @@ cmd_browse() {
 	echo
 	echo ""
 
-	local found=0
-	while IFS= read -r md_file; do
-		local rel_path="${md_file#"$AGENTS_DIR/"}"
-
-		# Skip non-skill files (custom/skills/* is allowed through)
-		case "$rel_path" in
-		custom/skills/*) ;;
-		scripts/* | templates/* | memory/* | configs/* | custom/* | draft/* | AGENTS.md | VERSION | subagent-index.toon)
-			continue
-			;;
-		esac
-
-		local cat
-		cat=$(path_to_category "$rel_path")
-
-		# Match category (prefix match)
-		if [[ "$cat" == "$category" || "$cat" == "$category/"* ]]; then
-			local filename
-			filename=$(basename "$md_file" .md)
-			local desc
-			desc=$(extract_description "$md_file")
-
-			local type_label="native"
-			if [[ "$filename" == *-skill ]]; then
-				type_label="imported"
-			fi
-
-			echo -e "  ${BOLD}${filename}${NC} ${YELLOW}($type_label)${NC}"
-			if [[ -n "$desc" ]]; then
-				echo "    $desc"
-			fi
-			((++found))
-		fi
-	done < <(find -L "$AGENTS_DIR" -name "*.md" -type f | sort)
+	local found
+	found=$(_list_skills_in_category "$category")
 
 	echo ""
-	if [[ $found -eq 0 ]]; then
+	if [[ "$found" -eq 0 ]]; then
 		log_warning "No skills found in category '$category'"
 		echo ""
 		echo "Available categories:"
@@ -486,35 +743,8 @@ cmd_describe() {
 		return 1
 	fi
 
-	# Find the skill file
-	local skill_file=""
-	local candidates=()
-
-	# Search for exact match first, then partial
-	while IFS= read -r md_file; do
-		local filename
-		filename=$(basename "$md_file" .md)
-		local rel_path="${md_file#"$AGENTS_DIR/"}"
-
-		# Skip non-skill files
-		case "$rel_path" in
-		scripts/* | templates/* | memory/* | configs/* | AGENTS.md | VERSION | subagent-index.toon)
-			continue
-			;;
-		esac
-
-		if [[ "$filename" == "$name" ]]; then
-			skill_file="$md_file"
-			break
-		elif [[ "$filename" == *"$name"* ]]; then
-			candidates+=("$md_file")
-		fi
-	done < <(find -L "$AGENTS_DIR" -name "*.md" -type f | sort)
-
-	# Use first candidate if no exact match
-	if [[ -z "$skill_file" && ${#candidates[@]} -gt 0 ]]; then
-		skill_file="${candidates[0]}"
-	fi
+	local skill_file
+	skill_file=$(_find_skill_file "$name" "1")
 
 	if [[ -z "$skill_file" || ! -f "$skill_file" ]]; then
 		log_error "Skill not found: $name"
@@ -535,80 +765,8 @@ cmd_describe() {
 	local model_tier
 	model_tier=$(extract_model_tier "$skill_file")
 
-	echo ""
-	echo -e "${BOLD}${title:-$filename}${NC}"
-	printf '=%.0s' $(seq 1 ${#filename})
-	echo
-	echo ""
-
-	if [[ -n "$desc" ]]; then
-		echo -e "  ${CYAN}Description:${NC} $desc"
-	fi
-	echo -e "  ${CYAN}Category:${NC}    $category"
-	echo -e "  ${CYAN}Path:${NC}        $rel_path"
-
-	if [[ -n "$model_tier" ]]; then
-		echo -e "  ${CYAN}Model tier:${NC}  $model_tier"
-	fi
-
-	local is_imported="false"
-	if [[ "$filename" == *-skill ]]; then
-		is_imported="true"
-		echo -e "  ${CYAN}Type:${NC}        imported (community skill)"
-
-		# Show upstream info if available
-		if [[ -f "$SKILL_SOURCES" ]] && command -v jq &>/dev/null; then
-			local base_name="${filename%-skill}"
-			local upstream
-			upstream=$(jq -r --arg n "$base_name" '.skills[] | select(.name == $n) | .upstream_url // empty' "$SKILL_SOURCES" || true)
-			if [[ -n "$upstream" ]]; then
-				echo -e "  ${CYAN}Upstream:${NC}    $upstream"
-			fi
-			local imported_at
-			imported_at=$(jq -r --arg n "$base_name" '.skills[] | select(.name == $n) | .imported_at // empty' "$SKILL_SOURCES" || true)
-			if [[ -n "$imported_at" ]]; then
-				echo -e "  ${CYAN}Imported:${NC}    $imported_at"
-			fi
-		fi
-	else
-		echo -e "  ${CYAN}Type:${NC}        native (aidevops built-in)"
-	fi
-
-	# Check for companion directory (subagents)
-	local companion_dir="${skill_file%.md}"
-	if [[ -d "$companion_dir" ]]; then
-		local sub_count
-		sub_count=$(find "$companion_dir" -maxdepth 1 -name "*.md" -type f | wc -l | tr -d ' ')
-		if [[ "$sub_count" -gt 0 ]]; then
-			echo ""
-			echo -e "  ${CYAN}Subagents ($sub_count):${NC}"
-			while IFS= read -r sub_file; do
-				local sub_name
-				sub_name=$(basename "$sub_file" .md)
-				local sub_desc
-				sub_desc=$(extract_description "$sub_file")
-				if [[ -n "$sub_desc" ]]; then
-					echo "    - $sub_name: $sub_desc"
-				else
-					echo "    - $sub_name"
-				fi
-			done < <(find "$companion_dir" -maxdepth 1 -name "*.md" -type f | sort)
-		fi
-	fi
-
-	# Show content preview (first non-frontmatter paragraph)
-	echo ""
-	echo -e "  ${CYAN}Preview:${NC}"
-	awk '
-		/^---$/ { in_fm = !in_fm; next }
-		in_fm { next }
-		/^#/ { next }
-		/^$/ { if (found) exit; next }
-		{ found = 1; print "    " $0 }
-	' "$skill_file" | head -5
-
-	echo ""
-	echo "Full content: $skill_file"
+	_describe_print_header "$skill_file" "$filename" "$rel_path" "$category" "$desc" "$title" "$model_tier"
+	_describe_print_subagents_and_preview "$skill_file"
 
 	return 0
 }
@@ -623,24 +781,8 @@ cmd_info() {
 		return 1
 	fi
 
-	# Find the skill file (same logic as describe)
-	local skill_file=""
-	while IFS= read -r md_file; do
-		local filename
-		filename=$(basename "$md_file" .md)
-		local rel_path="${md_file#"$AGENTS_DIR/"}"
-
-		case "$rel_path" in
-		scripts/* | templates/* | memory/* | configs/* | AGENTS.md | VERSION | subagent-index.toon)
-			continue
-			;;
-		esac
-
-		if [[ "$filename" == "$name" ]]; then
-			skill_file="$md_file"
-			break
-		fi
-	done < <(find -L "$AGENTS_DIR" -name "*.md" -type f | sort)
+	local skill_file
+	skill_file=$(_find_skill_file "$name" "0")
 
 	if [[ -z "$skill_file" || ! -f "$skill_file" ]]; then
 		log_error "Skill not found: $name"
@@ -885,87 +1027,15 @@ cmd_recommend() {
 	echo -e "  ${CYAN}Task:${NC} $task_desc"
 	echo ""
 
-	# Extract keywords from the task description
 	local task_lower
 	task_lower=$(echo "$task_desc" | tr '[:upper:]' '[:lower:]')
 
-	# Define keyword-to-category mappings for common tasks
-	# Format: "keyword=category" (one per line, simple string matching)
-	local keyword_map
-	keyword_map="browser=tools/browser
-scrape=tools/browser
-crawl=tools/browser
-playwright=tools/browser
-seo=seo
-search engine=seo
-keyword=seo
-ranking=seo
-deploy=tools/deployment
-vercel=tools/deployment
-coolify=tools/deployment
-docker=tools/containers
-container=tools/containers
-wordpress=tools/wordpress
-wp=tools/wordpress
-git=tools/git
-github=tools/git
-pr=tools/git
-pull request=tools/git
-email=services/email
-video=tools/video
-image=tools/vision
-pdf=tools/pdf
-database=services/database
-postgres=services/database
-security=tools/security
-secret=tools/credentials
-api key=tools/credentials
-voice=tools/voice
-speech=tools/voice
-mobile=tools/mobile
-ios=tools/mobile
-accessibility=tools/accessibility
-wcag=tools/accessibility
-content=content
-blog=content
-article=content
-youtube=content
-code review=tools/code-review
-lint=tools/code-review
-quality=tools/code-review
-hosting=services/hosting
-cloudflare=services/hosting
-dns=services/hosting
-monitor=services/monitoring
-sentry=services/monitoring
-document=tools/document
-extract=tools/document
-ocr=tools/ocr
-receipt=tools/accounts"
-
 	local matched_categories=()
-	local line
-	while IFS= read -r line; do
-		local kw="${line%%=*}"
-		local cat="${line#*=}"
-		if [[ "$task_lower" == *"$kw"* ]]; then
-			# Avoid duplicates
-			local already=false
-			local existing
-			for existing in "${matched_categories[@]+"${matched_categories[@]}"}"; do
-				if [[ "$existing" == "$cat" ]]; then
-					already=true
-					break
-				fi
-			done
-			if [[ "$already" == false ]]; then
-				matched_categories+=("$cat")
-			fi
-		fi
-	done <<<"$keyword_map"
+	while IFS= read -r cat_line; do
+		matched_categories+=("$cat_line")
+	done < <(_match_categories_from_task "$task_lower")
 
 	if [[ ${#matched_categories[@]} -eq 0 ]]; then
-		# Fallback: do a general search with the task words
 		log_info "No specific category match. Running general search..."
 		echo ""
 		cmd_search "$task_desc" "false"
@@ -980,32 +1050,11 @@ receipt=tools/accounts"
 	for cat in "${matched_categories[@]}"; do
 		echo -e "  ${BOLD}$cat:${NC}"
 
-		local found_in_cat=0
-		while IFS= read -r md_file; do
-			local rel_path="${md_file#"$AGENTS_DIR/"}"
-			local filename
-			filename=$(basename "$md_file" .md)
+		local found_in_cat
+		found_in_cat=$(_list_skills_in_category "$cat")
+		total_found=$((total_found + found_in_cat))
 
-			# Skip non-skill files
-			case "$rel_path" in
-			scripts/* | templates/* | memory/* | configs/* | custom/* | draft/* | AGENTS.md | VERSION | subagent-index.toon)
-				continue
-				;;
-			esac
-
-			local file_cat
-			file_cat=$(path_to_category "$rel_path")
-
-			if [[ "$file_cat" == "$cat" || "$file_cat" == "$cat/"* ]]; then
-				local desc
-				desc=$(extract_description "$md_file")
-				echo -e "    ${GREEN}-${NC} $filename: ${desc:-<no description>}"
-				((++found_in_cat))
-				((++total_found))
-			fi
-		done < <(find -L "$AGENTS_DIR" -name "*.md" -type f | sort)
-
-		if [[ $found_in_cat -eq 0 ]]; then
+		if [[ "$found_in_cat" -eq 0 ]]; then
 			echo "    (no skills in this category)"
 		fi
 		echo ""
