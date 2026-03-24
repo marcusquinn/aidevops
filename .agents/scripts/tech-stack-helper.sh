@@ -614,23 +614,18 @@ load_builtwith_api_key() {
 # BigQuery Provider — HTTP Archive crawl.pages
 # =============================================================================
 
-bq_reverse_lookup() {
-	local technology
-	technology=$(sanitize_sql_value "$1")
-	local limit="${2:-$DEFAULT_LIMIT}"
-	local client="${3:-$DEFAULT_CLIENT}"
-	local rank_filter="${4:-}"
-	local keywords="${5:-}"
-	local crawl_date="${6:-}"
-	local format="${7:-json}"
+# Validate and normalise bq_reverse_lookup parameters (limit, client, crawl_date).
+# Outputs three lines: validated_limit, validated_client, resolved_crawl_date.
+_bq_reverse_validate_params() {
+	local limit="$1"
+	local client="$2"
+	local crawl_date="$3"
 
-	# Validate limit is a positive integer to prevent SQL injection
 	if ! [[ "$limit" =~ ^[0-9]+$ ]] || [[ "$limit" -le 0 ]]; then
 		print_warning "Invalid limit '$limit', using default"
 		limit="$DEFAULT_LIMIT"
 	fi
 
-	# Validate client is an expected value (allowlist)
 	case "$client" in
 	desktop | mobile) ;;
 	*)
@@ -639,7 +634,6 @@ bq_reverse_lookup() {
 		;;
 	esac
 
-	# Sanitize crawl_date (expected format: YYYY-MM-DD or YYYY-MM-01)
 	if ! [[ "$crawl_date" =~ ^[0-9]{4}-[0-9]{2}-[0-9]{2}$ ]]; then
 		if [[ -n "$crawl_date" ]]; then
 			print_warning "Invalid crawl_date format '$crawl_date', fetching latest"
@@ -647,18 +641,15 @@ bq_reverse_lookup() {
 		crawl_date=$(get_latest_crawl_date)
 	fi
 
-	local cache_key="reverse_bq_${technology}_${client}_${rank_filter}_${keywords}_${crawl_date}_${limit}"
-	local cache_file
-	cache_file=$(get_cache_path "$cache_key")
+	printf '%s\n%s\n%s\n' "$limit" "$client" "$crawl_date"
+	return 0
+}
 
-	if is_cache_valid "$cache_file"; then
-		print_info "Using cached results (age < ${CACHE_TTL_DAYS}d)"
-		format_output "$cache_file" "$format"
-		return 0
-	fi
-
-	print_info "Querying HTTP Archive via BigQuery..."
-	print_info "Technology: $technology | Date: $crawl_date | Client: $client | Limit: $limit"
+# Build SQL WHERE clauses for rank and keyword filters.
+# Outputs two lines: rank_clause, keyword_clause (may be empty).
+_bq_reverse_build_clauses() {
+	local rank_filter="$1"
+	local keywords="$2"
 
 	local rank_clause=""
 	if [[ -n "$rank_filter" ]]; then
@@ -684,9 +675,7 @@ bq_reverse_lookup() {
 		for kw in $keywords; do
 			kw="${kw#"${kw%%[![:space:]]*}"}"
 			kw="${kw%"${kw##*[![:space:]]}"}"
-			# Sanitize via shared function (strips quotes, backslashes, semicolons)
 			kw=$(sanitize_sql_value "$kw")
-			# Additional LIKE-specific sanitization: escape % and _ wildcards in user input
 			kw="${kw//%/\\%}"
 			kw="${kw//_/\\_}"
 			if [[ -z "$kw" ]]; then
@@ -701,6 +690,48 @@ bq_reverse_lookup() {
 			keyword_clause="AND (${kw_conditions})"
 		fi
 	fi
+
+	printf '%s\n%s\n' "$rank_clause" "$keyword_clause"
+	return 0
+}
+
+bq_reverse_lookup() {
+	local technology
+	technology=$(sanitize_sql_value "$1")
+	local limit="${2:-$DEFAULT_LIMIT}"
+	local client="${3:-$DEFAULT_CLIENT}"
+	local rank_filter="${4:-}"
+	local keywords="${5:-}"
+	local crawl_date="${6:-}"
+	local format="${7:-json}"
+
+	# Validate and normalise parameters
+	local validated
+	validated=$(_bq_reverse_validate_params "$limit" "$client" "$crawl_date")
+	limit=$(printf '%s\n' "$validated" | sed -n '1p')
+	client=$(printf '%s\n' "$validated" | sed -n '2p')
+	crawl_date=$(printf '%s\n' "$validated" | sed -n '3p')
+
+	local cache_key="reverse_bq_${technology}_${client}_${rank_filter}_${keywords}_${crawl_date}_${limit}"
+	local cache_file
+	cache_file=$(get_cache_path "$cache_key")
+
+	if is_cache_valid "$cache_file"; then
+		print_info "Using cached results (age < ${CACHE_TTL_DAYS}d)"
+		format_output "$cache_file" "$format"
+		return 0
+	fi
+
+	print_info "Querying HTTP Archive via BigQuery..."
+	print_info "Technology: $technology | Date: $crawl_date | Client: $client | Limit: $limit"
+
+	# Build SQL clauses
+	local clauses
+	clauses=$(_bq_reverse_build_clauses "$rank_filter" "$keywords")
+	local rank_clause
+	rank_clause=$(printf '%s\n' "$clauses" | sed -n '1p')
+	local keyword_clause
+	keyword_clause=$(printf '%s\n' "$clauses" | sed -n '2p')
 
 	local query
 	query=$(
@@ -1254,19 +1285,15 @@ run_provider() {
 # Result Merging
 # =============================================================================
 
-# Merge results from multiple providers into a unified report
-# Strategy: union of all detected technologies, with confidence scores
-# based on how many providers detected each technology
-merge_results() {
-	local url="$1"
-	shift
-	# Remaining args are provider:json pairs passed via temp files
+# Collect valid provider result files into a JSON array string.
+# Sets $combined (JSON array) and $providers_list (comma-separated names).
+# Returns 1 if no valid results were found.
+_merge_collect_results() {
+	local combined_var="$1"
+	local providers_var="$2"
+	shift 2
 	local -a result_files=("$@")
 
-	local domain
-	domain=$(extract_domain "$url")
-
-	# Collect all provider results into a JSON array
 	local combined="["
 	local first=true
 	local providers_list=""
@@ -1276,20 +1303,15 @@ merge_results() {
 		if [[ -f "$file" ]]; then
 			local content
 			content=$(cat "$file")
-
-			# Skip error results
 			if echo "$content" | jq -e '.error' &>/dev/null; then
 				continue
 			fi
-
 			if [[ "$first" == "true" ]]; then
 				first=false
 			else
 				combined+=","
 			fi
 			combined+="$content"
-
-			# Track provider names
 			local pname
 			pname=$(echo "$content" | jq -r '.provider // "unknown"' 2>/dev/null || echo "unknown")
 			if [[ -n "$providers_list" ]]; then
@@ -1301,43 +1323,73 @@ merge_results() {
 	done
 	combined+="]"
 
-	# If no valid results, return empty
+	# Export via nameref-safe approach: write to temp files read by caller
+	printf '%s' "$combined" >"${combined_var}"
+	printf '%s' "$providers_list" >"${providers_var}"
+
 	if [[ "$first" == "true" ]]; then
-		jq -n \
-			--arg url "$url" \
-			--arg domain "$domain" \
-			'{
-                url: $url,
-                domain: $domain,
-                scan_time: (now | strftime("%Y-%m-%dT%H:%M:%SZ")),
-                provider_count: 0,
-                providers: [],
-                technology_count: 0,
-                technologies: [],
-                categories: [],
-                error: "no_providers_returned_results"
-            }'
+		return 1
+	fi
+	return 0
+}
+
+# Emit an empty/error merged result object for a URL.
+_merge_empty_result() {
+	local url="$1"
+	local domain="$2"
+	jq -n \
+		--arg url "$url" \
+		--arg domain "$domain" \
+		'{
+            url: $url,
+            domain: $domain,
+            scan_time: (now | strftime("%Y-%m-%dT%H:%M:%SZ")),
+            provider_count: 0,
+            providers: [],
+            technology_count: 0,
+            technologies: [],
+            categories: [],
+            error: "no_providers_returned_results"
+        }'
+	return 0
+}
+
+# Merge results from multiple providers into a unified report.
+# Strategy: union of all detected technologies, with confidence scores
+# based on how many providers detected each technology.
+merge_results() {
+	local url="$1"
+	shift
+	local -a result_files=("$@")
+
+	local domain
+	domain=$(extract_domain "$url")
+
+	local combined_file providers_file
+	combined_file=$(mktemp)
+	providers_file=$(mktemp)
+	trap 'rm -f "${combined_file:-}" "${providers_file:-}"' RETURN
+
+	if ! _merge_collect_results "$combined_file" "$providers_file" "${result_files[@]}"; then
+		_merge_empty_result "$url" "$domain"
 		return 1
 	fi
 
-	# Use jq to merge — simpler approach that handles the actual provider output format
+	local combined providers_list
+	combined=$(cat "$combined_file")
+	providers_list=$(cat "$providers_file")
+
 	echo "$combined" | jq \
 		--arg url "$url" \
 		--arg domain "$domain" \
 		--arg providers "$providers_list" \
 		'
         ($providers | split(",")) as $prov_list |
-
-        # Flatten all technologies from all providers
         [.[] | (.provider // "unknown") as $prov |
             (.technologies // [])[] |
             . + {detected_by: $prov}
         ] |
-
-        # Group by lowercase name
         group_by(.name | ascii_downcase) |
-
-        # Merge each group
         map({
             name: .[0].name,
             category: .[0].category // "unknown",
@@ -1346,9 +1398,7 @@ merge_results() {
             detected_by: [.[] | .detected_by] | unique,
             provider_count: ([.[] | .detected_by] | unique | length)
         }) |
-
         sort_by(-.confidence, .name) |
-
         {
             url: $url,
             domain: $domain,
@@ -1455,6 +1505,86 @@ format_markdown() {
 # Core Commands
 # =============================================================================
 
+# Run providers in parallel, writing results to tmp_dir/<provider>.json.
+# Populates result_files_var (nameref-safe: writes paths to a temp file, one per line).
+_lookup_run_parallel() {
+	local url="$1"
+	local use_cache="$2"
+	local timeout_secs="$3"
+	local cache_ttl="$4"
+	local tmp_dir="$5"
+	local result_files_out="$6"
+	shift 6
+	local -a providers_to_run=("$@")
+
+	local -a pids=()
+	local provider
+	for provider in "${providers_to_run[@]}"; do
+		local result_file="${tmp_dir}/${provider}.json"
+		printf '%s\n' "$result_file" >>"$result_files_out"
+
+		if [[ "$use_cache" == "true" ]]; then
+			local provider_cached
+			if provider_cached=$(cache_get_provider "$url" "$provider"); then
+				echo "$provider_cached" >"$result_file"
+				log_info "Provider cache hit: ${provider}"
+				continue
+			fi
+		fi
+
+		(
+			local result
+			result=$(run_provider "$provider" "$url" "$timeout_secs")
+			echo "$result" >"$result_file"
+			if ! echo "$result" | jq -e '.error' &>/dev/null; then
+				cache_store "$url" "$provider" "$result" "$cache_ttl"
+			fi
+		) &
+		pids+=($!)
+	done
+
+	local pid
+	for pid in "${pids[@]}"; do
+		wait "$pid" 2>/dev/null || true
+	done
+	return 0
+}
+
+# Run providers sequentially, writing results to tmp_dir/<provider>.json.
+_lookup_run_sequential() {
+	local url="$1"
+	local use_cache="$2"
+	local timeout_secs="$3"
+	local cache_ttl="$4"
+	local tmp_dir="$5"
+	local result_files_out="$6"
+	shift 6
+	local -a providers_to_run=("$@")
+
+	local provider
+	for provider in "${providers_to_run[@]}"; do
+		local result_file="${tmp_dir}/${provider}.json"
+		printf '%s\n' "$result_file" >>"$result_files_out"
+
+		if [[ "$use_cache" == "true" ]]; then
+			local provider_cached
+			if provider_cached=$(cache_get_provider "$url" "$provider"); then
+				echo "$provider_cached" >"$result_file"
+				log_info "Provider cache hit: ${provider}"
+				continue
+			fi
+		fi
+
+		local result
+		result=$(run_provider "$provider" "$url" "$timeout_secs")
+		echo "$result" >"$result_file"
+		if ! echo "$result" | jq -e '.error' &>/dev/null; then
+			cache_store "$url" "$provider" "$result" "$cache_ttl"
+		fi
+	done
+	return 0
+}
+
 # Lookup: detect tech stack of a URL
 cmd_lookup() {
 	local url="$1"
@@ -1468,7 +1598,6 @@ cmd_lookup() {
 	url=$(normalize_url "$url")
 	log_info "Looking up tech stack for: ${url}"
 
-	# Check cache first
 	if [[ "$use_cache" == "true" ]]; then
 		local cached
 		if cached=$(cache_get_merged "$url"); then
@@ -1478,7 +1607,6 @@ cmd_lookup() {
 		fi
 	fi
 
-	# Determine which providers to use
 	local -a providers_to_run=()
 	if [[ -n "$specific_provider" ]]; then
 		if is_provider_available "$specific_provider"; then
@@ -1500,119 +1628,54 @@ cmd_lookup() {
 
 	log_info "Using providers: ${providers_to_run[*]}"
 
-	# Create temp directory for provider results
 	local tmp_dir
 	tmp_dir=$(mktemp -d)
 	trap 'rm -rf "${tmp_dir:-}"' RETURN
 
-	# Run providers
-	local -a result_files=()
-	local -a pids=()
+	local result_files_out="${tmp_dir}/_result_files.txt"
 
 	if [[ "$run_parallel" == "true" && ${#providers_to_run[@]} -gt 1 ]]; then
-		# Parallel execution
-		local provider
-		for provider in "${providers_to_run[@]}"; do
-			local result_file="${tmp_dir}/${provider}.json"
-			result_files+=("$result_file")
-
-			# Check provider cache first
-			if [[ "$use_cache" == "true" ]]; then
-				local provider_cached
-				if provider_cached=$(cache_get_provider "$url" "$provider"); then
-					echo "$provider_cached" >"$result_file"
-					log_info "Provider cache hit: ${provider}"
-					continue
-				fi
-			fi
-
-			(
-				local result
-				result=$(run_provider "$provider" "$url" "$timeout_secs")
-				echo "$result" >"$result_file"
-
-				# Cache individual provider result
-				if echo "$result" | jq -e '.error' &>/dev/null; then
-					: # Don't cache errors
-				else
-					cache_store "$url" "$provider" "$result" "$cache_ttl"
-				fi
-			) &
-			pids+=($!)
-		done
-
-		# Wait for all providers
-		local pid
-		for pid in "${pids[@]}"; do
-			wait "$pid" 2>/dev/null || true
-		done
+		_lookup_run_parallel "$url" "$use_cache" "$timeout_secs" "$cache_ttl" \
+			"$tmp_dir" "$result_files_out" "${providers_to_run[@]}"
 	else
-		# Sequential execution
-		local provider
-		for provider in "${providers_to_run[@]}"; do
-			local result_file="${tmp_dir}/${provider}.json"
-			result_files+=("$result_file")
-
-			# Check provider cache first
-			if [[ "$use_cache" == "true" ]]; then
-				local provider_cached
-				if provider_cached=$(cache_get_provider "$url" "$provider"); then
-					echo "$provider_cached" >"$result_file"
-					log_info "Provider cache hit: ${provider}"
-					continue
-				fi
-			fi
-
-			local result
-			result=$(run_provider "$provider" "$url" "$timeout_secs")
-			echo "$result" >"$result_file"
-
-			# Cache individual provider result
-			if echo "$result" | jq -e '.error' &>/dev/null; then
-				: # Don't cache errors
-			else
-				cache_store "$url" "$provider" "$result" "$cache_ttl"
-			fi
-		done
+		_lookup_run_sequential "$url" "$use_cache" "$timeout_secs" "$cache_ttl" \
+			"$tmp_dir" "$result_files_out" "${providers_to_run[@]}"
 	fi
 
-	# Merge results
+	local -a result_files=()
+	if [[ -f "$result_files_out" ]]; then
+		while IFS= read -r rf; do
+			result_files+=("$rf")
+		done <"$result_files_out"
+	fi
+
 	local merged
 	merged=$(merge_results "$url" "${result_files[@]}") || {
 		log_error "Failed to merge results"
 		return 1
 	}
 
-	# Cache merged result
 	if [[ "$use_cache" == "true" ]]; then
 		local providers_str
 		providers_str=$(echo "$merged" | jq -r '.providers | join(",")' 2>/dev/null || echo "")
 		cache_store_merged "$url" "$merged" "$providers_str" "$cache_ttl"
 	fi
 
-	# Output
 	output_results "$merged" "$output_format"
-
 	return 0
 }
 
-# Reverse lookup: find sites using a technology
-# Supports both multi-provider orchestration (provider helpers) and BigQuery/BuiltWith direct
-cmd_reverse() {
-	local technology=""
-	local limit="$DEFAULT_LIMIT"
-	local client="$DEFAULT_CLIENT"
-	local traffic=""
-	local keywords=""
-	local region=""
-	local industry=""
-	local format="json"
-	local provider="auto"
-	local crawl_date=""
-	local output_format="table"
-	local use_cache="true"
-	local cache_ttl="$TS_DEFAULT_CACHE_TTL"
-	local -a filters=()
+# Parse cmd_reverse args; write shell variable assignments to out_file.
+# Returns 1 on --help or parse error (writes HELP/ERROR sentinel to out_file).
+_reverse_parse_args() {
+	local out_file="$1"
+	shift
+
+	local technology="" limit="$DEFAULT_LIMIT" client="$DEFAULT_CLIENT"
+	local traffic="" keywords="" region="" industry=""
+	local format="json" provider="auto" crawl_date=""
+	local output_format="table" use_cache="true" cache_ttl="$TS_DEFAULT_CACHE_TTL"
+	local filters_str=""
 
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
@@ -1674,23 +1737,130 @@ cmd_reverse() {
 			;;
 		--help | -h)
 			usage_reverse
-			return 0
+			printf 'HELP\n' >"$out_file"
+			return 1
 			;;
 		-*)
 			print_error "Unknown option: $1"
 			usage_reverse
+			printf 'ERROR\n' >"$out_file"
 			return 1
 			;;
 		*)
-			if [[ -z "$technology" ]]; then
-				technology="$1"
-			else
-				filters+=("$1")
-			fi
+			if [[ -z "$technology" ]]; then technology="$1"; else filters_str="${filters_str} $1"; fi
 			shift
 			;;
 		esac
 	done
+
+	# Write variables as shell assignments; quote values that may contain spaces
+	{
+		printf 'technology=%s\n' "$technology"
+		printf 'limit=%s\nclient=%s\n' "$limit" "$client"
+		printf 'traffic=%s\nkeywords=%s\n' "$traffic" "$keywords"
+		printf 'region=%s\nindustry=%s\n' "$region" "$industry"
+		printf 'format=%s\noutput_format=%s\n' "$format" "$output_format"
+		printf 'provider=%s\ncrawl_date=%s\n' "$provider" "$crawl_date"
+		printf 'use_cache=%s\ncache_ttl=%s\n' "$use_cache" "$cache_ttl"
+		printf 'filters_str=%s\n' "$filters_str"
+	} >"$out_file"
+	return 0
+}
+
+# Execute reverse lookup via installed provider helpers (not BigQuery/BuiltWith).
+# Handles cache check, provider dispatch, merge, and cache store.
+_reverse_via_providers() {
+	local technology="$1"
+	local use_cache="$2"
+	local cache_ttl="$3"
+	local output_format="$4"
+	shift 4
+	local -a reverse_providers=("$@")
+
+	log_info "Reverse lookup for technology: ${technology}"
+
+	local filters_hash
+	filters_hash=$(printf '%s' "$technology" | shasum -a 256 | cut -d' ' -f1)
+
+	if [[ "$use_cache" == "true" && -f "$CACHE_DB" ]]; then
+		local cached
+		cached=$(sqlite3_param "$CACHE_DB" \
+			"SELECT results_json FROM reverse_cache
+			WHERE technology = :tech
+			  AND filters_hash = :hash
+			  AND expires_at > strftime('%Y-%m-%dT%H:%M:%SZ', 'now');" \
+			":tech" "$technology" \
+			":hash" "$filters_hash" \
+			2>/dev/null || echo "")
+		if [[ -n "$cached" ]]; then
+			log_success "Cache hit for reverse lookup: ${technology}"
+			output_results "$cached" "$output_format"
+			return 0
+		fi
+	fi
+
+	local tmp_dir
+	tmp_dir=$(mktemp -d)
+	trap 'rm -rf "${tmp_dir:-}"' RETURN
+
+	local -a result_files=()
+	local p
+	for p in "${reverse_providers[@]}"; do
+		local script
+		script=$(provider_script "$p")
+		local script_path="${SCRIPT_DIR}/${script}"
+		local result_file="${tmp_dir}/${p}.json"
+		result_files+=("$result_file")
+		local result
+		result=$(timeout "$TS_DEFAULT_TIMEOUT" "$script_path" reverse "$technology" --json 2>/dev/null) || true
+		echo "${result:-{}}" >"$result_file"
+	done
+
+	local merged
+	merged=$(jq -s '
+        {
+            technology: .[0].technology,
+            scan_time: (now | strftime("%Y-%m-%dT%H:%M:%SZ")),
+            sites: [.[].sites // [] | .[]] | unique_by(.url),
+            total_count: ([.[].sites // [] | .[]] | unique_by(.url) | length)
+        }
+    ' "${result_files[@]}" 2>/dev/null) || {
+		log_error "Failed to merge reverse lookup results"
+		return 1
+	}
+
+	if [[ "$use_cache" == "true" ]]; then
+		log_stderr "cache reverse" sqlite3_param "$CACHE_DB" \
+			"INSERT OR REPLACE INTO reverse_cache (technology, filters_hash, results_json, expires_at)
+			VALUES (:tech, :hash, :json,
+				strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '+' || :ttl || ' hours'));" \
+			":tech" "$technology" \
+			":hash" "$filters_hash" \
+			":json" "$merged" \
+			":ttl" "$cache_ttl" \
+			2>/dev/null || true
+	fi
+
+	output_results "$merged" "$output_format"
+	return 0
+}
+
+# Reverse lookup: find sites using a technology.
+# Supports both multi-provider orchestration (provider helpers) and BigQuery/BuiltWith direct.
+cmd_reverse() {
+	local args_file
+	args_file=$(mktemp)
+	trap 'rm -f "${args_file:-}"' RETURN
+
+	if ! _reverse_parse_args "$args_file" "$@"; then
+		local sentinel
+		sentinel=$(cat "$args_file" 2>/dev/null || echo "ERROR")
+		[[ "$sentinel" == "HELP" ]] && return 0
+		return 1
+	fi
+
+	# shellcheck disable=SC1090
+	source "$args_file"
 
 	if [[ -z "$technology" ]]; then
 		print_error "Technology name is required"
@@ -1703,16 +1873,11 @@ cmd_reverse() {
 		limit="$MAX_LIMIT"
 	fi
 
-	# Region/industry filtering via keywords (HTTP Archive doesn't have structured region data)
 	if [[ -n "$region" ]]; then
 		local region_tld
 		region_tld=$(region_to_tld "$region")
 		if [[ -n "$region_tld" ]]; then
-			if [[ -n "$keywords" ]]; then
-				keywords="${keywords},${region_tld}"
-			else
-				keywords="$region_tld"
-			fi
+			keywords="${keywords:+${keywords},}${region_tld}"
 			print_info "Filtering by region: $region (TLD: $region_tld)"
 		else
 			print_warning "Unknown region '$region' — region filter ignored"
@@ -1720,15 +1885,10 @@ cmd_reverse() {
 	fi
 
 	if [[ -n "$industry" ]]; then
-		if [[ -n "$keywords" ]]; then
-			keywords="${keywords},${industry}"
-		else
-			keywords="$industry"
-		fi
+		keywords="${keywords:+${keywords},}${industry}"
 		print_info "Filtering by industry keyword: $industry"
 	fi
 
-	# Check if provider helpers support reverse lookup
 	local -a reverse_providers=()
 	local p
 	for p in $PROVIDERS; do
@@ -1742,80 +1902,12 @@ cmd_reverse() {
 		fi
 	done
 
-	# If provider helpers support reverse, use them; otherwise fall back to BigQuery/BuiltWith
 	if [[ ${#reverse_providers[@]} -gt 0 && "$provider" == "auto" ]]; then
-		log_info "Reverse lookup for technology: ${technology}"
-
-		# Build filters hash for SQLite cache key
-		local filters_hash
-		filters_hash=$(echo "${technology}|${filters[*]:-}" | shasum -a 256 | cut -d' ' -f1)
-
-		# Check SQLite cache
-		if [[ "$use_cache" == "true" && -f "$CACHE_DB" ]]; then
-			local cached
-			cached=$(sqlite3_param "$CACHE_DB" \
-				"SELECT results_json FROM reverse_cache
-				WHERE technology = :tech
-				  AND filters_hash = :hash
-				  AND expires_at > strftime('%Y-%m-%dT%H:%M:%SZ', 'now');" \
-				":tech" "$technology" \
-				":hash" "$filters_hash" \
-				2>/dev/null || echo "")
-
-			if [[ -n "$cached" ]]; then
-				log_success "Cache hit for reverse lookup: ${technology}"
-				output_results "$cached" "$output_format"
-				return 0
-			fi
-		fi
-
-		local tmp_dir
-		tmp_dir=$(mktemp -d)
-		trap 'rm -rf "${tmp_dir:-}"' RETURN
-
-		local -a result_files=()
-		for p in "${reverse_providers[@]}"; do
-			local script
-			script=$(provider_script "$p")
-			local script_path="${SCRIPT_DIR}/${script}"
-			local result_file="${tmp_dir}/${p}.json"
-			result_files+=("$result_file")
-
-			local result
-			result=$(timeout "$TS_DEFAULT_TIMEOUT" "$script_path" reverse "$technology" --json ${filters[@]+"${filters[@]}"} 2>/dev/null) || true
-			echo "${result:-{}}" >"$result_file"
-		done
-
-		local merged
-		merged=$(jq -s '
-            {
-                technology: .[0].technology,
-                scan_time: (now | strftime("%Y-%m-%dT%H:%M:%SZ")),
-                sites: [.[].sites // [] | .[]] | unique_by(.url),
-                total_count: ([.[].sites // [] | .[]] | unique_by(.url) | length)
-            }
-        ' "${result_files[@]}" 2>/dev/null) || {
-			log_error "Failed to merge reverse lookup results"
-			return 1
-		}
-
-		if [[ "$use_cache" == "true" ]]; then
-			log_stderr "cache reverse" sqlite3_param "$CACHE_DB" \
-				"INSERT OR REPLACE INTO reverse_cache (technology, filters_hash, results_json, expires_at)
-				VALUES (:tech, :hash, :json,
-					strftime('%Y-%m-%dT%H:%M:%SZ', 'now', '+' || :ttl || ' hours'));" \
-				":tech" "$technology" \
-				":hash" "$filters_hash" \
-				":json" "$merged" \
-				":ttl" "$cache_ttl" \
-				2>/dev/null || true
-		fi
-
-		output_results "$merged" "$output_format"
-		return 0
+		_reverse_via_providers "$technology" "$use_cache" "$cache_ttl" \
+			"$output_format" "${reverse_providers[@]}"
+		return $?
 	fi
 
-	# BigQuery / BuiltWith path
 	case "$provider" in
 	auto | httparchive | bq)
 		if check_bq_available && check_gcloud_auth; then
@@ -2294,18 +2386,18 @@ EOF
 # Main Command Router
 # =============================================================================
 
-main() {
-	local command="${1:-help}"
-	shift || true
+# Parse global options from main()'s argument list.
+# Writes parsed values to out_file as shell variable assignments.
+# Remaining positional args are written one-per-line to positional_file.
+_main_parse_global_opts() {
+	local out_file="$1"
+	local positional_file="$2"
+	shift 2
 
-	# Parse global options
-	local output_format="table"
-	local use_cache="true"
-	local specific_provider=""
+	local output_format="table" use_cache="true" specific_provider=""
 	local run_parallel="true"
 	local timeout_secs="$TS_DEFAULT_TIMEOUT"
 	local cache_ttl="$TS_DEFAULT_CACHE_TTL"
-	local -a positional=()
 
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
@@ -2343,20 +2435,38 @@ main() {
 			;;
 		-h | --help)
 			print_usage
-			return 0
+			printf 'HELP\n' >"$out_file"
+			return 1
 			;;
 		*)
-			positional+=("$1")
+			printf '%s\n' "$1" >>"$positional_file"
 			shift
 			;;
 		esac
 	done
 
-	# Check dependencies
-	check_dependencies || return 1
+	cat >"$out_file" <<ENDVARS
+output_format=$output_format
+use_cache=$use_cache
+specific_provider=$specific_provider
+run_parallel=$run_parallel
+timeout_secs=$timeout_secs
+cache_ttl=$cache_ttl
+ENDVARS
+	return 0
+}
 
-	# Initialize cache
-	init_cache_db || true
+# Route a parsed command to the appropriate cmd_* function.
+_main_route_command() {
+	local command="$1"
+	local use_cache="$2"
+	local output_format="$3"
+	local specific_provider="$4"
+	local run_parallel="$5"
+	local timeout_secs="$6"
+	local cache_ttl="$7"
+	shift 7
+	local -a positional=("$@")
 
 	case "$command" in
 	lookup)
@@ -2373,7 +2483,6 @@ main() {
 			log_error "Technology name is required. Usage: tech-stack-helper.sh reverse <technology>"
 			return 1
 		fi
-		# Pass remaining positional args as filters
 		local -a filters=()
 		if [[ ${#positional[@]} -gt 1 ]]; then
 			filters=("${positional[@]:1}")
@@ -2391,13 +2500,8 @@ main() {
 	cache)
 		local subcmd="${positional[0]:-stats}"
 		case "$subcmd" in
-		stats)
-			cache_stats
-			;;
-		clear)
-			local mode="${positional[1]:-expired}"
-			cache_clear "$mode"
-			;;
+		stats) cache_stats ;;
+		clear) cache_clear "${positional[1]:-expired}" ;;
 		get)
 			local url="${positional[1]:-}"
 			if [[ -z "$url" ]]; then
@@ -2412,15 +2516,9 @@ main() {
 			;;
 		esac
 		;;
-	providers)
-		list_providers
-		;;
-	categories)
-		cmd_categories ${positional[@]+"${positional[@]}"}
-		;;
-	trending)
-		cmd_trending ${positional[@]+"${positional[@]}"}
-		;;
+	providers) list_providers ;;
+	categories) cmd_categories ${positional[@]+"${positional[@]}"} ;;
+	trending) cmd_trending ${positional[@]+"${positional[@]}"} ;;
 	info)
 		local technology="${positional[0]:-}"
 		if [[ -z "$technology" ]]; then
@@ -2429,20 +2527,50 @@ main() {
 		fi
 		cmd_info "$technology" "${positional[@]:1}"
 		;;
-	help | -h | --help)
-		print_usage
-		;;
-	version)
-		echo "tech-stack-helper.sh v${VERSION}"
-		;;
+	help | -h | --help) print_usage ;;
+	version) echo "tech-stack-helper.sh v${VERSION}" ;;
 	*)
 		log_error "Unknown command: ${command}"
 		print_usage
 		return 1
 		;;
 	esac
-
 	return 0
+}
+
+main() {
+	local command="${1:-help}"
+	shift || true
+
+	local opts_file positional_file
+	opts_file=$(mktemp)
+	positional_file=$(mktemp)
+	trap 'rm -f "${opts_file:-}" "${positional_file:-}"' RETURN
+
+	if ! _main_parse_global_opts "$opts_file" "$positional_file" "$@"; then
+		local sentinel
+		sentinel=$(cat "$opts_file" 2>/dev/null || echo "ERROR")
+		[[ "$sentinel" == "HELP" ]] && return 0
+		return 1
+	fi
+
+	# shellcheck disable=SC1090
+	source "$opts_file"
+
+	local -a positional=()
+	if [[ -s "$positional_file" ]]; then
+		while IFS= read -r pos; do
+			positional+=("$pos")
+		done <"$positional_file"
+	fi
+
+	check_dependencies || return 1
+	init_cache_db || true
+
+	_main_route_command "$command" "$use_cache" "$output_format" \
+		"$specific_provider" "$run_parallel" "$timeout_secs" "$cache_ttl" \
+		"${positional[@]+"${positional[@]}"}"
+	return $?
 }
 
 main "$@"
