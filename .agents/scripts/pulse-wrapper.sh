@@ -2526,45 +2526,37 @@ prefetch_gh_failure_notifications() {
 }
 
 #######################################
-# Weekly complexity scan (GH#5628)
-#
-# Runs the same awk-based function complexity check used by CI
-# (code-quality.yml "Shell function complexity" step) and creates
-# simplification-debt issues for files that exceed the per-file
-# violation threshold. Runs at most once per COMPLEXITY_SCAN_INTERVAL
-# (default 7 days), tracked via a timestamp file.
-#
-# This is the "periodic trigger" that feeds the simplification pipeline:
-#   scan → issue (needs-maintainer-review) → maintainer approves →
-#   pulse dispatches worker → PR → merge → threshold ratchets down
-#
-# Deduplication: checks for existing open simplification-debt issues
-# matching the same filename before creating a new one.
-#
-# Returns: 0 always (best-effort, never breaks the pulse)
+# Weekly complexity scan helpers (GH#5628)
 #######################################
-run_weekly_complexity_scan() {
-	local repos_json="$REPOS_JSON"
 
-	# Check if scan is due
-	local now_epoch
-	now_epoch=$(date +%s)
-	if [[ -f "$COMPLEXITY_SCAN_LAST_RUN" ]]; then
-		local last_run
-		last_run=$(cat "$COMPLEXITY_SCAN_LAST_RUN" 2>/dev/null || echo "0")
-		[[ "$last_run" =~ ^[0-9]+$ ]] || last_run=0
-		local elapsed=$((now_epoch - last_run))
-		if [[ "$elapsed" -lt "$COMPLEXITY_SCAN_INTERVAL" ]]; then
-			local remaining=$(((COMPLEXITY_SCAN_INTERVAL - elapsed) / 3600))
-			echo "[pulse-wrapper] Complexity scan not due yet (${remaining}h remaining)" >>"$LOGFILE"
-			return 0
-		fi
+# Check if the complexity scan interval has elapsed.
+# Arguments: $1 - now_epoch (current epoch seconds)
+# Returns: 0 if scan is due, 1 if not yet due
+_complexity_scan_check_interval() {
+	local now_epoch="$1"
+	if [[ ! -f "$COMPLEXITY_SCAN_LAST_RUN" ]]; then
+		return 0
 	fi
+	local last_run
+	last_run=$(cat "$COMPLEXITY_SCAN_LAST_RUN" 2>/dev/null || echo "0")
+	[[ "$last_run" =~ ^[0-9]+$ ]] || last_run=0
+	local elapsed=$((now_epoch - last_run))
+	if [[ "$elapsed" -lt "$COMPLEXITY_SCAN_INTERVAL" ]]; then
+		local remaining=$(((COMPLEXITY_SCAN_INTERVAL - elapsed) / 3600))
+		echo "[pulse-wrapper] Complexity scan not due yet (${remaining}h remaining)" >>"$LOGFILE"
+		return 1
+	fi
+	return 0
+}
 
-	echo "[pulse-wrapper] Running weekly complexity scan (GH#5628)..." >>"$LOGFILE"
-
-	# Find the repo path for the aidevops framework itself
-	local aidevops_slug="marcusquinn/aidevops"
+# Resolve the aidevops repo path and validate lint-file-discovery.sh exists.
+# Arguments: $1 - repos_json path, $2 - aidevops_slug, $3 - now_epoch
+# Outputs: aidevops_path via stdout (empty on failure)
+# Returns: 0 on success, 1 on failure (also writes last-run timestamp on failure)
+_complexity_scan_find_repo() {
+	local repos_json="$1"
+	local aidevops_slug="$2"
+	local now_epoch="$3"
 	local aidevops_path=""
 	if [[ -f "$repos_json" ]] && command -v jq &>/dev/null; then
 		aidevops_path=$(jq -r --arg slug "$aidevops_slug" \
@@ -2574,91 +2566,88 @@ run_weekly_complexity_scan() {
 	if [[ -z "$aidevops_path" || "$aidevops_path" == "null" || ! -d "$aidevops_path" ]]; then
 		echo "[pulse-wrapper] Complexity scan: aidevops repo path not found — skipping" >>"$LOGFILE"
 		echo "$now_epoch" >"$COMPLEXITY_SCAN_LAST_RUN"
-		return 0
+		return 1
 	fi
-
-	# Source lint-file-discovery.sh for consistent file exclusions
 	local lint_discovery="${aidevops_path}/.agents/scripts/lint-file-discovery.sh"
 	if [[ ! -f "$lint_discovery" ]]; then
 		echo "[pulse-wrapper] Complexity scan: lint-file-discovery.sh not found — skipping" >>"$LOGFILE"
 		echo "$now_epoch" >"$COMPLEXITY_SCAN_LAST_RUN"
-		return 0
+		return 1
 	fi
+	echo "$aidevops_path"
+	return 0
+}
 
-	# Run the awk complexity check (same pattern as CI code-quality.yml)
-	# Collect violations grouped by file
+# Collect per-file violation counts from shell files in the repo.
+# Arguments: $1 - aidevops_path, $2 - now_epoch
+# Outputs: scan_results (pipe-delimited lines) via stdout
+# Side effect: logs total violation count; writes last-run on no files found
+_complexity_scan_collect_violations() {
+	local aidevops_path="$1"
+	local now_epoch="$2"
 	local shell_files
 	shell_files=$(git -C "$aidevops_path" ls-files '*.sh' | grep -Ev '_archive/|archived/|supervisor-archived/' || true)
-
 	if [[ -z "$shell_files" ]]; then
 		echo "[pulse-wrapper] Complexity scan: no shell files found — skipping" >>"$LOGFILE"
 		echo "$now_epoch" >"$COMPLEXITY_SCAN_LAST_RUN"
-		return 0
+		return 1
 	fi
-
-	# Collect per-file violation counts
-	# Format: file_path|violation_count|details
 	local scan_results=""
 	local total_violations=0
 	local files_with_violations=0
-
 	while IFS= read -r file; do
 		[[ -n "$file" ]] || continue
 		local full_path="${aidevops_path}/${file}"
 		[[ -f "$full_path" ]] || continue
-
 		local result
 		result=$(awk '
 			/^[a-zA-Z_][a-zA-Z0-9_]*\(\)[[:space:]]*\{/ { fname=$1; sub(/\(\)/, "", fname); start=NR; next }
 			fname && /^\}$/ { lines=NR-start; if(lines>'"$COMPLEXITY_FUNC_LINE_THRESHOLD"') printf "%s() %d lines\n", fname, lines; fname="" }
 		' "$full_path")
-
 		if [[ -n "$result" ]]; then
 			local count
 			count=$(echo "$result" | wc -l | tr -d ' ')
 			total_violations=$((total_violations + count))
 			files_with_violations=$((files_with_violations + 1))
-
 			if [[ "$count" -ge "$COMPLEXITY_FILE_VIOLATION_THRESHOLD" ]]; then
-				# This file qualifies for an issue
 				local details
 				details=$(echo "$result" | head -10)
 				scan_results="${scan_results}${file}|${count}|${details}"$'\n'
 			fi
 		fi
 	done <<<"$shell_files"
-
 	echo "[pulse-wrapper] Complexity scan: ${total_violations} violations across ${files_with_violations} files" >>"$LOGFILE"
+	printf '%s' "$scan_results"
+	return 0
+}
 
-	# Create issues for qualifying files (dedup against existing open issues)
+# Create GitHub issues for qualifying files (dedup against existing open issues).
+# Arguments: $1 - scan_results (pipe-delimited), $2 - repos_json, $3 - aidevops_slug
+# Returns: 0 always
+_complexity_scan_create_issues() {
+	local scan_results="$1"
+	local repos_json="$2"
+	local aidevops_slug="$3"
 	local issues_created=0
 	local issues_skipped=0
-
 	while IFS='|' read -r file_path violation_count details; do
 		[[ -n "$file_path" ]] || continue
-
 		local basename_file
 		basename_file=$(basename "$file_path")
-
-		# Dedup: check for existing open simplification-debt issue for this file
 		local existing_issues
 		existing_issues=$(gh issue list --repo "$aidevops_slug" \
 			--label "simplification-debt" --state open \
 			--json number,title --limit 50 2>/dev/null) || existing_issues="[]"
-
 		local has_existing="false"
 		if echo "$existing_issues" | jq -e --arg fname "$basename_file" \
 			'.[] | select(.title | test($fname))' >/dev/null 2>&1; then
 			has_existing="true"
 		fi
-
 		if [[ "$has_existing" == "true" ]]; then
 			echo "[pulse-wrapper] Complexity scan: skipping ${basename_file} — existing open issue" >>"$LOGFILE"
 			issues_skipped=$((issues_skipped + 1))
 			continue
 		fi
-
-		# Determine maintainer for assignment
 		local maintainer
 		maintainer=$(jq -r --arg slug "$aidevops_slug" \
 			'.initialized_repos[] | select(.slug == $slug) | .maintainer // empty' \
@@ -2666,8 +2655,6 @@ run_weekly_complexity_scan() {
 		if [[ -z "$maintainer" ]]; then
 			maintainer=$(echo "$aidevops_slug" | cut -d/ -f1)
 		fi
-
-		# Build issue body
 		local issue_body
 		issue_body="## Complexity scan finding (automated, GH#5628)
 
@@ -2699,8 +2686,6 @@ This is an automated scan. The function lengths are factual, but the best decomp
 **To approve or decline**, comment on this issue:
 - \`approved\` — removes the review gate and queues for automated dispatch
 - \`declined: <reason>\` — closes this issue (include your reason after the colon)"
-
-		# Create the issue
 		if gh issue create --repo "$aidevops_slug" \
 			--title "simplification: reduce function complexity in ${basename_file} (${violation_count} functions >${COMPLEXITY_FUNC_LINE_THRESHOLD} lines)" \
 			--label "simplification-debt" --label "needs-maintainer-review" \
@@ -2712,11 +2697,48 @@ This is an automated scan. The function lengths are factual, but the best decomp
 			echo "[pulse-wrapper] Complexity scan: failed to create issue for ${basename_file}" >>"$LOGFILE"
 		fi
 	done <<<"$scan_results"
-
-	# Update last-run timestamp
-	echo "$now_epoch" >"$COMPLEXITY_SCAN_LAST_RUN"
-
 	echo "[pulse-wrapper] Complexity scan complete: ${issues_created} issues created, ${issues_skipped} skipped (existing)" >>"$LOGFILE"
+	return 0
+}
+
+#######################################
+# Weekly complexity scan (GH#5628)
+#
+# Runs the same awk-based function complexity check used by CI
+# (code-quality.yml "Shell function complexity" step) and creates
+# simplification-debt issues for files that exceed the per-file
+# violation threshold. Runs at most once per COMPLEXITY_SCAN_INTERVAL
+# (default 7 days), tracked via a timestamp file.
+#
+# This is the "periodic trigger" that feeds the simplification pipeline:
+#   scan → issue (needs-maintainer-review) → maintainer approves →
+#   pulse dispatches worker → PR → merge → threshold ratchets down
+#
+# Deduplication: checks for existing open simplification-debt issues
+# matching the same filename before creating a new one.
+#
+# Returns: 0 always (best-effort, never breaks the pulse)
+#######################################
+run_weekly_complexity_scan() {
+	local repos_json="$REPOS_JSON"
+	local aidevops_slug="marcusquinn/aidevops"
+
+	local now_epoch
+	now_epoch=$(date +%s)
+
+	_complexity_scan_check_interval "$now_epoch" || return 0
+
+	echo "[pulse-wrapper] Running weekly complexity scan (GH#5628)..." >>"$LOGFILE"
+
+	local aidevops_path
+	aidevops_path=$(_complexity_scan_find_repo "$repos_json" "$aidevops_slug" "$now_epoch") || return 0
+
+	local scan_results
+	scan_results=$(_complexity_scan_collect_violations "$aidevops_path" "$now_epoch") || return 0
+
+	_complexity_scan_create_issues "$scan_results" "$repos_json" "$aidevops_slug"
+
+	echo "$now_epoch" >"$COMPLEXITY_SCAN_LAST_RUN"
 	return 0
 }
 
@@ -2879,24 +2901,14 @@ check_dispatch_dedup() {
 #   1 - no blocker found (safe to dispatch)
 #   2 - API error (fail open — allow dispatch to proceed)
 #######################################
-#######################################
-# Match terminal blocker patterns in comment bodies (GH#5627)
-#
-# Checks concatenated comment bodies against known blocker patterns.
-# Returns blocker_reason and user_action via stdout (2 lines).
-#
-# Arguments:
-#   $1 - all_bodies (concatenated comment text)
-# Output: 2 lines to stdout (blocker_reason, user_action) — empty if no match
-# Exit codes:
-#   0 - blocker pattern matched
-#   1 - no match
-#######################################
-_match_terminal_blocker_pattern() {
+# Match known terminal blocker patterns in comment bodies.
+# Arguments: $1 - all_bodies (concatenated comment text)
+# Outputs: "reason|action" via stdout if a blocker is found
+# Returns: 0 if blocker found, 1 if not
+_check_terminal_blocker_patterns() {
 	local all_bodies="$1"
 	local blocker_reason=""
 	local user_action=""
-
 	# Pattern 1: workflow scope missing
 	if echo "$all_bodies" | grep -qiE 'workflow scope|refusing to allow an OAuth App to create or update workflow|token lacks.*workflow'; then
 		blocker_reason="GitHub token lacks \`workflow\` scope — workers cannot push workflow file changes"
@@ -2914,13 +2926,10 @@ _match_terminal_blocker_pattern() {
 		blocker_reason="Persistent authentication or permission failure for workflow files"
 		user_action="Check your GitHub token scopes with \`gh auth status\`, refresh if needed with \`gh auth refresh -s workflow\`, then remove the \`status:blocked\` label."
 	fi
-
 	if [[ -z "$blocker_reason" ]]; then
 		return 1
 	fi
-
-	echo "$blocker_reason"
-	echo "$user_action"
+	printf '%s|%s' "$blocker_reason" "$user_action"
 	return 0
 }
 
@@ -2953,13 +2962,11 @@ _apply_terminal_blocker() {
 		already_blocked=true
 	fi
 
-	# Check for existing terminal-blocker comment (idempotent)
 	local has_blocker_comment=false
 	if echo "$all_bodies" | grep -qF 'Terminal blocker detected'; then
 		has_blocker_comment=true
 	fi
 
-	# Add label if not already present
 	if [[ "$already_blocked" == "false" ]]; then
 		gh issue edit "$issue_number" --repo "$repo_slug" \
 			--add-label "status:blocked" \
@@ -2968,7 +2975,6 @@ _apply_terminal_blocker() {
 				--add-label "status:blocked" 2>/dev/null || true
 	fi
 
-	# Post comment if not already posted
 	if [[ "$has_blocker_comment" == "false" ]]; then
 		gh issue comment "$issue_number" --repo "$repo_slug" \
 			--body "**Terminal blocker detected** (GH#5141) — skipping dispatch.
