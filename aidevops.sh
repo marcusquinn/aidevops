@@ -3093,15 +3093,8 @@ cmd_skills() {
 	esac
 }
 
-# Help command
-cmd_help() {
-	local version
-	version=$(get_version)
-
-	echo "AI DevOps Framework CLI v$version"
-	echo ""
-	echo "Usage: aidevops <command> [options]"
-	echo ""
+# Help text helpers (extracted for complexity reduction)
+_help_commands() {
 	echo "Commands:"
 	echo "  init [features]    Initialize aidevops in current project"
 	echo "  upgrade-planning   Upgrade TODO.md/PLANS.md to latest templates"
@@ -3129,23 +3122,10 @@ cmd_help() {
 	echo "  uninstall          Remove aidevops from your system"
 	echo "  version            Show version information"
 	echo "  help               Show this help message"
-	echo ""
-	echo "Examples:"
-	echo "  aidevops init                # Initialize with all features"
-	echo "  aidevops init planning       # Initialize with planning only"
-	echo "  aidevops upgrade-planning    # Upgrade planning files to latest"
-	echo "  aidevops features            # List available features"
-	echo "  aidevops status              # Check what's installed"
-	echo "  aidevops doctor              # Find duplicate/conflicting installs"
-	echo "  aidevops doctor --fix        # Interactively remove duplicates"
-	echo "  aidevops update              # Update framework + check projects"
-	echo "  aidevops repos               # List registered projects"
-	echo "  aidevops repos add           # Register current project"
-	echo "  aidevops detect              # Find unregistered projects"
-	echo "  aidevops update-tools        # Check for outdated tools"
-	echo "  aidevops update-tools -u     # Update all outdated tools"
-	echo "  aidevops uninstall           # Remove aidevops"
-	echo ""
+	return 0
+}
+
+_help_detailed_sections() {
 	echo "Security:"
 	echo "  aidevops security check      # Run per-repo security posture assessment"
 	echo "  aidevops security audit      # Alias for check"
@@ -3206,50 +3186,33 @@ cmd_help() {
 	echo "  aidevops stats ingest        # Parse new Claude JSONL log entries"
 	echo "  aidevops stats sync-budget   # Sync to budget tracker (t1100)"
 	echo ""
-	echo "Auto-Update:"
-	echo "  aidevops auto-update enable  # Poll for updates every 10 min"
-	echo "  aidevops auto-update disable # Stop auto-updating"
-	echo "  aidevops auto-update status  # Show auto-update state"
+	echo "Auto-Update:"; echo "  aidevops auto-update enable  # Poll for updates every 10 min"
+	echo "  aidevops auto-update disable # Stop auto-updating"; echo "  aidevops auto-update status  # Show auto-update state"
 	echo "  aidevops auto-update check   # One-shot check and update now"
 	echo ""
-	echo "Repo Sync:"
-	echo "  aidevops repo-sync enable    # Enable daily git pull for repos"
-	echo "  aidevops repo-sync disable   # Disable daily sync"
-	echo "  aidevops repo-sync status    # Show sync state and last results"
+	echo "Repo Sync:"; echo "  aidevops repo-sync enable    # Enable daily git pull for repos"
+	echo "  aidevops repo-sync disable   # Disable daily sync"; echo "  aidevops repo-sync status    # Show sync state and last results"
 	echo "  aidevops repo-sync check     # One-shot sync all repos now"
 	echo "  aidevops repo-sync dirs list # List configured parent directories"
-	echo "  aidevops repo-sync dirs add  # Add a parent directory"
-	echo "  aidevops repo-sync dirs rm   # Remove a parent directory"
-	echo "  aidevops repo-sync config    # Show/edit configuration"
-	echo "  aidevops repo-sync logs      # View sync logs"
+	echo "  aidevops repo-sync dirs add  # Add a parent directory"; echo "  aidevops repo-sync dirs rm   # Remove a parent directory"
+	echo "  aidevops repo-sync config    # Show/edit configuration"; echo "  aidevops repo-sync logs      # View sync logs"
 	echo ""
-	echo "Agent Sources (private repos):"
-	echo "  aidevops sources add <path>  # Add a local repo as agent source"
+	echo "Agent Sources (private repos):"; echo "  aidevops sources add <path>  # Add a local repo as agent source"
 	echo "  aidevops sources add-remote <url> # Clone and add remote repo"
-	echo "  aidevops sources remove <n>  # Remove a source (keeps agents)"
-	echo "  aidevops sources list        # List configured sources"
-	echo "  aidevops sources status      # Show sync status"
-	echo "  aidevops sources sync        # Sync all sources to custom/"
+	echo "  aidevops sources remove <n>  # Remove a source (keeps agents)"; echo "  aidevops sources list        # List configured sources"
+	echo "  aidevops sources status      # Show sync status"; echo "  aidevops sources sync        # Sync all sources to custom/"
 	echo ""
-	echo "Plugins:"
-	echo "  aidevops plugin add <url>    # Install a plugin from git repo"
-	echo "  aidevops plugin list         # List installed plugins"
-	echo "  aidevops plugin update       # Update all plugins"
+	echo "Plugins:"; echo "  aidevops plugin add <url>    # Install a plugin from git repo"
+	echo "  aidevops plugin list         # List installed plugins"; echo "  aidevops plugin update       # Update all plugins"
 	echo "  aidevops plugin remove <n>   # Remove a plugin"
 	echo ""
-	echo "Skill Management:"
-	echo "  aidevops skill add <source>  # Import a skill from GitHub"
-	echo "  aidevops skill list          # List imported skills"
-	echo "  aidevops skill check         # Check for upstream updates"
-	echo "  aidevops skill update [name] # Update skills to latest"
-	echo "  aidevops skill remove <name> # Remove an imported skill"
+	echo "Skill Management:"; echo "  aidevops skill add <source>  # Import a skill from GitHub"
+	echo "  aidevops skill list          # List imported skills"; echo "  aidevops skill check         # Check for upstream updates"
+	echo "  aidevops skill update [name] # Update skills to latest"; echo "  aidevops skill remove <name> # Remove an imported skill"
 	echo ""
-	echo "Skill Discovery:"
-	echo "  aidevops skills search <q>   # Search skills by keyword"
-	echo "  aidevops skills browse       # Browse skills by category"
-	echo "  aidevops skills describe <n> # Show skill description"
-	echo "  aidevops skills recommend <t># Suggest skills for a task"
-	echo "  aidevops skills categories   # List all categories"
+	echo "Skill Discovery:"; echo "  aidevops skills search <q>   # Search skills by keyword"
+	echo "  aidevops skills browse       # Browse skills by category"; echo "  aidevops skills describe <n> # Show skill description"
+	echo "  aidevops skills recommend <t># Suggest skills for a task"; echo "  aidevops skills categories   # List all categories"
 	echo ""
 	echo "Installation:"
 	echo "  npm install -g aidevops && aidevops update      # via npm (recommended)"
@@ -3257,6 +3220,33 @@ cmd_help() {
 	echo "  bash <(curl -fsSL https://aidevops.sh/install)                     # manual"
 	echo ""
 	echo "Documentation: https://github.com/marcusquinn/aidevops"
+	return 0
+}
+
+# Help command
+cmd_help() {
+	local version; version=$(get_version)
+	echo "AI DevOps Framework CLI v$version"; echo ""
+	echo "Usage: aidevops <command> [options]"; echo ""
+	_help_commands
+	echo ""
+	echo "Examples:"
+	echo "  aidevops init                # Initialize with all features"
+	echo "  aidevops init planning       # Initialize with planning only"
+	echo "  aidevops upgrade-planning    # Upgrade planning files to latest"
+	echo "  aidevops features            # List available features"
+	echo "  aidevops status              # Check what's installed"
+	echo "  aidevops doctor              # Find duplicate/conflicting installs"
+	echo "  aidevops doctor --fix        # Interactively remove duplicates"
+	echo "  aidevops update              # Update framework + check projects"
+	echo "  aidevops repos               # List registered projects"
+	echo "  aidevops repos add           # Register current project"
+	echo "  aidevops detect              # Find unregistered projects"
+	echo "  aidevops update-tools        # Check for outdated tools"
+	echo "  aidevops update-tools -u     # Update all outdated tools"
+	echo "  aidevops uninstall           # Remove aidevops"
+	echo ""
+	_help_detailed_sections
 }
 
 # Version command
@@ -3273,264 +3263,73 @@ cmd_version() {
 	fi
 }
 
+# Helper dispatch (extracted from main for complexity reduction)
+_dispatch_helper() {
+	local script_name="$1" error_name="$2"; shift 2
+	local hp="$AGENTS_DIR/scripts/$script_name"
+	[[ ! -f "$hp" ]] && hp="$INSTALL_DIR/.agents/scripts/$script_name"
+	if [[ -f "$hp" ]]; then bash "$hp" "$@"
+	else print_error "$error_name not found. Run: aidevops update"; exit 1; fi
+	return 0
+}
+
+_dispatch_config() {
+	local ch="$AGENTS_DIR/scripts/config-helper.sh"
+	[[ ! -f "$ch" ]] && ch="$INSTALL_DIR/.agents/scripts/config-helper.sh"
+	[[ ! -f "$ch" ]] && ch="$AGENTS_DIR/scripts/feature-toggle-helper.sh"
+	[[ ! -f "$ch" ]] && ch="$INSTALL_DIR/.agents/scripts/feature-toggle-helper.sh"
+	if [[ -f "$ch" ]]; then bash "$ch" "$@"
+	else print_error "config-helper.sh not found. Run: aidevops update"; exit 1; fi
+	return 0
+}
+
 # Main entry point
 main() {
 	local command="${1:-help}"
 
 	# Auto-detect unregistered repo on any command (silent check)
-	local unregistered
-	unregistered=$(detect_unregistered_repo 2>/dev/null) || true
+	local unregistered; unregistered=$(detect_unregistered_repo 2>/dev/null) || true
 	if [[ -n "$unregistered" && "$command" != "detect" && "$command" != "repos" ]]; then
-		echo -e "${YELLOW}[TIP]${NC} This project uses aidevops but isn't registered. Run: aidevops repos add"
-		echo ""
+		echo -e "${YELLOW}[TIP]${NC} This project uses aidevops but isn't registered. Run: aidevops repos add"; echo ""
 	fi
 
 	# Check if agents need updating (skip for update command itself)
 	if [[ "$command" != "update" && "$command" != "upgrade" && "$command" != "u" ]]; then
-		local cli_version agents_version
-		cli_version=$(get_version)
-		if [[ -f "$AGENTS_DIR/VERSION" ]]; then
-			agents_version=$(cat "$AGENTS_DIR/VERSION")
-		else
-			agents_version="not installed"
-		fi
-
-		if [[ "$agents_version" == "not installed" ]]; then
-			echo -e "${YELLOW}[WARN]${NC} Agents not installed. Run: aidevops update"
-			echo ""
-		elif [[ "$cli_version" != "$agents_version" ]]; then
-			echo -e "${YELLOW}[WARN]${NC} Version mismatch - CLI: $cli_version, Agents: $agents_version"
-			echo -e "       Run: aidevops update"
-			echo ""
-		fi
+		local cli_version agents_version; cli_version=$(get_version)
+		[[ -f "$AGENTS_DIR/VERSION" ]] && agents_version=$(cat "$AGENTS_DIR/VERSION") || agents_version="not installed"
+		if [[ "$agents_version" == "not installed" ]]; then echo -e "${YELLOW}[WARN]${NC} Agents not installed. Run: aidevops update"; echo ""
+		elif [[ "$cli_version" != "$agents_version" ]]; then echo -e "${YELLOW}[WARN]${NC} Version mismatch - CLI: $cli_version, Agents: $agents_version"; echo -e "       Run: aidevops update"; echo ""; fi
 	fi
 
+	shift || true
 	case "$command" in
-	init | i)
-		shift
-		cmd_init "$@"
-		;;
-	features | f)
-		cmd_features
-		;;
-	status | s)
-		cmd_status
-		;;
-	update | upgrade | u)
-		shift
-		cmd_update "$@"
-		;;
-	auto-update | autoupdate)
-		shift
-		local auto_update_helper="$AGENTS_DIR/scripts/auto-update-helper.sh"
-		if [[ ! -f "$auto_update_helper" ]]; then
-			auto_update_helper="$INSTALL_DIR/.agents/scripts/auto-update-helper.sh"
-		fi
-		if [[ -f "$auto_update_helper" ]]; then
-			bash "$auto_update_helper" "$@"
-		else
-			print_error "auto-update-helper.sh not found. Run: aidevops update"
-			exit 1
-		fi
-		;;
-	repo-sync | reposync)
-		shift
-		local repo_sync_helper="$AGENTS_DIR/scripts/repo-sync-helper.sh"
-		if [[ ! -f "$repo_sync_helper" ]]; then
-			repo_sync_helper="$INSTALL_DIR/.agents/scripts/repo-sync-helper.sh"
-		fi
-		if [[ -f "$repo_sync_helper" ]]; then
-			bash "$repo_sync_helper" "$@"
-		else
-			print_error "repo-sync-helper.sh not found. Run: aidevops update"
-			exit 1
-		fi
-		;;
-	update-tools | tools)
-		shift
-		cmd_update_tools "$@"
-		;;
-	upgrade-planning | up)
-		shift
-		cmd_upgrade_planning "$@"
-		;;
-	repos | projects)
-		shift
-		cmd_repos "$@"
-		;;
-	skill)
-		shift
-		cmd_skill "$@"
-		;;
-	skills)
-		shift
-		cmd_skills "$@"
-		;;
-	sources | agent-sources)
-		shift
-		local sources_helper="$AGENTS_DIR/scripts/agent-sources-helper.sh"
-		if [[ ! -f "$sources_helper" ]]; then
-			sources_helper="$INSTALL_DIR/.agents/scripts/agent-sources-helper.sh"
-		fi
-		if [[ -f "$sources_helper" ]]; then
-			bash "$sources_helper" "$@"
-		else
-			print_error "agent-sources-helper.sh not found. Run: aidevops update"
-			exit 1
-		fi
-		;;
-	plugin | plugins)
-		shift
-		cmd_plugin "$@"
-		;;
-	pulse)
-		shift
-		local pulse_session_helper="$AGENTS_DIR/scripts/pulse-session-helper.sh"
-		if [[ ! -f "$pulse_session_helper" ]]; then
-			pulse_session_helper="$INSTALL_DIR/.agents/scripts/pulse-session-helper.sh"
-		fi
-		if [[ -f "$pulse_session_helper" ]]; then
-			bash "$pulse_session_helper" "$@"
-		else
-			print_error "pulse-session-helper.sh not found. Run: aidevops update"
-			exit 1
-		fi
-		;;
-	security)
-		shift
-		local security_posture_helper="$AGENTS_DIR/scripts/security-posture-helper.sh"
-		if [[ ! -f "$security_posture_helper" ]]; then
-			security_posture_helper="$INSTALL_DIR/.agents/scripts/security-posture-helper.sh"
-		fi
-		if [[ -f "$security_posture_helper" ]]; then
-			# Default to 'setup' when no subcommand given (most useful action)
-			if [[ $# -eq 0 ]]; then
-				bash "$security_posture_helper" setup
-			else
-				bash "$security_posture_helper" "$@"
-			fi
-		else
-			print_error "security-posture-helper.sh not found. Run: aidevops update"
-			exit 1
-		fi
-		;;
-	doctor | doc)
-		shift
-		local doctor_helper="$AGENTS_DIR/scripts/doctor-helper.sh"
-		if [[ ! -f "$doctor_helper" ]]; then
-			doctor_helper="$INSTALL_DIR/.agents/scripts/doctor-helper.sh"
-		fi
-		if [[ -f "$doctor_helper" ]]; then
-			bash "$doctor_helper" "$@"
-		else
-			print_error "doctor-helper.sh not found. Run: aidevops update"
-			exit 1
-		fi
-		;;
-	detect | scan)
-		cmd_detect
-		;;
-	ip-check | ip_check)
-		shift
-		local ip_rep_helper="$AGENTS_DIR/scripts/ip-reputation-helper.sh"
-		if [[ ! -f "$ip_rep_helper" ]]; then
-			ip_rep_helper="$INSTALL_DIR/.agents/scripts/ip-reputation-helper.sh"
-		fi
-		if [[ -f "$ip_rep_helper" ]]; then
-			bash "$ip_rep_helper" "$@"
-		else
-			print_error "ip-reputation-helper.sh not found. Run: aidevops update"
-			exit 1
-		fi
-		;;
-	model-accounts-pool | map)
-		shift
-		local oauth_pool_helper="$AGENTS_DIR/scripts/oauth-pool-helper.sh"
-		if [[ ! -f "$oauth_pool_helper" ]]; then
-			oauth_pool_helper="$INSTALL_DIR/.agents/scripts/oauth-pool-helper.sh"
-		fi
-		if [[ -f "$oauth_pool_helper" ]]; then
-			bash "$oauth_pool_helper" "$@"
-		else
-			print_error "oauth-pool-helper.sh not found. Run: aidevops update"
-			exit 1
-		fi
-		;;
-	opencode-sandbox | oc-sandbox)
-		shift
-		local sandbox_helper="$AGENTS_DIR/scripts/opencode-sandbox-helper.sh"
-		if [[ ! -f "$sandbox_helper" ]]; then
-			sandbox_helper="$INSTALL_DIR/.agents/scripts/opencode-sandbox-helper.sh"
-		fi
-		if [[ -f "$sandbox_helper" ]]; then
-			bash "$sandbox_helper" "$@"
-		else
-			print_error "opencode-sandbox-helper.sh not found. Run: aidevops update"
-			exit 1
-		fi
-		;;
-	secret | secrets)
-		shift
-		local secret_helper="$AGENTS_DIR/scripts/secret-helper.sh"
-		if [[ ! -f "$secret_helper" ]]; then
-			secret_helper="$INSTALL_DIR/.agents/scripts/secret-helper.sh"
-		fi
-		if [[ -f "$secret_helper" ]]; then
-			bash "$secret_helper" "$@"
-		else
-			print_error "secret-helper.sh not found. Run: aidevops update"
-			exit 1
-		fi
-		;;
-	stats | observability)
-		shift
-		local obs_helper="$AGENTS_DIR/scripts/observability-helper.sh"
-		if [[ ! -f "$obs_helper" ]]; then
-			obs_helper="$INSTALL_DIR/.agents/scripts/observability-helper.sh"
-		fi
-		if [[ -f "$obs_helper" ]]; then
-			bash "$obs_helper" "$@"
-		else
-			print_error "observability-helper.sh not found. Run: aidevops update"
-			exit 1
-		fi
-		;;
-	config | configure)
-		shift
-		# Prefer JSONC config-helper.sh, fall back to legacy feature-toggle-helper.sh
-		local config_helper="$AGENTS_DIR/scripts/config-helper.sh"
-		if [[ ! -f "$config_helper" ]]; then
-			config_helper="$INSTALL_DIR/.agents/scripts/config-helper.sh"
-		fi
-		if [[ ! -f "$config_helper" ]]; then
-			# Legacy fallback
-			config_helper="$AGENTS_DIR/scripts/feature-toggle-helper.sh"
-		fi
-		if [[ ! -f "$config_helper" ]]; then
-			config_helper="$INSTALL_DIR/.agents/scripts/feature-toggle-helper.sh"
-		fi
-		if [[ -f "$config_helper" ]]; then
-			bash "$config_helper" "$@"
-		else
-			print_error "config-helper.sh not found. Run: aidevops update"
-			exit 1
-		fi
-		;;
-	uninstall | remove)
-		cmd_uninstall
-		;;
-	version | v | -v | --version)
-		cmd_version
-		;;
-	help | h | -h | --help)
-		cmd_help
-		;;
-	*)
-		print_error "Unknown command: $command"
-		echo ""
-		cmd_help
-		exit 1
-		;;
+	init | i) cmd_init "$@" ;;
+	features | f) cmd_features ;;
+	status | s) cmd_status ;;
+	update | upgrade | u) cmd_update "$@" ;;
+	auto-update | autoupdate) _dispatch_helper "auto-update-helper.sh" "auto-update-helper.sh" "$@" ;;
+	repo-sync | reposync) _dispatch_helper "repo-sync-helper.sh" "repo-sync-helper.sh" "$@" ;;
+	update-tools | tools) cmd_update_tools "$@" ;;
+	upgrade-planning | up) cmd_upgrade_planning "$@" ;;
+	repos | projects) cmd_repos "$@" ;;
+	skill) cmd_skill "$@" ;;
+	skills) cmd_skills "$@" ;;
+	sources | agent-sources) _dispatch_helper "agent-sources-helper.sh" "agent-sources-helper.sh" "$@" ;;
+	plugin | plugins) cmd_plugin "$@" ;;
+	pulse) _dispatch_helper "pulse-session-helper.sh" "pulse-session-helper.sh" "$@" ;;
+	security) [[ $# -eq 0 ]] && _dispatch_helper "security-posture-helper.sh" "security-posture-helper.sh" setup || _dispatch_helper "security-posture-helper.sh" "security-posture-helper.sh" "$@" ;;
+	doctor | doc) _dispatch_helper "doctor-helper.sh" "doctor-helper.sh" "$@" ;;
+	detect | scan) cmd_detect ;;
+	ip-check | ip_check) _dispatch_helper "ip-reputation-helper.sh" "ip-reputation-helper.sh" "$@" ;;
+	model-accounts-pool | map) _dispatch_helper "oauth-pool-helper.sh" "oauth-pool-helper.sh" "$@" ;;
+	opencode-sandbox | oc-sandbox) _dispatch_helper "opencode-sandbox-helper.sh" "opencode-sandbox-helper.sh" "$@" ;;
+	secret | secrets) _dispatch_helper "secret-helper.sh" "secret-helper.sh" "$@" ;;
+	stats | observability) _dispatch_helper "observability-helper.sh" "observability-helper.sh" "$@" ;;
+	config | configure) _dispatch_config "$@" ;;
+	uninstall | remove) cmd_uninstall ;;
+	version | v | -v | --version) cmd_version ;;
+	help | h | -h | --help) cmd_help ;;
+	*) print_error "Unknown command: $command"; echo ""; cmd_help; exit 1 ;;
 	esac
 }
 
