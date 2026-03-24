@@ -370,6 +370,99 @@ EOF
 	return 0
 }
 
+test_default_template_replaced_with_rich_readme() {
+	local test_name="default GitHub template replaced with rich profile README"
+
+	TEST_DIR=$(mktemp -d)
+	local fixture_home="${TEST_DIR}/home"
+	local fixture_repo="${TEST_DIR}/profile-repo"
+	local fixture_remote="${TEST_DIR}/profile-remote.git"
+	local helper_dir="${TEST_DIR}/helper"
+	local helper_path="${helper_dir}/profile-readme-helper.sh"
+
+	mkdir -p "${helper_dir}" "${fixture_home}/.config/aidevops"
+	mkdir -p "${fixture_home}/.aidevops/.agent-workspace/observability"
+	mkdir -p "${fixture_home}/.aidevops/cache"
+	cp "${SOURCE_HELPER}" "${helper_path}"
+	chmod +x "${helper_path}"
+	write_stub_dependencies "${helper_dir}"
+
+	# Create a bare remote and local clone with the default GitHub template
+	git init --bare --initial-branch=main "${fixture_remote}" >/dev/null
+	git init -b main "${fixture_repo}" >/dev/null
+	git -C "${fixture_repo}" config user.name "Fixture"
+	git -C "${fixture_repo}" config user.email "fixture@example.com"
+	git -C "${fixture_repo}" remote add origin "${fixture_remote}"
+
+	# Write the exact default GitHub profile template
+	cat >"${fixture_repo}/README.md" <<'EOF'
+## Hi there 👋
+
+<!--
+**fixture/fixture** is a ✨ _special_ ✨ repository because its `README.md` (this file) appears on your GitHub profile.
+
+Here are some ideas to get you started:
+
+- 🔭 I'm currently working on ...
+- 🌱 I'm currently learning ...
+- 👯 I'm looking to collaborate on ...
+- 🤔 I'm looking for help with ...
+- 💬 Ask me about ...
+- 📫 How to reach me: ...
+- 😄 Pronouns: ...
+- ⚡ Fun fact: ...
+-->
+EOF
+
+	git -C "${fixture_repo}" add README.md
+	git -C "${fixture_repo}" commit -m "Initial commit" >/dev/null
+	git -C "${fixture_repo}" push -u origin main >/dev/null
+
+	# Set up repos.json
+	cat >"${fixture_home}/.config/aidevops/repos.json" <<EOF
+{
+  "initialized_repos": [
+    {
+      "path": "${fixture_repo}",
+      "slug": "fixture/fixture",
+      "priority": "profile",
+      "pulse": false,
+      "maintainer": "fixture"
+    }
+  ]
+}
+EOF
+
+	# Run update — should detect default template and replace with rich README
+	if ! HOME="${fixture_home}" bash "${helper_path}" update >/dev/null 2>&1; then
+		print_result "${test_name}" 1 "helper update command failed"
+		return 0
+	fi
+
+	local readme="${fixture_repo}/README.md"
+
+	# Verify the default template is gone
+	if grep -q 'is a.*special.*repository' "$readme" 2>/dev/null; then
+		print_result "${test_name}" 1 "default GitHub template still present after update"
+		return 0
+	fi
+
+	# Verify markers were added
+	if ! grep -q '<!-- STATS-START -->' "$readme"; then
+		print_result "${test_name}" 1 "STATS-START marker not found after update"
+		return 0
+	fi
+
+	# Verify it's a rich README (has the aidevops tagline)
+	if ! grep -q 'aidevops' "$readme"; then
+		print_result "${test_name}" 1 "aidevops reference not found — not a rich README"
+		return 0
+	fi
+
+	print_result "${test_name}" 0
+	return 0
+}
+
 main() {
 	if [[ ! -x "${SOURCE_HELPER}" ]]; then
 		echo "Helper script not found or not executable: ${SOURCE_HELPER}" >&2
@@ -381,6 +474,8 @@ main() {
 	test_inject_markers_into_existing_readme
 	teardown
 	test_diverged_history_recovery
+	teardown
+	test_default_template_replaced_with_rich_readme
 	teardown
 
 	echo ""

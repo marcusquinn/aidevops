@@ -1151,6 +1151,31 @@ _generate_contributions() {
 	return 0
 }
 
+# --- Detect if a README is the default GitHub profile template ---
+# Returns 0 (true) if the file matches the default template pattern.
+# The default template contains "## Hi there" and the commented-out suggestions
+# block that GitHub auto-generates for new username/username repos.
+_is_default_github_template() {
+	local readme_path="$1"
+	if [[ ! -f "$readme_path" ]]; then
+		return 1
+	fi
+	# Check for the distinctive GitHub default template markers:
+	# 1. The "Hi there" heading (with or without emoji)
+	# 2. The commented-out "is a special repository" block
+	if grep -q 'Hi there' "$readme_path" 2>/dev/null &&
+		grep -q 'is a.*special.*repository' "$readme_path" 2>/dev/null; then
+		return 0
+	fi
+	# Also match minimal default READMEs that just have "# username" and nothing else
+	local line_count
+	line_count=$(wc -l <"$readme_path" | tr -d ' ')
+	if [[ "$line_count" -le 3 ]] && ! grep -q '<!-- STATS-START -->' "$readme_path" 2>/dev/null; then
+		return 0
+	fi
+	return 1
+}
+
 # --- Inject aidevops markers into an existing README that lacks them ---
 # Preserves all existing content and appends marker blocks at the end.
 # This handles the case where a user has manually written their README
@@ -1209,12 +1234,12 @@ _recover_diverged_profile() {
 		local readme_path="${repo_dir}/README.md"
 		if [[ -f "$readme_path" ]] && grep -q '<!-- STATS-START -->' "$readme_path" 2>/dev/null; then
 			echo "Remote README already has markers — no seeding needed"
+		elif [[ ! -f "$readme_path" ]] || _is_default_github_template "$readme_path"; then
+			echo "Creating rich profile README..."
+			_generate_rich_readme "$gh_user" "$readme_path"
 		elif [[ -f "$readme_path" ]]; then
 			echo "Injecting markers into remote README..."
 			_inject_markers_into_readme "$readme_path"
-		else
-			echo "Creating rich profile README..."
-			_generate_rich_readme "$gh_user" "$readme_path"
 		fi
 
 		# Commit and push the seeded README
@@ -1466,10 +1491,13 @@ cmd_init() {
 
 	# Seed README.md with stat markers.
 	# If the file doesn't exist or is the default GitHub template, generate a full README.
-	# If the file exists with user content but lacks markers, inject markers into it.
+	# If the file exists with real user content but lacks markers, inject markers into it.
 	local readme_path="${repo_dir}/README.md"
 	if [[ ! -f "$readme_path" ]]; then
 		echo "Creating rich profile README..."
+		_generate_rich_readme "$gh_user" "$readme_path"
+	elif _is_default_github_template "$readme_path"; then
+		echo "Default GitHub template detected — replacing with rich profile README..."
 		_generate_rich_readme "$gh_user" "$readme_path"
 	elif ! grep -q '<!-- STATS-START -->' "$readme_path"; then
 		echo "Injecting stat markers into existing README..."
@@ -1590,13 +1618,25 @@ cmd_update() {
 	local source_file
 	source_file="$readme_path"
 
-	# Ensure markers exist in the source content — inject them if missing
+	# Ensure markers exist in the source content — replace default template or inject into custom content
 	if ! grep -q '<!-- STATS-START -->' "$source_file" || ! grep -q '<!-- STATS-END -->' "$source_file"; then
-		echo "Markers missing from README — injecting them..."
-		_inject_markers_into_readme "$source_file"
-		# Commit the marker injection before proceeding with stats update
+		if _is_default_github_template "$source_file"; then
+			echo "Default GitHub template detected — replacing with rich profile README..."
+			local gh_user
+			gh_user=$(_resolve_profile_user "$profile_repo")
+			if [[ -n "$gh_user" ]]; then
+				_generate_rich_readme "$gh_user" "$source_file"
+			else
+				echo "Could not resolve username — injecting markers only..."
+				_inject_markers_into_readme "$source_file"
+			fi
+		else
+			echo "Markers missing from README — injecting them..."
+			_inject_markers_into_readme "$source_file"
+		fi
+		# Commit the marker injection/replacement before proceeding with stats update
 		git -C "$profile_repo" add README.md
-		git -C "$profile_repo" commit -m "feat: inject aidevops stat markers into profile README" --no-verify 2>/dev/null || true
+		git -C "$profile_repo" commit -m "feat: initialize profile README with aidevops stat markers" --no-verify 2>/dev/null || true
 	fi
 
 	# Replace content between markers
