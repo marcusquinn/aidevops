@@ -3658,6 +3658,7 @@ cmd_help() {
 	echo "  aidevops model-accounts-pool add anthropic     # Add Claude Pro/Max account"
 	echo "  aidevops model-accounts-pool add openai        # Add ChatGPT Plus/Pro account"
 	echo "  aidevops model-accounts-pool add cursor        # Add Cursor Pro account"
+	echo "  aidevops model-accounts-pool add google        # Add Google AI Pro/Ultra/Workspace account"
 	echo "  aidevops model-accounts-pool import claude-cli # Import from Claude CLI auth"
 	echo "  aidevops model-accounts-pool assign-pending <provider># Assign stranded token"
 	echo "  aidevops model-accounts-pool remove <provider> <email># Remove an account"

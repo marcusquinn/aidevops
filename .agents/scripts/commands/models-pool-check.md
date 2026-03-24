@@ -41,9 +41,10 @@ If Claude CLI is not installed or not logged in, fall back to the standard inter
 >
 > You'll need a paid subscription to one of these:
 >
-> - **Claude Pro or Max** ($20-100/mo from anthropic.com) — for Claude models
+ > - **Claude Pro or Max** ($20-100/mo from anthropic.com) — for Claude models
 > - **ChatGPT Plus or Pro** ($20-200/mo from openai.com) — for GPT/o-series models
 > - **Cursor Pro** ($20/mo from cursor.com) — for models via Cursor's proxy
+> - **Google AI Pro or Ultra** ($25-65/mo from one.google.com) — for Gemini models via Gemini CLI
 >
 > Which provider do you have a subscription with?
 
@@ -55,7 +56,9 @@ For OpenAI: `oauth-pool-helper.sh add openai`
 
 For Cursor: `opencode auth login --provider cursor`
 
-For Anthropic/OpenAI, explain: "This will open your browser to log in. After you authorize, you'll get a code to paste back into the terminal. Once done, restart OpenCode and your account will be active."
+For Google: `oauth-pool-helper.sh add google`
+
+For Anthropic/OpenAI/Google, explain: "This will open your browser to log in. After you authorize, you'll get a code to paste back into the terminal. Once done, restart OpenCode and your account will be active."
 
 For Cursor, explain: "This opens your browser to log into Cursor. After you authorize, tokens are saved automatically. Restart OpenCode and Cursor models will appear when you press Ctrl+T."
 
@@ -96,7 +99,7 @@ After any change (add/remove/re-auth), run `oauth-pool-helper.sh check` again to
 ## Key principles
 
 - **One step at a time.** Don't dump all commands at once. Guide through the immediate next action, wait for confirmation, then proceed.
-- **Separate terminal for add commands.** The `oauth-pool-helper.sh add` command needs a real terminal. For Anthropic/OpenAI it opens a browser; for Cursor it reads from the IDE (instant, no browser). Always say "run this in a separate terminal" — never suggest pasting tokens or codes into this chat.
+- **Separate terminal for add commands.** The `oauth-pool-helper.sh add` command needs a real terminal. For Anthropic/OpenAI/Google it opens a browser; for Cursor it reads from the IDE (instant, no browser). Always say "run this in a separate terminal" — never suggest pasting tokens or codes into this chat.
 - **Explain why, not just what.** "This connects your Claude subscription so you can use Claude models here" is better than "This adds an OAuth token to the pool."
 - **Any model can run this.** The diagnostic uses `oauth-pool-helper.sh` (a shell script). It works even on free OpenCode models with no provider configured. The user doesn't need a working paid provider to check their setup.
 - **Don't mention internals.** Users don't need to know about pool.json, PKCE, token endpoints, auth hooks, or OAuth flows. They need "run this command, then restart."

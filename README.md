@@ -326,6 +326,27 @@ oauth-pool-helper.sh add cursor
 - **Model discovery** — automatically detects all models available to your account
 - **Pool rotation** — multiple accounts with LRU rotation and 429 failover
 
+### Google AI Pool (Gemini CLI / Vertex AI)
+
+Use your Google AI Pro, AI Ultra, or Workspace subscription for Gemini models. Tokens are injected as ADC bearer tokens that Gemini CLI, Vertex AI SDK, and the Gemini API pick up automatically.
+
+**Setup:**
+
+```bash
+# Add your Google account to the pool (browser OAuth flow)
+aidevops model-accounts-pool add google
+
+# Restart OpenCode — token is injected as GOOGLE_OAUTH_ACCESS_TOKEN
+```
+
+**Supported plans:**
+
+- **Google AI Pro** (~$25/mo) — daily Gemini CLI limits
+- **Google AI Ultra** (~$65/mo) — higher daily limits
+- **Google Workspace** with Gemini add-on — enterprise daily limits
+
+**Isolation guarantee:** Google auth failures never affect Anthropic/OpenAI/Cursor providers. A Google 429 or auth error only puts the Google pool into cooldown.
+
 ### GitHub AI Agent Integration
 
 Enable AI-powered issue resolution directly from GitHub. Comment `/oc fix this` on any issue and the AI creates a branch, implements the fix, and opens a PR.
@@ -394,6 +415,8 @@ aidevops model-accounts-pool check        # live token validity test per account
 | Account shows `auth-error` | `aidevops model-accounts-pool add anthropic` (re-auth) |
 | Pool is empty (no accounts) | `aidevops model-accounts-pool add anthropic` |
 | Recently re-authed, still broken | `aidevops model-accounts-pool assign-pending anthropic` |
+| Google Gemini CLI rate-limited | `aidevops model-accounts-pool rotate google` |
+| Google token expired | `aidevops model-accounts-pool add google` (re-auth) |
 
 **Step 3 — If still broken, re-add the account**
 
@@ -401,6 +424,7 @@ aidevops model-accounts-pool check        # live token validity test per account
 aidevops model-accounts-pool add anthropic     # Claude Pro/Max — opens browser OAuth
 aidevops model-accounts-pool add openai        # ChatGPT Plus/Pro
 aidevops model-accounts-pool add cursor        # Cursor Pro (reads from local IDE)
+aidevops model-accounts-pool add google        # Google AI Pro/Ultra/Workspace — browser OAuth
 aidevops model-accounts-pool import claude-cli # Import from existing Claude CLI auth
 ```
 
