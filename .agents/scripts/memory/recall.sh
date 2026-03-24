@@ -204,7 +204,10 @@ cmd_recall() {
 		fi
 	done
 	set +f # Re-enable globbing
-	local escaped_query="$tokenised_query"
+	# Escape single quotes for SQLite .param set binding (GH#5678)
+	# .param set :query '...' uses single-quote delimiters, so any literal
+	# single quote in the query (e.g., O'Reilly) must be doubled to ''
+	local escaped_query="${tokenised_query//"'"/"''"}"
 
 	# Build filters with validation
 	local extra_filters=""
@@ -326,10 +329,12 @@ SELECT
     learnings.created_at,
     COALESCE(learning_access.last_accessed_at, '') as last_accessed_at,
     COALESCE(learning_access.access_count, 0) as access_count,
+    COALESCE(learning_access.auto_captured, 0) as auto_captured,
     bm25(learnings) as score
 FROM learnings
 LEFT JOIN learning_access ON learnings.id = learning_access.id
-WHERE learnings MATCH :query $extra_filters
+$entity_fts_join
+WHERE learnings MATCH :query $extra_filters $auto_join_filter $entity_fts_where
 ORDER BY score
 LIMIT $limit;
 EOF
