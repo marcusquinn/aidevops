@@ -154,6 +154,24 @@ const OPENAI_REDIRECT_URI = "http://localhost:1455/auth/callback";
 const OPENAI_OAUTH_SCOPES = "openid profile email offline_access";
 
 // ---------------------------------------------------------------------------
+// Google OAuth constants (issue #5614)
+// Google AI Pro/Ultra/Workspace subscription accounts.
+// Tokens are injected as ADC bearer tokens (GOOGLE_OAUTH_ACCESS_TOKEN env var)
+// which Gemini CLI, Vertex AI SDK, and generativelanguage.googleapis.com pick up.
+// Health check: GET /v1beta/models?pageSize=1 on generativelanguage.googleapis.com
+// Isolation: separate in-memory cooldown, separate pool key — failures never
+// cascade to anthropic/openai/cursor providers.
+// ---------------------------------------------------------------------------
+
+const GOOGLE_CLIENT_ID = "681255809395-oo8ft6t5t0rnmhfqgpnkqtev5b9a2i5j.apps.googleusercontent.com";
+const GOOGLE_TOKEN_ENDPOINT = "https://oauth2.googleapis.com/token";
+const GOOGLE_OAUTH_AUTHORIZE_URL = "https://accounts.google.com/o/oauth2/v2/auth";
+/** OOB redirect — code is displayed in the browser for manual paste */
+const GOOGLE_REDIRECT_URI = "urn:ietf:wg:oauth:2.0:oob";
+const GOOGLE_OAUTH_SCOPES = "https://www.googleapis.com/auth/generative-language https://www.googleapis.com/auth/cloud-platform openid email profile";
+const GOOGLE_HEALTH_CHECK_URL = "https://generativelanguage.googleapis.com/v1beta/models?pageSize=1";
+
+// ---------------------------------------------------------------------------
 // Cursor constants (t1549)
 // Cursor uses cursor-agent CLI for authentication and a local HTTP proxy
 // sidecar that translates OpenAI-compatible requests to cursor-agent calls.
@@ -269,6 +287,13 @@ let openaiTokenEndpointCooldownUntil = 0;
  * @type {number}
  */
 let cursorProxyCooldownUntil = 0;
+
+/**
+ * In-memory timestamp of the last 429 from the Google token endpoint (issue #5614).
+ * Isolated from other providers — Google failures never affect anthropic/openai/cursor.
+ * @type {number}
+ */
+let googleTokenEndpointCooldownUntil = 0;
 
 /**
  * Execute a curl request to a token endpoint, returning a Response-like object.
@@ -475,6 +500,61 @@ async function fetchOpenAITokenEndpoint(params, context) {
       [
         `[aidevops] OAuth pool: ${context} failed: rate limited by OpenAI.`,
         `Cooldown set for ${cooldownMinutes}m — no further token requests until then.`,
+        "Use /model-accounts-pool reset-cooldowns to clear manually.",
+      ].join(" "),
+    );
+  } else if (!response.ok) {
+    console.error(`[aidevops] OAuth pool: ${context} failed: HTTP ${response.status}`);
+  }
+
+  return response;
+}
+
+/**
+ * Fetch from the Google OAuth2 token endpoint (issue #5614).
+ * Google uses JSON bodies (same as Anthropic, unlike OpenAI's form-encoded).
+ * Uses curl to avoid Bun's automatic header injection.
+ * Isolated cooldown — Google 429s never affect other providers.
+ *
+ * @param {string} body - JSON string body
+ * @param {string} context - description for logging
+ * @returns {Promise<{ ok: boolean, status: number, statusText: string, headers: { get(k: string): string|null }, json(): Promise<any>, text(): Promise<string> }>}
+ */
+async function fetchGoogleTokenEndpoint(body, context) {
+  const now = Date.now();
+  if (googleTokenEndpointCooldownUntil > now) {
+    const remainingMinutes = Math.ceil((googleTokenEndpointCooldownUntil - now) / 60000);
+    console.error(
+      [
+        `[aidevops] OAuth pool: ${context} skipped — Google token endpoint rate limited,`,
+        `cooldown ${remainingMinutes}m remaining.`,
+        "Use /model-accounts-pool reset-cooldowns to clear manually.",
+      ].join(" "),
+    );
+    return {
+      ok: false,
+      status: 429,
+      statusText: "Rate Limited (cooldown)",
+      headers: { get() { return null; } },
+      async json() { return { error: "Rate limited (cooldown)" }; },
+      async text() { return "Rate limited (cooldown)"; },
+    };
+  }
+
+  const response = curlTokenEndpoint(GOOGLE_TOKEN_ENDPOINT, {
+    headers: { "User-Agent": ANTHROPIC_USER_AGENT },
+    body,
+  }, context);
+
+  if (response.status === 429) {
+    const retryAfter = response.headers.get("retry-after");
+    const cooldownMs = parseRetryAfterCooldown(retryAfter);
+    googleTokenEndpointCooldownUntil = Date.now() + cooldownMs;
+    const cooldownMinutes = Math.ceil(cooldownMs / 60000);
+    console.error(
+      [
+        `[aidevops] OAuth pool: ${context} failed: rate limited by Google.`,
+        `Cooldown set for ${cooldownMinutes}m — no further Google token requests until then.`,
         "Use /model-accounts-pool reset-cooldowns to clear manually.",
       ].join(" "),
     );
@@ -1073,6 +1153,40 @@ async function refreshCursorAccessToken(account) {
 }
 
 /**
+ * Refresh an expired Google access token using the refresh token (issue #5614).
+ * Google uses JSON bodies (same as Anthropic). Isolated from other providers.
+ * @param {PoolAccount} account
+ * @returns {Promise<{access: string, refresh: string, expires: number} | null>}
+ */
+async function refreshGoogleAccessToken(account) {
+  try {
+    const response = await fetchGoogleTokenEndpoint(
+      JSON.stringify({
+        grant_type: "refresh_token",
+        refresh_token: account.refresh,
+        client_id: GOOGLE_CLIENT_ID,
+      }),
+      `Google refresh for ${account.email}`,
+    );
+    if (!response.ok) {
+      return null;
+    }
+    const json = await response.json();
+    return {
+      access: json.access_token,
+      // Google may not return a new refresh_token on refresh — keep existing
+      refresh: json.refresh_token || account.refresh,
+      expires: Date.now() + (json.expires_in || 3600) * 1000,
+    };
+  } catch (err) {
+    console.error(
+      `[aidevops] OAuth pool: Google token refresh error for ${account.email}: ${err.message}`,
+    );
+    return null;
+  }
+}
+
+/**
  * Decode a Cursor JWT to extract email and expiry. No signature verification.
  * @param {string} token
  * @returns {{ email: string|undefined, expiresAt: number|undefined }}
@@ -1166,6 +1280,8 @@ export async function ensureValidToken(provider, account) {
     tokens = await refreshCursorAccessToken(account);
   } else if (provider === "openai") {
     tokens = await refreshOpenAIAccessToken(account);
+  } else if (provider === "google") {
+    tokens = await refreshGoogleAccessToken(account);
   } else {
     tokens = await refreshAccessToken(account);
   }
@@ -1299,6 +1415,8 @@ export async function fetchWithPoolFailover(client, provider, currentEmail, requ
       injectFn = injectCursorPoolToken;
     } else if (provider === "openai") {
       injectFn = injectOpenAIPoolToken;
+    } else if (provider === "google") {
+      injectFn = injectGooglePoolToken;
     } else {
       injectFn = injectPoolToken;
     }
@@ -1328,6 +1446,8 @@ export async function fetchWithPoolFailover(client, provider, currentEmail, requ
       injectFn = injectCursorPoolToken;
     } else if (provider === "openai") {
       injectFn = injectOpenAIPoolToken;
+    } else if (provider === "google") {
+      injectFn = injectGooglePoolToken;
     } else {
       injectFn = injectPoolToken;
     }
@@ -1392,11 +1512,18 @@ export async function initPoolAuth(client) {
   await seedPoolAuthEntry(client, "anthropic-pool");
   await seedPoolAuthEntry(client, "openai-pool");
   await seedPoolAuthEntry(client, "cursor-pool");
+  await seedPoolAuthEntry(client, "google-pool");
 
   // Inject pool tokens into built-in providers
   await injectPoolToken(client);
   await injectOpenAIPoolToken(client);
   await injectCursorPoolToken(client);
+  // Google: inject as ADC bearer token (isolated — failure does not affect others)
+  try {
+    await injectGooglePoolToken(client);
+  } catch (err) {
+    console.error(`[aidevops] OAuth pool: Google token injection failed (isolated): ${err.message}`);
+  }
 }
 
 /**
@@ -1696,6 +1823,65 @@ export async function injectCursorPoolToken(client, skipEmail) {
     console.error(`[aidevops] OAuth pool: failed to inject Cursor token: ${err.message}`);
     return false;
   }
+}
+
+/**
+ * Pick the best Google pool account and inject its token as GOOGLE_OAUTH_ACCESS_TOKEN
+ * (ADC bearer token) for Gemini CLI / Vertex AI / generativelanguage.googleapis.com (issue #5614).
+ *
+ * Isolation guarantee: this function only touches the "google" pool key and
+ * GOOGLE_OAUTH_ACCESS_TOKEN env var. It never modifies anthropic/openai/cursor
+ * pool entries or their env vars. A Google failure returns false without
+ * affecting other providers.
+ *
+ * @param {any} client - OpenCode SDK client
+ * @param {string} [skipEmail] - email to skip (for rotation on 429)
+ * @returns {Promise<boolean>} true if a token was injected
+ */
+export async function injectGooglePoolToken(client, skipEmail) {
+  const accounts = getAccounts("google");
+  if (accounts.length === 0) return false;
+
+  const now = Date.now();
+  let account = null;
+  const sorted = [...accounts]
+    .filter(
+      (a) =>
+        ["active", "idle"].includes(a.status) &&
+        a.email !== skipEmail &&
+        (!a.cooldownUntil || a.cooldownUntil <= now),
+    )
+    .sort((a, b) => new Date(a.lastUsed || 0) - new Date(b.lastUsed || 0));
+
+  for (const candidate of sorted) {
+    const accessToken = await ensureValidToken("google", candidate);
+    if (!accessToken) {
+      console.error(`[aidevops] OAuth pool: skipping invalid Google token for ${candidate.email}`);
+      continue;
+    }
+    account = candidate;
+    break;
+  }
+
+  if (!account) return false;
+
+  const accessToken = await ensureValidToken("google", account);
+  if (!accessToken) {
+    console.error(`[aidevops] OAuth pool: failed to get valid Google token for ${account.email}`);
+    return false;
+  }
+
+  // Inject as ADC bearer token — Gemini CLI and Vertex AI SDK read this env var
+  process.env.GOOGLE_OAUTH_ACCESS_TOKEN = accessToken;
+
+  // Mark as used
+  patchAccount("google", account.email, {
+    lastUsed: new Date().toISOString(),
+    status: "active",
+  });
+
+  console.error(`[aidevops] OAuth pool: injected Google token for ${account.email} as GOOGLE_OAUTH_ACCESS_TOKEN`);
+  return true;
 }
 
 /**
@@ -2307,6 +2493,184 @@ export function createCursorPoolAuthHook(client) {
 }
 
 /**
+ * Create the auth hook for the google-pool provider (issue #5614).
+ * This provider exists solely for the "Add Account to Pool" OAuth flow.
+ * It has no models — Google tokens are injected as GOOGLE_OAUTH_ACCESS_TOKEN
+ * (ADC bearer) for Gemini CLI / Vertex AI / generativelanguage.googleapis.com.
+ *
+ * Google OAuth uses PKCE + OOB redirect (urn:ietf:wg:oauth:2.0:oob) — the
+ * authorization code is displayed in the browser for manual paste.
+ * access_type=offline + prompt=consent ensures a refresh_token is returned.
+ *
+ * Isolation: Google auth failures never affect anthropic/openai/cursor providers.
+ *
+ * @param {any} client - OpenCode SDK client
+ * @returns {import('@opencode-ai/plugin').AuthHook}
+ */
+export function createGooglePoolAuthHook(client) {
+  return {
+    provider: "google-pool",
+
+    methods: [
+      {
+        get label() {
+          const accounts = getAccounts("google");
+          if (accounts.length === 0) {
+            return "Add Account to Pool (Google AI Pro/Ultra/Workspace)";
+          }
+          return `Add Account to Pool (${accounts.length} account${accounts.length === 1 ? "" : "s"})`;
+        },
+        type: "oauth",
+        prompts: [
+          {
+            type: "text",
+            key: "email",
+            get message() {
+              const accounts = getAccounts("google");
+              if (accounts.length === 0) {
+                return "Google account email (required to match tokens to accounts)";
+              }
+              const emails = accounts.map((a, i) => `  ${i + 1}. ${a.email}`).join("\n");
+              return `Existing accounts:\n${emails}\nEnter email (existing to re-auth, or new to add)`;
+            },
+            placeholder: "you@gmail.com",
+            validate: (value) => {
+              if (!value || !value.includes("@")) {
+                return "Please enter a valid email address";
+              }
+              return undefined;
+            },
+          },
+        ],
+        authorize: async (inputs) => {
+          const email = inputs?.email || "unknown";
+          const pkce = generatePKCE();
+
+          const url = new URL(GOOGLE_OAUTH_AUTHORIZE_URL);
+          url.searchParams.set("client_id", GOOGLE_CLIENT_ID);
+          url.searchParams.set("response_type", "code");
+          url.searchParams.set("redirect_uri", GOOGLE_REDIRECT_URI);
+          url.searchParams.set("scope", GOOGLE_OAUTH_SCOPES);
+          url.searchParams.set("code_challenge", pkce.challenge);
+          url.searchParams.set("code_challenge_method", "S256");
+          url.searchParams.set("access_type", "offline");
+          url.searchParams.set("prompt", "consent");
+
+          return {
+            url: url.toString(),
+            instructions: [
+              `Adding Google AI account: ${email}`,
+              `1. A browser window will open to accounts.google.com`,
+              `2. Sign in with your Google AI Pro/Ultra or Workspace account`,
+              `3. After authorizing, copy the authorization code shown in the browser`,
+              `4. Paste the authorization code here: `,
+            ].join("\n"),
+            method: "code",
+            callback: async (code) => {
+              const authCode = code?.trim();
+              if (!authCode || authCode.length < 5) {
+                return { type: "failed" };
+              }
+
+              const result = await fetchGoogleTokenEndpoint(
+                JSON.stringify({
+                  code: authCode,
+                  grant_type: "authorization_code",
+                  client_id: GOOGLE_CLIENT_ID,
+                  redirect_uri: GOOGLE_REDIRECT_URI,
+                  code_verifier: pkce.verifier,
+                }),
+                "Google token exchange",
+              );
+
+              if (!result.ok) {
+                return { type: "failed" };
+              }
+
+              const json = await result.json();
+
+              // Resolve email from ID token JWT claims (Google OIDC)
+              let resolvedEmail = email;
+              if (json.id_token && resolvedEmail === "unknown") {
+                try {
+                  const parts = json.id_token.split(".");
+                  if (parts.length >= 2) {
+                    const payload = JSON.parse(
+                      Buffer.from(parts[1], "base64url").toString("utf-8"),
+                    );
+                    resolvedEmail = payload.email || payload.sub || "unknown";
+                    console.error(`[aidevops] OAuth pool: resolved Google email ${resolvedEmail} from ID token`);
+                  }
+                } catch {
+                  // JWT decode failed — continue with provided email
+                }
+              }
+
+              // Fallback: try Google userinfo endpoint
+              if (resolvedEmail === "unknown" && json.access_token) {
+                try {
+                  const userResp = await fetch("https://www.googleapis.com/oauth2/v3/userinfo", {
+                    headers: {
+                      "Authorization": `Bearer ${json.access_token}`,
+                    },
+                  });
+                  if (userResp.ok) {
+                    const userInfo = await userResp.json();
+                    resolvedEmail = userInfo.email || userInfo.sub || "unknown";
+                    console.error(`[aidevops] OAuth pool: resolved Google email ${resolvedEmail} from userinfo`);
+                  }
+                } catch {
+                  // Userinfo endpoint unavailable
+                }
+              }
+
+              const tokenData = {
+                refresh: json.refresh_token || "",
+                access: json.access_token,
+                expires: Date.now() + (json.expires_in || 3600) * 1000,
+              };
+
+              const saved = upsertAccount("google", {
+                email: resolvedEmail,
+                ...tokenData,
+                added: new Date().toISOString(),
+                lastUsed: new Date().toISOString(),
+                status: "active",
+                cooldownUntil: null,
+              });
+
+              if (!saved) {
+                // upsertAccount refused — unknown email with named accounts.
+                savePendingToken("google", {
+                  ...tokenData,
+                  added: new Date().toISOString(),
+                });
+                // Inject for this session
+                if (tokenData.access) process.env.GOOGLE_OAUTH_ACCESS_TOKEN = tokenData.access;
+                return { type: "success", ...tokenData };
+              }
+
+              const totalAccounts = getAccounts("google").length;
+              console.error(
+                `[aidevops] OAuth pool: added Google ${resolvedEmail} (${totalAccounts} account${totalAccounts === 1 ? "" : "s"} total)`,
+              );
+              console.error(
+                `[aidevops] OAuth pool: Google account added. Token injected as GOOGLE_OAUTH_ACCESS_TOKEN for Gemini CLI / Vertex AI.`,
+              );
+
+              // Inject the new token
+              await injectGooglePoolToken(client);
+
+              return { type: "success", ...tokenData };
+            },
+          };
+        },
+      },
+    ],
+  };
+}
+
+/**
  * Register the pool provider for the auth dialog display name.
  *
  * The auth hook (provider: "anthropic-pool") automatically appears in the
@@ -2371,6 +2735,13 @@ export function registerPoolProvider(config) {
       api: CURSOR_PROXY_BASE_URL,
       modelName: "[Account Setup Only] Use Cursor provider for models",
     },
+    {
+      id: "google-pool",
+      name: "Google Pool (Account Management)",
+      npm: "@ai-sdk/google",
+      api: "https://generativelanguage.googleapis.com/v1beta",
+      modelName: "[Account Setup Only] Token injected as GOOGLE_OAUTH_ACCESS_TOKEN",
+    },
   ];
 
   for (const def of poolProviders) {
@@ -2431,7 +2802,7 @@ export function createPoolTool(client) {
       "'check' to test token validity for all accounts,",
       "'status' for rotation statistics.",
       "Supports providers: anthropic (Claude Pro/Max), openai (ChatGPT Plus/Pro),",
-      "and cursor (Cursor Pro).",
+      "cursor (Cursor Pro), and google (Google AI Pro/Ultra/Workspace).",
       "The agent should route natural language requests about managing",
       "provider accounts, OAuth pools, or credential rotation to this tool.",
       "Shell equivalent: oauth-pool-helper.sh supports the same actions",
@@ -2452,8 +2823,8 @@ export function createPoolTool(client) {
         },
         provider: {
           type: "string",
-          enum: ["anthropic", "openai", "cursor"],
-          description: "Provider name: 'anthropic' (default), 'openai', or 'cursor'",
+          enum: ["anthropic", "openai", "cursor", "google"],
+          description: "Provider name: 'anthropic' (default), 'openai', 'cursor', or 'google'",
         },
       },
       required: ["action"],
@@ -2467,6 +2838,7 @@ export function createPoolTool(client) {
         anthropic: `To add an account: run \`opencode auth login\` and select "Anthropic Pool".`,
         openai: `To add an account: run \`opencode auth login\` and select "OpenAI Pool".`,
         cursor: `To add an account: run \`opencode auth login\` and select "Cursor Pool". Requires cursor-agent CLI.`,
+        google: `To add an account: run \`opencode auth login\` and select "Google Pool". Requires Google AI Pro/Ultra or Workspace subscription.`,
       };
       const addAccountHint = addAccountHints[provider] || addAccountHints.anthropic;
 
@@ -2476,6 +2848,7 @@ export function createPoolTool(client) {
         anthropic: tokenEndpointCooldownUntil,
         openai: openaiTokenEndpointCooldownUntil,
         cursor: cursorProxyCooldownUntil,
+        google: googleTokenEndpointCooldownUntil,
       };
       const endpointCooldownUntil = endpointCooldowns[provider] || 0;
 
@@ -2562,6 +2935,9 @@ export function createPoolTool(client) {
           } else if (provider === "openai") {
             wasGated = openaiTokenEndpointCooldownUntil > Date.now();
             openaiTokenEndpointCooldownUntil = 0;
+          } else if (provider === "google") {
+            wasGated = googleTokenEndpointCooldownUntil > Date.now();
+            googleTokenEndpointCooldownUntil = 0;
           } else {
             wasGated = tokenEndpointCooldownUntil > Date.now();
             tokenEndpointCooldownUntil = 0;
@@ -2593,7 +2969,7 @@ export function createPoolTool(client) {
 
         case "rotate": {
           if (accounts.length < 2) {
-            const poolNames = { anthropic: "Anthropic Pool", openai: "OpenAI Pool", cursor: "Cursor Pool" };
+            const poolNames = { anthropic: "Anthropic Pool", openai: "OpenAI Pool", cursor: "Cursor Pool", google: "Google Pool" };
             const poolName = poolNames[provider] || "Pool";
             return `Cannot rotate: only ${accounts.length} account(s) in pool. Add more accounts via Ctrl+A → ${poolName}.`;
           }
@@ -2608,6 +2984,8 @@ export function createPoolTool(client) {
             injectFn = injectCursorPoolToken;
           } else if (provider === "openai") {
             injectFn = injectOpenAIPoolToken;
+          } else if (provider === "google") {
+            injectFn = injectGooglePoolToken;
           } else {
             injectFn = injectPoolToken;
           }
@@ -2644,7 +3022,7 @@ export function createPoolTool(client) {
           // providers (or a specific provider if specified)
           const providersToCheck = args.provider
             ? [args.provider]
-            : ["anthropic", "openai", "cursor"];
+            : ["anthropic", "openai", "cursor", "google"];
 
           const results = [];
 
@@ -2726,6 +3104,23 @@ export function createPoolTool(client) {
                     } else {
                       lines.push(`    Validity: HTTP ${testResp.status}`);
                     }
+                  } else if (prov === "google") {
+                    // Health check against Gemini API (generativelanguage.googleapis.com)
+                    const testResp = await fetch(GOOGLE_HEALTH_CHECK_URL, {
+                      headers: {
+                        "Authorization": `Bearer ${account.access}`,
+                      },
+                    });
+                    testOk = testResp.ok || testResp.status === 403;
+                    if (testResp.status === 401) {
+                      lines.push(`    Validity: INVALID (401 — needs refresh)`);
+                    } else if (testResp.status === 403) {
+                      lines.push(`    Validity: OK (403 — token valid, check AI Pro/Ultra subscription)`);
+                    } else if (testOk) {
+                      lines.push(`    Validity: OK`);
+                    } else {
+                      lines.push(`    Validity: HTTP ${testResp.status}`);
+                    }
                   } else {
                     lines.push(`    Validity: (skipped — ${prov} uses proxy)`);
                   }
@@ -2744,6 +3139,7 @@ export function createPoolTool(client) {
             // Token endpoint status for this provider
             const epCooldown = prov === "anthropic" ? tokenEndpointCooldownUntil
               : prov === "openai" ? openaiTokenEndpointCooldownUntil
+              : prov === "google" ? googleTokenEndpointCooldownUntil
               : cursorProxyCooldownUntil;
             if (epCooldown > now) {
               results.push(`  Token endpoint: RATE LIMITED (${Math.ceil((epCooldown - now) / 60000)}m remaining)`);
@@ -2759,7 +3155,7 @@ export function createPoolTool(client) {
           }
 
           if (results.length === 0) {
-            const poolNames = { anthropic: "Anthropic Pool", openai: "OpenAI Pool", cursor: "Cursor Pool" };
+            const poolNames = { anthropic: "Anthropic Pool", openai: "OpenAI Pool", cursor: "Cursor Pool", google: "Google Pool" };
             return `No accounts in any pool.\n\nTo add an account:\n1. Run \`opencode auth login\` (or Ctrl+A)\n2. Select a pool provider (${Object.values(poolNames).join(", ")})\n3. Enter your account email and complete the OAuth flow\n4. After success, switch to the main provider and select a model`;
           }
 

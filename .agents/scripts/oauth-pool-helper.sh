@@ -5,14 +5,14 @@
 # accounts when the OpenCode TUI auth hooks are unavailable.
 #
 # Usage:
-#   oauth-pool-helper.sh add [anthropic|openai|cursor]           # Add account via OAuth
-#   oauth-pool-helper.sh check [anthropic|openai|cursor|all]     # Health check all accounts
-#   oauth-pool-helper.sh list [anthropic|openai|cursor|all]      # List accounts
-#   oauth-pool-helper.sh remove <provider> <email>               # Remove an account
-#   oauth-pool-helper.sh rotate [anthropic|openai|cursor]        # Switch active account
-#   oauth-pool-helper.sh status [anthropic|openai|cursor|all]    # Pool rotation statistics
-#   oauth-pool-helper.sh assign-pending <provider> [email]       # Assign pending token
-#   oauth-pool-helper.sh help                                    # Show usage
+#   oauth-pool-helper.sh add [anthropic|openai|cursor|google]           # Add account via OAuth
+#   oauth-pool-helper.sh check [anthropic|openai|cursor|google|all]     # Health check all accounts
+#   oauth-pool-helper.sh list [anthropic|openai|cursor|google|all]      # List accounts
+#   oauth-pool-helper.sh remove <provider> <email>                      # Remove an account
+#   oauth-pool-helper.sh rotate [anthropic|openai|cursor|google]        # Switch active account
+#   oauth-pool-helper.sh status [anthropic|openai|cursor|google|all]    # Pool rotation statistics
+#   oauth-pool-helper.sh assign-pending <provider> [email]              # Assign pending token
+#   oauth-pool-helper.sh help                                           # Show usage
 #
 # Security: Tokens are written to ~/.aidevops/oauth-pool.json (600 perms).
 #           Secrets are passed via stdin/env, never as command arguments.
@@ -41,6 +41,17 @@ OPENAI_TOKEN_ENDPOINT="https://auth.openai.com/oauth/token"
 OPENAI_AUTHORIZE_URL="https://auth.openai.com/oauth/authorize"
 OPENAI_REDIRECT_URI="http://localhost:1455/auth/callback"
 OPENAI_SCOPES="openid profile email offline_access"
+
+# Google OAuth (AI Pro/Ultra/Workspace subscription accounts)
+# Client ID is the Google Cloud OAuth2 client for Gemini CLI / AI Studio.
+# Tokens are injected as ADC bearer tokens (GOOGLE_OAUTH_ACCESS_TOKEN env var)
+# which Gemini CLI, Vertex AI SDK, and generativelanguage.googleapis.com pick up.
+GOOGLE_CLIENT_ID="681255809395-oo8ft6t5t0rnmhfqgpnkqtev5b9a2i5j.apps.googleusercontent.com"
+GOOGLE_TOKEN_ENDPOINT="https://oauth2.googleapis.com/token"
+GOOGLE_AUTHORIZE_URL="https://accounts.google.com/o/oauth2/v2/auth"
+GOOGLE_REDIRECT_URI="urn:ietf:wg:oauth:2.0:oob"
+GOOGLE_SCOPES="https://www.googleapis.com/auth/generative-language https://www.googleapis.com/auth/cloud-platform openid email profile"
+GOOGLE_HEALTH_CHECK_URL="https://generativelanguage.googleapis.com/v1beta/models?pageSize=1"
 
 # User-Agent (detect Claude CLI version)
 CLAUDE_VERSION="2.1.80"
@@ -146,14 +157,20 @@ cmd_add() {
 	local provider="${1:-anthropic}"
 	local prefill_email="${2:-}"
 
-	if [[ "$provider" != "anthropic" && "$provider" != "openai" && "$provider" != "cursor" ]]; then
-		print_error "Unsupported provider: $provider (supported: anthropic, openai, cursor)"
+	if [[ "$provider" != "anthropic" && "$provider" != "openai" && "$provider" != "cursor" && "$provider" != "google" ]]; then
+		print_error "Unsupported provider: $provider (supported: anthropic, openai, cursor, google)"
 		return 1
 	fi
 
 	# Cursor uses a different flow — read from local IDE installation
 	if [[ "$provider" == "cursor" ]]; then
 		cmd_add_cursor
+		return $?
+	fi
+
+	# Google uses its own OAuth flow with ADC token injection
+	if [[ "$provider" == "google" ]]; then
+		cmd_add_google "$prefill_email"
 		return $?
 	fi
 
@@ -190,6 +207,7 @@ cmd_add() {
 		redirect_uri="$OPENAI_REDIRECT_URI"
 		scopes="$OPENAI_SCOPES"
 	fi
+	# Note: google provider is handled by cmd_add_google before reaching here
 
 	local encoded_scopes encoded_redirect
 	encoded_scopes=$(urlencode "$scopes")
@@ -579,6 +597,224 @@ json.dump(pool, sys.stdout, indent=2)
 }
 
 # ---------------------------------------------------------------------------
+# Add Google account (OAuth2 PKCE flow, ADC bearer token injection)
+# ---------------------------------------------------------------------------
+
+cmd_add_google() {
+	local prefill_email="${1:-}"
+
+	print_info "Adding Google AI account to pool..."
+	print_info "Supported plans: Google AI Pro (~\$25/mo), AI Ultra (~\$65/mo), Workspace with Gemini"
+	print_info "Token is injected as GOOGLE_OAUTH_ACCESS_TOKEN (ADC bearer) for Gemini CLI / Vertex AI"
+	echo "" >&2
+
+	# Prompt for email
+	local email
+	if [[ -n "$prefill_email" ]]; then
+		email="$prefill_email"
+		print_info "Using email: ${email}"
+	else
+		printf 'Google account email: ' >&2
+		read -r email
+	fi
+	if [[ -z "$email" || "$email" != *@* ]]; then
+		print_error "Invalid email address"
+		return 1
+	fi
+
+	# Generate PKCE + state nonce
+	local verifier challenge state_nonce
+	verifier=$(generate_verifier)
+	challenge=$(generate_challenge "$verifier")
+	state_nonce=$(openssl rand -hex 24)
+
+	local encoded_scopes encoded_redirect
+	encoded_scopes=$(urlencode "$GOOGLE_SCOPES")
+	encoded_redirect=$(urlencode "$GOOGLE_REDIRECT_URI")
+
+	# Google OAuth2 authorize URL with PKCE + access_type=offline for refresh token
+	local full_url
+	full_url="${GOOGLE_AUTHORIZE_URL}?client_id=${GOOGLE_CLIENT_ID}&response_type=code&redirect_uri=${encoded_redirect}&scope=${encoded_scopes}&code_challenge=${challenge}&code_challenge_method=S256&state=${state_nonce}&access_type=offline&prompt=consent"
+
+	print_info "Opening browser for Google OAuth..."
+	print_info "Sign in with your Google AI Pro/Ultra or Workspace account."
+	open_browser "$full_url"
+
+	# Google OOB flow: the authorization code is shown in the browser
+	printf 'Paste the authorization code from the browser: ' >&2
+	local auth_code
+	read -r auth_code
+	if [[ -z "$auth_code" ]]; then
+		print_error "No authorization code provided"
+		return 1
+	fi
+
+	# Strip any whitespace
+	auth_code="${auth_code// /}"
+
+	# Exchange code for tokens
+	print_info "Exchanging authorization code for tokens..."
+
+	# Build JSON body via python3 to safely encode the auth code
+	local token_body
+	token_body=$(CODE="$auth_code" CLIENT_ID="$GOOGLE_CLIENT_ID" \
+		REDIR="$GOOGLE_REDIRECT_URI" VERIFIER="$verifier" python3 -c "
+import json, os
+print(json.dumps({
+    'code': os.environ['CODE'],
+    'grant_type': 'authorization_code',
+    'client_id': os.environ['CLIENT_ID'],
+    'redirect_uri': os.environ['REDIR'],
+    'code_verifier': os.environ['VERIFIER'],
+}))")
+
+	local response http_status
+	response=$(printf '%s' "$token_body" | curl -sS \
+		-w '\n%{http_code}' \
+		-X POST \
+		-H "Content-Type: application/json" \
+		--data-binary @- \
+		--max-time 15 \
+		"$GOOGLE_TOKEN_ENDPOINT" 2>/dev/null) || {
+		print_error "curl failed during token exchange"
+		return 1
+	}
+
+	http_status=$(printf '%s' "$response" | tail -1)
+	local body
+	body=$(printf '%s' "$response" | sed '$d')
+
+	if [[ "$http_status" != "200" ]]; then
+		print_error "Token exchange failed: HTTP ${http_status}"
+		local error_msg
+		error_msg=$(printf '%s' "$body" | python3 -c "
+import sys, json
+try:
+    d = json.load(sys.stdin)
+    parts = []
+    for k in ('error', 'error_description', 'message'):
+        if k in d and d[k]:
+            parts.append(str(d[k]))
+    print(': '.join(parts) if parts else 'unknown')
+except: print('unknown')
+" 2>/dev/null || echo "unknown")
+		print_error "Error: ${error_msg}"
+		return 1
+	fi
+
+	# Extract tokens
+	local access_token refresh_token expires_in
+	access_token=$(printf '%s' "$body" | python3 -c "import sys,json; print(json.load(sys.stdin).get('access_token',''))" 2>/dev/null)
+	refresh_token=$(printf '%s' "$body" | python3 -c "import sys,json; print(json.load(sys.stdin).get('refresh_token',''))" 2>/dev/null)
+	expires_in=$(printf '%s' "$body" | python3 -c "import sys,json; print(json.load(sys.stdin).get('expires_in',3600))" 2>/dev/null)
+
+	if [[ -z "$access_token" ]]; then
+		print_error "No access token in response"
+		return 1
+	fi
+
+	# Validate token against Gemini API (health check)
+	print_info "Validating token against Gemini API..."
+	local health_status
+	health_status=$(ACCESS="$access_token" python3 -c "
+import os
+from urllib.request import Request, urlopen
+from urllib.error import HTTPError, URLError
+token = os.environ['ACCESS']
+try:
+    req = Request('${GOOGLE_HEALTH_CHECK_URL}', method='GET')
+    req.add_header('Authorization', 'Bearer ' + token)
+    urlopen(req, timeout=10)
+    print('OK')
+except HTTPError as e:
+    print('HTTP_' + str(e.code))
+except (URLError, OSError):
+    print('NETWORK_ERROR')
+except Exception:
+    print('ERROR')
+" 2>/dev/null)
+
+	case "$health_status" in
+	OK)
+		print_success "Token validated against Gemini API"
+		;;
+	HTTP_403)
+		print_warning "Token valid but Gemini API returned 403 — account may lack AI Pro/Ultra subscription"
+		print_info "Token will still be stored; check your Google AI subscription at https://one.google.com/about/google-ai-plans/"
+		;;
+	HTTP_401)
+		print_error "Token invalid (401) — authorization may have failed"
+		return 1
+		;;
+	*)
+		print_warning "Could not validate against Gemini API (${health_status}) — storing token anyway"
+		;;
+	esac
+
+	# Calculate expiry timestamp (milliseconds)
+	local now_ms expires_ms
+	now_ms=$(get_now_ms)
+	expires_ms=$((now_ms + expires_in * 1000))
+
+	# Upsert into pool file
+	local pool now_iso
+	pool=$(load_pool)
+	now_iso=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+	pool=$(printf '%s' "$pool" | EMAIL="$email" \
+		ACCESS="$access_token" REFRESH="$refresh_token" \
+		EXPIRES="$expires_ms" NOW_ISO="$now_iso" \
+		python3 -c "
+import sys, json, os
+pool = json.load(sys.stdin)
+email = os.environ['EMAIL']
+access = os.environ['ACCESS']
+refresh = os.environ['REFRESH']
+expires = int(os.environ['EXPIRES'])
+now_iso = os.environ['NOW_ISO']
+
+if 'google' not in pool:
+    pool['google'] = []
+
+found = False
+for account in pool['google']:
+    if account.get('email') == email:
+        account['access'] = access
+        account['refresh'] = refresh
+        account['expires'] = expires
+        account['lastUsed'] = now_iso
+        account['status'] = 'active'
+        account['cooldownUntil'] = None
+        found = True
+        break
+
+if not found:
+    pool['google'].append({
+        'email': email,
+        'access': access,
+        'refresh': refresh,
+        'expires': expires,
+        'added': now_iso,
+        'lastUsed': now_iso,
+        'status': 'active',
+        'cooldownUntil': None,
+    })
+
+json.dump(pool, sys.stdout, indent=2)
+")
+
+	save_pool "$pool"
+
+	local count
+	count=$(printf '%s' "$pool" | count_provider_accounts "google")
+
+	print_success "Added ${email} to Google pool (${count} account(s) total)"
+	print_info "Token injected as GOOGLE_OAUTH_ACCESS_TOKEN for Gemini CLI / Vertex AI."
+	print_info "Restart OpenCode to use the new token."
+	return 0
+}
+
+# ---------------------------------------------------------------------------
 # Check accounts
 # ---------------------------------------------------------------------------
 
@@ -587,9 +823,9 @@ cmd_check() {
 
 	# Validate provider to prevent injection into python3 inline code
 	case "$provider" in
-	all | anthropic | openai | cursor) ;;
+	all | anthropic | openai | cursor | google) ;;
 	*)
-		print_error "Invalid provider: $provider (valid: anthropic, openai, cursor, all)"
+		print_error "Invalid provider: $provider (valid: anthropic, openai, cursor, google, all)"
 		return 1
 		;;
 	esac
@@ -599,7 +835,7 @@ cmd_check() {
 
 	local -a providers_to_check
 	if [[ "$provider" == "all" ]]; then
-		providers_to_check=(anthropic openai cursor)
+		providers_to_check=(anthropic openai cursor google)
 	else
 		providers_to_check=("$provider")
 	fi
@@ -664,7 +900,7 @@ for a in pool.get(prov, []):
             print(f\"    Last used: {lu}\")
     print(f\"    Refresh token: {'present' if a.get('refresh') else 'MISSING'}\")
 
-    # Test token validity inline (anthropic only, in-process via urllib)
+    # Test token validity inline (anthropic + google, in-process via urllib)
     if prov == 'anthropic':
         token = a.get('access', '')
         if not token:
@@ -689,6 +925,29 @@ for a in pool.get(prov, []):
                 print(f\"    Validity: ERROR (network)\")
             except Exception:
                 print(f\"    Validity: ERROR\")
+    elif prov == 'google':
+        token = a.get('access', '')
+        if not token:
+            print(f\"    Validity: no access token\")
+        elif expires_in <= 0:
+            print(f\"    Validity: EXPIRED - will auto-refresh on next use\")
+        else:
+            try:
+                req = Request('https://generativelanguage.googleapis.com/v1beta/models?pageSize=1', method='GET')
+                req.add_header('Authorization', f'Bearer {token}')
+                urlopen(req, timeout=10)
+                print(f\"    Validity: OK\")
+            except HTTPError as e:
+                if e.code == 401:
+                    print(f\"    Validity: INVALID (401 - needs refresh)\")
+                elif e.code == 403:
+                    print(f\"    Validity: OK (403 - token valid, check AI Pro/Ultra subscription)\")
+                else:
+                    print(f\"    Validity: HTTP {e.code}\")
+            except (URLError, OSError):
+                print(f\"    Validity: ERROR (network)\")
+            except Exception:
+                print(f\"    Validity: ERROR\")
 " 2>/dev/null
 
 		printf '  Token endpoint: OK\n'
@@ -701,6 +960,7 @@ for a in pool.get(prov, []):
 		echo "  oauth-pool-helper.sh add anthropic    # Claude Pro/Max"
 		echo "  oauth-pool-helper.sh add openai       # ChatGPT Plus/Pro"
 		echo "  oauth-pool-helper.sh add cursor       # Cursor Pro (reads from IDE)"
+		echo "  oauth-pool-helper.sh add google       # Google AI Pro/Ultra/Workspace"
 	fi
 	return 0
 }
@@ -713,9 +973,9 @@ cmd_list() {
 	local provider="${1:-all}"
 
 	case "$provider" in
-	all | anthropic | openai | cursor) ;;
+	all | anthropic | openai | cursor | google) ;;
 	*)
-		print_error "Invalid provider: $provider (valid: anthropic, openai, cursor, all)"
+		print_error "Invalid provider: $provider (valid: anthropic, openai, cursor, google, all)"
 		return 1
 		;;
 	esac
@@ -725,7 +985,7 @@ cmd_list() {
 
 	local -a providers_to_list
 	if [[ "$provider" == "all" ]]; then
-		providers_to_list=(anthropic openai cursor)
+		providers_to_list=(anthropic openai cursor google)
 	else
 		providers_to_list=("$provider")
 	fi
@@ -805,9 +1065,9 @@ cmd_rotate() {
 	local provider="${1:-anthropic}"
 
 	case "$provider" in
-	anthropic | openai | cursor) ;;
+	anthropic | openai | cursor | google) ;;
 	*)
-		print_error "Invalid provider: $provider (valid: anthropic, openai, cursor)"
+		print_error "Invalid provider: $provider (valid: anthropic, openai, cursor, google)"
 		return 1
 		;;
 	esac
@@ -920,10 +1180,12 @@ try:
         token_urls = {
             'anthropic': 'https://platform.claude.com/v1/oauth/token',
             'openai': 'https://auth.openai.com/oauth/token',
+            'google': 'https://oauth2.googleapis.com/token',
         }
         client_ids = {
             'anthropic': '9d1c250a-e61b-44d9-88ed-5944d1962f5e',
             'openai': 'app_EMoamEEZ73f0CkXaXp7hrann',
+            'google': '681255809395-oo8ft6t5t0rnmhfqgpnkqtev5b9a2i5j.apps.googleusercontent.com',
         }
         token_url = token_urls.get(provider, '')
         client_id = client_ids.get(provider, '')
@@ -1060,13 +1322,13 @@ cmd_refresh() {
 	local target_email="${2:-all}"
 
 	case "$provider" in
-	anthropic | openai) ;;
+	anthropic | openai | google) ;;
 	cursor)
 		print_info "Cursor tokens are long-lived and don't use refresh flow"
 		return 0
 		;;
 	*)
-		print_error "Invalid provider: $provider (valid: anthropic, openai)"
+		print_error "Invalid provider: $provider (valid: anthropic, openai, google)"
 		return 1
 		;;
 	esac
@@ -1090,10 +1352,12 @@ ua_header = os.environ.get('UA_HEADER', 'aidevops/1.0')
 token_urls = {
     'anthropic': 'https://platform.claude.com/v1/oauth/token',
     'openai': 'https://auth.openai.com/oauth/token',
+    'google': 'https://oauth2.googleapis.com/token',
 }
 client_ids = {
     'anthropic': '9d1c250a-e61b-44d9-88ed-5944d1962f5e',
     'openai': 'app_EMoamEEZ73f0CkXaXp7hrann',
+    'google': '681255809395-oo8ft6t5t0rnmhfqgpnkqtev5b9a2i5j.apps.googleusercontent.com',
 }
 
 token_url = token_urls.get(provider, '')
@@ -1264,9 +1528,9 @@ cmd_status() {
 	local provider="${1:-all}"
 
 	case "$provider" in
-	all | anthropic | openai | cursor) ;;
+	all | anthropic | openai | cursor | google) ;;
 	*)
-		print_error "Invalid provider: $provider (valid: anthropic, openai, cursor, all)"
+		print_error "Invalid provider: $provider (valid: anthropic, openai, cursor, google, all)"
 		return 1
 		;;
 	esac
@@ -1276,7 +1540,7 @@ cmd_status() {
 
 	local -a providers_to_check
 	if [[ "$provider" == "all" ]]; then
-		providers_to_check=(anthropic openai cursor)
+		providers_to_check=(anthropic openai cursor google)
 	else
 		providers_to_check=("$provider")
 	fi
@@ -1322,6 +1586,7 @@ print(f'  Auth errors:    {auth_error}')
 		echo "  oauth-pool-helper.sh add anthropic    # Claude Pro/Max"
 		echo "  oauth-pool-helper.sh add openai       # ChatGPT Plus/Pro"
 		echo "  oauth-pool-helper.sh add cursor       # Cursor Pro (reads from IDE)"
+		echo "  oauth-pool-helper.sh add google       # Google AI Pro/Ultra/Workspace"
 	fi
 
 	printf 'Pool file: %s\n' "$POOL_FILE"
@@ -1337,9 +1602,9 @@ cmd_assign_pending() {
 	local email="${2:-}"
 
 	case "$provider" in
-	anthropic | openai | cursor) ;;
+	anthropic | openai | cursor | google) ;;
 	*)
-		print_error "Invalid provider: $provider (valid: anthropic, openai, cursor)"
+		print_error "Invalid provider: $provider (valid: anthropic, openai, cursor, google)"
 		return 1
 		;;
 	esac
@@ -1440,9 +1705,9 @@ cmd_reset_cooldowns() {
 	local provider="${1:-all}"
 
 	case "$provider" in
-	all | anthropic | openai | cursor) ;;
+	all | anthropic | openai | cursor | google) ;;
 	*)
-		print_error "Invalid provider: $provider (valid: anthropic, openai, cursor, all)"
+		print_error "Invalid provider: $provider (valid: anthropic, openai, cursor, google, all)"
 		return 1
 		;;
 	esac
@@ -1489,9 +1754,9 @@ cmd_status() {
 	local provider="${1:-all}"
 
 	case "$provider" in
-	all | anthropic | openai | cursor) ;;
+	all | anthropic | openai | cursor | google) ;;
 	*)
-		print_error "Invalid provider: $provider (valid: anthropic, openai, cursor, all)"
+		print_error "Invalid provider: $provider (valid: anthropic, openai, cursor, google, all)"
 		return 1
 		;;
 	esac
@@ -1504,7 +1769,7 @@ cmd_status() {
 
 	local -a providers_to_check
 	if [[ "$provider" == "all" ]]; then
-		providers_to_check=(anthropic openai cursor)
+		providers_to_check=(anthropic openai cursor google)
 	else
 		providers_to_check=("$provider")
 	fi
@@ -1548,6 +1813,7 @@ if available == 0 and total > 0:
 		echo "  aidevops model-accounts-pool add anthropic    # Claude Pro/Max"
 		echo "  aidevops model-accounts-pool add openai       # ChatGPT Plus/Pro"
 		echo "  aidevops model-accounts-pool add cursor       # Cursor Pro"
+		echo "  aidevops model-accounts-pool add google       # Google AI Pro/Ultra/Workspace"
 		echo "  aidevops model-accounts-pool import claude-cli"
 	fi
 
@@ -1564,9 +1830,9 @@ cmd_assign_pending() {
 	local email="${2:-}"
 
 	case "$provider" in
-	anthropic | openai | cursor) ;;
+	anthropic | openai | cursor | google) ;;
 	*)
-		print_error "Invalid provider: $provider (valid: anthropic, openai, cursor)"
+		print_error "Invalid provider: $provider (valid: anthropic, openai, cursor, google)"
 		return 1
 		;;
 	esac
@@ -1762,16 +2028,16 @@ Preferred CLI (same commands, no path needed):
   aidevops model-accounts-pool <command>
 
 Commands:
-  add [anthropic|openai|cursor]            Add an account (browser OAuth flow)
-  check [anthropic|openai|cursor|all]      Health check: token expiry + live validity
-  list [anthropic|openai|cursor|all]       List accounts with per-account status
-  status [anthropic|openai|cursor|all]     Pool aggregate stats (counts, availability)
-  refresh [anthropic|openai] [email|all]    Refresh expired tokens without re-auth (uses refresh_token)
-  rotate [anthropic|openai|cursor]         Switch to next available account NOW (auto-refreshes expired tokens)
-  reset-cooldowns [provider|all]           Clear rate-limit cooldowns so all accounts retry
-  assign-pending <provider> [email]        Assign a stranded pending token to an account
-  remove <provider> <email>               Remove an account from the pool
-  import [claude-cli]                      Import account from Claude CLI auth
+  add [anthropic|openai|cursor|google]            Add an account (browser OAuth flow)
+  check [anthropic|openai|cursor|google|all]      Health check: token expiry + live validity
+  list [anthropic|openai|cursor|google|all]       List accounts with per-account status
+  status [anthropic|openai|cursor|google|all]     Pool aggregate stats (counts, availability)
+  refresh [anthropic|openai|google] [email|all]   Refresh expired tokens without re-auth (uses refresh_token)
+  rotate [anthropic|openai|cursor|google]         Switch to next available account NOW (auto-refreshes expired tokens)
+  reset-cooldowns [provider|all]                  Clear rate-limit cooldowns so all accounts retry
+  assign-pending <provider> [email]               Assign a stranded pending token to an account
+  remove <provider> <email>                       Remove an account from the pool
+  import [claude-cli]                             Import account from Claude CLI auth
 
 Quickstart (if you see "Key Missing" or auth errors):
   aidevops model-accounts-pool status            # 1. See pool health at a glance
@@ -1784,10 +2050,12 @@ Examples:
   oauth-pool-helper.sh add anthropic                      # Claude Pro/Max (browser OAuth)
   oauth-pool-helper.sh add openai                         # ChatGPT Plus/Pro (browser OAuth)
   oauth-pool-helper.sh add cursor                         # Cursor Pro (reads from IDE)
+  oauth-pool-helper.sh add google                         # Google AI Pro/Ultra/Workspace (browser OAuth)
   oauth-pool-helper.sh import claude-cli                  # Import from Claude CLI auth
   oauth-pool-helper.sh check                              # Check all accounts
   oauth-pool-helper.sh list                               # List all accounts
   oauth-pool-helper.sh rotate anthropic                   # Switch to next Anthropic account
+  oauth-pool-helper.sh rotate google                      # Switch to next Google account
   oauth-pool-helper.sh reset-cooldowns                    # Clear all cooldowns
   oauth-pool-helper.sh status                             # Show pool statistics
   oauth-pool-helper.sh remove anthropic user@example.com
@@ -1802,6 +2070,8 @@ Notes:
   - If refresh fails, re-auth with 'add' using the same email
   - The pool auto-rotates between accounts when one hits rate limits
   - Cursor reads credentials from your local Cursor IDE — log in there first
+  - Google tokens are injected as GOOGLE_OAUTH_ACCESS_TOKEN (ADC bearer) for Gemini CLI / Vertex AI
+  - Google requires AI Pro (~$25/mo), AI Ultra (~$65/mo), or Workspace with Gemini subscription
   - 'assign-pending' assigns tokens saved when email could not be identified during OAuth
   - 'import claude-cli' detects your Claude CLI account and pre-fills the email
 HELP
