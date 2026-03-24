@@ -172,6 +172,10 @@ list_running_keys() {
 # Returns: exit 0 if duplicate found (do NOT dispatch),
 #          exit 1 if no duplicate (safe to dispatch)
 # Outputs: matching key and PID on stdout if duplicate found
+#
+# GH#5662: When a supervisor DB match is found, the stored PID is verified
+# with kill -0 before returning exit 0. Dead PIDs cause the stale DB entry
+# to be reset to 'failed' and exit 1 is returned (safe to dispatch).
 #######################################
 is_duplicate() {
 	local title="$1"
@@ -273,8 +277,48 @@ is_duplicate() {
 			esac
 
 			if [[ -n "$db_match" ]]; then
-				printf 'DUPLICATE: key=%s already active in supervisor DB (task %s)\n' "$candidate_key" "$db_match"
-				return 0
+				# GH#5662: Verify the stored PID is still alive before reporting duplicate.
+				# DB records with status 'running'/'dispatched'/'evaluating' may be stale
+				# if the worker process died without updating the DB (SIGKILL, power loss, etc.).
+				local supervisor_dir="${SUPERVISOR_DIR:-${HOME}/.aidevops/.agent-workspace/supervisor}"
+				local pid_file="${supervisor_dir}/pids/${db_match}.pid"
+				local stored_pid=""
+				if [[ -f "$pid_file" ]]; then
+					stored_pid=$(cat "$pid_file" 2>/dev/null || true)
+				fi
+
+				if [[ -n "$stored_pid" ]] && [[ "$stored_pid" =~ ^[0-9]+$ ]]; then
+					# PID file exists with a numeric PID — check liveness
+					if ! kill -0 "$stored_pid" 2>/dev/null; then
+						# Process is dead — stale DB entry; reset status and allow dispatch
+						sqlite3 "$supervisor_db" "
+							UPDATE tasks SET status = 'failed',
+							  error = 'stale: PID ${stored_pid} not running (GH#5662)',
+							  updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
+							WHERE id = '$(printf '%s' "$db_match" | sed "s/'/''/g")';
+						" 2>/dev/null || true
+						printf 'STALE: key=%s task %s PID %s is dead — entry reset, safe to dispatch\n' \
+							"$candidate_key" "$db_match" "$stored_pid"
+						continue
+					fi
+					# PID is alive — genuine duplicate
+					printf 'DUPLICATE: key=%s already active in supervisor DB (task %s PID %s)\n' \
+						"$candidate_key" "$db_match" "$stored_pid"
+					return 0
+				else
+					# No PID file or non-numeric content — cannot verify liveness.
+					# Treat as stale to avoid blocking valid dispatch (GH#5662).
+					# The DB record may be from a crashed worker that never wrote a PID file.
+					printf 'STALE: key=%s task %s has no valid PID file — treating as stale, safe to dispatch\n' \
+						"$candidate_key" "$db_match"
+					sqlite3 "$supervisor_db" "
+						UPDATE tasks SET status = 'failed',
+						  error = 'stale: no PID file found (GH#5662)',
+						  updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
+						WHERE id = '$(printf '%s' "$db_match" | sed "s/'/''/g")';
+					" 2>/dev/null || true
+					continue
+				fi
 			fi
 		done <<<"$candidate_keys"
 	fi
