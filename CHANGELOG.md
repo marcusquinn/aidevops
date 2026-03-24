@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.1.94] - 2026-03-24
+
+### Changed
+
+- Refactor: reduce function complexity in oauth-pool-helper.sh (GH#5643) (#5654)
+
 ## [3.1.89] - 2026-03-24
 
 ### Changed
