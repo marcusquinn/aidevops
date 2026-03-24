@@ -185,11 +185,11 @@ jobs:
 
           echo "Actor $ACTOR has permission level: $ACTOR_PERMS"
 
-          # Only maintainers (admin, maintain) and owners can remove triage labels
-          # write = collaborator (like alex-solovyev) — NOT sufficient
+          # Allow maintainers and collaborators with write permission to remove triage labels
+          # write = standard collaborator level (e.g., alex-solovyev) — sufficient
           # admin/maintain = maintainer level
           case "$ACTOR_PERMS" in
-            admin|maintain)
+            admin|maintain|write)
               echo "ALLOWED: $ACTOR has $ACTOR_PERMS permission — label removal accepted"
               exit 0
               ;;
