@@ -192,12 +192,14 @@ cmd_recall() {
 	# Quote each token individually to handle special chars (hyphens = NOT in FTS5)
 	# "foo-bar baz" → "\"foo-bar\" \"baz\"" (each token quoted, joined by implicit AND)
 	#
-	# Apostrophes are replaced with spaces before tokenization. Apostrophes inside
-	# FTS5 double-quoted tokens cannot be SQL-escaped (doubling them to '' produces
-	# invalid FTS5 syntax). Replacing with a space splits "O'Reilly" into two tokens
-	# "O" and "Reilly", which still matches content containing "O'Reilly" because
+	# Apostrophes and backslashes are replaced with spaces before tokenization.
+	# Apostrophes inside FTS5 double-quoted tokens cannot be SQL-escaped (doubling
+	# them to '' produces invalid FTS5 syntax). Backslashes are not valid FTS5 query
+	# syntax and cause a parse error. Replacing both with spaces splits e.g.
+	# "O'Reilly" into "O" and "Reilly", which still matches stored content because
 	# FTS5 tokenizes stored content the same way (GH#5678).
 	local query_clean="${query//"'"/" "}"
+	query_clean="${query_clean//\\/  }"
 	local tokenised_query=""
 	local token
 	set -f # Disable globbing during tokenization (SC2086)
@@ -213,11 +215,17 @@ cmd_recall() {
 	set +f # Re-enable globbing
 	# Build an SQL single-quoted literal for .param set, then escape it for the
 	# sqlite3 dot-command's outer double-quoted argument (GH#5678).
-	# tokenised_query contains no apostrophes (stripped above), so the SQL literal
-	# needs no internal single-quote escaping. The FTS5 double-quote tokens are
-	# escaped as \" for the outer double-quoted dot-command argument.
+	# tokenised_query contains no apostrophes or backslashes (stripped above), so
+	# the SQL literal needs no internal single-quote escaping. The FTS5 double-quote
+	# tokens are escaped as \" for the outer double-quoted dot-command argument.
+	#
+	# Security note: the heredoc uses <<EOF (not <<'EOF'), so ${param_query} is
+	# expanded by the shell. This is safe because shell variable expansion is NOT
+	# recursive — the content of param_query is substituted literally; any
+	# command-substitution syntax ($(…), `…`) or variable references inside the
+	# value are NOT re-evaluated. The :query parameter binding then isolates the
+	# value from SQL execution, preventing injection at the SQLite layer.
 	local param_query="'${tokenised_query}'"
-	param_query="${param_query//\\/\\\\}"
 	param_query="${param_query//\"/\\\"}"
 
 	# Build filters with validation
