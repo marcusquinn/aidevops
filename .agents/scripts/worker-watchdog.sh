@@ -5,7 +5,7 @@
 # have no monitoring. Workers that crash, hang, or enter the OpenCode idle-state
 # bug sit indefinitely consuming resources and blocking issue re-dispatch.
 #
-# Four failure modes detected:
+# Five failure modes detected:
 #   1. CPU idle: Worker completed but sits in file-watcher (OpenCode idle bug).
 #      Signal: tree CPU < WORKER_IDLE_CPU_THRESHOLD for WORKER_IDLE_TIMEOUT.
 #   2. Progress stall: Worker is running but producing no output (stuck on API,
@@ -16,11 +16,16 @@
 #      commits == 0, messages >= WORKER_THRASH_MESSAGE_THRESHOLD.
 #   4. Runtime ceiling: Worker has been running too long regardless of activity.
 #      Signal: elapsed > WORKER_MAX_RUNTIME. Prevents infinite loops.
+#   5. Provider backoff stall (GH#5650): Worker's provider hit auth_error or
+#      rate-limit and is backed off in headless-runtime state DB. Worker process
+#      stays alive but makes no progress. Signal: provider_backoff table has an
+#      active entry for the worker's provider/model with retry_after in the future.
+#      Kill immediately — no transcript gate needed (provider won't respond anyway).
 #
 # On kill:
 #   - Posts a comment on the associated GitHub issue explaining the kill reason
 #   - Removes the worker's status:in-progress label
-#   - Adds status:available for recoverable exits (idle, stall, runtime)
+#   - Adds status:available for recoverable exits (idle, stall, runtime, backoff)
 #   - Adds status:blocked for zero-commit thrash to prevent blind relaunch loops
 #   - Logs the action to the watchdog log file
 #
@@ -38,10 +43,13 @@
 #   WORKER_PROGRESS_TIMEOUT      Seconds without log growth = stuck (default: 600)
 #   WORKER_THRASH_ELAPSED_THRESHOLD  Minimum runtime before thrash check (default: 3600)
 #   WORKER_THRASH_MESSAGE_THRESHOLD  Minimum messages for thrash check (default: 120)
+#   WORKER_THRASH_RATIO_THRESHOLD    Struggle ratio threshold for time-weighted check (default: 10)
+#   WORKER_THRASH_RATIO_ELAPSED      Minimum elapsed seconds for ratio-only thrash (default: 25200 = 7h)
 #   WORKER_MAX_RUNTIME           Hard ceiling in seconds (default: 10800 = 3h)
 #   WORKER_DRY_RUN               Set to "true" to log but not kill (default: false)
 #   WORKER_WATCHDOG_NOTIFY       Set to "false" to disable macOS notifications
 #   WORKER_PROCESS_PATTERN       CLI name to match (default: opencode)
+#   HEADLESS_RUNTIME_DB          Path to headless-runtime state.db (auto-detected)
 
 set -euo pipefail
 
@@ -67,6 +75,8 @@ WORKER_IDLE_CPU_THRESHOLD="${WORKER_IDLE_CPU_THRESHOLD:-5}"                # CPU
 WORKER_PROGRESS_TIMEOUT="${WORKER_PROGRESS_TIMEOUT:-600}"                  # 10 min no log output = stuck
 WORKER_THRASH_ELAPSED_THRESHOLD="${WORKER_THRASH_ELAPSED_THRESHOLD:-3600}" # 1h minimum runtime before zero-commit thrash checks (GH#4400: lowered from 2h)
 WORKER_THRASH_MESSAGE_THRESHOLD="${WORKER_THRASH_MESSAGE_THRESHOLD:-120}"  # ~2 messages/min over 1h before thrash checks (GH#4400: lowered from 180)
+WORKER_THRASH_RATIO_THRESHOLD="${WORKER_THRASH_RATIO_THRESHOLD:-10}"       # Struggle ratio threshold for time-weighted check (GH#5650)
+WORKER_THRASH_RATIO_ELAPSED="${WORKER_THRASH_RATIO_ELAPSED:-25200}"        # 7h: ratio-only thrash check for long-running zero-commit workers (GH#5650)
 WORKER_MAX_RUNTIME="${WORKER_MAX_RUNTIME:-10800}"                          # 3 hour hard ceiling
 WORKER_DRY_RUN="${WORKER_DRY_RUN:-false}"
 WORKER_WATCHDOG_NOTIFY="${WORKER_WATCHDOG_NOTIFY:-true}"
@@ -78,6 +88,8 @@ WORKER_IDLE_CPU_THRESHOLD=$(_validate_int WORKER_IDLE_CPU_THRESHOLD "$WORKER_IDL
 WORKER_PROGRESS_TIMEOUT=$(_validate_int WORKER_PROGRESS_TIMEOUT "$WORKER_PROGRESS_TIMEOUT" 600 120)
 WORKER_THRASH_ELAPSED_THRESHOLD=$(_validate_int WORKER_THRASH_ELAPSED_THRESHOLD "$WORKER_THRASH_ELAPSED_THRESHOLD" 3600 600)
 WORKER_THRASH_MESSAGE_THRESHOLD=$(_validate_int WORKER_THRASH_MESSAGE_THRESHOLD "$WORKER_THRASH_MESSAGE_THRESHOLD" 120 30)
+WORKER_THRASH_RATIO_THRESHOLD=$(_validate_int WORKER_THRASH_RATIO_THRESHOLD "$WORKER_THRASH_RATIO_THRESHOLD" 10 1)
+WORKER_THRASH_RATIO_ELAPSED=$(_validate_int WORKER_THRASH_RATIO_ELAPSED "$WORKER_THRASH_RATIO_ELAPSED" 25200 3600)
 WORKER_MAX_RUNTIME=$(_validate_int WORKER_MAX_RUNTIME "$WORKER_MAX_RUNTIME" 10800 600)
 
 # Paths
@@ -85,6 +97,9 @@ readonly LOG_DIR="${HOME}/.aidevops/logs"
 readonly LOG_FILE="${LOG_DIR}/worker-watchdog.log"
 readonly STATE_DIR="${HOME}/.aidevops/.agent-workspace/tmp"
 readonly IDLE_STATE_DIR="${STATE_DIR}/worker-idle-tracking"
+# headless-runtime state DB — same default as headless-runtime-helper.sh
+# Not readonly: must be overridable by HEADLESS_RUNTIME_DB env var and tests
+HEADLESS_RUNTIME_DB="${HEADLESS_RUNTIME_DB:-${HOME}/.aidevops/.agent-workspace/headless-runtime/state.db}"
 
 STALL_EVIDENCE_CLASS=""
 STALL_EVIDENCE_SUMMARY=""
@@ -94,6 +109,9 @@ THRASH_RATIO=""
 THRASH_COMMITS=""
 THRASH_MESSAGES=""
 THRASH_FLAG=""
+BACKOFF_PROVIDER=""
+BACKOFF_REASON=""
+BACKOFF_RETRY_AFTER=""
 
 readonly LAUNCHD_LABEL="sh.aidevops.worker-watchdog"
 readonly PLIST_PATH="${HOME}/Library/LaunchAgents/${LAUNCHD_LABEL}.plist"
@@ -273,6 +291,135 @@ extract_repo_slug() {
 	fi
 
 	echo "$slug"
+	return 0
+}
+
+#######################################
+# Extract provider name from worker command line
+#
+# Workers are dispatched with a model like "anthropic/claude-sonnet-4-6".
+# The provider is the prefix before the first slash.
+#
+# Arguments:
+#   $1 - command line string
+# Output: provider name (e.g., "anthropic") or empty string
+#######################################
+extract_provider_from_cmd() {
+	local cmd="$1"
+	local model=""
+
+	# Try --model flag first
+	if [[ "$cmd" =~ --model[[:space:]]+([^[:space:]]+) ]]; then
+		model="${BASH_REMATCH[1]}"
+	fi
+
+	# Fall back to AIDEVOPS_HEADLESS_MODELS env var embedded in command
+	if [[ -z "$model" && "$cmd" =~ AIDEVOPS_HEADLESS_MODELS=([^[:space:]]+) ]]; then
+		model="${BASH_REMATCH[1]}"
+		# Take first model if comma-separated list
+		model="${model%%,*}"
+	fi
+
+	if [[ -z "$model" ]]; then
+		echo ""
+		return 0
+	fi
+
+	# Extract provider prefix (before first slash)
+	local provider="${model%%/*}"
+	echo "$provider"
+	return 0
+}
+
+#######################################
+# Check if a worker's provider is currently backed off in the headless-runtime DB
+#
+# Reads the provider_backoff table from the headless-runtime state.db.
+# A worker whose provider is backed off will make no progress — kill immediately.
+# This check bypasses the transcript gate because the provider won't respond.
+#
+# Arguments:
+#   $1 - PID
+#   $2 - command line
+#   $3 - elapsed seconds
+# Returns: 0 if provider is backed off (kill), 1 if not backed off
+# Side effects: sets BACKOFF_PROVIDER, BACKOFF_REASON, BACKOFF_RETRY_AFTER
+#######################################
+check_provider_backoff() {
+	local pid="$1"
+	local cmd="$2"
+	local elapsed_seconds="$3"
+
+	BACKOFF_PROVIDER=""
+	BACKOFF_REASON=""
+	BACKOFF_RETRY_AFTER=""
+
+	# Only check after a minimum grace period (avoid false positives on startup)
+	if [[ "$elapsed_seconds" -lt 300 ]]; then
+		return 1
+	fi
+
+	# Skip if headless-runtime DB doesn't exist
+	if [[ ! -f "$HEADLESS_RUNTIME_DB" ]]; then
+		return 1
+	fi
+
+	# Extract provider from command line
+	local provider
+	provider=$(extract_provider_from_cmd "$cmd")
+	if [[ -z "$provider" ]]; then
+		return 1
+	fi
+
+	# Query provider_backoff table for active backoff entries matching this provider
+	# A backoff is active if retry_after is in the future (or NULL = indefinite)
+	local backoff_row
+	backoff_row=$(
+		WATCHDOG_DB="$HEADLESS_RUNTIME_DB" WATCHDOG_PROVIDER="$provider" python3 - <<'PY'
+import os
+import sqlite3
+
+db_path = os.environ["WATCHDOG_DB"]
+provider = os.environ["WATCHDOG_PROVIDER"]
+
+try:
+    conn = sqlite3.connect(db_path)
+    conn.execute("PRAGMA busy_timeout=3000")
+    cursor = conn.cursor()
+    # Match provider-level backoff (auth_error) or model-level backoff
+    # where the model starts with this provider prefix
+    cursor.execute(
+        """
+        SELECT provider, reason, retry_after
+        FROM provider_backoff
+        WHERE (provider = ? OR provider LIKE ?)
+          AND (
+            retry_after IS NULL
+            OR retry_after > strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+          )
+        ORDER BY
+          CASE WHEN provider = ? THEN 0 ELSE 1 END,
+          retry_after DESC
+        LIMIT 1
+        """,
+        (provider, provider + "/%", provider),
+    )
+    row = cursor.fetchone()
+    if row:
+        matched_key, reason, retry_after = row
+        print(f"{matched_key}|{reason or 'unknown'}|{retry_after or 'indefinite'}")
+    else:
+        print("")
+except sqlite3.Error:
+    print("")
+PY
+	) 2>/dev/null || backoff_row=""
+
+	if [[ -z "$backoff_row" ]]; then
+		return 1
+	fi
+
+	IFS='|' read -r BACKOFF_PROVIDER BACKOFF_REASON BACKOFF_RETRY_AFTER <<<"$backoff_row"
 	return 0
 }
 
@@ -530,15 +677,21 @@ check_zero_commit_thrashing() {
 		return 1
 	fi
 
-	if [[ "$THRASH_MESSAGES" -lt "$WORKER_THRASH_MESSAGE_THRESHOLD" ]]; then
-		return 1
+	# Primary thrash check: high message volume + thrashing flag
+	if [[ "$THRASH_MESSAGES" -ge "$WORKER_THRASH_MESSAGE_THRESHOLD" && "$THRASH_FLAG" == "thrashing" ]]; then
+		return 0
 	fi
 
-	if [[ "$THRASH_FLAG" != "thrashing" ]]; then
-		return 1
+	# Time-weighted thrash check (GH#5650): long-running zero-commit workers with
+	# any non-trivial struggle ratio. Catches workers with ratio 14 at 7+ hours
+	# that the primary check misses (ratio < 30 threshold, flag != "thrashing").
+	# Rationale: ratio 14 at 7h with 0 commits = ~98 messages, no output. Clearly stuck.
+	if [[ "$elapsed_seconds" -ge "$WORKER_THRASH_RATIO_ELAPSED" && "$THRASH_RATIO" -ge "$WORKER_THRASH_RATIO_THRESHOLD" ]]; then
+		THRASH_FLAG="time-weighted-thrash"
+		return 0
 	fi
 
-	return 0
+	return 1
 }
 
 #######################################
@@ -639,6 +792,7 @@ post_kill_github_update() {
 		destination_text="This issue has been re-labeled \`status:blocked\` to prevent blind re-dispatch of the same failing strategy."
 		;;
 	runtime) reason_desc="Worker exceeded the ${duration} runtime ceiling — killed to prevent infinite loops." ;;
+	backoff) reason_desc="Worker's provider is backed off in the headless-runtime state DB (${evidence_summary}). Worker was alive but making no progress — killed for immediate re-queue." ;;
 	*) reason_desc="Worker killed by watchdog (reason: ${reason})." ;;
 	esac
 
@@ -707,7 +861,18 @@ cmd_check() {
 		local duration
 		duration=$(_format_duration "$elapsed_seconds")
 
-		# Check 1: Runtime ceiling candidate (transcript gate decides kill/defer)
+		# Check 1: Provider backoff stall (GH#5650) — kill immediately, no transcript gate.
+		# A worker whose provider is backed off will never make progress. The transcript
+		# gate is irrelevant — the provider won't respond regardless of what the transcript says.
+		if check_provider_backoff "$pid" "$cmd" "$elapsed_seconds"; then
+			local backoff_evidence="provider=${BACKOFF_PROVIDER} reason=${BACKOFF_REASON} retry_after=${BACKOFF_RETRY_AFTER}"
+			log_msg "PROVIDER BACKOFF: PID=${pid} elapsed=${duration} ${backoff_evidence}"
+			kill_worker "$pid" "backoff" "$cmd" "$elapsed_seconds" "$backoff_evidence"
+			killed_count=$((killed_count + 1))
+			continue
+		fi
+
+		# Check 2: Runtime ceiling candidate (transcript gate decides kill/defer)
 		if [[ "$elapsed_seconds" -ge "$WORKER_MAX_RUNTIME" ]]; then
 			if ! transcript_allows_intervention "runtime" "$cmd" "$elapsed_seconds"; then
 				continue
@@ -718,7 +883,7 @@ cmd_check() {
 			continue
 		fi
 
-		# Check 2: zero-commit high-message thrash detection
+		# Check 3: zero-commit high-message thrash detection
 		if check_zero_commit_thrashing "$pid" "$cmd" "$elapsed_seconds"; then
 			if ! transcript_allows_intervention "thrash" "$cmd" "$elapsed_seconds"; then
 				continue
@@ -738,7 +903,7 @@ cmd_check() {
 			continue
 		fi
 
-		# Check 3: CPU idle detection
+		# Check 4: CPU idle detection
 		if check_idle "$pid" "$tree_cpu"; then
 			if ! transcript_allows_intervention "idle" "$cmd" "$elapsed_seconds"; then
 				continue
@@ -749,7 +914,7 @@ cmd_check() {
 			continue
 		fi
 
-		# Check 4: Progress stall detection
+		# Check 5: Progress stall detection
 		if check_progress_stall "$pid" "$cmd" "$elapsed_seconds"; then
 			if ! transcript_allows_intervention "stall" "$cmd" "$elapsed_seconds"; then
 				continue
@@ -798,6 +963,8 @@ cmd_status() {
 	echo "  Progress timeout:    $(_format_duration "$WORKER_PROGRESS_TIMEOUT")"
 	echo "  Runtime ceiling:     $(_format_duration "$WORKER_MAX_RUNTIME")"
 	echo "  Thrash guardrail:    elapsed >= $(_format_duration "$WORKER_THRASH_ELAPSED_THRESHOLD"), messages >= ${WORKER_THRASH_MESSAGE_THRESHOLD}, commits = 0"
+	echo "  Thrash (time-wt):    elapsed >= $(_format_duration "$WORKER_THRASH_RATIO_ELAPSED"), ratio >= ${WORKER_THRASH_RATIO_THRESHOLD}, commits = 0 (GH#5650)"
+	echo "  Provider backoff:    DB=${HEADLESS_RUNTIME_DB}"
 	echo "  Dry run:             ${WORKER_DRY_RUN}"
 	echo "  Notifications:       ${WORKER_WATCHDOG_NOTIFY}"
 
@@ -867,6 +1034,17 @@ cmd_status() {
 			IFS='|' read -r sr_ratio sr_commits sr_messages sr_flag <<<"$sr_result"
 			if [[ "$sr_ratio" != "n/a" ]]; then
 				echo "    Struggle: ratio=${sr_ratio} commits=${sr_commits} messages=${sr_messages} ${sr_flag:+[${sr_flag}]}"
+			fi
+
+			# Provider backoff state
+			local status_provider
+			status_provider=$(extract_provider_from_cmd "$cmd")
+			if [[ -n "$status_provider" ]]; then
+				if check_provider_backoff "$pid" "$cmd" 300; then
+					echo "    Backoff:  ACTIVE provider=${BACKOFF_PROVIDER} reason=${BACKOFF_REASON} retry_after=${BACKOFF_RETRY_AFTER}"
+				else
+					echo "    Backoff:  none (provider=${status_provider})"
+				fi
 			fi
 
 			echo ""
@@ -1085,7 +1263,9 @@ Commands:
   --help, -h        Show this help
 
 Detection signals:
+  Provider backoff: Worker's provider is backed off in headless-runtime DB — kill immediately (GH#5650)
   Zero-commit thrash: elapsed >= $(_format_duration "$WORKER_THRASH_ELAPSED_THRESHOLD"), commits = 0, messages >= ${WORKER_THRASH_MESSAGE_THRESHOLD}
+  Thrash (time-wt): elapsed >= $(_format_duration "$WORKER_THRASH_RATIO_ELAPSED"), commits = 0, ratio >= ${WORKER_THRASH_RATIO_THRESHOLD} (GH#5650)
   CPU idle:         Tree CPU < ${WORKER_IDLE_CPU_THRESHOLD}% for $(_format_duration "$WORKER_IDLE_TIMEOUT")
   Progress stall:   No session messages for $(_format_duration "$WORKER_PROGRESS_TIMEOUT"), then inspect transcript tail evidence
   Runtime ceiling:  Hard kill after $(_format_duration "$WORKER_MAX_RUNTIME")
@@ -1094,19 +1274,22 @@ On kill:
   - Posts comment on associated GitHub issue
   - Removes status:in-progress label
   - Adds status:blocked for zero-commit thrash kills
-  - Adds status:available for all other kill reasons
+  - Adds status:available for all other kill reasons (including backoff)
   - Logs to ${LOG_FILE}
 
 Environment variables:
-  WORKER_IDLE_TIMEOUT          Idle detection window (default: 300s)
-  WORKER_IDLE_CPU_THRESHOLD    CPU% idle threshold (default: 5)
-  WORKER_PROGRESS_TIMEOUT      Stall detection window (default: 600s)
+  WORKER_IDLE_TIMEOUT              Idle detection window (default: 300s)
+  WORKER_IDLE_CPU_THRESHOLD        CPU% idle threshold (default: 5)
+  WORKER_PROGRESS_TIMEOUT          Stall detection window (default: 600s)
   WORKER_THRASH_ELAPSED_THRESHOLD  Minimum runtime for thrash guardrail (default: 3600s)
   WORKER_THRASH_MESSAGE_THRESHOLD  Minimum messages for thrash guardrail (default: 120)
-  WORKER_MAX_RUNTIME           Hard runtime ceiling (default: 10800s = 3h)
-  WORKER_DRY_RUN               Log but don't kill (default: false)
-  WORKER_WATCHDOG_NOTIFY       macOS notifications (default: true)
-  WORKER_PROCESS_PATTERN       CLI name to match (default: opencode)
+  WORKER_THRASH_RATIO_THRESHOLD    Struggle ratio threshold for time-weighted check (default: 10)
+  WORKER_THRASH_RATIO_ELAPSED      Minimum elapsed for ratio-only thrash (default: 25200s = 7h)
+  WORKER_MAX_RUNTIME               Hard runtime ceiling (default: 10800s = 3h)
+  WORKER_DRY_RUN                   Log but don't kill (default: false)
+  WORKER_WATCHDOG_NOTIFY           macOS notifications (default: true)
+  WORKER_PROCESS_PATTERN           CLI name to match (default: opencode)
+  HEADLESS_RUNTIME_DB              Path to headless-runtime state.db (auto-detected)
 HELP
 	return 0
 }

@@ -41,6 +41,9 @@ setup_test_env() {
 	export WORKER_PROGRESS_TIMEOUT=120
 	export WORKER_WATCHDOG_NOTIFY=false
 	export WORKER_DRY_RUN=true
+	# Pre-set HEADLESS_RUNTIME_DB so the script picks it up at source time
+	# (the variable is set from env on load, not readonly, so tests can override it per-test)
+	export HEADLESS_RUNTIME_DB="${TEST_ROOT}/headless-runtime/state.db"
 	mkdir -p "${HOME}/.aidevops/.agent-workspace/tmp/worker-idle-tracking"
 	mkdir -p "${HOME}/.aidevops/logs"
 	# shellcheck source=/dev/null
@@ -417,6 +420,237 @@ test_transcript_gate_allows_stalled_sessions() {
 	return 0
 }
 
+# GH#5650: provider backoff detection tests
+
+seed_backoff_fixture() {
+	local db_path="$1"
+	local provider="$2"
+	local reason="$3"
+	local retry_after="$4" # ISO8601 UTC, or "future" / "past" shorthand
+
+	mkdir -p "$(dirname "$db_path")"
+
+	FIXTURE_DB="$db_path" \
+		FIXTURE_PROVIDER="$provider" \
+		FIXTURE_REASON="$reason" \
+		FIXTURE_RETRY_AFTER="$retry_after" \
+		python3 - <<'PY'
+import os
+import sqlite3
+import time
+
+db_path = os.environ["FIXTURE_DB"]
+provider = os.environ["FIXTURE_PROVIDER"]
+reason = os.environ["FIXTURE_REASON"]
+retry_after_raw = os.environ["FIXTURE_RETRY_AFTER"]
+
+now = int(time.time())
+if retry_after_raw == "future":
+    from datetime import datetime, timezone, timedelta
+    retry_after = (datetime.now(timezone.utc) + timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+elif retry_after_raw == "past":
+    from datetime import datetime, timezone, timedelta
+    retry_after = (datetime.now(timezone.utc) - timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
+else:
+    retry_after = retry_after_raw
+
+conn = sqlite3.connect(db_path)
+conn.executescript("""
+    CREATE TABLE IF NOT EXISTS provider_backoff (
+        provider       TEXT PRIMARY KEY,
+        reason         TEXT NOT NULL,
+        retry_after    TEXT,
+        auth_signature TEXT,
+        details        TEXT,
+        updated_at     TEXT NOT NULL
+    );
+""")
+conn.execute(
+    "INSERT OR REPLACE INTO provider_backoff (provider, reason, retry_after, auth_signature, details, updated_at) VALUES (?, ?, ?, ?, ?, strftime('%Y-%m-%dT%H:%M:%SZ', 'now'))",
+    (provider, reason, retry_after, "", "test fixture"),
+)
+conn.commit()
+conn.close()
+PY
+	return 0
+}
+
+test_extract_provider_from_cmd_anthropic() {
+	reset_fixture
+	local cmd='opencode run --model anthropic/claude-sonnet-4-6 --title "Issue #5650: Fix watchdog" --dir /tmp/aidevops "/full-loop Implement issue #5650"'
+	local provider
+	provider=$(extract_provider_from_cmd "$cmd")
+
+	if [[ "$provider" == "anthropic" ]]; then
+		print_result "extract_provider_from_cmd extracts anthropic" 0
+		return 0
+	fi
+
+	print_result "extract_provider_from_cmd extracts anthropic" 1 "Expected 'anthropic', got '${provider}'"
+	return 0
+}
+
+test_extract_provider_from_cmd_openai() {
+	reset_fixture
+	local cmd='opencode run --model openai/gpt-4o --title "Issue #5650: Fix watchdog" --dir /tmp/aidevops "/full-loop Implement issue #5650"'
+	local provider
+	provider=$(extract_provider_from_cmd "$cmd")
+
+	if [[ "$provider" == "openai" ]]; then
+		print_result "extract_provider_from_cmd extracts openai" 0
+		return 0
+	fi
+
+	print_result "extract_provider_from_cmd extracts openai" 1 "Expected 'openai', got '${provider}'"
+	return 0
+}
+
+test_extract_provider_from_cmd_no_model() {
+	reset_fixture
+	local cmd='opencode run --title "Issue #5650: Fix watchdog" --dir /tmp/aidevops "/full-loop Implement issue #5650"'
+	local provider
+	provider=$(extract_provider_from_cmd "$cmd")
+
+	if [[ -z "$provider" ]]; then
+		print_result "extract_provider_from_cmd returns empty when no model flag" 0
+		return 0
+	fi
+
+	print_result "extract_provider_from_cmd returns empty when no model flag" 1 "Expected empty, got '${provider}'"
+	return 0
+}
+
+test_check_provider_backoff_detects_active_backoff() {
+	reset_fixture
+	local backoff_db="${TEST_ROOT}/headless-runtime/state.db"
+	HEADLESS_RUNTIME_DB="$backoff_db"
+	seed_backoff_fixture "$backoff_db" "anthropic" "auth_error" "future"
+
+	local cmd='opencode run --model anthropic/claude-sonnet-4-6 --title "Issue #5650: Fix watchdog" --dir /tmp/aidevops "/full-loop Implement issue #5650"'
+
+	if check_provider_backoff "9999" "$cmd" 600; then
+		if [[ "$BACKOFF_PROVIDER" == "anthropic" && "$BACKOFF_REASON" == "auth_error" ]]; then
+			print_result "check_provider_backoff detects active auth_error backoff" 0
+			return 0
+		fi
+		print_result "check_provider_backoff detects active auth_error backoff" 1 "Backoff detected but wrong fields: provider=${BACKOFF_PROVIDER} reason=${BACKOFF_REASON}"
+		return 0
+	fi
+
+	print_result "check_provider_backoff detects active auth_error backoff" 1 "Expected backoff to be detected for anthropic auth_error"
+	return 0
+}
+
+test_check_provider_backoff_ignores_expired_backoff() {
+	reset_fixture
+	local backoff_db="${TEST_ROOT}/headless-runtime/state-expired.db"
+	HEADLESS_RUNTIME_DB="$backoff_db"
+	seed_backoff_fixture "$backoff_db" "anthropic" "auth_error" "past"
+
+	local cmd='opencode run --model anthropic/claude-sonnet-4-6 --title "Issue #5650: Fix watchdog" --dir /tmp/aidevops "/full-loop Implement issue #5650"'
+
+	if check_provider_backoff "9998" "$cmd" 600; then
+		print_result "check_provider_backoff ignores expired backoff" 1 "Expected expired backoff to be ignored"
+		return 0
+	fi
+
+	print_result "check_provider_backoff ignores expired backoff" 0
+	return 0
+}
+
+test_check_provider_backoff_skips_grace_period() {
+	reset_fixture
+	local backoff_db="${TEST_ROOT}/headless-runtime/state-grace.db"
+	HEADLESS_RUNTIME_DB="$backoff_db"
+	seed_backoff_fixture "$backoff_db" "anthropic" "auth_error" "future"
+
+	local cmd='opencode run --model anthropic/claude-sonnet-4-6 --title "Issue #5650: Fix watchdog" --dir /tmp/aidevops "/full-loop Implement issue #5650"'
+
+	# elapsed < 300 — should skip check (grace period)
+	if check_provider_backoff "9997" "$cmd" 60; then
+		print_result "check_provider_backoff skips workers in grace period" 1 "Expected grace period to suppress backoff check"
+		return 0
+	fi
+
+	print_result "check_provider_backoff skips workers in grace period" 0
+	return 0
+}
+
+test_post_kill_marks_backoff_as_available() {
+	reset_fixture
+	local gh_calls_file="${TEST_ROOT}/gh-calls-backoff.log"
+	: >"$gh_calls_file"
+
+	extract_issue_number() {
+		printf '%s' "5650"
+		return 0
+	}
+
+	extract_repo_slug() {
+		printf '%s' "marcusquinn/aidevops"
+		return 0
+	}
+
+	gh() {
+		printf '%s\n' "$*" >>"$gh_calls_file"
+		return 0
+	}
+
+	post_kill_github_update "worker cmd" "backoff" "7h 23m" "provider=anthropic reason=auth_error retry_after=2026-03-24T05:58:00Z"
+
+	local captured_calls=""
+	captured_calls=$(<"$gh_calls_file")
+
+	if [[ "$captured_calls" != *"--add-label status:available"* ]]; then
+		print_result "backoff kills re-queue issues as available" 1 "Expected status:available label for backoff kill"
+		return 0
+	fi
+
+	if [[ "$captured_calls" == *"--add-label status:blocked"* ]]; then
+		print_result "backoff kills re-queue issues as available" 1 "Backoff kills should NOT set status:blocked"
+		return 0
+	fi
+
+	print_result "backoff kills re-queue issues as available" 0
+	return 0
+}
+
+test_time_weighted_thrash_catches_low_ratio_long_runtime() {
+	reset_fixture
+	# ratio=14, commits=0, messages=98, flag="" — below primary threshold (30) but 7h+ elapsed
+	set_struggle_stub "14|0|98|"
+	local cmd='opencode run --title "Issue #5650: Fix watchdog" --dir /tmp/aidevops "/full-loop Implement issue #5650"'
+
+	# 7h 30m elapsed — should trigger time-weighted check
+	if ! check_zero_commit_thrashing "9996" "$cmd" 27000; then
+		print_result "time-weighted thrash catches ratio-14 at 7h+ with 0 commits" 1 "Expected time-weighted thrash to trigger at 7h+ with ratio 14"
+		return 0
+	fi
+
+	if [[ "$THRASH_FLAG" != "time-weighted-thrash" ]]; then
+		print_result "time-weighted thrash catches ratio-14 at 7h+ with 0 commits" 1 "Expected flag=time-weighted-thrash, got '${THRASH_FLAG}'"
+		return 0
+	fi
+
+	print_result "time-weighted thrash catches ratio-14 at 7h+ with 0 commits" 0
+	return 0
+}
+
+test_time_weighted_thrash_skips_short_runtime() {
+	reset_fixture
+	# Same ratio but only 1h elapsed — should NOT trigger time-weighted check
+	set_struggle_stub "14|0|98|"
+	local cmd='opencode run --title "Issue #5650: Fix watchdog" --dir /tmp/aidevops "/full-loop Implement issue #5650"'
+
+	if check_zero_commit_thrashing "9995" "$cmd" 3600; then
+		print_result "time-weighted thrash skips workers under 7h" 1 "Expected time-weighted thrash to skip at 1h elapsed"
+		return 0
+	fi
+
+	print_result "time-weighted thrash skips workers under 7h" 0
+	return 0
+}
+
 main() {
 	setup_test_env
 	test_recent_message_clears_stall
@@ -430,6 +664,16 @@ main() {
 	test_extract_session_title_handles_unquoted_multiword_titles
 	test_transcript_gate_defers_active_sessions
 	test_transcript_gate_allows_stalled_sessions
+	# GH#5650: provider backoff detection
+	test_extract_provider_from_cmd_anthropic
+	test_extract_provider_from_cmd_openai
+	test_extract_provider_from_cmd_no_model
+	test_check_provider_backoff_detects_active_backoff
+	test_check_provider_backoff_ignores_expired_backoff
+	test_check_provider_backoff_skips_grace_period
+	test_post_kill_marks_backoff_as_available
+	test_time_weighted_thrash_catches_low_ratio_long_runtime
+	test_time_weighted_thrash_skips_short_runtime
 	teardown_test_env
 
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
