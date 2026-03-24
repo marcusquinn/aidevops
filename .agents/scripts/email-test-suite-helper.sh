@@ -46,25 +46,17 @@ readonly CSS_UNSUPPORTED_YAHOO="media queries (partially), animation, transform"
 # Design Rendering Tests
 # =============================================================================
 
-# Validate HTML email structure
-validate_html_structure() {
+# Check DOCTYPE, charset, viewport, and xmlns meta requirements
+_check_html_meta() {
 	local html_file="$1"
-
-	print_header "HTML Email Structure Validation"
-
-	if [[ ! -f "$html_file" ]]; then
-		print_error "HTML file not found: $html_file"
-		return 1
-	fi
-
-	local issues=0
-	local warnings=0
+	local issues_ref="$2"
+	local warnings_ref="$3"
 
 	# Check for DOCTYPE
 	if ! grep -qi '<!DOCTYPE' "$html_file"; then
 		print_error "Missing DOCTYPE declaration"
 		print_info "Add: <!DOCTYPE html>"
-		issues=$((issues + 1))
+		eval "$issues_ref=\$((\$$issues_ref + 1))"
 	else
 		print_success "DOCTYPE declaration found"
 	fi
@@ -74,7 +66,7 @@ validate_html_structure() {
 		print_warning "Missing xmlns attribute on html tag"
 		# NOSONAR - xmlns URL is a namespace identifier, not a network request
 		print_info "Add: xmlns=\"http://www.w3.org/1999/xhtml\" for Outlook compatibility"
-		warnings=$((warnings + 1))
+		eval "$warnings_ref=\$((\$$warnings_ref + 1))"
 	else
 		print_success "xmlns attribute found"
 	fi
@@ -83,7 +75,7 @@ validate_html_structure() {
 	if ! grep -qi 'charset' "$html_file"; then
 		print_error "Missing charset meta tag"
 		print_info "Add: <meta charset=\"UTF-8\">"
-		issues=$((issues + 1))
+		eval "$issues_ref=\$((\$$issues_ref + 1))"
 	else
 		print_success "Charset declaration found"
 	fi
@@ -92,10 +84,19 @@ validate_html_structure() {
 	if ! grep -qi 'viewport' "$html_file"; then
 		print_warning "Missing viewport meta tag (needed for mobile)"
 		print_info "Add: <meta name=\"viewport\" content=\"width=device-width, initial-scale=1.0\">"
-		warnings=$((warnings + 1))
+		eval "$warnings_ref=\$((\$$warnings_ref + 1))"
 	else
 		print_success "Viewport meta tag found"
 	fi
+
+	return 0
+}
+
+# Check table layout, inline styles, and image alt text
+_check_html_layout() {
+	local html_file="$1"
+	local issues_ref="$2"
+	local warnings_ref="$3"
 
 	# Check for table-based layout (recommended for email)
 	local table_count
@@ -103,7 +104,7 @@ validate_html_structure() {
 	table_count="${table_count:-0}"
 	if [[ "$table_count" -eq 0 ]]; then
 		print_warning "No table elements found - table-based layout recommended for email"
-		warnings=$((warnings + 1))
+		eval "$warnings_ref=\$((\$$warnings_ref + 1))"
 	else
 		print_success "Table-based layout detected ($table_count tables)"
 	fi
@@ -119,7 +120,7 @@ validate_html_structure() {
 	if [[ "$style_block_count" -gt 0 && "$inline_style_count" -eq 0 ]]; then
 		print_warning "Style blocks found but no inline styles - Gmail strips <style> blocks"
 		print_info "Use CSS inlining tools (juice, premailer) before sending"
-		warnings=$((warnings + 1))
+		eval "$warnings_ref=\$((\$$warnings_ref + 1))"
 	elif [[ "$inline_style_count" -gt 0 ]]; then
 		print_success "Inline styles detected ($inline_style_count occurrences)"
 	fi
@@ -134,11 +135,20 @@ validate_html_structure() {
 		img_with_alt="${img_with_alt:-0}"
 		if [[ "$img_with_alt" -lt "$img_total" ]]; then
 			print_warning "Some images missing alt text ($img_with_alt/$img_total have alt)"
-			warnings=$((warnings + 1))
+			eval "$warnings_ref=\$((\$$warnings_ref + 1))"
 		else
 			print_success "All images have alt text ($img_total images)"
 		fi
 	fi
+
+	return 0
+}
+
+# Check image URLs, unsubscribe link, and file size
+_check_html_content() {
+	local html_file="$1"
+	local issues_ref="$2"
+	local warnings_ref="$3"
 
 	# Check for absolute URLs in images
 	local relative_imgs
@@ -146,13 +156,13 @@ validate_html_structure() {
 	relative_imgs="${relative_imgs:-0}"
 	if [[ "$relative_imgs" -gt 0 ]]; then
 		print_error "Relative image URLs found ($relative_imgs) - use absolute URLs"
-		issues=$((issues + 1))
+		eval "$issues_ref=\$((\$$issues_ref + 1))"
 	fi
 
 	# Check for unsubscribe link
 	if ! grep -qi 'unsubscribe' "$html_file"; then
 		print_warning "No unsubscribe link detected (required for marketing emails)"
-		warnings=$((warnings + 1))
+		eval "$warnings_ref=\$((\$$warnings_ref + 1))"
 	else
 		print_success "Unsubscribe link found"
 	fi
@@ -162,13 +172,34 @@ validate_html_structure() {
 	file_size=$(wc -c <"$html_file" | tr -d ' ')
 	if [[ "$file_size" -gt 102400 ]]; then
 		print_warning "Email HTML is large (${file_size} bytes) - Gmail clips emails >102KB"
-		warnings=$((warnings + 1))
+		eval "$warnings_ref=\$((\$$warnings_ref + 1))"
 	elif [[ "$file_size" -gt 80000 ]]; then
 		print_warning "Email HTML approaching Gmail clip limit (${file_size}/102400 bytes)"
-		warnings=$((warnings + 1))
+		eval "$warnings_ref=\$((\$$warnings_ref + 1))"
 	else
 		print_success "Email size OK (${file_size} bytes, limit 102400)"
 	fi
+
+	return 0
+}
+
+# Validate HTML email structure
+validate_html_structure() {
+	local html_file="$1"
+
+	print_header "HTML Email Structure Validation"
+
+	if [[ ! -f "$html_file" ]]; then
+		print_error "HTML file not found: $html_file"
+		return 1
+	fi
+
+	local issues=0
+	local warnings=0
+
+	_check_html_meta "$html_file" issues warnings
+	_check_html_layout "$html_file" issues warnings
+	_check_html_content "$html_file" issues warnings
 
 	# Summary
 	print_header "Validation Summary"
@@ -429,6 +460,112 @@ check_responsive() {
 	return 0
 }
 
+# Check image alt text and table roles (WCAG 1.1.1, 1.3.1)
+_check_a11y_images() {
+	local html_file="$1"
+	local issues_ref="$2"
+	local warnings_ref="$3"
+
+	# Check: images without alt text (WCAG 1.1.1)
+	local total_imgs
+	total_imgs=$(grep -ciE '<img ' "$html_file" 2>/dev/null || true)
+	total_imgs="${total_imgs:-0}"
+	local imgs_with_alt
+	imgs_with_alt=$(grep -ciE '<img [^>]*alt=' "$html_file" 2>/dev/null || true)
+	imgs_with_alt="${imgs_with_alt:-0}"
+	local imgs_missing_alt=$((total_imgs - imgs_with_alt))
+
+	if [[ "$imgs_missing_alt" -gt 0 ]]; then
+		print_error "$imgs_missing_alt image(s) missing alt attribute (WCAG 1.1.1)"
+		eval "$issues_ref=\$((\$$issues_ref + $imgs_missing_alt))"
+	else
+		print_success "All images have alt attributes ($total_imgs images)"
+	fi
+
+	# Check: layout tables without role="presentation" (WCAG 1.3.1)
+	local tables
+	tables=$(grep -ciE '<table' "$html_file" 2>/dev/null || true)
+	tables="${tables:-0}"
+	local tables_with_role
+	tables_with_role=$(grep -ciE '<table[^>]*role=' "$html_file" 2>/dev/null || true)
+	tables_with_role="${tables_with_role:-0}"
+	if [[ "$tables" -gt 0 && "$tables_with_role" -eq 0 ]]; then
+		print_warning "$tables table(s) without role attribute — use role=\"presentation\" for layout tables (WCAG 1.3.1)"
+		eval "$warnings_ref=\$((\$$warnings_ref + 1))"
+	elif [[ "$tables" -gt 0 ]]; then
+		print_success "Tables have role attributes ($tables_with_role/$tables)"
+	fi
+
+	return 0
+}
+
+# Check heading structure and language attribute (WCAG 1.3.1, 3.1.1)
+_check_a11y_structure() {
+	local html_file="$1"
+	local issues_ref="$2"
+	local warnings_ref="$3"
+
+	# Check: language attribute on html tag (WCAG 3.1.1)
+	if grep -qiE '<html[^>]*lang=' "$html_file" 2>/dev/null; then
+		print_success "HTML lang attribute present"
+	else
+		print_error "Missing lang attribute on <html> tag (WCAG 3.1.1)"
+		eval "$issues_ref=\$((\$$issues_ref + 1))"
+	fi
+
+	# Check: heading structure (WCAG 1.3.1)
+	local headings
+	headings=$(grep -ciE '<h[1-6]' "$html_file" 2>/dev/null || true)
+	headings="${headings:-0}"
+	if [[ "$headings" -eq 0 ]]; then
+		print_warning "No heading elements found (WCAG 1.3.1)"
+		eval "$warnings_ref=\$((\$$warnings_ref + 1))"
+	else
+		print_success "$headings heading element(s) found"
+	fi
+
+	return 0
+}
+
+# Check font sizes, link text, and colour usage (WCAG 1.4.1, 1.4.4, 2.4.4)
+_check_a11y_text() {
+	local html_file="$1"
+	local warnings_ref="$2"
+
+	# Check: small font sizes (WCAG 1.4.4)
+	local small_fonts
+	small_fonts=$(grep -ciE 'font-size:\s*(([0-9]|1[0-3])px)' "$html_file" 2>/dev/null || true)
+	small_fonts="${small_fonts:-0}"
+	if [[ "$small_fonts" -gt 0 ]]; then
+		print_warning "$small_fonts instance(s) of font-size below 14px (WCAG 1.4.4)"
+		eval "$warnings_ref=\$((\$$warnings_ref + 1))"
+	else
+		print_success "No excessively small font sizes detected"
+	fi
+
+	# Check: generic link text (WCAG 2.4.4)
+	local generic_links
+	generic_links=$(grep -ciE '<a [^>]*>[[:space:]]*(click here|here|read more|learn more|more)[[:space:]]*</a>' "$html_file" 2>/dev/null || true)
+	generic_links="${generic_links:-0}"
+	if [[ "$generic_links" -gt 0 ]]; then
+		print_warning "$generic_links link(s) with generic text like 'click here' (WCAG 2.4.4)"
+		eval "$warnings_ref=\$((\$$warnings_ref + 1))"
+	else
+		print_success "No generic link text detected"
+	fi
+
+	# Check: colour-only indicators (WCAG 1.4.1)
+	local color_only
+	color_only=$(grep -ciE 'color:\s*(red|green)' "$html_file" 2>/dev/null || true)
+	color_only="${color_only:-0}"
+	if [[ "$color_only" -gt 0 ]]; then
+		print_warning "$color_only instance(s) of red/green colour usage — avoid colour as sole indicator (WCAG 1.4.1)"
+		eval "$warnings_ref=\$((\$$warnings_ref + 1))"
+	fi
+
+	return 0
+}
+
 # Check email accessibility (delegates to accessibility-helper.sh)
 check_accessibility() {
 	local html_file="$1"
@@ -452,85 +589,9 @@ check_accessibility() {
 	local issues=0
 	local warnings=0
 
-	# Check: images without alt text (WCAG 1.1.1)
-	local total_imgs
-	total_imgs=$(grep -ciE '<img ' "$html_file" 2>/dev/null || true)
-	total_imgs="${total_imgs:-0}"
-	local imgs_with_alt
-	imgs_with_alt=$(grep -ciE '<img [^>]*alt=' "$html_file" 2>/dev/null || true)
-	imgs_with_alt="${imgs_with_alt:-0}"
-	local imgs_missing_alt=$((total_imgs - imgs_with_alt))
-
-	if [[ "$imgs_missing_alt" -gt 0 ]]; then
-		print_error "$imgs_missing_alt image(s) missing alt attribute (WCAG 1.1.1)"
-		issues=$((issues + imgs_missing_alt))
-	else
-		print_success "All images have alt attributes ($total_imgs images)"
-	fi
-
-	# Check: language attribute on html tag (WCAG 3.1.1)
-	if grep -qiE '<html[^>]*lang=' "$html_file" 2>/dev/null; then
-		print_success "HTML lang attribute present"
-	else
-		print_error "Missing lang attribute on <html> tag (WCAG 3.1.1)"
-		issues=$((issues + 1))
-	fi
-
-	# Check: layout tables without role="presentation" (WCAG 1.3.1)
-	local tables
-	tables=$(grep -ciE '<table' "$html_file" 2>/dev/null || true)
-	tables="${tables:-0}"
-	local tables_with_role
-	tables_with_role=$(grep -ciE '<table[^>]*role=' "$html_file" 2>/dev/null || true)
-	tables_with_role="${tables_with_role:-0}"
-	if [[ "$tables" -gt 0 && "$tables_with_role" -eq 0 ]]; then
-		print_warning "$tables table(s) without role attribute — use role=\"presentation\" for layout tables (WCAG 1.3.1)"
-		warnings=$((warnings + 1))
-	elif [[ "$tables" -gt 0 ]]; then
-		print_success "Tables have role attributes ($tables_with_role/$tables)"
-	fi
-
-	# Check: small font sizes (WCAG 1.4.4)
-	local small_fonts
-	small_fonts=$(grep -ciE 'font-size:\s*(([0-9]|1[0-3])px)' "$html_file" 2>/dev/null || true)
-	small_fonts="${small_fonts:-0}"
-	if [[ "$small_fonts" -gt 0 ]]; then
-		print_warning "$small_fonts instance(s) of font-size below 14px (WCAG 1.4.4)"
-		warnings=$((warnings + 1))
-	else
-		print_success "No excessively small font sizes detected"
-	fi
-
-	# Check: generic link text (WCAG 2.4.4)
-	local generic_links
-	generic_links=$(grep -ciE '<a [^>]*>[[:space:]]*(click here|here|read more|learn more|more)[[:space:]]*</a>' "$html_file" 2>/dev/null || true)
-	generic_links="${generic_links:-0}"
-	if [[ "$generic_links" -gt 0 ]]; then
-		print_warning "$generic_links link(s) with generic text like 'click here' (WCAG 2.4.4)"
-		warnings=$((warnings + 1))
-	else
-		print_success "No generic link text detected"
-	fi
-
-	# Check: heading structure (WCAG 1.3.1)
-	local headings
-	headings=$(grep -ciE '<h[1-6]' "$html_file" 2>/dev/null || true)
-	headings="${headings:-0}"
-	if [[ "$headings" -eq 0 ]]; then
-		print_warning "No heading elements found (WCAG 1.3.1)"
-		warnings=$((warnings + 1))
-	else
-		print_success "$headings heading element(s) found"
-	fi
-
-	# Check: colour-only indicators (WCAG 1.4.1)
-	local color_only
-	color_only=$(grep -ciE 'color:\s*(red|green)' "$html_file" 2>/dev/null || true)
-	color_only="${color_only:-0}"
-	if [[ "$color_only" -gt 0 ]]; then
-		print_warning "$color_only instance(s) of red/green colour usage — avoid colour as sole indicator (WCAG 1.4.1)"
-		warnings=$((warnings + 1))
-	fi
+	_check_a11y_images "$html_file" issues warnings
+	_check_a11y_structure "$html_file" issues warnings
+	_check_a11y_text "$html_file" warnings
 
 	# Summary
 	print_header "Accessibility Summary"
@@ -676,35 +737,15 @@ test_smtp_domain() {
 	return 0
 }
 
-# Analyze email headers from a file or stdin
-analyze_headers() {
-	local header_file="${1:-}"
+# Extract and display basic email header fields
+_parse_header_basics() {
+	local headers="$1"
 
-	print_header "Email Header Analysis"
-
-	local headers
-	if [[ -n "$header_file" && -f "$header_file" ]]; then
-		headers=$(cat "$header_file")
-	else
-		print_info "Paste email headers below (end with Ctrl+D):"
-		headers=$(cat)
-	fi
-
-	if [[ -z "$headers" ]]; then
-		print_error "No headers provided"
-		return 1
-	fi
-
-	# Extract key headers
-	local from
+	local from to subject date_header message_id
 	from=$(echo "$headers" | grep -i '^From:' | head -1 || true)
-	local to
 	to=$(echo "$headers" | grep -i '^To:' | head -1 || true)
-	local subject
 	subject=$(echo "$headers" | grep -i '^Subject:' | head -1 || true)
-	local date_header
 	date_header=$(echo "$headers" | grep -i '^Date:' | head -1 || true)
-	local message_id
 	message_id=$(echo "$headers" | grep -i '^Message-ID:' | head -1 || true)
 
 	echo "  $from"
@@ -714,7 +755,13 @@ analyze_headers() {
 	echo "  $message_id"
 	echo ""
 
-	# Check authentication results
+	return 0
+}
+
+# Check SPF, DKIM, DMARC authentication results and DKIM signature
+_check_header_auth() {
+	local headers="$1"
+
 	print_header "Authentication Results"
 
 	local auth_results
@@ -759,12 +806,18 @@ analyze_headers() {
 	local dkim_sig
 	dkim_sig=$(echo "$headers" | grep -i '^DKIM-Signature:' || true)
 	if [[ -n "$dkim_sig" ]]; then
-		local dkim_domain
+		local dkim_domain dkim_selector
 		dkim_domain=$(echo "$dkim_sig" | grep -oiE 'd=[^ ;]+' | head -1 || true)
-		local dkim_selector
 		dkim_selector=$(echo "$dkim_sig" | grep -oiE 's=[^ ;]+' | head -1 || true)
 		print_info "DKIM Signature: $dkim_domain $dkim_selector"
 	fi
+
+	return 0
+}
+
+# Check delivery path, spam indicators, and unsubscribe headers
+_check_header_delivery() {
+	local headers="$1"
 
 	# Check Received headers (trace route)
 	print_header "Delivery Path"
@@ -774,9 +827,8 @@ analyze_headers() {
 	print_info "Hops: $received_count"
 
 	echo "$headers" | grep -i '^Received:' | head -5 | while read -r line; do
-		local hop_from
+		local hop_from hop_by
 		hop_from=$(echo "$line" | grep -oiE 'from [^ ]+' | head -1 || true)
-		local hop_by
 		hop_by=$(echo "$line" | grep -oiE 'by [^ ]+' | head -1 || true)
 		echo "  $hop_from -> $hop_by"
 	done
@@ -784,13 +836,12 @@ analyze_headers() {
 	# Check for spam indicators
 	print_header "Spam Indicators"
 
-	local spam_score
+	local spam_score spam_status
 	spam_score=$(echo "$headers" | grep -i 'X-Spam-Score:' | head -1 || true)
 	if [[ -n "$spam_score" ]]; then
 		echo "  $spam_score"
 	fi
 
-	local spam_status
 	spam_status=$(echo "$headers" | grep -i 'X-Spam-Status:' | head -1 || true)
 	if [[ -n "$spam_status" ]]; then
 		echo "  $spam_status"
@@ -818,14 +869,36 @@ analyze_headers() {
 	return 0
 }
 
-# Check inbox placement factors for a domain
-check_inbox_placement() {
+# Analyze email headers from a file or stdin
+analyze_headers() {
+	local header_file="${1:-}"
+
+	print_header "Email Header Analysis"
+
+	local headers
+	if [[ -n "$header_file" && -f "$header_file" ]]; then
+		headers=$(cat "$header_file")
+	else
+		print_info "Paste email headers below (end with Ctrl+D):"
+		headers=$(cat)
+	fi
+
+	if [[ -z "$headers" ]]; then
+		print_error "No headers provided"
+		return 1
+	fi
+
+	_parse_header_basics "$headers"
+	_check_header_auth "$headers"
+	_check_header_delivery "$headers"
+
+	return 0
+}
+
+# Check SPF, DKIM, DMARC DNS authentication records
+_check_dns_auth() {
 	local domain="$1"
-
-	print_header "Inbox Placement Analysis: $domain"
-
-	local score=0
-	local max_score=10
+	local score_ref="$2"
 
 	# 1. SPF check
 	local spf_record
@@ -833,7 +906,7 @@ check_inbox_placement() {
 	if [[ -n "$spf_record" ]]; then
 		if [[ "$spf_record" == *"-all"* || "$spf_record" == *"~all"* ]]; then
 			print_success "SPF: Configured with enforcement"
-			score=$((score + 1))
+			eval "$score_ref=\$((\$$score_ref + 1))"
 		else
 			print_warning "SPF: Configured but weak policy"
 		fi
@@ -853,7 +926,7 @@ check_inbox_placement() {
 	done
 	if [[ "$dkim_found" == true ]]; then
 		print_success "DKIM: At least one selector found"
-		score=$((score + 1))
+		eval "$score_ref=\$((\$$score_ref + 1))"
 	else
 		print_error "DKIM: No common selectors found"
 	fi
@@ -864,30 +937,42 @@ check_inbox_placement() {
 	if [[ -n "$dmarc_record" ]]; then
 		if [[ "$dmarc_record" == *"p=reject"* || "$dmarc_record" == *"p=quarantine"* ]]; then
 			print_success "DMARC: Enforcing policy"
-			score=$((score + 2))
+			eval "$score_ref=\$((\$$score_ref + 2))"
 		elif [[ "$dmarc_record" == *"p=none"* ]]; then
 			print_warning "DMARC: Monitoring only (p=none)"
-			score=$((score + 1))
+			eval "$score_ref=\$((\$$score_ref + 1))"
 		fi
 	else
 		print_error "DMARC: Not configured"
 	fi
 
+	return 0
+}
+
+# Check MX records and reverse DNS for inbox placement
+_check_dns_mx() {
+	local domain="$1"
+	local score_ref="$2"
+	local mx_records_ref="$3"
+
 	# 4. MX records
 	local mx_records
 	mx_records=$(dig MX "$domain" +short 2>/dev/null || true)
+	eval "$mx_records_ref=\"\$mx_records\""
+
 	if [[ -n "$mx_records" ]]; then
 		local mx_count
 		mx_count=$(echo "$mx_records" | wc -l | tr -d ' ')
 		if [[ "$mx_count" -gt 1 ]]; then
 			print_success "MX: $mx_count records (redundant)"
-			score=$((score + 1))
+			eval "$score_ref=\$((\$$score_ref + 1))"
 		else
 			print_success "MX: Configured (single server)"
-			score=$((score + 1))
+			eval "$score_ref=\$((\$$score_ref + 1))"
 		fi
 	else
 		print_error "MX: Not configured"
+		return 0
 	fi
 
 	# 5. Reverse DNS (PTR) for MX
@@ -901,19 +986,27 @@ check_inbox_placement() {
 			ptr_record=$(dig -x "$mx_ip" +short 2>/dev/null || true)
 			if [[ -n "$ptr_record" ]]; then
 				print_success "Reverse DNS: PTR record exists for MX IP"
-				score=$((score + 1))
+				eval "$score_ref=\$((\$$score_ref + 1))"
 			else
 				print_warning "Reverse DNS: No PTR record for MX IP ($mx_ip)"
 			fi
 		fi
 	fi
 
+	return 0
+}
+
+# Check optional MTA-STS, TLS-RPT, BIMI, and blacklist status
+_check_dns_optional() {
+	local domain="$1"
+	local score_ref="$2"
+
 	# 6. MTA-STS check
 	local mta_sts
 	mta_sts=$(dig TXT "_mta-sts.${domain}" +short 2>/dev/null | tr -d '"' || true)
 	if [[ -n "$mta_sts" && "$mta_sts" == *"v=STSv1"* ]]; then
 		print_success "MTA-STS: Configured"
-		score=$((score + 1))
+		eval "$score_ref=\$((\$$score_ref + 1))"
 	else
 		print_info "MTA-STS: Not configured (optional but recommended)"
 	fi
@@ -923,7 +1016,7 @@ check_inbox_placement() {
 	tls_rpt=$(dig TXT "_smtp._tls.${domain}" +short 2>/dev/null | tr -d '"' || true)
 	if [[ -n "$tls_rpt" && "$tls_rpt" == *"v=TLSRPTv1"* ]]; then
 		print_success "TLS-RPT: Configured"
-		score=$((score + 1))
+		eval "$score_ref=\$((\$$score_ref + 1))"
 	else
 		print_info "TLS-RPT: Not configured (optional)"
 	fi
@@ -933,7 +1026,7 @@ check_inbox_placement() {
 	bimi=$(dig TXT "default._bimi.${domain}" +short 2>/dev/null | tr -d '"' || true)
 	if [[ -n "$bimi" && "$bimi" == *"v=BIMI1"* ]]; then
 		print_success "BIMI: Configured (brand logo in inbox)"
-		score=$((score + 1))
+		eval "$score_ref=\$((\$$score_ref + 1))"
 	else
 		print_info "BIMI: Not configured (optional, requires DMARC p=quarantine+)"
 	fi
@@ -948,11 +1041,28 @@ check_inbox_placement() {
 		bl_result=$(dig A "${reversed_ip}.zen.spamhaus.org" +short 2>/dev/null || true)
 		if [[ -z "$bl_result" || "$bl_result" == *"NXDOMAIN"* ]]; then
 			print_success "Blacklist: Not listed on Spamhaus"
-			score=$((score + 1))
+			eval "$score_ref=\$((\$$score_ref + 1))"
 		else
 			print_error "Blacklist: Listed on Spamhaus ($bl_result)"
 		fi
 	fi
+
+	return 0
+}
+
+# Check inbox placement factors for a domain
+check_inbox_placement() {
+	local domain="$1"
+
+	print_header "Inbox Placement Analysis: $domain"
+
+	local score=0
+	local max_score=10
+	local mx_records=""
+
+	_check_dns_auth "$domain" score
+	_check_dns_mx "$domain" score mx_records
+	_check_dns_optional "$domain" score
 
 	# Score summary
 	print_header "Inbox Placement Score"
@@ -999,13 +1109,10 @@ test_mail_tls() {
 	fi
 
 	# Extract certificate details
-	local subject
+	local subject issuer dates san
 	subject=$(echo "$cert_info" | openssl x509 -noout -subject 2>/dev/null || true)
-	local issuer
 	issuer=$(echo "$cert_info" | openssl x509 -noout -issuer 2>/dev/null || true)
-	local dates
 	dates=$(echo "$cert_info" | openssl x509 -noout -dates 2>/dev/null || true)
-	local san
 	san=$(echo "$cert_info" | openssl x509 -noout -ext subjectAltName 2>/dev/null || true)
 
 	if [[ -n "$subject" ]]; then
@@ -1057,11 +1164,9 @@ test_mail_tls() {
 	return 0
 }
 
-# Generate a test email (HTML) for rendering tests
-generate_test_email() {
-	local output_file="${1:-test-email.html}"
-
-	print_header "Generating Test Email Template"
+# Write the HTML content for the test email template
+_generate_email_html() {
+	local output_file="$1"
 
 	cat >"$output_file" <<'HTMLEOF'
 <!DOCTYPE html>
@@ -1165,6 +1270,17 @@ generate_test_email() {
 </body>
 </html>
 HTMLEOF
+
+	return 0
+}
+
+# Generate a test email (HTML) for rendering tests
+generate_test_email() {
+	local output_file="${1:-test-email.html}"
+
+	print_header "Generating Test Email Template"
+
+	_generate_email_html "$output_file"
 
 	print_success "Test email generated: $output_file"
 	print_info "Run: $0 test-design $output_file"
