@@ -655,6 +655,144 @@ get_release_asset_pattern() {
 }
 
 # =============================================================================
+# Helper: Download and extract llama.cpp release
+# =============================================================================
+
+_setup_download_llama() {
+	local platform="$1"
+	local release_json="$2"
+
+	if ! suppress_stderr command -v curl; then
+		print_error "curl is required but not found"
+		return 2
+	fi
+
+	if ! suppress_stderr command -v tar && ! suppress_stderr command -v unzip; then
+		print_error "tar or unzip is required but neither found"
+		return 2
+	fi
+
+	local tag_name
+	tag_name="$(echo "$release_json" | jq -r '.tag_name // empty')"
+	if [[ -z "$tag_name" ]]; then
+		print_error "Could not determine latest release tag (jq required)"
+		return 1
+	fi
+	print_info "Latest release: ${tag_name}"
+
+	local asset_pattern
+	asset_pattern="$(get_release_asset_pattern "$platform")" || {
+		print_error "No binary available for platform: ${platform}"
+		return 1
+	}
+
+	local download_url
+	download_url="$(echo "$release_json" | jq -r --arg pat "$asset_pattern" \
+		'.assets[] | select(.name | test($pat)) | .browser_download_url' | head -1)"
+
+	if [[ -z "$download_url" ]]; then
+		print_error "No matching release asset for pattern: ${asset_pattern}"
+		print_info "Available assets:"
+		echo "$release_json" | jq -r '.assets[].name' 2>/dev/null | head -10
+		return 1
+	fi
+
+	local asset_name
+	asset_name="$(basename "$download_url")"
+	print_info "Downloading ${asset_name}..."
+
+	local tmp_dir
+	tmp_dir="$(mktemp -d)"
+	local tmp_archive="${tmp_dir}/${asset_name}"
+
+	if ! curl -sL -o "$tmp_archive" "$download_url"; then
+		print_error "Download failed: ${download_url}"
+		rm -rf "$tmp_dir"
+		return 1
+	fi
+
+	print_info "Extracting..."
+	mkdir -p "$tmp_dir/extracted"
+	if [[ "$asset_name" == *.tar.gz ]] || [[ "$asset_name" == *.tgz ]]; then
+		if ! tar -xzf "$tmp_archive" -C "$tmp_dir/extracted"; then
+			print_error "Extraction failed (tar.gz)"
+			rm -rf "$tmp_dir"
+			return 1
+		fi
+	elif [[ "$asset_name" == *.zip ]]; then
+		if ! unzip -qo "$tmp_archive" -d "$tmp_dir/extracted"; then
+			print_error "Extraction failed (zip)"
+			rm -rf "$tmp_dir"
+			return 1
+		fi
+	else
+		print_error "Unknown archive format: ${asset_name}"
+		rm -rf "$tmp_dir"
+		return 1
+	fi
+
+	# Find and copy the server binary
+	local server_bin
+	server_bin="$(find "$tmp_dir/extracted" -name "llama-server" -type f | head -1)"
+	if [[ -z "$server_bin" ]]; then
+		server_bin="$(find "$tmp_dir/extracted" -name "llama-server*" -type f ! -name "*.dll" | head -1)"
+	fi
+
+	if [[ -z "$server_bin" ]]; then
+		print_error "llama-server binary not found in release archive"
+		print_info "Archive contents:"
+		find "$tmp_dir/extracted" -type f | head -20
+		rm -rf "$tmp_dir"
+		return 1
+	fi
+
+	cp "$server_bin" "$LLAMA_SERVER_BIN"
+	chmod +x "$LLAMA_SERVER_BIN"
+
+	# Also copy llama-cli if present
+	local cli_bin
+	cli_bin="$(find "$tmp_dir/extracted" -name "llama-cli" -type f | head -1)"
+	if [[ -n "$cli_bin" ]]; then
+		cp "$cli_bin" "$LLAMA_CLI_BIN"
+		chmod +x "$LLAMA_CLI_BIN"
+	fi
+
+	rm -rf "$tmp_dir"
+
+	local installed_version
+	installed_version="$("$LLAMA_SERVER_BIN" --version 2>/dev/null | head -1 || echo "${tag_name}")"
+	print_success "llama-server installed: ${installed_version}"
+	return 0
+}
+
+# =============================================================================
+# Helper: Install huggingface-cli
+# =============================================================================
+
+_setup_install_hf_cli() {
+	if ! suppress_stderr command -v huggingface-cli; then
+		print_info "Installing huggingface-cli..."
+		if suppress_stderr command -v pip3; then
+			log_stderr "pip install" pip3 install --quiet "huggingface_hub[cli]" || {
+				print_warning "Failed to install huggingface-cli via pip3"
+				print_info "Install manually: pip3 install 'huggingface_hub[cli]'"
+			}
+		elif suppress_stderr command -v pip; then
+			log_stderr "pip install" pip install --quiet "huggingface_hub[cli]" || {
+				print_warning "Failed to install huggingface-cli via pip"
+				print_info "Install manually: pip install 'huggingface_hub[cli]'"
+			}
+		else
+			print_warning "pip not found — install huggingface-cli manually"
+			print_info "Install: pip3 install 'huggingface_hub[cli]'"
+		fi
+	else
+		print_info "huggingface-cli: already installed"
+	fi
+	return 0
+}
+
+# =============================================================================
 # Command: setup
 # =============================================================================
 
@@ -695,135 +833,17 @@ cmd_setup() {
 		# Download llama.cpp release
 		print_info "Fetching latest llama.cpp release..."
 
-		if ! suppress_stderr command -v curl; then
-			print_error "curl is required but not found"
-			return 2
-		fi
-
-		if ! suppress_stderr command -v tar && ! suppress_stderr command -v unzip; then
-			print_error "tar or unzip is required but neither found"
-			return 2
-		fi
-
 		local release_json
 		release_json="$(curl -sL "$LLAMA_CPP_API")" || {
 			print_error "Failed to fetch llama.cpp release info"
 			return 1
 		}
 
-		local tag_name
-		tag_name="$(echo "$release_json" | jq -r '.tag_name // empty')"
-		if [[ -z "$tag_name" ]]; then
-			print_error "Could not determine latest release tag (jq required)"
-			return 1
-		fi
-		print_info "Latest release: ${tag_name}"
-
-		local asset_pattern
-		asset_pattern="$(get_release_asset_pattern "$platform")" || {
-			print_error "No binary available for platform: ${platform}"
-			return 1
-		}
-
-		local download_url
-		download_url="$(echo "$release_json" | jq -r --arg pat "$asset_pattern" \
-			'.assets[] | select(.name | test($pat)) | .browser_download_url' | head -1)"
-
-		if [[ -z "$download_url" ]]; then
-			print_error "No matching release asset for pattern: ${asset_pattern}"
-			print_info "Available assets:"
-			echo "$release_json" | jq -r '.assets[].name' 2>/dev/null | head -10
-			return 1
-		fi
-
-		local asset_name
-		asset_name="$(basename "$download_url")"
-		print_info "Downloading ${asset_name}..."
-
-		local tmp_dir
-		tmp_dir="$(mktemp -d)"
-		local tmp_archive="${tmp_dir}/${asset_name}"
-
-		if ! curl -sL -o "$tmp_archive" "$download_url"; then
-			print_error "Download failed: ${download_url}"
-			rm -rf "$tmp_dir"
-			return 1
-		fi
-
-		print_info "Extracting..."
-		mkdir -p "$tmp_dir/extracted"
-		if [[ "$asset_name" == *.tar.gz ]] || [[ "$asset_name" == *.tgz ]]; then
-			if ! tar -xzf "$tmp_archive" -C "$tmp_dir/extracted"; then
-				print_error "Extraction failed (tar.gz)"
-				rm -rf "$tmp_dir"
-				return 1
-			fi
-		elif [[ "$asset_name" == *.zip ]]; then
-			if ! unzip -qo "$tmp_archive" -d "$tmp_dir/extracted"; then
-				print_error "Extraction failed (zip)"
-				rm -rf "$tmp_dir"
-				return 1
-			fi
-		else
-			print_error "Unknown archive format: ${asset_name}"
-			rm -rf "$tmp_dir"
-			return 1
-		fi
-
-		# Find and copy the server binary
-		local server_bin
-		server_bin="$(find "$tmp_dir/extracted" -name "llama-server" -type f | head -1)"
-		if [[ -z "$server_bin" ]]; then
-			# Some releases use different naming
-			server_bin="$(find "$tmp_dir/extracted" -name "llama-server*" -type f ! -name "*.dll" | head -1)"
-		fi
-
-		if [[ -z "$server_bin" ]]; then
-			print_error "llama-server binary not found in release archive"
-			print_info "Archive contents:"
-			find "$tmp_dir/extracted" -type f | head -20
-			rm -rf "$tmp_dir"
-			return 1
-		fi
-
-		cp "$server_bin" "$LLAMA_SERVER_BIN"
-		chmod +x "$LLAMA_SERVER_BIN"
-
-		# Also copy llama-cli if present (useful for benchmarking)
-		local cli_bin
-		cli_bin="$(find "$tmp_dir/extracted" -name "llama-cli" -type f | head -1)"
-		if [[ -n "$cli_bin" ]]; then
-			cp "$cli_bin" "$LLAMA_CLI_BIN"
-			chmod +x "$LLAMA_CLI_BIN"
-		fi
-
-		rm -rf "$tmp_dir"
-
-		local installed_version
-		installed_version="$("$LLAMA_SERVER_BIN" --version 2>/dev/null | head -1 || echo "${tag_name}")"
-		print_success "llama-server installed: ${installed_version}"
+		_setup_download_llama "$platform" "$release_json" || return $?
 	fi
 
 	# Install huggingface-cli if not present
-	if ! suppress_stderr command -v huggingface-cli; then
-		print_info "Installing huggingface-cli..."
-		if suppress_stderr command -v pip3; then
-			log_stderr "pip install" pip3 install --quiet "huggingface_hub[cli]" || {
-				print_warning "Failed to install huggingface-cli via pip3"
-				print_info "Install manually: pip3 install 'huggingface_hub[cli]'"
-			}
-		elif suppress_stderr command -v pip; then
-			log_stderr "pip install" pip install --quiet "huggingface_hub[cli]" || {
-				print_warning "Failed to install huggingface-cli via pip"
-				print_info "Install manually: pip install 'huggingface_hub[cli]'"
-			}
-		else
-			print_warning "pip not found — install huggingface-cli manually"
-			print_info "Install: pip3 install 'huggingface_hub[cli]'"
-		fi
-	else
-		print_info "huggingface-cli: already installed"
-	fi
+	_setup_install_hf_cli
 
 	# Write default config
 	write_default_config
@@ -834,6 +854,126 @@ cmd_setup() {
 	print_success "Setup complete. Directory: ${LOCAL_MODELS_DIR}"
 	print_info "Next: local-model-helper.sh recommend  (see model suggestions)"
 	print_info "      local-model-helper.sh search \"qwen3 8b\"  (find models)"
+	return 0
+}
+
+# =============================================================================
+# Helper: Resolve model path (auto-detect or validate)
+# =============================================================================
+
+_start_resolve_model() {
+	local model="$1"
+
+	if [[ -z "$model" ]]; then
+		# Try to find the most recently used model
+		local latest_model
+		latest_model="$(find "$LOCAL_MODELS_STORE" -name "*.gguf" -type f -printf '%T@ %p\n' 2>/dev/null | sort -rn | head -1 | awk '{print $2}')"
+		if [[ -z "$latest_model" ]]; then
+			# macOS find doesn't support -printf
+			latest_model="$(find "$LOCAL_MODELS_STORE" -name "*.gguf" -type f 2>/dev/null | head -1)"
+		fi
+		if [[ -z "$latest_model" ]]; then
+			print_error "No model specified and no models found in ${LOCAL_MODELS_STORE}"
+			print_info "Download a model first: local-model-helper.sh download <repo> --quant Q4_K_M"
+			return 3
+		fi
+		model="$latest_model"
+		print_info "Using model: $(basename "$model")"
+	fi
+
+	# Resolve relative model name to full path
+	if [[ ! -f "$model" ]]; then
+		local resolved="${LOCAL_MODELS_STORE}/${model}"
+		if [[ -f "$resolved" ]]; then
+			model="$resolved"
+		else
+			print_error "Model not found: ${model}"
+			print_info "Available models:"
+			find "$LOCAL_MODELS_STORE" -name "*.gguf" -type f -exec basename {} \; 2>/dev/null
+			return 3
+		fi
+	fi
+
+	echo "$model"
+	return 0
+}
+
+# =============================================================================
+# Helper: Start llama-server process
+# =============================================================================
+
+_start_server_process() {
+	local model="$1"
+	local port="$2"
+	local host="$3"
+	local ctx_size="$4"
+	local gpu_layers="$5"
+	local threads="$6"
+	local flash_attn="$7"
+
+	local server_args=(
+		"--model" "$model"
+		"--port" "$port"
+		"--host" "$host"
+		"--ctx-size" "$ctx_size"
+		"--n-gpu-layers" "$gpu_layers"
+		"--threads" "$threads"
+	)
+
+	if [[ "$flash_attn" == "true" ]]; then
+		server_args+=("--flash-attn")
+	fi
+
+	print_info "Starting llama-server..."
+	print_info "  Model:      $(basename "$model")"
+	print_info "  API:        http://${host}:${port}/v1"
+	print_info "  Context:    ${ctx_size} tokens"
+	print_info "  Threads:    ${threads}"
+	print_info "  GPU layers: ${gpu_layers}"
+
+	# Start server in background
+	local log_file="${LOCAL_MODELS_DIR}/server.log"
+	nohup "$LLAMA_SERVER_BIN" "${server_args[@]}" >"$log_file" 2>&1 &
+	local server_pid=$!
+	echo "$server_pid" >"$LOCAL_PID_FILE"
+
+	# Wait briefly and verify it started
+	sleep 2
+	if ! kill -0 "$server_pid" 2>/dev/null; then
+		print_error "Server failed to start. Check log: ${log_file}"
+		rm -f "$LOCAL_PID_FILE"
+		tail -20 "$log_file" 2>/dev/null
+		return 1
+	fi
+
+	echo "$server_pid"
+	return 0
+}
+
+# =============================================================================
+# Helper: Wait for server health endpoint
+# =============================================================================
+
+_start_wait_health() {
+	local host="$1"
+	local port="$2"
+	local server_pid="$3"
+
+	local retries=0
+	local max_retries=15
+	while [[ $retries -lt $max_retries ]]; do
+		if curl -sf "http://${host}:${port}/health" >/dev/null 2>&1; then
+			print_success "Server running (PID ${server_pid})"
+			print_info "API endpoint: http://${host}:${port}/v1"
+			print_info "Health check: curl http://${host}:${port}/health"
+			return 0
+		fi
+		retries=$((retries + 1))
+		sleep 1
+	done
+
+	print_warning "Server started (PID ${server_pid}) but health check not responding yet"
+	print_info "It may still be loading the model. Check: curl http://${host}:${port}/health"
 	return 0
 }
 
@@ -898,99 +1038,24 @@ cmd_start() {
 			print_error "Server already running (PID ${existing_pid}). Stop it first: local-model-helper.sh stop"
 			return 4
 		else
-			# Stale PID file
 			rm -f "$LOCAL_PID_FILE"
 		fi
 	fi
 
 	# Resolve model path
-	if [[ -z "$model" ]]; then
-		# Try to find the most recently used model
-		local latest_model
-		latest_model="$(find "$LOCAL_MODELS_STORE" -name "*.gguf" -type f -printf '%T@ %p\n' 2>/dev/null | sort -rn | head -1 | awk '{print $2}')"
-		if [[ -z "$latest_model" ]]; then
-			# macOS find doesn't support -printf
-			latest_model="$(find "$LOCAL_MODELS_STORE" -name "*.gguf" -type f 2>/dev/null | head -1)"
-		fi
-		if [[ -z "$latest_model" ]]; then
-			print_error "No model specified and no models found in ${LOCAL_MODELS_STORE}"
-			print_info "Download a model first: local-model-helper.sh download <repo> --quant Q4_K_M"
-			return 3
-		fi
-		model="$latest_model"
-		print_info "Using model: $(basename "$model")"
-	fi
-
-	# Resolve relative model name to full path
-	if [[ ! -f "$model" ]]; then
-		local resolved="${LOCAL_MODELS_STORE}/${model}"
-		if [[ -f "$resolved" ]]; then
-			model="$resolved"
-		else
-			print_error "Model not found: ${model}"
-			print_info "Available models:"
-			find "$LOCAL_MODELS_STORE" -name "*.gguf" -type f -exec basename {} \; 2>/dev/null
-			return 3
-		fi
-	fi
+	model="$(_start_resolve_model "$model")" || return $?
 
 	# Auto-detect threads if not specified
 	if [[ -z "$threads" ]]; then
 		threads="$(detect_threads)"
 	fi
 
-	# Build server arguments
-	local server_args=(
-		"--model" "$model"
-		"--port" "$port"
-		"--host" "$host"
-		"--ctx-size" "$ctx_size"
-		"--n-gpu-layers" "$gpu_layers"
-		"--threads" "$threads"
-	)
-
-	if [[ "$flash_attn" == "true" ]]; then
-		server_args+=("--flash-attn")
-	fi
-
-	print_info "Starting llama-server..."
-	print_info "  Model:      $(basename "$model")"
-	print_info "  API:        http://${host}:${port}/v1"
-	print_info "  Context:    ${ctx_size} tokens"
-	print_info "  Threads:    ${threads}"
-	print_info "  GPU layers: ${gpu_layers}"
-
-	# Start server in background
-	local log_file="${LOCAL_MODELS_DIR}/server.log"
-	nohup "$LLAMA_SERVER_BIN" "${server_args[@]}" >"$log_file" 2>&1 &
-	local server_pid=$!
-	echo "$server_pid" >"$LOCAL_PID_FILE"
-
-	# Wait briefly and verify it started
-	sleep 2
-	if ! kill -0 "$server_pid" 2>/dev/null; then
-		print_error "Server failed to start. Check log: ${log_file}"
-		rm -f "$LOCAL_PID_FILE"
-		tail -20 "$log_file" 2>/dev/null
-		return 1
-	fi
+	# Start server process
+	local server_pid
+	server_pid="$(_start_server_process "$model" "$port" "$host" "$ctx_size" "$gpu_layers" "$threads" "$flash_attn")" || return $?
 
 	# Wait for health endpoint
-	local retries=0
-	local max_retries=15
-	while [[ $retries -lt $max_retries ]]; do
-		if curl -sf "http://${host}:${port}/health" >/dev/null 2>&1; then
-			print_success "Server running (PID ${server_pid})"
-			print_info "API endpoint: http://${host}:${port}/v1"
-			print_info "Health check: curl http://${host}:${port}/health"
-			return 0
-		fi
-		retries=$((retries + 1))
-		sleep 1
-	done
-
-	print_warning "Server started (PID ${server_pid}) but health check not responding yet"
-	print_info "It may still be loading the model. Check: curl http://${host}:${port}/health"
+	_start_wait_health "$host" "$port" "$server_pid"
 	return 0
 }
 
@@ -1043,6 +1108,57 @@ cmd_stop() {
 # Command: status
 # =============================================================================
 
+# =============================================================================
+# Helper: Get server uptime string
+# =============================================================================
+
+_status_get_uptime() {
+	local pid="$1"
+	local uptime_str=""
+
+	if [[ "$(uname -s)" == "Darwin" ]]; then
+		local start_time
+		start_time="$(ps -p "$pid" -o lstart= 2>/dev/null || echo "")"
+		if [[ -n "$start_time" ]]; then
+			uptime_str="since ${start_time}"
+		fi
+	else
+		local elapsed
+		elapsed="$(ps -p "$pid" -o etimes= 2>/dev/null | tr -d ' ' || echo "")"
+		if [[ -n "$elapsed" ]]; then
+			local hours=$((elapsed / 3600))
+			local mins=$(((elapsed % 3600) / 60))
+			uptime_str="${hours}h ${mins}m"
+		fi
+	fi
+
+	echo "$uptime_str"
+	return 0
+}
+
+# =============================================================================
+# Helper: Get loaded model name from API
+# =============================================================================
+
+_status_get_model_name() {
+	local host="$1"
+	local port="$2"
+	local model_name=""
+
+	local models_response
+	models_response="$(curl -sf "http://${host}:${port}/v1/models" 2>/dev/null || echo "")"
+	if [[ -n "$models_response" ]] && suppress_stderr command -v jq; then
+		model_name="$(echo "$models_response" | jq -r '.data[0].id // "unknown"' 2>/dev/null || echo "unknown")"
+	fi
+
+	echo "$model_name"
+	return 0
+}
+
+# =============================================================================
+# Command: status
+# =============================================================================
+
 cmd_status() {
 	local json_output=false
 	while [[ $# -gt 0 ]]; do
@@ -1084,29 +1200,8 @@ cmd_status() {
 	api_url="http://${LLAMA_HOST}:${LLAMA_PORT}/v1"
 
 	if [[ "$running" == "true" ]]; then
-		# Try to get loaded model from /v1/models
-		local models_response
-		models_response="$(curl -sf "http://${LLAMA_HOST}:${LLAMA_PORT}/v1/models" 2>/dev/null || echo "")"
-		if [[ -n "$models_response" ]] && suppress_stderr command -v jq; then
-			model_name="$(echo "$models_response" | jq -r '.data[0].id // "unknown"' 2>/dev/null || echo "unknown")"
-		fi
-
-		# Calculate uptime from process start time
-		if [[ "$(uname -s)" == "Darwin" ]]; then
-			local start_time
-			start_time="$(ps -p "$pid" -o lstart= 2>/dev/null || echo "")"
-			if [[ -n "$start_time" ]]; then
-				uptime_str="since ${start_time}"
-			fi
-		else
-			local elapsed
-			elapsed="$(ps -p "$pid" -o etimes= 2>/dev/null | tr -d ' ' || echo "")"
-			if [[ -n "$elapsed" ]]; then
-				local hours=$((elapsed / 3600))
-				local mins=$(((elapsed % 3600) / 60))
-				uptime_str="${hours}h ${mins}m"
-			fi
-		fi
+		model_name="$(_status_get_model_name "$LLAMA_HOST" "$LLAMA_PORT")"
+		uptime_str="$(_status_get_uptime "$pid")"
 	fi
 
 	if [[ "$json_output" == "true" ]]; then
@@ -1146,16 +1241,88 @@ cmd_status() {
 	model_count="$(find "$LOCAL_MODELS_STORE" -name "*.gguf" -type f 2>/dev/null | wc -l | tr -d ' ')"
 	if [[ "$model_count" -gt 0 ]]; then
 		local total_size
-		if [[ "$(uname -s)" == "Darwin" ]]; then
-			total_size="$(du -sh "$LOCAL_MODELS_STORE" 2>/dev/null | awk '{print $1}')"
-		else
-			total_size="$(du -sh "$LOCAL_MODELS_STORE" 2>/dev/null | awk '{print $1}')"
-		fi
+		total_size="$(du -sh "$LOCAL_MODELS_STORE" 2>/dev/null | awk '{print $1}')"
 		echo "Models: ${model_count} downloaded (${total_size})"
 	else
 		echo "Models: none downloaded"
 	fi
 
+	return 0
+}
+
+# =============================================================================
+# Command: models
+# =============================================================================
+
+# =============================================================================
+# Helper: Get model size in human-readable format
+# =============================================================================
+
+_models_get_size_human() {
+	local model_path="$1"
+	local size_human=""
+
+	if [[ "$(uname -s)" == "Darwin" ]]; then
+		local size_bytes
+		size_bytes="$(stat -f%z "$model_path" 2>/dev/null || echo "0")"
+		size_human="$(echo "$size_bytes" | awk '{
+			if ($1 >= 1073741824) printf "%.1f GB", $1/1073741824;
+			else if ($1 >= 1048576) printf "%.0f MB", $1/1048576;
+			else printf "%.0f KB", $1/1024;
+		}')"
+	else
+		size_human="$(du -h "$model_path" 2>/dev/null | awk '{print $1}')"
+	fi
+
+	echo "$size_human"
+	return 0
+}
+
+# =============================================================================
+# Helper: Extract quantization from model filename
+# =============================================================================
+
+_models_get_quant() {
+	local name="$1"
+	local quant
+
+	quant="$(echo "$name" | grep -oiE '(q[0-9]_[a-z0-9_]+|iq[0-9]_[a-z0-9]+|f16|f32|bf16)' | head -1 | tr '[:lower:]' '[:upper:]')"
+	[[ -z "$quant" ]] && quant="-"
+
+	echo "$quant"
+	return 0
+}
+
+# =============================================================================
+# Helper: Get last used time for model from database
+# =============================================================================
+
+_models_get_last_used() {
+	local name="$1"
+	local last_used_str="-"
+
+	if suppress_stderr command -v sqlite3 && [[ -f "$LOCAL_USAGE_DB" ]]; then
+		local db_last escaped_name
+		escaped_name="$(sql_escape "$name")"
+		db_last="$(sqlite3 "$LOCAL_USAGE_DB" "SELECT last_used FROM model_inventory WHERE model='${escaped_name}' LIMIT 1;" 2>/dev/null || echo "")"
+		if [[ -n "$db_last" ]]; then
+			local now_epoch last_epoch diff_days
+			now_epoch="$(date +%s)"
+			last_epoch="$(date -j -f "%Y-%m-%d %H:%M:%S" "$db_last" +%s 2>/dev/null || date -d "$db_last" +%s 2>/dev/null || echo "0")"
+			if [[ "$last_epoch" -gt 0 ]]; then
+				diff_days="$(((now_epoch - last_epoch) / 86400))"
+				if [[ "$diff_days" -eq 0 ]]; then
+					last_used_str="today"
+				elif [[ "$diff_days" -eq 1 ]]; then
+					last_used_str="1d ago"
+				else
+					last_used_str="${diff_days}d ago"
+				fi
+			fi
+		fi
+	fi
+
+	echo "$last_used_str"
 	return 0
 }
 
@@ -1201,12 +1368,7 @@ cmd_models() {
 			else
 				size_bytes="$(stat -c%s "$model_path" 2>/dev/null || echo "0")"
 			fi
-			last_used=""
-			if suppress_stderr command -v sqlite3 && [[ -f "$LOCAL_USAGE_DB" ]]; then
-				local escaped_name_json
-				escaped_name_json="$(sql_escape "$name")"
-				last_used="$(sqlite3 "$LOCAL_USAGE_DB" "SELECT last_used FROM model_inventory WHERE model='${escaped_name_json}' LIMIT 1;" 2>/dev/null || echo "")"
-			fi
+			last_used="$(_models_get_last_used "$name")"
 			[[ "$first" == "true" ]] || echo ","
 			first=false
 			printf '  {"name": "%s", "size_bytes": %s, "last_used": "%s"}' "$name" "$size_bytes" "$last_used"
@@ -1224,50 +1386,65 @@ cmd_models() {
 		local name size_human quant last_used_str
 		name="$(basename "$model_path")"
 
-		# Get human-readable size
-		if [[ "$(uname -s)" == "Darwin" ]]; then
-			local size_bytes
-			size_bytes="$(stat -f%z "$model_path" 2>/dev/null || echo "0")"
-			size_human="$(echo "$size_bytes" | awk '{
-				if ($1 >= 1073741824) printf "%.1f GB", $1/1073741824;
-				else if ($1 >= 1048576) printf "%.0f MB", $1/1048576;
-				else printf "%.0f KB", $1/1024;
-			}')"
-		else
-			size_human="$(du -h "$model_path" 2>/dev/null | awk '{print $1}')"
-		fi
-
-		# Extract quantization from filename
-		quant="$(echo "$name" | grep -oiE '(q[0-9]_[a-z0-9_]+|iq[0-9]_[a-z0-9]+|f16|f32|bf16)' | head -1 | tr '[:lower:]' '[:upper:]')"
-		[[ -z "$quant" ]] && quant="-"
-
-		# Get last used from database
-		last_used_str="-"
-		if suppress_stderr command -v sqlite3 && [[ -f "$LOCAL_USAGE_DB" ]]; then
-			local db_last escaped_name_tbl
-			escaped_name_tbl="$(sql_escape "$name")"
-			db_last="$(sqlite3 "$LOCAL_USAGE_DB" "SELECT last_used FROM model_inventory WHERE model='${escaped_name_tbl}' LIMIT 1;" 2>/dev/null || echo "")"
-			if [[ -n "$db_last" ]]; then
-				# Show relative time
-				local now_epoch last_epoch diff_days
-				now_epoch="$(date +%s)"
-				last_epoch="$(date -j -f "%Y-%m-%d %H:%M:%S" "$db_last" +%s 2>/dev/null || date -d "$db_last" +%s 2>/dev/null || echo "0")"
-				if [[ "$last_epoch" -gt 0 ]]; then
-					diff_days="$(((now_epoch - last_epoch) / 86400))"
-					if [[ "$diff_days" -eq 0 ]]; then
-						last_used_str="today"
-					elif [[ "$diff_days" -eq 1 ]]; then
-						last_used_str="1d ago"
-					else
-						last_used_str="${diff_days}d ago"
-					fi
-				fi
-			fi
-		fi
+		size_human="$(_models_get_size_human "$model_path")"
+		quant="$(_models_get_quant "$name")"
+		last_used_str="$(_models_get_last_used "$name")"
 
 		printf "%-40s %10s %8s %12s\n" "$name" "$size_human" "$quant" "$last_used_str"
 	done <<<"$models"
 
+	return 0
+}
+
+# =============================================================================
+# Helper: Find GGUF file matching quantization in HuggingFace repo
+# =============================================================================
+
+_download_find_gguf() {
+	local repo="$1"
+	local quant="$2"
+	local quant_lower
+	quant_lower="$(echo "$quant" | tr '[:upper:]' '[:lower:]')"
+
+	print_info "Searching for ${quant} quantization in ${repo}..."
+
+	# List files in the repo via HuggingFace API
+	local files_json
+	files_json="$(curl -sL "${HF_API}/models/${repo}" 2>/dev/null || echo "")"
+
+	if [[ -z "$files_json" ]]; then
+		print_error "Could not fetch repo info for: ${repo}"
+		return 1
+	fi
+
+	# Try to find a matching GGUF file from siblings
+	local siblings_json filename
+	siblings_json="$(echo "$files_json" | jq -r '.siblings[]?.rfilename // empty' 2>/dev/null || echo "")"
+
+	if [[ -n "$siblings_json" ]]; then
+		filename="$(echo "$siblings_json" | grep -i "\.gguf$" | grep -i "$quant_lower" | head -1)"
+	fi
+
+	# If not found in siblings, try the tree API
+	if [[ -z "$filename" ]]; then
+		local tree_json
+		tree_json="$(curl -sL "${HF_API}/models/${repo}/tree/main" 2>/dev/null || echo "")"
+		if [[ -n "$tree_json" ]]; then
+			filename="$(echo "$tree_json" | jq -r '.[].path // empty' 2>/dev/null | grep -i "\.gguf$" | grep -i "$quant_lower" | head -1)"
+		fi
+	fi
+
+	if [[ -z "$filename" ]]; then
+		print_error "No GGUF file matching quantization '${quant}' found in ${repo}"
+		print_info "Available GGUF files:"
+		if [[ -n "$siblings_json" ]]; then
+			echo "$siblings_json" | grep -i "\.gguf$" | head -10
+		fi
+		print_info "Specify exact file: --file <filename.gguf>"
+		return 3
+	fi
+
+	echo "$filename"
 	return 0
 }
 
@@ -1320,47 +1497,7 @@ cmd_download() {
 
 	# If no specific filename, find matching GGUF file in the repo
 	if [[ -z "$filename" ]]; then
-		print_info "Searching for ${quant} quantization in ${repo}..."
-
-		local quant_lower
-		quant_lower="$(echo "$quant" | tr '[:upper:]' '[:lower:]')"
-
-		# List files in the repo via HuggingFace API
-		local files_json
-		files_json="$(curl -sL "${HF_API}/models/${repo}" 2>/dev/null || echo "")"
-
-		if [[ -z "$files_json" ]]; then
-			print_error "Could not fetch repo info for: ${repo}"
-			return 1
-		fi
-
-		# Try to find a matching GGUF file from siblings
-		local siblings_json
-		siblings_json="$(echo "$files_json" | jq -r '.siblings[]?.rfilename // empty' 2>/dev/null || echo "")"
-
-		if [[ -n "$siblings_json" ]]; then
-			filename="$(echo "$siblings_json" | grep -i "\.gguf$" | grep -i "$quant_lower" | head -1)"
-		fi
-
-		# If not found in siblings, try the tree API
-		if [[ -z "$filename" ]]; then
-			local tree_json
-			tree_json="$(curl -sL "${HF_API}/models/${repo}/tree/main" 2>/dev/null || echo "")"
-			if [[ -n "$tree_json" ]]; then
-				filename="$(echo "$tree_json" | jq -r '.[].path // empty' 2>/dev/null | grep -i "\.gguf$" | grep -i "$quant_lower" | head -1)"
-			fi
-		fi
-
-		if [[ -z "$filename" ]]; then
-			print_error "No GGUF file matching quantization '${quant}' found in ${repo}"
-			print_info "Available GGUF files:"
-			if [[ -n "$siblings_json" ]]; then
-				echo "$siblings_json" | grep -i "\.gguf$" | head -10
-			fi
-			print_info "Specify exact file: --file <filename.gguf>"
-			return 3
-		fi
-
+		filename="$(_download_find_gguf "$repo" "$quant")" || return $?
 		print_info "Found: ${filename}"
 	fi
 
@@ -1579,6 +1716,192 @@ cmd_recommend() {
 }
 
 # =============================================================================
+# Helper: Get days unused for a model (from DB or mtime)
+# =============================================================================
+
+_get_days_unused() {
+	local model_path="$1"
+	local now_epoch="$2"
+	local name
+	name="$(basename "$model_path")"
+	local days_unused=-1
+
+	# Try DB first
+	if suppress_stderr command -v sqlite3 && [[ -f "$LOCAL_USAGE_DB" ]]; then
+		local db_last escaped_name
+		escaped_name="$(sql_escape "$name")"
+		db_last="$(sqlite3 "$LOCAL_USAGE_DB" "SELECT last_used FROM model_inventory WHERE model='${escaped_name}' LIMIT 1;" 2>/dev/null || echo "")"
+		if [[ -n "$db_last" ]]; then
+			local last_epoch
+			last_epoch="$(date -j -f "%Y-%m-%d %H:%M:%S" "$db_last" +%s 2>/dev/null || date -d "$db_last" +%s 2>/dev/null || echo "0")"
+			if [[ "$last_epoch" -gt 0 ]]; then
+				days_unused="$(((now_epoch - last_epoch) / 86400))"
+				echo "$days_unused"
+				return 0
+			fi
+		fi
+	fi
+
+	# Fall back to mtime
+	if [[ "$(uname -s)" == "Darwin" ]]; then
+		local mod_epoch
+		mod_epoch="$(stat -f%m "$model_path" 2>/dev/null || echo "0")"
+		if [[ "$mod_epoch" -gt 0 ]]; then
+			days_unused="$(((now_epoch - mod_epoch) / 86400))"
+		fi
+	else
+		local mod_epoch
+		mod_epoch="$(stat -c%Y "$model_path" 2>/dev/null || echo "0")"
+		if [[ "$mod_epoch" -gt 0 ]]; then
+			days_unused="$(((now_epoch - mod_epoch) / 86400))"
+		fi
+	fi
+
+	echo "$days_unused"
+	return 0
+}
+
+# =============================================================================
+# Helper: Format days unused as human-readable string
+# =============================================================================
+
+_format_days_unused() {
+	local days_unused="$1"
+	if [[ "$days_unused" == "-" ]] || [[ "$days_unused" -lt 0 ]]; then
+		echo "-"
+		return 0
+	fi
+	if [[ "$days_unused" -eq 0 ]]; then
+		echo "today"
+	elif [[ "$days_unused" -eq 1 ]]; then
+		echo "1d ago"
+	else
+		echo "${days_unused}d ago"
+	fi
+	return 0
+}
+
+# =============================================================================
+# Helper: Remove a specific model file and DB entry
+# =============================================================================
+
+_remove_model_file() {
+	local model_path="$1"
+	local model_name="$2"
+	local size_human="$3"
+
+	rm -f "$model_path"
+	print_success "Removed: ${model_name} (${size_human})"
+
+	# Clean up database entry
+	if suppress_stderr command -v sqlite3 && [[ -f "$LOCAL_USAGE_DB" ]]; then
+		local escaped_name
+		escaped_name="$(sql_escape "$model_name")"
+		sqlite3 "$LOCAL_USAGE_DB" "DELETE FROM model_inventory WHERE model='${escaped_name}';" 2>/dev/null || true
+	fi
+	return 0
+}
+
+# =============================================================================
+# Helper: Print cleanup report table row
+# =============================================================================
+
+_print_cleanup_row() {
+	local name="$1"
+	local size_human="$2"
+	local last_used_str="$3"
+	local status_str="$4"
+
+	printf "%-40s %10s %12s %10s\n" "$name" "$size_human" "$last_used_str" "$status_str"
+	return 0
+}
+
+# =============================================================================
+# Helper: Process and display all models in cleanup report
+# =============================================================================
+
+_cleanup_report_models() {
+	local models="$1"
+	local threshold="$2"
+	local now_epoch="$3"
+	local total_size_bytes=0
+	local stale_size_bytes=0
+	local stale_count=0
+
+	printf "%-40s %10s %12s %10s\n" "MODEL" "SIZE" "LAST USED" "STATUS"
+	printf "%-40s %10s %12s %10s\n" "-----" "----" "---------" "------"
+
+	while IFS= read -r model_path; do
+		local name size_bytes size_human last_used_str status_str days_unused
+		name="$(basename "$model_path")"
+
+		if [[ "$(uname -s)" == "Darwin" ]]; then
+			size_bytes="$(stat -f%z "$model_path" 2>/dev/null || echo "0")"
+		else
+			size_bytes="$(stat -c%s "$model_path" 2>/dev/null || echo "0")"
+		fi
+		total_size_bytes=$((total_size_bytes + size_bytes))
+
+		size_human="$(echo "$size_bytes" | awk '{
+			if ($1 >= 1073741824) printf "%.1f GB", $1/1073741824;
+			else printf "%.0f MB", $1/1048576;
+		}')"
+
+		days_unused="$(_get_days_unused "$model_path" "$now_epoch")"
+		last_used_str="$(_format_days_unused "$days_unused")"
+		status_str="unknown"
+
+		if [[ "$days_unused" != "-" ]] && [[ "$days_unused" -gt "$threshold" ]]; then
+			status_str="stale (>${threshold}d)"
+			stale_size_bytes=$((stale_size_bytes + size_bytes))
+			stale_count=$((stale_count + 1))
+		else
+			status_str="active"
+		fi
+
+		_print_cleanup_row "$name" "$size_human" "$last_used_str" "$status_str"
+	done <<<"$models"
+
+	echo ""
+	local total_human stale_human
+	total_human="$(echo "$total_size_bytes" | awk '{printf "%.1f GB", $1/1073741824}')"
+	stale_human="$(echo "$stale_size_bytes" | awk '{printf "%.1f GB", $1/1073741824}')"
+	echo "Total: ${total_human} (${stale_human} stale)"
+
+	# Return stale info via stdout (name=value format)
+	echo "stale_count=$stale_count"
+	echo "stale_size_bytes=$stale_size_bytes"
+	echo "stale_human=$stale_human"
+	return 0
+}
+
+# =============================================================================
+# Helper: Remove all stale models
+# =============================================================================
+
+_cleanup_remove_stale() {
+	local models="$1"
+	local threshold="$2"
+	local now_epoch="$3"
+
+	print_info "Removing stale models..."
+	while IFS= read -r model_path; do
+		local name days_unused_check
+		name="$(basename "$model_path")"
+		days_unused_check="$(_get_days_unused "$model_path" "$now_epoch")"
+
+		if [[ "$days_unused_check" -gt "$threshold" ]]; then
+			rm -f "$model_path"
+			print_success "Removed: ${name}"
+			if suppress_stderr command -v sqlite3 && [[ -f "$LOCAL_USAGE_DB" ]]; then
+				sqlite3 "$LOCAL_USAGE_DB" "DELETE FROM model_inventory WHERE model='$(sql_escape "$name")';" 2>/dev/null || true
+			fi
+		fi
+	done <<<"$models"
+	return 0
+}
+
+# =============================================================================
 # Command: cleanup
 # =============================================================================
 
@@ -1636,14 +1959,7 @@ cmd_cleanup() {
 			else
 				size_human="$(du -h "$target" | awk '{print $1}')"
 			fi
-			rm -f "$target"
-			print_success "Removed: ${remove_model} (${size_human})"
-			# Clean up database entry
-			if suppress_stderr command -v sqlite3 && [[ -f "$LOCAL_USAGE_DB" ]]; then
-				local escaped_rm
-				escaped_rm="$(sql_escape "$remove_model")"
-				sqlite3 "$LOCAL_USAGE_DB" "DELETE FROM model_inventory WHERE model='${escaped_rm}';" 2>/dev/null || true
-			fi
+			_remove_model_file "$target" "$remove_model" "$size_human"
 		else
 			print_error "Model not found: ${remove_model}"
 			return 3
@@ -1652,140 +1968,24 @@ cmd_cleanup() {
 	fi
 
 	# Show cleanup report
-	local now_epoch total_size_bytes stale_size_bytes stale_count
+	local now_epoch
 	now_epoch="$(date +%s)"
-	total_size_bytes=0
-	stale_size_bytes=0
-	stale_count=0
 
-	printf "%-40s %10s %12s %10s\n" "MODEL" "SIZE" "LAST USED" "STATUS"
-	printf "%-40s %10s %12s %10s\n" "-----" "----" "---------" "------"
+	local report_output
+	report_output="$(_cleanup_report_models "$models" "$threshold" "$now_epoch")"
+	echo "$report_output" | grep -v "^stale_"
 
-	while IFS= read -r model_path; do
-		local name size_bytes size_human last_used_str status_str days_unused
-		name="$(basename "$model_path")"
-
-		if [[ "$(uname -s)" == "Darwin" ]]; then
-			size_bytes="$(stat -f%z "$model_path" 2>/dev/null || echo "0")"
-		else
-			size_bytes="$(stat -c%s "$model_path" 2>/dev/null || echo "0")"
-		fi
-		total_size_bytes=$((total_size_bytes + size_bytes))
-
-		size_human="$(echo "$size_bytes" | awk '{
-			if ($1 >= 1073741824) printf "%.1f GB", $1/1073741824;
-			else printf "%.0f MB", $1/1048576;
-		}')"
-
-		# Check last used
-		days_unused="-"
-		last_used_str="-"
-		status_str="unknown"
-
-		if suppress_stderr command -v sqlite3 && [[ -f "$LOCAL_USAGE_DB" ]]; then
-			local db_last escaped_name_cl
-			escaped_name_cl="$(sql_escape "$name")"
-			db_last="$(sqlite3 "$LOCAL_USAGE_DB" "SELECT last_used FROM model_inventory WHERE model='${escaped_name_cl}' LIMIT 1;" 2>/dev/null || echo "")"
-			if [[ -n "$db_last" ]]; then
-				local last_epoch
-				last_epoch="$(date -j -f "%Y-%m-%d %H:%M:%S" "$db_last" +%s 2>/dev/null || date -d "$db_last" +%s 2>/dev/null || echo "0")"
-				if [[ "$last_epoch" -gt 0 ]]; then
-					days_unused="$(((now_epoch - last_epoch) / 86400))"
-					if [[ "$days_unused" -eq 0 ]]; then
-						last_used_str="today"
-					elif [[ "$days_unused" -eq 1 ]]; then
-						last_used_str="1d ago"
-					else
-						last_used_str="${days_unused}d ago"
-					fi
-				fi
-			fi
-		fi
-
-		# Fall back to file modification time if no DB entry
-		if [[ "$last_used_str" == "-" ]]; then
-			if [[ "$(uname -s)" == "Darwin" ]]; then
-				local mod_epoch
-				mod_epoch="$(stat -f%m "$model_path" 2>/dev/null || echo "0")"
-				if [[ "$mod_epoch" -gt 0 ]]; then
-					days_unused="$(((now_epoch - mod_epoch) / 86400))"
-					last_used_str="${days_unused}d ago (mtime)"
-				fi
-			else
-				local mod_epoch
-				mod_epoch="$(stat -c%Y "$model_path" 2>/dev/null || echo "0")"
-				if [[ "$mod_epoch" -gt 0 ]]; then
-					days_unused="$(((now_epoch - mod_epoch) / 86400))"
-					last_used_str="${days_unused}d ago (mtime)"
-				fi
-			fi
-		fi
-
-		if [[ "$days_unused" != "-" ]] && [[ "$days_unused" -gt "$threshold" ]]; then
-			status_str="stale (>${threshold}d)"
-			stale_size_bytes=$((stale_size_bytes + size_bytes))
-			stale_count=$((stale_count + 1))
-		else
-			status_str="active"
-		fi
-
-		printf "%-40s %10s %12s %10s\n" "$name" "$size_human" "$last_used_str" "$status_str"
-	done <<<"$models"
-
-	echo ""
-	local total_human stale_human
-	total_human="$(echo "$total_size_bytes" | awk '{printf "%.1f GB", $1/1073741824}')"
-	stale_human="$(echo "$stale_size_bytes" | awk '{printf "%.1f GB", $1/1073741824}')"
-	echo "Total: ${total_human} (${stale_human} stale)"
+	# Extract stale counts from report
+	local stale_count stale_size_bytes stale_human
+	stale_count="$(echo "$report_output" | grep "^stale_count=" | cut -d= -f2)"
+	stale_size_bytes="$(echo "$report_output" | grep "^stale_size_bytes=" | cut -d= -f2)"
+	stale_human="$(echo "$report_output" | grep "^stale_human=" | cut -d= -f2)"
 
 	if [[ "$stale_count" -gt 0 ]]; then
 		echo "Recommendation: Remove ${stale_count} stale model(s) to free ${stale_human}"
 		echo ""
 		if [[ "$remove_stale" == "true" ]]; then
-			print_info "Removing stale models..."
-			while IFS= read -r model_path; do
-				local name days_unused_check
-				name="$(basename "$model_path")"
-				days_unused_check=-1
-
-				if suppress_stderr command -v sqlite3 && [[ -f "$LOCAL_USAGE_DB" ]]; then
-					local db_last escaped_name_rm
-					escaped_name_rm="$(sql_escape "$name")"
-					db_last="$(sqlite3 "$LOCAL_USAGE_DB" "SELECT last_used FROM model_inventory WHERE model='${escaped_name_rm}' LIMIT 1;" 2>/dev/null || echo "")"
-					if [[ -n "$db_last" ]]; then
-						local last_epoch
-						last_epoch="$(date -j -f "%Y-%m-%d %H:%M:%S" "$db_last" +%s 2>/dev/null || date -d "$db_last" +%s 2>/dev/null || echo "0")"
-						if [[ "$last_epoch" -gt 0 ]]; then
-							days_unused_check="$(((now_epoch - last_epoch) / 86400))"
-						fi
-					fi
-				fi
-
-				# Fall back to mtime only when DB lookup returned no result
-				if [[ "$days_unused_check" -lt 0 ]]; then
-					if [[ "$(uname -s)" == "Darwin" ]]; then
-						local mod_epoch
-						mod_epoch="$(stat -f%m "$model_path" 2>/dev/null || echo "0")"
-						if [[ "$mod_epoch" -gt 0 ]]; then
-							days_unused_check="$(((now_epoch - mod_epoch) / 86400))"
-						fi
-					else
-						local mod_epoch
-						mod_epoch="$(stat -c%Y "$model_path" 2>/dev/null || echo "0")"
-						if [[ "$mod_epoch" -gt 0 ]]; then
-							days_unused_check="$(((now_epoch - mod_epoch) / 86400))"
-						fi
-					fi
-				fi
-
-				if [[ "$days_unused_check" -gt "$threshold" ]]; then
-					rm -f "$model_path"
-					print_success "Removed: ${name}"
-					if suppress_stderr command -v sqlite3 && [[ -f "$LOCAL_USAGE_DB" ]]; then
-						sqlite3 "$LOCAL_USAGE_DB" "DELETE FROM model_inventory WHERE model='$(sql_escape "$name")';" 2>/dev/null || true
-					fi
-				fi
-			done <<<"$models"
+			_cleanup_remove_stale "$models" "$threshold" "$now_epoch"
 		else
 			echo "Run: local-model-helper.sh cleanup --remove-stale"
 		fi
@@ -1998,6 +2198,44 @@ cmd_benchmark() {
 # Outputs a short message if cleanup is recommended, nothing otherwise.
 # Designed to be called from aidevops-update-check.sh or session init.
 
+# =============================================================================
+# Helper: Calculate stale models count and size
+# =============================================================================
+
+_nudge_calculate_stale() {
+	local models="$1"
+	local threshold="$2"
+	local now_epoch="$3"
+
+	local stale_size_bytes=0
+	local stale_count=0
+
+	while IFS= read -r model_path; do
+		local name size_bytes days_unused
+		name="$(basename "$model_path")"
+		days_unused="$(_get_days_unused "$model_path" "$now_epoch")"
+
+		if [[ "$(uname -s)" == "Darwin" ]]; then
+			size_bytes="$(stat -f%z "$model_path" 2>/dev/null || echo "0")"
+		else
+			size_bytes="$(stat -c%s "$model_path" 2>/dev/null || echo "0")"
+		fi
+
+		if [[ "$days_unused" -gt "$threshold" ]]; then
+			stale_size_bytes=$((stale_size_bytes + size_bytes))
+			stale_count=$((stale_count + 1))
+		fi
+	done <<<"$models"
+
+	echo "stale_count=$stale_count"
+	echo "stale_size_bytes=$stale_size_bytes"
+	return 0
+}
+
+# =============================================================================
+# Command: nudge
+# =============================================================================
+
 cmd_nudge() {
 	local json_output=false
 	local threshold="${STALE_THRESHOLD_DAYS}"
@@ -2022,7 +2260,7 @@ cmd_nudge() {
 		return 1
 	fi
 
-	# Quick exit if no models directory or no sqlite3
+	# Quick exit if no models directory
 	if [[ ! -d "$LOCAL_MODELS_STORE" ]]; then
 		return 0
 	fi
@@ -2031,58 +2269,16 @@ cmd_nudge() {
 	models="$(find "$LOCAL_MODELS_STORE" -name "*.gguf" -type f 2>/dev/null)"
 	[[ -z "$models" ]] && return 0
 
-	local now_epoch stale_size_bytes stale_count
+	local now_epoch
 	now_epoch="$(date +%s)"
-	stale_size_bytes=0
-	stale_count=0
 
-	while IFS= read -r model_path; do
-		local name size_bytes days_unused
-		name="$(basename "$model_path")"
-		days_unused=-1
-
-		if [[ "$(uname -s)" == "Darwin" ]]; then
-			size_bytes="$(stat -f%z "$model_path" 2>/dev/null || echo "0")"
-		else
-			size_bytes="$(stat -c%s "$model_path" 2>/dev/null || echo "0")"
-		fi
-
-		# Check last used from DB
-		if suppress_stderr command -v sqlite3 && [[ -f "$LOCAL_USAGE_DB" ]]; then
-			local db_last escaped_name_nudge
-			escaped_name_nudge="$(sql_escape "$name")"
-			db_last="$(sqlite3 "$LOCAL_USAGE_DB" "SELECT last_used FROM model_inventory WHERE model='${escaped_name_nudge}' LIMIT 1;" 2>/dev/null || echo "")"
-			if [[ -n "$db_last" ]]; then
-				local last_epoch
-				last_epoch="$(date -j -f "%Y-%m-%d %H:%M:%S" "$db_last" +%s 2>/dev/null || date -d "$db_last" +%s 2>/dev/null || echo "0")"
-				if [[ "$last_epoch" -gt 0 ]]; then
-					days_unused="$(((now_epoch - last_epoch) / 86400))"
-				fi
-			fi
-		fi
-
-		# Fall back to file modification time if DB lookup failed or returned no result
-		if [[ "$days_unused" -lt 0 ]]; then
-			if [[ "$(uname -s)" == "Darwin" ]]; then
-				local mod_epoch
-				mod_epoch="$(stat -f%m "$model_path" 2>/dev/null || echo "0")"
-				if [[ "$mod_epoch" -gt 0 ]]; then
-					days_unused="$(((now_epoch - mod_epoch) / 86400))"
-				fi
-			else
-				local mod_epoch
-				mod_epoch="$(stat -c%Y "$model_path" 2>/dev/null || echo "0")"
-				if [[ "$mod_epoch" -gt 0 ]]; then
-					days_unused="$(((now_epoch - mod_epoch) / 86400))"
-				fi
-			fi
-		fi
-
-		if [[ "$days_unused" -gt "$threshold" ]]; then
-			stale_size_bytes=$((stale_size_bytes + size_bytes))
-			stale_count=$((stale_count + 1))
-		fi
-	done <<<"$models"
+	# Calculate stale models
+	local stale_info
+	stale_info="$(_nudge_calculate_stale "$models" "$threshold" "$now_epoch")"
+	local stale_count
+	stale_count="$(echo "$stale_info" | grep "^stale_count=" | cut -d= -f2)"
+	local stale_size_bytes
+	stale_size_bytes="$(echo "$stale_info" | grep "^stale_size_bytes=" | cut -d= -f2)"
 
 	# Only nudge if stale models exceed threshold (default 5 GB)
 	if [[ "$stale_size_bytes" -gt "$STALE_NUDGE_THRESHOLD_BYTES" ]]; then
