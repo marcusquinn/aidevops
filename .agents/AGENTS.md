@@ -261,6 +261,14 @@ Worktrees: `wt switch -c {type}/{name}`. Keep the canonical repo directory on `m
 
 Full workflow: `workflows/git-workflow.md`, `reference/session.md`
 
+## Slash Command Resolution
+
+When a user invokes a slash command (`/runners`, `/full-loop`, `/routine`, etc.) or provides input that clearly maps to one, always read the canonical command doc at `scripts/commands/<command>.md` before executing. The on-disk doc is the source of truth — do not improvise from memory or inline text. User-provided workflow descriptions may be stale; use them as context but defer to the command doc for the current procedure.
+
+This also applies when the agent itself needs to perform an action that has a corresponding command (e.g., logging a framework issue → `/log-issue-aidevops`, not raw `framework-issue-helper.sh`). The command doc adds quality steps (diagnostics, duplicate checks, user confirmation) that direct helper invocation skips.
+
+If unsure which command maps to the user's intent, list available commands: `ls ~/.aidevops/agents/scripts/commands/`.
+
 ## Domain Index
 
 Read subagents on-demand. Full index: `subagent-index.toon`.

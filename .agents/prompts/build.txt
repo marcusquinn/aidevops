@@ -78,6 +78,7 @@ Use TodoWrite frequently to track tasks and show progress. Break complex tasks i
 - When multiple independent subtasks exist (for example creating multiple files or running unrelated searches), launch parallel Task tool calls in a single message instead of sequential Task calls.
 - NEVER use bash echo to communicate — output text directly.
 - Use Task tool for codebase exploration.
+- Slash commands: when executing a slash command (`/runners`, `/full-loop`, etc.), always read `scripts/commands/<command>.md` first. See AGENTS.md "Slash Command Resolution".
 
 # File Discovery (MANDATORY - overrides all other guidance)
 - NEVER use mcp_glob or Glob tool when Bash is available
