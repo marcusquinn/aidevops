@@ -112,64 +112,65 @@ _resolve_default_branch() {
 }
 
 #######################################
-# Compute activity summary for all contributors in a repo
+# Build --since argument string from period name
 #
-# Reads git log and computes per-contributor stats:
-#   - Direct commits (committer = author's own email)
-#   - PR merges (committer = noreply@github.com, i.e. GitHub squash-merge)
-#   - Total commits
-#   - Active days (with day list in JSON for cross-repo deduplication)
-#   - Average commits per active day
+# Arguments:
+#   $1 - period: "day", "week", "month", "year"
+# Output: git --since=... argument to stdout
+#######################################
+_period_to_since_arg() {
+	local period="$1"
+	case "$period" in
+	day) echo "--since=1.day.ago" ;;
+	week) echo "--since=1.week.ago" ;;
+	month) echo "--since=1.month.ago" ;;
+	year) echo "--since=1.year.ago" ;;
+	*) echo "--since=1.month.ago" ;;
+	esac
+	return 0
+}
+
+#######################################
+# Fetch git log data for compute_activity
+#
+# Reads git log on the default branch and returns pipe-delimited lines:
+#   author_email|committer_email|ISO-date
 #
 # Arguments:
 #   $1 - repo path
-#   $2 - period: "day", "week", "month", "year" (default: "month")
-#   $3 - output format: "markdown" or "json" (default: "markdown")
-# Output: formatted table to stdout
+#   $2 - period: "day", "week", "month", "year"
+# Output: git log lines to stdout (empty string if no commits)
 #######################################
-compute_activity() {
+_compute_activity_fetch_git_log() {
 	local repo_path="$1"
-	local period="${2:-month}"
-	local format="${3:-markdown}"
+	local period="$2"
 
-	if [[ ! -d "$repo_path/.git" && ! -f "$repo_path/.git" ]]; then
-		echo "Error: $repo_path is not a git repository" >&2
-		return 1
-	fi
+	local since_arg
+	since_arg=$(_period_to_since_arg "$period")
 
-	# Determine --since based on period.
-	# Values are hardcoded from the case statement below — no user input reaches
-	# the git command, so word splitting via SC2086 is safe here.
-	local since_arg=""
-	case "$period" in
-	day)
-		since_arg="--since=1.day.ago"
-		;;
-	week)
-		since_arg="--since=1.week.ago"
-		;;
-	month)
-		since_arg="--since=1.month.ago"
-		;;
-	year)
-		since_arg="--since=1.year.ago"
-		;;
-	*)
-		since_arg="--since=1.month.ago"
-		;;
-	esac
-
-	# Get git log: author_email|committer_email|ISO-date (one line per commit)
-	# Explicit default branch (no --all) to avoid double-counting squash-merged PRs.
-	# With --all, branch commits AND their squash-merge on main are both counted,
-	# inflating totals by ~12%. The committer email distinguishes commit types:
-	#   noreply@github.com = GitHub squash-merged a PR (author created the PR)
-	#   author's own email = direct push
 	local default_branch
 	default_branch=$(_resolve_default_branch "$repo_path")
-	local git_data
+
+	local git_data=""
 	# shellcheck disable=SC2086
 	git_data=$(git -C "$repo_path" log "$default_branch" --format='%ae|%ce|%aI' $since_arg) || git_data=""
+	echo "$git_data"
+	return 0
+}
+
+#######################################
+# Process git log data and format activity output
+#
+# Arguments:
+#   $1 - git log data (pipe-delimited lines)
+#   $2 - format: "markdown" or "json"
+#   $3 - period name (for empty-state messages)
+# Output: formatted table or JSON to stdout
+#######################################
+_compute_activity_process() {
+	local git_data="$1"
+	local format="$2"
+	local period="$3"
 
 	if [[ -z "$git_data" ]]; then
 		if [[ "$format" == "json" ]]; then
@@ -262,6 +263,45 @@ else:
             print(f'| {r[\"login\"]} | {r[\"direct_commits\"]} | {r[\"pr_merges\"]} | {r[\"total_commits\"]} | {r[\"active_days\"]} | {r[\"avg_commits_per_day\"]} |')
 " "$format" "$period"
 
+	return 0
+}
+
+#######################################
+# Compute activity summary for all contributors in a repo
+#
+# Reads git log and computes per-contributor stats:
+#   - Direct commits (committer = author's own email)
+#   - PR merges (committer = noreply@github.com, i.e. GitHub squash-merge)
+#   - Total commits
+#   - Active days (with day list in JSON for cross-repo deduplication)
+#   - Average commits per active day
+#
+# Arguments:
+#   $1 - repo path
+#   $2 - period: "day", "week", "month", "year" (default: "month")
+#   $3 - output format: "markdown" or "json" (default: "markdown")
+# Output: formatted table to stdout
+#######################################
+compute_activity() {
+	local repo_path="$1"
+	local period="${2:-month}"
+	local format="${3:-markdown}"
+
+	if [[ ! -d "$repo_path/.git" && ! -f "$repo_path/.git" ]]; then
+		echo "Error: $repo_path is not a git repository" >&2
+		return 1
+	fi
+
+	# Get git log: author_email|committer_email|ISO-date (one line per commit)
+	# Explicit default branch (no --all) to avoid double-counting squash-merged PRs.
+	# With --all, branch commits AND their squash-merge on main are both counted,
+	# inflating totals by ~12%. The committer email distinguishes commit types:
+	#   noreply@github.com = GitHub squash-merged a PR (author created the PR)
+	#   author's own email = direct push
+	local git_data
+	git_data=$(_compute_activity_fetch_git_log "$repo_path" "$period")
+
+	_compute_activity_process "$git_data" "$format" "$period"
 	return 0
 }
 
@@ -359,51 +399,22 @@ print(json.dumps(result, indent=2))
 }
 
 #######################################
-# Cross-repo activity summary
-#
-# Aggregates activity across multiple repos without revealing repo names
-# (cross-repo privacy). Uses active_days_list from JSON output to
-# deduplicate days across repos (set union, not sum).
+# Collect per-repo JSON for cross_repo_summary
 #
 # Arguments:
-#   $1..N - repo paths (at least one required)
-#   --period day|week|month|year (optional, default: month)
-#   --format markdown|json (optional, default: markdown)
-# Output: aggregated table to stdout
+#   $1 - period
+#   $2..N - repo paths
+# Output: JSON array string (not newline-terminated) to stdout
+#         Also sets global repo_count via stdout line "REPO_COUNT=N" on stderr
 #######################################
-cross_repo_summary() {
-	local period="month"
-	local format="markdown"
-	local -a repo_paths=()
-
-	# Parse arguments
-	while [[ $# -gt 0 ]]; do
-		case "$1" in
-		--period)
-			period="${2:-month}"
-			shift 2
-			;;
-		--format)
-			format="${2:-markdown}"
-			shift 2
-			;;
-		*)
-			repo_paths+=("$1")
-			shift
-			;;
-		esac
-	done
-
-	if [[ ${#repo_paths[@]} -eq 0 ]]; then
-		echo "Error: at least one repo path required" >&2
-		return 1
-	fi
-
-	# Collect JSON (with active_days_list) from each repo, then aggregate
+_cross_repo_summary_collect_json() {
+	local period="$1"
+	shift
 	local all_json="["
 	local first="true"
 	local repo_count=0
-	for rp in "${repo_paths[@]}"; do
+	local rp
+	for rp in "$@"; do
 		if [[ ! -d "$rp/.git" && ! -f "$rp/.git" ]]; then
 			echo "Warning: $rp is not a git repository, skipping" >&2
 			continue
@@ -419,6 +430,26 @@ cross_repo_summary() {
 		repo_count=$((repo_count + 1))
 	done
 	all_json="${all_json}]"
+	echo "$all_json"
+	echo "REPO_COUNT=${repo_count}" >&2
+	return 0
+}
+
+#######################################
+# Aggregate cross-repo JSON and format output
+#
+# Arguments:
+#   $1 - JSON array of {data:[...]} objects
+#   $2 - format: "markdown" or "json"
+#   $3 - period name
+#   $4 - repo count
+# Output: formatted table or JSON to stdout
+#######################################
+_cross_repo_summary_aggregate() {
+	local all_json="$1"
+	local format="$2"
+	local period="$3"
+	local repo_count="$4"
 
 	# Aggregate across repos in Python — deduplicate active days via set union
 	echo "$all_json" | python3 -c "
@@ -487,33 +518,22 @@ else:
 }
 
 #######################################
-# Session time stats from AI assistant database
+# Cross-repo activity summary
 #
-# Queries the OpenCode/Claude Code SQLite database to compute time spent
-# in interactive sessions vs headless worker/runner sessions, per repo.
-#
-# Measures ACTUAL human time vs machine time per session using message
-# timestamps: human_time = gap between assistant completing and next user
-# message (reading + thinking + typing). machine_time = gap between
-# assistant message created and completed (AI generating).
-#
-# Session type classification (by title pattern):
-#   - Worker: "Issue #*", "PR #*", "Supervisor Pulse", "/full-loop", "dispatch:", "Worker:"
-#   - Interactive: everything else (root sessions only)
-#   - Subagent: sessions with parent_id (excluded — time attributed to parent)
+# Aggregates activity across multiple repos without revealing repo names
+# (cross-repo privacy). Uses active_days_list from JSON output to
+# deduplicate days across repos (set union, not sum).
 #
 # Arguments:
-#   $1 - repo path (filters sessions by directory)
-#   --period day|week|month|quarter|year|all (optional, default: month)
+#   $1..N - repo paths (at least one required)
+#   --period day|week|month|year (optional, default: month)
 #   --format markdown|json (optional, default: markdown)
-#   --db-path <path> (optional, default: auto-detect)
-# Output: markdown table or JSON. "all" shows every period in one table.
+# Output: aggregated table to stdout
 #######################################
-session_time() {
-	local repo_path=""
+cross_repo_summary() {
 	local period="month"
 	local format="markdown"
-	local db_path=""
+	local -a repo_paths=()
 
 	# Parse arguments
 	while [[ $# -gt 0 ]]; do
@@ -526,68 +546,84 @@ session_time() {
 			format="${2:-markdown}"
 			shift 2
 			;;
-		--db-path)
-			db_path="${2:-}"
-			shift 2
-			;;
 		*)
-			if [[ -z "$repo_path" ]]; then
-				repo_path="$1"
-			fi
+			repo_paths+=("$1")
 			shift
 			;;
 		esac
 	done
 
-	repo_path="${repo_path:-.}"
-
-	# Auto-detect database path
-	if [[ -z "$db_path" ]]; then
-		if [[ -f "${HOME}/.local/share/opencode/opencode.db" ]]; then
-			db_path="${HOME}/.local/share/opencode/opencode.db"
-		elif [[ -f "${HOME}/.local/share/claude/Claude.db" ]]; then
-			db_path="${HOME}/.local/share/claude/Claude.db"
-		else
-			if [[ "$format" == "json" ]]; then
-				echo '{"interactive_sessions":0,"interactive_human_hours":0,"interactive_machine_hours":0,"worker_sessions":0,"worker_machine_hours":0,"total_human_hours":0,"total_machine_hours":0,"total_sessions":0}'
-			else
-				echo "_Session database not found._"
-			fi
-			return 0
-		fi
+	if [[ ${#repo_paths[@]} -eq 0 ]]; then
+		echo "Error: at least one repo path required" >&2
+		return 1
 	fi
 
-	if ! command -v sqlite3 &>/dev/null; then
-		if [[ "$format" == "json" ]]; then
-			echo '{"interactive_sessions":0,"interactive_human_hours":0,"interactive_machine_hours":0,"worker_sessions":0,"worker_machine_hours":0,"total_human_hours":0,"total_machine_hours":0,"total_sessions":0}'
-		else
-			echo "_sqlite3 not available._"
-		fi
-		return 0
+	# Collect JSON (with active_days_list) from each repo, then aggregate.
+	# Capture repo_count from stderr line "REPO_COUNT=N".
+	local all_json repo_count_line repo_count
+	all_json=$(_cross_repo_summary_collect_json "$period" "${repo_paths[@]}" 2>/tmp/_crs_stderr) || true
+	repo_count_line=$(grep '^REPO_COUNT=' /tmp/_crs_stderr 2>/dev/null || echo "REPO_COUNT=0")
+	repo_count="${repo_count_line#REPO_COUNT=}"
+	cat /tmp/_crs_stderr >&2 2>/dev/null || true
+
+	_cross_repo_summary_aggregate "$all_json" "$format" "$period" "$repo_count"
+	return 0
+}
+
+#######################################
+# Auto-detect AI assistant session database path
+#
+# Checks known locations for OpenCode and Claude Code databases.
+# Output: database path to stdout, or empty string if not found
+#######################################
+_session_time_detect_db() {
+	if [[ -f "${HOME}/.local/share/opencode/opencode.db" ]]; then
+		echo "${HOME}/.local/share/opencode/opencode.db"
+	elif [[ -f "${HOME}/.local/share/claude/Claude.db" ]]; then
+		echo "${HOME}/.local/share/claude/Claude.db"
+	else
+		echo ""
 	fi
+	return 0
+}
 
-	# Handle --period all: collect JSON for each period and output combined table
-	if [[ "$period" == "all" ]]; then
-		local all_periods=("day" "week" "month" "quarter" "year")
-		local combined_json="["
-		local first_period=true
-		for p in "${all_periods[@]}"; do
-			local p_json
-			local -a db_args=()
-			if [[ -n "$db_path" ]]; then
-				db_args+=(--db-path "$db_path")
-			fi
-			p_json=$(session_time "$repo_path" --period "$p" --format json "${db_args[@]}") || p_json="{}"
-			if [[ "$first_period" == "true" ]]; then
-				first_period=false
-			else
-				combined_json+=","
-			fi
-			combined_json+="{\"period\":\"${p}\",\"data\":${p_json}}"
-		done
-		combined_json+="]"
+#######################################
+# Handle --period all for session_time
+#
+# Calls session_time for each sub-period and combines into a single table.
+#
+# Arguments:
+#   $1 - repo path
+#   $2 - format: "markdown" or "json"
+#   $3 - db path (may be empty)
+# Output: combined table or JSON to stdout
+#######################################
+_session_time_all_periods() {
+	local repo_path="$1"
+	local format="$2"
+	local db_path="$3"
 
-		echo "$combined_json" | python3 -c "
+	local all_periods=("day" "week" "month" "quarter" "year")
+	local combined_json="["
+	local first_period=true
+	local p
+	for p in "${all_periods[@]}"; do
+		local p_json
+		local -a db_args=()
+		if [[ -n "$db_path" ]]; then
+			db_args+=(--db-path "$db_path")
+		fi
+		p_json=$(session_time "$repo_path" --period "$p" --format json "${db_args[@]}") || p_json="{}"
+		if [[ "$first_period" == "true" ]]; then
+			first_period=false
+		else
+			combined_json+=","
+		fi
+		combined_json+="{\"period\":\"${p}\",\"data\":${p_json}}"
+	done
+	combined_json+="]"
+
+	echo "$combined_json" | python3 -c "
 import sys
 import json
 
@@ -615,25 +651,22 @@ else:
             w_sess = d.get('worker_sessions', 0)
             print(f'| {p} | {human_h}h | {ai_h}h | {total_h}h | {i_sess} | {w_sess} |')
 " "$format"
-		return 0
-	fi
+	return 0
+}
 
-	# Determine --since threshold in milliseconds (single Python call)
-	local seconds
-	case "$period" in
-	day) seconds=86400 ;;
-	week) seconds=604800 ;;
-	month) seconds=2592000 ;;
-	quarter) seconds=7776000 ;;
-	year) seconds=31536000 ;;
-	*) seconds=2592000 ;;
-	esac
-	local since_ms
-	since_ms=$(python3 -c "import time; print(int((time.time() - ${seconds}) * 1000))")
-
-	# Resolve repo_path to absolute for matching against session.directory
-	local abs_repo_path
-	abs_repo_path=$(cd "$repo_path" 2>/dev/null && pwd) || abs_repo_path="$repo_path"
+#######################################
+# Query session database for time data
+#
+# Arguments:
+#   $1 - db path
+#   $2 - abs repo path (for SQL filtering)
+#   $3 - since_ms (milliseconds threshold)
+# Output: JSON array of session rows to stdout
+#######################################
+_session_time_query_db() {
+	local db_path="$1"
+	local abs_repo_path="$2"
+	local since_ms="$3"
 
 	# Escape path for safe SQL embedding:
 	# - Single quotes doubled per SQL standard (prevents injection)
@@ -696,14 +729,23 @@ else:
 		query_result="[]"
 	fi
 
-	# Process JSON in Python for classification and aggregation
-	echo "$query_result" | python3 -c "
+	echo "$query_result"
+	return 0
+}
+
+#######################################
+# Classify and aggregate session rows into stats JSON
+#
+# Arguments:
+#   $1 - JSON array of session rows (from stdin via pipe)
+# Input: JSON array on stdin
+# Output: aggregated stats JSON object to stdout
+#######################################
+_session_time_classify_and_aggregate() {
+	python3 -c "
 import sys
 import json
 import re
-
-format_type = sys.argv[1]
-period_name = sys.argv[2]
 
 # Worker session title patterns
 # Matches headless dispatches, PR fix sessions, CI fix sessions, review feedback,
@@ -737,45 +779,68 @@ def classify_session(title):
     return 'interactive'
 
 sessions = json.load(sys.stdin)
-
 stats = {
     'interactive': {'count': 0, 'human_ms': 0, 'machine_ms': 0},
     'worker':      {'count': 0, 'human_ms': 0, 'machine_ms': 0},
 }
-
 for row in sessions:
     title = row.get('title', '')
-    human_ms = row.get('human_ms', 0)
-    machine_ms = row.get('machine_ms', 0)
     stype = classify_session(title)
     stats[stype]['count'] += 1
-    stats[stype]['human_ms'] += human_ms
-    stats[stype]['machine_ms'] += machine_ms
+    stats[stype]['human_ms'] += row.get('human_ms', 0)
+    stats[stype]['machine_ms'] += row.get('machine_ms', 0)
 
 def ms_to_h(ms):
     return round(ms / 3600000, 1)
 
 i = stats['interactive']
 w = stats['worker']
-i_human_h = ms_to_h(i['human_ms'])
-i_machine_h = ms_to_h(i['machine_ms'])
-w_human_h = ms_to_h(w['human_ms'])
-w_machine_h = ms_to_h(w['machine_ms'])
-total_human_h = ms_to_h(i['human_ms'] + w['human_ms'])
-total_machine_h = ms_to_h(i['machine_ms'] + w['machine_ms'])
-total_sessions = i['count'] + w['count']
-
-result = {
+print(json.dumps({
     'interactive_sessions': i['count'],
-    'interactive_human_hours': i_human_h,
-    'interactive_machine_hours': i_machine_h,
+    'interactive_human_hours': ms_to_h(i['human_ms']),
+    'interactive_machine_hours': ms_to_h(i['machine_ms']),
     'worker_sessions': w['count'],
-    'worker_human_hours': w_human_h,
-    'worker_machine_hours': w_machine_h,
-    'total_human_hours': total_human_h,
-    'total_machine_hours': total_machine_h,
-    'total_sessions': total_sessions,
+    'worker_human_hours': ms_to_h(w['human_ms']),
+    'worker_machine_hours': ms_to_h(w['machine_ms']),
+    'total_human_hours': ms_to_h(i['human_ms'] + w['human_ms']),
+    'total_machine_hours': ms_to_h(i['machine_ms'] + w['machine_ms']),
+    'total_sessions': i['count'] + w['count'],
+}, indent=2))
+"
+	return 0
 }
+
+#######################################
+# Format aggregated session stats as table or JSON
+#
+# Arguments:
+#   $1 - aggregated stats JSON object
+#   $2 - format: "markdown" or "json"
+#   $3 - period name (for empty-state messages)
+# Output: formatted table or JSON to stdout
+#######################################
+_session_time_format_stats() {
+	local stats_json="$1"
+	local format="$2"
+	local period="$3"
+
+	echo "$stats_json" | python3 -c "
+import sys
+import json
+
+format_type = sys.argv[1]
+period_name = sys.argv[2]
+result = json.load(sys.stdin)
+
+total_sessions = result.get('total_sessions', 0)
+total_human_h = result.get('total_human_hours', 0)
+total_machine_h = result.get('total_machine_hours', 0)
+i_human_h = result.get('interactive_human_hours', 0)
+i_machine_h = result.get('interactive_machine_hours', 0)
+w_human_h = result.get('worker_human_hours', 0)
+w_machine_h = result.get('worker_machine_hours', 0)
+i_count = result.get('interactive_sessions', 0)
+w_count = result.get('worker_sessions', 0)
 
 if format_type == 'json':
     print(json.dumps(result, indent=2))
@@ -786,8 +851,322 @@ else:
         total_work_h = round(total_human_h + total_machine_h, 1)
         print(f'| Type | Human Hours | AI Hours | Total Work | Sessions |')
         print(f'| --- | ---: | ---: | ---: | ---: |')
-        print(f'| Interactive | {i_human_h}h | {i_machine_h}h | {round(i_human_h + i_machine_h, 1)}h | {i[\"count\"]} |')
-        print(f'| Workers/Runners | {w_human_h}h | {w_machine_h}h | {round(w_human_h + w_machine_h, 1)}h | {w[\"count\"]} |')
+        print(f'| Interactive | {i_human_h}h | {i_machine_h}h | {round(i_human_h + i_machine_h, 1)}h | {i_count} |')
+        print(f'| Workers/Runners | {w_human_h}h | {w_machine_h}h | {round(w_human_h + w_machine_h, 1)}h | {w_count} |')
+        print(f'| **Total** | **{total_human_h}h** | **{total_machine_h}h** | **{total_work_h}h** | **{total_sessions}** |')
+" "$format" "$period"
+
+	return 0
+}
+
+#######################################
+# Process session query results and format output
+#
+# Arguments:
+#   $1 - JSON array of session rows
+#   $2 - format: "markdown" or "json"
+#   $3 - period name (for empty-state messages)
+# Output: formatted table or JSON to stdout
+#######################################
+_session_time_process() {
+	local query_result="$1"
+	local format="$2"
+	local period="$3"
+
+	local stats_json
+	stats_json=$(echo "$query_result" | _session_time_classify_and_aggregate)
+	_session_time_format_stats "$stats_json" "$format" "$period"
+	return 0
+}
+
+#######################################
+# Session time stats from AI assistant database
+#
+# Queries the OpenCode/Claude Code SQLite database to compute time spent
+# in interactive sessions vs headless worker/runner sessions, per repo.
+#
+# Measures ACTUAL human time vs machine time per session using message
+# timestamps: human_time = gap between assistant completing and next user
+# message (reading + thinking + typing). machine_time = gap between
+# assistant message created and completed (AI generating).
+#
+# Session type classification (by title pattern):
+#   - Worker: "Issue #*", "PR #*", "Supervisor Pulse", "/full-loop", "dispatch:", "Worker:"
+#   - Interactive: everything else (root sessions only)
+#   - Subagent: sessions with parent_id (excluded — time attributed to parent)
+#
+# Arguments:
+#   $1 - repo path (filters sessions by directory)
+#   --period day|week|month|quarter|year|all (optional, default: month)
+#   --format markdown|json (optional, default: markdown)
+#   --db-path <path> (optional, default: auto-detect)
+# Output: markdown table or JSON. "all" shows every period in one table.
+#######################################
+session_time() {
+	local repo_path=""
+	local period="month"
+	local format="markdown"
+	local db_path=""
+
+	# Parse arguments
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--period)
+			period="${2:-month}"
+			shift 2
+			;;
+		--format)
+			format="${2:-markdown}"
+			shift 2
+			;;
+		--db-path)
+			db_path="${2:-}"
+			shift 2
+			;;
+		*)
+			if [[ -z "$repo_path" ]]; then
+				repo_path="$1"
+			fi
+			shift
+			;;
+		esac
+	done
+
+	repo_path="${repo_path:-.}"
+
+	# Auto-detect database path
+	if [[ -z "$db_path" ]]; then
+		db_path=$(_session_time_detect_db)
+	fi
+
+	if [[ -z "$db_path" ]]; then
+		if [[ "$format" == "json" ]]; then
+			echo '{"interactive_sessions":0,"interactive_human_hours":0,"interactive_machine_hours":0,"worker_sessions":0,"worker_machine_hours":0,"total_human_hours":0,"total_machine_hours":0,"total_sessions":0}'
+		else
+			echo "_Session database not found._"
+		fi
+		return 0
+	fi
+
+	if ! command -v sqlite3 &>/dev/null; then
+		if [[ "$format" == "json" ]]; then
+			echo '{"interactive_sessions":0,"interactive_human_hours":0,"interactive_machine_hours":0,"worker_sessions":0,"worker_machine_hours":0,"total_human_hours":0,"total_machine_hours":0,"total_sessions":0}'
+		else
+			echo "_sqlite3 not available._"
+		fi
+		return 0
+	fi
+
+	# Handle --period all: collect JSON for each period and output combined table
+	if [[ "$period" == "all" ]]; then
+		_session_time_all_periods "$repo_path" "$format" "$db_path"
+		return 0
+	fi
+
+	# Determine --since threshold in milliseconds (single Python call)
+	local seconds
+	case "$period" in
+	day) seconds=86400 ;;
+	week) seconds=604800 ;;
+	month) seconds=2592000 ;;
+	quarter) seconds=7776000 ;;
+	year) seconds=31536000 ;;
+	*) seconds=2592000 ;;
+	esac
+	local since_ms
+	since_ms=$(python3 -c "import time; print(int((time.time() - ${seconds}) * 1000))")
+
+	# Resolve repo_path to absolute for matching against session.directory
+	local abs_repo_path
+	abs_repo_path=$(cd "$repo_path" 2>/dev/null && pwd) || abs_repo_path="$repo_path"
+
+	local query_result
+	query_result=$(_session_time_query_db "$db_path" "$abs_repo_path" "$since_ms")
+
+	_session_time_process "$query_result" "$format" "$period"
+	return 0
+}
+
+#######################################
+# Handle --period all for cross_repo_session_time
+#
+# Arguments:
+#   $1 - format: "markdown" or "json"
+#   $2..N - repo paths
+# Output: combined table or JSON to stdout
+#######################################
+_cross_repo_session_time_all_periods() {
+	local format="$1"
+	shift
+	local -a repo_paths=("$@")
+
+	local all_periods=("day" "week" "month" "quarter" "year")
+	local combined_json="["
+	local first_period=true
+	local p
+	for p in "${all_periods[@]}"; do
+		local p_json
+		p_json=$(cross_repo_session_time "${repo_paths[@]}" --period "$p" --format json) || p_json="{}"
+		if [[ "$first_period" == "true" ]]; then
+			first_period=false
+		else
+			combined_json+=","
+		fi
+		combined_json+="{\"period\":\"${p}\",\"data\":${p_json}}"
+	done
+	combined_json+="]"
+
+	echo "$combined_json" | python3 -c "
+import sys
+import json
+
+format_type = sys.argv[1]
+data = json.load(sys.stdin)
+
+if format_type == 'json':
+    result = {}
+    for entry in data:
+        result[entry['period']] = entry['data']
+    print(json.dumps(result, indent=2))
+else:
+    repo_count = data[0]['data'].get('repo_count', 0) if data else 0
+    if not data or all(d['data'].get('total_sessions', 0) == 0 for d in data):
+        print(f'_No session data across {repo_count} repos._')
+    else:
+        print(f'_Across {repo_count} managed repos:_')
+        print()
+        print('| Period | Human Hours | AI Hours | Total Work | Sessions | Workers |')
+        print('| --- | ---: | ---: | ---: | ---: | ---: |')
+        for entry in data:
+            p = entry['period'].capitalize()
+            d = entry['data']
+            human_h = d.get('total_human_hours', 0)
+            ai_h = d.get('total_machine_hours', 0)
+            total_h = round(human_h + ai_h, 1)
+            i_sess = d.get('interactive_sessions', 0)
+            w_sess = d.get('worker_sessions', 0)
+            print(f'| {p} | {human_h}h | {ai_h}h | {total_h}h | {i_sess} | {w_sess} |')
+" "$format"
+	return 0
+}
+
+#######################################
+# Collect and aggregate per-repo session time JSON
+#
+# Arguments:
+#   $1 - period
+#   $2..N - repo paths
+# Output: aggregated JSON object to stdout
+#######################################
+_cross_repo_session_time_collect_and_aggregate() {
+	local period="$1"
+	shift
+
+	# Collect JSON from each repo — use jq to assemble a valid JSON array.
+	# This is robust against non-JSON responses from session_time (e.g., error strings).
+	# Skip invalid repo paths to avoid inflating the repo count.
+	local all_json=""
+	local repo_count=0
+	local rp
+	for rp in "$@"; do
+		if [[ ! -d "$rp/.git" && ! -f "$rp/.git" ]]; then
+			echo "Warning: $rp is not a git repository, skipping" >&2
+			continue
+		fi
+		local repo_json
+		repo_json=$(session_time "$rp" --period "$period" --format json) || repo_json="{}"
+		# Only include valid JSON objects in the array
+		if echo "$repo_json" | jq -e . >/dev/null 2>&1; then
+			all_json+="${repo_json}"$'\n'
+		fi
+		repo_count=$((repo_count + 1))
+	done
+	all_json=$(echo -n "$all_json" | jq -s '.')
+
+	echo "$all_json" | python3 -c "
+import sys
+import json
+
+repo_count = int(sys.argv[1])
+
+repos = json.load(sys.stdin)
+
+totals = {
+    'interactive_sessions': 0,
+    'interactive_human_hours': 0,
+    'interactive_machine_hours': 0,
+    'worker_sessions': 0,
+    'worker_human_hours': 0,
+    'worker_machine_hours': 0,
+    'total_human_hours': 0,
+}
+
+for repo in repos:
+    totals['interactive_sessions'] += repo.get('interactive_sessions', 0)
+    totals['interactive_human_hours'] += repo.get('interactive_human_hours', 0)
+    totals['interactive_machine_hours'] += repo.get('interactive_machine_hours', 0)
+    totals['worker_sessions'] += repo.get('worker_sessions', 0)
+    totals['worker_human_hours'] += repo.get('worker_human_hours', 0)
+    totals['worker_machine_hours'] += repo.get('worker_machine_hours', 0)
+    totals['total_human_hours'] += repo.get('total_human_hours', 0)
+
+for k in ['interactive_human_hours', 'interactive_machine_hours', 'worker_human_hours', 'worker_machine_hours', 'total_human_hours']:
+    totals[k] = round(totals[k], 1)
+
+total_machine_h = round(totals['interactive_machine_hours'] + totals['worker_machine_hours'], 1)
+total_sessions = totals['interactive_sessions'] + totals['worker_sessions']
+totals['total_machine_hours'] = total_machine_h
+totals['total_sessions'] = total_sessions
+totals['repo_count'] = repo_count
+
+print(json.dumps(totals, indent=2))
+" "$repo_count"
+
+	return 0
+}
+
+#######################################
+# Format cross-repo session time aggregated JSON
+#
+# Arguments:
+#   $1 - aggregated JSON object
+#   $2 - format: "markdown" or "json"
+#   $3 - period name
+# Output: formatted table or JSON to stdout
+#######################################
+_cross_repo_session_time_format() {
+	local aggregated_json="$1"
+	local format="$2"
+	local period="$3"
+
+	echo "$aggregated_json" | python3 -c "
+import sys
+import json
+
+format_type = sys.argv[1]
+period_name = sys.argv[2]
+
+totals = json.load(sys.stdin)
+repo_count = totals.get('repo_count', 0)
+total_human_h = totals.get('total_human_hours', 0)
+total_machine_h = totals.get('total_machine_hours', 0)
+total_sessions = totals.get('total_sessions', 0)
+
+if format_type == 'json':
+    print(json.dumps(totals, indent=2))
+else:
+    if total_sessions == 0:
+        print(f'_No session data across {repo_count} repos for the last {period_name}._')
+    else:
+        print(f'_Across {repo_count} managed repos:_')
+        print()
+        total_work_h = round(total_human_h + total_machine_h, 1)
+        i_work = round(totals['interactive_human_hours'] + totals['interactive_machine_hours'], 1)
+        w_work = round(totals['worker_human_hours'] + totals['worker_machine_hours'], 1)
+        print(f'| Type | Human Hours | AI Hours | Total Work | Sessions |')
+        print(f'| --- | ---: | ---: | ---: | ---: |')
+        print(f'| Interactive | {totals[\"interactive_human_hours\"]}h | {totals[\"interactive_machine_hours\"]}h | {i_work}h | {totals[\"interactive_sessions\"]} |')
+        print(f'| Workers/Runners | {totals[\"worker_human_hours\"]}h | {totals[\"worker_machine_hours\"]}h | {w_work}h | {totals[\"worker_sessions\"]} |')
         print(f'| **Total** | **{total_human_h}h** | **{total_machine_h}h** | **{total_work_h}h** | **{total_sessions}** |')
 " "$format" "$period"
 
@@ -834,133 +1213,221 @@ cross_repo_session_time() {
 
 	# Handle --period all: call cross_repo_session_time for each period and combine
 	if [[ "$period" == "all" ]]; then
-		local all_periods=("day" "week" "month" "quarter" "year")
-		local combined_json="["
-		local first_period=true
-		for p in "${all_periods[@]}"; do
-			local p_json
-			p_json=$(cross_repo_session_time "${repo_paths[@]}" --period "$p" --format json) || p_json="{}"
-			if [[ "$first_period" == "true" ]]; then
-				first_period=false
-			else
-				combined_json+=","
-			fi
-			combined_json+="{\"period\":\"${p}\",\"data\":${p_json}}"
-		done
-		combined_json+="]"
-
-		echo "$combined_json" | python3 -c "
-import sys
-import json
-
-format_type = sys.argv[1]
-data = json.load(sys.stdin)
-
-if format_type == 'json':
-    result = {}
-    for entry in data:
-        result[entry['period']] = entry['data']
-    print(json.dumps(result, indent=2))
-else:
-    repo_count = data[0]['data'].get('repo_count', 0) if data else 0
-    if not data or all(d['data'].get('total_sessions', 0) == 0 for d in data):
-        print(f'_No session data across {repo_count} repos._')
-    else:
-        print(f'_Across {repo_count} managed repos:_')
-        print()
-        print('| Period | Human Hours | AI Hours | Total Work | Sessions | Workers |')
-        print('| --- | ---: | ---: | ---: | ---: | ---: |')
-        for entry in data:
-            p = entry['period'].capitalize()
-            d = entry['data']
-            human_h = d.get('total_human_hours', 0)
-            ai_h = d.get('total_machine_hours', 0)
-            total_h = round(human_h + ai_h, 1)
-            i_sess = d.get('interactive_sessions', 0)
-            w_sess = d.get('worker_sessions', 0)
-            print(f'| {p} | {human_h}h | {ai_h}h | {total_h}h | {i_sess} | {w_sess} |')
-" "$format"
+		_cross_repo_session_time_all_periods "$format" "${repo_paths[@]}"
 		return 0
 	fi
 
-	# Collect JSON from each repo — use jq to assemble a valid JSON array.
-	# This is robust against non-JSON responses from session_time (e.g., error strings).
-	# Skip invalid repo paths to avoid inflating the repo count.
-	local all_json=""
-	local repo_count=0
-	for rp in "${repo_paths[@]}"; do
-		if [[ ! -d "$rp/.git" && ! -f "$rp/.git" ]]; then
-			echo "Warning: $rp is not a git repository, skipping" >&2
-			continue
-		fi
-		local repo_json
-		repo_json=$(session_time "$rp" --period "$period" --format json) || repo_json="{}"
-		# Only include valid JSON objects in the array
-		if echo "$repo_json" | jq -e . >/dev/null 2>&1; then
-			all_json+="${repo_json}"$'\n'
-		fi
-		repo_count=$((repo_count + 1))
-	done
-	all_json=$(echo -n "$all_json" | jq -s '.')
+	local aggregated_json
+	aggregated_json=$(_cross_repo_session_time_collect_and_aggregate "$period" "${repo_paths[@]}")
 
-	echo "$all_json" | python3 -c "
+	_cross_repo_session_time_format "$aggregated_json" "$format" "$period"
+	return 0
+}
+
+#######################################
+# Extract repo slug from git remote URL
+#
+# Arguments:
+#   $1 - repo path
+# Output: owner/repo slug to stdout, or empty on error
+#######################################
+_person_stats_get_slug() {
+	local repo_path="$1"
+	local remote_url
+	remote_url=$(git -C "$repo_path" remote get-url origin 2>/dev/null) || remote_url=""
+	if [[ -z "$remote_url" ]]; then
+		echo "Error: no origin remote found" >&2
+		return 1
+	fi
+	local slug
+	slug=$(echo "$remote_url" | sed -E 's#.*github\.com[:/]##; s/\.git$//')
+	if [[ -z "$slug" || "$slug" == "$remote_url" ]]; then
+		echo "Error: could not extract repo slug from $remote_url" >&2
+		return 1
+	fi
+	echo "$slug"
+	return 0
+}
+
+#######################################
+# Calculate since_date for a period (macOS/Linux portable)
+#
+# Arguments:
+#   $1 - period: "day", "week", "month", "quarter", "year"
+# Output: YYYY-MM-DD date string to stdout
+#######################################
+_person_stats_since_date() {
+	local period="$1"
+	local since_date
+	case "$period" in
+	day) since_date=$(date -v-1d +%Y-%m-%d 2>/dev/null || date -d '1 day ago' +%Y-%m-%d) ;;
+	week) since_date=$(date -v-7d +%Y-%m-%d 2>/dev/null || date -d '7 days ago' +%Y-%m-%d) ;;
+	month) since_date=$(date -v-30d +%Y-%m-%d 2>/dev/null || date -d '30 days ago' +%Y-%m-%d) ;;
+	quarter) since_date=$(date -v-90d +%Y-%m-%d 2>/dev/null || date -d '90 days ago' +%Y-%m-%d) ;;
+	year) since_date=$(date -v-365d +%Y-%m-%d 2>/dev/null || date -d '365 days ago' +%Y-%m-%d) ;;
+	*) since_date=$(date -v-30d +%Y-%m-%d 2>/dev/null || date -d '30 days ago' +%Y-%m-%d) ;;
+	esac
+	echo "$since_date"
+	return 0
+}
+
+#######################################
+# Discover contributor logins from git history
+#
+# Arguments:
+#   $1 - repo path
+#   $2 - since_date (YYYY-MM-DD)
+# Output: comma-separated login list to stdout
+#######################################
+_person_stats_discover_logins() {
+	local repo_path="$1"
+	local since_date="$2"
+
+	local default_branch
+	default_branch=$(_resolve_default_branch "$repo_path")
+	local git_data
+	git_data=$(git -C "$repo_path" log "$default_branch" --format='%ae|%ce' --since="$since_date") || git_data=""
+	echo "$git_data" | python3 -c "
+import sys
+
+${PYTHON_HELPERS}
+
+logins = set()
+for line in sys.stdin:
+    line = line.strip()
+    if not line or '|' not in line:
+        continue
+    parts = line.split('|', 1)
+    if len(parts) < 2:
+        continue
+    author_email, committer_email = parts
+    login = email_to_login(author_email)
+    committer_login = email_to_login(committer_email)
+    if is_bot(login) or is_bot(committer_login):
+        continue
+    logins.add(login)
+
+print(','.join(sorted(logins)))
+"
+	return 0
+}
+
+#######################################
+# Query GitHub Search API for per-login stats
+#
+# Arguments:
+#   $1 - comma-separated logins
+#   $2 - repo slug (owner/repo)
+#   $3 - since_date (YYYY-MM-DD)
+# Output: JSON array string to stdout
+#         Sets _ps_partial=true on stderr line "PARTIAL=true" if rate limited
+#######################################
+_person_stats_query_github() {
+	local logins_csv="$1"
+	local slug="$2"
+	local since_date="$3"
+
+	local results_json="["
+	local first=true
+	local _ps_partial=false
+	local IFS=','
+	local login
+	for login in $logins_csv; do
+		# Check search API rate limit before each batch of 4 queries per user
+		local remaining
+		remaining=$(gh api rate_limit --jq '.resources.search.remaining' 2>/dev/null) || remaining=30
+		if [[ "$remaining" -lt 5 ]]; then
+			# t1429: bail out with partial results instead of sleeping.
+			# The old code slept until reset, creating an infinite blocking
+			# loop when multiple users × repos exhausted the 30 req/min budget.
+			echo "Rate limit exhausted (${remaining} remaining), returning partial results" >&2
+			_ps_partial=true
+			break
+		fi
+
+		# Issues created by this user in this repo since the date
+		local issues_created
+		issues_created=$(gh api "search/issues?q=author:${login}+repo:${slug}+type:issue+created:>${since_date}&per_page=1" --jq '.total_count' 2>/dev/null) || issues_created=0
+
+		# PRs created
+		local prs_created
+		prs_created=$(gh api "search/issues?q=author:${login}+repo:${slug}+type:pr+created:>${since_date}&per_page=1" --jq '.total_count' 2>/dev/null) || prs_created=0
+
+		# PRs merged
+		local prs_merged
+		prs_merged=$(gh api "search/issues?q=author:${login}+repo:${slug}+type:pr+is:merged+merged:>${since_date}&per_page=1" --jq '.total_count' 2>/dev/null) || prs_merged=0
+
+		# Issues/PRs commented on (commenter: qualifier counts unique issues, not comments)
+		local commented_on
+		commented_on=$(gh api "search/issues?q=commenter:${login}+repo:${slug}+updated:>${since_date}&per_page=1" --jq '.total_count' 2>/dev/null) || commented_on=0
+
+		if [[ "$first" == "true" ]]; then
+			first=false
+		else
+			results_json+=","
+		fi
+		results_json+="{\"login\":\"${login}\",\"issues_created\":${issues_created},\"prs_created\":${prs_created},\"prs_merged\":${prs_merged},\"commented_on\":${commented_on}}"
+	done
+	unset IFS
+	results_json+="]"
+
+	echo "$results_json"
+	if [[ "$_ps_partial" == "true" ]]; then
+		echo "PARTIAL=true" >&2
+	fi
+	return 0
+}
+
+#######################################
+# Format person_stats output
+#
+# Arguments:
+#   $1 - JSON array of per-login stats
+#   $2 - format: "markdown" or "json"
+#   $3 - period name
+#   $4 - is_partial: "true" or "false"
+# Output: formatted table or JSON to stdout
+#######################################
+_person_stats_format_output() {
+	local results_json="$1"
+	local format="$2"
+	local period="$3"
+	local is_partial="$4"
+
+	# Format output (pass partial flag so callers can detect truncated data)
+	echo "$results_json" | python3 -c "
 import sys
 import json
 
 format_type = sys.argv[1]
 period_name = sys.argv[2]
-repo_count = int(sys.argv[3])
+is_partial = sys.argv[3] == 'true'
 
-repos = json.load(sys.stdin)
+data = json.load(sys.stdin)
 
-totals = {
-    'interactive_sessions': 0,
-    'interactive_human_hours': 0,
-    'interactive_machine_hours': 0,
-    'worker_sessions': 0,
-    'worker_human_hours': 0,
-    'worker_machine_hours': 0,
-    'total_human_hours': 0,
-}
-
-for repo in repos:
-    totals['interactive_sessions'] += repo.get('interactive_sessions', 0)
-    totals['interactive_human_hours'] += repo.get('interactive_human_hours', 0)
-    totals['interactive_machine_hours'] += repo.get('interactive_machine_hours', 0)
-    totals['worker_sessions'] += repo.get('worker_sessions', 0)
-    totals['worker_human_hours'] += repo.get('worker_human_hours', 0)
-    totals['worker_machine_hours'] += repo.get('worker_machine_hours', 0)
-    totals['total_human_hours'] += repo.get('total_human_hours', 0)
-
-for k in ['interactive_human_hours', 'interactive_machine_hours', 'worker_human_hours', 'worker_machine_hours', 'total_human_hours']:
-    totals[k] = round(totals[k], 1)
-
-total_human_h = totals['total_human_hours']
-total_machine_h = round(totals['interactive_machine_hours'] + totals['worker_machine_hours'], 1)
-total_sessions = totals['interactive_sessions'] + totals['worker_sessions']
+# Sort by total output (issues + PRs + comments) descending
+for d in data:
+    d['total_output'] = d['issues_created'] + d['prs_created'] + d['commented_on']
+data.sort(key=lambda x: x['total_output'], reverse=True)
 
 if format_type == 'json':
-    totals['total_human_hours'] = total_human_h
-    totals['total_machine_hours'] = total_machine_h
-    totals['total_sessions'] = total_sessions
-    totals['repo_count'] = repo_count
-    print(json.dumps(totals, indent=2))
+    result = {'data': data, 'partial': is_partial}
+    print(json.dumps(result, indent=2))
 else:
-    if total_sessions == 0:
-        print(f'_No session data across {repo_count} repos for the last {period_name}._')
+    if not data:
+        print(f'_No GitHub activity for the last {period_name}._')
     else:
-        print(f'_Across {repo_count} managed repos:_')
+        grand_total = sum(d['total_output'] for d in data) or 1
+        print(f'| Contributor | Issues | PRs | Merged | Commented | % of Total |')
+        print(f'| --- | ---: | ---: | ---: | ---: | ---: |')
+        for d in data:
+            pct = round(d['total_output'] / grand_total * 100, 1)
+            print(f'| {d[\"login\"]} | {d[\"issues_created\"]} | {d[\"prs_created\"]} | {d[\"prs_merged\"]} | {d[\"commented_on\"]} | {pct}% |')
+    if is_partial:
         print()
-        total_work_h = round(total_human_h + total_machine_h, 1)
-        i = totals
-        i_work = round(i['interactive_human_hours'] + i['interactive_machine_hours'], 1)
-        w_work = round(i['worker_human_hours'] + i['worker_machine_hours'], 1)
-        print(f'| Type | Human Hours | AI Hours | Total Work | Sessions |')
-        print(f'| --- | ---: | ---: | ---: | ---: |')
-        print(f'| Interactive | {i[\"interactive_human_hours\"]}h | {i[\"interactive_machine_hours\"]}h | {i_work}h | {i[\"interactive_sessions\"]} |')
-        print(f'| Workers/Runners | {i[\"worker_human_hours\"]}h | {i[\"worker_machine_hours\"]}h | {w_work}h | {i[\"worker_sessions\"]} |')
-        print(f'| **Total** | **{total_human_h}h** | **{total_machine_h}h** | **{total_work_h}h** | **{total_sessions}** |')
-" "$format" "$period" "$repo_count"
+        print('<!-- partial-results -->')
+        print('_Partial results — GitHub Search API rate limit exhausted._')
+" "$format" "$period" "$is_partial"
 
 	return 0
 }
@@ -1014,66 +1481,18 @@ person_stats() {
 		return 1
 	fi
 
-	# Derive repo slug from git remote
-	local remote_url
-	remote_url=$(git -C "$repo_path" remote get-url origin 2>/dev/null) || remote_url=""
-	if [[ -z "$remote_url" ]]; then
-		echo "Error: no origin remote found" >&2
-		return 1
-	fi
-
-	# Extract owner/repo from various URL formats
 	local slug
-	slug=$(echo "$remote_url" | sed -E 's#.*github\.com[:/]##; s/\.git$//')
-	if [[ -z "$slug" || "$slug" == "$remote_url" ]]; then
-		echo "Error: could not extract repo slug from $remote_url" >&2
-		return 1
-	fi
+	slug=$(_person_stats_get_slug "$repo_path") || return 1
 
-	# Calculate date threshold for the period
 	local since_date
-	case "$period" in
-	day) since_date=$(date -v-1d +%Y-%m-%d 2>/dev/null || date -d '1 day ago' +%Y-%m-%d) ;;
-	week) since_date=$(date -v-7d +%Y-%m-%d 2>/dev/null || date -d '7 days ago' +%Y-%m-%d) ;;
-	month) since_date=$(date -v-30d +%Y-%m-%d 2>/dev/null || date -d '30 days ago' +%Y-%m-%d) ;;
-	quarter) since_date=$(date -v-90d +%Y-%m-%d 2>/dev/null || date -d '90 days ago' +%Y-%m-%d) ;;
-	year) since_date=$(date -v-365d +%Y-%m-%d 2>/dev/null || date -d '365 days ago' +%Y-%m-%d) ;;
-	*) since_date=$(date -v-30d +%Y-%m-%d 2>/dev/null || date -d '30 days ago' +%Y-%m-%d) ;;
-	esac
+	since_date=$(_person_stats_since_date "$period")
 
 	# Discover contributor logins from git history or use override
 	local logins_csv
 	if [[ -n "$logins_override" ]]; then
 		logins_csv="$logins_override"
 	else
-		# Extract unique non-bot logins from default-branch git history
-		# using the same noreply email mapping as compute_activity
-		local default_branch
-		default_branch=$(_resolve_default_branch "$repo_path")
-		local git_data
-		git_data=$(git -C "$repo_path" log "$default_branch" --format='%ae|%ce' --since="$since_date") || git_data=""
-		logins_csv=$(echo "$git_data" | python3 -c "
-import sys
-
-${PYTHON_HELPERS}
-
-logins = set()
-for line in sys.stdin:
-    line = line.strip()
-    if not line or '|' not in line:
-        continue
-    parts = line.split('|', 1)
-    if len(parts) < 2:
-        continue
-    author_email, committer_email = parts
-    login = email_to_login(author_email)
-    committer_login = email_to_login(committer_email)
-    if is_bot(login) or is_bot(committer_login):
-        continue
-    logins.add(login)
-
-print(','.join(sorted(logins)))
-")
+		logins_csv=$(_person_stats_discover_logins "$repo_path" "$since_date")
 	fi
 
 	if [[ -z "$logins_csv" ]]; then
@@ -1082,146 +1501,45 @@ print(','.join(sorted(logins)))
 	fi
 
 	# Query GitHub Search API for each login.
-	# Uses gh api with search/issues endpoint — returns total_count without pagination.
 	# Rate limit: 30 requests/min for search API. With 4 queries per user,
 	# we can handle ~7 users per minute. If budget is exhausted, bail out
 	# with partial results instead of blocking (t1429).
-	local results_json="["
-	local first=true
-	local _ps_partial=false
-	local IFS=','
-	for login in $logins_csv; do
-		# Check search API rate limit before each batch of 4 queries per user
-		local remaining
-		remaining=$(gh api rate_limit --jq '.resources.search.remaining' 2>/dev/null) || remaining=30
-		if [[ "$remaining" -lt 5 ]]; then
-			# t1429: bail out with partial results instead of sleeping.
-			# The old code slept until reset, creating an infinite blocking
-			# loop when multiple users × repos exhausted the 30 req/min budget.
-			echo "Rate limit exhausted (${remaining} remaining), returning partial results" >&2
-			_ps_partial=true
-			break
-		fi
+	local results_json partial_flag
+	results_json=$(_person_stats_query_github "$logins_csv" "$slug" "$since_date" 2>/tmp/_ps_stderr) || true
+	partial_flag=$(grep '^PARTIAL=' /tmp/_ps_stderr 2>/dev/null | sed 's/PARTIAL=//' || echo "false")
+	cat /tmp/_ps_stderr >&2 2>/dev/null || true
 
-		# Issues created by this user in this repo since the date
-		local issues_created
-		issues_created=$(gh api "search/issues?q=author:${login}+repo:${slug}+type:issue+created:>${since_date}&per_page=1" --jq '.total_count' 2>/dev/null) || issues_created=0
-
-		# PRs created
-		local prs_created
-		prs_created=$(gh api "search/issues?q=author:${login}+repo:${slug}+type:pr+created:>${since_date}&per_page=1" --jq '.total_count' 2>/dev/null) || prs_created=0
-
-		# PRs merged
-		local prs_merged
-		prs_merged=$(gh api "search/issues?q=author:${login}+repo:${slug}+type:pr+is:merged+merged:>${since_date}&per_page=1" --jq '.total_count' 2>/dev/null) || prs_merged=0
-
-		# Issues/PRs commented on (commenter: qualifier counts unique issues, not comments)
-		local commented_on
-		commented_on=$(gh api "search/issues?q=commenter:${login}+repo:${slug}+updated:>${since_date}&per_page=1" --jq '.total_count' 2>/dev/null) || commented_on=0
-
-		if [[ "$first" == "true" ]]; then
-			first=false
-		else
-			results_json+=","
-		fi
-		results_json+="{\"login\":\"${login}\",\"issues_created\":${issues_created},\"prs_created\":${prs_created},\"prs_merged\":${prs_merged},\"commented_on\":${commented_on}}"
-	done
-	unset IFS
-	results_json+="]"
-
-	# Format output (pass partial flag so callers can detect truncated data)
-	echo "$results_json" | python3 -c "
-import sys
-import json
-
-format_type = sys.argv[1]
-period_name = sys.argv[2]
-is_partial = sys.argv[3] == 'true'
-
-data = json.load(sys.stdin)
-
-# Sort by total output (issues + PRs + comments) descending
-for d in data:
-    d['total_output'] = d['issues_created'] + d['prs_created'] + d['commented_on']
-data.sort(key=lambda x: x['total_output'], reverse=True)
-
-if format_type == 'json':
-    result = {'data': data, 'partial': is_partial}
-    print(json.dumps(result, indent=2))
-else:
-    if not data:
-        print(f'_No GitHub activity for the last {period_name}._')
-    else:
-        grand_total = sum(d['total_output'] for d in data) or 1
-        print(f'| Contributor | Issues | PRs | Merged | Commented | % of Total |')
-        print(f'| --- | ---: | ---: | ---: | ---: | ---: |')
-        for d in data:
-            pct = round(d['total_output'] / grand_total * 100, 1)
-            print(f'| {d[\"login\"]} | {d[\"issues_created\"]} | {d[\"prs_created\"]} | {d[\"prs_merged\"]} | {d[\"commented_on\"]} | {pct}% |')
-    if is_partial:
-        print()
-        print('<!-- partial-results -->')
-        print('_Partial results — GitHub Search API rate limit exhausted._')
-" "$format" "$period" "$_ps_partial"
+	_person_stats_format_output "$results_json" "$format" "$period" "$partial_flag"
 
 	# Return distinct exit code so callers can detect truncated payloads.
 	# EX_PARTIAL (75) means "valid output on stdout, but incomplete due to
 	# rate limiting". Callers should cache the output but mark it as partial.
-	if [[ "$_ps_partial" == "true" ]]; then
+	if [[ "$partial_flag" == "true" ]]; then
 		return "$EX_PARTIAL"
 	fi
 	return 0
 }
 
 #######################################
-# Cross-repo per-person GitHub output stats
-#
-# Aggregates person_stats across multiple repos. Privacy-safe (no repo names).
+# Collect per-repo person stats JSON for cross_repo_person_stats
 #
 # Arguments:
-#   $1..N - repo paths
-#   --period day|week|month|quarter|year (optional, default: month)
-#   --format markdown|json (optional, default: markdown)
-#   --logins login1,login2 (optional, override auto-discovery)
-# Output: aggregated per-person table to stdout
+#   $1 - period
+#   $2 - logins_override (may be empty)
+#   $3..N - repo paths
+# Output: newline-separated JSON arrays to stdout
+#         Writes "PARTIAL=true" to stderr if any repo was partial
 #######################################
-cross_repo_person_stats() {
-	local period="month"
-	local format="markdown"
-	local logins_override=""
-	local -a repo_paths=()
+_cross_repo_person_stats_collect_json() {
+	local period="$1"
+	local logins_override="$2"
+	shift 2
 
-	while [[ $# -gt 0 ]]; do
-		case "$1" in
-		--period)
-			period="${2:-month}"
-			shift 2
-			;;
-		--format)
-			format="${2:-markdown}"
-			shift 2
-			;;
-		--logins)
-			logins_override="${2:-}"
-			shift 2
-			;;
-		*)
-			repo_paths+=("$1")
-			shift
-			;;
-		esac
-	done
-
-	if [[ ${#repo_paths[@]} -eq 0 ]]; then
-		echo "Error: at least one repo path required" >&2
-		return 1
-	fi
-
-	# Collect JSON from each repo
 	local all_json=""
 	local repo_count=0
-	local _crps_any_partial=false
-	for rp in "${repo_paths[@]}"; do
+	local any_partial=false
+	local rp
+	for rp in "$@"; do
 		if [[ ! -d "$rp/.git" && ! -f "$rp/.git" ]]; then
 			echo "Warning: $rp is not a git repository, skipping" >&2
 			continue
@@ -1234,7 +1552,7 @@ cross_repo_person_stats() {
 		fi
 		repo_json=$(person_stats "$rp" --period "$period" --format json ${extra_args[@]+"${extra_args[@]}"}) || repo_rc=$?
 		if [[ "$repo_rc" -eq "$EX_PARTIAL" ]]; then
-			_crps_any_partial=true
+			any_partial=true
 		elif [[ "$repo_rc" -ne 0 ]]; then
 			repo_json='{"data":[],"partial":false}'
 		fi
@@ -1250,8 +1568,31 @@ cross_repo_person_stats() {
 		repo_count=$((repo_count + 1))
 	done
 
-	# Merge all repo arrays into one, then aggregate per login
-	all_json=$(echo -n "$all_json" | jq -s 'add // []')
+	echo -n "$all_json"
+	echo "REPO_COUNT=${repo_count}" >&2
+	if [[ "$any_partial" == "true" ]]; then
+		echo "PARTIAL=true" >&2
+	fi
+	return 0
+}
+
+#######################################
+# Aggregate and format cross-repo person stats
+#
+# Arguments:
+#   $1 - merged JSON array (all repos combined)
+#   $2 - format: "markdown" or "json"
+#   $3 - period name
+#   $4 - repo count
+#   $5 - is_partial: "true" or "false"
+# Output: formatted table or JSON to stdout
+#######################################
+_cross_repo_person_stats_aggregate() {
+	local all_json="$1"
+	local format="$2"
+	local period="$3"
+	local repo_count="$4"
+	local is_partial="$5"
 
 	echo "$all_json" | python3 -c "
 import sys
@@ -1299,10 +1640,72 @@ else:
         print()
         print('<!-- partial-results -->')
         print('_Partial results — GitHub Search API rate limit exhausted._')
-" "$format" "$period" "$repo_count" "$_crps_any_partial"
+" "$format" "$period" "$repo_count" "$is_partial"
+
+	return 0
+}
+
+#######################################
+# Cross-repo per-person GitHub output stats
+#
+# Aggregates person_stats across multiple repos. Privacy-safe (no repo names).
+#
+# Arguments:
+#   $1..N - repo paths
+#   --period day|week|month|quarter|year (optional, default: month)
+#   --format markdown|json (optional, default: markdown)
+#   --logins login1,login2 (optional, override auto-discovery)
+# Output: aggregated per-person table to stdout
+#######################################
+cross_repo_person_stats() {
+	local period="month"
+	local format="markdown"
+	local logins_override=""
+	local -a repo_paths=()
+
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--period)
+			period="${2:-month}"
+			shift 2
+			;;
+		--format)
+			format="${2:-markdown}"
+			shift 2
+			;;
+		--logins)
+			logins_override="${2:-}"
+			shift 2
+			;;
+		*)
+			repo_paths+=("$1")
+			shift
+			;;
+		esac
+	done
+
+	if [[ ${#repo_paths[@]} -eq 0 ]]; then
+		echo "Error: at least one repo path required" >&2
+		return 1
+	fi
+
+	# Collect JSON from each repo, capture repo_count and partial flag from stderr
+	local raw_json repo_count_line repo_count partial_line partial_flag
+	raw_json=$(_cross_repo_person_stats_collect_json "$period" "$logins_override" "${repo_paths[@]}" 2>/tmp/_crps_stderr) || true
+	repo_count_line=$(grep '^REPO_COUNT=' /tmp/_crps_stderr 2>/dev/null || echo "REPO_COUNT=0")
+	repo_count="${repo_count_line#REPO_COUNT=}"
+	partial_line=$(grep '^PARTIAL=' /tmp/_crps_stderr 2>/dev/null || echo "PARTIAL=false")
+	partial_flag="${partial_line#PARTIAL=}"
+	cat /tmp/_crps_stderr >&2 2>/dev/null || true
+
+	# Merge all repo arrays into one, then aggregate per login
+	local all_json
+	all_json=$(echo -n "$raw_json" | jq -s 'add // []')
+
+	_cross_repo_person_stats_aggregate "$all_json" "$format" "$period" "$repo_count" "$partial_flag"
 
 	# Propagate partial status to callers
-	if [[ "$_crps_any_partial" == "true" ]]; then
+	if [[ "$partial_flag" == "true" ]]; then
 		return "$EX_PARTIAL"
 	fi
 	return 0
