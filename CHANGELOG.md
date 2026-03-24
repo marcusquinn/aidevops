@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.1.89] - 2026-03-24
+
+### Changed
+
+- Refactor: disable proactive refresh, keep as commented-out option (#5613)
+
 ## [3.1.88] - 2026-03-24
 
 ### Fixed
