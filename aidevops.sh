@@ -663,365 +663,168 @@ cmd_status() {
 	echo ""
 }
 
+# Update helpers (extracted for complexity reduction)
+
+_update_sync_projects() {
+	local skip="$1" current_ver="$2"
+	echo ""; print_header "Syncing Initialized Projects"
+	if [[ "$skip" == "true" ]]; then print_info "Project sync skipped (--skip-project-sync)"; return 0; fi
+	local repos_needing_upgrade=()
+	while IFS= read -r repo_path; do
+		[[ -z "$repo_path" ]] && continue
+		[[ -d "$repo_path" ]] && check_repo_needs_upgrade "$repo_path" && repos_needing_upgrade+=("$repo_path")
+	done < <(get_registered_repos)
+	if [[ ${#repos_needing_upgrade[@]} -eq 0 ]]; then print_success "All registered projects are up to date"; return 0; fi
+	local synced=0 skipped=0 failed=0
+	for repo in "${repos_needing_upgrade[@]}"; do
+		[[ ! -f "$repo/.aidevops.json" ]] && { skipped=$((skipped + 1)); continue; }
+		local did_sync=false
+		if command -v jq &>/dev/null; then
+			local temp_file="${repo}/.aidevops.json.tmp"
+			if jq --arg version "$current_ver" '.version = $version' "$repo/.aidevops.json" >"$temp_file" 2>/dev/null && [[ -s "$temp_file" ]]; then
+				mv "$temp_file" "$repo/.aidevops.json"
+				local features; features=$(jq -r '[.features | to_entries[] | select(.value == true) | .key] | join(",")' "$repo/.aidevops.json" 2>/dev/null || echo "")
+				register_repo "$repo" "$current_ver" "$features"; did_sync=true
+			else rm -f "$temp_file"; fi
+		fi
+		if [[ "$did_sync" != "true" ]]; then
+			sed -i '' "s/\"version\": *\"[^\"]*\"/\"version\": \"$current_ver\"/" "$repo/.aidevops.json" 2>/dev/null && did_sync=true
+		fi
+		[[ "$did_sync" == "true" ]] && synced=$((synced + 1)) || failed=$((failed + 1))
+	done
+	[[ $synced -gt 0 ]] && print_success "Synced $synced project(s) to v$current_ver"
+	[[ $skipped -gt 0 ]] && print_info "Skipped $skipped uninitialized project(s) (run 'aidevops init' in each to enable)"
+	[[ $failed -gt 0 ]] && print_warning "$failed project(s) failed to sync (jq missing or write error)"
+	return 0
+}
+
+_update_check_planning() {
+	echo ""; print_header "Checking Planning Templates"
+	local repos_needing_planning=()
+	while IFS= read -r repo_path; do
+		[[ -z "$repo_path" || ! -d "$repo_path" ]] && continue
+		if [[ -f "$repo_path/.aidevops.json" ]]; then
+			local has_planning; has_planning=$(grep -o '"planning": *true' "$repo_path/.aidevops.json" 2>/dev/null || true)
+			[[ -n "$has_planning" ]] && check_planning_needs_upgrade "$repo_path" && repos_needing_planning+=("$repo_path")
+		fi
+	done < <(get_registered_repos)
+	if [[ ${#repos_needing_planning[@]} -eq 0 ]]; then print_success "All planning templates are up to date"; return 0; fi
+	echo ""; print_warning "${#repos_needing_planning[@]} project(s) have outdated planning templates:"
+	for repo in "${repos_needing_planning[@]}"; do
+		local repo_name; repo_name=$(basename "$repo")
+		local todo_ver; todo_ver=$(grep -A1 "TOON:meta" "$repo/TODO.md" 2>/dev/null | tail -1 | cut -d',' -f1)
+		echo "  - $repo_name (v${todo_ver:-none})"
+	done
+	local template_ver; template_ver=$(grep -A1 "TOON:meta" "$AGENTS_DIR/templates/todo-template.md" 2>/dev/null | tail -1 | cut -d',' -f1)
+	echo ""; echo "  Latest template: v${template_ver} (adds risk field, active session time estimates)"; echo ""
+	read -r -p "Upgrade planning templates in these projects? [y/N] " response
+	if [[ "$response" =~ ^[Yy]$ ]]; then
+		for repo in "${repos_needing_planning[@]}"; do
+			print_info "Upgrading $(basename "$repo")..."
+			(cd "$repo" && cmd_upgrade_planning --force) || print_warning "Failed to upgrade $(basename "$repo")"
+		done
+	else print_info "Run 'aidevops upgrade-planning' in each project to upgrade manually"; fi
+	return 0
+}
+
+_update_check_tools() {
+	echo ""; print_header "Checking Key Tools"
+	local tool_check_script="$AGENTS_DIR/scripts/tool-version-check.sh"
+	if [[ ! -f "$tool_check_script" ]]; then print_info "Tool version check not available (run setup first)"; return 0; fi
+	local stale_count=0 stale_tools=""
+	local key_tool_cmds="opencode gh"; local key_tool_pkgs="opencode-ai brew:gh"
+	local idx=0
+	for cmd_name in $key_tool_cmds; do
+		local pkg_ref; pkg_ref=$(echo "$key_tool_pkgs" | cut -d' ' -f$((idx + 1))); idx=$((idx + 1))
+		local installed="" latest=""
+		command -v "$cmd_name" &>/dev/null || continue
+		installed=$("$cmd_name" --version 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+		[[ -z "$installed" ]] && continue
+		if [[ "$pkg_ref" == brew:* ]]; then
+			local brew_pkg="${pkg_ref#brew:}"; local brew_bin=""; brew_bin=$(command -v brew 2>/dev/null || true)
+			if [[ -n "$brew_bin" && -x "$brew_bin" ]]; then
+				latest=$(_timeout_cmd 30 "$brew_bin" info --json=v2 "$brew_pkg" | jq -r '.formulae[0].versions.stable // empty' || true)
+			elif [[ "$brew_pkg" == "gh" ]] && command -v gh &>/dev/null; then latest=$(get_public_release_tag "cli/cli"); fi
+		else latest=$(_timeout_cmd 30 npm view "$pkg_ref" version || true); fi
+		[[ -z "$latest" ]] && continue
+		[[ "$installed" != "$latest" ]] && { stale_tools="${stale_tools:+$stale_tools, }$cmd_name ($installed -> $latest)"; ((++stale_count)); }
+	done
+	if [[ "$stale_count" -eq 0 ]]; then print_success "Key tools are up to date"
+	else
+		print_warning "$stale_count tool(s) have updates: $stale_tools"; echo ""
+		read -r -p "Run full tool update check? [y/N] " response
+		[[ "$response" =~ ^[Yy]$ ]] && bash "$tool_check_script" --update || print_info "Run 'aidevops update-tools --update' to update later"
+	fi
+	return 0
+}
+
 # Update/upgrade command
 cmd_update() {
 	local skip_project_sync=false
-	local arg
-	for arg in "$@"; do
-		case "$arg" in
-		--skip-project-sync) skip_project_sync=true ;;
-		esac
-	done
-
-	print_header "Updating AI DevOps Framework"
-	echo ""
-
-	local current_version
-	current_version=$(get_version)
-
-	print_info "Current version: $current_version"
-	print_info "Fetching latest version..."
+	local arg; for arg in "$@"; do case "$arg" in --skip-project-sync) skip_project_sync=true ;; esac; done
+	print_header "Updating AI DevOps Framework"; echo ""
+	local current_version; current_version=$(get_version)
+	print_info "Current version: $current_version"; print_info "Fetching latest version..."
 
 	if check_dir "$INSTALL_DIR/.git"; then
 		cd "$INSTALL_DIR" || exit 1
-
-		# Ensure we're on the main branch (detached HEAD or stale branch blocks pull)
-		local current_branch
-		current_branch=$(git branch --show-current 2>/dev/null || echo "")
-		if [[ "$current_branch" != "main" ]]; then
-			print_info "Switching to main branch..."
-			git checkout main --quiet 2>/dev/null || git checkout -b main origin/main --quiet 2>/dev/null || true
-		fi
-
-		# Clean up any working tree changes left by a previous update
-		# (e.g. chmod on tracked scripts, scan results written to repo)
-		# This ensures git pull --ff-only won't be blocked.
-		# Handles both staged and unstaged changes.
-		# See: https://github.com/marcusquinn/aidevops/issues/2286
+		local current_branch; current_branch=$(git branch --show-current 2>/dev/null || echo "")
+		[[ "$current_branch" != "main" ]] && { print_info "Switching to main branch..."; git checkout main --quiet 2>/dev/null || git checkout -b main origin/main --quiet 2>/dev/null || true; }
 		if ! git diff --quiet 2>/dev/null || ! git diff --cached --quiet 2>/dev/null; then
-			print_info "Cleaning up stale working tree changes..."
-			git reset HEAD -- . 2>/dev/null || true
-			git checkout -- . 2>/dev/null || true
+			print_info "Cleaning up stale working tree changes..."; git reset HEAD -- . 2>/dev/null || true; git checkout -- . 2>/dev/null || true
 		fi
-
-		# Fetch latest from origin (include tags for version consistency)
 		git fetch origin main --tags --quiet
-
-		local local_hash
-		local_hash=$(git rev-parse HEAD)
-		local remote_hash
-		remote_hash=$(git rev-parse origin/main)
-
+		local local_hash; local_hash=$(git rev-parse HEAD); local remote_hash; remote_hash=$(git rev-parse origin/main)
 		if [[ "$local_hash" == "$remote_hash" ]]; then
 			print_success "Framework already up to date!"
-
-			# Even when repo is current, deployed agents may be stale
-			# (e.g., previous setup.sh was interrupted or failed)
 			local repo_version deployed_version
-			repo_version=$(cat "$INSTALL_DIR/VERSION" 2>/dev/null || echo "unknown")
-			deployed_version=$(cat "$HOME/.aidevops/agents/VERSION" 2>/dev/null || echo "none")
+			repo_version=$(cat "$INSTALL_DIR/VERSION" 2>/dev/null || echo "unknown"); deployed_version=$(cat "$HOME/.aidevops/agents/VERSION" 2>/dev/null || echo "none")
 			if [[ "$repo_version" != "$deployed_version" ]]; then
-				print_warning "Deployed agents ($deployed_version) don't match repo ($repo_version)"
-				print_info "Re-running setup to sync agents..."
+				print_warning "Deployed agents ($deployed_version) don't match repo ($repo_version)"; print_info "Re-running setup to sync agents..."
 				bash "$INSTALL_DIR/setup.sh" --non-interactive
 			fi
-
-			# Safety net: discard any working tree changes setup.sh may have introduced
-			# (e.g. chmod on tracked scripts, scan results written to repo)
-			# See: https://github.com/marcusquinn/aidevops/issues/2286
 			git checkout -- . 2>/dev/null || true
 		else
-			print_info "Pulling latest changes..."
-			local old_hash
-			old_hash=$(git rev-parse HEAD)
-
-			if git pull --ff-only origin main --quiet; then
-				: # fast-forward succeeded
+			print_info "Pulling latest changes..."; local old_hash; old_hash=$(git rev-parse HEAD)
+			if git pull --ff-only origin main --quiet; then :
 			else
-				# Fast-forward failed (dirty tree, diverged history, or other issue).
-				# Since we just fetched origin/main, reset to it — the repo is managed
-				# by aidevops and should always track origin/main exactly.
-				# See: https://github.com/marcusquinn/aidevops/issues/2288
 				print_warning "Fast-forward pull failed — resetting to origin/main..."
-				git reset --hard origin/main --quiet 2>/dev/null || {
-					print_error "Failed to reset to origin/main"
-					print_info "Try: cd $INSTALL_DIR && git fetch origin && git reset --hard origin/main"
-					return 1
-				}
+				git reset --hard origin/main --quiet 2>/dev/null || { print_error "Failed to reset to origin/main"; print_info "Try: cd $INSTALL_DIR && git fetch origin && git reset --hard origin/main"; return 1; }
 			fi
-
-			local new_version new_hash
-			new_version=$(get_version)
-			new_hash=$(git rev-parse HEAD)
-
-			# Print bounded summary of meaningful changes
+			local new_version new_hash; new_version=$(get_version); new_hash=$(git rev-parse HEAD)
 			if [[ "$old_hash" != "$new_hash" ]]; then
-				local total_commits
-				total_commits=$(git rev-list --count "$old_hash..$new_hash" 2>/dev/null || echo "0")
+				local total_commits; total_commits=$(git rev-list --count "$old_hash..$new_hash" 2>/dev/null || echo "0")
 				if [[ "$total_commits" -gt 0 ]]; then
-					echo ""
-					print_info "Changes since $current_version ($total_commits commits):"
-					git log --oneline "$old_hash..$new_hash" |
-						grep -E '^[a-f0-9]+ (feat|fix|refactor|perf|docs):' |
-						head -20
-					if [[ "$total_commits" -gt 20 ]]; then
-						echo "  ... and more (run 'git log --oneline' in $INSTALL_DIR for full list)"
-					fi
+					echo ""; print_info "Changes since $current_version ($total_commits commits):"
+					git log --oneline "$old_hash..$new_hash" | grep -E '^[a-f0-9]+ (feat|fix|refactor|perf|docs):' | head -20
+					[[ "$total_commits" -gt 20 ]] && echo "  ... and more (run 'git log --oneline' in $INSTALL_DIR for full list)"
 				fi
 			fi
-
-			echo ""
-			print_info "Running setup to apply changes..."
-			local setup_exit=0
-			bash "$INSTALL_DIR/setup.sh" --non-interactive || setup_exit=$?
-
-			# Safety net: discard any working tree changes setup.sh may have introduced
-			# (e.g. chmod on tracked scripts, scan results written to repo)
-			# See: https://github.com/marcusquinn/aidevops/issues/2286
+			echo ""; print_info "Running setup to apply changes..."
+			local setup_exit=0; bash "$INSTALL_DIR/setup.sh" --non-interactive || setup_exit=$?
 			git checkout -- . 2>/dev/null || true
-
-			# Verify deployment: compare repo VERSION with deployed agents VERSION
-			# This catches silent setup.sh failures (e.g., non-interactive mode in
-			# environments where setup.sh exits early without deploying agents)
-			# See: https://github.com/marcusquinn/aidevops/issues/3980
 			local repo_version deployed_version
-			repo_version=$(cat "$INSTALL_DIR/VERSION" 2>/dev/null || echo "unknown")
-			deployed_version=$(cat "$HOME/.aidevops/agents/VERSION" 2>/dev/null || echo "none")
-
-			if [[ "$setup_exit" -ne 0 ]]; then
-				print_warning "Setup exited with code $setup_exit"
-			fi
-
+			repo_version=$(cat "$INSTALL_DIR/VERSION" 2>/dev/null || echo "unknown"); deployed_version=$(cat "$HOME/.aidevops/agents/VERSION" 2>/dev/null || echo "none")
+			[[ "$setup_exit" -ne 0 ]] && print_warning "Setup exited with code $setup_exit"
 			if [[ "$repo_version" != "$deployed_version" ]]; then
 				print_warning "Agent deployment incomplete: repo=$repo_version, deployed=$deployed_version"
 				print_info "Run 'bash $INSTALL_DIR/setup.sh' manually to deploy agents"
-			else
-				print_success "Updated to version $new_version (agents deployed)"
-			fi
+			else print_success "Updated to version $new_version (agents deployed)"; fi
 		fi
 	else
 		print_warning "Repository not found, performing fresh install..."
-		# Download setup script to temp file first (not piped to shell)
-		local tmp_setup
-		tmp_setup=$(mktemp "${TMPDIR:-/tmp}/aidevops-setup-XXXXXX.sh") || {
-			print_error "Failed to create temp file for setup script"
-			return 1
-		}
+		local tmp_setup; tmp_setup=$(mktemp "${TMPDIR:-/tmp}/aidevops-setup-XXXXXX.sh") || { print_error "Failed to create temp file for setup script"; return 1; }
 		trap 'rm -f "${tmp_setup:-}"' RETURN
 		if curl -fsSL "https://raw.githubusercontent.com/marcusquinn/aidevops/main/setup.sh" -o "$tmp_setup" 2>/dev/null && [[ -s "$tmp_setup" ]]; then
-			chmod +x "$tmp_setup"
-			bash "$tmp_setup"
-			local setup_exit=$?
-			rm -f "$tmp_setup"
-			[[ $setup_exit -ne 0 ]] && return 1
-		else
-			rm -f "$tmp_setup"
-			print_error "Failed to download setup script"
-			print_info "Try: git clone https://github.com/marcusquinn/aidevops.git $INSTALL_DIR && bash $INSTALL_DIR/setup.sh"
-			return 1
+			chmod +x "$tmp_setup"; bash "$tmp_setup"; local setup_exit=$?; rm -f "$tmp_setup"; [[ $setup_exit -ne 0 ]] && return 1
+		else rm -f "$tmp_setup"; print_error "Failed to download setup script"
+			print_info "Try: git clone https://github.com/marcusquinn/aidevops.git $INSTALL_DIR && bash $INSTALL_DIR/setup.sh"; return 1
 		fi
 	fi
 
-	# Auto-sync registered projects (t1552)
-	# Updates .aidevops.json version stamp and repos.json entry for each
-	# initialized project whose version is older than the current framework.
-	# Skip with --skip-project-sync if needed.
-	echo ""
-	print_header "Syncing Initialized Projects"
-
-	if [[ "$skip_project_sync" == "true" ]]; then
-		print_info "Project sync skipped (--skip-project-sync)"
-	else
-		local repos_needing_upgrade=()
-		local current_ver
-		current_ver=$(get_version)
-
-		while IFS= read -r repo_path; do
-			[[ -z "$repo_path" ]] && continue
-
-			if [[ -d "$repo_path" ]]; then
-				if check_repo_needs_upgrade "$repo_path"; then
-					repos_needing_upgrade+=("$repo_path")
-				fi
-			fi
-		done < <(get_registered_repos)
-
-		if [[ ${#repos_needing_upgrade[@]} -eq 0 ]]; then
-			print_success "All registered projects are up to date"
-		else
-			local synced=0
-			local skipped=0
-			local failed=0
-			for repo in "${repos_needing_upgrade[@]}"; do
-				if [[ ! -f "$repo/.aidevops.json" ]]; then
-					# Not initialized with aidevops — skip silently
-					skipped=$((skipped + 1))
-					continue
-				fi
-
-				# Try jq first (preserves formatting), fall back to sed
-				# (some .aidevops.json files have minor structural issues
-				# that jq rejects but sed handles fine for version updates)
-				local did_sync=false
-				if command -v jq &>/dev/null; then
-					local temp_file="${repo}/.aidevops.json.tmp"
-					if jq --arg version "$current_ver" '.version = $version' "$repo/.aidevops.json" >"$temp_file" 2>/dev/null &&
-						[[ -s "$temp_file" ]]; then
-						mv "$temp_file" "$repo/.aidevops.json"
-
-						# Update repos.json entry
-						local features
-						features=$(jq -r '[.features | to_entries[] | select(.value == true) | .key] | join(",")' "$repo/.aidevops.json" 2>/dev/null || echo "")
-						register_repo "$repo" "$current_ver" "$features"
-
-						did_sync=true
-					else
-						rm -f "$temp_file"
-					fi
-				fi
-
-				# Fallback: sed-based version update (handles malformed JSON)
-				if [[ "$did_sync" != "true" ]]; then
-					if sed -i '' "s/\"version\": *\"[^\"]*\"/\"version\": \"$current_ver\"/" "$repo/.aidevops.json" 2>/dev/null; then
-						did_sync=true
-					fi
-				fi
-
-				if [[ "$did_sync" == "true" ]]; then
-					synced=$((synced + 1))
-				else
-					failed=$((failed + 1))
-				fi
-			done
-
-			if [[ $synced -gt 0 ]]; then
-				print_success "Synced $synced project(s) to v$current_ver"
-			fi
-			if [[ $skipped -gt 0 ]]; then
-				print_info "Skipped $skipped uninitialized project(s) (run 'aidevops init' in each to enable)"
-			fi
-			if [[ $failed -gt 0 ]]; then
-				print_warning "$failed project(s) failed to sync (jq missing or write error)"
-			fi
-		fi
-	fi
-
-	# Check planning templates in registered repos
-	echo ""
-	print_header "Checking Planning Templates"
-
-	local repos_needing_planning=()
-	while IFS= read -r repo_path; do
-		[[ -z "$repo_path" ]] && continue
-		[[ ! -d "$repo_path" ]] && continue
-		# Only check repos with planning enabled
-		if [[ -f "$repo_path/.aidevops.json" ]]; then
-			local has_planning
-			has_planning=$(grep -o '"planning": *true' "$repo_path/.aidevops.json" 2>/dev/null || true)
-			if [[ -n "$has_planning" ]] && check_planning_needs_upgrade "$repo_path"; then
-				repos_needing_planning+=("$repo_path")
-			fi
-		fi
-	done < <(get_registered_repos)
-
-	if [[ ${#repos_needing_planning[@]} -eq 0 ]]; then
-		print_success "All planning templates are up to date"
-	else
-		echo ""
-		print_warning "${#repos_needing_planning[@]} project(s) have outdated planning templates:"
-		for repo in "${repos_needing_planning[@]}"; do
-			local repo_name
-			repo_name=$(basename "$repo")
-			local todo_ver
-			todo_ver=$(grep -A1 "TOON:meta" "$repo/TODO.md" 2>/dev/null | tail -1 | cut -d',' -f1)
-			echo "  - $repo_name (v${todo_ver:-none})"
-		done
-		local template_ver
-		template_ver=$(grep -A1 "TOON:meta" "$AGENTS_DIR/templates/todo-template.md" 2>/dev/null | tail -1 | cut -d',' -f1)
-		echo ""
-		echo "  Latest template: v${template_ver} (adds risk field, active session time estimates)"
-		echo ""
-		read -r -p "Upgrade planning templates in these projects? [y/N] " response
-		if [[ "$response" =~ ^[Yy]$ ]]; then
-			for repo in "${repos_needing_planning[@]}"; do
-				print_info "Upgrading $(basename "$repo")..."
-				# Run upgrade-planning in the repo context
-				(cd "$repo" && cmd_upgrade_planning --force) || print_warning "Failed to upgrade $(basename "$repo")"
-			done
-		else
-			print_info "Run 'aidevops upgrade-planning' in each project to upgrade manually"
-		fi
-	fi
-
-	# Quick tool staleness check (key tools only, <5s)
-	echo ""
-	print_header "Checking Key Tools"
-
-	local tool_check_script="$AGENTS_DIR/scripts/tool-version-check.sh"
-	if [[ -f "$tool_check_script" ]]; then
-		local stale_count=0
-		local stale_tools=""
-
-		# Check a few key tools quickly via npm view (parallel, ~2-3s total)
-		# bash 3.2-compatible: parallel arrays instead of associative array
-		local key_tool_cmds="opencode gh"
-		local key_tool_pkgs="opencode-ai brew:gh"
-
-		local idx=0
-		for cmd_name in $key_tool_cmds; do
-			local pkg_ref
-			pkg_ref=$(echo "$key_tool_pkgs" | cut -d' ' -f$((idx + 1)))
-			idx=$((idx + 1))
-			local installed=""
-			local latest=""
-
-			# Get installed version
-			if command -v "$cmd_name" &>/dev/null; then
-				installed=$("$cmd_name" --version 2>/dev/null | head -1 | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
-			else
-				continue
-			fi
-			[[ -z "$installed" ]] && continue
-
-			# Get latest version (npm, brew, or GitHub API) — timeout prevents hangs on slow registries
-			if [[ "$pkg_ref" == brew:* ]]; then
-				local brew_pkg="${pkg_ref#brew:}"
-				local brew_bin=""
-				brew_bin=$(command -v brew 2>/dev/null || true)
-				if [[ -n "$brew_bin" && -x "$brew_bin" ]]; then
-					latest=$(_timeout_cmd 30 "$brew_bin" info --json=v2 "$brew_pkg" | jq -r '.formulae[0].versions.stable // empty' || true)
-				elif [[ "$brew_pkg" == "gh" ]] && command -v gh &>/dev/null; then
-					# Fallback: use the public GitHub API so update still works when brew
-					# is unavailable or gh auth refresh is unhealthy.
-					latest=$(get_public_release_tag "cli/cli")
-				fi
-			else
-				latest=$(_timeout_cmd 30 npm view "$pkg_ref" version || true)
-			fi
-			[[ -z "$latest" ]] && continue
-
-			if [[ "$installed" != "$latest" ]]; then
-				stale_tools="${stale_tools:+$stale_tools, }$cmd_name ($installed -> $latest)"
-				((++stale_count))
-			fi
-		done
-
-		if [[ "$stale_count" -eq 0 ]]; then
-			print_success "Key tools are up to date"
-		else
-			print_warning "$stale_count tool(s) have updates: $stale_tools"
-			echo ""
-			read -r -p "Run full tool update check? [y/N] " response
-			if [[ "$response" =~ ^[Yy]$ ]]; then
-				bash "$tool_check_script" --update
-			else
-				print_info "Run 'aidevops update-tools --update' to update later"
-			fi
-		fi
-	else
-		print_info "Tool version check not available (run setup first)"
-	fi
-
+	_update_sync_projects "$skip_project_sync" "$(get_version)"
+	_update_check_planning
+	_update_check_tools
 	return 0
 }
 
