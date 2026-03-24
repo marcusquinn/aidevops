@@ -801,6 +801,118 @@ PYEOF
 # Convert command
 # ============================================================================
 
+# OCR pre-processing helper for cmd_convert.
+# Modifies input/from_ext via nameref if OCR is needed.
+# Args: input_ref from_ext_ref ocr_provider_ref
+# Returns 0 always (errors are fatal via die).
+_convert_ocr_preprocess() {
+	local input_ref="$1"
+	local from_ext_ref="$2"
+	local ocr_provider_ref="$3"
+
+	local _input="${!input_ref}"
+	local _from_ext="${!from_ext_ref}"
+	local _ocr_provider="${!ocr_provider_ref}"
+
+	if [[ -z "${_ocr_provider}" ]] && ! { [[ "${_from_ext}" == "pdf" ]] && is_scanned_pdf "${_input}"; }; then
+		return 0
+	fi
+
+	if [[ -z "${_ocr_provider}" ]]; then
+		_ocr_provider="auto"
+		log_info "Scanned PDF detected -- activating OCR"
+	fi
+
+	local provider
+	provider=$(select_ocr_provider "${_ocr_provider}")
+
+	local ocr_work="${HOME}/.aidevops/.agent-workspace/tmp"
+	mkdir -p "$ocr_work"
+
+	if [[ "${_from_ext}" == "pdf" ]]; then
+		local ocr_text="${ocr_work}/ocr-text-$$.txt"
+		ocr_scanned_pdf "${_input}" "$provider" "$ocr_text"
+		printf -v "${input_ref}" '%s' "$ocr_text"
+		printf -v "${from_ext_ref}" '%s' "txt"
+		log_info "Proceeding with OCR text as input"
+	elif [[ "${_from_ext}" =~ ^(png|jpg|jpeg|tiff|tif|bmp|webp)$ ]]; then
+		local ocr_text="${ocr_work}/ocr-text-$$.txt"
+		log_info "Running OCR on image with ${provider}..."
+		run_ocr "${_input}" "$provider" >"$ocr_text"
+		local text_len
+		text_len=$(wc -c <"$ocr_text" | tr -d ' ')
+		log_ok "OCR extracted ${text_len} bytes from image"
+		printf -v "${input_ref}" '%s' "$ocr_text"
+		printf -v "${from_ext_ref}" '%s' "txt"
+	fi
+
+	return 0
+}
+
+# Tool execution helper for cmd_convert.
+# Args: tool input output to_ext template extra_args dedup_registry
+_convert_execute_tool() {
+	local tool="$1"
+	local input="$2"
+	local output="$3"
+	local to_ext="$4"
+	local template="$5"
+	local extra_args="$6"
+	local dedup_registry="$7"
+
+	case "${tool}" in
+	email-parser)
+		convert_email "$input" "$output" "$dedup_registry"
+		;;
+	pandoc)
+		convert_with_pandoc "$input" "$output" "$extra_args"
+		;;
+	libreoffice)
+		local output_dir
+		output_dir=$(dirname "$output")
+		convert_with_libreoffice "$input" "${to_ext}" "${output_dir}"
+		;;
+	odfpy-pipeline)
+		convert_pdf_to_odt "$input" "$output" "$template"
+		;;
+	mineru)
+		local output_dir
+		output_dir=$(dirname "$output")
+		log_info "Converting with MinerU: $(basename "$input") -> markdown"
+		mineru -p "$input" -o "${output_dir}"
+		log_ok "MinerU output in: ${output_dir}"
+		;;
+	pdftotext)
+		log_info "Extracting text with pdftotext"
+		pdftotext -layout "$input" "$output"
+		if [[ -f "$output" ]]; then
+			local size
+			size=$(human_filesize "$output")
+			log_ok "Created: ${output} (${size})"
+		fi
+		;;
+	pdftohtml)
+		log_info "Converting with pdftohtml"
+		pdftohtml -s "$input" "$output"
+		log_ok "Created: ${output}"
+		;;
+	reader-lm)
+		convert_with_reader_lm "$input" "$output"
+		;;
+	rolm-ocr)
+		convert_with_rolm_ocr "$input" "$output"
+		;;
+	*)
+		die "Unknown tool: ${tool}"
+		;;
+	esac
+
+	return 0
+}
+
+# ============================================================================
+# Helper functions for select_tool (extracted for complexity reduction)
+# ============================================================================
 
 # ============================================================================
 # Helper functions for select_tool (extracted for complexity reduction)
@@ -902,7 +1014,6 @@ _select_tool_html_to_md() {
 	return 0
 }
 
-
 select_tool() {
 	local from_ext="$1"
 	local to_ext="$2"
@@ -977,7 +1088,6 @@ select_tool() {
 
 	return 0
 }
-
 
 convert_with_pandoc() {
 	local input="$1"
@@ -1295,7 +1405,6 @@ convert_email() {
 	return 0
 }
 
-
 # ============================================================================
 # Extracted helpers for complexity reduction (t1044.12)
 # ============================================================================
@@ -1306,19 +1415,53 @@ _convert_parse_args() {
 	local -n template_ref=$5 extra_args_ref=$6 ocr_provider_ref=$7
 	local -n run_normalise_ref=$8 dedup_registry_ref=$9
 	shift 9
-	
+
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
-		--to) to_ext_ref="$(printf '%s' "$2" | tr '[:upper:]' '[:lower:]')"; shift 2 ;;
-		--output | -o) output_ref="$2"; shift 2 ;;
-		--tool) force_tool_ref="$2"; shift 2 ;;
-		--template) template_ref="$2"; shift 2 ;;
-		--engine) extra_args_ref="--pdf-engine=$2"; shift 2 ;;
-		--dedup-registry) dedup_registry_ref="$2"; shift 2 ;;
-		--ocr) ocr_provider_ref="${2:-auto}"; shift; [[ $# -gt 0 && "$1" != --* ]] && { ocr_provider_ref="$1"; shift; } ;;
-		--no-normalise | --no-normalize) run_normalise_ref=false; shift ;;
-		--*) extra_args_ref="${extra_args_ref} $1"; shift ;;
-		*) [[ -z "${input_ref}" ]] && input_ref="$1"; shift ;;
+		--to)
+			to_ext_ref="$(printf '%s' "$2" | tr '[:upper:]' '[:lower:]')"
+			shift 2
+			;;
+		--output | -o)
+			output_ref="$2"
+			shift 2
+			;;
+		--tool)
+			force_tool_ref="$2"
+			shift 2
+			;;
+		--template)
+			template_ref="$2"
+			shift 2
+			;;
+		--engine)
+			extra_args_ref="--pdf-engine=$2"
+			shift 2
+			;;
+		--dedup-registry)
+			dedup_registry_ref="$2"
+			shift 2
+			;;
+		--ocr)
+			ocr_provider_ref="${2:-auto}"
+			shift
+			[[ $# -gt 0 && "$1" != --* ]] && {
+				ocr_provider_ref="$1"
+				shift
+			}
+			;;
+		--no-normalise | --no-normalize)
+			run_normalise_ref=false
+			shift
+			;;
+		--*)
+			extra_args_ref="${extra_args_ref} $1"
+			shift
+			;;
+		*)
+			[[ -z "${input_ref}" ]] && input_ref="$1"
+			shift
+			;;
 		esac
 	done
 	return 0
@@ -1328,14 +1471,26 @@ _convert_parse_args() {
 _create_parse_args() {
 	local -n template_ref=$1 data_ref=$2 output_ref=$3 script_ref=$4
 	shift 4
-	
+
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
-		--data) data_ref="$2"; shift 2 ;;
-		--output | -o) output_ref="$2"; shift 2 ;;
-		--script) script_ref="$2"; shift 2 ;;
+		--data)
+			data_ref="$2"
+			shift 2
+			;;
+		--output | -o)
+			output_ref="$2"
+			shift 2
+			;;
+		--script)
+			script_ref="$2"
+			shift 2
+			;;
 		--*) shift ;;
-		*) [[ -z "${template_ref}" ]] && template_ref="$1"; shift ;;
+		*)
+			[[ -z "${template_ref}" ]] && template_ref="$1"
+			shift
+			;;
 		esac
 	done
 	return 0
@@ -1345,13 +1500,25 @@ _create_parse_args() {
 _import_parse_args() {
 	local -n input_path_ref=$1 output_dir_ref=$2 skip_contacts_ref=$3
 	shift 3
-	
+
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
-		--output | -o) output_dir_ref="$2"; shift 2 ;;
-		--skip-contacts) skip_contacts_ref=true; shift ;;
-		--*) log_warn "Unknown option: $1"; shift ;;
-		*) [[ -z "${input_path_ref}" ]] && input_path_ref="$1"; shift ;;
+		--output | -o)
+			output_dir_ref="$2"
+			shift 2
+			;;
+		--skip-contacts)
+			skip_contacts_ref=true
+			shift
+			;;
+		--*)
+			log_warn "Unknown option: $1"
+			shift
+			;;
+		*)
+			[[ -z "${input_path_ref}" ]] && input_path_ref="$1"
+			shift
+			;;
 		esac
 	done
 	return 0
@@ -1362,15 +1529,33 @@ _template_parse_args() {
 	local -n doc_type_ref=$1 format_ref=$2 fields_ref=$3
 	local -n header_logo_ref=$4 footer_text_ref=$5 output_ref=$6
 	shift 6
-	
+
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
-		--type) doc_type_ref="$2"; shift 2 ;;
-		--format) format_ref="$2"; shift 2 ;;
-		--fields) fields_ref="$2"; shift 2 ;;
-		--header-logo) header_logo_ref="$2"; shift 2 ;;
-		--footer-text) footer_text_ref="$2"; shift 2 ;;
-		--output) output_ref="$2"; shift 2 ;;
+		--type)
+			doc_type_ref="$2"
+			shift 2
+			;;
+		--format)
+			format_ref="$2"
+			shift 2
+			;;
+		--fields)
+			fields_ref="$2"
+			shift 2
+			;;
+		--header-logo)
+			header_logo_ref="$2"
+			shift 2
+			;;
+		--footer-text)
+			footer_text_ref="$2"
+			shift 2
+			;;
+		--output)
+			output_ref="$2"
+			shift 2
+			;;
 		*) shift ;;
 		esac
 	done
@@ -1382,15 +1567,30 @@ _normalise_parse_args() {
 	local -n input_ref=$1 output_ref=$2 inplace_ref=$3
 	local -n generate_pageindex_ref=$4 email_mode_ref=$5
 	shift 5
-	
+
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
-		--output | -o) output_ref="$2"; shift 2 ;;
-		--inplace | -i) inplace_ref=true; shift ;;
-		--pageindex) generate_pageindex_ref=true; shift ;;
-		--email | -e) email_mode_ref=true; shift ;;
+		--output | -o)
+			output_ref="$2"
+			shift 2
+			;;
+		--inplace | -i)
+			inplace_ref=true
+			shift
+			;;
+		--pageindex)
+			generate_pageindex_ref=true
+			shift
+			;;
+		--email | -e)
+			email_mode_ref=true
+			shift
+			;;
 		--*) shift ;;
-		*) [[ -z "${input_ref}" ]] && input_ref="$1"; shift ;;
+		*)
+			[[ -z "${input_ref}" ]] && input_ref="$1"
+			shift
+			;;
 		esac
 	done
 	return 0
@@ -1400,14 +1600,26 @@ _normalise_parse_args() {
 _pageindex_parse_args() {
 	local -n input_ref=$1 output_ref=$2 source_pdf_ref=$3 ollama_model_ref=$4
 	shift 4
-	
+
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
-		--output | -o) output_ref="$2"; shift 2 ;;
-		--source-pdf) source_pdf_ref="$2"; shift 2 ;;
-		--ollama-model) ollama_model_ref="$2"; shift 2 ;;
+		--output | -o)
+			output_ref="$2"
+			shift 2
+			;;
+		--source-pdf)
+			source_pdf_ref="$2"
+			shift 2
+			;;
+		--ollama-model)
+			ollama_model_ref="$2"
+			shift 2
+			;;
 		--*) shift ;;
-		*) [[ -z "${input_ref}" ]] && input_ref="$1"; shift ;;
+		*)
+			[[ -z "${input_ref}" ]] && input_ref="$1"
+			shift
+			;;
 		esac
 	done
 	return 0
@@ -1417,17 +1629,57 @@ _pageindex_parse_args() {
 _manifest_parse_args() {
 	local -n output_dir_ref=$1
 	shift
-	
+
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
-		--*) log_warn "Unknown option: $1"; shift ;;
-		*) [[ -z "${output_dir_ref}" ]] && output_dir_ref="$1"; shift ;;
+		--*)
+			log_warn "Unknown option: $1"
+			shift
+			;;
+		*)
+			[[ -z "${output_dir_ref}" ]] && output_dir_ref="$1"
+			shift
+			;;
 		esac
 	done
 	return 0
 }
 
+# Validate and resolve paths for cmd_convert.
+# Sets output and from_ext; validates input/to_ext.
+# Args: input to_ext output_ref from_ext_ref
+_convert_validate_paths() {
+	local input="$1"
+	local to_ext="$2"
+	local output_ref="$3"
+	local from_ext_ref="$4"
 
+	if [[ -z "${input}" ]]; then
+		die "Usage: convert <input-file> --to <format> [--output <file>] [--tool <name>]"
+	fi
+	if [[ ! -f "${input}" ]]; then
+		die "Input file not found: ${input}"
+	fi
+	if [[ -z "${to_ext}" ]]; then
+		die "Target format required. Use --to <format> (e.g., --to pdf, --to odt)"
+	fi
+
+	local _output="${!output_ref}"
+	if [[ -z "${_output}" ]]; then
+		_output="${input%.*}.${to_ext}"
+		printf -v "${output_ref}" '%s' "${_output}"
+	fi
+
+	local _from_ext
+	_from_ext=$(get_ext "$input")
+	printf -v "${from_ext_ref}" '%s' "${_from_ext}"
+
+	if [[ "${_from_ext}" == "${to_ext}" ]]; then
+		die "Input and output formats are the same: ${_from_ext}"
+	fi
+
+	return 0
+}
 
 cmd_convert() {
 	local input=""
@@ -1440,7 +1692,6 @@ cmd_convert() {
 	local run_normalise=true
 	local dedup_registry=""
 
-	# Parse arguments
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--to)
@@ -1470,7 +1721,6 @@ cmd_convert() {
 		--ocr)
 			ocr_provider="${2:-auto}"
 			shift
-			# Only shift again if next arg is not a flag
 			if [[ $# -gt 0 && "$1" != --* && "$1" != -* ]]; then
 				ocr_provider="$1"
 				shift
@@ -1485,135 +1735,30 @@ cmd_convert() {
 			shift
 			;;
 		*)
-			if [[ -z "${input}" ]]; then
-				input="$1"
-			fi
+			[[ -z "${input}" ]] && input="$1"
 			shift
 			;;
 		esac
 	done
 
-	# Validate
-	if [[ -z "${input}" ]]; then
-		die "Usage: convert <input-file> --to <format> [--output <file>] [--tool <name>]"
-	fi
-
-	if [[ ! -f "${input}" ]]; then
-		die "Input file not found: ${input}"
-	fi
-
-	if [[ -z "${to_ext}" ]]; then
-		die "Target format required. Use --to <format> (e.g., --to pdf, --to odt)"
-	fi
-
-	# Normalise format names
+	# Normalise format aliases
 	case "${to_ext}" in
 	markdown) to_ext="md" ;;
 	text) to_ext="txt" ;;
 	esac
 
-	# Determine output path
-	if [[ -z "${output}" ]]; then
-		local basename_noext
-		basename_noext="${input%.*}"
-		output="${basename_noext}.${to_ext}"
-	fi
+	# Validate inputs and resolve output/from_ext
+	local from_ext=""
+	_convert_validate_paths "${input}" "${to_ext}" output from_ext
 
-	# Get input extension
-	local from_ext
-	from_ext=$(get_ext "$input")
+	# OCR pre-processing: handle scanned PDFs and images (modifies input/from_ext)
+	_convert_ocr_preprocess input from_ext ocr_provider
 
-	# Same format check
-	if [[ "${from_ext}" == "${to_ext}" ]]; then
-		die "Input and output formats are the same: ${from_ext}"
-	fi
-
-	# OCR pre-processing: handle scanned PDFs and images
-	if [[ -n "${ocr_provider}" ]] || { [[ "${from_ext}" == "pdf" ]] && is_scanned_pdf "$input"; }; then
-		if [[ -z "${ocr_provider}" ]]; then
-			ocr_provider="auto"
-			log_info "Scanned PDF detected -- activating OCR"
-		fi
-
-		local provider
-		provider=$(select_ocr_provider "${ocr_provider}")
-
-		# Use workspace dir for temp files (avoids macOS /tmp sandbox issues)
-		local ocr_work="${HOME}/.aidevops/.agent-workspace/tmp"
-		mkdir -p "$ocr_work"
-
-		if [[ "${from_ext}" == "pdf" ]]; then
-			# OCR the scanned PDF pages, then convert the extracted text
-			local ocr_text="${ocr_work}/ocr-text-$$.txt"
-			ocr_scanned_pdf "$input" "$provider" "$ocr_text"
-			# Replace input with the OCR text for downstream conversion
-			input="$ocr_text"
-			from_ext="txt"
-			log_info "Proceeding with OCR text as input"
-		elif [[ "${from_ext}" =~ ^(png|jpg|jpeg|tiff|tif|bmp|webp)$ ]]; then
-			# OCR an image file directly
-			local ocr_text="${ocr_work}/ocr-text-$$.txt"
-			log_info "Running OCR on image with ${provider}..."
-			run_ocr "$input" "$provider" >"$ocr_text"
-			local text_len
-			text_len=$(wc -c <"$ocr_text" | tr -d ' ')
-			log_ok "OCR extracted ${text_len} bytes from image"
-			input="$ocr_text"
-			from_ext="txt"
-		fi
-	fi
-
-	# Select tool
+	# Select tool and execute conversion
 	local tool
 	tool=$(select_tool "${from_ext}" "${to_ext}" "${force_tool}")
-
-	# Execute conversion
-	case "${tool}" in
-	email-parser)
-		convert_email "$input" "$output" "$dedup_registry"
-		;;
-	pandoc)
-		convert_with_pandoc "$input" "$output" "$extra_args"
-		;;
-	libreoffice)
-		local output_dir
-		output_dir=$(dirname "$output")
-		convert_with_libreoffice "$input" "${to_ext}" "${output_dir}"
-		;;
-	odfpy-pipeline)
-		convert_pdf_to_odt "$input" "$output" "$template"
-		;;
-	mineru)
-		local output_dir
-		output_dir=$(dirname "$output")
-		log_info "Converting with MinerU: $(basename "$input") -> markdown"
-		mineru -p "$input" -o "${output_dir}"
-		log_ok "MinerU output in: ${output_dir}"
-		;;
-	pdftotext)
-		log_info "Extracting text with pdftotext"
-		pdftotext -layout "$input" "$output"
-		if [[ -f "$output" ]]; then
-			local size
-			size=$(human_filesize "$output")
-			log_ok "Created: ${output} (${size})"
-		fi
-		;;
-	pdftohtml)
-		log_info "Converting with pdftohtml"
-		pdftohtml -s "$input" "$output"
-		log_ok "Created: ${output}"
-		;;
-	reader-lm)
-		convert_with_reader_lm "$input" "$output"
-		;;
-	rolm-ocr)
-		convert_with_rolm_ocr "$input" "$output"
-		;;
-	*)
-		die "Unknown tool: ${tool}"
-		;;
-	esac
+	_convert_execute_tool "${tool}" "$input" "$output" "${to_ext}" \
+		"${template}" "${extra_args}" "${dedup_registry}"
 
 	# Auto-run normalise after *→md conversions (unless --no-normalise flag is set)
 	if [[ "${run_normalise}" == "true" ]] && [[ "${to_ext}" =~ ^(md|markdown)$ ]] && [[ -f "$output" ]]; then
@@ -1631,6 +1776,81 @@ cmd_convert() {
 # ============================================================================
 # Template command
 # ============================================================================
+
+# Helper: handle 'template draft' subcommand logic
+_template_draft_subcommand() {
+	local doc_type=""
+	local format="odt"
+	local fields=""
+	local header_logo=""
+	local footer_text=""
+	local output=""
+
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--type)
+			doc_type="$2"
+			shift 2
+			;;
+		--format)
+			format="$2"
+			shift 2
+			;;
+		--fields)
+			fields="$2"
+			shift 2
+			;;
+		--header-logo)
+			header_logo="$2"
+			shift 2
+			;;
+		--footer-text)
+			footer_text="$2"
+			shift 2
+			;;
+		--output)
+			output="$2"
+			shift 2
+			;;
+		*) shift ;;
+		esac
+	done
+
+	if [[ -z "${doc_type}" ]]; then
+		die "Usage: template draft --type <name> [--format odt|docx] [--fields f1,f2,f3]"
+	fi
+
+	if [[ -z "${output}" ]]; then
+		mkdir -p "${TEMPLATE_DIR}/documents"
+		output="${TEMPLATE_DIR}/documents/${doc_type}-template.${format}"
+	fi
+
+	log_info "Generating draft template: ${doc_type} (${format})"
+	log_info "Fields: ${fields:-auto}"
+	log_info "Output: ${output}"
+
+	if [[ "${format}" == "odt" ]]; then
+		if ! activate_venv 2>/dev/null || ! has_python_pkg odf 2>/dev/null; then
+			die "odfpy required for ODT template generation. Run: install --standard"
+		fi
+		local script_dir
+		script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+		python3 "${script_dir}/template-draft.py" \
+			"$output" "$doc_type" "$fields" "$header_logo" "$footer_text"
+		log_ok "Draft template created: ${output}"
+		log_info "Edit in LibreOffice or your preferred editor to refine layout."
+		log_info "Replace {{placeholders}} markers with your design, keeping the field names."
+	elif [[ "${format}" == "docx" ]]; then
+		if ! activate_venv 2>/dev/null || ! has_python_pkg docx 2>/dev/null; then
+			die "python-docx required for DOCX template generation. Run: install --standard"
+		fi
+		log_warn "DOCX template generation not yet implemented. Use ODT format."
+	else
+		die "Unsupported template format: ${format}. Use odt or docx."
+	fi
+
+	return 0
+}
 
 cmd_template() {
 	local subcmd="${1:-}"
@@ -1652,228 +1872,7 @@ cmd_template() {
 		fi
 		;;
 	draft)
-		local doc_type=""
-		local format="odt"
-		local fields=""
-		local header_logo=""
-		local footer_text=""
-		local output=""
-
-		while [[ $# -gt 0 ]]; do
-			case "$1" in
-			--type)
-				doc_type="$2"
-				shift 2
-				;;
-			--format)
-				format="$2"
-				shift 2
-				;;
-			--fields)
-				fields="$2"
-				shift 2
-				;;
-			--header-logo)
-				header_logo="$2"
-				shift 2
-				;;
-			--footer-text)
-				footer_text="$2"
-				shift 2
-				;;
-			--output)
-				output="$2"
-				shift 2
-				;;
-			*) shift ;;
-			esac
-		done
-
-		if [[ -z "${doc_type}" ]]; then
-			die "Usage: template draft --type <name> [--format odt|docx] [--fields f1,f2,f3]"
-		fi
-
-		# Determine output path
-		if [[ -z "${output}" ]]; then
-			mkdir -p "${TEMPLATE_DIR}/documents"
-			output="${TEMPLATE_DIR}/documents/${doc_type}-template.${format}"
-		fi
-
-		log_info "Generating draft template: ${doc_type} (${format})"
-		log_info "Fields: ${fields:-auto}"
-		log_info "Output: ${output}"
-
-		if [[ "${format}" == "odt" ]]; then
-			if ! activate_venv 2>/dev/null || ! has_python_pkg odf 2>/dev/null; then
-				die "odfpy required for ODT template generation. Run: install --standard"
-			fi
-
-			# Generate ODT template with Python
-			python3 - "$output" "$doc_type" "$fields" "$header_logo" "$footer_text" <<'PYEOF'
-import sys
-import os
-from odf.opendocument import OpenDocumentText
-from odf.style import Style, MasterPage, PageLayout, PageLayoutProperties
-from odf.style import TextProperties, ParagraphProperties, GraphicProperties
-from odf.style import Header as StyleHeader, Footer as StyleFooter
-from odf.style import FontFace, HeaderStyle, FooterStyle
-from odf.text import P, PageNumber, PageCount
-from odf.draw import Frame, Image
-from odf import dc
-
-output_path = sys.argv[1]
-doc_type = sys.argv[2]
-fields_str = sys.argv[3] if len(sys.argv) > 3 else ""
-header_logo = sys.argv[4] if len(sys.argv) > 4 else ""
-footer_text = sys.argv[5] if len(sys.argv) > 5 else ""
-
-fields = [f.strip() for f in fields_str.split(",") if f.strip()] if fields_str else []
-
-doc = OpenDocumentText()
-
-# Font
-ff = FontFace(attributes={
-    "name": "Arial",
-    "fontfamily": "Arial",
-    "fontfamilygeneric": "swiss",
-    "fontpitch": "variable",
-})
-doc.fontfacedecls.addElement(ff)
-
-# Page layout
-pl = PageLayout(name="ContentLayout")
-pl.addElement(PageLayoutProperties(
-    pagewidth="21.001cm", pageheight="29.7cm",
-    margintop="2.5cm", marginbottom="3cm",
-    marginleft="2cm", marginright="2cm",
-    printorientation="portrait",
-))
-pl.addElement(HeaderStyle())
-pl.addElement(FooterStyle())
-doc.automaticstyles.addElement(pl)
-
-# Styles
-heading = Style(name="Heading", family="paragraph")
-heading.addElement(TextProperties(fontname="Arial", fontsize="14pt", fontweight="bold"))
-heading.addElement(ParagraphProperties(marginbottom="0.3cm", margintop="0.5cm"))
-doc.styles.addElement(heading)
-
-body = Style(name="Body", family="paragraph")
-body.addElement(TextProperties(fontname="Arial", fontsize="11pt"))
-body.addElement(ParagraphProperties(lineheight="150%", marginbottom="0.3cm", textalign="justify"))
-doc.styles.addElement(body)
-
-placeholder = Style(name="Placeholder", family="paragraph")
-placeholder.addElement(TextProperties(fontname="Arial", fontsize="11pt", color="#cc0000"))
-placeholder.addElement(ParagraphProperties(lineheight="150%", marginbottom="0.3cm"))
-doc.styles.addElement(placeholder)
-
-footer_s = Style(name="FooterText", family="paragraph")
-footer_s.addElement(TextProperties(fontname="Arial", fontsize="7pt", color="#888888"))
-footer_s.addElement(ParagraphProperties(textalign="center", lineheight="120%"))
-doc.styles.addElement(footer_s)
-
-footer_pg = Style(name="FooterPage", family="paragraph")
-footer_pg.addElement(TextProperties(fontname="Arial", fontsize="9pt", color="#666666"))
-footer_pg.addElement(ParagraphProperties(textalign="center"))
-doc.styles.addElement(footer_pg)
-
-header_s = Style(name="HeaderPara", family="paragraph")
-header_s.addElement(ParagraphProperties(textalign="end"))
-doc.styles.addElement(header_s)
-
-img_style = Style(name="ImgFrame", family="graphic")
-img_style.addElement(GraphicProperties(
-    verticalpos="top", verticalrel="paragraph",
-    horizontalpos="center", horizontalrel="paragraph",
-    wrap="none",
-))
-doc.automaticstyles.addElement(img_style)
-
-# Master page with header/footer
-master = MasterPage(name="Standard", pagelayoutname="ContentLayout")
-
-# Header
-header = StyleHeader()
-hp = P(stylename="HeaderPara")
-if header_logo and os.path.isfile(header_logo):
-    href = doc.addPicture(header_logo)
-    frame = Frame(stylename=img_style, width="4.5cm", height="1.13cm", anchortype="as-char")
-    frame.addElement(Image(href=href))
-    hp.addElement(frame)
-else:
-    hp.addText("{{header_logo}}")
-header.addElement(hp)
-master.addElement(header)
-
-# Footer
-footer = StyleFooter()
-fp1 = P(stylename="FooterPage")
-fp1.addText("Page ")
-fp1.addElement(PageNumber(selectpage="current"))
-fp1.addText(" of ")
-fp1.addElement(PageCount())
-footer.addElement(fp1)
-if footer_text:
-    fp2 = P(stylename="FooterText")
-    fp2.addText(footer_text)
-    footer.addElement(fp2)
-else:
-    fp2 = P(stylename="FooterText")
-    fp2.addText("{{footer_text}}")
-    footer.addElement(fp2)
-master.addElement(footer)
-doc.masterstyles.addElement(master)
-
-# Content: title + placeholder fields
-title_s = Style(name="TitlePara", family="paragraph", masterpagename="Standard")
-title_s.addElement(TextProperties(fontname="Arial", fontsize="18pt", fontweight="bold"))
-title_s.addElement(ParagraphProperties(textalign="center", marginbottom="1cm", breakbefore="page"))
-doc.automaticstyles.addElement(title_s)
-
-p = P(stylename="TitlePara")
-p.addText("{{title}}")
-doc.text.addElement(p)
-
-doc.text.addElement(P(stylename="Body"))
-
-# Add placeholder fields
-if fields:
-    for field in fields:
-        p = P(stylename="Placeholder")
-        p.addText("{{" + field + "}}")
-        doc.text.addElement(p)
-else:
-    # Default fields based on document type
-    defaults = {
-        "letter": ["date", "recipient_name", "recipient_address", "subject", "body", "signoff", "author"],
-        "report": ["title", "author", "date", "summary", "body"],
-        "invoice": ["invoice_number", "date", "client_name", "client_address", "items", "subtotal", "vat", "total"],
-        "statement": ["title", "property_name", "property_address", "date", "author", "body"],
-    }
-    for field in defaults.get(doc_type, ["title", "date", "author", "body"]):
-        p = P(stylename="Placeholder")
-        p.addText("{{" + field + "}}")
-        doc.text.addElement(p)
-
-# Metadata
-doc.meta.addElement(dc.Title(text=f"{doc_type.title()} Template"))
-doc.meta.addElement(dc.Description(text=f"Draft template for {doc_type} documents. Replace {{{{placeholders}}}} with actual content."))
-
-doc.save(output_path)
-print(f"Template saved: {output_path}")
-PYEOF
-			log_ok "Draft template created: ${output}"
-			log_info "Edit in LibreOffice or your preferred editor to refine layout."
-			log_info "Replace {{placeholders}} markers with your design, keeping the field names."
-		elif [[ "${format}" == "docx" ]]; then
-			if ! activate_venv 2>/dev/null || ! has_python_pkg docx 2>/dev/null; then
-				die "python-docx required for DOCX template generation. Run: install --standard"
-			fi
-			log_warn "DOCX template generation not yet implemented. Use ODT format."
-		else
-			die "Unsupported template format: ${format}. Use odt or docx."
-		fi
+		_template_draft_subcommand "$@"
 		;;
 	*)
 		printf "Usage: %s template <subcommand>\n\n" "${SCRIPT_NAME}"
@@ -1897,47 +1896,6 @@ PYEOF
 # ============================================================================
 # Create command (fill template with data)
 # ============================================================================
-
-
-# ============================================================================
-# Helper functions for cmd_create (extracted for complexity reduction)
-# ============================================================================
-
-_create_parse_args() {
-	local -n args_ref=$1
-	local -n template_ref=$2
-	local -n data_ref=$3
-	local -n output_ref=$4
-	local -n script_ref=$5
-	
-	while [[ $# -gt 1 ]]; do
-		case "$2" in
-		--data)
-			data_ref="$3"
-			shift 2
-			;;
-		--output | -o)
-			output_ref="$3"
-			shift 2
-			;;
-		--script)
-			script_ref="$3"
-			shift 2
-			;;
-		--*)
-			shift
-			;;
-		*)
-			if [[ -z "${template_ref}" ]]; then
-				template_ref="$2"
-			fi
-			shift
-			;;
-		esac
-	done
-	return 0
-}
-
 
 cmd_create() {
 	local template=""
@@ -2355,177 +2313,111 @@ PYEOF
 }
 
 # Batch import emails from a directory of .eml files or an mbox file
-cmd_import_emails() {
-	local input_path=""
-	local output_dir=""
-	local skip_contacts=false
+# Resolve input to a directory of .eml files.
+# Sets eml_dir_ref and tmp_eml_dir_ref (tmp is set if mbox was split).
+# Args: input_path eml_dir_ref tmp_eml_dir_ref
+_import_resolve_eml_dir() {
+	local input_path="$1"
+	local eml_dir_ref="$2"
+	local tmp_eml_dir_ref="$3"
 
-	# Parse arguments
-	while [[ $# -gt 0 ]]; do
-		case "$1" in
-		--output | -o)
-			output_dir="$2"
-			shift 2
-			;;
-		--skip-contacts)
-			skip_contacts=true
-			shift
-			;;
-		--*)
-			log_warn "Unknown option: $1"
-			shift
-			;;
-		*)
-			if [[ -z "${input_path}" ]]; then
-				input_path="$1"
-			fi
-			shift
-			;;
-		esac
-	done
-
-	# Validate input
-	if [[ -z "${input_path}" ]]; then
-		die "Usage: import-emails <dir|mbox-file> --output <dir> [--skip-contacts]"
-	fi
-
-	if [[ ! -e "${input_path}" ]]; then
-		die "Input not found: ${input_path}"
-	fi
-
-	if [[ -z "${output_dir}" ]]; then
-		die "Output directory required. Use --output <dir>"
-	fi
-
-	mkdir -p "${output_dir}"
-
-	local eml_dir=""
-	local tmp_eml_dir=""
-
-	# Determine input type: directory of .eml files or mbox file
 	if [[ -d "${input_path}" ]]; then
-		eml_dir="${input_path}"
+		printf -v "${eml_dir_ref}" '%s' "${input_path}"
 		log_info "Input: directory of .eml files"
-	elif [[ -f "${input_path}" ]]; then
-		local ext
-		ext=$(get_ext "${input_path}")
-		if [[ "${ext}" == "mbox" ]] || file "${input_path}" 2>/dev/null | grep -qi "mail\|mbox\|text"; then
-			tmp_eml_dir="${HOME}/.aidevops/.agent-workspace/tmp/mbox-split-$$"
-			mkdir -p "${tmp_eml_dir}"
+		return 0
+	fi
 
-			local split_output
-			split_output=$(split_mbox "${input_path}" "${tmp_eml_dir}")
-			local mbox_count
-			mbox_count=$(printf '%s' "$split_output" | grep -oE 'MBOX_COUNT=[0-9]+' | cut -d= -f2)
-			mbox_count="${mbox_count:-0}"
-
-			if [[ "${mbox_count}" -eq 0 ]]; then
-				rm -rf "${tmp_eml_dir}"
-				die "No emails found in mbox file: ${input_path}"
-			fi
-
-			log_info "Extracted ${mbox_count} emails from mbox"
-			eml_dir="${tmp_eml_dir}"
-		else
-			die "Input file is not a recognized mbox format: ${input_path}"
-		fi
-	else
+	if [[ ! -f "${input_path}" ]]; then
 		die "Input must be a directory or mbox file: ${input_path}"
 	fi
 
-	# Count .eml files
-	local eml_files=()
-	while IFS= read -r -d '' f; do
-		eml_files+=("$f")
-	done < <(find "${eml_dir}" -maxdepth 1 -type f \( -name "*.eml" -o -name "*.msg" \) -print0 2>/dev/null | sort -z)
-
-	local total="${#eml_files[@]}"
-
-	if [[ "${total}" -eq 0 ]]; then
-		if [[ -n "${tmp_eml_dir}" ]]; then
-			rm -rf "${tmp_eml_dir}"
-		fi
-		die "No .eml or .msg files found in: ${eml_dir}"
+	local ext
+	ext=$(get_ext "${input_path}")
+	if [[ "${ext}" != "mbox" ]] && ! file "${input_path}" 2>/dev/null | grep -qi "mail\|mbox\|text"; then
+		die "Input file is not a recognized mbox format: ${input_path}"
 	fi
 
-	log_info "Found ${total} email(s) to process"
-	log_info "Output directory: ${output_dir}"
+	local tmp_dir="${HOME}/.aidevops/.agent-workspace/tmp/mbox-split-$$"
+	mkdir -p "${tmp_dir}"
+	printf -v "${tmp_eml_dir_ref}" '%s' "${tmp_dir}"
 
-	# Create contacts directory
-	local contacts_dir="${output_dir}/contacts"
+	local split_output
+	split_output=$(split_mbox "${input_path}" "${tmp_dir}")
+	local mbox_count
+	mbox_count=$(printf '%s' "$split_output" | grep -oE 'MBOX_COUNT=[0-9]+' | cut -d= -f2)
+	mbox_count="${mbox_count:-0}"
+
+	if [[ "${mbox_count}" -eq 0 ]]; then
+		rm -rf "${tmp_dir}"
+		die "No emails found in mbox file: ${input_path}"
+	fi
+
+	log_info "Extracted ${mbox_count} emails from mbox"
+	printf -v "${eml_dir_ref}" '%s' "${tmp_dir}"
+	return 0
+}
+
+# Process a single email file: convert and optionally extract contacts.
+# Args: eml_file output_dir contacts_dir skip_contacts processed total start_time
+# Outputs: "FAILED" to stdout if conversion failed, nothing otherwise.
+_import_process_one_email() {
+	local eml_file="$1"
+	local output_dir="$2"
+	local contacts_dir="$3"
+	local skip_contacts="$4"
+	local processed="$5"
+	local total="$6"
+	local start_time="$7"
+
+	local pct=$((processed * 100 / total))
+	local elapsed=$(($(date +%s) - start_time))
+	local eta="calculating..."
+	if [[ "${elapsed}" -gt 0 ]]; then
+		local secs_per_email=$((elapsed / processed))
+		local eta_secs=$(((total - processed) * secs_per_email))
+		if [[ "${eta_secs}" -ge 60 ]]; then
+			eta="$((eta_secs / 60))m $((eta_secs % 60))s"
+		else
+			eta="${eta_secs}s"
+		fi
+	fi
+
+	printf "${BLUE}[%d/%d %d%%]${NC} Processing: %s (ETA: %s)\n" \
+		"${processed}" "${total}" "${pct}" "$(basename "${eml_file}")" "${eta}"
+
+	local convert_output
+	if ! convert_output=$(convert_eml_to_md "${eml_file}" "${output_dir}" 2>/dev/null); then
+		log_warn "Failed to process: $(basename "${eml_file}")"
+		printf 'FAILED\n'
+		return 0
+	fi
+
 	if [[ "${skip_contacts}" != true ]]; then
-		mkdir -p "${contacts_dir}"
+		local converted_md
+		converted_md=$(printf '%s' "$convert_output" | grep '^Email converted:' | sed 's/^Email converted: //')
+		if [[ -n "${converted_md}" ]] && [[ -f "${converted_md}" ]]; then
+			extract_contact_from_email "${converted_md}" "${contacts_dir}" 2>/dev/null || true
+		fi
 	fi
 
-	# Process each email with progress reporting
-	local processed=0
-	local failed=0
-	local start_time
-	start_time=$(date +%s)
+	return 0
+}
 
-	local eml_file
-	for eml_file in "${eml_files[@]}"; do
-		processed=$((processed + 1))
+# Print import summary.
+# Args: processed failed total start_time output_dir contacts_dir skip_contacts
+_import_print_summary() {
+	local processed="$1"
+	local failed="$2"
+	local total="$3"
+	local start_time="$4"
+	local output_dir="$5"
+	local contacts_dir="$6"
+	local skip_contacts="$7"
 
-		# Progress reporting
-		local pct=$((processed * 100 / total))
-		local elapsed=$(($(date +%s) - start_time))
-		local rate="0"
-		if [[ "${elapsed}" -gt 0 ]]; then
-			rate=$((processed / elapsed))
-			if [[ "${rate}" -eq 0 ]]; then
-				rate="<1"
-			fi
-		fi
-		local remaining=$((total - processed))
-		local eta="calculating..."
-		if [[ "${elapsed}" -gt 0 ]] && [[ "${processed}" -gt 0 ]]; then
-			local secs_per_email=$((elapsed / processed))
-			local eta_secs=$((remaining * secs_per_email))
-			if [[ "${eta_secs}" -ge 60 ]]; then
-				eta="$((eta_secs / 60))m $((eta_secs % 60))s"
-			else
-				eta="${eta_secs}s"
-			fi
-		fi
-
-		printf "${BLUE}[%d/%d %d%%]${NC} Processing: %s (ETA: %s)\n" \
-			"${processed}" "${total}" "${pct}" "$(basename "${eml_file}")" "${eta}"
-
-		# Convert email to markdown using t1044.1's convert_eml_to_md
-		# Capture output to extract the md file path
-		local convert_output
-		if ! convert_output=$(convert_eml_to_md "${eml_file}" "${output_dir}" 2>/dev/null); then
-			log_warn "Failed to process: $(basename "${eml_file}")"
-			failed=$((failed + 1))
-			continue
-		fi
-
-		# Extract contacts from the generated markdown (if not skipped)
-		if [[ "${skip_contacts}" != true ]]; then
-			# Parse md file path from convert_eml_to_md output
-			local converted_md
-			converted_md=$(printf '%s' "$convert_output" | grep '^Email converted:' | sed 's/^Email converted: //')
-			if [[ -n "${converted_md}" ]] && [[ -f "${converted_md}" ]]; then
-				extract_contact_from_email "${converted_md}" "${contacts_dir}" 2>/dev/null || true
-			fi
-		fi
-	done
-
-	# Clean up temp mbox split directory
-	if [[ -n "${tmp_eml_dir}" ]]; then
-		rm -rf "${tmp_eml_dir}"
-	fi
-
-	# Summary
-	local end_time
-	end_time=$(date +%s)
-	local total_time=$((end_time - start_time))
-	local total_time_fmt
+	local total_time=$(($(date +%s) - start_time))
+	local total_time_fmt="${total_time}s"
 	if [[ "${total_time}" -ge 60 ]]; then
 		total_time_fmt="$((total_time / 60))m $((total_time % 60))s"
-	else
-		total_time_fmt="${total_time}s"
 	fi
 
 	printf "\n"
@@ -2544,7 +2436,90 @@ cmd_import_emails() {
 		printf "  Contacts:   %s unique contact(s) in %s\n" "${contact_count}" "${contacts_dir}"
 	fi
 
-	# Generate collection manifest (_index.toon)
+	return 0
+}
+
+cmd_import_emails() {
+	local input_path=""
+	local output_dir=""
+	local skip_contacts=false
+
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--output | -o)
+			output_dir="$2"
+			shift 2
+			;;
+		--skip-contacts)
+			skip_contacts=true
+			shift
+			;;
+		--*)
+			log_warn "Unknown option: $1"
+			shift
+			;;
+		*)
+			[[ -z "${input_path}" ]] && input_path="$1"
+			shift
+			;;
+		esac
+	done
+
+	if [[ -z "${input_path}" ]]; then
+		die "Usage: import-emails <dir|mbox-file> --output <dir> [--skip-contacts]"
+	fi
+	if [[ ! -e "${input_path}" ]]; then
+		die "Input not found: ${input_path}"
+	fi
+	if [[ -z "${output_dir}" ]]; then
+		die "Output directory required. Use --output <dir>"
+	fi
+
+	mkdir -p "${output_dir}"
+
+	local eml_dir=""
+	local tmp_eml_dir=""
+	_import_resolve_eml_dir "${input_path}" eml_dir tmp_eml_dir
+
+	local eml_files=()
+	while IFS= read -r -d '' f; do
+		eml_files+=("$f")
+	done < <(find "${eml_dir}" -maxdepth 1 -type f \( -name "*.eml" -o -name "*.msg" \) -print0 2>/dev/null | sort -z)
+
+	local total="${#eml_files[@]}"
+	if [[ "${total}" -eq 0 ]]; then
+		[[ -n "${tmp_eml_dir}" ]] && rm -rf "${tmp_eml_dir}"
+		die "No .eml or .msg files found in: ${eml_dir}"
+	fi
+
+	log_info "Found ${total} email(s) to process"
+	log_info "Output directory: ${output_dir}"
+
+	local contacts_dir="${output_dir}/contacts"
+	[[ "${skip_contacts}" != true ]] && mkdir -p "${contacts_dir}"
+
+	local processed=0
+	local failed=0
+	local start_time
+	start_time=$(date +%s)
+
+	local eml_file
+	for eml_file in "${eml_files[@]}"; do
+		processed=$((processed + 1))
+		local result
+		result=$(_import_process_one_email \
+			"${eml_file}" "${output_dir}" "${contacts_dir}" \
+			"${skip_contacts}" "${processed}" "${total}" "${start_time}")
+		if [[ "${result}" == "FAILED" ]]; then
+			failed=$((failed + 1))
+		fi
+	done
+
+	[[ -n "${tmp_eml_dir}" ]] && rm -rf "${tmp_eml_dir}"
+
+	_import_print_summary "${processed}" "${failed}" "${total}" \
+		"${start_time}" "${output_dir}" "${contacts_dir}" "${skip_contacts}"
+
 	cmd_generate_manifest "${output_dir}" || log_warn "Manifest generation failed (non-fatal)"
 
 	if [[ "${failed}" -gt 0 ]]; then
@@ -2592,249 +2567,10 @@ cmd_generate_manifest() {
 
 	log_info "Generating collection manifest: ${index_file}"
 
-	# Use Python for reliable YAML frontmatter parsing and TOON generation
-	python3 - "${output_dir}" "${index_file}" <<'PYEOF'
-import sys
-import os
-import re
-import glob
-from collections import OrderedDict
-from datetime import datetime
-
-output_dir = sys.argv[1]
-index_file = sys.argv[2]
-
-
-def parse_frontmatter(md_path):
-    """Extract YAML frontmatter fields from a markdown file."""
-    fields = {}
-    try:
-        with open(md_path, 'r', encoding='utf-8', errors='replace') as f:
-            content = f.read(8192)  # Read enough for frontmatter
-    except (OSError, IOError):
-        return fields
-
-    if not content.startswith('---'):
-        return fields
-
-    end = content.find('\n---', 3)
-    if end == -1:
-        return fields
-
-    fm_block = content[4:end]
-    for raw_line in fm_block.split('\n'):
-        # Skip indented lines (nested YAML: list items, sub-keys)
-        if raw_line.startswith(' ') or raw_line.startswith('\t'):
-            continue
-        line = raw_line.strip()
-        if not line or line.startswith('#') or line.startswith('- '):
-            continue
-        colon_pos = line.find(':')
-        if colon_pos > 0:
-            key = line[:colon_pos].strip()
-            value = line[colon_pos + 1:].strip()
-            # Strip surrounding quotes
-            if len(value) >= 2 and value[0] in ('"', "'") and value[-1] == value[0]:
-                value = value[1:-1]
-            fields[key] = value
-
-    return fields
-
-
-def escape_toon_value(val):
-    """Escape a value for TOON format — quote if it contains commas or quotes."""
-    val = str(val)
-    if ',' in val or '"' in val or '\n' in val:
-        return '"' + val.replace('"', '""') + '"'
-    return val
-
-
-def parse_contact_toon(toon_path):
-    """Parse a contact .toon file into a dict."""
-    contact = {}
-    try:
-        with open(toon_path, 'r', encoding='utf-8', errors='replace') as f:
-            for line in f:
-                line = line.strip()
-                if line == 'contact' or not line:
-                    continue
-                parts = line.split('\t', 1)
-                if len(parts) == 2:
-                    contact[parts[0]] = parts[1]
-    except (OSError, IOError):
-        pass
-    return contact
-
-
-# --- Collect documents ---
-md_files = sorted(glob.glob(os.path.join(output_dir, '*.md')))
-documents = []
-# Track threads: message_id -> doc info, in_reply_to chains
-msg_id_map = {}  # message_id -> index in documents
-thread_map = {}  # thread_id -> list of doc indices (if thread_id exists)
-reply_chains = {}  # message_id -> in_reply_to
-
-for md_path in md_files:
-    basename = os.path.basename(md_path)
-    if basename.startswith('_'):
-        continue  # Skip index files
-
-    fm = parse_frontmatter(md_path)
-    if not fm:
-        continue
-
-    doc = OrderedDict()
-    doc['file'] = basename
-    doc['subject'] = fm.get('subject', fm.get('title', ''))
-    doc['from'] = fm.get('from', '')
-    doc['to'] = fm.get('to', '')
-    doc['date_sent'] = fm.get('date_sent', '')
-    doc['message_id'] = fm.get('message_id', '')
-    doc['in_reply_to'] = fm.get('in_reply_to', '')
-    doc['attachment_count'] = fm.get('attachment_count', '0')
-    doc['tokens_estimate'] = fm.get('tokens_estimate', '0')
-    doc['size'] = fm.get('size', '')
-
-    # Thread fields (from t1044.8 if available)
-    doc['thread_id'] = fm.get('thread_id', '')
-    doc['thread_position'] = fm.get('thread_position', '')
-
-    idx = len(documents)
-    documents.append(doc)
-
-    # Index by message_id for thread reconstruction
-    mid = doc['message_id']
-    if mid:
-        msg_id_map[mid] = idx
-
-    irt = doc['in_reply_to']
-    if irt and mid:
-        reply_chains[mid] = irt
-
-    # If thread_id exists (t1044.8), group by it
-    tid = doc['thread_id']
-    if tid:
-        thread_map.setdefault(tid, []).append(idx)
-
-
-# --- Reconstruct threads from in_reply_to chains (fallback if no thread_id) ---
-def find_thread_root(mid):
-    """Walk in_reply_to chain to find the root message_id."""
-    visited = set()
-    current = mid
-    while current in reply_chains and current not in visited:
-        visited.add(current)
-        current = reply_chains[current]
-    return current
-
-
-if not thread_map:
-    # No t1044.8 thread_id data — reconstruct from in_reply_to chains
-    root_groups = {}  # root_message_id -> list of doc indices
-    for mid, idx in msg_id_map.items():
-        root = find_thread_root(mid)
-        root_groups.setdefault(root, []).append(idx)
-    # Only include groups with >1 message as threads
-    for root_mid, indices in root_groups.items():
-        if len(indices) > 1:
-            thread_map[root_mid] = sorted(indices, key=lambda i: documents[i].get('date_sent', ''))
-
-# Build thread records
-threads = []
-for tid, indices in sorted(thread_map.items(), key=lambda x: x[0]):
-    thread_docs = [documents[i] for i in indices]
-    # Collect unique participants
-    participants = set()
-    for d in thread_docs:
-        for addr in (d.get('from', ''), d.get('to', '')):
-            for part in addr.split(','):
-                part = part.strip()
-                if part:
-                    # Extract email from "Name <email>" format
-                    email_match = re.search(r'<([^>]+)>', part)
-                    if email_match:
-                        participants.add(email_match.group(1).lower())
-                    elif '@' in part:
-                        participants.add(part.lower())
-
-    thread = OrderedDict()
-    thread['thread_id'] = tid
-    thread['subject'] = thread_docs[0].get('subject', '') if thread_docs else ''
-    thread['message_count'] = str(len(indices))
-    thread['participants'] = '; '.join(sorted(participants))
-    thread['first_date'] = thread_docs[0].get('date_sent', '') if thread_docs else ''
-    thread['last_date'] = thread_docs[-1].get('date_sent', '') if thread_docs else ''
-    threads.append(thread)
-
-
-# --- Collect contacts ---
-contacts_dir = os.path.join(output_dir, 'contacts')
-contacts = []
-if os.path.isdir(contacts_dir):
-    toon_files = sorted(glob.glob(os.path.join(contacts_dir, '*.toon')))
-    for toon_path in toon_files:
-        c = parse_contact_toon(toon_path)
-        if not c.get('email'):
-            continue
-
-        # Count emails from/to this contact in the documents
-        email_addr = c['email'].lower()
-        email_count = 0
-        for doc in documents:
-            from_field = doc.get('from', '').lower()
-            to_field = doc.get('to', '').lower()
-            if email_addr in from_field or email_addr in to_field:
-                email_count += 1
-
-        contact = OrderedDict()
-        contact['email'] = c.get('email', '')
-        contact['name'] = c.get('name', '')
-        contact['title'] = c.get('title', '')
-        contact['company'] = c.get('company', '')
-        contact['email_count'] = str(email_count)
-        contact['first_seen'] = c.get('first_seen', '')
-        contact['last_seen'] = c.get('last_seen', '')
-        contact['confidence'] = c.get('confidence', 'low')
-        contacts.append(contact)
-
-
-# --- Write _index.toon ---
-with open(index_file, 'w', encoding='utf-8') as f:
-    now = datetime.now().strftime('%Y-%m-%dT%H:%M:%S')
-
-    # Documents index
-    doc_fields = 'file,subject,from,to,date_sent,message_id,in_reply_to,attachment_count,tokens_estimate,size'
-    f.write(f'documents[{len(documents)}]{{{doc_fields}}}:\n')
-    for doc in documents:
-        vals = [escape_toon_value(doc.get(k, '')) for k in doc_fields.split(',')]
-        f.write(f'  {",".join(vals)}\n')
-
-    # Threads index
-    thread_fields = 'thread_id,subject,message_count,participants,first_date,last_date'
-    f.write(f'threads[{len(threads)}]{{{thread_fields}}}:\n')
-    for t in threads:
-        vals = [escape_toon_value(t.get(k, '')) for k in thread_fields.split(',')]
-        f.write(f'  {",".join(vals)}\n')
-
-    # Contacts index
-    contact_fields = 'email,name,title,company,email_count,first_seen,last_seen,confidence'
-    f.write(f'contacts[{len(contacts)}]{{{contact_fields}}}:\n')
-    for c in contacts:
-        vals = [escape_toon_value(c.get(k, '')) for k in contact_fields.split(',')]
-        f.write(f'  {",".join(vals)}\n')
-
-    # Summary metadata
-    f.write('metadata:\n')
-    f.write(f'  total_documents: {len(documents)}\n')
-    f.write(f'  total_threads: {len(threads)}\n')
-    f.write(f'  total_contacts: {len(contacts)}\n')
-    f.write(f'  generated: "{now}"\n')
-    f.write(f'  source: email-import\n')
-
-print(f'MANIFEST_DOCS={len(documents)}')
-print(f'MANIFEST_THREADS={len(threads)}')
-print(f'MANIFEST_CONTACTS={len(contacts)}')
-PYEOF
+	# Use the extracted generate-manifest.py script for TOON generation
+	local script_dir
+	script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+	python3 "${script_dir}/generate-manifest.py" "${output_dir}" "${index_file}"
 
 	local manifest_result=$?
 	if [[ "${manifest_result}" -ne 0 ]]; then
@@ -2915,345 +2651,10 @@ cmd_normalise() {
 	local tmp_file
 	tmp_file=$(mktemp)
 
-	# Process the markdown file with Python
-	python3 - "$input" "$tmp_file" "${email_mode}" <<'PYEOF'
-import sys
-import re
-from typing import List, Tuple
-
-def detect_heading_from_structure(line: str, prev_line: str, next_line: str,
-                                  email_mode: bool = False) -> Tuple[int, str]:
-    """
-    Detect if a line should be a heading based on structural cues.
-    Returns (heading_level, cleaned_text) or (0, line) if not a heading.
-    In email mode, only explicit markdown headings (#) are detected —
-    heuristic detection is skipped since email section detection already
-    inserts proper headings for quoted replies, signatures, and forwards.
-    """
-    stripped = line.strip()
-    
-    # Already a markdown heading
-    if stripped.startswith('#'):
-        level = len(re.match(r'^#+', stripped).group())
-        text = stripped.lstrip('#').strip()
-        return (level, text)
-    
-    # Empty line
-    if not stripped:
-        return (0, line)
-    
-    # In email mode, skip heuristic heading detection — email section
-    # detection (quoted replies, signatures, forwards) already adds headings
-    if email_mode:
-        return (0, line)
-    
-    # Detect heading patterns:
-    # 1. ALL CAPS lines (likely headings)
-    # 2. Title Case with blank lines before/after
-    # 3. Short lines (<60 chars) that are capitalized with blank lines around them
-    
-    is_all_caps = stripped.isupper() and len(stripped.split()) >= 1
-    is_title_case = stripped[0].isupper() and not stripped.endswith(('.', '!', '?', ':'))
-    is_short = len(stripped) < 60
-    has_blank_before = not prev_line.strip()
-    has_blank_after = not next_line.strip()
-    
-    # ALL CAPS = likely heading (level 2 if has blank before, else level 3)
-    if is_all_caps and is_short:
-        if has_blank_before:
-            return (2, stripped.title())
-        # Even without blank before, if it's ALL CAPS and short, likely a heading
-        elif has_blank_after:
-            return (3, stripped.title())
-    
-    # Title case, short, surrounded by blanks = likely heading level 3
-    if is_title_case and is_short and has_blank_before and has_blank_after:
-        # Check if it looks like a sentence (ends with punctuation)
-        if not re.search(r'[.!?]$', stripped):
-            return (3, stripped)
-    
-    return (0, line)
-
-def normalise_heading_hierarchy(lines: List[str],
-                                email_mode: bool = False) -> List[str]:
-    """
-    Ensure heading hierarchy is valid:
-    - Single # root heading
-    - Sequential nesting (no skipped levels)
-    """
-    result = []
-    heading_stack = []
-    has_h1 = False
-    
-    for i, line in enumerate(lines):
-        prev_line = lines[i-1] if i > 0 else ""
-        next_line = lines[i+1] if i < len(lines)-1 else ""
-        
-        level, text = detect_heading_from_structure(line, prev_line, next_line,
-                                                    email_mode=email_mode)
-        
-        if level > 0:
-            # Ensure we have an H1
-            if not has_h1:
-                if level == 1:
-                    has_h1 = True
-                else:
-                    # Promote first heading to H1
-                    level = 1
-                    has_h1 = True
-            
-            # Ensure sequential nesting
-            if heading_stack:
-                last_level = heading_stack[-1]
-                # Can't skip levels (e.g., H2 -> H4)
-                if level > last_level + 1:
-                    level = last_level + 1
-            
-            # Update stack
-            while heading_stack and heading_stack[-1] >= level:
-                heading_stack.pop()
-            heading_stack.append(level)
-            
-            result.append('#' * level + ' ' + text)
-        else:
-            result.append(line)
-    
-    return result
-
-def align_table_pipes(lines: List[str]) -> List[str]:
-    """
-    Align markdown table pipes for readability.
-    """
-    result = []
-    in_table = False
-    table_lines = []
-    
-    for line in lines:
-        stripped = line.strip()
-        
-        # Detect table rows (contain |)
-        if '|' in stripped and stripped.count('|') >= 2:
-            in_table = True
-            table_lines.append(line)
-        else:
-            # End of table
-            if in_table and table_lines:
-                # Process and align the table
-                result.extend(align_table(table_lines))
-                table_lines = []
-                in_table = False
-            result.append(line)
-    
-    # Handle table at end of file
-    if table_lines:
-        result.extend(align_table(table_lines))
-    
-    return result
-
-def align_table(table_lines: List[str]) -> List[str]:
-    """
-    Align a single table's pipes.
-    """
-    if not table_lines:
-        return []
-    
-    # Parse table cells
-    rows = []
-    for line in table_lines:
-        # Split by | and strip whitespace
-        cells = [cell.strip() for cell in line.split('|')]
-        # Remove empty first/last cells (from leading/trailing |)
-        if cells and not cells[0]:
-            cells = cells[1:]
-        if cells and not cells[-1]:
-            cells = cells[:-1]
-        rows.append(cells)
-    
-    if not rows:
-        return table_lines
-    
-    # Find max width for each column
-    num_cols = max(len(row) for row in rows)
-    col_widths = [0] * num_cols
-    
-    for row in rows:
-        for i, cell in enumerate(row):
-            if i < num_cols:
-                col_widths[i] = max(col_widths[i], len(cell))
-    
-    # Rebuild table with aligned pipes
-    result = []
-    for row in rows:
-        # Pad cells to column width
-        padded = []
-        for i in range(num_cols):
-            cell = row[i] if i < len(row) else ''
-            # Check if this is a separator row (contains only -, :, and spaces)
-            if re.match(r'^[\s:-]+$', cell):
-                # Preserve alignment markers
-                if cell.startswith(':') and cell.endswith(':'):
-                    padded.append(':' + '-' * (col_widths[i] - 2) + ':')
-                elif cell.startswith(':'):
-                    padded.append(':' + '-' * (col_widths[i] - 1))
-                elif cell.endswith(':'):
-                    padded.append('-' * (col_widths[i] - 1) + ':')
-                else:
-                    padded.append('-' * col_widths[i])
-            else:
-                padded.append(cell.ljust(col_widths[i]))
-        
-        result.append('| ' + ' | '.join(padded) + ' |')
-    
-    return result
-
-def detect_email_sections(lines: List[str]) -> List[str]:
-    """
-    Detect and structure email-specific sections:
-    - Quoted replies (lines starting with >)
-    - Signature blocks (lines after --)
-    - Forwarded message headers (---------- Forwarded message ----------)
-    """
-    result = []
-    in_quote_block = False
-    in_signature = False
-    in_forwarded = False
-    quote_depth = 0
-
-    for i, line in enumerate(lines):
-        stripped = line.strip()
-
-        # Detect forwarded message headers
-        if re.match(r'^-{3,}\s*(Forwarded|Original)\s+(message|Message)\s*-{3,}$', stripped):
-            # Close any open quote block
-            if in_quote_block:
-                result.append('')
-                in_quote_block = False
-            if in_signature:
-                in_signature = False
-            in_forwarded = True
-            result.append('')
-            result.append('## Forwarded Message')
-            result.append('')
-            continue
-
-        # Detect "Begin forwarded message:" variant
-        if re.match(r'^Begin forwarded message\s*:', stripped, re.IGNORECASE):
-            if in_quote_block:
-                result.append('')
-                in_quote_block = False
-            in_forwarded = True
-            result.append('')
-            result.append('## Forwarded Message')
-            result.append('')
-            continue
-
-        # Detect forwarded header fields (From:, Date:, Subject:, To:)
-        if in_forwarded and re.match(r'^(From|Date|Subject|To|Cc|Sent|Reply-To)\s*:', stripped):
-            result.append(f'**{stripped}**')
-            continue
-
-        # End forwarded header block on first non-header, non-blank line
-        if in_forwarded and stripped and not re.match(r'^(From|Date|Subject|To|Cc|Sent|Reply-To)\s*:', stripped):
-            in_forwarded = False
-            result.append('')
-
-        # Detect signature block: line is exactly "-- " or "--"
-        if stripped == '--' or stripped == '-- ':
-            if in_quote_block:
-                result.append('')
-                in_quote_block = False
-            in_signature = True
-            result.append('')
-            result.append('## Signature')
-            result.append('')
-            continue
-
-        # Lines in signature block
-        if in_signature:
-            # End signature if we hit a quoted reply or forwarded message
-            if stripped.startswith('>') or re.match(r'^-{3,}\s*(Forwarded|Original)', stripped):
-                in_signature = False
-                # Re-process this line
-            else:
-                result.append(line)
-                continue
-
-        # Detect quoted reply lines (starting with >)
-        if stripped.startswith('>'):
-            # Count quote depth
-            new_depth = 0
-            temp = stripped
-            while temp.startswith('>'):
-                new_depth += 1
-                temp = temp[1:].lstrip()
-
-            # Start a new quote section if transitioning from non-quoted
-            if not in_quote_block:
-                in_quote_block = True
-                quote_depth = new_depth
-                # Check if previous line has "On ... wrote:" pattern
-                prev_wrote = False
-                if i > 0:
-                    prev = lines[i - 1].strip()
-                    if re.match(r'^On\s+.+wrote\s*:\s*$', prev):
-                        prev_wrote = True
-                    elif re.match(r'^On\s+.+wrote\s*:\s*$', prev.rstrip('>').strip()):
-                        prev_wrote = True
-                if not prev_wrote:
-                    result.append('')
-                    result.append('## Quoted Reply')
-                    result.append('')
-
-            # Preserve the quoted line as-is (blockquote syntax)
-            result.append(line)
-            continue
-
-        # Transition out of quote block
-        if in_quote_block and not stripped.startswith('>'):
-            in_quote_block = False
-            quote_depth = 0
-            # Check if this line is "On ... wrote:" (attribution for next quote)
-            if re.match(r'^On\s+.+wrote\s*:\s*$', stripped):
-                result.append('')
-                result.append('## Quoted Reply')
-                result.append('')
-                result.append(f'*{stripped}*')
-                continue
-
-        # Regular line
-        result.append(line)
-
-    return result
-
-
-def main():
-    input_file = sys.argv[1]
-    output_file = sys.argv[2]
-    email_mode = sys.argv[3].lower() == 'true' if len(sys.argv) > 3 else False
-
-    with open(input_file, 'r', encoding='utf-8') as f:
-        lines = f.read().splitlines()
-
-    # Step 0 (email only): Detect and structure email-specific sections
-    if email_mode:
-        lines = detect_email_sections(lines)
-
-    # Step 1: Normalise heading hierarchy
-    lines = normalise_heading_hierarchy(lines, email_mode=email_mode)
-
-    # Step 2: Align table pipes
-    lines = align_table_pipes(lines)
-
-    # Write output
-    with open(output_file, 'w', encoding='utf-8') as f:
-        f.write('\n'.join(lines))
-        # Ensure file ends with newline
-        if lines and lines[-1]:
-            f.write('\n')
-
-if __name__ == '__main__':
-    main()
-PYEOF
+	# Process the markdown file with the extracted normalise-markdown.py script
+	local script_dir
+	script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+	python3 "${script_dir}/normalise-markdown.py" "$input" "$tmp_file" "${email_mode}"
 
 	# Check if processing succeeded
 	if [[ ! -f "${tmp_file}" ]]; then
@@ -3360,293 +2761,11 @@ cmd_pageindex() {
 
 	log_info "Generating PageIndex: $(basename "$input") -> $(basename "$output")"
 
-	# Generate the PageIndex JSON with Python
-	python3 - "$input" "$output" "${use_ollama}" "${ollama_model}" "${source_pdf}" "${page_count}" <<'PYEOF'
-import sys
-import re
-import json
-import hashlib
-from typing import List, Dict, Optional, Any
-
-def extract_frontmatter(lines: List[str]) -> Dict[str, str]:
-    """Extract YAML frontmatter fields from markdown."""
-    frontmatter = {}
-    if not lines or lines[0].strip() != '---':
-        return frontmatter
-
-    for i, line in enumerate(lines[1:], 1):
-        if line.strip() == '---':
-            break
-        if ':' in line:
-            key, _, value = line.partition(':')
-            frontmatter[key.strip()] = value.strip()
-
-    return frontmatter
-
-def get_frontmatter_end(lines: List[str]) -> int:
-    """Return the line index after the closing --- of frontmatter, or 0."""
-    if not lines or lines[0].strip() != '---':
-        return 0
-    for i, line in enumerate(lines[1:], 1):
-        if line.strip() == '---':
-            return i + 1
-    return 0
-
-def extract_first_sentence(text: str) -> str:
-    """Extract the first meaningful sentence from text."""
-    # Strip markdown formatting
-    text = re.sub(r'\[([^\]]+)\]\([^)]+\)', r'\1', text)  # links
-    text = re.sub(r'[*_`~]+', '', text)  # emphasis
-    text = text.strip()
-
-    if not text:
-        return ""
-
-    # Find first sentence boundary
-    match = re.match(r'^(.+?[.!?])\s', text)
-    if match:
-        sentence = match.group(1).strip()
-        # Cap at 200 chars
-        if len(sentence) > 200:
-            return sentence[:197] + '...'
-        return sentence
-
-    # No sentence boundary — use first line, capped
-    first_line = text.split('\n')[0].strip()
-    if len(first_line) > 200:
-        return first_line[:197] + '...'
-    return first_line
-
-def get_ollama_summary(text: str, model: str) -> Optional[str]:
-    """Get a one-sentence summary from Ollama. Returns None on failure."""
-    import urllib.request
-    import urllib.error
-
-    # Truncate input to avoid overwhelming small models
-    if len(text) > 2000:
-        text = text[:2000] + '...'
-
-    prompt = (
-        "Summarise the following section in exactly one concise sentence "
-        "(max 150 characters). Return ONLY the summary sentence, nothing else.\n\n"
-        + text
-    )
-
-    payload = json.dumps({
-        "model": model,
-        "prompt": prompt,
-        "stream": False,
-        "options": {"temperature": 0.1, "num_predict": 80}
-    }).encode('utf-8')
-
-    req = urllib.request.Request(
-        'http://localhost:11434/api/generate',
-        data=payload,
-        headers={'Content-Type': 'application/json'}
-    )
-
-    try:
-        with urllib.request.urlopen(req, timeout=15) as resp:
-            result = json.loads(resp.read().decode('utf-8'))
-            summary = result.get('response', '').strip()
-            # Clean up: remove quotes, ensure single sentence
-            summary = summary.strip('"\'')
-            # Take only first sentence if model returned multiple
-            match = re.match(r'^(.+?[.!?])', summary)
-            if match:
-                return match.group(1)
-            return summary if summary else None
-    except (urllib.error.URLError, TimeoutError, json.JSONDecodeError, OSError):
-        return None
-
-def estimate_page_from_position(line_idx: int, total_lines: int, page_count: int) -> int:
-    """Estimate which PDF page a line corresponds to based on position ratio."""
-    if page_count <= 0 or total_lines <= 0:
-        return 0
-    ratio = line_idx / total_lines
-    page = int(ratio * page_count) + 1
-    return min(page, page_count)
-
-def build_pageindex_tree(
-    lines: List[str],
-    use_ollama: bool,
-    ollama_model: str,
-    source_pdf: str,
-    page_count: int
-) -> Dict[str, Any]:
-    """Build a hierarchical PageIndex tree from markdown headings."""
-    frontmatter = extract_frontmatter(lines)
-    content_start = get_frontmatter_end(lines)
-    content_lines = lines[content_start:]
-    total_lines = len(content_lines)
-
-    # Parse headings and their content
-    sections = []
-    current_heading = None
-    current_content_lines = []
-    current_line_idx = 0
-
-    for i, line in enumerate(content_lines):
-        stripped = line.strip()
-        heading_match = re.match(r'^(#{1,6})\s+(.+)$', stripped)
-
-        if heading_match:
-            # Save previous section
-            if current_heading is not None:
-                sections.append({
-                    'level': current_heading['level'],
-                    'title': current_heading['title'],
-                    'line_idx': current_heading['line_idx'],
-                    'content': '\n'.join(current_content_lines).strip()
-                })
-
-            level = len(heading_match.group(1))
-            title = heading_match.group(2).strip()
-            current_heading = {
-                'level': level,
-                'title': title,
-                'line_idx': i
-            }
-            current_content_lines = []
-            current_line_idx = i
-        else:
-            current_content_lines.append(line)
-
-    # Save last section
-    if current_heading is not None:
-        sections.append({
-            'level': current_heading['level'],
-            'title': current_heading['title'],
-            'line_idx': current_heading['line_idx'],
-            'content': '\n'.join(current_content_lines).strip()
-        })
-
-    if not sections:
-        # No headings found — create a single root node from the whole content
-        full_content = '\n'.join(content_lines).strip()
-        title = frontmatter.get('title', 'Untitled')
-        summary = ""
-        if use_ollama and full_content:
-            summary = get_ollama_summary(full_content, ollama_model) or ""
-        if not summary and full_content:
-            summary = extract_first_sentence(full_content)
-
-        return {
-            "version": "1.0",
-            "generator": "aidevops/document-creation-helper",
-            "source_file": frontmatter.get('source_file', ''),
-            "content_hash": frontmatter.get('content_hash', ''),
-            "page_count": page_count,
-            "tree": {
-                "title": title,
-                "level": 1,
-                "summary": summary,
-                "page": 1 if page_count > 0 else None,
-                "children": []
-            }
-        }
-
-    # Build hierarchical tree from flat section list
-    def build_tree(sections_list, start_idx, parent_level):
-        """Recursively build tree from sections starting at start_idx."""
-        children = []
-        i = start_idx
-
-        while i < len(sections_list):
-            section = sections_list[i]
-
-            if section['level'] <= parent_level:
-                # This section is at or above parent level — stop
-                break
-
-            # Generate summary
-            summary = ""
-            if use_ollama and section['content']:
-                summary = get_ollama_summary(section['content'], ollama_model) or ""
-            if not summary and section['content']:
-                summary = extract_first_sentence(section['content'])
-
-            # Estimate page reference
-            page_ref = None
-            if page_count > 0:
-                page_ref = estimate_page_from_position(
-                    section['line_idx'], total_lines, page_count
-                )
-
-            node = {
-                "title": section['title'],
-                "level": section['level'],
-                "summary": summary,
-                "page": page_ref,
-                "children": []
-            }
-
-            # Find children (sections with higher level numbers before next sibling)
-            child_children, next_i = build_tree(sections_list, i + 1, section['level'])
-            node['children'] = child_children
-
-            children.append(node)
-            i = next_i
-
-        return children, i
-
-    # Build from root
-    root_section = sections[0]
-    root_summary = ""
-    if use_ollama and root_section['content']:
-        root_summary = get_ollama_summary(root_section['content'], ollama_model) or ""
-    if not root_summary and root_section['content']:
-        root_summary = extract_first_sentence(root_section['content'])
-
-    root_page = None
-    if page_count > 0:
-        root_page = 1
-
-    root_children, _ = build_tree(sections, 1, root_section['level'])
-
-    tree = {
-        "title": root_section['title'],
-        "level": root_section['level'],
-        "summary": root_summary,
-        "page": root_page,
-        "children": root_children
-    }
-
-    # Compute content hash if not in frontmatter
-    content_hash = frontmatter.get('content_hash', '')
-    if not content_hash:
-        full_text = '\n'.join(lines)
-        content_hash = hashlib.sha256(full_text.encode('utf-8')).hexdigest()
-
-    return {
-        "version": "1.0",
-        "generator": "aidevops/document-creation-helper",
-        "source_file": frontmatter.get('source_file', source_pdf if source_pdf else ''),
-        "content_hash": content_hash,
-        "page_count": page_count,
-        "tree": tree
-    }
-
-def main():
-    input_file = sys.argv[1]
-    output_file = sys.argv[2]
-    use_ollama = sys.argv[3].lower() == 'true' if len(sys.argv) > 3 else False
-    ollama_model = sys.argv[4] if len(sys.argv) > 4 else 'llama3.2:1b'
-    source_pdf = sys.argv[5] if len(sys.argv) > 5 else ''
-    page_count = int(sys.argv[6]) if len(sys.argv) > 6 and sys.argv[6].isdigit() else 0
-
-    with open(input_file, 'r', encoding='utf-8') as f:
-        lines = f.read().splitlines()
-
-    pageindex = build_pageindex_tree(lines, use_ollama, ollama_model, source_pdf, page_count)
-
-    with open(output_file, 'w', encoding='utf-8') as f:
-        json.dump(pageindex, f, indent=2, ensure_ascii=False)
-        f.write('\n')
-
-if __name__ == '__main__':
-    main()
-PYEOF
+	# Generate the PageIndex JSON with the extracted pageindex-generator.py script
+	local script_dir
+	script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+	python3 "${script_dir}/pageindex-generator.py" \
+		"$input" "$output" "${use_ollama}" "${ollama_model}" "${source_pdf}" "${page_count}"
 
 	if [[ -f "${output}" ]]; then
 		local size
