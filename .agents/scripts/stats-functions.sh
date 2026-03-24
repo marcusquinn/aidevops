@@ -1267,22 +1267,22 @@ _quality_sweep_for_repo() {
 			local sc_summary=""
 			local sc_details=""
 
-			# timeout_sec (from shared-constants.sh) handles macOS + Linux portably.
-			# It always provides a timeout mechanism (background + kill fallback on
-			# bare macOS), so we no longer need to skip ShellCheck when no timeout
-			# utility is installed.
+			# timeout_sec (from shared-constants.sh) handles macOS + Linux portably,
+			# providing a background + kill fallback on bare macOS so we no longer
+			# need to skip ShellCheck when no timeout utility is installed.
+			# GH#5663: git ls-files returns relative paths — resolve to absolute
+			# before running ShellCheck, and guard against tracked-but-deleted files
+			# (index vs working tree mismatch) by skipping missing paths with a log
+			# entry rather than passing a non-existent path to ShellCheck.
 
 			while IFS= read -r shfile; do
 				[[ -z "$shfile" ]] && continue
-				# GH#5663: git ls-files returns relative paths — resolve to absolute.
-				if [[ "$shfile" != /* ]]; then
+				if [[ ! "$shfile" =~ ^/ ]]; then
 					shfile="${repo_path}/${shfile}"
 				fi
-				# GH#5663: Guard against tracked-but-deleted files (index vs working
-				# tree mismatch). Skip with a log entry rather than running ShellCheck
-				# on a path that does not exist.
 				if [[ ! -f "$shfile" ]]; then
-					echo "[stats] ShellCheck: skipping missing file: ${shfile}" >>"$LOGFILE"
+					printf '%s [stats] ShellCheck: skipping missing file: %s\n' \
+						"$(date '+%Y-%m-%d %H:%M:%S')" "${shfile}" >>"$LOGFILE"
 					continue
 				fi
 				local result
