@@ -417,6 +417,137 @@ cmd_status() {
 }
 
 # ============================================================================
+# Helper functions for cmd_install (extracted for complexity reduction)
+# ============================================================================
+
+_install_tier_minimal() {
+	log_info "Installing Tier 1: pandoc + poppler"
+	if [[ "$(uname)" == "Darwin" ]]; then
+		brew install pandoc poppler 2>&1 || true
+	elif has_cmd apt-get; then
+		sudo apt-get update && sudo apt-get install -y pandoc poppler-utils
+	else
+		die "Unsupported platform. Install pandoc and poppler manually."
+	fi
+	log_ok "Tier 1 installed"
+	return 0
+}
+
+_install_tier_standard() {
+	log_info "Installing Tier 2: Python libraries"
+	if ! has_cmd pandoc; then
+		log_info "Installing Tier 1 first..."
+		_install_tier_minimal
+	fi
+	if [[ ! -d "${VENV_DIR}" ]]; then
+		log_info "Creating Python venv at ${VENV_DIR}"
+		mkdir -p "$(dirname "${VENV_DIR}")"
+		python3 -m venv "${VENV_DIR}"
+	fi
+	activate_venv
+	pip install --quiet odfpy python-docx openpyxl
+	log_ok "Tier 2 installed (odfpy, python-docx, openpyxl)"
+	return 0
+}
+
+_install_tier_full() {
+	log_info "Installing Tier 3: LibreOffice headless"
+	if ! has_python_pkg odf 2>/dev/null; then
+		_install_tier_standard
+	fi
+	if [[ "$(uname)" == "Darwin" ]]; then
+		brew install --cask libreoffice 2>&1 || true
+	elif has_cmd apt-get; then
+		sudo apt-get update && sudo apt-get install -y libreoffice-core libreoffice-writer libreoffice-calc libreoffice-impress
+	else
+		die "Unsupported platform. Install LibreOffice manually."
+	fi
+	log_ok "Tier 3 installed"
+	return 0
+}
+
+_install_tier_ocr() {
+	log_info "Installing OCR tools"
+	if [[ "$(uname)" == "Darwin" ]]; then
+		brew install tesseract 2>&1 || true
+	elif has_cmd apt-get; then
+		sudo apt-get update && sudo apt-get install -y tesseract-ocr
+	fi
+	if [[ ! -d "${VENV_DIR}" ]]; then
+		mkdir -p "$(dirname "${VENV_DIR}")"
+		python3 -m venv "${VENV_DIR}"
+	fi
+	activate_venv
+	pip install --quiet easyocr
+	if has_cmd ollama; then
+		log_info "Pulling GLM-OCR model via Ollama..."
+		ollama pull glm-ocr 2>&1 || true
+	else
+		log_info "Ollama not installed -- skipping GLM-OCR (brew install ollama)"
+	fi
+	log_ok "OCR tools installed"
+	return 0
+}
+
+_install_specific_tool() {
+	local tool="$1"
+	case "${tool}" in
+	pandoc)
+		if [[ "$(uname)" == "Darwin" ]]; then brew install pandoc; else sudo apt-get install -y pandoc; fi
+		;;
+	poppler)
+		if [[ "$(uname)" == "Darwin" ]]; then brew install poppler; else sudo apt-get install -y poppler-utils; fi
+		;;
+	odfpy | python-docx | openpyxl)
+		if [[ ! -d "${VENV_DIR}" ]]; then
+			mkdir -p "$(dirname "${VENV_DIR}")"
+			python3 -m venv "${VENV_DIR}"
+		fi
+		activate_venv
+		pip install --quiet "${tool}"
+		;;
+	libreoffice)
+		if [[ "$(uname)" == "Darwin" ]]; then
+			brew install --cask libreoffice
+		else
+			sudo apt-get install -y libreoffice-core
+		fi
+		;;
+	mineru)
+		if [[ ! -d "${VENV_DIR}" ]]; then
+			mkdir -p "$(dirname "${VENV_DIR}")"
+			python3 -m venv "${VENV_DIR}"
+		fi
+		activate_venv
+		pip install "mineru[all]"
+		;;
+	tesseract)
+		if [[ "$(uname)" == "Darwin" ]]; then brew install tesseract; else sudo apt-get install -y tesseract-ocr; fi
+		;;
+	easyocr)
+		if [[ ! -d "${VENV_DIR}" ]]; then
+			mkdir -p "$(dirname "${VENV_DIR}")"
+			python3 -m venv "${VENV_DIR}"
+		fi
+		activate_venv
+		pip install --quiet easyocr
+		;;
+	glm-ocr)
+		if has_cmd ollama; then
+			ollama pull glm-ocr
+		else
+			die "Ollama required for GLM-OCR. Install: brew install ollama"
+		fi
+		;;
+	*)
+		die "Unknown tool: ${tool}"
+		;;
+	esac
+	log_ok "${tool} installed"
+	return 0
+}
+
+# ============================================================================
 # Install command
 # ============================================================================
 
@@ -426,126 +557,22 @@ cmd_install() {
 
 	case "${tier}" in
 	--minimal)
-		log_info "Installing Tier 1: pandoc + poppler"
-		if [[ "$(uname)" == "Darwin" ]]; then
-			brew install pandoc poppler 2>&1 || true
-		elif has_cmd apt-get; then
-			sudo apt-get update && sudo apt-get install -y pandoc poppler-utils
-		else
-			die "Unsupported platform. Install pandoc and poppler manually."
-		fi
-		log_ok "Tier 1 installed"
+		_install_tier_minimal
 		;;
 	--standard)
-		log_info "Installing Tier 2: Python libraries"
-		# Ensure Tier 1 first
-		if ! has_cmd pandoc; then
-			log_info "Installing Tier 1 first..."
-			cmd_install --minimal
-		fi
-		# Create venv
-		if [[ ! -d "${VENV_DIR}" ]]; then
-			log_info "Creating Python venv at ${VENV_DIR}"
-			mkdir -p "$(dirname "${VENV_DIR}")"
-			python3 -m venv "${VENV_DIR}"
-		fi
-		activate_venv
-		pip install --quiet odfpy python-docx openpyxl
-		log_ok "Tier 2 installed (odfpy, python-docx, openpyxl)"
+		_install_tier_standard
 		;;
 	--full)
-		log_info "Installing Tier 3: LibreOffice headless"
-		# Ensure Tier 1 + 2 first
-		if ! has_python_pkg odf 2>/dev/null; then
-			cmd_install --standard
-		fi
-		if [[ "$(uname)" == "Darwin" ]]; then
-			brew install --cask libreoffice 2>&1 || true
-		elif has_cmd apt-get; then
-			sudo apt-get update && sudo apt-get install -y libreoffice-core libreoffice-writer libreoffice-calc libreoffice-impress
-		else
-			die "Unsupported platform. Install LibreOffice manually."
-		fi
-		log_ok "Tier 3 installed"
+		_install_tier_full
 		;;
 	--ocr)
-		log_info "Installing OCR tools"
-		if [[ "$(uname)" == "Darwin" ]]; then
-			brew install tesseract 2>&1 || true
-		elif has_cmd apt-get; then
-			sudo apt-get update && sudo apt-get install -y tesseract-ocr
-		fi
-		if [[ ! -d "${VENV_DIR}" ]]; then
-			mkdir -p "$(dirname "${VENV_DIR}")"
-			python3 -m venv "${VENV_DIR}"
-		fi
-		activate_venv
-		pip install --quiet easyocr
-		if has_cmd ollama; then
-			log_info "Pulling GLM-OCR model via Ollama..."
-			ollama pull glm-ocr 2>&1 || true
-		else
-			log_info "Ollama not installed -- skipping GLM-OCR (brew install ollama)"
-		fi
-		log_ok "OCR tools installed"
+		_install_tier_ocr
 		;;
 	--tool)
 		if [[ -z "${tool}" ]]; then
 			die "Usage: install --tool <name> (pandoc|poppler|odfpy|python-docx|openpyxl|libreoffice|mineru|tesseract|easyocr|glm-ocr)"
 		fi
-		case "${tool}" in
-		pandoc)
-			if [[ "$(uname)" == "Darwin" ]]; then brew install pandoc; else sudo apt-get install -y pandoc; fi
-			;;
-		poppler)
-			if [[ "$(uname)" == "Darwin" ]]; then brew install poppler; else sudo apt-get install -y poppler-utils; fi
-			;;
-		odfpy | python-docx | openpyxl)
-			if [[ ! -d "${VENV_DIR}" ]]; then
-				mkdir -p "$(dirname "${VENV_DIR}")"
-				python3 -m venv "${VENV_DIR}"
-			fi
-			activate_venv
-			pip install --quiet "${tool}"
-			;;
-		libreoffice)
-			if [[ "$(uname)" == "Darwin" ]]; then
-				brew install --cask libreoffice
-			else
-				sudo apt-get install -y libreoffice-core
-			fi
-			;;
-		mineru)
-			if [[ ! -d "${VENV_DIR}" ]]; then
-				mkdir -p "$(dirname "${VENV_DIR}")"
-				python3 -m venv "${VENV_DIR}"
-			fi
-			activate_venv
-			pip install "mineru[all]"
-			;;
-		tesseract)
-			if [[ "$(uname)" == "Darwin" ]]; then brew install tesseract; else sudo apt-get install -y tesseract-ocr; fi
-			;;
-		easyocr)
-			if [[ ! -d "${VENV_DIR}" ]]; then
-				mkdir -p "$(dirname "${VENV_DIR}")"
-				python3 -m venv "${VENV_DIR}"
-			fi
-			activate_venv
-			pip install --quiet easyocr
-			;;
-		glm-ocr)
-			if has_cmd ollama; then
-				ollama pull glm-ocr
-			else
-				die "Ollama required for GLM-OCR. Install: brew install ollama"
-			fi
-			;;
-		*)
-			die "Unknown tool: ${tool}"
-			;;
-		esac
-		log_ok "${tool} installed"
+		_install_specific_tool "${tool}"
 		;;
 	*)
 		printf "Usage: %s install <tier>\n\n" "${SCRIPT_NAME}"
