@@ -801,12 +801,113 @@ PYEOF
 # Convert command
 # ============================================================================
 
+
+# ============================================================================
+# Helper functions for select_tool (extracted for complexity reduction)
+# ============================================================================
+
+_select_tool_pdf() {
+	local to_ext="$1"
+	case "${to_ext}" in
+	md | markdown)
+		if has_rolm_ocr; then
+			printf 'rolm-ocr'
+		elif has_cmd mineru; then
+			printf 'mineru'
+		elif has_cmd pdftotext; then
+			printf 'pdftotext'
+		else
+			die "No tool available for pdf->md. Run: install --minimal (poppler) or install MinerU"
+		fi
+		;;
+	odt)
+		if has_python_pkg odf 2>/dev/null && has_cmd pdftotext; then
+			printf 'odfpy-pipeline'
+		else
+			die "No tool available for pdf->odt. Run: install --standard (odfpy + poppler)"
+		fi
+		;;
+	docx)
+		if has_cmd soffice || has_cmd libreoffice; then
+			printf 'libreoffice'
+		else
+			die "No tool available for pdf->docx. Run: install --full (LibreOffice)"
+		fi
+		;;
+	html)
+		if has_cmd pdftohtml; then
+			printf 'pdftohtml'
+		else
+			die "No tool available for pdf->html. Run: install --minimal (poppler)"
+		fi
+		;;
+	txt | text)
+		printf 'pdftotext'
+		;;
+	*)
+		die "Unsupported conversion: pdf -> ${to_ext}"
+		;;
+	esac
+	return 0
+}
+
+_select_tool_spreadsheet() {
+	local from_ext="$1"
+	local to_ext="$2"
+	if [[ "${to_ext}" == "csv" ]] || [[ "${from_ext}" == "csv" ]]; then
+		if has_python_pkg openpyxl 2>/dev/null; then
+			printf 'openpyxl'
+		elif has_cmd soffice || has_cmd libreoffice; then
+			printf 'libreoffice'
+		elif has_cmd pandoc; then
+			printf 'pandoc'
+		else
+			die "No tool available for spreadsheet conversion."
+		fi
+	elif has_cmd soffice || has_cmd libreoffice; then
+		printf 'libreoffice'
+	else
+		die "LibreOffice required for ${from_ext}->${to_ext}. Run: install --full"
+	fi
+	return 0
+}
+
+_select_tool_presentation() {
+	local from_ext="$1"
+	local to_ext="$2"
+	if [[ "${to_ext}" == "md" ]] || [[ "${to_ext}" == "markdown" ]]; then
+		if has_cmd pandoc; then
+			printf 'pandoc'
+		else
+			die "pandoc required for presentation->md."
+		fi
+	elif has_cmd soffice || has_cmd libreoffice; then
+		printf 'libreoffice'
+	elif has_cmd pandoc; then
+		printf 'pandoc'
+	else
+		die "No tool available for presentation conversion."
+	fi
+	return 0
+}
+
+_select_tool_html_to_md() {
+	if has_reader_lm; then
+		printf 'reader-lm'
+	elif has_cmd pandoc; then
+		printf 'pandoc'
+	else
+		die "No tool available for html->md. Run: install --minimal (pandoc) or ollama pull reader-lm"
+	fi
+	return 0
+}
+
+
 select_tool() {
 	local from_ext="$1"
 	local to_ext="$2"
 	local force_tool="${3:-}"
 
-	# If user forced a tool, use it
 	if [[ -n "${force_tool}" ]]; then
 		printf '%s' "${force_tool}"
 		return 0
@@ -820,47 +921,7 @@ select_tool() {
 
 	# PDF source requires special handling
 	if [[ "${from_ext}" == "pdf" ]]; then
-		case "${to_ext}" in
-		md | markdown)
-			# Prefer RolmOCR for GPU-accelerated PDF->md with table preservation
-			if has_rolm_ocr; then
-				printf 'rolm-ocr'
-			elif has_cmd mineru; then
-				printf 'mineru'
-			elif has_cmd pdftotext; then
-				printf 'pdftotext'
-			else
-				die "No tool available for pdf->md. Run: install --minimal (poppler) or install MinerU"
-			fi
-			;;
-		odt)
-			if has_python_pkg odf 2>/dev/null && has_cmd pdftotext; then
-				printf 'odfpy-pipeline'
-			else
-				die "No tool available for pdf->odt. Run: install --standard (odfpy + poppler)"
-			fi
-			;;
-		docx)
-			if has_cmd soffice || has_cmd libreoffice; then
-				printf 'libreoffice'
-			else
-				die "No tool available for pdf->docx. Run: install --full (LibreOffice)"
-			fi
-			;;
-		html)
-			if has_cmd pdftohtml; then
-				printf 'pdftohtml'
-			else
-				die "No tool available for pdf->html. Run: install --minimal (poppler)"
-			fi
-			;;
-		txt | text)
-			printf 'pdftotext'
-			;;
-		*)
-			die "Unsupported conversion: pdf -> ${to_ext}"
-			;;
-		esac
+		_select_tool_pdf "${to_ext}"
 		return 0
 	fi
 
@@ -891,51 +952,19 @@ select_tool() {
 
 	# Spreadsheet conversions: prefer LibreOffice
 	if [[ "${from_ext}" =~ ^(xlsx|ods|xls)$ ]] || [[ "${to_ext}" =~ ^(xlsx|ods|xls)$ ]]; then
-		if [[ "${to_ext}" == "csv" ]] || [[ "${from_ext}" == "csv" ]]; then
-			if has_python_pkg openpyxl 2>/dev/null; then
-				printf 'openpyxl'
-			elif has_cmd soffice || has_cmd libreoffice; then
-				printf 'libreoffice'
-			elif has_cmd pandoc; then
-				printf 'pandoc'
-			else
-				die "No tool available for spreadsheet conversion."
-			fi
-		elif has_cmd soffice || has_cmd libreoffice; then
-			printf 'libreoffice'
-		else
-			die "LibreOffice required for ${from_ext}->${to_ext}. Run: install --full"
-		fi
+		_select_tool_spreadsheet "${from_ext}" "${to_ext}"
 		return 0
 	fi
 
 	# Presentation conversions: prefer LibreOffice
 	if [[ "${from_ext}" =~ ^(pptx|odp|ppt)$ ]] || [[ "${to_ext}" =~ ^(pptx|odp|ppt)$ ]]; then
-		if [[ "${to_ext}" == "md" ]] || [[ "${to_ext}" == "markdown" ]]; then
-			if has_cmd pandoc; then
-				printf 'pandoc'
-			else
-				die "pandoc required for presentation->md."
-			fi
-		elif has_cmd soffice || has_cmd libreoffice; then
-			printf 'libreoffice'
-		elif has_cmd pandoc; then
-			printf 'pandoc'
-		else
-			die "No tool available for presentation conversion."
-		fi
+		_select_tool_presentation "${from_ext}" "${to_ext}"
 		return 0
 	fi
 
 	# HTML to markdown: prefer Reader-LM for table preservation
 	if [[ "${from_ext}" == "html" ]] && [[ "${to_ext}" =~ ^(md|markdown)$ ]]; then
-		if has_reader_lm; then
-			printf 'reader-lm'
-		elif has_cmd pandoc; then
-			printf 'pandoc'
-		else
-			die "No tool available for html->md. Run: install --minimal (pandoc) or ollama pull reader-lm"
-		fi
+		_select_tool_html_to_md
 		return 0
 	fi
 
@@ -948,6 +977,7 @@ select_tool() {
 
 	return 0
 }
+
 
 convert_with_pandoc() {
 	local input="$1"
