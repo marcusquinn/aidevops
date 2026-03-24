@@ -191,10 +191,17 @@ cmd_recall() {
 	# binding) rather than string interpolation to prevent SQL injection.
 	# Quote each token individually to handle special chars (hyphens = NOT in FTS5)
 	# "foo-bar baz" → "\"foo-bar\" \"baz\"" (each token quoted, joined by implicit AND)
+	#
+	# Apostrophes are replaced with spaces before tokenization. Apostrophes inside
+	# FTS5 double-quoted tokens cannot be SQL-escaped (doubling them to '' produces
+	# invalid FTS5 syntax). Replacing with a space splits "O'Reilly" into two tokens
+	# "O" and "Reilly", which still matches content containing "O'Reilly" because
+	# FTS5 tokenizes stored content the same way (GH#5678).
+	local query_clean="${query//"'"/" "}"
 	local tokenised_query=""
 	local token
 	set -f # Disable globbing during tokenization (SC2086)
-	for token in $query; do
+	for token in $query_clean; do
 		# Escape embedded double quotes within each token for FTS5 syntax
 		token="${token//\"/\"\"}"
 		if [[ -n "$tokenised_query" ]]; then
@@ -204,10 +211,14 @@ cmd_recall() {
 		fi
 	done
 	set +f # Re-enable globbing
-	# Escape single quotes for SQLite .param set binding (GH#5678)
-	# .param set :query '...' uses single-quote delimiters, so any literal
-	# single quote in the query (e.g., O'Reilly) must be doubled to ''
-	local escaped_query="${tokenised_query//"'"/"''"}"
+	# Build an SQL single-quoted literal for .param set, then escape it for the
+	# sqlite3 dot-command's outer double-quoted argument (GH#5678).
+	# tokenised_query contains no apostrophes (stripped above), so the SQL literal
+	# needs no internal single-quote escaping. The FTS5 double-quote tokens are
+	# escaped as \" for the outer double-quoted dot-command argument.
+	local param_query="'${tokenised_query}'"
+	param_query="${param_query//\\/\\\\}"
+	param_query="${param_query//\"/\\\"}"
 
 	# Build filters with validation
 	local extra_filters=""
@@ -262,7 +273,7 @@ cmd_recall() {
 	local results
 	results=$(
 		db -json "$MEMORY_DB" <<EOF
-.param set :query "${escaped_query}"
+.param set :query "${param_query}"
 SELECT 
     learnings.id,
     learnings.content,
@@ -319,7 +330,7 @@ EOF
 		if [[ -f "$global_db" ]]; then
 			shared_results=$(
 				db -json "$global_db" <<EOF
-.param set :query "${escaped_query}"
+.param set :query "${param_query}"
 SELECT 
     learnings.id,
     learnings.content,
