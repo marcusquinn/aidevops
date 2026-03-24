@@ -149,197 +149,18 @@ open_browser() {
 	return 0
 }
 
-# ---------------------------------------------------------------------------
-# Add account
-# ---------------------------------------------------------------------------
-
-cmd_add() {
-	local provider="${1:-anthropic}"
-	local prefill_email="${2:-}"
-
-	if [[ "$provider" != "anthropic" && "$provider" != "openai" && "$provider" != "cursor" && "$provider" != "google" ]]; then
-		print_error "Unsupported provider: $provider (supported: anthropic, openai, cursor, google)"
-		return 1
-	fi
-
-	# Cursor uses a different flow — read from local IDE installation
-	if [[ "$provider" == "cursor" ]]; then
-		cmd_add_cursor
-		return $?
-	fi
-
-	# Google uses its own OAuth flow with ADC token injection
-	if [[ "$provider" == "google" ]]; then
-		cmd_add_google "$prefill_email"
-		return $?
-	fi
-
-	# Prompt for email (pre-filled if provided, e.g. from import)
-	local email
-	if [[ -n "$prefill_email" ]]; then
-		email="$prefill_email"
-		print_info "Using email: ${email}"
-	else
-		printf 'Account email: ' >&2
-		read -r email
-	fi
-	if [[ -z "$email" || "$email" != *@* ]]; then
-		print_error "Invalid email address"
-		return 1
-	fi
-
-	# Generate PKCE + separate state nonce (verifier must not double as state)
-	local verifier challenge state_nonce
-	verifier=$(generate_verifier)
-	challenge=$(generate_challenge "$verifier")
-	state_nonce=$(openssl rand -hex 24)
-
-	# Build authorize URL
-	local authorize_url client_id redirect_uri scopes
-	if [[ "$provider" == "anthropic" ]]; then
-		client_id="$ANTHROPIC_CLIENT_ID"
-		authorize_url="$ANTHROPIC_AUTHORIZE_URL"
-		redirect_uri="$ANTHROPIC_REDIRECT_URI"
-		scopes="$ANTHROPIC_SCOPES"
-	else
-		client_id="$OPENAI_CLIENT_ID"
-		authorize_url="$OPENAI_AUTHORIZE_URL"
-		redirect_uri="$OPENAI_REDIRECT_URI"
-		scopes="$OPENAI_SCOPES"
-	fi
-	# Note: google provider is handled by cmd_add_google before reaching here
-
-	local encoded_scopes encoded_redirect
-	encoded_scopes=$(urlencode "$scopes")
-	encoded_redirect=$(urlencode "$redirect_uri")
-
-	local full_url="${authorize_url}?client_id=${client_id}&response_type=code&redirect_uri=${encoded_redirect}&scope=${encoded_scopes}&code_challenge=${challenge}&code_challenge_method=S256&state=${state_nonce}"
-
-	if [[ "$provider" == "anthropic" ]]; then
-		full_url="${full_url}&code=true"
-	fi
-
-	print_info "Opening browser for ${provider} OAuth..."
-	open_browser "$full_url"
-
-	# Wait for authorization code
-	printf 'Paste the authorization code here: ' >&2
-	local auth_code
-	read -r auth_code
-	if [[ -z "$auth_code" ]]; then
-		print_error "No authorization code provided"
-		return 1
-	fi
-
-	# Strip fragment if present (code#state format) and validate state
-	local code returned_state
-	if [[ "$auth_code" == *"#"* ]]; then
-		code="${auth_code%%#*}"
-		returned_state="${auth_code#*#}"
-		if [[ "$returned_state" != "$state_nonce" ]]; then
-			print_error "State mismatch — possible CSRF. Expected ${state_nonce}, got ${returned_state}"
-			return 1
-		fi
-	else
-		code="$auth_code"
-	fi
-
-	# Exchange code for tokens
-	print_info "Exchanging authorization code for tokens..."
-
-	local token_endpoint token_body content_type ua_header
-	if [[ "$provider" == "anthropic" ]]; then
-		token_endpoint="$ANTHROPIC_TOKEN_ENDPOINT"
-		content_type="application/json"
-		ua_header="$USER_AGENT"
-		# Build JSON via Python to safely encode the auth code (may contain
-		# characters that break printf-based JSON construction).
-		# The 'state' field is required by Anthropic's token endpoint as of
-		# Claude CLI v2.1.x — omitting it causes HTTP 400 "Invalid request format".
-		token_body=$(CODE="$code" CLIENT_ID="$client_id" REDIR="$redirect_uri" \
-			VERIFIER="$verifier" STATE="$state_nonce" python3 -c "
-import json, os
-print(json.dumps({
-    'code': os.environ['CODE'],
-    'grant_type': 'authorization_code',
-    'client_id': os.environ['CLIENT_ID'],
-    'redirect_uri': os.environ['REDIR'],
-    'code_verifier': os.environ['VERIFIER'],
-    'state': os.environ['STATE'],
-}))")
-	else
-		token_endpoint="$OPENAI_TOKEN_ENDPOINT"
-		content_type="application/x-www-form-urlencoded"
-		ua_header="opencode/1.2.27"
-		local encoded_code
-		encoded_code=$(urlencode "$code")
-		token_body="code=${encoded_code}&grant_type=authorization_code&client_id=${client_id}&redirect_uri=$(urlencode "$redirect_uri")&code_verifier=${verifier}"
-	fi
-
-	# Use curl with stdin for body (keeps secrets off argv)
-	local response http_status
-	response=$(printf '%s' "$token_body" | curl -sS \
-		-w '\n%{http_code}' \
-		-X POST \
-		-H "Content-Type: ${content_type}" \
-		-H "User-Agent: ${ua_header}" \
-		--data-binary @- \
-		--max-time 15 \
-		"$token_endpoint" 2>/dev/null) || {
-		print_error "curl failed"
-		return 1
-	}
-
-	# Parse response — last line is HTTP status
-	http_status=$(printf '%s' "$response" | tail -1)
-	local body
-	body=$(printf '%s' "$response" | sed '$d')
-
-	if [[ "$http_status" != "200" ]]; then
-		print_error "Token exchange failed: HTTP ${http_status}"
-		# Show error details but NOT any token values
-		# Anthropic returns {type, message}, OpenAI returns {error, error_description}
-		local error_msg
-		error_msg=$(printf '%s' "$body" | python3 -c "
-import sys, json
-try:
-    d = json.load(sys.stdin)
-    parts = []
-    for k in ('type', 'error', 'message', 'error_description'):
-        if k in d and d[k]:
-            parts.append(str(d[k]))
-    print(': '.join(parts) if parts else 'unknown')
-except: print('unknown')
-" 2>/dev/null || echo "unknown")
-		print_error "Error: ${error_msg}"
-		return 1
-	fi
-
-	# Extract tokens using python3 (jq alternative that's always available on macOS)
-	local access_token refresh_token expires_in
-	access_token=$(printf '%s' "$body" | python3 -c "import sys,json; print(json.load(sys.stdin).get('access_token',''))" 2>/dev/null)
-	refresh_token=$(printf '%s' "$body" | python3 -c "import sys,json; print(json.load(sys.stdin).get('refresh_token',''))" 2>/dev/null)
-	expires_in=$(printf '%s' "$body" | python3 -c "import sys,json; print(json.load(sys.stdin).get('expires_in',3600))" 2>/dev/null)
-
-	if [[ -z "$access_token" ]]; then
-		print_error "No access token in response"
-		return 1
-	fi
-
-	# Calculate expiry timestamp (milliseconds)
-	local now_ms expires_ms
-	now_ms=$(get_now_ms)
-	expires_ms=$((now_ms + expires_in * 1000))
-
-	# Upsert into pool file
-	local pool
-	pool=$(load_pool)
-
-	local now_iso
-	now_iso=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-
-	# Use python3 for JSON manipulation (handles escaping correctly)
-	pool=$(printf '%s' "$pool" | PROVIDER="$provider" EMAIL="$email" \
+# Upsert an account into the pool JSON (stdin → stdout).
+# Usage: printf '%s' "$pool" | pool_upsert_account "$provider" "$email" \
+#            "$access_token" "$refresh_token" "$expires_ms" "$now_iso"
+# Prints the updated pool JSON to stdout.
+pool_upsert_account() {
+	local provider="$1"
+	local email="$2"
+	local access_token="$3"
+	local refresh_token="$4"
+	local expires_ms="$5"
+	local now_iso="$6"
+	PROVIDER="$provider" EMAIL="$email" \
 		ACCESS="$access_token" REFRESH="$refresh_token" \
 		EXPIRES="$expires_ms" NOW_ISO="$now_iso" \
 		python3 -c "
@@ -355,7 +176,6 @@ now_iso = os.environ['NOW_ISO']
 if provider not in pool:
     pool[provider] = []
 
-# Find existing account by email
 found = False
 for account in pool[provider]:
     if account.get('email') == email:
@@ -381,71 +201,365 @@ if not found:
     })
 
 json.dump(pool, sys.stdout, indent=2)
-")
+"
+	return 0
+}
 
+# Parse HTTP response (body + status) from curl -w '\n%{http_code}' output.
+# Sets caller's 'http_status' and 'body' variables via stdout lines.
+# Usage: parse_curl_response "$response" http_status_var body_var
+# Prints: first line = status code, remaining lines = body
+parse_curl_response() {
+	local response="$1"
+	printf '%s' "$response" | tail -1
+	printf '%s' "$response" | sed '$d'
+	return 0
+}
+
+# Extract a JSON error message from a token endpoint response body (stdin).
+# Prints a human-readable error string (never a token value).
+extract_token_error() {
+	python3 -c "
+import sys, json
+try:
+    d = json.load(sys.stdin)
+    parts = []
+    for k in ('type', 'error', 'message', 'error_description'):
+        if k in d and d[k]:
+            parts.append(str(d[k]))
+    print(': '.join(parts) if parts else 'unknown')
+except Exception:
+    print('unknown')
+" 2>/dev/null || echo "unknown"
+	return 0
+}
+
+# Exchange an OAuth authorization code for tokens via curl (body via stdin).
+# Usage: _oauth_exchange_code "$token_endpoint" "$content_type" "$ua_header" "$token_body"
+# Prints two lines: http_status, then body (JSON).
+_oauth_exchange_code() {
+	local token_endpoint="$1"
+	local content_type="$2"
+	local ua_header="$3"
+	local token_body="$4"
+	printf '%s' "$token_body" | curl -sS \
+		-w '\n%{http_code}' \
+		-X POST \
+		-H "Content-Type: ${content_type}" \
+		-H "User-Agent: ${ua_header}" \
+		--data-binary @- \
+		--max-time 15 \
+		"$token_endpoint" 2>/dev/null
+	return 0
+}
+
+# Extract access_token, refresh_token, expires_in from a JSON token response (stdin).
+# Prints three lines: access_token, refresh_token, expires_in.
+_extract_token_fields() {
+	python3 -c "
+import sys, json
+d = json.load(sys.stdin)
+print(d.get('access_token', ''))
+print(d.get('refresh_token', ''))
+print(d.get('expires_in', 3600))
+" 2>/dev/null
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# Add account — helpers
+# ---------------------------------------------------------------------------
+
+# Prompt for or validate an email address.
+# Usage: _add_prompt_email "$prefill_email" "$prompt_text"
+# Prints the validated email to stdout; returns 1 on invalid input.
+_add_prompt_email() {
+	local prefill_email="$1"
+	local prompt_text="${2:-Account email: }"
+	local email
+	if [[ -n "$prefill_email" ]]; then
+		email="$prefill_email"
+		print_info "Using email: ${email}" >&2
+	else
+		printf '%s' "$prompt_text" >&2
+		read -r email
+	fi
+	if [[ -z "$email" || "$email" != *@* ]]; then
+		print_error "Invalid email address" >&2
+		return 1
+	fi
+	printf '%s' "$email"
+	return 0
+}
+
+# Build the OAuth authorize URL for anthropic or openai providers.
+# Usage: _add_build_authorize_url "$provider" "$client_id" "$redirect_uri" \
+#            "$scopes" "$challenge" "$state_nonce"
+# Prints the full URL to stdout.
+_add_build_authorize_url() {
+	local provider="$1"
+	local client_id="$2"
+	local redirect_uri="$3"
+	local scopes="$4"
+	local challenge="$5"
+	local state_nonce="$6"
+	local encoded_scopes encoded_redirect
+	encoded_scopes=$(urlencode "$scopes")
+	encoded_redirect=$(urlencode "$redirect_uri")
+	local full_url="${ANTHROPIC_AUTHORIZE_URL}"
+	if [[ "$provider" == "openai" ]]; then
+		full_url="$OPENAI_AUTHORIZE_URL"
+	fi
+	full_url="${full_url}?client_id=${client_id}&response_type=code&redirect_uri=${encoded_redirect}&scope=${encoded_scopes}&code_challenge=${challenge}&code_challenge_method=S256&state=${state_nonce}"
+	if [[ "$provider" == "anthropic" ]]; then
+		full_url="${full_url}&code=true"
+	fi
+	printf '%s' "$full_url"
+	return 0
+}
+
+# Save a new/updated account into the pool and print a success message.
+# Usage: _add_save_to_pool "$provider" "$email" "$access_token" \
+#            "$refresh_token" "$expires_ms" "$now_iso"
+_add_save_to_pool() {
+	local provider="$1"
+	local email="$2"
+	local access_token="$3"
+	local refresh_token="$4"
+	local expires_ms="$5"
+	local now_iso="$6"
+	local pool count
+	pool=$(load_pool)
+	pool=$(printf '%s' "$pool" | pool_upsert_account "$provider" "$email" \
+		"$access_token" "$refresh_token" "$expires_ms" "$now_iso")
 	save_pool "$pool"
-
-	local count
 	count=$(printf '%s' "$pool" | count_provider_accounts "$provider")
-
 	print_success "Added ${email} to ${provider} pool (${count} account(s) total)"
+	return 0
+}
+
+# Resolve provider-specific OAuth parameters.
+# Prints 5 lines: client_id, redirect_uri, scopes, token_endpoint, content_type, ua_header.
+_add_get_provider_params() {
+	local provider="$1"
+	if [[ "$provider" == "anthropic" ]]; then
+		printf '%s\n' "$ANTHROPIC_CLIENT_ID"
+		printf '%s\n' "$ANTHROPIC_REDIRECT_URI"
+		printf '%s\n' "$ANTHROPIC_SCOPES"
+		printf '%s\n' "$ANTHROPIC_TOKEN_ENDPOINT"
+		printf '%s\n' "application/json"
+		printf '%s\n' "$USER_AGENT"
+	else
+		printf '%s\n' "$OPENAI_CLIENT_ID"
+		printf '%s\n' "$OPENAI_REDIRECT_URI"
+		printf '%s\n' "$OPENAI_SCOPES"
+		printf '%s\n' "$OPENAI_TOKEN_ENDPOINT"
+		printf '%s\n' "application/x-www-form-urlencoded"
+		printf '%s\n' "opencode/1.2.27"
+	fi
+	return 0
+}
+
+# Read and validate the authorization code from stdin, stripping fragment and
+# checking state nonce. Prints the bare code to stdout.
+_add_read_auth_code() {
+	local state_nonce="$1"
+	local auth_code
+	printf 'Paste the authorization code here: ' >&2
+	read -r auth_code
+	if [[ -z "$auth_code" ]]; then
+		print_error "No authorization code provided" >&2
+		return 1
+	fi
+	local code returned_state
+	if [[ "$auth_code" == *"#"* ]]; then
+		code="${auth_code%%#*}"
+		returned_state="${auth_code#*#}"
+		if [[ "$returned_state" != "$state_nonce" ]]; then
+			print_error "State mismatch — possible CSRF. Expected ${state_nonce}, got ${returned_state}" >&2
+			return 1
+		fi
+	else
+		code="$auth_code"
+	fi
+	printf '%s' "$code"
+	return 0
+}
+
+# Build the token exchange request body for anthropic or openai.
+# Prints the body string to stdout.
+_add_build_token_body() {
+	local provider="$1"
+	local code="$2"
+	local client_id="$3"
+	local redirect_uri="$4"
+	local verifier="$5"
+	local state_nonce="$6"
+	if [[ "$provider" == "anthropic" ]]; then
+		# Build JSON via Python to safely encode the auth code.
+		# The 'state' field is required by Anthropic's token endpoint as of
+		# Claude CLI v2.1.x — omitting it causes HTTP 400 "Invalid request format".
+		CODE="$code" CLIENT_ID="$client_id" REDIR="$redirect_uri" \
+			VERIFIER="$verifier" STATE="$state_nonce" python3 -c "
+import json, os
+print(json.dumps({
+    'code': os.environ['CODE'],
+    'grant_type': 'authorization_code',
+    'client_id': os.environ['CLIENT_ID'],
+    'redirect_uri': os.environ['REDIR'],
+    'code_verifier': os.environ['VERIFIER'],
+    'state': os.environ['STATE'],
+}))"
+	else
+		local encoded_code
+		encoded_code=$(urlencode "$code")
+		printf 'code=%s&grant_type=authorization_code&client_id=%s&redirect_uri=%s&code_verifier=%s' \
+			"$encoded_code" "$client_id" "$(urlencode "$redirect_uri")" "$verifier"
+	fi
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# Add account
+# ---------------------------------------------------------------------------
+
+cmd_add() {
+	local provider="${1:-anthropic}"
+	local prefill_email="${2:-}"
+
+	if [[ "$provider" != "anthropic" && "$provider" != "openai" && "$provider" != "cursor" && "$provider" != "google" ]]; then
+		print_error "Unsupported provider: $provider (supported: anthropic, openai, cursor, google)"
+		return 1
+	fi
+
+	# Cursor uses a different flow — read from local IDE installation
+	if [[ "$provider" == "cursor" ]]; then
+		cmd_add_cursor
+		return $?
+	fi
+
+	# Google uses its own OAuth flow with ADC token injection
+	if [[ "$provider" == "google" ]]; then
+		cmd_add_google "$prefill_email"
+		return $?
+	fi
+
+	local email
+	email=$(_add_prompt_email "$prefill_email") || return 1
+
+	# Generate PKCE + separate state nonce (verifier must not double as state)
+	local verifier challenge state_nonce
+	verifier=$(generate_verifier)
+	challenge=$(generate_challenge "$verifier")
+	state_nonce=$(openssl rand -hex 24)
+
+	# Select provider-specific OAuth parameters
+	local params client_id redirect_uri scopes token_endpoint content_type ua_header
+	params=$(_add_get_provider_params "$provider")
+	client_id=$(printf '%s\n' "$params" | sed -n '1p')
+	redirect_uri=$(printf '%s\n' "$params" | sed -n '2p')
+	scopes=$(printf '%s\n' "$params" | sed -n '3p')
+	token_endpoint=$(printf '%s\n' "$params" | sed -n '4p')
+	content_type=$(printf '%s\n' "$params" | sed -n '5p')
+	ua_header=$(printf '%s\n' "$params" | sed -n '6p')
+
+	local full_url
+	full_url=$(_add_build_authorize_url "$provider" "$client_id" "$redirect_uri" "$scopes" "$challenge" "$state_nonce")
+
+	print_info "Opening browser for ${provider} OAuth..."
+	open_browser "$full_url"
+
+	local code
+	code=$(_add_read_auth_code "$state_nonce") || return 1
+
+	print_info "Exchanging authorization code for tokens..."
+
+	local token_body
+	token_body=$(_add_build_token_body "$provider" "$code" "$client_id" "$redirect_uri" "$verifier" "$state_nonce")
+
+	local response http_status body
+	response=$(_oauth_exchange_code "$token_endpoint" "$content_type" "$ua_header" "$token_body") || {
+		print_error "curl failed"
+		return 1
+	}
+	http_status=$(printf '%s' "$response" | tail -1)
+	body=$(printf '%s' "$response" | sed '$d')
+
+	if [[ "$http_status" != "200" ]]; then
+		print_error "Token exchange failed: HTTP ${http_status}"
+		local error_msg
+		error_msg=$(printf '%s' "$body" | extract_token_error)
+		print_error "Error: ${error_msg}"
+		return 1
+	fi
+
+	# Extract tokens (three lines: access, refresh, expires_in)
+	local token_fields access_token refresh_token expires_in
+	token_fields=$(printf '%s' "$body" | _extract_token_fields)
+	access_token=$(printf '%s\n' "$token_fields" | sed -n '1p')
+	refresh_token=$(printf '%s\n' "$token_fields" | sed -n '2p')
+	expires_in=$(printf '%s\n' "$token_fields" | sed -n '3p')
+
+	if [[ -z "$access_token" ]]; then
+		print_error "No access token in response"
+		return 1
+	fi
+
+	local now_ms expires_ms now_iso
+	now_ms=$(get_now_ms)
+	expires_ms=$((now_ms + expires_in * 1000))
+	now_iso=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+	_add_save_to_pool "$provider" "$email" "$access_token" "$refresh_token" "$expires_ms" "$now_iso"
 	print_info "Restart OpenCode to use the new token."
 	print_info "Then switch to the '${provider^}' provider and select a model to start chatting."
 	return 0
 }
 
 # ---------------------------------------------------------------------------
-# Add Cursor account (reads from local Cursor IDE installation)
+# Add Cursor account — helpers
 # ---------------------------------------------------------------------------
 
-cmd_add_cursor() {
-	# Cursor doesn't use a browser OAuth flow. Instead, credentials are
-	# managed by the Cursor IDE and stored locally. We read them from:
-	#   1. ~/.cursor/auth.json (cursor-agent CLI)
-	#   2. Cursor IDE's SQLite state database (fallback)
-
-	local cursor_auth_json=""
-	local cursor_state_db=""
-
-	# Determine paths based on platform
+# Resolve Cursor credential file paths for the current platform.
+# Prints two lines: cursor_auth_json path, cursor_state_db path.
+# Returns 1 on unsupported platform.
+_cursor_get_platform_paths() {
 	case "$(uname -s)" in
 	Darwin)
-		cursor_auth_json="${HOME}/.cursor/auth.json"
-		cursor_state_db="${HOME}/Library/Application Support/Cursor/User/globalStorage/state.vscdb"
+		printf '%s\n' "${HOME}/.cursor/auth.json"
+		printf '%s\n' "${HOME}/Library/Application Support/Cursor/User/globalStorage/state.vscdb"
 		;;
 	Linux)
 		local config_dir="${XDG_CONFIG_HOME:-${HOME}/.config}"
-		cursor_auth_json="${config_dir}/cursor/auth.json"
-		cursor_state_db="${HOME}/.config/Cursor/User/globalStorage/state.vscdb"
+		printf '%s\n' "${config_dir}/cursor/auth.json"
+		printf '%s\n' "${HOME}/.config/Cursor/User/globalStorage/state.vscdb"
 		;;
 	MINGW* | MSYS* | CYGWIN*)
 		local app_data="${APPDATA:-${HOME}/AppData/Roaming}"
-		cursor_auth_json="${app_data}/Cursor/auth.json"
-		cursor_state_db="${app_data}/Cursor/User/globalStorage/state.vscdb"
+		printf '%s\n' "${app_data}/Cursor/auth.json"
+		printf '%s\n' "${app_data}/Cursor/User/globalStorage/state.vscdb"
 		;;
 	*)
 		print_error "Unsupported platform for Cursor: $(uname -s)"
 		return 1
 		;;
 	esac
+	return 0
+}
 
-	local access_token=""
-	local refresh_token=""
-	local email=""
-
-	# Source 1: cursor-agent auth.json
-	if [[ -f "$cursor_auth_json" ]]; then
-		print_info "Reading from Cursor auth.json..."
-		local _at _rt _line _count
-		_count=0
-		while IFS= read -r _line; do
-			_count=$((_count + 1))
-			if [[ $_count -eq 1 ]]; then
-				_at="$_line"
-			elif [[ $_count -eq 2 ]]; then
-				_rt="$_line"
-			fi
-		done < <(python3 -c "
+# Read access and refresh tokens from Cursor auth.json.
+# Prints two lines: access_token, refresh_token (may be empty).
+_cursor_read_auth_json() {
+	local cursor_auth_json="$1"
+	local _at _rt _line _count
+	_count=0
+	while IFS= read -r _line; do
+		_count=$((_count + 1))
+		if [[ $_count -eq 1 ]]; then
+			_at="$_line"
+		elif [[ $_count -eq 2 ]]; then
+			_rt="$_line"
+		fi
+	done < <(python3 -c "
 import json, sys
 try:
     with open(sys.argv[1]) as f:
@@ -456,40 +570,33 @@ except Exception:
     print('')
     print('')
 " "$cursor_auth_json" 2>/dev/null)
-		access_token="${_at:-}"
-		refresh_token="${_rt:-}"
-	fi
+	printf '%s\n' "${_at:-}"
+	printf '%s\n' "${_rt:-}"
+	return 0
+}
 
-	# Source 2: Cursor IDE state database (fallback or supplement)
-	if [[ -z "$access_token" && -f "$cursor_state_db" ]]; then
-		print_info "Reading from Cursor IDE state database..."
-		if ! command -v sqlite3 &>/dev/null; then
-			print_error "sqlite3 is required to read Cursor credentials but is not installed"
-			return 1
-		fi
-		access_token=$(sqlite3 "$cursor_state_db" "SELECT value FROM ItemTable WHERE key = 'cursorAuth/accessToken'" 2>/dev/null || true)
-		if [[ -z "$refresh_token" ]]; then
-			refresh_token=$(sqlite3 "$cursor_state_db" "SELECT value FROM ItemTable WHERE key = 'cursorAuth/refreshToken'" 2>/dev/null || true)
-		fi
-		if [[ -z "$email" ]]; then
-			email=$(sqlite3 "$cursor_state_db" "SELECT value FROM ItemTable WHERE key = 'cursorAuth/cachedEmail'" 2>/dev/null || true)
-		fi
-	fi
-
-	if [[ -z "$access_token" ]]; then
-		print_error "No Cursor credentials found."
-		echo "" >&2
-		echo "Make sure you:" >&2
-		echo "  1. Have Cursor IDE installed" >&2
-		echo "  2. Are logged into your Cursor account in the IDE" >&2
-		echo "  3. Have an active Cursor Pro subscription" >&2
-		echo "" >&2
-		echo "After logging in, run this command again." >&2
+# Read Cursor credentials from the IDE SQLite state database.
+# Prints three lines: access_token, refresh_token, email (may be empty).
+_cursor_read_state_db() {
+	local cursor_state_db="$1"
+	if ! command -v sqlite3 &>/dev/null; then
+		print_error "sqlite3 is required to read Cursor credentials but is not installed"
 		return 1
 	fi
+	local at rt em
+	at=$(sqlite3 "$cursor_state_db" "SELECT value FROM ItemTable WHERE key = 'cursorAuth/accessToken'" 2>/dev/null || true)
+	rt=$(sqlite3 "$cursor_state_db" "SELECT value FROM ItemTable WHERE key = 'cursorAuth/refreshToken'" 2>/dev/null || true)
+	em=$(sqlite3 "$cursor_state_db" "SELECT value FROM ItemTable WHERE key = 'cursorAuth/cachedEmail'" 2>/dev/null || true)
+	printf '%s\n' "${at:-}"
+	printf '%s\n' "${rt:-}"
+	printf '%s\n' "${em:-}"
+	return 0
+}
 
-	# Decode JWT to get email and expiry (no secrets printed)
-	local jwt_email jwt_exp
+# Decode a JWT access token to extract email and expiry (no secrets printed).
+# Prints two lines: email, exp (unix seconds, 0 if unavailable).
+_cursor_decode_jwt_fields() {
+	local access_token="$1"
 	local _je _jx _jline _jcount
 	_jcount=0
 	while IFS= read -r _jline; do
@@ -516,10 +623,71 @@ else:
     print('')
     print(0)
 " 2>/dev/null)
-	jwt_email="${_je:-}"
-	jwt_exp="${_jx:-0}"
+	printf '%s\n' "${_je:-}"
+	printf '%s\n' "${_jx:-0}"
+	return 0
+}
 
-	# Use JWT email if we didn't get one from the state DB
+# ---------------------------------------------------------------------------
+# Add Cursor account (reads from local Cursor IDE installation)
+# ---------------------------------------------------------------------------
+
+cmd_add_cursor() {
+	# Cursor doesn't use a browser OAuth flow. Instead, credentials are
+	# managed by the Cursor IDE and stored locally. We read them from:
+	#   1. ~/.cursor/auth.json (cursor-agent CLI)
+	#   2. Cursor IDE's SQLite state database (fallback)
+
+	local cursor_auth_json cursor_state_db
+	local path_lines
+	path_lines=$(_cursor_get_platform_paths) || return 1
+	cursor_auth_json=$(printf '%s\n' "$path_lines" | sed -n '1p')
+	cursor_state_db=$(printf '%s\n' "$path_lines" | sed -n '2p')
+
+	local access_token="" refresh_token="" email=""
+
+	# Source 1: cursor-agent auth.json
+	if [[ -f "$cursor_auth_json" ]]; then
+		print_info "Reading from Cursor auth.json..."
+		local auth_lines
+		auth_lines=$(_cursor_read_auth_json "$cursor_auth_json")
+		access_token=$(printf '%s\n' "$auth_lines" | sed -n '1p')
+		refresh_token=$(printf '%s\n' "$auth_lines" | sed -n '2p')
+	fi
+
+	# Source 2: Cursor IDE state database (fallback or supplement)
+	if [[ -z "$access_token" && -f "$cursor_state_db" ]]; then
+		print_info "Reading from Cursor IDE state database..."
+		local db_lines
+		db_lines=$(_cursor_read_state_db "$cursor_state_db") || return 1
+		access_token=$(printf '%s\n' "$db_lines" | sed -n '1p')
+		if [[ -z "$refresh_token" ]]; then
+			refresh_token=$(printf '%s\n' "$db_lines" | sed -n '2p')
+		fi
+		if [[ -z "$email" ]]; then
+			email=$(printf '%s\n' "$db_lines" | sed -n '3p')
+		fi
+	fi
+
+	if [[ -z "$access_token" ]]; then
+		print_error "No Cursor credentials found."
+		echo "" >&2
+		echo "Make sure you:" >&2
+		echo "  1. Have Cursor IDE installed" >&2
+		echo "  2. Are logged into your Cursor account in the IDE" >&2
+		echo "  3. Have an active Cursor Pro subscription" >&2
+		echo "" >&2
+		echo "After logging in, run this command again." >&2
+		return 1
+	fi
+
+	# Decode JWT to get email and expiry (no secrets printed)
+	local jwt_fields jwt_email jwt_exp
+	jwt_fields=$(_cursor_decode_jwt_fields "$access_token")
+	jwt_email=$(printf '%s\n' "$jwt_fields" | sed -n '1p')
+	jwt_exp=$(printf '%s\n' "$jwt_fields" | sed -n '2p')
+	jwt_exp="${jwt_exp:-0}"
+
 	if [[ -z "$email" && -n "$jwt_email" ]]; then
 		email="$jwt_email"
 	fi
@@ -532,130 +700,43 @@ else:
 	if [[ "$jwt_exp" != "0" && -n "$jwt_exp" ]]; then
 		expires_ms=$((jwt_exp * 1000))
 	else
-		# Default: 1 hour from now
 		local now_ms
 		now_ms=$(get_now_ms)
 		expires_ms=$((now_ms + 3600000))
 	fi
 
-	# Upsert into pool file
-	local pool now_iso
-	pool=$(load_pool)
+	local now_iso
 	now_iso=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-
-	pool=$(printf '%s' "$pool" | PROVIDER="cursor" EMAIL="$email" \
-		ACCESS="$access_token" REFRESH="${refresh_token:-}" \
-		EXPIRES="$expires_ms" NOW_ISO="$now_iso" \
-		python3 -c "
-import sys, json, os
-pool = json.load(sys.stdin)
-provider = os.environ['PROVIDER']
-email = os.environ['EMAIL']
-access = os.environ['ACCESS']
-refresh = os.environ['REFRESH']
-expires = int(os.environ['EXPIRES'])
-now_iso = os.environ['NOW_ISO']
-
-if provider not in pool:
-    pool[provider] = []
-
-found = False
-for account in pool[provider]:
-    if account.get('email') == email:
-        account['access'] = access
-        account['refresh'] = refresh
-        account['expires'] = expires
-        account['lastUsed'] = now_iso
-        account['status'] = 'active'
-        account['cooldownUntil'] = None
-        found = True
-        break
-
-if not found:
-    pool[provider].append({
-        'email': email,
-        'access': access,
-        'refresh': refresh,
-        'expires': expires,
-        'added': now_iso,
-        'lastUsed': now_iso,
-        'status': 'active',
-        'cooldownUntil': None,
-    })
-
-json.dump(pool, sys.stdout, indent=2)
-")
-
-	save_pool "$pool"
-
-	local count
-	count=$(printf '%s' "$pool" | count_provider_accounts "cursor")
-
-	print_success "Added Cursor account ${email} to pool (${count} account(s) total)"
+	_add_save_to_pool "cursor" "$email" "$access_token" "${refresh_token:-}" "$expires_ms" "$now_iso"
 	print_info "Restart OpenCode to use the Cursor provider."
 	return 0
 }
 
 # ---------------------------------------------------------------------------
-# Add Google account (OAuth2 PKCE flow, ADC bearer token injection)
+# Add Google account — helpers
 # ---------------------------------------------------------------------------
 
-cmd_add_google() {
-	local prefill_email="${1:-}"
-
-	print_info "Adding Google AI account to pool..."
-	print_info "Supported plans: Google AI Pro (~\$25/mo), AI Ultra (~\$65/mo), Workspace with Gemini"
-	print_info "Token is injected as GOOGLE_OAUTH_ACCESS_TOKEN (ADC bearer) for Gemini CLI / Vertex AI"
-	echo "" >&2
-
-	# Prompt for email
-	local email
-	if [[ -n "$prefill_email" ]]; then
-		email="$prefill_email"
-		print_info "Using email: ${email}"
-	else
-		printf 'Google account email: ' >&2
-		read -r email
-	fi
-	if [[ -z "$email" || "$email" != *@* ]]; then
-		print_error "Invalid email address"
-		return 1
-	fi
-
-	# Generate PKCE + state nonce
-	local verifier challenge state_nonce
-	verifier=$(generate_verifier)
-	challenge=$(generate_challenge "$verifier")
-	state_nonce=$(openssl rand -hex 24)
-
+# Build the Google OAuth2 authorize URL with PKCE.
+# Usage: _google_build_authorize_url "$challenge" "$state_nonce"
+# Prints the full URL to stdout.
+_google_build_authorize_url() {
+	local challenge="$1"
+	local state_nonce="$2"
 	local encoded_scopes encoded_redirect
 	encoded_scopes=$(urlencode "$GOOGLE_SCOPES")
 	encoded_redirect=$(urlencode "$GOOGLE_REDIRECT_URI")
+	printf '%s?client_id=%s&response_type=code&redirect_uri=%s&scope=%s&code_challenge=%s&code_challenge_method=S256&state=%s&access_type=offline&prompt=consent' \
+		"$GOOGLE_AUTHORIZE_URL" "$GOOGLE_CLIENT_ID" \
+		"$encoded_redirect" "$encoded_scopes" \
+		"$challenge" "$state_nonce"
+	return 0
+}
 
-	# Google OAuth2 authorize URL with PKCE + access_type=offline for refresh token
-	local full_url
-	full_url="${GOOGLE_AUTHORIZE_URL}?client_id=${GOOGLE_CLIENT_ID}&response_type=code&redirect_uri=${encoded_redirect}&scope=${encoded_scopes}&code_challenge=${challenge}&code_challenge_method=S256&state=${state_nonce}&access_type=offline&prompt=consent"
-
-	print_info "Opening browser for Google OAuth..."
-	print_info "Sign in with your Google AI Pro/Ultra or Workspace account."
-	open_browser "$full_url"
-
-	# Google OOB flow: the authorization code is shown in the browser
-	printf 'Paste the authorization code from the browser: ' >&2
-	local auth_code
-	read -r auth_code
-	if [[ -z "$auth_code" ]]; then
-		print_error "No authorization code provided"
-		return 1
-	fi
-
-	# Strip any whitespace
-	auth_code="${auth_code// /}"
-
-	# Exchange code for tokens
-	print_info "Exchanging authorization code for tokens..."
-
-	# Build JSON body via python3 to safely encode the auth code
+# Exchange a Google authorization code for tokens.
+# Prints two lines: http_status, then body JSON.
+_google_exchange_code() {
+	local auth_code="$1"
+	local verifier="$2"
 	local token_body
 	token_body=$(CODE="$auth_code" CLIENT_ID="$GOOGLE_CLIENT_ID" \
 		REDIR="$GOOGLE_REDIRECT_URI" VERIFIER="$verifier" python3 -c "
@@ -667,73 +748,15 @@ print(json.dumps({
     'redirect_uri': os.environ['REDIR'],
     'code_verifier': os.environ['VERIFIER'],
 }))")
+	_oauth_exchange_code "$GOOGLE_TOKEN_ENDPOINT" "application/json" "aidevops/1.0" "$token_body"
+	return 0
+}
 
-	local response http_status
-	response=$(printf '%s' "$token_body" | curl -sS \
-		-w '\n%{http_code}' \
-		-X POST \
-		-H "Content-Type: application/json" \
-		--data-binary @- \
-		--max-time 15 \
-		"$GOOGLE_TOKEN_ENDPOINT" 2>/dev/null) || {
-		print_error "curl failed during token exchange"
-		return 1
-	}
-
-	http_status=$(printf '%s' "$response" | tail -1)
-	local body
-	body=$(printf '%s' "$response" | sed '$d')
-
-	if [[ "$http_status" != "200" ]]; then
-		print_error "Token exchange failed: HTTP ${http_status}"
-		local error_msg
-		error_msg=$(printf '%s' "$body" | python3 -c "
-import sys, json
-try:
-    d = json.load(sys.stdin)
-    parts = []
-    for k in ('error', 'error_description', 'message'):
-        if k in d and d[k]:
-            parts.append(str(d[k]))
-    print(': '.join(parts) if parts else 'unknown')
-except: print('unknown')
-" 2>/dev/null || echo "unknown")
-		print_error "Error: ${error_msg}"
-		return 1
-	fi
-
-	# Extract tokens
-	local access_token refresh_token expires_in
-	access_token=$(printf '%s' "$body" | python3 -c "import sys,json; print(json.load(sys.stdin).get('access_token',''))" 2>/dev/null)
-	refresh_token=$(printf '%s' "$body" | python3 -c "import sys,json; print(json.load(sys.stdin).get('refresh_token',''))" 2>/dev/null)
-	expires_in=$(printf '%s' "$body" | python3 -c "import sys,json; print(json.load(sys.stdin).get('expires_in',3600))" 2>/dev/null)
-
-	if [[ -z "$access_token" ]]; then
-		print_error "No access token in response"
-		return 1
-	fi
-
-	# Validate token against Gemini API (health check)
-	print_info "Validating token against Gemini API..."
-	local health_status
-	health_status=$(ACCESS="$access_token" python3 -c "
-import os
-from urllib.request import Request, urlopen
-from urllib.error import HTTPError, URLError
-token = os.environ['ACCESS']
-try:
-    req = Request('${GOOGLE_HEALTH_CHECK_URL}', method='GET')
-    req.add_header('Authorization', 'Bearer ' + token)
-    urlopen(req, timeout=10)
-    print('OK')
-except HTTPError as e:
-    print('HTTP_' + str(e.code))
-except (URLError, OSError):
-    print('NETWORK_ERROR')
-except Exception:
-    print('ERROR')
-" 2>/dev/null)
-
+# Report the result of a Google token health check to the user.
+# Usage: _google_report_health "$health_status"
+# Returns 1 if the token is definitively invalid (HTTP_401).
+_google_report_health() {
+	local health_status="$1"
 	case "$health_status" in
 	OK)
 		print_success "Token validated against Gemini API"
@@ -750,67 +773,223 @@ except Exception:
 		print_warning "Could not validate against Gemini API (${health_status}) — storing token anyway"
 		;;
 	esac
+	return 0
+}
 
-	# Calculate expiry timestamp (milliseconds)
-	local now_ms expires_ms
+# Validate a Google access token against the Gemini API.
+# Prints one of: OK, HTTP_NNN, NETWORK_ERROR, ERROR.
+_google_validate_token() {
+	local access_token="$1"
+	local health_check_url="$2"
+	ACCESS="$access_token" HEALTH_URL="$health_check_url" python3 -c "
+import os
+from urllib.request import Request, urlopen
+from urllib.error import HTTPError, URLError
+token = os.environ['ACCESS']
+url = os.environ['HEALTH_URL']
+try:
+    req = Request(url, method='GET')
+    req.add_header('Authorization', 'Bearer ' + token)
+    urlopen(req, timeout=10)
+    print('OK')
+except HTTPError as e:
+    print('HTTP_' + str(e.code))
+except (URLError, OSError):
+    print('NETWORK_ERROR')
+except Exception:
+    print('ERROR')
+" 2>/dev/null
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# Add Google account (OAuth2 PKCE flow, ADC bearer token injection)
+# ---------------------------------------------------------------------------
+
+cmd_add_google() {
+	local prefill_email="${1:-}"
+
+	print_info "Adding Google AI account to pool..."
+	print_info "Supported plans: Google AI Pro (~\$25/mo), AI Ultra (~\$65/mo), Workspace with Gemini"
+	print_info "Token is injected as GOOGLE_OAUTH_ACCESS_TOKEN (ADC bearer) for Gemini CLI / Vertex AI"
+	echo "" >&2
+
+	local email
+	email=$(_add_prompt_email "$prefill_email" "Google account email: ") || return 1
+
+	# Generate PKCE + state nonce
+	local verifier challenge state_nonce
+	verifier=$(generate_verifier)
+	challenge=$(generate_challenge "$verifier")
+	state_nonce=$(openssl rand -hex 24)
+
+	local full_url
+	full_url=$(_google_build_authorize_url "$challenge" "$state_nonce")
+
+	print_info "Opening browser for Google OAuth..."
+	print_info "Sign in with your Google AI Pro/Ultra or Workspace account."
+	open_browser "$full_url"
+
+	# Google OOB flow: the authorization code is shown in the browser
+	printf 'Paste the authorization code from the browser: ' >&2
+	local auth_code
+	read -r auth_code
+	if [[ -z "$auth_code" ]]; then
+		print_error "No authorization code provided"
+		return 1
+	fi
+	auth_code="${auth_code// /}"
+
+	print_info "Exchanging authorization code for tokens..."
+
+	local response http_status body
+	response=$(_google_exchange_code "$auth_code" "$verifier") || {
+		print_error "curl failed during token exchange"
+		return 1
+	}
+	http_status=$(printf '%s' "$response" | tail -1)
+	body=$(printf '%s' "$response" | sed '$d')
+
+	if [[ "$http_status" != "200" ]]; then
+		print_error "Token exchange failed: HTTP ${http_status}"
+		local error_msg
+		error_msg=$(printf '%s' "$body" | extract_token_error)
+		print_error "Error: ${error_msg}"
+		return 1
+	fi
+
+	local token_fields access_token refresh_token expires_in
+	token_fields=$(printf '%s' "$body" | _extract_token_fields)
+	access_token=$(printf '%s\n' "$token_fields" | sed -n '1p')
+	refresh_token=$(printf '%s\n' "$token_fields" | sed -n '2p')
+	expires_in=$(printf '%s\n' "$token_fields" | sed -n '3p')
+
+	if [[ -z "$access_token" ]]; then
+		print_error "No access token in response"
+		return 1
+	fi
+
+	# Validate token against Gemini API (health check)
+	print_info "Validating token against Gemini API..."
+	local health_status
+	health_status=$(_google_validate_token "$access_token" "$GOOGLE_HEALTH_CHECK_URL")
+	_google_report_health "$health_status" || return 1
+
+	local now_ms expires_ms now_iso
 	now_ms=$(get_now_ms)
 	expires_ms=$((now_ms + expires_in * 1000))
-
-	# Upsert into pool file
-	local pool now_iso
-	pool=$(load_pool)
 	now_iso=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-
-	pool=$(printf '%s' "$pool" | EMAIL="$email" \
-		ACCESS="$access_token" REFRESH="$refresh_token" \
-		EXPIRES="$expires_ms" NOW_ISO="$now_iso" \
-		python3 -c "
-import sys, json, os
-pool = json.load(sys.stdin)
-email = os.environ['EMAIL']
-access = os.environ['ACCESS']
-refresh = os.environ['REFRESH']
-expires = int(os.environ['EXPIRES'])
-now_iso = os.environ['NOW_ISO']
-
-if 'google' not in pool:
-    pool['google'] = []
-
-found = False
-for account in pool['google']:
-    if account.get('email') == email:
-        account['access'] = access
-        account['refresh'] = refresh
-        account['expires'] = expires
-        account['lastUsed'] = now_iso
-        account['status'] = 'active'
-        account['cooldownUntil'] = None
-        found = True
-        break
-
-if not found:
-    pool['google'].append({
-        'email': email,
-        'access': access,
-        'refresh': refresh,
-        'expires': expires,
-        'added': now_iso,
-        'lastUsed': now_iso,
-        'status': 'active',
-        'cooldownUntil': None,
-    })
-
-json.dump(pool, sys.stdout, indent=2)
-")
-
-	save_pool "$pool"
-
-	local count
-	count=$(printf '%s' "$pool" | count_provider_accounts "google")
-
-	print_success "Added ${email} to Google pool (${count} account(s) total)"
+	_add_save_to_pool "google" "$email" "$access_token" "$refresh_token" "$expires_ms" "$now_iso"
 	print_info "Token injected as GOOGLE_OAUTH_ACCESS_TOKEN for Gemini CLI / Vertex AI."
 	print_info "Restart OpenCode to use the new token."
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# Check accounts — helpers
+# ---------------------------------------------------------------------------
+
+# Print formatted details for all accounts of a provider (stdin = pool JSON).
+# Tests live token validity for anthropic and google via urllib (in-process).
+# Usage: printf '%s' "$pool" | _check_print_provider_accounts "$prov" "$now_ms" "$ua"
+_check_print_provider_accounts() {
+	local prov="$1"
+	local now_ms="$2"
+	local ua="$3"
+	NOW_MS="$now_ms" PROV="$prov" UA="$ua" python3 -c "
+import sys, json, os
+from datetime import datetime
+from urllib.request import Request, urlopen
+from urllib.error import HTTPError, URLError
+
+pool = json.load(sys.stdin)
+now = int(os.environ['NOW_MS'])
+prov = os.environ['PROV']
+ua = os.environ['UA']
+
+for a in pool.get(prov, []):
+    print(f\"  {a['email']}:\")
+    expires_in = a.get('expires', 0) - now
+    if expires_in <= 0:
+        print(f\"    Token: EXPIRED\")
+    else:
+        mins = expires_in // 60000
+        hours = mins // 60
+        if hours > 0:
+            print(f\"    Token: expires in {hours}h {mins % 60}m\")
+        else:
+            print(f\"    Token: expires in {mins}m\")
+    print(f\"    Status: {a.get('status', 'unknown')}\")
+    cd = a.get('cooldownUntil')
+    if cd and cd > now:
+        cd_mins = (cd - now + 59999) // 60000
+        print(f\"    Cooldown: {cd_mins}m remaining\")
+    lu = a.get('lastUsed')
+    if lu:
+        try:
+            lu_ts = datetime.fromisoformat(lu.replace('Z','+00:00')).timestamp() * 1000
+            ago = now - lu_ts
+            ago_mins = int(ago // 60000)
+            ago_hours = ago_mins // 60
+            if ago_hours > 0:
+                print(f\"    Last used: {ago_hours}h {ago_mins % 60}m ago\")
+            else:
+                print(f\"    Last used: {ago_mins}m ago\")
+        except Exception:
+            print(f\"    Last used: {lu}\")
+    print(f\"    Refresh token: {'present' if a.get('refresh') else 'MISSING'}\")
+    _check_token_validity(a, prov, expires_in, ua)
+
+def _check_token_validity(a, prov, expires_in, ua):
+    from urllib.request import Request, urlopen
+    from urllib.error import HTTPError, URLError
+    token = a.get('access', '')
+    if prov == 'anthropic':
+        if not token:
+            print(f\"    Validity: no access token\")
+        elif expires_in <= 0:
+            print(f\"    Validity: EXPIRED - will auto-refresh on next use\")
+        else:
+            try:
+                req = Request('https://api.anthropic.com/v1/models', method='GET')
+                req.add_header('Authorization', f'Bearer {token}')
+                req.add_header('User-Agent', ua)
+                req.add_header('anthropic-version', '2023-06-01')
+                req.add_header('anthropic-beta', 'oauth-2025-04-20')
+                urlopen(req, timeout=10)
+                print(f\"    Validity: OK\")
+            except HTTPError as e:
+                if e.code == 401:
+                    print(f\"    Validity: INVALID (401 - needs refresh)\")
+                else:
+                    print(f\"    Validity: HTTP {e.code}\")
+            except (URLError, OSError):
+                print(f\"    Validity: ERROR (network)\")
+            except Exception:
+                print(f\"    Validity: ERROR\")
+    elif prov == 'google':
+        if not token:
+            print(f\"    Validity: no access token\")
+        elif expires_in <= 0:
+            print(f\"    Validity: EXPIRED - will auto-refresh on next use\")
+        else:
+            try:
+                req = Request('https://generativelanguage.googleapis.com/v1beta/models?pageSize=1', method='GET')
+                req.add_header('Authorization', f'Bearer {token}')
+                urlopen(req, timeout=10)
+                print(f\"    Validity: OK\")
+            except HTTPError as e:
+                if e.code == 401:
+                    print(f\"    Validity: INVALID (401 - needs refresh)\")
+                elif e.code == 403:
+                    print(f\"    Validity: OK (403 - token valid, check AI Pro/Ultra subscription)\")
+                else:
+                    print(f\"    Validity: HTTP {e.code}\")
+            except (URLError, OSError):
+                print(f\"    Validity: ERROR (network)\")
+            except Exception:
+                print(f\"    Validity: ERROR\")
+" 2>/dev/null
 	return 0
 }
 
@@ -853,103 +1032,7 @@ cmd_check() {
 		found_any="true"
 
 		printf '\n## %s (%s account%s)\n' "$prov" "$count" "$([ "$count" = "1" ] && echo "" || echo "s")"
-
-		# Single python3 pass: format details + test validity per account.
-		# Validity probe uses urllib.request so the token stays in-process
-		# and never appears on argv (unlike curl subprocess).
-		printf '%s' "$pool" | NOW_MS="$now_ms" PROV="$prov" UA="$USER_AGENT" python3 -c "
-import sys, json, os
-from datetime import datetime
-from urllib.request import Request, urlopen
-from urllib.error import HTTPError, URLError
-
-pool = json.load(sys.stdin)
-now = int(os.environ['NOW_MS'])
-prov = os.environ['PROV']
-ua = os.environ['UA']
-
-for a in pool.get(prov, []):
-    print(f\"  {a['email']}:\")
-    expires_in = a.get('expires', 0) - now
-    if expires_in <= 0:
-        print(f\"    Token: EXPIRED\")
-    else:
-        mins = expires_in // 60000
-        hours = mins // 60
-        if hours > 0:
-            print(f\"    Token: expires in {hours}h {mins % 60}m\")
-        else:
-            print(f\"    Token: expires in {mins}m\")
-    print(f\"    Status: {a.get('status', 'unknown')}\")
-    cd = a.get('cooldownUntil')
-    if cd and cd > now:
-        cd_mins = (cd - now + 59999) // 60000
-        print(f\"    Cooldown: {cd_mins}m remaining\")
-    lu = a.get('lastUsed')
-    if lu:
-        try:
-            lu_ts = datetime.fromisoformat(lu.replace('Z','+00:00')).timestamp() * 1000
-            ago = now - lu_ts
-            ago_mins = int(ago // 60000)
-            ago_hours = ago_mins // 60
-            if ago_hours > 0:
-                print(f\"    Last used: {ago_hours}h {ago_mins % 60}m ago\")
-            else:
-                print(f\"    Last used: {ago_mins}m ago\")
-        except Exception:
-            print(f\"    Last used: {lu}\")
-    print(f\"    Refresh token: {'present' if a.get('refresh') else 'MISSING'}\")
-
-    # Test token validity inline (anthropic + google, in-process via urllib)
-    if prov == 'anthropic':
-        token = a.get('access', '')
-        if not token:
-            print(f\"    Validity: no access token\")
-        elif expires_in <= 0:
-            print(f\"    Validity: EXPIRED - will auto-refresh on next use\")
-        else:
-            try:
-                req = Request('https://api.anthropic.com/v1/models', method='GET')
-                req.add_header('Authorization', f'Bearer {token}')
-                req.add_header('User-Agent', ua)
-                req.add_header('anthropic-version', '2023-06-01')
-                req.add_header('anthropic-beta', 'oauth-2025-04-20')
-                urlopen(req, timeout=10)
-                print(f\"    Validity: OK\")
-            except HTTPError as e:
-                if e.code == 401:
-                    print(f\"    Validity: INVALID (401 - needs refresh)\")
-                else:
-                    print(f\"    Validity: HTTP {e.code}\")
-            except (URLError, OSError):
-                print(f\"    Validity: ERROR (network)\")
-            except Exception:
-                print(f\"    Validity: ERROR\")
-    elif prov == 'google':
-        token = a.get('access', '')
-        if not token:
-            print(f\"    Validity: no access token\")
-        elif expires_in <= 0:
-            print(f\"    Validity: EXPIRED - will auto-refresh on next use\")
-        else:
-            try:
-                req = Request('https://generativelanguage.googleapis.com/v1beta/models?pageSize=1', method='GET')
-                req.add_header('Authorization', f'Bearer {token}')
-                urlopen(req, timeout=10)
-                print(f\"    Validity: OK\")
-            except HTTPError as e:
-                if e.code == 401:
-                    print(f\"    Validity: INVALID (401 - needs refresh)\")
-                elif e.code == 403:
-                    print(f\"    Validity: OK (403 - token valid, check AI Pro/Ultra subscription)\")
-                else:
-                    print(f\"    Validity: HTTP {e.code}\")
-            except (URLError, OSError):
-                print(f\"    Validity: ERROR (network)\")
-            except Exception:
-                print(f\"    Validity: ERROR\")
-" 2>/dev/null
-
+		printf '%s' "$pool" | _check_print_provider_accounts "$prov" "$now_ms" "$USER_AGENT"
 		printf '  Token endpoint: OK\n'
 	done
 
@@ -1058,97 +1141,105 @@ json.dump(pool, sys.stdout, indent=2)
 }
 
 # ---------------------------------------------------------------------------
-# Rotate active account
+# Rotate active account — helpers
 # ---------------------------------------------------------------------------
 
-cmd_rotate() {
-	local provider="${1:-anthropic}"
-
-	case "$provider" in
-	anthropic | openai | cursor | google) ;;
-	*)
-		print_error "Invalid provider: $provider (valid: anthropic, openai, cursor, google)"
-		return 1
-		;;
-	esac
-
-	local pool
-	pool=$(load_pool)
-
-	# Count accounts for this provider
-	local account_count
-	account_count=$(printf '%s' "$pool" | count_provider_accounts "$provider")
-
-	if [[ "$account_count" -lt 2 ]]; then
-		print_error "Cannot rotate: only ${account_count} account(s) in ${provider} pool. Need at least 2."
-		print_info "Add more accounts: oauth-pool-helper.sh add ${provider}"
-		return 1
-	fi
-
-	if [[ ! -f "$OPENCODE_AUTH_FILE" ]]; then
-		print_error "OpenCode auth file not found: ${OPENCODE_AUTH_FILE}"
-		print_info "Is OpenCode installed? The auth file is created on first login."
-		return 1
-	fi
-
-	# Identify the current active account and rotate to the next one.
-	# Uses python3 to:
-	#   1. Read the current token from auth.json (access field under provider key)
-	#   2. Find which pool account matches (by access token prefix comparison)
-	#   3. Pick the next account that is NOT the current one
-	#   4. Write the new account's tokens into auth.json
-	#   5. Update lastUsed in the pool file
-	# All token handling stays in-process — no secrets on argv or stdout.
-	local result py_stderr_file
-	py_stderr_file=$(mktemp "${TMPDIR:-/tmp}/oauth-rotate-err.XXXXXX")
-	result=$(POOL_FILE_PATH="$POOL_FILE" AUTH_FILE_PATH="$OPENCODE_AUTH_FILE" \
+# Core rotation logic: find next account, auto-refresh if expired, write
+# auth.json and pool atomically under an advisory lock.
+# All token handling stays in-process — no secrets on argv or stdout.
+# Prints three lines to stdout: status (OK|ERROR:*), prev_email, next_email.
+# Prints REFRESHED or REFRESH_FAILED:* to stderr (informational only).
+_rotate_execute() {
+	local provider="$1"
+	POOL_FILE_PATH="$POOL_FILE" AUTH_FILE_PATH="$OPENCODE_AUTH_FILE" \
 		PROVIDER="$provider" python3 -c "
-import sys, json, os, fcntl, tempfile
+import sys, json, os, fcntl, tempfile, time, urllib.request, urllib.error
 from datetime import datetime, timezone
 
 pool_path = os.environ['POOL_FILE_PATH']
 auth_path = os.environ['AUTH_FILE_PATH']
 provider = os.environ['PROVIDER']
 
-# Advisory lock on pool file to serialize concurrent rotations.
-# Covers the full read-modify-write cycle for both pool and auth files.
+TOKEN_URLS = {
+    'anthropic': 'https://platform.claude.com/v1/oauth/token',
+    'openai':    'https://auth.openai.com/oauth/token',
+    'google':    'https://oauth2.googleapis.com/token',
+}
+CLIENT_IDS = {
+    'anthropic': '9d1c250a-e61b-44d9-88ed-5944d1962f5e',
+    'openai':    'app_EMoamEEZ73f0CkXaXp7hrann',
+    'google':    '681255809395-oo8ft6t5t0rnmhfqgpnkqtev5b9a2i5j.apps.googleusercontent.com',
+}
+
+def _atomic_write_json(path, data):
+    d = os.path.dirname(path)
+    fd, tmp = tempfile.mkstemp(dir=d, prefix='.tmp-', suffix='.tmp')
+    try:
+        with os.fdopen(fd, 'w') as f:
+            json.dump(data, f, indent=2)
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, path)
+    except BaseException:
+        try: os.unlink(tmp)
+        except OSError: pass
+        raise
+
+def _try_refresh(account, provider, now_ms):
+    refresh_tok = account.get('refresh', '')
+    token_url = TOKEN_URLS.get(provider, '')
+    client_id = CLIENT_IDS.get(provider, '')
+    if not (refresh_tok and token_url and client_id):
+        return
+    body = json.dumps({
+        'grant_type': 'refresh_token',
+        'refresh_token': refresh_tok,
+        'client_id': client_id,
+    }).encode('utf-8')
+    req = urllib.request.Request(
+        token_url, data=body,
+        headers={'Content-Type': 'application/json',
+                 'User-Agent': os.environ.get('UA_HEADER', 'aidevops/1.0')},
+        method='POST',
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=15) as resp:
+            rdata = json.loads(resp.read().decode('utf-8'))
+        new_access = rdata.get('access_token', '')
+        if new_access:
+            account['access']  = new_access
+            account['refresh'] = rdata.get('refresh_token', refresh_tok)
+            account['expires'] = now_ms + int(rdata.get('expires_in', 3600)) * 1000
+            account['status']  = 'active'
+            print('REFRESHED', file=sys.stderr)
+    except (urllib.error.URLError, urllib.error.HTTPError) as e:
+        print(f'REFRESH_FAILED:{e}', file=sys.stderr)
+
 lock_path = pool_path + '.lock'
 lock_fd = open(lock_path, 'w')
 try:
     fcntl.flock(lock_fd, fcntl.LOCK_EX)
 
-    # Load pool
     with open(pool_path) as f:
         pool = json.load(f)
-
     accounts = pool.get(provider, [])
     if len(accounts) < 2:
         print('ERROR:need_accounts')
         sys.exit(0)
 
-    # Load auth.json
     with open(auth_path) as f:
         auth = json.load(f)
-
-    # Get current access token from auth.json for this provider
-    current_auth = auth.get(provider, {})
+    current_auth   = auth.get(provider, {})
     current_access = current_auth.get('access', '')
 
-    # Find which pool account is currently active by matching access token
     current_email = None
     for a in accounts:
         if a.get('access', '') == current_access and current_access:
             current_email = a.get('email', 'unknown')
             break
-
-    # If no match by access token, fall back to most-recently-used
     if current_email is None:
         sorted_by_used = sorted(accounts, key=lambda a: a.get('lastUsed', ''), reverse=True)
         current_email = sorted_by_used[0].get('email', 'unknown')
 
-    # Pick the next account: first available account that is NOT the current one
-    # Prefer active/idle accounts, skip rate-limited or auth-error
-    import time
     now_ms = int(time.time() * 1000)
     candidates = [
         a for a in accounts
@@ -1156,116 +1247,34 @@ try:
         and a.get('status', 'active') in ('active', 'idle')
         and (not a.get('cooldownUntil') or a['cooldownUntil'] <= now_ms)
     ]
-
-    # If no active candidates, try any non-current account
     if not candidates:
         candidates = [a for a in accounts if a.get('email') != current_email]
-
     if not candidates:
         print('ERROR:no_alternate')
         sys.exit(0)
 
-    # Sort by least-recently-used
     candidates.sort(key=lambda a: a.get('lastUsed', ''))
     next_account = candidates[0]
-    next_email = next_account.get('email', 'unknown')
+    next_email   = next_account.get('email', 'unknown')
 
-    # Auto-refresh expired tokens before writing to auth.json
-    # If the selected account's access token is expired and it has a refresh
-    # token, exchange it for a new access token via the token endpoint.
-    next_expires = next_account.get('expires', 0)
-    next_refresh = next_account.get('refresh', '')
-    if next_expires and next_expires <= now_ms and next_refresh:
-        import urllib.request, urllib.error
-        token_urls = {
-            'anthropic': 'https://platform.claude.com/v1/oauth/token',
-            'openai': 'https://auth.openai.com/oauth/token',
-            'google': 'https://oauth2.googleapis.com/token',
-        }
-        client_ids = {
-            'anthropic': '9d1c250a-e61b-44d9-88ed-5944d1962f5e',
-            'openai': 'app_EMoamEEZ73f0CkXaXp7hrann',
-            'google': '681255809395-oo8ft6t5t0rnmhfqgpnkqtev5b9a2i5j.apps.googleusercontent.com',
-        }
-        token_url = token_urls.get(provider, '')
-        client_id = client_ids.get(provider, '')
-        if token_url and client_id:
-            refresh_body = json.dumps({
-                'grant_type': 'refresh_token',
-                'refresh_token': next_refresh,
-                'client_id': client_id,
-            }).encode('utf-8')
-            req = urllib.request.Request(
-                token_url,
-                data=refresh_body,
-                headers={
-                    'Content-Type': 'application/json',
-                    'User-Agent': os.environ.get('UA_HEADER', 'aidevops/1.0'),
-                },
-                method='POST',
-            )
-            try:
-                with urllib.request.urlopen(req, timeout=15) as resp:
-                    rdata = json.loads(resp.read().decode('utf-8'))
-                new_access = rdata.get('access_token', '')
-                new_refresh = rdata.get('refresh_token', next_refresh)
-                new_expires_in = int(rdata.get('expires_in', 3600))
-                new_expires_ms = now_ms + new_expires_in * 1000
-                if new_access:
-                    next_account['access'] = new_access
-                    next_account['refresh'] = new_refresh
-                    next_account['expires'] = new_expires_ms
-                    next_account['status'] = 'active'
-                    print('REFRESHED', file=sys.stderr)
-            except (urllib.error.URLError, urllib.error.HTTPError) as e:
-                # Refresh failed — write the expired token anyway; user will
-                # see the error and can re-auth manually
-                print(f'REFRESH_FAILED:{e}', file=sys.stderr)
+    # Auto-refresh if expired and refresh token available
+    if next_account.get('expires', 0) <= now_ms and next_account.get('refresh'):
+        _try_refresh(next_account, provider, now_ms)
 
-    # Write the new account's tokens into auth.json (atomic: temp + os.replace)
     auth[provider] = {
-        'type': current_auth.get('type', 'oauth'),
+        'type':    current_auth.get('type', 'oauth'),
         'refresh': next_account.get('refresh', ''),
-        'access': next_account.get('access', ''),
+        'access':  next_account.get('access', ''),
         'expires': next_account.get('expires', 0),
     }
+    _atomic_write_json(auth_path, auth)
 
-    # Atomic write to auth.json (temp-file + rename)
-    auth_dir = os.path.dirname(auth_path)
-    fd_auth, tmp_auth = tempfile.mkstemp(dir=auth_dir, prefix='.auth-', suffix='.tmp')
-    try:
-        with os.fdopen(fd_auth, 'w') as f:
-            json.dump(auth, f, indent=2)
-        os.chmod(tmp_auth, 0o600)
-        os.replace(tmp_auth, auth_path)
-    except BaseException:
-        try:
-            os.unlink(tmp_auth)
-        except OSError:
-            pass
-        raise
-
-    # Update lastUsed in pool file for the new account (atomic: temp + os.replace)
     now_iso = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
     for a in pool[provider]:
         if a.get('email') == next_email:
             a['lastUsed'] = now_iso
             break
-
-    # Atomic write to pool file (temp-file + os.replace)
-    pool_dir = os.path.dirname(pool_path)
-    fd_pool, tmp_pool = tempfile.mkstemp(dir=pool_dir, prefix='.pool-', suffix='.tmp')
-    try:
-        with os.fdopen(fd_pool, 'w') as f:
-            json.dump(pool, f, indent=2)
-        os.chmod(tmp_pool, 0o600)
-        os.replace(tmp_pool, pool_path)
-    except BaseException:
-        try:
-            os.unlink(tmp_pool)
-        except OSError:
-            pass
-        raise
+    _atomic_write_json(pool_path, pool)
 
 finally:
     fcntl.flock(lock_fd, fcntl.LOCK_UN)
@@ -1274,19 +1283,15 @@ finally:
 print('OK')
 print(current_email)
 print(next_email)
-" 2>"$py_stderr_file") || {
-		local py_err
-		py_err=$(cat "$py_stderr_file" 2>/dev/null)
-		rm -f "$py_stderr_file"
-		print_error "Rotation failed — python3 error"
-		if [[ -n "${py_err:-}" ]]; then
-			print_error "Detail: ${py_err}"
-		fi
-		return 1
-	}
-	rm -f "$py_stderr_file"
+"
+	return 0
+}
 
-	# Parse result — one field per line to avoid delimiter issues in emails
+# Parse the result lines from _rotate_execute and emit user-facing messages.
+# Returns 0 on success, 1 on error.
+_rotate_parse_result() {
+	local result="$1"
+	local provider="$2"
 	local first_line
 	first_line=$(printf '%s\n' "$result" | sed -n '1p')
 	case "$first_line" in
@@ -1311,6 +1316,57 @@ print(next_email)
 		return 1
 		;;
 	esac
+}
+
+# ---------------------------------------------------------------------------
+# Rotate active account
+# ---------------------------------------------------------------------------
+
+cmd_rotate() {
+	local provider="${1:-anthropic}"
+
+	case "$provider" in
+	anthropic | openai | cursor | google) ;;
+	*)
+		print_error "Invalid provider: $provider (valid: anthropic, openai, cursor, google)"
+		return 1
+		;;
+	esac
+
+	local pool
+	pool=$(load_pool)
+
+	local account_count
+	account_count=$(printf '%s' "$pool" | count_provider_accounts "$provider")
+
+	if [[ "$account_count" -lt 2 ]]; then
+		print_error "Cannot rotate: only ${account_count} account(s) in ${provider} pool. Need at least 2."
+		print_info "Add more accounts: oauth-pool-helper.sh add ${provider}"
+		return 1
+	fi
+
+	if [[ ! -f "$OPENCODE_AUTH_FILE" ]]; then
+		print_error "OpenCode auth file not found: ${OPENCODE_AUTH_FILE}"
+		print_info "Is OpenCode installed? The auth file is created on first login."
+		return 1
+	fi
+
+	local result py_stderr_file
+	py_stderr_file=$(mktemp "${TMPDIR:-/tmp}/oauth-rotate-err.XXXXXX")
+	result=$(_rotate_execute "$provider" 2>"$py_stderr_file") || {
+		local py_err
+		py_err=$(cat "$py_stderr_file" 2>/dev/null)
+		rm -f "$py_stderr_file"
+		print_error "Rotation failed — python3 error"
+		if [[ -n "${py_err:-}" ]]; then
+			print_error "Detail: ${py_err}"
+		fi
+		return 1
+	}
+	rm -f "$py_stderr_file"
+
+	_rotate_parse_result "$result" "$provider"
+	return $?
 }
 
 # ---------------------------------------------------------------------------
