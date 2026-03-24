@@ -574,9 +574,17 @@ _test_approval_filter() {
 
 		($actionable_raw and ($no_actionable_recommendation | not) and ($no_actionable_suggestions | not)) as $actionable |
 
+		# GH#5668: merge/CI-status comments are not actionable review feedback
+		($body | test(
+			"\\bmerging\\.?$|\\bmerge (this|the) pr\\b|" +
+			"\\bci (checks? )?(green|pass(ed)?|ok)\\b|" +
+			"\\ball (checks?|tests?) (green|pass(ed)?|ok)\\b|" +
+			"\\breview.bot.gate (pass|ok)\\b|" +
+			"\\bpulse supervisor\\b"; "i")) as $merge_status_only |
+
 		# skip = approval-only/no-recommendation/no-suggestions/no-actionable sentiment
-		# or summary praise with no actionable critique
-		if (($approval_only or $no_actionable_recommendation or $no_actionable_suggestions or $no_actionable_sentiment or $summary_praise_only) and ($actionable | not)) then "skip"
+		# or summary praise with no actionable critique, or merge/CI-status comment
+		if (($approval_only or $no_actionable_recommendation or $no_actionable_suggestions or $no_actionable_sentiment or $summary_praise_only or $merge_status_only) and ($actionable | not)) then "skip"
 		else "keep"
 		end
 	')
@@ -1585,6 +1593,108 @@ test_scan_single_pr_filters_issue3145_pr3077_review_body() {
 	return 0
 }
 
+# Regression test for GH#5668: pulse supervisor merge comment filed as quality-debt.
+# The exact review body from PR #5637 (marcusquinn, APPROVED, human reviewer).
+# "Pulse supervisor: all CI checks green, review-bot-gate PASS, CodeRabbit approved. Merging."
+# This is an operational status message, not actionable review feedback.
+# Before the fix: human APPROVED reviews bypassed all filters (elif $reviewer == "human" then true).
+# After the fix: human APPROVED reviews require $actionable content, and $merge_status_only
+# is added to the non-actionable filter set.
+test_skips_pr5637_pulse_supervisor_merge_comment() {
+	local result
+	result=$(_test_approval_filter "Pulse supervisor: all CI checks green, review-bot-gate PASS, CodeRabbit approved. Merging." "APPROVED" "marcusquinn")
+	if [[ "$result" == "skip" ]]; then
+		print_result "GH#5668: pulse supervisor merge comment filtered (human APPROVED)" 0
+	else
+		print_result "GH#5668: pulse supervisor merge comment filtered (human APPROVED)" 1 "expected skip, got ${result}"
+	fi
+	return 0
+}
+
+# Counterpart: human CHANGES_REQUESTED review must always pass through (GH#5668).
+# The fix preserves CHANGES_REQUESTED as always-actionable.
+test_keeps_human_changes_requested_review_gh5668() {
+	local result
+	result=$(_test_approval_filter "This function has a bug: the return value is not checked. Please fix before merging." "CHANGES_REQUESTED" "marcusquinn")
+	if [[ "$result" == "keep" ]]; then
+		print_result "GH#5668: human CHANGES_REQUESTED review kept (not filtered)" 0
+	else
+		print_result "GH#5668: human CHANGES_REQUESTED review kept (not filtered)" 1 "expected keep, got ${result}"
+	fi
+	return 0
+}
+
+# Integration test: _scan_single_pr with the exact PR #5637 review must return 0 findings.
+test_scan_single_pr_filters_pr5637_merge_comment() {
+	reset_mock_state
+
+	gh() {
+		local command="$1"
+		shift
+		case "$command" in
+		api)
+			while [[ $# -gt 0 ]]; do
+				case "$1" in
+				repos/*/pulls/*/comments)
+					echo "[]"
+					return 0
+					;;
+				repos/*/pulls/*/reviews)
+					# Exact review from PR #5637 that caused issue #5668
+					echo '[{"id":3996148895,"user":{"login":"marcusquinn"},"state":"APPROVED","body":"Pulse supervisor: all CI checks green, review-bot-gate PASS, CodeRabbit approved. Merging.","submitted_at":"2026-03-24T04:24:00Z","html_url":"https://github.com/marcusquinn/aidevops/pull/5637#pullrequestreview-3996148895"}]'
+					return 0
+					;;
+				repos/*/git/trees/*)
+					echo '{"tree":[]}'
+					return 0
+					;;
+				repos/*)
+					echo "main"
+					return 0
+					;;
+				esac
+				shift
+			done
+			echo "[]"
+			return 0
+			;;
+		label | pr) return 0 ;;
+		esac
+		echo "[]"
+		return 0
+	}
+
+	local findings
+	findings=$(_scan_single_pr "owner/repo" "5637" "medium" "false" 2>/dev/null)
+	local count
+	count=$(printf '%s' "$findings" | jq 'length' 2>/dev/null || echo "0")
+
+	if [[ "$count" -eq 0 ]]; then
+		print_result "GH#5668: PR #5637 pulse supervisor merge comment produces 0 findings" 0
+	else
+		print_result "GH#5668: PR #5637 pulse supervisor merge comment produces 0 findings" 1 "expected 0 findings, got ${count} — would have filed false-positive issue"
+	fi
+
+	gh() {
+		local command="$1"
+		shift
+		case "$command" in
+		api)
+			_mock_gh_api "$@"
+			return $?
+			;;
+		label) return 0 ;;
+		issue)
+			_mock_gh_issue "$@"
+			return $?
+			;;
+		esac
+		echo "unexpected gh call: ${command}" >&2
+		return 1
+	}
+	return 0
+}
+
 main() {
 	source "$HELPER"
 
@@ -1643,6 +1753,12 @@ main() {
 	echo "Running positive-review filter regression tests (GH#4814)"
 	test_scan_single_pr_filters_issue4814_pr2166_exact_body
 	test_scan_single_pr_positive_body_with_inline_comments_not_summary_only
+
+	echo ""
+	echo "Running merge/CI-status comment filter tests (GH#5668)"
+	test_skips_pr5637_pulse_supervisor_merge_comment
+	test_keeps_human_changes_requested_review_gh5668
+	test_scan_single_pr_filters_pr5637_merge_comment
 
 	echo "Results: ${TESTS_PASSED}/${TESTS_RUN} passed, ${TESTS_FAILED} failed"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then

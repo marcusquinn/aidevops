@@ -1099,17 +1099,30 @@ _scan_single_pr() {
 
 		($actionable_raw and ($no_actionable_recommendation | not) and ($no_actionable_suggestions | not)) as $actionable |
 
+		# Detect merge/CI-status comments: supervisor or bot merge announcements
+		# (e.g. "Pulse supervisor: all CI checks green... Merging.") are not
+		# actionable review feedback -- they are operational status messages.
+		# These slip through the $approval_only filter because they do not match
+		# the short approval phrase patterns (GH#5668, incident: issue #5668).
+		($body | test(
+			"\\bmerging\\.?$|\\bmerge (this|the) pr\\b|" +
+			"\\bci (checks? )?(green|pass(ed)?|ok)\\b|" +
+			"\\ball (checks?|tests?) (green|pass(ed)?|ok)\\b|" +
+			"\\breview.bot.gate (pass|ok)\\b|" +
+			"\\bpulse supervisor\\b"; "i")) as $merge_status_only |
+
 		# Skip purely approving reviews unless --include-positive is set.
 		# Explicit "no suggestions" statements are always non-actionable and should
 		# be skipped even though they contain the token "suggest", which would
 		# otherwise trip the actionable heuristic.
 		# Other approval/sentiment patterns are skipped only when no actionable
 		# critique appears in the body.
-		select($include_positive or (((($approval_only or $no_actionable_recommendation or $no_actionable_suggestions or $no_actionable_sentiment or $summary_praise_only) and ($actionable | not))) | not)) |
+		select($include_positive or (((($approval_only or $no_actionable_recommendation or $no_actionable_suggestions or $no_actionable_sentiment or $summary_praise_only or $merge_status_only) and ($actionable | not))) | not)) |
 
 		select(
 			if $include_positive then true
-			elif $reviewer == "human" then true
+			elif .state == "CHANGES_REQUESTED" then true
+			elif $reviewer == "human" then $actionable
 			elif .state == "APPROVED" then $actionable
 			else
 				($actionable and ($body | test(
