@@ -407,7 +407,9 @@ generate_contest_results() {
                 r.model_id,
                 COUNT(DISTINCT r.response_id),
                 printf('%.2f', AVG(ws.weighted_score)),
-                printf('%.1f', AVG(r.response_time))
+                CASE WHEN AVG(r.response_time) = 0.0 THEN NULL
+                     ELSE printf('%.1f', AVG(r.response_time))
+                END
             FROM responses r
             JOIN (
                 SELECT response_id,
@@ -428,8 +430,8 @@ generate_contest_results() {
             ) ws ON r.response_id = ws.response_id
             GROUP BY r.model_id
             ORDER BY AVG(ws.weighted_score) DESC;
-        " 2>/dev/null | while IFS='|' read -r model responses avg_score avg_time; do
-			echo "| $model | $responses | $avg_score/5.0 | $avg_time |"
+		" 2>/dev/null | while IFS='|' read -r model responses avg_score avg_time; do
+			echo "| $model | $responses | $avg_score/5.0 | ${avg_time:-N/A} |"
 		done
 
 		echo ""
