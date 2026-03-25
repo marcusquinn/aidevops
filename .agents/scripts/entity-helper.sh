@@ -101,18 +101,12 @@ generate_profile_id() {
 }
 
 #######################################
-# Initialize entity tables in memory.db
-# Adds entity-specific tables alongside existing learnings tables.
-# Idempotent — safe to call multiple times.
+# Apply core entity and channel table DDL.
+# Layer 2 (entities) and cross-channel identity tables.
+# Idempotent — all statements use IF NOT EXISTS.
 #######################################
-init_entity_db() {
-	mkdir -p "$ENTITY_MEMORY_BASE_DIR"
-
-	# Set WAL mode and busy timeout (output suppressed — PRAGMAs echo their values)
-	entity_db "$ENTITY_MEMORY_DB" "PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;" >/dev/null 2>&1
-
+_init_entity_db_schema_core() {
 	entity_db "$ENTITY_MEMORY_DB" <<'SCHEMA'
-
 -- Layer 2: Entity relationship model
 -- Core entity table — a person, agent, or service we interact with
 CREATE TABLE IF NOT EXISTS entities (
@@ -143,7 +137,17 @@ CREATE TABLE IF NOT EXISTS entity_channels (
 
 -- Index for fast entity lookups by channel
 CREATE INDEX IF NOT EXISTS idx_entity_channels_entity ON entity_channels(entity_id);
+SCHEMA
+	return 0
+}
 
+#######################################
+# Apply interaction, conversation, profile, gap, and FTS DDL.
+# Layers 0 and 1 plus versioned profiles and capability gaps.
+# Idempotent — all statements use IF NOT EXISTS.
+#######################################
+_init_entity_db_schema_interactions() {
+	entity_db "$ENTITY_MEMORY_DB" <<'SCHEMA'
 -- Layer 0: Raw interaction log (immutable, append-only)
 -- Every message across all channels — source of truth
 CREATE TABLE IF NOT EXISTS interactions (
@@ -230,6 +234,33 @@ CREATE VIRTUAL TABLE IF NOT EXISTS interactions_fts USING fts5(
     tokenize='porter unicode61'
 );
 SCHEMA
+	return 0
+}
+
+#######################################
+# Apply all entity schema DDL to the database.
+# Delegates to _init_entity_db_schema_core and
+# _init_entity_db_schema_interactions for size compliance.
+# Idempotent — safe to call multiple times.
+#######################################
+_init_entity_db_schema() {
+	_init_entity_db_schema_core
+	_init_entity_db_schema_interactions
+	return 0
+}
+
+#######################################
+# Initialize entity tables in memory.db
+# Adds entity-specific tables alongside existing learnings tables.
+# Idempotent — safe to call multiple times.
+#######################################
+init_entity_db() {
+	mkdir -p "$ENTITY_MEMORY_BASE_DIR"
+
+	# Set WAL mode and busy timeout (output suppressed — PRAGMAs echo their values)
+	entity_db "$ENTITY_MEMORY_DB" "PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000;" >/dev/null 2>&1
+
+	_init_entity_db_schema
 
 	return 0
 }
@@ -1302,6 +1333,95 @@ EOF
 }
 
 #######################################
+# Validate and privacy-filter interaction content.
+# Prints filtered content to stdout; returns 1 on rejection.
+# Args: content channel direction
+#######################################
+_log_interaction_validate() {
+	local content="$1"
+	local channel="$2"
+	local direction="$3"
+
+	local log_channel_pattern=" $channel "
+	if [[ ! " $VALID_CHANNELS " =~ $log_channel_pattern ]]; then
+		log_error "Invalid channel: $channel. Valid channels: $VALID_CHANNELS"
+		return 1
+	fi
+
+	local direction_pattern=" $direction "
+	if [[ ! " $VALID_DIRECTIONS " =~ $direction_pattern ]]; then
+		log_error "Invalid direction: $direction. Valid: $VALID_DIRECTIONS"
+		return 1
+	fi
+
+	# Privacy filter: strip <private>...</private> blocks
+	content=$(echo "$content" | sed 's/<private>[^<]*<\/private>//g' | sed 's/  */ /g' | sed 's/^ *//;s/ *$//')
+
+	# Privacy filter: reject content that looks like secrets
+	if echo "$content" | grep -qE '(sk-[a-zA-Z0-9_-]{20,}|AKIA[0-9A-Z]{16}|ghp_[a-zA-Z0-9]{36})'; then
+		log_error "Content appears to contain secrets. Refusing to log."
+		return 1
+	fi
+
+	if [[ -z "$content" ]]; then
+		log_warn "Content is empty after privacy filtering. Skipping."
+		return 2
+	fi
+
+	echo "$content"
+	return 0
+}
+
+#######################################
+# Write a validated interaction to the database.
+# Updates interactions, FTS index, conversation, and entity timestamps.
+# Args: esc_id channel esc_channel_id conv_clause direction esc_content esc_metadata esc_conv_id conversation_id
+#######################################
+_log_interaction_write() {
+	local esc_id="$1"
+	local channel="$2"
+	local esc_channel_id="$3"
+	local conv_clause="$4"
+	local direction="$5"
+	local esc_content="$6"
+	local esc_metadata="$7"
+	local esc_conv_id="$8"
+	local conversation_id="$9"
+
+	local int_id
+	int_id=$(generate_interaction_id)
+
+	entity_db "$ENTITY_MEMORY_DB" <<EOF
+INSERT INTO interactions (id, entity_id, channel, channel_id, conversation_id, direction, content, metadata)
+VALUES ('$int_id', '$esc_id', '$channel', '$esc_channel_id', $conv_clause, '$direction', '$esc_content', '$esc_metadata');
+EOF
+
+	# Update FTS index
+	entity_db "$ENTITY_MEMORY_DB" <<EOF
+INSERT INTO interactions_fts (id, entity_id, content, channel, created_at)
+VALUES ('$int_id', '$esc_id', '$esc_content', '$channel', strftime('%Y-%m-%dT%H:%M:%SZ', 'now'));
+EOF
+
+	# Update conversation if linked
+	if [[ -n "$conversation_id" ]]; then
+		entity_db "$ENTITY_MEMORY_DB" <<EOF
+UPDATE conversations SET
+    interaction_count = interaction_count + 1,
+    last_interaction_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
+    updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+WHERE id = '$esc_conv_id';
+EOF
+	fi
+
+	# Update entity's updated_at
+	entity_db "$ENTITY_MEMORY_DB" \
+		"UPDATE entities SET updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = '$esc_id';"
+
+	echo "$int_id"
+	return 0
+}
+
+#######################################
 # Log an interaction (Layer 0 — immutable)
 #######################################
 cmd_log_interaction() {
@@ -1349,31 +1469,15 @@ cmd_log_interaction() {
 		return 1
 	fi
 
-	local log_channel_pattern=" $channel "
-	if [[ ! " $VALID_CHANNELS " =~ $log_channel_pattern ]]; then
-		log_error "Invalid channel: $channel. Valid channels: $VALID_CHANNELS"
+	local filtered_content
+	filtered_content=$(_log_interaction_validate "$content" "$channel" "$direction")
+	local validate_rc=$?
+	if [[ $validate_rc -eq 1 ]]; then
 		return 1
-	fi
-
-	local direction_pattern=" $direction "
-	if [[ ! " $VALID_DIRECTIONS " =~ $direction_pattern ]]; then
-		log_error "Invalid direction: $direction. Valid: $VALID_DIRECTIONS"
-		return 1
-	fi
-
-	# Privacy filter: strip <private>...</private> blocks
-	content=$(echo "$content" | sed 's/<private>[^<]*<\/private>//g' | sed 's/  */ /g' | sed 's/^ *//;s/ *$//')
-
-	# Privacy filter: reject content that looks like secrets
-	if echo "$content" | grep -qE '(sk-[a-zA-Z0-9_-]{20,}|AKIA[0-9A-Z]{16}|ghp_[a-zA-Z0-9]{36})'; then
-		log_error "Content appears to contain secrets. Refusing to log."
-		return 1
-	fi
-
-	if [[ -z "$content" ]]; then
-		log_warn "Content is empty after privacy filtering. Skipping."
+	elif [[ $validate_rc -eq 2 ]]; then
 		return 0
 	fi
+	content="$filtered_content"
 
 	init_entity_db
 
@@ -1392,41 +1496,124 @@ cmd_log_interaction() {
 		return 1
 	fi
 
-	local int_id
-	int_id=$(generate_interaction_id)
-
 	local conv_clause="NULL"
 	if [[ -n "$conversation_id" ]]; then
 		conv_clause="'$esc_conv_id'"
 	fi
 
-	entity_db "$ENTITY_MEMORY_DB" <<EOF
-INSERT INTO interactions (id, entity_id, channel, channel_id, conversation_id, direction, content, metadata)
-VALUES ('$int_id', '$esc_id', '$channel', '$esc_channel_id', $conv_clause, '$direction', '$esc_content', '$esc_metadata');
+	_log_interaction_write \
+		"$esc_id" "$channel" "$esc_channel_id" "$conv_clause" \
+		"$direction" "$esc_content" "$esc_metadata" "$esc_conv_id" "$conversation_id"
+	return $?
+}
+
+#######################################
+# Emit JSON context for an entity (entity + channels + profile + interactions).
+# Args: esc_id channel_clause limit
+#######################################
+_context_json() {
+	local esc_id="$1"
+	local channel_clause="$2"
+	local limit="$3"
+
+	echo "{"
+
+	echo "\"entity\":"
+	entity_db -json "$ENTITY_MEMORY_DB" "SELECT * FROM entities WHERE id = '$esc_id';"
+	echo ","
+
+	echo "\"channels\":"
+	entity_db -json "$ENTITY_MEMORY_DB" "SELECT * FROM entity_channels WHERE entity_id = '$esc_id';"
+	echo ","
+
+	echo "\"profile\":"
+	entity_db -json "$ENTITY_MEMORY_DB" <<EOF
+SELECT profile_key, profile_value, confidence FROM entity_profiles
+WHERE entity_id = '$esc_id'
+  AND id NOT IN (SELECT supersedes_id FROM entity_profiles WHERE supersedes_id IS NOT NULL)
+ORDER BY profile_key;
+EOF
+	echo ","
+
+	echo "\"recent_interactions\":"
+	entity_db -json "$ENTITY_MEMORY_DB" <<EOF
+SELECT i.id, i.channel, i.direction, i.content, i.created_at
+FROM interactions i
+WHERE i.entity_id = '$esc_id' $channel_clause
+ORDER BY i.created_at DESC
+LIMIT $limit;
 EOF
 
-	# Update FTS index
+	echo "}"
+	return 0
+}
+
+#######################################
+# Emit human-readable context for an entity.
+# Args: entity_id esc_id channel_clause limit privacy_filter
+#######################################
+_context_text() {
+	local entity_id="$1"
+	local esc_id="$2"
+	local channel_clause="$3"
+	local limit="$4"
+	local privacy_filter="$5"
+
+	echo ""
+	echo "=== Context: $entity_id ==="
+	echo ""
+
 	entity_db "$ENTITY_MEMORY_DB" <<EOF
-INSERT INTO interactions_fts (id, entity_id, content, channel, created_at)
-VALUES ('$int_id', '$esc_id', '$esc_content', '$channel', strftime('%Y-%m-%dT%H:%M:%SZ', 'now'));
+SELECT 'Entity: ' || name || ' (' || type || ')' || char(10) ||
+       'Channels: ' || (SELECT GROUP_CONCAT(channel || ':' || channel_id, ', ') FROM entity_channels WHERE entity_id = '$esc_id')
+FROM entities WHERE id = '$esc_id';
 EOF
 
-	# Update conversation if linked
-	if [[ -n "$conversation_id" ]]; then
+	echo ""
+	echo "Profile:"
+	local profile_data
+	profile_data=$(
 		entity_db "$ENTITY_MEMORY_DB" <<EOF
-UPDATE conversations SET
-    interaction_count = interaction_count + 1,
-    last_interaction_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
-    updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
-WHERE id = '$esc_conv_id';
+SELECT '  ' || profile_key || ': ' || profile_value
+FROM entity_profiles
+WHERE entity_id = '$esc_id'
+  AND id NOT IN (SELECT supersedes_id FROM entity_profiles WHERE supersedes_id IS NOT NULL)
+ORDER BY profile_key;
 EOF
+	)
+	if [[ -z "$profile_data" ]]; then
+		echo "  (no profile data)"
+	else
+		echo "$profile_data"
 	fi
 
-	# Update entity's updated_at
-	entity_db "$ENTITY_MEMORY_DB" \
-		"UPDATE entities SET updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = '$esc_id';"
+	echo ""
+	echo "Recent interactions (last $limit):"
+	local interactions
+	interactions=$(
+		entity_db "$ENTITY_MEMORY_DB" <<EOF
+SELECT '  [' || i.direction || '] ' || i.channel || ' ' || i.created_at || char(10) ||
+       '    ' || substr(i.content, 1, 120) ||
+       CASE WHEN length(i.content) > 120 THEN '...' ELSE '' END
+FROM interactions i
+WHERE i.entity_id = '$esc_id' $channel_clause
+ORDER BY i.created_at DESC
+LIMIT $limit;
+EOF
+	)
 
-	echo "$int_id"
+	if [[ -z "$interactions" ]]; then
+		echo "  (no interactions)"
+	else
+		if [[ "$privacy_filter" == true ]]; then
+			# Apply privacy filtering to output (sed required: regex quantifiers/char classes/word boundaries)
+			interactions=$(sed \
+				-e 's/[a-zA-Z0-9._%+-]\+@[a-zA-Z0-9.-]\+\.[a-zA-Z]\{2,\}/[EMAIL]/g' \
+				-e 's/\b[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\b/[IP]/g' \
+				-e 's/sk-[a-zA-Z0-9_-]\{20,\}/[API_KEY]/g' <<<"$interactions")
+		fi
+		echo "$interactions"
+	fi
 	return 0
 }
 
@@ -1473,106 +1660,15 @@ cmd_context() {
 	local esc_id
 	esc_id=$(sql_escape "$entity_id")
 
-	# Build channel filter
 	local channel_clause=""
 	if [[ -n "$channel_filter" ]]; then
 		channel_clause="AND i.channel = '$(sql_escape "$channel_filter")'"
 	fi
 
 	if [[ "$format" == "json" ]]; then
-		# Entity info + profile + recent interactions
-		echo "{"
-
-		# Entity
-		echo "\"entity\":"
-		entity_db -json "$ENTITY_MEMORY_DB" "SELECT * FROM entities WHERE id = '$esc_id';"
-		echo ","
-
-		# Channels
-		echo "\"channels\":"
-		entity_db -json "$ENTITY_MEMORY_DB" "SELECT * FROM entity_channels WHERE entity_id = '$esc_id';"
-		echo ","
-
-		# Current profile
-		echo "\"profile\":"
-		entity_db -json "$ENTITY_MEMORY_DB" <<EOF
-SELECT profile_key, profile_value, confidence FROM entity_profiles
-WHERE entity_id = '$esc_id'
-  AND id NOT IN (SELECT supersedes_id FROM entity_profiles WHERE supersedes_id IS NOT NULL)
-ORDER BY profile_key;
-EOF
-		echo ","
-
-		# Recent interactions
-		echo "\"recent_interactions\":"
-		entity_db -json "$ENTITY_MEMORY_DB" <<EOF
-SELECT i.id, i.channel, i.direction, i.content, i.created_at
-FROM interactions i
-WHERE i.entity_id = '$esc_id' $channel_clause
-ORDER BY i.created_at DESC
-LIMIT $limit;
-EOF
-
-		echo "}"
+		_context_json "$esc_id" "$channel_clause" "$limit"
 	else
-		echo ""
-		echo "=== Context: $entity_id ==="
-		echo ""
-
-		# Entity info
-		entity_db "$ENTITY_MEMORY_DB" <<EOF
-SELECT 'Entity: ' || name || ' (' || type || ')' || char(10) ||
-       'Channels: ' || (SELECT GROUP_CONCAT(channel || ':' || channel_id, ', ') FROM entity_channels WHERE entity_id = '$esc_id')
-FROM entities WHERE id = '$esc_id';
-EOF
-
-		# Profile summary
-		echo ""
-		echo "Profile:"
-		local profile_data
-		profile_data=$(
-			entity_db "$ENTITY_MEMORY_DB" <<EOF
-SELECT '  ' || profile_key || ': ' || profile_value
-FROM entity_profiles
-WHERE entity_id = '$esc_id'
-  AND id NOT IN (SELECT supersedes_id FROM entity_profiles WHERE supersedes_id IS NOT NULL)
-ORDER BY profile_key;
-EOF
-		)
-		if [[ -z "$profile_data" ]]; then
-			echo "  (no profile data)"
-		else
-			echo "$profile_data"
-		fi
-
-		# Recent interactions
-		echo ""
-		echo "Recent interactions (last $limit):"
-		local interactions
-		interactions=$(
-			entity_db "$ENTITY_MEMORY_DB" <<EOF
-SELECT '  [' || i.direction || '] ' || i.channel || ' ' || i.created_at || char(10) ||
-       '    ' || substr(i.content, 1, 120) ||
-       CASE WHEN length(i.content) > 120 THEN '...' ELSE '' END
-FROM interactions i
-WHERE i.entity_id = '$esc_id' $channel_clause
-ORDER BY i.created_at DESC
-LIMIT $limit;
-EOF
-		)
-
-		if [[ -z "$interactions" ]]; then
-			echo "  (no interactions)"
-		else
-			if [[ "$privacy_filter" == true ]]; then
-				# Apply privacy filtering to output (sed required: regex quantifiers/char classes/word boundaries)
-				interactions=$(sed \
-					-e 's/[a-zA-Z0-9._%+-]\+@[a-zA-Z0-9.-]\+\.[a-zA-Z]\{2,\}/[EMAIL]/g' \
-					-e 's/\b[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\b/[IP]/g' \
-					-e 's/sk-[a-zA-Z0-9_-]\{20,\}/[API_KEY]/g' <<<"$interactions")
-			fi
-			echo "$interactions"
-		fi
+		_context_text "$entity_id" "$esc_id" "$channel_clause" "$limit" "$privacy_filter"
 	fi
 
 	return 0
@@ -1817,9 +1913,10 @@ EOF
 }
 
 #######################################
-# Show help
+# Print help: commands section
+# Extracted from cmd_help for size compliance.
 #######################################
-cmd_help() {
+_help_commands() {
 	cat <<'EOF'
 entity-helper.sh - Entity memory system for aidevops
 
@@ -1860,7 +1957,16 @@ SYSTEM:
     stats           Show entity system statistics
     migrate         Run schema migration (idempotent)
     help            Show this help
+EOF
+	return 0
+}
 
+#######################################
+# Print help: options, architecture, and examples section
+# Extracted from cmd_help for size compliance.
+#######################################
+_help_options() {
+	cat <<'EOF'
 CREATE OPTIONS:
     --name <name>           Entity name (required)
     --type <type>           person, agent, or service (default: person)
@@ -1933,6 +2039,15 @@ EXAMPLES:
     # Load context for an entity (privacy-filtered)
     entity-helper.sh context ent_xxx --privacy-filter --limit 10
 EOF
+	return 0
+}
+
+#######################################
+# Show help
+#######################################
+cmd_help() {
+	_help_commands
+	_help_options
 	return 0
 }
 
