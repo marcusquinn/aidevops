@@ -52,116 +52,106 @@ find_project_root() {
 	return 1
 }
 
+# Emit the current entry state as a pipe-delimited record and reset all fields
+# Globals: current_status current_vid current_tid current_desc current_pr
+#          current_merged current_files current_checks current_verified current_failed
+_flush_entry() {
+	if [[ -n "$current_vid" ]]; then
+		echo "${current_status}|${current_vid}|${current_tid}|${current_desc}|${current_pr}|${current_merged}|${current_files}|${current_checks}|${current_verified}|${current_failed}"
+	fi
+	current_status="" current_vid="" current_tid="" current_desc=""
+	current_pr="" current_merged="" current_files="" current_checks=""
+	current_verified="" current_failed=""
+	return 0
+}
+
+# Parse the header line of a verify entry and populate current_* globals
+# Args: $1 = marker char, $2 = verify_id, $3 = task_id, $4 = rest of line
+# Globals written: current_status current_vid current_tid current_desc
+#                  current_pr current_merged current_verified current_failed
+_parse_entry_header() {
+	local marker="$1"
+	current_vid="$2"
+	current_tid="$3"
+	local rest="$4"
+
+	case "$marker" in
+	" ") current_status="pending" ;;
+	"x") current_status="passed" ;;
+	"!") current_status="failed" ;;
+	*) current_status="unknown" ;;
+	esac
+
+	# Extract PR reference
+	if [[ "$rest" =~ \|\ PR\ #([0-9]+) ]]; then
+		current_pr="#${BASH_REMATCH[1]}"
+	elif [[ "$rest" =~ \|\ cherry-picked:([a-f0-9]+) ]]; then
+		current_pr="cherry:${BASH_REMATCH[1]}"
+	fi
+
+	# Extract dates and failure reason
+	[[ "$rest" =~ merged:([0-9-]+) ]] && current_merged="${BASH_REMATCH[1]}"
+	[[ "$rest" =~ verified:([0-9-]+) ]] && current_verified="${BASH_REMATCH[1]}"
+	[[ "$rest" =~ failed:[0-9-]+\ reason:(.+) ]] && current_failed="${BASH_REMATCH[1]}"
+
+	# Description is everything before the first |, right-trimmed
+	current_desc="${rest%%|*}"
+	current_desc="${current_desc%"${current_desc##*[![:space:]]}"}"
+	return 0
+}
+
+# Parse indented metadata lines (files: / check:) and append to current_* globals
+# Args: $1 = line
+# Globals written: current_files current_checks
+_parse_entry_metadata() {
+	local line="$1"
+	if [[ "$line" =~ ^[[:space:]]+files:\ (.+) ]]; then
+		current_files="${BASH_REMATCH[1]}"
+	elif [[ "$line" =~ ^[[:space:]]+check:\ (.+) ]]; then
+		if [[ -n "$current_checks" ]]; then
+			current_checks="${current_checks}; ${BASH_REMATCH[1]}"
+		else
+			current_checks="${BASH_REMATCH[1]}"
+		fi
+	fi
+	return 0
+}
+
 # Parse a verification entry block into structured data
-# Input: lines of a single verify entry (starting with - [ ] or - [x] or - [!])
-# Output: status|verify_id|task_id|description|pr|merged|files|checks|verified|failed_reason
+# Input: path to VERIFY.md
+# Output: pipe-delimited records: status|verify_id|task_id|description|pr|merged|files|checks|verified|failed_reason
 parse_verify_entries() {
 	local verify_file="$1"
 	local in_queue=false
-	local current_status=""
-	local current_vid=""
-	local current_tid=""
-	local current_desc=""
-	local current_pr=""
-	local current_merged=""
-	local current_files=""
-	local current_checks=""
-	local current_verified=""
-	local current_failed=""
-
-	flush_entry() {
-		if [[ -n "$current_vid" ]]; then
-			echo "${current_status}|${current_vid}|${current_tid}|${current_desc}|${current_pr}|${current_merged}|${current_files}|${current_checks}|${current_verified}|${current_failed}"
-		fi
-		current_status=""
-		current_vid=""
-		current_tid=""
-		current_desc=""
-		current_pr=""
-		current_merged=""
-		current_files=""
-		current_checks=""
-		current_verified=""
-		current_failed=""
-		return 0
-	}
+	current_status="" current_vid="" current_tid="" current_desc=""
+	current_pr="" current_merged="" current_files="" current_checks=""
+	current_verified="" current_failed=""
 
 	while IFS= read -r line; do
-		# Detect queue boundaries
 		if [[ "$line" == "<!-- VERIFY-QUEUE-START -->" ]]; then
 			in_queue=true
 			continue
 		fi
 		if [[ "$line" == "<!-- VERIFY-QUEUE-END -->" ]]; then
-			flush_entry
+			_flush_entry
 			in_queue=false
 			continue
 		fi
-
 		$in_queue || continue
-
-		# Skip blank lines
 		[[ -z "$line" ]] && continue
 
 		# New entry: - [ ] v001 t168 Description | PR #660 | merged:2026-02-08
 		if [[ "$line" =~ ^-\ \[(.)\]\ (v[0-9]+)\ (t[0-9]+)\ (.+) ]]; then
-			flush_entry
-			local marker="${BASH_REMATCH[1]}"
-			current_vid="${BASH_REMATCH[2]}"
-			current_tid="${BASH_REMATCH[3]}"
-			local rest="${BASH_REMATCH[4]}"
-
-			case "$marker" in
-			" ") current_status="pending" ;;
-			"x") current_status="passed" ;;
-			"!") current_status="failed" ;;
-			*) current_status="unknown" ;;
-			esac
-
-			# Extract PR number
-			if [[ "$rest" =~ \|\ PR\ #([0-9]+) ]]; then
-				current_pr="#${BASH_REMATCH[1]}"
-			elif [[ "$rest" =~ \|\ cherry-picked:([a-f0-9]+) ]]; then
-				current_pr="cherry:${BASH_REMATCH[1]}"
-			fi
-
-			# Extract merged date
-			if [[ "$rest" =~ merged:([0-9-]+) ]]; then
-				current_merged="${BASH_REMATCH[1]}"
-			fi
-
-			# Extract verified date
-			if [[ "$rest" =~ verified:([0-9-]+) ]]; then
-				current_verified="${BASH_REMATCH[1]}"
-			fi
-
-			# Extract failed reason
-			if [[ "$rest" =~ failed:([0-9-]+)\ reason:(.+) ]]; then
-				current_failed="${BASH_REMATCH[2]}"
-			fi
-
-			# Description is everything before the first |
-			current_desc="${rest%%|*}"
-			current_desc="${current_desc%"${current_desc##*[![:space:]]}"}"
-
+			_flush_entry
+			_parse_entry_header "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}" \
+				"${BASH_REMATCH[3]}" "${BASH_REMATCH[4]}"
 			continue
 		fi
 
-		# Metadata lines (indented under an entry)
-		if [[ "$line" =~ ^[[:space:]]+files:\ (.+) ]]; then
-			current_files="${BASH_REMATCH[1]}"
-		elif [[ "$line" =~ ^[[:space:]]+check:\ (.+) ]]; then
-			if [[ -n "$current_checks" ]]; then
-				current_checks="${current_checks}; ${BASH_REMATCH[1]}"
-			else
-				current_checks="${BASH_REMATCH[1]}"
-			fi
-		fi
-
+		_parse_entry_metadata "$line"
 	done <"$verify_file"
 
-	# Flush last entry
-	flush_entry
+	_flush_entry
 	return 0
 }
 
@@ -186,23 +176,106 @@ apply_filters() {
 	return 0
 }
 
-# Output as markdown
-
-output_markdown() {
+# Count entries by status in an entries file
+# Args: $1 = entries_file
+# Output: three lines: pending=N passed=N failed=N
+_count_entries() {
 	local entries_file="$1"
-
-	local pending_count=0
-	local passed_count=0
-	local failed_count=0
-
-	# Count entries
-	while IFS='|' read -r status vid tid desc pr merged files checks verified failed_reason; do
+	local pending_count=0 passed_count=0 failed_count=0
+	while IFS='|' read -r status _rest; do
 		case "$status" in
 		pending) ((++pending_count)) ;;
 		passed) ((++passed_count)) ;;
 		failed) ((++failed_count)) ;;
 		esac
 	done <"$entries_file"
+	echo "pending=${pending_count}"
+	echo "passed=${passed_count}"
+	echo "failed=${failed_count}"
+	return 0
+}
+
+# Render one status section (failed / pending / passed) in markdown
+# Args: $1 = section name, $2 = count, $3 = entries_file, $4 = color code
+_output_markdown_section() {
+	local section="$1"
+	local count="$2"
+	local entries_file="$3"
+	local color="$4"
+
+	[[ "$count" -eq 0 ]] && return 0
+
+	local title
+	title=$(printf '%s' "${section:0:1}" | tr '[:lower:]' '[:upper:]')${section:1}
+
+	if $NO_COLOR; then
+		echo "### ${title} ($count)"
+	else
+		echo -e "### ${color}${title} ($count)${C_NC}"
+	fi
+	echo ""
+
+	if $COMPACT; then
+		while IFS='|' read -r status vid tid desc pr merged files checks verified failed_reason; do
+			[[ "$status" != "$section" ]] && continue
+			case "$section" in
+			failed) echo "- [!] $vid $tid $desc $pr ${failed_reason:+reason: $failed_reason}" ;;
+			pending) echo "- [ ] $vid $tid $desc $pr" ;;
+			passed) echo "- [x] $vid $tid $desc $pr verified:$verified" ;;
+			esac
+		done <"$entries_file"
+	else
+		case "$section" in
+		failed)
+			echo "| # | Verify | Task | Description | PR | Merged | Reason |"
+			echo "|---|--------|------|-------------|-----|--------|--------|"
+			;;
+		pending)
+			echo "| # | Verify | Task | Description | PR | Merged | Checks |"
+			echo "|---|--------|------|-------------|-----|--------|--------|"
+			;;
+		passed)
+			echo "| # | Verify | Task | Description | PR | Merged | Verified |"
+			echo "|---|--------|------|-------------|-----|--------|----------|"
+			;;
+		esac
+		local num=0
+		while IFS='|' read -r status vid tid desc pr merged files checks verified failed_reason; do
+			[[ "$status" != "$section" ]] && continue
+			((++num))
+			case "$section" in
+			failed)
+				echo "| $num | $vid | $tid | $desc | $pr | $merged | ${failed_reason:--} |"
+				;;
+			pending)
+				local check_count=0
+				[[ -n "$checks" ]] && check_count=$(echo "$checks" | tr ';' '\n' | wc -l | tr -d ' ')
+				echo "| $num | $vid | $tid | $desc | $pr | $merged | ${check_count} checks |"
+				;;
+			passed)
+				echo "| $num | $vid | $tid | $desc | $pr | $merged | ${verified:--} |"
+				;;
+			esac
+		done <"$entries_file"
+	fi
+	echo ""
+	echo "---"
+	echo ""
+	return 0
+}
+
+# Output as markdown
+output_markdown() {
+	local entries_file="$1"
+	local pending_count=0 passed_count=0 failed_count=0
+
+	while IFS='=' read -r key val; do
+		case "$key" in
+		pending) pending_count="$val" ;;
+		passed) passed_count="$val" ;;
+		failed) failed_count="$val" ;;
+		esac
+	done < <(_count_entries "$entries_file")
 
 	local total=$((pending_count + passed_count + failed_count))
 
@@ -215,100 +288,10 @@ output_markdown() {
 		return 0
 	fi
 
-	# Failed section (most important)
-	if [[ $failed_count -gt 0 ]]; then
-		if $NO_COLOR; then
-			echo "### Failed ($failed_count)"
-		else
-			echo -e "### ${C_RED}Failed ($failed_count)${C_NC}"
-		fi
-		echo ""
+	_output_markdown_section "failed" "$failed_count" "$entries_file" "$C_RED"
+	_output_markdown_section "pending" "$pending_count" "$entries_file" "$C_YELLOW"
+	_output_markdown_section "passed" "$passed_count" "$entries_file" "$C_GREEN"
 
-		if $COMPACT; then
-			while IFS='|' read -r status vid tid desc pr merged files checks verified failed_reason; do
-				[[ "$status" != "failed" ]] && continue
-				echo "- [!] $vid $tid $desc $pr ${failed_reason:+reason: $failed_reason}"
-			done <"$entries_file"
-		else
-			echo "| # | Verify | Task | Description | PR | Merged | Reason |"
-			echo "|---|--------|------|-------------|-----|--------|--------|"
-			local num=0
-			while IFS='|' read -r status vid tid desc pr merged files checks verified failed_reason; do
-				[[ "$status" != "failed" ]] && continue
-				((++num))
-				echo "| $num | $vid | $tid | $desc | $pr | $merged | ${failed_reason:--} |"
-			done <"$entries_file"
-		fi
-		echo ""
-		echo "---"
-		echo ""
-	fi
-
-	# Pending section
-	if [[ $pending_count -gt 0 ]]; then
-		if $NO_COLOR; then
-			echo "### Pending ($pending_count)"
-		else
-			echo -e "### ${C_YELLOW}Pending ($pending_count)${C_NC}"
-		fi
-		echo ""
-
-		if $COMPACT; then
-			while IFS='|' read -r status vid tid desc pr merged files checks verified failed_reason; do
-				[[ "$status" != "pending" ]] && continue
-				echo "- [ ] $vid $tid $desc $pr"
-			done <"$entries_file"
-		else
-			echo "| # | Verify | Task | Description | PR | Merged | Checks |"
-			echo "|---|--------|------|-------------|-----|--------|--------|"
-			local num=0
-			while IFS='|' read -r status vid tid desc pr merged files checks verified failed_reason; do
-				[[ "$status" != "pending" ]] && continue
-				((++num))
-				local check_count
-				if [[ -n "$checks" ]]; then
-					check_count=$(echo "$checks" | tr ';' '\n' | wc -l | xargs)
-				else
-					check_count=0
-				fi
-				echo "| $num | $vid | $tid | $desc | $pr | $merged | ${check_count} checks |"
-			done <"$entries_file"
-		fi
-		echo ""
-		echo "---"
-		echo ""
-	fi
-
-	# Passed section
-	if [[ $passed_count -gt 0 ]]; then
-		if $NO_COLOR; then
-			echo "### Passed ($passed_count)"
-		else
-			echo -e "### ${C_GREEN}Passed ($passed_count)${C_NC}"
-		fi
-		echo ""
-
-		if $COMPACT; then
-			while IFS='|' read -r status vid tid desc pr merged files checks verified failed_reason; do
-				[[ "$status" != "passed" ]] && continue
-				echo "- [x] $vid $tid $desc $pr verified:$verified"
-			done <"$entries_file"
-		else
-			echo "| # | Verify | Task | Description | PR | Merged | Verified |"
-			echo "|---|--------|------|-------------|-----|--------|----------|"
-			local num=0
-			while IFS='|' read -r status vid tid desc pr merged files checks verified failed_reason; do
-				[[ "$status" != "passed" ]] && continue
-				((++num))
-				echo "| $num | $vid | $tid | $desc | $pr | $merged | ${verified:--} |"
-			done <"$entries_file"
-		fi
-		echo ""
-		echo "---"
-		echo ""
-	fi
-
-	# Summary
 	echo -e "**Summary:** ${pending_count} pending | ${passed_count} passed | ${failed_count} failed | ${total} total"
 	return 0
 }
