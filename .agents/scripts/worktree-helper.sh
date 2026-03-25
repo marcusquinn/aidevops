@@ -776,6 +776,24 @@ cmd_switch() {
 	return $?
 }
 
+# Validate and get the grace hours setting.
+# Returns a valid integer grace hours value, defaulting to 4 if invalid.
+# Prints warning to stderr if WORKTREE_CLEAN_GRACE_HOURS is invalid.
+get_validated_grace_hours() {
+	local grace_hours="${WORKTREE_CLEAN_GRACE_HOURS:-4}"
+
+	# Check if it's a valid positive integer
+	if [[ "$grace_hours" =~ ^[0-9]+$ ]] && [[ "$grace_hours" -gt 0 ]]; then
+		echo "$grace_hours"
+		return 0
+	fi
+
+	# Invalid value - warn and use default
+	echo -e "${YELLOW}Warning: WORKTREE_CLEAN_GRACE_HOURS='$grace_hours' is invalid, using default 4 hours${NC}" >&2
+	echo "4"
+	return 0
+}
+
 # Check if a worktree directory is younger than the grace period.
 # Returns 0 (true) if the worktree is within the grace period, 1 (false) if old enough to clean.
 # Grace period defaults to WORKTREE_CLEAN_GRACE_HOURS (default: 4 hours).
@@ -783,7 +801,8 @@ cmd_switch() {
 # Bash 3.2 compatible — no associative arrays, no bash 4+ features.
 worktree_is_in_grace_period() {
 	local wt_path="${1:-}"
-	local grace_hours="${WORKTREE_CLEAN_GRACE_HOURS:-4}"
+	local grace_hours
+	grace_hours=$(get_validated_grace_hours)
 	[[ -z "$wt_path" ]] && return 1
 	[[ ! -d "$wt_path" ]] && return 1
 
@@ -812,14 +831,17 @@ worktree_is_in_grace_period() {
 
 # Check if a branch has an open PR on any remote.
 # Returns 0 (true) if an open PR exists, 1 (false) otherwise.
-# Requires gh CLI. Returns 1 (safe to proceed) if gh is unavailable.
+# Requires gh CLI. Returns 0 (skip deletion) if gh is unavailable or fails.
 branch_has_open_pr() {
 	local branch="${1:-}"
 	[[ -z "$branch" ]] && return 1
-	command -v gh &>/dev/null || return 1
+	command -v gh &>/dev/null || return 0
 
 	local open_count
-	open_count=$(gh pr list --state open --head "$branch" --json number --jq 'length' 2>/dev/null || echo "0")
+	if ! open_count=$(gh pr list --state open --head "$branch" --json number --jq 'length' 2>/dev/null); then
+		# gh command failed - return 0 to skip deletion (safety-first)
+		return 0
+	fi
 	[[ "$open_count" -gt 0 ]] && return 0
 	return 1
 }
@@ -837,6 +859,79 @@ branch_has_zero_commits_ahead() {
 	local ahead_count
 	ahead_count=$(git rev-list --count "refs/heads/$default_br..refs/heads/$branch" 2>/dev/null || echo "1")
 	[[ "$ahead_count" -eq 0 ]] && return 0
+	return 1
+}
+
+# Check if a worktree should be skipped during cleanup due to safety constraints.
+# Returns 0 (true) if worktree should be skipped, 1 (false) if safe to remove.
+# Args: $1=worktree_path, $2=worktree_branch, $3=default_branch, $4=open_pr_branches, $5=force_merged
+# Prints skip reason to stdout if skipping.
+should_skip_cleanup() {
+	local wt_path="$1"
+	local wt_branch="$2"
+	local default_br="$3"
+	local open_pr_list="$4"
+	local force_merged_flag="$5"
+
+	# Ownership check (t189): skip if owned by another active session
+	if is_worktree_owned_by_others "$wt_path"; then
+		local owner_info
+		owner_info=$(check_worktree_owner "$wt_path")
+		local owner_pid
+		owner_pid="${owner_info%%|*}"
+		echo -e "  ${RED}$wt_branch${NC} (owned by active session PID $owner_pid - skipping)"
+		echo "    $wt_path"
+		echo ""
+		return 0
+	fi
+
+	# GH#5694 Safety check A: Grace period
+	# Skip worktrees younger than WORKTREE_CLEAN_GRACE_HOURS (default 4h).
+	# A freshly created worktree with 0 commits looks "merged" to git branch --merged.
+	# The grace period prevents deletion of in-progress work that hasn't been committed yet.
+	if worktree_is_in_grace_period "$wt_path"; then
+		local grace_hours
+		grace_hours=$(get_validated_grace_hours)
+		echo -e "  ${RED}$wt_branch${NC} (within grace period ${grace_hours}h - skipping)"
+		echo "    $wt_path"
+		echo ""
+		return 0
+	fi
+
+	# GH#5694 Safety check B: Open PR
+	# Skip worktrees whose branch has an open PR — active work in progress.
+	# This applies even with --force-merged: an open PR means the work is not done.
+	if [[ -n "$open_pr_list" ]] && echo "$open_pr_list" | grep -Fxq "$wt_branch"; then
+		echo -e "  ${RED}$wt_branch${NC} (has open PR - skipping)"
+		echo "    $wt_path"
+		echo ""
+		return 0
+	fi
+
+	# GH#5694 Safety check C: Zero-commit + dirty
+	# A branch with 0 commits ahead of default AND uncommitted changes is in-progress,
+	# not truly merged. git branch --merged treats 0-commit branches as merged because
+	# they share the same HEAD as the default branch.
+	if worktree_has_changes "$wt_path" && branch_has_zero_commits_ahead "$wt_branch" "$default_br"; then
+		echo -e "  ${RED}$wt_branch${NC} (0 commits ahead + dirty files = in-progress, not merged - skipping)"
+		echo "    $wt_path"
+		echo ""
+		return 0
+	fi
+
+	# Dirty check: behaviour depends on --force-merged flag
+	# Only reached if the three safety checks above did not trigger.
+	if worktree_has_changes "$wt_path"; then
+		if [[ "$force_merged_flag" != "true" ]]; then
+			echo -e "  ${RED}$wt_branch${NC} (has uncommitted changes - skipping)"
+			echo "    $wt_path"
+			echo ""
+			return 0
+		fi
+		# force_merged=true: dirty state is abandoned WIP, safe to force-remove
+	fi
+
+	# All safety checks passed
 	return 1
 }
 
@@ -933,62 +1028,12 @@ cmd_clean() {
 					merge_type="squash-merged PR"
 				fi
 
-				# Ownership check (t189): skip if owned by another active session
-				if [[ "$is_merged" == "true" ]] && is_worktree_owned_by_others "$worktree_path"; then
-					local clean_owner_info
-					clean_owner_info=$(check_worktree_owner "$worktree_path")
-					local clean_owner_pid
-					clean_owner_pid="${clean_owner_info%%|*}"
-					echo -e "  ${RED}$worktree_branch${NC} (owned by active session PID $clean_owner_pid - skipping)"
-					echo "    $worktree_path"
-					echo ""
+				# Apply safety checks using shared helper
+				if [[ "$is_merged" == "true" ]] && should_skip_cleanup "$worktree_path" "$worktree_branch" "$default_branch" "$open_pr_branches" "$force_merged"; then
 					is_merged=false
-				fi
-
-				# GH#5694 Safety check A: Grace period
-				# Skip worktrees younger than WORKTREE_CLEAN_GRACE_HOURS (default 4h).
-				# A freshly created worktree with 0 commits looks "merged" to git branch --merged.
-				# The grace period prevents deletion of in-progress work that hasn't been committed yet.
-				if [[ "$is_merged" == "true" ]] && worktree_is_in_grace_period "$worktree_path"; then
-					echo -e "  ${RED}$worktree_branch${NC} (within grace period ${WORKTREE_CLEAN_GRACE_HOURS:-4}h - skipping)"
-					echo "    $worktree_path"
-					echo ""
-					is_merged=false
-				fi
-
-				# GH#5694 Safety check B: Open PR
-				# Skip worktrees whose branch has an open PR — active work in progress.
-				# This applies even with --force-merged: an open PR means the work is not done.
-				if [[ "$is_merged" == "true" ]] && [[ -n "$open_pr_branches" ]] && echo "$open_pr_branches" | grep -Fxq "$worktree_branch"; then
-					echo -e "  ${RED}$worktree_branch${NC} (has open PR - skipping)"
-					echo "    $worktree_path"
-					echo ""
-					is_merged=false
-				fi
-
-				# GH#5694 Safety check C: Zero-commit + dirty
-				# A branch with 0 commits ahead of default AND uncommitted changes is in-progress,
-				# not truly merged. git branch --merged treats 0-commit branches as merged because
-				# they share the same HEAD as the default branch.
-				if [[ "$is_merged" == "true" ]] && worktree_has_changes "$worktree_path" && branch_has_zero_commits_ahead "$worktree_branch" "$default_branch"; then
-					echo -e "  ${RED}$worktree_branch${NC} (0 commits ahead + dirty files = in-progress, not merged - skipping)"
-					echo "    $worktree_path"
-					echo ""
-					is_merged=false
-				fi
-
-				# Dirty check: behaviour depends on --force-merged flag
-				# Only reached if the three safety checks above did not override is_merged.
-				if [[ "$is_merged" == "true" ]] && worktree_has_changes "$worktree_path"; then
-					if [[ "$force_merged" == "true" ]]; then
-						# PR is confirmed merged — dirty state is abandoned WIP, safe to force-remove
-						merge_type="$merge_type, dirty (force)"
-					else
-						echo -e "  ${RED}$worktree_branch${NC} (has uncommitted changes - skipping)"
-						echo "    $worktree_path"
-						echo ""
-						is_merged=false
-					fi
+				elif [[ "$is_merged" == "true" ]] && worktree_has_changes "$worktree_path" && [[ "$force_merged" == "true" ]]; then
+					# PR is confirmed merged — dirty state is abandoned WIP, safe to force-remove
+					merge_type="$merge_type, dirty (force)"
 				fi
 
 				if [[ "$is_merged" == "true" ]]; then
@@ -1032,16 +1077,8 @@ cmd_clean() {
 					local should_remove=false
 					local use_force=false
 
-					# Ownership check (t189): never remove worktrees owned by other sessions
-					if is_worktree_owned_by_others "$worktree_path"; then
-						local rm_owner_info
-						rm_owner_info=$(check_worktree_owner "$worktree_path")
-						local rm_owner_pid
-						rm_owner_pid="${rm_owner_info%%|*}"
-						echo -e "${RED}Skipping $worktree_branch - owned by active session PID $rm_owner_pid${NC}"
-						should_remove=false
 					# Check 1: Traditional merge
-					elif git branch --merged "$default_branch" 2>/dev/null | grep -q "^\s*$worktree_branch$"; then
+					if git branch --merged "$default_branch" 2>/dev/null | grep -q "^\s*$worktree_branch$"; then
 						should_remove=true
 					# Check 2: Remote branch deleted - ONLY if branch was previously pushed
 					# Check all remotes, not just origin (consistent with branch_was_pushed)
@@ -1053,32 +1090,11 @@ cmd_clean() {
 						should_remove=true
 					fi
 
-					# GH#5694 Safety check A: Grace period (removal pass)
-					if [[ "$should_remove" == "true" ]] && worktree_is_in_grace_period "$worktree_path"; then
-						echo -e "${RED}Skipping $worktree_branch - within grace period ${WORKTREE_CLEAN_GRACE_HOURS:-4}h${NC}"
+					# Apply safety checks using shared helper
+					if [[ "$should_remove" == "true" ]] && should_skip_cleanup "$worktree_path" "$worktree_branch" "$default_branch" "$open_pr_branches" "$force_merged"; then
 						should_remove=false
-					fi
-
-					# GH#5694 Safety check B: Open PR (removal pass)
-					if [[ "$should_remove" == "true" ]] && [[ -n "$open_pr_branches" ]] && echo "$open_pr_branches" | grep -Fxq "$worktree_branch"; then
-						echo -e "${RED}Skipping $worktree_branch - has open PR${NC}"
-						should_remove=false
-					fi
-
-					# GH#5694 Safety check C: Zero-commit + dirty (removal pass)
-					if [[ "$should_remove" == "true" ]] && worktree_has_changes "$worktree_path" && branch_has_zero_commits_ahead "$worktree_branch" "$default_branch"; then
-						echo -e "${RED}Skipping $worktree_branch - 0 commits ahead + dirty files = in-progress, not merged${NC}"
-						should_remove=false
-					fi
-
-					# If should_remove but has changes, need --force-merged to proceed
-					if [[ "$should_remove" == "true" ]] && worktree_has_changes "$worktree_path"; then
-						if [[ "$force_merged" == "true" ]]; then
-							use_force=true
-						else
-							echo -e "${RED}Skipping $worktree_branch - has uncommitted changes${NC}"
-							should_remove=false
-						fi
+					elif [[ "$should_remove" == "true" ]] && worktree_has_changes "$worktree_path" && [[ "$force_merged" == "true" ]]; then
+						use_force=true
 					fi
 
 					if [[ "$should_remove" == "true" ]]; then
