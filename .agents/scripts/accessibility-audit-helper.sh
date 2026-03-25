@@ -728,6 +728,136 @@ print_header_line() {
 }
 
 # =============================================================================
+# Command Handlers
+# =============================================================================
+
+_cmd_audit() {
+	local url="${1:-}"
+	if [[ -z "$url" ]]; then
+		print_error "Please provide a URL to audit"
+		print_info "Usage: $0 audit <url>"
+		return 1
+	fi
+	run_full_audit "$url"
+	return $?
+}
+
+_cmd_axe() {
+	local url="${1:-}"
+	if [[ -z "$url" ]]; then
+		print_error "Please provide a URL"
+		print_info "Usage: $0 axe <url> [tags]"
+		return 1
+	fi
+	run_axe_audit "$url" "${2:-$(_wcag_level_to_axe_tags "$AUDIT_WCAG_LEVEL")}"
+	return $?
+}
+
+_cmd_wave() {
+	local url="${1:-}"
+	if [[ -z "$url" ]]; then
+		print_error "Please provide a URL"
+		print_info "Usage: $0 wave <url> [report-type]"
+		return 1
+	fi
+	run_wave_audit "$url" "${2:-2}"
+	return $?
+}
+
+_cmd_contrast() {
+	local fg="${1:-}"
+	local bg="${2:-}"
+	if [[ -z "$fg" || -z "$bg" ]]; then
+		print_error "Please provide foreground and background colours"
+		print_info "Usage: $0 contrast <fg-hex> <bg-hex>"
+		print_info "Example: $0 contrast '#333333' '#ffffff'"
+		return 1
+	fi
+	run_webaim_contrast "$fg" "$bg"
+	return $?
+}
+
+_cmd_lighthouse() {
+	local url="${1:-}"
+	if [[ -z "$url" ]]; then
+		print_error "Please provide a URL"
+		print_info "Usage: $0 lighthouse <url> [desktop|mobile]"
+		return 1
+	fi
+	run_lighthouse_a11y "$url" "${2:-desktop}"
+	return $?
+}
+
+_cmd_bulk() {
+	local urls_file="${1:-}"
+	if [[ -z "$urls_file" ]]; then
+		print_error "Please provide a file containing URLs"
+		print_info "Usage: $0 bulk <urls-file> [engine]"
+		return 1
+	fi
+	bulk_audit "$urls_file" "${2:-all}"
+	return $?
+}
+
+_cmd_compare() {
+	local url="${1:-}"
+	if [[ -z "$url" ]]; then
+		print_error "Please provide a URL"
+		print_info "Usage: $0 compare <url>"
+		return 1
+	fi
+	compare_engines "$url"
+	return $?
+}
+
+_cmd_help() {
+	print_header_line "Accessibility Audit Helper"
+	echo "Usage: $0 [command] [options]"
+	echo ""
+	echo "Commands:"
+	echo "  audit <url>                    Full audit (axe-core + Lighthouse + WAVE)"
+	echo "  axe <url> [tags]               axe-core standalone audit"
+	echo "  wave <url> [report-type]        WAVE API accessibility report"
+	echo "  contrast <fg-hex> <bg-hex>     WebAIM contrast checker API"
+	echo "  lighthouse <url> [strategy]    Lighthouse accessibility-only audit"
+	echo "  bulk <urls-file> [engine]      Audit multiple URLs from file"
+	echo "  compare <url>                  Run all engines and compare results"
+	echo "  status                         Show installed tools and configuration"
+	echo "  install-deps                   Install required dependencies"
+	echo "  help                           Show this help"
+	echo ""
+	echo "Engines:"
+	echo "  axe-core     @axe-core/cli — standalone axe accessibility scanner"
+	echo "  lighthouse   Google Lighthouse — accessibility category audit"
+	echo "  wave         WAVE API — WebAIM visual accessibility evaluator"
+	echo "  webaim       WebAIM contrast checker API — programmatic colour checks"
+	echo ""
+	echo "axe-core Tags (comma-separated):"
+	echo "  wcag2a, wcag2aa, wcag2aaa, wcag21a, wcag21aa, wcag22aa, best-practice"
+	echo ""
+	echo "WAVE Report Types:"
+	echo "  1 = WAVE report (full)    2 = Statistics only (default)"
+	echo "  3 = Categories + items    4 = WAVE + statistics"
+	echo ""
+	echo "Environment Variables:"
+	echo "  WAVE_API_KEY          WAVE API key (required for wave command)"
+	echo "  AUDIT_WCAG_LEVEL      Default WCAG level (default: WCAG2AA)"
+	echo ""
+	echo "Examples:"
+	echo "  $0 audit https://example.com"
+	echo "  $0 axe https://example.com wcag2aa,wcag21aa"
+	echo "  $0 wave https://example.com"
+	echo "  $0 contrast '#333333' '#ffffff'"
+	echo "  $0 lighthouse https://example.com mobile"
+	echo "  $0 bulk websites.txt axe"
+	echo "  $0 compare https://example.com"
+	echo "  $0 status"
+	echo ""
+	echo "Reports saved to: $AUDIT_REPORTS_DIR"
+	return 0
+}
+
+# =============================================================================
 # Main
 # =============================================================================
 
@@ -736,123 +866,18 @@ main() {
 	shift || true
 
 	case "$command" in
-	"audit" | "full")
-		local url="${1:-}"
-		if [[ -z "$url" ]]; then
-			print_error "Please provide a URL to audit"
-			print_info "Usage: $0 audit <url>"
-			return 1
-		fi
-		run_full_audit "$url"
-		;;
-	"axe" | "axe-core")
-		local url="${1:-}"
-		if [[ -z "$url" ]]; then
-			print_error "Please provide a URL"
-			print_info "Usage: $0 axe <url> [tags]"
-			return 1
-		fi
-		run_axe_audit "$url" "${2:-$(_wcag_level_to_axe_tags "$AUDIT_WCAG_LEVEL")}"
-		;;
-	"wave")
-		local url="${1:-}"
-		if [[ -z "$url" ]]; then
-			print_error "Please provide a URL"
-			print_info "Usage: $0 wave <url> [report-type]"
-			return 1
-		fi
-		run_wave_audit "$url" "${2:-2}"
-		;;
-	"contrast" | "webaim-contrast")
-		local fg="${1:-}"
-		local bg="${2:-}"
-		if [[ -z "$fg" || -z "$bg" ]]; then
-			print_error "Please provide foreground and background colours"
-			print_info "Usage: $0 contrast <fg-hex> <bg-hex>"
-			print_info "Example: $0 contrast '#333333' '#ffffff'"
-			return 1
-		fi
-		run_webaim_contrast "$fg" "$bg"
-		;;
-	"lighthouse" | "lh")
-		local url="${1:-}"
-		if [[ -z "$url" ]]; then
-			print_error "Please provide a URL"
-			print_info "Usage: $0 lighthouse <url> [desktop|mobile]"
-			return 1
-		fi
-		run_lighthouse_a11y "$url" "${2:-desktop}"
-		;;
-	"bulk")
-		local urls_file="${1:-}"
-		if [[ -z "$urls_file" ]]; then
-			print_error "Please provide a file containing URLs"
-			print_info "Usage: $0 bulk <urls-file> [engine]"
-			return 1
-		fi
-		bulk_audit "$urls_file" "${2:-all}"
-		;;
-	"compare")
-		local url="${1:-}"
-		if [[ -z "$url" ]]; then
-			print_error "Please provide a URL"
-			print_info "Usage: $0 compare <url>"
-			return 1
-		fi
-		compare_engines "$url"
-		;;
-	"status")
-		show_status
-		;;
-	"install-deps")
-		install_deps
-		;;
-	"help" | *)
-		print_header_line "Accessibility Audit Helper"
-		echo "Usage: $0 [command] [options]"
-		echo ""
-		echo "Commands:"
-		echo "  audit <url>                    Full audit (axe-core + Lighthouse + WAVE)"
-		echo "  axe <url> [tags]               axe-core standalone audit"
-		echo "  wave <url> [report-type]        WAVE API accessibility report"
-		echo "  contrast <fg-hex> <bg-hex>     WebAIM contrast checker API"
-		echo "  lighthouse <url> [strategy]    Lighthouse accessibility-only audit"
-		echo "  bulk <urls-file> [engine]      Audit multiple URLs from file"
-		echo "  compare <url>                  Run all engines and compare results"
-		echo "  status                         Show installed tools and configuration"
-		echo "  install-deps                   Install required dependencies"
-		echo "  help                           Show this help"
-		echo ""
-		echo "Engines:"
-		echo "  axe-core     @axe-core/cli — standalone axe accessibility scanner"
-		echo "  lighthouse   Google Lighthouse — accessibility category audit"
-		echo "  wave         WAVE API — WebAIM visual accessibility evaluator"
-		echo "  webaim       WebAIM contrast checker API — programmatic colour checks"
-		echo ""
-		echo "axe-core Tags (comma-separated):"
-		echo "  wcag2a, wcag2aa, wcag2aaa, wcag21a, wcag21aa, wcag22aa, best-practice"
-		echo ""
-		echo "WAVE Report Types:"
-		echo "  1 = WAVE report (full)    2 = Statistics only (default)"
-		echo "  3 = Categories + items    4 = WAVE + statistics"
-		echo ""
-		echo "Environment Variables:"
-		echo "  WAVE_API_KEY          WAVE API key (required for wave command)"
-		echo "  AUDIT_WCAG_LEVEL      Default WCAG level (default: WCAG2AA)"
-		echo ""
-		echo "Examples:"
-		echo "  $0 audit https://example.com"
-		echo "  $0 axe https://example.com wcag2aa,wcag21aa"
-		echo "  $0 wave https://example.com"
-		echo "  $0 contrast '#333333' '#ffffff'"
-		echo "  $0 lighthouse https://example.com mobile"
-		echo "  $0 bulk websites.txt axe"
-		echo "  $0 compare https://example.com"
-		echo "  $0 status"
-		echo ""
-		echo "Reports saved to: $AUDIT_REPORTS_DIR"
-		;;
+	"audit" | "full") _cmd_audit "$@" ;;
+	"axe" | "axe-core") _cmd_axe "$@" ;;
+	"wave") _cmd_wave "$@" ;;
+	"contrast" | "webaim-contrast") _cmd_contrast "$@" ;;
+	"lighthouse" | "lh") _cmd_lighthouse "$@" ;;
+	"bulk") _cmd_bulk "$@" ;;
+	"compare") _cmd_compare "$@" ;;
+	"status") show_status ;;
+	"install-deps") install_deps ;;
+	"help" | *) _cmd_help ;;
 	esac
+	return $?
 }
 
 main "$@"
