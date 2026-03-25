@@ -678,6 +678,244 @@ map_tags_to_labels() {
 # Compose — Issue Body
 # =============================================================================
 
+# Build the metadata header block (lines 1-2 + tags) for an issue body.
+# Outputs the header text (no trailing newline).
+# Arguments:
+#   $1 - task_id
+#   $2 - status
+#   $3 - estimate
+#   $4 - actual
+#   $5 - detected_plan_id
+#   $6 - assignee
+#   $7 - logged
+#   $8 - started
+#   $9 - completed
+#   $10 - verified
+#   $11 - tags
+_compose_issue_metadata() {
+	local task_id="$1"
+	local status="$2"
+	local estimate="$3"
+	local actual="$4"
+	local detected_plan_id="$5"
+	local assignee="$6"
+	local logged="$7"
+	local started="$8"
+	local completed="$9"
+	local verified="${10}"
+	local tags="${11}"
+
+	# Line 1: task ID + scalar fields
+	local header="**Task ID:** \`$task_id\`"
+	[[ -n "$status" ]] && header="$header | **Status:** $status"
+	[[ -n "$estimate" ]] && header="$header | **Estimate:** \`$estimate\`"
+	[[ -n "$actual" ]] && header="$header | **Actual:** \`$actual\`"
+	[[ -n "$detected_plan_id" ]] && header="$header | **Plan:** \`$detected_plan_id\`"
+
+	# Line 2: dates and assignment
+	local meta_line2=""
+	if [[ -n "$assignee" ]]; then
+		if [[ "$assignee" =~ ^[A-Za-z0-9._-]+$ ]]; then
+			meta_line2="**Assignee:** @$assignee"
+		else
+			meta_line2="**Assignee:** $assignee"
+		fi
+	fi
+	[[ -n "$logged" ]] && meta_line2="${meta_line2:+$meta_line2 | }**Logged:** $logged"
+	[[ -n "$started" ]] && meta_line2="${meta_line2:+$meta_line2 | }**Started:** $started"
+	[[ -n "$completed" ]] && meta_line2="${meta_line2:+$meta_line2 | }**Completed:** $completed"
+	[[ -n "$verified" ]] && meta_line2="${meta_line2:+$meta_line2 | }**Verified:** $verified"
+	[[ -n "$meta_line2" ]] && header="$header"$'\n'"$meta_line2"
+
+	# Tags line
+	if [[ -n "$tags" ]]; then
+		local formatted_tags
+		# shellcheck disable=SC2016  # & in sed replacement is sed syntax, not a bash expression
+		formatted_tags=$(echo "$tags" | sed 's/,/ /g' | sed 's/#//g' | sed 's/[^ ]*/`&`/g')
+		header="$header"$'\n'"**Tags:** $formatted_tags"
+	fi
+
+	echo "$header"
+	return 0
+}
+
+# Append plan context sections (purpose, extras, progress, decisions, discoveries).
+# Outputs the appended body text.
+# Arguments:
+#   $1 - current body text
+#   $2 - plan_section text
+_compose_issue_plan_sections() {
+	local body="$1"
+	local plan_section="$2"
+
+	local purpose
+	purpose=$(extract_plan_purpose "$plan_section")
+	[[ -n "$purpose" ]] && body="$body"$'\n\n'"## Plan: Purpose"$'\n\n'"$purpose"
+
+	local extra_sections
+	extra_sections=$(extract_plan_extra_sections "$plan_section")
+	[[ -n "$extra_sections" ]] && body="$body"$'\n\n'"<details><summary>Plan: Context &amp; Architecture</summary>"$'\n'"$extra_sections"$'\n\n'"</details>"
+
+	local progress
+	progress=$(extract_plan_progress "$plan_section")
+	[[ -n "$progress" ]] && body="$body"$'\n\n'"<details><summary>Plan: Progress</summary>"$'\n\n'"$progress"$'\n\n'"</details>"
+
+	local decisions
+	decisions=$(extract_plan_decisions "$plan_section")
+	[[ -n "$decisions" ]] && body="$body"$'\n\n'"<details><summary>Plan: Decision Log</summary>"$'\n\n'"$decisions"$'\n\n'"</details>"
+
+	local discoveries
+	discoveries=$(extract_plan_discoveries "$plan_section")
+	[[ -n "$discoveries" ]] && body="$body"$'\n\n'"<details><summary>Plan: Discoveries</summary>"$'\n\n'"$discoveries"$'\n\n'"</details>"
+
+	echo "$body"
+	return 0
+}
+
+# Append related PRD/task files section to the body.
+# Arguments:
+#   $1 - current body text
+#   $2 - task_id
+#   $3 - project_root
+_compose_issue_related_files() {
+	local body="$1"
+	local task_id="$2"
+	local project_root="$3"
+
+	local related_files
+	related_files=$(find_related_files "$task_id" "$project_root")
+	if [[ -z "$related_files" ]]; then
+		echo "$body"
+		return 0
+	fi
+
+	body="$body"$'\n\n'"## Related Files"
+	while IFS= read -r file; do
+		if [[ -n "$file" ]]; then
+			local rel_path file_summary
+			rel_path="${file#"$project_root"/}"
+			file_summary=$(extract_file_summary "$file" 30)
+			if [[ -n "$file_summary" ]]; then
+				body="$body"$'\n\n'"<details><summary><code>$rel_path</code></summary>"$'\n\n'"$file_summary"$'\n\n'"</details>"
+			else
+				body="$body"$'\n\n'"- [\`$rel_path\`]($rel_path)"
+			fi
+		fi
+	done <<<"$related_files"
+
+	echo "$body"
+	return 0
+}
+
+# Resolve plan section and plan ID from a task's plan_link or auto-detection.
+# Outputs two lines: first line is detected_plan_id (may be empty), remaining lines are plan_section.
+# Arguments:
+#   $1 - plan_link (may be empty)
+#   $2 - task_id
+#   $3 - project_root
+_resolve_plan_context() {
+	local plan_link="$1"
+	local task_id="$2"
+	local project_root="$3"
+
+	local plan_section="" detected_plan_id=""
+	if [[ -n "$plan_link" ]]; then
+		plan_section=$(extract_plan_section "$plan_link" "$project_root")
+		if [[ -n "$plan_section" ]]; then
+			detected_plan_id=$(echo "$plan_section" | awk '
+				/^<!--TOON:plan\{/ { getline data; if (match(data, /^p[0-9]+,/)) { print substr(data, RSTART, RLENGTH-1); exit } }
+			' || true)
+		fi
+	else
+		local auto_detected
+		auto_detected=$(find_plan_by_task_id "$task_id" "$project_root")
+		if [[ -n "$auto_detected" ]]; then
+			detected_plan_id=$(echo "$auto_detected" | head -1)
+			plan_section=$(echo "$auto_detected" | tail -n +2)
+		fi
+	fi
+
+	# Output: line 1 = plan ID (empty string if none), remaining = plan section text
+	printf '%s\n' "$detected_plan_id"
+	[[ -n "$plan_section" ]] && printf '%s\n' "$plan_section"
+	return 0
+}
+
+# Append description, dependencies, and notes sections to the body.
+# Arguments:
+#   $1 - current body text
+#   $2 - description
+#   $3 - blocked_by
+#   $4 - blocks
+#   $5 - notes
+_compose_issue_content() {
+	local body="$1"
+	local description="$2"
+	local blocked_by="$3"
+	local blocks="$4"
+	local notes="$5"
+
+	[[ -n "$description" ]] && body="$body"$'\n\n'"## Description"$'\n\n'"$description"
+	[[ -n "$blocked_by" ]] && body="$body"$'\n\n'"**Blocked by:** \`$blocked_by\`"
+	[[ -n "$blocks" ]] && body="$body"$'\n'"**Blocks:** \`$blocks\`"
+	[[ -n "$notes" ]] && body="$body"$'\n\n'"## Notes"$'\n\n'"$notes"
+
+	echo "$body"
+	return 0
+}
+
+# Append subtasks section to the body, converting TODO.md checkbox format to GitHub checkboxes.
+# Arguments:
+#   $1 - current body text
+#   $2 - subtasks text (multi-line, from extract_subtasks)
+_compose_issue_subtasks() {
+	local body="$1"
+	local subtasks="$2"
+
+	if [[ -z "$subtasks" ]]; then
+		echo "$body"
+		return 0
+	fi
+
+	body="$body"$'\n\n'"## Subtasks"$'\n'
+	while IFS= read -r subtask_line; do
+		local gh_line
+		gh_line=$(echo "$subtask_line" | sed -E 's/^[[:space:]]+//' | sed -E 's/^- \[x\]/- [x]/' | sed -E 's/^- \[ \]/- [ ]/' | sed -E 's/^- \[-\] (.*)/- [x] ~~\1~~/')
+		body="$body"$'\n'"$gh_line"
+	done <<<"$subtasks"
+
+	echo "$body"
+	return 0
+}
+
+# Append task brief content to the body (strips YAML frontmatter).
+# Arguments:
+#   $1 - current body text
+#   $2 - brief_file path
+_compose_issue_brief() {
+	local body="$1"
+	local brief_file="$2"
+
+	if [[ ! -f "$brief_file" ]]; then
+		echo "$body"
+		return 0
+	fi
+
+	local brief_content
+	brief_content=$(awk '
+		BEGIN { in_front=0; front_done=0 }
+		/^---$/ && !front_done { in_front=!in_front; if(!in_front) front_done=1; next }
+		!in_front { print }
+	' "$brief_file")
+
+	if [[ -n "$brief_content" && ${#brief_content} -gt 10 ]]; then
+		body="$body"$'\n\n'"## Task Brief"$'\n\n'"$brief_content"
+	fi
+
+	echo "$body"
+	return 0
+}
+
 # Compose a rich issue body from all available task context.
 # Arguments:
 #   $1 - task_id
@@ -727,194 +965,46 @@ compose_issue_body() {
 		esac
 	done <<<"$parsed"
 
-	# Resolve plan context early so plan ID can appear in metadata header.
-	# Supports: explicit → [todo/PLANS.md#anchor] link OR auto-detect via **TODO:**/**Task:** field.
-	local plan_section="" detected_plan_id=""
-	if [[ -n "$plan_link" ]]; then
-		plan_section=$(extract_plan_section "$plan_link" "$project_root")
-		# Also extract plan ID from TOON block for explicit links
-		if [[ -n "$plan_section" ]]; then
-			detected_plan_id=$(echo "$plan_section" | awk '
-				/^<!--TOON:plan\{/ { getline data; if (match(data, /^p[0-9]+,/)) { print substr(data, RSTART, RLENGTH-1); exit } }
-			' || true)
-		fi
-	else
-		# Auto-detect: scan PLANS.md for **TODO:** or **Task:** containing this task ID
-		local auto_detected
-		auto_detected=$(find_plan_by_task_id "$task_id" "$project_root")
-		if [[ -n "$auto_detected" ]]; then
-			detected_plan_id=$(echo "$auto_detected" | head -1)
-			plan_section=$(echo "$auto_detected" | tail -n +2)
-		fi
-	fi
+	# Resolve plan context (plan ID + section text) via helper.
+	# _resolve_plan_context outputs: line 1 = plan ID, remaining lines = plan section.
+	local plan_context detected_plan_id plan_section
+	plan_context=$(_resolve_plan_context "$plan_link" "$task_id" "$project_root")
+	detected_plan_id=$(echo "$plan_context" | head -1)
+	plan_section=$(echo "$plan_context" | tail -n +2)
 
-	# Start building the body
-	local body=""
+	# Build metadata header
+	local body
+	body=$(_compose_issue_metadata \
+		"$task_id" "$status" "$estimate" "$actual" "$detected_plan_id" \
+		"$assignee" "$logged" "$started" "$completed" "$verified" "$tags")
 
-	# Task metadata header line
-	body="**Task ID:** \`$task_id\`"
-	if [[ -n "$status" ]]; then
-		body="$body | **Status:** $status"
-	fi
-	if [[ -n "$estimate" ]]; then
-		body="$body | **Estimate:** \`$estimate\`"
-	fi
-	if [[ -n "$actual" ]]; then
-		body="$body | **Actual:** \`$actual\`"
-	fi
-	# Include plan ID in metadata header when auto-detected (no explicit link)
-	if [[ -n "$detected_plan_id" ]]; then
-		body="$body | **Plan:** \`$detected_plan_id\`"
-	fi
-
-	# Second metadata line: dates and assignment
-	local meta_line2=""
-	if [[ -n "$assignee" ]]; then
-		# Only add @ if assignee looks like a GitHub username (no @ in it already)
-		# This prevents @user@host or plain usernames from becoming bad mentions
-		if [[ "$assignee" =~ ^[A-Za-z0-9._-]+$ ]]; then
-			meta_line2="**Assignee:** @$assignee"
-		else
-			meta_line2="**Assignee:** $assignee"
-		fi
-	fi
-	if [[ -n "$logged" ]]; then
-		meta_line2="${meta_line2:+$meta_line2 | }**Logged:** $logged"
-	fi
-	if [[ -n "$started" ]]; then
-		meta_line2="${meta_line2:+$meta_line2 | }**Started:** $started"
-	fi
-	if [[ -n "$completed" ]]; then
-		meta_line2="${meta_line2:+$meta_line2 | }**Completed:** $completed"
-	fi
-	if [[ -n "$verified" ]]; then
-		meta_line2="${meta_line2:+$meta_line2 | }**Verified:** $verified"
-	fi
-	if [[ -n "$meta_line2" ]]; then
-		body="$body"$'\n'"$meta_line2"
-	fi
-
-	# Tags
-	if [[ -n "$tags" ]]; then
-		local formatted_tags
-		# shellcheck disable=SC2016  # & in sed replacement is sed syntax, not a bash expression
-		formatted_tags=$(echo "$tags" | sed 's/,/ /g' | sed 's/#//g' | sed 's/[^ ]*/`&`/g')
-		body="$body"$'\n'"**Tags:** $formatted_tags"
-	fi
-
-	# Full description (the detailed spec after the em dash)
-	if [[ -n "$description" ]]; then
-		body="$body"$'\n\n'"## Description"$'\n\n'"$description"
-	fi
-
-	# Dependencies
-	if [[ -n "$blocked_by" ]]; then
-		body="$body"$'\n\n'"**Blocked by:** \`$blocked_by\`"
-	fi
-	if [[ -n "$blocks" ]]; then
-		body="$body"$'\n'"**Blocks:** \`$blocks\`"
-	fi
+	# Description, dependencies, notes
+	local notes
+	notes=$(extract_notes "$block")
+	body=$(_compose_issue_content "$body" "$description" "$blocked_by" "$blocks" "$notes")
 
 	# Subtasks
 	local subtasks
 	subtasks=$(extract_subtasks "$block")
-	if [[ -n "$subtasks" ]]; then
-		body="$body"$'\n\n'"## Subtasks"$'\n'
-		while IFS= read -r subtask_line; do
-			# Convert TODO.md checkbox format to issue checkbox
-			local gh_line
-			gh_line=$(echo "$subtask_line" | sed -E 's/^[[:space:]]+//' | sed -E 's/^- \[x\]/- [x]/' | sed -E 's/^- \[ \]/- [ ]/' | sed -E 's/^- \[-\] (.*)/- [x] ~~\1~~/')
-			body="$body"$'\n'"$gh_line"
-		done <<<"$subtasks"
-	fi
+	body=$(_compose_issue_subtasks "$body" "$subtasks")
 
-	# Notes
-	local notes
-	notes=$(extract_notes "$block")
-	if [[ -n "$notes" ]]; then
-		body="$body"$'\n\n'"## Notes"$'\n\n'"$notes"
-	fi
-
-	# Plan context (plan_section resolved above before metadata header)
+	# Plan context sections
 	if [[ -n "$plan_section" ]]; then
-		# Purpose (always shown inline)
-		local purpose
-		purpose=$(extract_plan_purpose "$plan_section")
-		if [[ -n "$purpose" ]]; then
-			body="$body"$'\n\n'"## Plan: Purpose"$'\n\n'"$purpose"
-		fi
-
-		# Extra sections: Context, Research, Architecture, Tool Matrix, etc. (collapsed)
-		local extra_sections
-		extra_sections=$(extract_plan_extra_sections "$plan_section")
-		if [[ -n "$extra_sections" ]]; then
-			body="$body"$'\n\n'"<details><summary>Plan: Context &amp; Architecture</summary>"$'\n'"$extra_sections"$'\n\n'"</details>"
-		fi
-
-		# Progress (collapsed)
-		local progress
-		progress=$(extract_plan_progress "$plan_section")
-		if [[ -n "$progress" ]]; then
-			body="$body"$'\n\n'"<details><summary>Plan: Progress</summary>"$'\n\n'"$progress"$'\n\n'"</details>"
-		fi
-
-		# Decisions (collapsed)
-		local decisions
-		decisions=$(extract_plan_decisions "$plan_section")
-		if [[ -n "$decisions" ]]; then
-			body="$body"$'\n\n'"<details><summary>Plan: Decision Log</summary>"$'\n\n'"$decisions"$'\n\n'"</details>"
-		fi
-
-		# Discoveries (collapsed)
-		local discoveries
-		discoveries=$(extract_plan_discoveries "$plan_section")
-		if [[ -n "$discoveries" ]]; then
-			body="$body"$'\n\n'"<details><summary>Plan: Discoveries</summary>"$'\n\n'"$discoveries"$'\n\n'"</details>"
-		fi
+		body=$(_compose_issue_plan_sections "$body" "$plan_section")
 	fi
 
-	# Related PRD/task files (with inline content)
-	local related_files
-	related_files=$(find_related_files "$task_id" "$project_root")
-	if [[ -n "$related_files" ]]; then
-		body="$body"$'\n\n'"## Related Files"
-		while IFS= read -r file; do
-			if [[ -n "$file" ]]; then
-				local rel_path file_summary
-				rel_path="${file#"$project_root"/}"
-				file_summary=$(extract_file_summary "$file" 30)
-				if [[ -n "$file_summary" ]]; then
-					body="$body"$'\n\n'"<details><summary><code>$rel_path</code></summary>"$'\n\n'"$file_summary"$'\n\n'"</details>"
-				else
-					body="$body"$'\n\n'"- [\`$rel_path\`]($rel_path)"
-				fi
-			fi
-		done <<<"$related_files"
-	fi
+	# Related PRD/task files
+	body=$(_compose_issue_related_files "$body" "$task_id" "$project_root")
 
-	# Task brief file (todo/tasks/{task_id}-brief.md)
-	local brief_file="$project_root/todo/tasks/${task_id}-brief.md"
-	if [[ -f "$brief_file" ]]; then
-		local brief_content
-		# Strip YAML frontmatter (--- ... ---) if present
-		brief_content=$(awk '
-			BEGIN { in_front=0; front_done=0 }
-			/^---$/ && !front_done { in_front=!in_front; if(!in_front) front_done=1; next }
-			!in_front { print }
-		' "$brief_file")
-		if [[ -n "$brief_content" && ${#brief_content} -gt 10 ]]; then
-			body="$body"$'\n\n'"## Task Brief"$'\n\n'"$brief_content"
-		fi
-	fi
+	# Task brief
+	body=$(_compose_issue_brief "$body" "$project_root/todo/tasks/${task_id}-brief.md")
 
-	# Extract HTML comments (e.g., REBASE notes) from the task line
+	# HTML comments (e.g., REBASE notes) from the task line
 	local html_comments
 	# Match HTML comments — use sed to extract content between <!-- and -->
 	# Handles comments containing > characters (e.g., "use a -> b pattern")
 	html_comments=$(echo "$first_line" | sed -n 's/.*\(<!--.*-->\).*/\1/p' | sed 's/<!--//;s/-->//' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
-	if [[ -n "$html_comments" ]]; then
-		body="$body"$'\n\n'"## Implementation Notes"$'\n\n'"$html_comments"
-	fi
+	[[ -n "$html_comments" ]] && body="$body"$'\n\n'"## Implementation Notes"$'\n\n'"$html_comments"
 
 	# Footer
 	body="$body"$'\n\n'"---"$'\n'"*Synced from TODO.md by issue-sync-helper.sh*"
