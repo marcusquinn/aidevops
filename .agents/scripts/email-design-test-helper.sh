@@ -1070,11 +1070,12 @@ show_help() {
 	return 0
 }
 
-main() {
-	local command="${1:-help}"
-	local arg1="${2:-}"
-	local arg2="${3:-}"
-	local arg3="${4:-}"
+# Dispatch local testing commands
+_dispatch_local_commands() {
+	local command="$1"
+	local arg1="$2"
+	local arg2="$3"
+	local arg3="$4"
 
 	case "$command" in
 	"test" | "local" | "test-local")
@@ -1084,16 +1085,28 @@ main() {
 			exit 1
 		fi
 		test_local "$arg1"
+		return 0
 		;;
-	"eoa-auth" | "auth")
-		eoa_auth "false"
-		;;
+	esac
+
+	return 1
+}
+
+# Dispatch EOA commands that require an HTML file argument
+_dispatch_eoa_html_commands() {
+	local command="$1"
+	local arg1="$2"
+	local arg2="$3"
+	local arg3="$4"
+
+	case "$command" in
 	"eoa-sandbox" | "sandbox")
 		if [[ -z "$arg1" ]]; then
 			print_error "HTML file required"
 			exit 1
 		fi
 		eoa_sandbox "$arg1" "${arg2:-Sandbox Design Test}"
+		return 0
 		;;
 	"eoa-test" | "eoa")
 		if [[ -z "$arg1" ]]; then
@@ -1101,6 +1114,7 @@ main() {
 			exit 1
 		fi
 		eoa_test "$arg1" "${arg2:-Email Design Test}" "$arg3" "false"
+		return 0
 		;;
 	"eoa-create" | "create")
 		if [[ -z "$arg1" ]]; then
@@ -1108,13 +1122,27 @@ main() {
 			exit 1
 		fi
 		eoa_create_test "$arg1" "${arg2:-Email Design Test}" "$arg3" "false" "false"
+		return 0
 		;;
+	esac
+
+	return 1
+}
+
+# Dispatch EOA commands that require a test ID argument
+_dispatch_eoa_id_commands() {
+	local command="$1"
+	local arg1="$2"
+	local arg2="$3"
+
+	case "$command" in
 	"eoa-results" | "results")
 		if [[ -z "$arg1" ]]; then
 			print_error "Test ID required"
 			exit 1
 		fi
 		eoa_results "$arg1" "$arg2" "false"
+		return 0
 		;;
 	"eoa-poll" | "poll")
 		if [[ -z "$arg1" ]]; then
@@ -1122,6 +1150,7 @@ main() {
 			exit 1
 		fi
 		eoa_poll "$arg1" "false"
+		return 0
 		;;
 	"eoa-info" | "info")
 		if [[ -z "$arg1" ]]; then
@@ -1129,15 +1158,7 @@ main() {
 			exit 1
 		fi
 		eoa_test_info "$arg1" "false"
-		;;
-	"eoa-list" | "list")
-		eoa_list "false"
-		;;
-	"eoa-clients" | "clients")
-		eoa_clients "false"
-		;;
-	"eoa-defaults" | "defaults")
-		eoa_default_clients "false"
+		return 0
 		;;
 	"eoa-delete" | "delete")
 		if [[ -z "$arg1" ]]; then
@@ -1145,6 +1166,7 @@ main() {
 			exit 1
 		fi
 		eoa_delete "$arg1"
+		return 0
 		;;
 	"eoa-inline-css" | "inline-css")
 		if [[ -z "$arg1" ]]; then
@@ -1152,6 +1174,7 @@ main() {
 			exit 1
 		fi
 		eoa_inline_css "$arg1"
+		return 0
 		;;
 	"eoa-reprocess" | "reprocess")
 		if [[ -z "$arg1" ]]; then
@@ -1163,18 +1186,57 @@ main() {
 			exit 1
 		fi
 		eoa_reprocess "$arg1" "$arg2"
-		;;
-	"help" | "-h" | "--help" | "")
-		show_help
-		;;
-	*)
-		print_error "Unknown command: $command"
-		echo "$HELP_USAGE_INFO"
-		exit 1
+		return 0
 		;;
 	esac
 
-	return 0
+	return 1
+}
+
+# Dispatch EOA commands that require no positional arguments
+_dispatch_eoa_noarg_commands() {
+	local command="$1"
+
+	case "$command" in
+	"eoa-auth" | "auth")
+		eoa_auth "false"
+		return 0
+		;;
+	"eoa-list" | "list")
+		eoa_list "false"
+		return 0
+		;;
+	"eoa-clients" | "clients")
+		eoa_clients "false"
+		return 0
+		;;
+	"eoa-defaults" | "defaults")
+		eoa_default_clients "false"
+		return 0
+		;;
+	"help" | "-h" | "--help" | "")
+		show_help
+		return 0
+		;;
+	esac
+
+	return 1
+}
+
+main() {
+	local command="${1:-help}"
+	local arg1="${2:-}"
+	local arg2="${3:-}"
+	local arg3="${4:-}"
+
+	_dispatch_local_commands "$command" "$arg1" "$arg2" "$arg3" && return 0
+	_dispatch_eoa_html_commands "$command" "$arg1" "$arg2" "$arg3" && return 0
+	_dispatch_eoa_id_commands "$command" "$arg1" "$arg2" && return 0
+	_dispatch_eoa_noarg_commands "$command" && return 0
+
+	print_error "Unknown command: $command"
+	echo "$HELP_USAGE_INFO"
+	exit 1
 }
 
 main "$@"
