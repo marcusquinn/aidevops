@@ -816,7 +816,8 @@ test_pipeline_classify() {
 	return 0
 }
 
-test_pipeline_validate() {
+# Tests 1-5: valid document types pass validation
+_test_pipeline_validate_doc_types() {
 	local group="pipeline/validate"
 
 	# Test 1: Valid purchase invoice passes validation
@@ -889,6 +890,13 @@ test_pipeline_validate() {
 		fi
 	fi
 
+	return 0
+}
+
+# Tests 6-10: VAT warnings and multi-currency detection
+_test_pipeline_validate_vat_currency() {
+	local group="pipeline/validate"
+
 	# Test 6: VAT claimed without supplier VAT number
 	if should_run "${group}/vat-no-supplier-number"; then
 		local json_file="${TEST_WORKSPACE}/vat-no-supplier.json"
@@ -959,6 +967,13 @@ test_pipeline_validate() {
 			log_test "FAIL" "${group}/usd-receipt" "Expected USD currency, got: ${output:0:200}"
 		fi
 	fi
+
+	return 0
+}
+
+# Tests 11-15: format edge cases — wrapped output, date normalisation, currency codes, line VAT
+_test_pipeline_validate_formats() {
+	local group="pipeline/validate"
 
 	# Test 11: Wrapped extraction output format
 	if should_run "${group}/wrapped-format"; then
@@ -1031,6 +1046,13 @@ test_pipeline_validate() {
 		fi
 	fi
 
+	return 0
+}
+
+# Tests 16-20: error paths — no-VAT receipt, large invoice, auto-detect, malformed, missing file
+_test_pipeline_validate_error_paths() {
+	local group="pipeline/validate"
+
 	# Test 16: Receipt with no VAT
 	if should_run "${group}/receipt-no-vat"; then
 		local json_file="${TEST_WORKSPACE}/receipt-no-vat.json"
@@ -1101,7 +1123,16 @@ test_pipeline_validate() {
 	return 0
 }
 
-test_pipeline_categorise() {
+test_pipeline_validate() {
+	_test_pipeline_validate_doc_types
+	_test_pipeline_validate_vat_currency
+	_test_pipeline_validate_formats
+	_test_pipeline_validate_error_paths
+	return 0
+}
+
+# Tests 1-6: common expense categories (fuel, office, food, software, travel, postage)
+_test_pipeline_categorise_common() {
 	local group="pipeline/categorise"
 
 	# Test 1: Fuel vendor
@@ -1170,6 +1201,13 @@ test_pipeline_categorise() {
 		fi
 	fi
 
+	return 0
+}
+
+# Tests 7-12: extended categories (telephone, advertising, professional, unknown, hotel, repairs)
+_test_pipeline_categorise_extended() {
+	local group="pipeline/categorise"
+
 	# Test 7: Telephone
 	if should_run "${group}/telephone"; then
 		local output
@@ -1236,6 +1274,12 @@ test_pipeline_categorise() {
 		fi
 	fi
 
+	return 0
+}
+
+test_pipeline_categorise() {
+	_test_pipeline_categorise_common
+	_test_pipeline_categorise_extended
 	return 0
 }
 
@@ -1639,7 +1683,8 @@ test_doc_helper_args() {
 	return 0
 }
 
-test_pipeline_python_import() {
+# Tests 1-2: module import and Pydantic model instantiation
+_test_pipeline_python_import_models() {
 	local group="pipeline/python-import"
 
 	# Test 1: Pipeline module imports successfully
@@ -1692,6 +1737,13 @@ print('All models instantiate OK')
 			log_test "FAIL" "${group}/model-instantiation" "Model instantiation failed"
 		fi
 	fi
+
+	return 0
+}
+
+# Tests 3-5: date normalisation function and enum correctness
+_test_pipeline_python_import_enums() {
+	local group="pipeline/python-import"
 
 	# Test 3: Date normalisation function
 	if should_run "${group}/date-normalisation"; then
@@ -1772,6 +1824,12 @@ print('DocumentType enum OK')
 		fi
 	fi
 
+	return 0
+}
+
+test_pipeline_python_import() {
+	_test_pipeline_python_import_models
+	_test_pipeline_python_import_enums
 	return 0
 }
 
