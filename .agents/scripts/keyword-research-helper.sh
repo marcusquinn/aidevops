@@ -1751,6 +1751,41 @@ show_help() {
 # Main
 # =============================================================================
 
+# Parse a single filter option (--min-volume, --max-volume, etc.) into _OPT_FILTERS.
+# Arguments: $1=flag_name $2=value
+# Returns 1 if the flag is not a filter option (caller should handle it).
+_parse_filter_option() {
+	local flag="$1"
+	local value="$2"
+	case "$flag" in
+	--min-volume)
+		_OPT_FILTERS="${_OPT_FILTERS:+$_OPT_FILTERS,}min-volume:$value"
+		;;
+	--max-volume)
+		_OPT_FILTERS="${_OPT_FILTERS:+$_OPT_FILTERS,}max-volume:$value"
+		;;
+	--min-difficulty)
+		_OPT_FILTERS="${_OPT_FILTERS:+$_OPT_FILTERS,}min-difficulty:$value"
+		;;
+	--max-difficulty)
+		_OPT_FILTERS="${_OPT_FILTERS:+$_OPT_FILTERS,}max-difficulty:$value"
+		;;
+	--intent)
+		_OPT_FILTERS="${_OPT_FILTERS:+$_OPT_FILTERS,}intent:$value"
+		;;
+	--contains)
+		_OPT_FILTERS="${_OPT_FILTERS:+$_OPT_FILTERS,}contains:$value"
+		;;
+	--excludes)
+		_OPT_FILTERS="${_OPT_FILTERS:+$_OPT_FILTERS,}excludes:$value"
+		;;
+	*)
+		return 1
+		;;
+	esac
+	return 0
+}
+
 # Parse CLI options into global variables for main() dispatch
 # Sets: _OPT_KEYWORDS, _OPT_PROVIDER, _OPT_LOCALE, _OPT_LIMIT, _OPT_DAYS,
 #       _OPT_CSV, _OPT_QUICK, _OPT_AHREFS, _OPT_ENRICH, _OPT_MODE,
@@ -1818,32 +1853,8 @@ _parse_options() {
 			_OPT_TARGET="$2"
 			shift 2
 			;;
-		--min-volume)
-			_OPT_FILTERS="${_OPT_FILTERS:+$_OPT_FILTERS,}min-volume:$2"
-			shift 2
-			;;
-		--max-volume)
-			_OPT_FILTERS="${_OPT_FILTERS:+$_OPT_FILTERS,}max-volume:$2"
-			shift 2
-			;;
-		--min-difficulty)
-			_OPT_FILTERS="${_OPT_FILTERS:+$_OPT_FILTERS,}min-difficulty:$2"
-			shift 2
-			;;
-		--max-difficulty)
-			_OPT_FILTERS="${_OPT_FILTERS:+$_OPT_FILTERS,}max-difficulty:$2"
-			shift 2
-			;;
-		--intent)
-			_OPT_FILTERS="${_OPT_FILTERS:+$_OPT_FILTERS,}intent:$2"
-			shift 2
-			;;
-		--contains)
-			_OPT_FILTERS="${_OPT_FILTERS:+$_OPT_FILTERS,}contains:$2"
-			shift 2
-			;;
-		--excludes)
-			_OPT_FILTERS="${_OPT_FILTERS:+$_OPT_FILTERS,}excludes:$2"
+		--min-volume | --max-volume | --min-difficulty | --max-difficulty | --intent | --contains | --excludes)
+			_parse_filter_option "$1" "$2"
 			shift 2
 			;;
 		-*)
