@@ -1318,7 +1318,7 @@ _ed_process_row() {
 		score=$(echo "$result" | jq -r '.score // ""')
 		passed=$(echo "$result" | jq -r '.passed // ""')
 		if [[ -n "$score" ]]; then
-			row_total_score=$(awk "BEGIN { print $row_total_score + $score }")
+			row_total_score=$(awk -v prev="$row_total_score" -v add="$score" 'BEGIN { print prev + add }')
 			row_total_count=$((row_total_count + 1))
 			[[ "$passed" == "true" ]] && row_pass_count=$((row_pass_count + 1))
 		fi
