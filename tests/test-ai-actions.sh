@@ -1832,6 +1832,54 @@ fi
 # ─── Test 27: create_subtasks — task_not_in_db recorded as failed in dedup (t1238) ─
 echo "Test 27: create_subtasks executor — task_not_in_db failure recorded in dedup log (t1238)"
 
+# Assert that a task_not_in_db failure is correctly recorded in the dedup log.
+# Must run inside a subshell with test env, SUPERVISOR_DB, and ai-actions.sh sourced.
+# Args: none (uses SUPERVISOR_DB and REPO_DIR from caller scope)
+_assert_notindb_dedup_recording() {
+	local failures=0
+
+	# Execute create_subtasks for a task NOT in the DB
+	local action
+	action='{"type":"create_subtasks","parent_task_id":"t77777","subtasks":[{"title":"Sub 1","estimate":"~1h","model":"sonnet"}],"reasoning":"test"}'
+
+	local result rc
+	result=$(_exec_create_subtasks "$action" "$REPO_DIR" 2>/dev/null)
+	rc=$?
+
+	# Should fail with task_not_in_db
+	if [[ $rc -eq 0 ]]; then
+		echo "FAIL: task not in DB should return rc=1, got rc=0"
+		failures=$((failures + 1))
+	fi
+
+	local error_field
+	error_field=$(printf '%s' "$result" | jq -r '.error // "MISSING"' 2>/dev/null || echo "PARSE_ERROR")
+	if [[ "$error_field" != "task_not_in_db" ]]; then
+		echo "FAIL: should return error=task_not_in_db, got: $result"
+		failures=$((failures + 1))
+	fi
+
+	# Now simulate what execute_action_plan() does: record the failure in dedup log (t1238 fix 2)
+	_record_action_dedup "cycle-test-001" "create_subtasks" "task:t77777" "failed" "unknown"
+
+	# Verify the failure IS now visible to _is_duplicate_action (t1238 fix 3)
+	# With AI_ACTION_CYCLE_AWARE_DEDUP=false, basic dedup applies: same type+target = duplicate
+	if ! _is_duplicate_action "create_subtasks" "task:t77777" "unknown"; then
+		echo "FAIL: failed action should be detected as duplicate to suppress retry (t1238 fix 3)"
+		failures=$((failures + 1))
+	fi
+
+	# Verify the dedup log entry has status='failed' (not 'executed')
+	local stored_status
+	stored_status=$(sqlite3 "$SUPERVISOR_DB" "SELECT status FROM action_dedup_log WHERE target='task:t77777' LIMIT 1;")
+	if [[ "$stored_status" != "failed" ]]; then
+		echo "FAIL: dedup log should store status='failed', got '$stored_status'"
+		failures=$((failures + 1))
+	fi
+
+	return "$failures"
+}
+
 _test_create_subtasks_not_in_db_dedup() {
 	(
 		set +e
@@ -1859,8 +1907,6 @@ _test_create_subtasks_not_in_db_dedup() {
 
 		source "$ACTIONS_SCRIPT"
 
-		local failures=0
-
 		# Create a supervisor DB with the tasks table but WITHOUT t77777 registered.
 		# This simulates a cross-repo task (e.g., webapp t003) that the AI
 		# incorrectly tries to subtask in the aidevops context (t1238 root cause).
@@ -1882,44 +1928,8 @@ _test_create_subtasks_not_in_db_dedup() {
 			);
 		"
 
-		# Execute create_subtasks for a task NOT in the DB
-		local action
-		action='{"type":"create_subtasks","parent_task_id":"t77777","subtasks":[{"title":"Sub 1","estimate":"~1h","model":"sonnet"}],"reasoning":"test"}'
-
-		local result rc
-		result=$(_exec_create_subtasks "$action" "$REPO_DIR" 2>/dev/null)
-		rc=$?
-
-		# Should fail with task_not_in_db
-		if [[ $rc -eq 0 ]]; then
-			echo "FAIL: task not in DB should return rc=1, got rc=0"
-			failures=$((failures + 1))
-		fi
-
-		local error_field
-		error_field=$(printf '%s' "$result" | jq -r '.error // "MISSING"' 2>/dev/null || echo "PARSE_ERROR")
-		if [[ "$error_field" != "task_not_in_db" ]]; then
-			echo "FAIL: should return error=task_not_in_db, got: $result"
-			failures=$((failures + 1))
-		fi
-
-		# Now simulate what execute_action_plan() does: record the failure in dedup log (t1238 fix 2)
-		_record_action_dedup "cycle-test-001" "create_subtasks" "task:t77777" "failed" "unknown"
-
-		# Verify the failure IS now visible to _is_duplicate_action (t1238 fix 3)
-		# With AI_ACTION_CYCLE_AWARE_DEDUP=false, basic dedup applies: same type+target = duplicate
-		if ! _is_duplicate_action "create_subtasks" "task:t77777" "unknown"; then
-			echo "FAIL: failed action should be detected as duplicate to suppress retry (t1238 fix 3)"
-			failures=$((failures + 1))
-		fi
-
-		# Verify the dedup log entry has status='failed' (not 'executed')
-		local stored_status
-		stored_status=$(sqlite3 "$SUPERVISOR_DB" "SELECT status FROM action_dedup_log WHERE target='task:t77777' LIMIT 1;")
-		if [[ "$stored_status" != "failed" ]]; then
-			echo "FAIL: dedup log should store status='failed', got '$stored_status'"
-			failures=$((failures + 1))
-		fi
+		local failures=0
+		_assert_notindb_dedup_recording || failures=$((failures + $?))
 
 		rm -rf "/tmp/test-ai-actions-logs-$$" "$SUPERVISOR_DB" 2>/dev/null || true
 		exit "$failures"
