@@ -1,9 +1,5 @@
 # Email Sequence Templates
 
-Copy-paste email sequences for common scenarios.
-
----
-
 ## Welcome Sequence (5 Emails)
 
 ### Email 1: Welcome + Delivery (Day 0)
@@ -156,8 +152,6 @@ If it's not right for you, just let me know for a full refund.
 P.S. [Urgency element if applicable—deadline, limited spots, etc.]
 ```
 
----
-
 ## Cart Abandonment Sequence (3 Emails)
 
 ### Email 1: Reminder (1 Hour After)
@@ -233,8 +227,6 @@ If you have any questions at all, just reply to this email.
 P.S. Remember, you're protected by our [X]-day guarantee. 
 Zero risk.
 ```
-
----
 
 ## SaaS Trial Sequence (7 Emails)
 
@@ -408,8 +400,6 @@ Questions? Reply to this email—happy to help.
 
 — [Your Name/Team]
 ```
-
----
 
 ## Launch Sequence (7 Emails)
 
@@ -610,8 +600,6 @@ Zero risk.
 
 P.S. Have a last-minute question? Reply now—I'll get back to you before midnight.
 ```
-
----
 
 ## Quick Subject Line Templates
 
