@@ -582,6 +582,90 @@ cmd_leads() {
 	esac
 }
 
+# Read, validate, and return lead file content on stdout.
+# Usage: _leads_add_read_file <file> [settings_json]
+# Outputs validated (and settings-merged) JSON to stdout.
+_leads_add_read_file() {
+	local file="$1"
+	local settings_json="${2:-}"
+
+	if [[ ! -f "$file" ]]; then
+		log_error "File not found: ${file}"
+		return 1
+	fi
+
+	local file_content
+	file_content=$(cat "$file") || {
+		log_error "Failed to read file: ${file}"
+		return 1
+	}
+
+	if ! printf '%s' "$file_content" | jq empty 2>/dev/null; then
+		log_error "Invalid JSON in file: ${file}"
+		return 1
+	fi
+
+	local lead_count
+	lead_count=$(printf '%s' "$file_content" | jq '.lead_list | length' 2>/dev/null) || lead_count=0
+
+	if [[ "$lead_count" -eq 0 ]]; then
+		log_error "No leads found in file. Expected JSON with 'lead_list' array."
+		return 1
+	fi
+
+	if [[ -n "$settings_json" ]]; then
+		file_content=$(printf '%s' "$file_content" | jq --argjson settings "$settings_json" '. + {settings: $settings}')
+	fi
+
+	printf '%s' "$file_content"
+	return 0
+}
+
+# Send leads in multiple batches and print a summary JSON.
+# Usage: _leads_add_multi_batch <campaign_id> <file_content> <lead_count>
+_leads_add_multi_batch() {
+	local campaign_id="$1"
+	local file_content="$2"
+	local lead_count="$3"
+
+	log_info "Splitting ${lead_count} leads into batches of ${SL_MAX_LEADS_PER_BATCH}"
+	local offset=0
+	local batch_num=0
+	local total_added=0
+	local total_skipped=0
+
+	while [[ "$offset" -lt "$lead_count" ]]; do
+		batch_num=$((batch_num + 1))
+		local batch_body
+		batch_body=$(printf '%s' "$file_content" | jq --argjson offset "$offset" --argjson limit "$SL_MAX_LEADS_PER_BATCH" \
+			'.lead_list = (.lead_list[$offset:$offset+$limit])')
+
+		local batch_size
+		batch_size=$(printf '%s' "$batch_body" | jq '.lead_list | length')
+		log_info "Batch ${batch_num}: sending ${batch_size} leads (offset ${offset})"
+
+		local result
+		result=$(api_post "/campaigns/${campaign_id}/leads" "$batch_body") || {
+			log_error "Batch ${batch_num} failed at offset ${offset}"
+			return 1
+		}
+
+		local added
+		added=$(printf '%s' "$result" | jq -r '.added_count // 0')
+		local skipped
+		skipped=$(printf '%s' "$result" | jq -r '.skipped_count // 0')
+		total_added=$((total_added + added))
+		total_skipped=$((total_skipped + skipped))
+
+		log_info "Batch ${batch_num}: added=${added}, skipped=${skipped}"
+		offset=$((offset + SL_MAX_LEADS_PER_BATCH))
+	done
+
+	printf '{"total_added": %d, "total_skipped": %d, "batches": %d}\n' \
+		"$total_added" "$total_skipped" "$batch_num"
+	return 0
+}
+
 leads_add() {
 	local campaign_id="${1:-}"
 	local file=""
@@ -615,36 +699,11 @@ leads_add() {
 		return 1
 	fi
 
-	if [[ ! -f "$file" ]]; then
-		log_error "File not found: ${file}"
-		return 1
-	fi
-
-	# Read and validate the file
 	local file_content
-	file_content=$(cat "$file") || {
-		log_error "Failed to read file: ${file}"
-		return 1
-	}
+	file_content=$(_leads_add_read_file "$file" "$settings_json") || return 1
 
-	if ! printf '%s' "$file_content" | jq empty 2>/dev/null; then
-		log_error "Invalid JSON in file: ${file}"
-		return 1
-	fi
-
-	# Check lead count for batching
 	local lead_count
 	lead_count=$(printf '%s' "$file_content" | jq '.lead_list | length' 2>/dev/null) || lead_count=0
-
-	if [[ "$lead_count" -eq 0 ]]; then
-		log_error "No leads found in file. Expected JSON with 'lead_list' array."
-		return 1
-	fi
-
-	# Merge settings if provided
-	if [[ -n "$settings_json" ]]; then
-		file_content=$(printf '%s' "$file_content" | jq --argjson settings "$settings_json" '. + {settings: $settings}')
-	fi
 
 	if [[ "$lead_count" -le "$SL_MAX_LEADS_PER_BATCH" ]]; then
 		# Single batch
@@ -652,42 +711,7 @@ leads_add() {
 		result=$(api_post "/campaigns/${campaign_id}/leads" "$file_content") || return 1
 		printf '%s\n' "$result" | jq '.'
 	else
-		# Multi-batch: split into chunks of SL_MAX_LEADS_PER_BATCH
-		log_info "Splitting ${lead_count} leads into batches of ${SL_MAX_LEADS_PER_BATCH}"
-		local offset=0
-		local batch_num=0
-		local total_added=0
-		local total_skipped=0
-
-		while [[ "$offset" -lt "$lead_count" ]]; do
-			batch_num=$((batch_num + 1))
-			local batch_body
-			batch_body=$(printf '%s' "$file_content" | jq --argjson offset "$offset" --argjson limit "$SL_MAX_LEADS_PER_BATCH" \
-				'.lead_list = (.lead_list[$offset:$offset+$limit])')
-
-			local batch_size
-			batch_size=$(printf '%s' "$batch_body" | jq '.lead_list | length')
-			log_info "Batch ${batch_num}: sending ${batch_size} leads (offset ${offset})"
-
-			local result
-			result=$(api_post "/campaigns/${campaign_id}/leads" "$batch_body") || {
-				log_error "Batch ${batch_num} failed at offset ${offset}"
-				return 1
-			}
-
-			local added
-			added=$(printf '%s' "$result" | jq -r '.added_count // 0')
-			local skipped
-			skipped=$(printf '%s' "$result" | jq -r '.skipped_count // 0')
-			total_added=$((total_added + added))
-			total_skipped=$((total_skipped + skipped))
-
-			log_info "Batch ${batch_num}: added=${added}, skipped=${skipped}"
-			offset=$((offset + SL_MAX_LEADS_PER_BATCH))
-		done
-
-		printf '{"total_added": %d, "total_skipped": %d, "batches": %d}\n' \
-			"$total_added" "$total_skipped" "$batch_num"
+		_leads_add_multi_batch "$campaign_id" "$file_content" "$lead_count" || return 1
 	fi
 	return 0
 }
