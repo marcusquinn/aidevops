@@ -77,7 +77,7 @@ check_session_count() {
 	local interactive_count=0
 
 	# Count opencode processes with a real TTY (interactive sessions).
-	# Filter both '?' (Linux) and '??' (macOS) headless TTY entries.
+	# Filter both '?' (Linux) and '??' (macOS headless TTY entries.
 	interactive_count=$(ps axo tty,command | awk '
 		/(\.(opencode|claude)|opencode-ai|claude-ai)/ && !/awk/ && $1 != "?" && $1 != "??" { count++ }
 		END { print count + 0 }
@@ -151,6 +151,749 @@ _get_runner_role() {
 }
 
 #######################################
+# Find an existing health issue by cache, labels, or title search.
+#
+# Arguments:
+#   $1 - repo slug
+#   $2 - runner user
+#   $3 - runner role (supervisor|contributor)
+#   $4 - runner prefix (e.g. "[Supervisor:user]")
+#   $5 - role label (supervisor|contributor)
+#   $6 - role display (Supervisor|Contributor)
+#   $7 - cache file path
+# Output: issue number to stdout (empty if not found)
+#######################################
+_find_health_issue() {
+	local repo_slug="$1"
+	local runner_user="$2"
+	local runner_role="$3"
+	local runner_prefix="$4"
+	local role_label="$5"
+	local role_display="$6"
+	local health_issue_file="$7"
+
+	local health_issue_number=""
+
+	# Try cached issue number first
+	if [[ -f "$health_issue_file" ]]; then
+		health_issue_number=$(cat "$health_issue_file" 2>/dev/null || echo "")
+	fi
+
+	# Validate cached issue still exists and is open
+	if [[ -n "$health_issue_number" ]]; then
+		local issue_state
+		issue_state=$(gh issue view "$health_issue_number" --repo "$repo_slug" --json state --jq '.state' 2>/dev/null || echo "")
+		if [[ "$issue_state" != "OPEN" ]]; then
+			if [[ "$runner_role" == "supervisor" ]]; then
+				_unpin_health_issue "$health_issue_number" "$repo_slug"
+			fi
+			health_issue_number=""
+			rm -f "$health_issue_file" 2>/dev/null || true
+		fi
+	fi
+
+	# Search by labels (more reliable than title search)
+	if [[ -z "$health_issue_number" ]]; then
+		local label_results
+		label_results=$(gh issue list --repo "$repo_slug" \
+			--label "$role_label" --label "$runner_user" \
+			--state open --json number,title \
+			--jq "[.[] | select(.title | startswith(\"[${role_display}:\"))] | sort_by(.number) | reverse" 2>/dev/null || echo "[]")
+
+		health_issue_number=$(printf '%s' "$label_results" | jq -r '.[0].number // empty' 2>/dev/null || echo "")
+
+		# Dedup: close all but the newest
+		local dup_count
+		dup_count=$(printf '%s' "$label_results" | jq 'length' 2>/dev/null || echo "0")
+		if [[ "${dup_count:-0}" -gt 1 ]]; then
+			local dup_numbers
+			dup_numbers=$(printf '%s' "$label_results" | jq -r '.[1:][].number' 2>/dev/null || echo "")
+			while IFS= read -r dup_num; do
+				[[ -z "$dup_num" ]] && continue
+				if [[ "$runner_role" == "supervisor" ]]; then
+					_unpin_health_issue "$dup_num" "$repo_slug"
+				fi
+				gh issue close "$dup_num" --repo "$repo_slug" \
+					--comment "Closing duplicate ${runner_role} health issue — superseded by #${health_issue_number}." 2>/dev/null || true
+			done <<<"$dup_numbers"
+		fi
+	fi
+
+	# Fallback: title-based search with label backfill
+	if [[ -z "$health_issue_number" ]]; then
+		health_issue_number=$(gh issue list --repo "$repo_slug" \
+			--search "in:title ${runner_prefix}" \
+			--state open --json number,title \
+			--jq "[.[] | select(.title | startswith(\"${runner_prefix}\"))][0].number" 2>/dev/null || echo "")
+		if [[ -n "$health_issue_number" ]]; then
+			gh label create "$runner_user" --repo "$repo_slug" --color "0E8A16" \
+				--description "${role_display} runner: ${runner_user}" --force 2>/dev/null || true
+			gh issue edit "$health_issue_number" --repo "$repo_slug" \
+				--add-label "$role_label" --add-label "$runner_user" 2>/dev/null || true
+		fi
+	fi
+
+	echo "$health_issue_number"
+	return 0
+}
+
+#######################################
+# Create a new health issue for a runner+repo and optionally pin it.
+#
+# Arguments:
+#   $1 - repo slug
+#   $2 - runner user
+#   $3 - runner role (supervisor|contributor)
+#   $4 - runner prefix (e.g. "[Supervisor:user]")
+#   $5 - role label (supervisor|contributor)
+#   $6 - role label color
+#   $7 - role label desc
+#   $8 - role display (Supervisor|Contributor)
+# Output: new issue number to stdout (empty on failure)
+#######################################
+_create_health_issue() {
+	local repo_slug="$1"
+	local runner_user="$2"
+	local runner_role="$3"
+	local runner_prefix="$4"
+	local role_label="$5"
+	local role_label_color="$6"
+	local role_label_desc="$7"
+	local role_display="$8"
+
+	gh label create "$role_label" --repo "$repo_slug" --color "$role_label_color" \
+		--description "$role_label_desc" --force 2>/dev/null || true
+	gh label create "$runner_user" --repo "$repo_slug" --color "0E8A16" \
+		--description "${role_display} runner: ${runner_user}" --force 2>/dev/null || true
+	gh label create "source:health-dashboard" --repo "$repo_slug" --color "C2E0C6" \
+		--description "Auto-created by stats-functions.sh health dashboard" --force 2>/dev/null || true
+
+	local health_issue_number
+	health_issue_number=$(gh issue create --repo "$repo_slug" \
+		--title "${runner_prefix} starting..." \
+		--body "Live ${runner_role} status for **${runner_user}**. Updated each pulse. Pin this issue for at-a-glance monitoring." \
+		--label "$role_label" --label "$runner_user" --label "source:health-dashboard" 2>/dev/null | grep -oE '[0-9]+$' || echo "")
+
+	if [[ -z "$health_issue_number" ]]; then
+		echo "[stats] Health issue: could not create for ${repo_slug}" >>"$LOGFILE"
+		echo ""
+		return 0
+	fi
+
+	# Pin only supervisor issues — contributor issues don't pin because
+	# GitHub allows max 3 pinned issues per repo and those slots are
+	# reserved for maintainer dashboards and the quality review issue.
+	if [[ "$runner_role" == "supervisor" ]]; then
+		local node_id
+		node_id=$(gh issue view "$health_issue_number" --repo "$repo_slug" --json id --jq '.id' 2>/dev/null || echo "")
+		if [[ -n "$node_id" ]]; then
+			gh api graphql -f query="
+				mutation {
+					pinIssue(input: {issueId: \"${node_id}\"}) {
+						issue { number }
+					}
+				}" >/dev/null 2>&1 || true
+		fi
+	fi
+	echo "[stats] Health issue: created #${health_issue_number} (${runner_role}) for ${runner_user} in ${repo_slug}" >>"$LOGFILE"
+
+	echo "$health_issue_number"
+	return 0
+}
+
+#######################################
+# Resolve (find or create) the health issue number for a runner+repo.
+#
+# Delegates to _find_health_issue then _create_health_issue if not found.
+#
+# Arguments:
+#   $1 - repo slug
+#   $2 - runner user
+#   $3 - runner role (supervisor|contributor)
+#   $4 - runner prefix (e.g. "[Supervisor:user]")
+#   $5 - role label (supervisor|contributor)
+#   $6 - role label color
+#   $7 - role label desc
+#   $8 - role display (Supervisor|Contributor)
+#   $9 - cache file path
+# Output: issue number to stdout (empty on failure)
+#######################################
+_resolve_health_issue_number() {
+	local repo_slug="$1"
+	local runner_user="$2"
+	local runner_role="$3"
+	local runner_prefix="$4"
+	local role_label="$5"
+	local role_label_color="$6"
+	local role_label_desc="$7"
+	local role_display="$8"
+	local health_issue_file="$9"
+
+	local health_issue_number
+	health_issue_number=$(_find_health_issue \
+		"$repo_slug" "$runner_user" "$runner_role" "$runner_prefix" \
+		"$role_label" "$role_display" "$health_issue_file")
+
+	if [[ -z "$health_issue_number" ]]; then
+		health_issue_number=$(_create_health_issue \
+			"$repo_slug" "$runner_user" "$runner_role" "$runner_prefix" \
+			"$role_label" "$role_label_color" "$role_label_desc" "$role_display")
+	fi
+
+	echo "$health_issue_number"
+	return 0
+}
+
+#######################################
+# Scan active headless worker processes for a repo.
+#
+# Arguments:
+#   $1 - repo path (used to filter workers by --dir)
+# Output: "workers_md|worker_count" (newline-delimited fields)
+#######################################
+_scan_active_workers() {
+	local repo_path="$1"
+
+	local workers_md=""
+	local worker_count=0
+	local worker_lines
+	worker_lines=$(ps axo pid,tty,etime,command | grep '[.]opencode' | grep -v 'bash-language-server' || true)
+
+	if [[ -n "$worker_lines" ]]; then
+		local worker_table=""
+		while IFS= read -r line; do
+			local w_pid w_tty w_etime w_cmd
+			read -r w_pid w_tty w_etime w_cmd <<<"$line"
+
+			# Only count headless workers (no TTY).
+			# Exclude both '?' (Linux headless) and '??' (macOS headless).
+			[[ "$w_tty" != "?" && "$w_tty" != "??" ]] && continue
+
+			# Extract title if present (--title "...")
+			local w_title="headless"
+			if [[ "$w_cmd" =~ --title[[:space:]]+\"([^\"]+)\" ]] || [[ "$w_cmd" =~ --title[[:space:]]+([^[:space:]]+) ]]; then
+				w_title="${BASH_REMATCH[1]}"
+			fi
+
+			# Extract dir if present
+			local w_dir=""
+			if [[ "$w_cmd" =~ --dir[[:space:]]+([^[:space:]]+) ]]; then
+				w_dir="${BASH_REMATCH[1]}"
+			fi
+
+			# Only include workers for this repo (or all if dir not detectable)
+			if [[ -n "$w_dir" && "$w_dir" != "$repo_path"* ]]; then
+				continue
+			fi
+
+			local w_title_short="${w_title:0:60}"
+			[[ ${#w_title} -gt 60 ]] && w_title_short="${w_title_short}..."
+			worker_table="${worker_table}| ${w_pid} | ${w_etime} | ${w_title_short} |
+"
+			worker_count=$((worker_count + 1))
+		done <<<"$worker_lines"
+
+		if [[ "$worker_count" -gt 0 ]]; then
+			workers_md="| PID | Uptime | Title |
+| --- | --- | --- |
+${worker_table}"
+		fi
+	fi
+
+	if [[ "$worker_count" -eq 0 ]]; then
+		workers_md="_No active workers_"
+	fi
+
+	printf '%s\n%s\n' "$workers_md" "$worker_count"
+	return 0
+}
+
+#######################################
+# Collect system resource metrics (CPU, memory, processes).
+#
+# Output: "sys_load_ratio|sys_cpu_cores|sys_load_1m|sys_load_5m|sys_memory|sys_procs"
+#######################################
+_gather_system_resources() {
+	local sys_cpu_cores sys_load_1m sys_load_5m sys_memory sys_procs
+	sys_cpu_cores=$(sysctl -n hw.ncpu 2>/dev/null || nproc 2>/dev/null || echo "?")
+	sys_procs=$(ps aux 2>/dev/null | wc -l | tr -d ' ')
+
+	if [[ "$(uname)" == "Darwin" ]]; then
+		local load_str
+		load_str=$(sysctl -n vm.loadavg 2>/dev/null || echo "{ 0 0 0 }")
+		sys_load_1m=$(echo "$load_str" | awk '{print $2}')
+		sys_load_5m=$(echo "$load_str" | awk '{print $3}')
+
+		local page_size vm_free vm_inactive
+		page_size=$(sysctl -n hw.pagesize 2>/dev/null || echo "16384")
+		vm_free=$(vm_stat 2>/dev/null | awk '/Pages free/ {gsub(/\./,"",$3); print $3}')
+		vm_inactive=$(vm_stat 2>/dev/null | awk '/Pages inactive/ {gsub(/\./,"",$3); print $3}')
+		[[ "$page_size" =~ ^[0-9]+$ ]] || page_size=16384
+		[[ "$vm_free" =~ ^[0-9]+$ ]] || vm_free=0
+		[[ "$vm_inactive" =~ ^[0-9]+$ ]] || vm_inactive=0
+		if [[ -n "$vm_free" ]]; then
+			local avail_mb=$(((${vm_free:-0} + ${vm_inactive:-0}) * page_size / 1048576))
+			if [[ "$avail_mb" -lt 1024 ]]; then
+				sys_memory="HIGH pressure (${avail_mb}MB free)"
+			elif [[ "$avail_mb" -lt 4096 ]]; then
+				sys_memory="medium (${avail_mb}MB free)"
+			else
+				sys_memory="low (${avail_mb}MB free)"
+			fi
+		else
+			sys_memory="unknown"
+		fi
+	elif [[ -f /proc/loadavg ]]; then
+		read -r sys_load_1m sys_load_5m _ </proc/loadavg
+		local mem_avail
+		mem_avail=$(awk '/MemAvailable/ {print int($2/1024)}' /proc/meminfo 2>/dev/null || echo "")
+		if [[ -n "$mem_avail" ]]; then
+			if [[ "$mem_avail" -lt 1024 ]]; then
+				sys_memory="HIGH pressure (${mem_avail}MB free)"
+			elif [[ "$mem_avail" -lt 4096 ]]; then
+				sys_memory="medium (${mem_avail}MB free)"
+			else
+				sys_memory="low (${mem_avail}MB free)"
+			fi
+		else
+			sys_memory="unknown"
+		fi
+	else
+		sys_load_1m="?"
+		sys_load_5m="?"
+		sys_memory="unknown"
+	fi
+
+	local sys_load_ratio="?"
+	if [[ -n "${sys_load_1m:-}" && "${sys_cpu_cores:-0}" -gt 0 && "${sys_cpu_cores}" != "?" ]]; then
+		if [[ "$sys_load_1m" =~ ^[0-9]+\.?[0-9]*$ ]] && [[ "$sys_cpu_cores" =~ ^[0-9]+$ ]]; then
+			sys_load_ratio=$(awk "BEGIN {printf \"%d\", (${sys_load_1m} / ${sys_cpu_cores}) * 100}" || echo "?")
+		fi
+	fi
+
+	printf '%s|%s|%s|%s|%s|%s' \
+		"$sys_load_ratio" "$sys_cpu_cores" "$sys_load_1m" "$sys_load_5m" "$sys_memory" "$sys_procs"
+	return 0
+}
+
+#######################################
+# Gather live stats for the health issue body.
+#
+# Collects PR counts, issue counts, active workers, system resources,
+# worktree count, max workers, and session count for a single repo.
+#
+# Arguments:
+#   $1 - repo slug
+#   $2 - repo path
+#   $3 - runner user
+# Output: newline-delimited fields:
+#   pr_count, prs_md, assigned_issue_count, total_issue_count,
+#   workers_md, worker_count, sys_load_ratio, sys_cpu_cores,
+#   sys_load_1m, sys_load_5m, sys_memory, sys_procs,
+#   wt_count, max_workers, session_count, session_warning
+#######################################
+_gather_health_stats() {
+	local repo_slug="$1"
+	local repo_path="$2"
+	local runner_user="$3"
+
+	# Open PRs
+	local pr_json
+	pr_json=$(gh pr list --repo "$repo_slug" --state open \
+		--json number,title,headRefName,updatedAt,reviewDecision,statusCheckRollup \
+		--limit 20 2>/dev/null) || pr_json="[]"
+	local pr_count
+	pr_count=$(echo "$pr_json" | jq 'length')
+
+	# Open issues — assigned to this runner (actionable) vs total
+	local assigned_issue_count
+	assigned_issue_count=$(gh issue list --repo "$repo_slug" --state open \
+		--assignee "$runner_user" --json number --jq 'length' 2>/dev/null || echo "0")
+	local total_issue_count
+	total_issue_count=$(gh issue list --repo "$repo_slug" --state open \
+		--json number,labels --jq '[.[] | select(.labels | map(.name) | (index("supervisor") or index("contributor") or index("persistent") or index("quality-review")) | not)] | length' 2>/dev/null || echo "0")
+
+	# Active headless workers
+	local worker_raw workers_md worker_count
+	worker_raw=$(_scan_active_workers "$repo_path")
+	workers_md=$(printf '%s\n' "$worker_raw" | head -1)
+	worker_count=$(printf '%s\n' "$worker_raw" | tail -1)
+
+	# System resources
+	local sys_raw sys_load_ratio sys_cpu_cores sys_load_1m sys_load_5m sys_memory sys_procs
+	sys_raw=$(_gather_system_resources)
+	IFS='|' read -r sys_load_ratio sys_cpu_cores sys_load_1m sys_load_5m sys_memory sys_procs <<<"$sys_raw"
+
+	# Worktree count for this repo
+	local wt_count=0
+	if [[ -d "${repo_path}/.git" ]]; then
+		wt_count=$(git -C "$repo_path" worktree list 2>/dev/null | wc -l | tr -d ' ')
+	fi
+
+	# Max workers
+	local max_workers="?"
+	local max_workers_file="${HOME}/.aidevops/logs/pulse-max-workers"
+	if [[ -f "$max_workers_file" ]]; then
+		max_workers=$(cat "$max_workers_file" 2>/dev/null || echo "?")
+	fi
+
+	# Interactive session count (t1398)
+	local session_count
+	session_count=$(check_session_count)
+	local session_warning=""
+	if [[ "$session_count" -gt "$SESSION_COUNT_WARN" ]]; then
+		session_warning=" **WARNING: exceeds threshold of ${SESSION_COUNT_WARN}**"
+	fi
+
+	# PRs table
+	local prs_md=""
+	if [[ "$pr_count" -gt 0 ]]; then
+		prs_md="| # | Title | Branch | Checks | Review | Updated |
+| --- | --- | --- | --- | --- | --- |
+"
+		prs_md="${prs_md}$(echo "$pr_json" | jq -r '.[] | "| #\(.number) | \(.title[:60]) | `\(.headRefName)` | \(if .statusCheckRollup == null or (.statusCheckRollup | length) == 0 then "none" elif (.statusCheckRollup | all((.conclusion // .state) == "SUCCESS")) then "PASS" elif (.statusCheckRollup | any((.conclusion // .state) == "FAILURE")) then "FAIL" else "PENDING" end) | \(if .reviewDecision == null or .reviewDecision == "" then "NONE" else .reviewDecision end) | \(.updatedAt[:16]) |"')"
+	else
+		prs_md="_No open PRs_"
+	fi
+
+	# Output all stats as newline-delimited fields
+	printf '%s\n' \
+		"$pr_count" \
+		"$prs_md" \
+		"$assigned_issue_count" \
+		"$total_issue_count" \
+		"$workers_md" \
+		"$worker_count" \
+		"$sys_load_ratio" \
+		"$sys_cpu_cores" \
+		"$sys_load_1m" \
+		"$sys_load_5m" \
+		"$sys_memory" \
+		"$sys_procs" \
+		"$wt_count" \
+		"$max_workers" \
+		"$session_count" \
+		"$session_warning"
+	return 0
+}
+
+#######################################
+# Build the health issue body markdown.
+#
+# Arguments:
+#   $1  - now_iso
+#   $2  - role_display
+#   $3  - runner_user
+#   $4  - repo_slug
+#   $5  - pr_count
+#   $6  - assigned_issue_count
+#   $7  - total_issue_count
+#   $8  - worker_count
+#   $9  - max_workers
+#   $10 - wt_count
+#   $11 - session_count
+#   $12 - session_warning
+#   $13 - prs_md
+#   $14 - workers_md
+#   $15 - person_stats_md
+#   $16 - cross_repo_person_stats_md
+#   $17 - session_time_md
+#   $18 - cross_repo_session_time_md
+#   $19 - activity_md
+#   $20 - cross_repo_md
+#   $21 - sys_load_ratio
+#   $22 - sys_cpu_cores
+#   $23 - sys_load_1m
+#   $24 - sys_load_5m
+#   $25 - sys_memory
+#   $26 - sys_procs
+#   $27 - runner_role
+# Output: body markdown to stdout
+#######################################
+_build_health_issue_body() {
+	local now_iso="$1"
+	local role_display="$2"
+	local runner_user="$3"
+	local repo_slug="$4"
+	local pr_count="$5"
+	local assigned_issue_count="$6"
+	local total_issue_count="$7"
+	local worker_count="$8"
+	local max_workers="$9"
+	local wt_count="${10}"
+	local session_count="${11}"
+	local session_warning="${12}"
+	local prs_md="${13}"
+	local workers_md="${14}"
+	local person_stats_md="${15}"
+	local cross_repo_person_stats_md="${16}"
+	local session_time_md="${17}"
+	local cross_repo_session_time_md="${18}"
+	local activity_md="${19}"
+	local cross_repo_md="${20}"
+	local sys_load_ratio="${21}"
+	local sys_cpu_cores="${22}"
+	local sys_load_1m="${23}"
+	local sys_load_5m="${24}"
+	local sys_memory="${25}"
+	local sys_procs="${26}"
+	local runner_role="${27}"
+
+	cat <<BODY
+## Queue Health Dashboard
+
+**Last pulse**: \`${now_iso}\`
+**${role_display}**: \`${runner_user}\`
+**Repo**: \`${repo_slug}\`
+
+### Summary
+
+| Metric | Count |
+| --- | --- |
+| Open PRs | ${pr_count} |
+| Assigned Issues | ${assigned_issue_count} |
+| Total Issues | ${total_issue_count} |
+| Active Workers | ${worker_count} |
+| Max Workers | ${max_workers} |
+| Worktrees | ${wt_count} |
+| Interactive Sessions | ${session_count}${session_warning} |
+
+### Open PRs
+
+${prs_md}
+
+### Active Workers
+
+${workers_md}
+
+### GitHub activity on this project (last 30 days)
+
+${person_stats_md:-_Person stats unavailable._}
+
+### GitHub activity on all projects (last 30 days)
+
+${cross_repo_person_stats_md:-_Cross-repo person stats unavailable._}
+
+### Work with AI sessions on this project (${runner_user})
+
+${session_time_md}
+
+### Work with AI sessions on all projects (${runner_user})
+
+${cross_repo_session_time_md:-_Single repo or cross-repo session data unavailable._}
+
+### Commits to this project (last 30 days)
+
+${activity_md}
+
+### Commits to all projects (last 30 days)
+
+${cross_repo_md:-_Single repo or cross-repo data unavailable._}
+
+### System Resources
+
+| Metric | Value |
+| --- | --- |
+| CPU | ${sys_load_ratio}% used (${sys_cpu_cores} cores, load: ${sys_load_1m}/${sys_load_5m}) |
+| Memory | ${sys_memory} |
+| Processes | ${sys_procs} |
+
+---
+_Auto-updated by ${runner_role} stats process. Do not edit manually._
+BODY
+	return 0
+}
+
+#######################################
+# Update the health issue title if the stats have changed.
+#
+# Avoids unnecessary API calls by comparing the stats portion of the
+# title (stripping the timestamp) before issuing an edit.
+#
+# Arguments:
+#   $1 - health_issue_number
+#   $2 - repo_slug
+#   $3 - runner_prefix
+#   $4 - pr_count
+#   $5 - pr_label
+#   $6 - assigned_issue_count
+#   $7 - worker_count
+#   $8 - worker_label
+#######################################
+_update_health_issue_title() {
+	local health_issue_number="$1"
+	local repo_slug="$2"
+	local runner_prefix="$3"
+	local pr_count="$4"
+	local pr_label="$5"
+	local assigned_issue_count="$6"
+	local worker_count="$7"
+	local worker_label="$8"
+
+	local title_parts="${pr_count} ${pr_label}, ${assigned_issue_count} assigned, ${worker_count} ${worker_label}"
+	local title_time
+	title_time=$(date -u +"%H:%M")
+	local health_title="${runner_prefix} ${title_parts} at ${title_time} UTC"
+
+	local current_title=""
+	local view_output
+	view_output=$(gh issue view "$health_issue_number" --repo "$repo_slug" --json title --jq '.title' 2>&1)
+	local view_exit_code=$?
+	if [[ $view_exit_code -eq 0 ]]; then
+		current_title="$view_output"
+	else
+		echo "[stats] Health issue: failed to view title for #${health_issue_number}: ${view_output}" >>"$LOGFILE"
+	fi
+
+	local current_stats="${current_title% at [0-9][0-9]:[0-9][0-9] UTC}"
+	local new_stats="${health_title% at [0-9][0-9]:[0-9][0-9] UTC}"
+	if [[ "$current_stats" != "$new_stats" ]]; then
+		local title_edit_stderr
+		title_edit_stderr=$(gh issue edit "$health_issue_number" --repo "$repo_slug" --title "$health_title" 2>&1 >/dev/null)
+		local title_edit_exit_code=$?
+		if [[ $title_edit_exit_code -ne 0 ]]; then
+			echo "[stats] Health issue: failed to update title for #${health_issue_number}: ${title_edit_stderr}" >>"$LOGFILE"
+		fi
+	fi
+
+	return 0
+}
+
+#######################################
+# Gather commit activity and session-time markdown for a single repo.
+#
+# Arguments:
+#   $1 - repo path
+#   $2 - slug_safe (slug with / replaced by -)
+# Output: activity_md to stdout
+#######################################
+_gather_activity_stats_for_repo() {
+	local repo_path="$1"
+	local activity_helper="${HOME}/.aidevops/agents/scripts/contributor-activity-helper.sh"
+	if [[ -x "$activity_helper" ]]; then
+		bash "$activity_helper" summary "$repo_path" --period month --format markdown || echo "_Activity data unavailable._"
+	else
+		echo "_Activity helper not installed._"
+	fi
+	return 0
+}
+
+#######################################
+# Gather session-time markdown for a single repo.
+#
+# Arguments:
+#   $1 - repo path
+# Output: session_time_md to stdout
+#######################################
+_gather_session_time_for_repo() {
+	local repo_path="$1"
+	local activity_helper="${HOME}/.aidevops/agents/scripts/contributor-activity-helper.sh"
+	if [[ -x "$activity_helper" ]]; then
+		bash "$activity_helper" session-time "$repo_path" --period all --format markdown || echo "_Session data unavailable._"
+	else
+		echo "_Activity helper not installed._"
+	fi
+	return 0
+}
+
+#######################################
+# Read person-stats from the hourly cache for a repo.
+#
+# Arguments:
+#   $1 - slug_safe (slug with / replaced by -)
+# Output: person_stats_md to stdout
+#######################################
+_read_person_stats_cache() {
+	local slug_safe="$1"
+	local ps_cache="${PERSON_STATS_CACHE_DIR}/person-stats-cache-${slug_safe}.md"
+	if [[ -f "$ps_cache" ]]; then
+		cat "$ps_cache"
+	else
+		echo "_Person stats not yet cached._"
+	fi
+	return 0
+}
+
+#######################################
+# Gather all stats and assemble the health issue body markdown.
+#
+# Combines _gather_health_stats, activity helpers, and _build_health_issue_body
+# into a single call to keep _update_health_issue_for_repo under 100 lines.
+#
+# Arguments:
+#   $1  - repo_slug
+#   $2  - repo_path
+#   $3  - runner_user
+#   $4  - slug_safe
+#   $5  - now_iso
+#   $6  - role_display
+#   $7  - runner_role
+#   $8  - cross_repo_md
+#   $9  - cross_repo_session_time_md
+#   $10 - cross_repo_person_stats_md
+# Output: body markdown to stdout
+#######################################
+_assemble_health_issue_body() {
+	local repo_slug="$1"
+	local repo_path="$2"
+	local runner_user="$3"
+	local slug_safe="$4"
+	local now_iso="$5"
+	local role_display="$6"
+	local runner_role="$7"
+	local cross_repo_md="$8"
+	local cross_repo_session_time_md="$9"
+	local cross_repo_person_stats_md="${10}"
+
+	# Gather live stats via temp file (avoids subshell variable loss)
+	local stats_tmp
+	stats_tmp=$(mktemp)
+	_gather_health_stats "$repo_slug" "$repo_path" "$runner_user" >"$stats_tmp"
+
+	local pr_count prs_md assigned_issue_count total_issue_count
+	local workers_md worker_count sys_load_ratio sys_cpu_cores
+	local sys_load_1m sys_load_5m sys_memory sys_procs
+	local wt_count max_workers session_count session_warning
+	{
+		IFS= read -r pr_count
+		IFS= read -r prs_md
+		IFS= read -r assigned_issue_count
+		IFS= read -r total_issue_count
+		IFS= read -r workers_md
+		IFS= read -r worker_count
+		IFS= read -r sys_load_ratio
+		IFS= read -r sys_cpu_cores
+		IFS= read -r sys_load_1m
+		IFS= read -r sys_load_5m
+		IFS= read -r sys_memory
+		IFS= read -r sys_procs
+		IFS= read -r wt_count
+		IFS= read -r max_workers
+		IFS= read -r session_count
+		IFS= read -r session_warning
+	} <"$stats_tmp"
+	rm -f "$stats_tmp"
+
+	local activity_md session_time_md person_stats_md
+	activity_md=$(_gather_activity_stats_for_repo "$repo_path" "$slug_safe")
+	session_time_md=$(_gather_session_time_for_repo "$repo_path")
+	person_stats_md=$(_read_person_stats_cache "$slug_safe")
+
+	_build_health_issue_body \
+		"$now_iso" "$role_display" "$runner_user" "$repo_slug" \
+		"$pr_count" "$assigned_issue_count" "$total_issue_count" \
+		"$worker_count" "$max_workers" "$wt_count" \
+		"$session_count" "$session_warning" \
+		"$prs_md" "$workers_md" \
+		"$person_stats_md" "$cross_repo_person_stats_md" \
+		"$session_time_md" "$cross_repo_session_time_md" \
+		"$activity_md" "$cross_repo_md" \
+		"$sys_load_ratio" "$sys_cpu_cores" "$sys_load_1m" "$sys_load_5m" \
+		"$sys_memory" "$sys_procs" "$runner_role"
+	return 0
+}
+
+#######################################
 # Update pinned health issue for a single repo
 #
 # Creates or updates a pinned GitHub issue with live status:
@@ -210,106 +953,16 @@ _update_health_issue_for_repo() {
 	local slug_safe="${repo_slug//\//-}"
 	local cache_dir="${HOME}/.aidevops/logs"
 	local health_issue_file="${cache_dir}/health-issue-${runner_user}-${role_label}-${slug_safe}"
-	local health_issue_number=""
 
 	mkdir -p "$cache_dir"
 
-	# Try cached issue number first
-	if [[ -f "$health_issue_file" ]]; then
-		health_issue_number=$(cat "$health_issue_file" 2>/dev/null || echo "")
-	fi
-
-	# Validate cached issue still exists and is open
-	if [[ -n "$health_issue_number" ]]; then
-		local issue_state
-		issue_state=$(gh issue view "$health_issue_number" --repo "$repo_slug" --json state --jq '.state' 2>/dev/null || echo "")
-		if [[ "$issue_state" != "OPEN" ]]; then
-			if [[ "$runner_role" == "supervisor" ]]; then
-				_unpin_health_issue "$health_issue_number" "$repo_slug"
-			fi
-			health_issue_number=""
-			rm -f "$health_issue_file" 2>/dev/null || true
-		fi
-	fi
-
-	# Search by labels (more reliable than title search)
-	if [[ -z "$health_issue_number" ]]; then
-		local label_results
-		label_results=$(gh issue list --repo "$repo_slug" \
-			--label "$role_label" --label "$runner_user" \
-			--state open --json number,title \
-			--jq "[.[] | select(.title | startswith(\"[${role_display}:\"))] | sort_by(.number) | reverse" 2>/dev/null || echo "[]")
-
-		health_issue_number=$(printf '%s' "$label_results" | jq -r '.[0].number // empty' 2>/dev/null || echo "")
-
-		# Dedup: close all but the newest
-		local dup_count
-		dup_count=$(printf '%s' "$label_results" | jq 'length' 2>/dev/null || echo "0")
-		if [[ "${dup_count:-0}" -gt 1 ]]; then
-			local dup_numbers
-			dup_numbers=$(printf '%s' "$label_results" | jq -r '.[1:][].number' 2>/dev/null || echo "")
-			while IFS= read -r dup_num; do
-				[[ -z "$dup_num" ]] && continue
-				if [[ "$runner_role" == "supervisor" ]]; then
-					_unpin_health_issue "$dup_num" "$repo_slug"
-				fi
-				gh issue close "$dup_num" --repo "$repo_slug" \
-					--comment "Closing duplicate ${runner_role} health issue — superseded by #${health_issue_number}." 2>/dev/null || true
-			done <<<"$dup_numbers"
-		fi
-	fi
-
-	# Fallback: title-based search
-	if [[ -z "$health_issue_number" ]]; then
-		health_issue_number=$(gh issue list --repo "$repo_slug" \
-			--search "in:title ${runner_prefix}" \
-			--state open --json number,title \
-			--jq "[.[] | select(.title | startswith(\"${runner_prefix}\"))][0].number" 2>/dev/null || echo "")
-		# Backfill labels
-		if [[ -n "$health_issue_number" ]]; then
-			gh label create "$runner_user" --repo "$repo_slug" --color "0E8A16" \
-				--description "${role_display} runner: ${runner_user}" --force 2>/dev/null || true
-			gh issue edit "$health_issue_number" --repo "$repo_slug" \
-				--add-label "$role_label" --add-label "$runner_user" 2>/dev/null || true
-		fi
-	fi
-
-	# Create the issue if it doesn't exist
-	if [[ -z "$health_issue_number" ]]; then
-		gh label create "$role_label" --repo "$repo_slug" --color "$role_label_color" \
-			--description "$role_label_desc" --force 2>/dev/null || true
-		gh label create "$runner_user" --repo "$repo_slug" --color "0E8A16" \
-			--description "${role_display} runner: ${runner_user}" --force 2>/dev/null || true
-		gh label create "source:health-dashboard" --repo "$repo_slug" --color "C2E0C6" \
-			--description "Auto-created by stats-functions.sh health dashboard" --force 2>/dev/null || true
-
-		health_issue_number=$(gh issue create --repo "$repo_slug" \
-			--title "${runner_prefix} starting..." \
-			--body "Live ${runner_role} status for **${runner_user}**. Updated each pulse. Pin this issue for at-a-glance monitoring." \
-			--label "$role_label" --label "$runner_user" --label "source:health-dashboard" 2>/dev/null | grep -oE '[0-9]+$' || echo "")
-
-		if [[ -z "$health_issue_number" ]]; then
-			echo "[stats] Health issue: could not create for ${repo_slug}" >>"$LOGFILE"
-			return 0
-		fi
-
-		# Pin only supervisor issues — contributor issues don't pin because
-		# GitHub allows max 3 pinned issues per repo and those slots are
-		# reserved for maintainer dashboards and the quality review issue.
-		if [[ "$runner_role" == "supervisor" ]]; then
-			local node_id
-			node_id=$(gh issue view "$health_issue_number" --repo "$repo_slug" --json id --jq '.id' 2>/dev/null || echo "")
-			if [[ -n "$node_id" ]]; then
-				gh api graphql -f query="
-					mutation {
-						pinIssue(input: {issueId: \"${node_id}\"}) {
-							issue { number }
-						}
-					}" >/dev/null 2>&1 || true
-			fi
-		fi
-		echo "[stats] Health issue: created #${health_issue_number} (${runner_role}) for ${runner_user} in ${repo_slug}" >>"$LOGFILE"
-	fi
+	# Resolve (find or create) the health issue number
+	local health_issue_number
+	health_issue_number=$(_resolve_health_issue_number \
+		"$repo_slug" "$runner_user" "$runner_role" "$runner_prefix" \
+		"$role_label" "$role_label_color" "$role_label_desc" \
+		"$role_display" "$health_issue_file")
+	[[ -z "$health_issue_number" ]] && return 0
 
 	# Supervisor-only: unpin closed/stale issues and ensure current is pinned
 	if [[ "$runner_role" == "supervisor" ]]; then
@@ -332,254 +985,15 @@ _update_health_issue_for_repo() {
 	# Cache the issue number
 	echo "$health_issue_number" >"$health_issue_file"
 
-	# --- Gather stats from gh CLI ---
 	local now_iso
 	now_iso=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 
-	# Open PRs
-	local pr_json
-	pr_json=$(gh pr list --repo "$repo_slug" --state open \
-		--json number,title,headRefName,updatedAt,reviewDecision,statusCheckRollup \
-		--limit 20 2>/dev/null) || pr_json="[]"
-	local pr_count
-	pr_count=$(echo "$pr_json" | jq 'length')
-
-	# Open issues — assigned to this runner (actionable) vs total
-	local assigned_issue_count
-	assigned_issue_count=$(gh issue list --repo "$repo_slug" --state open \
-		--assignee "$runner_user" --json number --jq 'length' 2>/dev/null || echo "0")
-	local total_issue_count
-	total_issue_count=$(gh issue list --repo "$repo_slug" --state open \
-		--json number,labels --jq '[.[] | select(.labels | map(.name) | (index("supervisor") or index("contributor") or index("persistent") or index("quality-review")) | not)] | length' 2>/dev/null || echo "0")
-
-	# Active headless workers (opencode processes for this repo)
-	local workers_md=""
-	local worker_count=0
-	local worker_lines
-	worker_lines=$(ps axo pid,tty,etime,command | grep '[.]opencode' | grep -v 'bash-language-server' || true)
-
-	if [[ -n "$worker_lines" ]]; then
-		local worker_table=""
-		while IFS= read -r line; do
-			local w_pid w_tty w_etime w_cmd
-			read -r w_pid w_tty w_etime w_cmd <<<"$line"
-
-			# Only count headless workers (no TTY).
-			# Exclude both '?' (Linux headless) and '??' (macOS headless).
-			[[ "$w_tty" != "?" && "$w_tty" != "??" ]] && continue
-
-			# Extract title if present (--title "...")
-			local w_title="headless"
-			if [[ "$w_cmd" =~ --title[[:space:]]+\"([^\"]+)\" ]] || [[ "$w_cmd" =~ --title[[:space:]]+([^[:space:]]+) ]]; then
-				w_title="${BASH_REMATCH[1]}"
-			fi
-
-			# Extract dir if present
-			local w_dir=""
-			if [[ "$w_cmd" =~ --dir[[:space:]]+([^[:space:]]+) ]]; then
-				w_dir="${BASH_REMATCH[1]}"
-			fi
-
-			# Only include workers for this repo (or all if dir not detectable)
-			if [[ -n "$w_dir" && "$w_dir" != "$repo_path"* ]]; then
-				continue
-			fi
-
-			local w_title_short="${w_title:0:60}"
-			[[ ${#w_title} -gt 60 ]] && w_title_short="${w_title_short}..."
-			worker_table="${worker_table}| ${w_pid} | ${w_etime} | ${w_title_short} |
-"
-			worker_count=$((worker_count + 1))
-		done <<<"$worker_lines"
-
-		if [[ "$worker_count" -gt 0 ]]; then
-			workers_md="| PID | Uptime | Title |
-| --- | --- | --- |
-${worker_table}"
-		fi
-	fi
-
-	if [[ "$worker_count" -eq 0 ]]; then
-		workers_md="_No active workers_"
-	fi
-
-	# PRs table
-	local prs_md=""
-	if [[ "$pr_count" -gt 0 ]]; then
-		prs_md="| # | Title | Branch | Checks | Review | Updated |
-| --- | --- | --- | --- | --- | --- |
-"
-		prs_md="${prs_md}$(echo "$pr_json" | jq -r '.[] | "| #\(.number) | \(.title[:60]) | `\(.headRefName)` | \(if .statusCheckRollup == null or (.statusCheckRollup | length) == 0 then "none" elif (.statusCheckRollup | all((.conclusion // .state) == "SUCCESS")) then "PASS" elif (.statusCheckRollup | any((.conclusion // .state) == "FAILURE")) then "FAIL" else "PENDING" end) | \(if .reviewDecision == null or .reviewDecision == "" then "NONE" else .reviewDecision end) | \(.updatedAt[:16]) |"')"
-	else
-		prs_md="_No open PRs_"
-	fi
-
-	# System resources
-	local sys_cpu_cores sys_load_1m sys_load_5m sys_memory sys_procs
-	sys_cpu_cores=$(sysctl -n hw.ncpu 2>/dev/null || nproc 2>/dev/null || echo "?")
-	sys_procs=$(ps aux 2>/dev/null | wc -l | tr -d ' ')
-
-	if [[ "$(uname)" == "Darwin" ]]; then
-		local load_str
-		load_str=$(sysctl -n vm.loadavg 2>/dev/null || echo "{ 0 0 0 }")
-		sys_load_1m=$(echo "$load_str" | awk '{print $2}')
-		sys_load_5m=$(echo "$load_str" | awk '{print $3}')
-
-		local page_size vm_free vm_inactive
-		page_size=$(sysctl -n hw.pagesize 2>/dev/null || echo "16384")
-		vm_free=$(vm_stat 2>/dev/null | awk '/Pages free/ {gsub(/\./,"",$3); print $3}')
-		vm_inactive=$(vm_stat 2>/dev/null | awk '/Pages inactive/ {gsub(/\./,"",$3); print $3}')
-		# Validate integers before arithmetic expansion
-		[[ "$page_size" =~ ^[0-9]+$ ]] || page_size=16384
-		[[ "$vm_free" =~ ^[0-9]+$ ]] || vm_free=0
-		[[ "$vm_inactive" =~ ^[0-9]+$ ]] || vm_inactive=0
-		if [[ -n "$vm_free" ]]; then
-			local avail_mb=$(((${vm_free:-0} + ${vm_inactive:-0}) * page_size / 1048576))
-			if [[ "$avail_mb" -lt 1024 ]]; then
-				sys_memory="HIGH pressure (${avail_mb}MB free)"
-			elif [[ "$avail_mb" -lt 4096 ]]; then
-				sys_memory="medium (${avail_mb}MB free)"
-			else
-				sys_memory="low (${avail_mb}MB free)"
-			fi
-		else
-			sys_memory="unknown"
-		fi
-	elif [[ -f /proc/loadavg ]]; then
-		read -r sys_load_1m sys_load_5m _ </proc/loadavg
-		local mem_avail
-		mem_avail=$(awk '/MemAvailable/ {print int($2/1024)}' /proc/meminfo 2>/dev/null || echo "")
-		if [[ -n "$mem_avail" ]]; then
-			if [[ "$mem_avail" -lt 1024 ]]; then
-				sys_memory="HIGH pressure (${mem_avail}MB free)"
-			elif [[ "$mem_avail" -lt 4096 ]]; then
-				sys_memory="medium (${mem_avail}MB free)"
-			else
-				sys_memory="low (${mem_avail}MB free)"
-			fi
-		else
-			sys_memory="unknown"
-		fi
-	else
-		sys_load_1m="?"
-		sys_load_5m="?"
-		sys_memory="unknown"
-	fi
-
-	local sys_load_ratio="?"
-	if [[ -n "${sys_load_1m:-}" && "${sys_cpu_cores:-0}" -gt 0 && "${sys_cpu_cores}" != "?" ]]; then
-		# Validate numeric before passing to awk (prevents awk injection)
-		if [[ "$sys_load_1m" =~ ^[0-9]+\.?[0-9]*$ ]] && [[ "$sys_cpu_cores" =~ ^[0-9]+$ ]]; then
-			sys_load_ratio=$(awk "BEGIN {printf \"%d\", (${sys_load_1m} / ${sys_cpu_cores}) * 100}" || echo "?")
-		fi
-	fi
-
-	# Worktree count for this repo
-	local wt_count=0
-	if [[ -d "${repo_path}/.git" ]]; then
-		wt_count=$(git -C "$repo_path" worktree list 2>/dev/null | wc -l | tr -d ' ')
-	fi
-
-	# Max workers
-	local max_workers="?"
-	local max_workers_file="${HOME}/.aidevops/logs/pulse-max-workers"
-	if [[ -f "$max_workers_file" ]]; then
-		max_workers=$(cat "$max_workers_file" 2>/dev/null || echo "?")
-	fi
-
-	# Interactive session count (t1398)
-	local session_count
-	session_count=$(check_session_count)
-	local session_warning=""
-	if [[ "$session_count" -gt "$SESSION_COUNT_WARN" ]]; then
-		session_warning=" **WARNING: exceeds threshold of ${SESSION_COUNT_WARN}**"
-	fi
-
-	# --- Contributor activity from git history (per-repo only) ---
-	# Cross-repo totals are pre-computed once in update_health_issues() and
-	# passed via $3 to avoid redundant git log walks (N repos × N repos).
-	# Session time stats are passed via $4 (also pre-computed once).
-	local activity_md=""
-	local session_time_md=""
-	local person_stats_md=""
-	local activity_helper="${HOME}/.aidevops/agents/scripts/contributor-activity-helper.sh"
-	if [[ -x "$activity_helper" ]]; then
-		activity_md=$(bash "$activity_helper" summary "$repo_path" --period month --format markdown || echo "_Activity data unavailable._")
-		session_time_md=$(bash "$activity_helper" session-time "$repo_path" --period all --format markdown || echo "_Session data unavailable._")
-	else
-		activity_md="_Activity helper not installed._"
-		session_time_md="_Activity helper not installed._"
-	fi
-	# t1426: person-stats from hourly cache (see _refresh_person_stats_cache)
-	local ps_cache="${PERSON_STATS_CACHE_DIR}/person-stats-cache-${slug_safe}.md"
-	if [[ -f "$ps_cache" ]]; then
-		person_stats_md=$(cat "$ps_cache")
-	else
-		person_stats_md="_Person stats not yet cached._"
-	fi
-
-	# --- Assemble body ---
+	# Gather live stats and activity data, then assemble the body
 	local body
-	body="## Queue Health Dashboard
-
-**Last pulse**: \`${now_iso}\`
-**${role_display}**: \`${runner_user}\`
-**Repo**: \`${repo_slug}\`
-
-### Summary
-
-| Metric | Count |
-| --- | --- |
-| Open PRs | ${pr_count} |
-| Assigned Issues | ${assigned_issue_count} |
-| Total Issues | ${total_issue_count} |
-| Active Workers | ${worker_count} |
-| Max Workers | ${max_workers} |
-| Worktrees | ${wt_count} |
-| Interactive Sessions | ${session_count}${session_warning} |
-
-### Open PRs
-
-${prs_md}
-
-### Active Workers
-
-${workers_md}
-
-### GitHub activity on this project (last 30 days)
-
-${person_stats_md:-_Person stats unavailable._}
-
-### GitHub activity on all projects (last 30 days)
-
-${cross_repo_person_stats_md:-_Cross-repo person stats unavailable._}
-
-### Work with AI sessions on this project (${runner_user})
-
-${session_time_md}
-
-### Work with AI sessions on all projects (${runner_user})
-
-${cross_repo_session_time_md:-_Single repo or cross-repo session data unavailable._}
-
-### Commits to this project (last 30 days)
-
-${activity_md}
-
-### Commits to all projects (last 30 days)
-
-${cross_repo_md:-_Single repo or cross-repo data unavailable._}
-
-### System Resources
-
-| Metric | Value |
-| --- | --- |
-| CPU | ${sys_load_ratio}% used (${sys_cpu_cores} cores, load: ${sys_load_1m}/${sys_load_5m}) |
-| Memory | ${sys_memory} |
-| Processes | ${sys_procs} |
-
----
-_Auto-updated by ${runner_role} stats process. Do not edit manually._"
+	body=$(_assemble_health_issue_body \
+		"$repo_slug" "$repo_path" "$runner_user" "$slug_safe" \
+		"$now_iso" "$role_display" "$runner_role" \
+		"$cross_repo_md" "$cross_repo_session_time_md" "$cross_repo_person_stats_md")
 
 	# Update the issue body — capture stderr for debugging auth/API failures
 	local body_edit_stderr
@@ -591,34 +1005,13 @@ _Auto-updated by ${runner_role} stats process. Do not edit manually._"
 	# Build title with stats (correct pluralization)
 	local pr_label="PRs"
 	[[ "$pr_count" -eq 1 ]] && pr_label="PR"
-	local assigned_label="assigned"
 	local worker_label="workers"
 	[[ "$worker_count" -eq 1 ]] && worker_label="worker"
-	local title_parts="${pr_count} ${pr_label}, ${assigned_issue_count} ${assigned_label}, ${worker_count} ${worker_label}"
-	local title_time
-	title_time=$(date -u +"%H:%M")
-	local health_title="${runner_prefix} ${title_parts} at ${title_time} UTC"
 
-	# Only update title if stats changed
-	local current_title=""
-	local view_output
-	view_output=$(gh issue view "$health_issue_number" --repo "$repo_slug" --json title --jq '.title' 2>&1)
-	local view_exit_code=$?
-	if [[ $view_exit_code -eq 0 ]]; then
-		current_title="$view_output"
-	else
-		echo "[stats] Health issue: failed to view title for #${health_issue_number}: ${view_output}" >>"$LOGFILE"
-	fi
-	local current_stats="${current_title% at [0-9][0-9]:[0-9][0-9] UTC}"
-	local new_stats="${health_title% at [0-9][0-9]:[0-9][0-9] UTC}"
-	if [[ "$current_stats" != "$new_stats" ]]; then
-		local title_edit_stderr
-		title_edit_stderr=$(gh issue edit "$health_issue_number" --repo "$repo_slug" --title "$health_title" 2>&1 >/dev/null)
-		local title_edit_exit_code=$?
-		if [[ $title_edit_exit_code -ne 0 ]]; then
-			echo "[stats] Health issue: failed to update title for #${health_issue_number}: ${title_edit_stderr}" >>"$LOGFILE"
-		fi
-	fi
+	_update_health_issue_title \
+		"$health_issue_number" "$repo_slug" "$runner_prefix" \
+		"$pr_count" "$pr_label" "$assigned_issue_count" \
+		"$worker_count" "$worker_label"
 
 	return 0
 }
@@ -1089,10 +1482,816 @@ _save_sweep_state() {
 }
 
 #######################################
+# Run ShellCheck on all tracked .sh files in a repo.
+#
+# Arguments:
+#   $1 - repo slug
+#   $2 - repo path
+# Output: shellcheck_section markdown to stdout
+#######################################
+_sweep_shellcheck() {
+	local repo_slug="$1"
+	local repo_path="$2"
+
+	command -v shellcheck &>/dev/null || return 0
+
+	local sh_files
+	# GH#5663: Use git ls-files to discover only tracked shell scripts.
+	# find can return deleted files still on disk, stale worktree paths, or
+	# build artifacts — causing false ShellCheck findings on non-existent files.
+	if git -C "$repo_path" rev-parse --git-dir >/dev/null 2>&1; then
+		sh_files=$(git -C "$repo_path" ls-files '*.sh' 2>/dev/null | head -100)
+	else
+		# Fallback for non-git directories (should not occur for pulse repos)
+		sh_files=$(find "$repo_path" -name "*.sh" -not -path "*/archived/*" -not -path "*/node_modules/*" -not -path "*/.git/*" -type f 2>/dev/null | head -100)
+	fi
+
+	[[ -z "$sh_files" ]] && return 0
+
+	local sc_errors=0
+	local sc_warnings=0
+	local sc_details=""
+
+	# timeout_sec (from shared-constants.sh) handles macOS + Linux portably,
+	# providing a background + kill fallback on bare macOS so we no longer
+	# need to skip ShellCheck when no timeout utility is installed.
+	# GH#5663: git ls-files returns relative paths — resolve to absolute
+	# before running ShellCheck, and guard against tracked-but-deleted files
+	# (index vs working tree mismatch) by skipping missing paths with a log
+	# entry rather than passing a non-existent path to ShellCheck.
+
+	while IFS= read -r shfile; do
+		[[ -z "$shfile" ]] && continue
+		if [[ ! "$shfile" =~ ^/ ]]; then
+			shfile="${repo_path}/${shfile}"
+		fi
+		if [[ ! -f "$shfile" ]]; then
+			printf '%s [stats] ShellCheck: skipping missing file: %s\n' \
+				"$(date '+%Y-%m-%d %H:%M:%S')" "${shfile}" >>"$LOGFILE"
+			continue
+		fi
+		local result
+		# t1398.2: hardened invocation — no -x, --norc, per-file timeout,
+		# ulimit -v in subshell to cap RSS per shellcheck process.
+		# t1402: stderr merged into stdout (2>&1) so diagnostic messages
+		# (parse errors, timeouts, permission failures) are captured in
+		# $result and appear in the sweep summary.
+		result=$(
+			ulimit -v 1048576 2>/dev/null || true
+			timeout_sec 30 shellcheck --norc -f gcc "$shfile" 2>&1 || true
+		)
+		if [[ -n "$result" ]]; then
+			local file_errors
+			file_errors=$(grep -c ':.*: error:' <<<"$result") || file_errors=0
+			local file_warnings
+			file_warnings=$(grep -c ':.*: warning:' <<<"$result") || file_warnings=0
+			sc_errors=$((sc_errors + file_errors))
+			sc_warnings=$((sc_warnings + file_warnings))
+
+			# Capture first 3 findings per file for the summary
+			local rel_path="${shfile#"$repo_path"/}"
+			local top_findings
+			top_findings=$(head -3 <<<"$result" | while IFS= read -r line; do
+				echo "  - \`${rel_path}\`: ${line##*: }"
+			done)
+			if [[ -n "$top_findings" ]]; then
+				sc_details="${sc_details}${top_findings}
+"
+			fi
+		fi
+	done <<<"$sh_files"
+
+	local file_count
+	file_count=$(echo "$sh_files" | wc -l | tr -d ' ')
+	local shellcheck_section="### ShellCheck ($file_count files scanned)
+
+- **Errors**: ${sc_errors}
+- **Warnings**: ${sc_warnings}
+"
+	if [[ -n "$sc_details" ]]; then
+		shellcheck_section="${shellcheck_section}
+**Top findings:**
+${sc_details}"
+	fi
+	if [[ "$sc_errors" -eq 0 && "$sc_warnings" -eq 0 ]]; then
+		shellcheck_section="${shellcheck_section}
+_All clear — no issues found._
+"
+	fi
+
+	printf '%s' "$shellcheck_section"
+	return 0
+}
+
+#######################################
+# Run Qlty CLI analysis on a repo.
+#
+# Arguments:
+#   $1 - repo slug
+#   $2 - repo path
+# Sets caller variables via stdout (pipe-delimited):
+#   qlty_section|qlty_smell_count|qlty_grade
+#######################################
+_sweep_qlty() {
+	local repo_slug="$1"
+	local repo_path="$2"
+
+	local qlty_bin="${HOME}/.qlty/bin/qlty"
+	if [[ ! -x "$qlty_bin" ]] || [[ ! -f "${repo_path}/.qlty/qlty.toml" && ! -f "${repo_path}/.qlty.toml" ]]; then
+		printf '%s|%s|%s' "" "0" "UNKNOWN"
+		return 0
+	fi
+
+	# Use SARIF output for machine-parseable smell data (structured by rule, file, location)
+	local qlty_sarif
+	qlty_sarif=$("$qlty_bin" smells --all --sarif --no-snippets --quiet 2>/dev/null) || qlty_sarif=""
+
+	local qlty_smell_count=0
+	local qlty_grade="UNKNOWN"
+	local qlty_section=""
+
+	if [[ -n "$qlty_sarif" ]] && echo "$qlty_sarif" | jq -e '.runs' &>/dev/null; then
+		# Single jq pass: extract total count, per-rule breakdown, and top files
+		local qlty_data
+		qlty_data=$(echo "$qlty_sarif" | jq -r '
+			(.runs[0].results | length) as $total |
+			([.runs[0].results[] | .ruleId] | group_by(.) | map({rule: .[0], count: length}) | sort_by(-.count)[:8] |
+				map("  - \(.rule): \(.count)") | join("\n")) as $rules |
+			([.runs[0].results[] | .locations[0].physicalLocation.artifactLocation.uri] |
+				group_by(.) | map({file: .[0], count: length}) | sort_by(-.count)[:10] |
+				map("  - `\(.file)`: \(.count) smells") | join("\n")) as $files |
+			"\($total)|\($rules)|\($files)"
+		') || qlty_data="0||"
+		qlty_smell_count="${qlty_data%%|*}"
+		local qlty_remainder="${qlty_data#*|}"
+		local qlty_rules_breakdown="${qlty_remainder%%|*}"
+		local qlty_files_breakdown="${qlty_remainder#*|}"
+		[[ "$qlty_smell_count" =~ ^[0-9]+$ ]] || qlty_smell_count=0
+		qlty_rules_breakdown=$(_sanitize_markdown "$qlty_rules_breakdown")
+		qlty_files_breakdown=$(_sanitize_markdown "$qlty_files_breakdown")
+
+		qlty_section="### Qlty Maintainability
+
+- **Total smells**: ${qlty_smell_count}
+- **By rule (fix these for maximum grade improvement)**:
+${qlty_rules_breakdown}
+- **Top files (highest smell density)**:
+${qlty_files_breakdown}
+"
+		if [[ "$qlty_smell_count" -eq 0 ]]; then
+			qlty_section="### Qlty Maintainability
+
+_No smells detected — clean codebase._
+"
+		fi
+	else
+		qlty_section="### Qlty Maintainability
+
+_Qlty analysis returned empty or failed to parse._
+"
+	fi
+
+	# Fetch the Qlty Cloud badge grade (A/B/C/D/F) from the badge SVG.
+	# The grade is determined by Qlty Cloud's analysis (not local CLI),
+	# so we parse the badge colour which maps to the grade letter.
+	local badge_svg
+	badge_svg=$(curl -sS --fail --connect-timeout 5 --max-time 10 \
+		"https://qlty.sh/gh/${repo_slug}/maintainability.svg" 2>/dev/null) || badge_svg=""
+	if [[ -n "$badge_svg" ]]; then
+		# Grade colour mapping from Qlty's badge palette
+		qlty_grade=$(python3 -c "
+import sys, re
+svg = sys.stdin.read()
+colors = {'#22C55E':'A','#84CC16':'B','#EAB308':'C','#F97316':'D','#EF4444':'F'}
+for c in re.findall(r'fill=\"(#[A-F0-9]+)\"', svg):
+    if c in colors:
+        print(colors[c])
+        sys.exit(0)
+print('UNKNOWN')
+" <<<"$badge_svg" 2>/dev/null) || qlty_grade="UNKNOWN"
+	fi
+
+	qlty_section="${qlty_section}
+- **Qlty Cloud grade**: ${qlty_grade}
+"
+
+	# --- 2b. Simplification-debt bridge (code-simplifier pipeline) ---
+	# For files with high smell density, auto-create simplification-debt issues
+	# with needs-maintainer-review label. This bridges the daily sweep to the
+	# code-simplifier's human-gated dispatch pipeline (see code-simplifier.md).
+	# Max 3 issues per sweep to avoid flooding. Deduplicates against existing issues.
+	if [[ -n "$qlty_sarif" && "$qlty_smell_count" -gt 0 ]]; then
+		_create_simplification_issues "$repo_slug" "$qlty_sarif"
+	fi
+
+	printf '%s|%s|%s' "$qlty_section" "$qlty_smell_count" "$qlty_grade"
+	return 0
+}
+
+#######################################
+# Run SonarCloud quality gate check for a repo.
+#
+# Arguments:
+#   $1 - repo path
+# Output: pipe-delimited "sonar_section|sweep_gate_status|sweep_total_issues|sweep_high_critical"
+#######################################
+_sweep_sonarcloud() {
+	local repo_path="$1"
+
+	local sonar_section=""
+	local sweep_gate_status="UNKNOWN"
+	local sweep_total_issues=0
+	local sweep_high_critical=0
+
+	[[ -f "${repo_path}/sonar-project.properties" ]] || {
+		printf '%s|%s|%s|%s' "$sonar_section" "$sweep_gate_status" "$sweep_total_issues" "$sweep_high_critical"
+		return 0
+	}
+
+	local project_key
+	project_key=$(grep '^sonar.projectKey=' "${repo_path}/sonar-project.properties" 2>/dev/null | cut -d= -f2)
+	local org_key
+	org_key=$(grep '^sonar.organization=' "${repo_path}/sonar-project.properties" 2>/dev/null | cut -d= -f2)
+
+	if [[ -z "$project_key" || -z "$org_key" ]]; then
+		printf '%s|%s|%s|%s' "$sonar_section" "$sweep_gate_status" "$sweep_total_issues" "$sweep_high_critical"
+		return 0
+	fi
+
+	# URL-encode project_key to prevent injection via crafted sonar-project.properties
+	local encoded_project_key
+	encoded_project_key=$(python3 -c 'import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1]))' "$project_key" 2>/dev/null) || encoded_project_key=""
+	if [[ -z "$encoded_project_key" ]]; then
+		echo "[stats] Failed to URL-encode project_key — skipping SonarCloud" >&2
+		printf '%s|%s|%s|%s' "$sonar_section" "$sweep_gate_status" "$sweep_total_issues" "$sweep_high_critical"
+		return 0
+	fi
+
+	# SonarCloud public API — quality gate status
+	local sonar_status=""
+	sonar_status=$(curl -sS --fail --connect-timeout 5 --max-time 20 \
+		"https://sonarcloud.io/api/qualitygates/project_status?projectKey=${encoded_project_key}" || echo "")
+
+	if [[ -n "$sonar_status" ]] && echo "$sonar_status" | jq -e '.projectStatus' &>/dev/null; then
+		# Single jq pass: extract gate status, conditions, and failing conditions with remediation
+		local gate_data
+		gate_data=$(echo "$sonar_status" | jq -r '
+			(.projectStatus.status // "UNKNOWN") as $status |
+			[.projectStatus.conditions[]? | "- **\(.metricKey)**: \(.actualValue) (\(.status))"] | join("\n") as $conds |
+			"\($status)|\($conds)"
+		') || gate_data="UNKNOWN|"
+		local gate_status="${gate_data%%|*}"
+		local conditions="${gate_data#*|}"
+		# Sanitise API data before embedding in markdown comment
+		gate_status=$(_sanitize_markdown "$gate_status")
+		conditions=$(_sanitize_markdown "$conditions")
+		sweep_gate_status="$gate_status"
+
+		sonar_section="### SonarCloud Quality Gate
+
+- **Status**: ${gate_status}
+${conditions}
+"
+		# Badge-aware diagnostics: when the gate fails, identify the
+		# specific failing conditions and provide actionable remediation.
+		if [[ "$gate_status" == "ERROR" || "$gate_status" == "WARN" ]]; then
+			sonar_section="${sonar_section}$(_sweep_sonarcloud_diagnostics "$sonar_status" "$encoded_project_key")"
+		fi
+	fi
+
+	# Fetch open issues summary with rule-level breakdown for targeted fixes
+	local issues_section total_issues high_critical_count
+	issues_section=$(_sweep_sonarcloud_issues "$encoded_project_key")
+	total_issues="${issues_section%%|*}"
+	local issues_remainder="${issues_section#*|}"
+	high_critical_count="${issues_remainder%%|*}"
+	local issues_md="${issues_remainder#*|}"
+	[[ "$total_issues" =~ ^[0-9]+$ ]] || total_issues=0
+	[[ "$high_critical_count" =~ ^[0-9]+$ ]] || high_critical_count=0
+	sweep_total_issues="$total_issues"
+	sweep_high_critical="$high_critical_count"
+	if [[ -n "$issues_md" ]]; then
+		sonar_section="${sonar_section}${issues_md}"
+	fi
+
+	printf '%s|%s|%s|%s' "$sonar_section" "$sweep_gate_status" "$sweep_total_issues" "$sweep_high_critical"
+	return 0
+}
+
+#######################################
+# Fetch SonarCloud open issues summary with rule-level breakdown.
+#
+# Arguments:
+#   $1 - encoded_project_key
+# Output: "total_issues|high_critical_count|issues_md"
+#######################################
+_sweep_sonarcloud_issues() {
+	local encoded_project_key="$1"
+
+	local sonar_issues=""
+	sonar_issues=$(curl -sS --fail --connect-timeout 5 --max-time 20 \
+		"https://sonarcloud.io/api/issues/search?componentKeys=${encoded_project_key}&statuses=OPEN,CONFIRMED,REOPENED&ps=1&facets=severities,types,rules" || echo "")
+
+	if [[ -z "$sonar_issues" ]] || ! echo "$sonar_issues" | jq -e '.total' &>/dev/null; then
+		printf '%s|%s|%s' "0" "0" ""
+		return 0
+	fi
+
+	# Single jq pass: extract total, high/critical count, severity breakdown, type breakdown, and top rules
+	local issues_data
+	issues_data=$(echo "$sonar_issues" | jq -r '
+		(.total // 0) as $total |
+		([.facets[]? | select(.property == "severities") | .values[]? | select(.val == "MAJOR" or .val == "CRITICAL" or .val == "BLOCKER") | .count] | add // 0) as $hc |
+		([.facets[]? | select(.property == "severities") | .values[]? | "  - \(.val): \(.count)"] | join("\n")) as $sev |
+		([.facets[]? | select(.property == "types") | .values[]? | "  - \(.val): \(.count)"] | join("\n")) as $typ |
+		"\($total)|\($hc)|\($sev)|\($typ)"
+	') || issues_data="0|0||"
+	local total_issues="${issues_data%%|*}"
+	local remainder="${issues_data#*|}"
+	local high_critical_count="${remainder%%|*}"
+	remainder="${remainder#*|}"
+	local severity_breakdown="${remainder%%|*}"
+	local type_breakdown="${remainder#*|}"
+	[[ "$total_issues" =~ ^[0-9]+$ ]] || total_issues=0
+	[[ "$high_critical_count" =~ ^[0-9]+$ ]] || high_critical_count=0
+	severity_breakdown=$(_sanitize_markdown "$severity_breakdown")
+	type_breakdown=$(_sanitize_markdown "$type_breakdown")
+
+	local issues_md="
+- **Open issues**: ${total_issues}
+- **By severity**:
+${severity_breakdown}
+- **By type**:
+${type_breakdown}
+"
+	# Rule-level breakdown: shows which rules produce the most issues,
+	# enabling targeted batch fixes (e.g., S1192 string constants, S7688
+	# bracket style). This is the key data the supervisor needs to create
+	# actionable quality-debt issues grouped by rule rather than by file.
+	local rules_breakdown
+	rules_breakdown=$(echo "$sonar_issues" | jq -r '
+		[.facets[]? | select(.property == "rules") | .values[:10][]? |
+		"  - \(.val): \(.count) issues"] | join("\n")
+	') || rules_breakdown=""
+	if [[ -n "$rules_breakdown" ]]; then
+		rules_breakdown=$(_sanitize_markdown "$rules_breakdown")
+		issues_md="${issues_md}
+- **Top rules (fix these for maximum badge improvement)**:
+${rules_breakdown}
+"
+	fi
+
+	printf '%s|%s|%s' "$total_issues" "$high_critical_count" "$issues_md"
+	return 0
+}
+
+#######################################
+# Build SonarCloud failing-condition diagnostics markdown.
+#
+# Called only when gate_status is ERROR or WARN.
+#
+# Arguments:
+#   $1 - sonar_status JSON
+#   $2 - encoded_project_key
+# Output: diagnostics markdown to stdout
+#######################################
+_sweep_sonarcloud_diagnostics() {
+	local sonar_status="$1"
+	local encoded_project_key="$2"
+
+	local failing_diagnostics
+	failing_diagnostics=$(echo "$sonar_status" | jq -r '
+		[.projectStatus.conditions[]? | select(.status == "ERROR" or .status == "WARN") |
+		"- **\(.metricKey)**: actual=\(.actualValue), required \(.comparator) \(.errorThreshold) -- " +
+		(if .metricKey == "new_security_hotspots_reviewed" then
+			"Review unreviewed security hotspots in SonarCloud UI (mark Safe/Fixed) or fix the flagged code"
+		elif .metricKey == "new_reliability_rating" then
+			"Fix new bugs introduced in the analysis period"
+		elif .metricKey == "new_security_rating" then
+			"Fix new vulnerabilities introduced in the analysis period"
+		elif .metricKey == "new_maintainability_rating" then
+			"Reduce new code smells (extract constants, fix unused vars, simplify conditionals)"
+		elif .metricKey == "new_duplicated_lines_density" then
+			"Reduce code duplication in new code"
+		else
+			"Check SonarCloud dashboard for details"
+		end)
+		] | join("\n")
+	') || failing_diagnostics=""
+
+	if [[ -n "$failing_diagnostics" ]]; then
+		failing_diagnostics=$(_sanitize_markdown "$failing_diagnostics")
+		printf '\n**Failing conditions (badge blockers):**\n%s\n' "$failing_diagnostics"
+	fi
+
+	# Fetch unreviewed security hotspots count — this is the most
+	# common quality gate blocker for DevOps repos (false positives
+	# from shell patterns like curl, npm install, hash algorithms).
+	local hotspots_response=""
+	hotspots_response=$(curl -sS --fail --connect-timeout 5 --max-time 20 \
+		"https://sonarcloud.io/api/hotspots/search?projectKey=${encoded_project_key}&status=TO_REVIEW&ps=5" || echo "")
+	if [[ -n "$hotspots_response" ]] && echo "$hotspots_response" | jq -e '.paging' &>/dev/null; then
+		local hotspot_total hotspot_details
+		hotspot_total=$(echo "$hotspots_response" | jq -r '.paging.total // 0')
+		[[ "$hotspot_total" =~ ^[0-9]+$ ]] || hotspot_total=0
+		if [[ "$hotspot_total" -gt 0 ]]; then
+			hotspot_details=$(echo "$hotspots_response" | jq -r '
+				[.hotspots[:5][] |
+				"  - `\(.component | split(":") | last):\(.line)` — \(.ruleKey): \(.message | .[0:100])"]
+				| join("\n")
+			') || hotspot_details=""
+			hotspot_details=$(_sanitize_markdown "$hotspot_details")
+			printf '\n**Unreviewed security hotspots (%s):**\n%s\n_Review these in SonarCloud UI or fix the underlying code to pass the quality gate._\n' \
+				"$hotspot_total" "$hotspot_details"
+		fi
+	fi
+
+	return 0
+}
+
+#######################################
+# Run Codacy API check for a repo.
+#
+# Arguments:
+#   $1 - repo slug
+# Output: codacy_section markdown to stdout (empty if unavailable)
+#######################################
+_sweep_codacy() {
+	local repo_slug="$1"
+
+	local codacy_token=""
+	if command -v gopass &>/dev/null; then
+		codacy_token=$(gopass show -o "aidevops/CODACY_API_TOKEN" 2>/dev/null || echo "")
+	fi
+	[[ -z "$codacy_token" ]] && return 0
+
+	local codacy_org="${repo_slug%%/*}"
+	local codacy_repo="${repo_slug##*/}"
+	local codacy_response
+	codacy_response=$(curl -s -H "api-token: ${codacy_token}" \
+		"https://app.codacy.com/api/v3/organizations/gh/${codacy_org}/repositories/${codacy_repo}/issues/search" \
+		-X POST -H "Content-Type: application/json" -d '{"limit":1}' 2>/dev/null || echo "")
+
+	if [[ -n "$codacy_response" ]] && echo "$codacy_response" | jq -e '.pagination' &>/dev/null; then
+		local codacy_total
+		codacy_total=$(echo "$codacy_response" | jq -r '.pagination.total // 0')
+		[[ "$codacy_total" =~ ^[0-9]+$ ]] || codacy_total=0
+		printf '### Codacy\n\n- **Open issues**: %s\n- **Dashboard**: https://app.codacy.com/gh/%s/%s/dashboard\n' \
+			"$codacy_total" "$codacy_org" "$codacy_repo"
+	fi
+
+	return 0
+}
+
+#######################################
+# Build the CodeRabbit trigger section for a quality sweep.
+#
+# Arguments:
+#   $1 - repo slug
+#   $2 - sweep_gate_status
+#   $3 - sweep_total_issues
+# Output: coderabbit_section markdown to stdout
+#######################################
+_sweep_coderabbit() {
+	local repo_slug="$1"
+	local sweep_gate_status="$2"
+	local sweep_total_issues="$3"
+
+	local prev_state
+	prev_state=$(_load_sweep_state "$repo_slug")
+	local prev_gate prev_issues prev_high_critical
+	IFS='|' read -r prev_gate prev_issues prev_high_critical <<<"$prev_state"
+	# Validate numeric fields from state file before arithmetic — corrupted or
+	# missing values would cause $(( )) to fail or produce nonsense deltas.
+	[[ "$prev_issues" =~ ^[0-9]+$ ]] || prev_issues=0
+	[[ "$prev_high_critical" =~ ^[0-9]+$ ]] || prev_high_critical=0
+
+	# First-run guard: if no previous state exists (prev_gate is UNKNOWN from
+	# _load_sweep_state default), skip delta-based triggers. Without this, the
+	# delta from 0 to current issue count always exceeds the spike threshold,
+	# causing every first run (or run after state loss) to trigger a full review.
+	if [[ "$prev_gate" == "UNKNOWN" ]]; then
+		echo "[stats] CodeRabbit: first run for ${repo_slug} — saved baseline, skipping trigger" >>"$LOGFILE"
+		printf '### CodeRabbit\n\n_First sweep run — baseline saved (%s issues, gate %s). Review trigger will activate on next sweep if quality degrades._\n' \
+			"$sweep_total_issues" "$sweep_gate_status"
+		return 0
+	fi
+
+	local issue_delta=$((sweep_total_issues - prev_issues))
+	local reasons=()
+
+	# Condition 1: Quality Gate is failing
+	if [[ "$sweep_gate_status" == "ERROR" || "$sweep_gate_status" == "WARN" ]]; then
+		reasons+=("quality gate ${sweep_gate_status}")
+	fi
+
+	# Condition 2: Issue count spiked by threshold or more
+	if [[ "$issue_delta" -ge "$CODERABBIT_ISSUE_SPIKE" ]]; then
+		reasons+=("issue spike +${issue_delta}")
+	fi
+
+	if [[ ${#reasons[@]} -gt 0 ]]; then
+		local trigger_reasons=""
+		# Use printf -v to avoid subshell overhead (Gemini review on PR #2886)
+		printf -v trigger_reasons '%s, ' "${reasons[@]}"
+		trigger_reasons="${trigger_reasons%, }"
+		echo "[stats] CodeRabbit: active review triggered for ${repo_slug} (${trigger_reasons})" >>"$LOGFILE"
+		printf '### CodeRabbit\n\n**Trigger**: %s\n\n@coderabbitai Please run a full codebase review of this repository. Focus on:\n- Security vulnerabilities and credential exposure\n- Shell script quality (error handling, quoting, race conditions)\n- Code duplication and maintainability\n- Documentation accuracy\n' \
+			"$trigger_reasons"
+	else
+		printf '### CodeRabbit\n\n_Monitoring: %s issues (delta: %s), gate %s — no active review needed._\n' \
+			"$sweep_total_issues" "$issue_delta" "$sweep_gate_status"
+	fi
+
+	return 0
+}
+
+#######################################
+# Run merged PR review scanner for a repo.
+#
+# Arguments:
+#   $1 - repo slug
+# Output: review_scan_section markdown to stdout (empty if unavailable)
+#######################################
+_sweep_review_scanner() {
+	local repo_slug="$1"
+
+	local review_helper="${SCRIPT_DIR}/quality-feedback-helper.sh"
+	[[ -x "$review_helper" ]] || return 0
+
+	local scan_output
+	scan_output=$("$review_helper" scan-merged \
+		--repo "$repo_slug" \
+		--batch 30 \
+		--create-issues \
+		--min-severity medium \
+		--json) || scan_output=""
+
+	[[ -z "$scan_output" ]] && return 0
+	echo "$scan_output" | jq -e '.scanned' &>/dev/null || return 0
+
+	# Single jq pass: extract all three fields at once
+	local scan_data
+	scan_data=$(echo "$scan_output" | jq -r '"\(.scanned // 0)|\(.findings // 0)|\(.issues_created // 0)"') || scan_data="0|0|0"
+	local scanned="${scan_data%%|*}"
+	local remainder="${scan_data#*|}"
+	local scan_findings="${remainder%%|*}"
+	local scan_issues="${remainder#*|}"
+	# Validate integers before any arithmetic comparison
+	[[ "$scanned" =~ ^[0-9]+$ ]] || scanned=0
+	[[ "$scan_findings" =~ ^[0-9]+$ ]] || scan_findings=0
+	[[ "$scan_issues" =~ ^[0-9]+$ ]] || scan_issues=0
+
+	local review_scan_section="### Merged PR Review Scanner
+
+- **PRs scanned**: ${scanned}
+- **Findings**: ${scan_findings}
+- **Issues created**: ${scan_issues}
+"
+	if [[ "$scan_findings" -gt 0 ]]; then
+		review_scan_section="${review_scan_section}
+_Issues labelled \`quality-debt\` — capped at 30% of dispatch concurrency._
+"
+	fi
+
+	printf '%s' "$review_scan_section"
+	return 0
+}
+
+#######################################
 # Run quality sweep for a single repo
 #
 # Gathers findings from all available tools and posts a single
 # summary comment on the persistent quality review issue.
+#
+# Arguments:
+#   $1 - repo slug
+#   $2 - repo path
+#######################################
+
+#######################################
+# Build the daily quality sweep comment body.
+#
+# Arguments:
+#   $1  - now_iso
+#   $2  - repo_slug
+#   $3  - tool_count
+#   $4  - shellcheck_section
+#   $5  - qlty_section
+#   $6  - sonar_section
+#   $7  - codacy_section
+#   $8  - coderabbit_section
+#   $9  - review_scan_section
+# Output: comment markdown to stdout
+#######################################
+_build_sweep_comment() {
+	local now_iso="$1"
+	local repo_slug="$2"
+	local tool_count="$3"
+	local shellcheck_section="$4"
+	local qlty_section="$5"
+	local sonar_section="$6"
+	local codacy_section="$7"
+	local coderabbit_section="$8"
+	local review_scan_section="$9"
+
+	cat <<COMMENT
+## Daily Code Quality Sweep
+
+**Date**: ${now_iso}
+**Repo**: \`${repo_slug}\`
+**Tools run**: ${tool_count}
+
+---
+
+${shellcheck_section}
+${qlty_section}
+${sonar_section}
+${codacy_section}
+${coderabbit_section}
+${review_scan_section}
+
+---
+_Auto-generated by stats-wrapper.sh daily quality sweep. The supervisor will review findings and create actionable issues._
+COMMENT
+	return 0
+}
+
+#######################################
+# Run all quality sweep tools for a repo and return results.
+#
+# Arguments:
+#   $1 - repo slug
+#   $2 - repo path
+# Output: pipe-delimited
+#   tool_count|shellcheck_section|qlty_section|qlty_smell_count|qlty_grade|
+#   sonar_section|sweep_gate_status|sweep_total_issues|sweep_high_critical|
+#   codacy_section|coderabbit_section|review_scan_section
+#######################################
+_run_sweep_tools() {
+	local repo_slug="$1"
+	local repo_path="$2"
+
+	local tool_count=0
+	local sweep_gate_status="UNKNOWN"
+	local sweep_total_issues=0
+	local sweep_high_critical=0
+
+	local shellcheck_section=""
+	shellcheck_section=$(_sweep_shellcheck "$repo_slug" "$repo_path")
+	[[ -n "$shellcheck_section" ]] && tool_count=$((tool_count + 1))
+
+	local qlty_section="" qlty_smell_count=0 qlty_grade="UNKNOWN"
+	local qlty_raw
+	qlty_raw=$(_sweep_qlty "$repo_slug" "$repo_path")
+	if [[ -n "$qlty_raw" ]]; then
+		qlty_section="${qlty_raw%%|*}"
+		local qlty_remainder="${qlty_raw#*|}"
+		qlty_smell_count="${qlty_remainder%%|*}"
+		qlty_grade="${qlty_remainder#*|}"
+		[[ -n "$qlty_section" ]] && tool_count=$((tool_count + 1))
+	fi
+
+	local sonar_section=""
+	local sonar_raw
+	sonar_raw=$(_sweep_sonarcloud "$repo_path")
+	if [[ -n "$sonar_raw" ]]; then
+		sonar_section="${sonar_raw%%|*}"
+		local sonar_remainder="${sonar_raw#*|}"
+		sweep_gate_status="${sonar_remainder%%|*}"
+		sonar_remainder="${sonar_remainder#*|}"
+		sweep_total_issues="${sonar_remainder%%|*}"
+		sweep_high_critical="${sonar_remainder#*|}"
+		[[ -n "$sonar_section" ]] && tool_count=$((tool_count + 1))
+	fi
+
+	local codacy_section=""
+	codacy_section=$(_sweep_codacy "$repo_slug")
+	[[ -n "$codacy_section" ]] && tool_count=$((tool_count + 1))
+
+	local coderabbit_section=""
+	coderabbit_section=$(_sweep_coderabbit "$repo_slug" "$sweep_gate_status" "$sweep_total_issues")
+	_save_sweep_state "$repo_slug" "$sweep_gate_status" "$sweep_total_issues" "$sweep_high_critical" "$qlty_smell_count" "$qlty_grade"
+	tool_count=$((tool_count + 1))
+
+	local review_scan_section=""
+	review_scan_section=$(_sweep_review_scanner "$repo_slug")
+	[[ -n "$review_scan_section" ]] && tool_count=$((tool_count + 1))
+
+	printf '%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n' \
+		"$tool_count" "$shellcheck_section" "$qlty_section" \
+		"$qlty_smell_count" "$qlty_grade" "$sonar_section" \
+		"$sweep_gate_status" "$sweep_total_issues" "$sweep_high_critical" \
+		"$codacy_section" "$coderabbit_section" "$review_scan_section"
+	return 0
+}
+
+_quality_sweep_for_repo() {
+	local repo_slug="$1"
+	local repo_path="$2"
+
+	local issue_number
+	issue_number=$(_ensure_quality_issue "$repo_slug") || return 0
+
+	local now_iso
+	now_iso=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+	# Run all tools and read results via temp file
+	local tools_tmp
+	tools_tmp=$(mktemp)
+	_run_sweep_tools "$repo_slug" "$repo_path" >"$tools_tmp"
+
+	local tool_count shellcheck_section qlty_section qlty_smell_count qlty_grade
+	local sonar_section sweep_gate_status sweep_total_issues sweep_high_critical
+	local codacy_section coderabbit_section review_scan_section
+	{
+		IFS= read -r tool_count
+		IFS= read -r shellcheck_section
+		IFS= read -r qlty_section
+		IFS= read -r qlty_smell_count
+		IFS= read -r qlty_grade
+		IFS= read -r sonar_section
+		IFS= read -r sweep_gate_status
+		IFS= read -r sweep_total_issues
+		IFS= read -r sweep_high_critical
+		IFS= read -r codacy_section
+		IFS= read -r coderabbit_section
+		IFS= read -r review_scan_section
+	} <"$tools_tmp"
+	rm -f "$tools_tmp"
+
+	if [[ "${tool_count:-0}" -eq 0 ]]; then
+		echo "[stats] Quality sweep: no tools available for ${repo_slug}" >>"$LOGFILE"
+		return 0
+	fi
+
+	# Update issue body dashboard first (best-effort — comment is secondary)
+	_update_quality_issue_body "$repo_slug" "$issue_number" \
+		"$sweep_gate_status" "$sweep_total_issues" "$sweep_high_critical" \
+		"$now_iso" "$tool_count" "$qlty_smell_count" "$qlty_grade"
+
+	# Post daily comment with full findings
+	local comment_body
+	comment_body=$(_build_sweep_comment \
+		"$now_iso" "$repo_slug" "$tool_count" \
+		"$shellcheck_section" "$qlty_section" "$sonar_section" \
+		"$codacy_section" "$coderabbit_section" "$review_scan_section")
+
+	local comment_stderr=""
+	local comment_posted=false
+	comment_stderr=$(gh issue comment "$issue_number" --repo "$repo_slug" --body "$comment_body" 2>&1 >/dev/null) && comment_posted=true || {
+		echo "[stats] Quality sweep: failed to post comment on #${issue_number} in ${repo_slug}: ${comment_stderr}" >>"$LOGFILE"
+	}
+
+	if [[ "$comment_posted" == true ]]; then
+		echo "[stats] Quality sweep: posted findings on #${issue_number} in ${repo_slug} (${tool_count} tools)" >>"$LOGFILE"
+	fi
+	return 0
+}
+
+#######################################
+# Build the simplification-debt issue body for a single file.
+#
+# Arguments:
+#   $1 - file_path
+#   $2 - smell_count
+#   $3 - rule_breakdown
+# Output: issue body markdown to stdout
+#######################################
+_build_simplification_issue_body() {
+	local file_path="$1"
+	local smell_count="$2"
+	local rule_breakdown="$3"
+
+	cat <<BODY
+## Qlty Maintainability — ${file_path}
+
+**Smells detected**: ${smell_count}
+**Rules**: ${rule_breakdown}
+
+This file was flagged by the daily quality sweep for high smell density. The smells are primarily function complexity, nested control flow, and return statement count — all reducible via extract-function refactoring.
+
+### Suggested approach
+
+1. Read the file and identify the highest-complexity functions
+2. Extract helper functions to reduce per-function complexity below the threshold (~17)
+3. Verify with \`qlty smells ${file_path}\` after each change
+4. No behavior changes — pure structural refactoring
+
+### Verification
+
+- Syntax check: \`python3 -c "import ast; ast.parse(open('${file_path}').read())"\` (Python) or \`node --check ${file_path}\` (JS/TS)
+- Smell check: \`qlty smells ${file_path} --no-snippets --quiet\`
+- No public API changes
+
+---
+**To approve or decline**, comment on this issue:
+- \`approved\` — removes the review gate and queues for automated dispatch
+- \`declined: <reason>\` — closes this issue (include your reason after the colon)
+BODY
+	return 0
+}
+
 #######################################
 # Create simplification-debt issues for files with high Qlty smell density.
 # Bridges the daily quality sweep to the code-simplifier's human-gated
@@ -1177,30 +2376,7 @@ _create_simplification_issues() {
 		# Create the issue with code-simplifier label convention
 		local issue_title="simplification: reduce ${smell_count} Qlty smells in ${file_basename}"
 		local issue_body
-		issue_body="## Qlty Maintainability — ${file_path}
-
-**Smells detected**: ${smell_count}
-**Rules**: ${rule_breakdown}
-
-This file was flagged by the daily quality sweep for high smell density. The smells are primarily function complexity, nested control flow, and return statement count — all reducible via extract-function refactoring.
-
-### Suggested approach
-
-1. Read the file and identify the highest-complexity functions
-2. Extract helper functions to reduce per-function complexity below the threshold (~17)
-3. Verify with \`qlty smells ${file_path}\` after each change
-4. No behavior changes — pure structural refactoring
-
-### Verification
-
-- Syntax check: \`python3 -c \"import ast; ast.parse(open('${file_path}').read())\"\` (Python) or \`node --check ${file_path}\` (JS/TS)
-- Smell check: \`qlty smells ${file_path} --no-snippets --quiet\`
-- No public API changes
-
----
-**To approve or decline**, comment on this issue:
-- \`approved\` — removes the review gate and queues for automated dispatch
-- \`declined: <reason>\` — closes this issue (include your reason after the colon)"
+		issue_body=$(_build_simplification_issue_body "$file_path" "$smell_count" "$rule_breakdown")
 
 		if gh issue create --repo "$repo_slug" \
 			--title "$issue_title" \
@@ -1220,610 +2396,16 @@ _Created ${issues_created} simplification-debt issue(s) for high-smell files (ne
 	return 0
 }
 
+#######################################
+# Compute quality-debt backlog stats for the quality issue dashboard.
 #
 # Arguments:
 #   $1 - repo slug
-#   $2 - repo path
+# Output: pipe-delimited "debt_open|debt_closed|debt_total|debt_resolution_pct"
 #######################################
-_quality_sweep_for_repo() {
+_compute_debt_stats() {
 	local repo_slug="$1"
-	local repo_path="$2"
 
-	local issue_number
-	issue_number=$(_ensure_quality_issue "$repo_slug") || return 0
-
-	local now_iso
-	now_iso=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-	local findings=""
-	local tool_count=0
-
-	# Function-scoped variables for cross-section use (CodeRabbit conditional logic)
-	local sweep_gate_status="UNKNOWN"
-	local sweep_total_issues=0
-	local sweep_high_critical=0
-
-	# --- 1. ShellCheck ---
-	# SC1091 is disabled globally in .shellcheckrc and source-path=SCRIPTDIR
-	# has been removed (it caused 11 GB RSS / kernel panics — GH#2915).
-	# The quality sweep uses --norc + no -x for maximum isolation.
-	# Per-file timeout + ulimit + guard_child_processes() remain as
-	# defense-in-depth.
-	local shellcheck_section=""
-	if command -v shellcheck &>/dev/null; then
-		local sh_files
-		# GH#5663: Use git ls-files to discover only tracked shell scripts.
-		# find can return deleted files still on disk, stale worktree paths, or
-		# build artifacts — causing false ShellCheck findings on non-existent files.
-		if git -C "$repo_path" rev-parse --git-dir >/dev/null 2>&1; then
-			sh_files=$(git -C "$repo_path" ls-files '*.sh' 2>/dev/null | head -100)
-		else
-			# Fallback for non-git directories (should not occur for pulse repos)
-			sh_files=$(find "$repo_path" -name "*.sh" -not -path "*/archived/*" -not -path "*/node_modules/*" -not -path "*/.git/*" -type f 2>/dev/null | head -100)
-		fi
-
-		if [[ -n "$sh_files" ]]; then
-			local sc_errors=0
-			local sc_warnings=0
-			local sc_summary=""
-			local sc_details=""
-
-			# timeout_sec (from shared-constants.sh) handles macOS + Linux portably,
-			# providing a background + kill fallback on bare macOS so we no longer
-			# need to skip ShellCheck when no timeout utility is installed.
-			# GH#5663: git ls-files returns relative paths — resolve to absolute
-			# before running ShellCheck, and guard against tracked-but-deleted files
-			# (index vs working tree mismatch) by skipping missing paths with a log
-			# entry rather than passing a non-existent path to ShellCheck.
-
-			while IFS= read -r shfile; do
-				[[ -z "$shfile" ]] && continue
-				if [[ ! "$shfile" =~ ^/ ]]; then
-					shfile="${repo_path}/${shfile}"
-				fi
-				if [[ ! -f "$shfile" ]]; then
-					printf '%s [stats] ShellCheck: skipping missing file: %s\n' \
-						"$(date '+%Y-%m-%d %H:%M:%S')" "${shfile}" >>"$LOGFILE"
-					continue
-				fi
-				local result
-				# t1398.2: hardened invocation — no -x, --norc, per-file timeout,
-				# ulimit -v in subshell to cap RSS per shellcheck process.
-				# t1402: stderr merged into stdout (2>&1) so diagnostic messages
-				# (parse errors, timeouts, permission failures) are captured in
-				# $result and appear in the sweep summary.
-				result=$(
-					ulimit -v 1048576 2>/dev/null || true
-					timeout_sec 30 shellcheck --norc -f gcc "$shfile" 2>&1 || true
-				)
-				if [[ -n "$result" ]]; then
-					local file_errors
-					file_errors=$(grep -c ':.*: error:' <<<"$result") || file_errors=0
-					local file_warnings
-					file_warnings=$(grep -c ':.*: warning:' <<<"$result") || file_warnings=0
-					sc_errors=$((sc_errors + file_errors))
-					sc_warnings=$((sc_warnings + file_warnings))
-
-					# Capture first 3 findings per file for the summary
-					local rel_path="${shfile#"$repo_path"/}"
-					local top_findings
-					top_findings=$(head -3 <<<"$result" | while IFS= read -r line; do
-						echo "  - \`${rel_path}\`: ${line##*: }"
-					done)
-					if [[ -n "$top_findings" ]]; then
-						sc_details="${sc_details}${top_findings}
-"
-					fi
-				fi
-			done <<<"$sh_files"
-
-			local file_count
-			file_count=$(echo "$sh_files" | wc -l | tr -d ' ')
-			shellcheck_section="### ShellCheck ($file_count files scanned)
-
-- **Errors**: ${sc_errors}
-- **Warnings**: ${sc_warnings}
-"
-			if [[ -n "$sc_details" ]]; then
-				shellcheck_section="${shellcheck_section}
-**Top findings:**
-${sc_details}"
-			fi
-			if [[ "$sc_errors" -eq 0 && "$sc_warnings" -eq 0 ]]; then
-				shellcheck_section="${shellcheck_section}
-_All clear — no issues found._
-"
-			fi
-			tool_count=$((tool_count + 1))
-
-		fi
-	fi
-
-	# --- 2. Qlty CLI (structured SARIF analysis + badge grade) ---
-	local qlty_section=""
-	local qlty_smell_count=0
-	local qlty_grade="UNKNOWN"
-	local qlty_bin="${HOME}/.qlty/bin/qlty"
-	if [[ -x "$qlty_bin" ]] && [[ -f "${repo_path}/.qlty/qlty.toml" || -f "${repo_path}/.qlty.toml" ]]; then
-		# Use SARIF output for machine-parseable smell data (structured by rule, file, location)
-		local qlty_sarif
-		qlty_sarif=$("$qlty_bin" smells --all --sarif --no-snippets --quiet 2>/dev/null) || qlty_sarif=""
-
-		if [[ -n "$qlty_sarif" ]] && echo "$qlty_sarif" | jq -e '.runs' &>/dev/null; then
-			# Single jq pass: extract total count, per-rule breakdown, and top files
-			local qlty_data
-			qlty_data=$(echo "$qlty_sarif" | jq -r '
-				(.runs[0].results | length) as $total |
-				([.runs[0].results[] | .ruleId] | group_by(.) | map({rule: .[0], count: length}) | sort_by(-.count)[:8] |
-					map("  - \(.rule): \(.count)") | join("\n")) as $rules |
-				([.runs[0].results[] | .locations[0].physicalLocation.artifactLocation.uri] |
-					group_by(.) | map({file: .[0], count: length}) | sort_by(-.count)[:10] |
-					map("  - `\(.file)`: \(.count) smells") | join("\n")) as $files |
-				"\($total)|\($rules)|\($files)"
-			') || qlty_data="0||"
-			qlty_smell_count="${qlty_data%%|*}"
-			local qlty_remainder="${qlty_data#*|}"
-			local qlty_rules_breakdown="${qlty_remainder%%|*}"
-			local qlty_files_breakdown="${qlty_remainder#*|}"
-			[[ "$qlty_smell_count" =~ ^[0-9]+$ ]] || qlty_smell_count=0
-			qlty_rules_breakdown=$(_sanitize_markdown "$qlty_rules_breakdown")
-			qlty_files_breakdown=$(_sanitize_markdown "$qlty_files_breakdown")
-
-			qlty_section="### Qlty Maintainability
-
-- **Total smells**: ${qlty_smell_count}
-- **By rule (fix these for maximum grade improvement)**:
-${qlty_rules_breakdown}
-- **Top files (highest smell density)**:
-${qlty_files_breakdown}
-"
-			if [[ "$qlty_smell_count" -eq 0 ]]; then
-				qlty_section="### Qlty Maintainability
-
-_No smells detected — clean codebase._
-"
-			fi
-		else
-			qlty_section="### Qlty Maintainability
-
-_Qlty analysis returned empty or failed to parse._
-"
-		fi
-
-		# Fetch the Qlty Cloud badge grade (A/B/C/D/F) from the badge SVG.
-		# The grade is determined by Qlty Cloud's analysis (not local CLI),
-		# so we parse the badge colour which maps to the grade letter.
-		local badge_svg
-		badge_svg=$(curl -sS --fail --connect-timeout 5 --max-time 10 \
-			"https://qlty.sh/gh/${repo_slug}/maintainability.svg" 2>/dev/null) || badge_svg=""
-		if [[ -n "$badge_svg" ]]; then
-			# Grade colour mapping from Qlty's badge palette
-			qlty_grade=$(python3 -c "
-import sys, re
-svg = sys.stdin.read()
-colors = {'#22C55E':'A','#84CC16':'B','#EAB308':'C','#F97316':'D','#EF4444':'F'}
-for c in re.findall(r'fill=\"(#[A-F0-9]+)\"', svg):
-    if c in colors:
-        print(colors[c])
-        sys.exit(0)
-print('UNKNOWN')
-" <<<"$badge_svg" 2>/dev/null) || qlty_grade="UNKNOWN"
-		fi
-
-		qlty_section="${qlty_section}
-- **Qlty Cloud grade**: ${qlty_grade}
-"
-		tool_count=$((tool_count + 1))
-
-		# --- 2b. Simplification-debt bridge (code-simplifier pipeline) ---
-		# For files with high smell density, auto-create simplification-debt issues
-		# with needs-maintainer-review label. This bridges the daily sweep to the
-		# code-simplifier's human-gated dispatch pipeline (see code-simplifier.md).
-		# Max 3 issues per sweep to avoid flooding. Deduplicates against existing issues.
-		if [[ -n "$qlty_sarif" && "$qlty_smell_count" -gt 0 ]]; then
-			_create_simplification_issues "$repo_slug" "$qlty_sarif"
-		fi
-	fi
-
-	# --- 3. SonarCloud (public API — no auth needed for public repos) ---
-	local sonar_section=""
-	if [[ -f "${repo_path}/sonar-project.properties" ]]; then
-		local project_key
-		project_key=$(grep '^sonar.projectKey=' "${repo_path}/sonar-project.properties" 2>/dev/null | cut -d= -f2)
-		local org_key
-		org_key=$(grep '^sonar.organization=' "${repo_path}/sonar-project.properties" 2>/dev/null | cut -d= -f2)
-
-		if [[ -n "$project_key" && -n "$org_key" ]]; then
-			# URL-encode project_key to prevent injection via crafted sonar-project.properties
-			local encoded_project_key
-			encoded_project_key=$(python3 -c 'import urllib.parse,sys; print(urllib.parse.quote(sys.argv[1]))' "$project_key" 2>/dev/null) || encoded_project_key=""
-			if [[ -z "$encoded_project_key" ]]; then
-				echo "[stats] Failed to URL-encode project_key — skipping SonarCloud" >&2
-			fi
-
-			# SonarCloud public API — quality gate status
-			local sonar_status=""
-			if [[ -n "$encoded_project_key" ]]; then
-				sonar_status=$(curl -sS --fail --connect-timeout 5 --max-time 20 \
-					"https://sonarcloud.io/api/qualitygates/project_status?projectKey=${encoded_project_key}" || echo "")
-			fi
-
-			if [[ -n "$sonar_status" ]] && echo "$sonar_status" | jq -e '.projectStatus' &>/dev/null; then
-				# Single jq pass: extract gate status, conditions, and failing conditions with remediation
-				local gate_data
-				gate_data=$(echo "$sonar_status" | jq -r '
-					(.projectStatus.status // "UNKNOWN") as $status |
-					[.projectStatus.conditions[]? | "- **\(.metricKey)**: \(.actualValue) (\(.status))"] | join("\n") as $conds |
-					"\($status)|\($conds)"
-				') || gate_data="UNKNOWN|"
-				local gate_status="${gate_data%%|*}"
-				local conditions="${gate_data#*|}"
-				# Sanitise API data before embedding in markdown comment
-				gate_status=$(_sanitize_markdown "$gate_status")
-				conditions=$(_sanitize_markdown "$conditions")
-				# Feed sweep state for CodeRabbit conditional trigger (section 5)
-				sweep_gate_status="$gate_status"
-
-				sonar_section="### SonarCloud Quality Gate
-
-- **Status**: ${gate_status}
-${conditions}
-"
-				# Badge-aware diagnostics: when the gate fails, identify the
-				# specific failing conditions and provide actionable remediation.
-				# This is the root cause improvement — previously the sweep only
-				# reported the gate status without explaining what to fix.
-				if [[ "$gate_status" == "ERROR" || "$gate_status" == "WARN" ]]; then
-					local failing_diagnostics
-					failing_diagnostics=$(echo "$sonar_status" | jq -r '
-						[.projectStatus.conditions[]? | select(.status == "ERROR" or .status == "WARN") |
-						"- **\(.metricKey)**: actual=\(.actualValue), required \(.comparator) \(.errorThreshold) -- " +
-						(if .metricKey == "new_security_hotspots_reviewed" then
-							"Review unreviewed security hotspots in SonarCloud UI (mark Safe/Fixed) or fix the flagged code"
-						elif .metricKey == "new_reliability_rating" then
-							"Fix new bugs introduced in the analysis period"
-						elif .metricKey == "new_security_rating" then
-							"Fix new vulnerabilities introduced in the analysis period"
-						elif .metricKey == "new_maintainability_rating" then
-							"Reduce new code smells (extract constants, fix unused vars, simplify conditionals)"
-						elif .metricKey == "new_duplicated_lines_density" then
-							"Reduce code duplication in new code"
-						else
-							"Check SonarCloud dashboard for details"
-						end)
-						] | join("\n")
-					') || failing_diagnostics=""
-					if [[ -n "$failing_diagnostics" ]]; then
-						failing_diagnostics=$(_sanitize_markdown "$failing_diagnostics")
-						sonar_section="${sonar_section}
-**Failing conditions (badge blockers):**
-${failing_diagnostics}
-"
-					fi
-
-					# Fetch unreviewed security hotspots count — this is the most
-					# common quality gate blocker for DevOps repos (false positives
-					# from shell patterns like curl, npm install, hash algorithms).
-					local hotspots_response=""
-					hotspots_response=$(curl -sS --fail --connect-timeout 5 --max-time 20 \
-						"https://sonarcloud.io/api/hotspots/search?projectKey=${encoded_project_key}&status=TO_REVIEW&ps=5" || echo "")
-					if [[ -n "$hotspots_response" ]] && echo "$hotspots_response" | jq -e '.paging' &>/dev/null; then
-						local hotspot_total hotspot_details
-						hotspot_total=$(echo "$hotspots_response" | jq -r '.paging.total // 0')
-						[[ "$hotspot_total" =~ ^[0-9]+$ ]] || hotspot_total=0
-						if [[ "$hotspot_total" -gt 0 ]]; then
-							hotspot_details=$(echo "$hotspots_response" | jq -r '
-								[.hotspots[:5][] |
-								"  - `\(.component | split(":") | last):\(.line)` — \(.ruleKey): \(.message | .[0:100])"]
-								| join("\n")
-							') || hotspot_details=""
-							hotspot_details=$(_sanitize_markdown "$hotspot_details")
-							sonar_section="${sonar_section}
-**Unreviewed security hotspots (${hotspot_total}):**
-${hotspot_details}
-_Review these in SonarCloud UI or fix the underlying code to pass the quality gate._
-"
-						fi
-					fi
-				fi
-			fi
-
-			# Fetch open issues summary with rule-level breakdown for targeted fixes
-			local sonar_issues=""
-			if [[ -n "$encoded_project_key" ]]; then
-				sonar_issues=$(curl -sS --fail --connect-timeout 5 --max-time 20 \
-					"https://sonarcloud.io/api/issues/search?componentKeys=${encoded_project_key}&statuses=OPEN,CONFIRMED,REOPENED&ps=1&facets=severities,types,rules" || echo "")
-			fi
-
-			if [[ -n "$sonar_issues" ]] && echo "$sonar_issues" | jq -e '.total' &>/dev/null; then
-				# Single jq pass: extract total, high/critical count, severity breakdown, type breakdown, and top rules
-				local issues_data
-				issues_data=$(echo "$sonar_issues" | jq -r '
-					(.total // 0) as $total |
-					([.facets[]? | select(.property == "severities") | .values[]? | select(.val == "MAJOR" or .val == "CRITICAL" or .val == "BLOCKER") | .count] | add // 0) as $hc |
-					([.facets[]? | select(.property == "severities") | .values[]? | "  - \(.val): \(.count)"] | join("\n")) as $sev |
-					([.facets[]? | select(.property == "types") | .values[]? | "  - \(.val): \(.count)"] | join("\n")) as $typ |
-					"\($total)|\($hc)|\($sev)|\($typ)"
-				') || issues_data="0|0||"
-				local total_issues="${issues_data%%|*}"
-				local remainder="${issues_data#*|}"
-				local high_critical_count="${remainder%%|*}"
-				remainder="${remainder#*|}"
-				local severity_breakdown="${remainder%%|*}"
-				local type_breakdown="${remainder#*|}"
-				# Validate numeric fields before any arithmetic use
-				if ! [[ "$total_issues" =~ ^[0-9]+$ ]]; then
-					total_issues=0
-				fi
-				if ! [[ "$high_critical_count" =~ ^[0-9]+$ ]]; then
-					high_critical_count=0
-				fi
-				# Feed sweep state for CodeRabbit conditional trigger (section 5)
-				sweep_total_issues="$total_issues"
-				sweep_high_critical="$high_critical_count"
-				# Sanitise API data before embedding in markdown comment
-				severity_breakdown=$(_sanitize_markdown "$severity_breakdown")
-				type_breakdown=$(_sanitize_markdown "$type_breakdown")
-
-				sonar_section="${sonar_section}
-- **Open issues**: ${total_issues}
-- **By severity**:
-${severity_breakdown}
-- **By type**:
-${type_breakdown}
-"
-				# Rule-level breakdown: shows which rules produce the most issues,
-				# enabling targeted batch fixes (e.g., S1192 string constants, S7688
-				# bracket style). This is the key data the supervisor needs to create
-				# actionable quality-debt issues grouped by rule rather than by file.
-				local rules_breakdown
-				rules_breakdown=$(echo "$sonar_issues" | jq -r '
-					[.facets[]? | select(.property == "rules") | .values[:10][]? |
-					"  - \(.val): \(.count) issues"] | join("\n")
-				') || rules_breakdown=""
-				if [[ -n "$rules_breakdown" ]]; then
-					rules_breakdown=$(_sanitize_markdown "$rules_breakdown")
-					sonar_section="${sonar_section}
-- **Top rules (fix these for maximum badge improvement)**:
-${rules_breakdown}
-"
-				fi
-			fi
-			tool_count=$((tool_count + 1))
-		fi
-	fi
-
-	# --- 4. Codacy (API — requires token from gopass) ---
-	local codacy_section=""
-	local codacy_token=""
-	if command -v gopass &>/dev/null; then
-		codacy_token=$(gopass show -o "aidevops/CODACY_API_TOKEN" 2>/dev/null || echo "")
-	fi
-	if [[ -n "$codacy_token" ]]; then
-		local codacy_org="${repo_slug%%/*}"
-		local codacy_repo="${repo_slug##*/}"
-		local codacy_response
-		codacy_response=$(curl -s -H "api-token: ${codacy_token}" \
-			"https://app.codacy.com/api/v3/organizations/gh/${codacy_org}/repositories/${codacy_repo}/issues/search" \
-			-X POST -H "Content-Type: application/json" -d '{"limit":1}' 2>/dev/null || echo "")
-
-		if [[ -n "$codacy_response" ]] && echo "$codacy_response" | jq -e '.pagination' &>/dev/null; then
-			local codacy_total
-			codacy_total=$(echo "$codacy_response" | jq -r '.pagination.total // 0')
-			[[ "$codacy_total" =~ ^[0-9]+$ ]] || codacy_total=0
-			codacy_section="### Codacy
-
-- **Open issues**: ${codacy_total}
-- **Dashboard**: https://app.codacy.com/gh/${codacy_org}/${codacy_repo}/dashboard
-"
-			tool_count=$((tool_count + 1))
-		fi
-	fi
-
-	# --- 5. CodeRabbit trigger (conditional — t1390, fixed t2851) ---
-	# Only trigger @coderabbitai active review when quality degrades:
-	#   - Quality Gate fails (ERROR/WARN)
-	#   - Issue count increases by CODERABBIT_ISSUE_SPIKE+ since last sweep
-	# Otherwise post a passive monitoring line to avoid repetitive requests.
-	#
-	# Root cause of prior failures (PRs #2806, #2832):
-	#   1. No first-run guard: when no state file exists, prev_issues=0 and
-	#      the delta from 0 to current count always exceeds the spike threshold.
-	#   2. Condition 3 (high_critical_delta > 0) was too sensitive — any +1
-	#      fluctuation in MAJOR-severity issues triggered a full review.
-	#   Both are fixed below: first run saves baseline without triggering,
-	#   and condition 3 is removed per the issue spec.
-	local coderabbit_section=""
-	local prev_state
-	prev_state=$(_load_sweep_state "$repo_slug")
-	local prev_gate prev_issues prev_high_critical
-	IFS='|' read -r prev_gate prev_issues prev_high_critical <<<"$prev_state"
-	# Validate numeric fields from state file before arithmetic — corrupted or
-	# missing values would cause $(( )) to fail or produce nonsense deltas.
-	[[ "$prev_issues" =~ ^[0-9]+$ ]] || prev_issues=0
-	[[ "$prev_high_critical" =~ ^[0-9]+$ ]] || prev_high_critical=0
-
-	# First-run guard: if no previous state exists (prev_gate is UNKNOWN from
-	# _load_sweep_state default), skip delta-based triggers. Without this, the
-	# delta from 0 to current issue count always exceeds the spike threshold,
-	# causing every first run (or run after state loss) to trigger a full review.
-	#
-	# Refactored (t1401): _save_sweep_state and tool_count are common to all
-	# branches — hoisted outside the conditional to reduce duplication.
-	local is_baseline_run=false
-	[[ "$prev_gate" == "UNKNOWN" ]] && is_baseline_run=true
-
-	if [[ "$is_baseline_run" == true ]]; then
-		coderabbit_section="### CodeRabbit
-
-_First sweep run — baseline saved (${sweep_total_issues} issues, gate ${sweep_gate_status}). Review trigger will activate on next sweep if quality degrades._
-"
-		echo "[stats] CodeRabbit: first run for ${repo_slug} — saved baseline, skipping trigger" >>"$LOGFILE"
-	else
-		local issue_delta=$((sweep_total_issues - prev_issues))
-		local reasons=()
-
-		# Condition 1: Quality Gate is failing
-		if [[ "$sweep_gate_status" == "ERROR" || "$sweep_gate_status" == "WARN" ]]; then
-			reasons+=("quality gate ${sweep_gate_status}")
-		fi
-
-		# Condition 2: Issue count spiked by threshold or more
-		if [[ "$issue_delta" -ge "$CODERABBIT_ISSUE_SPIKE" ]]; then
-			reasons+=("issue spike +${issue_delta}")
-		fi
-
-		local trigger_active=false
-		local trigger_reasons=""
-		if [[ ${#reasons[@]} -gt 0 ]]; then
-			trigger_active=true
-			# Use printf -v to avoid subshell overhead (Gemini review on PR #2886)
-			printf -v trigger_reasons '%s, ' "${reasons[@]}"
-			trigger_reasons="${trigger_reasons%, }"
-		fi
-
-		if [[ "$trigger_active" == true ]]; then
-			coderabbit_section="### CodeRabbit
-
-**Trigger**: ${trigger_reasons}
-
-@coderabbitai Please run a full codebase review of this repository. Focus on:
-- Security vulnerabilities and credential exposure
-- Shell script quality (error handling, quoting, race conditions)
-- Code duplication and maintainability
-- Documentation accuracy
-"
-			echo "[stats] CodeRabbit: active review triggered for ${repo_slug} (${trigger_reasons})" >>"$LOGFILE"
-		else
-			coderabbit_section="### CodeRabbit
-
-_Monitoring: ${sweep_total_issues} issues (delta: ${issue_delta}), gate ${sweep_gate_status} — no active review needed._
-"
-		fi
-	fi
-
-	# Common to all branches: save state for next sweep and count the tool
-	_save_sweep_state "$repo_slug" "$sweep_gate_status" "$sweep_total_issues" "$sweep_high_critical" "$qlty_smell_count" "$qlty_grade"
-	tool_count=$((tool_count + 1))
-
-	# --- 6. Merged PR review scanner ---
-	# Scans recently merged PRs for unactioned review feedback from bots
-	# (CodeRabbit, Gemini Code Assist) and humans. Creates quality-debt
-	# issues for findings above medium severity.
-	local review_scan_section=""
-	local review_helper="${SCRIPT_DIR}/quality-feedback-helper.sh"
-	if [[ -x "$review_helper" ]]; then
-		local scan_output
-		scan_output=$("$review_helper" scan-merged \
-			--repo "$repo_slug" \
-			--batch 30 \
-			--create-issues \
-			--min-severity medium \
-			--json) || scan_output=""
-
-		if [[ -n "$scan_output" ]] && echo "$scan_output" | jq -e '.scanned' &>/dev/null; then
-			# Single jq pass: extract all three fields at once
-			local scan_data
-			scan_data=$(echo "$scan_output" | jq -r '"\(.scanned // 0)|\(.findings // 0)|\(.issues_created // 0)"') || scan_data="0|0|0"
-			local scanned="${scan_data%%|*}"
-			local remainder="${scan_data#*|}"
-			local scan_findings="${remainder%%|*}"
-			local scan_issues="${remainder#*|}"
-			# Validate integers before any arithmetic comparison
-			[[ "$scanned" =~ ^[0-9]+$ ]] || scanned=0
-			[[ "$scan_findings" =~ ^[0-9]+$ ]] || scan_findings=0
-			[[ "$scan_issues" =~ ^[0-9]+$ ]] || scan_issues=0
-
-			review_scan_section="### Merged PR Review Scanner
-
-- **PRs scanned**: ${scanned}
-- **Findings**: ${scan_findings}
-- **Issues created**: ${scan_issues}
-"
-			if [[ "$scan_findings" -gt 0 ]]; then
-				review_scan_section="${review_scan_section}
-_Issues labelled \`quality-debt\` — capped at 30% of dispatch concurrency._
-"
-			fi
-			tool_count=$((tool_count + 1))
-		fi
-	fi
-
-	# --- Assemble comment ---
-	if [[ "$tool_count" -eq 0 ]]; then
-		echo "[stats] Quality sweep: no tools available for ${repo_slug}" >>"$LOGFILE"
-		return 0
-	fi
-
-	local comment_body="## Daily Code Quality Sweep
-
-**Date**: ${now_iso}
-**Repo**: \`${repo_slug}\`
-**Tools run**: ${tool_count}
-
----
-
-${shellcheck_section}
-${qlty_section}
-${sonar_section}
-${codacy_section}
-${coderabbit_section}
-${review_scan_section}
-
----
-_Auto-generated by stats-wrapper.sh daily quality sweep. The supervisor will review findings and create actionable issues._"
-
-	# --- 7. Update issue body with stats dashboard (t1411) ---
-	# Mirrors the supervisor health issue pattern: the issue body is a live
-	# dashboard updated each sweep, while comments preserve the daily history.
-	# Runs before the comment post so a transient comment failure doesn't
-	# leave the dashboard stale (CodeRabbit review feedback).
-	_update_quality_issue_body "$repo_slug" "$issue_number" \
-		"$sweep_gate_status" "$sweep_total_issues" "$sweep_high_critical" \
-		"$now_iso" "$tool_count" "$qlty_smell_count" "$qlty_grade"
-
-	# Post comment (best-effort — dashboard already updated above)
-	local comment_stderr=""
-	local comment_posted=false
-	comment_stderr=$(gh issue comment "$issue_number" --repo "$repo_slug" --body "$comment_body" 2>&1 >/dev/null) && comment_posted=true || {
-		echo "[stats] Quality sweep: failed to post comment on #${issue_number} in ${repo_slug}: ${comment_stderr}" >>"$LOGFILE"
-	}
-
-	if [[ "$comment_posted" == true ]]; then
-		echo "[stats] Quality sweep: posted findings on #${issue_number} in ${repo_slug} (${tool_count} tools)" >>"$LOGFILE"
-	fi
-	return 0
-}
-
-#######################################
-# Update the quality review issue body with a stats dashboard
-#
-# Mirrors the supervisor health issue pattern: the body shows at-a-glance
-# stats (gate status, backlog, bot coverage, scan history), while daily
-# sweep comments preserve the full history.
-#
-# Arguments:
-#   $1 - repo slug
-#   $2 - issue number
-#   $3 - gate status (OK/ERROR/WARN/UNKNOWN)
-#   $4 - total SonarCloud issues
-#   $5 - high/critical count
-#   $6 - sweep timestamp (ISO)
-#   $7 - tool count
-#   $8 - qlty smell count (optional)
-#   $9 - qlty grade (optional)
-#######################################
-_update_quality_issue_body() {
-	local repo_slug="$1"
-	local issue_number="$2"
-	local gate_status="$3"
-	local total_issues="$4"
-	local high_critical="$5"
-	local sweep_time="$6"
-	local tool_count="$7"
-	local qlty_smell_count="${8:-0}"
-	local qlty_grade="${9:-UNKNOWN}"
-
-	# --- Quality-debt backlog stats ---
 	# Use GraphQL issueCount for accurate totals without pagination limits
 	# (CodeRabbit review feedback — gh issue list defaults to 30 results).
 	local debt_open=0
@@ -1853,22 +2435,82 @@ _update_quality_issue_body() {
 		debt_resolution_pct=$((debt_closed * 100 / debt_total))
 	fi
 
-	# --- PR scan lifetime stats from state file ---
-	local slug_safe="${repo_slug//\//-}"
-	local scan_state_file="${HOME}/.aidevops/logs/review-scan-state-${slug_safe}.json"
-	local prs_scanned_lifetime=0
-	local issues_created_lifetime=0
-	if [[ -f "$scan_state_file" ]]; then
-		prs_scanned_lifetime=$(jq -r '.scanned_prs | length // 0' "$scan_state_file" 2>>"$LOGFILE" || echo "0")
-		issues_created_lifetime=$(jq -r '.issues_created // 0' "$scan_state_file" 2>>"$LOGFILE" || echo "0")
-	fi
-	[[ "$prs_scanned_lifetime" =~ ^[0-9]+$ ]] || prs_scanned_lifetime=0
-	[[ "$issues_created_lifetime" =~ ^[0-9]+$ ]] || issues_created_lifetime=0
+	printf '%s|%s|%s|%s' "$debt_open" "$debt_closed" "$debt_total" "$debt_resolution_pct"
+	return 0
+}
 
-	# --- Bot review coverage on open PRs (t1411) ---
-	# Check which open PRs have bot reviews and which are still waiting.
-	# This surfaces PRs where bots were rate-limited or never posted.
-	local bot_coverage_section=""
+#######################################
+# Compute bot review coverage stats for open PRs.
+#
+# Arguments:
+#   $1 - repo slug
+# Output: bot_coverage_section markdown to stdout
+#######################################
+#######################################
+# Check bot review status for each open PR and accumulate counts.
+#
+# Arguments:
+#   $1 - pr_objects (newline-delimited compact JSON objects)
+#   $2 - repo_slug
+#   $3 - review_helper path
+# Output: "prs_with_reviews|prs_waiting|prs_stale_waiting"
+#######################################
+_check_pr_bot_coverage() {
+	local pr_objects="$1"
+	local repo_slug="$2"
+	local review_helper="$3"
+
+	local prs_with_reviews=0
+	local prs_waiting=0
+	local prs_stale_waiting=""
+
+	while IFS= read -r pr_obj; do
+		[[ -z "$pr_obj" ]] && continue
+		local pr_num
+		pr_num=$(echo "$pr_obj" | jq -r '.number')
+		[[ -z "$pr_num" || "$pr_num" == "null" ]] && continue
+		local gate_result
+		gate_result=$("$review_helper" check "$pr_num" "$repo_slug" 2>>"$LOGFILE" || echo "UNKNOWN")
+		case "$gate_result" in
+		PASS*)
+			prs_with_reviews=$((prs_with_reviews + 1))
+			;;
+		WAITING* | UNKNOWN*)
+			prs_waiting=$((prs_waiting + 1))
+			# Check if PR is older than 2 hours (stale waiting).
+			local pr_created
+			pr_created=$(echo "$pr_obj" | jq -r '.createdAt // empty')
+			if [[ -n "$pr_created" ]]; then
+				local pr_epoch
+				pr_epoch=$(date -j -f "%Y-%m-%dT%H:%M:%SZ" "$pr_created" +%s 2>/dev/null || date -d "$pr_created" +%s 2>/dev/null || echo "0")
+				[[ "$pr_epoch" =~ ^[0-9]+$ ]] || pr_epoch=0
+				if [[ "$pr_epoch" -gt 0 ]]; then
+					local now_epoch
+					now_epoch=$(date +%s)
+					local pr_age_hours=$(((now_epoch - pr_epoch) / 3600))
+					if [[ "$pr_age_hours" -ge 2 ]]; then
+						local pr_title
+						pr_title=$(echo "$pr_obj" | jq -r '.title[:50] // empty')
+						pr_title=$(_sanitize_markdown "$pr_title")
+						prs_stale_waiting="${prs_stale_waiting}  - #${pr_num}: ${pr_title} (${pr_age_hours}h old)
+"
+					fi
+				fi
+			fi
+			;;
+		SKIP*)
+			prs_with_reviews=$((prs_with_reviews + 1))
+			;;
+		esac
+	done <<<"$pr_objects"
+
+	printf '%s|%s|%s' "$prs_with_reviews" "$prs_waiting" "$prs_stale_waiting"
+	return 0
+}
+
+_compute_bot_coverage() {
+	local repo_slug="$1"
+
 	local open_prs_json
 	open_prs_json=$(gh pr list --repo "$repo_slug" --state open \
 		--limit 1000 --json number,title,createdAt 2>>"$LOGFILE") || open_prs_json="[]"
@@ -1884,66 +2526,24 @@ _update_quality_issue_body() {
 	local helper_available=false
 	if [[ "$open_pr_count" -gt 0 && -x "$review_helper" ]]; then
 		helper_available=true
-	elif [[ "$open_pr_count" -gt 0 ]]; then
-		# Helper unavailable but PRs exist — use UNKNOWN sentinel to avoid
-		# misleading zero counts (CodeRabbit review feedback)
-		prs_with_reviews="UNKNOWN"
-		prs_waiting="UNKNOWN"
 	fi
+
 	if [[ "$helper_available" == true ]]; then
 		# Parse open_prs_json once into per-PR objects to avoid re-parsing the
 		# full JSON array on every iteration (Gemini review feedback — GH#3153).
-		# Each line is a compact JSON object: {"number":N,"title":"...","createdAt":"..."}
 		local pr_objects
 		pr_objects=$(echo "$open_prs_json" | jq -c '.[]')
-		while IFS= read -r pr_obj; do
-			[[ -z "$pr_obj" ]] && continue
-			local pr_num
-			pr_num=$(echo "$pr_obj" | jq -r '.number')
-			[[ -z "$pr_num" || "$pr_num" == "null" ]] && continue
-			local gate_result
-			gate_result=$("$review_helper" check "$pr_num" "$repo_slug" 2>>"$LOGFILE" || echo "UNKNOWN")
-			case "$gate_result" in
-			PASS*)
-				prs_with_reviews=$((prs_with_reviews + 1))
-				;;
-			WAITING* | UNKNOWN*)
-				prs_waiting=$((prs_waiting + 1))
-				# Check if PR is older than 2 hours (stale waiting).
-				# Fields already extracted from pr_obj — no re-parse of open_prs_json.
-				local pr_created
-				pr_created=$(echo "$pr_obj" | jq -r '.createdAt // empty')
-				if [[ -n "$pr_created" ]]; then
-					local pr_epoch
-					pr_epoch=$(date -j -f "%Y-%m-%dT%H:%M:%SZ" "$pr_created" +%s 2>/dev/null || date -d "$pr_created" +%s 2>/dev/null || echo "0")
-					# Validate epoch is numeric and non-zero — a failed parse
-					# falls back to "0" which would produce a huge age (CodeRabbit review)
-					[[ "$pr_epoch" =~ ^[0-9]+$ ]] || pr_epoch=0
-					if [[ "$pr_epoch" -gt 0 ]]; then
-						local now_epoch
-						now_epoch=$(date +%s)
-						local pr_age_hours=$(((now_epoch - pr_epoch) / 3600))
-						if [[ "$pr_age_hours" -ge 2 ]]; then
-							local pr_title
-							pr_title=$(echo "$pr_obj" | jq -r '.title[:50] // empty')
-							# Sanitise PR title — untrusted GitHub content could
-							# contain @ mentions or markdown that leaks into the dashboard
-							pr_title=$(_sanitize_markdown "$pr_title")
-							prs_stale_waiting="${prs_stale_waiting}  - #${pr_num}: ${pr_title} (${pr_age_hours}h old)
-"
-						fi
-					fi
-				fi
-				;;
-			SKIP*)
-				prs_with_reviews=$((prs_with_reviews + 1))
-				;;
-			esac
-		done <<<"$pr_objects"
+		local coverage_raw
+		coverage_raw=$(_check_pr_bot_coverage "$pr_objects" "$repo_slug" "$review_helper")
+		prs_with_reviews="${coverage_raw%%|*}"
+		local cov_remainder="${coverage_raw#*|}"
+		prs_waiting="${cov_remainder%%|*}"
+		prs_stale_waiting="${cov_remainder#*|}"
 	fi
 
 	# Build bot coverage section — show N/A when helper is unavailable
 	# to avoid misleading zero counts (CodeRabbit review feedback)
+	local bot_coverage_section=""
 	if [[ "$helper_available" == true ]]; then
 		bot_coverage_section="### Bot Review Coverage
 
@@ -1977,13 +2577,21 @@ _No open PRs._
 ${prs_stale_waiting}"
 	fi
 
-	# --- Badge status indicator ---
-	# Translate gate status + Qlty grade to a human-readable badge indicator
-	# so the dashboard immediately shows whether the repo's public badges are green.
-	local badge_indicator="UNKNOWN"
-	# Qlty grade comes from the function-scoped variable set in section 2
-	local sweep_qlty_grade="${qlty_grade:-UNKNOWN}"
-	local sweep_qlty_smells="${qlty_smell_count:-0}"
+	printf '%s' "$bot_coverage_section"
+	return 0
+}
+
+#######################################
+# Compute badge status indicator from gate status and Qlty grade.
+#
+# Arguments:
+#   $1 - gate_status (OK/ERROR/WARN/UNKNOWN)
+#   $2 - qlty_grade (A/B/C/D/F/UNKNOWN)
+# Output: badge_indicator string to stdout
+#######################################
+_compute_badge_indicator() {
+	local gate_status="$1"
+	local qlty_grade="$2"
 
 	local sonar_badge="UNKNOWN"
 	case "$gate_status" in
@@ -1993,7 +2601,7 @@ ${prs_stale_waiting}"
 	esac
 
 	local qlty_badge="UNKNOWN"
-	case "$sweep_qlty_grade" in
+	case "$qlty_grade" in
 	A) qlty_badge="GREEN" ;;
 	B) qlty_badge="GREEN" ;;
 	C) qlty_badge="YELLOW" ;;
@@ -2001,6 +2609,7 @@ ${prs_stale_waiting}"
 	F) qlty_badge="RED" ;;
 	esac
 
+	local badge_indicator="UNKNOWN"
 	if [[ "$sonar_badge" == "GREEN" && "$qlty_badge" == "GREEN" ]]; then
 		badge_indicator="GREEN (all badges passing)"
 	elif [[ "$sonar_badge" == "RED" || "$qlty_badge" == "RED" ]]; then
@@ -2014,6 +2623,69 @@ ${prs_stale_waiting}"
 		[[ "$qlty_badge" == "YELLOW" ]] && warning="${warning:+$warning + }Qlty"
 		badge_indicator="YELLOW (${warning} needs improvement)"
 	fi
+
+	printf '%s' "$badge_indicator"
+	return 0
+}
+
+#######################################
+# Update the quality review issue body with a stats dashboard
+#
+# Mirrors the supervisor health issue pattern: the body shows at-a-glance
+# stats (gate status, backlog, bot coverage, scan history), while daily
+# sweep comments preserve the full history.
+#
+# Arguments:
+#   $1 - repo slug
+#   $2 - issue number
+#   $3 - gate status (OK/ERROR/WARN/UNKNOWN)
+#   $4 - total SonarCloud issues
+#   $5 - high/critical count
+#   $6 - sweep timestamp (ISO)
+#   $7 - tool count
+#   $8 - qlty smell count (optional)
+#   $9 - qlty grade (optional)
+#######################################
+_update_quality_issue_body() {
+	local repo_slug="$1"
+	local issue_number="$2"
+	local gate_status="$3"
+	local total_issues="$4"
+	local high_critical="$5"
+	local sweep_time="$6"
+	local tool_count="$7"
+	local qlty_smell_count="${8:-0}"
+	local qlty_grade="${9:-UNKNOWN}"
+
+	# --- Quality-debt backlog stats ---
+	local debt_raw
+	debt_raw=$(_compute_debt_stats "$repo_slug")
+	local debt_open="${debt_raw%%|*}"
+	local debt_remainder="${debt_raw#*|}"
+	local debt_closed="${debt_remainder%%|*}"
+	debt_remainder="${debt_remainder#*|}"
+	local debt_total="${debt_remainder%%|*}"
+	local debt_resolution_pct="${debt_remainder#*|}"
+
+	# --- PR scan lifetime stats from state file ---
+	local slug_safe="${repo_slug//\//-}"
+	local scan_state_file="${HOME}/.aidevops/logs/review-scan-state-${slug_safe}.json"
+	local prs_scanned_lifetime=0
+	local issues_created_lifetime=0
+	if [[ -f "$scan_state_file" ]]; then
+		prs_scanned_lifetime=$(jq -r '.scanned_prs | length // 0' "$scan_state_file" 2>>"$LOGFILE" || echo "0")
+		issues_created_lifetime=$(jq -r '.issues_created // 0' "$scan_state_file" 2>>"$LOGFILE" || echo "0")
+	fi
+	[[ "$prs_scanned_lifetime" =~ ^[0-9]+$ ]] || prs_scanned_lifetime=0
+	[[ "$issues_created_lifetime" =~ ^[0-9]+$ ]] || issues_created_lifetime=0
+
+	# --- Bot review coverage on open PRs (t1411) ---
+	local bot_coverage_section
+	bot_coverage_section=$(_compute_bot_coverage "$repo_slug")
+
+	# --- Badge status indicator ---
+	local badge_indicator
+	badge_indicator=$(_compute_badge_indicator "$gate_status" "$qlty_grade")
 
 	# --- Assemble dashboard body ---
 	local body="## Quality Review Dashboard
@@ -2029,8 +2701,8 @@ ${prs_stale_waiting}"
 | --- | --- |
 | SonarCloud gate | ${gate_status} |
 | SonarCloud issues | ${total_issues} (${high_critical} high/critical) |
-| Qlty grade | ${sweep_qlty_grade} |
-| Qlty smells | ${sweep_qlty_smells} |
+| Qlty grade | ${qlty_grade} |
+| Qlty smells | ${qlty_smell_count} |
 | Quality-debt open | ${debt_open} |
 | Quality-debt closed | ${debt_closed} |
 | Quality-debt total | ${debt_total} |
@@ -2051,12 +2723,11 @@ _Auto-updated by daily quality sweep. Comments below contain detailed findings p
 	}
 
 	# Update issue title with stats (like supervisor health issues)
-	local debt_label="debt"
 	local title_gate="${gate_status}"
 	[[ "$gate_status" == "UNKNOWN" ]] && title_gate="--"
-	local qlty_title="${sweep_qlty_grade}"
-	[[ "$sweep_qlty_grade" == "UNKNOWN" ]] && qlty_title="--"
-	local quality_title="Daily Code Quality Review — ${title_gate}, qlty:${qlty_title}, ${debt_open} ${debt_label}, ${total_issues} sonar"
+	local qlty_title="${qlty_grade}"
+	[[ "$qlty_grade" == "UNKNOWN" ]] && qlty_title="--"
+	local quality_title="Daily Code Quality Review — ${title_gate}, qlty:${qlty_title}, ${debt_open} debt, ${total_issues} sonar"
 	# Only update title if it changed (avoid unnecessary API calls)
 	local current_title
 	current_title=$(gh issue view "$issue_number" --repo "$repo_slug" --json title --jq '.title' 2>>"$LOGFILE" || echo "")
