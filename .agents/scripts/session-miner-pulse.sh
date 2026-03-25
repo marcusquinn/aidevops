@@ -537,30 +537,31 @@ PY
 	return $?
 }
 
-# --- Main ---
+# --- Main helpers ---
 
-main() {
-	local db_override=""
-	local dry_run=false
-	local force=false
-	local create_issues=false
+# parse_args sets script-level variables: _db_override, _dry_run, _force, _create_issues
+parse_args() {
+	_db_override=""
+	_dry_run=false
+	_force=false
+	_create_issues=false
 
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--db)
-			db_override="$2"
+			_db_override="$2"
 			shift 2
 			;;
 		--dry-run)
-			dry_run=true
+			_dry_run=true
 			shift
 			;;
 		--force)
-			force=true
+			_force=true
 			shift
 			;;
 		--create-issues)
-			create_issues=true
+			_create_issues=true
 			shift
 			;;
 		--since)
@@ -573,8 +574,10 @@ main() {
 			;;
 		esac
 	done
+	return 0
+}
 
-	# Ensure extractor/compressor are in workspace
+sync_scripts() {
 	mkdir -p "${MINER_DIR}"
 	if [[ -f "${EXTRACTOR_SRC}" ]] && [[ ! -f "${EXTRACTOR}" || "${EXTRACTOR_SRC}" -nt "${EXTRACTOR}" ]]; then
 		cp "${EXTRACTOR_SRC}" "${EXTRACTOR}"
@@ -582,22 +585,13 @@ main() {
 	if [[ -f "${COMPRESSOR_SRC}" ]] && [[ ! -f "${COMPRESSOR}" || "${COMPRESSOR_SRC}" -nt "${COMPRESSOR}" ]]; then
 		cp "${COMPRESSOR_SRC}" "${COMPRESSOR}"
 	fi
+	return 0
+}
 
-	# Check interval (skip if too recent, unless forced)
-	if [[ "${force}" != true ]]; then
-		check_interval || return 0
-	fi
-
-	# Acquire lock
-	check_lock || return 0
-	trap release_lock EXIT
-
-	# Find database
-	local db_path
-	db_path=$(detect_db "${db_override}") || return 1
-	log_info "Using database: ${db_path}"
-
-	# Check DB size
+# validate_db_size checks the DB is large enough to mine.
+# Prints the db_path on success; returns 1 if too small or not found.
+validate_db_size() {
+	local db_path="$1"
 	local db_size
 	# Cross-platform file size: Linux (stat -c) first, macOS (stat -f) fallback
 	db_size=$(stat -c %s "${db_path}" 2>/dev/null || stat -f %z "${db_path}" 2>/dev/null || echo 0)
@@ -605,60 +599,64 @@ main() {
 	[[ "${db_size}" =~ ^[0-9]+$ ]] || db_size=0
 	if [[ "${db_size}" -lt 1000 ]]; then
 		log_info "Database too small (${db_size} bytes). Nothing to mine."
-		release_lock
-		return 0
+		return 1
 	fi
+	return 0
+}
 
-	# Create output directory for this run
+# run_pipeline runs extraction + compression and verifies output.
+# Sets _output_dir, _compressed_file, _feedback_actions_file,
+# _feedback_report_file, _feedback_metrics_file on success.
+run_pipeline() {
+	local db_path="$1"
+
 	local run_ts
 	run_ts=$(date +%Y%m%d_%H%M%S)
-	local output_dir="${MINER_DIR}/pulse_${run_ts}"
-	mkdir -p "${output_dir}"
+	_output_dir="${MINER_DIR}/pulse_${run_ts}"
+	mkdir -p "${_output_dir}"
 
-	# Run extraction
 	local extract_output
-	extract_output=$(run_extraction "${db_path}" "${output_dir}" 2>&1) || {
+	extract_output=$(run_extraction "${db_path}" "${_output_dir}" 2>&1) || {
 		log_error "Extraction failed: ${extract_output}"
-		release_lock
 		return 1
 	}
 
-	# Find the chunks directory (extract.py creates a timestamped subdir)
 	local chunks_dir
-	chunks_dir=$(find "${output_dir}" -maxdepth 1 -type d -name "chunks_*" | head -1)
+	chunks_dir=$(find "${_output_dir}" -maxdepth 1 -type d -name "chunks_*" | head -1)
 	if [[ -z "${chunks_dir}" ]]; then
-		log_error "No chunks directory found in ${output_dir}"
-		release_lock
+		log_error "No chunks directory found in ${_output_dir}"
 		return 1
 	fi
 
-	# Run compression
 	run_compression "${chunks_dir}" 2>&1 || {
 		log_error "Compression failed"
-		release_lock
 		return 1
 	}
 
-	local compressed_file="${output_dir}/compressed_signals.json"
-	local feedback_actions_file="${MINER_DIR}/feedback_actions.json"
-	local feedback_report_file="${MINER_DIR}/feedback_actions.md"
-	local feedback_metrics_file="${MINER_DIR}/feedback_metrics.json"
+	_compressed_file="${_output_dir}/compressed_signals.json"
+	_feedback_actions_file="${MINER_DIR}/feedback_actions.json"
+	_feedback_report_file="${MINER_DIR}/feedback_actions.md"
+	_feedback_metrics_file="${MINER_DIR}/feedback_metrics.json"
 
-	# Verify compressed output exists before proceeding
-	if [[ ! -f "${compressed_file}" ]]; then
-		log_error "Compressed signals file not produced at ${compressed_file}"
-		release_lock
+	if [[ ! -f "${_compressed_file}" ]]; then
+		log_error "Compressed signals file not produced at ${_compressed_file}"
 		return 1
 	fi
+	return 0
+}
 
-	# Generate summary
+# output_results prints summary and feedback, optionally creates issues,
+# and records the pulse timestamp when not in dry-run mode.
+output_results() {
+	local dry_run="$1"
+	local create_issues="$2"
+
 	local summary
-	summary=$(generate_summary "${compressed_file}" 2>&1)
+	summary=$(generate_summary "${_compressed_file}" 2>&1)
 
 	local feedback_output
-	feedback_output=$(generate_feedback_actions "${compressed_file}" "${feedback_actions_file}" "${feedback_report_file}" "${feedback_metrics_file}" 2>&1) || {
+	feedback_output=$(generate_feedback_actions "${_compressed_file}" "${_feedback_actions_file}" "${_feedback_report_file}" "${_feedback_metrics_file}" 2>&1) || {
 		log_error "Feedback action generation failed: ${feedback_output}"
-		release_lock
 		return 1
 	}
 
@@ -667,24 +665,26 @@ main() {
 		echo "${summary}"
 		echo "${feedback_output}"
 		if [[ "${create_issues}" == true ]]; then
-			create_feedback_issues "${feedback_actions_file}" "${dry_run}" || true
+			create_feedback_issues "${_feedback_actions_file}" "${dry_run}" || true
 		fi
 		echo "--- Would log TODO suggestions to relevant repos ---"
 	else
 		echo "${summary}"
 		echo "${feedback_output}"
 		if [[ "${create_issues}" == true ]]; then
-			create_feedback_issues "${feedback_actions_file}" "${dry_run}" || true
+			create_feedback_issues "${_feedback_actions_file}" "${dry_run}" || true
 		fi
 		record_pulse
-		log_info "Pulse complete. Output: ${output_dir}"
-		log_info "Compressed signals: ${compressed_file}"
-		log_info "Feedback actions: ${feedback_actions_file}"
-		log_info "Feedback report: ${feedback_report_file}"
-		log_info "Run 'opencode run --dir ~/Git/REPO --title \"Session miner analysis\" \"Analyse ${compressed_file} against the current harness and suggest improvements\"' for deep analysis."
+		log_info "Pulse complete. Output: ${_output_dir}"
+		log_info "Compressed signals: ${_compressed_file}"
+		log_info "Feedback actions: ${_feedback_actions_file}"
+		log_info "Feedback report: ${_feedback_report_file}"
+		log_info "Run 'opencode run --dir ~/Git/REPO --title \"Session miner analysis\" \"Analyse ${_compressed_file} against the current harness and suggest improvements\"' for deep analysis."
 	fi
+	return 0
+}
 
-	# Clean up old pulse directories (keep last 7)
+cleanup_old_pulses() {
 	local old_dirs
 	old_dirs=$(find "${MINER_DIR}" -maxdepth 1 -type d -name "pulse_*" | sort | head -n -7 2>/dev/null || true)
 	if [[ -n "${old_dirs}" ]]; then
@@ -693,6 +693,48 @@ main() {
 		done
 		log_info "Cleaned up old pulse directories"
 	fi
+	return 0
+}
+
+# --- Main ---
+
+main() {
+	parse_args "$@" || return 1
+
+	sync_scripts
+
+	# Check interval (skip if too recent, unless forced)
+	if [[ "${_force}" != true ]]; then
+		check_interval || return 0
+	fi
+
+	# Acquire lock
+	check_lock || return 0
+	trap release_lock EXIT
+
+	# Find and validate database
+	local db_path
+	db_path=$(detect_db "${_db_override}") || return 1
+	log_info "Using database: ${db_path}"
+
+	validate_db_size "${db_path}" || {
+		release_lock
+		return 0
+	}
+
+	# Run extraction + compression pipeline
+	run_pipeline "${db_path}" || {
+		release_lock
+		return 1
+	}
+
+	# Output results (summary, feedback, optional issue creation)
+	output_results "${_dry_run}" "${_create_issues}" || {
+		release_lock
+		return 1
+	}
+
+	cleanup_old_pulses
 
 	return 0
 }
