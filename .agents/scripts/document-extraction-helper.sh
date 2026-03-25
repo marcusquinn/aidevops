@@ -575,13 +575,11 @@ resolve_llm_backend() {
 	return 0
 }
 
-# Build Python schema class definitions for a given schema name.
-# Outputs the Python snippet to stdout; caller captures with $().
-build_schema_code() {
-	local schema="$1"
-	case "$schema" in
-	invoice)
-		printf '%s' "
+# Schema sub-functions: each emits a Python class definition to stdout.
+# Called by build_schema_code() below.
+
+_schema_invoice() {
+	printf '%s' "
 class LineItem(BaseModel):
     description: str = ''
     quantity: float = 0
@@ -601,9 +599,11 @@ class Invoice(BaseModel):
 
 schema_class = Invoice
 "
-		;;
-	receipt)
-		printf '%s' "
+	return 0
+}
+
+_schema_receipt() {
+	printf '%s' "
 class ReceiptItem(BaseModel):
     name: str = ''
     price: float = 0
@@ -617,9 +617,11 @@ class Receipt(BaseModel):
 
 schema_class = Receipt
 "
-		;;
-	contract)
-		printf '%s' "
+	return 0
+}
+
+_schema_contract() {
+	printf '%s' "
 class ContractSummary(BaseModel):
     parties: list[str] = []
     effective_date: str = ''
@@ -629,9 +631,11 @@ class ContractSummary(BaseModel):
 
 schema_class = ContractSummary
 "
-		;;
-	id-document)
-		printf '%s' "
+	return 0
+}
+
+_schema_id_document() {
+	printf '%s' "
 class IDDocument(BaseModel):
     document_type: str = ''
     full_name: str = ''
@@ -642,9 +646,11 @@ class IDDocument(BaseModel):
 
 schema_class = IDDocument
 "
-		;;
-	purchase-invoice)
-		printf '%s' "
+	return 0
+}
+
+_schema_purchase_invoice() {
+	printf '%s' "
 from typing import Optional
 
 class PurchaseLineItem(BaseModel):
@@ -675,9 +681,11 @@ class PurchaseInvoice(BaseModel):
 
 schema_class = PurchaseInvoice
 "
-		;;
-	expense-receipt)
-		printf '%s' "
+	return 0
+}
+
+_schema_expense_receipt() {
+	printf '%s' "
 from typing import Optional
 
 class ReceiptItem(BaseModel):
@@ -706,9 +714,11 @@ class ExpenseReceipt(BaseModel):
 
 schema_class = ExpenseReceipt
 "
-		;;
-	credit-note)
-		printf '%s' "
+	return 0
+}
+
+_schema_credit_note() {
+	printf '%s' "
 from typing import Optional
 
 class CreditLineItem(BaseModel):
@@ -734,12 +744,30 @@ class CreditNote(BaseModel):
 
 schema_class = CreditNote
 "
-		;;
-	auto | *)
-		printf '%s' "
+	return 0
+}
+
+_schema_auto() {
+	printf '%s' "
 schema_class = None
 "
-		;;
+	return 0
+}
+
+# Build Python schema class definitions for a given schema name.
+# Outputs the Python snippet to stdout; caller captures with $().
+# Dispatches to _schema_*() sub-functions for each document type.
+build_schema_code() {
+	local schema="$1"
+	case "$schema" in
+	invoice) _schema_invoice ;;
+	receipt) _schema_receipt ;;
+	contract) _schema_contract ;;
+	id-document) _schema_id_document ;;
+	purchase-invoice) _schema_purchase_invoice ;;
+	expense-receipt) _schema_expense_receipt ;;
+	credit-note) _schema_credit_note ;;
+	auto | *) _schema_auto ;;
 	esac
 	return 0
 }
