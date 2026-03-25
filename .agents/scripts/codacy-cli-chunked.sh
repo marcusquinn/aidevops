@@ -263,6 +263,83 @@ run_quick_analysis() {
 	return 0
 }
 
+# Process a single chunk of tools and merge results into the combined results file
+_process_chunk() {
+	local chunk_num="$1"
+	local chunk_start="$2"
+	local chunk_end="$3"
+	local total_tools="$4"
+	local results_file="$5"
+	shift 5
+	local tool_array=("$@")
+
+	print_progress "$chunk_start" "$total_tools" "Processing chunk $chunk_num"
+	update_progress "Starting chunk $chunk_num (tools $chunk_start-$chunk_end)"
+
+	local chunk_tools=""
+	local j
+	for ((j = chunk_start - 1; j < chunk_end; j++)); do
+		chunk_tools="$chunk_tools ${tool_array[j]}"
+	done
+
+	print_info "Chunk $chunk_num: Running ${tool_array[chunk_start - 1]} to ${tool_array[chunk_end - 1]}..."
+
+	local chunk_start_time
+	chunk_start_time=$(date +%s)
+	local chunk_result_file=".agents/tmp/codacy-chunk-$chunk_num.sarif"
+
+	# Run chunk with extended timeout
+	local cmd="codacy-cli analyze --tools $(echo $chunk_tools | tr ' ' ',') --format sarif --output $chunk_result_file"
+	print_info "Executing: $(echo $chunk_tools | wc -w | tr -d ' ') tools"
+
+	timeout $((TIMEOUT * 2)) bash -c "$cmd" 2>/dev/null
+	local exit_code=$?
+
+	local chunk_end_time
+	chunk_end_time=$(date +%s)
+	local chunk_duration
+	chunk_duration=$((chunk_end_time - chunk_start_time))
+
+	if [[ $exit_code -eq 124 ]]; then
+		print_warning "⏰ Chunk $chunk_num timed out after ${chunk_duration}s"
+		update_progress "Chunk $chunk_num timed out"
+	elif [[ $exit_code -eq 0 ]]; then
+		print_success "✓ Chunk $chunk_num completed in ${chunk_duration}s"
+		update_progress "Chunk $chunk_num completed in ${chunk_duration}s"
+		# Merge chunk results
+		if [[ -f "$chunk_result_file" ]]; then
+			if [[ ! -f "$results_file" ]]; then
+				cp "$chunk_result_file" "$results_file"
+			else
+				cat "$chunk_result_file" >>"$results_file"
+			fi
+		fi
+	else
+		print_error "✗ Chunk $chunk_num failed after ${chunk_duration}s"
+		update_progress "Chunk $chunk_num failed"
+	fi
+	return 0
+}
+
+# Report final results summary for chunked analysis
+_report_chunked_results() {
+	local results_file="$1"
+	local completed_tools="$2"
+	local total_tools="$3"
+	local total_duration="$4"
+
+	print_success "Chunked analysis completed in ${total_duration}s ($completed_tools/$total_tools tools)"
+	update_progress "Chunked analysis completed: $completed_tools/$total_tools tools in ${total_duration}s"
+
+	if [[ -f "$results_file" ]]; then
+		print_info "Results saved to: $results_file"
+		local issues_count
+		issues_count=$(grep -c '"ruleId"' "$results_file" 2>/dev/null || echo "unknown")
+		print_info "Total issues found: $issues_count"
+	fi
+	return 0
+}
+
 # Chunked full analysis
 run_chunked_analysis() {
 	print_header "Running Chunked Full Analysis"
@@ -287,68 +364,23 @@ run_chunked_analysis() {
 	local results_file=".agents/tmp/codacy-chunked-results.sarif"
 	local chunk_num=1
 
-	# Process tools in chunks
+	# Build tool array
 	local tool_array=()
 	while IFS= read -r tool; do
 		tool_array+=("$tool")
 	done <<<"$tools"
 
+	local i
 	for ((i = 0; i < ${#tool_array[@]}; i += CHUNK_SIZE)); do
-		local chunk_start
-		chunk_start=$((i + 1))
-		local chunk_end
-		chunk_end=$((i + CHUNK_SIZE))
+		local chunk_start=$((i + 1))
+		local chunk_end=$((i + CHUNK_SIZE))
 		if [[ $chunk_end -gt ${#tool_array[@]} ]]; then
 			chunk_end=${#tool_array[@]}
 		fi
 
-		print_progress $chunk_start $total_tools "Processing chunk $chunk_num"
-		update_progress "Starting chunk $chunk_num (tools $chunk_start-$chunk_end)"
+		_process_chunk "$chunk_num" "$chunk_start" "$chunk_end" \
+			"$total_tools" "$results_file" "${tool_array[@]}"
 
-		local chunk_tools=""
-		for ((j = i; j < chunk_end; j++)); do
-			chunk_tools="$chunk_tools ${tool_array[j]}"
-		done
-
-		print_info "Chunk $chunk_num: Running ${tool_array[i]} to ${tool_array[((chunk_end - 1))]}..."
-
-		local chunk_start_time
-		chunk_start_time=$(date +%s)
-		local chunk_result_file=".agents/tmp/codacy-chunk-$chunk_num.sarif"
-
-		# Run chunk with extended timeout
-		local cmd="codacy-cli analyze --tools $(echo $chunk_tools | tr ' ' ',') --format sarif --output $chunk_result_file"
-		print_info "Executing: $(echo $chunk_tools | wc -w | tr -d ' ') tools"
-
-		timeout $((TIMEOUT * 2)) bash -c "$cmd" 2>/dev/null
-		local exit_code=$?
-
-		local chunk_end_time
-		chunk_end_time=$(date +%s)
-		local chunk_duration
-		chunk_duration=$((chunk_end_time - chunk_start_time))
-
-		if [[ $exit_code -eq 124 ]]; then
-			print_warning "⏰ Chunk $chunk_num timed out after ${chunk_duration}s"
-			update_progress "Chunk $chunk_num timed out"
-		elif [[ $exit_code -eq 0 ]]; then
-			print_success "✓ Chunk $chunk_num completed in ${chunk_duration}s"
-			update_progress "Chunk $chunk_num completed in ${chunk_duration}s"
-
-			# Merge chunk results
-			if [[ -f "$chunk_result_file" ]]; then
-				if [[ ! -f "$results_file" ]]; then
-					cp "$chunk_result_file" "$results_file"
-				else
-					cat "$chunk_result_file" >>"$results_file"
-				fi
-			fi
-		else
-			print_error "✗ Chunk $chunk_num failed after ${chunk_duration}s"
-			update_progress "Chunk $chunk_num failed"
-		fi
-
-		# Update progress
 		completed_tools=$chunk_end
 		((++chunk_num))
 
@@ -361,19 +393,9 @@ run_chunked_analysis() {
 
 	local end_time
 	end_time=$(date +%s)
-	local total_duration
-	total_duration=$((end_time - start_time))
+	local total_duration=$((end_time - start_time))
 
-	print_success "Chunked analysis completed in ${total_duration}s ($completed_tools/$total_tools tools)"
-	update_progress "Chunked analysis completed: $completed_tools/$total_tools tools in ${total_duration}s"
-
-	if [[ -f "$results_file" ]]; then
-		print_info "Results saved to: $results_file"
-		local issues_count
-		issues_count=$(grep -c '"ruleId"' "$results_file" 2>/dev/null || echo "unknown")
-		print_info "Total issues found: $issues_count"
-	fi
-
+	_report_chunked_results "$results_file" "$completed_tools" "$total_tools" "$total_duration"
 	return 0
 }
 
