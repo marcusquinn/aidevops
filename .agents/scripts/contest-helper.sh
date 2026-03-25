@@ -376,6 +376,73 @@ _create_contest_entries() {
 }
 
 #######################################
+# Verify task exists in supervisor DB and return its fields.
+# Usage: _create_verify_task <escaped_id>
+# Outputs: repo<TAB>description  (empty = not found)
+#######################################
+_create_verify_task() {
+	local escaped_id="$1"
+
+	db -separator $'\t' "$SUPERVISOR_DB" "
+		SELECT repo, description
+		FROM tasks WHERE id = '$escaped_id';
+	"
+	return 0
+}
+
+#######################################
+# Check for an existing active contest for a task.
+# Usage: _create_check_existing <escaped_id>
+# Outputs: existing contest ID (empty = none)
+#######################################
+_create_check_existing() {
+	local escaped_id="$1"
+
+	db "$SUPERVISOR_DB" "
+		SELECT id FROM contests
+		WHERE task_id = '$escaped_id'
+		AND status NOT IN ('complete','failed','cancelled');
+	"
+	return 0
+}
+
+#######################################
+# Insert a contest record and its entries; outputs contest_id.
+# Usage: _create_insert_contest <task_id> <escaped_id> <tdesc> <trepo> <models> <batch_id>
+#######################################
+_create_insert_contest() {
+	local task_id="$1"
+	local escaped_id="$2"
+	local tdesc="$3"
+	local trepo="$4"
+	local models="$5"
+	local batch_id="$6"
+
+	local contest_id
+	contest_id="contest-${task_id}-$(date +%Y%m%d%H%M%S)"
+
+	db "$SUPERVISOR_DB" "
+		INSERT INTO contests (id, task_id, description, status, models, batch_id, repo)
+		VALUES (
+			'$(sql_escape "$contest_id")',
+			'$escaped_id',
+			'$(sql_escape "$tdesc")',
+			'pending',
+			'$(sql_escape "$models")',
+			'$(sql_escape "${batch_id:-}")',
+			'$(sql_escape "${trepo:-.}")'
+		);
+	"
+
+	local model_count
+	model_count=$(_create_contest_entries "$contest_id" "$task_id" "$models")
+
+	log_success "Contest created: $contest_id with ${model_count} entries"
+	echo "$contest_id"
+	return 0
+}
+
+#######################################
 # Create a contest for a task (t1011)
 # Dispatches the same task to top-3 models in parallel
 #######################################
@@ -391,65 +458,32 @@ cmd_create() {
 
 	ensure_contest_tables || return 1
 
-	# Verify task exists in supervisor DB
 	local escaped_id
 	escaped_id=$(sql_escape "$task_id")
-	local task_row
-	task_row=$(db -separator $'\t' "$SUPERVISOR_DB" "
-		SELECT id, repo, description, status
-		FROM tasks WHERE id = '$escaped_id';
-	")
 
+	local task_row
+	task_row=$(_create_verify_task "$escaped_id")
 	if [[ -z "$task_row" ]]; then
 		log_error "Task not found in supervisor DB: $task_id"
 		return 1
 	fi
 
-	local _tid trepo tdesc _tstatus
-	IFS=$'\t' read -r _tid trepo tdesc _tstatus <<<"$task_row"
+	local trepo tdesc
+	IFS=$'\t' read -r trepo tdesc <<<"$task_row"
 
-	# Check for existing active contest
 	local existing_contest
-	existing_contest=$(db "$SUPERVISOR_DB" "
-		SELECT id FROM contests
-		WHERE task_id = '$escaped_id'
-		AND status NOT IN ('complete','failed','cancelled');
-	")
+	existing_contest=$(_create_check_existing "$escaped_id")
 	if [[ -n "$existing_contest" ]]; then
 		log_warn "Active contest already exists for $task_id: $existing_contest"
 		echo "$existing_contest"
 		return 0
 	fi
 
-	# Select models
 	local models
 	models=$(select_contest_models "$explicit_models")
 	log_info "Contest models: $models"
 
-	# Generate contest ID
-	local contest_id
-	contest_id="contest-${task_id}-$(date +%Y%m%d%H%M%S)"
-
-	# Create contest record
-	db "$SUPERVISOR_DB" "
-		INSERT INTO contests (id, task_id, description, status, models, batch_id, repo)
-		VALUES (
-			'$(sql_escape "$contest_id")',
-			'$escaped_id',
-			'$(sql_escape "$tdesc")',
-			'pending',
-			'$(sql_escape "$models")',
-			'$(sql_escape "${batch_id:-}")',
-			'$(sql_escape "${trepo:-.}")'
-		);
-	"
-
-	# Create contest entries for each model
-	local model_count
-	model_count=$(_create_contest_entries "$contest_id" "$task_id" "$models")
-
-	log_success "Contest created: $contest_id with ${model_count} entries"
-	echo "$contest_id"
+	_create_insert_contest "$task_id" "$escaped_id" "$tdesc" "$trepo" "$models" "$batch_id"
 	return 0
 }
 
@@ -524,6 +558,56 @@ _dispatch_single_entry() {
 }
 
 #######################################
+# Load contest details from DB; outputs task_id<TAB>desc<TAB>repo<TAB>batch_id
+# Returns 1 if not found.
+#######################################
+_dispatch_load_contest() {
+	local escaped_cid="$1"
+
+	local row
+	row=$(db -separator $'\t' "$SUPERVISOR_DB" "
+		SELECT task_id, description, repo, batch_id
+		FROM contests WHERE id = '$escaped_cid';
+	")
+	if [[ -z "$row" ]]; then
+		return 1
+	fi
+	printf '%s' "$row"
+	return 0
+}
+
+#######################################
+# Dispatch all pending entries for a contest; outputs dispatched_count.
+#######################################
+_dispatch_run_entries() {
+	local escaped_cid="$1"
+	local ctask_id="$2"
+	local cdesc="$3"
+	local crepo="$4"
+	local cbatch_id="$5"
+
+	local entries
+	entries=$(db -separator $'\t' "$SUPERVISOR_DB" "
+		SELECT id, model, task_id
+		FROM contest_entries
+		WHERE contest_id = '$escaped_cid' AND status = 'pending';
+	")
+
+	local dispatched_count=0
+	while IFS=$'\t' read -r entry_id entry_model entry_task_id; do
+		[[ -z "$entry_id" ]] && continue
+		if _dispatch_single_entry \
+			"$entry_id" "$entry_model" "$entry_task_id" \
+			"$ctask_id" "$cdesc" "$crepo" "$cbatch_id"; then
+			dispatched_count=$((dispatched_count + 1))
+		fi
+	done <<<"$entries"
+
+	echo "$dispatched_count"
+	return 0
+}
+
+#######################################
 # Dispatch contest entries as parallel workers
 # Creates subtasks in supervisor DB and dispatches them
 #######################################
@@ -539,53 +623,34 @@ cmd_dispatch_contest() {
 	local escaped_cid
 	escaped_cid=$(sql_escape "$contest_id")
 
-	# Get contest details
 	local contest_row
-	contest_row=$(db -separator $'\t' "$SUPERVISOR_DB" "
-		SELECT task_id, description, repo, batch_id
-		FROM contests WHERE id = '$escaped_cid';
-	")
-
-	if [[ -z "$contest_row" ]]; then
+	contest_row=$(_dispatch_load_contest "$escaped_cid") || {
 		log_error "Contest not found: $contest_id"
 		return 1
-	fi
+	}
 
 	local ctask_id cdesc crepo cbatch_id
 	IFS=$'\t' read -r ctask_id cdesc crepo cbatch_id <<<"$contest_row"
 
-	# Transition contest to dispatching
 	db "$SUPERVISOR_DB" "
 		UPDATE contests SET status = 'dispatching', metadata = 'dispatch_started:$(date -u +%Y-%m-%dT%H:%M:%SZ)'
 		WHERE id = '$escaped_cid';
 	"
 
-	# Get pending entries
 	local entries
 	entries=$(db -separator $'\t' "$SUPERVISOR_DB" "
 		SELECT id, model, task_id
 		FROM contest_entries
 		WHERE contest_id = '$escaped_cid' AND status = 'pending';
 	")
-
 	if [[ -z "$entries" ]]; then
 		log_warn "No pending entries for contest $contest_id"
 		return 0
 	fi
 
-	local dispatched_count=0
+	local dispatched_count
+	dispatched_count=$(_dispatch_run_entries "$escaped_cid" "$ctask_id" "$cdesc" "$crepo" "$cbatch_id")
 
-	while IFS=$'\t' read -r entry_id entry_model entry_task_id; do
-		[[ -z "$entry_id" ]] && continue
-
-		if _dispatch_single_entry \
-			"$entry_id" "$entry_model" "$entry_task_id" \
-			"$ctask_id" "$cdesc" "$crepo" "$cbatch_id"; then
-			dispatched_count=$((dispatched_count + 1))
-		fi
-	done <<<"$entries"
-
-	# Update contest status
 	if [[ "$dispatched_count" -gt 0 ]]; then
 		db "$SUPERVISOR_DB" "
 			UPDATE contests SET status = 'running'
@@ -919,6 +984,100 @@ _store_scores_and_find_winner() {
 }
 
 #######################################
+# Check that a contest is ready for evaluation.
+# Returns 0 (ready), 1 (error/not ready), 2 (still running).
+# On success, outputs complete_count to stdout.
+#######################################
+_evaluate_check_readiness() {
+	local contest_id="$1"
+	local escaped_cid="$2"
+
+	local contest_status
+	contest_status=$(db "$SUPERVISOR_DB" "SELECT status FROM contests WHERE id = '$escaped_cid';")
+	if [[ "$contest_status" != "running" ]]; then
+		log_error "Contest $contest_id is in '$contest_status' state, must be 'running' to evaluate"
+		return 1
+	fi
+
+	local pending_count
+	pending_count=$(db "$SUPERVISOR_DB" "
+		SELECT count(*) FROM contest_entries
+		WHERE contest_id = '$escaped_cid'
+		AND status NOT IN ('complete','failed','cancelled');
+	")
+	if [[ "$pending_count" -gt 0 ]]; then
+		log_info "Contest $contest_id has $pending_count entries still running — not ready for evaluation"
+		return 2
+	fi
+
+	local complete_count
+	complete_count=$(db "$SUPERVISOR_DB" "
+		SELECT count(*) FROM contest_entries
+		WHERE contest_id = '$escaped_cid' AND status = 'complete';
+	")
+	if [[ "$complete_count" -lt 2 ]]; then
+		log_error "Contest $contest_id has fewer than 2 completed entries ($complete_count) — cannot cross-rank"
+		db "$SUPERVISOR_DB" "
+			UPDATE contests SET status = 'failed',
+				metadata = COALESCE(metadata,'') || ' eval_failed:insufficient_entries'
+			WHERE id = '$escaped_cid';
+		"
+		return 1
+	fi
+
+	echo "$complete_count"
+	return 0
+}
+
+#######################################
+# Collect summaries, build ranking prompt, run judges, aggregate scores.
+# Outputs winner_row (id<TAB>model<TAB>score) or empty on failure.
+#######################################
+_evaluate_run_pipeline() {
+	local contest_id="$1"
+	local escaped_cid="$2"
+
+	local summaries_file
+	summaries_file=$(_collect_entry_summaries "$escaped_cid")
+
+	local num_entries
+	num_entries=$(wc -l <"$summaries_file" | tr -d ' ')
+	if [[ "$num_entries" -lt 2 ]]; then
+		log_error "Not enough entries to evaluate"
+		rm -f "$summaries_file"
+		return 1
+	fi
+
+	local ranking_prompt
+	ranking_prompt=$(_build_ranking_prompt "$num_entries" "$summaries_file")
+
+	db "$SUPERVISOR_DB" "UPDATE contests SET status = 'scoring' WHERE id = '$escaped_cid';"
+
+	local judges_file
+	judges_file=$(mktemp "${TMPDIR:-/tmp}/contest-judges-XXXXXX")
+	while IFS=$'\t' read -r _eid emodel _summary_b64; do
+		[[ -z "$emodel" ]] && continue
+		echo "$emodel" >>"$judges_file"
+	done <"$summaries_file"
+
+	local all_scores_file
+	all_scores_file=$(mktemp "${TMPDIR:-/tmp}/contest-allscores-XXXXXX")
+	_run_judges "$judges_file" "$ranking_prompt" >"$all_scores_file"
+	rm -f "$judges_file"
+
+	local judge_count
+	judge_count=$(wc -l <"$all_scores_file" | tr -d ' ')
+	log_info "Aggregating scores from ${judge_count} score lines..."
+
+	local winner_row
+	winner_row=$(_store_scores_and_find_winner "$escaped_cid" "$summaries_file" "$all_scores_file")
+	rm -f "$summaries_file" "$all_scores_file"
+
+	printf '%s' "$winner_row"
+	return 0
+}
+
+#######################################
 # Evaluate contest — cross-rank outputs from all completed entries
 # Each model scores all outputs (including its own) blindly as A/B/C
 # Then aggregate scores and pick winner
@@ -935,90 +1094,18 @@ cmd_evaluate() {
 	local escaped_cid
 	escaped_cid=$(sql_escape "$contest_id")
 
-	# Verify contest is in evaluatable state
-	local contest_status
-	contest_status=$(db "$SUPERVISOR_DB" "SELECT status FROM contests WHERE id = '$escaped_cid';")
-	if [[ "$contest_status" != "running" ]]; then
-		log_error "Contest $contest_id is in '$contest_status' state, must be 'running' to evaluate"
-		return 1
-	fi
-
-	# Check all entries are complete (or failed)
-	local pending_count
-	pending_count=$(db "$SUPERVISOR_DB" "
-		SELECT count(*) FROM contest_entries
-		WHERE contest_id = '$escaped_cid'
-		AND status NOT IN ('complete','failed','cancelled');
-	")
-
-	if [[ "$pending_count" -gt 0 ]]; then
-		log_info "Contest $contest_id has $pending_count entries still running — not ready for evaluation"
-		return 2
-	fi
-
-	# Get completed entries
 	local complete_count
-	complete_count=$(db "$SUPERVISOR_DB" "
-		SELECT count(*) FROM contest_entries
-		WHERE contest_id = '$escaped_cid' AND status = 'complete';
-	")
-
-	if [[ "$complete_count" -lt 2 ]]; then
-		log_error "Contest $contest_id has fewer than 2 completed entries ($complete_count) — cannot cross-rank"
-		db "$SUPERVISOR_DB" "
-			UPDATE contests SET status = 'failed',
-				metadata = COALESCE(metadata,'') || ' eval_failed:insufficient_entries'
-			WHERE id = '$escaped_cid';
-		"
-		return 1
+	complete_count=$(_evaluate_check_readiness "$contest_id" "$escaped_cid")
+	local readiness_rc=$?
+	if [[ "$readiness_rc" -ne 0 ]]; then
+		return "$readiness_rc"
 	fi
 
-	# Transition to evaluating
 	db "$SUPERVISOR_DB" "UPDATE contests SET status = 'evaluating' WHERE id = '$escaped_cid';"
 	log_info "Evaluating contest $contest_id with $complete_count entries..."
 
-	# Collect output summaries
-	local summaries_file
-	summaries_file=$(_collect_entry_summaries "$escaped_cid")
-
-	local num_entries
-	num_entries=$(wc -l <"$summaries_file" | tr -d ' ')
-
-	if [[ "$num_entries" -lt 2 ]]; then
-		log_error "Not enough entries to evaluate"
-		rm -f "$summaries_file"
-		return 1
-	fi
-
-	# Build ranking prompt
-	local ranking_prompt
-	ranking_prompt=$(_build_ranking_prompt "$num_entries" "$summaries_file")
-
-	# Transition to scoring
-	db "$SUPERVISOR_DB" "UPDATE contests SET status = 'scoring' WHERE id = '$escaped_cid';"
-
-	# Build judges list from entry models
-	local judges_file
-	judges_file=$(mktemp "${TMPDIR:-/tmp}/contest-judges-XXXXXX")
-	while IFS=$'\t' read -r _eid emodel _summary_b64; do
-		[[ -z "$emodel" ]] && continue
-		echo "$emodel" >>"$judges_file"
-	done <"$summaries_file"
-
-	# Run judges and collect all scores
-	local all_scores_file
-	all_scores_file=$(mktemp "${TMPDIR:-/tmp}/contest-allscores-XXXXXX")
-	_run_judges "$judges_file" "$ranking_prompt" >"$all_scores_file"
-	rm -f "$judges_file"
-
-	local judge_count
-	judge_count=$(wc -l <"$all_scores_file" | tr -d ' ')
-	log_info "Aggregating scores from ${judge_count} score lines..."
-
-	# Store scores and find winner
 	local winner_row
-	winner_row=$(_store_scores_and_find_winner "$escaped_cid" "$summaries_file" "$all_scores_file")
-	rm -f "$summaries_file" "$all_scores_file"
+	winner_row=$(_evaluate_run_pipeline "$contest_id" "$escaped_cid") || return 1
 
 	_finalize_contest_winner "$contest_id" "$escaped_cid" "$winner_row"
 	return $?
