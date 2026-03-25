@@ -71,6 +71,42 @@ readonly -a CC_POSTING_WINDOWS=(
 )
 
 # =============================================================================
+# Input Validation & SQL Safety
+# =============================================================================
+
+# Escape a string for safe interpolation into SQL single-quoted literals.
+# Doubles single quotes per SQL standard (the only escape needed for SQLite
+# string literals). Usage: escaped="$(sql_escape "$raw")"
+sql_escape() {
+	local raw="$1"
+	printf '%s' "${raw//\'/\'\'}"
+	return 0
+}
+
+# Validate that a value is a strictly numeric (positive integer) ID.
+# Returns 0 if valid, 1 if not. Usage: validate_numeric_id "$id" "content_id"
+validate_numeric_id() {
+	local value="$1"
+	local label="${2:-id}"
+	if ! [[ "$value" =~ ^[0-9]+$ ]]; then
+		print_error "Invalid ${label}: '${value}' — must be a positive integer"
+		return 1
+	fi
+	return 0
+}
+
+# Validate that a value is a positive integer (for counts, days, limits, weeks).
+validate_positive_int() {
+	local value="$1"
+	local label="${2:-value}"
+	if ! [[ "$value" =~ ^[0-9]+$ ]]; then
+		print_error "Invalid ${label}: '${value}' — must be a positive integer"
+		return 1
+	fi
+	return 0
+}
+
+# =============================================================================
 # Database Initialization
 # =============================================================================
 
@@ -177,13 +213,13 @@ cmd_add() {
 
 	local escaped_title escaped_pillar escaped_cluster escaped_notes
 	local escaped_intent escaped_author escaped_tags
-	escaped_title="${title//\'/\'\'}"
-	escaped_pillar="${pillar//\'/\'\'}"
-	escaped_cluster="${cluster//\'/\'\'}"
-	escaped_notes="${notes//\'/\'\'}"
-	escaped_intent="${intent//\'/\'\'}"
-	escaped_author="${author//\'/\'\'}"
-	escaped_tags="${tags//\'/\'\'}"
+	escaped_title="$(sql_escape "$title")"
+	escaped_pillar="$(sql_escape "$pillar")"
+	escaped_cluster="$(sql_escape "$cluster")"
+	escaped_notes="$(sql_escape "$notes")"
+	escaped_intent="$(sql_escape "$intent")"
+	escaped_author="$(sql_escape "$author")"
+	escaped_tags="$(sql_escape "$tags")"
 
 	local new_id
 	new_id=$(sqlite3 "$CC_DB" "
@@ -228,16 +264,30 @@ cmd_list() {
 
 	init_db
 
+	# Validate numeric limit
+	validate_positive_int "$limit" "limit" || return 1
+
+	# Build WHERE clause with escaped values
 	local where_clause="1=1"
-	[[ -n "$stage_filter" ]] && where_clause="${where_clause} AND c.stage = '${stage_filter}'"
-	[[ -n "$status_filter" ]] && where_clause="${where_clause} AND s.status = '${status_filter}'"
+	if [[ -n "$stage_filter" ]]; then
+		local escaped_stage
+		escaped_stage="$(sql_escape "$stage_filter")"
+		where_clause="${where_clause} AND c.stage = '${escaped_stage}'"
+	fi
+	if [[ -n "$status_filter" ]]; then
+		local escaped_status
+		escaped_status="$(sql_escape "$status_filter")"
+		where_clause="${where_clause} AND s.status = '${escaped_status}'"
+	fi
 
 	local query
 	if [[ -n "$platform_filter" ]]; then
+		local escaped_platform
+		escaped_platform="$(sql_escape "$platform_filter")"
 		query="SELECT c.id, c.title, c.stage, c.pillar, s.platform, s.scheduled_date, s.status
                FROM content_items c
                LEFT JOIN schedule s ON c.id = s.content_id
-               WHERE ${where_clause} AND s.platform = '${platform_filter}'
+               WHERE ${where_clause} AND s.platform = '${escaped_platform}'
                ORDER BY s.scheduled_date ASC
                LIMIT ${limit};"
 	else
@@ -271,7 +321,12 @@ cmd_list() {
 
 	echo ""
 	local total
-	total=$(sqlite3 "$CC_DB" "SELECT COUNT(*) FROM content_items WHERE ${where_clause};")
+	if [[ -n "$status_filter" ]]; then
+		# When filtering by schedule status, must join schedule table
+		total=$(sqlite3 "$CC_DB" "SELECT COUNT(DISTINCT c.id) FROM content_items c LEFT JOIN schedule s ON c.id = s.content_id WHERE ${where_clause};")
+	else
+		total=$(sqlite3 "$CC_DB" "SELECT COUNT(*) FROM content_items c WHERE ${where_clause};")
+	fi
 	echo "Total items: ${total}"
 
 	return 0
@@ -287,7 +342,7 @@ cmd_schedule() {
 		print_error "Usage: content-calendar-helper.sh schedule <content_id> <YYYY-MM-DD> <platform> [--time HH:MM]"
 		return 1
 	fi
-	_validate_numeric_id "$content_id" "content_id" || return 1
+	validate_numeric_id "$content_id" "content_id" || return 1
 	shift 3
 
 	local sched_time=""
@@ -429,7 +484,7 @@ cmd_status() {
 	init_db
 
 	if [[ -n "$item_id" ]]; then
-		_validate_numeric_id "$item_id" "item_id" || return 1
+		validate_numeric_id "$item_id" "item_id" || return 1
 
 		# Show specific item details
 		local item_data
@@ -526,7 +581,7 @@ cmd_advance() {
 		echo "  Stages: ${CC_STAGES}"
 		return 1
 	fi
-	_validate_numeric_id "$item_id" "item_id" || return 1
+	validate_numeric_id "$item_id" "item_id" || return 1
 
 	# Validate stage
 	if ! echo "$CC_STAGES" | grep -qw "$target_stage"; then
@@ -594,6 +649,7 @@ cmd_due() {
 		esac
 	done
 
+	validate_positive_int "$days" "days" || return 1
 	init_db
 
 	local today_date
@@ -755,6 +811,7 @@ cmd_gaps() {
 		esac
 	done
 
+	validate_positive_int "$days" "days" || return 1
 	init_db
 
 	local today_date
@@ -904,19 +961,6 @@ cmd_export() {
 # =============================================================================
 # Helper Functions
 # =============================================================================
-
-# Validate that a value is a positive integer (for SQL ID parameters)
-_validate_numeric_id() {
-	local value="$1"
-	local label="${2:-ID}"
-
-	if ! [[ "$value" =~ ^[0-9]+$ ]]; then
-		print_error "${label} must be a positive integer, got: ${value}"
-		return 1
-	fi
-
-	return 0
-}
 
 # Show optimal posting window for a platform
 _show_posting_window() {
