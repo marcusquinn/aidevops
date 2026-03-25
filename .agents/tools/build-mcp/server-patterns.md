@@ -17,19 +17,18 @@ tools:
 
 ## Quick Reference
 
-- **Purpose**: Patterns for registering MCP tools, resources, and prompts
 - **Validation**: Always use Zod schemas with `.describe()`
 - **SDK**: `@modelcontextprotocol/sdk` + `elysia-mcp`
 
 **Pattern Types**:
 
-| Type | Purpose | Naming Pattern | Example |
-|------|---------|----------------|---------|
+| Type | Purpose | Naming | Example |
+|------|---------|--------|---------|
 | Tool | Execute actions, call APIs | `verb_noun` | `get_user`, `create_item` |
 | Resource | Expose data/files | `protocol://path` | `config://settings` |
 | Prompt | Reusable prompt templates | `action` or `action_context` | `summarize`, `code_review` |
 
-**Tool Naming Quick Reference**:
+**Tool Naming Verbs**:
 
 | Verb | Use Case | Examples |
 |------|----------|----------|
@@ -39,6 +38,10 @@ tools:
 | `create` | New resource | `create_user`, `create_project` |
 | `update` | Modify existing | `update_user`, `update_settings` |
 | `delete` | Remove resource | `delete_user`, `delete_file` |
+| `validate` | Check validity | `validate_email`, `validate_config` |
+| `convert` | Transform format | `convert_currency`, `convert_image` |
+| `send` | Transmit data | `send_email`, `send_notification` |
+| `run` | Execute process | `run_build`, `run_tests` |
 
 <!-- AI-CONTEXT-END -->
 
@@ -365,45 +368,20 @@ server.prompt(
 );
 ```
 
-## Tool Naming Conventions
+## Tool Naming
 
-AI assistants select tools based on names and descriptions. Follow these conventions for optimal discoverability:
+AI assistants select tools by name and description. Use `snake_case` `verb_noun` format.
 
-### Naming Pattern: `verb_noun`
-
-```text
-Format: {action}_{resource}
-Examples: get_user, list_items, create_order, delete_file, search_documents
-```
-
-| Verb | When to Use | Examples |
-|------|-------------|----------|
-| `get` | Retrieve single item by ID | `get_user`, `get_order`, `get_config` |
-| `list` | Retrieve multiple items | `list_users`, `list_orders`, `list_files` |
-| `search` | Query with filters | `search_documents`, `search_logs` |
-| `create` | Create new resource | `create_user`, `create_project` |
-| `update` | Modify existing resource | `update_user`, `update_settings` |
-| `delete` | Remove resource | `delete_user`, `delete_file` |
-| `validate` | Check validity | `validate_email`, `validate_config` |
-| `convert` | Transform format | `convert_currency`, `convert_image` |
-| `send` | Transmit data | `send_email`, `send_notification` |
-| `run` | Execute process | `run_build`, `run_tests` |
-
-### Naming Anti-Patterns
+### Anti-Patterns
 
 ```typescript
-// BAD: Vague or generic names
+// BAD: Vague or generic
 'do_thing'        // What thing?
 'process'         // Process what?
 'handle_data'     // Too generic
-'execute'         // Execute what?
 
-// BAD: Inconsistent casing
+// BAD: Wrong casing or redundant prefixes
 'getUser'         // Use snake_case, not camelCase
-'Get_User'        // Inconsistent capitalization
-'GET_USER'        // All caps
-
-// BAD: Redundant prefixes
 'tool_get_user'   // "tool_" prefix is redundant
 'mcp_list_items'  // "mcp_" prefix is redundant
 
@@ -411,84 +389,50 @@ Examples: get_user, list_items, create_order, delete_file, search_documents
 'get_user'
 'list_items'
 'search_documents'
-'create_order'
 ```
 
 ### Compound Actions
 
-For complex operations, use descriptive compound names:
+For multi-step or domain-specific operations:
 
 ```typescript
-// Multi-step operations
 'get_user_with_orders'    // Returns user + their orders
 'list_active_sessions'    // Filtered list
 'search_and_replace'      // Combined action
-
-// Domain-specific operations
 'deploy_to_production'
 'sync_inventory'
 'generate_report'
 'export_to_csv'
 ```
 
-## Tool Description Guidelines
+## Descriptions & Best Practices
 
-Descriptions are critical for AI assistants to understand when and how to use tools.
+Tool descriptions determine when AI assistants use a tool. Every description should cover: **what** it does, **when** to use it, and **side effects** (if any).
 
-### Description Structure
-
-Every tool description should answer:
-
-1. **What** - What does this tool do?
-2. **When** - When should an AI use this tool?
-3. **Input** - What inputs are required/optional?
-4. **Output** - What does it return?
-5. **Side Effects** - Does it modify state?
-
-### Description Template
+### Tool Descriptions
 
 ```typescript
-server.tool(
-  'create_user',
-  // Description should be 1-2 sentences covering purpose and key behavior
-  'Creates a new user account with the specified details. Returns the created user object with generated ID.',
-  {
-    email: z.string().email().describe('User email address (must be unique)'),
-    name: z.string().describe('Full name of the user'),
-    role: z.enum(['admin', 'user', 'guest']).optional().describe('User role (default: user)'),
-  },
-  async (args) => { /* ... */ }
-);
-```
-
-### Good vs Bad Descriptions
-
-```typescript
-// BAD: Too vague
+// BAD: Too vague — AI can't determine when to use it
 server.tool('get_data', 'Gets data', { /* ... */ });
 
-// BAD: Missing key information
+// BAD: Missing side-effect info
 server.tool('delete_user', 'Deletes a user', { /* ... */ });
-// Missing: What happens to user's data? Is this reversible?
 
-// BAD: Too technical, not AI-friendly
-server.tool('query_db', 'Executes SELECT * FROM users WHERE id = ?', { /* ... */ });
-
-// GOOD: Clear purpose, behavior, and constraints
+// GOOD: Clear purpose, behavior, constraints
 server.tool(
   'get_user',
   'Retrieves a user by their unique ID. Returns user profile including name, email, and role. Returns null if user not found.',
   { id: z.string().uuid().describe('Unique user identifier (UUID format)') }
 );
 
-// GOOD: Explains side effects
+// GOOD: Documents side effects and irreversibility
 server.tool(
   'delete_user',
   'Permanently deletes a user account and all associated data. This action cannot be undone. Requires admin privileges.',
   { id: z.string().uuid().describe('User ID to delete') }
 );
 
-// GOOD: Explains when to use
+// GOOD: Explains when to use (vs alternatives)
 server.tool(
   'search_documents',
   'Full-text search across all documents. Use this when looking for documents by content rather than by ID. Supports wildcards and phrase matching.',
@@ -499,109 +443,41 @@ server.tool(
 );
 ```
 
-### Parameter Description Best Practices
+### Parameter Descriptions
 
 ```typescript
-// BAD: No description
-query: z.string()
+// BAD
+query: z.string()                           // No description
+query: z.string().describe('Query')         // Redundant
+limit: z.number().describe('Limit')         // Missing constraints
 
-// BAD: Redundant description
-query: z.string().describe('Query')
-
-// BAD: Missing constraints
-limit: z.number().describe('Limit')
-
-// GOOD: Explains purpose and constraints
+// GOOD
 query: z.string().describe('Search query - supports wildcards (*) and exact phrases ("...")')
-
-// GOOD: Includes valid values
 status: z.enum(['pending', 'active', 'completed']).describe('Filter by status')
-
-// GOOD: Explains defaults and ranges
 limit: z.number().min(1).max(100).optional().default(20)
   .describe('Results per page (1-100, default: 20)')
-
-// GOOD: Explains format requirements
 date: z.string().describe('Date in ISO 8601 format (YYYY-MM-DD)')
-
-// GOOD: Explains relationships
 user_id: z.string().uuid().describe('ID of the user who owns this resource')
 ```
 
-### Indicating Side Effects
-
-Always document if a tool modifies state:
+### Use Specific Types
 
 ```typescript
-// Read-only tool - no side effects
-server.tool(
-  'get_user',
-  'Retrieves user details. Read-only operation.',
-  { /* ... */ }
-);
-
-// Write operation - has side effects
-server.tool(
-  'update_user',
-  'Updates user profile fields. Modifies the user record in the database.',
-  { /* ... */ }
-);
-
-// Destructive operation - irreversible
-server.tool(
-  'delete_user',
-  'Permanently deletes user and all data. IRREVERSIBLE. Requires confirmation.',
-  { /* ... */ }
-);
-
-// External side effects
-server.tool(
-  'send_email',
-  'Sends an email to the specified recipient. Cannot be undone once sent.',
-  { /* ... */ }
-);
-```
-
-## Best Practices
-
-### 1. Always Describe Parameters
-
-```typescript
-// Good
-query: z.string().describe('Search query to find matching items')
-
-// Bad
-query: z.string()
-```
-
-### 2. Use Specific Types
-
-```typescript
-// Good
-email: z.string().email().describe('User email address')
-url: z.string().url().describe('Webhook URL')
-count: z.number().int().positive().describe('Number of items')
-
-// Bad
+// BAD — loses validation
 email: z.string()
 url: z.string()
 count: z.number()
+
+// GOOD — validates at schema level
+email: z.string().email().describe('User email address')
+url: z.string().url().describe('Webhook URL')
+count: z.number().int().positive().describe('Number of items')
 ```
 
-### 3. Provide Defaults for Optional Parameters
+### Return Structured JSON
 
 ```typescript
-// Good
-limit: z.number().optional().default(20).describe('Max results (default: 20)')
-
-// Okay but less clear
-limit: z.number().optional().describe('Max results')
-```
-
-### 4. Return Structured JSON
-
-```typescript
-// Good - structured, parseable
+// GOOD — structured, parseable
 return {
   content: [{
     type: 'text',
@@ -609,16 +485,16 @@ return {
   }],
 };
 
-// Bad - unstructured text
+// BAD — unstructured text
 return {
   content: [{ type: 'text', text: `Success! Got ${result.length} items` }],
 };
 ```
 
-### 5. Handle Errors Gracefully
+### Handle Errors with `isError`
 
 ```typescript
-// Good - structured error
+// GOOD — structured error with isError flag
 return {
   content: [{
     type: 'text',
@@ -627,6 +503,22 @@ return {
   isError: true,
 };
 
-// Bad - throws exception
+// BAD — throws exception (crashes the tool call)
 throw new Error('Item not found');
+```
+
+### Document Side Effects
+
+```typescript
+// Read-only — no side effects
+server.tool('get_user', 'Retrieves user details. Read-only operation.', { /* ... */ });
+
+// Write — modifies state
+server.tool('update_user', 'Updates user profile fields. Modifies the user record in the database.', { /* ... */ });
+
+// Destructive — irreversible
+server.tool('delete_user', 'Permanently deletes user and all data. IRREVERSIBLE. Requires confirmation.', { /* ... */ });
+
+// External — cannot be undone
+server.tool('send_email', 'Sends an email to the specified recipient. Cannot be undone once sent.', { /* ... */ });
 ```
