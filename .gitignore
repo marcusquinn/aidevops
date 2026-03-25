@@ -47,6 +47,7 @@ authorized_keys
 # Exception for credential/secret management scripts (not actual credentials)
 !.agents/scripts/credential-helper.sh
 !.agents/scripts/secret-helper.sh
+!.agents/scripts/secret-hygiene-helper.sh
 !.agents/scripts/tests/test-secret-helper.sh
 
 # Environment files

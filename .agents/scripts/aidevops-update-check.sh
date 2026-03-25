@@ -268,6 +268,40 @@ main() {
 		echo "$security_posture"
 	fi
 
+	# Secret hygiene & supply chain IoC check
+	local secret_hygiene=""
+	if [[ -x "${script_dir}/secret-hygiene-helper.sh" ]]; then
+		secret_hygiene="$("${script_dir}/secret-hygiene-helper.sh" startup-check || true)"
+	fi
+	if [[ -n "$secret_hygiene" ]]; then
+		echo "$secret_hygiene"
+	fi
+
+	# Active security advisories (delivered via aidevops updates, dismissed by user)
+	local advisories_output=""
+	local advisories_dir="$HOME/.aidevops/advisories"
+	local dismissed_file="$advisories_dir/dismissed.txt"
+	if [[ -d "$advisories_dir" ]]; then
+		for advisory_file in "$advisories_dir"/*.advisory; do
+			[[ -f "$advisory_file" ]] || continue
+			local adv_id
+			adv_id=$(basename "$advisory_file" .advisory)
+			# Skip dismissed advisories
+			if [[ -f "$dismissed_file" ]] && grep -qxF "$adv_id" "$dismissed_file" 2>/dev/null; then
+				continue
+			fi
+			local first_line
+			first_line=$(head -1 "$advisory_file" | sed 's/^[[:space:]]*//')
+			if [[ -n "$first_line" ]]; then
+				advisories_output="${advisories_output:+${advisories_output}
+}${first_line} Run in your terminal: secret-hygiene-helper.sh scan | Dismiss: secret-hygiene-helper.sh dismiss ${adv_id}"
+			fi
+		done
+	fi
+	if [[ -n "$advisories_output" ]]; then
+		echo "$advisories_output"
+	fi
+
 	# Contribution watch: surface items needing reply (t1419)
 	# Reads cached state file — no API calls, no LLM, no comment bodies.
 	local contribution_watch=""
@@ -301,6 +335,8 @@ main() {
 		[[ -n "$nudge_output" ]] && echo "$nudge_output"
 		[[ -n "$session_warning" ]] && echo "$session_warning"
 		[[ -n "$security_posture" ]] && echo "$security_posture"
+		[[ -n "$secret_hygiene" ]] && echo "$secret_hygiene"
+		[[ -n "$advisories_output" ]] && echo "$advisories_output"
 		[[ -n "$contribution_watch" ]] && echo "$contribution_watch"
 	} >"$cache_dir/session-greeting.txt"
 

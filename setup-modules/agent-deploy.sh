@@ -207,6 +207,22 @@ deploy_aidevops_agents() {
 			print_warning "VERSION file not found in repo root"
 		fi
 
+		# Deploy security advisories (shown in session greeting until dismissed)
+		local advisories_source="$source_dir/advisories"
+		local advisories_target="$HOME/.aidevops/advisories"
+		if [[ -d "$advisories_source" ]]; then
+			mkdir -p "$advisories_target"
+			local adv_count=0
+			for adv_file in "$advisories_source"/*.advisory; do
+				[[ -f "$adv_file" ]] || continue
+				cp "$adv_file" "$advisories_target/"
+				adv_count=$((adv_count + 1))
+			done
+			if [[ "$adv_count" -gt 0 ]]; then
+				print_info "Deployed $adv_count security advisory/advisories"
+			fi
+		fi
+
 		# Inject extracted OpenCode plan-reminder into Plan+ if available
 		local plan_reminder="$HOME/.aidevops/cache/opencode-prompts/plan-reminder.txt"
 		local plan_plus="$target_dir/plan-plus.md"
