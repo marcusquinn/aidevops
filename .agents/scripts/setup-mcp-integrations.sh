@@ -126,13 +126,275 @@ print_mcp_security_warning() {
 	return 0
 }
 
-# Install specific MCP integration
+# --- Per-integration install helpers ---
+
+_install_chrome_devtools() {
+	local mcp_command="$1"
+	print_info "Setting up Chrome DevTools MCP with advanced configuration..."
+	if command -v claude &>/dev/null; then
+		claude mcp add chrome-devtools "$mcp_command" --channel=canary --headless=true
+	fi
+	return 0
+}
+
+_install_playwright() {
+	local mcp_command="$1"
+	print_info "Installing Playwright browsers..."
+	npx playwright install
+	if command -v claude &>/dev/null; then
+		claude mcp add playwright "$mcp_command"
+	fi
+	return 0
+}
+
+_install_cloudflare_browser() {
+	print_warning "Cloudflare Browser Rendering requires API credentials"
+	print_info "Set CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN environment variables"
+	return 0
+}
+
+_install_ahrefs() {
+	print_warning "Ahrefs MCP requires API key"
+	print_info "Get your standard 40-char API key from: https://ahrefs.com/api"
+	print_info "Note: JWT-style tokens do NOT work - use the standard API key"
+	echo ""
+	print_info "Store in ~/.config/aidevops/credentials.sh:"
+	print_info "  export AHREFS_API_KEY=\"your_40_char_key\""
+	echo ""
+	print_info "For OpenCode, use bash wrapper pattern in opencode.json:"
+	print_info '  "ahrefs": {'
+	print_info '    "type": "local",'
+	print_info '    "command": ["/bin/bash", "-c", "API_KEY=\$AHREFS_API_KEY /opt/homebrew/bin/npx -y @ahrefs/mcp@latest"],'
+	print_info '    "enabled": true'
+	print_info '  }'
+	echo ""
+	print_info "Note: The MCP expects API_KEY env var, not AHREFS_API_KEY"
+	return 0
+}
+
+_install_perplexity() {
+	print_warning "Perplexity MCP requires API key"
+	print_info "Set PERPLEXITY_API_KEY environment variable"
+	print_info "Get your API key from: https://docs.perplexity.ai/"
+	return 0
+}
+
+_install_nextjs_devtools() {
+	local mcp_command="$1"
+	print_info "Setting up Next.js DevTools MCP..."
+	if command -v claude &>/dev/null; then
+		claude mcp add nextjs-devtools "$mcp_command"
+	fi
+	return 0
+}
+
+_install_google_search_console() {
+	local mcp_command="$1"
+	print_warning "Google Search Console MCP requires Google API credentials"
+	print_info "Set GOOGLE_APPLICATION_CREDENTIALS environment variable"
+	print_info "Get credentials from: https://console.cloud.google.com/"
+	print_info "Enable Search Console API in your Google Cloud project"
+	if command -v claude &>/dev/null; then
+		claude mcp add google-search-console "$mcp_command"
+	fi
+	return 0
+}
+
+_install_pagespeed_insights() {
+	local mcp_command="$1"
+	print_info "Setting up PageSpeed Insights MCP for website performance auditing..."
+	print_warning "Optional: Set GOOGLE_API_KEY for higher rate limits"
+	print_info "Get API key from: https://console.cloud.google.com/"
+	print_info "Enable PageSpeed Insights API in your Google Cloud project"
+	print_info "Also installing Lighthouse CLI for comprehensive auditing..."
+
+	# Install Lighthouse CLI if not present
+	# Use --ignore-scripts to prevent execution of postinstall scripts for security
+	if ! command -v lighthouse &>/dev/null; then
+		npm install -g --ignore-scripts lighthouse
+	fi
+
+	if command -v claude &>/dev/null; then
+		claude mcp add pagespeed-insights "$mcp_command"
+	fi
+
+	print_success "PageSpeed Insights MCP setup complete!"
+	print_info "Use: ./.agents/scripts/pagespeed-helper.sh for CLI access"
+	return 0
+}
+
+_install_grep_vercel() {
+	print_info "Grep by Vercel MCP (grep.app) is no longer installed by aidevops"
+	print_info "Use @github-search subagent instead (CLI-based, zero token overhead)"
+	print_info "If you have Oh-My-OpenCode, it provides grep_app MCP"
+	echo
+	print_info "Usage: @github-search 'search pattern'"
+	print_info "Or directly: gh search code 'pattern' --language typescript"
+	return 0
+}
+
+_install_claude_code_mcp() {
+	local mcp_command="$1"
+	print_info "Setting up Claude Code MCP (forked) for Claude Code automation..."
+	print_info "Source: https://github.com/marcusquinn/claude-code-mcp"
+	print_info "Upstream: https://github.com/steipete/claude-code-mcp (revert if merged)"
+	print_warning "Requires Claude Code and prior acceptance of --dangerously-skip-permissions"
+	print_info "One-time setup: claude --dangerously-skip-permissions"
+	if command -v claude &>/dev/null; then
+		claude mcp add claude-code-mcp "$mcp_command"
+	fi
+	print_success "Claude Code MCP setup complete!"
+	print_info "Use 'claude_code' tool to run Claude Code tasks"
+	return 0
+}
+
+_install_stagehand() {
+	print_info "Setting up Stagehand AI Browser Automation MCP integration..."
+
+	# First ensure Stagehand JavaScript is installed
+	if ! bash "${SCRIPT_DIR}/../../.agents/scripts/stagehand-helper.sh" status &>/dev/null; then
+		print_info "Installing Stagehand JavaScript first..."
+		bash "${SCRIPT_DIR}/../../.agents/scripts/stagehand-helper.sh" install
+	fi
+
+	# Setup advanced configuration
+	bash "${SCRIPT_DIR}/stagehand-setup.sh" setup
+
+	# Add to Claude MCP if available
+	if command -v claude &>/dev/null; then
+		claude mcp add stagehand "node" --args "${HOME}/.aidevops/stagehand/examples/basic-example.js"
+	fi
+
+	print_success "Stagehand JavaScript MCP integration completed"
+	print_info "Try: 'Ask Claude to help with browser automation using Stagehand'"
+	print_info "Use: ./.agents/scripts/stagehand-helper.sh for CLI access"
+	return 0
+}
+
+_install_stagehand_python() {
+	print_info "Setting up Stagehand Python AI Browser Automation MCP integration..."
+
+	# First ensure Stagehand Python is installed
+	if ! bash "${SCRIPT_DIR}/../../.agents/scripts/stagehand-python-helper.sh" status &>/dev/null; then
+		print_info "Installing Stagehand Python first..."
+		bash "${SCRIPT_DIR}/../../.agents/scripts/stagehand-python-helper.sh" install
+	fi
+
+	# Setup advanced configuration
+	bash "${SCRIPT_DIR}/stagehand-python-setup.sh" setup
+
+	# Add to Claude MCP if available
+	if command -v claude &>/dev/null; then
+		local python_path="${HOME}/.aidevops/stagehand-python/.venv/bin/python"
+		claude mcp add stagehand-python "$python_path" --args "${HOME}/.aidevops/stagehand-python/examples/basic_example.py"
+	fi
+
+	print_success "Stagehand Python MCP integration completed"
+	print_info "Try: 'Ask Claude to help with Python browser automation using Stagehand'"
+	print_info "Use: ./.agents/scripts/stagehand-python-helper.sh for CLI access"
+	return 0
+}
+
+_install_stagehand_both() {
+	print_info "Setting up both Stagehand JavaScript and Python MCP integrations..."
+
+	# Setup JavaScript version
+	bash "$0" stagehand
+
+	# Setup Python version
+	bash "$0" stagehand-python
+
+	print_success "Both Stagehand integrations completed"
+	print_info "JavaScript: ./.agents/scripts/stagehand-helper.sh"
+	print_info "Python: ./.agents/scripts/stagehand-python-helper.sh"
+	return 0
+}
+
+_install_dataforseo() {
+	print_info "Setting up DataForSEO MCP for comprehensive SEO data..."
+	print_warning "DataForSEO MCP requires API credentials"
+	print_info "Get credentials from: https://app.dataforseo.com/"
+	echo ""
+	print_info "Store in ~/.config/aidevops/credentials.sh:"
+	print_info "  export DATAFORSEO_USERNAME=\"your_username\""
+	print_info "  export DATAFORSEO_PASSWORD=\"your_password\""
+	echo ""
+	print_info "Or use the helper script:"
+	print_info "  bash ~/.aidevops/agents/scripts/setup-local-api-keys.sh set DATAFORSEO_USERNAME your_username"
+	print_info "  bash ~/.aidevops/agents/scripts/setup-local-api-keys.sh set DATAFORSEO_PASSWORD your_password"
+	echo ""
+	print_info "For OpenCode, use bash wrapper pattern in opencode.json:"
+	print_info '  "dataforseo": {'
+	print_info '    "type": "local",'
+	print_info '    "command": ["/bin/bash", "-c", "source ~/.config/aidevops/credentials.sh && DATAFORSEO_USERNAME=\$DATAFORSEO_USERNAME DATAFORSEO_PASSWORD=\$DATAFORSEO_PASSWORD npx dataforseo-mcp-server"],'
+	print_info '    "enabled": true'
+	print_info '  }'
+	echo ""
+	print_info "Available modules: SERP, KEYWORDS_DATA, BACKLINKS, ONPAGE, DATAFORSEO_LABS, BUSINESS_DATA, DOMAIN_ANALYTICS, CONTENT_ANALYSIS, AI_OPTIMIZATION"
+	print_info "Docs: https://docs.dataforseo.com/v3/"
+	return 0
+}
+
+_install_unstract() {
+	print_info "Setting up Unstract self-hosted document processing platform..."
+	print_info "This installs the full Unstract platform locally via Docker Compose"
+	print_info "Requirements: Docker, Docker Compose, Git, 8GB RAM"
+	echo
+
+	# Run the helper script for installation
+	local helper_script="${SCRIPT_DIR}/unstract-helper.sh"
+	if [[ -f "$helper_script" ]]; then
+		bash "$helper_script" install
+	else
+		print_error "unstract-helper.sh not found at ${helper_script}"
+		print_info "Manual install:"
+		print_info "  git clone https://github.com/Zipstack/unstract.git ~/.aidevops/unstract"
+		print_info "  cd ~/.aidevops/unstract && ./run-platform.sh"
+		return 1
+	fi
+
+	echo
+	print_info "Your existing LLM API keys can be used as Unstract adapters:"
+	print_info "  Run: unstract-helper.sh configure-llm"
+	echo ""
+	print_info "The MCP connects to your local instance by default."
+	print_info "Config template: configs/mcp-templates/unstract.json"
+	return 0
+}
+
+_install_context7() {
+	print_info "Setting up Context7 MCP for real-time library documentation..."
+	print_info "Context7 provides up-to-date docs for libraries and frameworks."
+	echo ""
+	print_info "Two setup options:"
+	echo ""
+	print_info "  1. Remote MCP (recommended — zero install):"
+	print_info '     "context7": {'
+	print_info '       "type": "remote",'
+	print_info '       "url": "https://mcp.context7.com/mcp",'
+	print_info '       "enabled": true'
+	print_info '     }'
+	echo ""
+	print_info "  2. Local MCP (via npx):"
+	print_info '     "context7": {'
+	print_info '       "type": "local",'
+	print_info '       "command": ["npx", "-y", "@upstash/context7-mcp@latest"],'
+	print_info '       "enabled": true'
+	print_info '     }'
+	echo ""
+	print_info "Disable telemetry: export CTX7_TELEMETRY_DISABLED=1"
+	print_info "CLI alternative: npx ctx7 setup --opencode --cli"
+	print_info "Docs: ~/.aidevops/agents/tools/context/context7.md"
+	return 0
+}
+
+# Install specific MCP integration — thin dispatcher to per-integration helpers
 install_mcp() {
 	local mcp_name="$1"
 	local mcp_command
 	mcp_command=$(get_mcp_command "$mcp_name")
 
-	if [[ -z "$mcp_command" ]]; then
+	if ! is_known_mcp "$mcp_name"; then
 		print_error "Unknown MCP integration: $mcp_name"
 		return 1
 	fi
@@ -141,230 +403,23 @@ install_mcp() {
 	print_info "Installing $mcp_name MCP..."
 
 	case "$mcp_name" in
-	"chrome-devtools")
-		print_info "Setting up Chrome DevTools MCP with advanced configuration..."
-		if command -v claude &>/dev/null; then
-			claude mcp add chrome-devtools "$mcp_command" --channel=canary --headless=true
-		fi
-		;;
-	"playwright")
-		print_info "Installing Playwright browsers..."
-		npx playwright install
-		if command -v claude &>/dev/null; then
-			claude mcp add playwright "$mcp_command"
-		fi
-		;;
-	"cloudflare-browser")
-		print_warning "Cloudflare Browser Rendering requires API credentials"
-		print_info "Set CLOUDFLARE_ACCOUNT_ID and CLOUDFLARE_API_TOKEN environment variables"
-		;;
-	"ahrefs")
-		print_warning "Ahrefs MCP requires API key"
-		print_info "Get your standard 40-char API key from: https://ahrefs.com/api"
-		print_info "Note: JWT-style tokens do NOT work - use the standard API key"
-		echo ""
-		print_info "Store in ~/.config/aidevops/credentials.sh:"
-		print_info "  export AHREFS_API_KEY=\"your_40_char_key\""
-		echo ""
-		print_info "For OpenCode, use bash wrapper pattern in opencode.json:"
-		print_info '  "ahrefs": {'
-		print_info '    "type": "local",'
-		print_info '    "command": ["/bin/bash", "-c", "API_KEY=\$AHREFS_API_KEY /opt/homebrew/bin/npx -y @ahrefs/mcp@latest"],'
-		print_info '    "enabled": true'
-		print_info '  }'
-		echo ""
-		print_info "Note: The MCP expects API_KEY env var, not AHREFS_API_KEY"
-		;;
-	"perplexity")
-		print_warning "Perplexity MCP requires API key"
-		print_info "Set PERPLEXITY_API_KEY environment variable"
-		print_info "Get your API key from: https://docs.perplexity.ai/"
-		;;
-	"nextjs-devtools")
-		print_info "Setting up Next.js DevTools MCP..."
-		if command -v claude &>/dev/null; then
-			claude mcp add nextjs-devtools "$mcp_command"
-		fi
-		;;
-	"google-search-console")
-		print_warning "Google Search Console MCP requires Google API credentials"
-		print_info "Set GOOGLE_APPLICATION_CREDENTIALS environment variable"
-		print_info "Get credentials from: https://console.cloud.google.com/"
-		print_info "Enable Search Console API in your Google Cloud project"
-		if command -v claude &>/dev/null; then
-			claude mcp add google-search-console "$mcp_command"
-		fi
-		;;
-	"pagespeed-insights")
-		print_info "Setting up PageSpeed Insights MCP for website performance auditing..."
-		print_warning "Optional: Set GOOGLE_API_KEY for higher rate limits"
-		print_info "Get API key from: https://console.cloud.google.com/"
-		print_info "Enable PageSpeed Insights API in your Google Cloud project"
-		print_info "Also installing Lighthouse CLI for comprehensive auditing..."
-
-		# Install Lighthouse CLI if not present
-		# Use --ignore-scripts to prevent execution of postinstall scripts for security
-		if ! command -v lighthouse &>/dev/null; then
-			npm install -g --ignore-scripts lighthouse
-		fi
-
-		if command -v claude &>/dev/null; then
-			claude mcp add pagespeed-insights "$mcp_command"
-		fi
-
-		print_success "PageSpeed Insights MCP setup complete!"
-		print_info "Use: ./.agents/scripts/pagespeed-helper.sh for CLI access"
-		;;
-	"grep-vercel")
-		print_info "Grep by Vercel MCP (grep.app) is no longer installed by aidevops"
-		print_info "Use @github-search subagent instead (CLI-based, zero token overhead)"
-		print_info "If you have Oh-My-OpenCode, it provides grep_app MCP"
-		echo
-		print_info "Usage: @github-search 'search pattern'"
-		print_info "Or directly: gh search code 'pattern' --language typescript"
-		;;
-	"claude-code-mcp")
-		print_info "Setting up Claude Code MCP (forked) for Claude Code automation..."
-		print_info "Source: https://github.com/marcusquinn/claude-code-mcp"
-		print_info "Upstream: https://github.com/steipete/claude-code-mcp (revert if merged)"
-		print_warning "Requires Claude Code and prior acceptance of --dangerously-skip-permissions"
-		print_info "One-time setup: claude --dangerously-skip-permissions"
-		if command -v claude &>/dev/null; then
-			claude mcp add claude-code-mcp "$mcp_command"
-		fi
-		print_success "Claude Code MCP setup complete!"
-		print_info "Use 'claude_code' tool to run Claude Code tasks"
-		;;
-	"stagehand")
-		print_info "Setting up Stagehand AI Browser Automation MCP integration..."
-
-		# First ensure Stagehand JavaScript is installed
-		if ! bash "${SCRIPT_DIR}/../../.agents/scripts/stagehand-helper.sh" status &>/dev/null; then
-			print_info "Installing Stagehand JavaScript first..."
-			bash "${SCRIPT_DIR}/../../.agents/scripts/stagehand-helper.sh" install
-		fi
-
-		# Setup advanced configuration
-		bash "${SCRIPT_DIR}/stagehand-setup.sh" setup
-
-		# Add to Claude MCP if available
-		if command -v claude &>/dev/null; then
-			claude mcp add stagehand "node" --args "${HOME}/.aidevops/stagehand/examples/basic-example.js"
-		fi
-
-		print_success "Stagehand JavaScript MCP integration completed"
-		print_info "Try: 'Ask Claude to help with browser automation using Stagehand'"
-		print_info "Use: ./.agents/scripts/stagehand-helper.sh for CLI access"
-		;;
-	"stagehand-python")
-		print_info "Setting up Stagehand Python AI Browser Automation MCP integration..."
-
-		# First ensure Stagehand Python is installed
-		if ! bash "${SCRIPT_DIR}/../../.agents/scripts/stagehand-python-helper.sh" status &>/dev/null; then
-			print_info "Installing Stagehand Python first..."
-			bash "${SCRIPT_DIR}/../../.agents/scripts/stagehand-python-helper.sh" install
-		fi
-
-		# Setup advanced configuration
-		bash "${SCRIPT_DIR}/stagehand-python-setup.sh" setup
-
-		# Add to Claude MCP if available
-		if command -v claude &>/dev/null; then
-			local python_path="${HOME}/.aidevops/stagehand-python/.venv/bin/python"
-			claude mcp add stagehand-python "$python_path" --args "${HOME}/.aidevops/stagehand-python/examples/basic_example.py"
-		fi
-
-		print_success "Stagehand Python MCP integration completed"
-		print_info "Try: 'Ask Claude to help with Python browser automation using Stagehand'"
-		print_info "Use: ./.agents/scripts/stagehand-python-helper.sh for CLI access"
-		;;
-	"stagehand-both")
-		print_info "Setting up both Stagehand JavaScript and Python MCP integrations..."
-
-		# Setup JavaScript version
-		bash "$0" stagehand
-
-		# Setup Python version
-		bash "$0" stagehand-python
-
-		print_success "Both Stagehand integrations completed"
-		print_info "JavaScript: ./.agents/scripts/stagehand-helper.sh"
-		print_info "Python: ./.agents/scripts/stagehand-python-helper.sh"
-		;;
-	"dataforseo")
-		print_info "Setting up DataForSEO MCP for comprehensive SEO data..."
-		print_warning "DataForSEO MCP requires API credentials"
-		print_info "Get credentials from: https://app.dataforseo.com/"
-		echo ""
-		print_info "Store in ~/.config/aidevops/credentials.sh:"
-		print_info "  export DATAFORSEO_USERNAME=\"your_username\""
-		print_info "  export DATAFORSEO_PASSWORD=\"your_password\""
-		echo ""
-		print_info "Or use the helper script:"
-		print_info "  bash ~/.aidevops/agents/scripts/setup-local-api-keys.sh set DATAFORSEO_USERNAME your_username"
-		print_info "  bash ~/.aidevops/agents/scripts/setup-local-api-keys.sh set DATAFORSEO_PASSWORD your_password"
-		echo ""
-		print_info "For OpenCode, use bash wrapper pattern in opencode.json:"
-		print_info '  "dataforseo": {'
-		print_info '    "type": "local",'
-		print_info '    "command": ["/bin/bash", "-c", "source ~/.config/aidevops/credentials.sh && DATAFORSEO_USERNAME=\$DATAFORSEO_USERNAME DATAFORSEO_PASSWORD=\$DATAFORSEO_PASSWORD npx dataforseo-mcp-server"],'
-		print_info '    "enabled": true'
-		print_info '  }'
-		echo ""
-		print_info "Available modules: SERP, KEYWORDS_DATA, BACKLINKS, ONPAGE, DATAFORSEO_LABS, BUSINESS_DATA, DOMAIN_ANALYTICS, CONTENT_ANALYSIS, AI_OPTIMIZATION"
-		print_info "Docs: https://docs.dataforseo.com/v3/"
-		;;
+	"chrome-devtools") _install_chrome_devtools "$mcp_command" ;;
+	"playwright") _install_playwright "$mcp_command" ;;
+	"cloudflare-browser") _install_cloudflare_browser ;;
+	"ahrefs") _install_ahrefs ;;
+	"perplexity") _install_perplexity ;;
+	"nextjs-devtools") _install_nextjs_devtools "$mcp_command" ;;
+	"google-search-console") _install_google_search_console "$mcp_command" ;;
+	"pagespeed-insights") _install_pagespeed_insights "$mcp_command" ;;
+	"grep-vercel") _install_grep_vercel ;;
+	"claude-code-mcp") _install_claude_code_mcp "$mcp_command" ;;
+	"stagehand") _install_stagehand ;;
+	"stagehand-python") _install_stagehand_python ;;
+	"stagehand-both") _install_stagehand_both ;;
+	"dataforseo") _install_dataforseo ;;
 	# serper - REMOVED: Uses curl subagent (.agents/seo/serper.md), no MCP needed
-	# Get API key from https://serper.dev/ and set SERPER_API_KEY in credentials.sh
-	"unstract")
-		print_info "Setting up Unstract self-hosted document processing platform..."
-		print_info "This installs the full Unstract platform locally via Docker Compose"
-		print_info "Requirements: Docker, Docker Compose, Git, 8GB RAM"
-		echo
-
-		# Run the helper script for installation
-		local helper_script="${SCRIPT_DIR}/unstract-helper.sh"
-		if [[ -f "$helper_script" ]]; then
-			bash "$helper_script" install
-		else
-			print_error "unstract-helper.sh not found at ${helper_script}"
-			print_info "Manual install:"
-			print_info "  git clone https://github.com/Zipstack/unstract.git ~/.aidevops/unstract"
-			print_info "  cd ~/.aidevops/unstract && ./run-platform.sh"
-			return 1
-		fi
-
-		echo
-		print_info "Your existing LLM API keys can be used as Unstract adapters:"
-		print_info "  Run: unstract-helper.sh configure-llm"
-		echo ""
-		print_info "The MCP connects to your local instance by default."
-		print_info "Config template: configs/mcp-templates/unstract.json"
-		;;
-	"context7")
-		print_info "Setting up Context7 MCP for real-time library documentation..."
-		print_info "Context7 provides up-to-date docs for libraries and frameworks."
-		echo ""
-		print_info "Two setup options:"
-		echo ""
-		print_info "  1. Remote MCP (recommended — zero install):"
-		print_info '     "context7": {'
-		print_info '       "type": "remote",'
-		print_info '       "url": "https://mcp.context7.com/mcp",'
-		print_info '       "enabled": true'
-		print_info '     }'
-		echo ""
-		print_info "  2. Local MCP (via npx):"
-		print_info '     "context7": {'
-		print_info '       "type": "local",'
-		print_info '       "command": ["npx", "-y", "@upstash/context7-mcp@latest"],'
-		print_info '       "enabled": true'
-		print_info '     }'
-		echo ""
-		print_info "Disable telemetry: export CTX7_TELEMETRY_DISABLED=1"
-		print_info "CLI alternative: npx ctx7 setup --opencode --cli"
-		print_info "Docs: ~/.aidevops/agents/tools/context/context7.md"
-		;;
+	"unstract") _install_unstract ;;
+	"context7") _install_context7 ;;
 	*)
 		print_error "Unknown MCP integration: $mcp_name"
 		print_info "Available integrations: ${MCP_LIST[*]}"
