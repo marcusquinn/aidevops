@@ -176,13 +176,99 @@ generate_changelog_preview() {
 	return 0
 }
 
+# Classify a single commit message into a changelog category.
+# Appends the formatted entry to the appropriate category variable (passed by name).
+# Arguments: commit message
+# Outputs: sets caller's added/changed/fixed/security/removed/deprecated via printf to stdout
+# Returns category:entry on stdout as "CATEGORY\tentry" for the caller to accumulate.
+_classify_commit_to_category() {
+	local commit="$1"
+	local clean_msg="$commit"
+
+	case "$commit" in
+	feat:*)
+		clean_msg="${commit#feat: }"
+		printf 'added\t- %s\n' "$clean_msg"
+		;;
+	feat\(*\):*)
+		clean_msg=$(echo "$commit" | sed 's/^feat([^)]*): //')
+		printf 'added\t- %s\n' "$clean_msg"
+		;;
+	fix:*)
+		clean_msg="${commit#fix: }"
+		printf 'fixed\t- %s\n' "$clean_msg"
+		;;
+	fix\(*\):*)
+		clean_msg=$(echo "$commit" | sed 's/^fix([^)]*): //')
+		printf 'fixed\t- %s\n' "$clean_msg"
+		;;
+	security:*)
+		clean_msg="${commit#security: }"
+		printf 'security\t- %s\n' "$clean_msg"
+		;;
+	docs:*)
+		clean_msg="${commit#docs: }"
+		printf 'changed\t- Documentation: %s\n' "$clean_msg"
+		;;
+	refactor:*)
+		clean_msg="${commit#refactor: }"
+		printf 'changed\t- Refactor: %s\n' "$clean_msg"
+		;;
+	perf:*)
+		clean_msg="${commit#perf: }"
+		printf 'changed\t- Performance: %s\n' "$clean_msg"
+		;;
+	BREAKING\ CHANGE:* | breaking:*)
+		clean_msg="${commit#BREAKING CHANGE: }"
+		clean_msg="${clean_msg#breaking: }"
+		printf 'removed\t- **BREAKING**: %s\n' "$clean_msg"
+		;;
+	deprecate:* | deprecated:*)
+		clean_msg="${commit#deprecate: }"
+		clean_msg="${clean_msg#deprecated: }"
+		printf 'deprecated\t- %s\n' "$clean_msg"
+		;;
+	test:*)
+		clean_msg="${commit#test: }"
+		printf 'changed\t- Tests: %s\n' "$clean_msg"
+		;;
+	test\(*\):*)
+		clean_msg=$(echo "$commit" | sed 's/^test([^)]*): //')
+		printf 'changed\t- Tests: %s\n' "$clean_msg"
+		;;
+	ci:*)
+		clean_msg="${commit#ci: }"
+		printf 'changed\t- CI: %s\n' "$clean_msg"
+		;;
+	ci\(*\):*)
+		clean_msg=$(echo "$commit" | sed 's/^ci([^)]*): //')
+		printf 'changed\t- CI: %s\n' "$clean_msg"
+		;;
+	build:*)
+		clean_msg="${commit#build: }"
+		printf 'changed\t- Build: %s\n' "$clean_msg"
+		;;
+	build\(*\):*)
+		clean_msg=$(echo "$commit" | sed 's/^build([^)]*): //')
+		printf 'changed\t- Build: %s\n' "$clean_msg"
+		;;
+	chore:*)
+		clean_msg="${commit#chore: }"
+		printf 'changed\t- Maintenance: %s\n' "$clean_msg"
+		;;
+	chore\(*\):*)
+		clean_msg=$(echo "$commit" | sed 's/^chore([^)]*): //')
+		printf 'changed\t- Maintenance: %s\n' "$clean_msg"
+		;;
+	*) ;; # Ignore other commit types
+	esac
+	return 0
+}
+
 # Function to generate changelog content from commits (cleaner format)
 generate_changelog_content() {
 	local prev_tag
 	prev_tag=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
-
-	# Categorize commits
-	local added="" changed="" fixed="" security="" removed="" deprecated=""
 
 	local commits
 	if [[ -n "$prev_tag" ]]; then
@@ -191,90 +277,27 @@ generate_changelog_content() {
 		commits=$(git log --oneline -20 --pretty=format:"%s" 2>/dev/null)
 	fi
 
+	# Categorize commits
+	local added="" changed="" fixed="" security="" removed="" deprecated=""
+
 	while IFS= read -r commit; do
-		# Skip empty lines and release commits
 		[[ -z "$commit" ]] && continue
 		[[ "$commit" == chore\(release\):* ]] && continue
 
-		# Clean up commit message - remove type prefix for cleaner output
-		local clean_msg="$commit"
+		local category entry classified
+		classified=$(_classify_commit_to_category "$commit")
+		[[ -z "$classified" ]] && continue
 
-		case "$commit" in
-		feat:*)
-			clean_msg="${commit#feat: }"
-			added="${added}- ${clean_msg}\n"
-			;;
-		feat\(*\):*)
-			clean_msg=$(echo "$commit" | sed 's/^feat([^)]*): //')
-			added="${added}- ${clean_msg}\n"
-			;;
-		fix:*)
-			clean_msg="${commit#fix: }"
-			fixed="${fixed}- ${clean_msg}\n"
-			;;
-		fix\(*\):*)
-			clean_msg=$(echo "$commit" | sed 's/^fix([^)]*): //')
-			fixed="${fixed}- ${clean_msg}\n"
-			;;
-		security:*)
-			clean_msg="${commit#security: }"
-			security="${security}- ${clean_msg}\n"
-			;;
-		docs:*)
-			clean_msg="${commit#docs: }"
-			changed="${changed}- Documentation: ${clean_msg}\n"
-			;;
-		refactor:*)
-			clean_msg="${commit#refactor: }"
-			changed="${changed}- Refactor: ${clean_msg}\n"
-			;;
-		perf:*)
-			clean_msg="${commit#perf: }"
-			changed="${changed}- Performance: ${clean_msg}\n"
-			;;
-		BREAKING\ CHANGE:* | breaking:*)
-			clean_msg="${commit#BREAKING CHANGE: }"
-			clean_msg="${clean_msg#breaking: }"
-			removed="${removed}- **BREAKING**: ${clean_msg}\n"
-			;;
-		deprecate:* | deprecated:*)
-			clean_msg="${commit#deprecate: }"
-			clean_msg="${clean_msg#deprecated: }"
-			deprecated="${deprecated}- ${clean_msg}\n"
-			;;
-		test:*)
-			clean_msg="${commit#test: }"
-			changed="${changed}- Tests: ${clean_msg}\n"
-			;;
-		test\(*\):*)
-			clean_msg=$(echo "$commit" | sed 's/^test([^)]*): //')
-			changed="${changed}- Tests: ${clean_msg}\n"
-			;;
-		ci:*)
-			clean_msg="${commit#ci: }"
-			changed="${changed}- CI: ${clean_msg}\n"
-			;;
-		ci\(*\):*)
-			clean_msg=$(echo "$commit" | sed 's/^ci([^)]*): //')
-			changed="${changed}- CI: ${clean_msg}\n"
-			;;
-		build:*)
-			clean_msg="${commit#build: }"
-			changed="${changed}- Build: ${clean_msg}\n"
-			;;
-		build\(*\):*)
-			clean_msg=$(echo "$commit" | sed 's/^build([^)]*): //')
-			changed="${changed}- Build: ${clean_msg}\n"
-			;;
-		chore:*)
-			clean_msg="${commit#chore: }"
-			changed="${changed}- Maintenance: ${clean_msg}\n"
-			;;
-		chore\(*\):*)
-			clean_msg=$(echo "$commit" | sed 's/^chore([^)]*): //')
-			changed="${changed}- Maintenance: ${clean_msg}\n"
-			;;
-		*) ;; # Ignore other commit types
+		category="${classified%%	*}"
+		entry="${classified#*	}"
+
+		case "$category" in
+		added) added="${added}${entry}\n" ;;
+		changed) changed="${changed}${entry}\n" ;;
+		fixed) fixed="${fixed}${entry}\n" ;;
+		security) security="${security}${entry}\n" ;;
+		removed) removed="${removed}${entry}\n" ;;
+		deprecated) deprecated="${deprecated}${entry}\n" ;;
 		esac
 	done <<<"$commits"
 
@@ -573,35 +596,11 @@ cleanup_temp_dir() {
 	return 0
 }
 
-run_patch_release_preflight() {
-	local baseline_ref=""
-	baseline_ref=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
-
-	if [[ -z "$baseline_ref" ]]; then
-		print_warning "No previous tag found; falling back to full preflight"
-		local preflight_script="$REPO_ROOT/.agents/scripts/linters-local.sh"
-		if [[ -f "$preflight_script" ]]; then
-			bash "$preflight_script"
-			return $?
-		fi
-		print_warning "Preflight script not found, skipping checks"
-		return 0
-	fi
-
-	print_info "Running patch release regression preflight against $baseline_ref..."
-
-	local changed_files=""
-	changed_files=$(git diff --name-only "$baseline_ref"..HEAD 2>/dev/null || echo "")
-	local pre_edit_test_script="$REPO_ROOT/.agents/scripts/tests/test-pre-edit-check.sh"
-
-	if ! configure_secretlint_command; then
-		return 1
-	fi
-
-	local tmp_dir=""
-	tmp_dir=$(mktemp -d)
-	PATCH_PREFLIGHT_TMP_DIR="$tmp_dir"
-	trap 'cleanup_temp_dir "$PATCH_PREFLIGHT_TMP_DIR"; PATCH_PREFLIGHT_TMP_DIR=""' RETURN
+# Run secretlint on changed files only (not the entire repo).
+# Arguments: baseline_ref changed_files (newline-separated list)
+_run_secretlint_on_changed_files() {
+	local baseline_ref="$1"
+	local changed_files="$2"
 
 	# Scan only CHANGED files with secretlint (not the entire repo).
 	# The old approach scanned all ~2000 files twice (current + baseline archive),
@@ -637,6 +636,14 @@ run_patch_release_preflight() {
 	else
 		print_info "Secretlint: no files changed since $baseline_ref"
 	fi
+	return 0
+}
+
+# Run ShellCheck on shell files that changed since baseline_ref.
+# Arguments: baseline_ref changed_files (newline-separated list)
+_run_shellcheck_on_changed_files() {
+	local baseline_ref="$1"
+	local changed_files="$2"
 
 	local -a changed_shell_files=()
 	local changed_file=""
@@ -664,6 +671,14 @@ run_patch_release_preflight() {
 	else
 		print_info "ShellCheck: no shell files changed since $baseline_ref"
 	fi
+	return 0
+}
+
+# Run the pre-edit regression test if pre-edit-check.sh or its test was changed.
+# Arguments: changed_files (newline-separated list) pre_edit_test_script
+_run_pre_edit_regression_test() {
+	local changed_files="$1"
+	local pre_edit_test_script="$2"
 
 	if [[ "$changed_files" == *".agents/scripts/pre-edit-check.sh"* ]] || [[ "$changed_files" == *".agents/scripts/tests/test-pre-edit-check.sh"* ]]; then
 		if [[ ! -x "$pre_edit_test_script" ]]; then
@@ -678,6 +693,50 @@ run_patch_release_preflight() {
 			print_error "Pre-edit regression test failed"
 			return 1
 		fi
+	fi
+	return 0
+}
+
+run_patch_release_preflight() {
+	local baseline_ref=""
+	baseline_ref=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+
+	if [[ -z "$baseline_ref" ]]; then
+		print_warning "No previous tag found; falling back to full preflight"
+		local preflight_script="$REPO_ROOT/.agents/scripts/linters-local.sh"
+		if [[ -f "$preflight_script" ]]; then
+			bash "$preflight_script"
+			return $?
+		fi
+		print_warning "Preflight script not found, skipping checks"
+		return 0
+	fi
+
+	print_info "Running patch release regression preflight against $baseline_ref..."
+
+	local changed_files=""
+	changed_files=$(git diff --name-only "$baseline_ref"..HEAD 2>/dev/null || echo "")
+	local pre_edit_test_script="$REPO_ROOT/.agents/scripts/tests/test-pre-edit-check.sh"
+
+	if ! configure_secretlint_command; then
+		return 1
+	fi
+
+	local tmp_dir=""
+	tmp_dir=$(mktemp -d)
+	PATCH_PREFLIGHT_TMP_DIR="$tmp_dir"
+	trap 'cleanup_temp_dir "$PATCH_PREFLIGHT_TMP_DIR"; PATCH_PREFLIGHT_TMP_DIR=""' RETURN
+
+	if ! _run_secretlint_on_changed_files "$baseline_ref" "$changed_files"; then
+		return 1
+	fi
+
+	if ! _run_shellcheck_on_changed_files "$baseline_ref" "$changed_files"; then
+		return 1
+	fi
+
+	if ! _run_pre_edit_regression_test "$changed_files" "$pre_edit_test_script"; then
+		return 1
 	fi
 
 	print_success "Patch release regression preflight passed"
@@ -725,6 +784,81 @@ validate_version_consistency() {
 			return 1
 		fi
 	fi
+}
+
+# Update the README.md version badge (hardcoded or dynamic).
+# All output goes to stderr. Returns 0 on success, 1 on failure.
+# Increments the caller's errors counter via stdout ("1" on failure, "0" on success).
+_update_readme_version_badge() {
+	local new_version="$1"
+	local dynamic_badge_pattern="img.shields.io/github/v/release"
+	local hardcoded_badge_pattern="Version-[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*-blue"
+
+	if [[ ! -f "$REPO_ROOT/README.md" ]]; then
+		print_warning "README.md not found, skipping version badge update" >&2
+		return 0
+	fi
+
+	if grep -q "$dynamic_badge_pattern" "$REPO_ROOT/README.md"; then
+		# Dynamic badge - no update needed, GitHub handles it automatically
+		print_success "README.md uses dynamic GitHub release badge (no update needed)" >&2
+	elif grep -q "$hardcoded_badge_pattern" "$REPO_ROOT/README.md"; then
+		# Hardcoded badge - update it
+		sed_inplace "s/$hardcoded_badge_pattern/Version-$new_version-blue/" "$REPO_ROOT/README.md"
+		if grep -q "Version-$new_version-blue" "$REPO_ROOT/README.md"; then
+			print_success "Updated README.md version badge to $new_version" >&2
+		else
+			print_error "Failed to update README.md version badge"
+			return 1
+		fi
+	else
+		# No version badge found - that's okay, just warn
+		print_warning "README.md has no version badge (consider adding dynamic GitHub release badge)" >&2
+	fi
+	return 0
+}
+
+# Update the Homebrew formula URL to the new version.
+# SHA256 is updated separately by CI publish-packages.yml.
+# All output goes to stderr. Returns 0 on success, 1 on failure.
+_update_homebrew_formula() {
+	local new_version="$1"
+	local formula_file="$REPO_ROOT/homebrew/aidevops.rb"
+
+	if [[ ! -f "$formula_file" ]]; then
+		return 0
+	fi
+
+	sed_inplace "s|url \"https://github.com/marcusquinn/aidevops/archive/refs/tags/v[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\.tar\.gz\"|url \"https://github.com/marcusquinn/aidevops/archive/refs/tags/v${new_version}.tar.gz\"|" "$formula_file"
+
+	if grep -q "v${new_version}.tar.gz" "$formula_file"; then
+		print_success "Updated homebrew/aidevops.rb version URL" >&2
+	else
+		print_error "Failed to update homebrew/aidevops.rb"
+		return 1
+	fi
+	return 0
+}
+
+# Update the Claude Code plugin marketplace.json version field.
+# All output goes to stderr. Returns 0 on success, 1 on failure.
+_update_claude_plugin_version() {
+	local new_version="$1"
+	local plugin_file="$REPO_ROOT/.claude-plugin/marketplace.json"
+
+	if [[ ! -f "$plugin_file" ]]; then
+		return 0
+	fi
+
+	sed_inplace "s/\"version\": *\"[^\"]*\"/\"version\": \"$new_version\"/" "$plugin_file"
+
+	if grep -q "\"version\": \"$new_version\"" "$plugin_file"; then
+		print_success "Updated .claude-plugin/marketplace.json" >&2
+	else
+		print_error "Failed to update .claude-plugin/marketplace.json"
+		return 1
+	fi
+	return 0
 }
 
 # Function to update version in files
@@ -778,56 +912,16 @@ update_version_in_files() {
 		errors=$((errors + 1))
 	fi
 
-	# Update README version badge (skip if using dynamic GitHub release badge)
-	local dynamic_badge_pattern="img.shields.io/github/v/release"
-	local hardcoded_badge_pattern="Version-[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*-blue"
-	if [[ -f "$REPO_ROOT/README.md" ]]; then
-		if grep -q "$dynamic_badge_pattern" "$REPO_ROOT/README.md"; then
-			# Dynamic badge - no update needed, GitHub handles it automatically
-			print_success "README.md uses dynamic GitHub release badge (no update needed)" >&2
-		elif grep -q "$hardcoded_badge_pattern" "$REPO_ROOT/README.md"; then
-			# Hardcoded badge - update it
-			sed_inplace "s/$hardcoded_badge_pattern/Version-$new_version-blue/" "$REPO_ROOT/README.md"
-
-			# Validate the update was successful
-			if grep -q "Version-$new_version-blue" "$REPO_ROOT/README.md"; then
-				print_success "Updated README.md version badge to $new_version" >&2
-			else
-				print_error "Failed to update README.md version badge"
-				errors=$((errors + 1))
-			fi
-		else
-			# No version badge found - that's okay, just warn
-			print_warning "README.md has no version badge (consider adding dynamic GitHub release badge)" >&2
-		fi
-	else
-		print_warning "README.md not found, skipping version badge update" >&2
+	if ! _update_readme_version_badge "$new_version"; then
+		errors=$((errors + 1))
 	fi
 
-	# Update Homebrew formula version (SHA256 is updated by CI publish-packages.yml)
-	local formula_file="$REPO_ROOT/homebrew/aidevops.rb"
-	if [[ -f "$formula_file" ]]; then
-		sed_inplace "s|url \"https://github.com/marcusquinn/aidevops/archive/refs/tags/v[0-9][0-9]*\.[0-9][0-9]*\.[0-9][0-9]*\.tar\.gz\"|url \"https://github.com/marcusquinn/aidevops/archive/refs/tags/v${new_version}.tar.gz\"|" "$formula_file"
-
-		if grep -q "v${new_version}.tar.gz" "$formula_file"; then
-			print_success "Updated homebrew/aidevops.rb version URL" >&2
-		else
-			print_error "Failed to update homebrew/aidevops.rb"
-			errors=$((errors + 1))
-		fi
+	if ! _update_homebrew_formula "$new_version"; then
+		errors=$((errors + 1))
 	fi
 
-	# Update Claude Code plugin marketplace.json
-	if [[ -f "$REPO_ROOT/.claude-plugin/marketplace.json" ]]; then
-		sed_inplace "s/\"version\": *\"[^\"]*\"/\"version\": \"$new_version\"/" "$REPO_ROOT/.claude-plugin/marketplace.json"
-
-		# Validate the update was successful
-		if grep -q "\"version\": \"$new_version\"" "$REPO_ROOT/.claude-plugin/marketplace.json"; then
-			print_success "Updated .claude-plugin/marketplace.json" >&2
-		else
-			print_error "Failed to update .claude-plugin/marketplace.json"
-			errors=$((errors + 1))
-		fi
+	if ! _update_claude_plugin_version "$new_version"; then
+		errors=$((errors + 1))
 	fi
 
 	# Return error if any updates failed
@@ -1325,6 +1419,228 @@ EOF
 	return 0
 }
 
+# Handle the "bump" action: bump version and update all files.
+# Arguments: bump_type [major|minor|patch]
+_main_bump() {
+	local bump_type="$1"
+
+	if [[ -z "$bump_type" ]]; then
+		print_error "Bump type required. Usage: $0 bump [major|minor|patch]"
+		exit 1
+	fi
+
+	local current_version
+	current_version=$(get_current_version)
+	print_info "Current version: $current_version"
+
+	local new_version
+	new_version=$(bump_version "$bump_type")
+
+	if [[ $? -eq 0 ]]; then
+		print_success "Bumped version: $current_version → $new_version"
+		if ! update_version_in_files "$new_version"; then
+			print_error "Failed to update version in all files"
+			print_info "Run validation to check: $0 validate"
+			exit 1
+		fi
+		echo "$new_version"
+	else
+		exit 1
+	fi
+	return 0
+}
+
+# Check changelog state before release; exit if nothing to release.
+# Arguments: force_flag
+_release_check_changelog() {
+	local force_flag="$1"
+
+	if ! check_changelog_unreleased; then
+		local releasable_commits
+		releasable_commits=$(get_releasable_commit_subjects)
+
+		if [[ -n "$releasable_commits" ]]; then
+			print_warning "CHANGELOG.md [Unreleased] is empty; proceeding with auto-generated changelog from commit history"
+			print_info "Detected releasable commits since last tag:"
+			local listed_count=0
+			while IFS= read -r commit_subject; do
+				[[ -z "$commit_subject" ]] && continue
+				print_info "  - $commit_subject"
+				listed_count=$((listed_count + 1))
+				if [[ "$listed_count" -ge 5 ]]; then
+					break
+				fi
+			done <<<"$releasable_commits"
+		else
+			if [[ "$force_flag" != "--force" ]]; then
+				print_error "CHANGELOG.md [Unreleased] is empty and no releasable commits were found since last tag"
+				print_info "Nothing meaningful to release. Add commits or use --force to bypass"
+				exit 1
+			else
+				print_warning "Bypassing changelog and empty-commit checks with --force"
+			fi
+		fi
+	fi
+	return 0
+}
+
+# Perform the version bump, file updates, tag, push, and GitHub release.
+# Arguments: bump_type new_version
+_release_execute() {
+	local bump_type="$1"
+	local new_version="$2"
+
+	print_info "Updating version references in files..."
+	if ! update_version_in_files "$new_version"; then
+		print_error "Failed to update version in all files. Aborting release."
+		print_info "The VERSION file may have been updated. Run validation to check:"
+		print_info "  $0 validate"
+		exit 1
+	fi
+
+	print_info "Updating CHANGELOG.md..."
+	if ! update_changelog "$new_version"; then
+		print_warning "Failed to update CHANGELOG.md automatically"
+	fi
+
+	# Auto-mark tasks complete based on commit messages
+	auto_mark_tasks_complete
+
+	print_info "Validating version consistency..."
+	if validate_version_consistency "$new_version"; then
+		print_success "Version validation passed"
+		commit_version_changes "$new_version"
+		create_git_tag "$new_version"
+		if ! push_changes; then
+			# Rollback: delete local tag since --atomic ensures nothing was pushed
+			print_warning "Rolling back local tag v$new_version due to push failure"
+			git tag -d "v$new_version" 2>/dev/null
+			echo ""
+			print_info "The version commit exists locally. To complete the release:"
+			print_info "  1. Fix the issue (e.g., git fetch origin && git rebase origin/main)"
+			print_info "  2. Re-create tag: git tag -a v$new_version -m 'Release v$new_version'"
+			print_info "  3. Push: git push --atomic origin main --tags"
+			print_info "  4. Create release: $0 github-release"
+			exit 1
+		fi
+		create_github_release "$new_version"
+		run_post_release_agent_sync
+		print_success "Release $new_version created successfully!"
+	else
+		print_error "Version validation failed. Please fix inconsistencies before creating release."
+		exit 1
+	fi
+	return 0
+}
+
+# Handle the "release" action: full release pipeline.
+# Arguments: bump_type [flags...] (all positional args from main, starting at $1=bump_type)
+_main_release() {
+	local bump_type="$1"
+	shift
+
+	if [[ -z "$bump_type" ]]; then
+		print_error "Bump type required. Usage: $0 release [major|minor|patch]"
+		exit 1
+	fi
+
+	# Parse flags (can be in any order after bump_type)
+	local force_flag=""
+	local skip_preflight=""
+	local allow_dirty=""
+	for arg in "$@"; do
+		case "$arg" in
+		"--force") force_flag="--force" ;;
+		"--skip-preflight") skip_preflight="--skip-preflight" ;;
+		"--allow-dirty") allow_dirty="--allow-dirty" ;;
+		*) ;; # Ignore unknown flags
+		esac
+	done
+
+	print_info "Creating release with $bump_type version bump..."
+
+	# Verify local branch is in sync with remote (prevents post-squash-merge failures)
+	if ! verify_remote_sync "main"; then
+		if [[ "$force_flag" != "--force" ]]; then
+			print_error "Cannot release when local/remote are out of sync."
+			print_info "Use --force to bypass (not recommended)"
+			exit 1
+		else
+			print_warning "Bypassing remote sync check with --force"
+		fi
+	fi
+
+	# Check for uncommitted changes
+	if [[ "$allow_dirty" != "--allow-dirty" ]]; then
+		if ! check_working_tree_clean; then
+			print_error "Cannot release with uncommitted changes."
+			print_info "Commit your changes first, or use --allow-dirty to bypass (not recommended)"
+			exit 1
+		fi
+	else
+		print_warning "Releasing with uncommitted changes (--allow-dirty)"
+	fi
+
+	# Run preflight checks unless skipped
+	if [[ "$skip_preflight" != "--skip-preflight" ]]; then
+		if ! run_preflight_checks "$bump_type"; then
+			print_error "Preflight checks failed. Fix issues or use --skip-preflight to bypass."
+			exit 1
+		fi
+	else
+		print_warning "Skipping preflight checks with --skip-preflight"
+	fi
+
+	_release_check_changelog "$force_flag"
+
+	local new_version
+	new_version=$(bump_version "$bump_type")
+
+	if [[ $? -eq 0 ]]; then
+		_release_execute "$bump_type" "$new_version"
+	else
+		exit 1
+	fi
+	return 0
+}
+
+# Print usage/help text.
+_main_usage() {
+	echo "AI DevOps Framework Version Manager"
+	echo ""
+	echo "Usage: $0 [action] [options]"
+	echo ""
+	echo "Actions:"
+	echo "  get                           Get current version"
+	echo "  bump [major|minor|patch]      Bump version"
+	echo "  tag                           Create git tag for current version"
+	echo "  github-release                Create GitHub release for current version"
+	echo "  release [major|minor|patch]   Bump version, update files, create tag and GitHub release"
+	echo "  preflight [major|minor|patch] Run release preflight checks only"
+	echo "  validate                      Validate version consistency across all files"
+	echo "  changelog-check               Check CHANGELOG.md has entry for current version"
+	echo "  changelog-preview             Generate changelog entry from commits since last tag"
+	echo "  auto-mark-tasks               Auto-mark tasks complete based on commit messages"
+	echo "  list-task-ids                 List task IDs found in commits since last release"
+	echo ""
+	echo "Options:"
+	echo "  --force                       Bypass changelog check (use with release)"
+	echo "  --skip-preflight              Bypass quality checks (use with release)"
+	echo ""
+	echo "Examples:"
+	echo "  $0 get"
+	echo "  $0 bump minor"
+	echo "  $0 release patch"
+	echo "  $0 release minor --force"
+	echo "  $0 release patch --skip-preflight"
+	echo "  $0 release patch --force --skip-preflight"
+	echo "  $0 github-release"
+	echo "  $0 validate"
+	echo "  $0 changelog-check"
+	echo "  $0 changelog-preview"
+	return 0
+}
+
 # Main function
 main() {
 	local action="${1:-}"
@@ -1335,29 +1651,7 @@ main() {
 		get_current_version
 		;;
 	"bump")
-		if [[ -z "$bump_type" ]]; then
-			print_error "Bump type required. Usage: $0 bump [major|minor|patch]"
-			exit 1
-		fi
-
-		local current_version
-		current_version=$(get_current_version)
-		print_info "Current version: $current_version"
-
-		local new_version
-		new_version=$(bump_version "$bump_type")
-
-		if [[ $? -eq 0 ]]; then
-			print_success "Bumped version: $current_version → $new_version"
-			if ! update_version_in_files "$new_version"; then
-				print_error "Failed to update version in all files"
-				print_info "Run validation to check: $0 validate"
-				exit 1
-			fi
-			echo "$new_version"
-		else
-			exit 1
-		fi
+		_main_bump "$bump_type"
 		;;
 	"tag")
 		local version
@@ -1365,133 +1659,7 @@ main() {
 		create_git_tag "$version"
 		;;
 	"release")
-		if [[ -z "$bump_type" ]]; then
-			print_error "Bump type required. Usage: $0 release [major|minor|patch]"
-			exit 1
-		fi
-
-		# Parse flags (can be in any order after bump_type)
-		local force_flag=""
-		local skip_preflight=""
-		local allow_dirty=""
-		for arg in "${@:3}"; do
-			case "$arg" in
-			"--force") force_flag="--force" ;;
-			"--skip-preflight") skip_preflight="--skip-preflight" ;;
-			"--allow-dirty") allow_dirty="--allow-dirty" ;;
-			*) ;; # Ignore unknown flags
-			esac
-		done
-
-		print_info "Creating release with $bump_type version bump..."
-
-		# Verify local branch is in sync with remote (prevents post-squash-merge failures)
-		if ! verify_remote_sync "main"; then
-			if [[ "$force_flag" != "--force" ]]; then
-				print_error "Cannot release when local/remote are out of sync."
-				print_info "Use --force to bypass (not recommended)"
-				exit 1
-			else
-				print_warning "Bypassing remote sync check with --force"
-			fi
-		fi
-
-		# Check for uncommitted changes
-		if [[ "$allow_dirty" != "--allow-dirty" ]]; then
-			if ! check_working_tree_clean; then
-				print_error "Cannot release with uncommitted changes."
-				print_info "Commit your changes first, or use --allow-dirty to bypass (not recommended)"
-				exit 1
-			fi
-		else
-			print_warning "Releasing with uncommitted changes (--allow-dirty)"
-		fi
-
-		# Run preflight checks unless skipped
-		if [[ "$skip_preflight" != "--skip-preflight" ]]; then
-			if ! run_preflight_checks "$bump_type"; then
-				print_error "Preflight checks failed. Fix issues or use --skip-preflight to bypass."
-				exit 1
-			fi
-		else
-			print_warning "Skipping preflight checks with --skip-preflight"
-		fi
-
-		# Check changelog has content before proceeding
-		if ! check_changelog_unreleased; then
-			local releasable_commits
-			releasable_commits=$(get_releasable_commit_subjects)
-
-			if [[ -n "$releasable_commits" ]]; then
-				print_warning "CHANGELOG.md [Unreleased] is empty; proceeding with auto-generated changelog from commit history"
-				print_info "Detected releasable commits since last tag:"
-				local listed_count=0
-				while IFS= read -r commit_subject; do
-					[[ -z "$commit_subject" ]] && continue
-					print_info "  - $commit_subject"
-					listed_count=$((listed_count + 1))
-					if [[ "$listed_count" -ge 5 ]]; then
-						break
-					fi
-				done <<<"$releasable_commits"
-			else
-				if [[ "$force_flag" != "--force" ]]; then
-					print_error "CHANGELOG.md [Unreleased] is empty and no releasable commits were found since last tag"
-					print_info "Nothing meaningful to release. Add commits or use --force to bypass"
-					exit 1
-				else
-					print_warning "Bypassing changelog and empty-commit checks with --force"
-				fi
-			fi
-		fi
-
-		local new_version
-		new_version=$(bump_version "$bump_type")
-
-		if [[ $? -eq 0 ]]; then
-			print_info "Updating version references in files..."
-			if ! update_version_in_files "$new_version"; then
-				print_error "Failed to update version in all files. Aborting release."
-				print_info "The VERSION file may have been updated. Run validation to check:"
-				print_info "  $0 validate"
-				exit 1
-			fi
-
-			print_info "Updating CHANGELOG.md..."
-			if ! update_changelog "$new_version"; then
-				print_warning "Failed to update CHANGELOG.md automatically"
-			fi
-
-			# Auto-mark tasks complete based on commit messages
-			auto_mark_tasks_complete
-
-			print_info "Validating version consistency..."
-			if validate_version_consistency "$new_version"; then
-				print_success "Version validation passed"
-				commit_version_changes "$new_version"
-				create_git_tag "$new_version"
-				if ! push_changes; then
-					# Rollback: delete local tag since --atomic ensures nothing was pushed
-					print_warning "Rolling back local tag v$new_version due to push failure"
-					git tag -d "v$new_version" 2>/dev/null
-					echo ""
-					print_info "The version commit exists locally. To complete the release:"
-					print_info "  1. Fix the issue (e.g., git fetch origin && git rebase origin/main)"
-					print_info "  2. Re-create tag: git tag -a v$new_version -m 'Release v$new_version'"
-					print_info "  3. Push: git push --atomic origin main --tags"
-					print_info "  4. Create release: $0 github-release"
-					exit 1
-				fi
-				create_github_release "$new_version"
-				run_post_release_agent_sync
-				print_success "Release $new_version created successfully!"
-			else
-				print_error "Version validation failed. Please fix inconsistencies before creating release."
-				exit 1
-			fi
-		else
-			exit 1
-		fi
+		_main_release "$bump_type" "${@:3}"
 		;;
 	"github-release")
 		local version
@@ -1536,38 +1704,7 @@ main() {
 		extract_task_ids_from_commits
 		;;
 	*)
-		echo "AI DevOps Framework Version Manager"
-		echo ""
-		echo "Usage: $0 [action] [options]"
-		echo ""
-		echo "Actions:"
-		echo "  get                           Get current version"
-		echo "  bump [major|minor|patch]      Bump version"
-		echo "  tag                           Create git tag for current version"
-		echo "  github-release                Create GitHub release for current version"
-		echo "  release [major|minor|patch]   Bump version, update files, create tag and GitHub release"
-		echo "  preflight [major|minor|patch] Run release preflight checks only"
-		echo "  validate                      Validate version consistency across all files"
-		echo "  changelog-check               Check CHANGELOG.md has entry for current version"
-		echo "  changelog-preview             Generate changelog entry from commits since last tag"
-		echo "  auto-mark-tasks               Auto-mark tasks complete based on commit messages"
-		echo "  list-task-ids                 List task IDs found in commits since last release"
-		echo ""
-		echo "Options:"
-		echo "  --force                       Bypass changelog check (use with release)"
-		echo "  --skip-preflight              Bypass quality checks (use with release)"
-		echo ""
-		echo "Examples:"
-		echo "  $0 get"
-		echo "  $0 bump minor"
-		echo "  $0 release patch"
-		echo "  $0 release minor --force"
-		echo "  $0 release patch --skip-preflight"
-		echo "  $0 release patch --force --skip-preflight"
-		echo "  $0 github-release"
-		echo "  $0 validate"
-		echo "  $0 changelog-check"
-		echo "  $0 changelog-preview"
+		_main_usage
 		;;
 	esac
 	return 0
