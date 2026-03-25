@@ -253,17 +253,14 @@ search_prs_for_task() {
 	echo "$matches"
 }
 
-# --- Main migration -----------------------------------------------------------
+# --- Build SQL query for tasks needing backfill --------------------------------
 
-main() {
-	log "=== PR Backfill Migration (t237) ==="
-	[[ "$DRY_RUN" == "true" ]] && log "DRY RUN — no changes will be made"
-
-	# Get tasks needing backfill
+build_task_query() {
+	local single_task="$1"
 	local task_query
-	if [[ -n "$SINGLE_TASK" ]]; then
+	if [[ -n "$single_task" ]]; then
 		local escaped_single
-		escaped_single=$(sql_escape "$SINGLE_TASK")
+		escaped_single=$(sql_escape "$single_task")
 		task_query="SELECT id, status, repo, branch, pr_url FROM tasks WHERE id = '$escaped_single';"
 	else
 		task_query="
@@ -274,13 +271,20 @@ main() {
             ORDER BY id;
         "
 	fi
+	echo "$task_query"
+	return 0
+}
 
+# --- Load tasks from DB and resolve repo slug ---------------------------------
+
+load_tasks() {
+	local task_query="$1"
 	local tasks_raw
 	tasks_raw=$(db -separator '|' "$SUPERVISOR_DB" "$task_query" 2>/dev/null || echo "")
 
 	if [[ -z "$tasks_raw" ]]; then
 		log "No tasks found needing PR backfill"
-		exit 0
+		return 1
 	fi
 
 	local task_count
@@ -293,118 +297,139 @@ main() {
 	local repo_slug
 	repo_slug=$(detect_repo_slug "$first_repo") || {
 		echo "ERROR: Cannot detect repo slug from $first_repo" >&2
-		exit 1
+		return 1
 	}
 	log "Repo slug: $repo_slug"
 
-	# Fetch all merged PRs
-	local merged_prs_json
-	merged_prs_json=$(fetch_merged_prs "$repo_slug") || exit 1
+	# Output: tasks_raw|repo_slug (tab-separated for caller to split)
+	printf '%s\t%s' "$tasks_raw" "$repo_slug"
+	return 0
+}
 
-	# Counters
-	local matched=0 unmatched=0 skipped=0 errors=0 already_linked=0
+# --- Try each candidate PR until one validates and can be linked ---------------
 
-	# Process each task
-	while IFS='|' read -r task_id status _repo branch pr_url; do
-		[[ -z "$task_id" ]] && continue
+try_candidates() {
+	local task_id="$1"
+	local repo_slug="$2"
+	local candidate_urls="$3"
+	# Counters passed by name (caller increments via return value)
+	# Returns: "true", "skip", "error", or "false"
 
-		log_verbose "Processing $task_id (status=$status, branch=$branch, pr_url=${pr_url:-<empty>})"
+	local linked="false"
+	while IFS= read -r candidate_url; do
+		[[ -z "$candidate_url" ]] && continue
 
-		# Search for matching PRs in the pre-fetched list
-		local candidate_urls
-		candidate_urls=$(search_prs_for_task "$task_id" "$merged_prs_json")
+		log_verbose "Candidate for $task_id: $candidate_url"
 
-		if [[ -z "$candidate_urls" ]]; then
-			log_verbose "No merged PR found for $task_id"
-			((++unmatched))
+		# Validate the PR belongs to this task
+		local validated_url
+		validated_url=$(validate_pr_belongs_to_task "$task_id" "$repo_slug" "$candidate_url") || validated_url=""
 
-			if [[ "$DRY_RUN" != "true" ]]; then
-				write_proof_log "$task_id" "pr_backfill" \
-					"no_match" \
-					"No merged PR found matching task ID in branch or title (searched $repo_slug)" \
-					""
-			fi
+		if [[ -z "$validated_url" ]]; then
+			log_verbose "Validation failed for $task_id <-> $candidate_url"
 			continue
 		fi
 
-		# Try each candidate (most recent first) until one validates
-		local linked="false"
-		while IFS= read -r candidate_url; do
-			[[ -z "$candidate_url" ]] && continue
+		# Check if this PR is already linked to another task
+		local existing_task
+		existing_task=$(db "$SUPERVISOR_DB" "
+            SELECT id FROM tasks
+            WHERE pr_url = '$(sql_escape "$validated_url")'
+            AND id != '$(sql_escape "$task_id")';
+        " 2>/dev/null || echo "")
 
-			log_verbose "Candidate for $task_id: $candidate_url"
-
-			# Validate the PR belongs to this task
-			local validated_url
-			validated_url=$(validate_pr_belongs_to_task "$task_id" "$repo_slug" "$candidate_url") || validated_url=""
-
-			if [[ -z "$validated_url" ]]; then
-				log_verbose "Validation failed for $task_id <-> $candidate_url"
-				continue
+		if [[ -n "$existing_task" ]]; then
+			log "SKIP $task_id: PR $validated_url already linked to $existing_task"
+			if [[ "$DRY_RUN" != "true" ]]; then
+				write_proof_log "$task_id" "pr_backfill" \
+					"skip_cross_linked" \
+					"PR already linked to task $existing_task — not overwriting" \
+					"$validated_url"
 			fi
+			linked="skip"
+			break
+		fi
 
-			# Check if this PR is already linked to another task
-			local existing_task
-			existing_task=$(db "$SUPERVISOR_DB" "
-                SELECT id FROM tasks
-                WHERE pr_url = '$(sql_escape "$validated_url")'
-                AND id != '$(sql_escape "$task_id")';
-            " 2>/dev/null || echo "")
-
-			if [[ -n "$existing_task" ]]; then
-				log "SKIP $task_id: PR $validated_url already linked to $existing_task"
-				((++already_linked))
-
-				if [[ "$DRY_RUN" != "true" ]]; then
-					write_proof_log "$task_id" "pr_backfill" \
-						"skip_cross_linked" \
-						"PR already linked to task $existing_task — not overwriting" \
-						"$validated_url"
-				fi
-				linked="skip"
-				break
-			fi
-
-			# Apply the update
-			if [[ "$DRY_RUN" == "true" ]]; then
-				log "DRY RUN: Would link $task_id -> $validated_url"
+		# Apply the update
+		if [[ "$DRY_RUN" == "true" ]]; then
+			log "DRY RUN: Would link $task_id -> $validated_url"
+			linked="true"
+			break
+		else
+			local db_err
+			if db_err=$(db "$SUPERVISOR_DB" "
+                UPDATE tasks SET pr_url = '$(sql_escape "$validated_url")'
+                WHERE id = '$(sql_escape "$task_id")';
+            " 2>&1); then
+				log "LINKED $task_id -> $validated_url"
+				write_proof_log "$task_id" "pr_backfill" \
+					"linked" \
+					"Retroactive PR backfill: matched merged PR via branch/title search" \
+					"$validated_url"
 				linked="true"
 				break
 			else
-				local db_err
-				if db_err=$(db "$SUPERVISOR_DB" "
-                    UPDATE tasks SET pr_url = '$(sql_escape "$validated_url")'
-                    WHERE id = '$(sql_escape "$task_id")';
-                " 2>&1); then
-					log "LINKED $task_id -> $validated_url"
-					write_proof_log "$task_id" "pr_backfill" \
-						"linked" \
-						"Retroactive PR backfill: matched merged PR via branch/title search" \
-						"$validated_url"
-					linked="true"
-					break
-				else
-					log "ERROR: Failed to update DB for $task_id: $db_err"
-					((++errors))
-					linked="error"
-					break
-				fi
+				log "ERROR: Failed to update DB for $task_id: $db_err"
+				linked="error"
+				break
 			fi
-		done <<<"$candidate_urls"
+		fi
+	done <<<"$candidate_urls"
 
-		case "$linked" in
-		true) ((++matched)) ;;
-		skip) ;;  # already counted in already_linked
-		error) ;; # already counted in errors
-		*) ((++unmatched)) ;;
-		esac
+	echo "$linked"
+	return 0
+}
 
-		# Rate limit: small delay between GitHub API calls to avoid rate limiting
-		sleep 0.5
+# --- Process a single task row ------------------------------------------------
 
-	done <<<"$tasks_raw"
+process_task() {
+	local task_id="$1"
+	local status="$2"
+	local branch="$3"
+	local repo_slug="$4"
+	local merged_prs_json="$5"
+	# Outputs: "matched", "unmatched", "already_linked", "error"
 
-	# Summary
+	log_verbose "Processing $task_id (status=$status, branch=$branch)"
+
+	# Search for matching PRs in the pre-fetched list
+	local candidate_urls
+	candidate_urls=$(search_prs_for_task "$task_id" "$merged_prs_json")
+
+	if [[ -z "$candidate_urls" ]]; then
+		log_verbose "No merged PR found for $task_id"
+		if [[ "$DRY_RUN" != "true" ]]; then
+			write_proof_log "$task_id" "pr_backfill" \
+				"no_match" \
+				"No merged PR found matching task ID in branch or title (searched $repo_slug)" \
+				""
+		fi
+		echo "unmatched"
+		return 0
+	fi
+
+	local linked
+	linked=$(try_candidates "$task_id" "$repo_slug" "$candidate_urls")
+
+	case "$linked" in
+	true) echo "matched" ;;
+	skip) echo "already_linked" ;;
+	error) echo "error" ;;
+	*) echo "unmatched" ;;
+	esac
+	return 0
+}
+
+# --- Print migration summary --------------------------------------------------
+
+print_summary() {
+	local task_count="$1"
+	local matched="$2"
+	local unmatched="$3"
+	local already_linked="$4"
+	local errors="$5"
+	local skipped="$6"
+
 	log ""
 	log "=== Migration Summary ==="
 	log "Total tasks processed: $task_count"
@@ -415,7 +440,57 @@ main() {
 	log "Skipped:              $skipped"
 	[[ "$DRY_RUN" == "true" ]] && log "(DRY RUN — no changes were made)"
 	log "========================="
+	return 0
+}
 
+# --- Main migration -----------------------------------------------------------
+
+main() {
+	log "=== PR Backfill Migration (t237) ==="
+	[[ "$DRY_RUN" == "true" ]] && log "DRY RUN — no changes will be made"
+
+	# Build and execute task query
+	local task_query
+	task_query=$(build_task_query "$SINGLE_TASK")
+
+	local load_result
+	load_result=$(load_tasks "$task_query") || exit 0
+
+	# Split load_result into tasks_raw and repo_slug (tab-separated)
+	local tasks_raw repo_slug
+	tasks_raw=$(echo "$load_result" | cut -f1)
+	repo_slug=$(echo "$load_result" | cut -f2)
+
+	local task_count
+	task_count=$(echo "$tasks_raw" | wc -l | tr -d ' ')
+
+	# Fetch all merged PRs once
+	local merged_prs_json
+	merged_prs_json=$(fetch_merged_prs "$repo_slug") || exit 1
+
+	# Counters
+	local matched=0 unmatched=0 skipped=0 errors=0 already_linked=0
+
+	# Process each task
+	while IFS='|' read -r task_id status _repo branch pr_url; do
+		[[ -z "$task_id" ]] && continue
+
+		local outcome
+		outcome=$(process_task "$task_id" "$status" "$branch" "$repo_slug" "$merged_prs_json")
+
+		case "$outcome" in
+		matched) ((++matched)) ;;
+		already_linked) ((++already_linked)) ;;
+		error) ((++errors)) ;;
+		*) ((++unmatched)) ;;
+		esac
+
+		# Rate limit: small delay between GitHub API calls to avoid rate limiting
+		sleep 0.5
+
+	done <<<"$tasks_raw"
+
+	print_summary "$task_count" "$matched" "$unmatched" "$already_linked" "$errors" "$skipped"
 	return 0
 }
 
