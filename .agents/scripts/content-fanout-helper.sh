@@ -863,10 +863,10 @@ channel_estimate_values() {
 }
 
 # Print the per-channel estimate table rows.
-# Args: channels (space-separated)
-# Side effect: appends "tokens minutes" per channel to $_est_totals_file.
+# Args: channels (space-separated), totals_file (path to accumulate "tokens minutes" per channel)
 _print_estimate_rows() {
 	local channels="$1"
+	local totals_file="$2"
 
 	for ch in $channels; do
 		local est tokens minutes outputs
@@ -875,7 +875,7 @@ _print_estimate_rows() {
 		minutes="${est##* }"
 		outputs=$(channel_outputs "$ch" 2>/dev/null || echo "Channel-specific content")
 		printf "  %-18s %-8s %-8s %s\n" "$ch" "~${tokens}" "~${minutes}" "$outputs"
-		echo "${tokens} ${minutes}" >>"$_est_totals_file"
+		echo "${tokens} ${minutes}" >>"$totals_file"
 	done
 	return 0
 }
@@ -917,10 +917,11 @@ cmd_estimate() {
 	printf "  %-18s %-8s %-8s %s\n" "CHANNEL" "TOKENS" "MINUTES" "OUTPUTS"
 	printf "  %-18s %-8s %-8s %s\n" "-------" "------" "-------" "-------"
 
-	_est_totals_file=$(mktemp)
-	_print_estimate_rows "$channels"
-	_print_estimate_summary "$_est_totals_file"
-	rm -f "$_est_totals_file"
+	local est_totals_file
+	est_totals_file=$(mktemp)
+	_print_estimate_rows "$channels" "$est_totals_file"
+	_print_estimate_summary "$est_totals_file"
+	rm -f "$est_totals_file"
 
 	return 0
 }
