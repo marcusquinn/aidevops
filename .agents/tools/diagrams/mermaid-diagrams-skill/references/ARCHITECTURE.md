@@ -1,14 +1,14 @@
 # Architecture Diagrams
 
-Mermaid provides several diagram types for system architecture: Architecture diagrams, Block diagrams, C4 diagrams, and Kanban boards.
+Mermaid provides several diagram types for system architecture: Architecture diagrams, Block diagrams, C4 diagrams, Kanban boards, Packet diagrams, and Requirement diagrams.
 
 ---
 
-# Architecture Diagrams
+## Architecture Diagrams
 
 Cloud and CI/CD infrastructure visualization using icons and groups.
 
-## Basic Syntax
+### Basic Syntax
 
 ```mermaid
 architecture-beta
@@ -20,121 +20,49 @@ architecture-beta
     db:L -- R:server
 ```
 
----
+### Components
 
-## Components
-
-### Groups
-
-Organize services logically:
+**Groups** — organize services logically:
 
 ```
 group {id}({icon})[{title}]
 group {id}({icon})[{title}] in {parent_id}
 ```
 
-```mermaid
-architecture-beta
-    group cloud(cloud)[Cloud Infrastructure]
-    group vpc(cloud)[VPC] in cloud
-    group public(cloud)[Public Subnet] in vpc
-    group private(cloud)[Private Subnet] in vpc
-```
-
-### Services
-
-Individual components:
+**Services** — individual components:
 
 ```
 service {id}({icon})[{title}]
 service {id}({icon})[{title}] in {group_id}
 ```
 
-```mermaid
-architecture-beta
-    group backend(cloud)[Backend]
-
-    service api(server)[API Server] in backend
-    service db(database)[PostgreSQL] in backend
-    service cache(database)[Redis] in backend
-```
-
-### Junctions
-
-4-way connection points:
+**Junctions** — 4-way connection points:
 
 ```
 junction {id}
 junction {id} in {group_id}
 ```
 
----
-
-## Edges
-
-Connect components with directional flow:
+### Edges
 
 ```
 {service}:{direction} {arrow} {direction}:{service}
 ```
 
-### Directions
+| Direction | Code | Arrow Types | Syntax |
+|-----------|------|-------------|--------|
+| Top | `T` | Undirected | `--` |
+| Bottom | `B` | Right | `-->` |
+| Left | `L` | Left | `<--` |
+| Right | `R` | Bidirectional | `<-->` |
 
-| Code | Position |
-|------|----------|
-| `T` | Top |
-| `B` | Bottom |
-| `L` | Left |
-| `R` | Right |
+### Icons
 
-### Arrow Types
+Default: `cloud`, `database`, `disk`, `internet`, `server`
 
-| Syntax | Description |
-|--------|-------------|
-| `--` | Undirected |
-| `-->` | Arrow to right |
-| `<--` | Arrow to left |
-| `<-->` | Bidirectional |
+Iconify (200,000+ icons): `logos:aws`, `logos:google-cloud`, etc.
 
-```mermaid
-architecture-beta
-    service a(server)[A]
-    service b(server)[B]
-    service c(server)[C]
-    service d(server)[D]
-
-    a:R --> L:b
-    b:B --> T:c
-    c:L <-- R:d
-```
-
----
-
-## Icons
-
-### Default Icons
-
-| Icon | Description |
-|------|-------------|
-| `cloud` | Cloud |
-| `database` | Database |
-| `disk` | Disk storage |
-| `internet` | Internet/globe |
-| `server` | Server |
-
-### Iconify Icons
-
-Access 200,000+ icons from iconify.design:
-
-```mermaid
-architecture-beta
-    service aws(logos:aws)[AWS]
-    service gcp(logos:google-cloud)[GCP]
-```
-
----
-
-## Example: Microservices Architecture
+### Example: Microservices Architecture
 
 ```mermaid
 architecture-beta
@@ -170,11 +98,11 @@ architecture-beta
 
 ---
 
-# Block Diagrams
+## Block Diagrams
 
 System component layouts with flexible positioning.
 
-## Basic Syntax
+### Syntax
 
 ```mermaid
 block-beta
@@ -183,29 +111,9 @@ block-beta
     d e f
 ```
 
----
+**Block width (spanning):** `a:1 b:2 c:3`
 
-## Columns
-
-Control layout width:
-
-```mermaid
-block-beta
-    columns 4
-    a b c d
-    e f g h
-```
-
-## Block Width (Spanning)
-
-```mermaid
-block-beta
-    columns 3
-    a:1 b:2
-    c:3
-```
-
-## Block Shapes
+**Shapes:**
 
 ```mermaid
 block-beta
@@ -219,9 +127,7 @@ block-beta
     g{{"Hexagon"}}
 ```
 
----
-
-## Nested Blocks
+**Nested blocks:**
 
 ```mermaid
 block-beta
@@ -247,24 +153,7 @@ block-beta
     backend --> Cache
 ```
 
----
-
-## Connections
-
-```mermaid
-block-beta
-    columns 3
-
-    A["Client"] --> B["API Gateway"]
-    B --> C["Service A"]
-    B --> D["Service B"]
-    C --> E[("Database")]
-    D --> E
-```
-
----
-
-## Styling
+**Styling:**
 
 ```mermaid
 block-beta
@@ -280,9 +169,7 @@ block-beta
     class Database data
 ```
 
----
-
-## Example: Three-Tier Architecture
+### Example: Three-Tier Architecture
 
 ```mermaid
 block-beta
@@ -321,25 +208,19 @@ block-beta
 
 ---
 
-# C4 Diagrams
+## C4 Diagrams
 
 Software architecture using the C4 model (Context, Container, Component, Code).
 
-## Diagram Types
-
 | Type | Declaration | Level |
 |------|-------------|-------|
-| System Context | `C4Context` | 1 - Highest |
+| System Context | `C4Context` | 1 — Highest |
 | Container | `C4Container` | 2 |
 | Component | `C4Component` | 3 |
 | Dynamic | `C4Dynamic` | Interactions |
 | Deployment | `C4Deployment` | Infrastructure |
 
----
-
-## C4Context (Level 1)
-
-Shows system in context with users and external systems:
+### C4Context (Level 1)
 
 ```mermaid
 C4Context
@@ -359,24 +240,9 @@ C4Context
     Rel(system, payment, "Processes payments")
 ```
 
-### Elements
+**Elements:** `Person`, `Person_Ext`, `System`, `System_Ext`, `SystemDb`, `SystemQueue`, `Boundary`, `Enterprise_Boundary`
 
-| Function | Description |
-|----------|-------------|
-| `Person(alias, label, desc)` | User/actor |
-| `Person_Ext()` | External person |
-| `System(alias, label, desc)` | Software system |
-| `System_Ext()` | External system |
-| `SystemDb()` | Database system |
-| `SystemQueue()` | Queue system |
-| `Boundary(alias, label)` | Grouping boundary |
-| `Enterprise_Boundary()` | Enterprise scope |
-
----
-
-## C4Container (Level 2)
-
-Shows containers within the system:
+### C4Container (Level 2)
 
 ```mermaid
 C4Container
@@ -402,21 +268,9 @@ C4Container
     Rel(worker, email, "Sends via", "HTTPS")
 ```
 
-### Container Elements
+**Container elements:** `Container`, `Container_Ext`, `ContainerDb`, `ContainerQueue`, `Container_Boundary`
 
-| Function | Description |
-|----------|-------------|
-| `Container(alias, label, tech, desc)` | Container |
-| `Container_Ext()` | External container |
-| `ContainerDb()` | Database container |
-| `ContainerQueue()` | Queue container |
-| `Container_Boundary()` | Container grouping |
-
----
-
-## C4Component (Level 3)
-
-Shows components within a container:
+### C4Component (Level 3)
 
 ```mermaid
 C4Component
@@ -441,11 +295,7 @@ C4Component
     Rel(authSvc, cache, "Caches sessions")
 ```
 
----
-
-## C4Dynamic
-
-Shows runtime interactions:
+### C4Dynamic & C4Deployment
 
 ```mermaid
 C4Dynamic
@@ -466,12 +316,6 @@ C4Dynamic
     Rel(worker, email, "6. Send confirmation")
 ```
 
----
-
-## C4Deployment
-
-Shows deployment to infrastructure:
-
 ```mermaid
 C4Deployment
     title Deployment Diagram
@@ -491,75 +335,34 @@ C4Deployment
     Rel(api, db, "SQL")
 ```
 
----
+**Relationships:** `Rel(from, to, label[, tech])`, `BiRel()`, `Rel_U/D/L/R()`, `Rel_Back()`
 
-## Relationships
-
-| Function | Description |
-|----------|-------------|
-| `Rel(from, to, label)` | Relationship |
-| `Rel(from, to, label, tech)` | With technology |
-| `BiRel()` | Bidirectional |
-| `Rel_U()`, `Rel_D()`, `Rel_L()`, `Rel_R()` | Directional |
-| `Rel_Back()` | Reverse direction |
+**Styling:** `UpdateElementStyle(alias, $fontColor, $bgColor)`, `UpdateRelStyle(from, to, $textColor, $lineColor)`
 
 ---
 
-## Styling
-
-```mermaid
-C4Context
-    Person(user, "User")
-    System(system, "System")
-    Rel(user, system, "Uses")
-
-    UpdateElementStyle(user, $fontColor="blue", $bgColor="lightblue")
-    UpdateRelStyle(user, system, $textColor="red", $lineColor="red")
-```
-
----
-
-# Kanban Diagrams
-
-Workflow boards for task management.
-
-## Basic Syntax
-
-```mermaid
-kanban
-    Todo
-        task1[Design API]
-        task2[Write tests]
-    In Progress
-        task3[Implement auth]
-    Done
-        task4[Setup project]
-```
-
----
-
-## Task Metadata
+## Kanban Diagrams
 
 ```mermaid
 kanban
     Backlog
-        task1[User authentication]
+        story1[User login]
+        story2[Password reset]
+    Todo
+        task1[Design login form]
         @{ ticket: AUTH-123 }
-        @{ assigned: john }
+        @{ assigned: alice }
         @{ priority: High }
+    In Progress
+        task2[Implement login API]
+        @{ assigned: bob }
+    Done
+        task3[Project setup]
 ```
 
-### Metadata Keys
+**Metadata keys:** `ticket`, `assigned`, `priority`
 
-| Key | Description |
-|-----|-------------|
-| `ticket` | Issue/ticket number |
-| `assigned` | Assignee |
-| `priority` | Priority level |
-
----
-
-## Configuration
+**Config:**
 
 ```yaml
 ---
@@ -571,58 +374,9 @@ config:
 
 ---
 
-## Example: Sprint Board
-
-```mermaid
-kanban
-    Backlog
-        story1[User login]
-        story2[Password reset]
-        story3[OAuth integration]
-
-    Todo
-        task1[Design login form]
-        task2[Setup JWT auth]
-
-    In Progress
-        task3[Implement login API]
-        @{ assigned: alice }
-        task4[Write login tests]
-        @{ assigned: bob }
-
-    Review
-        task5[Database schema]
-        @{ assigned: charlie }
-
-    Done
-        task6[Project setup]
-        task7[CI/CD pipeline]
-```
-
----
-
-# Packet Diagrams
+## Packet Diagrams
 
 Network protocol visualization.
-
-## Basic Syntax
-
-```mermaid
-packet-beta
-    0-15: "Source Port"
-    16-31: "Destination Port"
-    32-63: "Sequence Number"
-```
-
-## Bit Ranges
-
-Two syntaxes:
-- Absolute: `0-15: "Field"`
-- Relative: `+16: "Field"` (16 bits from current position)
-
----
-
-## Example: TCP Packet
 
 ```mermaid
 packet-beta
@@ -645,70 +399,17 @@ packet-beta
     192-255: "Data"
 ```
 
-## Example: UDP Packet
-
-```mermaid
-packet-beta
-    title UDP Packet
-    +16: "Source Port"
-    +16: "Destination Port"
-    +16: "Length"
-    +16: "Checksum"
-    +64: "Data"
-```
+**Bit ranges:** Absolute `0-15: "Field"` or relative `+16: "Field"` (16 bits from current position).
 
 ---
 
-# Requirement Diagrams
+## Requirement Diagrams
 
 System requirements and traceability.
 
-## Basic Syntax
+**Requirement types:** `requirement`, `functionalRequirement`, `interfaceRequirement`, `performanceRequirement`, `physicalRequirement`, `designConstraint`
 
-```mermaid
-requirementDiagram
-
-    requirement user_login {
-        id: REQ-001
-        text: Users must be able to log in
-        risk: low
-        verifymethod: test
-    }
-
-    element login_page {
-        type: ui_component
-        docref: UI-001
-    }
-
-    login_page - satisfies -> user_login
-```
-
-## Requirement Types
-
-| Type | Description |
-|------|-------------|
-| `requirement` | Generic |
-| `functionalRequirement` | Functional |
-| `interfaceRequirement` | Interface |
-| `performanceRequirement` | Performance |
-| `physicalRequirement` | Physical |
-| `designConstraint` | Constraint |
-
-## Relationships
-
-| Type | Meaning |
-|------|---------|
-| `contains` | Parent contains child |
-| `copies` | Duplicate |
-| `derives` | Derives from |
-| `satisfies` | Element satisfies requirement |
-| `verifies` | Element verifies requirement |
-| `refines` | Refines requirement |
-| `traces` | Traceability link |
-
----
-
-## Example: Feature Requirements
+**Relationships:** `contains`, `copies`, `derives`, `satisfies`, `verifies`, `refines`, `traces`
 
 ```mermaid
 requirementDiagram
