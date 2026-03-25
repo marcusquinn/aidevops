@@ -224,25 +224,10 @@ _submit_and_handle() {
 	return 0
 }
 
-# Realistic Skin Enhancement
-cmd_enhance() {
-	local img_url=""
-	local webhook_url=""
-	local model_version="${ENHANCOR_MODEL_VERSION}"
-	local enhancement_mode="${ENHANCOR_ENHANCEMENT_MODE}"
-	local enhancement_type="${ENHANCOR_ENHANCEMENT_TYPE}"
-	local skin_refinement_level=0
-	local skin_realism_level=""
-	local portrait_depth=""
-	local output_resolution=""
-	local mask_image_url=""
-	local mask_expand=15
-	local sync_mode="false"
-	local poll_interval="${ENHANCOR_POLL_INTERVAL}"
-	local timeout="${ENHANCOR_TIMEOUT}"
-	local output_file=""
-	local -a area_flags=()
-
+# Parse arguments for cmd_enhance; sets variables in caller's scope via eval
+_parse_enhance_args() {
+	# Variables set in caller scope (passed by name via positional args)
+	# Caller must declare all locals before calling this function.
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--img-url | -i)
@@ -321,16 +306,24 @@ cmd_enhance() {
 			;;
 		esac
 	done
+	return 0
+}
 
-	if [[ -z "${img_url}" ]]; then
-		print_error "Image URL is required"
-		print_info "Usage: enhancor-helper.sh enhance --img-url URL [options]"
-		return 1
-	fi
+# Build the JSON request body for cmd_enhance
+_build_enhance_body() {
+	local img_url="$1"
+	local model_version="$2"
+	local enhancement_mode="$3"
+	local enhancement_type="$4"
+	local skin_refinement_level="$5"
+	local mask_expand="$6"
+	local webhook_url="$7"
+	local mask_image_url="$8"
+	local skin_realism_level="$9"
+	local portrait_depth="${10}"
+	local output_resolution="${11}"
+	# area_flags is read from caller scope (array cannot cross function boundary)
 
-	load_api_key || return 1
-
-	# Build request body safely with jq
 	local body
 	body=$(jq -n \
 		--arg img_url "${img_url}" \
@@ -367,7 +360,46 @@ cmd_enhance() {
 		body=$(echo "${body}" | jq --argjson v "${output_resolution}" '. + {output_resolution: $v}')
 	fi
 
-	# Add area flags
+	echo "${body}"
+	return 0
+}
+
+# Realistic Skin Enhancement
+cmd_enhance() {
+	local img_url=""
+	local webhook_url=""
+	local model_version="${ENHANCOR_MODEL_VERSION}"
+	local enhancement_mode="${ENHANCOR_ENHANCEMENT_MODE}"
+	local enhancement_type="${ENHANCOR_ENHANCEMENT_TYPE}"
+	local skin_refinement_level=0
+	local skin_realism_level=""
+	local portrait_depth=""
+	local output_resolution=""
+	local mask_image_url=""
+	local mask_expand=15
+	local sync_mode="false"
+	local poll_interval="${ENHANCOR_POLL_INTERVAL}"
+	local timeout="${ENHANCOR_TIMEOUT}"
+	local output_file=""
+	local -a area_flags=()
+
+	_parse_enhance_args "$@" || return 1
+
+	if [[ -z "${img_url}" ]]; then
+		print_error "Image URL is required"
+		print_info "Usage: enhancor-helper.sh enhance --img-url URL [options]"
+		return 1
+	fi
+
+	load_api_key || return 1
+
+	local body
+	body=$(_build_enhance_body \
+		"${img_url}" "${model_version}" "${enhancement_mode}" "${enhancement_type}" \
+		"${skin_refinement_level}" "${mask_expand}" "${webhook_url}" "${mask_image_url}" \
+		"${skin_realism_level}" "${portrait_depth}" "${output_resolution}")
+
+	# Add area flags (array must be applied here — cannot cross function boundary)
 	local area_name
 	for area_name in "${area_flags[@]+"${area_flags[@]}"}"; do
 		body=$(echo "${body}" | jq --arg k "${area_name}" '. + {($k): true}')
@@ -580,19 +612,8 @@ cmd_detailed() {
 	return $?
 }
 
-# Kora Pro AI Image Generation
-cmd_generate() {
-	local model="kora_pro"
-	local prompt=""
-	local img_url=""
-	local webhook_url=""
-	local generation_mode="normal"
-	local image_size="portrait_3:4"
-	local sync_mode="false"
-	local poll_interval="${ENHANCOR_POLL_INTERVAL}"
-	local timeout="${ENHANCOR_TIMEOUT}"
-	local output_file=""
-
+# Parse arguments for cmd_generate; sets variables in caller's scope
+_parse_generate_args() {
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--model)
@@ -650,14 +671,17 @@ cmd_generate() {
 			;;
 		esac
 	done
+	return 0
+}
 
-	if [[ -z "${prompt}" ]]; then
-		print_error "Prompt is required"
-		print_info "Usage: enhancor-helper.sh generate \"your prompt\" [options]"
-		return 1
-	fi
-
-	load_api_key || return 1
+# Build the JSON request body for cmd_generate
+_build_generate_body() {
+	local model="$1"
+	local prompt="$2"
+	local generation_mode="$3"
+	local image_size="$4"
+	local img_url="$5"
+	local webhook_url="$6"
 
 	# Build request body safely with jq (critical for prompts containing quotes)
 	local body
@@ -679,6 +703,36 @@ cmd_generate() {
 	if [[ -n "${webhook_url}" ]]; then
 		body=$(echo "${body}" | jq --arg v "${webhook_url}" '. + {webhookUrl: $v}')
 	fi
+
+	echo "${body}"
+	return 0
+}
+
+# Kora Pro AI Image Generation
+cmd_generate() {
+	local model="kora_pro"
+	local prompt=""
+	local img_url=""
+	local webhook_url=""
+	local generation_mode="normal"
+	local image_size="portrait_3:4"
+	local sync_mode="false"
+	local poll_interval="${ENHANCOR_POLL_INTERVAL}"
+	local timeout="${ENHANCOR_TIMEOUT}"
+	local output_file=""
+
+	_parse_generate_args "$@" || return 1
+
+	if [[ -z "${prompt}" ]]; then
+		print_error "Prompt is required"
+		print_info "Usage: enhancor-helper.sh generate \"your prompt\" [options]"
+		return 1
+	fi
+
+	load_api_key || return 1
+
+	local body
+	body=$(_build_generate_body "${model}" "${prompt}" "${generation_mode}" "${image_size}" "${img_url}" "${webhook_url}")
 
 	_submit_and_handle "/kora/v1" "${body}" "${sync_mode}" "${poll_interval}" "${timeout}" "${output_file}" "generation request (${model})"
 	return $?
@@ -831,8 +885,8 @@ cmd_setup() {
 	return 0
 }
 
-# Help
-cmd_help() {
+# Help: usage header and command list
+_help_commands_section() {
 	cat <<EOF
 Enhancor Helper - REST API client for Enhancor AI
 
@@ -849,6 +903,13 @@ COMMANDS:
     batch               Batch process multiple images
     setup               Setup API key
     help                Show this help message
+EOF
+	return 0
+}
+
+# Help: per-command option reference
+_help_options_section() {
+	cat <<EOF
 
 ENHANCE OPTIONS:
     --img-url, -i URL           Image URL (required)
@@ -905,6 +966,13 @@ BATCH OPTIONS:
     --input, -i FILE            Input file with URLs (one per line)
     --output-dir DIR            Output directory (default: current directory)
     [additional options]        Pass through to command
+EOF
+	return 0
+}
+
+# Help: examples and environment reference
+_help_examples_section() {
+	cat <<EOF
 
 EXAMPLES:
     # Skin enhancement with v3 model
@@ -936,6 +1004,14 @@ ENVIRONMENT:
 
 For more information, see: https://www.enhancor.ai/
 EOF
+	return 0
+}
+
+# Help
+cmd_help() {
+	_help_commands_section
+	_help_options_section
+	_help_examples_section
 	return 0
 }
 
