@@ -176,15 +176,19 @@ cmd_add() {
 	init_db
 
 	local escaped_title escaped_pillar escaped_cluster escaped_notes
+	local escaped_intent escaped_author escaped_tags
 	escaped_title="${title//\'/\'\'}"
 	escaped_pillar="${pillar//\'/\'\'}"
 	escaped_cluster="${cluster//\'/\'\'}"
 	escaped_notes="${notes//\'/\'\'}"
+	escaped_intent="${intent//\'/\'\'}"
+	escaped_author="${author//\'/\'\'}"
+	escaped_tags="${tags//\'/\'\'}"
 
 	local new_id
 	new_id=$(sqlite3 "$CC_DB" "
         INSERT INTO content_items (title, pillar, cluster, intent, author, tags, notes)
-        VALUES ('${escaped_title}', '${escaped_pillar}', '${escaped_cluster}', '${intent}', '${author}', '${tags}', '${escaped_notes}');
+        VALUES ('${escaped_title}', '${escaped_pillar}', '${escaped_cluster}', '${escaped_intent}', '${escaped_author}', '${escaped_tags}', '${escaped_notes}');
         SELECT last_insert_rowid();
     ")
 
@@ -226,6 +230,7 @@ cmd_list() {
 
 	local where_clause="1=1"
 	[[ -n "$stage_filter" ]] && where_clause="${where_clause} AND c.stage = '${stage_filter}'"
+	[[ -n "$status_filter" ]] && where_clause="${where_clause} AND s.status = '${status_filter}'"
 
 	local query
 	if [[ -n "$platform_filter" ]]; then
@@ -282,6 +287,7 @@ cmd_schedule() {
 		print_error "Usage: content-calendar-helper.sh schedule <content_id> <YYYY-MM-DD> <platform> [--time HH:MM]"
 		return 1
 	fi
+	_validate_numeric_id "$content_id" "content_id" || return 1
 	shift 3
 
 	local sched_time=""
@@ -423,6 +429,8 @@ cmd_status() {
 	init_db
 
 	if [[ -n "$item_id" ]]; then
+		_validate_numeric_id "$item_id" "item_id" || return 1
+
 		# Show specific item details
 		local item_data
 		item_data=$(sqlite3 -separator '|' "$CC_DB" "
@@ -518,6 +526,7 @@ cmd_advance() {
 		echo "  Stages: ${CC_STAGES}"
 		return 1
 	fi
+	_validate_numeric_id "$item_id" "item_id" || return 1
 
 	# Validate stage
 	if ! echo "$CC_STAGES" | grep -qw "$target_stage"; then
@@ -895,6 +904,19 @@ cmd_export() {
 # =============================================================================
 # Helper Functions
 # =============================================================================
+
+# Validate that a value is a positive integer (for SQL ID parameters)
+_validate_numeric_id() {
+	local value="$1"
+	local label="${2:-ID}"
+
+	if ! [[ "$value" =~ ^[0-9]+$ ]]; then
+		print_error "${label} must be a positive integer, got: ${value}"
+		return 1
+	fi
+
+	return 0
+}
 
 # Show optimal posting window for a platform
 _show_posting_window() {
