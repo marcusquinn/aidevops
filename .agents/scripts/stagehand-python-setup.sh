@@ -14,15 +14,9 @@ readonly STAGEHAND_PYTHON_CONFIG_DIR="${HOME}/.aidevops/stagehand-python"
 readonly STAGEHAND_PYTHON_EXAMPLES_DIR="${STAGEHAND_PYTHON_CONFIG_DIR}/examples"
 readonly STAGEHAND_PYTHON_TEMPLATES_DIR="${STAGEHAND_PYTHON_CONFIG_DIR}/templates"
 
-# Create advanced Python example scripts
-create_python_examples() {
-    print_info "Creating advanced Stagehand Python example scripts..."
-    
-    mkdir -p "$STAGEHAND_PYTHON_EXAMPLES_DIR"
-    mkdir -p "$STAGEHAND_PYTHON_TEMPLATES_DIR"
-    
-    # Basic example with Pydantic
-    cat > "${STAGEHAND_PYTHON_EXAMPLES_DIR}/basic_example.py" << 'EOF'
+# Write basic_example.py to the examples directory
+_write_basic_example_py() {
+	cat >"${STAGEHAND_PYTHON_EXAMPLES_DIR}/basic_example.py" <<'EOF'
 #!/usr/bin/env python3
 """
 Basic Stagehand Python Example
@@ -48,7 +42,7 @@ class PageInfo(BaseModel):
 async def main():
     """Main function demonstrating basic Stagehand usage"""
     print("🤘 Testing Stagehand Python AI Browser Automation...")
-    
+
     # Create configuration
     config = StagehandConfig(
         env="LOCAL",  # or "BROWSERBASE"
@@ -59,43 +53,43 @@ async def main():
         headless=False,
         verbose=1
     )
-    
+
     stagehand = Stagehand(config)
-    
+
     try:
         print("\nInitializing 🤘 Stagehand...")
         await stagehand.init()
-        
+
         if stagehand.env == "BROWSERBASE":
             print(f"🌐 View your live browser: https://www.browserbase.com/sessions/{stagehand.session_id}")
-        
+
         page = stagehand.page
-        
+
         # Navigate to a test page
         await page.goto("https://example.com")
         print("✅ Successfully navigated to example.com")
-        
+
         # Use natural language to interact
         await page.act("scroll down to see more content")
         print("✅ Performed scroll action")
-        
+
         # Extract structured data
         page_info = await page.extract(
             "extract the page title, main heading, and description",
             schema=PageInfo
         )
-        
+
         print(f"\n📊 Extracted Data:")
         print(f"Title: {page_info.title}")
         print(f"Heading: {page_info.heading}")
         print(f"Description: {page_info.description}")
-        
+
         # Use observe to discover elements
         elements = await page.observe("find all clickable links")
         print(f"\n🔍 Observed Elements: {elements}")
-        
+
         print("\n🎉 Stagehand Python test completed successfully!")
-        
+
     except Exception as e:
         print(f"❌ Error: {str(e)}")
         raise
@@ -106,9 +100,12 @@ async def main():
 if __name__ == "__main__":
     asyncio.run(main())
 EOF
+	return 0
+}
 
-    # E-commerce automation example
-    cat > "${STAGEHAND_PYTHON_EXAMPLES_DIR}/ecommerce_automation.py" << 'EOF'
+# Write ecommerce_automation.py header and search_products function
+_write_ecommerce_search_py() {
+	cat >"${STAGEHAND_PYTHON_EXAMPLES_DIR}/ecommerce_automation.py" <<'EOF'
 #!/usr/bin/env python3
 """
 E-commerce Automation with Stagehand Python
@@ -143,7 +140,7 @@ class ProductResults(BaseModel):
 
 async def search_products(query: str, max_results: int = 5) -> ProductResults:
     """Search for products and extract structured data"""
-    
+
     config = StagehandConfig(
         env="LOCAL",
         model_name="google/gemini-2.5-flash",
@@ -151,71 +148,81 @@ async def search_products(query: str, max_results: int = 5) -> ProductResults:
         headless=True,  # Run headless for automation
         verbose=1
     )
-    
+
     stagehand = Stagehand(config)
-    
+
     try:
         await stagehand.init()
         page = stagehand.page
-        
+
         # Navigate to Amazon (example)
         await page.goto("https://amazon.com")
-        
+
         # Search for products
         await page.act(f'search for "{query}"')
-        
+
         # Wait for results to load
         await asyncio.sleep(3)
-        
+
         # Extract product information
         products_data = await page.extract(
             f"extract the first {max_results} products with their details",
             schema=ProductResults
         )
-        
+
         # Add metadata
         products_data.search_query = query
         products_data.timestamp = datetime.now().isoformat()
-        
+
         # Save results
         results_dir = f"{os.path.expanduser('~')}/.aidevops/stagehand-python/results"
         os.makedirs(results_dir, exist_ok=True)
-        
+
         filename = f"product-search-{query.replace(' ', '-')}-{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
         filepath = os.path.join(results_dir, filename)
-        
+
         with open(filepath, 'w') as f:
             json.dump(products_data.dict(), f, indent=2)
-        
+
         print(f"Found {len(products_data.products)} products:")
         for i, product in enumerate(products_data.products, 1):
             print(f"{i}. {product.name} - ${product.price} ({product.rating}⭐)")
-        
+
         print(f"Results saved to: {filepath}")
         return products_data
-        
+
     except Exception as e:
         print(f"Error during product search: {e}")
         raise
     finally:
         await stagehand.close()
+EOF
+	return 0
+}
+
+# Append ecommerce_automation.py main entry point
+_write_ecommerce_main_py() {
+	cat >>"${STAGEHAND_PYTHON_EXAMPLES_DIR}/ecommerce_automation.py" <<'EOF'
 
 async def main():
     """Main function for product search"""
     import sys
-    
+
     query = sys.argv[1] if len(sys.argv) > 1 else "wireless headphones"
     max_results = int(sys.argv[2]) if len(sys.argv) > 2 else 5
-    
+
     results = await search_products(query, max_results)
     print(f"\nProduct search completed for: {results.search_query}")
 
 if __name__ == "__main__":
     asyncio.run(main())
 EOF
+	return 0
+}
 
-    # Web scraping template
-    cat > "${STAGEHAND_PYTHON_TEMPLATES_DIR}/web_scraping_template.py" << 'EOF'
+# Write web_scraping_template.py scraper function (header + scrape_website)
+_write_web_scraping_scraper_py() {
+	cat >"${STAGEHAND_PYTHON_TEMPLATES_DIR}/web_scraping_template.py" <<'EOF'
 #!/usr/bin/env python3
 """
 Web Scraping Template with Stagehand Python
@@ -249,7 +256,7 @@ class ScrapingResults(BaseModel):
 
 async def scrape_website(url: str, extraction_prompt: str, max_items: int = 10) -> ScrapingResults:
     """Generic website scraping function"""
-    
+
     config = StagehandConfig(
         env="LOCAL",
         model_name="google/gemini-2.5-flash",
@@ -257,84 +264,111 @@ async def scrape_website(url: str, extraction_prompt: str, max_items: int = 10) 
         headless=True,
         verbose=1
     )
-    
+
     stagehand = Stagehand(config)
-    
+
     try:
         await stagehand.init()
         page = stagehand.page
-        
+
         print(f"Navigating to: {url}")
         await page.goto(url)
-        
+
         # Wait for page to load
         await asyncio.sleep(3)
-        
+
         # Handle cookie banners or popups
         try:
             await page.act("close any cookie banners or popups")
         except Exception:
             print("No popups to close")
-        
+
         # Extract data based on the prompt
         results = await page.extract(
             extraction_prompt,
             schema=ScrapingResults
         )
-        
+
         # Add metadata
         results.source_url = url
         results.extraction_prompt = extraction_prompt
         results.timestamp = datetime.now().isoformat()
-        
+
         print(f"Extracted {len(results.items)} items:")
         for i, item in enumerate(results.items, 1):
             print(f"{i}. {item.title}")
             print(f"   {item.description[:100]}...")
-        
+
         return results
-        
+
     except Exception as e:
         print(f"Error during web scraping: {e}")
         raise
     finally:
         await stagehand.close()
+EOF
+	return 0
+}
+
+# Append web_scraping_template.py main entry point
+_write_web_scraping_main_py() {
+	cat >>"${STAGEHAND_PYTHON_TEMPLATES_DIR}/web_scraping_template.py" <<'EOF'
 
 async def main():
     """Main function for web scraping"""
     import sys
-    
+
     url = sys.argv[1] if len(sys.argv) > 1 else "https://news.ycombinator.com"
     prompt = sys.argv[2] if len(sys.argv) > 2 else "extract the top stories with titles and descriptions"
     max_items = int(sys.argv[3]) if len(sys.argv) > 3 else 10
-    
+
     results = await scrape_website(url, prompt, max_items)
-    
+
     # Save results
     results_dir = f"{os.path.expanduser('~')}/.aidevops/stagehand-python/results"
     os.makedirs(results_dir, exist_ok=True)
-    
+
     filename = f"scraping-results-{datetime.now().strftime('%Y%m%d_%H%M%S')}.json"
     filepath = os.path.join(results_dir, filename)
-    
+
     with open(filepath, 'w') as f:
         json.dump(results.dict(), f, indent=2)
-    
+
     print(f"Results saved to: {filepath}")
 
 if __name__ == "__main__":
     asyncio.run(main())
 EOF
+	return 0
+}
 
-    print_success "Created advanced Stagehand Python examples"
-    return 0
+# Create advanced Python example scripts
+create_python_examples() {
+	print_info "Creating advanced Stagehand Python example scripts..."
+
+	mkdir -p "$STAGEHAND_PYTHON_EXAMPLES_DIR"
+	mkdir -p "$STAGEHAND_PYTHON_TEMPLATES_DIR"
+
+	# Basic example with Pydantic
+	_write_basic_example_py
+
+	# E-commerce automation example
+	_write_ecommerce_search_py
+	_write_ecommerce_main_py
+
+	# Web scraping template
+	_write_web_scraping_scraper_py
+	_write_web_scraping_main_py
+
+	print_success "Created advanced Stagehand Python examples"
+	return 0
 }
 
 # Create requirements.txt for the project
 create_requirements_file() {
-    local requirements_file="${STAGEHAND_PYTHON_CONFIG_DIR}/requirements.txt"
-    
-    cat > "$requirements_file" << 'EOF'
+	local requirements_file="${STAGEHAND_PYTHON_CONFIG_DIR}/requirements.txt"
+
+	cat >"$requirements_file" <<'EOF'
 # Stagehand Python AI Browser Automation
 stagehand>=0.5.0
 
@@ -356,34 +390,34 @@ isort>=5.12.0
 mypy>=1.5.0
 EOF
 
-    print_success "Created requirements.txt at: $requirements_file"
-    return 0
+	print_success "Created requirements.txt at: $requirements_file"
+	return 0
 }
 
 # Main setup function
 main() {
-    local command="${1:-setup}"
-    
-    case "$command" in
-        "setup")
-            print_info "Setting up Stagehand Python advanced configuration..."
-            create_python_examples
-            create_requirements_file
-            print_success "Stagehand Python advanced setup completed!"
-            print_info "Next steps:"
-            print_info "1. Run: bash .agents/scripts/stagehand-python-helper.sh install"
-            print_info "2. Configure API keys in ~/.aidevops/stagehand-python/.env"
-            print_info "3. Activate venv: source ~/.aidevops/stagehand-python/.venv/bin/activate"
-            print_info "4. Try examples: cd ~/.aidevops/stagehand-python && python examples/basic_example.py" || exit
-            ;;
-        "examples")
-            create_python_examples
-            ;;
-        "requirements")
-            create_requirements_file
-            ;;
-        "help")
-            cat << EOF
+	local command="${1:-setup}"
+
+	case "$command" in
+	"setup")
+		print_info "Setting up Stagehand Python advanced configuration..."
+		create_python_examples
+		create_requirements_file
+		print_success "Stagehand Python advanced setup completed!"
+		print_info "Next steps:"
+		print_info "1. Run: bash .agents/scripts/stagehand-python-helper.sh install"
+		print_info "2. Configure API keys in ~/.aidevops/stagehand-python/.env"
+		print_info "3. Activate venv: source ~/.aidevops/stagehand-python/.venv/bin/activate"
+		print_info "4. Try examples: cd ~/.aidevops/stagehand-python && python examples/basic_example.py" || exit
+		;;
+	"examples")
+		create_python_examples
+		;;
+	"requirements")
+		create_requirements_file
+		;;
+	"help")
+		cat <<EOF
 Stagehand Python Setup Script
 
 USAGE:
@@ -396,14 +430,14 @@ COMMANDS:
     help            Show this help
 
 EOF
-            ;;
-        *)
-            print_error "$ERROR_UNKNOWN_COMMAND $command"
-            return 1
-            ;;
-    esac
-    
-    return 0
+		;;
+	*)
+		print_error "$ERROR_UNKNOWN_COMMAND $command"
+		return 1
+		;;
+	esac
+
+	return 0
 }
 
 # Execute main function
