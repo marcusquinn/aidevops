@@ -19,31 +19,20 @@ Cross-session memory for AI assistants using SQLite FTS5 for fast full-text sear
 **Requires**: `sqlite3` CLI (includes FTS5 by default)
 
 ```bash
-# Ubuntu/Debian
-sudo apt install sqlite3
-
-# macOS (usually pre-installed)
-brew install sqlite3
-
-# Verify installation
-sqlite3 --version
+sudo apt install sqlite3   # Ubuntu/Debian
+brew install sqlite3       # macOS (usually pre-installed)
+sqlite3 --version          # Verify
 ```
 
-**Motto**: "Compound, then clear" - Sessions should build on each other.
+**Motto**: "Compound, then clear" — sessions should build on each other.
 
-**Inspired by**: [Supermemory](https://supermemory.ai/research) architecture for:
-
-- **Relational versioning** - Track how memories evolve (updates, extends, derives)
-- **Dual timestamps** - Distinguish when stored vs when event occurred
-- **Contextual disambiguation** - Self-contained, atomic memories
-
-**Architecture Decision: SQLite FTS5 over PostgreSQL** - SQLite was chosen for memory storage to minimize deployment complexity and eliminate external dependencies. No separate database server required, no connection management, and FTS5 provides fast full-text search out of the box. This aligns with the aidevops philosophy of self-contained, portable tooling.
+**Architecture Decision: SQLite FTS5 over PostgreSQL** — chosen to minimize deployment complexity and eliminate external dependencies. No separate database server, no connection management, FTS5 provides fast full-text search out of the box.
 
 ## Entity Memory System
 
-The memory system extends beyond project-scoped learnings to include **entity memory** — tracking relationships with people, agents, and services across all communication channels. This enables relationship continuity that survives session resets and context compaction.
+Extends beyond project-scoped learnings to track relationships with people, agents, and services across all communication channels. Enables relationship continuity that survives session resets and context compaction.
 
-**Architecture:** Three-layer design sharing the same `memory.db` database. See `reference/entity-memory-architecture.md` for the full architecture document.
+**Architecture:** Three-layer design sharing the same `memory.db`. Full architecture: `reference/entity-memory-architecture.md`.
 
 | Layer | Purpose | Script | Tables |
 |-------|---------|--------|--------|
@@ -53,41 +42,20 @@ The memory system extends beyond project-scoped learnings to include **entity me
 | Loop | Self-evolution (gap detection → TODO → upgrade) | `self-evolution-helper.sh` | `capability_gaps`, `gap_evidence` |
 
 **Key concepts:**
-
 - **Entities** — people, agents, or services the system interacts with
-- **Cross-channel identity** — link Matrix, SimpleX, email, CLI identities to the same entity (with confidence levels: confirmed/suggested/inferred)
-- **Versioned profiles** — entity preferences and needs are never updated in place; new versions supersede old ones via `supersedes_id` chain
-- **Immutable interactions** — Layer 0 is append-only; all other layers are derived from it
-- **Self-evolution loop** — interaction patterns → capability gap detection → automatic TODO creation → system upgrade → better service
-
-**Quick entity examples:**
+- **Cross-channel identity** — link Matrix, SimpleX, email, CLI identities to the same entity (confidence: confirmed/suggested/inferred)
+- **Versioned profiles** — entity preferences never updated in place; new versions supersede old via `supersedes_id` chain
+- **Immutable interactions** — Layer 0 is append-only; all other layers derived from it
+- **Self-evolution loop** — interaction patterns → capability gap detection → automatic TODO creation → system upgrade
 
 ```bash
-# Create an entity with initial channel link
-entity-helper.sh create --name "Marcus" --type person \
-    --channel matrix --channel-id "@marcus:server.com"
-
-# Link additional channel
-entity-helper.sh link ent_xxx --channel email \
-    --channel-id "marcus@example.com" --verified
-
-# Log an interaction (Layer 0 — immutable)
-entity-helper.sh log-interaction ent_xxx \
-    --channel matrix --content "How's the deployment going?"
-
-# Create a conversation and load context
-conversation-helper.sh create --entity ent_xxx --channel matrix \
-    --channel-id "!room:server" --topic "Deployment discussion"
+entity-helper.sh create --name "Marcus" --type person --channel matrix --channel-id "@marcus:server.com"
+entity-helper.sh link ent_xxx --channel email --channel-id "marcus@example.com" --verified
+entity-helper.sh log-interaction ent_xxx --channel matrix --content "How's the deployment going?"
+conversation-helper.sh create --entity ent_xxx --channel matrix --channel-id "!room:server" --topic "Deployment"
 conversation-helper.sh context conv_xxx --recent-messages 10
-
-# Store a memory linked to an entity
-memory-helper.sh store --content "Prefers concise responses" \
-    --entity ent_xxx --type USER_PREFERENCE
-
-# Recall memories for an entity
+memory-helper.sh store --content "Prefers concise responses" --entity ent_xxx --type USER_PREFERENCE
 memory-helper.sh recall --query "preferences" --entity ent_xxx
-
-# Run self-evolution scan
 self-evolution-helper.sh pulse-scan --auto-todo-threshold 3
 ```
 
@@ -103,60 +71,24 @@ self-evolution-helper.sh pulse-scan --auto-todo-threshold 3
 # Update an existing memory (creates version chain)
 ~/.aidevops/agents/scripts/memory-helper.sh store --content "Favorite color is now green" --supersedes mem_xxx --relation updates
 
-# View version history
-~/.aidevops/agents/scripts/memory-helper.sh history mem_xxx
-
-# Store an auto-captured memory (from AI agent)
-~/.aidevops/agents/scripts/memory-helper.sh store --auto --type "WORKING_SOLUTION" --content "Fixed CORS with nginx headers" --tags "cors,nginx"
-
 # Recall memories
 ~/.aidevops/agents/scripts/memory-helper.sh recall "cors"
-
-# Show recent memories
 ~/.aidevops/agents/scripts/memory-helper.sh recall --recent
 
-# Show auto-capture log
-~/.aidevops/agents/scripts/memory-helper.sh log
-
-# View statistics (includes auto-capture counts)
+# Maintenance
 ~/.aidevops/agents/scripts/memory-helper.sh stats
-
-# Remove duplicate memories
-~/.aidevops/agents/scripts/memory-helper.sh dedup --dry-run
-~/.aidevops/agents/scripts/memory-helper.sh dedup
-
-# Validate memory health (staleness, duplicates, size)
+~/.aidevops/agents/scripts/memory-helper.sh dedup --dry-run && memory-helper.sh dedup
 ~/.aidevops/agents/scripts/memory-helper.sh validate
 ```
 
 ## Auto-Recall
 
-Memories are automatically recalled at key entry points to provide relevant context:
+Memories are automatically recalled at key entry points:
 
-**Interactive Sessions:**
-- **Session start**: Recent memories (last 5) surface via `conversation-starter.md`
+- **Interactive sessions**: Recent memories (last 5) surface via `conversation-starter.md`
 - **Session resume**: After loading checkpoint, recent memories provide context
-
-**Headless Workers:**
-- **Runner dispatch**: Before task execution, runners recall:
-  - Recent memories (last 5) from runner's namespace
-  - Task-specific memories based on prompt query
-- **Objective runner**: On first step only (token efficiency), recalls:
-  - Recent memories (last 5)
-  - Objective-specific memories based on goal description
-  - Failure patterns from previous runs of the same objective
-
-**Behavior:**
-- Silent if no memories found (no noise)
-- Uses namespace isolation for runners (`--namespace <name> --shared`)
-- Formatted as markdown sections prepended to prompts
-- Only runs once per entry point (not on every iteration)
-
-**Implementation:**
-- `conversation-starter.md`: Lines 10-24 (interactive session start)
-- `session-checkpoint-helper.sh`: `cmd_load()` (session resume)
-- `runner-helper.sh`: `cmd_run()` (runner dispatch)
-- `objective-runner-helper.sh`: archived (t1336) — `/full-loop` now handles iterative execution
+- **Runner dispatch**: Before task execution, runners recall recent + task-specific memories
+- **Behavior**: Silent if no memories found; namespace-isolated for runners; formatted as markdown sections
 
 ## Slash Commands
 
@@ -180,9 +112,9 @@ See `scripts/commands/remember.md` and `scripts/commands/recall.md` for full doc
 | `CODEBASE_PATTERN` | Project conventions |
 | `USER_PREFERENCE` | Developer preferences |
 | `TOOL_CONFIG` | Tool setup notes |
-| `DECISION` | General project decisions and non-architectural choices |
+| `DECISION` | General project decisions |
 | `CONTEXT` | Background info |
-| `ARCHITECTURAL_DECISION` | System-level architecture choices and trade-offs (service boundaries, data flow, tech stack selection) |
+| `ARCHITECTURAL_DECISION` | System-level architecture choices and trade-offs |
 | `ERROR_FIX` | Bug fixes and patches |
 | `OPEN_THREAD` | Unresolved questions or follow-ups |
 | `SUCCESS_PATTERN` | Approaches that consistently work for task types |
@@ -190,41 +122,19 @@ See `scripts/commands/remember.md` and `scripts/commands/recall.md` for full doc
 
 ## Auto-Capture
 
-AI agents automatically store memories using the `--auto` flag when they detect
-significant events (working solutions, failed approaches, decisions). This is
-tool-agnostic - works with Claude Code, OpenCode, Cursor, Windsurf, or any AI
-tool that reads AGENTS.md.
+AI agents automatically store memories using the `--auto` flag when they detect significant events. Tool-agnostic — works with Claude Code, OpenCode, Cursor, Windsurf, or any AI tool that reads AGENTS.md.
 
-**How it works:**
-
-1. Agent detects a trigger (e.g., solution found, preference stated)
-2. Agent stores with `--auto` flag: `memory-helper.sh store --auto --content "..."`
-3. Auto-captured memories are tracked separately from manual `/remember` entries
-4. Review with `/memory-log` or `memory-helper.sh log`
-
-**Privacy filters (applied automatically on store):**
-
-- `<private>...</private>` blocks are stripped from content
+**Privacy filters** (applied automatically on store):
+- `<private>...</private>` blocks are stripped
 - Content matching secret patterns (API keys, tokens) is rejected
-- Credentials and sensitive config values are never stored
-
-**Filtering:**
 
 ```bash
-# Show only auto-captured memories
-memory-helper.sh recall "query" --auto-only
-
-# Show only manually stored memories
-memory-helper.sh recall "query" --manual-only
-
-# Show auto-capture log (recent auto-captures)
-memory-helper.sh log
-memory-helper.sh log --limit 50
+memory-helper.sh recall "query" --auto-only    # Auto-captured only
+memory-helper.sh recall "query" --manual-only  # Manually stored only
+memory-helper.sh log                           # Recent auto-captures
 ```
 
 ## Relation Types
-
-Inspired by Supermemory's relational versioning:
 
 | Relation | Use For | Example |
 |----------|---------|---------|
@@ -239,93 +149,41 @@ Inspired by Supermemory's relational versioning:
 | `created_at` | When the memory was stored in the database |
 | `event_date` | When the event described actually occurred |
 
-This enables temporal reasoning like "what happened last week?" by distinguishing
-between when you learned something vs when it happened.
-
 ## Deduplication
 
-The memory system prevents duplicate entries at two levels:
-
-**On store (automatic):** Before inserting a new memory, the system checks for:
-
-- **Exact duplicates**: identical content string with the same type
-- **Near-duplicates**: same content after normalizing case, punctuation, and whitespace
-
-When a duplicate is detected, the existing entry's access count is incremented and its ID is returned. No new entry is created.
-
-**Bulk deduplication:** For cleaning up existing duplicates:
+**On store (automatic):** Checks for exact duplicates (identical content + type) and near-duplicates (same content after normalizing case/punctuation/whitespace). Increments access count on match instead of creating a new entry.
 
 ```bash
-# Preview what would be removed
-memory-helper.sh dedup --dry-run
-
-# Remove all duplicates (keeps oldest, merges tags)
-memory-helper.sh dedup
-
-# Only remove exact duplicates (skip near-duplicates)
+memory-helper.sh dedup --dry-run   # Preview
+memory-helper.sh dedup             # Remove all duplicates (keeps oldest, merges tags)
 memory-helper.sh dedup --exact-only
 ```
 
 ## Auto-Pruning
 
-Stale entries are automatically pruned to keep the memory database lean:
-
-- **Trigger**: Runs opportunistically on every `store` call (at most once per 24 hours)
-- **Criteria**: Removes entries older than 90 days that have never been accessed
-- **Safe**: Frequently accessed memories are preserved regardless of age
-- **Manual override**: Use `prune` command for custom thresholds
+Runs opportunistically on every `store` call (at most once per 24 hours). Removes entries older than 90 days that have never been accessed. Frequently accessed memories are preserved regardless of age.
 
 ```bash
-# Manual prune with custom threshold
-memory-helper.sh prune --older-than-days 60
-
-# Preview before pruning
 memory-helper.sh prune --older-than-days 60 --dry-run
-
-# Also prune accessed entries (use with caution)
+memory-helper.sh prune --older-than-days 60
 memory-helper.sh prune --older-than-days 180 --include-accessed
 ```
 
 ## Semantic Search (Opt-in)
 
-For similarity-based search beyond keyword matching, enable vector embeddings:
-
 ```bash
-# One-time setup with local model (~90MB download, no API key)
-memory-embeddings-helper.sh setup --provider local
-
-# Or use OpenAI API (requires API key, no local model download)
-memory-embeddings-helper.sh setup --provider openai
-
-# Index existing memories
-memory-embeddings-helper.sh index
-
-# Search by meaning (not just keywords)
-memory-helper.sh recall "how to optimize database queries" --semantic
-
-# Hybrid search: combines FTS5 keyword + semantic using Reciprocal Rank Fusion
-memory-helper.sh recall "authentication patterns" --hybrid
-
-# Or use the embeddings helper directly
-memory-embeddings-helper.sh search "authentication patterns"
-memory-embeddings-helper.sh search "authentication patterns" --hybrid
-
-# Check provider and index status
+memory-embeddings-helper.sh setup --provider local    # ~90MB download, no API key
+memory-embeddings-helper.sh setup --provider openai   # Requires API key
+memory-embeddings-helper.sh index                     # Index existing memories
+memory-helper.sh recall "optimize database queries" --semantic
+memory-helper.sh recall "authentication patterns" --hybrid  # FTS5 + semantic (RRF)
 memory-embeddings-helper.sh status
-
-# Switch between providers
-memory-embeddings-helper.sh provider openai
-memory-embeddings-helper.sh rebuild  # Re-index with new provider
 ```
-
-### Embedding Providers
 
 | Provider | Model | Dimensions | Requirements |
 |----------|-------|-----------|--------------|
 | `local` | all-MiniLM-L6-v2 | 384 | Python 3.9+, sentence-transformers (~90MB) |
 | `openai` | text-embedding-3-small | 1536 | Python 3.9+, numpy, OpenAI API key |
-
-### Search Modes
 
 | Mode | Flag | Description |
 |------|------|-------------|
@@ -333,190 +191,77 @@ memory-embeddings-helper.sh rebuild  # Re-index with new provider
 | Semantic | `--semantic` | Vector similarity search |
 | Hybrid | `--hybrid` | Combines keyword + semantic using Reciprocal Rank Fusion (RRF) |
 
-Hybrid search is recommended for natural language queries. It finds results that
-match by both exact keywords and semantic meaning, producing better results than
-either method alone.
-
-### Auto-Indexing
-
-Once embeddings are configured (`setup` + `index`), new memories stored via
-`memory-helper.sh store` are automatically indexed in the background. No manual
-re-indexing is needed for new entries.
-
-FTS5 keyword search remains the default and works without any setup.
+Hybrid search is recommended for natural language queries. New memories stored via `memory-helper.sh store` are automatically indexed once embeddings are configured.
 
 ## Pattern Tracking
 
-Track what works and what fails across task types, models, and approaches.
-Patterns are captured automatically by the supervisor after task completion,
-and can also be recorded manually.
-
-Pattern tracking is now handled by the cross-session memory system and the pulse supervisor's outcome observation (Step 2a). Use `/remember` and `/recall` for manual pattern recording, and slash commands for querying:
+Pattern tracking is handled by the cross-session memory system and the pulse supervisor's outcome observation (Step 2a).
 
 ```bash
-# Use slash commands for pattern queries
 /patterns refactor          # Suggest patterns for a task
 /patterns report            # Full report
 /patterns recommend bugfix  # Model recommendation
 /route "fix auth bug"       # Model routing (includes pattern data)
-
-# Manual pattern recording via memory
 /remember "Structured debugging found root cause for bugfix t102.3 (sonnet, 120s)"
 /recall "bugfix patterns"
 ```
 
-**Automatic capture**: The pulse supervisor observes success/failure patterns from GitHub PR state (merged vs closed-without-merge) and files improvement issues when patterns emerge. Agents also record patterns via `/remember` after task completion.
+The pulse supervisor observes success/failure patterns from GitHub PR state (merged vs closed-without-merge) and files improvement issues when patterns emerge.
 
-> **Note**: The `pattern-tracker-helper.sh` script has been archived. Pattern data in `memory.db` remains accessible via the memory system. See `scripts/archived/pattern-tracker-helper.sh` for the original implementation.
+> **Note**: `pattern-tracker-helper.sh` has been archived. Pattern data in `memory.db` remains accessible via the memory system.
 
 ## Memory Graduation (Sharing Learnings)
 
-Graduate validated local memories into shared documentation so all framework users
-benefit. Memories qualify when they reach high confidence or are accessed frequently.
+Graduate validated local memories into shared documentation so all framework users benefit. Memories qualify when they reach high confidence or are accessed frequently.
 
 ```bash
-# Check graduation status
-memory-graduate-helper.sh status
-
-# See what's ready to graduate
-memory-graduate-helper.sh candidates
-
-# Preview graduation output
+memory-graduate-helper.sh candidates    # See what's ready
 memory-graduate-helper.sh graduate --dry-run
-
-# Graduate memories into shared docs
-memory-graduate-helper.sh graduate
-
-# Or use via memory-helper.sh
-memory-helper.sh graduate candidates
-memory-helper.sh graduate status
+memory-graduate-helper.sh graduate      # Appends to .agents/aidevops/graduated-learnings.md
 ```
 
-**How it works**:
-
-1. Memories accumulate in local DB via `/remember` and auto-capture
-2. Frequently recalled memories gain `access_count` (proves usefulness)
-3. `memory-graduate-helper.sh candidates` shows what qualifies
-4. `memory-graduate-helper.sh graduate` appends to `.agents/aidevops/graduated-learnings.md`
-5. Graduated memories are marked with `graduated_at` timestamp (won't be proposed again)
-6. Commit and push the updated file to share with all users
-
-**Graduation criteria** (any of):
-
-- `confidence = "high"` (manually marked as high-value)
-- `access_count >= 3` (frequently recalled, proving usefulness)
+**Graduation criteria** (any of): `confidence = "high"` OR `access_count >= 3`.
 
 **Slash command**: `/graduate-memories` or `/graduate-memories --dry-run`
 
-See `scripts/memory-graduate-helper.sh help` for full documentation.
-
 ## Memory Audit Pulse (Automated Hygiene)
 
-Periodic scan that deduplicates, prunes, graduates, consolidates, and identifies
-improvement opportunities. Runs automatically as Phase 9 of the supervisor pulse
-cycle (self-throttled to once per 24 hours).
+Runs automatically as Phase 9 of the supervisor pulse cycle (self-throttled to once per 24 hours).
 
 ```bash
-# Run audit pulse manually
 memory-audit-pulse.sh run --force
-
-# Preview without changes
 memory-audit-pulse.sh run --dry-run
-
-# Check audit history
 memory-audit-pulse.sh status
 ```
 
-**Phases**:
-
-1. **Dedup** — remove exact and near-duplicate memories
-2. **Prune** — remove stale entries (>90 days, never accessed)
-3. **Graduate** — promote high-value memories to shared docs
-4. **Consolidate** — cross-memory insight generation via LLM (see below)
-5. **Scan** — identify self-improvement opportunities (recurring failures, noisy auto-capture, untagged memories)
-6. **Report** — summary with JSONL history
+**Phases**: Dedup → Prune → Graduate → Consolidate → Scan → Report
 
 ## Memory Consolidation (Cross-Memory Insight Generation)
 
-Like the human brain during sleep, the consolidation phase replays, connects, and
-compresses information across memories. It uses a cheap LLM call (haiku-tier,
-~$0.001/call) to scan unconsolidated memories, discover cross-cutting connections,
-and store synthesized insights.
-
-Inspired by Google's [always-on-memory-agent](https://github.com/GoogleCloudPlatform/generative-ai/tree/main/gemini/agents/always-on-memory-agent)
-consolidation loop — adapted to aidevops's batch-oriented architecture.
+Uses a cheap LLM call (haiku-tier, ~$0.001/call) to scan unconsolidated memories, discover cross-cutting connections, and store synthesized insights. Inspired by Google's [always-on-memory-agent](https://github.com/GoogleCloudPlatform/generative-ai/tree/main/gemini/agents/always-on-memory-agent).
 
 ```bash
-# Runs automatically as Phase 4 of the audit pulse
-memory-audit-pulse.sh run --force
-
-# Manual trigger via memory-helper
-memory-helper.sh insights
-
-# Preview what would be consolidated
-memory-helper.sh insights --dry-run
+memory-helper.sh insights           # Manual trigger
+memory-helper.sh insights --dry-run # Preview
 ```
 
-**How it works**:
-
-1. Queries memories not yet included in any consolidation
-2. If fewer than 3 unconsolidated memories, skips (not enough signal)
-3. Sends batch to `ai-research-helper.sh` (haiku tier) for pattern detection
-4. Parses response: extracts connections and synthesized insight
-5. Stores insight in `memory_consolidations` table
-6. Creates `derives` relations in `learning_relations` for discovered connections
-
-**Requirements**:
-
-- `ai-research-helper.sh` must be available and executable
-- Anthropic API key configured (env, gopass, or credentials.sh)
-- Gracefully skips if either is unavailable (no errors, just a warning)
-
-**Storage**:
-
-- Insights stored in `memory_consolidations` table (id, source_ids, insight, connections)
-- Connections stored as `derives` relations in existing `learning_relations` table
-- Both are queryable via standard SQLite queries
-
-**Cost**: ~$0.001-0.01 per audit pulse run (haiku on 10-50 memories). Negligible for
-daily operation.
-
-**Cron integration** (optional):
+Insights stored in `memory_consolidations` table; connections stored as `derives` relations in `learning_relations`. Cost: ~$0.001-0.01 per audit pulse run. Gracefully skips if `ai-research-helper.sh` or API key unavailable.
 
 ```bash
-# Daily at 4 AM
+# Daily at 4 AM (optional cron)
 0 4 * * * ~/.aidevops/agents/scripts/memory-audit-pulse.sh run --quiet
 ```
 
-**Slash command**: `/memory-audit` or `/memory-audit --dry-run`
-
-See `scripts/memory-audit-pulse.sh help` for full documentation.
-
 ## Namespaces (Per-Runner Memory Isolation)
 
-Runners can have isolated memory namespaces. Each namespace gets its own SQLite DB,
-preventing cross-contamination between parallel agents while allowing shared access
-to global memories when needed.
-
 ```bash
-# Store in a runner-specific namespace
 memory-helper.sh --namespace code-reviewer store --content "Prefer explicit error handling"
-
-# Recall from namespace only
 memory-helper.sh --namespace code-reviewer recall "error handling"
-
-# Recall from namespace + global (shared access)
-memory-helper.sh --namespace code-reviewer recall "error handling" --shared
-
-# View namespace stats
-memory-helper.sh --namespace code-reviewer stats
-
-# List all namespaces
-memory-helper.sh namespaces
+memory-helper.sh --namespace code-reviewer recall "error handling" --shared  # Also search global
+memory-helper.sh namespaces  # List all namespaces
 ```
 
-Namespace DBs are stored at `memory/namespaces/<name>/memory.db`. The global DB
-remains at `memory/memory.db` and is always accessible without `--namespace`.
+Namespace DBs: `memory/namespaces/<name>/memory.db`. Global DB: `memory/memory.db`.
 
 ## Storage Location
 
@@ -537,124 +282,20 @@ remains at `memory/memory.db` and is always accessible without `--namespace`.
 │   └── memory_consolidations # Cross-memory insights (t1413)
 ├── embeddings.db       # Optional: vector embeddings for semantic search
 ├── namespaces/         # Per-runner isolated memory
-│   ├── code-reviewer/
-│   │   └── memory.db
-│   └── seo-analyst/
-│       └── memory.db
 └── preferences/        # Optional: markdown preference files
 ```
-
-## Entity Memory (Relationship Continuity)
-
-Entity memory gives agents the ability to maintain relationship continuity with
-individuals across all channels (Matrix, SimpleX, email, CLI). It extends the
-existing project-scoped memory with a three-layer architecture for tracking
-entities (people, agents, services) and their interactions.
-
-**Full architecture**: `reference/entity-memory-architecture.md`
-
-### Three Layers
-
-| Layer | Purpose | Script | Mutability |
-|-------|---------|--------|------------|
-| Layer 0 | Raw interaction log | `entity-helper.sh log-interaction` | **Immutable** (append-only) |
-| Layer 1 | Per-conversation context | `conversation-helper.sh` | Summaries immutable (supersedes chain) |
-| Layer 2 | Entity relationship model | `entity-helper.sh` | Profiles immutable (supersedes chain) |
-
-### Quick Start
-
-```bash
-# Create an entity with initial channel link
-entity-helper.sh create --name "Marcus" --type person \
-    --channel matrix --channel-id "@marcus:server.com"
-
-# Link additional channel identity
-entity-helper.sh link ent_xxx --channel email \
-    --channel-id "marcus@example.com" --verified
-
-# Suggest matches for an unknown identity
-entity-helper.sh suggest simplex "~user123"
-
-# Log an interaction (Layer 0 — immutable)
-entity-helper.sh log-interaction ent_xxx \
-    --channel matrix --content "How's the deployment going?"
-
-# Create a conversation and add messages
-conversation-helper.sh create --entity ent_xxx --channel matrix \
-    --channel-id "!room:server" --topic "Deployment"
-conversation-helper.sh add-message conv_xxx --content "All green!"
-
-# Load context for an AI model (combines all three layers)
-conversation-helper.sh context conv_xxx --recent-messages 20
-
-# Update entity profile (versioned — creates new entry, supersedes old)
-entity-helper.sh profile-update ent_xxx \
-    --key "communication_style" --value "prefers concise responses" \
-    --evidence "observed across 5 conversations"
-
-# Generate conversation summary (immutable, with source range refs)
-conversation-helper.sh summarise conv_xxx
-
-# AI-judged idle detection (replaces fixed timeout)
-conversation-helper.sh idle-check --all
-
-# View entity context (privacy-filtered)
-entity-helper.sh context ent_xxx --privacy-filter --limit 10
-
-# Entity system statistics
-entity-helper.sh stats
-```
-
-### Identity Resolution
-
-Cross-channel identity linking follows a "suggest, don't assume" principle:
-
-- **`suggest`**: Proposes entity matches for an unknown channel identity
-- **`link`**: Creates a link (defaults to `suggested` confidence)
-- **`link --verified`**: Creates a confirmed link
-- **`verify`**: Upgrades an existing link to `confirmed`
-
-Confidence levels: `confirmed` (user verified) > `suggested` (system proposed) > `inferred` (pattern match).
-
-### Immutability Guarantees
-
-- **Interactions** (Layer 0): Never updated or deleted. Append-only source of truth.
-- **Summaries** (Layer 1): Never edited. New summaries supersede old ones via `supersedes_id`.
-- **Profiles** (Layer 2): Never updated in place. Each change creates a new version with evidence.
-
-This ensures a complete audit trail of how the system's understanding of each entity evolved over time.
-
-### Self-Evolution Loop
-
-The capability gap system detects what users need but the system cannot provide:
-
-```bash
-# Gaps are detected during interactions and recorded with evidence
-# High-frequency gaps are promoted to TODO tasks automatically
-# Resolution is tracked: detected → todo_created → resolved
-```
-
-See `reference/entity-memory-architecture.md` for the full self-evolution loop design.
 
 ## CLI Reference
 
 ```bash
-# Store with project context
+# Store
 memory-helper.sh store --type "TYPE" --content "content" --tags "tags" --project "project-name"
-
-# Store with event date (when it happened)
 memory-helper.sh store --content "Fixed bug" --event-date "2024-01-15T10:00:00Z"
-
-# Update an existing memory (relational versioning)
 memory-helper.sh store --content "New info" --supersedes mem_xxx --relation updates
-
-# Extend a memory with more detail
 memory-helper.sh store --content "Additional context" --supersedes mem_xxx --relation extends
 
-# Search with filters
+# Recall
 memory-helper.sh recall "query" --type WORKING_SOLUTION --project myapp --limit 20
-
-# Show recent memories
 memory-helper.sh recall --recent 10
 
 # Version history
@@ -662,196 +303,50 @@ memory-helper.sh history mem_xxx   # Show ancestors and descendants
 memory-helper.sh latest mem_xxx    # Find latest version in chain
 
 # Maintenance
-memory-helper.sh validate          # Check for stale entries and duplicates
-memory-helper.sh dedup --dry-run   # Preview duplicate removal
-memory-helper.sh dedup             # Remove duplicate entries
-memory-helper.sh prune --dry-run   # Preview stale entry cleanup
-memory-helper.sh prune             # Remove stale entries
+memory-helper.sh validate
+memory-helper.sh dedup --dry-run && memory-helper.sh dedup
+memory-helper.sh prune --dry-run && memory-helper.sh prune
 
 # Export
-memory-helper.sh export --format json   # Export as JSON
-memory-helper.sh export --format toon   # Export as TOON (token-efficient)
+memory-helper.sh export --format json
+memory-helper.sh export --format toon
 
-# Graduation (promote to shared docs)
-memory-helper.sh graduate candidates    # List graduation candidates
-memory-helper.sh graduate status        # Show graduation stats
-memory-helper.sh graduate graduate --dry-run  # Preview graduation
-memory-helper.sh graduate graduate      # Graduate to shared docs
+# Graduation
+memory-helper.sh graduate candidates
+memory-helper.sh graduate graduate --dry-run
+memory-helper.sh graduate graduate
 
-# Namespaces (per-runner isolation)
+# Namespaces
 memory-helper.sh --namespace my-runner store --content "Runner-specific learning"
-memory-helper.sh --namespace my-runner recall "query" --shared  # Also search global
-memory-helper.sh namespaces            # List all namespaces
+memory-helper.sh --namespace my-runner recall "query" --shared
+memory-helper.sh namespaces
 ```
 
-## Legacy: File-Based Preferences
+## Developer Preferences
 
-For detailed preference files (optional, complements SQLite):
+Preference files complement the SQLite memory system for detailed, structured preferences:
 
 ```text
 ~/.aidevops/.agent-workspace/memory/preferences/
-├── coding-style.md
-├── workflow.md
+├── coding-style.md      # Indentation, line length, quote style, language-specific
+├── documentation.md     # Comment density, JSDoc/PHPDoc, README format
+├── workflow.md          # Git commit style, branch naming, testing, CI/CD
+├── tools.md             # Editors, shell, Node/Python/package managers
 └── project-specific/
-    └── wordpress.md
+    └── {project}.md     # Project-specific conventions and release process
 ```
 
-## Developer Preferences Memory
-
-### Purpose
-
-Maintain a consistent record of developer preferences across coding sessions to:
-
-- Ensure AI assistants provide assistance aligned with the developer's preferred style
-- Reduce the need for developers to repeatedly explain their preferences
-- Create a persistent context across tools and sessions
-
-### How AI Assistants Should Use Preferences
-
-1. **Before starting work**: Check `~/.aidevops/.agent-workspace/memory/preferences/` for relevant preferences
-2. **During development**: Apply established preferences to suggestions and code
-3. **When feedback is given**: Update preference files to record new preferences
-4. **When switching projects**: Check for project-specific preference files
-
-### Preference Categories to Track
-
-#### Code Style Preferences
-
-```markdown
-# ~/.aidevops/.agent-workspace/memory/preferences/coding-style.md
-
-## General
-- Preferred indentation: [tabs/spaces, count]
-- Line length limit: [80/100/120]
-- Quote style: [single/double]
-
-## Language-Specific
-### JavaScript/TypeScript
-- Semicolons: [yes/no]
-- Arrow functions: [preferred/when-appropriate]
-
-### Python
-- Type hints: [always/public-only/never]
-- Docstring style: [Google/NumPy/Sphinx]
-
-### PHP
-- WordPress coding standards: [yes/no]
-- PSR-12: [yes/no]
-```
-
-#### Documentation Preferences
-
-```markdown
-# ~/.aidevops/.agent-workspace/memory/preferences/documentation.md
-
-## Code Comments
-- Prefer: [minimal/moderate/extensive]
-- JSDoc/PHPDoc: [always/public-only/never]
-
-## Project Documentation
-- README format: [brief/comprehensive]
-- Changelog style: [Keep a Changelog/custom]
-
-## AI Assistant Documentation
-- Token-efficient: [yes/no]
-- Reference external files: [yes/no]
-```
-
-#### Workflow Preferences
-
-```markdown
-# ~/.aidevops/.agent-workspace/memory/preferences/workflow.md
-
-## Git
-- Commit message style: [conventional/descriptive]
-- Branch naming: [feature/issue-123/kebab-case]
-- Squash commits: [yes/no]
-
-## Testing
-- Test coverage minimum: [80%/90%/100%]
-- TDD approach: [yes/no]
-
-## CI/CD
-- Auto-fix on commit: [yes/no]
-- Required checks: [list]
-```
-
-#### Tool Preferences
-
-```markdown
-# ~/.aidevops/.agent-workspace/memory/preferences/tools.md
-
-## Editors/IDEs
-- Primary: [VS Code/Cursor/etc]
-- Extensions: [list relevant]
-
-## Terminal
-- Shell: [zsh/bash/fish]
-- Custom aliases: [note any that affect commands]
-
-## Environment
-- Node.js manager: [nvm/n/fnm]
-- Python manager: [pyenv/conda/system]
-- Package managers: [npm/yarn/pnpm]
-```
-
-### Project-Specific Preferences
-
-For projects with unique requirements:
-
-```markdown
-# ~/.aidevops/.agent-workspace/memory/preferences/project-specific/wordpress.md
-
-## WordPress Development
-- Prefer simpler solutions over complex ones
-- Follow WordPress coding standards
-- Use OOP best practices
-- Admin functionality in admin/lib/
-- Core functionality in includes/
-- Assets in /assets organized by admin folders
-- Version updates require language file updates (POT/PO)
-
-## Plugin Release Process
-- Create version branch from main
-- Update all version references
-- Run quality checks before merge
-- Create GitHub tag and release
-- Ensure readme.txt is updated (Git Updater uses main branch)
-```
-
-### Potential Issues to Track
-
-Document environment-specific issues that affect AI assistance:
-
-```markdown
-# ~/.aidevops/.agent-workspace/memory/preferences/environment-issues.md
-
-## Terminal Customizations
-- Non-standard prompt: [describe]
-- Custom aliases that might confuse: [list]
-- Shell integrations: [starship/oh-my-zsh/etc]
-
-## Multiple Runtime Versions
-- Node.js versions: [list, note if Homebrew]
-- Python versions: [list, note manager]
-- PHP versions: [list]
-
-## Known Conflicts
-- [Document any tool conflicts discovered]
-```
+**How AI assistants should use preferences:**
+1. Before starting work: check `preferences/` for relevant files
+2. During development: apply established preferences to suggestions and code
+3. When feedback is given: update preference files to record new preferences
+4. When switching projects: check for project-specific preference files
 
 ## Security Guidelines
 
 - **Never store credentials** in memory files
 - **Use configuration references** instead of actual API keys
-- **Keep sensitive data** in separate secure locations (`~/.config/aidevops/credentials.sh`)
+- **Keep sensitive data** in `~/.config/aidevops/credentials.sh`
 - **Regular cleanup** of outdated information
 - **No personal identifiable information** in shareable templates
-
-## Important Reminders
-
-- **Never store personal data** in this template directory
-- **Use ~/.aidevops/.agent-workspace/memory/** for all actual operations
-- **This directory is version controlled** - keep it clean
-- **Respect privacy** - be mindful of what you store
-- **Update preferences** when developer feedback indicates a change
+- **This directory is version controlled** — keep it clean; use `~/.aidevops/.agent-workspace/memory/` for all actual operations
