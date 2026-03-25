@@ -452,7 +452,7 @@ PYEOF
 }
 
 # Write OCR output to file or stdout.
-# Usage: _ocr_write_output <ocr_output> <output_file> <quiet> <lang> <image_path>
+# Usage: _ocr_write_output <ocr_output> <output_file> <quiet>
 _ocr_write_output() {
 	local ocr_output="$1"
 	local output_file="$2"
