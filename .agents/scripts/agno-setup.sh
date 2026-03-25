@@ -5,7 +5,7 @@ set -euo pipefail
 # Sets up local Agno AgentOS and Agent-UI for AI assistant capabilities
 #
 # Author: AI DevOps Framework
-# Version: 1.2.0
+# Version: 1.3.0
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 source "${SCRIPT_DIR}/shared-constants.sh"
@@ -18,82 +18,80 @@ AGENT_UI_PORT="${AGENT_UI_PORT:-3000}"
 
 # Function to check prerequisites
 check_prerequisites() {
-    print_info "Checking prerequisites..."
-    
-    # Check Python
-    if ! command -v python3 &> /dev/null; then
-        print_error "Python 3 is required but not installed"
-        return 1
-    fi
-    
-    local python_version
-    python_version=$(python3 --version | cut -d' ' -f2 | cut -d'.' -f1-2)
-    if [[ $(echo "$python_version >= 3.8" | bc -l) -eq 0 ]]; then
-        print_error "Python 3.8+ is required, found $python_version"
-        return 1
-    fi
-    
-    # Check Node.js
-    # Check for Bun (preferred) or Node.js
-    if command -v bun &> /dev/null; then
-        print_success "Bun $(bun --version) found (preferred)"
-    elif command -v node &> /dev/null; then
-        local node_version
-        node_version=$(node --version 2>/dev/null | cut -d'v' -f2 | cut -d'.' -f1)
-        if [[ -z "$node_version" ]] || ! [[ "$node_version" =~ ^[0-9]+$ ]]; then
-            print_error "Could not determine Node.js version"
-            return 1
-        fi
-        if [[ "$node_version" -lt 18 ]]; then
-            print_error "Node.js 18+ is required, found v$node_version"
-            return 1
-        fi
-        if ! command -v npm &> /dev/null; then
-            print_error "npm is required but not installed"
-            return 1
-        fi
-        print_info "Node.js found (install Bun for faster setup: curl -fsSL https://bun.sh/install | bash)"
-    else
-        print_error "Bun or Node.js is required"
-        print_info "Install Bun: curl -fsSL https://bun.sh/install | bash"
-        return 1
-    fi
-    
-    print_success "All prerequisites met"
-    return 0
+	print_info "Checking prerequisites..."
+
+	# Check Python
+	if ! command -v python3 &>/dev/null; then
+		print_error "Python 3 is required but not installed"
+		return 1
+	fi
+
+	local python_version
+	python_version=$(python3 --version | cut -d' ' -f2 | cut -d'.' -f1-2)
+	if [[ $(echo "$python_version >= 3.8" | bc -l) -eq 0 ]]; then
+		print_error "Python 3.8+ is required, found $python_version"
+		return 1
+	fi
+
+	# Check for Bun (preferred) or Node.js
+	if command -v bun &>/dev/null; then
+		print_success "Bun $(bun --version) found (preferred)"
+	elif command -v node &>/dev/null; then
+		local node_version
+		node_version=$(node --version 2>/dev/null | cut -d'v' -f2 | cut -d'.' -f1)
+		if [[ -z "$node_version" ]] || ! [[ "$node_version" =~ ^[0-9]+$ ]]; then
+			print_error "Could not determine Node.js version"
+			return 1
+		fi
+		if [[ "$node_version" -lt 18 ]]; then
+			print_error "Node.js 18+ is required, found v$node_version"
+			return 1
+		fi
+		if ! command -v npm &>/dev/null; then
+			print_error "npm is required but not installed"
+			return 1
+		fi
+		print_info "Node.js found (install Bun for faster setup: curl -fsSL https://bun.sh/install | bash)"
+	else
+		print_error "Bun or Node.js is required"
+		print_info "Install Bun: curl -fsSL https://bun.sh/install | bash"
+		return 1
+	fi
+
+	print_success "All prerequisites met"
+	return 0
 }
 
-# Function to setup Agno AgentOS
-setup_agno() {
-    print_info "Setting up Agno AgentOS..."
-    
-    # Create directory
-    mkdir -p "$AGNO_DIR"
-    cd "$AGNO_DIR" || exit
-    
-    # Create virtual environment
-    if [[ ! -d "venv" ]]; then
-        print_info "Creating Python virtual environment..."
-        python3 -m venv venv
-    fi
-    
-    # Activate virtual environment
-    source venv/bin/activate
-    
-    # Install Agno with browser automation
-    print_info "Installing Agno with browser automation..."
-    pip install --upgrade pip
-    pip install "agno[all]"
-    pip install playwright selenium beautifulsoup4 requests-html
+# Install Python venv and Agno packages
+_setup_agno_venv() {
+	mkdir -p "$AGNO_DIR"
+	cd "$AGNO_DIR" || return 1
 
-    # Install Playwright browsers
-    print_info "Installing Playwright browsers..."
-    playwright install
-    
-    # Create basic AgentOS configuration
-    if [[ ! -f "agent_os.py" ]]; then
-        print_info "Creating AgentOS configuration..."
-        cat > agent_os.py << 'EOF'
+	if [[ ! -d "venv" ]]; then
+		print_info "Creating Python virtual environment..."
+		python3 -m venv venv
+	fi
+
+	source venv/bin/activate
+
+	print_info "Installing Agno with browser automation..."
+	pip install --upgrade pip
+	pip install "agno[all]"
+	pip install playwright selenium beautifulsoup4 requests-html
+
+	print_info "Installing Playwright browsers..."
+	playwright install
+	return 0
+}
+
+# Write the AgentOS Python configuration file
+_write_agno_agent_os_py() {
+	if [[ -f "agent_os.py" ]]; then
+		return 0
+	fi
+
+	print_info "Creating AgentOS configuration..."
+	cat >agent_os.py <<'EOF'
 #!/usr/bin/env python3
 """
 AI DevOps Framework - Agno AgentOS Configuration
@@ -197,7 +195,7 @@ devops_agent = Agent(
     instructions=[
         "You are an expert DevOps assistant specializing in:",
         "- Infrastructure automation and management",
-        "- CI/CD pipeline optimization", 
+        "- CI/CD pipeline optimization",
         "- Cloud platform integration",
         "- Security best practices",
         "- Monitoring and observability",
@@ -358,15 +356,20 @@ if __name__ == "__main__":
     print(f"📊 Available Agents: {len(agent_os.agents)}")
     print(f"🌐 Server will run on: http://localhost:{agent_os.port}")
     print("💡 Use Ctrl+C to stop the server")
-    
+
     agent_os.serve()
 EOF
-        print_success "Created AgentOS configuration"
-    fi
-    
-    # Create environment template
-    if [[ ! -f ".env.example" ]]; then
-        cat > .env.example << 'EOF'
+	print_success "Created AgentOS configuration"
+	return 0
+}
+
+# Write the .env.example template
+_write_agno_env_example() {
+	if [[ -f ".env.example" ]]; then
+		return 0
+	fi
+
+	cat >.env.example <<'EOF'
 # AI DevOps Framework - Agno Configuration (Local Browser Automation)
 # Copy this file to .env and configure your API keys
 
@@ -401,65 +404,78 @@ LINKEDIN_HEADLESS=false
 # No data is sent to cloud services or external browsers
 # Complete privacy and security with local-only operation
 EOF
-        print_success "Created environment template (local browser automation)"
-    fi
-    
-    # Create startup script
-    cat > start_agno.sh << 'EOF'
+	print_success "Created environment template (local browser automation)"
+	return 0
+}
+
+# Write the start_agno.sh launcher
+_write_agno_start_script() {
+	cat >start_agno.sh <<'EOF'
 #!/bin/bash
 cd "$(dirname "$0")"
 source venv/bin/activate
 python agent_os.py
 EOF
-    chmod +x start_agno.sh
-    
-    print_success "Agno AgentOS setup complete"
-    print_info "Directory: $AGNO_DIR"
-    print_info "Configure your API keys in .env file"
-    return 0
+	chmod +x start_agno.sh
+	return 0
+}
+
+# Function to setup Agno AgentOS
+setup_agno() {
+	print_info "Setting up Agno AgentOS..."
+
+	_setup_agno_venv || return 1
+	_write_agno_agent_os_py
+	_write_agno_env_example
+	_write_agno_start_script
+
+	print_success "Agno AgentOS setup complete"
+	print_info "Directory: $AGNO_DIR"
+	print_info "Configure your API keys in .env file"
+	return 0
 }
 
 # Function to setup Agent-UI
 setup_agent_ui() {
-    print_info "Setting up Agent-UI..."
-    
-    # Create directory
-    mkdir -p "$AGENT_UI_DIR"
-    cd "$AGENT_UI_DIR" || exit
-    
-    # Check if already initialized
-    if [[ ! -f "package.json" ]]; then
-        print_info "Creating Agent-UI project..."
-        if command -v bun &> /dev/null; then
-            bun x create-agent-ui@latest . --yes
-        else
-            # NOSONAR - npm scripts required for project scaffolding
-            npx create-agent-ui@latest . --yes
-        fi
-    else
-        print_info "Agent-UI already initialized, updating dependencies..."
-        if command -v bun &> /dev/null; then
-            bun install
-        else
-            # NOSONAR - npm scripts required for native dependencies
-            npm install
-        fi
-    fi
-    
-    # Create configuration
-    if [[ ! -f ".env.local" ]]; then
-        cat > .env.local << EOF
+	print_info "Setting up Agent-UI..."
+
+	# Create directory
+	mkdir -p "$AGENT_UI_DIR"
+	cd "$AGENT_UI_DIR" || exit
+
+	# Check if already initialized
+	if [[ ! -f "package.json" ]]; then
+		print_info "Creating Agent-UI project..."
+		if command -v bun &>/dev/null; then
+			bun x create-agent-ui@latest . --yes
+		else
+			# NOSONAR - npm scripts required for project scaffolding
+			npx create-agent-ui@latest . --yes
+		fi
+	else
+		print_info "Agent-UI already initialized, updating dependencies..."
+		if command -v bun &>/dev/null; then
+			bun install
+		else
+			# NOSONAR - npm scripts required for native dependencies
+			npm install
+		fi
+	fi
+
+	# Create configuration
+	if [[ ! -f ".env.local" ]]; then
+		cat >.env.local <<EOF
 # Agent-UI Configuration for AI DevOps Framework
 NEXT_PUBLIC_AGNO_API_URL=http://localhost:${AGNO_PORT}
 NEXT_PUBLIC_APP_NAME=AI DevOps Assistant
 NEXT_PUBLIC_APP_DESCRIPTION=AI-powered DevOps automation and assistance
 PORT=${AGENT_UI_PORT}
 EOF
-        print_success "Created Agent-UI configuration"
-    fi
-    
-    # Create startup script (prefers bun)
-    cat > start_agent_ui.sh << 'EOF'
+		print_success "Created Agent-UI configuration"
+	fi
+
+	# Create startup script (prefers bun)
+	cat >start_agent_ui.sh <<'EOF'
 #!/bin/bash
 cd "$(dirname "$0")"
 if command -v bun &> /dev/null; then
@@ -468,22 +484,18 @@ else
     npm run dev
 fi
 EOF
-    chmod +x start_agent_ui.sh
-    
-    print_success "Agent-UI setup complete"
-    print_info "Directory: $AGENT_UI_DIR"
-    return 0
+	chmod +x start_agent_ui.sh
+
+	print_success "Agent-UI setup complete"
+	print_info "Directory: $AGENT_UI_DIR"
+	return 0
 }
 
-# Function to create management scripts
-create_management_scripts() {
-    print_info "Creating management scripts..."
+# Write the unified stack start script
+_write_start_stack_script() {
+	local script_dir="$1"
 
-    local script_dir="$HOME/.aidevops/scripts"
-    mkdir -p "$script_dir"
-
-    # Create unified start script
-    cat > "$script_dir/start-agno-stack.sh" << 'EOF'
+	cat >"$script_dir/start-agno-stack.sh" <<'EOF'
 #!/bin/bash
 
 # AI DevOps Framework - Agno Stack Startup Script
@@ -536,10 +548,15 @@ echo "$AGENT_UI_PID" > /tmp/agent_ui_pid
 # Keep script running to monitor services
 wait
 EOF
-    chmod +x "$script_dir/start-agno-stack.sh"
+	chmod +x "$script_dir/start-agno-stack.sh"
+	return 0
+}
 
-    # Create stop script
-    cat > "$script_dir/stop-agno-stack.sh" << 'EOF'
+# Write the stack stop script
+_write_stop_stack_script() {
+	local script_dir="$1"
+
+	cat >"$script_dir/stop-agno-stack.sh" <<'EOF'
 #!/bin/bash
 
 echo "🛑 Stopping AI DevOps Agno Stack..."
@@ -570,10 +587,15 @@ pkill -f "npm.*run.*dev" 2>/dev/null
 
 echo "✅ AI DevOps Agno Stack stopped"
 EOF
-    chmod +x "$script_dir/stop-agno-stack.sh"
+	chmod +x "$script_dir/stop-agno-stack.sh"
+	return 0
+}
 
-    # Create status script
-    cat > "$script_dir/agno-status.sh" << 'EOF'
+# Write the stack status script
+_write_status_script() {
+	local script_dir="$1"
+
+	cat >"$script_dir/agno-status.sh" <<'EOF'
 #!/bin/bash
 
 echo "📊 AI DevOps Agno Stack Status"
@@ -597,111 +619,106 @@ echo ""
 echo "🔧 Process Information:"
 ps aux | grep -E "(agent_os\.py|npm.*run.*dev)" | grep -v grep || echo "No Agno processes found"
 EOF
-    chmod +x "$script_dir/agno-status.sh"
+	chmod +x "$script_dir/agno-status.sh"
+	return 0
+}
 
-    print_success "Management scripts created in $script_dir"
-    return 0
+# Function to create management scripts
+create_management_scripts() {
+	print_info "Creating management scripts..."
+
+	local script_dir="$HOME/.aidevops/scripts"
+	mkdir -p "$script_dir"
+
+	_write_start_stack_script "$script_dir"
+	_write_stop_stack_script "$script_dir"
+	_write_status_script "$script_dir"
+
+	print_success "Management scripts created in $script_dir"
+	return 0
 }
 
 # Function to show usage information
 show_usage() {
-    echo "AI DevOps Framework - Agno Setup"
-    echo ""
-    echo "Usage: $0 [action]"
-    echo ""
-    echo "Actions:"
-    echo "  setup     Complete setup of Agno + Agent-UI"
-    echo "  agno      Setup only Agno AgentOS"
-    echo "  ui        Setup only Agent-UI"
-    echo "  check     Check prerequisites"
-    echo "  status    Show current status"
-    echo "  start     Start the Agno stack"
-    echo "  stop      Stop the Agno stack"
-    echo ""
-    echo "Examples:"
-    echo "  $0 setup    # Full setup"
-    echo "  $0 start    # Start services"
-    echo "  $0 status   # Check status"
-    return 0
+	echo "AI DevOps Framework - Agno Setup"
+	echo ""
+	echo "Usage: $0 [action]"
+	echo ""
+	echo "Actions:"
+	echo "  setup     Complete setup of Agno + Agent-UI"
+	echo "  agno      Setup only Agno AgentOS"
+	echo "  ui        Setup only Agent-UI"
+	echo "  check     Check prerequisites"
+	echo "  status    Show current status"
+	echo "  start     Start the Agno stack"
+	echo "  stop      Stop the Agno stack"
+	echo ""
+	echo "Examples:"
+	echo "  $0 setup    # Full setup"
+	echo "  $0 start    # Start services"
+	echo "  $0 status   # Check status"
+	return 0
 }
 
 # Main function
 main() {
-    # Assign positional parameters to local variables
-    local command="${1:-help}"
-    local account_name="$account_name"
-    local target="$target"
-    local options="$options"
-    # Assign positional parameters to local variables
-    local command="${1:-help}"
-    local account_name="$account_name"
-    local target="$target"
-    local options="$options"
-    # Assign positional parameters to local variables
-    local command="${1:-help}"
-    local account_name="$account_name"
-    local target="$target"
-    local options="$options"
-    # Assign positional parameters to local variables
-    local action="$command"
+	local action="${1:-help}"
 
-    case "$action" in
-        "setup")
-            if check_prerequisites; then
-                setup_agno
-                setup_agent_ui
-                create_management_scripts
-                echo ""
-                print_success "🎉 AI DevOps Agno Stack setup complete!"
-                echo ""
-                echo "📋 Next Steps:"
-                echo "1. Configure API keys in $AGNO_DIR/.env"
-                echo "2. Start services: ~/.aidevops/scripts/start-agno-stack.sh"
-                echo "3. Access Agent-UI: http://localhost:3000"
-                echo "4. Access AgentOS API: http://localhost:8000"
-            fi
-            ;;
-        "agno")
-            if check_prerequisites; then
-                setup_agno
-            fi
-            ;;
-        "ui")
-            if check_prerequisites; then
-                setup_agent_ui
-            fi
-            ;;
-        "check")
-            check_prerequisites
-            ;;
-        "status")
-            if [[ -f "$HOME/.aidevops/scripts/agno-status.sh" ]]; then
-                "$HOME/.aidevops/scripts/agno-status.sh"
-            else
-                print_error "Agno stack not set up. Run '$0 setup' first."
-            fi
-            ;;
-        "start")
-            if [[ -f "$HOME/.aidevops/scripts/start-agno-stack.sh" ]]; then
-                "$HOME/.aidevops/scripts/start-agno-stack.sh"
-            else
-                print_error "Agno stack not set up. Run '$0 setup' first."
-            fi
-            ;;
-        "stop")
-            if [[ -f "$HOME/.aidevops/scripts/stop-agno-stack.sh" ]]; then
-                "$HOME/.aidevops/scripts/stop-agno-stack.sh"
-            else
-                print_error "Agno stack not set up. Run '$0 setup' first."
-            fi
-            ;;
-        *)
-            show_usage
-            ;;
-    esac
-    return 0
+	case "$action" in
+	"setup")
+		if check_prerequisites; then
+			setup_agno
+			setup_agent_ui
+			create_management_scripts
+			echo ""
+			print_success "🎉 AI DevOps Agno Stack setup complete!"
+			echo ""
+			echo "📋 Next Steps:"
+			echo "1. Configure API keys in $AGNO_DIR/.env"
+			echo "2. Start services: ~/.aidevops/scripts/start-agno-stack.sh"
+			echo "3. Access Agent-UI: http://localhost:3000"
+			echo "4. Access AgentOS API: http://localhost:8000"
+		fi
+		;;
+	"agno")
+		if check_prerequisites; then
+			setup_agno
+		fi
+		;;
+	"ui")
+		if check_prerequisites; then
+			setup_agent_ui
+		fi
+		;;
+	"check")
+		check_prerequisites
+		;;
+	"status")
+		if [[ -f "$HOME/.aidevops/scripts/agno-status.sh" ]]; then
+			"$HOME/.aidevops/scripts/agno-status.sh"
+		else
+			print_error "Agno stack not set up. Run '$0 setup' first."
+		fi
+		;;
+	"start")
+		if [[ -f "$HOME/.aidevops/scripts/start-agno-stack.sh" ]]; then
+			"$HOME/.aidevops/scripts/start-agno-stack.sh"
+		else
+			print_error "Agno stack not set up. Run '$0 setup' first."
+		fi
+		;;
+	"stop")
+		if [[ -f "$HOME/.aidevops/scripts/stop-agno-stack.sh" ]]; then
+			"$HOME/.aidevops/scripts/stop-agno-stack.sh"
+		else
+			print_error "Agno stack not set up. Run '$0 setup' first."
+		fi
+		;;
+	*)
+		show_usage
+		;;
+	esac
+	return 0
 }
 
 main "$@"
-
-return 0
