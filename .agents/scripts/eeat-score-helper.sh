@@ -144,9 +144,9 @@ create_output_dir() {
 	return 0
 }
 
-# Generate Python header: imports, constants, and PROMPTS dict
-_generate_python_header() {
-	cat <<'PYTHON_HEADER'
+# Generate Python imports and openpyxl guard
+_generate_python_imports() {
+	cat <<'PYTHON_IMPORTS'
 #!/usr/bin/env python3
 """
 E-E-A-T Score Analyzer
@@ -172,6 +172,13 @@ try:
 except ImportError:
     HAS_OPENPYXL = False
 
+PYTHON_IMPORTS
+	return 0
+}
+
+# Generate Python PROMPTS dict (authorship, citation, effort, originality)
+_generate_python_prompts_part1() {
+	cat <<'PYTHON_PROMPTS1'
 # E-E-A-T Prompts
 PROMPTS = {
     "authorship_reasoning": """You are evaluating Authorship & Expertise for this page. Analyze and explain in 3-4 sentences:
@@ -251,6 +258,13 @@ Score 1-10:
 7-10 = HIGH ORIGINALITY: Substantively unique, adds new information
 Return ONLY the number.""",
 
+PYTHON_PROMPTS1
+	return 0
+}
+
+# Generate Python PROMPTS dict (intent, subjective, writing)
+_generate_python_prompts_part2() {
+	cat <<'PYTHON_PROMPTS2'
     "intent_reasoning": """You are evaluating Page Intent for this page. Analyze and explain in 3-4 sentences:
 - What is this page's PRIMARY PURPOSE (the "WHY" it exists)?
 - Is it HELPFUL-FIRST (created to help users) or SEARCH-FIRST (created to rank)?
@@ -305,13 +319,21 @@ Score 1-10:
 Return ONLY the number."""
 }
 
-PYTHON_HEADER
+PYTHON_PROMPTS2
 	return 0
 }
 
-# Generate Python dataclass and EEATAnalyzer class
-_generate_python_classes() {
-	cat <<'PYTHON_CLASSES'
+# Generate Python header: imports, constants, and PROMPTS dict
+_generate_python_header() {
+	_generate_python_imports
+	_generate_python_prompts_part1
+	_generate_python_prompts_part2
+	return 0
+}
+
+# Generate Python EEATScore dataclass
+_generate_python_dataclass() {
+	cat <<'PYTHON_DATACLASS'
 @dataclass
 class EEATScore:
     url: str
@@ -333,6 +355,13 @@ class EEATScore:
     grade: str = ""
     analyzed_at: str = ""
 
+PYTHON_DATACLASS
+	return 0
+}
+
+# Generate Python EEATAnalyzer class: __init__, fetch_page_content, call_llm
+_generate_python_analyzer_init() {
+	cat <<'PYTHON_ANALYZER_INIT'
 class EEATAnalyzer:
     def __init__(self, output_dir: str, provider: str = "openai",
                  model: str = "gpt-4o", temperature: float = 0.3,
@@ -342,12 +371,8 @@ class EEATAnalyzer:
         self.model = model
         self.temperature = temperature
         self.weights = weights or {
-            "authorship": 0.15,
-            "citation": 0.15,
-            "effort": 0.15,
-            "originality": 0.15,
-            "intent": 0.15,
-            "subjective": 0.15,
+            "authorship": 0.15, "citation": 0.15, "effort": 0.15,
+            "originality": 0.15, "intent": 0.15, "subjective": 0.15,
             "writing": 0.10
         }
         self.session: Optional[aiohttp.ClientSession] = None
@@ -360,18 +385,11 @@ class EEATAnalyzer:
                 if response.status == 200:
                     html = await response.text()
                     soup = BeautifulSoup(html, 'html.parser')
-
-                    # Remove script and style elements
                     for element in soup(['script', 'style', 'nav', 'footer', 'header']):
                         element.decompose()
-
-                    # Get text content
                     text = soup.get_text(separator='\n', strip=True)
-
-                    # Truncate to reasonable length for LLM
                     if len(text) > 15000:
                         text = text[:15000] + "\n[Content truncated...]"
-
                     return text
         except Exception as e:
             print(f"Error fetching {url}: {e}")
@@ -385,17 +403,19 @@ class EEATAnalyzer:
             return await self._call_anthropic(prompt, content)
         return ""
 
+PYTHON_ANALYZER_INIT
+	return 0
+}
+
+# Generate Python EEATAnalyzer class: _call_openai and _call_anthropic methods
+_generate_python_analyzer_llm_backends() {
+	cat <<'PYTHON_ANALYZER_LLM'
     async def _call_openai(self, prompt: str, content: str) -> str:
         """Call OpenAI API"""
         api_key = os.environ.get("OPENAI_API_KEY")
         if not api_key:
             raise ValueError("OPENAI_API_KEY not set")
-
-        headers = {
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json"
-        }
-
+        headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
         payload = {
             "model": self.model,
             "messages": [
@@ -405,13 +425,10 @@ class EEATAnalyzer:
             "temperature": self.temperature,
             "max_tokens": 500
         }
-
         try:
             async with self.session.post(
                 "https://api.openai.com/v1/chat/completions",
-                headers=headers,
-                json=payload,
-                timeout=60
+                headers=headers, json=payload, timeout=60
             ) as response:
                 if response.status == 200:
                     data = await response.json()
@@ -428,27 +445,20 @@ class EEATAnalyzer:
         api_key = os.environ.get("ANTHROPIC_API_KEY")
         if not api_key:
             raise ValueError("ANTHROPIC_API_KEY not set")
-
         headers = {
             "x-api-key": api_key,
             "Content-Type": "application/json",
             "anthropic-version": "2023-06-01"
         }
-
         payload = {
             "model": self.model if "claude" in self.model else "claude-sonnet-4-6",
             "max_tokens": 500,
-            "messages": [
-                {"role": "user", "content": f"{prompt}\n\nAnalyze this content:\n\n{content}"}
-            ]
+            "messages": [{"role": "user", "content": f"{prompt}\n\nAnalyze this content:\n\n{content}"}]
         }
-
         try:
             async with self.session.post(
                 "https://api.anthropic.com/v1/messages",
-                headers=headers,
-                json=payload,
-                timeout=60
+                headers=headers, json=payload, timeout=60
             ) as response:
                 if response.status == 200:
                     data = await response.json()
@@ -457,9 +467,15 @@ class EEATAnalyzer:
             print(f"Anthropic API call failed: {e}")
         return ""
 
+PYTHON_ANALYZER_LLM
+	return 0
+}
+
+# Generate Python EEATAnalyzer class: scoring, grading, and URL analysis methods
+_generate_python_analyzer_scoring() {
+	cat <<'PYTHON_ANALYZER_SCORING'
     def parse_score(self, response: str) -> int:
         """Extract numeric score from LLM response"""
-        # Try to find a number 1-10
         import re
         numbers = re.findall(r'\b([1-9]|10)\b', response)
         if numbers:
@@ -495,16 +511,11 @@ class EEATAnalyzer:
     async def analyze_url(self, url: str) -> EEATScore:
         """Analyze a single URL for E-E-A-T"""
         print(f"Analyzing: {url}")
-
         score = EEATScore(url=url, analyzed_at=datetime.now().isoformat())
-
-        # Fetch content
         content = await self.fetch_page_content(url)
         if not content:
             print(f"  Could not fetch content for {url}")
             return score
-
-        # Analyze each criterion
         criteria = [
             ("authorship", "authorship_score", "authorship_reasoning"),
             ("citation", "citation_score", "citation_reasoning"),
@@ -514,60 +525,44 @@ class EEATAnalyzer:
             ("subjective", "subjective_score", "subjective_reasoning"),
             ("writing", "writing_score", "writing_reasoning"),
         ]
-
         for criterion, score_attr, reasoning_attr in criteria:
             print(f"  Evaluating {criterion}...")
-
-            # Get reasoning
-            reasoning_prompt = PROMPTS[f"{criterion}_reasoning"]
-            reasoning = await self.call_llm(reasoning_prompt, content)
+            reasoning = await self.call_llm(PROMPTS[f"{criterion}_reasoning"], content)
             setattr(score, reasoning_attr, reasoning)
-
-            # Get score
-            score_prompt = PROMPTS[f"{criterion}_score"]
-            score_response = await self.call_llm(score_prompt, content)
+            score_response = await self.call_llm(PROMPTS[f"{criterion}_score"], content)
             numeric_score = self.parse_score(score_response)
             setattr(score, score_attr, numeric_score)
-
             print(f"    Score: {numeric_score}/10")
-
-            # Small delay to avoid rate limits
             await asyncio.sleep(0.5)
-
-        # Calculate overall score and grade
         score.overall_score = self.calculate_overall_score(score)
         score.grade = self.calculate_grade(score.overall_score)
-
         print(f"  Overall: {score.overall_score}/10 (Grade: {score.grade})")
-
         return score
 
     async def analyze_urls(self, urls: List[str]):
         """Analyze multiple URLs"""
-        headers = {
-            'User-Agent': 'AIDevOps-EEATAnalyzer/1.0'
-        }
-
         connector = aiohttp.TCPConnector(limit=5)
         timeout = aiohttp.ClientTimeout(total=120)
-
         async with aiohttp.ClientSession(
-            headers=headers,
-            connector=connector,
-            timeout=timeout
+            headers={'User-Agent': 'AIDevOps-EEATAnalyzer/1.0'},
+            connector=connector, timeout=timeout
         ) as session:
             self.session = session
-
             for url in urls:
                 score = await self.analyze_url(url)
                 self.scores.append(score)
-
         return self.scores
 
+PYTHON_ANALYZER_SCORING
+	return 0
+}
+
+# Generate Python EEATAnalyzer class: export_csv method
+_generate_python_analyzer_export_csv() {
+	cat <<'PYTHON_ANALYZER_EXPORT_CSV'
     def export_csv(self, filename: str):
         """Export scores to CSV"""
         filepath = self.output_dir / filename
-
         fieldnames = [
             'url', 'overall_score', 'grade',
             'authorship_score', 'authorship_reasoning',
@@ -579,88 +574,64 @@ class EEATAnalyzer:
             'writing_score', 'writing_reasoning',
             'analyzed_at'
         ]
-
         with open(filepath, 'w', newline='', encoding='utf-8') as f:
             writer = csv.DictWriter(f, fieldnames=fieldnames)
             writer.writeheader()
             for score in self.scores:
                 writer.writerow(asdict(score))
-
         print(f"Exported: {filepath}")
 
+PYTHON_ANALYZER_EXPORT_CSV
+	return 0
+}
+
+# Generate Python EEATAnalyzer class: export_xlsx and export_summary methods
+_generate_python_analyzer_export_xlsx_summary() {
+	cat <<'PYTHON_ANALYZER_EXPORT_XLSX'
     def export_xlsx(self, filename: str):
         """Export scores to Excel with formatting"""
         if not HAS_OPENPYXL:
             print("openpyxl not installed, skipping XLSX export")
             return
-
         filepath = self.output_dir / filename
         wb = openpyxl.Workbook()
         ws = wb.active
         ws.title = "E-E-A-T Scores"
-
-        # Headers
         headers = [
             'URL', 'Overall Score', 'Grade',
-            'Authorship', 'Authorship Notes',
-            'Citation', 'Citation Notes',
-            'Effort', 'Effort Notes',
-            'Originality', 'Originality Notes',
-            'Intent', 'Intent Notes',
-            'Subjective', 'Subjective Notes',
-            'Writing', 'Writing Notes',
-            'Analyzed At'
+            'Authorship', 'Authorship Notes', 'Citation', 'Citation Notes',
+            'Effort', 'Effort Notes', 'Originality', 'Originality Notes',
+            'Intent', 'Intent Notes', 'Subjective', 'Subjective Notes',
+            'Writing', 'Writing Notes', 'Analyzed At'
         ]
-
-        # Header styling
         header_fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
         header_font = Font(color="FFFFFF", bold=True)
-
         for col, header in enumerate(headers, 1):
             cell = ws.cell(row=1, column=col, value=header)
             cell.fill = header_fill
             cell.font = header_font
             cell.alignment = Alignment(horizontal='center')
-
-        # Grade colors
-        grade_colors = {
-            'A': '00B050',  # Green
-            'B': '92D050',  # Light green
-            'C': 'FFEB9C',  # Yellow
-            'D': 'FFC7CE',  # Light red
-            'F': 'FF0000',  # Red
-        }
-
-        # Data rows
+        grade_colors = {'A': '00B050', 'B': '92D050', 'C': 'FFEB9C', 'D': 'FFC7CE', 'F': 'FF0000'}
         for row_num, score in enumerate(self.scores, 2):
             ws.cell(row=row_num, column=1, value=score.url)
             ws.cell(row=row_num, column=2, value=score.overall_score)
-
             grade_cell = ws.cell(row=row_num, column=3, value=score.grade)
             if score.grade in grade_colors:
                 grade_cell.fill = PatternFill(
                     start_color=grade_colors[score.grade],
-                    end_color=grade_colors[score.grade],
-                    fill_type="solid"
+                    end_color=grade_colors[score.grade], fill_type="solid"
                 )
-
-            ws.cell(row=row_num, column=4, value=score.authorship_score)
-            ws.cell(row=row_num, column=5, value=score.authorship_reasoning)
-            ws.cell(row=row_num, column=6, value=score.citation_score)
-            ws.cell(row=row_num, column=7, value=score.citation_reasoning)
-            ws.cell(row=row_num, column=8, value=score.effort_score)
-            ws.cell(row=row_num, column=9, value=score.effort_reasoning)
-            ws.cell(row=row_num, column=10, value=score.originality_score)
-            ws.cell(row=row_num, column=11, value=score.originality_reasoning)
-            ws.cell(row=row_num, column=12, value=score.intent_score)
-            ws.cell(row=row_num, column=13, value=score.intent_reasoning)
-            ws.cell(row=row_num, column=14, value=score.subjective_score)
-            ws.cell(row=row_num, column=15, value=score.subjective_reasoning)
-            ws.cell(row=row_num, column=16, value=score.writing_score)
-            ws.cell(row=row_num, column=17, value=score.writing_reasoning)
-            ws.cell(row=row_num, column=18, value=score.analyzed_at)
-
-        # Adjust column widths
+            for col_idx, val in enumerate([
+                score.authorship_score, score.authorship_reasoning,
+                score.citation_score, score.citation_reasoning,
+                score.effort_score, score.effort_reasoning,
+                score.originality_score, score.originality_reasoning,
+                score.intent_score, score.intent_reasoning,
+                score.subjective_score, score.subjective_reasoning,
+                score.writing_score, score.writing_reasoning,
+                score.analyzed_at
+            ], 4):
+                ws.cell(row=row_num, column=col_idx, value=val)
         ws.column_dimensions['A'].width = 50
         ws.column_dimensions['B'].width = 12
         ws.column_dimensions['C'].width = 8
@@ -669,10 +640,7 @@ class EEATAnalyzer:
         for col in ['E', 'G', 'I', 'K', 'M', 'O', 'Q']:
             ws.column_dimensions[col].width = 40
         ws.column_dimensions['R'].width = 20
-
-        # Freeze header row
         ws.freeze_panes = 'A2'
-
         wb.save(filepath)
         print(f"Exported: {filepath}")
 
@@ -680,48 +648,51 @@ class EEATAnalyzer:
         """Export summary statistics"""
         if not self.scores:
             return
-
+        criteria_keys = ["overall", "authorship", "citation", "effort",
+                         "originality", "intent", "subjective", "writing"]
+        avg_scores = {
+            k: round(sum(getattr(s, f"{k}_score", s.overall_score)
+                         for s in self.scores) / len(self.scores), 2)
+            for k in criteria_keys
+        }
+        avg_scores["overall"] = round(
+            sum(s.overall_score for s in self.scores) / len(self.scores), 2
+        )
         summary = {
             "analyzed_at": datetime.now().isoformat(),
             "total_pages": len(self.scores),
-            "average_scores": {
-                "overall": round(sum(s.overall_score for s in self.scores) / len(self.scores), 2),
-                "authorship": round(sum(s.authorship_score for s in self.scores) / len(self.scores), 2),
-                "citation": round(sum(s.citation_score for s in self.scores) / len(self.scores), 2),
-                "effort": round(sum(s.effort_score for s in self.scores) / len(self.scores), 2),
-                "originality": round(sum(s.originality_score for s in self.scores) / len(self.scores), 2),
-                "intent": round(sum(s.intent_score for s in self.scores) / len(self.scores), 2),
-                "subjective": round(sum(s.subjective_score for s in self.scores) / len(self.scores), 2),
-                "writing": round(sum(s.writing_score for s in self.scores) / len(self.scores), 2),
-            },
+            "average_scores": avg_scores,
             "grade_distribution": {
-                "A": sum(1 for s in self.scores if s.grade == "A"),
-                "B": sum(1 for s in self.scores if s.grade == "B"),
-                "C": sum(1 for s in self.scores if s.grade == "C"),
-                "D": sum(1 for s in self.scores if s.grade == "D"),
-                "F": sum(1 for s in self.scores if s.grade == "F"),
+                g: sum(1 for s in self.scores if s.grade == g)
+                for g in ["A", "B", "C", "D", "F"]
             },
             "weakest_areas": [],
             "strongest_areas": []
         }
-
-        # Find weakest and strongest areas
-        avg_scores = summary["average_scores"]
         sorted_areas = sorted(
             [(k, v) for k, v in avg_scores.items() if k != "overall"],
             key=lambda x: x[1]
         )
         summary["weakest_areas"] = [a[0] for a in sorted_areas[:2]]
         summary["strongest_areas"] = [a[0] for a in sorted_areas[-2:]]
-
         filepath = self.output_dir / filename
         with open(filepath, 'w') as f:
             json.dump(summary, f, indent=2)
-
         print(f"Exported: {filepath}")
         return summary
 
-PYTHON_CLASSES
+PYTHON_ANALYZER_EXPORT_XLSX
+	return 0
+}
+
+# Generate Python dataclass and EEATAnalyzer class (composes all class sub-functions)
+_generate_python_classes() {
+	_generate_python_dataclass
+	_generate_python_analyzer_init
+	_generate_python_analyzer_llm_backends
+	_generate_python_analyzer_scoring
+	_generate_python_analyzer_export_csv
+	_generate_python_analyzer_export_xlsx_summary
 	return 0
 }
 
