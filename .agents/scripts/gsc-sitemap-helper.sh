@@ -460,13 +460,22 @@ run_script() {
 	return $?
 }
 
-cmd_submit() {
-	local domains=()
+# Module-level variables written by _submit_* helpers and read by cmd_submit
+_SUBMIT_DOMAINS=()
+_SUBMIT_DOMAINS_JSON=""
+
+# Parse cmd_submit flags and positional domain arguments.
+# Writes: _SUBMIT_DOMAINS (array), and the caller's local variables via nameref-free
+# approach — returns values via stdout for scalar opts, array via _SUBMIT_DOMAINS.
+# Usage: _submit_parse_args [args...]
+# Sets _SUBMIT_DOMAINS; echoes "sitemap_path|dry_run|headless|timeout|file" on stdout.
+_submit_parse_args() {
 	local sitemap_path="${DEFAULT_SITEMAP}"
 	local dry_run="false"
 	local headless="false"
 	local timeout="60000"
 	local file=""
+	_SUBMIT_DOMAINS=()
 
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
@@ -516,58 +525,89 @@ cmd_submit() {
 			;;
 		*)
 			# Sanitize domain input
-			domains+=("$(sanitize_domain "$1")")
+			_SUBMIT_DOMAINS+=("$(sanitize_domain "$1")")
 			shift
 			;;
 		esac
 	done
 
+	printf '%s|%s|%s|%s|%s' "$sitemap_path" "$dry_run" "$headless" "$timeout" "$file"
+	return 0
+}
+
+# Read domains from a file into _SUBMIT_DOMAINS (appends to existing entries).
+# Usage: _submit_read_domains_file <file>
+_submit_read_domains_file() {
+	local file="$1"
+	if [[ ! -f "$file" ]]; then
+		log_error "File not found: $file"
+		return 1
+	fi
+	local line sanitized
+	while IFS= read -r line; do
+		# Skip empty lines and comments
+		[[ -z "$line" || "$line" =~ ^# ]] && continue
+		sanitized="$(sanitize_domain "$line")"
+		[[ -n "$sanitized" ]] && _SUBMIT_DOMAINS+=("$sanitized")
+	done <"$file"
+	return 0
+}
+
+# Convert _SUBMIT_DOMAINS array to a JSON array string.
+# Writes result to _SUBMIT_DOMAINS_JSON.
+_submit_build_domains_json() {
+	if command -v jq &>/dev/null; then
+		_SUBMIT_DOMAINS_JSON=$(printf '%s\n' "${_SUBMIT_DOMAINS[@]}" | jq -R -s -c 'split("\n") | map(select(length > 0))')
+	else
+		# Fallback: manual construction with basic escaping
+		_SUBMIT_DOMAINS_JSON="["
+		local i escaped_domain
+		for i in "${!_SUBMIT_DOMAINS[@]}"; do
+			[[ $i -gt 0 ]] && _SUBMIT_DOMAINS_JSON+=","
+			escaped_domain="${_SUBMIT_DOMAINS[$i]//\\/\\\\}"
+			escaped_domain="${escaped_domain//\"/\\\"}"
+			_SUBMIT_DOMAINS_JSON+="\"${escaped_domain}\""
+		done
+		_SUBMIT_DOMAINS_JSON+="]"
+	fi
+	return 0
+}
+
+cmd_submit() {
+	local opts sitemap_path dry_run headless timeout file
+	opts="$(_submit_parse_args "$@")" || return 1
+
+	# Unpack pipe-delimited opts written by _submit_parse_args
+	sitemap_path="${opts%%|*}"
+	opts="${opts#*|}"
+	dry_run="${opts%%|*}"
+	opts="${opts#*|}"
+	headless="${opts%%|*}"
+	opts="${opts#*|}"
+	timeout="${opts%%|*}"
+	opts="${opts#*|}"
+	file="${opts}"
+
 	# Read domains from file if specified
 	if [[ -n "$file" ]]; then
-		if [[ ! -f "$file" ]]; then
-			log_error "File not found: $file"
-			return 1
-		fi
-		while IFS= read -r line; do
-			# Skip empty lines and comments
-			[[ -z "$line" || "$line" =~ ^# ]] && continue
-			# Sanitize domain from file
-			local sanitized
-			sanitized="$(sanitize_domain "$line")"
-			[[ -n "$sanitized" ]] && domains+=("$sanitized")
-		done <"$file"
+		_submit_read_domains_file "$file" || return 1
 	fi
 
-	if [[ ${#domains[@]} -eq 0 ]]; then
+	if [[ ${#_SUBMIT_DOMAINS[@]} -eq 0 ]]; then
 		log_error "No domains specified"
 		show_help
 		return 1
 	fi
 
-	# Convert domains array to JSON safely using jq
-	local domains_json
-	if command -v jq &>/dev/null; then
-		domains_json=$(printf '%s\n' "${domains[@]}" | jq -R -s -c 'split("\n") | map(select(length > 0))')
-	else
-		# Fallback: manual construction with basic escaping
-		domains_json="["
-		for i in "${!domains[@]}"; do
-			[[ $i -gt 0 ]] && domains_json+=","
-			# Escape quotes and backslashes
-			local escaped_domain="${domains[$i]//\\/\\\\}"
-			escaped_domain="${escaped_domain//\"/\\\"}"
-			domains_json+="\"${escaped_domain}\""
-		done
-		domains_json+="]"
-	fi
+	_submit_build_domains_json
 
 	ensure_directories
 	ensure_playwright || return 1
 
-	log_info "Submitting sitemaps for ${#domains[@]} domain(s)..."
+	log_info "Submitting sitemaps for ${#_SUBMIT_DOMAINS[@]} domain(s)..."
 	[[ "$dry_run" == "true" ]] && log_warn "DRY RUN - no changes will be made"
 
-	create_submit_script "$domains_json" "$sitemap_path" "$dry_run" "$headless" "$timeout"
+	create_submit_script "$_SUBMIT_DOMAINS_JSON" "$sitemap_path" "$dry_run" "$headless" "$timeout"
 	run_script
 	return $?
 }
