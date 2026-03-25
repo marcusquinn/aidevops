@@ -154,42 +154,26 @@ find_all_locations() {
 
 # --- Core diagnostic functions ---
 
-# Diagnose a single binary (aidevops or opencode)
-# Outputs: sets global arrays via temp files (bash 3.2 compatible — no assoc arrays)
-diagnose_binary() {
-	local binary_name="$1"
-	local locations_raw=""
-	local location_count=0
-	local active_path=""
-	local active_method=""
-	local active_version=""
-	local has_conflicts=false
+# Deduplicate raw locations into newline-separated unique_paths/methods/versions/resolved.
+# Outputs four variables via stdout in the format: paths|resolved|methods|versions|count
+# Callers parse with IFS='|' read -r ...
+_collect_unique_locations() {
+	local locations_raw="$1"
+	local include_versions="${2:-true}"
 
-	print_header "Checking: $binary_name"
-
-	# Find all locations
-	locations_raw=$(find_all_locations "$binary_name")
-
-	if [[ -z "$locations_raw" ]]; then
-		print_info "$binary_name is not installed"
-		return 0
-	fi
-
-	# Deduplicate by resolved path
 	local seen_resolved=""
 	local unique_paths=""
 	local unique_resolved=""
 	local unique_methods=""
 	local unique_versions=""
+	local count=0
 
 	while IFS= read -r loc; do
 		[[ -z "$loc" ]] && continue
 		local resolved
 		resolved=$(resolve_path "$loc")
-		local method
-		method=$(identify_method "$resolved")
 
-		# Check if we've already seen this resolved path
+		# Skip already-seen resolved paths
 		local already_seen=false
 		while IFS= read -r seen; do
 			[[ -z "$seen" ]] && continue
@@ -198,52 +182,62 @@ diagnose_binary() {
 				break
 			fi
 		done <<<"$seen_resolved"
-
-		if [[ "$already_seen" == "true" ]]; then
-			continue
-		fi
+		[[ "$already_seen" == "true" ]] && continue
 
 		seen_resolved="${seen_resolved}${resolved}"$'\n'
 
-		local version
-		version=$(get_binary_version "$loc")
-
-		location_count=$((location_count + 1))
-
-		# First location is the active one (highest PATH priority)
-		if [[ $location_count -eq 1 ]]; then
-			active_path="$loc"
-			active_method="$method"
-			active_version="$version"
+		local method
+		method=$(identify_method "$resolved")
+		local version="skipped"
+		if [[ "$include_versions" == "true" ]]; then
+			version=$(get_binary_version "$loc")
 		fi
 
+		count=$((count + 1))
 		unique_paths="${unique_paths}${loc}"$'\n'
 		unique_resolved="${unique_resolved}${resolved}"$'\n'
 		unique_methods="${unique_methods}${method}"$'\n'
 		unique_versions="${unique_versions}${version}"$'\n'
 	done <<<"$locations_raw"
 
-	# Report findings
-	if [[ $location_count -eq 0 ]]; then
-		print_info "$binary_name is not installed"
-		return 0
-	fi
+	# Output as pipe-delimited fields; each field is base64-encoded to survive newlines
+	printf '%s|%s|%s|%s|%d' \
+		"$(printf '%s' "$unique_paths" | base64 -w0)" \
+		"$(printf '%s' "$unique_resolved" | base64 -w0)" \
+		"$(printf '%s' "$unique_methods" | base64 -w0)" \
+		"$(printf '%s' "$unique_versions" | base64 -w0)" \
+		"$count"
+	return 0
+}
 
-	if [[ $location_count -eq 1 ]]; then
-		local resolved
-		resolved=$(resolve_path "$active_path")
-		print_success "$binary_name: 1 install found"
-		print_detail "  ${DIM}Path:${NC}    $active_path"
-		if [[ "$active_path" != "$resolved" ]]; then
-			print_detail "  ${DIM}Target:${NC}  $resolved"
-		fi
-		print_detail "  ${DIM}Method:${NC}  $active_method"
-		print_detail "  ${DIM}Version:${NC} $active_version"
-		return 0
-	fi
+# Report a single (no-conflict) install
+_report_single_install() {
+	local binary_name="$1"
+	local active_path="$2"
+	local active_method="$3"
+	local active_version="$4"
 
-	# Multiple installs found — this is a conflict
-	has_conflicts=true
+	local resolved
+	resolved=$(resolve_path "$active_path")
+	print_success "$binary_name: 1 install found"
+	print_detail "  ${DIM}Path:${NC}    $active_path"
+	if [[ "$active_path" != "$resolved" ]]; then
+		print_detail "  ${DIM}Target:${NC}  $resolved"
+	fi
+	print_detail "  ${DIM}Method:${NC}  $active_method"
+	print_detail "  ${DIM}Version:${NC} $active_version"
+	return 0
+}
+
+# Report multiple conflicting installs and check for version mismatches
+_report_conflict_installs() {
+	local binary_name="$1"
+	local location_count="$2"
+	local unique_paths="$3"
+	local unique_resolved="$4"
+	local unique_methods="$5"
+	local unique_versions="$6"
+
 	CONFLICTS_FOUND=1
 	print_warning "$binary_name: $location_count installs found (conflict!)"
 	print_detail ""
@@ -253,11 +247,7 @@ diagnose_binary() {
 		[[ -z "$loc" ]] && continue
 		idx=$((idx + 1))
 
-		local resolved=""
-		local method=""
-		local version=""
-
-		# Read corresponding resolved/method/version by line number
+		local resolved method version
 		resolved=$(echo "$unique_resolved" | sed -n "${idx}p")
 		method=$(echo "$unique_methods" | sed -n "${idx}p")
 		version=$(echo "$unique_versions" | sed -n "${idx}p")
@@ -295,6 +285,53 @@ diagnose_binary() {
 		print_detail "  This means \`$binary_name update\` may update one copy while the"
 		print_detail "  stale copy continues to run from PATH."
 	fi
+	return 0
+}
+
+# Diagnose a single binary (aidevops or opencode)
+diagnose_binary() {
+	local binary_name="$1"
+
+	print_header "Checking: $binary_name"
+
+	local locations_raw
+	locations_raw=$(find_all_locations "$binary_name")
+
+	if [[ -z "$locations_raw" ]]; then
+		print_info "$binary_name is not installed"
+		return 0
+	fi
+
+	local collected
+	collected=$(_collect_unique_locations "$locations_raw" "true")
+
+	local up_paths_b64 up_resolved_b64 up_methods_b64 up_versions_b64 location_count
+	IFS='|' read -r up_paths_b64 up_resolved_b64 up_methods_b64 up_versions_b64 location_count <<<"$collected"
+
+	local unique_paths unique_resolved unique_methods unique_versions
+	unique_paths=$(printf '%s' "$up_paths_b64" | base64 -d)
+	unique_resolved=$(printf '%s' "$up_resolved_b64" | base64 -d)
+	unique_methods=$(printf '%s' "$up_methods_b64" | base64 -d)
+	unique_versions=$(printf '%s' "$up_versions_b64" | base64 -d)
+
+	if [[ $location_count -eq 0 ]]; then
+		print_info "$binary_name is not installed"
+		return 0
+	fi
+
+	local active_path active_method active_version
+	active_path=$(echo "$unique_paths" | sed -n '1p')
+	active_method=$(echo "$unique_methods" | sed -n '1p')
+	active_version=$(echo "$unique_versions" | sed -n '1p')
+
+	if [[ $location_count -eq 1 ]]; then
+		_report_single_install "$binary_name" "$active_path" "$active_method" "$active_version"
+		return 0
+	fi
+
+	# Multiple installs found — this is a conflict
+	_report_conflict_installs "$binary_name" "$location_count" \
+		"$unique_paths" "$unique_resolved" "$unique_methods" "$unique_versions"
 
 	# Recommend consolidation
 	recommend_consolidation "$binary_name" "$unique_paths" "$unique_methods" "$active_path" "$active_method"
@@ -372,6 +409,59 @@ recommend_consolidation() {
 	return 0
 }
 
+# --- Fix mode helpers ---
+
+# Prompt user and execute removal of one duplicate install
+_fix_remove_install() {
+	local binary_name="$1"
+	local method="$2"
+	local path="$3"
+
+	local remove_cmd=""
+	case "$method" in
+	npm) remove_cmd="npm uninstall -g $binary_name" ;;
+	bun) remove_cmd="bun remove -g $binary_name" ;;
+	brew) remove_cmd="brew uninstall $binary_name" ;;
+	cargo) remove_cmd="cargo uninstall $binary_name" ;;
+	*) remove_cmd="rm \"$path\"" ;;
+	esac
+
+	echo ""
+	echo -e "${YELLOW}Remove $binary_name [$method] at $path?${NC}"
+	echo -e "  Command: $remove_cmd"
+	echo -n "  Proceed? [y/N] "
+	read -r confirm
+	if [[ "$confirm" =~ ^[Yy]$ ]]; then
+		echo -e "  ${BLUE}Running:${NC} $remove_cmd"
+		local success=false
+		case "$method" in
+		npm)
+			if npm uninstall -g "$binary_name" 2>&1; then success=true; fi
+			;;
+		bun)
+			if bun remove -g "$binary_name" 2>&1; then success=true; fi
+			;;
+		brew)
+			if brew uninstall "$binary_name" 2>&1; then success=true; fi
+			;;
+		cargo)
+			if cargo uninstall "$binary_name" 2>&1; then success=true; fi
+			;;
+		*)
+			if rm "$path" 2>&1; then success=true; fi
+			;;
+		esac
+		if $success; then
+			print_success "Removed $binary_name [$method]"
+		else
+			print_error "Failed to remove $binary_name [$method]"
+		fi
+	else
+		print_info "Skipped $binary_name [$method]"
+	fi
+	return 0
+}
+
 # Interactive fix mode — remove duplicates with user confirmation
 run_fix() {
 	local binary_name="$1"
@@ -380,37 +470,17 @@ run_fix() {
 	locations_raw=$(find_all_locations "$binary_name")
 	[[ -z "$locations_raw" ]] && return 0
 
-	# Build unique list
-	local seen_resolved=""
-	local unique_paths=""
-	local unique_methods=""
-	local count=0
+	local collected
+	collected=$(_collect_unique_locations "$locations_raw" "false")
 
-	while IFS= read -r loc; do
-		[[ -z "$loc" ]] && continue
-		local resolved
-		resolved=$(resolve_path "$loc")
-
-		local already_seen=false
-		while IFS= read -r seen; do
-			[[ -z "$seen" ]] && continue
-			if [[ "$seen" == "$resolved" ]]; then
-				already_seen=true
-				break
-			fi
-		done <<<"$seen_resolved"
-
-		[[ "$already_seen" == "true" ]] && continue
-		seen_resolved="${seen_resolved}${resolved}"$'\n'
-
-		local method
-		method=$(identify_method "$resolved")
-		count=$((count + 1))
-		unique_paths="${unique_paths}${loc}"$'\n'
-		unique_methods="${unique_methods}${method}"$'\n'
-	done <<<"$locations_raw"
+	local up_paths_b64 up_resolved_b64 up_methods_b64 up_versions_b64 count
+	IFS='|' read -r up_paths_b64 up_resolved_b64 up_methods_b64 up_versions_b64 count <<<"$collected"
 
 	[[ $count -le 1 ]] && return 0
+
+	local unique_paths unique_methods
+	unique_paths=$(printf '%s' "$up_paths_b64" | base64 -d)
+	unique_methods=$(printf '%s' "$up_methods_b64" | base64 -d)
 
 	# Determine preferred method
 	local preferred_method=""
@@ -425,55 +495,11 @@ run_fix() {
 		[[ -z "$method" ]] && continue
 		idx=$((idx + 1))
 
-		if [[ "$method" == "$preferred_method" ]]; then
-			continue
-		fi
+		[[ "$method" == "$preferred_method" ]] && continue
 
 		local path
 		path=$(echo "$unique_paths" | sed -n "${idx}p")
-
-		local remove_cmd=""
-		case "$method" in
-		npm) remove_cmd="npm uninstall -g $binary_name" ;;
-		bun) remove_cmd="bun remove -g $binary_name" ;;
-		brew) remove_cmd="brew uninstall $binary_name" ;;
-		cargo) remove_cmd="cargo uninstall $binary_name" ;;
-		*) remove_cmd="rm \"$path\"" ;;
-		esac
-
-		echo ""
-		echo -e "${YELLOW}Remove $binary_name [$method] at $path?${NC}"
-		echo -e "  Command: $remove_cmd"
-		echo -n "  Proceed? [y/N] "
-		read -r confirm
-		if [[ "$confirm" =~ ^[Yy]$ ]]; then
-			echo -e "  ${BLUE}Running:${NC} $remove_cmd"
-			local success=false
-			case "$method" in
-			npm)
-				if npm uninstall -g "$binary_name" 2>&1; then success=true; fi
-				;;
-			bun)
-				if bun remove -g "$binary_name" 2>&1; then success=true; fi
-				;;
-			brew)
-				if brew uninstall "$binary_name" 2>&1; then success=true; fi
-				;;
-			cargo)
-				if cargo uninstall "$binary_name" 2>&1; then success=true; fi
-				;;
-			*)
-				if rm "$path" 2>&1; then success=true; fi
-				;;
-			esac
-			if $success; then
-				print_success "Removed $binary_name [$method]"
-			else
-				print_error "Failed to remove $binary_name [$method]"
-			fi
-		else
-			print_info "Skipped $binary_name [$method]"
-		fi
+		_fix_remove_install "$binary_name" "$method" "$path"
 	done <<<"$unique_methods"
 
 	return 0
