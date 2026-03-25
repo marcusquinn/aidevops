@@ -204,7 +204,7 @@ Password manager unlock paths: (1) **Playwriter** — uses your already-unlocked
 | **Playwriter** | Yes | Yes | Yes | Yes | Install extension in your browser |
 | **Stagehand** | Yes | Yes | Yes | Yes (Firefox) | `executablePath` in `browserOptions` |
 | **Crawl4AI** | Yes | Yes | Yes | Yes (Firefox) | `browser_path` in `BrowserConfig` |
-| **Camoufox** | No | No | No | Partial | Both hardened Firefox; Camoufox preferred |
+| **Camoufox** | No | No | No | Partial | Same hardened Firefox base; prefer Camoufox for programmatic control |
 | **dev-browser** | Possible | Possible | Possible | No | Modify launch args in server config |
 | **playwright-cli / agent-browser / WaterCrawl** | No | No | No | No | Bundled Chromium / cloud API |
 
