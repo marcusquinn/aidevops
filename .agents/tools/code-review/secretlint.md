@@ -31,61 +31,21 @@ tools:
 
 <!-- AI-CONTEXT-END -->
 
-Secretlint is a pluggable linting tool designed to prevent committing credentials and secrets to repositories. It provides an opt-in approach with comprehensive documentation for each detection rule.
-
-## Overview
-
-| Feature | Description |
-|---------|-------------|
-| **Secret Scanner** | Finds credentials in projects and reports them |
-| **Project-Friendly** | Easy setup per-project with CI service integration |
-| **Pre-Commit Hooks** | Prevents committing credential files |
-| **Pluggable** | Custom rules and flexible configuration |
-| **Documentation** | Each rule describes why it detects something as secret |
-
 ## Quick Start
 
-### Installation Options
-
 ```bash
-# Option 1: Local installation (recommended for projects)
-./.agents/scripts/secretlint-helper.sh install
+./.agents/scripts/secretlint-helper.sh install   # Local install (recommended)
+./.agents/scripts/secretlint-helper.sh quick     # Quick scan without installation
+./.agents/scripts/secretlint-helper.sh docker    # Docker (no Node.js required)
+./.agents/scripts/secretlint-helper.sh install global  # Global installation
 
-# Option 2: Quick scan without installation
-./.agents/scripts/secretlint-helper.sh quick
-
-# Option 3: Docker (no Node.js required)
-./.agents/scripts/secretlint-helper.sh docker
-
-# Option 4: Global installation
-./.agents/scripts/secretlint-helper.sh install global
-```
-
-### Basic Usage
-
-```bash
-# Check installation status
-./.agents/scripts/secretlint-helper.sh status
-
-# Initialize configuration
-./.agents/scripts/secretlint-helper.sh init
-
-# Scan all files
-./.agents/scripts/secretlint-helper.sh scan
-
-# Scan specific directory
-./.agents/scripts/secretlint-helper.sh scan "src/**/*"
-
-# Quick scan (no installation needed)
-./.agents/scripts/secretlint-helper.sh quick
-
-# Scan via Docker
-./.agents/scripts/secretlint-helper.sh docker
+./.agents/scripts/secretlint-helper.sh status    # Check installation status
+./.agents/scripts/secretlint-helper.sh init      # Initialize configuration
+./.agents/scripts/secretlint-helper.sh scan      # Scan all files
+./.agents/scripts/secretlint-helper.sh scan "src/**/*"  # Scan specific directory
 ```
 
 ## Detected Secret Types
-
-Secretlint's recommended preset detects:
 
 | Secret Type | Rule |
 |-------------|------|
@@ -104,32 +64,21 @@ Secretlint's recommended preset detects:
 | 1Password Service Account Tokens | `@secretlint/secretlint-rule-1password` |
 | Database Connection Strings | `@secretlint/secretlint-rule-database-connection-string` |
 
-### Additional Rules
-
-| Rule | Description |
-|------|-------------|
-| `@secretlint/secretlint-rule-pattern` | Custom regex patterns |
-| `@secretlint/secretlint-rule-secp256k1-privatekey` | Cryptocurrency private keys |
-| `@secretlint/secretlint-rule-no-k8s-kind-secret` | Kubernetes Secret manifests |
-| `@secretlint/secretlint-rule-no-homedir` | Home directory paths |
-| `@secretlint/secretlint-rule-no-dotenv` | .env file detection |
-| `@secretlint/secretlint-rule-filter-comments` | Comment-based ignoring |
+**Additional rules**: `@secretlint/secretlint-rule-pattern` (custom regex), `secretlint-rule-secp256k1-privatekey` (crypto keys), `secretlint-rule-no-k8s-kind-secret` (Kubernetes), `secretlint-rule-no-homedir`, `secretlint-rule-no-dotenv`, `secretlint-rule-filter-comments`.
 
 ## Configuration
 
-### Basic Configuration (.secretlintrc.json)
+### Basic (.secretlintrc.json)
 
 ```json
 {
   "rules": [
-    {
-      "id": "@secretlint/secretlint-rule-preset-recommend"
-    }
+    { "id": "@secretlint/secretlint-rule-preset-recommend" }
   ]
 }
 ```
 
-### Advanced Configuration
+### Advanced
 
 ```json
 {
@@ -139,26 +88,15 @@ Secretlint's recommended preset detects:
       "rules": [
         {
           "id": "@secretlint/secretlint-rule-aws",
-          "options": {
-            "allows": ["/test-key-/i", "AKIAIOSFODNN7EXAMPLE"]
-          },
+          "options": { "allows": ["/test-key-/i", "AKIAIOSFODNN7EXAMPLE"] },
           "allowMessageIds": ["AWSAccountID"]
-        },
-        {
-          "id": "@secretlint/secretlint-rule-github",
-          "disabled": false
         }
       ]
     },
     {
       "id": "@secretlint/secretlint-rule-pattern",
       "options": {
-        "patterns": [
-          {
-            "name": "custom-api-key",
-            "patterns": ["/MY_CUSTOM_KEY=[A-Za-z0-9]{32}/"]
-          }
-        ]
+        "patterns": [{ "name": "custom-api-key", "patterns": ["/MY_CUSTOM_KEY=[A-Za-z0-9]{32}/"] }]
       }
     }
   ]
@@ -177,26 +115,15 @@ Secretlint's recommended preset detects:
 
 ### Ignore File (.secretlintignore)
 
-Uses `.gitignore` syntax:
-
 ```text
-# Dependencies
 **/node_modules/**
 **/vendor/**
-
-# Build outputs
 **/dist/**
 **/build/**
-
-# Test fixtures (may contain fake secrets)
 **/test/fixtures/**
 **/testdata/**
-
-# Generated files
 **/package-lock.json
 **/pnpm-lock.yaml
-
-# Binary files
 **/*.png
 **/*.jpg
 **/*.pdf
@@ -204,22 +131,14 @@ Uses `.gitignore` syntax:
 
 ## Ignoring by Comments
 
-Use inline comments to ignore specific lines:
-
 ```javascript
 // secretlint-disable-next-line
 const API_KEY = "sk-test-12345";
 
-const config = {
-  key: "secret-value" // secretlint-disable-line
-};
+const config = { key: "secret-value" }; // secretlint-disable-line
 
 // secretlint-disable
-// Block of code with test secrets
-const TEST_KEYS = {
-  aws: "AKIAIOSFODNN7EXAMPLE",
-  github: "ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
-};
+const TEST_KEYS = { aws: "AKIAIOSFODNN7EXAMPLE" };
 // secretlint-enable
 
 /* secretlint-disable @secretlint/secretlint-rule-github -- test credentials */
@@ -229,72 +148,33 @@ const testToken = "ghs_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx";
 
 ## Output Formats
 
-### Stylish (default)
-
 ```bash
-secretlint "**/*"
-```
+secretlint "**/*"                                          # Stylish (default)
+secretlint "**/*" --format json                            # JSON
+./.agents/scripts/secretlint-helper.sh scan . json        # JSON via helper
 
-### JSON
-
-```bash
-secretlint "**/*" --format json
-# or
-./.agents/scripts/secretlint-helper.sh scan . json
-```
-
-### SARIF (for CI/CD)
-
-```bash
-# Install SARIF formatter
+# SARIF (for CI/CD security dashboards)
 npm install @secretlint/secretlint-formatter-sarif --save-dev
-
-# Generate SARIF
 secretlint "**/*" --format @secretlint/secretlint-formatter-sarif > results.sarif
-# or
-./.agents/scripts/secretlint-helper.sh sarif
-```
+./.agents/scripts/secretlint-helper.sh sarif              # Via helper
 
-### Mask Result (fix secrets)
-
-```bash
-# Mask secrets in a file and overwrite
+# Mask secrets in a file
 secretlint .zsh_history --format=mask-result --output=.zsh_history
-# or
-./.agents/scripts/secretlint-helper.sh mask .env.example
+./.agents/scripts/secretlint-helper.sh mask .env.example  # Via helper
 ```
 
 ## Pre-commit Integration
 
-### Option 1: Native Git Hook
-
 ```bash
-# Setup via helper
+# Option 1: Native git hook
 ./.agents/scripts/secretlint-helper.sh hook
-```
 
-### Option 2: Husky + lint-staged (Node.js projects)
-
-```bash
-# Setup via helper
+# Option 2: Husky + lint-staged (Node.js projects)
 ./.agents/scripts/secretlint-helper.sh husky
-```
-
-Or manually:
-
-```bash
-# Install
+# Or manually:
 npx husky-init && npm install lint-staged --save-dev
-
-# Configure lint-staged in package.json
-{
-  "lint-staged": {
-    "*": ["secretlint"]
-  }
-}
-
-# Add hook
-npx husky add .husky/pre-commit "npx --no-install lint-staged"
+# Add to package.json: "lint-staged": { "*": ["secretlint"] }
+# npx husky add .husky/pre-commit "npx --no-install lint-staged"
 ```
 
 ### Option 3: pre-commit Framework (Docker)
@@ -324,8 +204,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
-        with:
-          node-version: 20
+        with: { node-version: 20 }
       - run: npm ci
       - run: npx secretlint "**/*"
 ```
@@ -340,13 +219,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
+        with: { fetch-depth: 0 }
       - uses: tj-actions/changed-files@v44
         id: changed-files
       - uses: actions/setup-node@v4
-        with:
-          node-version: 20
+        with: { node-version: 20 }
       - if: steps.changed-files.outputs.any_changed == 'true'
         run: |
           npm ci
@@ -358,57 +235,24 @@ jobs:
 ```yaml
 secretlint:
   image: secretlint/secretlint:latest
-  script:
-    - secretlint "**/*"
+  script: secretlint "**/*"
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
 ```
 
-### Generic CI Script
-
-```bash
-#!/bin/bash
-set -e
-
-# Install
-npm ci
-
-# Run secretlint
-npx secretlint "**/*" --format json > secretlint-results.json || true
-
-# Check for issues
-if jq -e '.messages | length > 0' secretlint-results.json > /dev/null; then
-    echo "Secrets detected!"
-    jq '.messages[] | "\(.filePath):\(.line):\(.column) \(.ruleId): \(.message)"' secretlint-results.json
-    exit 1
-fi
-
-echo "No secrets found"
-```
-
 ## Docker Usage
 
-### Quick Scan
-
 ```bash
+# Quick scan
 docker run -v "$(pwd)":"$(pwd)" -w "$(pwd)" --rm -it secretlint/secretlint secretlint "**/*"
-```
 
-### With Custom Config
-
-```bash
+# With custom config
 docker run -v "$(pwd)":"$(pwd)" -w "$(pwd)" --rm -it \
-  secretlint/secretlint secretlint "**/*" \
-  --secretlintrc .secretlintrc.json
+  secretlint/secretlint secretlint "**/*" --secretlintrc .secretlintrc.json
 ```
 
-### Built-in Docker Packages
-
-The Docker image includes:
-- `@secretlint/secretlint-rule-preset-recommend`
-- `@secretlint/secretlint-rule-pattern`
-- `@secretlint/secretlint-formatter-sarif`
+Docker image includes: `secretlint-rule-preset-recommend`, `secretlint-rule-pattern`, `secretlint-formatter-sarif`.
 
 ## Comparison with Other Tools
 
@@ -416,115 +260,16 @@ The Docker image includes:
 |---------|------------|-------------|----------------|----------|
 | Approach | Opt-in | Opt-out | Opt-out | Opt-out |
 | Custom Rules | npm packages | Shell patterns | Python plugins | TOML config |
-| Pre-commit | Yes | Yes | Yes | Yes |
-| CI/CD | Yes | Yes | Yes | Yes |
 | Documentation | Per-rule docs | Limited | Limited | Limited |
 | Node.js Required | Yes (or Docker) | No | Python | No |
 | False Positives | Lower (opt-in) | Higher | Medium | Medium |
 
-## Best Practices
-
-### For Development Teams
-
-1. **Install locally** in each project for consistent behavior
-2. **Initialize configuration** early in project setup
-3. **Use pre-commit hooks** to catch secrets before they're committed
-4. **Configure allowlists** for known safe patterns (test credentials)
-5. **Document exceptions** with `secretlint-disable` comments
-
-### For CI/CD
-
-1. **Fail builds** when secrets are detected
-2. **Generate SARIF** for security dashboard integration
-3. **Scan diff only** in PRs for performance
-4. **Use Docker** for consistent, dependency-free scanning
-
-### Handling False Positives
-
-1. **Allow specific patterns** in rule options:
-
-   ```json
-   {
-     "options": {
-       "allows": ["/test-/i", "example-key"]
-     }
-   }
-   ```
-
-2. **Suppress specific message IDs**:
-
-   ```json
-   {
-     "allowMessageIds": ["AWSAccountID"]
-   }
-   ```
-
-3. **Use inline comments** for one-off exceptions:
-
-   ```javascript
-   const key = "test-key"; // secretlint-disable-line
-   ```
-
-4. **Add to ignore file** for entire files/directories
-
-## Integration with AI DevOps Framework
-
-### Helper Script Commands
-
-```bash
-# Installation
-./.agents/scripts/secretlint-helper.sh install         # Local install
-./.agents/scripts/secretlint-helper.sh install global  # Global install
-./.agents/scripts/secretlint-helper.sh install-rules all  # Additional rules
-
-# Configuration
-./.agents/scripts/secretlint-helper.sh init            # Initialize config
-./.agents/scripts/secretlint-helper.sh status          # Check status
-
-# Scanning
-./.agents/scripts/secretlint-helper.sh scan            # Scan all files
-./.agents/scripts/secretlint-helper.sh scan "src/**/*" # Scan specific
-./.agents/scripts/secretlint-helper.sh quick           # Quick scan (npx)
-./.agents/scripts/secretlint-helper.sh docker          # Docker scan
-
-# Output
-./.agents/scripts/secretlint-helper.sh scan . json     # JSON output
-./.agents/scripts/secretlint-helper.sh sarif           # SARIF output
-./.agents/scripts/secretlint-helper.sh mask file.txt   # Mask secrets
-
-# Hooks
-./.agents/scripts/secretlint-helper.sh hook            # Git hook
-./.agents/scripts/secretlint-helper.sh husky           # Husky setup
-```
-
-### Quality Pipeline Integration
-
-Secretlint integrates with the framework's quality pipeline:
-
-```bash
-# Run as part of quality checks
-./.agents/scripts/linters-local.sh  # Includes secretlint
-
-# Pre-commit validation
-./.agents/scripts/pre-commit-hook.sh  # Includes secretlint
-```
-
 ## Troubleshooting
-
-### Common Issues
 
 **"Failed to load rule module: @secretlint/secretlint-rule-preset-recommend is not found"**
 
-This error means secretlint is installed but the required rule preset is missing. The config file references rules that aren't installed.
-
 ```bash
-# Fix: Install the preset alongside secretlint
 npm install --save-dev secretlint @secretlint/secretlint-rule-preset-recommend
-
-# Or globally
-npm install -g secretlint @secretlint/secretlint-rule-preset-recommend
-
-# Verify installation
 ./.agents/scripts/secretlint-helper.sh status
 ```
 
@@ -537,39 +282,27 @@ npm install -g secretlint @secretlint/secretlint-rule-preset-recommend
 **"secretlint command not found"**
 
 ```bash
-# Use npx
 npx secretlint "**/*"
-# Or install globally (include the preset!)
-npm install -g secretlint @secretlint/secretlint-rule-preset-recommend
+# Or: npm install -g secretlint @secretlint/secretlint-rule-preset-recommend
 ```
 
-**Scan fails with exit code 2**
-
-Exit code 2 indicates a configuration or installation error (not secrets found). Check:
+**Exit code 2** (configuration/installation error, not secrets found):
 
 ```bash
-# Diagnose the issue
 ./.agents/scripts/secretlint-helper.sh status
-
-# Common fixes:
-# 1. Missing rules - reinstall
-./.agents/scripts/secretlint-helper.sh install
-
-# 2. Invalid config - reinitialize
-rm .secretlintrc.json
-./.agents/scripts/secretlint-helper.sh init
+./.agents/scripts/secretlint-helper.sh install   # Missing rules
+rm .secretlintrc.json && ./.agents/scripts/secretlint-helper.sh init  # Invalid config
 ```
 
-**Performance issues with large repos**
+**Performance issues with large repos** — add to `.secretlintignore`:
 
-```bash
-# Configure .secretlintignore to exclude:
+```text
 **/node_modules/**
 **/dist/**
 **/*.lock
 ```
 
-**False positives**
+**False positives** — allow specific patterns in rule options:
 
 ```json
 {
@@ -577,21 +310,25 @@ rm .secretlintrc.json
     "id": "@secretlint/secretlint-rule-preset-recommend",
     "rules": [{
       "id": "@secretlint/secretlint-rule-<rule-name>",
-      "options": {
-        "allows": ["/pattern-to-allow/i"]
-      }
+      "options": { "allows": ["/pattern-to-allow/i"] },
+      "allowMessageIds": ["AWSAccountID"]
     }]
   }]
 }
 ```
 
+Or use inline comments: `const key = "test-key"; // secretlint-disable-line`
+
+## Quality Pipeline Integration
+
+```bash
+./.agents/scripts/linters-local.sh      # Includes secretlint
+./.agents/scripts/pre-commit-hook.sh    # Includes secretlint
+```
+
 ## Resources
 
-- **GitHub**: [https://github.com/secretlint/secretlint](https://github.com/secretlint/secretlint)
-- **npm**: [https://www.npmjs.com/package/secretlint](https://www.npmjs.com/package/secretlint)
-- **Docker Hub**: [https://hub.docker.com/r/secretlint/secretlint](https://hub.docker.com/r/secretlint/secretlint)
-- **Demo**: [https://secretlint.github.io/](https://secretlint.github.io/)
-
----
-
-**Secretlint provides a secure, developer-friendly approach to preventing credential leaks with its opt-in rule system and comprehensive documentation.**
+- **GitHub**: https://github.com/secretlint/secretlint
+- **npm**: https://www.npmjs.com/package/secretlint
+- **Docker Hub**: https://hub.docker.com/r/secretlint/secretlint
+- **Demo**: https://secretlint.github.io/

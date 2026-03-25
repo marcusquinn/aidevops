@@ -42,48 +42,28 @@ AI Video Output → CapCut AI Voice Cleanup → ElevenLabs Transformation → Fi
 
 **Why this matters:**
 
-1. **CapCut AI Voice Cleanup** (FIRST):
-   - Normalizes accents and artifacts from raw AI output
-   - Removes robotic patterns and unnatural cadence
-   - Cleans background noise and audio artifacts
-   - Standardizes volume and tone
+1. **CapCut AI Voice Cleanup** (FIRST): Normalizes accents/artifacts, removes robotic patterns, cleans background noise, standardizes volume and tone.
+2. **ElevenLabs Transformation** (SECOND): Voice cloning, emotional delivery, character consistency, professional quality.
 
-2. **ElevenLabs Transformation** (SECOND):
-   - Voice cloning for consistent channel narration
-   - Emotional delivery and natural speech patterns
-   - Character voice consistency across videos
-   - Professional voice quality
-
-**Common mistake**: Feeding raw AI video audio directly to ElevenLabs produces poor results because the artifacts and unnatural patterns get amplified during transformation.
+**Common mistake**: Feeding raw AI video audio directly to ElevenLabs amplifies artifacts during transformation.
 
 ### Voice Cloning Workflow
 
-For consistent channel narration across multiple videos:
-
 ```bash
-# 1. Record or extract clean voice sample (10-30 seconds minimum for instant clone)
-# 2. Upload to ElevenLabs voice library (or MiniMax with 10s clip)
-# 3. Use cloned voice for all channel content
-
 # Voice bridge for interactive voice (development/testing)
 voice-helper.sh talk              # Start voice conversation
 voice-helper.sh voices            # List available TTS voices
 ```
 
-**Critical: NEVER use pre-made ElevenLabs voices for realistic content.** Pre-made voices are widely recognised and immediately signal "AI-generated" to audiences. Instead:
+**Critical: NEVER use pre-made ElevenLabs voices for realistic content.** Pre-made voices are widely recognised and signal "AI-generated". Instead:
 
-- **Voice Design**: Create a unique voice from a natural language description (e.g., "warm female voice, mid-30s, slight British accent, confident and approachable")
-- **Instant Voice Clone**: Upload a 10-30 second clean audio clip of the target voice
+- **Voice Design**: Create from natural language description (e.g., "warm female voice, mid-30s, slight British accent")
+- **Instant Voice Clone**: Upload a 10-30 second clean audio clip
 - **Professional Voice Clone**: Upload 3-5 minutes for highest fidelity (recommended for AI influencer personas)
 
-**Voice cloning source quality rules:**
+**Voice cloning source quality rules**: Single speaker, quiet environment, clear pronunciation. If cloning from existing content, run through CapCut cleanup first.
 
-- Single speaker, no overlapping voices
-- Quiet environment, no background music or noise
-- Clear pronunciation, natural speaking pace
-- If cloning from existing content (YouTube, podcast), run through CapCut cleanup first (see Critical 2-Step Voice Workflow above)
-
-**Alternative: MiniMax TTS** — For talking-head content where ElevenLabs is overkill, MiniMax offers good default quality at $5/month for 120 minutes. Voice clone works with just a 10-second clip. See `tools/voice/voice-models.md` for full comparison.
+**Alternative: MiniMax TTS** — For talking-head content where ElevenLabs is overkill. Good default quality at $5/month for 120 minutes; voice clone works with a 10-second clip. See `tools/voice/voice-models.md`.
 
 **Voice consistency checklist:**
 
@@ -96,7 +76,7 @@ voice-helper.sh voices            # List available TTS voices
 
 ### Emotional Block Cues
 
-Per-word emotion tagging for natural AI speech delivery. This technique dramatically improves the naturalness of AI-generated speech by giving the TTS model explicit emotional context.
+Per-word emotion tagging for natural AI speech delivery. Dramatically improves naturalness by giving TTS explicit emotional context.
 
 **Format:**
 
@@ -106,123 +86,55 @@ Per-word emotion tagging for natural AI speech delivery. This technique dramatic
 
 **Available emotion tags:**
 
-| Tag | Use Case | Example |
-|-----|----------|---------|
-| `[neutral]` | Default, informational | "Here's how it works." |
-| `[excited]` | Hooks, reveals, wins | "This changed everything!" |
-| `[serious]` | Problems, warnings, data | "95% of creators fail here." |
-| `[curious]` | Questions, exploration | "What if we tried this?" |
-| `[confident]` | Authority, expertise | "I've tested this 100 times." |
-| `[empathetic]` | Pain points, struggles | "I know how frustrating this is." |
-| `[urgent]` | CTAs, time-sensitive | "Don't miss this opportunity." |
+| Tag | Use Case |
+|-----|----------|
+| `[neutral]` | Default, informational |
+| `[excited]` | Hooks, reveals, wins |
+| `[serious]` | Problems, warnings, data |
+| `[curious]` | Questions, exploration |
+| `[confident]` | Authority, expertise |
+| `[empathetic]` | Pain points, struggles |
+| `[urgent]` | CTAs, time-sensitive |
 
 **Emotional pacing rules:**
 
-1. **Hook (0-3s)**: Start with `[excited]` or `[curious]` to grab attention
-2. **Problem (3-10s)**: Shift to `[serious]` or `[empathetic]` to establish pain
-3. **Solution (10s+)**: Use `[confident]` to deliver value
-4. **CTA (final 5s)**: End with `[urgent]` or `[excited]` for action
+1. **Hook (0-3s)**: `[excited]` or `[curious]`
+2. **Problem (3-10s)**: `[serious]` or `[empathetic]`
+3. **Solution (10s+)**: `[confident]`
+4. **CTA (final 5s)**: `[urgent]` or `[excited]`
 
-**Example script with emotional blocks:**
-
-```text
-[excited]What if I told you there's a way to 10x your content output?[/excited]
-[serious]Most creators spend 40 hours per video.[/serious]
-[empathetic]I was stuck in that cycle for months.[/empathetic]
-[confident]Then I discovered this AI pipeline.[/confident]
-[excited]Now I produce 10 videos in the same time.[/excited]
-[urgent]Let me show you exactly how.[/urgent]
-```
-
-**Integration with script writing:**
-
-- Scripts from `content/production/writing.md` should include emotional block markup
-- Voice actors (human or AI) use these as delivery cues
-- TTS engines with emotion support (ElevenLabs, ChatTTS) parse these directly
+Scripts from `content/production/writing.md` should include emotional block markup. TTS engines with emotion support (ElevenLabs, ChatTTS) parse these directly.
 
 ## 4-Layer Audio Design
 
-Professional audio is built in layers, not as a single track. This approach gives you mixing flexibility and professional polish.
+### Layer 1: Dialogue (Primary) — Target: -15 LUFS
 
-### Layer 1: Dialogue (Primary)
+Processing chain: `Raw Voice → Noise Reduction → EQ → Compression → De-esser → Limiter → -15 LUFS`
 
-**Target LUFS**: -15 (dialogue clarity)
-
-- Voice narration or on-camera speech
-- Highest priority in the mix
 - Always centered (mono or center channel)
 - EQ: High-pass filter at 80Hz, presence boost at 3-5kHz
+- Tools: CapCut (AI cleanup), ElevenLabs (transformation), Audacity/Audition (manual), `voice-helper.sh`
 
-**Processing chain:**
+### Layer 2: Ambient Noise (Background) — Target: -25 LUFS
 
-```text
-Raw Voice → Noise Reduction → EQ → Compression → De-esser → Limiter → -15 LUFS
-```
+- Stereo width for immersion; low-pass filter to avoid competing with dialogue
 
-**Tools:**
+| Content Type | Ambient Style |
+|--------------|---------------|
+| UGC/Vlog | Diegetic only (room tone, keyboard clicks) |
+| Tutorial | Minimal/none |
+| Documentary | Rich environmental |
+| Commercial | Designed ambience |
 
-- CapCut: AI voice cleanup, noise reduction
-- ElevenLabs: Voice transformation, cloning
-- Audacity/Audition: Manual cleanup, EQ, compression
-- `voice-helper.sh`: Local voice processing
+Sources: Freesound.org (CC0/CC-BY), Epidemic Sound, custom recording, AI-generated (AudioCraft, Stable Audio).
 
-### Layer 2: Ambient Noise (Background)
+### Layer 3: SFX (Sound Effects) — Target: -10 to -20 LUFS
 
-**Target LUFS**: -25 (subtle presence)
+Categories: Whooshes/Swooshes, Impacts, UI Sounds, Foley, Risers/Drops.
 
-- Environmental sound (office, street, nature)
-- Establishes scene context
-- Stereo width for immersion
-- Low-pass filter to avoid competing with dialogue
+**Timing rules**: SFX should land 1-2 frames BEFORE the visual event. Layer multiple SFX for bigger impacts. Use reverb to place SFX in the same "space" as dialogue.
 
-**Content type ambient rules:**
-
-| Content Type | Ambient Style | Example |
-|--------------|---------------|---------|
-| UGC/Vlog | Diegetic only | Room tone, keyboard clicks |
-| Tutorial | Minimal/none | Silence or soft room tone |
-| Documentary | Rich environmental | Location-specific ambience |
-| Commercial | Designed ambience | Branded sonic environment |
-
-**Where to source:**
-
-- Freesound.org (CC0 and CC-BY)
-- Epidemic Sound (subscription)
-- Record custom ambience on location
-- AI-generated ambience (AudioCraft, Stable Audio)
-
-### Layer 3: SFX (Sound Effects)
-
-**Target LUFS**: Varies by effect (-10 to -20)
-
-- Punctuation for visual events
-- Transitions between scenes
-- UI sounds for motion graphics
-- Impact sounds for reveals
-
-**SFX categories:**
-
-1. **Whooshes/Swooshes**: Scene transitions, motion graphics
-2. **Impacts**: Reveals, text appearance, logo hits
-3. **UI Sounds**: Button clicks, notifications, tech interfaces
-4. **Foley**: Footsteps, object handling, physical actions
-5. **Risers/Drops**: Build tension, release energy
-
-**Timing rules:**
-
-- SFX should land 1-2 frames BEFORE the visual event (anticipation)
-- Layer multiple SFX for bigger impacts (e.g., whoosh + impact + reverb tail)
-- Use reverb to place SFX in the same "space" as dialogue
-
-### Layer 4: Music (Score)
-
-**Target LUFS**: -18 to -20 (supporting role)
-
-- Emotional tone and pacing
-- Fills silence without competing with dialogue
-- Ducking (auto-volume reduction) when dialogue plays
-
-**Music selection by content type:**
+### Layer 4: Music (Score) — Target: -18 to -20 LUFS
 
 | Content Type | Music Style | Ducking |
 |--------------|-------------|---------|
@@ -232,79 +144,13 @@ Raw Voice → Noise Reduction → EQ → Compression → De-esser → Limiter �
 | Documentary | Cinematic score | -4dB during speech |
 | YouTube | Upbeat, royalty-free | -6dB during speech |
 
-**Music sources:**
+Sources: Epidemic Sound, Artlist, Uppbeat (free tier), AudioJungle, AI-generated (Suno, Udio, Stable Audio).
 
-- Epidemic Sound (subscription, YouTube-safe)
-- Artlist (subscription, unlimited license)
-- Uppbeat (free tier, attribution)
-- AudioJungle (pay-per-track)
-- AI-generated (Suno, Udio, Stable Audio) - check platform policies
+**Ducking automation**: Set dialogue track as sidechain input, music as target. Threshold -20dB, ratio 4:1, attack 10ms, release 200ms.
 
-**Ducking automation:**
+## LUFS Reference
 
-Most NLEs (Premiere, DaVinci, Final Cut) support sidechain compression for automatic ducking. Set dialogue track as sidechain input, music track as target, threshold -20dB, ratio 4:1, attack 10ms, release 200ms.
-
-## Platform Audio Rules
-
-Different platforms and content types have different audio expectations. Violating these conventions makes content feel "off" even if technically correct.
-
-### UGC (User-Generated Content)
-
-**Rule**: All diegetic audio (sounds that exist in the scene)
-
-- No background music unless it's playing in the scene
-- Natural room tone and ambient noise
-- Authentic, unpolished feel
-- Dialogue can be slightly rough (adds authenticity)
-
-**Why**: UGC audiences expect raw, authentic audio. Overly polished audio signals "produced content" and breaks trust.
-
-**Examples**: TikTok vlogs, Instagram Stories, YouTube Shorts (personal)
-
-### Commercial/Branded
-
-**Rule**: Mixed diegetic + score
-
-- Professional voice (ElevenLabs or pro voice actor)
-- Designed ambience (not raw location audio)
-- Music score for emotional tone
-- Polished, clean mix
-
-**Why**: Branded content needs to signal quality and professionalism. Audiences expect production value.
-
-**Examples**: Product demos, brand videos, ads, sponsored content
-
-### Tutorial/Educational
-
-**Rule**: Dialogue-first, minimal music
-
-- Clear, intelligible voice (no competing sounds)
-- Music only in intro/outro or silent sections
-- SFX for UI interactions and transitions
-- Consistent volume throughout
-
-**Why**: Educational content prioritizes information transfer. Any audio that competes with dialogue reduces comprehension.
-
-**Examples**: How-to videos, courses, explainers
-
-### Documentary/Cinematic
-
-**Rule**: Rich soundscape, cinematic score
-
-- Layered ambience for immersion
-- Music score for emotional arc
-- Foley for physical actions
-- Dynamic range (quiet moments and loud moments)
-
-**Why**: Documentary audiences expect immersive, cinematic audio that enhances storytelling.
-
-**Examples**: Long-form YouTube documentaries, narrative content
-
-## LUFS Levels Reference
-
-LUFS (Loudness Units Full Scale) is the broadcast standard for measuring perceived loudness. Different content types and platforms have different target LUFS.
-
-### Target LUFS by Content Type
+### Platform Targets
 
 | Content Type | Target LUFS | Notes |
 |--------------|-------------|-------|
@@ -315,38 +161,37 @@ LUFS (Loudness Units Full Scale) is the broadcast standard for measuring perceiv
 | Streaming (Netflix) | -27 | Wide dynamic range |
 | Audiobook | -18 to -23 | Consistent, comfortable |
 
-### Layer LUFS Targets
+### Layer Targets
 
-| Layer | Target LUFS | Relative Level |
-|-------|-------------|----------------|
-| Dialogue | -15 | 0dB (reference) |
-| Ambient | -25 | -10dB |
-| SFX | -10 to -20 | Varies by effect |
-| Music | -18 to -20 | -3 to -5dB |
+| Layer | Target LUFS |
+|-------|-------------|
+| Dialogue | -15 (reference) |
+| Ambient | -25 |
+| SFX | -10 to -20 |
+| Music | -18 to -20 |
 
 **Measuring LUFS:**
 
 ```bash
-# ffmpeg (integrated LUFS)
 ffmpeg -i input.mp4 -af loudnorm=print_format=json -f null -
-
 # Audacity: Analyze > Loudness Normalization (preview mode)
 # DaVinci Resolve: Fairlight > Loudness Meter
-# Adobe Audition: Effects > Amplitude and Compression > Match Loudness
 ```
 
-**Normalization workflow:**
+**Normalization workflow**: Mix layers → measure integrated LUFS → apply normalization → limiter (true peak -1dB).
 
-1. Mix all layers to target relative levels
-2. Measure integrated LUFS of final mix
-3. Apply loudness normalization to hit platform target
-4. Use limiter to prevent clipping (true peak -1dB)
+## Platform Audio Rules
+
+| Platform | Rule | Why |
+|----------|------|-----|
+| UGC (TikTok, Shorts) | All diegetic, no score | Raw/authentic feel; polished audio breaks trust |
+| Commercial/Branded | Mixed diegetic + score, professional voice | Signals quality and production value |
+| Tutorial/Educational | Dialogue-first, minimal music | Competing audio reduces comprehension |
+| Documentary/Cinematic | Rich soundscape, cinematic score | Immersive storytelling |
 
 ## Voice Tools Reference
 
 ### Local Voice Processing
-
-**voice-helper.sh** - Interactive voice bridge for AI coding agent:
 
 ```bash
 voice-helper.sh talk              # Start voice conversation (defaults)
@@ -363,230 +208,21 @@ voice-helper.sh benchmark         # Test component speeds
 
 ### Cloud Voice Services
 
-**ElevenLabs** (voice cloning, transformation):
+**ElevenLabs**: Voice cloning from 3-5 min samples, 29 languages, 100+ stock voices, emotional control. API: `voice-pipeline-helper.sh [transform|tts|voices|clone]`
 
-- Voice cloning from 3-5 minute samples
-- 29 languages, 100+ stock voices
-- Emotional control and speaking style
-- API: `voice-pipeline-helper.sh [transform|tts|voices|clone]`
+**CapCut-equivalent cleanup** (local ffmpeg): Noise reduction, high-pass filter, de-essing, loudness normalization. CLI: `voice-pipeline-helper.sh cleanup <audio> [output] [target-lufs]`
 
-**CapCut-equivalent cleanup** (local ffmpeg processing):
+**Edge TTS** (Microsoft, free): 400+ voices, 100+ languages, fast, no API key. Used by voice-helper.sh.
 
-- Noise reduction, high-pass filter, de-essing
-- Loudness normalization to target LUFS
-- Compression and presence boost for voice clarity
-- CLI: `voice-pipeline-helper.sh cleanup <audio> [output] [target-lufs]`
-- Full pipeline: `voice-pipeline-helper.sh pipeline <file> [voice-id]`
-
-**CapCut** (web-based AI voice cleanup):
-
-- Accent normalization
-- Artifact removal
-- Background noise reduction
-- Web-based, no API (manual workflow — use `voice-pipeline-helper.sh cleanup` for automated equivalent)
-
-**Edge TTS** (Microsoft, free):
-
-- 400+ voices, 100+ languages
-- Fast, low-latency
-- No API key required
-- Used by voice-helper.sh
-
-### Speech-to-Speech Pipeline
-
-For advanced use cases (custom LLMs, server/client deployment, multi-language, phone integration), see `tools/voice/speech-to-speech.md`.
-
-**Pipeline**: `VAD → STT → LLM → TTS`
-
-**Deployment modes**:
-
-- Local (macOS with Apple Silicon)
-- Local (CUDA GPU)
-- Server/Client (Remote GPU)
-- Docker (CUDA)
-
-**Use cases**:
-
-- Voice-driven DevOps
-- Phone integration (Twilio)
-- Video narration
-- Multi-language support (6+ languages)
-
-## Audio Production Workflow
-
-### 1. Script Preparation
-
-From `content/production/writing.md`:
-
-- Long-form: Scene-by-scene with B-roll directions
-- Short-form: Hook-first, 60s constraint
-- Include emotional block cues for voice delivery
-- Mark dialogue pacing (8-second chunks for AI video)
-
-### 2. Voice Recording/Generation
-
-**Option A: AI Voice (ElevenLabs)**
-
-1. Generate voice from script with emotional blocks
-2. Export as WAV (48kHz, 24-bit)
-3. If from AI video: CapCut cleanup FIRST, then ElevenLabs
-
-**Option B: Human Voice Actor**
-
-1. Record in treated space (minimal reverb)
-2. Use pop filter and quality mic
-3. Record at -12dB to -18dB (leave headroom)
-4. Provide emotional block cues as delivery notes
-
-**Option C: Voice Cloning (Consistent Channel)**
-
-1. Record or source 3-5 minute clean voice sample
-2. Upload to ElevenLabs voice library
-3. Use cloned voice for all channel content
-4. Update voice sample quarterly for quality
-
-### 3. Voice Cleanup (Layer 1)
-
-```text
-Raw Voice → Noise Reduction → EQ → Compression → De-esser → Limiter → -15 LUFS
-```
-
-**Tools**: CapCut (AI cleanup), Audacity (manual), Adobe Audition (pro)
-
-### 4. Sound Design (Layers 2-4)
-
-**Ambient (Layer 2)**:
-
-- Source from Freesound, Epidemic Sound, or record custom
-- Low-pass filter to avoid dialogue competition
-- Target -25 LUFS
-
-**SFX (Layer 3)**:
-
-- Add whooshes for transitions
-- Add impacts for reveals
-- Time 1-2 frames before visual event
-- Layer multiple SFX for bigger impacts
-
-**Music (Layer 4)**:
-
-- Select music matching content type and emotional tone
-- Apply ducking (sidechain compression) to reduce volume during dialogue
-- Target -18 to -20 LUFS
-
-### 5. Mixing
-
-**Balance**:
-
-- Dialogue: 0dB (reference)
-- Ambient: -10dB
-- Music: -3 to -5dB
-- SFX: Varies by effect
-
-**Panning**:
-
-- Dialogue: Center (mono)
-- Ambient: Stereo width
-- Music: Stereo
-- SFX: Positioned to match visual
-
-**EQ**:
-
-- High-pass filter on all tracks (80Hz) to remove rumble
-- Presence boost on dialogue (3-5kHz)
-- Low-pass filter on ambient (8kHz) to avoid dialogue competition
-
-### 6. Mastering
-
-**Loudness normalization**:
-
-1. Measure integrated LUFS of final mix
-2. Apply loudness normalization to hit platform target
-3. Use limiter to prevent clipping (true peak -1dB)
-
-**Final export**:
-
-- Format: WAV or AAC
-- Sample rate: 48kHz (video standard)
-- Bit depth: 24-bit (WAV) or 320kbps (AAC)
-- Channels: Stereo (or mono for dialogue-only)
-
-## Content Type Audio Presets
-
-Quick-start presets for common content types:
-
-### YouTube Long-Form
-
-- **Dialogue**: -15 LUFS, centered, EQ for clarity
-- **Music**: Upbeat royalty-free, -18 LUFS, ducking -6dB
-- **SFX**: Transitions and reveals
-- **Ambient**: Minimal or none
-
-### TikTok/Shorts (UGC)
-
-- **Dialogue**: -12 LUFS (louder for mobile), authentic/raw
-- **Music**: Trending sounds (diegetic), no score
-- **SFX**: Minimal, only for emphasis
-- **Ambient**: Natural room tone
-
-### Commercial/Product Demo
-
-- **Dialogue**: -15 LUFS, professional voice (ElevenLabs)
-- **Music**: Branded score, -20 LUFS, ducking -8dB
-- **SFX**: UI sounds, product interactions
-- **Ambient**: Designed ambience (not raw location)
-
-### Podcast
-
-- **Dialogue**: -16 to -19 LUFS, consistent volume
-- **Music**: Intro/outro only, -18 LUFS
-- **SFX**: Minimal, transitions only
-- **Ambient**: None (studio environment)
-
-### Documentary/Cinematic
-
-- **Dialogue**: -15 LUFS, natural delivery
-- **Music**: Cinematic score, -18 LUFS, ducking -4dB
-- **SFX**: Rich foley, environmental sounds
-- **Ambient**: Layered, immersive, -25 LUFS
-
-## Integration with Content Pipeline
-
-Audio production fits into the broader content creation pipeline:
-
-```text
-Research (content/research.md)
-    ↓
-Story (content/story.md)
-    ↓
-Script (content/production/writing.md)
-    ↓
-Voice Production (THIS FILE)
-    ↓
-Video Production (content/production/video.md)
-    ↓
-Final Mix & Master
-    ↓
-Distribution (content/distribution/)
-```
-
-**Cross-references**:
-
-- **Script writing**: `content/production/writing.md` - Dialogue pacing, emotional cues
-- **Video production**: `content/production/video.md` - Audio sync, dialogue timing, longform talking-head pipeline
-- **Voice models**: `tools/voice/voice-models.md` - TTS model comparison (ElevenLabs, MiniMax, Qwen3-TTS)
-- **Voice pipeline**: `voice-pipeline-helper.sh` - CapCut cleanup + ElevenLabs transformation chain
-- **Voice tools**: `tools/voice/speech-to-speech.md` - Advanced voice pipeline
-- **Voice helper**: `voice-helper.sh` - Local voice processing
+For advanced use cases (custom LLMs, server/client deployment, phone integration), see `tools/voice/speech-to-speech.md`.
 
 ## See Also
 
-- `tools/voice/speech-to-speech.md` - Advanced voice pipeline (VAD, STT, LLM, TTS)
-- `tools/voice/cloud-voice-agents.md` - Cloud voice agents (GPT-4o Realtime, MiniCPM-o)
-- `tools/voice/voice-ai-models.md` - Complete model comparison (TTS, STT, S2S)
-- `tools/voice/pipecat-opencode.md` - Pipecat real-time voice pipeline
-- `tools/video/remotion.md` - Video narration and compositing
-- `tools/video/heygen-skill/rules/voices.md` - AI voice cloning
-- `content/production/writing.md` - Script structure and dialogue pacing
-- `content/production/video.md` - Video production and audio sync
-- `content/optimization.md` - A/B testing audio variants
+- `tools/voice/speech-to-speech.md` — Advanced voice pipeline (VAD, STT, LLM, TTS)
+- `tools/voice/cloud-voice-agents.md` — Cloud voice agents (GPT-4o Realtime, MiniCPM-o)
+- `tools/voice/voice-ai-models.md` — Complete model comparison (TTS, STT, S2S)
+- `tools/voice/voice-models.md` — TTS model comparison (ElevenLabs, MiniMax, Qwen3-TTS)
+- `tools/voice/pipecat-opencode.md` — Pipecat real-time voice pipeline
+- `content/production/writing.md` — Script structure, dialogue pacing, emotional cues
+- `content/production/video.md` — Video production and audio sync
+- `content/optimization.md` — A/B testing audio variants
