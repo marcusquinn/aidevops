@@ -345,7 +345,134 @@ check_review_bot_gate() {
 	return 0
 }
 
-# Phase 4: Dependency scanning
+# Phase 4: Dependency scanning — helpers
+
+# Check npm/Node.js dependencies via npm audit
+# Usage: _check_npm_deps <repo-path>
+# Sets has_deps=true if package.json found; emits findings directly.
+_check_npm_deps() {
+	local repo_path="$1"
+
+	[[ -f "$repo_path/package.json" ]] || return 0
+	# Signal to caller that at least one manifest was found
+	has_deps=true
+	print_info "Found package.json — checking npm dependencies..."
+
+	if [[ ! -f "$repo_path/package-lock.json" ]]; then
+		print_warn "package.json exists but no package-lock.json — cannot run npm audit"
+		add_finding "$SEVERITY_WARNING" "$CAT_DEPENDENCIES" "Missing package-lock.json"
+		return 0
+	fi
+
+	if ! command -v npm &>/dev/null; then
+		print_skip "npm not installed — cannot audit Node.js dependencies"
+		add_finding "$SEVERITY_INFO" "$CAT_DEPENDENCIES" "npm not available"
+		return 0
+	fi
+
+	local audit_output
+	audit_output=$(npm audit --json --prefix "$repo_path" 2>/dev/null) || true
+
+	if [[ -z "$audit_output" ]]; then
+		print_skip "npm audit returned no output"
+		return 0
+	fi
+
+	local vuln_total vuln_critical vuln_high
+	vuln_total=$(echo "$audit_output" | jq -r '.metadata.vulnerabilities.total // 0' 2>/dev/null) || vuln_total="0"
+	vuln_critical=$(echo "$audit_output" | jq -r '.metadata.vulnerabilities.critical // 0' 2>/dev/null) || vuln_critical="0"
+	vuln_high=$(echo "$audit_output" | jq -r '.metadata.vulnerabilities.high // 0' 2>/dev/null) || vuln_high="0"
+
+	if [[ "$vuln_critical" -gt 0 ]]; then
+		print_crit "npm audit: $vuln_critical critical, $vuln_high high ($vuln_total total vulnerabilities)"
+		add_finding "$SEVERITY_CRITICAL" "$CAT_DEPENDENCIES" "npm: $vuln_critical critical, $vuln_high high vulnerabilities"
+	elif [[ "$vuln_high" -gt 0 ]]; then
+		print_warn "npm audit: $vuln_high high ($vuln_total total vulnerabilities)"
+		add_finding "$SEVERITY_WARNING" "$CAT_DEPENDENCIES" "npm: $vuln_high high vulnerabilities"
+	elif [[ "$vuln_total" -gt 0 ]]; then
+		print_info "npm audit: $vuln_total low/moderate vulnerabilities"
+		add_finding "$SEVERITY_INFO" "$CAT_DEPENDENCIES" "npm: $vuln_total low/moderate vulnerabilities"
+	else
+		print_pass "npm audit: no known vulnerabilities"
+		add_finding "$SEVERITY_PASS" "$CAT_DEPENDENCIES" "npm: clean audit"
+	fi
+
+	return 0
+}
+
+# Check Python dependencies via pip-audit
+# Usage: _check_pip_deps <repo-path>
+_check_pip_deps() {
+	local repo_path="$1"
+
+	[[ -f "$repo_path/requirements.txt" ]] || [[ -f "$repo_path/pyproject.toml" ]] || return 0
+	has_deps=true
+	print_info "Found Python project — checking dependencies..."
+
+	if ! command -v pip-audit &>/dev/null; then
+		print_skip "pip-audit not installed — install with: pip install pip-audit"
+		add_finding "$SEVERITY_INFO" "$CAT_DEPENDENCIES" "pip-audit not available"
+		return 0
+	fi
+
+	local pip_output
+	pip_output=$(pip-audit --requirement "$repo_path/requirements.txt" --format json 2>/dev/null) || true
+
+	if [[ -z "$pip_output" ]]; then
+		return 0
+	fi
+
+	local pip_vulns
+	pip_vulns=$(echo "$pip_output" | jq 'length' 2>/dev/null) || pip_vulns="0"
+
+	if [[ "$pip_vulns" -gt 0 ]]; then
+		print_warn "pip-audit: $pip_vulns vulnerable package(s)"
+		add_finding "$SEVERITY_WARNING" "$CAT_DEPENDENCIES" "pip: $pip_vulns vulnerable packages"
+	else
+		print_pass "pip-audit: no known vulnerabilities"
+		add_finding "$SEVERITY_PASS" "$CAT_DEPENDENCIES" "pip: clean audit"
+	fi
+
+	return 0
+}
+
+# Check Rust dependencies via cargo audit
+# Usage: _check_cargo_deps <repo-path>
+_check_cargo_deps() {
+	local repo_path="$1"
+
+	[[ -f "$repo_path/Cargo.toml" ]] || return 0
+	has_deps=true
+
+	if ! command -v cargo-audit &>/dev/null; then
+		print_skip "cargo-audit not installed — install with: cargo install cargo-audit"
+		add_finding "$SEVERITY_INFO" "$CAT_DEPENDENCIES" "cargo-audit not available"
+		return 0
+	fi
+
+	print_info "Found Cargo.toml — running cargo audit..."
+	local cargo_output
+	cargo_output=$(cargo audit --json 2>/dev/null) || true
+
+	if [[ -z "$cargo_output" ]]; then
+		return 0
+	fi
+
+	local cargo_vulns
+	cargo_vulns=$(echo "$cargo_output" | jq '.vulnerabilities.found // 0' 2>/dev/null) || cargo_vulns="0"
+
+	if [[ "$cargo_vulns" -gt 0 ]]; then
+		print_warn "cargo audit: $cargo_vulns vulnerability(ies)"
+		add_finding "$SEVERITY_WARNING" "$CAT_DEPENDENCIES" "cargo: $cargo_vulns vulnerabilities"
+	else
+		print_pass "cargo audit: no known vulnerabilities"
+		add_finding "$SEVERITY_PASS" "$CAT_DEPENDENCIES" "cargo: clean audit"
+	fi
+
+	return 0
+}
+
+# Phase 4: Dependency scanning — orchestrator
 check_dependencies() {
 	local repo_path="$1"
 
@@ -353,96 +480,9 @@ check_dependencies() {
 
 	local has_deps=false
 
-	# Check for package.json (npm/Node.js)
-	if [[ -f "$repo_path/package.json" ]]; then
-		has_deps=true
-		print_info "Found package.json — checking npm dependencies..."
-
-		# Try npm audit first (most common)
-		if command -v npm &>/dev/null && [[ -f "$repo_path/package-lock.json" ]]; then
-			local audit_output
-			audit_output=$(npm audit --json --prefix "$repo_path" 2>/dev/null) || true
-
-			if [[ -n "$audit_output" ]]; then
-				local vuln_total
-				vuln_total=$(echo "$audit_output" | jq -r '.metadata.vulnerabilities.total // 0' 2>/dev/null) || vuln_total="0"
-				local vuln_critical
-				vuln_critical=$(echo "$audit_output" | jq -r '.metadata.vulnerabilities.critical // 0' 2>/dev/null) || vuln_critical="0"
-				local vuln_high
-				vuln_high=$(echo "$audit_output" | jq -r '.metadata.vulnerabilities.high // 0' 2>/dev/null) || vuln_high="0"
-
-				if [[ "$vuln_critical" -gt 0 ]]; then
-					print_crit "npm audit: $vuln_critical critical, $vuln_high high ($vuln_total total vulnerabilities)"
-					add_finding "$SEVERITY_CRITICAL" "$CAT_DEPENDENCIES" "npm: $vuln_critical critical, $vuln_high high vulnerabilities"
-				elif [[ "$vuln_high" -gt 0 ]]; then
-					print_warn "npm audit: $vuln_high high ($vuln_total total vulnerabilities)"
-					add_finding "$SEVERITY_WARNING" "$CAT_DEPENDENCIES" "npm: $vuln_high high vulnerabilities"
-				elif [[ "$vuln_total" -gt 0 ]]; then
-					print_info "npm audit: $vuln_total low/moderate vulnerabilities"
-					add_finding "$SEVERITY_INFO" "$CAT_DEPENDENCIES" "npm: $vuln_total low/moderate vulnerabilities"
-				else
-					print_pass "npm audit: no known vulnerabilities"
-					add_finding "$SEVERITY_PASS" "$CAT_DEPENDENCIES" "npm: clean audit"
-				fi
-			else
-				print_skip "npm audit returned no output"
-			fi
-		elif [[ ! -f "$repo_path/package-lock.json" ]]; then
-			print_warn "package.json exists but no package-lock.json — cannot run npm audit"
-			add_finding "$SEVERITY_WARNING" "$CAT_DEPENDENCIES" "Missing package-lock.json"
-		fi
-	fi
-
-	# Check for requirements.txt or pyproject.toml (Python)
-	if [[ -f "$repo_path/requirements.txt" ]] || [[ -f "$repo_path/pyproject.toml" ]]; then
-		has_deps=true
-		print_info "Found Python project — checking dependencies..."
-
-		if command -v pip-audit &>/dev/null; then
-			local pip_output
-			pip_output=$(pip-audit --requirement "$repo_path/requirements.txt" --format json 2>/dev/null) || true
-
-			if [[ -n "$pip_output" ]]; then
-				local pip_vulns
-				pip_vulns=$(echo "$pip_output" | jq 'length' 2>/dev/null) || pip_vulns="0"
-
-				if [[ "$pip_vulns" -gt 0 ]]; then
-					print_warn "pip-audit: $pip_vulns vulnerable package(s)"
-					add_finding "$SEVERITY_WARNING" "$CAT_DEPENDENCIES" "pip: $pip_vulns vulnerable packages"
-				else
-					print_pass "pip-audit: no known vulnerabilities"
-					add_finding "$SEVERITY_PASS" "$CAT_DEPENDENCIES" "pip: clean audit"
-				fi
-			fi
-		else
-			print_skip "pip-audit not installed — install with: pip install pip-audit"
-			add_finding "$SEVERITY_INFO" "$CAT_DEPENDENCIES" "pip-audit not available"
-		fi
-	fi
-
-	# Check for Cargo.toml (Rust)
-	if [[ -f "$repo_path/Cargo.toml" ]]; then
-		has_deps=true
-		if command -v cargo-audit &>/dev/null; then
-			print_info "Found Cargo.toml — running cargo audit..."
-			local cargo_output
-			cargo_output=$(cargo audit --json 2>/dev/null) || true
-			if [[ -n "$cargo_output" ]]; then
-				local cargo_vulns
-				cargo_vulns=$(echo "$cargo_output" | jq '.vulnerabilities.found // 0' 2>/dev/null) || cargo_vulns="0"
-				if [[ "$cargo_vulns" -gt 0 ]]; then
-					print_warn "cargo audit: $cargo_vulns vulnerability(ies)"
-					add_finding "$SEVERITY_WARNING" "$CAT_DEPENDENCIES" "cargo: $cargo_vulns vulnerabilities"
-				else
-					print_pass "cargo audit: no known vulnerabilities"
-					add_finding "$SEVERITY_PASS" "$CAT_DEPENDENCIES" "cargo: clean audit"
-				fi
-			fi
-		else
-			print_skip "cargo-audit not installed — install with: cargo install cargo-audit"
-			add_finding "$SEVERITY_INFO" "$CAT_DEPENDENCIES" "cargo-audit not available"
-		fi
-	fi
+	_check_npm_deps "$repo_path"
+	_check_pip_deps "$repo_path"
+	_check_cargo_deps "$repo_path"
 
 	if [[ "$has_deps" == "false" ]]; then
 		print_skip "No dependency manifests found (package.json, requirements.txt, Cargo.toml)"
@@ -1028,7 +1068,206 @@ cmd_status() {
 	return 1
 }
 
-# Interactive guided setup
+# Interactive guided setup — step helpers
+# Each helper:
+#   - Runs the corresponding check
+#   - If failing: prompts user and attempts remediation
+#   - Increments actions_fixed or actions_skipped (caller-owned vars)
+#   - Returns 0 always (errors are user-visible, not fatal)
+
+# Setup step 1: prompt guard patterns
+# Requires caller to have declared: actions_fixed, actions_skipped, CHECK_LABEL, CHECK_FIX
+_setup_prompt_guard() {
+	if check_prompt_guard_patterns; then
+		echo -e "${GREEN}[OK]${NC} $CHECK_LABEL"
+		return 0
+	fi
+
+	echo -e "${YELLOW}[1]${NC} $CHECK_LABEL"
+	echo "    $CHECK_FIX"
+	echo ""
+	local response
+	read -r -p "    Run aidevops update now? [Y/n] " response
+	response="${response:-y}"
+	if [[ "$response" =~ ^[Yy]$ ]]; then
+		echo ""
+		if command -v aidevops &>/dev/null; then
+			aidevops update
+		else
+			bash "$HOME/Git/aidevops/setup.sh" --non-interactive
+		fi
+		actions_fixed=$((actions_fixed + 1))
+	else
+		actions_skipped=$((actions_skipped + 1))
+	fi
+	echo ""
+	return 0
+}
+
+# Setup step 2: secret storage backend
+_setup_secret_storage() {
+	if check_secret_storage; then
+		echo -e "${GREEN}[OK]${NC} $CHECK_LABEL"
+		return 0
+	fi
+
+	echo -e "${YELLOW}[2]${NC} $CHECK_LABEL"
+	echo "    $CHECK_FIX"
+	echo ""
+
+	local response
+	if command -v gopass &>/dev/null; then
+		read -r -p "    Initialize gopass store now? [Y/n] " response
+		response="${response:-y}"
+		if [[ "$response" =~ ^[Yy]$ ]]; then
+			echo ""
+			local secret_helper="${AGENTS_DIR}/scripts/secret-helper.sh"
+			if [[ -f "$secret_helper" ]]; then
+				bash "$secret_helper" init
+			else
+				gopass init
+			fi
+			actions_fixed=$((actions_fixed + 1))
+		else
+			actions_skipped=$((actions_skipped + 1))
+		fi
+	elif [[ -f "$CREDENTIALS_FILE" ]]; then
+		read -r -p "    Fix permissions on credentials.sh? [Y/n] " response
+		response="${response:-y}"
+		if [[ "$response" =~ ^[Yy]$ ]]; then
+			chmod 600 "$CREDENTIALS_FILE"
+			echo -e "    ${GREEN}Fixed.${NC}"
+			actions_fixed=$((actions_fixed + 1))
+		else
+			actions_skipped=$((actions_skipped + 1))
+		fi
+	else
+		echo "    Options:"
+		echo "      1. Install gopass (recommended): brew install gopass && aidevops secret init"
+		echo "      2. Create credentials.sh: touch $CREDENTIALS_FILE && chmod 600 $CREDENTIALS_FILE"
+		echo ""
+		read -r -p "    Skip for now? [Y/n] " _
+		actions_skipped=$((actions_skipped + 1))
+	fi
+	echo ""
+	return 0
+}
+
+# Setup step 3: GitHub CLI authentication
+_setup_gh_auth() {
+	if check_gh_auth; then
+		echo -e "${GREEN}[OK]${NC} $CHECK_LABEL"
+		return 0
+	fi
+
+	echo -e "${YELLOW}[3]${NC} $CHECK_LABEL"
+	echo "    $CHECK_FIX"
+	echo ""
+
+	local response
+	if command -v gh &>/dev/null; then
+		read -r -p "    Run gh auth login now? [Y/n] " response
+		response="${response:-y}"
+		if [[ "$response" =~ ^[Yy]$ ]]; then
+			echo ""
+			gh auth login -s workflow
+			actions_fixed=$((actions_fixed + 1))
+		else
+			actions_skipped=$((actions_skipped + 1))
+		fi
+	else
+		echo "    Install GitHub CLI first: brew install gh"
+		actions_skipped=$((actions_skipped + 1))
+	fi
+	echo ""
+	return 0
+}
+
+# Setup step 3b: GitHub CLI workflow scope (t1540)
+_setup_gh_workflow_scope() {
+	if check_gh_workflow_scope; then
+		echo -e "${GREEN}[OK]${NC} $CHECK_LABEL"
+		return 0
+	fi
+
+	echo -e "${YELLOW}[3b]${NC} $CHECK_LABEL"
+	echo "    $CHECK_FIX"
+	echo "    Without this scope, pushes/merges of PRs with .github/workflows/ changes fail."
+	echo ""
+
+	local response
+	if command -v gh &>/dev/null; then
+		read -r -p "    Run gh auth refresh -s workflow now? [Y/n] " response
+		response="${response:-y}"
+		if [[ "$response" =~ ^[Yy]$ ]]; then
+			echo ""
+			gh auth refresh -s workflow
+			actions_fixed=$((actions_fixed + 1))
+		else
+			actions_skipped=$((actions_skipped + 1))
+		fi
+	else
+		actions_skipped=$((actions_skipped + 1))
+	fi
+	echo ""
+	return 0
+}
+
+# Setup step 4: SSH key
+_setup_ssh_key() {
+	if check_ssh_key; then
+		echo -e "${GREEN}[OK]${NC} $CHECK_LABEL"
+		return 0
+	fi
+
+	echo -e "${YELLOW}[4]${NC} $CHECK_LABEL"
+	echo "    $CHECK_FIX"
+	echo ""
+
+	local response
+	read -r -p "    Generate an Ed25519 SSH key now? [Y/n] " response
+	response="${response:-y}"
+	if [[ "$response" =~ ^[Yy]$ ]]; then
+		echo ""
+		local git_email
+		git_email=$(git config --global user.email || echo "")
+		ssh-keygen -t ed25519 -C "$git_email"
+		actions_fixed=$((actions_fixed + 1))
+		echo ""
+		echo "    Add to GitHub: gh ssh-key add ~/.ssh/id_ed25519.pub"
+	else
+		actions_skipped=$((actions_skipped + 1))
+	fi
+	echo ""
+	return 0
+}
+
+# Setup step 5: secretlint
+_setup_secretlint() {
+	if check_secretlint; then
+		echo -e "${GREEN}[OK]${NC} $CHECK_LABEL"
+		return 0
+	fi
+
+	echo -e "${YELLOW}[5]${NC} $CHECK_LABEL"
+	echo "    $CHECK_FIX"
+	echo ""
+
+	local response
+	read -r -p "    Install secretlint now? [Y/n] " response
+	response="${response:-y}"
+	if [[ "$response" =~ ^[Yy]$ ]]; then
+		echo ""
+		npm install -g secretlint @secretlint/secretlint-rule-preset-recommend
+		actions_fixed=$((actions_fixed + 1))
+	else
+		actions_skipped=$((actions_skipped + 1))
+	fi
+	echo ""
+	return 0
+}
+
+# Interactive guided setup — orchestrator
 cmd_setup() {
 	echo -e "${BOLD}${CYAN}Security Setup${NC}"
 	echo "==============="
@@ -1040,164 +1279,12 @@ cmd_setup() {
 	local actions_skipped=0
 	local CHECK_LABEL="" CHECK_FIX=""
 
-	# --- Prompt guard patterns ---
-	if ! check_prompt_guard_patterns; then
-		echo -e "${YELLOW}[1]${NC} $CHECK_LABEL"
-		echo "    $CHECK_FIX"
-		echo ""
-		read -r -p "    Run aidevops update now? [Y/n] " response
-		response="${response:-y}"
-		if [[ "$response" =~ ^[Yy]$ ]]; then
-			echo ""
-			if command -v aidevops &>/dev/null; then
-				aidevops update
-			else
-				bash "$HOME/Git/aidevops/setup.sh" --non-interactive
-			fi
-			actions_fixed=$((actions_fixed + 1))
-		else
-			actions_skipped=$((actions_skipped + 1))
-		fi
-		echo ""
-	else
-		echo -e "${GREEN}[OK]${NC} $CHECK_LABEL"
-	fi
-
-	# --- Secret storage ---
-	if ! check_secret_storage; then
-		echo -e "${YELLOW}[2]${NC} $CHECK_LABEL"
-		echo "    $CHECK_FIX"
-		echo ""
-
-		if command -v gopass &>/dev/null; then
-			read -r -p "    Initialize gopass store now? [Y/n] " response
-			response="${response:-y}"
-			if [[ "$response" =~ ^[Yy]$ ]]; then
-				echo ""
-				local secret_helper="${AGENTS_DIR}/scripts/secret-helper.sh"
-				if [[ -f "$secret_helper" ]]; then
-					bash "$secret_helper" init
-				else
-					gopass init
-				fi
-				actions_fixed=$((actions_fixed + 1))
-			else
-				actions_skipped=$((actions_skipped + 1))
-			fi
-		elif [[ -f "$CREDENTIALS_FILE" ]]; then
-			read -r -p "    Fix permissions on credentials.sh? [Y/n] " response
-			response="${response:-y}"
-			if [[ "$response" =~ ^[Yy]$ ]]; then
-				chmod 600 "$CREDENTIALS_FILE"
-				echo -e "    ${GREEN}Fixed.${NC}"
-				actions_fixed=$((actions_fixed + 1))
-			else
-				actions_skipped=$((actions_skipped + 1))
-			fi
-		else
-			echo "    Options:"
-			echo "      1. Install gopass (recommended): brew install gopass && aidevops secret init"
-			echo "      2. Create credentials.sh: touch $CREDENTIALS_FILE && chmod 600 $CREDENTIALS_FILE"
-			echo ""
-			read -r -p "    Skip for now? [Y/n] " _
-			actions_skipped=$((actions_skipped + 1))
-		fi
-		echo ""
-	else
-		echo -e "${GREEN}[OK]${NC} $CHECK_LABEL"
-	fi
-
-	# --- GitHub CLI auth ---
-	if ! check_gh_auth; then
-		echo -e "${YELLOW}[3]${NC} $CHECK_LABEL"
-		echo "    $CHECK_FIX"
-		echo ""
-
-		if command -v gh &>/dev/null; then
-			read -r -p "    Run gh auth login now? [Y/n] " response
-			response="${response:-y}"
-			if [[ "$response" =~ ^[Yy]$ ]]; then
-				echo ""
-				gh auth login -s workflow
-				actions_fixed=$((actions_fixed + 1))
-			else
-				actions_skipped=$((actions_skipped + 1))
-			fi
-		else
-			echo "    Install GitHub CLI first: brew install gh"
-			actions_skipped=$((actions_skipped + 1))
-		fi
-		echo ""
-	else
-		echo -e "${GREEN}[OK]${NC} $CHECK_LABEL"
-	fi
-
-	# --- GitHub CLI workflow scope (t1540) ---
-	if ! check_gh_workflow_scope; then
-		echo -e "${YELLOW}[3b]${NC} $CHECK_LABEL"
-		echo "    $CHECK_FIX"
-		echo "    Without this scope, pushes/merges of PRs with .github/workflows/ changes fail."
-		echo ""
-
-		if command -v gh &>/dev/null; then
-			read -r -p "    Run gh auth refresh -s workflow now? [Y/n] " response
-			response="${response:-y}"
-			if [[ "$response" =~ ^[Yy]$ ]]; then
-				echo ""
-				gh auth refresh -s workflow
-				actions_fixed=$((actions_fixed + 1))
-			else
-				actions_skipped=$((actions_skipped + 1))
-			fi
-		else
-			actions_skipped=$((actions_skipped + 1))
-		fi
-		echo ""
-	else
-		echo -e "${GREEN}[OK]${NC} $CHECK_LABEL"
-	fi
-
-	# --- SSH key ---
-	if ! check_ssh_key; then
-		echo -e "${YELLOW}[4]${NC} $CHECK_LABEL"
-		echo "    $CHECK_FIX"
-		echo ""
-		read -r -p "    Generate an Ed25519 SSH key now? [Y/n] " response
-		response="${response:-y}"
-		if [[ "$response" =~ ^[Yy]$ ]]; then
-			echo ""
-			local git_email
-			git_email=$(git config --global user.email || echo "")
-			ssh-keygen -t ed25519 -C "$git_email"
-			actions_fixed=$((actions_fixed + 1))
-			echo ""
-			echo "    Add to GitHub: gh ssh-key add ~/.ssh/id_ed25519.pub"
-		else
-			actions_skipped=$((actions_skipped + 1))
-		fi
-		echo ""
-	else
-		echo -e "${GREEN}[OK]${NC} $CHECK_LABEL"
-	fi
-
-	# --- Secretlint ---
-	if ! check_secretlint; then
-		echo -e "${YELLOW}[5]${NC} $CHECK_LABEL"
-		echo "    $CHECK_FIX"
-		echo ""
-		read -r -p "    Install secretlint now? [Y/n] " response
-		response="${response:-y}"
-		if [[ "$response" =~ ^[Yy]$ ]]; then
-			echo ""
-			npm install -g secretlint @secretlint/secretlint-rule-preset-recommend
-			actions_fixed=$((actions_fixed + 1))
-		else
-			actions_skipped=$((actions_skipped + 1))
-		fi
-		echo ""
-	else
-		echo -e "${GREEN}[OK]${NC} $CHECK_LABEL"
-	fi
+	_setup_prompt_guard
+	_setup_secret_storage
+	_setup_gh_auth
+	_setup_gh_workflow_scope
+	_setup_ssh_key
+	_setup_secretlint
 
 	# --- Summary ---
 	echo ""
