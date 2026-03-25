@@ -301,6 +301,8 @@ write_plan_file() {
 	local total_outputs=0
 	local formats_file
 	formats_file=$(mktemp)
+	# shellcheck disable=SC2064
+	trap "rm -f '$formats_file'" RETURN
 
 	{
 		_emit_plan_header
@@ -321,7 +323,6 @@ write_plan_file() {
 		echo "estimated_tokens: $((total_outputs * 2000))"
 	} >"$plan_file"
 
-	rm -f "$formats_file"
 	return 0
 }
 
