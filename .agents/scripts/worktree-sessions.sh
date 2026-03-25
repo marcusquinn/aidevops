@@ -411,7 +411,7 @@ cmd_list() {
 
 	echo ""
 	echo -e "${BOLD}To resume work:${NC}"
-	echo "  1. cd <worktree-path>" || exit
+	echo "  1. cd <worktree-path>"
 	echo "  2. Open OpenCode (it will show recent sessions)"
 	echo "  3. Use Ctrl+P to browse sessions by title"
 	echo ""

@@ -198,6 +198,11 @@ _request_app_token() {
 	local token_file
 	token_file=$(create_token_file "$token" "$repo" "github-app" "$expires_at")
 
+	if [[ -z "$token_file" ]] || [[ ! -f "$token_file" ]]; then
+		log_token "ERROR" "Failed to create token file for GitHub App token (repo: ${repo})"
+		return 1
+	fi
+
 	log_token "INFO" "Created GitHub App installation token for ${repo} (expires: ${expires_at})"
 	log_audit "create" "$repo" "github-app" "$ttl" "app-${installation_id}"
 
@@ -305,6 +310,11 @@ create_delegated_token() {
 
 	local token_file
 	token_file=$(create_token_file "$current_token" "$repo" "delegated" "$expires_at")
+
+	if [[ -z "$token_file" ]] || [[ ! -f "$token_file" ]]; then
+		log_token "ERROR" "Failed to create token file for delegated token (repo: ${repo})"
+		return 1
+	fi
 
 	log_token "INFO" "Created delegated token for ${repo} (advisory TTL: ${ttl}s)"
 	log_audit "create" "$repo" "delegated" "$ttl" "delegated-$$"
