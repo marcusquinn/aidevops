@@ -70,13 +70,12 @@ score_to_risk() {
 	return 0
 }
 
-# Main check function
-cmd_check() {
-	local ip="$1"
-	local api_key="${IPHUB_API_KEY:-}"
-	local timeout="$DEFAULT_TIMEOUT"
-
-	shift
+# Parse --api-key and --timeout flags; prints "api_key=<val> timeout=<val>" to stdout
+# Usage: eval "$(_parse_check_args "$api_key_default" "$timeout_default" "$@")"
+_parse_check_args() {
+	local api_key="$1"
+	local timeout="$2"
+	shift 2
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--api-key)
@@ -100,11 +99,16 @@ cmd_check() {
 			;;
 		esac
 	done
+	printf 'api_key=%s timeout=%s' "$api_key" "$timeout"
+	return 0
+}
 
-	if [[ -z "$api_key" ]]; then
-		error_json "$ip" "IPHUB_API_KEY not set — 1000 checks/day free at iphub.info"
-		return 0
-	fi
+# Fetch raw JSON from IP Hub API; prints response to stdout on success.
+# Returns 1 on curl failure, invalid JSON, or API-level error (also prints error_json).
+_fetch_ip_response() {
+	local ip="$1"
+	local api_key="$2"
+	local timeout="$3"
 
 	local response
 	response=$(curl -sf \
@@ -114,21 +118,29 @@ cmd_check() {
 		"${API_BASE}/${ip}" \
 		2>/dev/null) || {
 		error_json "$ip" "curl request failed"
-		return 0
+		return 1
 	}
 
 	if ! echo "$response" | jq empty 2>/dev/null; then
 		error_json "$ip" "invalid JSON response"
-		return 0
+		return 1
 	fi
 
-	# Check for API errors
 	local api_error
 	api_error=$(echo "$response" | jq -r '.error // empty' 2>/dev/null || true)
 	if [[ -n "$api_error" ]]; then
 		error_json "$ip" "$api_error"
-		return 0
+		return 1
 	fi
+
+	echo "$response"
+	return 0
+}
+
+# Extract fields from a valid API response and emit the final result JSON.
+_build_result_json() {
+	local ip="$1"
+	local response="$2"
 
 	local block country asn isp
 	block=$(echo "$response" | jq -r '.block // 0')
@@ -175,6 +187,31 @@ cmd_check() {
             isp: $isp,
             raw: $raw
         }'
+	return 0
+}
+
+# Main check function
+cmd_check() {
+	local ip="$1"
+	local api_key="${IPHUB_API_KEY:-}"
+	local timeout="$DEFAULT_TIMEOUT"
+	shift
+
+	local parsed
+	parsed=$(_parse_check_args "$api_key" "$timeout" "$@") || return 1
+	api_key="${parsed#api_key=}"
+	api_key="${api_key% timeout=*}"
+	timeout="${parsed##* timeout=}"
+
+	if [[ -z "$api_key" ]]; then
+		error_json "$ip" "IPHUB_API_KEY not set — 1000 checks/day free at iphub.info"
+		return 0
+	fi
+
+	local response
+	response=$(_fetch_ip_response "$ip" "$api_key" "$timeout") || return 0
+
+	_build_result_json "$ip" "$response"
 	return 0
 }
 
