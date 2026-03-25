@@ -44,7 +44,16 @@ Target: $ARGUMENTS
    ./.agents/scripts/mcp-audit-helper.sh scan
    ```
 
-5. **Report findings** with severity and location
+5. **Secret hygiene & supply chain scan** for plaintext credentials and IoCs:
+
+   ```bash
+   # Scan for plaintext secrets, .pth supply chain IoCs, unpinned deps
+   aidevops security scan
+   # Or directly:
+   secret-hygiene-helper.sh scan
+   ```
+
+6. **Report findings** with severity and location
 
 ## What It Checks
 
@@ -56,6 +65,10 @@ Target: $ARGUMENTS
 | AI Configs | Ferret | Prompt injection, jailbreaks |
 | MCP Descriptions | MCP Audit | Injection in MCP tool descriptions |
 | Obvious Vulns | Security Helper | Command injection, SQL injection |
+| Plaintext Secrets | Secret Hygiene | AWS, GCP, Azure, k8s, Docker, npm, PyPI, SSH |
+| Supply Chain IoCs | Secret Hygiene | Python .pth files, compromised package versions |
+| Unpinned Deps | Secret Hygiene | >= in requirements.txt, ^ in package.json |
+| MCP Auto-Download | Secret Hygiene | uvx/npx in MCP configs (transitive dep risk) |
 
 ## Output
 
@@ -84,3 +97,17 @@ Use `/security-analysis` for comprehensive scanning with:
 - Full taint analysis
 - Git history scanning
 - Detailed remediation guidance
+
+## Related CLI Commands
+
+```bash
+aidevops security              # Security posture setup wizard
+aidevops security scan         # Full secret hygiene & supply chain scan
+aidevops security scan-pth     # Python .pth file audit only
+aidevops security scan-secrets # Plaintext secret locations only
+aidevops security scan-deps    # Unpinned dependency check only
+aidevops security dismiss <id> # Dismiss a security advisory after action
+aidevops security hygiene      # Alias for 'aidevops security scan'
+aidevops security setup        # Interactive security posture setup
+aidevops security status       # Detailed security posture report
+```

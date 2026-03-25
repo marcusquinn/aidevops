@@ -3072,7 +3072,7 @@ _help_commands() {
 	echo "  repos [cmd]        Manage registered projects (list/add/remove/clean)"
 	echo "  model-accounts-pool OAuth account pool (list/check/add/rotate/reset-cooldowns)"
 	echo "  opencode-sandbox   Test OpenCode versions in isolation (install/run/check/clean)"
-	echo "  security <cmd>     Security posture (check/audit/setup/status/summary)"
+	echo "  security <cmd>     Security posture, secret hygiene, supply chain scanning"
 	echo "  ip-check <cmd>     IP reputation checks (check/batch/report/providers)"
 	echo "  secret <cmd>       Manage secrets (set/list/run/init/import/status)"
 	echo "  config <cmd>       Feature toggles (list/get/set/reset/path/help)"
@@ -3091,6 +3091,11 @@ _help_detailed_sections() {
 	echo "  aidevops security summary    # One-line per-repo security status"
 	echo "  aidevops security setup      # Interactive guided user security setup"
 	echo "  aidevops security status     # Detailed user security posture report"
+	echo "  aidevops security scan       # Secret hygiene & supply chain scan"
+	echo "  aidevops security scan-pth   # Python .pth file audit (supply chain IoC)"
+	echo "  aidevops security scan-secrets # Plaintext credential locations"
+	echo "  aidevops security scan-deps  # Unpinned dependency check"
+	echo "  aidevops security dismiss <id> # Dismiss a security advisory"
 	echo ""
 	echo "IP Reputation:"
 	echo "  aidevops ip-check check <ip> # Check IP reputation across providers"
@@ -3319,7 +3324,20 @@ main() {
 	sources | agent-sources) _dispatch_helper "agent-sources-helper.sh" "agent-sources-helper.sh" "$@" ;;
 	plugin | plugins) cmd_plugin "$@" ;;
 	pulse) _dispatch_helper "pulse-session-helper.sh" "pulse-session-helper.sh" "$@" ;;
-	security) [[ $# -eq 0 ]] && _dispatch_helper "security-posture-helper.sh" "security-posture-helper.sh" setup || _dispatch_helper "security-posture-helper.sh" "security-posture-helper.sh" "$@" ;;
+	security)
+		case "${1:-}" in
+		scan | scan-secrets | scan-pth | scan-deps | dismiss)
+			_dispatch_helper "secret-hygiene-helper.sh" "secret-hygiene-helper.sh" "$@"
+			;;
+		hygiene)
+			shift
+			_dispatch_helper "secret-hygiene-helper.sh" "secret-hygiene-helper.sh" "${@:-scan}"
+			;;
+		*)
+			[[ $# -eq 0 ]] && _dispatch_helper "security-posture-helper.sh" "security-posture-helper.sh" setup || _dispatch_helper "security-posture-helper.sh" "security-posture-helper.sh" "$@"
+			;;
+		esac
+		;;
 	doctor | doc) _dispatch_helper "doctor-helper.sh" "doctor-helper.sh" "$@" ;;
 	detect | scan) cmd_detect ;;
 	ip-check | ip_check) _dispatch_helper "ip-reputation-helper.sh" "ip-reputation-helper.sh" "$@" ;;

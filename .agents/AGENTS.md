@@ -293,7 +293,7 @@ Read subagents on-demand. Full index: `subagent-index.toon`.
 | Outreach | `services/outreach/cold-outreach.md`, `services/outreach/smartlead.md`, `services/outreach/instantly.md`, `services/outreach/manyreach.md` |
 | Payments | `services/payments/revenuecat.md`, `services/payments/stripe.md`, `services/payments/procurement.md` |
 | Auth troubleshooting | `tools/credentials/auth-troubleshooting.md` |
-| Security/Encryption | `tools/security/tirith.md`, `tools/security/opsec.md`, `tools/security/prompt-injection-defender.md`, `tools/security/tamper-evident-audit.md`, `tools/credentials/encryption-stack.md` |
+| Security/Encryption | `tools/security/tirith.md`, `tools/security/opsec.md`, `tools/security/prompt-injection-defender.md`, `tools/security/tamper-evident-audit.md`, `tools/credentials/encryption-stack.md`, `scripts/secret-hygiene-helper.sh` |
 | Database/Local-first | `tools/database/pglite-local-first.md`, `services/database/postgres-drizzle-skill.md` |
 | Vector Search | `tools/database/vector-search.md`, `tools/database/vector-search/zvec.md` |
 | Local Development | `services/hosting/local-hosting.md` |
@@ -330,6 +330,13 @@ Key capabilities (details in `reference/orchestration.md`, `reference/services.m
 ## Security
 
 Rules: `prompts/build.txt`. Secrets: `gopass` preferred; `credentials.sh` plaintext fallback (600 perms). Config templates: `configs/*.json.txt` (committed), working: `configs/*.json` (gitignored). Full docs: `tools/credentials/gopass.md`.
+
+**Secret hygiene & supply chain protection:**
+- `aidevops security scan` — scans for plaintext secrets (AWS, GCP, Azure, k8s, Docker, npm, PyPI, SSH), Python `.pth` supply chain IoCs, unpinned dependencies, and MCP auto-download risks. Never exposes secret values.
+- `aidevops security scan-pth` — Python `.pth` file audit (the attack vector used in the LiteLLM March 2026 supply chain compromise).
+- `aidevops security dismiss <id>` — dismiss a security advisory after taking action.
+- Security advisories are delivered via `aidevops update` and shown in the session greeting until dismissed. Advisory files: `~/.aidevops/advisories/*.advisory`.
+- All remediation commands must be run in a **separate terminal**, never inside AI chat sessions.
 
 **Cross-repo privacy:** NEVER include private repo names in TODO.md task descriptions, issue titles, or comments on public repos. Use generic references like "a managed private repo" or "cross-repo project". The issue-sync-helper.sh has automated sanitization, but prevention at the source is the primary defense.
 
