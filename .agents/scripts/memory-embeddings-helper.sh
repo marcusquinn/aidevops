@@ -230,13 +230,10 @@ print_setup_instructions() {
 }
 
 #######################################
-# Create the Python embedding engine
-# Supports both local and OpenAI providers
+# Write Python engine header: imports and model loading
 #######################################
-create_python_engine() {
-	mkdir -p "$MEMORY_DIR"
-	mkdir -p "$(dirname "$PYTHON_SCRIPT")"
-	cat >"$PYTHON_SCRIPT" <<'PYEOF'
+_write_python_header() {
+	cat >>"$PYTHON_SCRIPT" <<'PYEOF'
 #!/usr/bin/env python3
 """Embedding engine for aidevops semantic memory.
 
@@ -281,7 +278,15 @@ def embed_text_local(text: str) -> list[float]:
     model = get_local_model()
     embedding = model.encode(text, normalize_embeddings=True)
     return embedding.tolist()
+PYEOF
+	return 0
+}
 
+#######################################
+# Write Python engine: OpenAI embedding and shared embed helpers
+#######################################
+_write_python_embed_functions() {
+	cat >>"$PYTHON_SCRIPT" <<'PYEOF'
 
 def embed_text_openai(text: str) -> list[float]:
     api_key = os.environ.get("OPENAI_API_KEY", "")
@@ -348,7 +353,15 @@ def cosine_similarity(a: list[float], b: list[float]) -> float:
     if norm_a == 0 or norm_b == 0:
         return 0.0
     return float(dot / (norm_a * norm_b))
+PYEOF
+	return 0
+}
 
+#######################################
+# Write Python engine: DB init and cmd_embed/cmd_search
+#######################################
+_write_python_db_and_search() {
+	cat >>"$PYTHON_SCRIPT" <<'PYEOF'
 
 def init_embeddings_db(db_path: str):
     conn = sqlite3.connect(db_path)
@@ -429,7 +442,15 @@ def cmd_search(provider: str, embeddings_db: str, memory_db: str, query: str, li
             })
     mem_conn.close()
     print(json.dumps(output))
+PYEOF
+	return 0
+}
 
+#######################################
+# Write Python engine: cmd_hybrid (FTS5 + semantic RRF)
+#######################################
+_write_python_hybrid() {
+	cat >>"$PYTHON_SCRIPT" <<'PYEOF'
 
 def cmd_hybrid(provider: str, embeddings_db: str, memory_db: str, query: str, limit: int = 5):
     """Hybrid search: combine FTS5 BM25 + semantic similarity using Reciprocal Rank Fusion."""
@@ -516,7 +537,15 @@ def cmd_hybrid(provider: str, embeddings_db: str, memory_db: str, query: str, li
             })
     mem_conn.close()
     print(json.dumps(output))
+PYEOF
+	return 0
+}
 
+#######################################
+# Write Python engine: cmd_index and cmd_add
+#######################################
+_write_python_index_add() {
+	cat >>"$PYTHON_SCRIPT" <<'PYEOF'
 
 def cmd_index(provider: str, memory_db: str, embeddings_db: str):
     dim = get_embedding_dim(provider)
@@ -599,7 +628,15 @@ def cmd_add(provider: str, memory_db: str, embeddings_db: str, memory_id: str):
     emb_conn.commit()
     emb_conn.close()
     print(json.dumps({"indexed": memory_id}))
+PYEOF
+	return 0
+}
 
+#######################################
+# Write Python engine: cmd_status and cmd_find_similar
+#######################################
+_write_python_status_find_similar() {
+	cat >>"$PYTHON_SCRIPT" <<'PYEOF'
 
 def cmd_status(embeddings_db: str):
     db_path = Path(embeddings_db)
@@ -695,7 +732,15 @@ def cmd_find_similar(provider: str, embeddings_db: str, memory_db: str,
         "content": row[1][:200],
         "score": round(best_score, 4),
     }))
+PYEOF
+	return 0
+}
 
+#######################################
+# Write Python engine: main dispatcher
+#######################################
+_write_python_main() {
+	cat >>"$PYTHON_SCRIPT" <<'PYEOF'
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
@@ -726,6 +771,25 @@ if __name__ == "__main__":
         print(f"Unknown command: {command}")
         sys.exit(1)
 PYEOF
+	return 0
+}
+
+#######################################
+# Create the Python embedding engine
+# Delegates to section writers to keep each function under 100 lines
+#######################################
+create_python_engine() {
+	mkdir -p "$MEMORY_DIR"
+	mkdir -p "$(dirname "$PYTHON_SCRIPT")"
+	# Truncate/create the file before appending sections
+	: >"$PYTHON_SCRIPT"
+	_write_python_header
+	_write_python_embed_functions
+	_write_python_db_and_search
+	_write_python_hybrid
+	_write_python_index_add
+	_write_python_status_find_similar
+	_write_python_main
 	chmod +x "$PYTHON_SCRIPT"
 	return 0
 }
