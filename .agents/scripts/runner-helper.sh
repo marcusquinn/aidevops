@@ -265,6 +265,114 @@ build_curl_args() {
 }
 
 #######################################
+# Parse create command arguments
+# Sets: description, model, workdir, provider (via nameref-style globals)
+# Usage: _parse_create_args description_var model_var workdir_var provider_var "$@"
+#######################################
+_parse_create_args() {
+	# Use indirect assignment via eval for bash 3.2 compatibility (no namerefs)
+	local _desc_var="$1" _model_var="$2" _workdir_var="$3" _provider_var="$4"
+	shift 4
+
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--description)
+			[[ $# -lt 2 ]] && {
+				log_error "--description requires a value"
+				return 1
+			}
+			eval "${_desc_var}=\"\$2\""
+			shift 2
+			;;
+		--model)
+			[[ $# -lt 2 ]] && {
+				log_error "--model requires a value"
+				return 1
+			}
+			eval "${_model_var}=\"\$2\""
+			shift 2
+			;;
+		--provider)
+			[[ $# -lt 2 ]] && {
+				log_error "--provider requires a value"
+				return 1
+			}
+			eval "${_provider_var}=\"\$2\""
+			shift 2
+			;;
+		--workdir)
+			[[ $# -lt 2 ]] && {
+				log_error "--workdir requires a value"
+				return 1
+			}
+			eval "${_workdir_var}=\"\$2\""
+			shift 2
+			;;
+		*)
+			log_error "Unknown option: $1"
+			return 1
+			;;
+		esac
+	done
+	return 0
+}
+
+#######################################
+# Write runner config.json and AGENTS.md to disk
+#######################################
+_write_runner_files() {
+	local name="$1"
+	local description="$2"
+	local model="$3"
+	local workdir="$4"
+
+	local dir
+	dir=$(runner_dir "$name")
+	mkdir -p "$dir/runs"
+
+	local timestamp
+	timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+	jq -n \
+		--arg name "$name" \
+		--arg description "$description" \
+		--arg model "$model" \
+		--arg workdir "${workdir:-}" \
+		--arg created "$timestamp" \
+		'{
+            name: $name,
+            description: $description,
+            model: $model,
+            workdir: $workdir,
+            created: $created,
+            lastRun: null,
+            lastStatus: null,
+            runCount: 0
+        }' >"$dir/config.json"
+
+	cat >"$dir/AGENTS.md" <<EOF
+# $name
+
+$description
+
+## Instructions
+
+Add your runner-specific instructions here. This file defines the runner's
+personality, rules, and output format.
+
+## Rules
+
+- Follow the task prompt precisely
+- Output structured results when possible
+- Report errors clearly with context
+
+## Output Format
+
+Respond with clear, actionable output appropriate to the task.
+EOF
+	return 0
+}
+
+#######################################
 # Create a new runner
 #######################################
 cmd_create() {
@@ -288,47 +396,7 @@ cmd_create() {
 	fi
 
 	local description="" model="$DEFAULT_MODEL" workdir="" provider=""
-
-	while [[ $# -gt 0 ]]; do
-		case "$1" in
-		--description)
-			[[ $# -lt 2 ]] && {
-				log_error "--description requires a value"
-				return 1
-			}
-			description="$2"
-			shift 2
-			;;
-		--model)
-			[[ $# -lt 2 ]] && {
-				log_error "--model requires a value"
-				return 1
-			}
-			model="$2"
-			shift 2
-			;;
-		--provider)
-			[[ $# -lt 2 ]] && {
-				log_error "--provider requires a value"
-				return 1
-			}
-			provider="$2"
-			shift 2
-			;;
-		--workdir)
-			[[ $# -lt 2 ]] && {
-				log_error "--workdir requires a value"
-				return 1
-			}
-			workdir="$2"
-			shift 2
-			;;
-		*)
-			log_error "Unknown option: $1"
-			return 1
-			;;
-		esac
-	done
+	_parse_create_args description model workdir provider "$@" || return 1
 
 	# Resolve tier names to full model strings (t132.7)
 	model=$(resolve_model_tier "$model")
@@ -345,49 +413,7 @@ cmd_create() {
 
 	local dir
 	dir=$(runner_dir "$name")
-	mkdir -p "$dir/runs"
-
-	# Create config
-	local timestamp
-	timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-	jq -n \
-		--arg name "$name" \
-		--arg description "$description" \
-		--arg model "$model" \
-		--arg workdir "${workdir:-}" \
-		--arg created "$timestamp" \
-		'{
-            name: $name,
-            description: $description,
-            model: $model,
-            workdir: $workdir,
-            created: $created,
-            lastRun: null,
-            lastStatus: null,
-            runCount: 0
-        }' >"$dir/config.json"
-
-	# Create default AGENTS.md
-	cat >"$dir/AGENTS.md" <<EOF
-# $name
-
-$description
-
-## Instructions
-
-Add your runner-specific instructions here. This file defines the runner's
-personality, rules, and output format.
-
-## Rules
-
-- Follow the task prompt precisely
-- Output structured results when possible
-- Report errors clearly with context
-
-## Output Format
-
-Respond with clear, actionable output appropriate to the task.
-EOF
+	_write_runner_files "$name" "$description" "$model" "$workdir" || return 1
 
 	log_success "Created runner: $name"
 	echo ""
@@ -399,6 +425,264 @@ EOF
 	echo "  2. Test run: runner-helper.sh run $name \"your prompt\""
 
 	return 0
+}
+
+#######################################
+# Parse run command arguments
+# Uses indirect assignment for bash 3.2 compatibility (no namerefs)
+# Sets: attach, model, format, cmd_timeout, continue_session, provider
+#######################################
+_parse_run_args() {
+	local _attach_var="$1" _model_var="$2" _format_var="$3"
+	local _timeout_var="$4" _continue_var="$5" _provider_var="$6"
+	shift 6
+
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--attach)
+			[[ $# -lt 2 ]] && {
+				log_error "--attach requires a value"
+				return 1
+			}
+			eval "${_attach_var}=\"\$2\""
+			shift 2
+			;;
+		--model)
+			[[ $# -lt 2 ]] && {
+				log_error "--model requires a value"
+				return 1
+			}
+			eval "${_model_var}=\"\$2\""
+			shift 2
+			;;
+		--provider)
+			[[ $# -lt 2 ]] && {
+				log_error "--provider requires a value"
+				return 1
+			}
+			eval "${_provider_var}=\"\$2\""
+			shift 2
+			;;
+		--format)
+			[[ $# -lt 2 ]] && {
+				log_error "--format requires a value"
+				return 1
+			}
+			eval "${_format_var}=\"\$2\""
+			shift 2
+			;;
+		--timeout)
+			[[ $# -lt 2 ]] && {
+				log_error "--timeout requires a value"
+				return 1
+			}
+			eval "${_timeout_var}=\"\$2\""
+			shift 2
+			;;
+		--continue | -c)
+			eval "${_continue_var}=true"
+			shift
+			;;
+		*)
+			log_error "Unknown option: $1"
+			return 1
+			;;
+		esac
+	done
+	return 0
+}
+
+#######################################
+# Build the CLI dispatch command array for opencode or claude backend
+# Populates the caller's cmd_args array (passed by name)
+# Args: cmd_args_var name model attach format continue_session dir
+#######################################
+_build_dispatch_cmd() {
+	local _arr_var="$1"
+	local name="$2"
+	local model="$3"
+	local attach="$4"
+	local format="$5"
+	local continue_session="$6"
+	local dir="$7"
+	local workdir="$8"
+
+	if [[ "$AIDEVOPS_DISPATCH_BACKEND" == "opencode" ]]; then
+		eval "${_arr_var}=(\"opencode\" \"run\")"
+		[[ -n "$attach" ]] && eval "${_arr_var}+=( \"--attach\" \"\$attach\" )"
+		eval "${_arr_var}+=( \"-m\" \"\$model\" \"--title\" \"runner/\$name\" \"--dir\" \"\$workdir\" )"
+
+		if [[ "$continue_session" == "true" ]]; then
+			local session_id=""
+			[[ -f "$dir/session.id" ]] && session_id=$(cat "$dir/session.id")
+			if [[ -n "$session_id" ]]; then
+				eval "${_arr_var}+=( \"-s\" \"\$session_id\" )"
+			else
+				log_warn "No previous session found for $name, starting fresh"
+			fi
+		fi
+
+		[[ -n "$format" ]] && eval "${_arr_var}+=( \"--format\" \"\$format\" )"
+
+	elif [[ "$AIDEVOPS_DISPATCH_BACKEND" == "claude" ]]; then
+		local claude_model
+		claude_model=$(model_for_claude_cli "$model")
+		local claude_format
+		case "${format:-text}" in
+		text | json | stream-json) claude_format="${format:-text}" ;;
+		*) claude_format="text" ;;
+		esac
+
+		eval "${_arr_var}=(\"claude\" \"-p\" \"--model\" \"\$claude_model\" \"--output-format\" \"\$claude_format\" \"--dir\" \"\$workdir\")"
+
+		if [[ "$continue_session" == "true" ]]; then
+			local session_file="$dir/session.id"
+			if [[ -s "$session_file" ]]; then
+				eval "${_arr_var}+=( \"--resume\" \"\$(cat \"\$session_file\")\" )"
+			else
+				log_warn "No previous session found for $name, starting fresh"
+			fi
+		fi
+
+		[[ -n "$attach" ]] && log_warn "Claude CLI does not support --attach (server mode). Ignoring."
+	fi
+	return 0
+}
+
+#######################################
+# Build the full prompt string with memory and mailbox context prepended
+# Echoes the assembled prompt to stdout
+#######################################
+_build_run_prompt() {
+	local name="$1"
+	local prompt="$2"
+	local dir="$3"
+
+	# Mailbox bookend: check inbox before work
+	local mailbox_context
+	mailbox_context=$(mailbox_before_run "$name" 2>/dev/null || true)
+
+	# Memory auto-recall: retrieve relevant memories before work
+	local memory_context="" recent_memories="" task_memories=""
+	if [[ -x "$MEMORY_HELPER" ]]; then
+		recent_memories=$("$MEMORY_HELPER" --namespace "$name" recall --recent --limit 5 --format text 2>/dev/null || echo "")
+		task_memories=$("$MEMORY_HELPER" --namespace "$name" recall --query "$prompt" --limit 5 --format text 2>/dev/null || echo "")
+	fi
+
+	if [[ -n "$recent_memories" || -n "$task_memories" ]]; then
+		memory_context="## Memory Context (relevant learnings from previous runs)
+
+"
+		[[ -n "$recent_memories" ]] && memory_context="${memory_context}### Recent Memories
+
+${recent_memories}
+
+"
+		[[ -n "$task_memories" ]] && memory_context="${memory_context}### Task-Relevant Memories
+
+${task_memories}
+
+"
+		log_info "Retrieved memory context for runner: $name"
+	fi
+
+	# Build the full prompt with runner instructions
+	local agents_md="$dir/AGENTS.md"
+	local full_prompt
+	if [[ -f "$agents_md" ]]; then
+		local instructions
+		instructions=$(cat "$agents_md")
+		full_prompt="${instructions}
+
+---
+
+## Task
+
+${prompt}"
+	else
+		full_prompt="$prompt"
+	fi
+
+	# Prepend memory context if available
+	if [[ -n "$memory_context" ]]; then
+		full_prompt="${memory_context}
+
+---
+
+${full_prompt}"
+	fi
+
+	# Prepend mailbox context if there are unread messages
+	if [[ -n "$mailbox_context" ]] && echo "$mailbox_context" | grep -q '^Total:.*([1-9][0-9]* unread)'; then
+		full_prompt="## Mailbox (unread messages from other agents)
+
+${mailbox_context}
+
+---
+
+${full_prompt}"
+		log_info "Prepended mailbox context to prompt"
+	fi
+
+	printf '%s' "$full_prompt"
+	return 0
+}
+
+#######################################
+# Execute the dispatch command, update run metadata, report status
+# Args: name dir cmd_timeout run_id run_timestamp cmd_args...
+# Returns the exit code of the dispatched command
+#######################################
+_execute_run() {
+	local name="$1"
+	local dir="$2"
+	local cmd_timeout="$3"
+	local run_id="$4"
+	local run_timestamp="$5"
+	shift 5
+	# remaining args are the command array
+
+	local log_file="$dir/runs/${run_id}.log"
+
+	log_info "Dispatching to runner: $name"
+	log_info "Run ID: $run_id"
+
+	local exit_code=0
+	local start_time
+	start_time=$(date +%s)
+
+	timeout_sec "$cmd_timeout" "$@" 2>&1 | tee "$log_file"
+	exit_code=${PIPESTATUS[0]}
+
+	local end_time duration
+	end_time=$(date +%s)
+	duration=$((end_time - start_time))
+
+	# Update config with run metadata
+	local temp_file
+	temp_file=$(mktemp)
+	_save_cleanup_scope
+	trap '_run_cleanups' RETURN
+	push_cleanup "rm -f '${temp_file}'"
+	local status="success"
+	[[ $exit_code -ne 0 ]] && status="failed"
+
+	jq --arg timestamp "$run_timestamp" \
+		--arg status "$status" \
+		--argjson duration "$duration" \
+		'.lastRun = $timestamp | .lastStatus = $status | .lastDuration = $duration | .runCount += 1' \
+		"$dir/config.json" >"$temp_file"
+	mv "$temp_file" "$dir/config.json"
+
+	if [[ $exit_code -eq 0 ]]; then
+		log_success "Run complete (${duration}s)"
+	else
+		log_error "Run failed after ${duration}s (exit code: $exit_code)"
+	fi
+
+	mailbox_after_run "$name" "$status" "$duration" "$run_id" 2>/dev/null || true
+
+	return "$exit_code"
 }
 
 #######################################
@@ -434,59 +718,7 @@ cmd_run() {
 
 	local attach="" model="" format="" cmd_timeout="$DEFAULT_TIMEOUT" continue_session=false
 	local provider=""
-
-	while [[ $# -gt 0 ]]; do
-		case "$1" in
-		--attach)
-			[[ $# -lt 2 ]] && {
-				log_error "--attach requires a value"
-				return 1
-			}
-			attach="$2"
-			shift 2
-			;;
-		--model)
-			[[ $# -lt 2 ]] && {
-				log_error "--model requires a value"
-				return 1
-			}
-			model="$2"
-			shift 2
-			;;
-		--provider)
-			[[ $# -lt 2 ]] && {
-				log_error "--provider requires a value"
-				return 1
-			}
-			provider="$2"
-			shift 2
-			;;
-		--format)
-			[[ $# -lt 2 ]] && {
-				log_error "--format requires a value"
-				return 1
-			}
-			format="$2"
-			shift 2
-			;;
-		--timeout)
-			[[ $# -lt 2 ]] && {
-				log_error "--timeout requires a value"
-				return 1
-			}
-			cmd_timeout="$2"
-			shift 2
-			;;
-		--continue | -c)
-			continue_session=true
-			shift
-			;;
-		*)
-			log_error "Unknown option: $1"
-			return 1
-			;;
-		esac
-	done
+	_parse_run_args attach model format cmd_timeout continue_session provider "$@" || return 1
 
 	local dir
 	dir=$(runner_dir "$name")
@@ -494,9 +726,7 @@ cmd_run() {
 	# Resolve model (flag > config > default), with tier name support (t132.7)
 	if [[ -z "$model" ]]; then
 		model=$(runner_config "$name" "model")
-		if [[ -z "$model" ]]; then
-			model="$DEFAULT_MODEL"
-		fi
+		[[ -z "$model" ]] && model="$DEFAULT_MODEL"
 	fi
 	model=$(resolve_model_tier "$model")
 
@@ -509,218 +739,26 @@ cmd_run() {
 	# Resolve workdir
 	local workdir
 	workdir=$(runner_config "$name" "workdir")
-	if [[ -z "$workdir" ]]; then
-		workdir="$(pwd)"
-	fi
+	[[ -z "$workdir" ]] && workdir="$(pwd)"
 
-	# Build dispatch command based on available backend (t1160.3, t1160)
-	# Centralised CLI command building — eliminates duplicated if/else branches
+	log_info "Model: $model"
+
+	# Build dispatch command array
 	local -a cmd_args=()
+	_build_dispatch_cmd cmd_args "$name" "$model" "$attach" "$format" "$continue_session" "$dir" "$workdir" || return 1
 
-	if [[ "$AIDEVOPS_DISPATCH_BACKEND" == "opencode" ]]; then
-		cmd_args=("opencode" "run")
-
-		# Attach to server if specified
-		if [[ -n "$attach" ]]; then
-			cmd_args+=("--attach" "$attach")
-		fi
-
-		# Model
-		cmd_args+=("-m" "$model")
-
-		# Session title
-		cmd_args+=("--title" "runner/$name")
-
-		# Continue previous session if requested
-		if [[ "$continue_session" == "true" ]]; then
-			local session_id=""
-			if [[ -f "$dir/session.id" ]]; then
-				session_id=$(cat "$dir/session.id")
-			fi
-			if [[ -n "$session_id" ]]; then
-				cmd_args+=("-s" "$session_id")
-			else
-				log_warn "No previous session found for $name, starting fresh"
-			fi
-		fi
-
-		# Working directory
-		cmd_args+=("--dir" "$workdir")
-
-		# Output format
-		if [[ -n "$format" ]]; then
-			cmd_args+=("--format" "$format")
-		fi
-
-	elif [[ "$AIDEVOPS_DISPATCH_BACKEND" == "claude" ]]; then
-		cmd_args=("claude" "-p")
-
-		# Model (strip provider prefix for Claude CLI)
-		local claude_model
-		claude_model=$(model_for_claude_cli "$model")
-		cmd_args+=("--model" "$claude_model")
-
-		# Output format (Claude CLI only accepts: text, json, stream-json)
-		# Normalize format to a Claude-valid value; default to text for
-		# OpenCode-only values (e.g. "terminal") that would fail at runtime.
-		local claude_format
-		case "${format:-text}" in
-		text | json | stream-json) claude_format="${format:-text}" ;;
-		*) claude_format="text" ;;
-		esac
-		cmd_args+=("--output-format" "$claude_format")
-
-		# Continue previous session if requested
-		if [[ "$continue_session" == "true" ]]; then
-			local session_file="$dir/session.id"
-			if [[ -s "$session_file" ]]; then
-				cmd_args+=("--resume" "$(cat "$session_file")")
-			else
-				log_warn "No previous session found for $name, starting fresh"
-			fi
-		fi
-
-		# Working directory
-		cmd_args+=("--dir" "$workdir")
-
-		# Claude CLI does not support --attach (server mode)
-		if [[ -n "$attach" ]]; then
-			log_warn "Claude CLI does not support --attach (server mode). Ignoring."
-		fi
-	fi
-
-	# Mailbox bookend: check inbox before work
-	local mailbox_context
-	mailbox_context=$(mailbox_before_run "$name" 2>/dev/null || true)
-
-	# Memory auto-recall: retrieve relevant memories before work
-	local memory_context=""
-
-	# Recall recent memories (last 5)
-	local recent_memories=""
-	if [[ -x "$MEMORY_HELPER" ]]; then
-		recent_memories=$("$MEMORY_HELPER" --namespace "$name" recall --recent --limit 5 --format text 2>/dev/null || echo "")
-	fi
-
-	# If we have a task description in the prompt, also recall task-specific memories
-	local task_memories=""
-	if [[ -n "$prompt" && -x "$MEMORY_HELPER" ]]; then
-		task_memories=$("$MEMORY_HELPER" --namespace "$name" recall --query "$prompt" --limit 5 --format text 2>/dev/null || echo "")
-	fi
-
-	# Combine memory contexts
-	if [[ -n "$recent_memories" || -n "$task_memories" ]]; then
-		memory_context="## Memory Context (relevant learnings from previous runs)
-
-"
-		if [[ -n "$recent_memories" ]]; then
-			memory_context="${memory_context}### Recent Memories
-
-$recent_memories
-
-"
-		fi
-		if [[ -n "$task_memories" ]]; then
-			memory_context="${memory_context}### Task-Relevant Memories
-
-$task_memories
-
-"
-		fi
-		log_info "Retrieved memory context for runner: $name"
-	fi
-
-	# Build the full prompt with runner context
-	local agents_md="$dir/AGENTS.md"
+	# Build full prompt with memory/mailbox context
 	local full_prompt
-	if [[ -f "$agents_md" ]]; then
-		local instructions
-		instructions=$(cat "$agents_md")
-		full_prompt="$instructions
-
----
-
-## Task
-
-$prompt"
-	else
-		full_prompt="$prompt"
-	fi
-
-	# Prepend memory context if available
-	if [[ -n "$memory_context" ]]; then
-		full_prompt="$memory_context
-
----
-
-$full_prompt"
-	fi
-
-	# Prepend mailbox context if there are unread messages
-	if [[ -n "$mailbox_context" ]] && echo "$mailbox_context" | grep -q '^Total:.*([1-9][0-9]* unread)'; then
-		full_prompt="## Mailbox (unread messages from other agents)
-
-$mailbox_context
-
----
-
-$full_prompt"
-		log_info "Prepended mailbox context to prompt"
-	fi
-
+	full_prompt=$(_build_run_prompt "$name" "$prompt" "$dir") || return 1
 	cmd_args+=("$full_prompt")
 
-	# Log the run
-	local run_timestamp
+	# Execute
+	local run_timestamp run_id
 	run_timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-	local run_id
 	run_id="run-$(date +%s)"
-	local log_file="$dir/runs/${run_id}.log"
 
-	log_info "Dispatching to runner: $name"
-	log_info "Model: $model"
-	log_info "Run ID: $run_id"
-
-	# Execute with portable timeout (timeout_sec from shared-constants.sh)
-	local exit_code=0
-	local start_time
-	start_time=$(date +%s)
-
-	timeout_sec "$cmd_timeout" "${cmd_args[@]}" 2>&1 | tee "$log_file"
-	exit_code=${PIPESTATUS[0]}
-
-	local end_time duration
-	end_time=$(date +%s)
-	duration=$((end_time - start_time))
-
-	# Update config with run metadata
-	local temp_file
-	temp_file=$(mktemp)
-	_save_cleanup_scope
-	trap '_run_cleanups' RETURN
-	push_cleanup "rm -f '${temp_file}'"
-	local status="success"
-	if [[ $exit_code -ne 0 ]]; then
-		status="failed"
-	fi
-
-	jq --arg timestamp "$run_timestamp" \
-		--arg status "$status" \
-		--argjson duration "$duration" \
-		'.lastRun = $timestamp | .lastStatus = $status | .lastDuration = $duration | .runCount += 1' \
-		"$dir/config.json" >"$temp_file"
-	mv "$temp_file" "$dir/config.json"
-
-	if [[ $exit_code -eq 0 ]]; then
-		log_success "Run complete (${duration}s)"
-	else
-		log_error "Run failed after ${duration}s (exit code: $exit_code)"
-	fi
-
-	# Mailbox bookend: report status after work
-	mailbox_after_run "$name" "$status" "$duration" "$run_id" 2>/dev/null || true
-
-	return "$exit_code"
+	_execute_run "$name" "$dir" "$cmd_timeout" "$run_id" "$run_timestamp" "${cmd_args[@]}"
+	return $?
 }
 
 #######################################
