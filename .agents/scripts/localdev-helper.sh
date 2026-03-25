@@ -83,6 +83,8 @@ cmd_init() {
 # pacman, apk). On Linux, the apt package name is "mkcert" (available in
 # Ubuntu 20.04+ and Debian 11+). libnss3-tools is required on Debian/Ubuntu
 # for mkcert to install the CA root into Firefox/Chrome trust stores.
+# Falls back to downloading the upstream binary from dl.filippo.io for
+# distributions without a supported package manager (x86_64, arm64, armv7l).
 # After installation, runs `mkcert -install`
 # to create and trust the local CA root.
 # Returns: 0 if mkcert is available after this function, 1 if installation failed.
@@ -114,6 +116,35 @@ ensure_mkcert() {
 	elif command -v apk >/dev/null 2>&1; then
 		if sudo apk add mkcert 2>/dev/null; then
 			installed=true
+		fi
+	fi
+
+	# Binary download fallback for distros without a supported package manager.
+	# Supports x86_64 (amd64), aarch64/arm64, and armv7l architectures.
+	if [[ "$installed" != "true" ]] && command -v curl >/dev/null 2>&1; then
+		local raw_arch
+		raw_arch=$(uname -m)
+		local arch=""
+		case "$raw_arch" in
+		x86_64) arch="amd64" ;;
+		aarch64 | arm64) arch="arm64" ;;
+		armv7l) arch="armv7l" ;;
+		*) arch="" ;;
+		esac
+
+		if [[ -n "$arch" ]]; then
+			print_info "Attempting binary download fallback for linux/$arch..."
+			local bin_dir="$HOME/.local/bin"
+			mkdir -p "$bin_dir"
+			local mkcert_url="https://dl.filippo.io/mkcert/latest?for=linux/$arch"
+			if curl -fsSL "$mkcert_url" -o "$bin_dir/mkcert" 2>/dev/null && chmod +x "$bin_dir/mkcert"; then
+				# Ensure ~/.local/bin is on PATH for this session
+				export PATH="$bin_dir:$PATH"
+				if command -v mkcert >/dev/null 2>&1; then
+					installed=true
+					print_success "mkcert installed via binary download to $bin_dir/mkcert"
+				fi
+			fi
 		fi
 	fi
 
