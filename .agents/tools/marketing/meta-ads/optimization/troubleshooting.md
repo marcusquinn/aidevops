@@ -8,64 +8,20 @@
 
 ### Ad Not Spending
 
-**Check in Order:**
-
-1. **Payment Method**
-   - Valid card on file?
-   - Recent payment failure?
-   - Spending limit reached?
-
-2. **Ad Status**
-   - Is ad "Active"?
-   - Any disapproval?
-   - In review?
-
-3. **Budget**
-   - Is budget too low?
-   - Daily budget exhausted?
-   - Lifetime budget exhausted?
-
-4. **Schedule**
-   - Start date in future?
-   - End date passed?
-   - Dayparting excluding now?
-
-5. **Audience**
-   - Too small (<1,000)?
-   - Overlapping with better performer?
-   - All excluded?
-
-6. **Bid**
-   - Cost cap too low?
-   - Bid cap too restrictive?
+Check in order: payment method (valid card, no failures, spending limit) → ad status (Active, no disapproval) → budget (not exhausted, above minimum) → schedule (start/end dates, dayparting) → audience (>1,000, no conflicts) → bid (cost cap not too restrictive).
 
 ### Limited Delivery
-
-**Causes:**
-- Audience too narrow
-- Budget too low for CPA
-- High competition
-- Low-quality ad
-
-**Solutions:**
 
 | Cause | Fix |
 |-------|-----|
 | Small audience | Broaden targeting |
-| Low budget | Increase or consolidate |
-| Competition | Adjust bid/budget |
-| Low quality | Improve creative |
+| Low budget | Increase or consolidate ad sets |
+| High competition | Adjust bid/budget |
+| Low-quality ad | Improve creative |
 
 ### Learning Limited
 
-**Definition:**
-Ad set not getting 50 conversions/week to optimize.
-
-**Fixes:**
-1. **Increase budget** — More spend = more conversions
-2. **Broaden audience** — Larger pool to find converters
-3. **Higher-funnel event** — Optimize for AddToCart instead of Purchase
-4. **Consolidate** — Combine ad sets to aggregate conversions
+Ad set not getting 50 conversions/week. Fixes: increase budget, broaden audience, optimize for higher-funnel event (AddToCart instead of Purchase), or consolidate ad sets to aggregate conversions.
 
 ---
 
@@ -73,21 +29,13 @@ Ad set not getting 50 conversions/week to optimize.
 
 ### High CPA (Above Target)
 
-**Diagnostic Flow:**
 ```
 CPA too high?
-├── Check CPM
-│   ├── High CPM? → Competition/quality issue
-│   └── Normal CPM? → Continue...
-├── Check CTR
-│   ├── Low CTR? → Creative not compelling
-│   └── Normal CTR? → Continue...
-├── Check CVR
-│   ├── Low CVR? → Landing page issue
-│   └── Normal CVR? → Wrong traffic/audience
+├── High CPM? → Competition/quality issue
+├── Low CTR? → Creative not compelling
+├── Low CVR? → Landing page issue
+└── Normal all? → Wrong traffic/audience
 ```
-
-**Common Causes & Fixes:**
 
 | Symptom | Likely Cause | Fix |
 |---------|--------------|-----|
@@ -98,57 +46,25 @@ CPA too high?
 
 ### High CPM
 
-**Why CPMs Rise:**
-- Q4/Holiday competition
-- Audience too narrow
-- Low ad quality score
-- Poor engagement
-- Industry competition
+**Causes**: Q4/Holiday competition, narrow audience, low ad quality, poor engagement, industry competition.
 
-**Fixes:**
-- Broaden audience
-- Improve creative quality
-- Test different placements
-- Adjust timing (avoid peak)
-- Improve engagement signals
+**Fixes**: Broaden audience, improve creative quality, test different placements, adjust timing, improve engagement signals.
 
 ### Low CTR
 
-**Benchmark:** <0.8% is concerning, <0.5% needs action
+**Benchmark**: <0.8% is concerning, <0.5% needs action.
 
-**Causes:**
-- Hook not compelling
-- Wrong audience
-- Creative fatigue
-- Poor visual quality
-- Unclear value proposition
+**Causes**: Hook not compelling, wrong audience, creative fatigue, poor visual quality, unclear value proposition.
 
-**Fixes:**
-- Test new hooks
-- Review audience fit
-- Refresh creative
-- Improve visual quality
-- Clarify message
+**Fixes**: Test new hooks, review audience fit, refresh creative, clarify message.
 
 ### Low Conversion Rate
 
-**Site-Side Issues:**
-- Page load slow (>3 seconds)
-- Mobile experience broken
-- Form too long
-- Price shock
-- Trust signals missing
+**Site-side**: Page load >3s, broken mobile, long form, price shock, missing trust signals.
 
-**Message Mismatch:**
-- Ad promises X, page delivers Y
-- Different visual style
-- Different offer
-- Confusing journey
+**Message mismatch**: Ad promises X, page delivers Y; different visual style, offer, or confusing journey.
 
-**Audience Issues:**
-- Wrong intent level
-- Too early in funnel
-- Wrong demographics
+**Audience**: Wrong intent level, too early in funnel, wrong demographics.
 
 ---
 
@@ -156,32 +72,14 @@ CPA too high?
 
 ### Account Disabled
 
-**Immediate Steps:**
 1. Check email for explanation
 2. Request review in Business Settings
 3. Don't create new accounts (makes it worse)
 
-**Common Causes:**
-- Policy violations
-- Payment failures
-- Suspicious activity
-- Circumventing systems
-
-**Prevention:**
-- Stay within policies
-- Keep payment current
-- Avoid frequent major changes
-- Don't use VPNs/proxies
+**Prevention**: Stay within policies, keep payment current, avoid frequent major changes, don't use VPNs/proxies.
 
 ### Ad Rejections
 
-**Review Process:**
-1. Read rejection reason carefully
-2. Check ad against specific policy
-3. Fix the issue
-4. Request manual review
-
-**Common Violations:**
 | Violation | Fix |
 |-----------|-----|
 | Personal attributes | Remove "you" + attribute ("You're fat") |
@@ -191,18 +89,7 @@ CPA too high?
 | Clickbait | Remove sensational language |
 | Non-functional LP | Fix landing page |
 
-### Appeals Process
-
-1. Go to Account Quality
-2. Find rejected ad
-3. Click "Request Review"
-4. Provide context if asked
-5. Wait (usually 24-72 hours)
-
-**If Appeal Denied:**
-- Modify ad and resubmit
-- Don't keep appealing same ad
-- Contact support for clarification
+**Appeals**: Account Quality → find rejected ad → Request Review → wait 24-72 hours. If denied, modify and resubmit (don't keep appealing same ad).
 
 ---
 
@@ -210,47 +97,20 @@ CPA too high?
 
 ### Pixel Not Firing
 
-**Debug Steps:**
 1. Use Facebook Pixel Helper extension
 2. Check Events Manager → Test Events
-3. Browse your site and check events
-4. Verify pixel code is on page
+3. Verify pixel code is on page (correct location, no script conflicts, test in incognito)
 
-**Common Causes:**
-- Pixel code missing
-- Code in wrong location
-- Conflicts with other scripts
-- Ad blocker (test in incognito)
+### Conversion Mismatch (Meta vs analytics)
 
-### Conversion Mismatch
+**Causes**: Different attribution windows, duplicate events, CAPI not deduplicating, cross-domain issues, view-through attribution.
 
-**When Meta reports differ from your analytics:**
-
-**Causes:**
-- Attribution windows different
-- Duplicate events firing
-- CAPI not deduplicating
-- Cross-domain issues
-- View-through attribution
-
-**Investigation:**
-1. Compare same date range
-2. Check attribution settings
-3. Test for duplicate events
-4. Verify CAPI setup
-5. Review cross-domain tracking
+**Investigation**: Compare same date range → check attribution settings → test for duplicate events → verify CAPI setup → review cross-domain tracking.
 
 ### CAPI Issues
 
-**Events Not Matching:**
-- Check event_id parameter
-- Ensure Pixel and CAPI use same event_id
-- Verify user data hashing
-
-**Low Match Rate:**
-- Include more user data (email, phone, fbp, fbc)
-- Check data formatting
-- Verify hashing algorithm
+- **Events not matching**: Check `event_id` parameter — Pixel and CAPI must use same `event_id`
+- **Low match rate**: Include more user data (email, phone, fbp, fbc), check data formatting and hashing algorithm
 
 ---
 
@@ -258,73 +118,27 @@ CPA too high?
 
 ### Ad Fatigue
 
-**Signs:**
-- CTR declining >20% week-over-week
-- Frequency >3.0 (prospecting) or >5.0 (retargeting)
-- CPA rising while CPM stable
-- Running 3+ weeks unchanged
+**Signs**: CTR declining >20% week-over-week, frequency >3.0 (prospecting) or >5.0 (retargeting), CPA rising while CPM stable, running 3+ weeks unchanged.
 
-**Fixes:**
-1. Add new creative to ad set
-2. Create iterations of winner
-3. Pause fatigued ads
-4. Test new concepts
+**Fixes**: Add new creative, create iterations of winner, pause fatigued ads, test new concepts.
 
 ### Quality Ranking Issues
 
-**Below Average Quality:**
-1. Check for policy-edge content
-2. Improve visual quality
-3. Remove clickbait elements
-4. Test more authentic style
-
-**Below Average Engagement:**
-1. Test new hooks
-2. Improve scroll-stopping elements
-3. Add call-to-engagement
-4. Test different formats
-
-**Below Average Conversion:**
-1. Improve landing page
-2. Check offer-audience fit
-3. Verify tracking accurate
-4. Test different CTAs
+| Ranking | Fixes |
+|---------|-------|
+| Below average quality | Check policy-edge content, improve visuals, remove clickbait, test authentic style |
+| Below average engagement | Test new hooks, improve scroll-stopping elements, add call-to-engagement, test formats |
+| Below average conversion | Improve landing page, check offer-audience fit, verify tracking, test CTAs |
 
 ---
 
 ## Seasonal Issues
 
-### Q4 (Oct-Dec) Challenges
-
-**What to Expect:**
-- CPMs increase 30-100%+
-- Competition intense
-- Inventory premium
-
-**How to Handle:**
-- Increase CPA targets
-- Lock in winning creative early
-- Consider pausing low-margin offers
-- Focus on retargeting
-
-### Post-Holiday Slump (January)
-
-**What to Expect:**
-- Lower CPMs
-- Lower purchase intent
-- Budget hangovers for consumers
-
-**Opportunity:**
-- Test new creative cheaply
-- Build audiences
-- Prepare for spring
-
-### Summer Variations
-
-**General:**
-- Lower engagement (people outside)
-- Good for testing
-- Industry-specific variations
+| Period | Expectation | Strategy |
+|--------|-------------|----------|
+| Q4 (Oct-Dec) | CPMs +30-100%, intense competition | Increase CPA targets, lock in winning creative early, focus on retargeting |
+| January | Lower CPMs, lower purchase intent | Test new creative cheaply, build audiences, prepare for spring |
+| Summer | Lower engagement, industry-specific | Good for testing |
 
 ---
 
@@ -343,209 +157,67 @@ CPA too high?
 
 ---
 
-## Deep Dive: Common Scenarios
+## Common Scenarios
 
-### Scenario 1: New Campaign Won't Spend
+### New Campaign Won't Spend
 
-**Step-by-Step Diagnosis:**
+Check all levels Active (Campaign, Ad Set, Ad) → budget above minimum → audience >1,000, no conflicting exclusions → payment valid → all ads approved with correct landing page URLs.
 
-1. **Check Campaign Status**
-   - Campaign, Ad Set, and Ad all "Active"?
-   - Any "Errors" or "Warnings" badges?
+If still not spending after 24 hours: duplicate the campaign, start with smaller proven audience, increase budget temporarily, contact support if persistent.
 
-2. **Check Budget**
-   - Is budget set correctly?
-   - Is it higher than minimum bid?
-   - For CBO, are all ad sets receiving allocation?
+### CPA Was Great, Now Terrible
 
-3. **Check Audience**
-   - Audience size >1,000?
-   - No conflicting exclusions?
-   - Location set correctly?
+- **Gradual over days** = likely fatigue → add new creative, pause fatigued ads
+- **Sudden overnight** = algorithm reset or external factor → check if you edited anything, check seasonal competition, check landing page for changes
+- **Recovery**: revert edits if sudden, duplicate fresh ad set, adjust expectations for external factors
 
-4. **Check Payment**
-   - Payment method valid?
-   - Spending limit not hit?
-   - Account in good standing?
+### High CTR But No Conversions
 
-5. **Check Ads**
-   - All approved?
-   - No policy holds?
-   - Correct landing page URLs?
+Check in order: landing page (doesn't match ad, loads slow, poor mobile, confusing CTA) → tracking (pixel not on thank you page, CAPI mismatch) → audience (curious clickers, wrong demographics) → offer (price shock, too much friction).
 
-**If Still Not Spending After 24 Hours:**
-- Duplicate the campaign entirely
-- Start with smaller, proven audience
-- Increase budget temporarily
-- Contact support if persistent
+**Diagnostic test**: Check LP conversion rate in GA4 (benchmark: 5-15%). If LP CVR is fine but Meta shows no conversions → tracking issue.
 
-### Scenario 2: CPA Was Great, Now Terrible
+### Winning Campaign Suddenly Stopped
 
-**Step-by-Step Diagnosis:**
+**Causes**: Policy issue (ad flagged, LP changed) → audience exhaustion (frequency 5+, small audience burned through) → competition spike (seasonal, new competitor) → algorithm change.
 
-1. **When Did It Change?**
-   - Gradual over days = likely fatigue
-   - Sudden overnight = algorithm reset or external factor
-
-2. **Check What Changed**
-   - Did you edit anything?
-   - Did you add new ads?
-   - Did frequency spike?
-
-3. **Check External Factors**
-   - Seasonal competition (Q4, holidays)?
-   - Competitor activity?
-   - News/current events?
-
-4. **Check Landing Page**
-   - Did it change?
-   - Is it still loading fast?
-   - Any new errors?
-
-**Recovery Actions:**
-- If gradual: Add new creative, pause fatigued
-- If sudden edit: Revert change, duplicate fresh
-- If external: Adjust expectations or pause
-- If landing page: Fix immediately
-
-### Scenario 3: High CTR But No Conversions
-
-**Likely Causes:**
-
-1. **Landing Page Issues**
-   - Page doesn't match ad promise
-   - Page loads slow/broken
-   - Poor mobile experience
-   - Confusing layout/CTA
-
-2. **Tracking Issues**
-   - Pixel not on thank you page
-   - Event not firing correctly
-   - CAPI mismatch
-
-3. **Audience Mismatch**
-   - Curious clickers, not buyers
-   - Wrong demographics finding ad
-   - Interests don't align with intent
-
-4. **Offer Issues**
-   - Price shock when they arrive
-   - Offer not compelling enough
-   - Too much friction to convert
-
-**Diagnostic Test:**
-- Check landing page conversion rate directly (GA4)
-- Compare to benchmark (5-15% for good LP)
-- If LP CVR low, problem is post-click
-- If LP CVR fine but Meta shows no conv, tracking issue
-
-### Scenario 4: Winning Campaign Suddenly Stopped
-
-**Common Causes:**
-
-1. **Policy Issue**
-   - Ad flagged after running
-   - Landing page changed and now violates
-   - New policy enforcement
-
-2. **Audience Exhaustion**
-   - Small audience + high spend = burned through
-   - Frequency spiked to 5+
-   - Everyone who would convert has converted
-
-3. **Competition Spike**
-   - Seasonal increase
-   - Competitor entered market
-   - Category CPMs rose
-
-4. **Algorithm Change**
-   - Meta updated delivery
-   - Your ad no longer favored
-   - Signal changed
-
-**Recovery Actions:**
-- Check for policy issues first
-- Review frequency and reach
-- Duplicate ad set to new campaign
-- Test broader audiences
-- Create new creative variations
+**Recovery**: Check for policy issues first → review frequency and reach → duplicate ad set to new campaign → test broader audiences → create new creative variations.
 
 ---
 
-## Platform-Specific Troubleshooting
+## Platform-Specific
 
-### Facebook vs Instagram Differences
+### Facebook vs Instagram
 
-**Facebook:**
-- Generally older audience
-- Feed engagement different than IG
-- More text-tolerant
-- Marketplace, Groups placement
+| Platform | Characteristics |
+|----------|----------------|
+| Facebook | Older audience, more text-tolerant, Marketplace/Groups placements |
+| Instagram | Younger/visual, Stories/Reels heavy, less text tolerance, Explore/Shop |
 
-**Instagram:**
-- Younger, more visual
-- Stories/Reels heavy
-- Less text tolerance
-- Explore, Shop placements
-
-**If Performing Differently:**
-- Check placement breakdown
-- Create placement-specific creative
-- Adjust audience if needed
+If performing differently: check placement breakdown, create placement-specific creative.
 
 ### Audience Network Issues
 
-**Common Problems:**
-- Low-quality clicks
-- High volume, low conversion
-- Accidental clicks
+Common problems: low-quality clicks, high volume but low conversion, accidental clicks.
 
-**Solutions:**
-- Exclude Audience Network entirely
-- Or create separate AN-only campaign
-- Monitor conversion rate separately
+Solutions: exclude Audience Network entirely, or create separate AN-only campaign and monitor conversion rate separately.
 
-### Reels-Specific Issues
+### Reels-Specific
 
-**If Reels Underperforms:**
-- Format wrong (not 9:16)?
-- Content too "ad-like"?
-- Hook not working for Reels audience?
-- Need native-feeling content
-
-**If Reels Over-Delivers:**
-- May be cheaper but lower intent
-- Check conversion quality
-- May need to restrict placements
+- **Underperforms**: Check format (must be 9:16), content too "ad-like", hook not working — need native-feeling content
+- **Over-delivers**: May be cheaper but lower intent — check conversion quality, consider restricting placements
 
 ---
 
 ## When to Contact Meta Support
 
-**Contact Support When:**
-- Account disabled with no clear reason
-- Repeated ad rejections for compliant ads
-- Pixel/tracking issues after exhausting docs
-- Payment issues not resolved through help center
-- Suspected bug or platform issue
+**Contact when**: Account disabled with no clear reason, repeated rejections for compliant ads, pixel/tracking issues after exhausting docs, payment issues not resolved through help center, suspected platform bug.
 
-**How to Contact:**
-1. Business Help Center → Contact
-2. Chat is usually fastest
-3. Provide: Ad Account ID, Campaign ID, specific issue
-4. Be polite but persistent
+**How**: Business Help Center → Contact → Chat (usually fastest). Provide: Ad Account ID, Campaign ID, specific issue.
 
-**What Support CAN Help With:**
-- Account access issues
-- Policy clarifications
-- Technical bugs
-- Payment problems
+**Support can help with**: Account access, policy clarifications, technical bugs, payment problems.
 
-**What Support CAN'T Help With:**
-- "Why is my CPA high?" (optimization questions)
-- Strategy advice
-- Creative feedback
-- Competitor issues
+**Support cannot help with**: CPA optimization questions, strategy advice, creative feedback, competitor issues.
 
 ---
 
