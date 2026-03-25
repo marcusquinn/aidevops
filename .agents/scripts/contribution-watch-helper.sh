@@ -286,6 +286,65 @@ _notification_item_type() {
 }
 
 # =============================================================================
+# Seed helpers
+# =============================================================================
+
+# Fetch authored and commented contributions. Sets globals:
+#   _SEED_ALL_ITEMS  — deduplicated JSON array of all items
+#   _SEED_AUTHORED   — raw authored JSON (for role detection)
+_seed_fetch_contributions() {
+	local username="$1"
+
+	echo -e "${CYAN}Searching for authored issues/PRs...${NC}"
+	_SEED_AUTHORED=$(gh api "search/issues?q=author:${username}+is:open&per_page=${API_PAGE_SIZE}&sort=updated" \
+		--jq '.items[] | {url: .html_url, repo: .repository_url, number: .number, title: .title, type: (if .pull_request then "pr" else "issue" end), updated: .updated_at, created: .created_at}' \
+		2>/dev/null) || _SEED_AUTHORED=""
+
+	echo -e "${CYAN}Searching for commented issues/PRs...${NC}"
+	local commented_json
+	commented_json=$(gh api "search/issues?q=commenter:${username}+is:open&per_page=${API_PAGE_SIZE}&sort=updated" \
+		--jq '.items[] | {url: .html_url, repo: .repository_url, number: .number, title: .title, type: (if .pull_request then "pr" else "issue" end), updated: .updated_at, created: .created_at}' \
+		2>/dev/null) || commented_json=""
+
+	_SEED_ALL_ITEMS=$(printf '%s\n%s' "$_SEED_AUTHORED" "$commented_json" | jq -s 'unique_by(.url)' 2>/dev/null) || _SEED_ALL_ITEMS="[]"
+	return 0
+}
+
+# Update state JSON for a single seed item. Prints updated state.
+_seed_update_state() {
+	local state="$1"
+	local item_key="$2"
+	local item_type="$3"
+	local role="$4"
+	local title="$5"
+	local updated="$6"
+
+	echo "$state" | jq \
+		--arg key "$item_key" \
+		--arg type "$item_type" \
+		--arg role "$role" \
+		--arg title "$title" \
+		--arg updated "$updated" \
+		'
+		if .items[$key] == null then
+			.items[$key] = {
+				type: $type,
+				role: $role,
+				title: $title,
+				last_our_comment: "",
+				last_any_comment: $updated,
+				last_notified: "",
+				hot_until: ""
+			}
+		else
+			.items[$key].title = $title |
+			.items[$key].last_any_comment = (if ($updated > .items[$key].last_any_comment) then $updated else .items[$key].last_any_comment end)
+		end
+	'
+	return 0
+}
+
+# =============================================================================
 # Seed: discover all external contributions
 # =============================================================================
 
@@ -316,47 +375,26 @@ cmd_seed() {
 	state=$(_read_state)
 	local items_added=0
 
-	# Search for issues/PRs authored by user
-	echo -e "${CYAN}Searching for authored issues/PRs...${NC}"
-	local authored_json
-	authored_json=$(gh api "search/issues?q=author:${username}+is:open&per_page=${API_PAGE_SIZE}&sort=updated" \
-		--jq '.items[] | {url: .html_url, repo: .repository_url, number: .number, title: .title, type: (if .pull_request then "pr" else "issue" end), updated: .updated_at, created: .created_at}' \
-		2>/dev/null) || authored_json=""
-
-	# Search for issues/PRs commented on by user
-	echo -e "${CYAN}Searching for commented issues/PRs...${NC}"
-	local commented_json
-	commented_json=$(gh api "search/issues?q=commenter:${username}+is:open&per_page=${API_PAGE_SIZE}&sort=updated" \
-		--jq '.items[] | {url: .html_url, repo: .repository_url, number: .number, title: .title, type: (if .pull_request then "pr" else "issue" end), updated: .updated_at, created: .created_at}' \
-		2>/dev/null) || commented_json=""
-
-	# Combine and deduplicate
-	local all_items
-	all_items=$(printf '%s\n%s' "$authored_json" "$commented_json" | jq -s 'unique_by(.url)' 2>/dev/null) || all_items="[]"
+	# Fetch contributions into globals _SEED_ALL_ITEMS and _SEED_AUTHORED
+	_SEED_ALL_ITEMS="" _SEED_AUTHORED=""
+	_seed_fetch_contributions "$username"
 
 	local total_found
-	total_found=$(echo "$all_items" | jq 'length')
-
+	total_found=$(echo "$_SEED_ALL_ITEMS" | jq 'length')
 	echo -e "${CYAN}Found ${total_found} total items. Filtering external repos...${NC}"
 
-	# Process each item
-	local item_count
-	item_count=$(echo "$all_items" | jq 'length')
-	local i=0
-	while [[ "$i" -lt "$item_count" ]]; do
-		local item
-		item=$(echo "$all_items" | jq ".[$i]")
+	local item_count i=0
+	item_count=$(echo "$_SEED_ALL_ITEMS" | jq 'length')
 
-		# Extract repo slug from repository_url (format: https://api.github.com/repos/owner/repo)
-		local repo_url
+	while [[ "$i" -lt "$item_count" ]]; do
+		local item repo_url repo_slug
+		item=$(echo "$_SEED_ALL_ITEMS" | jq ".[$i]")
 		repo_url=$(echo "$item" | jq -r '.repo')
-		local repo_slug
 		repo_slug=$(echo "$repo_url" | sed 's|https://api.github.com/repos/||')
 
 		# Skip our own repos (pulse-enabled)
 		local is_own=false
 		if [[ -n "$own_repos" ]]; then
-			# Check if repo_slug matches any own repo
 			local own_slug
 			while IFS='|' read -r own_slug _rest; do
 				if [[ "$repo_slug" == "$own_slug" ]]; then
@@ -371,54 +409,23 @@ cmd_seed() {
 			continue
 		fi
 
-		local number
+		local number item_type title updated item_key role
 		number=$(echo "$item" | jq -r '.number')
-		local item_type
 		item_type=$(echo "$item" | jq -r '.type')
-		local title
 		title=$(echo "$item" | jq -r '.title')
-		local updated
 		updated=$(echo "$item" | jq -r '.updated')
-		local item_key="${repo_slug}#${number}"
+		item_key="${repo_slug}#${number}"
 
-		# Determine role (author or commenter)
-		local role="commenter"
-		local created_by
-		# We already know from the search query — items from authored_json are "author"
-		# For simplicity, check if item appears in authored results
-		if echo "$authored_json" | jq -e "select(.number == ${number})" &>/dev/null 2>&1; then
+		# Determine role: author if item appears in authored results
+		role="commenter"
+		if echo "$_SEED_AUTHORED" | jq -e "select(.number == ${number})" &>/dev/null 2>&1; then
 			role="author"
 		fi
 
 		if [[ "$dry_run" == "true" ]]; then
 			echo "  ${item_key} (${item_type}, ${role}): ${title}"
 		else
-			# Add to state if not already tracked
-			local now_iso
-			now_iso=$(_now_iso)
-			state=$(echo "$state" | jq \
-				--arg key "$item_key" \
-				--arg type "$item_type" \
-				--arg role "$role" \
-				--arg title "$title" \
-				--arg updated "$updated" \
-				--arg now "$now_iso" \
-				'
-				if .items[$key] == null then
-					.items[$key] = {
-						type: $type,
-						role: $role,
-						title: $title,
-						last_our_comment: "",
-						last_any_comment: $updated,
-						last_notified: "",
-						hot_until: ""
-					}
-				else
-					.items[$key].title = $title |
-					.items[$key].last_any_comment = (if ($updated > .items[$key].last_any_comment) then $updated else .items[$key].last_any_comment end)
-				end
-			')
+			state=$(_seed_update_state "$state" "$item_key" "$item_type" "$role" "$title" "$updated")
 		fi
 
 		items_added=$((items_added + 1))
@@ -429,7 +436,6 @@ cmd_seed() {
 		echo ""
 		echo -e "${GREEN}Dry run complete: ${items_added} external items found${NC}"
 	else
-		# Update last_scan timestamp
 		local now_iso
 		now_iso=$(_now_iso)
 		state=$(echo "$state" | jq --arg ts "$now_iso" '.last_scan = $ts')
@@ -438,6 +444,292 @@ cmd_seed() {
 		_log_info "Seed complete: ${items_added} items added"
 	fi
 
+	return 0
+}
+
+# =============================================================================
+# Scan helpers
+# =============================================================================
+
+# Determine whether a backfill sweep is due. Prints "true" or "false".
+_scan_check_backfill_due() {
+	local state="$1"
+
+	if ! [[ "$BACKFILL_FRESHNESS_HOURS" =~ ^[0-9]+$ ]] || [[ "$BACKFILL_FRESHNESS_HOURS" -eq 0 ]]; then
+		BACKFILL_FRESHNESS_HOURS=24
+	fi
+
+	local last_backfill
+	last_backfill=$(echo "$state" | jq -r '.last_backfill // ""')
+
+	if [[ -z "$last_backfill" ]]; then
+		echo "true"
+		return 0
+	fi
+
+	local last_backfill_epoch now_epoch backfill_elapsed
+	last_backfill_epoch=$(_epoch_from_iso "$last_backfill")
+	now_epoch=$(date +%s)
+	backfill_elapsed=$((now_epoch - last_backfill_epoch))
+
+	if [[ "$backfill_elapsed" -ge $((BACKFILL_FRESHNESS_HOURS * 3600)) ]]; then
+		echo "true"
+	else
+		echo "false"
+	fi
+	return 0
+}
+
+# Process the notifications stream. Updates _SCAN_STATE, _SCAN_NEEDS_ATTENTION,
+# _SCAN_ATTENTION_ITEMS, _SCAN_ITEMS_CHECKED, _SCAN_ALERTED_KEYS in place.
+_scan_process_notifications() {
+	local notifications="$1"
+	local managed_slugs="$2"
+
+	while IFS= read -r row; do
+		[[ -z "$row" ]] && continue
+		_SCAN_NOTIFICATIONS_CHECKED=$((_SCAN_NOTIFICATIONS_CHECKED + 1))
+
+		local repo_slug reason subject_url item_key item_type title updated
+		repo_slug=$(echo "$row" | jq -r '.repository.full_name // ""')
+		[[ -z "$repo_slug" ]] && continue
+		_is_managed_repo "$repo_slug" "$managed_slugs" && continue
+
+		reason=$(echo "$row" | jq -r '.reason // ""')
+		_is_signal_reason "$reason" || continue
+
+		subject_url=$(echo "$row" | jq -r '.subject.url // ""')
+		item_key=$(_extract_item_key "$subject_url")
+		[[ -z "$item_key" ]] && continue
+
+		item_type=$(_notification_item_type "$(echo "$row" | jq -r '.subject.type // "Issue"')")
+		title=$(echo "$row" | jq -r '.subject.title // "unknown"')
+		updated=$(echo "$row" | jq -r '.updated_at // ""')
+		[[ -z "$updated" ]] && continue
+
+		_SCAN_STATE=$(echo "$_SCAN_STATE" | jq \
+			--arg key "$item_key" \
+			--arg type "$item_type" \
+			--arg title "$title" \
+			--arg updated "$updated" \
+			'.items[$key] = ((.items[$key] // {type: $type, role: "participant", title: $title, last_our_comment: "", last_any_comment: "", last_notified: "", hot_until: ""})
+				| .type = $type
+				| .title = $title
+				| .last_any_comment = (if .last_any_comment == "" or $updated > .last_any_comment then $updated else .last_any_comment end)
+			)')
+
+		local last_notified
+		last_notified=$(echo "$_SCAN_STATE" | jq -r --arg key "$item_key" '.items[$key].last_notified // ""')
+		[[ -n "$last_notified" ]] && [[ ! "$updated" > "$last_notified" ]] && continue
+		[[ "$_SCAN_ALERTED_KEYS" == *$'\n'"$item_key"$'\n'* ]] && continue
+
+		local hot_until
+		hot_until=$(date -u -v+24H +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d '+24 hours' +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo "")
+		_SCAN_STATE=$(echo "$_SCAN_STATE" | jq \
+			--arg key "$item_key" \
+			--arg updated "$updated" \
+			--arg hot "$hot_until" \
+			'.items[$key].last_notified = $updated | .items[$key].hot_until = $hot')
+
+		_SCAN_ALERTED_KEYS+="${item_key}"$'\n'
+		_SCAN_NEEDS_ATTENTION=$((_SCAN_NEEDS_ATTENTION + 1))
+		_SCAN_ATTENTION_ITEMS="${_SCAN_ATTENTION_ITEMS}  ${item_key} (${item_type}): ${title} — reason: ${reason}\n"
+		_SCAN_ITEMS_CHECKED=$((_SCAN_ITEMS_CHECKED + 1))
+	done < <(echo "$notifications" | jq -c '.[]?')
+	return 0
+}
+
+# Fetch latest comment metadata for a tracked item during backfill.
+# Prints JSON: {author, created} or empty string on failure.
+_scan_backfill_fetch_latest_comment() {
+	local repo_slug="$1"
+	local number="$2"
+	local key="$3"
+
+	local issue_comments="[]"
+	if ! issue_comments=$(gh api --paginate "repos/${repo_slug}/issues/${number}/comments" \
+		--jq '[.[] | {author: .user.login, created: .created_at}]' 2>/dev/null); then
+		_log_warn "Backfill issue comments API failed for ${repo_slug}#${number}"
+		issue_comments="[]"
+	fi
+
+	local pr_review_comments="[]"
+	if ! pr_review_comments=$(gh api --paginate "repos/${repo_slug}/pulls/${number}/comments" \
+		--jq '[.[] | {author: .user.login, created: .created_at}]' 2>/dev/null); then
+		local tracked_type
+		tracked_type=$(echo "$_SCAN_STATE" | jq -r --arg key "$key" '.items[$key].type // "issue"')
+		if [[ "$tracked_type" == "pr" ]]; then
+			_log_warn "Backfill PR review comments API failed for ${repo_slug}#${number}"
+		fi
+		pr_review_comments="[]"
+	fi
+
+	jq -s 'add | sort_by(.created) | reverse | .[0]' \
+		<(echo "$issue_comments") <(echo "$pr_review_comments") 2>/dev/null || echo ""
+	return 0
+}
+
+# Run backfill sweep over all tracked items. Updates _SCAN_STATE,
+# _SCAN_NEEDS_ATTENTION, _SCAN_ATTENTION_ITEMS, _SCAN_ITEMS_CHECKED,
+# _SCAN_ALERTED_KEYS, _SCAN_BACKFILL_CHECKED in place.
+_scan_run_backfill() {
+	local managed_slugs="$1"
+	local username="$2"
+
+	local items_keys
+	items_keys=$(echo "$_SCAN_STATE" | jq -r '.items | keys[]' 2>/dev/null) || items_keys=""
+
+	while IFS= read -r key; do
+		[[ -z "$key" ]] && continue
+		_SCAN_BACKFILL_CHECKED=$((_SCAN_BACKFILL_CHECKED + 1))
+
+		local repo_slug number
+		repo_slug="${key%#*}"
+		number="${key##*#}"
+
+		_is_managed_repo "$repo_slug" "$managed_slugs" && continue
+
+		local comments_meta
+		comments_meta=$(_scan_backfill_fetch_latest_comment "$repo_slug" "$number" "$key")
+		[[ -z "$comments_meta" || "$comments_meta" == "null" ]] && continue
+
+		local latest_comment_author latest_comment_time
+		latest_comment_author=$(echo "$comments_meta" | jq -r '.author // ""')
+		latest_comment_time=$(echo "$comments_meta" | jq -r '.created // ""')
+		[[ -z "$latest_comment_time" ]] && continue
+
+		_SCAN_STATE=$(echo "$_SCAN_STATE" | jq \
+			--arg key "$key" \
+			--arg time "$latest_comment_time" \
+			'.items[$key].last_any_comment = (if .items[$key].last_any_comment == "" or $time > .items[$key].last_any_comment then $time else .items[$key].last_any_comment end)')
+
+		if [[ "$latest_comment_author" == "$username" ]]; then
+			_SCAN_STATE=$(echo "$_SCAN_STATE" | jq --arg key "$key" --arg time "$latest_comment_time" '.items[$key].last_our_comment = $time')
+			continue
+		fi
+
+		local last_notified
+		last_notified=$(echo "$_SCAN_STATE" | jq -r --arg key "$key" '.items[$key].last_notified // ""')
+		[[ -n "$last_notified" ]] && [[ ! "$latest_comment_time" > "$last_notified" ]] && continue
+		[[ "$_SCAN_ALERTED_KEYS" == *$'\n'"$key"$'\n'* ]] && continue
+
+		local title item_type hot_until
+		title=$(echo "$_SCAN_STATE" | jq -r --arg key "$key" '.items[$key].title // "unknown"')
+		item_type=$(echo "$_SCAN_STATE" | jq -r --arg key "$key" '.items[$key].type // "issue"')
+		hot_until=$(date -u -v+24H +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d '+24 hours' +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo "")
+
+		_SCAN_STATE=$(echo "$_SCAN_STATE" | jq \
+			--arg key "$key" \
+			--arg updated "$latest_comment_time" \
+			--arg hot "$hot_until" \
+			'.items[$key].last_notified = $updated | .items[$key].hot_until = $hot')
+
+		_SCAN_ALERTED_KEYS+="${key}"$'\n'
+		_SCAN_NEEDS_ATTENTION=$((_SCAN_NEEDS_ATTENTION + 1))
+		_SCAN_ATTENTION_ITEMS="${_SCAN_ATTENTION_ITEMS}  ${key} (${item_type}): ${title} — reason: backfill\n"
+		_SCAN_ITEMS_CHECKED=$((_SCAN_ITEMS_CHECKED + 1))
+	done <<<"$items_keys"
+	return 0
+}
+
+# Handle auto-draft creation for items needing attention (t1555).
+# AGENT COMPOSE INSTRUCTION (t5520): After composing a draft reply, assess
+# whether a reply is actually needed. If the recommendation is "no reply
+# needed", "no action required", or "decline", call:
+#   draft-response-helper.sh reject <draft_id> "No reply needed"
+# instead of leaving the notification issue open. This avoids requiring
+# manual closure of no-reply drafts. The deterministic safety net in
+# check-approvals will also auto-decline after 24h if the draft body
+# contains clear no-reply indicators and no user comment exists.
+_scan_handle_auto_draft() {
+	local state="$1"
+	local draft_helper="$2"
+	local needs_attention="$3"
+
+	local draft_enabled=true
+	if type is_feature_enabled &>/dev/null && ! is_feature_enabled draft_responses 2>/dev/null; then
+		draft_enabled=false
+	fi
+
+	if [[ "$draft_enabled" != "true" || "$needs_attention" -le 0 || ! -x "$draft_helper" ]]; then
+		return 0
+	fi
+
+	local draft_keys
+	draft_keys=$(echo "$state" | jq -r '
+		.items | to_entries[] |
+		select(.value.last_any_comment > (.value.last_our_comment // "")) |
+		.key
+	' 2>/dev/null) || draft_keys=""
+
+	local draft_created=0 dk
+	while IFS= read -r dk; do
+		[[ -z "$dk" ]] && continue
+		if bash "$draft_helper" draft "$dk" >/dev/null 2>&1; then
+			draft_created=$((draft_created + 1))
+		fi
+	done <<<"$draft_keys"
+
+	if [[ "$draft_created" -gt 0 ]]; then
+		echo "Created ${draft_created} draft reply file(s). Review with: draft-response-helper.sh list --pending"
+		_log_info "Auto-draft: created ${draft_created} draft(s)"
+	fi
+	return 0
+}
+
+# Handle check-approvals scan for pending draft responses (t1556).
+_scan_handle_approvals() {
+	local draft_helper="$1"
+
+	local draft_enabled=true
+	if type is_feature_enabled &>/dev/null && ! is_feature_enabled draft_responses 2>/dev/null; then
+		draft_enabled=false
+	fi
+
+	if [[ "$draft_enabled" != "true" || ! -x "$draft_helper" ]]; then
+		return 0
+	fi
+
+	_log_info "Running check-approvals scan"
+	local approval_output=""
+	if ! approval_output=$(bash "$draft_helper" check-approvals 2>&1); then
+		_log_warn "Approval scan failed (exit $?): ${approval_output}"
+		echo "Approval scan failed; see ${LOGFILE}."
+	else
+		echo "$approval_output"
+	fi
+	return 0
+}
+
+# Print scan summary and trigger macOS notification if needed.
+_scan_print_results() {
+	local needs_attention="$1"
+	local attention_items="$2"
+	local notifications_checked="$3"
+	local items_checked="$4"
+	local run_backfill="$5"
+	local auto_backfill="$6"
+	local backfill_checked="$7"
+
+	if [[ "$needs_attention" -gt 0 ]]; then
+		echo -e "${YELLOW}${needs_attention} external contribution(s) need your reply:${NC}"
+		echo -e "$attention_items"
+		# macOS notification (for launchd runs)
+		if [[ ! -t 0 ]] && command -v osascript &>/dev/null; then
+			osascript -e "display notification \"${needs_attention} contribution(s) need reply\" with title \"aidevops\"" 2>/dev/null || true
+		fi
+	else
+		echo -e "${GREEN}All caught up — no external contributions need attention${NC}"
+	fi
+
+	echo "Checked ${notifications_checked} notifications (${items_checked} actionable external threads)."
+	if [[ "$run_backfill" == "true" ]]; then
+		if [[ "$auto_backfill" == "true" ]]; then
+			echo "Backfill sweep checked ${backfill_checked} tracked threads (auto cadence: ${BACKFILL_FRESHNESS_HOURS}h)."
+		else
+			echo "Backfill sweep checked ${backfill_checked} tracked threads."
+		fi
+	fi
 	return 0
 }
 
@@ -464,11 +756,17 @@ cmd_scan() {
 
 	_ensure_state_file
 
-	local state
-	state=$(_read_state)
+	# Shared scan state — updated by helper functions
+	_SCAN_STATE=$(_read_state)
+	_SCAN_NEEDS_ATTENTION=0
+	_SCAN_ITEMS_CHECKED=0
+	_SCAN_BACKFILL_CHECKED=0
+	_SCAN_ATTENTION_ITEMS=""
+	_SCAN_NOTIFICATIONS_CHECKED=0
+	_SCAN_ALERTED_KEYS=$'\n'
 
 	local last_scan
-	last_scan=$(echo "$state" | jq -r '.last_scan // ""')
+	last_scan=$(echo "$_SCAN_STATE" | jq -r '.last_scan // ""')
 
 	if [[ -z "$last_scan" ]]; then
 		echo -e "${YELLOW}No previous scan found. Run 'seed' first.${NC}"
@@ -476,28 +774,10 @@ cmd_scan() {
 		return 1
 	fi
 
-	# Auto-enable low-frequency backfill when due, so the safety-net runs even
-	# from default scheduled callers that use plain "scan".
+	# Auto-enable low-frequency backfill when due.
 	if [[ "$run_backfill" != "true" ]]; then
-		if ! [[ "$BACKFILL_FRESHNESS_HOURS" =~ ^[0-9]+$ ]] || [[ "$BACKFILL_FRESHNESS_HOURS" -eq 0 ]]; then
-			BACKFILL_FRESHNESS_HOURS=24
-		fi
-
-		local last_backfill
-		last_backfill=$(echo "$state" | jq -r '.last_backfill // ""')
-		local backfill_due=false
-		if [[ -z "$last_backfill" ]]; then
-			backfill_due=true
-		else
-			local last_backfill_epoch now_epoch backfill_elapsed
-			last_backfill_epoch=$(_epoch_from_iso "$last_backfill")
-			now_epoch=$(date +%s)
-			backfill_elapsed=$((now_epoch - last_backfill_epoch))
-			if [[ "$backfill_elapsed" -ge $((BACKFILL_FRESHNESS_HOURS * 3600)) ]]; then
-				backfill_due=true
-			fi
-		fi
-
+		local backfill_due
+		backfill_due=$(_scan_check_backfill_due "$_SCAN_STATE")
 		if [[ "$backfill_due" == "true" ]]; then
 			run_backfill=true
 			auto_backfill=true
@@ -511,285 +791,42 @@ cmd_scan() {
 	managed_slugs=$(_get_managed_repo_slugs)
 
 	local since_arg=""
-	if [[ -n "$last_scan" ]]; then
-		since_arg="&since=${last_scan}"
-	fi
+	[[ -n "$last_scan" ]] && since_arg="&since=${last_scan}"
 
-	# Notifications API is the primary signal: one paginated API stream instead
-	# of one API call per tracked issue/PR.
+	# Notifications API: one paginated stream instead of one call per tracked item.
 	local notifications
 	notifications=$(gh api --paginate "notifications?participating=true&all=true&per_page=${API_PAGE_SIZE}${since_arg}" 2>/dev/null) || notifications=""
 
-	local needs_attention=0
-	local items_checked=0
-	local backfill_checked=0
-	local attention_items=""
-	local notifications_checked=0
-	local alerted_keys=$'\n'
+	_scan_process_notifications "$notifications" "$managed_slugs"
 
-	while IFS= read -r row; do
-		[[ -z "$row" ]] && continue
-
-		notifications_checked=$((notifications_checked + 1))
-
-		local repo_slug
-		repo_slug=$(echo "$row" | jq -r '.repository.full_name // ""')
-		if [[ -z "$repo_slug" ]]; then
-			continue
-		fi
-
-		# Suppress managed repos (aidevops automation noise belongs to pulse stream).
-		if _is_managed_repo "$repo_slug" "$managed_slugs"; then
-			continue
-		fi
-
-		local reason
-		reason=$(echo "$row" | jq -r '.reason // ""')
-		if ! _is_signal_reason "$reason"; then
-			continue
-		fi
-
-		local subject_url
-		subject_url=$(echo "$row" | jq -r '.subject.url // ""')
-		local item_key
-		item_key=$(_extract_item_key "$subject_url")
-		if [[ -z "$item_key" ]]; then
-			continue
-		fi
-
-		local item_type
-		item_type=$(_notification_item_type "$(echo "$row" | jq -r '.subject.type // "Issue"')")
-		local title
-		title=$(echo "$row" | jq -r '.subject.title // "unknown"')
-		local updated
-		updated=$(echo "$row" | jq -r '.updated_at // ""')
-		if [[ -z "$updated" ]]; then
-			continue
-		fi
-
-		# Create or update tracked item from notification metadata only.
-		state=$(echo "$state" | jq \
-			--arg key "$item_key" \
-			--arg type "$item_type" \
-			--arg title "$title" \
-			--arg updated "$updated" \
-			'.items[$key] = ((.items[$key] // {type: $type, role: "participant", title: $title, last_our_comment: "", last_any_comment: "", last_notified: "", hot_until: ""})
-				| .type = $type
-				| .title = $title
-				| .last_any_comment = (if .last_any_comment == "" or $updated > .last_any_comment then $updated else .last_any_comment end)
-			)')
-
-		local last_notified
-		last_notified=$(echo "$state" | jq -r --arg key "$item_key" '.items[$key].last_notified // ""')
-		# ISO 8601 UTC timestamps sort lexicographically, so string compare is valid.
-		if [[ -n "$last_notified" ]] && [[ ! "$updated" > "$last_notified" ]]; then
-			continue
-		fi
-
-		if [[ "$alerted_keys" == *$'\n'"$item_key"$'\n'* ]]; then
-			continue
-		fi
-		alerted_keys+="${item_key}"$'\n'
-
-		needs_attention=$((needs_attention + 1))
-		attention_items="${attention_items}  ${item_key} (${item_type}): ${title} — reason: ${reason}\n"
-
-		# Mark as notified and hot.
-		local hot_until
-		hot_until=$(date -u -v+24H +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d '+24 hours' +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo "")
-		state=$(echo "$state" | jq \
-			--arg key "$item_key" \
-			--arg updated "$updated" \
-			--arg hot "$hot_until" \
-			'.items[$key].last_notified = $updated | .items[$key].hot_until = $hot')
-
-		items_checked=$((items_checked + 1))
-	done < <(echo "$notifications" | jq -c '.[]?')
-
-	# Optional safety net: one deterministic metadata-only sweep over tracked items.
-	# Use this for low-frequency backfill to catch muted/unsubscribed notification gaps.
+	# Optional safety net: deterministic metadata-only sweep over tracked items.
 	if [[ "$run_backfill" == "true" ]]; then
-		local items_keys
-		items_keys=$(echo "$state" | jq -r '.items | keys[]' 2>/dev/null) || items_keys=""
-
-		while IFS= read -r key; do
-			[[ -z "$key" ]] && continue
-			backfill_checked=$((backfill_checked + 1))
-
-			local repo_slug
-			repo_slug="${key%#*}"
-			if _is_managed_repo "$repo_slug" "$managed_slugs"; then
-				continue
-			fi
-
-			local number
-			number="${key##*#}"
-
-			local issue_comments="[]"
-			local pr_review_comments="[]"
-
-			if ! issue_comments=$(gh api --paginate "repos/${repo_slug}/issues/${number}/comments" \
-				--jq '[.[] | {author: .user.login, created: .created_at}]' 2>/dev/null); then
-				_log_warn "Backfill issue comments API failed for ${repo_slug}#${number}"
-				issue_comments="[]"
-			fi
-
-			if ! pr_review_comments=$(gh api --paginate "repos/${repo_slug}/pulls/${number}/comments" \
-				--jq '[.[] | {author: .user.login, created: .created_at}]' 2>/dev/null); then
-				# Expected for issue threads; only warn if this key is tracked as PR.
-				local tracked_type
-				tracked_type=$(echo "$state" | jq -r --arg key "$key" '.items[$key].type // "issue"')
-				if [[ "$tracked_type" == "pr" ]]; then
-					_log_warn "Backfill PR review comments API failed for ${repo_slug}#${number}"
-				fi
-				pr_review_comments="[]"
-			fi
-
-			local comments_meta
-			comments_meta=$(jq -s 'add | sort_by(.created) | reverse | .[0]' \
-				<(echo "$issue_comments") <(echo "$pr_review_comments") 2>/dev/null) || comments_meta=""
-
-			if [[ -z "$comments_meta" || "$comments_meta" == "null" ]]; then
-				continue
-			fi
-
-			local latest_comment_author
-			latest_comment_author=$(echo "$comments_meta" | jq -r '.author // ""')
-			local latest_comment_time
-			latest_comment_time=$(echo "$comments_meta" | jq -r '.created // ""')
-			if [[ -z "$latest_comment_time" ]]; then
-				continue
-			fi
-
-			state=$(echo "$state" | jq \
-				--arg key "$key" \
-				--arg time "$latest_comment_time" \
-				'.items[$key].last_any_comment = (if .items[$key].last_any_comment == "" or $time > .items[$key].last_any_comment then $time else .items[$key].last_any_comment end)')
-
-			if [[ "$latest_comment_author" == "$username" ]]; then
-				state=$(echo "$state" | jq --arg key "$key" --arg time "$latest_comment_time" '.items[$key].last_our_comment = $time')
-				continue
-			fi
-
-			local last_notified
-			last_notified=$(echo "$state" | jq -r --arg key "$key" '.items[$key].last_notified // ""')
-			if [[ -n "$last_notified" ]] && [[ ! "$latest_comment_time" > "$last_notified" ]]; then
-				continue
-			fi
-
-			if [[ "$alerted_keys" == *$'\n'"$key"$'\n'* ]]; then
-				continue
-			fi
-			alerted_keys+="${key}"$'\n'
-
-			local title
-			title=$(echo "$state" | jq -r --arg key "$key" '.items[$key].title // "unknown"')
-			local item_type
-			item_type=$(echo "$state" | jq -r --arg key "$key" '.items[$key].type // "issue"')
-
-			needs_attention=$((needs_attention + 1))
-			attention_items="${attention_items}  ${key} (${item_type}): ${title} — reason: backfill\n"
-
-			local hot_until
-			hot_until=$(date -u -v+24H +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d '+24 hours' +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo "")
-			state=$(echo "$state" | jq \
-				--arg key "$key" \
-				--arg updated "$latest_comment_time" \
-				--arg hot "$hot_until" \
-				'.items[$key].last_notified = $updated | .items[$key].hot_until = $hot')
-
-			items_checked=$((items_checked + 1))
-		done <<<"$items_keys"
+		_scan_run_backfill "$managed_slugs" "$username"
 	fi
 
 	# Update scan timestamp
 	local now_iso
 	now_iso=$(_now_iso)
-	state=$(echo "$state" | jq --arg ts "$now_iso" '.last_scan = $ts')
+	_SCAN_STATE=$(echo "$_SCAN_STATE" | jq --arg ts "$now_iso" '.last_scan = $ts')
 	if [[ "$run_backfill" == "true" ]]; then
-		state=$(echo "$state" | jq --arg ts "$now_iso" '.last_backfill = $ts')
+		_SCAN_STATE=$(echo "$_SCAN_STATE" | jq --arg ts "$now_iso" '.last_backfill = $ts')
 	fi
-	_write_state "$state"
+	_write_state "$_SCAN_STATE"
 
-	# Auto-draft: create draft replies for items needing attention (t1555)
-	# Triggered by --auto-draft flag. Calls draft-response-helper.sh draft
-	# for each item that has new activity since our last comment.
-	# Drafts are stored locally and NEVER posted without explicit user approval.
-	#
-	# AGENT COMPOSE INSTRUCTION (t5520): After composing a draft reply, assess
-	# whether a reply is actually needed. If the recommendation is "no reply
-	# needed", "no action required", or "decline", call:
-	#   draft-response-helper.sh reject <draft_id> "No reply needed"
-	# instead of leaving the notification issue open. This avoids requiring
-	# manual closure of no-reply drafts. The deterministic safety net in
-	# check-approvals will also auto-decline after 24h if the draft body
-	# contains clear no-reply indicators and no user comment exists.
-	local _draft_helper
-	_draft_helper="${SCRIPT_DIR}/draft-response-helper.sh"
-	local _draft_enabled=true
-	if type is_feature_enabled &>/dev/null && ! is_feature_enabled draft_responses 2>/dev/null; then
-		_draft_enabled=false
+	local draft_helper="${SCRIPT_DIR}/draft-response-helper.sh"
+	if [[ "$auto_draft" == "true" ]]; then
+		_scan_handle_auto_draft "$_SCAN_STATE" "$draft_helper" "$_SCAN_NEEDS_ATTENTION"
 	fi
-	if [[ "$auto_draft" == "true" && "$_draft_enabled" == "true" && "$needs_attention" -gt 0 && -x "$_draft_helper" ]]; then
-		local _draft_keys
-		_draft_keys=$(echo "$state" | jq -r '
-			.items | to_entries[] |
-			select(.value.last_any_comment > (.value.last_our_comment // "")) |
-			.key
-		' 2>/dev/null) || _draft_keys=""
-		local _draft_created=0
-		local _dk
-		while IFS= read -r _dk; do
-			[[ -z "$_dk" ]] && continue
-			if bash "$_draft_helper" draft "$_dk" >/dev/null 2>&1; then
-				_draft_created=$((_draft_created + 1))
-			fi
-		done <<<"$_draft_keys"
-		if [[ "$_draft_created" -gt 0 ]]; then
-			echo "Created ${_draft_created} draft reply file(s). Review with: draft-response-helper.sh list --pending"
-			_log_info "Auto-draft: created ${_draft_created} draft(s)"
-		fi
-	fi
+	_scan_handle_approvals "$draft_helper"
 
-	# Check-approvals: scan notification issues for user comments (t1556)
-	# Runs every scan cycle when draft_responses is enabled. Deterministic gate
-	# ensures no LLM cost for issues without new user comments.
-	if [[ "$_draft_enabled" == "true" && -x "$_draft_helper" ]]; then
-		_log_info "Running check-approvals scan"
-		local _approval_output=""
-		if ! _approval_output=$(bash "$_draft_helper" check-approvals 2>&1); then
-			_log_warn "Approval scan failed (exit $?): ${_approval_output}"
-			echo "Approval scan failed; see ${LOGFILE}."
-		else
-			echo "$_approval_output"
-		fi
-	fi
+	_scan_print_results "$_SCAN_NEEDS_ATTENTION" "$_SCAN_ATTENTION_ITEMS" \
+		"$_SCAN_NOTIFICATIONS_CHECKED" "$_SCAN_ITEMS_CHECKED" \
+		"$run_backfill" "$auto_backfill" "$_SCAN_BACKFILL_CHECKED"
 
-	# Output results
-	if [[ "$needs_attention" -gt 0 ]]; then
-		echo -e "${YELLOW}${needs_attention} external contribution(s) need your reply:${NC}"
-		echo -e "$attention_items"
-
-		# macOS notification (for launchd runs)
-		if [[ ! -t 0 ]] && command -v osascript &>/dev/null; then
-			osascript -e "display notification \"${needs_attention} contribution(s) need reply\" with title \"aidevops\"" 2>/dev/null || true
-		fi
-	else
-		echo -e "${GREEN}All caught up — no external contributions need attention${NC}"
-	fi
-
-	echo "Checked ${notifications_checked} notifications (${items_checked} actionable external threads)."
-	if [[ "$run_backfill" == "true" ]]; then
-		if [[ "$auto_backfill" == "true" ]]; then
-			echo "Backfill sweep checked ${backfill_checked} tracked threads (auto cadence: ${BACKFILL_FRESHNESS_HOURS}h)."
-		else
-			echo "Backfill sweep checked ${backfill_checked} tracked threads."
-		fi
-	fi
-	_log_info "Scan complete: notifications=${notifications_checked}, actionable=${items_checked}, backfill_checked=${backfill_checked}, needs_attention=${needs_attention}, run_backfill=${run_backfill}, auto_backfill=${auto_backfill}"
+	_log_info "Scan complete: notifications=${_SCAN_NOTIFICATIONS_CHECKED}, actionable=${_SCAN_ITEMS_CHECKED}, backfill_checked=${_SCAN_BACKFILL_CHECKED}, needs_attention=${_SCAN_NEEDS_ATTENTION}, run_backfill=${run_backfill}, auto_backfill=${auto_backfill}"
 
 	# Output machine-readable count for pulse integration
-	echo "CONTRIBUTION_WATCH_COUNT=${needs_attention}"
+	echo "CONTRIBUTION_WATCH_COUNT=${_SCAN_NEEDS_ATTENTION}"
 
 	return 0
 }
@@ -820,15 +857,7 @@ cmd_status() {
 		return 0
 	fi
 
-	# Group by state
-	local now_epoch
-	now_epoch=$(date +%s)
-
-	local hot_count=0
-	local active_count=0
-	local dormant_count=0
-	local needs_reply_count=0
-
+	local hot_count=0 active_count=0 dormant_count=0 needs_reply_count=0
 	echo -e "${CYAN}Items needing reply:${NC}"
 	local found_needing=false
 
@@ -838,19 +867,13 @@ cmd_status() {
 	while IFS= read -r key; do
 		[[ -z "$key" ]] && continue
 
-		local item
+		local item title item_type last_any last_our hot_until role
 		item=$(echo "$state" | jq --arg k "$key" '.items[$k]')
-		local title
 		title=$(echo "$item" | jq -r '.title // "unknown"')
-		local item_type
 		item_type=$(echo "$item" | jq -r '.type // "issue"')
-		local last_any
 		last_any=$(echo "$item" | jq -r '.last_any_comment // ""')
-		local last_our
 		last_our=$(echo "$item" | jq -r '.last_our_comment // ""')
-		local hot_until
 		hot_until=$(echo "$item" | jq -r '.hot_until // ""')
-		local role
 		role=$(echo "$item" | jq -r '.role // "commenter"')
 
 		# Determine activity tier
@@ -866,7 +889,7 @@ cmd_status() {
 			fi
 		fi
 
-		# Check if needs reply (someone else has last word and we haven't been notified)
+		# Check if needs reply (someone else has last word)
 		if [[ -n "$last_any" && ("$last_our" < "$last_any" || -z "$last_our") ]]; then
 			needs_reply_count=$((needs_reply_count + 1))
 			found_needing=true
@@ -886,7 +909,6 @@ cmd_status() {
 	echo "  Dormant (>7d):  ${dormant_count}"
 	echo "  Need reply:     ${needs_reply_count}"
 
-	# Show adaptive polling recommendation
 	echo ""
 	echo -e "${CYAN}Polling schedule:${NC}"
 	if [[ "$hot_count" -gt 0 ]]; then
