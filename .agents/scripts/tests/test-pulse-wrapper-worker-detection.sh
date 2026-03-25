@@ -253,6 +253,48 @@ test_excludes_zombie_and_stopped_processes() {
 	return 0
 }
 
+test_has_worker_for_repo_issue_session_key_fallback() {
+	# GH#6453: When get_repo_path_by_slug returns empty (slug not in repos.json),
+	# has_worker_for_repo_issue must fall back to matching by --session-key.
+	# This prevents false-negatives that cause the backfill cycle to re-dispatch
+	# already-running workers.
+	local original_repos_json="$REPOS_JSON"
+
+	# Use a repos.json that does NOT contain the slug being tested
+	cat >"${REPOS_JSON}" <<'JSON'
+{
+  "initialized_repos": [
+    {
+      "slug": "marcusquinn/other-repo",
+      "path": "/tmp/other-repo"
+    }
+  ]
+}
+JSON
+
+	# Worker process with --session-key issue-6426 but slug not in repos.json
+	set_ps_fixture "500 S 00:15 bash /home/user/.aidevops/agents/scripts/sandbox-exec-helper.sh run --timeout 3600 --allow-secret-io -- opencode run \"/full-loop Implement issue #6426\" --dir /tmp/aidevops --session-key issue-6426 --title Issue #6426"
+
+	# Should detect the worker via session-key fallback even though slug is not in repos.json
+	if ! has_worker_for_repo_issue "6426" "marcusquinn/aidevops"; then
+		REPOS_JSON="$original_repos_json"
+		print_result "has_worker_for_repo_issue session-key fallback detects worker when slug not in repos.json" 1 "Expected worker match via session-key fallback"
+		return 0
+	fi
+
+	# Should not match a different issue number
+	if has_worker_for_repo_issue "9999" "marcusquinn/aidevops"; then
+		REPOS_JSON="$original_repos_json"
+		print_result "has_worker_for_repo_issue session-key fallback rejects wrong issue number" 1 "Expected no match for issue 9999"
+		return 0
+	fi
+
+	REPOS_JSON="$original_repos_json"
+	print_result "has_worker_for_repo_issue session-key fallback detects worker when slug not in repos.json" 0
+	print_result "has_worker_for_repo_issue session-key fallback rejects wrong issue number" 0
+	return 0
+}
+
 test_check_dispatch_dedup_treats_merged_pr_as_duplicate() {
 	local original_script_dir="$SCRIPT_DIR"
 	SCRIPT_DIR="$TEST_ROOT"
@@ -282,6 +324,7 @@ main() {
 	test_deduplicates_multiple_workers_with_process_chains
 	test_repo_issue_detection_uses_filtered_worker_list
 	test_excludes_zombie_and_stopped_processes
+	test_has_worker_for_repo_issue_session_key_fallback
 	test_check_dispatch_dedup_treats_merged_pr_as_duplicate
 
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"

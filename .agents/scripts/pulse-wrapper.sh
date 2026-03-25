@@ -2974,25 +2974,47 @@ has_worker_for_repo_issue() {
 
 	local repo_path
 	repo_path=$(get_repo_path_by_slug "$repo_slug")
-	if [[ -z "$repo_path" ]]; then
-		return 1
+
+	local worker_lines
+	worker_lines=$(list_active_worker_processes) || worker_lines=""
+
+	# Primary match: repo path + issue number in command line.
+	# Requires get_repo_path_by_slug to return a non-empty path.
+	if [[ -n "$repo_path" ]]; then
+		local matches
+		matches=$(printf '%s\n' "$worker_lines" | awk -v issue="$issue_number" -v path="$repo_path" '
+			BEGIN {
+				esc = path
+				gsub(/[][(){}.^$*+?|\\]/, "\\\\&", esc)
+			}
+			$0 ~ ("--dir[[:space:]]+" esc "([[:space:]]|$)") &&
+			($0 ~ ("issue-" issue "([^0-9]|$)") || $0 ~ ("Issue #" issue "([^0-9]|$)")) { count++ }
+			END { print count + 0 }
+		') || matches=0
+		[[ "$matches" =~ ^[0-9]+$ ]] || matches=0
+		if [[ "$matches" -gt 0 ]]; then
+			return 0
+		fi
 	fi
 
-	local matches
-	matches=$(list_active_worker_processes | awk -v issue="$issue_number" -v path="$repo_path" '
-		BEGIN {
-			esc = path
-			gsub(/[][(){}.^$*+?|\\]/, "\\\\&", esc)
-		}
-		$0 ~ ("--dir[[:space:]]+" esc "([[:space:]]|$)") &&
-		($0 ~ ("issue-" issue "([^0-9]|$)") || $0 ~ ("Issue #" issue "([^0-9]|$)")) { count++ }
+	# Fallback: match by session-key alone (GH#6453).
+	# When get_repo_path_by_slug returns empty (slug not in repos.json,
+	# path mismatch, or repos.json unavailable), the primary match above
+	# always returns 0 matches — a false-negative that causes the backfill
+	# cycle to re-dispatch already-running workers.
+	# The session-key "issue-<number>" is always present in the command line
+	# of workers dispatched via headless-runtime-helper.sh run --session-key.
+	# This fallback catches those workers regardless of path resolution.
+	local sk_matches
+	sk_matches=$(printf '%s\n' "$worker_lines" | awk -v issue="$issue_number" '
+		$0 ~ ("--session-key[[:space:]]+issue-" issue "([^0-9]|$)") { count++ }
 		END { print count + 0 }
-	') || matches=0
-	[[ "$matches" =~ ^[0-9]+$ ]] || matches=0
-
-	if [[ "$matches" -gt 0 ]]; then
+	') || sk_matches=0
+	[[ "$sk_matches" =~ ^[0-9]+$ ]] || sk_matches=0
+	if [[ "$sk_matches" -gt 0 ]]; then
 		return 0
 	fi
+
 	return 1
 }
 
@@ -3755,6 +3777,14 @@ _compute_initial_underfill() {
 # If the LLM exited quickly (<5 min) and the pool is still underfilled
 # with runnable work, restart the pulse. Capped at PULSE_BACKFILL_MAX_ATTEMPTS.
 #
+# GH#6453: A grace-period wait is inserted before re-counting workers.
+# Workers dispatched by the LLM pulse take several seconds to appear in
+# list_active_worker_processes (sandbox-exec + opencode startup latency).
+# Without this wait, count_active_workers() returns the pre-dispatch count,
+# making the pool appear underfilled and triggering a second LLM pass that
+# re-dispatches the same issues — doubling compute cost and causing branch
+# conflicts. The wait duration is PULSE_LAUNCH_GRACE_SECONDS (default 20s).
+#
 # Arguments:
 #   $1 - initial pulse_duration in seconds
 #######################################
@@ -3771,6 +3801,18 @@ _run_early_exit_recycle_loop() {
 		if [[ -f "$STOP_FLAG" ]]; then
 			echo "[pulse-wrapper] Stop flag set — skipping early-exit recycle" >>"$LOGFILE"
 			break
+		fi
+
+		# GH#6453: Wait for newly-dispatched workers to appear in the process list
+		# before re-counting. Workers dispatched by the LLM pulse take
+		# PULSE_LAUNCH_GRACE_SECONDS to start (sandbox-exec + opencode startup).
+		# Counting immediately after the LLM exits produces a false-negative
+		# (workers running but not yet visible) that triggers duplicate dispatch.
+		local grace_wait="$PULSE_LAUNCH_GRACE_SECONDS"
+		[[ "$grace_wait" =~ ^[0-9]+$ ]] || grace_wait=20
+		if [[ "$grace_wait" -gt 0 ]]; then
+			echo "[pulse-wrapper] Early-exit recycle: waiting ${grace_wait}s for dispatched workers to appear (GH#6453)" >>"$LOGFILE"
+			sleep "$grace_wait"
 		fi
 
 		# Re-check worker state
