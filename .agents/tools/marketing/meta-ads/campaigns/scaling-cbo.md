@@ -4,234 +4,81 @@
 
 ---
 
-## Table of Contents
-1. [Purpose & Philosophy](#purpose--philosophy)
-2. [Moving Winners from Testing](#moving-winners-from-testing)
-3. [Broad Targeting in 2026](#broad-targeting-in-2026)
-4. [CBO Mastery](#cbo-mastery)
-5. [Scaling Methods](#scaling-methods)
-6. [Handling Performance Fluctuations](#handling-performance-fluctuations)
-7. [Advantage+ Shopping Campaigns](#advantage-shopping-campaigns)
-
----
-
 ## Purpose & Philosophy
 
-### Why CBO for Scaling?
+**Why CBO for Scaling?** ABO requires manual budget allocation; CBO lets Meta automatically allocate to best performers 24/7, faster than humans.
 
-**The Problem with ABO at Scale:**
-- You have to manually manage budget allocation
-- Winner ad sets need more budget → manual adjustment
-- Slow response to performance changes
-
-**CBO Solution:**
-- Meta automatically allocates budget to best performers
-- 24/7 optimization without your intervention
-- Faster reallocation than humans
-
-### The Scaling Mindset
-
-1. **Only proven winners enter** — No testing in scale
-2. **Trust the algorithm** — CBO knows where to spend
-3. **Scale gradually** — Big jumps reset learning
-4. **Protect what works** — Don't touch winning ads
+**Scaling Mindset:**
+1. Only proven winners enter — no testing in scale
+2. Trust the algorithm — CBO knows where to spend
+3. Scale gradually — big jumps reset learning
+4. Protect what works — don't touch winning ads
 
 ---
 
 ## Moving Winners from Testing
 
-### Criteria for Graduation
+### Graduation Criteria
 
-**Minimum Requirements:**
-- CPA at or below target for 3+ consecutive days
-- 50+ conversions (100+ preferred)
-- CTR above 0.8%
-- No declining trend
-
-**Ideal Winner Profile:**
-- CPA 20%+ below target
-- 100+ conversions
-- CTR above 1.5%
-- Stable or improving daily performance
+| Tier | CPA | Conversions | CTR |
+|------|-----|-------------|-----|
+| Minimum | At/below target, 3+ days | 50+ | >0.8% |
+| Ideal | 20%+ below target | 100+ | >1.5% |
 
 ### How to Move Ads
 
-**Method 1: Duplicate Ad Set (Recommended)**
-```
-1. Go to winning ad set in Testing campaign
-2. Click "Duplicate"
-3. Select "Existing Campaign" → Scale campaign
-4. Duplicate settings → Keep everything
-5. Turn ON in scale campaign
-6. Turn OFF in testing campaign (optional)
-```
+**Method 1: Duplicate Ad Set (Recommended)** — preserves optimization history and pixel learning.
+1. Go to winning ad set in Testing campaign → Duplicate
+2. Select "Existing Campaign" → Scale campaign
+3. Turn ON in scale, turn OFF in testing (optional)
 
-**Why Duplicate Ad Set:**
-- Preserves optimization history
-- Pixel learning transfers
-- Cleaner than recreating
+**Method 2: Duplicate Ad Only** — use when adding a variation to an existing scale ad set.
 
-**Method 2: Duplicate Ad Only**
-```
-1. Go to winning ad
-2. Click "Duplicate"  
-3. Select existing ad set in Scale campaign
-4. Add to existing winners
-```
-
-**Use When:**
-- Adding variation to existing scale ad set
-- Ad set structure different in scale
-
-### Duplicate vs Create New
-
-| Action | When to Use |
-|--------|-------------|
-| **Duplicate** | Always preferred — preserves learning |
-| **Create New** | Only if duplicate isn't working |
-
-### Post-Move Monitoring
-
-**First 48 Hours:**
-- Watch for delivery issues
-- Ensure ad is spending
-- Compare performance to testing
-
-**If Performance Drops:**
-- Give it 3-5 days (learning reset)
-- If still poor after 5 days, investigate
-- May need to duplicate fresh
+**Post-Move:** Watch for delivery issues first 48h. If performance drops, give it 3–5 days (learning reset). If still poor after 5 days, duplicate fresh.
 
 ---
 
 ## Broad Targeting in 2026
 
-### Why Broad Works
+Meta's AI outperforms manual targeting. Broad = let the algorithm find converters from millions of signals vs. your assumptions.
 
-**Meta's AI is Better Than Your Targeting**
-
-| What You Think | What Algorithm Does |
-|----------------|---------------------|
-| "Target 25-34 females interested in yoga" | Finds ALL people likely to convert |
-| Limited to your hypothesis | Tests millions of signals |
-| Based on assumptions | Based on conversion data |
-
-**Broad Targeting = Let the Algorithm Do Its Job**
-
-### When to Use Broad
-
-**Use Broad When:**
-- You have 50+ conversions/week
-- Pixel has good data
-- Creative is strong
-- You want to scale
-
-**Use Interests/Lookalikes When:**
-- Very niche B2B (tiny market)
-- Account is brand new
-- You have <50 conversions/week
-- You need to restrict (compliance/targeting)
-
-### Setting Up Broad Targeting
+**Use Broad when:** 50+ conversions/week, strong pixel data, strong creative, scaling.
+**Use Interests/Lookalikes when:** Very niche B2B, new account, <50 conversions/week, compliance restrictions.
 
 **Broad Setup:**
 ```
-Location: [Your target geography]
-Age: 18-65+ (or 25-65+ if product is adult-focused)
+Location: [Target geography]
+Age: 18-65+ (or 25-65+ for adult-focused products)
 Gender: All
 Detailed Targeting: NONE
 Advantage+ Audience: ON
 ```
 
-**What Advantage+ Audience Does:**
-Goes beyond your targeting to find additional converters. If you select some targeting, it uses that as a "suggestion" but expands.
+**Geo Tiers:**
+- Tier 1 (best): US, CA, UK, AU — start here
+- Tier 2 (test separately if Tier 1 saturates): Western Europe, Nordics
+- Never mix dramatically different geos in the same ad set
 
-### Geo Targeting Strategies
-
-**Tier 1 Countries (Best Performance):**
-- United States
-- Canada
-- United Kingdom
-- Australia
-
-**Tier 2 Countries (Good but Different):**
-- Western Europe (Germany, France, Netherlands)
-- Nordics (Sweden, Norway, Denmark)
-
-**Strategy:**
-- Start with Tier 1 only
-- Test Tier 2 separately if Tier 1 saturates
-- Never mix dramatically different geos in same ad set
-
-### Age/Gender Restrictions
-
-**Use Only When:**
-- Product is legally restricted
-- Very clear gender/age skew in buyers
-- Policy requires it
-
-**Example:**
-- Alcohol → 21+ (legal requirement)
-- Menstrual products → Female only (logical)
-- General software → No restrictions (let algorithm decide)
+**Age/Gender restrictions:** Only when legally required or very clear buyer skew (e.g., alcohol → 21+, menstrual products → female).
 
 ---
 
 ## CBO Mastery
 
-### How CBO Distributes Budget
+### Budget Distribution
 
-```
-Campaign Budget: $1,000/day
+CBO evaluates hourly and reallocates. Example at $1,000/day:
+- Ad Set A: $20 CPA → gets $500
+- Ad Set B: $30 CPA → gets $300
+- Ad Set C: $50 CPA → gets $200
 
-Meta evaluates hourly:
-- Ad Set A: Converting at $20 CPA → Gets $500
-- Ad Set B: Converting at $30 CPA → Gets $300  
-- Ad Set C: Converting at $50 CPA → Gets $200
+**Minimum budget formula:** `Target CPA × 10` per ad set. With 3 ad sets at $30 CPA target → campaign budget should be $900+.
 
-Next hour might shift based on real-time performance
-```
-
-### Minimum Spend Per Ad Set
-
-**CBO Minimum Budget Rule:**
-Each ad set must have minimum budget to be viable.
-
-**Formula:**
-```
-Minimum per ad set = Target CPA × 10
-```
-
-**Example:**
-- Target CPA: $30
-- Minimum per ad set: $300
-- With 3 ad sets: Campaign budget should be $900+
-
-### Ad Set Spend Limits
-
-**Set Minimum Spend Per Ad Set:**
-Force CBO to give each ad set a fair chance.
-
-**How to Set:**
-1. Ad Set → Edit
-2. Spending limits → Set minimum
-3. Minimum = Target CPA × 3-5
-
-**Example:**
-```
-Target CPA: $30
-Minimum spend limit: $100/day
-This ensures each ad set gets at least $100 to optimize
-```
-
-**When to Use:**
-- New ad sets competing with established ones
-- Testing new audiences in scale
-- Ensuring winner diversity
+**Minimum Spend Limits** (force CBO to give new ad sets a fair chance):
+- Set minimum = `Target CPA × 3–5`
+- Use when: new ad sets competing with established ones, testing new audiences in scale
 
 ### When CBO Fails
-
-**CBO Underperforms When:**
 
 | Symptom | Cause | Fix |
 |---------|-------|-----|
@@ -246,70 +93,24 @@ This ensures each ad set gets at least $100 to optimize
 
 ### Vertical Scaling (Budget Increases)
 
-**What It Is:**
-Increasing budget on existing campaigns.
-
-**The 20% Rule:**
-Traditional advice: Don't increase more than 20% per day.
-
-**Is 20% Still Valid in 2026?**
-It depends:
+**20% Rule** — still valid in 2026 depending on situation:
 
 | Situation | Can Exceed 20%? |
 |-----------|-----------------|
-| Learning complete, CPA stable | Yes, can go 30-50% |
-| CPA significantly below target | Yes, can go 50%+ |
+| Learning complete, CPA stable | Yes, 30–50% |
+| CPA significantly below target | Yes, 50%+ |
 | Learning phase | No, stay conservative |
 | CPA near target | No, stay at 20% |
 
-**Conservative Scaling:**
-```
-Day 1: $100
-Day 3: $120 (+20%)
-Day 5: $144 (+20%)
-Day 7: $173 (+20%)
-Day 9: $207 (+20%)
-Day 11: $249 (+20%)
-```
+**Budget increase timing:** Morning (12:00–1:00 AM). Avoid mid-day increases.
 
-**Aggressive Scaling (When CPA Way Below Target):**
-```
-Day 1: $100 (CPA: $15, target: $30)
-Day 2: $200 (+100%)
-Day 3: $200 (monitor)
-Day 4: $400 (+100%) if CPA still good
-```
-
-**Budget Increase Timing:**
-- Morning (12:00-1:00 AM) — Start of new day
-- Avoid middle of day increases
+**Conservative:** $100 → $120 → $144 → $173 → $207 → $249 (every 2 days)
+**Aggressive (CPA way below target):** $100 → $200 → monitor → $400 if CPA still good
 
 ### Horizontal Scaling (Duplication)
 
-**What It Is:**
-Creating duplicate ad sets with variations.
+Use when vertical scaling hits limits or to spread risk. Change ONE thing per duplicate:
 
-**When to Duplicate:**
-- Vertical scaling hitting limits
-- Want to test audience variations
-- Want to spread risk
-
-**How to Duplicate:**
-```
-1. Duplicate winning ad set
-2. Change ONE thing:
-   - Different age bracket
-   - Different geo
-   - Different lookalike %
-3. Start at original budget
-4. Let compete with original
-```
-
-**How Many Duplicates:**
-- Start with 2-3
-- Don't exceed 5-6 similar ad sets (internal competition)
-
-**Audience Variations to Test:**
 ```
 Original: Broad US, 25-65
 Duplicate 1: Broad US, 25-45
@@ -318,79 +119,35 @@ Duplicate 3: Broad CA/UK/AU
 Duplicate 4: 1% Lookalike
 ```
 
-### Scaling with New Creatives
+Limit: 2–3 duplicates to start; don't exceed 5–6 similar ad sets (internal competition).
 
-**The Safest Scale Method:**
-Add new proven creative to existing scale campaign.
+### Scaling with New Creatives (Safest Method)
 
-**Process:**
 1. Test new creative in ABO testing campaign
 2. Find winner
-3. Add to existing winning ad set in scale
-4. Budget stays same, creative variety increases
+3. Add to existing winning ad set in scale (budget stays same, creative variety increases)
 
-**Benefits:**
-- No learning phase reset
-- Creative diversity fights fatigue
-- Algorithm finds best performer
+No learning phase reset, creative diversity fights fatigue, algorithm finds best performer.
 
 ### The Scaling Sequence
 
-**Phase 1: Vertical First**
-```
-Start: $200/day
-Week 1: Scale to $300-400/day
-Week 2: Scale to $500-600/day
-Watch: CPA stability
-```
-
-**Phase 2: Horizontal When Needed**
-```
-If CPA rises at $600/day:
-- Don't push to $800
-- Duplicate ad set instead
-- 2 ad sets × $400 = $800 with better stability
-```
-
-**Phase 3: New Creative Always**
-```
-Continuously:
-- Test new creative in ABO
-- Add winners to scale
-- Retire fatigued creative
-```
+- **Phase 1 (Vertical):** $200 → $300–400 (week 1) → $500–600 (week 2), watch CPA stability
+- **Phase 2 (Horizontal):** If CPA rises at $600, duplicate instead of pushing to $800 (2 × $400 = better stability)
+- **Phase 3 (Creative):** Continuously test in ABO, add winners to scale, retire fatigued creative
 
 ---
 
 ## Handling Performance Fluctuations
 
-### CPM Spikes
+### Diagnostic Process
 
-**Common Causes:**
-- Increased competition (Black Friday, holidays)
-- Audience saturation
-- Quality score drop
-- Policy issues
-
-**Solutions:**
-| Cause | Fix |
-|-------|-----|
-| Competition | Wait it out or adjust targets |
-| Saturation | Broaden audience |
-| Quality drop | Check ad relevance diagnostics |
-| Policy | Review ads for violations |
-
-### Performance Drops
-
-**Diagnostic Process:**
 ```
-1. Is CPM up? → Competition or quality issue
-2. Is CTR down? → Creative fatigue
-3. Is CVR down? → Landing page or offer issue
+1. Is CPM up?        → Competition or quality issue
+2. Is CTR down?      → Creative fatigue
+3. Is CVR down?      → Landing page or offer issue
 4. Is frequency high? → Audience saturation
 ```
 
-**Troubleshooting Table:**
 | Symptom | Likely Cause | Action |
 |---------|--------------|--------|
 | Sudden CPA spike | Algorithm reset or competition | Wait 48h, then act |
@@ -401,174 +158,73 @@ Continuously:
 
 ### Creative Fatigue Signals
 
-**Signs of Fatigue:**
-- CTR declining week-over-week
-- Frequency above 2.5-3.0
-- CPA increasing while CPM stable
-- Same creative running 3+ weeks
+CTR declining week-over-week, frequency >2.5–3.0, CPA increasing while CPM stable, same creative running 3+ weeks.
 
-**Solutions:**
-1. Add new creative to ad set
-2. Pause fatigued ads
-3. Create iterations of winning concept
-4. Test completely new concepts
-
-### When to Refresh vs Kill
-
-**Refresh (Keep the Ad Set):**
-- Ad set has good history
-- Only 1-2 ads fatigued
-- Other ads still performing
-- Just add new creative
-
-**Kill (Pause Entire Ad Set):**
-- All ads fatigued
-- Audience exhausted
-- CPA 50%+ above target sustained
-- Start fresh with new ad set
+**Refresh (keep ad set):** Only 1–2 ads fatigued, others still performing — add new creative.
+**Kill (pause ad set):** All ads fatigued, audience exhausted, CPA 50%+ above target sustained.
 
 ### Seasonal Adjustments
 
-**High Competition Periods:**
-- Q4 (Oct-Dec) — Holiday shopping
-- Black Friday/Cyber Monday — Peak competition
-- January — Post-holiday slump
-- Summer — Variable by industry
-
-**Adjustment Strategy:**
 | Period | CPM Expectation | Action |
 |--------|-----------------|--------|
-| Q4 | +30-100% | Increase CPA targets or scale back |
-| Black Friday | +100-200% | Only run if ROAS covers |
-| January | -20-30% | Good time to scale |
+| Q4 (Oct–Dec) | +30–100% | Increase CPA targets or scale back |
+| Black Friday | +100–200% | Only run if ROAS covers |
+| January | -20–30% | Good time to scale |
 | Summer | Variable | Test aggressively |
 
 ---
 
-## Advantage+ Shopping Campaigns
+## Advantage+ Shopping Campaigns (ASC)
 
-### What Is ASC?
+Fully automated: Meta controls targeting, tests creative combinations, handles prospecting + retargeting.
 
-Fully automated shopping campaign type:
-- Meta controls all targeting
-- AI tests creative combinations
-- Automatic prospecting + retargeting
-- Minimal inputs required
+**Use ASC when:** Ecommerce with catalog, 50+ purchases/week, 10+ creative variations, want simplicity.
+**Use Manual when:** B2B/lead gen, specific targeting required, low conversion volume, testing creative.
 
-### How ASC Works
+**Setup:**
+- Existing Customer Budget Cap: 0–20% (0% = prospecting only, 10–20% = balanced)
+- Creative: minimum 5 ads, ideal 10+, mix of formats (video, static, carousel, dynamic product)
+- Country: one ASC per country recommended
 
-```
-You Provide:
-├── Creative assets (images, videos)
-├── Product catalog (for ecom)
-├── Budget
-├── Country targeting
-└── Existing customer budget cap
+**What you control:** Creative on/off, existing customer cap, budget, country.
+**What Meta controls:** Detailed targeting, placements, bid strategy.
 
-Meta Handles:
-├── Audience targeting
-├── Creative testing
-├── Placement optimization
-├── Budget distribution
-└── Bid optimization
-```
-
-### When to Use ASC vs Manual
-
-**Use ASC When:**
-- Ecommerce with catalog
-- 50+ purchases/week
-- Strong creative library (10+ variations)
-- You want simplicity
-
-**Use Manual When:**
-- B2B/lead gen (ASC is for shopping)
-- Very specific targeting required
-- Low conversion volume
-- Testing creative (want control)
-
-### ASC Setup Best Practices
-
-**Existing Customer Budget Cap:**
-- Set to 0-20% to focus on new customers
-- If you want only prospecting, set 0%
-- If you want balanced, set 10-20%
-
-**Creative Requirements:**
-- Minimum 5 ads, ideal 10+
-- Mix of formats (video, static, carousel)
-- Various angles and hooks
-- Dynamic product ads included
-
-**Country Targeting:**
-- ASC operates at country level
-- One ASC per country recommended
-- Or group similar countries
-
-### ASC Optimization
-
-**What You Can Control:**
-- Creative on/off
-- Existing customer cap
-- Budget
-- Country
-
-**What You Can't Control:**
-- Detailed targeting
-- Placements
-- Bid strategy
-
-**Optimization Levers:**
-1. Add/remove creative
-2. Adjust existing customer cap
-3. Adjust budget
-4. Test different countries
-
-### ASC vs Manual Performance
-
-**Typical Results:**
 | Metric | ASC | Manual |
 |--------|-----|--------|
-| CPA | Often 10-20% lower | Baseline |
+| CPA | Often 10–20% lower | Baseline |
 | Scale potential | High | Medium |
 | Control | Low | High |
 | Setup time | Minutes | Hours |
-
-**When Manual Beats ASC:**
-- Very niche audiences
-- Specific retargeting sequences
-- Limited creative assets
-- When ASC isn't hitting targets
 
 ---
 
 ## Scale Campaign Checklist
 
-### Before Scaling:
+**Before Scaling:**
 - [ ] Winner has 50+ conversions in testing
 - [ ] CPA at or below target for 3+ days
 - [ ] Creative shows no fatigue
 - [ ] Landing page is stable
 
-### Adding to Scale:
+**Adding to Scale:**
 - [ ] Duplicate (don't recreate) ad set
 - [ ] Same audience settings as testing
 - [ ] Start at testing budget level
 - [ ] Set minimum spend limits if CBO
 
-### During Scale:
+**During Scale:**
 - [ ] Monitor daily for first week
 - [ ] Track CPA trend, not single days
 - [ ] Scale gradually (20% rule)
 - [ ] Add new creative before fatigue
 
-### Warning Signs:
+**Warning Signs:**
 - [ ] CPA rising 20%+ sustained
 - [ ] Frequency above 3.0
 - [ ] CTR declining week-over-week
 - [ ] CPM spiking without competition reason
 
-### Scale Limits:
+**Scale Limits:**
 - [ ] Know your daily/monthly max budget
 - [ ] Don't scale into loss territory
 - [ ] Have new creative pipeline ready
