@@ -777,10 +777,8 @@ cmd_usage() {
 	return 0
 }
 
-cmd_help() {
-	cat <<'HELP'
-runway-helper.sh - Runway API CLI for video, image, and audio generation
-
+_help_commands() {
+	cat <<'COMMANDS'
 COMMANDS:
   video     Generate video from image, text, or video
   image     Generate image from text with optional references
@@ -795,7 +793,12 @@ COMMANDS:
   credits   Check credit balance
   usage     Query credit usage history
   help      Show this help
+COMMANDS
+	return 0
+}
 
+_help_options() {
+	cat <<'OPTIONS'
 VIDEO OPTIONS:
   --image, -i URL     Source image URL (image-to-video)
   --video, -v URL     Source video URL (video-to-video, uses gen4_aleph)
@@ -850,7 +853,12 @@ ISOLATE OPTIONS:
 USAGE OPTIONS:
   --start DATE        Start date (YYYY-MM-DD)
   --end DATE          End date (YYYY-MM-DD)
+OPTIONS
+	return 0
+}
 
+_help_examples() {
+	cat <<'EXAMPLES'
 EXAMPLES:
   # Image-to-video with Gen-4 Turbo
   runway-helper.sh video -i https://example.com/photo.jpg \
@@ -901,7 +909,18 @@ VOICE PRESETS:
 DUBBING LANGUAGES:
   en, hi, pt, zh, es, fr, de, ja, ar, ru, ko, id, it, nl, tr, pl, sv,
   fil, ms, ro, uk, el, cs, da, fi, bg, hr, sk, ta
-HELP
+EXAMPLES
+	return 0
+}
+
+cmd_help() {
+	echo "runway-helper.sh - Runway API CLI for video, image, and audio generation"
+	echo ""
+	_help_commands
+	echo ""
+	_help_options
+	echo ""
+	_help_examples
 	return 0
 }
 
