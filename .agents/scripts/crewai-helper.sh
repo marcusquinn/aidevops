@@ -33,131 +33,131 @@ LOCALHOST_HELPER="$SCRIPTS_DIR/localhost-helper.sh"
 # Port management integration with localhost-helper.sh
 # Returns available port (original if free, or next available)
 get_available_port() {
-    local desired_port="$1"
-    
-    # Use localhost-helper.sh if available
-    if [[ -x "$LOCALHOST_HELPER" ]]; then
-        if "$LOCALHOST_HELPER" check-port "$desired_port" >/dev/null 2>&1; then
-            echo "$desired_port"
-            return 0
-        else
-            # Port in use, find alternative
-            local suggested
-            suggested=$("$LOCALHOST_HELPER" find-port "$((desired_port + 1))" 2>/dev/null)
-            if [[ -n "$suggested" ]]; then
-                print_warning "Port $desired_port in use, using $suggested instead"
-                echo "$suggested"
-                return 0
-            fi
-        fi
-    fi
-    
-    # Fallback: basic port check using lsof
-    if ! lsof -i :"$desired_port" >/dev/null 2>&1; then
-        echo "$desired_port"
-        return 0
-    fi
-    
-    # Find next available port
-    local port="$desired_port"
-    while lsof -i :"$port" >/dev/null 2>&1 && [[ $port -lt 65535 ]]; do
-        ((++port))
-    done
-    
-    if [[ $port -lt 65535 ]]; then
-        print_warning "Port $desired_port in use, using $port instead"
-        echo "$port"
-        return 0
-    fi
-    
-    print_error "No available ports found"
-    return 1
+	local desired_port="$1"
+
+	# Use localhost-helper.sh if available
+	if [[ -x "$LOCALHOST_HELPER" ]]; then
+		if "$LOCALHOST_HELPER" check-port "$desired_port" >/dev/null 2>&1; then
+			echo "$desired_port"
+			return 0
+		else
+			# Port in use, find alternative
+			local suggested
+			suggested=$("$LOCALHOST_HELPER" find-port "$((desired_port + 1))" 2>/dev/null)
+			if [[ -n "$suggested" ]]; then
+				print_warning "Port $desired_port in use, using $suggested instead"
+				echo "$suggested"
+				return 0
+			fi
+		fi
+	fi
+
+	# Fallback: basic port check using lsof
+	if ! lsof -i :"$desired_port" >/dev/null 2>&1; then
+		echo "$desired_port"
+		return 0
+	fi
+
+	# Find next available port
+	local port="$desired_port"
+	while lsof -i :"$port" >/dev/null 2>&1 && [[ $port -lt 65535 ]]; do
+		((++port))
+	done
+
+	if [[ $port -lt 65535 ]]; then
+		print_warning "Port $desired_port in use, using $port instead"
+		echo "$port"
+		return 0
+	fi
+
+	print_error "No available ports found"
+	return 1
 }
 
 # Check prerequisites
 check_prerequisites() {
-    local missing=0
-    
-    print_info "Checking prerequisites..."
-    
-    # Check Python
-    if command -v python3 &> /dev/null; then
-        local python_version
-        python_version=$(python3 --version 2>&1 | cut -d' ' -f2)
-        local major minor
-        major=$(echo "$python_version" | cut -d. -f1)
-        minor=$(echo "$python_version" | cut -d. -f2)
-        
-        if [[ $major -ge 3 ]] && [[ $minor -ge 10 ]]; then
-            print_success "Python $python_version found (3.10+ required)"
-        else
-            print_error "Python 3.10+ required, found $python_version"
-            missing=1
-        fi
-    else
-        print_error "Python 3 not found"
-        missing=1
-    fi
-    
-    # Check pip
-    if command -v pip3 &> /dev/null || python3 -m pip --version &> /dev/null; then
-        print_success "pip found"
-    else
-        print_error "pip not found"
-        missing=1
-    fi
-    
-    # Check for uv (preferred)
-    if command -v uv &> /dev/null; then
-        print_success "uv found (preferred package manager)"
-    else
-        print_warning "uv not found, will use pip"
-    fi
-    
-    if [[ $missing -eq 1 ]]; then
-        print_error "Missing prerequisites. Please install them first."
-        return 1
-    fi
-    
-    print_success "All prerequisites met"
-    return 0
+	local missing=0
+
+	print_info "Checking prerequisites..."
+
+	# Check Python
+	if command -v python3 &>/dev/null; then
+		local python_version
+		python_version=$(python3 --version 2>&1 | cut -d' ' -f2)
+		local major minor
+		major=$(echo "$python_version" | cut -d. -f1)
+		minor=$(echo "$python_version" | cut -d. -f2)
+
+		if [[ $major -ge 3 ]] && [[ $minor -ge 10 ]]; then
+			print_success "Python $python_version found (3.10+ required)"
+		else
+			print_error "Python 3.10+ required, found $python_version"
+			missing=1
+		fi
+	else
+		print_error "Python 3 not found"
+		missing=1
+	fi
+
+	# Check pip
+	if command -v pip3 &>/dev/null || python3 -m pip --version &>/dev/null; then
+		print_success "pip found"
+	else
+		print_error "pip not found"
+		missing=1
+	fi
+
+	# Check for uv (preferred)
+	if command -v uv &>/dev/null; then
+		print_success "uv found (preferred package manager)"
+	else
+		print_warning "uv not found, will use pip"
+	fi
+
+	if [[ $missing -eq 1 ]]; then
+		print_error "Missing prerequisites. Please install them first."
+		return 1
+	fi
+
+	print_success "All prerequisites met"
+	return 0
 }
 
 # Setup CrewAI
 setup_crewai() {
-    print_info "Setting up CrewAI..."
-    
-    # Create directories
-    mkdir -p "$CREWAI_DIR"
-    mkdir -p "$SCRIPTS_DIR"
-    
-    cd "$CREWAI_DIR" || exit 1
-    
-    # Create virtual environment
-    if [[ ! -d "venv" ]]; then
-        print_info "Creating virtual environment..."
-        python3 -m venv venv
-    fi
-    
-    # Activate venv
-    # shellcheck source=/dev/null
-    source venv/bin/activate
-    
-    # Install CrewAI
-    print_info "Installing CrewAI..."
-    if command -v uv &> /dev/null; then
-        uv pip install crewai -U
-        uv pip install 'crewai[tools]' -U
-        uv pip install streamlit -U
-    else
-        pip install crewai -U
-        pip install 'crewai[tools]' -U
-        pip install streamlit -U
-    fi
-    
-    # Create environment template
-    if [[ ! -f ".env.example" ]]; then
-        cat > .env.example << 'EOF'
+	print_info "Setting up CrewAI..."
+
+	# Create directories
+	mkdir -p "$CREWAI_DIR"
+	mkdir -p "$SCRIPTS_DIR"
+
+	cd "$CREWAI_DIR" || exit 1
+
+	# Create virtual environment
+	if [[ ! -d "venv" ]]; then
+		print_info "Creating virtual environment..."
+		python3 -m venv venv
+	fi
+
+	# Activate venv
+	# shellcheck source=/dev/null
+	source venv/bin/activate
+
+	# Install CrewAI
+	print_info "Installing CrewAI..."
+	if command -v uv &>/dev/null; then
+		uv pip install crewai -U
+		uv pip install 'crewai[tools]' -U
+		uv pip install streamlit -U
+	else
+		pip install crewai -U
+		pip install 'crewai[tools]' -U
+		pip install streamlit -U
+	fi
+
+	# Create environment template
+	if [[ ! -f ".env.example" ]]; then
+		cat >.env.example <<'EOF'
 # CrewAI Configuration for AI DevOps Framework
 # Copy this file to .env and configure your API keys
 
@@ -185,32 +185,30 @@ CREWAI_STUDIO_PORT=8501
 # Security Note: All processing runs locally
 # No data is sent to external services unless you configure external LLMs
 EOF
-        print_success "Created environment template"
-    fi
-    
-    # Copy template to .env if not exists
-    if [[ ! -f ".env" ]]; then
-        cp .env.example .env
-        print_info "Created .env file - please configure your API keys"
-    fi
-    
-    # Create a simple studio app
-    create_studio_app
-    
-    # Create management scripts
-    create_management_scripts
-    
-    print_success "CrewAI setup complete"
-    print_info "Directory: $CREWAI_DIR"
-    print_info "Configure your API keys in .env file"
-    return 0
+		print_success "Created environment template"
+	fi
+
+	# Copy template to .env if not exists
+	if [[ ! -f ".env" ]]; then
+		cp .env.example .env
+		print_info "Created .env file - please configure your API keys"
+	fi
+
+	# Create a simple studio app
+	create_studio_app
+
+	# Create management scripts
+	create_management_scripts
+
+	print_success "CrewAI setup complete"
+	print_info "Directory: $CREWAI_DIR"
+	print_info "Configure your API keys in .env file"
+	return 0
 }
 
-# Create a simple CrewAI Studio app
-create_studio_app() {
-    print_info "Creating CrewAI Studio app..."
-    
-    cat > "$CREWAI_DIR/studio_app.py" << 'STUDIOEOF'
+# Write the studio app header, sidebar, and tab scaffolding
+_write_studio_app_header() {
+	cat <<'HEADEREOF'
 """
 CrewAI Studio - Simple Streamlit Interface
 AI DevOps Framework Integration
@@ -249,70 +247,81 @@ model = st.sidebar.selectbox(
 
 # Main content
 tab1, tab2, tab3 = st.tabs(["Quick Crew", "Custom Crew", "Documentation"])
+HEADEREOF
+	return 0
+}
+
+# Write the Quick Crew tab content
+_write_studio_app_quick_crew_tab() {
+	cat <<'QUICKEOF'
 
 with tab1:
     st.header("Quick Crew Builder")
-    
+
     topic = st.text_input("Research Topic", placeholder="Enter a topic to research...")
-    
+
     col1, col2 = st.columns(2)
     with col1:
         num_agents = st.slider("Number of Agents", 1, 5, 2)
     with col2:
         process_type = st.selectbox("Process Type", ["sequential", "hierarchical"])
-    
+
     if st.button("Run Crew", type="primary"):
         if topic:
             with st.spinner("Running crew..."):
                 try:
                     from crewai import Agent, Crew, Task, Process
-                    
-                    # Create agents
+
                     researcher = Agent(
                         role="Senior Researcher",
                         goal=f"Research {topic} thoroughly",
                         backstory="Expert researcher with deep knowledge.",
                         verbose=True
                     )
-                    
+
                     writer = Agent(
                         role="Content Writer",
                         goal="Create engaging content",
                         backstory="Skilled writer who makes complex topics accessible.",
                         verbose=True
                     )
-                    
-                    # Create tasks
+
                     research_task = Task(
                         description=f"Research the topic: {topic}",
                         expected_output="Comprehensive research summary",
                         agent=researcher
                     )
-                    
+
                     writing_task = Task(
                         description="Write a report based on the research",
                         expected_output="Well-written report in markdown",
                         agent=writer
                     )
-                    
-                    # Create crew
+
                     crew = Crew(
                         agents=[researcher, writer],
                         tasks=[research_task, writing_task],
                         process=Process.sequential if process_type == "sequential" else Process.hierarchical,
                         verbose=True
                     )
-                    
+
                     result = crew.kickoff()
-                    
+
                     st.success("Crew completed!")
                     st.markdown("### Result")
                     st.markdown(str(result))
-                    
+
                 except Exception as e:
                     st.error(f"Error: {str(e)}")
         else:
             st.warning("Please enter a topic")
+QUICKEOF
+	return 0
+}
+
+# Write the Custom Crew and Documentation tabs plus footer
+_write_studio_app_remaining_tabs() {
+	cat <<'TABSEOF'
 
 with tab2:
     st.header("Custom Crew Configuration")
@@ -339,19 +348,19 @@ with tab3:
     - [CrewAI Documentation](https://docs.crewai.com)
     - [CrewAI GitHub](https://github.com/crewAIInc/crewAI)
     - [CrewAI Examples](https://github.com/crewAIInc/crewAI-examples)
-    
+
     ### Key Concepts
-    
+
     **Agents**: AI entities with roles, goals, and backstories
-    
+
     **Tasks**: Specific assignments with descriptions and expected outputs
-    
+
     **Crews**: Teams of agents working together on tasks
-    
+
     **Flows**: Event-driven workflows for complex orchestration
-    
+
     ### Process Types
-    
+
     - **Sequential**: Tasks executed one after another
     - **Hierarchical**: Manager agent delegates to workers
     """)
@@ -359,20 +368,27 @@ with tab3:
 # Footer
 st.markdown("---")
 st.markdown("*Part of the [AI DevOps Framework](https://github.com/marcusquinn/aidevops)*")
-STUDIOEOF
-    
-    print_success "Created CrewAI Studio app"
-    return 0
+TABSEOF
+	return 0
 }
 
-# Create management scripts
-create_management_scripts() {
-    print_info "Creating management scripts..."
-    
-    mkdir -p "$SCRIPTS_DIR"
-    
-    # Create start script
-    cat > "$SCRIPTS_DIR/start-crewai-studio.sh" << 'EOF'
+# Create a simple CrewAI Studio app
+create_studio_app() {
+	print_info "Creating CrewAI Studio app..."
+
+	{
+		_write_studio_app_header
+		_write_studio_app_quick_crew_tab
+		_write_studio_app_remaining_tabs
+	} >"$CREWAI_DIR/studio_app.py"
+
+	print_success "Created CrewAI Studio app"
+	return 0
+}
+
+# Write the start-crewai-studio.sh management script
+_write_start_script() {
+	cat >"$SCRIPTS_DIR/start-crewai-studio.sh" <<'EOF'
 #!/bin/bash
 # AI DevOps Framework - CrewAI Studio Startup Script
 
@@ -406,25 +422,17 @@ fi
 
 if [[ -f "$CREWAI_DIR/studio_app.py" ]]; then
     cd "$CREWAI_DIR" || exit 1
-    
-    # Activate venv
     source venv/bin/activate
-    
-    # Load environment
     if [[ -f .env ]]; then
         set -a
         source .env
         set +a
     fi
-    
-    # Start Streamlit with available port
     streamlit run studio_app.py --server.port "$DESIRED_PORT" --server.headless true &
     STUDIO_PID=$!
     echo "$STUDIO_PID" > /tmp/crewai_studio_pid
     echo "$DESIRED_PORT" > /tmp/crewai_studio_port
-    
     sleep 3
-    
     echo ""
     echo "CrewAI Studio started!"
     echo "URL: http://localhost:$DESIRED_PORT"
@@ -436,10 +444,13 @@ else
     exit 1
 fi
 EOF
-    chmod +x "$SCRIPTS_DIR/start-crewai-studio.sh"
-    
-    # Create stop script
-    cat > "$SCRIPTS_DIR/stop-crewai-studio.sh" << 'EOF'
+	chmod +x "$SCRIPTS_DIR/start-crewai-studio.sh"
+	return 0
+}
+
+# Write the stop-crewai-studio.sh management script
+_write_stop_script() {
+	cat >"$SCRIPTS_DIR/stop-crewai-studio.sh" <<'EOF'
 #!/bin/bash
 # AI DevOps Framework - CrewAI Studio Stop Script
 
@@ -459,10 +470,13 @@ pkill -f "streamlit run studio_app.py" 2>/dev/null || true
 
 echo "CrewAI Studio stopped"
 EOF
-    chmod +x "$SCRIPTS_DIR/stop-crewai-studio.sh"
-    
-    # Create status script
-    cat > "$SCRIPTS_DIR/crewai-status.sh" << 'EOF'
+	chmod +x "$SCRIPTS_DIR/stop-crewai-studio.sh"
+	return 0
+}
+
+# Write the crewai-status.sh management script
+_write_status_script() {
+	cat >"$SCRIPTS_DIR/crewai-status.sh" <<'EOF'
 #!/bin/bash
 # AI DevOps Framework - CrewAI Status Script
 
@@ -497,165 +511,174 @@ else
     echo "CrewAI CLI not in PATH (activate venv first)"
 fi
 EOF
-    chmod +x "$SCRIPTS_DIR/crewai-status.sh"
-    
-    print_success "Management scripts created in $SCRIPTS_DIR"
-    return 0
+	chmod +x "$SCRIPTS_DIR/crewai-status.sh"
+	return 0
+}
+
+# Create management scripts
+create_management_scripts() {
+	print_info "Creating management scripts..."
+	mkdir -p "$SCRIPTS_DIR"
+	_write_start_script
+	_write_stop_script
+	_write_status_script
+	print_success "Management scripts created in $SCRIPTS_DIR"
+	return 0
 }
 
 # Create a new crew project
 create_crew() {
-    local project_name="${1:-my-crew}"
-    
-    print_info "Creating new crew project: $project_name"
-    
-    if [[ ! -d "$CREWAI_DIR/venv" ]]; then
-        print_error "CrewAI not set up. Run 'setup' first."
-        return 1
-    fi
-    
-    cd "$CREWAI_DIR" || exit 1
-    # shellcheck source=/dev/null
-    source venv/bin/activate
-    
-    crewai create crew "$project_name"
-    
-    print_success "Created crew project: $project_name"
-    print_info "Next steps:"
-    echo "  cd $CREWAI_DIR/$project_name"
-    echo "  crewai install"
-    echo "  crewai run"
-    
-    return 0
+	local project_name="${1:-my-crew}"
+
+	print_info "Creating new crew project: $project_name"
+
+	if [[ ! -d "$CREWAI_DIR/venv" ]]; then
+		print_error "CrewAI not set up. Run 'setup' first."
+		return 1
+	fi
+
+	cd "$CREWAI_DIR" || exit 1
+	# shellcheck source=/dev/null
+	source venv/bin/activate
+
+	crewai create crew "$project_name"
+
+	print_success "Created crew project: $project_name"
+	print_info "Next steps:"
+	echo "  cd $CREWAI_DIR/$project_name"
+	echo "  crewai install"
+	echo "  crewai run"
+
+	return 0
 }
 
 # Run a crew
 run_crew() {
-    local project_dir="${1:-.}"
-    
-    if [[ ! -d "$CREWAI_DIR/venv" ]]; then
-        print_error "CrewAI not set up. Run 'setup' first."
-        return 1
-    fi
-    
-    # shellcheck source=/dev/null
-    source "$CREWAI_DIR/venv/bin/activate"
-    
-    cd "$project_dir" || exit 1
-    
-    if [[ -f "pyproject.toml" ]]; then
-        crewai run
-    else
-        print_error "Not a CrewAI project directory (no pyproject.toml found)"
-        return 1
-    fi
-    
-    return 0
+	local project_dir="${1:-.}"
+
+	if [[ ! -d "$CREWAI_DIR/venv" ]]; then
+		print_error "CrewAI not set up. Run 'setup' first."
+		return 1
+	fi
+
+	# shellcheck source=/dev/null
+	source "$CREWAI_DIR/venv/bin/activate"
+
+	cd "$project_dir" || exit 1
+
+	if [[ -f "pyproject.toml" ]]; then
+		crewai run
+	else
+		print_error "Not a CrewAI project directory (no pyproject.toml found)"
+		return 1
+	fi
+
+	return 0
 }
 
 # Start CrewAI Studio
 start_studio() {
-    if [[ -f "$SCRIPTS_DIR/start-crewai-studio.sh" ]]; then
-        "$SCRIPTS_DIR/start-crewai-studio.sh"
-    else
-        print_error "CrewAI not set up. Run 'setup' first."
-        return 1
-    fi
-    return 0
+	if [[ -f "$SCRIPTS_DIR/start-crewai-studio.sh" ]]; then
+		"$SCRIPTS_DIR/start-crewai-studio.sh"
+	else
+		print_error "CrewAI not set up. Run 'setup' first."
+		return 1
+	fi
+	return 0
 }
 
 # Stop CrewAI Studio
 stop_studio() {
-    if [[ -f "$SCRIPTS_DIR/stop-crewai-studio.sh" ]]; then
-        "$SCRIPTS_DIR/stop-crewai-studio.sh"
-    else
-        pkill -f "streamlit run studio_app.py" 2>/dev/null || true
-    fi
-    return 0
+	if [[ -f "$SCRIPTS_DIR/stop-crewai-studio.sh" ]]; then
+		"$SCRIPTS_DIR/stop-crewai-studio.sh"
+	else
+		pkill -f "streamlit run studio_app.py" 2>/dev/null || true
+	fi
+	return 0
 }
 
 # Check status
 check_status() {
-    if [[ -f "$SCRIPTS_DIR/crewai-status.sh" ]]; then
-        "$SCRIPTS_DIR/crewai-status.sh"
-    else
-        if curl -s "http://localhost:$CREWAI_STUDIO_PORT" >/dev/null 2>&1; then
-            print_success "CrewAI Studio is running at http://localhost:$CREWAI_STUDIO_PORT"
-        else
-            print_warning "CrewAI Studio is not running"
-        fi
-    fi
-    return 0
+	if [[ -f "$SCRIPTS_DIR/crewai-status.sh" ]]; then
+		"$SCRIPTS_DIR/crewai-status.sh"
+	else
+		if curl -s "http://localhost:$CREWAI_STUDIO_PORT" >/dev/null 2>&1; then
+			print_success "CrewAI Studio is running at http://localhost:$CREWAI_STUDIO_PORT"
+		else
+			print_warning "CrewAI Studio is not running"
+		fi
+	fi
+	return 0
 }
 
 # Show usage
 show_usage() {
-    echo "AI DevOps Framework - CrewAI Helper"
-    echo ""
-    echo "Usage: $0 [action] [options]"
-    echo ""
-    echo "Actions:"
-    echo "  setup     Complete setup of CrewAI"
-    echo "  start     Start CrewAI Studio"
-    echo "  stop      Stop CrewAI Studio"
-    echo "  status    Check CrewAI status"
-    echo "  check     Check prerequisites"
-    echo "  create    Create a new crew project"
-    echo "  run       Run a crew (in current directory)"
-    echo "  help      Show this help message"
-    echo ""
-    echo "Examples:"
-    echo "  $0 setup                    # Full setup"
-    echo "  $0 start                    # Start Studio"
-    echo "  $0 create my-research-crew  # Create new project"
-    echo "  $0 run                      # Run crew in current dir"
-    echo ""
-    echo "URLs (after start):"
-    echo "  CrewAI Studio: http://localhost:8501"
-    return 0
+	echo "AI DevOps Framework - CrewAI Helper"
+	echo ""
+	echo "Usage: $0 [action] [options]"
+	echo ""
+	echo "Actions:"
+	echo "  setup     Complete setup of CrewAI"
+	echo "  start     Start CrewAI Studio"
+	echo "  stop      Stop CrewAI Studio"
+	echo "  status    Check CrewAI status"
+	echo "  check     Check prerequisites"
+	echo "  create    Create a new crew project"
+	echo "  run       Run a crew (in current directory)"
+	echo "  help      Show this help message"
+	echo ""
+	echo "Examples:"
+	echo "  $0 setup                    # Full setup"
+	echo "  $0 start                    # Start Studio"
+	echo "  $0 create my-research-crew  # Create new project"
+	echo "  $0 run                      # Run crew in current dir"
+	echo ""
+	echo "URLs (after start):"
+	echo "  CrewAI Studio: http://localhost:8501"
+	return 0
 }
 
 # Main function
 main() {
-    local action="${1:-help}"
-    shift || true
-    
-    case "$action" in
-        "setup")
-            if check_prerequisites; then
-                setup_crewai
-                echo ""
-                print_success "CrewAI setup complete!"
-                echo ""
-                echo "Next Steps:"
-                echo "1. Configure API keys in $CREWAI_DIR/.env"
-                echo "2. Start CrewAI Studio: $SCRIPTS_DIR/start-crewai-studio.sh"
-                echo "3. Or create a project: crewai create crew my-project"
-            fi
-            ;;
-        "start")
-            start_studio
-            ;;
-        "stop")
-            stop_studio
-            ;;
-        "status")
-            check_status
-            ;;
-        "check")
-            check_prerequisites
-            ;;
-        "create")
-            create_crew "$@"
-            ;;
-        "run")
-            run_crew "$@"
-            ;;
-        "help"|*)
-            show_usage
-            ;;
-    esac
-    return 0
+	local action="${1:-help}"
+	shift || true
+
+	case "$action" in
+	"setup")
+		if check_prerequisites; then
+			setup_crewai
+			echo ""
+			print_success "CrewAI setup complete!"
+			echo ""
+			echo "Next Steps:"
+			echo "1. Configure API keys in $CREWAI_DIR/.env"
+			echo "2. Start CrewAI Studio: $SCRIPTS_DIR/start-crewai-studio.sh"
+			echo "3. Or create a project: crewai create crew my-project"
+		fi
+		;;
+	"start")
+		start_studio
+		;;
+	"stop")
+		stop_studio
+		;;
+	"status")
+		check_status
+		;;
+	"check")
+		check_prerequisites
+		;;
+	"create")
+		create_crew "$@"
+		;;
+	"run")
+		run_crew "$@"
+		;;
+	"help" | *)
+		show_usage
+		;;
+	esac
+	return 0
 }
 
 main "$@"
