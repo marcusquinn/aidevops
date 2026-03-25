@@ -1,14 +1,6 @@
 # CHAPTER 8: Creative Operations and Team Management
 
-Creative excellence doesn't happen by accident. Behind every viral campaign, every scroll-stopping ad, every conversion-driving creative—there's a system. A workflow. A team operating with precision.
-
-This chapter pulls back the curtain on creative operations. You'll learn the workflows, tools, and team structures that allow high-performing creative teams to ship quality creative at scale, on time, on budget, every time.
-
-Whether you're building a creative team from scratch or optimizing an existing operation, this chapter provides the operational playbook for creative production at scale.
-
 ## Creative Production Workflows: From Brief to Broadcast
-
-Workflows turn chaos into consistency. The best creative teams don't wing it—they follow battle-tested processes that ensure every project moves smoothly from concept to completion.
 
 ### The Creative Production Pipeline
 
@@ -249,11 +241,9 @@ Day 2 Evening: Delivery + launch
 Requirements: Dedicated team, clear brief, limited scope
 ```
 
-## Briefing Templates: The Blueprint for Great Creative
+## Briefing Templates
 
-A creative brief isn't bureaucracy—it's clarity. The best briefs are concise but comprehensive, leaving no room for misinterpretation while inspiring creative excellence.
-
-### The Master Creative Brief Template
+### Creative Brief Template
 
 ```
 ╔═══════════════════════════════════════════════════════════════╗
@@ -613,9 +603,7 @@ Hook Requirements:
 □ Creative freedom on hook
 ```
 
-## Feedback Loops: The Critical Communication Layer
-
-Creative dies in silence. The best teams have structured feedback systems that improve work without slowing it down.
+## Feedback Loops
 
 ### The Feedback Pyramid
 
@@ -859,19 +847,7 @@ Every piece of feedback must include strategic reasoning.
     better CTA visibility and brand consistency"
 ```
 
-## Asset Management and DAM: Organizing Creative at Scale
-
-Creative chaos is expensive. Missed deadlines, lost assets, wrong versions—poor asset management costs teams thousands of hours and dollars.
-
-### Digital Asset Management (DAM) Fundamentals
-
-A DAM system is:
-- Centralized repository
-- Organized with metadata
-- Accessible by all stakeholders
-- Version controlled
-- Rights-managed
-- Searchable
+## Asset Management and DAM
 
 ### Folder Structure Best Practices
 
@@ -1074,9 +1050,7 @@ For every asset, track:
 | Song_BGM   | Epidemic| Music  | 2027    | Web   | No broadcast |
 ```
 
-## Creative Team Structure: Building for Scale
-
-The right team structure enables creative excellence. The wrong structure creates bottlenecks, burnout, and mediocre work.
+## Creative Team Structure
 
 ### Team Size by Company Stage
 
@@ -1290,9 +1264,7 @@ Purpose: Strategic alignment, continuous improvement
 - Team training needs
 ```
 
-## Freelancer Management: Extending Your Team
-
-Freelancers provide flexibility, specialized skills, and capacity during peaks. But managing freelancers poorly wastes money and delivers mediocre work.
+## Freelancer Management
 
 ### When to Use Freelancers
 
@@ -1449,9 +1421,7 @@ Milestone 3: Final Delivery
 - Fair payment terms
 - Referrals for quality freelancers
 
-## Creative QA: Quality Assurance Before Launch
-
-One mistake in a live ad is too many. Creative QA processes catch errors before they reach customers.
+## Creative QA
 
 ### The Creative QA Checklist
 
@@ -1562,31 +1532,12 @@ Creator → Internal Review → QA Check → Final Approval → Launch
 - Figma (design QA)
 - Asana/Monday (checklist tracking)
 
-## Localization and Versioning: Creative at Global Scale
-
-Global brands need local relevance. Localization adapts creative for different markets without losing brand consistency.
+## Localization and Versioning
 
 ### Localization vs. Translation
 
-**Translation:**
-- Language only
-- Word-for-word
-- Misses cultural nuance
-
-**Localization:**
-- Language + Culture
-- Idioms, references, humor
-- Visual cultural relevance
-- Market-specific offers
-
-**Example:**
-```
-Translation: "Our product is the best"
-Localization (Mexico): "Nuestro producto es lo máximo" 
-                    (more casual, culturally appropriate)
-Localization (Spain): "Nuestro producto es el mejor" 
-                   (more formal, appropriate for market)
-```
+**Translation:** Language only, word-for-word, misses cultural nuance.
+**Localization:** Language + culture — idioms, humor, visual relevance, market-specific offers.
 
 ### What Gets Localized
 
@@ -1723,9 +1674,7 @@ Examples:
 - Update master → Cascade to localized versions
 - Track which versions are current
 
-## Creative Toolstack: The Technology Foundation
-
-The right tools amplify creative talent. The wrong tools create friction and bottlenecks.
+## Creative Toolstack
 
 ### Core Creative Tools
 
@@ -1807,32 +1756,13 @@ The right tools amplify creative talent. The wrong tools create friction and bot
 
 ### Tool Selection Criteria
 
-**When choosing tools:**
-
-1. **Team Skill Level:**
-   - Expert team → Adobe Creative Suite
-   - Mixed skill → Canva + Adobe hybrid
-   - Non-designers → Canva, templates
-
-2. **Integration:**
-   - Does it work with existing tools?
-   - API availability?
-   - Single sign-on (SSO)?
-
-3. **Scalability:**
-   - Cost per user
-   - Enterprise features
-   - Admin controls
-
-4. **Collaboration:**
-   - Real-time collaboration
-   - Review/approval features
-   - Version control
-
-5. **Output Quality:**
-   - Export formats needed
-   - Resolution requirements
-   - Platform compatibility
+| Factor | Considerations |
+|--------|---------------|
+| Team skill | Expert → Adobe CC; mixed → Canva + Adobe; non-designers → Canva |
+| Integration | Existing tool compatibility, API, SSO |
+| Scalability | Cost per user, enterprise features, admin controls |
+| Collaboration | Real-time editing, review/approval, version control |
+| Output quality | Export formats, resolution, platform compatibility |
 
 ### Tool Stack Recommendations by Team Size
 
@@ -1868,88 +1798,26 @@ AI: Enterprise AI tools (custom)
 Total: ~$2,000-5,000/month
 ```
 
-### Tool Training and Documentation
+### Tool Onboarding Checklist
 
-**Onboarding Checklist:**
 ```
-□ Account access provisioned
-□ Software installed
-□ Tutorial resources shared
-□ Template library access
-□ Naming conventions explained
-□ Best practices documented
-□ First project walkthrough
-□ Q&A session scheduled
+□ Account access provisioned    □ Tutorial resources shared
+□ Software installed            □ Template library access
+□ Naming conventions explained  □ Best practices documented
+□ First project walkthrough     □ Q&A session scheduled
 ```
 
-**Internal Documentation:**
-```
-Create living documents for:
-- Tool-specific workflows
-- Keyboard shortcuts
-- Export settings
-- Troubleshooting guides
-- Advanced techniques
-```
+Maintain living docs for: tool workflows, keyboard shortcuts, export settings, troubleshooting, advanced techniques.
 
 ---
 
-## Conclusion: Building the Creative Operations Engine
+## Conclusion
 
-Creative excellence requires operational excellence. The teams that consistently produce great creative aren't luckier or more talented—they're more organized.
+**Operational advantages:** Speed (workflows eliminate delays) · Quality (QA catches errors) · Scale (systems handle volume) · Consistency (templates ensure standards) · Morale (clear processes reduce burnout)
 
-**The Operational Advantages:**
-
-1. **Speed:** Workflows eliminate delays
-2. **Quality:** QA processes catch errors
-3. **Scale:** Systems handle volume
-4. **Consistency:** Templates ensure standards
-5. **Morale:** Clear processes reduce burnout
-
-**The Investment:**
-- Time to document processes
-- Money for tools and systems
-- Effort to train team
-- Commitment to continuous improvement
-
-**The Return:**
-- Faster time-to-market
-- Higher creative quality
-- Lower revision costs
-- Happier team
-- Better results
-
-**Your Action Plan:**
-
-1. **Audit your current state:**
-   - What's working?
-   - What's broken?
-   - Where are the bottlenecks?
-
-2. **Prioritize quick wins:**
-   - File naming conventions
-   - Project management tool
-   - Feedback templates
-
-3. **Build systematically:**
-   - Document one workflow at a time
-   - Train team on each system
-   - Iterate based on feedback
-
-4. **Invest in tools:**
-   - Start with essentials
-   - Scale as team grows
-   - Measure ROI on each tool
-
-5. **Maintain and improve:**
-   - Regular process reviews
-   - Team feedback sessions
-   - Continuous optimization
-
-Creative operations isn't sexy. It's not the work that wins awards. But it's the foundation that allows award-winning work to happen consistently, at scale, without burning out your team.
-
-Build the machine. Make great creative.
-
----
-
-**Word Count: 9,156 words**
+**Action plan:**
+1. Audit current state — identify bottlenecks
+2. Quick wins — file naming, project management, feedback templates
+3. Build systematically — document one workflow at a time, train, iterate
+4. Invest in tools — start with essentials, scale as team grows
+5. Maintain — regular process reviews, continuous optimization
