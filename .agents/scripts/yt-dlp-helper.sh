@@ -510,28 +510,15 @@ download_transcript() {
 	return $exit_code
 }
 
-# Convert local video file(s) to audio using ffmpeg
-convert_local() {
-	local input_path="$1"
-	shift
-	parse_options "$@"
+# Resolve audio codec settings from FORMAT_OVERRIDE
+# Sets: audio_ext, audio_codec, audio_quality (caller must declare these as local)
+_resolve_audio_codec() {
+	local format_override="$1"
+	audio_ext="mp3"
+	audio_codec="libmp3lame"
+	audio_quality="0"
 
-	if ! check_ffmpeg; then
-		print_error "ffmpeg is required for local file conversion."
-		print_info "Run: yt-dlp-helper.sh install"
-		return 1
-	fi
-
-	if [[ ! -e "$input_path" ]]; then
-		print_error "File or directory not found: $input_path"
-		return 1
-	fi
-
-	# Determine audio codec from format override
-	local audio_ext="mp3"
-	local audio_codec="libmp3lame"
-	local audio_quality="0"
-	case "$FORMAT_OVERRIDE" in
+	case "$format_override" in
 	"m4a" | "audio-m4a")
 		audio_ext="m4a"
 		audio_codec="aac"
@@ -556,6 +543,98 @@ convert_local() {
 		# Default to mp3 for unknown formats
 		;;
 	esac
+	return 0
+}
+
+# Collect video files from a path (file or directory)
+# Prints one file path per line
+_collect_video_files() {
+	local input_path="$1"
+
+	if [[ -d "$input_path" ]]; then
+		find "$input_path" -maxdepth 1 -type f \( \
+			-name "*.mp4" -o -name "*.mkv" -o -name "*.webm" -o \
+			-name "*.avi" -o -name "*.mov" -o -name "*.flv" -o \
+			-name "*.wmv" -o -name "*.m4v" -o -name "*.ts" \
+			\) -print | sort
+	else
+		echo "$input_path"
+	fi
+	return 0
+}
+
+# Build ffmpeg quality argument for a given codec and quality string
+# Appends to ffmpeg_args array (caller must declare it)
+_append_ffmpeg_quality_arg() {
+	local codec="$1"
+	local quality="$2"
+
+	[[ -z "$quality" ]] && return 0
+
+	case "$codec" in
+	"libmp3lame" | "aac")
+		ffmpeg_args+=(-q:a "$quality")
+		;;
+	"libopus")
+		ffmpeg_args+=(-b:a "$quality")
+		;;
+	*)
+		# No quality setting for other codecs
+		;;
+	esac
+	return 0
+}
+
+# Convert a single video file to audio
+# Returns: 0 on success, 1 on failure
+_convert_single_file() {
+	local file="$1"
+	local output_dir="$2"
+	local audio_ext="$3"
+	local audio_codec="$4"
+	local audio_quality="$5"
+
+	local basename
+	basename=$(basename "$file")
+	local name_no_ext="${basename%.*}"
+	local output_file="$output_dir/${name_no_ext}.${audio_ext}"
+
+	local ffmpeg_args=(-i "$file" -vn -acodec "$audio_codec")
+	_append_ffmpeg_quality_arg "$audio_codec" "$audio_quality"
+
+	if [[ "$NO_METADATA" != true ]]; then
+		ffmpeg_args+=(-map_metadata 0)
+	fi
+	ffmpeg_args+=(-y "$output_file")
+
+	if ffmpeg "${ffmpeg_args[@]}" 2>/dev/null; then
+		print_success "  -> ${name_no_ext}.${audio_ext}"
+		return 0
+	else
+		print_error "  Failed: $basename"
+		return 1
+	fi
+}
+
+# Convert local video file(s) to audio using ffmpeg
+convert_local() {
+	local input_path="$1"
+	shift
+	parse_options "$@"
+
+	if ! check_ffmpeg; then
+		print_error "ffmpeg is required for local file conversion."
+		print_info "Run: yt-dlp-helper.sh install"
+		return 1
+	fi
+
+	if [[ ! -e "$input_path" ]]; then
+		print_error "File or directory not found: $input_path"
+		return 1
+	fi
+
+	local audio_ext audio_codec audio_quality
+	_resolve_audio_codec "$FORMAT_OVERRIDE"
 
 	# Build output directory
 	local output_dir
@@ -573,19 +652,10 @@ convert_local() {
 	print_info "Output: $output_dir"
 	print_info "Format: $audio_ext ($audio_codec)"
 
-	local file_count=0
-	local success_count=0
-	local fail_count=0
-
-	# Process single file or directory
 	local files=()
-	if [[ -d "$input_path" ]]; then
-		while IFS= read -r -d '' file; do
-			files+=("$file")
-		done < <(find "$input_path" -maxdepth 1 -type f \( -name "*.mp4" -o -name "*.mkv" -o -name "*.webm" -o -name "*.avi" -o -name "*.mov" -o -name "*.flv" -o -name "*.wmv" -o -name "*.m4v" -o -name "*.ts" \) -print0 | sort -z)
-	else
-		files+=("$input_path")
-	fi
+	while IFS= read -r file; do
+		[[ -n "$file" ]] && files+=("$file")
+	done < <(_collect_video_files "$input_path")
 
 	if [[ ${#files[@]} -eq 0 ]]; then
 		print_error "No video files found in: $input_path"
@@ -593,45 +663,17 @@ convert_local() {
 		return 1
 	fi
 
+	local file_count=0
+	local success_count=0
+	local fail_count=0
+
 	for file in "${files[@]}"; do
 		file_count=$((file_count + 1))
-		local basename
-		basename=$(basename "$file")
-		local name_no_ext="${basename%.*}"
-		local output_file="$output_dir/${name_no_ext}.${audio_ext}"
-
-		print_info "[$file_count/${#files[@]}] Converting: $basename"
-
-		local ffmpeg_args=(-i "$file" -vn -acodec "$audio_codec")
-		if [[ -n "$audio_quality" ]]; then
-			case "$audio_codec" in
-			"libmp3lame")
-				ffmpeg_args+=(-q:a "$audio_quality")
-				;;
-			"aac")
-				ffmpeg_args+=(-q:a "$audio_quality")
-				;;
-			"libopus")
-				ffmpeg_args+=(-b:a "$audio_quality")
-				;;
-			*)
-				# No quality setting for other codecs
-				;;
-			esac
-		fi
-
-		if [[ "$NO_METADATA" != true ]]; then
-			ffmpeg_args+=(-map_metadata 0)
-		fi
-
-		ffmpeg_args+=(-y "$output_file")
-
-		if ffmpeg "${ffmpeg_args[@]}" 2>/dev/null; then
+		print_info "[$file_count/${#files[@]}] Converting: $(basename "$file")"
+		if _convert_single_file "$file" "$output_dir" "$audio_ext" "$audio_codec" "$audio_quality"; then
 			success_count=$((success_count + 1))
-			print_success "  -> ${name_no_ext}.${audio_ext}"
 		else
 			fail_count=$((fail_count + 1))
-			print_error "  Failed: $basename"
 		fi
 	done
 

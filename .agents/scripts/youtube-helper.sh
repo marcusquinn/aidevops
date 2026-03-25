@@ -37,59 +37,59 @@ readonly HELP_SHOW_MESSAGE="Show this help message"
 
 # Resolve service account key file
 resolve_sa_key() {
-    local key_file=""
+	local key_file=""
 
-    # Check environment variable first
-    if [[ -n "${GCP_SA_KEY_FILE:-}" ]]; then
-        key_file="$GCP_SA_KEY_FILE"
-    fi
+	# Check environment variable first
+	if [[ -n "${GCP_SA_KEY_FILE:-}" ]]; then
+		key_file="$GCP_SA_KEY_FILE"
+	fi
 
-    # Check credentials.sh
-    if [[ -z "$key_file" ]] && [[ -f "$HOME/.config/aidevops/credentials.sh" ]]; then
-        key_file=$(grep -oP 'GCP_SA_KEY_FILE="\K[^"]+' "$HOME/.config/aidevops/credentials.sh" 2>/dev/null | head -1 || true)
-        # Expand $HOME if present
-        key_file="${key_file/\$HOME/$HOME}"
-    fi
+	# Check credentials.sh
+	if [[ -z "$key_file" ]] && [[ -f "$HOME/.config/aidevops/credentials.sh" ]]; then
+		key_file=$(grep -oP 'GCP_SA_KEY_FILE="\K[^"]+' "$HOME/.config/aidevops/credentials.sh" 2>/dev/null | head -1 || true)
+		# Expand $HOME if present
+		key_file="${key_file/\$HOME/$HOME}"
+	fi
 
-    # Default location
-    if [[ -z "$key_file" ]]; then
-        key_file="$HOME/.config/aidevops/keys/evergreen-je-sa.json"
-    fi
+	# Default location
+	if [[ -z "$key_file" ]]; then
+		key_file="$HOME/.config/aidevops/keys/evergreen-je-sa.json"
+	fi
 
-    if [[ ! -f "$key_file" ]]; then
-        print_error "Service account key not found at: $key_file"
-        print_info "Store your key: cp <key.json> ~/.config/aidevops/keys/evergreen-je-sa.json && chmod 600 ~/.config/aidevops/keys/evergreen-je-sa.json"
-        print_info "Then add to credentials.sh: export GCP_SA_KEY_FILE=\"\$HOME/.config/aidevops/keys/evergreen-je-sa.json\""
-        return 1
-    fi
+	if [[ ! -f "$key_file" ]]; then
+		print_error "Service account key not found at: $key_file"
+		print_info "Store your key: cp <key.json> ~/.config/aidevops/keys/evergreen-je-sa.json && chmod 600 ~/.config/aidevops/keys/evergreen-je-sa.json"
+		print_info "Then add to credentials.sh: export GCP_SA_KEY_FILE=\"\$HOME/.config/aidevops/keys/evergreen-je-sa.json\""
+		return 1
+	fi
 
-    echo "$key_file"
-    return 0
+	echo "$key_file"
+	return 0
 }
 
 # Get OAuth2 access token from service account
 get_access_token() {
-    local key_file
-    key_file=$(resolve_sa_key) || return 1
+	local key_file
+	key_file=$(resolve_sa_key) || return 1
 
-    # Check cache (tokens last 1 hour, cache for 50 minutes)
-    local token_cache="$YT_CACHE_DIR/token.json"
-    if [[ -f "$token_cache" ]]; then
-        local cached_exp
-        cached_exp=$(node -e "const t=JSON.parse(require('fs').readFileSync('$token_cache','utf8')); console.log(t.expires_at||0)" 2>/dev/null || echo "0")
-        local now
-        now=$(date +%s)
-        if [[ "$cached_exp" -gt "$now" ]]; then
-            node -e "console.log(JSON.parse(require('fs').readFileSync('$token_cache','utf8')).access_token)" 2>/dev/null
-            return 0
-        fi
-    fi
+	# Check cache (tokens last 1 hour, cache for 50 minutes)
+	local token_cache="$YT_CACHE_DIR/token.json"
+	if [[ -f "$token_cache" ]]; then
+		local cached_exp
+		cached_exp=$(node -e "const t=JSON.parse(require('fs').readFileSync('$token_cache','utf8')); console.log(t.expires_at||0)" 2>/dev/null || echo "0")
+		local now
+		now=$(date +%s)
+		if [[ "$cached_exp" -gt "$now" ]]; then
+			node -e "console.log(JSON.parse(require('fs').readFileSync('$token_cache','utf8')).access_token)" 2>/dev/null
+			return 0
+		fi
+	fi
 
-    mkdir -p "$YT_CACHE_DIR"
+	mkdir -p "$YT_CACHE_DIR"
 
-    # Generate JWT and exchange for access token using Node.js
-    local token_json
-    token_json=$(node -e "
+	# Generate JWT and exchange for access token using Node.js
+	local token_json
+	token_json=$(node -e "
 const crypto = require('crypto');
 const fs = require('fs');
 const { execSync } = require('child_process');
@@ -130,69 +130,69 @@ if (tok.access_token) {
     process.exit(1);
 }
 " 2>/dev/null) || {
-        print_error "Failed to obtain access token from Google OAuth2"
-        return 1
-    }
+		print_error "Failed to obtain access token from Google OAuth2"
+		return 1
+	}
 
-    # Cache the token
-    echo "$token_json" > "$token_cache"
-    chmod 600 "$token_cache"
+	# Cache the token
+	echo "$token_json" >"$token_cache"
+	chmod 600 "$token_cache"
 
-    echo "$token_json" | node -e "process.stdin.on('data',d=>console.log(JSON.parse(d).access_token))"
-    return 0
+	echo "$token_json" | node -e "process.stdin.on('data',d=>console.log(JSON.parse(d).access_token))"
+	return 0
 }
 
 # Make authenticated YouTube API request
 yt_api_request() {
-    local endpoint="$1"
-    local params="$2"
-    local quota_cost="${3:-1}"
+	local endpoint="$1"
+	local params="$2"
+	local quota_cost="${3:-1}"
 
-    local token
-    token=$(get_access_token) || return 1
+	local token
+	token=$(get_access_token) || return 1
 
-    local url="${YT_API_BASE}/${endpoint}?${params}"
-    local response
-    response=$(curl -s -w "\n%{http_code}" "$url" \
-        -H "Authorization: Bearer $token" \
-        -H "$USER_AGENT") || {
-        print_error "API request failed: $endpoint"
-        return 1
-    }
+	local url="${YT_API_BASE}/${endpoint}?${params}"
+	local response
+	response=$(curl -s -w "\n%{http_code}" "$url" \
+		-H "Authorization: Bearer $token" \
+		-H "$USER_AGENT") || {
+		print_error "API request failed: $endpoint"
+		return 1
+	}
 
-    local http_code
-    http_code=$(echo "$response" | tail -1)
-    local body
-    body=$(echo "$response" | sed '$d')
+	local http_code
+	http_code=$(echo "$response" | tail -1)
+	local body
+	body=$(echo "$response" | sed '$d')
 
-    # Track quota usage
-    track_quota "$quota_cost" "$endpoint"
+	# Track quota usage
+	track_quota "$quota_cost" "$endpoint"
 
-    if [[ "$http_code" -ge 400 ]]; then
-        local error_msg
-        error_msg=$(echo "$body" | node -e "process.stdin.on('data',d=>{try{const e=JSON.parse(d).error;console.log(e.code+': '+e.message)}catch(x){console.log(d.toString().substring(0,200))}})" 2>/dev/null || echo "$body")
-        print_error "YouTube API error ($http_code): $error_msg"
-        return 1
-    fi
+	if [[ "$http_code" -ge 400 ]]; then
+		local error_msg
+		error_msg=$(echo "$body" | node -e "process.stdin.on('data',d=>{try{const e=JSON.parse(d).error;console.log(e.code+': '+e.message)}catch(x){console.log(d.toString().substring(0,200))}})" 2>/dev/null || echo "$body")
+		print_error "YouTube API error ($http_code): $error_msg"
+		return 1
+	fi
 
-    echo "$body"
-    return 0
+	echo "$body"
+	return 0
 }
 
 # Track daily quota usage
 track_quota() {
-    local cost="$1"
-    local endpoint="$2"
+	local cost="$1"
+	local endpoint="$2"
 
-    mkdir -p "$YT_CACHE_DIR"
+	mkdir -p "$YT_CACHE_DIR"
 
-    local current=0
-    if [[ -f "$YT_QUOTA_FILE" ]]; then
-        current=$(node -e "console.log(JSON.parse(require('fs').readFileSync('$YT_QUOTA_FILE','utf8')).total||0)" 2>/dev/null || echo "0")
-    fi
+	local current=0
+	if [[ -f "$YT_QUOTA_FILE" ]]; then
+		current=$(node -e "console.log(JSON.parse(require('fs').readFileSync('$YT_QUOTA_FILE','utf8')).total||0)" 2>/dev/null || echo "0")
+	fi
 
-    local new_total=$((current + cost))
-    node -e "
+	local new_total=$((current + cost))
+	node -e "
 const fs = require('fs');
 const file = '$YT_QUOTA_FILE';
 let data = {};
@@ -202,36 +202,36 @@ data.calls = data.calls || [];
 data.calls.push({endpoint:'$endpoint', cost:$cost, time:new Date().toISOString()});
 fs.writeFileSync(file, JSON.stringify(data, null, 2));
 " 2>/dev/null
-    return 0
+	return 0
 }
 
 # Extract video ID from URL or return as-is
 extract_video_id() {
-    local input="$1"
-    if [[ "$input" =~ v=([a-zA-Z0-9_-]{11}) ]]; then
-        echo "${BASH_REMATCH[1]}"
-    elif [[ "$input" =~ youtu\.be/([a-zA-Z0-9_-]{11}) ]]; then
-        echo "${BASH_REMATCH[1]}"
-    elif [[ "$input" =~ ^[a-zA-Z0-9_-]{11}$ ]]; then
-        echo "$input"
-    else
-        echo "$input"
-    fi
-    return 0
+	local input="$1"
+	if [[ "$input" =~ v=([a-zA-Z0-9_-]{11}) ]]; then
+		echo "${BASH_REMATCH[1]}"
+	elif [[ "$input" =~ youtu\.be/([a-zA-Z0-9_-]{11}) ]]; then
+		echo "${BASH_REMATCH[1]}"
+	elif [[ "$input" =~ ^[a-zA-Z0-9_-]{11}$ ]]; then
+		echo "$input"
+	else
+		echo "$input"
+	fi
+	return 0
 }
 
 # Extract channel handle from URL or return as-is
 extract_channel_handle() {
-    local input="$1"
-    # Remove URL prefix if present
-    if [[ "$input" =~ youtube\.com/@([a-zA-Z0-9._-]+) ]]; then
-        echo "@${BASH_REMATCH[1]}"
-    elif [[ "$input" =~ ^@ ]]; then
-        echo "$input"
-    else
-        echo "@$input"
-    fi
-    return 0
+	local input="$1"
+	# Remove URL prefix if present
+	if [[ "$input" =~ youtube\.com/@([a-zA-Z0-9._-]+) ]]; then
+		echo "@${BASH_REMATCH[1]}"
+	elif [[ "$input" =~ ^@ ]]; then
+		echo "$input"
+	else
+		echo "@$input"
+	fi
+	return 0
 }
 
 # ============================================================================
@@ -240,30 +240,30 @@ extract_channel_handle() {
 
 # Get channel metadata and statistics
 cmd_channel() {
-    local input="${1:?Channel handle, ID, or URL required}"
-    local format="${2:-pretty}"
+	local input="${1:?Channel handle, ID, or URL required}"
+	local format="${2:-pretty}"
 
-    local params=""
-    local parts="snippet,statistics,contentDetails,brandingSettings"
+	local params=""
+	local parts="snippet,statistics,contentDetails,brandingSettings"
 
-    # Detect input type
-    if [[ "$input" =~ ^UC[a-zA-Z0-9_-]{22}$ ]]; then
-        params="part=$parts&id=$input"
-    elif [[ "$input" =~ ^@ ]] || [[ "$input" =~ youtube\.com/@ ]]; then
-        local handle
-        handle=$(extract_channel_handle "$input")
-        params="part=$parts&forHandle=${handle#@}"
-    else
-        params="part=$parts&forHandle=$input"
-    fi
+	# Detect input type
+	if [[ "$input" =~ ^UC[a-zA-Z0-9_-]{22}$ ]]; then
+		params="part=$parts&id=$input"
+	elif [[ "$input" =~ ^@ ]] || [[ "$input" =~ youtube\.com/@ ]]; then
+		local handle
+		handle=$(extract_channel_handle "$input")
+		params="part=$parts&forHandle=${handle#@}"
+	else
+		params="part=$parts&forHandle=$input"
+	fi
 
-    local response
-    response=$(yt_api_request "channels" "$params" 1) || return 1
+	local response
+	response=$(yt_api_request "channels" "$params" 1) || return 1
 
-    if [[ "$format" == "json" ]]; then
-        echo "$response"
-    else
-        echo "$response" | node -e "
+	if [[ "$format" == "json" ]]; then
+		echo "$response"
+	else
+		echo "$response" | node -e "
 process.stdin.on('data', d => {
     const data = JSON.parse(d);
     if (!data.items || data.items.length === 0) {
@@ -290,22 +290,18 @@ process.stdin.on('data', d => {
     console.log((s.description || 'N/A').substring(0, 500));
 });
 "
-    fi
-    return 0
+	fi
+	return 0
 }
 
-# List all videos from a channel (via uploads playlist)
-cmd_videos() {
-    local input="${1:?Channel handle, ID, or URL required}"
-    local limit="${2:-50}"
-    local format="${3:-pretty}"
+# Resolve uploads playlist ID from a channel handle/ID/URL
+_get_uploads_playlist() {
+	local input="$1"
 
-    # First get the channel's uploads playlist ID
-    local channel_json
-    channel_json=$(cmd_channel "$input" "json") || return 1
+	local channel_json
+	channel_json=$(cmd_channel "$input" "json") || return 1
 
-    local uploads_playlist
-    uploads_playlist=$(echo "$channel_json" | node -e "
+	echo "$channel_json" | node -e "
 process.stdin.on('data', d => {
     const data = JSON.parse(d);
     if (data.items?.[0]?.contentDetails?.relatedPlaylists?.uploads) {
@@ -315,34 +311,35 @@ process.stdin.on('data', d => {
         process.exit(1);
     }
 });
-" 2>/dev/null) || {
-        print_error "Could not find uploads playlist for channel"
-        return 1
-    }
+" 2>/dev/null
+	return 0
+}
 
-    print_info "Fetching videos from playlist: $uploads_playlist"
+# Fetch all video IDs from a playlist up to a given limit
+_fetch_playlist_video_ids() {
+	local uploads_playlist="$1"
+	local limit="$2"
 
-    local all_video_ids=()
-    local page_token=""
-    local fetched=0
+	local all_video_ids=()
+	local page_token=""
+	local fetched=0
 
-    while [[ $fetched -lt $limit ]]; do
-        local page_size=$((limit - fetched))
-        if [[ $page_size -gt 50 ]]; then
-            page_size=50
-        fi
+	while [[ $fetched -lt $limit ]]; do
+		local page_size=$((limit - fetched))
+		if [[ $page_size -gt 50 ]]; then
+			page_size=50
+		fi
 
-        local params="part=snippet,contentDetails&playlistId=$uploads_playlist&maxResults=$page_size"
-        if [[ -n "$page_token" ]]; then
-            params="$params&pageToken=$page_token"
-        fi
+		local params="part=snippet,contentDetails&playlistId=$uploads_playlist&maxResults=$page_size"
+		if [[ -n "$page_token" ]]; then
+			params="$params&pageToken=$page_token"
+		fi
 
-        local response
-        response=$(yt_api_request "playlistItems" "$params" 1) || return 1
+		local response
+		response=$(yt_api_request "playlistItems" "$params" 1) || return 1
 
-        # Extract video IDs and basic info
-        local page_data
-        page_data=$(echo "$response" | node -e "
+		local page_data
+		page_data=$(echo "$response" | node -e "
 process.stdin.on('data', d => {
     const data = JSON.parse(d);
     const items = (data.items || []).map(i => ({
@@ -359,57 +356,77 @@ process.stdin.on('data', d => {
 });
 " 2>/dev/null) || break
 
-        local video_ids
-        video_ids=$(echo "$page_data" | node -e "process.stdin.on('data',d=>JSON.parse(d).items.forEach(i=>console.log(i.videoId)))" 2>/dev/null)
+		local video_ids
+		video_ids=$(echo "$page_data" | node -e "process.stdin.on('data',d=>JSON.parse(d).items.forEach(i=>console.log(i.videoId)))" 2>/dev/null)
 
-        while IFS= read -r vid; do
-            [[ -n "$vid" ]] && all_video_ids+=("$vid")
-        done <<< "$video_ids"
+		while IFS= read -r vid; do
+			[[ -n "$vid" ]] && all_video_ids+=("$vid")
+		done <<<"$video_ids"
 
-        fetched=${#all_video_ids[@]}
+		fetched=${#all_video_ids[@]}
 
-        page_token=$(echo "$page_data" | node -e "process.stdin.on('data',d=>console.log(JSON.parse(d).nextPageToken))" 2>/dev/null)
-        if [[ -z "$page_token" ]]; then
-            break
-        fi
-    done
+		page_token=$(echo "$page_data" | node -e "process.stdin.on('data',d=>console.log(JSON.parse(d).nextPageToken))" 2>/dev/null)
+		if [[ -z "$page_token" ]]; then
+			break
+		fi
+	done
 
-    if [[ ${#all_video_ids[@]} -eq 0 ]]; then
-        print_warning "No videos found"
-        return 0
-    fi
+	printf '%s\n' "${all_video_ids[@]}"
+	return 0
+}
 
-    # Fetch full video details in batches of 50
-    local all_videos="[]"
-    local i=0
-    while [[ $i -lt ${#all_video_ids[@]} ]]; do
-        local batch=()
-        local j=0
-        while [[ $j -lt 50 ]] && [[ $((i + j)) -lt ${#all_video_ids[@]} ]]; do
-            batch+=("${all_video_ids[$((i + j))]}")
-            j=$((j + 1))
-        done
+# Fetch full video details for an array of video IDs (in batches of 50)
+_fetch_video_details_batch() {
+	local all_videos="[]"
+	local batch=()
+	local count=0
 
-        local ids_param
-        ids_param=$(IFS=,; echo "${batch[*]}")
+	while IFS= read -r vid; do
+		[[ -z "$vid" ]] && continue
+		batch+=("$vid")
+		count=$((count + 1))
 
-        local video_response
-        video_response=$(yt_api_request "videos" "part=snippet,statistics,contentDetails&id=$ids_param" 1) || break
-
-        all_videos=$(node -e "
+		if [[ $count -eq 50 ]]; then
+			local ids_param
+			ids_param=$(
+				IFS=,
+				echo "${batch[*]}"
+			)
+			local video_response
+			video_response=$(yt_api_request "videos" "part=snippet,statistics,contentDetails&id=$ids_param" 1) || break
+			all_videos=$(node -e "
 const existing = $all_videos;
 const newData = JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));
-const merged = existing.concat(newData.items || []);
-console.log(JSON.stringify(merged));
-" <<< "$video_response" 2>/dev/null)
+console.log(JSON.stringify(existing.concat(newData.items || [])));
+" <<<"$video_response" 2>/dev/null)
+			batch=()
+			count=0
+		fi
+	done
 
-        i=$((i + 50))
-    done
+	# Flush remaining batch
+	if [[ ${#batch[@]} -gt 0 ]]; then
+		local ids_param
+		ids_param=$(
+			IFS=,
+			echo "${batch[*]}"
+		)
+		local video_response
+		video_response=$(yt_api_request "videos" "part=snippet,statistics,contentDetails&id=$ids_param" 1) || true
+		all_videos=$(node -e "
+const existing = $all_videos;
+const newData = JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));
+console.log(JSON.stringify(existing.concat(newData.items || [])));
+" <<<"$video_response" 2>/dev/null)
+	fi
 
-    if [[ "$format" == "json" ]]; then
-        echo "$all_videos"
-    else
-        echo "$all_videos" | node -e "
+	echo "$all_videos"
+	return 0
+}
+
+# Print video list in pretty table format
+_print_videos_table() {
+	echo "$1" | node -e "
 process.stdin.on('data', d => {
     const videos = JSON.parse(d);
     console.log('Videos found: ' + videos.length);
@@ -426,25 +443,57 @@ process.stdin.on('data', d => {
     });
 });
 "
-    fi
-    return 0
+	return 0
+}
+
+# List all videos from a channel (via uploads playlist)
+cmd_videos() {
+	local input="${1:?Channel handle, ID, or URL required}"
+	local limit="${2:-50}"
+	local format="${3:-pretty}"
+
+	local uploads_playlist
+	uploads_playlist=$(_get_uploads_playlist "$input") || {
+		print_error "Could not find uploads playlist for channel"
+		return 1
+	}
+
+	print_info "Fetching videos from playlist: $uploads_playlist"
+
+	local all_video_ids_str
+	all_video_ids_str=$(_fetch_playlist_video_ids "$uploads_playlist" "$limit") || return 1
+
+	if [[ -z "$all_video_ids_str" ]]; then
+		print_warning "No videos found"
+		return 0
+	fi
+
+	local all_videos
+	all_videos=$(echo "$all_video_ids_str" | _fetch_video_details_batch)
+
+	if [[ "$format" == "json" ]]; then
+		echo "$all_videos"
+	else
+		_print_videos_table "$all_videos"
+	fi
+	return 0
 }
 
 # Get video details
 cmd_video() {
-    local input="${1:?Video ID or URL required}"
-    local format="${2:-pretty}"
+	local input="${1:?Video ID or URL required}"
+	local format="${2:-pretty}"
 
-    local video_id
-    video_id=$(extract_video_id "$input")
+	local video_id
+	video_id=$(extract_video_id "$input")
 
-    local response
-    response=$(yt_api_request "videos" "part=snippet,statistics,contentDetails,topicDetails&id=$video_id" 1) || return 1
+	local response
+	response=$(yt_api_request "videos" "part=snippet,statistics,contentDetails,topicDetails&id=$video_id" 1) || return 1
 
-    if [[ "$format" == "json" ]]; then
-        echo "$response"
-    else
-        echo "$response" | node -e "
+	if [[ "$format" == "json" ]]; then
+		echo "$response"
+	else
+		echo "$response" | node -e "
 process.stdin.on('data', d => {
     const data = JSON.parse(d);
     if (!data.items || data.items.length === 0) {
@@ -473,26 +522,26 @@ process.stdin.on('data', d => {
     console.log((s.description || 'N/A').substring(0, 500));
 });
 "
-    fi
-    return 0
+	fi
+	return 0
 }
 
 # Search YouTube
 cmd_search() {
-    local query="${1:?Search query required}"
-    local type="${2:-video}"
-    local limit="${3:-10}"
-    local format="${4:-pretty}"
+	local query="${1:?Search query required}"
+	local type="${2:-video}"
+	local limit="${3:-10}"
+	local format="${4:-pretty}"
 
-    local params="part=snippet&q=$(urlencode "$query")&type=$type&maxResults=$limit&order=relevance"
+	local params="part=snippet&q=$(urlencode "$query")&type=$type&maxResults=$limit&order=relevance"
 
-    local response
-    response=$(yt_api_request "search" "$params" 100) || return 1
+	local response
+	response=$(yt_api_request "search" "$params" 100) || return 1
 
-    if [[ "$format" == "json" ]]; then
-        echo "$response"
-    else
-        echo "$response" | node -e "
+	if [[ "$format" == "json" ]]; then
+		echo "$response"
+	else
+		echo "$response" | node -e "
 process.stdin.on('data', d => {
     const data = JSON.parse(d);
     const items = data.items || [];
@@ -508,84 +557,84 @@ process.stdin.on('data', d => {
     });
 });
 "
-    fi
-    return 0
+	fi
+	return 0
 }
 
 # Extract transcript via yt-dlp
 cmd_transcript() {
-    local input="${1:?Video ID or URL required}"
-    local lang="${2:-en}"
+	local input="${1:?Video ID or URL required}"
+	local lang="${2:-en}"
 
-    local video_id
-    video_id=$(extract_video_id "$input")
-    local url="https://www.youtube.com/watch?v=$video_id"
+	local video_id
+	video_id=$(extract_video_id "$input")
+	local url="https://www.youtube.com/watch?v=$video_id"
 
-    if ! command -v yt-dlp &> /dev/null; then
-        print_error "yt-dlp is required for transcript extraction"
-        print_info "Run: yt-dlp-helper.sh install"
-        return 1
-    fi
+	if ! command -v yt-dlp &>/dev/null; then
+		print_error "yt-dlp is required for transcript extraction"
+		print_info "Run: yt-dlp-helper.sh install"
+		return 1
+	fi
 
-    local tmp_dir
-    tmp_dir=$(mktemp -d)
+	local tmp_dir
+	tmp_dir=$(mktemp -d)
 
-    yt-dlp \
-        --skip-download \
-        --write-auto-subs \
-        --write-subs \
-        --sub-langs "$lang" \
-        --convert-subs srt \
-        -o "$tmp_dir/transcript.%(ext)s" \
-        "$url" 2>/dev/null
+	yt-dlp \
+		--skip-download \
+		--write-auto-subs \
+		--write-subs \
+		--sub-langs "$lang" \
+		--convert-subs srt \
+		-o "$tmp_dir/transcript.%(ext)s" \
+		"$url" 2>/dev/null
 
-    local srt_file
-    srt_file=$(find "$tmp_dir" -name "*.srt" -type f | head -1)
+	local srt_file
+	srt_file=$(find "$tmp_dir" -name "*.srt" -type f | head -1)
 
-    if [[ -n "$srt_file" ]] && [[ -f "$srt_file" ]]; then
-        # Convert SRT to plain text (strip timestamps and formatting)
-        sed -E '/^[0-9]+$/d; /^[0-9]{2}:[0-9]{2}:[0-9]{2}/d; /^$/d; s/<[^>]*>//g' "$srt_file"
-    else
-        print_warning "No transcript found for video $video_id (language: $lang)"
-        print_info "Try: youtube-helper.sh transcript $video_id all"
-    fi
+	if [[ -n "$srt_file" ]] && [[ -f "$srt_file" ]]; then
+		# Convert SRT to plain text (strip timestamps and formatting)
+		sed -E '/^[0-9]+$/d; /^[0-9]{2}:[0-9]{2}:[0-9]{2}/d; /^$/d; s/<[^>]*>//g' "$srt_file"
+	else
+		print_warning "No transcript found for video $video_id (language: $lang)"
+		print_info "Try: youtube-helper.sh transcript $video_id all"
+	fi
 
-    rm -rf "$tmp_dir"
-    return 0
+	rm -rf "$tmp_dir"
+	return 0
 }
 
 # Find trending videos in a niche
 cmd_trending() {
-    local niche="${1:?Niche/topic required}"
-    local limit="${2:-20}"
+	local niche="${1:?Niche/topic required}"
+	local limit="${2:-20}"
 
-    print_info "Searching trending videos for: $niche"
+	print_info "Searching trending videos for: $niche"
 
-    # Search with relevance + recent uploads
-    local params="part=snippet&q=$(urlencode "$niche")&type=video&maxResults=$limit&order=viewCount&publishedAfter=$(date -u -v-30d +%Y-%m-%dT00:00:00Z 2>/dev/null || date -u -d '30 days ago' +%Y-%m-%dT00:00:00Z 2>/dev/null)"
+	# Search with relevance + recent uploads
+	local params="part=snippet&q=$(urlencode "$niche")&type=video&maxResults=$limit&order=viewCount&publishedAfter=$(date -u -v-30d +%Y-%m-%dT00:00:00Z 2>/dev/null || date -u -d '30 days ago' +%Y-%m-%dT00:00:00Z 2>/dev/null)"
 
-    local search_response
-    search_response=$(yt_api_request "search" "$params" 100) || return 1
+	local search_response
+	search_response=$(yt_api_request "search" "$params" 100) || return 1
 
-    # Get video IDs
-    local video_ids
-    video_ids=$(echo "$search_response" | node -e "
+	# Get video IDs
+	local video_ids
+	video_ids=$(echo "$search_response" | node -e "
 process.stdin.on('data', d => {
     const items = JSON.parse(d).items || [];
     console.log(items.map(i => i.id?.videoId).filter(Boolean).join(','));
 });
 " 2>/dev/null)
 
-    if [[ -z "$video_ids" ]]; then
-        print_warning "No trending videos found for: $niche"
-        return 0
-    fi
+	if [[ -z "$video_ids" ]]; then
+		print_warning "No trending videos found for: $niche"
+		return 0
+	fi
 
-    # Get full video details
-    local video_response
-    video_response=$(yt_api_request "videos" "part=snippet,statistics,contentDetails&id=$video_ids" 1) || return 1
+	# Get full video details
+	local video_response
+	video_response=$(yt_api_request "videos" "part=snippet,statistics,contentDetails&id=$video_ids" 1) || return 1
 
-    echo "$video_response" | node -e "
+	echo "$video_response" | node -e "
 process.stdin.on('data', d => {
     const videos = (JSON.parse(d).items || [])
         .sort((a, b) => Number(b.statistics?.viewCount || 0) - Number(a.statistics?.viewCount || 0));
@@ -604,34 +653,34 @@ process.stdin.on('data', d => {
     });
 });
 "
-    return 0
+	return 0
 }
 
 # Compare multiple channels side-by-side
 cmd_competitors() {
-    if [[ $# -lt 1 ]]; then
-        print_error "At least one channel handle required"
-        print_info "Usage: youtube-helper.sh competitors @channel1 @channel2 @channel3"
-        return 1
-    fi
+	if [[ $# -lt 1 ]]; then
+		print_error "At least one channel handle required"
+		print_info "Usage: youtube-helper.sh competitors @channel1 @channel2 @channel3"
+		return 1
+	fi
 
-    local channels=("$@")
-    local all_data="[]"
+	local channels=("$@")
+	local all_data="[]"
 
-    for ch in "${channels[@]}"; do
-        print_info "Fetching: $ch"
-        local ch_json
-        ch_json=$(cmd_channel "$ch" "json") || continue
+	for ch in "${channels[@]}"; do
+		print_info "Fetching: $ch"
+		local ch_json
+		ch_json=$(cmd_channel "$ch" "json") || continue
 
-        all_data=$(node -e "
+		all_data=$(node -e "
 const existing = $all_data;
 const newData = JSON.parse(require('fs').readFileSync('/dev/stdin','utf8'));
 if (newData.items?.[0]) existing.push(newData.items[0]);
 console.log(JSON.stringify(existing));
-" <<< "$ch_json" 2>/dev/null)
-    done
+" <<<"$ch_json" 2>/dev/null)
+	done
 
-    echo "$all_data" | node -e "
+	echo "$all_data" | node -e "
 process.stdin.on('data', d => {
     const channels = JSON.parse(d);
     if (channels.length === 0) {
@@ -676,18 +725,18 @@ process.stdin.on('data', d => {
     });
 });
 "
-    return 0
+	return 0
 }
 
 # Show quota usage
 cmd_quota() {
-    if [[ ! -f "$YT_QUOTA_FILE" ]]; then
-        print_info "No API calls made today"
-        print_info "Daily quota: 10,000 units"
-        return 0
-    fi
+	if [[ ! -f "$YT_QUOTA_FILE" ]]; then
+		print_info "No API calls made today"
+		print_info "Daily quota: 10,000 units"
+		return 0
+	fi
 
-    node -e "
+	node -e "
 const data = JSON.parse(require('fs').readFileSync('$YT_QUOTA_FILE', 'utf8'));
 console.log('YouTube API Quota Usage (today):');
 console.log('');
@@ -706,52 +755,52 @@ Object.entries(byEndpoint).sort((a,b) => b[1] - a[1]).forEach(([ep, cost]) => {
     console.log('  ' + ep.padEnd(30) + ' ' + cost + ' units');
 });
 "
-    return 0
+	return 0
 }
 
 # Test authentication
 cmd_auth_test() {
-    print_info "Testing YouTube Data API authentication..."
+	print_info "Testing YouTube Data API authentication..."
 
-    local token
-    token=$(get_access_token) || {
-        print_error "Authentication failed"
-        return 1
-    }
+	local token
+	token=$(get_access_token) || {
+		print_error "Authentication failed"
+		return 1
+	}
 
-    print_success "Authentication successful (token obtained)"
+	print_success "Authentication successful (token obtained)"
 
-    # Test with a simple API call
-    local response
-    response=$(yt_api_request "channels" "part=snippet&forHandle=youtube" 1) || {
-        print_error "API call failed despite valid token"
-        return 1
-    }
+	# Test with a simple API call
+	local response
+	response=$(yt_api_request "channels" "part=snippet&forHandle=youtube" 1) || {
+		print_error "API call failed despite valid token"
+		return 1
+	}
 
-    local channel_name
-    channel_name=$(echo "$response" | node -e "process.stdin.on('data',d=>{const i=JSON.parse(d).items;console.log(i?.[0]?.snippet?.title||'unknown')})" 2>/dev/null)
+	local channel_name
+	channel_name=$(echo "$response" | node -e "process.stdin.on('data',d=>{const i=JSON.parse(d).items;console.log(i?.[0]?.snippet?.title||'unknown')})" 2>/dev/null)
 
-    print_success "API call successful (fetched: $channel_name)"
+	print_success "API call successful (fetched: $channel_name)"
 
-    local key_file
-    key_file=$(resolve_sa_key)
-    local sa_email
-    sa_email=$(node -e "console.log(JSON.parse(require('fs').readFileSync('$key_file','utf8')).client_email)" 2>/dev/null)
-    print_info "Service account: $sa_email"
+	local key_file
+	key_file=$(resolve_sa_key)
+	local sa_email
+	sa_email=$(node -e "console.log(JSON.parse(require('fs').readFileSync('$key_file','utf8')).client_email)" 2>/dev/null)
+	print_info "Service account: $sa_email"
 
-    return 0
+	return 0
 }
 
 # URL encode helper
 urlencode() {
-    local string="$1"
-    node -e "console.log(encodeURIComponent('$string'))" 2>/dev/null
-    return 0
+	local string="$1"
+	node -e "console.log(encodeURIComponent('$string'))" 2>/dev/null
+	return 0
 }
 
 # Show help
 show_help() {
-    cat << 'EOF'
+	cat <<'EOF'
 YouTube Data API Helper - Channel & Video Research
 
 Usage: youtube-helper.sh <command> [args] [options]
@@ -793,51 +842,51 @@ Authentication:
   Set via: export GCP_SA_KEY_FILE="path/to/key.json"
   Test:    youtube-helper.sh auth-test
 EOF
-    return 0
+	return 0
 }
 
 # Main entry point
 main() {
-    local command="${1:-help}"
-    shift 2>/dev/null || true
+	local command="${1:-help}"
+	shift 2>/dev/null || true
 
-    case "$command" in
-        "channel")
-            cmd_channel "$@"
-            ;;
-        "videos")
-            cmd_videos "$@"
-            ;;
-        "video")
-            cmd_video "$@"
-            ;;
-        "search")
-            cmd_search "$@"
-            ;;
-        "transcript")
-            cmd_transcript "$@"
-            ;;
-        "trending")
-            cmd_trending "$@"
-            ;;
-        "competitors")
-            cmd_competitors "$@"
-            ;;
-        "quota")
-            cmd_quota
-            ;;
-        "auth-test")
-            cmd_auth_test
-            ;;
-        "help"|"-h"|"--help"|"")
-            show_help
-            ;;
-        *)
-            print_error "$ERROR_UNKNOWN_COMMAND $command"
-            show_help
-            return 1
-            ;;
-    esac
+	case "$command" in
+	"channel")
+		cmd_channel "$@"
+		;;
+	"videos")
+		cmd_videos "$@"
+		;;
+	"video")
+		cmd_video "$@"
+		;;
+	"search")
+		cmd_search "$@"
+		;;
+	"transcript")
+		cmd_transcript "$@"
+		;;
+	"trending")
+		cmd_trending "$@"
+		;;
+	"competitors")
+		cmd_competitors "$@"
+		;;
+	"quota")
+		cmd_quota
+		;;
+	"auth-test")
+		cmd_auth_test
+		;;
+	"help" | "-h" | "--help" | "")
+		show_help
+		;;
+	*)
+		print_error "$ERROR_UNKNOWN_COMMAND $command"
+		show_help
+		return 1
+		;;
+	esac
 }
 
 main "$@"
