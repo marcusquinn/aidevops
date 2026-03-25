@@ -2009,60 +2009,71 @@ PYEOF
 	return 0
 }
 
-cmd_create() {
-	local template=""
-	local data=""
-	local output=""
-	local script=""
+# Parse create command arguments.
+# Sets _CREATE_TEMPLATE, _CREATE_DATA, _CREATE_OUTPUT, _CREATE_SCRIPT in caller scope.
+_create_cmd_parse_args() {
+	_CREATE_TEMPLATE=""
+	_CREATE_DATA=""
+	_CREATE_OUTPUT=""
+	_CREATE_SCRIPT=""
 
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--data)
-			data="$2"
+			_CREATE_DATA="$2"
 			shift 2
 			;;
 		--output | -o)
-			output="$2"
+			_CREATE_OUTPUT="$2"
 			shift 2
 			;;
 		--script)
-			script="$2"
+			_CREATE_SCRIPT="$2"
 			shift 2
 			;;
 		--*) shift ;;
 		*)
-			if [[ -z "${template}" ]]; then
-				template="$1"
-			fi
+			[[ -z "${_CREATE_TEMPLATE}" ]] && _CREATE_TEMPLATE="$1"
 			shift
 			;;
 		esac
 	done
+	return 0
+}
 
-	# Script mode: delegate to a Python script
-	if [[ -n "${script}" ]]; then
-		_create_run_script "${script}" "${data}" "${output}"
-		return $?
-	fi
+# Validate template inputs and resolve output path.
+# Returns 1 on validation failure.
+_create_validate_template() {
+	local template="$1"
+	local data="$2"
+	local output_ref="$3"
 
-	# Template mode
 	if [[ -z "${template}" ]]; then
 		die "Usage: create <template-file> --data <json|file> --output <file>"
 	fi
-
 	if [[ ! -f "${template}" ]]; then
 		die "Template not found: ${template}"
 	fi
-
 	if [[ -z "${data}" ]]; then
 		die "Data required. Use --data '{\"field\": \"value\"}' or --data fields.json"
 	fi
 
-	if [[ -z "${output}" ]]; then
+	local _output="${!output_ref}"
+	if [[ -z "${_output}" ]]; then
 		local ext
 		ext=$(get_ext "$template")
-		output="${template%.*}-filled.${ext}"
+		_output="${template%.*}-filled.${ext}"
+		printf -v "${output_ref}" '%s' "${_output}"
 	fi
+
+	return 0
+}
+
+# Fill a template file with data, dispatching by extension.
+_create_fill_template() {
+	local template="$1"
+	local data="$2"
+	local output="$3"
 
 	local ext
 	ext=$(get_ext "$template")
@@ -2091,6 +2102,25 @@ cmd_create() {
 		die "Unsupported template format: ${ext}. Use odt or docx."
 		;;
 	esac
+
+	return 0
+}
+
+cmd_create() {
+	_create_cmd_parse_args "$@"
+
+	local template="${_CREATE_TEMPLATE}"
+	local data="${_CREATE_DATA}"
+	local output="${_CREATE_OUTPUT}"
+	local script="${_CREATE_SCRIPT}"
+
+	if [[ -n "${script}" ]]; then
+		_create_run_script "${script}" "${data}" "${output}"
+		return $?
+	fi
+
+	_create_validate_template "${template}" "${data}" output || return 1
+	_create_fill_template "${template}" "${data}" "${output}"
 
 	return 0
 }
