@@ -146,6 +146,175 @@ parse_mission_state() {
 }
 
 #######################################
+# Score generality of an artifact (+30 max)
+# Penalises project-specific paths/URLs; rewards generic variable patterns.
+# $1: artifact content (string)
+# Outputs: integer points earned
+#######################################
+_score_generality() {
+	local content="$1"
+	local points=0
+	local specificity_hits=0
+
+	if echo "$content" | grep -qiE '(localhost:[0-9]+|127\.0\.0\.1|/home/[a-z]+/Git/[a-z])'; then
+		specificity_hits=$((specificity_hits + 1))
+	fi
+	if echo "$content" | grep -qiE '(my-project|my-app|myapp|todo/missions/m-)'; then
+		specificity_hits=$((specificity_hits + 1))
+	fi
+	# Reward generic patterns: env vars, positional params, long-form flags
+	# shellcheck disable=SC2016 # Intentional: checking for literal $ patterns in content
+	if echo "$content" | grep -qiE '(\$\{?[A-Z_]+\}?|\$1|\$2|--[a-z]+-[a-z]+)'; then
+		points=$((points + 15))
+	fi
+	if [[ "$specificity_hits" -eq 0 ]]; then
+		points=$((points + 15))
+	elif [[ "$specificity_hits" -eq 1 ]]; then
+		points=$((points + 8))
+	fi
+
+	echo "$points"
+	return 0
+}
+
+#######################################
+# Score documentation quality of an artifact (+20 max)
+# $1: artifact content (string)
+# $2: artifact type (agent|script)
+# Outputs: integer points earned
+#######################################
+_score_documentation() {
+	local content="$1"
+	local artifact_type="$2"
+	local points=0
+
+	if [[ "$artifact_type" == "agent" ]]; then
+		if echo "$content" | grep -q '^---'; then
+			points=$((points + 7))
+		fi
+		if echo "$content" | grep -qi 'description:'; then
+			points=$((points + 7))
+		fi
+		if echo "$content" | grep -qE '^## '; then
+			points=$((points + 6))
+		fi
+	elif [[ "$artifact_type" == "script" ]]; then
+		if echo "$content" | grep -qi '# Usage:'; then
+			points=$((points + 7))
+		fi
+		if echo "$content" | grep -qi 'set -euo pipefail'; then
+			points=$((points + 7))
+		fi
+		if echo "$content" | grep -qE '^[a-z_]+\(\)'; then
+			points=$((points + 6))
+		fi
+	fi
+
+	echo "$points"
+	return 0
+}
+
+#######################################
+# Score artifact size appropriateness (+15 max)
+# Sweet spot: 20-200 lines for agents, 30-500 for scripts.
+# $1: line count (integer)
+# $2: artifact type (agent|script)
+# Outputs: integer points earned
+#######################################
+_score_size() {
+	local line_count="$1"
+	local artifact_type="$2"
+	local points=0
+
+	if [[ "$artifact_type" == "agent" ]]; then
+		if [[ "$line_count" -ge 20 && "$line_count" -le 200 ]]; then
+			points=15
+		elif [[ "$line_count" -ge 10 && "$line_count" -le 300 ]]; then
+			points=8
+		elif [[ "$line_count" -lt 10 ]]; then
+			points=2 # Too trivial
+		fi
+	elif [[ "$artifact_type" == "script" ]]; then
+		if [[ "$line_count" -ge 30 && "$line_count" -le 500 ]]; then
+			points=15
+		elif [[ "$line_count" -ge 15 && "$line_count" -le 800 ]]; then
+			points=8
+		elif [[ "$line_count" -lt 15 ]]; then
+			points=2
+		fi
+	fi
+
+	echo "$points"
+	return 0
+}
+
+#######################################
+# Score adherence to aidevops standard format (+15 max)
+# $1: artifact content (string)
+# $2: artifact type (agent|script)
+# Outputs: integer points earned
+#######################################
+_score_standard_format() {
+	local content="$1"
+	local artifact_type="$2"
+	local points=0
+
+	if [[ "$artifact_type" == "agent" ]]; then
+		if echo "$content" | grep -q 'mode: subagent'; then
+			points=$((points + 10))
+		fi
+		if echo "$content" | grep -q 'tools:'; then
+			points=$((points + 5))
+		fi
+	elif [[ "$artifact_type" == "script" ]]; then
+		if echo "$content" | grep -q '#!/usr/bin/env bash'; then
+			points=$((points + 5))
+		fi
+		if echo "$content" | grep -q 'shared-constants.sh'; then
+			points=$((points + 5))
+		fi
+		if echo "$content" | grep -q 'local '; then
+			points=$((points + 5))
+		fi
+	fi
+
+	echo "$points"
+	return 0
+}
+
+#######################################
+# Score multi-feature usage within the mission (+20 max)
+# $1: artifact path
+# $2: mission directory
+# Outputs: integer points earned
+#######################################
+_score_multi_feature_usage() {
+	local artifact_path="$1"
+	local mission_dir="$2"
+	local points=0
+	local ref_count=0
+
+	if [[ -d "$mission_dir" ]]; then
+		local artifact_name
+		artifact_name=$(basename "$artifact_path")
+		ref_count=$(grep -rl "$artifact_name" "$mission_dir" 2>/dev/null | wc -l | tr -d ' ')
+		# Subtract self-reference
+		ref_count=$((ref_count > 0 ? ref_count - 1 : 0))
+	fi
+
+	if [[ "$ref_count" -ge 3 ]]; then
+		points=20
+	elif [[ "$ref_count" -ge 2 ]]; then
+		points=15
+	elif [[ "$ref_count" -ge 1 ]]; then
+		points=8
+	fi
+
+	echo "$points"
+	return 0
+}
+
+#######################################
 # Score an artifact for reusability (0-100)
 # Factors:
 #   - Generality (not project-specific): +30
@@ -162,7 +331,6 @@ score_artifact() {
 	local artifact_path="$1"
 	local artifact_type="$2"
 	local mission_dir="$3"
-	local score=0
 
 	if [[ ! -f "$artifact_path" ]]; then
 		echo "0"
@@ -174,110 +342,23 @@ score_artifact() {
 	local line_count
 	line_count=$(wc -l <"$artifact_path" | tr -d ' ')
 
-	# --- Generality check (+30) ---
-	# Penalise if it references project-specific paths, hardcoded URLs, or specific repo names
-	local specificity_hits=0
-	if echo "$content" | grep -qiE '(localhost:[0-9]+|127\.0\.0\.1|/home/[a-z]+/Git/[a-z])'; then
-		specificity_hits=$((specificity_hits + 1))
-	fi
-	if echo "$content" | grep -qiE '(my-project|my-app|myapp|todo/missions/m-)'; then
-		specificity_hits=$((specificity_hits + 1))
-	fi
-	# Reward if it uses generic patterns, variables, parameters
-	# shellcheck disable=SC2016 # Intentional: checking for literal $ patterns in content
-	if echo "$content" | grep -qiE '(\$\{?[A-Z_]+\}?|\$1|\$2|--[a-z]+-[a-z]+)'; then
-		score=$((score + 15))
-	fi
-	if [[ "$specificity_hits" -eq 0 ]]; then
-		score=$((score + 15))
-	elif [[ "$specificity_hits" -eq 1 ]]; then
-		score=$((score + 8))
-	fi
+	local score=0
+	local pts
 
-	# --- Documentation quality (+20) ---
-	if [[ "$artifact_type" == "agent" ]]; then
-		# Agent: check for frontmatter, description, sections
-		if echo "$content" | grep -q '^---'; then
-			score=$((score + 7))
-		fi
-		if echo "$content" | grep -qi 'description:'; then
-			score=$((score + 7))
-		fi
-		if echo "$content" | grep -qE '^## '; then
-			score=$((score + 6))
-		fi
-	elif [[ "$artifact_type" == "script" ]]; then
-		# Script: check for usage comments, function docs
-		if echo "$content" | grep -qi '# Usage:'; then
-			score=$((score + 7))
-		fi
-		if echo "$content" | grep -qi 'set -euo pipefail'; then
-			score=$((score + 7))
-		fi
-		if echo "$content" | grep -qE '^[a-z_]+\(\)'; then
-			score=$((score + 6))
-		fi
-	fi
+	pts=$(_score_generality "$content")
+	score=$((score + pts))
 
-	# --- Size check (+15) ---
-	# Sweet spot: 20-200 lines for agents, 30-500 for scripts
-	if [[ "$artifact_type" == "agent" ]]; then
-		if [[ "$line_count" -ge 20 && "$line_count" -le 200 ]]; then
-			score=$((score + 15))
-		elif [[ "$line_count" -ge 10 && "$line_count" -le 300 ]]; then
-			score=$((score + 8))
-		elif [[ "$line_count" -lt 10 ]]; then
-			score=$((score + 2)) # Too trivial
-		fi
-	elif [[ "$artifact_type" == "script" ]]; then
-		if [[ "$line_count" -ge 30 && "$line_count" -le 500 ]]; then
-			score=$((score + 15))
-		elif [[ "$line_count" -ge 15 && "$line_count" -le 800 ]]; then
-			score=$((score + 8))
-		elif [[ "$line_count" -lt 15 ]]; then
-			score=$((score + 2))
-		fi
-	fi
+	pts=$(_score_documentation "$content" "$artifact_type")
+	score=$((score + pts))
 
-	# --- Standard format (+15) ---
-	if [[ "$artifact_type" == "agent" ]]; then
-		# Check for aidevops subagent format
-		if echo "$content" | grep -q 'mode: subagent'; then
-			score=$((score + 10))
-		fi
-		if echo "$content" | grep -q 'tools:'; then
-			score=$((score + 5))
-		fi
-	elif [[ "$artifact_type" == "script" ]]; then
-		# Check for bash best practices
-		if echo "$content" | grep -q '#!/usr/bin/env bash'; then
-			score=$((score + 5))
-		fi
-		if echo "$content" | grep -q 'shared-constants.sh'; then
-			score=$((score + 5))
-		fi
-		if echo "$content" | grep -q 'local '; then
-			score=$((score + 5))
-		fi
-	fi
+	pts=$(_score_size "$line_count" "$artifact_type")
+	score=$((score + pts))
 
-	# --- Multi-feature usage (+20) ---
-	# Check if the artifact is referenced from multiple places in the mission
-	local ref_count=0
-	if [[ -d "$mission_dir" ]]; then
-		local artifact_name
-		artifact_name=$(basename "$artifact_path")
-		ref_count=$(grep -rl "$artifact_name" "$mission_dir" 2>/dev/null | wc -l | tr -d ' ')
-		# Subtract self-reference
-		ref_count=$((ref_count > 0 ? ref_count - 1 : 0))
-	fi
-	if [[ "$ref_count" -ge 3 ]]; then
-		score=$((score + 20))
-	elif [[ "$ref_count" -ge 2 ]]; then
-		score=$((score + 15))
-	elif [[ "$ref_count" -ge 1 ]]; then
-		score=$((score + 8))
-	fi
+	pts=$(_score_standard_format "$content" "$artifact_type")
+	score=$((score + pts))
+
+	pts=$(_score_multi_feature_usage "$artifact_path" "$mission_dir")
+	score=$((score + pts))
 
 	# Clamp to 0-100
 	if [[ "$score" -gt 100 ]]; then
@@ -331,144 +412,163 @@ extract_description() {
 }
 
 #######################################
-# Scan a mission directory for reusable artifacts
-# $1: mission directory path
+# Print score-coloured artifact row
+# $1: score (integer)
+# $2: name
+# $3: description
 #######################################
-cmd_scan() {
+_print_artifact_row() {
+	local score="$1"
+	local name="$2"
+	local desc="$3"
+	local score_color="${RED:-}"
+
+	if [[ "$score" -ge "$PROMOTE_THRESHOLD_SHARED" ]]; then
+		score_color="${GREEN:-}"
+	elif [[ "$score" -ge "$PROMOTE_THRESHOLD_CUSTOM" ]]; then
+		score_color="${CYAN:-}"
+	elif [[ "$score" -ge "$PROMOTE_THRESHOLD_DRAFT" ]]; then
+		score_color="${YELLOW:-}"
+	fi
+
+	printf "  %s%-3d%s  %-30s %s\n" "$score_color" "$score" "${NC:-}" "$name" "$desc"
+	return 0
+}
+
+#######################################
+# Upsert a single artifact learning record into mission_learnings
+# $1: mission_id
+# $2: artifact_type (agent|script)
+# $3: artifact_path
+# $4: artifact_name
+# $5: description
+# $6: score
+# $7: now (ISO timestamp)
+# $8: tags
+#######################################
+_upsert_learning() {
+	local mission_id="$1"
+	local artifact_type="$2"
+	local artifact_path="$3"
+	local artifact_name="$4"
+	local description="$5"
+	local score="$6"
+	local now="$7"
+	local tags="$8"
+	local learning_id
+	learning_id=$(generate_learning_id)
+
+	local safe_mid safe_path safe_name safe_desc
+	safe_mid=$(echo "$mission_id" | sed "s/'/''/g")
+	safe_path=$(echo "$artifact_path" | sed "s/'/''/g")
+	safe_name=$(echo "$artifact_name" | sed "s/'/''/g")
+	safe_desc=$(echo "$description" | sed "s/'/''/g")
+
+	sqlite3 "$MEMORY_DB" "
+		INSERT INTO mission_learnings (id, mission_id, artifact_type, artifact_path, artifact_name, description, reuse_score, times_seen, first_seen, last_seen, tags)
+		VALUES ('$learning_id', '$safe_mid', '$artifact_type', '$safe_path', '$safe_name', '$safe_desc', $score, 1, '$now', '$now', '$tags')
+		ON CONFLICT(mission_id, artifact_name, artifact_type) DO UPDATE SET
+			reuse_score = MAX(reuse_score, $score),
+			times_seen = times_seen + 1,
+			last_seen = '$now',
+			description = '$safe_desc';
+	" 2>/dev/null || log_warn "Failed to store $artifact_type learning: $artifact_name"
+	return 0
+}
+
+#######################################
+# Scan mission agents subdirectory
+# $1: mission_dir
+# $2: mission_id
+# $3: now (ISO timestamp)
+# Outputs: count of agents found (via stdout of last echo)
+# Sets found_count via nameref is not bash 3.2 safe; caller adds return value.
+#######################################
+_scan_agents() {
 	local mission_dir="$1"
+	local mission_id="$2"
+	local now="$3"
+	local count=0
 
-	if [[ -z "$mission_dir" ]]; then
-		log_error "Mission directory required: mission-skill-learner.sh scan <mission-dir>"
-		return 1
+	if [[ ! -d "${mission_dir}/agents" ]]; then
+		echo "$count"
+		return 0
 	fi
 
-	# Resolve to absolute path
-	mission_dir=$(cd "$mission_dir" 2>/dev/null && pwd) || {
-		log_error "Cannot access mission directory: $mission_dir"
-		return 1
-	}
+	echo -e "${CYAN:-}Mission Agents:${NC:-}"
+	local agent_file
+	while IFS= read -r -d '' agent_file; do
+		local agent_name agent_score agent_desc
+		agent_name=$(basename "$agent_file" .md)
+		agent_score=$(score_artifact "$agent_file" "agent" "$mission_dir")
+		agent_desc=$(extract_description "$agent_file" "agent")
 
-	local mission_file="${mission_dir}/mission.md"
-	if [[ ! -f "$mission_file" ]]; then
-		log_error "No mission.md found in: $mission_dir"
-		return 1
+		_upsert_learning "$mission_id" "agent" "$agent_file" "$agent_name" "$agent_desc" "$agent_score" "$now" "mission,agent"
+		_print_artifact_row "$agent_score" "$agent_name" "$agent_desc"
+		count=$((count + 1))
+	done < <(find "${mission_dir}/agents" -name "*.md" -type f -print0 2>/dev/null)
+
+	if [[ "$count" -eq 0 ]]; then
+		echo "  (none found)"
 	fi
-
-	# Parse mission state
-	local mission_id="" mission_status="" mission_title=""
-	eval "$(parse_mission_state "$mission_file")"
-
-	if [[ -z "$mission_id" ]]; then
-		mission_id=$(basename "$mission_dir")
-	fi
-
 	echo ""
-	echo -e "${CYAN:-}=== Mission Skill Learning: $mission_id ===${NC:-}"
-	echo -e "  Title: ${mission_title:-unknown}"
-	echo -e "  Status: ${mission_status:-unknown}"
+	echo "$count"
+	return 0
+}
+
+#######################################
+# Scan mission scripts subdirectory
+# $1: mission_dir
+# $2: mission_id
+# $3: now (ISO timestamp)
+# Outputs: count of scripts found (via stdout of last echo)
+#######################################
+_scan_scripts() {
+	local mission_dir="$1"
+	local mission_id="$2"
+	local now="$3"
+	local count=0
+
+	if [[ ! -d "${mission_dir}/scripts" ]]; then
+		echo "$count"
+		return 0
+	fi
+
+	echo -e "${CYAN:-}Mission Scripts:${NC:-}"
+	local script_file
+	while IFS= read -r -d '' script_file; do
+		local script_name script_score script_desc
+		script_name=$(basename "$script_file")
+		script_score=$(score_artifact "$script_file" "script" "$mission_dir")
+		script_desc=$(extract_description "$script_file" "script")
+
+		_upsert_learning "$mission_id" "script" "$script_file" "$script_name" "$script_desc" "$script_score" "$now" "mission,script"
+		_print_artifact_row "$script_score" "$script_name" "$script_desc"
+		count=$((count + 1))
+	done < <(find "${mission_dir}/scripts" -name "*.sh" -type f -print0 2>/dev/null)
+
+	if [[ "$count" -eq 0 ]]; then
+		echo "  (none found)"
+	fi
 	echo ""
+	echo "$count"
+	return 0
+}
 
-	ensure_learnings_table || return 1
+#######################################
+# Extract and store decision patterns from mission.md
+# $1: mission_file path
+# $2: mission_id
+# Outputs: count of decisions found (via stdout of last echo)
+#######################################
+_scan_decisions() {
+	local mission_file="$1"
+	local mission_id="$2"
+	local count=0
 
-	local found_count=0
-	local now
-	now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-
-	# --- Scan mission agents ---
-	if [[ -d "${mission_dir}/agents" ]]; then
-		echo -e "${CYAN:-}Mission Agents:${NC:-}"
-		local agent_file
-		while IFS= read -r -d '' agent_file; do
-			local agent_name
-			agent_name=$(basename "$agent_file" .md)
-			local agent_score
-			agent_score=$(score_artifact "$agent_file" "agent" "$mission_dir")
-			local agent_desc
-			agent_desc=$(extract_description "$agent_file" "agent")
-			local learning_id
-			learning_id=$(generate_learning_id)
-
-			# Store in DB (upsert)
-			sqlite3 "$MEMORY_DB" "
-				INSERT INTO mission_learnings (id, mission_id, artifact_type, artifact_path, artifact_name, description, reuse_score, times_seen, first_seen, last_seen, tags)
-				VALUES ('$learning_id', '$(echo "$mission_id" | sed "s/'/''/g")', 'agent', '$(echo "$agent_file" | sed "s/'/''/g")', '$(echo "$agent_name" | sed "s/'/''/g")', '$(echo "$agent_desc" | sed "s/'/''/g")', $agent_score, 1, '$now', '$now', 'mission,agent')
-				ON CONFLICT(mission_id, artifact_name, artifact_type) DO UPDATE SET
-					reuse_score = MAX(reuse_score, $agent_score),
-					times_seen = times_seen + 1,
-					last_seen = '$now',
-					description = '$(echo "$agent_desc" | sed "s/'/''/g")';
-			" 2>/dev/null || log_warn "Failed to store agent learning: $agent_name"
-
-			# Display
-			local score_color="${RED:-}"
-			if [[ "$agent_score" -ge "$PROMOTE_THRESHOLD_SHARED" ]]; then
-				score_color="${GREEN:-}"
-			elif [[ "$agent_score" -ge "$PROMOTE_THRESHOLD_CUSTOM" ]]; then
-				score_color="${CYAN:-}"
-			elif [[ "$agent_score" -ge "$PROMOTE_THRESHOLD_DRAFT" ]]; then
-				score_color="${YELLOW:-}"
-			fi
-
-			printf "  %s%-3d%s  %-30s %s\n" "$score_color" "$agent_score" "${NC:-}" "$agent_name" "$agent_desc"
-			found_count=$((found_count + 1))
-		done < <(find "${mission_dir}/agents" -name "*.md" -type f -print0 2>/dev/null)
-
-		if [[ "$found_count" -eq 0 ]]; then
-			echo "  (none found)"
-		fi
-		echo ""
-	fi
-
-	# --- Scan mission scripts ---
-	local script_count=0
-	if [[ -d "${mission_dir}/scripts" ]]; then
-		echo -e "${CYAN:-}Mission Scripts:${NC:-}"
-		local script_file
-		while IFS= read -r -d '' script_file; do
-			local script_name
-			script_name=$(basename "$script_file")
-			local script_score
-			script_score=$(score_artifact "$script_file" "script" "$mission_dir")
-			local script_desc
-			script_desc=$(extract_description "$script_file" "script")
-			local learning_id
-			learning_id=$(generate_learning_id)
-
-			sqlite3 "$MEMORY_DB" "
-				INSERT INTO mission_learnings (id, mission_id, artifact_type, artifact_path, artifact_name, description, reuse_score, times_seen, first_seen, last_seen, tags)
-				VALUES ('$learning_id', '$(echo "$mission_id" | sed "s/'/''/g")', 'script', '$(echo "$script_file" | sed "s/'/''/g")', '$(echo "$script_name" | sed "s/'/''/g")', '$(echo "$script_desc" | sed "s/'/''/g")', $script_score, 1, '$now', '$now', 'mission,script')
-				ON CONFLICT(mission_id, artifact_name, artifact_type) DO UPDATE SET
-					reuse_score = MAX(reuse_score, $script_score),
-					times_seen = times_seen + 1,
-					last_seen = '$now',
-					description = '$(echo "$script_desc" | sed "s/'/''/g")';
-			" 2>/dev/null || log_warn "Failed to store script learning: $script_name"
-
-			local score_color="${RED:-}"
-			if [[ "$script_score" -ge "$PROMOTE_THRESHOLD_SHARED" ]]; then
-				score_color="${GREEN:-}"
-			elif [[ "$script_score" -ge "$PROMOTE_THRESHOLD_CUSTOM" ]]; then
-				score_color="${CYAN:-}"
-			elif [[ "$script_score" -ge "$PROMOTE_THRESHOLD_DRAFT" ]]; then
-				score_color="${YELLOW:-}"
-			fi
-
-			printf "  %s%-3d%s  %-30s %s\n" "$score_color" "$script_score" "${NC:-}" "$script_name" "$script_desc"
-			script_count=$((script_count + 1))
-			found_count=$((found_count + 1))
-		done < <(find "${mission_dir}/scripts" -name "*.sh" -type f -print0 2>/dev/null)
-
-		if [[ "$script_count" -eq 0 ]]; then
-			echo "  (none found)"
-		fi
-		echo ""
-	fi
-
-	# --- Extract patterns from decision log ---
 	echo -e "${CYAN:-}Decision Patterns:${NC:-}"
-	local decision_count=0
+
 	if [[ -f "$mission_file" ]]; then
-		# Extract decisions from the decision log table
 		local in_decisions=false
 		while IFS= read -r line; do
 			if echo "$line" | grep -q '## Decision Log'; then
@@ -479,32 +579,42 @@ cmd_scan() {
 				break
 			fi
 			if [[ "$in_decisions" == true ]] && echo "$line" | grep -qE '^\| [0-9]'; then
-				# Extract decision text (column 3)
 				local decision_text
 				decision_text=$(echo "$line" | awk -F'|' '{gsub(/^ +| +$/, "", $4); print $4}')
 				if [[ -n "$decision_text" && "$decision_text" != "Rationale" ]]; then
-					# Store as a mission pattern in memory
 					"$MEMORY_HELPER" store \
 						--content "[mission:${mission_id}] Decision: ${decision_text}" \
 						--type "$MEMORY_TYPE_MISSION_PATTERN" \
 						--tags "mission,decision,${mission_id}" \
 						--confidence "medium" 2>/dev/null || true
-
 					echo "  + $decision_text"
-					decision_count=$((decision_count + 1))
-					found_count=$((found_count + 1))
+					count=$((count + 1))
 				fi
 			fi
 		done <"$mission_file"
 	fi
-	if [[ "$decision_count" -eq 0 ]]; then
+
+	if [[ "$count" -eq 0 ]]; then
 		echo "  (none found)"
 	fi
 	echo ""
+	echo "$count"
+	return 0
+}
 
-	# --- Extract lessons learned from retrospective ---
+#######################################
+# Extract and store lessons learned from mission.md
+# $1: mission_file path
+# $2: mission_id
+# Outputs: count of lessons found (via stdout of last echo)
+#######################################
+_scan_lessons() {
+	local mission_file="$1"
+	local mission_id="$2"
+	local count=0
+
 	echo -e "${CYAN:-}Lessons Learned:${NC:-}"
-	local lesson_count=0
+
 	if [[ -f "$mission_file" ]]; then
 		local in_lessons=false
 		while IFS= read -r line; do
@@ -524,41 +634,51 @@ cmd_scan() {
 						--type "$MEMORY_TYPE_MISSION_PATTERN" \
 						--tags "mission,lesson,${mission_id}" \
 						--confidence "high" 2>/dev/null || true
-
 					echo "  + $lesson"
-					lesson_count=$((lesson_count + 1))
-					found_count=$((found_count + 1))
+					count=$((count + 1))
 				fi
 			fi
 		done <"$mission_file"
 	fi
-	if [[ "$lesson_count" -eq 0 ]]; then
+
+	if [[ "$count" -eq 0 ]]; then
 		echo "  (none found)"
 	fi
 	echo ""
+	echo "$count"
+	return 0
+}
 
-	# --- Summary ---
+#######################################
+# Print scan summary and promotion suggestions
+# $1: mission_id
+# $2: found_count (total artifacts)
+#######################################
+_scan_summary() {
+	local mission_id="$1"
+	local found_count="$2"
+	local safe_mid
+	safe_mid=$(echo "$mission_id" | sed "s/'/''/g")
+
 	echo -e "${CYAN:-}Summary:${NC:-}"
 	echo "  Artifacts scanned: $found_count"
 
-	# Count promotion candidates
 	local promote_count
 	promote_count=$(sqlite3 "$MEMORY_DB" "
 		SELECT COUNT(*) FROM mission_learnings
-		WHERE mission_id = '$(echo "$mission_id" | sed "s/'/''/g")'
+		WHERE mission_id = '$safe_mid'
 		AND reuse_score >= $PROMOTE_THRESHOLD_DRAFT
 		AND promoted_to IS NULL;
 	" 2>/dev/null || echo "0")
 	echo "  Promotion candidates (score >= $PROMOTE_THRESHOLD_DRAFT): $promote_count"
 
-	# Show promotion suggestions
 	if [[ "$promote_count" -gt 0 ]]; then
 		echo ""
 		echo -e "${CYAN:-}Promotion Suggestions:${NC:-}"
 		sqlite3 -separator '|' "$MEMORY_DB" "
 			SELECT artifact_name, artifact_type, reuse_score, description
 			FROM mission_learnings
-			WHERE mission_id = '$(echo "$mission_id" | sed "s/'/''/g")'
+			WHERE mission_id = '$safe_mid'
 			AND reuse_score >= $PROMOTE_THRESHOLD_DRAFT
 			AND promoted_to IS NULL
 			ORDER BY reuse_score DESC;
@@ -575,6 +695,71 @@ cmd_scan() {
 	fi
 
 	echo ""
+	return 0
+}
+
+#######################################
+# Scan a mission directory for reusable artifacts
+# $1: mission directory path
+#######################################
+cmd_scan() {
+	local mission_dir="$1"
+
+	if [[ -z "$mission_dir" ]]; then
+		log_error "Mission directory required: mission-skill-learner.sh scan <mission-dir>"
+		return 1
+	fi
+
+	mission_dir=$(cd "$mission_dir" 2>/dev/null && pwd) || {
+		log_error "Cannot access mission directory: $mission_dir"
+		return 1
+	}
+
+	local mission_file="${mission_dir}/mission.md"
+	if [[ ! -f "$mission_file" ]]; then
+		log_error "No mission.md found in: $mission_dir"
+		return 1
+	fi
+
+	local mission_id="" mission_status="" mission_title=""
+	eval "$(parse_mission_state "$mission_file")"
+	if [[ -z "$mission_id" ]]; then
+		mission_id=$(basename "$mission_dir")
+	fi
+
+	echo ""
+	echo -e "${CYAN:-}=== Mission Skill Learning: $mission_id ===${NC:-}"
+	echo -e "  Title: ${mission_title:-unknown}"
+	echo -e "  Status: ${mission_status:-unknown}"
+	echo ""
+
+	ensure_learnings_table || return 1
+
+	local now
+	now=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+
+	# Scan each artifact category; capture counts from last line of each helper's output
+	local agent_out script_out decision_out lesson_out
+	agent_out=$(_scan_agents "$mission_dir" "$mission_id" "$now")
+	script_out=$(_scan_scripts "$mission_dir" "$mission_id" "$now")
+	decision_out=$(_scan_decisions "$mission_file" "$mission_id")
+	lesson_out=$(_scan_lessons "$mission_file" "$mission_id")
+
+	# Print buffered output (all display lines except the trailing count)
+	echo "$agent_out" | head -n -1
+	echo "$script_out" | head -n -1
+	echo "$decision_out" | head -n -1
+	echo "$lesson_out" | head -n -1
+
+	# Sum counts (last line of each output block)
+	local agent_count script_count decision_count lesson_count found_count
+	agent_count=$(echo "$agent_out" | tail -1)
+	script_count=$(echo "$script_out" | tail -1)
+	decision_count=$(echo "$decision_out" | tail -1)
+	lesson_count=$(echo "$lesson_out" | tail -1)
+	found_count=$((agent_count + script_count + decision_count + lesson_count))
+
+	_scan_summary "$mission_id" "$found_count"
 	log_success "Scan complete for mission: $mission_id"
 	return 0
 }
