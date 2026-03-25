@@ -27,6 +27,11 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 NC='\033[0m'
 
+# Test counters — set by run_test(), incremented by run_case()
+_TEST_PASS=0
+_TEST_FAIL=0
+_TEST_HOOK_PATH=""
+
 print_help() {
 	local script_name
 	script_name="$(basename "$0")"
@@ -64,37 +69,34 @@ check_hook_source() {
 	return 0
 }
 
-run_test() {
-	local hook_path="${1:-${HOOK_SOURCE}}"
-	local pass_count=0
-	local fail_count=0
+# run_case - Execute one test case and update global pass/fail counters.
+# Uses _TEST_HOOK_PATH, _TEST_PASS, _TEST_FAIL set by run_test().
+run_case() {
+	local description="$1"
+	local input_json="$2"
+	local expect_blocked="$3"
 
-	printf "${BLUE}Testing git_safety_guard.py...${NC}\n\n"
+	local result
+	result=$(echo "${input_json}" | python3 "${_TEST_HOOK_PATH}" 2>/dev/null) || true
 
-	run_case() {
-		local description="$1"
-		local input_json="$2"
-		local expect_blocked="$3"
+	local is_blocked="false"
+	if echo "${result}" | grep -q '"permissionDecision".*"deny"' 2>/dev/null; then
+		is_blocked="true"
+	fi
 
-		local result
-		result=$(echo "${input_json}" | python3 "${hook_path}" 2>/dev/null) || true
+	if [[ "${is_blocked}" == "${expect_blocked}" ]]; then
+		printf "${GREEN}PASS${NC} %s\n" "${description}"
+		_TEST_PASS=$((_TEST_PASS + 1))
+	else
+		printf "${RED}FAIL${NC} %s (expected blocked=%s, got blocked=%s)\n" \
+			"${description}" "${expect_blocked}" "${is_blocked}"
+		_TEST_FAIL=$((_TEST_FAIL + 1))
+	fi
+	return 0
+}
 
-		local is_blocked="false"
-		if echo "${result}" | grep -q '"permissionDecision".*"deny"' 2>/dev/null; then
-			is_blocked="true"
-		fi
-
-		if [[ "${is_blocked}" == "${expect_blocked}" ]]; then
-			printf "${GREEN}PASS${NC} %s\n" "${description}"
-			pass_count=$((pass_count + 1))
-		else
-			printf "${RED}FAIL${NC} %s (expected blocked=%s, got blocked=%s)\n" \
-				"${description}" "${expect_blocked}" "${is_blocked}"
-			fail_count=$((fail_count + 1))
-		fi
-	}
-
-	# Should be BLOCKED
+# _run_blocked_cases - Run all test cases that should be blocked by the hook.
+_run_blocked_cases() {
 	run_case "git checkout -- file.txt" \
 		'{"tool_name":"Bash","tool_input":{"command":"git checkout -- file.txt"}}' "true"
 	run_case "git restore file.txt" \
@@ -131,8 +133,11 @@ run_test() {
 		'{"tool_name":"Bash","tool_input":{"command":"rm -r -f ./build"}}' "true"
 	run_case "rm --recursive --force ./dist" \
 		'{"tool_name":"Bash","tool_input":{"command":"rm --recursive --force ./dist"}}' "true"
+	return 0
+}
 
-	# Should be ALLOWED
+# _run_allowed_cases - Run all test cases that should be allowed through the hook.
+_run_allowed_cases() {
 	run_case "git status (safe)" \
 		'{"tool_name":"Bash","tool_input":{"command":"git status"}}' "false"
 	run_case "git checkout -b new-branch (safe)" \
@@ -165,11 +170,24 @@ run_test() {
 		'{"tool_name":"Bash","tool_input":{"command":""}}' "false"
 	run_case "Invalid JSON (safe)" \
 		'not json at all' "false"
+	return 0
+}
+
+run_test() {
+	local hook_path="${1:-${HOOK_SOURCE}}"
+	_TEST_HOOK_PATH="${hook_path}"
+	_TEST_PASS=0
+	_TEST_FAIL=0
+
+	printf "${BLUE}Testing git_safety_guard.py...${NC}\n\n"
+
+	_run_blocked_cases
+	_run_allowed_cases
 
 	printf "\n${BLUE}Results: ${GREEN}%d passed${NC}, ${RED}%d failed${NC}\n" \
-		"${pass_count}" "${fail_count}"
+		"${_TEST_PASS}" "${_TEST_FAIL}"
 
-	if [[ "${fail_count}" -gt 0 ]]; then
+	if [[ "${_TEST_FAIL}" -gt 0 ]]; then
 		return 1
 	fi
 	return 0
