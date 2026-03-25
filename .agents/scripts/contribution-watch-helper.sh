@@ -344,6 +344,119 @@ _seed_update_state() {
 	return 0
 }
 
+# Check whether a repo slug matches any of the pipe-delimited own_repos.
+_seed_is_own_repo() {
+	local repo_slug="$1"
+	local own_repos="$2"
+
+	if [[ -z "$own_repos" ]]; then
+		return 1
+	fi
+
+	local own_slug
+	while IFS='|' read -r own_slug _rest; do
+		if [[ "$repo_slug" == "$own_slug" ]]; then
+			return 0
+		fi
+	done <<<"$(echo "$own_repos" | tr '|' '\n')"
+
+	return 1
+}
+
+# Process a single seed item. Prints the updated state JSON.
+# Returns 0 if item was added, 1 if skipped.
+_seed_process_single_item() {
+	local index="$1"
+	local own_repos="$2"
+	local dry_run="$3"
+	local state="$4"
+
+	local item repo_url repo_slug
+	item=$(echo "$_SEED_ALL_ITEMS" | jq ".[$index]")
+	repo_url=$(echo "$item" | jq -r '.repo')
+	repo_slug=$(echo "$repo_url" | sed 's|https://api.github.com/repos/||')
+
+	# Skip our own repos (pulse-enabled)
+	if _seed_is_own_repo "$repo_slug" "$own_repos"; then
+		echo "$state"
+		return 1
+	fi
+
+	local number item_type title updated item_key role
+	number=$(echo "$item" | jq -r '.number')
+	item_type=$(echo "$item" | jq -r '.type')
+	title=$(echo "$item" | jq -r '.title')
+	updated=$(echo "$item" | jq -r '.updated')
+	item_key="${repo_slug}#${number}"
+
+	# Determine role: author if item appears in authored results
+	role="commenter"
+	if echo "$_SEED_AUTHORED" | jq -e "select(.number == ${number})" &>/dev/null 2>&1; then
+		role="author"
+	fi
+
+	if [[ "$dry_run" == "true" ]]; then
+		echo "  ${item_key} (${item_type}, ${role}): ${title}" >&2
+		echo "$state"
+	else
+		_seed_update_state "$state" "$item_key" "$item_type" "$role" "$title" "$updated"
+	fi
+	return 0
+}
+
+# Iterate all fetched items, filter external, and update state.
+# Writes updated state JSON to the file path in $1 (temp file).
+# Writes item count to the file path in $2 (temp file).
+_seed_process_items() {
+	local own_repos="$1"
+	local dry_run="$2"
+	local state="$3"
+	local state_out="$4"
+	local count_out="$5"
+
+	local items_added=0
+
+	local total_found
+	total_found=$(echo "$_SEED_ALL_ITEMS" | jq 'length')
+	echo -e "${CYAN}Found ${total_found} total items. Filtering external repos...${NC}"
+
+	local item_count i=0
+	item_count=$(echo "$_SEED_ALL_ITEMS" | jq 'length')
+
+	while [[ "$i" -lt "$item_count" ]]; do
+		local new_state
+		if new_state=$(_seed_process_single_item "$i" "$own_repos" "$dry_run" "$state"); then
+			items_added=$((items_added + 1))
+		fi
+		state="$new_state"
+		i=$((i + 1))
+	done
+
+	echo "$state" >"$state_out"
+	printf '%s' "$items_added" >"$count_out"
+	return 0
+}
+
+# Save seed results and print summary.
+_seed_finalize() {
+	local dry_run="$1"
+	local state="$2"
+	local items_added="$3"
+
+	if [[ "$dry_run" == "true" ]]; then
+		echo ""
+		echo -e "${GREEN}Dry run complete: ${items_added} external items found${NC}"
+	else
+		local now_iso
+		now_iso=$(_now_iso)
+		state=$(echo "$state" | jq --arg ts "$now_iso" '.last_scan = $ts')
+		_write_state "$state"
+		echo -e "${GREEN}Seed complete: ${items_added} external items tracked${NC}"
+		_log_info "Seed complete: ${items_added} items added"
+	fi
+	return 0
+}
+
 # =============================================================================
 # Seed: discover all external contributions
 # =============================================================================
@@ -373,76 +486,26 @@ cmd_seed() {
 
 	local state
 	state=$(_read_state)
-	local items_added=0
 
 	# Fetch contributions into globals _SEED_ALL_ITEMS and _SEED_AUTHORED
 	_SEED_ALL_ITEMS="" _SEED_AUTHORED=""
 	_seed_fetch_contributions "$username"
 
-	local total_found
-	total_found=$(echo "$_SEED_ALL_ITEMS" | jq 'length')
-	echo -e "${CYAN}Found ${total_found} total items. Filtering external repos...${NC}"
+	# Process items and update state via temp files (avoids subshell variable loss)
+	local tmp_state tmp_count
+	tmp_state=$(mktemp) || return 1
+	tmp_count=$(mktemp) || {
+		rm -f "$tmp_state"
+		return 1
+	}
+	trap 'rm -f "$tmp_state" "$tmp_count"' RETURN
 
-	local item_count i=0
-	item_count=$(echo "$_SEED_ALL_ITEMS" | jq 'length')
+	_seed_process_items "$own_repos" "$dry_run" "$state" "$tmp_state" "$tmp_count"
+	state=$(cat "$tmp_state")
+	local items_added
+	items_added=$(cat "$tmp_count")
 
-	while [[ "$i" -lt "$item_count" ]]; do
-		local item repo_url repo_slug
-		item=$(echo "$_SEED_ALL_ITEMS" | jq ".[$i]")
-		repo_url=$(echo "$item" | jq -r '.repo')
-		repo_slug=$(echo "$repo_url" | sed 's|https://api.github.com/repos/||')
-
-		# Skip our own repos (pulse-enabled)
-		local is_own=false
-		if [[ -n "$own_repos" ]]; then
-			local own_slug
-			while IFS='|' read -r own_slug _rest; do
-				if [[ "$repo_slug" == "$own_slug" ]]; then
-					is_own=true
-					break
-				fi
-			done <<<"$(echo "$own_repos" | tr '|' '\n')"
-		fi
-
-		if [[ "$is_own" == "true" ]]; then
-			i=$((i + 1))
-			continue
-		fi
-
-		local number item_type title updated item_key role
-		number=$(echo "$item" | jq -r '.number')
-		item_type=$(echo "$item" | jq -r '.type')
-		title=$(echo "$item" | jq -r '.title')
-		updated=$(echo "$item" | jq -r '.updated')
-		item_key="${repo_slug}#${number}"
-
-		# Determine role: author if item appears in authored results
-		role="commenter"
-		if echo "$_SEED_AUTHORED" | jq -e "select(.number == ${number})" &>/dev/null 2>&1; then
-			role="author"
-		fi
-
-		if [[ "$dry_run" == "true" ]]; then
-			echo "  ${item_key} (${item_type}, ${role}): ${title}"
-		else
-			state=$(_seed_update_state "$state" "$item_key" "$item_type" "$role" "$title" "$updated")
-		fi
-
-		items_added=$((items_added + 1))
-		i=$((i + 1))
-	done
-
-	if [[ "$dry_run" == "true" ]]; then
-		echo ""
-		echo -e "${GREEN}Dry run complete: ${items_added} external items found${NC}"
-	else
-		local now_iso
-		now_iso=$(_now_iso)
-		state=$(echo "$state" | jq --arg ts "$now_iso" '.last_scan = $ts')
-		_write_state "$state"
-		echo -e "${GREEN}Seed complete: ${items_added} external items tracked${NC}"
-		_log_info "Seed complete: ${items_added} items added"
-	fi
+	_seed_finalize "$dry_run" "$state" "$items_added"
 
 	return 0
 }
@@ -477,6 +540,36 @@ _scan_check_backfill_due() {
 	else
 		echo "false"
 	fi
+	return 0
+}
+
+# Mark an item as needing attention. Updates _SCAN_STATE, _SCAN_ALERTED_KEYS,
+# _SCAN_NEEDS_ATTENTION, _SCAN_ATTENTION_ITEMS, _SCAN_ITEMS_CHECKED.
+# Returns 1 if the item was already alerted or not newer than last_notified.
+_scan_alert_item() {
+	local item_key="$1"
+	local item_type="$2"
+	local title="$3"
+	local updated="$4"
+	local reason="$5"
+
+	local last_notified
+	last_notified=$(echo "$_SCAN_STATE" | jq -r --arg key "$item_key" '.items[$key].last_notified // ""')
+	[[ -n "$last_notified" ]] && [[ ! "$updated" > "$last_notified" ]] && return 1
+	[[ "$_SCAN_ALERTED_KEYS" == *$'\n'"$item_key"$'\n'* ]] && return 1
+
+	local hot_until
+	hot_until=$(date -u -v+24H +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d '+24 hours' +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo "")
+	_SCAN_STATE=$(echo "$_SCAN_STATE" | jq \
+		--arg key "$item_key" \
+		--arg updated "$updated" \
+		--arg hot "$hot_until" \
+		'.items[$key].last_notified = $updated | .items[$key].hot_until = $hot')
+
+	_SCAN_ALERTED_KEYS+="${item_key}"$'\n'
+	_SCAN_NEEDS_ATTENTION=$((_SCAN_NEEDS_ATTENTION + 1))
+	_SCAN_ATTENTION_ITEMS="${_SCAN_ATTENTION_ITEMS}  ${item_key} (${item_type}): ${title} — reason: ${reason}\n"
+	_SCAN_ITEMS_CHECKED=$((_SCAN_ITEMS_CHECKED + 1))
 	return 0
 }
 
@@ -518,23 +611,7 @@ _scan_process_notifications() {
 				| .last_any_comment = (if .last_any_comment == "" or $updated > .last_any_comment then $updated else .last_any_comment end)
 			)')
 
-		local last_notified
-		last_notified=$(echo "$_SCAN_STATE" | jq -r --arg key "$item_key" '.items[$key].last_notified // ""')
-		[[ -n "$last_notified" ]] && [[ ! "$updated" > "$last_notified" ]] && continue
-		[[ "$_SCAN_ALERTED_KEYS" == *$'\n'"$item_key"$'\n'* ]] && continue
-
-		local hot_until
-		hot_until=$(date -u -v+24H +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d '+24 hours' +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo "")
-		_SCAN_STATE=$(echo "$_SCAN_STATE" | jq \
-			--arg key "$item_key" \
-			--arg updated "$updated" \
-			--arg hot "$hot_until" \
-			'.items[$key].last_notified = $updated | .items[$key].hot_until = $hot')
-
-		_SCAN_ALERTED_KEYS+="${item_key}"$'\n'
-		_SCAN_NEEDS_ATTENTION=$((_SCAN_NEEDS_ATTENTION + 1))
-		_SCAN_ATTENTION_ITEMS="${_SCAN_ATTENTION_ITEMS}  ${item_key} (${item_type}): ${title} — reason: ${reason}\n"
-		_SCAN_ITEMS_CHECKED=$((_SCAN_ITEMS_CHECKED + 1))
+		_scan_alert_item "$item_key" "$item_type" "$title" "$updated" "$reason" || true
 	done < <(echo "$notifications" | jq -c '.[]?')
 	return 0
 }
@@ -569,6 +646,48 @@ _scan_backfill_fetch_latest_comment() {
 	return 0
 }
 
+# Process a single backfill item: fetch comments, update state, alert if needed.
+# Updates _SCAN_STATE, _SCAN_BACKFILL_CHECKED and alert globals.
+_scan_backfill_process_item() {
+	local key="$1"
+	local managed_slugs="$2"
+	local username="$3"
+
+	_SCAN_BACKFILL_CHECKED=$((_SCAN_BACKFILL_CHECKED + 1))
+
+	local repo_slug number
+	repo_slug="${key%#*}"
+	number="${key##*#}"
+
+	_is_managed_repo "$repo_slug" "$managed_slugs" && return 0
+
+	local comments_meta
+	comments_meta=$(_scan_backfill_fetch_latest_comment "$repo_slug" "$number" "$key")
+	[[ -z "$comments_meta" || "$comments_meta" == "null" ]] && return 0
+
+	local latest_comment_author latest_comment_time
+	latest_comment_author=$(echo "$comments_meta" | jq -r '.author // ""')
+	latest_comment_time=$(echo "$comments_meta" | jq -r '.created // ""')
+	[[ -z "$latest_comment_time" ]] && return 0
+
+	_SCAN_STATE=$(echo "$_SCAN_STATE" | jq \
+		--arg key "$key" \
+		--arg time "$latest_comment_time" \
+		'.items[$key].last_any_comment = (if .items[$key].last_any_comment == "" or $time > .items[$key].last_any_comment then $time else .items[$key].last_any_comment end)')
+
+	if [[ "$latest_comment_author" == "$username" ]]; then
+		_SCAN_STATE=$(echo "$_SCAN_STATE" | jq --arg key "$key" --arg time "$latest_comment_time" '.items[$key].last_our_comment = $time')
+		return 0
+	fi
+
+	local title item_type
+	title=$(echo "$_SCAN_STATE" | jq -r --arg key "$key" '.items[$key].title // "unknown"')
+	item_type=$(echo "$_SCAN_STATE" | jq -r --arg key "$key" '.items[$key].type // "issue"')
+
+	_scan_alert_item "$key" "$item_type" "$title" "$latest_comment_time" "backfill" || true
+	return 0
+}
+
 # Run backfill sweep over all tracked items. Updates _SCAN_STATE,
 # _SCAN_NEEDS_ATTENTION, _SCAN_ATTENTION_ITEMS, _SCAN_ITEMS_CHECKED,
 # _SCAN_ALERTED_KEYS, _SCAN_BACKFILL_CHECKED in place.
@@ -581,53 +700,7 @@ _scan_run_backfill() {
 
 	while IFS= read -r key; do
 		[[ -z "$key" ]] && continue
-		_SCAN_BACKFILL_CHECKED=$((_SCAN_BACKFILL_CHECKED + 1))
-
-		local repo_slug number
-		repo_slug="${key%#*}"
-		number="${key##*#}"
-
-		_is_managed_repo "$repo_slug" "$managed_slugs" && continue
-
-		local comments_meta
-		comments_meta=$(_scan_backfill_fetch_latest_comment "$repo_slug" "$number" "$key")
-		[[ -z "$comments_meta" || "$comments_meta" == "null" ]] && continue
-
-		local latest_comment_author latest_comment_time
-		latest_comment_author=$(echo "$comments_meta" | jq -r '.author // ""')
-		latest_comment_time=$(echo "$comments_meta" | jq -r '.created // ""')
-		[[ -z "$latest_comment_time" ]] && continue
-
-		_SCAN_STATE=$(echo "$_SCAN_STATE" | jq \
-			--arg key "$key" \
-			--arg time "$latest_comment_time" \
-			'.items[$key].last_any_comment = (if .items[$key].last_any_comment == "" or $time > .items[$key].last_any_comment then $time else .items[$key].last_any_comment end)')
-
-		if [[ "$latest_comment_author" == "$username" ]]; then
-			_SCAN_STATE=$(echo "$_SCAN_STATE" | jq --arg key "$key" --arg time "$latest_comment_time" '.items[$key].last_our_comment = $time')
-			continue
-		fi
-
-		local last_notified
-		last_notified=$(echo "$_SCAN_STATE" | jq -r --arg key "$key" '.items[$key].last_notified // ""')
-		[[ -n "$last_notified" ]] && [[ ! "$latest_comment_time" > "$last_notified" ]] && continue
-		[[ "$_SCAN_ALERTED_KEYS" == *$'\n'"$key"$'\n'* ]] && continue
-
-		local title item_type hot_until
-		title=$(echo "$_SCAN_STATE" | jq -r --arg key "$key" '.items[$key].title // "unknown"')
-		item_type=$(echo "$_SCAN_STATE" | jq -r --arg key "$key" '.items[$key].type // "issue"')
-		hot_until=$(date -u -v+24H +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d '+24 hours' +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || echo "")
-
-		_SCAN_STATE=$(echo "$_SCAN_STATE" | jq \
-			--arg key "$key" \
-			--arg updated "$latest_comment_time" \
-			--arg hot "$hot_until" \
-			'.items[$key].last_notified = $updated | .items[$key].hot_until = $hot')
-
-		_SCAN_ALERTED_KEYS+="${key}"$'\n'
-		_SCAN_NEEDS_ATTENTION=$((_SCAN_NEEDS_ATTENTION + 1))
-		_SCAN_ATTENTION_ITEMS="${_SCAN_ATTENTION_ITEMS}  ${key} (${item_type}): ${title} — reason: backfill\n"
-		_SCAN_ITEMS_CHECKED=$((_SCAN_ITEMS_CHECKED + 1))
+		_scan_backfill_process_item "$key" "$managed_slugs" "$username"
 	done <<<"$items_keys"
 	return 0
 }
@@ -733,30 +806,8 @@ _scan_print_results() {
 	return 0
 }
 
-# =============================================================================
-# Scan: check notifications for new external activity
-# =============================================================================
-
-cmd_scan() {
-	local run_backfill=false
-	local auto_backfill=false
-	local auto_draft=false
-	local scan_arg
-	for scan_arg in "$@"; do
-		case "$scan_arg" in
-		--backfill) run_backfill=true ;;
-		--auto-draft) auto_draft=true ;;
-		esac
-	done
-
-	_check_prerequisites || return 1
-
-	local username
-	username=$(_get_username) || return 1
-
-	_ensure_state_file
-
-	# Shared scan state — updated by helper functions
+# Initialise shared scan globals from state file.
+_scan_init_globals() {
 	_SCAN_STATE=$(_read_state)
 	_SCAN_NEEDS_ATTENTION=0
 	_SCAN_ITEMS_CHECKED=0
@@ -764,47 +815,28 @@ cmd_scan() {
 	_SCAN_ATTENTION_ITEMS=""
 	_SCAN_NOTIFICATIONS_CHECKED=0
 	_SCAN_ALERTED_KEYS=$'\n'
+	return 0
+}
 
-	local last_scan
-	last_scan=$(echo "$_SCAN_STATE" | jq -r '.last_scan // ""')
-
-	if [[ -z "$last_scan" ]]; then
-		echo -e "${YELLOW}No previous scan found. Run 'seed' first.${NC}"
-		_log_warn "Scan attempted with no prior seed"
-		return 1
-	fi
-
-	# Auto-enable low-frequency backfill when due.
-	if [[ "$run_backfill" != "true" ]]; then
-		local backfill_due
-		backfill_due=$(_scan_check_backfill_due "$_SCAN_STATE")
-		if [[ "$backfill_due" == "true" ]]; then
-			run_backfill=true
-			auto_backfill=true
-			_log_info "Auto-enabling backfill safety-net (cadence: ${BACKFILL_FRESHNESS_HOURS}h)"
-		fi
-	fi
-
-	_log_info "Scan started (last_scan: ${last_scan})"
-
-	local managed_slugs
-	managed_slugs=$(_get_managed_repo_slugs)
+# Fetch and process the notifications stream.
+_scan_fetch_and_process() {
+	local last_scan="$1"
+	local managed_slugs="$2"
 
 	local since_arg=""
 	[[ -n "$last_scan" ]] && since_arg="&since=${last_scan}"
 
-	# Notifications API: one paginated stream instead of one call per tracked item.
 	local notifications
 	notifications=$(gh api --paginate "notifications?participating=true&all=true&per_page=${API_PAGE_SIZE}${since_arg}" 2>/dev/null) || notifications=""
 
 	_scan_process_notifications "$notifications" "$managed_slugs"
+	return 0
+}
 
-	# Optional safety net: deterministic metadata-only sweep over tracked items.
-	if [[ "$run_backfill" == "true" ]]; then
-		_scan_run_backfill "$managed_slugs" "$username"
-	fi
+# Save scan state with updated timestamps.
+_scan_save_state() {
+	local run_backfill="$1"
 
-	# Update scan timestamp
 	local now_iso
 	now_iso=$(_now_iso)
 	_SCAN_STATE=$(echo "$_SCAN_STATE" | jq --arg ts "$now_iso" '.last_scan = $ts')
@@ -812,6 +844,14 @@ cmd_scan() {
 		_SCAN_STATE=$(echo "$_SCAN_STATE" | jq --arg ts "$now_iso" '.last_backfill = $ts')
 	fi
 	_write_state "$_SCAN_STATE"
+	return 0
+}
+
+# Run post-scan actions: auto-draft, approvals, results, logging.
+_scan_post_actions() {
+	local auto_draft="$1"
+	local run_backfill="$2"
+	local auto_backfill="$3"
 
 	local draft_helper="${SCRIPT_DIR}/draft-response-helper.sh"
 	if [[ "$auto_draft" == "true" ]]; then
@@ -825,9 +865,171 @@ cmd_scan() {
 
 	_log_info "Scan complete: notifications=${_SCAN_NOTIFICATIONS_CHECKED}, actionable=${_SCAN_ITEMS_CHECKED}, backfill_checked=${_SCAN_BACKFILL_CHECKED}, needs_attention=${_SCAN_NEEDS_ATTENTION}, run_backfill=${run_backfill}, auto_backfill=${auto_backfill}"
 
-	# Output machine-readable count for pulse integration
 	echo "CONTRIBUTION_WATCH_COUNT=${_SCAN_NEEDS_ATTENTION}"
+	return 0
+}
 
+# Parse scan CLI arguments. Sets _SCAN_ARG_BACKFILL, _SCAN_ARG_AUTO_DRAFT.
+_scan_parse_args() {
+	_SCAN_ARG_BACKFILL=false
+	_SCAN_ARG_AUTO_BACKFILL=false
+	_SCAN_ARG_AUTO_DRAFT=false
+	local scan_arg
+	for scan_arg in "$@"; do
+		case "$scan_arg" in
+		--backfill) _SCAN_ARG_BACKFILL=true ;;
+		--auto-draft) _SCAN_ARG_AUTO_DRAFT=true ;;
+		esac
+	done
+	return 0
+}
+
+# Auto-enable backfill when cadence threshold is reached.
+# Updates _SCAN_ARG_BACKFILL and _SCAN_ARG_AUTO_BACKFILL in place.
+_scan_maybe_auto_backfill() {
+	if [[ "$_SCAN_ARG_BACKFILL" == "true" ]]; then
+		return 0
+	fi
+	local backfill_due
+	backfill_due=$(_scan_check_backfill_due "$_SCAN_STATE")
+	if [[ "$backfill_due" == "true" ]]; then
+		_SCAN_ARG_BACKFILL=true
+		_SCAN_ARG_AUTO_BACKFILL=true
+		_log_info "Auto-enabling backfill safety-net (cadence: ${BACKFILL_FRESHNESS_HOURS}h)"
+	fi
+	return 0
+}
+
+# =============================================================================
+# Scan: check notifications for new external activity
+# =============================================================================
+
+cmd_scan() {
+	_scan_parse_args "$@"
+
+	_check_prerequisites || return 1
+
+	local username
+	username=$(_get_username) || return 1
+
+	_ensure_state_file
+	_scan_init_globals
+
+	local last_scan
+	last_scan=$(echo "$_SCAN_STATE" | jq -r '.last_scan // ""')
+
+	if [[ -z "$last_scan" ]]; then
+		echo -e "${YELLOW}No previous scan found. Run 'seed' first.${NC}"
+		_log_warn "Scan attempted with no prior seed"
+		return 1
+	fi
+
+	_scan_maybe_auto_backfill
+	_log_info "Scan started (last_scan: ${last_scan})"
+
+	local managed_slugs
+	managed_slugs=$(_get_managed_repo_slugs)
+
+	_scan_fetch_and_process "$last_scan" "$managed_slugs"
+
+	if [[ "$_SCAN_ARG_BACKFILL" == "true" ]]; then
+		_scan_run_backfill "$managed_slugs" "$username"
+	fi
+
+	_scan_save_state "$_SCAN_ARG_BACKFILL"
+	_scan_post_actions "$_SCAN_ARG_AUTO_DRAFT" "$_SCAN_ARG_BACKFILL" "$_SCAN_ARG_AUTO_BACKFILL"
+
+	return 0
+}
+
+# Classify a single status item into activity tiers and check if it needs reply.
+# Updates globals: _STATUS_HOT, _STATUS_ACTIVE, _STATUS_DORMANT,
+# _STATUS_NEEDS_REPLY, _STATUS_FOUND_NEEDING.
+_status_classify_item() {
+	local state="$1"
+	local key="$2"
+
+	local item title item_type last_any last_our role
+	item=$(echo "$state" | jq --arg k "$key" '.items[$k]')
+	title=$(echo "$item" | jq -r '.title // "unknown"')
+	item_type=$(echo "$item" | jq -r '.type // "issue"')
+	last_any=$(echo "$item" | jq -r '.last_any_comment // ""')
+	last_our=$(echo "$item" | jq -r '.last_our_comment // ""')
+	role=$(echo "$item" | jq -r '.role // "commenter"')
+
+	# Determine activity tier
+	if [[ -n "$last_any" ]]; then
+		local age_seconds
+		age_seconds=$(_seconds_since "$last_any")
+		if [[ "$age_seconds" -lt "$HOT_THRESHOLD" ]]; then
+			_STATUS_HOT=$((_STATUS_HOT + 1))
+		elif [[ "$age_seconds" -gt "$DORMANT_THRESHOLD" ]]; then
+			_STATUS_DORMANT=$((_STATUS_DORMANT + 1))
+		else
+			_STATUS_ACTIVE=$((_STATUS_ACTIVE + 1))
+		fi
+	fi
+
+	# Check if needs reply (someone else has last word)
+	if [[ -n "$last_any" && ("$last_our" < "$last_any" || -z "$last_our") ]]; then
+		_STATUS_NEEDS_REPLY=$((_STATUS_NEEDS_REPLY + 1))
+		_STATUS_FOUND_NEEDING=true
+		echo "  ${key} (${item_type}, ${role}): ${title}"
+		echo "    Last activity: ${last_any}"
+	fi
+	return 0
+}
+
+# Iterate all tracked items and classify them. Prints needs-reply items.
+# Sets globals: _STATUS_HOT, _STATUS_ACTIVE, _STATUS_DORMANT,
+# _STATUS_NEEDS_REPLY, _STATUS_FOUND_NEEDING.
+_status_collect_items() {
+	local state="$1"
+
+	_STATUS_HOT=0
+	_STATUS_ACTIVE=0
+	_STATUS_DORMANT=0
+	_STATUS_NEEDS_REPLY=0
+	_STATUS_FOUND_NEEDING=false
+
+	local keys
+	keys=$(echo "$state" | jq -r '.items | keys[]' 2>/dev/null) || keys=""
+
+	while IFS= read -r key; do
+		[[ -z "$key" ]] && continue
+		_status_classify_item "$state" "$key"
+	done <<<"$keys"
+	return 0
+}
+
+# Print activity tier summary and polling schedule.
+_status_print_summary() {
+	local hot_count="$1"
+	local active_count="$2"
+	local dormant_count="$3"
+	local needs_reply_count="$4"
+	local found_needing="$5"
+
+	if [[ "$found_needing" == "false" ]]; then
+		echo "  None — all caught up!"
+	fi
+
+	echo ""
+	echo -e "${CYAN}Activity tiers:${NC}"
+	echo "  Hot (<24h):     ${hot_count}"
+	echo "  Active:         ${active_count}"
+	echo "  Dormant (>7d):  ${dormant_count}"
+	echo "  Need reply:     ${needs_reply_count}"
+
+	echo ""
+	echo -e "${CYAN}Polling schedule:${NC}"
+	if [[ "$hot_count" -gt 0 ]]; then
+		echo "  Current: every 15 minutes (hot items detected)"
+	elif [[ "$active_count" -gt 0 ]]; then
+		echo "  Current: every 1 hour (active items)"
+	else
+		echo "  Current: every 6 hours (all dormant)"
+	fi
 	return 0
 }
 
@@ -857,80 +1059,16 @@ cmd_status() {
 		return 0
 	fi
 
-	local hot_count=0 active_count=0 dormant_count=0 needs_reply_count=0
 	echo -e "${CYAN}Items needing reply:${NC}"
-	local found_needing=false
-
-	local keys
-	keys=$(echo "$state" | jq -r '.items | keys[]' 2>/dev/null) || keys=""
-
-	while IFS= read -r key; do
-		[[ -z "$key" ]] && continue
-
-		local item title item_type last_any last_our hot_until role
-		item=$(echo "$state" | jq --arg k "$key" '.items[$k]')
-		title=$(echo "$item" | jq -r '.title // "unknown"')
-		item_type=$(echo "$item" | jq -r '.type // "issue"')
-		last_any=$(echo "$item" | jq -r '.last_any_comment // ""')
-		last_our=$(echo "$item" | jq -r '.last_our_comment // ""')
-		hot_until=$(echo "$item" | jq -r '.hot_until // ""')
-		role=$(echo "$item" | jq -r '.role // "commenter"')
-
-		# Determine activity tier
-		if [[ -n "$last_any" ]]; then
-			local age_seconds
-			age_seconds=$(_seconds_since "$last_any")
-			if [[ "$age_seconds" -lt "$HOT_THRESHOLD" ]]; then
-				hot_count=$((hot_count + 1))
-			elif [[ "$age_seconds" -gt "$DORMANT_THRESHOLD" ]]; then
-				dormant_count=$((dormant_count + 1))
-			else
-				active_count=$((active_count + 1))
-			fi
-		fi
-
-		# Check if needs reply (someone else has last word)
-		if [[ -n "$last_any" && ("$last_our" < "$last_any" || -z "$last_our") ]]; then
-			needs_reply_count=$((needs_reply_count + 1))
-			found_needing=true
-			echo "  ${key} (${item_type}, ${role}): ${title}"
-			echo "    Last activity: ${last_any}"
-		fi
-	done <<<"$keys"
-
-	if [[ "$found_needing" == "false" ]]; then
-		echo "  None — all caught up!"
-	fi
-
-	echo ""
-	echo -e "${CYAN}Activity tiers:${NC}"
-	echo "  Hot (<24h):     ${hot_count}"
-	echo "  Active:         ${active_count}"
-	echo "  Dormant (>7d):  ${dormant_count}"
-	echo "  Need reply:     ${needs_reply_count}"
-
-	echo ""
-	echo -e "${CYAN}Polling schedule:${NC}"
-	if [[ "$hot_count" -gt 0 ]]; then
-		echo "  Current: every 15 minutes (hot items detected)"
-	elif [[ "$active_count" -gt 0 ]]; then
-		echo "  Current: every 1 hour (active items)"
-	else
-		echo "  Current: every 6 hours (all dormant)"
-	fi
+	_status_collect_items "$state"
+	_status_print_summary "$_STATUS_HOT" "$_STATUS_ACTIVE" "$_STATUS_DORMANT" \
+		"$_STATUS_NEEDS_REPLY" "$_STATUS_FOUND_NEEDING"
 
 	return 0
 }
 
-# =============================================================================
-# Install: create launchd plist
-# =============================================================================
-
-cmd_install() {
-	local script_path
-	script_path=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")
-
-	# Determine polling interval based on current state
+# Determine polling interval based on current state. Prints interval in seconds.
+_install_get_interval() {
 	local interval="$POLL_DEFAULT"
 	if [[ -f "$STATE_FILE" ]]; then
 		local state
@@ -941,11 +1079,15 @@ cmd_install() {
 			interval="$POLL_HOT"
 		fi
 	fi
+	echo "$interval"
+	return 0
+}
 
-	# Ensure log directory exists
-	mkdir -p "$(dirname "$LOGFILE")" 2>/dev/null || true
+# Write the launchd plist file for the scan schedule.
+_install_write_plist() {
+	local script_path="$1"
+	local interval="$2"
 
-	# Create plist
 	cat >"$PLIST_PATH" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
@@ -979,8 +1121,23 @@ cmd_install() {
 </dict>
 </plist>
 PLIST
+	return 0
+}
 
-	# Load the plist
+# =============================================================================
+# Install: create launchd plist
+# =============================================================================
+
+cmd_install() {
+	local script_path
+	script_path=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")
+
+	local interval
+	interval=$(_install_get_interval)
+
+	mkdir -p "$(dirname "$LOGFILE")" 2>/dev/null || true
+	_install_write_plist "$script_path" "$interval"
+
 	launchctl unload "$PLIST_PATH" 2>/dev/null || true
 	launchctl load "$PLIST_PATH" 2>/dev/null || true
 
