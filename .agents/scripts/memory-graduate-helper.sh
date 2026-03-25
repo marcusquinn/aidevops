@@ -251,10 +251,11 @@ _print_candidates_text() {
 }
 
 #######################################
-# Find graduation candidates
-# Criteria: high confidence OR frequently accessed, not yet graduated
+# Parse arguments for cmd_candidates
+# Usage: _candidates_parse_args "$@"
+# Outputs: newline-separated KEY=VALUE pairs
 #######################################
-cmd_candidates() {
+_candidates_parse_args() {
 	local limit=$DEFAULT_LIMIT
 	local min_access=$DEFAULT_MIN_ACCESS
 	local format="text"
@@ -276,6 +277,30 @@ cmd_candidates() {
 		*) shift ;;
 		esac
 	done
+
+	printf '%s\n' \
+		"limit=${limit}" \
+		"min_access=${min_access}" \
+		"format=${format}"
+	return 0
+}
+
+#######################################
+# Find graduation candidates
+# Criteria: high confidence OR frequently accessed, not yet graduated
+#######################################
+cmd_candidates() {
+	local parsed
+	parsed=$(_candidates_parse_args "$@")
+
+	local limit min_access format
+	while IFS='=' read -r key val; do
+		case "$key" in
+		limit) limit="$val" ;;
+		min_access) min_access="$val" ;;
+		format) format="$val" ;;
+		esac
+	done <<<"$parsed"
 
 	ensure_schema || return 1
 
@@ -468,9 +493,11 @@ HEADER
 }
 
 #######################################
-# Graduate memories into shared docs
+# Parse arguments for cmd_graduate
+# Usage: _graduate_parse_args "$@"
+# Outputs: newline-separated KEY=VALUE pairs
 #######################################
-cmd_graduate() {
+_graduate_parse_args() {
 	local dry_run=false
 	local limit=$DEFAULT_LIMIT
 	local min_access=$DEFAULT_MIN_ACCESS
@@ -493,6 +520,84 @@ cmd_graduate() {
 		esac
 	done
 
+	printf '%s\n' \
+		"dry_run=${dry_run}" \
+		"limit=${limit}" \
+		"min_access=${min_access}"
+	return 0
+}
+
+#######################################
+# Collect entries from results into tmp_dir and read back counts/ids
+# Args: results tmp_dir
+# Outputs: sets graduated_count, skipped_count, graduated_ids[] in caller scope
+# (caller must declare these variables before calling)
+#######################################
+_graduate_collect_and_read() {
+	local results="$1"
+	local tmp_dir="$2"
+
+	_collect_entries "$results" "$tmp_dir"
+
+	graduated_count=$(cat "$tmp_dir/count_graduated" 2>/dev/null || echo "0")
+	skipped_count=$(cat "$tmp_dir/count_skipped" 2>/dev/null || echo "0")
+
+	graduated_ids=()
+	if [[ -f "$tmp_dir/ids" ]]; then
+		while IFS= read -r id; do
+			graduated_ids+=("$id")
+		done <"$tmp_dir/ids"
+	fi
+	return 0
+}
+
+#######################################
+# Write graduated content to file and mark memories in DB
+# Args: tmp_dir target_file graduated_count skipped_count graduated_ids...
+#######################################
+_graduate_write_and_mark() {
+	local tmp_dir="$1"
+	local target_file="$2"
+	local graduated_count="$3"
+	local skipped_count="$4"
+	shift 4
+	local graduated_ids=("$@")
+
+	local new_content
+	new_content=$(_build_graduation_content "$tmp_dir")
+
+	_ensure_graduated_file "$target_file"
+
+	# Append graduated content
+	echo "$new_content" >>"$target_file"
+
+	# Mark memories as graduated in the DB
+	if [[ ${#graduated_ids[@]} -gt 0 ]]; then
+		mark_graduated "${graduated_ids[@]}"
+	fi
+
+	log_success "Graduated $graduated_count memories ($skipped_count skipped as metadata)"
+	log_info "Updated: $target_file"
+	log_info "Remember to commit and push the changes."
+	return 0
+}
+
+#######################################
+# Graduate memories into shared docs
+#######################################
+cmd_graduate() {
+	local parsed
+	parsed=$(_graduate_parse_args "$@")
+
+	local dry_run limit min_access
+	while IFS='=' read -r key val; do
+		case "$key" in
+		dry_run) dry_run="$val" ;;
+		limit) limit="$val" ;;
+		min_access) min_access="$val" ;;
+		esac
+	done <<<"$parsed"
+
 	ensure_schema || return 1
 
 	local target_file
@@ -514,19 +619,9 @@ cmd_graduate() {
 	# shellcheck disable=SC2064
 	trap "rm -rf '$tmp_dir'" EXIT
 
-	_collect_entries "$results" "$tmp_dir"
-
 	local graduated_count skipped_count
-	graduated_count=$(cat "$tmp_dir/count_graduated" 2>/dev/null || echo "0")
-	skipped_count=$(cat "$tmp_dir/count_skipped" 2>/dev/null || echo "0")
-
-	# Read collected ids into array
 	local graduated_ids=()
-	if [[ -f "$tmp_dir/ids" ]]; then
-		while IFS= read -r id; do
-			graduated_ids+=("$id")
-		done <"$tmp_dir/ids"
-	fi
+	_graduate_collect_and_read "$results" "$tmp_dir"
 
 	if [[ "$graduated_count" -eq 0 ]]; then
 		log_info "No actionable memories to graduate ($skipped_count skipped as metadata)."
@@ -542,21 +637,8 @@ cmd_graduate() {
 		return 0
 	fi
 
-	local new_content
-	new_content=$(_build_graduation_content "$tmp_dir")
-
-	_ensure_graduated_file "$target_file"
-
-	# Append graduated content
-	echo "$new_content" >>"$target_file"
-
-	# Mark memories as graduated in the DB
-	mark_graduated "${graduated_ids[@]}"
-
-	log_success "Graduated $graduated_count memories ($skipped_count skipped as metadata)"
-	log_info "Updated: $target_file"
-	log_info "Remember to commit and push the changes."
-
+	_graduate_write_and_mark "$tmp_dir" "$target_file" \
+		"$graduated_count" "$skipped_count" "${graduated_ids[@]+"${graduated_ids[@]}"}"
 	return 0
 }
 
