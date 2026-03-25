@@ -358,7 +358,7 @@ Entity resolution: Slack user ID (`U01ABCDEF`) → `entity_channels` table looku
 
 `~/.config/aidevops/slack-bot.json` (600 permissions):
 
-> **Security**: Store `botToken`, `appToken`, and `signingSecret` in gopass (`aidevops secret set slack-bot-token`), not in this JSON file.
+> **Security**: Store `botToken`, `appToken`, and `signingSecret` in gopass (`aidevops secret set slack-bot-token`), not in this JSON file. Reference them via environment variables or `credentials.sh`. The values below are placeholders only.
 
 ```json
 {
