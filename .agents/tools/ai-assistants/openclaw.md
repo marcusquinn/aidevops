@@ -18,94 +18,52 @@ tools:
 
 ## Quick Reference
 
-- **Purpose**: Personal AI assistant running locally or on a VPS, accessible via messaging channels
 - **Install**: `curl -fsSL https://openclaw.ai/install.sh | bash && openclaw onboard --install-daemon`
 - **Runtime**: Node.js >= 22
-- **Docs**: https://docs.openclaw.ai
-- **Repo**: https://github.com/openclaw/openclaw
-- **Gateway**: ws://127.0.0.1:18789 (local control plane)
-- **Security audit**: `openclaw security audit --deep`
+- **Docs**: https://docs.openclaw.ai | **Repo**: https://github.com/openclaw/openclaw
+- **Gateway**: ws://127.0.0.1:18789 | **Security audit**: `openclaw security audit --deep`
 
-**Supported Channels**: WhatsApp, Telegram, Slack, Discord, Signal, iMessage, Microsoft Teams, WebChat, BlueBubbles, Matrix, Google Chat, Mattermost, LINE, Zalo
+**Channels**: WhatsApp, Telegram, Slack, Discord, Signal, iMessage, Microsoft Teams, WebChat, BlueBubbles, Matrix, Google Chat, Mattermost, LINE, Zalo
 
-**Key Features**:
-
-- Multi-channel inbox (respond from any messaging platform)
-- Voice Wake + Talk Mode (macOS/iOS/Android)
-- Live Canvas (agent-driven visual workspace)
-- Skills system (similar to aidevops agents)
-- Browser control, cron jobs, webhooks
-- Agent sandboxing (Docker-based tool isolation)
-- Multi-agent routing (different agents per channel/context)
+**Key Features**: Multi-channel inbox, Voice Wake + Talk Mode (macOS/iOS/Android), Live Canvas, Skills system, Browser control, cron jobs, webhooks, Agent sandboxing (Docker), Multi-agent routing
 
 <!-- AI-CONTEXT-END -->
 
 ## Deployment Tiers
 
-OpenClaw can run in three configurations, each suited to different needs:
+```text
+Need AI 24/7 from any device?
+  YES → Have a VPS (Hetzner/Hostinger)?
+    YES → Tier 3: Remote VPS + Tailscale
+    NO  → Provision one via @hetzner, then Tier 3
+  NO  → Want isolation from host?
+    YES → Tier 2: OrbStack Container
+    NO  → Tier 1: Native Local
+```
 
-### Tier 1: Native Local (Simplest)
-
-Run directly on your machine. Best for personal use, development, and getting started.
-
+**Tier 1 — Native Local** (simplest, fastest setup, no isolation):
 ```bash
-# Install OpenClaw
 curl -fsSL https://openclaw.ai/install.sh | bash
-
-# Run onboarding wizard (installs daemon)
 openclaw onboard --install-daemon
-
-# Verify
 openclaw doctor
 ```
 
-**Pros**: Fastest setup, no container overhead, direct filesystem access.
-**Cons**: Only available when your machine is on, no isolation.
-
-### Tier 2: OrbStack Container (Isolated)
-
-Run in a Docker container via OrbStack on macOS. Best for isolation, easy reset, and testing.
-
+**Tier 2 — OrbStack Container** (isolated, easy reset):
 ```bash
-# Ensure OrbStack is running (aidevops installs it)
-orb status
-
-# Clone and run via Docker
-git clone https://github.com/openclaw/openclaw.git
-cd openclaw
-./docker-setup.sh
+git clone https://github.com/openclaw/openclaw.git && cd openclaw
+./docker-setup.sh  # builds image, runs onboarding, starts via Docker Compose
 ```
+Config and workspace bind-mounted from `~/.openclaw/`. See `tools/containers/orbstack.md`.
 
-The setup script builds the image, runs onboarding, generates a gateway token, and starts via Docker Compose. Config and workspace are bind-mounted from `~/.openclaw/`.
-
-**Pros**: Isolated from host, reproducible, easy to reset.
-**Cons**: Slightly more complex setup, container overhead.
-
-See `@orbstack` for OrbStack management and `tools/containers/orbstack.md` for details.
-
-### Tier 3: Remote VPS (Always-On)
-
-Run on a Hetzner or Hostinger VPS with Tailscale for secure access. Best for always-on availability from any device.
-
+**Tier 3 — Remote VPS** (always-on, any device):
 ```bash
-# 1. Provision a VPS via aidevops (use @hetzner or @hostinger)
-#    Minimum: CX22 (2 vCPU, 4GB RAM) or equivalent
-
-# 2. Install Tailscale on both local machine and VPS
-#    See @tailscale for setup
-
-# 3. SSH into VPS via Tailscale
-ssh user@<tailscale-hostname>
-
-# 4. Install OpenClaw on VPS
-curl -fsSL https://openclaw.ai/install.sh | bash
-openclaw onboard --install-daemon
-
-# 5. Configure Tailscale Serve for secure HTTPS access
-# In ~/.openclaw/openclaw.json:
+# 1. Provision VPS (min CX22: 2 vCPU, 4GB RAM) via @hetzner or @hostinger
+# 2. Install Tailscale on both machines (see @tailscale)
+# 3. SSH into VPS and install OpenClaw
+curl -fsSL https://openclaw.ai/install.sh | bash && openclaw onboard --install-daemon
 ```
-
 ```json5
+// ~/.openclaw/openclaw.json — Tailscale Serve config
 {
   gateway: {
     bind: "loopback",
@@ -115,181 +73,83 @@ openclaw onboard --install-daemon
 }
 ```
 
-**Pros**: Always available, accessible from any device, survives laptop sleep/shutdown.
-**Cons**: Monthly VPS cost, requires Tailscale setup.
-
-See `@tailscale` for Tailscale configuration and `services/networking/tailscale.md` for details.
-
-### Deployment Decision Tree
-
-```text
-Do you need AI accessible 24/7 from any device?
-  YES -> Do you have a VPS (Hetzner/Hostinger)?
-    YES -> Tier 3: Remote VPS + Tailscale
-    NO  -> Provision one via @hetzner, then Tier 3
-  NO  -> Do you want isolation from your host system?
-    YES -> Tier 2: OrbStack Container
-    NO  -> Tier 1: Native Local
-```
-
-## Installation
-
-### Quick Install (Recommended)
+## From Source (Development)
 
 ```bash
-# macOS/Linux
-curl -fsSL https://openclaw.ai/install.sh | bash
-
-# Run onboarding wizard (installs daemon)
-openclaw onboard --install-daemon
-```
-
-The wizard walks through:
-
-1. Gateway setup and auth token generation
-2. Model provider configuration
-3. Workspace configuration
-4. Channel connections (WhatsApp, Telegram, etc.)
-
-### From Source (Development)
-
-```bash
-git clone https://github.com/openclaw/openclaw.git
-cd openclaw
-
-pnpm install
-pnpm ui:build
-pnpm build
-
+git clone https://github.com/openclaw/openclaw.git && cd openclaw
+pnpm install && pnpm ui:build && pnpm build
 pnpm openclaw onboard --install-daemon
-
-# Dev loop (auto-reload)
-pnpm gateway:watch
+pnpm gateway:watch  # dev loop with auto-reload
 ```
 
 ## Architecture
 
 ```text
 WhatsApp / Telegram / Slack / Discord / Signal / iMessage / Teams / WebChat
-               |
-               v
+                |
+                v
 +-------------------------------+
-|           Gateway             |
-|       (control plane)         |
-|     ws://127.0.0.1:18789      |
+|           Gateway             |  ws://127.0.0.1:18789
 +---------------+---------------+
-               |
-               +-- Agent runtime (RPC)
-               +-- CLI (openclaw ...)
-               +-- Control UI / Dashboard
-               +-- macOS app
-               +-- iOS / Android nodes
+                +-- Agent runtime (RPC)
+                +-- CLI (openclaw ...)
+                +-- Control UI / Dashboard
+                +-- macOS app / iOS / Android nodes
 ```
-
-## Configuration
 
 Minimal config at `~/.openclaw/openclaw.json`:
-
 ```json5
-{
-  agent: {
-    model: "anthropic/claude-opus-4-6"
-  }
-}
+{ agent: { model: "anthropic/claude-opus-4-6" } }
 ```
-
-Full configuration reference: https://docs.openclaw.ai/gateway/configuration
+Full reference: https://docs.openclaw.ai/gateway/configuration
 
 ## Channel Setup
 
-Each channel has its own security model. Always configure allowlists before connecting.
+Always configure allowlists before connecting.
 
-### WhatsApp (QR Pairing)
-
+**WhatsApp** (QR pairing):
 ```bash
-openclaw channels login  # Scan QR code with WhatsApp
-```
-
-Default DM policy is `pairing` -- unknown senders get a pairing code you must approve:
-
-```bash
+openclaw channels login  # scan QR code
 openclaw pairing list whatsapp
 openclaw pairing approve whatsapp <code>
 ```
 
-### Telegram (Bot Token)
-
-1. Create a bot via @BotFather on Telegram
-2. Configure:
-
+**Telegram** — create bot via @BotFather, then:
 ```json5
-{
-  channels: {
-    telegram: {
-      botToken: "123456:ABCDEF"  // or set TELEGRAM_BOT_TOKEN env var
-    }
-  }
-}
+{ channels: { telegram: { botToken: "123456:ABCDEF" } } }
 ```
 
-### Discord (Bot Token)
-
-1. Create application at https://discord.com/developers/applications
-2. Create bot, copy token
-3. Configure:
-
+**Discord** — create app at https://discord.com/developers/applications, then:
 ```json5
-{
-  channels: {
-    discord: {
-      token: "your-bot-token"  // or set DISCORD_BOT_TOKEN env var
-    }
-  }
-}
+{ channels: { discord: { token: "your-bot-token" } } }
 ```
 
-### Slack (App Tokens)
+**Slack** — set `SLACK_BOT_TOKEN` + `SLACK_APP_TOKEN` env vars.
 
-Set `SLACK_BOT_TOKEN` + `SLACK_APP_TOKEN` environment variables.
+**Signal** — privacy-focused; requires `signal-cli` installed separately.
 
-### Signal (signal-cli)
-
-Privacy-focused channel. Requires `signal-cli` installed separately.
-
-### iMessage (BlueBubbles)
-
-Recommended: Use BlueBubbles macOS server for full iMessage support (edit, unsend, effects, reactions, group management).
+**iMessage** — use BlueBubbles macOS server for full support (edit, unsend, effects, reactions, group management).
 
 ## Security
 
 **Security is the most important part of OpenClaw setup.** An AI with shell access connected to messaging channels is a significant attack surface.
 
-### Core Principle: Access Control Before Intelligence
-
-1. **Identity first**: Decide who can talk to the bot (DM pairing / allowlists)
-2. **Scope next**: Decide where the bot can act (tool policy, sandboxing)
-3. **Model last**: Assume the model can be manipulated; limit blast radius
-
-### Security Audit
-
-Run regularly, especially after config changes:
+**Principle: Access Control Before Intelligence**
+1. Identity first — who can talk to the bot (DM pairing / allowlists)
+2. Scope next — where the bot can act (tool policy, sandboxing)
+3. Model last — assume the model can be manipulated; limit blast radius
 
 ```bash
-openclaw security audit          # Quick check
-openclaw security audit --deep   # Full check with live Gateway probe
-openclaw security audit --fix    # Auto-fix common issues
+openclaw security audit          # quick check
+openclaw security audit --deep   # full check with live Gateway probe
+openclaw security audit --fix    # auto-fix common issues
 ```
 
-The audit checks: inbound access policies, tool blast radius, network exposure, browser control, disk permissions, plugins, and model hygiene.
-
-### Secure Baseline Config
-
+**Secure baseline config:**
 ```json5
 {
   gateway: {
-    mode: "local",
-    bind: "loopback",
-    port: 18789,
+    mode: "local", bind: "loopback", port: 18789,
     auth: { mode: "token", token: "your-long-random-token" },
   },
   channels: {
@@ -298,145 +158,78 @@ The audit checks: inbound access policies, tool blast radius, network exposure, 
       groups: { "*": { requireMention: true } },
     },
   },
-  discovery: {
-    mdns: { mode: "minimal" },  // Don't broadcast sensitive info
-  },
+  discovery: { mdns: { mode: "minimal" } },
 }
 ```
 
-### DM Access Model
+**DM access policies:**
 
 | Policy | Behavior | Use Case |
 |--------|----------|----------|
 | `pairing` (default) | Unknown senders get a code, must be approved | Personal use |
-| `allowlist` | Only pre-approved senders, no pairing handshake | Controlled access |
+| `allowlist` | Only pre-approved senders | Controlled access |
 | `open` | Anyone can DM (requires `allowFrom: ["*"]`) | Public bots only |
 | `disabled` | Ignore all inbound DMs | Channel-specific disable |
 
-### Group Security
-
-Always require mention in groups to prevent the bot responding to every message:
-
+**Group security** — always require mention:
 ```json5
-{
-  channels: {
-    whatsapp: {
-      groups: { "*": { requireMention: true } },
-      groupPolicy: "allowlist",
-    },
-  },
-}
+{ channels: { whatsapp: { groups: { "*": { requireMention: true } }, groupPolicy: "allowlist" } } }
 ```
 
-### Session Isolation (Multi-User)
-
-If multiple people can DM the bot, isolate sessions to prevent cross-user context leakage:
-
+**Session isolation** (multi-user, prevents cross-user context leakage):
 ```json5
-{
-  session: { dmScope: "per-channel-peer" },
-}
+{ session: { dmScope: "per-channel-peer" } }
 ```
 
-### Prompt Injection Awareness
+**Prompt injection** — even with locked-down DMs, injection can happen via untrusted content (web pages, emails, attachments). Mitigations: use a read-only reader agent for untrusted content; keep `web_search`/`browser` off unless needed; enable sandboxing for agents touching untrusted input; keep secrets out of prompts.
 
-Even with locked-down DMs, prompt injection can happen via any untrusted content the bot reads (web pages, emails, attachments). Mitigations:
-
-- Use a read-only reader agent for untrusted content, pass summaries to main agent
-- Keep `web_search`/`web_fetch`/`browser` off for tool-enabled agents unless needed
-- Enable sandboxing for agents that touch untrusted input
-- Keep secrets out of prompts; use env/config on the gateway host
-
-### Sandboxing
-
-Enable Docker-based tool isolation for non-main sessions:
-
+**Sandboxing:**
 ```json5
-{
-  agents: {
-    defaults: {
-      sandbox: {
-        mode: "non-main",
-        scope: "agent",
-        workspaceAccess: "none",
-      },
-    },
-  },
-}
+{ agents: { defaults: { sandbox: { mode: "non-main", scope: "agent", workspaceAccess: "none" } } } }
 ```
 
-### File Permissions
-
+**File permissions:**
 ```bash
-chmod 700 ~/.openclaw
-chmod 600 ~/.openclaw/openclaw.json
-# The security audit checks and can fix these
-openclaw security audit --fix
+chmod 700 ~/.openclaw && chmod 600 ~/.openclaw/openclaw.json
 ```
 
 ## CLI Commands
 
 ```bash
-# Gateway management
-openclaw gateway --port 18789 --verbose
+openclaw gateway --port 18789 --verbose  # start gateway
 openclaw gateway status
-openclaw dashboard                    # Open Control UI
-
-# Messaging
+openclaw dashboard                        # open Control UI
 openclaw message send --target +15555550123 --message "Hello"
-
-# Agent interaction
 openclaw agent --message "Ship checklist" --thinking high
-
-# Health and security
 openclaw doctor
 openclaw security audit --deep
-
-# Channel management
-openclaw channels login
-openclaw channels list
-
-# Pairing (DM security)
-openclaw pairing list <channel>
-openclaw pairing approve <channel> <code>
-
-# Session management
-openclaw sessions list
-openclaw sessions history <sessionId>
+openclaw channels login && openclaw channels list
+openclaw pairing list <channel> && openclaw pairing approve <channel> <code>
+openclaw sessions list && openclaw sessions history <sessionId>
 ```
 
 ## Chat Commands
 
-Send these in any connected channel:
-
 | Command | Purpose |
 |---------|---------|
 | `/status` | Session status (model, tokens, cost) |
-| `/new` or `/reset` | Reset the session |
-| `/compact` | Compact session context |
+| `/new` or `/reset` | Reset session |
+| `/compact` | Compact context |
 | `/think <level>` | Set thinking level (off/minimal/low/medium/high/xhigh) |
 | `/verbose on/off` | Toggle verbose mode |
 | `/usage off/tokens/full` | Per-response usage footer |
 | `/restart` | Restart gateway (owner-only) |
 
-## Skills (Agent Workspace)
+## Skills
 
-OpenClaw uses a skills system similar to aidevops agents:
-
-- Workspace root: `~/.openclaw/workspace` (configurable)
-- Injected prompts: `AGENTS.md`, `SOUL.md`, `TOOLS.md`
-- Skills location: `~/.openclaw/workspace/skills/<skill>/SKILL.md`
+Workspace root: `~/.openclaw/workspace`. Injected prompts: `AGENTS.md`, `SOUL.md`, `TOOLS.md`. Skills: `~/.openclaw/workspace/skills/<skill>/SKILL.md`.
 
 ## Integration with aidevops
-
-OpenClaw and aidevops are complementary tools with different strengths:
-
-### When to Use Each
 
 | Scenario | Use | Why |
 |----------|-----|-----|
 | Writing code, debugging, PRs | **aidevops** | Full IDE integration, file editing, git workflow |
-| Quick question from your phone | **OpenClaw** | WhatsApp/Telegram, always available |
+| Quick question from phone | **OpenClaw** | WhatsApp/Telegram, always available |
 | Server monitoring alerts | **OpenClaw** | Cron jobs + messaging channels |
 | Complex multi-file refactor | **aidevops** | Edit/Write tools, worktrees, preflight |
 | Voice interaction while driving | **OpenClaw** | Talk Mode, Voice Wake |
@@ -444,118 +237,39 @@ OpenClaw and aidevops are complementary tools with different strengths:
 | Client communication bot | **OpenClaw** | Multi-channel, pairing, session isolation |
 | CI/CD and deployment | **aidevops** | GitHub Actions, Coolify, release workflow |
 
-### Cross-Integration
-
-aidevops infrastructure agents can manage the server OpenClaw runs on:
-
-- `@hetzner` -- Provision and manage the VPS running OpenClaw
-- `@cloudflare` -- DNS for custom domain pointing to OpenClaw gateway
-- `@tailscale` -- Secure mesh network between your devices and the gateway
-- `@orbstack` -- Local Docker container management for OpenClaw
-
-OpenClaw can trigger aidevops workflows via messaging:
-
-- Message your bot "deploy the latest release" and it can run deployment scripts
-- Set up cron jobs in OpenClaw to monitor server health via aidevops scripts
-- Use OpenClaw webhooks to trigger aidevops CI/CD pipelines
-
-### Recommended Setup
-
-1. Install OpenClaw: `curl -fsSL https://openclaw.ai/install.sh | bash`
-2. Run onboarding: `openclaw onboard --install-daemon`
-3. Connect your preferred channel (WhatsApp recommended for mobile)
-4. Run security audit: `openclaw security audit --fix`
-5. Configure workspace to use aidevops agents:
-
-```json5
-{
-  agents: {
-    defaults: {
-      workspace: "~/Git/your-project"
-    }
-  }
-}
-```
+**Cross-integration:** aidevops agents manage the server OpenClaw runs on (`@hetzner`, `@cloudflare`, `@tailscale`, `@orbstack`). OpenClaw can trigger aidevops workflows via messaging — e.g., "deploy the latest release" runs deployment scripts; cron jobs monitor server health via aidevops scripts; webhooks trigger CI/CD pipelines.
 
 ## Tailscale Integration
 
-For remote gateway access, Tailscale provides secure networking without port forwarding:
-
-### Tailscale Serve (Tailnet-Only)
-
 ```json5
-{
-  gateway: {
-    bind: "loopback",
-    tailscale: { mode: "serve" },
-  },
-}
+// Tailnet-only (recommended)
+{ gateway: { bind: "loopback", tailscale: { mode: "serve" } } }
+// Access via https://<magicdns>/ from any tailnet device
+
+// Public funnel (use with caution — requires password auth)
+{ gateway: { bind: "loopback", tailscale: { mode: "funnel" }, auth: { mode: "password", password: "${OPENCLAW_GATEWAY_PASSWORD}" } } }
 ```
 
-Access via `https://<magicdns>/` from any device on your tailnet.
+When using Serve, set `gateway.auth.allowTailscale: true` (default) to authenticate via Tailscale identity headers without a separate token. See `services/networking/tailscale.md`.
 
-### Tailscale Funnel (Public, Use with Caution)
+## Companion Apps
 
-```json5
-{
-  gateway: {
-    bind: "loopback",
-    tailscale: { mode: "funnel" },
-    auth: { mode: "password", password: "${OPENCLAW_GATEWAY_PASSWORD}" },
-  },
-}
-```
-
-Funnel requires auth mode `password`. Prefer `OPENCLAW_GATEWAY_PASSWORD` env var over config file.
-
-### Tailscale Identity Headers
-
-When using Serve, OpenClaw can authenticate via Tailscale identity headers (`tailscale-user-login`) without requiring a separate token. Set `gateway.auth.allowTailscale: true` (default for Serve).
-
-See `@tailscale` and `services/networking/tailscale.md` for full Tailscale setup.
-
-## Companion Apps (Optional)
-
-### macOS App
-
-- Menu bar control for Gateway
-- Voice Wake + push-to-talk
-- WebChat + debug tools
-
-### iOS/Android Nodes
-
-- Canvas surface
-- Voice trigger forwarding
-- Camera/screen capture
+- **macOS**: menu bar control, Voice Wake, WebChat + debug tools
+- **iOS/Android**: Canvas surface, voice trigger forwarding, camera/screen capture
 
 ## Troubleshooting
 
 ```bash
-# Check gateway health
-openclaw doctor
-
-# View logs
-openclaw gateway --verbose
-
-# Security check
-openclaw security audit --deep
-
-# Full status (secrets redacted)
-openclaw status --all
-
-# Reset credentials (last resort)
-rm -rf ~/.openclaw/credentials
-openclaw channels login
+openclaw doctor                  # gateway health
+openclaw gateway --verbose       # view logs
+openclaw security audit --deep   # security check
+openclaw status --all            # full status (secrets redacted)
+rm -rf ~/.openclaw/credentials && openclaw channels login  # reset credentials (last resort)
 ```
 
 ## Resources
 
-- **Website**: https://openclaw.ai
-- **Docs**: https://docs.openclaw.ai
-- **Getting Started**: https://docs.openclaw.ai/start/getting-started
-- **Configuration**: https://docs.openclaw.ai/gateway/configuration
-- **Security**: https://docs.openclaw.ai/gateway/security
-- **Tailscale**: https://docs.openclaw.ai/gateway/tailscale
-- **Docker**: https://docs.openclaw.ai/install/docker
-- **Discord**: https://discord.gg/openclaw
-- **GitHub**: https://github.com/openclaw/openclaw
+- https://openclaw.ai | https://docs.openclaw.ai
+- [Getting Started](https://docs.openclaw.ai/start/getting-started) | [Configuration](https://docs.openclaw.ai/gateway/configuration)
+- [Security](https://docs.openclaw.ai/gateway/security) | [Tailscale](https://docs.openclaw.ai/gateway/tailscale) | [Docker](https://docs.openclaw.ai/install/docker)
+- [Discord](https://discord.gg/openclaw) | [GitHub](https://github.com/openclaw/openclaw)

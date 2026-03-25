@@ -2,557 +2,159 @@
 
 > Understanding the algorithm is the difference between throwing money at ads and running profitable campaigns.
 
----
-
-## Table of Contents
-1. [The Auction System](#the-auction-system)
-2. [Meta's ML Prediction Models](#metas-ml-prediction-models)
-3. [The Learning Phase](#the-learning-phase)
-4. [Account History & Trust](#account-history--trust)
-5. [Pixel Data & Its Impact](#pixel-data--its-impact)
-6. [Aggregated Event Measurement (AEM)](#aggregated-event-measurement-aem)
-7. [Conversion API (CAPI)](#conversion-api-capi)
-8. [The 2026 Algorithm Reality](#the-2026-algorithm-reality)
-
----
-
 ## The Auction System
 
-Every time someone opens Facebook or Instagram, an auction occurs to determine which ad they see. This happens billions of times per day.
-
-### The Three Factors
-
-Meta's auction isn't just about who pays the most. It's a weighted score of three factors:
+Every ad impression triggers an auction. Winner = highest **Total Value**:
 
 ```
 Total Value = Bid × Estimated Action Rate × Ad Quality
 ```
 
-#### 1. Bid (What You're Willing to Pay)
-- **Lowest Cost:** Meta tries to get you the most results for your budget
-- **Cost Cap:** You set a maximum cost per result
-- **Bid Cap:** You set a maximum bid per auction
-- **ROAS Target:** Meta optimizes for return on ad spend
+**Bid strategies:** Lowest Cost (default), Cost Cap, Bid Cap, ROAS Target.
 
-**Key Insight:** Higher bid ≠ guaranteed win. A $5 bid with low predicted engagement loses to a $2 bid with high predicted engagement.
+**Estimated Action Rate** — Meta's ML prediction that this specific user will convert on your specific ad. Inputs: your campaign history, user behavior, ad creative, landing page, time/device/placement, and hundreds more signals. This is why creative matters so much.
 
-#### 2. Estimated Action Rate (Will They Convert?)
-This is Meta's ML prediction of how likely THIS specific person is to take YOUR desired action.
+**Ad Quality** — engagement minus negative feedback. Positive: likes, shares, watch time, CTR. Negative: "hide ad", reports, misleading claims, policy violations, high bounce rate.
 
-**How Meta Predicts:**
-- Historical data from your campaigns
-- User's past behavior (purchases, clicks, engagement)
-- Content of your ad (image, video, text)
-- Landing page quality
-- Time of day, device, placement
-- Hundreds of other signals
-
-**Estimated Action Rate = Meta's prediction that this specific user will convert on your specific ad**
-
-This is why creative matters so much — it directly affects this score.
-
-#### 3. Ad Quality (User Experience)
-Meta penalizes ads that create bad user experiences.
-
-**Positive Signals:**
-- High engagement (likes, comments, shares, saves)
-- Video watch time
-- Click-through rate
-- Low negative feedback
-
-**Negative Signals:**
-- Hide ad / Report ad clicks
-- Low engagement despite impressions
-- Misleading claims
-- Policy-violating content
-- High bounce rate from landing page
-
-**Quality = User Engagement - Negative Feedback**
-
-### The Auction Math
-
+**Auction example:**
 ```
-Ad A: $3 bid × 2% estimated action rate × 0.8 quality = 0.048
-Ad B: $2 bid × 3% estimated action rate × 1.0 quality = 0.060
-Ad C: $5 bid × 1% estimated action rate × 0.7 quality = 0.035
-
-Winner: Ad B (highest total value despite lowest bid)
+Ad A: $3 bid × 2% EAR × 0.8 quality = 0.048
+Ad B: $2 bid × 3% EAR × 1.0 quality = 0.060  ← wins despite lowest bid
+Ad C: $5 bid × 1% EAR × 0.7 quality = 0.035
 ```
 
-### What This Means for Advertisers
-
-1. **You can't buy your way to good results** — Quality and relevance matter more than budget
-2. **Better creative = lower costs** — High engagement lowers your effective bid needed
-3. **Poor ads get penalized** — Low-quality ads cost MORE to deliver, not less
-4. **Relevance is everything** — Showing the right ad to the right person wins
-
----
+**Implications:** Better creative lowers your effective cost. Poor ads cost MORE to deliver. Relevance beats budget.
 
 ## Meta's ML Prediction Models
 
-Meta's machine learning is the most sophisticated advertising AI on the planet. Understanding it gives you an edge.
+Meta predicts who will click, convert, and when — using:
 
-### How Predictions Work
+- **User data**: demographics, interests, purchase history, device patterns, social connections
+- **Ad data**: your account history, creative content analysis, landing page quality, CAPI/Pixel data
+- **Contextual data**: time of day, seasonality, competitive landscape
 
-When you create an ad, Meta immediately starts predicting:
-- Who is likely to click
-- Who is likely to convert
-- What time they're most receptive
-- Which placement will perform best
-- What creative elements drive engagement
-
-### The Data Meta Uses
-
-**User Data:**
-- Demographics (age, gender, location)
-- Interests (inferred from behavior)
-- Purchase history (on and off Facebook)
-- Device usage patterns
-- Content consumption patterns
-- Social connections
-- Time spent on different content types
-
-**Ad Data:**
-- Historical performance of your account
-- Creative content analysis (images, video, text)
-- Landing page content and quality
-- Conversion data from Pixel/CAPI
-- Similar advertisers' performance
-
-**Contextual Data:**
-- Time of day
-- Day of week
-- Seasonality patterns
-- Competitive landscape
-- Inventory availability
-
-### The "Black Box" Problem
-
-Meta doesn't tell you exactly how predictions work. But we know:
-
-1. **More data = better predictions** — Accounts with history perform better
-2. **Conversion events teach the algorithm** — Each conversion improves targeting
-3. **Creative signals matter** — Meta analyzes ad content for audience matching
-4. **Quality traffic compounds** — Good conversions lead to finding more good conversions
-
-### How to Help the Algorithm
-
-**Do:**
+**How to help the algorithm:**
 - Give it clear conversion signals (Pixel + CAPI)
-- Use consistent creative styles so it learns what works
-- Feed it quality data (good customers, not just leads)
+- Use consistent creative so it learns what works
+- Feed quality data (good customers, not just leads)
 - Let campaigns run long enough to learn
-
-**Don't:**
-- Change campaigns constantly (resets learning)
-- Use low-quality conversion events (garbage in, garbage out)
-- Fragment budgets across too many campaigns
-- Fight the algorithm with overly narrow targeting
-
----
+- Don't fragment budgets; don't fight it with overly narrow targeting
 
 ## The Learning Phase
 
-When you launch a new campaign, ad set, or make significant changes, Meta enters a "Learning Phase."
+When you launch or make significant changes, Meta enters a Learning Phase to build a prediction model for your ad.
 
-### What's Actually Happening
+**Exit criteria:** 50 optimization events in 7 days, OR 7 days elapsed. Expect 20–50% higher CPAs and inconsistent performance during learning.
 
-During learning phase, Meta is:
-1. Testing your ad across different audience segments
-2. Gathering conversion data
-3. Building a prediction model specific to your ad
-4. Determining optimal delivery patterns
+**Learning Limited** — not enough optimization events. Causes and fixes:
 
-### Learning Phase Requirements
-
-**Exit Criteria:**
-- **50 optimization events** in the last 7 days per ad set
-- OR **7 days** since launch (whichever comes first)
-- Stable performance (not fluctuating wildly)
-
-**What Counts as an Optimization Event:**
-- Whatever you selected as your optimization goal
-- Purchases, leads, clicks, video views, etc.
-
-### Learning Phase Performance
-
-**Expect During Learning:**
-- Higher CPAs (20-50% above stable)
-- Inconsistent daily performance
-- Wider cost variations
-- "Learning" or "Learning Limited" status
-
-**After Learning Phase:**
-- Stabilized CPAs
-- More predictable daily performance
-- Status changes to "Active"
-
-### Learning Limited
-
-If you see "Learning Limited," it means:
-- Your ad set isn't getting enough optimization events
-- Predictions will be less reliable
-- Performance will be suboptimal
-
-**Causes of Learning Limited:**
-- Budget too low
-- Audience too narrow
-- Optimization event too rare
-- Too many ad sets competing
-
-**Fixes:**
 | Problem | Solution |
 |---------|----------|
-| Low budget | Increase daily budget |
-| Small audience | Broaden targeting |
-| Rare event | Optimize for higher-funnel event |
+| Budget too low | Increase daily budget |
+| Audience too narrow | Broaden targeting |
+| Optimization event too rare | Optimize for higher-funnel event |
 | Too many ad sets | Consolidate |
 
-### What Resets Learning Phase
+**What resets learning phase:**
 
-Major edits trigger a learning phase reset:
-
-| Change Type | Resets Learning? |
-|-------------|------------------|
+| Change | Resets? |
+|--------|---------|
 | New ad | No (ad set level) |
 | Budget change >20% | Sometimes |
-| Budget change <20% | No |
+| Budget change ≤20% | No |
 | Targeting change | Yes |
 | Optimization event change | Yes |
 | Bid strategy change | Yes |
-| Creative change (all ads) | Yes |
+| All creatives changed | Yes |
 | Pause >7 days | Yes |
 
-**Best Practice:** Make small changes (≤20%) and wait 2-3 days between adjustments.
-
----
+**Best practice:** Make changes ≤20% and wait 2–3 days between adjustments.
 
 ## Account History & Trust
 
-Your account's history significantly impacts performance. New accounts start from scratch.
+Established accounts get faster learning, better predictions, delivery priority, lower CPMs, and feature access. New accounts face longer learning, higher initial CPAs, and more scrutiny.
 
-### How Account History Helps
+**Build trust:** Consistent spend, low refund/chargeback rates, policy compliance, positive engagement, successful payment history.
 
-**Established Accounts Get:**
-- Faster learning phases
-- Better initial predictions
-- More delivery priority
-- Lower CPMs in competitive auctions
-- Access to certain features
-
-**New Accounts Face:**
-- Longer learning periods
-- Higher initial CPAs
-- More scrutiny (fraud detection)
-- Feature limitations
-
-### Building Account Trust
-
-**Positive Signals:**
-- Consistent spend over time
-- Low refund/chargeback rates
-- Policy compliance
-- Positive user engagement
-- Successful payment history
-
-**Negative Signals:**
-- Payment failures
-- Policy violations
-- High ad rejection rates
-- Frequent dramatic changes
-- User complaints
-
-### The "Seasoning" Period
-
-New accounts or new pixels need time to build trust.
-
-**Recommendation:**
-- Start with smaller budgets ($50-100/day)
-- Run for 2-4 weeks before aggressive scaling
-- Focus on quality conversions, not volume
-- Avoid policy-edge content initially
-
----
+**Seasoning new accounts:** Start at $50–100/day, run 2–4 weeks before aggressive scaling, focus on quality conversions, avoid policy-edge content initially.
 
 ## Pixel Data & Its Impact
 
-The Meta Pixel is JavaScript code on your website that tracks user behavior and conversions.
+Every Pixel fire teaches Meta what converts, what doesn't, content preferences, timing patterns, and device/placement signals.
 
-### How Pixel Data Improves Delivery
+**Essential events (in priority order for AEM):**
 
-Every Pixel fire teaches Meta:
-1. **What converts** — User attributes that lead to conversions
-2. **What doesn't** — Users who don't convert (negative signals)
-3. **Content preferences** — Which products/pages attract which users
-4. **Timing patterns** — When your audience is most active
-5. **Device/placement** — Where conversions happen
+| Priority | Event | Purpose |
+|----------|-------|---------|
+| 1 | Purchase | Conversion signal |
+| 2 | InitiateCheckout | High intent |
+| 3 | AddToCart | Purchase intent |
+| 4 | Lead | Lead capture |
+| 5 | CompleteRegistration | Signup tracking |
+| 6 | ViewContent | Interest signals |
+| 7 | PageView | Basic tracking |
+| 8 | (Custom) | — |
 
-### Essential Pixel Events
+**Healthy pixel signs:** Events firing consistently, match rates >80%, no duplicates, proper value/currency passing.
 
-| Event | When to Fire | Purpose |
-|-------|--------------|---------|
-| PageView | Every page | Basic tracking |
-| ViewContent | Product/key pages | Interest signals |
-| AddToCart | Cart additions | Purchase intent |
-| InitiateCheckout | Checkout start | High intent |
-| Purchase | Completed orders | Conversion signal |
-| Lead | Form submissions | Lead capture |
-| CompleteRegistration | Account creation | Signup tracking |
-
-### Event Priority (Post-iOS)
-
-With Aggregated Event Measurement, you can only optimize for 8 events per domain, ranked by priority.
-
-**Recommended Priority Order:**
-1. Purchase
-2. InitiateCheckout
-3. AddToCart
-4. Lead
-5. CompleteRegistration
-6. ViewContent
-7. PageView
-8. (Custom event)
-
-### Pixel Health Check
-
-**Signs of Healthy Pixel:**
-- Events firing consistently
-- Match rates >80%
-- No duplicate events
-- Proper value passing
-- Event timing correct
-
-**Common Pixel Issues:**
-- Duplicate events (fires twice per action)
-- Missing parameters (no value, no currency)
-- Delayed firing (after redirect)
-- Cross-domain issues (different pixels)
-
----
+**Common issues:** Duplicate events, missing parameters, delayed firing after redirect, cross-domain pixel conflicts.
 
 ## Aggregated Event Measurement (AEM)
 
-Apple's iOS 14+ privacy changes forced Meta to create AEM — a framework for tracking in a privacy-first world.
+Apple's iOS 14+ forced Meta to AEM: 8 events max per domain, 72-hour delayed reporting, ~20–30% modeled conversions, no user-level data.
 
-### How AEM Works
-
-**Before iOS 14:**
-- Pixel tracked everything
-- Full user journey visible
-- Unlimited events per domain
-- Real-time attribution
-
-**After iOS 14 (AEM):**
-- 8 events max per domain
-- Modeled conversions (not 100% accurate)
-- 72-hour delayed reporting
-- Aggregated data (less granular)
-
-### AEM Limitations
-
-| Limitation | Impact |
-|------------|--------|
-| 8 event limit | Can't optimize for minor events |
-| 72-hour delay | Real-time optimization harder |
-| Modeled data | ~30% of conversions estimated |
-| No view-through (iOS) | Underreports display impact |
-| Aggregate reporting | No user-level data |
-
-### Working Within AEM
-
-**Event Prioritization:**
-Rank your 8 events by business importance. If user completes multiple events, only highest priority counts.
-
-**Example Priority:**
-```
-1. Purchase (highest)
-2. InitiateCheckout
-3. AddToCart
-4. Lead
-5. ViewContent
-6. Search
-7. PageView
-8. CustomEvent (lowest)
-```
-
-**Domain Verification:**
-Required for AEM. Verify your domain in Business Settings to enable full tracking capabilities.
-
-### Modeling & Estimation
-
-Meta now "models" conversions it can't directly track:
-- Statistical models based on historical patterns
-- Aggregated data from opted-in users
-- Machine learning predictions
-
-**What This Means:**
-- Your reported numbers are ~70-80% directly tracked
-- ~20-30% are statistically modeled
-- Directional accuracy is good, but exact numbers may vary
-- Compare trends, not absolute numbers
-
----
+**Working within AEM:** Verify your domain in Business Settings. Rank your 8 events by business importance — if a user completes multiple events, only the highest priority counts. Compare trends, not absolute numbers (~70–80% directly tracked, ~20–30% statistically modeled).
 
 ## Conversion API (CAPI)
 
-CAPI is server-side tracking that sends conversion data directly from your server to Meta — bypassing browser limitations.
+CAPI sends conversion data server-to-server, bypassing ad blockers (20–30% of users), iOS ATT (80%+ opt-out), and browser privacy features.
 
-### Why CAPI is Essential
-
-**Pixel Limitations:**
-- Blocked by ad blockers (20-30% of users)
-- iOS App Tracking Transparency (80%+ opt-out)
-- Browser privacy features
-- Safari Intelligent Tracking Prevention
-- Third-party cookie death
-
-**CAPI Benefits:**
-- Direct server-to-server connection
-- Not affected by browser blockers
-- More reliable data transmission
-- Higher event match rates
-- Better attribution accuracy
-
-### CAPI + Pixel = Best Results
-
-Don't choose one or the other. Use both.
-
+**Use Pixel + CAPI together** — Meta deduplicates via `event_id`:
 ```
-User converts on website
-       ↓
-Pixel fires (client-side)  ←→  CAPI fires (server-side)
-       ↓
-Meta deduplicates
-       ↓
-Single conversion recorded
+User converts → Pixel fires (client) + CAPI fires (server) → Meta deduplicates → 1 conversion recorded
 ```
 
-**Deduplication:**
-Meta uses `event_id` to ensure the same conversion isn't counted twice.
-
-### CAPI Implementation Options
+**Implementation options:**
 
 | Method | Complexity | Cost | Reliability |
 |--------|------------|------|-------------|
 | Shopify/WooCommerce native | Easy | Free | Good |
-| Google Tag Manager server | Medium | ~$100/mo | Great |
+| GTM server-side | Medium | ~$100/mo | Great |
 | Custom server integration | Hard | Dev time | Best |
 | Third-party (Segment, etc.) | Medium | $200+/mo | Great |
 
-### Key CAPI Parameters
+**Required CAPI parameters:** `event_name`, `event_time`, `action_source`, `event_source_url`, `user_data` (hashed: `em`, `ph`, `fn`, `ln`; cookies: `fbp`, `fbc`). Higher match rate = better optimization.
 
-**Required:**
-- `event_name` — Purchase, Lead, etc.
-- `event_time` — Unix timestamp
-- `action_source` — website, app, etc.
-- `event_source_url` — Page URL
-- `user_data` — For matching
-
-**User Data for Matching:**
-- `em` — Email (hashed)
-- `ph` — Phone (hashed)
-- `fn` — First name (hashed)
-- `ln` — Last name (hashed)
-- `fbp` — FB Browser ID (from _fbp cookie)
-- `fbc` — FB Click ID (from URL fbclid)
-
-**Higher match rate = better optimization**
-
-### CAPI Event Quality
-
-Meta scores your CAPI implementation:
-
-| Quality Score | Meaning |
-|---------------|---------|
-| Good | All working well |
-| OK | Room for improvement |
-| Poor | Fix immediately |
-| N/A | Not enough data |
-
-**Check in:** Events Manager → Data Sources → Select Pixel → Overview
-
----
+Check CAPI quality in Events Manager → Data Sources → Select Pixel → Overview.
 
 ## The 2026 Algorithm Reality
 
-### The Shift to AI-First
+**The shift:** Manual interest/behavior targeting → broad targeting with AI finding buyers. Creative IS targeting now.
 
-Meta's algorithm in 2026 is fundamentally different from even 2023:
+**What this means:**
+1. Broad audiences often beat detailed targeting — let the algorithm learn from conversion data
+2. Creative quality drives 70–80% of performance — algorithm optimizes delivery, you control the message
+3. CAPI is mandatory — first-party data is gold, conversion quality > quantity
+4. Think systems: Testing → Scaling → Retargeting as a continuous loop
 
-**Old Paradigm (Pre-2024):**
-- Manual targeting with interests/behaviors
-- Detailed audience layering
-- Human-defined segments
-- Creative as add-on
-
-**New Paradigm (2025-2026):**
-- Broad targeting, AI finds buyers
-- Advantage+ as default
-- Creative IS targeting
-- Machine learning dominates
-
-### What This Means for Advertisers
-
-1. **Stop over-optimizing targeting**
-   - Broad audiences often beat detailed targeting
-   - Let the algorithm learn from conversion data
-   - Your job is creative, not audience selection
-
-2. **Creative quality is 70-80% of performance**
-   - Algorithm optimizes delivery
-   - You control the message
-   - Better creative = lower CPMs, better results
-
-3. **Feed the machine quality data**
-   - CAPI implementation mandatory
-   - First-party data is gold
-   - Conversion quality matters more than quantity
-
-4. **Think systems, not campaigns**
-   - Testing → Scaling → Retargeting as a system
-   - Continuous creative iteration
-   - Account-level thinking
-
-### Advantage+ Is the New Default
-
-Meta is pushing all advertisers toward Advantage+ features:
+**Advantage+ features:**
 
 | Feature | What It Does | When to Use |
 |---------|--------------|-------------|
 | Advantage+ Audience | AI finds your audience | Most campaigns |
 | Advantage+ Placements | AI chooses placements | Always |
 | Advantage+ Creative | AI tests variations | When you have volume |
-| Advantage+ Shopping | Full auto ecom campaigns | Ecom with 50+ purchases/week |
+| Advantage+ Shopping | Full auto ecom | Ecom with 50+ purchases/week |
 
-**Manual still wins when:**
-- Very niche B2B (tiny audiences)
-- Creative testing (need control)
-- Specific placement requirements
-- Limited conversion data
-
----
+Manual targeting still wins for: very niche B2B, creative testing requiring control, specific placement requirements, limited conversion data.
 
 ## Key Takeaways
 
-1. **The auction rewards relevance, not just budget**
-   - Better creative + engagement = lower costs
-   - Poor ads cost MORE to deliver
-
-2. **Learning phase needs 50 conversions/week**
-   - Don't make major changes during learning
-   - Consolidate campaigns if not hitting threshold
-
-3. **Account history matters**
-   - New accounts need seasoning
-   - Build trust through consistent quality
-
-4. **Pixel + CAPI together**
-   - Pixel alone misses 30-50% of conversions
-   - CAPI is mandatory in 2026
-
-5. **Let AI do its job**
-   - Broad targeting + great creative beats micro-targeting
-   - Focus on inputs (creative, data) not micro-management
+1. **Auction rewards relevance** — better creative + engagement = lower costs; poor ads cost MORE
+2. **Learning phase needs 50 conversions/week** — don't make major changes during learning; consolidate if not hitting threshold
+3. **Account history matters** — new accounts need seasoning; build trust through consistent quality
+4. **Pixel + CAPI together** — Pixel alone misses 30–50% of conversions; CAPI is mandatory in 2026
+5. **Let AI do its job** — broad targeting + great creative beats micro-targeting; focus on inputs (creative, data)
 
 ---
 
