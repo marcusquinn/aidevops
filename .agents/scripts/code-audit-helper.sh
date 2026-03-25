@@ -576,8 +576,13 @@ deduplicate_findings() {
 # Audit Command (Main Orchestrator)
 # =============================================================================
 
-# Parse arguments for cmd_audit; sets repo, pr_number, services_filter in caller scope
-_parse_audit_args() {
+# Parse audit command arguments into _AUDIT_REPO, _AUDIT_PR, _AUDIT_SERVICES
+# Returns 1 on validation failure.
+parse_audit_args() {
+	_AUDIT_REPO=""
+	_AUDIT_PR=0
+	_AUDIT_SERVICES=""
+
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--repo)
@@ -585,7 +590,7 @@ _parse_audit_args() {
 				log_error "Missing value for --repo"
 				return 1
 			}
-			repo="$2"
+			_AUDIT_REPO="$2"
 			shift 2
 			;;
 		--pr)
@@ -593,7 +598,7 @@ _parse_audit_args() {
 				log_error "Missing value for --pr"
 				return 1
 			}
-			pr_number="$2"
+			_AUDIT_PR="$2"
 			shift 2
 			;;
 		--services)
@@ -601,7 +606,7 @@ _parse_audit_args() {
 				log_error "Missing value for --services"
 				return 1
 			}
-			services_filter="$2"
+			_AUDIT_SERVICES="$2"
 			shift 2
 			;;
 		*)
@@ -619,31 +624,17 @@ _resolve_audit_context() {
 	local _pr_ref="$2"
 
 	# Validate numeric inputs to prevent SQL injection
-	if [[ "${!_pr_ref}" != "0" ]] && ! [[ "${!_pr_ref}" =~ ^[0-9]+$ ]]; then
-		log_error "Invalid PR number: ${!_pr_ref}"
+	if [[ "$_AUDIT_PR" != "0" ]] && ! [[ "$_AUDIT_PR" =~ ^[0-9]+$ ]]; then
+		log_error "Invalid PR number: $_AUDIT_PR"
 		return 1
 	fi
 
-	# Auto-detect repo if not specified
-	if [[ -z "${!_repo_ref}" ]]; then
-		printf -v "$_repo_ref" '%s' "$(get_repo)"
-	fi
-
-	# Auto-detect PR if not specified
-	if [[ "${!_pr_ref}" -eq 0 ]]; then
-		local _detected_pr
-		_detected_pr=$(gh pr view --json number -q .number 2>/dev/null || echo "0")
-		if ! [[ "$_detected_pr" =~ ^[0-9]+$ ]]; then
-			log_warn "Could not auto-detect PR number, defaulting to 0"
-			_detected_pr=0
-		fi
-		printf -v "$_pr_ref" '%s' "$_detected_pr"
-	fi
 	return 0
 }
 
-# Iterate services and collect findings; outputs services_run and total_findings
-_run_audit_services() {
+# Run each configured service collector and accumulate findings.
+# Outputs "services_run|total_findings" on stdout.
+run_service_collectors() {
 	local run_id="$1"
 	local repo="$2"
 	local pr_number="$3"
@@ -685,6 +676,23 @@ _run_audit_services() {
 		fi
 	done
 
+	echo "${services_run}|${total_findings}"
+	return 0
+}
+
+# Iterate services and collect findings; outputs services_run and total_findings
+_run_audit_services() {
+	local run_id="$1"
+	local repo="$2"
+	local pr_number="$3"
+	local services="$4"
+
+	# Run collectors and parse result
+	local collector_result
+	collector_result=$(run_service_collectors "$run_id" "$repo" "$pr_number" "$services")
+	local services_run total_findings
+	IFS='|' read -r services_run total_findings <<<"$collector_result"
+
 	# Return via stdout: "services_run|total_findings"
 	echo "${services_run}|${total_findings}"
 	return 0
@@ -695,9 +703,29 @@ cmd_audit() {
 	local pr_number=0
 	local services_filter=""
 
-	_parse_audit_args "$@" || return 1
+	parse_audit_args "$@" || return 1
+
+	repo="$_AUDIT_REPO"
+	pr_number="$_AUDIT_PR"
+	services_filter="$_AUDIT_SERVICES"
 
 	_resolve_audit_context repo pr_number || return 1
+
+	# Auto-detect repo if not specified
+	if [[ -z "$repo" ]]; then
+		repo=$(get_repo)
+	fi
+
+	# Auto-detect PR if not specified
+	if [[ "$pr_number" -eq 0 ]]; then
+		local _detected_pr
+		_detected_pr=$(gh pr view --json number -q .number 2>/dev/null || echo "0")
+		if ! [[ "$_detected_pr" =~ ^[0-9]+$ ]]; then
+			log_warn "Could not auto-detect PR number, defaulting to 0"
+			_detected_pr=0
+		fi
+		pr_number="$_detected_pr"
+	fi
 
 	local head_sha
 	head_sha=$(get_head_sha)
@@ -754,8 +782,15 @@ cmd_audit() {
 # Summary Output
 # =============================================================================
 
-_print_summary_metadata() {
+# Print run metadata (repo, PR, SHA, timestamps, services).
+print_summary_header() {
 	local run_id="$1"
+
+	echo "============================================"
+	echo "  Unified Code Audit Report (Run #${run_id})"
+	echo "============================================"
+	echo ""
+
 	local run_info
 	run_info=$(db "$AUDIT_DB" -separator '|' "
         SELECT repo, pr_number, head_sha, started_at, completed_at, services_run
@@ -775,24 +810,10 @@ _print_summary_metadata() {
 	return 0
 }
 
-_print_summary_by_source() {
+# Print findings grouped by severity with colour coding.
+print_findings_by_severity() {
 	local run_id="$1"
-	echo "  Findings by Source:"
-	db "$AUDIT_DB" -separator '|' "
-        SELECT source, COUNT(*) as cnt
-        FROM audit_findings
-        WHERE run_id = $run_id AND is_duplicate = 0
-        GROUP BY source
-        ORDER BY cnt DESC;
-    " | while IFS='|' read -r source cnt; do
-		printf "    %-15s %s\n" "$source" "$cnt"
-	done
-	echo ""
-	return 0
-}
 
-_print_summary_by_severity() {
-	local run_id="$1"
 	echo "  Findings by Severity:"
 	db "$AUDIT_DB" -separator '|' "
         SELECT severity, COUNT(*) as cnt
@@ -822,24 +843,10 @@ _print_summary_by_severity() {
 	return 0
 }
 
-_print_summary_by_category() {
+# Print the top 10 most affected files.
+print_most_affected_files() {
 	local run_id="$1"
-	echo "  Findings by Category:"
-	db "$AUDIT_DB" -separator '|' "
-        SELECT category, COUNT(*) as cnt
-        FROM audit_findings
-        WHERE run_id = $run_id AND is_duplicate = 0
-        GROUP BY category
-        ORDER BY cnt DESC;
-    " | while IFS='|' read -r cat cnt; do
-		printf "    %-15s %s\n" "$cat" "$cnt"
-	done
-	echo ""
-	return 0
-}
 
-_print_summary_top_files() {
-	local run_id="$1"
 	echo "  Most Affected Files (top 10):"
 	db "$AUDIT_DB" -separator '|' "
         SELECT path, COUNT(*) as cnt,
@@ -857,8 +864,10 @@ _print_summary_top_files() {
 	return 0
 }
 
-_print_summary_dedup_stats() {
+# Print deduplication statistics.
+print_dedup_stats() {
 	local run_id="$1"
+
 	local total_raw unique_count dup_count
 	total_raw=$(db "$AUDIT_DB" "SELECT COUNT(*) FROM audit_findings WHERE run_id = $run_id;")
 	unique_count=$(db "$AUDIT_DB" "SELECT COUNT(*) FROM audit_findings WHERE run_id = $run_id AND is_duplicate = 0;")
@@ -874,17 +883,40 @@ _print_summary_dedup_stats() {
 print_summary() {
 	local run_id="$1"
 
-	echo "============================================"
-	echo "  Unified Code Audit Report (Run #${run_id})"
-	echo "============================================"
+	print_summary_header "$run_id"
+
+	# Findings by source (excluding duplicates)
+	echo "  Findings by Source:"
+	db "$AUDIT_DB" -separator '|' "
+        SELECT source, COUNT(*) as cnt
+        FROM audit_findings
+        WHERE run_id = $run_id AND is_duplicate = 0
+        GROUP BY source
+        ORDER BY cnt DESC;
+    " | while IFS='|' read -r source cnt; do
+		printf "    %-15s %s\n" "$source" "$cnt"
+	done
+
 	echo ""
 
-	_print_summary_metadata "$run_id"
-	_print_summary_by_source "$run_id"
-	_print_summary_by_severity "$run_id"
-	_print_summary_by_category "$run_id"
-	_print_summary_top_files "$run_id"
-	_print_summary_dedup_stats "$run_id"
+	print_findings_by_severity "$run_id"
+
+	# Findings by category (excluding duplicates)
+	echo "  Findings by Category:"
+	db "$AUDIT_DB" -separator '|' "
+        SELECT category, COUNT(*) as cnt
+        FROM audit_findings
+        WHERE run_id = $run_id AND is_duplicate = 0
+        GROUP BY category
+        ORDER BY cnt DESC;
+    " | while IFS='|' read -r cat cnt; do
+		printf "    %-15s %s\n" "$cat" "$cnt"
+	done
+
+	echo ""
+
+	print_most_affected_files "$run_id"
+	print_dedup_stats "$run_id"
 
 	return 0
 }
@@ -893,8 +925,14 @@ print_summary() {
 # Report Command
 # =============================================================================
 
-# Parse arguments for cmd_report; sets format, severity, run_id, limit in caller scope
-_parse_report_args() {
+# Parse report command arguments into _RPT_FORMAT, _RPT_SEVERITY, _RPT_RUN_ID, _RPT_LIMIT.
+# Returns 1 on validation failure.
+parse_report_args() {
+	_RPT_FORMAT="text"
+	_RPT_SEVERITY=""
+	_RPT_RUN_ID=""
+	_RPT_LIMIT=100
+
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--format)
@@ -902,7 +940,7 @@ _parse_report_args() {
 				log_error "Missing value for --format"
 				return 1
 			}
-			format="$2"
+			_RPT_FORMAT="$2"
 			shift 2
 			;;
 		--severity)
@@ -910,7 +948,7 @@ _parse_report_args() {
 				log_error "Missing value for --severity"
 				return 1
 			}
-			severity="$2"
+			_RPT_SEVERITY="$2"
 			shift 2
 			;;
 		--run)
@@ -918,7 +956,7 @@ _parse_report_args() {
 				log_error "Missing value for --run"
 				return 1
 			}
-			run_id="$2"
+			_RPT_RUN_ID="$2"
 			shift 2
 			;;
 		--limit)
@@ -926,7 +964,7 @@ _parse_report_args() {
 				log_error "Missing value for --limit"
 				return 1
 			}
-			limit="$2"
+			_RPT_LIMIT="$2"
 			shift 2
 			;;
 		*)
@@ -983,31 +1021,33 @@ _report_csv() {
 	return 0
 }
 
-_report_text() {
-	local where="$1"
-	local limit="$2"
-	local run_id="$3"
+# Output findings in human-readable text format.
+report_text() {
+	local run_id="$1"
+	local where="$2"
+	local limit="$3"
+
 	echo ""
 	echo "Audit Findings (Run #${run_id})"
 	echo "==============================="
 	echo ""
 
 	db "$AUDIT_DB" -separator $'\x1f' "
-        SELECT source, severity, path, line,
-               substr(replace(replace(description, char(10), ' '), char(13), ''), 1, 120)
-        FROM audit_findings
-        $where
-        ORDER BY
-            CASE severity
-                WHEN 'critical' THEN 1
-                WHEN 'high' THEN 2
-                WHEN 'medium' THEN 3
-                WHEN 'low' THEN 4
-                ELSE 5
-            END,
-            path, line
-        LIMIT $limit;
-    " | while IFS=$'\x1f' read -r source sev path line desc; do
+            SELECT source, severity, path, line,
+                   substr(replace(replace(description, char(10), ' '), char(13), ''), 1, 120)
+            FROM audit_findings
+            $where
+            ORDER BY
+                CASE severity
+                    WHEN 'critical' THEN 1
+                    WHEN 'high' THEN 2
+                    WHEN 'medium' THEN 3
+                    WHEN 'low' THEN 4
+                    ELSE 5
+                END,
+                path, line
+            LIMIT $limit;
+        " | while IFS=$'\x1f' read -r source sev path line desc; do
 		local color="$NC"
 		case "$sev" in
 		critical) color="$RED" ;;
@@ -1032,16 +1072,17 @@ _report_text() {
 	local total
 	total=$(db "$AUDIT_DB" "SELECT COUNT(*) FROM audit_findings $where;")
 	echo "Total unique findings: ${total}"
+
 	return 0
 }
 
 cmd_report() {
-	local format="text"
-	local severity=""
-	local run_id=""
-	local limit=100
+	parse_report_args "$@" || return 1
 
-	_parse_report_args "$@" || return 1
+	local format="$_RPT_FORMAT"
+	local severity="$_RPT_SEVERITY"
+	local run_id="$_RPT_RUN_ID"
+	local limit="$_RPT_LIMIT"
 
 	# Validate numeric inputs to prevent SQL injection
 	if [[ -n "$run_id" ]] && ! [[ "$run_id" =~ ^[0-9]+$ ]]; then
@@ -1070,10 +1111,41 @@ cmd_report() {
 		where="${where} AND severity = '$(sql_escape "$severity")'"
 	fi
 
+	local severity_order="
+                ORDER BY
+                    CASE severity
+                        WHEN 'critical' THEN 1
+                        WHEN 'high' THEN 2
+                        WHEN 'medium' THEN 3
+                        WHEN 'low' THEN 4
+                        ELSE 5
+                    END,
+                    path, line
+                LIMIT $limit"
+
 	case "$format" in
-	json) _report_json "$where" "$limit" ;;
-	csv) _report_csv "$where" "$limit" ;;
-	text | *) _report_text "$where" "$limit" "$run_id" ;;
+	json)
+		db "$AUDIT_DB" -json "
+                SELECT id, source, severity, path, line, description, category, rule_id
+                FROM audit_findings
+                $where
+                $severity_order;
+            "
+		;;
+	csv)
+		echo "id,source,severity,path,line,description,category,rule_id"
+		db "$AUDIT_DB" -csv "
+                SELECT id, source, severity, path, line,
+                       substr(replace(description, char(10), ' '), 1, 200),
+                       category, rule_id
+                FROM audit_findings
+                $where
+                $severity_order;
+            "
+		;;
+	text | *)
+		report_text "$run_id" "$where" "$limit"
+		;;
 	esac
 
 	return 0
