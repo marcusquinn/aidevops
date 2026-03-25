@@ -82,18 +82,14 @@ PY
 }
 
 #######################################
-# Summarise the recent OpenCode transcript tail for a worker session
+# Validate preconditions for session tail evidence collection
 # Arguments:
 #   $1 - worker command line
-#   $2 - recent activity timeout seconds
-#   $3 - maximum parts to inspect (optional, default: 8)
-# Returns: "classification|summary" where classification is one of
-#   active, provider-waiting, stalled, none
+# Outputs: "db_path|session_title" on success, or "none|<reason>" on failure
+# Returns: 0 always (caller checks output prefix)
 #######################################
-_get_session_tail_evidence() {
+_get_session_tail_preconditions() {
 	local cmd="$1"
-	local timeout_seconds="$2"
-	local part_limit="${3:-8}"
 	local db_path session_title
 	db_path=$(_opencode_db_path)
 	session_title=$(_extract_session_title "$cmd")
@@ -108,11 +104,18 @@ _get_session_tail_evidence() {
 		return 0
 	fi
 
-	SESSION_TAIL_DB_PATH="$db_path" \
-		SESSION_TAIL_TITLE="$session_title" \
-		SESSION_TAIL_TIMEOUT="$timeout_seconds" \
-		SESSION_TAIL_LIMIT="$part_limit" \
-		python3 - <<'PY'
+	printf '%s|%s' "$db_path" "$session_title"
+	return 0
+}
+
+#######################################
+# Python script: query OpenCode DB and classify session tail.
+# Reads env vars: SESSION_TAIL_DB_PATH, SESSION_TAIL_TITLE,
+#   SESSION_TAIL_TIMEOUT, SESSION_TAIL_LIMIT
+# Returns: "classification|summary" via stdout
+#######################################
+_run_session_tail_python() {
+	python3 - <<'PY'
 import json
 import os
 import re
@@ -248,6 +251,62 @@ summary = (
 )
 print(f"{classification}|{summary}")
 PY
+	return 0
+}
+
+#######################################
+# Set env vars and invoke the session tail Python script
+# Arguments:
+#   $1 - db_path
+#   $2 - session_title
+#   $3 - timeout_seconds
+#   $4 - part_limit
+# Returns: "classification|summary" via stdout
+#######################################
+_query_session_tail() {
+	local db_path="$1"
+	local session_title="$2"
+	local timeout_seconds="$3"
+	local part_limit="$4"
+
+	SESSION_TAIL_DB_PATH="$db_path" \
+		SESSION_TAIL_TITLE="$session_title" \
+		SESSION_TAIL_TIMEOUT="$timeout_seconds" \
+		SESSION_TAIL_LIMIT="$part_limit" \
+		_run_session_tail_python
+	return 0
+}
+
+#######################################
+# Summarise the recent OpenCode transcript tail for a worker session
+# Arguments:
+#   $1 - worker command line
+#   $2 - recent activity timeout seconds
+#   $3 - maximum parts to inspect (optional, default: 8)
+# Returns: "classification|summary" where classification is one of
+#   active, provider-waiting, stalled, none
+#######################################
+_get_session_tail_evidence() {
+	local cmd="$1"
+	local timeout_seconds="$2"
+	local part_limit="${3:-8}"
+
+	local preconditions
+	preconditions=$(_get_session_tail_preconditions "$cmd")
+
+	# Early-exit if preconditions returned a "none|..." failure
+	case "$preconditions" in
+	none\|*)
+		printf '%s' "$preconditions"
+		return 0
+		;;
+	esac
+
+	local db_path session_title
+	db_path="${preconditions%%|*}"
+	session_title="${preconditions#*|}"
+
+	_query_session_tail "$db_path" "$session_title" "$timeout_seconds" "$part_limit"
 	return 0
 }
 
