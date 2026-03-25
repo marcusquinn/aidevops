@@ -216,33 +216,18 @@ parse_channels() {
 	return 0
 }
 
-# ─── Commands ─────────────────────────────────────────────────────────
+# ─── Plan/run helper functions ────────────────────────────────────────
 
-cmd_plan() {
-	local brief_file="$1"
-	ensure_dirs
+# Write the plan file content for cmd_plan.
+# Args: plan_file channels channel_count
+# Reads BRIEF_* globals set by parse_brief.
+# Outputs: all_formats (space-separated) and total_outputs via stdout side-channel
+#          (caller re-counts from the written file to avoid subshell variable loss).
+write_plan_file() {
+	local plan_file="$1"
+	local channels="$2"
+	local channel_count="$3"
 
-	parse_brief "$brief_file" || return 1
-
-	local channels
-	channels=$(parse_channels "$BRIEF_CHANNELS") || return 1
-
-	local topic_slug
-	topic_slug=$(slug "$BRIEF_TOPIC")
-	local plan_id="${topic_slug}-$(date +%Y%m%d-%H%M%S)"
-	local plan_file="${PLANS_DIR}/${plan_id}.plan"
-
-	# Count channels
-	local channel_count=0
-	for _ch in $channels; do
-		channel_count=$((channel_count + 1))
-	done
-
-	print_info "Generating fan-out plan: ${plan_id}"
-	print_info "Topic: ${BRIEF_TOPIC}"
-	print_info "Channels: ${channel_count} (${channels})"
-
-	# Calculate total outputs and collect unique formats
 	local total_outputs=0
 	local all_formats=""
 
@@ -280,19 +265,17 @@ cmd_plan() {
 
 			total_outputs=$((total_outputs + 1))
 
-			# Collect unique formats
 			local fmt _saved_ifs2="$IFS"
 			IFS=','
 			for fmt in $formats; do
 				case " ${all_formats} " in
-				*" ${fmt} "*) ;; # already present
+				*" ${fmt} "*) ;;
 				*) all_formats="${all_formats} ${fmt}" ;;
 				esac
 			done
 			IFS="$_saved_ifs2"
 		done
 
-		# Count unique formats
 		local format_count=0
 		for _fmt in $all_formats; do
 			format_count=$((format_count + 1))
@@ -306,11 +289,234 @@ cmd_plan() {
 		echo "estimated_tokens: $((total_outputs * 2000))"
 	} >"$plan_file"
 
-	# Count unique formats for display
-	local format_count=0
-	for _fmt in $all_formats; do
-		format_count=$((format_count + 1))
+	return 0
+}
+
+# Parse plan file metadata into local variables in the caller's scope.
+# Args: plan_file
+# Sets: plan_id topic angle audience tone cta notes (in caller via echo; caller uses command substitution)
+# Usage: eval "$(parse_plan_file "$plan_file")" — not used; instead outputs are captured individually.
+# Simpler approach: function sets globals prefixed PLAN_ to avoid subshell loss.
+parse_plan_file() {
+	local plan_file="$1"
+
+	PLAN_ID=$(grep '^id:' "$plan_file" | sed 's/^id: *//')
+	PLAN_TOPIC=$(grep '^topic:' "$plan_file" | sed 's/^topic: *//')
+	PLAN_ANGLE=$(grep '^angle:' "$plan_file" | sed 's/^angle: *//')
+	PLAN_AUDIENCE=$(grep '^audience:' "$plan_file" | sed 's/^audience: *//')
+	PLAN_TONE=$(grep '^tone:' "$plan_file" | sed 's/^tone: *//')
+	PLAN_CTA=$(grep '^cta:' "$plan_file" | sed 's/^cta: *//' || echo "")
+	PLAN_NOTES=$(grep '^notes:' "$plan_file" | sed 's/^notes: *//' || echo "")
+
+	return 0
+}
+
+# Write the channel-specific prompt file for cmd_run.
+# Args: ch topic angle audience tone cta notes prompt_file
+write_channel_prompt() {
+	local ch="$1"
+	local topic="$2"
+	local angle="$3"
+	local audience="$4"
+	local tone="$5"
+	local cta="$6"
+	local notes="$7"
+	local prompt_file="$8"
+
+	local outputs
+	outputs=$(channel_outputs "$ch" 2>/dev/null || echo "Channel-specific content")
+	local formats
+	formats=$(channel_formats "$ch" 2>/dev/null || echo "script")
+
+	{
+		echo "# Fan-Out Prompt: ${ch}"
+		echo ""
+		echo "## Story Context"
+		echo ""
+		echo "- **Topic**: ${topic}"
+		echo "- **Angle**: ${angle}"
+		echo "- **Audience**: ${audience}"
+		echo "- **Tone**: ${tone}"
+		echo "- **CTA**: ${cta}"
+		echo "- **Notes**: ${notes}"
+		echo ""
+		echo "## Channel: ${ch}"
+		echo ""
+		echo "**Required outputs**: ${outputs}"
+		echo ""
+		echo "**Required formats**: ${formats}"
+		echo ""
+		echo "## Instructions"
+		echo ""
+		write_channel_instructions "$ch"
+		echo ""
+		echo "## Quality Checklist"
+		echo ""
+		echo "- [ ] Hook is in the first line/sentence/second"
+		echo "- [ ] Tone matches platform expectations"
+		echo "- [ ] CTA is clear and singular"
+		echo "- [ ] No cross-posting smell (platform-native language)"
+		echo "- [ ] Story angle is consistent with brief"
+	} >"$prompt_file"
+
+	return 0
+}
+
+# Emit the channel-specific instruction lines (no file redirection — caller handles it).
+# Args: ch
+write_channel_instructions() {
+	local ch="$1"
+
+	case "$ch" in
+	youtube)
+		echo "Generate a complete YouTube video package:"
+		echo "1. Long-form script (scene-by-scene with B-roll directions, 8-12 min target)"
+		echo "2. Title (3 variants using hook formulas: Bold Claim, Question, Curiosity Gap)"
+		echo "3. Description (SEO-optimized, timestamps, links, keywords)"
+		echo "4. Tags (15-20 relevant tags)"
+		echo "5. Thumbnail brief (text overlay, emotion, color scheme, 3 variants)"
+		echo "6. End screen CTA script"
+		echo ""
+		echo "Reference: content/distribution/youtube/ for YouTube-specific conventions."
+		;;
+	short-form)
+		echo "Generate vertical short-form video content:"
+		echo "1. 60-second script (hook in first 1-3 seconds, fast cuts every 1-3s)"
+		echo "2. Caption/subtitle text (for 80%+ silent viewers)"
+		echo "3. Trending sound suggestion (describe mood/genre, not specific track)"
+		echo "4. 3 hook variants (pattern interrupt openers)"
+		echo ""
+		echo "Format: 9:16 vertical. Platforms: TikTok, Reels, Shorts."
+		echo "Reference: content/distribution/short-form.md"
+		;;
+	social-x)
+		echo "Generate X (Twitter) content:"
+		echo "1. Thread version (5-8 posts, hook-first, each post standalone value)"
+		echo "2. Single post version (under 280 chars, punchy)"
+		echo "3. Quote-post version (for sharing related content)"
+		echo ""
+		echo "Voice: Concise, opinionated, personality-forward."
+		echo "Reference: content/distribution/social.md"
+		;;
+	social-linkedin)
+		echo "Generate LinkedIn content:"
+		echo "1. Long-form post (1200-1500 chars, thought leadership framing)"
+		echo "2. Short-form post (under 300 chars, for quick engagement)"
+		echo "3. Article outline (if topic warrants deeper treatment)"
+		echo ""
+		echo "Voice: Professional, insight-driven, no sales pitch."
+		echo "Reference: content/distribution/social.md"
+		;;
+	social-reddit)
+		echo "Generate Reddit content:"
+		echo "1. Post title (curiosity-driven, not clickbait)"
+		echo "2. Post body (value-first, community-native, anti-promotional)"
+		echo "3. Suggested subreddits (3-5 relevant communities)"
+		echo "4. Comment engagement strategy"
+		echo ""
+		echo "Voice: Authentic, helpful, never salesy."
+		echo "Reference: content/distribution/social.md"
+		;;
+	blog)
+		echo "Generate SEO-optimized blog content:"
+		echo "1. Article outline (H2/H3 structure, 1500-2500 words target)"
+		echo "2. Meta title (under 60 chars, keyword-front-loaded)"
+		echo "3. Meta description (under 155 chars, includes CTA)"
+		echo "4. Target keyword + 5 secondary keywords"
+		echo "5. Internal link suggestions (3-5 related topics)"
+		echo "6. Featured image brief"
+		echo ""
+		echo "Reference: content/distribution/blog.md, seo/"
+		;;
+	email)
+		echo "Generate email/newsletter content:"
+		echo "1. Subject line (5 variants, A/B test ready)"
+		echo "2. Preview text (under 90 chars)"
+		echo "3. Newsletter body (story-driven, single CTA)"
+		echo "4. P.S. line (secondary hook)"
+		echo ""
+		echo "Reference: content/distribution/email.md"
+		;;
+	podcast)
+		echo "Generate podcast content:"
+		echo "1. Episode title (curiosity-driven)"
+		echo "2. Talking points / script outline (15-20 min target)"
+		echo "3. Intro script (30s hook)"
+		echo "4. Outro script (CTA + next episode tease)"
+		echo "5. Show notes (timestamps, links, resources)"
+		echo ""
+		echo "Reference: content/distribution/podcast.md"
+		;;
+	*)
+		echo "Generate content adapted for: ${ch}"
+		echo "Follow the conventions in the relevant distribution subagent."
+		;;
+	esac
+
+	return 0
+}
+
+# Write the run summary file.
+# Args: output_dir plan_file completed failed
+write_run_summary() {
+	local output_dir="$1"
+	local plan_file="$2"
+	local completed="$3"
+	local failed="$4"
+
+	{
+		echo "# Fan-Out Run Summary"
+		echo "# Executed: $(timestamp)"
+		echo ""
+		echo "plan: ${plan_file}"
+		echo "output_dir: ${output_dir}"
+		echo "channels_prepared: ${completed}"
+		echo "channels_failed: ${failed}"
+		echo "status: prompts_ready"
+		echo ""
+		echo "# Each channel directory contains a prompt.md file ready for AI processing."
+		echo "# Process with the content agent: @content run fan-out from ${output_dir}"
+	} >"${output_dir}/summary.md"
+
+	return 0
+}
+
+# ─── Commands ─────────────────────────────────────────────────────────
+
+cmd_plan() {
+	local brief_file="$1"
+	ensure_dirs
+
+	parse_brief "$brief_file" || return 1
+
+	local channels
+	channels=$(parse_channels "$BRIEF_CHANNELS") || return 1
+
+	local topic_slug
+	topic_slug=$(slug "$BRIEF_TOPIC")
+	local plan_id="${topic_slug}-$(date +%Y%m%d-%H%M%S)"
+	local plan_file="${PLANS_DIR}/${plan_id}.plan"
+
+	local channel_count=0
+	for _ch in $channels; do
+		channel_count=$((channel_count + 1))
 	done
+
+	print_info "Generating fan-out plan: ${plan_id}"
+	print_info "Topic: ${BRIEF_TOPIC}"
+	print_info "Channels: ${channel_count} (${channels})"
+
+	write_plan_file "$plan_file" "$channels" "$channel_count"
+
+	# Re-read summary counts from the written file (avoids subshell variable loss)
+	local total_outputs
+	total_outputs=$(grep '^total_outputs:' "$plan_file" | sed 's/^total_outputs: *//')
+	local unique_formats_line
+	unique_formats_line=$(grep '^unique_formats:' "$plan_file" | sed 's/^unique_formats: *//')
+	local format_count
+	format_count=$(echo "$unique_formats_line" | sed 's/ .*//')
+	local all_formats
+	all_formats=$(echo "$unique_formats_line" | sed 's/^[0-9]* *(//;s/)//')
 
 	print_success "Plan written: ${plan_file}"
 	echo ""
@@ -332,28 +538,14 @@ cmd_run() {
 		return 1
 	fi
 
-	local plan_id
-	plan_id=$(grep '^id:' "$plan_file" | sed 's/^id: *//')
-	local topic
-	topic=$(grep '^topic:' "$plan_file" | sed 's/^topic: *//')
-	local angle
-	angle=$(grep '^angle:' "$plan_file" | sed 's/^angle: *//')
-	local audience
-	audience=$(grep '^audience:' "$plan_file" | sed 's/^audience: *//')
-	local tone
-	tone=$(grep '^tone:' "$plan_file" | sed 's/^tone: *//')
-	local cta
-	cta=$(grep '^cta:' "$plan_file" | sed 's/^cta: *//' || echo "")
-	local notes
-	notes=$(grep '^notes:' "$plan_file" | sed 's/^notes: *//' || echo "")
+	parse_plan_file "$plan_file"
 
-	local output_dir="${OUTPUTS_DIR}/${plan_id}"
+	local output_dir="${OUTPUTS_DIR}/${PLAN_ID}"
 	mkdir -p "$output_dir"
 
-	print_info "Executing fan-out: ${plan_id}"
+	print_info "Executing fan-out: ${PLAN_ID}"
 	print_info "Output directory: ${output_dir}"
 
-	# Extract channels from plan
 	local channels=""
 	while IFS= read -r line; do
 		local ch="${line#channel: }"
@@ -373,149 +565,16 @@ cmd_run() {
 
 		print_info "Generating: ${ch}..."
 
-		# Write the channel-specific prompt file for AI processing
-		local prompt_file="${ch_dir}/prompt.md"
-		local outputs
-		outputs=$(channel_outputs "$ch" 2>/dev/null || echo "Channel-specific content")
-		local formats
-		formats=$(channel_formats "$ch" 2>/dev/null || echo "script")
+		write_channel_prompt \
+			"$ch" "$PLAN_TOPIC" "$PLAN_ANGLE" "$PLAN_AUDIENCE" \
+			"$PLAN_TONE" "$PLAN_CTA" "$PLAN_NOTES" \
+			"${ch_dir}/prompt.md"
 
-		{
-			echo "# Fan-Out Prompt: ${ch}"
-			echo ""
-			echo "## Story Context"
-			echo ""
-			echo "- **Topic**: ${topic}"
-			echo "- **Angle**: ${angle}"
-			echo "- **Audience**: ${audience}"
-			echo "- **Tone**: ${tone}"
-			echo "- **CTA**: ${cta}"
-			echo "- **Notes**: ${notes}"
-			echo ""
-			echo "## Channel: ${ch}"
-			echo ""
-			echo "**Required outputs**: ${outputs}"
-			echo ""
-			echo "**Required formats**: ${formats}"
-			echo ""
-			echo "## Instructions"
-			echo ""
-
-			case "$ch" in
-			youtube)
-				echo "Generate a complete YouTube video package:"
-				echo "1. Long-form script (scene-by-scene with B-roll directions, 8-12 min target)"
-				echo "2. Title (3 variants using hook formulas: Bold Claim, Question, Curiosity Gap)"
-				echo "3. Description (SEO-optimized, timestamps, links, keywords)"
-				echo "4. Tags (15-20 relevant tags)"
-				echo "5. Thumbnail brief (text overlay, emotion, color scheme, 3 variants)"
-				echo "6. End screen CTA script"
-				echo ""
-				echo "Reference: content/distribution/youtube/ for YouTube-specific conventions."
-				;;
-			short-form)
-				echo "Generate vertical short-form video content:"
-				echo "1. 60-second script (hook in first 1-3 seconds, fast cuts every 1-3s)"
-				echo "2. Caption/subtitle text (for 80%+ silent viewers)"
-				echo "3. Trending sound suggestion (describe mood/genre, not specific track)"
-				echo "4. 3 hook variants (pattern interrupt openers)"
-				echo ""
-				echo "Format: 9:16 vertical. Platforms: TikTok, Reels, Shorts."
-				echo "Reference: content/distribution/short-form.md"
-				;;
-			social-x)
-				echo "Generate X (Twitter) content:"
-				echo "1. Thread version (5-8 posts, hook-first, each post standalone value)"
-				echo "2. Single post version (under 280 chars, punchy)"
-				echo "3. Quote-post version (for sharing related content)"
-				echo ""
-				echo "Voice: Concise, opinionated, personality-forward."
-				echo "Reference: content/distribution/social.md"
-				;;
-			social-linkedin)
-				echo "Generate LinkedIn content:"
-				echo "1. Long-form post (1200-1500 chars, thought leadership framing)"
-				echo "2. Short-form post (under 300 chars, for quick engagement)"
-				echo "3. Article outline (if topic warrants deeper treatment)"
-				echo ""
-				echo "Voice: Professional, insight-driven, no sales pitch."
-				echo "Reference: content/distribution/social.md"
-				;;
-			social-reddit)
-				echo "Generate Reddit content:"
-				echo "1. Post title (curiosity-driven, not clickbait)"
-				echo "2. Post body (value-first, community-native, anti-promotional)"
-				echo "3. Suggested subreddits (3-5 relevant communities)"
-				echo "4. Comment engagement strategy"
-				echo ""
-				echo "Voice: Authentic, helpful, never salesy."
-				echo "Reference: content/distribution/social.md"
-				;;
-			blog)
-				echo "Generate SEO-optimized blog content:"
-				echo "1. Article outline (H2/H3 structure, 1500-2500 words target)"
-				echo "2. Meta title (under 60 chars, keyword-front-loaded)"
-				echo "3. Meta description (under 155 chars, includes CTA)"
-				echo "4. Target keyword + 5 secondary keywords"
-				echo "5. Internal link suggestions (3-5 related topics)"
-				echo "6. Featured image brief"
-				echo ""
-				echo "Reference: content/distribution/blog.md, seo/"
-				;;
-			email)
-				echo "Generate email/newsletter content:"
-				echo "1. Subject line (5 variants, A/B test ready)"
-				echo "2. Preview text (under 90 chars)"
-				echo "3. Newsletter body (story-driven, single CTA)"
-				echo "4. P.S. line (secondary hook)"
-				echo ""
-				echo "Reference: content/distribution/email.md"
-				;;
-			podcast)
-				echo "Generate podcast content:"
-				echo "1. Episode title (curiosity-driven)"
-				echo "2. Talking points / script outline (15-20 min target)"
-				echo "3. Intro script (30s hook)"
-				echo "4. Outro script (CTA + next episode tease)"
-				echo "5. Show notes (timestamps, links, resources)"
-				echo ""
-				echo "Reference: content/distribution/podcast.md"
-				;;
-			*)
-				echo "Generate content adapted for: ${ch}"
-				echo "Follow the conventions in the relevant distribution subagent."
-				;;
-			esac
-
-			echo ""
-			echo "## Quality Checklist"
-			echo ""
-			echo "- [ ] Hook is in the first line/sentence/second"
-			echo "- [ ] Tone matches platform expectations"
-			echo "- [ ] CTA is clear and singular"
-			echo "- [ ] No cross-posting smell (platform-native language)"
-			echo "- [ ] Story angle is consistent with brief"
-		} >"$prompt_file"
-
-		# Write a status marker
 		echo "pending" >"${ch_dir}/.status"
 		completed=$((completed + 1))
 	done
 
-	# Write run summary
-	{
-		echo "# Fan-Out Run Summary"
-		echo "# Executed: $(timestamp)"
-		echo ""
-		echo "plan: ${plan_file}"
-		echo "output_dir: ${output_dir}"
-		echo "channels_prepared: ${completed}"
-		echo "channels_failed: ${failed}"
-		echo "status: prompts_ready"
-		echo ""
-		echo "# Each channel directory contains a prompt.md file ready for AI processing."
-		echo "# Process with the content agent: @content run fan-out from ${output_dir}"
-	} >"${output_dir}/summary.md"
+	write_run_summary "$output_dir" "$plan_file" "$completed" "$failed"
 
 	print_success "Fan-out prepared: ${completed} channels"
 	echo ""
