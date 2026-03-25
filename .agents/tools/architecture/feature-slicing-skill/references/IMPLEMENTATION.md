@@ -2,7 +2,11 @@
 
 Code patterns for Feature-Sliced Design architecture. Sources: [Tutorial](https://feature-sliced.design/docs/get-started/tutorial) | [Examples](https://github.com/feature-sliced/examples) | [Awesome FSD](https://github.com/feature-sliced/awesome)
 
-## Entity Pattern: User
+> For layer rules and import constraints, see [LAYERS.md](LAYERS.md). For public API barrel patterns, see [PUBLIC-API.md](PUBLIC-API.md).
+
+## Entity Pattern: User (Complete Example)
+
+This is the canonical FSD entity — every entity follows this structure. Segments: `model/` (types, mapper, schema), `api/` (requests, queries), `ui/` (components).
 
 **Model Layer** (`entities/user/model/`):
 
@@ -30,7 +34,7 @@ export interface UserDTO {
 ```
 
 ```typescript
-// entities/user/model/mapper.ts
+// entities/user/model/mapper.ts — DTO-to-domain conversion
 import type { User, UserDTO, UserRole } from './types';
 
 export function mapUserDTO(dto: UserDTO): User {
@@ -46,7 +50,7 @@ export function mapUserDTO(dto: UserDTO): User {
 ```
 
 ```typescript
-// entities/user/model/schema.ts
+// entities/user/model/schema.ts — validation with Zod
 import { z } from 'zod';
 
 export const userSchema = z.object({
@@ -77,9 +81,9 @@ export async function getUserById(id: string): Promise<User> {
 ```
 
 ```typescript
-// entities/user/api/queries.ts
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
-import { getCurrentUser, getUserById, updateUser } from './userApi';
+// entities/user/api/queries.ts — TanStack Query integration
+import { useQuery } from '@tanstack/react-query';
+import { getCurrentUser, getUserById } from './userApi';
 
 export const userKeys = {
   all: ['users'] as const,
@@ -88,10 +92,7 @@ export const userKeys = {
 };
 
 export function useCurrentUser() {
-  return useQuery({
-    queryKey: userKeys.current(),
-    queryFn: getCurrentUser,
-  });
+  return useQuery({ queryKey: userKeys.current(), queryFn: getCurrentUser });
 }
 
 export function useUser(id: string) {
@@ -119,11 +120,7 @@ export function UserAvatar({ user, size = 'md' }: UserAvatarProps) {
 
   if (user.avatar) {
     return (
-      <img
-        src={user.avatar}
-        alt={user.name}
-        className={`rounded-full ${sizes[size]}`}
-      />
+      <img src={user.avatar} alt={user.name} className={`rounded-full ${sizes[size]}`} />
     );
   }
 
@@ -135,38 +132,11 @@ export function UserAvatar({ user, size = 'md' }: UserAvatarProps) {
 }
 ```
 
-```tsx
-// entities/user/ui/UserCard.tsx
-import type { User } from '../model/types';
-import { UserAvatar } from './UserAvatar';
-
-interface UserCardProps {
-  user: User;
-  onClick?: () => void;
-}
-
-export function UserCard({ user, onClick }: UserCardProps) {
-  return (
-    <div
-      onClick={onClick}
-      className="flex items-center gap-3 p-3 rounded-lg hover:bg-gray-50 cursor-pointer"
-    >
-      <UserAvatar user={user} />
-      <div>
-        <p className="font-medium">{user.name}</p>
-        <p className="text-sm text-gray-500">{user.email}</p>
-      </div>
-    </div>
-  );
-}
-```
-
-**Public API** (`entities/user/index.ts`):
+**Public API** (`entities/user/index.ts`) — barrel file exposing the slice contract:
 
 ```typescript
 // entities/user/index.ts
 export { UserAvatar } from './ui/UserAvatar';
-export { UserCard } from './ui/UserCard';
 export { getCurrentUser, getUserById } from './api/userApi';
 export { useCurrentUser, useUser, userKeys } from './api/queries';
 export type { User, UserRole, UserDTO } from './model/types';
@@ -174,29 +144,23 @@ export { mapUserDTO } from './model/mapper';
 export { userSchema, type UserFormData } from './model/schema';
 ```
 
+> Every slice follows this barrel pattern. See [PUBLIC-API.md](PUBLIC-API.md) for rules and anti-patterns.
+
 ## Feature Pattern: Authentication
 
-**Model Layer** (`features/auth/model/`):
+Features add **user interactions** on top of entities. Key differences from entities: features own state (stores), forms, and action handlers. They import from entities but never the reverse.
+
+**Types and State** (`features/auth/model/`):
 
 ```typescript
 // features/auth/model/types.ts
-export interface LoginCredentials {
-  email: string;
-  password: string;
-}
-
-export interface RegisterData extends LoginCredentials {
-  name: string;
-}
-
-export interface AuthTokens {
-  accessToken: string;
-  refreshToken: string;
-}
+export interface LoginCredentials { email: string; password: string; }
+export interface RegisterData extends LoginCredentials { name: string; }
+export interface AuthTokens { accessToken: string; refreshToken: string; }
 ```
 
 ```typescript
-// features/auth/model/store.ts
+// features/auth/model/store.ts — Zustand with persistence
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import type { User } from '@/entities/user';
@@ -224,24 +188,7 @@ export const useAuthStore = create<AuthState>()(
 );
 ```
 
-```typescript
-// features/auth/model/schema.ts
-import { z } from 'zod';
-
-export const loginSchema = z.object({
-  email: z.string().email('Invalid email'),
-  password: z.string().min(8, 'Password must be at least 8 characters'),
-});
-
-export const registerSchema = loginSchema.extend({
-  name: z.string().min(2, 'Name must be at least 2 characters'),
-});
-
-export type LoginFormData = z.infer<typeof loginSchema>;
-export type RegisterFormData = z.infer<typeof registerSchema>;
-```
-
-**API Layer** (`features/auth/api/`):
+**API Layer** (`features/auth/api/`) — note how it imports `mapUserDTO` from the entity:
 
 ```typescript
 // features/auth/api/authApi.ts
@@ -249,11 +196,7 @@ import { apiClient } from '@/shared/api';
 import { mapUserDTO, type User, type UserDTO } from '@/entities/user';
 import type { LoginCredentials, RegisterData, AuthTokens } from '../model/types';
 
-interface AuthResponse {
-  user: UserDTO;
-  access_token: string;
-  refresh_token: string;
-}
+interface AuthResponse { user: UserDTO; access_token: string; refresh_token: string; }
 
 export async function login(credentials: LoginCredentials): Promise<{ user: User; tokens: AuthTokens }> {
   const { data } = await apiClient.post<AuthResponse>('/auth/login', credentials);
@@ -276,24 +219,26 @@ export async function logout(): Promise<void> {
 }
 ```
 
-**UI Layer** (`features/auth/ui/`):
+**UI Layer** — form with react-hook-form + Zod validation:
 
 ```tsx
 // features/auth/ui/LoginForm.tsx
 import { useForm } from 'react-hook-form';
 import { zodResolver } from '@hookform/resolvers/zod';
+import { z } from 'zod';
 import { Button, Input } from '@/shared/ui';
-import { loginSchema, type LoginFormData } from '../model/schema';
 import { login } from '../api/authApi';
 import { useAuthStore } from '../model/store';
 
+const loginSchema = z.object({
+  email: z.string().email('Invalid email'),
+  password: z.string().min(8, 'Password must be at least 8 characters'),
+});
+type LoginFormData = z.infer<typeof loginSchema>;
+
 export function LoginForm() {
   const setAuth = useAuthStore((s) => s.setAuth);
-  const {
-    register,
-    handleSubmit,
-    formState: { errors, isSubmitting },
-  } = useForm<LoginFormData>({
+  const { register, handleSubmit, formState: { errors, isSubmitting } } = useForm<LoginFormData>({
     resolver: zodResolver(loginSchema),
   });
 
@@ -304,61 +249,17 @@ export function LoginForm() {
 
   return (
     <form onSubmit={handleSubmit(onSubmit)} className="space-y-4">
-      <Input
-        {...register('email')}
-        type="email"
-        placeholder="Email"
-        error={errors.email?.message}
-      />
-      <Input
-        {...register('password')}
-        type="password"
-        placeholder="Password"
-        error={errors.password?.message}
-      />
-      <Button type="submit" loading={isSubmitting}>
-        Sign In
-      </Button>
+      <Input {...register('email')} type="email" placeholder="Email" error={errors.email?.message} />
+      <Input {...register('password')} type="password" placeholder="Password" error={errors.password?.message} />
+      <Button type="submit" loading={isSubmitting}>Sign In</Button>
     </form>
   );
 }
 ```
 
-```tsx
-// features/auth/ui/LogoutButton.tsx
-import { Button } from '@/shared/ui';
-import { logout } from '../api/authApi';
-import { useAuthStore } from '../model/store';
-
-export function LogoutButton() {
-  const clearAuth = useAuthStore((s) => s.clearAuth);
-
-  const handleLogout = async () => {
-    await logout();
-    clearAuth();
-  };
-
-  return (
-    <Button variant="ghost" onClick={handleLogout}>
-      Sign Out
-    </Button>
-  );
-}
-```
-
-**Public API** (`features/auth/index.ts`):
-
-```typescript
-// features/auth/index.ts
-export { LoginForm } from './ui/LoginForm';
-export { LogoutButton } from './ui/LogoutButton';
-export { useAuthStore } from './model/store';
-export { login, register, logout } from './api/authApi';
-export type { LoginCredentials, AuthTokens } from './model/types';
-export { loginSchema, registerSchema } from './model/schema';
-```
-
 ## Widget Pattern: Header
+
+Widgets compose features and entities into reusable UI blocks. They sit above features in the layer hierarchy.
 
 ```tsx
 // widgets/header/ui/Header.tsx
@@ -373,9 +274,7 @@ export function Header() {
 
   return (
     <header className="flex items-center justify-between px-6 py-4 border-b">
-      <Link to="/">
-        <Logo />
-      </Link>
+      <Link to="/"><Logo /></Link>
       <SearchBox />
       <nav className="flex items-center gap-4">
         {isAuthenticated ? (
@@ -396,6 +295,8 @@ export { Header } from './ui/Header';
 ```
 
 ## Page Pattern: Product Detail
+
+Pages compose widgets, features, and entities into route screens. Each page is one slice.
 
 ```typescript
 // pages/product-detail/api/loader.ts
@@ -434,7 +335,9 @@ export { ProductDetailPage } from './ui/ProductDetailPage';
 export { productDetailLoader } from './api/loader';
 ```
 
-## Shared Layer Pattern
+## Shared Layer: API Client
+
+The shared layer has no slices — it provides domain-agnostic infrastructure. The API client with auth interceptors is the most FSD-specific shared pattern.
 
 ```typescript
 // shared/api/client.ts
@@ -445,6 +348,7 @@ export const apiClient = axios.create({
   headers: { 'Content-Type': 'application/json' },
 });
 
+// Auth interceptor — reads persisted tokens from zustand storage
 apiClient.interceptors.request.use((config) => {
   const storage = localStorage.getItem('auth-storage');
   if (storage) {
@@ -456,6 +360,7 @@ apiClient.interceptors.request.use((config) => {
   return config;
 });
 
+// 401 interceptor — clears auth and redirects on token expiry
 apiClient.interceptors.response.use(
   (response) => response,
   (error) => {
@@ -471,68 +376,7 @@ apiClient.interceptors.response.use(
 export { apiClient } from './client';
 ```
 
-### UI Components
-
-```tsx
-// shared/ui/Button.tsx
-import { forwardRef, type ButtonHTMLAttributes } from 'react';
-
-interface ButtonProps extends ButtonHTMLAttributes<HTMLButtonElement> {
-  variant?: 'primary' | 'secondary' | 'ghost';
-  loading?: boolean;
-}
-
-export const Button = forwardRef<HTMLButtonElement, ButtonProps>(
-  ({ variant = 'primary', loading, children, disabled, ...props }, ref) => {
-    const variants = {
-      primary: 'bg-blue-600 text-white hover:bg-blue-700',
-      secondary: 'bg-gray-200 text-gray-800 hover:bg-gray-300',
-      ghost: 'text-gray-600 hover:bg-gray-100',
-    };
-
-    return (
-      <button
-        ref={ref}
-        disabled={disabled || loading}
-        className={`px-4 py-2 rounded-lg font-medium ${variants[variant]} disabled:opacity-50`}
-        {...props}
-      >
-        {loading ? 'Loading...' : children}
-      </button>
-    );
-  }
-);
-```
-
-```tsx
-// shared/ui/Input.tsx
-import { forwardRef, type InputHTMLAttributes } from 'react';
-
-interface InputProps extends InputHTMLAttributes<HTMLInputElement> {
-  error?: string;
-}
-
-export const Input = forwardRef<HTMLInputElement, InputProps>(
-  ({ error, className, ...props }, ref) => (
-    <div>
-      <input
-        ref={ref}
-        className={`w-full px-3 py-2 border rounded-lg ${
-          error ? 'border-red-500' : 'border-gray-300'
-        } ${className}`}
-        {...props}
-      />
-      {error && <p className="mt-1 text-sm text-red-500">{error}</p>}
-    </div>
-  )
-);
-
-// shared/ui/index.ts
-export { Button } from './Button';
-export { Input } from './Input';
-```
-
-## App Layer Pattern
+## App Layer: Providers and Router
 
 ```tsx
 // app/providers/index.tsx
@@ -555,8 +399,6 @@ export function Providers({ children }: { children: React.ReactNode }) {
   );
 }
 ```
-
-### Router Configuration
 
 ```tsx
 // app/routes/router.tsx
