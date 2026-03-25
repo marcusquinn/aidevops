@@ -24,7 +24,7 @@
 #   6. Report — summary of actions taken
 #
 # Author: AI DevOps Framework
-# Version: 1.1.0
+# Version: 1.2.0
 # License: MIT
 # =============================================================================
 
@@ -197,24 +197,14 @@ phase_graduate() {
 	return 0
 }
 
+# =============================================================================
+# Phase 4 helpers: Consolidation
+# =============================================================================
+
 #######################################
-# Phase 4: Consolidation (cross-memory insight generation)
-# Uses a cheap LLM call (haiku) to find connections between
-# unconsolidated memories and generate synthesized insights.
-# Inspired by Google's always-on-memory-agent consolidation loop.
+# Ensure memory_consolidations table exists
 #######################################
-phase_consolidate() {
-	local dry_run="$1"
-	local quiet="$2"
-
-	[[ "$quiet" != "true" ]] && log_info "Phase 4: Consolidating memories (cross-memory insight generation)..."
-
-	if [[ ! -f "$MEMORY_DB" ]]; then
-		echo "0"
-		return 0
-	fi
-
-	# Ensure memory_consolidations table exists (with index, matching _common.sh schema)
+_consolidate_ensure_schema() {
 	db "$MEMORY_DB" <<'EOF' || true
 CREATE TABLE IF NOT EXISTS memory_consolidations (
     id TEXT PRIMARY KEY,
@@ -226,23 +216,27 @@ CREATE TABLE IF NOT EXISTS memory_consolidations (
 CREATE INDEX IF NOT EXISTS idx_consolidations_created
     ON memory_consolidations(created_at DESC);
 EOF
+	return 0
+}
 
-	# Find memories not yet included in any consolidation.
-	# A memory is "unconsolidated" if its ID doesn't appear in any
-	# memory_consolidations.source_ids JSON array.
-	# We extract all previously consolidated IDs and validate them
-	# against the expected mem_* pattern to prevent SQL injection.
+#######################################
+# Build validated set of already-consolidated memory IDs
+# Outputs: newline-separated validated IDs (may be empty)
+#######################################
+_consolidate_get_consolidated_set() {
 	local all_consolidated_ids
 	all_consolidated_ids=$(db "$MEMORY_DB" "SELECT source_ids FROM memory_consolidations;" || echo "")
 
-	# Build a list of already-consolidated memory IDs (validated)
-	local consolidated_set=""
-	if [[ -n "$all_consolidated_ids" ]]; then
-		local raw_ids=""
-		if command -v jq &>/dev/null; then
-			raw_ids=$(echo "$all_consolidated_ids" | jq -r '.[]' | sort -u)
-		elif command -v python3 &>/dev/null; then
-			raw_ids=$(echo "$all_consolidated_ids" | python3 -c "
+	if [[ -z "$all_consolidated_ids" ]]; then
+		echo ""
+		return 0
+	fi
+
+	local raw_ids=""
+	if command -v jq &>/dev/null; then
+		raw_ids=$(echo "$all_consolidated_ids" | jq -r '.[]' | sort -u)
+	elif command -v python3 &>/dev/null; then
+		raw_ids=$(echo "$all_consolidated_ids" | python3 -c "
 import sys, json
 ids = set()
 for line in sys.stdin:
@@ -255,64 +249,57 @@ for line in sys.stdin:
 for i in sorted(ids):
     print(i)
 ")
-		fi
-		# Validate each ID matches expected mem_* pattern (prevent SQL injection)
-		local validated_ids=""
-		while IFS= read -r mid; do
-			[[ -z "$mid" ]] && continue
-			if [[ "$mid" =~ ^mem_[0-9]{14}_[0-9a-f]+$ ]]; then
-				[[ -n "$validated_ids" ]] && validated_ids+=","
-				validated_ids+="$mid"
-			fi
-		done <<<"$raw_ids"
-		consolidated_set="$validated_ids"
 	fi
 
-	# Query unconsolidated memories (limit to recent 20 for cost control)
-	local unconsolidated_query
+	# Validate each ID matches expected mem_* pattern (prevent SQL injection)
+	local validated_ids=""
+	while IFS= read -r mid; do
+		[[ -z "$mid" ]] && continue
+		if [[ "$mid" =~ ^mem_[0-9]{14}_[0-9a-f]+$ ]]; then
+			[[ -n "$validated_ids" ]] && validated_ids+=","
+			validated_ids+="$mid"
+		fi
+	done <<<"$raw_ids"
+
+	echo "$validated_ids"
+	return 0
+}
+
+#######################################
+# Query unconsolidated memories (limit 20 for cost control)
+# Args: $1 = comma-separated consolidated_set (may be empty)
+# Outputs: raw DB rows (may be empty)
+#######################################
+_consolidate_query_unconsolidated() {
+	local consolidated_set="$1"
+
+	local query
 	if [[ -n "$consolidated_set" ]]; then
-		# Build SQL IN clause from validated IDs
 		local in_clause
 		in_clause=$(echo "$consolidated_set" | tr ',' '\n' | sed "s/.*/'&'/" | paste -sd ',' -)
-		unconsolidated_query="SELECT id, replace(replace(substr(content, 1, 200), char(10), ' '), char(13), ' ') AS content_preview, type, tags FROM learnings WHERE id NOT IN ($in_clause) ORDER BY created_at DESC LIMIT 20;"
+		query="SELECT id, replace(replace(substr(content, 1, 200), char(10), ' '), char(13), ' ') AS content_preview, type, tags FROM learnings WHERE id NOT IN ($in_clause) ORDER BY created_at DESC LIMIT 20;"
 	else
-		unconsolidated_query="SELECT id, replace(replace(substr(content, 1, 200), char(10), ' '), char(13), ' ') AS content_preview, type, tags FROM learnings ORDER BY created_at DESC LIMIT 20;"
+		query="SELECT id, replace(replace(substr(content, 1, 200), char(10), ' '), char(13), ' ') AS content_preview, type, tags FROM learnings ORDER BY created_at DESC LIMIT 20;"
 	fi
 
-	local unconsolidated
-	unconsolidated=$(db "$MEMORY_DB" "$unconsolidated_query" || echo "")
+	db "$MEMORY_DB" "$query" || echo ""
+	return 0
+}
 
-	if [[ -z "$unconsolidated" ]]; then
-		[[ "$quiet" != "true" ]] && log_success "Consolidate: no unconsolidated memories"
-		echo "0"
-		return 0
-	fi
-
-	# Count unconsolidated memories (grep -c is more reliable than wc -l for non-empty)
-	local uncons_count
-	uncons_count=$(printf '%s\n' "$unconsolidated" | grep -c '.' || echo "0")
-
-	if [[ "$uncons_count" -lt 3 ]]; then
-		[[ "$quiet" != "true" ]] && log_success "Consolidate: only $uncons_count unconsolidated memories (need 3+)"
-		echo "0"
-		return 0
-	fi
-
-	if [[ "$dry_run" == "true" ]]; then
-		[[ "$quiet" != "true" ]] && log_info "Consolidate: would analyze $uncons_count unconsolidated memories (dry-run)"
-		echo "$uncons_count"
-		return 0
-	fi
-
-	# Check if ai-research-helper.sh is available
+#######################################
+# Call haiku LLM for consolidation insight
+# Args: $1 = unconsolidated rows text
+# Outputs: raw LLM response (JSON string)
+#######################################
+_consolidate_call_llm() {
+	local unconsolidated="$1"
 	local ai_helper="${SCRIPT_DIR}/ai-research-helper.sh"
+
 	if [[ ! -x "$ai_helper" ]]; then
-		[[ "$quiet" != "true" ]] && log_warn "Consolidate: ai-research-helper.sh not found, skipping"
-		echo "0"
-		return 0
+		echo ""
+		return 1
 	fi
 
-	# Build the consolidation prompt
 	local prompt
 	prompt="You are a memory consolidation agent. Below are memories from a developer's knowledge base. Find cross-cutting connections and patterns between them.
 
@@ -328,20 +315,28 @@ INSTRUCTIONS:
 If no meaningful connections exist, respond: {\"connections\":[],\"insight\":\"\",\"source_ids\":[]}
 Only include memory IDs that actually appear in the MEMORIES above."
 
-	# Call haiku for consolidation
 	local response
 	response=$("$ai_helper" --prompt "$prompt" --model haiku --max-tokens 500) || {
-		[[ "$quiet" != "true" ]] && log_warn "Consolidate: LLM call failed, skipping"
-		echo "0"
-		return 0
+		echo ""
+		return 1
 	}
 
 	# Strip markdown code fences if present (LLMs sometimes wrap JSON)
-	# Backticks in sed are literal, not command substitution
 	# shellcheck disable=SC2016
 	response=$(echo "$response" | sed 's/^```json//; s/^```//; s/```$//' | tr -d '\n')
+	echo "$response"
+	return 0
+}
 
-	# Parse the response — jq preferred, python3 fallback
+#######################################
+# Parse and validate LLM consolidation response
+# Args: $1 = raw response string
+# Outputs: three lines: insight, connections_json, source_ids_json
+# Returns 1 if response is invalid/empty
+#######################################
+_consolidate_parse_response() {
+	local response="$1"
+
 	local insight connections source_ids
 	if command -v jq &>/dev/null; then
 		insight=$(echo "$response" | jq -r '.insight // empty' || echo "")
@@ -352,21 +347,14 @@ Only include memory IDs that actually appear in the MEMORIES above."
 		connections=$(echo "$response" | python3 -c "import sys,json; d=json.load(sys.stdin); print(json.dumps(d.get('connections',[])))" || echo "[]")
 		source_ids=$(echo "$response" | python3 -c "import sys,json; d=json.load(sys.stdin); print(json.dumps(d.get('source_ids',[])))" || echo "[]")
 	else
-		[[ "$quiet" != "true" ]] && log_warn "Consolidate: neither jq nor python3 available for parsing"
-		echo "0"
-		return 0
+		return 1
 	fi
 
-	# Skip if no meaningful insight
 	if [[ -z "$insight" || "$insight" == "null" ]]; then
-		[[ "$quiet" != "true" ]] && log_success "Consolidate: no meaningful connections found"
-		echo "0"
-		return 0
+		return 1
 	fi
 
-	# Validate source_ids: filter to only IDs matching the expected mem_* pattern.
-	# This prevents a consolidation record with garbage/hallucinated IDs from being
-	# persisted, which would incorrectly mark those IDs as "already consolidated".
+	# Validate source_ids: filter to only IDs matching the expected mem_* pattern
 	local validated_source_ids="[]"
 	if command -v jq &>/dev/null; then
 		validated_source_ids=$(printf '%s' "$source_ids" | jq -c '[.[] | select(type == "string") | select(test("^mem_[0-9]{14}_[0-9a-f]+$"))]' 2>/dev/null || echo "[]")
@@ -375,15 +363,23 @@ Only include memory IDs that actually appear in the MEMORIES above."
 	fi
 
 	if [[ "$validated_source_ids" == "[]" ]]; then
-		[[ "$quiet" != "true" ]] && log_warn "Consolidate: LLM returned no valid source_ids, skipping"
-		echo "0"
-		return 0
+		return 1
 	fi
 
-	# Store the consolidation using printf to safely handle special characters.
-	# The insight/connections come from LLM output — single-quote escaping alone
-	# is insufficient for arbitrary text. We sanitise by stripping control chars
-	# and escaping single quotes. source_ids uses the validated version.
+	printf '%s\n%s\n%s\n' "$insight" "$connections" "$validated_source_ids"
+	return 0
+}
+
+#######################################
+# Persist consolidation record and derives relations
+# Args: $1=insight $2=connections_json $3=validated_source_ids_json
+# Outputs: number of connections stored
+#######################################
+_consolidate_store_insight() {
+	local insight="$1"
+	local connections="$2"
+	local validated_source_ids="$3"
+
 	local cons_id
 	cons_id="cons_$(date +%Y%m%d%H%M%S)_$(head -c 4 /dev/urandom | xxd -p)"
 
@@ -398,10 +394,7 @@ INSERT INTO memory_consolidations (id, source_ids, insight, connections)
 VALUES ('$cons_id', '$safe_source_ids', '$safe_insight', '$safe_connections');
 EOF
 
-	# Create 'derives' relations in learning_relations for each connection.
-	# Schema: learning_relations(id, supersedes_id, relation_type, created_at)
-	# For 'derives', id = the derived/downstream memory, supersedes_id = the source.
-	# We create a relation from to_id -> from_id meaning "to_id derives from from_id".
+	# Create 'derives' relations in learning_relations for each connection
 	local conn_count=0
 	local conn_pairs=""
 	if command -v jq &>/dev/null; then
@@ -430,17 +423,253 @@ except (json.JSONDecodeError, TypeError) as e:
 			from_exists=$(db "$MEMORY_DB" "SELECT COUNT(*) FROM learnings WHERE id = '$from_id';" || echo "0")
 			to_exists=$(db "$MEMORY_DB" "SELECT COUNT(*) FROM learnings WHERE id = '$to_id';" || echo "0")
 			if [[ "$from_exists" == "1" && "$to_exists" == "1" ]]; then
-				# to_id derives from from_id: id=to_id, supersedes_id=from_id
 				db "$MEMORY_DB" "INSERT OR IGNORE INTO learning_relations (id, supersedes_id, relation_type, created_at) VALUES ('$to_id', '$from_id', 'derives', '$now_ts');" || true
 				conn_count=$((conn_count + 1))
 			fi
 		done <<<"$conn_pairs"
 	fi
 
+	echo "$conn_count"
+	return 0
+}
+
+#######################################
+# Phase 4: Consolidation (cross-memory insight generation)
+# Uses a cheap LLM call (haiku) to find connections between
+# unconsolidated memories and generate synthesized insights.
+# Inspired by Google's always-on-memory-agent consolidation loop.
+#######################################
+phase_consolidate() {
+	local dry_run="$1"
+	local quiet="$2"
+
+	[[ "$quiet" != "true" ]] && log_info "Phase 4: Consolidating memories (cross-memory insight generation)..."
+
+	if [[ ! -f "$MEMORY_DB" ]]; then
+		echo "0"
+		return 0
+	fi
+
+	_consolidate_ensure_schema
+
+	local consolidated_set
+	consolidated_set=$(_consolidate_get_consolidated_set)
+
+	local unconsolidated
+	unconsolidated=$(_consolidate_query_unconsolidated "$consolidated_set")
+
+	if [[ -z "$unconsolidated" ]]; then
+		[[ "$quiet" != "true" ]] && log_success "Consolidate: no unconsolidated memories"
+		echo "0"
+		return 0
+	fi
+
+	local uncons_count
+	uncons_count=$(printf '%s\n' "$unconsolidated" | grep -c '.' || echo "0")
+
+	if [[ "$uncons_count" -lt 3 ]]; then
+		[[ "$quiet" != "true" ]] && log_success "Consolidate: only $uncons_count unconsolidated memories (need 3+)"
+		echo "0"
+		return 0
+	fi
+
+	if [[ "$dry_run" == "true" ]]; then
+		[[ "$quiet" != "true" ]] && log_info "Consolidate: would analyze $uncons_count unconsolidated memories (dry-run)"
+		echo "$uncons_count"
+		return 0
+	fi
+
+	local response
+	response=$(_consolidate_call_llm "$unconsolidated") || {
+		[[ "$quiet" != "true" ]] && log_warn "Consolidate: LLM call failed, skipping"
+		echo "0"
+		return 0
+	}
+
+	if [[ -z "$response" ]]; then
+		[[ "$quiet" != "true" ]] && log_warn "Consolidate: LLM call failed, skipping"
+		echo "0"
+		return 0
+	fi
+
+	local parsed
+	parsed=$(_consolidate_parse_response "$response") || {
+		[[ "$quiet" != "true" ]] && {
+			if ! command -v jq &>/dev/null && ! command -v python3 &>/dev/null; then
+				log_warn "Consolidate: neither jq nor python3 available for parsing"
+			else
+				log_success "Consolidate: no meaningful connections found"
+			fi
+		}
+		echo "0"
+		return 0
+	}
+
+	local insight connections validated_source_ids
+	insight=$(printf '%s\n' "$parsed" | sed -n '1p')
+	connections=$(printf '%s\n' "$parsed" | sed -n '2p')
+	validated_source_ids=$(printf '%s\n' "$parsed" | sed -n '3p')
+
+	local conn_count
+	conn_count=$(_consolidate_store_insight "$insight" "$connections" "$validated_source_ids")
+
 	[[ "$quiet" != "true" ]] && log_success "Consolidate: generated insight from $uncons_count memories ($conn_count connections)"
 	[[ "$quiet" != "true" ]] && log_info "  Insight: ${insight:0:120}..."
 
 	echo "1"
+	return 0
+}
+
+# =============================================================================
+# Phase 5 helpers: Opportunity scan sub-checks
+# Each outputs: count (integer) and appends to the shared details variable
+# via stdout lines prefixed with "detail:"
+# =============================================================================
+
+#######################################
+# 5a. Repeated failure patterns
+#######################################
+_opportunities_check_failures() {
+	local repeated_failures
+	repeated_failures=$(
+		db "$MEMORY_DB" <<'EOF'
+SELECT type, COUNT(*) as cnt
+FROM learnings
+WHERE type IN ('FAILED_APPROACH', 'FAILURE_PATTERN', 'ERROR_FIX')
+AND created_at >= datetime('now', '-30 days')
+GROUP BY type
+HAVING cnt >= 3
+ORDER BY cnt DESC;
+EOF
+	)
+
+	local count=0
+	if [[ -n "$repeated_failures" ]]; then
+		while IFS='|' read -r ftype fcount; do
+			[[ -z "$ftype" ]] && continue
+			count=$((count + 1))
+			echo "detail:  - Recurring ${ftype}: ${fcount} in last 30 days (investigate root cause)"
+		done <<<"$repeated_failures"
+	fi
+
+	echo "count:$count"
+	return 0
+}
+
+#######################################
+# 5b. Low-confidence memories that are frequently accessed
+#######################################
+_opportunities_check_low_confidence() {
+	local low_conf_popular
+	low_conf_popular=$(
+		db "$MEMORY_DB" <<'EOF'
+SELECT l.id, substr(l.content, 1, 80), COALESCE(a.access_count, 0) as ac
+FROM learnings l
+LEFT JOIN learning_access a ON l.id = a.id
+WHERE l.confidence = 'low'
+AND COALESCE(a.access_count, 0) >= 3
+LIMIT 5;
+EOF
+	)
+
+	local count=0
+	if [[ -n "$low_conf_popular" ]]; then
+		while IFS='|' read -r lid lcontent lac; do
+			[[ -z "$lid" ]] && continue
+			count=$((count + 1))
+			echo "detail:  - Popular but low-confidence ($lid, ${lac}x): upgrade confidence? ${lcontent}..."
+		done <<<"$low_conf_popular"
+	fi
+
+	echo "count:$count"
+	return 0
+}
+
+#######################################
+# 5c. Memories with no tags
+#######################################
+_opportunities_check_untagged() {
+	local untagged_count
+	untagged_count=$(db "$MEMORY_DB" \
+		"SELECT COUNT(*) FROM learnings WHERE tags = '' OR tags IS NULL;" \
+		2>/dev/null || echo "0")
+
+	local count=0
+	if [[ "$untagged_count" -gt 10 ]]; then
+		count=1
+		echo "detail:  - ${untagged_count} memories have no tags (reduces discoverability)"
+	fi
+
+	echo "count:$count"
+	return 0
+}
+
+#######################################
+# 5d. Superseded memories never cleaned up
+#######################################
+_opportunities_check_superseded() {
+	local orphan_superseded
+	orphan_superseded=$(
+		db "$MEMORY_DB" <<'EOF'
+SELECT COUNT(*) FROM learning_relations lr
+WHERE lr.relation_type = 'updates'
+AND lr.supersedes_id IN (SELECT id FROM learnings);
+EOF
+	)
+	orphan_superseded="${orphan_superseded:-0}"
+
+	local count=0
+	if [[ "$orphan_superseded" -gt 5 ]]; then
+		count=1
+		echo "detail:  - ${orphan_superseded} superseded memories still in DB (consider archiving)"
+	fi
+
+	echo "count:$count"
+	return 0
+}
+
+#######################################
+# 5e. Memory growth rate
+#######################################
+_opportunities_check_growth() {
+	local recent_7d
+	recent_7d=$(db "$MEMORY_DB" \
+		"SELECT COUNT(*) FROM learnings WHERE created_at >= datetime('now', '-7 days');" \
+		2>/dev/null || echo "0")
+
+	local count=0
+	if [[ "$recent_7d" -gt 50 ]]; then
+		count=1
+		echo "detail:  - High memory growth: ${recent_7d} in 7 days (check for noisy auto-capture)"
+	fi
+
+	echo "count:$count"
+	return 0
+}
+
+#######################################
+# 5f. Batch retrospective noise
+#######################################
+_opportunities_check_noise() {
+	local noise_count
+	noise_count=$(
+		db "$MEMORY_DB" <<'EOF'
+SELECT COUNT(*) FROM learnings
+WHERE content LIKE 'Batch retrospective:%'
+   OR content LIKE 'Session review for batch%'
+   OR content LIKE 'Implemented feature: t%'
+   OR content LIKE 'Supervisor task t%';
+EOF
+	)
+	noise_count="${noise_count:-0}"
+
+	local count=0
+	if [[ "$noise_count" -gt 5 ]]; then
+		count=1
+		echo "detail:  - ${noise_count} session-metadata memories (low value, consider filtering in auto-capture)"
+	fi
+
+	echo "count:$count"
 	return 0
 }
 
@@ -461,105 +690,20 @@ phase_opportunities() {
 	local opportunities=0
 	local opportunity_details=""
 
-	# 5a. Check for repeated failure patterns (same type of error recurring)
-	local repeated_failures
-	repeated_failures=$(
-		db "$MEMORY_DB" <<'EOF'
-SELECT type, COUNT(*) as cnt
-FROM learnings
-WHERE type IN ('FAILED_APPROACH', 'FAILURE_PATTERN', 'ERROR_FIX')
-AND created_at >= datetime('now', '-30 days')
-GROUP BY type
-HAVING cnt >= 3
-ORDER BY cnt DESC;
-EOF
-	)
-
-	if [[ -n "$repeated_failures" ]]; then
-		while IFS='|' read -r ftype fcount; do
-			[[ -z "$ftype" ]] && continue
-			opportunities=$((opportunities + 1))
-			opportunity_details+="  - Recurring ${ftype}: ${fcount} in last 30 days (investigate root cause)\n"
-		done <<<"$repeated_failures"
-	fi
-
-	# 5b. Check for low-confidence memories that are frequently accessed
-	# (suggests they should be validated and upgraded)
-	local low_conf_popular
-	low_conf_popular=$(
-		db "$MEMORY_DB" <<'EOF'
-SELECT l.id, substr(l.content, 1, 80), COALESCE(a.access_count, 0) as ac
-FROM learnings l
-LEFT JOIN learning_access a ON l.id = a.id
-WHERE l.confidence = 'low'
-AND COALESCE(a.access_count, 0) >= 3
-LIMIT 5;
-EOF
-	)
-
-	if [[ -n "$low_conf_popular" ]]; then
-		while IFS='|' read -r lid lcontent lac; do
-			[[ -z "$lid" ]] && continue
-			opportunities=$((opportunities + 1))
-			opportunity_details+="  - Popular but low-confidence ($lid, ${lac}x): upgrade confidence? ${lcontent}...\n"
-		done <<<"$low_conf_popular"
-	fi
-
-	# 5c. Check for memories with no tags (harder to find later)
-	local untagged_count
-	untagged_count=$(db "$MEMORY_DB" \
-		"SELECT COUNT(*) FROM learnings WHERE tags = '' OR tags IS NULL;" \
-		2>/dev/null || echo "0")
-
-	if [[ "$untagged_count" -gt 10 ]]; then
-		opportunities=$((opportunities + 1))
-		opportunity_details+="  - ${untagged_count} memories have no tags (reduces discoverability)\n"
-	fi
-
-	# 5d. Check for superseded memories that were never cleaned up
-	local orphan_superseded
-	orphan_superseded=$(
-		db "$MEMORY_DB" <<'EOF'
-SELECT COUNT(*) FROM learning_relations lr
-WHERE lr.relation_type = 'updates'
-AND lr.supersedes_id IN (SELECT id FROM learnings);
-EOF
-	)
-	orphan_superseded="${orphan_superseded:-0}"
-
-	if [[ "$orphan_superseded" -gt 5 ]]; then
-		opportunities=$((opportunities + 1))
-		opportunity_details+="  - ${orphan_superseded} superseded memories still in DB (consider archiving)\n"
-	fi
-
-	# 5e. Check memory growth rate (warn if growing too fast)
-	local recent_7d
-	recent_7d=$(db "$MEMORY_DB" \
-		"SELECT COUNT(*) FROM learnings WHERE created_at >= datetime('now', '-7 days');" \
-		2>/dev/null || echo "0")
-
-	if [[ "$recent_7d" -gt 50 ]]; then
-		opportunities=$((opportunities + 1))
-		opportunity_details+="  - High memory growth: ${recent_7d} in 7 days (check for noisy auto-capture)\n"
-	fi
-
-	# 5f. Check for batch retrospective noise (session metadata stored as memories)
-	local noise_count
-	noise_count=$(
-		db "$MEMORY_DB" <<'EOF'
-SELECT COUNT(*) FROM learnings
-WHERE content LIKE 'Batch retrospective:%'
-   OR content LIKE 'Session review for batch%'
-   OR content LIKE 'Implemented feature: t%'
-   OR content LIKE 'Supervisor task t%';
-EOF
-	)
-	noise_count="${noise_count:-0}"
-
-	if [[ "$noise_count" -gt 5 ]]; then
-		opportunities=$((opportunities + 1))
-		opportunity_details+="  - ${noise_count} session-metadata memories (low value, consider filtering in auto-capture)\n"
-	fi
+	# Run each sub-check and accumulate results
+	local sub_checks=(_opportunities_check_failures _opportunities_check_low_confidence _opportunities_check_untagged _opportunities_check_superseded _opportunities_check_growth _opportunities_check_noise)
+	local check
+	for check in "${sub_checks[@]}"; do
+		local sub_output
+		sub_output=$("$check")
+		local sub_count
+		sub_count=$(echo "$sub_output" | grep '^count:' | sed 's/^count://')
+		opportunities=$((opportunities + sub_count))
+		while IFS= read -r detail_line; do
+			[[ "$detail_line" == detail:* ]] || continue
+			opportunity_details+="${detail_line#detail:}\n"
+		done <<<"$sub_output"
+	done
 
 	[[ "$quiet" != "true" ]] && {
 		if [[ "$opportunities" -gt 0 ]]; then
