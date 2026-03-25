@@ -263,6 +263,88 @@ deploy_scripts_only() {
 	return 0
 }
 
+# Sync agents via rsync, excluding preserved directories and plugin namespaces
+_deploy_agents_rsync() {
+	local source_dir="$1"
+	local -a rsync_excludes=(
+		"--exclude=loop-state/"
+		"--exclude=custom/"
+		"--exclude=draft/"
+	)
+	local plugin_namespace
+	for plugin_namespace in "${PLUGIN_NAMESPACES[@]+"${PLUGIN_NAMESPACES[@]}"}"; do
+		rsync_excludes+=("--exclude=${plugin_namespace}/")
+	done
+	rsync -a "${rsync_excludes[@]}" "$source_dir/" "$TARGET_DIR/"
+	return $?
+}
+
+# Sync agents via tar when rsync is unavailable, preserving custom/draft/plugin dirs
+_deploy_agents_tar_fallback() {
+	local source_dir="$1"
+	local tmp_preserve
+	tmp_preserve=$(mktemp -d)
+	local preserve_ok=true
+	local -a preserved_dirs=("custom" "draft")
+	local plugin_namespace
+	for plugin_namespace in "${PLUGIN_NAMESPACES[@]+"${PLUGIN_NAMESPACES[@]}"}"; do
+		preserved_dirs+=("$plugin_namespace")
+	done
+
+	local pdir
+	for pdir in "${preserved_dirs[@]}"; do
+		if [[ -d "$TARGET_DIR/$pdir" ]] && ! cp -R "$TARGET_DIR/$pdir" "$tmp_preserve/$pdir"; then
+			preserve_ok=false
+		fi
+	done
+
+	if [[ "$preserve_ok" == "false" ]]; then
+		log_error "Failed to preserve custom/draft directories"
+		rm -rf "$tmp_preserve"
+		return 1
+	fi
+
+	# Remove existing target contents (except preserved dirs) to match rsync --delete behavior
+	if [[ -z "$TARGET_DIR" ]]; then
+		log_error "TARGET_DIR is empty — refusing to run find cleanup"
+		rm -rf "$tmp_preserve"
+		return 1
+	fi
+	local -a find_args=(
+		-mindepth 1
+		-maxdepth 1
+		! -name 'custom'
+		! -name 'draft'
+		! -name 'loop-state'
+	)
+	for plugin_namespace in "${PLUGIN_NAMESPACES[@]+"${PLUGIN_NAMESPACES[@]}"}"; do
+		find_args+=(! -name "$plugin_namespace")
+	done
+	find_args+=(-exec rm -rf {} +)
+	if ! find "$TARGET_DIR" "${find_args[@]}"; then
+		log_error "Failed to clean target directory: $TARGET_DIR"
+		rm -rf "$tmp_preserve"
+		return 1
+	fi
+
+	# Copy all agents excluding preserved directories
+	local -a tar_excludes=("--exclude=loop-state" "--exclude=custom" "--exclude=draft")
+	for plugin_namespace in "${PLUGIN_NAMESPACES[@]+"${PLUGIN_NAMESPACES[@]}"}"; do
+		tar_excludes+=("--exclude=$plugin_namespace")
+	done
+	(cd "$source_dir" && tar cf - "${tar_excludes[@]}" .) |
+		(cd "$TARGET_DIR" && tar xf -)
+
+	# Restore preserved directories
+	for pdir in "${preserved_dirs[@]}"; do
+		if [[ -d "$tmp_preserve/$pdir" ]]; then
+			cp -R "$tmp_preserve/$pdir" "$TARGET_DIR/$pdir"
+		fi
+	done
+	rm -rf "$tmp_preserve"
+	return 0
+}
+
 # Deploy all agent files (selective sync, preserving custom/draft)
 deploy_all_agents() {
 	local source_dir="$REPO_DIR/.agents"
@@ -288,78 +370,9 @@ deploy_all_agents() {
 	log_info "Deploying all agents to $TARGET_DIR..."
 
 	if command -v rsync &>/dev/null; then
-		local -a rsync_excludes=(
-			"--exclude=loop-state/"
-			"--exclude=custom/"
-			"--exclude=draft/"
-		)
-		local plugin_namespace
-		for plugin_namespace in "${PLUGIN_NAMESPACES[@]+"${PLUGIN_NAMESPACES[@]}"}"; do
-			rsync_excludes+=("--exclude=${plugin_namespace}/")
-		done
-		rsync -a "${rsync_excludes[@]}" "$source_dir/" "$TARGET_DIR/"
+		_deploy_agents_rsync "$source_dir" || return 1
 	else
-		# Preserve user and plugin namespace directories
-		local tmp_preserve
-		tmp_preserve=$(mktemp -d)
-		local preserve_ok=true
-		local -a preserved_dirs=("custom" "draft")
-		local plugin_namespace
-		for plugin_namespace in "${PLUGIN_NAMESPACES[@]+"${PLUGIN_NAMESPACES[@]}"}"; do
-			preserved_dirs+=("$plugin_namespace")
-		done
-
-		local pdir
-		for pdir in "${preserved_dirs[@]}"; do
-			if [[ -d "$TARGET_DIR/$pdir" ]] && ! cp -R "$TARGET_DIR/$pdir" "$tmp_preserve/$pdir"; then
-				preserve_ok=false
-			fi
-		done
-
-		if [[ "$preserve_ok" == "false" ]]; then
-			log_error "Failed to preserve custom/draft directories"
-			rm -rf "$tmp_preserve"
-			return 1
-		fi
-
-		# Remove existing target contents (except custom/draft) to match rsync --delete behavior
-		if [[ -z "$TARGET_DIR" ]]; then
-			log_error "TARGET_DIR is empty — refusing to run find cleanup"
-			rm -rf "$tmp_preserve"
-			return 1
-		fi
-		local -a find_args=(
-			-mindepth 1
-			-maxdepth 1
-			! -name 'custom'
-			! -name 'draft'
-			! -name 'loop-state'
-		)
-		for plugin_namespace in "${PLUGIN_NAMESPACES[@]+"${PLUGIN_NAMESPACES[@]}"}"; do
-			find_args+=(! -name "$plugin_namespace")
-		done
-		find_args+=(-exec rm -rf {} +)
-		if ! find "$TARGET_DIR" "${find_args[@]}"; then
-			log_error "Failed to clean target directory: $TARGET_DIR"
-			rm -rf "$tmp_preserve"
-			return 1
-		fi
-
-		# Copy all agents
-		local -a tar_excludes=("--exclude=loop-state" "--exclude=custom" "--exclude=draft")
-		for plugin_namespace in "${PLUGIN_NAMESPACES[@]+"${PLUGIN_NAMESPACES[@]}"}"; do
-			tar_excludes+=("--exclude=$plugin_namespace")
-		done
-		(cd "$source_dir" && tar cf - "${tar_excludes[@]}" .) |
-			(cd "$TARGET_DIR" && tar xf -)
-
-		# Restore preserved directories
-		for pdir in "${preserved_dirs[@]}"; do
-			if [[ -d "$tmp_preserve/$pdir" ]]; then
-				cp -R "$tmp_preserve/$pdir" "$TARGET_DIR/$pdir"
-			fi
-		done
-		rm -rf "$tmp_preserve"
+		_deploy_agents_tar_fallback "$source_dir" || return 1
 	fi
 
 	# Set executable permissions on scripts
