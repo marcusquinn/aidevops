@@ -575,31 +575,13 @@ resolve_llm_backend() {
 	return 0
 }
 
-# Extract structured data from document
-do_extract() {
-	local input_file="$1"
-	local schema="${2:-auto}"
-	local privacy="${3:-none}"
-
-	validate_file_exists "$input_file" "Input file" || return 1
-	activate_venv || return 1
-	ensure_workspace
-
-	local basename
-	basename="$(basename "$input_file" | sed 's/\.[^.]*$//')"
-	local output_file="${WORKSPACE_DIR}/${basename}-extracted.json"
-
-	# Determine LLM backend with multi-model fallback
-	local llm_backend
-	llm_backend="$(resolve_llm_backend "$privacy")" || return 1
-
-	print_info "Extracting from ${input_file} (schema=${schema}, privacy=${privacy}, llm=${llm_backend})..."
-
-	# Build schema selection
-	local schema_code
+# Build Python schema class definitions for a given schema name.
+# Outputs the Python snippet to stdout; caller captures with $().
+build_schema_code() {
+	local schema="$1"
 	case "$schema" in
 	invoice)
-		schema_code="
+		printf '%s' "
 class LineItem(BaseModel):
     description: str = ''
     quantity: float = 0
@@ -621,7 +603,7 @@ schema_class = Invoice
 "
 		;;
 	receipt)
-		schema_code="
+		printf '%s' "
 class ReceiptItem(BaseModel):
     name: str = ''
     price: float = 0
@@ -637,7 +619,7 @@ schema_class = Receipt
 "
 		;;
 	contract)
-		schema_code="
+		printf '%s' "
 class ContractSummary(BaseModel):
     parties: list[str] = []
     effective_date: str = ''
@@ -649,7 +631,7 @@ schema_class = ContractSummary
 "
 		;;
 	id-document)
-		schema_code="
+		printf '%s' "
 class IDDocument(BaseModel):
     document_type: str = ''
     full_name: str = ''
@@ -662,7 +644,7 @@ schema_class = IDDocument
 "
 		;;
 	purchase-invoice)
-		schema_code="
+		printf '%s' "
 from typing import Optional
 
 class PurchaseLineItem(BaseModel):
@@ -695,7 +677,7 @@ schema_class = PurchaseInvoice
 "
 		;;
 	expense-receipt)
-		schema_code="
+		printf '%s' "
 from typing import Optional
 
 class ReceiptItem(BaseModel):
@@ -726,7 +708,7 @@ schema_class = ExpenseReceipt
 "
 		;;
 	credit-note)
-		schema_code="
+		printf '%s' "
 from typing import Optional
 
 class CreditLineItem(BaseModel):
@@ -754,11 +736,23 @@ schema_class = CreditNote
 "
 		;;
 	auto | *)
-		schema_code="
+		printf '%s' "
 schema_class = None
 "
 		;;
 	esac
+	return 0
+}
+
+# Run the Python extraction block for a single document.
+# Args: input_file output_file llm_backend schema_name schema_code pipeline_py
+run_extraction_python() {
+	local input_file="$1"
+	local output_file="$2"
+	local llm_backend="$3"
+	local schema_name="$4"
+	local schema_code="$5"
+	local pipeline_py="$6"
 
 	"${VENV_DIR}/bin/python3" -c "
 import json
@@ -773,11 +767,7 @@ ${schema_code}
 input_file = '${input_file}'
 output_file = '${output_file}'
 llm_backend = '${llm_backend}'
-schema_name = '${schema}'
-
-# Determine file type for dual-input strategy
-file_ext = Path(input_file).suffix.lower()
-is_pdf = file_ext == '.pdf'
+schema_name = '${schema_name}'
 
 extractor = Extractor()
 extractor.load_document_loader('docling')
@@ -794,13 +784,8 @@ try:
         doc_result = converter.convert(input_file)
         md_content = doc_result.document.export_to_markdown()
 
-        # Try classification via extraction_pipeline
-        pipeline_py = os.path.join(os.path.dirname(os.path.abspath('${PIPELINE_PY}')), 'extraction_pipeline.py')
-        if os.path.exists('${PIPELINE_PY}'):
-            pipeline_py = '${PIPELINE_PY}'
-
         try:
-            sys.path.insert(0, os.path.dirname(pipeline_py))
+            sys.path.insert(0, os.path.dirname('${pipeline_py}'))
             from extraction_pipeline import classify_document, DocumentType
             doc_type, scores = classify_document(md_content)
             print(f'Auto-classified as: {doc_type.value} (scores: {scores})', file=sys.stderr)
@@ -816,10 +801,9 @@ try:
     # Run validation pipeline if extraction_pipeline.py is available
     validated_output = None
     try:
-        sys.path.insert(0, os.path.dirname('${PIPELINE_PY}'))
+        sys.path.insert(0, os.path.dirname('${pipeline_py}'))
         from extraction_pipeline import parse_and_validate, DocumentType as DT
 
-        # Map schema name to DocumentType
         type_map = {
             'purchase-invoice': DT.PURCHASE_INVOICE,
             'purchase_invoice': DT.PURCHASE_INVOICE,
@@ -841,7 +825,6 @@ try:
     except (ImportError, Exception) as e:
         print(f'Validation pipeline skipped: {e}', file=sys.stderr)
 
-    # Use validated output if available, otherwise raw
     final_output = validated_output if validated_output else raw_output
 
     with open(output_file, 'w') as f:
@@ -851,7 +834,34 @@ try:
 except Exception as e:
     print(f'Extraction error: {e}', file=sys.stderr)
     sys.exit(1)
-" || {
+"
+	return $?
+}
+
+# Extract structured data from document
+do_extract() {
+	local input_file="$1"
+	local schema="${2:-auto}"
+	local privacy="${3:-none}"
+
+	validate_file_exists "$input_file" "Input file" || return 1
+	activate_venv || return 1
+	ensure_workspace
+
+	local basename
+	basename="$(basename "$input_file" | sed 's/\.[^.]*$//')"
+	local output_file="${WORKSPACE_DIR}/${basename}-extracted.json"
+
+	local llm_backend
+	llm_backend="$(resolve_llm_backend "$privacy")" || return 1
+
+	print_info "Extracting from ${input_file} (schema=${schema}, privacy=${privacy}, llm=${llm_backend})..."
+
+	local schema_code
+	schema_code="$(build_schema_code "$schema")"
+
+	run_extraction_python \
+		"$input_file" "$output_file" "$llm_backend" "$schema" "$schema_code" "$PIPELINE_PY" || {
 		print_error "Extraction failed"
 		return 1
 	}
@@ -994,25 +1004,21 @@ do_help() {
 	return 0
 }
 
-# Parse command-line arguments
-parse_args() {
-	local command="${1:-help}"
+# Parse --flag value options from remaining positional arguments.
+# Populates variables in the caller's scope via eval (bash 3.2 compatible).
+# Args: command remaining_args...
+# Sets: schema privacy output_format output_file pattern install_component
+parse_named_opts() {
+	local _cmd="$1"
 	shift || true
 
-	# Parse named options
-	local file=""
-	local schema="auto"
-	local privacy="none"
-	local output_format="json"
-	local output_file=""
-	local pattern="*"
-	local install_component="all"
-
-	# First positional arg after command is the file/dir
-	if [[ $# -gt 0 ]] && [[ ! "$1" =~ ^-- ]]; then
-		file="$1"
-		shift || true
-	fi
+	# Defaults (caller must declare these locals before calling)
+	schema="auto"
+	privacy="none"
+	output_format="json"
+	output_file=""
+	pattern="*"
+	install_component="all"
 
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
@@ -1050,62 +1056,76 @@ parse_args() {
 			;;
 		*)
 			# Treat as output file for pii-redact
-			if [[ "$command" == "pii-redact" ]] && [[ -z "$output_file" ]]; then
+			if [[ "$_cmd" == "pii-redact" ]] && [[ -z "$output_file" ]]; then
 				output_file="$1"
 			fi
 			shift
 			;;
 		esac
 	done
+	return 0
+}
+
+# Dispatch a parsed command to its do_* handler.
+# Args: command file schema privacy output_format output_file pattern install_component
+dispatch_command() {
+	local command="$1"
+	local file="$2"
+	local schema="$3"
+	local privacy="$4"
+	local output_format="$5"
+	local output_file="$6"
+	local pattern="$7"
+	local install_component="$8"
 
 	case "$command" in
 	extract)
-		if [[ -z "$file" ]]; then
+		[[ -n "$file" ]] || {
 			print_error "${ERROR_INPUT_FILE_REQUIRED}"
 			return 1
-		fi
+		}
 		do_extract "$file" "$schema" "$privacy" "$output_format"
 		;;
 	classify)
-		if [[ -z "$file" ]]; then
+		[[ -n "$file" ]] || {
 			print_error "${ERROR_INPUT_FILE_REQUIRED}"
 			return 1
-		fi
+		}
 		do_classify "$file"
 		;;
 	validate)
-		if [[ -z "$file" ]]; then
+		[[ -n "$file" ]] || {
 			print_error "${ERROR_INPUT_FILE_REQUIRED}"
 			return 1
-		fi
+		}
 		do_validate "$file" "$schema"
 		;;
 	batch)
-		if [[ -z "$file" ]]; then
+		[[ -n "$file" ]] || {
 			print_error "Input directory is required"
 			return 1
-		fi
+		}
 		do_batch "$file" "$schema" "$privacy" "$pattern"
 		;;
 	pii-scan)
-		if [[ -z "$file" ]]; then
+		[[ -n "$file" ]] || {
 			print_error "${ERROR_INPUT_FILE_REQUIRED}"
 			return 1
-		fi
+		}
 		do_pii_scan "$file"
 		;;
 	pii-redact)
-		if [[ -z "$file" ]]; then
+		[[ -n "$file" ]] || {
 			print_error "${ERROR_INPUT_FILE_REQUIRED}"
 			return 1
-		fi
+		}
 		do_pii_redact "$file" "$output_file"
 		;;
 	convert)
-		if [[ -z "$file" ]]; then
+		[[ -n "$file" ]] || {
 			print_error "${ERROR_INPUT_FILE_REQUIRED}"
 			return 1
-		fi
+		}
 		do_convert "$file" "$output_format"
 		;;
 	install)
@@ -1126,6 +1146,29 @@ parse_args() {
 		return 1
 		;;
 	esac
+	return $?
+}
+
+# Parse command-line arguments and dispatch to the appropriate handler.
+parse_args() {
+	local command="${1:-help}"
+	shift || true
+
+	# Extract first positional arg (file/dir) before named options
+	local file=""
+	if [[ $# -gt 0 ]] && [[ ! "$1" =~ ^-- ]]; then
+		file="$1"
+		shift || true
+	fi
+
+	# Option variables populated by parse_named_opts
+	local schema privacy output_format output_file pattern install_component
+	parse_named_opts "$command" "$@" || return 1
+
+	dispatch_command \
+		"$command" "$file" "$schema" "$privacy" \
+		"$output_format" "$output_file" "$pattern" "$install_component"
+	return $?
 }
 
 # Main entry point
