@@ -447,6 +447,210 @@ is_url_skill() {
 # Commands
 # =============================================================================
 
+# Check a URL-sourced skill for updates. Populates the caller's counters and
+# results array via indirect side-effects on the named variables passed in.
+# Arguments:
+#   $1 - skill JSON object (from jq -c)
+#   $2 - skill name
+#   $3 - upstream URL
+# Outputs: nothing directly; caller reads updates_available/up_to_date/check_failed/results
+# Returns: 0 to continue loop, 1 to signal check_failed (caller increments)
+_check_url_skill() {
+	local skill_json="$1"
+	local name="$2"
+	local upstream_url="$3"
+
+	local stored_hash stored_etag stored_last_modified
+	stored_hash=$(echo "$skill_json" | jq -r '.upstream_hash // empty')
+	stored_etag=$(echo "$skill_json" | jq -r '.upstream_etag // empty')
+	stored_last_modified=$(echo "$skill_json" | jq -r '.upstream_last_modified // empty')
+
+	local latest_hash
+	if ! latest_hash=$(fetch_url_conditional "$upstream_url" "$stored_etag" "$stored_last_modified"); then
+		log_warning "Could not fetch URL for $name: $upstream_url"
+		return 1
+	fi
+
+	# Store updated cache headers from the response
+	update_cache_headers "$name" "$FETCH_RESP_ETAG" "$FETCH_RESP_LAST_MODIFIED"
+
+	# HTTP 304 — content unchanged, skip hash computation entirely
+	if [[ "$latest_hash" == "not_modified" ]]; then
+		update_last_checked "$name"
+		if [[ "$NON_INTERACTIVE" != true ]]; then
+			echo -e "${GREEN}Up to date${NC}: $name (304 Not Modified)"
+		fi
+		log_info "Up to date: $name (304 Not Modified, skipped download)"
+		((++up_to_date))
+		results+=("{\"name\":\"$name\",\"status\":\"up_to_date\",\"commit\":\"${stored_hash}\"}")
+		return 0
+	fi
+
+	# Update last_checked timestamp
+	update_last_checked "$name"
+
+	if [[ -z "$stored_hash" ]]; then
+		if [[ "$NON_INTERACTIVE" != true ]]; then
+			echo -e "${YELLOW}UNKNOWN${NC}: $name (no hash recorded)"
+			echo "  Source: $upstream_url"
+			echo "  Latest hash: ${latest_hash:0:12}"
+			echo ""
+		fi
+		log_info "UNKNOWN: $name (no hash recorded) latest_hash=${latest_hash:0:12}"
+		((++updates_available))
+		results+=("{\"name\":\"$name\",\"status\":\"unknown\",\"latest\":\"${latest_hash}\"}")
+	elif [[ "$latest_hash" != "$stored_hash" ]]; then
+		if [[ "$NON_INTERACTIVE" != true ]]; then
+			echo -e "${YELLOW}UPDATE AVAILABLE${NC}: $name (URL content changed)"
+			echo "  Previous hash: ${stored_hash:0:12}"
+			echo "  Current hash:  ${latest_hash:0:12}"
+			echo "  Run: aidevops skill update $name"
+			echo ""
+		fi
+		log_info "UPDATE AVAILABLE: $name prev_hash=${stored_hash:0:12} new_hash=${latest_hash:0:12}"
+		((++updates_available))
+		results+=("{\"name\":\"$name\",\"status\":\"update_available\",\"current\":\"${stored_hash}\",\"latest\":\"${latest_hash}\"}")
+		if [[ "$AUTO_UPDATE" == true ]]; then
+			log_info "Auto-updating $name..."
+			local add_exit=0
+			if [[ "$NON_INTERACTIVE" == true ]]; then
+				"$ADD_SKILL_HELPER" add "$upstream_url" --force </dev/null >>"$SKILL_LOG_FILE" 2>&1 || add_exit=$?
+			else
+				"$ADD_SKILL_HELPER" add "$upstream_url" --force || add_exit=$?
+			fi
+			if [[ "$add_exit" -eq 0 ]]; then
+				update_upstream_hash "$name" "$latest_hash"
+				log_success "Updated $name"
+			else
+				log_error "Failed to update $name (exit $add_exit)"
+			fi
+		fi
+	else
+		if [[ "$NON_INTERACTIVE" != true ]]; then
+			echo -e "${GREEN}Up to date${NC}: $name"
+		fi
+		log_info "Up to date: $name hash=${stored_hash:0:12}"
+		((++up_to_date))
+		results+=("{\"name\":\"$name\",\"status\":\"up_to_date\",\"commit\":\"${stored_hash}\"}")
+	fi
+	return 0
+}
+
+# Check a GitHub-sourced skill for updates. Populates the caller's counters and
+# results array via indirect side-effects on the named variables passed in.
+# Arguments:
+#   $1 - skill name
+#   $2 - upstream URL
+#   $3 - current commit SHA (may be empty)
+# Returns: 0 to continue loop, 1 to signal check_failed (caller increments)
+_check_github_skill() {
+	local name="$1"
+	local upstream_url="$2"
+	local current_commit="$3"
+
+	local owner_repo
+	owner_repo=$(parse_github_url "$upstream_url")
+	owner_repo=$(echo "$owner_repo" | cut -d'/' -f1-2)
+
+	if [[ -z "$owner_repo" || "$owner_repo" == "/" ]]; then
+		log_warning "Could not parse URL for $name: $upstream_url"
+		return 1
+	fi
+
+	local latest_commit
+	if ! latest_commit=$(get_latest_commit "$owner_repo"); then
+		log_warning "Could not fetch latest commit for $name ($owner_repo)"
+		return 1
+	fi
+
+	update_last_checked "$name"
+
+	if [[ -z "$current_commit" ]]; then
+		if [[ "$NON_INTERACTIVE" != true ]]; then
+			echo -e "${YELLOW}UNKNOWN${NC}: $name (no commit recorded)"
+			echo "  Source: $upstream_url"
+			echo "  Latest: ${latest_commit:0:7}"
+			echo ""
+		fi
+		log_info "UNKNOWN: $name (no commit recorded) latest=${latest_commit:0:7}"
+		((++updates_available))
+		results+=("{\"name\":\"$name\",\"status\":\"unknown\",\"latest\":\"$latest_commit\"}")
+	elif [[ "$latest_commit" != "$current_commit" ]]; then
+		if [[ "$NON_INTERACTIVE" != true ]]; then
+			echo -e "${YELLOW}UPDATE AVAILABLE${NC}: $name"
+			echo "  Current: ${current_commit:0:7}"
+			echo "  Latest:  ${latest_commit:0:7}"
+			echo "  Run: aidevops skill update $name"
+			echo ""
+		fi
+		log_info "UPDATE AVAILABLE: $name current=${current_commit:0:7} latest=${latest_commit:0:7}"
+		((++updates_available))
+		results+=("{\"name\":\"$name\",\"status\":\"update_available\",\"current\":\"$current_commit\",\"latest\":\"$latest_commit\"}")
+		if [[ "$AUTO_UPDATE" == true ]]; then
+			log_info "Auto-updating $name..."
+			local add_exit=0
+			if [[ "$NON_INTERACTIVE" == true ]]; then
+				"$ADD_SKILL_HELPER" add "$upstream_url" --force </dev/null >>"$SKILL_LOG_FILE" 2>&1 || add_exit=$?
+			else
+				"$ADD_SKILL_HELPER" add "$upstream_url" --force || add_exit=$?
+			fi
+			if [[ "$add_exit" -eq 0 ]]; then
+				log_success "Updated $name"
+			else
+				log_error "Failed to update $name (exit $add_exit)"
+			fi
+		fi
+	else
+		if [[ "$NON_INTERACTIVE" != true ]]; then
+			echo -e "${GREEN}Up to date${NC}: $name"
+		fi
+		log_info "Up to date: $name commit=${current_commit:0:7}"
+		((++up_to_date))
+		results+=("{\"name\":\"$name\",\"status\":\"up_to_date\",\"commit\":\"$current_commit\"}")
+	fi
+	return 0
+}
+
+# Print the check summary (human-readable + optional JSON).
+# Reads from caller's up_to_date/updates_available/check_failed/results variables.
+# Returns: 0 if no updates, 1 if updates available
+_print_check_summary() {
+	local up_to_date="$1"
+	local updates_available="$2"
+	local check_failed="$3"
+	shift 3
+	local results=("$@")
+
+	if [[ "$NON_INTERACTIVE" != true ]]; then
+		echo ""
+		echo "Summary:"
+		echo "  Up to date: $up_to_date"
+		echo "  Updates available: $updates_available"
+		if [[ $check_failed -gt 0 ]]; then
+			echo "  Check failed: $check_failed"
+		fi
+	fi
+	log_info "Summary: up_to_date=$up_to_date updates_available=$updates_available check_failed=$check_failed"
+
+	if [[ "$JSON_OUTPUT" == true ]]; then
+		echo ""
+		echo "{"
+		echo "  \"up_to_date\": $up_to_date,"
+		echo "  \"updates_available\": $updates_available,"
+		echo "  \"check_failed\": $check_failed,"
+		local results_json
+		results_json=$(printf '%s,' "${results[@]}")
+		results_json="${results_json%,}"
+		echo "  \"results\": [$results_json]"
+		echo "}"
+	fi
+
+	if [[ $updates_available -gt 0 ]]; then
+		return 1
+	fi
+	return 0
+}
+
 cmd_check() {
 	require_jq
 
@@ -461,221 +665,27 @@ cmd_check() {
 	local check_failed=0
 	local results=()
 
-	# Read skills from JSON
 	while IFS= read -r skill_json; do
 		local name upstream_url current_commit
 		name=$(echo "$skill_json" | jq -r '.name')
 		upstream_url=$(echo "$skill_json" | jq -r '.upstream_url')
 		current_commit=$(echo "$skill_json" | jq -r '.upstream_commit // empty')
 
-		# --- URL-sourced skills: conditional request + content-hash comparison (t1415.2, t1415.3) ---
 		if is_url_skill "$skill_json"; then
-			local stored_hash stored_etag stored_last_modified
-			stored_hash=$(echo "$skill_json" | jq -r '.upstream_hash // empty')
-			stored_etag=$(echo "$skill_json" | jq -r '.upstream_etag // empty')
-			stored_last_modified=$(echo "$skill_json" | jq -r '.upstream_last_modified // empty')
-
-			# Use conditional request when we have cache headers (t1415.3)
-			local latest_hash
-			if [[ -n "$stored_etag" || -n "$stored_last_modified" ]]; then
-				if ! latest_hash=$(fetch_url_conditional "$upstream_url" "$stored_etag" "$stored_last_modified"); then
-					log_warning "Could not fetch URL for $name: $upstream_url"
-					((++check_failed))
-					continue
-				fi
-
-				# HTTP 304 — content unchanged, skip hash computation entirely
-				if [[ "$latest_hash" == "not_modified" ]]; then
-					update_last_checked "$name"
-					if [[ "$NON_INTERACTIVE" != true ]]; then
-						echo -e "${GREEN}Up to date${NC}: $name (304 Not Modified)"
-					fi
-					log_info "Up to date: $name (304 Not Modified, skipped download)"
-					((++up_to_date))
-					results+=("{\"name\":\"$name\",\"status\":\"up_to_date\",\"commit\":\"${stored_hash}\"}")
-					continue
-				fi
-
-				# Got a 200 — store updated cache headers from the response
-				update_cache_headers "$name" "$FETCH_RESP_ETAG" "$FETCH_RESP_LAST_MODIFIED"
-			else
-				# No cache headers stored yet — use plain fetch (t1415.2 path)
-				# but capture headers for future conditional requests
-				if ! latest_hash=$(fetch_url_conditional "$upstream_url" "" ""); then
-					log_warning "Could not fetch URL for $name: $upstream_url"
-					((++check_failed))
-					continue
-				fi
-
-				# Store any cache headers from the response for next time
-				update_cache_headers "$name" "$FETCH_RESP_ETAG" "$FETCH_RESP_LAST_MODIFIED"
-			fi
-
-			# Update last_checked timestamp
-			update_last_checked "$name"
-
-			if [[ -z "$stored_hash" ]]; then
-				# No hash recorded — first check after import
-				if [[ "$NON_INTERACTIVE" != true ]]; then
-					echo -e "${YELLOW}UNKNOWN${NC}: $name (no hash recorded)"
-					echo "  Source: $upstream_url"
-					echo "  Latest hash: ${latest_hash:0:12}"
-					echo ""
-				fi
-				log_info "UNKNOWN: $name (no hash recorded) latest_hash=${latest_hash:0:12}"
-				((++updates_available))
-				results+=("{\"name\":\"$name\",\"status\":\"unknown\",\"latest\":\"${latest_hash}\"}")
-			elif [[ "$latest_hash" != "$stored_hash" ]]; then
-				if [[ "$NON_INTERACTIVE" != true ]]; then
-					echo -e "${YELLOW}UPDATE AVAILABLE${NC}: $name (URL content changed)"
-					echo "  Previous hash: ${stored_hash:0:12}"
-					echo "  Current hash:  ${latest_hash:0:12}"
-					echo "  Run: aidevops skill update $name"
-					echo ""
-				fi
-				log_info "UPDATE AVAILABLE: $name prev_hash=${stored_hash:0:12} new_hash=${latest_hash:0:12}"
-				((++updates_available))
-				results+=("{\"name\":\"$name\",\"status\":\"update_available\",\"current\":\"${stored_hash}\",\"latest\":\"${latest_hash}\"}")
-
-				# Auto-update if enabled
-				if [[ "$AUTO_UPDATE" == true ]]; then
-					log_info "Auto-updating $name..."
-					local add_exit=0
-					if [[ "$NON_INTERACTIVE" == true ]]; then
-						"$ADD_SKILL_HELPER" add "$upstream_url" --force </dev/null >>"$SKILL_LOG_FILE" 2>&1 || add_exit=$?
-					else
-						"$ADD_SKILL_HELPER" add "$upstream_url" --force || add_exit=$?
-					fi
-					if [[ "$add_exit" -eq 0 ]]; then
-						# Update the stored hash after successful re-import
-						update_upstream_hash "$name" "$latest_hash"
-						log_success "Updated $name"
-					else
-						log_error "Failed to update $name (exit $add_exit)"
-					fi
-				fi
-			else
-				if [[ "$NON_INTERACTIVE" != true ]]; then
-					echo -e "${GREEN}Up to date${NC}: $name"
-				fi
-				log_info "Up to date: $name hash=${stored_hash:0:12}"
-				((++up_to_date))
-				results+=("{\"name\":\"$name\",\"status\":\"up_to_date\",\"commit\":\"${stored_hash}\"}")
+			if ! _check_url_skill "$skill_json" "$name" "$upstream_url"; then
+				((++check_failed))
 			fi
 			continue
 		fi
 
-		# --- GitHub-sourced skills: commit SHA comparison ---
-
-		# Parse owner/repo from URL
-		local owner_repo
-		owner_repo=$(parse_github_url "$upstream_url")
-
-		# Extract just owner/repo (first two path components)
-		owner_repo=$(echo "$owner_repo" | cut -d'/' -f1-2)
-
-		if [[ -z "$owner_repo" || "$owner_repo" == "/" ]]; then
-			log_warning "Could not parse URL for $name: $upstream_url"
+		if ! _check_github_skill "$name" "$upstream_url" "$current_commit"; then
 			((++check_failed))
-			continue
-		fi
-
-		# Get latest commit
-		local latest_commit
-		if ! latest_commit=$(get_latest_commit "$owner_repo"); then
-			log_warning "Could not fetch latest commit for $name ($owner_repo)"
-			((++check_failed))
-			continue
-		fi
-
-		# Update last_checked timestamp
-		update_last_checked "$name"
-
-		# Compare commits
-		if [[ -z "$current_commit" ]]; then
-			# No commit recorded, consider as update available
-			if [[ "$NON_INTERACTIVE" != true ]]; then
-				echo -e "${YELLOW}UNKNOWN${NC}: $name (no commit recorded)"
-				echo "  Source: $upstream_url"
-				echo "  Latest: ${latest_commit:0:7}"
-				echo ""
-			fi
-			log_info "UNKNOWN: $name (no commit recorded) latest=${latest_commit:0:7}"
-			((++updates_available))
-			results+=("{\"name\":\"$name\",\"status\":\"unknown\",\"latest\":\"$latest_commit\"}")
-		elif [[ "$latest_commit" != "$current_commit" ]]; then
-			if [[ "$NON_INTERACTIVE" != true ]]; then
-				echo -e "${YELLOW}UPDATE AVAILABLE${NC}: $name"
-				echo "  Current: ${current_commit:0:7}"
-				echo "  Latest:  ${latest_commit:0:7}"
-				echo "  Run: aidevops skill update $name"
-				echo ""
-			fi
-			log_info "UPDATE AVAILABLE: $name current=${current_commit:0:7} latest=${latest_commit:0:7}"
-			((++updates_available))
-			results+=("{\"name\":\"$name\",\"status\":\"update_available\",\"current\":\"$current_commit\",\"latest\":\"$latest_commit\"}")
-
-			# Auto-update if enabled
-			if [[ "$AUTO_UPDATE" == true ]]; then
-				log_info "Auto-updating $name..."
-				# In non-interactive mode: close stdin to prevent any prompts from add-skill-helper.sh
-				local add_exit=0
-				if [[ "$NON_INTERACTIVE" == true ]]; then
-					"$ADD_SKILL_HELPER" add "$upstream_url" --force </dev/null >>"$SKILL_LOG_FILE" 2>&1 || add_exit=$?
-				else
-					"$ADD_SKILL_HELPER" add "$upstream_url" --force || add_exit=$?
-				fi
-				if [[ "$add_exit" -eq 0 ]]; then
-					log_success "Updated $name"
-				else
-					log_error "Failed to update $name (exit $add_exit)"
-				fi
-			fi
-		else
-			if [[ "$NON_INTERACTIVE" != true ]]; then
-				echo -e "${GREEN}Up to date${NC}: $name"
-			fi
-			log_info "Up to date: $name commit=${current_commit:0:7}"
-			((++up_to_date))
-			results+=("{\"name\":\"$name\",\"status\":\"up_to_date\",\"commit\":\"$current_commit\"}")
 		fi
 
 	done < <(jq -c '.skills[]' "$SKILL_SOURCES")
 
-	# Summary
-	if [[ "$NON_INTERACTIVE" != true ]]; then
-		echo ""
-		echo "Summary:"
-		echo "  Up to date: $up_to_date"
-		echo "  Updates available: $updates_available"
-		if [[ $check_failed -gt 0 ]]; then
-			echo "  Check failed: $check_failed"
-		fi
-	fi
-	log_info "Summary: up_to_date=$up_to_date updates_available=$updates_available check_failed=$check_failed"
-
-	# JSON output if requested
-	if [[ "$JSON_OUTPUT" == true ]]; then
-		echo ""
-		echo "{"
-		echo "  \"up_to_date\": $up_to_date,"
-		echo "  \"updates_available\": $updates_available,"
-		echo "  \"check_failed\": $check_failed,"
-		# Join results array with comma using printf
-		local results_json
-		results_json=$(printf '%s,' "${results[@]}")
-		results_json="${results_json%,}" # Remove trailing comma
-		echo "  \"results\": [$results_json]"
-		echo "}"
-	fi
-
-	# Return non-zero if updates available (useful for CI)
-	# In non-interactive mode, auto-update-helper.sh treats exit 1 as "updates applied" (not an error)
-	if [[ $updates_available -gt 0 ]]; then
-		return 1
-	fi
-
-	return 0
+	_print_check_summary "$up_to_date" "$updates_available" "$check_failed" "${results[@]+"${results[@]}"}"
+	return $?
 }
 
 cmd_update() {
@@ -1098,6 +1108,190 @@ get_default_branch() {
 	return 0
 }
 
+# Create or reuse a worktree for a given branch name.
+# Uses worktree-helper.sh if available, falls back to direct git worktree add.
+# Arguments:
+#   $1 - branch name
+#   $2 - repo root path
+#   $3 - label for error messages (e.g. skill name or "batch")
+# Outputs: worktree path on stdout
+# Returns: 0 on success, 1 on failure
+_create_worktree_for_branch() {
+	local branch_name="$1"
+	local repo_root="$2"
+	local label="$3"
+
+	local worktree_path=""
+
+	if [[ -x "$WORKTREE_HELPER" ]]; then
+		local wt_output
+		wt_output=$("$WORKTREE_HELPER" add "$branch_name" 2>&1) || {
+			if echo "$wt_output" | grep -q "already exists"; then
+				worktree_path=$(echo "$wt_output" | grep -oE '/[^ ]+' | head -1)
+				log_info "Using existing worktree: $worktree_path"
+			else
+				log_error "Failed to create worktree for $label: $wt_output"
+				return 1
+			fi
+		}
+		if [[ -z "${worktree_path:-}" ]]; then
+			worktree_path=$(echo "$wt_output" | grep "^Path:" | sed 's/^Path: *//' | head -1)
+			worktree_path=$(echo "$worktree_path" | sed 's/\x1b\[[0-9;]*m//g')
+		fi
+	fi
+
+	if [[ -z "${worktree_path:-}" ]]; then
+		local parent_dir repo_name slug
+		parent_dir=$(dirname "$repo_root")
+		repo_name=$(basename "$repo_root")
+		slug=$(echo "$branch_name" | tr '/' '-' | tr '[:upper:]' '[:lower:]')
+		worktree_path="${parent_dir}/${repo_name}-${slug}"
+
+		if [[ -d "$worktree_path" ]]; then
+			log_info "Using existing worktree: $worktree_path"
+		else
+			log_info "Creating worktree at: $worktree_path"
+			local wt_add_output
+			if git show-ref --verify --quiet "refs/heads/$branch_name" 2>/dev/null; then
+				wt_add_output=$(git worktree add "$worktree_path" "$branch_name" 2>&1) || {
+					log_error "Failed to create worktree for $label: ${wt_add_output}"
+					return 1
+				}
+			else
+				wt_add_output=$(git worktree add -b "$branch_name" "$worktree_path" 2>&1) || {
+					log_error "Failed to create worktree for $label: ${wt_add_output}"
+					return 1
+				}
+			fi
+			register_worktree "$worktree_path" "$branch_name"
+		fi
+	fi
+
+	if [[ ! -d "$worktree_path" ]]; then
+		log_error "Worktree path does not exist: $worktree_path"
+		return 1
+	fi
+
+	echo "$worktree_path"
+	return 0
+}
+
+# Push a branch and create a PR via gh CLI.
+# Arguments:
+#   $1 - worktree path
+#   $2 - branch name
+#   $3 - default branch (base)
+#   $4 - PR title
+#   $5 - PR body
+#   $6 - label for error messages (e.g. skill name or "batch")
+# Returns: 0 on success, 1 on failure
+_push_and_create_pr() {
+	local worktree_path="$1"
+	local branch_name="$2"
+	local default_branch="$3"
+	local pr_title="$4"
+	local pr_body="$5"
+	local label="$6"
+
+	local push_output
+	push_output=$(git -C "$worktree_path" push -u origin "$branch_name" 2>&1) || {
+		log_error "Failed to push branch for $label: ${push_output}"
+		return 1
+	}
+	log_success "Pushed branch: $branch_name"
+
+	if ! command -v gh &>/dev/null; then
+		log_warning "gh CLI not available — branch pushed but PR not created"
+		log_info "Create PR manually: gh pr create --head $branch_name"
+		return 0
+	fi
+
+	if ! gh auth status &>/dev/null; then
+		log_warning "gh auth unavailable — branch pushed but PR not created for $label"
+		log_info "Authenticate with: gh auth login"
+		log_info "Create PR manually: gh pr create --head $branch_name"
+		return 1
+	fi
+
+	local pr_create_output
+	pr_create_output=$(gh pr create \
+		--head "$branch_name" \
+		--base "$default_branch" \
+		--title "$pr_title" \
+		--body "$pr_body" \
+		--repo "$(gh repo view --json nameWithOwner --jq '.nameWithOwner' 2>/dev/null || echo '')" \
+		2>&1) || {
+		log_error "Failed to create PR for $label: ${pr_create_output}"
+		log_info "Branch is pushed — create PR manually: gh pr create --head $branch_name"
+		return 1
+	}
+
+	log_success "PR created for $label: $pr_create_output"
+	return 0
+}
+
+# Build commit message and PR artifacts for a single skill update, then commit.
+# Arguments:
+#   $1 - worktree path
+#   $2 - skill name
+#   $3 - upstream URL
+#   $4 - current commit/hash
+#   $5 - latest commit/hash
+#   $6 - source type: "github" or "url"
+#   $7 - default branch
+# Outputs: sets caller-local pr_title and pr_body (via echo to stdout — caller captures)
+# Returns: 0 on success, 1 on failure
+# Note: caller must capture pr_title and pr_body separately; this function commits and
+#       echoes "PR_TITLE:<title>" then "PR_BODY_START" ... "PR_BODY_END" to stdout.
+#       Simpler: function sets globals _PR_TITLE and _PR_BODY for the caller.
+_PR_TITLE=""
+_PR_BODY=""
+_commit_skill_update() {
+	local worktree_path="$1"
+	local skill_name="$2"
+	local upstream_url="$3"
+	local current_commit="$4"
+	local latest_commit="$5"
+	local source_type="$6"
+	local default_branch="$7"
+
+	git -C "$worktree_path" add -A
+	local diff_summary
+	diff_summary=$(get_skill_diff_summary "$worktree_path" "$default_branch")
+
+	local commit_msg
+	if [[ "$source_type" == "url" ]]; then
+		commit_msg=$(generate_url_skill_commit_msg \
+			"$skill_name" "$upstream_url" "$current_commit" "$latest_commit")
+		_PR_TITLE="chore(skill/${skill_name}): update from upstream URL (${latest_commit:0:12})"
+		_PR_BODY=$(generate_url_skill_pr_body \
+			"$skill_name" "$upstream_url" "$current_commit" "$latest_commit" "$diff_summary")
+		update_upstream_hash "$skill_name" "$latest_commit"
+	else
+		local owner_repo_for_log changelog=""
+		owner_repo_for_log=$(parse_github_url "$upstream_url")
+		owner_repo_for_log=$(echo "$owner_repo_for_log" | cut -d'/' -f1-2)
+		if [[ -n "$owner_repo_for_log" && "$owner_repo_for_log" != "/" ]]; then
+			log_info "Fetching upstream changelog for $skill_name..."
+			changelog=$(get_upstream_changelog "$owner_repo_for_log" "$current_commit" "$latest_commit" 2>/dev/null || true)
+		fi
+		commit_msg=$(generate_skill_commit_msg \
+			"$skill_name" "$upstream_url" "$current_commit" "$latest_commit" "$changelog")
+		_PR_TITLE="chore(skill/${skill_name}): update from upstream (${latest_commit:0:7})"
+		_PR_BODY=$(generate_skill_pr_body \
+			"$skill_name" "$upstream_url" "$current_commit" "$latest_commit" \
+			"$changelog" "$diff_summary")
+	fi
+
+	local commit_output
+	commit_output=$(git -C "$worktree_path" commit -m "$commit_msg" --no-verify 2>&1) || {
+		log_error "Failed to commit changes for $skill_name: ${commit_output}"
+		return 1
+	}
+	log_success "Committed skill update for $skill_name"
+	return 0
+}
+
 # Process a single skill update: worktree -> re-import -> commit -> PR
 # Arguments:
 #   $1 - skill name
@@ -1123,10 +1317,7 @@ cmd_pr_single() {
 	local default_branch
 	default_branch=$(get_default_branch)
 
-	# Branch name: chore/skill-update-<name>
 	local branch_name="chore/skill-update-${skill_name}"
-	local timestamp
-	timestamp=$(date -u +"%Y%m%d")
 
 	# Check if a PR already exists for this branch
 	if command -v gh &>/dev/null; then
@@ -1150,74 +1341,16 @@ cmd_pr_single() {
 
 	log_info "Creating PR for skill update: $skill_name"
 
-	# Create worktree using worktree-helper.sh if available, else direct git
 	local worktree_path
-	if [[ -x "$WORKTREE_HELPER" ]]; then
-		# worktree-helper.sh add creates the worktree and prints the path
-		local wt_output
-		wt_output=$("$WORKTREE_HELPER" add "$branch_name" 2>&1) || {
-			# If worktree already exists, extract its path
-			if echo "$wt_output" | grep -q "already exists"; then
-				worktree_path=$(echo "$wt_output" | grep -oE '/[^ ]+' | head -1)
-				log_info "Using existing worktree: $worktree_path"
-			else
-				log_error "Failed to create worktree for $skill_name: $wt_output"
-				return 1
-			fi
-		}
-		# Extract path from output (format: "Path: /path/to/worktree")
-		if [[ -z "${worktree_path:-}" ]]; then
-			worktree_path=$(echo "$wt_output" | grep "^Path:" | sed 's/^Path: *//' | head -1)
-			# Strip ANSI codes if present
-			worktree_path=$(echo "$worktree_path" | sed 's/\x1b\[[0-9;]*m//g')
-		fi
-	fi
-
-	# Fallback: create worktree directly
-	if [[ -z "${worktree_path:-}" ]]; then
-		local parent_dir
-		parent_dir=$(dirname "$repo_root")
-		local repo_name
-		repo_name=$(basename "$repo_root")
-		local slug
-		slug=$(echo "$branch_name" | tr '/' '-' | tr '[:upper:]' '[:lower:]')
-		worktree_path="${parent_dir}/${repo_name}-${slug}"
-
-		if [[ -d "$worktree_path" ]]; then
-			log_info "Using existing worktree: $worktree_path"
-		else
-			log_info "Creating worktree at: $worktree_path"
-			local wt_add_output
-			if git show-ref --verify --quiet "refs/heads/$branch_name" 2>/dev/null; then
-				wt_add_output=$(git worktree add "$worktree_path" "$branch_name" 2>&1) || {
-					log_error "Failed to create worktree for $skill_name: ${wt_add_output}"
-					return 1
-				}
-			else
-				wt_add_output=$(git worktree add -b "$branch_name" "$worktree_path" 2>&1) || {
-					log_error "Failed to create worktree for $skill_name: ${wt_add_output}"
-					return 1
-				}
-			fi
-			# Register ownership
-			register_worktree "$worktree_path" "$branch_name"
-		fi
-	fi
-
-	if [[ ! -d "$worktree_path" ]]; then
-		log_error "Worktree path does not exist: $worktree_path"
-		return 1
-	fi
+	worktree_path=$(_create_worktree_for_branch "$branch_name" "$repo_root" "$skill_name") || return 1
 
 	# Re-import the skill in the worktree context
 	log_info "Re-importing $skill_name in worktree..."
 	local add_skill_in_wt="${worktree_path}/.agents/scripts/add-skill-helper.sh"
 	if [[ ! -x "$add_skill_in_wt" ]]; then
-		# Fall back to the deployed helper
 		add_skill_in_wt="$ADD_SKILL_HELPER"
 	fi
 
-	# Run the import from within the worktree directory
 	if ! (cd "$worktree_path" && "$add_skill_in_wt" add "$upstream_url" --force --skip-security 2>&1); then
 		log_error "Failed to re-import $skill_name"
 		_cleanup_worktree "$worktree_path" "$branch_name"
@@ -1226,7 +1359,6 @@ cmd_pr_single() {
 
 	# Check if there are actual changes
 	if git -C "$worktree_path" diff --quiet && git -C "$worktree_path" diff --cached --quiet; then
-		# Also check for untracked files
 		local untracked
 		untracked=$(git -C "$worktree_path" ls-files --others --exclude-standard 2>/dev/null || echo "")
 		if [[ -z "$untracked" ]]; then
@@ -1236,93 +1368,17 @@ cmd_pr_single() {
 		fi
 	fi
 
-	# Stage changes and capture diff summary before committing
-	git -C "$worktree_path" add -A
-	local diff_summary
-	diff_summary=$(get_skill_diff_summary "$worktree_path" "$default_branch")
-
-	local commit_msg
-	local pr_title
-	local pr_body
-
-	if [[ "$source_type" == "url" ]]; then
-		# URL-sourced skill: hash-based commit/PR (t1415.2)
-		commit_msg=$(generate_url_skill_commit_msg \
-			"$skill_name" "$upstream_url" "$current_commit" "$latest_commit")
-		pr_title="chore(skill/${skill_name}): update from upstream URL (${latest_commit:0:12})"
-		pr_body=$(generate_url_skill_pr_body \
-			"$skill_name" "$upstream_url" "$current_commit" "$latest_commit" "$diff_summary")
-
-		# Update the stored hash after successful re-import
-		update_upstream_hash "$skill_name" "$latest_commit"
-	else
-		# GitHub-sourced skill: commit-based with changelog
-		local owner_repo_for_log
-		owner_repo_for_log=$(parse_github_url "$upstream_url")
-		owner_repo_for_log=$(echo "$owner_repo_for_log" | cut -d'/' -f1-2)
-		local changelog=""
-		if [[ -n "$owner_repo_for_log" && "$owner_repo_for_log" != "/" ]]; then
-			log_info "Fetching upstream changelog for $skill_name..."
-			changelog=$(get_upstream_changelog "$owner_repo_for_log" "$current_commit" "$latest_commit" 2>/dev/null || true)
-		fi
-
-		commit_msg=$(generate_skill_commit_msg \
-			"$skill_name" "$upstream_url" "$current_commit" "$latest_commit" "$changelog")
-		pr_title="chore(skill/${skill_name}): update from upstream (${latest_commit:0:7})"
-		pr_body=$(generate_skill_pr_body \
-			"$skill_name" "$upstream_url" "$current_commit" "$latest_commit" \
-			"$changelog" "$diff_summary")
-	fi
-
-	local commit_output
-	commit_output=$(git -C "$worktree_path" commit -m "$commit_msg" --no-verify 2>&1) || {
-		log_error "Failed to commit changes for $skill_name: ${commit_output}"
+	if ! _commit_skill_update \
+		"$worktree_path" "$skill_name" "$upstream_url" \
+		"$current_commit" "$latest_commit" "$source_type" "$default_branch"; then
 		_cleanup_worktree "$worktree_path" "$branch_name"
 		return 1
-	}
-
-	log_success "Committed skill update for $skill_name"
-
-	# Push the branch
-	local push_output
-	push_output=$(git -C "$worktree_path" push -u origin "$branch_name" 2>&1) || {
-		log_error "Failed to push branch for $skill_name: ${push_output}"
-		return 1
-	}
-
-	log_success "Pushed branch: $branch_name"
-
-	# Create PR via gh CLI
-	if ! command -v gh &>/dev/null; then
-		log_warning "gh CLI not available — branch pushed but PR not created"
-		log_info "Create PR manually: gh pr create --head $branch_name"
-		return 0
 	fi
 
-	if ! gh auth status &>/dev/null; then
-		log_warning "gh auth unavailable — branch pushed but PR not created for $skill_name"
-		log_info "Authenticate with: gh auth login"
-		log_info "Create PR manually: gh pr create --head $branch_name"
-		return 1
-	fi
-
-	local pr_url
-	local pr_create_output
-	pr_create_output=$(gh pr create \
-		--head "$branch_name" \
-		--base "$default_branch" \
-		--title "$pr_title" \
-		--body "$pr_body" \
-		--repo "$(gh repo view --json nameWithOwner --jq '.nameWithOwner' 2>/dev/null || echo '')" \
-		2>&1) || {
-		log_error "Failed to create PR for $skill_name: ${pr_create_output}"
-		log_info "Branch is pushed — create PR manually: gh pr create --head $branch_name"
-		return 1
-	}
-	pr_url="$pr_create_output"
-
-	log_success "PR created for $skill_name: $pr_url"
-	return 0
+	_push_and_create_pr \
+		"$worktree_path" "$branch_name" "$default_branch" \
+		"$_PR_TITLE" "$_PR_BODY" "$skill_name"
+	return $?
 }
 
 # Clean up a worktree on failure (only if we created it)
@@ -1349,43 +1405,14 @@ _cleanup_worktree() {
 # Batch PR Pipeline — collect all updated skills into a single PR (t1082.3)
 # =============================================================================
 
-# Create one PR containing updates for all skills that have upstream changes.
+# Scan skill-sources.json and collect skills that need updates into parallel arrays.
+# Populates the caller's skills_to_update, skill_urls, skill_current_commits,
+# skill_latest_commits arrays (caller must declare them before calling).
 # Arguments:
-#   $1 - target skill name (optional; empty = all skills)
-# Returns: 0 on success, 1 on failure
-cmd_pr_batch() {
+#   $1 - target skill name filter (empty = all skills)
+# Returns: 0 always (individual failures are logged and skipped)
+_collect_skills_needing_update() {
 	local target_skill="${1:-}"
-
-	require_jq
-
-	local skill_count
-	skill_count=$(check_skill_sources)
-
-	log_info "Checking $skill_count imported skill(s) for upstream updates (batch mode)..."
-	echo ""
-
-	# Require gh CLI for PR creation (unless dry-run)
-	if [[ "$DRY_RUN" != true ]] && ! command -v gh &>/dev/null; then
-		log_error "gh CLI is required for PR creation"
-		log_info "Install with: brew install gh (macOS) or see https://cli.github.com/"
-		return 1
-	fi
-
-	local repo_root
-	repo_root=$(get_repo_root)
-	if [[ -z "$repo_root" ]]; then
-		log_error "Not in a git repository"
-		return 1
-	fi
-
-	local default_branch
-	default_branch=$(get_default_branch)
-
-	# Collect skills that need updates
-	local skills_to_update=()
-	local skill_urls=()
-	local skill_current_commits=()
-	local skill_latest_commits=()
 
 	while IFS= read -r skill_json; do
 		local name upstream_url current_commit
@@ -1393,40 +1420,29 @@ cmd_pr_batch() {
 		upstream_url=$(echo "$skill_json" | jq -r '.upstream_url')
 		current_commit=$(echo "$skill_json" | jq -r '.upstream_commit // empty')
 
-		# Filter to specific skill if requested
 		if [[ -n "$target_skill" && "$name" != "$target_skill" ]]; then
 			continue
 		fi
 
-		# --- URL-sourced skills: conditional request + content-hash comparison (t1415.2, t1415.3) ---
 		if is_url_skill "$skill_json"; then
-			local stored_hash stored_etag stored_last_modified
+			local stored_hash stored_etag stored_last_modified latest_hash
 			stored_hash=$(echo "$skill_json" | jq -r '.upstream_hash // empty')
 			stored_etag=$(echo "$skill_json" | jq -r '.upstream_etag // empty')
 			stored_last_modified=$(echo "$skill_json" | jq -r '.upstream_last_modified // empty')
 
-			local latest_hash
 			if ! latest_hash=$(fetch_url_conditional "$upstream_url" "$stored_etag" "$stored_last_modified"); then
 				log_warning "Could not fetch URL for $name: $upstream_url — skipping"
 				continue
 			fi
-
-			# Store updated cache headers from the response
 			update_cache_headers "$name" "$FETCH_RESP_ETAG" "$FETCH_RESP_LAST_MODIFIED"
 			update_last_checked "$name"
 
-			# HTTP 304 — content unchanged
 			if [[ "$latest_hash" == "not_modified" ]]; then
-				if [[ "$QUIET" != true ]]; then
-					echo -e "${GREEN}Up to date${NC}: $name (304 Not Modified)"
-				fi
+				[[ "$QUIET" != true ]] && echo -e "${GREEN}Up to date${NC}: $name (304 Not Modified)"
 				continue
 			fi
-
 			if [[ -n "$stored_hash" && "$latest_hash" == "$stored_hash" ]]; then
-				if [[ "$QUIET" != true ]]; then
-					echo -e "${GREEN}Up to date${NC}: $name"
-				fi
+				[[ "$QUIET" != true ]] && echo -e "${GREEN}Up to date${NC}: $name"
 				continue
 			fi
 
@@ -1438,16 +1454,12 @@ cmd_pr_batch() {
 			continue
 		fi
 
-		# --- Non-GitHub, non-URL sources (ClawdHub, etc.) — skip ---
 		if [[ "$upstream_url" != *"github.com"* ]]; then
-			if [[ "$QUIET" != true ]]; then
-				log_info "Skipping $name (non-GitHub source: ${upstream_url})"
-			fi
+			[[ "$QUIET" != true ]] && log_info "Skipping $name (non-GitHub source: ${upstream_url})"
 			continue
 		fi
 
-		# --- GitHub-sourced skills: commit SHA comparison ---
-		local owner_repo
+		local owner_repo latest_commit
 		owner_repo=$(parse_github_url "$upstream_url")
 		owner_repo=$(echo "$owner_repo" | cut -d'/' -f1-2)
 
@@ -1455,22 +1467,14 @@ cmd_pr_batch() {
 			log_warning "Could not parse URL for $name: $upstream_url — skipping"
 			continue
 		fi
-
-		# Get latest commit
-		local latest_commit
 		if ! latest_commit=$(get_latest_commit "$owner_repo"); then
 			log_warning "Could not fetch latest commit for $name ($owner_repo) — skipping"
 			continue
 		fi
-
-		# Update last_checked timestamp
 		update_last_checked "$name"
 
-		# Skip if up to date
 		if [[ -n "$current_commit" && "$latest_commit" == "$current_commit" ]]; then
-			if [[ "$QUIET" != true ]]; then
-				echo -e "${GREEN}Up to date${NC}: $name"
-			fi
+			[[ "$QUIET" != true ]] && echo -e "${GREEN}Up to date${NC}: $name"
 			continue
 		fi
 
@@ -1481,99 +1485,17 @@ cmd_pr_batch() {
 		skill_latest_commits+=("$latest_commit")
 
 	done < <(jq -c '.skills[]' "$SKILL_SOURCES")
+	return 0
+}
 
-	local update_count="${#skills_to_update[@]}"
-
-	if [[ "$update_count" -eq 0 ]]; then
-		log_info "No skills require updates — no PR needed"
-		return 0
-	fi
-
-	log_info "Found $update_count skill(s) with updates"
-	echo ""
-
-	# Branch name: chore/skill-update-batch-YYYYMMDD
-	local timestamp
-	timestamp=$(date -u +"%Y%m%d")
-	local branch_name="chore/skill-update-batch-${timestamp}"
-
-	if [[ "$DRY_RUN" == true ]]; then
-		log_info "DRY RUN: Would create single batch PR for $update_count skill(s)"
-		echo "  Branch: $branch_name"
-		for i in "${!skills_to_update[@]}"; do
-			echo "  - ${skills_to_update[$i]}: ${skill_current_commits[$i]:0:7} → ${skill_latest_commits[$i]:0:7}"
-		done
-		echo ""
-		return 0
-	fi
-
-	# Check if a PR already exists for this branch
-	if command -v gh &>/dev/null; then
-		local existing_pr
-		existing_pr=$(gh pr list --head "$branch_name" --state open --json number --jq '.[0].number' 2>/dev/null || echo "")
-		if [[ -n "$existing_pr" ]]; then
-			log_warning "PR #${existing_pr} already open for batch branch $branch_name — skipping"
-			return 0
-		fi
-	fi
-
-	# Create worktree for the batch branch
-	local worktree_path=""
-	if [[ -x "$WORKTREE_HELPER" ]]; then
-		local wt_output
-		wt_output=$("$WORKTREE_HELPER" add "$branch_name" 2>&1) || {
-			if echo "$wt_output" | grep -q "already exists"; then
-				worktree_path=$(echo "$wt_output" | grep -oE '/[^ ]+' | head -1)
-				log_info "Using existing worktree: $worktree_path"
-			else
-				log_error "Failed to create worktree for batch: $wt_output"
-				return 1
-			fi
-		}
-		if [[ -z "${worktree_path:-}" ]]; then
-			worktree_path=$(echo "$wt_output" | grep "^Path:" | sed 's/^Path: *//' | head -1)
-			worktree_path=$(echo "$worktree_path" | sed 's/\x1b\[[0-9;]*m//g')
-		fi
-	fi
-
-	# Fallback: create worktree directly
-	if [[ -z "${worktree_path:-}" ]]; then
-		local parent_dir
-		parent_dir=$(dirname "$repo_root")
-		local repo_name
-		repo_name=$(basename "$repo_root")
-		local slug
-		slug=$(echo "$branch_name" | tr '/' '-' | tr '[:upper:]' '[:lower:]')
-		worktree_path="${parent_dir}/${repo_name}-${slug}"
-
-		if [[ -d "$worktree_path" ]]; then
-			log_info "Using existing worktree: $worktree_path"
-		else
-			log_info "Creating batch worktree at: $worktree_path"
-			local wt_add_output
-			if git show-ref --verify --quiet "refs/heads/$branch_name" 2>/dev/null; then
-				wt_add_output=$(git worktree add "$worktree_path" "$branch_name" 2>&1) || {
-					log_error "Failed to create batch worktree: ${wt_add_output}"
-					return 1
-				}
-			else
-				wt_add_output=$(git worktree add -b "$branch_name" "$worktree_path" 2>&1) || {
-					log_error "Failed to create batch worktree: ${wt_add_output}"
-					return 1
-				}
-			fi
-			register_worktree "$worktree_path" "$branch_name"
-		fi
-	fi
-
-	if [[ ! -d "$worktree_path" ]]; then
-		log_error "Batch worktree path does not exist: $worktree_path"
-		return 1
-	fi
-
-	# Re-import each skill in the worktree
-	local imported_skills=()
-	local failed_skills=()
+# Re-import each skill in a worktree, populating imported_skills and failed_skills arrays.
+# Arguments:
+#   $1 - worktree path
+# Reads: skills_to_update, skill_urls (parallel arrays from caller)
+# Populates: imported_skills, failed_skills (caller must declare them)
+# Returns: 0 always
+_reimport_skills_in_worktree() {
+	local worktree_path="$1"
 
 	for i in "${!skills_to_update[@]}"; do
 		local skill_name="${skills_to_update[$i]}"
@@ -1593,59 +1515,51 @@ cmd_pr_batch() {
 			failed_skills+=("$skill_name")
 		fi
 	done
+	return 0
+}
 
-	# Update upstream_hash for URL-sourced skills that were successfully re-imported (t1415.2)
+# Update upstream_hash for URL-sourced skills that were successfully re-imported.
+# Arguments:
+#   $1 - newline-separated list of successfully imported skill names
+# Reads: skills_to_update, skill_latest_commits (parallel arrays from caller)
+# Returns: 0 always
+_update_url_skill_hashes() {
+	local imported_skills_list="$1"
+
 	for i in "${!skills_to_update[@]}"; do
 		local sname="${skills_to_update[$i]}"
 		local sformat
 		sformat=$(jq -r --arg name "$sname" '.skills[] | select(.name == $name) | .format_detected // empty' "$SKILL_SOURCES")
-		if [[ "$sformat" == "url" ]]; then
-			# Check if this skill was successfully imported
-			local was_imported=false
-			for imp in "${imported_skills[@]}"; do
-				if [[ "$imp" == "$sname" ]]; then
-					was_imported=true
-					break
-				fi
-			done
-			if [[ "$was_imported" == true ]]; then
-				update_upstream_hash "$sname" "${skill_latest_commits[$i]}"
-				log_info "Updated upstream_hash for URL skill: $sname"
-			fi
+		if [[ "$sformat" != "url" ]]; then
+			continue
+		fi
+		if echo "$imported_skills_list" | grep -qxF "$sname"; then
+			update_upstream_hash "$sname" "${skill_latest_commits[$i]}"
+			log_info "Updated upstream_hash for URL skill: $sname"
 		fi
 	done
+	return 0
+}
 
-	if [[ "${#imported_skills[@]}" -eq 0 ]]; then
-		log_error "No skills were successfully imported — aborting batch PR"
-		_cleanup_worktree "$worktree_path" "$branch_name"
-		return 1
-	fi
+# Build the batch commit message and commit staged changes.
+# Arguments:
+#   $1 - worktree path
+#   $2 - branch name (for cleanup on failure)
+#   $3 - timestamp (YYYYMMDD)
+#   $4 - newline-separated list of successfully imported skill names
+# Reads: skills_to_update, skill_current_commits, skill_latest_commits, imported_skills
+# Returns: 0 on success, 1 on failure
+_commit_batch_changes() {
+	local worktree_path="$1"
+	local branch_name="$2"
+	local timestamp="$3"
+	local imported_skills_list="$4"
 
-	# Check if there are actual changes
-	if git -C "$worktree_path" diff --quiet && git -C "$worktree_path" diff --cached --quiet; then
-		local untracked
-		untracked=$(git -C "$worktree_path" ls-files --others --exclude-standard 2>/dev/null || echo "")
-		if [[ -z "$untracked" ]]; then
-			log_info "No changes detected after re-importing all skills — skipping"
-			_cleanup_worktree "$worktree_path" "$branch_name"
-			return 0
-		fi
-	fi
-
-	# Stage and commit all changes
 	git -C "$worktree_path" add -A
 
-	# Build commit message listing all updated skills
 	local commit_msg="chore: batch update ${#imported_skills[@]} skill(s) from upstream (t1082.3)"$'\n'$'\n'
-	# bash 3.2-compatible: newline-separated string instead of associative array
-	local imported_skills_list=""
-	for imp in "${imported_skills[@]}"; do
-		imported_skills_list="${imported_skills_list:+$imported_skills_list
-}$imp"
-	done
 	for i in "${!skills_to_update[@]}"; do
 		local sname="${skills_to_update[$i]}"
-		# Only include successfully imported skills
 		if echo "$imported_skills_list" | grep -qxF "$sname"; then
 			commit_msg+="- ${sname}: ${skill_current_commits[$i]:0:12} → ${skill_latest_commits[$i]:0:12}"$'\n'
 		fi
@@ -1658,25 +1572,37 @@ cmd_pr_batch() {
 		_cleanup_worktree "$worktree_path" "$branch_name"
 		return 1
 	}
-
 	log_success "Committed batch skill updates"
+	return 0
+}
 
-	# Push the branch
+# Build the batch PR body and create the PR via gh CLI.
+# Arguments:
+#   $1 - worktree path
+#   $2 - branch name
+#   $3 - default branch
+#   $4 - newline-separated list of successfully imported skill names
+# Reads: skills_to_update, skill_current_commits, skill_latest_commits, skill_urls,
+#        imported_skills, failed_skills
+# Returns: 0 on success, 1 on failure
+_create_batch_pr() {
+	local worktree_path="$1"
+	local branch_name="$2"
+	local default_branch="$3"
+	local imported_skills_list="$4"
+
 	local push_output
 	push_output=$(git -C "$worktree_path" push -u origin "$branch_name" 2>&1) || {
 		log_error "Failed to push batch branch: ${push_output}"
 		return 1
 	}
-
 	log_success "Pushed batch branch: $branch_name"
 
-	# Create PR via gh CLI
 	if ! command -v gh &>/dev/null; then
 		log_warning "gh CLI not available — branch pushed but PR not created"
 		log_info "Create PR manually: gh pr create --head $branch_name"
 		return 0
 	fi
-
 	if ! gh auth status &>/dev/null; then
 		log_warning "gh auth unavailable — branch pushed but batch PR not created"
 		log_info "Authenticate with: gh auth login"
@@ -1684,13 +1610,10 @@ cmd_pr_batch() {
 		return 1
 	fi
 
-	# Build PR body with table of all updated skills
-	local pr_title="chore: batch update ${#imported_skills[@]} skill(s) from upstream"
 	local skill_table="| Skill | Previous | Latest | Source |"$'\n'
 	skill_table+="|-------|----------|--------|--------|"$'\n'
 	for i in "${!skills_to_update[@]}"; do
 		local sname="${skills_to_update[$i]}"
-		# Reuse the imported_skills_list built for the commit message lookup
 		if echo "$imported_skills_list" | grep -qxF "$sname"; then
 			skill_table+="| \`${sname}\` | \`${skill_current_commits[$i]:0:12}\` | \`${skill_latest_commits[$i]:0:12}\` | ${skill_urls[$i]} |"$'\n'
 		fi
@@ -1701,6 +1624,7 @@ cmd_pr_batch() {
 		failed_note=$'\n'"**Note**: The following skills failed to re-import and are NOT included in this PR: ${failed_skills[*]}"$'\n'
 	fi
 
+	local pr_title="chore: batch update ${#imported_skills[@]} skill(s) from upstream"
 	local pr_body
 	pr_body="## Batch Skill Update
 
@@ -1729,7 +1653,6 @@ ${failed_note}
 		log_info "Branch is pushed — create PR manually: gh pr create --head $branch_name"
 		return 1
 	}
-
 	log_success "Batch PR created: $pr_create_output"
 
 	echo ""
@@ -1739,9 +1662,219 @@ ${failed_note}
 		echo "  Skills failed:  ${#failed_skills[@]} (${failed_skills[*]})"
 	fi
 	echo "  PR: $pr_create_output"
+	return 0
+}
+
+# Create one PR containing updates for all skills that have upstream changes.
+# Arguments:
+#   $1 - target skill name (optional; empty = all skills)
+# Returns: 0 on success, 1 on failure
+# Re-import skills into a worktree, update URL hashes, and verify changes exist.
+# Arguments:
+#   $1 - worktree path
+#   $2 - branch name (for cleanup on no-change exit)
+# Reads/populates: imported_skills, failed_skills (caller must declare them)
+# Reads: skills_to_update, skill_urls, skill_latest_commits
+# Returns: 0 if changes exist and ready to commit, 1 on failure or no changes
+_batch_reimport_and_verify() {
+	local worktree_path="$1"
+	local branch_name="$2"
+
+	_reimport_skills_in_worktree "$worktree_path"
+
+	# Build newline-separated list for grep-based membership checks (bash 3.2 compatible)
+	local imported_skills_list=""
+	for imp in "${imported_skills[@]}"; do
+		imported_skills_list="${imported_skills_list:+$imported_skills_list
+}$imp"
+	done
+
+	_update_url_skill_hashes "$imported_skills_list"
+
+	if [[ "${#imported_skills[@]}" -eq 0 ]]; then
+		log_error "No skills were successfully imported — aborting batch PR"
+		_cleanup_worktree "$worktree_path" "$branch_name"
+		return 1
+	fi
+
+	if git -C "$worktree_path" diff --quiet && git -C "$worktree_path" diff --cached --quiet; then
+		local untracked
+		untracked=$(git -C "$worktree_path" ls-files --others --exclude-standard 2>/dev/null || echo "")
+		if [[ -z "$untracked" ]]; then
+			log_info "No changes detected after re-importing all skills — skipping"
+			_cleanup_worktree "$worktree_path" "$branch_name"
+			return 1
+		fi
+	fi
+
+	# Echo the list so the caller can capture it without a global
+	echo "$imported_skills_list"
+	return 0
+}
+
+cmd_pr_batch() {
+	local target_skill="${1:-}"
+
+	require_jq
+
+	local skill_count
+	skill_count=$(check_skill_sources)
+
+	log_info "Checking $skill_count imported skill(s) for upstream updates (batch mode)..."
+	echo ""
+
+	if [[ "$DRY_RUN" != true ]] && ! command -v gh &>/dev/null; then
+		log_error "gh CLI is required for PR creation"
+		log_info "Install with: brew install gh (macOS) or see https://cli.github.com/"
+		return 1
+	fi
+
+	local repo_root default_branch
+	repo_root=$(get_repo_root)
+	if [[ -z "$repo_root" ]]; then
+		log_error "Not in a git repository"
+		return 1
+	fi
+	default_branch=$(get_default_branch)
+
+	local skills_to_update=() skill_urls=() skill_current_commits=() skill_latest_commits=()
+	_collect_skills_needing_update "$target_skill"
+
+	local update_count="${#skills_to_update[@]}"
+	if [[ "$update_count" -eq 0 ]]; then
+		log_info "No skills require updates — no PR needed"
+		return 0
+	fi
+
+	log_info "Found $update_count skill(s) with updates"
+	echo ""
+
+	local timestamp branch_name
+	timestamp=$(date -u +"%Y%m%d")
+	branch_name="chore/skill-update-batch-${timestamp}"
+
+	if [[ "$DRY_RUN" == true ]]; then
+		log_info "DRY RUN: Would create single batch PR for $update_count skill(s)"
+		echo "  Branch: $branch_name"
+		for i in "${!skills_to_update[@]}"; do
+			echo "  - ${skills_to_update[$i]}: ${skill_current_commits[$i]:0:7} → ${skill_latest_commits[$i]:0:7}"
+		done
+		echo ""
+		return 0
+	fi
+
+	if command -v gh &>/dev/null; then
+		local existing_pr
+		existing_pr=$(gh pr list --head "$branch_name" --state open --json number --jq '.[0].number' 2>/dev/null || echo "")
+		if [[ -n "$existing_pr" ]]; then
+			log_warning "PR #${existing_pr} already open for batch branch $branch_name — skipping"
+			return 0
+		fi
+	fi
+
+	local worktree_path
+	worktree_path=$(_create_worktree_for_branch "$branch_name" "$repo_root" "batch") || return 1
+
+	local imported_skills=() failed_skills=()
+	local imported_skills_list
+	imported_skills_list=$(_batch_reimport_and_verify "$worktree_path" "$branch_name") || return 1
+
+	_commit_batch_changes "$worktree_path" "$branch_name" "$timestamp" "$imported_skills_list" || return 1
+	_create_batch_pr "$worktree_path" "$branch_name" "$default_branch" "$imported_skills_list" || return 1
 
 	if [[ "${#failed_skills[@]}" -gt 0 ]]; then
 		return 1
+	fi
+	return 0
+}
+
+# Check a URL-sourced skill and create a PR if an update is available.
+# Increments caller's prs_created, prs_skipped, or prs_failed counters.
+# Arguments:
+#   $1 - skill JSON object (from jq -c)
+#   $2 - skill name
+#   $3 - upstream URL
+# Returns: 0 always (counters reflect outcome)
+_pr_check_url_skill() {
+	local skill_json="$1"
+	local name="$2"
+	local upstream_url="$3"
+
+	local stored_hash stored_etag stored_last_modified latest_hash
+	stored_hash=$(echo "$skill_json" | jq -r '.upstream_hash // empty')
+	stored_etag=$(echo "$skill_json" | jq -r '.upstream_etag // empty')
+	stored_last_modified=$(echo "$skill_json" | jq -r '.upstream_last_modified // empty')
+
+	if ! latest_hash=$(fetch_url_conditional "$upstream_url" "$stored_etag" "$stored_last_modified"); then
+		log_warning "Could not fetch URL for $name: $upstream_url — skipping"
+		((++prs_skipped))
+		return 0
+	fi
+
+	update_cache_headers "$name" "$FETCH_RESP_ETAG" "$FETCH_RESP_LAST_MODIFIED"
+	update_last_checked "$name"
+
+	if [[ "$latest_hash" == "not_modified" ]]; then
+		[[ "$QUIET" != true ]] && echo -e "${GREEN}Up to date${NC}: $name (304 Not Modified)"
+		return 0
+	fi
+	if [[ -n "$stored_hash" && "$latest_hash" == "$stored_hash" ]]; then
+		[[ "$QUIET" != true ]] && echo -e "${GREEN}Up to date${NC}: $name"
+		return 0
+	fi
+
+	if cmd_pr_single "$name" "$upstream_url" "$stored_hash" "$latest_hash" "url"; then
+		((++prs_created))
+	else
+		((++prs_failed))
+	fi
+	return 0
+}
+
+# Check a GitHub-sourced skill and create a PR if an update is available.
+# Increments caller's prs_created, prs_skipped, or prs_failed counters.
+# Arguments:
+#   $1 - skill name
+#   $2 - upstream URL
+#   $3 - current commit SHA (may be empty)
+# Returns: 0 always (counters reflect outcome)
+_pr_check_github_skill() {
+	local name="$1"
+	local upstream_url="$2"
+	local current_commit="$3"
+
+	if [[ "$upstream_url" != *"github.com"* ]]; then
+		[[ "$QUIET" != true ]] && log_info "Skipping $name (non-GitHub source: ${upstream_url})"
+		((++prs_skipped))
+		return 0
+	fi
+
+	local owner_repo latest_commit
+	owner_repo=$(parse_github_url "$upstream_url")
+	owner_repo=$(echo "$owner_repo" | cut -d'/' -f1-2)
+
+	if [[ -z "$owner_repo" || "$owner_repo" == "/" ]]; then
+		log_warning "Could not parse URL for $name: $upstream_url — skipping"
+		((++prs_skipped))
+		return 0
+	fi
+	if ! latest_commit=$(get_latest_commit "$owner_repo"); then
+		log_warning "Could not fetch latest commit for $name ($owner_repo) — skipping"
+		((++prs_skipped))
+		return 0
+	fi
+
+	update_last_checked "$name"
+
+	if [[ -n "$current_commit" && "$latest_commit" == "$current_commit" ]]; then
+		[[ "$QUIET" != true ]] && echo -e "${GREEN}Up to date${NC}: $name"
+		return 0
+	fi
+
+	if cmd_pr_single "$name" "$upstream_url" "$current_commit" "$latest_commit" "github"; then
+		((++prs_created))
+	else
+		((++prs_failed))
 	fi
 	return 0
 }
@@ -1752,14 +1885,12 @@ ${failed_note}
 cmd_pr() {
 	local target_skill="${1:-}"
 
-	# Dispatch to batch mode if configured
 	if [[ "$BATCH_MODE" == "single-pr" ]]; then
 		log_info "Batch mode: single-pr — all updated skills will be combined into one PR"
 		cmd_pr_batch "$target_skill"
 		return $?
 	fi
 
-	# Default: one-per-skill
 	require_jq
 
 	local skill_count
@@ -1768,17 +1899,14 @@ cmd_pr() {
 	log_info "Checking $skill_count imported skill(s) for upstream updates (one PR per skill)..."
 	echo ""
 
-	# Require gh CLI for PR creation (unless dry-run)
 	if [[ "$DRY_RUN" != true ]] && ! command -v gh &>/dev/null; then
 		log_error "gh CLI is required for PR creation"
 		log_info "Install with: brew install gh (macOS) or see https://cli.github.com/"
 		return 1
 	fi
 
-	# Ensure we're on the default branch in the main repo
-	local current_branch
+	local current_branch default_branch
 	current_branch=$(git branch --show-current 2>/dev/null || echo "")
-	local default_branch
 	default_branch=$(get_default_branch)
 
 	if [[ "$DRY_RUN" != true && "$current_branch" != "$default_branch" ]]; then
@@ -1795,102 +1923,19 @@ cmd_pr() {
 		upstream_url=$(echo "$skill_json" | jq -r '.upstream_url')
 		current_commit=$(echo "$skill_json" | jq -r '.upstream_commit // empty')
 
-		# Filter to specific skill if requested
 		if [[ -n "$target_skill" && "$name" != "$target_skill" ]]; then
 			continue
 		fi
 
-		# --- URL-sourced skills: conditional request + content-hash comparison (t1415.2, t1415.3) ---
 		if is_url_skill "$skill_json"; then
-			local stored_hash stored_etag stored_last_modified
-			stored_hash=$(echo "$skill_json" | jq -r '.upstream_hash // empty')
-			stored_etag=$(echo "$skill_json" | jq -r '.upstream_etag // empty')
-			stored_last_modified=$(echo "$skill_json" | jq -r '.upstream_last_modified // empty')
-
-			local latest_hash
-			if ! latest_hash=$(fetch_url_conditional "$upstream_url" "$stored_etag" "$stored_last_modified"); then
-				log_warning "Could not fetch URL for $name: $upstream_url — skipping"
-				((++prs_skipped))
-				continue
-			fi
-
-			# Store updated cache headers from the response
-			update_cache_headers "$name" "$FETCH_RESP_ETAG" "$FETCH_RESP_LAST_MODIFIED"
-			update_last_checked "$name"
-
-			# HTTP 304 — content unchanged
-			if [[ "$latest_hash" == "not_modified" ]]; then
-				if [[ "$QUIET" != true ]]; then
-					echo -e "${GREEN}Up to date${NC}: $name (304 Not Modified)"
-				fi
-				continue
-			fi
-
-			if [[ -n "$stored_hash" && "$latest_hash" == "$stored_hash" ]]; then
-				if [[ "$QUIET" != true ]]; then
-					echo -e "${GREEN}Up to date${NC}: $name"
-				fi
-				continue
-			fi
-
-			# URL skill has an update (or no stored hash) — create PR
-			if cmd_pr_single "$name" "$upstream_url" "$stored_hash" "$latest_hash" "url"; then
-				((++prs_created))
-			else
-				((++prs_failed))
-			fi
+			_pr_check_url_skill "$skill_json" "$name" "$upstream_url"
 			continue
 		fi
 
-		# --- Non-GitHub, non-URL sources (ClawdHub, etc.) — skip ---
-		if [[ "$upstream_url" != *"github.com"* ]]; then
-			if [[ "$QUIET" != true ]]; then
-				log_info "Skipping $name (non-GitHub source: ${upstream_url})"
-			fi
-			((++prs_skipped))
-			continue
-		fi
-
-		# --- GitHub-sourced skills: commit SHA comparison ---
-		local owner_repo
-		owner_repo=$(parse_github_url "$upstream_url")
-		owner_repo=$(echo "$owner_repo" | cut -d'/' -f1-2)
-
-		if [[ -z "$owner_repo" || "$owner_repo" == "/" ]]; then
-			log_warning "Could not parse URL for $name: $upstream_url — skipping"
-			((++prs_skipped))
-			continue
-		fi
-
-		# Get latest commit
-		local latest_commit
-		if ! latest_commit=$(get_latest_commit "$owner_repo"); then
-			log_warning "Could not fetch latest commit for $name ($owner_repo) — skipping"
-			((++prs_skipped))
-			continue
-		fi
-
-		# Update last_checked timestamp
-		update_last_checked "$name"
-
-		# Skip if up to date
-		if [[ -n "$current_commit" && "$latest_commit" == "$current_commit" ]]; then
-			if [[ "$QUIET" != true ]]; then
-				echo -e "${GREEN}Up to date${NC}: $name"
-			fi
-			continue
-		fi
-
-		# Skill has an update — create PR
-		if cmd_pr_single "$name" "$upstream_url" "$current_commit" "$latest_commit" "github"; then
-			((++prs_created))
-		else
-			((++prs_failed))
-		fi
+		_pr_check_github_skill "$name" "$upstream_url" "$current_commit"
 
 	done < <(jq -c '.skills[]' "$SKILL_SOURCES")
 
-	# Summary
 	echo ""
 	echo "PR Pipeline Summary:"
 	echo "  PRs created: $prs_created"
