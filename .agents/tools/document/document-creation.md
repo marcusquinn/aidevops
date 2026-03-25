@@ -25,29 +25,14 @@ tools:
 - **OCR**: Auto-detects scanned PDFs; supports Tesseract, EasyOCR, GLM-OCR, Vision LLM
 - **Formats**: ODT, DOCX, PDF, MD, HTML, EPUB, PPTX, ODP, XLSX, ODS, RTF, CSV, TSV
 
-**Quick start**:
-
 ```bash
-# Check available tools
-document-creation-helper.sh status
-
-# Install dependencies (choose tier)
-document-creation-helper.sh install --minimal   # pandoc + poppler
-document-creation-helper.sh install --standard   # + odfpy, python-docx, openpyxl
-document-creation-helper.sh install --full       # + LibreOffice headless
-
-# Convert between formats
-document-creation-helper.sh convert report.pdf --to odt
-document-creation-helper.sh convert letter.odt --to pdf
-document-creation-helper.sh convert notes.md --to docx
-
-# Create from template
+document-creation-helper.sh status                                    # check tools
+document-creation-helper.sh install --minimal                         # pandoc + poppler
+document-creation-helper.sh install --standard                        # + odfpy, python-docx, openpyxl
+document-creation-helper.sh install --full                            # + LibreOffice headless
+document-creation-helper.sh convert report.pdf --to odt               # convert
 document-creation-helper.sh create template.odt --data fields.json --output letter.odt
-
-# List supported conversions
-document-creation-helper.sh formats
-
-# Manage templates
+document-creation-helper.sh formats                                   # list supported conversions
 document-creation-helper.sh template list
 document-creation-helper.sh template draft --type letter --format odt
 ```
@@ -112,74 +97,17 @@ availability at runtime and selects automatically.
 | EML | MD | email-to-markdown.py | -- | Parses MIME structure, converts HTML body to markdown, extracts attachments |
 | MSG | MD | email-to-markdown.py | -- | Uses extract-msg library, converts HTML body to markdown, extracts attachments |
 
-**Email conversion features**:
-- Parses MIME structure using Python's email library (.eml) or extract-msg (.msg)
-- Converts HTML email body to markdown using html2text
-- Extracts all attachments to a subfolder (`{filename}_attachments/`)
-- Preserves email metadata (From, To, Subject, Date) in markdown frontmatter
-- Outputs: `email.md` + `email_attachments/` folder
-
-**Converting extracted attachments**:
-After extracting attachments from an email, you can convert them to markdown using the same tool:
-
-```bash
-# Extract email and attachments
-document-creation-helper.sh convert email.eml --to md
-
-# Convert PDF attachment to markdown
-document-creation-helper.sh convert email_attachments/report.pdf --to md
-
-# Convert DOCX attachment to markdown
-document-creation-helper.sh convert email_attachments/document.docx --to md
-
-# OCR image attachment to markdown
-document-creation-helper.sh convert email_attachments/scan.jpg --to md --ocr auto
-```
-
-**Dependencies**:
-- `.eml` files: Python stdlib (email module) + html2text
-- `.msg` files: extract-msg library (auto-installed on first use)
+**Email conversion**: Parses MIME/MSG structure, converts HTML body to markdown, extracts attachments to `{filename}_attachments/`, preserves metadata (From, To, Subject, Date) in frontmatter. Dependencies: Python stdlib for `.eml`; `extract-msg` (auto-installed) for `.msg`.
 
 **Thread reconstruction** (t1054.8):
 
-After converting multiple emails to markdown, reconstruct conversation threads from `message_id` and `in_reply_to` headers:
-
 ```bash
-# Batch convert emails and reconstruct threads
-email-batch-convert-helper.sh batch ./emails
-
-# Or run steps separately:
-# 1. Convert emails
-email-batch-convert-helper.sh convert ./emails
-
-# 2. Reconstruct threads
-email-batch-convert-helper.sh threads ./emails
-
-# Or use Python scripts directly:
-python3 email-thread-reconstruction.py ./emails
+email-batch-convert-helper.sh batch ./emails      # convert + reconstruct threads
+email-batch-convert-helper.sh convert ./emails    # convert only
+email-batch-convert-helper.sh threads ./emails    # reconstruct only
 ```
 
-**Thread metadata added to frontmatter**:
-- `thread_id`: Root message-id of the conversation thread
-- `thread_position`: Position in thread (0 = root, 1+ = replies)
-- `thread_length`: Total messages in thread
-
-**Thread index file** (`thread-index.md`):
-- Lists all emails grouped by thread
-- Chronological ordering within each thread
-- Indented to show reply hierarchy
-- Links to individual email markdown files
-
-Example thread index output:
-```markdown
-## Thread: Project kickoff meeting (4 messages)
-Thread ID: `<msg-001@example.com>`
-
-1. [Project kickoff meeting](email1.md) - alice@example.com - 2026-02-10T09:00:00+0000
-  2. [Re: Project kickoff meeting](email2.md) - bob@example.com - 2026-02-10T10:30:00+0000
-  3. [Re: Project kickoff meeting](email3.md) - charlie@example.com - 2026-02-10T11:00:00+0000
-    4. [Re: Project kickoff meeting](email4.md) - alice@example.com - 2026-02-10T12:00:00+0000
-```
+Thread metadata added to frontmatter: `thread_id`, `thread_position`, `thread_length`. Output includes `thread-index.md` listing all emails grouped by thread with reply hierarchy.
 
 ### PDF Extraction (PDF as source)
 
@@ -218,28 +146,20 @@ Thread ID: `<msg-001@example.com>`
 
 ### Tier 1: Minimal (pandoc + poppler)
 
-Always available after `install --minimal`. Handles most text-based conversions.
-
-- **pandoc**: Swiss-army knife. Reads: md, docx, odt, html, epub, rst, latex, pptx, xlsx, csv, tsv, rtf. Writes: md, docx, odt, html, epub, pdf (with engine), pptx, rst, latex.
-- **poppler** (pdftotext, pdfimages, pdfinfo, pdftohtml): PDF text/image extraction, metadata.
+- **pandoc**: Reads/writes md, docx, odt, html, epub, rst, latex, pptx, xlsx, csv, tsv, rtf
+- **poppler** (pdftotext, pdfimages, pdfinfo, pdftohtml): PDF text/image extraction, metadata
 
 ### Tier 2: Standard (+ Python libraries)
 
-Adds programmatic document creation and manipulation.
-
-- **odfpy**: Create/edit ODT, ODS, ODP programmatically. Full control over styles, headers, footers, images, tables.
-- **python-docx**: Create/edit DOCX programmatically. Paragraphs, tables, images, styles, headers/footers.
-- **openpyxl**: Create/edit XLSX programmatically. Cells, formulas, charts, styles.
+- **odfpy**: Create/edit ODT, ODS, ODP programmatically
+- **python-docx**: Create/edit DOCX programmatically
+- **openpyxl**: Create/edit XLSX programmatically
 
 ### Tier 3: Full (+ LibreOffice headless)
 
-Highest fidelity for office format conversions. LibreOffice headless runs without GUI.
-
-- **LibreOffice headless**: `soffice --headless --convert-to <format> <input>`. Handles complex layouts, embedded objects, macros. Faithful ODT/DOCX/XLSX/PPTX to PDF conversion.
+- **LibreOffice headless**: `soffice --headless --convert-to <format> <input>`. Highest fidelity for office format conversions.
 
 ### Specialist Tools (routed to, not owned)
-
-These have their own agents. This agent routes to them when the task matches.
 
 | Tool | Agent | When to route |
 |------|-------|---------------|
@@ -250,293 +170,106 @@ These have their own agents. This agent routes to them when the task matches.
 
 ### Advanced Conversion Providers
 
-AI-powered conversion tools for enhanced quality and table preservation.
-
 | Provider | Model | Install | Best For |
 |----------|-------|---------|----------|
 | Reader-LM | Jina, 1.5B | `ollama pull reader-lm` | HTML to markdown with table preservation |
 | RolmOCR | Reducto, 7B | vLLM server with RolmOCR model | PDF page images to markdown with table preservation (GPU-accelerated) |
 
-**Reader-LM** (Jina AI, 1.5B parameters):
-- Runs locally via Ollama
-- Converts HTML to markdown while preserving complex table structures
-- Replaces pandoc for HTML->md when available
-- Usage: `document-creation-helper.sh convert page.html --to md`
-
-**RolmOCR** (Reducto, 7B parameters):
-- Runs via vLLM server (requires GPU)
-- Converts PDF page images to markdown with table preservation
-- Replaces pdftotext for PDF->md when GPU available
-- Requires vLLM server running on port 8000 with RolmOCR model
-- Usage: `document-creation-helper.sh convert document.pdf --to md`
-
 ## Document Creation from Templates
-
-### Template System
-
-Templates are regular documents (ODT, DOCX, etc.) with placeholder markers.
-The agent replaces markers with supplied data to produce finished documents.
 
 **Placeholder syntax**: `{{field_name}}`
 
-Example template fields:
-
-```text
-{{property_name}}       -- "The Bakehouse"
-{{property_address}}    -- "Rue de la Vallee, St Mary, JE3 3DL"
-{{date}}                -- "10th October 2025"
-{{author}}              -- "Marcus Quinn"
-{{listing_reference}}   -- "MY0128"
-```
-
-### Template Sources
-
-1. **User-supplied** (preferred): Place templates in your project or provide a path.
-   The agent uses them as-is, replacing only the placeholder fields.
-
-2. **Draft templates**: When no template exists, the agent can generate a draft
-   ODT/DOCX with placeholder fields, basic styles, headers/footers, and logo
-   placement. The user then refines the layout in their preferred editor
-   (LibreOffice, Affinity Publisher, Word) and saves it as the canonical template.
-
-### Template Storage
-
-```text
-~/.aidevops/.agent-workspace/templates/
-  documents/          # Document templates (ODT, DOCX)
-  spreadsheets/       # Spreadsheet templates (ODS, XLSX)
-  presentations/      # Presentation templates (ODP, PPTX)
-```
-
-Project-specific templates can live anywhere -- pass the path to the helper.
-
-### Creating Documents from Templates
+**Template storage**: `~/.aidevops/.agent-workspace/templates/` (documents/, spreadsheets/, presentations/)
 
 ```bash
-# From a template with JSON data
+# From template with JSON data
 document-creation-helper.sh create template.odt \
   --data '{"property_name": "The Bakehouse", "date": "10th October 2025"}' \
   --output letter.odt
 
-# From a template with a JSON file
-document-creation-helper.sh create template.odt \
-  --data fields.json \
-  --output letter.odt
+# From template with data file
+document-creation-helper.sh create template.odt --data fields.json --output letter.odt
 
 # Generate a draft template
 document-creation-helper.sh template draft \
-  --type letter \
-  --format odt \
+  --type letter --format odt \
   --fields "property_name,property_address,date,author,listing_reference"
-```
 
-### Programmatic Creation (no template)
-
-For fully programmatic document generation (e.g., reports from data), the agent
-uses odfpy/python-docx directly. This is appropriate when:
-
-- The document structure is data-driven (variable number of sections, images)
-- No visual template exists yet
-- Batch generation of many documents with different structures
-
-```bash
-# The helper delegates to a Python script for complex creation
+# Programmatic creation (data-driven structure, no template)
 document-creation-helper.sh create --script generate-report.py \
-  --data project-data.json \
-  --output report.odt
+  --data project-data.json --output report.odt
 ```
+
+Use programmatic creation (odfpy/python-docx) when: document structure is data-driven, no visual template exists, or batch generation with different structures.
 
 ## Installation
 
 ```bash
-# Check what's installed
-document-creation-helper.sh status
-
-# Minimal: pandoc + poppler (covers most text conversions)
-document-creation-helper.sh install --minimal
-
-# Standard: + odfpy, python-docx, openpyxl (programmatic creation)
-document-creation-helper.sh install --standard
-
-# Full: + LibreOffice headless (highest fidelity office conversions)
-document-creation-helper.sh install --full
-
-# Individual tools
-document-creation-helper.sh install --tool pandoc
-document-creation-helper.sh install --tool libreoffice
-document-creation-helper.sh install --tool odfpy
-document-creation-helper.sh install --tool python-docx
-document-creation-helper.sh install --tool openpyxl
-```
-
-### Installation Details
-
-**Tier 1 - Minimal**:
-
-```bash
 # macOS
-brew install pandoc poppler
+brew install pandoc poppler                                           # Tier 1
+brew install --cask libreoffice                                       # Tier 3
 
 # Ubuntu/Debian
-sudo apt install pandoc poppler-utils
+sudo apt install pandoc poppler-utils                                 # Tier 1
+sudo apt install libreoffice-core libreoffice-writer libreoffice-calc libreoffice-impress  # Tier 3
 
-# Windows
-choco install pandoc
-```
-
-**Tier 2 - Standard** (Python venv at `~/.aidevops/.agent-workspace/python-env/document-creation/`):
-
-```bash
+# Tier 2 (Python venv at ~/.aidevops/.agent-workspace/python-env/document-creation/)
 python3 -m venv ~/.aidevops/.agent-workspace/python-env/document-creation
 source ~/.aidevops/.agent-workspace/python-env/document-creation/bin/activate
 pip install odfpy python-docx openpyxl
-```
 
-**Tier 3 - Full**:
-
-```bash
-# macOS
-brew install --cask libreoffice
-
-# Ubuntu/Debian
-sudo apt install libreoffice-core libreoffice-writer libreoffice-calc libreoffice-impress
-
-# Verify headless mode
-soffice --headless --version
+# Via helper (handles venv automatically)
+document-creation-helper.sh install --tool easyocr
+ollama pull glm-ocr                                                   # GLM-OCR
 ```
 
 ## Usage Examples
 
-### Format Conversion
-
 ```bash
-# Simple conversions
-document-creation-helper.sh convert report.md --to docx
-document-creation-helper.sh convert letter.odt --to pdf
-document-creation-helper.sh convert slides.pptx --to pdf
-document-creation-helper.sh convert data.xlsx --to csv
-
-# Email conversions (extracts attachments automatically)
-document-creation-helper.sh convert email.eml --to md
-document-creation-helper.sh convert message.msg --to md
-
-# With options
-document-creation-helper.sh convert report.md --to pdf --engine xelatex
-document-creation-helper.sh convert letter.odt --to pdf --tool libreoffice
-document-creation-helper.sh convert complex.pdf --to md --tool mineru
-
-# Batch conversion (use a for loop — the script processes one file at a time)
+# Batch conversion
 for f in ./documents/*.docx; do document-creation-helper.sh convert "$f" --to pdf; done
-for f in ./reports/*.md; do document-creation-helper.sh convert "$f" --to odt; done
 
 # Force a specific tool
-document-creation-helper.sh convert file.odt --to pdf --tool pandoc
 document-creation-helper.sh convert file.odt --to pdf --tool libreoffice
-```
 
-### PDF to ODT (layout-preserving)
+# Email (extracts attachments automatically)
+document-creation-helper.sh convert email.eml --to md
 
-This is a multi-step process handled automatically:
-
-1. Extract text with `pdftotext -layout`
-2. Extract images with `pdfimages`
-3. Detect document structure (headings, paragraphs, captions)
-4. Build ODT with odfpy (styles, headers/footers, embedded images)
-
-```bash
-# Automatic (uses best available tools)
+# PDF to ODT (multi-step: extract text+images, detect structure, build ODT)
 document-creation-helper.sh convert report.pdf --to odt
-
-# With a template (applies extracted content to template layout)
 document-creation-helper.sh convert report.pdf --to odt --template company-template.odt
-```
 
-### Document Creation
-
-```bash
-# From template with inline data
-document-creation-helper.sh create letter-template.odt \
-  --data '{"recipient": "Planning Department", "date": "2025-10-11"}' \
-  --output cover-letter.odt
-
-# From template with data file
-document-creation-helper.sh create invoice-template.xlsx \
-  --data invoice-data.json \
-  --output "Invoice-2025-001.xlsx"
-
-# Generate a draft template for a new document type
-document-creation-helper.sh template draft \
-  --type report \
-  --format odt \
-  --fields "title,author,date,summary" \
-  --header-logo logo.png \
-  --footer-text "Company Name | confidential"
+# OCR
+document-creation-helper.sh convert scanned.pdf --to odt --ocr tesseract
+document-creation-helper.sh convert screenshot.png --to md --ocr auto
 ```
 
 ## Decision Tree
-
-When asked to convert or create a document, follow this tree:
 
 ```text
 1. What is the task?
    |
     +-- Convert format A to format B
     |   |
-    |   +-- Is it structured data extraction? (invoice fields, receipt OCR)
-    |   |   YES -> Route to document-extraction.md or docstrange.md
-    |   |
-    |   +-- Is it PDF form filling or signing?
-    |   |   YES -> Route to tools/pdf/overview.md (LibPDF)
-    |   |
-    |   +-- Is it PDF with complex layout to markdown?
-    |   |   YES -> Route to tools/conversion/mineru.md
-    |   |
-    |   +-- Is it a scanned PDF or image with text?
-    |   |   YES -> OCR pipeline (auto-detect provider, extract text, then convert)
-    |   |
-    |   +-- Otherwise: use this agent's tool selection matrix
-    |       Check preferred tool -> available? -> use it
-    |       Not available? -> try fallback
-    |       No fallback? -> suggest installation
-   |
-   +-- Create document from template
-   |   |
-   |   +-- Template supplied?
-   |   |   YES -> Load template, replace placeholders, save
-   |   |   NO  -> Offer to generate draft template
-   |   |
-   |   +-- Complex/data-driven structure?
-   |       YES -> Use odfpy/python-docx programmatically
-   |       NO  -> Template + placeholder replacement
-   |
-   +-- Generate draft template
-       |
-       +-- Collect: format, fields, header/footer, logo
-       +-- Generate with odfpy/python-docx
-       +-- Save to templates directory or specified path
-       +-- User refines in their preferred editor
+    |   +-- Structured data extraction? → document-extraction.md or docstrange.md
+    |   +-- PDF form filling or signing? → tools/pdf/overview.md (LibPDF)
+    |   +-- PDF with complex layout to markdown? → tools/conversion/mineru.md
+    |   +-- Scanned PDF or image with text? → OCR pipeline (auto-detect provider)
+    |   +-- Otherwise: use tool selection matrix above
+    |
+    +-- Create document from template
+    |   +-- Template supplied? → replace placeholders, save
+    |   +-- No template? → offer to generate draft template
+    |   +-- Complex/data-driven? → odfpy/python-docx programmatically
+    |
+    +-- Generate draft template
+        +-- Collect: format, fields, header/footer, logo
+        +-- Generate with odfpy/python-docx → user refines in editor
 ```
 
 ## OCR Support
 
-For scanned PDFs and images containing text, OCR extracts the text content before
-document creation or conversion can proceed.
-
-### When OCR Is Needed
-
-- **Scanned PDFs**: Pages are images, not selectable text. `pdftotext` returns empty output.
-- **Photos of documents**: Camera captures of letters, forms, signs.
-- **Screenshots with text**: UI captures where text needs extracting.
-
-### Auto-Detection
-
-The helper script detects scanned PDFs automatically:
-
-1. Run `pdftotext` on the input -- if output is empty or near-empty, pages are likely scanned images
-2. Run `pdffonts` -- if no fonts are embedded, the PDF contains only images
-3. If both checks indicate image-only content, trigger OCR pipeline
-
-### OCR Provider Routing
+**Auto-detection**: `pdftotext` returns empty → pages are images; `pdffonts` shows no embedded fonts → trigger OCR.
 
 | Provider | Install | Speed | Quality | Best For |
 |----------|---------|-------|---------|----------|
@@ -545,71 +278,19 @@ The helper script detects scanned PDFs automatically:
 | GLM-OCR | `ollama pull glm-ocr` | Slow | Very good | Privacy-sensitive, complex layouts |
 | Vision LLM | API key required | Medium | Excellent | Photos, receipts, handwriting |
 
-**Selection order** (auto mode): Tesseract -> EasyOCR -> GLM-OCR -> Vision LLM
+**Selection order** (auto mode): Tesseract → EasyOCR → GLM-OCR → Vision LLM
 
-The helper picks the first available provider. Use `--ocr <provider>` to force a specific one.
+For screenshot/image input, options: keep as image, extract text (OCR), or both (image + text caption).
 
-### Usage
-
-```bash
-# Auto-detect and OCR if needed
-document-creation-helper.sh convert scanned-report.pdf --to odt
-
-# Force OCR with specific provider
-document-creation-helper.sh convert scanned.pdf --to odt --ocr tesseract
-document-creation-helper.sh convert photo.jpg --to odt --ocr glm-ocr
-
-# OCR a screenshot -- extract text as quoted block
-document-creation-helper.sh convert screenshot.png --to md --ocr auto
-
-# Check OCR tool availability
-document-creation-helper.sh status
-```
-
-### Screenshot Text Extraction
-
-When the input is a screenshot or image (PNG, JPG, TIFF), the agent offers three options:
-
-1. **Keep as image** -- embed the screenshot in the output document as-is
-2. **Extract text** -- OCR the image and insert the text content
-3. **Both** -- embed the image with the extracted text as a caption or adjacent paragraph
-
-### OCR Installation
-
-```bash
-# Tesseract (recommended first install -- fast, reliable for printed text)
-brew install tesseract                    # macOS
-sudo apt install tesseract-ocr            # Ubuntu/Debian
-
-# EasyOCR (Python, 80+ languages)
-document-creation-helper.sh install --tool easyocr
-
-# GLM-OCR (local AI via Ollama, no API keys)
-ollama pull glm-ocr
-
-# All OCR tools at once
-document-creation-helper.sh install --ocr
-```
-
-### Related OCR Agents
-
-- `tools/ocr/glm-ocr.md` -- Local OCR via Ollama
-- `tools/ocr/ocr-research.md` -- OCR approach comparison and research
-- `tools/document/document-extraction.md` -- Structured data extraction (Docling + ExtractThinker)
-- `tools/conversion/mineru.md` -- MinerU (layout-aware PDF parsing with built-in OCR)
+**Related OCR agents**: `tools/ocr/glm-ocr.md`, `tools/ocr/ocr-research.md`, `tools/document/document-extraction.md`, `tools/conversion/mineru.md`
 
 ## Limitations
 
-- **PDF to editable formats** is inherently lossy. PDFs use absolute positioning;
-  flow-based formats (ODT, DOCX) use relative layout. Text content and images
-  transfer well; exact positioning does not.
-- **Spreadsheet formulas** may not survive format conversion (XLSX to ODS and back).
-  Values are preserved; formulas may need manual verification.
-- **Presentation animations and transitions** are lost in most conversions.
-- **Embedded fonts** may not transfer between formats. The output may use
-  fallback fonts if the original font is unavailable.
-- **LibreOffice headless** produces the highest fidelity but is a large install (~500MB).
-  The helper script works without it, using pandoc as fallback.
+- **PDF to editable formats**: inherently lossy — text/images transfer well, exact positioning does not
+- **Spreadsheet formulas**: may not survive format conversion; values preserved, formulas need verification
+- **Presentation animations/transitions**: lost in most conversions
+- **Embedded fonts**: may not transfer; output uses fallback fonts if original unavailable
+- **LibreOffice headless**: highest fidelity but large install (~500MB); pandoc used as fallback
 
 ## Related
 
