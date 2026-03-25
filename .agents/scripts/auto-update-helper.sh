@@ -750,6 +750,72 @@ get_user_idle_seconds() {
 }
 
 #######################################
+# Check tool freshness time gate
+# Sets needs_check=false and returns 0 if within gate, returns 0 otherwise.
+# Outputs "skip" to stdout if gate not elapsed, "run" if check needed.
+# Args: $1 = freshness_seconds
+#######################################
+_check_tool_freshness_time_gate() {
+	local freshness_seconds="$1"
+
+	local last_tool_check=""
+	if [[ -f "$STATE_FILE" ]] && command -v jq &>/dev/null; then
+		last_tool_check=$(jq -r '.last_tool_check // empty' "$STATE_FILE" 2>/dev/null || true)
+	fi
+
+	if [[ -n "$last_tool_check" ]]; then
+		local last_epoch now_epoch elapsed
+		if [[ "$(uname)" == "Darwin" ]]; then
+			# TZ=UTC: stored timestamps are UTC — macOS date -j ignores the Z suffix
+			last_epoch=$(TZ=UTC date -j -f "%Y-%m-%dT%H:%M:%SZ" "$last_tool_check" "+%s" 2>/dev/null || echo "0")
+		else
+			last_epoch=$(date -d "$last_tool_check" "+%s" 2>/dev/null || echo "0")
+		fi
+		now_epoch=$(date +%s)
+		elapsed=$((now_epoch - last_epoch))
+
+		if [[ $elapsed -lt $freshness_seconds ]]; then
+			log_info "Tools checked ${elapsed}s ago (gate: ${freshness_seconds}s) — skipping"
+			echo "skip"
+			return 0
+		fi
+	fi
+
+	echo "run"
+	return 0
+}
+
+#######################################
+# Check tool idle gate — only update when user is away
+# Returns 0 if idle enough to proceed, 1 if user is active (defer).
+# Args: none (reads config internally)
+#######################################
+_check_tool_idle_gate() {
+	local idle_hours
+	idle_hours=$(get_feature_toggle tool_idle_hours "$DEFAULT_TOOL_IDLE_HOURS")
+	if ! [[ "$idle_hours" =~ ^[0-9]+$ ]] || [[ "$idle_hours" -eq 0 ]]; then
+		log_warn "updates.tool_idle_hours='${idle_hours}' is not a positive integer — using default (${DEFAULT_TOOL_IDLE_HOURS}h)"
+		idle_hours="$DEFAULT_TOOL_IDLE_HOURS"
+	fi
+	local idle_threshold_seconds
+	idle_threshold_seconds=$((idle_hours * 3600))
+
+	local user_idle_seconds
+	user_idle_seconds=$(get_user_idle_seconds)
+	if [[ $user_idle_seconds -lt $idle_threshold_seconds ]]; then
+		local idle_h idle_m
+		idle_h=$((user_idle_seconds / 3600))
+		idle_m=$(((user_idle_seconds % 3600) / 60))
+		log_info "User idle ${idle_h}h${idle_m}m (need ${idle_hours}h) — deferring tool updates"
+		return 1
+	fi
+
+	# Export idle seconds for caller to use in log message
+	echo "$user_idle_seconds"
+	return 0
+}
+
+#######################################
 # Check tool freshness and auto-update if stale (6h gate)
 # Only runs when user has been idle for AIDEVOPS_TOOL_IDLE_HOURS.
 # Delegates to tool-version-check.sh --update --quiet.
@@ -773,57 +839,16 @@ check_tool_freshness() {
 	local freshness_seconds
 	freshness_seconds=$((freshness_hours * 3600))
 
-	# Read last tool check timestamp from state file
-	local last_tool_check
-	last_tool_check=""
-	if [[ -f "$STATE_FILE" ]] && command -v jq &>/dev/null; then
-		last_tool_check=$(jq -r '.last_tool_check // empty' "$STATE_FILE" 2>/dev/null || true)
-	fi
-
-	# Determine if check is needed (time gate)
-	local needs_check=true
-	if [[ -n "$last_tool_check" ]]; then
-		local last_epoch now_epoch elapsed
-		if [[ "$(uname)" == "Darwin" ]]; then
-			# TZ=UTC: stored timestamps are UTC — macOS date -j ignores the Z suffix
-			last_epoch=$(TZ=UTC date -j -f "%Y-%m-%dT%H:%M:%SZ" "$last_tool_check" "+%s" 2>/dev/null || echo "0")
-		else
-			last_epoch=$(date -d "$last_tool_check" "+%s" 2>/dev/null || echo "0")
-		fi
-		now_epoch=$(date +%s)
-		elapsed=$((now_epoch - last_epoch))
-
-		if [[ $elapsed -lt $freshness_seconds ]]; then
-			log_info "Tools checked ${elapsed}s ago (gate: ${freshness_seconds}s) — skipping"
-			needs_check=false
-		fi
-	fi
-
-	if [[ "$needs_check" != "true" ]]; then
+	# Time gate: skip if checked recently
+	local gate_result
+	gate_result=$(_check_tool_freshness_time_gate "$freshness_seconds")
+	if [[ "$gate_result" == "skip" ]]; then
 		return 0
 	fi
 
-	# Check user idle time — only update when user is away
-	# Read from JSONC config (handles env var > user config > defaults priority)
-	local idle_hours
-	idle_hours=$(get_feature_toggle tool_idle_hours "$DEFAULT_TOOL_IDLE_HOURS")
-	if ! [[ "$idle_hours" =~ ^[0-9]+$ ]] || [[ "$idle_hours" -eq 0 ]]; then
-		log_warn "updates.tool_idle_hours='${idle_hours}' is not a positive integer — using default (${DEFAULT_TOOL_IDLE_HOURS}h)"
-		idle_hours="$DEFAULT_TOOL_IDLE_HOURS"
-	fi
-	local idle_threshold_seconds
-	idle_threshold_seconds=$((idle_hours * 3600))
-
+	# Idle gate: only update when user is away
 	local user_idle_seconds
-	user_idle_seconds=$(get_user_idle_seconds)
-	if [[ $user_idle_seconds -lt $idle_threshold_seconds ]]; then
-		local idle_h
-		idle_h=$((user_idle_seconds / 3600))
-		local idle_m
-		idle_m=$(((user_idle_seconds % 3600) / 60))
-		log_info "User idle ${idle_h}h${idle_m}m (need ${idle_hours}h) — deferring tool updates"
-		return 0
-	fi
+	user_idle_seconds=$(_check_tool_idle_gate) || return 0
 
 	# Locate tool-version-check.sh
 	local tool_check_script="$HOME/.aidevops/agents/scripts/tool-version-check.sh"
@@ -1013,6 +1038,121 @@ update_upstream_watch_timestamp() {
 }
 
 #######################################
+# Handle stale deployed agents when repo version matches remote.
+# Checks VERSION mismatch and sentinel script hash drift; re-deploys if needed.
+# Args: $1 = current version string
+#######################################
+_cmd_check_stale_agent_redeploy() {
+	local current="$1"
+
+	# Even when repo matches remote, deployed agents may be stale
+	# (e.g., previous setup.sh was interrupted or failed silently)
+	# See: https://github.com/marcusquinn/aidevops/issues/3980
+	local deployed_version
+	deployed_version=$(cat "$HOME/.aidevops/agents/VERSION" 2>/dev/null || echo "none")
+	if [[ "$current" != "$deployed_version" ]]; then
+		log_warn "Deployed agents stale ($deployed_version), re-deploying..."
+		if bash "$INSTALL_DIR/setup.sh" --non-interactive >>"$LOG_FILE" 2>&1; then
+			local redeployed_version
+			redeployed_version=$(cat "$HOME/.aidevops/agents/VERSION" 2>/dev/null || echo "none")
+			if [[ "$current" == "$redeployed_version" ]]; then
+				log_info "Agents re-deployed successfully ($deployed_version -> $redeployed_version)"
+			else
+				log_error "Agent re-deploy incomplete: repo=$current, deployed=$redeployed_version"
+			fi
+		else
+			log_error "setup.sh failed during stale-agent re-deploy (exit code: $?)"
+		fi
+		return 0
+	fi
+
+	# VERSION matches but scripts may still differ — a script fix merged without
+	# a version bump leaves the deployed copy stale until setup.sh is run manually.
+	# Detect this by comparing SHA-256 of a sentinel script that is frequently
+	# patched (gh-failure-miner-helper.sh). If it drifts, re-deploy all agents.
+	# GH#4727: Codacy not_collected false-positive recurred because the fix in
+	# PR #4704 was not deployed to ~/.aidevops/ before the next pulse cycle.
+	local sentinel_repo="$INSTALL_DIR/.agents/scripts/gh-failure-miner-helper.sh"
+	local sentinel_deployed="$HOME/.aidevops/agents/scripts/gh-failure-miner-helper.sh"
+	if [[ -f "$sentinel_repo" && -f "$sentinel_deployed" ]]; then
+		local hash_repo hash_deployed
+		hash_repo=$(sha256sum "$sentinel_repo" 2>/dev/null | awk '{print $1}' || shasum -a 256 "$sentinel_repo" 2>/dev/null | awk '{print $1}' || echo "")
+		hash_deployed=$(sha256sum "$sentinel_deployed" 2>/dev/null | awk '{print $1}' || shasum -a 256 "$sentinel_deployed" 2>/dev/null | awk '{print $1}' || echo "")
+		if [[ -n "$hash_repo" && -n "$hash_deployed" && "$hash_repo" != "$hash_deployed" ]]; then
+			log_warn "Script drift detected (sentinel hash mismatch at v$current) — re-deploying agents..."
+			if bash "$INSTALL_DIR/setup.sh" --non-interactive >>"$LOG_FILE" 2>&1; then
+				log_info "Agents re-deployed after script drift (v$current)"
+			else
+				log_error "setup.sh failed during script-drift re-deploy (exit code: $?)"
+			fi
+		fi
+	fi
+	return 0
+}
+
+#######################################
+# Perform git fetch/pull/reset to bring INSTALL_DIR to origin/main.
+# Handles dirty working tree, detached HEAD, and ff-only failures.
+# Args: $1 = remote version (for state updates on failure)
+# Returns: 0 on success, 1 on unrecoverable failure
+#######################################
+_cmd_check_git_update() {
+	local remote="$1"
+
+	# Clean up any working tree changes left by setup.sh or other processes
+	# (e.g., chmod on tracked scripts, scan results written to repo)
+	# This ensures git pull --ff-only won't be blocked by dirty files.
+	# See: https://github.com/marcusquinn/aidevops/issues/2286
+	if ! git -C "$INSTALL_DIR" diff --quiet 2>/dev/null || ! git -C "$INSTALL_DIR" diff --cached --quiet 2>/dev/null; then
+		log_info "Cleaning up stale working tree changes..."
+		if ! git -C "$INSTALL_DIR" reset HEAD -- . 2>>"$LOG_FILE"; then
+			log_warn "git reset HEAD failed during working tree cleanup"
+		fi
+		if ! git -C "$INSTALL_DIR" checkout -- . 2>>"$LOG_FILE"; then
+			log_warn "git checkout -- . failed during working tree cleanup"
+		fi
+	fi
+
+	# Ensure we're on the main branch (detached HEAD or stale branch blocks pull)
+	# Mirrors recovery logic from aidevops.sh cmd_update()
+	# See: https://github.com/marcusquinn/aidevops/issues/4142
+	local current_branch
+	current_branch=$(git -C "$INSTALL_DIR" branch --show-current 2>/dev/null || echo "")
+	if [[ "$current_branch" != "main" ]]; then
+		log_info "Not on main branch ($current_branch), switching..."
+		if ! git -C "$INSTALL_DIR" checkout main --quiet 2>>"$LOG_FILE" &&
+			! git -C "$INSTALL_DIR" checkout -b main origin/main --quiet 2>>"$LOG_FILE"; then
+			log_error "Failed to switch to main branch from '$current_branch' in $INSTALL_DIR"
+			update_state "update" "$remote" "branch_switch_failed"
+			return 1
+		fi
+	fi
+
+	# Pull latest changes
+	if ! git -C "$INSTALL_DIR" fetch origin main --quiet 2>>"$LOG_FILE"; then
+		log_error "git fetch failed"
+		update_state "update" "$remote" "fetch_failed"
+		return 1
+	fi
+
+	if ! git -C "$INSTALL_DIR" pull --ff-only origin main --quiet 2>>"$LOG_FILE"; then
+		# Fast-forward failed (diverged history or persistent dirty state).
+		# Since we just fetched origin/main, reset to it — the repo is managed
+		# by aidevops and should always track origin/main exactly.
+		# See: https://github.com/marcusquinn/aidevops/issues/2288
+		log_warn "git pull --ff-only failed — falling back to reset"
+		if git -C "$INSTALL_DIR" reset --hard origin/main --quiet 2>>"$LOG_FILE"; then
+			log_info "Reset to origin/main succeeded"
+		else
+			log_error "git reset --hard origin/main also failed"
+			update_state "update" "$remote" "pull_failed"
+			return 1
+		fi
+	fi
+	return 0
+}
+
+#######################################
 # One-shot check and update
 # This is what the cron job calls
 #######################################
@@ -1054,49 +1194,7 @@ cmd_check() {
 	if [[ "$current" == "$remote" ]]; then
 		log_info "Already up to date (v$current)"
 		update_state "check" "$current" "up_to_date"
-
-		# Even when repo matches remote, deployed agents may be stale
-		# (e.g., previous setup.sh was interrupted or failed silently)
-		# See: https://github.com/marcusquinn/aidevops/issues/3980
-		local deployed_version
-		deployed_version=$(cat "$HOME/.aidevops/agents/VERSION" 2>/dev/null || echo "none")
-		if [[ "$current" != "$deployed_version" ]]; then
-			log_warn "Deployed agents stale ($deployed_version), re-deploying..."
-			if bash "$INSTALL_DIR/setup.sh" --non-interactive >>"$LOG_FILE" 2>&1; then
-				local redeployed_version
-				redeployed_version=$(cat "$HOME/.aidevops/agents/VERSION" 2>/dev/null || echo "none")
-				if [[ "$current" == "$redeployed_version" ]]; then
-					log_info "Agents re-deployed successfully ($deployed_version -> $redeployed_version)"
-				else
-					log_error "Agent re-deploy incomplete: repo=$current, deployed=$redeployed_version"
-				fi
-			else
-				log_error "setup.sh failed during stale-agent re-deploy (exit code: $?)"
-			fi
-		else
-			# VERSION matches but scripts may still differ — a script fix merged without
-			# a version bump leaves the deployed copy stale until setup.sh is run manually.
-			# Detect this by comparing SHA-256 of a sentinel script that is frequently
-			# patched (gh-failure-miner-helper.sh). If it drifts, re-deploy all agents.
-			# GH#4727: Codacy not_collected false-positive recurred because the fix in
-			# PR #4704 was not deployed to ~/.aidevops/ before the next pulse cycle.
-			local sentinel_repo="$INSTALL_DIR/.agents/scripts/gh-failure-miner-helper.sh"
-			local sentinel_deployed="$HOME/.aidevops/agents/scripts/gh-failure-miner-helper.sh"
-			if [[ -f "$sentinel_repo" && -f "$sentinel_deployed" ]]; then
-				local hash_repo hash_deployed
-				hash_repo=$(sha256sum "$sentinel_repo" 2>/dev/null | awk '{print $1}' || shasum -a 256 "$sentinel_repo" 2>/dev/null | awk '{print $1}' || echo "")
-				hash_deployed=$(sha256sum "$sentinel_deployed" 2>/dev/null | awk '{print $1}' || shasum -a 256 "$sentinel_deployed" 2>/dev/null | awk '{print $1}' || echo "")
-				if [[ -n "$hash_repo" && -n "$hash_deployed" && "$hash_repo" != "$hash_deployed" ]]; then
-					log_warn "Script drift detected (sentinel hash mismatch at v$current) — re-deploying agents..."
-					if bash "$INSTALL_DIR/setup.sh" --non-interactive >>"$LOG_FILE" 2>&1; then
-						log_info "Agents re-deployed after script drift (v$current)"
-					else
-						log_error "setup.sh failed during script-drift re-deploy (exit code: $?)"
-					fi
-				fi
-			fi
-		fi
-
+		_cmd_check_stale_agent_redeploy "$current"
 		run_freshness_checks
 		return 0
 	fi
@@ -1113,58 +1211,9 @@ cmd_check() {
 		return 1
 	fi
 
-	# Clean up any working tree changes left by setup.sh or other processes
-	# (e.g., chmod on tracked scripts, scan results written to repo)
-	# This ensures git pull --ff-only won't be blocked by dirty files.
-	# See: https://github.com/marcusquinn/aidevops/issues/2286
-	if ! git -C "$INSTALL_DIR" diff --quiet 2>/dev/null || ! git -C "$INSTALL_DIR" diff --cached --quiet 2>/dev/null; then
-		log_info "Cleaning up stale working tree changes..."
-		if ! git -C "$INSTALL_DIR" reset HEAD -- . 2>>"$LOG_FILE"; then
-			log_warn "git reset HEAD failed during working tree cleanup"
-		fi
-		if ! git -C "$INSTALL_DIR" checkout -- . 2>>"$LOG_FILE"; then
-			log_warn "git checkout -- . failed during working tree cleanup"
-		fi
-	fi
-
-	# Ensure we're on the main branch (detached HEAD or stale branch blocks pull)
-	# Mirrors recovery logic from aidevops.sh cmd_update()
-	# See: https://github.com/marcusquinn/aidevops/issues/4142
-	local current_branch
-	current_branch=$(git -C "$INSTALL_DIR" branch --show-current 2>/dev/null || echo "")
-	if [[ "$current_branch" != "main" ]]; then
-		log_info "Not on main branch ($current_branch), switching..."
-		if ! git -C "$INSTALL_DIR" checkout main --quiet 2>>"$LOG_FILE" &&
-			! git -C "$INSTALL_DIR" checkout -b main origin/main --quiet 2>>"$LOG_FILE"; then
-			log_error "Failed to switch to main branch from '$current_branch' in $INSTALL_DIR"
-			update_state "update" "$remote" "branch_switch_failed"
-			run_freshness_checks
-			return 1
-		fi
-	fi
-
-	# Pull latest changes
-	if ! git -C "$INSTALL_DIR" fetch origin main --quiet 2>>"$LOG_FILE"; then
-		log_error "git fetch failed"
-		update_state "update" "$remote" "fetch_failed"
+	if ! _cmd_check_git_update "$remote"; then
 		run_freshness_checks
 		return 1
-	fi
-
-	if ! git -C "$INSTALL_DIR" pull --ff-only origin main --quiet 2>>"$LOG_FILE"; then
-		# Fast-forward failed (diverged history or persistent dirty state).
-		# Since we just fetched origin/main, reset to it — the repo is managed
-		# by aidevops and should always track origin/main exactly.
-		# See: https://github.com/marcusquinn/aidevops/issues/2288
-		log_warn "git pull --ff-only failed — falling back to reset"
-		if git -C "$INSTALL_DIR" reset --hard origin/main --quiet 2>>"$LOG_FILE"; then
-			log_info "Reset to origin/main succeeded"
-		else
-			log_error "git reset --hard origin/main also failed"
-			update_state "update" "$remote" "pull_failed"
-			run_freshness_checks
-			return 1
-		fi
 	fi
 
 	# Run setup.sh non-interactively to deploy agents
@@ -1206,6 +1255,115 @@ cmd_check() {
 }
 
 #######################################
+# Install auto-update as a macOS LaunchAgent
+# Args: $1 = script_path, $2 = interval (minutes)
+# Returns: 0 on success, 1 on failure
+#######################################
+_cmd_enable_launchd() {
+	local script_path="$1"
+	local interval="$2"
+	local interval_seconds=$((interval * 60))
+
+	# Migrate from old label if present (t1260)
+	local old_label="com.aidevops.auto-update"
+	local old_plist="${LAUNCHD_DIR}/${old_label}.plist"
+	if launchctl list 2>/dev/null | grep -qF "$old_label"; then
+		launchctl unload -w "$old_plist" 2>/dev/null || true
+		log_info "Unloaded old LaunchAgent: $old_label"
+	fi
+	rm -f "$old_plist"
+
+	# Auto-migrate existing cron entry if present
+	_migrate_cron_to_launchd "$script_path" "$interval_seconds"
+
+	mkdir -p "$LAUNCHD_DIR"
+
+	# Create named symlink so macOS System Settings shows "aidevops-auto-update"
+	# instead of the raw script name (t1260)
+	local bin_dir="$HOME/.aidevops/bin"
+	mkdir -p "$bin_dir"
+	local display_link="$bin_dir/aidevops-auto-update"
+	ln -sf "$script_path" "$display_link"
+
+	# Generate plist content and compare to existing (t1265)
+	local new_content
+	new_content=$(_generate_auto_update_plist "$display_link" "$interval_seconds" "${PATH}")
+
+	# Skip if already loaded with identical config (avoids macOS notification)
+	if _launchd_is_loaded && [[ -f "$LAUNCHD_PLIST" ]]; then
+		local existing_content
+		existing_content=$(cat "$LAUNCHD_PLIST" 2>/dev/null) || existing_content=""
+		if [[ "$existing_content" == "$new_content" ]]; then
+			print_info "Auto-update LaunchAgent already installed with identical config ($LAUNCHD_LABEL)"
+			update_state "enable" "$(get_local_version)" "enabled"
+			return 0
+		fi
+		# Loaded but config differs — don't overwrite while running
+		print_info "Auto-update LaunchAgent already loaded ($LAUNCHD_LABEL)"
+		update_state "enable" "$(get_local_version)" "enabled"
+		return 0
+	fi
+
+	echo "$new_content" >"$LAUNCHD_PLIST"
+
+	if launchctl load -w "$LAUNCHD_PLIST" 2>/dev/null; then
+		update_state "enable" "$(get_local_version)" "enabled"
+		print_success "Auto-update enabled (every ${interval} minutes)"
+		echo ""
+		echo "  Scheduler: launchd (macOS LaunchAgent)"
+		echo "  Label:     $LAUNCHD_LABEL"
+		echo "  Plist:     $LAUNCHD_PLIST"
+		echo "  Script:    $script_path"
+		echo "  Logs:      $LOG_FILE"
+		echo ""
+		echo "  Disable with: aidevops auto-update disable"
+		echo "  Check now:    aidevops auto-update check"
+	else
+		print_error "Failed to load LaunchAgent: $LAUNCHD_LABEL"
+		return 1
+	fi
+	return 0
+}
+
+#######################################
+# Install auto-update as a Linux cron entry
+# Args: $1 = script_path, $2 = interval (minutes)
+# Returns: 0 on success
+#######################################
+_cmd_enable_cron() {
+	local script_path="$1"
+	local interval="$2"
+
+	# Build cron expression
+	local cron_expr="*/${interval} * * * *"
+	local cron_line="$cron_expr $script_path check >> $LOG_FILE 2>&1 $CRON_MARKER"
+
+	# Get existing crontab (excluding our entry)
+	local temp_cron
+	temp_cron=$(mktemp)
+	trap 'rm -f "${temp_cron:-}"' RETURN
+
+	crontab -l 2>/dev/null | grep -v "$CRON_MARKER" >"$temp_cron" || true
+
+	# Add our entry and install
+	echo "$cron_line" >>"$temp_cron"
+	crontab "$temp_cron"
+	rm -f "$temp_cron"
+
+	update_state "enable" "$(get_local_version)" "enabled"
+
+	print_success "Auto-update enabled (every ${interval} minutes)"
+	echo ""
+	echo "  Schedule: $cron_expr"
+	echo "  Script:   $script_path"
+	echo "  Logs:     $LOG_FILE"
+	echo ""
+	echo "  Disable with: aidevops auto-update disable"
+	echo "  Check now:    aidevops auto-update check"
+	return 0
+}
+
+#######################################
 # Enable auto-update scheduler (platform-aware)
 # On macOS: installs LaunchAgent plist
 # On Linux: installs crontab entry
@@ -1237,100 +1395,12 @@ cmd_enable() {
 	backend="$(_get_scheduler_backend)"
 
 	if [[ "$backend" == "launchd" ]]; then
-		local interval_seconds=$((interval * 60))
-
-		# Migrate from old label if present (t1260)
-		local old_label="com.aidevops.auto-update"
-		local old_plist="${LAUNCHD_DIR}/${old_label}.plist"
-		if launchctl list 2>/dev/null | grep -qF "$old_label"; then
-			launchctl unload -w "$old_plist" 2>/dev/null || true
-			log_info "Unloaded old LaunchAgent: $old_label"
-		fi
-		rm -f "$old_plist"
-
-		# Auto-migrate existing cron entry if present
-		_migrate_cron_to_launchd "$script_path" "$interval_seconds"
-
-		mkdir -p "$LAUNCHD_DIR"
-
-		# Create named symlink so macOS System Settings shows "aidevops-auto-update"
-		# instead of the raw script name (t1260)
-		local bin_dir="$HOME/.aidevops/bin"
-		mkdir -p "$bin_dir"
-		local display_link="$bin_dir/aidevops-auto-update"
-		ln -sf "$script_path" "$display_link"
-
-		# Generate plist content and compare to existing (t1265)
-		local new_content
-		new_content=$(_generate_auto_update_plist "$display_link" "$interval_seconds" "${PATH}")
-
-		# Skip if already loaded with identical config (avoids macOS notification)
-		if _launchd_is_loaded && [[ -f "$LAUNCHD_PLIST" ]]; then
-			local existing_content
-			existing_content=$(cat "$LAUNCHD_PLIST" 2>/dev/null) || existing_content=""
-			if [[ "$existing_content" == "$new_content" ]]; then
-				print_info "Auto-update LaunchAgent already installed with identical config ($LAUNCHD_LABEL)"
-				update_state "enable" "$(get_local_version)" "enabled"
-				return 0
-			fi
-			# Loaded but config differs — don't overwrite while running
-			print_info "Auto-update LaunchAgent already loaded ($LAUNCHD_LABEL)"
-			update_state "enable" "$(get_local_version)" "enabled"
-			return 0
-		fi
-
-		echo "$new_content" >"$LAUNCHD_PLIST"
-
-		if launchctl load -w "$LAUNCHD_PLIST" 2>/dev/null; then
-			update_state "enable" "$(get_local_version)" "enabled"
-			print_success "Auto-update enabled (every ${interval} minutes)"
-			echo ""
-			echo "  Scheduler: launchd (macOS LaunchAgent)"
-			echo "  Label:     $LAUNCHD_LABEL"
-			echo "  Plist:     $LAUNCHD_PLIST"
-			echo "  Script:    $script_path"
-			echo "  Logs:      $LOG_FILE"
-			echo ""
-			echo "  Disable with: aidevops auto-update disable"
-			echo "  Check now:    aidevops auto-update check"
-		else
-			print_error "Failed to load LaunchAgent: $LAUNCHD_LABEL"
-			return 1
-		fi
-		return 0
+		_cmd_enable_launchd "$script_path" "$interval"
+		return $?
 	fi
 
-	# Linux: cron backend
-	# Build cron expression
-	local cron_expr="*/${interval} * * * *"
-	local cron_line="$cron_expr $script_path check >> $LOG_FILE 2>&1 $CRON_MARKER"
-
-	# Get existing crontab (excluding our entry)
-	local temp_cron
-	temp_cron=$(mktemp)
-	trap 'rm -f "${temp_cron:-}"' RETURN
-
-	crontab -l 2>/dev/null | grep -v "$CRON_MARKER" >"$temp_cron" || true
-
-	# Add our entry
-	echo "$cron_line" >>"$temp_cron"
-
-	# Install
-	crontab "$temp_cron"
-	rm -f "$temp_cron"
-
-	# Update state
-	update_state "enable" "$(get_local_version)" "enabled"
-
-	print_success "Auto-update enabled (every ${interval} minutes)"
-	echo ""
-	echo "  Schedule: $cron_expr"
-	echo "  Script:   $script_path"
-	echo "  Logs:     $LOG_FILE"
-	echo ""
-	echo "  Disable with: aidevops auto-update disable"
-	echo "  Check now:    aidevops auto-update check"
-	return 0
+	_cmd_enable_cron "$script_path" "$interval"
+	return $?
 }
 
 #######################################
@@ -1400,21 +1470,11 @@ cmd_disable() {
 }
 
 #######################################
-# Show status (platform-aware)
+# Print scheduler section of status output (launchd or cron)
+# Args: $1 = backend ("launchd" or "cron")
 #######################################
-cmd_status() {
-	ensure_dirs
-
-	local current
-	current=$(get_local_version)
-
-	local backend
-	backend="$(_get_scheduler_backend)"
-
-	echo ""
-	echo -e "${BOLD:-}Auto-Update Status${NC}"
-	echo "-------------------"
-	echo ""
+_cmd_status_scheduler() {
+	local backend="$1"
 
 	if [[ "$backend" == "launchd" ]]; then
 		# macOS: show LaunchAgent status
@@ -1460,61 +1520,92 @@ cmd_status() {
 			echo -e "  Status:    ${YELLOW}disabled${NC}"
 		fi
 	fi
+	return 0
+}
+
+#######################################
+# Print state file section of status output (last check, updates, idle)
+# Reads STATE_FILE; no-op if file absent or jq unavailable.
+#######################################
+_cmd_status_state() {
+	if ! [[ -f "$STATE_FILE" ]] || ! command -v jq &>/dev/null; then
+		return 0
+	fi
+
+	local last_action last_ts last_status last_update last_update_ver last_skill_check skill_updates
+	last_action=$(jq -r '.last_action // "none"' "$STATE_FILE" 2>/dev/null)
+	last_ts=$(jq -r '.last_timestamp // "never"' "$STATE_FILE" 2>/dev/null)
+	last_status=$(jq -r '.last_status // "unknown"' "$STATE_FILE" 2>/dev/null)
+	last_update=$(jq -r '.last_update // "never"' "$STATE_FILE" 2>/dev/null)
+	last_update_ver=$(jq -r '.last_update_version // "n/a"' "$STATE_FILE" 2>/dev/null)
+	last_skill_check=$(jq -r '.last_skill_check // "never"' "$STATE_FILE" 2>/dev/null)
+	skill_updates=$(jq -r '.skill_updates_applied // 0' "$STATE_FILE" 2>/dev/null)
+
+	echo ""
+	echo "  Last check:         $last_ts ($last_action: $last_status)"
+	if [[ "$last_update" != "never" ]]; then
+		echo "  Last update:        $last_update (v$last_update_ver)"
+	fi
+	echo "  Last skill check:   $last_skill_check"
+	echo "  Skill updates:      $skill_updates applied (lifetime)"
+
+	local last_openclaw_check
+	last_openclaw_check=$(jq -r '.last_openclaw_check // "never"' "$STATE_FILE" 2>/dev/null)
+	echo "  Last OpenClaw check: $last_openclaw_check"
+	if command -v openclaw &>/dev/null; then
+		local openclaw_ver
+		openclaw_ver=$(openclaw --version 2>/dev/null | head -1 || echo "unknown")
+		echo "  OpenClaw version:   $openclaw_ver"
+	fi
+
+	local last_tool_check tool_updates_applied
+	last_tool_check=$(jq -r '.last_tool_check // "never"' "$STATE_FILE" 2>/dev/null)
+	tool_updates_applied=$(jq -r '.tool_updates_applied // 0' "$STATE_FILE" 2>/dev/null)
+	echo "  Last tool check:    $last_tool_check"
+	echo "  Tool updates:       $tool_updates_applied applied (lifetime)"
+
+	# Show current user idle time
+	local idle_secs idle_h idle_m
+	idle_secs=$(get_user_idle_seconds)
+	idle_h=$((idle_secs / 3600))
+	idle_m=$(((idle_secs % 3600) / 60))
+	# Read from JSONC config (handles env var > user config > defaults priority)
+	local idle_threshold
+	idle_threshold=$(get_feature_toggle tool_idle_hours "$DEFAULT_TOOL_IDLE_HOURS")
+	# Validate idle_threshold is a positive integer (mirrors check_tool_freshness)
+	if ! [[ "$idle_threshold" =~ ^[0-9]+$ ]] || [[ "$idle_threshold" -eq 0 ]]; then
+		idle_threshold="$DEFAULT_TOOL_IDLE_HOURS"
+	fi
+	if [[ $idle_secs -ge $((idle_threshold * 3600)) ]]; then
+		echo -e "  User idle:          ${idle_h}h${idle_m}m (${GREEN}>=${idle_threshold}h — tool updates eligible${NC})"
+	else
+		echo -e "  User idle:          ${idle_h}h${idle_m}m (${YELLOW}<${idle_threshold}h — tool updates deferred${NC})"
+	fi
+	return 0
+}
+
+#######################################
+# Show status (platform-aware)
+#######################################
+cmd_status() {
+	ensure_dirs
+
+	local current
+	current=$(get_local_version)
+
+	local backend
+	backend="$(_get_scheduler_backend)"
+
+	echo ""
+	echo -e "${BOLD:-}Auto-Update Status${NC}"
+	echo "-------------------"
+	echo ""
+
+	_cmd_status_scheduler "$backend"
 
 	echo "  Version:   v$current"
 
-	# Show state file info
-	if [[ -f "$STATE_FILE" ]] && command -v jq &>/dev/null; then
-		local last_action last_ts last_status last_update last_update_ver last_skill_check skill_updates
-		last_action=$(jq -r '.last_action // "none"' "$STATE_FILE" 2>/dev/null)
-		last_ts=$(jq -r '.last_timestamp // "never"' "$STATE_FILE" 2>/dev/null)
-		last_status=$(jq -r '.last_status // "unknown"' "$STATE_FILE" 2>/dev/null)
-		last_update=$(jq -r '.last_update // "never"' "$STATE_FILE" 2>/dev/null)
-		last_update_ver=$(jq -r '.last_update_version // "n/a"' "$STATE_FILE" 2>/dev/null)
-		last_skill_check=$(jq -r '.last_skill_check // "never"' "$STATE_FILE" 2>/dev/null)
-		skill_updates=$(jq -r '.skill_updates_applied // 0' "$STATE_FILE" 2>/dev/null)
-
-		echo ""
-		echo "  Last check:         $last_ts ($last_action: $last_status)"
-		if [[ "$last_update" != "never" ]]; then
-			echo "  Last update:        $last_update (v$last_update_ver)"
-		fi
-		echo "  Last skill check:   $last_skill_check"
-		echo "  Skill updates:      $skill_updates applied (lifetime)"
-
-		local last_openclaw_check
-		last_openclaw_check=$(jq -r '.last_openclaw_check // "never"' "$STATE_FILE" 2>/dev/null)
-		echo "  Last OpenClaw check: $last_openclaw_check"
-		if command -v openclaw &>/dev/null; then
-			local openclaw_ver
-			openclaw_ver=$(openclaw --version 2>/dev/null | head -1 || echo "unknown")
-			echo "  OpenClaw version:   $openclaw_ver"
-		fi
-
-		local last_tool_check tool_updates_applied
-		last_tool_check=$(jq -r '.last_tool_check // "never"' "$STATE_FILE" 2>/dev/null)
-		tool_updates_applied=$(jq -r '.tool_updates_applied // 0' "$STATE_FILE" 2>/dev/null)
-		echo "  Last tool check:    $last_tool_check"
-		echo "  Tool updates:       $tool_updates_applied applied (lifetime)"
-
-		# Show current user idle time
-		local idle_secs idle_h idle_m
-		idle_secs=$(get_user_idle_seconds)
-		idle_h=$((idle_secs / 3600))
-		idle_m=$(((idle_secs % 3600) / 60))
-		# Read from JSONC config (handles env var > user config > defaults priority)
-		local idle_threshold
-		idle_threshold=$(get_feature_toggle tool_idle_hours "$DEFAULT_TOOL_IDLE_HOURS")
-		# Validate idle_threshold is a positive integer (mirrors check_tool_freshness)
-		if ! [[ "$idle_threshold" =~ ^[0-9]+$ ]] || [[ "$idle_threshold" -eq 0 ]]; then
-			idle_threshold="$DEFAULT_TOOL_IDLE_HOURS"
-		fi
-		if [[ $idle_secs -ge $((idle_threshold * 3600)) ]]; then
-			echo -e "  User idle:          ${idle_h}h${idle_m}m (${GREEN}>=${idle_threshold}h — tool updates eligible${NC})"
-		else
-			echo -e "  User idle:          ${idle_h}h${idle_m}m (${YELLOW}<${idle_threshold}h — tool updates deferred${NC})"
-		fi
-	fi
+	_cmd_status_state
 
 	# Check config overrides (env var or config file)
 	if ! is_feature_enabled auto_update 2>/dev/null; then
