@@ -576,12 +576,11 @@ cmd_help() {
 	return 0
 }
 
-# Parse command-line arguments
-parse_args() {
-	local command="${1:-help}"
-	shift || true
-
-	# Parse named options
+# Parse named options from argument list; sets variables in caller scope via echo
+# Usage: eval "$(_parse_options "$@")"
+# Outputs: shell assignments for file, dry_run, nominal_override, supplier_id,
+#          auto_supplier, currency_override; remaining args are consumed.
+_parse_options() {
 	local file=""
 	local dry_run="false"
 	local nominal_override=""
@@ -589,7 +588,7 @@ parse_args() {
 	local auto_supplier="false"
 	local currency_override=""
 
-	# First positional arg after command is the file/dir/name
+	# First positional arg (if not a flag) is the file/dir/name
 	if [[ $# -gt 0 ]] && [[ ! "$1" =~ ^-- ]]; then
 		file="$1"
 		shift || true
@@ -639,6 +638,26 @@ parse_args() {
 		esac
 	done
 
+	printf '%s\n' \
+		"file=$(printf '%q' "$file")" \
+		"dry_run=$(printf '%q' "$dry_run")" \
+		"nominal_override=$(printf '%q' "$nominal_override")" \
+		"supplier_id=$(printf '%q' "$supplier_id")" \
+		"auto_supplier=$(printf '%q' "$auto_supplier")" \
+		"currency_override=$(printf '%q' "$currency_override")"
+	return 0
+}
+
+# Dispatch a parsed command to the appropriate cmd_* function
+_dispatch_command() {
+	local command="$1"
+	local file="$2"
+	local dry_run="$3"
+	local nominal_override="$4"
+	local supplier_id="$5"
+	local auto_supplier="$6"
+	local currency_override="$7"
+
 	case "$command" in
 	record-purchase | rp)
 		if [[ -z "$file" ]]; then
@@ -687,6 +706,28 @@ parse_args() {
 		return 1
 		;;
 	esac
+	return $?
+}
+
+# Parse command-line arguments and dispatch to the appropriate command
+parse_args() {
+	local command="${1:-help}"
+	shift || true
+
+	local file=""
+	local dry_run="false"
+	local nominal_override=""
+	local supplier_id=""
+	local auto_supplier="false"
+	local currency_override=""
+
+	local opts
+	opts="$(_parse_options "$@")" || return 1
+	eval "$opts"
+
+	_dispatch_command "$command" "$file" "$dry_run" "$nominal_override" \
+		"$supplier_id" "$auto_supplier" "$currency_override"
+	return $?
 }
 
 # Main entry point
