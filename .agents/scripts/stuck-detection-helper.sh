@@ -250,16 +250,14 @@ _sd_record_milestone() {
 	return 0
 }
 
-# Apply stuck-detection label and post advisory comment to a GitHub issue.
-# ADVISORY ONLY — does not modify task state, does not kill workers.
-cmd_label_stuck() {
+# Validate arguments and confidence threshold for cmd_label_stuck.
+# Returns 0 if valid and above threshold, 1 on error, 2 if below threshold.
+# Outputs "above" or "below" to stdout when validation passes.
+_sd_validate_stuck_params() {
 	local issue_number="$1"
 	local milestone_min="$2"
 	local elapsed_min="$3"
 	local confidence="$4"
-	local reasoning="$5"
-	local suggested_actions="$6"
-	local repo_slug="${7:-}"
 
 	if [[ -z "$issue_number" || -z "$milestone_min" || -z "$elapsed_min" || -z "$confidence" ]]; then
 		_sd_log_error "usage: label-stuck <issue_number> <milestone_min> <elapsed_min> <confidence> <reasoning> <suggested_actions> [--repo <slug>]"
@@ -279,29 +277,34 @@ cmd_label_stuck() {
 		return 1
 	fi
 
-	# Check confidence threshold
-	local above_threshold
 	if ! [[ "$confidence" =~ ^([0-9]+([.][0-9]+)?|[.][0-9]+)$ ]] ||
 		! [[ "$STUCK_CONFIDENCE_THRESHOLD" =~ ^([0-9]+([.][0-9]+)?|[.][0-9]+)$ ]]; then
 		_sd_log_error "confidence values must be numeric (got confidence=${confidence}, threshold=${STUCK_CONFIDENCE_THRESHOLD})"
 		return 1
 	fi
+
+	local above_threshold
 	above_threshold=$(awk -v c="$confidence" -v t="$STUCK_CONFIDENCE_THRESHOLD" 'BEGIN { print (c >= t) ? 1 : 0 }') || above_threshold="0"
 
 	if [[ "$above_threshold" -ne 1 ]]; then
-		_sd_log_info "confidence $confidence below threshold $STUCK_CONFIDENCE_THRESHOLD for issue #$issue_number — not labeling"
-		# Still record the milestone as checked
-		_sd_record_milestone "$issue_number" "$milestone_min" "$repo_slug" || true
-		return 0
+		echo "below"
+	else
+		echo "above"
 	fi
+	return 0
+}
 
-	# Skip if gh CLI not available
+# Ensure gh CLI is available and resolve the repo slug.
+# Prints the resolved repo slug to stdout on success.
+# Returns 0 on success, 1 on failure.
+_sd_ensure_gh_repo() {
+	local repo_slug="$1"
+
 	if ! command -v gh &>/dev/null; then
 		_sd_log_warn "gh CLI not found, skipping GitHub label"
 		return 1
 	fi
 
-	# Resolve repo
 	if [[ -z "$repo_slug" ]]; then
 		repo_slug=$(_sd_resolve_repo_slug)
 	fi
@@ -310,27 +313,41 @@ cmd_label_stuck() {
 		return 1
 	fi
 
-	# Allow tests to skip GitHub operations
-	if [[ "${SD_SKIP_GITHUB:-}" == "true" ]]; then
-		_sd_log_info "GitHub operations skipped (SD_SKIP_GITHUB=true)"
-		_sd_record_milestone "$issue_number" "$milestone_min" "$repo_slug" || true
-		return 0
-	fi
+	echo "$repo_slug"
+	return 0
+}
 
-	# Ensure the stuck-detection label exists
+# Create the stuck-detection label (if absent) and apply it to the issue.
+# Returns 0 on success, 1 if the label could not be applied.
+_sd_apply_stuck_label_gh() {
+	local issue_number="$1"
+	local repo_slug="$2"
+
 	gh label create "$STUCK_LABEL" --repo "$repo_slug" \
 		--color "$STUCK_LABEL_COLOR" \
 		--description "$STUCK_LABEL_DESC" \
 		--force 2>/dev/null || true
 
-	# Apply label
 	gh issue edit "$issue_number" --repo "$repo_slug" \
 		--add-label "$STUCK_LABEL" || {
 		_sd_log_warn "failed to add label to issue #$issue_number"
 		return 1
 	}
+	return 0
+}
 
-	# Post explanatory comment
+# Build and post the advisory comment on the issue.
+# Prints the ISO timestamp used in the comment to stdout.
+# Returns 0 on success, 1 if the comment could not be posted.
+_sd_post_stuck_comment() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local milestone_min="$3"
+	local elapsed_min="$4"
+	local confidence="$5"
+	local reasoning="$6"
+	local suggested_actions="$7"
+
 	local now
 	now=$(_sd_now_iso)
 
@@ -355,9 +372,15 @@ ${suggested_actions}
 		comment_failed=1
 	}
 
-	# Record milestone and labeled issue in state (regardless of comment success,
-	# since the label was applied — skipping state would cause re-labeling).
-	_sd_record_milestone "$issue_number" "$milestone_min" "$repo_slug" || true
+	echo "$now"
+	return "$comment_failed"
+}
+
+# Record the labeled issue entry in the persistent state file.
+_sd_record_labeled_issue_state() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local now="$3"
 
 	local state
 	state=$(_sd_read_state) || state='{"milestones_checked":{},"labeled_issues":[]}'
@@ -370,6 +393,55 @@ ${suggested_actions}
 	if [[ -n "$new_state" ]]; then
 		_sd_write_state "$new_state" || true
 	fi
+	return 0
+}
+
+# Apply stuck-detection label and post advisory comment to a GitHub issue.
+# ADVISORY ONLY — does not modify task state, does not kill workers.
+cmd_label_stuck() {
+	local issue_number="$1"
+	local milestone_min="$2"
+	local elapsed_min="$3"
+	local confidence="$4"
+	local reasoning="$5"
+	local suggested_actions="$6"
+	local repo_slug="${7:-}"
+
+	# Validate args and check confidence threshold
+	local threshold_result
+	threshold_result=$(_sd_validate_stuck_params "$issue_number" "$milestone_min" "$elapsed_min" "$confidence") || return 1
+
+	if [[ "$threshold_result" == "below" ]]; then
+		_sd_log_info "confidence $confidence below threshold $STUCK_CONFIDENCE_THRESHOLD for issue #$issue_number — not labeling"
+		_sd_record_milestone "$issue_number" "$milestone_min" "$repo_slug" || true
+		return 0
+	fi
+
+	# Ensure gh CLI available and repo resolved
+	local resolved_repo
+	resolved_repo=$(_sd_ensure_gh_repo "$repo_slug") || return 1
+	repo_slug="$resolved_repo"
+
+	# Allow tests to skip GitHub operations
+	if [[ "${SD_SKIP_GITHUB:-}" == "true" ]]; then
+		_sd_log_info "GitHub operations skipped (SD_SKIP_GITHUB=true)"
+		_sd_record_milestone "$issue_number" "$milestone_min" "$repo_slug" || true
+		return 0
+	fi
+
+	# Apply the label
+	_sd_apply_stuck_label_gh "$issue_number" "$repo_slug" || return 1
+
+	# Post advisory comment; capture timestamp for state recording
+	local now
+	now=$(_sd_post_stuck_comment "$issue_number" "$repo_slug" \
+		"$milestone_min" "$elapsed_min" "$confidence" "$reasoning" "$suggested_actions")
+	local comment_failed=$?
+
+	# Record milestone and labeled issue in state (regardless of comment success,
+	# since the label was applied — skipping state would cause re-labeling).
+	_sd_record_milestone "$issue_number" "$milestone_min" "$repo_slug" || true
+	_sd_record_labeled_issue_state "$issue_number" "$repo_slug" "$now" || true
 
 	_sd_log_warn "labeled issue #$issue_number as stuck (confidence: $confidence, milestone: ${milestone_min}min)"
 	return "$comment_failed"
