@@ -120,31 +120,27 @@ get_perms() {
 	fi
 }
 
-scan_plaintext_secrets() {
-	echo -e "${BOLD}Plaintext Secret Locations${NC}"
-	echo "=========================="
-	echo ""
-	echo "WARNING: Never paste secret values into AI chat sessions."
-	echo "Run all remediation commands in a SEPARATE TERMINAL."
-	echo ""
-
-	# 1. aidevops credentials.sh
+# Scan aidevops credentials.sh (check 1)
+_scan_aidevops_creds() {
 	local creds="$HOME/.config/aidevops/credentials.sh"
-	if [[ -f "$creds" ]]; then
-		local perms
-		perms=$(get_perms "$creds")
-		if [[ "$perms" != "600" ]]; then
-			report_finding "high" "$creds" \
-				"Plaintext credentials with insecure permissions ($perms)" \
-				"chmod 600 $creds && migrate to gopass: aidevops secret init"
-		else
-			report_finding "medium" "$creds" \
-				"Plaintext credentials file (600 perms — OK but still plaintext on disk)" \
-				"Migrate to gopass: aidevops secret init"
-		fi
+	[[ -f "$creds" ]] || return 0
+	local perms
+	perms=$(get_perms "$creds")
+	if [[ "$perms" != "600" ]]; then
+		report_finding "high" "$creds" \
+			"Plaintext credentials with insecure permissions ($perms)" \
+			"chmod 600 $creds && migrate to gopass: aidevops secret init"
+	else
+		report_finding "medium" "$creds" \
+			"Plaintext credentials file (600 perms — OK but still plaintext on disk)" \
+			"Migrate to gopass: aidevops secret init"
 	fi
+	return 0
+}
 
-	# 2. AWS credentials
+# Scan cloud provider credentials: AWS, GCP, Azure (checks 2–4)
+_scan_cloud_credentials() {
+	# AWS credentials
 	local aws_creds="$HOME/.aws/credentials"
 	if [[ -f "$aws_creds" ]]; then
 		local perms
@@ -156,7 +152,7 @@ scan_plaintext_secrets() {
 			"Use IAM Identity Center or SSO instead of long-lived keys"
 	fi
 
-	# 3. GCP application default credentials
+	# GCP application default credentials
 	local gcp_creds="$HOME/.config/gcloud/application_default_credentials.json"
 	if [[ -f "$gcp_creds" ]]; then
 		report_finding "high" "$gcp_creds" \
@@ -164,15 +160,19 @@ scan_plaintext_secrets() {
 			"gcloud auth application-default revoke && gcloud auth application-default login"
 	fi
 
-	# 4. Azure tokens
+	# Azure tokens
 	local azure_tokens="$HOME/.azure/accessTokens.json"
 	if [[ -f "$azure_tokens" ]]; then
 		report_finding "high" "$azure_tokens" \
 			"Azure access tokens in plaintext" \
 			"az account clear && az login"
 	fi
+	return 0
+}
 
-	# 5. Kubernetes config
+# Scan infrastructure credentials: Kubernetes, Docker (checks 5–6)
+_scan_infra_credentials() {
+	# Kubernetes config
 	local kube_config="$HOME/.kube/config"
 	if [[ -f "$kube_config" ]]; then
 		local perms
@@ -186,7 +186,7 @@ scan_plaintext_secrets() {
 		fi
 	fi
 
-	# 6. Docker config (may contain registry auth)
+	# Docker config (may contain registry auth)
 	local docker_config="$HOME/.docker/config.json"
 	if [[ -f "$docker_config" ]]; then
 		local has_auth=0
@@ -199,8 +199,12 @@ scan_plaintext_secrets() {
 				"docker logout && docker login (uses credential helper)"
 		fi
 	fi
+	return 0
+}
 
-	# 7. NPM token
+# Scan developer tool credentials: NPM, PyPI, Netrc, GitHub CLI (checks 7–10)
+_scan_dev_credentials() {
+	# NPM token
 	local npmrc="$HOME/.npmrc"
 	if [[ -f "$npmrc" ]]; then
 		local has_token
@@ -212,7 +216,7 @@ scan_plaintext_secrets() {
 		fi
 	fi
 
-	# 8. PyPI credentials (this is how litellm maintainer was compromised)
+	# PyPI credentials (this is how litellm maintainer was compromised)
 	local pypirc="$HOME/.pypirc"
 	if [[ -f "$pypirc" ]]; then
 		report_finding "high" "$pypirc" \
@@ -220,7 +224,7 @@ scan_plaintext_secrets() {
 			"rm ~/.pypirc && use trusted publishers or API tokens with limited scope"
 	fi
 
-	# 9. Netrc
+	# Netrc
 	local netrc="$HOME/.netrc"
 	if [[ -f "$netrc" ]]; then
 		local perms
@@ -232,7 +236,7 @@ scan_plaintext_secrets() {
 			"Review and remove unused entries; chmod 600 ~/.netrc"
 	fi
 
-	# 10. GitHub CLI hosts
+	# GitHub CLI hosts
 	local gh_hosts="$HOME/.config/gh/hosts.yml"
 	if [[ -f "$gh_hosts" ]]; then
 		local perms
@@ -243,8 +247,12 @@ scan_plaintext_secrets() {
 				"chmod 600 $gh_hosts"
 		fi
 	fi
+	return 0
+}
 
-	# 11. SSH keys without passphrase
+# Scan SSH keys, .env files, and Stripe CLI config (checks 11–13)
+_scan_ssh_and_env() {
+	# SSH keys without passphrase
 	local ssh_dir="$HOME/.ssh"
 	if [[ -d "$ssh_dir" ]]; then
 		local unprotected=0
@@ -264,7 +272,7 @@ scan_plaintext_secrets() {
 		fi
 	fi
 
-	# 12. .env files in Git repos
+	# .env files in Git repos
 	local env_count=0
 	if command -v fd &>/dev/null; then
 		env_count=$(fd -g ".env" "$HOME/Git/" --max-depth 3 --type f 2>/dev/null | wc -l | tr -d ' ') || env_count=0
@@ -275,13 +283,29 @@ scan_plaintext_secrets() {
 			"Ensure .env is in .gitignore; migrate secrets to gopass: aidevops secret set NAME"
 	fi
 
-	# 13. Stripe CLI config
+	# Stripe CLI config
 	local stripe_config="$HOME/.config/stripe"
 	if [[ -d "$stripe_config" ]]; then
 		report_finding "medium" "$stripe_config" \
 			"Stripe CLI config directory (may contain API keys)" \
 			"stripe login (refreshes token via browser)"
 	fi
+	return 0
+}
+
+scan_plaintext_secrets() {
+	echo -e "${BOLD}Plaintext Secret Locations${NC}"
+	echo "=========================="
+	echo ""
+	echo "WARNING: Never paste secret values into AI chat sessions."
+	echo "Run all remediation commands in a SEPARATE TERMINAL."
+	echo ""
+
+	_scan_aidevops_creds
+	_scan_cloud_credentials
+	_scan_infra_credentials
+	_scan_dev_credentials
+	_scan_ssh_and_env
 
 	return 0
 }
