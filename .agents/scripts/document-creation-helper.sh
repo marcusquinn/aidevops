@@ -625,20 +625,14 @@ cmd_formats() {
 # MIME/Email conversion functions
 # ============================================================================
 
-# Convert .eml or .msg file to markdown with attachments
-convert_eml_to_md() {
+# Python MIME parser for a single .eml file.
+# Writes markdown + raw-headers files and prints status lines to stdout.
+# Args: input_file output_dir
+_eml_parse_mime() {
 	local input="$1"
 	local output_dir="$2"
-	local no_normalise="${3:-false}"
 
-	log_info "Parsing email: $(basename "$input")"
-
-	# Capture Python output to temp file for md path extraction
-	local eml_output_log
-	eml_output_log=$(mktemp)
-
-	# Use Python email stdlib to parse MIME
-	python3 - "$input" "$output_dir" <<'PYEOF' | tee "${eml_output_log}"
+	python3 - "$input" "$output_dir" <<'PYEOF'
 import sys
 import os
 import email
@@ -704,11 +698,11 @@ if msg.is_multipart():
     for part in msg.walk():
         content_type = part.get_content_type()
         content_disposition = str(part.get("Content-Disposition", ""))
-        
+
         # Skip attachments in body extraction
         if "attachment" in content_disposition:
             continue
-            
+
         if content_type == "text/plain":
             try:
                 body_text = part.get_content()
@@ -740,15 +734,15 @@ with open(md_file, 'w', encoding='utf-8') as f:
     f.write(f"# Email: {subject}\n\n")
     f.write(f"**From:** {sender_name} <{sender_email}>\n")
     f.write(f"**Date:** {date_header}\n")
-    
+
     to_header = msg.get('To', '')
     if to_header:
         f.write(f"**To:** {to_header}\n")
-    
+
     cc_header = msg.get('Cc', '')
     if cc_header:
         f.write(f"**Cc:** {cc_header}\n")
-    
+
     f.write(f"\n---\n\n")
     f.write(body)
 
@@ -765,7 +759,7 @@ attachment_count = 0
 if msg.is_multipart():
     for part in msg.walk():
         content_disposition = str(part.get("Content-Disposition", ""))
-        
+
         if "attachment" in content_disposition:
             filename = part.get_filename()
             if filename:
@@ -774,7 +768,7 @@ if msg.is_multipart():
                 attachment_path = os.path.join(email_dir, filename)
                 with open(attachment_path, 'wb') as f:
                     f.write(part.get_payload(decode=True))
-                
+
                 print(f"  Extracted attachment: {filename}")
 
 print(f"Email converted: {md_file}")
@@ -783,15 +777,46 @@ print(f"Attachments: {attachment_count}")
 print(f"Output directory: {email_dir}")
 PYEOF
 
-	# Extract markdown file path from captured output and run normalise
-	if [[ "${no_normalise}" != true ]] && [[ -f "${eml_output_log}" ]]; then
-		local md_path
-		md_path=$(grep '^Email converted: ' "${eml_output_log}" | sed 's/^Email converted: //')
-		if [[ -n "${md_path}" ]] && [[ -f "${md_path}" ]]; then
-			log_info "Running email normalisation on: $(basename "${md_path}")"
-			cmd_normalise "${md_path}" --inplace --email
-		fi
+	return 0
+}
+
+# Run normalise on the converted markdown path extracted from eml_output_log.
+# Args: eml_output_log no_normalise
+_eml_run_normalise() {
+	local eml_output_log="$1"
+	local no_normalise="$2"
+
+	if [[ "${no_normalise}" == true ]] || [[ ! -f "${eml_output_log}" ]]; then
+		return 0
 	fi
+
+	local md_path
+	md_path=$(grep '^Email converted: ' "${eml_output_log}" | sed 's/^Email converted: //')
+	if [[ -n "${md_path}" ]] && [[ -f "${md_path}" ]]; then
+		log_info "Running email normalisation on: $(basename "${md_path}")"
+		cmd_normalise "${md_path}" --inplace --email
+	fi
+
+	return 0
+}
+
+# Convert .eml or .msg file to markdown with attachments
+convert_eml_to_md() {
+	local input="$1"
+	local output_dir="$2"
+	local no_normalise="${3:-false}"
+
+	log_info "Parsing email: $(basename "$input")"
+
+	# Capture Python output to temp file for md path extraction
+	local eml_output_log
+	eml_output_log=$(mktemp)
+
+	# Use Python email stdlib to parse MIME
+	_eml_parse_mime "$input" "$output_dir" | tee "${eml_output_log}"
+
+	# Extract markdown file path from captured output and run normalise
+	_eml_run_normalise "${eml_output_log}" "${no_normalise}"
 	rm -f "${eml_output_log}"
 
 	return 0
@@ -1897,81 +1922,31 @@ cmd_template() {
 # Create command (fill template with data)
 # ============================================================================
 
-cmd_create() {
-	local template=""
-	local data=""
-	local output=""
-	local script=""
+# Script mode: run a Python creation script with optional data/output args.
+# Args: script data output
+_create_run_script() {
+	local script="$1"
+	local data="$2"
+	local output="$3"
 
-	while [[ $# -gt 0 ]]; do
-		case "$1" in
-		--data)
-			data="$2"
-			shift 2
-			;;
-		--output | -o)
-			output="$2"
-			shift 2
-			;;
-		--script)
-			script="$2"
-			shift 2
-			;;
-		--*) shift ;;
-		*)
-			if [[ -z "${template}" ]]; then
-				template="$1"
-			fi
-			shift
-			;;
-		esac
-	done
-
-	# Script mode: delegate to a Python script
-	if [[ -n "${script}" ]]; then
-		if [[ ! -f "${script}" ]]; then
-			die "Script not found: ${script}"
-		fi
-		log_info "Running creation script: ${script}"
-		if activate_venv 2>/dev/null; then
-			python3 "${script}" ${data:+--data "$data"} ${output:+--output "$output"}
-		else
-			python3 "${script}" ${data:+--data "$data"} ${output:+--output "$output"}
-		fi
-		return $?
+	if [[ ! -f "${script}" ]]; then
+		die "Script not found: ${script}"
 	fi
+	log_info "Running creation script: ${script}"
+	activate_venv 2>/dev/null || true
+	# shellcheck disable=SC2086
+	python3 "${script}" ${data:+--data "$data"} ${output:+--output "$output"}
+	return $?
+}
 
-	# Template mode
-	if [[ -z "${template}" ]]; then
-		die "Usage: create <template-file> --data <json|file> --output <file>"
-	fi
+# Fill an ODT template with data using Python zipfile manipulation.
+# Args: template data output
+_create_fill_odt_python() {
+	local template="$1"
+	local data="$2"
+	local output="$3"
 
-	if [[ ! -f "${template}" ]]; then
-		die "Template not found: ${template}"
-	fi
-
-	if [[ -z "${data}" ]]; then
-		die "Data required. Use --data '{\"field\": \"value\"}' or --data fields.json"
-	fi
-
-	if [[ -z "${output}" ]]; then
-		local ext
-		ext=$(get_ext "$template")
-		output="${template%.*}-filled.${ext}"
-	fi
-
-	local ext
-	ext=$(get_ext "$template")
-
-	log_info "Creating document from template: $(basename "$template")"
-
-	case "${ext}" in
-	odt)
-		if ! activate_venv 2>/dev/null || ! has_python_pkg odf 2>/dev/null; then
-			die "odfpy required. Run: install --standard"
-		fi
-
-		python3 - "$template" "$data" "$output" <<'PYEOF'
+	python3 - "$template" "$data" "$output" <<'PYEOF'
 import sys
 import os
 import json
@@ -2030,6 +2005,76 @@ try:
 finally:
     shutil.rmtree(tmp_dir)
 PYEOF
+
+	return 0
+}
+
+cmd_create() {
+	local template=""
+	local data=""
+	local output=""
+	local script=""
+
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--data)
+			data="$2"
+			shift 2
+			;;
+		--output | -o)
+			output="$2"
+			shift 2
+			;;
+		--script)
+			script="$2"
+			shift 2
+			;;
+		--*) shift ;;
+		*)
+			if [[ -z "${template}" ]]; then
+				template="$1"
+			fi
+			shift
+			;;
+		esac
+	done
+
+	# Script mode: delegate to a Python script
+	if [[ -n "${script}" ]]; then
+		_create_run_script "${script}" "${data}" "${output}"
+		return $?
+	fi
+
+	# Template mode
+	if [[ -z "${template}" ]]; then
+		die "Usage: create <template-file> --data <json|file> --output <file>"
+	fi
+
+	if [[ ! -f "${template}" ]]; then
+		die "Template not found: ${template}"
+	fi
+
+	if [[ -z "${data}" ]]; then
+		die "Data required. Use --data '{\"field\": \"value\"}' or --data fields.json"
+	fi
+
+	if [[ -z "${output}" ]]; then
+		local ext
+		ext=$(get_ext "$template")
+		output="${template%.*}-filled.${ext}"
+	fi
+
+	local ext
+	ext=$(get_ext "$template")
+
+	log_info "Creating document from template: $(basename "$template")"
+
+	case "${ext}" in
+	odt)
+		if ! activate_venv 2>/dev/null || ! has_python_pkg odf 2>/dev/null; then
+			die "odfpy required. Run: install --standard"
+		fi
+		_create_fill_odt_python "$template" "$data" "$output"
 		if [[ -f "$output" ]]; then
 			local size
 			size=$(human_filesize "$output")
@@ -2183,9 +2228,9 @@ PYEOF
 	return 0
 }
 
-# Extract contact info from an email body (signature parsing)
-# Produces TOON-format contact records in contacts/ directory
-extract_contact_from_email() {
+# Python implementation: parse signature and write/update a TOON contact record.
+# Args: md_file contacts_dir
+_extract_contact_python() {
 	local md_file="$1"
 	local contacts_dir="$2"
 
@@ -2308,6 +2353,17 @@ else:
         f.write(f"\tconfidence\tlow\n")
 
 PYEOF
+
+	return 0
+}
+
+# Extract contact info from an email body (signature parsing)
+# Produces TOON-format contact records in contacts/ directory
+extract_contact_from_email() {
+	local md_file="$1"
+	local contacts_dir="$2"
+
+	_extract_contact_python "$md_file" "$contacts_dir"
 
 	return 0
 }
