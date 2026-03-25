@@ -361,72 +361,67 @@ cmd_request() {
 	return $?
 }
 
-main() {
-	local command="${1:-help}"
-	local subcommand="${2:-}"
-	if [[ $# -gt 0 ]]; then
-		shift
-	fi
-	if [[ $# -gt 0 ]]; then
-		shift
-	fi
-
-	local campaign_id=""
-	local lead_id=""
-	local sequence_id=""
-	local email_account_id=""
-	local status_filter=""
-	local limit=""
-	local method=""
-	local endpoint=""
-	local json_file=""
-	local api_base="$INSTANTLY_API_BASE_DEFAULT"
-	local raw_mode="false"
+parse_main_args() {
+	# Sets script-level variables: _campaign_id, _lead_id, _sequence_id,
+	# _email_account_id, _status_filter, _limit, _method, _endpoint,
+	# _json_file, _api_base, _raw_mode
+	# Returns 1 on unknown option.
+	_campaign_id=""
+	_lead_id=""
+	_sequence_id=""
+	_email_account_id=""
+	_status_filter=""
+	_limit=""
+	_method=""
+	_endpoint=""
+	_json_file=""
+	_api_base="$INSTANTLY_API_BASE_DEFAULT"
+	_raw_mode="false"
 
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--campaign-id)
-			campaign_id="${2:-}"
+			_campaign_id="${2:-}"
 			shift 2
 			;;
 		--lead-id)
-			lead_id="${2:-}"
+			_lead_id="${2:-}"
 			shift 2
 			;;
 		--sequence-id)
-			sequence_id="${2:-}"
+			_sequence_id="${2:-}"
 			shift 2
 			;;
 		--email-account-id)
-			email_account_id="${2:-}"
+			_email_account_id="${2:-}"
 			shift 2
 			;;
 		--status)
-			status_filter="${2:-}"
+			_status_filter="${2:-}"
 			shift 2
 			;;
 		--limit)
-			limit="${2:-}"
+			_limit="${2:-}"
 			shift 2
 			;;
 		--method)
-			method="${2:-}"
+			_method="${2:-}"
 			shift 2
 			;;
 		--endpoint)
-			endpoint="${2:-}"
+			_endpoint="${2:-}"
 			shift 2
 			;;
 		--json-file)
-			json_file="${2:-}"
+			_json_file="${2:-}"
 			shift 2
 			;;
 		--api-base)
-			api_base="${2:-}"
+			_api_base="${2:-}"
 			shift 2
 			;;
 		--raw)
-			raw_mode="true"
+			_raw_mode="true"
 			shift
 			;;
 		*)
@@ -436,44 +431,46 @@ main() {
 		esac
 	done
 
-	if [[ -n "$limit" ]] && ! is_positive_integer "$limit"; then
-		print_error "--limit must be a positive integer"
-		return 1
-	fi
+	return 0
+}
+
+dispatch_command() {
+	local command="$1"
+	local subcommand="$2"
 
 	case "$command" in
 	campaigns)
 		require_api_key || return 1
-		cmd_campaigns "$subcommand" "$campaign_id" "$status_filter" "$limit" "$json_file" "$api_base" "$raw_mode"
+		cmd_campaigns "$subcommand" "$_campaign_id" "$_status_filter" "$_limit" "$_json_file" "$_api_base" "$_raw_mode"
 		return $?
 		;;
 	leads)
 		require_api_key || return 1
-		cmd_leads "$subcommand" "$lead_id" "$campaign_id" "$limit" "$json_file" "$api_base" "$raw_mode"
+		cmd_leads "$subcommand" "$_lead_id" "$_campaign_id" "$_limit" "$_json_file" "$_api_base" "$_raw_mode"
 		return $?
 		;;
 	sequences)
 		require_api_key || return 1
-		cmd_sequences "$subcommand" "$sequence_id" "$limit" "$api_base" "$raw_mode"
+		cmd_sequences "$subcommand" "$_sequence_id" "$_limit" "$_api_base" "$_raw_mode"
 		return $?
 		;;
 	warmup)
 		require_api_key || return 1
-		cmd_warmup "$subcommand" "$email_account_id" "$api_base" "$raw_mode"
+		cmd_warmup "$subcommand" "$_email_account_id" "$_api_base" "$_raw_mode"
 		return $?
 		;;
 	analytics)
 		require_api_key || return 1
-		cmd_analytics "$subcommand" "$campaign_id" "$api_base" "$raw_mode"
+		cmd_analytics "$subcommand" "$_campaign_id" "$_api_base" "$_raw_mode"
 		return $?
 		;;
 	request)
 		require_api_key || return 1
-		cmd_request "$method" "$endpoint" "$json_file" "$api_base" "$raw_mode"
+		cmd_request "$_method" "$_endpoint" "$_json_file" "$_api_base" "$_raw_mode"
 		return $?
 		;;
 	status)
-		cmd_status "$api_base"
+		cmd_status "$_api_base"
 		return $?
 		;;
 	help | --help | -h)
@@ -486,6 +483,27 @@ main() {
 		return 1
 		;;
 	esac
+}
+
+main() {
+	local command="${1:-help}"
+	local subcommand="${2:-}"
+	if [[ $# -gt 0 ]]; then
+		shift
+	fi
+	if [[ $# -gt 0 ]]; then
+		shift
+	fi
+
+	parse_main_args "$@" || return 1
+
+	if [[ -n "$_limit" ]] && ! is_positive_integer "$_limit"; then
+		print_error "--limit must be a positive integer"
+		return 1
+	fi
+
+	dispatch_command "$command" "$subcommand"
+	return $?
 }
 
 main "$@"
