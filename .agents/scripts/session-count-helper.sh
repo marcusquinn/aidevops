@@ -93,17 +93,28 @@ get_max_sessions() {
 	return 0
 }
 
-# Count interactive AI sessions.
-# Returns the count on stdout.
-# Uses pgrep + /proc/cmdline (Linux) or ps (macOS) to distinguish
-# interactive from headless sessions.
-count_interactive_sessions() {
-	local count=0
+# Read the command line for a given PID.
+# Uses /proc/PID/cmdline on Linux, ps on macOS.
+# Outputs the cmdline string on stdout; empty string if PID has exited.
+_get_pid_cmdline() {
+	local pid="$1"
+	local cmdline=""
+	if [[ -r "/proc/${pid}/cmdline" ]]; then
+		# Linux: /proc/PID/cmdline has null-separated args
+		cmdline=$(tr '\0' ' ' <"/proc/${pid}/cmdline" 2>/dev/null || true)
+	else
+		# macOS fallback: ps -o args= (2>/dev/null: PID may have exited)
+		cmdline=$(ps -o args= -p "$pid" 2>/dev/null || true)
+	fi
+	echo "$cmdline"
+	return 0
+}
 
-	# --- OpenCode sessions ---
-	# Interactive opencode: the .opencode binary running WITHOUT "run" as
-	# the first argument after the binary name.
-	# Headless: .opencode run ...
+# Count interactive OpenCode sessions.
+# Excludes headless workers (.opencode run ...), language servers, and node wrappers.
+# Outputs the count on stdout.
+_count_opencode_sessions() {
+	local count=0
 	local opencode_pids=""
 	opencode_pids=$(pgrep -f '\.opencode' || true)
 
@@ -111,17 +122,10 @@ count_interactive_sessions() {
 		local pid
 		while IFS= read -r pid; do
 			[[ -z "$pid" ]] && continue
-			local cmdline=""
-			if [[ -r "/proc/${pid}/cmdline" ]]; then
-				# Linux: /proc/PID/cmdline has null-separated args
-				cmdline=$(tr '\0' ' ' <"/proc/${pid}/cmdline" 2>/dev/null || true)
-			else
-				# macOS fallback: ps -o args= (2>/dev/null: PID may have exited)
-				cmdline=$(ps -o args= -p "$pid" 2>/dev/null || true)
-			fi
+			local cmdline
+			cmdline=$(_get_pid_cmdline "$pid")
 
-			# Skip if this is a headless worker (has "run" after .opencode)
-			# Also skip language servers and helper processes
+			# Skip headless workers
 			if echo "$cmdline" | grep -qE '\.opencode run '; then
 				continue
 			fi
@@ -133,13 +137,19 @@ count_interactive_sessions() {
 			if echo "$cmdline" | grep -qE '^node .*/bin/opencode'; then
 				continue
 			fi
-			# This is an interactive opencode session
 			count=$((count + 1))
 		done <<<"$opencode_pids"
 	fi
 
-	# --- Claude Code sessions ---
-	# Interactive claude: the claude binary WITHOUT "-p", "--print", or "run"
+	echo "$count"
+	return 0
+}
+
+# Count interactive Claude Code sessions.
+# Excludes headless modes (-p, --print, run).
+# Outputs the count on stdout.
+_count_claude_sessions() {
+	local count=0
 	local claude_pids=""
 	claude_pids=$(pgrep -x claude || true)
 
@@ -147,13 +157,8 @@ count_interactive_sessions() {
 		local pid
 		while IFS= read -r pid; do
 			[[ -z "$pid" ]] && continue
-			local cmdline=""
-			if [[ -r "/proc/${pid}/cmdline" ]]; then
-				cmdline=$(tr '\0' ' ' <"/proc/${pid}/cmdline" 2>/dev/null || true)
-			else
-				# macOS fallback (2>/dev/null: PID may have exited)
-				cmdline=$(ps -o args= -p "$pid" 2>/dev/null || true)
-			fi
+			local cmdline
+			cmdline=$(_get_pid_cmdline "$pid")
 
 			# Skip headless modes
 			if echo "$cmdline" | grep -qE 'claude (-p|--print|run) '; then
@@ -163,60 +168,79 @@ count_interactive_sessions() {
 		done <<<"$claude_pids"
 	fi
 
+	echo "$count"
+	return 0
+}
+
+# Count interactive sessions for a simple app (Cursor, Windsurf, Aider).
+# These apps have no headless mode to filter — all matching PIDs are interactive.
+# Args: $1 = pgrep pattern
+# Outputs the count on stdout.
+_count_simple_sessions() {
+	local pattern="$1"
+	local pids=""
+	pids=$(pgrep -f "$pattern" || true)
+	if [[ -n "$pids" ]]; then
+		echo "$pids" | wc -l | tr -d ' '
+	else
+		echo "0"
+	fi
+	return 0
+}
+
+# Count interactive AI sessions.
+# Returns the count on stdout.
+# Uses pgrep + /proc/cmdline (Linux) or ps (macOS) to distinguish
+# interactive from headless sessions.
+count_interactive_sessions() {
+	local count=0
+	local n
+
+	n=$(_count_opencode_sessions)
+	count=$((count + n))
+
+	n=$(_count_claude_sessions)
+	count=$((count + n))
+
 	# --- Cursor sessions ---
 	# Note: pgrep -c is Linux-only; use pgrep | wc -l for cross-platform.
 	# Guard with -n check to avoid counting empty output as 1.
-	local cursor_pids=""
-	cursor_pids=$(pgrep -f 'Cursor\.app' || true)
-	if [[ -n "$cursor_pids" ]]; then
-		local cursor_count
-		cursor_count=$(echo "$cursor_pids" | wc -l)
-		count=$((count + cursor_count))
-	fi
+	n=$(_count_simple_sessions 'Cursor\.app')
+	count=$((count + n))
 
 	# --- Windsurf sessions ---
-	local windsurf_pids=""
-	windsurf_pids=$(pgrep -f 'Windsurf' || true)
-	if [[ -n "$windsurf_pids" ]]; then
-		local windsurf_count
-		windsurf_count=$(echo "$windsurf_pids" | wc -l)
-		count=$((count + windsurf_count))
-	fi
+	n=$(_count_simple_sessions 'Windsurf')
+	count=$((count + n))
 
 	# --- Aider sessions ---
-	local aider_pids=""
-	aider_pids=$(pgrep -f 'aider' || true)
-	if [[ -n "$aider_pids" ]]; then
-		local aider_count
-		aider_count=$(echo "$aider_pids" | wc -l)
-		count=$((count + aider_count))
-	fi
+	n=$(_count_simple_sessions 'aider')
+	count=$((count + n))
 
 	echo "$count"
 	return 0
 }
 
-# List detected interactive sessions with details.
-# Output format: PID | APP | RSS_MB | UPTIME
-list_sessions() {
+# Print session details for a given PID and app name.
+# Uses 2>/dev/null on ps calls because the PID may have exited
+# between detection and inspection (race condition).
+_print_session_detail() {
+	local pid="$1"
+	local app_name="$2"
+	local rss_mb etime
+	rss_mb=$(ps -o rss= -p "$pid" 2>/dev/null || echo "0")
+	rss_mb=$((${rss_mb:-0} / 1024))
+	etime=$(ps -o etime= -p "$pid" 2>/dev/null || echo "unknown")
+	etime=$(echo "$etime" | tr -d ' ')
+	echo "  PID ${pid} | ${app_name} | ${rss_mb} MB | uptime: ${etime}"
+	return 0
+}
+
+# List interactive OpenCode sessions with details.
+# Excludes headless workers, language servers, and node wrappers.
+# Increments the found counter via stdout (caller adds to its own count).
+# Args: none. Outputs detail lines; returns number of sessions found.
+_list_opencode_sessions() {
 	local found=0
-
-	# Helper: print session details for a given PID and app name.
-	# Uses 2>/dev/null on ps calls because the PID may have exited
-	# between detection and inspection (race condition).
-	_print_session_detail() {
-		local pid="$1"
-		local app_name="$2"
-		local rss_mb etime
-		rss_mb=$(ps -o rss= -p "$pid" 2>/dev/null || echo "0")
-		rss_mb=$((${rss_mb:-0} / 1024))
-		etime=$(ps -o etime= -p "$pid" 2>/dev/null || echo "unknown")
-		etime=$(echo "$etime" | tr -d ' ')
-		echo "  PID ${pid} | ${app_name} | ${rss_mb} MB | uptime: ${etime}"
-		return 0
-	}
-
-	# --- OpenCode sessions ---
 	local opencode_pids=""
 	opencode_pids=$(pgrep -f '\.opencode' || true)
 
@@ -224,13 +248,8 @@ list_sessions() {
 		local pid
 		while IFS= read -r pid; do
 			[[ -z "$pid" ]] && continue
-			local cmdline=""
-			if [[ -r "/proc/${pid}/cmdline" ]]; then
-				cmdline=$(tr '\0' ' ' <"/proc/${pid}/cmdline" 2>/dev/null || true)
-			else
-				# macOS fallback (2>/dev/null: PID may have exited)
-				cmdline=$(ps -o args= -p "$pid" 2>/dev/null || true)
-			fi
+			local cmdline
+			cmdline=$(_get_pid_cmdline "$pid")
 
 			# Skip headless, language servers, node wrappers
 			if echo "$cmdline" | grep -qE '\.opencode run '; then
@@ -248,7 +267,14 @@ list_sessions() {
 		done <<<"$opencode_pids"
 	fi
 
-	# --- Claude Code sessions ---
+	return "$found"
+}
+
+# List interactive Claude Code sessions with details.
+# Excludes headless modes (-p, --print, run).
+# Returns number of sessions found via exit code.
+_list_claude_sessions() {
+	local found=0
 	local claude_pids=""
 	claude_pids=$(pgrep -x claude || true)
 
@@ -256,13 +282,8 @@ list_sessions() {
 		local pid
 		while IFS= read -r pid; do
 			[[ -z "$pid" ]] && continue
-			local cmdline=""
-			if [[ -r "/proc/${pid}/cmdline" ]]; then
-				cmdline=$(tr '\0' ' ' <"/proc/${pid}/cmdline" 2>/dev/null || true)
-			else
-				# macOS fallback (2>/dev/null: PID may have exited)
-				cmdline=$(ps -o args= -p "$pid" 2>/dev/null || true)
-			fi
+			local cmdline
+			cmdline=$(_get_pid_cmdline "$pid")
 
 			if echo "$cmdline" | grep -qE 'claude (-p|--print|run) '; then
 				continue
@@ -273,44 +294,57 @@ list_sessions() {
 		done <<<"$claude_pids"
 	fi
 
-	# --- Cursor sessions ---
-	local cursor_pids=""
-	cursor_pids=$(pgrep -f 'Cursor\.app' || true)
+	return "$found"
+}
 
-	if [[ -n "$cursor_pids" ]]; then
+# List interactive sessions for a simple app (Cursor, Windsurf, Aider).
+# All matching PIDs are treated as interactive (no headless mode to filter).
+# Args: $1 = pgrep pattern, $2 = display name
+# Returns number of sessions found via exit code.
+_list_simple_app_sessions() {
+	local pattern="$1"
+	local display_name="$2"
+	local found=0
+	local pids=""
+	pids=$(pgrep -f "$pattern" || true)
+
+	if [[ -n "$pids" ]]; then
 		local pid
 		while IFS= read -r pid; do
 			[[ -z "$pid" ]] && continue
-			_print_session_detail "$pid" "Cursor"
+			_print_session_detail "$pid" "$display_name"
 			found=$((found + 1))
-		done <<<"$cursor_pids"
+		done <<<"$pids"
 	fi
+
+	return "$found"
+}
+
+# List detected interactive sessions with details.
+# Output format: PID | APP | RSS_MB | UPTIME
+list_sessions() {
+	local found=0
+	local n=0
+
+	# --- OpenCode sessions ---
+	_list_opencode_sessions || n=$?
+	found=$((found + n))
+
+	# --- Claude Code sessions ---
+	_list_claude_sessions || n=$?
+	found=$((found + n))
+
+	# --- Cursor sessions ---
+	_list_simple_app_sessions 'Cursor\.app' "Cursor" || n=$?
+	found=$((found + n))
 
 	# --- Windsurf sessions ---
-	local windsurf_pids=""
-	windsurf_pids=$(pgrep -f 'Windsurf' || true)
-
-	if [[ -n "$windsurf_pids" ]]; then
-		local pid
-		while IFS= read -r pid; do
-			[[ -z "$pid" ]] && continue
-			_print_session_detail "$pid" "Windsurf"
-			found=$((found + 1))
-		done <<<"$windsurf_pids"
-	fi
+	_list_simple_app_sessions 'Windsurf' "Windsurf" || n=$?
+	found=$((found + n))
 
 	# --- Aider sessions ---
-	local aider_pids=""
-	aider_pids=$(pgrep -f 'aider' || true)
-
-	if [[ -n "$aider_pids" ]]; then
-		local pid
-		while IFS= read -r pid; do
-			[[ -z "$pid" ]] && continue
-			_print_session_detail "$pid" "Aider"
-			found=$((found + 1))
-		done <<<"$aider_pids"
-	fi
+	_list_simple_app_sessions 'aider' "Aider" || n=$?
+	found=$((found + n))
 
 	if [[ "$found" -eq 0 ]]; then
 		echo "  No interactive AI sessions detected"
