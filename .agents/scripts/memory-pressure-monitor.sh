@@ -535,10 +535,11 @@ _auto_kill_process() {
 # --- Core Logic ---------------------------------------------------------------
 
 # Phase 1: Check a single process for RSS and runtime violations.
-# Appends findings to the caller's `findings` array and sets `has_critical`/
-# `has_warning` flags. Called once per process from do_check().
+# Appends findings to the module-level `_check_findings` array and sets
+# `_check_has_critical`/`_check_has_warning` flags.
+# Called once per process from do_check().
 # Arguments: $1=pid $2=rss_mb $3=runtime $4=cmd_name
-# Modifies (via nameref-free indirect): findings[], has_critical, has_warning
+# Modifies: _check_findings[], _check_has_critical, _check_has_warning
 _check_process_rss_and_runtime() {
 	local pid="$1"
 	local rss_mb="$2"
@@ -696,9 +697,11 @@ do_check() {
 	local session_count
 	session_count=$(_count_interactive_sessions)
 
-	# Phase 4: Act on findings
-	_act_on_findings "$total_rss_mb" "$process_count" "$session_count"
-	return $?
+	# Phase 4: Act on findings — capture exit code explicitly so set -e
+	# does not abort when _act_on_findings returns 1 (warning) or 2 (critical).
+	local check_rc=0
+	_act_on_findings "$total_rss_mb" "$process_count" "$session_count" || check_rc=$?
+	return "$check_rc"
 }
 
 # --- Commands -----------------------------------------------------------------
