@@ -128,6 +128,114 @@ ensure_db() {
 # Prompt Management
 # =============================================================================
 
+_prompt_add() {
+	local title="" text="" category="general" difficulty="medium"
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--title)
+			title="$2"
+			shift 2
+			;;
+		--text)
+			text="$2"
+			shift 2
+			;;
+		--file)
+			if [[ -f "$2" ]]; then
+				text=$(cat "$2")
+			else
+				print_error "File not found: $2"
+				return 1
+			fi
+			shift 2
+			;;
+		--category)
+			category="$2"
+			shift 2
+			;;
+		--difficulty)
+			difficulty="$2"
+			shift 2
+			;;
+		*) shift ;;
+		esac
+	done
+
+	if [[ -z "$title" || -z "$text" ]]; then
+		print_error "Usage: response-scoring-helper.sh prompt add --title \"Title\" --text \"Prompt text\""
+		return 1
+	fi
+
+	local escaped_title escaped_text
+	escaped_title=$(echo "$title" | sed "s/'/''/g")
+	escaped_text=$(echo "$text" | sed "s/'/''/g")
+
+	local prompt_id
+	prompt_id=$(log_stderr "prompt add" sqlite3 "$SCORING_DB" \
+		"INSERT INTO prompts (title, prompt_text, category, difficulty) VALUES ('${escaped_title}', '${escaped_text}', '${category}', '${difficulty}'); SELECT last_insert_rowid();")
+
+	print_success "Created prompt #${prompt_id}: ${title}"
+	return 0
+}
+
+_prompt_list() {
+	echo ""
+	echo "Evaluation Prompts"
+	echo "=================="
+	echo ""
+	printf "%-5s %-30s %-12s %-10s %-10s %s\n" \
+		"ID" "Title" "Category" "Difficulty" "Responses" "Created"
+	printf "%-5s %-30s %-12s %-10s %-10s %s\n" \
+		"---" "-----" "--------" "----------" "---------" "-------"
+
+	log_stderr "prompt list" sqlite3 -separator '|' "$SCORING_DB" \
+		"SELECT p.prompt_id, p.title, p.category, p.difficulty,
+                COUNT(r.response_id), p.created_at
+         FROM prompts p
+         LEFT JOIN responses r ON p.prompt_id = r.prompt_id
+         GROUP BY p.prompt_id
+         ORDER BY p.created_at DESC;" | while IFS='|' read -r pid ptitle pcat pdiff rcount pcreated; do
+		local short_title="${ptitle:0:28}"
+		local short_date="${pcreated:0:10}"
+		printf "%-5s %-30s %-12s %-10s %-10s %s\n" \
+			"$pid" "$short_title" "$pcat" "$pdiff" "$rcount" "$short_date"
+	done
+	echo ""
+	return 0
+}
+
+_prompt_show() {
+	local prompt_id="${1:-}"
+	if [[ -z "$prompt_id" ]]; then
+		print_error "Usage: response-scoring-helper.sh prompt show <prompt_id>"
+		return 1
+	fi
+
+	local result
+	result=$(log_stderr "prompt show" sqlite3 -separator '|' "$SCORING_DB" \
+		"SELECT title, prompt_text, category, difficulty, created_at
+         FROM prompts WHERE prompt_id = ${prompt_id};")
+
+	if [[ -z "$result" ]]; then
+		print_error "Prompt #${prompt_id} not found"
+		return 1
+	fi
+
+	local ptitle ptext pcat pdiff pcreated
+	IFS='|' read -r ptitle ptext pcat pdiff pcreated <<<"$result"
+
+	echo ""
+	echo "Prompt #${prompt_id}: ${ptitle}"
+	echo "=========================="
+	echo "Category: ${pcat} | Difficulty: ${pdiff} | Created: ${pcreated}"
+	echo ""
+	echo "--- Prompt Text ---"
+	echo "$ptext"
+	echo "---"
+	echo ""
+	return 0
+}
+
 cmd_prompt() {
 	local action="${1:-list}"
 	shift || true
@@ -136,110 +244,14 @@ cmd_prompt() {
 
 	case "$action" in
 	add)
-		local title="" text="" category="general" difficulty="medium"
-		while [[ $# -gt 0 ]]; do
-			case "$1" in
-			--title)
-				title="$2"
-				shift 2
-				;;
-			--text)
-				text="$2"
-				shift 2
-				;;
-			--file)
-				if [[ -f "$2" ]]; then
-					text=$(cat "$2")
-				else
-					print_error "File not found: $2"
-					return 1
-				fi
-				shift 2
-				;;
-			--category)
-				category="$2"
-				shift 2
-				;;
-			--difficulty)
-				difficulty="$2"
-				shift 2
-				;;
-			*) shift ;;
-			esac
-		done
-
-		if [[ -z "$title" || -z "$text" ]]; then
-			print_error "Usage: response-scoring-helper.sh prompt add --title \"Title\" --text \"Prompt text\""
-			return 1
-		fi
-
-		local escaped_title escaped_text
-		escaped_title=$(echo "$title" | sed "s/'/''/g")
-		escaped_text=$(echo "$text" | sed "s/'/''/g")
-
-		local prompt_id
-		prompt_id=$(log_stderr "prompt add" sqlite3 "$SCORING_DB" \
-			"INSERT INTO prompts (title, prompt_text, category, difficulty) VALUES ('${escaped_title}', '${escaped_text}', '${category}', '${difficulty}'); SELECT last_insert_rowid();")
-
-		print_success "Created prompt #${prompt_id}: ${title}"
+		_prompt_add "$@"
 		;;
-
 	list)
-		echo ""
-		echo "Evaluation Prompts"
-		echo "=================="
-		echo ""
-		printf "%-5s %-30s %-12s %-10s %-10s %s\n" \
-			"ID" "Title" "Category" "Difficulty" "Responses" "Created"
-		printf "%-5s %-30s %-12s %-10s %-10s %s\n" \
-			"---" "-----" "--------" "----------" "---------" "-------"
-
-		log_stderr "prompt list" sqlite3 -separator '|' "$SCORING_DB" \
-			"SELECT p.prompt_id, p.title, p.category, p.difficulty,
-                        COUNT(r.response_id), p.created_at
-                 FROM prompts p
-                 LEFT JOIN responses r ON p.prompt_id = r.prompt_id
-                 GROUP BY p.prompt_id
-                 ORDER BY p.created_at DESC;" | while IFS='|' read -r pid ptitle pcat pdiff rcount pcreated; do
-			local short_title="${ptitle:0:28}"
-			local short_date="${pcreated:0:10}"
-			printf "%-5s %-30s %-12s %-10s %-10s %s\n" \
-				"$pid" "$short_title" "$pcat" "$pdiff" "$rcount" "$short_date"
-		done
-		echo ""
+		_prompt_list
 		;;
-
 	show)
-		local prompt_id="${1:-}"
-		if [[ -z "$prompt_id" ]]; then
-			print_error "Usage: response-scoring-helper.sh prompt show <prompt_id>"
-			return 1
-		fi
-
-		local result
-		result=$(log_stderr "prompt show" sqlite3 -separator '|' "$SCORING_DB" \
-			"SELECT title, prompt_text, category, difficulty, created_at
-                 FROM prompts WHERE prompt_id = ${prompt_id};")
-
-		if [[ -z "$result" ]]; then
-			print_error "Prompt #${prompt_id} not found"
-			return 1
-		fi
-
-		local ptitle ptext pcat pdiff pcreated
-		IFS='|' read -r ptitle ptext pcat pdiff pcreated <<<"$result"
-
-		echo ""
-		echo "Prompt #${prompt_id}: ${ptitle}"
-		echo "=========================="
-		echo "Category: ${pcat} | Difficulty: ${pdiff} | Created: ${pcreated}"
-		echo ""
-		echo "--- Prompt Text ---"
-		echo "$ptext"
-		echo "---"
-		echo ""
+		_prompt_show "$@"
 		;;
-
 	*)
 		print_error "Unknown prompt action: $action (use add, list, show)"
 		return 1
@@ -869,36 +881,10 @@ _compare_json() {
 # Leaderboard
 # =============================================================================
 
-cmd_leaderboard() {
-	local category="" json_flag=false limit=20
-
-	ensure_db
-
-	while [[ $# -gt 0 ]]; do
-		case "$1" in
-		--category)
-			category="$2"
-			shift 2
-			;;
-		--json)
-			json_flag=true
-			shift
-			;;
-		--limit)
-			limit="$2"
-			shift 2
-			;;
-		*) shift ;;
-		esac
-	done
-
-	local where_clause=""
-	if [[ -n "$category" ]]; then
-		where_clause="WHERE p.category = '${category}'"
-	fi
-
-	local results
-	results=$(sqlite3 -separator '|' "$SCORING_DB" "
+_leaderboard_query() {
+	local where_clause="$1"
+	local limit="$2"
+	sqlite3 -separator '|' "$SCORING_DB" "
         SELECT r.model_id,
                COUNT(DISTINCT r.response_id) as response_count,
                ROUND(AVG((
@@ -932,7 +918,85 @@ cmd_leaderboard() {
         HAVING COUNT(DISTINCT s2.score_id) > 0
         ORDER BY avg_weighted DESC
         LIMIT ${limit};
-    " 2>/dev/null)
+    " 2>/dev/null
+	return 0
+}
+
+_leaderboard_json() {
+	local results="$1"
+	local json_entries=()
+	local rank=0
+	while IFS='|' read -r model rcount wavg acorr acomp acode aclar atime acost; do
+		rank=$((rank + 1))
+		json_entries+=("{\"rank\":${rank},\"model\":\"${model}\",\"responses\":${rcount},\"weighted_avg\":${wavg:-0},\"avg_correctness\":${acorr:-0},\"avg_completeness\":${acomp:-0},\"avg_code_quality\":${acode:-0},\"avg_clarity\":${aclar:-0},\"avg_time\":${atime:-0},\"avg_cost\":${acost:-0}}")
+	done <<<"$results"
+	echo "{\"leaderboard\":[$(
+		IFS=,
+		echo "${json_entries[*]}"
+	)]}"
+	return 0
+}
+
+_leaderboard_table() {
+	local results="$1"
+	local category="$2"
+	echo ""
+	echo "Model Leaderboard"
+	echo "=================="
+	if [[ -n "$category" ]]; then
+		echo "Category: ${category}"
+	fi
+	echo ""
+	printf "%-4s %-22s %-5s %-6s %-6s %-6s %-6s %-8s %-8s\n" \
+		"Rank" "Model" "N" "Corr." "Comp." "Code" "Clar." "Avg" "Time(s)"
+	printf "%-4s %-22s %-5s %-6s %-6s %-6s %-6s %-8s %-8s\n" \
+		"----" "-----" "---" "-----" "-----" "----" "-----" "-------" "-------"
+
+	local rank=0
+	echo "$results" | while IFS='|' read -r model rcount wavg acorr acomp acode aclar atime acost; do
+		rank=$((rank + 1))
+		printf "%-4s %-22s %-5s %-6s %-6s %-6s %-6s %-8s %-8s\n" \
+			"#${rank}" "$model" "$rcount" \
+			"${acorr:- -}" "${acomp:- -}" "${acode:- -}" "${aclar:- -}" \
+			"${wavg:- -}" "${atime:- -}"
+	done
+
+	echo ""
+	echo "Criteria weights: Correctness 30%, Completeness 25%, Code Quality 25%, Clarity 20%"
+	echo "N = number of scored responses"
+	return 0
+}
+
+cmd_leaderboard() {
+	local category="" json_flag=false limit=20
+
+	ensure_db
+
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--category)
+			category="$2"
+			shift 2
+			;;
+		--json)
+			json_flag=true
+			shift
+			;;
+		--limit)
+			limit="$2"
+			shift 2
+			;;
+		*) shift ;;
+		esac
+	done
+
+	local where_clause=""
+	if [[ -n "$category" ]]; then
+		where_clause="WHERE p.category = '${category}'"
+	fi
+
+	local results
+	results=$(_leaderboard_query "$where_clause" "$limit")
 
 	if [[ -z "$results" ]]; then
 		print_warning "No scored responses found"
@@ -940,41 +1004,9 @@ cmd_leaderboard() {
 	fi
 
 	if [[ "$json_flag" == "true" ]]; then
-		local json_entries=()
-		local rank=0
-		while IFS='|' read -r model rcount wavg acorr acomp acode aclar atime acost; do
-			rank=$((rank + 1))
-			json_entries+=("{\"rank\":${rank},\"model\":\"${model}\",\"responses\":${rcount},\"weighted_avg\":${wavg:-0},\"avg_correctness\":${acorr:-0},\"avg_completeness\":${acomp:-0},\"avg_code_quality\":${acode:-0},\"avg_clarity\":${aclar:-0},\"avg_time\":${atime:-0},\"avg_cost\":${acost:-0}}")
-		done <<<"$results"
-		echo "{\"leaderboard\":[$(
-			IFS=,
-			echo "${json_entries[*]}"
-		)]}"
+		_leaderboard_json "$results"
 	else
-		echo ""
-		echo "Model Leaderboard"
-		echo "=================="
-		if [[ -n "$category" ]]; then
-			echo "Category: ${category}"
-		fi
-		echo ""
-		printf "%-4s %-22s %-5s %-6s %-6s %-6s %-6s %-8s %-8s\n" \
-			"Rank" "Model" "N" "Corr." "Comp." "Code" "Clar." "Avg" "Time(s)"
-		printf "%-4s %-22s %-5s %-6s %-6s %-6s %-6s %-8s %-8s\n" \
-			"----" "-----" "---" "-----" "-----" "----" "-----" "-------" "-------"
-
-		local rank=0
-		echo "$results" | while IFS='|' read -r model rcount wavg acorr acomp acode aclar atime acost; do
-			rank=$((rank + 1))
-			printf "%-4s %-22s %-5s %-6s %-6s %-6s %-6s %-8s %-8s\n" \
-				"#${rank}" "$model" "$rcount" \
-				"${acorr:- -}" "${acomp:- -}" "${acode:- -}" "${aclar:- -}" \
-				"${wavg:- -}" "${atime:- -}"
-		done
-
-		echo ""
-		echo "Criteria weights: Correctness 30%, Completeness 25%, Code Quality 25%, Clarity 20%"
-		echo "N = number of scored responses"
+		_leaderboard_table "$results" "$category"
 	fi
 	echo ""
 	return 0
