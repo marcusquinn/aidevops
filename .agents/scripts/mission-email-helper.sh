@@ -188,12 +188,13 @@ render_template() {
 }
 
 #######################################
-# Send a templated email via SES
+# Parse send command arguments
+# Prints key=value lines; caller evals output
 #######################################
-cmd_send() {
+_parse_send_args() {
 	local account="" from_addr="" to_addr="" subject="" template="" body=""
 	local thread_id="" region=""
-	local -a template_vars=()
+	local template_vars_str=""
 
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
@@ -250,7 +251,8 @@ cmd_send() {
 				log_error "--var requires key=value"
 				return 1
 			}
-			template_vars+=("$2")
+			# Accumulate vars as newline-separated string (no arrays across subshells)
+			template_vars_str="${template_vars_str}${2}"$'\x1f'
 			shift 2
 			;;
 		--thread-id)
@@ -276,36 +278,27 @@ cmd_send() {
 		esac
 	done
 
-	# Validate required fields
-	if [[ -z "$account" ]]; then
-		log_error "Missing --account"
-		return 1
-	fi
-	if [[ -z "$from_addr" ]]; then
-		log_error "Missing --from"
-		return 1
-	fi
-	if [[ -z "$to_addr" ]]; then
-		log_error "Missing --to"
-		return 1
-	fi
-	if [[ -z "$subject" ]]; then
-		log_error "Missing --subject"
-		return 1
-	fi
-	if [[ -z "$template" && -z "$body" ]]; then
-		log_error "Either --template or --body is required"
-		return 1
-	fi
+	printf 'SEND_ACCOUNT=%s\n' "$account"
+	printf 'SEND_FROM=%s\n' "$from_addr"
+	printf 'SEND_TO=%s\n' "$to_addr"
+	printf 'SEND_SUBJECT=%s\n' "$subject"
+	printf 'SEND_TEMPLATE=%s\n' "$template"
+	printf 'SEND_BODY=%s\n' "$body"
+	printf 'SEND_THREAD_ID=%s\n' "$thread_id"
+	printf 'SEND_REGION=%s\n' "$region"
+	printf 'SEND_TEMPLATE_VARS=%s\n' "$template_vars_str"
+	return 0
+}
 
-	# Render template if specified
-	if [[ -n "$template" ]]; then
-		if ! body=$(render_template "$template" "${template_vars[@]}"); then
-			return 1
-		fi
-	fi
+#######################################
+# Load SES credentials for an account and export AWS env vars
+# Arguments: account_name [region_override]
+# Sets: AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_DEFAULT_REGION
+#######################################
+_load_ses_credentials() {
+	local account="$1"
+	local region_override="${2:-}"
 
-	# Load SES credentials from config
 	if [[ ! -f "$SES_CONFIG" ]]; then
 		log_error "SES config not found: $SES_CONFIG"
 		log_info "Copy and customize: cp configs/ses-config.json.txt $SES_CONFIG"
@@ -322,50 +315,27 @@ cmd_send() {
 	local aws_key aws_secret ses_region
 	aws_key=$(echo "$account_config" | jq -r '.aws_access_key_id')
 	aws_secret=$(echo "$account_config" | jq -r '.aws_secret_access_key')
-	ses_region="${region:-$(echo "$account_config" | jq -r '.region // "us-east-1"')}"
+	ses_region="${region_override:-$(echo "$account_config" | jq -r '.region // "us-east-1"')}"
 
 	export AWS_ACCESS_KEY_ID="$aws_key"
 	export AWS_SECRET_ACCESS_KEY="$aws_secret"
 	export AWS_DEFAULT_REGION="$ses_region"
+	return 0
+}
 
-	# Build In-Reply-To header for threading
-	local extra_headers=""
-	if [[ -n "$thread_id" ]]; then
-		ensure_db
-		local last_ses_id
-		last_ses_id=$(db "$EMAIL_DB" "
-			SELECT ses_message_id FROM messages
-			WHERE thread_id = '$(sql_escape "$thread_id")'
-			AND ses_message_id != ''
-			ORDER BY received_at DESC LIMIT 1;
-		")
-		if [[ -n "$last_ses_id" ]]; then
-			extra_headers="In-Reply-To: <${last_ses_id}>"
-		fi
-	fi
+#######################################
+# Record a sent message and manage thread in DB
+# Arguments: thread_id from_addr to_addr subject body ses_message_id template
+#######################################
+_record_sent_message() {
+	local thread_id="$1"
+	local from_addr="$2"
+	local to_addr="$3"
+	local subject="$4"
+	local body="$5"
+	local ses_message_id="$6"
+	local template="$7"
 
-	# Send via SES using raw email for header control
-	local raw_message
-	raw_message=$(build_raw_email "$from_addr" "$to_addr" "$subject" "$body" "$extra_headers")
-
-	local encoded_message
-	encoded_message=$(echo "$raw_message" | base64)
-
-	local send_result
-	send_result=$(aws ses send-raw-email \
-		--raw-message "Data=${encoded_message}" \
-		--query 'MessageId' --output text 2>&1)
-
-	local rc=$?
-	if [[ $rc -ne 0 ]]; then
-		log_error "SES send failed: $send_result"
-		return 1
-	fi
-
-	local ses_message_id="$send_result"
-	log_success "Email sent. SES Message ID: $ses_message_id"
-
-	# Record in database
 	ensure_db
 	local msg_id
 	msg_id=$(generate_id "msg")
@@ -403,6 +373,105 @@ cmd_send() {
 
 	echo "thread_id=$thread_id"
 	echo "message_id=$msg_id"
+	return 0
+}
+
+#######################################
+# Send a templated email via SES
+#######################################
+cmd_send() {
+	# Parse arguments
+	local parsed_args
+	if ! parsed_args=$(_parse_send_args "$@"); then
+		return 1
+	fi
+
+	local SEND_ACCOUNT SEND_FROM SEND_TO SEND_SUBJECT SEND_TEMPLATE SEND_BODY
+	local SEND_THREAD_ID SEND_REGION SEND_TEMPLATE_VARS
+	eval "$parsed_args"
+
+	# Validate required fields
+	if [[ -z "$SEND_ACCOUNT" ]]; then
+		log_error "Missing --account"
+		return 1
+	fi
+	if [[ -z "$SEND_FROM" ]]; then
+		log_error "Missing --from"
+		return 1
+	fi
+	if [[ -z "$SEND_TO" ]]; then
+		log_error "Missing --to"
+		return 1
+	fi
+	if [[ -z "$SEND_SUBJECT" ]]; then
+		log_error "Missing --subject"
+		return 1
+	fi
+	if [[ -z "$SEND_TEMPLATE" && -z "$SEND_BODY" ]]; then
+		log_error "Either --template or --body is required"
+		return 1
+	fi
+
+	# Render template if specified
+	if [[ -n "$SEND_TEMPLATE" ]]; then
+		# Reconstruct template_vars array from unit-separator-delimited string
+		local -a template_vars=()
+		local IFS=$'\x1f'
+		# shellcheck disable=SC2206
+		template_vars=($SEND_TEMPLATE_VARS)
+		unset IFS
+		if ! SEND_BODY=$(render_template "$SEND_TEMPLATE" "${template_vars[@]}"); then
+			return 1
+		fi
+	fi
+
+	# Load SES credentials
+	if ! _load_ses_credentials "$SEND_ACCOUNT" "$SEND_REGION"; then
+		return 1
+	fi
+
+	# Build In-Reply-To header for threading
+	local extra_headers=""
+	if [[ -n "$SEND_THREAD_ID" ]]; then
+		ensure_db
+		local last_ses_id
+		last_ses_id=$(db "$EMAIL_DB" "
+			SELECT ses_message_id FROM messages
+			WHERE thread_id = '$(sql_escape "$SEND_THREAD_ID")'
+			AND ses_message_id != ''
+			ORDER BY received_at DESC LIMIT 1;
+		")
+		if [[ -n "$last_ses_id" ]]; then
+			extra_headers="In-Reply-To: <${last_ses_id}>"
+		fi
+	fi
+
+	# Send via SES using raw email for header control
+	local raw_message
+	raw_message=$(build_raw_email "$SEND_FROM" "$SEND_TO" "$SEND_SUBJECT" "$SEND_BODY" "$extra_headers")
+
+	local encoded_message
+	encoded_message=$(echo "$raw_message" | base64)
+
+	local send_result
+	send_result=$(aws ses send-raw-email \
+		--raw-message "Data=${encoded_message}" \
+		--query 'MessageId' --output text 2>&1)
+
+	local rc=$?
+	if [[ $rc -ne 0 ]]; then
+		log_error "SES send failed: $send_result"
+		return 1
+	fi
+
+	local ses_message_id="$send_result"
+	log_success "Email sent. SES Message ID: $ses_message_id"
+
+	# Record in database
+	local record_out
+	record_out=$(_record_sent_message "$SEND_THREAD_ID" "$SEND_FROM" "$SEND_TO" \
+		"$SEND_SUBJECT" "$SEND_BODY" "$ses_message_id" "$SEND_TEMPLATE")
+	echo "$record_out"
 	echo "ses_message_id=$ses_message_id"
 	return 0
 }
@@ -445,9 +514,10 @@ build_raw_email() {
 }
 
 #######################################
-# Receive and parse emails from S3 (SES receipt rule destination)
+# Parse receive command arguments
+# Prints key=value lines; caller evals output
 #######################################
-cmd_receive() {
+_parse_receive_args() {
 	local account="" mailbox="" since="" thread_id=""
 
 	while [[ $# -gt 0 ]]; do
@@ -491,36 +561,192 @@ cmd_receive() {
 		esac
 	done
 
-	if [[ -z "$account" ]]; then
+	printf 'RECV_ACCOUNT=%s\n' "$account"
+	printf 'RECV_MAILBOX=%s\n' "$mailbox"
+	printf 'RECV_SINCE=%s\n' "$since"
+	printf 'RECV_THREAD_ID=%s\n' "$thread_id"
+	return 0
+}
+
+#######################################
+# Match an inbound email to an existing thread or create one
+# Arguments: thread_id in_reply_to from_addr to_addr subj
+# Prints: matched thread ID
+#######################################
+_match_inbound_thread() {
+	local thread_id="$1"
+	local in_reply_to="$2"
+	local from_addr="$3"
+	local to_addr="$4"
+	local subj="$5"
+
+	local matched_thread="$thread_id"
+
+	if [[ -z "$matched_thread" && -n "$in_reply_to" ]]; then
+		# Find thread by SES message ID reference
+		matched_thread=$(db "$EMAIL_DB" "
+			SELECT thread_id FROM messages
+			WHERE ses_message_id = '$(sql_escape "$in_reply_to")'
+			LIMIT 1;
+		")
+	fi
+
+	if [[ -z "$matched_thread" ]]; then
+		# Try matching by counterparty email
+		matched_thread=$(db "$EMAIL_DB" "
+			SELECT id FROM threads
+			WHERE counterparty = '$(sql_escape "$from_addr")'
+			AND status IN ('active', 'waiting')
+			ORDER BY updated_at DESC LIMIT 1;
+		")
+	fi
+
+	if [[ -z "$matched_thread" ]]; then
+		# Create a new thread for unmatched inbound
+		matched_thread=$(generate_id "thr")
+		db "$EMAIL_DB" "
+			INSERT INTO threads (id, mission_id, subject, counterparty, our_address)
+			VALUES ('$(sql_escape "$matched_thread")', 'unknown', '$(sql_escape "$subj")', '$(sql_escape "$from_addr")', '$(sql_escape "$to_addr")');
+		"
+	fi
+
+	echo "$matched_thread"
+	return 0
+}
+
+#######################################
+# Store an inbound message and update its thread
+# Arguments: matched_thread from_addr to_addr subj body_text key msg_date
+# Prints: msg_id
+#######################################
+_store_inbound_message() {
+	local matched_thread="$1"
+	local from_addr="$2"
+	local to_addr="$3"
+	local subj="$4"
+	local body_text="$5"
+	local key="$6"
+	local msg_date="$7"
+
+	local msg_id
+	msg_id=$(generate_id "msg")
+	db "$EMAIL_DB" "
+		INSERT INTO messages (id, thread_id, direction, from_addr, to_addr, subject, body_text, raw_headers, received_at)
+		VALUES (
+			'$(sql_escape "$msg_id")',
+			'$(sql_escape "$matched_thread")',
+			'inbound',
+			'$(sql_escape "$from_addr")',
+			'$(sql_escape "$to_addr")',
+			'$(sql_escape "$subj")',
+			'$(sql_escape "$body_text")',
+			's3-key: $(sql_escape "$key")',
+			'$(sql_escape "${msg_date:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}")'
+		);
+	"
+
+	db "$EMAIL_DB" "
+		UPDATE threads SET updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now'), status = 'active'
+		WHERE id = '$(sql_escape "$matched_thread")';
+	"
+
+	echo "$msg_id"
+	return 0
+}
+
+#######################################
+# Process a single received email from S3
+# Arguments: key bucket tmp_dir since thread_id
+# Returns: 0 if ingested, 1 if skipped/failed
+#######################################
+_process_received_email() {
+	local key="$1"
+	local bucket="$2"
+	local tmp_dir="$3"
+	local since="$4"
+	local thread_id="$5"
+
+	# Skip if already ingested (check by S3 key as a proxy)
+	local already_seen
+	already_seen=$(db "$EMAIL_DB" "SELECT count(*) FROM messages WHERE raw_headers LIKE '%s3-key: $(sql_escape "$key")%';")
+	if [[ "$already_seen" -gt 0 ]]; then
+		return 1
+	fi
+
+	# Download the raw email
+	local tmp_file="${tmp_dir}/$(basename "$key")"
+	if ! aws s3 cp "s3://${bucket}/${key}" "$tmp_file" --quiet 2>/dev/null; then
+		log_warn "Failed to download: s3://${bucket}/${key}"
+		return 1
+	fi
+
+	# Parse the email
+	local parsed
+	parsed=$(parse_email_file "$tmp_file")
+	if [[ -z "$parsed" ]]; then
+		log_warn "Failed to parse: $key"
+		return 1
+	fi
+
+	# Extract fields from parsed output
+	local from_addr to_addr subj body_text msg_date in_reply_to
+	from_addr=$(echo "$parsed" | jq -r '.from // ""')
+	to_addr=$(echo "$parsed" | jq -r '.to // ""')
+	subj=$(echo "$parsed" | jq -r '.subject // ""')
+	body_text=$(echo "$parsed" | jq -r '.body_text // ""')
+	msg_date=$(echo "$parsed" | jq -r '.date // ""')
+	in_reply_to=$(echo "$parsed" | jq -r '.in_reply_to // ""')
+
+	# Filter by since date if specified
+	if [[ -n "$since" && -n "$msg_date" && "$msg_date" < "$since" ]]; then
+		return 1
+	fi
+
+	# Match or create thread
+	local matched_thread
+	matched_thread=$(_match_inbound_thread "$thread_id" "$in_reply_to" "$from_addr" "$to_addr" "$subj")
+
+	# Store message and update thread
+	local msg_id
+	msg_id=$(_store_inbound_message "$matched_thread" "$from_addr" "$to_addr" \
+		"$subj" "$body_text" "$key" "$msg_date")
+
+	# Extract verification codes
+	extract_and_store_codes "$msg_id" "$body_text"
+	return 0
+}
+
+#######################################
+# Receive and parse emails from S3 (SES receipt rule destination)
+#######################################
+cmd_receive() {
+	# Parse arguments
+	local parsed_args
+	if ! parsed_args=$(_parse_receive_args "$@"); then
+		return 1
+	fi
+
+	local RECV_ACCOUNT RECV_MAILBOX RECV_SINCE RECV_THREAD_ID
+	eval "$parsed_args"
+
+	if [[ -z "$RECV_ACCOUNT" ]]; then
 		log_error "Missing --account"
 		return 1
 	fi
-	if [[ -z "$mailbox" ]]; then
+	if [[ -z "$RECV_MAILBOX" ]]; then
 		log_error "Missing --mailbox (S3 bucket/prefix)"
 		return 1
 	fi
 
 	# Load SES credentials
-	local account_config
-	account_config=$(jq -r ".accounts.\"$account\"" "$SES_CONFIG")
-	if [[ "$account_config" == "null" ]]; then
-		log_error "Account '$account' not found"
+	if ! _load_ses_credentials "$RECV_ACCOUNT"; then
 		return 1
 	fi
 
-	local aws_key aws_secret ses_region
-	aws_key=$(echo "$account_config" | jq -r '.aws_access_key_id')
-	aws_secret=$(echo "$account_config" | jq -r '.aws_secret_access_key')
-	ses_region=$(echo "$account_config" | jq -r '.region // "us-east-1"')
-
-	export AWS_ACCESS_KEY_ID="$aws_key"
-	export AWS_SECRET_ACCESS_KEY="$aws_secret"
-	export AWS_DEFAULT_REGION="$ses_region"
-
 	# Parse bucket and prefix from mailbox
 	local bucket prefix
-	bucket="${mailbox%%/*}"
-	prefix="${mailbox#*/}"
+	bucket="${RECV_MAILBOX%%/*}"
+	prefix="${RECV_MAILBOX#*/}"
 	if [[ "$prefix" == "$bucket" ]]; then
 		prefix=""
 	fi
@@ -540,7 +766,7 @@ cmd_receive() {
 	fi
 
 	if [[ -z "$objects" || "$objects" == "None" ]]; then
-		log_info "No emails found in $mailbox"
+		log_info "No emails found in $RECV_MAILBOX"
 		return 0
 	fi
 
@@ -551,112 +777,17 @@ cmd_receive() {
 
 	local key
 	for key in $objects; do
-		# Skip if already ingested (check by S3 key as a proxy)
-		local already_seen
-		already_seen=$(db "$EMAIL_DB" "SELECT count(*) FROM messages WHERE raw_headers LIKE '%s3-key: $(sql_escape "$key")%';")
-		if [[ "$already_seen" -gt 0 ]]; then
-			continue
+		if _process_received_email "$key" "$bucket" "$tmp_dir" "$RECV_SINCE" "$RECV_THREAD_ID"; then
+			ingested=$((ingested + 1))
 		fi
-
-		# Download the raw email
-		local tmp_file="${tmp_dir}/$(basename "$key")"
-		if ! aws s3 cp "s3://${bucket}/${key}" "$tmp_file" --quiet 2>/dev/null; then
-			log_warn "Failed to download: s3://${bucket}/${key}"
-			continue
-		fi
-
-		# Parse the email
-		local parsed
-		parsed=$(parse_email_file "$tmp_file")
-		if [[ -z "$parsed" ]]; then
-			log_warn "Failed to parse: $key"
-			continue
-		fi
-
-		# Extract fields from parsed output
-		local from_addr to_addr subj body_text msg_date in_reply_to
-		from_addr=$(echo "$parsed" | jq -r '.from // ""')
-		to_addr=$(echo "$parsed" | jq -r '.to // ""')
-		subj=$(echo "$parsed" | jq -r '.subject // ""')
-		body_text=$(echo "$parsed" | jq -r '.body_text // ""')
-		msg_date=$(echo "$parsed" | jq -r '.date // ""')
-		in_reply_to=$(echo "$parsed" | jq -r '.in_reply_to // ""')
-
-		# Filter by since date if specified
-		if [[ -n "$since" && -n "$msg_date" ]]; then
-			if [[ "$msg_date" < "$since" ]]; then
-				continue
-			fi
-		fi
-
-		# Match to thread
-		local matched_thread=""
-		if [[ -n "$thread_id" ]]; then
-			matched_thread="$thread_id"
-		elif [[ -n "$in_reply_to" ]]; then
-			# Find thread by SES message ID reference
-			matched_thread=$(db "$EMAIL_DB" "
-				SELECT thread_id FROM messages
-				WHERE ses_message_id = '$(sql_escape "$in_reply_to")'
-				LIMIT 1;
-			")
-		fi
-
-		if [[ -z "$matched_thread" ]]; then
-			# Try matching by counterparty email
-			matched_thread=$(db "$EMAIL_DB" "
-				SELECT id FROM threads
-				WHERE counterparty = '$(sql_escape "$from_addr")'
-				AND status IN ('active', 'waiting')
-				ORDER BY updated_at DESC LIMIT 1;
-			")
-		fi
-
-		if [[ -z "$matched_thread" ]]; then
-			# Create a new thread for unmatched inbound
-			matched_thread=$(generate_id "thr")
-			db "$EMAIL_DB" "
-				INSERT INTO threads (id, mission_id, subject, counterparty, our_address)
-				VALUES ('$(sql_escape "$matched_thread")', 'unknown', '$(sql_escape "$subj")', '$(sql_escape "$from_addr")', '$(sql_escape "$to_addr")');
-			"
-		fi
-
-		# Store the message
-		local msg_id
-		msg_id=$(generate_id "msg")
-		db "$EMAIL_DB" "
-			INSERT INTO messages (id, thread_id, direction, from_addr, to_addr, subject, body_text, raw_headers, received_at)
-			VALUES (
-				'$(sql_escape "$msg_id")',
-				'$(sql_escape "$matched_thread")',
-				'inbound',
-				'$(sql_escape "$from_addr")',
-				'$(sql_escape "$to_addr")',
-				'$(sql_escape "$subj")',
-				'$(sql_escape "$body_text")',
-				's3-key: $(sql_escape "$key")',
-				'$(sql_escape "${msg_date:-$(date -u +%Y-%m-%dT%H:%M:%SZ)}")'
-			);
-		"
-
-		# Update thread
-		db "$EMAIL_DB" "
-			UPDATE threads SET updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now'), status = 'active'
-			WHERE id = '$(sql_escape "$matched_thread")';
-		"
-
-		# Extract verification codes
-		extract_and_store_codes "$msg_id" "$body_text"
-
-		ingested=$((ingested + 1))
 	done
 
 	rm -rf "$tmp_dir"
 
 	if [[ "$ingested" -gt 0 ]]; then
-		log_success "Ingested $ingested emails from $mailbox"
+		log_success "Ingested $ingested emails from $RECV_MAILBOX"
 	else
-		log_info "No new emails to ingest from $mailbox"
+		log_info "No new emails to ingest from $RECV_MAILBOX"
 	fi
 
 	return 0
@@ -863,9 +994,10 @@ for c in codes:
 }
 
 #######################################
-# Thread management commands
+# Parse thread command arguments
+# Prints key=value lines; caller evals output
 #######################################
-cmd_thread() {
+_parse_thread_args() {
 	local action="" thread_id="" mission_id="" subject="" counterparty="" context=""
 
 	while [[ $# -gt 0 ]]; do
@@ -926,160 +1058,212 @@ cmd_thread() {
 		esac
 	done
 
+	printf 'THR_ACTION=%s\n' "$action"
+	printf 'THR_ID=%s\n' "$thread_id"
+	printf 'THR_MISSION=%s\n' "$mission_id"
+	printf 'THR_SUBJECT=%s\n' "$subject"
+	printf 'THR_COUNTERPARTY=%s\n' "$counterparty"
+	printf 'THR_CONTEXT=%s\n' "$context"
+	return 0
+}
+
+#######################################
+# List threads, optionally filtered by mission
+#######################################
+_thread_list() {
+	local mission_id="$1"
+
+	local where_clause="1=1"
+	if [[ -n "$mission_id" ]]; then
+		where_clause="mission_id = '$(sql_escape "$mission_id")'"
+	fi
+
+	local results
+	results=$(db -separator '|' "$EMAIL_DB" "
+		SELECT t.id, t.mission_id, t.subject, t.counterparty, t.status, t.updated_at,
+			(SELECT count(*) FROM messages m WHERE m.thread_id = t.id) as msg_count,
+			(SELECT count(*) FROM extracted_codes ec JOIN messages m2 ON ec.message_id = m2.id WHERE m2.thread_id = t.id AND ec.used = 0) as pending_codes
+		FROM threads t
+		WHERE $where_clause
+		ORDER BY t.updated_at DESC;
+	")
+
+	echo "Email Threads"
+	echo "============="
+	if [[ -z "$results" ]]; then
+		echo "  (no threads)"
+		return 0
+	fi
+
+	while IFS='|' read -r tid mid subj cp status updated msgs codes; do
+		echo ""
+		echo "  [$status] $tid"
+		echo "    Mission:      $mid"
+		echo "    Subject:      $subj"
+		echo "    Counterparty: $cp"
+		echo "    Messages:     $msgs"
+		if [[ "$codes" -gt 0 ]]; then
+			echo "    Pending codes: $codes"
+		fi
+		echo "    Updated:      $updated"
+	done <<<"$results"
+	return 0
+}
+
+#######################################
+# Show a single thread with messages and extracted codes
+#######################################
+_thread_show() {
+	local thread_id="$1"
+
+	if [[ -z "$thread_id" ]]; then
+		log_error "Thread ID required"
+		return 1
+	fi
+
+	local thread_info
+	thread_info=$(db -separator '|' "$EMAIL_DB" "
+		SELECT id, mission_id, subject, counterparty, our_address, status, context, created_at, updated_at
+		FROM threads WHERE id = '$(sql_escape "$thread_id")';
+	")
+
+	if [[ -z "$thread_info" ]]; then
+		log_error "Thread not found: $thread_id"
+		return 1
+	fi
+
+	local tid mid subj cp our_addr status ctx created updated
+	IFS='|' read -r tid mid subj cp our_addr status ctx created updated <<<"$thread_info"
+
+	echo "Thread: $tid"
+	echo "  Mission:      $mid"
+	echo "  Subject:      $subj"
+	echo "  Counterparty: $cp"
+	echo "  Our address:  $our_addr"
+	echo "  Status:       $status"
+	echo "  Created:      $created"
+	echo "  Updated:      $updated"
+	if [[ -n "$ctx" ]]; then
+		echo "  Context:      $ctx"
+	fi
+
+	echo ""
+	echo "Messages:"
+	echo "---------"
+
+	local messages
+	messages=$(db -separator '|' "$EMAIL_DB" "
+		SELECT id, direction, from_addr, to_addr, subject, body_text, received_at
+		FROM messages
+		WHERE thread_id = '$(sql_escape "$thread_id")'
+		ORDER BY received_at ASC;
+	")
+
+	if [[ -z "$messages" ]]; then
+		echo "  (no messages)"
+	else
+		while IFS='|' read -r mid dir from_a to_a msg_subj msg_body recv_at; do
+			local arrow
+			if [[ "$dir" == "outbound" ]]; then
+				arrow=">>>"
+			else
+				arrow="<<<"
+			fi
+			echo ""
+			echo "  $arrow [$recv_at] $from_a -> $to_a"
+			echo "      Subject: $msg_subj"
+			echo "      ${msg_body:0:200}"
+			if [[ ${#msg_body} -gt 200 ]]; then
+				echo "      ... (truncated)"
+			fi
+		done <<<"$messages"
+	fi
+
+	# Show extracted codes
+	local codes
+	codes=$(db -separator '|' "$EMAIL_DB" "
+		SELECT ec.code_type, ec.code_value, ec.used, ec.extracted_at
+		FROM extracted_codes ec
+		JOIN messages m ON ec.message_id = m.id
+		WHERE m.thread_id = '$(sql_escape "$thread_id")'
+		ORDER BY ec.extracted_at DESC;
+	")
+
+	if [[ -n "$codes" ]]; then
+		echo ""
+		echo "Extracted Codes:"
+		echo "----------------"
+		while IFS='|' read -r ctype cval cused cat; do
+			local used_label="unused"
+			if [[ "$cused" -eq 1 ]]; then
+				used_label="USED"
+			fi
+			echo "  [$used_label] $ctype: $cval (extracted: $cat)"
+		done <<<"$codes"
+	fi
+	return 0
+}
+
+#######################################
+# Create a new thread
+#######################################
+_thread_create() {
+	local mission_id="$1"
+	local subject="$2"
+	local counterparty="$3"
+	local context="$4"
+
+	if [[ -z "$mission_id" ]]; then
+		log_error "Missing --mission"
+		return 1
+	fi
+	if [[ -z "$subject" ]]; then
+		log_error "Missing --subject"
+		return 1
+	fi
+	if [[ -z "$counterparty" ]]; then
+		log_error "Missing --counterparty"
+		return 1
+	fi
+
+	local new_thread_id
+	new_thread_id=$(generate_id "thr")
+
+	db "$EMAIL_DB" "
+		INSERT INTO threads (id, mission_id, subject, counterparty, context)
+		VALUES ('$(sql_escape "$new_thread_id")', '$(sql_escape "$mission_id")', '$(sql_escape "$subject")', '$(sql_escape "$counterparty")', '$(sql_escape "$context")');
+	"
+
+	log_success "Created thread: $new_thread_id"
+	echo "thread_id=$new_thread_id"
+	return 0
+}
+
+#######################################
+# Thread management commands
+#######################################
+cmd_thread() {
+	# Parse arguments
+	local parsed_args
+	if ! parsed_args=$(_parse_thread_args "$@"); then
+		return 1
+	fi
+
+	local THR_ACTION THR_ID THR_MISSION THR_SUBJECT THR_COUNTERPARTY THR_CONTEXT
+	eval "$parsed_args"
+
 	ensure_db
 
-	case "$action" in
+	case "$THR_ACTION" in
 	list)
-		local where_clause="1=1"
-		if [[ -n "$mission_id" ]]; then
-			where_clause="mission_id = '$(sql_escape "$mission_id")'"
-		fi
-
-		local results
-		results=$(db -separator '|' "$EMAIL_DB" "
-			SELECT t.id, t.mission_id, t.subject, t.counterparty, t.status, t.updated_at,
-				(SELECT count(*) FROM messages m WHERE m.thread_id = t.id) as msg_count,
-				(SELECT count(*) FROM extracted_codes ec JOIN messages m2 ON ec.message_id = m2.id WHERE m2.thread_id = t.id AND ec.used = 0) as pending_codes
-			FROM threads t
-			WHERE $where_clause
-			ORDER BY t.updated_at DESC;
-		")
-
-		echo "Email Threads"
-		echo "============="
-		if [[ -z "$results" ]]; then
-			echo "  (no threads)"
-			return 0
-		fi
-
-		while IFS='|' read -r tid mid subj cp status updated msgs codes; do
-			echo ""
-			echo "  [$status] $tid"
-			echo "    Mission:      $mid"
-			echo "    Subject:      $subj"
-			echo "    Counterparty: $cp"
-			echo "    Messages:     $msgs"
-			if [[ "$codes" -gt 0 ]]; then
-				echo "    Pending codes: $codes"
-			fi
-			echo "    Updated:      $updated"
-		done <<<"$results"
+		_thread_list "$THR_MISSION"
 		;;
-
 	show)
-		if [[ -z "$thread_id" ]]; then
-			log_error "Thread ID required"
-			return 1
-		fi
-
-		local thread_info
-		thread_info=$(db -separator '|' "$EMAIL_DB" "
-			SELECT id, mission_id, subject, counterparty, our_address, status, context, created_at, updated_at
-			FROM threads WHERE id = '$(sql_escape "$thread_id")';
-		")
-
-		if [[ -z "$thread_info" ]]; then
-			log_error "Thread not found: $thread_id"
-			return 1
-		fi
-
-		local tid mid subj cp our_addr status ctx created updated
-		IFS='|' read -r tid mid subj cp our_addr status ctx created updated <<<"$thread_info"
-
-		echo "Thread: $tid"
-		echo "  Mission:      $mid"
-		echo "  Subject:      $subj"
-		echo "  Counterparty: $cp"
-		echo "  Our address:  $our_addr"
-		echo "  Status:       $status"
-		echo "  Created:      $created"
-		echo "  Updated:      $updated"
-		if [[ -n "$ctx" ]]; then
-			echo "  Context:      $ctx"
-		fi
-
-		echo ""
-		echo "Messages:"
-		echo "---------"
-
-		local messages
-		messages=$(db -separator '|' "$EMAIL_DB" "
-			SELECT id, direction, from_addr, to_addr, subject, body_text, received_at
-			FROM messages
-			WHERE thread_id = '$(sql_escape "$thread_id")'
-			ORDER BY received_at ASC;
-		")
-
-		if [[ -z "$messages" ]]; then
-			echo "  (no messages)"
-		else
-			while IFS='|' read -r mid dir from_a to_a msg_subj msg_body recv_at; do
-				local arrow
-				if [[ "$dir" == "outbound" ]]; then
-					arrow=">>>"
-				else
-					arrow="<<<"
-				fi
-				echo ""
-				echo "  $arrow [$recv_at] $from_a -> $to_a"
-				echo "      Subject: $msg_subj"
-				echo "      ${msg_body:0:200}"
-				if [[ ${#msg_body} -gt 200 ]]; then
-					echo "      ... (truncated)"
-				fi
-			done <<<"$messages"
-		fi
-
-		# Show extracted codes
-		local codes
-		codes=$(db -separator '|' "$EMAIL_DB" "
-			SELECT ec.code_type, ec.code_value, ec.used, ec.extracted_at
-			FROM extracted_codes ec
-			JOIN messages m ON ec.message_id = m.id
-			WHERE m.thread_id = '$(sql_escape "$thread_id")'
-			ORDER BY ec.extracted_at DESC;
-		")
-
-		if [[ -n "$codes" ]]; then
-			echo ""
-			echo "Extracted Codes:"
-			echo "----------------"
-			while IFS='|' read -r ctype cval cused cat; do
-				local used_label="unused"
-				if [[ "$cused" -eq 1 ]]; then
-					used_label="USED"
-				fi
-				echo "  [$used_label] $ctype: $cval (extracted: $cat)"
-			done <<<"$codes"
-		fi
+		_thread_show "$THR_ID"
 		;;
-
 	create)
-		if [[ -z "$mission_id" ]]; then
-			log_error "Missing --mission"
-			return 1
-		fi
-		if [[ -z "$subject" ]]; then
-			log_error "Missing --subject"
-			return 1
-		fi
-		if [[ -z "$counterparty" ]]; then
-			log_error "Missing --counterparty"
-			return 1
-		fi
-
-		local new_thread_id
-		new_thread_id=$(generate_id "thr")
-
-		db "$EMAIL_DB" "
-			INSERT INTO threads (id, mission_id, subject, counterparty, context)
-			VALUES ('$(sql_escape "$new_thread_id")', '$(sql_escape "$mission_id")', '$(sql_escape "$subject")', '$(sql_escape "$counterparty")', '$(sql_escape "$context")');
-		"
-
-		log_success "Created thread: $new_thread_id"
-		echo "thread_id=$new_thread_id"
+		_thread_create "$THR_MISSION" "$THR_SUBJECT" "$THR_COUNTERPARTY" "$THR_CONTEXT"
 		;;
-
 	*)
 		log_error "Thread command requires --list, --show, or --create"
 		return 1
