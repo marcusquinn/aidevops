@@ -95,13 +95,14 @@ score_to_risk() {
 	return 0
 }
 
-# Main check function
-cmd_check() {
-	local ip="$1"
+# Parse --api-key and --timeout flags from remaining args.
+# Sets _SHODAN_API_KEY and _SHODAN_TIMEOUT in the caller's scope via stdout
+# protocol: prints "api_key=<val>" and "timeout=<val>" lines for eval.
+# Returns 1 on argument errors.
+_parse_check_args() {
 	local api_key="${SHODAN_API_KEY:-}"
 	local timeout="$DEFAULT_TIMEOUT"
 
-	shift
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--api-key)
@@ -126,10 +127,17 @@ cmd_check() {
 		esac
 	done
 
-	if [[ -z "$api_key" ]]; then
-		error_json "$ip" "SHODAN_API_KEY not set — free API key available at shodan.io (limited credits)"
-		return 0
-	fi
+	printf 'api_key=%s\ntimeout=%s\n' "$api_key" "$timeout"
+	return 0
+}
+
+# Fetch raw JSON from Shodan API. Prints response to stdout.
+# Returns 0 on success (even for API-level errors in the JSON body).
+# Returns 1 on curl failure (prints error_json to stdout instead).
+_fetch_shodan_data() {
+	local ip="$1"
+	local api_key="$2"
+	local timeout="$3"
 
 	local response
 	response=$(curl -sf \
@@ -138,31 +146,34 @@ cmd_check() {
 		"${API_BASE}/${ip}?key=${api_key}&minify=false" \
 		2>/dev/null) || {
 		error_json "$ip" "curl request failed"
-		return 0
+		return 1
 	}
 
 	if ! echo "$response" | jq empty 2>/dev/null; then
 		error_json "$ip" "invalid JSON response"
-		return 0
+		return 1
 	fi
 
-	# Check for API errors
-	local api_error
-	api_error=$(echo "$response" | jq -r '.error // empty' 2>/dev/null || true)
-	if [[ -n "$api_error" ]]; then
-		# 404 = IP not in Shodan (clean, not an error)
-		if [[ "$api_error" == *"No information available"* ]]; then
-			jq -n \
-				--arg provider "$PROVIDER_NAME" \
-				--arg ip "$ip" \
-				'{provider: $provider, ip: $ip, score: 0, risk_level: "clean", is_listed: false,
-                  open_ports: [], vulns: [], tags: [], org: "unknown", country: "unknown",
-                  is_tor: false, is_vpn: false, note: "IP not indexed by Shodan"}'
-			return 0
-		fi
-		error_json "$ip" "$api_error"
-		return 0
-	fi
+	echo "$response"
+	return 0
+}
+
+# Emit clean JSON for an IP not indexed by Shodan (404 / "No information available").
+_not_indexed_json() {
+	local ip="$1"
+	jq -n \
+		--arg provider "$PROVIDER_NAME" \
+		--arg ip "$ip" \
+		'{provider: $provider, ip: $ip, score: 0, risk_level: "clean", is_listed: false,
+          open_ports: [], vulns: [], tags: [], org: "unknown", country: "unknown",
+          is_tor: false, is_vpn: false, note: "IP not indexed by Shodan"}'
+	return 0
+}
+
+# Extract fields from a valid Shodan response and emit the final result JSON.
+_build_result_json() {
+	local ip="$1"
+	local response="$2"
 
 	local open_ports vulns tags org country
 	open_ports=$(echo "$response" | jq -r '[.ports // [] | .[]]')
@@ -220,6 +231,41 @@ cmd_check() {
             is_vpn: $is_vpn,
             raw: $raw
         }'
+	return 0
+}
+
+# Main check function — orchestrates arg parsing, API call, and result building
+cmd_check() {
+	local ip="$1"
+	shift
+
+	local parsed api_key timeout
+	parsed=$(_parse_check_args "$@") || return 1
+	api_key=$(echo "$parsed" | grep '^api_key=' | cut -d= -f2-)
+	timeout=$(echo "$parsed" | grep '^timeout=' | cut -d= -f2-)
+
+	if [[ -z "$api_key" ]]; then
+		error_json "$ip" "SHODAN_API_KEY not set — free API key available at shodan.io (limited credits)"
+		return 0
+	fi
+
+	local response
+	response=$(_fetch_shodan_data "$ip" "$api_key" "$timeout") || return 0
+
+	# Check for API errors in the response body
+	local api_error
+	api_error=$(echo "$response" | jq -r '.error // empty' 2>/dev/null || true)
+	if [[ -n "$api_error" ]]; then
+		# 404 = IP not in Shodan (clean, not an error)
+		if [[ "$api_error" == *"No information available"* ]]; then
+			_not_indexed_json "$ip"
+			return 0
+		fi
+		error_json "$ip" "$api_error"
+		return 0
+	fi
+
+	_build_result_json "$ip" "$response"
 	return 0
 }
 
