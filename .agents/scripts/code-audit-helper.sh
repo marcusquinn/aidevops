@@ -350,62 +350,10 @@ JQ_EOF
 	return 0
 }
 
-# Collect findings from Codacy via API
-collect_codacy() {
-	local run_id="$1"
-	local repo="$2"
-	local _pr_number="$3"
-	local count=0
-
-	local api_token="${CODACY_API_TOKEN:-${CODACY_PROJECT_TOKEN:-}}"
-	if [[ -z "$api_token" ]]; then
-		log_warn "CODACY_API_TOKEN not set — skipping Codacy"
-		echo "0"
-		return 0
-	fi
-
-	log_info "Collecting Codacy findings..."
-
-	local org username repo_name
-	org="${CODACY_ORGANIZATION:-}"
-	username="${CODACY_USERNAME:-}"
-	repo_name=$(echo "$repo" | cut -d'/' -f2)
-	local provider="${org:-$username}"
-
-	if [[ -z "$provider" ]]; then
-		# Try to derive from repo
-		provider=$(echo "$repo" | cut -d'/' -f1)
-	fi
-
-	local api_url="https://app.codacy.com/api/v3/analysis/organizations/gh/${provider}/repositories/${repo_name}/issues/search"
-
-	local response
-	response=$(curl -s -H "api-token: ${api_token}" \
-		-H "Content-Type: application/json" \
-		-d '{"limit": 100}' \
-		"$api_url" 2>/dev/null) || {
-		log_warn "Codacy API request failed"
-		echo "0"
-		return 0
-	}
-
-	if ! command -v jq &>/dev/null; then
-		log_warn "jq not available — cannot parse Codacy response"
-		echo "0"
-		return 0
-	fi
-
-	local sql_file
-	sql_file=$(mktemp)
-	_save_cleanup_scope
-	trap '_run_cleanups' RETURN
-	push_cleanup "rm -f '${sql_file}'"
-
-	local jq_filter_file
-	jq_filter_file=$(mktemp)
-	push_cleanup "rm -f '${jq_filter_file}'"
-
-	cat >"$jq_filter_file" <<'JQ_EOF'
+# Write the Codacy jq filter to a file path supplied as $1
+_write_codacy_jq_filter() {
+	local dest="$1"
+	cat >"$dest" <<'JQ_EOF'
 def sql_str: gsub("'"; "''") | "'" + . + "'";
 def map_severity:
     if . == "Error" then "critical"
@@ -439,6 +387,62 @@ $line + ", " +
 ($dedup_key | sql_str) +
 ");"
 JQ_EOF
+	return 0
+}
+
+# Collect findings from Codacy via API
+collect_codacy() {
+	local run_id="$1"
+	local repo="$2"
+	local _pr_number="$3"
+	local count=0
+
+	local api_token="${CODACY_API_TOKEN:-${CODACY_PROJECT_TOKEN:-}}"
+	if [[ -z "$api_token" ]]; then
+		log_warn "CODACY_API_TOKEN not set — skipping Codacy"
+		echo "0"
+		return 0
+	fi
+
+	log_info "Collecting Codacy findings..."
+
+	local org username repo_name
+	org="${CODACY_ORGANIZATION:-}"
+	username="${CODACY_USERNAME:-}"
+	repo_name=$(echo "$repo" | cut -d'/' -f2)
+	local provider="${org:-$username}"
+
+	if [[ -z "$provider" ]]; then
+		provider=$(echo "$repo" | cut -d'/' -f1)
+	fi
+
+	local api_url="https://app.codacy.com/api/v3/analysis/organizations/gh/${provider}/repositories/${repo_name}/issues/search"
+
+	local response
+	response=$(curl -s -H "api-token: ${api_token}" \
+		-H "Content-Type: application/json" \
+		-d '{"limit": 100}' \
+		"$api_url" 2>/dev/null) || {
+		log_warn "Codacy API request failed"
+		echo "0"
+		return 0
+	}
+
+	if ! command -v jq &>/dev/null; then
+		log_warn "jq not available — cannot parse Codacy response"
+		echo "0"
+		return 0
+	fi
+
+	local sql_file jq_filter_file
+	sql_file=$(mktemp)
+	_save_cleanup_scope
+	trap '_run_cleanups' RETURN
+	push_cleanup "rm -f '${sql_file}'"
+
+	jq_filter_file=$(mktemp)
+	push_cleanup "rm -f '${jq_filter_file}'"
+	_write_codacy_jq_filter "$jq_filter_file"
 
 	echo "$response" | jq -r \
 		--arg run_id "$run_id" \
@@ -572,11 +576,8 @@ deduplicate_findings() {
 # Audit Command (Main Orchestrator)
 # =============================================================================
 
-cmd_audit() {
-	local repo=""
-	local pr_number=0
-	local services_filter=""
-
+# Parse arguments for cmd_audit; sets repo, pr_number, services_filter in caller scope
+_parse_audit_args() {
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--repo)
@@ -609,57 +610,48 @@ cmd_audit() {
 			;;
 		esac
 	done
+	return 0
+}
+
+# Resolve repo and pr_number to concrete values (auto-detect if not set)
+_resolve_audit_context() {
+	local _repo_ref="$1"
+	local _pr_ref="$2"
 
 	# Validate numeric inputs to prevent SQL injection
-	if [[ "$pr_number" != "0" ]] && ! [[ "$pr_number" =~ ^[0-9]+$ ]]; then
-		log_error "Invalid PR number: $pr_number"
+	if [[ "${!_pr_ref}" != "0" ]] && ! [[ "${!_pr_ref}" =~ ^[0-9]+$ ]]; then
+		log_error "Invalid PR number: ${!_pr_ref}"
 		return 1
 	fi
 
 	# Auto-detect repo if not specified
-	if [[ -z "$repo" ]]; then
-		repo=$(get_repo)
+	if [[ -z "${!_repo_ref}" ]]; then
+		printf -v "$_repo_ref" '%s' "$(get_repo)"
 	fi
 
 	# Auto-detect PR if not specified
-	if [[ "$pr_number" -eq 0 ]]; then
-		pr_number=$(gh pr view --json number -q .number 2>/dev/null || echo "0")
-		if ! [[ "$pr_number" =~ ^[0-9]+$ ]]; then
+	if [[ "${!_pr_ref}" -eq 0 ]]; then
+		local _detected_pr
+		_detected_pr=$(gh pr view --json number -q .number 2>/dev/null || echo "0")
+		if ! [[ "$_detected_pr" =~ ^[0-9]+$ ]]; then
 			log_warn "Could not auto-detect PR number, defaulting to 0"
-			pr_number=0
+			_detected_pr=0
 		fi
+		printf -v "$_pr_ref" '%s' "$_detected_pr"
 	fi
+	return 0
+}
 
-	local head_sha
-	head_sha=$(get_head_sha)
-
-	ensure_db
-
-	log_info "Starting unified code audit for ${repo}"
-	[[ "$pr_number" -gt 0 ]] && log_info "PR: #${pr_number} (SHA: ${head_sha})"
-
-	# Create audit run
-	local run_id
-	run_id=$(db "$AUDIT_DB" "
-        INSERT INTO audit_runs (repo, pr_number, head_sha)
-        VALUES ('$(sql_escape "$repo")', $pr_number, '$(sql_escape "$head_sha")');
-        SELECT last_insert_rowid();
-    ")
-
-	log_info "Audit run #${run_id} started"
-
-	# Determine which services to run
-	local services
-	if [[ -n "$services_filter" ]]; then
-		services="$services_filter"
-	else
-		services=$(get_configured_services)
-	fi
+# Iterate services and collect findings; outputs services_run and total_findings
+_run_audit_services() {
+	local run_id="$1"
+	local repo="$2"
+	local pr_number="$3"
+	local services="$4"
 
 	local services_run=""
 	local total_findings=0
 
-	# Iterate configured services and call each collector
 	local services_array
 	read -ra services_array <<<"$services"
 	for service in "${services_array[@]}"; do
@@ -693,6 +685,51 @@ cmd_audit() {
 		fi
 	done
 
+	# Return via stdout: "services_run|total_findings"
+	echo "${services_run}|${total_findings}"
+	return 0
+}
+
+cmd_audit() {
+	local repo=""
+	local pr_number=0
+	local services_filter=""
+
+	_parse_audit_args "$@" || return 1
+
+	_resolve_audit_context repo pr_number || return 1
+
+	local head_sha
+	head_sha=$(get_head_sha)
+
+	ensure_db
+
+	log_info "Starting unified code audit for ${repo}"
+	[[ "$pr_number" -gt 0 ]] && log_info "PR: #${pr_number} (SHA: ${head_sha})"
+
+	# Create audit run
+	local run_id
+	run_id=$(db "$AUDIT_DB" "
+        INSERT INTO audit_runs (repo, pr_number, head_sha)
+        VALUES ('$(sql_escape "$repo")', $pr_number, '$(sql_escape "$head_sha")');
+        SELECT last_insert_rowid();
+    ")
+
+	log_info "Audit run #${run_id} started"
+
+	# Determine which services to run
+	local services
+	if [[ -n "$services_filter" ]]; then
+		services="$services_filter"
+	else
+		services=$(get_configured_services)
+	fi
+
+	# Collect findings from all services
+	local result services_run total_findings
+	result=$(_run_audit_services "$run_id" "$repo" "$pr_number" "$services")
+	IFS='|' read -r services_run total_findings <<<"$result"
+
 	# Deduplicate cross-service findings
 	deduplicate_findings "$run_id"
 
@@ -717,21 +754,13 @@ cmd_audit() {
 # Summary Output
 # =============================================================================
 
-print_summary() {
+_print_summary_metadata() {
 	local run_id="$1"
-
-	echo "============================================"
-	echo "  Unified Code Audit Report (Run #${run_id})"
-	echo "============================================"
-	echo ""
-
-	# Run metadata
 	local run_info
 	run_info=$(db "$AUDIT_DB" -separator '|' "
         SELECT repo, pr_number, head_sha, started_at, completed_at, services_run
         FROM audit_runs WHERE id = $run_id;
     ")
-
 	if [[ -n "$run_info" ]]; then
 		local repo pr sha started completed services
 		IFS='|' read -r repo pr sha started completed services <<<"$run_info"
@@ -743,8 +772,11 @@ print_summary() {
 		echo "  Services:    $services"
 		echo ""
 	fi
+	return 0
+}
 
-	# Findings by source (excluding duplicates)
+_print_summary_by_source() {
+	local run_id="$1"
 	echo "  Findings by Source:"
 	db "$AUDIT_DB" -separator '|' "
         SELECT source, COUNT(*) as cnt
@@ -755,10 +787,12 @@ print_summary() {
     " | while IFS='|' read -r source cnt; do
 		printf "    %-15s %s\n" "$source" "$cnt"
 	done
-
 	echo ""
+	return 0
+}
 
-	# Findings by severity (excluding duplicates)
+_print_summary_by_severity() {
+	local run_id="$1"
 	echo "  Findings by Severity:"
 	db "$AUDIT_DB" -separator '|' "
         SELECT severity, COUNT(*) as cnt
@@ -784,10 +818,12 @@ print_summary() {
 		esac
 		printf "    ${color}%-10s${NC} %s\n" "$sev" "$cnt"
 	done
-
 	echo ""
+	return 0
+}
 
-	# Findings by category (excluding duplicates)
+_print_summary_by_category() {
+	local run_id="$1"
 	echo "  Findings by Category:"
 	db "$AUDIT_DB" -separator '|' "
         SELECT category, COUNT(*) as cnt
@@ -798,10 +834,12 @@ print_summary() {
     " | while IFS='|' read -r cat cnt; do
 		printf "    %-15s %s\n" "$cat" "$cnt"
 	done
-
 	echo ""
+	return 0
+}
 
-	# Most affected files (top 10, excluding duplicates)
+_print_summary_top_files() {
+	local run_id="$1"
 	echo "  Most Affected Files (top 10):"
 	db "$AUDIT_DB" -separator '|' "
         SELECT path, COUNT(*) as cnt,
@@ -815,20 +853,38 @@ print_summary() {
     " | while IFS='|' read -r path cnt sources severities; do
 		printf "    %-45s %3s  [%s] (%s)\n" "$path" "$cnt" "$sources" "$severities"
 	done
-
 	echo ""
+	return 0
+}
 
-	# Deduplication stats
+_print_summary_dedup_stats() {
+	local run_id="$1"
 	local total_raw unique_count dup_count
 	total_raw=$(db "$AUDIT_DB" "SELECT COUNT(*) FROM audit_findings WHERE run_id = $run_id;")
 	unique_count=$(db "$AUDIT_DB" "SELECT COUNT(*) FROM audit_findings WHERE run_id = $run_id AND is_duplicate = 0;")
 	dup_count=$(db "$AUDIT_DB" "SELECT COUNT(*) FROM audit_findings WHERE run_id = $run_id AND is_duplicate = 1;")
-
 	echo "  Deduplication:"
 	echo "    Total raw findings:  $total_raw"
 	echo "    Unique findings:     $unique_count"
 	echo "    Duplicates removed:  $dup_count"
 	echo ""
+	return 0
+}
+
+print_summary() {
+	local run_id="$1"
+
+	echo "============================================"
+	echo "  Unified Code Audit Report (Run #${run_id})"
+	echo "============================================"
+	echo ""
+
+	_print_summary_metadata "$run_id"
+	_print_summary_by_source "$run_id"
+	_print_summary_by_severity "$run_id"
+	_print_summary_by_category "$run_id"
+	_print_summary_top_files "$run_id"
+	_print_summary_dedup_stats "$run_id"
 
 	return 0
 }
@@ -837,12 +893,8 @@ print_summary() {
 # Report Command
 # =============================================================================
 
-cmd_report() {
-	local format="text"
-	local severity=""
-	local run_id=""
-	local limit=100
-
+# Parse arguments for cmd_report; sets format, severity, run_id, limit in caller scope
+_parse_report_args() {
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--format)
@@ -883,6 +935,113 @@ cmd_report() {
 			;;
 		esac
 	done
+	return 0
+}
+
+_report_json() {
+	local where="$1"
+	local limit="$2"
+	db "$AUDIT_DB" -json "
+        SELECT id, source, severity, path, line, description, category, rule_id
+        FROM audit_findings
+        $where
+        ORDER BY
+            CASE severity
+                WHEN 'critical' THEN 1
+                WHEN 'high' THEN 2
+                WHEN 'medium' THEN 3
+                WHEN 'low' THEN 4
+                ELSE 5
+            END,
+            path, line
+        LIMIT $limit;
+    "
+	return 0
+}
+
+_report_csv() {
+	local where="$1"
+	local limit="$2"
+	echo "id,source,severity,path,line,description,category,rule_id"
+	db "$AUDIT_DB" -csv "
+        SELECT id, source, severity, path, line,
+               substr(replace(description, char(10), ' '), 1, 200),
+               category, rule_id
+        FROM audit_findings
+        $where
+        ORDER BY
+            CASE severity
+                WHEN 'critical' THEN 1
+                WHEN 'high' THEN 2
+                WHEN 'medium' THEN 3
+                WHEN 'low' THEN 4
+                ELSE 5
+            END,
+            path, line
+        LIMIT $limit;
+    "
+	return 0
+}
+
+_report_text() {
+	local where="$1"
+	local limit="$2"
+	local run_id="$3"
+	echo ""
+	echo "Audit Findings (Run #${run_id})"
+	echo "==============================="
+	echo ""
+
+	db "$AUDIT_DB" -separator $'\x1f' "
+        SELECT source, severity, path, line,
+               substr(replace(replace(description, char(10), ' '), char(13), ''), 1, 120)
+        FROM audit_findings
+        $where
+        ORDER BY
+            CASE severity
+                WHEN 'critical' THEN 1
+                WHEN 'high' THEN 2
+                WHEN 'medium' THEN 3
+                WHEN 'low' THEN 4
+                ELSE 5
+            END,
+            path, line
+        LIMIT $limit;
+    " | while IFS=$'\x1f' read -r source sev path line desc; do
+		local color="$NC"
+		case "$sev" in
+		critical) color="$RED" ;;
+		high) color="$RED" ;;
+		medium) color="$YELLOW" ;;
+		low) color="$BLUE" ;;
+		*) color="$NC" ;;
+		esac
+
+		local location=""
+		if [[ -n "$path" && "$path" != "" ]]; then
+			location="${path}:${line}"
+		else
+			location="(general)"
+		fi
+
+		printf "  ${color}[%-8s]${NC} %-12s %s\n" "$sev" "$source" "$location"
+		echo "    ${desc}"
+		echo ""
+	done
+
+	local total
+	total=$(db "$AUDIT_DB" "SELECT COUNT(*) FROM audit_findings $where;")
+	echo "Total unique findings: ${total}"
+	return 0
+}
+
+cmd_report() {
+	local format="text"
+	local severity=""
+	local run_id=""
+	local limit=100
+
+	_parse_report_args "$@" || return 1
 
 	# Validate numeric inputs to prevent SQL injection
 	if [[ -n "$run_id" ]] && ! [[ "$run_id" =~ ^[0-9]+$ ]]; then
@@ -912,90 +1071,9 @@ cmd_report() {
 	fi
 
 	case "$format" in
-	json)
-		db "$AUDIT_DB" -json "
-                SELECT id, source, severity, path, line, description, category, rule_id
-                FROM audit_findings
-                $where
-                ORDER BY
-                    CASE severity
-                        WHEN 'critical' THEN 1
-                        WHEN 'high' THEN 2
-                        WHEN 'medium' THEN 3
-                        WHEN 'low' THEN 4
-                        ELSE 5
-                    END,
-                    path, line
-                LIMIT $limit;
-            "
-		;;
-	csv)
-		echo "id,source,severity,path,line,description,category,rule_id"
-		db "$AUDIT_DB" -csv "
-                SELECT id, source, severity, path, line,
-                       substr(replace(description, char(10), ' '), 1, 200),
-                       category, rule_id
-                FROM audit_findings
-                $where
-                ORDER BY
-                    CASE severity
-                        WHEN 'critical' THEN 1
-                        WHEN 'high' THEN 2
-                        WHEN 'medium' THEN 3
-                        WHEN 'low' THEN 4
-                        ELSE 5
-                    END,
-                    path, line
-                LIMIT $limit;
-            "
-		;;
-	text | *)
-		echo ""
-		echo "Audit Findings (Run #${run_id})"
-		echo "==============================="
-		echo ""
-
-		db "$AUDIT_DB" -separator $'\x1f' "
-                SELECT source, severity, path, line,
-                       substr(replace(replace(description, char(10), ' '), char(13), ''), 1, 120)
-                FROM audit_findings
-                $where
-                ORDER BY
-                    CASE severity
-                        WHEN 'critical' THEN 1
-                        WHEN 'high' THEN 2
-                        WHEN 'medium' THEN 3
-                        WHEN 'low' THEN 4
-                        ELSE 5
-                    END,
-                    path, line
-                LIMIT $limit;
-            " | while IFS=$'\x1f' read -r source sev path line desc; do
-			local color="$NC"
-			case "$sev" in
-			critical) color="$RED" ;;
-			high) color="$RED" ;;
-			medium) color="$YELLOW" ;;
-			low) color="$BLUE" ;;
-			*) color="$NC" ;;
-			esac
-
-			local location=""
-			if [[ -n "$path" && "$path" != "" ]]; then
-				location="${path}:${line}"
-			else
-				location="(general)"
-			fi
-
-			printf "  ${color}[%-8s]${NC} %-12s %s\n" "$sev" "$source" "$location"
-			echo "    ${desc}"
-			echo ""
-		done
-
-		local total
-		total=$(db "$AUDIT_DB" "SELECT COUNT(*) FROM audit_findings $where;")
-		echo "Total unique findings: ${total}"
-		;;
+	json) _report_json "$where" "$limit" ;;
+	csv) _report_csv "$where" "$limit" ;;
+	text | *) _report_text "$where" "$limit" "$run_id" ;;
 	esac
 
 	return 0
