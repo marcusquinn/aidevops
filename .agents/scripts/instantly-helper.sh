@@ -361,6 +361,18 @@ cmd_request() {
 	return $?
 }
 
+require_option_arg() {
+	local option="$1"
+	local nargs="$2"
+
+	if [[ "$nargs" -lt 2 ]]; then
+		print_error "Option ${option} requires a value"
+		return 1
+	fi
+
+	return 0
+}
+
 main() {
 	local command="${1:-help}"
 	local subcommand="${2:-}"
@@ -386,43 +398,53 @@ main() {
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--campaign-id)
-			campaign_id="${2:-}"
+			require_option_arg "$1" "$#" || return 1
+			campaign_id="$2"
 			shift 2
 			;;
 		--lead-id)
-			lead_id="${2:-}"
+			require_option_arg "$1" "$#" || return 1
+			lead_id="$2"
 			shift 2
 			;;
 		--sequence-id)
-			sequence_id="${2:-}"
+			require_option_arg "$1" "$#" || return 1
+			sequence_id="$2"
 			shift 2
 			;;
 		--email-account-id)
-			email_account_id="${2:-}"
+			require_option_arg "$1" "$#" || return 1
+			email_account_id="$2"
 			shift 2
 			;;
 		--status)
-			status_filter="${2:-}"
+			require_option_arg "$1" "$#" || return 1
+			status_filter="$2"
 			shift 2
 			;;
 		--limit)
-			limit="${2:-}"
+			require_option_arg "$1" "$#" || return 1
+			limit="$2"
 			shift 2
 			;;
 		--method)
-			method="${2:-}"
+			require_option_arg "$1" "$#" || return 1
+			method="$2"
 			shift 2
 			;;
 		--endpoint)
-			endpoint="${2:-}"
+			require_option_arg "$1" "$#" || return 1
+			endpoint="$2"
 			shift 2
 			;;
 		--json-file)
-			json_file="${2:-}"
+			require_option_arg "$1" "$#" || return 1
+			json_file="$2"
 			shift 2
 			;;
 		--api-base)
-			api_base="${2:-}"
+			require_option_arg "$1" "$#" || return 1
+			api_base="$2"
 			shift 2
 			;;
 		--raw)
