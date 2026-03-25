@@ -101,12 +101,9 @@ score_to_risk() {
 	return 0
 }
 
-# Main check function
-cmd_check() {
-	local ip="$1"
+# Parse --timeout option from remaining args; prints resolved timeout value
+_parse_check_args() {
 	local timeout="$DEFAULT_TIMEOUT"
-
-	shift
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--timeout)
@@ -122,23 +119,19 @@ cmd_check() {
 			;;
 		esac
 	done
+	echo "$timeout"
+	return 0
+}
 
-	# Validate IPv4 (basic check)
-	if ! echo "$ip" | grep -qE '^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$'; then
-		error_json "$ip" "invalid IPv4 address format"
-		return 0
-	fi
-
-	# Check dig is available
-	if ! command -v dig &>/dev/null; then
-		error_json "$ip" "dig not found — install bind-utils or dnsutils"
-		return 0
-	fi
+# Query zen.spamhaus.org and process results.
+# Outputs a JSON object: {is_listed, max_score, zones_json, zone_details, lookup_host, dig_result}
+_query_zen_dnsbl() {
+	local ip="$1"
+	local timeout="$2"
 
 	local reversed
 	reversed=$(reverse_ip "$ip")
 
-	# Query zen.spamhaus.org (combined SBL+XBL+PBL)
 	local lookup_host="${reversed}.${ZEN_ZONE}"
 	local dig_result
 	dig_result=$(dig +short +time="${timeout}" +tries=1 "$lookup_host" A 2>/dev/null || true)
@@ -177,15 +170,56 @@ cmd_check() {
 		zone_details="$zone_json"
 	fi
 
-	local risk_level
-	risk_level=$(score_to_risk "$max_score")
-
 	# Build zones JSON array
 	local zones_json="[]"
 	local z
 	for z in "${zones[@]+"${zones[@]}"}"; do
 		zones_json=$(echo "$zones_json" | jq --arg z "$z" '. + [$z]')
 	done
+
+	jq -n \
+		--argjson is_listed "$is_listed" \
+		--argjson max_score "$max_score" \
+		--argjson zones_json "$zones_json" \
+		--argjson zone_details "$zone_details" \
+		--arg lookup_host "$lookup_host" \
+		--arg dig_result "$dig_result" \
+		'{is_listed: $is_listed, max_score: $max_score, zones_json: $zones_json,
+		  zone_details: $zone_details, lookup_host: $lookup_host, dig_result: $dig_result}'
+	return 0
+}
+
+# Main check function
+cmd_check() {
+	local ip="$1"
+	shift
+
+	local timeout
+	timeout=$(_parse_check_args "$@") || return 1
+
+	# Validate IPv4 (basic check)
+	if ! echo "$ip" | grep -qE '^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$'; then
+		error_json "$ip" "invalid IPv4 address format"
+		return 0
+	fi
+
+	# Check dig is available
+	if ! command -v dig &>/dev/null; then
+		error_json "$ip" "dig not found — install bind-utils or dnsutils"
+		return 0
+	fi
+
+	local query_result
+	query_result=$(_query_zen_dnsbl "$ip" "$timeout")
+
+	local max_score is_listed zones_json zone_details lookup_host dig_result risk_level
+	max_score=$(echo "$query_result" | jq -r '.max_score')
+	is_listed=$(echo "$query_result" | jq -r '.is_listed')
+	zones_json=$(echo "$query_result" | jq -c '.zones_json')
+	zone_details=$(echo "$query_result" | jq -c '.zone_details')
+	lookup_host=$(echo "$query_result" | jq -r '.lookup_host')
+	dig_result=$(echo "$query_result" | jq -r '.dig_result')
+	risk_level=$(score_to_risk "$max_score")
 
 	jq -n \
 		--arg provider "$PROVIDER_NAME" \
