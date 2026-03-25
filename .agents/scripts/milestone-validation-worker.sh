@@ -224,6 +224,47 @@ require_value() {
 	return 0
 }
 
+# Validate parsed inputs after option parsing completes.
+# Checks mission file, milestone number, and repo path.
+validate_parsed_inputs() {
+	# Validate mission file exists
+	if [[ ! -f "$MISSION_FILE" ]]; then
+		log_error "Mission file not found: $MISSION_FILE"
+		return 2
+	fi
+
+	# Resolve to absolute path
+	MISSION_FILE="$(cd "$(dirname "$MISSION_FILE")" && pwd)/$(basename "$MISSION_FILE")"
+
+	# Validate milestone number is numeric
+	if ! echo "$MILESTONE_NUM" | grep -qE '^[0-9]+$'; then
+		log_error "Invalid milestone number: $MILESTONE_NUM (expected numeric)"
+		return 2
+	fi
+
+	# Infer repo path from mission file if not provided
+	if [[ -z "$REPO_PATH" ]]; then
+		REPO_PATH=$(infer_repo_path "$MISSION_FILE")
+		if [[ -z "$REPO_PATH" ]]; then
+			log_error "Could not infer repo path from mission file. Use --repo-path."
+			return 2
+		fi
+	fi
+
+	# Validate repo path
+	if [[ ! -d "$REPO_PATH" ]]; then
+		log_error "Repository path not found: $REPO_PATH"
+		return 2
+	fi
+
+	if [[ ! -d "$REPO_PATH/.git" ]] && ! git -C "$REPO_PATH" rev-parse --git-dir >/dev/null 2>&1; then
+		log_error "Not a git repository: $REPO_PATH"
+		return 2
+	fi
+
+	return 0
+}
+
 parse_args() {
 	# Check for --help before positional arg validation
 	for arg in "$@"; do
@@ -310,42 +351,7 @@ parse_args() {
 		esac
 	done
 
-	# Validate mission file exists
-	if [[ ! -f "$MISSION_FILE" ]]; then
-		log_error "Mission file not found: $MISSION_FILE"
-		return 2
-	fi
-
-	# Resolve to absolute path
-	MISSION_FILE="$(cd "$(dirname "$MISSION_FILE")" && pwd)/$(basename "$MISSION_FILE")"
-
-	# Validate milestone number is numeric
-	if ! echo "$MILESTONE_NUM" | grep -qE '^[0-9]+$'; then
-		log_error "Invalid milestone number: $MILESTONE_NUM (expected numeric)"
-		return 2
-	fi
-
-	# Infer repo path from mission file if not provided
-	if [[ -z "$REPO_PATH" ]]; then
-		REPO_PATH=$(infer_repo_path "$MISSION_FILE")
-		if [[ -z "$REPO_PATH" ]]; then
-			log_error "Could not infer repo path from mission file. Use --repo-path."
-			return 2
-		fi
-	fi
-
-	# Validate repo path
-	if [[ ! -d "$REPO_PATH" ]]; then
-		log_error "Repository path not found: $REPO_PATH"
-		return 2
-	fi
-
-	if [[ ! -d "$REPO_PATH/.git" ]] && ! git -C "$REPO_PATH" rev-parse --git-dir >/dev/null 2>&1; then
-		log_error "Not a git repository: $REPO_PATH"
-		return 2
-	fi
-
-	return 0
+	validate_parsed_inputs
 }
 
 # =============================================================================
@@ -533,119 +539,133 @@ append_progress_log() {
 # Validation Checks
 # =============================================================================
 
-# Detect and run the project's test suite
+# Run Node.js test suite via detected package manager.
+_run_node_tests() {
+	local repo_path="$1"
+	local has_test
+	has_test=$(grep -c '"test"' "$repo_path/package.json" 2>/dev/null || echo "0")
+
+	if [[ "$has_test" -gt 0 ]]; then
+		local test_output
+		local test_exit=0
+		local pkg_cmd
+		pkg_cmd=$(detect_pkg_manager "$repo_path")
+
+		test_output=$(cd "$repo_path" && $pkg_cmd test 2>&1) || test_exit=$?
+
+		if [[ $test_exit -eq 0 ]]; then
+			record_pass "Test suite ($pkg_cmd test)"
+		else
+			local failure_summary
+			failure_summary=$(echo "$test_output" | grep -iE '(FAIL|Error|failed|✗|✘)' | head -10 || echo "Exit code: $test_exit")
+			record_fail "Test suite ($pkg_cmd test)" "$failure_summary"
+		fi
+	else
+		record_skip "Test suite" "No 'test' script in package.json"
+	fi
+	return 0
+}
+
+# Run Python test suite via pytest.
+_run_python_tests() {
+	local repo_path="$1"
+	local test_output
+	local test_exit=0
+
+	if command -v pytest >/dev/null 2>&1; then
+		test_output=$(cd "$repo_path" && pytest --tb=short 2>&1) || test_exit=$?
+	elif [[ -f "$repo_path/.venv/bin/pytest" ]]; then
+		test_output=$(cd "$repo_path" && .venv/bin/pytest --tb=short 2>&1) || test_exit=$?
+	else
+		record_skip "Test suite (pytest)" "pytest not found"
+		return 0
+	fi
+
+	if [[ $test_exit -eq 0 ]]; then
+		record_pass "Test suite (pytest)"
+	else
+		local failure_summary
+		failure_summary=$(echo "$test_output" | grep -E '(FAILED|ERROR|short test summary)' | head -10 || echo "Exit code: $test_exit")
+		record_fail "Test suite (pytest)" "$failure_summary"
+	fi
+	return 0
+}
+
+# Run Rust test suite via cargo.
+_run_rust_tests() {
+	local repo_path="$1"
+	local test_output
+	local test_exit=0
+	test_output=$(cd "$repo_path" && cargo test 2>&1) || test_exit=$?
+
+	if [[ $test_exit -eq 0 ]]; then
+		record_pass "Test suite (cargo test)"
+	else
+		local failure_summary
+		failure_summary=$(echo "$test_output" | grep -E '(FAILED|failures:)' | head -10 || echo "Exit code: $test_exit")
+		record_fail "Test suite (cargo test)" "$failure_summary"
+	fi
+	return 0
+}
+
+# Run Go test suite.
+_run_go_tests() {
+	local repo_path="$1"
+	local test_output
+	local test_exit=0
+	test_output=$(cd "$repo_path" && go test ./... 2>&1) || test_exit=$?
+
+	if [[ $test_exit -eq 0 ]]; then
+		record_pass "Test suite (go test)"
+	else
+		local failure_summary
+		failure_summary=$(echo "$test_output" | grep -E '(FAIL|--- FAIL)' | head -10 || echo "Exit code: $test_exit")
+		record_fail "Test suite (go test)" "$failure_summary"
+	fi
+	return 0
+}
+
+# Run ShellCheck on shell scripts in .agents/scripts/.
+_run_shell_tests() {
+	local repo_path="$1"
+	if command -v shellcheck >/dev/null 2>&1; then
+		local sc_output
+		local sc_exit=0
+		sc_output=$(find "$repo_path/.agents/scripts" -type f -name "*.sh" -exec shellcheck {} + 2>&1) || sc_exit=$?
+
+		if [[ $sc_exit -eq 0 ]]; then
+			record_pass "ShellCheck validation"
+		else
+			local failure_count
+			failure_count=$(echo "$sc_output" | grep -c "^In " || echo "0")
+			record_fail "ShellCheck validation" "$failure_count files with issues"
+		fi
+	else
+		record_skip "ShellCheck validation" "shellcheck not installed"
+	fi
+	return 0
+}
+
+# Detect and run the project's test suite.
+# Dispatches to language-specific helpers based on project markers.
 run_test_suite() {
 	local repo_path="$1"
 
 	log_info "Running test suite..."
 
-	# Detect test framework and run
 	if [[ -f "$repo_path/package.json" ]]; then
-		# Node.js project — check for test script
-		local has_test
-		has_test=$(grep -c '"test"' "$repo_path/package.json" 2>/dev/null || echo "0")
-
-		if [[ "$has_test" -gt 0 ]]; then
-			local test_output
-			local test_exit=0
-
-			local pkg_cmd
-			pkg_cmd=$(detect_pkg_manager "$repo_path")
-
-			test_output=$(cd "$repo_path" && $pkg_cmd test 2>&1) || test_exit=$?
-
-			if [[ $test_exit -eq 0 ]]; then
-				record_pass "Test suite ($pkg_cmd test)"
-			else
-				local failure_summary
-				failure_summary=$(echo "$test_output" | grep -iE '(FAIL|Error|failed|✗|✘)' | head -10 || echo "Exit code: $test_exit")
-				record_fail "Test suite ($pkg_cmd test)" "$failure_summary"
-			fi
-			return 0
-		else
-			record_skip "Test suite" "No 'test' script in package.json"
-			return 0
-		fi
+		_run_node_tests "$repo_path"
+	elif [[ -f "$repo_path/pyproject.toml" ]] || [[ -f "$repo_path/setup.py" ]] || [[ -f "$repo_path/pytest.ini" ]]; then
+		_run_python_tests "$repo_path"
+	elif [[ -f "$repo_path/Cargo.toml" ]]; then
+		_run_rust_tests "$repo_path"
+	elif [[ -f "$repo_path/go.mod" ]]; then
+		_run_go_tests "$repo_path"
+	elif [[ -d "$repo_path/.agents/scripts" ]]; then
+		_run_shell_tests "$repo_path"
+	else
+		record_skip "Test suite" "No recognised test framework found"
 	fi
-
-	# Python project
-	if [[ -f "$repo_path/pyproject.toml" ]] || [[ -f "$repo_path/setup.py" ]] || [[ -f "$repo_path/pytest.ini" ]]; then
-		local test_output
-		local test_exit=0
-
-		if command -v pytest >/dev/null 2>&1; then
-			test_output=$(cd "$repo_path" && pytest --tb=short 2>&1) || test_exit=$?
-		elif [[ -f "$repo_path/.venv/bin/pytest" ]]; then
-			test_output=$(cd "$repo_path" && .venv/bin/pytest --tb=short 2>&1) || test_exit=$?
-		else
-			record_skip "Test suite (pytest)" "pytest not found"
-			return 0
-		fi
-
-		if [[ $test_exit -eq 0 ]]; then
-			record_pass "Test suite (pytest)"
-		else
-			local failure_summary
-			failure_summary=$(echo "$test_output" | grep -E '(FAILED|ERROR|short test summary)' | head -10 || echo "Exit code: $test_exit")
-			record_fail "Test suite (pytest)" "$failure_summary"
-		fi
-		return 0
-	fi
-
-	# Rust project
-	if [[ -f "$repo_path/Cargo.toml" ]]; then
-		local test_output
-		local test_exit=0
-		test_output=$(cd "$repo_path" && cargo test 2>&1) || test_exit=$?
-
-		if [[ $test_exit -eq 0 ]]; then
-			record_pass "Test suite (cargo test)"
-		else
-			local failure_summary
-			failure_summary=$(echo "$test_output" | grep -E '(FAILED|failures:)' | head -10 || echo "Exit code: $test_exit")
-			record_fail "Test suite (cargo test)" "$failure_summary"
-		fi
-		return 0
-	fi
-
-	# Go project
-	if [[ -f "$repo_path/go.mod" ]]; then
-		local test_output
-		local test_exit=0
-		test_output=$(cd "$repo_path" && go test ./... 2>&1) || test_exit=$?
-
-		if [[ $test_exit -eq 0 ]]; then
-			record_pass "Test suite (go test)"
-		else
-			local failure_summary
-			failure_summary=$(echo "$test_output" | grep -E '(FAIL|--- FAIL)' | head -10 || echo "Exit code: $test_exit")
-			record_fail "Test suite (go test)" "$failure_summary"
-		fi
-		return 0
-	fi
-
-	# Shell project (aidevops itself)
-	if [[ -d "$repo_path/.agents/scripts" ]]; then
-		# Run ShellCheck on scripts if available
-		if command -v shellcheck >/dev/null 2>&1; then
-			local sc_output
-			local sc_exit=0
-			sc_output=$(find "$repo_path/.agents/scripts" -type f -name "*.sh" -exec shellcheck {} + 2>&1) || sc_exit=$?
-
-			if [[ $sc_exit -eq 0 ]]; then
-				record_pass "ShellCheck validation"
-			else
-				local failure_count
-				failure_count=$(echo "$sc_output" | grep -c "^In " || echo "0")
-				record_fail "ShellCheck validation" "$failure_count files with issues"
-			fi
-		else
-			record_skip "ShellCheck validation" "shellcheck not installed"
-		fi
-		return 0
-	fi
-
-	record_skip "Test suite" "No recognised test framework found"
 	return 0
 }
 
@@ -1170,31 +1190,20 @@ generate_report() {
 # Main
 # =============================================================================
 
-main() {
-	local parse_exit=0
-	parse_args "$@" || parse_exit=$?
-	if [[ $parse_exit -ne 0 ]]; then
-		return $parse_exit
-	fi
-
-	log_info "Starting milestone validation"
-	log_info "Mission: $MISSION_FILE"
-	log_info "Milestone: $MILESTONE_NUM"
-	log_info "Repo: $REPO_PATH"
-
-	# Verify milestone is ready for validation
+# Check whether the milestone is in a state that allows validation.
+# Returns 0 to proceed, 1 to skip (already passed), or 3 for state error.
+check_milestone_readiness() {
 	local milestone_status
 	milestone_status=$(get_milestone_status "$MISSION_FILE" "$MILESTONE_NUM")
 	log_verbose "Current milestone status: '$milestone_status'"
 
-	# Allow validation when status is: active (all features done), validating (re-validation), or empty
 	case "$milestone_status" in
 	active | validating | "")
 		# OK to proceed
 		;;
 	passed)
 		log_info "Milestone $MILESTONE_NUM already passed validation"
-		return 0
+		return 1
 		;;
 	pending)
 		log_error "Milestone $MILESTONE_NUM is still pending — features not yet dispatched"
@@ -1207,25 +1216,16 @@ main() {
 		log_warn "Unexpected milestone status: '$milestone_status' — proceeding with validation"
 		;;
 	esac
+	return 0
+}
 
-	# Update status to validating
-	update_milestone_status "$MISSION_FILE" "$MILESTONE_NUM" "validating"
-
-	# Read validation criteria
-	local validation_criteria
-	validation_criteria=$(get_milestone_validation "$MISSION_FILE" "$MILESTONE_NUM")
-	log_verbose "Validation criteria: $validation_criteria"
-
-	# Pull latest changes
-	log_info "Pulling latest changes..."
-	local pull_exit=0
-	git -C "$REPO_PATH" pull --rebase 2>/dev/null || pull_exit=$?
-	if [[ $pull_exit -ne 0 ]]; then
-		record_warning "Git pull" "Pull failed (exit $pull_exit) — validating current state"
-	fi
-
-	# Run validation checks with retry support
+# Run all validation checks with retry support.
+# Sets VALIDATION_PASSED and populates failure/warning arrays.
+# Prints the final attempt number to stdout.
+run_validation_with_retries() {
+	local validation_criteria="$1"
 	local attempt=1
+
 	while [[ $attempt -le $MV_MAX_RETRIES ]]; do
 		if [[ $attempt -gt 1 ]]; then
 			log_info "Retry attempt $attempt/$MV_MAX_RETRIES..."
@@ -1252,6 +1252,14 @@ main() {
 		attempt=$((attempt + 1))
 	done
 
+	echo "$attempt"
+	return 0
+}
+
+# Update mission state, generate report, and create fix tasks based on results.
+handle_validation_result() {
+	local attempt="$1"
+
 	# Determine final exit code before report generation
 	local final_exit=0
 	if [[ "$VALIDATION_PASSED" != "true" ]]; then
@@ -1277,12 +1285,54 @@ main() {
 	else
 		update_milestone_status "$MISSION_FILE" "$MILESTONE_NUM" "failed"
 		append_progress_log "$MISSION_FILE" "Milestone $MILESTONE_NUM validation failed" "${#VALIDATION_FAILURES[@]} failure(s) after $MV_MAX_RETRIES attempt(s): ${VALIDATION_FAILURES[*]}"
-
-		# Create fix tasks
 		create_fix_tasks "$MISSION_FILE" "$MILESTONE_NUM" "$REPO_PATH"
-
 		return 1
 	fi
+}
+
+main() {
+	local parse_exit=0
+	parse_args "$@" || parse_exit=$?
+	if [[ $parse_exit -ne 0 ]]; then
+		return $parse_exit
+	fi
+
+	log_info "Starting milestone validation"
+	log_info "Mission: $MISSION_FILE"
+	log_info "Milestone: $MILESTONE_NUM"
+	log_info "Repo: $REPO_PATH"
+
+	# Verify milestone is ready for validation
+	local readiness_exit=0
+	check_milestone_readiness || readiness_exit=$?
+	if [[ $readiness_exit -eq 1 ]]; then
+		return 0
+	elif [[ $readiness_exit -gt 1 ]]; then
+		return $readiness_exit
+	fi
+
+	# Update status to validating
+	update_milestone_status "$MISSION_FILE" "$MILESTONE_NUM" "validating"
+
+	# Read validation criteria
+	local validation_criteria
+	validation_criteria=$(get_milestone_validation "$MISSION_FILE" "$MILESTONE_NUM")
+	log_verbose "Validation criteria: $validation_criteria"
+
+	# Pull latest changes
+	log_info "Pulling latest changes..."
+	local pull_exit=0
+	git -C "$REPO_PATH" pull --rebase 2>/dev/null || pull_exit=$?
+	if [[ $pull_exit -ne 0 ]]; then
+		record_warning "Git pull" "Pull failed (exit $pull_exit) — validating current state"
+	fi
+
+	# Run validation checks with retry support
+	local attempt
+	attempt=$(run_validation_with_retries "$validation_criteria")
+
+	# Handle results: report, state update, fix tasks
+	handle_validation_result "$attempt"
 }
 
 main "$@"
