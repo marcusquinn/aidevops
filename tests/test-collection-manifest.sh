@@ -20,7 +20,8 @@ NC='\033[0m'
 PASS=0
 FAIL=0
 
-_setup_email_files() {
+# Write the two threaded email fixtures (email1.md, email2.md)
+_setup_thread_emails() {
 	local dir="$1"
 
 	cat >"${dir}/email1.md" <<'EOF'
@@ -66,6 +67,13 @@ thread_length: "3"
 Sounds good.
 EOF
 
+	return 0
+}
+
+# Write the standalone email fixture with attachments (email3.md)
+_setup_attachment_email() {
+	local dir="$1"
+
 	cat >"${dir}/email3.md" <<'EOF'
 ---
 title: "Project update"
@@ -88,6 +96,13 @@ tokens_estimate: 120
 Here is the latest update.
 EOF
 
+	return 0
+}
+
+_setup_email_files() {
+	local dir="$1"
+	_setup_thread_emails "$dir"
+	_setup_attachment_email "$dir"
 	return 0
 }
 
