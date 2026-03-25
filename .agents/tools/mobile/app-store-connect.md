@@ -26,11 +26,13 @@ tools:
 - **Website**: https://asccli.app
 - **Skills (official)**: https://github.com/tddworks/asc-cli-skills (27 skills)
 - **Skills (community)**: https://github.com/rudrankriyam/app-store-connect-cli-skills (22 workflow skills)
-- **Web apps**: Command Center (`/command-center`), Console (`/console`), Screenshot Studio (`/editor`)
+- **Web apps**: [Command Center](https://asccli.app/command-center), [Console](https://asccli.app/console), [Screenshot Studio](https://asccli.app/editor)
 
 **Key design**: CAEOAS (Commands As Engine Of Application State) — every JSON response includes an `affordances` field with ready-to-run next commands. Always follow affordances instead of constructing commands manually.
 
 **Requirements**: macOS 13+, App Store Connect API key
+
+**Dependency check**: Before running any `asc` command, verify it is installed: `command -v asc >/dev/null || brew install tddworks/tap/asccli`. This is a Homebrew tap — `brew install asc` installs a different, unrelated package.
 
 <!-- AI-CONTEXT-END -->
 
@@ -188,91 +190,26 @@ asc app-shots generate --device-type APP_IPHONE_67
 asc app-shots translate --to zh --to ja       # localise all screens
 ```
 
-## Web Apps (Local Hosting)
+## Web Apps
 
-The `asc` CLI includes a web server (`asc web-server`) with two web apps. A third app (Screenshot Studio) lives in the homepage repo and is served separately.
+Since v0.1.57, the web apps are hosted at asccli.app. The `asc web-server` command starts a local API bridge (`/api/run`) and redirects `/command-center/`, `/console/`, and `/` to the hosted versions (302).
 
-| App | Server | Purpose |
-|-----|--------|---------|
-| **Command Center** | `asc web-server` | Interactive ASC dashboard — apps, builds, TestFlight, screenshots, subscriptions, reviews |
-| **Console** | `asc web-server` | CLI reference + embedded terminal, Cmd+K search |
-| **Screenshot Studio** | Static (separate) | Visual App Store screenshot builder with device bezels, text layers, gradient backgrounds |
+| App | URL | Purpose |
+|-----|-----|---------|
+| **Command Center** | https://asccli.app/command-center | Interactive ASC dashboard — apps, builds, TestFlight, screenshots, subscriptions, reviews |
+| **Console** | https://asccli.app/console | CLI reference + embedded terminal, Cmd+K search |
+| **Screenshot Studio** | https://asccli.app/editor | Visual App Store screenshot builder with device bezels, text layers, gradient backgrounds |
 
-**Live demos**: https://asccli.app/command-center, https://asccli.app/console, https://asccli.app/editor
+### Local API bridge
 
-### Setup (one-time)
-
-The Homebrew bottle installs the `asc` binary but `asc web-server` extracts only `server.js` to a temp directory — the web app static files (HTML/CSS/JS) are not included. You must clone them separately:
+Run `asc web-server` to start the local API bridge. The web apps at asccli.app connect to it for CLI command execution. Default ports: 8420 (HTTP), 8421 (HTTPS).
 
 ```bash
-# 1. Clone web app files (sparse — only the web apps, not the full repo)
-mkdir -p ~/.asc/web
-git clone --depth 1 --filter=blob:none --sparse \
-  https://github.com/tddworks/asc-cli.git ~/.asc/web
-git -C ~/.asc/web sparse-checkout set apps/asc-web homepage/editor homepage/static
-
-# 2. Start asc web-server once to create the temp directory, then kill it
-asc web-server --port 18420 &
-ASC_PID=$!
-sleep 2
-kill "$ASC_PID" 2>/dev/null
-wait "$ASC_PID" 2>/dev/null
-
-# 3. Find the temp directory and symlink web app files into it
-TEMP_DIR=$(find /private/var/folders /tmp -name "server.js" -path "*/asc-web-server/*" \
-  -exec dirname {} \; 2>/dev/null | head -1)
-if [[ -n "$TEMP_DIR" ]]; then
-  ln -sf ~/.asc/web/apps/asc-web/command-center "$TEMP_DIR/command-center"
-  ln -sf ~/.asc/web/apps/asc-web/console "$TEMP_DIR/console"
-  ln -sf ~/.asc/web/apps/asc-web/shared "$TEMP_DIR/shared"
-  echo "Symlinked web apps into $TEMP_DIR"
-else
-  echo "ERROR: Could not find asc-web-server temp directory"
-fi
+asc web-server                    # default ports 8420/8421
+asc web-server --port 18420       # custom port (binds N and N+1)
 ```
 
-### Local hosting with localdev
-
-Register two apps with localdev — one for the asc web-server (Command Center + Console), one for the Screenshot Studio (static):
-
-```bash
-# Register apps (one-time). Use ports with a gap of 3+ between them
-# because asc web-server binds BOTH --port AND --port+1 (built-in HTTPS).
-localdev-helper.sh add asc-web          # e.g. port 3109
-localdev-helper.sh add asc-editor 3112  # skip 3110-3111 to avoid collision
-
-# Add /etc/hosts entries (requires sudo — run in your terminal)
-sudo sh -c 'echo "127.0.0.1 asc-web.local" >> /etc/hosts'
-sudo sh -c 'echo "127.0.0.1 asc-editor.local" >> /etc/hosts'
-```
-
-Start the servers on their assigned localdev ports:
-
-```bash
-# Command Center + Console (asc web-server on localdev port)
-ASC_PORT=$(jq -r '.apps["asc-web"].port' ~/.local-dev-proxy/ports.json)
-nohup asc web-server --port "$ASC_PORT" > /tmp/asc-web.log 2>&1 &
-
-# Screenshot Studio (static file server on localdev port)
-EDITOR_PORT=$(jq -r '.apps["asc-editor"].port' ~/.local-dev-proxy/ports.json)
-nohup npx -y http-server ~/.asc/web/homepage -p "$EDITOR_PORT" --silent > /tmp/asc-editor.log 2>&1 &
-```
-
-Access via HTTPS through Traefik:
-
-| App | URL |
-|-----|-----|
-| **Command Center** | https://asc-web.local/command-center/ |
-| **Console** | https://asc-web.local/console/ |
-| **Screenshot Studio** | https://asc-editor.local/editor/ |
-
-### Port collision warning
-
-`asc web-server --port N` binds **two** ports: `N` (HTTP) and `N+1` (its own built-in HTTPS). When assigning localdev ports, leave a gap of at least 2 between asc-web and the next app to avoid `EADDRINUSE` errors. Traefik handles TLS termination for the `.local` domains — the built-in HTTPS on port N+1 is unused but still binds.
-
-### Server details
-
-The `asc web-server` runs a Node.js HTTP server. Routes: `/api/run` executes `asc` CLI commands (validated — blocks shell metacharacters), static files served for Command Center and Console. The Screenshot Studio is fully static and works without any backend — it only needs a file server.
+**Port collision warning**: `asc web-server --port N` binds **two** ports: `N` (HTTP) and `N+1` (built-in HTTPS). Leave a gap of at least 2 between this and other services.
 
 ## Agent Skills
 
