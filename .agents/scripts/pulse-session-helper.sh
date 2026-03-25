@@ -292,14 +292,10 @@ EOF
 }
 
 #######################################
-# Stop pulse session (graceful)
-#
-# 1. Create stop flag (overrides all consent layers)
-# 2. Remove the session flag
-# 3. Wait for in-flight workers to finish (up to grace period)
-# 4. Optionally kill remaining workers if --force is passed
+# Parse --force/-f flag from stop arguments
+# Outputs: "true" if force, "false" otherwise
 #######################################
-cmd_stop() {
+_stop_parse_force() {
 	local force=false
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
@@ -312,6 +308,17 @@ cmd_stop() {
 			;;
 		esac
 	done
+	echo "$force"
+	return 0
+}
+
+#######################################
+# Early-exit guard for cmd_stop
+# Returns: 0 to continue, 1 to exit (already stopped / not enabled)
+# Args: $1 = force ("true"/"false")
+#######################################
+_stop_check_preconditions() {
+	local force="$1"
 
 	# Check if already stopped — but allow --force through so it can kill workers
 	if [[ -f "$STOP_FLAG" ]] && ! is_session_active; then
@@ -319,22 +326,29 @@ cmd_stop() {
 		worker_count_check=$(count_workers)
 		if [[ "$force" != "true" ]] && [[ "$worker_count_check" -eq 0 ]] && ! is_pulse_running; then
 			print_info "Pulse is already stopped"
-			return 0
+			return 1
 		fi
 	fi
 
 	# If no session flag and no config consent, nothing to stop
 	if ! is_session_active && ! is_config_consent_enabled; then
 		print_info "Pulse is not enabled (no session flag, no config consent)"
-		return 0
+		return 1
 	fi
 
+	return 0
+}
+
+#######################################
+# Write stop flag, remove session flag, log the event
+# Outputs: started_at value (may be empty)
+#######################################
+_stop_write_flags() {
 	local started_at=""
 	if is_session_active; then
 		started_at=$(grep '^started_at=' "$SESSION_FLAG" | cut -d= -f2 | tr -cd '[:alnum:]T:Z.+-')
 	fi
 
-	# Create stop flag — this overrides all consent layers immediately
 	local now_iso
 	now_iso=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
 	local user
@@ -344,57 +358,54 @@ stopped_at=${now_iso}
 stopped_by=${user}
 EOF
 
-	# Also remove session flag for clean state
 	rm -f "$SESSION_FLAG"
-
 	echo "[pulse-session] Session stopped at ${now_iso} (was started: ${started_at:-unknown})" >>"$LOGFILE"
+	echo "$started_at"
+	return 0
+}
 
-	print_success "Pulse stopped (no new pulse cycles will start)"
+#######################################
+# Force-kill all worker processes via SIGTERM
+# Args: $1 = worker_count
+#######################################
+_stop_force_kill_workers() {
+	local worker_count="$1"
 
-	# Check for in-flight workers
-	local worker_count
-	worker_count=$(count_workers)
-
-	if [[ "$worker_count" -eq 0 ]]; then
-		print_success "No active workers — clean shutdown"
-		return 0
-	fi
-
-	echo ""
-	print_info "${worker_count} worker(s) still running"
-
-	if [[ "$force" == "true" ]]; then
-		print_warning "Force mode: sending SIGTERM to all workers..."
-		# Kill worker processes gracefully
-		local killed=0
-		while IFS= read -r line; do
-			local pid
-			pid=$(echo "$line" | awk '{print $1}')
-			if [[ -n "$pid" ]]; then
-				kill "$pid" 2>/dev/null || true
-				killed=$((killed + 1))
-			fi
-		done < <(ps axo pid,command | grep '[/]full-loop' | grep '\.opencode')
-
-		if [[ "$killed" -gt 0 ]]; then
-			print_info "Sent SIGTERM to ${killed} worker(s)"
-			sleep 3
-
-			# Check if any survived
-			local remaining
-			remaining=$(count_workers)
-			if [[ "$remaining" -gt 0 ]]; then
-				print_warning "${remaining} worker(s) still running after SIGTERM"
-				echo "  They will finish their current operation and exit."
-				echo "  Force kill with: kill -9 \$(ps axo pid,command | grep '[/]full-loop' | grep '\\.opencode' | awk '{print \$1}')"
-			else
-				print_success "All workers stopped"
-			fi
+	print_warning "Force mode: sending SIGTERM to all workers..."
+	local killed=0
+	while IFS= read -r line; do
+		local pid
+		pid=$(echo "$line" | awk '{print $1}')
+		if [[ -n "$pid" ]]; then
+			kill "$pid" 2>/dev/null || true
+			killed=$((killed + 1))
 		fi
-		return 0
-	fi
+	done < <(ps axo pid,command | grep '[/]full-loop' | grep '\.opencode')
 
-	# Graceful mode: wait for workers to finish
+	if [[ "$killed" -gt 0 ]]; then
+		print_info "Sent SIGTERM to ${killed} worker(s)"
+		sleep 3
+
+		local remaining
+		remaining=$(count_workers)
+		if [[ "$remaining" -gt 0 ]]; then
+			print_warning "${remaining} worker(s) still running after SIGTERM"
+			echo "  They will finish their current operation and exit."
+			echo "  Force kill with: kill -9 \$(ps axo pid,command | grep '[/]full-loop' | grep '\\.opencode' | awk '{print \$1}')"
+		else
+			print_success "All workers stopped"
+		fi
+	fi
+	return 0
+}
+
+#######################################
+# Wait gracefully for workers to finish (up to grace period)
+# Args: $1 = initial worker_count
+#######################################
+_stop_wait_for_workers() {
+	local worker_count="$1"
+
 	echo "  Workers will complete their current PR/commit cycle."
 	echo "  No new work will be dispatched."
 	echo ""
@@ -430,36 +441,60 @@ EOF
 }
 
 #######################################
-# Show pulse session status
+# Stop pulse session (graceful)
+#
+# 1. Create stop flag (overrides all consent layers)
+# 2. Remove the session flag
+# 3. Wait for in-flight workers to finish (up to grace period)
+# 4. Optionally kill remaining workers if --force is passed
 #######################################
-cmd_status() {
-	echo -e "${BOLD}Pulse Status${NC}"
-	echo "────────────"
+cmd_stop() {
+	local force
+	force=$(_stop_parse_force "$@")
+
+	_stop_check_preconditions "$force" || return 0
+
+	_stop_write_flags >/dev/null
+
+	print_success "Pulse stopped (no new pulse cycles will start)"
+
+	local worker_count
+	worker_count=$(count_workers)
+
+	if [[ "$worker_count" -eq 0 ]]; then
+		print_success "No active workers — clean shutdown"
+		return 0
+	fi
+
 	echo ""
+	print_info "${worker_count} worker(s) still running"
 
-	# Consent layers (mirrors check_session_gate() in pulse-wrapper.sh)
-	local effective_state="disabled"
-	local effective_reason=""
+	if [[ "$force" == "true" ]]; then
+		_stop_force_kill_workers "$worker_count"
+		return 0
+	fi
 
-	# Layer 1: Stop flag (highest priority — overrides everything)
+	_stop_wait_for_workers "$worker_count"
+	return 0
+}
+
+#######################################
+# Resolve effective consent state for status display
+# Outputs four lines: effective_state, effective_reason,
+#   has_stop_flag (true/false), has_session_flag (true/false),
+#   has_config_consent (true/false)
+#######################################
+_status_resolve_consent() {
 	local has_stop_flag=false
-	if [[ -f "$STOP_FLAG" ]]; then
-		has_stop_flag=true
-	fi
-
-	# Layer 2: Session flag (explicit user action)
 	local has_session_flag=false
-	if is_session_active; then
-		has_session_flag=true
-	fi
-
-	# Layer 3: Config consent (persistent, survives reboots)
 	local has_config_consent=false
-	if is_config_consent_enabled; then
-		has_config_consent=true
-	fi
+	local effective_state="disabled"
+	local effective_reason="no consent layer active"
 
-	# Determine effective state
+	[[ -f "$STOP_FLAG" ]] && has_stop_flag=true
+	is_session_active && has_session_flag=true
+	is_config_consent_enabled && has_config_consent=true
+
 	if [[ "$has_stop_flag" == "true" ]]; then
 		effective_state="stopped"
 		effective_reason="stop flag (aidevops pulse stop)"
@@ -469,12 +504,22 @@ cmd_status() {
 	elif [[ "$has_config_consent" == "true" ]]; then
 		effective_state="enabled"
 		effective_reason="config consent (orchestration.supervisor_pulse=true)"
-	else
-		effective_state="disabled"
-		effective_reason="no consent layer active"
 	fi
 
-	# Display effective state
+	printf '%s\n%s\n%s\n%s\n%s\n' \
+		"$effective_state" "$effective_reason" \
+		"$has_stop_flag" "$has_session_flag" "$has_config_consent"
+	return 0
+}
+
+#######################################
+# Print effective pulse state line
+# Args: $1=effective_state, $2=effective_reason
+#######################################
+_status_print_effective_state() {
+	local effective_state="$1"
+	local effective_reason="$2"
+
 	if [[ "$effective_state" == "enabled" ]]; then
 		echo -e "  Pulse:       ${GREEN}enabled${NC} via ${effective_reason}"
 	elif [[ "$effective_state" == "stopped" ]]; then
@@ -482,11 +527,22 @@ cmd_status() {
 	else
 		echo -e "  Pulse:       ${YELLOW}disabled${NC} (${effective_reason})"
 	fi
+	return 0
+}
 
-	# Show consent layer details
+#######################################
+# Print consent layer details
+# Args: $1=has_stop_flag, $2=has_session_flag, $3=has_config_consent
+#######################################
+_status_print_consent_layers() {
+	local has_stop_flag="$1"
+	local has_session_flag="$2"
+	local has_config_consent="$3"
+
 	# Sanitize values from flag files to prevent terminal escape injection
 	echo ""
 	echo -e "  ${BOLD}Consent layers:${NC}"
+
 	if [[ "$has_stop_flag" == "true" ]]; then
 		local stopped_at
 		stopped_at=$(grep '^stopped_at=' "$STOP_FLAG" | cut -d= -f2 | tr -cd '[:alnum:]T:Z.+-')
@@ -494,6 +550,7 @@ cmd_status() {
 	else
 		echo -e "    Stop flag:      ${GREEN}clear${NC}"
 	fi
+
 	if [[ "$has_session_flag" == "true" ]]; then
 		local started_at started_by
 		started_at=$(grep '^started_at=' "$SESSION_FLAG" | cut -d= -f2 | tr -cd '[:alnum:]T:Z.+-')
@@ -502,18 +559,22 @@ cmd_status() {
 	else
 		echo -e "    Session flag:   ${YELLOW}inactive${NC}"
 	fi
+
 	if [[ "$has_config_consent" == "true" ]]; then
 		echo -e "    Config consent: ${GREEN}enabled${NC}"
 	else
 		echo -e "    Config consent: ${YELLOW}disabled${NC}"
 	fi
-	echo ""
+	return 0
+}
 
-	# Pulse process — handle SETUP:/IDLE: sentinels (GH#4575)
+#######################################
+# Print pulse process status line
+#######################################
+_status_print_process() {
 	if is_pulse_running; then
 		local pulse_pid_content pulse_display_pid
 		pulse_pid_content=$(cat "$PIDFILE" || echo "?")
-		# Extract numeric PID for display
 		if [[ "$pulse_pid_content" == SETUP:* ]]; then
 			pulse_display_pid="${pulse_pid_content#SETUP:}"
 			echo -e "  Process:     ${YELLOW}setup${NC} (PID ${pulse_display_pid}, pre-flight stages)"
@@ -526,37 +587,47 @@ cmd_status() {
 		idle_scheduler_name=$(get_scheduler_name)
 		echo -e "  Process:     ${BLUE}idle${NC} (waiting for next ${idle_scheduler_name} cycle)"
 	fi
+	return 0
+}
 
-	# Workers
-	local worker_count
-	worker_count=$(count_workers)
+#######################################
+# Print workers, max workers, repos, last pulse summary
+# Args: $1 = worker_count (pre-computed to avoid double ps call)
+#######################################
+_status_print_workers_summary() {
+	local worker_count="$1"
+
 	if [[ "$worker_count" -gt 0 ]]; then
 		echo -e "  Workers:     ${GREEN}${worker_count} active${NC}"
 	else
 		echo "  Workers:     0"
 	fi
 
-	# Max workers
 	local max_workers="?"
 	if [[ -f "$MAX_WORKERS_FILE" ]]; then
 		max_workers=$(cat "$MAX_WORKERS_FILE" || echo "?")
 	fi
 	echo "  Max workers: ${max_workers}"
 
-	# Repos
 	local repo_count
 	repo_count=$(get_pulse_repo_count)
 	echo "  Repos:       ${repo_count} pulse-enabled"
 
-	# Last pulse
 	local last_pulse
 	last_pulse=$(get_last_pulse_time)
 	echo "  Last pulse:  ${last_pulse}"
+	return 0
+}
 
-	echo ""
+#######################################
+# Print active worker process details
+# Args: $1 = worker_count
+#######################################
+_status_print_worker_details() {
+	local worker_count="$1"
 
-	# Worker details (if any)
 	if [[ "$worker_count" -gt 0 ]]; then
+		echo ""
 		echo -e "${BOLD}Active Workers${NC}"
 		echo "──────────────"
 		echo ""
@@ -574,8 +645,16 @@ cmd_status() {
 		done
 		echo ""
 	fi
+	return 0
+}
 
-	# Hint
+#######################################
+# Print action hints based on effective state
+# Args: $1 = effective_state
+#######################################
+_status_print_hints() {
+	local effective_state="$1"
+
 	if [[ "$effective_state" == "enabled" ]]; then
 		echo "  Stop:  aidevops pulse stop"
 		echo "  Force: aidevops pulse stop --force"
@@ -585,6 +664,39 @@ cmd_status() {
 		echo "  Start:  aidevops pulse start"
 		echo "  Or set: orchestration.supervisor_pulse=true in config.jsonc"
 	fi
+	return 0
+}
+
+#######################################
+# Show pulse session status
+#######################################
+cmd_status() {
+	echo -e "${BOLD}Pulse Status${NC}"
+	echo "────────────"
+	echo ""
+
+	# Resolve consent layers (5-line output: state, reason, stop, session, config)
+	local consent_output effective_state effective_reason has_stop_flag has_session_flag has_config_consent
+	consent_output=$(_status_resolve_consent)
+	effective_state=$(echo "$consent_output" | sed -n '1p')
+	effective_reason=$(echo "$consent_output" | sed -n '2p')
+	has_stop_flag=$(echo "$consent_output" | sed -n '3p')
+	has_session_flag=$(echo "$consent_output" | sed -n '4p')
+	has_config_consent=$(echo "$consent_output" | sed -n '5p')
+
+	_status_print_effective_state "$effective_state" "$effective_reason"
+	_status_print_consent_layers "$has_stop_flag" "$has_session_flag" "$has_config_consent"
+	echo ""
+
+	_status_print_process
+
+	local worker_count
+	worker_count=$(count_workers)
+	_status_print_workers_summary "$worker_count"
+	echo ""
+
+	_status_print_worker_details "$worker_count"
+	_status_print_hints "$effective_state"
 	return 0
 }
 
