@@ -1353,14 +1353,28 @@ list_active_worker_processes() {
 	#      (sandbox-disabled path and test fixtures)
 	# Exclude: lines starting with "node " (node child) or whose command
 	# starts with a path ending in "/.opencode " (binary grandchild).
-	ps axo pid,etime,command | awk '
+	#
+	# GH#6413: Process state filtering — exclude zombie (Z) and stopped (T)
+	# processes. These are dead/stuck processes that hold no useful work but
+	# appear as "active" in worker counts, inflating struggle ratios and
+	# preventing the pulse from dispatching replacements. The stat column is
+	# used for filtering only; output format remains pid,etime,command for
+	# backward compatibility with all consumers.
+	ps axo pid,stat,etime,command | awk '
 		/\/full-loop/ &&
 		$0 !~ /(^|[[:space:]])\/pulse([[:space:]]|$)/ &&
 		$0 !~ /Supervisor Pulse/ &&
 		$0 ~ /(^|[[:space:]\/])\.?opencode([[:space:]]|$)/ &&
 		$0 !~ /[[:space:]]node[[:space:]].*\/opencode/ &&
 		$0 !~ /\/bin\/\.opencode[[:space:]]/ {
-			print
+			# $2 is the stat column (e.g., S, SN, Ss, Z, Zs, T, TN)
+			stat = $2
+			# Exclude zombies (Z*) and stopped processes (T*)
+			if (stat ~ /^[ZT]/) next
+			# Print pid, etime, command (skip stat to preserve output format)
+			printf "%s %s", $1, $3
+			for (i = 4; i <= NF; i++) printf " %s", $i
+			printf "\n"
 		}
 	'
 	return 0
