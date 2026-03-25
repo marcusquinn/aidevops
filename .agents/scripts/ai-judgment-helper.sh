@@ -33,6 +33,7 @@
 #   2 - API unavailable (fallback used, still exits 0 for callers)
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
+# shellcheck source=shared-constants.sh
 source "${SCRIPT_DIR}/shared-constants.sh"
 
 set -euo pipefail

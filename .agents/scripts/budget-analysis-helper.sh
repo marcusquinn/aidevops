@@ -15,6 +15,7 @@
 #   budget-analysis-helper.sh help
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
+# shellcheck source=shared-constants.sh
 source "${SCRIPT_DIR}/shared-constants.sh"
 set -euo pipefail
 init_log_file
