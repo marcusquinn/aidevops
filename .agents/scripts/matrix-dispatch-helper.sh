@@ -155,134 +155,127 @@ check_opencode_server() {
 }
 
 #######################################
-# Interactive setup wizard
+# Read homeserver URL with optional existing-value prompt
+# Sets $homeserver in caller scope via nameref-free pattern (bash 3.2 compat)
+# Returns: prints the resolved homeserver URL
 #######################################
-cmd_setup() {
-	local dry_run=false
-	if [[ "${1:-}" == "--dry-run" ]]; then
-		dry_run=true
-		shift
-	fi
-
-	check_deps || return 1
-	ensure_dirs
-
-	echo -e "${BOLD}Matrix Bot Setup${NC}"
-	if [[ "$dry_run" == "true" ]]; then
-		echo -e "${YELLOW}[DRY RUN MODE - No changes will be saved]${NC}"
-	fi
-	echo "──────────────────────────────────"
-	echo ""
-	echo "This wizard configures a Matrix bot that dispatches messages to AI runners."
-	echo ""
-
-	# Homeserver URL
-	local homeserver
+_setup_read_homeserver() {
+	local result=""
 	if config_exists; then
 		local existing_hs
 		existing_hs=$(config_get "homeserverUrl")
 		if [[ -n "$existing_hs" ]]; then
-			echo -n "Matrix homeserver URL [$existing_hs]: "
-			read -r homeserver </dev/tty
-			homeserver="${homeserver:-$existing_hs}"
+			echo -n "Matrix homeserver URL [$existing_hs]: " >/dev/tty
+			read -r result </dev/tty
+			result="${result:-$existing_hs}"
 		else
-			echo -n "Matrix homeserver URL (e.g., https://matrix.example.com): "
-			read -r homeserver </dev/tty
+			echo -n "Matrix homeserver URL (e.g., https://matrix.example.com): " >/dev/tty
+			read -r result </dev/tty
 		fi
 	else
-		echo -n "Matrix homeserver URL (e.g., https://matrix.example.com): "
-		read -r homeserver </dev/tty
+		echo -n "Matrix homeserver URL (e.g., https://matrix.example.com): " >/dev/tty
+		read -r result </dev/tty
 	fi
+	printf '%s' "$result"
+	return 0
+}
 
-	if [[ -z "$homeserver" ]]; then
-		log_error "Homeserver URL is required"
-		return 1
-	fi
-
-	# Access token
-	echo ""
-	echo "Create a bot account on your Matrix server, then get an access token."
-	echo "For Synapse: use the admin API or register via Element and extract token."
-	echo "For Cloudron Synapse: Admin Console > Users > Create user, then login via Element."
-	echo ""
-
-	local access_token
+#######################################
+# Read access token with masked existing-value prompt
+# Returns: prints the resolved access token
+#######################################
+_setup_read_access_token() {
+	local result=""
 	local existing_token
 	existing_token=$(config_get "accessToken")
 	if [[ -n "$existing_token" ]]; then
-		echo -n "Bot access token [****${existing_token: -8}]: "
-		read -rs access_token </dev/tty
-		echo ""
-		access_token="${access_token:-$existing_token}"
+		echo -n "Bot access token [****${existing_token: -8}]: " >/dev/tty
+		read -rs result </dev/tty
+		echo "" >/dev/tty
+		result="${result:-$existing_token}"
 	else
-		echo -n "Bot access token: "
-		read -rs access_token </dev/tty
-		echo ""
+		echo -n "Bot access token: " >/dev/tty
+		read -rs result </dev/tty
+		echo "" >/dev/tty
 	fi
+	printf '%s' "$result"
+	return 0
+}
 
-	if [[ -z "$access_token" ]]; then
-		log_error "Access token is required"
-		return 1
-	fi
+#######################################
+# Read optional setup fields: allowed_users, default_runner, idle_timeout
+# Outputs three lines: allowed_users, default_runner, idle_timeout
+#######################################
+_setup_read_optional_fields() {
+	local allowed_users="" default_runner="" idle_timeout=""
 
-	# Allowed users (optional)
-	echo ""
-	echo "Restrict which Matrix users can trigger the bot (comma-separated)."
-	echo "Leave empty to allow all users in mapped rooms."
-	echo "Example: @admin:example.com,@dev:example.com"
-	echo ""
-
-	local allowed_users
+	# Allowed users
+	echo "" >/dev/tty
+	echo "Restrict which Matrix users can trigger the bot (comma-separated)." >/dev/tty
+	echo "Leave empty to allow all users in mapped rooms." >/dev/tty
+	echo "Example: @admin:example.com,@dev:example.com" >/dev/tty
+	echo "" >/dev/tty
 	local existing_users
 	existing_users=$(config_get "allowedUsers")
 	if [[ -n "$existing_users" ]]; then
-		echo -n "Allowed users [$existing_users]: "
+		echo -n "Allowed users [$existing_users]: " >/dev/tty
 		read -r allowed_users </dev/tty
 		allowed_users="${allowed_users:-$existing_users}"
 	else
-		echo -n "Allowed users (empty = all): "
+		echo -n "Allowed users (empty = all): " >/dev/tty
 		read -r allowed_users </dev/tty
 	fi
 
 	# Default runner
-	echo ""
-	echo "Default runner for rooms without explicit mapping."
-	echo "Messages in unmapped rooms go to this runner (or are ignored if empty)."
-	echo ""
-
-	local default_runner
+	echo "" >/dev/tty
+	echo "Default runner for rooms without explicit mapping." >/dev/tty
+	echo "Messages in unmapped rooms go to this runner (or are ignored if empty)." >/dev/tty
+	echo "" >/dev/tty
 	local existing_runner
 	existing_runner=$(config_get "defaultRunner")
 	if [[ -n "$existing_runner" ]]; then
-		echo -n "Default runner [$existing_runner]: "
+		echo -n "Default runner [$existing_runner]: " >/dev/tty
 		read -r default_runner </dev/tty
 		default_runner="${default_runner:-$existing_runner}"
 	else
-		echo -n "Default runner (empty = ignore unmapped rooms): "
+		echo -n "Default runner (empty = ignore unmapped rooms): " >/dev/tty
 		read -r default_runner </dev/tty
 	fi
 
 	# Session idle timeout
-	echo ""
-	echo "Session idle timeout (seconds). After this period of inactivity,"
-	echo "the bot compacts the conversation context and frees the session."
-	echo "The compacted summary is used to prime the next session."
-	echo ""
-
-	local idle_timeout
+	echo "" >/dev/tty
+	echo "Session idle timeout (seconds). After this period of inactivity," >/dev/tty
+	echo "the bot compacts the conversation context and frees the session." >/dev/tty
+	echo "The compacted summary is used to prime the next session." >/dev/tty
+	echo "" >/dev/tty
 	local existing_timeout
 	existing_timeout=$(config_get "sessionIdleTimeout")
 	if [[ -n "$existing_timeout" ]]; then
-		echo -n "Session idle timeout [${existing_timeout}s]: "
+		echo -n "Session idle timeout [${existing_timeout}s]: " >/dev/tty
 		read -r idle_timeout </dev/tty
 		idle_timeout="${idle_timeout:-$existing_timeout}"
 	else
-		echo -n "Session idle timeout [300]: "
+		echo -n "Session idle timeout [300]: " >/dev/tty
 		read -r idle_timeout </dev/tty
 		idle_timeout="${idle_timeout:-300}"
 	fi
 
-	# Save config
+	printf '%s\n%s\n%s\n' "$allowed_users" "$default_runner" "$idle_timeout"
+	return 0
+}
+
+#######################################
+# Save or preview setup config
+# Args: dry_run homeserver access_token allowed_users default_runner idle_timeout
+#######################################
+_setup_save_config() {
+	local dry_run="$1"
+	local homeserver="$2"
+	local access_token="$3"
+	local allowed_users="$4"
+	local default_runner="$5"
+	local idle_timeout="$6"
+
 	if [[ "$dry_run" == "true" ]]; then
 		log_info "Dry-run: Would save configuration to $CONFIG_FILE"
 		echo ""
@@ -333,9 +326,17 @@ cmd_setup() {
 		mv "$temp_file" "$CONFIG_FILE"
 		chmod 600 "$CONFIG_FILE"
 	fi
+	return 0
+}
 
-	# Install matrix-bot-sdk and better-sqlite3 if needed
+#######################################
+# Install npm dependencies for the bot
+# Args: dry_run
+#######################################
+_setup_install_deps() {
+	local dry_run="$1"
 	local needs_install=false
+
 	if [[ ! -d "$DATA_DIR/node_modules/matrix-bot-sdk" ]]; then
 		needs_install=true
 	fi
@@ -356,8 +357,110 @@ cmd_setup() {
 			log_success "Dependencies installed"
 		fi
 	fi
+	return 0
+}
 
-	# Generate session store and bot scripts
+#######################################
+# Post-setup success messages and missing-runner check
+#######################################
+_setup_post_success() {
+	log_success "Setup complete!"
+	echo ""
+
+	local runner_helper="$HOME/.aidevops/agents/scripts/runner-helper.sh"
+	if config_exists && [[ -x "$runner_helper" ]]; then
+		local mappings
+		mappings=$(jq -r '.roomMappings // {} | values[]' "$CONFIG_FILE" 2>/dev/null)
+		if [[ -n "$mappings" ]]; then
+			local missing_runners=()
+			while IFS= read -r runner_name; do
+				if ! "$runner_helper" status "$runner_name" &>/dev/null; then
+					missing_runners+=("$runner_name")
+				fi
+			done <<<"$mappings"
+
+			if ((${#missing_runners[@]} > 0)); then
+				log_info "Creating missing runners for mapped rooms..."
+				for mr in "${missing_runners[@]}"; do
+					if "$runner_helper" create "$mr" --description "Matrix bot runner for $mr" 2>/dev/null; then
+						log_success "Created runner: $mr"
+					else
+						log_warn "Failed to create runner: $mr"
+						echo "  Create manually: runner-helper.sh create $mr --description \"Description\" --workdir /path/to/project"
+					fi
+				done
+				echo ""
+			fi
+		fi
+	fi
+
+	echo "Next steps:"
+	echo "  1. Map rooms to runners:"
+	echo "     matrix-dispatch-helper.sh map '!roomid:server' my-runner"
+	echo ""
+	echo "  2. Create runners for each mapped room:"
+	echo "     runner-helper.sh create <name> --description \"desc\" --workdir /path/to/project"
+	echo ""
+	echo "  3. Start the bot:"
+	echo "     matrix-dispatch-helper.sh start"
+	echo ""
+	echo "  4. In a mapped Matrix room, type:"
+	echo "     !ai Review the auth module for security issues"
+	return 0
+}
+
+#######################################
+# Interactive setup wizard
+#######################################
+cmd_setup() {
+	local dry_run=false
+	if [[ "${1:-}" == "--dry-run" ]]; then
+		dry_run=true
+		shift
+	fi
+
+	check_deps || return 1
+	ensure_dirs
+
+	echo -e "${BOLD}Matrix Bot Setup${NC}"
+	if [[ "$dry_run" == "true" ]]; then
+		echo -e "${YELLOW}[DRY RUN MODE - No changes will be saved]${NC}"
+	fi
+	echo "──────────────────────────────────"
+	echo ""
+	echo "This wizard configures a Matrix bot that dispatches messages to AI runners."
+	echo ""
+
+	local homeserver
+	homeserver=$(_setup_read_homeserver)
+	if [[ -z "$homeserver" ]]; then
+		log_error "Homeserver URL is required"
+		return 1
+	fi
+
+	echo ""
+	echo "Create a bot account on your Matrix server, then get an access token."
+	echo "For Synapse: use the admin API or register via Element and extract token."
+	echo "For Cloudron Synapse: Admin Console > Users > Create user, then login via Element."
+	echo ""
+
+	local access_token
+	access_token=$(_setup_read_access_token)
+	if [[ -z "$access_token" ]]; then
+		log_error "Access token is required"
+		return 1
+	fi
+
+	local optional_fields allowed_users default_runner idle_timeout
+	optional_fields=$(_setup_read_optional_fields)
+	allowed_users=$(printf '%s' "$optional_fields" | sed -n '1p')
+	default_runner=$(printf '%s' "$optional_fields" | sed -n '2p')
+	idle_timeout=$(printf '%s' "$optional_fields" | sed -n '3p')
+
+	_setup_save_config "$dry_run" "$homeserver" "$access_token" "$allowed_users" "$default_runner" "$idle_timeout" || return 1
+
+	_setup_install_deps "$dry_run" || return 1
+
 	if [[ "$dry_run" == "true" ]]; then
 		log_info "Dry-run: Would generate session store and bot scripts"
 	else
@@ -372,49 +475,7 @@ cmd_setup() {
 		echo "To apply these settings, run:"
 		echo "  matrix-dispatch-helper.sh setup"
 	else
-		log_success "Setup complete!"
-		echo ""
-
-		# Check for existing room mappings and warn about missing runners
-		local runner_helper="$HOME/.aidevops/agents/scripts/runner-helper.sh"
-		if config_exists && [[ -x "$runner_helper" ]]; then
-			local mappings
-			mappings=$(jq -r '.roomMappings // {} | values[]' "$CONFIG_FILE" 2>/dev/null)
-			if [[ -n "$mappings" ]]; then
-				local missing_runners=()
-				while IFS= read -r runner_name; do
-					if ! "$runner_helper" status "$runner_name" &>/dev/null; then
-						missing_runners+=("$runner_name")
-					fi
-				done <<<"$mappings"
-
-				if ((${#missing_runners[@]} > 0)); then
-					log_info "Creating missing runners for mapped rooms..."
-					for mr in "${missing_runners[@]}"; do
-						if "$runner_helper" create "$mr" --description "Matrix bot runner for $mr" 2>/dev/null; then
-							log_success "Created runner: $mr"
-						else
-							log_warn "Failed to create runner: $mr"
-							echo "  Create manually: runner-helper.sh create $mr --description \"Description\" --workdir /path/to/project"
-						fi
-					done
-					echo ""
-				fi
-			fi
-		fi
-
-		echo "Next steps:"
-		echo "  1. Map rooms to runners:"
-		echo "     matrix-dispatch-helper.sh map '!roomid:server' my-runner"
-		echo ""
-		echo "  2. Create runners for each mapped room:"
-		echo "     runner-helper.sh create <name> --description \"desc\" --workdir /path/to/project"
-		echo ""
-		echo "  3. Start the bot:"
-		echo "     matrix-dispatch-helper.sh start"
-		echo ""
-		echo "  4. In a mapped Matrix room, type:"
-		echo "     !ai Review the auth module for security issues"
+		_setup_post_success
 	fi
 
 	return 0
@@ -1879,6 +1940,139 @@ cmd_logs() {
 }
 
 #######################################
+# Resolve session DB path and table name
+# Outputs two lines: db_path, table_name
+# Args: subcmd (used for empty-DB messaging)
+#######################################
+_sessions_resolve_db() {
+	local subcmd="$1"
+	local db_path="$MEMORY_DB"
+	local table_name="matrix_room_sessions"
+
+	if [[ ! -f "$db_path" ]] || ! sqlite3 -cmd ".timeout 5000" "$db_path" "SELECT 1 FROM $table_name LIMIT 1;" &>/dev/null; then
+		if [[ -f "$SESSION_DB" ]]; then
+			db_path="$SESSION_DB"
+			table_name="sessions"
+			log_info "Using legacy session store: $SESSION_DB"
+		else
+			if [[ "$subcmd" == "list" ]]; then
+				echo -e "${BOLD}Conversation Sessions${NC}"
+				echo "──────────────────────────────────"
+				echo "(no sessions — database not yet created)"
+				echo "Sessions are created automatically when the bot processes messages."
+			else
+				log_info "No session database"
+			fi
+			printf 'NONE\nNONE\n'
+			return 0
+		fi
+	fi
+
+	printf '%s\n%s\n' "$db_path" "$table_name"
+	return 0
+}
+
+#######################################
+# List sessions from entity-aware store
+# Args: db_path
+#######################################
+_sessions_list_entity_aware() {
+	local db_path="$1"
+	local sessions
+	sessions=$(sqlite3 -cmd ".timeout 5000" -separator '|' "$db_path" \
+		"SELECT s.room_id, s.runner_name, s.message_count, COALESCE(e.name, ''), s.entity_id, s.last_active
+		 FROM matrix_room_sessions s
+		 LEFT JOIN entities e ON s.entity_id = e.id
+		 ORDER BY s.last_active DESC;" 2>/dev/null)
+
+	if [[ -z "$sessions" ]]; then
+		echo "(no sessions)"
+		return 0
+	fi
+
+	printf "%-35s %-15s %5s %-20s %s\n" "Room ID" "Runner" "Msgs" "Entity" "Last Active"
+	printf "%-35s %-15s %5s %-20s %s\n" "───────────────────────────────────" "───────────────" "─────" "────────────────────" "───────────────────"
+
+	while IFS='|' read -r room runner msgs entity_name entity_id active; do
+		local entity_display="${entity_name:-${entity_id:-(none)}}"
+		printf "%-35s %-15s %5s %-20s %s\n" "$room" "$runner" "$msgs" "$entity_display" "$active"
+	done <<<"$sessions"
+	return 0
+}
+
+#######################################
+# List sessions from legacy store
+# Args: db_path
+#######################################
+_sessions_list_legacy() {
+	local db_path="$1"
+	local sessions
+	sessions=$(sqlite3 -cmd ".timeout 5000" -separator '|' "$db_path" \
+		"SELECT room_id, runner_name, message_count, length(compacted_context), last_active FROM sessions ORDER BY last_active DESC;" 2>/dev/null)
+
+	if [[ -z "$sessions" ]]; then
+		echo "(no sessions)"
+		return 0
+	fi
+
+	printf "%-40s %-18s %6s %8s %s\n" "Room ID" "Runner" "Msgs" "Context" "Last Active"
+	printf "%-40s %-18s %6s %8s %s\n" "────────────────────────────────────────" "──────────────────" "──────" "────────" "───────────────────"
+
+	while IFS='|' read -r room runner msgs ctx_bytes active; do
+		local ctx_display
+		if [[ "$ctx_bytes" -gt 1024 ]]; then
+			ctx_display="$((ctx_bytes / 1024))KB"
+		else
+			ctx_display="${ctx_bytes}B"
+		fi
+		printf "%-40s %-18s %6s %8s %s\n" "$room" "$runner" "$msgs" "$ctx_display" "$active"
+	done <<<"$sessions"
+	return 0
+}
+
+#######################################
+# Show stats from entity-aware store
+# Args: db_path
+#######################################
+_sessions_stats_entity_aware() {
+	local db_path="$1"
+	local total_sessions active_sessions matrix_interactions entity_count db_size
+	total_sessions=$(sqlite3 -cmd ".timeout 5000" "$db_path" "SELECT COUNT(*) FROM matrix_room_sessions;" 2>/dev/null || echo "0")
+	active_sessions=$(sqlite3 -cmd ".timeout 5000" "$db_path" "SELECT COUNT(*) FROM matrix_room_sessions WHERE session_id != '';" 2>/dev/null || echo "0")
+	matrix_interactions=$(sqlite3 -cmd ".timeout 5000" "$db_path" "SELECT COUNT(*) FROM interactions WHERE channel = 'matrix';" 2>/dev/null || echo "0")
+	entity_count=$(sqlite3 -cmd ".timeout 5000" "$db_path" "SELECT COUNT(*) FROM entity_channels WHERE channel = 'matrix';" 2>/dev/null || echo "0")
+	db_size=$(stat -f%z "$db_path" 2>/dev/null || stat -c%s "$db_path" 2>/dev/null || echo "0")
+
+	echo "Total sessions:       ${total_sessions:-0}"
+	echo "Active sessions:      ${active_sessions:-0}"
+	echo "Matrix interactions:  ${matrix_interactions:-0} (Layer 0, immutable)"
+	echo "Matrix entities:      ${entity_count:-0}"
+	echo "Database:             $db_path ($((${db_size:-0} / 1024))KB)"
+	return 0
+}
+
+#######################################
+# Show stats from legacy store
+# Args: db_path
+#######################################
+_sessions_stats_legacy() {
+	local db_path="$1"
+	local total_sessions active_sessions total_messages context_bytes db_size
+	total_sessions=$(sqlite3 -cmd ".timeout 5000" "$db_path" "SELECT COUNT(*) FROM sessions;" 2>/dev/null || echo "0")
+	active_sessions=$(sqlite3 -cmd ".timeout 5000" "$db_path" "SELECT COUNT(*) FROM sessions WHERE session_id != '';" 2>/dev/null || echo "0")
+	total_messages=$(sqlite3 -cmd ".timeout 5000" "$db_path" "SELECT COUNT(*) FROM message_log;" 2>/dev/null || echo "0")
+	context_bytes=$(sqlite3 -cmd ".timeout 5000" "$db_path" "SELECT COALESCE(SUM(length(compacted_context)), 0) FROM sessions;" 2>/dev/null || echo "0")
+	db_size=$(stat -f%z "$db_path" 2>/dev/null || stat -c%s "$db_path" 2>/dev/null || echo "0")
+
+	echo "Total sessions:    ${total_sessions:-0} (legacy store)"
+	echo "Active sessions:   ${active_sessions:-0}"
+	echo "Messages in log:   ${total_messages:-0}"
+	echo "Compacted context: $((${context_bytes:-0} / 1024))KB"
+	echo "Database size:     $((${db_size:-0} / 1024))KB"
+	return 0
+}
+
+#######################################
 # Manage conversation sessions
 #######################################
 cmd_sessions() {
@@ -1892,76 +2086,23 @@ cmd_sessions() {
 
 	ensure_dirs
 
-	# Use shared memory.db for entity-aware sessions
-	local db_path="$MEMORY_DB"
-	local table_name="matrix_room_sessions"
+	local db_info db_path table_name
+	db_info=$(_sessions_resolve_db "$subcmd")
+	db_path=$(printf '%s' "$db_info" | sed -n '1p')
+	table_name=$(printf '%s' "$db_info" | sed -n '2p')
 
-	# Fall back to legacy sessions.db if memory.db doesn't have the table
-	if [[ ! -f "$db_path" ]] || ! sqlite3 -cmd ".timeout 5000" "$db_path" "SELECT 1 FROM $table_name LIMIT 1;" &>/dev/null; then
-		if [[ -f "$SESSION_DB" ]]; then
-			db_path="$SESSION_DB"
-			table_name="sessions"
-			log_info "Using legacy session store: $SESSION_DB"
-		else
-			if [[ "$subcmd" == "list" ]]; then
-				echo -e "${BOLD}Conversation Sessions${NC}"
-				echo "──────────────────────────────────"
-				echo "(no sessions — database not yet created)"
-				echo "Sessions are created automatically when the bot processes messages."
-				return 0
-			fi
-			log_info "No session database"
-			return 0
-		fi
+	if [[ "$db_path" == "NONE" ]]; then
+		return 0
 	fi
 
 	case "$subcmd" in
 	list)
 		echo -e "${BOLD}Conversation Sessions${NC}"
 		echo "──────────────────────────────────"
-
-		local sessions
 		if [[ "$table_name" == "matrix_room_sessions" ]]; then
-			sessions=$(sqlite3 -cmd ".timeout 5000" -separator '|' "$db_path" \
-				"SELECT s.room_id, s.runner_name, s.message_count, COALESCE(e.name, ''), s.entity_id, s.last_active
-				 FROM matrix_room_sessions s
-				 LEFT JOIN entities e ON s.entity_id = e.id
-				 ORDER BY s.last_active DESC;" 2>/dev/null)
-
-			if [[ -z "$sessions" ]]; then
-				echo "(no sessions)"
-				return 0
-			fi
-
-			printf "%-35s %-15s %5s %-20s %s\n" "Room ID" "Runner" "Msgs" "Entity" "Last Active"
-			printf "%-35s %-15s %5s %-20s %s\n" "───────────────────────────────────" "───────────────" "─────" "────────────────────" "───────────────────"
-
-			while IFS='|' read -r room runner msgs entity_name entity_id active; do
-				local entity_display="${entity_name:-${entity_id:-(none)}}"
-				printf "%-35s %-15s %5s %-20s %s\n" "$room" "$runner" "$msgs" "$entity_display" "$active"
-			done <<<"$sessions"
+			_sessions_list_entity_aware "$db_path"
 		else
-			# Legacy format
-			sessions=$(sqlite3 -cmd ".timeout 5000" -separator '|' "$db_path" \
-				"SELECT room_id, runner_name, message_count, length(compacted_context), last_active FROM sessions ORDER BY last_active DESC;" 2>/dev/null)
-
-			if [[ -z "$sessions" ]]; then
-				echo "(no sessions)"
-				return 0
-			fi
-
-			printf "%-40s %-18s %6s %8s %s\n" "Room ID" "Runner" "Msgs" "Context" "Last Active"
-			printf "%-40s %-18s %6s %8s %s\n" "────────────────────────────────────────" "──────────────────" "──────" "────────" "───────────────────"
-
-			while IFS='|' read -r room runner msgs ctx_bytes active; do
-				local ctx_display
-				if [[ "$ctx_bytes" -gt 1024 ]]; then
-					ctx_display="$((ctx_bytes / 1024))KB"
-				else
-					ctx_display="${ctx_bytes}B"
-				fi
-				printf "%-40s %-18s %6s %8s %s\n" "$room" "$runner" "$msgs" "$ctx_display" "$active"
-			done <<<"$sessions"
+			_sessions_list_legacy "$db_path"
 		fi
 		;;
 
@@ -1972,10 +2113,9 @@ cmd_sessions() {
 			echo "Usage: matrix-dispatch-helper.sh sessions clear '<room_id>'"
 			return 1
 		fi
-
 		# Clear from entity-aware table (Layer 0 interactions are preserved — immutable)
 		sqlite3 -cmd ".timeout 5000" "$db_path" \
-			"DELETE FROM $table_name WHERE room_id = '$(echo "$room_id" | sed "s/'/''/g")';" 2>/dev/null
+			"DELETE FROM $table_name WHERE room_id = '$(printf '%s' "$room_id" | sed "s/'/''/g")';" 2>/dev/null
 		log_success "Cleared session for room $room_id"
 		log_info "Note: Layer 0 interactions are preserved (immutable). Only session state was cleared."
 		;;
@@ -1990,33 +2130,10 @@ cmd_sessions() {
 	stats)
 		echo -e "${BOLD}Session Statistics${NC}"
 		echo "──────────────────────────────────"
-
 		if [[ "$table_name" == "matrix_room_sessions" ]]; then
-			local total_sessions active_sessions matrix_interactions entity_count db_size
-			total_sessions=$(sqlite3 -cmd ".timeout 5000" "$db_path" "SELECT COUNT(*) FROM matrix_room_sessions;" 2>/dev/null || echo "0")
-			active_sessions=$(sqlite3 -cmd ".timeout 5000" "$db_path" "SELECT COUNT(*) FROM matrix_room_sessions WHERE session_id != '';" 2>/dev/null || echo "0")
-			matrix_interactions=$(sqlite3 -cmd ".timeout 5000" "$db_path" "SELECT COUNT(*) FROM interactions WHERE channel = 'matrix';" 2>/dev/null || echo "0")
-			entity_count=$(sqlite3 -cmd ".timeout 5000" "$db_path" "SELECT COUNT(*) FROM entity_channels WHERE channel = 'matrix';" 2>/dev/null || echo "0")
-			db_size=$(stat -f%z "$db_path" 2>/dev/null || stat -c%s "$db_path" 2>/dev/null || echo "0")
-
-			echo "Total sessions:       ${total_sessions:-0}"
-			echo "Active sessions:      ${active_sessions:-0}"
-			echo "Matrix interactions:  ${matrix_interactions:-0} (Layer 0, immutable)"
-			echo "Matrix entities:      ${entity_count:-0}"
-			echo "Database:             $db_path ($((${db_size:-0} / 1024))KB)"
+			_sessions_stats_entity_aware "$db_path"
 		else
-			local total_sessions active_sessions total_messages context_bytes db_size
-			total_sessions=$(sqlite3 -cmd ".timeout 5000" "$db_path" "SELECT COUNT(*) FROM sessions;" 2>/dev/null || echo "0")
-			active_sessions=$(sqlite3 -cmd ".timeout 5000" "$db_path" "SELECT COUNT(*) FROM sessions WHERE session_id != '';" 2>/dev/null || echo "0")
-			total_messages=$(sqlite3 -cmd ".timeout 5000" "$db_path" "SELECT COUNT(*) FROM message_log;" 2>/dev/null || echo "0")
-			context_bytes=$(sqlite3 -cmd ".timeout 5000" "$db_path" "SELECT COALESCE(SUM(length(compacted_context)), 0) FROM sessions;" 2>/dev/null || echo "0")
-			db_size=$(stat -f%z "$db_path" 2>/dev/null || stat -c%s "$db_path" 2>/dev/null || echo "0")
-
-			echo "Total sessions:    ${total_sessions:-0} (legacy store)"
-			echo "Active sessions:   ${active_sessions:-0}"
-			echo "Messages in log:   ${total_messages:-0}"
-			echo "Compacted context: $((${context_bytes:-0} / 1024))KB"
-			echo "Database size:     $((${db_size:-0} / 1024))KB"
+			_sessions_stats_legacy "$db_path"
 		fi
 		;;
 
@@ -2349,36 +2466,15 @@ cmd_setup_noninteractive() {
 }
 
 #######################################
-# Auto-setup: Full end-to-end provisioning
-#
-# Orchestrates: Cloudron Synapse install -> bot user creation ->
-# access token -> bot config -> room creation -> room mapping
-#
-# Usage:
-#   matrix-dispatch-helper.sh auto-setup <cloudron-server> [options]
-#
-# Options:
-#   --subdomain <name>     Synapse subdomain (default: matrix)
-#   --bot-user <name>      Bot username (default: aibot)
-#   --bot-display <name>   Bot display name (default: AI DevOps Bot)
-#   --runners <list>       Comma-separated runner names for room creation
-#   --allowed-users <list> Comma-separated Matrix user IDs to allow
-#   --dry-run              Show what would be done without executing
-#   --skip-install         Skip Synapse installation (already installed)
-#   --admin-token <token>  Use existing Synapse admin token instead of auto-detecting
+# Parse auto-setup arguments
+# Outputs: cloudron_server subdomain bot_user bot_display runners allowed_users dry_run skip_install admin_token
+# (one per line, in that order)
 #######################################
-cmd_auto_setup() {
-	local cloudron_server=""
-	local subdomain="matrix"
-	local bot_user="aibot"
-	local bot_display="AI DevOps Bot"
-	local runners=""
-	local allowed_users=""
-	local dry_run=false
-	local skip_install=false
-	local admin_token=""
+_auto_setup_parse_args() {
+	local cloudron_server="" subdomain="matrix" bot_user="aibot"
+	local bot_display="AI DevOps Bot" runners="" allowed_users=""
+	local dry_run=false skip_install=false admin_token=""
 
-	# Parse arguments
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--subdomain)
@@ -2429,44 +2525,34 @@ cmd_auto_setup() {
 		esac
 	done
 
-	if [[ -z "$cloudron_server" ]]; then
-		log_error "Cloudron server name is required"
-		echo ""
-		echo "Usage: matrix-dispatch-helper.sh auto-setup <cloudron-server> [options]"
-		echo ""
-		echo "Options:"
-		echo "  --subdomain <name>     Synapse subdomain (default: matrix)"
-		echo "  --bot-user <name>      Bot username (default: aibot)"
-		echo "  --bot-display <name>   Bot display name (default: AI DevOps Bot)"
-		echo "  --runners <list>       Comma-separated runner names for room creation"
-		echo "  --allowed-users <list> Comma-separated allowed Matrix user IDs"
-		echo "  --dry-run              Show plan without executing"
-		echo "  --skip-install         Skip Synapse installation (already installed)"
-		echo "  --admin-token <token>  Use existing Synapse admin token"
-		echo ""
-		echo "Example:"
-		echo "  matrix-dispatch-helper.sh auto-setup cloudron01 --runners code-reviewer,seo-analyst,ops-monitor"
-		return 1
-	fi
+	printf '%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n%s\n' \
+		"$cloudron_server" "$subdomain" "$bot_user" "$bot_display" \
+		"$runners" "$allowed_users" "$dry_run" "$skip_install" "$admin_token"
+	return 0
+}
 
-	check_deps || return 1
-	ensure_dirs
-
-	# Resolve Cloudron server config
+#######################################
+# Resolve Cloudron server config
+# Args: cloudron_server
+# Outputs: server_domain (or exits with error)
+#######################################
+_auto_setup_resolve_cloudron() {
+	local cloudron_server="$1"
 	local cloudron_helper="${SCRIPT_DIR}/cloudron-helper.sh"
+
 	if [[ ! -x "$cloudron_helper" ]]; then
 		log_error "cloudron-helper.sh not found at $cloudron_helper"
 		return 1
 	fi
 
-	# Try multiple config locations: repo root configs/, relative to script, CWD-relative
 	local cloudron_config=""
-	local -a config_paths=(
+	local config_paths=(
 		"${SCRIPT_DIR}/../../configs/cloudron-config.json"
 		"${SCRIPT_DIR}/../configs/cloudron-config.json"
 		"configs/cloudron-config.json"
 		"../configs/cloudron-config.json"
 	)
+	local candidate
 	for candidate in "${config_paths[@]}"; do
 		if [[ -f "$candidate" ]]; then
 			cloudron_config="$candidate"
@@ -2480,9 +2566,8 @@ cmd_auto_setup() {
 		return 1
 	fi
 
-	local server_domain
+	local server_domain server_token
 	server_domain=$(jq -r ".servers.\"$cloudron_server\".domain" "$cloudron_config" 2>/dev/null)
-	local server_token
 	server_token=$(jq -r ".servers.\"$cloudron_server\".api_token" "$cloudron_config" 2>/dev/null)
 
 	if [[ "$server_domain" == "null" || -z "$server_domain" ]]; then
@@ -2500,107 +2585,99 @@ cmd_auto_setup() {
 		return 1
 	fi
 
-	local homeserver_url="https://${subdomain}.${server_domain}"
-	local server_name
-	server_name=$(extract_server_name "$homeserver_url")
-	local bot_user_id="@${bot_user}:${server_name}"
-	local bot_password
-	bot_password=$(generate_password 32)
+	printf '%s\n' "$server_domain"
+	return 0
+}
 
-	# Synapse app store ID on Cloudron
+#######################################
+# Print dry-run plan for auto-setup
+# Args: skip_install subdomain server_domain bot_user_id server_name runners
+#######################################
+_auto_setup_dry_run() {
+	local skip_install="$1" subdomain="$2" server_domain="$3"
+	local bot_user_id="$4" server_name="$5" runners="$6"
+
+	echo -e "${YELLOW}[DRY RUN]${NC} The following steps would be executed:"
+	echo ""
+	if [[ "$skip_install" != "true" ]]; then
+		echo "  1. Install Synapse on Cloudron at $subdomain.$server_domain"
+		echo "  2. Wait for Synapse to be ready"
+	else
+		echo "  1-2. (skipped — Synapse already installed)"
+	fi
+	echo "  3. Register bot user: $bot_user_id"
+	echo "  4. Login as bot to get access token"
+	echo "  5. Store credentials via aidevops secret"
+	echo "  6. Configure matrix-dispatch-helper.sh"
+	if [[ -n "$runners" ]]; then
+		echo "  7. Create rooms and map to runners:"
+		local runner_list runner
+		IFS=',' read -ra runner_list <<<"$runners"
+		for runner in "${runner_list[@]}"; do
+			runner=$(printf '%s' "$runner" | tr -d ' ')
+			echo "     - Room: #${runner}:${server_name} -> runner: $runner"
+		done
+	else
+		echo "  7. (no runners specified — skip room creation)"
+	fi
+	echo "  8. Install npm dependencies and generate bot scripts"
+	echo ""
+	echo "Run without --dry-run to execute."
+	return 0
+}
+
+#######################################
+# Install Synapse on Cloudron (steps 1-2)
+# Args: cloudron_server subdomain server_domain homeserver_url
+# Returns: 0 on success, 1 on failure
+#######################################
+_auto_setup_install_synapse() {
+	local cloudron_server="$1" subdomain="$2" server_domain="$3" homeserver_url="$4"
+	local cloudron_helper="${SCRIPT_DIR}/cloudron-helper.sh"
 	local synapse_app_id="org.matrix.synapse.cloudronapp"
 
-	echo -e "${BOLD}Matrix Bot Auto-Setup${NC}"
-	echo "──────────────────────────────────"
-	echo ""
-	echo "Cloudron server:  $cloudron_server ($server_domain)"
-	echo "Synapse URL:      $homeserver_url"
-	echo "Bot user:         $bot_user_id"
-	echo "Bot display name: $bot_display"
-	echo "Runners:          ${runners:-none (add later with 'map' command)}"
-	echo "Allowed users:    ${allowed_users:-all}"
-	echo ""
+	log_info "Step 1/8: Installing Synapse on Cloudron..."
 
-	if [[ "$dry_run" == "true" ]]; then
-		echo -e "${YELLOW}[DRY RUN]${NC} The following steps would be executed:"
-		echo ""
-		if [[ "$skip_install" != "true" ]]; then
-			echo "  1. Install Synapse on Cloudron at $subdomain.$server_domain"
-			echo "  2. Wait for Synapse to be ready"
+	local app_id
+	app_id=$("$cloudron_helper" install-app "$cloudron_server" "$synapse_app_id" "$subdomain" 2>&1)
+	local install_exit=$?
+
+	if [[ $install_exit -ne 0 ]]; then
+		local existing_app
+		existing_app=$("$cloudron_helper" app-info "$cloudron_server" "$subdomain" 2>/dev/null)
+		if [[ -n "$existing_app" ]]; then
+			log_warn "Synapse appears to already be installed at $subdomain.$server_domain"
+			app_id=$(printf '%s' "$existing_app" | jq -r '.id')
 		else
-			echo "  1-2. (skipped — Synapse already installed)"
-		fi
-		echo "  3. Register bot user: $bot_user_id"
-		echo "  4. Login as bot to get access token"
-		echo "  5. Store credentials via aidevops secret"
-		echo "  6. Configure matrix-dispatch-helper.sh"
-		if [[ -n "$runners" ]]; then
-			echo "  7. Create rooms and map to runners:"
-			IFS=',' read -ra runner_list <<<"$runners"
-			for runner in "${runner_list[@]}"; do
-				runner=$(echo "$runner" | tr -d ' ')
-				echo "     - Room: #${runner}:${server_name} -> runner: $runner"
-			done
-		else
-			echo "  7. (no runners specified — skip room creation)"
-		fi
-		echo "  8. Install npm dependencies and generate bot scripts"
-		echo ""
-		echo "Run without --dry-run to execute."
-		return 0
-	fi
-
-	# ── Step 1: Install Synapse on Cloudron ──
-	local app_id=""
-	if [[ "$skip_install" != "true" ]]; then
-		log_info "Step 1/8: Installing Synapse on Cloudron..."
-
-		app_id=$("$cloudron_helper" install-app "$cloudron_server" "$synapse_app_id" "$subdomain" 2>&1)
-		local install_exit=$?
-
-		if [[ $install_exit -ne 0 ]]; then
-			# Check if already installed
-			local existing_app
-			existing_app=$("$cloudron_helper" app-info "$cloudron_server" "$subdomain" 2>/dev/null)
-			if [[ -n "$existing_app" ]]; then
-				log_warn "Synapse appears to already be installed at $subdomain.$server_domain"
-				app_id=$(echo "$existing_app" | jq -r '.id')
-			else
-				log_error "Failed to install Synapse: $app_id"
-				return 1
-			fi
-		fi
-
-		# Extract just the app ID (last line of output from install_app)
-		app_id=$(echo "$app_id" | tail -1 | tr -d '[:space:]')
-		log_success "Synapse installation initiated (app ID: $app_id)"
-
-		# ── Step 2: Wait for Synapse to be ready ──
-		log_info "Step 2/8: Waiting for Synapse to be ready..."
-		if ! "$cloudron_helper" wait-ready "$cloudron_server" "$app_id" 600; then
-			log_error "Synapse failed to become ready within 10 minutes"
+			log_error "Failed to install Synapse: $app_id"
 			return 1
 		fi
-		log_success "Synapse is ready"
-	else
-		log_info "Step 1-2/8: Skipping Synapse installation (--skip-install)"
-
-		# Verify Synapse is accessible
-		local health_check
-		health_check=$(curl -sf "${homeserver_url}/_matrix/client/versions" 2>/dev/null)
-		if [[ -z "$health_check" ]]; then
-			log_error "Synapse not responding at $homeserver_url"
-			log_info "Verify Synapse is installed and running on Cloudron"
-			return 1
-		fi
-		log_success "Synapse is accessible at $homeserver_url"
 	fi
 
-	# ── Step 3: Get admin token and register bot user ──
+	app_id=$(printf '%s' "$app_id" | tail -1 | tr -d '[:space:]')
+	log_success "Synapse installation initiated (app ID: $app_id)"
+
+	log_info "Step 2/8: Waiting for Synapse to be ready..."
+	if ! "$cloudron_helper" wait-ready "$cloudron_server" "$app_id" 600; then
+		log_error "Synapse failed to become ready within 10 minutes"
+		return 1
+	fi
+	log_success "Synapse is ready"
+	return 0
+}
+
+#######################################
+# Register bot user and obtain access token (steps 3-4)
+# Args: homeserver_url cloudron_server bot_user_id bot_password bot_display admin_token
+# Outputs: bot_access_token on stdout
+#######################################
+_auto_setup_register_and_login() {
+	local homeserver_url="$1" cloudron_server="$2" bot_user_id="$3"
+	local bot_password="$4" bot_display="$5" admin_token="$6"
+
 	log_info "Step 3/8: Registering bot user..."
 
 	if [[ -z "$admin_token" ]]; then
-		# Try to get admin token from aidevops secrets
 		local secret_name="SYNAPSE_ADMIN_TOKEN_${cloudron_server}"
 		admin_token=$(gopass show "aidevops/${secret_name}" 2>/dev/null || true)
 
@@ -2617,47 +2694,51 @@ cmd_auto_setup() {
 		fi
 	fi
 
-	local register_result
+	local register_result register_rc
 	register_result=$(synapse_register_bot_user "$homeserver_url" "$admin_token" "$bot_user_id" "$bot_password" "$bot_display" 2>&1)
-	local register_exit=$?
-
-	if [[ $register_exit -ne 0 ]]; then
+	register_rc=$?
+	if [[ $register_rc -ne 0 ]]; then
 		log_error "Failed to register bot user: $register_result"
 		return 1
 	fi
 	log_success "Bot user registered: $bot_user_id"
 
-	# ── Step 4: Login as bot to get access token ──
 	log_info "Step 4/8: Logging in as bot user..."
-
-	local login_result
+	local login_result login_rc
 	login_result=$(matrix_login "$homeserver_url" "$bot_user_id" "$bot_password" 2>&1)
-	local login_exit=$?
-
-	if [[ $login_exit -ne 0 ]]; then
+	login_rc=$?
+	if [[ $login_rc -ne 0 ]]; then
 		log_error "Failed to login as bot: $login_result"
 		return 1
 	fi
 
 	local bot_access_token
-	bot_access_token=$(echo "$login_result" | jq -r '.access_token // empty' 2>/dev/null)
-
+	bot_access_token=$(printf '%s' "$login_result" | jq -r '.access_token // empty' 2>/dev/null)
 	if [[ -z "$bot_access_token" ]]; then
 		log_error "Failed to extract access token from login response"
 		return 1
 	fi
 	log_success "Bot access token obtained"
 
-	# ── Step 5: Store credentials securely ──
+	printf '%s\n' "$bot_access_token"
+	return 0
+}
+
+#######################################
+# Store bot credentials in gopass (step 5)
+# Args: cloudron_server bot_password bot_access_token
+#######################################
+_auto_setup_store_credentials() {
+	local cloudron_server="$1" bot_password="$2" bot_access_token="$3"
+	local secret_prefix="MATRIX_BOT_${cloudron_server}"
+
 	log_info "Step 5/8: Storing credentials..."
 
-	# Store bot password and token via gopass if available
-	local secret_prefix="MATRIX_BOT_${cloudron_server}"
 	if command -v gopass &>/dev/null; then
-		echo "$bot_password" | gopass insert -f "aidevops/${secret_prefix}_PASSWORD" 2>/dev/null || {
+		printf '%s' "$bot_password" | gopass insert -f "aidevops/${secret_prefix}_PASSWORD" 2>/dev/null || {
 			log_warn "Failed to store bot password in gopass"
 		}
-		echo "$bot_access_token" | gopass insert -f "aidevops/${secret_prefix}_TOKEN" 2>/dev/null || {
+		printf '%s' "$bot_access_token" | gopass insert -f "aidevops/${secret_prefix}_TOKEN" 2>/dev/null || {
 			log_warn "Failed to store bot token in gopass"
 		}
 		log_success "Credentials stored in gopass (aidevops/${secret_prefix}_*)"
@@ -2665,85 +2746,84 @@ cmd_auto_setup() {
 		log_warn "gopass not available — credentials stored only in config file"
 		log_info "Install gopass for encrypted credential storage: aidevops secret set"
 	fi
+	return 0
+}
 
-	# ── Step 6: Configure the bot non-interactively ──
-	log_info "Step 6/8: Configuring bot..."
+#######################################
+# Create rooms and map to runners (step 7)
+# Args: homeserver_url bot_access_token runners allowed_users
+#######################################
+_auto_setup_create_rooms() {
+	local homeserver_url="$1" bot_access_token="$2" runners="$3" allowed_users="$4"
+	local runner_helper="$HOME/.aidevops/agents/scripts/runner-helper.sh"
 
-	cmd_setup_noninteractive "$homeserver_url" "$bot_access_token" "$allowed_users" "" "$DEFAULT_TIMEOUT"
-	log_success "Bot configured"
+	log_info "Step 7/8: Creating rooms, runners, and mapping..."
 
-	# ── Step 7: Create rooms and map to runners ──
-	if [[ -n "$runners" ]]; then
-		log_info "Step 7/8: Creating rooms, runners, and mapping..."
+	local runner_list runner
+	IFS=',' read -ra runner_list <<<"$runners"
+	for runner in "${runner_list[@]}"; do
+		runner=$(printf '%s' "$runner" | tr -d ' ')
 
-		local runner_helper="$HOME/.aidevops/agents/scripts/runner-helper.sh"
-		IFS=',' read -ra runner_list <<<"$runners"
-		for runner in "${runner_list[@]}"; do
-			runner=$(echo "$runner" | tr -d ' ')
-
-			# Create the runner if it doesn't exist
-			if [[ -x "$runner_helper" ]]; then
-				if ! "$runner_helper" status "$runner" &>/dev/null; then
-					log_info "Creating runner: $runner"
-					"$runner_helper" create "$runner" --description "Matrix bot runner for $runner" 2>/dev/null || {
-						log_warn "Failed to create runner: $runner"
-					}
-				else
-					log_info "Runner already exists: $runner"
-				fi
+		if [[ -x "$runner_helper" ]]; then
+			if ! "$runner_helper" status "$runner" &>/dev/null; then
+				log_info "Creating runner: $runner"
+				"$runner_helper" create "$runner" --description "Matrix bot runner for $runner" 2>/dev/null || {
+					log_warn "Failed to create runner: $runner"
+				}
 			else
-				log_warn "runner-helper.sh not found — create runners manually: runner-helper.sh create $runner"
+				log_info "Runner already exists: $runner"
 			fi
+		else
+			log_warn "runner-helper.sh not found — create runners manually: runner-helper.sh create $runner"
+		fi
 
-			local room_name="AI: ${runner}"
-			local room_alias="${runner}"
+		local room_name="AI: ${runner}"
+		local room_alias="${runner}"
+		log_info "Creating room for runner: $runner"
 
-			log_info "Creating room for runner: $runner"
+		local room_result room_id room_rc
+		room_result=$(matrix_create_room "$homeserver_url" "$bot_access_token" "$room_name" "$room_alias" "false" 2>&1)
+		room_rc=$?
+		if [[ $room_rc -ne 0 ]]; then
+			log_warn "Failed to create room for $runner: $room_result"
+			continue
+		fi
 
-			local room_result
-			room_result=$(matrix_create_room "$homeserver_url" "$bot_access_token" "$room_name" "$room_alias" "false" 2>&1)
-			local room_exit=$?
+		room_id=$(printf '%s' "$room_result" | jq -r '.room_id // empty' 2>/dev/null)
+		if [[ -z "$room_id" ]]; then
+			log_warn "Failed to extract room ID for $runner"
+			continue
+		fi
+		log_success "Room created: $room_id ($room_name)"
 
-			if [[ $room_exit -ne 0 ]]; then
-				log_warn "Failed to create room for $runner: $room_result"
-				continue
-			fi
+		cmd_map "$room_id" "$runner"
 
-			local room_id
-			room_id=$(echo "$room_result" | jq -r '.room_id // empty' 2>/dev/null)
+		if [[ -n "$allowed_users" ]]; then
+			local user_list user
+			IFS=',' read -ra user_list <<<"$allowed_users"
+			for user in "${user_list[@]}"; do
+				user=$(printf '%s' "$user" | tr -d ' ')
+				log_info "Inviting $user to room $room_id"
+				matrix_invite_user "$homeserver_url" "$bot_access_token" "$room_id" "$user" 2>/dev/null || {
+					log_warn "Failed to invite $user to $room_id"
+				}
+			done
+		fi
+	done
 
-			if [[ -z "$room_id" ]]; then
-				log_warn "Failed to extract room ID for $runner"
-				continue
-			fi
+	log_success "Room creation and mapping complete"
+	return 0
+}
 
-			log_success "Room created: $room_id ($room_name)"
+#######################################
+# Print auto-setup completion summary (step 8)
+# Args: homeserver_url bot_user_id runners cloudron_server
+#######################################
+_auto_setup_summary() {
+	local homeserver_url="$1" bot_user_id="$2" runners="$3" cloudron_server="$4"
+	local secret_prefix="MATRIX_BOT_${cloudron_server}"
 
-			# Map room to runner
-			cmd_map "$room_id" "$runner"
-
-			# Invite the admin user(s) to the room
-			if [[ -n "$allowed_users" ]]; then
-				IFS=',' read -ra user_list <<<"$allowed_users"
-				for user in "${user_list[@]}"; do
-					user=$(echo "$user" | tr -d ' ')
-					log_info "Inviting $user to room $room_id"
-					matrix_invite_user "$homeserver_url" "$bot_access_token" "$room_id" "$user" 2>/dev/null || {
-						log_warn "Failed to invite $user to $room_id"
-					}
-				done
-			fi
-		done
-
-		log_success "Room creation and mapping complete"
-	else
-		log_info "Step 7/8: No runners specified — skipping room creation"
-		log_info "Map rooms later with: matrix-dispatch-helper.sh map '<room_id>' <runner>"
-	fi
-
-	# ── Step 8: Summary ──
 	log_info "Step 8/8: Finalizing..."
-
 	echo ""
 	echo -e "${BOLD}Auto-Setup Complete!${NC}"
 	echo "──────────────────────────────────"
@@ -2777,14 +2857,176 @@ cmd_auto_setup() {
 		echo "  aidevops/${secret_prefix}_PASSWORD"
 		echo "  aidevops/${secret_prefix}_TOKEN"
 	fi
+	return 0
+}
+
+#######################################
+# Auto-setup: Full end-to-end provisioning
+#
+# Orchestrates: Cloudron Synapse install -> bot user creation ->
+# access token -> bot config -> room creation -> room mapping
+#
+# Usage:
+#   matrix-dispatch-helper.sh auto-setup <cloudron-server> [options]
+#
+# Options:
+#   --subdomain <name>     Synapse subdomain (default: matrix)
+#   --bot-user <name>      Bot username (default: aibot)
+#   --bot-display <name>   Bot display name (default: AI DevOps Bot)
+#   --runners <list>       Comma-separated runner names for room creation
+#   --allowed-users <list> Comma-separated Matrix user IDs to allow
+#   --dry-run              Show what would be done without executing
+#   --skip-install         Skip Synapse installation (already installed)
+#   --admin-token <token>  Use existing Synapse admin token instead of auto-detecting
+#######################################
+#######################################
+# Print auto-setup usage when no server is given
+#######################################
+_auto_setup_usage() {
+	log_error "Cloudron server name is required"
+	echo ""
+	echo "Usage: matrix-dispatch-helper.sh auto-setup <cloudron-server> [options]"
+	echo ""
+	echo "Options:"
+	echo "  --subdomain <name>     Synapse subdomain (default: matrix)"
+	echo "  --bot-user <name>      Bot username (default: aibot)"
+	echo "  --bot-display <name>   Bot display name (default: AI DevOps Bot)"
+	echo "  --runners <list>       Comma-separated runner names for room creation"
+	echo "  --allowed-users <list> Comma-separated allowed Matrix user IDs"
+	echo "  --dry-run              Show plan without executing"
+	echo "  --skip-install         Skip Synapse installation (already installed)"
+	echo "  --admin-token <token>  Use existing Synapse admin token"
+	echo ""
+	echo "Example:"
+	echo "  matrix-dispatch-helper.sh auto-setup cloudron01 --runners code-reviewer,seo-analyst,ops-monitor"
+	return 1
+}
+
+#######################################
+# Verify Synapse is accessible when skipping install (step 1-2 skip path)
+# Args: homeserver_url
+#######################################
+_auto_setup_verify_synapse() {
+	local homeserver_url="$1"
+	log_info "Step 1-2/8: Skipping Synapse installation (--skip-install)"
+	local health_check
+	health_check=$(curl -sf "${homeserver_url}/_matrix/client/versions" 2>/dev/null)
+	if [[ -z "$health_check" ]]; then
+		log_error "Synapse not responding at $homeserver_url"
+		log_info "Verify Synapse is installed and running on Cloudron"
+		return 1
+	fi
+	log_success "Synapse is accessible at $homeserver_url"
+	return 0
+}
+
+#######################################
+# Auto-setup: Full end-to-end provisioning
+#
+# Orchestrates: Cloudron Synapse install -> bot user creation ->
+# access token -> bot config -> room creation -> room mapping
+#
+# Usage:
+#   matrix-dispatch-helper.sh auto-setup <cloudron-server> [options]
+#
+# Options:
+#   --subdomain <name>     Synapse subdomain (default: matrix)
+#   --bot-user <name>      Bot username (default: aibot)
+#   --bot-display <name>   Bot display name (default: AI DevOps Bot)
+#   --runners <list>       Comma-separated runner names for room creation
+#   --allowed-users <list> Comma-separated Matrix user IDs to allow
+#   --dry-run              Show what would be done without executing
+#   --skip-install         Skip Synapse installation (already installed)
+#   --admin-token <token>  Use existing Synapse admin token instead of auto-detecting
+#######################################
+cmd_auto_setup() {
+	local parsed cloudron_server subdomain bot_user bot_display
+	local runners allowed_users dry_run skip_install admin_token
+
+	parsed=$(_auto_setup_parse_args "$@") || return 1
+	cloudron_server=$(printf '%s' "$parsed" | sed -n '1p')
+	subdomain=$(printf '%s' "$parsed" | sed -n '2p')
+	bot_user=$(printf '%s' "$parsed" | sed -n '3p')
+	bot_display=$(printf '%s' "$parsed" | sed -n '4p')
+	runners=$(printf '%s' "$parsed" | sed -n '5p')
+	allowed_users=$(printf '%s' "$parsed" | sed -n '6p')
+	dry_run=$(printf '%s' "$parsed" | sed -n '7p')
+	skip_install=$(printf '%s' "$parsed" | sed -n '8p')
+	admin_token=$(printf '%s' "$parsed" | sed -n '9p')
+
+	if [[ -z "$cloudron_server" ]]; then
+		_auto_setup_usage
+		return 1
+	fi
+
+	check_deps || return 1
+	ensure_dirs
+
+	local server_domain
+	server_domain=$(_auto_setup_resolve_cloudron "$cloudron_server") || return 1
+
+	local homeserver_url="https://${subdomain}.${server_domain}"
+	local server_name
+	server_name=$(extract_server_name "$homeserver_url")
+	local bot_user_id="@${bot_user}:${server_name}"
+	local bot_password
+	bot_password=$(generate_password 32)
+
+	echo -e "${BOLD}Matrix Bot Auto-Setup${NC}"
+	echo "──────────────────────────────────"
+	echo ""
+	echo "Cloudron server:  $cloudron_server ($server_domain)"
+	echo "Synapse URL:      $homeserver_url"
+	echo "Bot user:         $bot_user_id"
+	echo "Bot display name: $bot_display"
+	echo "Runners:          ${runners:-none (add later with 'map' command)}"
+	echo "Allowed users:    ${allowed_users:-all}"
+	echo ""
+
+	if [[ "$dry_run" == "true" ]]; then
+		_auto_setup_dry_run "$skip_install" "$subdomain" "$server_domain" "$bot_user_id" "$server_name" "$runners"
+		return 0
+	fi
+
+	# Steps 1-2: Install or verify Synapse
+	if [[ "$skip_install" != "true" ]]; then
+		_auto_setup_install_synapse "$cloudron_server" "$subdomain" "$server_domain" "$homeserver_url" || return 1
+	else
+		_auto_setup_verify_synapse "$homeserver_url" || return 1
+	fi
+
+	# Steps 3-4: Register bot and get access token
+	local bot_access_token
+	bot_access_token=$(_auto_setup_register_and_login \
+		"$homeserver_url" "$cloudron_server" "$bot_user_id" \
+		"$bot_password" "$bot_display" "$admin_token") || return 1
+
+	# Step 5: Store credentials
+	_auto_setup_store_credentials "$cloudron_server" "$bot_password" "$bot_access_token"
+
+	# Step 6: Configure bot
+	log_info "Step 6/8: Configuring bot..."
+	cmd_setup_noninteractive "$homeserver_url" "$bot_access_token" "$allowed_users" "" "$DEFAULT_TIMEOUT"
+	log_success "Bot configured"
+
+	# Step 7: Create rooms
+	if [[ -n "$runners" ]]; then
+		_auto_setup_create_rooms "$homeserver_url" "$bot_access_token" "$runners" "$allowed_users" || return 1
+	else
+		log_info "Step 7/8: No runners specified — skipping room creation"
+		log_info "Map rooms later with: matrix-dispatch-helper.sh map '<room_id>' <runner>"
+	fi
+
+	# Step 8: Summary
+	_auto_setup_summary "$homeserver_url" "$bot_user_id" "$runners" "$cloudron_server"
 
 	return 0
 }
 
 #######################################
-# Show help
+# Help: commands and usage overview
 #######################################
-cmd_help() {
+_help_commands() {
 	cat <<'EOF'
 matrix-dispatch-helper.sh - Matrix bot for AI runner dispatch
 
@@ -2804,26 +3046,6 @@ COMMANDS:
     test <room|runner> "msg"    Test dispatch without Matrix
     logs [--tail N] [--follow]  View bot logs
     help                        Show this help
-
-SYNAPSE ADMIN API FUNCTIONS (for scripting):
-    Source this script to use these functions in your own scripts:
-        source matrix-dispatch-helper.sh
-
-    synapse_register_bot_user <homeserver_url> <admin_token> <user_id> <password> [display_name]
-        Register a new bot user via Synapse Admin API
-        Example: synapse_register_bot_user "https://matrix.example.com" "syt_..." "@bot:example.com" "secret123" "My Bot"
-
-    matrix_login <homeserver_url> <user_id> <password>
-        Login and get access token via Matrix Client API
-        Example: matrix_login "https://matrix.example.com" "@bot:example.com" "secret123"
-
-    matrix_create_room <homeserver_url> <access_token> <room_name> [room_alias] [is_public]
-        Create a new Matrix room
-        Example: matrix_create_room "https://matrix.example.com" "syt_..." "My Room" "myroom" "false"
-
-    matrix_invite_user <homeserver_url> <access_token> <room_id> <user_id>
-        Invite a user to a room
-        Example: matrix_invite_user "https://matrix.example.com" "syt_..." "!abc:example.com" "@user:example.com"
 
 SETUP:
     1. Create a Matrix bot account on your homeserver
@@ -2848,7 +3070,43 @@ ARCHITECTURE:
     │               │◀────│              │◀────│                  │
     │ AI response   │     │              │     │                  │
     └──────────────┘     └──────────────┘     └──────────────────┘
+EOF
+	return 0
+}
 
+#######################################
+# Help: Synapse Admin API scripting functions
+#######################################
+_help_api_functions() {
+	cat <<'EOF'
+SYNAPSE ADMIN API FUNCTIONS (for scripting):
+    Source this script to use these functions in your own scripts:
+        source matrix-dispatch-helper.sh
+
+    synapse_register_bot_user <homeserver_url> <admin_token> <user_id> <password> [display_name]
+        Register a new bot user via Synapse Admin API
+        Example: synapse_register_bot_user "https://matrix.example.com" "syt_..." "@bot:example.com" "secret123" "My Bot"
+
+    matrix_login <homeserver_url> <user_id> <password>
+        Login and get access token via Matrix Client API
+        Example: matrix_login "https://matrix.example.com" "@bot:example.com" "secret123"
+
+    matrix_create_room <homeserver_url> <access_token> <room_name> [room_alias] [is_public]
+        Create a new Matrix room
+        Example: matrix_create_room "https://matrix.example.com" "syt_..." "My Room" "myroom" "false"
+
+    matrix_invite_user <homeserver_url> <access_token> <room_id> <user_id>
+        Invite a user to a room
+        Example: matrix_invite_user "https://matrix.example.com" "syt_..." "!abc:example.com" "@user:example.com"
+EOF
+	return 0
+}
+
+#######################################
+# Help: auto-setup, requirements, configuration, and examples
+#######################################
+_help_setup_and_examples() {
+	cat <<'EOF'
 AUTO-SETUP (Cloudron + Synapse):
     Fully automated provisioning — installs Synapse, creates bot user,
     obtains access token, configures the bot, creates rooms, and maps runners.
@@ -2916,8 +3174,20 @@ EXAMPLES:
 
     # Test without Matrix
     matrix-dispatch-helper.sh test code-reviewer "Review src/auth.ts"
-
 EOF
+	return 0
+}
+
+#######################################
+# Show help
+#######################################
+cmd_help() {
+	_help_commands
+	echo ""
+	_help_api_functions
+	echo ""
+	_help_setup_and_examples
+	return 0
 }
 
 #######################################
