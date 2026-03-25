@@ -47,26 +47,20 @@ my-app/
 **Quick Start**:
 
 ```bash
-# Initialize new app package
 cloudron init
-
-# Build and test
 cloudron build
 cloudron install --location testapp
-
-# Iterate
 cloudron build && cloudron update --app testapp
 cloudron logs -f --app testapp
 ```
+
 <!-- AI-CONTEXT-END -->
 
 ## Pre-Packaging Assessment
 
-Before writing any code, assess whether the app is a good candidate for Cloudron packaging. Initial packaging is roughly 25% of total effort. The remaining 75% is SSO integration, upgrade path testing, backup correctness, and ongoing maintenance. A structured assessment upfront prevents wasted weeks on impractical candidates.
+Before writing any code, assess whether the app is a good candidate for Cloudron packaging. Initial packaging is roughly 25% of total effort. The remaining 75% is SSO integration, upgrade path testing, backup correctness, and ongoing maintenance.
 
 ### Step 1: Feasibility Assessment (Two-Axis Scoring)
-
-Score the app across two dimensions. If either score exceeds the "Hard" threshold, reconsider whether to proceed.
 
 **Axis A: Structural Difficulty** (how hard to get it running)
 
@@ -93,7 +87,7 @@ Score the app across two dimensions. If either score exceeds the "Hard" threshol
 
 **Compliance subtotal** (max 13): 0-2 Low, 3-5 Moderate, 6-8 High, 9+ Very High.
 
-**Decision rule**: If structural score is 10+ or compliance score is 9+, recommend against packaging and suggest alternatives. Document the assessment in the PR or issue for future reference.
+**Decision rule**: If structural score is 10+ or compliance score is 9+, recommend against packaging. Document the assessment in the PR or issue for future reference.
 
 ### Step 2: Gather Evidence
 
@@ -106,25 +100,13 @@ Before scoring, fetch and read these files from the upstream repo:
 5. GitHub releases page (release frequency, stability)
 6. Upstream self-hosting/deployment docs
 
-**The compose file is the single most valuable artifact.** It reveals the true dependency graph: which databases, caches, brokers, and workers the app actually needs. Ignore the monolithic Docker image if one exists.
+**The compose file is the single most valuable artifact.** It reveals the true dependency graph: which databases, caches, brokers, and workers the app actually needs.
 
 ### Step 3: Pre-Packaging Research
 
-Search the Cloudron forum for existing knowledge:
-
-1. **Search by app name**: `https://forum.cloudron.io/search?term=APP_NAME&in=titles`
-   Forum threads with the app name in the title often contain:
-   - Community packaging attempts (partial or complete) you can build on
-   - Known gotchas, workarounds, and platform-specific quirks
-   - Addon requirements and configuration insights from real deployments
-   - User experience reports on complexity, stability, and resource usage
-   - Upstream compatibility issues with Cloudron's read-only filesystem or auth model
-
-2. **Check the packaging category**: [forum.cloudron.io/category/96](https://forum.cloudron.io/category/96/app-packaging-development) for active packaging discussions
-
-3. **Search the app store**: `cloudron appstore search APP_NAME` to check if an official or community package already exists
-
-This research often saves significant trial-and-error, especially for apps with non-standard storage, auth, or process models.
+1. **Search by app name**: `https://forum.cloudron.io/search?term=APP_NAME&in=titles` — community packaging attempts, known gotchas, addon requirements
+2. **Check the packaging category**: [forum.cloudron.io/category/96](https://forum.cloudron.io/category/96/app-packaging-development)
+3. **Search the app store**: `cloudron appstore search APP_NAME` to check if a package already exists
 
 ## Using git.cloudron.io as Reference
 
@@ -132,38 +114,19 @@ Study real-world packaging patterns from 200+ official Cloudron app packages at 
 
 **Full guide**: `cloudron-git-reference.md` - Repository structure, finding apps by technology, GitLab API usage, recommended reference apps by use case, cloning patterns, and common search patterns.
 
-## Overview
-
-Cloudron app packaging creates Docker containers that integrate with Cloudron's platform features: automatic SSL, user management (LDAP/OIDC), backups, and addon services.
-
-**Key Concepts**:
-- Apps run in isolated Docker containers with read-only filesystems
-- Persistent data stored in `/app/data` (backed up automatically)
-- Services (databases, email, auth) provided via addons with environment variables
-- Health checks determine app readiness
-- Start scripts handle initialization and configuration injection
-
 ## Decision Trees
 
 ### Base Image Selection
 
 **Always start from `cloudron/base:5.0.0`.** Do not start from the upstream app's Docker image.
 
-The upstream image trap: many complex apps ship monolithic Docker images that bundle their own databases, reverse proxies, and init systems. Starting from these images means fighting their assumptions. You end up disabling services, overriding configs, and debugging interactions between the app's internal process manager and Cloudron's external one. This approach has caused multi-week packaging failures (e.g., docassemble: 25 symlinks, 15-20 minute boot times, fragile result).
+The upstream image trap: many complex apps ship monolithic Docker images that bundle their own databases, reverse proxies, and init systems. Starting from these images means fighting their assumptions. This approach has caused multi-week packaging failures (e.g., docassemble: 25 symlinks, 15-20 minute boot times, fragile result).
 
 The correct approach: read the upstream `docker-compose.yml` to understand the app's true dependencies, then install the app on `cloudron/base` using its package manager (pip, npm, composer, go build, or download binary).
 
 **When multi-stage builds are justified**: Only when the app's build toolchain is exotic or compilation from source on `cloudron/base` is impractical. Build in the upstream image, then `COPY --from` the compiled artifacts into a final stage based on `cloudron/base`.
 
 **Alpine/musl compatibility warning**: If the upstream image is Alpine-based (uses musl libc), binaries compiled inside it will NOT run on `cloudron/base` (Ubuntu/glibc). You will get `libc.musl-x86_64.so.1: cannot open shared object file` errors. Always compile in a glibc-based builder stage or use pre-built glibc binaries.
-
-**Why cloudron/base is the safe default**:
-- Pre-configured locales (prevents unicode crashes)
-- Includes `gosu` for privilege dropping
-- Web terminal compatibility (bash, utilities)
-- Consistent glibc environment (Ubuntu 24.04 LTS)
-- Security updates managed by Cloudron team
-- Shared layers across all Cloudron apps (disk efficient)
 
 **Base image contents (verified on Cloudron 9.1.3)**:
 
@@ -244,24 +207,19 @@ RUN mkdir -p /app/code/defaults && \
 **Runtime (start.sh)**:
 
 ```bash
-# Create persistent directories
 mkdir -p /app/data/config /app/data/storage /app/data/logs
 
-# First-run: copy defaults
 if [[ ! -f /app/data/.initialized ]]; then
     cp -rn /app/code/defaults/config/* /app/data/config/ 2>/dev/null || true
     cp -rn /app/code/defaults/storage/* /app/data/storage/ 2>/dev/null || true
 fi
 
-# Create symlinks (always recreate - safe and idempotent)
+# Always recreate - safe and idempotent
 ln -sfn /app/data/config /app/code/config
 ln -sfn /app/data/storage /app/code/storage
 ln -sfn /app/data/logs /app/code/logs
 
-# Fix permissions
 chown -R cloudron:cloudron /app/data
-
-# Mark initialized
 touch /app/data/.initialized
 ```
 
@@ -334,8 +292,6 @@ workers=$(( mem / 1024 / 1024 / 128 ))  # 1 worker per 128MB
 
 ### TCP/UDP Port Exposure
 
-Cloudron supports exposing raw TCP and UDP ports via the manifest, not just HTTP. This is required for protocols like XMPP (5222/5269), MQTT, game servers, or any non-HTTP service.
-
 ```json
 {
   "tcpPorts": {
@@ -357,13 +313,13 @@ Cloudron supports exposing raw TCP and UDP ports via the manifest, not just HTTP
 }
 ```
 
-The port values are exposed as environment variables (e.g., `XMPP_C2S_PORT`) so the app can read the externally mapped port. Note that apps using TCP/UDP ports must handle their own TLS termination for those ports (Cloudron's reverse proxy only handles HTTP).
+Port values are exposed as environment variables (e.g., `XMPP_C2S_PORT`). Apps using TCP/UDP ports must handle their own TLS termination for those ports.
 
 ### 9.1+ Manifest Features
 
-**`persistentDirs`**: Directories that persist across updates without needing the `localstorage` addon. Useful for apps that write to specific paths outside `/app/data`.
+**`persistentDirs`**: Directories that persist across updates without needing the `localstorage` addon.
 
-**`backupCommand` / `restoreCommand`**: Custom commands run during backup/restore for apps with special backup needs (e.g., consistent SQLite snapshots, application-level dump/restore).
+**`backupCommand` / `restoreCommand`**: Custom commands run during backup/restore for apps with special backup needs.
 
 ```json
 {
@@ -392,28 +348,22 @@ The port values are exposed as environment variables (e.g., `XMPP_C2S_PORT`) so 
 ```dockerfile
 FROM cloudron/base:5.0.0
 
-# Install dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
     nginx \
     php8.2-fpm \
     php8.2-mysql \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy application code
 WORKDIR /app/code
 COPY --chown=cloudron:cloudron . /app/code/
 
-# Preserve defaults for first-run
 RUN mkdir -p /app/code/defaults && \
     mv /app/code/config /app/code/defaults/config 2>/dev/null || true
 
-# Add start script
 COPY start.sh /app/code/start.sh
 RUN chmod +x /app/code/start.sh
 
-# Expose port (documentation only, Cloudron uses httpPort from manifest)
 EXPOSE 8000
-
 CMD ["/app/code/start.sh"]
 ```
 
@@ -425,10 +375,6 @@ CMD ["/app/code/start.sh"]
 # PHP temp paths must be writable
 RUN rm -rf /var/lib/php/sessions && \
     ln -s /run/php/sessions /var/lib/php/sessions
-
-# In start.sh:
-mkdir -p /run/php/sessions /run/php/uploads /run/php/tmp
-chown -R www-data:www-data /run/php
 ```
 
 PHP-FPM pool config:
@@ -439,13 +385,12 @@ php_value[upload_tmp_dir] = /run/php/uploads
 php_value[sys_temp_dir] = /run/php/tmp
 ```
 
+In start.sh: `mkdir -p /run/php/sessions /run/php/uploads /run/php/tmp`
+
 #### Node.js Applications
 
 ```dockerfile
-# Build time
 RUN npm ci --production && npm cache clean --force
-
-# Runtime
 ENV NODE_ENV=production
 ```
 
@@ -456,7 +401,6 @@ ENV NODE_ENV=production
 ```dockerfile
 ENV PYTHONUNBUFFERED=1
 ENV PYTHONDONTWRITEBYTECODE=1
-
 RUN pip install --no-cache-dir -r requirements.txt
 ```
 
@@ -478,11 +422,7 @@ server {
 }
 ```
 
-In start.sh:
-
-```bash
-mkdir -p /run/nginx/client_body /run/nginx/proxy /run/nginx/fastcgi
-```
+In start.sh: `mkdir -p /run/nginx/client_body /run/nginx/proxy /run/nginx/fastcgi`
 
 #### Apache Configuration
 
@@ -504,40 +444,28 @@ set -eu
 
 echo "==> Starting Cloudron App"
 
-# ============================================
 # PHASE 1: First-Run Detection
-# ============================================
 if [[ ! -f /app/data/.initialized ]]; then
     FIRST_RUN=true
-    echo "==> First run detected"
 else
     FIRST_RUN=false
 fi
 
-# ============================================
 # PHASE 2: Directory Structure
-# ============================================
 mkdir -p /app/data/config /app/data/storage /app/data/logs
 mkdir -p /run/app /run/php /run/nginx  # Ephemeral
 
-# ============================================
 # PHASE 3: Symlinks (always recreate - idempotent)
-# ============================================
 ln -sfn /app/data/config /app/code/config
 ln -sfn /app/data/storage /app/code/storage
 ln -sfn /app/data/logs /app/code/logs
 
-# ============================================
 # PHASE 4: First-Run Initialization
-# ============================================
 if [[ "$FIRST_RUN" == "true" ]]; then
-    echo "==> Copying default configs"
     cp -rn /app/code/defaults/config/* /app/data/config/ 2>/dev/null || true
 fi
 
-# ============================================
 # PHASE 5: Configuration Injection
-# ============================================
 # Method A: Template substitution
 envsubst < /app/code/config.template > /app/data/config/app.conf
 
@@ -555,29 +483,17 @@ EOF
 # Method C: sed for simple replacements
 sed -i "s|APP_URL=.*|APP_URL=${CLOUDRON_APP_ORIGIN}|" /app/data/config/.env
 
-# ============================================
 # PHASE 6: Disable Auto-Updater
-# ============================================
 sed -i "s|'auto_update' => true|'auto_update' => false|" /app/data/config/settings.php 2>/dev/null || true
 
-# ============================================
 # PHASE 7: Database Migrations
-# ============================================
-echo "==> Running migrations"
 gosu cloudron:cloudron /app/code/bin/migrate --force
 
-# ============================================
 # PHASE 8: Finalization
-# ============================================
 chown -R cloudron:cloudron /app/data /run/app
-
-# Mark initialized
 touch /app/data/.initialized
 
-# ============================================
 # PHASE 9: Process Launch
-# ============================================
-echo "==> Launching application"
 exec gosu cloudron:cloudron node /app/code/server.js
 ```
 
@@ -614,24 +530,17 @@ stderr_logfile=/dev/stderr
 stderr_logfile_maxbytes=0
 ```
 
-End of start.sh for multi-process:
-
-```bash
-exec /usr/bin/supervisord --configuration /app/code/supervisord.conf
-```
+End of start.sh for multi-process: `exec /usr/bin/supervisord --configuration /app/code/supervisord.conf`
 
 ## Addon Environment Variables
 
 For the full environment variable reference for all addons (`mysql`, `postgresql`, `mongodb`, `redis`, `ldap`, `oidc`, `sendmail`, `recvmail`, `email`, `proxyauth`, `scheduler`, `tls`, `turn`, `docker`) including addon-specific options, see [addons-ref.md](cloudron-app-packaging-skill/addons-ref.md).
 
 **Key patterns**:
-
 - Read env vars at runtime on every start — values can change across restarts.
 - Run DB migrations on each start.
 
 ### General Variables (Always Available)
-
-These are always set, regardless of which addons are declared:
 
 ```bash
 CLOUDRON_APP_ORIGIN=https://app.domain.com  # Full URL with protocol
@@ -641,44 +550,20 @@ CLOUDRON=1                                   # Always set to "1"
 
 ## Development Workflow
 
-### Initial Setup
-
 ```bash
 # Install Cloudron CLI
 npm install -g cloudron
-
-# Login to your Cloudron instance
 cloudron login my.cloudron.example
-
-# Initialize new app (creates manifest and basic structure)
 cloudron init
-```
 
-### Build-Test-Iterate Cycle
-
-```bash
-# Build Docker image (auto-tags with timestamp)
+# Build-test-iterate
 cloudron build
-
-# First install
 cloudron install --location testapp
-
-# View logs
 cloudron logs -f --app testapp
-
-# After changes, rebuild and update
 cloudron build && cloudron update --app testapp
-
-# Debug mode (pauses app, makes filesystem writable)
-cloudron debug --app testapp
-
-# Shell into running container
-cloudron exec --app testapp
-
-# Disable debug mode
+cloudron debug --app testapp       # Pauses app, makes filesystem writable
+cloudron exec --app testapp        # Shell into running container
 cloudron debug --disable --app testapp
-
-# Cleanup
 cloudron uninstall --app testapp
 ```
 
@@ -705,12 +590,11 @@ Cloudron has no AMQP addon. Apps using Celery, Sidekiq, or any AMQP-dependent ta
 **Option A: Redis as broker (preferred)**. If the app supports Redis as a broker backend (Celery does natively), use the Cloudron Redis addon:
 
 ```python
-# Celery with Redis broker
 CELERY_BROKER_URL = os.environ['CLOUDRON_REDIS_URL']
 CELERY_RESULT_BACKEND = os.environ['CLOUDRON_REDIS_URL']
 ```
 
-**Option B: LavinMQ (when AMQP is required)**. LavinMQ is a lightweight AMQP broker (~40 MB RAM, single binary, drop-in RabbitMQ replacement). Install in the Dockerfile and run under Supervisor:
+**Option B: LavinMQ (when AMQP is required)**. LavinMQ is a lightweight AMQP broker (~40 MB RAM, single binary, drop-in RabbitMQ replacement):
 
 ```dockerfile
 RUN curl -fsSL https://packagecloud.io/cloudamqp/lavinmq/gpgkey | gpg --dearmor -o /usr/share/keyrings/lavinmq.gpg && \
@@ -722,88 +606,18 @@ RUN curl -fsSL https://packagecloud.io/cloudamqp/lavinmq/gpgkey | gpg --dearmor 
 
 Store data under `/app/data/lavinmq` and run as a Supervisor program.
 
-## Anti-Patterns to Avoid
+## Common Anti-Patterns
 
-### Starting from the upstream Docker image
-
-```dockerfile
-# WRONG - Fighting the image's assumptions about bundled services
-FROM someapp/monolith:latest
-# ... weeks of disabling internal postgres, redis, nginx ...
-
-# CORRECT - Install the app on cloudron/base
-FROM cloudron/base:5.0.0
-RUN pip install someapp  # or npm install, go build, download binary
-```
-
-### Writing to /app/code
-
-```bash
-# WRONG - Read-only filesystem
-echo "data" > /app/code/cache/file.txt
-
-# CORRECT
-echo "data" > /app/data/cache/file.txt
-```
-
-### Running as root
-
-```bash
-# WRONG
-node /app/code/server.js
-
-# CORRECT
-exec gosu cloudron:cloudron node /app/code/server.js
-```
-
-### Missing exec
-
-```bash
-# WRONG - Signals won't propagate, container won't stop gracefully
-gosu cloudron:cloudron node server.js
-
-# CORRECT
-exec gosu cloudron:cloudron node server.js
-```
-
-### Non-idempotent start.sh
-
-```bash
-# WRONG - Fails on second run if file exists
-cp /app/code/defaults/config.json /app/data/
-
-# CORRECT - Safe to repeat
-cp -n /app/code/defaults/config.json /app/data/ 2>/dev/null || true
-```
-
-### Hardcoded URLs
-
-```javascript
-// WRONG
-const baseUrl = "https://myapp.example.com";
-
-// CORRECT
-const baseUrl = process.env.CLOUDRON_APP_ORIGIN;
-```
-
-### Bundling databases
-
-```dockerfile
-# WRONG - Use Cloudron addons instead
-RUN apt-get install -y postgresql redis-server
-```
-
-### Caching environment variables
-
-```javascript
-// WRONG - Variables can change on restart
-const dbHost = process.env.CLOUDRON_MYSQL_HOST;
-// ... later in code
-connect(dbHost);
-
-// CORRECT - Read fresh each time
-connect(process.env.CLOUDRON_MYSQL_HOST);
-```
+| Anti-pattern | Wrong | Correct |
+|---|---|---|
+| Starting from upstream image | `FROM someapp/monolith:latest` | `FROM cloudron/base:5.0.0` + install app |
+| Writing to /app/code | `echo "data" > /app/code/cache/file.txt` | `echo "data" > /app/data/cache/file.txt` |
+| Running as root | `node /app/code/server.js` | `exec gosu cloudron:cloudron node /app/code/server.js` |
+| Missing exec | `gosu cloudron:cloudron node server.js` | `exec gosu cloudron:cloudron node server.js` |
+| Non-idempotent start.sh | `cp /app/code/defaults/config.json /app/data/` | `cp -n /app/code/defaults/config.json /app/data/ 2>/dev/null \|\| true` |
+| Hardcoded URLs | `const baseUrl = "https://myapp.example.com"` | `const baseUrl = process.env.CLOUDRON_APP_ORIGIN` |
+| Bundling databases | `RUN apt-get install -y postgresql redis-server` | Use Cloudron addons |
+| Caching env vars | `const dbHost = process.env.CLOUDRON_MYSQL_HOST` (stored) | Read `process.env.CLOUDRON_MYSQL_HOST` fresh each time |
 
 ## Upgrade & Migration Handling
 
@@ -817,7 +631,6 @@ if [[ -f "$VERSION_FILE" ]]; then
     PREVIOUS_VERSION=$(cat "$VERSION_FILE")
     if [[ "$PREVIOUS_VERSION" != "$CURRENT_VERSION" ]]; then
         echo "==> Upgrading from $PREVIOUS_VERSION to $CURRENT_VERSION"
-        # Run version-specific migrations
         if [[ "$PREVIOUS_VERSION" < "1.5.0" ]]; then
             echo "==> Running 1.5.0 migration"
             # migration commands
@@ -834,49 +647,17 @@ echo "$CURRENT_VERSION" > "$VERSION_FILE"
 - Use framework migration tracking (Laravel, Django, Rails, etc.)
 - For raw SQL: `CREATE TABLE IF NOT EXISTS`, `ADD COLUMN IF NOT EXISTS`
 
-## Local Development with aidevops
+## Troubleshooting
 
-When developing Cloudron app packages locally:
-
-```bash
-# Create repo in ~/Git/
-mkdir ~/Git/cloudron-myapp
-cd ~/Git/cloudron-myapp
-
-# Initialize with aidevops
-aidevops init
-
-# Initialize Cloudron package
-cloudron init
-
-# Structure
-# ~/Git/cloudron-myapp/
-#   .agents/                    # aidevops config
-#   CloudronManifest.json      # Cloudron manifest
-#   Dockerfile                 # Build instructions
-#   start.sh                   # Entry point
-#   logo.png                   # App icon
-```
-
-### Recommended .gitignore
-
-```gitignore
-# Cloudron
-.cloudron/
-
-# aidevops
-.agents/loop-state/
-*.local.md
-
-# Build artifacts
-node_modules/
-vendor/
-dist/
-```
+| Issue | Solution |
+|-------|----------|
+| App won't start | `cloudron logs --app testapp` / `cloudron debug --app testapp` |
+| Permission denied | `chown -R cloudron:cloudron /app/data` — check if writing to read-only path |
+| Database connection fails | Verify addon declared in manifest; `cloudron exec --app testapp` then `env \| grep CLOUDRON` |
+| Health check fails | `curl -v http://localhost:8000/health` — verify app listens on httpPort |
+| Memory limit exceeded | Increase `memoryLimit` in manifest; check for memory leaks; optimize worker counts |
 
 ## Publishing to Cloudron App Store
-
-Once your app is tested and stable:
 
 1. **Fork the app store repo**: https://git.cloudron.io/cloudron/appstore
 2. **Add your app**: Create directory with manifest and icon
@@ -885,73 +666,19 @@ Once your app is tested and stable:
 
 See: https://docs.cloudron.io/packaging/publishing/
 
-## Troubleshooting
-
-### Common Issues
-
-**App won't start**:
-
-```bash
-cloudron logs --app testapp
-cloudron debug --app testapp
-# Check start.sh for errors
-```
-
-**Permission denied errors**:
-
-```bash
-# Ensure proper ownership
-chown -R cloudron:cloudron /app/data
-# Check if writing to read-only path
-```
-
-**Database connection fails**:
-
-```bash
-# Verify addon is declared in manifest
-# Check environment variables are being read correctly
-cloudron exec --app testapp
-env | grep CLOUDRON
-```
-
-**Health check fails**:
-
-```bash
-# Verify healthCheckPath returns 200
-curl -v http://localhost:8000/health
-# Check if app is actually listening on httpPort
-```
-
-**Memory limit exceeded**:
-
-```bash
-# Increase memoryLimit in manifest
-# Check for memory leaks
-# Optimize worker counts
-```
-
 ## Resources
-
-### Official Documentation
-
-- **Packaging Tutorial**: https://docs.cloudron.io/packaging/tutorial/
-- **Packaging Reference**: https://docs.cloudron.io/packaging/
-- **CLI Reference**: https://docs.cloudron.io/packaging/cli/
-- **Publishing Guide**: https://docs.cloudron.io/packaging/publishing/
-- **Addon Reference**: https://docs.cloudron.io/packaging/addons/
-
-### git.cloudron.io (Source Code)
-
-The GitLab instance at https://git.cloudron.io/ is the authoritative source for all Cloudron app packages. See "Using git.cloudron.io as Reference" section above for detailed usage.
 
 | Resource | URL |
 |----------|-----|
-| **All Packages** | https://git.cloudron.io/packages |
-| **Explore by Topic** | https://git.cloudron.io/explore/projects/topics |
-| **Recently Updated** | https://git.cloudron.io/explore/projects?sort=latest_activity_desc |
-| **Platform Code** | https://git.cloudron.io/platform |
-| **Documentation Source** | https://git.cloudron.io/docs/docs |
-| **GitLab API** | https://git.cloudron.io/api/v4/ |
+| Packaging Tutorial | https://docs.cloudron.io/packaging/tutorial/ |
+| Packaging Reference | https://docs.cloudron.io/packaging/ |
+| CLI Reference | https://docs.cloudron.io/packaging/cli/ |
+| Publishing Guide | https://docs.cloudron.io/packaging/publishing/ |
+| Addon Reference | https://docs.cloudron.io/packaging/addons/ |
+| All Packages | https://git.cloudron.io/packages |
+| Explore by Topic | https://git.cloudron.io/explore/projects/topics |
+| Forum (Packaging) | https://forum.cloudron.io/category/96/app-packaging-development |
+| Base Image Tags | https://hub.docker.com/r/cloudron/base/tags |
 
 ### Example Repos by Framework
 
@@ -963,9 +690,3 @@ The GitLab instance at https://git.cloudron.io/ is the authoritative source for 
 | Go | https://git.cloudron.io/explore/projects/topics/go | vikunja-app |
 | Ruby/Rails | https://git.cloudron.io/explore/projects/topics/rails | discourse-app |
 | Java | https://git.cloudron.io/explore/projects/topics/java | metabase-app |
-
-### Other Resources
-
-- **Forum (Packaging)**: https://forum.cloudron.io/category/96/app-packaging-development
-- **Base Image Tags**: https://hub.docker.com/r/cloudron/base/tags
-- **App Store**: https://cloudron.io/store/index.html
