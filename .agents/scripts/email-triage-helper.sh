@@ -380,7 +380,10 @@ create_task_from_email() {
 	return 0
 }
 
-triage_single() {
+# _triage_parse_message: extract and classify fields from a message JSON object.
+# Outputs a tab-delimited record:
+#   from\tsubject\tmessage_id\tsender_domain\tguard_state\tcategory\theuristic_conf\turgency\treport_type\temotion\tis_opportunity
+_triage_parse_message() {
 	local message_json="$1"
 
 	local from_value subject body message_id
@@ -403,26 +406,24 @@ triage_single() {
 	report_type=$(detect_report_type "$subject" "$body")
 	emotion=$(detect_emotion "$subject" "$body")
 
-	local is_report="false" needs_report_attention="false"
-	if [[ "$report_type" != "none" ]]; then
-		is_report="true"
-		if [[ "$urgency" == "Critical" || "$urgency" == "High" ]]; then
-			needs_report_attention="true"
-		fi
-	fi
-
-	local trusted_report_sender="false" trusted_opportunity_sender="false"
-	if config_has_sender "trusted_report_senders" "$from_value" "$sender_domain"; then
-		trusted_report_sender="true"
-	fi
-	if config_has_sender "trusted_opportunity_senders" "$from_value" "$sender_domain"; then
-		trusted_opportunity_sender="true"
-	fi
-
 	local is_opportunity="false"
-	if printf '%s %s' "$subject" "$body" | tr '[:upper:]' '[:lower:]' | grep -Eiq 'opportunity|partnership|proposal|lead|collaborat|intro'; then
+	if printf '%s %s' "$subject" "$body" | tr '[:upper:]' '[:lower:]' |
+		grep -Eiq 'opportunity|partnership|proposal|lead|collaborat|intro'; then
 		is_opportunity="true"
 	fi
+
+	printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s' \
+		"$from_value" "$subject" "$message_id" "$sender_domain" \
+		"$guard_state" "$category" "$heuristic_conf" "$urgency" "$report_type" \
+		"$emotion" "$is_opportunity"
+	return 0
+}
+
+# _triage_check_dns_auth: run SPF/DKIM/DMARC checks and derive phishing flag.
+# Outputs a tab-delimited record: spf|dkim|dmarc|is_phishing
+_triage_check_dns_auth() {
+	local sender_domain="$1"
+	local guard_state="$2"
 
 	local spf_result dkim_result dmarc_result
 	spf_result=$(check_spf "$sender_domain")
@@ -437,17 +438,25 @@ triage_single() {
 		is_phishing="true"
 	fi
 
-	local selected_model="haiku"
-	if [[ "$heuristic_conf" == "0.62" || "$guard_state" == "warn" ]]; then
-		selected_model="sonnet"
-	fi
+	printf '%s\t%s\t%s\t%s' "$spf_result" "$dkim_result" "$dmarc_result" "$is_phishing"
+	return 0
+}
 
-	local ai_json="{}"
-	if [[ "$guard_state" != "block" ]]; then
-		ai_json=$(ai_classify "$message_json" "$selected_model")
-	fi
+# _triage_apply_ai_overrides: merge AI classification results over heuristic values.
+# Outputs a tab-delimited record:
+#   category|urgency|emotion|is_report|report_type|is_opportunity|is_phishing|ai_confidence
+_triage_apply_ai_overrides() {
+	local ai_json="$1"
+	local category="$2"
+	local urgency="$3"
+	local emotion="$4"
+	local is_report="$5"
+	local report_type="$6"
+	local is_opportunity="$7"
+	local is_phishing="$8"
 
-	local ai_category ai_urgency ai_emotion ai_is_report ai_report_type ai_is_opportunity ai_is_phishing ai_confidence
+	local ai_category ai_urgency ai_emotion ai_is_report ai_report_type
+	local ai_is_opportunity ai_is_phishing ai_confidence
 	ai_category=$(extract_field "$ai_json" '.category' '')
 	ai_urgency=$(extract_field "$ai_json" '.urgency' '')
 	ai_emotion=$(extract_field "$ai_json" '.emotion' '')
@@ -457,21 +466,13 @@ triage_single() {
 	ai_is_phishing=$(extract_field "$ai_json" '.is_phishing' '')
 	ai_confidence=$(extract_field "$ai_json" '.confidence' '0.0')
 
-	if [[ -n "$ai_category" ]]; then
-		category="$ai_category"
-	fi
-	if [[ -n "$ai_urgency" ]]; then
-		urgency="$ai_urgency"
-	fi
-	if [[ -n "$ai_emotion" ]]; then
-		emotion="$ai_emotion"
-	fi
+	if [[ -n "$ai_category" ]]; then category="$ai_category"; fi
+	if [[ -n "$ai_urgency" ]]; then urgency="$ai_urgency"; fi
+	if [[ -n "$ai_emotion" ]]; then emotion="$ai_emotion"; fi
 	if [[ "$ai_is_report" == "true" || "$ai_is_report" == "false" ]]; then
 		is_report="$ai_is_report"
 	fi
-	if [[ -n "$ai_report_type" ]]; then
-		report_type="$ai_report_type"
-	fi
+	if [[ -n "$ai_report_type" ]]; then report_type="$ai_report_type"; fi
 	if [[ "$ai_is_opportunity" == "true" || "$ai_is_opportunity" == "false" ]]; then
 		is_opportunity="$ai_is_opportunity"
 	fi
@@ -479,15 +480,22 @@ triage_single() {
 		is_phishing="$ai_is_phishing"
 	fi
 
-	local actionable="false"
-	if [[ "$is_phishing" != "true" ]] && [[ "$urgency" == "Critical" || "$urgency" == "High" || "$is_report" == "true" || "$is_opportunity" == "true" ]]; then
-		actionable="true"
-	fi
+	printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s' \
+		"$category" "$urgency" "$emotion" "$is_report" \
+		"$report_type" "$is_opportunity" "$is_phishing" "$ai_confidence"
+	return 0
+}
 
-	local created_task_id=""
-	if [[ "$actionable" == "true" ]]; then
-		created_task_id=$(create_task_from_email "$subject" "$urgency" "$message_id")
-	fi
+# _triage_emit_result: build and print the final triage JSON object.
+_triage_emit_result() {
+	local message_id="$1" from_value="$2" sender_domain="$3" subject="$4"
+	local category="$5" urgency="$6" emotion="$7"
+	local is_report="$8" report_type="$9" needs_report_attention="${10}"
+	local is_opportunity="${11}" is_phishing="${12}"
+	local trusted_report_sender="${13}" trusted_opportunity_sender="${14}"
+	local guard_state="${15}" spf_result="${16}" dkim_result="${17}" dmarc_result="${18}"
+	local selected_model="${19}" heuristic_conf="${20}" ai_confidence="${21}"
+	local actionable="${22}" created_task_id="${23}"
 
 	jq -n \
 		--arg message_id "$message_id" \
@@ -542,6 +550,86 @@ triage_single() {
 			actionable: $actionable,
 			created_task_id: (if $created_task_id == "" then null else $created_task_id end)
 		}'
+	return 0
+}
+
+triage_single() {
+	local message_json="$1"
+
+	# Phase 1: parse message fields and run heuristic classifiers
+	local parsed_fields
+	parsed_fields=$(_triage_parse_message "$message_json")
+	local from_value subject message_id sender_domain guard_state
+	local category heuristic_conf urgency report_type emotion is_opportunity
+	IFS=$'\t' read -r from_value subject message_id sender_domain \
+		guard_state category heuristic_conf urgency report_type \
+		emotion is_opportunity \
+		<<<"$parsed_fields"
+
+	# Derive boolean flags from heuristic results
+	local is_report="false" needs_report_attention="false"
+	if [[ "$report_type" != "none" ]]; then
+		is_report="true"
+		if [[ "$urgency" == "Critical" || "$urgency" == "High" ]]; then
+			needs_report_attention="true"
+		fi
+	fi
+
+	local trusted_report_sender="false" trusted_opportunity_sender="false"
+	if config_has_sender "trusted_report_senders" "$from_value" "$sender_domain"; then
+		trusted_report_sender="true"
+	fi
+	if config_has_sender "trusted_opportunity_senders" "$from_value" "$sender_domain"; then
+		trusted_opportunity_sender="true"
+	fi
+
+	# Phase 2: DNS authentication checks
+	local dns_fields
+	dns_fields=$(_triage_check_dns_auth "$sender_domain" "$guard_state")
+	local spf_result dkim_result dmarc_result is_phishing
+	IFS=$'\t' read -r spf_result dkim_result dmarc_result is_phishing <<<"$dns_fields"
+
+	# Phase 3: AI classification (skipped when guard blocks)
+	local selected_model="haiku"
+	if [[ "$heuristic_conf" == "0.62" || "$guard_state" == "warn" ]]; then
+		selected_model="sonnet"
+	fi
+
+	local ai_json="{}"
+	if [[ "$guard_state" != "block" ]]; then
+		ai_json=$(ai_classify "$message_json" "$selected_model")
+	fi
+
+	local merged_fields ai_confidence
+	merged_fields=$(_triage_apply_ai_overrides \
+		"$ai_json" "$category" "$urgency" "$emotion" \
+		"$is_report" "$report_type" "$is_opportunity" "$is_phishing")
+	IFS=$'\t' read -r category urgency emotion is_report \
+		report_type is_opportunity is_phishing ai_confidence <<<"$merged_fields"
+
+	# Phase 4: actionability and task creation
+	local actionable="false"
+	if [[ "$is_phishing" != "true" ]] &&
+		[[ "$urgency" == "Critical" || "$urgency" == "High" ||
+			"$is_report" == "true" || "$is_opportunity" == "true" ]]; then
+		actionable="true"
+	fi
+
+	local created_task_id=""
+	if [[ "$actionable" == "true" ]]; then
+		created_task_id=$(create_task_from_email "$subject" "$urgency" "$message_id")
+	fi
+
+	# Phase 5: emit result
+	_triage_emit_result \
+		"$message_id" "$from_value" "$sender_domain" "$subject" \
+		"$category" "$urgency" "$emotion" \
+		"$is_report" "$report_type" "$needs_report_attention" \
+		"$is_opportunity" "$is_phishing" \
+		"$trusted_report_sender" "$trusted_opportunity_sender" \
+		"$guard_state" "$spf_result" "$dkim_result" "$dmarc_result" \
+		"$selected_model" "$heuristic_conf" "$ai_confidence" \
+		"$actionable" "$created_task_id"
 	return 0
 }
 
