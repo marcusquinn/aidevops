@@ -312,6 +312,85 @@ _delete_stale_remote_ref() {
 	echo -e "${GREEN}Deleted ${remote}/$branch${NC}"
 }
 
+# Handle a merged stale remote branch (interactive or headless).
+# Args: $1=branch, $2=stale_remote, $3=remote_commit
+# Returns 0 to proceed, 1 to abort.
+_handle_stale_merged() {
+	local branch="$1"
+	local stale_remote="$2"
+	local remote_commit="$3"
+
+	echo -e "${YELLOW}Stale remote branch detected: ${stale_remote}/$branch (already merged)${NC}"
+	echo -e "  Last commit: $remote_commit"
+
+	if [[ -t 0 ]]; then
+		echo ""
+		echo -e "Options:"
+		echo -e "  1) Delete stale remote ref and continue (recommended)"
+		echo -e "  2) Continue without deleting"
+		echo -e "  3) Abort"
+		read -rp "Choice [1]: " choice
+		choice="${choice:-1}"
+		case "$choice" in
+		1) _delete_stale_remote_ref "$branch" "Deleting stale remote ref..." "$stale_remote" ;;
+		2) echo -e "${YELLOW}Proceeding without deleting stale remote${NC}" ;;
+		3)
+			echo -e "${RED}Aborted${NC}"
+			return 1
+			;;
+		*)
+			echo -e "${RED}Invalid choice, aborting${NC}"
+			return 1
+			;;
+		esac
+	else
+		# Headless: auto-delete merged stale refs
+		_delete_stale_remote_ref "$branch" "Headless mode: auto-deleting merged stale remote ref..." "$stale_remote"
+	fi
+
+	return 0
+}
+
+# Handle an unmerged stale remote branch (interactive or headless).
+# Args: $1=branch, $2=stale_remote, $3=remote_commit
+# Returns 0 to proceed, 1 to abort.
+_handle_stale_unmerged() {
+	local branch="$1"
+	local stale_remote="$2"
+	local remote_commit="$3"
+
+	echo -e "${RED}Stale remote branch detected: ${stale_remote}/$branch (NOT merged)${NC}"
+	echo -e "  Last commit: $remote_commit"
+
+	if [[ -t 0 ]]; then
+		echo ""
+		echo -e "Options:"
+		echo -e "  1) Delete stale remote ref and continue (${RED}unmerged changes will be lost on remote${NC})"
+		echo -e "  2) Continue without deleting (new branch will diverge from stale remote)"
+		echo -e "  3) Abort"
+		read -rp "Choice [3]: " choice
+		choice="${choice:-3}"
+		case "$choice" in
+		1) _delete_stale_remote_ref "$branch" "Deleting stale remote ref..." "$stale_remote" ;;
+		2) echo -e "${YELLOW}Proceeding without deleting stale remote${NC}" ;;
+		3)
+			echo -e "${RED}Aborted${NC}"
+			return 1
+			;;
+		*)
+			echo -e "${RED}Invalid choice, aborting${NC}"
+			return 1
+			;;
+		esac
+	else
+		# Headless: warn but proceed — don't delete unmerged work
+		echo -e "${YELLOW}Headless mode: proceeding without deleting (unmerged remote preserved)${NC}"
+		echo -e "${YELLOW}New local branch will diverge from stale remote ref${NC}"
+	fi
+
+	return 0
+}
+
 # Handle stale remote branch before creating a new local branch (t1060)
 # In interactive mode: warns user and offers to delete.
 # In headless mode (no tty): auto-deletes if merged, warns and proceeds if unmerged.
@@ -330,73 +409,9 @@ handle_stale_remote_branch() {
 	remote_commit=$(git rev-parse --short "refs/remotes/${stale_remote}/$branch" 2>/dev/null || echo "unknown")
 
 	if [[ "$stale_status" == "merged" ]]; then
-		echo -e "${YELLOW}Stale remote branch detected: ${stale_remote}/$branch (already merged)${NC}"
-		echo -e "  Last commit: $remote_commit"
-
-		if [[ -t 0 ]]; then
-			# Interactive: ask user
-			echo ""
-			echo -e "Options:"
-			echo -e "  1) Delete stale remote ref and continue (recommended)"
-			echo -e "  2) Continue without deleting"
-			echo -e "  3) Abort"
-			read -rp "Choice [1]: " choice
-			choice="${choice:-1}"
-			case "$choice" in
-			1)
-				_delete_stale_remote_ref "$branch" "Deleting stale remote ref..." "$stale_remote"
-				;;
-			2)
-				echo -e "${YELLOW}Proceeding without deleting stale remote${NC}"
-				;;
-			3)
-				echo -e "${RED}Aborted${NC}"
-				return 1
-				;;
-			*)
-				echo -e "${RED}Invalid choice, aborting${NC}"
-				return 1
-				;;
-			esac
-		else
-			# Headless: auto-delete merged stale refs
-			_delete_stale_remote_ref "$branch" "Headless mode: auto-deleting merged stale remote ref..." "$stale_remote"
-		fi
+		_handle_stale_merged "$branch" "$stale_remote" "$remote_commit" || return 1
 	else
-		# Unmerged stale remote
-		echo -e "${RED}Stale remote branch detected: ${stale_remote}/$branch (NOT merged)${NC}"
-		echo -e "  Last commit: $remote_commit"
-
-		if [[ -t 0 ]]; then
-			# Interactive: ask user
-			echo ""
-			echo -e "Options:"
-			echo -e "  1) Delete stale remote ref and continue (${RED}unmerged changes will be lost on remote${NC})"
-			echo -e "  2) Continue without deleting (new branch will diverge from stale remote)"
-			echo -e "  3) Abort"
-			read -rp "Choice [3]: " choice
-			choice="${choice:-3}"
-			case "$choice" in
-			1)
-				_delete_stale_remote_ref "$branch" "Deleting stale remote ref..." "$stale_remote"
-				;;
-			2)
-				echo -e "${YELLOW}Proceeding without deleting stale remote${NC}"
-				;;
-			3)
-				echo -e "${RED}Aborted${NC}"
-				return 1
-				;;
-			*)
-				echo -e "${RED}Invalid choice, aborting${NC}"
-				return 1
-				;;
-			esac
-		else
-			# Headless: warn but proceed — don't delete unmerged work
-			echo -e "${YELLOW}Headless mode: proceeding without deleting (unmerged remote preserved)${NC}"
-			echo -e "${YELLOW}New local branch will diverge from stale remote ref${NC}"
-		fi
+		_handle_stale_unmerged "$branch" "$stale_remote" "$remote_commit" || return 1
 	fi
 
 	return 0
@@ -639,6 +654,73 @@ cmd_list() {
 	return 0
 }
 
+# Validate that a resolved worktree path is safe to remove.
+# Checks: not main worktree, not current directory, ownership.
+# Args: $1=path_to_remove
+# Returns 0 if safe to remove, 1 if blocked.
+_remove_validate_path() {
+	local path_to_remove="$1"
+
+	# Don't allow removing main worktree
+	local main_worktree
+	main_worktree=$(git worktree list --porcelain | head -1 | cut -d' ' -f2-)
+	if [[ "$path_to_remove" == "$main_worktree" ]]; then
+		echo -e "${RED}Error: Cannot remove main worktree${NC}"
+		return 1
+	fi
+
+	# Check if we're currently in the worktree to remove
+	if [[ "$(pwd)" == "$path_to_remove"* ]]; then
+		echo -e "${RED}Error: Cannot remove worktree while inside it${NC}"
+		echo "First: cd $(get_repo_root)" || exit
+		return 1
+	fi
+
+	# Ownership check (t189): refuse to remove worktrees owned by other sessions
+	if is_worktree_owned_by_others "$path_to_remove"; then
+		_remove_show_owner_error "$path_to_remove"
+		if [[ "${WORKTREE_FORCE_REMOVE:-}" != "true" ]]; then
+			return 1
+		fi
+		echo -e "${YELLOW}--force specified, proceeding with removal${NC}"
+	fi
+
+	return 0
+}
+
+# Clean up aidevops runtime files and execute the git worktree remove.
+# Also handles unregistration and localdev cleanup.
+# Args: $1=path_to_remove
+# Returns 0 on success, 1 on failure.
+_remove_cleanup_and_execute() {
+	local path_to_remove="$1"
+
+	# Clean up aidevops runtime files before removal (prevents "contains untracked files" error)
+	rm -rf "$path_to_remove/.agents/loop-state" 2>/dev/null || true
+	rm -rf "$path_to_remove/.agents/tmp" 2>/dev/null || true
+	rm -f "$path_to_remove/.agents/.DS_Store" 2>/dev/null || true
+	rmdir "$path_to_remove/.agent" 2>/dev/null || true # Only removes if empty
+
+	# Capture branch name before removal for localdev cleanup (t1224.8)
+	local removed_branch=""
+	removed_branch="$(git -C "$path_to_remove" branch --show-current 2>/dev/null || echo "")"
+
+	echo -e "${BLUE}Removing worktree: $path_to_remove${NC}"
+	git worktree remove "$path_to_remove"
+
+	# Unregister ownership (t189)
+	unregister_worktree "$path_to_remove"
+
+	echo -e "${GREEN}Worktree removed successfully${NC}"
+
+	# Localdev integration (t1224.8): auto-remove branch subdomain route
+	if [[ -n "$removed_branch" ]]; then
+		localdev_auto_branch_rm "$removed_branch"
+	fi
+
+	return 0
+}
+
 # Remove a worktree by branch name or path, with optional --force.
 cmd_remove() {
 	local target=""
@@ -675,53 +757,11 @@ cmd_remove() {
 		return 1
 	fi
 
-	# Don't allow removing main worktree
-	local main_worktree
-	main_worktree=$(git worktree list --porcelain | head -1 | cut -d' ' -f2-)
-	if [[ "$path_to_remove" == "$main_worktree" ]]; then
-		echo -e "${RED}Error: Cannot remove main worktree${NC}"
-		return 1
-	fi
+	# Validate path is safe to remove
+	_remove_validate_path "$path_to_remove" || return 1
 
-	# Check if we're currently in the worktree to remove
-	if [[ "$(pwd)" == "$path_to_remove"* ]]; then
-		echo -e "${RED}Error: Cannot remove worktree while inside it${NC}"
-		echo "First: cd $(get_repo_root)" || exit
-		return 1
-	fi
-
-	# Ownership check (t189): refuse to remove worktrees owned by other sessions
-	if is_worktree_owned_by_others "$path_to_remove"; then
-		_remove_show_owner_error "$path_to_remove"
-		# Allow --force override
-		if [[ "${WORKTREE_FORCE_REMOVE:-}" != "true" ]]; then
-			return 1
-		fi
-		echo -e "${YELLOW}--force specified, proceeding with removal${NC}"
-	fi
-
-	# Clean up aidevops runtime files before removal (prevents "contains untracked files" error)
-	rm -rf "$path_to_remove/.agents/loop-state" 2>/dev/null || true
-	rm -rf "$path_to_remove/.agents/tmp" 2>/dev/null || true
-	rm -f "$path_to_remove/.agents/.DS_Store" 2>/dev/null || true
-	rmdir "$path_to_remove/.agent" 2>/dev/null || true # Only removes if empty
-
-	# Capture branch name before removal for localdev cleanup (t1224.8)
-	local removed_branch=""
-	removed_branch="$(git -C "$path_to_remove" branch --show-current 2>/dev/null || echo "")"
-
-	echo -e "${BLUE}Removing worktree: $path_to_remove${NC}"
-	git worktree remove "$path_to_remove"
-
-	# Unregister ownership (t189)
-	unregister_worktree "$path_to_remove"
-
-	echo -e "${GREEN}Worktree removed successfully${NC}"
-
-	# Localdev integration (t1224.8): auto-remove branch subdomain route
-	if [[ -n "$removed_branch" ]]; then
-		localdev_auto_branch_rm "$removed_branch"
-	fi
+	# Clean up runtime files and execute removal
+	_remove_cleanup_and_execute "$path_to_remove" || return 1
 
 	return 0
 }
