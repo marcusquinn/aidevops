@@ -293,8 +293,13 @@ main() {
 			local first_line
 			first_line=$(head -1 "$advisory_file" | sed 's/^[[:space:]]*//')
 			if [[ -n "$first_line" ]]; then
-				advisories_output="${advisories_output:+${advisories_output}
-}${first_line} Run in your terminal: aidevops security | Dismiss: aidevops security dismiss ${adv_id}"
+				local entry
+				entry=$(printf '%s Run in your terminal: aidevops security | Dismiss: aidevops security dismiss %s' "$first_line" "$adv_id")
+				if [[ -n "$advisories_output" ]]; then
+					advisories_output=$(printf '%s\n%s' "$advisories_output" "$entry")
+				else
+					advisories_output="$entry"
+				fi
 			fi
 		done
 	fi
