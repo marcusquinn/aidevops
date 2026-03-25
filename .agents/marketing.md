@@ -150,31 +150,13 @@ See `.agents/services/crm/fluentcrm.md` for detailed setup instructions.
 ### Creating a Campaign
 
 ```text
-1. Create email template
-   fluentcrm_create_email_template with:
-   - title: "Campaign Name - Template"
-   - subject: "Your Subject Line"
-   - body: HTML content
-
-2. Create campaign
-   fluentcrm_create_campaign with:
-   - title: "Campaign Name"
-   - subject: "Email Subject"
-   - template_id: template ID from step 1
-   - recipient_list: [list IDs]
-
-3. Review in FluentCRM admin
-4. Schedule or send immediately
+1. Plan — goals, audience, messaging
+2. Create template: fluentcrm_create_email_template (title, subject, body HTML)
+3. Create campaign: fluentcrm_create_campaign (title, subject, template_id, recipient_list)
+4. Test — send test emails, check rendering
+5. Schedule — set send time for optimal engagement
+6. Monitor and optimize — track opens, clicks, conversions; A/B test
 ```
-
-### Campaign Workflow
-
-1. **Plan** - Define goals, audience, messaging
-2. **Create** - Build template and campaign
-3. **Test** - Send test emails, check rendering
-4. **Schedule** - Set send time for optimal engagement
-5. **Monitor** - Track opens, clicks, conversions
-6. **Optimize** - A/B test and improve
 
 ## Email Templates
 
@@ -344,29 +326,13 @@ Returns: <a href="{{fc_smart_link slug='demo-cta'}}">Request a Demo</a>
 
 ## Content Marketing Integration
 
-### Platform Voice Guidelines
-
-When creating content for social media or multi-channel campaigns, see `content/platform-personas.md` for platform-specific voice adaptations (LinkedIn, Instagram, YouTube, X, Facebook). This ensures consistent brand voice adapted to each channel's norms.
+For platform-specific voice (LinkedIn, Instagram, YouTube, X, Facebook), see `content/platform-personas.md`.
 
 ### Content to Campaign Workflow
 
-1. **Create content** using `content.md` agent
-2. **Adapt for platforms** using `content/platform-personas.md` guidelines
-3. **Optimize for SEO** using `seo.md` agent
-4. **Create email** promoting content
-5. **Segment audience** by interest
-6. **Send campaign** to relevant segments
-7. **Track engagement** and conversions
-
-### Content Promotion Campaigns
-
-```text
-# For each new blog post:
-1. Create email template with post excerpt
-2. Create campaign targeting relevant interest tags
-3. Add smart link to track clicks
-4. Schedule for optimal send time
-```
+1. Create content (`content.md`) → adapt for platforms → optimize for SEO (`seo.md`)
+2. Create email template with post excerpt; create campaign targeting relevant interest tags
+3. Add smart link to track clicks; schedule for optimal send time; track engagement
 
 ## Lead Generation
 
@@ -425,17 +391,9 @@ Returns:
 
 ### Campaign Analysis
 
-After each campaign:
-
-1. Review open and click rates
-2. Analyze by segment performance
-3. Identify top-performing content
-4. Note unsubscribes and complaints
-5. Document learnings for future
+After each campaign: review open/click rates by segment, identify top content, note unsubscribes and complaints, document learnings.
 
 ## A/B Testing
-
-### What to Test
 
 | Element | Test Ideas |
 |---------|------------|
@@ -445,30 +403,15 @@ After each campaign:
 | **CTA** | Button text, color, placement |
 | **Content** | Long vs. short, format |
 
-### Testing Process
-
-1. Create two template variations
-2. Split audience randomly
-3. Send to small test group (10-20%)
-4. Wait for results (24-48 hours)
-5. Send winner to remaining audience
+**Process**: Create two variations → split audience → send to 10-20% test group → wait 24-48h → send winner to remainder.
 
 ## Best Practices
 
-### Email Deliverability
+### Deliverability & List Hygiene
 
-- Warm up new sending domains
-- Maintain clean lists (remove bounces)
-- Use double opt-in
-- Monitor sender reputation
-- Authenticate with SPF, DKIM, DMARC
-
-### List Hygiene
-
-- Remove hard bounces immediately
-- Re-engage or remove inactive (90+ days)
-- Honor unsubscribes instantly
-- Validate emails on import
+- Authenticate with SPF, DKIM, DMARC; warm up new sending domains
+- Double opt-in; validate emails on import; remove hard bounces immediately
+- Re-engage or remove inactive (90+ days); honor unsubscribes instantly
 
 ### Compliance
 
@@ -500,8 +443,4 @@ After each campaign:
 | Pre-send validation | Run `email-test-suite-helper.sh test-design <file>` and `check-placement <domain>` for comprehensive checks. See `services/email/email-testing.md` for full testing suite docs |
 | Accessibility issues | Use `services/accessibility/accessibility-audit.md` for WCAG compliance |
 
-### Getting Help
-
-- FluentCRM Docs: https://fluentcrm.com/docs/
-- FluentCRM REST API: https://rest-api.fluentcrm.com/
-- See `.agents/services/crm/fluentcrm.md` for detailed troubleshooting
+Docs: [FluentCRM](https://fluentcrm.com/docs/) | [REST API](https://rest-api.fluentcrm.com/) | `.agents/services/crm/fluentcrm.md`

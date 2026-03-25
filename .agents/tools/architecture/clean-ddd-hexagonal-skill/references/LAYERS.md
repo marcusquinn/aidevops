@@ -470,36 +470,12 @@ export function configureContainer(): Container {
 
 ## Language-Agnostic Structure
 
-The same layered structure applies to any language:
+The same layered structure applies to any language. The key is **dependency direction**: outer layers import inner layers, never the reverse.
 
-### Go
+| Language | Root | Presentation alias |
+|----------|------|--------------------|
+| Go | `internal/` | `interfaces/` |
+| Rust | `src/` | `presentation/` |
+| Python | `src/` | `presentation/` |
 
-```
-internal/
-├── domain/
-├── application/
-├── infrastructure/
-└── interfaces/      # Presentation
-```
-
-### Rust
-
-```
-src/
-├── domain/
-├── application/
-├── infrastructure/
-└── presentation/
-```
-
-### Python
-
-```
-src/
-├── domain/
-├── application/
-├── infrastructure/
-└── presentation/
-```
-
-The key is **dependency direction**: outer layers import inner layers, never the reverse.
+All share the same inner folders: `domain/`, `application/`, `infrastructure/`.
