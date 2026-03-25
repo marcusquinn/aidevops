@@ -1376,14 +1376,13 @@ show_help() {
 	return 0
 }
 
-# Main function
-main() {
-	local command="${1:-help}"
-	local arg2="${2:-}"
-	local arg3="${3:-}"
+# Dispatch infrastructure (domain) commands
+_dispatch_infrastructure_cmd() {
+	local command="$1"
+	local arg2="$2"
+	local arg3="$3"
 
 	case "$command" in
-	# Infrastructure commands
 	"check" | "full")
 		if [[ -z "$arg2" ]]; then
 			print_error "Domain required"
@@ -1462,7 +1461,20 @@ main() {
 		fi
 		check_reverse_dns "$arg2"
 		;;
-	# Content commands
+	*)
+		return 1
+		;;
+	esac
+
+	return 0
+}
+
+# Dispatch content (HTML file) commands
+_dispatch_content_cmd() {
+	local command="$1"
+	local arg2="$2"
+
+	case "$command" in
 	"content-check" | "content")
 		if [[ -z "$arg2" ]]; then
 			print_error "HTML file required"
@@ -1513,7 +1525,21 @@ main() {
 		fi
 		check_spam_words "$arg2"
 		;;
-	# Combined commands
+	*)
+		return 1
+		;;
+	esac
+
+	return 0
+}
+
+# Dispatch combined, accessibility, and utility commands
+_dispatch_combined_cmd() {
+	local command="$1"
+	local arg2="$2"
+	local arg3="$3"
+
+	case "$command" in
 	"precheck")
 		if [[ -z "$arg2" ]]; then
 			print_error "Domain and HTML file required"
@@ -1522,7 +1548,6 @@ main() {
 		fi
 		check_precheck "$arg2" "$arg3"
 		;;
-	# Accessibility
 	"accessibility" | "a11y")
 		if [[ -z "$arg2" ]]; then
 			print_error "HTML file required"
@@ -1531,7 +1556,6 @@ main() {
 		fi
 		check_email_accessibility "$arg2"
 		;;
-	# Other
 	"mail-tester" | "mailtester")
 		mail_tester_guide
 		;;
@@ -1551,6 +1575,28 @@ main() {
 		fi
 		;;
 	esac
+
+	return 0
+}
+
+# Main function — thin dispatcher delegating to sub-dispatchers by command group
+main() {
+	local command="${1:-help}"
+	local arg2="${2:-}"
+	local arg3="${3:-}"
+
+	# Try infrastructure commands first
+	if _dispatch_infrastructure_cmd "$command" "$arg2" "$arg3"; then
+		return 0
+	fi
+
+	# Try content commands next
+	if _dispatch_content_cmd "$command" "$arg2"; then
+		return 0
+	fi
+
+	# Fall through to combined/utility commands
+	_dispatch_combined_cmd "$command" "$arg2" "$arg3"
 
 	return 0
 }
