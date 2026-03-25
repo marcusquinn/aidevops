@@ -336,48 +336,39 @@ loop_generate_guardrails() {
 # Re-Anchor System
 # =============================================================================
 
-# Generate re-anchor prompt for fresh context
-# Arguments:
-#   $1 - task_keywords (for memory recall)
+# Collect current git state for re-anchor context
+# Arguments: none
 # Returns: 0
-# Output: Re-anchor prompt to stdout and file
-loop_generate_reanchor() {
-	local task_keywords="${1:-}"
-	local task_id
-	task_id=$(loop_get_state ".task_id")
-	local iteration
-	iteration=$(loop_get_state ".iteration")
-	local prompt
-	prompt=$(loop_get_state ".prompt")
+# Output: Sets caller variables git_status, git_log, git_branch via stdout lines
+_loop_reanchor_git_state() {
+	git status --short 2>/dev/null || echo "Not a git repo"
+	return 0
+}
 
-	loop_init_state_dir
+# Collect git log for re-anchor context
+# Arguments: none
+# Returns: 0
+# Output: Recent commit log to stdout
+_loop_reanchor_git_log() {
+	git log -5 --oneline 2>/dev/null || echo "No git history"
+	return 0
+}
 
-	# Get git state
-	local git_status
-	git_status=$(git status --short 2>/dev/null || echo "Not a git repo")
-	local git_log
-	git_log=$(git log -5 --oneline 2>/dev/null || echo "No git history")
-	local git_branch
-	git_branch=$(git branch --show-current 2>/dev/null || echo "unknown")
-
-	# Detect headless worker mode (t173: workers must not interact with TODO.md)
-	local is_headless="false"
-	if [[ "${FULL_LOOP_HEADLESS:-false}" == "true" ]]; then
-		is_headless="true"
-	fi
-
-	# Get TODO.md in-progress tasks (read-only context, skip in headless mode - t173)
+# Collect TODO.md context for re-anchor (skipped in headless mode)
+# Arguments:
+#   $1 - is_headless ("true"|"false")
+# Returns: 0
+# Output: Sets todo_in_progress and next_task via two newline-separated sections
+_loop_reanchor_todo_context() {
+	local is_headless="$1"
 	local todo_in_progress=""
+	local next_task=""
+
 	if [[ "$is_headless" == "false" && -f "TODO.md" ]]; then
 		todo_in_progress=$(grep -A10 "## In Progress" TODO.md 2>/dev/null | head -15 || echo "No tasks in progress")
-	fi
 
-	# Extract single next task (the "pin" concept from Loom)
-	# Focus on ONE task per iteration to reduce context drift
-	# Skip in headless mode — workers work on their assigned task only (t173)
-	local next_task=""
-	if [[ "$is_headless" == "false" && -f "TODO.md" ]]; then
-		# Get first unchecked task from In Progress section, or first from Backlog
+		# Extract single next task (the "pin" concept from Loom)
+		# Focus on ONE task per iteration to reduce context drift
 		next_task=$(awk '
             /^## In Progress/,/^##/ { if (/^- \[ \]/) { print; exit } }
         ' TODO.md 2>/dev/null || echo "")
@@ -389,35 +380,59 @@ loop_generate_reanchor() {
 		fi
 	fi
 
-	# Get relevant memories
+	# Output as two delimited sections for caller to parse
+	printf '%s\n---NEXT_TASK---\n%s' "$todo_in_progress" "$next_task"
+	return 0
+}
+
+# Collect memories and mailbox messages for re-anchor context
+# Arguments:
+#   $1 - task_keywords (for memory recall)
+# Returns: 0
+# Output: memories and mailbox_messages separated by ---MAILBOX---
+_loop_reanchor_external_context() {
+	local task_keywords="$1"
 	local memories=""
+	local mailbox_messages=""
+
 	if [[ -n "$task_keywords" ]] && command -v "$LOOP_MEMORY_HELPER" &>/dev/null; then
 		memories=$("$LOOP_MEMORY_HELPER" recall "$task_keywords" --limit 5 --format text 2>/dev/null || echo "No relevant memories")
 	fi
 
-	# Check mailbox for pending messages
-	local mailbox_messages=""
 	if [[ -x "$LOOP_MAIL_HELPER" ]]; then
 		mailbox_messages=$("$LOOP_MAIL_HELPER" check --unread-only 2>/dev/null || echo "No mailbox messages")
 	fi
 
-	# Generate guardrails from failures (the "signs" concept)
-	# These are actionable rules derived from past failures - "same mistake never happens twice"
-	local guardrails
-	guardrails=$(loop_generate_guardrails 5)
+	printf '%s\n---MAILBOX---\n%s' "$memories" "$mailbox_messages"
+	return 0
+}
 
-	# Get latest receipt
-	local latest_receipt=""
+# Get the latest receipt JSON for re-anchor context
+# Arguments: none
+# Returns: 0
+# Output: Receipt JSON to stdout, or empty string
+_loop_reanchor_latest_receipt() {
 	local latest_receipt_file
 	latest_receipt_file=$(find "$LOOP_RECEIPTS_DIR" -name "*.json" -type f -print0 2>/dev/null | xargs -0 ls -t 2>/dev/null | head -1 || echo "")
 	if [[ -n "$latest_receipt_file" && -f "$latest_receipt_file" ]]; then
-		latest_receipt=$(cat "$latest_receipt_file")
+		cat "$latest_receipt_file"
+	fi
+	return 0
+}
+
+# Build headless worker restriction block for re-anchor prompt (t173)
+# Arguments:
+#   $1 - is_headless ("true"|"false")
+# Returns: 0
+# Output: Restriction markdown block to stdout, or empty string
+_loop_reanchor_headless_block() {
+	local is_headless="$1"
+	if [[ "$is_headless" != "true" ]]; then
+		return 0
 	fi
 
-	# Build headless worker restriction block (t173)
-	local headless_restriction=""
-	if [[ "$is_headless" == "true" ]]; then
-		headless_restriction="
+	cat <<'HEADLESS_BLOCK'
+
 ## MANDATORY Worker Restrictions (t173 - Headless Mode)
 
 - **Do NOT edit, commit, or push TODO.md** — the supervisor owns all TODO.md updates.
@@ -425,21 +440,46 @@ loop_generate_reanchor() {
 - Report status via exit code, log output, and PR creation only.
 - Put task notes in commit messages or PR body, never in TODO.md.
 - Work ONLY on the assigned task described above. Do not pick tasks from TODO.md.
-- **ShellCheck before push (t234)**: Before every \`git push\`, if any committed .sh files changed, run \`shellcheck -x -S warning\` on them. Fix violations before pushing. Skip if shellcheck is not installed.
-- **Workflow scope check before push (t1540)**: If any committed files are in \`.github/workflows/\`, verify the gh token has the \`workflow\` scope by running \`gh auth status\` and checking for 'workflow' in the scopes. If missing, do NOT push — instead post a comment on the issue explaining the branch name and that \`gh auth refresh -s workflow\` is needed, then exit cleanly.
-"
-	fi
+- **ShellCheck before push (t234)**: Before every `git push`, if any committed .sh files changed, run `shellcheck -x -S warning` on them. Fix violations before pushing. Skip if shellcheck is not installed.
+- **Workflow scope check before push (t1540)**: If any committed files are in `.github/workflows/`, verify the gh token has the `workflow` scope by running `gh auth status` and checking for 'workflow' in the scopes. If missing, do NOT push — instead post a comment on the issue explaining the branch name and that `gh auth refresh -s workflow` is needed, then exit cleanly.
+HEADLESS_BLOCK
+	return 0
+}
 
-	# Build TODO.md section (omitted in headless mode - t173)
-	local todo_section=""
-	if [[ "$is_headless" == "false" ]]; then
-		todo_section="### TODO.md In Progress
-\`\`\`
-$todo_in_progress
-\`\`\`"
-	fi
+# Write the re-anchor markdown template to LOOP_REANCHOR_FILE
+# All arguments are pre-collected context values.
+# Arguments (positional, all required):
+#   $1  - task_id
+#   $2  - iteration
+#   $3  - git_branch
+#   $4  - headless_restriction (may be empty)
+#   $5  - prompt
+#   $6  - next_task
+#   $7  - git_status
+#   $8  - git_log
+#   $9  - todo_section (may be empty)
+#   $10 - guardrails
+#   $11 - mailbox_messages
+#   $12 - memories
+#   $13 - latest_receipt
+#   $14 - completion_promise
+# Returns: 0
+_loop_reanchor_write_file() {
+	local task_id="$1"
+	local iteration="$2"
+	local git_branch="$3"
+	local headless_restriction="$4"
+	local prompt="$5"
+	local next_task="$6"
+	local git_status="$7"
+	local git_log="$8"
+	local todo_section="$9"
+	local guardrails="${10}"
+	local mailbox_messages="${11}"
+	local memories="${12}"
+	local latest_receipt="${13}"
+	local completion_promise="${14}"
 
-	# Generate re-anchor prompt with single-task focus
 	cat >"$LOOP_REANCHOR_FILE" <<EOF
 # Re-Anchor Context (MANDATORY - Read Before Any Work)
 
@@ -490,14 +530,72 @@ ${latest_receipt:-"First iteration - no previous receipt"}
 ---
 
 **IMPORTANT:** Re-read this context before proceeding. Do NOT rely on conversation history.
-Focus on ONE task per iteration. When the overall task is complete, output: <promise>$(loop_get_state ".completion_promise")</promise>
+Focus on ONE task per iteration. When the overall task is complete, output: <promise>${completion_promise}</promise>
 
 **CONTEXT GUARD:** If you sense your context window is running low (e.g., you are losing
 track of earlier instructions, your responses are getting shorter, or you feel you cannot
 complete the next step), IMMEDIATELY: (1) \`git add -A && git commit -m "wip: context low"\`,
-(2) \`git push\`, (3) output: <promise>$(loop_get_state ".completion_promise")</promise>.
+(2) \`git push\`, (3) output: <promise>${completion_promise}</promise>.
 Do NOT attempt complex work when context is low — preserve what you have.
 EOF
+	return 0
+}
+
+# Generate re-anchor prompt for fresh context
+# Arguments:
+#   $1 - task_keywords (for memory recall)
+# Returns: 0
+# Output: Re-anchor prompt to stdout and file
+loop_generate_reanchor() {
+	local task_keywords="${1:-}"
+	local task_id iteration prompt completion_promise
+	task_id=$(loop_get_state ".task_id")
+	iteration=$(loop_get_state ".iteration")
+	prompt=$(loop_get_state ".prompt")
+	completion_promise=$(loop_get_state ".completion_promise")
+
+	loop_init_state_dir
+
+	# Detect headless worker mode (t173: workers must not interact with TODO.md)
+	local is_headless="false"
+	if [[ "${FULL_LOOP_HEADLESS:-false}" == "true" ]]; then
+		is_headless="true"
+	fi
+
+	local git_status git_log git_branch
+	git_status=$(_loop_reanchor_git_state)
+	git_log=$(_loop_reanchor_git_log)
+	git_branch=$(git branch --show-current 2>/dev/null || echo "unknown")
+
+	local todo_raw todo_in_progress next_task
+	todo_raw=$(_loop_reanchor_todo_context "$is_headless")
+	todo_in_progress="${todo_raw%%---NEXT_TASK---*}"
+	next_task="${todo_raw##*---NEXT_TASK---}"
+
+	local external_raw memories mailbox_messages
+	external_raw=$(_loop_reanchor_external_context "$task_keywords")
+	memories="${external_raw%%---MAILBOX---*}"
+	mailbox_messages="${external_raw##*---MAILBOX---}"
+
+	local guardrails latest_receipt headless_restriction
+	guardrails=$(loop_generate_guardrails 5)
+	latest_receipt=$(_loop_reanchor_latest_receipt)
+	headless_restriction=$(_loop_reanchor_headless_block "$is_headless")
+
+	# Build TODO.md section (omitted in headless mode - t173)
+	local todo_section=""
+	if [[ "$is_headless" == "false" ]]; then
+		todo_section="### TODO.md In Progress
+\`\`\`
+$todo_in_progress
+\`\`\`"
+	fi
+
+	_loop_reanchor_write_file \
+		"$task_id" "$iteration" "$git_branch" "$headless_restriction" \
+		"$prompt" "$next_task" "$git_status" "$git_log" "$todo_section" \
+		"$guardrails" "$mailbox_messages" "$memories" "$latest_receipt" \
+		"$completion_promise"
 
 	cat "$LOOP_REANCHOR_FILE"
 	return 0
@@ -1085,6 +1183,102 @@ loop_context_guard() {
 # External Loop Runner
 # =============================================================================
 
+# Validate that the requested tool is available
+# Arguments:
+#   $1 - tool name
+# Returns: 0 if available, 1 if not (logs error)
+_loop_run_external_validate() {
+	local tool="$1"
+	if ! command -v "$tool" &>/dev/null; then
+		loop_log_error "Tool not found: $tool"
+		return 1
+	fi
+	return 0
+}
+
+# Invoke the external tool for one iteration and capture output
+# Arguments:
+#   $1 - tool (opencode|claude|aider)
+#   $2 - full_prompt
+#   $3 - output_file (path to capture stdout+stderr)
+# Returns: tool exit code
+_loop_run_external_run_tool() {
+	local tool="$1"
+	local full_prompt="$2"
+	local output_file="$3"
+	local exit_code=0
+
+	case "$tool" in
+	opencode)
+		echo "$full_prompt" | opencode --print >"$output_file" 2>&1 || exit_code=$?
+		;;
+	claude)
+		echo "$full_prompt" | claude --print >"$output_file" 2>&1 || exit_code=$?
+		;;
+	aider)
+		aider --yes --message "$full_prompt" >"$output_file" 2>&1 || exit_code=$?
+		;;
+	*)
+		loop_log_error "Unknown tool: $tool"
+		return 1
+		;;
+	esac
+
+	return "$exit_code"
+}
+
+# Check output file for a fulfilled completion promise
+# Arguments:
+#   $1 - output_file
+#   $2 - completion_promise (expected literal string)
+# Returns: 0 if promise found and matches, 1 otherwise
+_loop_run_external_check_completion() {
+	local output_file="$1"
+	local completion_promise="$2"
+
+	# Use fixed-string match to avoid regex injection; extract and trim whitespace
+	if ! grep -qF "<promise>" "$output_file" 2>/dev/null; then
+		return 1
+	fi
+
+	local extracted_promise
+	extracted_promise=$(sed -n 's/.*<promise>[[:space:]]*\(.*\)[[:space:]]*<\/promise>.*/\1/p' "$output_file" |
+		sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | head -1)
+
+	[[ -n "$extracted_promise" && "$extracted_promise" == "$completion_promise" ]]
+}
+
+# Send a completion status report via the mailbox system
+# Arguments:
+#   $1 - iteration count at completion
+# Returns: 0
+_loop_run_external_send_status() {
+	local iteration="$1"
+
+	if [[ ! -x "$LOOP_MAIL_HELPER" ]]; then
+		return 0
+	fi
+
+	local agent_id current_dir
+	current_dir=$(pwd)
+	agent_id=$("$LOOP_MAIL_HELPER" agents 2>/dev/null | grep "$current_dir" | cut -d',' -f1 | head -1 || echo "")
+
+	# Fallback: use first registered agent if no worktree match
+	if [[ -z "$agent_id" ]]; then
+		agent_id=$("$LOOP_MAIL_HELPER" agents 2>/dev/null | grep -o '^[^,]*' | head -1 || echo "")
+	fi
+
+	if [[ -n "$agent_id" ]]; then
+		"$LOOP_MAIL_HELPER" send \
+			--to "coordinator" \
+			--type status_report \
+			--payload "Task completed: $(loop_get_state ".prompt" | head -c 100). Iterations: $iteration. Branch: $(git branch --show-current 2>/dev/null || echo unknown)" \
+			2>/dev/null || true
+	fi
+
+	return 0
+}
+
 # Run external loop with fresh sessions
 # Arguments:
 #   $1 - tool (opencode|claude|aider)
@@ -1098,11 +1292,7 @@ loop_run_external() {
 	local max_iterations="${3:-50}"
 	local completion_promise="${4:-TASK_COMPLETE}"
 
-	# Validate tool
-	if ! command -v "$tool" &>/dev/null; then
-		loop_log_error "Tool not found: $tool"
-		return 1
-	fi
+	_loop_run_external_validate "$tool" || return 1
 
 	loop_log_info "Starting external loop with $tool"
 	loop_log_info "Max iterations: $max_iterations"
@@ -1126,78 +1316,30 @@ loop_run_external() {
 	while [[ $iteration -le $max_iterations ]]; do
 		loop_log_step "=== Iteration $iteration/$max_iterations ==="
 
-		# Update state
 		loop_set_state ".iteration" "$iteration"
 		loop_set_state ".last_iteration_at" "$(date -u +"%Y-%m-%dT%H:%M:%SZ")"
 
-		# Generate re-anchor prompt
 		local reanchor
 		reanchor=$(loop_generate_reanchor "$prompt")
 
-		# Build full prompt with re-anchor
-		local full_prompt="$reanchor"
-
-		# Run tool (fresh session each time)
 		local exit_code=0
-		case "$tool" in
-		opencode)
-			echo "$full_prompt" | opencode --print >"$output_file" 2>&1 || exit_code=$?
-			;;
-		claude)
-			echo "$full_prompt" | claude --print >"$output_file" 2>&1 || exit_code=$?
-			;;
-		aider)
-			aider --yes --message "$full_prompt" >"$output_file" 2>&1 || exit_code=$?
-			;;
-		*)
-			loop_log_error "Unknown tool: $tool"
-			return 1
-			;;
-		esac
+		_loop_run_external_run_tool "$tool" "$reanchor" "$output_file" || exit_code=$?
 
-		# Check for completion promise using fixed-string match to avoid regex injection.
-		# Extract promise content with sed, trim whitespace, compare as literal string.
-		local extracted_promise=""
-		if grep -qF "<promise>" "$output_file" 2>/dev/null; then
-			extracted_promise=$(sed -n 's/.*<promise>[[:space:]]*\(.*\)[[:space:]]*<\/promise>.*/\1/p' "$output_file" | sed 's/^[[:space:]]*//;s/[[:space:]]*$//' | head -1)
-		fi
-		if [[ -n "$extracted_promise" && "$extracted_promise" == "$completion_promise" ]]; then
+		if _loop_run_external_check_completion "$output_file" "$completion_promise"; then
 			loop_log_success "Completion promise detected!"
 			loop_create_receipt "task" "success" '{"promise_fulfilled": true}'
 			loop_store_success "Task completed after $iteration iterations"
-
-			# Send status report via mailbox (if available)
-			if [[ -x "$LOOP_MAIL_HELPER" ]]; then
-				local agent_id
-				# Identify current agent by matching worktree path in registry
-				local current_dir
-				current_dir=$(pwd)
-				agent_id=$("$LOOP_MAIL_HELPER" agents 2>/dev/null | grep "$current_dir" | cut -d',' -f1 | head -1 || echo "")
-				# Fallback: use first registered agent if no worktree match
-				if [[ -z "$agent_id" ]]; then
-					agent_id=$("$LOOP_MAIL_HELPER" agents 2>/dev/null | grep -o '^[^,]*' | head -1 || echo "")
-				fi
-				if [[ -n "$agent_id" ]]; then
-					"$LOOP_MAIL_HELPER" send \
-						--to "coordinator" \
-						--type status_report \
-						--payload "Task completed: $(loop_get_state ".prompt" | head -c 100). Iterations: $iteration. Branch: $(git branch --show-current 2>/dev/null || echo unknown)" \
-						2>/dev/null || true
-				fi
-			fi
-
+			_loop_run_external_send_status "$iteration"
 			return 0
 		fi
 
-		# Context-remaining guard (t247.1): detect approaching context
-		# exhaustion and proactively signal + push before the tool exits
-		# silently. This prevents the clean_exit_no_signal retry pattern.
+		# Context-remaining guard (t247.1): detect approaching context exhaustion
+		# and proactively signal + push before the tool exits silently.
 		if loop_context_guard "$output_file" "$iteration" "$max_iterations" "$output_sizes_file"; then
 			loop_log_success "Context guard: work preserved, signal emitted"
 			return 0
 		fi
 
-		# Track attempt and check for blocking
 		local attempts
 		attempts=$(loop_track_attempt)
 		if loop_should_block 5; then
@@ -1205,12 +1347,9 @@ loop_run_external() {
 			return 1
 		fi
 
-		# Create retry receipt
 		loop_create_receipt "task" "retry" "{\"iteration\": $iteration, \"exit_code\": $exit_code}"
 
 		iteration=$((iteration + 1))
-
-		# Brief delay between iterations
 		sleep 2
 	done
 
