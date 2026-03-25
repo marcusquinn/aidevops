@@ -334,6 +334,164 @@ color_status() {
 }
 
 # =============================================================================
+# CLI Dashboard Command — helpers
+# =============================================================================
+
+# Print dashboard header: title, timestamp, separator, workers, burn rate.
+# Args: verbose worker_count max_workers
+_status_print_header() {
+	local verbose="$1"
+	local worker_count="$2"
+	local max_workers="$3"
+
+	echo ""
+	echo -e "${BOLD:-}${WHITE}Mission Progress Dashboard${NC}"
+	echo -e "${CYAN}$(date '+%Y-%m-%d %H:%M:%S')${NC}"
+	printf '%.0s─' {1..60}
+	echo ""
+
+	echo -e "\n${WHITE}Workers:${NC} ${worker_count}/${max_workers} active"
+
+	if [[ "$verbose" == "true" ]]; then
+		local workers
+		workers=$(get_active_workers)
+		if [[ -n "$workers" ]]; then
+			echo "$workers" | while IFS= read -r w; do
+				local pid etime cmd
+				pid=$(echo "$w" | awk '{print $1}')
+				etime=$(echo "$w" | awk '{print $2}')
+				cmd=$(echo "$w" | awk '{for(i=3;i<=NF;i++) printf "%s ", $i; print ""}' | head -c 80)
+				echo -e "  ${CYAN}PID ${pid}${NC} (${etime}) ${cmd}"
+			done
+		fi
+	fi
+
+	local burn_json
+	burn_json=$(get_burn_rate_json)
+	if [[ "$burn_json" != "{}" ]] && command -v jq &>/dev/null; then
+		local today_spend hourly_rate avg_daily
+		today_spend=$(echo "$burn_json" | jq -r '.today_spend // 0' 2>/dev/null)
+		hourly_rate=$(echo "$burn_json" | jq -r '.hourly_rate // 0' 2>/dev/null)
+		avg_daily=$(echo "$burn_json" | jq -r '.avg_daily // 0' 2>/dev/null)
+		echo -e "${WHITE}Burn Rate:${NC} \$${today_spend}/today | \$${hourly_rate}/hr | \$${avg_daily}/day avg"
+	fi
+
+	echo ""
+	return 0
+}
+
+# Print a single mission block: header, overall progress, per-milestone rows, budget.
+# Args: mission_file mission_filter
+_status_print_mission() {
+	local mission_file="$1"
+	local mission_filter="$2"
+
+	local MISSION_ID MISSION_TITLE MISSION_STATUS MISSION_MODE
+	local MISSION_CREATED MISSION_STARTED MISSION_COMPLETED
+	local BUDGET_TIME BUDGET_MONEY BUDGET_TOKENS ALERT_THRESHOLD
+	eval "$(parse_mission_frontmatter "$mission_file")"
+
+	if [[ -n "$mission_filter" && "$MISSION_ID" != *"$mission_filter"* && "$MISSION_TITLE" != *"$mission_filter"* ]]; then
+		return 0
+	fi
+
+	local status_colored
+	status_colored=$(color_status "$MISSION_STATUS")
+	echo -e "${WHITE}${MISSION_TITLE}${NC} (${MISSION_ID})"
+	echo -e "  Status: ${status_colored} | Mode: ${MISSION_MODE} | Created: ${MISSION_CREATED}"
+
+	local -a milestones=()
+	while IFS= read -r ms; do
+		[[ -n "$ms" ]] && milestones+=("$ms")
+	done < <(parse_milestones "$mission_file")
+
+	if [[ ${#milestones[@]} -eq 0 ]]; then
+		echo "  No milestones defined."
+		echo ""
+		return 0
+	fi
+
+	local total_features=0 total_completed=0 total_milestones=${#milestones[@]}
+	local passed_milestones=0
+	for ms in "${milestones[@]}"; do
+		local ms_total ms_completed ms_status
+		ms_total=$(echo "$ms" | cut -d'|' -f4)
+		ms_completed=$(echo "$ms" | cut -d'|' -f5)
+		ms_status=$(echo "$ms" | cut -d'|' -f3)
+		total_features=$((total_features + ms_total))
+		total_completed=$((total_completed + ms_completed))
+		if echo "$ms_status" | grep -qiE 'passed|completed|done'; then
+			passed_milestones=$((passed_milestones + 1))
+		fi
+	done
+
+	echo -n "  Overall: "
+	render_progress_bar "$total_completed" "$total_features" 30
+	echo " (${total_completed}/${total_features} features, ${passed_milestones}/${total_milestones} milestones)"
+
+	for ms in "${milestones[@]}"; do
+		local ms_num ms_name ms_status ms_total ms_completed ms_estimate
+		IFS='|' read -r ms_num ms_name ms_status ms_total ms_completed ms_estimate <<<"$ms"
+		local ms_status_colored
+		ms_status_colored=$(color_status "$ms_status")
+		echo -n "  M${ms_num}: ${ms_name} "
+		render_progress_bar "$ms_completed" "$ms_total" 20
+		echo -e " ${ms_status_colored} (${ms_completed}/${ms_total}) ${ms_estimate:-}"
+	done
+
+	local -a budget_rows=()
+	while IFS= read -r br; do
+		[[ -n "$br" ]] && budget_rows+=("$br")
+	done < <(parse_budget_table "$mission_file")
+
+	if [[ ${#budget_rows[@]} -gt 0 ]]; then
+		echo "  Budget:"
+		for br in "${budget_rows[@]}"; do
+			local cat bgt spt rem pct
+			IFS='|' read -r cat bgt spt rem pct <<<"$br"
+			local pct_num
+			pct_num=$(echo "$pct" | tr -dc '0-9')
+			local color="$NC"
+			if [[ -n "$pct_num" && "$pct_num" -ge 80 ]]; then
+				color="$RED"
+			elif [[ -n "$pct_num" && "$pct_num" -ge 60 ]]; then
+				color="$YELLOW"
+			fi
+			echo -e "    ${cat}: ${spt} / ${bgt} (${color}${pct}${NC})"
+		done
+	fi
+
+	echo ""
+	return 0
+}
+
+# Print blocked issues across all pulse repos (verbose mode only).
+_status_print_blockers() {
+	echo -e "${WHITE}Blockers:${NC}"
+	local repos_json="${HOME}/.config/aidevops/repos.json"
+	if [[ -f "$repos_json" ]] && command -v jq &>/dev/null; then
+		local found_blockers=false
+		while IFS= read -r slug; do
+			[[ -z "$slug" ]] && continue
+			local blocked_issues
+			blocked_issues=$(gh issue list --repo "$slug" --label "status:blocked" --json number,title --jq '.[] | "  #\(.number): \(.title)"' 2>/dev/null) || continue
+			if [[ -n "$blocked_issues" ]]; then
+				found_blockers=true
+				echo -e "  ${YELLOW}${slug}:${NC}"
+				echo "$blocked_issues"
+			fi
+		done < <(jq -r '.[] | select(.pulse == true) | .slug // empty' "$repos_json" 2>/dev/null)
+		if [[ "$found_blockers" == "false" ]]; then
+			echo "  None"
+		fi
+	else
+		echo "  (repos.json not found or jq not available)"
+	fi
+	echo ""
+	return 0
+}
+
+# =============================================================================
 # CLI Dashboard Command
 # =============================================================================
 
@@ -363,159 +521,18 @@ cmd_status() {
 		return 0
 	fi
 
-	# Header
-	echo ""
-	echo -e "${BOLD:-}${WHITE}Mission Progress Dashboard${NC}"
-	echo -e "${CYAN}$(date '+%Y-%m-%d %H:%M:%S')${NC}"
-	printf '%.0s─' {1..60}
-	echo ""
-
-	# Active workers summary
-	local worker_count
+	local worker_count max_workers
 	worker_count=$(count_active_workers)
-	local max_workers
 	max_workers=$(cat ~/.aidevops/logs/pulse-max-workers 2>/dev/null || echo 4)
-	echo -e "\n${WHITE}Workers:${NC} ${worker_count}/${max_workers} active"
 
-	if [[ "$verbose" == "true" ]]; then
-		local workers
-		workers=$(get_active_workers)
-		if [[ -n "$workers" ]]; then
-			echo "$workers" | while IFS= read -r w; do
-				local pid etime cmd
-				pid=$(echo "$w" | awk '{print $1}')
-				etime=$(echo "$w" | awk '{print $2}')
-				cmd=$(echo "$w" | awk '{for(i=3;i<=NF;i++) printf "%s ", $i; print ""}' | head -c 80)
-				echo -e "  ${CYAN}PID ${pid}${NC} (${etime}) ${cmd}"
-			done
-		fi
-	fi
+	_status_print_header "$verbose" "$worker_count" "$max_workers"
 
-	# Burn rate
-	local burn_json
-	burn_json=$(get_burn_rate_json)
-	if [[ "$burn_json" != "{}" ]] && command -v jq &>/dev/null; then
-		local today_spend hourly_rate avg_daily
-		today_spend=$(echo "$burn_json" | jq -r '.today_spend // 0' 2>/dev/null)
-		hourly_rate=$(echo "$burn_json" | jq -r '.hourly_rate // 0' 2>/dev/null)
-		avg_daily=$(echo "$burn_json" | jq -r '.avg_daily // 0' 2>/dev/null)
-		echo -e "${WHITE}Burn Rate:${NC} \$${today_spend}/today | \$${hourly_rate}/hr | \$${avg_daily}/day avg"
-	fi
-
-	echo ""
-
-	# Per-mission display
 	for mission_file in "${mission_files[@]}"; do
-		# Parse frontmatter
-		local MISSION_ID MISSION_TITLE MISSION_STATUS MISSION_MODE
-		local MISSION_CREATED MISSION_STARTED MISSION_COMPLETED
-		local BUDGET_TIME BUDGET_MONEY BUDGET_TOKENS ALERT_THRESHOLD
-		eval "$(parse_mission_frontmatter "$mission_file")"
-
-		# Apply filter
-		if [[ -n "$mission_filter" && "$MISSION_ID" != *"$mission_filter"* && "$MISSION_TITLE" != *"$mission_filter"* ]]; then
-			continue
-		fi
-
-		# Mission header
-		local status_colored
-		status_colored=$(color_status "$MISSION_STATUS")
-		echo -e "${WHITE}${MISSION_TITLE}${NC} (${MISSION_ID})"
-		echo -e "  Status: ${status_colored} | Mode: ${MISSION_MODE} | Created: ${MISSION_CREATED}"
-
-		# Parse milestones
-		local -a milestones=()
-		while IFS= read -r ms; do
-			[[ -n "$ms" ]] && milestones+=("$ms")
-		done < <(parse_milestones "$mission_file")
-
-		if [[ ${#milestones[@]} -eq 0 ]]; then
-			echo "  No milestones defined."
-			echo ""
-			continue
-		fi
-
-		# Overall progress
-		local total_features=0 total_completed=0 total_milestones=${#milestones[@]}
-		local passed_milestones=0
-		for ms in "${milestones[@]}"; do
-			local ms_total ms_completed ms_status
-			ms_total=$(echo "$ms" | cut -d'|' -f4)
-			ms_completed=$(echo "$ms" | cut -d'|' -f5)
-			ms_status=$(echo "$ms" | cut -d'|' -f3)
-			total_features=$((total_features + ms_total))
-			total_completed=$((total_completed + ms_completed))
-			if echo "$ms_status" | grep -qiE 'passed|completed|done'; then
-				passed_milestones=$((passed_milestones + 1))
-			fi
-		done
-
-		echo -n "  Overall: "
-		render_progress_bar "$total_completed" "$total_features" 30
-		echo " (${total_completed}/${total_features} features, ${passed_milestones}/${total_milestones} milestones)"
-
-		# Per-milestone progress
-		for ms in "${milestones[@]}"; do
-			local ms_num ms_name ms_status ms_total ms_completed ms_estimate
-			IFS='|' read -r ms_num ms_name ms_status ms_total ms_completed ms_estimate <<<"$ms"
-
-			local ms_status_colored
-			ms_status_colored=$(color_status "$ms_status")
-
-			echo -n "  M${ms_num}: ${ms_name} "
-			render_progress_bar "$ms_completed" "$ms_total" 20
-			echo -e " ${ms_status_colored} (${ms_completed}/${ms_total}) ${ms_estimate:-}"
-		done
-
-		# Budget tracking
-		local -a budget_rows=()
-		while IFS= read -r br; do
-			[[ -n "$br" ]] && budget_rows+=("$br")
-		done < <(parse_budget_table "$mission_file")
-
-		if [[ ${#budget_rows[@]} -gt 0 ]]; then
-			echo "  Budget:"
-			for br in "${budget_rows[@]}"; do
-				local cat bgt spt rem pct
-				IFS='|' read -r cat bgt spt rem pct <<<"$br"
-				local pct_num
-				pct_num=$(echo "$pct" | tr -dc '0-9')
-				local color="$NC"
-				if [[ -n "$pct_num" && "$pct_num" -ge 80 ]]; then
-					color="$RED"
-				elif [[ -n "$pct_num" && "$pct_num" -ge 60 ]]; then
-					color="$YELLOW"
-				fi
-				echo -e "    ${cat}: ${spt} / ${bgt} (${color}${pct}${NC})"
-			done
-		fi
-
-		echo ""
+		_status_print_mission "$mission_file" "$mission_filter"
 	done
 
-	# Blockers section
 	if [[ "$verbose" == "true" ]]; then
-		echo -e "${WHITE}Blockers:${NC}"
-		local repos_json="${HOME}/.config/aidevops/repos.json"
-		if [[ -f "$repos_json" ]] && command -v jq &>/dev/null; then
-			local found_blockers=false
-			while IFS= read -r slug; do
-				[[ -z "$slug" ]] && continue
-				local blocked_issues
-				blocked_issues=$(gh issue list --repo "$slug" --label "status:blocked" --json number,title --jq '.[] | "  #\(.number): \(.title)"' 2>/dev/null) || continue
-				if [[ -n "$blocked_issues" ]]; then
-					found_blockers=true
-					echo -e "  ${YELLOW}${slug}:${NC}"
-					echo "$blocked_issues"
-				fi
-			done < <(jq -r '.[] | select(.pulse == true) | .slug // empty' "$repos_json" 2>/dev/null)
-			if [[ "$found_blockers" == "false" ]]; then
-				echo "  None"
-			fi
-		else
-			echo "  (repos.json not found or jq not available)"
-		fi
-		echo ""
+		_status_print_blockers
 	fi
 
 	return 0
@@ -571,6 +588,93 @@ cmd_summary() {
 }
 
 # =============================================================================
+# JSON Output Command — helpers
+# =============================================================================
+
+# Build a JSON array of milestones for one mission file.
+# Also writes total_features and total_completed to the named variables via stdout
+# in the format "TOTAL_FEATURES=N\nTOTAL_COMPLETED=N" on the last two lines.
+# Callers must separate the JSON array (first line) from the counters.
+# Args: mission_file
+# Stdout: milestones_json_array|total_features|total_completed
+_json_build_milestones() {
+	local mission_file="$1"
+	local milestones_json="["
+	local first_ms=true
+	local total_features=0 total_completed=0
+
+	while IFS= read -r ms; do
+		[[ -z "$ms" ]] && continue
+		local ms_num ms_name ms_status ms_total ms_completed ms_estimate
+		IFS='|' read -r ms_num ms_name ms_status ms_total ms_completed ms_estimate <<<"$ms"
+		total_features=$((total_features + ms_total))
+		total_completed=$((total_completed + ms_completed))
+
+		[[ "$first_ms" == "true" ]] || milestones_json="${milestones_json},"
+		first_ms=false
+		milestones_json="${milestones_json}$(jq -c -n \
+			--argjson num "$ms_num" \
+			--arg name "$ms_name" \
+			--arg status "$ms_status" \
+			--argjson total "$ms_total" \
+			--argjson completed "$ms_completed" \
+			--arg estimate "${ms_estimate:-}" \
+			'{number:$num, name:$name, status:$status, total_features:$total, completed_features:$completed, estimate:$estimate}')"
+	done < <(parse_milestones "$mission_file")
+	milestones_json="${milestones_json}]"
+
+	echo "${milestones_json}|${total_features}|${total_completed}"
+	return 0
+}
+
+# Build a single mission JSON object.
+# Args: mission_file mission_filter
+# Stdout: JSON object string, or empty string if filtered out
+_json_build_mission() {
+	local mission_file="$1"
+	local mission_filter="$2"
+
+	local MISSION_ID MISSION_TITLE MISSION_STATUS MISSION_MODE
+	local MISSION_CREATED MISSION_STARTED MISSION_COMPLETED
+	local BUDGET_TIME BUDGET_MONEY BUDGET_TOKENS ALERT_THRESHOLD
+	eval "$(parse_mission_frontmatter "$mission_file")"
+
+	if [[ -n "$mission_filter" && "$MISSION_ID" != *"$mission_filter"* ]]; then
+		return 0
+	fi
+
+	local ms_result milestones_json total_features total_completed
+	ms_result=$(_json_build_milestones "$mission_file")
+	milestones_json=$(echo "$ms_result" | cut -d'|' -f1)
+	total_features=$(echo "$ms_result" | cut -d'|' -f2)
+	total_completed=$(echo "$ms_result" | cut -d'|' -f3)
+
+	local pct=0
+	if [[ "$total_features" -gt 0 ]]; then
+		pct=$((total_completed * 100 / total_features))
+	fi
+
+	jq -c -n \
+		--arg id "$MISSION_ID" \
+		--arg title "$MISSION_TITLE" \
+		--arg status "$MISSION_STATUS" \
+		--arg mode "$MISSION_MODE" \
+		--arg created "$MISSION_CREATED" \
+		--arg started "$MISSION_STARTED" \
+		--arg completed "$MISSION_COMPLETED" \
+		--argjson total_features "$total_features" \
+		--argjson completed_features "$total_completed" \
+		--argjson progress_pct "$pct" \
+		--argjson milestones "$milestones_json" \
+		--arg file "$mission_file" \
+		'{id:$id, title:$title, status:$status, mode:$mode, created:$created,
+		  started:$started, completed:$completed, total_features:$total_features,
+		  completed_features:$completed_features, progress_pct:$progress_pct,
+		  milestones:$milestones, file:$file}'
+	return 0
+}
+
+# =============================================================================
 # JSON Output Command
 # =============================================================================
 
@@ -596,82 +700,25 @@ cmd_json() {
 		[[ -n "$f" ]] && mission_files+=("$f")
 	done < <(find_mission_files)
 
-	local worker_count
+	local worker_count max_workers burn_json cost_json
 	worker_count=$(count_active_workers)
-	local max_workers
 	max_workers=$(cat ~/.aidevops/logs/pulse-max-workers 2>/dev/null || echo 4)
-	local burn_json
 	burn_json=$(get_burn_rate_json)
-	local cost_json
 	cost_json=$(get_cost_status_json)
 
-	# Build missions array
 	local missions_json="["
 	local first_mission=true
-
 	for mission_file in "${mission_files[@]}"; do
-		local MISSION_ID MISSION_TITLE MISSION_STATUS MISSION_MODE
-		local MISSION_CREATED MISSION_STARTED MISSION_COMPLETED
-		local BUDGET_TIME BUDGET_MONEY BUDGET_TOKENS ALERT_THRESHOLD
-		eval "$(parse_mission_frontmatter "$mission_file")"
-
-		if [[ -n "$mission_filter" && "$MISSION_ID" != *"$mission_filter"* ]]; then
-			continue
-		fi
-
-		# Parse milestones into JSON
-		local milestones_json="["
-		local first_ms=true
-		local total_features=0 total_completed=0
-
-		while IFS= read -r ms; do
-			[[ -z "$ms" ]] && continue
-			local ms_num ms_name ms_status ms_total ms_completed ms_estimate
-			IFS='|' read -r ms_num ms_name ms_status ms_total ms_completed ms_estimate <<<"$ms"
-			total_features=$((total_features + ms_total))
-			total_completed=$((total_completed + ms_completed))
-
-			[[ "$first_ms" == "true" ]] || milestones_json="${milestones_json},"
-			first_ms=false
-			milestones_json="${milestones_json}$(jq -c -n \
-				--argjson num "$ms_num" \
-				--arg name "$ms_name" \
-				--arg status "$ms_status" \
-				--argjson total "$ms_total" \
-				--argjson completed "$ms_completed" \
-				--arg estimate "${ms_estimate:-}" \
-				'{number:$num, name:$name, status:$status, total_features:$total, completed_features:$completed, estimate:$estimate}')"
-		done < <(parse_milestones "$mission_file")
-		milestones_json="${milestones_json}]"
-
-		local pct=0
-		if [[ "$total_features" -gt 0 ]]; then
-			pct=$((total_completed * 100 / total_features))
-		fi
-
+		local mission_obj
+		mission_obj=$(_json_build_mission "$mission_file" "$mission_filter")
+		[[ -z "$mission_obj" ]] && continue
 		[[ "$first_mission" == "true" ]] || missions_json="${missions_json},"
 		first_mission=false
-		missions_json="${missions_json}$(jq -c -n \
-			--arg id "$MISSION_ID" \
-			--arg title "$MISSION_TITLE" \
-			--arg status "$MISSION_STATUS" \
-			--arg mode "$MISSION_MODE" \
-			--arg created "$MISSION_CREATED" \
-			--arg started "$MISSION_STARTED" \
-			--arg completed "$MISSION_COMPLETED" \
-			--argjson total_features "$total_features" \
-			--argjson completed_features "$total_completed" \
-			--argjson progress_pct "$pct" \
-			--argjson milestones "$milestones_json" \
-			--arg file "$mission_file" \
-			'{id:$id, title:$title, status:$status, mode:$mode, created:$created,
-			  started:$started, completed:$completed, total_features:$total_features,
-			  completed_features:$completed_features, progress_pct:$progress_pct,
-			  milestones:$milestones, file:$file}')"
+		missions_json="${missions_json}${mission_obj}"
 	done
 	missions_json="${missions_json}]"
 
-	# Assemble full dashboard JSON
+	# Assemble full dashboard JSON.
 	# Note: bash ${var:-{}} is ambiguous — the first } closes the expansion.
 	# Use explicit empty-object fallback variables instead.
 	local empty_obj='{}'
