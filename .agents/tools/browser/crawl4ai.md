@@ -173,6 +173,8 @@ async with AsyncWebCrawler(config=browser_config) as crawler:
     result2 = await crawler.arun("https://site.com/dashboard")
 ```
 
+**Warning**: `use_persistent_context=True` can cause crashes with concurrent `arun_many` — use separate crawler instances for parallel persistent sessions.
+
 ### Custom Browser Engine (Brave, Edge, Chrome)
 
 ```python
