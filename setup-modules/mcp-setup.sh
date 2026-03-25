@@ -9,23 +9,13 @@ IFS=$'\n\t'
 trap 'rc=$?; echo "[ERROR] ${BASH_SOURCE[0]}:${LINENO} exit $rc" >&2' ERR
 shopt -s inherit_errexit 2>/dev/null || true
 
-install_mcp_packages() {
-	# Check prerequisites before announcing setup (GH#5240)
-	if ! command -v bun &>/dev/null && ! command -v npm &>/dev/null; then
-		print_skip "MCP packages" "neither bun nor npm found" "Install bun: brew install oven-sh/bun/bun (or npm via Node.js)"
-		setup_track_deferred "MCP packages" "Install bun or npm"
-		return 0
-	fi
-
-	print_info "Installing MCP server packages globally (eliminates npx startup delay)..."
-
+_install_mcp_packages_node() {
+	# Install/update Node.js MCP packages globally.
 	# Security note: MCP servers run as persistent processes with access to conversation
 	# context, credentials, and network. The packages below are from known/vetted sources.
 	# Before adding new MCP packages to this list, verify the source repository and scan
 	# dependencies with: npx @socketsecurity/cli npm info <package>
 	# See: .agents/tools/mcp-toolkit/mcporter.md "Security Considerations"
-
-	# Node.js MCP packages to install globally
 	local -a node_mcps=(
 		"chrome-devtools-mcp"
 		"mcp-server-gsc"
@@ -58,8 +48,11 @@ install_mcp_packages() {
 	if [[ $failed -gt 0 ]]; then
 		print_warning "$failed packages failed (check network or package names)"
 	fi
+	return 0
+}
 
-	# Python MCP packages (install or upgrade)
+_install_mcp_packages_python() {
+	# Install/update Python MCP packages via pipx and uv.
 	if command -v pipx &>/dev/null; then
 		print_info "Installing/updating analytics-mcp via pipx..."
 		if command -v analytics-mcp &>/dev/null; then
@@ -80,6 +73,21 @@ install_mcp_packages() {
 		print_warning "uv is installed but too old to support 'tool' subcommand — skipping outscraper-mcp-server"
 		print_info "Update uv with: curl -LsSf https://astral.sh/uv/install.sh | sh"
 	fi
+	return 0
+}
+
+install_mcp_packages() {
+	# Check prerequisites before announcing setup (GH#5240)
+	if ! command -v bun &>/dev/null && ! command -v npm &>/dev/null; then
+		print_skip "MCP packages" "neither bun nor npm found" "Install bun: brew install oven-sh/bun/bun (or npm via Node.js)"
+		setup_track_deferred "MCP packages" "Install bun or npm"
+		return 0
+	fi
+
+	print_info "Installing MCP server packages globally (eliminates npx startup delay)..."
+
+	_install_mcp_packages_node
+	_install_mcp_packages_python
 
 	# Update opencode.json with resolved full paths for all MCP binaries
 	update_mcp_paths_in_opencode
@@ -118,6 +126,78 @@ resolve_mcp_binary_path() {
 	return 0
 }
 
+_update_mcp_paths_resolve_local_cmds() {
+	# Resolve local MCP command binaries to full paths. Prints update count.
+	local tmp_config="$1"
+	local updated=0
+
+	local mcp_keys
+	mcp_keys=$(jq -r '.mcp | to_entries[] | select(.value.type == "local") | select(.value.command != null) | .key' "$tmp_config" 2>/dev/null)
+
+	while IFS= read -r mcp_key; do
+		[[ -z "$mcp_key" ]] && continue
+
+		local current_cmd
+		current_cmd=$(jq -r --arg k "$mcp_key" '.mcp[$k].command[0]' "$tmp_config" 2>/dev/null)
+
+		# Skip if already a full path
+		if [[ "$current_cmd" == /* ]]; then
+			# Verify the path still exists; resolve stale paths
+			if [[ ! -x "$current_cmd" ]]; then
+				local bin_name
+				bin_name=$(basename "$current_cmd")
+				local new_path
+				new_path=$(resolve_mcp_binary_path "$bin_name")
+				if [[ -n "$new_path" && "$new_path" != "$current_cmd" ]]; then
+					jq --arg k "$mcp_key" --arg p "$new_path" '.mcp[$k].command[0] = $p' "$tmp_config" >"${tmp_config}.new" && mv "${tmp_config}.new" "$tmp_config"
+					((++updated))
+				fi
+			fi
+			continue
+		fi
+
+		# Skip docker (container runtime) and node (resolved separately)
+		case "$current_cmd" in
+		docker | node) continue ;;
+		esac
+
+		local full_path
+		full_path=$(resolve_mcp_binary_path "$current_cmd")
+
+		if [[ -n "$full_path" && "$full_path" != "$current_cmd" ]]; then
+			jq --arg k "$mcp_key" --arg p "$full_path" '.mcp[$k].command[0] = $p' "$tmp_config" >"${tmp_config}.new" && mv "${tmp_config}.new" "$tmp_config"
+			((++updated))
+		fi
+	done <<<"$mcp_keys"
+
+	echo "$updated"
+	return 0
+}
+
+_update_mcp_paths_resolve_node_cmds() {
+	# Resolve 'node' commands to full path (e.g., quickfile, amazon-order-history).
+	# These use ["node", "/path/to/index.js"] — node itself should be resolved.
+	# Prints update count.
+	local tmp_config="$1"
+	local updated=0
+
+	local node_path
+	node_path=$(resolve_mcp_binary_path "node")
+	if [[ -n "$node_path" ]]; then
+		local node_mcp_keys
+		node_mcp_keys=$(jq -r '.mcp | to_entries[] | select(.value.type == "local") | select(.value.command != null) | select(.value.command[0] == "node") | .key' "$tmp_config" 2>/dev/null)
+		local mcp_key
+		while IFS= read -r mcp_key; do
+			[[ -z "$mcp_key" ]] && continue
+			jq --arg k "$mcp_key" --arg p "$node_path" '.mcp[$k].command[0] = $p' "$tmp_config" >"${tmp_config}.new" && mv "${tmp_config}.new" "$tmp_config"
+			((++updated))
+		done <<<"$node_mcp_keys"
+	fi
+
+	echo "$updated"
+	return 0
+}
+
 update_mcp_paths_in_opencode() {
 	local opencode_config
 	opencode_config=$(find_opencode_config) || return 0
@@ -136,63 +216,10 @@ update_mcp_paths_in_opencode() {
 	cp "$opencode_config" "$tmp_config"
 
 	local updated=0
-
-	# Get all MCP entries with local commands
-	local mcp_keys
-	mcp_keys=$(jq -r '.mcp | to_entries[] | select(.value.type == "local") | select(.value.command != null) | .key' "$tmp_config" 2>/dev/null)
-
-	while IFS= read -r mcp_key; do
-		[[ -z "$mcp_key" ]] && continue
-
-		# Get the first element of the command array (the binary)
-		local current_cmd
-		current_cmd=$(jq -r --arg k "$mcp_key" '.mcp[$k].command[0]' "$tmp_config" 2>/dev/null)
-
-		# Skip if already a full path
-		if [[ "$current_cmd" == /* ]]; then
-			# Verify the path still exists
-			if [[ ! -x "$current_cmd" ]]; then
-				# Path is stale, try to resolve
-				local bin_name
-				bin_name=$(basename "$current_cmd")
-				local new_path
-				new_path=$(resolve_mcp_binary_path "$bin_name")
-				if [[ -n "$new_path" && "$new_path" != "$current_cmd" ]]; then
-					jq --arg k "$mcp_key" --arg p "$new_path" '.mcp[$k].command[0] = $p' "$tmp_config" >"${tmp_config}.new" && mv "${tmp_config}.new" "$tmp_config"
-					((++updated))
-				fi
-			fi
-			continue
-		fi
-
-		# Skip docker (container runtime) and node (resolved separately below)
-		case "$current_cmd" in
-		docker | node) continue ;;
-		esac
-
-		# Resolve the full path
-		local full_path
-		full_path=$(resolve_mcp_binary_path "$current_cmd")
-
-		if [[ -n "$full_path" && "$full_path" != "$current_cmd" ]]; then
-			jq --arg k "$mcp_key" --arg p "$full_path" '.mcp[$k].command[0] = $p' "$tmp_config" >"${tmp_config}.new" && mv "${tmp_config}.new" "$tmp_config"
-			((++updated))
-		fi
-	done <<<"$mcp_keys"
-
-	# Also resolve 'node' commands (e.g., quickfile, amazon-order-history)
-	# These use ["node", "/path/to/index.js"] - node itself should be resolved
-	local node_path
-	node_path=$(resolve_mcp_binary_path "node")
-	if [[ -n "$node_path" ]]; then
-		local node_mcp_keys
-		node_mcp_keys=$(jq -r '.mcp | to_entries[] | select(.value.type == "local") | select(.value.command != null) | select(.value.command[0] == "node") | .key' "$tmp_config" 2>/dev/null)
-		while IFS= read -r mcp_key; do
-			[[ -z "$mcp_key" ]] && continue
-			jq --arg k "$mcp_key" --arg p "$node_path" '.mcp[$k].command[0] = $p' "$tmp_config" >"${tmp_config}.new" && mv "${tmp_config}.new" "$tmp_config"
-			((++updated))
-		done <<<"$node_mcp_keys"
-	fi
+	local local_count node_count
+	local_count=$(_update_mcp_paths_resolve_local_cmds "$tmp_config")
+	node_count=$(_update_mcp_paths_resolve_node_cmds "$tmp_config")
+	updated=$((local_count + node_count))
 
 	if [[ $updated -gt 0 ]]; then
 		create_backup_with_rotation "$opencode_config" "opencode"
@@ -442,10 +469,39 @@ setup_browser_tools() {
 	return 0
 }
 
+_setup_opencode_plugins_remove_cursor_oauth() {
+	# Remove the broken opencode-cursor-oauth plugin if present.
+	# The opencode-cursor-oauth npm plugin crashes during startup and
+	# silently prevents ALL plugins from loading (including ours).
+	# Filed: https://github.com/ephraimduncan/opencode-cursor/issues/15
+	# Re-enable when the upstream fix is released.
+	local opencode_config="$1"
+	local cursor_plugin="opencode-cursor-oauth"
+
+	local cursor_present
+	cursor_present=$(jq --arg p "$cursor_plugin" \
+		'(.plugin // []) | map(select(. == $p)) | length' \
+		"$opencode_config" 2>/dev/null || echo "0")
+	if [[ "$cursor_present" -gt 0 ]]; then
+		local tmp_cursor="${opencode_config}.tmp.$$"
+		if jq --arg p "$cursor_plugin" \
+			'.plugin = [.plugin[] | select(. != $p)]' \
+			"$opencode_config" >"$tmp_cursor" 2>/dev/null; then
+			mv "$tmp_cursor" "$opencode_config"
+			print_warning "Removed opencode-cursor-oauth plugin (crashes all plugin loading)"
+			print_info "  Filed: https://github.com/ephraimduncan/opencode-cursor/issues/15"
+		else
+			rm -f "$tmp_cursor"
+			print_warning "Failed to remove opencode-cursor-oauth plugin from opencode.json (file: $opencode_config)"
+		fi
+	fi
+	return 0
+}
+
 _setup_opencode_plugins_register_file_url() {
 	# Mechanism 1: register aidevops plugin via file:// URL in opencode.json.
 	# Also removes the broken opencode-cursor-oauth plugin if present.
-	# Sets pool_plugin_registered in caller scope via nameref-free output.
+	# Prints "true" or "false" to indicate registration status.
 	local opencode_config="$1"
 	local aidevops_plugin_entrypoint="$2"
 	local plugin_url="file://${aidevops_plugin_entrypoint}"
@@ -477,29 +533,7 @@ _setup_opencode_plugins_register_file_url() {
 		print_success "aidevops plugin already registered in opencode.json"
 	fi
 
-	# --- opencode-cursor-oauth plugin (DISABLED) ---
-	# The opencode-cursor-oauth npm plugin crashes during startup and
-	# silently prevents ALL plugins from loading (including ours).
-	# Filed: https://github.com/ephraimduncan/opencode-cursor/issues/15
-	# Re-enable when the upstream fix is released.
-	local cursor_plugin="opencode-cursor-oauth"
-	local cursor_present
-	cursor_present=$(jq --arg p "$cursor_plugin" \
-		'(.plugin // []) | map(select(. == $p)) | length' \
-		"$opencode_config" 2>/dev/null || echo "0")
-	if [[ "$cursor_present" -gt 0 ]]; then
-		local tmp_cursor="${opencode_config}.tmp.$$"
-		if jq --arg p "$cursor_plugin" \
-			'.plugin = [.plugin[] | select(. != $p)]' \
-			"$opencode_config" >"$tmp_cursor" 2>/dev/null; then
-			mv "$tmp_cursor" "$opencode_config"
-			print_warning "Removed opencode-cursor-oauth plugin (crashes all plugin loading)"
-			print_info "  Filed: https://github.com/ephraimduncan/opencode-cursor/issues/15"
-		else
-			rm -f "$tmp_cursor"
-			print_warning "Failed to remove opencode-cursor-oauth plugin from opencode.json (file: $opencode_config)"
-		fi
-	fi
+	_setup_opencode_plugins_remove_cursor_oauth "$opencode_config"
 
 	echo "true"
 	return 0
@@ -519,6 +553,31 @@ _setup_opencode_plugins_register_symlink() {
 		fi
 	elif [[ ! -d "$aidevops_plugin_dst" ]]; then
 		ln -sfn "$aidevops_plugin_src" "$aidevops_plugin_dst"
+	fi
+	return 0
+}
+
+_setup_opencode_plugins_print_pool_guidance() {
+	# Print OAuth pool authentication instructions for OpenCode v1.2.30+.
+	local pool_plugin_registered="$1"
+
+	if [[ "$pool_plugin_registered" == "true" ]]; then
+		print_info "Use the aidevops OAuth pool (provided by the aidevops plugin above):"
+		print_info "  1. Run: opencode auth login"
+		print_info "  2. Select: 'Anthropic Pool' (added by aidevops plugin)"
+		print_info "  3. Enter your Claude account email"
+		print_info "  4. Complete the OAuth flow in your browser"
+		print_info "  5. Repeat to add more accounts for automatic rotation"
+		print_info "  6. Switch to 'Anthropic' provider and select a model to start chatting"
+		print_info ""
+		print_info "For Cursor Pro accounts:"
+		print_info "  Run: opencode auth login --provider cursor"
+		print_info ""
+		print_info "  Health check: /models-pool-check"
+		print_info "  Manage accounts: /model-accounts-pool list|status|remove"
+	else
+		print_warning "aidevops OpenCode plugin was not registered; 'Anthropic Pool' may be unavailable"
+		print_info "Re-run aidevops setup to register the plugin, then run: opencode auth login"
 	fi
 	return 0
 }
@@ -551,24 +610,7 @@ _setup_opencode_plugins_auth_guidance() {
 
 	if [[ "$builtin_auth_removed" == "true" ]]; then
 		print_info "OpenCode v${oc_raw_version}: built-in Anthropic OAuth removed in v1.2.30"
-		if [[ "$pool_plugin_registered" == "true" ]]; then
-			print_info "Use the aidevops OAuth pool (provided by the aidevops plugin above):"
-			print_info "  1. Run: opencode auth login"
-			print_info "  2. Select: 'Anthropic Pool' (added by aidevops plugin)"
-			print_info "  3. Enter your Claude account email"
-			print_info "  4. Complete the OAuth flow in your browser"
-			print_info "  5. Repeat to add more accounts for automatic rotation"
-			print_info "  6. Switch to 'Anthropic' provider and select a model to start chatting"
-			print_info ""
-			print_info "For Cursor Pro accounts:"
-			print_info "  Run: opencode auth login --provider cursor"
-			print_info ""
-			print_info "  Health check: /models-pool-check"
-			print_info "  Manage accounts: /model-accounts-pool list|status|remove"
-		else
-			print_warning "aidevops OpenCode plugin was not registered; 'Anthropic Pool' may be unavailable"
-			print_info "Re-run aidevops setup to register the plugin, then run: opencode auth login"
-		fi
+		_setup_opencode_plugins_print_pool_guidance "$pool_plugin_registered"
 	else
 		print_info "After setup, authenticate with: opencode auth login"
 		print_info "  - For Claude OAuth (v1.1.36-v1.2.29): Select 'Anthropic' -> 'Claude Pro/Max' (built-in)"
@@ -690,52 +732,56 @@ _setup_google_analytics_mcp_detect_creds() {
 	return 0
 }
 
-_setup_google_analytics_mcp_write_config() {
-	# Update or add the google-analytics-mcp entry in opencode.json.
+_setup_google_analytics_mcp_update_existing() {
+	# Update an existing google-analytics-mcp entry in opencode.json.
+	local opencode_config="$1"
+	local creds_path="$2"
+	local project_id="$3"
+	local enable_mcp="$4"
+
+	if [[ "$enable_mcp" == "true" ]]; then
+		local tmp_config
+		tmp_config=$(mktemp)
+		trap 'rm -f "${tmp_config:-}"' RETURN
+		if jq --arg creds "$creds_path" --arg proj "$project_id" \
+			'.mcp["google-analytics-mcp"].environment.GOOGLE_APPLICATION_CREDENTIALS = $creds |
+			 .mcp["google-analytics-mcp"].environment.GOOGLE_PROJECT_ID = $proj |
+			 .mcp["google-analytics-mcp"].enabled = true' \
+			"$opencode_config" >"$tmp_config" 2>/dev/null; then
+			mv "$tmp_config" "$opencode_config"
+			print_success "Updated Google Analytics MCP with GSC credentials (enabled)"
+		else
+			rm -f "$tmp_config"
+			print_warning "Failed to update Google Analytics MCP config"
+		fi
+	else
+		print_info "Google Analytics MCP already configured in OpenCode"
+	fi
+	return 0
+}
+
+_setup_google_analytics_mcp_add_new() {
+	# Add a new google-analytics-mcp entry to opencode.json.
 	local opencode_config="$1"
 	local creds_path="$2"
 	local project_id="$3"
 	local enable_mcp="$4"
 	local gsc_creds="$5"
 
-	# Update existing entry if present
-	if jq -e '.mcp["google-analytics-mcp"]' "$opencode_config" >/dev/null 2>&1; then
-		if [[ "$enable_mcp" == "true" ]]; then
-			local tmp_config
-			tmp_config=$(mktemp)
-			trap 'rm -f "${tmp_config:-}"' RETURN
-			if jq --arg creds "$creds_path" --arg proj "$project_id" \
-				'.mcp["google-analytics-mcp"].environment.GOOGLE_APPLICATION_CREDENTIALS = $creds |
-                 .mcp["google-analytics-mcp"].environment.GOOGLE_PROJECT_ID = $proj |
-                 .mcp["google-analytics-mcp"].enabled = true' \
-				"$opencode_config" >"$tmp_config" 2>/dev/null; then
-				mv "$tmp_config" "$opencode_config"
-				print_success "Updated Google Analytics MCP with GSC credentials (enabled)"
-			else
-				rm -f "$tmp_config"
-				print_warning "Failed to update Google Analytics MCP config"
-			fi
-		else
-			print_info "Google Analytics MCP already configured in OpenCode"
-		fi
-		return 0
-	fi
-
-	# Add new entry
 	local tmp_config
 	tmp_config=$(mktemp)
 	trap 'rm -f "${tmp_config:-}"' RETURN
 
 	if jq --arg creds "$creds_path" --arg proj "$project_id" --argjson enabled "$enable_mcp" \
 		'.mcp["google-analytics-mcp"] = {
-        "type": "local",
-        "command": ["analytics-mcp"],
-        "environment": {
-            "GOOGLE_APPLICATION_CREDENTIALS": $creds,
-            "GOOGLE_PROJECT_ID": $proj
-        },
-        "enabled": $enabled
-    }' "$opencode_config" >"$tmp_config" 2>/dev/null; then
+		"type": "local",
+		"command": ["analytics-mcp"],
+		"environment": {
+			"GOOGLE_APPLICATION_CREDENTIALS": $creds,
+			"GOOGLE_PROJECT_ID": $proj
+		},
+		"enabled": $enabled
+	}' "$opencode_config" >"$tmp_config" 2>/dev/null; then
 		mv "$tmp_config" "$opencode_config"
 		if [[ "$enable_mcp" == "true" ]]; then
 			print_success "Added Google Analytics MCP to OpenCode (enabled with GSC credentials)"
@@ -748,6 +794,25 @@ _setup_google_analytics_mcp_write_config() {
 		rm -f "$tmp_config"
 		print_warning "Failed to add Google Analytics MCP to config"
 	fi
+	return 0
+}
+
+_setup_google_analytics_mcp_write_config() {
+	# Update or add the google-analytics-mcp entry in opencode.json.
+	local opencode_config="$1"
+	local creds_path="$2"
+	local project_id="$3"
+	local enable_mcp="$4"
+	local gsc_creds="$5"
+
+	# Update existing entry if present
+	if jq -e '.mcp["google-analytics-mcp"]' "$opencode_config" >/dev/null 2>&1; then
+		_setup_google_analytics_mcp_update_existing "$opencode_config" "$creds_path" "$project_id" "$enable_mcp"
+		return 0
+	fi
+
+	# Add new entry
+	_setup_google_analytics_mcp_add_new "$opencode_config" "$creds_path" "$project_id" "$enable_mcp" "$gsc_creds"
 	return 0
 }
 
@@ -799,6 +864,105 @@ setup_google_analytics_mcp() {
 	return 0
 }
 
+_setup_quickfile_mcp_clone_and_build() {
+	# Clone and build the QuickFile MCP server. Returns 1 if user skips or build fails.
+	local quickfile_dir="$1"
+
+	if [[ -f "$quickfile_dir/dist/index.js" ]]; then
+		print_success "QuickFile MCP already installed at $quickfile_dir"
+		return 0
+	fi
+
+	print_info "QuickFile MCP provides AI access to UK accounting (invoices, clients, reports)"
+	local install_qf
+	read -r -p "Clone and build QuickFile MCP server? [Y/n]: " install_qf
+
+	if [[ ! "$install_qf" =~ ^[Yy]?$ ]]; then
+		print_info "Skipped QuickFile MCP installation"
+		print_info "Install later: git clone https://github.com/marcusquinn/quickfile-mcp.git ~/Git/quickfile-mcp"
+		return 1
+	fi
+
+	if [[ ! -d "$quickfile_dir" ]]; then
+		if ! run_with_spinner "Cloning quickfile-mcp" git clone https://github.com/marcusquinn/quickfile-mcp.git "$quickfile_dir"; then
+			print_warning "Failed to clone quickfile-mcp"
+			return 1
+		fi
+		print_success "Cloned quickfile-mcp"
+	fi
+
+	if ! run_with_spinner "Installing dependencies" npm install --prefix "$quickfile_dir"; then
+		print_warning "npm install failed - try manually: cd $quickfile_dir && npm install"
+		return 1
+	fi
+
+	if ! run_with_spinner "Building QuickFile MCP" npm run build --prefix "$quickfile_dir"; then
+		print_warning "Build failed - try manually: cd $quickfile_dir && npm run build"
+		return 1
+	fi
+
+	print_success "QuickFile MCP built successfully"
+	return 0
+}
+
+_setup_quickfile_mcp_check_credentials() {
+	# Check and display QuickFile credential status.
+	local credentials_dir="$1"
+	local credentials_file="$2"
+
+	if [[ -f "$credentials_file" ]]; then
+		print_success "QuickFile credentials configured at $credentials_file"
+	else
+		print_info "QuickFile credentials not found"
+		print_info "Create credentials:"
+		print_info "  mkdir -p $credentials_dir && chmod 700 $credentials_dir"
+		print_info "  Create $credentials_file with:"
+		print_info "    accountNumber: from QuickFile dashboard (top-right)"
+		print_info "    apiKey: Account Settings > 3rd Party Integrations > API Key"
+		print_info "    applicationId: Account Settings > Create a QuickFile App"
+	fi
+	return 0
+}
+
+_setup_quickfile_mcp_update_opencode() {
+	# Add QuickFile MCP entry to OpenCode config if not already present.
+	local quickfile_dir="$1"
+
+	local opencode_config
+	if ! opencode_config=$(find_opencode_config); then
+		return 0
+	fi
+
+	local quickfile_entry
+	quickfile_entry=$(jq -r '.mcp.quickfile // empty' "$opencode_config" 2>/dev/null)
+
+	if [[ -n "$quickfile_entry" ]]; then
+		print_success "QuickFile MCP already in OpenCode config"
+		return 0
+	fi
+
+	print_info "Adding QuickFile MCP to OpenCode config..."
+	local node_path
+	node_path=$(resolve_mcp_binary_path "node")
+	[[ -z "$node_path" ]] && node_path="node"
+
+	local tmp_config
+	tmp_config=$(mktemp)
+	trap 'rm -f "${tmp_config:-}"' RETURN
+
+	if jq --arg np "$node_path" --arg dp "$quickfile_dir/dist/index.js" \
+		'.mcp.quickfile = {"type": "local", "command": [$np, $dp], "enabled": true}' \
+		"$opencode_config" >"$tmp_config" 2>/dev/null; then
+		create_backup_with_rotation "$opencode_config" "opencode"
+		mv "$tmp_config" "$opencode_config"
+		print_success "QuickFile MCP added to OpenCode config"
+	else
+		rm -f "$tmp_config"
+		print_warning "Failed to update OpenCode config - add manually"
+	fi
+	return 0
+}
+
 setup_quickfile_mcp() {
 	local quickfile_dir="$HOME/Git/quickfile-mcp"
 	local credentials_dir="$HOME/.config/.quickfile-mcp"
@@ -814,84 +978,13 @@ setup_quickfile_mcp() {
 	# Prerequisites met — proceed with setup
 	print_info "Setting up QuickFile MCP server..."
 
-	# Check if already cloned and built
-	if [[ -f "$quickfile_dir/dist/index.js" ]]; then
-		print_success "QuickFile MCP already installed at $quickfile_dir"
-	else
-		print_info "QuickFile MCP provides AI access to UK accounting (invoices, clients, reports)"
-		read -r -p "Clone and build QuickFile MCP server? [Y/n]: " install_qf
-
-		if [[ "$install_qf" =~ ^[Yy]?$ ]]; then
-			if [[ ! -d "$quickfile_dir" ]]; then
-				if run_with_spinner "Cloning quickfile-mcp" git clone https://github.com/marcusquinn/quickfile-mcp.git "$quickfile_dir"; then
-					print_success "Cloned quickfile-mcp"
-				else
-					print_warning "Failed to clone quickfile-mcp"
-					return 0
-				fi
-			fi
-
-			if run_with_spinner "Installing dependencies" npm install --prefix "$quickfile_dir"; then
-				if run_with_spinner "Building QuickFile MCP" npm run build --prefix "$quickfile_dir"; then
-					print_success "QuickFile MCP built successfully"
-				else
-					print_warning "Build failed - try manually: cd $quickfile_dir && npm run build"
-					return 0
-				fi
-			else
-				print_warning "npm install failed - try manually: cd $quickfile_dir && npm install"
-				return 0
-			fi
-		else
-			print_info "Skipped QuickFile MCP installation"
-			print_info "Install later: git clone https://github.com/marcusquinn/quickfile-mcp.git ~/Git/quickfile-mcp"
-			return 0
-		fi
+	# Clone and build (returns 1 if skipped or failed)
+	if ! _setup_quickfile_mcp_clone_and_build "$quickfile_dir"; then
+		return 0
 	fi
 
-	# Check credentials
-	if [[ -f "$credentials_file" ]]; then
-		print_success "QuickFile credentials configured at $credentials_file"
-	else
-		print_info "QuickFile credentials not found"
-		print_info "Create credentials:"
-		print_info "  mkdir -p $credentials_dir && chmod 700 $credentials_dir"
-		print_info "  Create $credentials_file with:"
-		print_info "    accountNumber: from QuickFile dashboard (top-right)"
-		print_info "    apiKey: Account Settings > 3rd Party Integrations > API Key"
-		print_info "    applicationId: Account Settings > Create a QuickFile App"
-	fi
-
-	# Update OpenCode config if available
-	local opencode_config
-	if opencode_config=$(find_opencode_config); then
-		local quickfile_entry
-		quickfile_entry=$(jq -r '.mcp.quickfile // empty' "$opencode_config" 2>/dev/null)
-
-		if [[ -z "$quickfile_entry" ]]; then
-			print_info "Adding QuickFile MCP to OpenCode config..."
-			local node_path
-			node_path=$(resolve_mcp_binary_path "node")
-			[[ -z "$node_path" ]] && node_path="node"
-
-			local tmp_config
-			tmp_config=$(mktemp)
-			trap 'rm -f "${tmp_config:-}"' RETURN
-
-			if jq --arg np "$node_path" --arg dp "$quickfile_dir/dist/index.js" \
-				'.mcp.quickfile = {"type": "local", "command": [$np, $dp], "enabled": true}' \
-				"$opencode_config" >"$tmp_config" 2>/dev/null; then
-				create_backup_with_rotation "$opencode_config" "opencode"
-				mv "$tmp_config" "$opencode_config"
-				print_success "QuickFile MCP added to OpenCode config"
-			else
-				rm -f "$tmp_config"
-				print_warning "Failed to update OpenCode config - add manually"
-			fi
-		else
-			print_success "QuickFile MCP already in OpenCode config"
-		fi
-	fi
+	_setup_quickfile_mcp_check_credentials "$credentials_dir" "$credentials_file"
+	_setup_quickfile_mcp_update_opencode "$quickfile_dir"
 
 	print_info "Documentation: ~/.aidevops/agents/services/accounting/quickfile.md"
 	return 0
