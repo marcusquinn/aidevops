@@ -37,75 +37,71 @@ print_header() {
 # Spam Content Analysis
 # =============================================================================
 
-# Analyse email content for spam trigger words and patterns
-analyze_spam_content() {
-	local input_file="$1"
+# Analyse subject line for spam signals; updates score/issues via nameref-style
+# output vars passed by name. Prints warnings directly.
+_analyze_subject_line() {
+	local content="$1"
+	local -n _subj_score="$2"
+	local -n _subj_issues="$3"
 
-	print_header "Spam Content Analysis"
-
-	if [[ ! -f "$input_file" ]]; then
-		print_error "File not found: $input_file"
-		return 1
-	fi
-
-	local content
-	content=$(cat "$input_file")
-	local score=0
-	local max_score=100
-	local issues=0
-
-	# --- Subject line analysis (if HTML email, extract <title>) ---
 	local subject=""
 	subject=$(grep -oiE '<title>[^<]+</title>' <<<"$content" | sed 's/<[^>]*>//g' | head -1 || true)
 
-	if [[ -n "$subject" ]]; then
-		print_header "Subject Line Analysis"
-		echo "  Subject: $subject"
+	if [[ -z "$subject" ]]; then
+		return 0
+	fi
 
-		# ALL CAPS check
-		local caps_ratio
-		local total_chars
-		total_chars=$(echo "$subject" | wc -c | tr -d ' ')
-		local upper_chars
-		upper_chars=$(echo "$subject" | tr -cd '[:upper:]' | wc -c | tr -d ' ')
-		if [[ "$total_chars" -gt 0 ]]; then
-			caps_ratio=$(((upper_chars * 100) / total_chars))
-			if [[ "$caps_ratio" -gt 50 && "$total_chars" -gt 10 ]]; then
-				print_warning "Subject is >50% uppercase ($caps_ratio%) - spam trigger"
-				score=$((score + 10))
-				issues=$((issues + 1))
-			fi
-		fi
+	print_header "Subject Line Analysis"
+	echo "  Subject: $subject"
 
-		# Excessive punctuation
-		local exclaim_count
-		exclaim_count=$(echo "$subject" | tr -cd '!' | wc -c | tr -d ' ')
-		if [[ "$exclaim_count" -gt 1 ]]; then
-			print_warning "Multiple exclamation marks in subject ($exclaim_count) - spam trigger"
-			score=$((score + 5))
-			issues=$((issues + 1))
-		fi
-
-		local question_count
-		question_count=$(echo "$subject" | tr -cd '?' | wc -c | tr -d ' ')
-		if [[ "$question_count" -gt 2 ]]; then
-			print_warning "Excessive question marks in subject ($question_count)"
-			score=$((score + 3))
-			issues=$((issues + 1))
-		fi
-
-		# Dollar signs / currency
-		if echo "$subject" | grep -qiE '[$£€]|free|winner|prize|congratulations'; then
-			print_warning "Financial/prize language in subject - high spam trigger"
-			score=$((score + 15))
-			issues=$((issues + 1))
+	# ALL CAPS check
+	local caps_ratio
+	local total_chars
+	total_chars=$(echo "$subject" | wc -c | tr -d ' ')
+	local upper_chars
+	upper_chars=$(echo "$subject" | tr -cd '[:upper:]' | wc -c | tr -d ' ')
+	if [[ "$total_chars" -gt 0 ]]; then
+		caps_ratio=$(((upper_chars * 100) / total_chars))
+		if [[ "$caps_ratio" -gt 50 && "$total_chars" -gt 10 ]]; then
+			print_warning "Subject is >50% uppercase ($caps_ratio%) - spam trigger"
+			_subj_score=$((_subj_score + 10))
+			_subj_issues=$((_subj_issues + 1))
 		fi
 	fi
 
-	# --- Body content spam triggers ---
-	print_header "Body Content Analysis"
+	# Excessive punctuation
+	local exclaim_count
+	exclaim_count=$(echo "$subject" | tr -cd '!' | wc -c | tr -d ' ')
+	if [[ "$exclaim_count" -gt 1 ]]; then
+		print_warning "Multiple exclamation marks in subject ($exclaim_count) - spam trigger"
+		_subj_score=$((_subj_score + 5))
+		_subj_issues=$((_subj_issues + 1))
+	fi
 
-	# High-risk spam phrases
+	local question_count
+	question_count=$(echo "$subject" | tr -cd '?' | wc -c | tr -d ' ')
+	if [[ "$question_count" -gt 2 ]]; then
+		print_warning "Excessive question marks in subject ($question_count)"
+		_subj_score=$((_subj_score + 3))
+		_subj_issues=$((_subj_issues + 1))
+	fi
+
+	# Dollar signs / currency
+	if echo "$subject" | grep -qiE '[$£€]|free|winner|prize|congratulations'; then
+		print_warning "Financial/prize language in subject - high spam trigger"
+		_subj_score=$((_subj_score + 15))
+		_subj_issues=$((_subj_issues + 1))
+	fi
+
+	return 0
+}
+
+# Scan content for high-risk spam phrases; returns count via nameref.
+_analyze_high_risk_phrases() {
+	local content="$1"
+	local -n _hr_score="$2"
+	local -n _hr_issues="$3"
+
 	local -a high_risk_phrases=(
 		"act now"
 		"buy now"
@@ -151,14 +147,22 @@ analyze_spam_content() {
 	done
 
 	if [[ "$high_risk_found" -gt 0 ]]; then
-		score=$((score + high_risk_found * 5))
-		issues=$((issues + high_risk_found))
+		_hr_score=$((_hr_score + high_risk_found * 5))
+		_hr_issues=$((_hr_issues + high_risk_found))
 		print_error "$high_risk_found high-risk spam phrases detected"
 	else
 		print_success "No high-risk spam phrases found"
 	fi
 
-	# Medium-risk phrases
+	return 0
+}
+
+# Scan content for medium-risk spam phrases; updates score/issues via nameref.
+_analyze_medium_risk_phrases() {
+	local content="$1"
+	local -n _mr_score="$2"
+	local -n _mr_issues="$3"
+
 	local -a medium_risk_phrases=(
 		"as seen on"
 		"bargain"
@@ -202,14 +206,22 @@ analyze_spam_content() {
 	done
 
 	if [[ "$medium_risk_found" -gt 0 ]]; then
-		score=$((score + medium_risk_found * 2))
-		issues=$((issues + 1))
+		_mr_score=$((_mr_score + medium_risk_found * 2))
+		_mr_issues=$((_mr_issues + 1))
 		print_warning "$medium_risk_found medium-risk phrases detected"
 	else
 		print_success "No medium-risk spam phrases found"
 	fi
 
-	# --- Structural spam signals ---
+	return 0
+}
+
+# Check structural spam signals (images, URLs, hidden text, JS, forms, compliance).
+_analyze_structural_signals() {
+	local content="$1"
+	local -n _struct_score="$2"
+	local -n _struct_issues="$3"
+
 	print_header "Structural Analysis"
 
 	# Image-to-text ratio
@@ -222,8 +234,8 @@ analyze_spam_content() {
 	if [[ "$img_count" -gt 0 && "$text_length" -lt 200 ]]; then
 		print_warning "Low text-to-image ratio ($text_length chars, $img_count images)"
 		print_info "Image-heavy emails with little text are flagged as spam"
-		score=$((score + 10))
-		issues=$((issues + 1))
+		_struct_score=$((_struct_score + 10))
+		_struct_issues=$((_struct_issues + 1))
 	elif [[ "$img_count" -gt 0 ]]; then
 		print_success "Text-to-image ratio OK ($text_length chars, $img_count images)"
 	fi
@@ -234,8 +246,8 @@ analyze_spam_content() {
 	url_count="${url_count:-0}"
 	if [[ "$url_count" -gt 20 ]]; then
 		print_warning "Excessive URLs ($url_count) - may trigger spam filters"
-		score=$((score + 5))
-		issues=$((issues + 1))
+		_struct_score=$((_struct_score + 5))
+		_struct_issues=$((_struct_issues + 1))
 	fi
 
 	# Shortened URLs
@@ -245,15 +257,15 @@ analyze_spam_content() {
 	if [[ "$short_url_count" -gt 0 ]]; then
 		print_warning "URL shorteners detected ($short_url_count) - spam trigger"
 		print_info "Use full URLs instead of shortened links"
-		score=$((score + 8))
-		issues=$((issues + 1))
+		_struct_score=$((_struct_score + 8))
+		_struct_issues=$((_struct_issues + 1))
 	fi
 
 	# Hidden text (white text on white, font-size: 0, display: none)
 	if grep -qiE 'color:\s*(#fff|#ffffff|white).*background.*white|font-size:\s*0|display:\s*none.*[a-z]' <<<"$content"; then
 		print_error "Possible hidden text detected - major spam signal"
-		score=$((score + 20))
-		issues=$((issues + 1))
+		_struct_score=$((_struct_score + 20))
+		_struct_issues=$((_struct_issues + 1))
 	fi
 
 	# JavaScript (should never be in email)
@@ -262,23 +274,23 @@ analyze_spam_content() {
 	js_count="${js_count:-0}"
 	if [[ "$js_count" -gt 0 ]]; then
 		print_error "JavaScript detected ($js_count) - will be stripped and may trigger spam"
-		score=$((score + 15))
-		issues=$((issues + 1))
+		_struct_score=$((_struct_score + 15))
+		_struct_issues=$((_struct_issues + 1))
 	fi
 
 	# Form elements
 	if grep -qiE '<form|<input|<select|<textarea' <<<"$content"; then
 		print_warning "Form elements detected - not supported in most email clients"
-		score=$((score + 5))
-		issues=$((issues + 1))
+		_struct_score=$((_struct_score + 5))
+		_struct_issues=$((_struct_issues + 1))
 	fi
 
 	# Unsubscribe link check
 	if ! grep -qi 'unsubscribe' <<<"$content"; then
 		print_error "No unsubscribe link found - required for marketing emails"
 		print_info "Missing unsubscribe is a CAN-SPAM violation and spam trigger"
-		score=$((score + 10))
-		issues=$((issues + 1))
+		_struct_score=$((_struct_score + 10))
+		_struct_issues=$((_struct_issues + 1))
 	else
 		print_success "Unsubscribe link found"
 	fi
@@ -286,13 +298,21 @@ analyze_spam_content() {
 	# Physical address check (CAN-SPAM requirement)
 	if ! grep -qiE '[0-9]+\s+[A-Za-z]+\s+(street|st|avenue|ave|road|rd|boulevard|blvd|drive|dr|lane|ln|way|court|ct|suite|ste)' <<<"$content"; then
 		print_warning "No physical address detected - required by CAN-SPAM"
-		score=$((score + 5))
-		issues=$((issues + 1))
+		_struct_score=$((_struct_score + 5))
+		_struct_issues=$((_struct_issues + 1))
 	else
 		print_success "Physical address detected"
 	fi
 
-	# --- Score summary ---
+	return 0
+}
+
+# Print the spam score summary with rating.
+_print_spam_score_summary() {
+	local score="$1"
+	local max_score="$2"
+	local issues="$3"
+
 	print_header "Spam Score Summary"
 	echo ""
 
@@ -328,6 +348,36 @@ analyze_spam_content() {
 	echo "  Issues found: $issues"
 	echo ""
 	print_info "Lower score = better deliverability (0 = clean, 100 = spam)"
+
+	return 0
+}
+
+# Analyse email content for spam trigger words and patterns
+analyze_spam_content() {
+	local input_file="$1"
+
+	print_header "Spam Content Analysis"
+
+	if [[ ! -f "$input_file" ]]; then
+		print_error "File not found: $input_file"
+		return 1
+	fi
+
+	local content
+	content=$(cat "$input_file")
+	local score=0
+	local max_score=100
+	local issues=0
+
+	_analyze_subject_line "$content" score issues
+
+	print_header "Body Content Analysis"
+	_analyze_high_risk_phrases "$content" score issues
+	_analyze_medium_risk_phrases "$content" score issues
+
+	_analyze_structural_signals "$content" score issues
+
+	_print_spam_score_summary "$score" "$max_score" "$issues"
 
 	return 0
 }
@@ -385,21 +435,17 @@ check_spamassassin() {
 # Provider-Specific Deliverability
 # =============================================================================
 
-# Check Gmail-specific deliverability factors
-check_gmail_deliverability() {
+# Check Gmail SPF, DKIM, and DMARC; updates score via nameref.
+_check_gmail_dns_auth() {
 	local domain="$1"
-
-	print_header "Gmail Deliverability Check: $domain"
-
-	local score=0
-	local max_score=8
+	local -n _gdns_score="$2"
 
 	# 1. SPF alignment
 	local spf_record
 	spf_record=$(dig TXT "$domain" +short 2>/dev/null | grep -i "v=spf1" | tr -d '"' || true)
 	if [[ -n "$spf_record" && ("$spf_record" == *"-all"* || "$spf_record" == *"~all"*) ]]; then
 		print_success "SPF: Configured with enforcement"
-		score=$((score + 1))
+		_gdns_score=$((_gdns_score + 1))
 	else
 		print_error "SPF: Missing or weak — Gmail requires SPF"
 	fi
@@ -416,7 +462,7 @@ check_gmail_deliverability() {
 	done
 	if [[ "$dkim_found" == true ]]; then
 		print_success "DKIM: Valid selector found"
-		score=$((score + 1))
+		_gdns_score=$((_gdns_score + 1))
 	else
 		print_error "DKIM: No valid selector — Gmail requires DKIM"
 	fi
@@ -427,21 +473,23 @@ check_gmail_deliverability() {
 	if [[ -n "$dmarc_record" ]]; then
 		if [[ "$dmarc_record" == *"p=reject"* || "$dmarc_record" == *"p=quarantine"* ]]; then
 			print_success "DMARC: Enforcing policy (Gmail bulk sender requirement met)"
-			score=$((score + 2))
+			_gdns_score=$((_gdns_score + 2))
 		elif [[ "$dmarc_record" == *"p=none"* ]]; then
 			print_warning "DMARC: p=none — Gmail requires p=quarantine+ for bulk senders (>5000/day)"
-			score=$((score + 1))
+			_gdns_score=$((_gdns_score + 1))
 		fi
 	else
 		print_error "DMARC: Not configured — required by Gmail since Feb 2024"
 	fi
 
-	# 4. List-Unsubscribe (Gmail requires one-click unsubscribe since Feb 2024)
-	print_info "Gmail requires List-Unsubscribe + List-Unsubscribe-Post headers"
-	print_info "Verify by checking email headers after sending a test"
-	score=$((score + 1))
+	return 0
+}
 
-	# 5. PTR record
+# Check PTR (reverse DNS) for the domain's MX host; updates score via nameref.
+_check_gmail_ptr() {
+	local domain="$1"
+	local -n _ptr_score="$2"
+
 	local mx_host
 	mx_host=$(dig MX "$domain" +short 2>/dev/null | sort -n | head -1 | awk '{print $2}' | sed 's/\.$//' || true)
 	if [[ -n "$mx_host" ]]; then
@@ -452,12 +500,33 @@ check_gmail_deliverability() {
 			ptr=$(dig -x "$mx_ip" +short 2>/dev/null | sed 's/\.$//' || true)
 			if [[ -n "$ptr" ]]; then
 				print_success "PTR: Reverse DNS configured for mail server"
-				score=$((score + 1))
+				_ptr_score=$((_ptr_score + 1))
 			else
 				print_warning "PTR: No reverse DNS for $mx_ip"
 			fi
 		fi
 	fi
+
+	return 0
+}
+
+# Check Gmail-specific deliverability factors
+check_gmail_deliverability() {
+	local domain="$1"
+
+	print_header "Gmail Deliverability Check: $domain"
+
+	local score=0
+	local max_score=8
+
+	_check_gmail_dns_auth "$domain" score
+
+	# 4. List-Unsubscribe (Gmail requires one-click unsubscribe since Feb 2024)
+	print_info "Gmail requires List-Unsubscribe + List-Unsubscribe-Post headers"
+	print_info "Verify by checking email headers after sending a test"
+	score=$((score + 1))
+
+	_check_gmail_ptr "$domain" score
 
 	# 6. Google Postmaster Tools
 	print_info "Enrol in Google Postmaster Tools for reputation monitoring:"
@@ -493,21 +562,17 @@ check_gmail_deliverability() {
 	return 0
 }
 
-# Check Microsoft/Outlook-specific deliverability
-check_outlook_deliverability() {
+# Check Outlook SPF, DKIM, DMARC, and MTA-STS; updates score via nameref.
+_check_outlook_dns_auth() {
 	local domain="$1"
-
-	print_header "Microsoft/Outlook Deliverability Check: $domain"
-
-	local score=0
-	local max_score=7
+	local -n _odns_score="$2"
 
 	# 1. SPF
 	local spf_record
 	spf_record=$(dig TXT "$domain" +short 2>/dev/null | grep -i "v=spf1" | tr -d '"' || true)
 	if [[ -n "$spf_record" ]]; then
 		print_success "SPF: Configured"
-		score=$((score + 1))
+		_odns_score=$((_odns_score + 1))
 	else
 		print_error "SPF: Not configured"
 	fi
@@ -524,7 +589,7 @@ check_outlook_deliverability() {
 	done
 	if [[ "$dkim_found" == true ]]; then
 		print_success "DKIM: Valid selector found"
-		score=$((score + 1))
+		_odns_score=$((_odns_score + 1))
 	else
 		print_error "DKIM: No valid selector found"
 	fi
@@ -535,10 +600,10 @@ check_outlook_deliverability() {
 	if [[ -n "$dmarc_record" ]]; then
 		if [[ "$dmarc_record" == *"p=reject"* || "$dmarc_record" == *"p=quarantine"* ]]; then
 			print_success "DMARC: Enforcing policy"
-			score=$((score + 2))
+			_odns_score=$((_odns_score + 2))
 		else
 			print_warning "DMARC: p=none (monitoring only)"
-			score=$((score + 1))
+			_odns_score=$((_odns_score + 1))
 		fi
 	else
 		print_error "DMARC: Not configured"
@@ -549,12 +614,19 @@ check_outlook_deliverability() {
 	mta_sts=$(dig TXT "_mta-sts.${domain}" +short 2>/dev/null | tr -d '"' || true)
 	if [[ -n "$mta_sts" && "$mta_sts" == *"v=STSv1"* ]]; then
 		print_success "MTA-STS: Configured"
-		score=$((score + 1))
+		_odns_score=$((_odns_score + 1))
 	else
 		print_info "MTA-STS: Not configured (recommended for Outlook)"
 	fi
 
-	# 5. Blacklist check (Spamhaus)
+	return 0
+}
+
+# Check Spamhaus blacklist for the domain's A record; updates score via nameref.
+_check_outlook_blacklist() {
+	local domain="$1"
+	local -n _bl_score="$2"
+
 	local domain_ip
 	domain_ip=$(dig A "$domain" +short 2>/dev/null | head -1 || true)
 	if [[ -n "$domain_ip" ]]; then
@@ -564,11 +636,26 @@ check_outlook_deliverability() {
 		bl_result=$(dig A "${reversed_ip}.zen.spamhaus.org" +short 2>/dev/null || true)
 		if [[ -z "$bl_result" || "$bl_result" == *"NXDOMAIN"* ]]; then
 			print_success "Blacklist: Clean on Spamhaus"
-			score=$((score + 1))
+			_bl_score=$((_bl_score + 1))
 		else
 			print_error "Blacklist: Listed on Spamhaus — will affect Outlook delivery"
 		fi
 	fi
+
+	return 0
+}
+
+# Check Microsoft/Outlook-specific deliverability
+check_outlook_deliverability() {
+	local domain="$1"
+
+	print_header "Microsoft/Outlook Deliverability Check: $domain"
+
+	local score=0
+	local max_score=7
+
+	_check_outlook_dns_auth "$domain" score
+	_check_outlook_blacklist "$domain" score
 
 	# 6. SNDS enrolment
 	print_info "Enrol in Microsoft SNDS for reputation monitoring:"
