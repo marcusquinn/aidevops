@@ -161,27 +161,25 @@ setup_oh_my_zsh() {
 	return 0
 }
 
-# Extract portable customizations from bash configs into a shared profile for cross-shell use
-setup_shell_compatibility() {
-	print_info "Setting up cross-shell compatibility..."
+# Check that both zsh and bash are installed and collect existing bash config files.
+# Prints the bash config file paths (one per line) on success.
+# Returns 1 if prerequisites are not met (caller should return 0 early).
+_shell_compat_check_prereqs() {
+	local shared_profile="$1"
+	local zsh_rc="$2"
 
-	local shared_profile="$HOME/.shell_common"
-	local zsh_rc="$HOME/.zshrc"
-
-	# If shared profile already exists, we've already set this up
 	if [[ -f "$shared_profile" ]]; then
 		print_success "Cross-shell compatibility already configured ($shared_profile)"
-		return 0
+		return 1
 	fi
 
-	# Need both bash and zsh to be relevant
 	if ! command -v zsh >/dev/null 2>&1; then
 		print_info "zsh not installed - cross-shell setup not needed"
-		return 0
+		return 1
 	fi
 	if ! command -v bash >/dev/null 2>&1; then
 		print_info "bash not installed - cross-shell setup not needed"
-		return 0
+		return 1
 	fi
 
 	# Collect all bash config files that exist
@@ -195,20 +193,27 @@ setup_shell_compatibility() {
 
 	if [[ ${#bash_files[@]} -eq 0 ]]; then
 		print_info "No bash config files found - skipping cross-shell setup"
-		return 0
+		return 1
 	fi
 
 	if [[ ! -f "$zsh_rc" ]]; then
 		print_info "No .zshrc found - skipping cross-shell setup"
-		return 0
+		return 1
 	fi
 
-	# Count customizations across all bash config files
+	printf '%s\n' "${bash_files[@]}"
+	return 0
+}
+
+# Count portable customizations (exports, aliases, PATH entries) across bash config files.
+# Prints "exports aliases paths" space-separated.
+_shell_compat_count_customizations() {
 	local total_exports=0
 	local total_aliases=0
 	local total_paths=0
 
-	for src_file in "${bash_files[@]}"; do
+	local src_file
+	for src_file in "$@"; do
 		local n
 		# grep -c exits 1 on no match; || : prevents ERR trap noise
 		# File existence already verified when building bash_files array
@@ -220,34 +225,16 @@ setup_shell_compatibility() {
 		total_paths=$((total_paths + ${n:-0}))
 	done
 
-	if [[ $total_exports -eq 0 && $total_aliases -eq 0 && $total_paths -eq 0 ]]; then
-		print_info "No bash customizations detected - skipping cross-shell setup"
-		return 0
-	fi
+	echo "$total_exports $total_aliases $total_paths"
+	return 0
+}
 
-	print_info "Detected bash customizations across ${#bash_files[@]} file(s):"
-	echo "  Exports: $total_exports, Aliases: $total_aliases, PATH entries: $total_paths"
-	echo ""
-	print_info "Best practice: create a shared profile (~/.shell_common) sourced by"
-	print_info "both bash and zsh, so your customizations work in either shell."
-	echo ""
-
-	local setup_compat="Y"
-	if [[ "$NON_INTERACTIVE" != "true" ]]; then
-		read -r -p "Create shared shell profile for cross-shell compatibility? [Y/n]: " setup_compat
-	fi
-
-	if [[ ! "$setup_compat" =~ ^[Yy]?$ ]]; then
-		print_info "Skipped cross-shell compatibility setup"
-		print_info "Set up later by creating ~/.shell_common and sourcing it from both shells"
-		return 0
-	fi
-
-	# Extract portable customizations from bash config into shared profile
-	# We extract: exports, PATH modifications, aliases, eval statements, source commands
-	# We skip: bash-specific syntax (shopt, PROMPT_COMMAND, PS1, completion, bind, etc.)
-	# We deduplicate lines that appear in multiple files (e.g. .bash_profile sources .bashrc)
-	print_info "Creating shared profile: $shared_profile"
+# Extract portable customizations from bash config files into the shared profile.
+# Returns the count of extracted lines.
+_shell_compat_extract_to_shared_profile() {
+	local shared_profile="$1"
+	shift
+	# remaining args are bash_files
 
 	{
 		echo "# Shared shell profile - sourced by both bash and zsh"
@@ -262,7 +249,8 @@ setup_shell_compatibility() {
 	local -a seen_lines=()
 	local extracted=0
 
-	for src_file in "${bash_files[@]}"; do
+	local src_file
+	for src_file in "$@"; do
 		local src_basename
 		src_basename=$(basename "$src_file")
 		local added_header=false
@@ -336,14 +324,15 @@ setup_shell_compatibility() {
 		done <"$src_file"
 	done
 
-	if [[ $extracted -eq 0 ]]; then
-		rm -f "$shared_profile"
-		print_info "No portable customizations found to extract"
-		return 0
-	fi
+	echo "$extracted"
+	return 0
+}
 
-	chmod 644 "$shared_profile"
-	print_success "Extracted $extracted unique customization(s) to $shared_profile"
+# Add sourcing of the shared profile to .zshrc and all bash config files.
+_shell_compat_add_sourcing() {
+	local zsh_rc="$1"
+	shift
+	# remaining args are bash_files
 
 	# Add sourcing to .zshrc if not already present (existence verified above)
 	if ! grep -q 'shell_common' "$zsh_rc"; then
@@ -359,7 +348,8 @@ setup_shell_compatibility() {
 
 	# Add sourcing to bash config files if not already present
 	# File existence already verified when building bash_files array
-	for src_file in "${bash_files[@]}"; do
+	local src_file
+	for src_file in "$@"; do
 		if ! grep -q 'shell_common' "$src_file"; then
 			{
 				echo ""
@@ -371,6 +361,73 @@ setup_shell_compatibility() {
 			print_success "Added shared profile sourcing to $(basename "$src_file")"
 		fi
 	done
+
+	return 0
+}
+
+# Extract portable customizations from bash configs into a shared profile for cross-shell use
+setup_shell_compatibility() {
+	print_info "Setting up cross-shell compatibility..."
+
+	local shared_profile="$HOME/.shell_common"
+	local zsh_rc="$HOME/.zshrc"
+
+	# Check prerequisites; collect bash config files
+	local -a bash_files=()
+	local prereq_out
+	prereq_out=$(_shell_compat_check_prereqs "$shared_profile" "$zsh_rc") || return 0
+	while IFS= read -r line; do
+		[[ -n "$line" ]] && bash_files+=("$line")
+	done <<<"$prereq_out"
+
+	# Count customizations across all bash config files
+	local counts
+	counts=$(_shell_compat_count_customizations "${bash_files[@]}")
+	local total_exports total_aliases total_paths
+	read -r total_exports total_aliases total_paths <<<"$counts"
+
+	if [[ $total_exports -eq 0 && $total_aliases -eq 0 && $total_paths -eq 0 ]]; then
+		print_info "No bash customizations detected - skipping cross-shell setup"
+		return 0
+	fi
+
+	print_info "Detected bash customizations across ${#bash_files[@]} file(s):"
+	echo "  Exports: $total_exports, Aliases: $total_aliases, PATH entries: $total_paths"
+	echo ""
+	print_info "Best practice: create a shared profile (~/.shell_common) sourced by"
+	print_info "both bash and zsh, so your customizations work in either shell."
+	echo ""
+
+	local setup_compat="Y"
+	if [[ "$NON_INTERACTIVE" != "true" ]]; then
+		read -r -p "Create shared shell profile for cross-shell compatibility? [Y/n]: " setup_compat
+	fi
+
+	if [[ ! "$setup_compat" =~ ^[Yy]?$ ]]; then
+		print_info "Skipped cross-shell compatibility setup"
+		print_info "Set up later by creating ~/.shell_common and sourcing it from both shells"
+		return 0
+	fi
+
+	# Extract portable customizations from bash config into shared profile
+	# We extract: exports, PATH modifications, aliases, eval statements, source commands
+	# We skip: bash-specific syntax (shopt, PROMPT_COMMAND, PS1, completion, bind, etc.)
+	# We deduplicate lines that appear in multiple files (e.g. .bash_profile sources .bashrc)
+	print_info "Creating shared profile: $shared_profile"
+
+	local extracted
+	extracted=$(_shell_compat_extract_to_shared_profile "$shared_profile" "${bash_files[@]}")
+
+	if [[ $extracted -eq 0 ]]; then
+		rm -f "$shared_profile"
+		print_info "No portable customizations found to extract"
+		return 0
+	fi
+
+	chmod 644 "$shared_profile"
+	print_success "Extracted $extracted unique customization(s) to $shared_profile"
+
+	_shell_compat_add_sourcing "$zsh_rc" "${bash_files[@]}"
 
 	echo ""
 	print_success "Cross-shell compatibility configured"
@@ -499,53 +556,42 @@ add_local_bin_to_path() {
 # If it appears after /opt/homebrew/bin, the real shellcheck is found first
 # and the wrapper is bypassed entirely. The launchctl setenv always prepends,
 # and the case-guard in shell rc files ensures it stays first.
-setup_shellcheck_wrapper() {
-	local wrapper_path="$HOME/.aidevops/agents/scripts/shellcheck-wrapper.sh"
 
-	# Verify the wrapper exists and is executable
+# Verify the shellcheck wrapper exists and is executable.
+# Returns 1 if setup should be aborted (caller returns 0).
+_shellcheck_wrapper_verify() {
+	local wrapper_path="$1"
+
 	if [[ ! -x "$wrapper_path" ]]; then
 		if [[ -f "$wrapper_path" ]]; then
 			chmod +x "$wrapper_path"
 		else
 			print_warning "ShellCheck wrapper not found at $wrapper_path (will be available after deploy)"
-			return 0
+			return 1
 		fi
 	fi
 
-	# Verify the wrapper actually works (can find real shellcheck)
 	if ! "$wrapper_path" --version >/dev/null 2>&1; then
 		print_warning "ShellCheck wrapper cannot find real shellcheck binary — skipping"
-		return 0
+		return 1
 	fi
 
-	local env_line
-	# shellcheck disable=SC2016 # env_line is written to rc files; must expand at shell startup
-	env_line='export SHELLCHECK_PATH="$HOME/.aidevops/agents/scripts/shellcheck-wrapper.sh"'
-	# shellcheck disable=SC2016 # path_line is written to rc files; must expand at shell startup
-	# Sanitize-and-prepend: strip any existing occurrence of the shim dir from PATH
-	# (it may be at the END from a previous setup run), then prepend it. This ensures
-	# the shim is always first, even on machines upgrading from the old append form.
-	# The ${PATH:+:$PATH} guard handles the empty-PATH edge case without a trailing colon.
-	local path_line='_aidevops_shim="$HOME/.aidevops/bin"; PATH="$(printf '\''%s'\'' "$PATH" | tr '\'':'\'' '\''\n'\'' | grep -Fxv -- "$_aidevops_shim" | paste -sd: -)"; export PATH="$_aidevops_shim${PATH:+:$PATH}"; unset _aidevops_shim'
-	# Fish shell uses different syntax (set -gx instead of export)
-	# shellcheck disable=SC2016 # fish lines are written to config.fish; must expand at shell startup
-	local env_line_fish='set -gx SHELLCHECK_PATH "$HOME/.aidevops/agents/scripts/shellcheck-wrapper.sh"'
-	# shellcheck disable=SC2016 # fish path line: strip existing, then prepend
-	local path_line_fish='set -l _aidevops_shim "$HOME/.aidevops/bin"; set -l _aidevops_rest (string match -v -- "$_aidevops_shim" $PATH); set -gx PATH $_aidevops_shim $_aidevops_rest'
-	local added_to=""
-	local already_in=""
+	return 0
+}
 
-	# Layer 0: PATH shim (GH#2993)
-	# Create ~/.aidevops/bin/shellcheck as a symlink to the wrapper.
-	# This is the primary fix: bash-language-server resolves `shellcheck` via
-	# PATH, so the symlink must appear on PATH before /opt/homebrew/bin.
+# Layer 0: Create the PATH shim (GH#2993).
+# Places a symlink to the wrapper in ~/.aidevops/bin so bash-language-server
+# finds the wrapper via PATH lookup before the real shellcheck binary.
+_shellcheck_wrapper_setup_shim() {
+	local wrapper_path="$1"
 	local shim_dir="$HOME/.aidevops/bin"
 	local shim_path="$shim_dir/shellcheck"
+
 	mkdir -p "$shim_dir"
 
-	# Create or update the symlink
 	local wrapper_realpath
 	wrapper_realpath="$(realpath "$wrapper_path" 2>/dev/null || readlink -f "$wrapper_path" 2>/dev/null || echo "$wrapper_path")"
+
 	if [[ -L "$shim_path" ]]; then
 		local current_target
 		current_target="$(realpath "$shim_path" 2>/dev/null || readlink -f "$shim_path" 2>/dev/null || echo "")"
@@ -563,57 +609,64 @@ setup_shellcheck_wrapper() {
 		print_success "Created shellcheck shim: $shim_path → $wrapper_path"
 	fi
 
-	# Layer 1: launchctl setenv (macOS) — affects all GUI-launched processes
-	# Set both SHELLCHECK_PATH (for tools that honour it) and PATH (for tools
-	# that resolve shellcheck via PATH lookup, like bash-language-server).
+	return 0
+}
+
+# Layer 1: Set SHELLCHECK_PATH and prepend shim dir via launchctl (macOS only).
+# Affects all GUI-launched processes for the current boot session.
+_shellcheck_wrapper_setup_launchctl() {
+	local wrapper_path="$1"
+	local shim_dir="$2"
+
 	# Note: 2>/dev/null on launchctl is intentional — launchctl may not be
 	# available in non-GUI contexts (SSH, containers). Unlike grep where we
 	# want errors visible, launchctl failure is a non-fatal fallback.
-	#
-	# CRITICAL: Always prepend shim_dir even if it's already in PATH — it may
-	# be at the END (e.g., appended by a previous setup run), which means the
-	# real shellcheck at /opt/homebrew/bin is found first. We strip any existing
-	# occurrence and prepend to guarantee first position.
-	if [[ "$PLATFORM_MACOS" == "true" ]]; then
-		if launchctl setenv SHELLCHECK_PATH "$wrapper_path" 2>/dev/null; then
-			print_info "Set SHELLCHECK_PATH via launchctl (GUI processes)"
-		fi
-		# Build a clean PATH with shim_dir at the front, removing any existing
-		# occurrence to prevent duplicates while ensuring first position.
-		# Handle the empty-PATH edge case to avoid a trailing colon (which
-		# resolves to "." and is a PATH injection vector).
-		local clean_path
-		clean_path=$(printf '%s' "$PATH" | tr ':' '\n' | grep -Fxv "$shim_dir" | tr '\n' ':' | sed 's/:$//')
-		local new_path
-		if [[ -n "$clean_path" ]]; then
-			new_path="${shim_dir}:${clean_path}"
-		else
-			new_path="${shim_dir}"
-		fi
-		if launchctl setenv PATH "$new_path" 2>/dev/null; then
-			print_info "Prepended $shim_dir to PATH via launchctl (GUI processes)"
-		fi
+	if launchctl setenv SHELLCHECK_PATH "$wrapper_path" 2>/dev/null; then
+		print_info "Set SHELLCHECK_PATH via launchctl (GUI processes)"
 	fi
 
-	# Layer 2: .zshenv — affects ALL zsh processes (interactive AND non-interactive)
-	# This is critical because opencode spawns bash-language-server as a
-	# non-interactive child process. .zshrc is NOT sourced for non-interactive
-	# shells, so SHELLCHECK_PATH set only in .zshrc is invisible to the LSP.
-	# GH#2993: Also prepend ~/.aidevops/bin to PATH here so the shim is found.
+	# Build a clean PATH with shim_dir at the front, removing any existing
+	# occurrence to prevent duplicates while ensuring first position.
+	# Handle the empty-PATH edge case to avoid a trailing colon (which
+	# resolves to "." and is a PATH injection vector).
+	local clean_path
+	clean_path=$(printf '%s' "$PATH" | tr ':' '\n' | grep -Fxv "$shim_dir" | tr '\n' ':' | sed 's/:$//')
+	local new_path
+	if [[ -n "$clean_path" ]]; then
+		new_path="${shim_dir}:${clean_path}"
+	else
+		new_path="${shim_dir}"
+	fi
+	if launchctl setenv PATH "$new_path" 2>/dev/null; then
+		print_info "Prepended $shim_dir to PATH via launchctl (GUI processes)"
+	fi
+
+	return 0
+}
+
+# Layer 2: Configure SHELLCHECK_PATH and PATH shim in .zshenv.
+# Affects ALL zsh processes including non-interactive (e.g. bash-language-server).
+_shellcheck_wrapper_setup_zshenv() {
+	local env_line="$1"
+	local path_line="$2"
+	local shim_dir="$3"
 	local zshenv="$HOME/.zshenv"
+	local added_to_out=""
+	local already_in_out=""
+
 	if [[ -f "$zshenv" ]] || command -v zsh >/dev/null 2>&1; then
 		touch "$zshenv"
 
 		# SHELLCHECK_PATH env var (for tools that honour it)
 		if grep -q 'SHELLCHECK_PATH' "$zshenv"; then
-			already_in="${already_in:+$already_in, }$zshenv"
+			already_in_out="$zshenv"
 		else
 			{
 				echo ""
 				echo "# Added by aidevops setup (GH#2915: prevent ShellCheck memory explosion)"
 				echo "$env_line"
 			} >>"$zshenv"
-			added_to="${added_to:+$added_to, }$zshenv"
+			added_to_out="$zshenv"
 		fi
 
 		# PATH prepend for ~/.aidevops/bin (GH#2993: shim must be on PATH)
@@ -639,7 +692,20 @@ setup_shellcheck_wrapper() {
 		fi
 	fi
 
-	# Layer 3: Shell rc files — affects interactive terminal sessions
+	# Return values via stdout (space-separated)
+	echo "$added_to_out $already_in_out"
+	return 0
+}
+
+# Layer 3: Configure SHELLCHECK_PATH and PATH shim in interactive shell rc files.
+_shellcheck_wrapper_setup_rc_files() {
+	local env_line="$1"
+	local path_line="$2"
+	local env_line_fish="$3"
+	local path_line_fish="$4"
+	local added_to_out=""
+	local already_in_out=""
+
 	local rc_file
 	while IFS= read -r rc_file; do
 		[[ -z "$rc_file" ]] && continue
@@ -665,14 +731,14 @@ setup_shellcheck_wrapper() {
 
 		# SHELLCHECK_PATH env var
 		if grep -q 'SHELLCHECK_PATH' "$rc_file"; then
-			already_in="${already_in:+$already_in, }$rc_file"
+			already_in_out="${already_in_out:+$already_in_out, }$rc_file"
 		else
 			{
 				echo ""
 				echo "# Added by aidevops setup (GH#2915: prevent ShellCheck memory explosion)"
 				echo "$rc_env_line"
 			} >>"$rc_file"
-			added_to="${added_to:+$added_to, }$rc_file"
+			added_to_out="${added_to_out:+$added_to_out, }$rc_file"
 		fi
 
 		# PATH prepend for ~/.aidevops/bin (GH#2993)
@@ -699,6 +765,72 @@ setup_shellcheck_wrapper() {
 		fi
 	done < <(get_all_shell_rcs)
 
+	echo "$added_to_out|$already_in_out"
+	return 0
+}
+
+setup_shellcheck_wrapper() {
+	local wrapper_path="$HOME/.aidevops/agents/scripts/shellcheck-wrapper.sh"
+
+	_shellcheck_wrapper_verify "$wrapper_path" || return 0
+
+	local env_line
+	# shellcheck disable=SC2016 # env_line is written to rc files; must expand at shell startup
+	env_line='export SHELLCHECK_PATH="$HOME/.aidevops/agents/scripts/shellcheck-wrapper.sh"'
+	# shellcheck disable=SC2016 # path_line is written to rc files; must expand at shell startup
+	# Sanitize-and-prepend: strip any existing occurrence of the shim dir from PATH
+	# (it may be at the END from a previous setup run), then prepend it. This ensures
+	# the shim is always first, even on machines upgrading from the old append form.
+	# The ${PATH:+:$PATH} guard handles the empty-PATH edge case without a trailing colon.
+	local path_line='_aidevops_shim="$HOME/.aidevops/bin"; PATH="$(printf '\''%s'\'' "$PATH" | tr '\'':'\'' '\''\n'\'' | grep -Fxv -- "$_aidevops_shim" | paste -sd: -)"; export PATH="$_aidevops_shim${PATH:+:$PATH}"; unset _aidevops_shim'
+	# Fish shell uses different syntax (set -gx instead of export)
+	# shellcheck disable=SC2016 # fish lines are written to config.fish; must expand at shell startup
+	local env_line_fish='set -gx SHELLCHECK_PATH "$HOME/.aidevops/agents/scripts/shellcheck-wrapper.sh"'
+	# shellcheck disable=SC2016 # fish path line: strip existing, then prepend
+	local path_line_fish='set -l _aidevops_shim "$HOME/.aidevops/bin"; set -l _aidevops_rest (string match -v -- "$_aidevops_shim" $PATH); set -gx PATH $_aidevops_shim $_aidevops_rest'
+
+	local shim_dir="$HOME/.aidevops/bin"
+
+	# Layer 0: PATH shim (GH#2993)
+	_shellcheck_wrapper_setup_shim "$wrapper_path"
+
+	# Layer 1: launchctl setenv (macOS) — affects all GUI-launched processes
+	# Set both SHELLCHECK_PATH (for tools that honour it) and PATH (for tools
+	# that resolve shellcheck via PATH lookup, like bash-language-server).
+	# CRITICAL: Always prepend shim_dir even if it's already in PATH — it may
+	# be at the END (e.g., appended by a previous setup run), which means the
+	# real shellcheck at /opt/homebrew/bin is found first. We strip any existing
+	# occurrence and prepend to guarantee first position.
+	if [[ "$PLATFORM_MACOS" == "true" ]]; then
+		_shellcheck_wrapper_setup_launchctl "$wrapper_path" "$shim_dir"
+	fi
+
+	# Layer 2: .zshenv — affects ALL zsh processes (interactive AND non-interactive)
+	# This is critical because opencode spawns bash-language-server as a
+	# non-interactive child process. .zshrc is NOT sourced for non-interactive
+	# shells, so SHELLCHECK_PATH set only in .zshrc is invisible to the LSP.
+	# GH#2993: Also prepend ~/.aidevops/bin to PATH here so the shim is found.
+	local zshenv_result
+	zshenv_result=$(_shellcheck_wrapper_setup_zshenv "$env_line" "$path_line" "$shim_dir")
+	local zshenv_added zshenv_already
+	zshenv_added="${zshenv_result%% *}"
+	zshenv_already="${zshenv_result##* }"
+
+	# Layer 3: Shell rc files — affects interactive terminal sessions
+	local rc_result
+	rc_result=$(_shellcheck_wrapper_setup_rc_files "$env_line" "$path_line" "$env_line_fish" "$path_line_fish")
+	local rc_added rc_already
+	rc_added="${rc_result%%|*}"
+	rc_already="${rc_result##*|}"
+
+	# Merge results from layers 2 and 3
+	local added_to=""
+	local already_in=""
+	[[ -n "$zshenv_added" && "$zshenv_added" != " " ]] && added_to="${zshenv_added}"
+	[[ -n "$rc_added" ]] && added_to="${added_to:+$added_to, }${rc_added}"
+	[[ -n "$zshenv_already" && "$zshenv_already" != " " ]] && already_in="${zshenv_already}"
+	[[ -n "$rc_already" ]] && already_in="${already_in:+$already_in, }${rc_already}"
+
 	if [[ -n "$added_to" ]]; then
 		print_success "Configured SHELLCHECK_PATH wrapper in: $added_to"
 	fi
@@ -717,6 +849,26 @@ setup_shellcheck_wrapper() {
 	export PATH="$HOME/.aidevops/bin:$PATH"
 
 	return 0
+}
+
+# Check whether server access aliases are already configured in any rc file.
+# Returns 0 (true) if already configured, 1 (false) if not.
+_aliases_check_configured() {
+	local rc_file
+	while IFS= read -r rc_file; do
+		[[ -z "$rc_file" ]] && continue
+		if [[ -f "$rc_file" ]] && grep -q "# AI Assistant Server Access" "$rc_file"; then
+			return 0
+		fi
+	done < <(get_all_shell_rcs)
+
+	# Also check fish config (not included in get_all_shell_rcs on macOS)
+	local fish_config="$HOME/.config/fish/config.fish"
+	if [[ -f "$fish_config" ]] && grep -q "# AI Assistant Server Access" "$fish_config"; then
+		return 0
+	fi
+
+	return 1
 }
 
 # Add server access aliases to shell rc files (bash/zsh/fish)
@@ -758,25 +910,7 @@ alias aws-helper './.agents/scripts/aws-helper.sh'
 ALIASES
 	)
 
-	# Check if aliases already exist in any rc file (including fish config)
-	local any_configured=false
-	local rc_file
-	while IFS= read -r rc_file; do
-		[[ -z "$rc_file" ]] && continue
-		if [[ -f "$rc_file" ]] && grep -q "# AI Assistant Server Access" "$rc_file"; then
-			any_configured=true
-			break
-		fi
-	done < <(get_all_shell_rcs)
-	# Also check fish config (not included in get_all_shell_rcs on macOS)
-	if [[ "$any_configured" == "false" ]]; then
-		local fish_config="$HOME/.config/fish/config.fish"
-		if [[ -f "$fish_config" ]] && grep -q "# AI Assistant Server Access" "$fish_config"; then
-			any_configured=true
-		fi
-	fi
-
-	if [[ "$any_configured" == "true" ]]; then
+	if _aliases_check_configured; then
 		print_info "Server Access aliases already configured - Skipping"
 		return 0
 	fi
@@ -795,6 +929,7 @@ ALIASES
 			added_to="$fish_rc"
 		else
 			# Add to all bash/zsh rc files
+			local rc_file
 			while IFS= read -r rc_file; do
 				[[ -z "$rc_file" ]] && continue
 
