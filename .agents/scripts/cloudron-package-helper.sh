@@ -56,29 +56,9 @@ check_jq() {
 	return 0
 }
 
-# Initialize new Cloudron app package
-cmd_init() {
-	local name="${1:-}"
-
-	check_cloudron_cli || return 1
-
-	if [[ -n "$name" ]]; then
-		mkdir -p "$name"
-		cd "$name" || exit
-		log_info "Created directory: $name"
-	fi
-
-	if [[ -f "CloudronManifest.json" ]]; then
-		log_warn "CloudronManifest.json already exists"
-		read -rp "Overwrite? [y/N] " confirm
-		[[ "$confirm" != "y" && "$confirm" != "Y" ]] && return 0
-	fi
-
-	cloudron init
-
-	# Create basic start.sh if not exists
-	if [[ ! -f "start.sh" ]]; then
-		cat >start.sh <<'STARTSH'
+# Write start.sh template for a generic Cloudron app
+_init_create_start_sh() {
+	cat >start.sh <<'STARTSH'
 #!/bin/bash
 set -eu
 
@@ -112,13 +92,14 @@ touch /app/data/.initialized
 echo "==> Launching application"
 exec gosu cloudron:cloudron echo "Replace this with your app start command"
 STARTSH
-		chmod +x start.sh
-		log_success "Created start.sh template"
-	fi
+	chmod +x start.sh
+	log_success "Created start.sh template"
+	return 0
+}
 
-	# Create basic Dockerfile if not exists
-	if [[ ! -f "Dockerfile" ]]; then
-		cat >Dockerfile <<'DOCKERFILE'
+# Write Dockerfile template for a generic Cloudron app
+_init_create_dockerfile() {
+	cat >Dockerfile <<'DOCKERFILE'
 FROM cloudron/base:5.0.0
 
 # Install dependencies
@@ -141,12 +122,13 @@ EXPOSE 8000
 
 CMD ["/app/code/start.sh"]
 DOCKERFILE
-		log_success "Created Dockerfile template"
-	fi
+	log_success "Created Dockerfile template"
+	return 0
+}
 
-	# Create .gitignore if not exists
-	if [[ ! -f ".gitignore" ]]; then
-		cat >.gitignore <<'GITIGNORE'
+# Write .gitignore template for a Cloudron app project
+_init_create_gitignore() {
+	cat >.gitignore <<'GITIGNORE'
 # Cloudron
 .cloudron/
 
@@ -161,8 +143,33 @@ dist/
 __pycache__/
 *.pyc
 GITIGNORE
-		log_success "Created .gitignore"
+	log_success "Created .gitignore"
+	return 0
+}
+
+# Initialize new Cloudron app package
+cmd_init() {
+	local name="${1:-}"
+
+	check_cloudron_cli || return 1
+
+	if [[ -n "$name" ]]; then
+		mkdir -p "$name"
+		cd "$name" || exit
+		log_info "Created directory: $name"
 	fi
+
+	if [[ -f "CloudronManifest.json" ]]; then
+		log_warn "CloudronManifest.json already exists"
+		read -rp "Overwrite? [y/N] " confirm
+		[[ "$confirm" != "y" && "$confirm" != "Y" ]] && return 0
+	fi
+
+	cloudron init
+
+	[[ ! -f "start.sh" ]] && _init_create_start_sh
+	[[ ! -f "Dockerfile" ]] && _init_create_dockerfile
+	[[ ! -f ".gitignore" ]] && _init_create_gitignore
 
 	log_success "Cloudron app package initialized"
 	log_info "Next steps:"
@@ -171,6 +178,7 @@ GITIGNORE
 	echo "  3. Edit start.sh with your startup logic"
 	echo "  4. Run: cloudron-package-helper.sh build"
 	echo "  5. Run: cloudron-package-helper.sh install testapp"
+	return 0
 }
 
 # Validate CloudronManifest.json
@@ -800,19 +808,8 @@ EOF
 	log_success "Static site scaffold created"
 }
 
-scaffold_multi_process() {
-	log_info "Generating multi-process (supervisord) scaffold..."
-
-	# Check for existing files
-	if [[ -f "Dockerfile" || -f "start.sh" || -f "supervisord.conf" || -f "nginx.conf" ]]; then
-		log_warn "This will overwrite existing Dockerfile, start.sh, supervisord.conf, and nginx.conf"
-		read -rp "Continue? [y/N] " confirm
-		if ! [[ "$confirm" =~ ^[Yy]$ ]]; then
-			log_info "Scaffold cancelled."
-			return 0
-		fi
-	fi
-
+# Write Dockerfile for a multi-process (supervisord) Cloudron app
+_scaffold_multi_process_dockerfile() {
 	cat >Dockerfile <<'EOF'
 FROM cloudron/base:5.0.0
 
@@ -838,7 +835,11 @@ EXPOSE 8000
 
 CMD ["/app/code/start.sh"]
 EOF
+	return 0
+}
 
+# Write supervisord.conf for a multi-process Cloudron app
+_scaffold_multi_process_supervisord() {
 	cat >supervisord.conf <<'EOF'
 [supervisord]
 nodaemon=true
@@ -875,7 +876,11 @@ stdout_logfile_maxbytes=0
 stderr_logfile=/dev/stderr
 stderr_logfile_maxbytes=0
 EOF
+	return 0
+}
 
+# Write nginx.conf for a multi-process Cloudron app (proxy + health check)
+_scaffold_multi_process_nginx() {
 	cat >nginx.conf <<'EOF'
 client_body_temp_path /run/nginx/client_body;
 proxy_temp_path /run/nginx/proxy;
@@ -908,7 +913,11 @@ server {
     }
 }
 EOF
+	return 0
+}
 
+# Write start.sh for a multi-process Cloudron app (supervisord launcher)
+_scaffold_multi_process_start_sh() {
 	cat >start.sh <<'EOF'
 #!/bin/bash
 set -eu
@@ -943,10 +952,31 @@ echo "==> Starting supervisord"
 exec /usr/bin/supervisord --configuration /app/code/supervisord.conf
 EOF
 	chmod +x start.sh
+	return 0
+}
+
+scaffold_multi_process() {
+	log_info "Generating multi-process (supervisord) scaffold..."
+
+	# Check for existing files
+	if [[ -f "Dockerfile" || -f "start.sh" || -f "supervisord.conf" || -f "nginx.conf" ]]; then
+		log_warn "This will overwrite existing Dockerfile, start.sh, supervisord.conf, and nginx.conf"
+		read -rp "Continue? [y/N] " confirm
+		if ! [[ "$confirm" =~ ^[Yy]$ ]]; then
+			log_info "Scaffold cancelled."
+			return 0
+		fi
+	fi
+
+	_scaffold_multi_process_dockerfile
+	_scaffold_multi_process_supervisord
+	_scaffold_multi_process_nginx
+	_scaffold_multi_process_start_sh
 
 	log_success "Multi-process scaffold created (nginx + app + worker via supervisord)"
 	log_info "Edit supervisord.conf to configure your app and worker commands"
 	log_info "The nginx health check at /health responds immediately (before app is ready)"
+	return 0
 }
 
 # Show current package status
