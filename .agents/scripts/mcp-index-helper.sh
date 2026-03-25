@@ -130,28 +130,19 @@ needs_refresh() {
 }
 
 #######################################
-# Extract MCP tool descriptions from config
-# Uses Python for reliable JSON parsing
+# Insert MCP tools into the index database
+# Reads opencode.json, iterates enabled MCP servers,
+# classifies tools by category, and upserts rows.
+# Prints "tool_count mcp_count" to stdout on success.
+# Uses Python for reliable JSON parsing.
 #######################################
-sync_from_config() {
-	init_db
-
-	if [[ ! -f "$OPENCODE_CONFIG" ]]; then
-		log_error "OpenCode config not found: $OPENCODE_CONFIG"
-		return 1
-	fi
-
-	log_info "Syncing MCP tool descriptions from opencode.json..."
-
-	# Use Python to extract MCP info and tool global states
-	python3 <<'PYEOF'
+_sync_insert_tools() {
+	python3 - "$INDEX_DB" "$OPENCODE_CONFIG" <<'PYEOF'
 import json
 import sqlite3
-import os
 import sys
 
-config_path = os.path.expanduser("~/.config/opencode/opencode.json")
-db_path = os.path.expanduser("~/.aidevops/.agent-workspace/mcp-index/mcp-tools.db")
+db_path, config_path = sys.argv[1], sys.argv[2]
 
 try:
     with open(config_path, 'r') as f:
@@ -170,44 +161,53 @@ global_tools = config.get('tools', {})
 tool_count = 0
 mcp_count = 0
 
+# Common tool patterns based on MCP naming conventions
+tool_categories = {
+    'context7': ['query-docs', 'resolve-library-id'],
+    'augment-context-engine': ['codebase-retrieval'],
+    'dataforseo': ['serp', 'keywords', 'backlinks', 'domain-analytics'],
+    # serper - REMOVED: Uses curl subagent (.agents/seo/serper.md)
+    'gsc': ['query', 'sitemaps', 'inspect'],
+    'shadcn': ['browse', 'search', 'install'],
+    'playwriter': ['navigate', 'click', 'type', 'screenshot'],
+    'macos-automator': ['run-applescript', 'run-jxa', 'list-apps'],
+    'outscraper': ['google-maps', 'reviews', 'business-info'],
+    'quickfile': ['invoices', 'expenses', 'reports'],
+    'localwp': ['sites', 'start', 'stop'],
+    'claude-code-mcp': ['run_claude_code'],
+}
+
+# More specific descriptions for known tools
+tool_descriptions = {
+    'query-docs': 'Query documentation for a library using Context7',
+    'resolve-library-id': 'Resolve a library name to Context7 ID',
+    'search': 'Search for content or code',
+    'trace': 'Trace code execution paths',
+    'skeleton': 'Generate code skeleton/structure',
+    'codebase-retrieval': 'Semantic search across codebase using Augment',
+    'pack_codebase': 'Package local codebase for AI analysis',
+    'pack_remote_repository': 'Package remote GitHub repo for AI analysis',
+    'run_claude_code': 'Run Claude Code as a one-shot subprocess',
+}
+
 for mcp_name, mcp_config in mcp_servers.items():
     if not isinstance(mcp_config, dict):
         continue
-    
+
     # Skip disabled MCPs
     if not mcp_config.get('enabled', True):
         continue
-    
+
     mcp_count += 1
-    
+
     # Check if this MCP's tools are globally enabled
     tool_pattern = f"{mcp_name}_*"
     globally_enabled = 1 if global_tools.get(tool_pattern, False) else 0
-    
-    # Extract known tools from the MCP name pattern
-    # We'll create placeholder entries that can be enriched later
-    # when the MCP is actually loaded
-    
-    # Common tool patterns based on MCP naming conventions
-    tool_categories = {
-        'context7': ['query-docs', 'resolve-library-id'],
-        'augment-context-engine': ['codebase-retrieval'],
-        'dataforseo': ['serp', 'keywords', 'backlinks', 'domain-analytics'],
-        # serper - REMOVED: Uses curl subagent (.agents/seo/serper.md)
-        'gsc': ['query', 'sitemaps', 'inspect'],
-        'shadcn': ['browse', 'search', 'install'],
-        'playwriter': ['navigate', 'click', 'type', 'screenshot'],
-        'macos-automator': ['run-applescript', 'run-jxa', 'list-apps'],
-        'outscraper': ['google-maps', 'reviews', 'business-info'],
-        'quickfile': ['invoices', 'expenses', 'reports'],
-        'localwp': ['sites', 'start', 'stop'],
-        'claude-code-mcp': ['run_claude_code'],
-    }
-    
-    # Get category and tools for this MCP
+
+    # Classify category and resolve known tools for this MCP
     category = 'general'
     known_tools = []
-    
+
     for pattern, tools in tool_categories.items():
         if pattern in mcp_name.lower():
             known_tools = tools
@@ -229,39 +229,48 @@ for mcp_name, mcp_config in mcp_servers.items():
             elif pattern == 'claude-code-mcp':
                 category = 'ai-assistant'
             break
-    
-    # If no known tools, create a generic entry
+
+    # If no known tools, create a generic placeholder entry
     if not known_tools:
-        known_tools = ['*']  # Placeholder for unknown tools
-    
+        known_tools = ['*']
+
     for tool in known_tools:
         tool_name = f"{mcp_name}_{tool}" if tool != '*' else f"{mcp_name}_*"
-        description = f"Tool from {mcp_name} MCP server"
-        
-        # More specific descriptions for known tools
-        tool_descriptions = {
-            'query-docs': 'Query documentation for a library using Context7',
-            'resolve-library-id': 'Resolve a library name to Context7 ID',
-            'search': 'Search for content or code',
-            'trace': 'Trace code execution paths',
-            'skeleton': 'Generate code skeleton/structure',
-            'codebase-retrieval': 'Semantic search across codebase using Augment',
-            'pack_codebase': 'Package local codebase for AI analysis',
-            'pack_remote_repository': 'Package remote GitHub repo for AI analysis',
-            'run_claude_code': 'Run Claude Code as a one-shot subprocess',
-        }
-        
-        if tool in tool_descriptions:
-            description = tool_descriptions[tool]
-        
+        description = tool_descriptions.get(tool, f"Tool from {mcp_name} MCP server")
+
         cursor.execute('''
-            INSERT OR REPLACE INTO mcp_tools 
+            INSERT OR REPLACE INTO mcp_tools
             (mcp_name, tool_name, description, category, enabled_globally, indexed_at)
             VALUES (?, ?, ?, ?, ?, datetime('now'))
         ''', (mcp_name, tool_name, description, category, globally_enabled))
         tool_count += 1
 
-# Update sync metadata
+conn.commit()
+conn.close()
+
+# Print counts for the caller to capture and store in metadata
+print(f"{tool_count} {mcp_count}")
+PYEOF
+	return 0
+}
+
+#######################################
+# Update sync metadata after a successful tool insert
+# Args: $1=tool_count $2=mcp_count
+#######################################
+_sync_update_metadata() {
+	local tool_count="$1"
+	local mcp_count="$2"
+
+	python3 - "$INDEX_DB" "$tool_count" "$mcp_count" <<'PYEOF'
+import sqlite3
+import sys
+
+db_path, tool_count, mcp_count = sys.argv[1], sys.argv[2], sys.argv[3]
+
+conn = sqlite3.connect(db_path)
+cursor = conn.cursor()
+
 cursor.execute('''
     INSERT OR REPLACE INTO sync_metadata (key, value, updated_at)
     VALUES ('last_sync', datetime('now'), datetime('now'))
@@ -269,19 +278,42 @@ cursor.execute('''
 cursor.execute('''
     INSERT OR REPLACE INTO sync_metadata (key, value, updated_at)
     VALUES ('mcp_count', ?, datetime('now'))
-''', (str(mcp_count),))
+''', (mcp_count,))
 cursor.execute('''
     INSERT OR REPLACE INTO sync_metadata (key, value, updated_at)
     VALUES ('tool_count', ?, datetime('now'))
-''', (str(tool_count),))
+''', (tool_count,))
 
 conn.commit()
 conn.close()
-
-print(f"Synced {tool_count} tools from {mcp_count} MCP servers")
 PYEOF
+	return 0
+}
 
-	log_success "Sync complete"
+#######################################
+# Extract MCP tool descriptions from config
+# Orchestrates: init_db → insert tools → update metadata
+#######################################
+sync_from_config() {
+	init_db
+
+	if [[ ! -f "$OPENCODE_CONFIG" ]]; then
+		log_error "OpenCode config not found: $OPENCODE_CONFIG"
+		return 1
+	fi
+
+	log_info "Syncing MCP tool descriptions from opencode.json..."
+
+	local counts
+	counts=$(_sync_insert_tools) || return 1
+
+	local tool_count mcp_count
+	tool_count=$(echo "$counts" | awk '{print $1}')
+	mcp_count=$(echo "$counts" | awk '{print $2}')
+
+	_sync_update_metadata "$tool_count" "$mcp_count" || return 1
+
+	log_success "Synced $tool_count tools from $mcp_count MCP servers"
 	return 0
 }
 
