@@ -595,7 +595,14 @@ cmd_get() {
 	return 0
 }
 
-cmd_set() {
+# ---------------------------------------------------------------------------
+# cmd_set helpers — extracted to keep cmd_set under 100 lines
+# ---------------------------------------------------------------------------
+
+# Validate arguments and jq availability for cmd_set.
+# Sets $dotpath (normalised) in the caller's scope via echo; caller must capture.
+# Returns 0 on success, 1 on error.
+_cmd_set_validate_args() {
 	local dotpath="$1"
 	local value="$2"
 
@@ -610,20 +617,29 @@ cmd_set() {
 		return 1
 	fi
 
-	# Support legacy flat keys
-	dotpath=$(_legacy_key_to_dotpath "$dotpath")
+	# Normalise legacy flat key → dotpath and validate characters
+	local normalised
+	normalised=$(_legacy_key_to_dotpath "$dotpath")
+	_validate_dotpath "$normalised" || return 1
 
-	# Validate dotpath contains only safe characters
-	_validate_dotpath "$dotpath" || return 1
+	echo "$normalised"
+	return 0
+}
 
-	# Validate key exists in defaults
+# Look up the jq type and default value for a dotpath in the defaults file.
+# Outputs "<type>\t<default_val>" on stdout.
+# Returns 0 on success, 1 if key not found or defaults unreadable.
+_cmd_set_get_default_type() {
+	local dotpath="$1"
+
 	local defaults_json
 	defaults_json=$(_strip_jsonc "$JSONC_DEFAULTS") || return 1
-	local default_val
-	# Use jq type check instead of // empty — false and 0 are valid defaults
-	# Get type and value in a single jq call for efficiency
-	local default_type
-	if ! read -r default_type default_val < <(echo "$defaults_json" | jq -r --arg p "$dotpath" 'getpath($p | split(".")) | [type, (if . == null then "" else tostring end)] | @tsv'); then
+
+	local default_type default_val
+	# Use jq type check instead of // empty — false and 0 are valid defaults.
+	# Get type and value in a single jq call for efficiency.
+	if ! read -r default_type default_val < <(echo "$defaults_json" | jq -r --arg p "$dotpath" \
+		'getpath($p | split(".")) | [type, (if . == null then "" else tostring end)] | @tsv'); then
 		default_type="null"
 		default_val=""
 	fi
@@ -634,9 +650,19 @@ cmd_set() {
 		return 1
 	fi
 
-	# Validate value type from default and reject invalid input early
+	printf '%s\t%s\n' "$default_type" "$default_val"
+	return 0
+}
+
+# Validate that $value is compatible with $default_type (boolean/number/string).
+# Returns 0 if valid, 1 if not.
+_cmd_set_validate_value_type() {
+	local dotpath="$1"
+	local value="$2"
+	local default_type="$3"
+
 	# Use jq type (boolean/number/string) rather than pattern-matching the
-	# stringified default — avoids false negatives when default is "false" or "0"
+	# stringified default — avoids false negatives when default is "false" or "0".
 	case "$default_type" in
 	boolean)
 		local lower_value
@@ -653,11 +679,14 @@ cmd_set() {
 		fi
 		;;
 	esac
+	return 0
+}
 
-	# Create user config directory if needed
+# Ensure the user config directory and file exist, creating them with a header
+# comment if absent.
+_cmd_set_ensure_user_config() {
 	mkdir -p "$(dirname "$JSONC_USER")"
 
-	# Create user config file with header if it doesn't exist
 	if [[ ! -f "$JSONC_USER" ]]; then
 		cat >"$JSONC_USER" <<'HEADER'
 // aidevops Configuration — User Overrides
@@ -671,16 +700,25 @@ cmd_set() {
 {}
 HEADER
 	fi
+	return 0
+}
 
-	# Read existing user config, set the value, write back
+# Read the current user config, apply the new value, and write back with the
+# JSONC header preserved.  Invalidates the in-memory merge cache on success.
+# Returns 0 on success, 1 on error.
+_cmd_set_apply_value() {
+	local dotpath="$1"
+	local value="$2"
+	local default_type="$3"
+
 	local user_json
 	user_json=$(_strip_jsonc "$JSONC_USER") || {
 		echo "[ERROR] Malformed user config: $JSONC_USER — fix or reset before setting values" >&2
 		return 1
 	}
 
-	# Use jq --arg for safe dotpath and value passing (no shell interpolation into filter)
-	# Use default_type (jq type) for dispatch — avoids false/0 misclassification
+	# Use jq --arg for safe dotpath and value passing (no shell interpolation into filter).
+	# Dispatch on default_type to preserve the correct JSON type in the output.
 	local updated
 	case "$default_type" in
 	boolean)
@@ -724,21 +762,51 @@ HEADER
 	# Invalidate cache
 	_JSONC_MERGED_CACHE=""
 	_JSONC_CACHE_MTIME=""
+	return 0
+}
 
-	echo "[OK] Set ${dotpath}=${value}" >&2
+# Emit a warning if an environment variable would override the value just set.
+_cmd_set_warn_env_override() {
+	local dotpath="$1"
 
-	# Show if an env var would override this
-	local env_val=""
 	local env_var
 	env_var=$(_config_env_map "$dotpath")
 	if [[ -n "$env_var" ]]; then
 		# Use eval for Bash 3.2 compat — ${!var:-} causes "bad substitution" on 3.2
+		local env_val=""
 		eval "env_val=\${$env_var:-}"
 		if [[ -n "$env_val" ]]; then
 			echo "[WARN] Environment variable ${env_var}=${env_val} will override this setting" >&2
 		fi
 	fi
+	return 0
+}
 
+cmd_set() {
+	local dotpath="$1"
+	local value="$2"
+
+	# Validate args, jq presence, and normalise dotpath (legacy key → dotpath).
+	local normalised
+	normalised=$(_cmd_set_validate_args "$dotpath" "$value") || return 1
+	dotpath="$normalised"
+
+	# Look up the expected type and default value from the defaults file.
+	local type_line default_type
+	type_line=$(_cmd_set_get_default_type "$dotpath") || return 1
+	default_type=$(echo "$type_line" | cut -f1)
+
+	# Reject values that don't match the expected type.
+	_cmd_set_validate_value_type "$dotpath" "$value" "$default_type" || return 1
+
+	# Ensure the user config file exists before writing.
+	_cmd_set_ensure_user_config || return 1
+
+	# Apply the new value and write back.
+	_cmd_set_apply_value "$dotpath" "$value" "$default_type" || return 1
+
+	echo "[OK] Set ${dotpath}=${value}" >&2
+	_cmd_set_warn_env_override "$dotpath"
 	echo "  Change takes effect on next setup.sh run or script invocation." >&2
 	return 0
 }
