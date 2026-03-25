@@ -822,6 +822,163 @@ show_recommendations() {
 	return 0
 }
 
+# Guide helpers — one function per service (keeps show_guide() under 30 lines)
+
+_guide_github() {
+	echo -e "${BLUE}GitHub CLI Setup${NC}"
+	echo ""
+	echo "1. Install: brew install gh"
+	echo "2. Authenticate: gh auth login -s workflow"
+	echo "   (workflow scope is required for PRs that modify CI workflows)"
+	echo "3. Verify: gh auth status"
+	return 0
+}
+
+_guide_openai() {
+	echo -e "${BLUE}OpenAI API Setup${NC}"
+	echo ""
+	echo "1. Get API key: https://platform.openai.com/api-keys"
+	echo "2. Store key:"
+	echo "   ~/.aidevops/agents/scripts/setup-local-api-keys.sh set OPENAI_API_KEY \"sk-...\""
+	echo "3. Restart terminal or: source ~/.config/aidevops/credentials.sh"
+	return 0
+}
+
+_guide_anthropic() {
+	echo -e "${BLUE}Anthropic API Setup${NC}"
+	echo ""
+	echo "1. Get API key: https://console.anthropic.com/settings/keys"
+	echo "2. Store key:"
+	echo "   ~/.aidevops/agents/scripts/setup-local-api-keys.sh set ANTHROPIC_API_KEY \"sk-ant-...\""
+	echo "3. Restart terminal or: source ~/.config/aidevops/credentials.sh"
+	return 0
+}
+
+_guide_hetzner() {
+	echo -e "${BLUE}Hetzner Cloud Setup${NC}"
+	echo ""
+	echo "1. Create account: https://www.hetzner.com/cloud"
+	echo "2. Go to: Security -> API Tokens"
+	echo "3. Generate token with Read & Write permissions"
+	echo "4. Store token:"
+	echo "   ~/.aidevops/agents/scripts/setup-local-api-keys.sh set HCLOUD_TOKEN_MAIN \"your-token\""
+	return 0
+}
+
+_guide_cloudflare() {
+	echo -e "${BLUE}Cloudflare Setup${NC}"
+	echo ""
+	echo "1. Create account: https://cloudflare.com"
+	echo "2. Go to: My Profile -> API Tokens"
+	echo "3. Create token with Zone:Read, DNS:Edit permissions"
+	echo "4. Store token:"
+	echo "   ~/.aidevops/agents/scripts/setup-local-api-keys.sh set CLOUDFLARE_API_TOKEN \"your-token\""
+	return 0
+}
+
+_guide_dataforseo() {
+	echo -e "${BLUE}DataForSEO Setup${NC}"
+	echo ""
+	echo "1. Create account: https://app.dataforseo.com"
+	echo "2. Go to: API Access"
+	echo "3. Store credentials:"
+	echo "   ~/.aidevops/agents/scripts/setup-local-api-keys.sh set DATAFORSEO_USERNAME \"your-email\""
+	echo "   ~/.aidevops/agents/scripts/setup-local-api-keys.sh set DATAFORSEO_PASSWORD \"your-password\""
+	return 0
+}
+
+_guide_augment() {
+	echo -e "${BLUE}Augment Context Engine Setup${NC}"
+	echo ""
+	echo "1. Install: npm install -g @augmentcode/auggie@prerelease"
+	echo "2. Login: auggie login (opens browser)"
+	echo "3. Verify: auggie token print"
+	return 0
+}
+
+_guide_sonarcloud() {
+	echo -e "${BLUE}SonarCloud Setup${NC}"
+	echo ""
+	echo "1. Create account: https://sonarcloud.io"
+	echo "2. Go to: My Account -> Security"
+	echo "3. Generate token"
+	echo "4. Store token:"
+	echo "   ~/.aidevops/agents/scripts/setup-local-api-keys.sh set SONAR_TOKEN \"your-token\""
+	return 0
+}
+
+_guide_openclaw() {
+	echo -e "${BLUE}OpenClaw Setup${NC}"
+	echo ""
+	echo "1. Install: curl -fsSL https://openclaw.ai/install.sh | bash"
+	echo "2. Run onboarding: openclaw onboard --install-daemon"
+	echo "3. Connect a channel (e.g., WhatsApp): openclaw channels login"
+	echo "4. Security audit: openclaw security audit --fix"
+	echo "5. Verify: openclaw doctor"
+	echo ""
+	echo "Docs: https://docs.openclaw.ai/start/getting-started"
+	return 0
+}
+
+_guide_tailscale() {
+	echo -e "${BLUE}Tailscale Setup${NC}"
+	echo ""
+	echo "1. Install:"
+	echo "   macOS: brew install tailscale"
+	echo "   Linux: curl -fsSL https://tailscale.com/install.sh | sh"
+	echo "2. Start daemon:"
+	echo "   macOS: sudo tailscaled &"
+	echo "   Linux: sudo systemctl enable --now tailscaled"
+	echo "3. Authenticate: tailscale up"
+	echo "4. Verify: tailscale status"
+	echo ""
+	echo "Free tier: 100 devices, 3 users"
+	echo "Docs: https://tailscale.com/kb"
+	return 0
+}
+
+_guide_orbstack() {
+	echo -e "${BLUE}OrbStack Setup${NC}"
+	echo ""
+	echo "1. Install: brew install orbstack"
+	echo "2. Start: orb start (or open OrbStack.app)"
+	echo "3. Verify: orb status && docker --version"
+	echo ""
+	echo "OrbStack replaces Docker Desktop with better performance."
+	echo "All docker and docker compose commands work as normal."
+	echo "Docs: https://docs.orbstack.dev"
+	return 0
+}
+
+_guide_orchestration() {
+	echo -e "${BLUE}Autonomous Orchestration Setup${NC}"
+	echo ""
+	echo "Orchestration lets aidevops work autonomously — dispatching AI workers,"
+	echo "merging PRs, evaluating results, and self-improving."
+	echo ""
+	echo "1. Enable supervisor pulse (every 2 min):"
+	echo "   supervisor-helper.sh cron install"
+	echo ""
+	echo "2. Add tasks with auto-dispatch tag in TODO.md:"
+	echo "   - [ ] t001 Implement feature X #auto-dispatch ~2h"
+	echo ""
+	echo "3. Monitor progress:"
+	echo "   supervisor-helper.sh dashboard --batch <batch-id>"
+	echo ""
+	echo "Features included:"
+	echo "  - Worker dispatch: launches AI workers for tagged tasks"
+	echo "  - Auto-pickup: claims tasks across all repos in repos.json"
+	echo "  - Cross-repo visibility: manages issues/PRs across repos"
+	echo "  - Strategic review: 4-hourly opus-tier queue health analysis"
+	echo "  - Model routing: cost-aware tier selection (haiku to opus)"
+	echo "  - Budget tracking: per-provider spend limits"
+	echo "  - Circuit breaker: pauses on consecutive failures"
+	echo "  - Session miner: extracts learning from past sessions"
+	echo ""
+	echo "Docs: ~/.aidevops/agents/reference/orchestration.md"
+	return 0
+}
+
 # Show setup guide for a specific service
 show_guide() {
 	local service="${1:-}"
@@ -829,137 +986,18 @@ show_guide() {
 	echo ""
 
 	case "$service" in
-	github | gh)
-		echo -e "${BLUE}GitHub CLI Setup${NC}"
-		echo ""
-		echo "1. Install: brew install gh"
-		echo "2. Authenticate: gh auth login -s workflow"
-		echo "   (workflow scope is required for PRs that modify CI workflows)"
-		echo "3. Verify: gh auth status"
-		;;
-	openai)
-		echo -e "${BLUE}OpenAI API Setup${NC}"
-		echo ""
-		echo "1. Get API key: https://platform.openai.com/api-keys"
-		echo "2. Store key:"
-		echo "   ~/.aidevops/agents/scripts/setup-local-api-keys.sh set OPENAI_API_KEY \"sk-...\""
-		echo "3. Restart terminal or: source ~/.config/aidevops/credentials.sh"
-		;;
-	anthropic)
-		echo -e "${BLUE}Anthropic API Setup${NC}"
-		echo ""
-		echo "1. Get API key: https://console.anthropic.com/settings/keys"
-		echo "2. Store key:"
-		echo "   ~/.aidevops/agents/scripts/setup-local-api-keys.sh set ANTHROPIC_API_KEY \"sk-ant-...\""
-		echo "3. Restart terminal or: source ~/.config/aidevops/credentials.sh"
-		;;
-	hetzner)
-		echo -e "${BLUE}Hetzner Cloud Setup${NC}"
-		echo ""
-		echo "1. Create account: https://www.hetzner.com/cloud"
-		echo "2. Go to: Security -> API Tokens"
-		echo "3. Generate token with Read & Write permissions"
-		echo "4. Store token:"
-		echo "   ~/.aidevops/agents/scripts/setup-local-api-keys.sh set HCLOUD_TOKEN_MAIN \"your-token\""
-		;;
-	cloudflare)
-		echo -e "${BLUE}Cloudflare Setup${NC}"
-		echo ""
-		echo "1. Create account: https://cloudflare.com"
-		echo "2. Go to: My Profile -> API Tokens"
-		echo "3. Create token with Zone:Read, DNS:Edit permissions"
-		echo "4. Store token:"
-		echo "   ~/.aidevops/agents/scripts/setup-local-api-keys.sh set CLOUDFLARE_API_TOKEN \"your-token\""
-		;;
-	dataforseo)
-		echo -e "${BLUE}DataForSEO Setup${NC}"
-		echo ""
-		echo "1. Create account: https://app.dataforseo.com"
-		echo "2. Go to: API Access"
-		echo "3. Store credentials:"
-		echo "   ~/.aidevops/agents/scripts/setup-local-api-keys.sh set DATAFORSEO_USERNAME \"your-email\""
-		echo "   ~/.aidevops/agents/scripts/setup-local-api-keys.sh set DATAFORSEO_PASSWORD \"your-password\""
-		;;
-	augment | auggie)
-		echo -e "${BLUE}Augment Context Engine Setup${NC}"
-		echo ""
-		echo "1. Install: npm install -g @augmentcode/auggie@prerelease"
-		echo "2. Login: auggie login (opens browser)"
-		echo "3. Verify: auggie token print"
-		;;
-	sonarcloud | sonar)
-		echo -e "${BLUE}SonarCloud Setup${NC}"
-		echo ""
-		echo "1. Create account: https://sonarcloud.io"
-		echo "2. Go to: My Account -> Security"
-		echo "3. Generate token"
-		echo "4. Store token:"
-		echo "   ~/.aidevops/agents/scripts/setup-local-api-keys.sh set SONAR_TOKEN \"your-token\""
-		;;
-	openclaw)
-		echo -e "${BLUE}OpenClaw Setup${NC}"
-		echo ""
-		echo "1. Install: curl -fsSL https://openclaw.ai/install.sh | bash"
-		echo "2. Run onboarding: openclaw onboard --install-daemon"
-		echo "3. Connect a channel (e.g., WhatsApp): openclaw channels login"
-		echo "4. Security audit: openclaw security audit --fix"
-		echo "5. Verify: openclaw doctor"
-		echo ""
-		echo "Docs: https://docs.openclaw.ai/start/getting-started"
-		;;
-	tailscale)
-		echo -e "${BLUE}Tailscale Setup${NC}"
-		echo ""
-		echo "1. Install:"
-		echo "   macOS: brew install tailscale"
-		echo "   Linux: curl -fsSL https://tailscale.com/install.sh | sh"
-		echo "2. Start daemon:"
-		echo "   macOS: sudo tailscaled &"
-		echo "   Linux: sudo systemctl enable --now tailscaled"
-		echo "3. Authenticate: tailscale up"
-		echo "4. Verify: tailscale status"
-		echo ""
-		echo "Free tier: 100 devices, 3 users"
-		echo "Docs: https://tailscale.com/kb"
-		;;
-	orbstack | orb)
-		echo -e "${BLUE}OrbStack Setup${NC}"
-		echo ""
-		echo "1. Install: brew install orbstack"
-		echo "2. Start: orb start (or open OrbStack.app)"
-		echo "3. Verify: orb status && docker --version"
-		echo ""
-		echo "OrbStack replaces Docker Desktop with better performance."
-		echo "All docker and docker compose commands work as normal."
-		echo "Docs: https://docs.orbstack.dev"
-		;;
-	orchestration | supervisor | pulse)
-		echo -e "${BLUE}Autonomous Orchestration Setup${NC}"
-		echo ""
-		echo "Orchestration lets aidevops work autonomously — dispatching AI workers,"
-		echo "merging PRs, evaluating results, and self-improving."
-		echo ""
-		echo "1. Enable supervisor pulse (every 2 min):"
-		echo "   supervisor-helper.sh cron install"
-		echo ""
-		echo "2. Add tasks with auto-dispatch tag in TODO.md:"
-		echo "   - [ ] t001 Implement feature X #auto-dispatch ~2h"
-		echo ""
-		echo "3. Monitor progress:"
-		echo "   supervisor-helper.sh dashboard --batch <batch-id>"
-		echo ""
-		echo "Features included:"
-		echo "  - Worker dispatch: launches AI workers for tagged tasks"
-		echo "  - Auto-pickup: claims tasks across all repos in repos.json"
-		echo "  - Cross-repo visibility: manages issues/PRs across repos"
-		echo "  - Strategic review: 4-hourly opus-tier queue health analysis"
-		echo "  - Model routing: cost-aware tier selection (haiku to opus)"
-		echo "  - Budget tracking: per-provider spend limits"
-		echo "  - Circuit breaker: pauses on consecutive failures"
-		echo "  - Session miner: extracts learning from past sessions"
-		echo ""
-		echo "Docs: ~/.aidevops/agents/reference/orchestration.md"
-		;;
+	github | gh) _guide_github ;;
+	openai) _guide_openai ;;
+	anthropic) _guide_anthropic ;;
+	hetzner) _guide_hetzner ;;
+	cloudflare) _guide_cloudflare ;;
+	dataforseo) _guide_dataforseo ;;
+	augment | auggie) _guide_augment ;;
+	sonarcloud | sonar) _guide_sonarcloud ;;
+	openclaw) _guide_openclaw ;;
+	tailscale) _guide_tailscale ;;
+	orbstack | orb) _guide_orbstack ;;
+	orchestration | supervisor | pulse) _guide_orchestration ;;
 	*)
 		echo "Available guides: github, openai, anthropic, hetzner, cloudflare,"
 		echo "                  dataforseo, augment, sonarcloud, openclaw,"
@@ -1070,113 +1108,128 @@ show_help() {
 	return 0
 }
 
-# Output status as JSON
-output_json() {
-	local json="{"
+# JSON fragment helpers — one function per category (keeps output_json() under 30 lines)
 
-	# AI Providers
-	json+='"ai_providers":{'
-	json+='"openai":{"configured":'
-	is_configured "OPENAI_API_KEY" && json+='true' || json+='false'
-	json+='},"anthropic":{"configured":'
-	is_configured "ANTHROPIC_API_KEY" && json+='true' || json+='false'
-	json+='}},'
+_json_ai_providers() {
+	local openai anthropic
+	is_configured "OPENAI_API_KEY" && openai=true || openai=false
+	is_configured "ANTHROPIC_API_KEY" && anthropic=true || anthropic=false
+	jq -n --argjson oa "$openai" --argjson an "$anthropic" \
+		'{"ai_providers":{"openai":{"configured":$oa},"anthropic":{"configured":$an}}}'
+	return 0
+}
 
-	# Git Platforms
-	json+='"git_platforms":{'
-	json+='"github":{"installed":'
-	is_installed "gh" && json+='true' || json+='false'
-	json+=',"authenticated":'
-	is_cli_authenticated "gh" && json+='true' || json+='false'
-	json+='},"gitlab":{"installed":'
-	is_installed "glab" && json+='true' || json+='false'
-	json+=',"authenticated":'
-	is_cli_authenticated "glab" && json+='true' || json+='false'
-	json+='}},'
+_json_git_platforms() {
+	local gh_inst gh_auth glab_inst glab_auth
+	is_installed "gh" && gh_inst=true || gh_inst=false
+	is_cli_authenticated "gh" && gh_auth=true || gh_auth=false
+	is_installed "glab" && glab_inst=true || glab_inst=false
+	is_cli_authenticated "glab" && glab_auth=true || glab_auth=false
+	jq -n \
+		--argjson gi "$gh_inst" --argjson ga "$gh_auth" \
+		--argjson li "$glab_inst" --argjson la "$glab_auth" \
+		'{"git_platforms":{"github":{"installed":$gi,"authenticated":$ga},"gitlab":{"installed":$li,"authenticated":$la}}}'
+	return 0
+}
 
-	# Hosting
-	json+='"hosting":{'
-	json+='"cloudflare":{"configured":'
-	is_configured "CLOUDFLARE_API_TOKEN" && json+='true' || json+='false'
-	json+='},"coolify":{"configured":'
-	is_configured "COOLIFY_API_TOKEN" && json+='true' || json+='false'
-	json+='},"vercel":{"configured":'
-	is_configured "VERCEL_TOKEN" && json+='true' || json+='false'
-	json+='}},'
+_json_hosting() {
+	local cf coolify vercel
+	is_configured "CLOUDFLARE_API_TOKEN" && cf=true || cf=false
+	is_configured "COOLIFY_API_TOKEN" && coolify=true || coolify=false
+	is_configured "VERCEL_TOKEN" && vercel=true || vercel=false
+	jq -n --argjson cf "$cf" --argjson co "$coolify" --argjson ve "$vercel" \
+		'{"hosting":{"cloudflare":{"configured":$cf},"coolify":{"configured":$co},"vercel":{"configured":$ve}}}'
+	return 0
+}
 
-	# Code Quality
-	json+='"code_quality":{'
-	json+='"sonarcloud":{"configured":'
-	is_configured "SONAR_TOKEN" && json+='true' || json+='false'
-	json+='},"codacy":{"configured":'
-	is_configured "CODACY_PROJECT_TOKEN" && json+='true' || json+='false'
-	json+='},"coderabbit":{"configured":'
-	[[ -f "$CODERABBIT_KEY_FILE" ]] || is_configured "CODERABBIT_API_KEY" && json+='true' || json+='false'
-	json+='}},'
+_json_code_quality() {
+	local sonar codacy coderabbit
+	is_configured "SONAR_TOKEN" && sonar=true || sonar=false
+	is_configured "CODACY_PROJECT_TOKEN" && codacy=true || codacy=false
+	{ [[ -f "$CODERABBIT_KEY_FILE" ]] || is_configured "CODERABBIT_API_KEY"; } && coderabbit=true || coderabbit=false
+	jq -n --argjson so "$sonar" --argjson co "$codacy" --argjson cr "$coderabbit" \
+		'{"code_quality":{"sonarcloud":{"configured":$so},"codacy":{"configured":$co},"coderabbit":{"configured":$cr}}}'
+	return 0
+}
 
-	# SEO
-	json+='"seo":{'
-	json+='"dataforseo":{"configured":'
-	is_configured "DATAFORSEO_USERNAME" && is_configured "DATAFORSEO_PASSWORD" && json+='true' || json+='false'
-	json+='},"serper":{"configured":'
-	is_configured "SERPER_API_KEY" && json+='true' || json+='false'
-	json+='}},'
+_json_seo() {
+	local dfs serper
+	{ is_configured "DATAFORSEO_USERNAME" && is_configured "DATAFORSEO_PASSWORD"; } && dfs=true || dfs=false
+	is_configured "SERPER_API_KEY" && serper=true || serper=false
+	jq -n --argjson df "$dfs" --argjson se "$serper" \
+		'{"seo":{"dataforseo":{"configured":$df},"serper":{"configured":$se}}}'
+	return 0
+}
 
-	# Context Tools
-	json+='"context":{'
-	json+='"augment":{"installed":'
-	is_installed "auggie" && json+='true' || json+='false'
-	json+=',"authenticated":'
-	is_cli_authenticated "auggie" && json+='true' || json+='false'
-	local _sqlite3_installed=false _sqlite3_fts5=false
+_json_context() {
+	local aug_inst aug_auth sqlite_inst sqlite_fts5
+	is_installed "auggie" && aug_inst=true || aug_inst=false
+	is_cli_authenticated "auggie" && aug_auth=true || aug_auth=false
+	sqlite_inst=false
+	sqlite_fts5=false
 	if is_installed "sqlite3"; then
-		_sqlite3_installed=true
-		sqlite3 :memory: 'CREATE VIRTUAL TABLE t USING fts5(content);' &>/dev/null && _sqlite3_fts5=true
+		sqlite_inst=true
+		sqlite3 :memory: 'CREATE VIRTUAL TABLE t USING fts5(content);' &>/dev/null && sqlite_fts5=true
 	fi
-	json+="},"
-	json+="$(jq -n --argjson inst "$_sqlite3_installed" --argjson fts5 "$_sqlite3_fts5" \
-		'"sqlite3":{"installed":$inst,"fts5":$fts5}')"
-	json+='},'
+	jq -n \
+		--argjson ai "$aug_inst" --argjson aa "$aug_auth" \
+		--argjson si "$sqlite_inst" --argjson sf "$sqlite_fts5" \
+		'{"context":{"augment":{"installed":$ai,"authenticated":$aa},"sqlite3":{"installed":$si,"fts5":$sf}}}'
+	return 0
+}
 
-	# Containers
-	json+='"containers":{'
-	json+='"orbstack":{"installed":'
-	is_installed "orb" && json+='true' || json+='false'
-	json+='},"docker":{"installed":'
-	is_installed "docker" && json+='true' || json+='false'
-	json+='}},'
+_json_containers() {
+	local orb dk
+	is_installed "orb" && orb=true || orb=false
+	is_installed "docker" && dk=true || dk=false
+	jq -n --argjson or "$orb" --argjson dk "$dk" \
+		'{"containers":{"orbstack":{"installed":$or},"docker":{"installed":$dk}}}'
+	return 0
+}
 
-	# Networking
-	json+='"networking":{'
-	json+='"tailscale":{"installed":'
-	is_installed "tailscale" && json+='true' || json+='false'
-	json+=',"connected":'
-	tailscale status &>/dev/null 2>&1 && json+='true' || json+='false'
-	json+='}},'
+_json_networking() {
+	local ts_inst ts_conn
+	is_installed "tailscale" && ts_inst=true || ts_inst=false
+	tailscale status &>/dev/null 2>&1 && ts_conn=true || ts_conn=false
+	jq -n --argjson ti "$ts_inst" --argjson tc "$ts_conn" \
+		'{"networking":{"tailscale":{"installed":$ti,"connected":$tc}}}'
+	return 0
+}
 
-	# Orchestration
-	json+='"orchestration":{'
-	json+='"supervisor_pulse":'
-	local _pulse_json=false
+_json_orchestration() {
+	local pulse
+	pulse=false
 	if launchctl list 2>/dev/null | grep -qF "com.aidevops.aidevops-supervisor-pulse" ||
 		launchctl list 2>/dev/null | grep -qF "com.aidevops.supervisor-pulse" ||
 		crontab -l 2>/dev/null | grep -qF "aidevops-supervisor-pulse"; then
-		_pulse_json=true
+		pulse=true
 	fi
-	json+="$_pulse_json"
-	json+='},'
+	jq -n --argjson pu "$pulse" '{"orchestration":{"supervisor_pulse":$pu}}'
+	return 0
+}
 
-	# OpenClaw
-	json+='"openclaw":{'
-	json+='"installed":'
-	is_installed "openclaw" && json+='true' || json+='false'
-	json+=',"config_exists":'
-	[[ -f "$HOME/.openclaw/openclaw.json" ]] && json+='true' || json+='false'
-	json+='}'
+_json_openclaw() {
+	local inst cfg
+	is_installed "openclaw" && inst=true || inst=false
+	[[ -f "$HOME/.openclaw/openclaw.json" ]] && cfg=true || cfg=false
+	jq -n --argjson in "$inst" --argjson cf "$cfg" \
+		'{"openclaw":{"installed":$in,"config_exists":$cf}}'
+	return 0
+}
 
-	json+='}'
-
-	echo "$json" | jq .
+# Output status as JSON
+output_json() {
+	jq -s 'reduce .[] as $item ({}; . * $item)' \
+		<(_json_ai_providers) \
+		<(_json_git_platforms) \
+		<(_json_hosting) \
+		<(_json_code_quality) \
+		<(_json_seo) \
+		<(_json_context) \
+		<(_json_containers) \
+		<(_json_networking) \
+		<(_json_orchestration) \
+		<(_json_openclaw)
 	return 0
 }
 
