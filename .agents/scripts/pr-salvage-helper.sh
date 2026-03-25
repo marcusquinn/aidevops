@@ -83,6 +83,119 @@ get_default_branch() {
 }
 
 #######################################
+# Check if a branch exists on a remote repo
+# Arguments:
+#   $1 - repo slug (owner/repo)
+#   $2 - branch name
+# Output: "true" or "false" to stdout
+#######################################
+check_branch_exists() {
+	local slug="$1"
+	local branch="$2"
+	if gh api "repos/${slug}/branches/${branch}" --jq '.name' &>/dev/null; then
+		echo "true"
+	else
+		echo "false"
+	fi
+	return 0
+}
+
+#######################################
+# Check if a replacement PR exists (open PR for the same branch)
+# Arguments:
+#   $1 - repo slug (owner/repo)
+#   $2 - branch name
+# Output: "true" or "false" to stdout
+#######################################
+has_replacement_pr() {
+	local slug="$1"
+	local branch="$2"
+	local open_count
+	open_count=$(gh pr list --repo "$slug" --state open \
+		--head "$branch" --json number --jq 'length' 2>/dev/null) || open_count="0"
+	if [[ "${open_count:-0}" -gt 0 ]]; then
+		echo "true"
+	else
+		echo "false"
+	fi
+	return 0
+}
+
+#######################################
+# Assess knowledge-loss risk level based on code size and branch existence
+# Arguments:
+#   $1 - branch_exists ("true" or "false")
+#   $2 - additions count
+# Output: "high", "medium", or "low" to stdout
+#######################################
+assess_risk_level() {
+	local branch_exists="$1"
+	local additions="$2"
+	local risk="low"
+	if [[ "$branch_exists" == "false" ]]; then
+		# Branch deleted — code only recoverable via GitHub API (PR diff)
+		if [[ "$additions" -gt 100 ]]; then
+			risk="high"
+		else
+			risk="medium"
+		fi
+	else
+		# Branch exists — fully recoverable
+		if [[ "$additions" -gt 500 ]]; then
+			risk="high"
+		elif [[ "$additions" -gt 50 ]]; then
+			risk="medium"
+		fi
+	fi
+	echo "$risk"
+	return 0
+}
+
+#######################################
+# Build a JSON salvage entry for a single PR
+# Arguments:
+#   $1 - pr_json (compact JSON of the PR record)
+#   $2 - branch_exists ("true" or "false")
+#   $3 - risk level
+# Output: JSON object to stdout
+#######################################
+build_salvage_entry() {
+	local pr_json="$1"
+	local branch_exists="$2"
+	local risk="$3"
+	local pr_number branch additions deletions title author closed_at
+	pr_number=$(echo "$pr_json" | jq -r '.number')
+	branch=$(echo "$pr_json" | jq -r '.headRefName')
+	additions=$(echo "$pr_json" | jq -r '.additions')
+	deletions=$(echo "$pr_json" | jq -r '.deletions')
+	title=$(echo "$pr_json" | jq -r '.title')
+	author=$(echo "$pr_json" | jq -r '.author.login')
+	closed_at=$(echo "$pr_json" | jq -r '.closedAt')
+	jq -n \
+		--argjson number "$pr_number" \
+		--arg title "$title" \
+		--arg branch "$branch" \
+		--argjson branch_exists "$branch_exists" \
+		--argjson additions "$additions" \
+		--argjson deletions "$deletions" \
+		--arg author "$author" \
+		--arg risk "$risk" \
+		--arg closed_at "$closed_at" \
+		'{
+			number: $number,
+			title: $title,
+			branch: $branch,
+			branch_exists: $branch_exists,
+			additions: $additions,
+			deletions: $deletions,
+			author: $author,
+			risk: $risk,
+			closed_at: $closed_at
+		}'
+	return 0
+}
+
+#######################################
 # Scan a single repo for salvageable closed-unmerged PRs
 #
 # Arguments:
@@ -119,79 +232,22 @@ scan_repo() {
 		return 0
 	fi
 
-	# For each unmerged PR, check if the branch still exists
+	# For each unmerged PR, check recoverability and build salvage entries
 	local salvageable="[]"
 	local pr_json
 	while IFS= read -r pr_json; do
-		local pr_number branch additions deletions title author
-		pr_number=$(echo "$pr_json" | jq -r '.number')
+		local branch additions branch_exists risk entry
 		branch=$(echo "$pr_json" | jq -r '.headRefName')
 		additions=$(echo "$pr_json" | jq -r '.additions')
-		deletions=$(echo "$pr_json" | jq -r '.deletions')
-		title=$(echo "$pr_json" | jq -r '.title')
-		author=$(echo "$pr_json" | jq -r '.author.login')
 
-		# Check if branch exists on remote (use gh api for authenticated access)
-		local branch_exists="false"
-		if gh api "repos/${slug}/branches/${branch}" --jq '.name' &>/dev/null; then
-			branch_exists="true"
-		fi
-
-		# Check if a replacement PR exists (open PR for the same branch or issue)
-		local has_replacement="false"
-		local open_for_branch
-		open_for_branch=$(gh pr list --repo "$slug" --state open \
-			--head "$branch" --json number --jq 'length' 2>/dev/null) || open_for_branch="0"
-		if [[ "${open_for_branch:-0}" -gt 0 ]]; then
-			has_replacement="true"
-		fi
-
-		# Skip if there's already a replacement PR
-		if [[ "$has_replacement" == "true" ]]; then
+		# Skip PRs that already have a replacement open
+		if [[ "$(has_replacement_pr "$slug" "$branch")" == "true" ]]; then
 			continue
 		fi
 
-		# Determine risk level based on code size and branch existence
-		local risk="low"
-		if [[ "$branch_exists" == "false" ]]; then
-			# Branch deleted — code only recoverable via GitHub API (PR diff)
-			if [[ "$additions" -gt 100 ]]; then
-				risk="high"
-			else
-				risk="medium"
-			fi
-		else
-			# Branch exists — fully recoverable
-			if [[ "$additions" -gt 500 ]]; then
-				risk="high"
-			elif [[ "$additions" -gt 50 ]]; then
-				risk="medium"
-			fi
-		fi
-
-		# Build salvage entry
-		local entry
-		entry=$(jq -n \
-			--argjson number "$pr_number" \
-			--arg title "$title" \
-			--arg branch "$branch" \
-			--argjson branch_exists "$branch_exists" \
-			--argjson additions "$additions" \
-			--argjson deletions "$deletions" \
-			--arg author "$author" \
-			--arg risk "$risk" \
-			--arg closed_at "$(echo "$pr_json" | jq -r '.closedAt')" \
-			'{
-				number: $number,
-				title: $title,
-				branch: $branch,
-				branch_exists: $branch_exists,
-				additions: $additions,
-				deletions: $deletions,
-				author: $author,
-				risk: $risk,
-				closed_at: $closed_at
-			}')
+		branch_exists=$(check_branch_exists "$slug" "$branch")
+		risk=$(assess_risk_level "$branch_exists" "$additions")
+		entry=$(build_salvage_entry "$pr_json" "$branch_exists" "$risk")
 
 		salvageable=$(echo "$salvageable" | jq --argjson entry "$entry" '. + [$entry]')
 	done < <(echo "$unmerged" | jq -c '.[]')
@@ -244,6 +300,68 @@ cmd_prefetch() {
 }
 
 #######################################
+# Scan all pulse-enabled repos and aggregate results
+# Arguments:
+#   $1 - lookback days
+# Output: JSON array of salvageable PRs (tagged with repo slug) to stdout
+# Returns: 1 if repos.json not found
+#######################################
+scan_all_repos() {
+	local lookback_days="$1"
+	local all_results="[]"
+
+	if [[ ! -f "$REPOS_JSON" ]]; then
+		log_warn "repos.json not found at $REPOS_JSON"
+		return 1
+	fi
+
+	local repo_slugs
+	repo_slugs=$(jq -r '.initialized_repos[] | select(.pulse == true and (.local_only // false) == false and .slug != "") | .slug' "$REPOS_JSON")
+
+	while IFS= read -r slug; do
+		[[ -z "$slug" ]] && continue
+		log_info "Scanning $slug..."
+		local results
+		results=$(scan_repo "$slug" "$lookback_days")
+		local count
+		count=$(echo "$results" | jq 'length')
+		if [[ "$count" -gt 0 ]]; then
+			local tagged
+			tagged=$(echo "$results" | jq --arg slug "$slug" '[.[] | . + {repo: $slug}]')
+			all_results=$(echo "$all_results" "$tagged" | jq -s '.[0] + .[1]')
+		fi
+	done <<<"$repo_slugs"
+
+	echo "$all_results"
+	return 0
+}
+
+#######################################
+# Format and print a single risk group if non-empty
+# Arguments:
+#   $1 - all_results JSON array
+#   $2 - risk level ("high", "medium", or "low")
+#   $3 - display label (e.g., "HIGH RISK")
+# Output: formatted text to stdout (nothing if group is empty)
+#######################################
+format_risk_group() {
+	local all_results="$1"
+	local level="$2"
+	local label="$3"
+	local group
+	group=$(echo "$all_results" | jq --arg level "$level" '[.[] | select(.risk == $level)]')
+	local group_count
+	group_count=$(echo "$group" | jq 'length')
+
+	if [[ "$group_count" -gt 0 ]]; then
+		echo "$label ($group_count):"
+		echo "$group" | jq -r '.[] | "  PR #\(.number) [\(.repo)]: \(.title) (+\(.additions)/-\(.deletions)) branch=\(if .branch_exists then "exists" else "DELETED" end)"'
+		echo ""
+	fi
+	return 0
+}
+
+#######################################
 # Full scan across all pulse-enabled repos
 #
 # Arguments:
@@ -281,33 +399,11 @@ cmd_scan() {
 	local all_results="[]"
 
 	if [[ -n "$target_repo" ]]; then
-		# Scan single repo
 		local results
 		results=$(scan_repo "$target_repo" "$lookback_days")
 		all_results=$(echo "$results" | jq --arg slug "$target_repo" '[.[] | . + {repo: $slug}]')
 	else
-		# Scan all pulse-enabled repos
-		if [[ ! -f "$REPOS_JSON" ]]; then
-			log_warn "repos.json not found at $REPOS_JSON"
-			return 1
-		fi
-
-		local repo_slugs
-		repo_slugs=$(jq -r '.initialized_repos[] | select(.pulse == true and (.local_only // false) == false and .slug != "") | .slug' "$REPOS_JSON")
-
-		while IFS= read -r slug; do
-			[[ -z "$slug" ]] && continue
-			log_info "Scanning $slug..."
-			local results
-			results=$(scan_repo "$slug" "$lookback_days")
-			local count
-			count=$(echo "$results" | jq 'length')
-			if [[ "$count" -gt 0 ]]; then
-				local tagged
-				tagged=$(echo "$results" | jq --arg slug "$slug" '[.[] | . + {repo: $slug}]')
-				all_results=$(echo "$all_results" "$tagged" | jq -s '.[0] + .[1]')
-			fi
-		done <<<"$repo_slugs"
+		all_results=$(scan_all_repos "$lookback_days") || return 1
 	fi
 
 	local total
@@ -328,39 +424,9 @@ cmd_scan() {
 	echo "Found $total closed-unmerged PR(s) with recoverable code:"
 	echo ""
 
-	# Group by risk level
-	local high_risk
-	high_risk=$(echo "$all_results" | jq '[.[] | select(.risk == "high")]')
-	local high_count
-	high_count=$(echo "$high_risk" | jq 'length')
-
-	if [[ "$high_count" -gt 0 ]]; then
-		echo "HIGH RISK ($high_count):"
-		echo "$high_risk" | jq -r '.[] | "  PR #\(.number) [\(.repo)]: \(.title) (+\(.additions)/-\(.deletions)) branch=\(if .branch_exists then "exists" else "DELETED" end)"'
-		echo ""
-	fi
-
-	local medium_risk
-	medium_risk=$(echo "$all_results" | jq '[.[] | select(.risk == "medium")]')
-	local medium_count
-	medium_count=$(echo "$medium_risk" | jq 'length')
-
-	if [[ "$medium_count" -gt 0 ]]; then
-		echo "MEDIUM RISK ($medium_count):"
-		echo "$medium_risk" | jq -r '.[] | "  PR #\(.number) [\(.repo)]: \(.title) (+\(.additions)/-\(.deletions)) branch=\(if .branch_exists then "exists" else "DELETED" end)"'
-		echo ""
-	fi
-
-	local low_risk
-	low_risk=$(echo "$all_results" | jq '[.[] | select(.risk == "low")]')
-	local low_count
-	low_count=$(echo "$low_risk" | jq 'length')
-
-	if [[ "$low_count" -gt 0 ]]; then
-		echo "LOW RISK ($low_count):"
-		echo "$low_risk" | jq -r '.[] | "  PR #\(.number) [\(.repo)]: \(.title) (+\(.additions)/-\(.deletions)) branch=\(if .branch_exists then "exists" else "DELETED" end)"'
-		echo ""
-	fi
+	format_risk_group "$all_results" "high" "HIGH RISK"
+	format_risk_group "$all_results" "medium" "MEDIUM RISK"
+	format_risk_group "$all_results" "low" "LOW RISK"
 
 	echo "Actions:"
 	echo "  - HIGH risk: Reopen PR or cherry-pick immediately"
