@@ -20,11 +20,10 @@ NC='\033[0m'
 PASS=0
 FAIL=0
 
-setup() {
-	TEST_COLLECTION=$(mktemp -d)
+_setup_email_files() {
+	local dir="$1"
 
-	# Create sample email markdown files with frontmatter
-	cat >"${TEST_COLLECTION}/email1.md" <<'EOF'
+	cat >"${dir}/email1.md" <<'EOF'
 ---
 title: "Meeting tomorrow"
 description: "Hi team, let's meet tomorrow at 10am."
@@ -45,7 +44,7 @@ thread_length: "3"
 Hi team, let's meet tomorrow at 10am.
 EOF
 
-	cat >"${TEST_COLLECTION}/email2.md" <<'EOF'
+	cat >"${dir}/email2.md" <<'EOF'
 ---
 title: "Re: Meeting tomorrow"
 description: "Sounds good."
@@ -67,7 +66,7 @@ thread_length: "3"
 Sounds good.
 EOF
 
-	cat >"${TEST_COLLECTION}/email3.md" <<'EOF'
+	cat >"${dir}/email3.md" <<'EOF'
 ---
 title: "Project update"
 description: "Here is the latest update."
@@ -89,10 +88,15 @@ tokens_estimate: 120
 Here is the latest update.
 EOF
 
-	# Create contacts
-	mkdir -p "${TEST_COLLECTION}/contacts"
+	return 0
+}
 
-	cat >"${TEST_COLLECTION}/contacts/alice-at-example-com.toon" <<'EOF'
+_setup_contact_files() {
+	local dir="$1"
+
+	mkdir -p "${dir}/contacts"
+
+	cat >"${dir}/contacts/alice-at-example-com.toon" <<'EOF'
 contact:
   email: alice@example.com
   name: Alice Smith
@@ -107,7 +111,7 @@ contact:
   confidence: high
 EOF
 
-	cat >"${TEST_COLLECTION}/contacts/bob-at-example-com.toon" <<'EOF'
+	cat >"${dir}/contacts/bob-at-example-com.toon" <<'EOF'
 contact:
   email: bob@example.com
   name: Bob Jones
@@ -122,6 +126,13 @@ contact:
   confidence: medium
 EOF
 
+	return 0
+}
+
+setup() {
+	TEST_COLLECTION=$(mktemp -d)
+	_setup_email_files "$TEST_COLLECTION"
+	_setup_contact_files "$TEST_COLLECTION"
 	return 0
 }
 
