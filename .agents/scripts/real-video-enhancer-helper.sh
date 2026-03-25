@@ -294,37 +294,36 @@ cmd_install() {
 # Enhancement Commands
 # =============================================================================
 
-cmd_upscale() {
-	check_installation || return 1
-
-	local input=""
-	local output=""
-	local scale="${DEFAULT_SCALE}"
-	local model="${DEFAULT_UPSCALE_MODEL}"
-	local backend="${DEFAULT_BACKEND}"
-	local tile_size="${DEFAULT_TILE_SIZE}"
-	local verbose=false
+# Parse arguments for cmd_upscale; sets _UPSCALE_* globals
+_upscale_parse_args() {
+	_UPSCALE_INPUT=""
+	_UPSCALE_OUTPUT=""
+	_UPSCALE_SCALE="${DEFAULT_SCALE}"
+	_UPSCALE_MODEL="${DEFAULT_UPSCALE_MODEL}"
+	_UPSCALE_BACKEND="${DEFAULT_BACKEND}"
+	_UPSCALE_TILE_SIZE="${DEFAULT_TILE_SIZE}"
+	_UPSCALE_VERBOSE=false
 
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--scale | -s)
-			scale="$2"
+			_UPSCALE_SCALE="$2"
 			shift 2
 			;;
 		--model | -m)
-			model="$2"
+			_UPSCALE_MODEL="$2"
 			shift 2
 			;;
 		--backend | -b)
-			backend="$2"
+			_UPSCALE_BACKEND="$2"
 			shift 2
 			;;
 		--tile-size | -t)
-			tile_size="$2"
+			_UPSCALE_TILE_SIZE="$2"
 			shift 2
 			;;
 		--verbose | -v)
-			verbose=true
+			_UPSCALE_VERBOSE=true
 			shift
 			;;
 		-*)
@@ -332,10 +331,10 @@ cmd_upscale() {
 			return 1
 			;;
 		*)
-			if [[ -z "$input" ]]; then
-				input="$1"
-			elif [[ -z "$output" ]]; then
-				output="$1"
+			if [[ -z "${_UPSCALE_INPUT}" ]]; then
+				_UPSCALE_INPUT="$1"
+			elif [[ -z "${_UPSCALE_OUTPUT}" ]]; then
+				_UPSCALE_OUTPUT="$1"
 			else
 				print_error "Unexpected argument: $1"
 				return 1
@@ -344,6 +343,14 @@ cmd_upscale() {
 			;;
 		esac
 	done
+
+	return 0
+}
+
+# Validate upscale inputs and print usage on failure
+_upscale_validate() {
+	local input="$1"
+	local output="$2"
 
 	if [[ -z "$input" ]] || [[ -z "$output" ]]; then
 		print_error "Usage: real-video-enhancer-helper.sh upscale <input> <output> [options]"
@@ -360,6 +367,23 @@ cmd_upscale() {
 		print_error "Input file not found: $input"
 		return 1
 	fi
+
+	return 0
+}
+
+cmd_upscale() {
+	check_installation || return 1
+
+	_upscale_parse_args "$@" || return 1
+	local input="${_UPSCALE_INPUT}"
+	local output="${_UPSCALE_OUTPUT}"
+	local scale="${_UPSCALE_SCALE}"
+	local model="${_UPSCALE_MODEL}"
+	local backend="${_UPSCALE_BACKEND}"
+	local tile_size="${_UPSCALE_TILE_SIZE}"
+	local verbose="${_UPSCALE_VERBOSE}"
+
+	_upscale_validate "$input" "$output" || return 1
 
 	# Auto-detect backend if needed
 	if [[ "$backend" == "auto" ]]; then
@@ -393,34 +417,34 @@ cmd_upscale() {
 	fi
 
 	print_success "Upscaling complete: $output"
+	return 0
 }
 
-cmd_interpolate() {
-	check_installation || return 1
-
-	local input=""
-	local output=""
-	local fps="${DEFAULT_FPS}"
-	local model="${DEFAULT_INTERPOLATE_MODEL}"
-	local backend="${DEFAULT_BACKEND}"
-	local verbose=false
+# Parse arguments for cmd_interpolate; sets _INTERPOLATE_* globals
+_interpolate_parse_args() {
+	_INTERPOLATE_INPUT=""
+	_INTERPOLATE_OUTPUT=""
+	_INTERPOLATE_FPS="${DEFAULT_FPS}"
+	_INTERPOLATE_MODEL="${DEFAULT_INTERPOLATE_MODEL}"
+	_INTERPOLATE_BACKEND="${DEFAULT_BACKEND}"
+	_INTERPOLATE_VERBOSE=false
 
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--fps | -f)
-			fps="$2"
+			_INTERPOLATE_FPS="$2"
 			shift 2
 			;;
 		--model | -m)
-			model="$2"
+			_INTERPOLATE_MODEL="$2"
 			shift 2
 			;;
 		--backend | -b)
-			backend="$2"
+			_INTERPOLATE_BACKEND="$2"
 			shift 2
 			;;
 		--verbose | -v)
-			verbose=true
+			_INTERPOLATE_VERBOSE=true
 			shift
 			;;
 		-*)
@@ -428,10 +452,10 @@ cmd_interpolate() {
 			return 1
 			;;
 		*)
-			if [[ -z "$input" ]]; then
-				input="$1"
-			elif [[ -z "$output" ]]; then
-				output="$1"
+			if [[ -z "${_INTERPOLATE_INPUT}" ]]; then
+				_INTERPOLATE_INPUT="$1"
+			elif [[ -z "${_INTERPOLATE_OUTPUT}" ]]; then
+				_INTERPOLATE_OUTPUT="$1"
 			else
 				print_error "Unexpected argument: $1"
 				return 1
@@ -440,6 +464,14 @@ cmd_interpolate() {
 			;;
 		esac
 	done
+
+	return 0
+}
+
+# Validate interpolate inputs and print usage on failure
+_interpolate_validate() {
+	local input="$1"
+	local output="$2"
 
 	if [[ -z "$input" ]] || [[ -z "$output" ]]; then
 		print_error "Usage: real-video-enhancer-helper.sh interpolate <input> <output> [options]"
@@ -455,6 +487,22 @@ cmd_interpolate() {
 		print_error "Input file not found: $input"
 		return 1
 	fi
+
+	return 0
+}
+
+cmd_interpolate() {
+	check_installation || return 1
+
+	_interpolate_parse_args "$@" || return 1
+	local input="${_INTERPOLATE_INPUT}"
+	local output="${_INTERPOLATE_OUTPUT}"
+	local fps="${_INTERPOLATE_FPS}"
+	local model="${_INTERPOLATE_MODEL}"
+	local backend="${_INTERPOLATE_BACKEND}"
+	local verbose="${_INTERPOLATE_VERBOSE}"
+
+	_interpolate_validate "$input" "$output" || return 1
 
 	# Auto-detect backend if needed
 	if [[ "$backend" == "auto" ]]; then
@@ -487,29 +535,29 @@ cmd_interpolate() {
 	fi
 
 	print_success "Interpolation complete: $output"
+	return 0
 }
 
-cmd_denoise() {
-	check_installation || return 1
-
-	local input=""
-	local output=""
-	local model="${DEFAULT_DENOISE_MODEL}"
-	local backend="${DEFAULT_BACKEND}"
-	local verbose=false
+# Parse arguments for cmd_denoise; sets _DENOISE_* globals
+_denoise_parse_args() {
+	_DENOISE_INPUT=""
+	_DENOISE_OUTPUT=""
+	_DENOISE_MODEL="${DEFAULT_DENOISE_MODEL}"
+	_DENOISE_BACKEND="${DEFAULT_BACKEND}"
+	_DENOISE_VERBOSE=false
 
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--model | -m)
-			model="$2"
+			_DENOISE_MODEL="$2"
 			shift 2
 			;;
 		--backend | -b)
-			backend="$2"
+			_DENOISE_BACKEND="$2"
 			shift 2
 			;;
 		--verbose | -v)
-			verbose=true
+			_DENOISE_VERBOSE=true
 			shift
 			;;
 		-*)
@@ -517,10 +565,10 @@ cmd_denoise() {
 			return 1
 			;;
 		*)
-			if [[ -z "$input" ]]; then
-				input="$1"
-			elif [[ -z "$output" ]]; then
-				output="$1"
+			if [[ -z "${_DENOISE_INPUT}" ]]; then
+				_DENOISE_INPUT="$1"
+			elif [[ -z "${_DENOISE_OUTPUT}" ]]; then
+				_DENOISE_OUTPUT="$1"
 			else
 				print_error "Unexpected argument: $1"
 				return 1
@@ -529,6 +577,14 @@ cmd_denoise() {
 			;;
 		esac
 	done
+
+	return 0
+}
+
+# Validate denoise inputs and print usage on failure
+_denoise_validate() {
+	local input="$1"
+	local output="$2"
 
 	if [[ -z "$input" ]] || [[ -z "$output" ]]; then
 		print_error "Usage: real-video-enhancer-helper.sh denoise <input> <output> [options]"
@@ -543,6 +599,21 @@ cmd_denoise() {
 		print_error "Input file not found: $input"
 		return 1
 	fi
+
+	return 0
+}
+
+cmd_denoise() {
+	check_installation || return 1
+
+	_denoise_parse_args "$@" || return 1
+	local input="${_DENOISE_INPUT}"
+	local output="${_DENOISE_OUTPUT}"
+	local model="${_DENOISE_MODEL}"
+	local backend="${_DENOISE_BACKEND}"
+	local verbose="${_DENOISE_VERBOSE}"
+
+	_denoise_validate "$input" "$output" || return 1
 
 	# Auto-detect backend if needed
 	if [[ "$backend" == "auto" ]]; then
@@ -574,6 +645,7 @@ cmd_denoise() {
 	fi
 
 	print_success "Denoising complete: $output"
+	return 0
 }
 
 # Parse arguments for cmd_enhance; sets _ENHANCE_* globals
