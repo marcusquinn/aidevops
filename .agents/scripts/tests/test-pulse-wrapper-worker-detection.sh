@@ -271,6 +271,87 @@ test_check_dispatch_dedup_treats_merged_pr_as_duplicate() {
 	return 0
 }
 
+test_launching_worker_detected_by_has_worker_for_repo_issue() {
+	# GH#6453: A headless-runtime-helper.sh process in startup phase (before
+	# opencode spawns) must be detected by has_worker_for_repo_issue() to
+	# prevent duplicate dispatch.
+	set_ps_fixture "500 S 00:03 bash /home/user/.aidevops/agents/scripts/headless-runtime-helper.sh run --role worker --session-key issue-6426 --dir /tmp/aidevops --title Issue #6426: Fix auth --prompt /full-loop Implement issue #6426"
+
+	if ! has_worker_for_repo_issue "6426" "marcusquinn/aidevops"; then
+		print_result "has_worker_for_repo_issue detects launching worker (GH#6453)" 1 "Expected match for launching headless-runtime-helper process"
+		return 0
+	fi
+
+	# Should NOT match a different issue number
+	if has_worker_for_repo_issue "9999" "marcusquinn/aidevops"; then
+		print_result "has_worker_for_repo_issue rejects unrelated issue for launching worker" 1 "Expected no match for issue 9999"
+		return 0
+	fi
+
+	print_result "has_worker_for_repo_issue detects launching worker (GH#6453)" 0
+	print_result "has_worker_for_repo_issue rejects unrelated issue for launching worker" 0
+	return 0
+}
+
+test_count_active_workers_includes_launching_workers() {
+	# GH#6453: count_active_workers must include launching workers that
+	# don't yet have an opencode process, to prevent the early-exit recycle
+	# loop from seeing an underfilled pool and re-dispatching.
+	set_ps_fixture "600 S 00:30 bash /home/user/.aidevops/agents/scripts/sandbox-exec-helper.sh run --timeout 3600 --allow-secret-io -- /opt/homebrew/bin/opencode run \"/full-loop Implement issue #6001\" --dir /tmp/aidevops --title Issue #6001
+601 S 00:03 bash /home/user/.aidevops/agents/scripts/headless-runtime-helper.sh run --role worker --session-key issue-6002 --dir /tmp/aidevops --title Issue #6002: New feature --prompt /full-loop Implement issue #6002"
+
+	local count
+	count=$(count_active_workers)
+	# Line 600: active opencode worker (counted by list_active_worker_processes)
+	# Line 601: launching worker (counted by list_launching_worker_processes, no overlap)
+	if [[ "$count" != "2" ]]; then
+		print_result "count_active_workers includes launching workers (GH#6453)" 1 "Expected 2, got ${count}"
+		return 0
+	fi
+
+	print_result "count_active_workers includes launching workers (GH#6453)" 0
+	return 0
+}
+
+test_count_active_workers_deduplicates_launching_and_active() {
+	# GH#6453: When a worker has both a headless-runtime-helper parent AND
+	# an opencode child running, count it only once (not double-counted).
+	# The session-key "issue-6003" appears in both the launching process
+	# and the active opencode process command line.
+	set_ps_fixture "700 S 00:10 bash /home/user/.aidevops/agents/scripts/headless-runtime-helper.sh run --role worker --session-key issue-6003 --dir /tmp/aidevops --title Issue #6003: Fix bug --prompt /full-loop Implement issue #6003
+701 S 00:08 bash /home/user/.aidevops/agents/scripts/sandbox-exec-helper.sh run --timeout 3600 --allow-secret-io -- /opt/homebrew/bin/opencode run \"/full-loop Implement issue #6003\" --dir /tmp/aidevops --session-key issue-6003 --title Issue #6003"
+
+	local count
+	count=$(count_active_workers)
+	# Line 701 is the active opencode worker (counted by list_active_worker_processes)
+	# Line 700 is the launching parent — its session-key "issue-6003" appears in
+	# the active worker list, so it should be deduplicated (not double-counted)
+	if [[ "$count" != "1" ]]; then
+		print_result "count_active_workers deduplicates launching+active for same session-key (GH#6453)" 1 "Expected 1, got ${count}"
+		return 0
+	fi
+
+	print_result "count_active_workers deduplicates launching+active for same session-key (GH#6453)" 0
+	return 0
+}
+
+test_list_launching_worker_processes_excludes_pulse() {
+	# GH#6453: list_launching_worker_processes must only match --role worker,
+	# not --role pulse (the supervisor pulse is not a worker).
+	set_ps_fixture "800 S 00:03 bash /home/user/.aidevops/agents/scripts/headless-runtime-helper.sh run --role pulse --session-key supervisor-pulse --dir /tmp/workspace --title Supervisor Pulse
+801 S 00:03 bash /home/user/.aidevops/agents/scripts/headless-runtime-helper.sh run --role worker --session-key issue-6004 --dir /tmp/aidevops --title Issue #6004: Fix --prompt /full-loop"
+
+	local launching_count
+	launching_count=$(list_launching_worker_processes | wc -l | tr -d ' ')
+	if [[ "$launching_count" != "1" ]]; then
+		print_result "list_launching_worker_processes excludes pulse role (GH#6453)" 1 "Expected 1, got ${launching_count}"
+		return 0
+	fi
+
+	print_result "list_launching_worker_processes excludes pulse role (GH#6453)" 0
+	return 0
+}
+
 main() {
 	trap teardown_test_env EXIT
 	setup_test_env
@@ -283,6 +364,11 @@ main() {
 	test_repo_issue_detection_uses_filtered_worker_list
 	test_excludes_zombie_and_stopped_processes
 	test_check_dispatch_dedup_treats_merged_pr_as_duplicate
+	# GH#6453: Launching worker detection tests
+	test_launching_worker_detected_by_has_worker_for_repo_issue
+	test_count_active_workers_includes_launching_workers
+	test_count_active_workers_deduplicates_launching_and_active
+	test_list_launching_worker_processes_excludes_pulse
 
 	printf '\nRan %s tests, %s failed.\n' "$TESTS_RUN" "$TESTS_FAILED"
 	if [[ "$TESTS_FAILED" -gt 0 ]]; then

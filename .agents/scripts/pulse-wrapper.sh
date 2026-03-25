@@ -1380,6 +1380,36 @@ list_active_worker_processes() {
 	return 0
 }
 
+#######################################
+# List headless-runtime-helper.sh processes that are launching workers (GH#6453)
+#
+# Catches workers in their startup phase — after headless-runtime-helper.sh
+# has been invoked but before the opencode process has spawned. During this
+# window (model selection, auth check, sandbox setup), the worker is invisible
+# to list_active_worker_processes() because no opencode process exists yet.
+#
+# This causes has_worker_for_repo_issue() to return false-negative, allowing
+# the early-exit recycle loop or a recycled pulse to re-dispatch the same issue.
+#
+# Output format: pid etime command (same as list_active_worker_processes)
+# Filters: must contain headless-runtime-helper AND --role worker AND --session-key
+# Excludes: zombie/stopped processes
+#######################################
+list_launching_worker_processes() {
+	ps axo pid,stat,etime,command | awk '
+		/headless-runtime-helper/ &&
+		/--role[[:space:]]+worker/ &&
+		/--session-key/ {
+			stat = $2
+			if (stat ~ /^[ZT]/) next
+			printf "%s %s", $1, $3
+			for (i = 4; i <= NF; i++) printf " %s", $i
+			printf "\n"
+		}
+	'
+	return 0
+}
+
 prefetch_active_workers() {
 	local worker_lines
 	worker_lines=$(list_active_worker_processes || true)
@@ -2924,12 +2954,56 @@ prefetch_gh_failure_notifications() {
 
 #######################################
 # Count active worker processes
+#
+# GH#6453: Also counts headless-runtime-helper.sh processes in startup
+# phase (before opencode spawns). These are deduplicated against active
+# workers by session-key to avoid double-counting workers that have both
+# a headless-runtime-helper parent and an opencode child running.
+#
 # Returns: count via stdout
 #######################################
 count_active_workers() {
-	local count
-	count=$(list_active_worker_processes | wc -l | tr -d ' ') || count=0
-	echo "$count"
+	local active_count launching_count
+	active_count=$(list_active_worker_processes | wc -l | tr -d ' ') || active_count=0
+	[[ "$active_count" =~ ^[0-9]+$ ]] || active_count=0
+
+	# GH#6453: Count launching workers not yet visible as opencode processes.
+	# A launching worker's headless-runtime-helper.sh process contains
+	# --session-key issue-NNN. If an active opencode worker already exists
+	# for the same issue-NNN, the launching process is the parent — don't
+	# double-count. We use a simple heuristic: count launching processes
+	# whose session-key does NOT appear in the active worker process list.
+	local active_lines launching_lines
+	active_lines=$(list_active_worker_processes) || active_lines=""
+	launching_lines=$(list_launching_worker_processes) || launching_lines=""
+	launching_count=0
+
+	if [[ -n "$launching_lines" ]]; then
+		while IFS= read -r launch_line; do
+			[[ -z "$launch_line" ]] && continue
+			# Extract session-key value (e.g., "issue-6426")
+			local skey=""
+			if [[ "$launch_line" =~ --session-key[[:space:]]+([^[:space:]]+) ]]; then
+				skey="${BASH_REMATCH[1]}"
+			fi
+			if [[ -z "$skey" ]]; then
+				# Can't extract session-key — count conservatively
+				launching_count=$((launching_count + 1))
+				continue
+			fi
+			# Check if an active opencode worker already has this session-key
+			# (the session-key appears in the opencode command line as part of
+			# the issue reference, e.g., "issue-6426" in --session-key or prompt)
+			if [[ -n "$active_lines" ]] && echo "$active_lines" | grep -qF "$skey"; then
+				# Already counted as an active worker — skip
+				continue
+			fi
+			launching_count=$((launching_count + 1))
+		done <<<"$launching_lines"
+	fi
+
+	local total=$((active_count + launching_count))
+	echo "$total"
 	return 0
 }
 
@@ -2978,6 +3052,7 @@ has_worker_for_repo_issue() {
 		return 1
 	fi
 
+	# Check active opencode worker processes (fully started)
 	local matches
 	matches=$(list_active_worker_processes | awk -v issue="$issue_number" -v path="$repo_path" '
 		BEGIN {
@@ -2993,6 +3068,30 @@ has_worker_for_repo_issue() {
 	if [[ "$matches" -gt 0 ]]; then
 		return 0
 	fi
+
+	# GH#6453: Also check headless-runtime-helper.sh processes in startup phase.
+	# Workers are invisible to list_active_worker_processes() during the window
+	# between headless-runtime-helper.sh invocation and opencode process spawn
+	# (model selection, auth check, sandbox setup — typically 5-15s). Without
+	# this check, the early-exit recycle loop re-dispatches the same issue,
+	# creating 2 workers per dispatch.
+	local launching_matches
+	launching_matches=$(list_launching_worker_processes | awk -v issue="$issue_number" -v path="$repo_path" '
+		BEGIN {
+			esc = path
+			gsub(/[][(){}.^$*+?|\\]/, "\\\\&", esc)
+		}
+		($0 ~ ("--dir[[:space:]]+" esc "([[:space:]]|$)") &&
+		 ($0 ~ ("issue-" issue "([^0-9]|$)") || $0 ~ ("Issue #" issue "([^0-9]|$)"))) ||
+		($0 ~ ("--session-key[[:space:]]+issue-" issue "([^0-9]|$)")) { count++ }
+		END { print count + 0 }
+	') || launching_matches=0
+	[[ "$launching_matches" =~ ^[0-9]+$ ]] || launching_matches=0
+
+	if [[ "$launching_matches" -gt 0 ]]; then
+		return 0
+	fi
+
 	return 1
 }
 
@@ -3773,7 +3872,18 @@ _run_early_exit_recycle_loop() {
 			break
 		fi
 
-		# Re-check worker state
+		# GH#6453: Grace period before re-evaluating worker counts.
+		# Workers dispatched by the just-completed pulse are still in their
+		# startup phase (headless-runtime-helper.sh → model selection → auth
+		# check → sandbox setup → opencode spawn). Without this delay, the
+		# recycle loop sees an underfilled pool and re-dispatches the same
+		# issues, creating 2 workers per dispatch.
+		# PULSE_LAUNCH_GRACE_SECONDS (default 20s) matches the grace window
+		# used by check_worker_launch() for the same reason.
+		echo "[pulse-wrapper] Early-exit recycle: waiting ${PULSE_LAUNCH_GRACE_SECONDS}s for recently-dispatched workers to start" >>"$LOGFILE"
+		sleep "$PULSE_LAUNCH_GRACE_SECONDS"
+
+		# Re-check worker state (now includes launching workers via GH#6453)
 		local post_max post_active post_runnable post_queued
 		post_max=$(get_max_workers_target)
 		post_active=$(count_active_workers)
