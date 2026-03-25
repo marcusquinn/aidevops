@@ -777,6 +777,14 @@ cmd_switch() {
 	return $?
 }
 
+# Validate that a value is a positive integer.
+# Returns 0 if valid, 1 if invalid.
+# Args: $1=value_to_check
+_is_positive_integer() {
+	local value="$1"
+	[[ "$value" =~ ^[0-9]+$ ]] && [[ "$value" -gt 0 ]]
+}
+
 # Check if a worktree was created within the grace period (GH#5694).
 # Returns 0 (within grace period, skip cleanup) or 1 (older, ok to clean).
 # Uses the worktree directory's ctime as creation proxy.
@@ -787,15 +795,21 @@ _worktree_within_grace_period() {
 
 	[[ ! -d "$wt_path" ]] && return 1
 
+	# Validate grace_hours is a positive integer, fail safe if not
+	if ! _is_positive_integer "$grace_hours"; then
+		echo -e "${YELLOW}Warning: invalid grace period '$grace_hours', using default 4 hours${NC}" >&2
+		grace_hours=4
+	fi
+
 	local now_epoch wt_epoch age_hours
 	now_epoch=$(date +%s)
 
 	# Use stat to get creation/change time — portable between GNU and BSD stat
 	if stat --version >/dev/null 2>&1; then
 		# GNU stat (Linux)
-		wt_epoch=$(stat -c '%W' "$wt_path" 2>/dev/null || echo "0")
-		# %W returns 0 if birth time unavailable; fall back to %Y (mtime)
-		if [[ "$wt_epoch" == "0" ]]; then
+		wt_epoch=$(stat -c '%W' "$wt_path" 2>/dev/null || echo "-1")
+		# %W returns -1 (not 0) if birth time unavailable; fall back to %Y (mtime)
+		if [[ "$wt_epoch" == "-1" ]] || [[ "$wt_epoch" == "0" ]]; then
 			wt_epoch=$(stat -c '%Y' "$wt_path")
 		fi
 	else
@@ -814,21 +828,32 @@ _worktree_within_grace_period() {
 }
 
 # Check if a branch has an open PR on GitHub (GH#5694).
-# Returns 0 if an open PR exists, 1 otherwise.
-# Args: $1=branch_name
+# Returns 0 if an open PR exists, 1 if no open PR, 2 if gh command failed (network/auth).
+# Args: $1=branch_name, $2=open_pr_cache (optional, newline-delimited list of open PR branches)
 _branch_has_open_pr() {
 	local branch="$1"
+	local open_pr_cache="${2:-}"
 
 	command -v gh >/dev/null 2>&1 || return 1
 
+	# If cache is provided, use it instead of making API calls
+	if [[ -n "$open_pr_cache" ]]; then
+		echo "$open_pr_cache" | grep -Fxq "$branch"
+		return $?
+	fi
+
+	# Fallback: individual API call (when cache not available)
 	local pr_count
-	pr_count=$(gh pr list --state open --head "$branch" --json number --jq 'length' 2>/dev/null || echo "0")
+	if ! pr_count=$(gh pr list --state open --head "$branch" --json number --jq 'length' 2>/dev/null); then
+		# gh command failed (network/auth) - return 2 to indicate unknown state
+		return 2
+	fi
 	[[ "$pr_count" -gt 0 ]]
 }
 
 # Check if a branch has zero commits ahead of default AND dirty files (GH#5694).
 # This distinguishes "truly merged" from "just created, no commits yet".
-# Returns 0 if zero-ahead + dirty (in-progress, should NOT be cleaned), 1 otherwise.
+# Returns 0 if zero-ahead + dirty (in-progress, should NOT be cleaned), 1 otherwise, 2 if git rev-list failed.
 # Args: $1=branch_name, $2=default_branch, $3=worktree_path
 _is_zero_ahead_dirty() {
 	local branch="$1"
@@ -837,11 +862,60 @@ _is_zero_ahead_dirty() {
 
 	# Count commits ahead of default branch
 	local ahead_count
-	ahead_count=$(git rev-list --count "$default_branch..$branch" 2>/dev/null || echo "0")
+	if ! ahead_count=$(git rev-list --count "$default_branch..$branch" 2>/dev/null); then
+		# git rev-list failed - return 2 to indicate unknown state (fail safe)
+		return 2
+	fi
 
 	if [[ "$ahead_count" == "0" ]] && worktree_has_changes "$wt_path"; then
 		return 0
 	fi
+	return 1
+}
+
+# Shared safety check function for both detection and removal phases (GH#5694).
+# Returns skip reason if worktree should be skipped, empty string if safe to proceed.
+# Args: $1=branch_name, $2=default_branch, $3=worktree_path, $4=grace_hours, $5=open_pr_cache
+_check_worktree_safety() {
+	local branch="$1"
+	local default_branch="$2"
+	local wt_path="$3"
+	local grace_hours="$4"
+	local open_pr_cache="$5"
+
+	# Safety check 1: Grace period — skip recently-created worktrees
+	if _worktree_within_grace_period "$wt_path" "$grace_hours"; then
+		echo "created <${grace_hours}h ago - grace period"
+		return 0
+	fi
+
+	# Safety check 2: Open PR — branch with open PR is active work
+	local pr_check_result
+	_branch_has_open_pr "$branch" "$open_pr_cache"
+	pr_check_result=$?
+	if [[ "$pr_check_result" == "0" ]]; then
+		echo "has open PR"
+		return 0
+	elif [[ "$pr_check_result" == "2" ]]; then
+		# gh command failed (network/auth) - fail safe by skipping deletion
+		echo "PR check failed (network/auth) - skipping for safety"
+		return 0
+	fi
+
+	# Safety check 3: Zero-commits-ahead + dirty = in-progress
+	local zero_ahead_result
+	_is_zero_ahead_dirty "$branch" "$default_branch" "$wt_path"
+	zero_ahead_result=$?
+	if [[ "$zero_ahead_result" == "0" ]]; then
+		echo "0 commits ahead + dirty files = in-progress"
+		return 0
+	elif [[ "$zero_ahead_result" == "2" ]]; then
+		# git rev-list failed - fail safe by skipping deletion
+		echo "commit count check failed - skipping for safety"
+		return 0
+	fi
+
+	# No safety concerns found
 	return 1
 }
 
@@ -856,10 +930,31 @@ cmd_clean() {
 		case "${1:-}" in
 		--auto) auto_mode=true ;;
 		--force-merged) force_merged=true ;;
-		--grace-period=*) grace_hours="${1#*=}" ;;
+		--grace-period=*)
+			grace_hours="${1#*=}"
+			# Validate grace_hours is a positive integer, fail safe if not
+			if ! _is_positive_integer "$grace_hours"; then
+				echo -e "${RED}Error: --grace-period requires a positive integer (got '$grace_hours')${NC}" >&2
+				echo "Usage: worktree-helper.sh clean [--grace-period=N]" >&2
+				return 1
+			fi
+			;;
 		--grace-period)
-			shift
-			grace_hours="${1:-4}"
+			# Check if there's a next argument and it's not another flag
+			if [[ $# -gt 1 ]] && [[ "${2:-}" != --* ]]; then
+				shift
+				grace_hours="${1:-4}"
+				# Validate grace_hours is a positive integer, fail safe if not
+				if ! _is_positive_integer "$grace_hours"; then
+					echo -e "${RED}Error: --grace-period requires a positive integer (got '$grace_hours')${NC}" >&2
+					echo "Usage: worktree-helper.sh clean [--grace-period=N]" >&2
+					return 1
+				fi
+			else
+				echo -e "${RED}Error: --grace-period requires a value${NC}" >&2
+				echo "Usage: worktree-helper.sh clean [--grace-period=N]" >&2
+				return 1
+			fi
 			;;
 		*) break ;;
 		esac
@@ -898,8 +993,11 @@ cmd_clean() {
 	# Uses grep -Fxq for exact-line matching (no regex injection risk).
 	# NOTE: bash 3.2 (macOS default) lacks declare -A — do NOT use associative arrays.
 	local merged_pr_branches=""
+	local open_pr_branches=""
 	if command -v gh &>/dev/null; then
 		merged_pr_branches=$(gh pr list --state merged --limit 200 --json headRefName --jq '.[].headRefName' 2>/dev/null || echo "")
+		# Cache open PRs to avoid per-branch API calls
+		open_pr_branches=$(gh pr list --state open --json headRefName --jq '.[].headRefName' 2>/dev/null || echo "")
 	fi
 
 	while IFS= read -r line; do
@@ -946,30 +1044,16 @@ cmd_clean() {
 					is_merged=false
 				fi
 
-				# Safety check 1 (GH#5694): Grace period — skip recently-created worktrees
-				if [[ "$is_merged" == "true" ]] && _worktree_within_grace_period "$worktree_path" "$grace_hours"; then
-					echo -e "  ${RED}$worktree_branch${NC} (created <${grace_hours}h ago - grace period, skipping)"
-					echo "    $worktree_path"
-					echo ""
-					is_merged=false
-				fi
-
-				# Safety check 2 (GH#5694): Open PR — branch with open PR is active work
-				if [[ "$is_merged" == "true" ]] && _branch_has_open_pr "$worktree_branch"; then
-					echo -e "  ${RED}$worktree_branch${NC} (has open PR - skipping)"
-					echo "    $worktree_path"
-					echo ""
-					is_merged=false
-				fi
-
-				# Safety check 3 (GH#5694): Zero-commits-ahead + dirty = in-progress, not merged
-				# A branch with 0 commits ahead of default that git considers "merged"
-				# but has dirty files is likely just-created work, not completed work.
-				if [[ "$is_merged" == "true" ]] && _is_zero_ahead_dirty "$worktree_branch" "$default_branch" "$worktree_path"; then
-					echo -e "  ${RED}$worktree_branch${NC} (0 commits ahead + dirty files = in-progress, skipping)"
-					echo "    $worktree_path"
-					echo ""
-					is_merged=false
+				# Safety checks (GH#5694) - use shared helper function
+				if [[ "$is_merged" == "true" ]]; then
+					local skip_reason
+					skip_reason=$(_check_worktree_safety "$worktree_branch" "$default_branch" "$worktree_path" "$grace_hours" "$open_pr_branches")
+					if [[ -n "$skip_reason" ]]; then
+						echo -e "  ${RED}$worktree_branch${NC} ($skip_reason, skipping)"
+						echo "    $worktree_path"
+						echo ""
+						is_merged=false
+					fi
 				fi
 
 				# Dirty check: behaviour depends on --force-merged flag
@@ -1047,22 +1131,14 @@ cmd_clean() {
 						should_remove=true
 					fi
 
-					# Safety check 1 (GH#5694): Grace period — skip recently-created worktrees
-					if [[ "$should_remove" == "true" ]] && _worktree_within_grace_period "$worktree_path" "$grace_hours"; then
-						echo -e "${RED}Skipping $worktree_branch - created <${grace_hours}h ago (grace period)${NC}"
-						should_remove=false
-					fi
-
-					# Safety check 2 (GH#5694): Open PR — branch with open PR is active work
-					if [[ "$should_remove" == "true" ]] && _branch_has_open_pr "$worktree_branch"; then
-						echo -e "${RED}Skipping $worktree_branch - has open PR${NC}"
-						should_remove=false
-					fi
-
-					# Safety check 3 (GH#5694): Zero-commits-ahead + dirty = in-progress
-					if [[ "$should_remove" == "true" ]] && _is_zero_ahead_dirty "$worktree_branch" "$default_branch" "$worktree_path"; then
-						echo -e "${RED}Skipping $worktree_branch - 0 commits ahead + dirty files (in-progress)${NC}"
-						should_remove=false
+					# Safety checks (GH#5694) - use shared helper function
+					if [[ "$should_remove" == "true" ]]; then
+						local skip_reason
+						skip_reason=$(_check_worktree_safety "$worktree_branch" "$default_branch" "$worktree_path" "$grace_hours" "$open_pr_branches")
+						if [[ -n "$skip_reason" ]]; then
+							echo -e "${RED}Skipping $worktree_branch - $skip_reason${NC}"
+							should_remove=false
+						fi
 					fi
 
 					# If should_remove but has changes, need --force-merged to proceed
