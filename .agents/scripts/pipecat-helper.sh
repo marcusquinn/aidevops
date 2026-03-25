@@ -194,10 +194,10 @@ check_pipecat_installed() {
 
 # ─── Bot Template ──────────────────────────────────────────────────────
 
-# Write the Python bot.py content to disk (the full heredoc).
-# Called by generate_bot_template(); not intended for direct use.
-_generate_bot_python_content() {
-	cat >"${PIPECAT_BOT}" <<'BOTEOF'
+# Write the Python bot.py imports, config, and app setup sections.
+# Called by _generate_bot_python_content(); not intended for direct use.
+_write_bot_imports_and_config() {
+	cat >>"${PIPECAT_BOT}" <<'BOTEOF'
 """Pipecat local voice agent with Soniox STT + LLM + Cartesia TTS.
 
 Pipeline: Mic -> SmallWebRTC -> Soniox STT -> LLM -> Cartesia TTS -> Speaker
@@ -271,7 +271,14 @@ app.add_middleware(
 
 # Track active WebRTC connections for renegotiation
 pcs_map: Dict[str, SmallWebRTCConnection] = {}
+BOTEOF
+	return 0
+}
 
+# Write the Python bot.py LLM factory and pipeline runner functions.
+# Called by _generate_bot_python_content(); not intended for direct use.
+_write_bot_llm_and_pipeline() {
+	cat >>"${PIPECAT_BOT}" <<'BOTEOF'
 
 def get_llm_service(provider: str):
     """Create the LLM service based on provider choice."""
@@ -320,7 +327,6 @@ async def run_bot(
     voice_id: str,
 ):
     """Run the Pipecat voice agent pipeline for a single connection."""
-    # STT: Soniox (real-time streaming, 60+ languages)
     soniox_key = os.getenv("SONIOX_API_KEY")
     if not soniox_key:
         print("ERROR: SONIOX_API_KEY not set. Run: aidevops secret set SONIOX_API_KEY")
@@ -328,72 +334,51 @@ async def run_bot(
 
     stt = SonioxSTTService(api_key=soniox_key)
 
-    # TTS: Cartesia Sonic (low-latency streaming, word timestamps)
     cartesia_key = os.getenv("CARTESIA_API_KEY")
     if not cartesia_key:
         print("ERROR: CARTESIA_API_KEY not set. Run: aidevops secret set CARTESIA_API_KEY")
         return
 
-    tts = CartesiaTTSService(
-        api_key=cartesia_key,
-        voice_id=voice_id,
-    )
-
-    # LLM: Anthropic, OpenAI, or local
+    tts = CartesiaTTSService(api_key=cartesia_key, voice_id=voice_id)
     llm = get_llm_service(llm_provider)
-
-    # Context with system prompt
     messages = [{"role": "system", "content": SYSTEM_PROMPT}]
     context = OpenAILLMContext(messages)
     context_aggregator = llm.create_context_aggregator(context)
-
-    # RTVI processor for client UI events
     rtvi = RTVIProcessor(config=RTVIConfig(config=[]))
-
-    # Transport (local serverless WebRTC)
     transport = SmallWebRTCTransport(
         webrtc_connection=webrtc_connection,
         params=TransportParams(
             audio_in_enabled=True,
             audio_out_enabled=True,
             vad_enabled=True,
-            vad_analyzer=SileroVADAnalyzer(
-                params=VADParams(stop_secs=0.3),
-            ),
+            vad_analyzer=SileroVADAnalyzer(params=VADParams(stop_secs=0.3)),
         ),
     )
-
-    # Pipeline: input -> STT -> RTVI -> user context -> LLM -> TTS -> output -> assistant context
     pipeline = Pipeline(
-        [
-            transport.input(),
-            stt,
-            rtvi,
-            context_aggregator.user(),
-            llm,
-            tts,
-            transport.output(),
-            context_aggregator.assistant(),
-        ]
+        [transport.input(), stt, rtvi, context_aggregator.user(),
+         llm, tts, transport.output(), context_aggregator.assistant()]
     )
-
     task = PipelineTask(
         pipeline,
         params=PipelineParams(
-            allow_interruptions=True,
-            enable_metrics=True,
-            enable_usage_metrics=True,
+            allow_interruptions=True, enable_metrics=True, enable_usage_metrics=True
         ),
     )
 
-    # Handle client ready event
     @rtvi.event_handler("on_client_ready")
     async def on_client_ready(rtvi_processor):
         await rtvi_processor.set_bot_ready()
 
     runner = PipelineRunner(handle_sigint=False)
     await runner.run(task)
+BOTEOF
+	return 0
+}
 
+# Write the Python bot.py FastAPI app factory (WebRTC signaling + status endpoint).
+# Called by _generate_bot_python_content(); not intended for direct use.
+_write_bot_fastapi_app() {
+	cat >>"${PIPECAT_BOT}" <<'BOTEOF'
 
 def create_app(llm_provider: str, voice_id: str) -> FastAPI:
     """Configure the FastAPI app with the specified settings."""
@@ -407,10 +392,7 @@ def create_app(llm_provider: str, voice_id: str) -> FastAPI:
         # Renegotiate existing connection or create new one
         if pc_id and pc_id in pcs_map:
             pc = pcs_map[pc_id]
-            await pc.renegotiate(
-                sdp=body["sdp"],
-                type=body["type"],
-            )
+            await pc.renegotiate(sdp=body["sdp"], type=body["type"])
             return JSONResponse(
                 content={
                     "sdp": pc.get_local_description()["sdp"],
@@ -424,7 +406,6 @@ def create_app(llm_provider: str, voice_id: str) -> FastAPI:
             ice_servers=[IceServer(urls="stun:stun.l.google.com:19302")],
         )
         await pc.initialize(sdp=body["sdp"], type=body["type"])
-
         pc_id = pc.pc_id
         pcs_map[pc_id] = pc
 
@@ -434,7 +415,6 @@ def create_app(llm_provider: str, voice_id: str) -> FastAPI:
             llm_provider=llm_provider,
             voice_id=voice_id,
         )
-
         return JSONResponse(
             content={
                 "sdp": pc.get_local_description()["sdp"],
@@ -454,7 +434,14 @@ def create_app(llm_provider: str, voice_id: str) -> FastAPI:
         }
 
     return app
+BOTEOF
+	return 0
+}
 
+# Write the Python bot.py CLI entry point section.
+# Called by _generate_bot_python_content(); not intended for direct use.
+_write_bot_cli_entry() {
+	cat >>"${PIPECAT_BOT}" <<'BOTEOF'
 
 # ─── CLI Entry Point ───────────────────────────────────────────────────
 
@@ -482,6 +469,18 @@ if __name__ == "__main__":
 
     uvicorn.run(app, host="0.0.0.0", port=args.port, log_level="warning")
 BOTEOF
+	return 0
+}
+
+# Write the Python bot.py content to disk (the full heredoc).
+# Delegates to three sub-writers to keep each under 100 lines.
+# Called by generate_bot_template(); not intended for direct use.
+_generate_bot_python_content() {
+	: >"${PIPECAT_BOT}"
+	_write_bot_imports_and_config
+	_write_bot_llm_and_pipeline
+	_write_bot_fastapi_app
+	_write_bot_cli_entry
 	return 0
 }
 

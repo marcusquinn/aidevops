@@ -762,6 +762,79 @@ _consolidate_merge_pair() {
 }
 
 #######################################
+# Query similar memory pairs from the database
+# Args: similarity_threshold
+# Outputs: duplicate pairs on stdout (pipe-separated)
+#######################################
+_consolidate_query_duplicates() {
+	local similarity_threshold="$1"
+
+	db "$MEMORY_DB" <<EOF
+SELECT
+    l1.id as id1,
+    l2.id as id2,
+    l1.type,
+    substr(l1.content, 1, 50) as content1,
+    substr(l2.content, 1, 50) as content2,
+    l1.created_at as created1,
+    l2.created_at as created2
+FROM learnings l1
+JOIN learnings l2 ON l1.type = l2.type
+    AND l1.id < l2.id
+    AND l1.content != l2.content
+WHERE (
+    (SELECT COUNT(*) FROM (
+        SELECT value FROM json_each('["' || replace(lower(l1.content), ' ', '","') || '"]')
+        INTERSECT
+        SELECT value FROM json_each('["' || replace(lower(l2.content), ' ', '","') || '"]')
+    )) * 2.0 / (
+        length(l1.content) - length(replace(l1.content, ' ', '')) + 1 +
+        length(l2.content) - length(replace(l2.content, ' ', '')) + 1
+    ) > $similarity_threshold
+)
+LIMIT 20;
+EOF
+	return 0
+}
+
+#######################################
+# Execute the consolidation merge loop
+# Args: duplicates_str
+# Outputs: number of consolidated pairs on stdout
+#######################################
+_consolidate_execute_merges() {
+	local duplicates="$1"
+	local consolidated=0
+	# Track removed IDs to skip stale pairs from the static snapshot.
+	# A result set like A|B, A|C, B|C would otherwise try to merge B|C after B
+	# was already deleted, repointing relations to a non-existent keep row.
+	# removed_set is newline-delimited; grep -qxF matches exact lines only.
+	local removed_set=""
+
+	while IFS='|' read -r id1 id2 _type _content1 _content2 created1 created2; do
+		[[ -z "$id1" ]] && continue
+		# Skip if either side was already removed by an earlier iteration
+		printf '%s\n' "$removed_set" | grep -qxF "$id1" && continue
+		printf '%s\n' "$removed_set" | grep -qxF "$id2" && continue
+		_consolidate_merge_pair "$id1" "$id2" "$created1" "$created2"
+		consolidated=$((consolidated + 1))
+		# Record the deleted (older) ID so subsequent pairs skip it
+		local _del_id
+		# shellcheck disable=SC2071 # Intentional lexicographic comparison for ISO date strings
+		if [[ "$created1" < "$created2" ]]; then
+			_del_id="$id1"
+		else
+			_del_id="$id2"
+		fi
+		removed_set="${removed_set}
+${_del_id}"
+	done <<<"$duplicates"
+
+	echo "$consolidated"
+	return 0
+}
+
+#######################################
 # Consolidate similar memories
 # Merges memories with similar content to reduce redundancy
 #######################################
@@ -800,33 +873,7 @@ cmd_consolidate() {
 	log_info "Analyzing memories for consolidation..."
 
 	local duplicates
-	duplicates=$(
-		db "$MEMORY_DB" <<EOF
-SELECT
-    l1.id as id1,
-    l2.id as id2,
-    l1.type,
-    substr(l1.content, 1, 50) as content1,
-    substr(l2.content, 1, 50) as content2,
-    l1.created_at as created1,
-    l2.created_at as created2
-FROM learnings l1
-JOIN learnings l2 ON l1.type = l2.type
-    AND l1.id < l2.id
-    AND l1.content != l2.content
-WHERE (
-    (SELECT COUNT(*) FROM (
-        SELECT value FROM json_each('["' || replace(lower(l1.content), ' ', '","') || '"]')
-        INTERSECT
-        SELECT value FROM json_each('["' || replace(lower(l2.content), ' ', '","') || '"]')
-    )) * 2.0 / (
-        length(l1.content) - length(replace(l1.content, ' ', '')) + 1 +
-        length(l2.content) - length(replace(l2.content, ' ', '')) + 1
-    ) > $similarity_threshold
-)
-LIMIT 20;
-EOF
-	)
+	duplicates=$(_consolidate_query_duplicates "$similarity_threshold")
 
 	if [[ -z "$duplicates" ]]; then
 		log_success "No similar memories found for consolidation"
@@ -848,29 +895,8 @@ EOF
 		log_warn "Backup failed before consolidation — proceeding cautiously"
 	fi
 
-	local consolidated=0
-	# Track removed IDs to skip stale pairs from the static snapshot.
-	# A result set like A|B, A|C, B|C would otherwise try to merge B|C after B
-	# was already deleted, repointing relations to a non-existent keep row.
-	# removed_set is newline-delimited; grep -qxF matches exact lines only.
-	local removed_set=""
-	while IFS='|' read -r id1 id2 _type _content1 _content2 created1 created2; do
-		[[ -z "$id1" ]] && continue
-		# Skip if either side was already removed by an earlier iteration
-		printf '%s\n' "$removed_set" | grep -qxF "$id1" && continue
-		printf '%s\n' "$removed_set" | grep -qxF "$id2" && continue
-		_consolidate_merge_pair "$id1" "$id2" "$created1" "$created2"
-		consolidated=$((consolidated + 1))
-		# Record the deleted (older) ID so subsequent pairs skip it
-		local _del_id
-		if [[ "$created1" < "$created2" ]]; then
-			_del_id="$id1"
-		else
-			_del_id="$id2"
-		fi
-		removed_set="${removed_set}
-${_del_id}"
-	done <<<"$duplicates"
+	local consolidated
+	consolidated=$(_consolidate_execute_merges "$duplicates")
 
 	db "$MEMORY_DB" "INSERT INTO learnings(learnings) VALUES('rebuild');"
 	log_success "Consolidated $consolidated memory pairs"
