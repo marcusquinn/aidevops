@@ -9,9 +9,48 @@
 _MEMORY_RECALL_LOADED=1
 
 #######################################
+# Serialize parsed recall arguments as KEY=VALUE pairs
+# Usage: _recall_serialize_args <query> <limit> <type_filter> <max_age_days>
+#        <project_filter> <format> <recent_mode> <semantic_mode>
+#        <hybrid_mode> <shared_mode> <auto_only> <manual_only> <entity_filter>
+# Outputs: newline-separated KEY=VALUE pairs
+#######################################
+_recall_serialize_args() {
+	local query="$1"
+	local limit="$2"
+	local type_filter="$3"
+	local max_age_days="$4"
+	local project_filter="$5"
+	local format="$6"
+	local recent_mode="$7"
+	local semantic_mode="$8"
+	local hybrid_mode="$9"
+	local shared_mode="${10}"
+	local auto_only="${11}"
+	local manual_only="${12}"
+	local entity_filter="${13}"
+
+	printf '%s\n' \
+		"query=${query}" \
+		"limit=${limit}" \
+		"type_filter=${type_filter}" \
+		"max_age_days=${max_age_days}" \
+		"project_filter=${project_filter}" \
+		"format=${format}" \
+		"recent_mode=${recent_mode}" \
+		"semantic_mode=${semantic_mode}" \
+		"hybrid_mode=${hybrid_mode}" \
+		"shared_mode=${shared_mode}" \
+		"auto_only=${auto_only}" \
+		"manual_only=${manual_only}" \
+		"entity_filter=${entity_filter}"
+	return 0
+}
+
+#######################################
 # Parse arguments for cmd_recall
 # Usage: _recall_parse_args "$@"
-# Outputs: newline-separated KEY=VALUE pairs
+# Outputs: newline-separated KEY=VALUE pairs (via _recall_serialize_args)
 #######################################
 _recall_parse_args() {
 	local query=""
@@ -101,20 +140,9 @@ _recall_parse_args() {
 		esac
 	done
 
-	printf '%s\n' \
-		"query=${query}" \
-		"limit=${limit}" \
-		"type_filter=${type_filter}" \
-		"max_age_days=${max_age_days}" \
-		"project_filter=${project_filter}" \
-		"format=${format}" \
-		"recent_mode=${recent_mode}" \
-		"semantic_mode=${semantic_mode}" \
-		"hybrid_mode=${hybrid_mode}" \
-		"shared_mode=${shared_mode}" \
-		"auto_only=${auto_only}" \
-		"manual_only=${manual_only}" \
-		"entity_filter=${entity_filter}"
+	_recall_serialize_args "$query" "$limit" "$type_filter" "$max_age_days" \
+		"$project_filter" "$format" "$recent_mode" "$semantic_mode" \
+		"$hybrid_mode" "$shared_mode" "$auto_only" "$manual_only" "$entity_filter"
 	return 0
 }
 
