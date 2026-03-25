@@ -59,14 +59,12 @@ error_json() {
 	return 0
 }
 
-# Main check function
-cmd_check() {
-	local ip="$1"
+# Parse --api-key and --timeout flags from remaining args.
+# Outputs: "api_key=<value>" and "timeout=<value>" lines for eval.
+_parse_check_args() {
 	local api_key="${ABUSEIPDB_API_KEY:-}"
 	local timeout="$DEFAULT_TIMEOUT"
 
-	# Parse optional flags
-	shift
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--api-key)
@@ -91,16 +89,26 @@ cmd_check() {
 		esac
 	done
 
-	if [[ -z "$api_key" ]]; then
-		error_json "$ip" "ABUSEIPDB_API_KEY not set — free tier requires API key (1000/day free at abuseipdb.com)"
-		return 0
-	fi
+	printf 'api_key=%s\ntimeout=%s\n' "$api_key" "$timeout"
+	return 0
+}
 
-	local response http_code
+# Perform the HTTP request to AbuseIPDB.
+# Args: <ip> <api_key> <timeout>
+# Outputs: "<http_code> <response_body>" to stdout (space-separated on first line,
+# then the body follows — written to a temp file path printed on stdout).
+# Returns 0 on curl success, 1 on curl failure.
+_fetch_abuseipdb() {
+	local ip="$1"
+	local api_key="$2"
+	local timeout="$3"
+
 	local tmp_body
 	tmp_body=$(mktemp)
 	# shellcheck disable=SC2064
 	trap "rm -f '${tmp_body}'" RETURN
+
+	local http_code
 	http_code=$(curl -s -o "$tmp_body" -w '%{http_code}' \
 		--max-time "$timeout" \
 		-H "Key: ${api_key}" \
@@ -111,17 +119,17 @@ cmd_check() {
 		--data-urlencode "verbose" \
 		"${API_BASE}/check" 2>/dev/null) || {
 		rm -f "$tmp_body"
-		error_json "$ip" "curl request failed"
-		return 0
+		return 1
 	}
+
+	local response
 	response=$(cat "$tmp_body")
 	rm -f "$tmp_body"
 
 	# Handle HTTP 429 rate limiting
 	if [[ "$http_code" == "429" ]]; then
-		# AbuseIPDB returns retry-after info in the response body
 		local retry_after
-		retry_after=$(echo "$response" | jq -r '.errors[0].detail // empty' 2>/dev/null | grep -oE '[0-9]+' | head -1 || echo "60")
+		retry_after=$(printf '%s' "$response" | jq -r '.errors[0].detail // empty' 2>/dev/null | grep -oE '[0-9]+' | head -1 || echo "60")
 		[[ -z "$retry_after" ]] && retry_after=60
 		jq -n \
 			--arg provider "$PROVIDER_NAME" \
@@ -137,15 +145,26 @@ cmd_check() {
 		return 0
 	fi
 
+	# Signal success with response body on stdout for caller to consume
+	printf '%s' "$response"
+	return 0
+}
+
+# Parse a successful AbuseIPDB JSON response and emit the normalised result JSON.
+# Args: <ip> <response_body>
+_parse_check_response() {
+	local ip="$1"
+	local response="$2"
+
 	# Validate JSON
-	if ! echo "$response" | jq empty 2>/dev/null; then
+	if ! printf '%s' "$response" | jq empty 2>/dev/null; then
 		error_json "$ip" "invalid JSON response"
 		return 0
 	fi
 
 	# Check for API errors
 	local api_error
-	api_error=$(echo "$response" | jq -r '.errors[0].detail // empty' 2>/dev/null || true)
+	api_error=$(printf '%s' "$response" | jq -r '.errors[0].detail // empty' 2>/dev/null || true)
 	if [[ -n "$api_error" ]]; then
 		# Check if error message indicates rate limiting
 		if [[ "$api_error" == *"rate limit"* || "$api_error" == *"quota"* || "$api_error" == *"exceeded"* ]]; then
@@ -160,17 +179,17 @@ cmd_check() {
 	fi
 
 	local data
-	data=$(echo "$response" | jq '.data // {}')
+	data=$(printf '%s' "$response" | jq '.data // {}')
 
 	local score is_listed reports country isp domain is_tor is_proxy
-	score=$(echo "$data" | jq -r '.abuseConfidenceScore // 0')
-	is_listed=$(echo "$data" | jq -r 'if .totalReports > 0 then true else false end')
-	reports=$(echo "$data" | jq -r '.totalReports // 0')
-	country=$(echo "$data" | jq -r '.countryCode // "unknown"')
-	isp=$(echo "$data" | jq -r '.isp // "unknown"')
-	domain=$(echo "$data" | jq -r '.domain // "unknown"')
-	is_tor=$(echo "$data" | jq -r '.isTor // false')
-	is_proxy=$(echo "$data" | jq -r 'if .usageType == "VPN Service" or .usageType == "Proxy" then true else false end')
+	score=$(printf '%s' "$data" | jq -r '.abuseConfidenceScore // 0')
+	is_listed=$(printf '%s' "$data" | jq -r 'if .totalReports > 0 then true else false end')
+	reports=$(printf '%s' "$data" | jq -r '.totalReports // 0')
+	country=$(printf '%s' "$data" | jq -r '.countryCode // "unknown"')
+	isp=$(printf '%s' "$data" | jq -r '.isp // "unknown"')
+	domain=$(printf '%s' "$data" | jq -r '.domain // "unknown"')
+	is_tor=$(printf '%s' "$data" | jq -r '.isTor // false')
+	is_proxy=$(printf '%s' "$data" | jq -r 'if .usageType == "VPN Service" or .usageType == "Proxy" then true else false end')
 
 	local risk_level
 	risk_level=$(score_to_risk "${score%.*}")
@@ -202,6 +221,39 @@ cmd_check() {
             is_proxy: $is_proxy,
             raw: $raw
         }'
+	return 0
+}
+
+# Main check function
+cmd_check() {
+	local ip="$1"
+	shift
+
+	# Parse flags into local variables
+	local parsed_args api_key timeout
+	parsed_args=$(_parse_check_args "$@") || return 1
+	api_key=$(printf '%s' "$parsed_args" | grep '^api_key=' | cut -d= -f2-)
+	timeout=$(printf '%s' "$parsed_args" | grep '^timeout=' | cut -d= -f2-)
+
+	if [[ -z "$api_key" ]]; then
+		error_json "$ip" "ABUSEIPDB_API_KEY not set — free tier requires API key (1000/day free at abuseipdb.com)"
+		return 0
+	fi
+
+	local response
+	response=$(_fetch_abuseipdb "$ip" "$api_key" "$timeout") || {
+		error_json "$ip" "curl request failed"
+		return 0
+	}
+
+	# _fetch_abuseipdb emits final JSON directly for rate-limit/HTTP-error cases;
+	# if response is already a JSON object with an "error" or "provider" key, pass through.
+	if printf '%s' "$response" | jq -e 'has("provider")' >/dev/null 2>&1; then
+		printf '%s\n' "$response"
+		return 0
+	fi
+
+	_parse_check_response "$ip" "$response"
 	return 0
 }
 
