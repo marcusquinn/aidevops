@@ -170,6 +170,237 @@ EOF
 }
 
 #######################################
+# Merge tags from remove_id into keep_id (shared by all dedup phases)
+# Args: keep_id_esc remove_id_esc
+#######################################
+_dedup_merge_tags() {
+	local keep_id_esc="$1"
+	local remove_id_esc="$2"
+
+	local keep_tags remove_tags
+	keep_tags=$(db "$MEMORY_DB" "SELECT tags FROM learnings WHERE id = '$keep_id_esc';")
+	remove_tags=$(db "$MEMORY_DB" "SELECT tags FROM learnings WHERE id = '$remove_id_esc';")
+	if [[ -n "$remove_tags" ]]; then
+		local merged_tags
+		merged_tags=$(echo "$keep_tags,$remove_tags" | tr ',' '\n' | sort -u | grep -v '^$' | tr '\n' ',' | sed 's/,$//')
+		local merged_tags_esc="${merged_tags//"'"/"''"}"
+		db "$MEMORY_DB" "UPDATE learnings SET tags = '$merged_tags_esc' WHERE id = '$keep_id_esc';"
+	fi
+	return 0
+}
+
+#######################################
+# Phase 1: Remove exact duplicate entries (same content string)
+# Args: dry_run
+# Outputs: number of removed entries on stdout
+#######################################
+_dedup_exact_phase() {
+	local dry_run="$1"
+	local exact_removed=0
+
+	local exact_groups
+	exact_groups=$(
+		db "$MEMORY_DB" <<'EOF'
+SELECT GROUP_CONCAT(id, '|') as ids, content, type, COUNT(*) as cnt
+FROM learnings
+GROUP BY content
+HAVING cnt > 1
+ORDER BY cnt DESC;
+EOF
+	)
+
+	[[ -z "$exact_groups" ]] && echo "$exact_removed" && return 0
+
+	local dup_contents
+	dup_contents=$(db "$MEMORY_DB" "SELECT content FROM learnings GROUP BY content HAVING COUNT(*) > 1;")
+
+	while IFS= read -r dup_content; do
+		[[ -z "$dup_content" ]] && continue
+		local escaped_dup="${dup_content//"'"/"''"}"
+		local all_ids
+		all_ids=$(db "$MEMORY_DB" "SELECT id FROM learnings WHERE content = '$escaped_dup' ORDER BY created_at ASC;")
+
+		local keep_id=""
+		while IFS= read -r mem_id; do
+			[[ -z "$mem_id" ]] && continue
+			if [[ -z "$keep_id" ]]; then
+				keep_id="$mem_id"
+				continue
+			fi
+			local escaped_keep="${keep_id//"'"/"''"}"
+			local escaped_remove="${mem_id//"'"/"''"}"
+
+			if [[ "$dry_run" == true ]]; then
+				log_info "[DRY RUN] Would remove $mem_id (duplicate of $keep_id)"
+			else
+				_dedup_merge_tags "$escaped_keep" "$escaped_remove"
+				# Transfer access history (keep higher count)
+				db "$MEMORY_DB" <<EOF
+INSERT INTO learning_access (id, last_accessed_at, access_count)
+SELECT '$escaped_keep', last_accessed_at, access_count
+FROM learning_access WHERE id = '$escaped_remove'
+AND NOT EXISTS (SELECT 1 FROM learning_access WHERE id = '$escaped_keep')
+ON CONFLICT(id) DO UPDATE SET
+    access_count = MAX(learning_access.access_count, excluded.access_count),
+    last_accessed_at = MAX(learning_access.last_accessed_at, excluded.last_accessed_at);
+EOF
+				db_cleanup "$MEMORY_DB" "UPDATE learning_relations SET supersedes_id = '$escaped_keep' WHERE supersedes_id = '$escaped_remove';"
+				db_cleanup "$MEMORY_DB" "DELETE FROM learning_relations WHERE id = '$escaped_remove';"
+				db "$MEMORY_DB" "DELETE FROM learning_access WHERE id = '$escaped_remove';"
+				db "$MEMORY_DB" "DELETE FROM learnings WHERE id = '$escaped_remove';"
+			fi
+			exact_removed=$((exact_removed + 1))
+		done <<<"$all_ids"
+	done <<<"$dup_contents"
+
+	echo "$exact_removed"
+	return 0
+}
+
+#######################################
+# Phase 2: Remove near-duplicate entries (normalized content match)
+# Args: dry_run
+# Outputs: number of removed entries on stdout
+#######################################
+_dedup_near_phase() {
+	local dry_run="$1"
+	local near_removed=0
+
+	local near_groups
+	near_groups=$(
+		db "$MEMORY_DB" <<'EOF'
+SELECT GROUP_CONCAT(id, ',') as ids,
+       replace(replace(replace(replace(replace(lower(content),
+           '.',''),"'",''),',',''),'!',''),'?','') as norm,
+       COUNT(*) as cnt
+FROM learnings
+GROUP BY norm
+HAVING cnt > 1
+ORDER BY cnt DESC;
+EOF
+	)
+
+	[[ -z "$near_groups" ]] && echo "$near_removed" && return 0
+
+	while IFS='|' read -r id_list _norm _cnt; do
+		[[ -z "$id_list" ]] && continue
+		local id_count
+		id_count=$(echo "$id_list" | tr ',' '\n' | wc -l | tr -d ' ')
+		[[ "$id_count" -le 1 ]] && continue
+
+		local ids_arr
+		IFS=',' read -ra ids_arr <<<"$id_list"
+
+		# Find the oldest entry to keep
+		local oldest_id="" oldest_date="9999"
+		for nid in "${ids_arr[@]}"; do
+			[[ -z "$nid" ]] && continue
+			local nid_esc="${nid//"'"/"''"}"
+			local nid_exists
+			nid_exists=$(db "$MEMORY_DB" "SELECT COUNT(*) FROM learnings WHERE id = '$nid_esc';" 2>/dev/null || echo "0")
+			[[ "$nid_exists" == "0" ]] && continue
+			local nid_date
+			nid_date=$(db "$MEMORY_DB" "SELECT created_at FROM learnings WHERE id = '$nid_esc';" 2>/dev/null || echo "9999")
+			# shellcheck disable=SC2071 # Intentional lexicographic comparison for ISO date strings
+			if [[ "$nid_date" < "$oldest_date" ]]; then
+				oldest_date="$nid_date"
+				oldest_id="$nid"
+			fi
+		done
+		[[ -z "$oldest_id" ]] && continue
+
+		local oldest_esc="${oldest_id//"'"/"''"}"
+		for nid in "${ids_arr[@]}"; do
+			[[ -z "$nid" || "$nid" == "$oldest_id" ]] && continue
+			local nid_esc="${nid//"'"/"''"}"
+			local nid_exists
+			nid_exists=$(db "$MEMORY_DB" "SELECT COUNT(*) FROM learnings WHERE id = '$nid_esc';" 2>/dev/null || echo "0")
+			[[ "$nid_exists" == "0" ]] && continue
+
+			if [[ "$dry_run" == true ]]; then
+				local preview
+				preview=$(db "$MEMORY_DB" "SELECT substr(content, 1, 50) FROM learnings WHERE id = '$nid_esc';")
+				log_info "[DRY RUN] Would remove near-dup $nid (keep $oldest_id): $preview..."
+			else
+				_dedup_merge_tags "$oldest_esc" "$nid_esc"
+				db_cleanup "$MEMORY_DB" "UPDATE learning_relations SET supersedes_id = '$oldest_esc' WHERE supersedes_id = '$nid_esc';"
+				db_cleanup "$MEMORY_DB" "DELETE FROM learning_relations WHERE id = '$nid_esc';"
+				db "$MEMORY_DB" "DELETE FROM learning_access WHERE id = '$nid_esc';"
+				db "$MEMORY_DB" "DELETE FROM learnings WHERE id = '$nid_esc';"
+			fi
+			near_removed=$((near_removed + 1))
+		done
+	done <<<"$near_groups"
+
+	echo "$near_removed"
+	return 0
+}
+
+#######################################
+# Phase 3: Remove semantic duplicates (AI-judged similarity)
+# Only called when --semantic flag is set (~$0.001/pair API cost)
+# Args: dry_run threshold_judge
+# Outputs: number of removed entries on stdout
+#######################################
+_dedup_semantic_phase() {
+	local dry_run="$1"
+	local threshold_judge="$2"
+	local semantic_removed=0
+
+	log_info "Scanning for semantic duplicates (AI-judged)..."
+
+	local types
+	types=$(db "$MEMORY_DB" "SELECT DISTINCT type FROM learnings;")
+
+	while IFS= read -r check_type; do
+		[[ -z "$check_type" ]] && continue
+		local type_esc="${check_type//"'"/"''"}"
+		local entries
+		entries=$(db "$MEMORY_DB" "SELECT id, substr(content, 1, 200), created_at FROM learnings WHERE type = '$type_esc' ORDER BY created_at ASC LIMIT 50;")
+
+		local ids_arr=() contents_arr=()
+		while IFS='|' read -r eid econtent _edate; do
+			[[ -z "$eid" ]] && continue
+			ids_arr+=("$eid")
+			contents_arr+=("$econtent")
+		done <<<"$entries"
+
+		local len=${#ids_arr[@]}
+		local removed_set=""
+		for ((i = 0; i < len; i++)); do
+			echo "$removed_set" | grep -qF "${ids_arr[$i]}" && continue
+			for ((j = i + 1; j < len; j++)); do
+				echo "$removed_set" | grep -qF "${ids_arr[$j]}" && continue
+				local verdict
+				verdict=$("$threshold_judge" judge-dedup-similarity \
+					--content-a "${contents_arr[$i]}" \
+					--content-b "${contents_arr[$j]}" 2>/dev/null || echo "distinct")
+				if [[ "$verdict" == "duplicate" ]]; then
+					local remove_id="${ids_arr[$j]}"
+					local keep_id="${ids_arr[$i]}"
+					local remove_esc="${remove_id//"'"/"''"}"
+					local keep_esc="${keep_id//"'"/"''"}"
+					if [[ "$dry_run" == true ]]; then
+						log_info "[DRY RUN] Semantic dup: remove $remove_id (keep $keep_id): ${contents_arr[$j]:0:50}..."
+					else
+						_dedup_merge_tags "$keep_esc" "$remove_esc"
+						db_cleanup "$MEMORY_DB" "UPDATE learning_relations SET supersedes_id = '$keep_esc' WHERE supersedes_id = '$remove_esc';"
+						db_cleanup "$MEMORY_DB" "DELETE FROM learning_relations WHERE id = '$remove_esc';"
+						db "$MEMORY_DB" "DELETE FROM learning_access WHERE id = '$remove_esc';"
+						db "$MEMORY_DB" "DELETE FROM learnings WHERE id = '$remove_esc';"
+					fi
+					semantic_removed=$((semantic_removed + 1))
+					removed_set="${removed_set} ${remove_id}"
+				fi
+			done
+		done
+	done <<<"$types"
+
+	echo "$semantic_removed"
+	return 0
+}
+
+#######################################
 # Deduplicate memories
 # Removes exact, near-duplicate, and semantic duplicate entries.
 # Keeps the oldest (most established) entry; merges tags from removed entries.
@@ -204,248 +435,22 @@ cmd_dedup() {
 	done
 
 	init_db
-
 	log_info "Scanning for duplicate memories..."
 
-	# Phase 1: Exact duplicates (same content string)
-	local exact_groups
-	exact_groups=$(
-		db "$MEMORY_DB" <<'EOF'
-SELECT GROUP_CONCAT(id, '|') as ids, content, type, COUNT(*) as cnt
-FROM learnings
-GROUP BY content
-HAVING cnt > 1
-ORDER BY cnt DESC;
-EOF
-	)
+	local exact_removed
+	exact_removed=$(_dedup_exact_phase "$dry_run")
 
-	local exact_removed=0
-	if [[ -n "$exact_groups" ]]; then
-		# Query each duplicate group individually for reliable parsing
-		local dup_contents
-		dup_contents=$(db "$MEMORY_DB" "SELECT content FROM learnings GROUP BY content HAVING COUNT(*) > 1;")
-
-		while IFS= read -r dup_content; do
-			[[ -z "$dup_content" ]] && continue
-			local escaped_dup="${dup_content//"'"/"''"}"
-
-			# Get all IDs for this content, ordered by created_at (oldest first)
-			local all_ids
-			all_ids=$(db "$MEMORY_DB" "SELECT id FROM learnings WHERE content = '$escaped_dup' ORDER BY created_at ASC;")
-
-			local keep_id=""
-			while IFS= read -r mem_id; do
-				[[ -z "$mem_id" ]] && continue
-				if [[ -z "$keep_id" ]]; then
-					keep_id="$mem_id"
-					continue
-				fi
-
-				# This is a duplicate to remove
-				local escaped_keep="${keep_id//"'"/"''"}"
-				local escaped_remove="${mem_id//"'"/"''"}"
-
-				if [[ "$dry_run" == true ]]; then
-					log_info "[DRY RUN] Would remove $mem_id (duplicate of $keep_id)"
-				else
-					# Merge tags
-					local keep_tags remove_tags
-					keep_tags=$(db "$MEMORY_DB" "SELECT tags FROM learnings WHERE id = '$escaped_keep';")
-					remove_tags=$(db "$MEMORY_DB" "SELECT tags FROM learnings WHERE id = '$escaped_remove';")
-					if [[ -n "$remove_tags" ]]; then
-						local merged_tags
-						merged_tags=$(echo "$keep_tags,$remove_tags" | tr ',' '\n' | sort -u | grep -v '^$' | tr '\n' ',' | sed 's/,$//')
-						local merged_tags_esc="${merged_tags//"'"/"''"}"
-						db "$MEMORY_DB" "UPDATE learnings SET tags = '$merged_tags_esc' WHERE id = '$escaped_keep';"
-					fi
-
-					# Transfer access history (keep higher count)
-					db "$MEMORY_DB" <<EOF
-INSERT INTO learning_access (id, last_accessed_at, access_count)
-SELECT '$escaped_keep', last_accessed_at, access_count
-FROM learning_access WHERE id = '$escaped_remove'
-AND NOT EXISTS (SELECT 1 FROM learning_access WHERE id = '$escaped_keep')
-ON CONFLICT(id) DO UPDATE SET
-    access_count = MAX(learning_access.access_count, excluded.access_count),
-    last_accessed_at = MAX(learning_access.last_accessed_at, excluded.last_accessed_at);
-EOF
-
-					# Re-point relations
-					db_cleanup "$MEMORY_DB" "UPDATE learning_relations SET supersedes_id = '$escaped_keep' WHERE supersedes_id = '$escaped_remove';"
-					db_cleanup "$MEMORY_DB" "DELETE FROM learning_relations WHERE id = '$escaped_remove';"
-
-					# Delete duplicate
-					db "$MEMORY_DB" "DELETE FROM learning_access WHERE id = '$escaped_remove';"
-					db "$MEMORY_DB" "DELETE FROM learnings WHERE id = '$escaped_remove';"
-				fi
-				exact_removed=$((exact_removed + 1))
-			done <<<"$all_ids"
-		done <<<"$dup_contents"
-	fi
-
-	# Phase 2: Near-duplicates (normalized content match)
 	local near_removed=0
 	if [[ "$include_near" == true ]]; then
-		local near_groups
-		near_groups=$(
-			db "$MEMORY_DB" <<'EOF'
-SELECT GROUP_CONCAT(id, ',') as ids,
-       replace(replace(replace(replace(replace(lower(content),
-           '.',''),"'",''),',',''),'!',''),'?','') as norm,
-       COUNT(*) as cnt
-FROM learnings
-GROUP BY norm
-HAVING cnt > 1
-ORDER BY cnt DESC;
-EOF
-		)
-
-		if [[ -n "$near_groups" ]]; then
-			while IFS='|' read -r id_list _norm _cnt; do
-				[[ -z "$id_list" ]] && continue
-				# Skip if this was already handled as an exact duplicate
-				local id_count
-				id_count=$(echo "$id_list" | tr ',' '\n' | wc -l | tr -d ' ')
-				[[ "$id_count" -le 1 ]] && continue
-
-				local ids_arr
-				IFS=',' read -ra ids_arr <<<"$id_list"
-
-				# Find the oldest entry to keep
-				local oldest_id=""
-				local oldest_date="9999"
-				for nid in "${ids_arr[@]}"; do
-					[[ -z "$nid" ]] && continue
-					local nid_esc="${nid//"'"/"''"}"
-					local nid_exists
-					nid_exists=$(db "$MEMORY_DB" "SELECT COUNT(*) FROM learnings WHERE id = '$nid_esc';" 2>/dev/null || echo "0")
-					[[ "$nid_exists" == "0" ]] && continue
-
-					local nid_date
-					nid_date=$(db "$MEMORY_DB" "SELECT created_at FROM learnings WHERE id = '$nid_esc';" 2>/dev/null || echo "9999")
-					# shellcheck disable=SC2071 # Intentional lexicographic comparison for ISO date strings
-					if [[ "$nid_date" < "$oldest_date" ]]; then
-						oldest_date="$nid_date"
-						oldest_id="$nid"
-					fi
-				done
-
-				[[ -z "$oldest_id" ]] && continue
-
-				for nid in "${ids_arr[@]}"; do
-					[[ -z "$nid" || "$nid" == "$oldest_id" ]] && continue
-					local nid_esc="${nid//"'"/"''"}"
-					local nid_exists
-					nid_exists=$(db "$MEMORY_DB" "SELECT COUNT(*) FROM learnings WHERE id = '$nid_esc';" 2>/dev/null || echo "0")
-					[[ "$nid_exists" == "0" ]] && continue
-
-					local oldest_esc="${oldest_id//"'"/"''"}"
-
-					if [[ "$dry_run" == true ]]; then
-						local preview
-						preview=$(db "$MEMORY_DB" "SELECT substr(content, 1, 50) FROM learnings WHERE id = '$nid_esc';")
-						log_info "[DRY RUN] Would remove near-dup $nid (keep $oldest_id): $preview..."
-					else
-						# Merge tags
-						local keep_tags remove_tags
-						keep_tags=$(db "$MEMORY_DB" "SELECT tags FROM learnings WHERE id = '$oldest_esc';")
-						remove_tags=$(db "$MEMORY_DB" "SELECT tags FROM learnings WHERE id = '$nid_esc';")
-						if [[ -n "$remove_tags" ]]; then
-							local merged_tags
-							merged_tags=$(echo "$keep_tags,$remove_tags" | tr ',' '\n' | sort -u | grep -v '^$' | tr '\n' ',' | sed 's/,$//')
-							local merged_tags_esc="${merged_tags//"'"/"''"}"
-							db "$MEMORY_DB" "UPDATE learnings SET tags = '$merged_tags_esc' WHERE id = '$oldest_esc';"
-						fi
-
-						# Re-point relations and delete
-						db_cleanup "$MEMORY_DB" "UPDATE learning_relations SET supersedes_id = '$oldest_esc' WHERE supersedes_id = '$nid_esc';"
-						db_cleanup "$MEMORY_DB" "DELETE FROM learning_relations WHERE id = '$nid_esc';"
-						db "$MEMORY_DB" "DELETE FROM learning_access WHERE id = '$nid_esc';"
-						db "$MEMORY_DB" "DELETE FROM learnings WHERE id = '$nid_esc';"
-					fi
-					near_removed=$((near_removed + 1))
-				done
-			done <<<"$near_groups"
-		fi
+		near_removed=$(_dedup_near_phase "$dry_run")
 	fi
 
-	# Phase 3: Semantic duplicates (AI-judged similarity)
-	# Only runs with --semantic flag to control API costs (~$0.001/pair)
 	local semantic_removed=0
 	if [[ "$include_semantic" == true ]]; then
 		local threshold_judge
 		threshold_judge="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)/ai-threshold-judge.sh"
-
 		if [[ -x "$threshold_judge" ]]; then
-			log_info "Scanning for semantic duplicates (AI-judged)..."
-
-			# Get entries grouped by type (only compare within same type)
-			local types
-			types=$(db "$MEMORY_DB" "SELECT DISTINCT type FROM learnings;")
-
-			while IFS= read -r check_type; do
-				[[ -z "$check_type" ]] && continue
-				local type_esc="${check_type//"'"/"''"}"
-
-				# Get entries of this type (limit to 50 to control costs)
-				local entries
-				entries=$(db "$MEMORY_DB" "SELECT id, substr(content, 1, 200), created_at FROM learnings WHERE type = '$type_esc' ORDER BY created_at ASC LIMIT 50;")
-
-				# Compare pairs (O(n^2) but limited to 50 entries per type)
-				local ids_arr=() contents_arr=() dates_arr=()
-				while IFS='|' read -r eid econtent edate; do
-					[[ -z "$eid" ]] && continue
-					ids_arr+=("$eid")
-					contents_arr+=("$econtent")
-					dates_arr+=("$edate")
-				done <<<"$entries"
-
-				local len=${#ids_arr[@]}
-				local removed_set=""
-				for ((i = 0; i < len; i++)); do
-					# Skip if already marked for removal
-					echo "$removed_set" | grep -qF "${ids_arr[$i]}" && continue
-
-					for ((j = i + 1; j < len; j++)); do
-						echo "$removed_set" | grep -qF "${ids_arr[$j]}" && continue
-
-						local verdict
-						verdict=$("$threshold_judge" judge-dedup-similarity \
-							--content-a "${contents_arr[$i]}" \
-							--content-b "${contents_arr[$j]}" 2>/dev/null || echo "distinct")
-
-						if [[ "$verdict" == "duplicate" ]]; then
-							# Keep older entry (index i), remove newer (index j)
-							local remove_id="${ids_arr[$j]}"
-							local keep_id="${ids_arr[$i]}"
-							local remove_esc="${remove_id//"'"/"''"}"
-							local keep_esc="${keep_id//"'"/"''"}"
-
-							if [[ "$dry_run" == true ]]; then
-								log_info "[DRY RUN] Semantic dup: remove $remove_id (keep $keep_id): ${contents_arr[$j]:0:50}..."
-							else
-								# Merge tags
-								local keep_tags remove_tags
-								keep_tags=$(db "$MEMORY_DB" "SELECT tags FROM learnings WHERE id = '$keep_esc';")
-								remove_tags=$(db "$MEMORY_DB" "SELECT tags FROM learnings WHERE id = '$remove_esc';")
-								if [[ -n "$remove_tags" ]]; then
-									local merged_tags
-									merged_tags=$(echo "$keep_tags,$remove_tags" | tr ',' '\n' | sort -u | grep -v '^$' | tr '\n' ',' | sed 's/,$//')
-									local merged_tags_esc="${merged_tags//"'"/"''"}"
-									db "$MEMORY_DB" "UPDATE learnings SET tags = '$merged_tags_esc' WHERE id = '$keep_esc';"
-								fi
-
-								db_cleanup "$MEMORY_DB" "UPDATE learning_relations SET supersedes_id = '$keep_esc' WHERE supersedes_id = '$remove_esc';"
-								db_cleanup "$MEMORY_DB" "DELETE FROM learning_relations WHERE id = '$remove_esc';"
-								db "$MEMORY_DB" "DELETE FROM learning_access WHERE id = '$remove_esc';"
-								db "$MEMORY_DB" "DELETE FROM learnings WHERE id = '$remove_esc';"
-							fi
-							semantic_removed=$((semantic_removed + 1))
-							removed_set="${removed_set} ${remove_id}"
-						fi
-					done
-				done
-			done <<<"$types"
+			semantic_removed=$(_dedup_semantic_phase "$dry_run" "$threshold_judge")
 		else
 			log_warn "ai-threshold-judge.sh not found — skipping semantic dedup"
 		fi
@@ -458,7 +463,6 @@ EOF
 	elif [[ "$dry_run" == true ]]; then
 		log_info "[DRY RUN] Would remove $total_removed duplicates ($exact_removed exact, $near_removed near, $semantic_removed semantic)"
 	else
-		# Rebuild FTS index
 		db "$MEMORY_DB" "INSERT INTO learnings(learnings) VALUES('rebuild');"
 		log_success "Removed $total_removed duplicates ($exact_removed exact, $near_removed near, $semantic_removed semantic)"
 	fi
@@ -691,6 +695,73 @@ EOF
 }
 
 #######################################
+# Show dry-run output for consolidation candidates
+# Args: duplicates_str count
+#######################################
+_consolidate_dry_run() {
+	local duplicates="$1"
+	local count="$2"
+
+	log_info "[DRY RUN] Found $count potential consolidation pairs:"
+	echo ""
+	echo "$duplicates" | while IFS='|' read -r id1 id2 type content1 content2 _created1 _created2; do
+		echo "  [$type] #$id1 vs #$id2"
+		echo "    1: $content1..."
+		echo "    2: $content2..."
+		echo ""
+	done
+	echo ""
+	log_info "Run without --dry-run to consolidate"
+	return 0
+}
+
+#######################################
+# Merge a single consolidation pair (older survives, newer removed)
+# Args: id1 id2 created1 created2
+#######################################
+_consolidate_merge_pair() {
+	local id1="$1"
+	local id2="$2"
+	local created1="$3"
+	local created2="$4"
+
+	local older_id newer_id
+	# shellcheck disable=SC2071 # Intentional lexicographic comparison for ISO date strings
+	if [[ "$created1" < "$created2" ]]; then
+		older_id="$id1"
+		newer_id="$id2"
+	else
+		older_id="$id2"
+		newer_id="$id1"
+	fi
+
+	local older_id_esc="${older_id//"'"/"''"}"
+	local newer_id_esc="${newer_id//"'"/"''"}"
+
+	# Merge tags from newer into older
+	local older_tags newer_tags
+	older_tags=$(db "$MEMORY_DB" "SELECT tags FROM learnings WHERE id = '$older_id_esc';")
+	newer_tags=$(db "$MEMORY_DB" "SELECT tags FROM learnings WHERE id = '$newer_id_esc';")
+	if [[ -n "$newer_tags" ]]; then
+		local merged_tags
+		merged_tags=$(echo "$older_tags,$newer_tags" | tr ',' '\n' | sort -u | tr '\n' ',' | sed 's/,$//')
+		local merged_tags_esc="${merged_tags//"'"/"''"}"
+		db "$MEMORY_DB" "UPDATE learnings SET tags = '$merged_tags_esc' WHERE id = '$older_id_esc';"
+	fi
+
+	# Transfer access history
+	db "$MEMORY_DB" "UPDATE learning_access SET id = '$older_id_esc' WHERE id = '$newer_id_esc' AND NOT EXISTS (SELECT 1 FROM learning_access WHERE id = '$older_id_esc');" ||
+		echo "[WARN] Failed to transfer access history from $newer_id_esc to $older_id_esc" >&2
+
+	# Re-point relations and delete newer entry
+	db "$MEMORY_DB" "UPDATE learning_relations SET supersedes_id = '$older_id_esc' WHERE supersedes_id = '$newer_id_esc';"
+	db "$MEMORY_DB" "DELETE FROM learning_relations WHERE id = '$newer_id_esc';"
+	db "$MEMORY_DB" "DELETE FROM learning_access WHERE id = '$newer_id_esc';"
+	db "$MEMORY_DB" "DELETE FROM learnings WHERE id = '$newer_id_esc';"
+	return 0
+}
+
+#######################################
 # Consolidate similar memories
 # Merges memories with similar content to reduce redundancy
 #######################################
@@ -716,28 +787,23 @@ cmd_consolidate() {
 		esac
 	done
 
-	# Validate similarity_threshold is a valid decimal
 	if ! [[ "$similarity_threshold" =~ ^[0-9]*\.?[0-9]+$ ]]; then
 		log_error "--threshold must be a decimal number (e.g., 0.5)"
 		return 1
 	fi
-
 	if ! awk "BEGIN { exit !($similarity_threshold >= 0 && $similarity_threshold <= 1) }"; then
 		log_error "--threshold must be between 0 and 1"
 		return 1
 	fi
 
 	init_db
-
 	log_info "Analyzing memories for consolidation..."
 
-	# Find potential duplicates using FTS5 similarity
-	# Group by type and look for similar content
 	local duplicates
 	duplicates=$(
 		db "$MEMORY_DB" <<EOF
-SELECT 
-    l1.id as id1, 
+SELECT
+    l1.id as id1,
     l2.id as id2,
     l1.type,
     substr(l1.content, 1, 50) as content1,
@@ -745,11 +811,10 @@ SELECT
     l1.created_at as created1,
     l2.created_at as created2
 FROM learnings l1
-JOIN learnings l2 ON l1.type = l2.type 
+JOIN learnings l2 ON l1.type = l2.type
     AND l1.id < l2.id
     AND l1.content != l2.content
 WHERE (
-    -- Check for significant word overlap
     (SELECT COUNT(*) FROM (
         SELECT value FROM json_each('["' || replace(lower(l1.content), ' ', '","') || '"]')
         INTERSECT
@@ -772,79 +837,152 @@ EOF
 	count=$(echo "$duplicates" | wc -l | tr -d ' ')
 
 	if [[ "$dry_run" == true ]]; then
-		log_info "[DRY RUN] Found $count potential consolidation pairs:"
-		echo ""
-		echo "$duplicates" | while IFS='|' read -r id1 id2 type content1 content2 created1 created2; do
-			echo "  [$type] #$id1 vs #$id2"
-			echo "    1: $content1..."
-			echo "    2: $content2..."
-			echo ""
-		done
-		echo ""
-		log_info "Run without --dry-run to consolidate"
-	else
-		# Backup before consolidation deletes (t188)
-		local consolidate_backup
-		consolidate_backup=$(backup_sqlite_db "$MEMORY_DB" "pre-consolidate")
-		if [[ $? -ne 0 || -z "$consolidate_backup" ]]; then
-			log_warn "Backup failed before consolidation — proceeding cautiously"
-		fi
-
-		local consolidated=0
-
-		# Use here-string instead of pipe to avoid subshell variable scope issue
-		while IFS='|' read -r id1 id2 type content1 content2 created1 created2; do
-			[[ -z "$id1" ]] && continue
-
-			# Keep the older entry (more established), merge tags
-			local older_id newer_id
-			if [[ "$created1" < "$created2" ]]; then
-				older_id="$id1"
-				newer_id="$id2"
-			else
-				older_id="$id2"
-				newer_id="$id1"
-			fi
-
-			# Escape IDs for SQL injection prevention
-			local older_id_esc="${older_id//"'"/"''"}"
-			local newer_id_esc="${newer_id//"'"/"''"}"
-
-			# Merge tags from newer into older
-			local older_tags newer_tags
-			older_tags=$(db "$MEMORY_DB" "SELECT tags FROM learnings WHERE id = '$older_id_esc';")
-			newer_tags=$(db "$MEMORY_DB" "SELECT tags FROM learnings WHERE id = '$newer_id_esc';")
-
-			if [[ -n "$newer_tags" ]]; then
-				local merged_tags
-				merged_tags=$(echo "$older_tags,$newer_tags" | tr ',' '\n' | sort -u | tr '\n' ',' | sed 's/,$//')
-				# Escape merged_tags for SQL injection prevention
-				local merged_tags_esc="${merged_tags//"'"/"''"}"
-				db "$MEMORY_DB" "UPDATE learnings SET tags = '$merged_tags_esc' WHERE id = '$older_id_esc';"
-			fi
-
-			# Transfer access history
-			db "$MEMORY_DB" "UPDATE learning_access SET id = '$older_id_esc' WHERE id = '$newer_id_esc' AND NOT EXISTS (SELECT 1 FROM learning_access WHERE id = '$older_id_esc');" || echo "[WARN] Failed to transfer access history from $newer_id_esc to $older_id_esc" >&2
-
-			# Re-point relations that referenced the deleted memory to the surviving one
-			db "$MEMORY_DB" "UPDATE learning_relations SET supersedes_id = '$older_id_esc' WHERE supersedes_id = '$newer_id_esc';"
-			db "$MEMORY_DB" "DELETE FROM learning_relations WHERE id = '$newer_id_esc';"
-
-			# Delete the newer duplicate
-			db "$MEMORY_DB" "DELETE FROM learning_access WHERE id = '$newer_id_esc';"
-			db "$MEMORY_DB" "DELETE FROM learnings WHERE id = '$newer_id_esc';"
-
-			consolidated=$((consolidated + 1))
-		done <<<"$duplicates"
-
-		# Rebuild FTS index
-		db "$MEMORY_DB" "INSERT INTO learnings(learnings) VALUES('rebuild');"
-
-		log_success "Consolidated $consolidated memory pairs"
-
-		# Clean up old backups (t188)
-		cleanup_sqlite_backups "$MEMORY_DB" 5
+		_consolidate_dry_run "$duplicates" "$count"
+		return 0
 	fi
+
+	# Backup before consolidation deletes (t188)
+	local consolidate_backup
+	consolidate_backup=$(backup_sqlite_db "$MEMORY_DB" "pre-consolidate")
+	if [[ $? -ne 0 || -z "$consolidate_backup" ]]; then
+		log_warn "Backup failed before consolidation — proceeding cautiously"
+	fi
+
+	local consolidated=0
+	while IFS='|' read -r id1 id2 _type _content1 _content2 created1 created2; do
+		[[ -z "$id1" ]] && continue
+		_consolidate_merge_pair "$id1" "$id2" "$created1" "$created2"
+		consolidated=$((consolidated + 1))
+	done <<<"$duplicates"
+
+	db "$MEMORY_DB" "INSERT INTO learnings(learnings) VALUES('rebuild');"
+	log_success "Consolidated $consolidated memory pairs"
+	cleanup_sqlite_backups "$MEMORY_DB" 5
+	return 0
+}
+
+#######################################
+# Build validated SQL IN-list for type filter
+# Args: types_csv (comma-separated type names)
+# Outputs: SQL fragment on stdout, e.g. 'TYPE_A','TYPE_B'
+# Returns 1 on invalid type
+#######################################
+_prune_patterns_build_type_sql() {
+	local types_csv="$1"
+
+	local IFS=','
+	local type_parts=()
+	read -ra type_parts <<<"$types_csv"
+	unset IFS
+
+	local type_conditions=()
+	for t in "${type_parts[@]}"; do
+		local valid=false
+		for vt in $VALID_TYPES; do
+			if [[ "$t" == "$vt" ]]; then
+				valid=true
+				break
+			fi
+		done
+		if [[ "$valid" != true ]]; then
+			log_error "Invalid type '$t'. Valid types: $VALID_TYPES"
+			return 1
+		fi
+		type_conditions+=("'$t'")
+	done
+
+	if [[ ${#type_conditions[@]} -eq 0 ]]; then
+		log_error "No valid types specified"
+		return 1
+	fi
+
+	local type_sql
+	type_sql=$(printf "%s," "${type_conditions[@]}")
+	echo "${type_sql%,}"
+	return 0
+}
+
+#######################################
+# Show dry-run preview for prune-patterns
+# Args: type_sql escaped_keyword keep_count to_remove
+#######################################
+_prune_patterns_dry_run() {
+	local type_sql="$1"
+	local escaped_keyword="$2"
+	local keep_count="$3"
+	local to_remove="$4"
+
+	log_info "[DRY RUN] Would remove $to_remove entries. Entries to keep:"
+	db "$MEMORY_DB" <<EOF
+SELECT id, type, substr(content, 1, 80) || '...' as preview, created_at
+FROM learnings
+WHERE type IN ($type_sql) AND content LIKE '%${escaped_keyword}%'
+ORDER BY created_at DESC
+LIMIT $keep_count;
+EOF
+	echo ""
+	log_info "[DRY RUN] Sample entries to remove:"
+	db "$MEMORY_DB" <<EOF
+SELECT id, type, substr(content, 1, 80) || '...' as preview, created_at
+FROM learnings
+WHERE type IN ($type_sql) AND content LIKE '%${escaped_keyword}%'
+ORDER BY created_at DESC
+LIMIT 5 OFFSET $keep_count;
+EOF
+	return 0
+}
+
+#######################################
+# Execute the prune-patterns deletion
+# Args: type_sql escaped_keyword keep_count to_remove keyword
+#######################################
+_prune_patterns_execute() {
+	local type_sql="$1"
+	local escaped_keyword="$2"
+	local keep_count="$3"
+	local to_remove="$4"
+	local keyword="$5"
+
+	local prune_backup
+	prune_backup=$(backup_sqlite_db "$MEMORY_DB" "pre-prune-patterns")
+	if [[ $? -ne 0 || -z "$prune_backup" ]]; then
+		log_warn "Backup failed before prune-patterns — proceeding cautiously"
+	fi
+
+	local keep_ids
+	keep_ids=$(
+		db "$MEMORY_DB" <<EOF
+SELECT id FROM learnings
+WHERE type IN ($type_sql) AND content LIKE '%${escaped_keyword}%'
+ORDER BY created_at DESC
+LIMIT $keep_count;
+EOF
+	)
+
+	local exclude_sql=""
+	while IFS= read -r kid; do
+		[[ -z "$kid" ]] && continue
+		local kid_esc="${kid//"'"/"''"}"
+		if [[ -z "$exclude_sql" ]]; then
+			exclude_sql="'$kid_esc'"
+		else
+			exclude_sql="$exclude_sql,'$kid_esc'"
+		fi
+	done <<<"$keep_ids"
+
+	local delete_where="type IN ($type_sql) AND content LIKE '%${escaped_keyword}%'"
+	if [[ -n "$exclude_sql" ]]; then
+		delete_where="$delete_where AND id NOT IN ($exclude_sql)"
+	fi
+
+	db_cleanup "$MEMORY_DB" "DELETE FROM learning_relations WHERE id IN (SELECT id FROM learnings WHERE $delete_where);"
+	db_cleanup "$MEMORY_DB" "DELETE FROM learning_relations WHERE supersedes_id IN (SELECT id FROM learnings WHERE $delete_where);"
+	db "$MEMORY_DB" "DELETE FROM learning_access WHERE id IN (SELECT id FROM learnings WHERE $delete_where);"
+	db "$MEMORY_DB" "DELETE FROM learnings WHERE $delete_where;"
+	db "$MEMORY_DB" "INSERT INTO learnings(learnings) VALUES('rebuild');"
+
+	log_success "Pruned $to_remove repetitive '$keyword' entries (kept $keep_count newest)"
+	cleanup_sqlite_backups "$MEMORY_DB" 5
 	return 0
 }
 
@@ -892,7 +1030,6 @@ cmd_prune_patterns() {
 		return 1
 	fi
 
-	# Validate keep_count is a positive integer
 	if ! [[ "$keep_count" =~ ^[1-9][0-9]*$ ]]; then
 		log_error "--keep must be a positive integer (got: $keep_count)"
 		return 1
@@ -900,38 +1037,10 @@ cmd_prune_patterns() {
 
 	init_db
 
-	# Build type filter SQL (validate each type against VALID_TYPES to prevent SQL injection)
-	local type_sql=""
-	local IFS=','
-	local type_parts=()
-	read -ra type_parts <<<"$types"
-	unset IFS
-	local type_conditions=()
-	for t in "${type_parts[@]}"; do
-		# Validate against VALID_TYPES allowlist
-		local valid=false
-		for vt in $VALID_TYPES; do
-			if [[ "$t" == "$vt" ]]; then
-				valid=true
-				break
-			fi
-		done
-		if [[ "$valid" != true ]]; then
-			log_error "Invalid type '$t'. Valid types: $VALID_TYPES"
-			return 1
-		fi
-		type_conditions+=("'$t'")
-	done
-	if [[ ${#type_conditions[@]} -eq 0 ]]; then
-		log_error "No valid types specified"
-		return 1
-	fi
-	type_sql=$(printf "%s," "${type_conditions[@]}")
-	type_sql="${type_sql%,}"
+	local type_sql
+	type_sql=$(_prune_patterns_build_type_sql "$types") || return 1
 
 	local escaped_keyword="${keyword//"'"/"''"}"
-
-	# Count matching entries
 	local total_count
 	total_count=$(db "$MEMORY_DB" \
 		"SELECT COUNT(*) FROM learnings WHERE type IN ($type_sql) AND content LIKE '%${escaped_keyword}%';")
@@ -946,76 +1055,11 @@ cmd_prune_patterns() {
 	log_info "Will keep $keep_count newest entries, remove $to_remove"
 
 	if [[ "$dry_run" == true ]]; then
-		log_info "[DRY RUN] Would remove $to_remove entries. Entries to keep:"
-		db "$MEMORY_DB" <<EOF
-SELECT id, type, substr(content, 1, 80) || '...' as preview, created_at
-FROM learnings
-WHERE type IN ($type_sql) AND content LIKE '%${escaped_keyword}%'
-ORDER BY created_at DESC
-LIMIT $keep_count;
-EOF
-		echo ""
-		log_info "[DRY RUN] Sample entries to remove:"
-		db "$MEMORY_DB" <<EOF
-SELECT id, type, substr(content, 1, 80) || '...' as preview, created_at
-FROM learnings
-WHERE type IN ($type_sql) AND content LIKE '%${escaped_keyword}%'
-ORDER BY created_at DESC
-LIMIT 5 OFFSET $keep_count;
-EOF
+		_prune_patterns_dry_run "$type_sql" "$escaped_keyword" "$keep_count" "$to_remove"
 		return 0
 	fi
 
-	# Backup before bulk delete
-	local prune_backup
-	prune_backup=$(backup_sqlite_db "$MEMORY_DB" "pre-prune-patterns")
-	if [[ $? -ne 0 || -z "$prune_backup" ]]; then
-		log_warn "Backup failed before prune-patterns — proceeding cautiously"
-	fi
-
-	# Get IDs to keep (newest N per type combination)
-	local keep_ids
-	keep_ids=$(
-		db "$MEMORY_DB" <<EOF
-SELECT id FROM learnings
-WHERE type IN ($type_sql) AND content LIKE '%${escaped_keyword}%'
-ORDER BY created_at DESC
-LIMIT $keep_count;
-EOF
-	)
-
-	# Build exclusion list
-	local exclude_sql=""
-	while IFS= read -r kid; do
-		[[ -z "$kid" ]] && continue
-		local kid_esc="${kid//"'"/"''"}"
-		if [[ -z "$exclude_sql" ]]; then
-			exclude_sql="'$kid_esc'"
-		else
-			exclude_sql="$exclude_sql,'$kid_esc'"
-		fi
-	done <<<"$keep_ids"
-
-	# Delete matching entries except the ones we're keeping
-	local delete_where="type IN ($type_sql) AND content LIKE '%${escaped_keyword}%'"
-	if [[ -n "$exclude_sql" ]]; then
-		delete_where="$delete_where AND id NOT IN ($exclude_sql)"
-	fi
-
-	# Clean up relations first
-	db_cleanup "$MEMORY_DB" "DELETE FROM learning_relations WHERE id IN (SELECT id FROM learnings WHERE $delete_where);"
-	db_cleanup "$MEMORY_DB" "DELETE FROM learning_relations WHERE supersedes_id IN (SELECT id FROM learnings WHERE $delete_where);"
-	db "$MEMORY_DB" "DELETE FROM learning_access WHERE id IN (SELECT id FROM learnings WHERE $delete_where);"
-	db "$MEMORY_DB" "DELETE FROM learnings WHERE $delete_where;"
-
-	# Rebuild FTS index
-	db "$MEMORY_DB" "INSERT INTO learnings(learnings) VALUES('rebuild');"
-
-	log_success "Pruned $to_remove repetitive '$keyword' entries (kept $keep_count newest)"
-
-	# Clean up old backups
-	cleanup_sqlite_backups "$MEMORY_DB" 5
-
+	_prune_patterns_execute "$type_sql" "$escaped_keyword" "$keep_count" "$to_remove" "$keyword"
 	return 0
 }
 
@@ -1219,6 +1263,107 @@ cmd_namespaces_prune() {
 }
 
 #######################################
+# Resolve source and target DB paths for namespace migration
+# Args: from_ns to_ns
+# Outputs: "from_db|to_db|to_dir" on stdout
+# Returns 1 if source DB does not exist
+#######################################
+_migrate_resolve_dbs() {
+	local from_ns="$1"
+	local to_ns="$2"
+
+	local from_db
+	if [[ "$from_ns" == "global" ]]; then
+		from_db="$MEMORY_BASE_DIR/memory.db"
+	else
+		from_db="$MEMORY_BASE_DIR/namespaces/$from_ns/memory.db"
+	fi
+
+	if [[ ! -f "$from_db" ]]; then
+		log_error "Source not found: $from_db"
+		return 1
+	fi
+
+	local to_db to_dir
+	if [[ "$to_ns" == "global" ]]; then
+		to_db="$MEMORY_BASE_DIR/memory.db"
+		to_dir="$MEMORY_BASE_DIR"
+	else
+		to_dir="$MEMORY_BASE_DIR/namespaces/$to_ns"
+		to_db="$to_dir/memory.db"
+	fi
+
+	echo "${from_db}|${to_db}|${to_dir}"
+	return 0
+}
+
+#######################################
+# Copy entries from source DB to target DB using ATTACH DATABASE
+# Args: from_db to_db to_dir from_ns to_ns count
+#######################################
+_migrate_execute() {
+	local from_db="$1"
+	local to_db="$2"
+	local to_dir="$3"
+	local _from_ns="$4"
+	local to_ns="$5"
+	local count="$6"
+
+	mkdir -p "$to_dir"
+	local saved_dir="$MEMORY_DIR"
+	local saved_db="$MEMORY_DB"
+	MEMORY_DIR="$to_dir"
+	MEMORY_DB="$to_db"
+	init_db
+	MEMORY_DIR="$saved_dir"
+	MEMORY_DB="$saved_db"
+
+	db "$to_db" <<EOF
+ATTACH DATABASE '$from_db' AS source;
+
+INSERT OR IGNORE INTO learnings (id, session_id, content, type, tags, confidence, created_at, event_date, project_path, source)
+SELECT id, session_id, content, type, tags, confidence, created_at, event_date, project_path, source
+FROM source.learnings;
+
+INSERT OR IGNORE INTO learning_access (id, last_accessed_at, access_count)
+SELECT id, last_accessed_at, access_count
+FROM source.learning_access;
+
+INSERT OR IGNORE INTO learning_relations (id, supersedes_id, relation_type, created_at)
+SELECT id, supersedes_id, relation_type, created_at
+FROM source.learning_relations;
+
+DETACH DATABASE source;
+EOF
+
+	log_success "Migrated $count entries to '$to_ns'"
+	return 0
+}
+
+#######################################
+# Clear source DB after a --move migration (with backup)
+# Args: from_db to_ns
+#######################################
+_migrate_move_source() {
+	local from_db="$1"
+	local to_ns="$2"
+
+	backup_sqlite_db "$from_db" "pre-move-to-${to_ns}" >/dev/null 2>&1 ||
+		log_warn "Backup of source failed before move"
+
+	# All DELETEs in a single transaction for atomicity (GH#3776)
+	db "$from_db" <<'EOF'
+BEGIN TRANSACTION;
+DELETE FROM learning_relations;
+DELETE FROM learning_access;
+DELETE FROM learnings;
+INSERT INTO learnings(learnings) VALUES('rebuild');
+COMMIT;
+EOF
+	return 0
+}
+
+#######################################
 # Migrate memories between namespaces
 # Copies entries from one namespace (or global) to another
 #######################################
@@ -1259,31 +1404,12 @@ cmd_namespaces_migrate() {
 		return 1
 	fi
 
-	# Resolve source DB
-	local from_db
-	if [[ "$from_ns" == "global" ]]; then
-		from_db="$MEMORY_BASE_DIR/memory.db"
-	else
-		from_db="$MEMORY_BASE_DIR/namespaces/$from_ns/memory.db"
-	fi
+	local db_paths
+	db_paths=$(_migrate_resolve_dbs "$from_ns" "$to_ns") || return 1
 
-	if [[ ! -f "$from_db" ]]; then
-		log_error "Source not found: $from_db"
-		return 1
-	fi
+	local from_db to_db to_dir
+	IFS='|' read -r from_db to_db to_dir <<<"$db_paths"
 
-	# Resolve target DB
-	local to_db
-	local to_dir
-	if [[ "$to_ns" == "global" ]]; then
-		to_db="$MEMORY_BASE_DIR/memory.db"
-		to_dir="$MEMORY_BASE_DIR"
-	else
-		to_dir="$MEMORY_BASE_DIR/namespaces/$to_ns"
-		to_db="$to_dir/memory.db"
-	fi
-
-	# Count entries to migrate
 	local count
 	count=$(db "$from_db" "SELECT COUNT(*) FROM learnings;" 2>/dev/null || echo "0")
 
@@ -1300,52 +1426,10 @@ cmd_namespaces_migrate() {
 		return 0
 	fi
 
-	# Ensure target DB exists with correct schema
-	mkdir -p "$to_dir"
-	local saved_dir="$MEMORY_DIR"
-	local saved_db="$MEMORY_DB"
-	MEMORY_DIR="$to_dir"
-	MEMORY_DB="$to_db"
-	init_db
-	MEMORY_DIR="$saved_dir"
-	MEMORY_DB="$saved_db"
+	_migrate_execute "$from_db" "$to_db" "$to_dir" "$from_ns" "$to_ns" "$count"
 
-	# Migrate using ATTACH DATABASE
-	db "$to_db" <<EOF
-ATTACH DATABASE '$from_db' AS source;
-
--- Insert entries that don't already exist (by id)
-INSERT OR IGNORE INTO learnings (id, session_id, content, type, tags, confidence, created_at, event_date, project_path, source)
-SELECT id, session_id, content, type, tags, confidence, created_at, event_date, project_path, source
-FROM source.learnings;
-
--- Migrate access tracking
-INSERT OR IGNORE INTO learning_access (id, last_accessed_at, access_count)
-SELECT id, last_accessed_at, access_count
-FROM source.learning_access;
-
--- Migrate relations
-INSERT OR IGNORE INTO learning_relations (id, supersedes_id, relation_type, created_at)
-SELECT id, supersedes_id, relation_type, created_at
-FROM source.learning_relations;
-
-DETACH DATABASE source;
-EOF
-
-	log_success "Migrated $count entries from '$from_ns' to '$to_ns'"
-
-	# If --move, delete from source (with backup — t188)
-	# All DELETEs in a single transaction for atomicity (GH#3776)
 	if [[ "$move" == true ]]; then
-		backup_sqlite_db "$from_db" "pre-move-to-${to_ns}" >/dev/null 2>&1 || log_warn "Backup of source failed before move"
-		db "$from_db" <<'EOF'
-BEGIN TRANSACTION;
-DELETE FROM learning_relations;
-DELETE FROM learning_access;
-DELETE FROM learnings;
-INSERT INTO learnings(learnings) VALUES('rebuild');
-COMMIT;
-EOF
+		_migrate_move_source "$from_db" "$to_ns"
 		log_info "Cleared source: $from_ns"
 	fi
 
