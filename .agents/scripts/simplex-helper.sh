@@ -789,6 +789,88 @@ cmd_status() {
 	return 0
 }
 
+# Download and run the SimpleX server installer, then print init instructions.
+_cmd_server_init() {
+	local server_type="$1"
+	local fqdn="$2"
+
+	if [[ -z "$fqdn" ]]; then
+		log_error "FQDN required for server init: --fqdn <domain>"
+		return 1
+	fi
+
+	log_warn "This will download and execute a server installer script from:"
+	log_warn "  ${SERVER_INSTALL_URL}"
+	log_warn "Review the script at the URL above before proceeding."
+	log_info "Downloading SimpleX server installer..."
+	local installer
+	installer="$(mktemp /tmp/simplex-server-install-XXXXXX.sh)"
+
+	if ! curl -fsSLo "$installer" "$SERVER_INSTALL_URL"; then
+		log_error "Failed to download server installer"
+		rm -f "$installer"
+		return 1
+	fi
+
+	log_info "Running server installer (choose option for ${server_type}-server)..."
+	if ! bash "$installer"; then
+		log_error "Server installation failed"
+		rm -f "$installer"
+		return 1
+	fi
+	rm -f "$installer"
+
+	log_info "Initialize the server:"
+	if [[ "$server_type" == "smp" ]]; then
+		log_info "  su smp -c 'smp-server init --yes --store-log --control-port --fqdn=${fqdn}'"
+	else
+		log_info "  su xftp -c 'xftp-server init -l --fqdn=${fqdn} -q 100gb -p /srv/xftp/'"
+	fi
+	return 0
+}
+
+# Enable and start a SimpleX server systemd service.
+_cmd_server_start() {
+	local service_name="$1"
+
+	log_info "Starting ${service_name}..."
+	if command -v systemctl &>/dev/null; then
+		sudo systemctl enable --now "${service_name}.service"
+		log_success "${service_name} started"
+	else
+		log_error "systemctl not available. Start the server manually."
+		return 1
+	fi
+	return 0
+}
+
+# Stop a SimpleX server systemd service.
+_cmd_server_stop() {
+	local service_name="$1"
+
+	log_info "Stopping ${service_name}..."
+	if command -v systemctl &>/dev/null; then
+		sudo systemctl stop "${service_name}.service"
+		log_success "${service_name} stopped"
+	else
+		log_error "systemctl not available. Stop the server manually."
+		return 1
+	fi
+	return 0
+}
+
+# Show systemd status for a SimpleX server service.
+_cmd_server_status() {
+	local service_name="$1"
+
+	if command -v systemctl &>/dev/null; then
+		systemctl status "${service_name}.service" 2>/dev/null || log_info "${service_name} not found or not running"
+	else
+		log_info "systemctl not available"
+	fi
+	return 0
+}
+
 cmd_server() {
 	local action=""
 	local server_type="smp"
@@ -849,67 +931,10 @@ cmd_server() {
 	local service_name="${server_type}-server"
 
 	case "$action" in
-	init)
-		if [[ -z "$fqdn" ]]; then
-			log_error "FQDN required for server init: --fqdn <domain>"
-			return 1
-		fi
-
-		log_warn "This will download and execute a server installer script from:"
-		log_warn "  ${SERVER_INSTALL_URL}"
-		log_warn "Review the script at the URL above before proceeding."
-		log_info "Downloading SimpleX server installer..."
-		local installer
-		installer="$(mktemp /tmp/simplex-server-install-XXXXXX.sh)"
-
-		if ! curl -fsSLo "$installer" "$SERVER_INSTALL_URL"; then
-			log_error "Failed to download server installer"
-			rm -f "$installer"
-			return 1
-		fi
-
-		log_info "Running server installer (choose option for ${server_type}-server)..."
-		if ! bash "$installer"; then
-			log_error "Server installation failed"
-			rm -f "$installer"
-			return 1
-		fi
-		rm -f "$installer"
-
-		log_info "Initialize the server:"
-		if [[ "$server_type" == "smp" ]]; then
-			log_info "  su smp -c 'smp-server init --yes --store-log --control-port --fqdn=${fqdn}'"
-		else
-			log_info "  su xftp -c 'xftp-server init -l --fqdn=${fqdn} -q 100gb -p /srv/xftp/'"
-		fi
-		;;
-	start)
-		log_info "Starting ${service_name}..."
-		if command -v systemctl &>/dev/null; then
-			sudo systemctl enable --now "${service_name}.service"
-			log_success "${service_name} started"
-		else
-			log_error "systemctl not available. Start the server manually."
-			return 1
-		fi
-		;;
-	stop)
-		log_info "Stopping ${service_name}..."
-		if command -v systemctl &>/dev/null; then
-			sudo systemctl stop "${service_name}.service"
-			log_success "${service_name} stopped"
-		else
-			log_error "systemctl not available. Stop the server manually."
-			return 1
-		fi
-		;;
-	status)
-		if command -v systemctl &>/dev/null; then
-			systemctl status "${service_name}.service" 2>/dev/null || log_info "${service_name} not found or not running"
-		else
-			log_info "systemctl not available"
-		fi
-		;;
+	init) _cmd_server_init "$server_type" "$fqdn" || return 1 ;;
+	start) _cmd_server_start "$service_name" || return 1 ;;
+	stop) _cmd_server_stop "$service_name" || return 1 ;;
+	status) _cmd_server_status "$service_name" ;;
 	esac
 
 	return 0
