@@ -425,6 +425,28 @@ run_freshness_checks() {
 # Called from cmd_check after the main aidevops update logic.
 # Respects config: aidevops config set updates.skill_auto_update false
 #######################################
+#######################################
+# Execute skill update and return count of updates applied.
+# Args: $1 = path to skill-update-helper.sh
+# Outputs: update count on stdout
+#######################################
+_run_skill_update() {
+	local skill_update_script="$1"
+	local skill_updates=0
+
+	if "$skill_update_script" check --auto-update --quiet >>"$LOG_FILE" 2>&1; then
+		log_info "Skill freshness check complete (all up to date)"
+	else
+		# Exit code 1 means updates were available (and applied) — not an error
+		# Count updated skills via JSON check (best-effort)
+		skill_updates=$("$skill_update_script" check --json 2>/dev/null |
+			jq -r '.updates_available // 0' 2>/dev/null || echo "1")
+		log_info "Skill freshness check complete ($skill_updates updates applied)"
+	fi
+	echo "$skill_updates"
+	return 0
+}
+
 check_skill_freshness() {
 	# Opt-out via config (env var or config file)
 	if ! is_feature_enabled skill_auto_update 2>/dev/null; then
@@ -432,52 +454,21 @@ check_skill_freshness() {
 		return 0
 	fi
 
-	# Read from JSONC config (handles env var > user config > defaults priority)
 	local freshness_hours
-	freshness_hours=$(get_feature_toggle skill_freshness_hours "$DEFAULT_SKILL_FRESHNESS_HOURS")
-	# Validate freshness_hours is a positive integer (non-numeric crashes under set -e)
-	if ! [[ "$freshness_hours" =~ ^[0-9]+$ ]] || [[ "$freshness_hours" -eq 0 ]]; then
-		log_warn "updates.skill_freshness_hours='${freshness_hours}' is not a positive integer — using default (${DEFAULT_SKILL_FRESHNESS_HOURS}h)"
-		freshness_hours="$DEFAULT_SKILL_FRESHNESS_HOURS"
-	fi
+	freshness_hours=$(_get_validated_freshness_hours "skill_freshness_hours" "$DEFAULT_SKILL_FRESHNESS_HOURS" "updates.skill_freshness_hours")
 	local freshness_seconds=$((freshness_hours * 3600))
 
-	# Read last skill check timestamp from state file
-	local last_skill_check=""
-	if [[ -f "$STATE_FILE" ]] && command -v jq &>/dev/null; then
-		last_skill_check=$(jq -r '.last_skill_check // empty' "$STATE_FILE" 2>/dev/null || true)
-	fi
-
-	# Determine if check is needed
-	local needs_check=true
-	if [[ -n "$last_skill_check" ]]; then
-		local last_epoch now_epoch elapsed
-		if [[ "$(uname)" == "Darwin" ]]; then
-			# TZ=UTC: stored timestamps are UTC — macOS date -j ignores the Z suffix
-			last_epoch=$(TZ=UTC date -j -f "%Y-%m-%dT%H:%M:%SZ" "$last_skill_check" "+%s" 2>/dev/null || echo "0")
-		else
-			last_epoch=$(date -d "$last_skill_check" "+%s" 2>/dev/null || echo "0")
-		fi
-		now_epoch=$(date +%s)
-		elapsed=$((now_epoch - last_epoch))
-
-		if [[ $elapsed -lt $freshness_seconds ]]; then
-			log_info "Skills checked ${elapsed}s ago (gate: ${freshness_seconds}s) — skipping"
-			needs_check=false
-		fi
-	fi
-
-	if [[ "$needs_check" != "true" ]]; then
+	# Time gate: skip if checked recently
+	local gate_result
+	gate_result=$(_check_freshness_time_gate "last_skill_check" "$freshness_seconds" "Skills")
+	if [[ "$gate_result" == "skip" ]]; then
 		return 0
 	fi
 
 	# Locate skill-update-helper.sh
-	local skill_update_script="$HOME/.aidevops/agents/scripts/skill-update-helper.sh"
-	if [[ ! -x "$skill_update_script" ]]; then
-		skill_update_script="$INSTALL_DIR/.agents/scripts/skill-update-helper.sh"
-	fi
-
-	if [[ ! -x "$skill_update_script" ]]; then
+	local skill_update_script
+	skill_update_script=$(_locate_helper_script "skill-update-helper.sh")
+	if [[ -z "$skill_update_script" ]]; then
 		log_warn "skill-update-helper.sh not found — skipping skill freshness check"
 		return 0
 	fi
@@ -491,17 +482,8 @@ check_skill_freshness() {
 	fi
 
 	log_info "Running daily skill freshness check..."
-	local skill_updates=0
-	if "$skill_update_script" check --auto-update --quiet >>"$LOG_FILE" 2>&1; then
-		log_info "Skill freshness check complete (all up to date)"
-	else
-		# Exit code 1 means updates were available (and applied) — not an error
-		# Count updated skills via JSON check (best-effort)
-		skill_updates=$("$skill_update_script" check --json 2>/dev/null |
-			jq -r '.updates_available // 0' 2>/dev/null || echo "1")
-		log_info "Skill freshness check complete ($skill_updates updates applied)"
-	fi
-
+	local skill_updates
+	skill_updates=$(_run_skill_update "$skill_update_script")
 	update_skill_check_timestamp "$skill_updates"
 	return 0
 }
@@ -541,63 +523,16 @@ update_skill_check_timestamp() {
 # Respects config: aidevops config set updates.openclaw_auto_update false
 # Only runs if openclaw CLI is installed.
 #######################################
-check_openclaw_freshness() {
-	# Opt-out via config (env var or config file)
-	if ! is_feature_enabled openclaw_auto_update 2>/dev/null; then
-		log_info "OpenClaw auto-update disabled via config"
-		return 0
-	fi
-
-	# Skip if openclaw is not installed
-	if ! command -v openclaw &>/dev/null; then
-		return 0
-	fi
-
-	# Read from JSONC config (handles env var > user config > defaults priority)
-	local freshness_hours
-	freshness_hours=$(get_feature_toggle openclaw_freshness_hours "$DEFAULT_OPENCLAW_FRESHNESS_HOURS")
-	if ! [[ "$freshness_hours" =~ ^[0-9]+$ ]] || [[ "$freshness_hours" -eq 0 ]]; then
-		log_warn "updates.openclaw_freshness_hours='${freshness_hours}' is not a positive integer — using default (${DEFAULT_OPENCLAW_FRESHNESS_HOURS}h)"
-		freshness_hours="$DEFAULT_OPENCLAW_FRESHNESS_HOURS"
-	fi
-	local freshness_seconds=$((freshness_hours * 3600))
-
-	# Read last openclaw check timestamp from state file
-	local last_openclaw_check=""
-	if [[ -f "$STATE_FILE" ]] && command -v jq &>/dev/null; then
-		last_openclaw_check=$(jq -r '.last_openclaw_check // empty' "$STATE_FILE" 2>/dev/null || true)
-	fi
-
-	# Determine if check is needed
-	local needs_check=true
-	if [[ -n "$last_openclaw_check" ]]; then
-		local last_epoch now_epoch elapsed
-		if [[ "$(uname)" == "Darwin" ]]; then
-			# TZ=UTC: stored timestamps are UTC — macOS date -j ignores the Z suffix
-			last_epoch=$(TZ=UTC date -j -f "%Y-%m-%dT%H:%M:%SZ" "$last_openclaw_check" "+%s" 2>/dev/null || echo "0")
-		else
-			last_epoch=$(date -d "$last_openclaw_check" "+%s" 2>/dev/null || echo "0")
-		fi
-		now_epoch=$(date +%s)
-		elapsed=$((now_epoch - last_epoch))
-
-		if [[ $elapsed -lt $freshness_seconds ]]; then
-			log_info "OpenClaw checked ${elapsed}s ago (gate: ${freshness_seconds}s) — skipping"
-			needs_check=false
-		fi
-	fi
-
-	if [[ "$needs_check" != "true" ]]; then
-		return 0
-	fi
-
-	log_info "Running daily OpenClaw update check..."
+#######################################
+# Execute the openclaw update command and log results.
+# Handles channel detection and version comparison.
+#######################################
+_run_openclaw_update() {
 	local before_version after_version
 	before_version=$(openclaw --version 2>/dev/null | head -1 || echo "unknown")
 
 	# Determine update channel from openclaw config (default: current channel)
 	local -a update_cmd=(openclaw update --yes --no-restart)
-	# Check if user has a channel preference in openclaw config
 	local openclaw_channel=""
 	openclaw_channel=$(openclaw update status 2>/dev/null | grep "Channel" | sed 's/[^a-zA-Z]*Channel[^a-zA-Z]*//' | awk '{print $1}' || true)
 	if [[ "$openclaw_channel" =~ ^(beta|dev)$ ]]; then
@@ -614,7 +549,34 @@ check_openclaw_freshness() {
 	else
 		log_warn "OpenClaw update failed (exit code: $?)"
 	fi
+	return 0
+}
 
+check_openclaw_freshness() {
+	# Opt-out via config (env var or config file)
+	if ! is_feature_enabled openclaw_auto_update 2>/dev/null; then
+		log_info "OpenClaw auto-update disabled via config"
+		return 0
+	fi
+
+	# Skip if openclaw is not installed
+	if ! command -v openclaw &>/dev/null; then
+		return 0
+	fi
+
+	local freshness_hours
+	freshness_hours=$(_get_validated_freshness_hours "openclaw_freshness_hours" "$DEFAULT_OPENCLAW_FRESHNESS_HOURS" "updates.openclaw_freshness_hours")
+	local freshness_seconds=$((freshness_hours * 3600))
+
+	# Time gate: skip if checked recently
+	local gate_result
+	gate_result=$(_check_freshness_time_gate "last_openclaw_check" "$freshness_seconds" "OpenClaw")
+	if [[ "$gate_result" == "skip" ]]; then
+		return 0
+	fi
+
+	log_info "Running daily OpenClaw update check..."
+	_run_openclaw_update
 	update_openclaw_check_timestamp
 	return 0
 }
@@ -644,44 +606,38 @@ update_openclaw_check_timestamp() {
 }
 
 #######################################
-# Get user idle time in seconds (cross-platform)
-# macOS: IOKit HIDIdleTime (nanoseconds, works even without a GUI session)
-# Linux with X11: xprintidle (milliseconds) — requires X display
-# Linux with libinput: parse /sys/class/input/*/device/events (best-effort)
-# Linux TTY/headless: use shortest session idle from /proc (w command)
-# Headless server (no display, no TTY users): returns 999999 (always idle)
-# Returns: idle seconds on stdout, 0 on error (safe default = "user active")
+# Get macOS idle time via IOKit HIDIdleTime (nanoseconds).
+# Outputs idle seconds on stdout, or empty string if unavailable.
 #######################################
-get_user_idle_seconds() {
-	local idle_ns idle_ms idle_secs
-
-	# macOS: IOKit HIDIdleTime (always available, even over SSH)
-	if [[ "$(uname)" == "Darwin" ]]; then
-		idle_ns=$(ioreg -c IOHIDSystem 2>/dev/null | awk '/HIDIdleTime/ {gsub(/[^0-9]/, "", $NF); print $NF; exit}')
-		if [[ -n "$idle_ns" && "$idle_ns" =~ ^[0-9]+$ ]]; then
-			# HIDIdleTime is in nanoseconds
-			idle_secs=$((idle_ns / 1000000000))
-			echo "$idle_secs"
-			return 0
-		fi
-		echo "0"
+_get_idle_seconds_macos() {
+	local idle_ns
+	idle_ns=$(ioreg -c IOHIDSystem 2>/dev/null | awk '/HIDIdleTime/ {gsub(/[^0-9]/, "", $NF); print $NF; exit}')
+	if [[ -n "$idle_ns" && "$idle_ns" =~ ^[0-9]+$ ]]; then
+		echo "$((idle_ns / 1000000000))"
 		return 0
 	fi
+	echo "0"
+	return 0
+}
 
-	# Linux: try xprintidle first (X11, most accurate for desktop)
+#######################################
+# Get Linux idle time via xprintidle (X11) or dbus (Wayland).
+# Outputs idle seconds on stdout, or empty string if unavailable.
+#######################################
+_get_idle_seconds_linux_desktop() {
+	local idle_ms idle_secs
+
+	# xprintidle: X11, most accurate for desktop
 	if command -v xprintidle &>/dev/null && [[ -n "${DISPLAY:-}" ]]; then
 		idle_ms=$(xprintidle 2>/dev/null || echo "")
 		if [[ -n "$idle_ms" && "$idle_ms" =~ ^[0-9]+$ ]]; then
-			idle_secs=$((idle_ms / 1000))
-			echo "$idle_secs"
+			echo "$((idle_ms / 1000))"
 			return 0
 		fi
 	fi
 
-	# Linux: try dbus-send to GNOME/KDE screensaver (Wayland-compatible)
+	# dbus-send: GNOME/KDE screensaver (Wayland-compatible)
 	if command -v dbus-send &>/dev/null && [[ -n "${DBUS_SESSION_BUS_ADDRESS:-}" ]]; then
-		# GetSessionIdleTime returns seconds since last user input (keyboard/mouse)
-		# (GetActiveTime only measures screensaver runtime, which is 0 when not active)
 		idle_secs=$(dbus-send --session --dest=org.gnome.ScreenSaver \
 			--type=method_call --print-reply /org/gnome/ScreenSaver \
 			org.gnome.ScreenSaver.GetSessionIdleTime 2>/dev/null |
@@ -692,53 +648,101 @@ get_user_idle_seconds() {
 		fi
 	fi
 
-	# Linux: parse w(1) for shortest session idle (works on TTY and SSH)
-	# w output format: USER TTY FROM LOGIN@ IDLE JCPU PCPU WHAT
-	# IDLE can be: "3:42" (min:sec), "2days", "23:15m", "0.50s", etc.
-	if command -v w &>/dev/null; then
-		local min_idle
-		min_idle=999999
-		local found_user
-		found_user=false
-		local idle_field
-		# Parse w(1) output: extract idle field (5th column) using read builtin
-		local _user _tty _from _login _jcpu _pcpu _what
-		while read -r _user _tty _from _login idle_field _jcpu _pcpu _what; do
-			# Skip header lines
-			[[ "$_user" == "USER" ]] && continue
-			[[ -z "$idle_field" ]] && continue
-			found_user=true
+	echo ""
+	return 0
+}
 
-			local parsed
-			parsed=0
-			if [[ "$idle_field" =~ ^([0-9]+)days$ ]]; then
-				# Use 10# prefix to force base-10 (avoids octal interpretation of "08", "09")
-				parsed=$((10#${BASH_REMATCH[1]} * 86400))
-			elif [[ "$idle_field" =~ ^([0-9]+):([0-9]+)m$ ]]; then
-				# hours:minutes format (e.g. "23:15m")
-				parsed=$((10#${BASH_REMATCH[1]} * 3600 + 10#${BASH_REMATCH[2]} * 60))
-			elif [[ "$idle_field" =~ ^([0-9]+):([0-9]+)$ ]]; then
-				# minutes:seconds format (e.g. "3:42", "08:09")
-				parsed=$((10#${BASH_REMATCH[1]} * 60 + 10#${BASH_REMATCH[2]}))
-			elif [[ "$idle_field" =~ ^([0-9]+)\.([0-9]+)s$ ]]; then
-				parsed="$((10#${BASH_REMATCH[1]}))"
-			elif [[ "$idle_field" =~ ^([0-9]+)s$ ]]; then
-				parsed="$((10#${BASH_REMATCH[1]}))"
-			fi
+#######################################
+# Parse a single w(1) idle field into seconds.
+# w IDLE formats: "3:42" (min:sec), "2days", "23:15m", "0.50s", "5s"
+# Args: $1 = idle field string
+# Outputs: seconds on stdout
+#######################################
+_parse_w_idle_field() {
+	local idle_field="$1"
+	local parsed=0
 
-			if [[ $parsed -lt $min_idle ]]; then
-				min_idle=$parsed
-			fi
-		done < <(w -h 2>/dev/null || w 2>/dev/null)
+	if [[ "$idle_field" =~ ^([0-9]+)days$ ]]; then
+		# Use 10# prefix to force base-10 (avoids octal interpretation of "08", "09")
+		parsed=$((10#${BASH_REMATCH[1]} * 86400))
+	elif [[ "$idle_field" =~ ^([0-9]+):([0-9]+)m$ ]]; then
+		parsed=$((10#${BASH_REMATCH[1]} * 3600 + 10#${BASH_REMATCH[2]} * 60))
+	elif [[ "$idle_field" =~ ^([0-9]+):([0-9]+)$ ]]; then
+		parsed=$((10#${BASH_REMATCH[1]} * 60 + 10#${BASH_REMATCH[2]}))
+	elif [[ "$idle_field" =~ ^([0-9]+)\.([0-9]+)s$ ]]; then
+		parsed=$((10#${BASH_REMATCH[1]}))
+	elif [[ "$idle_field" =~ ^([0-9]+)s$ ]]; then
+		parsed=$((10#${BASH_REMATCH[1]}))
+	fi
 
-		if [[ "$found_user" == "true" ]]; then
-			echo "$min_idle"
-			return 0
+	echo "$parsed"
+	return 0
+}
+
+#######################################
+# Get Linux idle time from w(1) — shortest session idle (TTY/SSH).
+# Outputs idle seconds on stdout, or empty string if no users found.
+#######################################
+_get_idle_seconds_linux_w() {
+	if ! command -v w &>/dev/null; then
+		echo ""
+		return 0
+	fi
+
+	local min_idle=999999
+	local found_user=false
+	local idle_field
+	local _user _tty _from _login _jcpu _pcpu _what
+	while read -r _user _tty _from _login idle_field _jcpu _pcpu _what; do
+		[[ "$_user" == "USER" ]] && continue
+		[[ -z "$idle_field" ]] && continue
+		found_user=true
+
+		local parsed
+		parsed=$(_parse_w_idle_field "$idle_field")
+		if [[ $parsed -lt $min_idle ]]; then
+			min_idle=$parsed
 		fi
+	done < <(w -h 2>/dev/null || w 2>/dev/null)
+
+	if [[ "$found_user" == "true" ]]; then
+		echo "$min_idle"
+		return 0
+	fi
+
+	echo ""
+	return 0
+}
+
+#######################################
+# Get user idle time in seconds (cross-platform dispatcher).
+# Delegates to platform-specific sub-functions.
+# Returns: idle seconds on stdout, 0 on error (safe default = "user active")
+#######################################
+get_user_idle_seconds() {
+	# macOS: IOKit HIDIdleTime (always available, even over SSH)
+	if [[ "$(uname)" == "Darwin" ]]; then
+		_get_idle_seconds_macos
+		return 0
+	fi
+
+	# Linux desktop: xprintidle (X11) or dbus (Wayland)
+	local desktop_idle
+	desktop_idle=$(_get_idle_seconds_linux_desktop)
+	if [[ -n "$desktop_idle" ]]; then
+		echo "$desktop_idle"
+		return 0
+	fi
+
+	# Linux TTY/SSH: parse w(1) for shortest session idle
+	local w_idle
+	w_idle=$(_get_idle_seconds_linux_w)
+	if [[ -n "$w_idle" ]]; then
+		echo "$w_idle"
+		return 0
 	fi
 
 	# Headless server: no display, no logged-in users — treat as idle
-	# (background server with no human at keyboard)
 	if [[ -z "${DISPLAY:-}" && -z "${WAYLAND_DISPLAY:-}" ]]; then
 		echo "999999"
 		return 0
@@ -750,32 +754,90 @@ get_user_idle_seconds() {
 }
 
 #######################################
-# Check tool freshness time gate
-# Sets needs_check=false and returns 0 if within gate, returns 0 otherwise.
-# Outputs "skip" to stdout if gate not elapsed, "run" if check needed.
-# Args: $1 = freshness_seconds
+# Validate a freshness-hours config value is a positive integer.
+# Returns the validated value on stdout; falls back to default if invalid.
+# Args: $1 = config_key (e.g. "skill_freshness_hours")
+#       $2 = default_value
+#       $3 = config_prefix for log message (e.g. "updates.skill_freshness_hours")
 #######################################
-_check_tool_freshness_time_gate() {
-	local freshness_seconds="$1"
+_get_validated_freshness_hours() {
+	local config_key="$1"
+	local default_value="$2"
+	local config_prefix="$3"
 
-	local last_tool_check=""
-	if [[ -f "$STATE_FILE" ]] && command -v jq &>/dev/null; then
-		last_tool_check=$(jq -r '.last_tool_check // empty' "$STATE_FILE" 2>/dev/null || true)
+	local hours
+	hours=$(get_feature_toggle "$config_key" "$default_value")
+	if ! [[ "$hours" =~ ^[0-9]+$ ]] || [[ "$hours" -eq 0 ]]; then
+		log_warn "${config_prefix}='${hours}' is not a positive integer — using default (${default_value}h)"
+		hours="$default_value"
+	fi
+	echo "$hours"
+	return 0
+}
+
+#######################################
+# Locate a helper script with fallback paths.
+# Tries: deployed path, SCRIPT_DIR, INSTALL_DIR.
+# Outputs the found path on stdout, or empty string if not found.
+# Args: $1 = script filename (e.g. "skill-update-helper.sh")
+#######################################
+_locate_helper_script() {
+	local filename="$1"
+
+	local candidate="$HOME/.aidevops/agents/scripts/${filename}"
+	if [[ -x "$candidate" ]]; then
+		echo "$candidate"
+		return 0
 	fi
 
-	if [[ -n "$last_tool_check" ]]; then
+	candidate="${SCRIPT_DIR}/${filename}"
+	if [[ -x "$candidate" ]]; then
+		echo "$candidate"
+		return 0
+	fi
+
+	candidate="$INSTALL_DIR/.agents/scripts/${filename}"
+	if [[ -x "$candidate" ]]; then
+		echo "$candidate"
+		return 0
+	fi
+
+	echo ""
+	return 0
+}
+
+#######################################
+# Generic freshness time gate — checks if enough time has elapsed since
+# the last check of a given type. Reads the timestamp from STATE_FILE
+# using the provided jq field name.
+# Outputs "skip" to stdout if gate not elapsed, "run" if check needed.
+# Args: $1 = jq_field (e.g. "last_tool_check", "last_skill_check")
+#       $2 = freshness_seconds
+#       $3 = label for log message (e.g. "Tools", "Skills")
+#######################################
+_check_freshness_time_gate() {
+	local jq_field="$1"
+	local freshness_seconds="$2"
+	local label="$3"
+
+	local last_check=""
+	if [[ -f "$STATE_FILE" ]] && command -v jq &>/dev/null; then
+		last_check=$(jq -r ".${jq_field} // empty" "$STATE_FILE" 2>/dev/null || true)
+	fi
+
+	if [[ -n "$last_check" ]]; then
 		local last_epoch now_epoch elapsed
 		if [[ "$(uname)" == "Darwin" ]]; then
 			# TZ=UTC: stored timestamps are UTC — macOS date -j ignores the Z suffix
-			last_epoch=$(TZ=UTC date -j -f "%Y-%m-%dT%H:%M:%SZ" "$last_tool_check" "+%s" 2>/dev/null || echo "0")
+			last_epoch=$(TZ=UTC date -j -f "%Y-%m-%dT%H:%M:%SZ" "$last_check" "+%s" 2>/dev/null || echo "0")
 		else
-			last_epoch=$(date -d "$last_tool_check" "+%s" 2>/dev/null || echo "0")
+			last_epoch=$(date -d "$last_check" "+%s" 2>/dev/null || echo "0")
 		fi
 		now_epoch=$(date +%s)
 		elapsed=$((now_epoch - last_epoch))
 
 		if [[ $elapsed -lt $freshness_seconds ]]; then
-			log_info "Tools checked ${elapsed}s ago (gate: ${freshness_seconds}s) — skipping"
+			log_info "${label} checked ${elapsed}s ago (gate: ${freshness_seconds}s) — skipping"
 			echo "skip"
 			return 0
 		fi
@@ -822,6 +884,33 @@ _check_tool_idle_gate() {
 # Called from cmd_check after other freshness checks.
 # Respects config: aidevops config set updates.tool_auto_update false
 #######################################
+#######################################
+# Execute tool-version-check.sh and count updates applied.
+# Args: $1 = path to tool-version-check.sh
+# Outputs: update count on stdout
+#######################################
+_run_tool_update() {
+	local tool_check_script="$1"
+
+	local update_output
+	update_output=$("$tool_check_script" --update --quiet 2>&1) || true
+
+	if [[ -n "$update_output" ]]; then
+		echo "$update_output" >>"$LOG_FILE"
+	fi
+
+	# Count updates from output (best-effort: count lines with "Updated" or arrow)
+	# Use a subshell to avoid pipefail issues: grep -c exits 1 on no match,
+	# which under set -o pipefail would trigger || echo "0" and produce "0\n0"
+	local tool_updates=0
+	if [[ -n "$update_output" ]]; then
+		tool_updates=$(echo "$update_output" | { grep -cE '(Updated|→|->)' || true; })
+	fi
+
+	echo "$tool_updates"
+	return 0
+}
+
 check_tool_freshness() {
 	# Opt-out via config (env var or config file)
 	if ! is_feature_enabled tool_auto_update 2>/dev/null; then
@@ -829,19 +918,13 @@ check_tool_freshness() {
 		return 0
 	fi
 
-	# Read from JSONC config (handles env var > user config > defaults priority)
 	local freshness_hours
-	freshness_hours=$(get_feature_toggle tool_freshness_hours "$DEFAULT_TOOL_FRESHNESS_HOURS")
-	if ! [[ "$freshness_hours" =~ ^[0-9]+$ ]] || [[ "$freshness_hours" -eq 0 ]]; then
-		log_warn "updates.tool_freshness_hours='${freshness_hours}' is not a positive integer — using default (${DEFAULT_TOOL_FRESHNESS_HOURS}h)"
-		freshness_hours="$DEFAULT_TOOL_FRESHNESS_HOURS"
-	fi
-	local freshness_seconds
-	freshness_seconds=$((freshness_hours * 3600))
+	freshness_hours=$(_get_validated_freshness_hours "tool_freshness_hours" "$DEFAULT_TOOL_FRESHNESS_HOURS" "updates.tool_freshness_hours")
+	local freshness_seconds=$((freshness_hours * 3600))
 
 	# Time gate: skip if checked recently
 	local gate_result
-	gate_result=$(_check_tool_freshness_time_gate "$freshness_seconds")
+	gate_result=$(_check_freshness_time_gate "last_tool_check" "$freshness_seconds" "Tools")
 	if [[ "$gate_result" == "skip" ]]; then
 		return 0
 	fi
@@ -851,37 +934,16 @@ check_tool_freshness() {
 	user_idle_seconds=$(_check_tool_idle_gate) || return 0
 
 	# Locate tool-version-check.sh
-	local tool_check_script="$HOME/.aidevops/agents/scripts/tool-version-check.sh"
-	if [[ ! -x "$tool_check_script" ]]; then
-		tool_check_script="${SCRIPT_DIR}/tool-version-check.sh"
-	fi
-	if [[ ! -x "$tool_check_script" ]]; then
-		tool_check_script="$INSTALL_DIR/.agents/scripts/tool-version-check.sh"
-	fi
-
-	if [[ ! -x "$tool_check_script" ]]; then
+	local tool_check_script
+	tool_check_script=$(_locate_helper_script "tool-version-check.sh")
+	if [[ -z "$tool_check_script" ]]; then
 		log_warn "tool-version-check.sh not found — skipping tool freshness check"
 		return 0
 	fi
 
 	log_info "Running tool freshness check (user idle ${user_idle_seconds}s)..."
-
-	local update_output
-	update_output=$("$tool_check_script" --update --quiet 2>&1) || true
-
-	# Log output
-	if [[ -n "$update_output" ]]; then
-		echo "$update_output" >>"$LOG_FILE"
-	fi
-
-	# Count updates from output (best-effort: count lines with "Updated" or arrow)
-	# Use a subshell to avoid pipefail issues: grep -c exits 1 on no match,
-	# which under set -o pipefail would trigger || echo "0" and produce "0\n0"
 	local tool_updates
-	tool_updates=0
-	if [[ -n "$update_output" ]]; then
-		tool_updates=$(echo "$update_output" | { grep -cE '(Updated|→|->)' || true; })
-	fi
+	tool_updates=$(_run_tool_update "$tool_check_script")
 
 	if [[ $tool_updates -gt 0 ]]; then
 		log_info "Tool freshness check complete ($tool_updates tools updated)"
@@ -928,50 +990,12 @@ update_tool_check_timestamp() {
 # Called from cmd_check after tool freshness check.
 # Respects config: aidevops config set updates.upstream_watch false
 #######################################
-check_upstream_watch() {
-	# Opt-out via config (env var or config file)
-	if ! is_feature_enabled upstream_watch; then
-		log_info "Upstream watch disabled via config"
-		return 0
-	fi
-
-	local freshness_hours
-	freshness_hours=$(get_feature_toggle upstream_watch_hours "$DEFAULT_UPSTREAM_WATCH_HOURS")
-	if ! [[ "$freshness_hours" =~ ^[0-9]+$ ]] || [[ "$freshness_hours" -eq 0 ]]; then
-		log_warn "updates.upstream_watch_hours='${freshness_hours}' is not a positive integer — using default (${DEFAULT_UPSTREAM_WATCH_HOURS}h)"
-		freshness_hours="$DEFAULT_UPSTREAM_WATCH_HOURS"
-	fi
-	local freshness_seconds=$((freshness_hours * 3600))
-
-	# Read last upstream watch check timestamp from state file
-	local last_upstream_check=""
-	if [[ -f "$STATE_FILE" ]] && command -v jq &>/dev/null; then
-		last_upstream_check=$(jq -r '.last_upstream_watch_check // empty' "$STATE_FILE" 2>/dev/null || true)
-	fi
-
-	# Determine if check is needed
-	local needs_check=true
-	if [[ -n "$last_upstream_check" ]]; then
-		local last_epoch now_epoch elapsed
-		if [[ "$(uname)" == "Darwin" ]]; then
-			last_epoch=$(TZ=UTC date -j -f "%Y-%m-%dT%H:%M:%SZ" "$last_upstream_check" "+%s" 2>/dev/null || echo "0")
-		else
-			last_epoch=$(date -d "$last_upstream_check" "+%s" 2>/dev/null || echo "0")
-		fi
-		now_epoch=$(date +%s)
-		elapsed=$((now_epoch - last_epoch))
-
-		if [[ $elapsed -lt $freshness_seconds ]]; then
-			log_info "Upstream watch checked ${elapsed}s ago (gate: ${freshness_seconds}s) — skipping"
-			needs_check=false
-		fi
-	fi
-
-	if [[ "$needs_check" != "true" ]]; then
-		return 0
-	fi
-
-	# Locate upstream-watch-helper.sh (respect AIDEVOPS_AGENTS_DIR)
+#######################################
+# Locate upstream-watch-helper.sh and verify watchlist has repos.
+# Outputs script path on stdout if ready, empty string if not.
+# Also updates timestamp and returns early if no repos to watch.
+#######################################
+_locate_upstream_watch() {
 	local agents_dir="${AIDEVOPS_AGENTS_DIR:-$HOME/.aidevops/agents}"
 	local upstream_watch_script="${agents_dir}/scripts/upstream-watch-helper.sh"
 	if [[ ! -x "$upstream_watch_script" ]]; then
@@ -980,6 +1004,7 @@ check_upstream_watch() {
 
 	if [[ ! -x "$upstream_watch_script" ]]; then
 		log_info "upstream-watch-helper.sh not found — skipping upstream watch check"
+		echo ""
 		return 0
 	fi
 
@@ -988,6 +1013,7 @@ check_upstream_watch() {
 	if [[ ! -f "$watch_config" ]]; then
 		log_info "No upstream watch config found — skipping"
 		update_upstream_watch_timestamp
+		echo ""
 		return 0
 	fi
 
@@ -996,8 +1022,42 @@ check_upstream_watch() {
 	if [[ "$repo_count" -eq 0 ]]; then
 		log_info "No repos in upstream watchlist — skipping"
 		update_upstream_watch_timestamp
+		echo ""
 		return 0
 	fi
+
+	echo "$upstream_watch_script"
+	return 0
+}
+
+check_upstream_watch() {
+	# Opt-out via config (env var or config file)
+	if ! is_feature_enabled upstream_watch; then
+		log_info "Upstream watch disabled via config"
+		return 0
+	fi
+
+	local freshness_hours
+	freshness_hours=$(_get_validated_freshness_hours "upstream_watch_hours" "$DEFAULT_UPSTREAM_WATCH_HOURS" "updates.upstream_watch_hours")
+	local freshness_seconds=$((freshness_hours * 3600))
+
+	# Time gate: skip if checked recently
+	local gate_result
+	gate_result=$(_check_freshness_time_gate "last_upstream_watch_check" "$freshness_seconds" "Upstream watch")
+	if [[ "$gate_result" == "skip" ]]; then
+		return 0
+	fi
+
+	local upstream_watch_script
+	upstream_watch_script=$(_locate_upstream_watch)
+	if [[ -z "$upstream_watch_script" ]]; then
+		return 0
+	fi
+
+	local agents_dir="${AIDEVOPS_AGENTS_DIR:-$HOME/.aidevops/agents}"
+	local watch_config="${agents_dir}/configs/upstream-watch.json"
+	local repo_count
+	repo_count=$(jq '.repos | length' "$watch_config" 2>/dev/null || echo "0")
 
 	log_info "Running daily upstream watch check (${repo_count} repos)..."
 	if "$upstream_watch_script" check >>"$LOG_FILE" 2>&1; then
@@ -1153,27 +1213,90 @@ _cmd_check_git_update() {
 }
 
 #######################################
+# Perform the actual update: git pull, setup.sh deploy, verify, cleanup.
+# Args: $1 = current version, $2 = remote version
+# Returns: 0 on success, 1 on failure
+#######################################
+_cmd_check_perform_update() {
+	local current="$1"
+	local remote="$2"
+
+	log_info "Update available: v$current -> v$remote"
+	update_state "update_start" "$remote" "in_progress"
+
+	# Verify install directory exists and is a git repo
+	if [[ ! -d "$INSTALL_DIR/.git" ]]; then
+		log_error "Install directory is not a git repo: $INSTALL_DIR"
+		update_state "update" "$remote" "no_git_repo"
+		return 1
+	fi
+
+	if ! _cmd_check_git_update "$remote"; then
+		return 1
+	fi
+
+	# Run setup.sh non-interactively to deploy agents
+	log_info "Running setup.sh --non-interactive..."
+	if ! bash "$INSTALL_DIR/setup.sh" --non-interactive >>"$LOG_FILE" 2>&1; then
+		log_error "setup.sh failed (exit code: $?)"
+		update_state "update" "$remote" "setup_failed"
+		return 1
+	fi
+
+	# Verify agents were actually deployed (setup.sh may exit 0 without deploying)
+	# See: https://github.com/marcusquinn/aidevops/issues/3980
+	local new_version deployed_version
+	new_version=$(get_local_version)
+	deployed_version=$(cat "$HOME/.aidevops/agents/VERSION" 2>/dev/null || echo "none")
+	if [[ "$new_version" != "$deployed_version" ]]; then
+		log_warn "Update pulled v$new_version but agents at v$deployed_version — deployment incomplete"
+		update_state "update" "$new_version" "agents_stale"
+	else
+		log_info "Update complete: v$current -> v$new_version (agents deployed)"
+		update_state "update" "$new_version" "success"
+	fi
+
+	# Clean up any working tree changes setup.sh may have introduced
+	# See: https://github.com/marcusquinn/aidevops/issues/2286
+	if ! git -C "$INSTALL_DIR" checkout -- . 2>>"$LOG_FILE"; then
+		log_warn "Post-setup working tree cleanup failed — next update cycle may see dirty state"
+	fi
+	return 0
+}
+
+#######################################
 # One-shot check and update
 # This is what the cron job calls
 #######################################
-cmd_check() {
-	ensure_dirs
-
+#######################################
+# Acquire lock and verify preconditions for cmd_check.
+# Returns: 0 if ready to proceed, 1 if should skip
+#######################################
+_cmd_check_acquire() {
 	# Respect config (env var or config file)
 	if ! is_feature_enabled auto_update 2>/dev/null; then
 		log_info "Auto-update disabled via config (updates.auto_update)"
-		return 0
+		return 1
 	fi
 
 	# Skip if another update is already running
 	if is_update_running; then
 		log_info "Another update process is running, skipping"
-		return 0
+		return 1
 	fi
 
 	# Acquire lock
 	if ! acquire_lock; then
 		log_warn "Could not acquire lock, skipping check"
+		return 1
+	fi
+	return 0
+}
+
+cmd_check() {
+	ensure_dirs
+
+	if ! _cmd_check_acquire; then
 		return 0
 	fi
 	trap 'release_lock' EXIT
@@ -1181,7 +1304,6 @@ cmd_check() {
 	local current remote
 	current=$(get_local_version)
 	remote=$(get_remote_version)
-
 	log_info "Version check: local=$current remote=$remote"
 
 	if [[ "$current" == "unknown" || "$remote" == "unknown" ]]; then
@@ -1199,58 +1321,12 @@ cmd_check() {
 		return 0
 	fi
 
-	# New version available — perform update
-	log_info "Update available: v$current -> v$remote"
-	update_state "update_start" "$remote" "in_progress"
-
-	# Verify install directory exists and is a git repo
-	if [[ ! -d "$INSTALL_DIR/.git" ]]; then
-		log_error "Install directory is not a git repo: $INSTALL_DIR"
-		update_state "update" "$remote" "no_git_repo"
+	if ! _cmd_check_perform_update "$current" "$remote"; then
 		run_freshness_checks
 		return 1
 	fi
 
-	if ! _cmd_check_git_update "$remote"; then
-		run_freshness_checks
-		return 1
-	fi
-
-	# Run setup.sh non-interactively to deploy agents
-	log_info "Running setup.sh --non-interactive..."
-	if bash "$INSTALL_DIR/setup.sh" --non-interactive >>"$LOG_FILE" 2>&1; then
-		local new_version
-		new_version=$(get_local_version)
-
-		# Verify agents were actually deployed (setup.sh may exit 0 without deploying)
-		# See: https://github.com/marcusquinn/aidevops/issues/3980
-		local deployed_version
-		deployed_version=$(cat "$HOME/.aidevops/agents/VERSION" 2>/dev/null || echo "none")
-		if [[ "$new_version" != "$deployed_version" ]]; then
-			log_warn "Update pulled v$new_version but agents at v$deployed_version — deployment incomplete"
-			update_state "update" "$new_version" "agents_stale"
-		else
-			log_info "Update complete: v$current -> v$new_version (agents deployed)"
-			update_state "update" "$new_version" "success"
-		fi
-	else
-		log_error "setup.sh failed (exit code: $?)"
-		update_state "update" "$remote" "setup_failed"
-		run_freshness_checks
-		return 1
-	fi
-
-	# Clean up any working tree changes setup.sh may have introduced
-	# (e.g., chmod on tracked scripts, scan results written to repo)
-	# Prevents dirty tree from blocking the next update cycle.
-	# See: https://github.com/marcusquinn/aidevops/issues/2286
-	if ! git -C "$INSTALL_DIR" checkout -- . 2>>"$LOG_FILE"; then
-		log_warn "Post-setup working tree cleanup failed — next update cycle may see dirty state"
-	fi
-
-	# Run periodic freshness checks (skills, OpenClaw, tools, upstream watch)
 	run_freshness_checks
-
 	return 0
 }
 
