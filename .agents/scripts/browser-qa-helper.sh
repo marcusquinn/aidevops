@@ -937,9 +937,21 @@ cmd_smoke() {
 
 	log_info "Running smoke test on ${url} for pages: ${pages}"
 	local exit_code=0
-	node "$script_file" || exit_code=$?
+	local output
+	output=$(node "$script_file") || exit_code=$?
 	rm -f "$script_file"
-	return $exit_code
+
+	if [[ $exit_code -ne 0 ]]; then
+		printf '%s\n' "$output"
+		return $exit_code
+	fi
+
+	if [[ "$format" == "markdown" ]]; then
+		_format_smoke_markdown "$output"
+	else
+		printf '%s\n' "$output"
+	fi
+	return 0
 }
 
 # =============================================================================
@@ -1063,6 +1075,51 @@ REPORT
 # =============================================================================
 # Markdown Formatter
 # =============================================================================
+
+# Convert standalone smoke test JSON to markdown.
+# Args: $1 = JSON string with { summary: {...}, pages: [...] }
+_format_smoke_markdown() {
+	local json="$1"
+
+	echo "## Smoke Test Report"
+	echo ""
+	echo "**Date**: $(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+	echo ""
+
+	local total
+	total=$(printf '%s' "$json" | jq -r '.summary.total // 0' 2>/dev/null)
+	local passed
+	passed=$(printf '%s' "$json" | jq -r '.summary.passed // 0' 2>/dev/null)
+	local failed
+	failed=$(printf '%s' "$json" | jq -r '.summary.failed // 0' 2>/dev/null)
+	local console_errs
+	console_errs=$(printf '%s' "$json" | jq -r '.summary.consoleErrors // 0' 2>/dev/null)
+	local network_errs
+	network_errs=$(printf '%s' "$json" | jq -r '.summary.networkErrors // 0' 2>/dev/null)
+
+	echo "### Summary"
+	echo ""
+	echo "| Metric | Count |"
+	echo "|--------|-------|"
+	echo "| Pages checked | ${total} |"
+	echo "| Passed | ${passed} |"
+	echo "| Failed | ${failed} |"
+	echo "| Console errors | ${console_errs} |"
+	echo "| Network errors | ${network_errs} |"
+	echo ""
+
+	# Per-page details for failures
+	local fail_count
+	fail_count=$(printf '%s' "$json" | jq '[.pages[] | select(.ok == false)] | length' 2>/dev/null)
+	if [[ "${fail_count:-0}" -gt 0 ]]; then
+		echo "### Failed Pages"
+		echo ""
+		printf '%s' "$json" | jq -r '.pages[] | select(.ok == false) | "- **\(.page)**: status \(.status // "N/A")\(.error // "" | if . != "" then " — " + . else "" end)"' 2>/dev/null
+		echo ""
+	fi
+
+	return 0
+}
 
 # Convert JSON QA report to markdown format.
 # Args: $1 = JSON report string
