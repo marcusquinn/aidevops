@@ -160,6 +160,116 @@ cmd_discover() {
 # Manifest Validation
 # =============================================================================
 
+# Check required fields (name, version) in a manifest.
+# Arguments: manifest_path
+# Outputs: number of errors found (via stdout)
+# Returns: 0 always (caller accumulates errors)
+_validate_manifest_required_fields() {
+	local manifest="$1"
+	local errors=0
+
+	local name
+	name=$(jq -r '.name // empty' "$manifest" 2>/dev/null)
+	if [[ -z "$name" ]]; then
+		log_error "Manifest missing required field: name"
+		errors=$((errors + 1))
+	fi
+
+	local version
+	version=$(jq -r '.version // empty' "$manifest" 2>/dev/null)
+	if [[ -z "$version" ]]; then
+		log_error "Manifest missing required field: version"
+		errors=$((errors + 1))
+	fi
+
+	# Validate version format (semver-like)
+	if [[ -n "$version" ]] && [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.-]+)?$ ]]; then
+		log_warning "Version '$version' is not semver format (expected: X.Y.Z)"
+	fi
+
+	echo "$errors"
+	return 0
+}
+
+# Validate agents array entries in a manifest.
+# Arguments: manifest_path, plugin_dir
+# Outputs: number of errors found (via stdout)
+# Returns: 0 always (caller accumulates errors)
+_validate_manifest_agents() {
+	local manifest="$1"
+	local plugin_dir="$2"
+	local errors=0
+
+	local agents_count
+	agents_count=$(jq '.agents | length // 0' "$manifest" 2>/dev/null || echo "0")
+	if [[ "$agents_count" -gt 0 ]]; then
+		local i=0
+		while [[ "$i" -lt "$agents_count" ]]; do
+			local agent_file
+			agent_file=$(jq -r --argjson i "$i" '.agents[$i].file // empty' "$manifest" 2>/dev/null)
+			if [[ -z "$agent_file" ]]; then
+				log_error "Agent entry $i missing required field: file"
+				errors=$((errors + 1))
+			elif [[ ! -f "$plugin_dir/$agent_file" ]]; then
+				log_warning "Agent file not found: $plugin_dir/$agent_file"
+			fi
+			i=$((i + 1))
+		done
+	fi
+
+	echo "$errors"
+	return 0
+}
+
+# Validate hook script paths declared in a manifest.
+# Arguments: manifest_path, plugin_dir
+# Returns: 0 always (warnings only, no hard errors)
+_validate_manifest_hooks() {
+	local manifest="$1"
+	local plugin_dir="$2"
+
+	local hooks
+	hooks=$(jq -r '.hooks // empty | keys[]' "$manifest" 2>/dev/null || true)
+	if [[ -n "$hooks" ]]; then
+		while IFS= read -r hook; do
+			local hook_script
+			hook_script=$(jq -r --arg h "$hook" '.hooks[$h] // empty' "$manifest" 2>/dev/null)
+			if [[ -n "$hook_script" && ! -f "$plugin_dir/$hook_script" ]]; then
+				log_warning "Hook script not found: $plugin_dir/$hook_script (hook: $hook)"
+			fi
+		done <<<"$hooks"
+	fi
+
+	return 0
+}
+
+# Check that the current aidevops version satisfies min_aidevops_version.
+# Arguments: manifest_path
+# Returns: 0 always (warnings only, no hard errors)
+_validate_manifest_version_compat() {
+	local manifest="$1"
+
+	local min_version
+	min_version=$(jq -r '.min_aidevops_version // empty' "$manifest" 2>/dev/null)
+	if [[ -z "$min_version" ]]; then
+		return 0
+	fi
+
+	local current_version
+	current_version=$(cat "$AGENTS_DIR/VERSION" 2>/dev/null || echo "0.0.0")
+	# Simple version comparison (major.minor only)
+	local min_major min_minor cur_major cur_minor
+	min_major=$(echo "$min_version" | cut -d. -f1)
+	min_minor=$(echo "$min_version" | cut -d. -f2)
+	cur_major=$(echo "$current_version" | cut -d. -f1)
+	cur_minor=$(echo "$current_version" | cut -d. -f2)
+	if [[ "$cur_major" -lt "$min_major" ]] || { [[ "$cur_major" -eq "$min_major" ]] && [[ "$cur_minor" -lt "$min_minor" ]]; }; then
+		log_warning "Plugin requires aidevops >= $min_version (current: $current_version)"
+	fi
+
+	return 0
+}
+
 # Validate a plugin manifest (plugin.json)
 # Arguments: namespace
 # Returns: 0 if valid, 1 if invalid or missing
@@ -191,75 +301,13 @@ validate_manifest() {
 	fi
 
 	local errors=0
+	local field_errors agent_errors
+	field_errors=$(_validate_manifest_required_fields "$manifest")
+	agent_errors=$(_validate_manifest_agents "$manifest" "$plugin_dir")
+	errors=$((field_errors + agent_errors))
 
-	# Check required fields
-	local name
-	name=$(jq -r '.name // empty' "$manifest" 2>/dev/null)
-	if [[ -z "$name" ]]; then
-		log_error "Manifest missing required field: name"
-		errors=$((errors + 1))
-	fi
-
-	local version
-	version=$(jq -r '.version // empty' "$manifest" 2>/dev/null)
-	if [[ -z "$version" ]]; then
-		log_error "Manifest missing required field: version"
-		errors=$((errors + 1))
-	fi
-
-	# Validate version format (semver-like)
-	if [[ -n "$version" ]] && [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[a-zA-Z0-9.-]+)?$ ]]; then
-		log_warning "Version '$version' is not semver format (expected: X.Y.Z)"
-	fi
-
-	# Validate agents array if present
-	local agents_count
-	agents_count=$(jq '.agents | length // 0' "$manifest" 2>/dev/null || echo "0")
-	if [[ "$agents_count" -gt 0 ]]; then
-		# Check each agent has required fields
-		local i=0
-		while [[ "$i" -lt "$agents_count" ]]; do
-			local agent_file
-			agent_file=$(jq -r --argjson i "$i" '.agents[$i].file // empty' "$manifest" 2>/dev/null)
-			if [[ -z "$agent_file" ]]; then
-				log_error "Agent entry $i missing required field: file"
-				errors=$((errors + 1))
-			elif [[ ! -f "$plugin_dir/$agent_file" ]]; then
-				log_warning "Agent file not found: $plugin_dir/$agent_file"
-			fi
-			i=$((i + 1))
-		done
-	fi
-
-	# Validate hooks if present
-	local hooks
-	hooks=$(jq -r '.hooks // empty | keys[]' "$manifest" 2>/dev/null || true)
-	if [[ -n "$hooks" ]]; then
-		while IFS= read -r hook; do
-			local hook_script
-			hook_script=$(jq -r --arg h "$hook" '.hooks[$h] // empty' "$manifest" 2>/dev/null)
-			if [[ -n "$hook_script" && ! -f "$plugin_dir/$hook_script" ]]; then
-				log_warning "Hook script not found: $plugin_dir/$hook_script (hook: $hook)"
-			fi
-		done <<<"$hooks"
-	fi
-
-	# Validate min_version if present
-	local min_version
-	min_version=$(jq -r '.min_aidevops_version // empty' "$manifest" 2>/dev/null)
-	if [[ -n "$min_version" ]]; then
-		local current_version
-		current_version=$(cat "$AGENTS_DIR/VERSION" 2>/dev/null || echo "0.0.0")
-		# Simple version comparison (major.minor only)
-		local min_major min_minor cur_major cur_minor
-		min_major=$(echo "$min_version" | cut -d. -f1)
-		min_minor=$(echo "$min_version" | cut -d. -f2)
-		cur_major=$(echo "$current_version" | cut -d. -f1)
-		cur_minor=$(echo "$current_version" | cut -d. -f2)
-		if [[ "$cur_major" -lt "$min_major" ]] || { [[ "$cur_major" -eq "$min_major" ]] && [[ "$cur_minor" -lt "$min_minor" ]]; }; then
-			log_warning "Plugin requires aidevops >= $min_version (current: $current_version)"
-		fi
-	fi
+	_validate_manifest_hooks "$manifest" "$plugin_dir"
+	_validate_manifest_version_compat "$manifest"
 
 	if [[ "$errors" -gt 0 ]]; then
 		log_error "Manifest validation failed with $errors error(s)"
