@@ -830,7 +830,6 @@ main() {
 		confirm_step "Check OpenCode prompt drift" && check_opencode_prompt_drift
 		confirm_step "Deploy aidevops agents to ~/.aidevops/agents/" && deploy_aidevops_agents
 		confirm_step "Sync agents from private repositories" && sync_agent_sources
-		setup_shellcheck_wrapper
 		confirm_step "Install Claude Code safety hooks (block destructive commands)" && setup_safety_hooks
 		confirm_step "Initialize settings.json (canonical config file)" && init_settings_json
 		confirm_step "Setup multi-tenant credential storage" && setup_multi_tenant_credentials
