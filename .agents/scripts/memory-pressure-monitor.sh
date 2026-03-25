@@ -534,91 +534,94 @@ _auto_kill_process() {
 
 # --- Core Logic ---------------------------------------------------------------
 
-# Evaluate all monitored processes and generate alerts
-# Returns findings as structured output, one per line:
-#   SEVERITY|CATEGORY|PID|DETAIL
-do_check() {
-	ensure_dirs
+# Phase 1: Check a single process for RSS and runtime violations.
+# Appends findings to the caller's `findings` array and sets `has_critical`/
+# `has_warning` flags. Called once per process from do_check().
+# Arguments: $1=pid $2=rss_mb $3=runtime $4=cmd_name
+# Modifies (via nameref-free indirect): findings[], has_critical, has_warning
+_check_process_rss_and_runtime() {
+	local pid="$1"
+	local rss_mb="$2"
+	local runtime="$3"
+	local cmd_name="$4"
 
-	local findings=()
-	local total_rss_mb=0
-	local process_count=0
-	local has_critical=false
-	local has_warning=false
+	# RSS check
+	if [[ "$rss_mb" -ge "$PROCESS_RSS_CRIT_MB" ]]; then
+		_check_findings+=("CRITICAL|rss|${pid}|${cmd_name} using ${rss_mb} MB RSS (limit: ${PROCESS_RSS_CRIT_MB} MB)")
+		_check_has_critical=true
+		# Auto-kill ShellCheck at CRITICAL RSS — safe, language server respawns
+		if [[ "$cmd_name" == "shellcheck" && "$AUTO_KILL_SHELLCHECK" == "true" ]]; then
+			_auto_kill_process "$pid" "RSS ${rss_mb} MB exceeds ${PROCESS_RSS_CRIT_MB} MB limit"
+		fi
+	elif [[ "$rss_mb" -ge "$PROCESS_RSS_WARN_MB" ]]; then
+		_check_findings+=("WARNING|rss|${pid}|${cmd_name} using ${rss_mb} MB RSS (limit: ${PROCESS_RSS_WARN_MB} MB)")
+		_check_has_warning=true
+	fi
 
-	# --- Phase 1: Per-process checks ---
-	local processes
-	processes=$(_collect_monitored_processes)
+	# Runtime check — skip for app processes (long-running by design, GH#2992)
+	if ! _is_app_process "$cmd_name"; then
+		local runtime_limit="$TOOL_RUNTIME_MAX"
+		if [[ "$cmd_name" == "shellcheck" ]]; then
+			runtime_limit="$SHELLCHECK_RUNTIME_MAX"
+		fi
 
-	while IFS='|' read -r pid rss_mb runtime cmd_name full_cmd; do
-		[[ -z "$pid" ]] && continue
-		process_count=$((process_count + 1))
-		total_rss_mb=$((total_rss_mb + rss_mb))
-
-		# RSS check
-		if [[ "$rss_mb" -ge "$PROCESS_RSS_CRIT_MB" ]]; then
-			findings+=("CRITICAL|rss|${pid}|${cmd_name} using ${rss_mb} MB RSS (limit: ${PROCESS_RSS_CRIT_MB} MB)")
-			has_critical=true
-			# Auto-kill ShellCheck at CRITICAL RSS — safe, language server respawns
+		if [[ "$runtime" -gt "$runtime_limit" ]]; then
+			local duration limit_duration
+			duration=$(_format_duration "$runtime")
+			limit_duration=$(_format_duration "$runtime_limit")
+			_check_findings+=("WARNING|runtime|${pid}|${cmd_name} running for ${duration} (limit: ${limit_duration})")
+			_check_has_warning=true
+			# Auto-kill ShellCheck exceeding runtime — stuck in source chain expansion
 			if [[ "$cmd_name" == "shellcheck" && "$AUTO_KILL_SHELLCHECK" == "true" ]]; then
-				_auto_kill_process "$pid" "RSS ${rss_mb} MB exceeds ${PROCESS_RSS_CRIT_MB} MB limit"
-			fi
-		elif [[ "$rss_mb" -ge "$PROCESS_RSS_WARN_MB" ]]; then
-			findings+=("WARNING|rss|${pid}|${cmd_name} using ${rss_mb} MB RSS (limit: ${PROCESS_RSS_WARN_MB} MB)")
-			has_warning=true
-		fi
-
-		# Runtime check — skip for app processes (long-running by design, GH#2992)
-		if ! _is_app_process "$cmd_name"; then
-			local runtime_limit="$TOOL_RUNTIME_MAX"
-			if [[ "$cmd_name" == "shellcheck" ]]; then
-				runtime_limit="$SHELLCHECK_RUNTIME_MAX"
-			fi
-
-			if [[ "$runtime" -gt "$runtime_limit" ]]; then
-				local duration
-				duration=$(_format_duration "$runtime")
-				local limit_duration
-				limit_duration=$(_format_duration "$runtime_limit")
-				findings+=("WARNING|runtime|${pid}|${cmd_name} running for ${duration} (limit: ${limit_duration})")
-				has_warning=true
-				# Auto-kill ShellCheck exceeding runtime — stuck in source chain expansion
-				if [[ "$cmd_name" == "shellcheck" && "$AUTO_KILL_SHELLCHECK" == "true" ]]; then
-					_auto_kill_process "$pid" "runtime ${duration} exceeds ${limit_duration} limit"
-				fi
+				_auto_kill_process "$pid" "runtime ${duration} exceeds ${limit_duration} limit"
 			fi
 		fi
-	done <<<"$processes"
+	fi
+	return 0
+}
 
-	# --- Phase 2: Aggregate checks ---
+# Phase 2+3: Aggregate RSS, session count, and swap file checks.
+# Appends findings to _check_findings[]; sets _check_has_warning.
+# Arguments: $1=total_rss_mb $2=process_count
+_check_aggregate_and_os() {
+	local total_rss_mb="$1"
+	local process_count="$2"
 
 	# Total RSS
 	if [[ "$total_rss_mb" -ge "$AGGREGATE_RSS_WARN_MB" ]]; then
-		findings+=("WARNING|aggregate|0|Total aidevops RSS: ${total_rss_mb} MB across ${process_count} processes (limit: ${AGGREGATE_RSS_WARN_MB} MB)")
-		has_warning=true
+		_check_findings+=("WARNING|aggregate|0|Total aidevops RSS: ${total_rss_mb} MB across ${process_count} processes (limit: ${AGGREGATE_RSS_WARN_MB} MB)")
+		_check_has_warning=true
 	fi
 
 	# Session count
 	local session_count
 	session_count=$(_count_interactive_sessions)
 	if [[ "$session_count" -ge "$SESSION_COUNT_WARN" ]]; then
-		findings+=("WARNING|sessions|0|${session_count} interactive sessions open (limit: ${SESSION_COUNT_WARN})")
-		has_warning=true
+		_check_findings+=("WARNING|sessions|0|${session_count} interactive sessions open (limit: ${SESSION_COUNT_WARN})")
+		_check_has_warning=true
 	fi
 
-	# --- Phase 3: OS-level info (secondary, logged but not primary alert trigger) ---
-	local os_info
+	# OS-level info (secondary, logged but not primary alert trigger)
+	local os_info swap_files
 	os_info=$(_get_os_memory_info)
-	local mem_level swap_used_mb swap_files
-	IFS='|' read -r mem_level _ swap_used_mb swap_files <<<"$os_info"
-
+	IFS='|' read -r _ _ _ swap_files <<<"$os_info"
 	if [[ "$swap_files" =~ ^[0-9]+$ ]] && [[ "$swap_files" -gt 10 ]]; then
-		findings+=("INFO|swap|0|${swap_files} swap files detected (elevated)")
+		_check_findings+=("INFO|swap|0|${swap_files} swap files detected (elevated)")
 	fi
+	return 0
+}
 
-	# --- Phase 4: Act on findings ---
-	if [[ ${#findings[@]} -eq 0 ]]; then
-		# All clear — check if recovering from a previous alert
+# Phase 4: Log and notify for each finding; clear cooldowns on all-clear.
+# Reads _check_findings[], _check_has_critical, _check_has_warning,
+# total_rss_mb, process_count, session_count from caller scope.
+# Returns: 0=ok, 1=warnings, 2=critical
+_act_on_findings() {
+	local total_rss_mb="$1"
+	local process_count="$2"
+	local session_count="$3"
+
+	if [[ ${#_check_findings[@]} -eq 0 ]]; then
+		# All clear — clear cooldowns if recovering from a previous alert
 		if [[ -f "${STATE_DIR}/memory-pressure-rss.cooldown" ]] ||
 			[[ -f "${STATE_DIR}/memory-pressure-runtime.cooldown" ]] ||
 			[[ -f "${STATE_DIR}/memory-pressure-sessions.cooldown" ]] ||
@@ -632,11 +635,10 @@ do_check() {
 		return 0
 	fi
 
-	# Process findings
 	local finding
-	for finding in "${findings[@]}"; do
-		local severity category pid detail
-		IFS='|' read -r severity category pid detail <<<"$finding"
+	for finding in "${_check_findings[@]}"; do
+		local severity category detail
+		IFS='|' read -r severity category _ detail <<<"$finding"
 
 		log_msg "$severity" "$detail"
 
@@ -650,18 +652,53 @@ do_check() {
 			if [[ "$severity" == "CRITICAL" ]]; then
 				notify_title="CRITICAL: Memory Monitor"
 			fi
-			notify "$notify_title" "$detail" "$(echo "$severity" | tr '[:upper:]' '[:lower:]')"
+			notify "$notify_title" "$detail" "$(printf '%s' "$severity" | tr '[:upper:]' '[:lower:]')"
 			set_cooldown "$category"
 		fi
 	done
 
-	# Return appropriate exit code for callers
-	if [[ "$has_critical" == true ]]; then
+	if [[ "$_check_has_critical" == true ]]; then
 		return 2
-	elif [[ "$has_warning" == true ]]; then
+	elif [[ "$_check_has_warning" == true ]]; then
 		return 1
 	fi
 	return 0
+}
+
+# Evaluate all monitored processes and generate alerts.
+# Returns: 0=ok, 1=warnings found, 2=critical findings
+do_check() {
+	ensure_dirs
+
+	# Module-level state shared with helper functions above (avoids subshell/nameref)
+	_check_findings=()
+	_check_has_critical=false
+	_check_has_warning=false
+
+	local total_rss_mb=0
+	local process_count=0
+
+	# Phase 1: Per-process checks
+	local processes
+	processes=$(_collect_monitored_processes)
+
+	while IFS='|' read -r pid rss_mb runtime cmd_name full_cmd; do
+		[[ -z "$pid" ]] && continue
+		process_count=$((process_count + 1))
+		total_rss_mb=$((total_rss_mb + rss_mb))
+		_check_process_rss_and_runtime "$pid" "$rss_mb" "$runtime" "$cmd_name"
+	done <<<"$processes"
+
+	# Phases 2+3: Aggregate and OS checks
+	_check_aggregate_and_os "$total_rss_mb" "$process_count"
+
+	# Resolve session count for the all-clear log message
+	local session_count
+	session_count=$(_count_interactive_sessions)
+
+	# Phase 4: Act on findings
+	_act_on_findings "$total_rss_mb" "$process_count" "$session_count"
+	return $?
 }
 
 # --- Commands -----------------------------------------------------------------
@@ -676,12 +713,8 @@ cmd_check() {
 	return "$exit_code"
 }
 
-# Print detailed status of all monitored processes, sessions, and OS memory
-cmd_status() {
-	ensure_dirs
-
-	echo "=== Memory Pressure Monitor v${SCRIPT_VERSION} ==="
-	echo ""
+# Print the monitored-processes table section of --status output.
+_status_print_processes() {
 	echo "--- Monitored Processes ---"
 	echo ""
 
@@ -692,67 +725,70 @@ cmd_status() {
 
 	if [[ -z "$processes" ]]; then
 		echo "  No monitored processes running"
-	else
-		printf "  %-8s %-8s %-12s %-20s %-6s %s\n" "PID" "RSS MB" "Runtime" "Command" "Type" "Status"
-		printf "  %-8s %-8s %-12s %-20s %-6s %s\n" "---" "------" "-------" "-------" "----" "------"
-
-		while IFS='|' read -r pid rss_mb runtime cmd_name full_cmd; do
-			[[ -z "$pid" ]] && continue
-			count=$((count + 1))
-			total_rss=$((total_rss + rss_mb))
-
-			local duration
-			duration=$(_format_duration "$runtime")
-
-			local proc_type="tool"
-			if _is_app_process "$cmd_name"; then
-				proc_type="app"
-			fi
-
-			local status="ok"
-			if [[ "$rss_mb" -ge "$PROCESS_RSS_CRIT_MB" ]]; then
-				status="CRITICAL (RSS)"
-			elif [[ "$rss_mb" -ge "$PROCESS_RSS_WARN_MB" ]]; then
-				status="WARNING (RSS)"
-			fi
-
-			# Runtime check only for tool processes (apps are long-running by design)
-			if [[ "$proc_type" == "tool" ]]; then
-				local runtime_limit="$TOOL_RUNTIME_MAX"
-				[[ "$cmd_name" == "shellcheck" ]] && runtime_limit="$SHELLCHECK_RUNTIME_MAX"
-				if [[ "$runtime" -gt "$runtime_limit" ]]; then
-					if [[ "$status" == "ok" ]]; then
-						status="WARNING (runtime)"
-					else
-						status="${status}, WARNING (runtime)"
-					fi
-				fi
-			fi
-
-			printf "  %-8s %-8s %-12s %-20s %-6s %s\n" "$pid" "$rss_mb" "$duration" "$cmd_name" "$proc_type" "$status"
-		done <<<"$processes"
-
-		echo ""
-		echo "  Total: ${count} processes, ${total_rss} MB RSS"
+		return 0
 	fi
 
+	printf "  %-8s %-8s %-12s %-20s %-6s %s\n" "PID" "RSS MB" "Runtime" "Command" "Type" "Status"
+	printf "  %-8s %-8s %-12s %-20s %-6s %s\n" "---" "------" "-------" "-------" "----" "------"
+
+	while IFS='|' read -r pid rss_mb runtime cmd_name full_cmd; do
+		[[ -z "$pid" ]] && continue
+		count=$((count + 1))
+		total_rss=$((total_rss + rss_mb))
+
+		local duration proc_type status runtime_limit
+		duration=$(_format_duration "$runtime")
+		proc_type="tool"
+		_is_app_process "$cmd_name" && proc_type="app"
+
+		status="ok"
+		if [[ "$rss_mb" -ge "$PROCESS_RSS_CRIT_MB" ]]; then
+			status="CRITICAL (RSS)"
+		elif [[ "$rss_mb" -ge "$PROCESS_RSS_WARN_MB" ]]; then
+			status="WARNING (RSS)"
+		fi
+
+		# Runtime check only for tool processes (apps are long-running by design)
+		if [[ "$proc_type" == "tool" ]]; then
+			runtime_limit="$TOOL_RUNTIME_MAX"
+			[[ "$cmd_name" == "shellcheck" ]] && runtime_limit="$SHELLCHECK_RUNTIME_MAX"
+			if [[ "$runtime" -gt "$runtime_limit" ]]; then
+				if [[ "$status" == "ok" ]]; then
+					status="WARNING (runtime)"
+				else
+					status="${status}, WARNING (runtime)"
+				fi
+			fi
+		fi
+
+		printf "  %-8s %-8s %-12s %-20s %-6s %s\n" "$pid" "$rss_mb" "$duration" "$cmd_name" "$proc_type" "$status"
+	done <<<"$processes"
+
 	echo ""
+	echo "  Total: ${count} processes, ${total_rss} MB RSS"
+	return 0
+}
+
+# Print the interactive-sessions section of --status output.
+_status_print_sessions() {
 	echo "--- Interactive Sessions ---"
 	echo ""
-	local session_count
+	local session_count session_status
 	session_count=$(_count_interactive_sessions)
-	local session_status="ok"
+	session_status="ok"
 	if [[ "$session_count" -ge "$SESSION_COUNT_WARN" ]]; then
 		session_status="WARNING (>= ${SESSION_COUNT_WARN})"
 	fi
 	echo "  Count: ${session_count} (${session_status})"
+	return 0
+}
 
-	echo ""
+# Print the OS memory, configuration, and launchd sections of --status output.
+_status_print_os_and_config() {
 	echo "--- OS Memory (secondary) ---"
 	echo ""
-	local os_info
+	local os_info mem_level total_gb swap_used_mb swap_files
 	os_info=$(_get_os_memory_info)
-	local mem_level total_gb swap_used_mb swap_files
 	IFS='|' read -r mem_level total_gb swap_used_mb swap_files <<<"$os_info"
 	echo "  Total RAM: ${total_gb} GB"
 	echo "  Memory level: ${mem_level}% free (kern.memorystatus_level)"
@@ -784,7 +820,20 @@ cmd_status() {
 	else
 		echo "  Status: not installed (run --install)"
 	fi
+	return 0
+}
 
+# Print detailed status of all monitored processes, sessions, and OS memory.
+cmd_status() {
+	ensure_dirs
+
+	echo "=== Memory Pressure Monitor v${SCRIPT_VERSION} ==="
+	echo ""
+	_status_print_processes
+	echo ""
+	_status_print_sessions
+	echo ""
+	_status_print_os_and_config
 	echo ""
 	return 0
 }
