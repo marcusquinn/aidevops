@@ -327,10 +327,9 @@ codacy_api_request() {
 # Core: Collect Findings with Pagination
 # =============================================================================
 
-cmd_collect() {
-	local repo=""
-	local account="personal"
-
+# Parse --repo and --account arguments for cmd_collect.
+# Sets caller-scope variables: repo, account.
+_collect_parse_args() {
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--repo)
@@ -355,11 +354,18 @@ cmd_collect() {
 			;;
 		esac
 	done
+	return 0
+}
 
-	# Load credentials
+# Validate prerequisites, load config, ensure DB, and create an audit run.
+# Arguments: $1=repo $2=account
+# Outputs on stdout: "<run_id> <org> <repo_name>"
+_collect_setup() {
+	local repo="$1"
+	local account="$2"
+
 	load_codacy_config "$account" || return 1
 
-	# Auto-detect repo if not specified
 	if [[ -z "$repo" ]]; then
 		repo=$(get_repo)
 	fi
@@ -374,7 +380,6 @@ cmd_collect() {
 	local head_sha
 	head_sha=$(get_head_sha)
 
-	# Derive org and repo name from OWNER/REPO format
 	local org repo_name
 	org="${CODACY_PROVIDER:-}"
 	if [[ -z "$org" ]]; then
@@ -384,7 +389,6 @@ cmd_collect() {
 
 	log_info "Collecting Codacy findings for ${org}/${repo_name}..."
 
-	# Create audit run
 	local run_id
 	run_id=$(db "$AUDIT_DB" "
 		INSERT INTO audit_runs (repo, head_sha, services_run)
@@ -393,8 +397,19 @@ cmd_collect() {
 	")
 
 	log_info "Audit run #${run_id} started"
+	echo "${run_id} ${org} ${repo_name}"
+	return 0
+}
 
-	# Paginated collection
+# Paginate through Codacy API and insert all findings for a run.
+# Arguments: $1=run_id $2=org $3=repo_name
+# Outputs on stdout: total count of collected findings
+_collect_paginate() {
+	local run_id="$1"
+	local org="$2"
+	local repo_name="$3"
+	local endpoint="/analysis/organizations/gh/${org}/repositories/${repo_name}/issues/search"
+
 	local total_collected=0
 	local cursor=""
 	local page=0
@@ -403,7 +418,6 @@ cmd_collect() {
 	while [[ "$has_more" == "true" && $page -lt $CODACY_MAX_PAGES ]]; do
 		page=$((page + 1))
 
-		# Build request body with cursor-based pagination (jq for safe JSON escaping)
 		local request_body
 		if [[ -n "$cursor" ]]; then
 			request_body=$(jq -nc --argjson limit "$CODACY_PAGE_SIZE" --arg cursor "$cursor" \
@@ -411,8 +425,6 @@ cmd_collect() {
 		else
 			request_body=$(jq -nc --argjson limit "$CODACY_PAGE_SIZE" '{limit: $limit}')
 		fi
-
-		local endpoint="/analysis/organizations/gh/${org}/repositories/${repo_name}/issues/search"
 
 		log_info "Fetching page ${page} (cursor: ${cursor:-start})..."
 
@@ -422,7 +434,6 @@ cmd_collect() {
 			break
 		}
 
-		# Check if response has data
 		local issue_count
 		issue_count=$(echo "$response" | jq '.data | length' 2>/dev/null || echo "0")
 
@@ -431,24 +442,30 @@ cmd_collect() {
 			break
 		fi
 
-		# Parse and insert findings
 		local page_count
 		page_count=$(insert_findings "$run_id" "$response")
 		total_collected=$((total_collected + page_count))
 
 		log_info "Page ${page}: ${page_count} findings collected (total: ${total_collected})"
 
-		# Check for next page cursor
 		cursor=$(echo "$response" | jq -r '.pagination.cursor // empty' 2>/dev/null || echo "")
 		if [[ -z "$cursor" ]]; then
 			has_more=false
 		fi
 	done
 
-	# Mark duplicates within this run
+	echo "$total_collected"
+	return 0
+}
+
+# Deduplicate findings, mark run complete, and log summary.
+# Arguments: $1=run_id $2=total_collected
+_collect_finalise() {
+	local run_id="$1"
+	local total_collected="$2"
+
 	deduplicate_findings "$run_id"
 
-	# Update audit run as completed
 	db "$AUDIT_DB" "
 		UPDATE audit_runs
 		SET completed_at = strftime('%Y-%m-%dT%H:%M:%SZ','now'),
@@ -461,7 +478,25 @@ cmd_collect() {
 
 	log_success "Collection complete: ${total_collected} total, ${unique_count} unique findings (run #${run_id})"
 	log_info "Database: $AUDIT_DB"
+	return 0
+}
 
+cmd_collect() {
+	local repo=""
+	local account="personal"
+
+	_collect_parse_args "$@" || return 1
+
+	local setup_out
+	setup_out=$(_collect_setup "$repo" "$account") || return 1
+
+	local run_id org repo_name
+	read -r run_id org repo_name <<<"$setup_out"
+
+	local total_collected
+	total_collected=$(_collect_paginate "$run_id" "$org" "$repo_name")
+
+	_collect_finalise "$run_id" "$total_collected"
 	return 0
 }
 
@@ -592,12 +627,8 @@ deduplicate_findings() {
 # Query Command
 # =============================================================================
 
-cmd_query() {
-	local severity=""
-	local category=""
-	local format="text"
-	local limit=50
-
+# Parse query arguments into caller-scope variables: severity, category, format, limit.
+_query_parse_args() {
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--severity)
@@ -643,11 +674,17 @@ cmd_query() {
 			;;
 		esac
 	done
+	return 0
+}
 
-	ensure_db
-
-	# Build WHERE clause with input validation
+# Build and validate the SQL WHERE clause for query/export.
+# Arguments: $1=severity $2=category
+# Outputs validated WHERE clause on stdout; returns 1 on invalid input.
+_query_build_where() {
+	local severity="$1"
+	local category="$2"
 	local where="WHERE source = 'codacy' AND is_duplicate = 0"
+
 	if [[ -n "$severity" ]]; then
 		case "$severity" in
 		critical | high | medium | low | info)
@@ -659,6 +696,7 @@ cmd_query() {
 			;;
 		esac
 	fi
+
 	if [[ -n "$category" ]]; then
 		case "$category" in
 		security | bug | performance | style | documentation | refactoring | general)
@@ -671,79 +709,111 @@ cmd_query() {
 		esac
 	fi
 
+	echo "$where"
+	return 0
+}
+
+# Emit query results as JSON.
+# Arguments: $1=where $2=limit
+_query_output_json() {
+	local where="$1"
+	local limit="$2"
+	db "$AUDIT_DB" -json "
+		SELECT id, severity, path, line, description, category, rule_id, collected_at
+		FROM audit_findings
+		$where
+		ORDER BY
+		    CASE severity
+		        WHEN 'critical' THEN 1
+		        WHEN 'high' THEN 2
+		        WHEN 'medium' THEN 3
+		        WHEN 'low' THEN 4
+		        ELSE 5
+		    END,
+		    path, line
+		LIMIT $limit;
+	"
+	return 0
+}
+
+# Emit query results as formatted text with colour coding.
+# Arguments: $1=where $2=limit $3=severity_filter $4=category_filter
+_query_output_text() {
+	local where="$1"
+	local limit="$2"
+	local severity="$3"
+	local category="$4"
+
+	echo ""
+	echo "Codacy Findings"
+	echo "==============="
+	[[ -n "$severity" ]] && echo "Severity: ${severity}"
+	[[ -n "$category" ]] && echo "Category: ${category}"
+	echo ""
+
+	db "$AUDIT_DB" -separator $'\x1f' "
+		SELECT severity, path, line,
+		       substr(replace(replace(description, char(10), ' '), char(13), ''), 1, 120),
+		       rule_id
+		FROM audit_findings
+		$where
+		ORDER BY
+		    CASE severity
+		        WHEN 'critical' THEN 1
+		        WHEN 'high' THEN 2
+		        WHEN 'medium' THEN 3
+		        WHEN 'low' THEN 4
+		        ELSE 5
+		    END,
+		    path, line
+		LIMIT $limit;
+	" | while IFS=$'\x1f' read -r sev path line desc rule; do
+		local color="$NC"
+		case "$sev" in
+		critical) color="$RED" ;;
+		high) color="$RED" ;;
+		medium) color="$YELLOW" ;;
+		low) color="$BLUE" ;;
+		*) color="$NC" ;;
+		esac
+
+		local location=""
+		if [[ -n "$path" ]]; then
+			location="${path}:${line}"
+		else
+			location="(general)"
+		fi
+
+		printf "  ${color}[%-8s]${NC} %s" "$sev" "$location"
+		[[ -n "$rule" ]] && printf " (%s)" "$rule"
+		echo ""
+		echo "    ${desc}"
+		echo ""
+	done
+
+	local total
+	total=$(db "$AUDIT_DB" "SELECT COUNT(*) FROM audit_findings $where;")
+	echo "Total: ${total} finding(s)"
+	return 0
+}
+
+cmd_query() {
+	local severity=""
+	local category=""
+	local format="text"
+	local limit=50
+
+	_query_parse_args "$@" || return 1
+
+	ensure_db
+
+	local where
+	where=$(_query_build_where "$severity" "$category") || return 1
+
 	if [[ "$format" == "json" ]]; then
-		db "$AUDIT_DB" -json "
-			SELECT id, severity, path, line, description, category, rule_id, collected_at
-			FROM audit_findings
-			$where
-			ORDER BY
-			    CASE severity
-			        WHEN 'critical' THEN 1
-			        WHEN 'high' THEN 2
-			        WHEN 'medium' THEN 3
-			        WHEN 'low' THEN 4
-			        ELSE 5
-			    END,
-			    path, line
-			LIMIT $limit;
-		"
+		_query_output_json "$where" "$limit"
 	else
-		echo ""
-		echo "Codacy Findings"
-		echo "==============="
-		if [[ -n "$severity" ]]; then
-			echo "Severity: ${severity}"
-		fi
-		if [[ -n "$category" ]]; then
-			echo "Category: ${category}"
-		fi
-		echo ""
-
-		db "$AUDIT_DB" -separator $'\x1f' "
-			SELECT severity, path, line,
-			       substr(replace(replace(description, char(10), ' '), char(13), ''), 1, 120),
-			       rule_id
-			FROM audit_findings
-			$where
-			ORDER BY
-			    CASE severity
-			        WHEN 'critical' THEN 1
-			        WHEN 'high' THEN 2
-			        WHEN 'medium' THEN 3
-			        WHEN 'low' THEN 4
-			        ELSE 5
-			    END,
-			    path, line
-			LIMIT $limit;
-		" | while IFS=$'\x1f' read -r sev path line desc rule; do
-			local color="$NC"
-			case "$sev" in
-			critical) color="$RED" ;;
-			high) color="$RED" ;;
-			medium) color="$YELLOW" ;;
-			low) color="$BLUE" ;;
-			*) color="$NC" ;;
-			esac
-
-			local location=""
-			if [[ -n "$path" && "$path" != "" ]]; then
-				location="${path}:${line}"
-			else
-				location="(general)"
-			fi
-
-			printf "  ${color}[%-8s]${NC} %s" "$sev" "$location"
-			if [[ -n "$rule" ]]; then
-				printf " (%s)" "$rule"
-			fi
-			echo ""
-			echo "    ${desc}"
-			echo ""
-		done
-
-		local total
-		total=$(db "$AUDIT_DB" "SELECT COUNT(*) FROM audit_findings $where;")
-		echo "Total: ${total} finding(s)"
+		_query_output_text "$where" "$limit" "$severity" "$category"
 	fi
 
 	return 0
