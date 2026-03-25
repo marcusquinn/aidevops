@@ -559,9 +559,12 @@ MONITOR_PLIST
 		fi
 	else
 		# Linux: cron entry (every minute — cron minimum granularity)
+		# Shell-escape path to prevent command injection via metacharacters
+		local _cron_monitor_script
+		_cron_monitor_script=$(_cron_escape "$monitor_script")
 		(
 			crontab -l 2>/dev/null | grep -v 'aidevops: memory-pressure-monitor' || true
-			echo "* * * * * /bin/bash \"${monitor_script}\" >> \"\$HOME/.aidevops/logs/memory-pressure-launchd.log\" 2>&1 # aidevops: memory-pressure-monitor"
+			echo "* * * * * /bin/bash ${_cron_monitor_script} >> \"\$HOME/.aidevops/logs/memory-pressure-launchd.log\" 2>&1 # aidevops: memory-pressure-monitor"
 		) | crontab - 2>/dev/null || true
 		if crontab -l 2>/dev/null | grep -qF "aidevops: memory-pressure-monitor" 2>/dev/null; then
 			print_info "Memory pressure monitor enabled (cron, every minute)"
@@ -913,6 +916,9 @@ setup_oauth_token_refresh() {
 	if [[ "$(uname -s)" == "Darwin" ]]; then
 		local tr_plist="$HOME/Library/LaunchAgents/${tr_label}.plist"
 
+		# XML-escape paths for safe plist embedding.
+		# Note: &quot; entities in the bash -c string below render as " in the
+		# plist, providing proper shell quoting for paths with spaces.
 		local _xml_tr_script _xml_tr_home
 		_xml_tr_script=$(_xml_escape "$tr_script")
 		_xml_tr_home=$(_xml_escape "$HOME")
