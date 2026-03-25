@@ -26,7 +26,8 @@ Reducing from 7 steps to 3 (or even 1-page checkout) dramatically improves conve
 This is one of the highest-impact checkout decisions.
 
 **Account Required Checkout**:
-```
+
+```text
 Step 1: Create Account
 - Email
 - Password
@@ -50,7 +51,8 @@ Step 2: Proceed to checkout...
 - Abandonment increases 20-40%
 
 **Guest Checkout**:
-```
+
+```text
 Email Address: [___________]
 ○ Continue as Guest    ○ Create Account (optional)
 ```
@@ -76,7 +78,8 @@ Email Address: [___________]
 **Best Practice: Guest as Default, Account as Option**
 
 **Implementation**:
-```
+
+```text
 Checkout
 ─────────
 Email: [________________]
@@ -150,7 +153,8 @@ Information collected across multiple pages/steps.
 **Hybrid Approach: Accordion Checkout**:
 
 Single page, but fields grouped in expandable sections:
-```
+
+```text
 ✓ Contact Information
    Email: john@example.com
    [Edit]
@@ -181,7 +185,8 @@ For multi-step checkout, progress indicators reduce abandonment.
 **Types of Progress Indicators**:
 
 **1. Step Counter**:
-```
+
+```text
 Step 2 of 4
 ```
 
@@ -189,7 +194,8 @@ Step 2 of 4
 **Cons**: Emphasizes how much remains ("Still 2 more steps!")
 
 **2. Step Names**:
-```
+
+```text
 Shipping > Payment > Review
 ```
 
@@ -197,7 +203,8 @@ Shipping > Payment > Review
 **Cons**: Can feel long if many steps listed
 
 **3. Visual Progress Bar**:
-```
+
+```text
 ━━━━━━━━━━━━━━━━━╺━━━━━━━━━
 Shipping    Payment    Review
   ✓           ●
@@ -207,7 +214,8 @@ Shipping    Payment    Review
 **Cons**: Must be accurate (don't show 50% complete when user is only on step 1 of 5)
 
 **4. Checked-Off Steps**:
-```
+
+```text
 ✓ Cart
 ✓ Shipping
 ● Payment ← You are here
@@ -229,7 +237,8 @@ Car wash loyalty cards:
 Both groups need 8 purchases. Group B completed at a 82% higher rate because they started with "progress."
 
 **Application to Checkout**:
-```
+
+```text
 ✓ Added to Cart
 ○ Shipping
 ○ Payment
@@ -277,7 +286,8 @@ Every field adds friction. Every unnecessary field costs conversions.
 **Company Name for B2B**:
 
 If selling to businesses:
-```
+
+```text
 ☐ This is a business purchase
   [If checked, show:]
   Company Name: [___________]
@@ -290,13 +300,14 @@ Conditional logic keeps field hidden for consumers, shown for B2B.
 
 Never require. Most people don't have apartment numbers or suite numbers.
 
-```
+```text
 Address Line 2 (Apartment, Suite, etc.) - Optional
 [___________]
 ```
 
 Or use placeholder:
-```
+
+```text
 Address Line 2
 [Apartment, suite, etc. (optional)]
 ```
@@ -307,7 +318,8 @@ Address Line 2
 Surprise shipping costs are the #1 reason for cart abandonment (Baymard: 50% of abandonment).
 
 **Poor Implementation**:
-```
+
+```text
 Standard Shipping: Calculate at checkout
 Expedited: Calculate at checkout
 ```
@@ -315,14 +327,16 @@ Expedited: Calculate at checkout
 Users forced to proceed without knowing cost = abandonment.
 
 **Better Implementation**:
-```
+
+```text
 ○ Standard Shipping (5-7 business days) - $5.99
 ○ Expedited Shipping (2-3 business days) - $12.99
 ○ Overnight (1 business day) - $24.99
 ```
 
 **Best Implementation**:
-```
+
+```text
 ○ FREE Standard Shipping (5-7 business days)
 ○ Expedited Shipping (2-3 business days) - $12.99
 ○ Overnight (1 business day) - $24.99
@@ -335,7 +349,7 @@ Pre-select the most popular shipping option (usually fastest free option, or che
 
 **Psychology: Decoy Pricing in Shipping**:
 
-```
+```text
 ○ Standard (5-7 days) - $5.00
 ○ Priority (3-4 days) - $12.00 ← Decoy
 ○ Express (1-2 days) - $14.00
@@ -348,7 +362,8 @@ Priority is a decoy—only $2 less than Express for much slower delivery. Makes 
 **Accepted Payment Methods**:
 
 Display accepted payment logos prominently:
-```
+
+```text
 We accept: [Visa] [Mastercard] [AmEx] [Discover] [PayPal] [Apple Pay] [Google Pay]
 ```
 
@@ -368,7 +383,8 @@ We accept: [Visa] [Mastercard] [AmEx] [Discover] [PayPal] [Apple Pay] [Google Pa
 **Impact**: Adding BNPL increases AOV (average order value) by 30-50% and conversion rates by 20-30% (especially for orders $100+).
 
 **Implementation**:
-```
+
+```text
 Payment Method:
 ○ Credit/Debit Card
 ○ PayPal
@@ -385,7 +401,8 @@ Payment Method:
 **Impact**: Reduces checkout time from 2-3 minutes to 10-20 seconds.
 
 **Implementation**:
-```
+
+```text
 Express Checkout:
 [Apple Pay] [Google Pay] [PayPal]
 
@@ -399,14 +416,16 @@ Checkout is where trust is most critical. Users are about to enter payment infor
 **Essential Trust Signals**:
 
 **1. SSL Certificate / HTTPS**:
-```
+
+```text
 🔒 Secure Checkout
 ```
 
 Modern browsers show padlock in address bar, but some sites reinforce it.
 
 **2. Security Badges**:
-```
+
+```text
 [Norton Secured] [McAfee Secure] [SSL Secure]
 ```
 
@@ -415,26 +434,30 @@ Modern browsers show padlock in address bar, but some sites reinforce it.
 **Best Practice**: Place security badge near payment form and CTA button.
 
 **3. PCI Compliance**:
-```
+
+```text
 PCI DSS Compliant
 ```
 
 Signals that payment data is handled securely.
 
 **4. Money-Back Guarantee**:
-```
+
+```text
 🛡️ 30-Day Money-Back Guarantee
 ```
 
 Even in checkout, risk reversal helps.
 
 **5. Return Policy Link**:
-```
+
+```python
 Free Returns & Exchanges (see our return policy)
 ```
 
 **6. Customer Service Contact**:
-```
+
+```text
 Need help? Call us: 1-800-555-1234
 Or chat with us [Chat Icon]
 ```
@@ -444,7 +467,8 @@ Signals support is available if something goes wrong.
 **Trust Signal Placement**:
 
 **Near Payment Form**:
-```
+
+```text
 Payment Information
 Credit Card Number: [________________]
 Expiration: [__/__] CVV: [___]
@@ -454,7 +478,8 @@ Expiration: [__/__] CVV: [___]
 ```
 
 **Near Submit Button**:
-```
+
+```text
 [Complete Order]
 
 🛡️ 30-Day Money-Back Guarantee
@@ -462,7 +487,8 @@ Expiration: [__/__] CVV: [___]
 ```
 
 **Footer of Checkout**:
-```
+
+```text
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 Secure Checkout | PCI Compliant | 256-bit SSL Encryption
 Need help? Call 1-800-555-1234 or chat with us
@@ -481,7 +507,8 @@ Users should always see:
 Checkout form with no cart summary visible (user has to navigate back to cart to confirm items).
 
 **Good Experience**:
-```
+
+```text
 ┌─────────────────┬────────────────────┐
 │                 │  Order Summary     │
 │  Shipping       │                    │
@@ -498,7 +525,8 @@ Checkout form with no cart summary visible (user has to navigate back to cart to
 
 **Mobile Consideration**:
 On mobile, order summary often collapses:
-```
+
+```text
 ▼ Show Order Summary ($142)
 ```
 
@@ -512,7 +540,8 @@ As user scrolls through checkout form, order summary stays visible (sticky sideb
 Promo code fields are tricky—they can increase revenue (through redemptions) or decrease it (by prompting users to leave and search for codes).
 
 **The Problem**:
-```
+
+```text
 Promo Code: [___________] [Apply]
 ```
 
@@ -521,7 +550,8 @@ User sees this, thinks "Wait, I should find a promo code!" and leaves to Google 
 **Solutions**:
 
 **Option 1: Hide Until Clicked**
-```
+
+```text
 Have a promo code? [Click here]
 ```
 
@@ -532,7 +562,8 @@ If promo codes are rare or limited, don't show the field. Auto-apply promos base
 
 **Option 3: Provide a Code**
 If offering site-wide promos:
-```
+
+```text
 Promo Code: [SAVE10] [Applied ✓]
 Save 10% on your order!
 ```
@@ -554,10 +585,10 @@ Use proper input attributes to trigger browser autofill:
 <input type="text" name="fname" autocomplete="given-name">
 <input type="text" name="lname" autocomplete="family-name">
 <input type="text" name="address" autocomplete="shipping street-address">
-<input type="text" name="city" autocomplete="shipping locality">
-<input type="text" name="state" autocomplete="shipping region">
+<input type="text" name="city" autocomplete="shipping address-level2">
+<input type="text" name="state" autocomplete="shipping address-level1">
 <input type="text" name="zip" autocomplete="shipping postal-code">
-<input type="text" name="country" autocomplete="shipping country">
+<input type="text" name="country" autocomplete="shipping country-name">
 <input type="tel" name="phone" autocomplete="tel">
 ```
 
@@ -566,7 +597,7 @@ Use proper input attributes to trigger browser autofill:
 **Address Autocomplete**:
 Use Google Places API or similar:
 
-```
+```text
 Shipping Address
 [123 Main St|] ← User starts typing
   ↓
@@ -590,19 +621,22 @@ Shipping Address
 
 **Country**:
 Default to most common country for your audience:
-```
+
+```text
 Country: [United States ▼] ← Pre-selected based on IP or past orders
 ```
 
 **Billing Same as Shipping**:
-```
+
+```text
 ☑ Billing address same as shipping address
 ```
 
 Pre-check this checkbox. ~90% of customers use the same address.
 
 **Save Info for Next Time**:
-```
+
+```text
 ☐ Save this information for next time
 ```
 
@@ -613,19 +647,22 @@ For guest checkouts, offer to save info (creates account or cookie-based).
 **Inline Validation** (real-time feedback):
 
 **Good**:
-```
+
+```text
 Email
 [john@example.com] ✓
 ```
 
 **Better**:
-```
+
+```text
 Email
 [johnexample.com] ✗ Please enter a valid email address
 ```
 
 **Best**:
-```
+
+```text
 Email
 [john@] ...typing...
 [john@ex] ...typing...
@@ -642,17 +679,20 @@ Real-time validation as user types, but with slight delay (debounce) to avoid tr
 **Error Message Best Practices**:
 
 **Poor Error**:
-```
+
+```text
 ✗ Invalid credit card number
 ```
 
 **Better Error**:
-```
+
+```text
 ✗ Credit card number should be 15-16 digits
 ```
 
 **Best Error**:
-```
+
+```text
 ✗ Credit card number should be 15-16 digits. You entered 15.
   Double-check your number or try a different card.
 ```
@@ -661,7 +701,8 @@ Specific, helpful, actionable.
 
 **Error Summary**:
 If user clicks "Place Order" with errors, show summary at top:
-```
+
+```text
 ┌──────────────────────────────────────┐
 │ ⚠️ Please fix the following errors:  │
 │  • Email address is invalid          │
@@ -680,6 +721,7 @@ Mobile checkout requires special consideration—over 50% of transactions start 
 **Mobile-Specific Optimizations**:
 
 **1. Input Types**:
+
 ```html
 <input type="email"> ← Triggers email keyboard (@, .com shortcuts)
 <input type="tel"> ← Triggers numeric keypad
@@ -703,12 +745,14 @@ button {
 On mobile, always single column. Never side-by-side fields.
 
 **Poor** (desktop-style on mobile):
-```
+
+```text
 [First Name] [Last Name]
 ```
 
 **Good** (mobile-optimized):
-```
+
+```text
 First Name
 [____________]
 
@@ -723,7 +767,8 @@ Last Name
 - Address autocomplete essential
 
 **5. Digital Wallets Prominent**:
-```
+
+```text
 [Apple Pay]  [Google Pay]
 ──── or pay with card ────
 ```
@@ -746,26 +791,29 @@ Last Name
 **7. Progress Indicator**:
 Essential on mobile to show how much is left.
 
-```
+```text
 ●━━━○━━━○  Shipping
 ```
 
 ### Loading States and Button Copy During Submission
 
 **Poor Experience**:
-```
+
+```text
 [Place Order] ← User clicks
 (Nothing happens visibly for 2-3 seconds)
 (User clicks again—double order submitted!)
 ```
 
 **Better Experience**:
-```
+
+```text
 [Placing Order...] ← Button disabled, shows loading spinner
 ```
 
 **Best Experience**:
-```
+
+```text
 Before: [Place Order]
 Click ↓
 During: [Processing... 🔄] ← Button disabled, animated spinner
@@ -774,6 +822,7 @@ After: [Order Confirmed ✓] → Redirects to confirmation page
 ```
 
 **Implementation**:
+
 ```javascript
 form.addEventListener('submit', async (e) => {
   e.preventDefault();
@@ -797,7 +846,8 @@ form.addEventListener('submit', async (e) => {
 ```
 
 **Button Copy Progression**:
-```
+
+```text
 Initial:      [Complete Purchase]
 Clicked:      [Processing Payment...]
 Success:      [Payment Successful!]
@@ -806,7 +856,7 @@ Redirect:     (to confirmation page)
 
 OR
 
-```
+```text
 Initial:      [Place Order - $142.00]
 Clicked:      [Placing Your Order...]
 Success:      [✓ Order Placed]
@@ -824,7 +874,7 @@ When users abandon checkout, email recovery can win back 10-15% of those users.
 
 **Email #1: Reminder (1 hour after abandonment)**
 
-```
+```text
 Subject: Did you forget something?
 
 Hi [Name],
@@ -855,7 +905,7 @@ P.S. Your cart is saved for 48 hours.
 
 **Email #2: Incentive (24 hours after abandonment)**
 
-```
+```text
 Subject: [Name], here's 10% off to complete your order
 
 Hi [Name],
@@ -888,7 +938,7 @@ Best,
 
 **Email #3: Last Chance (48-72 hours after abandonment)**
 
-```
+```text
 Subject: Last chance: Your cart expires soon
 
 Hi [Name],
@@ -917,7 +967,7 @@ Thanks,
 
 **Email #4: Alternatives (72 hours after, if still no purchase)**
 
-```
+```text
 Subject: Not quite right? Here are some alternatives
 
 Hi [Name],
@@ -987,7 +1037,8 @@ Happy shopping!
 
 **Browse Abandonment**: User views products but never adds to cart
 **Email Example**:
-```
+
+```text
 Subject: Still interested in [Product Name]?
 
 Hi [Name],
@@ -1009,7 +1060,8 @@ Happy shopping!
 **Checkout Abandonment**: User starts checkout (enters email) but doesn't complete
 
 **Email Example** (more urgent, user was closer to purchase):
-```
+
+```python
 Subject: You're so close! Complete your order now.
 
 Hi [Name],
@@ -1036,7 +1088,7 @@ Exit-intent technology detects when a user is about to leave the page (mouse mov
 
 **Exit-Intent Popup Example**:
 
-```
+```text
 ┌──────────────────────────────────────┐
 │  Wait! Don't leave empty-handed.     │
 │                                       │
@@ -1072,7 +1124,7 @@ Exit-intent technology detects when a user is about to leave the page (mouse mov
 **Alternative: Live Chat Popup**:
 Instead of discount, offer help:
 
-```
+```text
 ┌──────────────────────────────────────┐
 │  Need help with your order?          │
 │                                       │
@@ -1094,7 +1146,8 @@ Instead of discount, offer help:
 **Order Bump**: Small add-on offered during checkout (before payment).
 
 **Example** (e-commerce):
-```
+
+```text
 Your Order:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━
 Running Shoes - $99.99
@@ -1133,7 +1186,8 @@ If checkbox selected: Subtotal becomes $112.98
 After purchase confirmation, offer an upsell that can be added with one click (payment info already captured).
 
 **Example**:
-```
+
+```text
 Order Confirmed!
 
 Your order #12345 is confirmed.
@@ -1231,7 +1285,8 @@ The order confirmation page is not just a receipt—it's a high-engagement oppor
 **1. Upsell/Cross-Sell** (as mentioned above)
 
 **2. Social Sharing**:
-```
+
+```text
 Share the love:
 [Share on Facebook] [Tweet] [Instagram]
 
@@ -1239,7 +1294,8 @@ Share the love:
 ```
 
 **3. Referral Program**:
-```
+
+```text
 Love our products?
 Refer a friend and you both get $10 off your next order!
 
@@ -1247,7 +1303,8 @@ Refer a friend and you both get $10 off your next order!
 ```
 
 **4. Account Creation** (if guest checkout):
-```
+
+```text
 Create an account to track your order and check out faster next time!
 
 Your email: john@example.com
@@ -1257,7 +1314,8 @@ Create a password: [________]
 ```
 
 **5. Survey/Feedback**:
-```
+
+```text
 How was your checkout experience?
 [Great! 😊] [Good 🙂] [Could be better 😐] [Poor ☹️]
 ```
@@ -1265,7 +1323,8 @@ How was your checkout experience?
 Quick one-click feedback to optimize checkout.
 
 **6. Content/Blog**:
-```
+
+```text
 While you wait, check out:
 → How to Care for Your Running Shoes
 → Best Running Routes in [City]
@@ -1408,7 +1467,8 @@ Selling globally requires localization.
 
 **Currency**:
 Display prices in local currency.
-```
+
+```text
 $99.99 USD
 €89.99 EUR
 £79.99 GBP
@@ -1425,14 +1485,15 @@ Use auto-detect by IP or let user select.
 
 **Taxes and Duties**:
 Communicate clearly:
-```
+
+```text
 Total: $142.00
 (Duties and taxes may apply upon delivery)
 ```
 
 OR
 
-```
+```text
 Total: $142.00
 Includes all duties and taxes (DDP)
 ```
@@ -1442,7 +1503,7 @@ DDP (Delivered Duty Paid) removes surprise fees and improves delivery experience
 **Shipping**:
 Show realistic delivery times for international shipping.
 
-```
+```text
 Standard International (10-20 business days) - $15.00
 Express International (5-7 business days) - $40.00
 ```

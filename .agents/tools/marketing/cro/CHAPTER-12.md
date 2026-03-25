@@ -1095,12 +1095,14 @@ Use: "Get Started Today—Offer Ends Tonight"
 #### Error Messages
 
 **Poor Error Message**:
-```
+
+```text
 Error: Invalid input
 ```
 
 **Better Error Message**:
-```
+
+```text
 Oops! Email addresses need an @ symbol.
 Please check your email and try again.
 ```
@@ -1126,14 +1128,16 @@ Please check your email and try again.
 #### Help Text and Tooltips
 
 **Without Help Text**:
-```
+
+```text
 VAT Number: [_______]
 ```
 
 User thinks: "What's a VAT number? Do I need one?"
 
 **With Help Text**:
-```
+
+```text
 VAT Number (optional): [_______]
 ⓘ Only required if you're an EU business
 ```
@@ -1143,7 +1147,8 @@ User thinks: "Oh, I'm not EU, I can skip this."
 **Help Text Examples**:
 
 **Phone Number Field**:
-```
+
+```text
 Phone Number (optional): [_______]
 We'll only call if there's a delivery issue
 ```
@@ -1151,7 +1156,8 @@ We'll only call if there's a delivery issue
 Reduces hesitation to share phone.
 
 **Password Field**:
-```
+
+```text
 Create Password: [_______]
 Tip: Use a mix of letters, numbers, and symbols
 ```
@@ -1159,7 +1165,8 @@ Tip: Use a mix of letters, numbers, and symbols
 Guides user to create strong password.
 
 **Billing Address**:
-```
+
+```text
 ☑ Billing address same as shipping
 Uncheck if your billing address is different
 ```
@@ -1169,12 +1176,14 @@ Clarifies purpose of checkbox.
 #### Form Labels and Placeholders
 
 **Poor Label/Placeholder**:
-```
+
+```text
 [Email]
 ```
 
 **Better Label + Placeholder**:
-```
+
+```text
 Email Address
 [you@example.com]
 ```
@@ -1189,19 +1198,22 @@ Email Address
 **Examples**:
 
 **Name Field**:
-```
+
+```text
 Full Name
 [Jane Doe]
 ```
 
 **Phone Field**:
-```
+
+```text
 Phone Number
 [(555) 123-4567]
 ```
 
 **Website Field**:
-```
+
+```text
 Website
 [https://example.com]
 ```
@@ -1209,7 +1221,8 @@ Website
 #### Privacy and Trust Microcopy
 
 **Below Email Field**:
-```
+
+```text
 Email Address
 [_______]
 
@@ -1217,7 +1230,8 @@ We'll never share your email. Unsubscribe anytime.
 ```
 
 **Below Credit Card Field**:
-```
+
+```text
 Credit Card Number
 [____ ____ ____ ____]
 
@@ -1225,7 +1239,8 @@ Credit Card Number
 ```
 
 **Below Phone Number**:
-```
+
+```text
 Phone Number (optional)
 [_______]
 
@@ -1237,12 +1252,14 @@ We'll only call if there's a delivery issue—no sales calls, ever.
 #### Success Messages
 
 **Poor Success Message**:
-```
+
+```text
 Success
 ```
 
 **Better Success Message**:
-```
+
+```text
 ✓ You're all set!
 
 We just sent a confirmation email to john@example.com.
@@ -1255,7 +1272,8 @@ Check your inbox to get started.
 - Confirmation of what happened
 
 **Form Submission Success**:
-```
+
+```text
 ✓ Thanks for reaching out!
 
 We'll respond within 24 hours.
@@ -1263,7 +1281,8 @@ While you wait, check out our free resources →
 ```
 
 **Order Confirmation Success**:
-```
+
+```text
 ✓ Order Confirmed!
 
 Your order #12345 will ship in 1-2 business days.
@@ -1271,7 +1290,8 @@ We'll email you a tracking number.
 ```
 
 **Subscription Success**:
-```
+
+```text
 ✓ Welcome aboard!
 
 Your first email is on its way.
@@ -1281,18 +1301,21 @@ Your first email is on its way.
 #### Loading States
 
 **Poor Loading Message**:
-```
+
+```text
 Loading...
 ```
 
 **Better Loading Message**:
-```
+
+```text
 Hang tight while we process your order...
 This usually takes 3-5 seconds.
 ```
 
 **Even Better** (with progress):
-```
+
+```text
 Processing your order...
 ✓ Validating payment
 ⋯ Confirming inventory

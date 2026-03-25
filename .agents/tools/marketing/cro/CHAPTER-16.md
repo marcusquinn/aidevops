@@ -131,24 +131,29 @@ from scipy import stats
 
 def calculate_geo_lift(test_sales, control_sales, test_baseline, control_baseline):
     """
-    Calculate lift using difference-in-differences
+    Calculate lift using difference-in-differences with proper variance estimation.
+    
+    Args:
+        test_sales: Array of per-market sales in treatment group during test period
+        control_sales: Array of per-market sales in control group during test period
+        test_baseline: Array of per-market sales in treatment group during baseline period
+        control_baseline: Array of per-market sales in control group during baseline period
     """
-    # Calculate changes from baseline
-    test_change = np.mean(test_sales) - np.mean(test_baseline)
-    control_change = np.mean(control_sales) - np.mean(control_baseline)
+    # Calculate per-market change scores (DiD approach)
+    test_change = np.array(test_sales) - np.array(test_baseline)
+    control_change = np.array(control_sales) - np.array(control_baseline)
     
-    # True lift is difference between test and control changes
-    lift = test_change - control_change
+    # True lift is difference in differences
+    lift = np.mean(test_change) - np.mean(control_change)
     
-    # Statistical significance
-    pooled_se = np.sqrt(
-        np.var(test_sales)/len(test_sales) + 
-        np.var(control_sales)/len(control_sales)
-    )
+    # Standard error of the difference in differences
+    se_test = np.std(test_change, ddof=1) / np.sqrt(len(test_change))
+    se_control = np.std(control_change, ddof=1) / np.sqrt(len(control_change))
+    pooled_se = np.sqrt(se_test**2 + se_control**2)
     
     t_stat = lift / pooled_se
-    p_value = 2 * (1 - stats.t.cdf(abs(t_stat), 
-                                   df=len(test_sales) + len(control_sales) - 2))
+    df = len(test_change) + len(control_change) - 2
+    p_value = 2 * (1 - stats.t.cdf(abs(t_stat), df=df))
     
     return {
         'lift': lift,
@@ -549,7 +554,14 @@ import math
 
 def sample_size_per_variant(baseline_rate, mde, alpha=0.05, power=0.8):
     """
-    Calculate required sample size per variant
+    Calculate required sample size per variant.
+    
+    Args:
+        baseline_rate: Current conversion rate (e.g., 0.02 for 2%)
+        mde: Minimum detectable effect as relative lift (e.g., 0.15 for 15%
+             relative increase, yielding p2 = baseline_rate * (1 + mde))
+        alpha: Significance level (default 0.05)
+        power: Statistical power (default 0.8)
     """
     p1 = baseline_rate
     p2 = baseline_rate * (1 + mde)
@@ -730,4 +742,4 @@ def generate_weekly_report():
     )
 ```
 
-This chapter covers the advanced analytics and attribution methodologies essential for sophisticated CRO programs. Mastering these techniques enables data-driven decision making and accurate measurement of optimization impact.
+This chapter covers the advanced analytics and attribution methodologies essential for sophisticated CRO programs. Mastering these techniques enables data-driven decision-making and accurate measurement of optimization impact.

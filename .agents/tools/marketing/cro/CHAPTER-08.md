@@ -96,37 +96,45 @@ Collect information gradually over time rather than all at once.
 #### How Progressive Profiling Works
 
 **First Interaction** (Newsletter Signup):
-```
+
+```text
 Email: ___________________
 [Subscribe]
 ```
+
 Conversion Rate: 12%
 
 **Second Interaction** (Content Download):
-```
+
+```text
 Email: user@example.com (pre-filled)
 First Name: ___________________
 [Download Guide]
 ```
+
 Conversion Rate: 40% (of newsletter subscribers)
 
 **Third Interaction** (Webinar Registration):
-```
+
+```text
 Email: user@example.com
 Name: John (pre-filled)
 Company: ___________________
 [Register]
 ```
+
 Conversion Rate: 25%
 
 **Fourth Interaction** (Free Trial):
-```
+
+```text
 Email: user@example.com
 Name: John
 Company: Example Corp (pre-filled)
 Phone: ___________________
 [Start Free Trial]
 ```
+
 Conversion Rate: 15%
 
 **Result**:
@@ -143,7 +151,8 @@ Conversion Rate: 15%
 - Logic to show only new/missing fields
 
 **Logic Flow**:
-```
+
+```text
 IF visitor is known (cookie/login):
   Load existing data
   Identify missing fields
@@ -154,6 +163,7 @@ END
 ```
 
 **Example (HubSpot)**:
+
 ```javascript
 <script charset="utf-8" type="text/javascript" src="//js.hsforms.net/forms/v2.js"></script>
 <script>
@@ -236,13 +246,15 @@ Good: "What's your biggest marketing challenge?" or "What brings you here today?
 **Progress Indicators**:
 
 **Visual Progress Bar**:
-```
+
+```text
 [■■■■■■□□□□] 60% Complete
 Step 2 of 3
 ```
 
 **Numbered Steps**:
-```
+
+```text
 ○ 1. About You ● 2. Company Info ○ 3. Preferences
 ```
 
@@ -271,6 +283,7 @@ Step 2 of 3
 - Clearly indicate which fields are required
 
 **Example**:
+
 ```html
 <div class="multi-step-form">
   <div class="progress-bar">
@@ -316,7 +329,8 @@ Step 2 of 3
 **Label Placement**:
 
 **Above Field** (recommended):
-```
+
+```text
 First Name
 [_________________]
 ```
@@ -328,7 +342,8 @@ Advantages:
 - Works well on mobile
 
 **Inside Field as Placeholder**:
-```
+
+```text
 [Enter your first name...]
 ```
 
@@ -340,7 +355,8 @@ Disadvantages:
 
 **Best Practice**:
 Use labels above fields, placeholders for format examples:
-```
+
+```text
 Email Address
 [user@example.com] ← placeholder shows format
 ```
@@ -350,42 +366,52 @@ Email Address
 **Use Correct Input Types**:
 
 **Email**:
+
 ```html
 <input type="email" name="email" autocomplete="email">
 ```
+
 Benefits:
 - Mobile keyboard shows @ and .com
 - Browser validation
 - Autofill suggestion
 
 **Phone**:
+
 ```html
 <input type="tel" name="phone" autocomplete="tel">
 ```
+
 Benefits:
 - Numeric keyboard on mobile
 - Autofill
 
 **URL**:
+
 ```html
 <input type="url" name="website" autocomplete="url">
 ```
+
 Benefits:
 - Shows .com on mobile keyboard
 - Validation
 
 **Number**:
+
 ```html
 <input type="number" name="quantity" min="1" max="10">
 ```
+
 Benefits:
 - Numeric keyboard
 - Built-in min/max validation
 
 **Date**:
+
 ```html
 <input type="date" name="birthdate">
 ```
+
 Benefits:
 - Native date picker
 - Proper format
@@ -393,7 +419,8 @@ Benefits:
 **Input Masks**:
 
 For formatted inputs (phone, credit card, dates):
-```
+
+```text
 Phone: (___) ___-____
 Credit Card: ____ ____ ____ ____
 Date: __/__/____
@@ -410,6 +437,7 @@ Libraries:
 Enable browser autofill with proper attributes:
 
 **Autocomplete Attributes**:
+
 ```html
 <input type="text" name="name" autocomplete="name">
 <input type="email" name="email" autocomplete="email">
@@ -423,6 +451,7 @@ Enable browser autofill with proper attributes:
 ```
 
 **Credit Card**:
+
 ```html
 <input type="text" name="cc-name" autocomplete="cc-name">
 <input type="text" name="cc-number" autocomplete="cc-number">
@@ -441,6 +470,7 @@ Benefits:
 Pre-select or pre-fill sensible defaults:
 
 **Country Selection**:
+
 ```javascript
 // Detect user's country from IP
 const userCountry = detectCountryFromIP();
@@ -448,18 +478,23 @@ document.querySelector('select[name="country"]').value = userCountry;
 ```
 
 **Quantity**:
+
 ```html
 <input type="number" name="quantity" value="1" min="1">
 ```
+
 Default to 1 (most common)
 
 **Subscription Preferences**:
+
 ```html
-<input type="checkbox" name="newsletter" checked>
+<input type="checkbox" name="newsletter">
 ```
-Pre-check newsletter signup (with clear indication)
+
+Provide an unchecked opt-in checkbox with clear consent language (explicit opt-in required)
 
 **Time Zones**:
+
 ```javascript
 const userTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
 ```
@@ -474,7 +509,8 @@ const userTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
 - Mobile necessitates single column
 
 **Single Column** (recommended):
-```
+
+```text
 First Name
 [_________________]
 
@@ -488,7 +524,8 @@ Email
 ```
 
 **Multi-Column** (use sparingly):
-```
+
+```text
 First Name          Last Name
 [________]          [________]
 
@@ -508,7 +545,7 @@ Only use multi-column for:
 **Field Grouping**:
 Group related fields with spacing and headings:
 
-```
+```text
 Personal Information
 ───────────────────
 First Name
@@ -536,7 +573,8 @@ Job Title
 **Required vs. Optional**:
 
 **Clear Indication**:
-```
+
+```text
 First Name *
 [_________________]
 
@@ -572,27 +610,31 @@ Options:
 Show errors as users complete each field (not on every keystroke)
 
 **Timing**:
-```
+
+```text
 Field focus → User types → Field blur → Validate → Show error/success
 ```
 
 **Visual Feedback**:
 
 **Error State**:
-```
+
+```text
 Email Address *
 [invalid@email] ← Red border
 ✗ Please enter a valid email address ← Red text
 ```
 
 **Success State**:
-```
+
+```text
 Email Address *
 [user@example.com] ← Green border
 ✓ ← Green checkmark
 ```
 
 **Implementation**:
+
 ```javascript
 emailField.addEventListener('blur', () => {
   if (!isValidEmail(emailField.value)) {
@@ -630,7 +672,7 @@ Good: "Please use format: (555) 555-5555"
 
 For forms with multiple errors, show summary at top:
 
-```
+```sql
 [Error Box at Top]
 ⚠️ Please correct the following errors:
   • Email address is required
@@ -649,14 +691,16 @@ With links that jump to specific fields on click.
 **Near Sensitive Fields**:
 
 Email Field:
-```
+
+```text
 Email Address *
 [_________________]
 🔒 We'll never share your email. Unsubscribe anytime.
 ```
 
 Payment Information:
-```
+
+```text
 Credit Card Number
 [____ ____ ____ ____]
 🔒 Your payment information is encrypted and secure
@@ -664,7 +708,8 @@ Credit Card Number
 ```
 
 Phone Number:
-```
+
+```text
 Phone Number (optional)
 [_________________]
 We'll only call to schedule delivery
@@ -673,7 +718,8 @@ We'll only call to schedule delivery
 #### Social Proof in Forms
 
 **Testimonials**:
-```
+
+```text
 [Form]
 ───────
 First Name: [____]
@@ -686,7 +732,8 @@ Email: [____]
 ```
 
 **Subscriber Count**:
-```
+
+```text
 Email Address
 [_________________]
 Join 50,000+ subscribers
@@ -707,7 +754,8 @@ Place near submit button
 **Single Field vs. Separate**:
 
 **Single "Full Name" Field** (preferred):
-```
+
+```text
 Full Name
 [_________________]
 ```
@@ -719,7 +767,8 @@ Advantages:
 - Can parse into first/last on backend
 
 **Separate Fields**:
-```
+
+```text
 First Name
 [_________________]
 
@@ -742,7 +791,8 @@ Only use separate if:
 **Email Confirmation**:
 
 Don't ask users to confirm email by typing twice:
-```
+
+```text
 Email
 [_________________]
 
@@ -756,6 +806,7 @@ Instead:
 - Allow easy correction if wrong
 
 **Auto-lowercase**:
+
 ```javascript
 emailField.addEventListener('input', (e) => {
   e.target.value = e.target.value.toLowerCase();
@@ -765,6 +816,7 @@ emailField.addEventListener('input', (e) => {
 Prevents case-sensitivity issues
 
 **Common Typo Detection**:
+
 ```javascript
 if (email.includes('@gmial.com')) {
   showSuggestion('Did you mean @gmail.com?');
@@ -793,7 +845,8 @@ Standardize on backend, not frontend.
 Phone numbers are sensitive and often unnecessary immediately.
 
 **Placeholder Example**:
-```
+
+```text
 Phone Number (optional)
 [(555) 555-5555] ← shows format
 ```
@@ -803,6 +856,7 @@ Phone Number (optional)
 **Address Autocomplete**:
 
 **Google Places API**:
+
 ```javascript
 const autocomplete = new google.maps.places.Autocomplete(addressField);
 ```
@@ -843,7 +897,8 @@ Don't ask for:
 **Requirements Communication**:
 
 Show requirements clearly BEFORE user types:
-```
+
+```text
 Password
 [_________________]
 Requirements:
@@ -854,7 +909,8 @@ Requirements:
 ```
 
 **Live Validation**:
-```
+
+```text
 Password
 [********]
 ✓ At least 8 characters
@@ -864,14 +920,16 @@ Password
 ```
 
 **Password Strength Indicator**:
-```
+
+```text
 Password
 [********]
 [■■■□□] Strength: Medium
 ```
 
 **Show/Hide Toggle**:
-```
+
+```text
 Password
 [********] [👁️ Show]
 ```
@@ -881,7 +939,8 @@ Lets users verify password without re-typing
 **Password Confirmation**:
 
 For critical actions (account creation, password change):
-```
+
+```text
 Password
 [_________________]
 
@@ -894,6 +953,7 @@ For low-stakes (newsletter signup), skip confirmation.
 #### Date Fields
 
 **Native Date Picker**:
+
 ```html
 <input type="date" name="birthdate">
 ```
@@ -911,7 +971,8 @@ Libraries:
 
 **Date Input Format**:
 For manual entry, show format clearly:
-```
+
+```text
 Birthdate
 [MM/DD/YYYY]
 ```
@@ -939,6 +1000,7 @@ Make entire label clickable, not just tiny box:
 ```
 
 **Large Touch Targets** (mobile):
+
 ```css
 .checkbox-label {
   min-height: 44px;
@@ -962,7 +1024,7 @@ input[type="checkbox"] {
   border: 0;
 }
 
-.checkbox-label::before {
+.checkbox-label span::before {
   content: '';
   display: inline-block;
   width: 20px;
@@ -971,7 +1033,7 @@ input[type="checkbox"] {
   margin-right: 10px;
 }
 
-input[type="checkbox"]:checked + .checkbox-label::before {
+input[type="checkbox"]:checked + span::before {
   background: #0066cc;
   border-color: #0066cc;
 }
@@ -979,7 +1041,8 @@ input[type="checkbox"]:checked + .checkbox-label::before {
 
 **Multiple Checkboxes**:
 Group with clear heading:
-```
+
+```text
 What topics interest you?
 □ Marketing
 □ Sales
@@ -989,7 +1052,8 @@ What topics interest you?
 
 **Radio Buttons**:
 Use for mutually exclusive options:
-```
+
+```text
 Company Size
 ○ 1-10 employees
 ○ 11-50 employees
@@ -1010,7 +1074,8 @@ Company Size
 
 **Searchable Dropdowns**:
 For long lists (countries, industries):
-```
+
+```text
 Country
 [Search countries...] ← type to filter
 ```
@@ -1097,7 +1162,8 @@ On mobile, this triggers native picker (better UX than custom dropdown)
 **Field Abandonment Analysis**:
 
 Identify which fields cause drop-off:
-```
+
+```text
 Field 1 (Email): 100% interaction, 98% completion
 Field 2 (Name): 98% interaction, 96% completion
 Field 3 (Phone): 96% interaction, 75% completion ← Problem!
@@ -1128,7 +1194,8 @@ Use insights to:
 Show/hide fields based on previous answers:
 
 **Example**:
-```
+
+```text
 Are you a current customer?
 ○ Yes  ○ No
 
@@ -1148,6 +1215,7 @@ Benefits:
 - Better data collection
 
 **Implementation**:
+
 ```javascript
 document.querySelector('input[name="customer"]').addEventListener('change', (e) => {
   if (e.target.value === 'no') {
@@ -1165,6 +1233,7 @@ document.querySelector('input[name="customer"]').addEventListener('change', (e) 
 For very long forms (applications, comprehensive surveys):
 
 **Auto-Save Progress**:
+
 ```javascript
 setInterval(() => {
   const formData = new FormData(formElement);
@@ -1173,6 +1242,7 @@ setInterval(() => {
 ```
 
 **Restore on Return**:
+
 ```javascript
 const savedData = JSON.parse(localStorage.getItem('form_draft'));
 if (savedData) {
@@ -1184,7 +1254,8 @@ if (savedData) {
 ```
 
 **Email Link to Continue**:
-```
+
+```text
 [Save and Continue Later]
 
 Email Address: [____________]
@@ -1198,7 +1269,8 @@ Email Address: [____________]
 Change submit button based on form state:
 
 **State-Based Copy**:
-```
+
+```text
 Empty form: "Get Started"
 Partially filled: "Continue"
 All fields complete: "Submit Application"
@@ -1212,7 +1284,8 @@ Error: "Try Again"
 Alternative interface: one question at a time in chat-like interface.
 
 **Example Flow**:
-```
+
+```text
 Bot: What's your first name?
 User: [John]
 ✓
@@ -1424,7 +1497,8 @@ ML determines optimal fields per user:
 
 **Predictive Autofill**:
 AI suggests completions based on partial input:
-```
+
+```text
 Company Na[me]
 [Microsoft] ← suggested
 [Microtech] ← alternative

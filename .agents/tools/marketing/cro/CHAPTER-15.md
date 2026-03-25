@@ -10,20 +10,23 @@ Customize content based on visitor's location (country, state, city).
 **Examples**:
 
 **Shipping Messaging**:
-```
+
+```text
 US visitor: "Free 2-day shipping to California"
 UK visitor: "Free delivery to London in 3-5 days"
 Canada visitor: "Ships to Toronto — import fees may apply"
 ```
 
 **Local Events/Stores**:
-```
+
+```text
 "Visit our store in [City]"
 "Attend our [City] meetup this Friday"
 ```
 
 **Currency Display**:
-```
+
+```text
 US: $99.99
 UK: £79.99
 EU: €89.99
@@ -424,7 +427,7 @@ E-commerce site tested:
 - **Segment 1** (returning customers): Showed "Welcome back!" vs "Continue shopping"
 - **Segment 2** (first-time visitors): Showed "New here? Get 10% off" vs "Browse best sellers"
 
-**Result**: 
+**Result**:
 - Returning customers: 12% uplift with "Continue shopping"
 - First-time visitors: 34% uplift with "Get 10% off"
 
@@ -517,7 +520,7 @@ Personalization hypotheses should still be tested.
 **Case Study 2: SaaS - Dynamic Headline by Referral Source**
 
 **Company**: Project management tool
-**Change**: 
+**Change**:
 - Google Ad (searching "Trello alternative") → Headline: "The Trello Alternative for Growing Teams"
 - Organic (searching "project management") → Headline: "Project Management Made Simple"
 **Result**: 34% increase in trial signups from paid ads, 18% overall lift
@@ -528,7 +531,7 @@ Personalization hypotheses should still be tested.
 **Case Study 3: Lead Gen - Returning Visitor Popup**
 
 **Company**: Marketing agency
-**Change**: 
+**Change**:
 - First visit: Educational content, soft CTA
 - Return visit (2+ visits): Exit-intent popup offering free audit
 **Result**: 28% increase in lead capture from returning visitors
@@ -539,7 +542,7 @@ Personalization hypotheses should still be tested.
 **Case Study 4: E-commerce - Cart Abandonment Personalization**
 
 **Company**: Fashion retailer
-**Change**: 
+**Change**:
 - Cart value < $50: Email with "Add $X to get free shipping"
 - Cart value $50-100: Email with 10% discount
 - Cart value $100+: Email with free express upgrade
@@ -556,7 +559,7 @@ Personalization hypotheses should still be tested.
 - Insurance agents
 - Financial advisors
 Each with industry-specific copy, use cases, testimonials
-**Result**: 
+**Result**:
 - Generic page: 2.3% conversion
 - Industry pages: 5.8% conversion (152% increase)
 **Why**: Specificity and relevance

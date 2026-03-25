@@ -21,7 +21,8 @@ The default human state is inaction. To drive action, you must:
 - Create urgency
 
 **Formula**:
-```
+
+```text
 Action Likelihood = (Motivation × Ability) - Friction
 
 Where:
@@ -29,6 +30,7 @@ Where:
 - Ability = perceived ease of action
 - Friction = obstacles/concerns
 ```
+
 
 #### The Commitment Gradient
 
@@ -166,6 +168,7 @@ Color matters less than contrast. Your CTA should stand out from:
 - Most prominent
 - Best for primary CTA
 - Highest conversion
+
 ```css
 background: #ff6b35;
 color: white;
@@ -176,6 +179,7 @@ border: none;
 - Secondary CTA
 - Less prominent
 - Lower conversion
+
 ```css
 background: transparent;
 color: #ff6b35;
@@ -186,6 +190,7 @@ border: 2px solid #ff6b35;
 - Eye-catching
 - Modern look
 - Can be overdone
+
 ```css
 background: linear-gradient(to right, #ff6b35, #ff8c61);
 ```
@@ -194,6 +199,7 @@ background: linear-gradient(to right, #ff6b35, #ff8c61);
 - Implies clickability
 - Adds depth
 - Can appear dated if overdone
+
 ```css
 box-shadow: 0 4px 6px rgba(0,0,0,0.1);
 ```
@@ -459,7 +465,8 @@ Guide attention toward CTA with visual cues:
 - Diagonal lines leading to button
 
 **Example**:
-```
+
+```text
 [Person Photo]
        ↓
     [Their gaze direction]
@@ -505,7 +512,8 @@ Reduce or eliminate competing calls-to-action:
 - Limit form fields and options
 
 **Visual Hierarchy**:
-```
+
+```text
 Primary CTA:    [Large, Colored, Prominent]
 Secondary CTA:  [Medium, Outline, Less Prominent]
 Tertiary:       [Text Link, Smallest]
@@ -600,7 +608,8 @@ Mouse movement toward browser back button or close
 - Mobile: Use scroll-based trigger instead of mouse movement
 
 **Example**:
-```
+
+```text
 [Popup Overlay]
 
 Wait! Before You Go...
@@ -635,6 +644,7 @@ Circular action button fixed to corner (common in mobile apps)
 - Test impact on engagement metrics
 
 **Mobile Example**:
+
 ```css
 .sticky-cta {
   position: fixed;
@@ -830,6 +840,7 @@ Make CTAs accessible via keyboard:
 - Logical tab order
 
 **Implementation**:
+
 ```html
 <button type="button" aria-label="Start your 14-day free trial">
   Start My Free Trial
@@ -837,6 +848,7 @@ Make CTAs accessible via keyboard:
 ```
 
 **Focus Indicator**:
+
 ```css
 button:focus {
   outline: 2px solid #0066cc;
@@ -854,11 +866,13 @@ button:focus {
 **Descriptive Labels**:
 
 Bad:
+
 ```html
 <button>Click Here</button>
 ```
 
 Good:
+
 ```html
 <button aria-label="Download the complete SEO guide">
   Download Guide
@@ -868,11 +882,13 @@ Good:
 **Link vs. Button**:
 
 Links: Navigate to new page
+
 ```html
 <a href="/pricing">View Pricing Plans</a>
 ```
 
 Buttons: Perform action on current page
+
 ```html
 <button onclick="addToCart()">Add to Cart</button>
 ```
@@ -894,7 +910,8 @@ Ensure sufficient contrast for visibility:
 - Manual verification with colorblind simulation
 
 **Example**:
-```
+
+```text
 Good: White text on dark blue (#0066cc) - 7.7:1 ratio
 Bad: Light grey text on white - 1.2:1 ratio
 ```
@@ -908,6 +925,7 @@ Bad: Light grey text on white - 1.2:1 ratio
 
 **Pointer Targets**:
 Entire button should be clickable, not just text
+
 ```css
 button {
   padding: 16px 32px; /* clickable area larger than text */
@@ -925,7 +943,8 @@ button {
 #### Form Validation Errors
 
 **Invalid Input**:
-```
+
+```text
 [Submit Button - Disabled]
 
 ↑ Please fix the following errors:
@@ -943,7 +962,8 @@ OR
 #### Loading States
 
 **During Processing**:
-```
+
+```text
 [Submit Button - Loading]
 ┌─────────────────────────────┐
 │ [Spinner] Processing...     │
@@ -951,6 +971,7 @@ OR
 ```
 
 **Implementation**:
+
 ```javascript
 button.addEventListener('click', async (e) => {
   e.preventDefault();
@@ -980,7 +1001,8 @@ button.addEventListener('click', async (e) => {
 #### Success States
 
 **Confirmation**:
-```
+
+```text
 [Button]
 Normal: "Subscribe"
 Clicked: "Subscribing..."
@@ -998,13 +1020,15 @@ Success: "✓ Subscribed!"
 #### Offline/Network Error
 
 **No Connection**:
-```
+
+```text
 [Button - Error State]
 ⚠ No internet connection
 Try again
 ```
 
 **Implementation**:
+
 ```javascript
 if (!navigator.onLine) {
   button.innerHTML = '⚠ No internet connection';
@@ -1115,7 +1139,8 @@ Fix: Loading states, success confirmation
 Build a knowledge base of test results to inform future optimizations:
 
 **Document Each Test**:
-```
+
+```text
 Test: Primary CTA Button Color
 Date: 2024-Q1
 Page: Homepage

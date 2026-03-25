@@ -45,9 +45,9 @@ Variables:
 Full factorial: 2 × 2 × 2 = 8 variations
 
 **Benefits:**
-- Detect interaction effects
-- Fewer total visitors needed
-- Comprehensive understanding
+- Detect interaction effects between variables
+- Can reduce total visitors when testing multiple factors jointly (but may require substantial traffic per cell to detect interactions)
+- Comprehensive understanding of variable combinations
 
 **Challenges:**
 - Complex analysis
@@ -82,17 +82,18 @@ Dynamic allocation of traffic to winning variations during the test.
 
 ### Sequential Testing
 
-Stop tests early when significance is reached.
+Stop tests early when significance is reached, but **only when using pre-specified stopping rules**. Ad-hoc stopping without proper error-control methods inflates false positive rates.
 
 **Benefits:**
-- Faster decisions
+- Faster decisions when using valid stopping boundaries
 - Lower opportunity cost
-- Reduced sample size
+- Reduced sample size while maintaining statistical validity
 
-**Methods:**
-- O'Brien-Fleming boundaries
-- Pocock boundaries
-- Always Valid P-values
+**Methods (required for valid early stopping):**
+- O'Brien-Fleming boundaries (conservative early, lenient late)
+- Pocock boundaries (equal spending at each interim look)
+- Always Valid P-values (anytime-valid inference)
+- Alpha-spending functions (flexible interim analysis scheduling)
 
 ## 21.4 Test Analysis Deep Dive
 

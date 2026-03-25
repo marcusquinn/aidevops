@@ -13,14 +13,16 @@ Pricing pages are among the most scrutinized pages on any website. Visitors spen
 Consider three SaaS pricing tiers presented left-to-right:
 
 **Poor Anchoring** (ascending order):
-```
+
+```text
 Basic: $29/mo → Professional: $99/mo → Enterprise: $299/mo
 ```
 
 When visitors see $29 first, the $99 option seems expensive (3.4x more). They anchor to the low price.
 
 **Strong Anchoring** (descending order):
-```
+
+```text
 Enterprise: $299/mo → Professional: $99/mo → Basic: $29/mo
 ```
 
@@ -31,7 +33,8 @@ When visitors see $299 first, the $99 option seems reasonable (67% discount from
 #### Anchoring with "Original" Prices
 
 **Crossed-Out Pricing**:
-```
+
+```text
 Premium Plan
 $199/mo $149/mo
 Save $50/month
@@ -48,7 +51,8 @@ The $199 anchor makes $149 feel like a deal, even if the product was never actua
 #### Annual vs. Monthly Pricing Anchors
 
 **Monthly Display with Annual Savings**:
-```
+
+```text
 Professional Plan
 $99/month
 Or $950/year (save $238)
@@ -57,7 +61,8 @@ Or $950/year (save $238)
 Anchors to the $99 monthly price, making the annual option feel like a discount.
 
 **Annual Display with Monthly Breakdown**:
-```
+
+```text
 Professional Plan
 $950/year
 Just $79/month billed annually
@@ -157,7 +162,7 @@ Despite being only $5 apart, the $39 price (charm pricing) outperformed both low
 
 **When to Use Charm Pricing**:
 
-**Use for**: 
+**Use for**:
 - Consumer products ($19.99, $49.95)
 - Impulse purchases
 - Competitive markets where price is a key factor
@@ -217,7 +222,7 @@ How you frame and present prices dramatically affects perception and conversion 
 **Daily Equivalent Pricing**:
 Makes larger sums feel small by breaking them down to daily costs.
 
-```
+```text
 $365/year = "Just $1 per day"
 $1,095/year = "Less than $3 per day—less than your morning coffee"
 $50/month = "Only $1.67 per day"
@@ -230,7 +235,8 @@ $50/month = "Only $1.67 per day"
 - Reducing sticker shock
 
 **Real Example - Gym Memberships**:
-```
+
+```text
 $599/year membership
 ↓ Reframed as:
 "Less than $1.64 per day to transform your health"
@@ -239,7 +245,8 @@ $599/year membership
 Comparison to daily coffee purchase makes the annual fee feel trivial.
 
 **B2B Example - Software**:
-```
+
+```text
 $10,000/year enterprise license
 ↓ Reframed as:
 "Just $27 per day to automate your entire workflow"
@@ -252,13 +259,15 @@ $10,000/year enterprise license
 Makes bulk purchases or subscriptions feel more economical.
 
 **E-commerce Example**:
-```
+
+```text
 12-pack of protein bars: $36
 "Just $3 per bar" (vs $4.50 per bar at retail)
 ```
 
 **SaaS Example**:
-```
+
+```text
 Team Plan: $499/month for 25 users
 "Less than $20 per user per month"
 ```
@@ -269,7 +278,7 @@ The per-unit framing makes the total cost feel justified.
 
 **Against Alternatives**:
 
-```
+```text
 Professional Photography Session: $2,000
 
 Compare to:
@@ -282,7 +291,7 @@ This reframes $2,000 from "expensive" to "smart value."
 
 **Against Negative Outcome**:
 
-```
+```text
 Website Security: $99/month
 
 Compare to:
@@ -296,14 +305,16 @@ Reframes $99/mo from a cost to an insurance policy.
 #### Loss Framing vs. Gain Framing
 
 **Loss Framing** (emphasizes what you avoid losing):
-```
+
+```text
 "Don't waste $10,000/year on inefficient processes"
 "Stop losing 20% of your leads to poor follow-up"
 "Prevent customer churn from bad support"
 ```
 
 **Gain Framing** (emphasizes what you acquire):
-```
+
+```text
 "Save $10,000/year with automated processes"
 "Capture 20% more leads with instant follow-up"
 "Increase customer retention through excellent support"
@@ -400,7 +411,8 @@ Actually five tiers, but Free and Enterprise are special cases. The core compari
 **Most Common**: Highlight the middle tier
 
 **Visual Treatment**:
-```
+
+```text
 ┌─────────┐   ┌─────────┐   ┌─────────┐
 │ STARTER │   │   PRO   │   │ENTERPRISE│
 │         │   │         │   │         │
@@ -429,7 +441,8 @@ Use when:
 - Features in highest tier are genuinely most valuable
 
 **Example**:
-```
+
+```text
 ┌─────────┐   ┌─────────┐   ┌─────────┐
 │  BASIC  │   │   PRO   │   │ENTERPRISE│
 │         │   │         │   │  BEST   │
@@ -447,17 +460,21 @@ This positioning says "Enterprise is where real value is" and makes $299 feel wo
 **Common Mistakes**:
 
 **Too Similar**:
-```
+
+```text
 Basic: 10 users, 100GB, email support
 Pro: 15 users, 150GB, email support
 ```
+
 Not enough differentiation to justify price jump.
 
 **Too Different**:
-```
+
+```text
 Basic: 5 users, 10GB, email support
 Pro: Unlimited users, unlimited storage, 24/7 phone support, API access, white label
 ```
+
 Too big a jump; needs a middle tier.
 
 **Feature Stuffing**:
@@ -466,7 +483,8 @@ Listing 30+ features makes comparison overwhelming.
 **Effective Differentiation**:
 
 **Clear Value Ladder**:
-```
+
+```text
 STARTER ($29/mo)
 • 10 users
 • 50GB storage
@@ -525,7 +543,8 @@ Higher tiers allow more usage (emails sent, API calls, projects, users, etc.).
 - Harder to budget for customers
 
 **Hybrid Approach** (increasingly common):
-```
+
+```text
 STARTER: Up to 10,000 emails/month + basic features
 PRO: Up to 100,000 emails/month + advanced features
 ENTERPRISE: Unlimited emails + all features + white glove support
@@ -571,7 +590,8 @@ Signals desperation or that monthly pricing is overpriced.
 **Two Main Approaches**:
 
 **Approach 1: Toggle Button**
-```
+
+```text
 Billed:  [Monthly] [Annually - Save 20%] ← Toggle switch
 ```
 
@@ -587,6 +607,7 @@ Billed:  [Monthly] [Annually - Save 20%] ← Toggle switch
 - Must handle state changes
 
 **Best Practice Implementation**:
+
 ```html
 <div class="billing-toggle">
   <label class="toggle">
@@ -601,30 +622,46 @@ Billed:  [Monthly] [Annually - Save 20%] ← Toggle switch
 ```
 
 Update all displayed prices when toggle changes:
+
 ```javascript
 document.querySelectorAll('[name="billing"]').forEach(radio => {
   radio.addEventListener('change', (e) => {
-    const billing = e.target.value;
-    updatePricing(billing);
+    updatePricing(e.target.value);
   });
 });
 
 function updatePricing(billing) {
+  const priceEl = document.querySelector('.starter-price');
+  const termEl = document.querySelector('.starter-term');
+
+  if (!priceEl || !termEl) {
+    console.error('Required pricing elements not found');
+    return;
+  }
+
   if (billing === 'annual') {
-    document.querySelector('.starter-price').textContent = '$24';
-    document.querySelector('.starter-term').textContent = '/mo (billed annually)';
-    // Update others...
+    priceEl.textContent = '$24';
+    termEl.textContent = '/mo (billed annually)';
   } else {
-    document.querySelector('.starter-price').textContent = '$29';
-    document.querySelector('.starter-term').textContent = '/month';
+    priceEl.textContent = '$29';
+    termEl.textContent = '/month';
   }
 }
+
+// Set initial state on page load
+document.addEventListener('DOMContentLoaded', () => {
+  const checkedRadio = document.querySelector('[name="billing"]:checked');
+  if (checkedRadio) {
+    updatePricing(checkedRadio.value);
+  }
+});
 ```
 
 **Approach 2: Separate Display (Annual as Upgrade)**
 
 Show monthly pricing, with annual as a subtle upgrade option:
-```
+
+```text
 PRO PLAN
 $99/month
 
@@ -713,7 +750,7 @@ Here, "Contact Sales" worked better—qualifying out small prospects and allowin
 
 Middle ground between transparency and flexibility:
 
-```
+```text
 ENTERPRISE
 Starting at $499/month
 
@@ -727,7 +764,8 @@ Starting at $499/month
 - Qualifies out those for whom base price is too high
 
 **Real Example - Salesforce**:
-```
+
+```text
 Enterprise: $150/user/month (billed annually)
 Unlimited: $300/user/month (billed annually)
 ```
@@ -765,7 +803,8 @@ A critical pricing page decision: Should you offer a time-limited free trial or 
 **Free Trial Variants**:
 
 **Credit Card Required**:
-```
+
+```text
 Start Your 14-Day Free Trial
 [Enter Credit Card] ← Required
 You won't be charged until the trial ends
@@ -775,7 +814,8 @@ You won't be charged until the trial ends
 **Cons**: Lower trial signups, more friction, user resentment
 
 **No Credit Card**:
-```
+
+```text
 Start Your 14-Day Free Trial
 No credit card required
 ```
@@ -864,7 +904,8 @@ This means 95-98% of free users never pay. For this to work:
 Some products offer both:
 
 **Example Flow**:
-```
+
+```text
 1. Start 14-day trial of Premium (no credit card)
 2. Full premium features for 14 days
 3. After 14 days:
@@ -892,25 +933,29 @@ Guarantees reduce perceived risk and can significantly boost conversion rates.
 #### Types of Guarantees
 
 **Time-Based Money-Back Guarantee**:
-```
+
+```text
 30-Day Money-Back Guarantee
 If you're not completely satisfied, we'll refund your purchase—no questions asked.
 ```
 
 **Conditional Money-Back Guarantee**:
-```
+
+```text
 Double Your Traffic or Your Money Back
 If we don't double your website traffic in 90 days, we'll refund every penny.
 ```
 
 **Satisfaction Guarantee**:
-```
+
+```text
 100% Satisfaction Guaranteed
 Love it or return it—for any reason, at any time.
 ```
 
 **Lifetime Guarantee**:
-```
+
+```text
 Lifetime Warranty
 This product is built to last. If it ever fails, we'll replace it free.
 ```
@@ -920,7 +965,8 @@ This product is built to last. If it ever fails, we'll replace it free.
 **Critical Placement Points**:
 
 **1. Pricing Page** (highest impact):
-```
+
+```text
 $99/month Professional Plan
 [Start Free Trial]
 
@@ -935,7 +981,8 @@ Visual treatments that work:
 
 **2. Checkout Page** (friction reduction):
 Place near final "Complete Purchase" button
-```
+
+```text
 [Complete Purchase]
 
 🛡️ Protected by our 30-day money-back guarantee
@@ -943,7 +990,8 @@ Place near final "Complete Purchase" button
 
 **3. Product Pages**:
 Near "Add to Cart" or "Buy Now"
-```
+
+```text
 [Add to Cart]
 
 ✓ Free returns within 60 days
@@ -951,7 +999,8 @@ Near "Add to Cart" or "Buy Now"
 
 **4. Exit-Intent Popups**:
 When user tries to leave:
-```
+
+```text
 Still unsure?
 Try it risk-free with our 30-day money-back guarantee.
 No questions asked.
@@ -960,25 +1009,32 @@ No questions asked.
 #### Guarantee Framing That Works
 
 **Weak Framing**:
-```
+
+```text
 "We offer refunds"
 ```
+
 Clinical, no emotion, no confidence.
 
 **Stronger Framing**:
-```
+
+```text
 "30-day money-back guarantee"
 ```
+
 Time-specific, clear commitment.
 
 **Strongest Framing**:
-```
+
+```text
 "Love It or Your Money Back—Guaranteed"
 ```
+
 Emotional ("love"), confident ("guaranteed"), clear outcome ("money back").
 
 **Adding Specificity**:
-```
+
+```text
 "If you're not completely satisfied for any reason within 30 days, just email us and we'll issue a full refund within 24 hours—no questions asked, no hassle."
 ```
 
@@ -1031,7 +1087,8 @@ The "no questions asked" phrase dramatically reduced perceived risk while having
 - Refund rate typically very low (people forget, feel guilty, or genuinely love product)
 
 **Real Example - Zappos**:
-```
+
+```text
 365-Day Return Policy
 Free Shipping Both Ways
 ```
@@ -1043,7 +1100,8 @@ Extreme guarantee became core part of brand identity. Despite the generous polic
 **Visual Elements That Build Trust**:
 
 **Guarantee Badge**:
-```
+
+```text
 ┌─────────────┐
 │     🛡️      │
 │   30-DAY    │
@@ -1054,7 +1112,8 @@ Extreme guarantee became core part of brand identity. Despite the generous polic
 ```
 
 **Checkmark List**:
-```
+
+```text
 ✓ 30-day money-back guarantee
 ✓ Free returns & exchanges
 ✓ No restocking fees
@@ -1062,7 +1121,8 @@ Extreme guarantee became core part of brand identity. Despite the generous polic
 ```
 
 **Trust Seal Section** (combine multiple trust signals):
-```
+
+```text
 ┌──────────────────────────────┐
 │ 🔒 Secure Checkout           │
 │ 🛡️ 30-Day Money-Back         │

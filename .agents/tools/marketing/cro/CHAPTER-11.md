@@ -30,7 +30,7 @@ Mobile interaction is primarily thumb-driven. Understanding thumb zones is criti
 
 **The Thumb Zone (One-Handed Use)**:
 
-```
+```text
 ┌─────────────────┐
 │  Hard to Reach  │ ← Top of screen
 │                 │
@@ -69,7 +69,8 @@ Tablets and large phones often held two-handed. Thumb zones extend to sides.
 **Practical Application**:
 
 **Poor** (CTA at top):
-```
+
+```text
 ┌─────────────────┐
 │ [Buy Now]       │ ← Requires scroll up to click
 │                 │
@@ -82,7 +83,8 @@ Tablets and large phones often held two-handed. Thumb zones extend to sides.
 ```
 
 **Good** (CTA at bottom):
-```
+
+```text
 ┌─────────────────┐
 │ Product Image   │
 │                 │
@@ -94,7 +96,8 @@ Tablets and large phones often held two-handed. Thumb zones extend to sides.
 ```
 
 **Even Better** (Sticky CTA):
-```
+
+```text
 ┌─────────────────┐
 │ Product Image   │
 │                 │
@@ -125,13 +128,15 @@ Goal: <5 fields if possible.
 Always. Never side-by-side fields on mobile.
 
 **Poor**:
-```
+
+```text
 [First Name]  [Last Name]
 [City] [State] [ZIP]
 ```
 
 **Good**:
-```
+
+```text
 [First Name]
 [Last Name]
 [City]
@@ -176,13 +181,15 @@ Enables one-tap autofill from saved data.
 **6. Input Masks** (for formatted fields):
 
 **Phone**:
-```
+
+```text
 [(___ ___ ___]
 Auto-formats as: (555) 123-4567
 ```
 
 **Credit Card**:
-```
+
+```text
 [____ ____ ____ ____]
 Auto-spaces: 4111 1111 1111 1111
 ```
@@ -192,14 +199,16 @@ Libraries: Cleave.js, react-input-mask
 **7. Clear Labels Above Fields**:
 
 **Poor** (placeholder only):
-```
+
+```text
 [johndoe@example.com]
 ```
 
 Once user types, placeholder disappears—they forget what field it was.
 
 **Good** (label + placeholder):
-```
+
+```text
 Email Address
 [you@example.com]
 ```
@@ -209,7 +218,8 @@ Label persists above field.
 **8. Sticky Labels** (for long forms):
 
 As user scrolls multi-step form, current section label sticks:
-```
+
+```text
 ┌─────────────────┐
 │ Shipping Info ▼ │ ← Sticky header
 ├─────────────────┤
@@ -220,7 +230,7 @@ As user scrolls multi-step form, current section label sticks:
 
 **9. Error Messages Below Field**:
 
-```
+```text
 Email
 [johnexample.com]
 ✗ Please enter a valid email address
@@ -230,7 +240,7 @@ Error appears directly below field (easy to associate).
 
 **10. Voice Input Option** (for text fields):
 
-```
+```text
 Message
 [🎤] ← Microphone icon
 ```
@@ -242,7 +252,8 @@ Users can speak instead of type (especially helpful for long text fields).
 Desktop navigation doesn't translate to mobile.
 
 **Desktop Navigation**:
-```
+
+```text
 [Logo] Home | Products | About | Blog | Contact [Cart] [Account]
 ```
 
@@ -251,7 +262,8 @@ Desktop navigation doesn't translate to mobile.
 **Mobile Navigation Patterns**:
 
 **1. Hamburger Menu**:
-```
+
+```text
 ┌──────────────────┐
 │ ☰  [Logo]  🛒 👤│
 └──────────────────┘
@@ -263,7 +275,8 @@ Tap ☰ reveals side drawer or full-screen menu.
 **Cons**: Reduces discoverability (out of sight, out of mind)
 
 **2. Bottom Tab Bar** (Mobile Apps, Increasingly Web):
-```
+
+```text
 ┌──────────────────┐
 │                  │
 │   Page Content   │
@@ -277,7 +290,8 @@ Tap ☰ reveals side drawer or full-screen menu.
 **Cons**: Takes vertical space
 
 **3. Priority+ Pattern**:
-```
+
+```text
 ┌──────────────────┐
 │[Logo] Home Shop ☰│
 └──────────────────┘
@@ -297,14 +311,15 @@ Most important nav items visible, rest hidden in ☰.
 
 Mobile users search more than desktop users. Make search prominent:
 
-```
+```text
 ┌──────────────────┐
 │ 🔍 Search...  ☰ │
 └──────────────────┘
 ```
 
 **Autocomplete Essential**:
-```
+
+```text
 🔍 running sh...
   → Running Shoes
   → Running Shorts
@@ -318,11 +333,13 @@ Shows results as user types (reduces typing, faster discovery).
 Mobile enables instant phone calls—leverage this.
 
 **Desktop**:
-```
+
+```text
 Questions? Call us: 1-800-555-1234
 ```
 
 **Mobile** (clickable):
+
 ```html
 <a href="tel:+18005551234">
   📞 Call Now: 1-800-555-1234
@@ -332,14 +349,16 @@ Questions? Call us: 1-800-555-1234
 **Placement**:
 
 1. **Header** (sticky):
-```
+
+```text
 ┌──────────────────┐
 │ ☰  [Logo]  📞    │
 └──────────────────┘
 ```
 
 2. **Floating Action Button**:
-```
+
+```text
 ┌──────────────────┐
 │                  │
 │   Page Content   │
@@ -349,7 +368,8 @@ Questions? Call us: 1-800-555-1234
 ```
 
 3. **Product/Service Pages**:
-```
+
+```text
 Product Name - $99
 
 Questions before buying?
@@ -391,7 +411,8 @@ Mobile CTAs must be finger-friendly and contextually relevant.
 **Mobile CTA Patterns**:
 
 **1. Full-Width Buttons**:
-```
+
+```text
 ┌──────────────────┐
 │                  │
 │  [Add to Cart]   │ ← Full width
@@ -402,7 +423,8 @@ Mobile CTAs must be finger-friendly and contextually relevant.
 Easier to tap, more prominent.
 
 **2. Sticky Bottom CTA**:
-```
+
+```text
 ┌──────────────────┐
 │  Product Info    │ ← Scrollable
 │  ...             │
@@ -414,7 +436,8 @@ Easier to tap, more prominent.
 Always visible, no need to scroll to find CTA.
 
 **3. Primary + Secondary**:
-```
+
+```text
 [Buy Now - $99.99]
 [Add to Wishlist]
 ```
@@ -422,7 +445,8 @@ Always visible, no need to scroll to find CTA.
 Primary button larger, bolder color. Secondary smaller or outlined.
 
 **4. Sticky Header CTA** (for long pages):
-```
+
+```text
 ┌──────────────────┐
 │ [Buy Now] ☰ 🛒   │ ← Sticky header with CTA
 ├──────────────────┤
@@ -448,7 +472,8 @@ Primary button larger, bolder color. Secondary smaller or outlined.
 Mobile users tolerate less complexity.
 
 **Mega Menus** (desktop):
-```
+
+```text
 Products ▼
   Category 1      Category 2      Category 3
   - Item A        - Item D        - Item G
@@ -457,7 +482,8 @@ Products ▼
 ```
 
 **Mobile**: Simplify to accordion or single-column:
-```
+
+```text
 Products ▼
   Category 1 ▶
   Category 2 ▶
@@ -472,12 +498,14 @@ Products ▼
 ```
 
 **Filter/Sort** (desktop):
-```
+
+```text
 [Sidebar with 15 filter options]
 ```
 
 **Mobile**: Collapsible filter drawer:
-```
+
+```python
 🔽 Filters & Sort (3 active)
 
 [Tap to open drawer from bottom]
@@ -499,17 +527,20 @@ Products ▼
 ```
 
 **Breadcrumbs** (desktop):
-```
+
+```text
 Home > Men's > Shoes > Running > Trail Running
 ```
 
 **Mobile**: Too long. Simplify:
-```
+
+```text
 ← Running Shoes
 ```
 
 Or collapsible:
-```
+
+```text
 ... > Running > Trail Running
 ```
 
@@ -518,12 +549,14 @@ Or collapsible:
 If you have a mobile app, prompting web visitors to install can increase engagement and conversions.
 
 **Smart Banner** (iOS):
+
 ```html
 <meta name="apple-itunes-app" content="app-id=123456789">
 ```
 
 Shows native iOS banner at top:
-```
+
+```text
 ┌──────────────────────────────┐
 │ [App Icon] App Name          │
 │ Open in App    [View]        │
@@ -531,7 +564,8 @@ Shows native iOS banner at top:
 ```
 
 **Custom Banner**:
-```
+
+```text
 ┌──────────────────────────────┐
 │ 📱 Get our app for:          │
 │ ✓ Faster checkout            │
@@ -552,6 +586,7 @@ Shows native iOS banner at top:
 
 **Smart Linking** (Deep Links):
 If user has app installed, open app instead of web:
+
 ```html
 <a href="myapp://product/123" onclick="fallback()">
   View Product
@@ -590,6 +625,7 @@ Every second matters exponentially.
 **1. Image Optimization**:
 
 Use responsive images:
+
 ```html
 <img 
   src="product-small.jpg"
@@ -603,6 +639,7 @@ Use responsive images:
 Serves appropriate size image for device.
 
 **WebP format**:
+
 ```html
 <picture>
   <source type="image/webp" srcset="product.webp">
@@ -613,6 +650,7 @@ Serves appropriate size image for device.
 WebP is 25-35% smaller than JPEG with same quality.
 
 **Lazy loading**:
+
 ```html
 <img src="image.jpg" loading="lazy">
 ```
@@ -620,6 +658,7 @@ WebP is 25-35% smaller than JPEG with same quality.
 Images below the fold don't load until user scrolls near them.
 
 **2. Critical CSS Inline**:
+
 ```html
 <style>
   /* Critical above-the-fold CSS here */
@@ -636,17 +675,20 @@ Inline critical CSS for instant render, load full CSS async.
 - Remove unused JS libraries
 - Code-split (load only needed JS per page)
 - Defer non-critical JS:
+
 ```html
 <script src="analytics.js" defer></script>
 ```
 
 **4. Server-Side Rendering** (SSR):
-```
+
+```text
 Server renders HTML → Sends complete HTML to browser → Instant display
 ```
 
 vs Client-Side Rendering:
-```
+
+```text
 Server sends empty HTML → Browser downloads JS → JS renders content → Display
 ```
 
@@ -657,7 +699,8 @@ Serve static assets from servers geographically close to user.
 
 **6. Reduce Redirects**:
 Every redirect adds round-trip delay:
-```
+
+```text
 http://example.com → https://example.com → https://www.example.com → 1 second wasted
 ```
 
@@ -665,6 +708,7 @@ http://example.com → https://example.com → https://www.example.com → 1 sec
 Compresses text files (HTML, CSS, JS) by 70-90%.
 
 **8. Prefetch/Preconnect**:
+
 ```html
 <link rel="preconnect" href="https://cdn.example.com">
 <link rel="dns-prefetch" href="https://analytics.example.com">
@@ -729,13 +773,15 @@ AMP is a Google-backed framework for ultra-fast mobile pages.
 2. Link to non-AMP site for conversion (checkout, complex forms)
 
 **Example**:
-```
+
+```text
 Google Search → AMP Product Page (fast!) → Non-AMP Checkout (full functionality)
 ```
 
 **Best of both**: Speed for acquisition, functionality for conversion.
 
 **AMP Form Example**:
+
 ```html
 <form method="post" action-xhr="/submit">
   <input type="email" name="email" placeholder="Email" required>
@@ -759,6 +805,7 @@ Even more important on mobile—forced account creation kills mobile conversions
 **2. Single-Column Form** (covered earlier)
 
 **3. Autofill Everything**:
+
 ```html
 <input autocomplete="email">
 <input autocomplete="name">
@@ -769,7 +816,8 @@ Even more important on mobile—forced account creation kills mobile conversions
 ```
 
 **4. Digital Wallets Front and Center**:
-```
+
+```text
 [Apple Pay]  [Google Pay]
 
 ─── or enter info ───
@@ -780,7 +828,8 @@ Even more important on mobile—forced account creation kills mobile conversions
 Apple Pay / Google Pay can reduce mobile checkout time from 2-3 minutes to 10 seconds.
 
 **5. Sticky Progress Indicator**:
-```
+
+```text
 ●──○──○  Shipping
 ```
 
@@ -791,7 +840,8 @@ Always visible at top as user scrolls through form.
 - Mobile: 2 steps maximum, ideally 1
 
 **7. Large, Tappable CTAs**:
-```
+
+```text
 ┌────────────────────┐
 │                    │
 │  Complete Order    │
@@ -816,7 +866,8 @@ Show errors immediately (don't wait until submit).
 
 **11. Progress Saving**:
 If user abandons, save their cart and checkout progress. Email them:
-```
+
+```text
 You left items in your cart:
 [Product Image]
 
@@ -824,7 +875,8 @@ You left items in your cart:
 ```
 
 **12. Click-to-Call Support**:
-```
+
+```text
 Need help?
 [📞 Call Us]  [💬 Chat]
 ```
