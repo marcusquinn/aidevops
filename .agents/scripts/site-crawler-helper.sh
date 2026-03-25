@@ -648,6 +648,95 @@ _crawl4ai_enqueue_links() {
 	return 0
 }
 
+# Initialise Crawl4AI output directories and tracking files.
+# Arguments: $1=url $2=output_dir
+# Sets caller-local: full_page_dir, body_only_dir, images_dir,
+#                    base_domain, visited_file, queue_file, results_file
+_crawl4ai_init_dirs() {
+	local url="$1"
+	local output_dir="$2"
+
+	full_page_dir="${output_dir}/content-full-page-md"
+	body_only_dir="${output_dir}/content-body-md"
+	images_dir="${output_dir}/images"
+	mkdir -p "$full_page_dir" "$body_only_dir" "$images_dir"
+
+	base_domain=$(echo "$url" | sed -E 's|^https?://||' | sed -E 's|/.*||')
+
+	visited_file="${output_dir}/.visited_urls"
+	queue_file="${output_dir}/.queue_urls"
+	results_file="${output_dir}/.results.jsonl"
+
+	echo "$url" >"$queue_file"
+	touch "$visited_file"
+	touch "$results_file"
+	return 0
+}
+
+# Dequeue the next batch of unvisited URLs from queue_file into visited_file.
+# Arguments: $1=max_urls $2=crawled_count $3=batch_size_limit
+# Outputs: batch_urls_str (newline-separated) and batch_count via temp files
+# Returns: 0 if batch is non-empty, 1 if nothing left to process
+_crawl4ai_dequeue_batch() {
+	local max_urls="$1"
+	local crawled_count="$2"
+	local batch_size_limit="${3:-5}"
+
+	local remaining=$((max_urls - crawled_count))
+	[[ $remaining -lt $batch_size_limit ]] && batch_size_limit=$remaining
+
+	local batch_urls_str=""
+	local batch_count=0
+
+	while IFS= read -r queue_url && [[ $batch_count -lt $batch_size_limit ]]; do
+		if grep -qxF "$queue_url" "$visited_file" 2>/dev/null; then
+			continue
+		fi
+		batch_urls_str+="${queue_url}"$'\n'
+		echo "$queue_url" >>"$visited_file"
+		((++batch_count))
+	done <"$queue_file"
+
+	if [[ $batch_count -gt 0 ]]; then
+		local new_queue
+		new_queue=$(mktemp)
+		while IFS= read -r queue_url; do
+			if ! grep -qxF "$queue_url" "$visited_file" 2>/dev/null; then
+				echo "$queue_url"
+			fi
+		done <"$queue_file" >"$new_queue"
+		mv "$new_queue" "$queue_file"
+	fi
+
+	# Pass results back via global (bash 3.2 compatible — no namerefs)
+	_CRAWL4AI_BATCH_URLS="$batch_urls_str"
+	_CRAWL4AI_BATCH_COUNT="$batch_count"
+	[[ $batch_count -gt 0 ]]
+	return $?
+}
+
+# Print Crawl4AI result counts after crawl completes.
+# Arguments: $1=output_dir $2=crawled_count
+_crawl4ai_print_results() {
+	local output_dir="$1"
+	local crawled_count="$2"
+	local full_page_dir="${output_dir}/content-full-page-md"
+	local body_only_dir="${output_dir}/content-body-md"
+	local images_dir="${output_dir}/images"
+
+	local full_page_count body_count img_count
+	full_page_count=$(find "$full_page_dir" -name "*.md" 2>/dev/null | wc -l | tr -d ' ')
+	body_count=$(find "$body_only_dir" -name "*.md" 2>/dev/null | wc -l | tr -d ' ')
+	img_count=$(find "$images_dir" -type f \( -name "*.jpg" -o -name "*.jpeg" -o -name "*.png" -o -name "*.gif" -o -name "*.webp" -o -name "*.svg" \) 2>/dev/null | wc -l | tr -d ' ')
+
+	print_success "Crawl4AI results saved to ${output_dir}"
+	print_info "  Pages crawled: $crawled_count"
+	print_info "  Full page markdown: $full_page_count (in content-full-page-md/)"
+	print_info "  Body-only markdown: $body_count (in content-body-md/)"
+	print_info "  Images downloaded: $img_count (in images/)"
+	return 0
+}
+
 # Crawl using Crawl4AI API with multi-page discovery
 crawl_with_crawl4ai() {
 	local url="$1"
@@ -657,24 +746,9 @@ crawl_with_crawl4ai() {
 
 	print_info "Using Crawl4AI backend..."
 
-	# Create content directories
-	local full_page_dir="${output_dir}/content-full-page-md"
-	local body_only_dir="${output_dir}/content-body-md"
-	local images_dir="${output_dir}/images"
-	mkdir -p "$full_page_dir" "$body_only_dir" "$images_dir"
-
-	# Extract base domain for internal link filtering
-	local base_domain
-	base_domain=$(echo "$url" | sed -E 's|^https?://||' | sed -E 's|/.*||')
-
-	# Initialize tracking arrays via temp files
-	local visited_file="${output_dir}/.visited_urls"
-	local queue_file="${output_dir}/.queue_urls"
-	local results_file="${output_dir}/.results.jsonl"
-
-	echo "$url" >"$queue_file"
-	touch "$visited_file"
-	touch "$results_file"
+	local full_page_dir body_only_dir images_dir base_domain
+	local visited_file queue_file results_file
+	_crawl4ai_init_dirs "$url" "$output_dir"
 
 	local crawled_count=0
 	local current_depth=0
@@ -682,36 +756,12 @@ crawl_with_crawl4ai() {
 	print_info "Starting multi-page crawl (max: $max_urls, depth: $depth)"
 
 	while [[ $crawled_count -lt $max_urls ]] && [[ -s "$queue_file" ]]; do
-		# Get next batch of URLs (up to 5 at a time for efficiency)
-		local batch_size=5
-		local remaining=$((max_urls - crawled_count))
-		[[ $remaining -lt $batch_size ]] && batch_size=$remaining
+		_CRAWL4AI_BATCH_URLS=""
+		_CRAWL4AI_BATCH_COUNT=0
+		_crawl4ai_dequeue_batch "$max_urls" "$crawled_count" 5 || break
 
-		local batch_urls_str=""
-		local batch_count=0
-
-		while IFS= read -r queue_url && [[ $batch_count -lt $batch_size ]]; do
-			if grep -qxF "$queue_url" "$visited_file" 2>/dev/null; then
-				continue
-			fi
-			batch_urls_str+="${queue_url}"$'\n'
-			echo "$queue_url" >>"$visited_file"
-			((++batch_count))
-		done <"$queue_file"
-
-		# Remove processed URLs from queue
-		if [[ $batch_count -gt 0 ]]; then
-			local new_queue
-			new_queue=$(mktemp)
-			while IFS= read -r queue_url; do
-				if ! grep -qxF "$queue_url" "$visited_file" 2>/dev/null; then
-					echo "$queue_url"
-				fi
-			done <"$queue_file" >"$new_queue"
-			mv "$new_queue" "$queue_file"
-		fi
-
-		[[ $batch_count -eq 0 ]] && break
+		local batch_urls_str="$_CRAWL4AI_BATCH_URLS"
+		local batch_count="$_CRAWL4AI_BATCH_COUNT"
 
 		print_info "[${crawled_count}/${max_urls}] Crawling batch of ${batch_count} URLs..."
 
@@ -728,24 +778,9 @@ crawl_with_crawl4ai() {
 	done
 
 	print_info "Crawl complete. Processing results..."
-
-	# Generate CSV and XLSX from results
 	crawl4ai_generate_reports "$output_dir" "$results_file" "$base_domain"
-
-	# Cleanup temp files
 	rm -f "$visited_file" "$queue_file"
-
-	# Count markdown files and images
-	local full_page_count body_count img_count
-	full_page_count=$(find "$full_page_dir" -name "*.md" 2>/dev/null | wc -l | tr -d ' ')
-	body_count=$(find "$body_only_dir" -name "*.md" 2>/dev/null | wc -l | tr -d ' ')
-	img_count=$(find "$images_dir" -type f \( -name "*.jpg" -o -name "*.jpeg" -o -name "*.png" -o -name "*.gif" -o -name "*.webp" -o -name "*.svg" \) 2>/dev/null | wc -l | tr -d ' ')
-
-	print_success "Crawl4AI results saved to ${output_dir}"
-	print_info "  Pages crawled: $crawled_count"
-	print_info "  Full page markdown: $full_page_count (in content-full-page-md/)"
-	print_info "  Body-only markdown: $body_count (in content-body-md/)"
-	print_info "  Images downloaded: $img_count (in images/)"
+	_crawl4ai_print_results "$output_dir" "$crawled_count"
 	return 0
 }
 
@@ -1047,20 +1082,83 @@ class SiteCrawler:
 PYINIT
 }
 
+# Emit SiteCrawler._parse_html_meta() helper method
+_fallback_crawler_class_parse_meta() {
+	cat <<'PYPARSEMETA'
+
+    def _parse_html_meta(self, soup, page):
+        """Extract title, meta description, robots, canonical, H1, word count, images."""
+        if soup.title:
+            page.title = soup.title.get_text(strip=True)[:200]
+            page.title_length = len(page.title)
+
+        meta_desc = soup.find('meta', attrs={'name': 'description'})
+        if meta_desc:
+            page.meta_description = meta_desc.get('content', '')[:300]
+            page.description_length = len(page.meta_description)
+
+        meta_robots = soup.find('meta', attrs={'name': 'robots'})
+        if meta_robots:
+            page.meta_robots = meta_robots.get('content', '')
+
+        canonical = soup.find('link', attrs={'rel': 'canonical'})
+        if canonical:
+            page.canonical = canonical.get('href', '')
+
+        h1_tags = soup.find_all('h1')
+        page.h1_count = len(h1_tags)
+        if h1_tags:
+            page.h1 = h1_tags[0].get_text(strip=True)[:200]
+
+        text = soup.get_text(separator=' ', strip=True)
+        page.word_count = len(text.split())
+
+        images = soup.find_all('img')
+        page.images = len(images)
+        page.images_missing_alt = sum(1 for img in images if not img.get('alt'))
+PYPARSEMETA
+}
+
+# Emit SiteCrawler._parse_html_links() helper method
+_fallback_crawler_class_parse_links() {
+	cat <<'PYPARSELINKS'
+
+    def _parse_html_links(self, soup, url: str, depth: int):
+        """Count internal/external links and enqueue unvisited internal URLs."""
+        internal_count = 0
+        external_count = 0
+
+        for link in soup.find_all('a', href=True):
+            href = link.get('href', '')
+            if not href or href.startswith(('#', 'javascript:', 'mailto:', 'tel:')):
+                continue
+
+            target_url = self.normalize_url(href, url)
+
+            if self.is_internal(target_url):
+                internal_count += 1
+                if target_url not in self.visited and depth < self.max_depth:
+                    self.queue.append((target_url, depth + 1))
+            else:
+                external_count += 1
+
+        return internal_count, external_count
+PYPARSELINKS
+}
+
 # Emit SiteCrawler.fetch_page() method
 _fallback_crawler_class_fetch() {
 	cat <<'PYFETCH'
 
     async def fetch_page(self, session: aiohttp.ClientSession, url: str, depth: int) -> PageData:
         page = PageData(url=url, crawl_depth=depth)
-        
+
         try:
             start = datetime.now()
             async with session.get(url, allow_redirects=True, timeout=aiohttp.ClientTimeout(total=15)) as response:
                 page.status_code = response.status
                 page.response_time_ms = (datetime.now() - start).total_seconds() * 1000
-                
-                # Track redirects
+
                 if response.history:
                     for r in response.history:
                         self.redirects.append({
@@ -1068,82 +1166,28 @@ _fallback_crawler_class_fetch() {
                             'status_code': r.status,
                             'redirect_url': str(response.url)
                         })
-                
+
                 page.status = "OK" if response.status < 300 else ("Redirect" if response.status < 400 else "Error")
-                
+
                 if response.status >= 400:
                     self.broken_links.append({'url': url, 'status_code': response.status, 'source': 'direct'})
                     return page
-                
+
                 content_type = response.headers.get('Content-Type', '')
                 if 'text/html' not in content_type:
                     return page
-                
+
                 html = await response.text()
                 soup = BeautifulSoup(html, 'html.parser')
-                
-                # Title
-                if soup.title:
-                    page.title = soup.title.get_text(strip=True)[:200]
-                    page.title_length = len(page.title)
-                
-                # Meta description
-                meta_desc = soup.find('meta', attrs={'name': 'description'})
-                if meta_desc:
-                    page.meta_description = meta_desc.get('content', '')[:300]
-                    page.description_length = len(page.meta_description)
-                
-                # Meta robots
-                meta_robots = soup.find('meta', attrs={'name': 'robots'})
-                if meta_robots:
-                    page.meta_robots = meta_robots.get('content', '')
-                
-                # Canonical
-                canonical = soup.find('link', attrs={'rel': 'canonical'})
-                if canonical:
-                    page.canonical = canonical.get('href', '')
-                
-                # H1
-                h1_tags = soup.find_all('h1')
-                page.h1_count = len(h1_tags)
-                if h1_tags:
-                    page.h1 = h1_tags[0].get_text(strip=True)[:200]
-                
-                # Word count
-                text = soup.get_text(separator=' ', strip=True)
-                page.word_count = len(text.split())
-                
-                # Images
-                images = soup.find_all('img')
-                page.images = len(images)
-                page.images_missing_alt = sum(1 for img in images if not img.get('alt'))
-                
-                # Links
-                internal_count = 0
-                external_count = 0
-                
-                for link in soup.find_all('a', href=True):
-                    href = link.get('href', '')
-                    if not href or href.startswith(('#', 'javascript:', 'mailto:', 'tel:')):
-                        continue
-                    
-                    target_url = self.normalize_url(href, url)
-                    
-                    if self.is_internal(target_url):
-                        internal_count += 1
-                        if target_url not in self.visited and depth < self.max_depth:
-                            self.queue.append((target_url, depth + 1))
-                    else:
-                        external_count += 1
-                
-                page.internal_links = internal_count
-                page.external_links = external_count
-                
+
+                self._parse_html_meta(soup, page)
+                page.internal_links, page.external_links = self._parse_html_links(soup, url, depth)
+
         except asyncio.TimeoutError:
             page.status = "Timeout"
         except Exception as e:
             page.status = f"Error: {str(e)[:50]}"
-        
+
         return page
 PYFETCH
 }
@@ -1340,6 +1384,8 @@ PYMAIN
 generate_fallback_crawler() {
 	_fallback_crawler_header
 	_fallback_crawler_class_init
+	_fallback_crawler_class_parse_meta
+	_fallback_crawler_class_parse_links
 	_fallback_crawler_class_fetch
 	_fallback_crawler_class_crawl
 	_fallback_crawler_class_export
@@ -1348,17 +1394,14 @@ generate_fallback_crawler() {
 	return 0
 }
 
-# Run crawl
-do_crawl() {
-	local url="$1"
-	shift
-
-	# Parse options
-	local depth="$DEFAULT_DEPTH"
-	local max_urls="$DEFAULT_MAX_URLS"
-	local format="$DEFAULT_FORMAT"
-	local output_base="$DEFAULT_OUTPUT_DIR"
-	local force_fallback=false
+# Parse do_crawl options into caller-local variables.
+# Sets: depth, max_urls, format, output_base, force_fallback
+_do_crawl_parse_opts() {
+	depth="$DEFAULT_DEPTH"
+	max_urls="$DEFAULT_MAX_URLS"
+	format="$DEFAULT_FORMAT"
+	output_base="$DEFAULT_OUTPUT_DIR"
+	force_fallback=false
 
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
@@ -1382,37 +1425,25 @@ do_crawl() {
 			force_fallback=true
 			shift
 			;;
-		*)
-			shift
-			;;
+		*) shift ;;
 		esac
 	done
+	return 0
+}
 
-	local domain
-	domain=$(get_domain "$url")
+# Run the Python fallback crawler for do_crawl.
+# Arguments: $1=url $2=output_dir $3=max_urls $4=depth $5=format $6=output_base $7=domain
+_do_crawl_run_python() {
+	local url="$1"
+	local output_dir="$2"
+	local max_urls="$3"
+	local depth="$4"
+	local format="$5"
+	local output_base="$6"
+	local domain="$7"
 
-	local output_dir
-	output_dir=$(create_output_dir "$domain" "$output_base")
-
-	print_header "Site Crawler - SEO Audit"
-	print_info "URL: $url"
-	print_info "Output: $output_dir"
-	print_info "Depth: $depth, Max URLs: $max_urls"
-
-	# Try Crawl4AI first (unless forced fallback)
-	if [[ "$force_fallback" != "true" ]] && check_crawl4ai; then
-		print_success "Crawl4AI detected at ${CRAWL4AI_URL}"
-		crawl_with_crawl4ai "$url" "$output_dir" "$max_urls" "$depth"
-		print_success "Crawl complete!"
-		print_info "Results: $output_dir"
-		print_info "Latest: ${output_base}/${domain}/_latest"
-		return 0
-	fi
-
-	# Fallback to Python crawler
 	print_info "Using lightweight Python crawler..."
 
-	# Find or install Python
 	if ! find_python; then
 		print_warning "Installing Python dependencies..."
 		if ! install_python_deps; then
@@ -1424,7 +1455,6 @@ do_crawl() {
 
 	print_info "Using: $PYTHON_CMD"
 
-	# Generate and run crawler
 	local crawler_script
 	crawler_script=$(mktemp /tmp/site_crawler_XXXXXX.py)
 	_save_cleanup_scope
@@ -1446,6 +1476,38 @@ do_crawl() {
 	fi
 
 	return $exit_code
+}
+
+# Run crawl
+do_crawl() {
+	local url="$1"
+	shift
+
+	local depth max_urls format output_base force_fallback
+	_do_crawl_parse_opts "$@"
+
+	local domain
+	domain=$(get_domain "$url")
+
+	local output_dir
+	output_dir=$(create_output_dir "$domain" "$output_base")
+
+	print_header "Site Crawler - SEO Audit"
+	print_info "URL: $url"
+	print_info "Output: $output_dir"
+	print_info "Depth: $depth, Max URLs: $max_urls"
+
+	if [[ "$force_fallback" != "true" ]] && check_crawl4ai; then
+		print_success "Crawl4AI detected at ${CRAWL4AI_URL}"
+		crawl_with_crawl4ai "$url" "$output_dir" "$max_urls" "$depth"
+		print_success "Crawl complete!"
+		print_info "Results: $output_dir"
+		print_info "Latest: ${output_base}/${domain}/_latest"
+		return 0
+	fi
+
+	_do_crawl_run_python "$url" "$output_dir" "$max_urls" "$depth" "$format" "$output_base" "$domain"
+	return $?
 }
 
 # Audit broken links
