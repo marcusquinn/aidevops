@@ -555,31 +555,25 @@ check_secrets() {
 	return $violations
 }
 
-# Check AI-Powered Quality CLIs integration
-check_markdown_lint() {
-	print_info "Checking Markdown Style..."
-
-	local md_files
-	local violations=0
-	local markdownlint_cmd=""
-
-	# Find markdownlint command
+# Resolve the markdownlint binary path, or return empty string if not found.
+_find_markdownlint_cmd() {
 	if command -v markdownlint &>/dev/null; then
-		markdownlint_cmd="markdownlint"
+		echo "markdownlint"
 	elif [[ -f "node_modules/.bin/markdownlint" ]]; then
-		markdownlint_cmd="node_modules/.bin/markdownlint"
+		echo "node_modules/.bin/markdownlint"
 	fi
+	return 0
+}
 
-	# Get markdown files to check:
-	# 1. Uncommitted changes (staged + unstaged) - BLOCKING
-	# 2. If no uncommitted, check files changed in current branch vs main - BLOCKING
-	# 3. Fallback to all tracked .md files in .agents/ - NON-BLOCKING (advisory)
-	local check_mode="changed" # "changed" = blocking, "all" = advisory
+# Populate md_files and check_mode for check_markdown_lint.
+# Outputs two lines: first is check_mode ("changed"|"all"), rest are file paths.
+# Callers split on the first line to get mode, remainder for files.
+_collect_markdown_files() {
+	local md_files check_mode="changed"
+
 	if git rev-parse --git-dir >/dev/null 2>&1; then
-		# First try uncommitted changes
 		md_files=$(git diff --name-only --diff-filter=ACMR HEAD -- '*.md' 2>/dev/null)
 
-		# If no uncommitted, check branch diff vs main
 		if [[ -z "$md_files" ]]; then
 			local base_branch
 			base_branch=$(git merge-base HEAD main 2>/dev/null || git merge-base HEAD master 2>/dev/null || echo "")
@@ -588,7 +582,6 @@ check_markdown_lint() {
 			fi
 		fi
 
-		# Fallback: check all .agents/*.md files (advisory only)
 		if [[ -z "$md_files" ]]; then
 			md_files=$(git ls-files '.agents/**/*.md' 2>/dev/null)
 			check_mode="all"
@@ -598,75 +591,87 @@ check_markdown_lint() {
 		check_mode="all"
 	fi
 
+	echo "$check_mode"
+	echo "$md_files"
+	return 0
+}
+
+# Report markdownlint output and return appropriate exit code.
+# Arguments: $1=lint_output $2=lint_exit $3=check_mode
+_report_markdown_result() {
+	local lint_output="$1"
+	local lint_exit="$2"
+	local check_mode="$3"
+	local violations=0
+
+	if [[ -n "$lint_output" ]]; then
+		local violation_count
+		violation_count=$(echo "$lint_output" | grep -c "MD[0-9]" 2>/dev/null) || violation_count=0
+		if ! [[ "$violation_count" =~ ^[0-9]+$ ]]; then
+			violation_count=0
+		fi
+		violations=$violation_count
+
+		if [[ $violations -gt 0 ]]; then
+			echo "$lint_output" | head -10
+			if [[ $violations -gt 10 ]]; then
+				echo "... and $((violations - 10)) more"
+			fi
+			print_info "Run: markdownlint --fix <file> to auto-fix"
+			if [[ "$check_mode" == "changed" ]]; then
+				print_error "Markdown: $violations style issues in changed files (BLOCKING)"
+				return 1
+			else
+				print_warning "Markdown: $violations style issues found (advisory)"
+				return 0
+			fi
+		elif [[ $lint_exit -ne 0 ]]; then
+			print_error "Markdown: markdownlint failed with exit code $lint_exit (non-rule error)"
+			echo "$lint_output"
+			[[ "$check_mode" == "changed" ]] && return 1
+			return 0
+		fi
+	elif [[ $lint_exit -ne 0 ]]; then
+		print_error "Markdown: markdownlint failed with exit code $lint_exit (no output)"
+		[[ "$check_mode" == "changed" ]] && return 1
+		return 0
+	fi
+
+	print_success "Markdown: No style issues found"
+	return 0
+}
+
+# Check AI-Powered Quality CLIs integration
+check_markdown_lint() {
+	print_info "Checking Markdown Style..."
+
+	local markdownlint_cmd
+	markdownlint_cmd=$(_find_markdownlint_cmd)
+
+	# Collect files and mode (first line = mode, rest = file paths)
+	local collected check_mode md_files
+	collected=$(_collect_markdown_files)
+	check_mode=$(echo "$collected" | head -1)
+	md_files=$(echo "$collected" | tail -n +2)
+
 	if [[ -z "$md_files" ]]; then
 		print_success "Markdown: No markdown files to check"
 		return 0
 	fi
 
 	if [[ -n "$markdownlint_cmd" ]]; then
-		# Run markdownlint and capture output; preserve exit code separately
 		local lint_output lint_exit=0
 		lint_output=$($markdownlint_cmd $md_files 2>&1) || lint_exit=$?
-
-		if [[ -n "$lint_output" ]]; then
-			# Count violations - ensure single integer (grep -c can fail, use wc -l as fallback)
-			local violation_count
-			violation_count=$(echo "$lint_output" | grep -c "MD[0-9]" 2>/dev/null) || violation_count=0
-			# Ensure it's a valid integer
-			if ! [[ "$violation_count" =~ ^[0-9]+$ ]]; then
-				violation_count=0
-			fi
-			violations=$violation_count
-
-			if [[ $violations -gt 0 ]]; then
-				# Show violations first (common to both modes)
-				echo "$lint_output" | head -10
-				if [[ $violations -gt 10 ]]; then
-					echo "... and $((violations - 10)) more"
-				fi
-				print_info "Run: markdownlint --fix <file> to auto-fix"
-
-				# Mode-specific message and return code
-				if [[ "$check_mode" == "changed" ]]; then
-					print_error "Markdown: $violations style issues in changed files (BLOCKING)"
-					return 1
-				else
-					print_warning "Markdown: $violations style issues found (advisory)"
-					return 0
-				fi
-			elif [[ $lint_exit -ne 0 ]]; then
-				# markdownlint failed for a non-rule reason (bad config, invalid args, etc.)
-				# Output doesn't match MD[0-9] pattern so violation_count=0, but the tool itself errored
-				print_error "Markdown: markdownlint failed with exit code $lint_exit (non-rule error)"
-				echo "$lint_output"
-				if [[ "$check_mode" == "changed" ]]; then
-					return 1
-				else
-					return 0
-				fi
-			fi
-		elif [[ $lint_exit -ne 0 ]]; then
-			# markdownlint failed with no output (e.g., config parse error with no stderr)
-			print_error "Markdown: markdownlint failed with exit code $lint_exit (no output)"
-			if [[ "$check_mode" == "changed" ]]; then
-				return 1
-			else
-				return 0
-			fi
-		fi
-		print_success "Markdown: No style issues found"
-	else
-		# Fallback: basic checks without markdownlint
-		# NOTE: Without markdownlint, we can't reliably detect MD031/MD040 violations
-		# because we can't distinguish opening fences (need language) from closing fences (always bare)
-		# So fallback is always advisory-only and recommends installing markdownlint
-		print_warning "Markdown: markdownlint not installed - cannot perform full lint checks"
-		print_info "Install: npm install -g markdownlint-cli"
-		print_info "Then re-run to get blocking checks for changed files"
-		# Advisory only - don't block without proper tooling
-		return 0
+		_report_markdown_result "$lint_output" "$lint_exit" "$check_mode"
+		return $?
 	fi
 
+	# Fallback: markdownlint not installed
+	# NOTE: Without markdownlint, we can't reliably detect MD031/MD040 violations
+	# because we can't distinguish opening fences (need language) from closing fences (always bare)
+	print_warning "Markdown: markdownlint not installed - cannot perform full lint checks"
+	print_info "Install: npm install -g markdownlint-cli"
+	print_info "Then re-run to get blocking checks for changed files"
 	return 0
 }
 
@@ -1338,18 +1343,12 @@ should_skip_gate() {
 	return 1
 }
 
-main() {
-	print_header
-
+# Run all gate checks in order, respecting bundle skip_gates.
+# Writes to the exit_code variable in the caller's scope via a temp file.
+# Returns: 0 if all gates passed, 1 if any gate failed.
+_run_gate_checks() {
 	local exit_code=0
 
-	# Collect shell files once (includes modularised subdirectories, excludes _archive/)
-	collect_shell_files
-
-	# Load bundle config for gate filtering (t1364.6)
-	load_bundle_gates
-
-	# Run all local quality checks (respecting bundle skip_gates)
 	if ! should_skip_gate "sonarcloud"; then
 		check_sonarcloud_status || exit_code=1
 		echo ""
@@ -1434,6 +1433,22 @@ main() {
 		check_python_complexity || exit_code=1
 		echo ""
 	fi
+
+	return $exit_code
+}
+
+main() {
+	print_header
+
+	# Collect shell files once (includes modularised subdirectories, excludes _archive/)
+	collect_shell_files
+
+	# Load bundle config for gate filtering (t1364.6)
+	load_bundle_gates
+
+	# Run all local quality checks (respecting bundle skip_gates)
+	local exit_code=0
+	_run_gate_checks || exit_code=1
 
 	check_remote_cli_status
 	echo ""
