@@ -7,18 +7,14 @@ metadata:
 
 # HeyGen Voices
 
-HeyGen provides a wide variety of AI voices for different languages, accents, and styles. Voices convert your text script into natural-sounding speech.
+HeyGen provides AI voices for different languages, accents, and styles.
 
 ## Listing Available Voices
-
-### curl
 
 ```bash
 curl -X GET "https://api.heygen.com/v2/voices" \
   -H "X-Api-Key: $HEYGEN_API_KEY"
 ```
-
-### TypeScript
 
 ```typescript
 interface Voice {
@@ -31,44 +27,25 @@ interface Voice {
   emotion_support: boolean;
 }
 
-interface VoicesResponse {
-  error: null | string;
-  data: {
-    voices: Voice[];
-  };
-}
-
 async function listVoices(): Promise<Voice[]> {
   const response = await fetch("https://api.heygen.com/v2/voices", {
     headers: { "X-Api-Key": process.env.HEYGEN_API_KEY! },
   });
-
-  const json: VoicesResponse = await response.json();
-
-  if (json.error) {
-    throw new Error(json.error);
-  }
-
+  const json = await response.json();
+  if (json.error) throw new Error(json.error);
   return json.data.voices;
 }
 ```
 
-### Python
-
 ```python
-import requests
-import os
+import requests, os
 
 def list_voices() -> list:
-    response = requests.get(
+    data = requests.get(
         "https://api.heygen.com/v2/voices",
         headers={"X-Api-Key": os.environ["HEYGEN_API_KEY"]}
-    )
-
-    data = response.json()
-    if data.get("error"):
-        raise Exception(data["error"])
-
+    ).json()
+    if data.get("error"): raise Exception(data["error"])
     return data["data"]["voices"]
 ```
 
@@ -87,15 +64,6 @@ def list_voices() -> list:
         "preview_audio": "https://files.heygen.ai/...",
         "support_pause": true,
         "emotion_support": true
-      },
-      {
-        "voice_id": "de8b5d78f2e0485f88d1e9f5c8e7f9a6",
-        "name": "Paul",
-        "language": "English",
-        "gender": "male",
-        "preview_audio": "https://files.heygen.ai/...",
-        "support_pause": true,
-        "emotion_support": false
       }
     ]
   }
@@ -104,404 +72,124 @@ def list_voices() -> list:
 
 ## Supported Languages
 
-HeyGen supports many languages including:
-
-| Language | Code | Notes |
-|----------|------|-------|
-| English (US) | en-US | Multiple voice options |
-| English (UK) | en-GB | British accent |
-| Spanish | es-ES | Spain Spanish |
-| Spanish (Latin) | es-MX | Mexican Spanish |
-| French | fr-FR | France French |
-| German | de-DE | Standard German |
-| Portuguese | pt-BR | Brazilian Portuguese |
-| Chinese (Mandarin) | zh-CN | Simplified Chinese |
-| Japanese | ja-JP | Standard Japanese |
-| Korean | ko-KR | Standard Korean |
-| Italian | it-IT | Standard Italian |
-| Dutch | nl-NL | Standard Dutch |
-| Polish | pl-PL | Standard Polish |
-| Arabic | ar-SA | Saudi Arabic |
+| Language | Code | Language | Code |
+|----------|------|----------|------|
+| English (US) | en-US | Japanese | ja-JP |
+| English (UK) | en-GB | Korean | ko-KR |
+| Spanish | es-ES | Italian | it-IT |
+| Spanish (Latin) | es-MX | Dutch | nl-NL |
+| French | fr-FR | Polish | pl-PL |
+| German | de-DE | Arabic | ar-SA |
+| Portuguese | pt-BR | Chinese (Mandarin) | zh-CN |
 
 ## Using Voices in Video Generation
 
-### Basic Voice Usage
-
 ```typescript
-const videoConfig = {
-  video_inputs: [
-    {
-      character: {
-        type: "avatar",
-        avatar_id: "josh_lite3_20230714",
-        avatar_style: "normal",
-      },
-      voice: {
-        type: "text",
-        input_text: "Hello! Welcome to our presentation.",
-        voice_id: "1bd001e7e50f421d891986aad5158bc8",
-      },
-    },
-  ],
-};
-```
+// Basic usage
+voice: {
+  type: "text",
+  input_text: "Hello! Welcome to our presentation.",
+  voice_id: "1bd001e7e50f421d891986aad5158bc8",
+}
 
-### Voice with Speed Adjustment
+// With speed adjustment (range: 0.5–2.0, default 1.0)
+voice: { ...above, speed: 1.2 }
 
-```typescript
-const videoConfig = {
-  video_inputs: [
-    {
-      character: {
-        type: "avatar",
-        avatar_id: "josh_lite3_20230714",
-        avatar_style: "normal",
-      },
-      voice: {
-        type: "text",
-        input_text: "This is spoken at a faster pace.",
-        voice_id: "1bd001e7e50f421d891986aad5158bc8",
-        speed: 1.2, // 1.0 is normal, range: 0.5 - 2.0
-      },
-    },
-  ],
-};
-```
+// With pitch adjustment (range: -20 to 20)
+voice: { ...above, pitch: 10 }
 
-### Voice with Pitch Adjustment
-
-```typescript
-const videoConfig = {
-  video_inputs: [
-    {
-      character: {
-        type: "avatar",
-        avatar_id: "josh_lite3_20230714",
-        avatar_style: "normal",
-      },
-      voice: {
-        type: "text",
-        input_text: "This has a higher pitch.",
-        voice_id: "1bd001e7e50f421d891986aad5158bc8",
-        pitch: 10, // Range: -20 to 20
-      },
-    },
-  ],
-};
+// Custom audio instead of TTS
+voice: {
+  type: "audio",
+  audio_url: "https://example.com/my-audio.mp3",
+}
 ```
 
 ## Adding Pauses with Break Tags
 
-HeyGen supports SSML-style `<break>` tags to add pauses in scripts.
+HeyGen supports SSML-style `<break>` tags. Format: `<break time="Xs"/>` where X is seconds.
 
-### Break Tag Format
-
-```xml
-<break time="Xs"/>
-```
-
-Where `X` is the duration in seconds (e.g., `1s`, `1.5s`, `0.5s`).
-
-### Requirements
-
-| Rule | Example |
-|------|---------|
-| Use seconds with "s" suffix | `<break time="1.5s"/>` ✓ |
-| Must have space before tag | `word <break time="1s"/>` ✓ |
-| Must have space after tag | `<break time="1s"/> word` ✓ |
-| Self-closing tag | `<break time="1s"/>` ✓ |
-
-**Incorrect:** `word<break time="1s"/>word` (no spaces)
-**Correct:** `word <break time="1s"/> word`
-
-### Examples
+**Rules:**
+- Use seconds with "s" suffix: `<break time="1.5s"/>`
+- Must have space before and after tag: `word <break time="1s"/> word`
+- Self-closing tag only
 
 ```typescript
-// Single pause
-const script1 = "Hello and welcome. <break time=\"1s\"/> Let me introduce our product.";
-
-// Multiple pauses
-const script2 = "First point. <break time=\"1.5s\"/> Second point. <break time=\"1s\"/> Third point.";
-
-// Pause at start (dramatic opening)
-const script3 = "<break time=\"0.5s\"/> Welcome to our presentation.";
-
-// Longer pause for emphasis
-const script4 = "And the winner is... <break time=\"2s\"/> You!";
-```
-
-### Full Example
-
-```typescript
-const scriptWithPauses = `
-Welcome to our product demo. <break time="1s"/>
+const script = `Welcome to our product demo. <break time="1s"/>
 Today I'll show you three key features. <break time="0.5s"/>
 First, let's look at the dashboard. <break time="1.5s"/>
-As you can see, it's incredibly intuitive.
-`;
-
-const videoConfig = {
-  video_inputs: [
-    {
-      character: {
-        type: "avatar",
-        avatar_id: "josh_lite3_20230714",
-        avatar_style: "normal",
-      },
-      voice: {
-        type: "text",
-        input_text: scriptWithPauses,
-        voice_id: "1bd001e7e50f421d891986aad5158bc8",
-      },
-    },
-  ],
-};
+As you can see, it's incredibly intuitive.`;
 ```
 
-### Consecutive Breaks
+Multiple consecutive breaks are automatically combined (e.g., `1s` + `0.5s` = `1.5s`).
 
-Multiple consecutive break tags are automatically combined:
-
-```typescript
-// These two breaks:
-"Hello <break time=\"1s\"/> <break time=\"0.5s\"/> world"
-
-// Are treated as a single 1.5s pause
-```
-
-### Best Practices
-
-1. **Use for emphasis** - Add pauses before important points
-2. **Keep pauses reasonable** - 0.5s to 2s is typical; longer feels unnatural
-3. **Match natural speech** - Add pauses where a human would breathe or pause
-4. **Test the output** - Listen to generated audio to verify timing feels right
-
-## Using Custom Audio Instead of TTS
-
-Instead of text-to-speech, you can provide your own audio:
-
-```typescript
-const videoConfig = {
-  video_inputs: [
-    {
-      character: {
-        type: "avatar",
-        avatar_id: "josh_lite3_20230714",
-        avatar_style: "normal",
-      },
-      voice: {
-        type: "audio",
-        audio_url: "https://example.com/my-audio.mp3",
-      },
-    },
-  ],
-};
-```
+**Best practices:** 0.5s–2s is typical; longer feels unnatural. Add pauses where a human would breathe.
 
 ## Filtering Voices
 
-### By Language
-
 ```typescript
-function filterByLanguage(voices: Voice[], language: string): Voice[] {
-  return voices.filter((v) =>
-    v.language.toLowerCase().includes(language.toLowerCase())
-  );
-}
-
-const englishVoices = filterByLanguage(voices, "english");
-const spanishVoices = filterByLanguage(voices, "spanish");
-```
-
-### By Gender
-
-```typescript
-function filterByGender(voices: Voice[], gender: "male" | "female"): Voice[] {
-  return voices.filter((v) => v.gender === gender);
-}
-
-const femaleVoices = filterByGender(voices, "female");
-```
-
-### By Features
-
-```typescript
-function filterByFeatures(
-  voices: Voice[],
-  options: { supportPause?: boolean; emotionSupport?: boolean }
-): Voice[] {
-  return voices.filter((v) => {
-    if (options.supportPause !== undefined && v.support_pause !== options.supportPause) {
-      return false;
-    }
-    if (options.emotionSupport !== undefined && v.emotion_support !== options.emotionSupport) {
-      return false;
-    }
-    return true;
-  });
-}
-
-const expressiveVoices = filterByFeatures(voices, { emotionSupport: true });
-```
-
-## Voice Selection Helper
-
-```typescript
-interface VoiceSelectionCriteria {
+// Combined filter helper
+async function findVoice(criteria: {
   language?: string;
   gender?: "male" | "female";
   supportPause?: boolean;
   emotionSupport?: boolean;
-}
-
-async function findVoice(criteria: VoiceSelectionCriteria): Promise<Voice | null> {
+}): Promise<Voice | null> {
   const voices = await listVoices();
-
-  const filtered = voices.filter((v) => {
-    if (criteria.language && !v.language.toLowerCase().includes(criteria.language.toLowerCase())) {
-      return false;
-    }
-    if (criteria.gender && v.gender !== criteria.gender) {
-      return false;
-    }
-    if (criteria.supportPause !== undefined && v.support_pause !== criteria.supportPause) {
-      return false;
-    }
-    if (criteria.emotionSupport !== undefined && v.emotion_support !== criteria.emotionSupport) {
-      return false;
-    }
+  return voices.find((v) => {
+    if (criteria.language && !v.language.toLowerCase().includes(criteria.language.toLowerCase())) return false;
+    if (criteria.gender && v.gender !== criteria.gender) return false;
+    if (criteria.supportPause !== undefined && v.support_pause !== criteria.supportPause) return false;
+    if (criteria.emotionSupport !== undefined && v.emotion_support !== criteria.emotionSupport) return false;
     return true;
-  });
-
-  return filtered[0] || null;
+  }) || null;
 }
 
 // Usage
-const voice = await findVoice({
-  language: "english",
-  gender: "female",
-  emotionSupport: true,
-});
-```
-
-## Multi-Language Videos
-
-Create videos with different languages per scene:
-
-```typescript
-const multiLanguageConfig = {
-  video_inputs: [
-    {
-      character: {
-        type: "avatar",
-        avatar_id: "josh_lite3_20230714",
-        avatar_style: "normal",
-      },
-      voice: {
-        type: "text",
-        input_text: "Hello! Welcome to our global product launch.",
-        voice_id: "english_voice_id",
-      },
-    },
-    {
-      character: {
-        type: "avatar",
-        avatar_id: "josh_lite3_20230714",
-        avatar_style: "normal",
-      },
-      voice: {
-        type: "text",
-        input_text: "Hola! Bienvenidos al lanzamiento global de nuestro producto.",
-        voice_id: "spanish_voice_id",
-      },
-    },
-  ],
-};
+const voice = await findVoice({ language: "english", gender: "female", emotionSupport: true });
 ```
 
 ## Matching Voice to Avatar
 
-### Recommended: Use Avatar's Default Voice
-
-Many avatars have a `default_voice_id` that's pre-matched. **This is the best approach.**
+**Recommended:** Use the avatar's `default_voice_id` — it's pre-matched.
 
 ```typescript
-// Using v3 API to get avatar with default voice
 const response = await fetch(
   "https://api.heygen.com/v3/avatar_group.list?include_public=true",
   { headers: { "X-Api-Key": process.env.HEYGEN_API_KEY! } }
 );
 const { data } = await response.json();
-
-// Find avatar with a default voice
 const avatar = data.avatar_group_list.find((a: any) => a.default_voice_id);
-
-if (avatar) {
-  const videoConfig = {
-    video_inputs: [{
-      character: { type: "avatar", avatar_id: avatar.id },
-      voice: {
-        type: "text",
-        input_text: script,
-        voice_id: avatar.default_voice_id, // Pre-matched voice
-      },
-    }],
-  };
-}
+// Use avatar.default_voice_id in voice config
 ```
 
 See [avatars.md](avatars.md) for complete examples.
 
-### Fallback: Match Gender Manually
-
-If avatar has no default voice, match genders manually:
+**Fallback:** If no default voice, match gender manually:
 
 ```typescript
-interface AvatarVoicePair {
-  avatarId: string;
-  voiceId: string;
-  gender: "male" | "female";
-}
-
-async function findMatchingAvatarAndVoice(
-  preferredGender?: "male" | "female"
-): Promise<AvatarVoicePair> {
-  const [avatars, voices] = await Promise.all([
-    listAvatars(),
-    listVoices(),
-  ]);
-
-  // Default to male if no preference
+async function findMatchingAvatarAndVoice(preferredGender?: "male" | "female") {
+  const [avatars, voices] = await Promise.all([listAvatars(), listVoices()]);
   const gender = preferredGender || "male";
-
-  // Find avatar with matching gender
   const avatar = avatars.find((a) => a.gender === gender);
-  if (!avatar) {
-    throw new Error(`No ${gender} avatar available`);
-  }
-
-  // Find voice with matching gender AND language
-  const voice = voices.find(
-    (v) => v.gender === gender && v.language.toLowerCase().includes("english")
-  );
-  if (!voice) {
-    throw new Error(`No ${gender} English voice available`);
-  }
-
-  return {
-    avatarId: avatar.avatar_id,
-    voiceId: voice.voice_id,
-    gender,
-  };
+  const voice = voices.find((v) => v.gender === gender && v.language.toLowerCase().includes("english"));
+  if (!avatar || !voice) throw new Error(`No ${gender} avatar/voice available`);
+  return { avatarId: avatar.avatar_id, voiceId: voice.voice_id, gender };
 }
 ```
 
+## Multi-Language Videos
+
+Assign different `voice_id` values per scene in `video_inputs` — each scene can use a different language voice.
+
 ## Best Practices
 
-1. **Match voice gender to avatar** - Always pair male voices with male avatars, female with female
-2. **Match voice to content** - Use professional voices for business content
-3. **Test voice previews** - Listen to preview audio before selecting
-4. **Consider locale** - Match voice accent to target audience
-5. **Use natural pacing** - Adjust speed for clarity, typically 0.9-1.1x
-6. **Add pauses** - Use SSML breaks for more natural speech flow
-7. **Validate availability** - Always verify voice_id exists before using
+| Rule | Detail |
+|------|--------|
+| Match gender to avatar | Male voices with male avatars, female with female |
+| Use default_voice_id | Pre-matched to avatar when available |
+| Test previews | Listen to `preview_audio` before selecting |
+| Match locale to audience | Consider accent and regional variant |
+| Natural pacing | Adjust speed 0.9–1.1x for clarity |
+| Add pauses | Use SSML breaks for natural speech flow |
+| Validate availability | Verify voice_id exists before using |
