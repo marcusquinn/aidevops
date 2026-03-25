@@ -312,16 +312,46 @@ generate_changelog_content() {
 	return 0
 }
 
-# Function to update CHANGELOG.md with new version
-update_changelog() {
-	local version="$1"
-	local changelog_file="$REPO_ROOT/CHANGELOG.md"
-	local today
-	today=$(date +%Y-%m-%d)
+# Replace the [Unreleased] section in a changelog file with new version content.
+# Reads the changelog, inserts the new version section after [Unreleased], and
+# discards old unreleased content.
+# Arguments: changelog_file content_file output_file
+_replace_unreleased_section() {
+	local changelog_file="$1"
+	local content_file="$2"
+	local output_file="$3"
+	local in_unreleased=0
 
-	if [[ ! -f "$changelog_file" ]]; then
-		print_warning "CHANGELOG.md not found, creating new one"
-		cat >"$changelog_file" <<'EOF'
+	while IFS= read -r line || [[ -n "$line" ]]; do
+		if [[ "$line" == "## [Unreleased]"* ]]; then
+			echo "## [Unreleased]"
+			echo ""
+			cat "$content_file"
+			in_unreleased=1
+		elif [[ "$line" == "## ["* ]] && [[ $in_unreleased -eq 1 ]]; then
+			# Next version section found, stop skipping
+			in_unreleased=0
+			echo ""
+			echo "$line"
+		elif [[ $in_unreleased -eq 0 ]]; then
+			echo "$line"
+		fi
+		# Skip lines while in_unreleased=1 (old unreleased content)
+	done <"$changelog_file" >"$output_file"
+	return 0
+}
+
+# Ensure CHANGELOG.md exists with the standard template.
+# Arguments: changelog_file
+_ensure_changelog_exists() {
+	local changelog_file="$1"
+
+	if [[ -f "$changelog_file" ]]; then
+		return 0
+	fi
+
+	print_warning "CHANGELOG.md not found, creating new one"
+	cat >"$changelog_file" <<'EOF'
 # Changelog
 
 All notable changes to this project will be documented in this file.
@@ -332,7 +362,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 EOF
-	fi
+	return 0
+}
+
+# Function to update CHANGELOG.md with new version
+update_changelog() {
+	local version="$1"
+	local changelog_file="$REPO_ROOT/CHANGELOG.md"
+	local today
+	today=$(date +%Y-%m-%d)
+
+	_ensure_changelog_exists "$changelog_file"
 
 	# Check if [Unreleased] section exists
 	if ! grep -q "^\## \[Unreleased\]" "$changelog_file"; then
@@ -366,31 +406,7 @@ EOF
 $changelog_content
 EOF
 
-	# Process the changelog using sed instead of awk for reliability
-	# 1. Find the [Unreleased] line
-	# 2. Keep it, add blank line, then insert new version content
-	# 3. Skip any existing content under [Unreleased] until next ## section
-
-	local in_unreleased=0
-	local printed_new=0
-
-	while IFS= read -r line || [[ -n "$line" ]]; do
-		if [[ "$line" == "## [Unreleased]"* ]]; then
-			echo "## [Unreleased]"
-			echo ""
-			cat "$content_file"
-			in_unreleased=1
-			printed_new=1
-		elif [[ "$line" == "## ["* ]] && [[ $in_unreleased -eq 1 ]]; then
-			# Next version section found, stop skipping
-			in_unreleased=0
-			echo ""
-			echo "$line"
-		elif [[ $in_unreleased -eq 0 ]]; then
-			echo "$line"
-		fi
-		# Skip lines while in_unreleased=1 (old unreleased content)
-	done <"$changelog_file" >"$temp_file"
+	_replace_unreleased_section "$changelog_file" "$content_file" "$temp_file"
 
 	# Replace original file
 	mv "$temp_file" "$changelog_file"
@@ -861,6 +877,63 @@ _update_claude_plugin_version() {
 	return 0
 }
 
+# Update the VERSION file with the new version string.
+# All output goes to stderr. Returns 0 on success, 1 on failure.
+_update_version_file() {
+	local new_version="$1"
+
+	if [[ ! -f "$VERSION_FILE" ]]; then
+		return 0
+	fi
+
+	echo "$new_version" >"$VERSION_FILE"
+	if [[ "$(cat "$VERSION_FILE")" == "$new_version" ]]; then
+		print_success "Updated VERSION file" >&2
+		return 0
+	fi
+
+	print_error "Failed to update VERSION file"
+	return 1
+}
+
+# Update the package.json version field.
+# All output goes to stderr. Returns 0 on success, 1 on failure.
+_update_package_json_version() {
+	local new_version="$1"
+
+	if [[ ! -f "$REPO_ROOT/package.json" ]]; then
+		return 0
+	fi
+
+	sed_inplace "s/\"version\": *\"[^\"]*\"/\"version\": \"$new_version\"/" "$REPO_ROOT/package.json"
+	if grep -q "\"version\": \"$new_version\"" "$REPO_ROOT/package.json"; then
+		print_success "Updated package.json" >&2
+		return 0
+	fi
+
+	print_error "Failed to update package.json"
+	return 1
+}
+
+# Update the sonar-project.properties version field.
+# All output goes to stderr. Returns 0 on success, 1 on failure.
+_update_sonar_version() {
+	local new_version="$1"
+
+	if [[ ! -f "$REPO_ROOT/sonar-project.properties" ]]; then
+		return 0
+	fi
+
+	sed_inplace "s/sonar\.projectVersion=.*/sonar.projectVersion=$new_version/" "$REPO_ROOT/sonar-project.properties"
+	if grep -q "sonar.projectVersion=$new_version" "$REPO_ROOT/sonar-project.properties"; then
+		print_success "Updated sonar-project.properties" >&2
+		return 0
+	fi
+
+	print_error "Failed to update sonar-project.properties"
+	return 1
+}
+
 # Function to update version in files
 # All diagnostic output goes to stderr so callers that capture stdout
 # as a version string (e.g. auto-version-bump.sh) are not polluted.
@@ -870,61 +943,17 @@ update_version_in_files() {
 
 	print_info "Updating version references in files..." >&2
 
-	# Update VERSION file
-	if [[ -f "$VERSION_FILE" ]]; then
-		echo "$new_version" >"$VERSION_FILE"
-		if [[ "$(cat "$VERSION_FILE")" == "$new_version" ]]; then
-			print_success "Updated VERSION file" >&2
-		else
-			print_error "Failed to update VERSION file"
-			errors=$((errors + 1))
-		fi
-	fi
+	_update_version_file "$new_version" || errors=$((errors + 1))
+	_update_package_json_version "$new_version" || errors=$((errors + 1))
+	_update_sonar_version "$new_version" || errors=$((errors + 1))
 
-	# Update package.json if it exists
-	if [[ -f "$REPO_ROOT/package.json" ]]; then
-		sed_inplace "s/\"version\": *\"[^\"]*\"/\"version\": \"$new_version\"/" "$REPO_ROOT/package.json"
-		if grep -q "\"version\": \"$new_version\"" "$REPO_ROOT/package.json"; then
-			print_success "Updated package.json" >&2
-		else
-			print_error "Failed to update package.json"
-			errors=$((errors + 1))
-		fi
-	fi
+	update_script_version_reference "$REPO_ROOT/setup.sh" "$new_version" "setup.sh" || errors=$((errors + 1))
+	update_script_version_reference "$REPO_ROOT/aidevops.sh" "$new_version" "aidevops.sh" || errors=$((errors + 1))
 
-	# Update sonar-project.properties
-	if [[ -f "$REPO_ROOT/sonar-project.properties" ]]; then
-		sed_inplace "s/sonar\.projectVersion=.*/sonar.projectVersion=$new_version/" "$REPO_ROOT/sonar-project.properties"
-		if grep -q "sonar.projectVersion=$new_version" "$REPO_ROOT/sonar-project.properties"; then
-			print_success "Updated sonar-project.properties" >&2
-		else
-			print_error "Failed to update sonar-project.properties"
-			errors=$((errors + 1))
-		fi
-	fi
+	_update_readme_version_badge "$new_version" || errors=$((errors + 1))
+	_update_homebrew_formula "$new_version" || errors=$((errors + 1))
+	_update_claude_plugin_version "$new_version" || errors=$((errors + 1))
 
-	# Update setup.sh and aidevops.sh with shared logic
-	if ! update_script_version_reference "$REPO_ROOT/setup.sh" "$new_version" "setup.sh"; then
-		errors=$((errors + 1))
-	fi
-
-	if ! update_script_version_reference "$REPO_ROOT/aidevops.sh" "$new_version" "aidevops.sh"; then
-		errors=$((errors + 1))
-	fi
-
-	if ! _update_readme_version_badge "$new_version"; then
-		errors=$((errors + 1))
-	fi
-
-	if ! _update_homebrew_formula "$new_version"; then
-		errors=$((errors + 1))
-	fi
-
-	if ! _update_claude_plugin_version "$new_version"; then
-		errors=$((errors + 1))
-	fi
-
-	# Return error if any updates failed
 	if [[ $errors -gt 0 ]]; then
 		print_error "Failed to update $errors file(s)"
 		return 1
@@ -1144,13 +1173,60 @@ find_pr_for_task_from_commits() {
 	return 0
 }
 
+# Mark a single task as complete in TODO.md.
+# Changes [ ] to [x], adds proof-log (pr:#NNN or verified:date) and completed: timestamp.
+# Arguments: task_id todo_file today_short
+# Returns: 0 if marked, 1 if already complete, 2 if not found
+_mark_single_task_complete() {
+	local task_id="$1"
+	local todo_file="$2"
+	local today_short="$3"
+
+	# Build regex patterns (avoids shellcheck SC1087 false positive with [[:space:]])
+	local unchecked_pattern="^[[:space:]]*- \\[ \\] ${task_id}[[:space:]]"
+	local checked_pattern="^[[:space:]]*- \\[x\\] ${task_id}[[:space:]]"
+
+	if grep -qE "$unchecked_pattern" "$todo_file"; then
+		local escaped_id
+		escaped_id=$(echo "$task_id" | sed 's/\./\\./g')
+
+		# Discover PR number for proof-log (t1004)
+		local pr_number=""
+		pr_number=$(find_pr_for_task_from_commits "$task_id")
+
+		# Build proof-log: pr:#NNN if PR found, otherwise verified:date
+		local proof_log=""
+		if [[ -n "$pr_number" ]]; then
+			proof_log=" pr:#${pr_number}"
+		else
+			proof_log=" verified:${today_short}"
+		fi
+
+		local sed_unchecked_pattern="^[[:space:]]*- \\[ \\] ${escaped_id}[[:space:]]"
+
+		# Check if line already has completed: field
+		if grep -E "$sed_unchecked_pattern" "$todo_file" | grep -q "completed:"; then
+			sed_inplace "s/^\\([[:space:]]*\\)- \\[ \\] \\(${escaped_id}[[:space:]].*\\)\$/\\1- [x] \\2${proof_log}/" "$todo_file"
+		else
+			sed_inplace "s/^\\([[:space:]]*\\)- \\[ \\] \\(${escaped_id}[[:space:]].*\\)\$/\\1- [x] \\2${proof_log} completed:$today_short/" "$todo_file"
+		fi
+
+		print_success "Marked $task_id as complete (${proof_log# })"
+		return 0
+	elif grep -qE "$checked_pattern" "$todo_file"; then
+		print_info "Task $task_id already marked complete"
+		return 1
+	else
+		print_warning "Task $task_id not found in TODO.md (may be subtask or already moved)"
+		return 2
+	fi
+}
+
 # Function to auto-mark tasks complete in TODO.md based on commit messages
 # Parses commits since last tag for task IDs and marks them complete
 # Writes pr:#NNN proof-log when a PR is discoverable, otherwise verified:YYYY-MM-DD (t1004)
 auto_mark_tasks_complete() {
 	local todo_file="$REPO_ROOT/TODO.md"
-	local today
-	today=$(date +%Y-%m-%dT%H:%M:%SZ)
 	local today_short
 	today_short=$(date +%Y-%m-%d)
 
@@ -1172,53 +1248,12 @@ auto_mark_tasks_complete() {
 	local count=0
 	local marked_tasks=""
 
-	# Process each task ID
 	while IFS= read -r task_id; do
 		[[ -z "$task_id" ]] && continue
 
-		# Build regex patterns (avoids shellcheck SC1087 false positive with [[:space:]])
-		local unchecked_pattern="^[[:space:]]*- \\[ \\] ${task_id}[[:space:]]"
-		local checked_pattern="^[[:space:]]*- \\[x\\] ${task_id}[[:space:]]"
-
-		# Check if task exists and is not already complete
-		# Pattern: - [ ] t001 ... (not already checked)
-		if grep -qE "$unchecked_pattern" "$todo_file"; then
-			# Mark task complete: change [ ] to [x] and add completed: timestamp
-			# Use sed to update the line
-			local escaped_id
-			escaped_id=$(echo "$task_id" | sed 's/\./\\./g')
-
-			# Discover PR number for proof-log (t1004)
-			local pr_number=""
-			pr_number=$(find_pr_for_task_from_commits "$task_id")
-
-			# Build proof-log: pr:#NNN if PR found, otherwise verified:date
-			local proof_log=""
-			if [[ -n "$pr_number" ]]; then
-				proof_log=" pr:#${pr_number}"
-			else
-				proof_log=" verified:${today_short}"
-			fi
-
-			# Build sed patterns
-			local sed_unchecked_pattern="^[[:space:]]*- \\[ \\] ${escaped_id}[[:space:]]"
-
-			# Check if line already has completed: field
-			if grep -E "$sed_unchecked_pattern" "$todo_file" | grep -q "completed:"; then
-				# Change checkbox and add proof-log (line already has completed:)
-				sed_inplace "s/^\\([[:space:]]*\\)- \\[ \\] \\(${escaped_id}[[:space:]].*\\)\$/\\1- [x] \\2${proof_log}/" "$todo_file"
-			else
-				# Change checkbox, add proof-log and completed: timestamp
-				sed_inplace "s/^\\([[:space:]]*\\)- \\[ \\] \\(${escaped_id}[[:space:]].*\\)\$/\\1- [x] \\2${proof_log} completed:$today_short/" "$todo_file"
-			fi
-
+		if _mark_single_task_complete "$task_id" "$todo_file" "$today_short"; then
 			count=$((count + 1))
 			marked_tasks="$marked_tasks $task_id"
-			print_success "Marked $task_id as complete (${proof_log# })"
-		elif grep -qE "$checked_pattern" "$todo_file"; then
-			print_info "Task $task_id already marked complete"
-		else
-			print_warning "Task $task_id not found in TODO.md (may be subtask or already moved)"
 		fi
 	done <<<"$task_ids"
 
