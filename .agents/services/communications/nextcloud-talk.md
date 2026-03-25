@@ -97,111 +97,68 @@ nextcloud-talk-dispatch-helper.sh start --daemon
 
 ### Prerequisites
 
-1. **Nextcloud server** (self-hosted) — version 27+ recommended for Talk Bot API
-2. **Talk app** installed and enabled (bundled with Nextcloud, or install from App Store)
-3. **Admin access** to the Nextcloud instance (for OCC CLI bot registration)
+1. **Nextcloud server** (self-hosted) — version 27+ required for Talk Bot API
+2. **Talk app** installed and enabled (`spreed`)
+3. **Admin access** for OCC CLI bot registration
 4. **Node.js >= 18** or **Bun** runtime for the webhook handler
-5. **Network reachability**: Bot endpoint must be reachable from the Nextcloud server (localhost, LAN, or tunneled)
-
-### Step 1: Ensure Talk App is Installed
+5. **Network reachability**: Bot endpoint must be reachable from the Nextcloud server
 
 ```bash
-# Check if Talk is installed
+# Check/install/enable Talk app
 sudo -u www-data php /var/www/nextcloud/occ app:list | grep spreed
-
-# Install Talk if not present
 sudo -u www-data php /var/www/nextcloud/occ app:install spreed
-
-# Enable Talk if disabled
 sudo -u www-data php /var/www/nextcloud/occ app:enable spreed
-
-# Verify version (27+ required for Bot API)
-sudo -u www-data php /var/www/nextcloud/occ app:info spreed
+sudo -u www-data php /var/www/nextcloud/occ app:info spreed   # verify version 27+
 ```
 
-### Step 2: Register a Bot via OCC CLI
-
-The Talk Bot API uses OCC CLI for bot registration. Each bot gets a name, a webhook URL, a description, and a shared secret for signature verification.
+### Register Bot via OCC CLI
 
 ```bash
-# Register a new bot
-# The command returns a JSON object with the bot ID and shared secret
+# Register bot — returns JSON with bot ID and shared secret
 sudo -u www-data php /var/www/nextcloud/occ talk:bot:install \
   "aidevops" \
   "http://localhost:8780/webhook" \
   "AI-powered DevOps assistant" \
   "YOUR_SHARED_SECRET_HERE"
 
-# List registered bots
 sudo -u www-data php /var/www/nextcloud/occ talk:bot:list
-
-# Remove a bot
 sudo -u www-data php /var/www/nextcloud/occ talk:bot:remove BOT_ID
-
-# Enable bot for a specific conversation
-# (done via Talk admin settings or API)
 ```
 
-### Step 3: Generate a Shared Secret
+### Generate and Store Shared Secret
 
 ```bash
-# Generate a cryptographically secure secret
 openssl rand -hex 32
-
-# Store securely
 gopass insert aidevops/nextcloud-talk/webhook-secret
-
-# Or via credentials.sh fallback (600 permissions)
+# Or credentials.sh fallback (600 permissions)
 ```
 
-### Step 4: Configure the Webhook Endpoint
-
-The bot must run an HTTP server that receives webhook POSTs from the Nextcloud server. The endpoint must:
-
-1. Accept POST requests with JSON body
-2. Verify the `X-Nextcloud-Talk-Signature` header (HMAC-SHA256)
-3. Respond with 200 OK quickly (process asynchronously)
-
-### Step 5: Create an App Password for API Access
-
-The bot needs an app password to send messages back via the OCS API:
+### Create App Password for OCS API
 
 ```bash
-# Create via Nextcloud UI:
-# Settings > Security > Devices & sessions > Create new app password
+# Via Nextcloud UI: Settings > Security > Devices & sessions > Create new app password
 # Name: "aidevops-talk-bot"
-
 # Or via OCC (admin only):
 sudo -u www-data php /var/www/nextcloud/occ user:setting BOT_USER app_password
 
-# Store securely
 gopass insert aidevops/nextcloud-talk/app-password
 ```
 
-### Step 6: Install Dependencies
+### Install Dependencies
 
 ```bash
-# Using Bun (preferred)
-bun add express crypto
-
-# Using npm
-npm install express
+bun add express crypto   # preferred
+npm install express      # fallback
 ```
 
 ## Bot API Integration
 
 ### Webhook Payload Format
 
-When a message is posted in a conversation where the bot is enabled, Talk sends a webhook POST:
-
 ```json
 {
   "type": "Create",
-  "actor": {
-    "type": "User",
-    "id": "admin",
-    "name": "Admin User"
-  },
+  "actor": { "type": "User", "id": "admin", "name": "Admin User" },
   "object": {
     "type": "Message",
     "id": "42",
@@ -209,32 +166,7 @@ When a message is posted in a conversation where the bot is enabled, Talk sends 
     "content": "Hello @aidevops, can you review the latest PR?",
     "mediaType": "text/markdown"
   },
-  "target": {
-    "type": "Collection",
-    "id": "conversation-token",
-    "name": "Development"
-  }
-}
-```
-
-### Signature Verification
-
-Every webhook request includes an `X-Nextcloud-Talk-Signature` header containing an HMAC-SHA256 signature of the request body, computed with the shared secret.
-
-```typescript
-import { createHmac } from "crypto";
-
-function verifySignature(body: string, signature: string, secret: string): boolean {
-  const expected = createHmac("sha256", secret)
-    .update(body)
-    .digest("hex");
-  // Constant-time comparison to prevent timing attacks
-  if (expected.length !== signature.length) return false;
-  let result = 0;
-  for (let i = 0; i < expected.length; i++) {
-    result |= expected.charCodeAt(i) ^ signature.charCodeAt(i);
-  }
-  return result === 0;
+  "target": { "type": "Collection", "id": "conversation-token", "name": "Development" }
 }
 ```
 
@@ -251,58 +183,38 @@ const BOT_USER = process.env.BOT_USER || "aidevops-bot";
 const APP_PASSWORD = process.env.APP_PASSWORD || "";
 const WEBHOOK_SECRET = process.env.WEBHOOK_SECRET || "";
 
-// Allowed Nextcloud user IDs
+// Allowed Nextcloud user IDs (empty = allow all)
 const ALLOWED_USERS = new Set(["admin", "developer1", "developer2"]);
 
 const app = express();
-
-// Raw body needed for signature verification
-app.use(express.raw({ type: "application/json" }));
+app.use(express.raw({ type: "application/json" }));  // raw body required for signature verification
 
 function verifySignature(body: Buffer, signature: string): boolean {
-  const expected = createHmac("sha256", WEBHOOK_SECRET)
-    .update(body)
-    .digest("hex");
+  const expected = createHmac("sha256", WEBHOOK_SECRET).update(body).digest("hex");
   if (expected.length !== signature.length) return false;
   let result = 0;
   for (let i = 0; i < expected.length; i++) {
-    result |= expected.charCodeAt(i) ^ signature.charCodeAt(i);
+    result |= expected.charCodeAt(i) ^ signature.charCodeAt(i);  // constant-time comparison
   }
   return result === 0;
 }
 
-// Send message to a Talk conversation via OCS API
 async function sendMessage(conversationToken: string, message: string): Promise<void> {
   const url = `${NEXTCLOUD_URL}/ocs/v2.php/apps/spreed/api/v1/chat/${conversationToken}`;
   const auth = Buffer.from(`${BOT_USER}:${APP_PASSWORD}`).toString("base64");
-
   await fetch(url, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "OCS-APIRequest": "true",
-      "Authorization": `Basic ${auth}`,
-    },
+    headers: { "Content-Type": "application/json", "OCS-APIRequest": "true", "Authorization": `Basic ${auth}` },
     body: JSON.stringify({ message }),
   });
 }
 
-// Send reaction to a message
-async function sendReaction(
-  conversationToken: string,
-  messageId: string,
-  reaction: string,
-): Promise<void> {
+async function sendReaction(conversationToken: string, messageId: string, reaction: string): Promise<void> {
   const url = `${NEXTCLOUD_URL}/ocs/v2.php/apps/spreed/api/v1/reaction/${conversationToken}/${messageId}`;
   const auth = Buffer.from(`${BOT_USER}:${APP_PASSWORD}`).toString("base64");
-
   await fetch(url, {
     method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "OCS-APIRequest": "true",
-      "Authorization": `Basic ${auth}`,
-    },
+    headers: { "Content-Type": "application/json", "OCS-APIRequest": "true", "Authorization": `Basic ${auth}` },
     body: JSON.stringify({ reaction }),
   });
 }
@@ -314,8 +226,7 @@ app.post("/webhook", async (req, res) => {
     return;
   }
 
-  // Respond immediately — process asynchronously
-  res.status(200).send("OK");
+  res.status(200).send("OK");  // respond immediately — process asynchronously
 
   const payload = JSON.parse(req.body.toString());
   const userId = payload.actor?.id;
@@ -323,24 +234,13 @@ app.post("/webhook", async (req, res) => {
   const messageId = payload.object?.id;
   const conversationToken = payload.target?.id;
 
-  // Access control
-  if (ALLOWED_USERS.size > 0 && !ALLOWED_USERS.has(userId)) {
-    return;
-  }
-
-  // Skip empty messages or non-text
+  if (ALLOWED_USERS.size > 0 && !ALLOWED_USERS.has(userId)) return;
   if (!messageText.trim()) return;
 
-  // Add processing reaction
   await sendReaction(conversationToken, messageId, "👀");
-
   try {
-    // Dispatch to runner (integrate with runner-helper.sh)
     const response = await dispatchToRunner(messageText, userId, conversationToken);
-
     await sendMessage(conversationToken, response);
-
-    // Success reaction
     await sendReaction(conversationToken, messageId, "✅");
   } catch (error) {
     await sendMessage(conversationToken, `Error: ${error.message}`);
@@ -348,240 +248,99 @@ app.post("/webhook", async (req, res) => {
   }
 });
 
-app.listen(PORT, () => {
-  console.log(`Nextcloud Talk bot listening on port ${PORT}`);
-});
+app.listen(PORT, () => console.log(`Nextcloud Talk bot listening on port ${PORT}`));
 ```
 
-### OCS API: Messaging and Conversations
+### OCS API Reference
 
 ```bash
-# List conversations the bot user is part of
-curl -s -u "bot-user:app-password" \
-  -H "OCS-APIRequest: true" \
+# List conversations
+curl -s -u "bot-user:app-password" -H "OCS-APIRequest: true" \
   "https://cloud.example.com/ocs/v2.php/apps/spreed/api/v4/room" | jq
 
-# Send a message to a conversation
-curl -s -u "bot-user:app-password" \
-  -H "OCS-APIRequest: true" \
-  -H "Content-Type: application/json" \
-  -d '{"message":"Hello from the bot!"}' \
+# Send message
+curl -s -u "bot-user:app-password" -H "OCS-APIRequest: true" \
+  -H "Content-Type: application/json" -d '{"message":"Hello from the bot!"}' \
   "https://cloud.example.com/ocs/v2.php/apps/spreed/api/v1/chat/CONVERSATION_TOKEN"
 
-# Get chat messages from a conversation
-curl -s -u "bot-user:app-password" \
-  -H "OCS-APIRequest: true" \
+# Get messages
+curl -s -u "bot-user:app-password" -H "OCS-APIRequest: true" \
   "https://cloud.example.com/ocs/v2.php/apps/spreed/api/v1/chat/CONVERSATION_TOKEN?lookIntoFuture=0&limit=50"
 
-# Send a reaction
-curl -s -u "bot-user:app-password" \
-  -H "OCS-APIRequest: true" \
-  -H "Content-Type: application/json" \
-  -d '{"reaction":"👍"}' \
+# Send reaction
+curl -s -u "bot-user:app-password" -H "OCS-APIRequest: true" \
+  -H "Content-Type: application/json" -d '{"reaction":"👍"}' \
   "https://cloud.example.com/ocs/v2.php/apps/spreed/api/v1/reaction/CONVERSATION_TOKEN/MESSAGE_ID"
 ```
 
-### Markdown Support
+Talk supports markdown in messages. Bot responses can use `**bold**`, `` `code` ``, headings, and lists.
 
-Talk supports markdown in messages. The bot can send formatted responses:
+## Security
 
-```typescript
-const formattedResponse = `
-## Analysis Results
+### Privacy Comparison
 
-**Repository**: \`myproject\`
-**Branch**: \`feature/auth-refactor\`
-
-### Issues Found
-
-1. **SQL injection** in \`src/db/query.ts:42\` — use parameterised queries
-2. **Missing input validation** in \`src/api/users.ts:18\`
-
-### Recommendations
-
-- Add input sanitisation middleware
-- Enable CSP headers
-
-> Overall: 2 critical, 0 warnings
-`;
-
-await sendMessage(conversationToken, formattedResponse);
-```
-
-### Access Control
-
-```typescript
-// Nextcloud user ID allowlist
-const ALLOWED_USERS = new Set(["admin", "developer1", "ops-team"]);
-
-// Conversation allowlist (by token)
-const ALLOWED_CONVERSATIONS = new Set(["abc123token", "def456token"]);
-
-function isAllowed(userId: string, conversationToken: string): boolean {
-  if (ALLOWED_USERS.size > 0 && !ALLOWED_USERS.has(userId)) {
-    return false;
-  }
-  if (ALLOWED_CONVERSATIONS.size > 0 && !ALLOWED_CONVERSATIONS.has(conversationToken)) {
-    return false;
-  }
-  return true;
-}
-```
-
-## Security Considerations
-
-> **CRITICAL**: Nextcloud Talk is the PRIVACY CHAMPION for self-hosted corporate communication. This section details why it offers the strongest privacy of any team collaboration platform.
-
-### Self-Hosted: The Key Advantage
-
-This is the fundamental differentiator. All data stays on YOUR server. You control:
-
-- **Hardware**: Your server, your rack, your data centre (or your chosen VPS)
-- **Software**: Open-source stack you can audit, modify, and rebuild
-- **Network**: Your firewall rules, your VPN, your DNS
-- **Backups**: Your backup schedule, your backup location, your retention policy
-- **Encryption keys**: Server-side encryption keys are generated and stored on YOUR server
-- **Access**: No third party has access to anything unless you explicitly grant it
-
-No Slack admin at Salesforce, no Microsoft engineer at Teams, no Google employee at Chat can read your messages. The software is AGPL-3.0 — you download it, you run it, you own the entire stack.
-
-### Encryption
-
-- **In transit**: TLS 1.2+ — you configure the certificate (Let's Encrypt, self-signed, or CA-issued). You control the cipher suites, the certificate rotation, the HSTS headers
-- **At rest**: Nextcloud server-side encryption module encrypts files and data in your database. You control the master key. When enabled, data on disk is encrypted with AES-256-CTR
-- **E2E for calls**: 1:1 video and audio calls use WebRTC with OWASP-recommended encryption (SRTP with DTLS key exchange). Media goes peer-to-peer when possible — never through Nextcloud servers
-- **Message storage**: Message content is stored in your Nextcloud database (PostgreSQL/MySQL/MariaDB). If you enable server-side encryption, database contents are encrypted at rest. You control the database credentials, the connection, the backup encryption
-
-### Metadata
-
-- **Only YOUR server sees metadata**. Connection logs, access times, IP addresses, user agents — all stored on YOUR server in YOUR log files
-- **No third-party metadata collection**. Unlike Slack (Salesforce collects comprehensive metadata), Teams (Microsoft telemetry), or Discord (full message analytics), no external company receives any metadata
-- **You control log retention**. Set log rotation, audit trail retention, and data lifecycle policies according to YOUR requirements
-- **No analytics beacons**. Nextcloud does not phone home with usage data (you can optionally enable anonymous usage statistics, but it is opt-in and sends minimal aggregate data)
-
-### No Third-Party Data Access
-
-Unlike Slack/Teams/Discord/Google Chat, NO external company has access to your messages:
+Nextcloud Talk offers the **strongest privacy of any corporate-style collaboration platform**:
 
 | Platform | Who can access your messages |
 |----------|------------------------------|
-| **Slack** | Salesforce, workspace admins (full export), law enforcement (Salesforce compliance) |
-| **Microsoft Teams** | Microsoft, tenant admins (eDiscovery/compliance), law enforcement (Microsoft compliance) |
+| **Slack** | Salesforce, workspace admins (full export), law enforcement |
+| **Microsoft Teams** | Microsoft, tenant admins (eDiscovery), law enforcement |
 | **Discord** | Discord Inc., law enforcement, trust & safety team |
-| **Google Chat** | Google, Workspace admins, law enforcement (Google compliance) |
+| **Google Chat** | Google, Workspace admins, law enforcement |
 | **Nextcloud Talk** | **Only you** — server admin of your own instance |
 
-Nextcloud GmbH (the company that develops Nextcloud) has ZERO access to your instance. They make the software. They do not operate it. They cannot see your data. This is architecturally guaranteed by the self-hosted model.
+Nextcloud GmbH (the company) has ZERO access to your instance — they make the software, they do not operate it. The only platforms with better theoretical privacy are SimpleX (no user identifiers, but no collaboration features) and Signal (E2E everything, but no self-hosting or file collaboration).
 
-### Push Notifications
+### Encryption
 
-- **Nextcloud push proxy**: Nextcloud provides a push notification proxy (`push-notifications` app) that relays wake-up signals to mobile devices via FCM/APNs. Minimal metadata is sent — a notification ID, no message content. The mobile app then fetches the actual message directly from YOUR server over TLS
-- **Self-hosted push proxy**: You can run your own push notification proxy (`notify_push`) to eliminate ALL third-party notification metadata. The `notify_push` binary connects directly to your Nextcloud server and pushes via WebSocket to connected clients
-- **Desktop/web**: Desktop and web clients use direct WebSocket connections to your server — no push proxy needed, no third-party involvement
+- **In transit**: TLS 1.2+ — you configure the certificate, cipher suites, HSTS
+- **At rest**: Server-side encryption module (AES-256-CTR) — you control the master key
+- **E2E for calls**: 1:1 video/audio via WebRTC SRTP/DTLS — media goes peer-to-peer when possible
+- **Group chats**: NOT end-to-end encrypted — rely on server-side encryption at rest. Server admin can read all text messages in the database. For most self-hosted deployments this is acceptable — you trust your own server.
 
-### AI Training
+### Metadata and Compliance
 
-- **NO external AI training**. Nextcloud GmbH has ZERO access to your data. There is no data pipeline, no telemetry that includes message content, no model training on your conversations
-- **Local AI integration**: Nextcloud offers optional AI features (smart search, OCR, text generation) via the `assistant` app. When configured, these use local models running ON YOUR SERVER (via llamafile, Ollama, or external API you configure). No data leaves your infrastructure unless you explicitly point it at an external API
-- **Your choice**: You decide whether to enable AI features, which models to use, and where they run. The default is no AI processing at all
-
-### Open Source
-
-- **Nextcloud server**: AGPL-3.0 — fully open source, auditable, forkable
-- **Talk app**: AGPL-3.0 — same license, full source available
-- **Mobile apps** (Android/iOS): Open source on GitHub
-- **Desktop app**: Open source, Electron-based
-- **Regular security audits**: Nextcloud participates in HackerOne bug bounty programme. Independent security audits published regularly
-- **Reproducible builds**: Community-verified builds available
-- **You can audit every line of code** that touches your data
-
-### Jurisdiction
-
-- **YOUR jurisdiction**. The server is where you put it. Run it in Germany, Switzerland, Iceland, your own office — your choice
-- **Nextcloud GmbH** is headquartered in Stuttgart, Germany, and is subject to German/EU law (strong data protection under GDPR). But they have no access to your instance — jurisdiction only matters for the software distribution, not your data
-- **No CLOUD Act exposure** (unless you choose to host in the US)
-- **No FISA Section 702 exposure** (unless you choose to host in the US)
-- **Data sovereignty**: You have complete control over where your data physically resides
-
-### Compliance
-
-You control compliance because you control the entire stack:
-
-- **GDPR**: Full control over data processing, retention, deletion, portability, and consent. Nextcloud provides GDPR compliance tools (data export, right to erasure)
-- **HIPAA**: Can be configured for HIPAA compliance with proper access controls, audit logging, and encryption. Several healthcare organisations run Nextcloud for this reason
-- **SOC2**: Audit logs, access controls, encryption at rest/in transit — all configurable
-- **ISO 27001**: Nextcloud GmbH itself is ISO 27001 certified for their development processes
-- **Full audit logs**: Every file access, share, login, and admin action is logged. You control retention
-- **Data retention policies**: Configure automatic deletion of old messages, files, and logs
-- **User management**: LDAP/AD integration, 2FA (TOTP, WebAuthn/FIDO2), SSO (SAML, OIDC)
+- Only YOUR server sees metadata (connection logs, access times, IPs, user agents)
+- No third-party metadata collection, no analytics beacons, no AI training on your data
+- Optional local AI features (`assistant` app) use models running ON YOUR SERVER — no data leaves unless you explicitly configure an external API
+- **Jurisdiction**: server is where you put it — no CLOUD Act or FISA 702 exposure unless you host in the US
+- **Compliance**: GDPR (full control over processing/retention/deletion), HIPAA-configurable, SOC2-configurable, ISO 27001 (Nextcloud GmbH certified for development processes)
+- **Open source**: AGPL-3.0 server, Talk app, mobile apps, desktop app — fully auditable
 
 ### Bot-Specific Security
 
-- **Webhook URL**: Must be reachable from your Nextcloud server. Can be `localhost` (same machine), LAN address (internal network), or tunneled (Cloudflare Tunnel, WireGuard). No public internet exposure required
-- **Webhook secret**: HMAC-SHA256 signature verification prevents forged webhook deliveries. Only your Nextcloud server knows the secret
-- **App password**: Bot authenticates to OCS API with an app password — scoped, revocable, auditable. Not the user's main password
-- **Bot runs in YOUR infrastructure**: The webhook handler runs on your server or your network. Bot code, logs, and temporary data never leave your control
-
-### Comparison
-
-Nextcloud Talk offers the **STRONGEST privacy of any corporate-style collaboration platform**. The only platforms with better theoretical privacy are:
-
-- **SimpleX** — no user identifiers at all, stateless servers, but no collaboration features (files, calendar, office)
-- **Signal** — E2E everything with sealed sender, but no self-hosting, no file collaboration, no office suite
-
-Nextcloud Talk sits in a unique position: **corporate-grade collaboration features** (file sharing, calendar, contacts, office suite, video conferencing, task boards) combined with **self-hosted privacy** where you own and control everything.
+- **Webhook URL**: Can be `localhost`, LAN, or tunneled (Cloudflare Tunnel, WireGuard) — no public internet exposure required
+- **Webhook secret**: HMAC-SHA256 signature verification prevents forged webhook deliveries
+- **App password**: Scoped, revocable, auditable — not the user's main password
+- **Bot runs in YOUR infrastructure**: webhook handler, logs, and temporary data never leave your control
 
 ## aidevops Integration
 
 ### nextcloud-talk-dispatch-helper.sh
 
-The helper script follows the same pattern as `matrix-dispatch-helper.sh` and `slack-dispatch-helper.sh`:
-
 ```bash
-# Setup wizard — prompts for Nextcloud URL, app password, webhook secret, conversation mappings
-nextcloud-talk-dispatch-helper.sh setup
-
-# Map conversations to runners
+nextcloud-talk-dispatch-helper.sh setup          # Interactive wizard
 nextcloud-talk-dispatch-helper.sh map "development" code-reviewer
 nextcloud-talk-dispatch-helper.sh map "seo-team" seo-analyst
 nextcloud-talk-dispatch-helper.sh map "operations" ops-monitor
-
-# List mappings
-nextcloud-talk-dispatch-helper.sh mappings
-
-# Remove a mapping
+nextcloud-talk-dispatch-helper.sh mappings        # list mappings
 nextcloud-talk-dispatch-helper.sh unmap "development"
-
-# Start/stop the webhook handler
 nextcloud-talk-dispatch-helper.sh start --daemon
 nextcloud-talk-dispatch-helper.sh stop
 nextcloud-talk-dispatch-helper.sh status
-
-# Test dispatch
 nextcloud-talk-dispatch-helper.sh test code-reviewer "Review src/auth.ts"
-
-# View logs
-nextcloud-talk-dispatch-helper.sh logs
-nextcloud-talk-dispatch-helper.sh logs --follow
+nextcloud-talk-dispatch-helper.sh logs [--follow]
 ```
 
-### Runner Dispatch
+### Runner Dispatch and Entity Resolution
 
-The bot dispatches to runners via `runner-helper.sh`, which handles:
+The bot dispatches to runners via `runner-helper.sh` (runner AGENTS.md, headless session management, memory namespace isolation, entity-aware context loading, run logging).
 
-- Runner AGENTS.md (personality/instructions)
-- Headless session management
-- Memory namespace isolation
-- Entity-aware context loading
-- Run logging
-
-### Entity Resolution
-
-When a Nextcloud user sends a message, the bot resolves their Nextcloud user ID to an entity:
+When a Nextcloud user sends a message, the bot resolves their user ID to an entity:
 
 - **Known user**: Match on `entity_channels` table (`channel=nextcloud-talk`, `channel_id=username`)
 - **New user**: Creates entity via `entity-helper.sh create` with Nextcloud user ID linked
-- **Cross-channel**: If the same person is linked on other channels (Matrix, Slack, SimpleX, email), their full profile is available
+- **Cross-channel**: If the same person is linked on Matrix, Slack, SimpleX, or email, their full profile is available
 - **Profile enrichment**: Nextcloud's user API provides display name, email, groups — used to populate entity profile on first contact
 
 ### Configuration
@@ -609,46 +368,20 @@ When a Nextcloud user sends a message, the bot resolves their Nextcloud user ID 
 }
 ```
 
-**Note**: `appPassword` and `webhookSecret` should be stored via `gopass` (preferred) or in the config file with 600 permissions. Never commit credentials to version control.
+Store `appPassword` and `webhookSecret` via `gopass` (preferred) or in the config file with 600 permissions. Never commit credentials to version control.
 
 ## Matterbridge Integration
 
 Nextcloud Talk is natively supported by [Matterbridge](https://github.com/42wim/matterbridge) via the Talk API.
 
-```text
-Nextcloud Talk
-    │
-    │  Talk API (via app password)
-    │
-Matterbridge (Go binary)
-    │
-    ├── Matrix rooms
-    ├── Slack workspaces
-    ├── Discord channels
-    ├── Telegram groups
-    ├── Signal contacts
-    ├── SimpleX chats
-    ├── IRC channels
-    └── 40+ other platforms
-```
-
-### Matterbridge Configuration
-
-Add to `matterbridge.toml`:
-
 ```toml
+# matterbridge.toml
 [nextcloud.myserver]
 Server = "https://cloud.example.com"
 Login = "matterbridge-bot"
 Password = "app-password-here"
-
-## SectionJoinPart shows join/leave messages
 ShowJoinPart = false
-```
 
-Gateway configuration:
-
-```toml
 [[gateway]]
 name = "dev-bridge"
 enable = true
@@ -662,74 +395,19 @@ account = "matrix.myserver"
 channel = "#dev:matrix.example.com"
 ```
 
-**Privacy note**: Bridging Nextcloud Talk to external platforms (Slack, Discord, Telegram) means messages from your self-hosted server will be stored on third-party infrastructure. Users should be informed that bridged conversations lose the privacy guarantees of self-hosting. Bridging to other self-hosted platforms (Matrix on your server, IRC on your network) preserves the self-hosted privacy model. See `services/communications/matterbridge.md` for full bridging considerations.
+**Privacy note**: Bridging to external platforms (Slack, Discord, Telegram) means messages leave your self-hosted server and are stored on third-party infrastructure. Users should be informed. Bridging to other self-hosted platforms (Matrix on your server, IRC on your network) preserves the self-hosted privacy model. See `services/communications/matterbridge.md`.
 
 ## Limitations
 
-### Self-Hosted Maintenance Overhead
-
-Nextcloud Talk requires you to run and maintain a Nextcloud server. This includes:
-
-- Server provisioning and hardening
-- Regular Nextcloud updates (PHP, database, app updates)
-- SSL certificate management
-- Backup configuration and testing
-- Monitoring and alerting
-- Database maintenance (PostgreSQL/MySQL tuning)
-
-**Mitigation**: Use managed Nextcloud hosting (e.g., Hetzner StorageShare, IONOS) or Cloudron for simplified deployment. See `services/hosting/cloudron.md`.
-
-### Talk Bot API Maturity
-
-The Talk Bot API (webhook-based) is relatively new compared to Slack's Bolt SDK or Discord's bot framework:
-
-- API surface is smaller — fewer interactive features
-- Documentation is less comprehensive than Slack/Discord
-- Community ecosystem of bots is smaller
-- API may change between major Talk versions
-
-**Mitigation**: Pin Nextcloud and Talk versions, test upgrades in staging.
-
-### No Rich Interactive Components
-
-Talk does not support interactive UI elements in bot messages:
-
-- No inline buttons or action menus
-- No modals or dialogs
-- No dropdown selects or form inputs
-- Text, markdown, reactions, and file attachments only
-
-Bot interaction is text-based. Use slash-command patterns or prefix commands for structured input.
-
-### E2E Encryption Scope
-
-- E2E encryption is available for **1:1 video and audio calls** (WebRTC SRTP/DTLS)
-- **Group chats and text messages are NOT end-to-end encrypted** — they rely on server-side encryption at rest
-- This means the server admin (you) can read all text messages in the database
-- For most self-hosted deployments this is acceptable — you trust your own server
-
-### Performance Depends on Your Hardware
-
-Unlike SaaS platforms with global CDN infrastructure, Nextcloud Talk performance depends on your server:
-
-- Video call quality depends on server bandwidth and TURN server configuration
-- Message delivery latency depends on server load and database performance
-- File sharing speed depends on storage backend (local disk, S3, NFS)
-
-**Mitigation**: Use a dedicated TURN server (coturn), Redis for caching, and adequate hardware.
-
-### Mobile Push Notification Setup
-
-Push notifications require either:
-
-- Nextcloud's push proxy (minimal metadata to FCM/APNs)
-- Self-hosted `notify_push` binary (eliminates all third-party notification traffic)
-
-Both require additional configuration beyond the base Nextcloud install.
-
-### Smaller Ecosystem
-
-Compared to Slack (2000+ apps in marketplace) or Discord (millions of bots), Nextcloud Talk has a smaller bot and integration ecosystem. Most integrations need to be built custom using the webhook API or OCS REST API.
+| Limitation | Mitigation |
+|------------|------------|
+| **Self-hosted maintenance overhead** — server provisioning, Nextcloud/PHP/DB updates, SSL, backups, monitoring | Use managed Nextcloud hosting (Hetzner StorageShare, IONOS) or Cloudron — see `services/hosting/cloudron.md` |
+| **Talk Bot API maturity** — smaller API surface, less documentation, smaller bot ecosystem than Slack/Discord, API may change between major versions | Pin Nextcloud and Talk versions; test upgrades in staging |
+| **No rich interactive components** — no inline buttons, modals, dropdowns, or form inputs; text, markdown, reactions, and file attachments only | Use slash-command patterns or prefix commands for structured input |
+| **Group chats not E2E encrypted** — server-side encryption at rest only; server admin can read all text messages | Acceptable for most self-hosted deployments where you trust your own server |
+| **Performance depends on your hardware** — video call quality, message latency, and file sharing speed depend on server resources | Use a dedicated TURN server (coturn), Redis for caching, and adequate hardware |
+| **Mobile push notification setup** — requires either Nextcloud's push proxy (minimal metadata to FCM/APNs) or self-hosted `notify_push` binary | Both require additional configuration beyond the base Nextcloud install |
+| **Smaller ecosystem** — far fewer bots and integrations than Slack (2000+ apps) or Discord (millions of bots) | Build custom integrations using the webhook API or OCS REST API |
 
 ## Related
 
