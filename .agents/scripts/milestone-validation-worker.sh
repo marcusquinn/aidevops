@@ -236,8 +236,8 @@ validate_parsed_inputs() {
 	# Resolve to absolute path
 	MISSION_FILE="$(cd "$(dirname "$MISSION_FILE")" && pwd)/$(basename "$MISSION_FILE")"
 
-	# Validate milestone number is numeric
-	if ! echo "$MILESTONE_NUM" | grep -qE '^[0-9]+$'; then
+	# Validate milestone number is numeric (bash-native — avoids fork for echo+grep)
+	if [[ ! "$MILESTONE_NUM" =~ ^[0-9]+$ ]]; then
 		log_error "Invalid milestone number: $MILESTONE_NUM (expected numeric)"
 		return 2
 	fi
@@ -543,7 +543,7 @@ append_progress_log() {
 _run_node_tests() {
 	local repo_path="$1"
 	local has_test
-	has_test=$(grep -c '"test"' "$repo_path/package.json" 2>/dev/null || echo "0")
+	has_test=$(grep -c '"test"' "$repo_path/package.json" 2>/dev/null) || has_test=0
 
 	if [[ "$has_test" -gt 0 ]]; then
 		local test_output
@@ -1221,14 +1221,16 @@ check_milestone_readiness() {
 
 # Run all validation checks with retry support.
 # Sets VALIDATION_PASSED and populates failure/warning arrays.
-# Prints the final attempt number to stdout.
+# Sets MV_FINAL_ATTEMPT (global) to the final attempt number — do NOT capture
+# this function in a subshell ($(...)) as that swallows all log output.
+MV_FINAL_ATTEMPT=1
 run_validation_with_retries() {
 	local validation_criteria="$1"
-	local attempt=1
+	MV_FINAL_ATTEMPT=1
 
-	while [[ $attempt -le $MV_MAX_RETRIES ]]; do
-		if [[ $attempt -gt 1 ]]; then
-			log_info "Retry attempt $attempt/$MV_MAX_RETRIES..."
+	while [[ $MV_FINAL_ATTEMPT -le $MV_MAX_RETRIES ]]; do
+		if [[ $MV_FINAL_ATTEMPT -gt 1 ]]; then
+			log_info "Retry attempt $MV_FINAL_ATTEMPT/$MV_MAX_RETRIES..."
 			reset_validation_state
 			# Brief pause before retry to allow transient issues to resolve
 			sleep 2
@@ -1246,13 +1248,12 @@ run_validation_with_retries() {
 			break
 		fi
 
-		if [[ $attempt -lt $MV_MAX_RETRIES ]]; then
-			log_warn "Validation failed on attempt $attempt/$MV_MAX_RETRIES — retrying..."
+		if [[ $MV_FINAL_ATTEMPT -lt $MV_MAX_RETRIES ]]; then
+			log_warn "Validation failed on attempt $MV_FINAL_ATTEMPT/$MV_MAX_RETRIES — retrying..."
 		fi
-		attempt=$((attempt + 1))
+		MV_FINAL_ATTEMPT=$((MV_FINAL_ATTEMPT + 1))
 	done
 
-	echo "$attempt"
 	return 0
 }
 
@@ -1328,11 +1329,11 @@ main() {
 	fi
 
 	# Run validation checks with retry support
-	local attempt
-	attempt=$(run_validation_with_retries "$validation_criteria")
+	# Result stored in MV_FINAL_ATTEMPT global (not stdout capture — avoids swallowing log output)
+	run_validation_with_retries "$validation_criteria"
 
 	# Handle results: report, state update, fix tasks
-	handle_validation_result "$attempt"
+	handle_validation_result "$MV_FINAL_ATTEMPT"
 }
 
 main "$@"
