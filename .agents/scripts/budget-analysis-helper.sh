@@ -234,6 +234,52 @@ get_complexity_hours() {
 # Commands
 # =============================================================================
 
+# _analyse_print_tier_row: render one tier row inside cmd_analyse's loop.
+# Args: tier label blended_cost tokens_per_dollar available_tokens
+#       tasks_achievable messages budget_usd json_flag first_flag
+_analyse_print_tier_row() {
+	local t="$1" label="$2" blended_cost="$3" tokens_per_dollar="$4"
+	local available_tokens="$5" tasks_achievable="$6" messages="$7"
+	local budget_usd="$8" json_flag="$9" first_flag="${10}"
+
+	if [[ "$json_flag" == "true" ]]; then
+		if [[ "$first_flag" != "true" ]]; then printf ','; fi
+		printf '{"tier":"%s","blended_cost_per_1m":%.4f,"tokens_per_dollar":%d,"available_tokens":%d,"est_moderate_tasks":%d,"est_messages":%d}' \
+			"$t" "$blended_cost" "$tokens_per_dollar" "$available_tokens" "$tasks_achievable" "$messages"
+	else
+		printf '  %s%s%s\n' "$CYAN" "$label" "$NC"
+		printf '    Cost per 1M tokens:  $%.4f\n' "$blended_cost"
+		printf '    Tokens per dollar:   %s\n' "$(printf '%d' "$tokens_per_dollar" | sed ':a;s/\B[0-9]\{3\}\>/,&/;ta')"
+		if [[ -n "$budget_usd" ]]; then
+			printf '    Available tokens:    %s\n' "$(printf '%d' "$available_tokens" | sed ':a;s/\B[0-9]\{3\}\>/,&/;ta')"
+			printf '    Est. tasks (moderate): %d\n' "$tasks_achievable"
+			printf '    Est. AI messages:    %d\n' "$messages"
+		fi
+		printf '\n'
+	fi
+	return 0
+}
+
+# _analyse_print_footer: render historical context footer for cmd_analyse (text mode).
+# Args: budget_usd
+_analyse_print_footer() {
+	local budget_usd="$1"
+	if [[ ! -f "$COST_LOG" ]]; then
+		return 0
+	fi
+	printf '  %sHistorical Context%s\n' "$YELLOW" "$NC"
+	local burn_rate
+	burn_rate=$(get_current_burn_rate)
+	printf '    Current burn rate:   $%s/hr\n' "$burn_rate"
+	if [[ -n "$budget_usd" ]] && awk "BEGIN { exit ($burn_rate > 0) ? 0 : 1 }"; then
+		local hours_remaining
+		hours_remaining=$(awk "BEGIN { printf \"%.1f\", $budget_usd / $burn_rate }")
+		printf '    Budget lasts:        %s hours at current rate\n' "$hours_remaining"
+	fi
+	printf '\n'
+	return 0
+}
+
 # analyse: Full budget analysis for a given budget (money and/or time)
 # Shows what can be accomplished within the budget at different quality tiers.
 cmd_analyse() {
@@ -266,7 +312,6 @@ cmd_analyse() {
 		return 1
 	fi
 
-	# Calculate what the budget buys at each tier
 	local tiers=("haiku" "sonnet" "opus")
 	local tier_labels=("Economy (haiku)" "Standard (sonnet)" "Premium (opus)")
 
@@ -276,56 +321,29 @@ cmd_analyse() {
 	else
 		printf '\n%sBudget Analysis%s\n' "$WHITE" "$NC"
 		printf '================================\n\n'
-		if [[ -n "$budget_usd" ]]; then
-			printf '  Budget:  $%s\n' "$budget_usd"
-		fi
-		if [[ -n "$budget_hours" ]]; then
-			printf '  Time:    %s hours\n' "$budget_hours"
-		fi
+		if [[ -n "$budget_usd" ]]; then printf '  Budget:  $%s\n' "$budget_usd"; fi
+		if [[ -n "$budget_hours" ]]; then printf '  Time:    %s hours\n' "$budget_hours"; fi
 		printf '\n'
 	fi
 
 	local first=true
 	local i=0
 	for t in "${tiers[@]}"; do
-		local blended_cost
+		local blended_cost tokens_per_dollar available_tokens tasks_achievable messages
 		blended_cost=$(get_tier_blended_cost "$t")
-		local tokens_per_dollar
 		tokens_per_dollar=$(awk "BEGIN { printf \"%d\", 1000000.0 / $blended_cost }")
-
-		local available_tokens=0
+		available_tokens=0
+		tasks_achievable=0
+		messages=0
 		if [[ -n "$budget_usd" ]]; then
 			available_tokens=$(awk "BEGIN { printf \"%d\", $budget_usd / $blended_cost * 1000000 }")
 		fi
-
-		# Estimate tasks achievable (using moderate complexity as baseline)
-		local tasks_achievable=0
 		if [[ "$available_tokens" -gt 0 ]]; then
 			tasks_achievable=$(awk "BEGIN { printf \"%d\", $available_tokens / $COMPLEXITY_MODERATE_TOKENS }")
-		fi
-
-		# Estimate messages (19K tokens per message from Factory.ai data)
-		local messages=0
-		if [[ "$available_tokens" -gt 0 ]]; then
 			messages=$(awk "BEGIN { printf \"%d\", $available_tokens / 19000 }")
 		fi
-
-		if [[ "$json_flag" == "true" ]]; then
-			if [[ "$first" != "true" ]]; then printf ','; fi
-			printf '{"tier":"%s","blended_cost_per_1m":%.4f,"tokens_per_dollar":%d,"available_tokens":%d,"est_moderate_tasks":%d,"est_messages":%d}' \
-				"$t" "$blended_cost" "$tokens_per_dollar" "$available_tokens" "$tasks_achievable" "$messages"
-		else
-			printf '  %s%s%s\n' "$CYAN" "${tier_labels[$i]}" "$NC"
-			printf '    Cost per 1M tokens:  $%.4f\n' "$blended_cost"
-			printf '    Tokens per dollar:   %s\n' "$(printf '%d' "$tokens_per_dollar" | sed ':a;s/\B[0-9]\{3\}\>/,&/;ta')"
-			if [[ -n "$budget_usd" ]]; then
-				printf '    Available tokens:    %s\n' "$(printf '%d' "$available_tokens" | sed ':a;s/\B[0-9]\{3\}\>/,&/;ta')"
-				printf '    Est. tasks (moderate): %d\n' "$tasks_achievable"
-				printf '    Est. AI messages:    %d\n' "$messages"
-			fi
-			printf '\n'
-		fi
-
+		_analyse_print_tier_row "$t" "${tier_labels[$i]}" "$blended_cost" "$tokens_per_dollar" \
+			"$available_tokens" "$tasks_achievable" "$messages" "$budget_usd" "$json_flag" "$first"
 		first=false
 		i=$((i + 1))
 	done
@@ -333,18 +351,72 @@ cmd_analyse() {
 	if [[ "$json_flag" == "true" ]]; then
 		printf ']}\n'
 	else
-		# Add historical context if available
-		if [[ -f "$COST_LOG" ]]; then
-			printf '  %sHistorical Context%s\n' "$YELLOW" "$NC"
-			local burn_rate
-			burn_rate=$(get_current_burn_rate)
-			printf '    Current burn rate:   $%s/hr\n' "$burn_rate"
-			if [[ -n "$budget_usd" ]] && awk "BEGIN { exit ($burn_rate > 0) ? 0 : 1 }"; then
-				local hours_remaining
-				hours_remaining=$(awk "BEGIN { printf \"%.1f\", $budget_usd / $burn_rate }")
-				printf '    Budget lasts:        %s hours at current rate\n' "$hours_remaining"
-			fi
-			printf '\n'
+		_analyse_print_footer "$budget_usd"
+	fi
+	return 0
+}
+
+# _recommend_print_json: render JSON output for cmd_recommend.
+# Args: goal complexity mvp_cost mvp_hours mvp_tokens
+#       prod_cost prod_hours prod_tokens polished_cost polished_hours polished_tokens
+_recommend_print_json() {
+	local goal="$1" complexity="$2"
+	local mvp_cost="$3" mvp_hours="$4" mvp_tokens="$5"
+	local prod_cost="$6" prod_hours="$7" prod_tokens="$8"
+	local polished_cost="$9" polished_hours="${10}" polished_tokens="${11}"
+
+	printf '{"goal":"%s","complexity":"%s","recommendations":[' \
+		"$(echo "$goal" | sed 's/"/\\"/g')" "$complexity"
+	printf '{"tier":"mvp","label":"Basic MVP","cost_usd":%.2f,"hours":%.1f,"tokens":%d,"includes":["Basic implementation","Minimal error handling","No tests","No docs"]},' \
+		"$mvp_cost" "$mvp_hours" "$mvp_tokens"
+	printf '{"tier":"production","label":"Production-Ready","cost_usd":%.2f,"hours":%.1f,"tokens":%d,"includes":["Full implementation","Error handling","Unit tests","Basic docs","CI integration"]},' \
+		"$prod_cost" "$prod_hours" "$prod_tokens"
+	printf '{"tier":"polished","label":"Polished + Monitored","cost_usd":%.2f,"hours":%.1f,"tokens":%d,"includes":["Architecture review (opus)","Full implementation","Comprehensive tests","Full docs","Monitoring","CI/CD pipeline","Performance optimisation"]}' \
+		"$polished_cost" "$polished_hours" "$polished_tokens"
+	printf ']}\n'
+	return 0
+}
+
+# _recommend_print_text: render human-readable output for cmd_recommend.
+# Args: goal complexity mvp_cost mvp_hours prod_cost prod_hours polished_cost polished_hours
+_recommend_print_text() {
+	local goal="$1" complexity="$2"
+	local mvp_cost="$3" mvp_hours="$4"
+	local prod_cost="$5" prod_hours="$6"
+	local polished_cost="$7" polished_hours="$8"
+
+	printf '\n%sBudget Recommendations%s\n' "$WHITE" "$NC"
+	printf '================================\n\n'
+	printf '  Goal:       %s\n' "$goal"
+	printf '  Complexity: %s%s%s\n\n' "$CYAN" "$complexity" "$NC"
+
+	printf '  %s1. Basic MVP%s\n' "$GREEN" "$NC"
+	printf '     Cost:     ~$%.2f  |  Time: ~%sh\n' "$mvp_cost" "$mvp_hours"
+	printf '     Model:    haiku-heavy (economy)\n'
+	printf '     Includes: Basic implementation, minimal error handling\n'
+	printf '     Skips:    Tests, docs, monitoring\n\n'
+
+	printf '  %s2. Production-Ready%s\n' "$YELLOW" "$NC"
+	printf '     Cost:     ~$%.2f  |  Time: ~%sh\n' "$prod_cost" "$prod_hours"
+	printf '     Model:    sonnet (standard)\n'
+	printf '     Includes: Full implementation, error handling, unit tests, basic docs\n'
+	printf '     Skips:    Monitoring, performance tuning, comprehensive docs\n\n'
+
+	printf '  %s3. Polished + Monitored%s\n' "$PURPLE" "$NC"
+	printf '     Cost:     ~$%.2f  |  Time: ~%sh\n' "$polished_cost" "$polished_hours"
+	printf '     Model:    opus (design) + sonnet (implementation)\n'
+	printf '     Includes: Architecture review, full implementation, comprehensive tests,\n'
+	printf '               full docs, monitoring, CI/CD, performance optimisation\n\n'
+
+	if [[ -f "$COST_LOG" ]]; then
+		local stats avg_task_cost
+		stats=$(get_historical_stats "true")
+		avg_task_cost=$(echo "$stats" | grep -o '"avg_task_cost":[0-9.]*' | cut -d: -f2)
+		if [[ -n "$avg_task_cost" ]] && awk "BEGIN { exit ($avg_task_cost > 0) ? 0 : 1 }"; then
+			printf '  %sCalibration Note%s\n' "$BLUE" "$NC"
+			printf '     Your historical avg cost per task: $%s\n' "$avg_task_cost"
+			printf '     Estimates above are heuristic — actual costs may vary based\n'
+			printf '     on codebase size, iteration count, and model availability.\n\n'
 		fi
 	fi
 	return 0
@@ -374,92 +446,44 @@ cmd_recommend() {
 		return 1
 	fi
 
-	local complexity
+	local complexity base_tokens base_hours
 	complexity=$(classify_complexity "$goal")
-	local base_tokens
 	base_tokens=$(get_complexity_tokens "$complexity")
-	local base_hours
 	base_hours=$(get_complexity_hours "$complexity")
 
 	# Three tiers of outcome: MVP, Production, Polished
 	# MVP: haiku-heavy, minimal tests, basic implementation
 	# Production: sonnet-heavy, full tests, error handling, docs
 	# Polished: opus for design + sonnet for impl, monitoring, CI/CD, docs
-
-	local mvp_tokens
+	local mvp_tokens prod_tokens polished_tokens
 	mvp_tokens=$(awk "BEGIN { printf \"%d\", $base_tokens * 0.6 }")
-	local prod_tokens
 	prod_tokens=$(awk "BEGIN { printf \"%d\", $base_tokens * 1.5 }")
-	local polished_tokens
 	polished_tokens=$(awk "BEGIN { printf \"%d\", $base_tokens * 3.0 }")
 
-	local mvp_hours
+	local mvp_hours prod_hours polished_hours
 	mvp_hours=$(awk "BEGIN { printf \"%.1f\", $base_hours * 0.5 }")
-	local prod_hours
 	prod_hours=$(awk "BEGIN { printf \"%.1f\", $base_hours * 1.5 }")
-	local polished_hours
 	polished_hours=$(awk "BEGIN { printf \"%.1f\", $base_hours * 3.0 }")
 
 	# Cost calculations (MVP uses haiku, Production uses sonnet, Polished uses opus+sonnet blend)
-	local mvp_cost
+	local mvp_cost prod_cost polished_opus_cost polished_sonnet_cost polished_cost
 	mvp_cost=$(calculate_tier_cost "$mvp_tokens" "haiku")
-	local prod_cost
 	prod_cost=$(calculate_tier_cost "$prod_tokens" "sonnet")
 	# Polished: 30% opus (design) + 70% sonnet (implementation)
-	local polished_opus_cost
 	polished_opus_cost=$(calculate_tier_cost "$(awk "BEGIN { printf \"%d\", $polished_tokens * 0.3 }")" "opus")
-	local polished_sonnet_cost
 	polished_sonnet_cost=$(calculate_tier_cost "$(awk "BEGIN { printf \"%d\", $polished_tokens * 0.7 }")" "sonnet")
-	local polished_cost
 	polished_cost=$(awk "BEGIN { printf \"%.2f\", $polished_opus_cost + $polished_sonnet_cost }")
 
 	if [[ "$json_flag" == "true" ]]; then
-		printf '{"goal":"%s","complexity":"%s","recommendations":[' \
-			"$(echo "$goal" | sed 's/"/\\"/g')" "$complexity"
-		printf '{"tier":"mvp","label":"Basic MVP","cost_usd":%.2f,"hours":%.1f,"tokens":%d,"includes":["Basic implementation","Minimal error handling","No tests","No docs"]},' \
-			"$mvp_cost" "$mvp_hours" "$mvp_tokens"
-		printf '{"tier":"production","label":"Production-Ready","cost_usd":%.2f,"hours":%.1f,"tokens":%d,"includes":["Full implementation","Error handling","Unit tests","Basic docs","CI integration"]},' \
-			"$prod_cost" "$prod_hours" "$prod_tokens"
-		printf '{"tier":"polished","label":"Polished + Monitored","cost_usd":%.2f,"hours":%.1f,"tokens":%d,"includes":["Architecture review (opus)","Full implementation","Comprehensive tests","Full docs","Monitoring","CI/CD pipeline","Performance optimisation"]}' \
+		_recommend_print_json "$goal" "$complexity" \
+			"$mvp_cost" "$mvp_hours" "$mvp_tokens" \
+			"$prod_cost" "$prod_hours" "$prod_tokens" \
 			"$polished_cost" "$polished_hours" "$polished_tokens"
-		printf ']}\n'
 	else
-		printf '\n%sBudget Recommendations%s\n' "$WHITE" "$NC"
-		printf '================================\n\n'
-		printf '  Goal:       %s\n' "$goal"
-		printf '  Complexity: %s%s%s\n\n' "$CYAN" "$complexity" "$NC"
-
-		printf '  %s1. Basic MVP%s\n' "$GREEN" "$NC"
-		printf '     Cost:     ~$%.2f  |  Time: ~%sh\n' "$mvp_cost" "$mvp_hours"
-		printf '     Model:    haiku-heavy (economy)\n'
-		printf '     Includes: Basic implementation, minimal error handling\n'
-		printf '     Skips:    Tests, docs, monitoring\n\n'
-
-		printf '  %s2. Production-Ready%s\n' "$YELLOW" "$NC"
-		printf '     Cost:     ~$%.2f  |  Time: ~%sh\n' "$prod_cost" "$prod_hours"
-		printf '     Model:    sonnet (standard)\n'
-		printf '     Includes: Full implementation, error handling, unit tests, basic docs\n'
-		printf '     Skips:    Monitoring, performance tuning, comprehensive docs\n\n'
-
-		printf '  %s3. Polished + Monitored%s\n' "$PURPLE" "$NC"
-		printf '     Cost:     ~$%.2f  |  Time: ~%sh\n' "$polished_cost" "$polished_hours"
-		printf '     Model:    opus (design) + sonnet (implementation)\n'
-		printf '     Includes: Architecture review, full implementation, comprehensive tests,\n'
-		printf '               full docs, monitoring, CI/CD, performance optimisation\n\n'
-
-		# Add historical calibration note if data exists
-		if [[ -f "$COST_LOG" ]]; then
-			local stats
-			stats=$(get_historical_stats "true")
-			local avg_task_cost
-			avg_task_cost=$(echo "$stats" | grep -o '"avg_task_cost":[0-9.]*' | cut -d: -f2)
-			if [[ -n "$avg_task_cost" ]] && awk "BEGIN { exit ($avg_task_cost > 0) ? 0 : 1 }"; then
-				printf '  %sCalibration Note%s\n' "$BLUE" "$NC"
-				printf '     Your historical avg cost per task: $%s\n' "$avg_task_cost"
-				printf '     Estimates above are heuristic — actual costs may vary based\n'
-				printf '     on codebase size, iteration count, and model availability.\n\n'
-			fi
-		fi
+		_recommend_print_text "$goal" "$complexity" \
+			"$mvp_cost" "$mvp_hours" \
+			"$prod_cost" "$prod_hours" \
+			"$polished_cost" "$polished_hours"
 	fi
 	return 0
 }
