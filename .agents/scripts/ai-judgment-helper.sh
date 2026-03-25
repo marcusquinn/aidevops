@@ -726,11 +726,7 @@ _bpc_evaluate_loop() {
 		fi
 		sleep 0.1
 	done <<<"$candidates"
-	if [[ ${#prune_ids[@]} -gt 0 ]]; then
-		printf '%s\n%s\n' "$keep_count" "${prune_ids[*]}"
-	else
-		printf '%s\nNONE\n' "$keep_count"
-	fi
+	printf '%s|%s\n' "$keep_count" "${prune_ids[*]}"
 	return 0
 }
 
@@ -757,10 +753,9 @@ cmd_batch_prune_check() {
 	fi
 	local loop_result keep_count prune_ids_str
 	loop_result=$(_bpc_evaluate_loop "$candidates")
-	keep_count=$(echo "$loop_result" | head -1)
-	prune_ids_str=$(echo "$loop_result" | tail -1)
+	IFS='|' read -r keep_count prune_ids_str <<<"$loop_result"
 	local prune_ids=()
-	[[ -n "$prune_ids_str" ]] && [[ "$prune_ids_str" != "NONE" ]] && read -ra prune_ids <<<"$prune_ids_str"
+	[[ -n "$prune_ids_str" ]] && read -ra prune_ids <<<"$prune_ids_str"
 	local prune_count=${#prune_ids[@]}
 	log_info "Batch prune check: $keep_count keep, $prune_count prune (of $((keep_count + prune_count)) evaluated)"
 	if [[ "$_bpc_dry_run" == true ]]; then
