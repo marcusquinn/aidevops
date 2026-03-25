@@ -569,6 +569,107 @@ test_input_validation() {
 	return 0
 }
 
+# Build a minimal PATH with jq excluded, using a shadow directory of symlinks
+# Prints the minimal PATH string; returns 1 if jq cannot be excluded
+_build_no_jq_path() {
+	local shadow_dir
+	shadow_dir="$(mktemp -d)"
+
+	# shellcheck disable=SC2064
+	trap "rm -rf '$shadow_dir'" EXIT
+
+	local needed_tools=(bash cat chmod cut date dirname env flock grep
+		head hostname ln ls mkdir mktemp mv printf pwd rm sed shasum
+		sha256sum source tail tr uname wc)
+	local tool tool_path
+	for tool in "${needed_tools[@]}"; do
+		tool_path="$(command -v "$tool" 2>/dev/null || true)"
+		if [[ -n "$tool_path" ]] && [[ -x "$tool_path" ]]; then
+			ln -sf "$tool_path" "${shadow_dir}/${tool}" 2>/dev/null || true
+		fi
+	done
+
+	local minimal_path="${shadow_dir}"
+	local saved_ifs="$IFS"
+	IFS=':'
+	local dir
+	for dir in $PATH; do
+		if [[ -d "$dir" ]] && ! [[ -x "${dir}/jq" ]]; then
+			minimal_path="${minimal_path}:${dir}"
+		fi
+	done
+	IFS="$saved_ifs"
+
+	echo "$minimal_path"
+	return 0
+}
+
+# Run the no-jq fallback tests inside a subshell with jq removed from PATH
+_run_no_jq_subtests() {
+	# 1. Basic logging (exercises manual JSON construction + escaping)
+	setup
+	if bash "$SCRIPT" log worker.dispatch "No-jq test entry" 2>/dev/null; then
+		if [[ -s "$AUDIT_LOG_FILE" ]]; then
+			local line_count
+			line_count="$(wc -l <"$AUDIT_LOG_FILE" | tr -d ' ')"
+			if [[ "$line_count" -eq 1 ]]; then
+				echo "  PASS: no-jq: basic logging produces 1 entry"
+			else
+				echo "  FAIL: no-jq: expected 1 entry, got $line_count"
+				exit 1
+			fi
+		else
+			echo "  FAIL: no-jq: log file is empty"
+			exit 1
+		fi
+	else
+		echo "  FAIL: no-jq: log command failed"
+		exit 1
+	fi
+	cleanup
+
+	# 2. Hash chain integrity (exercises sed-based hash extraction in verify)
+	setup
+	bash "$SCRIPT" log worker.dispatch "Chain entry 1" 2>/dev/null
+	bash "$SCRIPT" log credential.access "Chain entry 2" 2>/dev/null
+	bash "$SCRIPT" log config.change "Chain entry 3" 2>/dev/null
+	if bash "$SCRIPT" verify --quiet 2>/dev/null; then
+		echo "  PASS: no-jq: 3-entry chain verifies"
+	else
+		echo "  FAIL: no-jq: chain verification failed without jq"
+		exit 1
+	fi
+	cleanup
+
+	# 3. Tamper detection (exercises sed-based verify fallback)
+	setup
+	bash "$SCRIPT" log worker.dispatch "Original 1" 2>/dev/null
+	bash "$SCRIPT" log credential.access "Original 2" 2>/dev/null
+	bash "$SCRIPT" log worker.complete "Original 3" 2>/dev/null
+	sed -i '' 's/Original 2/TAMPERED 2/' "$AUDIT_LOG_FILE" 2>/dev/null ||
+		sed -i 's/Original 2/TAMPERED 2/' "$AUDIT_LOG_FILE"
+	if bash "$SCRIPT" verify --quiet 2>/dev/null; then
+		echo "  FAIL: no-jq: verify should detect tampered entry"
+		exit 1
+	else
+		echo "  PASS: no-jq: tampered entry detected without jq"
+	fi
+	cleanup
+
+	# 4. Special characters (exercises _audit_json_escape fallback)
+	setup
+	bash "$SCRIPT" log security.event 'Msg with "quotes" and back\\slash' 2>/dev/null
+	if bash "$SCRIPT" verify --quiet 2>/dev/null; then
+		echo "  PASS: no-jq: special characters handled in fallback"
+	else
+		echo "  FAIL: no-jq: special characters broke chain in fallback"
+		exit 1
+	fi
+	cleanup
+
+	exit 0
+}
+
 test_no_jq_fallback() {
 	echo "Test: No-jq fallback code paths"
 
@@ -587,35 +688,8 @@ test_no_jq_fallback() {
 	# of /usr/bin (which has 1000+ entries on macOS and is very slow).
 	# shellcheck disable=SC2030
 	(
-		local shadow_dir
-		shadow_dir="$(mktemp -d)"
-
-		# shellcheck disable=SC2064
-		trap "rm -rf '$shadow_dir'" EXIT
-
-		# Symlink only the specific tools the script needs (not jq)
-		local needed_tools=(bash cat chmod cut date dirname env flock grep
-			head hostname ln ls mkdir mktemp mv printf pwd rm sed shasum
-			sha256sum source tail tr uname wc)
-		local tool tool_path
-		for tool in "${needed_tools[@]}"; do
-			tool_path="$(command -v "$tool" 2>/dev/null || true)"
-			if [[ -n "$tool_path" ]] && [[ -x "$tool_path" ]]; then
-				ln -sf "$tool_path" "${shadow_dir}/${tool}" 2>/dev/null || true
-			fi
-		done
-
-		# Build minimal PATH: shadow_dir + any PATH dirs that don't have jq
-		local minimal_path="${shadow_dir}"
-		local saved_ifs="$IFS"
-		IFS=':'
-		local dir
-		for dir in $PATH; do
-			if [[ -d "$dir" ]] && ! [[ -x "${dir}/jq" ]]; then
-				minimal_path="${minimal_path}:${dir}"
-			fi
-		done
-		IFS="$saved_ifs"
+		local minimal_path
+		minimal_path="$(_build_no_jq_path)"
 		# shellcheck disable=SC2031
 		export PATH="$minimal_path"
 
@@ -625,71 +699,7 @@ test_no_jq_fallback() {
 			exit 0
 		fi
 
-		# --- Run representative tests without jq ---
-
-		# 1. Basic logging (exercises manual JSON construction + escaping)
-		setup
-		if bash "$SCRIPT" log worker.dispatch "No-jq test entry" 2>/dev/null; then
-			if [[ -s "$AUDIT_LOG_FILE" ]]; then
-				local line_count
-				line_count="$(wc -l <"$AUDIT_LOG_FILE" | tr -d ' ')"
-				if [[ "$line_count" -eq 1 ]]; then
-					echo "  PASS: no-jq: basic logging produces 1 entry"
-				else
-					echo "  FAIL: no-jq: expected 1 entry, got $line_count"
-					exit 1
-				fi
-			else
-				echo "  FAIL: no-jq: log file is empty"
-				exit 1
-			fi
-		else
-			echo "  FAIL: no-jq: log command failed"
-			exit 1
-		fi
-		cleanup
-
-		# 2. Hash chain integrity (exercises sed-based hash extraction in verify)
-		setup
-		bash "$SCRIPT" log worker.dispatch "Chain entry 1" 2>/dev/null
-		bash "$SCRIPT" log credential.access "Chain entry 2" 2>/dev/null
-		bash "$SCRIPT" log config.change "Chain entry 3" 2>/dev/null
-		if bash "$SCRIPT" verify --quiet 2>/dev/null; then
-			echo "  PASS: no-jq: 3-entry chain verifies"
-		else
-			echo "  FAIL: no-jq: chain verification failed without jq"
-			exit 1
-		fi
-		cleanup
-
-		# 3. Tamper detection (exercises sed-based verify fallback)
-		setup
-		bash "$SCRIPT" log worker.dispatch "Original 1" 2>/dev/null
-		bash "$SCRIPT" log credential.access "Original 2" 2>/dev/null
-		bash "$SCRIPT" log worker.complete "Original 3" 2>/dev/null
-		# Tamper with entry 2
-		sed -i '' 's/Original 2/TAMPERED 2/' "$AUDIT_LOG_FILE" 2>/dev/null ||
-			sed -i 's/Original 2/TAMPERED 2/' "$AUDIT_LOG_FILE"
-		if bash "$SCRIPT" verify --quiet 2>/dev/null; then
-			echo "  FAIL: no-jq: verify should detect tampered entry"
-			exit 1
-		else
-			echo "  PASS: no-jq: tampered entry detected without jq"
-		fi
-		cleanup
-
-		# 4. Special characters (exercises _audit_json_escape fallback)
-		setup
-		bash "$SCRIPT" log security.event 'Msg with "quotes" and back\\slash' 2>/dev/null
-		if bash "$SCRIPT" verify --quiet 2>/dev/null; then
-			echo "  PASS: no-jq: special characters handled in fallback"
-		else
-			echo "  FAIL: no-jq: special characters broke chain in fallback"
-			exit 1
-		fi
-		cleanup
-
-		exit 0
+		_run_no_jq_subtests
 	)
 
 	local subshell_exit=$?
