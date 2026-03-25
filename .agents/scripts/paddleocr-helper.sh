@@ -336,98 +336,18 @@ cmd_install() {
 }
 
 # =============================================================================
-# Command: ocr
+# OCR helpers
 # =============================================================================
 
-cmd_ocr() {
-	local image_path=""
-	local lang="$PADDLEOCR_LANG"
-	local output_file=""
-	local output_format="text"
-	local det_model=""
-	local rec_model=""
-	local quiet=false
-
-	while [[ $# -gt 0 ]]; do
-		case "$1" in
-		--lang)
-			lang="$2"
-			shift 2
-			;;
-		--output)
-			output_file="$2"
-			shift 2
-			;;
-		--format)
-			output_format="$2"
-			shift 2
-			;;
-		--det-model)
-			det_model="$2"
-			shift 2
-			;;
-		--rec-model)
-			rec_model="$2"
-			shift 2
-			;;
-		--quiet)
-			quiet=true
-			shift
-			;;
-		--venv)
-			PADDLEOCR_VENV="$2"
-			shift 2
-			;;
-		-*)
-			print_error "Unknown option: $1"
-			return 1
-			;;
-		*)
-			if [[ -z "$image_path" ]]; then
-				image_path="$1"
-			fi
-			shift
-			;;
-		esac
-	done
-
-	# Validate image path
-	if [[ -z "$image_path" ]]; then
-		print_error "Image path is required"
-		print_info "Usage: paddleocr-helper.sh ocr <image> [--lang en] [--format text|json|tsv]"
-		return 1
-	fi
-
-	if [[ ! -f "$image_path" ]]; then
-		print_error "Image not found: ${image_path}"
-		return 3
-	fi
-
-	# Activate venv if available
-	if [[ -f "${PADDLEOCR_VENV}/bin/activate" ]]; then
-		activate_venv "$PADDLEOCR_VENV" || true
-	fi
-
-	# Verify paddleocr is importable
-	if ! python3 -c "import paddleocr" 2>/dev/null; then
-		print_error "PaddleOCR not installed. Run: paddleocr-helper.sh install"
-		return 2
-	fi
-
-	if [[ "$quiet" == "false" ]]; then
-		print_info "Processing: ${image_path} (lang=${lang})" >&2
-	fi
-
-	# Build the Python OCR script
-	# PaddleOCR 3.4.0 API changes (verified on Linux x86_64, 2026-03-01):
-	#   - show_log parameter removed (ValueError: Unknown argument)
-	#   - use_angle_cls deprecated -> use_textline_orientation
-	#   - .ocr() deprecated -> .predict() returns OCRResult objects
-	#   - OneDNN/MKL-DNN crashes on Linux CPU (PaddlePaddle 3.3.0) -> enable_mkldnn=False
-	#   - PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK speeds up startup
-	local python_script
-	python_script="$(
-		cat <<'PYEOF'
+# Build the Python script used by cmd_ocr to extract text from an image.
+# PaddleOCR 3.4.0 API changes (verified on Linux x86_64, 2026-03-01):
+#   - show_log parameter removed (ValueError: Unknown argument)
+#   - use_angle_cls deprecated -> use_textline_orientation
+#   - .ocr() deprecated -> .predict() returns OCRResult objects
+#   - OneDNN/MKL-DNN crashes on Linux CPU (PaddlePaddle 3.3.0) -> enable_mkldnn=False
+#   - PADDLE_PDX_DISABLE_MODEL_SOURCE_CHECK speeds up startup
+_build_ocr_script() {
+	cat <<'PYEOF'
 import sys
 import json
 
@@ -528,18 +448,16 @@ else:
     for entry in entries:
         print(entry.get("text", ""))
 PYEOF
-	)"
+	return 0
+}
 
-	# Run OCR
-	local ocr_output
-	if ! ocr_output="$(python3 -c "$python_script" "$image_path" "$lang" "$output_format" "$det_model" "$rec_model" 2>/dev/null)"; then
-		print_error "OCR processing failed for: ${image_path}"
-		print_info "Try running with verbose output:"
-		print_info "  python3 -c 'from paddleocr import PaddleOCR; ocr = PaddleOCR(lang=\"${lang}\"); print(ocr.ocr(\"${image_path}\"))'"
-		return 1
-	fi
+# Write OCR output to file or stdout.
+# Usage: _ocr_write_output <ocr_output> <output_file> <quiet> <lang> <image_path>
+_ocr_write_output() {
+	local ocr_output="$1"
+	local output_file="$2"
+	local quiet="$3"
 
-	# Output results
 	if [[ -n "$output_file" ]]; then
 		echo "$ocr_output" >"$output_file"
 		if [[ "$quiet" == "false" ]]; then
@@ -550,30 +468,76 @@ PYEOF
 	else
 		echo "$ocr_output"
 	fi
-
 	return 0
 }
 
 # =============================================================================
-# Command: serve
+# Command: ocr
 # =============================================================================
 
-cmd_serve() {
-	local port="$PADDLEOCR_PORT"
+cmd_ocr() {
+	local image_path=""
+	local lang="$PADDLEOCR_LANG"
+	local output_file=""
+	local output_format="text"
+	local det_model=""
+	local rec_model=""
+	local quiet=false
 
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
-		--port)
-			port="$2"
+		--lang)
+			lang="$2"
 			shift 2
+			;;
+		--output)
+			output_file="$2"
+			shift 2
+			;;
+		--format)
+			output_format="$2"
+			shift 2
+			;;
+		--det-model)
+			det_model="$2"
+			shift 2
+			;;
+		--rec-model)
+			rec_model="$2"
+			shift 2
+			;;
+		--quiet)
+			quiet=true
+			shift
 			;;
 		--venv)
 			PADDLEOCR_VENV="$2"
 			shift 2
 			;;
-		*) shift ;;
+		-*)
+			print_error "Unknown option: $1"
+			return 1
+			;;
+		*)
+			if [[ -z "$image_path" ]]; then
+				image_path="$1"
+			fi
+			shift
+			;;
 		esac
 	done
+
+	# Validate image path
+	if [[ -z "$image_path" ]]; then
+		print_error "Image path is required"
+		print_info "Usage: paddleocr-helper.sh ocr <image> [--lang en] [--format text|json|tsv]"
+		return 1
+	fi
+
+	if [[ ! -f "$image_path" ]]; then
+		print_error "Image not found: ${image_path}"
+		return 3
+	fi
 
 	# Activate venv if available
 	if [[ -f "${PADDLEOCR_VENV}/bin/activate" ]]; then
@@ -586,26 +550,35 @@ cmd_serve() {
 		return 2
 	fi
 
-	# Check if already running
-	if [[ -f "$PADDLEOCR_PID_FILE" ]]; then
-		local existing_pid
-		existing_pid="$(cat "$PADDLEOCR_PID_FILE")"
-		if kill -0 "$existing_pid" 2>/dev/null; then
-			print_error "MCP server already running (PID ${existing_pid}). Stop it first: paddleocr-helper.sh stop"
-			return 4
-		else
-			# Stale PID file
-			rm -f "$PADDLEOCR_PID_FILE"
-		fi
+	if [[ "$quiet" == "false" ]]; then
+		print_info "Processing: ${image_path} (lang=${lang})" >&2
 	fi
 
-	ensure_dirs
+	local python_script
+	python_script="$(_build_ocr_script)"
 
-	# Build the MCP server launch script
-	# PaddleOCR 3.1.0+ ships a native MCP server via paddleocr.tools.mcp
-	local server_script
-	server_script="$(
-		cat <<'PYEOF'
+	# Run OCR
+	local ocr_output
+	if ! ocr_output="$(python3 -c "$python_script" "$image_path" "$lang" "$output_format" "$det_model" "$rec_model" 2>/dev/null)"; then
+		print_error "OCR processing failed for: ${image_path}"
+		print_info "Try running with verbose output:"
+		print_info "  python3 -c 'from paddleocr import PaddleOCR; ocr = PaddleOCR(lang=\"${lang}\"); print(ocr.ocr(\"${image_path}\"))'"
+		return 1
+	fi
+
+	_ocr_write_output "$ocr_output" "$output_file" "$quiet"
+	return 0
+}
+
+# =============================================================================
+# Serve helpers
+# =============================================================================
+
+# Build the Python script used by cmd_serve to run the MCP/HTTP server.
+# PaddleOCR 3.1.0+ ships a native MCP server via paddleocr_mcp; falls back
+# to a minimal HTTP endpoint when that package is not installed.
+_build_server_script() {
+	cat <<'PYEOF'
 import sys
 import os
 
@@ -687,11 +660,17 @@ except ImportError:
     print("POST /ocr with JSON body: {\"image\": \"/path/to/image.png\", \"lang\": \"en\"}", flush=True)
     server.serve_forever()
 PYEOF
-	)"
+	return 0
+}
+
+# Launch the server process and verify it started successfully.
+# Usage: _serve_start_and_verify <server_script> <port>
+_serve_start_and_verify() {
+	local server_script="$1"
+	local port="$2"
 
 	print_info "Starting PaddleOCR server on port ${port}..."
 
-	# Start server in background
 	nohup python3 -c "$server_script" "$port" >"$PADDLEOCR_LOG_FILE" 2>&1 &
 	local server_pid=$!
 	echo "$server_pid" >"$PADDLEOCR_PID_FILE"
@@ -709,6 +688,60 @@ PYEOF
 	print_info "Port: ${port}"
 	print_info "Log:  ${PADDLEOCR_LOG_FILE}"
 	return 0
+}
+
+# =============================================================================
+# Command: serve
+# =============================================================================
+
+cmd_serve() {
+	local port="$PADDLEOCR_PORT"
+
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--port)
+			port="$2"
+			shift 2
+			;;
+		--venv)
+			PADDLEOCR_VENV="$2"
+			shift 2
+			;;
+		*) shift ;;
+		esac
+	done
+
+	# Activate venv if available
+	if [[ -f "${PADDLEOCR_VENV}/bin/activate" ]]; then
+		activate_venv "$PADDLEOCR_VENV" || true
+	fi
+
+	# Verify paddleocr is importable
+	if ! python3 -c "import paddleocr" 2>/dev/null; then
+		print_error "PaddleOCR not installed. Run: paddleocr-helper.sh install"
+		return 2
+	fi
+
+	# Check if already running
+	if [[ -f "$PADDLEOCR_PID_FILE" ]]; then
+		local existing_pid
+		existing_pid="$(cat "$PADDLEOCR_PID_FILE")"
+		if kill -0 "$existing_pid" 2>/dev/null; then
+			print_error "MCP server already running (PID ${existing_pid}). Stop it first: paddleocr-helper.sh stop"
+			return 4
+		else
+			# Stale PID file
+			rm -f "$PADDLEOCR_PID_FILE"
+		fi
+	fi
+
+	ensure_dirs
+
+	local server_script
+	server_script="$(_build_server_script)"
+
+	_serve_start_and_verify "$server_script" "$port"
+	return $?
 }
 
 # =============================================================================
