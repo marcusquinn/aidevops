@@ -9,6 +9,138 @@ IFS=$'\n\t'
 trap 'rc=$?; echo "[ERROR] ${BASH_SOURCE[0]}:${LINENO} exit $rc" >&2' ERR
 shopt -s inherit_errexit 2>/dev/null || true
 
+# Install aidevops inside an OrbStack Linux VM (macOS only, user chose option 2)
+_bootstrap_orbstack_install() {
+	# Install OrbStack if not present
+	if ! command -v orb >/dev/null 2>&1 && [[ ! -d "/Applications/OrbStack.app" ]]; then
+		if command -v brew >/dev/null 2>&1; then
+			print_info "Installing OrbStack via Homebrew..."
+			brew install --cask orbstack
+		else
+			print_error "Homebrew is required to install OrbStack"
+			echo "Install Homebrew first: /bin/bash -c \"\$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\""
+			echo "Then re-run this installer."
+			exit 1
+		fi
+	fi
+
+	# Wait for OrbStack to be ready
+	if ! command -v orb >/dev/null 2>&1; then
+		print_info "Waiting for OrbStack CLI to become available..."
+		# OrbStack installs the CLI at /usr/local/bin/orb
+		local wait_count=0
+		while ! command -v orb >/dev/null 2>&1 && [[ $wait_count -lt 30 ]]; do
+			sleep 2
+			((++wait_count))
+		done
+		if ! command -v orb >/dev/null 2>&1; then
+			print_error "OrbStack CLI not found after installation"
+			echo "Open OrbStack.app manually, then re-run this installer."
+			exit 1
+		fi
+	fi
+
+	# Create or use existing Ubuntu VM
+	local vm_name="aidevops"
+	if orb list 2>/dev/null | grep -qxF "$vm_name"; then
+		print_info "Using existing OrbStack VM: $vm_name"
+	else
+		print_info "Creating Ubuntu VM: $vm_name..."
+		orb create ubuntu "$vm_name"
+	fi
+
+	# Run the installer inside the VM
+	print_info "Installing aidevops inside the VM..."
+	echo ""
+	orb run -m "$vm_name" bash -c 'bash <(curl -fsSL https://aidevops.sh/install)'
+
+	echo ""
+	print_success "aidevops installed in OrbStack VM: $vm_name"
+	echo ""
+	echo "To use aidevops in the VM:"
+	echo "  orb shell $vm_name              # Enter the VM"
+	echo "  orb run -m $vm_name opencode    # Run OpenCode directly"
+	echo ""
+	exit 0
+}
+
+# Auto-install git using the available package manager
+_bootstrap_install_git() {
+	print_warning "git is required but not installed - attempting auto-install..."
+	if [[ "$(uname)" == "Darwin" ]]; then
+		# macOS: xcode-select --install triggers git install
+		print_info "Installing Xcode Command Line Tools (includes git)..."
+		if xcode-select --install 2>/dev/null; then
+			# Wait for installation to complete (timeout after 5 minutes)
+			print_info "Waiting for Xcode CLT installation to complete (timeout: 5m)..."
+			local xcode_wait=0
+			local xcode_max_wait=300
+			until command -v git >/dev/null 2>&1; do
+				sleep 5
+				xcode_wait=$((xcode_wait + 5))
+				if [[ $xcode_wait -ge $xcode_max_wait ]]; then
+					print_error "Timed out waiting for Xcode CLT installation after ${xcode_max_wait}s"
+					echo "Complete the installation manually, then re-run this installer."
+					exit 1
+				fi
+			done
+			print_success "git installed via Xcode Command Line Tools"
+		else
+			# Already installed or failed
+			if ! command -v git >/dev/null 2>&1; then
+				print_error "git installation failed"
+				echo "Install git manually: brew install git (macOS)"
+				exit 1
+			fi
+		fi
+	elif command -v apt-get >/dev/null 2>&1; then
+		print_info "Installing git via apt..."
+		sudo apt-get update -qq && sudo apt-get install -y -qq git
+		if ! command -v git >/dev/null 2>&1; then
+			print_error "git installation failed"
+			exit 1
+		fi
+		print_success "git installed"
+	elif command -v dnf >/dev/null 2>&1; then
+		print_info "Installing git via dnf..."
+		sudo dnf install -y git
+		if ! command -v git >/dev/null 2>&1; then
+			print_error "git installation failed"
+			exit 1
+		fi
+		print_success "git installed"
+	elif command -v yum >/dev/null 2>&1; then
+		print_info "Installing git via yum..."
+		sudo yum install -y git
+		if ! command -v git >/dev/null 2>&1; then
+			print_error "git installation failed"
+			exit 1
+		fi
+		print_success "git installed"
+	elif command -v pacman >/dev/null 2>&1; then
+		print_info "Installing git via pacman..."
+		sudo pacman -S --noconfirm git
+		if ! command -v git >/dev/null 2>&1; then
+			print_error "git installation failed"
+			exit 1
+		fi
+		print_success "git installed"
+	elif command -v apk >/dev/null 2>&1; then
+		print_info "Installing git via apk..."
+		sudo apk add git
+		if ! command -v git >/dev/null 2>&1; then
+			print_error "git installation failed"
+			exit 1
+		fi
+		print_success "git installed"
+	else
+		print_error "git is required but not installed and no supported package manager found"
+		echo "Install git manually and re-run the installer"
+		exit 1
+	fi
+	return 0
+}
+
 bootstrap_repo() {
 	# Detect if running from curl (no script directory context)
 	local script_path="${BASH_SOURCE[0]}"
@@ -30,135 +162,13 @@ bootstrap_repo() {
 
 			if [[ "$install_target" == "2" ]]; then
 				print_info "Setting up OrbStack VM installation..."
-
-				# Install OrbStack if not present
-				if ! command -v orb >/dev/null 2>&1 && [[ ! -d "/Applications/OrbStack.app" ]]; then
-					if command -v brew >/dev/null 2>&1; then
-						print_info "Installing OrbStack via Homebrew..."
-						brew install --cask orbstack
-					else
-						print_error "Homebrew is required to install OrbStack"
-						echo "Install Homebrew first: /bin/bash -c \"\$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\""
-						echo "Then re-run this installer."
-						exit 1
-					fi
-				fi
-
-				# Wait for OrbStack to be ready
-				if ! command -v orb >/dev/null 2>&1; then
-					print_info "Waiting for OrbStack CLI to become available..."
-					# OrbStack installs the CLI at /usr/local/bin/orb
-					local wait_count=0
-					while ! command -v orb >/dev/null 2>&1 && [[ $wait_count -lt 30 ]]; do
-						sleep 2
-						((++wait_count))
-					done
-					if ! command -v orb >/dev/null 2>&1; then
-						print_error "OrbStack CLI not found after installation"
-						echo "Open OrbStack.app manually, then re-run this installer."
-						exit 1
-					fi
-				fi
-
-				# Create or use existing Ubuntu VM
-				local vm_name="aidevops"
-				if orb list 2>/dev/null | grep -qxF "$vm_name"; then
-					print_info "Using existing OrbStack VM: $vm_name"
-				else
-					print_info "Creating Ubuntu VM: $vm_name..."
-					orb create ubuntu "$vm_name"
-				fi
-
-				# Run the installer inside the VM
-				print_info "Installing aidevops inside the VM..."
-				echo ""
-				orb run -m "$vm_name" bash -c 'bash <(curl -fsSL https://aidevops.sh/install)'
-
-				echo ""
-				print_success "aidevops installed in OrbStack VM: $vm_name"
-				echo ""
-				echo "To use aidevops in the VM:"
-				echo "  orb shell $vm_name              # Enter the VM"
-				echo "  orb run -m $vm_name opencode    # Run OpenCode directly"
-				echo ""
-				exit 0
+				_bootstrap_orbstack_install
 			fi
 		fi
 
 		# Auto-install git if missing (required for cloning)
 		if ! command -v git >/dev/null 2>&1; then
-			print_warning "git is required but not installed - attempting auto-install..."
-			if [[ "$(uname)" == "Darwin" ]]; then
-				# macOS: xcode-select --install triggers git install
-				print_info "Installing Xcode Command Line Tools (includes git)..."
-				if xcode-select --install 2>/dev/null; then
-					# Wait for installation to complete (timeout after 5 minutes)
-					print_info "Waiting for Xcode CLT installation to complete (timeout: 5m)..."
-					local xcode_wait=0
-					local xcode_max_wait=300
-					until command -v git >/dev/null 2>&1; do
-						sleep 5
-						xcode_wait=$((xcode_wait + 5))
-						if [[ $xcode_wait -ge $xcode_max_wait ]]; then
-							print_error "Timed out waiting for Xcode CLT installation after ${xcode_max_wait}s"
-							echo "Complete the installation manually, then re-run this installer."
-							exit 1
-						fi
-					done
-					print_success "git installed via Xcode Command Line Tools"
-				else
-					# Already installed or failed
-					if ! command -v git >/dev/null 2>&1; then
-						print_error "git installation failed"
-						echo "Install git manually: brew install git (macOS)"
-						exit 1
-					fi
-				fi
-			elif command -v apt-get >/dev/null 2>&1; then
-				print_info "Installing git via apt..."
-				sudo apt-get update -qq && sudo apt-get install -y -qq git
-				if ! command -v git >/dev/null 2>&1; then
-					print_error "git installation failed"
-					exit 1
-				fi
-				print_success "git installed"
-			elif command -v dnf >/dev/null 2>&1; then
-				print_info "Installing git via dnf..."
-				sudo dnf install -y git
-				if ! command -v git >/dev/null 2>&1; then
-					print_error "git installation failed"
-					exit 1
-				fi
-				print_success "git installed"
-			elif command -v yum >/dev/null 2>&1; then
-				print_info "Installing git via yum..."
-				sudo yum install -y git
-				if ! command -v git >/dev/null 2>&1; then
-					print_error "git installation failed"
-					exit 1
-				fi
-				print_success "git installed"
-			elif command -v pacman >/dev/null 2>&1; then
-				print_info "Installing git via pacman..."
-				sudo pacman -S --noconfirm git
-				if ! command -v git >/dev/null 2>&1; then
-					print_error "git installation failed"
-					exit 1
-				fi
-				print_success "git installed"
-			elif command -v apk >/dev/null 2>&1; then
-				print_info "Installing git via apk..."
-				sudo apk add git
-				if ! command -v git >/dev/null 2>&1; then
-					print_error "git installation failed"
-					exit 1
-				fi
-				print_success "git installed"
-			else
-				print_error "git is required but not installed and no supported package manager found"
-				echo "Install git manually and re-run the installer"
-				exit 1
-			fi
+			_bootstrap_install_git
 		fi
 
 		# Create parent directory
@@ -190,6 +200,7 @@ bootstrap_repo() {
 		cd "$INSTALL_DIR" || exit 1
 		exec bash "./setup.sh" "$@"
 	fi
+	return 0
 }
 
 # Detect package manager
@@ -209,6 +220,7 @@ detect_package_manager() {
 	else
 		echo "unknown"
 	fi
+	return 0
 }
 
 # Install packages using detected package manager
@@ -346,11 +358,10 @@ ensure_homebrew() {
 	fi
 }
 
-# Check system requirements
-check_requirements() {
-	print_info "Checking system requirements..."
-
-	# Ensure Homebrew is in PATH (macOS Apple Silicon)
+# Fix Homebrew PATH for Apple Silicon and Intel Macs when brew is not in PATH.
+# Modifies rc files only during interactive setup (not updates).
+_check_req_fix_homebrew_path() {
+	# Apple Silicon Homebrew
 	if [[ -x "/opt/homebrew/bin/brew" ]] && [[ ":$PATH:" != *":/opt/homebrew/bin:"* ]]; then
 		eval "$(/opt/homebrew/bin/brew shellenv)"
 		print_warning "Homebrew not in PATH - added for this session"
@@ -423,6 +434,15 @@ check_requirements() {
 			fi
 		fi
 	fi
+	return 0
+}
+
+# Check system requirements
+check_requirements() {
+	print_info "Checking system requirements..."
+
+	# Ensure Homebrew is in PATH (macOS Apple Silicon and Intel)
+	_check_req_fix_homebrew_path
 
 	local missing_deps=()
 	local missing_packages=()
@@ -494,6 +514,7 @@ check_requirements() {
 	fi
 
 	print_success "All required dependencies found"
+	return 0
 }
 
 # Check for quality/linting tools (shellcheck, shfmt)
