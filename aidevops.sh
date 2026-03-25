@@ -3072,7 +3072,7 @@ _help_commands() {
 	echo "  repos [cmd]        Manage registered projects (list/add/remove/clean)"
 	echo "  model-accounts-pool OAuth account pool (list/check/add/rotate/reset-cooldowns)"
 	echo "  opencode-sandbox   Test OpenCode versions in isolation (install/run/check/clean)"
-	echo "  security <cmd>     Security posture, secret hygiene, supply chain scanning"
+	echo "  security [cmd]     Full security assessment (posture + hygiene + supply chain)"
 	echo "  ip-check <cmd>     IP reputation checks (check/batch/report/providers)"
 	echo "  secret <cmd>       Manage secrets (set/list/run/init/import/status)"
 	echo "  config <cmd>       Feature toggles (list/get/set/reset/path/help)"
@@ -3086,15 +3086,14 @@ _help_commands() {
 
 _help_detailed_sections() {
 	echo "Security:"
-	echo "  aidevops security check      # Run per-repo security posture assessment"
-	echo "  aidevops security audit      # Alias for check"
-	echo "  aidevops security summary    # One-line per-repo security status"
-	echo "  aidevops security setup      # Interactive guided user security setup"
-	echo "  aidevops security status     # Detailed user security posture report"
+	echo "  aidevops security            # Run ALL checks (posture + hygiene + supply chain)"
+	echo "  aidevops security posture    # Interactive security posture setup (gopass, gh, SSH)"
+	echo "  aidevops security status     # Combined posture + hygiene summary"
 	echo "  aidevops security scan       # Secret hygiene & supply chain scan"
 	echo "  aidevops security scan-pth   # Python .pth file audit (supply chain IoC)"
 	echo "  aidevops security scan-secrets # Plaintext credential locations"
 	echo "  aidevops security scan-deps  # Unpinned dependency check"
+	echo "  aidevops security check      # Per-repo security posture assessment"
 	echo "  aidevops security dismiss <id> # Dismiss a security advisory"
 	echo ""
 	echo "IP Reputation:"
@@ -3326,6 +3325,16 @@ main() {
 	pulse) _dispatch_helper "pulse-session-helper.sh" "pulse-session-helper.sh" "$@" ;;
 	security)
 		case "${1:-}" in
+		"")
+			# No args: run ALL security checks (posture + hygiene + advisories)
+			echo ""
+			echo "Running full security assessment..."
+			echo "==================================="
+			echo ""
+			_dispatch_helper "security-posture-helper.sh" "security-posture-helper.sh" status || true
+			echo ""
+			_dispatch_helper "secret-hygiene-helper.sh" "secret-hygiene-helper.sh" scan || true
+			;;
 		scan | scan-secrets | scan-pth | scan-deps | dismiss)
 			_dispatch_helper "secret-hygiene-helper.sh" "secret-hygiene-helper.sh" "$@"
 			;;
@@ -3333,8 +3342,18 @@ main() {
 			shift
 			_dispatch_helper "secret-hygiene-helper.sh" "secret-hygiene-helper.sh" "${@:-scan}"
 			;;
+		posture | setup)
+			shift || true
+			_dispatch_helper "security-posture-helper.sh" "security-posture-helper.sh" "${@:-setup}"
+			;;
+		status)
+			# Status shows both posture and hygiene summary
+			_dispatch_helper "security-posture-helper.sh" "security-posture-helper.sh" status || true
+			echo ""
+			_dispatch_helper "secret-hygiene-helper.sh" "secret-hygiene-helper.sh" startup-check || true
+			;;
 		*)
-			[[ $# -eq 0 ]] && _dispatch_helper "security-posture-helper.sh" "security-posture-helper.sh" setup || _dispatch_helper "security-posture-helper.sh" "security-posture-helper.sh" "$@"
+			_dispatch_helper "security-posture-helper.sh" "security-posture-helper.sh" "$@"
 			;;
 		esac
 		;;

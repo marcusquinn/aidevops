@@ -101,13 +101,14 @@ Use `/security-analysis` for comprehensive scanning with:
 ## Related CLI Commands
 
 ```bash
-aidevops security              # Security posture setup wizard
-aidevops security scan         # Full secret hygiene & supply chain scan
+aidevops security              # Run ALL checks (posture + hygiene + supply chain)
+aidevops security posture      # Interactive security posture setup (gopass, gh, SSH)
+aidevops security status       # Combined posture + hygiene summary
+aidevops security scan         # Secret hygiene & supply chain scan only
 aidevops security scan-pth     # Python .pth file audit only
 aidevops security scan-secrets # Plaintext secret locations only
 aidevops security scan-deps    # Unpinned dependency check only
+aidevops security check        # Per-repo security posture assessment
 aidevops security dismiss <id> # Dismiss a security advisory after action
-aidevops security hygiene      # Alias for 'aidevops security scan'
-aidevops security setup        # Interactive security posture setup
 aidevops security status       # Detailed security posture report
 ```

@@ -331,9 +331,11 @@ Key capabilities (details in `reference/orchestration.md`, `reference/services.m
 
 Rules: `prompts/build.txt`. Secrets: `gopass` preferred; `credentials.sh` plaintext fallback (600 perms). Config templates: `configs/*.json.txt` (committed), working: `configs/*.json` (gitignored). Full docs: `tools/credentials/gopass.md`.
 
-**Secret hygiene & supply chain protection:**
-- `aidevops security scan` — scans for plaintext secrets (AWS, GCP, Azure, k8s, Docker, npm, PyPI, SSH), Python `.pth` supply chain IoCs, unpinned dependencies, and MCP auto-download risks. Never exposes secret values.
-- `aidevops security scan-pth` — Python `.pth` file audit (the attack vector used in the LiteLLM March 2026 supply chain compromise).
+**Unified security command:** `aidevops security` (no args) runs all checks — user posture, plaintext secret hygiene, supply chain IoCs, and active advisories. Subcommands for targeted use:
+- `aidevops security` — run everything (recommended)
+- `aidevops security posture` — interactive security posture setup (gopass, gh auth, SSH, secretlint)
+- `aidevops security scan` — secret hygiene & supply chain scan (plaintext secrets, `.pth` IoCs, unpinned deps, MCP auto-download risks). Never exposes secret values.
+- `aidevops security check` — per-repo posture assessment (workflows, branch protection, review bot gate)
 - `aidevops security dismiss <id>` — dismiss a security advisory after taking action.
 - Security advisories are delivered via `aidevops update` and shown in the session greeting until dismissed. Advisory files: `~/.aidevops/advisories/*.advisory`.
 - All remediation commands must be run in a **separate terminal**, never inside AI chat sessions.
