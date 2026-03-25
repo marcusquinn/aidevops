@@ -47,14 +47,12 @@ check_sonar_scanner() {
 	return 0
 }
 
-# Install SonarScanner CLI
-install_sonar_scanner() {
-	print_header "Installing SonarScanner CLI"
-
-	# Detect platform and architecture
+# Detect platform and architecture for SonarScanner download
+# Prints two words to stdout: "<platform> <arch>"
+# Returns 1 on unsupported platform.
+_sonar_detect_platform() {
 	local platform
 	local arch
-	local download_url
 
 	case "$(uname -s)" in
 	Darwin*)
@@ -86,21 +84,17 @@ install_sonar_scanner() {
 		;;
 	esac
 
-	# Construct download URL
-	download_url="https://binaries.sonarsource.com/Distribution/sonar-scanner-cli/sonar-scanner-cli-${SONAR_SCANNER_VERSION}-${platform}-${arch}.zip"
+	echo "$platform $arch"
+	return 0
+}
 
-	print_info "Platform: $platform-$arch"
-	print_info "Downloading from: $download_url"
+# Download SonarScanner zip to the given destination path.
+# Args: $1=download_url $2=zip_file
+# Returns 1 on failure.
+_sonar_download_zip() {
+	local download_url="$1"
+	local zip_file="$2"
 
-	# Create temporary directory with trap cleanup for early returns
-	local temp_dir
-	temp_dir=$(mktemp -d)
-	_save_cleanup_scope
-	trap '_run_cleanups' RETURN
-	push_cleanup "rm -rf '${temp_dir}'"
-	local zip_file="$temp_dir/sonar-scanner.zip"
-
-	# Download
 	if command -v curl &>/dev/null; then
 		curl -L -o "$zip_file" "$download_url"
 	elif command -v wget &>/dev/null; then
@@ -115,40 +109,43 @@ install_sonar_scanner() {
 		return 1
 	fi
 
-	# Extract to /opt/sonar-scanner (requires sudo) or ~/sonar-scanner
-	local install_dir
-	if [[ -w "/opt" ]]; then
-		install_dir="/opt/sonar-scanner"
-	else
-		install_dir="$HOME/sonar-scanner"
-		print_info "Installing to user directory: $install_dir"
-	fi
+	return 0
+}
 
-	# Create install directory
-	mkdir -p "$install_dir"
+# Extract SonarScanner zip into install_dir.
+# Args: $1=zip_file $2=temp_dir $3=install_dir
+# Returns 1 on failure.
+_sonar_extract_zip() {
+	local zip_file="$1"
+	local temp_dir="$2"
+	local install_dir="$3"
 
-	# Extract
-	if command -v unzip &>/dev/null; then
-		unzip -q "$zip_file" -d "$temp_dir"
-		# Find extracted directory
-		local extracted_dir
-		extracted_dir=$(find "$temp_dir" -name "sonar-scanner-*" -type d | head -1)
-		if [[ -n "$extracted_dir" ]]; then
-			cp -r "$extracted_dir"/* "$install_dir/"
-		else
-			print_error "Extraction failed - directory not found"
-			return 1
-		fi
-	else
+	if ! command -v unzip &>/dev/null; then
 		print_error "unzip command not found. Please install unzip."
 		return 1
 	fi
 
-	# Make executable
-	chmod +x "$install_dir/bin/sonar-scanner"
+	unzip -q "$zip_file" -d "$temp_dir"
 
-	# Add to PATH (add to shell profile)
+	local extracted_dir
+	extracted_dir=$(find "$temp_dir" -name "sonar-scanner-*" -type d | head -1)
+	if [[ -z "$extracted_dir" ]]; then
+		print_error "Extraction failed - directory not found"
+		return 1
+	fi
+
+	cp -r "$extracted_dir"/* "$install_dir/"
+	chmod +x "$install_dir/bin/sonar-scanner"
+	return 0
+}
+
+# Add install_dir/bin to PATH in the user's shell profile if not already present.
+# Args: $1=install_dir
+# Prints the shell_profile path to stdout.
+_sonar_configure_path() {
+	local install_dir="$1"
 	local shell_profile
+
 	case "$SHELL" in
 	*/bash)
 		shell_profile="$HOME/.bashrc"
@@ -161,12 +158,62 @@ install_sonar_scanner() {
 		;;
 	esac
 
-	# Check if already in PATH
 	if ! echo "$PATH" | grep -q "$install_dir/bin"; then
 		echo "export PATH=\"$install_dir/bin:\$PATH\"" >>"$shell_profile"
 		export PATH="$install_dir/bin:$PATH"
 		print_info "Added to PATH in $shell_profile"
 	fi
+
+	echo "$shell_profile"
+	return 0
+}
+
+# Install SonarScanner CLI
+install_sonar_scanner() {
+	print_header "Installing SonarScanner CLI"
+
+	# Detect platform and architecture
+	local platform_arch
+	platform_arch=$(_sonar_detect_platform) || return 1
+	local platform
+	local arch
+	platform=$(echo "$platform_arch" | cut -d' ' -f1)
+	arch=$(echo "$platform_arch" | cut -d' ' -f2)
+
+	# Construct download URL
+	local download_url
+	download_url="https://binaries.sonarsource.com/Distribution/sonar-scanner-cli/sonar-scanner-cli-${SONAR_SCANNER_VERSION}-${platform}-${arch}.zip"
+
+	print_info "Platform: $platform-$arch"
+	print_info "Downloading from: $download_url"
+
+	# Create temporary directory with trap cleanup for early returns
+	local temp_dir
+	temp_dir=$(mktemp -d)
+	_save_cleanup_scope
+	trap '_run_cleanups' RETURN
+	push_cleanup "rm -rf '${temp_dir}'"
+	local zip_file="$temp_dir/sonar-scanner.zip"
+
+	# Download
+	_sonar_download_zip "$download_url" "$zip_file" || return 1
+
+	# Determine install directory
+	local install_dir
+	if [[ -w "/opt" ]]; then
+		install_dir="/opt/sonar-scanner"
+	else
+		install_dir="$HOME/sonar-scanner"
+		print_info "Installing to user directory: $install_dir"
+	fi
+	mkdir -p "$install_dir"
+
+	# Extract and make executable
+	_sonar_extract_zip "$zip_file" "$temp_dir" "$install_dir" || return 1
+
+	# Configure PATH
+	local shell_profile
+	shell_profile=$(_sonar_configure_path "$install_dir")
 
 	# Cleanup
 	rm -rf "$temp_dir"
