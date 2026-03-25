@@ -644,6 +644,133 @@ record_verification() {
 }
 
 # =============================================================================
+# Main Verify Command - Helper Functions
+# =============================================================================
+
+# Print verbose result for a named check using pass/warn/fail/skip result codes.
+# Args: label result details
+_verify_print_check() {
+	local label="$1"
+	local result="$2"
+	local details="$3"
+	case "$result" in
+	pass) print_success "${label}: ${details}" ;;
+	warn) print_warning "${label}: ${details}" ;;
+	fail) print_error "${label}: ${details}" ;;
+	skip) print_info "${label}: ${details}" ;;
+	*) print_info "${label}: ${details}" ;;
+	esac
+	return 0
+}
+
+# Print the final score line in verbose mode.
+# Args: score
+_verify_print_score() {
+	local score="$1"
+	echo ""
+	case "$score" in
+	"$SCORE_DELIVERABLE") echo -e "  Score: ${GREEN}${score}${NC}" ;;
+	"$SCORE_RISKY") echo -e "  Score: ${YELLOW}${score}${NC}" ;;
+	"$SCORE_UNDELIVERABLE") echo -e "  Score: ${RED}${score}${NC}" ;;
+	*) echo -e "  Score: ${BLUE}${score}${NC}" ;;
+	esac
+	return 0
+}
+
+# Run checks 1-3 (syntax, MX, disposable) and short-circuit on hard failures.
+# Outputs: sets caller variables via echo to a subshell is not viable in bash 3.2,
+# so this function prints "ok:<syntax_result>:<mx_result>:<mx_host>:<disposable_result>"
+# on success, or "fail:<score>:<check>:<details>" on short-circuit.
+# Args: email domain verbose
+_verify_early_checks() {
+	local email="$1"
+	local domain="$2"
+	local verbose="$3"
+
+	# Check 1: Syntax
+	local syntax_output syntax_result syntax_details
+	syntax_output=$(check_syntax "$email" 2>/dev/null || true)
+	syntax_result=$(echo "$syntax_output" | cut -d: -f2)
+	syntax_details=$(echo "$syntax_output" | cut -d: -f3-)
+
+	if [[ "$verbose" == "true" ]]; then
+		_verify_print_check "Syntax" "$syntax_result" "$syntax_details"
+	fi
+
+	if [[ "$syntax_result" == "fail" ]]; then
+		echo "fail:${SCORE_UNDELIVERABLE}:syntax_fail:${syntax_details}:${syntax_result}:skip:skip:skip:skip"
+		return 1
+	fi
+
+	# Check 2: MX Records
+	local mx_output mx_result mx_details mx_host
+	mx_output=$(check_mx "$domain" 2>/dev/null || true)
+	mx_result=$(echo "$mx_output" | cut -d: -f2)
+	mx_details=$(echo "$mx_output" | cut -d: -f3)
+	mx_host=$(echo "$mx_output" | cut -d: -f4 | tr -d ' ')
+
+	if [[ "$verbose" == "true" ]]; then
+		_verify_print_check "MX" "$mx_result" "$mx_details"
+	fi
+
+	if [[ "$mx_result" == "fail" ]]; then
+		echo "fail:${SCORE_UNDELIVERABLE}:no_mx:${mx_details}:${syntax_result}:${mx_result}:skip:skip:skip"
+		return 1
+	fi
+
+	# Check 3: Disposable Domain
+	local disposable_output disposable_result disposable_details
+	disposable_output=$(check_disposable "$domain" 2>/dev/null || true)
+	disposable_result=$(echo "$disposable_output" | cut -d: -f2)
+	disposable_details=$(echo "$disposable_output" | cut -d: -f3-)
+
+	if [[ "$verbose" == "true" ]]; then
+		_verify_print_check "Disposable" "$disposable_result" "$disposable_details"
+	fi
+
+	if [[ "$disposable_result" == "fail" ]]; then
+		echo "fail:${SCORE_UNDELIVERABLE}:disposable:${disposable_details}:${syntax_result}:${mx_result}:${disposable_result}:skip:skip"
+		return 1
+	fi
+
+	echo "ok:${syntax_result}:${mx_result}:${mx_host}:${disposable_result}"
+	return 0
+}
+
+# Run checks 4-6 (RCPT TO, full inbox, catch-all) and print verbose output.
+# Prints "rcpt_result:rcpt_details:catchall_result:catchall_details" on stdout.
+# Args: email domain mx_host verbose
+_verify_smtp_checks() {
+	local email="$1"
+	local domain="$2"
+	local mx_host="$3"
+	local verbose="$4"
+
+	# Check 4 & 5: SMTP RCPT TO + Full Inbox
+	local rcpt_output rcpt_result rcpt_details
+	rcpt_output=$(check_rcpt_to "$email" "$mx_host" 2>/dev/null || true)
+	rcpt_result=$(echo "$rcpt_output" | cut -d: -f2)
+	rcpt_details=$(echo "$rcpt_output" | cut -d: -f3-)
+
+	if [[ "$verbose" == "true" ]]; then
+		_verify_print_check "RCPT TO" "$rcpt_result" "$rcpt_details"
+	fi
+
+	# Check 6: Catch-All Detection
+	local catchall_output catchall_result catchall_details
+	catchall_output=$(check_catch_all "$domain" "$mx_host" 2>/dev/null || true)
+	catchall_result=$(echo "$catchall_output" | cut -d: -f2)
+	catchall_details=$(echo "$catchall_output" | cut -d: -f3-)
+
+	if [[ "$verbose" == "true" ]]; then
+		_verify_print_check "Catch-all" "$catchall_result" "$catchall_details"
+	fi
+
+	echo "${rcpt_result}:${rcpt_details}:${catchall_result}:${catchall_details}"
+	return 0
+}
+
+# =============================================================================
 # Main Verify Command
 # =============================================================================
 
@@ -661,150 +788,55 @@ verify_email() {
 		print_header "Verifying: ${email}"
 	fi
 
-	# --- Check 1: Syntax ---
-	local syntax_output
-	syntax_output=$(check_syntax "$email" 2>/dev/null || true)
-	local syntax_result
-	syntax_result=$(echo "$syntax_output" | cut -d: -f2)
-	local syntax_details
-	syntax_details=$(echo "$syntax_output" | cut -d: -f3-)
+	# Checks 1-3: syntax, MX, disposable (with short-circuit on failure)
+	local early_out
+	early_out=$(_verify_early_checks "$email" "$domain" "$verbose")
+	local early_status="$?"
 
-	if [[ "$verbose" == "true" ]]; then
-		if [[ "$syntax_result" == "pass" ]]; then
-			print_success "Syntax: ${syntax_details}"
-		else
-			print_error "Syntax: ${syntax_details}"
-		fi
-	fi
-
-	# Short-circuit on syntax failure
-	if [[ "$syntax_result" == "fail" ]]; then
-		local score="$SCORE_UNDELIVERABLE"
+	if [[ "$early_status" -ne 0 ]]; then
+		# Short-circuit: parse fail:<score>:<check>:<details>:<s>:<m>:<d>:<r>:<c>
+		local score check details s_r m_r d_r r_r c_r
+		score=$(echo "$early_out" | cut -d: -f2)
+		check=$(echo "$early_out" | cut -d: -f3)
+		details=$(echo "$early_out" | cut -d: -f4)
+		s_r=$(echo "$early_out" | cut -d: -f5)
+		m_r=$(echo "$early_out" | cut -d: -f6)
+		d_r=$(echo "$early_out" | cut -d: -f7)
+		r_r=$(echo "$early_out" | cut -d: -f8)
+		c_r=$(echo "$early_out" | cut -d: -f9)
 		if [[ "$verbose" == "true" ]]; then
-			echo ""
-			echo -e "  Score: ${RED}${score}${NC}"
+			_verify_print_score "$score"
 		else
-			echo "${email},${score},syntax_fail,${syntax_details}"
+			echo "${email},${score},${check},${details}"
 		fi
-		record_verification "$email" "$domain" "$score" "$syntax_result" "skip" "skip" "skip" "skip"
+		record_verification "$email" "$domain" "$score" "$s_r" "$m_r" "$d_r" "$r_r" "$c_r"
 		return 0
 	fi
 
-	# --- Check 2: MX Records ---
-	local mx_output
-	mx_output=$(check_mx "$domain" 2>/dev/null || true)
-	local mx_result
-	mx_result=$(echo "$mx_output" | cut -d: -f2)
-	local mx_details
-	mx_details=$(echo "$mx_output" | cut -d: -f3)
-	local mx_host
-	mx_host=$(echo "$mx_output" | cut -d: -f4 | tr -d ' ')
+	# Parse ok:<syntax_result>:<mx_result>:<mx_host>:<disposable_result>
+	local syntax_result mx_result mx_host disposable_result
+	syntax_result=$(echo "$early_out" | cut -d: -f2)
+	mx_result=$(echo "$early_out" | cut -d: -f3)
+	mx_host=$(echo "$early_out" | cut -d: -f4)
+	disposable_result=$(echo "$early_out" | cut -d: -f5)
 
-	if [[ "$verbose" == "true" ]]; then
-		case "$mx_result" in
-		pass) print_success "MX: ${mx_details}" ;;
-		warn) print_warning "MX: ${mx_details}" ;;
-		fail) print_error "MX: ${mx_details}" ;;
-		*) print_info "MX: ${mx_details}" ;;
-		esac
-	fi
+	# Checks 4-6: SMTP RCPT TO, full inbox, catch-all
+	local smtp_out rcpt_result rcpt_details catchall_result
+	smtp_out=$(_verify_smtp_checks "$email" "$domain" "$mx_host" "$verbose")
+	rcpt_result=$(echo "$smtp_out" | cut -d: -f1)
+	rcpt_details=$(echo "$smtp_out" | cut -d: -f2)
+	catchall_result=$(echo "$smtp_out" | cut -d: -f3)
 
-	# Short-circuit on MX failure
-	if [[ "$mx_result" == "fail" ]]; then
-		local score="$SCORE_UNDELIVERABLE"
-		if [[ "$verbose" == "true" ]]; then
-			echo ""
-			echo -e "  Score: ${RED}${score}${NC}"
-		else
-			echo "${email},${score},no_mx,${mx_details}"
-		fi
-		record_verification "$email" "$domain" "$score" "$syntax_result" "$mx_result" "skip" "skip" "skip"
-		return 0
-	fi
-
-	# --- Check 3: Disposable Domain ---
-	local disposable_output
-	disposable_output=$(check_disposable "$domain" 2>/dev/null || true)
-	local disposable_result
-	disposable_result=$(echo "$disposable_output" | cut -d: -f2)
-	local disposable_details
-	disposable_details=$(echo "$disposable_output" | cut -d: -f3-)
-
-	if [[ "$verbose" == "true" ]]; then
-		case "$disposable_result" in
-		pass) print_success "Disposable: ${disposable_details}" ;;
-		fail) print_error "Disposable: ${disposable_details}" ;;
-		skip) print_info "Disposable: ${disposable_details}" ;;
-		*) print_info "Disposable: ${disposable_details}" ;;
-		esac
-	fi
-
-	# Short-circuit on disposable domain
-	if [[ "$disposable_result" == "fail" ]]; then
-		local score="$SCORE_UNDELIVERABLE"
-		if [[ "$verbose" == "true" ]]; then
-			echo ""
-			echo -e "  Score: ${RED}${score}${NC}"
-		else
-			echo "${email},${score},disposable,${disposable_details}"
-		fi
-		record_verification "$email" "$domain" "$score" "$syntax_result" "$mx_result" "$disposable_result" "skip" "skip"
-		return 0
-	fi
-
-	# --- Check 4 & 5: SMTP RCPT TO + Full Inbox ---
-	local rcpt_output
-	rcpt_output=$(check_rcpt_to "$email" "$mx_host" 2>/dev/null || true)
-	local rcpt_result
-	rcpt_result=$(echo "$rcpt_output" | cut -d: -f2)
-	local rcpt_details
-	rcpt_details=$(echo "$rcpt_output" | cut -d: -f3-)
-
-	if [[ "$verbose" == "true" ]]; then
-		case "$rcpt_result" in
-		pass) print_success "RCPT TO: ${rcpt_details}" ;;
-		warn) print_warning "RCPT TO: ${rcpt_details}" ;;
-		fail) print_error "RCPT TO: ${rcpt_details}" ;;
-		full) print_warning "RCPT TO: ${rcpt_details}" ;;
-		skip) print_info "RCPT TO: ${rcpt_details}" ;;
-		*) print_info "RCPT TO: ${rcpt_details}" ;;
-		esac
-	fi
-
-	# --- Check 6: Catch-All Detection ---
-	local catchall_output
-	catchall_output=$(check_catch_all "$domain" "$mx_host" 2>/dev/null || true)
-	local catchall_result
-	catchall_result=$(echo "$catchall_output" | cut -d: -f2)
-	local catchall_details
-	catchall_details=$(echo "$catchall_output" | cut -d: -f3-)
-
-	if [[ "$verbose" == "true" ]]; then
-		case "$catchall_result" in
-		pass) print_success "Catch-all: ${catchall_details}" ;;
-		catchall) print_warning "Catch-all: ${catchall_details}" ;;
-		skip) print_info "Catch-all: ${catchall_details}" ;;
-		*) print_info "Catch-all: ${catchall_details}" ;;
-		esac
-	fi
-
-	# --- Calculate Score ---
+	# Calculate and output score
 	local score
 	score=$(calculate_score "$syntax_result" "$mx_result" "$disposable_result" "$rcpt_result" "$catchall_result")
 
 	if [[ "$verbose" == "true" ]]; then
-		echo ""
-		case "$score" in
-		"$SCORE_DELIVERABLE") echo -e "  Score: ${GREEN}${score}${NC}" ;;
-		"$SCORE_RISKY") echo -e "  Score: ${YELLOW}${score}${NC}" ;;
-		"$SCORE_UNDELIVERABLE") echo -e "  Score: ${RED}${score}${NC}" ;;
-		*) echo -e "  Score: ${BLUE}${score}${NC}" ;;
-		esac
+		_verify_print_score "$score"
 	else
 		echo "${email},${score},${rcpt_result},${rcpt_details}"
 	fi
 
-	# Record to stats
 	record_verification "$email" "$domain" "$score" \
 		"$syntax_result" "$mx_result" "$disposable_result" \
 		"$rcpt_result" "$catchall_result"
