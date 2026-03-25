@@ -254,6 +254,126 @@ Respond with ONLY one word: 'relevant' or 'prune'"
 }
 
 #######################################
+# Look up entity name from DB
+# Arguments: $1 — entity_id
+# Output: entity name or empty string
+#######################################
+_orl_get_entity_name() {
+	local entity_id="$1"
+	judgment_db "$JUDGMENT_MEMORY_DB" \
+		"SELECT name FROM entities WHERE id = '${entity_id//\'/\'\'}' LIMIT 1;" \
+		2>/dev/null || echo ""
+	return 0
+}
+
+#######################################
+# Resolve explicit detail preference to a character length
+# Arguments: $1 — entity_id
+# Output: length integer, or empty string if no preference stored
+#######################################
+_orl_resolve_detail_pref() {
+	local entity_id="$1"
+	local detail_pref
+	detail_pref=$(judgment_db "$JUDGMENT_MEMORY_DB" \
+		"SELECT ep.profile_value FROM entity_profiles ep
+		 WHERE ep.entity_id = '${entity_id//\'/\'\'}' AND ep.profile_key = 'detail_preference'
+		   AND ep.id NOT IN (SELECT supersedes_id FROM entity_profiles WHERE supersedes_id IS NOT NULL)
+		 ORDER BY ep.created_at DESC LIMIT 1;" \
+		2>/dev/null || echo "")
+	case "$detail_pref" in
+	concise | brief | short) echo "2000" ;;
+	normal | moderate) echo "4000" ;;
+	detailed | verbose | long) echo "8000" ;;
+	*) echo "" ;;
+	esac
+	return 0
+}
+
+#######################################
+# Query interaction stats for an entity/channel
+# Arguments: $1 — entity_id, $2 — channel_filter SQL fragment
+# Output: two lines — avg_msg_length, interaction_count
+#######################################
+_orl_get_interaction_stats() {
+	local entity_id="$1"
+	local channel_filter="$2"
+	local avg_msg_length interaction_count
+	avg_msg_length=$(judgment_db "$JUDGMENT_MEMORY_DB" \
+		"SELECT COALESCE(AVG(LENGTH(i.content)), 0) FROM interactions i
+		 JOIN conversations c ON i.conversation_id = c.id
+		 WHERE c.entity_id = '${entity_id//\'/\'\'}' AND i.direction = 'outbound'
+		 $channel_filter
+		 ORDER BY i.created_at DESC LIMIT 50;" \
+		2>/dev/null || echo "0")
+	interaction_count=$(judgment_db "$JUDGMENT_MEMORY_DB" \
+		"SELECT COUNT(*) FROM interactions i
+		 JOIN conversations c ON i.conversation_id = c.id
+		 WHERE c.entity_id = '${entity_id//\'/\'\'}' AND i.direction = 'inbound'
+		 $channel_filter;" \
+		2>/dev/null || echo "0")
+	printf '%s\n%s\n' "$avg_msg_length" "$interaction_count"
+	return 0
+}
+
+#######################################
+# Ask AI to judge preferred response length from recent messages
+# Arguments: $1 — entity_id, $2 — channel_filter, $3 — avg_msg_length, $4 — interaction_count
+# Output: length integer, or empty string if AI unavailable/inconclusive
+#######################################
+_orl_ai_judge_length() {
+	local entity_id="$1"
+	local channel_filter="$2"
+	local avg_msg_length="$3"
+	local interaction_count="$4"
+	[[ ! -x "$AI_HELPER" ]] && return 0
+	local recent_inbound
+	recent_inbound=$(judgment_db "$JUDGMENT_MEMORY_DB" \
+		"SELECT substr(i.content, 1, 100) FROM interactions i
+		 JOIN conversations c ON i.conversation_id = c.id
+		 WHERE c.entity_id = '${entity_id//\'/\'\'}' AND i.direction = 'inbound'
+		 $channel_filter
+		 ORDER BY i.created_at DESC LIMIT 5;" \
+		2>/dev/null || echo "")
+	[[ -z "$recent_inbound" ]] && return 0
+	local prompt="Based on these recent messages from a user, what response length do they prefer?
+
+Recent messages from user:
+$recent_inbound
+
+Average response length so far: ${avg_msg_length} chars
+Total interactions: ${interaction_count}
+
+Respond with ONLY a number: 2000 (concise), 4000 (normal), or 8000 (detailed)"
+	local result
+	result=$("$AI_HELPER" --prompt "$prompt" --model haiku --max-tokens 10 2>/dev/null || echo "")
+	result=$(echo "$result" | tr -dc '0-9')
+	if [[ -n "$result" && "$result" -ge 1000 && "$result" -le 16000 ]]; then
+		echo "$result"
+	fi
+	return 0
+}
+
+#######################################
+# Heuristic fallback: scale length from average outbound message length
+# Arguments: $1 — avg_msg_length (float), $2 — default_length
+# Output: length integer
+#######################################
+_orl_fallback_length() {
+	local avg_msg_length="$1"
+	local default_length="$2"
+	local avg_int
+	avg_int=$(printf "%.0f" "$avg_msg_length" 2>/dev/null || echo "0")
+	if [[ "$avg_int" -gt 0 && "$avg_int" -lt 2000 ]]; then
+		echo "3000"
+	elif [[ "$avg_int" -gt 6000 ]]; then
+		echo "8000"
+	else
+		echo "$default_length"
+	fi
+	return 0
+}
+
+#######################################
 # Determine optimal response length for an entity
 # Replaces: maxPromptLength: 4000 (fixed truncation)
 #
@@ -295,75 +415,39 @@ cmd_optimal_response_length() {
 		return 0
 	fi
 
-	# Look up entity
+	# Look up entity — unknown entity returns default
 	local entity_name
-	entity_name=$(judgment_db "$JUDGMENT_MEMORY_DB" \
-		"SELECT name FROM entities WHERE id = '${entity_id//\'/\'\'}' LIMIT 1;" \
-		2>/dev/null || echo "")
-
+	entity_name=$(_orl_get_entity_name "$entity_id")
 	if [[ -z "$entity_name" ]]; then
 		echo "$default_length"
 		return 0
 	fi
 
-	# Check entity profile for explicit detail preference FIRST
-	# An explicit preference always wins — no caching needed (local DB lookup is cheap)
-	# Latest version = not superseded by any other entry
-	local detail_pref
-	detail_pref=$(judgment_db "$JUDGMENT_MEMORY_DB" \
-		"SELECT ep.profile_value FROM entity_profiles ep
-		 WHERE ep.entity_id = '${entity_id//\'/\'\'}' AND ep.profile_key = 'detail_preference'
-		   AND ep.id NOT IN (SELECT supersedes_id FROM entity_profiles WHERE supersedes_id IS NOT NULL)
-		 ORDER BY ep.created_at DESC LIMIT 1;" \
-		2>/dev/null || echo "")
-
-	# If we have a stored preference, use it directly (no caching — profile is authoritative)
-	if [[ -n "$detail_pref" ]]; then
-		case "$detail_pref" in
-		concise | brief | short)
-			echo "2000"
-			return 0
-			;;
-		normal | moderate)
-			echo "4000"
-			return 0
-			;;
-		detailed | verbose | long)
-			echo "8000"
-			return 0
-			;;
-		esac
+	# Explicit stored preference always wins (no caching — local DB lookup is cheap)
+	local pref_length
+	pref_length=$(_orl_resolve_detail_pref "$entity_id")
+	if [[ -n "$pref_length" ]]; then
+		echo "$pref_length"
+		return 0
 	fi
 
-	# Get interaction data for AI judgment and heuristic fallback
+	# Build channel filter for interaction queries
 	local channel_filter=""
-	if [[ -n "$channel" ]]; then
-		channel_filter="AND i.channel = '${channel//\'/\'\'}'"
-	fi
+	[[ -n "$channel" ]] && channel_filter="AND i.channel = '${channel//\'/\'\'}'"
 
-	local avg_msg_length interaction_count
-	avg_msg_length=$(judgment_db "$JUDGMENT_MEMORY_DB" \
-		"SELECT COALESCE(AVG(LENGTH(i.content)), 0) FROM interactions i
-		 JOIN conversations c ON i.conversation_id = c.id
-		 WHERE c.entity_id = '${entity_id//\'/\'\'}' AND i.direction = 'outbound'
-		 $channel_filter
-		 ORDER BY i.created_at DESC LIMIT 50;" \
-		2>/dev/null || echo "0")
+	# Fetch interaction stats
+	local stats avg_msg_length interaction_count
+	stats=$(_orl_get_interaction_stats "$entity_id" "$channel_filter")
+	avg_msg_length=$(echo "$stats" | head -1)
+	interaction_count=$(echo "$stats" | tail -1)
 
-	interaction_count=$(judgment_db "$JUDGMENT_MEMORY_DB" \
-		"SELECT COUNT(*) FROM interactions i
-		 JOIN conversations c ON i.conversation_id = c.id
-		 WHERE c.entity_id = '${entity_id//\'/\'\'}' AND i.direction = 'inbound'
-		 $channel_filter;" \
-		2>/dev/null || echo "0")
-
-	# Not enough interaction data for AI judgment — use default
+	# Not enough data for AI judgment — use default
 	if [[ "$interaction_count" -lt 5 ]]; then
 		echo "$default_length"
 		return 0
 	fi
 
-	# Cache key for AI judgment results (not used for profile-based results)
+	# Check cache for prior AI judgment
 	local cache_key="response_length:${entity_id}:${channel}"
 	local cached
 	cached=$(get_cached_judgment "$cache_key")
@@ -372,52 +456,17 @@ cmd_optimal_response_length() {
 		return 0
 	fi
 
-	# Try AI judgment based on interaction patterns
-	if [[ -x "$AI_HELPER" ]]; then
-		# Get sample of recent inbound messages to gauge user's communication style
-		local recent_inbound
-		recent_inbound=$(judgment_db "$JUDGMENT_MEMORY_DB" \
-			"SELECT substr(i.content, 1, 100) FROM interactions i
-			 JOIN conversations c ON i.conversation_id = c.id
-			 WHERE c.entity_id = '${entity_id//\'/\'\'}' AND i.direction = 'inbound'
-			 $channel_filter
-			 ORDER BY i.created_at DESC LIMIT 5;" \
-			2>/dev/null || echo "")
-
-		if [[ -n "$recent_inbound" ]]; then
-			local prompt="Based on these recent messages from a user, what response length do they prefer?
-
-Recent messages from user:
-$recent_inbound
-
-Average response length so far: ${avg_msg_length} chars
-Total interactions: ${interaction_count}
-
-Respond with ONLY a number: 2000 (concise), 4000 (normal), or 8000 (detailed)"
-
-			local result
-			result=$("$AI_HELPER" --prompt "$prompt" --model haiku --max-tokens 10 2>/dev/null || echo "")
-			result=$(echo "$result" | tr -dc '0-9')
-
-			if [[ -n "$result" && "$result" -ge 1000 && "$result" -le 16000 ]]; then
-				cache_judgment "$cache_key" "$result"
-				echo "$result"
-				return 0
-			fi
-		fi
+	# Try AI judgment
+	local ai_result
+	ai_result=$(_orl_ai_judge_length "$entity_id" "$channel_filter" "$avg_msg_length" "$interaction_count")
+	if [[ -n "$ai_result" ]]; then
+		cache_judgment "$cache_key" "$ai_result"
+		echo "$ai_result"
+		return 0
 	fi
 
-	# Fallback: scale based on average outbound message length
-	# If we've been sending short responses, keep them short
-	local avg_int
-	avg_int=$(printf "%.0f" "$avg_msg_length" 2>/dev/null || echo "0")
-	if [[ "$avg_int" -gt 0 && "$avg_int" -lt 2000 ]]; then
-		echo "3000"
-	elif [[ "$avg_int" -gt 6000 ]]; then
-		echo "8000"
-	else
-		echo "$default_length"
-	fi
+	# Heuristic fallback
+	_orl_fallback_length "$avg_msg_length" "$default_length"
 	return 0
 }
 
@@ -526,6 +575,79 @@ cmd_should_prune() {
 }
 
 #######################################
+# Query candidate memories for batch pruning
+# Arguments: $1 — older_than_days, $2 — limit
+# Output: pipe-delimited rows (id|content|type|tags|created_at|access_count)
+#######################################
+_bpc_query_candidates() {
+	local older_than_days="$1"
+	local limit="$2"
+	judgment_db "$JUDGMENT_MEMORY_DB" \
+		"SELECT l.id, substr(l.content, 1, 100), l.type, l.tags, l.created_at,
+		        COALESCE(a.access_count, 0) as access_count
+		 FROM learnings l
+		 LEFT JOIN learning_access a ON l.id = a.id
+		 WHERE l.created_at < datetime('now', '-$older_than_days days')
+		 ORDER BY COALESCE(a.access_count, 0) ASC, l.created_at ASC
+		 LIMIT $limit;" \
+		2>/dev/null || echo ""
+	return 0
+}
+
+#######################################
+# Evaluate a single candidate row and update keep/prune counters
+# Arguments: $1 — mem_id, $2 — content, $3 — type, $4 — tags,
+#            $5 — created_at, $6 — access_count
+# Output: "keep" or "prune" on stdout
+#######################################
+_bpc_evaluate_candidate() {
+	local mem_id="$1"
+	local content="$2"
+	local type="$3"
+	local tags="$4"
+	local created_at="$5"
+	local access_count="$6"
+	local created_epoch now_epoch age_days
+	created_epoch=$(date -d "$created_at" +%s 2>/dev/null || date -j -f "%Y-%m-%d %H:%M:%S" "$created_at" +%s 2>/dev/null || echo "0")
+	now_epoch=$(date +%s)
+	age_days=$(((now_epoch - created_epoch) / 86400))
+	# Quick keep: frequently accessed
+	if [[ "$access_count" -gt 3 ]]; then
+		echo "keep"
+		return 0
+	fi
+	# Quick prune: very old, never accessed
+	if [[ "$age_days" -gt 180 && "$access_count" -eq 0 ]]; then
+		echo "prune"
+		return 0
+	fi
+	# AI judgment for borderline cases
+	cmd_is_memory_relevant \
+		--content "$content" \
+		--age-days "$age_days" \
+		--tags "$tags" \
+		--type "$type"
+	return 0
+}
+
+#######################################
+# Delete a list of memory IDs from all related tables
+# Arguments: $@ — memory IDs to delete
+#######################################
+_bpc_execute_prune() {
+	local pid escaped_pid
+	for pid in "$@"; do
+		escaped_pid="${pid//\'/\'\'}"
+		judgment_db "$JUDGMENT_MEMORY_DB" "DELETE FROM learning_relations WHERE id = '$escaped_pid' OR supersedes_id = '$escaped_pid';" 2>/dev/null || true
+		judgment_db "$JUDGMENT_MEMORY_DB" "DELETE FROM learning_access WHERE id = '$escaped_pid';" 2>/dev/null || true
+		judgment_db "$JUDGMENT_MEMORY_DB" "DELETE FROM learning_entities WHERE learning_id = '$escaped_pid';" 2>/dev/null || true
+		judgment_db "$JUDGMENT_MEMORY_DB" "DELETE FROM learnings WHERE id = '$escaped_pid';" 2>/dev/null || true
+	done
+	judgment_db "$JUDGMENT_MEMORY_DB" "INSERT INTO learnings(learnings) VALUES('rebuild');" 2>/dev/null || true
+	return 0
+}
+
+#######################################
 # Batch prune check — evaluate multiple memories
 # Replaces the blanket DEFAULT_MAX_AGE_DAYS=90 prune
 #
@@ -564,15 +686,7 @@ cmd_batch_prune_check() {
 
 	# Find candidate memories (old, never or rarely accessed)
 	local candidates
-	candidates=$(judgment_db "$JUDGMENT_MEMORY_DB" \
-		"SELECT l.id, substr(l.content, 1, 100), l.type, l.tags, l.created_at,
-		        COALESCE(a.access_count, 0) as access_count
-		 FROM learnings l
-		 LEFT JOIN learning_access a ON l.id = a.id
-		 WHERE l.created_at < datetime('now', '-$older_than_days days')
-		 ORDER BY COALESCE(a.access_count, 0) ASC, l.created_at ASC
-		 LIMIT $limit;" \
-		2>/dev/null || echo "")
+	candidates=$(_bpc_query_candidates "$older_than_days" "$limit")
 
 	if [[ -z "$candidates" ]]; then
 		log_info "No memories older than $older_than_days days to evaluate"
@@ -585,40 +699,14 @@ cmd_batch_prune_check() {
 
 	while IFS='|' read -r mem_id content type tags created_at access_count; do
 		[[ -z "$mem_id" ]] && continue
-
-		# Calculate age
-		local created_epoch now_epoch age_days
-		created_epoch=$(date -d "$created_at" +%s 2>/dev/null || date -j -f "%Y-%m-%d %H:%M:%S" "$created_at" +%s 2>/dev/null || echo "0")
-		now_epoch=$(date +%s)
-		age_days=$(((now_epoch - created_epoch) / 86400))
-
-		# Quick decisions first (no API call needed)
-		if [[ "$access_count" -gt 3 ]]; then
-			keep_count=$((keep_count + 1))
-			continue
-		fi
-
-		if [[ "$age_days" -gt 180 && "$access_count" -eq 0 ]]; then
-			prune_count=$((prune_count + 1))
-			prune_ids+=("$mem_id")
-			continue
-		fi
-
-		# AI judgment for borderline cases
-		local result
-		result=$(cmd_is_memory_relevant \
-			--content "$content" \
-			--age-days "$age_days" \
-			--tags "$tags" \
-			--type "$type")
-
-		if [[ "$result" == "prune" ]]; then
+		local decision
+		decision=$(_bpc_evaluate_candidate "$mem_id" "$content" "$type" "$tags" "$created_at" "$access_count")
+		if [[ "$decision" == "prune" ]]; then
 			prune_count=$((prune_count + 1))
 			prune_ids+=("$mem_id")
 		else
 			keep_count=$((keep_count + 1))
 		fi
-
 		# Rate limit: small delay between AI calls
 		sleep 0.1
 	done <<<"$candidates"
@@ -631,16 +719,8 @@ cmd_batch_prune_check() {
 			log_info "[DRY RUN] Would prune: ${prune_ids[*]}"
 		fi
 	else
-		# Actually prune
 		if [[ ${#prune_ids[@]} -gt 0 ]]; then
-			for pid in "${prune_ids[@]}"; do
-				local escaped_pid="${pid//\'/\'\'}"
-				judgment_db "$JUDGMENT_MEMORY_DB" "DELETE FROM learning_relations WHERE id = '$escaped_pid' OR supersedes_id = '$escaped_pid';" 2>/dev/null || true
-				judgment_db "$JUDGMENT_MEMORY_DB" "DELETE FROM learning_access WHERE id = '$escaped_pid';" 2>/dev/null || true
-				judgment_db "$JUDGMENT_MEMORY_DB" "DELETE FROM learning_entities WHERE learning_id = '$escaped_pid';" 2>/dev/null || true
-				judgment_db "$JUDGMENT_MEMORY_DB" "DELETE FROM learnings WHERE id = '$escaped_pid';" 2>/dev/null || true
-			done
-			judgment_db "$JUDGMENT_MEMORY_DB" "INSERT INTO learnings(learnings) VALUES('rebuild');" 2>/dev/null || true
+			_bpc_execute_prune "${prune_ids[@]}"
 			log_success "Pruned $prune_count memories (AI-judged irrelevant)"
 		fi
 	fi
@@ -789,6 +869,85 @@ build_evaluator_message() {
 }
 
 #######################################
+# Resolve system prompt for an evaluator
+# Arguments: $1 — eval_type, $2 — prompt_file (optional)
+# Output: system prompt on stdout, or error JSON on failure
+# Exit: 0 on success, 1 on unrecoverable error (caller should echo error JSON)
+#######################################
+_rse_build_system_prompt() {
+	local eval_type="$1"
+	local prompt_file="${2:-}"
+	if [[ "$eval_type" == "custom" && -n "$prompt_file" ]]; then
+		if [[ ! -f "$prompt_file" ]]; then
+			log_error "Custom prompt file not found: $prompt_file"
+			return 1
+		fi
+		cat "$prompt_file"
+	else
+		get_evaluator_prompt "$eval_type" || return 1
+	fi
+	return 0
+}
+
+#######################################
+# Call AI and extract a scored JSON result
+# Arguments: $1 — system_prompt, $2 — user_message, $3 — eval_type, $4 — threshold, $5 — cache_key
+# Output: result JSON on stdout, or empty string if AI unavailable/inconclusive
+#######################################
+_rse_run_ai_evaluator() {
+	local system_prompt="$1"
+	local user_message="$2"
+	local eval_type="$3"
+	local threshold="$4"
+	local cache_key="$5"
+	[[ ! -x "$AI_HELPER" ]] && return 0
+	local full_prompt="${system_prompt}
+
+${user_message}"
+	local raw_result
+	raw_result=$("$AI_HELPER" --prompt "$full_prompt" --model haiku --max-tokens 200 || echo "")
+	[[ -z "$raw_result" ]] && return 0
+	# Extract JSON: plain response → strip fences → per-line → greedy capture
+	local json_result
+	json_result=$(printf '%s' "$raw_result" | jq -Rrs '
+		. as $text
+		| (
+			($text | fromjson?)
+			// (
+				$text
+				| gsub("(?m)^```[A-Za-z0-9_-]*\\n"; "")
+				| gsub("(?m)^```$"; "")
+				| . as $stripped
+				| (
+					($stripped | fromjson?)
+					// (
+						($stripped | split("\n")
+						 | map(fromjson? | select(type == "object" and has("score")))
+						 | first)
+					)
+					// (
+						($stripped | capture("(?s)(?<json>\\{.*\\})").json | fromjson?)
+					)
+				)
+			)
+		) // empty
+		| select(type == "object" and has("score"))
+		| @json
+	' 2>/dev/null)
+	[[ -z "$json_result" ]] && return 0
+	local score details passed result_json
+	score=$(printf '%s' "$json_result" | jq -r '.score // ""')
+	details=$(printf '%s' "$json_result" | jq -r '.details // ""')
+	[[ -z "$score" ]] && return 0
+	passed=$(awk -v s="$score" -v t="$threshold" 'BEGIN { print (s >= t) ? "true" : "false" }')
+	result_json=$(jq -cn --arg type "$eval_type" --argjson score "${score}" --argjson passed "$passed" --arg details "$details" \
+		'{evaluator: $type, score: $score, passed: $passed, details: $details}')
+	cache_judgment "$cache_key" "$result_json" "" "haiku"
+	echo "$result_json"
+	return 0
+}
+
+#######################################
 # Run a single evaluator and return JSON result
 # Arguments:
 #   --type TYPE         Evaluator type
@@ -862,95 +1021,79 @@ run_single_evaluator() {
 	fi
 
 	# Build system prompt
-	local system_prompt=""
-	if [[ "$eval_type" == "custom" && -n "$prompt_file" ]]; then
-		if [[ ! -f "$prompt_file" ]]; then
-			log_error "Custom prompt file not found: $prompt_file"
+	local system_prompt
+	system_prompt=$(_rse_build_system_prompt "$eval_type" "$prompt_file") || {
+		if [[ "$eval_type" == "custom" ]]; then
 			echo "{\"evaluator\": \"custom\", \"score\": null, \"passed\": null, \"details\": \"Prompt file not found: ${prompt_file}\"}"
-			return 0
-		fi
-		system_prompt=$(cat "$prompt_file")
-	else
-		system_prompt=$(get_evaluator_prompt "$eval_type") || {
+		else
 			echo "{\"evaluator\": \"${eval_type}\", \"score\": null, \"passed\": null, \"details\": \"Unknown evaluator type\"}"
-			return 0
-		}
-	fi
+		fi
+		return 0
+	}
 
 	# Build user message
 	local user_message
 	user_message=$(build_evaluator_message "$eval_type" "$input_text" "$output_text" "$context_text" "$expected_text")
 
 	# Try AI evaluation
-	if [[ -x "$AI_HELPER" ]]; then
-		local full_prompt="${system_prompt}
-
-${user_message}"
-
-		local raw_result
-		raw_result=$("$AI_HELPER" --prompt "$full_prompt" --model haiku --max-tokens 200 || echo "")
-
-		if [[ -n "$raw_result" ]]; then
-			# Extract JSON from response: handle fenced blocks, wrapper text, and details
-			# containing braces. Three strategies in order:
-			#   1. Parse the whole response as JSON (plain response)
-			#   2. Strip fences, then try each line (JSON on its own line after wrapper text)
-			#   3. Strip fences, greedy capture (last resort; validated by fromjson?)
-			local json_result
-			json_result=$(printf '%s' "$raw_result" | jq -Rrs '
-				. as $text
-				| (
-					($text | fromjson?)
-					// (
-						$text
-						| gsub("(?m)^```[A-Za-z0-9_-]*\\n"; "")
-						| gsub("(?m)^```$"; "")
-						| . as $stripped
-						| (
-							($stripped | fromjson?)
-							// (
-								($stripped | split("\n")
-								 | map(fromjson? | select(type == "object" and has("score")))
-								 | first)
-							)
-							// (
-								($stripped | capture("(?s)(?<json>\\{.*\\})").json | fromjson?)
-							)
-						)
-					)
-				) // empty
-				| select(type == "object" and has("score"))
-				| @json
-			' 2>/dev/null)
-
-			if [[ -n "$json_result" ]]; then
-				# Parse score and details from JSON using jq (robust, handles whitespace/key order)
-				local score
-				score=$(printf '%s' "$json_result" | jq -r '.score // ""')
-				local details
-				details=$(printf '%s' "$json_result" | jq -r '.details // ""')
-
-				if [[ -n "$score" ]]; then
-					# Determine pass/fail using awk for float comparison
-					local passed
-					passed=$(awk -v s="$score" -v t="$threshold" 'BEGIN { print (s >= t) ? "true" : "false" }')
-
-					local result_json
-					result_json=$(jq -cn --arg type "$eval_type" --argjson score "${score}" --argjson passed "$passed" --arg details "$details" '{evaluator: $type, score: $score, passed: $passed, details: $details}')
-
-					# Cache the result
-					cache_judgment "$cache_key" "$result_json" "" "haiku"
-					echo "$result_json"
-					return 0
-				fi
-			fi
-		fi
+	local ai_result
+	ai_result=$(_rse_run_ai_evaluator "$system_prompt" "$user_message" "$eval_type" "$threshold" "$cache_key")
+	if [[ -n "$ai_result" ]]; then
+		echo "$ai_result"
+		return 0
 	fi
 
 	# Deterministic fallback: API unavailable
-	local fallback_json
-	fallback_json=$(jq -cn --arg type "$eval_type" '{evaluator: $type, score: null, passed: null, details: "API unavailable, using fallback"}')
-	echo "$fallback_json"
+	jq -cn --arg type "$eval_type" '{evaluator: $type, score: null, passed: null, details: "API unavailable, using fallback"}'
+	return 0
+}
+
+#######################################
+# Run each evaluator type in a comma-separated list and collect results
+# Arguments:
+#   $1 — comma-separated eval_types
+#   $2 — input_text, $3 — output_text, $4 — context_text,
+#   $5 — expected_text, $6 — threshold, $7 — prompt_file
+# Output: JSON results (one per line, or JSON array if multiple)
+#######################################
+_eval_run_types() {
+	local eval_types="$1"
+	local input_text="$2"
+	local output_text="$3"
+	local context_text="$4"
+	local expected_text="$5"
+	local threshold="$6"
+	local prompt_file="$7"
+
+	local IFS=','
+	local types_array
+	read -ra types_array <<<"$eval_types"
+	unset IFS
+
+	local results=()
+	local etype result
+	for etype in "${types_array[@]}"; do
+		etype=$(echo "$etype" | tr -d '[:space:]')
+		result=$(run_single_evaluator \
+			--type "$etype" \
+			--input "$input_text" \
+			--output "$output_text" \
+			--context "$context_text" \
+			--expected "$expected_text" \
+			--threshold "$threshold" \
+			--prompt-file "$prompt_file")
+		results+=("$result")
+		# Rate limit between evaluator calls
+		if [[ ${#types_array[@]} -gt 1 ]]; then
+			sleep 0.1
+		fi
+	done
+
+	if [[ ${#results[@]} -eq 1 ]]; then
+		echo "${results[0]}"
+	else
+		printf '%s\n' "${results[@]}" | jq -s .
+	fi
 	return 0
 }
 
@@ -1040,41 +1183,7 @@ cmd_evaluate() {
 		return 1
 	fi
 
-	# Split comma-separated types and run each evaluator
-	local IFS=','
-	local types_array
-	read -ra types_array <<<"$eval_types"
-	unset IFS
-
-	local results=()
-	for etype in "${types_array[@]}"; do
-		# Trim whitespace
-		etype=$(echo "$etype" | tr -d '[:space:]')
-		local result
-		result=$(run_single_evaluator \
-			--type "$etype" \
-			--input "$input_text" \
-			--output "$output_text" \
-			--context "$context_text" \
-			--expected "$expected_text" \
-			--threshold "$threshold" \
-			--prompt-file "$prompt_file")
-		results+=("$result")
-
-		# Rate limit between evaluator calls
-		if [[ ${#types_array[@]} -gt 1 ]]; then
-			sleep 0.1
-		fi
-	done
-
-	# Output results
-	if [[ ${#results[@]} -eq 1 ]]; then
-		echo "${results[0]}"
-	else
-		# Multiple evaluators: output as JSON array using jq --slurp for safety
-		printf '%s\n' "${results[@]}" | jq -s .
-	fi
-
+	_eval_run_types "$eval_types" "$input_text" "$output_text" "$context_text" "$expected_text" "$threshold" "$prompt_file"
 	return 0
 }
 
