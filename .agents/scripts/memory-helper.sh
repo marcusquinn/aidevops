@@ -82,9 +82,9 @@ source "${SCRIPT_DIR}/memory/recall.sh"
 source "${SCRIPT_DIR}/memory/maintenance.sh"
 
 #######################################
-# Show help
+# Help: usage and commands section
 #######################################
-cmd_help() {
+_help_usage_commands() {
 	cat <<'EOF'
 memory-helper.sh - Lightweight memory system for aidevops
 
@@ -113,7 +113,15 @@ COMMANDS:
     graduate    Promote validated memories into shared docs (delegates to memory-graduate-helper.sh)
     namespaces  List all memory namespaces
     help        Show this help
+EOF
+	return 0
+}
 
+#######################################
+# Help: store and recall options
+#######################################
+_help_store_recall_options() {
+	cat <<'EOF'
 GLOBAL OPTIONS:
     --namespace <name>    Use isolated memory namespace (per-runner)
                           Creates DB at: memory/namespaces/<name>/memory.db
@@ -161,7 +169,15 @@ RECALL OPTIONS:
     --hybrid              Combine FTS5 keyword + semantic search using RRF
     --stats               Show memory statistics
     --json                Output as JSON
+EOF
+	return 0
+}
 
+#######################################
+# Help: prune and dedup options
+#######################################
+_help_prune_dedup_options() {
+	cat <<'EOF'
 PRUNE OPTIONS:
     --older-than-days <n> Age threshold (default: 90)
     --dry-run             Show what would be deleted
@@ -206,7 +222,15 @@ STALENESS PREVENTION:
     - Recall updates last_accessed_at (used = valuable)
     - Prune removes old entries that were never accessed
     - Validate warns about potentially stale entries
+EOF
+	return 0
+}
 
+#######################################
+# Help: examples section
+#######################################
+_help_examples() {
+	cat <<'EOF'
 EXAMPLES:
     # Store a learning
     memory-helper.sh store --content "Use FTS5 for fast search" --type WORKING_SOLUTION
@@ -259,7 +283,15 @@ EXAMPLES:
     memory-helper.sh dedup --dry-run
     memory-helper.sh dedup
     memory-helper.sh dedup --exact-only
+EOF
+	return 0
+}
 
+#######################################
+# Help: entity and namespace examples
+#######################################
+_help_entity_namespace_examples() {
+	cat <<'EOF'
 ENTITY EXAMPLES:
     # Store a learning linked to an entity
     memory-helper.sh store --content "Prefers concise responses" --entity ent_xxx --type USER_PREFERENCE
@@ -298,6 +330,18 @@ NAMESPACE EXAMPLES:
     memory-helper.sh namespaces migrate --from code-reviewer --to global
     memory-helper.sh namespaces migrate --from global --to seo-analyst --move
 EOF
+	return 0
+}
+
+#######################################
+# Show help (orchestrates sub-sections)
+#######################################
+cmd_help() {
+	_help_usage_commands
+	_help_store_recall_options
+	_help_prune_dedup_options
+	_help_examples
+	_help_entity_namespace_examples
 	return 0
 }
 
