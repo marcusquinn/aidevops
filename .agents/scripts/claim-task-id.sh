@@ -682,6 +682,179 @@ check_framework_routing() {
 	return 0
 }
 
+# Resolve allocation: online (with dry-run shortcut) or offline fallback.
+# Sets caller-local variables first_id and is_offline via stdout protocol:
+#   prints "first_id=NNN" and "is_offline=true|false" on success,
+#   or returns non-zero on hard failure.
+# Callers eval the output to populate their locals.
+_main_resolve_allocation() {
+	local first_id_out=""
+	local is_offline_out="false"
+
+	if [[ "$OFFLINE_MODE" == "false" ]]; then
+		if [[ "$DRY_RUN" == "true" ]]; then
+			local current
+			current=$(read_remote_counter "$REPO_PATH" 2>/dev/null || read_local_counter "$REPO_PATH" 2>/dev/null || echo "?")
+			if [[ "$current" =~ ^[0-9]+$ ]]; then
+				log_info "Would allocate t${current}..t$((current + ALLOC_COUNT - 1)) (counter at ${current})"
+			else
+				log_info "Would allocate task ID (counter unreadable: ${current})"
+			fi
+			echo "task_id=tDRY_RUN"
+			echo "ref=DRY_RUN"
+			return 0
+		fi
+
+		if first_id_out=$(allocate_online "$REPO_PATH" "$ALLOC_COUNT"); then
+			log_success "Allocated task ID: t${first_id_out}"
+		else
+			log_warn "Online allocation failed, falling back to offline mode"
+			is_offline_out="true"
+		fi
+	else
+		is_offline_out="true"
+	fi
+
+	if [[ "$is_offline_out" == "true" ]]; then
+		if [[ "$DRY_RUN" == "true" ]]; then
+			log_info "Would allocate task ID in offline mode"
+			echo "task_id=tDRY_RUN"
+			echo "ref=offline"
+			return 2
+		fi
+
+		if ! first_id_out=$(allocate_offline "$REPO_PATH" "$ALLOC_COUNT"); then
+			log_error "Offline allocation failed"
+			return 1
+		fi
+	fi
+
+	# Communicate results back to caller via stdout key=value pairs
+	echo "_alloc_first_id=${first_id_out}"
+	echo "_alloc_is_offline=${is_offline_out}"
+	return 0
+}
+
+# Create issues for all allocated IDs (optional, non-blocking).
+# Populates caller-provided variables via stdout key=value pairs:
+#   _issue_ref_prefix, _issue_has_any, _issue_first_num, _issue_nums_csv
+_main_create_issues() {
+	local first_id="$1"
+	local platform="$2"
+
+	local ref_prefix=""
+	local last_id=$((first_id + ALLOC_COUNT - 1))
+	local -a issue_nums=()
+	local has_any_issue=false
+	local first_issue_num=""
+
+	if check_cli "$platform"; then
+		case "$platform" in
+		github) ref_prefix="GH" ;;
+		gitlab) ref_prefix="GL" ;;
+		esac
+
+		# Guard: skip issue creation if TASK_TITLE is empty (batch without --title)
+		if [[ -z "$TASK_TITLE" ]]; then
+			log_warn "No --title provided — skipping issue creation for batch allocation"
+		else
+			local i
+			for ((i = first_id; i <= last_id; i++)); do
+				local issue_title="t${i}: ${TASK_TITLE}"
+				local issue_num=""
+
+				case "$platform" in
+				github)
+					issue_num=$(create_github_issue "$issue_title" "$TASK_DESCRIPTION" "$TASK_LABELS" "$REPO_PATH") || true
+					;;
+				gitlab)
+					issue_num=$(create_gitlab_issue "$issue_title" "$TASK_DESCRIPTION" "$TASK_LABELS" "$REPO_PATH") || true
+					;;
+				esac
+
+				if [[ -n "$issue_num" ]]; then
+					log_success "Created issue: ${ref_prefix}#${issue_num}"
+					issue_nums+=("$issue_num")
+					has_any_issue=true
+					if [[ -z "$first_issue_num" ]]; then
+						first_issue_num="$issue_num"
+					fi
+				else
+					log_warn "Issue creation failed for t${i} (non-fatal — ID is secured)"
+					issue_nums+=("")
+				fi
+			done
+		fi
+	else
+		log_warn "CLI for $platform not found — skipping issue creation"
+	fi
+
+	# Communicate results back to caller via stdout key=value pairs
+	echo "_issue_ref_prefix=${ref_prefix}"
+	echo "_issue_has_any=${has_any_issue}"
+	echo "_issue_first_num=${first_issue_num}"
+	# CSV of issue numbers (empty slots preserved as empty fields)
+	local csv=""
+	local k
+	for ((k = 0; k < ${#issue_nums[@]}; k++)); do
+		if [[ $k -gt 0 ]]; then csv="${csv},"; fi
+		csv="${csv}${issue_nums[$k]}"
+	done
+	echo "_issue_nums_csv=${csv}"
+	return 0
+}
+
+# Emit machine-readable output lines to stdout.
+_main_output_results() {
+	local first_id="$1"
+	local is_offline="$2"
+	local ref_prefix="$3"
+	local has_any_issue="$4"
+	local first_issue_num="$5"
+	local issue_nums_csv="$6"
+
+	local last_id=$((first_id + ALLOC_COUNT - 1))
+
+	if [[ "$ALLOC_COUNT" -eq 1 ]]; then
+		echo "task_id=t${first_id}"
+	else
+		echo "task_id=t${first_id}"
+		echo "task_id_last=t${last_id}"
+		echo "task_count=${ALLOC_COUNT}"
+	fi
+
+	if [[ "$has_any_issue" == "true" ]] && [[ -n "$first_issue_num" ]]; then
+		echo "ref=${ref_prefix}#${first_issue_num}"
+		local remote_url
+		remote_url=$(cd "$REPO_PATH" && git remote get-url "$REMOTE_NAME" 2>/dev/null | sed 's/\.git$//' || echo "")
+		if [[ -n "$remote_url" ]]; then
+			echo "issue_url=${remote_url}/issues/${first_issue_num}"
+		fi
+		# Output refs for all issues in batch (new — for callers that parse all output)
+		if [[ "$ALLOC_COUNT" -gt 1 ]]; then
+			# Reconstruct issue_nums array from CSV
+			local -a issue_nums=()
+			local IFS_SAVE="$IFS"
+			IFS=',' read -r -a issue_nums <<<"$issue_nums_csv"
+			IFS="$IFS_SAVE"
+			local j
+			for ((j = 0; j < ALLOC_COUNT; j++)); do
+				local tid=$((first_id + j))
+				if [[ -n "${issue_nums[$j]}" ]]; then
+					echo "ref_t${tid}=${ref_prefix}#${issue_nums[$j]}"
+				fi
+			done
+		fi
+	elif [[ "$is_offline" == "true" ]]; then
+		echo "ref=offline"
+		echo "reconcile=true"
+	else
+		echo "ref=none"
+	fi
+
+	return 0
+}
+
 # Main execution
 main() {
 	parse_args "$@"
@@ -706,134 +879,38 @@ main() {
 
 	# --- Allocate the ID(s) first (the critical atomic step) ---
 
-	local first_id=""
-	local is_offline="false"
+	local _alloc_first_id="" _alloc_is_offline=""
+	local alloc_output alloc_rc=0
+	alloc_output=$(_main_resolve_allocation) || alloc_rc=$?
 
-	if [[ "$OFFLINE_MODE" == "false" ]]; then
-		if [[ "$DRY_RUN" == "true" ]]; then
-			local current
-			current=$(read_remote_counter "$REPO_PATH" 2>/dev/null || read_local_counter "$REPO_PATH" 2>/dev/null || echo "?")
-			if [[ "$current" =~ ^[0-9]+$ ]]; then
-				log_info "Would allocate t${current}..t$((current + ALLOC_COUNT - 1)) (counter at ${current})"
-			else
-				log_info "Would allocate task ID (counter unreadable: ${current})"
-			fi
-			echo "task_id=tDRY_RUN"
-			echo "ref=DRY_RUN"
-			return 0
-		fi
-
-		if first_id=$(allocate_online "$REPO_PATH" "$ALLOC_COUNT"); then
-			log_success "Allocated task ID: t${first_id}"
-		else
-			log_warn "Online allocation failed, falling back to offline mode"
-			is_offline="true"
-		fi
-	else
-		is_offline="true"
+	# Dry-run paths print directly and return early
+	if echo "$alloc_output" | grep -q "^task_id=tDRY_RUN"; then
+		echo "$alloc_output"
+		return $alloc_rc
 	fi
 
-	if [[ "$is_offline" == "true" ]]; then
-		if [[ "$DRY_RUN" == "true" ]]; then
-			log_info "Would allocate task ID in offline mode"
-			echo "task_id=tDRY_RUN"
-			echo "ref=offline"
-			return 2
-		fi
-
-		if ! first_id=$(allocate_offline "$REPO_PATH" "$ALLOC_COUNT"); then
-			log_error "Offline allocation failed"
-			return 1
-		fi
+	if [[ $alloc_rc -ne 0 ]]; then
+		return $alloc_rc
 	fi
+
+	# Parse allocation results
+	eval "$(echo "$alloc_output" | grep -E '^_alloc_(first_id|is_offline)=')"
+	local first_id="$_alloc_first_id"
+	local is_offline="$_alloc_is_offline"
 
 	# --- Create issues AFTER IDs are secured (optional, non-blocking) ---
-	# For batch allocations (--count N), create one issue per allocated ID.
 
-	local ref_prefix=""
-	local last_id=$((first_id + ALLOC_COUNT - 1))
-	# Associative-style parallel arrays: issue_nums[0..N-1] for each allocated ID
-	local -a issue_nums=()
-	local has_any_issue=false
-	local first_issue_num="" # Track first successful issue number (not relying on issue_nums[0])
-
+	local _issue_ref_prefix="" _issue_has_any="" _issue_first_num="" _issue_nums_csv=""
 	if [[ "$NO_ISSUE" == "false" ]] && [[ "$is_offline" == "false" ]] && [[ "$platform" != "unknown" ]]; then
-		if check_cli "$platform"; then
-			case "$platform" in
-			github) ref_prefix="GH" ;;
-			gitlab) ref_prefix="GL" ;;
-			esac
-
-			# Guard: skip issue creation if TASK_TITLE is empty (batch without --title)
-			if [[ -z "$TASK_TITLE" ]]; then
-				log_warn "No --title provided — skipping issue creation for batch allocation"
-			else
-				local i
-				for ((i = first_id; i <= last_id; i++)); do
-					local issue_title="t${i}: ${TASK_TITLE}"
-					local issue_num=""
-
-					case "$platform" in
-					github)
-						issue_num=$(create_github_issue "$issue_title" "$TASK_DESCRIPTION" "$TASK_LABELS" "$REPO_PATH") || true
-						;;
-					gitlab)
-						issue_num=$(create_gitlab_issue "$issue_title" "$TASK_DESCRIPTION" "$TASK_LABELS" "$REPO_PATH") || true
-						;;
-					esac
-
-					if [[ -n "$issue_num" ]]; then
-						log_success "Created issue: ${ref_prefix}#${issue_num}"
-						issue_nums+=("$issue_num")
-						has_any_issue=true
-						if [[ -z "$first_issue_num" ]]; then
-							first_issue_num="$issue_num"
-						fi
-					else
-						log_warn "Issue creation failed for t${i} (non-fatal — ID is secured)"
-						issue_nums+=("")
-					fi
-				done
-			fi
-		else
-			log_warn "CLI for $platform not found — skipping issue creation"
-		fi
+		local issue_output
+		issue_output=$(_main_create_issues "$first_id" "$platform")
+		eval "$(echo "$issue_output" | grep -E '^_issue_(ref_prefix|has_any|first_num|nums_csv)=')"
 	fi
 
 	# --- Output machine-readable results ---
 
-	if [[ "$ALLOC_COUNT" -eq 1 ]]; then
-		echo "task_id=t${first_id}"
-	else
-		echo "task_id=t${first_id}"
-		echo "task_id_last=t${last_id}"
-		echo "task_count=${ALLOC_COUNT}"
-	fi
-
-	if [[ "$has_any_issue" == "true" ]] && [[ -n "$first_issue_num" ]]; then
-		# Output ref for first successful issue (primary — backwards compatible)
-		echo "ref=${ref_prefix}#${first_issue_num}"
-		local remote_url
-		remote_url=$(cd "$REPO_PATH" && git remote get-url "$REMOTE_NAME" 2>/dev/null | sed 's/\.git$//' || echo "")
-		if [[ -n "$remote_url" ]]; then
-			echo "issue_url=${remote_url}/issues/${first_issue_num}"
-		fi
-		# Output refs for all issues in batch (new — for callers that parse all output)
-		if [[ "$ALLOC_COUNT" -gt 1 ]]; then
-			local j
-			for ((j = 0; j < ALLOC_COUNT; j++)); do
-				local tid=$((first_id + j))
-				if [[ -n "${issue_nums[$j]}" ]]; then
-					echo "ref_t${tid}=${ref_prefix}#${issue_nums[$j]}"
-				fi
-			done
-		fi
-	elif [[ "$is_offline" == "true" ]]; then
-		echo "ref=offline"
-		echo "reconcile=true"
-	else
-		echo "ref=none"
-	fi
+	_main_output_results "$first_id" "$is_offline" \
+		"$_issue_ref_prefix" "$_issue_has_any" "$_issue_first_num" "$_issue_nums_csv"
 
 	if [[ "$is_offline" == "true" ]]; then
 		return 2
