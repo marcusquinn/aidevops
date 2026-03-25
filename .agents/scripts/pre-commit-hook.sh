@@ -286,6 +286,84 @@ validate_todo_completions() {
 }
 
 # t1003: Validate that parent tasks with open subtasks are not marked complete
+
+# Check for open subtasks using explicit ID pattern (e.g., t123.1, t123.2)
+# Arguments: $1=staged_todo, $2=task_id
+# Output: count of open subtasks (0 if none)
+_check_explicit_subtasks() {
+	local staged_todo="$1"
+	local task_id="$2"
+
+	local explicit_subtasks
+	explicit_subtasks=$(echo "$staged_todo" | grep -E "^[[:space:]]*- \[ \] ${task_id}\.[0-9]+( |$)" || true)
+
+	if [[ -n "$explicit_subtasks" ]]; then
+		echo "$explicit_subtasks" | wc -l | tr -d ' '
+		return 0
+	fi
+
+	echo "0"
+	return 0
+}
+
+# Check for open subtasks using indentation hierarchy
+# Arguments: $1=staged_todo, $2=task_id
+# Output: count of open subtasks (0 if none)
+_check_indentation_subtasks() {
+	local staged_todo="$1"
+	local task_id="$2"
+
+	local task_line
+	task_line=$(echo "$staged_todo" | grep -E "^[[:space:]]*- \[x\] ${task_id}( |$)" | head -1 || true)
+	if [[ -z "$task_line" ]]; then
+		echo "0"
+		return 0
+	fi
+
+	local task_indent
+	task_indent=$(echo "$task_line" | sed -E 's/^([[:space:]]*).*/\1/' | wc -c)
+	task_indent=$((task_indent - 1))
+
+	local open_subtasks
+	open_subtasks=$(echo "$staged_todo" | awk -v tid="$task_id" -v tindent="$task_indent" '
+		BEGIN { found=0 }
+		/- \[x\] '"$task_id"'( |$)/ { found=1; next }
+		found && /^[[:space:]]*- \[/ {
+			match($0, /^[[:space:]]*/);
+			line_indent = RLENGTH;
+			if (line_indent > tindent) {
+				if ($0 ~ /- \[ \]/) { print $0 }
+			} else { found=0 }
+		}
+		found && /^[[:space:]]*$/ { next }
+		found && !/^[[:space:]]*- / && !/^[[:space:]]*$/ { found=0 }
+	')
+
+	if [[ -n "$open_subtasks" ]]; then
+		echo "$open_subtasks" | wc -l | tr -d ' '
+		return 0
+	fi
+
+	echo "0"
+	return 0
+}
+
+# Report parent-subtask blocking failures
+# Arguments: failed_tasks array passed via positional args
+_report_parent_subtask_failures() {
+	print_error "Parent task completion check FAILED"
+	print_error ""
+	print_error "The following parent tasks were marked [x] with open subtasks:"
+	for task in "$@"; do
+		print_error "  - $task"
+	done
+	print_error ""
+	print_error "Parent tasks should only be completed when ALL subtasks are done."
+	print_error ""
+	print_info "To fix: Complete all subtasks first, then retry commit"
+	return 0
+}
+
 validate_parent_subtask_blocking() {
 	# Only check if TODO.md is staged
 	if ! git diff --cached --name-only | grep -q '^TODO\.md$'; then
@@ -334,62 +412,24 @@ validate_parent_subtask_blocking() {
 		fi
 
 		# Check for explicit subtask IDs (e.g., t123.1, t123.2 are children of t123)
-		local explicit_subtasks
-		explicit_subtasks=$(echo "$staged_todo" | grep -E "^[[:space:]]*- \[ \] ${task_id}\.[0-9]+( |$)" || true)
-
-		if [[ -n "$explicit_subtasks" ]]; then
-			local open_count
-			open_count=$(echo "$explicit_subtasks" | wc -l | tr -d ' ')
+		local open_count
+		open_count=$(_check_explicit_subtasks "$staged_todo" "$task_id")
+		if [[ "$open_count" -gt 0 ]]; then
 			failed_tasks+=("$task_id (has $open_count open subtask(s) by ID)")
 			((++fail_count))
 			continue
 		fi
 
 		# Check for indentation-based subtasks
-		local task_line
-		task_line=$(echo "$staged_todo" | grep -E "^[[:space:]]*- \[x\] ${task_id}( |$)" | head -1 || true)
-		if [[ -z "$task_line" ]]; then
-			continue
-		fi
-
-		local task_indent
-		task_indent=$(echo "$task_line" | sed -E 's/^([[:space:]]*).*/\1/' | wc -c)
-		task_indent=$((task_indent - 1))
-
-		local open_subtasks
-		open_subtasks=$(echo "$staged_todo" | awk -v tid="$task_id" -v tindent="$task_indent" '
-			BEGIN { found=0 }
-			/- \[x\] '"$task_id"'( |$)/ { found=1; next }
-			found && /^[[:space:]]*- \[/ {
-				match($0, /^[[:space:]]*/);
-				line_indent = RLENGTH;
-				if (line_indent > tindent) {
-					if ($0 ~ /- \[ \]/) { print $0 }
-				} else { found=0 }
-			}
-			found && /^[[:space:]]*$/ { next }
-			found && !/^[[:space:]]*- / && !/^[[:space:]]*$/ { found=0 }
-		')
-
-		if [[ -n "$open_subtasks" ]]; then
-			local open_count
-			open_count=$(echo "$open_subtasks" | wc -l | tr -d ' ')
+		open_count=$(_check_indentation_subtasks "$staged_todo" "$task_id")
+		if [[ "$open_count" -gt 0 ]]; then
 			failed_tasks+=("$task_id (has $open_count open subtask(s) by indentation)")
 			((++fail_count))
 		fi
 	done <<<"$newly_completed"
 
 	if [[ "$fail_count" -gt 0 ]]; then
-		print_error "Parent task completion check FAILED"
-		print_error ""
-		print_error "The following parent tasks were marked [x] with open subtasks:"
-		for task in "${failed_tasks[@]}"; do
-			print_error "  - $task"
-		done
-		print_error ""
-		print_error "Parent tasks should only be completed when ALL subtasks are done."
-		print_error ""
-		print_info "To fix: Complete all subtasks first, then retry commit"
+		_report_parent_subtask_failures "${failed_tasks[@]}"
 		return 1
 	fi
 
@@ -398,55 +438,73 @@ validate_parent_subtask_blocking() {
 
 # t1039: Validate that new files in repo root are in the allowlist
 # Prevents workers from committing ephemeral artifacts (TEST-REPORT.md, VERIFY-*.md, etc.)
-validate_repo_root_files() {
-	print_info "Validating repo root files (allowlist check)..."
 
-	# Allowlist of permitted root-level files
-	local -a allowlist=(
+# Populate the ROOT_FILE_ALLOWLIST array with permitted root-level filenames.
+# Call once, then reference ${ROOT_FILE_ALLOWLIST[@]} in checks.
+_init_root_file_allowlist() {
+	ROOT_FILE_ALLOWLIST=(
 		# Documentation
-		"README.md"
-		"TODO.md"
-		"AGENTS.md"
-		"AGENT.md"
-		"CLAUDE.md"
-		"GEMINI.md"
-		"CHANGELOG.md"
-		"LICENSE"
-		"CODE_OF_CONDUCT.md"
-		"CONTRIBUTING.md"
-		"SECURITY.md"
-		"TERMS.md"
-		"MODELS.md"
-		"VERSION"
+		"README.md" "TODO.md" "AGENTS.md" "AGENT.md" "CLAUDE.md" "GEMINI.md"
+		"CHANGELOG.md" "LICENSE" "CODE_OF_CONDUCT.md" "CONTRIBUTING.md"
+		"SECURITY.md" "TERMS.md" "MODELS.md" "VERSION"
 		# Config files (dotfiles)
-		".gitignore"
-		".codacy.yml"
-		".codefactor.yml"
-		".coderabbit.yaml"
-		".markdownlint-cli2.jsonc"
-		".markdownlint.json"
-		".markdownlintignore"
-		".qlty/qlty.toml"
-		".qlty.toml"
-		".qltyignore"
-		".repomixignore"
-		".secretlintignore"
-		".secretlintrc.json"
+		".gitignore" ".codacy.yml" ".codefactor.yml" ".coderabbit.yaml"
+		".markdownlint-cli2.jsonc" ".markdownlint.json" ".markdownlintignore"
+		".qlty/qlty.toml" ".qlty.toml" ".qltyignore" ".repomixignore"
+		".secretlintignore" ".secretlintrc.json"
 		# Build/package files
-		"package.json"
-		"bun.lock"
-		"requirements.txt"
-		"requirements-lock.txt"
+		"package.json" "bun.lock" "requirements.txt" "requirements-lock.txt"
 		# Scripts
-		"setup.sh"
-		"aidevops.sh"
+		"setup.sh" "aidevops.sh"
 		# Tool configs
-		"sonar-project.properties"
-		"repomix.config.json"
-		"repomix-instruction.md"
+		"sonar-project.properties" "repomix.config.json" "repomix-instruction.md"
 		# Test scripts (temporary - should be moved to .agents/scripts/)
 		"test-proof-log-final.sh"
 	)
+	return 0
+}
+
+# Check if a filename is in the root file allowlist.
+# Arguments: $1=filename
+# Returns: 0 if allowed, 1 if not
+_is_root_file_allowed() {
+	local filename="$1"
+	local allowed_file
+
+	for allowed_file in "${ROOT_FILE_ALLOWLIST[@]}"; do
+		if [[ "$filename" == "$allowed_file" ]]; then
+			return 0
+		fi
+	done
+	return 1
+}
+
+# Report root file allowlist violations with remediation guidance.
+# Arguments: rejected filenames passed as positional args
+_report_root_file_violations() {
+	print_error "Repo root file validation FAILED"
+	print_error ""
+	print_error "The following new files in repo root are not allowlisted:"
+	for file in "$@"; do
+		print_error "  - $file"
+	done
+	print_error ""
+	print_error "Ephemeral artifacts (reports, verification files, etc.) should NOT"
+	print_error "be committed to the repo root. Move them to an appropriate subdirectory:"
+	print_error "  - Test reports → .agents/scripts/ or tests/"
+	print_error "  - Verification files → .agents/scripts/ or docs/"
+	print_error "  - Temporary files → should not be committed at all"
+	print_error ""
+	print_error "If this file is a legitimate new root-level file, add it to the"
+	print_error "allowlist in .agents/scripts/pre-commit-hook.sh (_init_root_file_allowlist)"
+	print_error ""
+	return 0
+}
+
+validate_repo_root_files() {
+	print_info "Validating repo root files (allowlist check)..."
+
+	_init_root_file_allowlist
 
 	# Get newly added root-level files (not in subdirectories)
 	local new_root_files
@@ -464,38 +522,14 @@ validate_repo_root_files() {
 			continue
 		fi
 
-		# Check if file is in allowlist
-		local allowed=false
-		for allowed_file in "${allowlist[@]}"; do
-			if [[ "$file" == "$allowed_file" ]]; then
-				allowed=true
-				break
-			fi
-		done
-
-		if [[ "$allowed" == "false" ]]; then
+		if ! _is_root_file_allowed "$file"; then
 			rejected_files+=("$file")
 			((++violations))
 		fi
 	done <<<"$new_root_files"
 
 	if [[ "$violations" -gt 0 ]]; then
-		print_error "Repo root file validation FAILED"
-		print_error ""
-		print_error "The following new files in repo root are not allowlisted:"
-		for file in "${rejected_files[@]}"; do
-			print_error "  - $file"
-		done
-		print_error ""
-		print_error "Ephemeral artifacts (reports, verification files, etc.) should NOT"
-		print_error "be committed to the repo root. Move them to an appropriate subdirectory:"
-		print_error "  - Test reports → .agents/scripts/ or tests/"
-		print_error "  - Verification files → .agents/scripts/ or docs/"
-		print_error "  - Temporary files → should not be committed at all"
-		print_error ""
-		print_error "If this file is a legitimate new root-level file, add it to the"
-		print_error "allowlist in .agents/scripts/pre-commit-hook.sh (validate_repo_root_files)"
-		print_error ""
+		_report_root_file_violations "${rejected_files[@]}"
 		return 1
 	fi
 
