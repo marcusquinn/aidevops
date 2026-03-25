@@ -2,26 +2,9 @@
 
 Class diagrams model object-oriented structures. ER diagrams model database schemas and data relationships.
 
----
-
 # Class Diagrams
 
-## Basic Syntax
-
-```mermaid
-classDiagram
-    class Animal {
-        +String name
-        +int age
-        +makeSound()
-    }
-```
-
----
-
 ## Class Definition
-
-### Attributes and Methods
 
 ```mermaid
 classDiagram
@@ -57,11 +40,7 @@ classDiagram
     }
 ```
 
----
-
 ## Relationships
-
-### Relationship Types
 
 | Syntax | Relationship |
 |--------|--------------|
@@ -102,8 +81,6 @@ classDiagram
 | `n` | Specific number |
 | `0..n` | Zero to n |
 
----
-
 ## Annotations
 
 ```mermaid
@@ -113,7 +90,6 @@ classDiagram
         +find(id)
         +save(entity)
     }
-
     class OrderStatus {
         <<enumeration>>
         PENDING
@@ -121,19 +97,15 @@ classDiagram
         SHIPPED
         DELIVERED
     }
-
     class UserService {
         <<service>>
         +createUser()
     }
-
     class BaseEntity {
         <<abstract>>
         +id
     }
 ```
-
----
 
 ## Generic Types
 
@@ -144,15 +116,11 @@ classDiagram
         +findAll() List~T~
         +save(entity: T) void
     }
-
     class UserRepository {
         +findByEmail(email) User
     }
-
     Repository~User~ <|-- UserRepository
 ```
-
----
 
 ## Namespaces
 
@@ -163,42 +131,30 @@ classDiagram
         class Order
         class Product
     }
-
     namespace Infrastructure {
         class UserRepository
         class OrderRepository
     }
-
     User "1" --> "*" Order
     UserRepository ..|> IUserRepository
 ```
 
----
-
-## Notes
+## Notes & Styling
 
 ```mermaid
 classDiagram
     class Order
     note for Order "Aggregate root for order management"
-
     class OrderItem
     note for OrderItem "Value object - immutable"
 ```
-
----
-
-## Styling
 
 ```mermaid
 classDiagram
     class Important
     class Normal
-
     style Important fill:#f9f,stroke:#333,stroke-width:4px
 ```
-
----
 
 ## Example: Domain Model
 
@@ -214,7 +170,6 @@ classDiagram
         +submit()
         +cancel()
     }
-
     class OrderItem {
         +OrderItemId id
         +ProductId productId
@@ -222,14 +177,12 @@ classDiagram
         +Money unitPrice
         +getSubtotal() Money
     }
-
     class Customer {
         +CustomerId id
         +Email email
         +Name name
         +getOrders() Order[]
     }
-
     class OrderStatus {
         <<enumeration>>
         DRAFT
@@ -239,7 +192,6 @@ classDiagram
         DELIVERED
         CANCELLED
     }
-
     class Money {
         <<value object>>
         +Decimal amount
@@ -247,7 +199,6 @@ classDiagram
         +add(other) Money
         +subtract(other) Money
     }
-
     Customer "1" --> "*" Order : places
     Order "1" *-- "1..*" OrderItem : contains
     Order --> OrderStatus
@@ -255,19 +206,7 @@ classDiagram
     OrderItem --> Money : unitPrice
 ```
 
----
-
 # Entity Relationship Diagrams
-
-## Basic Syntax
-
-```mermaid
-erDiagram
-    CUSTOMER ||--o{ ORDER : places
-    ORDER ||--|{ LINE_ITEM : contains
-```
-
----
 
 ## Relationship Notation (Crow's Foot)
 
@@ -280,12 +219,7 @@ erDiagram
 | `}o` | `o{` | Zero or more |
 | `}\|` | `\|{` | One or more |
 
-### Line Types
-
-| Type | Syntax | Meaning |
-|------|--------|---------|
-| Identifying | `--` | Strong relationship |
-| Non-identifying | `..` | Weak relationship |
+Line types: `--` (identifying/strong), `..` (non-identifying/weak).
 
 ### Common Patterns
 
@@ -297,50 +231,7 @@ erDiagram
     G }|--|{ H : "many to many (required)"
 ```
 
----
-
 ## Entity Attributes
-
-### Basic Attributes
-
-```mermaid
-erDiagram
-    USER {
-        uuid id
-        string email
-        string name
-        timestamp created_at
-    }
-```
-
-### Attribute Modifiers
-
-| Modifier | Meaning |
-|----------|---------|
-| `PK` | Primary Key |
-| `FK` | Foreign Key |
-| `UK` | Unique Key |
-
-```mermaid
-erDiagram
-    USER {
-        uuid id PK
-        string email UK
-        string name
-        timestamp created_at
-    }
-
-    ORDER {
-        uuid id PK
-        uuid user_id FK
-        decimal total
-        string status
-    }
-
-    USER ||--o{ ORDER : places
-```
-
-### Attribute Comments
 
 ```mermaid
 erDiagram
@@ -350,21 +241,20 @@ erDiagram
         string password_hash "BCrypt hashed"
         timestamp created_at "Auto-generated"
     }
+    ORDER {
+        uuid id PK
+        uuid user_id FK
+        decimal total
+        string status
+    }
+    USER ||--o{ ORDER : places
 ```
 
----
-
-## Relationship Labels
-
-```mermaid
-erDiagram
-    CUSTOMER ||--o{ ORDER : "places"
-    ORDER ||--|{ LINE_ITEM : "contains"
-    PRODUCT ||--o{ LINE_ITEM : "appears in"
-    EMPLOYEE ||--o{ ORDER : "processes"
-```
-
----
+| Modifier | Meaning |
+|----------|---------|
+| `PK` | Primary Key |
+| `FK` | Foreign Key |
+| `UK` | Unique Key |
 
 ## Example: E-Commerce Schema
 
@@ -381,91 +271,16 @@ erDiagram
     PRODUCT }o--|| CATEGORY : "belongs to"
     CART ||--|{ CART_ITEM : contains
 
-    USER {
-        uuid id PK
-        string email UK
-        string password_hash
-        string name
-        boolean is_active
-        timestamp created_at
-        timestamp updated_at
-    }
-
-    ADDRESS {
-        uuid id PK
-        uuid user_id FK
-        string street
-        string city
-        string state
-        string postal_code
-        string country
-        boolean is_default
-    }
-
-    PRODUCT {
-        uuid id PK
-        uuid category_id FK
-        string sku UK
-        string name
-        text description
-        decimal price
-        integer stock_quantity
-        boolean is_active
-    }
-
-    CATEGORY {
-        uuid id PK
-        uuid parent_id FK
-        string name
-        string slug UK
-    }
-
-    ORDER {
-        uuid id PK
-        uuid user_id FK
-        uuid shipping_address_id FK
-        string status
-        decimal subtotal
-        decimal tax
-        decimal shipping_cost
-        decimal total
-        timestamp created_at
-    }
-
-    ORDER_ITEM {
-        uuid id PK
-        uuid order_id FK
-        uuid product_id FK
-        integer quantity
-        decimal unit_price
-        decimal subtotal
-    }
-
-    CART {
-        uuid id PK
-        uuid user_id FK UK
-        timestamp updated_at
-    }
-
-    CART_ITEM {
-        uuid id PK
-        uuid cart_id FK
-        uuid product_id FK
-        integer quantity
-    }
-
-    SHIPPING {
-        uuid id PK
-        uuid order_id FK UK
-        string carrier
-        string tracking_number
-        string status
-        timestamp shipped_at
-        timestamp delivered_at
-    }
+    USER { uuid id PK; string email UK; string password_hash; string name; boolean is_active; timestamp created_at; timestamp updated_at }
+    ADDRESS { uuid id PK; uuid user_id FK; string street; string city; string state; string postal_code; string country; boolean is_default }
+    PRODUCT { uuid id PK; uuid category_id FK; string sku UK; string name; text description; decimal price; integer stock_quantity; boolean is_active }
+    CATEGORY { uuid id PK; uuid parent_id FK; string name; string slug UK }
+    ORDER { uuid id PK; uuid user_id FK; uuid shipping_address_id FK; string status; decimal subtotal; decimal tax; decimal shipping_cost; decimal total; timestamp created_at }
+    ORDER_ITEM { uuid id PK; uuid order_id FK; uuid product_id FK; integer quantity; decimal unit_price; decimal subtotal }
+    CART { uuid id PK; uuid user_id FK UK; timestamp updated_at }
+    CART_ITEM { uuid id PK; uuid cart_id FK; uuid product_id FK; integer quantity }
+    SHIPPING { uuid id PK; uuid order_id FK UK; string carrier; string tracking_number; string status; timestamp shipped_at; timestamp delivered_at }
 ```
-
----
 
 ## Example: Multi-Tenant SaaS
 
@@ -480,54 +295,11 @@ erDiagram
     PROJECT ||--|{ TASK : contains
     USER ||--o{ TASK : "assigned to"
 
-    ORGANIZATION {
-        uuid id PK
-        string name
-        string slug UK
-        string plan
-        timestamp created_at
-    }
-
-    USER {
-        uuid id PK
-        string email UK
-        string name
-        timestamp created_at
-    }
-
-    USER_ORG {
-        uuid id PK
-        uuid user_id FK
-        uuid org_id FK
-        string role
-    }
-
-    TEAM {
-        uuid id PK
-        uuid org_id FK
-        string name
-    }
-
-    TEAM_MEMBER {
-        uuid id PK
-        uuid team_id FK
-        uuid user_id FK
-        string role
-    }
-
-    PROJECT {
-        uuid id PK
-        uuid org_id FK
-        string name
-        string status
-    }
-
-    TASK {
-        uuid id PK
-        uuid project_id FK
-        uuid assignee_id FK
-        string title
-        string status
-        timestamp due_date
-    }
+    ORGANIZATION { uuid id PK; string name; string slug UK; string plan; timestamp created_at }
+    USER { uuid id PK; string email UK; string name; timestamp created_at }
+    USER_ORG { uuid id PK; uuid user_id FK; uuid org_id FK; string role }
+    TEAM { uuid id PK; uuid org_id FK; string name }
+    TEAM_MEMBER { uuid id PK; uuid team_id FK; uuid user_id FK; string role }
+    PROJECT { uuid id PK; uuid org_id FK; string name; string status }
+    TASK { uuid id PK; uuid project_id FK; uuid assignee_id FK; string title; string status; timestamp due_date }
 ```
