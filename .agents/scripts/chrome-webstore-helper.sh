@@ -360,37 +360,39 @@ cmd_status() {
 }
 
 # ------------------------------------------------------------------------------
-# PUBLISH COMMAND
+# PUBLISH COMMAND - HELPERS
 # ------------------------------------------------------------------------------
 
-cmd_publish() {
-	local manifest_path=""
-	local build_cmd=""
-	local zip_cmd=""
-	local output_path=""
-	local dry_run=false
+# Parse cmd_publish arguments.
+# Outputs: sets _pub_manifest, _pub_build_cmd, _pub_zip_cmd,
+#          _pub_output_path, _pub_dry_run in caller scope via eval.
+_publish_parse_args() {
+	_pub_manifest=""
+	_pub_build_cmd=""
+	_pub_zip_cmd=""
+	_pub_output_path=""
+	_pub_dry_run=false
 
-	# Parse arguments
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--manifest)
-			manifest_path="$2"
+			_pub_manifest="$2"
 			shift 2
 			;;
 		--build)
-			build_cmd="$2"
+			_pub_build_cmd="$2"
 			shift 2
 			;;
 		--zip)
-			zip_cmd="$2"
+			_pub_zip_cmd="$2"
 			shift 2
 			;;
 		--output)
-			output_path="$2"
+			_pub_output_path="$2"
 			shift 2
 			;;
 		--dry-run)
-			dry_run=true
+			_pub_dry_run=true
 			shift
 			;;
 		*)
@@ -399,6 +401,15 @@ cmd_publish() {
 			;;
 		esac
 	done
+	return 0
+}
+
+# Validate manifest, load credentials, read local version, fetch published
+# version, and compare. Sets _pub_local_version, _pub_access_token,
+# _pub_published_version in caller scope.
+# Returns 0 to proceed, 2 if versions match (no-op), 1 on error.
+_publish_check_versions() {
+	local manifest_path="$1"
 
 	if [[ -z "$manifest_path" ]]; then
 		print_error "$ERROR_MANIFEST_REQUIRED"
@@ -414,43 +425,43 @@ cmd_publish() {
 	load_credentials || return 1
 
 	# Read local version
-	local local_version
-	local_version=$(jq -r '.version // empty' "$manifest_path")
-
-	if [[ -z "$local_version" ]]; then
+	_pub_local_version=$(jq -r '.version // empty' "$manifest_path")
+	if [[ -z "$_pub_local_version" ]]; then
 		print_error "Failed to read version from manifest"
 		return 1
 	fi
-
-	print_info "Local version: $local_version"
+	print_info "Local version: $_pub_local_version"
 
 	# Exchange refresh token for access token
-	local access_token
-	access_token=$(exchange_token "$CWS_CLIENT_ID" "$CWS_CLIENT_SECRET" "$CWS_REFRESH_TOKEN") || return 1
+	_pub_access_token=$(exchange_token "$CWS_CLIENT_ID" "$CWS_CLIENT_SECRET" "$CWS_REFRESH_TOKEN") || return 1
 
 	# Fetch current published version
 	local status_url="${CWS_API_BASE}/v2/publishers/${CWS_PUBLISHER_ID}/items/${CWS_EXTENSION_ID}:fetchStatus"
 	local response
 	response=$(curl -s -X GET "$status_url" \
-		-H "Authorization: Bearer $access_token")
+		-H "Authorization: Bearer $_pub_access_token")
 
-	local published_version
-	published_version=$(echo "$response" | jq -r '.publishedItemRevisionStatus.distributionChannels[0].crxVersion // "unknown"')
+	_pub_published_version=$(echo "$response" | jq -r '.publishedItemRevisionStatus.distributionChannels[0].crxVersion // "unknown"')
+	print_info "Published version: $_pub_published_version"
 
-	print_info "Published version: $published_version"
-
-	# Compare versions
-	if [[ "$local_version" == "$published_version" ]]; then
+	# Compare versions — return 2 signals "no-op, already up to date"
+	if [[ "$_pub_local_version" == "$_pub_published_version" ]]; then
 		print_info "Local version matches published version. Skipping publish (no-op)."
-		return 0
+		return 2
 	fi
 
 	print_info "Version changed. Proceeding with publish..."
+	return 0
+}
 
-	if [[ "$dry_run" == true ]]; then
-		print_info "[DRY RUN] Would publish version $local_version"
-		return 0
-	fi
+# Run optional build command then create the zip package.
+# Arguments: build_cmd zip_cmd output_path manifest_path
+# Sets _pub_zip_file in caller scope.
+_publish_build_and_zip() {
+	local build_cmd="$1"
+	local zip_cmd="$2"
+	local output_path="$3"
+	local manifest_path="$4"
 
 	# Build extension if build command provided
 	if [[ -n "$build_cmd" ]]; then
@@ -465,8 +476,7 @@ cmd_publish() {
 		fi
 	fi
 
-	# Zip extension
-	local zip_file="${output_path:-extension.zip}"
+	_pub_zip_file="${output_path:-extension.zip}"
 
 	if [[ -n "$zip_cmd" ]]; then
 		print_info "Running zip command: $zip_cmd"
@@ -483,20 +493,28 @@ cmd_publish() {
 		local manifest_dir
 		manifest_dir=$(dirname "$manifest_path")
 		print_info "Creating zip from $manifest_dir"
-		if ! (cd "$manifest_dir" && zip -r "$zip_file" .); then
+		if ! (cd "$manifest_dir" && zip -r "$_pub_zip_file" .); then
 			print_error "$ERROR_ZIP_FAILED"
 			return 1
 		fi
 	fi
 
-	if [[ ! -f "$zip_file" ]]; then
-		print_error "Zip file not found: $zip_file"
+	if [[ ! -f "$_pub_zip_file" ]]; then
+		print_error "Zip file not found: $_pub_zip_file"
 		return 1
 	fi
 
+	return 0
+}
+
+# Upload the zip to Chrome Web Store and trigger publish.
+# Arguments: access_token zip_file
+_publish_upload_and_publish() {
+	local access_token="$1"
+	local zip_file="$2"
+
 	print_info "Uploading extension..."
 
-	# Upload extension
 	local upload_url="${CWS_API_BASE}/upload/v2/publishers/${CWS_PUBLISHER_ID}/items/${CWS_EXTENSION_ID}:upload"
 	local upload_response
 	upload_response=$(curl -s -X POST "$upload_url" \
@@ -515,7 +533,6 @@ cmd_publish() {
 
 	print_success "$SUCCESS_UPLOAD_COMPLETE"
 
-	# Publish extension
 	print_info "Publishing extension..."
 
 	local publish_url="${CWS_API_BASE}/v2/publishers/${CWS_PUBLISHER_ID}/items/${CWS_EXTENSION_ID}:publish"
@@ -526,7 +543,6 @@ cmd_publish() {
 	local publish_state
 	publish_state=$(echo "$publish_response" | jq -r '.status // empty')
 
-	# Successful states
 	case "$publish_state" in
 	PENDING_REVIEW | PUBLISHED | PUBLISHED_TO_TESTERS | STAGED)
 		print_success "$SUCCESS_PUBLISH_COMPLETE"
@@ -539,6 +555,40 @@ cmd_publish() {
 		return 1
 		;;
 	esac
+}
+
+# ------------------------------------------------------------------------------
+# PUBLISH COMMAND
+# ------------------------------------------------------------------------------
+
+cmd_publish() {
+	# Parse arguments into _pub_* variables
+	_publish_parse_args "$@" || return 1
+
+	# Validate manifest, load credentials, compare versions
+	local version_check_rc
+	_publish_check_versions "$_pub_manifest"
+	version_check_rc=$?
+	if [[ "$version_check_rc" -eq 1 ]]; then
+		return 1
+	fi
+	if [[ "$version_check_rc" -eq 2 ]]; then
+		# Versions match — no-op
+		return 0
+	fi
+
+	if [[ "$_pub_dry_run" == true ]]; then
+		print_info "[DRY RUN] Would publish version $_pub_local_version"
+		return 0
+	fi
+
+	# Build and zip
+	_publish_build_and_zip "$_pub_build_cmd" "$_pub_zip_cmd" "$_pub_output_path" "$_pub_manifest" || return 1
+
+	# Upload and publish
+	_publish_upload_and_publish "$_pub_access_token" "$_pub_zip_file" || return 1
+
+	return 0
 }
 
 # ------------------------------------------------------------------------------
