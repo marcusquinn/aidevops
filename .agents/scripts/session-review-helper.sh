@@ -594,17 +594,10 @@ output_security_summary() {
 	return 0
 }
 
-# JSON output for security summary (programmatic use).
-# Arguments:
-#   $1 - session ID filter (optional)
-_security_summary_json() {
-	local session_filter
-	if ! session_filter=$(_sanitize_session_filter "${1:-}"); then
-		echo "Invalid session filter" >&2
-		return 1
-	fi
-
-	# Collect counts first (used by both posture calculation and JSON output)
+# Collect log file counts for JSON security summary.
+# Outputs key=value pairs for eval by the caller.
+# No arguments.
+_security_json_collect_counts() {
 	local audit_count=0 net_access=0 net_flagged=0 net_denied=0
 	local pg_total=0 pg_blocks=0 pg_warns=0 pg_sanitizes=0
 
@@ -619,7 +612,17 @@ _security_summary_json() {
 		pg_sanitizes=$(grep -c '"action":"SANITIZE"' "$PG_ATTEMPTS_LOG" 2>/dev/null || echo "0")
 	fi
 
-	# Audit chain status
+	printf 'audit_count=%s\nnet_access=%s\nnet_flagged=%s\nnet_denied=%s\n' \
+		"$audit_count" "$net_access" "$net_flagged" "$net_denied"
+	printf 'pg_total=%s\npg_blocks=%s\npg_warns=%s\npg_sanitizes=%s\n' \
+		"$pg_total" "$pg_blocks" "$pg_warns" "$pg_sanitizes"
+	return 0
+}
+
+# Check audit chain integrity for JSON security summary.
+# Outputs key=value pair for eval by the caller.
+# No arguments.
+_security_json_audit_chain() {
 	local chain_intact="null"
 	local audit_helper="${SCRIPT_DIR}/audit-log-helper.sh"
 	if [[ -x "$audit_helper" ]] && [[ -f "$AUDIT_LOG" ]] && [[ -s "$AUDIT_LOG" ]]; then
@@ -629,14 +632,20 @@ _security_summary_json() {
 			chain_intact="false"
 		fi
 	fi
+	printf 'chain_intact=%s\n' "$chain_intact"
+	return 0
+}
 
-	# Compute posture using pre-computed counts (avoids redundant file reads)
-	local posture
-	posture=$(_security_posture "$net_denied" "$pg_blocks" "$pg_warns" "$net_flagged" "$chain_intact")
-
-	# Cost breakdown — query SQLite DB or JSONL for per-model cost data
+# Get cost breakdown for JSON security summary.
+# Queries SQLite DB first, falls back to JSONL metrics.
+# Arguments:
+#   $1 - session ID filter (optional)
+# Outputs key=value pairs for eval by the caller.
+_security_json_cost_breakdown() {
+	local session_filter="${1:-}"
 	local cost_json="[]"
 	local cost_total=0
+
 	if [[ -f "$OBS_DB" ]] && command -v sqlite3 &>/dev/null; then
 		local db_result
 		db_result=$(_security_cost_query_sqlite "json" "$session_filter" 2>/dev/null || echo "")
@@ -671,9 +680,23 @@ _security_summary_json() {
 		fi
 	fi
 
-	# Session context — query helper if available
+	# Output cost_json via a temp file to avoid eval injection on arbitrary JSON
+	local tmp_cost
+	tmp_cost=$(mktemp) || return 1
+	printf '%s' "$cost_json" >"$tmp_cost"
+	printf 'cost_json_file=%s\ncost_total=%s\n' "$tmp_cost" "$cost_total"
+	return 0
+}
+
+# Get session security context JSON for JSON security summary.
+# Arguments:
+#   $1 - session ID filter (optional)
+# Outputs the JSON string on stdout.
+_security_json_session_context() {
+	local session_filter="${1:-}"
 	local session_context_json='{"available":false}'
 	local session_helper="${SCRIPT_DIR}/session-security-helper.sh"
+
 	if [[ -x "$session_helper" ]]; then
 		local context_result
 		if [[ -n "$session_filter" ]]; then
@@ -684,10 +707,18 @@ _security_summary_json() {
 		session_context_json=$(printf '%s' "$context_result" | jq -ce --argjson available true '. + {available: $available}' 2>/dev/null || echo '{"available":false}')
 	fi
 
-	# Quarantine — query helper if available
+	printf '%s' "$session_context_json"
+	return 0
+}
+
+# Get quarantine status for JSON security summary.
+# Outputs key=value pairs for eval by the caller.
+# No arguments.
+_security_json_quarantine() {
 	local quarantine_available="false"
 	local quarantine_pending=0
 	local quarantine_helper="${SCRIPT_DIR}/quarantine-helper.sh"
+
 	if [[ -x "$quarantine_helper" ]]; then
 		quarantine_available="true"
 		local q_stats q_status
@@ -697,6 +728,53 @@ _security_summary_json() {
 			quarantine_pending="$q_status"
 		fi
 	fi
+
+	printf 'quarantine_available=%s\nquarantine_pending=%s\n' \
+		"$quarantine_available" "$quarantine_pending"
+	return 0
+}
+
+# JSON output for security summary (programmatic use).
+# Arguments:
+#   $1 - session ID filter (optional)
+_security_summary_json() {
+	local session_filter
+	if ! session_filter=$(_sanitize_session_filter "${1:-}"); then
+		echo "Invalid session filter" >&2
+		return 1
+	fi
+
+	# Collect log file counts
+	local audit_count=0 net_access=0 net_flagged=0 net_denied=0
+	local pg_total=0 pg_blocks=0 pg_warns=0 pg_sanitizes=0
+	eval "$(_security_json_collect_counts)"
+
+	# Audit chain integrity
+	local chain_intact="null"
+	eval "$(_security_json_audit_chain)"
+
+	# Compute posture using pre-computed counts (avoids redundant file reads)
+	local posture
+	posture=$(_security_posture "$net_denied" "$pg_blocks" "$pg_warns" "$net_flagged" "$chain_intact")
+
+	# Cost breakdown — query SQLite DB or JSONL for per-model cost data
+	local cost_json="[]"
+	local cost_total=0
+	local cost_json_file=""
+	eval "$(_security_json_cost_breakdown "$session_filter")"
+	if [[ -n "$cost_json_file" && -f "$cost_json_file" ]]; then
+		cost_json=$(cat "$cost_json_file")
+		rm -f "$cost_json_file"
+	fi
+
+	# Session context — query helper if available
+	local session_context_json
+	session_context_json=$(_security_json_session_context "$session_filter")
+
+	# Quarantine — query helper if available
+	local quarantine_available="false"
+	local quarantine_pending=0
+	eval "$(_security_json_quarantine)"
 
 	# Build JSON safely using jq to prevent injection via session_filter
 	local session_json="null"
