@@ -181,10 +181,8 @@ check_init_prerequisites() {
 	command -v docker >/dev/null 2>&1 || missing+=("docker")
 
 	# Try to auto-install mkcert if missing (GH#6415)
-	if ! command -v mkcert >/dev/null 2>&1; then
-		if ! ensure_mkcert; then
-			missing+=("mkcert")
-		fi
+	if ! command -v mkcert >/dev/null 2>&1 && ! ensure_mkcert; then
+		missing+=("mkcert")
 	fi
 
 	# dnsmasq: check brew installation or system-wide
@@ -777,11 +775,9 @@ generate_cert() {
 	local wildcard="*.${domain}"
 
 	# Ensure mkcert is available (auto-install if missing, GH#6415)
-	if ! command -v mkcert >/dev/null 2>&1; then
-		if ! ensure_mkcert; then
-			print_error "mkcert is required to generate SSL certificates"
-			return 1
-		fi
+	if ! command -v mkcert >/dev/null 2>&1 && ! ensure_mkcert; then
+		print_error "mkcert is required to generate SSL certificates"
+		return 1
 	fi
 
 	mkdir -p "$CERTS_DIR"
