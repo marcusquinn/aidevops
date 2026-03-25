@@ -186,9 +186,7 @@ Tested 2026-01-24, macOS ARM64 (Apple Silicon), headless, warm daemon. Median of
 | **Stagehand** | Unknown pages, natural language, self-healing | Slow | `stagehand-helper.sh setup` + API key |
 | **Anti-detect** | Bot evasion, multi-account, fingerprint rotation | Medium | `anti-detect-helper.sh setup` |
 
-## AI Page Understanding (Visual Verification)
-
-For AI agents to understand page state, prefer lightweight methods over screenshots:
+## AI Page Understanding
 
 | Method | Speed | Token Cost | Best For |
 |--------|-------|-----------|----------|
@@ -197,12 +195,12 @@ For AI agents to understand page state, prefer lightweight methods over screensh
 | **Element scan** | ~0.002s | ~20/element | Form filling, clicking |
 | **Screenshot** | ~0.05s | ~1K tokens (vision) | Visual debugging, regression, complex UIs |
 
-**Recommendation**: Use ARIA snapshot + element scan for automation. Add screenshots only when debugging or when visual layout matters (charts, drag-and-drop, image-heavy pages).
+Use ARIA snapshot + element scan for automation. Add screenshots only when debugging or when visual layout matters.
 
 ```javascript
 // Fast page understanding (no vision model needed)
-const aria = await page.locator('body').ariaSnapshot();  // Structured tree
-const text = await page.evaluate(() => document.body.innerText);  // Raw text
+const aria = await page.locator('body').ariaSnapshot();
+const text = await page.evaluate(() => document.body.innerText);
 const elements = await page.evaluate(() => {
   return [...document.querySelectorAll('input, select, button, a')].map(el => ({
     tag: el.tagName.toLowerCase(), type: el.type, name: el.name || el.id,
@@ -226,7 +224,7 @@ const elements = await page.evaluate(() => {
 | **Playwriter** | Multiple connected tabs | N/A | Shared browser session |
 | **Stagehand** | Multiple Stagehand instances | Slow (AI overhead per instance) | Full isolation |
 
-## Extension Support (Password Managers, etc.)
+## Extension Support
 
 | Tool | Load Extensions? | Interact with Extension UI? | Password Manager Autofill? |
 |------|-----------------|---------------------------|---------------------------|
@@ -237,72 +235,56 @@ const elements = await page.evaluate(() => {
 | **Crawl4AI** | No | No | No |
 | **Stagehand** | Possible (uses Playwright) | Untested | Untested |
 
-**Password manager reality**: Extensions load fine, but password managers need to be **unlocked** before autofill works. Options:
+Password managers need to be **unlocked** before autofill works:
 1. **Playwriter** - uses your already-unlocked browser (easiest)
 2. **Playwright persistent** - load extension + unlock via Bitwarden CLI (`bw unlock`)
 3. **dev-browser** - install extension in profile, unlock once (persists)
 
-## Custom Browser Engine Support (Brave, Edge, Chrome, Mullvad)
-
-Tools that use Playwright's bundled browsers can often be pointed at a different browser instead. This is useful for Brave's built-in Shields (ad/tracker blocking), Edge's enterprise features, Mullvad Browser's privacy hardening, or your existing Chrome profile.
+## Custom Browser Engine Support
 
 | Tool | Brave | Edge | Chrome | Mullvad | How |
 |------|-------|------|--------|---------|-----|
-| **Playwright** | Yes | Yes | Yes | Yes (Firefox) | `executablePath` in `launch()` or `launchPersistentContext()` |
-| **Playwriter** | Yes | Yes | Yes | Yes | Install extension in whichever browser you use |
-| **Stagehand** | Yes | Yes | Yes | Yes (Firefox) | `executablePath` in `browserOptions` (uses Playwright) |
-| **Crawl4AI** | Yes | Yes | Yes | Yes (Firefox) | `browser_path` in `BrowserConfig` with `browser_type="firefox"` |
-| **Camoufox** | No | No | No | Partial | Both are hardened Firefox; Camoufox preferred for automation |
+| **Playwright** | Yes | Yes | Yes | Yes (Firefox) | `executablePath` in `launch()` |
+| **Playwriter** | Yes | Yes | Yes | Yes | Install extension in your browser |
+| **Stagehand** | Yes | Yes | Yes | Yes (Firefox) | `executablePath` in `browserOptions` |
+| **Crawl4AI** | Yes | Yes | Yes | Yes (Firefox) | `browser_path` in `BrowserConfig` |
+| **Camoufox** | No | No | No | Partial | Both are hardened Firefox; Camoufox preferred |
 | **dev-browser** | Possible | Possible | Possible | No | Modify launch args in server config |
 | **playwright-cli** | No | No | No | No | Uses bundled Chromium only |
 | **agent-browser** | No | No | No | No | Uses bundled Chromium only |
 | **WaterCrawl** | No | No | No | No | Cloud API, no local browser |
 
-**Browser executable paths** (macOS):
+**Browser executable paths** (macOS / Linux / Windows):
 
 ```text
-Brave:   /Applications/Brave Browser.app/Contents/MacOS/Brave Browser
-Edge:    /Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge
-Chrome:  /Applications/Google Chrome.app/Contents/MacOS/Google Chrome
-Mullvad: /Applications/Mullvad Browser.app/Contents/MacOS/mullvadbrowser
+macOS:
+  Brave:   /Applications/Brave Browser.app/Contents/MacOS/Brave Browser
+  Edge:    /Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge
+  Chrome:  /Applications/Google Chrome.app/Contents/MacOS/Google Chrome
+  Mullvad: /Applications/Mullvad Browser.app/Contents/MacOS/mullvadbrowser
+
+Linux:
+  Brave: /usr/bin/brave-browser  |  Edge: /usr/bin/microsoft-edge
+  Chrome: /usr/bin/google-chrome  |  Mullvad: /usr/bin/mullvad-browser
+
+Windows:
+  Brave:   C:\Program Files\BraveSoftware\Brave-Browser\Application\brave.exe
+  Edge:    C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe
+  Chrome:  C:\Program Files\Google\Chrome\Application\chrome.exe
+  Mullvad: C:\Program Files\Mullvad Browser\Browser\mullvadbrowser.exe
 ```
-
-**Browser executable paths** (Linux):
-
-```text
-Brave:   /usr/bin/brave-browser
-Edge:    /usr/bin/microsoft-edge
-Chrome:  /usr/bin/google-chrome
-Mullvad: /usr/bin/mullvad-browser (or ~/.local/share/mullvad-browser/Browser/start-mullvad-browser)
-```
-
-**Browser executable paths** (Windows):
-
-```text
-Brave:   C:\Program Files\BraveSoftware\Brave-Browser\Application\brave.exe
-Edge:    C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe
-Chrome:  C:\Program Files\Google\Chrome\Application\chrome.exe
-Mullvad: C:\Program Files\Mullvad Browser\Browser\mullvadbrowser.exe
-```
-
-**Why use a custom browser?**
 
 | Browser | Built-in Advantage | Trade-off |
 |---------|-------------------|-----------|
-| **Brave** | Shields (ad/tracker blocking like uBlock Origin), built-in Tor, fingerprint randomization | Some sites detect Brave Shields |
-| **Edge** | Enterprise SSO, Azure AD integration, IE mode for legacy apps | Heavier than Chromium |
+| **Brave** | Shields (ad/tracker blocking), built-in Tor, fingerprint randomization | Some sites detect Brave Shields |
+| **Edge** | Enterprise SSO, Azure AD integration, IE mode | Heavier than Chromium |
 | **Chrome** | Widest extension ecosystem, most tested | No built-in ad blocking |
-| **Chromium** (bundled) | Cleanest automation baseline, no extra features | No ad blocking, no extensions by default |
-| **Mullvad Browser** | Tor Browser-based hardening, anti-fingerprinting, no telemetry | Firefox-based (not Chromium), some sites may break |
+| **Chromium** (bundled) | Cleanest automation baseline | No ad blocking, no extensions by default |
+| **Mullvad Browser** | Tor Browser-based hardening, anti-fingerprinting | Firefox-based, some sites may break |
 
-**Mullvad Browser notes**:
-- Based on Firefox ESR with Tor Browser's privacy patches (without Tor network)
-- Built-in anti-fingerprinting (canvas, WebGL, fonts, screen size)
-- Requires Playwright's Firefox driver, not Chromium
-- Best for privacy-focused automation where you want browser-level protection
-- For programmatic fingerprint control, use Camoufox instead (more configurable)
+Mullvad Browser: based on Firefox ESR with Tor Browser's privacy patches (without Tor network). Requires Playwright's Firefox driver. For programmatic fingerprint control, use Camoufox instead.
 
-**First-run preference**: When a tool supports custom browsers, the AI agent should ask the user on first use which browser they prefer. Store the preference in `~/.config/aidevops/browser-prefs.json`:
+Store browser preference in `~/.config/aidevops/browser-prefs.json`:
 
 ```json
 {
@@ -310,99 +292,41 @@ Mullvad: C:\Program Files\Mullvad Browser\Browser\mullvadbrowser.exe
   "preferred_firefox": "mullvad",
   "browser_paths": {
     "brave": "/Applications/Brave Browser.app/Contents/MacOS/Brave Browser",
-    "edge": "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
-    "chrome": "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
-    "mullvad": "/Applications/Mullvad Browser.app/Contents/MacOS/mullvadbrowser",
-    "firefox": "/Applications/Firefox.app/Contents/MacOS/firefox"
-  },
-  "extensions": {
-    "ublock_origin": "/path/to/ublock-origin-unpacked"
+    "mullvad": "/Applications/Mullvad Browser.app/Contents/MacOS/mullvadbrowser"
   }
 }
 ```
 
-**Mullvad Browser with Playwright** (Firefox driver):
+## Ad Blocker / Extension Loading
+
+| Tool | Load uBlock Origin? | How |
+|------|---------------------|-----|
+| **Playwright** (persistent) | Yes | `--load-extension=/path/to/ublock` + persistent context |
+| **dev-browser** | Yes | Install in profile (headed mode) |
+| **Playwriter** | Yes | Already installed in your browser |
+| **Stagehand** | Possible | Via Playwright's `--load-extension` |
+| **Crawl4AI / agent-browser / playwright-cli / WaterCrawl** | No | No extension support |
+
+**Alternative**: Use **Brave browser** with Shields — equivalent ad/tracker blocking without loading an extension.
 
 ```javascript
-import { firefox } from 'playwright';
-
-const browser = await firefox.launch({
-  executablePath: '/Applications/Mullvad Browser.app/Contents/MacOS/mullvadbrowser',
-  headless: false,  // Mullvad may require headed mode for full privacy features
+// Playwright with uBlock Origin
+const context = await chromium.launchPersistentContext('/tmp/browser-profile', {
+  headless: false,
+  args: [
+    '--load-extension=/path/to/ublock-origin-unpacked',
+    '--disable-extensions-except=/path/to/ublock-origin-unpacked',
+  ],
 });
-const page = await browser.newPage();
-await page.goto('https://browserleaks.com/canvas');
-await page.screenshot({ path: '/tmp/mullvad-test.png' });
-await browser.close();
-```
-
-## Ad Blocker / Extension Loading (uBlock Origin)
-
-Extensions like uBlock Origin reduce page noise, block trackers, and speed up page loads. This benefits both scraping (cleaner HTML) and automation (fewer pop-ups, consent banners).
-
-| Tool | Load uBlock Origin? | How | Notes |
-|------|---------------------|-----|-------|
-| **Playwright** (persistent) | Yes | `--load-extension=/path/to/ublock` | Requires an unpacked extension + persistent context |
-| **dev-browser** | Yes | Install in profile (headed mode) | Persists across restarts |
-| **Playwriter** | Yes | Already installed in your browser | Easiest - just use your browser |
-| **Stagehand** | Possible | Via Playwright's `--load-extension` | Untested, uses Playwright underneath |
-| **Crawl4AI** | No | N/A | No extension support |
-| **agent-browser** | No | N/A | No extension support |
-| **playwright-cli** | No | N/A | Uses bundled Chromium, no extension loading |
-| **WaterCrawl** | No | N/A | Cloud API |
-
-**Alternative to uBlock Origin**: Use **Brave browser** with Shields enabled - provides equivalent ad/tracker blocking without needing to load an extension. This works with any tool that supports custom browser engines (Playwright, Stagehand, Crawl4AI, Playwriter).
-
-**Getting uBlock Origin unpacked** (for Playwright/Stagehand `--load-extension`):
-
-```bash
-# Clone the official uBlock Origin repo and build
-git clone https://github.com/gorhill/uBlock.git ~/.aidevops/extensions/ublock-origin
-# Then build: cd ~/.aidevops/extensions/ublock-origin && make chromium
-# The built extension is in dist/build/uBlock0.chromium/
-# Alternatively, download from Chrome Web Store and extract the .crx
-```
-
-**Playwright example with uBlock Origin**:
-
-```javascript
-import { chromium } from 'playwright';
-
-const context = await chromium.launchPersistentContext(
-  '/tmp/browser-profile',
-  {
-    headless: false,  // Extensions may require headed mode in older Chromium; new headless (--headless=new) supports extensions
-    args: [
-      '--load-extension=/path/to/ublock-origin-unpacked',
-      '--disable-extensions-except=/path/to/ublock-origin-unpacked',
-    ],
-  }
-);
-const page = context.pages()[0] || await context.newPage();
-await page.goto('https://example.com');
 ```
 
 ## Chrome DevTools MCP (Companion Tool)
 
-Chrome DevTools MCP (`chrome-devtools-mcp`) is **not a browser** - it's a debugging/inspection layer that connects to any running Chrome/Chromium instance. Use it alongside any browser tool for:
-
-- **Performance**: Lighthouse audits, Core Web Vitals (LCP, FID, CLS, TTFB)
-- **Network**: Monitor/throttle requests, individual request throttling (Chrome 136+)
-- **Debugging**: Console capture, CSS coverage, visual regression
-- **SEO**: Meta extraction, structured data validation
-- **Mobile**: Device emulation, touch simulation
+`chrome-devtools-mcp` is a debugging/inspection layer that connects to any running Chrome/Chromium instance. Use alongside any browser tool for performance, network, debugging, SEO, and mobile emulation.
 
 ```bash
-# Connect to dev-browser
-npx chrome-devtools-mcp@latest --browserUrl http://127.0.0.1:9222
-
-# Connect to any Chrome with remote debugging
-npx chrome-devtools-mcp@latest --browserUrl http://127.0.0.1:9222
-
-# Launch its own headless Chrome
-npx chrome-devtools-mcp@latest --headless
-
-# With proxy
+npx chrome-devtools-mcp@latest --browserUrl http://127.0.0.1:9222  # Connect to dev-browser
+npx chrome-devtools-mcp@latest --headless                           # Launch own headless Chrome
 npx chrome-devtools-mcp@latest --proxyServer socks5://127.0.0.1:1080
 ```
 
@@ -422,83 +346,47 @@ Best for: Maximum speed, full Playwright API, proxy support, fresh sessions.
 ```javascript
 import { chromium } from 'playwright';
 
-const browser = await chromium.launch({
-  headless: true,
-  proxy: { server: 'socks5://127.0.0.1:1080' }  // Optional
-});
+const browser = await chromium.launch({ headless: true, proxy: { server: 'socks5://127.0.0.1:1080' } });
 const page = await browser.newPage();
 await page.goto('https://example.com');
 await page.fill('input[name="email"]', 'user@example.com');
 await page.screenshot({ path: '/tmp/screenshot.png' });  // viewport-sized (safe for AI)
-
-// Save state for reuse
 await page.context().storageState({ path: 'state.json' });
 await browser.close();
 
-// Later, in a new browser session: restore state
+// Restore state in a new session
 const browser2 = await chromium.launch({ headless: true });
 const context = await browser2.newContext({ storageState: 'state.json' });
 ```
-
-**Persistence**: Use `storageState` to save/load cookies and localStorage across sessions.
 
 ### Playwright CLI (AI Agents)
 
 Best for: AI agent automation, CLI-first workflows, session isolation, Microsoft-maintained.
 
 ```bash
-# Install (bun preferred for speed)
 bun install -g @playwright/mcp@latest
 
-# Basic workflow
 playwright-cli open https://example.com
 playwright-cli snapshot                    # Get accessibility tree with refs
-playwright-cli click e2                    # Click by ref (note: no @ prefix)
-playwright-cli fill e3 "user@example.com"  # Fill by ref
-playwright-cli type "search query"         # Type into focused element
+playwright-cli click e2                    # Click by ref
+playwright-cli fill e3 "user@example.com"
 playwright-cli screenshot
 playwright-cli close
 
 # Parallel sessions
 playwright-cli --session=s1 open https://site-a.com
 playwright-cli --session=s2 open https://site-b.com
-playwright-cli session-list
-
-# Tracing for debugging
-playwright-cli tracing-start
-playwright-cli click e4
-playwright-cli fill e7 "test"
-playwright-cli tracing-stop
 ```
-
-**Persistence**: Sessions preserve cookies/storage between calls. Use `--session=name` for isolation.
 
 **vs agent-browser**: Simpler ref syntax (`e5` vs `@e5`), built-in tracing, Microsoft-maintained. agent-browser has Rust CLI for faster cold starts and more commands.
-
-**Integrations**:
-- **Chrome DevTools MCP**: Connect to playwright-cli's browser for Lighthouse, network monitoring
-- **Anti-detect (rebrowser-patches)**: Apply patches to Playwright's Chromium, then use playwright-cli normally
-- See `playwright-cli.md` for detailed integration examples
-
-**Skill installation** (Claude Code):
-
-```bash
-/plugin marketplace add microsoft/playwright-cli
-/plugin install playwright-cli
-```
 
 ### Dev-Browser (Persistent Profile)
 
 Best for: Development testing, staying logged in across sessions, TypeScript projects.
 
 ```bash
-# Start server (profile persists across restarts)
 bash ~/.aidevops/agents/scripts/dev-browser-helper.sh start
 
-# Headless mode
-bash ~/.aidevops/agents/scripts/dev-browser-helper.sh start-headless
-
-# Execute scripts
 cd ~/.aidevops/dev-browser/skills/dev-browser && bun x tsx <<'EOF'
 import { connect, waitForPageLoad } from "@/client.js";
 const client = await connect("http://localhost:9222");
@@ -510,18 +398,17 @@ await client.disconnect();
 EOF
 ```
 
-**Persistence**: Profile directory (`~/.aidevops/dev-browser/skills/dev-browser/profiles/browser-data/`) retains cookies, localStorage, cache, and extension data across server restarts.
+Profile directory (`~/.aidevops/dev-browser/skills/dev-browser/profiles/browser-data/`) retains cookies, localStorage, cache, and extension data across restarts.
 
 ### Agent-Browser (CLI/CI/CD)
 
 Best for: Shell scripts, CI/CD pipelines, AI agent integration, parallel sessions.
 
 ```bash
-# Basic workflow
 agent-browser open https://example.com
 agent-browser snapshot -i              # Interactive elements with refs
-agent-browser click @e2                # Click by ref
-agent-browser fill @e3 "text"          # Fill by ref
+agent-browser click @e2
+agent-browser fill @e3 "text"
 agent-browser screenshot /tmp/page.png
 agent-browser close
 
@@ -533,8 +420,6 @@ agent-browser --session s2 open https://site-b.com
 agent-browser state save ~/.aidevops/.agent-workspace/auth/site.json
 agent-browser state load ~/.aidevops/.agent-workspace/auth/site.json
 ```
-
-**Persistence**: Use `state save/load` for cookies and storage. Use `--session` for isolation.
 
 **Note**: First run has a cold-start penalty (~3-5s) while the daemon starts. Subsequent commands are fast (~0.6s).
 
@@ -557,27 +442,20 @@ async def extract():
             {"name": "price", "selector": ".price", "type": "text"}
         ]
     }
-
     browser_config = BrowserConfig(
         headless=True,
-        proxy_config={"server": "socks5://127.0.0.1:1080"},  # Optional
-        use_persistent_context=True,       # Persist cookies
+        use_persistent_context=True,
         user_data_dir="~/.aidevops/.agent-workspace/work/crawl4ai-profile"
     )
-    run_config = CrawlerRunConfig(
-        extraction_strategy=JsonCssExtractionStrategy(schema)
-    )
-
     async with AsyncWebCrawler(config=browser_config) as crawler:
-        result = await crawler.arun(url="https://example.com", config=run_config)
-        print(result.extracted_content)  # JSON
+        result = await crawler.arun(
+            url="https://example.com",
+            config=CrawlerRunConfig(extraction_strategy=JsonCssExtractionStrategy(schema))
+        )
+        print(result.extracted_content)
 
 asyncio.run(extract())
 ```
-
-**Persistence**: Use `use_persistent_context=True` + `user_data_dir` for cookie/session persistence.
-
-**Interactions**: Limited form/click support via `CrawlerRunConfig(js_code="...")` for custom JS or C4A-Script DSL (CLICK, TYPE, PRESS commands). For complex interactive flows, use Playwright or dev-browser instead.
 
 **Note**: `use_persistent_context=True` can cause crashes with concurrent `arun_many` - use separate crawler instances for parallel persistent sessions.
 
@@ -588,28 +466,21 @@ Best for: Using your existing logged-in sessions, browser extensions, bypassing 
 ```bash
 # 1. Install Chrome/Brave extension:
 #    https://chromewebstore.google.com/detail/playwriter-mcp/jfeammnjpkecdekppnclgkkffahnhfhe
-
 # 2. Click extension icon on tab to control (turns green)
-
-# 3. Start MCP server (or use via MCP config)
+# 3. Start MCP server
 npx playwriter@latest
 ```
 
 ```javascript
-// Programmatic usage
 import { chromium } from 'playwright-core';
 const browser = await chromium.connectOverCDP("http://localhost:19988");
-const context = browser.contexts()[0];
-const page = context.pages()[0];  // Your existing tab
-
+const page = browser.contexts()[0].pages()[0];
 await page.fill('#search', 'query');
 await page.screenshot({ path: '/tmp/screenshot.png' });
 await browser.close();
 ```
 
-**Persistence**: Inherits your browser's sessions, cookies, extensions, and proxy settings.
-
-**Note**: Always headed (uses your visible browser). Best for tasks where you need your existing login state or want to collaborate with the AI in real-time.
+Always headed (uses your visible browser). Best for tasks where you need your existing login state.
 
 ### Stagehand (Natural Language)
 
@@ -619,34 +490,21 @@ Best for: Unknown page structures, self-healing automation, AI-powered extractio
 import { Stagehand } from "@browserbasehq/stagehand";
 import { z } from "zod";
 
-const stagehand = new Stagehand({
-  env: "LOCAL",
-  headless: true,
-  verbose: 0
-});
-
+const stagehand = new Stagehand({ env: "LOCAL", headless: true, verbose: 0 });
 await stagehand.init();
 const page = stagehand.ctx.pages()[0];
 
-// Navigate (standard Playwright)
 await page.goto("https://example.com");
-
-// Natural language actions (requires OpenAI/Anthropic API key)
 await stagehand.act("click the login button");
 await stagehand.act("fill in the email with user@example.com");
 
-// Structured extraction with schema
 const data = await stagehand.extract("get product details", z.object({
-  name: z.string(),
-  price: z.number()
+  name: z.string(), price: z.number()
 }));
-
 await stagehand.close();
 ```
 
-**Persistence**: Per-instance only. No built-in session persistence.
-
-**Note**: Natural language features require an OpenAI or Anthropic API key with quota. Without it, Stagehand works as a standard Playwright wrapper (use Playwright direct instead for better speed).
+**Note**: Natural language features require an OpenAI or Anthropic API key. Without it, Stagehand works as a standard Playwright wrapper.
 
 ## Proxy Support
 
@@ -657,8 +515,6 @@ await stagehand.close();
 | **System proxy** (macOS only) | All tools | `networksetup -setsocksfirewallproxy "Wi-Fi" host port` |
 | **Browser extension** (FoxyProxy) | Playwriter | Install in your browser |
 | **Residential proxy** (sticky IP) | Playwright, Crawl4AI | Provider session ID for same IP |
-
-**Persistent IP across restarts**: Use `storageState` (Playwright) or `user_data_dir` (Crawl4AI) combined with a sticky-session proxy provider.
 
 ## Session Persistence Summary
 
@@ -693,14 +549,9 @@ await client.disconnect();
 EOF
 ```
 
-**NEVER use curl/HTTP to verify frontend fixes**: Server returns 200 even when React crashes client-side because error boundaries render successfully. The crash happens during hydration which curl never executes. Always use browser screenshots to verify frontend fixes work.
+**NEVER use curl/HTTP to verify frontend fixes**: Server returns 200 even when React crashes client-side. Always use browser screenshots to verify frontend fixes work.
 
-**Self-diagnosis workflow**:
-1. Action fails or unexpected result
-2. Take screenshot
-3. Check errors/console
-4. Get snapshot/URL
-5. Analyze and retry - only ask user if truly stuck
+**Self-diagnosis workflow**: Action fails → take screenshot → check errors/console → get snapshot/URL → analyze and retry → only ask user if truly stuck.
 
 ## Ethical Guidelines
 
