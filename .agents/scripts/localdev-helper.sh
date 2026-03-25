@@ -105,6 +105,10 @@ ensure_mkcert() {
 		if sudo apt-get update -qq && sudo apt-get install -y -qq mkcert libnss3-tools 2>/dev/null; then
 			installed=true
 		fi
+	elif command -v apt >/dev/null 2>&1; then
+		if sudo apt update -qq && sudo apt install -y -qq mkcert libnss3-tools 2>/dev/null; then
+			installed=true
+		fi
 	elif command -v dnf >/dev/null 2>&1; then
 		if sudo dnf install -y mkcert 2>/dev/null; then
 			installed=true
