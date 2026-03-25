@@ -294,7 +294,7 @@ main() {
 			first_line=$(head -1 "$advisory_file" | sed 's/^[[:space:]]*//')
 			if [[ -n "$first_line" ]]; then
 				advisories_output="${advisories_output:+${advisories_output}
-}${first_line} Run in your terminal: secret-hygiene-helper.sh scan | Dismiss: secret-hygiene-helper.sh dismiss ${adv_id}"
+}${first_line} Run in your terminal: aidevops security | Dismiss: aidevops security dismiss ${adv_id}"
 			fi
 		done
 	fi

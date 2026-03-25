@@ -9,16 +9,11 @@
   not just when litellm is imported. A bug in the malware caused a fork bomb,
   which is how it was discovered — without that bug it would have been silent.
 
-  Check now — run these commands in a SEPARATE TERMINAL (not in AI chat):
+  Run in a SEPARATE TERMINAL (not in AI chat):
 
-    # Check for the malware indicator file
-    secret-hygiene-helper.sh scan-pth
-
-    # Check your installed litellm version
-    pip show litellm 2>/dev/null | grep Version
-
-    # Full scan for plaintext secrets and IoCs
-    secret-hygiene-helper.sh scan
+    aidevops security              # Full security scan (checks for this and more)
+    aidevops security scan-pth     # Quick check for .pth malware specifically
+    pip show litellm 2>/dev/null | grep Version   # Check your litellm version
 
   If affected: rotate ALL credentials immediately. Details:
     https://docs.litellm.ai/blog/security-update-march-2026

@@ -478,7 +478,7 @@ cmd_startup_check() {
 		sp=$("$py" -c "import site; print(site.getsitepackages()[0])" 2>/dev/null) || continue
 		[[ -d "$sp" ]] || continue
 		if [[ -f "$sp/litellm_init.pth" ]]; then
-			echo "CRITICAL: LiteLLM supply chain malware detected! Run in your terminal: secret-hygiene-helper.sh scan"
+			echo "CRITICAL: LiteLLM supply chain malware detected! Run in your terminal: aidevops security"
 			return 1
 		fi
 		for pth in "$sp"/*.pth; do
@@ -502,12 +502,12 @@ cmd_startup_check() {
 	[[ -f "$HOME/.azure/accessTokens.json" ]] && plaintext_count=$((plaintext_count + 1))
 
 	if [[ "$findings" -gt 0 ]]; then
-		echo "WARNING: $findings suspicious .pth file(s) found. Run in your terminal: secret-hygiene-helper.sh scan"
+		echo "WARNING: $findings suspicious .pth file(s) found. Run in your terminal: aidevops security"
 		return 1
 	fi
 
 	if [[ "$plaintext_count" -gt 0 ]]; then
-		echo "Secret hygiene: $plaintext_count high-risk plaintext credential location(s). Run in your terminal: secret-hygiene-helper.sh scan"
+		echo "Secret hygiene: $plaintext_count high-risk plaintext credential location(s). Run in your terminal: aidevops security"
 		return 1
 	fi
 
@@ -550,7 +550,7 @@ cmd_scan() {
 		fi
 		cat "$advisory"
 		echo ""
-		echo -e "  Dismiss after taking action: $(basename "$0") dismiss $advisory_id"
+		echo -e "  Dismiss after taking action: aidevops security dismiss $advisory_id"
 		echo ""
 	done
 
@@ -566,7 +566,7 @@ cmd_scan() {
 		echo ""
 		echo "Run remediation commands in a SEPARATE TERMINAL — not in AI chat."
 		echo "After rotating credentials, dismiss advisories:"
-		echo "  secret-hygiene-helper.sh dismiss <advisory-id>"
+		echo "  aidevops security dismiss <advisory-id>"
 	fi
 
 	if [[ "$FINDINGS_TOTAL" -gt 0 ]]; then
@@ -581,33 +581,32 @@ cmd_scan() {
 
 print_usage() {
 	cat <<'EOF'
-Usage: secret-hygiene-helper.sh <command> [options]
+Usage: aidevops security [command]
 
 Secret hygiene scanner and supply chain IoC detector.
 NEVER exposes secret values — only reports locations and key names.
 Run ALL remediation commands in a SEPARATE TERMINAL, not in AI chat.
 
 Commands:
-  scan              Full scan (secrets, .pth files, deps, MCP configs)
-  scan-secrets      Plaintext secret locations only
-  scan-pth          Python .pth file audit only (supply chain IoC)
-  scan-deps         Unpinned dependency check only
-  startup-check     One-line summary for session greeting
-  dismiss <id>      Dismiss a security advisory after taking action
-  help              Show this help
+  aidevops security              Full scan (posture + secrets + supply chain)
+  aidevops security scan         Secret hygiene & supply chain scan
+  aidevops security scan-pth     Python .pth file audit only (supply chain IoC)
+  aidevops security scan-secrets Plaintext secret locations only
+  aidevops security scan-deps    Unpinned dependency check only
+  aidevops security posture      Interactive security posture setup
+  aidevops security dismiss <id> Dismiss a security advisory after taking action
 
 Advisory System:
   Advisories are delivered via aidevops updates as files in:
     ~/.aidevops/advisories/<id>.advisory
 
   They appear in the session greeting until dismissed.
-  Dismiss after taking action: secret-hygiene-helper.sh dismiss <id>
+  Dismiss after taking action: aidevops security dismiss <id>
 
 Examples:
-  secret-hygiene-helper.sh scan                    # Full scan
-  secret-hygiene-helper.sh scan-pth               # Check for .pth malware
-  secret-hygiene-helper.sh startup-check          # Quick check for greeting
-  secret-hygiene-helper.sh dismiss litellm-2026-03  # Dismiss after rotating creds
+  aidevops security                        # Full scan (recommended)
+  aidevops security scan-pth               # Check for .pth malware
+  aidevops security dismiss litellm-2026-03  # Dismiss after rotating creds
 EOF
 	return 0
 }
