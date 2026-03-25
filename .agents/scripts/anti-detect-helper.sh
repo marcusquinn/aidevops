@@ -932,23 +932,29 @@ else:
 
 # ─── Warmup ──────────────────────────────────────────────────────────────────
 
-warmup_profile() {
-	local profile_name="$1"
-	shift
-	local duration="30" # minutes
+# Parse --duration flag from remaining args; echoes numeric minutes (default 30).
+warmup_parse_duration() {
+	local duration="30"
 	local arg
-
 	while [[ $# -gt 0 ]]; do
 		arg="$1"
 		case "$arg" in
 		--duration)
-			duration="${2%m}" # Strip 'm' suffix
+			duration="${2%m}" # Strip optional 'm' suffix
 			shift 2
 			;;
 		*) shift ;;
 		esac
 	done
+	echo "$duration"
+	return 0
+}
 
+# Validate profile exists, activate venv, and resolve config/proxy paths.
+# Outputs two lines: config_arg and proxy_arg (may be empty).
+# Returns 1 on error (profile not found or venv missing).
+warmup_build_config() {
+	local profile_name="$1"
 	local profile_dir
 	profile_dir=$(find_profile_dir "$profile_name")
 
@@ -957,8 +963,6 @@ warmup_profile() {
 		return 1
 	fi
 
-	echo -e "${BLUE}Warming up profile '$profile_name' for ${duration}m...${NC}"
-
 	source "$VENV_DIR/bin/activate" 2>/dev/null || {
 		echo -e "${RED}Error: Camoufox venv not found. Run: anti-detect-helper.sh setup${NC}" >&2
 		return 1
@@ -966,71 +970,61 @@ warmup_profile() {
 
 	local config_arg=""
 	local proxy_arg=""
+	[[ -f "$profile_dir/fingerprint.json" ]] && config_arg="$profile_dir/fingerprint.json"
+	[[ -f "$profile_dir/proxy.json" ]] && proxy_arg="$profile_dir/proxy.json"
 
-	if [[ -f "$profile_dir/fingerprint.json" ]]; then
-		config_arg="$profile_dir/fingerprint.json"
-	fi
-	if [[ -f "$profile_dir/proxy.json" ]]; then
-		proxy_arg="$profile_dir/proxy.json"
-	fi
+	# Output as two lines so the caller can read them back
+	printf '%s\n%s\n' "$config_arg" "$proxy_arg"
+	return 0
+}
 
-	python3 -c "
-import json
-import asyncio
-import random
-import time
+# Write the Python warmup script to a temp file and return its path.
+# Args: profile_dir config_arg proxy_arg duration_minutes
+# Echoes the temp file path; caller must remove it after use.
+warmup_write_script() {
+	local profile_dir="$1"
+	local config_arg="$2"
+	local proxy_arg="$3"
+	local duration="$4"
+
+	local tmp_script
+	tmp_script=$(mktemp /tmp/warmup_XXXXXX.py)
+
+	cat >"$tmp_script" <<PYEOF
+import json, asyncio, random, time
 
 WARMUP_SITES = [
-    'https://www.google.com',
-    'https://www.youtube.com',
-    'https://www.wikipedia.org',
-    'https://www.reddit.com',
-    'https://www.amazon.com',
-    'https://news.ycombinator.com',
-    'https://www.github.com',
-    'https://stackoverflow.com',
-    'https://www.bbc.com',
-    'https://www.nytimes.com',
+    'https://www.google.com', 'https://www.youtube.com',
+    'https://www.wikipedia.org', 'https://www.reddit.com',
+    'https://www.amazon.com', 'https://news.ycombinator.com',
+    'https://www.github.com', 'https://stackoverflow.com',
+    'https://www.bbc.com', 'https://www.nytimes.com',
 ]
 
 async def warmup():
     from camoufox.async_api import AsyncCamoufox
-
-    profile_config = {}
-    proxy = None
-    config_file = '$config_arg'
-    proxy_file = '$proxy_arg'
-
+    profile_config, proxy = {}, None
+    config_file, proxy_file = '${config_arg}', '${proxy_arg}'
     if config_file:
-        with open(config_file) as f:
-            profile_config = json.load(f)
-
+        with open(config_file) as f: profile_config = json.load(f)
     if proxy_file:
-        with open(proxy_file) as f:
-            proxy = json.load(f)
-
+        with open(proxy_file) as f: proxy = json.load(f)
     kwargs = {'headless': True, 'humanize': True}
     os_list = profile_config.get('os')
-    if os_list:
-        kwargs['os'] = os_list
+    if os_list: kwargs['os'] = os_list
     screen_config = profile_config.get('screen')
     if screen_config:
         from browserforge.fingerprints import Screen
         kwargs['screen'] = Screen(
             max_width=screen_config.get('maxWidth', 1920),
-            max_height=screen_config.get('maxHeight', 1080),
-        )
+            max_height=screen_config.get('maxHeight', 1080))
     if proxy:
         kwargs['proxy'] = proxy
         kwargs['geoip'] = True
-
-    duration_seconds = $duration * 60
-    start_time = time.time()
-    sites_visited = 0
-
+    duration_seconds = ${duration} * 60
+    start_time, sites_visited = time.time(), 0
     async with AsyncCamoufox(**kwargs) as browser:
         page = await browser.new_page()
-
         while (time.time() - start_time) < duration_seconds:
             url = random.choice(WARMUP_SITES)
             try:
@@ -1038,42 +1032,73 @@ async def warmup():
                 sites_visited += 1
                 elapsed = int(time.time() - start_time)
                 print(f'  [{elapsed}s] Visited: {url}')
-
-                # Simulate reading
                 await asyncio.sleep(random.uniform(3, 12))
-
-                # Scroll
                 await page.evaluate('window.scrollBy(0, window.innerHeight * Math.random())')
                 await asyncio.sleep(random.uniform(1, 4))
-
-                # Maybe click a link
                 if random.random() > 0.6:
-                    links = await page.query_selector_all('a[href^=\"http\"]')
+                    links = await page.query_selector_all('a[href^="http"]')
                     if links and len(links) > 2:
                         link = random.choice(links[:8])
                         try:
                             await link.click(timeout=5000)
                             await asyncio.sleep(random.uniform(2, 6))
                             await page.go_back(timeout=5000)
-                        except Exception:
-                            pass
-
-            except Exception as e:
-                pass  # Skip failed navigations
-
+                        except Exception: pass
+            except Exception: pass
             await asyncio.sleep(random.uniform(2, 8))
-
-        # Save state
         context = browser.contexts[0]
         cookies = context.cookies()
         state = {'cookies': cookies, 'origins': []}
-        with open('$profile_dir/storage-state.json', 'w') as f:
+        with open('${profile_dir}/storage-state.json', 'w') as f:
             json.dump(state, f, indent=2)
-
-        print(f'\\nWarmup complete: {sites_visited} sites visited, {len(cookies)} cookies saved.')
+        print(f'\nWarmup complete: {sites_visited} sites visited, {len(cookies)} cookies saved.')
 
 asyncio.run(warmup())
-" 2>&1
+PYEOF
+
+	echo "$tmp_script"
+	return 0
+}
+
+# Execute the async Camoufox warmup browsing session.
+# Args: profile_dir config_arg proxy_arg duration_minutes
+warmup_run_browser() {
+	local profile_dir="$1"
+	local config_arg="$2"
+	local proxy_arg="$3"
+	local duration="$4"
+
+	local tmp_script
+	tmp_script=$(warmup_write_script "$profile_dir" "$config_arg" "$proxy_arg" "$duration")
+	python3 "$tmp_script" 2>&1
+	local exit_code=$?
+	rm -f "$tmp_script"
+	return $exit_code
+}
+
+warmup_profile() {
+	local profile_name="$1"
+	shift
+
+	local duration
+	duration=$(warmup_parse_duration "$@")
+
+	local profile_dir
+	profile_dir=$(find_profile_dir "$profile_name")
+	if [[ -z "$profile_dir" ]]; then
+		echo -e "${RED}Error: Profile '$profile_name' not found.${NC}" >&2
+		return 1
+	fi
+
+	echo -e "${BLUE}Warming up profile '$profile_name' for ${duration}m...${NC}"
+
+	local config_lines
+	config_lines=$(warmup_build_config "$profile_name") || return 1
+	local config_arg proxy_arg
+	config_arg=$(echo "$config_lines" | sed -n '1p')
+	proxy_arg=$(echo "$config_lines" | sed -n '2p')
+
+	warmup_run_browser "$profile_dir" "$config_arg" "$proxy_arg" "$duration"
 
 	deactivate 2>/dev/null || true
 	echo -e "${GREEN}Warmup complete for '$profile_name'.${NC}"
