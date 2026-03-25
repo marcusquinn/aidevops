@@ -495,7 +495,10 @@ _status_print_blockers() {
 # CLI Dashboard Command
 # =============================================================================
 
-cmd_status() {
+# Parse --mission and --verbose flags for cmd_status.
+# Usage: _status_parse_args "$@"
+# Outputs: newline-separated KEY=VALUE pairs
+_status_parse_args() {
 	local mission_filter="" verbose=false
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
@@ -510,6 +513,23 @@ cmd_status() {
 		*) shift ;;
 		esac
 	done
+	printf '%s\n' \
+		"mission_filter=${mission_filter}" \
+		"verbose=${verbose}"
+	return 0
+}
+
+cmd_status() {
+	local parsed
+	parsed=$(_status_parse_args "$@")
+
+	local mission_filter="" verbose=""
+	while IFS='=' read -r key val; do
+		case "$key" in
+		mission_filter) mission_filter="$val" ;;
+		verbose) verbose="$val" ;;
+		esac
+	done <<<"$parsed"
 
 	local -a mission_files=()
 	while IFS= read -r f; do
@@ -678,6 +698,29 @@ _json_build_mission() {
 # JSON Output Command
 # =============================================================================
 
+# Build the missions JSON array from a list of mission files.
+# Args: mission_filter mission_files...
+# Outputs: JSON array string to stdout
+_json_build_missions_array() {
+	local mission_filter="$1"
+	shift
+	local mission_files=("$@")
+
+	local missions_json="["
+	local first_mission=true
+	for mission_file in "${mission_files[@]}"; do
+		local mission_obj
+		mission_obj=$(_json_build_mission "$mission_file" "$mission_filter")
+		[[ -z "$mission_obj" ]] && continue
+		[[ "$first_mission" == "true" ]] || missions_json="${missions_json},"
+		first_mission=false
+		missions_json="${missions_json}${mission_obj}"
+	done
+	missions_json="${missions_json}]"
+	printf '%s' "$missions_json"
+	return 0
+}
+
 cmd_json() {
 	local mission_filter=""
 	while [[ $# -gt 0 ]]; do
@@ -706,17 +749,8 @@ cmd_json() {
 	burn_json=$(get_burn_rate_json)
 	cost_json=$(get_cost_status_json)
 
-	local missions_json="["
-	local first_mission=true
-	for mission_file in "${mission_files[@]}"; do
-		local mission_obj
-		mission_obj=$(_json_build_mission "$mission_file" "$mission_filter")
-		[[ -z "$mission_obj" ]] && continue
-		[[ "$first_mission" == "true" ]] || missions_json="${missions_json},"
-		first_mission=false
-		missions_json="${missions_json}${mission_obj}"
-	done
-	missions_json="${missions_json}]"
+	local missions_json
+	missions_json=$(_json_build_missions_array "$mission_filter" "${mission_files[@]+"${mission_files[@]}"}")
 
 	# Assemble full dashboard JSON.
 	# Note: bash ${var:-{}} is ambiguous — the first } closes the expansion.

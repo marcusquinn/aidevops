@@ -450,24 +450,14 @@ _recall_output() {
 }
 
 #######################################
-# Recall learnings with search
+# Unpack parsed KEY=VALUE pairs into local variables for cmd_recall
+# Usage: _recall_unpack_args <parsed_string>
+# Sets: query limit type_filter max_age_days project_filter format
+#       recent_mode semantic_mode hybrid_mode shared_mode
+#       auto_only manual_only entity_filter
 #######################################
-cmd_recall() {
-	# Handle --stats early exit before argument parsing
-	local arg
-	for arg in "$@"; do
-		if [[ "$arg" == "--stats" ]]; then
-			cmd_stats
-			return $?
-		fi
-	done
-
-	# Parse arguments into KEY=VALUE pairs
-	local parsed
-	parsed=$(_recall_parse_args "$@") || return $?
-
-	local query limit type_filter max_age_days project_filter format
-	local recent_mode semantic_mode hybrid_mode shared_mode auto_only manual_only entity_filter
+_recall_unpack_args() {
+	local parsed="$1"
 	while IFS='=' read -r key val; do
 		case "$key" in
 		query) query="$val" ;;
@@ -485,6 +475,73 @@ cmd_recall() {
 		entity_filter) entity_filter="$val" ;;
 		esac
 	done <<<"$parsed"
+	return 0
+}
+
+#######################################
+# Execute FTS5 search: build query/filters, search DB, update access, shared search.
+# Caller must have: query limit type_filter max_age_days project_filter
+#                   auto_only manual_only entity_filter shared_mode MEMORY_DB
+# Outputs: sets results and shared_results in caller scope
+#######################################
+_recall_execute_fts() {
+	# Build FTS5 parameterised query
+	param_query=$(_recall_build_fts_param "$query")
+
+	# Build extra filters (validates type/age/project)
+	extra_filters=$(_recall_build_extra_filters "$type_filter" "$max_age_days" "$project_filter") || return $?
+
+	# Build auto-capture filter for FTS query (uses full table name, no alias)
+	auto_join_filter=""
+	if [[ "$auto_only" == true ]]; then
+		auto_join_filter="AND COALESCE(learning_access.auto_captured, 0) = 1"
+	elif [[ "$manual_only" == true ]]; then
+		auto_join_filter="AND COALESCE(learning_access.auto_captured, 0) = 0"
+	fi
+
+	# Build entity clauses for FTS5 (no alias support)
+	local entity_fts_clauses
+	entity_fts_clauses=$(_recall_build_entity_fts_clauses "$entity_filter")
+	entity_fts_join=$(printf '%s' "$entity_fts_clauses" | head -1)
+	entity_fts_where=$(printf '%s' "$entity_fts_clauses" | tail -1)
+
+	# Execute FTS5 search and update access tracking
+	results=$(_recall_search_db "$MEMORY_DB" "$param_query" \
+		"$entity_fts_join" "$entity_fts_where" \
+		"$extra_filters" "$auto_join_filter" "$limit")
+	_recall_update_access "$MEMORY_DB" "$results"
+
+	# Shared search: also query global DB when in a namespace with --shared
+	shared_results=""
+	if [[ "$shared_mode" == true && -n "$MEMORY_NAMESPACE" ]]; then
+		shared_results=$(_recall_shared_search "$param_query" \
+			"$entity_fts_join" "$entity_fts_where" \
+			"$extra_filters" "$auto_join_filter" "$limit")
+	fi
+	return 0
+}
+
+#######################################
+# Recall learnings with search
+#######################################
+cmd_recall() {
+	# Handle --stats early exit before argument parsing
+	local arg
+	for arg in "$@"; do
+		if [[ "$arg" == "--stats" ]]; then
+			cmd_stats
+			return $?
+		fi
+	done
+
+	# Parse arguments into KEY=VALUE pairs
+	local parsed
+	parsed=$(_recall_parse_args "$@") || return $?
+
+	local query="" limit="" type_filter="" max_age_days="" project_filter="" format=""
+	local recent_mode="" semantic_mode="" hybrid_mode="" shared_mode=""
+	local auto_only="" manual_only="" entity_filter=""
+	_recall_unpack_args "$parsed"
 
 	init_db
 
@@ -523,42 +580,11 @@ cmd_recall() {
 		return $?
 	fi
 
-	# Build FTS5 parameterised query
-	local param_query
-	param_query=$(_recall_build_fts_param "$query")
-
-	# Build extra filters (validates type/age/project)
-	local extra_filters
-	extra_filters=$(_recall_build_extra_filters "$type_filter" "$max_age_days" "$project_filter") || return $?
-
-	# Build auto-capture filter for FTS query (uses full table name, no alias)
-	local auto_join_filter=""
-	if [[ "$auto_only" == true ]]; then
-		auto_join_filter="AND COALESCE(learning_access.auto_captured, 0) = 1"
-	elif [[ "$manual_only" == true ]]; then
-		auto_join_filter="AND COALESCE(learning_access.auto_captured, 0) = 0"
-	fi
-
-	# Build entity clauses for FTS5 (no alias support)
-	local entity_fts_clauses entity_fts_join entity_fts_where
-	entity_fts_clauses=$(_recall_build_entity_fts_clauses "$entity_filter")
-	entity_fts_join=$(printf '%s' "$entity_fts_clauses" | head -1)
-	entity_fts_where=$(printf '%s' "$entity_fts_clauses" | tail -1)
-
-	# Execute FTS5 search and update access tracking
-	local results
-	results=$(_recall_search_db "$MEMORY_DB" "$param_query" \
-		"$entity_fts_join" "$entity_fts_where" \
-		"$extra_filters" "$auto_join_filter" "$limit")
-	_recall_update_access "$MEMORY_DB" "$results"
-
-	# Shared search: also query global DB when in a namespace with --shared
-	local shared_results=""
-	if [[ "$shared_mode" == true && -n "$MEMORY_NAMESPACE" ]]; then
-		shared_results=$(_recall_shared_search "$param_query" \
-			"$entity_fts_join" "$entity_fts_where" \
-			"$extra_filters" "$auto_join_filter" "$limit")
-	fi
+	# Execute FTS5 search (builds query, filters, entity clauses, shared search)
+	local param_query extra_filters auto_join_filter
+	local entity_fts_join="" entity_fts_where=""
+	local results="" shared_results=""
+	_recall_execute_fts || return $?
 
 	_recall_output "$format" "$query" "$entity_filter" "$results" "$shared_results" "$limit"
 	return 0

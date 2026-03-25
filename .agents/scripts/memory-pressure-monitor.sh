@@ -666,6 +666,23 @@ _act_on_findings() {
 	return 0
 }
 
+# Iterate over monitored processes, accumulate RSS/count, run per-process checks.
+# Modifies caller-scope total_rss_mb and process_count (must be declared before call).
+# Also populates _check_findings[], _check_has_critical, _check_has_warning via
+# _check_process_rss_and_runtime().
+_do_check_per_process() {
+	local processes
+	processes=$(_collect_monitored_processes)
+
+	while IFS='|' read -r pid rss_mb runtime cmd_name full_cmd; do
+		[[ -z "$pid" ]] && continue
+		process_count=$((process_count + 1))
+		total_rss_mb=$((total_rss_mb + rss_mb))
+		_check_process_rss_and_runtime "$pid" "$rss_mb" "$runtime" "$cmd_name"
+	done <<<"$processes"
+	return 0
+}
+
 # Evaluate all monitored processes and generate alerts.
 # Returns: 0=ok, 1=warnings found, 2=critical findings
 do_check() {
@@ -680,15 +697,7 @@ do_check() {
 	local process_count=0
 
 	# Phase 1: Per-process checks
-	local processes
-	processes=$(_collect_monitored_processes)
-
-	while IFS='|' read -r pid rss_mb runtime cmd_name full_cmd; do
-		[[ -z "$pid" ]] && continue
-		process_count=$((process_count + 1))
-		total_rss_mb=$((total_rss_mb + rss_mb))
-		_check_process_rss_and_runtime "$pid" "$rss_mb" "$runtime" "$cmd_name"
-	done <<<"$processes"
+	_do_check_per_process
 
 	# Phases 2+3: Aggregate and OS checks
 	_check_aggregate_and_os "$total_rss_mb" "$process_count"
