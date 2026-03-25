@@ -403,6 +403,110 @@ _sandbox_check_dns_exfil() {
 # Sandbox Execution
 # =============================================================================
 
+# Kill a child process group and its secondary watchdog.
+# Standalone cleanup function — called explicitly on all exit paths and
+# as an EXIT trap safety net. Takes explicit arguments instead of relying
+# on closure variables (extracted from nested _pgkill_cleanup in GH#6429).
+#
+# Arguments:
+#   $1 - watchdog_pid (may be empty)
+#   $2 - child_pgid (may be empty)
+#   $3 - child_pid (may be empty)
+_sandbox_pgkill_cleanup() {
+	local cleanup_watchdog_pid="$1"
+	local cleanup_child_pgid="$2"
+	local cleanup_child_pid="$3"
+
+	# Kill the secondary watchdog first to prevent it from firing
+	# after we've already cleaned up the child.
+	if [[ -n "$cleanup_watchdog_pid" ]]; then
+		kill "$cleanup_watchdog_pid" 2>/dev/null || true
+		wait "$cleanup_watchdog_pid" 2>/dev/null || true
+	fi
+
+	if [[ -n "$cleanup_child_pgid" ]]; then
+		# SIGTERM first — allow graceful shutdown
+		kill -- "-${cleanup_child_pgid}" 2>/dev/null || true
+		# Brief grace period, then SIGKILL any survivors
+		sleep 0.5
+		kill -0 -- "-${cleanup_child_pgid}" 2>/dev/null &&
+			kill -9 -- "-${cleanup_child_pgid}" 2>/dev/null || true
+	elif [[ -n "$cleanup_child_pid" ]]; then
+		# Fallback: setsid unavailable — kill direct child process only
+		kill "$cleanup_child_pid" 2>/dev/null || true
+		sleep 0.5
+		kill -0 "$cleanup_child_pid" 2>/dev/null &&
+			kill -9 "$cleanup_child_pid" 2>/dev/null || true
+	fi
+	return 0
+}
+
+# Start a command in a new process group via setsid.
+# Sets caller-scoped variables: child_pid, child_pgid, child_start_token
+# (uses bash dynamic scoping — caller must declare these as local).
+#
+# Arguments: stdout_file stderr_file cmd [args...]
+# Fallback: if setsid is unavailable, runs directly and leaves child_pgid
+# empty so _sandbox_pgkill_cleanup falls back to killing child_pid.
+_sandbox_spawn_child() {
+	local sc_stdout_file="$1"
+	local sc_stderr_file="$2"
+	shift 2
+
+	# setsid creates a new session (and process group) so the child and all
+	# its descendants share a PGID distinct from the wrapper's PGID.
+	# stdout/stderr are redirected here so the redirection applies to the
+	# backgrounded child process, not to the polling loop.
+	if command -v setsid &>/dev/null; then
+		setsid "$@" >"$sc_stdout_file" 2>"$sc_stderr_file" &
+		child_pid=$!
+		# Retrieve the process group ID of the child.
+		# On Linux: ps -o pgid= returns the PGID. On macOS: same flag works.
+		# If ps fails (race: child already exited), clear pgid to fall back
+		# to killing child_pid directly in _sandbox_pgkill_cleanup.
+		child_pgid="$(ps -o pgid= -p "$child_pid" 2>/dev/null | tr -d ' ')" || true
+		if [[ -z "$child_pgid" ]] || [[ "$child_pgid" == "0" ]]; then
+			child_pgid=""
+		fi
+	else
+		"$@" >"$sc_stdout_file" 2>"$sc_stderr_file" &
+		child_pid=$!
+		# setsid not available — child shares the script's process group.
+		# Do NOT read the PGID here: ps would return the script's own PGID,
+		# causing _sandbox_pgkill_cleanup to kill the wrapper itself.
+		child_pgid=""
+	fi
+
+	# PID recycling safety: capture a stable identity token at spawn time.
+	# On Linux, use /proc/<pid>/stat field 22 (starttime in clock ticks since
+	# boot). On macOS/other, use 'ps -o lstart=' for absolute start timestamp.
+	# If the lookup fails (child already exited), token is empty — the watchdog
+	# will skip signal delivery (safe: child already gone).
+	child_start_token="$(_sandbox_get_proc_starttime "$child_pid")"
+	return 0
+}
+
+# Poll until a child process exits or the timeout deadline is reached.
+# Returns 0 if the child exited on its own, 124 if the timeout was reached.
+#
+# Arguments:
+#   $1 - timeout in seconds
+#   $2 - child_pid to monitor
+_sandbox_poll_child() {
+	local poll_timeout="$1"
+	local poll_child_pid="$2"
+	local half_secs_remaining=$((poll_timeout * 2))
+
+	while kill -0 "$poll_child_pid" 2>/dev/null; do
+		if ((half_secs_remaining <= 0)); then
+			return 124
+		fi
+		sleep 0.5
+		((half_secs_remaining--)) || true
+	done
+	return 0
+}
+
 # Runs cmd in a new process group (via setsid) and kills the entire group
 # when the timeout expires or the function exits. This ensures that worker
 # child processes (MCP servers, node workers, etc.) are also terminated —
@@ -417,8 +521,8 @@ _sandbox_check_dns_exfil() {
 # The worker process spawns its own child processes. A plain `timeout` only
 # kills its direct child — grandchildren survive indefinitely. Fix: run the
 # command in a new process group via `setsid`, then kill the entire group
-# (kill -- -PGID) on timeout or exit. _pgkill_cleanup is called explicitly
-# on all exit paths — the EXIT trap is a safety net for unexpected exits only.
+# (kill -- -PGID) on timeout or exit. Cleanup is called explicitly on all
+# exit paths — the EXIT trap is a safety net for unexpected exits only.
 #
 # Secondary watchdog (GH#6413):
 # The primary polling loop uses sleep 0.5 + counter decrement. If the parent
@@ -438,71 +542,13 @@ _sandbox_exec_with_pgkill() {
 	local t_exit_code=0
 	local watchdog_pid=""
 
-	# Kill the child process group on any exit from this function.
-	# Uses kill -- -PGID to send SIGTERM to every process in the group,
-	# followed by SIGKILL after a short grace period.
-	# Also kills the secondary watchdog if still running.
-	_pgkill_cleanup() {
-		# Kill the secondary watchdog first to prevent it from firing
-		# after we've already cleaned up the child.
-		if [[ -n "$watchdog_pid" ]]; then
-			kill "$watchdog_pid" 2>/dev/null || true
-			wait "$watchdog_pid" 2>/dev/null || true
-			watchdog_pid=""
-		fi
-		if [[ -n "$child_pgid" ]]; then
-			# SIGTERM first — allow graceful shutdown
-			kill -- "-${child_pgid}" 2>/dev/null || true
-			# Brief grace period, then SIGKILL any survivors
-			sleep 0.5
-			kill -0 -- "-${child_pgid}" 2>/dev/null &&
-				kill -9 -- "-${child_pgid}" 2>/dev/null || true
-		elif [[ -n "$child_pid" ]]; then
-			# Fallback: setsid unavailable — kill direct child process only
-			kill "$child_pid" 2>/dev/null || true
-			sleep 0.5
-			kill -0 "$child_pid" 2>/dev/null &&
-				kill -9 "$child_pid" 2>/dev/null || true
-		fi
-		return 0
-	}
-	trap '_pgkill_cleanup' EXIT
+	# EXIT trap uses a closure-style wrapper to pass current variable values
+	# to the standalone cleanup function.
+	trap '_sandbox_pgkill_cleanup "$watchdog_pid" "$child_pgid" "$child_pid"' EXIT
 
-	# Start the command in a new process group.
-	# setsid creates a new session (and process group) so the child and all
-	# its descendants share a PGID distinct from the wrapper's PGID.
-	# stdout/stderr are redirected here so the redirection applies to the
-	# backgrounded child process, not to the polling loop below.
-	# Fallback: if setsid is unavailable, run directly and clear child_pgid
-	# so _pgkill_cleanup falls back to killing child_pid directly.
-	if command -v setsid &>/dev/null; then
-		setsid "$@" >"$t_stdout_file" 2>"$t_stderr_file" &
-		child_pid=$!
-		# Retrieve the process group ID of the child.
-		# On Linux: ps -o pgid= returns the PGID. On macOS: same flag works.
-		# If ps fails (race: child already exited), clear pgid to fall back
-		# to killing child_pid directly in _pgkill_cleanup.
-		child_pgid="$(ps -o pgid= -p "$child_pid" 2>/dev/null | tr -d ' ')" || true
-		if [[ -z "$child_pgid" ]] || [[ "$child_pgid" == "0" ]]; then
-			child_pgid=""
-		fi
-	else
-		"$@" >"$t_stdout_file" 2>"$t_stderr_file" &
-		child_pid=$!
-		# setsid not available — child shares the script's process group.
-		# Do NOT read the PGID here: ps would return the script's own PGID,
-		# causing _pgkill_cleanup to kill the wrapper itself.
-		# Leave child_pgid empty so _pgkill_cleanup kills child_pid directly.
-		child_pgid=""
-	fi
-
-	# PID recycling safety: capture a stable identity token at spawn time.
-	# On Linux, use /proc/<pid>/stat field 22 (starttime in clock ticks since
-	# boot) — more reliable than ps and avoids fork overhead. On macOS/other,
-	# use 'ps -o lstart=' which returns the absolute start timestamp.
-	# If the lookup fails (child already exited), token is empty — the watchdog
-	# will skip signal delivery (safe: child already gone).
-	child_start_token="$(_sandbox_get_proc_starttime "$child_pid")"
+	# Spawn the child in a new process group (sets child_pid, child_pgid,
+	# child_start_token via dynamic scoping).
+	_sandbox_spawn_child "$t_stdout_file" "$t_stderr_file" "$@"
 
 	# Marker file for watchdog-initiated kills (GH#6414, CodeRabbit review).
 	# Derived from t_stderr_file path to avoid collisions across concurrent
@@ -510,39 +556,28 @@ _sandbox_exec_with_pgkill() {
 	local t_watchdog_marker="${t_stderr_file}.watchdog_timeout"
 
 	# Secondary watchdog (GH#6413): independent wall-clock timeout enforcement.
-	# Spawned as a background subshell that sleeps for the timeout duration,
-	# then checks if the child is still alive and kills it. This catches cases
-	# where the primary polling loop fails (parent crash, sleep drift, etc.).
-	# The watchdog uses date(1) for wall-clock verification rather than relying
-	# solely on sleep duration, which can drift under system load.
 	# 10% grace period avoids racing with the primary loop's normal timeout.
-	# child_start_token is passed for PID recycling safety (see _sandbox_spawn_watchdog).
 	_sandbox_spawn_watchdog "$t_secs" "$child_pid" "$child_pgid" "$child_start_token" "$t_watchdog_marker" &
 	watchdog_pid=$!
 
 	# Poll until the child exits or the deadline is reached.
-	local half_secs_remaining=$((t_secs * 2))
-	while kill -0 "$child_pid" 2>/dev/null; do
-		if ((half_secs_remaining <= 0)); then
-			log_sandbox "WARN" "Command timed out after ${t_secs}s — killing process group ${child_pgid}"
-			_pgkill_cleanup
-			# Reap the child after killing it
-			wait "$child_pid" 2>/dev/null || true
-			trap - EXIT
-			return 124
-		fi
-		sleep 0.5
-		((half_secs_remaining--)) || true
-	done
+	if ! _sandbox_poll_child "$t_secs" "$child_pid"; then
+		log_sandbox "WARN" "Command timed out after ${t_secs}s — killing process group ${child_pgid}"
+		_sandbox_pgkill_cleanup "$watchdog_pid" "$child_pgid" "$child_pid"
+		watchdog_pid=""
+		# Reap the child after killing it
+		wait "$child_pid" 2>/dev/null || true
+		trap - EXIT
+		return 124
+	fi
 
 	wait "$child_pid" 2>/dev/null
 	t_exit_code=$?
 
 	# Watchdog exit status override (GH#6414, CodeRabbit review): if the
 	# secondary watchdog killed the child, it will have touched the marker
-	# file derived from t_stderr_file. Override the exit code to 124
-	# (standard timeout) so callers can distinguish a watchdog-killed
-	# process from a normal non-zero exit.
+	# file. Override the exit code to 124 (standard timeout) so callers can
+	# distinguish a watchdog-killed process from a normal non-zero exit.
 	if [[ -f "$t_watchdog_marker" ]]; then
 		log_sandbox "WARN" "Secondary watchdog marker detected for PID ${child_pid} — overriding exit code to 124"
 		t_exit_code=124
@@ -552,7 +587,8 @@ _sandbox_exec_with_pgkill() {
 	# Explicitly clean up any remaining descendants in the process group.
 	# The EXIT trap is cleared below, so cleanup must be called explicitly
 	# here — the trap does not fire on a normal function return.
-	_pgkill_cleanup
+	_sandbox_pgkill_cleanup "$watchdog_pid" "$child_pgid" "$child_pid"
+	watchdog_pid=""
 	trap - EXIT
 	return "$t_exit_code"
 }
