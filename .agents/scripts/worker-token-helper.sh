@@ -122,6 +122,106 @@ generate_jwt() {
 	return 0
 }
 
+# Build a JSON permissions object from a comma-separated "name:level" list.
+# e.g., "contents:write,pull_requests:write" -> {"contents":"write","pull_requests":"write"}
+# Arguments:
+#   $1 - comma-separated permissions string
+# Returns: JSON object string via stdout
+_build_permissions_json() {
+	local permissions="$1"
+	local perms_json="{"
+	local first=true
+	local perm
+	while IFS= read -r perm; do
+		perm="${perm#"${perm%%[![:space:]]*}"}"
+		perm="${perm%"${perm##*[![:space:]]}"}"
+		[[ -z "$perm" ]] && continue
+		if [[ "$perm" != *:* ]] || [[ "$perm" == :* ]] || [[ "$perm" == *: ]]; then
+			log_token "ERROR" "Invalid permission entry: ${perm} (expected name:level)"
+			return 1
+		fi
+		local perm_name="${perm%%:*}"
+		local perm_level="${perm##*:}"
+		if [[ "$first" == true ]]; then
+			first=false
+		else
+			perms_json+=","
+		fi
+		perms_json+="\"${perm_name}\":\"${perm_level}\""
+	done < <(printf '%s\n' "$permissions" | tr ',' '\n')
+	if [[ "$first" == true ]]; then
+		log_token "ERROR" "At least one valid permission is required"
+		return 1
+	fi
+	perms_json+="}"
+	printf '%s' "$perms_json"
+	return 0
+}
+
+# Request a scoped installation access token from the GitHub App API.
+# Arguments:
+#   $1 - repo (owner/name)
+#   $2 - jwt
+#   $3 - installation_id
+#   $4 - perms_json (JSON object)
+#   $5 - ttl
+# Returns: token_file path via stdout, or exits non-zero on failure
+_request_app_token() {
+	local repo="$1"
+	local jwt="$2"
+	local installation_id="$3"
+	local perms_json="$4"
+	local ttl="$5"
+
+	local repo_name="${repo##*/}"
+
+	local request_body
+	request_body=$(jq -n \
+		--argjson permissions "$perms_json" \
+		--arg repo "$repo_name" \
+		'{
+			repositories: [$repo],
+			permissions: $permissions
+		}')
+
+	local response
+	response=$(curl -sf -X POST \
+		"https://api.github.com/app/installations/${installation_id}/access_tokens" \
+		-H "Authorization: Bearer ${jwt}" \
+		-H "Accept: application/vnd.github+json" \
+		-H "X-GitHub-Api-Version: 2022-11-28" \
+		-d "$request_body" 2>/dev/null) || {
+		log_token "WARN" "GitHub App token creation failed (API error)"
+		return 1
+	}
+
+	local token expires_at
+	token=$(printf '%s' "$response" | jq -r '.token // empty')
+	expires_at=$(printf '%s' "$response" | jq -r '.expires_at // empty')
+
+	if [[ -z "$token" ]]; then
+		log_token "WARN" "GitHub App token creation returned empty token"
+		return 1
+	fi
+
+	local token_file
+	token_file=$(create_token_file "$token" "$repo" "github-app" "$expires_at") || {
+		log_token "ERROR" "Failed to persist GitHub App token for ${repo}"
+		return 1
+	}
+
+	if [[ -z "$token_file" ]] || [[ ! -f "$token_file" ]]; then
+		log_token "ERROR" "Failed to create token file for GitHub App token (repo: ${repo})"
+		return 1
+	fi
+
+	log_token "INFO" "Created GitHub App installation token for ${repo} (expires: ${expires_at})"
+	log_audit "create" "$repo" "github-app" "$ttl" "app-${installation_id}"
+
+	printf '%s' "$token_file"
+	return 0
+}
+
 create_app_token() {
 	local repo="$1"
 	local permissions="$2"
@@ -159,70 +259,12 @@ create_app_token() {
 		return 1
 	fi
 
-	# Extract repo owner and name
-	local repo_owner repo_name
-	repo_owner="${repo%%/*}"
-	repo_name="${repo##*/}"
+	# Build permissions JSON and request the installation token
+	local perms_json
+	perms_json=$(_build_permissions_json "$permissions") || return 1
 
-	# Build permissions JSON from comma-separated list
-	# e.g., "contents:write,pull_requests:write" -> {"contents":"write","pull_requests":"write"}
-	local perms_json="{"
-	local first=true
-	local perm
-	while IFS= read -r perm; do
-		perm="${perm#"${perm%%[![:space:]]*}"}"
-		perm="${perm%"${perm##*[![:space:]]}"}"
-		local perm_name="${perm%%:*}"
-		local perm_level="${perm##*:}"
-		if [[ "$first" == true ]]; then
-			first=false
-		else
-			perms_json+=","
-		fi
-		perms_json+="\"${perm_name}\":\"${perm_level}\""
-	done < <(printf '%s\n' "$permissions" | tr ',' '\n')
-	perms_json+="}"
-
-	# Request scoped installation token
-	local request_body
-	request_body=$(jq -n \
-		--argjson permissions "$perms_json" \
-		--arg owner "$repo_owner" \
-		--arg repo "$repo_name" \
-		'{
-			repositories: [$repo],
-			permissions: $permissions
-		}')
-
-	local response
-	response=$(curl -sf -X POST \
-		"https://api.github.com/app/installations/${installation_id}/access_tokens" \
-		-H "Authorization: Bearer ${jwt}" \
-		-H "Accept: application/vnd.github+json" \
-		-H "X-GitHub-Api-Version: 2022-11-28" \
-		-d "$request_body" 2>/dev/null) || {
-		log_token "WARN" "GitHub App token creation failed (API error)"
-		return 1
-	}
-
-	local token expires_at
-	token=$(printf '%s' "$response" | jq -r '.token // empty')
-	expires_at=$(printf '%s' "$response" | jq -r '.expires_at // empty')
-
-	if [[ -z "$token" ]]; then
-		log_token "WARN" "GitHub App token creation returned empty token"
-		return 1
-	fi
-
-	# Write token to secure temp file
-	local token_file
-	token_file=$(create_token_file "$token" "$repo" "github-app" "$expires_at")
-
-	log_token "INFO" "Created GitHub App installation token for ${repo} (expires: ${expires_at})"
-	log_audit "create" "$repo" "github-app" "$ttl" "app-${installation_id}"
-
-	printf '%s' "$token_file"
-	return 0
+	_request_app_token "$repo" "$jwt" "$installation_id" "$perms_json" "$ttl"
+	return $?
 }
 
 # =============================================================================
@@ -280,6 +322,11 @@ create_delegated_token() {
 
 	local token_file
 	token_file=$(create_token_file "$current_token" "$repo" "delegated" "$expires_at")
+
+	if [[ -z "$token_file" ]] || [[ ! -f "$token_file" ]]; then
+		log_token "ERROR" "Failed to create token file for delegated token (repo: ${repo})"
+		return 1
+	fi
 
 	log_token "INFO" "Created delegated token for ${repo} (advisory TTL: ${ttl}s)"
 	log_audit "create" "$repo" "delegated" "$ttl" "delegated-$$"
