@@ -85,34 +85,29 @@ EOF
 }
 
 #######################################
-# Migrate existing database to new schema
-# With backup-before-modify pattern (t188)
-# Note: t311.4 resolved duplicate migrate_db() — this is the single
-# authoritative version with t188 backup/rollback safety.
+# Migration helper: add event_date column to learnings FTS5 table (t188)
+# FTS5 doesn't support ALTER TABLE — requires backup, recreate, copy, verify.
+# Returns 0 on success (or if column already exists), 1 on failure.
 #######################################
-migrate_db() {
-	# Check if event_date column exists in FTS5 table
-	# FTS5 tables don't support ALTER TABLE, so we check via pragma
+_migrate_event_date() {
 	local has_event_date
 	has_event_date=$(db "$MEMORY_DB" "SELECT COUNT(*) FROM pragma_table_info('learnings') WHERE name='event_date';" 2>/dev/null || echo "0")
+	[[ "$has_event_date" != "0" ]] && return 0
 
-	if [[ "$has_event_date" == "0" ]]; then
-		log_info "Migrating database to add event_date and relations..."
+	log_info "Migrating database to add event_date and relations..."
 
-		# Backup before destructive FTS5 table recreation (t188)
-		local migrate_backup
-		migrate_backup=$(backup_sqlite_db "$MEMORY_DB" "pre-migrate-event-date")
-		if [[ $? -ne 0 || -z "$migrate_backup" ]]; then
-			log_error "Backup failed for memory migration — aborting"
-			return 1
-		fi
-		log_info "Pre-migration backup: $migrate_backup"
+	local migrate_backup
+	migrate_backup=$(backup_sqlite_db "$MEMORY_DB" "pre-migrate-event-date")
+	if [[ $? -ne 0 || -z "$migrate_backup" ]]; then
+		log_error "Backup failed for memory migration — aborting"
+		return 1
+	fi
+	log_info "Pre-migration backup: $migrate_backup"
 
-		# Get pre-migration row count for verification
-		local pre_count
-		pre_count=$(db "$MEMORY_DB" "SELECT COUNT(*) FROM learnings;" 2>/dev/null || echo "0")
+	local pre_count
+	pre_count=$(db "$MEMORY_DB" "SELECT COUNT(*) FROM learnings;" 2>/dev/null || echo "0")
 
-		db "$MEMORY_DB" <<'EOF'
+	db "$MEMORY_DB" <<'EOF'
 -- Create new FTS5 table with event_date
 CREATE VIRTUAL TABLE IF NOT EXISTS learnings_new USING fts5(
     id UNINDEXED,
@@ -151,19 +146,25 @@ CREATE TABLE IF NOT EXISTS learning_relations (
 );
 EOF
 
-		# Verify row counts after migration (t188)
-		local post_count
-		post_count=$(db "$MEMORY_DB" "SELECT COUNT(*) FROM learnings;" 2>/dev/null || echo "0")
-		if [[ "$post_count" -lt "$pre_count" ]]; then
-			log_error "Memory migration FAILED: row count decreased ($pre_count -> $post_count) — rolling back"
-			rollback_sqlite_db "$MEMORY_DB" "$migrate_backup"
-			return 1
-		fi
-
-		log_success "Database migrated successfully ($pre_count rows preserved)"
-		cleanup_sqlite_backups "$MEMORY_DB" 5
+	local post_count
+	post_count=$(db "$MEMORY_DB" "SELECT COUNT(*) FROM learnings;" 2>/dev/null || echo "0")
+	if [[ "$post_count" -lt "$pre_count" ]]; then
+		log_error "Memory migration FAILED: row count decreased ($pre_count -> $post_count) — rolling back"
+		rollback_sqlite_db "$MEMORY_DB" "$migrate_backup"
+		return 1
 	fi
 
+	log_success "Database migrated successfully ($pre_count rows preserved)"
+	cleanup_sqlite_backups "$MEMORY_DB" 5
+	return 0
+}
+
+#######################################
+# Migration helper: ensure learning_relations and learning_access columns exist
+# Covers: learning_relations table (pre-event_date DBs), auto_captured (t058),
+# graduated_at (t184).
+#######################################
+_migrate_learning_access_columns() {
 	# Ensure relations table exists (for databases created before this feature)
 	# Composite PK allows fan-in: one memory can derive from multiple sources.
 	db "$MEMORY_DB" <<'EOF'
@@ -189,7 +190,14 @@ EOF
 	if [[ "$has_graduated" == "0" ]]; then
 		db "$MEMORY_DB" "ALTER TABLE learning_access ADD COLUMN graduated_at TEXT DEFAULT NULL;" || echo "[WARN] Failed to add graduated_at column (may already exist)" >&2
 	fi
+	return 0
+}
 
+#######################################
+# Migration helper: create pattern_metadata table and backfill (t1095, t1114)
+# DDL lives in _create_pattern_metadata_table() (shared with init_db).
+#######################################
+_migrate_pattern_metadata() {
 	# Create pattern_metadata table if missing (t1095 migration)
 	# Companion table for pattern records — stores strategy, quality, failure_mode, tokens.
 	# DDL lives in _create_pattern_metadata_table() to avoid duplication with init_db().
@@ -216,10 +224,15 @@ EOF
 		db "$MEMORY_DB" "ALTER TABLE pattern_metadata ADD COLUMN estimated_cost REAL DEFAULT NULL;" 2>/dev/null ||
 			echo "[WARN] Failed to add estimated_cost column (may already exist)" >&2
 	fi
+	return 0
+}
 
-	# Create learning_entities junction table if missing (t1363.3 migration)
-	# Links learnings to entities — enables entity-scoped memory queries.
-	# Supports M:M: a learning can relate to multiple entities.
+#######################################
+# Migration helper: create learning_entities junction table (t1363.3)
+# Links learnings to entities — enables entity-scoped memory queries.
+# Supports M:M: a learning can relate to multiple entities.
+#######################################
+_migrate_learning_entities() {
 	local has_learning_entities
 	has_learning_entities=$(db "$MEMORY_DB" "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='learning_entities';" 2>/dev/null || echo "0")
 	if [[ "$has_learning_entities" == "0" ]]; then
@@ -235,16 +248,23 @@ CREATE INDEX IF NOT EXISTS idx_learning_entities_entity ON learning_entities(ent
 EOF
 		log_success "learning_entities junction table created (t1363.3)"
 	fi
+	return 0
+}
 
-	# Create entity memory tables if missing (t1363.1 migration)
-	# Part of the conversational memory system (p035).
-	# These tables extend memory.db with entity tracking, cross-channel identity,
-	# versioned profiles, and interaction logging.
+#######################################
+# Migration helper: create core entity identity tables (t1363.1, part 1/2)
+# Part of the conversational memory system (p035).
+# Tables: entities, entity_channels.
+# Skips if entities table already exists (idempotent guard).
+# Caller must also invoke _migrate_entity_interaction_tables().
+#######################################
+_migrate_entity_tables() {
 	local has_entities
 	has_entities=$(db "$MEMORY_DB" "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='entities';" 2>/dev/null || echo "0")
-	if [[ "$has_entities" == "0" ]]; then
-		log_info "Creating entity memory tables (t1363.1)..."
-		db "$MEMORY_DB" <<'EOF'
+	[[ "$has_entities" != "0" ]] && return 0
+
+	log_info "Creating entity memory tables (t1363.1)..."
+	db "$MEMORY_DB" <<'EOF'
 -- Layer 2: Entity relationship model
 CREATE TABLE IF NOT EXISTS entities (
     id TEXT PRIMARY KEY,
@@ -270,7 +290,20 @@ CREATE TABLE IF NOT EXISTS entity_channels (
     FOREIGN KEY (entity_id) REFERENCES entities(id) ON DELETE CASCADE
 );
 CREATE INDEX IF NOT EXISTS idx_entity_channels_entity ON entity_channels(entity_id);
+EOF
+	log_success "Entity identity tables created (t1363.1 part 1)"
+	return 0
+}
 
+#######################################
+# Migration helper: create entity interaction/profile tables (t1363.1, part 2/2)
+# Part of the conversational memory system (p035).
+# Tables: interactions, conversations, entity_profiles, capability_gaps,
+#         interactions_fts.
+# Depends on entities table existing (call after _migrate_entity_tables).
+#######################################
+_migrate_entity_interaction_tables() {
+	db "$MEMORY_DB" <<'EOF'
 -- Layer 0: Raw interaction log (immutable, append-only)
 CREATE TABLE IF NOT EXISTS interactions (
     id TEXT PRIMARY KEY,
@@ -347,11 +380,15 @@ CREATE VIRTUAL TABLE IF NOT EXISTS interactions_fts USING fts5(
     tokenize='porter unicode61'
 );
 EOF
-		log_success "Entity memory tables created (t1363.1)"
-	fi
+	log_success "Entity interaction tables created (t1363.1 part 2)"
+	return 0
+}
 
-	# Create conversation_summaries table if missing (t1363.2 migration)
-	# Versioned, immutable conversation summaries with source range references.
+#######################################
+# Migration helper: create conversation_summaries table and channel index (t1363.2)
+# Versioned, immutable conversation summaries with source range references.
+#######################################
+_migrate_conversation_summaries() {
 	local has_conv_summaries
 	has_conv_summaries=$(db "$MEMORY_DB" "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='conversation_summaries';" 2>/dev/null || echo "0")
 	if [[ "$has_conv_summaries" == "0" ]]; then
@@ -383,10 +420,15 @@ EOF
 	if [[ "$has_conv_channel_idx" == "0" ]]; then
 		db "$MEMORY_DB" "CREATE INDEX IF NOT EXISTS idx_conversations_channel ON conversations(channel, status);" 2>/dev/null || true
 	fi
+	return 0
+}
 
-	# Create memory_consolidations table if missing (t1413 migration)
-	# Stores cross-memory consolidation insights generated by LLM analysis.
-	# Connections between memories are also recorded in learning_relations as 'derives'.
+#######################################
+# Migration helper: create memory_consolidations table (t1413)
+# Stores cross-memory consolidation insights generated by LLM analysis.
+# Connections between memories are also recorded in learning_relations as 'derives'.
+#######################################
+_migrate_memory_consolidations() {
 	local has_consolidations
 	has_consolidations=$(db "$MEMORY_DB" "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='memory_consolidations';" 2>/dev/null || echo "0")
 	if [[ "$has_consolidations" == "0" ]]; then
@@ -403,7 +445,25 @@ CREATE INDEX IF NOT EXISTS idx_consolidations_created ON memory_consolidations(c
 EOF
 		log_success "memory_consolidations table created (t1413)"
 	fi
+	return 0
+}
 
+#######################################
+# Migrate existing database to new schema
+# With backup-before-modify pattern (t188)
+# Note: t311.4 resolved duplicate migrate_db() — this is the single
+# authoritative version with t188 backup/rollback safety.
+# Each migration step is delegated to a focused helper (_migrate_*).
+#######################################
+migrate_db() {
+	_migrate_event_date || return 1
+	_migrate_learning_access_columns
+	_migrate_pattern_metadata
+	_migrate_learning_entities
+	_migrate_entity_tables
+	_migrate_entity_interaction_tables
+	_migrate_conversation_summaries
+	_migrate_memory_consolidations
 	return 0
 }
 
