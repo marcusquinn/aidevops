@@ -402,95 +402,102 @@ check_phishing_indicators() {
 # DNS sender verification (SPF/DKIM/DMARC)
 # =============================================================================
 
-# Verify sender domain DNS authentication records
-# Arguments: $1=sender-domain
-# Returns: 0 if verified (pass), 1 if suspicious (warn/fail)
-verify_sender_dns() {
+# Check SPF record for a domain; appends to score/max_score/details via nameref-style
+# Arguments: $1=domain, $2=score_var (name), $3=max_score_var (name), $4=details_var (name)
+# Returns: always 0 (scoring is additive)
+_check_spf() {
 	local domain="$1"
-
-	if [[ -z "$domain" ]]; then
-		print_error "Domain required for DNS verification"
-		return 1
-	fi
-
-	print_info "Verifying DNS authentication for: $domain"
-
-	local score=0
-	local max_score=0
-	local details=""
-
-	# --- SPF Check ---
 	local spf_record
 	spf_record=$(dig TXT "$domain" +short 2>/dev/null | grep -i "v=spf1" | tr -d '"' || true)
 
-	max_score=$((max_score + 2))
+	eval "$3=\$((\$$3 + 2))"
 	if [[ -z "$spf_record" ]]; then
 		print_warning "SPF: No record found for $domain"
-		details="${details}SPF=MISSING; "
+		eval "$4=\"\$$4SPF=MISSING; \""
 	elif [[ "$spf_record" == *"-all"* || "$spf_record" == *"~all"* ]]; then
 		print_success "SPF: Valid record with strict/soft-fail policy"
-		score=$((score + 2))
-		details="${details}SPF=PASS; "
+		eval "$2=\$((\$$2 + 2))"
+		eval "$4=\"\$$4SPF=PASS; \""
 	elif [[ "$spf_record" == *"+all"* ]]; then
 		print_warning "SPF: Record uses +all (allows anyone — suspicious)"
-		score=$((score + 0))
-		details="${details}SPF=FAIL(+all); "
+		eval "$4=\"\$$4SPF=FAIL(+all); \""
 	else
 		print_info "SPF: Record found (neutral policy)"
-		score=$((score + 1))
-		details="${details}SPF=WARN; "
+		eval "$2=\$((\$$2 + 1))"
+		eval "$4=\"\$$4SPF=WARN; \""
 	fi
+	return 0
+}
 
-	# --- DKIM Check ---
+# Check DKIM records for a domain across common selectors
+# Arguments: $1=domain, $2=score_var (name), $3=max_score_var (name), $4=details_var (name)
+# Returns: always 0 (scoring is additive)
+_check_dkim() {
+	local domain="$1"
 	local found_dkim=false
 	local sel
-	max_score=$((max_score + 2))
 
+	eval "$3=\$((\$$3 + 2))"
 	for sel in $DKIM_SELECTORS; do
 		local dkim_record
 		dkim_record=$(dig TXT "${sel}._domainkey.${domain}" +short 2>/dev/null | tr -d '"' || true)
 		if [[ -n "$dkim_record" && "$dkim_record" != *"NXDOMAIN"* ]]; then
 			found_dkim=true
 			print_success "DKIM: Record found (selector: $sel)"
-			score=$((score + 2))
-			details="${details}DKIM=PASS(${sel}); "
+			eval "$2=\$((\$$2 + 2))"
+			eval "$4=\"\$$4DKIM=PASS(${sel}); \""
 			break
 		fi
 	done
 
 	if [[ "$found_dkim" == false ]]; then
 		print_warning "DKIM: No records found for common selectors"
-		details="${details}DKIM=MISSING; "
+		eval "$4=\"\$$4DKIM=MISSING; \""
 	fi
+	return 0
+}
 
-	# --- DMARC Check ---
+# Check DMARC record for a domain
+# Arguments: $1=domain, $2=score_var (name), $3=max_score_var (name), $4=details_var (name)
+# Returns: always 0 (scoring is additive)
+_check_dmarc() {
+	local domain="$1"
 	local dmarc_record
 	dmarc_record=$(dig TXT "_dmarc.${domain}" +short 2>/dev/null | tr -d '"' || true)
 
-	max_score=$((max_score + 3))
+	eval "$3=\$((\$$3 + 3))"
 	if [[ -z "$dmarc_record" ]]; then
 		print_warning "DMARC: No record found for $domain"
-		details="${details}DMARC=MISSING; "
+		eval "$4=\"\$$4DMARC=MISSING; \""
 	elif [[ "$dmarc_record" == *"p=reject"* ]]; then
 		print_success "DMARC: Policy=reject (strongest protection)"
-		score=$((score + 3))
-		details="${details}DMARC=PASS(reject); "
+		eval "$2=\$((\$$2 + 3))"
+		eval "$4=\"\$$4DMARC=PASS(reject); \""
 	elif [[ "$dmarc_record" == *"p=quarantine"* ]]; then
 		print_success "DMARC: Policy=quarantine (good protection)"
-		score=$((score + 2))
-		details="${details}DMARC=PASS(quarantine); "
+		eval "$2=\$((\$$2 + 2))"
+		eval "$4=\"\$$4DMARC=PASS(quarantine); \""
 	elif [[ "$dmarc_record" == *"p=none"* ]]; then
 		print_warning "DMARC: Policy=none (monitoring only)"
-		score=$((score + 1))
-		details="${details}DMARC=WARN(none); "
+		eval "$2=\$((\$$2 + 1))"
+		eval "$4=\"\$$4DMARC=WARN(none); \""
 	else
 		print_info "DMARC: Record found (unknown policy)"
-		score=$((score + 1))
-		details="${details}DMARC=WARN; "
+		eval "$2=\$((\$$2 + 1))"
+		eval "$4=\"\$$4DMARC=WARN; \""
 	fi
+	return 0
+}
 
-	# --- Score evaluation ---
+# Evaluate DNS score percentage and print pass/warn/fail verdict
+# Arguments: $1=score, $2=max_score, $3=details
+# Returns: 0 if pass, 1 if warn or fail
+_evaluate_dns_score() {
+	local score="$1"
+	local max_score="$2"
+	local details="$3"
 	local pct=0
+
 	if [[ "$max_score" -gt 0 ]]; then
 		pct=$(((score * 100) / max_score))
 	fi
@@ -508,6 +515,30 @@ verify_sender_dns() {
 		print_error "Sender DNS verification: FAIL (insufficient authentication)"
 		return 1
 	fi
+}
+
+# Verify sender domain DNS authentication records
+# Arguments: $1=sender-domain
+# Returns: 0 if verified (pass), 1 if suspicious (warn/fail)
+verify_sender_dns() {
+	local domain="$1"
+
+	if [[ -z "$domain" ]]; then
+		print_error "Domain required for DNS verification"
+		return 1
+	fi
+
+	print_info "Verifying DNS authentication for: $domain"
+
+	local score=0
+	local max_score=0
+	local details=""
+
+	_check_spf "$domain" score max_score details
+	_check_dkim "$domain" score max_score details
+	_check_dmarc "$domain" score max_score details
+	_evaluate_dns_score "$score" "$max_score" "$details"
+	return $?
 }
 
 # Check if sender domain is a known legitimate accounting/payment service
@@ -994,17 +1025,17 @@ HELPEOF
 # Main
 # =============================================================================
 
-main() {
-	local command="${1:-help}"
-	shift || true
-
-	# Parse global flags
-	local dry_run=false
-	local verbose=false
-	local accounts_email_override=""
-	local mailbox_dir_override=""
-	local flag_reason=""
-	local remaining_args=()
+# Parse global flags from argument list into named variables
+# Populates: dry_run, verbose, accounts_email_override, mailbox_dir_override,
+#            flag_reason, remaining_args (array)
+# Arguments: all remaining positional args after the command has been shifted off
+_parse_global_flags() {
+	dry_run=false
+	verbose=false
+	accounts_email_override=""
+	mailbox_dir_override=""
+	flag_reason=""
+	remaining_args=()
 
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
@@ -1034,12 +1065,13 @@ main() {
 			;;
 		esac
 	done
+	return 0
+}
 
-	# Export overrides for sub-functions
-	export DRY_RUN="$dry_run"
-	export ACCOUNTS_EMAIL_OVERRIDE="$accounts_email_override"
-
-	load_config
+# Dispatch a parsed command with pre-populated globals from _parse_global_flags
+# Arguments: $1=command
+_dispatch_command() {
+	local command="$1"
 
 	case "$command" in
 	"process")
@@ -1121,6 +1153,21 @@ main() {
 		exit 1
 		;;
 	esac
+	return 0
+}
+
+main() {
+	local command="${1:-help}"
+	shift || true
+
+	_parse_global_flags "$@"
+
+	# Export overrides for sub-functions
+	export DRY_RUN="$dry_run"
+	export ACCOUNTS_EMAIL_OVERRIDE="$accounts_email_override"
+
+	load_config
+	_dispatch_command "$command"
 	return 0
 }
 
