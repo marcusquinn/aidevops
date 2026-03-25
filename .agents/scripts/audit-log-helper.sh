@@ -238,6 +238,143 @@ _audit_error() {
 # Commands
 # =============================================================================
 
+# Parse --detail key=value pairs from argument list.
+# Arguments: $@ — remaining args after event_type and message have been shifted
+# Output: detail_json on stdout (always valid JSON object)
+# Returns: 0 on success, 1 on parse error
+_audit_parse_details() {
+	local detail_pairs=""
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--detail)
+			if [[ $# -lt 2 ]]; then
+				_audit_error "--detail requires a key=value argument"
+				return 1
+			fi
+			local kv="$2"
+			local key="${kv%%=*}"
+			local value="${kv#*=}"
+			if [[ "$key" == "$kv" ]]; then
+				_audit_error "Invalid --detail format: $kv (expected key=value)"
+				return 1
+			fi
+			local escaped_key escaped_value
+			escaped_key="$(_audit_json_escape "$key")"
+			escaped_value="$(_audit_json_escape "$value")"
+			if [[ -z "$detail_pairs" ]]; then
+				detail_pairs="\"${escaped_key}\":\"${escaped_value}\""
+			else
+				detail_pairs="${detail_pairs},\"${escaped_key}\":\"${escaped_value}\""
+			fi
+			shift 2
+			;;
+		*)
+			_audit_warn "Unknown argument: $1 (ignored)"
+			shift
+			;;
+		esac
+	done
+
+	local detail_json="{}"
+	if [[ -n "$detail_pairs" ]]; then
+		detail_json="{${detail_pairs}}"
+	fi
+	if [[ ${#detail_json} -gt $AUDIT_MAX_DETAIL_LEN ]]; then
+		detail_json='{"error":"detail_truncated"}'
+	fi
+
+	echo "$detail_json"
+	return 0
+}
+
+# Build a JSON entry (without the hash field) from its components.
+# Arguments: $1=seq $2=ts $3=event_type $4=message $5=detail_json $6=actor $7=host $8=prev_hash
+# Output: compact JSON on stdout
+_audit_build_entry_no_hash() {
+	local seq="$1" ts="$2" event_type="$3" message="$4"
+	local detail_json="$5" actor="$6" host="$7" prev_hash="$8"
+
+	if command -v jq &>/dev/null; then
+		jq -c -n \
+			--argjson seq "${seq}" \
+			--arg ts "${ts}" \
+			--arg type "${event_type}" \
+			--arg msg "${message}" \
+			--argjson detail "${detail_json}" \
+			--arg actor "${actor}" \
+			--arg host "${host}" \
+			--arg prev_hash "${prev_hash}" \
+			'{seq: $seq, ts: $ts, type: $type, msg: $msg, detail: $detail, actor: $actor, host: $host, prev_hash: $prev_hash}'
+	else
+		local escaped_msg escaped_actor escaped_host
+		escaped_msg="$(_audit_json_escape "$message")"
+		escaped_actor="$(_audit_json_escape "$actor")"
+		escaped_host="$(_audit_json_escape "$host")"
+		echo "{\"seq\":${seq},\"ts\":\"${ts}\",\"type\":\"${event_type}\",\"msg\":\"${escaped_msg}\",\"detail\":${detail_json},\"actor\":\"${escaped_actor}\",\"host\":\"${escaped_host}\",\"prev_hash\":\"${prev_hash}\"}"
+	fi
+	return 0
+}
+
+# Append a single audit entry to the log under an flock-serialised lock.
+# Handles: seq allocation, prev_hash lookup, entry construction, hash, append.
+# Arguments: $1=log_file $2=event_type $3=message $4=detail_json $5=ts $6=actor $7=host
+# Returns: 0 on success, 1 on lock failure
+_audit_locked_append() {
+	local log_file="$1" event_type="$2" message="$3" detail_json="$4"
+	local ts="$5" actor="$6" host="$7"
+
+	local lock_file="${log_file}.lock"
+	# Serialize the read-modify-write path with flock to prevent concurrent
+	# writers from duplicating sequence numbers or breaking the hash chain.
+	# Uses fd 200 for the lock file; released automatically when fd is closed.
+	if command -v flock &>/dev/null; then
+		exec 200>"$lock_file"
+		if ! flock -w 10 200; then
+			_audit_error "Could not acquire audit log lock after 10s"
+			exec 200>&-
+			return 1
+		fi
+	fi
+	# Note: if flock is unavailable (e.g., macOS without util-linux), we proceed
+	# without locking — single-writer scenarios are still safe.
+
+	local seq
+	if [[ -s "$log_file" ]]; then
+		seq="$(wc -l <"$log_file" | tr -d ' ')"
+		seq=$((seq + 1))
+	else
+		seq=1
+	fi
+
+	local prev_hash
+	prev_hash="$(_audit_last_hash)"
+
+	local entry_no_hash
+	entry_no_hash="$(_audit_build_entry_no_hash \
+		"$seq" "$ts" "$event_type" "$message" "$detail_json" "$actor" "$host" "$prev_hash")"
+
+	local entry_hash
+	entry_hash="$(_audit_sha256 "$entry_no_hash")"
+
+	local entry
+	if command -v jq &>/dev/null; then
+		entry=$(echo "$entry_no_hash" | jq -c --arg hash "$entry_hash" '. + {hash: $hash}')
+	else
+		# Reconstruct with hash appended (fallback — jq strongly preferred)
+		# Strip trailing } and append hash field
+		entry="${entry_no_hash%\}},\"hash\":\"${entry_hash}\"}"
+	fi
+
+	echo "$entry" >>"$log_file"
+
+	if command -v flock &>/dev/null; then
+		exec 200>&-
+	fi
+
+	echo "$seq"
+	return 0
+}
+
 # Log a security-sensitive event with hash chaining.
 #
 # Arguments:
@@ -283,147 +420,89 @@ cmd_log() {
 		return 1
 	fi
 
-	# Truncate message if too long
 	if [[ ${#message} -gt $AUDIT_MAX_MESSAGE_LEN ]]; then
 		message="${message:0:$AUDIT_MAX_MESSAGE_LEN}...[truncated]"
 	fi
 
 	shift 2
 
-	# Parse --detail key=value pairs
-	local detail_json="{}"
-	local detail_pairs=""
-	while [[ $# -gt 0 ]]; do
-		case "$1" in
-		--detail)
-			if [[ $# -lt 2 ]]; then
-				_audit_error "--detail requires a key=value argument"
-				return 1
-			fi
-			local kv="$2"
-			local key="${kv%%=*}"
-			local value="${kv#*=}"
-			if [[ "$key" == "$kv" ]]; then
-				_audit_error "Invalid --detail format: $kv (expected key=value)"
-				return 1
-			fi
-			local escaped_key
-			escaped_key="$(_audit_json_escape "$key")"
-			local escaped_value
-			escaped_value="$(_audit_json_escape "$value")"
-			if [[ -z "$detail_pairs" ]]; then
-				detail_pairs="\"${escaped_key}\":\"${escaped_value}\""
-			else
-				detail_pairs="${detail_pairs},\"${escaped_key}\":\"${escaped_value}\""
-			fi
-			shift 2
-			;;
-		*)
-			_audit_warn "Unknown argument: $1 (ignored)"
-			shift
-			;;
-		esac
-	done
-
-	if [[ -n "$detail_pairs" ]]; then
-		detail_json="{${detail_pairs}}"
-	fi
-
-	# Truncate detail if too long
-	if [[ ${#detail_json} -gt $AUDIT_MAX_DETAIL_LEN ]]; then
-		detail_json='{"error":"detail_truncated"}'
-	fi
+	local detail_json
+	detail_json="$(_audit_parse_details "$@")" || return 1
 
 	_audit_ensure_log
 
 	local log_file
 	log_file="$(_audit_log_path)"
 
-	# Build timestamp and actor/host outside the lock (no file dependency)
-	local ts
+	local ts actor host
 	ts="$(date -u '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || date '+%Y-%m-%dT%H:%M:%SZ')"
-	local actor="${AIDEVOPS_SESSION_ID:-${USER:-unknown}}"
-	local host
+	actor="${AIDEVOPS_SESSION_ID:-${USER:-unknown}}"
 	host="$(hostname -s 2>/dev/null || echo "unknown")"
 
-	# Serialize the read-modify-write path with flock to prevent concurrent
-	# writers from duplicating sequence numbers or breaking the hash chain.
-	# Uses fd 200 for the lock file; released automatically when fd is closed.
-	local lock_file="${log_file}.lock"
-	if command -v flock &>/dev/null; then
-		exec 200>"$lock_file"
-		if ! flock -w 10 200; then
-			_audit_error "Could not acquire audit log lock after 10s"
-			exec 200>&-
-			return 1
-		fi
-	fi
-	# Note: if flock is unavailable (e.g., macOS without util-linux), we proceed
-	# without locking — single-writer scenarios are still safe.
-
-	# --- Begin locked section (seq read → hash chain → append) ---
-
-	# Get sequence number (line count + 1)
 	local seq
-	if [[ -s "$log_file" ]]; then
-		seq="$(wc -l <"$log_file" | tr -d ' ')"
-		seq=$((seq + 1))
-	else
-		seq=1
-	fi
-
-	# Get previous hash
-	local prev_hash
-	prev_hash="$(_audit_last_hash)"
-
-	# Build the entry without hash (hash is computed over this)
-	local entry_no_hash
-	if command -v jq &>/dev/null; then
-		# Use jq for robust JSON construction — handles all escaping
-		entry_no_hash=$(jq -c -n \
-			--argjson seq "${seq}" \
-			--arg ts "${ts}" \
-			--arg type "${event_type}" \
-			--arg msg "${message}" \
-			--argjson detail "${detail_json}" \
-			--arg actor "${actor}" \
-			--arg host "${host}" \
-			--arg prev_hash "${prev_hash}" \
-			'{seq: $seq, ts: $ts, type: $type, msg: $msg, detail: $detail, actor: $actor, host: $host, prev_hash: $prev_hash}')
-	else
-		# Fallback: manual JSON construction (jq strongly preferred)
-		local escaped_msg escaped_actor escaped_host
-		escaped_msg="$(_audit_json_escape "$message")"
-		escaped_actor="$(_audit_json_escape "$actor")"
-		escaped_host="$(_audit_json_escape "$host")"
-		entry_no_hash="{\"seq\":${seq},\"ts\":\"${ts}\",\"type\":\"${event_type}\",\"msg\":\"${escaped_msg}\",\"detail\":${detail_json},\"actor\":\"${escaped_actor}\",\"host\":\"${escaped_host}\",\"prev_hash\":\"${prev_hash}\"}"
-	fi
-
-	# Compute hash of the entry
-	local entry_hash
-	entry_hash="$(_audit_sha256 "$entry_no_hash")"
-
-	# Build final entry with hash
-	local entry
-	if command -v jq &>/dev/null; then
-		entry=$(echo "$entry_no_hash" | jq -c --arg hash "$entry_hash" '. + {hash: $hash}')
-	else
-		entry="{\"seq\":${seq},\"ts\":\"${ts}\",\"type\":\"${event_type}\",\"msg\":\"${escaped_msg}\",\"detail\":${detail_json},\"actor\":\"${escaped_actor}\",\"host\":\"${escaped_host}\",\"prev_hash\":\"${prev_hash}\",\"hash\":\"${entry_hash}\"}"
-	fi
-
-	# Append entry while holding the lock
-	echo "$entry" >>"$log_file"
-
-	# --- End locked section ---
-
-	# Release lock
-	if command -v flock &>/dev/null; then
-		exec 200>&-
-	fi
+	seq="$(_audit_locked_append \
+		"$log_file" "$event_type" "$message" "$detail_json" "$ts" "$actor" "$host")" || return 1
 
 	_audit_info "Logged ${event_type} (seq=${seq})"
 
 	return 0
+}
+
+# Verify a single audit log entry against the expected previous hash.
+# Arguments: $1=line_num $2=line $3=expected_prev_hash
+# Output: next expected_prev_hash on stdout (the stored hash of this entry)
+# Returns: 0 if entry is valid, number of errors found (1 or 2) otherwise
+_audit_verify_entry() {
+	local line_num="$1" line="$2" expected_prev_hash="$3"
+
+	# Check 1: Valid JSON
+	if command -v jq &>/dev/null && ! echo "$line" | jq -e '.' &>/dev/null; then
+		_audit_error "Entry ${line_num}: Invalid JSON"
+		return 1
+	fi
+
+	# Extract fields
+	local stored_hash stored_prev_hash entry_no_hash_json
+	if command -v jq &>/dev/null; then
+		stored_hash="$(echo "$line" | jq -r '.hash // empty')"
+		stored_prev_hash="$(echo "$line" | jq -r '.prev_hash // empty')"
+		entry_no_hash_json="$(echo "$line" | jq -c 'del(.hash)')"
+	else
+		# Fallback: sed-based extraction (POSIX-compatible, no grep -P)
+		stored_hash="$(echo "$line" | sed -n 's/.*,"hash":"\([a-f0-9]\{64\}\)".*/\1/p')"
+		stored_prev_hash="$(echo "$line" | sed -n 's/.*"prev_hash":"\([a-f0-9]\{64\}\)".*/\1/p')"
+		# Remove the trailing ,"hash":"..." anchored to end of line
+		entry_no_hash_json="$(echo "$line" | sed 's/,"hash":"[a-f0-9]\{64\}"}$/}/')"
+	fi
+
+	if [[ -z "$stored_hash" ]]; then
+		_audit_error "Entry ${line_num}: Missing hash field"
+		return 1
+	fi
+
+	local entry_errors=0
+
+	# Check 2: prev_hash matches expected
+	if [[ "$stored_prev_hash" != "$expected_prev_hash" ]]; then
+		_audit_error "Entry ${line_num}: Chain broken — prev_hash mismatch"
+		_audit_error "  Expected: ${expected_prev_hash}"
+		_audit_error "  Found:    ${stored_prev_hash}"
+		entry_errors=$((entry_errors + 1))
+	fi
+
+	# Check 3: hash matches content
+	local computed_hash
+	computed_hash="$(_audit_sha256 "$entry_no_hash_json")"
+	if [[ "$computed_hash" != "$stored_hash" ]]; then
+		_audit_error "Entry ${line_num}: Hash mismatch — entry has been tampered with"
+		_audit_error "  Stored:   ${stored_hash}"
+		_audit_error "  Computed: ${computed_hash}"
+		entry_errors=$((entry_errors + 1))
+	fi
+
+	# Emit the stored hash so the caller can advance expected_prev_hash
+	echo "$stored_hash"
+	return "$entry_errors"
 }
 
 # Verify the integrity of the audit log hash chain.
@@ -472,60 +551,19 @@ cmd_verify() {
 	while IFS= read -r line; do
 		line_num=$((line_num + 1))
 
-		# Skip empty lines
 		if [[ -z "$line" ]]; then
 			continue
 		fi
 
-		# Check 1: Valid JSON
-		if command -v jq &>/dev/null && ! echo "$line" | jq -e '.' &>/dev/null; then
-			_audit_error "Entry ${line_num}: Invalid JSON"
-			errors=$((errors + 1))
-			continue
+		local entry_hash
+		entry_hash="$(_audit_verify_entry "$line_num" "$line" "$expected_prev_hash")"
+		local entry_errors=$?
+		errors=$((errors + entry_errors))
+
+		# Advance chain only when the entry itself was parseable (hash non-empty)
+		if [[ -n "$entry_hash" ]]; then
+			expected_prev_hash="$entry_hash"
 		fi
-
-		# Extract fields
-		local stored_hash stored_prev_hash entry_no_hash_json
-		if command -v jq &>/dev/null; then
-			stored_hash="$(echo "$line" | jq -r '.hash // empty')"
-			stored_prev_hash="$(echo "$line" | jq -r '.prev_hash // empty')"
-			# Reconstruct entry without hash field for verification
-			entry_no_hash_json="$(echo "$line" | jq -c 'del(.hash)')"
-		else
-			# Fallback: sed-based extraction (POSIX-compatible, no grep -P)
-			stored_hash="$(echo "$line" | sed -n 's/.*,"hash":"\([a-f0-9]\{64\}\)".*/\1/p')"
-			stored_prev_hash="$(echo "$line" | sed -n 's/.*"prev_hash":"\([a-f0-9]\{64\}\)".*/\1/p')"
-			# Remove the trailing ,"hash":"..." anchored to end of line
-			entry_no_hash_json="$(echo "$line" | sed 's/,"hash":"[a-f0-9]\{64\}"}$/}/')"
-		fi
-
-		if [[ -z "$stored_hash" ]]; then
-			_audit_error "Entry ${line_num}: Missing hash field"
-			errors=$((errors + 1))
-			continue
-		fi
-
-		# Check 2: prev_hash matches expected
-		if [[ "$stored_prev_hash" != "$expected_prev_hash" ]]; then
-			_audit_error "Entry ${line_num}: Chain broken — prev_hash mismatch"
-			_audit_error "  Expected: ${expected_prev_hash}"
-			_audit_error "  Found:    ${stored_prev_hash}"
-			errors=$((errors + 1))
-		fi
-
-		# Check 3: hash matches content
-		local computed_hash
-		computed_hash="$(_audit_sha256 "$entry_no_hash_json")"
-
-		if [[ "$computed_hash" != "$stored_hash" ]]; then
-			_audit_error "Entry ${line_num}: Hash mismatch — entry has been tampered with"
-			_audit_error "  Stored:   ${stored_hash}"
-			_audit_error "  Computed: ${computed_hash}"
-			errors=$((errors + 1))
-		fi
-
-		# Next entry should reference this entry's hash
-		expected_prev_hash="$stored_hash"
 
 	done <"$log_file"
 
