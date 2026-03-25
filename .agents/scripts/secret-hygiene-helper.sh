@@ -569,7 +569,7 @@ cmd_scan() {
 		echo "  secret-hygiene-helper.sh dismiss <advisory-id>"
 	fi
 
-	if [[ "$FINDINGS_HIGH" -gt 0 ]]; then
+	if [[ "$FINDINGS_TOTAL" -gt 0 ]]; then
 		return 1
 	fi
 	return 0

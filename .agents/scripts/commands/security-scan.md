@@ -110,5 +110,4 @@ aidevops security scan-secrets # Plaintext secret locations only
 aidevops security scan-deps    # Unpinned dependency check only
 aidevops security check        # Per-repo security posture assessment
 aidevops security dismiss <id> # Dismiss a security advisory after action
-aidevops security status       # Detailed security posture report
 ```
