@@ -2981,20 +2981,43 @@ count_active_workers() {
 	if [[ -n "$launching_lines" ]]; then
 		while IFS= read -r launch_line; do
 			[[ -z "$launch_line" ]] && continue
-			# Extract session-key value (e.g., "issue-6426")
-			local skey=""
+			# Extract session-key and dir from the launching process
+			local skey="" launch_dir=""
 			if [[ "$launch_line" =~ --session-key[[:space:]]+([^[:space:]]+) ]]; then
 				skey="${BASH_REMATCH[1]}"
+			fi
+			if [[ "$launch_line" =~ --dir[[:space:]]+([^[:space:]]+) ]]; then
+				launch_dir="${BASH_REMATCH[1]}"
 			fi
 			if [[ -z "$skey" ]]; then
 				# Can't extract session-key — count conservatively
 				launching_count=$((launching_count + 1))
 				continue
 			fi
-			# Check if an active opencode worker already has this session-key
-			# (the session-key appears in the opencode command line as part of
-			# the issue reference, e.g., "issue-6426" in --session-key or prompt)
-			if [[ -n "$active_lines" ]] && echo "$active_lines" | grep -qF "$skey"; then
+			# Check if an active opencode worker already exists with the same
+			# (dir, session-key) pair. Match both fields exactly to avoid
+			# cross-repo collisions (issue numbers are repo-scoped) and
+			# prefix matches (issue-123 vs issue-1234). (CodeRabbit review)
+			local found_match=false
+			if [[ -n "$active_lines" ]]; then
+				local active_line active_skey active_dir
+				while IFS= read -r active_line; do
+					[[ -z "$active_line" ]] && continue
+					active_skey=""
+					active_dir=""
+					if [[ "$active_line" =~ --session-key[[:space:]]+([^[:space:]]+) ]]; then
+						active_skey="${BASH_REMATCH[1]}"
+					fi
+					if [[ "$active_line" =~ --dir[[:space:]]+([^[:space:]]+) ]]; then
+						active_dir="${BASH_REMATCH[1]}"
+					fi
+					if [[ "$active_skey" == "$skey" && "$active_dir" == "$launch_dir" ]]; then
+						found_match=true
+						break
+					fi
+				done <<<"$active_lines"
+			fi
+			if [[ "$found_match" == "true" ]]; then
 				# Already counted as an active worker — skip
 				continue
 			fi
@@ -3912,6 +3935,13 @@ _run_early_exit_recycle_loop() {
 		if [[ "$grace_wait" -gt 0 ]]; then
 			echo "[pulse-wrapper] Early-exit recycle: waiting ${grace_wait}s for dispatched workers to appear (GH#6453)" >>"$LOGFILE"
 			sleep "$grace_wait"
+		fi
+
+		# Re-check stop flag after grace sleep — user may have run
+		# `aidevops pulse stop` during the wait. (CodeRabbit review)
+		if [[ -f "$STOP_FLAG" ]]; then
+			echo "[pulse-wrapper] Stop flag set during launch grace period — skipping early-exit recycle" >>"$LOGFILE"
+			break
 		fi
 
 		# Re-check stop flag after grace sleep — user may have run
