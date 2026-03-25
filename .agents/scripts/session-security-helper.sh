@@ -204,6 +204,128 @@ EOF
 	return 0
 }
 
+# Update context file using jq (when available).
+# Arguments:
+#   $1 - context_file path
+#   $2 - signal_type
+#   $3 - severity
+#   $4 - weight (integer)
+#   $5 - safe_detail
+#   $6 - timestamp
+# Returns: 0 on success
+_ss_record_signal_jq() {
+	local context_file="$1"
+	local signal_type="$2"
+	local severity="$3"
+	local weight="$4"
+	local safe_detail="$5"
+	local timestamp="$6"
+
+	local new_signal
+	new_signal=$(jq -nc \
+		--arg ts "$timestamp" \
+		--arg type "$signal_type" \
+		--arg sev "$severity" \
+		--argjson weight "$weight" \
+		--arg detail "$safe_detail" \
+		'{timestamp: $ts, type: $type, severity: $sev, weight: $weight, detail: $detail}')
+
+	local updated
+	updated=$(jq \
+		--argjson signal "$new_signal" \
+		--argjson weight "$weight" \
+		--arg ts "$timestamp" \
+		--argjson taint_threshold "$SS_TAINT_THRESHOLD" \
+		'
+		.signals += [$signal] |
+		.signal_count += 1 |
+		.composite_score += $weight |
+		.updated_at = $ts |
+		.tainted = (.composite_score >= $taint_threshold) |
+		.threat_level = (
+			if .composite_score >= 16 then "CRITICAL"
+			elif .composite_score >= 8 then "HIGH"
+			elif .composite_score >= 4 then "MEDIUM"
+			elif .composite_score >= 1 then "LOW"
+			else "CLEAN"
+			end
+		)
+		' "$context_file")
+
+	printf '%s\n' "$updated" >"$context_file"
+	return 0
+}
+
+# Update context file without jq (portable sed/grep fallback).
+# Arguments:
+#   $1 - context_file path
+#   $2 - session_id
+#   $3 - signal_type
+#   $4 - severity
+#   $5 - weight (integer)
+#   $6 - safe_detail
+#   $7 - timestamp
+# Returns: 0 on success
+_ss_record_signal_fallback() {
+	local context_file="$1"
+	local session_id="$2"
+	local signal_type="$3"
+	local severity="$4"
+	local weight="$5"
+	local safe_detail="$6"
+	local timestamp="$7"
+
+	local current_score=0
+	local current_count=0
+	local existing_signals=""
+	local created_at="$timestamp"
+
+	if [[ -f "$context_file" ]]; then
+		current_score=$(grep -o '"composite_score": *[0-9]*' "$context_file" | grep -o '[0-9]*' | head -1) || current_score=0
+		current_count=$(grep -o '"signal_count": *[0-9]*' "$context_file" | grep -o '[0-9]*' | head -1) || current_count=0
+		existing_signals=$(sed -n '/\"signals\"/,/\]/p' "$context_file" | grep -v '"signals"' | grep -v '^\s*\]' | sed 's/^[[:space:]]*//' || true)
+		created_at=$(grep -o '"created_at": *"[^"]*"' "$context_file" 2>/dev/null | cut -d'"' -f4 || echo "$timestamp")
+	fi
+
+	local new_score=$((current_score + weight))
+	local new_count=$((current_count + 1))
+	local new_level
+	new_level=$(_ss_score_to_level "$new_score")
+	local new_tainted="false"
+	if [[ "$new_score" -ge "$SS_TAINT_THRESHOLD" ]]; then
+		new_tainted="true"
+	fi
+
+	local signal_entry
+	signal_entry=$(printf '    {"timestamp": "%s", "type": "%s", "severity": "%s", "weight": %d, "detail": "%s"}' \
+		"$timestamp" "$signal_type" "$severity" "$weight" "$safe_detail")
+
+	local signals_content=""
+	if [[ -n "$existing_signals" ]]; then
+		existing_signals=$(printf '%s' "$existing_signals" | sed 's/,*[[:space:]]*$//')
+		signals_content="${existing_signals},
+${signal_entry}"
+	else
+		signals_content="$signal_entry"
+	fi
+
+	cat >"$context_file" <<EOF
+{
+  "session_id": "${session_id}",
+  "created_at": "${created_at}",
+  "updated_at": "${timestamp}",
+  "composite_score": ${new_score},
+  "threat_level": "${new_level}",
+  "tainted": ${new_tainted},
+  "signal_count": ${new_count},
+  "signals": [
+${signals_content}
+  ]
+}
+EOF
+	return 0
+}
+
 # Record a security signal in the session context.
 # Arguments:
 #   $1 - signal type (prompt-injection, sensitive-file, sensitive-data, network-flag, sandbox-violation)
@@ -242,93 +364,9 @@ cmd_record_signal() {
 	safe_detail=$(printf '%s' "$detail" | head -c 200 | tr -d '"' | tr -d "\\" | tr '\n' ' ')
 
 	if command -v jq &>/dev/null; then
-		# Use jq for reliable JSON manipulation
-		local new_signal
-		new_signal=$(jq -nc \
-			--arg ts "$timestamp" \
-			--arg type "$signal_type" \
-			--arg sev "$severity" \
-			--argjson weight "$weight" \
-			--arg detail "$safe_detail" \
-			'{timestamp: $ts, type: $type, severity: $sev, weight: $weight, detail: $detail}')
-
-		local updated
-		updated=$(jq \
-			--argjson signal "$new_signal" \
-			--argjson weight "$weight" \
-			--arg ts "$timestamp" \
-			--argjson taint_threshold "$SS_TAINT_THRESHOLD" \
-			'
-			.signals += [$signal] |
-			.signal_count += 1 |
-			.composite_score += $weight |
-			.updated_at = $ts |
-			.tainted = (.composite_score >= $taint_threshold) |
-			.threat_level = (
-				if .composite_score >= 16 then "CRITICAL"
-				elif .composite_score >= 8 then "HIGH"
-				elif .composite_score >= 4 then "MEDIUM"
-				elif .composite_score >= 1 then "LOW"
-				else "CLEAN"
-				end
-			)
-			' "$context_file")
-
-		printf '%s\n' "$updated" >"$context_file"
+		_ss_record_signal_jq "$context_file" "$signal_type" "$severity" "$weight" "$safe_detail" "$timestamp"
 	else
-		# Fallback: read current score, compute new, rewrite file
-		local current_score=0
-		local current_count=0
-		if [[ -f "$context_file" ]]; then
-			current_score=$(grep -o '"composite_score": *[0-9]*' "$context_file" | grep -o '[0-9]*' | head -1) || current_score=0
-			current_count=$(grep -o '"signal_count": *[0-9]*' "$context_file" | grep -o '[0-9]*' | head -1) || current_count=0
-		fi
-
-		local new_score=$((current_score + weight))
-		local new_count=$((current_count + 1))
-		local new_level
-		new_level=$(_ss_score_to_level "$new_score")
-		local new_tainted="false"
-		if [[ "$new_score" -ge "$SS_TAINT_THRESHOLD" ]]; then
-			new_tainted="true"
-		fi
-
-		# Read existing data before overwriting the file
-		local existing_signals=""
-		local created_at="$timestamp"
-		if [[ -f "$context_file" ]]; then
-			existing_signals=$(sed -n '/\"signals\"/,/\]/p' "$context_file" | grep -v '"signals"' | grep -v '^\s*\]' | sed 's/^[[:space:]]*//' || true)
-			created_at=$(grep -o '"created_at": *"[^"]*"' "$context_file" 2>/dev/null | cut -d'"' -f4 || echo "$timestamp")
-		fi
-
-		local signal_entry
-		signal_entry=$(printf '    {"timestamp": "%s", "type": "%s", "severity": "%s", "weight": %d, "detail": "%s"}' \
-			"$timestamp" "$signal_type" "$severity" "$weight" "$safe_detail")
-
-		local signals_content=""
-		if [[ -n "$existing_signals" ]]; then
-			# Remove trailing comma/whitespace from existing, add comma
-			existing_signals=$(printf '%s' "$existing_signals" | sed 's/,*[[:space:]]*$//')
-			signals_content="${existing_signals},
-${signal_entry}"
-		else
-			signals_content="$signal_entry"
-		fi
-
-		cat >"$context_file" <<EOF
-{
-  "session_id": "${session_id}",
-  "created_at": "${created_at}",
-  "updated_at": "${timestamp}",
-  "composite_score": ${new_score},
-  "threat_level": "${new_level}",
-  "tainted": ${new_tainted},
-  "signal_count": ${new_count},
-  "signals": [
-${signals_content}
-  ]
-}
-EOF
+		_ss_record_signal_fallback "$context_file" "$session_id" "$signal_type" "$severity" "$weight" "$safe_detail" "$timestamp"
 	fi
 
 	log_warn "Signal recorded: ${signal_type} (${severity}, +${weight}) — session ${session_id}, score now $(cmd_get_score --session-id "$session_id")"
@@ -534,91 +572,93 @@ cmd_cleanup() {
 # Test Suite
 # =============================================================================
 
-cmd_test() {
-	echo "Session Security Helper — Test Suite (t1428.3)"
-	echo "========================================================"
+# Assert equality helper used within cmd_test scope.
+# Increments passed/failed/total counters (caller-scoped via upvar pattern).
+# Arguments: $1=desc $2=expected $3=actual
+# Note: passed/failed/total must be declared in the calling scope.
+_test_assert_eq() {
+	local desc="$1"
+	local expected="$2"
+	local actual="$3"
+	total=$((total + 1))
+	if [[ "$actual" == "$expected" ]]; then
+		echo "  PASS $desc"
+		passed=$((passed + 1))
+	else
+		echo "  FAIL $desc (expected='$expected', got='$actual')"
+		failed=$((failed + 1))
+	fi
+	return 0
+}
 
-	local passed=0
-	local failed=0
-	local total=0
+# Assert exit-code helper used within cmd_test scope.
+# Arguments: $1=desc $2=expected_exit $@=command
+_test_assert_exit() {
+	local desc="$1"
+	local expected_exit="$2"
+	shift 2
+	total=$((total + 1))
+	local actual_exit=0
+	"$@" >/dev/null 2>&1 || actual_exit=$?
+	if [[ "$actual_exit" -eq "$expected_exit" ]]; then
+		echo "  PASS $desc (exit=$actual_exit)"
+		passed=$((passed + 1))
+	else
+		echo "  FAIL $desc (expected exit=$expected_exit, got=$actual_exit)"
+		failed=$((failed + 1))
+	fi
+	return 0
+}
 
-	# Use a unique test session ID
-	local test_session
-	test_session="test-$$-$(date +%s)"
-
-	# Helper: assert equality
-	_assert_eq() {
-		local desc="$1"
-		local expected="$2"
-		local actual="$3"
-		total=$((total + 1))
-		if [[ "$actual" == "$expected" ]]; then
-			echo "  PASS $desc"
-			passed=$((passed + 1))
-		else
-			echo "  FAIL $desc (expected='$expected', got='$actual')"
-			failed=$((failed + 1))
-		fi
-		return 0
-	}
-
-	# Helper: assert exit code
-	_assert_exit() {
-		local desc="$1"
-		local expected_exit="$2"
-		shift 2
-		total=$((total + 1))
-		local actual_exit=0
-		"$@" >/dev/null 2>&1 || actual_exit=$?
-		if [[ "$actual_exit" -eq "$expected_exit" ]]; then
-			echo "  PASS $desc (exit=$actual_exit)"
-			passed=$((passed + 1))
-		else
-			echo "  FAIL $desc (expected exit=$expected_exit, got=$actual_exit)"
-			failed=$((failed + 1))
-		fi
-		return 0
-	}
-
+# Test group: init and initial state.
+_test_group_init() {
+	local test_session="$1"
 	echo ""
 	echo "Testing init:"
 	local init_result
 	init_result=$(cmd_init --session-id "$test_session" 2>/dev/null)
-	_assert_eq "Init returns session ID" "$test_session" "$init_result"
+	_test_assert_eq "Init returns session ID" "$test_session" "$init_result"
 
 	local score
 	score=$(cmd_get_score --session-id "$test_session" 2>/dev/null)
-	_assert_eq "Initial score is 0" "0" "$score"
+	_test_assert_eq "Initial score is 0" "0" "$score"
 
 	echo ""
 	echo "Testing check-taint (clean session):"
-	_assert_exit "Clean session returns exit 1" 1 cmd_check_taint --session-id "$test_session"
+	_test_assert_exit "Clean session returns exit 1" 1 cmd_check_taint --session-id "$test_session"
+	return 0
+}
+
+# Test group: signal recording and taint transitions.
+_test_group_signals() {
+	local test_session="$1"
+	local score
 
 	echo ""
 	echo "Testing record-signal (LOW):"
 	cmd_record_signal "prompt-injection" "LOW" "Test low signal" --session-id "$test_session" 2>/dev/null
 	score=$(cmd_get_score --session-id "$test_session" 2>/dev/null)
-	_assert_eq "Score after LOW signal" "1" "$score"
+	_test_assert_eq "Score after LOW signal" "1" "$score"
 
 	echo ""
 	echo "Testing record-signal (MEDIUM):"
 	cmd_record_signal "sensitive-file" "MEDIUM" "Accessed .env file" --session-id "$test_session" 2>/dev/null
 	score=$(cmd_get_score --session-id "$test_session" 2>/dev/null)
-	_assert_eq "Score after LOW+MEDIUM" "3" "$score"
+	_test_assert_eq "Score after LOW+MEDIUM" "3" "$score"
 
 	echo ""
 	echo "Testing check-taint (below threshold):"
-	_assert_exit "Score 3 is not tainted (threshold=4)" 1 cmd_check_taint --session-id "$test_session"
+	_test_assert_exit "Score 3 is not tainted (threshold=4)" 1 cmd_check_taint --session-id "$test_session"
 
 	echo ""
 	echo "Testing record-signal (HIGH) — crosses taint threshold:"
 	cmd_record_signal "sensitive-data" "HIGH" "API key pattern detected" --session-id "$test_session" 2>/dev/null
 	score=$(cmd_get_score --session-id "$test_session" 2>/dev/null)
-	_assert_eq "Score after LOW+MEDIUM+HIGH" "6" "$score"
+	_test_assert_eq "Score after LOW+MEDIUM+HIGH" "6" "$score"
 
 	echo ""
 	echo "Testing check-taint (tainted session):"
-	_assert_exit "Score 6 is tainted" 0 cmd_check_taint --session-id "$test_session"
+	_test_assert_exit "Score 6 is tainted" 0 cmd_check_taint --session-id "$test_session"
 
 	echo ""
 	echo "Testing get-context:"
@@ -634,22 +674,10 @@ cmd_test() {
 	fi
 
 	echo ""
-	echo "Testing score-to-level mapping:"
-	_assert_eq "Score 0 = CLEAN" "CLEAN" "$(_ss_score_to_level 0)"
-	_assert_eq "Score 1 = LOW" "LOW" "$(_ss_score_to_level 1)"
-	_assert_eq "Score 3 = LOW" "LOW" "$(_ss_score_to_level 3)"
-	_assert_eq "Score 4 = MEDIUM" "MEDIUM" "$(_ss_score_to_level 4)"
-	_assert_eq "Score 7 = MEDIUM" "MEDIUM" "$(_ss_score_to_level 7)"
-	_assert_eq "Score 8 = HIGH" "HIGH" "$(_ss_score_to_level 8)"
-	_assert_eq "Score 15 = HIGH" "HIGH" "$(_ss_score_to_level 15)"
-	_assert_eq "Score 16 = CRITICAL" "CRITICAL" "$(_ss_score_to_level 16)"
-	_assert_eq "Score 100 = CRITICAL" "CRITICAL" "$(_ss_score_to_level 100)"
-
-	echo ""
 	echo "Testing record-signal (CRITICAL) — reaches HIGH level:"
 	cmd_record_signal "sandbox-violation" "CRITICAL" "Sandbox escape attempt" --session-id "$test_session" 2>/dev/null
 	score=$(cmd_get_score --session-id "$test_session" 2>/dev/null)
-	_assert_eq "Score after all signals" "10" "$score"
+	_test_assert_eq "Score after all signals" "10" "$score"
 
 	local taint_result
 	taint_result=$(cmd_check_taint --session-id "$test_session" 2>/dev/null) || true
@@ -661,26 +689,67 @@ cmd_test() {
 		echo "  FAIL Taint check expected HIGH level, got: $taint_result"
 		failed=$((failed + 1))
 	fi
+	return 0
+}
+
+# Test group: score-to-level and severity weight mappings.
+_test_group_mappings() {
+	echo ""
+	echo "Testing score-to-level mapping:"
+	_test_assert_eq "Score 0 = CLEAN" "CLEAN" "$(_ss_score_to_level 0)"
+	_test_assert_eq "Score 1 = LOW" "LOW" "$(_ss_score_to_level 1)"
+	_test_assert_eq "Score 3 = LOW" "LOW" "$(_ss_score_to_level 3)"
+	_test_assert_eq "Score 4 = MEDIUM" "MEDIUM" "$(_ss_score_to_level 4)"
+	_test_assert_eq "Score 7 = MEDIUM" "MEDIUM" "$(_ss_score_to_level 7)"
+	_test_assert_eq "Score 8 = HIGH" "HIGH" "$(_ss_score_to_level 8)"
+	_test_assert_eq "Score 15 = HIGH" "HIGH" "$(_ss_score_to_level 15)"
+	_test_assert_eq "Score 16 = CRITICAL" "CRITICAL" "$(_ss_score_to_level 16)"
+	_test_assert_eq "Score 100 = CRITICAL" "CRITICAL" "$(_ss_score_to_level 100)"
 
 	echo ""
 	echo "Testing severity weight mapping:"
-	_assert_eq "LOW weight" "1" "$(_ss_severity_weight "LOW")"
-	_assert_eq "MEDIUM weight" "2" "$(_ss_severity_weight "MEDIUM")"
-	_assert_eq "HIGH weight" "3" "$(_ss_severity_weight "HIGH")"
-	_assert_eq "CRITICAL weight" "4" "$(_ss_severity_weight "CRITICAL")"
-	_assert_eq "Unknown weight" "0" "$(_ss_severity_weight "UNKNOWN")"
+	_test_assert_eq "LOW weight" "1" "$(_ss_severity_weight "LOW")"
+	_test_assert_eq "MEDIUM weight" "2" "$(_ss_severity_weight "MEDIUM")"
+	_test_assert_eq "HIGH weight" "3" "$(_ss_severity_weight "HIGH")"
+	_test_assert_eq "CRITICAL weight" "4" "$(_ss_severity_weight "CRITICAL")"
+	_test_assert_eq "Unknown weight" "0" "$(_ss_severity_weight "UNKNOWN")"
+	return 0
+}
+
+# Test group: reset and non-existent session edge cases.
+_test_group_misc() {
+	local test_session="$1"
 
 	echo ""
 	echo "Testing reset:"
 	cmd_reset --session-id "$test_session" 2>/dev/null
+	local score
 	score=$(cmd_get_score --session-id "$test_session" 2>/dev/null)
-	_assert_eq "Score after reset" "0" "$score"
+	_test_assert_eq "Score after reset" "0" "$score"
 
 	echo ""
 	echo "Testing non-existent session:"
 	local ne_score
 	ne_score=$(cmd_get_score --session-id "nonexistent-session-xyz" 2>/dev/null)
-	_assert_eq "Non-existent session score" "0" "$ne_score"
+	_test_assert_eq "Non-existent session score" "0" "$ne_score"
+	return 0
+}
+
+cmd_test() {
+	echo "Session Security Helper — Test Suite (t1428.3)"
+	echo "========================================================"
+
+	local passed=0
+	local failed=0
+	local total=0
+
+	local test_session
+	test_session="test-$$-$(date +%s)"
+
+	_test_group_init "$test_session"
+	_test_group_signals "$test_session"
+	_test_group_mappings
+	_test_group_misc "$test_session"
 
 	# Cleanup test session
 	local test_file
