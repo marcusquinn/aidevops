@@ -53,49 +53,21 @@ OpenCode server mode (`opencode serve`) exposes an HTTP API for programmatic int
 
 ## Starting the Server
 
-### Standalone Server
-
 ```bash
-# Default (port 4096, localhost only)
-opencode serve
-
-# Custom port and hostname
-opencode serve --port 8080 --hostname 0.0.0.0
-
-# With mDNS discovery (for local network)
-opencode serve --mdns
-
-# With CORS for browser clients
-opencode serve --cors http://localhost:5173 --cors https://app.example.com
-```
-
-### With Authentication
-
-```bash
-# Basic auth (recommended for network exposure)
-OPENCODE_SERVER_PASSWORD=your-secure-password opencode serve
-
-# Custom username
+opencode serve                                                    # default (port 4096, localhost)
+opencode serve --port 8080 --hostname 0.0.0.0                    # custom port/hostname
+opencode serve --mdns                                             # mDNS discovery
+opencode serve --cors http://localhost:5173                       # CORS for browser clients
+OPENCODE_SERVER_PASSWORD=secret opencode serve                   # with auth
 OPENCODE_SERVER_USERNAME=admin OPENCODE_SERVER_PASSWORD=secret opencode serve
-```
-
-### Alongside TUI
-
-When you run `opencode` (TUI), it automatically starts a server on a random port. You can specify a fixed port:
-
-```bash
-opencode --port 4096 --hostname 127.0.0.1
+opencode --port 4096 --hostname 127.0.0.1                        # alongside TUI (fixed port)
 ```
 
 ## TypeScript SDK
 
-### Installation
-
 ```bash
 npm install @opencode-ai/sdk
 ```
-
-### Creating a Client
 
 ```typescript
 import { createOpencode, createOpencodeClient } from "@opencode-ai/sdk"
@@ -104,255 +76,134 @@ import { createOpencode, createOpencodeClient } from "@opencode-ai/sdk"
 const { client, server } = await createOpencode({
   port: 4096,
   hostname: "127.0.0.1",
-  config: {
-    model: "anthropic/claude-sonnet-4-6",
-  },
+  config: { model: "anthropic/claude-sonnet-4-6" },
 })
 
 // Option 2: Connect to existing server
-const client = createOpencodeClient({
-  baseUrl: "http://localhost:4096",
-})
-```
+const client = createOpencodeClient({ baseUrl: "http://localhost:4096" })
 
-### Session Management
-
-```typescript
-// Create a new session
-const session = await client.session.create({
-  body: { title: "My automated task" },
-})
-
-// List all sessions
+// Session management
+const session = await client.session.create({ body: { title: "My automated task" } })
 const sessions = await client.session.list()
+await client.session.delete({ path: { id: session.data.id } })
 
-// Get session details
-const details = await client.session.get({
-  path: { id: session.data.id },
-})
-
-// Delete a session
-await client.session.delete({
-  path: { id: session.data.id },
-})
-```
-
-### Sending Prompts
-
-```typescript
 // Synchronous prompt (waits for full response)
 const result = await client.session.prompt({
   path: { id: session.data.id },
   body: {
-    model: {
-      providerID: "anthropic",
-      modelID: "claude-sonnet-4-6",
-    },
+    model: { providerID: "anthropic", modelID: "claude-sonnet-4-6" },
     parts: [{ type: "text", text: "Explain this codebase structure" }],
   },
 })
+console.log(result.data.parts)
 
-console.log(result.data.parts) // AI response parts
-
-// Asynchronous prompt (fire and forget)
+// Asynchronous prompt (fire and forget — returns 204, monitor via SSE)
 await client.session.promptAsync({
   path: { id: session.data.id },
-  body: {
-    parts: [{ type: "text", text: "Run the test suite" }],
-  },
+  body: { parts: [{ type: "text", text: "Run the test suite" }] },
 })
-// Returns 204 No Content immediately
-// Monitor via SSE events
-```
 
-### Context Injection (No Reply)
-
-```typescript
-// Inject context without triggering AI response
+// Context injection (no AI response triggered)
 await client.session.prompt({
   path: { id: session.data.id },
   body: {
     noReply: true,
-    parts: [
-      {
-        type: "text",
-        text: "Context: This project uses TypeScript and Bun runtime.",
-      },
-    ],
+    parts: [{ type: "text", text: "Context: This project uses TypeScript and Bun runtime." }],
   },
 })
-```
 
-### Real-Time Events (SSE)
-
-```typescript
-// Subscribe to server events
+// Real-time events (SSE)
 const events = await client.event.subscribe()
-
 for await (const event of events.stream) {
   switch (event.type) {
-    case "session.message":
-      console.log("New message:", event.properties)
-      break
-    case "session.status":
-      console.log("Status change:", event.properties)
-      break
-    case "tool.call":
-      console.log("Tool invoked:", event.properties)
-      break
+    case "session.message": console.log("New message:", event.properties); break
+    case "session.status":  console.log("Status change:", event.properties); break
+    case "tool.call":       console.log("Tool invoked:", event.properties); break
   }
 }
 ```
 
 ## Direct HTTP API
 
-### Create Session
-
 ```bash
+# Create session
 curl -X POST http://localhost:4096/session \
   -H "Content-Type: application/json" \
   -d '{"title": "API Test Session"}'
-```
 
-### Send Prompt (Sync)
-
-```bash
+# Send prompt (sync)
 curl -X POST http://localhost:4096/session/{session_id}/message \
   -H "Content-Type: application/json" \
-  -d '{
-    "model": {
-      "providerID": "anthropic",
-      "modelID": "claude-sonnet-4-6"
-    },
-    "parts": [{"type": "text", "text": "Hello!"}]
-  }'
-```
+  -d '{"model":{"providerID":"anthropic","modelID":"claude-sonnet-4-6"},"parts":[{"type":"text","text":"Hello!"}]}'
 
-### Send Prompt (Async)
-
-```bash
+# Send prompt (async — returns 204 immediately)
 curl -X POST http://localhost:4096/session/{session_id}/prompt_async \
   -H "Content-Type: application/json" \
-  -d '{
-    "parts": [{"type": "text", "text": "Run tests in background"}]
-  }'
-# Returns 204 immediately
-```
+  -d '{"parts":[{"type":"text","text":"Run tests in background"}]}'
 
-### Subscribe to Events
-
-```bash
+# Subscribe to events (SSE)
 curl -N http://localhost:4096/event
-# SSE stream - first event is server.connected
-```
 
-### Execute Slash Command
-
-```bash
+# Execute slash command
 curl -X POST http://localhost:4096/session/{session_id}/command \
   -H "Content-Type: application/json" \
-  -d '{
-    "command": "remember",
-    "arguments": "This pattern worked for async processing"
-  }'
-```
+  -d '{"command":"remember","arguments":"This pattern worked for async processing"}'
 
-### Run Shell Command
-
-```bash
+# Run shell command
 curl -X POST http://localhost:4096/session/{session_id}/shell \
   -H "Content-Type: application/json" \
-  -d '{
-    "agent": "default",
-    "command": "npm test"
-  }'
+  -d '{"agent":"default","command":"npm test"}'
 ```
 
 ## Use Cases for aidevops
 
 ### 1. Parallel Agent Orchestration
 
-Run multiple AI sessions concurrently for different tasks:
-
 ```typescript
-import { createOpencodeClient } from "@opencode-ai/sdk"
-
 const client = createOpencodeClient({ baseUrl: "http://localhost:4096" })
 
-// Create parallel sessions for different tasks
 const [codeReview, docGen, testGen] = await Promise.all([
   client.session.create({ body: { title: "Code Review" } }),
   client.session.create({ body: { title: "Documentation" } }),
   client.session.create({ body: { title: "Test Generation" } }),
 ])
 
-// Dispatch tasks in parallel
 await Promise.all([
-  client.session.promptAsync({
-    path: { id: codeReview.data.id },
-    body: { parts: [{ type: "text", text: "Review src/auth.ts for security issues" }] },
-  }),
-  client.session.promptAsync({
-    path: { id: docGen.data.id },
-    body: { parts: [{ type: "text", text: "Generate API documentation for src/api/" }] },
-  }),
-  client.session.promptAsync({
-    path: { id: testGen.data.id },
-    body: { parts: [{ type: "text", text: "Generate unit tests for src/utils/" }] },
-  }),
+  client.session.promptAsync({ path: { id: codeReview.data.id },
+    body: { parts: [{ type: "text", text: "Review src/auth.ts for security issues" }] } }),
+  client.session.promptAsync({ path: { id: docGen.data.id },
+    body: { parts: [{ type: "text", text: "Generate API documentation for src/api/" }] } }),
+  client.session.promptAsync({ path: { id: testGen.data.id },
+    body: { parts: [{ type: "text", text: "Generate unit tests for src/utils/" }] } }),
 ])
 ```
 
 ### 2. Voice Dispatch (VoiceInk/iOS Shortcut)
 
-Send voice transcriptions to OpenCode:
-
 ```bash
 #!/bin/bash
 # voice-dispatch.sh - Called by VoiceInk or iOS Shortcut
-
 TRANSCRIPTION="$1"
 SESSION_ID="${OPENCODE_SESSION_ID:-default}"
-SERVER="http://localhost:4096"
-
-curl -X POST "$SERVER/session/$SESSION_ID/prompt_async" \
+curl -X POST "http://localhost:4096/session/$SESSION_ID/prompt_async" \
   -H "Content-Type: application/json" \
   -d "{\"parts\": [{\"type\": \"text\", \"text\": \"$TRANSCRIPTION\"}]}"
 ```
 
 ### 3. Automated Agent Testing
 
-Test agent changes in isolated sessions:
-
 ```typescript
 async function testAgentChange(testPrompt: string, expectedPattern: RegExp) {
   const client = createOpencodeClient({ baseUrl: "http://localhost:4096" })
-
-  // Create isolated test session
-  const session = await client.session.create({
-    body: { title: `Test: ${Date.now()}` },
-  })
-
+  const session = await client.session.create({ body: { title: `Test: ${Date.now()}` } })
   try {
-    // Send test prompt
     const result = await client.session.prompt({
       path: { id: session.data.id },
-      body: {
-        parts: [{ type: "text", text: testPrompt }],
-      },
+      body: { parts: [{ type: "text", text: testPrompt }] },
     })
-
-    // Extract text from response
-    const responseText = result.data.parts
-      .filter((p) => p.type === "text")
-      .map((p) => p.text)
-      .join("\n")
-
-    // Validate response
-    const passed = expectedPattern.test(responseText)
-    return { passed, response: responseText }
+    const responseText = result.data.parts.filter((p) => p.type === "text").map((p) => p.text).join("\n")
+    return { passed: expectedPattern.test(responseText), response: responseText }
   } finally {
-    // Cleanup
     await client.session.delete({ path: { id: session.data.id } })
   }
 }
@@ -360,115 +211,21 @@ async function testAgentChange(testPrompt: string, expectedPattern: RegExp) {
 
 ### 4. Self-Improving Agent Loop
 
-Query memory, generate improvements, test in isolated session:
-
-```typescript
-async function selfImproveLoop() {
-  const client = createOpencodeClient({ baseUrl: "http://localhost:4096" })
-
-  // 1. Review phase - analyze memory for patterns
-  const reviewSession = await client.session.create({
-    body: { title: "Self-Improve: Review" },
-  })
-
-  const analysis = await client.session.prompt({
-    path: { id: reviewSession.data.id },
-    body: {
-      parts: [
-        {
-          type: "text",
-          text: `Analyze recent memory entries for failure patterns:
-          
-/recall --type FAILURE --recent 20
-
-Identify gaps where we failed but don't have solutions.
-Output as JSON: { gaps: [{ pattern, frequency, suggestion }] }`,
-        },
-      ],
-    },
-  })
-
-  // 2. Refine phase - generate improvements
-  const refineSession = await client.session.create({
-    body: { title: "Self-Improve: Refine" },
-  })
-
-  const improvements = await client.session.prompt({
-    path: { id: refineSession.data.id },
-    body: {
-      parts: [
-        {
-          type: "text",
-          text: `Based on these gaps, propose agent improvements:
-${JSON.stringify(analysis.data)}
-
-Generate specific edits to agent files. Use worktree isolation.`,
-        },
-      ],
-    },
-  })
-
-  // 3. Test phase - validate in isolated session
-  const testSession = await client.session.create({
-    body: { title: "Self-Improve: Test" },
-  })
-
-  // Run test prompts against improved agents...
-
-  // 4. PR phase - create PR if tests pass (with privacy filter)
-}
-```
+Pattern: Review phase (analyze memory for failure patterns) → Refine phase (generate improvements in isolated session) → Test phase (validate against test prompts) → PR phase (create PR if tests pass, with privacy filter). Use `client.session.command` with `/recall` and `/remember` for memory access.
 
 ### 5. CI/CD Integration
 
-Trigger AI analysis from GitHub Actions:
-
-```yaml
-# .github/workflows/ai-review.yml
-name: AI Code Review
-
-on:
-  pull_request:
-    types: [opened, synchronize]
-
-jobs:
-  ai-review:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Start OpenCode Server
-        run: |
-          opencode serve --port 4096 &
-          sleep 5
-
-      - name: Run AI Review
-        run: |
-          SESSION=$(curl -s -X POST http://localhost:4096/session \
-            -H "Content-Type: application/json" \
-            -d '{"title": "PR Review"}' | jq -r '.id')
-
-          curl -X POST "http://localhost:4096/session/$SESSION/message" \
-            -H "Content-Type: application/json" \
-            -d '{
-              "parts": [{
-                "type": "text",
-                "text": "Review the changes in this PR for security issues and code quality. Output as markdown."
-              }]
-            }' | jq -r '.parts[0].text' > review.md
-
-      - name: Post Review Comment
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const fs = require('fs')
-            const review = fs.readFileSync('review.md', 'utf8')
-            github.rest.issues.createComment({
-              issue_number: context.issue.number,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              body: review
-            })
+```bash
+# In GitHub Actions: start server, create session, send review prompt, post comment
+opencode serve --port 4096 &
+sleep 5
+SESSION=$(curl -s -X POST http://localhost:4096/session \
+  -H "Content-Type: application/json" -d '{"title":"PR Review"}' | jq -r '.id')
+curl -X POST "http://localhost:4096/session/$SESSION/message" \
+  -H "Content-Type: application/json" \
+  -d '{"parts":[{"type":"text","text":"Review the changes in this PR for security issues. Output as markdown."}]}' \
+  | jq -r '.parts[0].text' > review.md
+# Then post review.md as a PR comment via actions/github-script
 ```
 
 ## API Reference
@@ -491,18 +248,13 @@ jobs:
 | `GET` | `/session/:id/diff` | Get session file changes |
 | `GET` | `/session/:id/todo` | Get session todo list |
 
-### Global Endpoints
+### Global / File Endpoints
 
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/global/health` | Server health check |
 | `GET` | `/event` | SSE event stream |
 | `GET` | `/doc` | OpenAPI 3.1 spec |
-
-### File Endpoints
-
-| Method | Path | Description |
-|--------|------|-------------|
 | `GET` | `/find?pattern=<pat>` | Search text in files |
 | `GET` | `/find/file?query=<q>` | Find files by name |
 | `GET` | `/file/content?path=<p>` | Read file content |
@@ -519,56 +271,24 @@ jobs:
 
 ## Integration with aidevops
 
-### Memory System
-
-Use the server API to store/recall memories programmatically:
-
 ```typescript
-// Store a memory via slash command
-await client.session.command({
-  path: { id: sessionId },
-  body: {
-    command: "remember",
-    arguments: "WORKING_SOLUTION: Use --no-verify for emergency hotfixes",
-  },
-})
-
-// Recall memories
-await client.session.command({
-  path: { id: sessionId },
-  body: {
-    command: "recall",
-    arguments: "--type WORKING_SOLUTION --recent 10",
-  },
-})
+// Store/recall memories via slash command
+await client.session.command({ path: { id: sessionId },
+  body: { command: "remember", arguments: "WORKING_SOLUTION: Use --no-verify for emergency hotfixes" } })
+await client.session.command({ path: { id: sessionId },
+  body: { command: "recall", arguments: "--type WORKING_SOLUTION --recent 10" } })
 ```
-
-### Mailbox System
-
-Dispatch tasks to parallel agents via mailbox:
 
 ```bash
-# Send task to another agent session
-mail-helper.sh send \
-  --to "code-reviewer" \
-  --type "task_dispatch" \
-  --subject "Review PR #123" \
-  --body "Review security implications of auth changes"
+# Mailbox dispatch to parallel agents
+mail-helper.sh send --to "code-reviewer" --type "task_dispatch" \
+  --subject "Review PR #123" --body "Review security implications of auth changes"
 ```
 
-### Pre-Edit Check
-
-Always run pre-edit check before file modifications:
-
 ```typescript
-// Before any file edits in automated sessions
-const preCheck = await client.session.shell({
-  path: { id: sessionId },
-  body: {
-    agent: "default",
-    command: "~/.aidevops/agents/scripts/pre-edit-check.sh --loop-mode",
-  },
-})
+// Pre-edit check before file modifications in automated sessions
+const preCheck = await client.session.shell({ path: { id: sessionId },
+  body: { agent: "default", command: "~/.aidevops/agents/scripts/pre-edit-check.sh --loop-mode" } })
 ```
 
 ## Security Considerations
@@ -576,45 +296,23 @@ const preCheck = await client.session.shell({
 1. **Network exposure**: Use `--hostname 127.0.0.1` (default) for local-only access
 2. **Authentication**: Always set `OPENCODE_SERVER_PASSWORD` when exposing to network
 3. **CORS**: Only allow trusted origins with `--cors`
-4. **Credentials**: Never pass secrets in prompts - use environment variables
+4. **Credentials**: Never pass secrets in prompts — use environment variables
 5. **Session cleanup**: Delete sessions after use to prevent data leakage
 
 ## Troubleshooting
 
-### Server won't start
-
 ```bash
-# Check if port is in use
-lsof -i :4096
-
-# Kill existing process
-pkill -f "opencode serve"
+lsof -i :4096                          # check if port is in use
+pkill -f "opencode serve"              # kill existing process
+curl http://localhost:4096/global/health  # verify server is running
 ```
 
-### Connection refused
-
-```bash
-# Verify server is running
-curl http://localhost:4096/global/health
-
-# Check firewall (macOS)
-sudo pfctl -s rules | grep 4096
-```
-
-### SDK timeout
-
-```typescript
-// Increase timeout for long operations
-const { client } = await createOpencode({
-  timeout: 30000, // 30 seconds
-})
-```
+SDK timeout: pass `timeout: 30000` to `createOpencode({ timeout: 30000 })`.
 
 ## Related Documentation
 
-- [OpenCode CLI](/docs/cli/) - Command-line interface
-- [OpenCode SDK](https://opencode.ai/docs/sdk/) - Official SDK documentation
-- [OpenCode Server](https://opencode.ai/docs/server/) - Full API reference
 - `tools/ai-assistants/overview.md` - AI assistant comparison
 - `workflows/git-workflow.md` - Git workflow integration
 - `memory/README.md` - Memory system documentation
+- OpenCode SDK docs: `https://opencode.ai/docs/sdk/`
+- OpenCode Server docs: `https://opencode.ai/docs/server/`
