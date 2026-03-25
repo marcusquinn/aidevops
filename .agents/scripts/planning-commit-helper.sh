@@ -93,27 +93,29 @@ show_status() {
 	return 0
 }
 
-# Complete a task by marking it done with proof-log
-# Usage: complete_task <task_id> --pr <pr_number> | --verified
-complete_task() {
-	local task_id=""
-	local pr_number=""
-	local verified_mode=false
+# ---------------------------------------------------------------------------
+# complete_task helpers
+# ---------------------------------------------------------------------------
 
-	# Parse arguments
+# Parse arguments for complete_task.
+# Outputs: sets caller-scope vars task_id, pr_number, verified_mode via nameref
+# emulation (prints assignments to stdout for eval).
+_complete_task_parse_args() {
+	local _task_id="" _pr_number="" _verified_mode="false"
+
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--pr)
-			pr_number="$2"
+			_pr_number="$2"
 			shift 2
 			;;
 		--verified)
-			verified_mode=true
+			_verified_mode="true"
 			shift
 			;;
 		*)
-			if [[ -z "$task_id" ]]; then
-				task_id="$1"
+			if [[ -z "$_task_id" ]]; then
+				_task_id="$1"
 			else
 				log_error "Unknown argument: $1"
 				return 1
@@ -123,65 +125,57 @@ complete_task() {
 		esac
 	done
 
-	# Validate arguments
-	if [[ -z "$task_id" ]]; then
-		log_error "Task ID is required"
-		echo "Usage: complete_task <task_id> --pr <pr_number> | --verified"
+	echo "task_id=${_task_id}"
+	echo "pr_number=${_pr_number}"
+	echo "verified_mode=${_verified_mode}"
+	return 0
+}
+
+# Validate that a PR exists and is merged.
+# Usage: _complete_task_validate_pr <pr_number>
+_complete_task_validate_pr() {
+	local pr_number="$1"
+
+	log_info "Validating PR #${pr_number} is merged..."
+	if ! gh pr view "$pr_number" --json state,mergedAt --jq '.state,.mergedAt' &>/dev/null; then
+		log_error "Failed to fetch PR #${pr_number}. Check that it exists and gh CLI is authenticated."
 		return 1
 	fi
 
-	if [[ -z "$pr_number" ]] && [[ "$verified_mode" != true ]]; then
-		log_error "Either --pr <number> or --verified is required"
+	local pr_state
+	local pr_merged_at
+	pr_state=$(gh pr view "$pr_number" --json state --jq '.state' 2>/dev/null)
+	pr_merged_at=$(gh pr view "$pr_number" --json mergedAt --jq '.mergedAt' 2>/dev/null)
+
+	if [[ "$pr_state" != "MERGED" ]] || [[ -z "$pr_merged_at" ]] || [[ "$pr_merged_at" == "null" ]]; then
+		log_error "PR #${pr_number} is not merged (state: ${pr_state})"
 		return 1
 	fi
 
-	if [[ -n "$pr_number" ]] && [[ "$verified_mode" == true ]]; then
-		log_error "Cannot use both --pr and --verified"
+	log_success "PR #${pr_number} is merged"
+	return 0
+}
+
+# Prompt for explicit confirmation when using --verified mode.
+# Returns 0 if confirmed, 1 if cancelled.
+_complete_task_confirm_verified() {
+	log_warning "Using --verified mode (no PR proof)"
+	echo -n "Are you sure this task is complete and verified? [y/N] "
+	read -r confirmation
+	if [[ "$confirmation" != "y" ]] && [[ "$confirmation" != "Y" ]]; then
+		log_info "Cancelled"
 		return 1
 	fi
+	return 0
+}
 
-	check_git_repo || return 1
-
-	local repo_root
-	repo_root=$(git rev-parse --show-toplevel)
-	local todo_file="${repo_root}/TODO.md"
-
-	if [[ ! -f "$todo_file" ]]; then
-		log_error "TODO.md not found at $todo_file"
-		return 1
-	fi
-
-	# Validate PR is merged if --pr is used
-	if [[ -n "$pr_number" ]]; then
-		log_info "Validating PR #${pr_number} is merged..."
-		if ! gh pr view "$pr_number" --json state,mergedAt --jq '.state,.mergedAt' &>/dev/null; then
-			log_error "Failed to fetch PR #${pr_number}. Check that it exists and gh CLI is authenticated."
-			return 1
-		fi
-
-		local pr_state
-		local pr_merged_at
-		pr_state=$(gh pr view "$pr_number" --json state --jq '.state' 2>/dev/null)
-		pr_merged_at=$(gh pr view "$pr_number" --json mergedAt --jq '.mergedAt' 2>/dev/null)
-
-		if [[ "$pr_state" != "MERGED" ]] || [[ -z "$pr_merged_at" ]] || [[ "$pr_merged_at" == "null" ]]; then
-			log_error "PR #${pr_number} is not merged (state: ${pr_state})"
-			return 1
-		fi
-
-		log_success "PR #${pr_number} is merged"
-	fi
-
-	# Require explicit confirmation for --verified
-	if [[ "$verified_mode" == true ]]; then
-		log_warning "Using --verified mode (no PR proof)"
-		echo -n "Are you sure this task is complete and verified? [y/N] "
-		read -r confirmation
-		if [[ "$confirmation" != "y" ]] && [[ "$confirmation" != "Y" ]]; then
-			log_info "Cancelled"
-			return 0
-		fi
-	fi
+# Update TODO.md: mark task done and append proof-log fields.
+# Usage: _complete_task_update_todo <todo_file> <task_id> <pr_number> <verified_mode>
+_complete_task_update_todo() {
+	local todo_file="$1"
+	local task_id="$2"
+	local pr_number="$3"
+	local verified_mode="$4"
 
 	# Find the task line
 	local task_line_num
@@ -205,14 +199,12 @@ complete_task() {
 	today=$(date +%Y-%m-%d)
 
 	if [[ -n "$pr_number" ]]; then
-		# Check if pr: field already exists
 		if echo "$updated_line" | grep -q "pr:#"; then
 			log_warning "Task already has pr: field, skipping"
 		else
 			updated_line="${updated_line} pr:#${pr_number}"
 		fi
 	else
-		# Add verified: field
 		if echo "$updated_line" | grep -q "verified:"; then
 			log_warning "Task already has verified: field, skipping"
 		else
@@ -239,8 +231,63 @@ complete_task() {
 	fi
 
 	log_success "Marked ${task_id} as complete"
+	return 0
+}
+
+# Complete a task by marking it done with proof-log
+# Usage: complete_task <task_id> --pr <pr_number> | --verified
+complete_task() {
+	local task_id="" pr_number="" verified_mode="false"
+
+	# Parse arguments
+	local parsed_args
+	parsed_args=$(_complete_task_parse_args "$@") || return 1
+	eval "$parsed_args"
+
+	# Validate arguments
+	if [[ -z "$task_id" ]]; then
+		log_error "Task ID is required"
+		echo "Usage: complete_task <task_id> --pr <pr_number> | --verified"
+		return 1
+	fi
+
+	if [[ -z "$pr_number" ]] && [[ "$verified_mode" != "true" ]]; then
+		log_error "Either --pr <number> or --verified is required"
+		return 1
+	fi
+
+	if [[ -n "$pr_number" ]] && [[ "$verified_mode" == "true" ]]; then
+		log_error "Cannot use both --pr and --verified"
+		return 1
+	fi
+
+	check_git_repo || return 1
+
+	local repo_root
+	repo_root=$(git rev-parse --show-toplevel)
+	local todo_file="${repo_root}/TODO.md"
+
+	if [[ ! -f "$todo_file" ]]; then
+		log_error "TODO.md not found at $todo_file"
+		return 1
+	fi
+
+	# Validate PR is merged if --pr is used
+	if [[ -n "$pr_number" ]]; then
+		_complete_task_validate_pr "$pr_number" || return 1
+	fi
+
+	# Require explicit confirmation for --verified
+	if [[ "$verified_mode" == "true" ]]; then
+		_complete_task_confirm_verified || return 0
+	fi
+
+	# Update TODO.md
+	_complete_task_update_todo "$todo_file" "$task_id" "$pr_number" "$verified_mode" || return 1
 
 	# Commit and push
+	local today
+	today=$(date +%Y-%m-%d)
 	local commit_msg
 	if [[ -n "$pr_number" ]]; then
 		commit_msg="plan: complete ${task_id} (pr:#${pr_number})"
@@ -255,6 +302,136 @@ complete_task() {
 		log_warning "Committed locally (push failed after retries - will retry later)"
 	fi
 
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# next_task_id helpers
+# ---------------------------------------------------------------------------
+
+# Parse arguments for next_task_id.
+# Prints assignments to stdout for eval.
+_next_task_id_parse_args() {
+	local _title="" _labels="" _description="" _offline_flag="" _dry_run_flag=""
+
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--title)
+			_title="$2"
+			shift 2
+			;;
+		--labels)
+			_labels="$2"
+			shift 2
+			;;
+		--description)
+			_description="$2"
+			shift 2
+			;;
+		--offline)
+			_offline_flag="--offline"
+			shift
+			;;
+		--dry-run)
+			_dry_run_flag="--dry-run"
+			shift
+			;;
+		*)
+			log_error "next_task_id: unknown option: $1"
+			return 1
+			;;
+		esac
+	done
+
+	echo "title=${_title}"
+	echo "labels=${_labels}"
+	echo "description=${_description}"
+	echo "offline_flag=${_offline_flag}"
+	echo "dry_run_flag=${_dry_run_flag}"
+	return 0
+}
+
+# Invoke claim-task-id.sh and capture its output + exit code.
+# Usage: _next_task_id_run_claim <claim_script> <repo_path> <title> <labels> <description> <offline_flag> <dry_run_flag>
+# Prints: claim_output on stdout; sets global claim_rc via caller convention (prints "claim_rc=N")
+_next_task_id_run_claim() {
+	local claim_script="$1"
+	local repo_path="$2"
+	local title="$3"
+	local labels="$4"
+	local description="$5"
+	local offline_flag="$6"
+	local dry_run_flag="$7"
+
+	local -a claim_args=(--title "$title" --repo-path "$repo_path")
+	[[ -n "$labels" ]] && claim_args+=(--labels "$labels")
+	[[ -n "$description" ]] && claim_args+=(--description "$description")
+	[[ -n "$offline_flag" ]] && claim_args+=("$offline_flag")
+	[[ -n "$dry_run_flag" ]] && claim_args+=("$dry_run_flag")
+
+	local claim_stderr
+	claim_stderr=$(mktemp)
+	local rc=0
+	local output
+	output=$("$claim_script" "${claim_args[@]}" 2>"$claim_stderr") || rc=$?
+
+	# Exit codes: 0 = online success, 2 = offline fallback; anything else is a hard error
+	if [[ $rc -ne 0 && $rc -ne 2 ]]; then
+		log_error "claim-task-id.sh failed (exit code: $rc)"
+		if [[ -s "$claim_stderr" ]]; then
+			cat "$claim_stderr" >&2
+		fi
+		rm -f "$claim_stderr"
+		return "$rc"
+	fi
+	rm -f "$claim_stderr"
+
+	echo "claim_rc=${rc}"
+	echo "claim_output<<CLAIM_EOF"
+	echo "$output"
+	echo "CLAIM_EOF"
+	return 0
+}
+
+# Parse the output lines from claim-task-id.sh.
+# Usage: _next_task_id_parse_output <claim_output_text> <claim_rc>
+# Prints machine-readable variables to stdout.
+_next_task_id_parse_output() {
+	local claim_output="$1"
+	local claim_rc="$2"
+
+	local task_id="" task_ref="" issue_url="" is_offline="false"
+
+	while IFS= read -r line; do
+		case "$line" in
+		task_id=*)
+			task_id="${line#task_id=}"
+			;;
+		ref=*)
+			task_ref="${line#ref=}"
+			;;
+		issue_url=*)
+			issue_url="${line#issue_url=}"
+			;;
+		reconcile=*)
+			# Offline mode indicator — no action needed
+			;;
+		esac
+	done <<<"$claim_output"
+
+	if [[ $claim_rc -eq 2 ]] || [[ "$task_ref" == "offline" ]]; then
+		is_offline="true"
+	fi
+
+	if [[ -z "$task_id" ]]; then
+		log_error "claim-task-id.sh returned no task_id"
+		return 1
+	fi
+
+	echo "TASK_ID=${task_id}"
+	echo "TASK_REF=${task_ref}"
+	echo "TASK_ISSUE_URL=${issue_url}"
+	echo "TASK_OFFLINE=${is_offline}"
 	return 0
 }
 
@@ -279,41 +456,12 @@ complete_task() {
 #   2 - Success with offline fallback
 #   1 - Error
 next_task_id() {
-	local title=""
-	local labels=""
-	local description=""
-	local offline_flag=""
-	local dry_run_flag=""
+	local title="" labels="" description="" offline_flag="" dry_run_flag=""
 
 	# Parse arguments
-	while [[ $# -gt 0 ]]; do
-		case "$1" in
-		--title)
-			title="$2"
-			shift 2
-			;;
-		--labels)
-			labels="$2"
-			shift 2
-			;;
-		--description)
-			description="$2"
-			shift 2
-			;;
-		--offline)
-			offline_flag="--offline"
-			shift
-			;;
-		--dry-run)
-			dry_run_flag="--dry-run"
-			shift
-			;;
-		*)
-			log_error "next_task_id: unknown option: $1"
-			return 1
-			;;
-		esac
-	done
+	local parsed_args
+	parsed_args=$(_next_task_id_parse_args "$@") || return 1
+	eval "$parsed_args"
 
 	if [[ -z "$title" ]]; then
 		log_error "next_task_id: --title is required"
@@ -332,76 +480,49 @@ next_task_id() {
 	local repo_path
 	repo_path=$(git rev-parse --show-toplevel 2>/dev/null || echo "$PWD")
 
-	# Build claim-task-id.sh arguments
-	local -a claim_args=(--title "$title" --repo-path "$repo_path")
-	[[ -n "$labels" ]] && claim_args+=(--labels "$labels")
-	[[ -n "$description" ]] && claim_args+=(--description "$description")
-	[[ -n "$offline_flag" ]] && claim_args+=("$offline_flag")
-	[[ -n "$dry_run_flag" ]] && claim_args+=("$dry_run_flag")
-
 	# Run claim-task-id.sh and capture output + exit code
-	# Capture stderr to temp file so we can show it on failure without re-running
-	local claim_output
 	local claim_rc=0
-	local claim_stderr
-	claim_stderr=$(mktemp)
-	trap 'rm -f "$claim_stderr"' RETURN
-	claim_output=$("$claim_script" "${claim_args[@]}" 2>"$claim_stderr") || claim_rc=$?
-
-	# Exit codes: 0 = online success, 2 = offline fallback; anything else is a hard error
-	if [[ $claim_rc -ne 0 && $claim_rc -ne 2 ]]; then
-		log_error "claim-task-id.sh failed (exit code: $claim_rc)"
-		# Show captured stderr for diagnostics
-		if [[ -s "$claim_stderr" ]]; then
-			cat "$claim_stderr" >&2
-		fi
-		rm -f "$claim_stderr"
+	local claim_meta
+	claim_meta=$(_next_task_id_run_claim \
+		"$claim_script" "$repo_path" "$title" "$labels" "$description" \
+		"$offline_flag" "$dry_run_flag") || {
+		claim_rc=$?
 		return "$claim_rc"
-	fi
-	rm -f "$claim_stderr"
+	}
 
-	# Parse output lines: task_id=tNNN, ref=GH#NNN, issue_url=..., reconcile=true
-	local task_id="" task_ref="" issue_url="" is_offline="false"
+	# Extract claim_rc and claim_output from the meta block
+	local claim_output=""
+	local in_output=false
+	while IFS= read -r meta_line; do
+		if [[ "$meta_line" == claim_rc=* ]]; then
+			claim_rc="${meta_line#claim_rc=}"
+		elif [[ "$meta_line" == "claim_output<<CLAIM_EOF" ]]; then
+			in_output=true
+		elif [[ "$meta_line" == "CLAIM_EOF" ]]; then
+			in_output=false
+		elif [[ "$in_output" == "true" ]]; then
+			claim_output="${claim_output}${meta_line}"$'\n'
+		fi
+	done <<<"$claim_meta"
 
-	while IFS= read -r line; do
-		case "$line" in
-		task_id=*)
-			task_id="${line#task_id=}"
-			;;
-		ref=*)
-			task_ref="${line#ref=}"
-			;;
-		issue_url=*)
-			issue_url="${line#issue_url=}"
-			;;
-		reconcile=*)
-			# Offline mode indicator
-			;;
-		esac
-	done <<<"$claim_output"
+	# Parse claim output into machine-readable variables
+	_next_task_id_parse_output "$claim_output" "$claim_rc" || return 1
 
-	# Determine if offline fallback was used
-	if [[ $claim_rc -eq 2 ]] || [[ "$task_ref" == "offline" ]]; then
+	# Log summary to stderr for human visibility
+	local is_offline="false"
+	if [[ $claim_rc -eq 2 ]]; then
 		is_offline="true"
 	fi
 
-	# Validate we got a task ID
-	if [[ -z "$task_id" ]]; then
-		log_error "claim-task-id.sh returned no task_id"
-		return 1
-	fi
+	# Re-parse task_id for the log message
+	local task_id_log task_ref_log
+	task_id_log=$(echo "$claim_output" | grep '^task_id=' | head -1 | cut -d= -f2-)
+	task_ref_log=$(echo "$claim_output" | grep '^ref=' | head -1 | cut -d= -f2-)
 
-	# Output machine-readable variables
-	echo "TASK_ID=${task_id}"
-	echo "TASK_REF=${task_ref}"
-	echo "TASK_ISSUE_URL=${issue_url}"
-	echo "TASK_OFFLINE=${is_offline}"
-
-	# Log summary to stderr for human visibility
 	if [[ "$is_offline" == "true" ]]; then
-		log_warning "Allocated ${task_id} (offline — reconcile when back online)"
+		log_warning "Allocated ${task_id_log} (offline — reconcile when back online)"
 	else
-		log_success "Allocated ${task_id} (${task_ref})"
+		log_success "Allocated ${task_id_log} (${task_ref_log})"
 	fi
 
 	return "$claim_rc"
