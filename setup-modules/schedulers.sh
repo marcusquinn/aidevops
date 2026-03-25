@@ -495,6 +495,11 @@ setup_memory_pressure_monitor() {
 	if [[ "$(uname -s)" == "Darwin" ]]; then
 		local monitor_plist="$HOME/Library/LaunchAgents/${monitor_label}.plist"
 
+		# XML-escape paths for safe plist embedding
+		local _xml_monitor_script _xml_monitor_home
+		_xml_monitor_script=$(_xml_escape "$monitor_script")
+		_xml_monitor_home=$(_xml_escape "$HOME")
+
 		local monitor_plist_content
 		monitor_plist_content=$(
 			cat <<MONITOR_PLIST
@@ -507,20 +512,20 @@ setup_memory_pressure_monitor() {
 	<key>ProgramArguments</key>
 	<array>
 		<string>/bin/bash</string>
-		<string>${monitor_script}</string>
+		<string>${_xml_monitor_script}</string>
 	</array>
 	<key>StartInterval</key>
 	<integer>60</integer>
 	<key>StandardOutPath</key>
-	<string>${HOME}/.aidevops/logs/memory-pressure-launchd.log</string>
+	<string>${_xml_monitor_home}/.aidevops/logs/memory-pressure-launchd.log</string>
 	<key>StandardErrorPath</key>
-	<string>${HOME}/.aidevops/logs/memory-pressure-launchd.log</string>
+	<string>${_xml_monitor_home}/.aidevops/logs/memory-pressure-launchd.log</string>
 	<key>EnvironmentVariables</key>
 	<dict>
 		<key>PATH</key>
 		<string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin</string>
 		<key>HOME</key>
-		<string>${HOME}</string>
+		<string>${_xml_monitor_home}</string>
 	</dict>
 	<key>RunAtLoad</key>
 	<true/>
@@ -667,7 +672,7 @@ setup_contribution_watch() {
 	else
 		_cw_log_dir="~/.aidevops/logs"
 	fi
-	if [[ "$_cw_log_dir" == *['`$']* ]]; then
+	if [[ "$_cw_log_dir" == *['`$"']* ]] || [[ "$_cw_log_dir" == *$'\n'* ]]; then
 		print_error "Invalid characters in paths.log_dir: $_cw_log_dir"
 		return 1
 	fi
@@ -763,7 +768,7 @@ CW_PLIST
 # Respects config: aidevops config set orchestration.draft_responses false
 setup_draft_responses() {
 	local dr_script="$HOME/.aidevops/agents/scripts/draft-response-helper.sh"
-	if [[ -x "$dr_script" ]] && is_feature_enabled draft_responses 2>/dev/null && is_feature_enabled contribution_watch 2>/dev/null && command -v gh &>/dev/null && gh auth status &>/dev/null 2>&1; then
+	if [[ -x "$dr_script" ]] && is_feature_enabled orchestration.draft_responses 2>/dev/null && is_feature_enabled orchestration.contribution_watch 2>/dev/null && command -v gh &>/dev/null && gh auth status &>/dev/null 2>&1; then
 		mkdir -p "$HOME/.aidevops/.agent-workspace/draft-responses"
 		if bash "$dr_script" init >/dev/null 2>&1; then
 			print_info "Draft responses ready (private repo + local drafts)"
@@ -909,7 +914,7 @@ setup_oauth_token_refresh() {
 	<array>
 		<string>/bin/bash</string>
 		<string>-c</string>
-		<string>${_xml_tr_script} refresh anthropic; ${_xml_tr_script} refresh openai</string>
+		<string>&quot;${_xml_tr_script}&quot; refresh anthropic; &quot;${_xml_tr_script}&quot; refresh openai</string>
 	</array>
 	<key>StartInterval</key>
 	<integer>1800</integer>
