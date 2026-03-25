@@ -144,9 +144,9 @@ create_output_dir() {
 	return 0
 }
 
-# Generate Python E-E-A-T analyzer script
-generate_analyzer_script() {
-	cat <<'PYTHON_SCRIPT'
+# Generate Python header: imports, constants, and PROMPTS dict
+_generate_python_header() {
+	cat <<'PYTHON_HEADER'
 #!/usr/bin/env python3
 """
 E-E-A-T Score Analyzer
@@ -305,6 +305,13 @@ Score 1-10:
 Return ONLY the number."""
 }
 
+PYTHON_HEADER
+	return 0
+}
+
+# Generate Python dataclass and EEATAnalyzer class
+_generate_python_classes() {
+	cat <<'PYTHON_CLASSES'
 @dataclass
 class EEATScore:
     url: str
@@ -327,7 +334,7 @@ class EEATScore:
     analyzed_at: str = ""
 
 class EEATAnalyzer:
-    def __init__(self, output_dir: str, provider: str = "openai", 
+    def __init__(self, output_dir: str, provider: str = "openai",
                  model: str = "gpt-4o", temperature: float = 0.3,
                  weights: Dict[str, float] = None):
         self.output_dir = Path(output_dir)
@@ -345,7 +352,7 @@ class EEATAnalyzer:
         }
         self.session: Optional[aiohttp.ClientSession] = None
         self.scores: List[EEATScore] = []
-    
+
     async def fetch_page_content(self, url: str) -> str:
         """Fetch page content for analysis"""
         try:
@@ -353,23 +360,23 @@ class EEATAnalyzer:
                 if response.status == 200:
                     html = await response.text()
                     soup = BeautifulSoup(html, 'html.parser')
-                    
+
                     # Remove script and style elements
                     for element in soup(['script', 'style', 'nav', 'footer', 'header']):
                         element.decompose()
-                    
+
                     # Get text content
                     text = soup.get_text(separator='\n', strip=True)
-                    
+
                     # Truncate to reasonable length for LLM
                     if len(text) > 15000:
                         text = text[:15000] + "\n[Content truncated...]"
-                    
+
                     return text
         except Exception as e:
             print(f"Error fetching {url}: {e}")
         return ""
-    
+
     async def call_llm(self, prompt: str, content: str) -> str:
         """Call LLM API for analysis"""
         if self.provider == "openai":
@@ -377,18 +384,18 @@ class EEATAnalyzer:
         elif self.provider == "anthropic":
             return await self._call_anthropic(prompt, content)
         return ""
-    
+
     async def _call_openai(self, prompt: str, content: str) -> str:
         """Call OpenAI API"""
         api_key = os.environ.get("OPENAI_API_KEY")
         if not api_key:
             raise ValueError("OPENAI_API_KEY not set")
-        
+
         headers = {
             "Authorization": f"Bearer {api_key}",
             "Content-Type": "application/json"
         }
-        
+
         payload = {
             "model": self.model,
             "messages": [
@@ -398,7 +405,7 @@ class EEATAnalyzer:
             "temperature": self.temperature,
             "max_tokens": 500
         }
-        
+
         try:
             async with self.session.post(
                 "https://api.openai.com/v1/chat/completions",
@@ -415,19 +422,19 @@ class EEATAnalyzer:
         except Exception as e:
             print(f"OpenAI API call failed: {e}")
         return ""
-    
+
     async def _call_anthropic(self, prompt: str, content: str) -> str:
         """Call Anthropic API"""
         api_key = os.environ.get("ANTHROPIC_API_KEY")
         if not api_key:
             raise ValueError("ANTHROPIC_API_KEY not set")
-        
+
         headers = {
             "x-api-key": api_key,
             "Content-Type": "application/json",
             "anthropic-version": "2023-06-01"
         }
-        
+
         payload = {
             "model": self.model if "claude" in self.model else "claude-sonnet-4-6",
             "max_tokens": 500,
@@ -435,7 +442,7 @@ class EEATAnalyzer:
                 {"role": "user", "content": f"{prompt}\n\nAnalyze this content:\n\n{content}"}
             ]
         }
-        
+
         try:
             async with self.session.post(
                 "https://api.anthropic.com/v1/messages",
@@ -449,7 +456,7 @@ class EEATAnalyzer:
         except Exception as e:
             print(f"Anthropic API call failed: {e}")
         return ""
-    
+
     def parse_score(self, response: str) -> int:
         """Extract numeric score from LLM response"""
         # Try to find a number 1-10
@@ -458,7 +465,7 @@ class EEATAnalyzer:
         if numbers:
             return int(numbers[0])
         return 5  # Default to middle score
-    
+
     def calculate_overall_score(self, score: EEATScore) -> float:
         """Calculate weighted overall score"""
         total = (
@@ -471,7 +478,7 @@ class EEATAnalyzer:
             score.writing_score * self.weights["writing"]
         )
         return round(total, 2)
-    
+
     def calculate_grade(self, overall_score: float) -> str:
         """Convert score to letter grade"""
         if overall_score >= 8.0:
@@ -484,19 +491,19 @@ class EEATAnalyzer:
             return "D"
         else:
             return "F"
-    
+
     async def analyze_url(self, url: str) -> EEATScore:
         """Analyze a single URL for E-E-A-T"""
         print(f"Analyzing: {url}")
-        
+
         score = EEATScore(url=url, analyzed_at=datetime.now().isoformat())
-        
+
         # Fetch content
         content = await self.fetch_page_content(url)
         if not content:
             print(f"  Could not fetch content for {url}")
             return score
-        
+
         # Analyze each criterion
         criteria = [
             ("authorship", "authorship_score", "authorship_reasoning"),
@@ -507,60 +514,60 @@ class EEATAnalyzer:
             ("subjective", "subjective_score", "subjective_reasoning"),
             ("writing", "writing_score", "writing_reasoning"),
         ]
-        
+
         for criterion, score_attr, reasoning_attr in criteria:
             print(f"  Evaluating {criterion}...")
-            
+
             # Get reasoning
             reasoning_prompt = PROMPTS[f"{criterion}_reasoning"]
             reasoning = await self.call_llm(reasoning_prompt, content)
             setattr(score, reasoning_attr, reasoning)
-            
+
             # Get score
             score_prompt = PROMPTS[f"{criterion}_score"]
             score_response = await self.call_llm(score_prompt, content)
             numeric_score = self.parse_score(score_response)
             setattr(score, score_attr, numeric_score)
-            
+
             print(f"    Score: {numeric_score}/10")
-            
+
             # Small delay to avoid rate limits
             await asyncio.sleep(0.5)
-        
+
         # Calculate overall score and grade
         score.overall_score = self.calculate_overall_score(score)
         score.grade = self.calculate_grade(score.overall_score)
-        
+
         print(f"  Overall: {score.overall_score}/10 (Grade: {score.grade})")
-        
+
         return score
-    
+
     async def analyze_urls(self, urls: List[str]):
         """Analyze multiple URLs"""
         headers = {
             'User-Agent': 'AIDevOps-EEATAnalyzer/1.0'
         }
-        
+
         connector = aiohttp.TCPConnector(limit=5)
         timeout = aiohttp.ClientTimeout(total=120)
-        
+
         async with aiohttp.ClientSession(
             headers=headers,
             connector=connector,
             timeout=timeout
         ) as session:
             self.session = session
-            
+
             for url in urls:
                 score = await self.analyze_url(url)
                 self.scores.append(score)
-        
+
         return self.scores
-    
+
     def export_csv(self, filename: str):
         """Export scores to CSV"""
         filepath = self.output_dir / filename
-        
+
         fieldnames = [
             'url', 'overall_score', 'grade',
             'authorship_score', 'authorship_reasoning',
@@ -572,26 +579,26 @@ class EEATAnalyzer:
             'writing_score', 'writing_reasoning',
             'analyzed_at'
         ]
-        
+
         with open(filepath, 'w', newline='', encoding='utf-8') as f:
             writer = csv.DictWriter(f, fieldnames=fieldnames)
             writer.writeheader()
             for score in self.scores:
                 writer.writerow(asdict(score))
-        
+
         print(f"Exported: {filepath}")
-    
+
     def export_xlsx(self, filename: str):
         """Export scores to Excel with formatting"""
         if not HAS_OPENPYXL:
             print("openpyxl not installed, skipping XLSX export")
             return
-        
+
         filepath = self.output_dir / filename
         wb = openpyxl.Workbook()
         ws = wb.active
         ws.title = "E-E-A-T Scores"
-        
+
         # Headers
         headers = [
             'URL', 'Overall Score', 'Grade',
@@ -604,17 +611,17 @@ class EEATAnalyzer:
             'Writing', 'Writing Notes',
             'Analyzed At'
         ]
-        
+
         # Header styling
         header_fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
         header_font = Font(color="FFFFFF", bold=True)
-        
+
         for col, header in enumerate(headers, 1):
             cell = ws.cell(row=1, column=col, value=header)
             cell.fill = header_fill
             cell.font = header_font
             cell.alignment = Alignment(horizontal='center')
-        
+
         # Grade colors
         grade_colors = {
             'A': '00B050',  # Green
@@ -623,12 +630,12 @@ class EEATAnalyzer:
             'D': 'FFC7CE',  # Light red
             'F': 'FF0000',  # Red
         }
-        
+
         # Data rows
         for row_num, score in enumerate(self.scores, 2):
             ws.cell(row=row_num, column=1, value=score.url)
             ws.cell(row=row_num, column=2, value=score.overall_score)
-            
+
             grade_cell = ws.cell(row=row_num, column=3, value=score.grade)
             if score.grade in grade_colors:
                 grade_cell.fill = PatternFill(
@@ -636,7 +643,7 @@ class EEATAnalyzer:
                     end_color=grade_colors[score.grade],
                     fill_type="solid"
                 )
-            
+
             ws.cell(row=row_num, column=4, value=score.authorship_score)
             ws.cell(row=row_num, column=5, value=score.authorship_reasoning)
             ws.cell(row=row_num, column=6, value=score.citation_score)
@@ -652,7 +659,7 @@ class EEATAnalyzer:
             ws.cell(row=row_num, column=16, value=score.writing_score)
             ws.cell(row=row_num, column=17, value=score.writing_reasoning)
             ws.cell(row=row_num, column=18, value=score.analyzed_at)
-        
+
         # Adjust column widths
         ws.column_dimensions['A'].width = 50
         ws.column_dimensions['B'].width = 12
@@ -662,18 +669,18 @@ class EEATAnalyzer:
         for col in ['E', 'G', 'I', 'K', 'M', 'O', 'Q']:
             ws.column_dimensions[col].width = 40
         ws.column_dimensions['R'].width = 20
-        
+
         # Freeze header row
         ws.freeze_panes = 'A2'
-        
+
         wb.save(filepath)
         print(f"Exported: {filepath}")
-    
+
     def export_summary(self, filename: str = "eeat-summary.json"):
         """Export summary statistics"""
         if not self.scores:
             return
-        
+
         summary = {
             "analyzed_at": datetime.now().isoformat(),
             "total_pages": len(self.scores),
@@ -697,7 +704,7 @@ class EEATAnalyzer:
             "weakest_areas": [],
             "strongest_areas": []
         }
-        
+
         # Find weakest and strongest areas
         avg_scores = summary["average_scores"]
         sorted_areas = sorted(
@@ -706,18 +713,25 @@ class EEATAnalyzer:
         )
         summary["weakest_areas"] = [a[0] for a in sorted_areas[:2]]
         summary["strongest_areas"] = [a[0] for a in sorted_areas[-2:]]
-        
+
         filepath = self.output_dir / filename
         with open(filepath, 'w') as f:
             json.dump(summary, f, indent=2)
-        
+
         print(f"Exported: {filepath}")
         return summary
 
+PYTHON_CLASSES
+	return 0
+}
+
+# Generate Python main() entry point
+_generate_python_main() {
+	cat <<'PYTHON_MAIN'
 
 async def main():
     import argparse
-    
+
     parser = argparse.ArgumentParser(description='E-E-A-T Score Analyzer')
     parser.add_argument('urls', nargs='+', help='URLs to analyze')
     parser.add_argument('--output', '-o', required=True, help='Output directory')
@@ -725,32 +739,32 @@ async def main():
     parser.add_argument('--model', default='gpt-4o', help='LLM model to use')
     parser.add_argument('--format', '-f', choices=['csv', 'xlsx', 'all'], default='xlsx')
     parser.add_argument('--domain', help='Domain name for output files')
-    
+
     args = parser.parse_args()
-    
+
     # Create output directory
     output_dir = Path(args.output)
     output_dir.mkdir(parents=True, exist_ok=True)
-    
+
     analyzer = EEATAnalyzer(
         output_dir=str(output_dir),
         provider=args.provider,
         model=args.model
     )
-    
+
     await analyzer.analyze_urls(args.urls)
-    
+
     # Generate filename
     domain = args.domain or "eeat-analysis"
     timestamp = datetime.now().strftime("%Y-%m-%d")
-    
+
     if args.format in ("xlsx", "all"):
         analyzer.export_xlsx(f"{domain}-eeat-score-{timestamp}.xlsx")
     if args.format in ("csv", "all"):
         analyzer.export_csv(f"{domain}-eeat-score-{timestamp}.csv")
-    
+
     summary = analyzer.export_summary()
-    
+
     print(f"\n=== E-E-A-T Analysis Summary ===")
     print(f"Pages analyzed: {summary['total_pages']}")
     print(f"Average overall score: {summary['average_scores']['overall']}/10")
@@ -764,7 +778,71 @@ async def main():
 
 if __name__ == "__main__":
     asyncio.run(main())
-PYTHON_SCRIPT
+PYTHON_MAIN
+	return 0
+}
+
+# Generate Python E-E-A-T analyzer script (composes header + classes + main)
+generate_analyzer_script() {
+	_generate_python_header
+	_generate_python_classes
+	_generate_python_main
+	return 0
+}
+
+# Parse options for do_analyze(); sets output_base, format, provider, model via nameref-style globals
+_parse_analyze_opts() {
+	# Callers must pre-set these locals before calling; we overwrite via indirect assignment.
+	# Usage: _parse_analyze_opts <output_base_var> <format_var> <provider_var> <model_var> "$@"
+	local _out_var="$1"
+	local _fmt_var="$2"
+	local _prov_var="$3"
+	local _mdl_var="$4"
+	shift 4
+
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--output)
+			eval "${_out_var}=\"\$2\""
+			shift 2
+			;;
+		--format)
+			eval "${_fmt_var}=\"\$2\""
+			shift 2
+			;;
+		--provider)
+			eval "${_prov_var}=\"\$2\""
+			shift 2
+			;;
+		--model)
+			eval "${_mdl_var}=\"\$2\""
+			shift 2
+			;;
+		*)
+			shift
+			;;
+		esac
+	done
+	return 0
+}
+
+# Extract URLs from a crawl data file (JSON or CSV); appends to the named array variable
+_extract_urls_from_crawl_file() {
+	local input_file="$1"
+	local urls_var="$2"
+
+	if [[ "$input_file" == *.json ]]; then
+		# JSON format - extract URLs with status 200
+		while IFS= read -r _url; do
+			[[ -n "$_url" ]] && eval "${urls_var}+=(\"\$_url\")"
+		done < <(jq -r '.[] | select(.status_code == 200) | .url' "$input_file" 2>/dev/null)
+	elif [[ "$input_file" == *.csv ]]; then
+		# CSV format - extract URLs from first column where status is 200
+		while IFS= read -r _url; do
+			[[ -n "$_url" ]] && eval "${urls_var}+=(\"\$_url\")"
+		done < <(tail -n +2 "$input_file" | awk -F',' '$2 == "200" || $2 == 200 {gsub(/"/, "", $1); print $1}')
+	fi
+	return 0
 }
 
 # Analyze crawled pages
@@ -777,49 +855,14 @@ do_analyze() {
 		return 1
 	fi
 
-	# Parse options
 	local output_base="$DEFAULT_OUTPUT_DIR"
 	local format="$OUTPUT_FORMAT"
 	local provider="$LLM_PROVIDER"
 	local model="$LLM_MODEL"
+	_parse_analyze_opts output_base format provider model "$@"
 
-	while [[ $# -gt 0 ]]; do
-		case "$1" in
-		--output)
-			output_base="$2"
-			shift 2
-			;;
-		--format)
-			format="$2"
-			shift 2
-			;;
-		--provider)
-			provider="$2"
-			shift 2
-			;;
-		--model)
-			model="$2"
-			shift 2
-			;;
-		*)
-			shift
-			;;
-		esac
-	done
-
-	# Extract URLs from crawl data
 	local urls=()
-	if [[ "$input_file" == *.json ]]; then
-		# JSON format - extract URLs with status 200
-		while IFS= read -r _url; do
-			[[ -n "$_url" ]] && urls+=("$_url")
-		done < <(jq -r '.[] | select(.status_code == 200) | .url' "$input_file" 2>/dev/null)
-	elif [[ "$input_file" == *.csv ]]; then
-		# CSV format - extract URLs from first column where status is 200
-		while IFS= read -r _url; do
-			[[ -n "$_url" ]] && urls+=("$_url")
-		done < <(tail -n +2 "$input_file" | awk -F',' '$2 == "200" || $2 == 200 {gsub(/"/, "", $1); print $1}')
-	fi
+	_extract_urls_from_crawl_file "$input_file" urls
 
 	if [[ ${#urls[@]} -eq 0 ]]; then
 		print_error "No valid URLs found in input file"
@@ -830,11 +873,9 @@ do_analyze() {
 	print_info "Input: $input_file"
 	print_info "URLs to analyze: ${#urls[@]}"
 
-	# Determine domain from first URL
 	local domain
 	domain=$(get_domain "${urls[0]}")
 
-	# Get output directory (use same as crawl data if in domain folder)
 	local input_dir
 	input_dir=$(dirname "$input_file")
 	local output_dir
@@ -853,16 +894,15 @@ do_analyze() {
 		pip3 install aiohttp beautifulsoup4 openpyxl --quiet
 	fi
 
-	# Generate and run analyzer
-	local analyzer_script="/tmp/eeat_analyzer_$$.py"
-	generate_analyzer_script >"$analyzer_script"
-
 	# Limit to reasonable number for API costs
 	local max_urls=50
 	if [[ ${#urls[@]} -gt $max_urls ]]; then
 		print_warning "Limiting analysis to first $max_urls URLs (of ${#urls[@]})"
 		urls=("${urls[@]:0:$max_urls}")
 	fi
+
+	local analyzer_script="/tmp/eeat_analyzer_$$.py"
+	generate_analyzer_script >"$analyzer_script"
 
 	python3 "$analyzer_script" "${urls[@]}" \
 		--output "$output_dir" \
