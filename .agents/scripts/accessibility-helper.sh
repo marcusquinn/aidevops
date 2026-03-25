@@ -1207,28 +1207,54 @@ _main_print_help() {
 	return 0
 }
 
-main() {
-	local command="${1:-help}"
-	local account_name="${2:-}"
+# Dispatch audit-category commands: audit, lighthouse, pa11y, email, bulk.
+# Args: $1=command $2=account_name $3=optional_arg $4=optional_arg
+# Returns: 0=handled (success or failure), 2=command not in this group
+_main_dispatch_audit() {
+	local command="$1"
+	local account_name="$2"
 
 	case "$command" in
 	"audit" | "check")
 		_main_require_arg "$account_name" "Please provide a URL to audit" "Usage: $0 audit <url>" || return 1
 		run_full_audit "$account_name"
+		return $?
 		;;
 	"lighthouse" | "lh")
 		_main_require_arg "$account_name" "Please provide a URL" "Usage: $0 lighthouse <url> [desktop|mobile]" || return 1
 		check_jq || return 1
 		run_lighthouse_a11y "$account_name" "${3:-desktop}"
+		return $?
 		;;
 	"pa11y" | "wcag")
 		_main_require_arg "$account_name" "Please provide a URL" "Usage: $0 pa11y <url> [WCAG2A|WCAG2AA|WCAG2AAA]" || return 1
 		run_pa11y_audit "$account_name" "${3:-$A11Y_WCAG_LEVEL}"
+		return $?
 		;;
 	"email")
 		_main_require_arg "$account_name" "Please provide an HTML file path" "Usage: $0 email <file.html>" || return 1
 		check_email_a11y "$account_name"
+		return $?
 		;;
+	"bulk")
+		_main_require_arg "$account_name" "Please provide a file containing URLs" "Usage: $0 bulk <urls-file>" || return 1
+		bulk_audit "$account_name"
+		return $?
+		;;
+	*)
+		return 2
+		;;
+	esac
+}
+
+# Dispatch contrast-and-wave commands: contrast, playwright-contrast, wave*.
+# Args: $1=command $2=account_name $3=optional_arg $4=optional_arg
+# Returns: 0=handled (success or failure), 2=command not in this group
+_main_dispatch_contrast_wave() {
+	local command="$1"
+	local account_name="$2"
+
+	case "$command" in
 	"contrast")
 		if [[ -z "$account_name" || -z "${3:-}" ]]; then
 			print_error "Please provide foreground and background colors"
@@ -1237,10 +1263,12 @@ main() {
 			return 1
 		fi
 		check_contrast "$account_name" "$3"
+		return $?
 		;;
 	"playwright-contrast" | "pw-contrast" | "extract-contrast")
 		_main_require_arg "$account_name" "Please provide a URL" "Usage: $0 playwright-contrast <url> [json|markdown|summary] [AA|AAA]" || return 1
 		run_playwright_contrast "$account_name" "${3:-summary}" "${4:-AA}"
+		return $?
 		;;
 	"wave")
 		if [[ -z "$account_name" ]]; then
@@ -1250,21 +1278,47 @@ main() {
 			return 1
 		fi
 		run_wave_audit "$account_name" "${3:-2}" "${4:-1200}"
+		return $?
 		;;
 	"wave-mobile")
 		_main_require_arg "$account_name" "Please provide a URL" "Usage: $0 wave-mobile <url> [reporttype]" || return 1
 		run_wave_mobile "$account_name" "${3:-2}"
+		return $?
 		;;
 	"wave-docs")
 		wave_docs "$account_name"
+		return $?
 		;;
 	"wave-credits")
 		wave_credits
+		return $?
 		;;
-	"bulk")
-		_main_require_arg "$account_name" "Please provide a file containing URLs" "Usage: $0 bulk <urls-file>" || return 1
-		bulk_audit "$account_name"
+	*)
+		return 2
 		;;
+	esac
+}
+
+main() {
+	local command="${1:-help}"
+	local account_name="${2:-}"
+	local rc
+
+	# Try audit/lighthouse/pa11y/email/bulk group
+	_main_dispatch_audit "$command" "$account_name" "${3:-}" "${4:-}"
+	rc=$?
+	if [[ $rc -ne 2 ]]; then
+		return $rc
+	fi
+
+	# Try contrast/wave group
+	_main_dispatch_contrast_wave "$command" "$account_name" "${3:-}" "${4:-}"
+	rc=$?
+	if [[ $rc -ne 2 ]]; then
+		return $rc
+	fi
+
+	case "$command" in
 	"install-deps")
 		install_deps
 		;;
@@ -1277,6 +1331,7 @@ main() {
 		return 1
 		;;
 	esac
+	return 0
 }
 
 main "$@"

@@ -572,12 +572,126 @@ _run_contrast_checks() {
 	return 0
 }
 
+# Write the JS snippet that checks images, inputs, and headings for a11y issues.
+# Output: JS code fragment (no surrounding function wrapper).
+_a11y_js_element_checks() {
+	cat <<'JSEOF'
+        const issues = [];
+
+        // Check images without alt text
+        const images = document.querySelectorAll('img');
+        images.forEach(img => {
+          if (!img.alt && !img.getAttribute('role') && !img.getAttribute('aria-label')) {
+            issues.push({
+              type: 'missing-alt', severity: 'error',
+              element: img.outerHTML.substring(0, 200),
+              message: 'Image missing alt text',
+            });
+          }
+        });
+
+        // Check form inputs without labels
+        const inputs = document.querySelectorAll('input, select, textarea');
+        inputs.forEach(input => {
+          const id = input.id;
+          const hasLabel = id && document.querySelector(`label[for="${id}"]`);
+          const hasAriaLabel = input.getAttribute('aria-label') || input.getAttribute('aria-labelledby');
+          const hasTitle = input.getAttribute('title');
+          const hasPlaceholder = input.getAttribute('placeholder');
+          if (!hasLabel && !hasAriaLabel && !hasTitle && input.type !== 'hidden' && input.type !== 'submit') {
+            issues.push({
+              type: 'missing-label', severity: 'warning',
+              element: input.outerHTML.substring(0, 200),
+              message: `Input ${input.type || 'text'} missing associated label${hasPlaceholder ? ' (has placeholder but not a label)' : ''}`,
+            });
+          }
+        });
+
+        // Check heading hierarchy
+        const headings = [...document.querySelectorAll('h1, h2, h3, h4, h5, h6')];
+        let lastLevel = 0;
+        headings.forEach(h => {
+          const level = parseInt(h.tagName[1], 10);
+          if (level > lastLevel + 1 && lastLevel > 0) {
+            issues.push({
+              type: 'heading-skip', severity: 'warning',
+              element: h.outerHTML.substring(0, 200),
+              message: `Heading level skipped: h${lastLevel} to h${level}`,
+            });
+          }
+          lastLevel = level;
+        });
+JSEOF
+	return 0
+}
+
+# Write the JS snippet that checks document-level and interactive-element a11y issues.
+# Output: JS code fragment (no surrounding function wrapper). Assumes `issues` array exists.
+_a11y_js_document_checks() {
+	cat <<'JSEOF'
+        // Check for missing lang attribute
+        const html = document.documentElement;
+        if (!html.getAttribute('lang')) {
+          issues.push({ type: 'missing-lang', severity: 'error', message: 'HTML element missing lang attribute' });
+        }
+
+        // Check for missing page title
+        if (!document.title || document.title.trim() === '') {
+          issues.push({ type: 'missing-title', severity: 'error', message: 'Page missing title element' });
+        }
+
+        // Check buttons without accessible names
+        const buttons = document.querySelectorAll('button');
+        buttons.forEach(btn => {
+          const text = btn.textContent?.trim();
+          const ariaLabel = btn.getAttribute('aria-label');
+          const ariaLabelledBy = btn.getAttribute('aria-labelledby');
+          if (!text && !ariaLabel && !ariaLabelledBy) {
+            issues.push({
+              type: 'empty-button', severity: 'error',
+              element: btn.outerHTML.substring(0, 200),
+              message: 'Button has no accessible name',
+            });
+          }
+        });
+
+        // Check links without accessible names
+        const links = document.querySelectorAll('a');
+        links.forEach(link => {
+          const text = link.textContent?.trim();
+          const ariaLabel = link.getAttribute('aria-label');
+          if (!text && !ariaLabel && !link.querySelector('img[alt]')) {
+            issues.push({
+              type: 'empty-link', severity: 'warning',
+              element: link.outerHTML.substring(0, 200),
+              message: 'Link has no accessible name',
+            });
+          }
+        });
+
+        return {
+          issues,
+          summary: {
+            errors: issues.filter(i => i.severity === 'error').length,
+            warnings: issues.filter(i => i.severity === 'warning').length,
+            total: issues.length,
+          },
+        };
+JSEOF
+	return 0
+}
+
 # Generate the Playwright a11y ARIA/structure check script file.
 # Args: $1=script_file $2=safe_url $3=pages_array
 _generate_a11y_script() {
 	local script_file="$1"
 	local safe_url="$2"
 	local pages_array="$3"
+	local element_checks document_checks
+	element_checks=$(_a11y_js_element_checks)
+	document_checks=$(_a11y_js_document_checks)
+	local evaluate_body="${element_checks}
+${document_checks}"
 
 	cat >"$script_file" <<SCRIPT
 import { chromium } from 'playwright';
@@ -598,113 +712,7 @@ async function run() {
       await page.goto(url, { waitUntil: 'networkidle', timeout: 30000 });
 
       const a11yData = await page.evaluate(() => {
-        const issues = [];
-
-        // Check images without alt text
-        const images = document.querySelectorAll('img');
-        images.forEach(img => {
-          if (!img.alt && !img.getAttribute('role') && !img.getAttribute('aria-label')) {
-            issues.push({
-              type: 'missing-alt',
-              severity: 'error',
-              element: img.outerHTML.substring(0, 200),
-              message: 'Image missing alt text',
-            });
-          }
-        });
-
-        // Check form inputs without labels
-        const inputs = document.querySelectorAll('input, select, textarea');
-        inputs.forEach(input => {
-          const id = input.id;
-          const hasLabel = id && document.querySelector(\`label[for="\${id}"]\`);
-          const hasAriaLabel = input.getAttribute('aria-label') || input.getAttribute('aria-labelledby');
-          const hasTitle = input.getAttribute('title');
-          const hasPlaceholder = input.getAttribute('placeholder');
-          if (!hasLabel && !hasAriaLabel && !hasTitle && input.type !== 'hidden' && input.type !== 'submit') {
-            issues.push({
-              type: 'missing-label',
-              severity: 'warning',
-              element: input.outerHTML.substring(0, 200),
-              message: \`Input \${input.type || 'text'} missing associated label\${hasPlaceholder ? ' (has placeholder but not a label)' : ''}\`,
-            });
-          }
-        });
-
-        // Check heading hierarchy
-        const headings = [...document.querySelectorAll('h1, h2, h3, h4, h5, h6')];
-        let lastLevel = 0;
-        headings.forEach(h => {
-          const level = parseInt(h.tagName[1], 10);
-          if (level > lastLevel + 1 && lastLevel > 0) {
-            issues.push({
-              type: 'heading-skip',
-              severity: 'warning',
-              element: h.outerHTML.substring(0, 200),
-              message: \`Heading level skipped: h\${lastLevel} to h\${level}\`,
-            });
-          }
-          lastLevel = level;
-        });
-
-        // Check for missing lang attribute
-        const html = document.documentElement;
-        if (!html.getAttribute('lang')) {
-          issues.push({
-            type: 'missing-lang',
-            severity: 'error',
-            message: 'HTML element missing lang attribute',
-          });
-        }
-
-        // Check for missing page title
-        if (!document.title || document.title.trim() === '') {
-          issues.push({
-            type: 'missing-title',
-            severity: 'error',
-            message: 'Page missing title element',
-          });
-        }
-
-        // Check buttons without accessible names
-        const buttons = document.querySelectorAll('button');
-        buttons.forEach(btn => {
-          const text = btn.textContent?.trim();
-          const ariaLabel = btn.getAttribute('aria-label');
-          const ariaLabelledBy = btn.getAttribute('aria-labelledby');
-          if (!text && !ariaLabel && !ariaLabelledBy) {
-            issues.push({
-              type: 'empty-button',
-              severity: 'error',
-              element: btn.outerHTML.substring(0, 200),
-              message: 'Button has no accessible name',
-            });
-          }
-        });
-
-        // Check links without accessible names
-        const links = document.querySelectorAll('a');
-        links.forEach(link => {
-          const text = link.textContent?.trim();
-          const ariaLabel = link.getAttribute('aria-label');
-          if (!text && !ariaLabel && !link.querySelector('img[alt]')) {
-            issues.push({
-              type: 'empty-link',
-              severity: 'warning',
-              element: link.outerHTML.substring(0, 200),
-              message: 'Link has no accessible name',
-            });
-          }
-        });
-
-        return {
-          issues,
-          summary: {
-            errors: issues.filter(i => i.severity === 'error').length,
-            warnings: issues.filter(i => i.severity === 'warning').length,
-            total: issues.length,
-          },
-        };
+${evaluate_body}
       });
 
       // Merge contrast data for this page if available
@@ -958,6 +966,59 @@ cmd_smoke() {
 # Full QA Run
 # =============================================================================
 
+# Execute the four QA phases and combine results into a JSON report string.
+# Args: $1=url $2=pages $3=viewports $4=output_dir $5=timestamp $6=timeout $7=max_dim
+# Output: combined JSON report (stdout)
+_run_qa_phases() {
+	local url="$1"
+	local pages="$2"
+	local viewports="$3"
+	local output_dir="$4"
+	local timestamp="$5"
+	local timeout="$6"
+	local max_dim="$7"
+
+	log_info "=== Browser QA Full Run ==="
+	log_info "URL: ${url}"
+	log_info "Pages: ${pages}"
+	log_info "Viewports: ${viewports}"
+
+	# Phase 1: Smoke test
+	log_info "--- Phase 1: Smoke Test ---"
+	local smoke_result
+	smoke_result=$(cmd_smoke --url "$url" --pages "$pages" --timeout "$timeout" 2>/dev/null) || smoke_result='{"error": "smoke test failed"}'
+
+	# Phase 2: Screenshots
+	log_info "--- Phase 2: Screenshots ---"
+	local screenshot_dir="${output_dir}/screenshots-${timestamp}"
+	local screenshot_result
+	screenshot_result=$(cmd_screenshot --url "$url" --pages "$pages" --viewports "$viewports" --output-dir "$screenshot_dir" --timeout "$timeout" --max-dim "$max_dim" 2>/dev/null) || screenshot_result='{"error": "screenshot capture failed"}'
+
+	# Phase 3: Broken links
+	log_info "--- Phase 3: Broken Link Check ---"
+	local links_result
+	links_result=$(cmd_links --url "$url" --timeout "$timeout" 2>/dev/null) || links_result='{"error": "link check failed"}'
+
+	# Phase 4: Accessibility
+	log_info "--- Phase 4: Accessibility ---"
+	local a11y_result
+	a11y_result=$(cmd_a11y --url "$url" --pages "$pages" 2>/dev/null) || a11y_result='{"error": "accessibility check failed"}'
+
+	cat <<REPORT
+{
+  "timestamp": "${timestamp}",
+  "url": "${url}",
+  "pages": "$(echo "$pages" | tr ' ' ',')",
+  "viewports": "${viewports}",
+  "smoke": ${smoke_result},
+  "screenshots": ${screenshot_result},
+  "links": ${links_result},
+  "accessibility": ${a11y_result}
+}
+REPORT
+	return 0
+}
+
 # Run the complete QA pipeline: smoke test, screenshots, broken links, accessibility.
 # Args: --url URL --pages "/ /about" --viewports "desktop,mobile" --format json|markdown
 # Output: Combined JSON report
@@ -1017,48 +1078,8 @@ cmd_run() {
 	timestamp=$(date -u +"%Y%m%dT%H%M%SZ")
 	local report_file="${output_dir}/qa-report-${timestamp}.json"
 
-	log_info "=== Browser QA Full Run ==="
-	log_info "URL: ${url}"
-	log_info "Pages: ${pages}"
-	log_info "Viewports: ${viewports}"
-
-	# Phase 1: Smoke test
-	log_info "--- Phase 1: Smoke Test ---"
-	local smoke_result
-	smoke_result=$(cmd_smoke --url "$url" --pages "$pages" --timeout "$timeout" 2>/dev/null) || smoke_result='{"error": "smoke test failed"}'
-
-	# Phase 2: Screenshots
-	log_info "--- Phase 2: Screenshots ---"
-	local screenshot_dir="${output_dir}/screenshots-${timestamp}"
-	local screenshot_result
-	screenshot_result=$(cmd_screenshot --url "$url" --pages "$pages" --viewports "$viewports" --output-dir "$screenshot_dir" --timeout "$timeout" --max-dim "$max_dim" 2>/dev/null) || screenshot_result='{"error": "screenshot capture failed"}'
-
-	# Phase 3: Broken links
-	log_info "--- Phase 3: Broken Link Check ---"
-	local links_result
-	links_result=$(cmd_links --url "$url" --timeout "$timeout" 2>/dev/null) || links_result='{"error": "link check failed"}'
-
-	# Phase 4: Accessibility
-	log_info "--- Phase 4: Accessibility ---"
-	local a11y_result
-	a11y_result=$(cmd_a11y --url "$url" --pages "$pages" 2>/dev/null) || a11y_result='{"error": "accessibility check failed"}'
-
-	# Combine results
 	local combined
-	combined=$(
-		cat <<REPORT
-{
-  "timestamp": "${timestamp}",
-  "url": "${url}",
-  "pages": "$(echo "$pages" | tr ' ' ',')",
-  "viewports": "${viewports}",
-  "smoke": ${smoke_result},
-  "screenshots": ${screenshot_result},
-  "links": ${links_result},
-  "accessibility": ${a11y_result}
-}
-REPORT
-	)
+	combined=$(_run_qa_phases "$url" "$pages" "$viewports" "$output_dir" "$timestamp" "$timeout" "$max_dim")
 
 	if [[ "$format" == "markdown" ]]; then
 		format_as_markdown "$combined"

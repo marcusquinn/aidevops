@@ -544,50 +544,66 @@ scan_skill_security() {
 
 	# Block on CRITICAL/HIGH unless --skip-security
 	if [[ "$critical_count" -gt 0 || "$high_count" -gt 0 ]]; then
-		if [[ "$skip_security" == true ]]; then
-			log_warning "CRITICAL/HIGH findings detected but --skip-security specified, proceeding"
-			log_skill_scan_result "$skill_name" "import (--skip-security)" "$critical_count" "$high_count" "$medium_count" "$max_severity"
-			return 0
-		fi
-
-		echo -e "${RED}BLOCKED: $critical_count CRITICAL and $high_count HIGH severity findings.${NC}"
-		echo ""
-		echo "This skill may contain:"
-		echo "  - Prompt injection or jailbreak instructions"
-		echo "  - Data exfiltration patterns"
-		echo "  - Command injection or malicious code"
-		echo "  - Hardcoded secrets or credentials"
-		echo ""
-		echo "Options:"
-		echo "  1. Cancel import (recommended)"
-		echo "  2. Import anyway (--skip-security)"
-		echo ""
-
-		# In non-interactive mode (piped), block by default
-		if [[ ! -t 0 ]]; then
-			log_error "Import blocked due to security findings (use --skip-security to override)"
-			return 1
-		fi
-
-		read -rp "Choose option [1-2]: " choice
-		case "$choice" in
-		2)
-			log_warning "Proceeding despite security findings"
-			log_skill_scan_result "$skill_name" "import (user override)" "$critical_count" "$high_count" "$medium_count" "$max_severity"
-			return 0
-			;;
-		*)
-			log_error "Import cancelled due to security findings"
-			log_skill_scan_result "$skill_name" "import BLOCKED" "$critical_count" "$high_count" "$medium_count" "$max_severity"
-			return 1
-			;;
-		esac
+		_scan_skill_handle_critical "$skill_name" "$critical_count" "$high_count" "$medium_count" "$max_severity" "$skip_security"
+		return $?
 	fi
 
 	# MEDIUM/LOW findings: warn but allow
 	log_warning "Security scan found $findings issue(s) (max: $max_severity) - review recommended"
 	log_skill_scan_result "$skill_name" "import" "$critical_count" "$high_count" "$medium_count" "$max_severity"
 	return 0
+}
+
+# Handle CRITICAL/HIGH security findings: prompt user or block in non-interactive mode.
+# Args: $1=skill_name $2=critical_count $3=high_count $4=medium_count $5=max_severity $6=skip_security
+# Returns: 0=proceed, 1=blocked
+_scan_skill_handle_critical() {
+	local skill_name="$1"
+	local critical_count="$2"
+	local high_count="$3"
+	local medium_count="$4"
+	local max_severity="$5"
+	local skip_security="$6"
+
+	if [[ "$skip_security" == true ]]; then
+		log_warning "CRITICAL/HIGH findings detected but --skip-security specified, proceeding"
+		log_skill_scan_result "$skill_name" "import (--skip-security)" "$critical_count" "$high_count" "$medium_count" "$max_severity"
+		return 0
+	fi
+
+	echo -e "${RED}BLOCKED: $critical_count CRITICAL and $high_count HIGH severity findings.${NC}"
+	echo ""
+	echo "This skill may contain:"
+	echo "  - Prompt injection or jailbreak instructions"
+	echo "  - Data exfiltration patterns"
+	echo "  - Command injection or malicious code"
+	echo "  - Hardcoded secrets or credentials"
+	echo ""
+	echo "Options:"
+	echo "  1. Cancel import (recommended)"
+	echo "  2. Import anyway (--skip-security)"
+	echo ""
+
+	# In non-interactive mode (piped), block by default
+	if [[ ! -t 0 ]]; then
+		log_error "Import blocked due to security findings (use --skip-security to override)"
+		return 1
+	fi
+
+	local choice
+	read -rp "Choose option [1-2]: " choice
+	case "$choice" in
+	2)
+		log_warning "Proceeding despite security findings"
+		log_skill_scan_result "$skill_name" "import (user override)" "$critical_count" "$high_count" "$medium_count" "$max_severity"
+		return 0
+		;;
+	*)
+		log_error "Import cancelled due to security findings"
+		log_skill_scan_result "$skill_name" "import BLOCKED" "$critical_count" "$high_count" "$medium_count" "$max_severity"
+		return 1
+		;;
+	esac
 }
 
 # Run VirusTotal scan on skill files and referenced domains
@@ -1171,43 +1187,18 @@ _resolve_github_skill_metadata() {
 	return 0
 }
 
-cmd_add() {
+# Execute the GitHub-specific import path for cmd_add.
+# Caller must have already parsed options and routed away non-GitHub sources.
+# Args: $1=url $2=owner $3=repo $4=subpath $5=custom_name $6=force $7=dry_run $8=skip_security
+_cmd_add_github() {
 	local url="$1"
-	shift
-
-	# Parse options (sets _add_* globals)
-	_add_custom_name=""
-	_add_force=false
-	_add_skip_security=false
-	_add_dry_run=false
-	if ! _parse_add_options "$@"; then
-		return 1
-	fi
-	local custom_name="$_add_custom_name"
-	local force="$_add_force"
-	local dry_run="$_add_dry_run"
-	local skip_security="$_add_skip_security"
-
-	log_info "Parsing source: $url"
-
-	# Route to ClawdHub or URL handler if applicable
-	_route_exit_code=0
-	if _detect_and_route_source "$url" "$custom_name" "$force" "$dry_run" "$skip_security"; then
-		return "$_route_exit_code"
-	fi
-
-	# Parse GitHub URL
-	local parsed owner repo subpath
-	parsed=$(parse_github_url "$url")
-	IFS='|' read -r owner repo subpath <<<"$parsed"
-
-	if [[ -z "$owner" || -z "$repo" ]]; then
-		log_error "Could not parse source URL: $url"
-		log_info "Expected: owner/repo, https://github.com/owner/repo, clawdhub:slug, or a raw URL"
-		return 1
-	fi
-
-	log_info "Owner: $owner, Repo: $repo, Subpath: ${subpath:-<root>}"
+	local owner="$2"
+	local repo="$3"
+	local subpath="$4"
+	local custom_name="$5"
+	local force="$6"
+	local dry_run="$7"
+	local skip_security="$8"
 
 	# Create temp directory
 	rm -rf "$TEMP_DIR"
@@ -1267,8 +1258,49 @@ cmd_add() {
 	log_success "Skill '$skill_name' imported successfully"
 	echo ""
 	log_info "Run './setup.sh' to create symlinks for other AI assistants"
-
 	return 0
+}
+
+cmd_add() {
+	local url="$1"
+	shift
+
+	# Parse options (sets _add_* globals)
+	_add_custom_name=""
+	_add_force=false
+	_add_skip_security=false
+	_add_dry_run=false
+	if ! _parse_add_options "$@"; then
+		return 1
+	fi
+	local custom_name="$_add_custom_name"
+	local force="$_add_force"
+	local dry_run="$_add_dry_run"
+	local skip_security="$_add_skip_security"
+
+	log_info "Parsing source: $url"
+
+	# Route to ClawdHub or URL handler if applicable
+	_route_exit_code=0
+	if _detect_and_route_source "$url" "$custom_name" "$force" "$dry_run" "$skip_security"; then
+		return "$_route_exit_code"
+	fi
+
+	# Parse GitHub URL
+	local parsed owner repo subpath
+	parsed=$(parse_github_url "$url")
+	IFS='|' read -r owner repo subpath <<<"$parsed"
+
+	if [[ -z "$owner" || -z "$repo" ]]; then
+		log_error "Could not parse source URL: $url"
+		log_info "Expected: owner/repo, https://github.com/owner/repo, clawdhub:slug, or a raw URL"
+		return 1
+	fi
+
+	log_info "Owner: $owner, Repo: $repo, Subpath: ${subpath:-<root>}"
+
+	_cmd_add_github "$url" "$owner" "$repo" "$subpath" "$custom_name" "$force" "$dry_run" "$skip_security"
+	return $?
 }
 
 # Convert fetched URL content to aidevops format.
