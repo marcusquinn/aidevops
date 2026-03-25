@@ -33,11 +33,7 @@ If you get stuck, hit reply. Real humans answer.
 P.S. Pro tip: Use "/" to access any command instantly.
 ```
 
-**Why it works:**
-- Warm, casual tone
-- Three actionable steps (not overwhelming)
-- "Real humans answer" builds trust
-- P.S. provides quick value
+**Why it works:** Warm tone, 3 actionable steps, "Real humans answer" builds trust, P.S. delivers quick value.
 
 ---
 
@@ -70,12 +66,7 @@ Jonas
 Head of Support, Basecamp
 ```
 
-**Why it works:**
-- Specific steps
-- Low commitment ("30 seconds")
-- Video option for different learners
-- Real name + title
-- Personality ("I love hearing...")
+**Why it works:** Specific steps with low commitment ("30 seconds"), video for different learners, real name + personality.
 
 ---
 
@@ -111,11 +102,7 @@ P.S. Hit reply and tell me your biggest copywriting
 challenge. I read every response.
 ```
 
-**Why it works:**
-- Delivers the promise immediately
-- Guides what to read (reduces overwhelm)
-- Sets expectation for future emails
-- Engagement prompt (hit reply)
+**Why it works:** Delivers the promise immediately, guides what to read (reduces overwhelm), sets expectation for future emails, engagement prompt.
 
 ---
 
@@ -152,11 +139,7 @@ P.S. Think your friends would like this? Forward it
 and they can sign up here.
 ```
 
-**Why it works:**
-- Hook with surprising number
-- Story structure (curiosity → explanation → lesson)
-- Business insight (not just news)
-- Referral prompt
+**Why it works:** Hook with surprising number, story structure (curiosity → explanation → lesson), business insight, referral prompt.
 
 ---
 
@@ -195,11 +178,7 @@ James
 P.S. If you enjoyed this, share it with others.
 ```
 
-**Why it works:**
-- Predictable format (readers know what to expect)
-- Mixed content (ideas, quotes, question)
-- Encourages reflection
-- Easy to share
+**Why it works:** Predictable format readers expect, mixed content (ideas/quotes/question), encourages reflection, easy to share.
 
 ---
 
@@ -244,12 +223,7 @@ I'll see you inside.
 P.S. Doors close Friday at 11:59pm. No extensions.
 ```
 
-**Why it works:**
-- Opens with success story (proof)
-- Before/after transformation
-- Limited time (urgency)
-- Not for everyone (exclusivity)
-- Clear deadline
+**Why it works:** Opens with success story (proof), before/after transformation, limited time + exclusivity, clear deadline.
 
 ---
 
@@ -279,11 +253,7 @@ We're here to help.
 — [Name/Team]
 ```
 
-**Why it works:**
-- Specific deadline
-- Loss aversion (what they'll lose)
-- Easy solution (30 seconds)
-- Open to questions
+**Why it works:** Specific deadline, loss aversion (what they'll lose), easy solution (30 seconds), open to questions.
 
 ---
 
@@ -314,11 +284,7 @@ P.S. If you decided it's not right for you, that's
 totally fine too. Just let me know and I'll stop bugging you.
 ```
 
-**Why it works:**
-- Personal, not automated tone
-- Addresses common objections
-- Open-ended (invites dialogue)
-- P.S. reduces pressure
+**Why it works:** Personal (not automated) tone, addresses common objections, open-ended dialogue, P.S. reduces pressure.
 
 ---
 
@@ -353,11 +319,7 @@ See you there,
 [Name]
 ```
 
-**Why it works:**
-- Clear benefit in subject
-- Specific time/date
-- Bullet takeaways
-- Replay available (removes friction)
+**Why it works:** Clear benefit in subject, specific time/date, bullet takeaways, replay removes friction.
 
 ---
 
@@ -391,11 +353,7 @@ Hit reply and let me know what's up.
 Founder, [Product]
 ```
 
-**Why it works:**
-- Specific timeframe (personalized)
-- What's new (reason to return)
-- Low pressure
-- Direct ask for feedback
+**Why it works:** Specific timeframe (personalized), what's new (reason to return), low pressure, direct ask for feedback.
 
 ---
 
@@ -444,6 +402,7 @@ Founder, [Product]
 ## Email Templates to Swipe
 
 ### Quick Value Email
+
 ```
 Subject: [Number]-minute tip to [benefit]
 
@@ -459,6 +418,7 @@ Try it today and let me know how it goes.
 ```
 
 ### Story Email
+
 ```
 Subject: [Intriguing statement from story]
 
@@ -478,6 +438,7 @@ The takeaway? [Connection to reader]
 ```
 
 ### Social Proof Email
+
 ```
 Subject: How [Customer] got [Result]
 
@@ -502,12 +463,12 @@ Want similar results?
 
 ---
 
-## Email Best Practices (Quick Reference)
+## Best Practices (Quick Reference)
 
-- Subject lines: 40-50 characters
-- Preview text: Extends your subject, don't repeat it
+- Subject lines: 40–50 characters
+- Preview text: extends your subject, don't repeat it
 - Open with value or hook, not throat-clearing
-- Short paragraphs (1-3 sentences)
+- Short paragraphs (1–3 sentences)
 - One CTA per email
 - Mobile-friendly (60%+ read on mobile)
 - Send at consistent times (build habit)

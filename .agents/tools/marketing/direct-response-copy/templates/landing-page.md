@@ -6,7 +6,7 @@ Copy-paste frameworks for different landing page types.
 
 ## Template 1: SaaS Free Trial Page
 
-### HERO SECTION
+### HERO
 
 ```
 [HEADLINE: Outcome-focused, specific]
@@ -18,177 +18,118 @@ Copy-paste frameworks for different landing page types.
 [PRIMARY CTA]
 Start Your Free Trial
 
-[TRUST ELEMENT]
-✓ No credit card required
-✓ Free for [X] days
-✓ Cancel anytime
+✓ No credit card required  ✓ Free for [X] days  ✓ Cancel anytime
 
-[SOCIAL PROOF BAR]
 Trusted by [X]+ [companies/users] including:
 [Logo] [Logo] [Logo] [Logo] [Logo]
 
-[HERO IMAGE/VIDEO]
 [Product screenshot or demo video]
 ```
 
-### PROBLEM SECTION
+### PROBLEM
 
 ```
-[SECTION HEADER]
 Sound Familiar?
 
-[PROBLEM STATEMENTS]
 You're [doing painful activity] but [not getting desired result].
 
 You've tried [solution 1], but [why it fails].
 You've tried [solution 2], but [why it fails].
 You've tried [solution 3], but [why it fails].
 
-Meanwhile, [negative consequence of not solving].
+Meanwhile, [negative consequence].
 
 There has to be a better way.
 ```
 
-### SOLUTION SECTION
+### SOLUTION
 
 ```
-[SECTION HEADER]
 Introducing [Product Name]
 
-[SOLUTION STATEMENT]
 The [category] that [key differentiator].
 
-[HOW IT'S DIFFERENT]
 Unlike [competitors/alternatives], [Product] uses [unique approach]
 to [achieve result] without [common objection].
 
-[VISUAL]
 [Screenshot or diagram showing the product]
 ```
 
-### HOW IT WORKS SECTION
+### HOW IT WORKS
 
 ```
-[SECTION HEADER]
 How [Product Name] Works
 
-[STEP 1]
 1. [Action verb] your [thing]
-   [Brief description of what happens]
-   [Visual: Screenshot or icon]
+   [Brief description]  [Visual]
 
-[STEP 2]
 2. [Action verb] [next thing]
-   [Brief description]
-   [Visual]
+   [Brief description]  [Visual]
 
-[STEP 3]
 3. [Action verb] [result]
-   [Brief description]
-   [Visual]
+   [Brief description]  [Visual]
 ```
 
-### FEATURES SECTION
+### FEATURES
 
 ```
-[SECTION HEADER]
 Everything You Need to [Achieve Outcome]
 
-[FEATURE 1]
-[Feature Icon]
-[Feature Name]
+[Feature Icon] [Feature Name]
 [Benefit statement: What this means for you]
 
-[FEATURE 2]
-[Feature Icon]
-[Feature Name]
+[Feature Icon] [Feature Name]
 [Benefit statement]
 
-[FEATURE 3]
-[Feature Icon]
-[Feature Name]
+[Feature Icon] [Feature Name]
 [Benefit statement]
 
-[FEATURE 4]
-[Feature Icon]
-[Feature Name]
+[Feature Icon] [Feature Name]
 [Benefit statement]
 ```
 
-### SOCIAL PROOF SECTION
+### SOCIAL PROOF
 
 ```
-[SECTION HEADER]
 See What Our Customers Say
 
-[TESTIMONIAL 1]
 "[Specific result achieved with product]"
-— [Name], [Title] at [Company]
-[Photo]
+— [Name], [Title] at [Company]  [Photo]
 
-[TESTIMONIAL 2]
 "[Quote about transformation/experience]"
-— [Name], [Title] at [Company]
-[Photo]
+— [Name], [Title] at [Company]  [Photo]
 
-[CASE STUDY PREVIEW]
 ┌─────────────────────────────────────────┐
 │ [Company Name]                          │
-│                                         │
 │ Challenge: [What they struggled with]   │
 │ Solution: [How they used your product]  │
 │ Result: [Specific metrics/outcomes]     │
-│                                         │
 │ [Read Full Case Study →]                │
 └─────────────────────────────────────────┘
 
-[STATS]
 [X]% average improvement | [X]+ customers | [X]/5 on G2
 ```
 
-### PRICING SECTION
+### PRICING
 
 ```
-[SECTION HEADER]
 Simple, Transparent Pricing
 
-[TIER 1: Starter]
-$[X]/mo
-For [who this is for]
+[TIER 1: Starter]          [TIER 2: Professional — MOST POPULAR]  [TIER 3: Enterprise]
+$[X]/mo                    $[X]/mo                                  Custom
+For [who this is for]      For [who this is for]                    For [who this is for]
 
-✓ [Feature 1]
-✓ [Feature 2]
-✓ [Feature 3]
+✓ [Feature 1]              ✓ Everything in Starter, plus:           ✓ Everything in Pro, plus:
+✓ [Feature 2]              ✓ [Feature 4]                            ✓ [Feature 7]
+✓ [Feature 3]              ✓ [Feature 5]                            ✓ [Feature 8]
+                           ✓ [Feature 6]                            ✓ Dedicated support
 
-[Start Free Trial]
-
-[TIER 2: Professional - MOST POPULAR]
-$[X]/mo
-For [who this is for]
-
-✓ Everything in Starter, plus:
-✓ [Feature 4]
-✓ [Feature 5]
-✓ [Feature 6]
-
-[Start Free Trial]
-
-[TIER 3: Enterprise]
-Custom
-For [who this is for]
-
-✓ Everything in Professional, plus:
-✓ [Feature 7]
-✓ [Feature 8]
-✓ Dedicated support
-
-[Contact Sales]
+[Start Free Trial]         [Start Free Trial]                       [Contact Sales]
 ```
 
-### FAQ SECTION
+### FAQ
 
 ```
-[SECTION HEADER]
 Frequently Asked Questions
 
 Q: How is [Product] different from [competitor/alternative]?
@@ -210,53 +151,41 @@ Q: What kind of support do you offer?
 A: [Support description]. [Response time]. [Channels available].
 ```
 
-### FINAL CTA SECTION
+### FINAL CTA
 
 ```
-[SECTION HEADER]
 Ready to [Achieve Desired Outcome]?
 
-[VALUE RECAP]
 Join [X]+ [companies/teams/users] who've already [achieved result].
 
-[CTA BUTTON]
-Start Your Free Trial
+[Start Your Free Trial]
 
-[TRUST ELEMENTS]
-✓ No credit card required
-✓ Set up in [X] minutes
-✓ [X]-day money-back guarantee
+✓ No credit card required  ✓ Set up in [X] minutes  ✓ [X]-day money-back guarantee
 ```
 
 ---
 
 ## Template 2: Lead Magnet Page
 
-### HERO SECTION
+### HERO
 
 ```
-[HEADLINE: Promise of the lead magnet]
 [Get/Download/Access] The [Adjective] [Resource Type] to [Achieve Outcome]
 
-[SUBHEADLINE: Expand on value]
 Learn [what they'll learn] without [common objection/sacrifice].
 
-[FORM]
 Name: [________]
 Email: [________]
 [Get Free Access]
 
-[PRIVACY]
 We respect your privacy. Unsubscribe anytime.
 
-[VISUAL]
-[Image of the lead magnet - PDF cover, video thumbnail, etc.]
+[Image of the lead magnet — PDF cover, video thumbnail, etc.]
 ```
 
-### WHAT'S INSIDE SECTION
+### WHAT'S INSIDE
 
 ```
-[SECTION HEADER]
 Inside This Free [Guide/Checklist/Template], You'll Discover:
 
 ✓ [Specific thing they'll learn #1] — [Why this matters]
@@ -266,81 +195,67 @@ Inside This Free [Guide/Checklist/Template], You'll Discover:
 ✓ [Specific thing they'll learn #5] — [Why this matters]
 ```
 
-### SOCIAL PROOF SECTION
+### SOCIAL PROOF
 
 ```
-[DOWNLOAD COUNT]
 Join [X]+ [people/marketers/business owners] who've downloaded this [resource]
 
-[TESTIMONIAL]
 "[Quote about value of the resource]"
 — [Name], [Title]
 ```
 
-### ABOUT SECTION (Optional)
+### ABOUT (Optional)
 
 ```
-[SECTION HEADER]
 About [Your Name/Company]
 
-[Brief credibility statement]
 I've [achievement related to topic] for [impressive stat].
-
-This [resource] contains [origin story - why you created it].
+This [resource] contains [origin story — why you created it].
 ```
 
 ### FINAL CTA
 
 ```
-[FORM REPEAT]
 [Get Your Free [Resource] Now]
 
-[URGENCY - if applicable]
-[Limited time / spots / availability reason]
+[Limited time / spots / availability reason — if applicable]
 ```
 
 ---
 
 ## Template 3: Sales Page (Course/Product)
 
-### HERO SECTION
+### HERO
 
 ```
-[HEADLINE: Big Promise]
 [How to/The] [Achieve Outcome] [Timeframe] [Without Objection]
 
-[SUBHEADLINE: Specifics]
 The [step-by-step/complete/proven] [system/method/framework] to [achieve result].
 
 [VIDEO or LONG-FORM COPY STARTS HERE]
 ```
 
-### PROBLEM SECTION
+### PROBLEM
 
 ```
-[OPENING - Identify with reader]
 If you've ever [struggled with problem]...
 
-[RELATABLE PAIN POINTS]
 You know that feeling when:
 • [Specific frustration #1]
 • [Specific frustration #2]
 • [Specific frustration #3]
 
-[WHAT THEY'VE TRIED]
 You've probably tried:
 • [Common solution #1] — but [why it didn't work]
 • [Common solution #2] — but [why it didn't work]
 • [Common solution #3] — but [why it didn't work]
 
-[AGITATION]
 And every day that passes, [negative consequence escalates].
 ```
 
-### STORY SECTION
+### STORY
 
 ```
-[YOUR STORY]
 I know exactly how you feel because I was there too.
 
 [Timeframe] ago, I [was in same painful situation].
@@ -351,106 +266,75 @@ I was about to [give up].
 
 Then [discovery moment/insight].
 
-That's when everything changed.
-
-[TRANSFORMATION]
 Within [timeframe], I [achieved result].
 
-Since then, I've [credibility builder - helped X people, generated $Y, etc.].
+Since then, I've [credibility builder — helped X people, generated $Y, etc.].
 ```
 
-### SOLUTION SECTION
+### SOLUTION
 
 ```
-[INTRODUCE PRODUCT]
 That's why I created [Product Name].
 
 [Product Name] is [brief description] that helps you [achieve outcome] without [objection].
 
-[UNIQUE MECHANISM]
 Here's what makes it different:
 
 Unlike [alternatives], [Product] works because [unique approach/insight].
 ```
 
-### OFFER SECTION
+### OFFER
 
 ```
-[SECTION HEADER]
 Here's Everything You Get With [Product Name]
 
-[COMPONENT 1]
 Module 1: [Name]
 [Description of what it covers and what they'll learn]
 Value: $[X]
 
-[COMPONENT 2]
 Module 2: [Name]
 [Description]
 Value: $[X]
 
 [Continue for all modules/components]
 
-[BONUSES]
 But that's not all. When you join today, you also get:
 
-BONUS #1: [Name] ($[X] value)
-[Description of bonus and why it's valuable]
+BONUS #1: [Name] ($[X] value) — [Description]
+BONUS #2: [Name] ($[X] value) — [Description]
+BONUS #3: [Name] ($[X] value) — [Description]
 
-BONUS #2: [Name] ($[X] value)
-[Description]
-
-BONUS #3: [Name] ($[X] value)
-[Description]
-
-[VALUE SUMMARY]
 Total Value: $[Big Number]
-
-Your Investment Today: Just $[Price]
-(or [X] payments of $[Y])
+Your Investment Today: Just $[Price]  (or [X] payments of $[Y])
 ```
 
-### GUARANTEE SECTION
+### GUARANTEE
 
 ```
-[GUARANTEE NAME]
 Try [Product] Risk-Free for [X] Days
 
-Go through the [training/materials].
-Implement what you learn.
-See results for yourself.
+Go through the [training/materials]. Implement what you learn. See results for yourself.
 
 If you don't [achieve specific outcome] or you're not completely satisfied,
 just email us within [X] days for a full refund.
 
 No questions asked. No hoops to jump through.
-
-You literally have nothing to lose.
 ```
 
-### FINAL CTA SECTION
+### FINAL CTA
 
 ```
-[SECTION HEADER]
 You Have Two Choices
 
-[OPTION 1 - Status Quo]
-Keep doing what you're doing.
-Keep [experiencing the pain].
-Keep [negative consequence].
+Keep doing what you're doing. Keep [experiencing the pain]. Keep [negative consequence].
 
-[OPTION 2 - Take Action]
 Or click the button below and [start achieving outcome].
 
-[CTA BUTTON]
 [Yes, I Want [Outcome] →]
 
-[URGENCY - if applicable]
-[Deadline/scarcity reason]
+[Deadline/scarcity reason — if applicable]
 
-[FINAL REASSURANCE]
 Remember: You're protected by our [X]-day guarantee.
-If it doesn't work for you, you get your money back.
 ```
 
 ---
@@ -458,41 +342,28 @@ If it doesn't work for you, you get your money back.
 ## Template 4: Webinar Registration Page
 
 ```
-[HEADLINE]
 Free Training: How to [Achieve Specific Outcome] in [Timeframe]
 
-[SUBHEADLINE]
 Join [Your Name] on [Date] at [Time] to learn [what they'll learn].
 
-[WEBINAR DETAILS]
-📅 [Date]
-🕐 [Time] [Timezone]
-⏱️ [Duration] minutes
+📅 [Date]  🕐 [Time] [Timezone]  ⏱️ [Duration] minutes
 
-[FORM]
 Name: [________]
 Email: [________]
 [Reserve My Seat]
 
-[WHAT YOU'LL LEARN]
 In this free training, you'll discover:
 
 ✓ [Takeaway #1] — [Why this matters]
 ✓ [Takeaway #2] — [Why this matters]
 ✓ [Takeaway #3] — [Why this matters]
 
-[BONUS]
 Plus: Everyone who attends live will get [bonus/gift].
 
-[ABOUT HOST]
-About [Your Name]:
-[Brief credibility - 1-2 sentences]
+About [Your Name]: [Brief credibility — 1–2 sentences]
 
-[SPOTS REMAINING - if applicable]
-⚠️ Only [X] spots available
-[Reserve My Seat Now]
+⚠️ Only [X] spots available  [Reserve My Seat Now]
 
-[CAN'T MAKE IT LIVE?]
 Can't make it live? Register anyway and we'll send you the recording.
 ```
 
@@ -500,16 +371,16 @@ Can't make it live? Register anyway and we'll send you the recording.
 
 ## Quick Substitution Guide
 
-| When you see... | Replace with... |
-|-----------------|-----------------|
-| [Product Name] | Your actual product name |
-| [X] | Specific number |
-| [Desired Outcome] | The main result they want |
-| [Target Audience] | Who you're talking to |
-| [Objection] | Main reason they might not buy |
-| [Timeframe] | How long to see results |
-| [Feature] | Specific capability |
-| [Benefit] | What the feature does for them |
-| [Unique Mechanism] | Why your approach works |
-| [Testimonial] | Real customer quote |
-| [CTA] | Your call to action |
+| Placeholder | Replace with |
+|-------------|-------------|
+| `[Product Name]` | Your actual product name |
+| `[X]` | Specific number |
+| `[Desired Outcome]` | The main result they want |
+| `[Target Audience]` | Who you're talking to |
+| `[Objection]` | Main reason they might not buy |
+| `[Timeframe]` | How long to see results |
+| `[Feature]` | Specific capability |
+| `[Benefit]` | What the feature does for them |
+| `[Unique Mechanism]` | Why your approach works |
+| `[Testimonial]` | Real customer quote |
+| `[CTA]` | Your call to action |
