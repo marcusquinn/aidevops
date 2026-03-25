@@ -542,8 +542,10 @@ append_progress_log() {
 # Run Node.js test suite via detected package manager.
 _run_node_tests() {
 	local repo_path="$1"
-	local has_test
-	has_test=$(grep -c '"test"' "$repo_path/package.json" 2>/dev/null) || has_test=0
+	local has_test=0
+	if grep -q '"test"' "$repo_path/package.json" 2>/dev/null; then
+		has_test=1
+	fi
 
 	if [[ "$has_test" -gt 0 ]]; then
 		local test_output
