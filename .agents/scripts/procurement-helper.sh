@@ -700,6 +700,241 @@ parse_args() {
 	return 0
 }
 
+# ============================================================================
+# Command implementations
+# ============================================================================
+
+cmd_create_card() {
+	load_config || exit 1
+	parse_args "$@"
+	[[ -z "$MISSION" ]] && {
+		print_error "$ERROR_MISSION_REQUIRED"
+		exit 1
+	}
+	[[ -z "$AMOUNT" ]] && {
+		print_error "$ERROR_AMOUNT_REQUIRED"
+		exit 1
+	}
+
+	check_budget "$MISSION" "$AMOUNT" || exit $?
+
+	local provider
+	provider=$(get_provider)
+	local currency
+	currency=$(get_currency)
+	local mccs
+	mccs=$(get_config_value '.allowed_mccs | join(",")' '')
+	local cardholder
+	cardholder=$(get_config_value '.cardholder_id' '')
+
+	local card_id
+	case "$provider" in
+	stripe)
+		card_id=$(stripe_create_card "$cardholder" "$AMOUNT" "$currency" "${DESCRIPTION:-$VENDOR}" "$mccs") || exit 1
+		;;
+	revolut)
+		local account_id
+		account_id=$(get_config_value '.revolut_account_id' '')
+		card_id=$(revolut_create_card "$account_id" "$AMOUNT" "$currency" "${DESCRIPTION:-$VENDOR}") || exit 1
+		;;
+	*)
+		print_error "$ERROR_PROVIDER_UNSUPPORTED"
+		exit 1
+		;;
+	esac
+
+	store_card_in_vault "$card_id" "$MISSION" "" || true
+	print_success "Card created: ${card_id} (limit: ${AMOUNT} ${currency})"
+	return 0
+}
+
+cmd_freeze_card() {
+	load_config || exit 1
+	parse_args "$@"
+	[[ -z "$CARD" ]] && {
+		print_error "$ERROR_CARD_REQUIRED"
+		exit 1
+	}
+
+	local provider
+	provider=$(get_provider)
+	case "$provider" in
+	stripe) stripe_freeze_card "$CARD" ;;
+	revolut) revolut_freeze_card "$CARD" ;;
+	*)
+		print_error "$ERROR_PROVIDER_UNSUPPORTED"
+		exit 1
+		;;
+	esac
+	return 0
+}
+
+cmd_close_card() {
+	load_config || exit 1
+	parse_args "$@"
+	[[ -z "$CARD" ]] && {
+		print_error "$ERROR_CARD_REQUIRED"
+		exit 1
+	}
+
+	local provider
+	provider=$(get_provider)
+	case "$provider" in
+	stripe) stripe_close_card "$CARD" ;;
+	*)
+		print_error "Close not supported for provider: ${provider}"
+		exit 1
+		;;
+	esac
+	return 0
+}
+
+cmd_list_cards() {
+	load_config || exit 1
+	parse_args "$@"
+
+	local provider
+	provider=$(get_provider)
+	case "$provider" in
+	stripe) stripe_list_cards "$STATUS" 100 ;;
+	*)
+		print_error "List not supported for provider: ${provider}"
+		exit 1
+		;;
+	esac
+	return 0
+}
+
+cmd_check_budget() {
+	load_config || exit 1
+	parse_args "$@"
+	[[ -z "$MISSION" ]] && {
+		print_error "$ERROR_MISSION_REQUIRED"
+		exit 1
+	}
+
+	if [[ -n "$AMOUNT" ]]; then
+		check_budget "$MISSION" "$AMOUNT"
+	else
+		local budget
+		budget=$(get_mission_budget "$MISSION")
+		local spent
+		spent=$(get_mission_spent "$MISSION")
+		local remaining
+		remaining=$(echo "$budget - $spent" | bc -l 2>/dev/null || echo "0")
+		echo "Mission: ${MISSION}"
+		echo "Budget:  \$${budget}"
+		echo "Spent:   \$${spent}"
+		echo "Remaining: \$${remaining}"
+	fi
+	return 0
+}
+
+cmd_spend() {
+	load_config || exit 1
+	parse_args "$@"
+	[[ -z "$MISSION" ]] && {
+		print_error "$ERROR_MISSION_REQUIRED"
+		exit 1
+	}
+	[[ -z "$AMOUNT" ]] && {
+		print_error "$ERROR_AMOUNT_REQUIRED"
+		exit 1
+	}
+	[[ -z "$VENDOR" ]] && {
+		print_error "Vendor is required (--vendor name)"
+		exit 1
+	}
+
+	update_ledger "$MISSION" "$VENDOR" "${DESCRIPTION:-$VENDOR}" "${CARD:-manual}" "$AMOUNT" "auto (within budget)"
+	return 0
+}
+
+cmd_capture_receipt() {
+	load_config || exit 1
+	parse_args "$@"
+	[[ -z "$MISSION" ]] && {
+		print_error "$ERROR_MISSION_REQUIRED"
+		exit 1
+	}
+
+	capture_receipt "$MISSION" "${CARD:-unknown}" "${VENDOR:-unknown}" "${AMOUNT:-0}" "$SCREENSHOT"
+	return 0
+}
+
+cmd_export_ledger() {
+	load_config || exit 1
+	parse_args "$@"
+	[[ -z "$MISSION" ]] && {
+		print_error "$ERROR_MISSION_REQUIRED"
+		exit 1
+	}
+
+	local mission_dir
+	mission_dir=$(get_mission_dir "$MISSION") || exit 1
+	local ledger_file="${mission_dir}/ledger.md"
+
+	if [[ ! -f "$ledger_file" ]]; then
+		print_error "No ledger found for mission ${MISSION}"
+		exit 1
+	fi
+
+	if [[ "$FORMAT" == "csv" ]]; then
+		grep "^|" "$ledger_file" | grep -v "^|---" | sed 's/^| //;s/ |$//' | sed 's/ | /,/g'
+	else
+		cat "$ledger_file"
+	fi
+	return 0
+}
+
+cmd_reconcile() {
+	load_config || exit 1
+	parse_args "$@"
+	[[ -z "$MISSION" ]] && {
+		print_error "$ERROR_MISSION_REQUIRED"
+		exit 1
+	}
+
+	print_info "Reconciling mission ${MISSION} against provider transactions..."
+
+	local provider
+	provider=$(get_provider)
+	if [[ "$provider" == "stripe" ]]; then
+		print_info "Fetching Stripe transactions..."
+		print_warning "Full reconciliation requires implementation — showing audit instead"
+		audit_mission "$MISSION"
+	else
+		print_warning "Reconciliation not yet implemented for provider: ${provider}"
+	fi
+	return 0
+}
+
+cmd_status() {
+	load_config || exit 1
+	local provider
+	provider=$(get_provider)
+	local currency
+	currency=$(get_currency)
+
+	echo "Provider: ${provider}"
+	echo "Currency: ${currency}"
+
+	if get_api_key "$provider" >/dev/null 2>&1; then
+		print_success "API key configured"
+	else
+		print_error "API key not configured"
+	fi
+
+	if command -v bw &>/dev/null; then
+		local bw_status
+		bw_status=$(bw status 2>/dev/null | jq -r '.status // "unknown"')
+		echo "Vaultwarden: ${bw_status}"
+	else
+		echo "Vaultwarden: CLI not installed"
+	fi
+	return 0
+}
+
 main() {
 	local command="${1:-help}"
 	shift || true
@@ -707,186 +942,14 @@ main() {
 	check_dependencies || exit 1
 
 	case "$command" in
-	create-card)
-		load_config || exit 1
-		parse_args "$@"
-		[[ -z "$MISSION" ]] && {
-			print_error "$ERROR_MISSION_REQUIRED"
-			exit 1
-		}
-		[[ -z "$AMOUNT" ]] && {
-			print_error "$ERROR_AMOUNT_REQUIRED"
-			exit 1
-		}
-
-		# Budget check
-		check_budget "$MISSION" "$AMOUNT" || exit $?
-
-		local provider
-		provider=$(get_provider)
-		local currency
-		currency=$(get_currency)
-		local mccs
-		mccs=$(get_config_value '.allowed_mccs | join(",")' '')
-		local cardholder
-		cardholder=$(get_config_value '.cardholder_id' '')
-
-		local card_id
-		case "$provider" in
-		stripe)
-			card_id=$(stripe_create_card "$cardholder" "$AMOUNT" "$currency" "${DESCRIPTION:-$VENDOR}" "$mccs") || exit 1
-			;;
-		revolut)
-			local account_id
-			account_id=$(get_config_value '.revolut_account_id' '')
-			card_id=$(revolut_create_card "$account_id" "$AMOUNT" "$currency" "${DESCRIPTION:-$VENDOR}") || exit 1
-			;;
-		*)
-			print_error "$ERROR_PROVIDER_UNSUPPORTED"
-			exit 1
-			;;
-		esac
-
-		# Store in Vaultwarden
-		store_card_in_vault "$card_id" "$MISSION" "" || true
-
-		print_success "Card created: ${card_id} (limit: ${AMOUNT} ${currency})"
-		;;
-
-	freeze-card)
-		load_config || exit 1
-		parse_args "$@"
-		[[ -z "$CARD" ]] && {
-			print_error "$ERROR_CARD_REQUIRED"
-			exit 1
-		}
-
-		local provider
-		provider=$(get_provider)
-		case "$provider" in
-		stripe) stripe_freeze_card "$CARD" ;;
-		revolut) revolut_freeze_card "$CARD" ;;
-		*)
-			print_error "$ERROR_PROVIDER_UNSUPPORTED"
-			exit 1
-			;;
-		esac
-		;;
-
-	close-card)
-		load_config || exit 1
-		parse_args "$@"
-		[[ -z "$CARD" ]] && {
-			print_error "$ERROR_CARD_REQUIRED"
-			exit 1
-		}
-
-		local provider
-		provider=$(get_provider)
-		case "$provider" in
-		stripe) stripe_close_card "$CARD" ;;
-		*)
-			print_error "Close not supported for provider: ${provider}"
-			exit 1
-			;;
-		esac
-		;;
-
-	list-cards)
-		load_config || exit 1
-		parse_args "$@"
-
-		local provider
-		provider=$(get_provider)
-		case "$provider" in
-		stripe) stripe_list_cards "$STATUS" 100 ;;
-		*)
-			print_error "List not supported for provider: ${provider}"
-			exit 1
-			;;
-		esac
-		;;
-
-	check-budget)
-		load_config || exit 1
-		parse_args "$@"
-		[[ -z "$MISSION" ]] && {
-			print_error "$ERROR_MISSION_REQUIRED"
-			exit 1
-		}
-
-		if [[ -n "$AMOUNT" ]]; then
-			check_budget "$MISSION" "$AMOUNT"
-		else
-			# Just show budget status
-			local budget
-			budget=$(get_mission_budget "$MISSION")
-			local spent
-			spent=$(get_mission_spent "$MISSION")
-			local remaining
-			remaining=$(echo "$budget - $spent" | bc -l 2>/dev/null || echo "0")
-			echo "Mission: ${MISSION}"
-			echo "Budget:  \$${budget}"
-			echo "Spent:   \$${spent}"
-			echo "Remaining: \$${remaining}"
-		fi
-		;;
-
-	spend)
-		load_config || exit 1
-		parse_args "$@"
-		[[ -z "$MISSION" ]] && {
-			print_error "$ERROR_MISSION_REQUIRED"
-			exit 1
-		}
-		[[ -z "$AMOUNT" ]] && {
-			print_error "$ERROR_AMOUNT_REQUIRED"
-			exit 1
-		}
-		[[ -z "$VENDOR" ]] && {
-			print_error "Vendor is required (--vendor name)"
-			exit 1
-		}
-
-		update_ledger "$MISSION" "$VENDOR" "${DESCRIPTION:-$VENDOR}" "${CARD:-manual}" "$AMOUNT" "auto (within budget)"
-		;;
-
-	capture-receipt)
-		load_config || exit 1
-		parse_args "$@"
-		[[ -z "$MISSION" ]] && {
-			print_error "$ERROR_MISSION_REQUIRED"
-			exit 1
-		}
-
-		capture_receipt "$MISSION" "${CARD:-unknown}" "${VENDOR:-unknown}" "${AMOUNT:-0}" "$SCREENSHOT"
-		;;
-
-	export-ledger)
-		load_config || exit 1
-		parse_args "$@"
-		[[ -z "$MISSION" ]] && {
-			print_error "$ERROR_MISSION_REQUIRED"
-			exit 1
-		}
-
-		local mission_dir
-		mission_dir=$(get_mission_dir "$MISSION") || exit 1
-		local ledger_file="${mission_dir}/ledger.md"
-
-		if [[ ! -f "$ledger_file" ]]; then
-			print_error "No ledger found for mission ${MISSION}"
-			exit 1
-		fi
-
-		if [[ "$FORMAT" == "csv" ]]; then
-			# Convert markdown table to CSV
-			grep "^|" "$ledger_file" | grep -v "^|---" | sed 's/^| //;s/ |$//' | sed 's/ | /,/g'
-		else
-			cat "$ledger_file"
-		fi
-		;;
-
+	create-card) cmd_create_card "$@" ;;
+	freeze-card) cmd_freeze_card "$@" ;;
+	close-card) cmd_close_card "$@" ;;
+	list-cards) cmd_list_cards "$@" ;;
+	check-budget) cmd_check_budget "$@" ;;
+	spend) cmd_spend "$@" ;;
+	capture-receipt) cmd_capture_receipt "$@" ;;
+	export-ledger) cmd_export_ledger "$@" ;;
 	audit)
 		load_config || exit 1
 		parse_args "$@"
@@ -896,60 +959,9 @@ main() {
 		}
 		audit_mission "$MISSION"
 		;;
-
-	reconcile)
-		load_config || exit 1
-		parse_args "$@"
-		[[ -z "$MISSION" ]] && {
-			print_error "$ERROR_MISSION_REQUIRED"
-			exit 1
-		}
-
-		print_info "Reconciling mission ${MISSION} against provider transactions..."
-
-		local provider
-		provider=$(get_provider)
-		if [[ "$provider" == "stripe" ]]; then
-			print_info "Fetching Stripe transactions..."
-			# Would compare ledger entries against actual Stripe transactions
-			print_warning "Full reconciliation requires implementation — showing audit instead"
-			audit_mission "$MISSION"
-		else
-			print_warning "Reconciliation not yet implemented for provider: ${provider}"
-		fi
-		;;
-
-	status)
-		load_config || exit 1
-		local provider
-		provider=$(get_provider)
-		local currency
-		currency=$(get_currency)
-
-		echo "Provider: ${provider}"
-		echo "Currency: ${currency}"
-
-		# Test API connectivity (without exposing keys)
-		if get_api_key "$provider" >/dev/null 2>&1; then
-			print_success "API key configured"
-		else
-			print_error "API key not configured"
-		fi
-
-		# Check Vaultwarden
-		if command -v bw &>/dev/null; then
-			local bw_status
-			bw_status=$(bw status 2>/dev/null | jq -r '.status // "unknown"')
-			echo "Vaultwarden: ${bw_status}"
-		else
-			echo "Vaultwarden: CLI not installed"
-		fi
-		;;
-
-	help | --help | -h)
-		show_help
-		;;
-
+	reconcile) cmd_reconcile "$@" ;;
+	status) cmd_status "$@" ;;
+	help | --help | -h) show_help ;;
 	*)
 		print_error "Unknown command: ${command}"
 		show_help
