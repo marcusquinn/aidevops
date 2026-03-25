@@ -1697,6 +1697,73 @@ cmd_test() {
 	return 0
 }
 
+# Run Tier 1 pattern scan for cmd_classify_deep.
+# Arguments: $1=content
+# Outputs: "TIER1_BLOCK|<severity>" if blocked, "TIER1_ESCALATE" if below threshold,
+#          "TIER1_CLEAN" if no findings.
+# Returns: 0=clean/escalate, 1=blocked
+_pg_classify_tier1() {
+	local content="$1"
+
+	local tier1_results
+	tier1_results=$(_pg_scan_message "$content") || true
+
+	if [[ -z "$tier1_results" ]]; then
+		echo "TIER1_CLEAN"
+		return 0
+	fi
+
+	local max_num
+	max_num=$(_pg_max_severity "$tier1_results")
+	local max_severity
+	max_severity=$(_pg_num_to_severity "$max_num")
+	local threshold
+	threshold=$(_pg_policy_threshold)
+
+	if [[ "$max_num" -ge "$threshold" ]]; then
+		_pg_log_warn "Tier 1 BLOCK (${max_severity}) — skipping Tier 2"
+		_pg_print_findings "$tier1_results"
+		echo "TIER1_BLOCK|${max_severity}"
+		return 1
+	fi
+
+	_pg_log_info "Tier 1 found ${max_severity} findings — escalating to Tier 2"
+	echo "TIER1_ESCALATE|${tier1_results}"
+	return 0
+}
+
+# Run Tier 2 LLM classification for cmd_classify_deep.
+# Arguments: $1=content $2=repo (may be empty) $3=author (may be empty)
+# Outputs: tier2_result string
+# Returns: 0=success, 1=flagged, 2=error
+_pg_classify_tier2() {
+	local content="$1"
+	local repo="${2:-}"
+	local author="${3:-}"
+
+	local classifier="${SCRIPT_DIR}/content-classifier-helper.sh"
+	if [[ ! -x "$classifier" ]]; then
+		echo "UNAVAILABLE"
+		return 0
+	fi
+
+	local tier2_result tier2_stderr tier2_exit=0
+	local stderr_tmpfile
+	stderr_tmpfile=$(mktemp "${TMPDIR:-/tmp}/pg-tier2-stderr.XXXXXX")
+	if [[ -n "$repo" && -n "$author" ]]; then
+		tier2_result=$("$classifier" classify-if-external "$repo" "$author" "$content" 2>"$stderr_tmpfile") || tier2_exit=$?
+	else
+		tier2_result=$("$classifier" classify "$content" 2>"$stderr_tmpfile") || tier2_exit=$?
+	fi
+	tier2_stderr=$(<"$stderr_tmpfile")
+	rm -f "$stderr_tmpfile"
+
+	[[ -n "$tier2_stderr" ]] && _pg_log_warn "Tier 2 classifier stderr: ${tier2_stderr}"
+
+	printf '%s\n' "$tier2_result"
+	return "$tier2_exit"
+}
+
 # Deep classification: Tier 1 (pattern) + Tier 2 (LLM) combined scan (t1412.7)
 # Runs pattern scan first; if clean or low-severity, escalates to LLM classifier.
 # For high-severity pattern matches, skips LLM (already caught).
@@ -1713,27 +1780,16 @@ cmd_classify_deep() {
 	fi
 
 	# Tier 1: Pattern scan
-	local tier1_results
-	tier1_results=$(_pg_scan_message "$content") || true
+	local tier1_output
+	tier1_output=$(_pg_classify_tier1 "$content") || {
+		echo "$tier1_output"
+		return 1
+	}
 
-	if [[ -n "$tier1_results" ]]; then
-		local max_num
-		max_num=$(_pg_max_severity "$tier1_results")
-		local max_severity
-		max_severity=$(_pg_num_to_severity "$max_num")
-		local threshold
-		threshold=$(_pg_policy_threshold)
-
-		if [[ "$max_num" -ge "$threshold" ]]; then
-			# Tier 1 already caught it at block level — no need for Tier 2
-			_pg_log_warn "Tier 1 BLOCK (${max_severity}) — skipping Tier 2"
-			_pg_print_findings "$tier1_results"
-			echo "TIER1_BLOCK|${max_severity}"
-			return 1
-		fi
-
-		# Tier 1 found something below threshold — escalate to Tier 2 for confirmation
-		_pg_log_info "Tier 1 found ${max_severity} findings — escalating to Tier 2"
+	# Re-run scan to get raw results for Tier 2 context (only if escalating)
+	local tier1_results=""
+	if [[ "$tier1_output" == "TIER1_ESCALATE|"* ]]; then
+		tier1_results="${tier1_output#TIER1_ESCALATE|}"
 	fi
 
 	# Tier 2: LLM classification
@@ -1749,39 +1805,21 @@ cmd_classify_deep() {
 		return 0
 	fi
 
-	local tier2_result
-	local tier2_stderr
-	local tier2_exit=0
-	local stderr_tmpfile
-	stderr_tmpfile=$(mktemp "${TMPDIR:-/tmp}/pg-tier2-stderr.XXXXXX")
-	if [[ -n "$repo" && -n "$author" ]]; then
-		tier2_result=$("$classifier" classify-if-external "$repo" "$author" "$content" 2>"$stderr_tmpfile") || tier2_exit=$?
-	else
-		tier2_result=$("$classifier" classify "$content" 2>"$stderr_tmpfile") || tier2_exit=$?
-	fi
-	tier2_stderr=$(<"$stderr_tmpfile")
-	rm -f "$stderr_tmpfile"
-
-	# Log classifier stderr if non-empty (captures API errors, timeouts, etc.)
-	if [[ -n "$tier2_stderr" ]]; then
-		_pg_log_warn "Tier 2 classifier stderr: ${tier2_stderr}"
-	fi
+	local tier2_result tier2_exit=0
+	tier2_result=$(_pg_classify_tier2 "$content" "$repo" "$author") || tier2_exit=$?
 
 	local tier2_class
 	tier2_class=$(printf '%s' "$tier2_result" | cut -d'|' -f1)
 
 	if [[ "$tier2_class" == "MALICIOUS" || "$tier2_class" == "SUSPICIOUS" ]]; then
 		_pg_log_warn "Tier 2 classification: ${tier2_result}"
-		if [[ -n "$tier1_results" ]]; then
-			_pg_print_findings "$tier1_results"
-		fi
+		[[ -n "$tier1_results" ]] && _pg_print_findings "$tier1_results"
 		echo "TIER2_${tier2_class}|${tier2_result}"
 		return 1
 	fi
 
-	# Fail securely: if Tier 2 errored or returned UNKNOWN, do not treat as clean
 	if [[ "$tier2_exit" -ne 0 || "$tier2_class" == "UNKNOWN" || -z "$tier2_class" ]]; then
-		_pg_log_error "Tier 2 classification failed or returned UNKNOWN (exit ${tier2_exit}, stderr: ${tier2_stderr}): ${tier2_result}"
+		_pg_log_error "Tier 2 classification failed or returned UNKNOWN (exit ${tier2_exit}): ${tier2_result}"
 		if [[ -n "$tier1_results" ]]; then
 			_pg_print_findings "$tier1_results"
 			echo "TIER1_WARN_T2_FAIL"
@@ -1791,7 +1829,6 @@ cmd_classify_deep() {
 		return 2
 	fi
 
-	# Both tiers agree it's clean (or Tier 1 had low findings + Tier 2 says SAFE)
 	if [[ -n "$tier1_results" ]]; then
 		local max_severity
 		max_severity=$(_pg_num_to_severity "$(_pg_max_severity "$tier1_results")")
