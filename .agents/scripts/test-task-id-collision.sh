@@ -906,15 +906,11 @@ EOF
 # =============================================================================
 # Test 11: .task-counter file validation
 # =============================================================================
-test_counter_validation() {
-	echo ""
-	echo "=== Test 11: .task-counter file validation ==="
-	info "Testing invalid counter file handling"
+# Helper: initialise a git repo without .task-counter for validation tests
+_counter_validation_setup() {
+	local test_repo="$1"
 
-	local test_repo="$TEST_DIR/test-repo-validate"
 	mkdir -p "$test_repo"
-
-	# Test with missing .task-counter
 	(
 		cd "$test_repo"
 		git init -q
@@ -927,6 +923,12 @@ EOF
 		git add TODO.md
 		git commit -q -m "init"
 	)
+	return 0
+}
+
+# Helper: verify missing .task-counter produces an error
+_counter_validation_check_missing() {
+	local test_repo="$1"
 
 	local output
 	output=$("$SCRIPT_DIR/claim-task-id.sh" --title "No counter test" --offline --no-issue --repo-path "$test_repo" 2>&1) || true
@@ -936,9 +938,16 @@ EOF
 	else
 		fail "Missing .task-counter did not produce expected error"
 	fi
+	return 0
+}
+
+# Helper: verify non-numeric and valid .task-counter values
+_counter_validation_check_values() {
+	local test_repo="$1"
 
 	# Test with non-numeric .task-counter
 	echo "abc" >"$test_repo/.task-counter"
+	local output
 	output=$("$SCRIPT_DIR/claim-task-id.sh" --title "Bad counter test" --offline --no-issue --repo-path "$test_repo" 2>&1) || true
 
 	if echo "$output" | grep -qi "invalid\|error"; then
@@ -959,6 +968,19 @@ EOF
 	else
 		fail "Expected t142, got '$task_id'"
 	fi
+	return 0
+}
+
+test_counter_validation() {
+	echo ""
+	echo "=== Test 11: .task-counter file validation ==="
+	info "Testing invalid counter file handling"
+
+	local test_repo="$TEST_DIR/test-repo-validate"
+
+	_counter_validation_setup "$test_repo"
+	_counter_validation_check_missing "$test_repo"
+	_counter_validation_check_values "$test_repo"
 	return 0
 }
 
