@@ -332,6 +332,57 @@ extract_provider_from_cmd() {
 }
 
 #######################################
+# Query the headless-runtime DB for an active backoff row for a provider
+#
+# Arguments:
+#   $1 - provider name (e.g., "anthropic")
+# Output: "provider|reason|retry_after" or empty string
+#######################################
+_backoff_query_db() {
+	local provider="$1"
+
+	WATCHDOG_DB="$HEADLESS_RUNTIME_DB" WATCHDOG_PROVIDER="$provider" python3 - <<'PY'
+import os
+import sqlite3
+
+db_path = os.environ["WATCHDOG_DB"]
+provider = os.environ["WATCHDOG_PROVIDER"]
+
+try:
+    conn = sqlite3.connect(db_path)
+    conn.execute("PRAGMA busy_timeout=3000")
+    cursor = conn.cursor()
+    # Match provider-level backoff (auth_error) or model-level backoff
+    # where the model starts with this provider prefix
+    cursor.execute(
+        """
+        SELECT provider, reason, retry_after
+        FROM provider_backoff
+        WHERE (provider = ? OR provider LIKE ?)
+          AND (
+            retry_after IS NULL
+            OR retry_after > strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+          )
+        ORDER BY
+          CASE WHEN provider = ? THEN 0 ELSE 1 END,
+          retry_after DESC
+        LIMIT 1
+        """,
+        (provider, provider + "/%", provider),
+    )
+    row = cursor.fetchone()
+    if row:
+        matched_key, reason, retry_after = row
+        print(f"{matched_key}|{reason or 'unknown'}|{retry_after or 'indefinite'}")
+    else:
+        print("")
+except sqlite3.Error:
+    print("")
+PY
+	return 0
+}
+
+#######################################
 # Check if a worker's provider is currently backed off in the headless-runtime DB
 #
 # Reads the provider_backoff table from the headless-runtime state.db.
@@ -374,46 +425,7 @@ check_provider_backoff() {
 	# Query provider_backoff table for active backoff entries matching this provider
 	# A backoff is active if retry_after is in the future (or NULL = indefinite)
 	local backoff_row
-	backoff_row=$(
-		WATCHDOG_DB="$HEADLESS_RUNTIME_DB" WATCHDOG_PROVIDER="$provider" python3 - <<'PY'
-import os
-import sqlite3
-
-db_path = os.environ["WATCHDOG_DB"]
-provider = os.environ["WATCHDOG_PROVIDER"]
-
-try:
-    conn = sqlite3.connect(db_path)
-    conn.execute("PRAGMA busy_timeout=3000")
-    cursor = conn.cursor()
-    # Match provider-level backoff (auth_error) or model-level backoff
-    # where the model starts with this provider prefix
-    cursor.execute(
-        """
-        SELECT provider, reason, retry_after
-        FROM provider_backoff
-        WHERE (provider = ? OR provider LIKE ?)
-          AND (
-            retry_after IS NULL
-            OR retry_after > strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
-          )
-        ORDER BY
-          CASE WHEN provider = ? THEN 0 ELSE 1 END,
-          retry_after DESC
-        LIMIT 1
-        """,
-        (provider, provider + "/%", provider),
-    )
-    row = cursor.fetchone()
-    if row:
-        matched_key, reason, retry_after = row
-        print(f"{matched_key}|{reason or 'unknown'}|{retry_after or 'indefinite'}")
-    else:
-        print("")
-except sqlite3.Error:
-    print("")
-PY
-	) 2>/dev/null || backoff_row=""
+	backoff_row=$(_backoff_query_db "$provider") 2>/dev/null || backoff_row=""
 
 	if [[ -z "$backoff_row" ]]; then
 		return 1
@@ -559,6 +571,50 @@ _stall_check_grace_period() {
 }
 
 #######################################
+# Evaluate stall evidence and decide whether to kill
+#
+# Called after stall duration threshold is exceeded.
+# Sets STALL_EVIDENCE_CLASS and STALL_EVIDENCE_SUMMARY.
+#
+# Arguments:
+#   $1 - PID
+#   $2 - command line
+#   $3 - stall_file path
+#   $4 - grace_file path
+#   $5 - now (epoch seconds)
+# Returns: 0 if stall confirmed (kill), 1 if stall cleared or deferred
+#######################################
+_stall_evaluate_evidence() {
+	local pid="$1"
+	local cmd="$2"
+	local stall_file="$3"
+	local grace_file="$4"
+	local now="$5"
+
+	local evidence_result
+	evidence_result=$(_get_session_tail_evidence "$cmd" "$WORKER_PROGRESS_TIMEOUT")
+	IFS='|' read -r STALL_EVIDENCE_CLASS STALL_EVIDENCE_SUMMARY <<<"$evidence_result"
+	local sanitized_evidence
+	sanitized_evidence=$(_sanitize_log_field "$STALL_EVIDENCE_SUMMARY")
+
+	if [[ "$STALL_EVIDENCE_CLASS" == "active" ]]; then
+		log_msg "STALL CLEARED: PID=${pid} evidence=${sanitized_evidence}"
+		rm -f "$stall_file" "$grace_file" 2>/dev/null || true
+		return 1
+	fi
+
+	if [[ "$STALL_EVIDENCE_CLASS" == "provider-waiting" ]]; then
+		if ! _stall_check_grace_period "$pid" "$grace_file" "$now" "$sanitized_evidence"; then
+			return 1
+		fi
+	else
+		rm -f "$grace_file" 2>/dev/null || true
+	fi
+
+	return 0
+}
+
+#######################################
 # Check if a worker's log output has stalled
 #
 # Uses the OpenCode session DB to check for recent messages.
@@ -609,27 +665,8 @@ check_progress_stall() {
 	local stall_duration=$((now - stall_since))
 
 	if [[ "$stall_duration" -ge "$WORKER_PROGRESS_TIMEOUT" ]]; then
-		local evidence_result
-		evidence_result=$(_get_session_tail_evidence "$cmd" "$WORKER_PROGRESS_TIMEOUT")
-		IFS='|' read -r STALL_EVIDENCE_CLASS STALL_EVIDENCE_SUMMARY <<<"$evidence_result"
-		local sanitized_evidence
-		sanitized_evidence=$(_sanitize_log_field "$STALL_EVIDENCE_SUMMARY")
-
-		if [[ "$STALL_EVIDENCE_CLASS" == "active" ]]; then
-			log_msg "STALL CLEARED: PID=${pid} evidence=${sanitized_evidence}"
-			rm -f "$stall_file" "$grace_file" 2>/dev/null || true
-			return 1
-		fi
-
-		if [[ "$STALL_EVIDENCE_CLASS" == "provider-waiting" ]]; then
-			if ! _stall_check_grace_period "$pid" "$grace_file" "$now" "$sanitized_evidence"; then
-				return 1
-			fi
-		else
-			rm -f "$grace_file" 2>/dev/null || true
-		fi
-
-		return 0 # Stalled long enough — kill
+		_stall_evaluate_evidence "$pid" "$cmd" "$stall_file" "$grace_file" "$now"
+		return $?
 	fi
 	return 1
 }
@@ -793,34 +830,19 @@ kill_worker() {
 }
 
 #######################################
-# Post-kill GitHub issue update
-#
-# Comments on the issue and swaps labels so the issue is re-queued.
+# Map kill reason to human-readable description and destination status
 #
 # Arguments:
-#   $1 - command line
-#   $2 - kill reason
-#   $3 - formatted duration
-#   $4 - evidence summary (optional)
+#   $1 - kill reason (idle|stall|thrash|runtime|backoff|*)
+#   $2 - formatted duration
+#   $3 - evidence summary
+# Output: "reason_desc|destination_status|destination_text" (pipe-separated)
 #######################################
-post_kill_github_update() {
-	local cmd="$1"
-	local reason="$2"
-	local duration="$3"
-	local evidence_summary="${4:-No transcript evidence available.}"
+_post_kill_map_reason() {
+	local reason="$1"
+	local duration="$2"
+	local evidence_summary="$3"
 
-	# Extract issue number and repo slug
-	local issue_number
-	issue_number=$(extract_issue_number "$cmd")
-	local repo_slug
-	repo_slug=$(extract_repo_slug "$cmd")
-
-	if [[ -z "$issue_number" || -z "$repo_slug" ]]; then
-		log_msg "Cannot update GitHub: issue=${issue_number:-unknown} repo=${repo_slug:-unknown}"
-		return 0
-	fi
-
-	# Map reason to human-readable description
 	local reason_desc=""
 	local destination_status="status:available"
 	local destination_text="This issue has been re-labeled \`status:available\` for re-dispatch. The next pulse or manual dispatch will pick it up."
@@ -838,7 +860,31 @@ post_kill_github_update() {
 	*) reason_desc="Worker killed by watchdog (reason: ${reason})." ;;
 	esac
 
-	# Post comment
+	echo "${reason_desc}|${destination_status}|${destination_text}"
+	return 0
+}
+
+#######################################
+# Post kill comment and update labels on a GitHub issue
+#
+# Arguments:
+#   $1 - issue number
+#   $2 - repo slug
+#   $3 - reason description
+#   $4 - formatted duration
+#   $5 - evidence summary
+#   $6 - destination status label
+#   $7 - destination text
+#######################################
+_post_kill_github_comment_and_labels() {
+	local issue_number="$1"
+	local repo_slug="$2"
+	local reason_desc="$3"
+	local duration="$4"
+	local evidence_summary="$5"
+	local destination_status="$6"
+	local destination_text="$7"
+
 	local comment_body="## Worker Watchdog Kill
 
 **Reason:** ${reason_desc}
@@ -872,6 +918,85 @@ _Automated by \`worker-watchdog.sh\` (t1419)_"
 		log_msg "Failed to update labels on ${repo_slug}#${issue_number}"
 	}
 
+	return 0
+}
+
+#######################################
+# Post-kill GitHub issue update
+#
+# Comments on the issue and swaps labels so the issue is re-queued.
+#
+# Arguments:
+#   $1 - command line
+#   $2 - kill reason
+#   $3 - formatted duration
+#   $4 - evidence summary (optional)
+#######################################
+post_kill_github_update() {
+	local cmd="$1"
+	local reason="$2"
+	local duration="$3"
+	local evidence_summary="${4:-No transcript evidence available.}"
+
+	# Extract issue number and repo slug
+	local issue_number
+	issue_number=$(extract_issue_number "$cmd")
+	local repo_slug
+	repo_slug=$(extract_repo_slug "$cmd")
+
+	if [[ -z "$issue_number" || -z "$repo_slug" ]]; then
+		log_msg "Cannot update GitHub: issue=${issue_number:-unknown} repo=${repo_slug:-unknown}"
+		return 0
+	fi
+
+	local mapped_reason
+	mapped_reason=$(_post_kill_map_reason "$reason" "$duration" "$evidence_summary")
+	local reason_desc destination_status destination_text
+	IFS='|' read -r reason_desc destination_status destination_text <<<"$mapped_reason"
+
+	_post_kill_github_comment_and_labels \
+		"$issue_number" "$repo_slug" "$reason_desc" \
+		"$duration" "$evidence_summary" \
+		"$destination_status" "$destination_text"
+
+	return 0
+}
+
+#######################################
+# Handle thrash detection signal for a single worker
+#
+# Called when check_zero_commit_thrashing returns 0.
+# Applies transcript gate and kills if confirmed.
+#
+# Arguments:
+#   $1 - PID
+#   $2 - command line
+#   $3 - elapsed seconds
+#   $4 - formatted duration
+# Returns: 0 if worker was killed, 1 if deferred
+#######################################
+_check_single_worker_thrash() {
+	local pid="$1"
+	local cmd="$2"
+	local elapsed_seconds="$3"
+	local duration="$4"
+
+	if ! transcript_allows_intervention "thrash" "$cmd" "$elapsed_seconds"; then
+		return 1
+	fi
+
+	local thrash_evidence="ratio=${THRASH_RATIO} messages=${THRASH_MESSAGES} commits=${THRASH_COMMITS} flag=${THRASH_FLAG:-none}"
+	local session_title
+	session_title=$(_extract_session_title "$cmd")
+	if [[ -n "$session_title" ]]; then
+		thrash_evidence="${thrash_evidence}; objective=${session_title}"
+	fi
+	if [[ -n "$INTERVENTION_EVIDENCE_SUMMARY" ]]; then
+		thrash_evidence="${thrash_evidence}; transcript=${INTERVENTION_EVIDENCE_SUMMARY}"
+	fi
+
+	log_msg "THRASH DETECTED: PID=${pid} elapsed=${duration} ${thrash_evidence}"
+	kill_worker "$pid" "thrash" "$cmd" "$elapsed_seconds" "$thrash_evidence"
 	return 0
 }
 
@@ -917,21 +1042,8 @@ _check_single_worker() {
 
 	# Check 3: zero-commit high-message thrash detection
 	if check_zero_commit_thrashing "$pid" "$cmd" "$elapsed_seconds"; then
-		if ! transcript_allows_intervention "thrash" "$cmd" "$elapsed_seconds"; then
-			return 1
-		fi
-		local thrash_evidence="ratio=${THRASH_RATIO} messages=${THRASH_MESSAGES} commits=${THRASH_COMMITS} flag=${THRASH_FLAG:-none}"
-		local session_title
-		session_title=$(_extract_session_title "$cmd")
-		if [[ -n "$session_title" ]]; then
-			thrash_evidence="${thrash_evidence}; objective=${session_title}"
-		fi
-		if [[ -n "$INTERVENTION_EVIDENCE_SUMMARY" ]]; then
-			thrash_evidence="${thrash_evidence}; transcript=${INTERVENTION_EVIDENCE_SUMMARY}"
-		fi
-		log_msg "THRASH DETECTED: PID=${pid} elapsed=${duration} ${thrash_evidence}"
-		kill_worker "$pid" "thrash" "$cmd" "$elapsed_seconds" "$thrash_evidence"
-		return 0
+		_check_single_worker_thrash "$pid" "$cmd" "$elapsed_seconds" "$duration"
+		return $?
 	fi
 
 	# Check 4: CPU idle detection
@@ -1030,6 +1142,41 @@ _status_print_config() {
 }
 
 #######################################
+# Print idle/stall/grace tracking state for a worker in --status output
+#
+# Arguments:
+#   $1 - PID
+#######################################
+_status_print_worker_tracking() {
+	local pid="$1"
+	local now
+	now=$(date +%s)
+
+	if [[ -f "${IDLE_STATE_DIR}/idle-${pid}" ]]; then
+		local idle_since
+		idle_since=$(cat "${IDLE_STATE_DIR}/idle-${pid}" 2>/dev/null || echo "0")
+		local idle_for=$((now - idle_since))
+		echo "    Idle for: $(_format_duration "$idle_for") / $(_format_duration "$WORKER_IDLE_TIMEOUT")"
+	fi
+
+	if [[ -f "${IDLE_STATE_DIR}/stall-${pid}" ]]; then
+		local stall_since
+		stall_since=$(cat "${IDLE_STATE_DIR}/stall-${pid}" 2>/dev/null || echo "0")
+		local stall_for=$((now - stall_since))
+		echo "    Stalled:  $(_format_duration "$stall_for") / $(_format_duration "$WORKER_PROGRESS_TIMEOUT")"
+	fi
+
+	if [[ -f "${IDLE_STATE_DIR}/stall-grace-${pid}" ]]; then
+		local grace_since
+		grace_since=$(cat "${IDLE_STATE_DIR}/stall-grace-${pid}" 2>/dev/null || echo "0")
+		local grace_for=$((now - grace_since))
+		echo "    Grace:    $(_format_duration "$grace_for") / $(_format_duration "$WORKER_PROGRESS_TIMEOUT")"
+	fi
+
+	return 0
+}
+
+#######################################
 # Print details for a single worker in --status output
 #
 # Arguments:
@@ -1059,34 +1206,7 @@ _status_print_worker() {
 	echo "    Tree CPU: ${tree_cpu}%"
 	[[ -n "$issue_number" ]] && echo "    Issue:    ${repo_slug:-unknown}#${issue_number}"
 
-	# Show idle tracking state
-	if [[ -f "${IDLE_STATE_DIR}/idle-${pid}" ]]; then
-		local idle_since
-		idle_since=$(cat "${IDLE_STATE_DIR}/idle-${pid}" 2>/dev/null || echo "0")
-		local now
-		now=$(date +%s)
-		local idle_for=$((now - idle_since))
-		echo "    Idle for: $(_format_duration "$idle_for") / $(_format_duration "$WORKER_IDLE_TIMEOUT")"
-	fi
-
-	# Show stall tracking state
-	if [[ -f "${IDLE_STATE_DIR}/stall-${pid}" ]]; then
-		local stall_since
-		stall_since=$(cat "${IDLE_STATE_DIR}/stall-${pid}" 2>/dev/null || echo "0")
-		local now
-		now=$(date +%s)
-		local stall_for=$((now - stall_since))
-		echo "    Stalled:  $(_format_duration "$stall_for") / $(_format_duration "$WORKER_PROGRESS_TIMEOUT")"
-	fi
-
-	if [[ -f "${IDLE_STATE_DIR}/stall-grace-${pid}" ]]; then
-		local grace_since
-		grace_since=$(cat "${IDLE_STATE_DIR}/stall-grace-${pid}" 2>/dev/null || echo "0")
-		local now
-		now=$(date +%s)
-		local grace_for=$((now - grace_since))
-		echo "    Grace:    $(_format_duration "$grace_for") / $(_format_duration "$WORKER_PROGRESS_TIMEOUT")"
-	fi
+	_status_print_worker_tracking "$pid"
 
 	# Struggle ratio
 	local sr_result
