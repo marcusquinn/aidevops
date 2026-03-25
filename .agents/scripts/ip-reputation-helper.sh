@@ -666,76 +666,91 @@ run_provider() {
 # Risk Scoring
 # =============================================================================
 
-# Merge per-provider results into unified risk assessment
-# Strategy: weighted average of scores, with listing flags as hard signals
-merge_results() {
-	local ip="$1"
-	shift
-	local result_files=("$@")
+# Aggregate a single provider result file into running merge counters.
+# Outputs updated counters as tab-separated: provider_results total_score provider_count
+# listed_count is_tor is_proxy is_vpn errors cache_hits cache_misses
+# (All passed by reference via nameref-style positional args — caller reassigns.)
+# Returns 0 always; caller checks updated values.
+_merge_aggregate_file() {
+	local file="$1"
+	# Passed-by-reference accumulators (caller must reassign from stdout)
+	local _prov_results="$2"
+	local _total_score="$3"
+	local _provider_count="$4"
+	local _listed_count="$5"
+	local _is_tor="$6"
+	local _is_proxy="$7"
+	local _is_vpn="$8"
+	local _errors="$9"
+	local _cache_hits="${10}"
+	local _cache_misses="${11}"
 
-	local provider_results="[]"
-	local total_score=0
-	local provider_count=0
-	local listed_count=0
-	local is_tor=false
-	local is_proxy=false
-	local is_vpn=false
-	local errors=0
-	local cache_hits=0
-	local cache_misses=0
-	local file
+	[[ -f "$file" ]] || {
+		printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+			"$_prov_results" "$_total_score" "$_provider_count" "$_listed_count" \
+			"$_is_tor" "$_is_proxy" "$_is_vpn" "$_errors" "$_cache_hits" "$_cache_misses"
+		return 0
+	}
 
-	for file in "${result_files[@]}"; do
-		[[ -f "$file" ]] || continue
-		local content
-		content=$(cat "$file")
-		[[ -z "$content" ]] && continue
+	local content
+	content=$(cat "$file")
+	[[ -z "$content" ]] && {
+		printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+			"$_prov_results" "$_total_score" "$_provider_count" "$_listed_count" \
+			"$_is_tor" "$_is_proxy" "$_is_vpn" "$_errors" "$_cache_hits" "$_cache_misses"
+		return 0
+	}
 
-		# Skip if not valid JSON
-		echo "$content" | jq empty 2>/dev/null || continue
+	echo "$content" | jq empty 2>/dev/null || {
+		printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+			"$_prov_results" "$_total_score" "$_provider_count" "$_listed_count" \
+			"$_is_tor" "$_is_proxy" "$_is_vpn" "$_errors" "$_cache_hits" "$_cache_misses"
+		return 0
+	}
 
-		provider_results=$(echo "$provider_results" | jq --argjson r "$content" '. + [$r]')
+	_prov_results=$(echo "$_prov_results" | jq --argjson r "$content" '. + [$r]')
 
-		# Check for errors
-		if echo "$content" | jq -e '.error' &>/dev/null; then
-			errors=$((errors + 1))
-			continue
-		fi
+	if echo "$content" | jq -e '.error' &>/dev/null; then
+		_errors=$((_errors + 1))
+		printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+			"$_prov_results" "$_total_score" "$_provider_count" "$_listed_count" \
+			"$_is_tor" "$_is_proxy" "$_is_vpn" "$_errors" "$_cache_hits" "$_cache_misses"
+		return 0
+	fi
 
-		provider_count=$((provider_count + 1))
+	_provider_count=$((_provider_count + 1))
 
-		# Track cache hit/miss
-		local was_cached
-		was_cached=$(echo "$content" | jq -r '.cached // false')
-		if [[ "$was_cached" == "true" ]]; then
-			cache_hits=$((cache_hits + 1))
-		else
-			cache_misses=$((cache_misses + 1))
-		fi
+	local was_cached
+	was_cached=$(echo "$content" | jq -r '.cached // false')
+	if [[ "$was_cached" == "true" ]]; then
+		_cache_hits=$((_cache_hits + 1))
+	else
+		_cache_misses=$((_cache_misses + 1))
+	fi
 
-		local score is_listed
-		score=$(echo "$content" | jq -r '.score // 0')
-		is_listed=$(echo "$content" | jq -r '.is_listed // false')
+	local score is_listed
+	score=$(echo "$content" | jq -r '.score // 0')
+	is_listed=$(echo "$content" | jq -r '.is_listed // false')
+	_total_score=$((_total_score + ${score%.*}))
+	[[ "$is_listed" == "true" ]] && _listed_count=$((_listed_count + 1))
 
-		total_score=$((total_score + ${score%.*}))
+	[[ "$(echo "$content" | jq -r '.is_tor // false')" == "true" ]] && _is_tor=true
+	[[ "$(echo "$content" | jq -r '.is_proxy // false')" == "true" ]] && _is_proxy=true
+	[[ "$(echo "$content" | jq -r '.is_vpn // false')" == "true" ]] && _is_vpn=true
 
-		if [[ "$is_listed" == "true" ]]; then
-			listed_count=$((listed_count + 1))
-		fi
+	printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+		"$_prov_results" "$_total_score" "$_provider_count" "$_listed_count" \
+		"$_is_tor" "$_is_proxy" "$_is_vpn" "$_errors" "$_cache_hits" "$_cache_misses"
+	return 0
+}
 
-		# Aggregate flags
-		if [[ "$(echo "$content" | jq -r '.is_tor // false')" == "true" ]]; then
-			is_tor=true
-		fi
-		if [[ "$(echo "$content" | jq -r '.is_proxy // false')" == "true" ]]; then
-			is_proxy=true
-		fi
-		if [[ "$(echo "$content" | jq -r '.is_vpn // false')" == "true" ]]; then
-			is_vpn=true
-		fi
-	done
+# Compute unified score + risk level + recommendation from aggregated counters.
+# Outputs: unified_score<TAB>risk_level<TAB>recommendation
+_merge_compute_risk() {
+	local provider_count="$1"
+	local total_score="$2"
+	local listed_count="$3"
 
-	# Calculate unified score
 	local unified_score=0
 	if [[ "$provider_count" -gt 0 ]]; then
 		unified_score=$((total_score / provider_count))
@@ -748,7 +763,6 @@ merge_results() {
 		unified_score=$((unified_score > 90 ? 100 : unified_score + 10))
 	fi
 
-	# Determine unified risk level
 	local risk_level
 	if [[ "$unified_score" -ge 75 ]]; then
 		risk_level="critical"
@@ -762,7 +776,6 @@ merge_results() {
 		risk_level="clean"
 	fi
 
-	# Recommendation
 	local recommendation
 	case "$risk_level" in
 	critical) recommendation="AVOID — IP is heavily flagged across multiple sources" ;;
@@ -772,6 +785,26 @@ merge_results() {
 	clean) recommendation="SAFE — no significant flags detected" ;;
 	*) recommendation="UNKNOWN — insufficient data" ;;
 	esac
+
+	printf '%s\t%s\t%s\n' "$unified_score" "$risk_level" "$recommendation"
+	return 0
+}
+
+# Emit the final merged JSON object.
+_merge_build_json() {
+	local ip="$1"
+	local unified_score="$2"
+	local risk_level="$3"
+	local recommendation="$4"
+	local listed_count="$5"
+	local provider_count="$6"
+	local errors="$7"
+	local is_tor="$8"
+	local is_proxy="$9"
+	local is_vpn="${10}"
+	local cache_hits="${11}"
+	local cache_misses="${12}"
+	local provider_results="${13}"
 
 	local scan_time
 	scan_time=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
@@ -810,6 +843,46 @@ merge_results() {
             },
             providers: $providers
         }'
+	return 0
+}
+
+# Merge per-provider results into unified risk assessment
+# Strategy: weighted average of scores, with listing flags as hard signals
+merge_results() {
+	local ip="$1"
+	shift
+	local result_files=("$@")
+
+	local provider_results="[]"
+	local total_score=0
+	local provider_count=0
+	local listed_count=0
+	local is_tor=false
+	local is_proxy=false
+	local is_vpn=false
+	local errors=0
+	local cache_hits=0
+	local cache_misses=0
+
+	local file
+	for file in "${result_files[@]}"; do
+		local row
+		row=$(_merge_aggregate_file "$file" \
+			"$provider_results" "$total_score" "$provider_count" "$listed_count" \
+			"$is_tor" "$is_proxy" "$is_vpn" "$errors" "$cache_hits" "$cache_misses")
+		IFS=$'\t' read -r provider_results total_score provider_count listed_count \
+			is_tor is_proxy is_vpn errors cache_hits cache_misses <<<"$row"
+	done
+
+	local risk_row
+	risk_row=$(_merge_compute_risk "$provider_count" "$total_score" "$listed_count")
+	local unified_score risk_level recommendation
+	IFS=$'\t' read -r unified_score risk_level recommendation <<<"$risk_row"
+
+	_merge_build_json "$ip" "$unified_score" "$risk_level" "$recommendation" \
+		"$listed_count" "$provider_count" "$errors" \
+		"$is_tor" "$is_proxy" "$is_vpn" \
+		"$cache_hits" "$cache_misses" "$provider_results"
 	return 0
 }
 
@@ -1025,8 +1098,9 @@ output_results() {
 # Core Commands
 # =============================================================================
 
-# Check a single IP address
-cmd_check() {
+# Parse cmd_check arguments. Outputs: ip<TAB>specific_provider<TAB>run_parallel<TAB>timeout_secs<TAB>output_format<TAB>use_cache
+# Returns 1 if --help was requested (caller should return 0) or on error.
+_check_parse_args() {
 	local ip=""
 	local specific_provider=""
 	local run_parallel=true
@@ -1034,12 +1108,11 @@ cmd_check() {
 	local output_format="$IP_REP_DEFAULT_FORMAT"
 	local use_cache="true"
 
-	# Parse arguments
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--help | -h)
 			print_usage_check
-			return 0
+			return 1
 			;;
 		--provider | -p)
 			specific_provider="$2"
@@ -1091,18 +1164,84 @@ cmd_check() {
 	if [[ -z "$ip" ]]; then
 		log_error "IP address required"
 		echo "Usage: $(basename "$0") check <ip> [options]" >&2
-		return 1
+		return 2
 	fi
 
-	# Validate IPv4 format
 	if ! echo "$ip" | grep -qE '^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$'; then
 		log_error "Invalid IPv4 address: ${ip}"
-		return 1
+		return 2
 	fi
 
-	log_info "Checking IP reputation for: ${ip}"
+	printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
+		"$ip" "$specific_provider" "$run_parallel" "$timeout_secs" "$output_format" "$use_cache"
+	return 0
+}
 
-	# Initialise cache
+# Run providers (parallel or sequential) and populate result_files array.
+# Writes JSON results to files under tmp_dir; caller passes result_files by name.
+# Usage: _check_run_providers ip timeout_secs use_cache run_parallel tmp_dir providers...
+_check_run_providers() {
+	local ip="$1"
+	local timeout_secs="$2"
+	local use_cache="$3"
+	local run_parallel="$4"
+	local tmp_dir="$5"
+	shift 5
+	local providers_to_run=("$@")
+
+	local -a result_files=()
+	local -a pids=()
+
+	if [[ "$run_parallel" == "true" && ${#providers_to_run[@]} -gt 1 ]]; then
+		local provider
+		for provider in "${providers_to_run[@]}"; do
+			local result_file="${tmp_dir}/${provider}.json"
+			result_files+=("$result_file")
+			(
+				local result
+				result=$(run_provider "$provider" "$ip" "$timeout_secs" "$use_cache")
+				echo "$result" >"$result_file"
+			) &
+			pids+=($!)
+		done
+		local pid
+		for pid in "${pids[@]}"; do
+			wait "$pid" 2>/dev/null || true
+		done
+	else
+		local provider
+		for provider in "${providers_to_run[@]}"; do
+			local result_file="${tmp_dir}/${provider}.json"
+			result_files+=("$result_file")
+			local result
+			result=$(run_provider "$provider" "$ip" "$timeout_secs" "$use_cache")
+			echo "$result" >"$result_file"
+		done
+	fi
+
+	# Output result file paths (one per line) for caller to collect
+	local f
+	for f in "${result_files[@]}"; do
+		echo "$f"
+	done
+	return 0
+}
+
+# Check a single IP address
+cmd_check() {
+	local parsed_row
+	parsed_row=$(_check_parse_args "$@") || {
+		local rc=$?
+		# rc=1 means --help was shown; rc=2 means validation error
+		[[ "$rc" -eq 1 ]] && return 0
+		return 1
+	}
+
+	local ip specific_provider run_parallel timeout_secs output_format use_cache
+	IFS=$'\t' read -r ip specific_provider run_parallel timeout_secs output_format use_cache \
+		<<<"$parsed_row"
+
+	log_info "Checking IP reputation for: ${ip}"
 	cache_init
 
 	# Determine providers to use
@@ -1123,48 +1262,17 @@ cmd_check() {
 
 	log_info "Using providers: ${providers_to_run[*]}"
 
-	# Create temp directory for results
 	local tmp_dir
 	tmp_dir=$(mktemp -d)
 	# shellcheck disable=SC2064
 	trap "rm -rf '${tmp_dir}'" RETURN
 
 	local -a result_files=()
-	local -a pids=()
+	while IFS= read -r rf; do
+		result_files+=("$rf")
+	done < <(_check_run_providers "$ip" "$timeout_secs" "$use_cache" "$run_parallel" \
+		"$tmp_dir" "${providers_to_run[@]}")
 
-	if [[ "$run_parallel" == "true" && ${#providers_to_run[@]} -gt 1 ]]; then
-		# Parallel execution via background jobs
-		local provider
-		for provider in "${providers_to_run[@]}"; do
-			local result_file="${tmp_dir}/${provider}.json"
-			result_files+=("$result_file")
-
-			(
-				local result
-				result=$(run_provider "$provider" "$ip" "$timeout_secs" "$use_cache")
-				echo "$result" >"$result_file"
-			) &
-			pids+=($!)
-		done
-
-		# Wait for all background jobs
-		local pid
-		for pid in "${pids[@]}"; do
-			wait "$pid" 2>/dev/null || true
-		done
-	else
-		# Sequential execution
-		local provider
-		for provider in "${providers_to_run[@]}"; do
-			local result_file="${tmp_dir}/${provider}.json"
-			result_files+=("$result_file")
-			local result
-			result=$(run_provider "$provider" "$ip" "$timeout_secs" "$use_cache")
-			echo "$result" >"$result_file"
-		done
-	fi
-
-	# Merge results
 	local merged
 	merged=$(merge_results "$ip" "${result_files[@]}") || {
 		log_error "Failed to merge provider results"
@@ -1207,9 +1315,9 @@ dnsbl_overlap_check() {
 	return 0
 }
 
-# Batch check IPs from a file (one IP per line)
-# Supports rate limiting across providers and optional DNSBL overlap
-cmd_batch() {
+# Parse cmd_batch arguments. Outputs: file<TAB>output_format<TAB>timeout_secs<TAB>specific_provider<TAB>use_cache<TAB>rate_limit<TAB>dnsbl_overlap
+# Returns 1 if --help was shown; 2 on validation error.
+_batch_parse_args() {
 	local file=""
 	local output_format="$IP_REP_DEFAULT_FORMAT"
 	local timeout_secs="$IP_REP_DEFAULT_TIMEOUT"
@@ -1222,7 +1330,7 @@ cmd_batch() {
 		case "$1" in
 		--help | -h)
 			print_usage_batch
-			return 0
+			return 1
 			;;
 		--format | -f)
 			output_format="$2"
@@ -1269,15 +1377,113 @@ cmd_batch() {
 	if [[ -z "$file" ]]; then
 		log_error "File path required"
 		echo "Usage: $(basename "$0") batch <file> [options]" >&2
-		return 1
+		return 2
 	fi
 
 	if [[ ! -f "$file" ]]; then
 		log_error "File not found: ${file}"
-		return 1
+		return 2
 	fi
 
-	# Initialise cache
+	printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+		"$file" "$output_format" "$timeout_secs" "$specific_provider" \
+		"$use_cache" "$rate_limit" "$dnsbl_overlap"
+	return 0
+}
+
+# Process a single IP in batch mode: check + optional DNSBL overlap.
+# Outputs updated batch_results JSON array to stdout.
+# Returns 0 on success, 1 if check failed (caller should skip).
+_batch_process_ip() {
+	local line="$1"
+	local timeout_secs="$2"
+	local specific_provider="$3"
+	local use_cache="$4"
+	local dnsbl_overlap="$5"
+	local batch_results="$6"
+
+	local check_args=("$line" "--format" "json" "--timeout" "$timeout_secs")
+	[[ -n "$specific_provider" ]] && check_args+=("--provider" "$specific_provider")
+	[[ "$use_cache" == "false" ]] && check_args+=("--no-cache")
+
+	local result
+	result=$(cmd_check "${check_args[@]}" 2>/dev/null) || return 1
+
+	if [[ "$dnsbl_overlap" == "true" ]]; then
+		local dnsbl_hits dnsbl_count
+		dnsbl_hits=$(dnsbl_overlap_check "$line")
+		dnsbl_count=$(echo "$dnsbl_hits" | jq 'length')
+		result=$(echo "$result" | jq \
+			--argjson dnsbl_hits "$dnsbl_hits" \
+			--argjson dnsbl_count "$dnsbl_count" \
+			'. + {dnsbl_overlap: {listed_on: $dnsbl_hits, count: $dnsbl_count}}')
+	fi
+
+	echo "$batch_results" | jq --argjson r "$result" '. + [$r]'
+	return 0
+}
+
+# Print batch summary header and flagged IP list.
+_batch_print_summary() {
+	local file="$1"
+	local processed="$2"
+	local clean="$3"
+	local flagged="$4"
+	local dnsbl_overlap="$5"
+	local batch_results="$6"
+	local output_format="$7"
+
+	echo ""
+	echo -e "$(c_bold)$(c_cyan)=== Batch Results ===$(c_nc)"
+	echo -e "File:     ${file}"
+	echo -e "Total:    ${processed} IPs processed"
+	echo -e "Clean:    $(c_green)${clean}$(c_nc)"
+	echo -e "Flagged:  $(c_red)${flagged}$(c_nc)"
+	[[ "$dnsbl_overlap" == "true" ]] && echo -e "DNSBL:    overlap check enabled"
+	echo ""
+
+	if [[ "$flagged" -gt 0 ]]; then
+		echo -e "$(c_bold)Flagged IPs:$(c_nc)"
+		local _nc_batch
+		_nc_batch=$(c_nc)
+		echo "$batch_results" | jq -r \
+			'.[] | select(.risk_level != "clean") | "\(.ip)\t\(.risk_level)\t\(.unified_score)\t\(.recommendation)"' \
+			2>/dev/null |
+			while IFS=$'\t' read -r batch_ip risk score rec; do
+				local color risk_upper
+				color=$(risk_color "$risk")
+				risk_upper=$(echo "$risk" | tr '[:lower:]' '[:upper:]')
+				echo -e "  ${batch_ip}  ${color}${risk_upper}${_nc_batch} (${score})  ${rec}"
+			done
+		echo ""
+	fi
+
+	if [[ "$output_format" == "json" ]]; then
+		jq -n \
+			--arg file "$file" \
+			--argjson total "$processed" \
+			--argjson clean "$clean" \
+			--argjson flagged "$flagged" \
+			--argjson results "$batch_results" \
+			'{file: $file, total: $total, clean: $clean, flagged: $flagged, results: $results}'
+	fi
+	return 0
+}
+
+# Batch check IPs from a file (one IP per line)
+# Supports rate limiting across providers and optional DNSBL overlap
+cmd_batch() {
+	local parsed_row
+	parsed_row=$(_batch_parse_args "$@") || {
+		local rc=$?
+		[[ "$rc" -eq 1 ]] && return 0
+		return 1
+	}
+
+	local file output_format timeout_secs specific_provider use_cache rate_limit dnsbl_overlap
+	IFS=$'\t' read -r file output_format timeout_secs specific_provider \
+		use_cache rate_limit dnsbl_overlap <<<"$parsed_row"
+
 	cache_init
 
 	local total=0
@@ -1285,7 +1491,6 @@ cmd_batch() {
 	local clean=0
 	local flagged=0
 
-	# Count IPs
 	total=$(grep -cE '^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$' "$file" || echo 0)
 	log_info "Processing ${total} IPs from ${file} (rate limit: ${rate_limit} req/s per provider)"
 
@@ -1310,16 +1515,13 @@ cmd_batch() {
 	local first_ip=true
 
 	while IFS= read -r line; do
-		# Skip empty lines and comments
 		[[ -z "$line" || "$line" =~ ^# ]] && continue
 
-		# Validate IP format
 		if ! echo "$line" | grep -qE '^[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}$'; then
 			log_warn "Skipping invalid IP: ${line}"
 			continue
 		fi
 
-		# Rate limiting: sleep between IPs (skip before first IP)
 		if [[ "$sleep_between" != "0" && "$first_ip" == "false" ]]; then
 			sleep "$sleep_between" 2>/dev/null || true
 		fi
@@ -1328,76 +1530,26 @@ cmd_batch() {
 		processed=$((processed + 1))
 		log_info "[${processed}/${total}] Checking ${line}..."
 
-		local check_args=("$line" "--format" "json" "--timeout" "$timeout_secs")
-		[[ -n "$specific_provider" ]] && check_args+=("--provider" "$specific_provider")
-		[[ "$use_cache" == "false" ]] && check_args+=("--no-cache")
-
-		local result
-		result=$(cmd_check "${check_args[@]}" 2>/dev/null) || {
+		local updated_results
+		updated_results=$(_batch_process_ip "$line" "$timeout_secs" "$specific_provider" \
+			"$use_cache" "$dnsbl_overlap" "$batch_results") || {
 			log_warn "Failed to check ${line}"
 			continue
 		}
-
-		# DNSBL overlap integration
-		if [[ "$dnsbl_overlap" == "true" ]]; then
-			local dnsbl_hits
-			dnsbl_hits=$(dnsbl_overlap_check "$line")
-			local dnsbl_count
-			dnsbl_count=$(echo "$dnsbl_hits" | jq 'length')
-			result=$(echo "$result" | jq \
-				--argjson dnsbl_hits "$dnsbl_hits" \
-				--argjson dnsbl_count "$dnsbl_count" \
-				'. + {dnsbl_overlap: {listed_on: $dnsbl_hits, count: $dnsbl_count}}')
-		fi
+		batch_results="$updated_results"
 
 		local risk_level
-		risk_level=$(echo "$result" | jq -r '.risk_level // "unknown"')
-
+		risk_level=$(echo "$batch_results" | jq -r '.[-1].risk_level // "unknown"')
 		if [[ "$risk_level" == "clean" ]]; then
 			clean=$((clean + 1))
 		else
 			flagged=$((flagged + 1))
 		fi
 
-		batch_results=$(echo "$batch_results" | jq --argjson r "$result" '. + [$r]')
-
 	done <"$file"
 
-	# Batch summary
-	echo ""
-	echo -e "$(c_bold)$(c_cyan)=== Batch Results ===$(c_nc)"
-	echo -e "File:     ${file}"
-	echo -e "Total:    ${processed} IPs processed"
-	echo -e "Clean:    $(c_green)${clean}$(c_nc)"
-	echo -e "Flagged:  $(c_red)${flagged}$(c_nc)"
-	[[ "$dnsbl_overlap" == "true" ]] && echo -e "DNSBL:    overlap check enabled"
-	echo ""
-
-	# Show flagged IPs
-	if [[ "$flagged" -gt 0 ]]; then
-		echo -e "$(c_bold)Flagged IPs:$(c_nc)"
-		local _nc_batch
-		_nc_batch=$(c_nc)
-		echo "$batch_results" | jq -r '.[] | select(.risk_level != "clean") | "\(.ip)\t\(.risk_level)\t\(.unified_score)\t\(.recommendation)"' 2>/dev/null |
-			while IFS=$'\t' read -r batch_ip risk score rec; do
-				local color risk_upper
-				color=$(risk_color "$risk")
-				risk_upper=$(echo "$risk" | tr '[:lower:]' '[:upper:]')
-				echo -e "  ${batch_ip}  ${color}${risk_upper}${_nc_batch} (${score})  ${rec}"
-			done
-		echo ""
-	fi
-
-	if [[ "$output_format" == "json" ]]; then
-		jq -n \
-			--arg file "$file" \
-			--argjson total "$processed" \
-			--argjson clean "$clean" \
-			--argjson flagged "$flagged" \
-			--argjson results "$batch_results" \
-			'{file: $file, total: $total, clean: $clean, flagged: $flagged, results: $results}'
-	fi
-
+	_batch_print_summary "$file" "$processed" "$clean" "$flagged" \
+		"$dnsbl_overlap" "$batch_results" "$output_format"
 	return 0
 }
 
