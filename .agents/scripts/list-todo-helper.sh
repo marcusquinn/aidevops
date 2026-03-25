@@ -752,9 +752,9 @@ require_arg() {
 	fi
 }
 
-# Main
-main() {
-	# Parse command line
+# Parse command-line arguments and set global option variables.
+# Returns: 0 on success, exits on error or --help.
+_parse_args() {
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--priority | -p) SORT_BY="priority" ;;
@@ -813,6 +813,12 @@ main() {
 		esac
 		shift
 	done
+	return 0
+}
+
+# Main
+main() {
+	_parse_args "$@"
 
 	# Disable colors if requested or not a terminal
 	# shellcheck disable=SC2034
