@@ -167,6 +167,136 @@ list_running_keys() {
 }
 
 #######################################
+# Check one candidate key against running process keys.
+# Handles cross-type matching: ref-NNN matches issue-NNN and pr-NNN.
+# Args: $1 = candidate key (e.g., "issue-2300", "ref-42", "task-t1337")
+#       $2 = newline-separated "pid|key" pairs from list_running_keys
+# Returns: exit 0 if match found (prints DUPLICATE line),
+#          exit 1 if no match
+#######################################
+_match_candidate_key() {
+	local candidate_key="$1"
+	local running_keys="$2"
+
+	local -a match_patterns=("$candidate_key")
+	local key_type key_num
+	key_type=$(printf '%s' "$candidate_key" | cut -d'-' -f1)
+	key_num=$(printf '%s' "$candidate_key" | cut -d'-' -f2-)
+
+	# ref-NNN should match issue-NNN and pr-NNN (and vice versa)
+	case "$key_type" in
+	ref)
+		match_patterns+=("issue-${key_num}" "pr-${key_num}")
+		;;
+	issue | pr)
+		match_patterns+=("ref-${key_num}")
+		;;
+	esac
+
+	local pattern
+	for pattern in "${match_patterns[@]}"; do
+		local match
+		match=$(printf '%s\n' "$running_keys" | grep "|${pattern}$" | head -1 || true)
+		if [[ -n "$match" ]]; then
+			local match_pid
+			match_pid=$(printf '%s' "$match" | cut -d'|' -f1)
+			printf 'DUPLICATE: key=%s matches running %s (PID %s)\n' "$candidate_key" "$pattern" "$match_pid"
+			return 0
+		fi
+	done
+
+	return 1
+}
+
+#######################################
+# Query supervisor DB for one candidate key and verify PID liveness.
+# GH#5662: stale DB entries (dead PIDs, missing PID files) are reset to
+# 'failed' and treated as safe to dispatch.
+# Args: $1 = candidate key (e.g., "issue-2300", "task-t1337", "pr-42")
+#       $2 = path to supervisor.db
+# Returns: exit 0 if live duplicate found (prints DUPLICATE line),
+#          exit 1 if no match or stale entry (prints STALE line if stale)
+#######################################
+_check_db_entry() {
+	local candidate_key="$1"
+	local supervisor_db="$2"
+
+	local key_type key_num
+	key_type=$(printf '%s' "$candidate_key" | cut -d'-' -f1)
+	key_num=$(printf '%s' "$candidate_key" | cut -d'-' -f2-)
+
+	local db_match=""
+	case "$key_type" in
+	issue)
+		db_match=$(sqlite3 "$supervisor_db" "
+			SELECT id FROM tasks
+			WHERE status IN ('running', 'dispatched', 'evaluating')
+			AND (description LIKE '%#${key_num}%'
+			     OR description LIKE '%issue ${key_num}%'
+			     OR description LIKE '%issue-${key_num}%')
+			LIMIT 1;
+		" 2>/dev/null || true)
+		;;
+	task)
+		db_match=$(sqlite3 "$supervisor_db" "
+			SELECT id FROM tasks
+			WHERE status IN ('running', 'dispatched', 'evaluating')
+			AND id = '${key_num}'
+			LIMIT 1;
+		" 2>/dev/null || true)
+		;;
+	pr)
+		db_match=$(sqlite3 "$supervisor_db" "
+			SELECT id FROM tasks
+			WHERE status IN ('running', 'dispatched', 'evaluating')
+			AND (pr_url LIKE '%/${key_num}'
+			     OR description LIKE '%PR #${key_num}%'
+			     OR description LIKE '%pr-${key_num}%')
+			LIMIT 1;
+		" 2>/dev/null || true)
+		;;
+	esac
+
+	[[ -z "$db_match" ]] && return 1
+
+	# GH#5662: Verify the stored PID is still alive before reporting duplicate.
+	local supervisor_dir="${SUPERVISOR_DIR:-${HOME}/.aidevops/.agent-workspace/supervisor}"
+	local pid_file="${supervisor_dir}/pids/${db_match}.pid"
+	local stored_pid=""
+	[[ -f "$pid_file" ]] && stored_pid=$(cat "$pid_file" 2>/dev/null || true)
+
+	if [[ -n "$stored_pid" ]] && [[ "$stored_pid" =~ ^[0-9]+$ ]]; then
+		if ! kill -0 "$stored_pid" 2>/dev/null; then
+			# Process is dead — stale DB entry; reset and allow dispatch
+			sqlite3 "$supervisor_db" "
+				UPDATE tasks SET status = 'failed',
+				  error = 'stale: PID ${stored_pid} not running (GH#5662)',
+				  updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
+				WHERE id = '$(printf '%s' "$db_match" | sed "s/'/''/g")';
+			" 2>/dev/null || true
+			printf 'STALE: key=%s task %s PID %s is dead — entry reset, safe to dispatch\n' \
+				"$candidate_key" "$db_match" "$stored_pid"
+			return 1
+		fi
+		# PID is alive — genuine duplicate
+		printf 'DUPLICATE: key=%s already active in supervisor DB (task %s PID %s)\n' \
+			"$candidate_key" "$db_match" "$stored_pid"
+		return 0
+	fi
+
+	# No PID file or non-numeric content — treat as stale (GH#5662)
+	printf 'STALE: key=%s task %s has no valid PID file — treating as stale, safe to dispatch\n' \
+		"$candidate_key" "$db_match"
+	sqlite3 "$supervisor_db" "
+		UPDATE tasks SET status = 'failed',
+		  error = 'stale: no PID file found (GH#5662)',
+		  updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
+		WHERE id = '$(printf '%s' "$db_match" | sed "s/'/''/g")';
+	" 2>/dev/null || true
+	return 1
+}
+
+#######################################
 # Check if a title's dedup keys overlap with any running worker.
 # Args: $1 = title of the item to be dispatched
 # Returns: exit 0 if duplicate found (do NOT dispatch),
@@ -189,136 +319,26 @@ is_duplicate() {
 		return 1
 	fi
 
-	# Get keys from running workers
+	# Check against running worker processes
 	local running_keys
 	running_keys=$(list_running_keys)
 
-	if [[ -z "$running_keys" ]]; then
-		# No running workers — no duplicate possible
-		return 1
-	fi
-
-	# Check for overlap (with cross-type matching: ref-NNN matches issue-NNN and pr-NNN)
-	while IFS= read -r candidate_key; do
-		[[ -z "$candidate_key" ]] && continue
-
-		# Build list of patterns to match against
-		local -a match_patterns=("$candidate_key")
-		local key_type key_num
-		key_type=$(printf '%s' "$candidate_key" | cut -d'-' -f1)
-		key_num=$(printf '%s' "$candidate_key" | cut -d'-' -f2-)
-
-		# ref-NNN should match issue-NNN and pr-NNN (and vice versa)
-		case "$key_type" in
-		ref)
-			match_patterns+=("issue-${key_num}" "pr-${key_num}")
-			;;
-		issue | pr)
-			match_patterns+=("ref-${key_num}")
-			;;
-		esac
-
-		local pattern
-		for pattern in "${match_patterns[@]}"; do
-			local match
-			match=$(printf '%s\n' "$running_keys" | grep "|${pattern}$" | head -1 || true)
-			if [[ -n "$match" ]]; then
-				local match_pid
-				match_pid=$(printf '%s' "$match" | cut -d'|' -f1)
-				printf 'DUPLICATE: key=%s matches running %s (PID %s)\n' "$candidate_key" "$pattern" "$match_pid"
+	if [[ -n "$running_keys" ]]; then
+		while IFS= read -r candidate_key; do
+			[[ -z "$candidate_key" ]] && continue
+			if _match_candidate_key "$candidate_key" "$running_keys"; then
 				return 0
 			fi
-		done
-	done <<<"$candidate_keys"
+		done <<<"$candidate_keys"
+	fi
 
 	# Also check the supervisor DB if available
 	local supervisor_db="${SUPERVISOR_DIR:-${HOME}/.aidevops/.agent-workspace/supervisor}/supervisor.db"
 	if [[ -f "$supervisor_db" ]] && command -v sqlite3 &>/dev/null; then
 		while IFS= read -r candidate_key; do
 			[[ -z "$candidate_key" ]] && continue
-			# Extract the number from the key for DB lookup
-			local key_type key_num
-			key_type=$(printf '%s' "$candidate_key" | cut -d'-' -f1)
-			key_num=$(printf '%s' "$candidate_key" | cut -d'-' -f2-)
-
-			local db_match=""
-			case "$key_type" in
-			issue)
-				# Check if any running/dispatched task references this issue number
-				db_match=$(sqlite3 "$supervisor_db" "
-					SELECT id FROM tasks
-					WHERE status IN ('running', 'dispatched', 'evaluating')
-					AND (description LIKE '%#${key_num}%'
-					     OR description LIKE '%issue ${key_num}%'
-					     OR description LIKE '%issue-${key_num}%')
-					LIMIT 1;
-				" 2>/dev/null || true)
-				;;
-			task)
-				# Check if this task ID is already active
-				db_match=$(sqlite3 "$supervisor_db" "
-					SELECT id FROM tasks
-					WHERE status IN ('running', 'dispatched', 'evaluating')
-					AND id = '${key_num}'
-					LIMIT 1;
-				" 2>/dev/null || true)
-				;;
-			pr)
-				# Check if any running task references this PR number
-				db_match=$(sqlite3 "$supervisor_db" "
-					SELECT id FROM tasks
-					WHERE status IN ('running', 'dispatched', 'evaluating')
-					AND (pr_url LIKE '%/${key_num}'
-					     OR description LIKE '%PR #${key_num}%'
-					     OR description LIKE '%pr-${key_num}%')
-					LIMIT 1;
-				" 2>/dev/null || true)
-				;;
-			esac
-
-			if [[ -n "$db_match" ]]; then
-				# GH#5662: Verify the stored PID is still alive before reporting duplicate.
-				# DB records with status 'running'/'dispatched'/'evaluating' may be stale
-				# if the worker process died without updating the DB (SIGKILL, power loss, etc.).
-				local supervisor_dir="${SUPERVISOR_DIR:-${HOME}/.aidevops/.agent-workspace/supervisor}"
-				local pid_file="${supervisor_dir}/pids/${db_match}.pid"
-				local stored_pid=""
-				if [[ -f "$pid_file" ]]; then
-					stored_pid=$(cat "$pid_file" 2>/dev/null || true)
-				fi
-
-				if [[ -n "$stored_pid" ]] && [[ "$stored_pid" =~ ^[0-9]+$ ]]; then
-					# PID file exists with a numeric PID — check liveness
-					if ! kill -0 "$stored_pid" 2>/dev/null; then
-						# Process is dead — stale DB entry; reset status and allow dispatch
-						sqlite3 "$supervisor_db" "
-							UPDATE tasks SET status = 'failed',
-							  error = 'stale: PID ${stored_pid} not running (GH#5662)',
-							  updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
-							WHERE id = '$(printf '%s' "$db_match" | sed "s/'/''/g")';
-						" 2>/dev/null || true
-						printf 'STALE: key=%s task %s PID %s is dead — entry reset, safe to dispatch\n' \
-							"$candidate_key" "$db_match" "$stored_pid"
-						continue
-					fi
-					# PID is alive — genuine duplicate
-					printf 'DUPLICATE: key=%s already active in supervisor DB (task %s PID %s)\n' \
-						"$candidate_key" "$db_match" "$stored_pid"
-					return 0
-				else
-					# No PID file or non-numeric content — cannot verify liveness.
-					# Treat as stale to avoid blocking valid dispatch (GH#5662).
-					# The DB record may be from a crashed worker that never wrote a PID file.
-					printf 'STALE: key=%s task %s has no valid PID file — treating as stale, safe to dispatch\n' \
-						"$candidate_key" "$db_match"
-					sqlite3 "$supervisor_db" "
-						UPDATE tasks SET status = 'failed',
-						  error = 'stale: no PID file found (GH#5662)',
-						  updated_at = strftime('%Y-%m-%dT%H:%M:%SZ','now')
-						WHERE id = '$(printf '%s' "$db_match" | sed "s/'/''/g")';
-					" 2>/dev/null || true
-					continue
-				fi
+			if _check_db_entry "$candidate_key" "$supervisor_db"; then
+				return 0
 			fi
 		done <<<"$candidate_keys"
 	fi
