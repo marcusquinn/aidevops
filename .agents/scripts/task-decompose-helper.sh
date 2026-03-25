@@ -90,6 +90,74 @@ check_existing_subtasks() {
 }
 
 #######################################
+# Build the LLM prompt for task classification
+# Arguments:
+#   $1 — task description
+#   $2 — depth (integer)
+#   $3 — lineage context string (may be empty)
+# Output: prompt string on stdout
+# Returns: 0 always
+#######################################
+build_classify_prompt() {
+	local description="$1"
+	local depth="$2"
+	local lineage_context="$3"
+
+	printf '%s' "You are classifying a software development task as either ATOMIC or COMPOSITE.
+
+ATOMIC means: a single developer can implement this in one focused session without further planning. It has one clear deliverable — a single PR.
+COMPOSITE means: this clearly contains 2 or more independent concerns that should be worked on separately by different developers in parallel.
+
+Rules:
+- When in doubt, choose ATOMIC. Over-decomposition creates more overhead (more PRs, more merge conflicts, more coordination) than under-decomposition.
+- A task that is large but has a single concern (e.g., 'refactor the auth module') is ATOMIC.
+- A task that lists multiple independent features (e.g., 'build login, registration, and OAuth') is COMPOSITE.
+- At depth ${depth} in the hierarchy. Deeper tasks should almost always be atomic.
+- If the task mentions 'and' connecting truly independent deliverables, it's likely COMPOSITE.
+- Bug fixes, refactors, documentation tasks, and single-feature tasks are almost always ATOMIC.
+- A task with 'with' connecting a feature and its natural sub-component (e.g., 'profile page with avatar upload') is ATOMIC — the sub-component is part of the feature, not independent.
+
+Examples:
+- 'Fix the login page redirect loop' -> ATOMIC (single bug fix)
+- 'Refactor the authentication module to use JWT tokens' -> ATOMIC (single concern, even if large)
+- 'Create classify/decompose LLM prompts and helper functions' -> ATOMIC (single deliverable: one script)
+- 'Add CI self-healing to pulse' -> ATOMIC (single feature addition)
+- 'Build auth system with login, registration, password reset, and OAuth' -> COMPOSITE (4 independent features)
+- 'Recursive task decomposition with classify pipeline, lineage context, batch strategies, pulse integration' -> COMPOSITE (4 independent concerns)
+- 'Build a CRM with contacts, deals, email integration, and reporting dashboard' -> COMPOSITE (4 independent modules)
+- 'Create user management and billing system and notification service' -> COMPOSITE (3 independent systems)
+${lineage_context}
+Task description: ${description}
+
+Respond with ONLY a JSON object (no markdown, no explanation outside the JSON):
+{\"kind\": \"atomic\" or \"composite\", \"confidence\": 0.0-1.0, \"reasoning\": \"one sentence explanation\"}"
+	return 0
+}
+
+#######################################
+# Call the LLM for classification and return validated JSON
+# Arguments:
+#   $1 — prompt string
+# Output: validated JSON on stdout
+# Returns: 0 on success, 1 on failure
+#######################################
+call_classify_llm() {
+	local prompt="$1"
+	local raw_result
+	raw_result=$("$AI_HELPER" --prompt "$prompt" --model haiku --max-tokens 200 || echo "")
+	if [[ -z "$raw_result" ]]; then
+		return 1
+	fi
+	local json_result
+	json_result=$(extract_classify_json "$raw_result")
+	if [[ -z "$json_result" ]]; then
+		return 1
+	fi
+	echo "$json_result"
+	return 0
+}
+
+#######################################
 # Classify a task as atomic or composite using LLM judgment
 #
 # Arguments:
@@ -134,10 +202,7 @@ cmd_classify() {
 			shift 2
 			;;
 		*)
-			# Treat remaining non-flag args as description if not set
-			if [[ -z "$description" ]]; then
-				description="$1"
-			fi
+			if [[ -z "$description" ]]; then description="$1"; fi
 			shift
 			;;
 		esac
@@ -148,7 +213,7 @@ cmd_classify() {
 		return 1
 	fi
 
-	# Fast-path: if task already has subtasks in TODO.md, treat as already-decomposed (atomic for dispatch)
+	# Fast-path: task already has subtasks — treat as atomic for dispatch
 	if [[ -n "$task_id" && -n "$todo_file" ]]; then
 		local has_children
 		has_children=$(check_existing_subtasks "$task_id" "$todo_file")
@@ -158,7 +223,7 @@ cmd_classify() {
 		fi
 	fi
 
-	# Heuristic fast-path: at depth 2+, almost certainly atomic
+	# Fast-path: depth 2+ is almost certainly atomic
 	if [[ "$depth" -ge 2 ]]; then
 		echo '{"kind": "atomic", "confidence": 0.9, "reasoning": "Depth >= 2, biased toward atomic per decomposition rules"}'
 		return 0
@@ -173,55 +238,19 @@ Lineage context (ancestor chain):
 ${lineage}
 "
 		fi
-
 		local prompt
-		prompt="You are classifying a software development task as either ATOMIC or COMPOSITE.
-
-ATOMIC means: a single developer can implement this in one focused session without further planning. It has one clear deliverable — a single PR.
-COMPOSITE means: this clearly contains 2 or more independent concerns that should be worked on separately by different developers in parallel.
-
-Rules:
-- When in doubt, choose ATOMIC. Over-decomposition creates more overhead (more PRs, more merge conflicts, more coordination) than under-decomposition.
-- A task that is large but has a single concern (e.g., 'refactor the auth module') is ATOMIC.
-- A task that lists multiple independent features (e.g., 'build login, registration, and OAuth') is COMPOSITE.
-- At depth ${depth} in the hierarchy. Deeper tasks should almost always be atomic.
-- If the task mentions 'and' connecting truly independent deliverables, it's likely COMPOSITE.
-- Bug fixes, refactors, documentation tasks, and single-feature tasks are almost always ATOMIC.
-- A task with 'with' connecting a feature and its natural sub-component (e.g., 'profile page with avatar upload') is ATOMIC — the sub-component is part of the feature, not independent.
-
-Examples:
-- 'Fix the login page redirect loop' -> ATOMIC (single bug fix)
-- 'Refactor the authentication module to use JWT tokens' -> ATOMIC (single concern, even if large)
-- 'Create classify/decompose LLM prompts and helper functions' -> ATOMIC (single deliverable: one script)
-- 'Add CI self-healing to pulse' -> ATOMIC (single feature addition)
-- 'Build auth system with login, registration, password reset, and OAuth' -> COMPOSITE (4 independent features)
-- 'Recursive task decomposition with classify pipeline, lineage context, batch strategies, pulse integration' -> COMPOSITE (4 independent concerns)
-- 'Build a CRM with contacts, deals, email integration, and reporting dashboard' -> COMPOSITE (4 independent modules)
-- 'Create user management and billing system and notification service' -> COMPOSITE (3 independent systems)
-${lineage_context}
-Task description: ${description}
-
-Respond with ONLY a JSON object (no markdown, no explanation outside the JSON):
-{\"kind\": \"atomic\" or \"composite\", \"confidence\": 0.0-1.0, \"reasoning\": \"one sentence explanation\"}"
-
-		local result
-		result=$("$AI_HELPER" --prompt "$prompt" --model haiku --max-tokens 200 || echo "")
-
-		if [[ -n "$result" ]]; then
-			local json_result
-			json_result=$(extract_classify_json "$result")
-
-			if [[ -n "$json_result" ]]; then
-				echo "$json_result"
-				return 0
-			fi
+		prompt=$(build_classify_prompt "$description" "$depth" "$lineage_context")
+		local json_result
+		if json_result=$(call_classify_llm "$prompt"); then
+			echo "$json_result"
+			return 0
 		fi
 	fi
 
-	# Heuristic fallback: count independent concerns
-	local result
-	result=$(heuristic_classify "$description" "$depth")
-	echo "$result"
+	# Heuristic fallback (subshell isolates set -e from grep non-matches inside heuristic)
+	local heuristic_result
+	heuristic_result=$(heuristic_classify "$description" "$depth")
+	echo "$heuristic_result"
 	return 2
 }
 
@@ -335,6 +364,84 @@ heuristic_classify() {
 }
 
 #######################################
+# Build the LLM prompt for task decomposition
+# Arguments:
+#   $1 — task description
+#   $2 — max subtasks (integer)
+#   $3 — lineage context string (may be empty)
+# Output: prompt string on stdout
+# Returns: 0 always
+#######################################
+build_decompose_prompt() {
+	local description="$1"
+	local max_subtasks="$2"
+	local lineage_context="$3"
+
+	printf '%s' "You are decomposing a software development task into independent subtasks for parallel execution by different developers.
+
+Rules:
+- Break into the MINIMUM number of subtasks (2-${max_subtasks}). Never pad with unnecessary tasks. Fewer subtasks = less coordination overhead.
+- Each subtask must be real, distinct work that a developer would naturally treat as a separate unit — a separate PR.
+- Each subtask should be independently implementable (can be assigned to a different developer working in parallel).
+- Include dependency edges: if subtask B needs subtask A's output, note it in blocked_by.
+- Use the blocked_by array to express dependencies (0-indexed subtask numbers).
+- Suggest a batch strategy: 'depth-first' if subtasks have sequential dependencies, 'breadth-first' if mostly independent.
+- Each subtask description should be specific enough to be a standalone task brief — not vague like 'handle edge cases'.
+
+Examples:
+
+Task: 'Build auth system with login, registration, password reset, and OAuth'
+Result: 4 subtasks (login, registration, password reset, OAuth) — all independent, breadth-first.
+
+Task: 'Build a REST API with database schema, then create frontend that calls the API, then add end-to-end tests'
+Result: 3 subtasks (API+schema, frontend, e2e tests) — sequential dependencies, depth-first.
+  - Frontend blocked_by API (needs endpoints to call)
+  - E2E tests blocked_by both (needs working system)
+
+Task: 'Recursive task decomposition with classify pipeline, lineage context, batch strategies, pulse integration'
+Result: 4-5 subtasks — classify/decompose helper, dispatch integration, lineage context, batch strategies, testing.
+  - Integration blocked_by helper (needs classify/decompose to exist)
+  - Testing blocked_by all implementation subtasks
+${lineage_context}
+Task to decompose: ${description}
+
+Respond with ONLY a JSON object (no markdown, no explanation outside the JSON):
+{
+  \"subtasks\": [
+    {\"description\": \"subtask description\", \"blocked_by\": []},
+    {\"description\": \"subtask description\", \"blocked_by\": [0]}
+  ],
+  \"strategy\": \"depth-first\" or \"breadth-first\"
+}"
+	return 0
+}
+
+#######################################
+# Call the LLM for decomposition and return validated JSON
+# Arguments:
+#   $1 — prompt string
+#   $2 — max subtasks (for validation)
+# Output: validated JSON on stdout
+# Returns: 0 on success, 1 on failure
+#######################################
+call_decompose_llm() {
+	local prompt="$1"
+	local max_subtasks="$2"
+	local raw_result
+	raw_result=$("$AI_HELPER" --prompt "$prompt" --model haiku --max-tokens 600 || echo "")
+	if [[ -z "$raw_result" ]]; then
+		return 1
+	fi
+	local json_result
+	json_result=$(extract_decompose_json "$raw_result" "$max_subtasks")
+	if [[ -z "$json_result" ]]; then
+		return 1
+	fi
+	echo "$json_result"
+	return 0
+}
+
+#######################################
 # Decompose a composite task into subtasks using LLM
 #
 # Arguments:
@@ -379,9 +486,7 @@ cmd_decompose() {
 			shift 2
 			;;
 		*)
-			if [[ -z "$description" ]]; then
-				description="$1"
-			fi
+			if [[ -z "$description" ]]; then description="$1"; fi
 			shift
 			;;
 		esac
@@ -392,7 +497,7 @@ cmd_decompose() {
 		return 1
 	fi
 
-	# Guard: if task already has subtasks, refuse to re-decompose
+	# Guard: refuse to re-decompose a task that already has subtasks
 	if [[ -n "$task_id" && -n "$todo_file" ]]; then
 		local has_children
 		has_children=$(check_existing_subtasks "$task_id" "$todo_file")
@@ -411,63 +516,19 @@ Lineage context (what this task is part of):
 ${lineage}
 "
 		fi
-
 		local prompt
-		prompt="You are decomposing a software development task into independent subtasks for parallel execution by different developers.
-
-Rules:
-- Break into the MINIMUM number of subtasks (2-${max_subtasks}). Never pad with unnecessary tasks. Fewer subtasks = less coordination overhead.
-- Each subtask must be real, distinct work that a developer would naturally treat as a separate unit — a separate PR.
-- Each subtask should be independently implementable (can be assigned to a different developer working in parallel).
-- Include dependency edges: if subtask B needs subtask A's output, note it in blocked_by.
-- Use the blocked_by array to express dependencies (0-indexed subtask numbers).
-- Suggest a batch strategy: 'depth-first' if subtasks have sequential dependencies, 'breadth-first' if mostly independent.
-- Each subtask description should be specific enough to be a standalone task brief — not vague like 'handle edge cases'.
-
-Examples:
-
-Task: 'Build auth system with login, registration, password reset, and OAuth'
-Result: 4 subtasks (login, registration, password reset, OAuth) — all independent, breadth-first.
-
-Task: 'Build a REST API with database schema, then create frontend that calls the API, then add end-to-end tests'
-Result: 3 subtasks (API+schema, frontend, e2e tests) — sequential dependencies, depth-first.
-  - Frontend blocked_by API (needs endpoints to call)
-  - E2E tests blocked_by both (needs working system)
-
-Task: 'Recursive task decomposition with classify pipeline, lineage context, batch strategies, pulse integration'
-Result: 4-5 subtasks — classify/decompose helper, dispatch integration, lineage context, batch strategies, testing.
-  - Integration blocked_by helper (needs classify/decompose to exist)
-  - Testing blocked_by all implementation subtasks
-${lineage_context}
-Task to decompose: ${description}
-
-Respond with ONLY a JSON object (no markdown, no explanation outside the JSON):
-{
-  \"subtasks\": [
-    {\"description\": \"subtask description\", \"blocked_by\": []},
-    {\"description\": \"subtask description\", \"blocked_by\": [0]}
-  ],
-  \"strategy\": \"depth-first\" or \"breadth-first\"
-}"
-
-		local result
-		result=$("$AI_HELPER" --prompt "$prompt" --model haiku --max-tokens 600 || echo "")
-
-		if [[ -n "$result" ]]; then
-			local json_result
-			json_result=$(extract_decompose_json "$result" "$max_subtasks")
-
-			if [[ -n "$json_result" ]]; then
-				echo "$json_result"
-				return 0
-			fi
+		prompt=$(build_decompose_prompt "$description" "$max_subtasks" "$lineage_context")
+		local json_result
+		if json_result=$(call_decompose_llm "$prompt" "$max_subtasks"); then
+			echo "$json_result"
+			return 0
 		fi
 	fi
 
-	# Heuristic fallback
-	local result
-	result=$(heuristic_decompose "$description" "$max_subtasks")
-	echo "$result"
+	# Heuristic fallback (subshell isolates set -e from grep non-matches inside heuristic)
+	local heuristic_result
+	heuristic_result=$(heuristic_decompose "$description" "$max_subtasks")
+	echo "$heuristic_result"
 	return 2
 }
 
