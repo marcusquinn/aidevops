@@ -170,22 +170,58 @@ EOF
 }
 
 #######################################
-# Merge tags from remove_id into keep_id (shared by all dedup phases)
-# Args: keep_id_esc remove_id_esc
+# Merge tags from a removed entry into a kept entry, then delete the removed entry.
+# Shared helper for all dedup phases.
+# All operations run in a single transaction to prevent race conditions.
+# Tag snapshot is taken inside BEGIN IMMEDIATE so no concurrent writer can
+# modify tags between the read and the update.
+# Args: $1=keep_id_escaped, $2=remove_id_escaped
 #######################################
-_dedup_merge_tags() {
-	local keep_id_esc="$1"
-	local remove_id_esc="$2"
+_dedup_merge_and_remove() {
+	local keep_esc="$1"
+	local remove_esc="$2"
 
-	local keep_tags remove_tags
-	keep_tags=$(db "$MEMORY_DB" "SELECT tags FROM learnings WHERE id = '$keep_id_esc';")
-	remove_tags=$(db "$MEMORY_DB" "SELECT tags FROM learnings WHERE id = '$remove_id_esc';")
-	if [[ -n "$remove_tags" ]]; then
-		local merged_tags
-		merged_tags=$(echo "$keep_tags,$remove_tags" | tr ',' '\n' | sort -u | grep -v '^$' | tr '\n' ',' | sed 's/,$//')
-		local merged_tags_esc="${merged_tags//"'"/"''"}"
-		db "$MEMORY_DB" "UPDATE learnings SET tags = '$merged_tags_esc' WHERE id = '$keep_id_esc';"
-	fi
+	# All reads and writes in one atomic transaction.
+	# Tags are merged inside the transaction using SQLite string functions so
+	# the snapshot is taken after the write lock is held (no pre-read race).
+	# INSERT ... ON CONFLICT handles both cases: keep row absent (INSERT) or present (UPDATE).
+	db "$MEMORY_DB" <<EOF
+BEGIN IMMEDIATE;
+
+-- Merge tags inside the transaction: concatenate keep+remove tags, deduplicate
+-- via a recursive CTE split, then write back. Only updates when remove has tags.
+UPDATE learnings SET tags = (
+    WITH src(raw) AS (
+        SELECT COALESCE((SELECT tags FROM learnings WHERE id = '$keep_esc'), '')
+            || ',' ||
+            COALESCE((SELECT tags FROM learnings WHERE id = '$remove_esc'), '')
+    ),
+    split(tag, rest) AS (
+        SELECT '', (SELECT raw FROM src) || ','
+        UNION ALL
+        SELECT substr(rest, 1, instr(rest, ',') - 1),
+               substr(rest, instr(rest, ',') + 1)
+        FROM split WHERE rest != ''
+    )
+    SELECT GROUP_CONCAT(DISTINCT tag, ',') FROM split WHERE tag != ''
+)
+WHERE id = '$keep_esc'
+  AND (SELECT COALESCE(tags, '') FROM learnings WHERE id = '$remove_esc') != '';
+
+INSERT INTO learning_access (id, last_accessed_at, access_count)
+SELECT '$keep_esc', last_accessed_at, access_count
+FROM learning_access WHERE id = '$remove_esc'
+ON CONFLICT(id) DO UPDATE SET
+    access_count = MAX(learning_access.access_count, excluded.access_count),
+    last_accessed_at = MAX(learning_access.last_accessed_at, excluded.last_accessed_at);
+
+UPDATE learning_relations SET supersedes_id = '$keep_esc' WHERE supersedes_id = '$remove_esc';
+DELETE FROM learning_relations WHERE id = '$remove_esc';
+DELETE FROM learning_access WHERE id = '$remove_esc';
+DELETE FROM learnings WHERE id = '$remove_esc';
+
+COMMIT;
+EOF
 	return 0
 }
 
@@ -231,23 +267,9 @@ EOF
 			local escaped_remove="${mem_id//"'"/"''"}"
 
 			if [[ "$dry_run" == true ]]; then
-				log_info "[DRY RUN] Would remove $mem_id (duplicate of $keep_id)"
+				log_info "[DRY RUN] Would remove $mem_id (duplicate of $keep_id)" >&2
 			else
-				_dedup_merge_tags "$escaped_keep" "$escaped_remove"
-				# Transfer access history (keep higher count)
-				db "$MEMORY_DB" <<EOF
-INSERT INTO learning_access (id, last_accessed_at, access_count)
-SELECT '$escaped_keep', last_accessed_at, access_count
-FROM learning_access WHERE id = '$escaped_remove'
-AND NOT EXISTS (SELECT 1 FROM learning_access WHERE id = '$escaped_keep')
-ON CONFLICT(id) DO UPDATE SET
-    access_count = MAX(learning_access.access_count, excluded.access_count),
-    last_accessed_at = MAX(learning_access.last_accessed_at, excluded.last_accessed_at);
-EOF
-				db_cleanup "$MEMORY_DB" "UPDATE learning_relations SET supersedes_id = '$escaped_keep' WHERE supersedes_id = '$escaped_remove';"
-				db_cleanup "$MEMORY_DB" "DELETE FROM learning_relations WHERE id = '$escaped_remove';"
-				db "$MEMORY_DB" "DELETE FROM learning_access WHERE id = '$escaped_remove';"
-				db "$MEMORY_DB" "DELETE FROM learnings WHERE id = '$escaped_remove';"
+				_dedup_merge_and_remove "$escaped_keep" "$escaped_remove"
 			fi
 			exact_removed=$((exact_removed + 1))
 		done <<<"$all_ids"
@@ -320,13 +342,9 @@ EOF
 			if [[ "$dry_run" == true ]]; then
 				local preview
 				preview=$(db "$MEMORY_DB" "SELECT substr(content, 1, 50) FROM learnings WHERE id = '$nid_esc';")
-				log_info "[DRY RUN] Would remove near-dup $nid (keep $oldest_id): $preview..."
+				log_info "[DRY RUN] Would remove near-dup $nid (keep $oldest_id): $preview..." >&2
 			else
-				_dedup_merge_tags "$oldest_esc" "$nid_esc"
-				db_cleanup "$MEMORY_DB" "UPDATE learning_relations SET supersedes_id = '$oldest_esc' WHERE supersedes_id = '$nid_esc';"
-				db_cleanup "$MEMORY_DB" "DELETE FROM learning_relations WHERE id = '$nid_esc';"
-				db "$MEMORY_DB" "DELETE FROM learning_access WHERE id = '$nid_esc';"
-				db "$MEMORY_DB" "DELETE FROM learnings WHERE id = '$nid_esc';"
+				_dedup_merge_and_remove "$oldest_esc" "$nid_esc"
 			fi
 			near_removed=$((near_removed + 1))
 		done
@@ -347,7 +365,7 @@ _dedup_semantic_phase() {
 	local threshold_judge="$2"
 	local semantic_removed=0
 
-	log_info "Scanning for semantic duplicates (AI-judged)..."
+	log_info "Scanning for semantic duplicates (AI-judged)..." >&2
 
 	local types
 	types=$(db "$MEMORY_DB" "SELECT DISTINCT type FROM learnings;")
@@ -366,11 +384,13 @@ _dedup_semantic_phase() {
 		done <<<"$entries"
 
 		local len=${#ids_arr[@]}
+		# removed_set is newline-delimited; grep -qxF matches exact lines only.
+		# Plain grep -qF matches substrings (e.g., "task-1" matches "task-10").
 		local removed_set=""
 		for ((i = 0; i < len; i++)); do
-			echo "$removed_set" | grep -qF "${ids_arr[$i]}" && continue
+			printf '%s\n' "$removed_set" | grep -qxF "${ids_arr[$i]}" && continue
 			for ((j = i + 1; j < len; j++)); do
-				echo "$removed_set" | grep -qF "${ids_arr[$j]}" && continue
+				printf '%s\n' "$removed_set" | grep -qxF "${ids_arr[$j]}" && continue
 				local verdict
 				verdict=$("$threshold_judge" judge-dedup-similarity \
 					--content-a "${contents_arr[$i]}" \
@@ -381,16 +401,13 @@ _dedup_semantic_phase() {
 					local remove_esc="${remove_id//"'"/"''"}"
 					local keep_esc="${keep_id//"'"/"''"}"
 					if [[ "$dry_run" == true ]]; then
-						log_info "[DRY RUN] Semantic dup: remove $remove_id (keep $keep_id): ${contents_arr[$j]:0:50}..."
+						log_info "[DRY RUN] Semantic dup: remove $remove_id (keep $keep_id): ${contents_arr[$j]:0:50}..." >&2
 					else
-						_dedup_merge_tags "$keep_esc" "$remove_esc"
-						db_cleanup "$MEMORY_DB" "UPDATE learning_relations SET supersedes_id = '$keep_esc' WHERE supersedes_id = '$remove_esc';"
-						db_cleanup "$MEMORY_DB" "DELETE FROM learning_relations WHERE id = '$remove_esc';"
-						db "$MEMORY_DB" "DELETE FROM learning_access WHERE id = '$remove_esc';"
-						db "$MEMORY_DB" "DELETE FROM learnings WHERE id = '$remove_esc';"
+						_dedup_merge_and_remove "$keep_esc" "$remove_esc"
 					fi
 					semantic_removed=$((semantic_removed + 1))
-					removed_set="${removed_set} ${remove_id}"
+					removed_set="${removed_set}
+${remove_id}"
 				fi
 			done
 		done
@@ -716,7 +733,10 @@ _consolidate_dry_run() {
 }
 
 #######################################
-# Merge a single consolidation pair (older survives, newer removed)
+# Merge a single consolidation pair (older survives, newer removed).
+# All operations run in a single transaction to prevent race conditions.
+# Tag snapshot is taken inside BEGIN IMMEDIATE so no concurrent writer can
+# modify tags between the read and the update.
 # Args: id1 id2 created1 created2
 #######################################
 _consolidate_merge_pair() {
@@ -738,26 +758,47 @@ _consolidate_merge_pair() {
 	local older_id_esc="${older_id//"'"/"''"}"
 	local newer_id_esc="${newer_id//"'"/"''"}"
 
-	# Merge tags from newer into older
-	local older_tags newer_tags
-	older_tags=$(db "$MEMORY_DB" "SELECT tags FROM learnings WHERE id = '$older_id_esc';")
-	newer_tags=$(db "$MEMORY_DB" "SELECT tags FROM learnings WHERE id = '$newer_id_esc';")
-	if [[ -n "$newer_tags" ]]; then
-		local merged_tags
-		merged_tags=$(echo "$older_tags,$newer_tags" | tr ',' '\n' | sort -u | tr '\n' ',' | sed 's/,$//')
-		local merged_tags_esc="${merged_tags//"'"/"''"}"
-		db "$MEMORY_DB" "UPDATE learnings SET tags = '$merged_tags_esc' WHERE id = '$older_id_esc';"
-	fi
+	# All reads and writes in one atomic transaction.
+	# Tags are merged inside the transaction using SQLite string functions so
+	# the snapshot is taken after the write lock is held (no pre-read race).
+	# INSERT ... ON CONFLICT preserves max access_count and latest last_accessed_at.
+	db "$MEMORY_DB" <<EOF
+BEGIN IMMEDIATE;
 
-	# Transfer access history
-	db "$MEMORY_DB" "UPDATE learning_access SET id = '$older_id_esc' WHERE id = '$newer_id_esc' AND NOT EXISTS (SELECT 1 FROM learning_access WHERE id = '$older_id_esc');" ||
-		echo "[WARN] Failed to transfer access history from $newer_id_esc to $older_id_esc" >&2
+-- Merge tags inside the transaction: concatenate older+newer tags, deduplicate
+-- via a recursive CTE split, then write back. Only updates when newer has tags.
+UPDATE learnings SET tags = (
+    WITH src(raw) AS (
+        SELECT COALESCE((SELECT tags FROM learnings WHERE id = '$older_id_esc'), '')
+            || ',' ||
+            COALESCE((SELECT tags FROM learnings WHERE id = '$newer_id_esc'), '')
+    ),
+    split(tag, rest) AS (
+        SELECT '', (SELECT raw FROM src) || ','
+        UNION ALL
+        SELECT substr(rest, 1, instr(rest, ',') - 1),
+               substr(rest, instr(rest, ',') + 1)
+        FROM split WHERE rest != ''
+    )
+    SELECT GROUP_CONCAT(DISTINCT tag, ',') FROM split WHERE tag != ''
+)
+WHERE id = '$older_id_esc'
+  AND (SELECT COALESCE(tags, '') FROM learnings WHERE id = '$newer_id_esc') != '';
 
-	# Re-point relations and delete newer entry
-	db "$MEMORY_DB" "UPDATE learning_relations SET supersedes_id = '$older_id_esc' WHERE supersedes_id = '$newer_id_esc';"
-	db "$MEMORY_DB" "DELETE FROM learning_relations WHERE id = '$newer_id_esc';"
-	db "$MEMORY_DB" "DELETE FROM learning_access WHERE id = '$newer_id_esc';"
-	db "$MEMORY_DB" "DELETE FROM learnings WHERE id = '$newer_id_esc';"
+INSERT INTO learning_access (id, last_accessed_at, access_count)
+SELECT '$older_id_esc', last_accessed_at, access_count
+FROM learning_access WHERE id = '$newer_id_esc'
+ON CONFLICT(id) DO UPDATE SET
+    access_count = MAX(learning_access.access_count, excluded.access_count),
+    last_accessed_at = MAX(learning_access.last_accessed_at, excluded.last_accessed_at);
+
+UPDATE learning_relations SET supersedes_id = '$older_id_esc' WHERE supersedes_id = '$newer_id_esc';
+DELETE FROM learning_relations WHERE id = '$newer_id_esc';
+DELETE FROM learning_access WHERE id = '$newer_id_esc';
+DELETE FROM learnings WHERE id = '$newer_id_esc';
+
+COMMIT;
+EOF
 	return 0
 }
 
@@ -815,10 +856,12 @@ JOIN learnings l2 ON l1.type = l2.type
     AND l1.id < l2.id
     AND l1.content != l2.content
 WHERE (
+    -- Strip double quotes from content before JSON array construction to prevent
+    -- malformed JSON when content contains literal quotes (e.g., 'the "word" here').
     (SELECT COUNT(*) FROM (
-        SELECT value FROM json_each('["' || replace(lower(l1.content), ' ', '","') || '"]')
+        SELECT value FROM json_each('["' || replace(replace(lower(l1.content), '"', ''), ' ', '","') || '"]')
         INTERSECT
-        SELECT value FROM json_each('["' || replace(lower(l2.content), ' ', '","') || '"]')
+        SELECT value FROM json_each('["' || replace(replace(lower(l2.content), '"', ''), ' ', '","') || '"]')
     )) * 2.0 / (
         length(l1.content) - length(replace(l1.content, ' ', '')) + 1 +
         length(l2.content) - length(replace(l2.content, ' ', '')) + 1
@@ -861,12 +904,13 @@ EOF
 		printf '%s\n' "$removed_set" | grep -qxF "$id2" && continue
 		_consolidate_merge_pair "$id1" "$id2" "$created1" "$created2"
 		consolidated=$((consolidated + 1))
-		# Record the deleted (older) ID so subsequent pairs skip it
+		# Record the deleted (newer) ID so subsequent pairs skip it.
+		# _consolidate_merge_pair keeps the older entry and deletes the newer.
 		local _del_id
 		if [[ "$created1" < "$created2" ]]; then
-			_del_id="$id1"
-		else
 			_del_id="$id2"
+		else
+			_del_id="$id1"
 		fi
 		removed_set="${removed_set}
 ${_del_id}"
@@ -992,10 +1036,16 @@ EOF
 		delete_where="$delete_where AND id NOT IN ($exclude_sql)"
 	fi
 
-	db_cleanup "$MEMORY_DB" "DELETE FROM learning_relations WHERE id IN (SELECT id FROM learnings WHERE $delete_where);"
-	db_cleanup "$MEMORY_DB" "DELETE FROM learning_relations WHERE supersedes_id IN (SELECT id FROM learnings WHERE $delete_where);"
-	db "$MEMORY_DB" "DELETE FROM learning_access WHERE id IN (SELECT id FROM learnings WHERE $delete_where);"
-	db "$MEMORY_DB" "DELETE FROM learnings WHERE $delete_where;"
+	# All deletes in a single transaction so partial state cannot be left behind
+	# on mid-deletion failure (e.g., relations deleted but learnings retained).
+	db "$MEMORY_DB" <<EOF
+BEGIN IMMEDIATE;
+DELETE FROM learning_relations WHERE id IN (SELECT id FROM learnings WHERE $delete_where);
+DELETE FROM learning_relations WHERE supersedes_id IN (SELECT id FROM learnings WHERE $delete_where);
+DELETE FROM learning_access WHERE id IN (SELECT id FROM learnings WHERE $delete_where);
+DELETE FROM learnings WHERE $delete_where;
+COMMIT;
+EOF
 	db "$MEMORY_DB" "INSERT INTO learnings(learnings) VALUES('rebuild');"
 
 	log_success "Pruned $to_remove repetitive '$keyword' entries (kept $keep_count newest)"
@@ -1346,8 +1396,9 @@ INSERT OR IGNORE INTO learnings (id, session_id, content, type, tags, confidence
 SELECT id, session_id, content, type, tags, confidence, created_at, event_date, project_path, source
 FROM source.learnings;
 
-INSERT OR IGNORE INTO learning_access (id, last_accessed_at, access_count)
-SELECT id, last_accessed_at, access_count
+-- Include auto_captured so memories retain their auto-capture status after migration
+INSERT OR IGNORE INTO learning_access (id, last_accessed_at, access_count, auto_captured)
+SELECT id, last_accessed_at, access_count, auto_captured
 FROM source.learning_access;
 
 INSERT OR IGNORE INTO learning_relations (id, supersedes_id, relation_type, created_at)
@@ -1424,6 +1475,20 @@ cmd_namespaces_migrate() {
 	if [[ -z "$from_ns" || -z "$to_ns" ]]; then
 		log_error "Both --from and --to are required"
 		echo "Usage: memory-helper.sh namespaces migrate --from <ns|global> --to <ns|global> [--dry-run] [--move]"
+		return 1
+	fi
+
+	# Validate namespace names to prevent path traversal (e.g. ../../../etc).
+	# "global" is the reserved keyword for the root DB; all other names must match
+	# the canonical pattern: starts with a letter, then alphanumerics/hyphens/underscores,
+	# max 40 chars — same rule enforced by resolve_namespace in _common.sh.
+	local _ns_pattern='^[A-Za-z][A-Za-z0-9_-]{0,39}$'
+	if [[ "$from_ns" != "global" && ! "$from_ns" =~ $_ns_pattern ]]; then
+		log_error "Invalid --from namespace: '$from_ns' (must start with a letter, contain only alphanumerics/hyphens/underscores, max 40 chars)"
+		return 1
+	fi
+	if [[ "$to_ns" != "global" && ! "$to_ns" =~ $_ns_pattern ]]; then
+		log_error "Invalid --to namespace: '$to_ns' (must start with a letter, contain only alphanumerics/hyphens/underscores, max 40 chars)"
 		return 1
 	fi
 
