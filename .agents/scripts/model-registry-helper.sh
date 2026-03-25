@@ -265,25 +265,16 @@ sync_subagents() {
 # Sync: Embedded Model Data (from compare-models-helper.sh)
 # =============================================================================
 
-sync_embedded() {
-	local added=0
-	local updated=0
-
-	# Source the model data from compare-models-helper.sh
-	local compare_helper="${SCRIPT_DIR}/compare-models-helper.sh"
-	if [[ ! -f "$compare_helper" ]]; then
-		print_warning "compare-models-helper.sh not found"
-		return 0
-	fi
-
-	# Extract MODEL_DATA from compare-models-helper.sh
+# Extract the MODEL_DATA block from compare-models-helper.sh.
+# Outputs the raw pipe-delimited lines to stdout; returns 1 if not found.
+_extract_model_data() {
+	local compare_helper="$1"
 	local model_data=""
 	local in_model_data=false
 	while IFS= read -r line; do
 		if [[ "$line" == 'readonly MODEL_DATA="'* ]]; then
 			in_model_data=true
 			model_data="${line#*=\"}"
-			# Check if single-line
 			if [[ "$model_data" == *'"' ]]; then
 				model_data="${model_data%\"}"
 				break
@@ -302,66 +293,92 @@ ${line}"
 	done <"$compare_helper"
 
 	if [[ -z "$model_data" ]]; then
+		return 1
+	fi
+	printf '%s\n' "$model_data"
+	return 0
+}
+
+# Upsert a single pipe-delimited model line into the models table.
+# Arguments: <pipe-delimited line> <added_var_name> <updated_var_name>
+# Increments the named counter variables via eval.
+_upsert_embedded_model() {
+	local line="$1"
+	local added_ref="$2"
+	local updated_ref="$3"
+
+	local model_id provider display_name ctx input output tier caps best_for
+	model_id=$(echo "$line" | cut -d'|' -f1)
+	provider=$(echo "$line" | cut -d'|' -f2)
+	display_name=$(echo "$line" | cut -d'|' -f3)
+	ctx=$(echo "$line" | cut -d'|' -f4)
+	input=$(echo "$line" | cut -d'|' -f5)
+	output=$(echo "$line" | cut -d'|' -f6)
+	tier=$(echo "$line" | cut -d'|' -f7)
+	caps=$(echo "$line" | cut -d'|' -f8)
+	best_for=$(echo "$line" | cut -d'|' -f9)
+
+	local norm_name
+	norm_name=$(normalize_model_name "$model_id")
+
+	local existing
+	existing=$(db_query "SELECT model_id FROM models WHERE model_id='$(sql_escape "$model_id")' AND provider='$(sql_escape "$provider")';")
+
+	if [[ -n "$existing" ]]; then
+		db_query "
+            UPDATE models SET
+                display_name = '$(sql_escape "$display_name")',
+                normalized_name = '$(sql_escape "$norm_name")',
+                context_window = $ctx,
+                input_price = $input,
+                output_price = $output,
+                tier = '$(sql_escape "$tier")',
+                capabilities = '$(sql_escape "$caps")',
+                best_for = '$(sql_escape "$best_for")',
+                last_seen = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
+                source = 'embedded'
+            WHERE model_id = '$(sql_escape "$model_id")' AND provider = '$(sql_escape "$provider")';
+        "
+		eval "${updated_ref}=\$(( ${updated_ref} + 1 ))"
+	else
+		db_query "
+            INSERT INTO models (model_id, provider, display_name, normalized_name, context_window, input_price, output_price, tier, capabilities, best_for, source)
+            VALUES (
+                '$(sql_escape "$model_id")',
+                '$(sql_escape "$provider")',
+                '$(sql_escape "$display_name")',
+                '$(sql_escape "$norm_name")',
+                $ctx, $input, $output,
+                '$(sql_escape "$tier")',
+                '$(sql_escape "$caps")',
+                '$(sql_escape "$best_for")',
+                'embedded'
+            );
+        "
+		eval "${added_ref}=\$(( ${added_ref} + 1 ))"
+	fi
+	return 0
+}
+
+sync_embedded() {
+	local added=0
+	local updated=0
+
+	local compare_helper="${SCRIPT_DIR}/compare-models-helper.sh"
+	if [[ ! -f "$compare_helper" ]]; then
+		print_warning "compare-models-helper.sh not found"
+		return 0
+	fi
+
+	local model_data
+	if ! model_data=$(_extract_model_data "$compare_helper"); then
 		print_warning "Could not extract MODEL_DATA from compare-models-helper.sh"
 		return 0
 	fi
 
-	# Parse and upsert each model
 	while IFS= read -r line; do
 		[[ -z "$line" ]] && continue
-
-		local model_id provider display_name ctx input output tier caps best_for
-		model_id=$(echo "$line" | cut -d'|' -f1)
-		provider=$(echo "$line" | cut -d'|' -f2)
-		display_name=$(echo "$line" | cut -d'|' -f3)
-		ctx=$(echo "$line" | cut -d'|' -f4)
-		input=$(echo "$line" | cut -d'|' -f5)
-		output=$(echo "$line" | cut -d'|' -f6)
-		tier=$(echo "$line" | cut -d'|' -f7)
-		caps=$(echo "$line" | cut -d'|' -f8)
-		best_for=$(echo "$line" | cut -d'|' -f9)
-
-		# Compute normalized name for fuzzy matching
-		local norm_name
-		norm_name=$(normalize_model_name "$model_id")
-
-		# Check if model already exists
-		local existing
-		existing=$(db_query "SELECT model_id FROM models WHERE model_id='$(sql_escape "$model_id")' AND provider='$(sql_escape "$provider")';")
-
-		if [[ -n "$existing" ]]; then
-			db_query "
-                UPDATE models SET
-                    display_name = '$(sql_escape "$display_name")',
-                    normalized_name = '$(sql_escape "$norm_name")',
-                    context_window = $ctx,
-                    input_price = $input,
-                    output_price = $output,
-                    tier = '$(sql_escape "$tier")',
-                    capabilities = '$(sql_escape "$caps")',
-                    best_for = '$(sql_escape "$best_for")',
-                    last_seen = strftime('%Y-%m-%dT%H:%M:%SZ', 'now'),
-                    source = 'embedded'
-                WHERE model_id = '$(sql_escape "$model_id")' AND provider = '$(sql_escape "$provider")';
-            "
-			updated=$((updated + 1))
-		else
-			db_query "
-                INSERT INTO models (model_id, provider, display_name, normalized_name, context_window, input_price, output_price, tier, capabilities, best_for, source)
-                VALUES (
-                    '$(sql_escape "$model_id")',
-                    '$(sql_escape "$provider")',
-                    '$(sql_escape "$display_name")',
-                    '$(sql_escape "$norm_name")',
-                    $ctx, $input, $output,
-                    '$(sql_escape "$tier")',
-                    '$(sql_escape "$caps")',
-                    '$(sql_escape "$best_for")',
-                    'embedded'
-                );
-            "
-			added=$((added + 1))
-		fi
+		_upsert_embedded_model "$line" added updated
 	done <<<"$model_data"
 
 	db_query "
@@ -478,6 +495,94 @@ sync_opencode() {
 # Falls back to direct API probing when OpenCode CLI is not available.
 # Requires individual provider API keys in environment.
 
+# Fetch models JSON from a single provider API using the given key.
+# Outputs newline-separated model IDs to stdout; returns 1 on failure.
+_fetch_provider_models() {
+	local provider="$1"
+	local key_value="$2"
+
+	local models_json=""
+	case "$provider" in
+	Anthropic)
+		models_json=$(curl -s --max-time "$DEFAULT_TIMEOUT" \
+			-H "x-api-key: ${key_value}" \
+			-H "anthropic-version: 2023-06-01" \
+			"https://api.anthropic.com/v1/models" 2>/dev/null) || return 1
+		;;
+	OpenAI)
+		models_json=$(curl -s --max-time "$DEFAULT_TIMEOUT" \
+			-H "Authorization: Bearer ${key_value}" \
+			"https://api.openai.com/v1/models" 2>/dev/null) || return 1
+		;;
+	Google)
+		models_json=$(curl -s --max-time "$DEFAULT_TIMEOUT" \
+			"https://generativelanguage.googleapis.com/v1beta/models?key=${key_value}" 2>/dev/null) || return 1
+		;;
+	OpenRouter)
+		models_json=$(curl -s --max-time "$DEFAULT_TIMEOUT" \
+			-H "Authorization: Bearer ${key_value}" \
+			"https://openrouter.ai/api/v1/models" 2>/dev/null) || return 1
+		;;
+	Groq)
+		models_json=$(curl -s --max-time "$DEFAULT_TIMEOUT" \
+			-H "Authorization: Bearer ${key_value}" \
+			"https://api.groq.com/openai/v1/models" 2>/dev/null) || return 1
+		;;
+	DeepSeek)
+		models_json=$(curl -s --max-time "$DEFAULT_TIMEOUT" \
+			-H "Authorization: Bearer ${key_value}" \
+			"https://api.deepseek.com/v1/models" 2>/dev/null) || return 1
+		;;
+	*)
+		return 1
+		;;
+	esac
+
+	[[ -z "$models_json" ]] && return 1
+
+	case "$provider" in
+	Google)
+		echo "$models_json" | jq -r '.models[].name // empty' 2>/dev/null | sed 's|^models/||' | sort || return 1
+		;;
+	*)
+		echo "$models_json" | jq -r '.data[].id // empty' 2>/dev/null | sort || return 1
+		;;
+	esac
+	return 0
+}
+
+# Upsert a single model ID into provider_models for the given provider.
+_upsert_provider_model() {
+	local mid="$1"
+	local provider="$2"
+
+	local in_registry
+	in_registry=$(db_query "SELECT COUNT(*) FROM models WHERE model_id LIKE '%$(sql_escape "$mid")%' AND provider='$(sql_escape "$provider")';")
+	local in_reg_flag=0
+	[[ "$in_registry" -gt 0 ]] && in_reg_flag=1
+
+	local in_subagents
+	in_subagents=$(db_query "SELECT COUNT(*) FROM subagent_models WHERE model_full_id LIKE '%$(sql_escape "$mid")%';")
+	local in_sub_flag=0
+	[[ "$in_subagents" -gt 0 ]] && in_sub_flag=1
+
+	db_query "
+        INSERT INTO provider_models (model_id, provider, in_registry, in_subagents, discovered_at)
+        VALUES (
+            '$(sql_escape "$mid")',
+            '$(sql_escape "$provider")',
+            $in_reg_flag,
+            $in_sub_flag,
+            strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+        )
+        ON CONFLICT(model_id, provider) DO UPDATE SET
+            in_registry = excluded.in_registry,
+            in_subagents = excluded.in_subagents,
+            discovered_at = excluded.discovered_at;
+    "
+	return 0
+}
+
 sync_providers() {
 	local added=0
 
@@ -490,13 +595,11 @@ sync_providers() {
         ORDER BY id DESC LIMIT 1;
     " 2>/dev/null || echo "")
 
-	# If recent successful sync, skip
 	if [[ -n "$opencode_synced" && "$opencode_synced" -gt 0 ]]; then
 		print_info "Skipping direct API probing (OpenCode sync already discovered $opencode_synced models)"
 		return 0
 	fi
 
-	# Reuse provider key detection from compare-models-helper.sh
 	local provider_env_keys="Anthropic|ANTHROPIC_API_KEY
 OpenAI|OPENAI_API_KEY
 Google|GOOGLE_API_KEY,GEMINI_API_KEY
@@ -521,88 +624,14 @@ DeepSeek|DEEPSEEK_API_KEY"
 
 		[[ -z "$key_value" ]] && continue
 
-		local models_json=""
-		case "$provider" in
-		Anthropic)
-			models_json=$(curl -s --max-time "$DEFAULT_TIMEOUT" \
-				-H "x-api-key: ${key_value}" \
-				-H "anthropic-version: 2023-06-01" \
-				"https://api.anthropic.com/v1/models" 2>/dev/null) || continue
-			;;
-		OpenAI)
-			models_json=$(curl -s --max-time "$DEFAULT_TIMEOUT" \
-				-H "Authorization: Bearer ${key_value}" \
-				"https://api.openai.com/v1/models" 2>/dev/null) || continue
-			;;
-		Google)
-			models_json=$(curl -s --max-time "$DEFAULT_TIMEOUT" \
-				"https://generativelanguage.googleapis.com/v1beta/models?key=${key_value}" 2>/dev/null) || continue
-			;;
-		OpenRouter)
-			models_json=$(curl -s --max-time "$DEFAULT_TIMEOUT" \
-				-H "Authorization: Bearer ${key_value}" \
-				"https://openrouter.ai/api/v1/models" 2>/dev/null) || continue
-			;;
-		Groq)
-			models_json=$(curl -s --max-time "$DEFAULT_TIMEOUT" \
-				-H "Authorization: Bearer ${key_value}" \
-				"https://api.groq.com/openai/v1/models" 2>/dev/null) || continue
-			;;
-		DeepSeek)
-			models_json=$(curl -s --max-time "$DEFAULT_TIMEOUT" \
-				-H "Authorization: Bearer ${key_value}" \
-				"https://api.deepseek.com/v1/models" 2>/dev/null) || continue
-			;;
-		*)
-			continue
-			;;
-		esac
-
-		[[ -z "$models_json" ]] && continue
-
-		# Extract model IDs
 		local model_ids=""
-		case "$provider" in
-		Google)
-			model_ids=$(echo "$models_json" | jq -r '.models[].name // empty' 2>/dev/null | sed 's|^models/||' | sort) || continue
-			;;
-		*)
-			model_ids=$(echo "$models_json" | jq -r '.data[].id // empty' 2>/dev/null | sort) || continue
-			;;
-		esac
-
+		model_ids=$(_fetch_provider_models "$provider" "$key_value") || continue
 		[[ -z "$model_ids" ]] && continue
 
 		local provider_count=0
 		while IFS= read -r mid; do
 			[[ -z "$mid" ]] && continue
-
-			# Check if this model is in our registry
-			local in_registry
-			in_registry=$(db_query "SELECT COUNT(*) FROM models WHERE model_id LIKE '%$(sql_escape "$mid")%' AND provider='$(sql_escape "$provider")';")
-			local in_reg_flag=0
-			[[ "$in_registry" -gt 0 ]] && in_reg_flag=1
-
-			# Check if referenced in subagents
-			local in_subagents
-			in_subagents=$(db_query "SELECT COUNT(*) FROM subagent_models WHERE model_full_id LIKE '%$(sql_escape "$mid")%';")
-			local in_sub_flag=0
-			[[ "$in_subagents" -gt 0 ]] && in_sub_flag=1
-
-			db_query "
-                INSERT INTO provider_models (model_id, provider, in_registry, in_subagents, discovered_at)
-                VALUES (
-                    '$(sql_escape "$mid")',
-                    '$(sql_escape "$provider")',
-                    $in_reg_flag,
-                    $in_sub_flag,
-                    strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
-                )
-                ON CONFLICT(model_id, provider) DO UPDATE SET
-                    in_registry = excluded.in_registry,
-                    in_subagents = excluded.in_subagents,
-                    discovered_at = excluded.discovered_at;
-            "
+			_upsert_provider_model "$mid" "$provider"
 			provider_count=$((provider_count + 1))
 		done <<<"$model_ids"
 
@@ -1171,11 +1200,119 @@ cmd_export() {
 	return $?
 }
 
+# Classify a task description into a model tier.
+# Sets variables tier, reason, cost in the caller's scope via eval.
+# Arguments: <desc_lower>
+_route_classify_tier() {
+	local desc_lower="$1"
+	local out_tier="$2"
+	local out_reason="$3"
+	local out_cost="$4"
+
+	local tier="sonnet"
+	local reason="Default tier for general development tasks"
+	local cost="1x"
+
+	# Opus: architecture, design, security audit, novel, trade-off, evaluate
+	if echo "$desc_lower" | grep -qE 'architect|system.design|security.audit|novel|trade.?off|evaluat|complex.*(plan|design|decision)|from.scratch'; then
+		tier="opus"
+		reason="Complex reasoning, architecture, or novel problem-solving"
+		cost="3x"
+	# Haiku: rename, format, classify, triage, commit message, simple
+	elif echo "$desc_lower" | grep -qE 'rename|reformat|classify|triage|commit.message|simple.*(text|transform)|extract.field|sort|prioriti[sz]e|route|tag|label'; then
+		tier="haiku"
+		reason="Simple classification, formatting, or text transform"
+		cost="0.25x"
+	# Flash: summarize, large context, bulk, read, scan
+	elif echo "$desc_lower" | grep -qE 'summari[sz]e|large.*(file|context|document|pdf)|bulk|scan.*files|read.*all|200.page|overview|skim'; then
+		tier="flash"
+		reason="Large context processing or summarization"
+		cost="0.20x"
+	# Pro: large codebase, many files, refactor across
+	elif echo "$desc_lower" | grep -qE 'large.codebase|500.file|many.files|refactor.across|entire.project|full.repo|cross.file'; then
+		tier="pro"
+		reason="Large codebase analysis requiring both context and reasoning"
+		cost="1.5x"
+	fi
+
+	eval "${out_tier}=\"\${tier}\""
+	eval "${out_reason}=\"\${reason}\""
+	eval "${out_cost}=\"\${cost}\""
+	return 0
+}
+
+# Look up primary and fallback models for a tier from the registry.
+# Falls back to hardcoded defaults when the registry is empty.
+# Sets primary_model and fallback_model in the caller's scope via eval.
+_route_lookup_models() {
+	local tier="$1"
+	local out_primary="$2"
+	local out_fallback="$3"
+
+	local primary_model=""
+	local fallback_model=""
+	primary_model=$(db_query "SELECT model_id FROM models WHERE tier = '$tier' AND is_primary = 1 LIMIT 1;" 2>/dev/null || echo "")
+	fallback_model=$(db_query "SELECT model_id FROM models WHERE tier = '$tier' AND is_fallback = 1 LIMIT 1;" 2>/dev/null || echo "")
+
+	case "$tier" in
+	haiku)
+		primary_model="${primary_model:-claude-haiku-4-5}"
+		fallback_model="${fallback_model:-gemini-2.5-flash}"
+		;;
+	flash)
+		primary_model="${primary_model:-gemini-2.5-flash}"
+		fallback_model="${fallback_model:-gpt-4.1-mini}"
+		;;
+	sonnet)
+		primary_model="${primary_model:-claude-sonnet-4-6}"
+		fallback_model="${fallback_model:-gpt-4.1}"
+		;;
+	pro)
+		primary_model="${primary_model:-gemini-2.5-pro}"
+		fallback_model="${fallback_model:-claude-sonnet-4-6}"
+		;;
+	opus)
+		primary_model="${primary_model:-claude-opus-4-6}"
+		fallback_model="${fallback_model:-o3}"
+		;;
+	esac
+
+	eval "${out_primary}=\"\${primary_model}\""
+	eval "${out_fallback}=\"\${fallback_model}\""
+	return 0
+}
+
+# Print the routing result in human-readable or JSON format.
+_route_output() {
+	local json_flag="$1"
+	local description="$2"
+	local tier="$3"
+	local primary_model="$4"
+	local fallback_model="$5"
+	local cost="$6"
+	local reason="$7"
+
+	if [[ "$json_flag" == "true" ]]; then
+		printf '{"tier":"%s","model":"%s","fallback":"%s","cost":"%s","reason":"%s"}\n' \
+			"$tier" "$primary_model" "$fallback_model" "$cost" "$reason"
+	else
+		echo ""
+		echo "Task: $description"
+		echo ""
+		echo "  Recommended tier:  $tier"
+		echo "  Primary model:     $primary_model"
+		echo "  Fallback model:    $fallback_model"
+		echo "  Relative cost:     $cost"
+		echo "  Reason:            $reason"
+		echo ""
+	fi
+	return 0
+}
+
 cmd_route() {
 	local description="$*"
 	local json_flag=false
 
-	# Parse flags
 	local args=()
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
@@ -1206,77 +1343,13 @@ cmd_route() {
 	local desc_lower
 	desc_lower=$(echo "$description" | tr '[:upper:]' '[:lower:]')
 
-	local tier="sonnet"
-	local reason="Default tier for general development tasks"
-	local cost="1x"
+	local tier reason cost
+	_route_classify_tier "$desc_lower" tier reason cost
 
-	# Opus indicators: architecture, design, security audit, novel, trade-off, evaluate
-	if echo "$desc_lower" | grep -qE 'architect|system.design|security.audit|novel|trade.?off|evaluat|complex.*(plan|design|decision)|from.scratch'; then
-		tier="opus"
-		reason="Complex reasoning, architecture, or novel problem-solving"
-		cost="3x"
-	# Haiku indicators: rename, format, classify, triage, commit message, simple
-	elif echo "$desc_lower" | grep -qE 'rename|reformat|classify|triage|commit.message|simple.*(text|transform)|extract.field|sort|prioriti[sz]e|route|tag|label'; then
-		tier="haiku"
-		reason="Simple classification, formatting, or text transform"
-		cost="0.25x"
-	# Flash indicators: summarize, large context, bulk, read, scan
-	elif echo "$desc_lower" | grep -qE 'summari[sz]e|large.*(file|context|document|pdf)|bulk|scan.*files|read.*all|200.page|overview|skim'; then
-		tier="flash"
-		reason="Large context processing or summarization"
-		cost="0.20x"
-	# Pro indicators: large codebase, many files, refactor across
-	elif echo "$desc_lower" | grep -qE 'large.codebase|500.file|many.files|refactor.across|entire.project|full.repo|cross.file'; then
-		tier="pro"
-		reason="Large codebase analysis requiring both context and reasoning"
-		cost="1.5x"
-	fi
+	local primary_model fallback_model
+	_route_lookup_models "$tier" primary_model fallback_model
 
-	# Look up the primary model for this tier from the registry
-	local primary_model=""
-	local fallback_model=""
-	primary_model=$(db_query "SELECT model_id FROM models WHERE tier = '$tier' AND is_primary = 1 LIMIT 1;" 2>/dev/null || echo "")
-	fallback_model=$(db_query "SELECT model_id FROM models WHERE tier = '$tier' AND is_fallback = 1 LIMIT 1;" 2>/dev/null || echo "")
-
-	# Defaults if registry is empty
-	case "$tier" in
-	haiku)
-		primary_model="${primary_model:-claude-haiku-4-5}"
-		fallback_model="${fallback_model:-gemini-2.5-flash}"
-		;;
-	flash)
-		primary_model="${primary_model:-gemini-2.5-flash}"
-		fallback_model="${fallback_model:-gpt-4.1-mini}"
-		;;
-	sonnet)
-		primary_model="${primary_model:-claude-sonnet-4-6}"
-		fallback_model="${fallback_model:-gpt-4.1}"
-		;;
-	pro)
-		primary_model="${primary_model:-gemini-2.5-pro}"
-		fallback_model="${fallback_model:-claude-sonnet-4-6}"
-		;;
-	opus)
-		primary_model="${primary_model:-claude-opus-4-6}"
-		fallback_model="${fallback_model:-o3}"
-		;;
-	esac
-
-	if [[ "$json_flag" == "true" ]]; then
-		printf '{"tier":"%s","model":"%s","fallback":"%s","cost":"%s","reason":"%s"}\n' \
-			"$tier" "$primary_model" "$fallback_model" "$cost" "$reason"
-	else
-		echo ""
-		echo "Task: $description"
-		echo ""
-		echo "  Recommended tier:  $tier"
-		echo "  Primary model:     $primary_model"
-		echo "  Fallback model:    $fallback_model"
-		echo "  Relative cost:     $cost"
-		echo "  Reason:            $reason"
-		echo ""
-	fi
-
+	_route_output "$json_flag" "$description" "$tier" "$primary_model" "$fallback_model" "$cost" "$reason"
 	return 0
 }
 
