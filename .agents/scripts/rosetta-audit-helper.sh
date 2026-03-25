@@ -415,7 +415,7 @@ _migrate_print_cleanup_advice() {
 # Full scan of x86 Homebrew packages
 cmd_scan() {
 	_require_apple_silicon || return 0
-	_require_dual_brew_scan || return 0
+	_require_dual_brew_scan || return 1
 
 	echo -e "${BLUE}Rosetta Audit — Scanning Homebrew packages${NC}"
 	echo "================================================================"
@@ -501,9 +501,9 @@ cmd_migrate() {
 	local migrated=0 skipped=0 failed=0
 	local _p1
 	_p1=$(cat "$phase1_file")
-	migrated=$(echo "$_p1" | grep -o 'migrated=[0-9]*' | cut -d= -f2)
-	skipped=$(echo "$_p1" | grep -o 'skipped=[0-9]*' | cut -d= -f2)
-	failed=$(echo "$_p1" | grep -o 'failed=[0-9]*' | cut -d= -f2)
+	migrated=$(echo "$_p1" | grep -o 'migrated=[0-9]*' | cut -d= -f2 || echo "0")
+	skipped=$(echo "$_p1" | grep -o 'skipped=[0-9]*' | cut -d= -f2 || echo "0")
+	failed=$(echo "$_p1" | grep -o 'failed=[0-9]*' | cut -d= -f2 || echo "0")
 
 	# Phase 2: Remove ALL x86 packages (duplicates + migrated)
 	# Now safe because ARM versions are installed for everything migratable
@@ -513,7 +513,7 @@ cmd_migrate() {
 	_migrate_remove_x86_packages "$dry_run" "$phase2_file"
 
 	local removed_dups=0
-	removed_dups=$(grep -o 'removed=[0-9]*' "$phase2_file" | cut -d= -f2)
+	removed_dups=$(grep -o 'removed=[0-9]*' "$phase2_file" | cut -d= -f2 || echo "0")
 
 	_migrate_print_summary "$dry_run" "$migrated" "$removed_dups" "$skipped" "$failed"
 
