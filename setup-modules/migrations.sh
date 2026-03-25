@@ -285,134 +285,144 @@ cleanup_stale_bun_opencode() {
 	return 0
 }
 
-# Migrate .agent -> .agents in user projects and local config
-# v2.104.0: Industry converging on .agents/ folder convention (aligning with AGENTS.md)
-# This migrates:
-# 1. .agent symlinks in user projects -> .agents
-# 2. .agent/loop-state/ -> .agents/loop-state/ in user projects
-# 3. .gitignore entries in user projects
-# 4. References in user's AI assistant configs
-# 5. References in ~/.aidevops/ config files
-migrate_agent_to_agents_folder() {
-	print_info "Checking for .agent -> .agents migration..."
+# Migrate legacy .agent symlink/directory to .agents in a single repo.
+# Args: $1 = repo_path
+# Prints: info messages for each migration action
+# Returns: 0 on success; sets _migrate_count to number of items migrated
+_migrate_repo_agent_symlinks() {
+	local repo_path="$1"
+	_migrate_count=0
 
-	local migrated=0
-
-	# 1. Migrate .agent symlinks in registered repos
-	local repos_file="$HOME/.config/aidevops/repos.json"
-	if [[ -f "$repos_file" ]] && command -v jq &>/dev/null; then
-		while IFS= read -r repo_path; do
-			[[ -z "$repo_path" ]] && continue
-			[[ ! -d "$repo_path" ]] && continue
-
-			# Migrate legacy .agent symlink/directory to .agents real directory
-			if [[ -L "$repo_path/.agent" ]]; then
-				rm -f "$repo_path/.agent"
-				if [[ ! -d "$repo_path/.agents" ]]; then
-					mkdir -p "$repo_path/.agents"
-				fi
-				print_info "  Removed legacy .agent symlink in $(basename "$repo_path")"
-				((++migrated))
-			elif [[ -d "$repo_path/.agent" && ! -L "$repo_path/.agent" ]]; then
-				# Real directory (not symlink) - rename it
-				if [[ ! -e "$repo_path/.agents" ]]; then
-					mv "$repo_path/.agent" "$repo_path/.agents"
-					print_info "  Renamed directory: $repo_path/.agent -> .agents"
-					((++migrated))
-				fi
-			fi
-
-			# Migrate legacy .agents symlink to real directory
-			if [[ -L "$repo_path/.agents" ]]; then
-				rm -f "$repo_path/.agents"
-				mkdir -p "$repo_path/.agents"
-				print_info "  Replaced .agents symlink with real directory in $(basename "$repo_path")"
-				((++migrated))
-			fi
-
-			# Update .gitignore: remove legacy bare ".agents" (now tracked),
-			# add runtime artifact ignores, migrate .agent/ paths.
-			# SKIP in non-interactive mode (e.g. auto-update cron) to avoid
-			# leaving uncommitted changes in user repos (issue #2570 bug 1).
-			local gitignore="$repo_path/.gitignore"
-			if [[ "${NON_INTERACTIVE:-false}" == "true" ]]; then
-				if [[ -f "$gitignore" ]]; then
-					local needs_gitignore_update=false
-					if grep -q "^\.agents$" "$gitignore" 2>/dev/null ||
-						grep -q "^\.agent$" "$gitignore" 2>/dev/null ||
-						grep -q "^\.agent/loop-state/" "$gitignore" 2>/dev/null ||
-						! grep -q "^\.agents/loop-state/" "$gitignore" 2>/dev/null; then
-						needs_gitignore_update=true
-					fi
-					if [[ "$needs_gitignore_update" == "true" ]]; then
-						print_warning "  $(basename "$repo_path")/.gitignore needs migration (skipped in non-interactive mode)"
-						print_info "  Run 'aidevops init' in $(basename "$repo_path") or 'setup.sh -i' to apply"
-					fi
-				fi
-			else
-				if [[ -f "$gitignore" ]]; then
-					# Remove legacy bare ".agents" and ".agent" entries (added by older versions)
-					# .agents/ is now a real committed directory, not a symlink to ignore
-					if grep -q "^\.agents$" "$gitignore" 2>/dev/null; then
-						sed -i '' '/^\.agents$/d' "$gitignore" 2>/dev/null ||
-							sed -i '/^\.agents$/d' "$gitignore" 2>/dev/null || true
-						print_info "  Removed legacy bare .agents from .gitignore in $(basename "$repo_path")"
-					fi
-					if grep -q "^\.agent$" "$gitignore" 2>/dev/null; then
-						sed -i '' '/^\.agent$/d' "$gitignore" 2>/dev/null ||
-							sed -i '/^\.agent$/d' "$gitignore" 2>/dev/null || true
-					fi
-
-					# Migrate .agent/loop-state/ -> .agents/loop-state/
-					if grep -q "^\.agent/loop-state/" "$gitignore" 2>/dev/null; then
-						sed -i '' 's|^\.agent/loop-state/|.agents/loop-state/|' "$gitignore" 2>/dev/null ||
-							sed -i 's|^\.agent/loop-state/|.agents/loop-state/|' "$gitignore" 2>/dev/null || true
-					fi
-
-					# Add runtime artifact ignores if not present
-					if ! grep -q "^\.agents/loop-state/" "$gitignore" 2>/dev/null; then
-						# Ensure trailing newline before appending (prevents malformed entries like *.zip.agents/loop-state/)
-						[[ -s "$gitignore" && $(tail -c1 "$gitignore" | wc -l) -eq 0 ]] && printf '\n' >>"$gitignore"
-						{
-							echo ""
-							echo "# aidevops runtime artifacts"
-							echo ".agents/loop-state/"
-							echo ".agents/tmp/"
-							echo ".agents/memory/"
-						} >>"$gitignore"
-						print_info "  Added .agents/ runtime artifact ignores in $(basename "$repo_path")"
-					fi
-				fi
-			fi
-		done < <(jq -r '.initialized_repos[].path' "$repos_file" 2>/dev/null)
+	# Migrate legacy .agent symlink/directory to .agents real directory
+	if [[ -L "$repo_path/.agent" ]]; then
+		rm -f "$repo_path/.agent"
+		if [[ ! -d "$repo_path/.agents" ]]; then
+			mkdir -p "$repo_path/.agents"
+		fi
+		print_info "  Removed legacy .agent symlink in $(basename "$repo_path")"
+		((_migrate_count++))
+	elif [[ -d "$repo_path/.agent" && ! -L "$repo_path/.agent" ]]; then
+		# Real directory (not symlink) - rename it
+		if [[ ! -e "$repo_path/.agents" ]]; then
+			mv "$repo_path/.agent" "$repo_path/.agents"
+			print_info "  Renamed directory: $repo_path/.agent -> .agents"
+			((_migrate_count++))
+		fi
 	fi
 
-	# 2. Also scan ~/Git/ for any .agent symlinks or directories not in repos.json
-	if [[ -d "$HOME/Git" ]]; then
-		while IFS= read -r -d '' agent_path; do
-			local repo_dir
-			repo_dir=$(dirname "$agent_path")
-
-			if [[ -L "$agent_path" ]]; then
-				# Symlink: remove and create real directory
-				rm -f "$agent_path"
-				if [[ ! -d "$repo_dir/.agents" ]]; then
-					mkdir -p "$repo_dir/.agents"
-				fi
-				print_info "  Removed legacy .agent symlink: $agent_path"
-				((++migrated))
-			elif [[ -d "$agent_path" ]]; then
-				# Directory: rename to .agents if .agents doesn't exist
-				if [[ ! -e "$repo_dir/.agents" ]]; then
-					mv "$agent_path" "$repo_dir/.agents"
-					print_info "  Renamed directory: $agent_path -> .agents"
-					((++migrated))
-				fi
-			fi
-		done < <(find "$HOME/Git" -maxdepth 3 -name ".agent" \( -type l -o -type d \) -print0 2>/dev/null)
+	# Migrate legacy .agents symlink to real directory
+	if [[ -L "$repo_path/.agents" ]]; then
+		rm -f "$repo_path/.agents"
+		mkdir -p "$repo_path/.agents"
+		print_info "  Replaced .agents symlink with real directory in $(basename "$repo_path")"
+		((_migrate_count++))
 	fi
 
-	# 3. Update AI assistant config files that reference .agent/
+	return 0
+}
+
+# Update .gitignore in a repo: remove legacy entries, add runtime artifact ignores.
+# Args: $1 = repo_path
+# SKIP in non-interactive mode to avoid leaving uncommitted changes (issue #2570 bug 1).
+_migrate_repo_gitignore() {
+	local repo_path="$1"
+	local gitignore="$repo_path/.gitignore"
+
+	if [[ "${NON_INTERACTIVE:-false}" == "true" ]]; then
+		if [[ -f "$gitignore" ]]; then
+			local needs_gitignore_update=false
+			if grep -q "^\.agents$" "$gitignore" 2>/dev/null ||
+				grep -q "^\.agent$" "$gitignore" 2>/dev/null ||
+				grep -q "^\.agent/loop-state/" "$gitignore" 2>/dev/null ||
+				! grep -q "^\.agents/loop-state/" "$gitignore" 2>/dev/null; then
+				needs_gitignore_update=true
+			fi
+			if [[ "$needs_gitignore_update" == "true" ]]; then
+				print_warning "  $(basename "$repo_path")/.gitignore needs migration (skipped in non-interactive mode)"
+				print_info "  Run 'aidevops init' in $(basename "$repo_path") or 'setup.sh -i' to apply"
+			fi
+		fi
+		return 0
+	fi
+
+	if [[ ! -f "$gitignore" ]]; then
+		return 0
+	fi
+
+	# Remove legacy bare ".agents" and ".agent" entries (added by older versions)
+	# .agents/ is now a real committed directory, not a symlink to ignore
+	if grep -q "^\.agents$" "$gitignore" 2>/dev/null; then
+		sed -i '' '/^\.agents$/d' "$gitignore" 2>/dev/null ||
+			sed -i '/^\.agents$/d' "$gitignore" 2>/dev/null || true
+		print_info "  Removed legacy bare .agents from .gitignore in $(basename "$repo_path")"
+	fi
+	if grep -q "^\.agent$" "$gitignore" 2>/dev/null; then
+		sed -i '' '/^\.agent$/d' "$gitignore" 2>/dev/null ||
+			sed -i '/^\.agent$/d' "$gitignore" 2>/dev/null || true
+	fi
+
+	# Migrate .agent/loop-state/ -> .agents/loop-state/
+	if grep -q "^\.agent/loop-state/" "$gitignore" 2>/dev/null; then
+		sed -i '' 's|^\.agent/loop-state/|.agents/loop-state/|' "$gitignore" 2>/dev/null ||
+			sed -i 's|^\.agent/loop-state/|.agents/loop-state/|' "$gitignore" 2>/dev/null || true
+	fi
+
+	# Add runtime artifact ignores if not present
+	if ! grep -q "^\.agents/loop-state/" "$gitignore" 2>/dev/null; then
+		# Ensure trailing newline before appending (prevents malformed entries like *.zip.agents/loop-state/)
+		[[ -s "$gitignore" && $(tail -c1 "$gitignore" | wc -l) -eq 0 ]] && printf '\n' >>"$gitignore"
+		{
+			echo ""
+			echo "# aidevops runtime artifacts"
+			echo ".agents/loop-state/"
+			echo ".agents/tmp/"
+			echo ".agents/memory/"
+		} >>"$gitignore"
+		print_info "  Added .agents/ runtime artifact ignores in $(basename "$repo_path")"
+	fi
+
+	return 0
+}
+
+# Scan ~/Git/ for .agent symlinks or directories not covered by repos.json.
+# Sets _migrate_count to number of items migrated.
+_migrate_git_dir_agent_paths() {
+	_migrate_count=0
+
+	if [[ ! -d "$HOME/Git" ]]; then
+		return 0
+	fi
+
+	while IFS= read -r -d '' agent_path; do
+		local repo_dir
+		repo_dir=$(dirname "$agent_path")
+
+		if [[ -L "$agent_path" ]]; then
+			# Symlink: remove and create real directory
+			rm -f "$agent_path"
+			if [[ ! -d "$repo_dir/.agents" ]]; then
+				mkdir -p "$repo_dir/.agents"
+			fi
+			print_info "  Removed legacy .agent symlink: $agent_path"
+			((_migrate_count++))
+		elif [[ -d "$agent_path" ]]; then
+			# Directory: rename to .agents if .agents doesn't exist
+			if [[ ! -e "$repo_dir/.agents" ]]; then
+				mv "$agent_path" "$repo_dir/.agents"
+				print_info "  Renamed directory: $agent_path -> .agents"
+				((_migrate_count++))
+			fi
+		fi
+	done < <(find "$HOME/Git" -maxdepth 3 -name ".agent" \( -type l -o -type d \) -print0 2>/dev/null)
+
+	return 0
+}
+
+# Update AI assistant config files and session greeting cache that reference .agent/.
+# Sets _migrate_count to number of files updated.
+_migrate_ai_config_agent_refs() {
+	_migrate_count=0
+
 	local ai_config_files=(
 		"$HOME/.config/opencode/agent/AGENTS.md"
 		"$HOME/.config/Claude/AGENTS.md"
@@ -426,12 +436,12 @@ migrate_agent_to_agents_folder() {
 				sed -i '' 's|\.agent/|.agents/|g' "$config_file" 2>/dev/null ||
 					sed -i 's|\.agent/|.agents/|g' "$config_file" 2>/dev/null || true
 				print_info "  Updated references in $config_file"
-				((++migrated))
+				((_migrate_count++))
 			fi
 		fi
 	done
 
-	# 4. Update session greeting cache if it references .agent/
+	# Update session greeting cache if it references .agent/
 	local greeting_cache="$HOME/.aidevops/cache/session-greeting.txt"
 	if [[ -f "$greeting_cache" ]]; then
 		if grep -q '\.agent/' "$greeting_cache" 2>/dev/null; then
@@ -439,6 +449,44 @@ migrate_agent_to_agents_folder() {
 				sed -i 's|\.agent/|.agents/|g' "$greeting_cache" 2>/dev/null || true
 		fi
 	fi
+
+	return 0
+}
+
+# Migrate .agent -> .agents in user projects and local config
+# v2.104.0: Industry converging on .agents/ folder convention (aligning with AGENTS.md)
+# This migrates:
+# 1. .agent symlinks in user projects -> .agents
+# 2. .agent/loop-state/ -> .agents/loop-state/ in user projects
+# 3. .gitignore entries in user projects
+# 4. References in user's AI assistant configs
+# 5. References in ~/.aidevops/ config files
+migrate_agent_to_agents_folder() {
+	print_info "Checking for .agent -> .agents migration..."
+
+	local migrated=0
+
+	# 1. Migrate .agent symlinks and .gitignore in registered repos
+	local repos_file="$HOME/.config/aidevops/repos.json"
+	if [[ -f "$repos_file" ]] && command -v jq &>/dev/null; then
+		while IFS= read -r repo_path; do
+			[[ -z "$repo_path" ]] && continue
+			[[ ! -d "$repo_path" ]] && continue
+
+			_migrate_repo_agent_symlinks "$repo_path"
+			migrated=$((migrated + _migrate_count))
+
+			_migrate_repo_gitignore "$repo_path"
+		done < <(jq -r '.initialized_repos[].path' "$repos_file" 2>/dev/null)
+	fi
+
+	# 2. Scan ~/Git/ for .agent paths not in repos.json
+	_migrate_git_dir_agent_paths
+	migrated=$((migrated + _migrate_count))
+
+	# 3. Update AI assistant config files and greeting cache
+	_migrate_ai_config_agent_refs
+	migrated=$((migrated + _migrate_count))
 
 	if [[ $migrated -gt 0 ]]; then
 		print_success "Migrated $migrated .agent -> .agents reference(s)"
@@ -449,19 +497,12 @@ migrate_agent_to_agents_folder() {
 	return 0
 }
 
-# Remove deprecated MCP entries from opencode.json
-# These MCPs have been replaced by curl-based subagents (zero context cost)
-cleanup_deprecated_mcps() {
-	local opencode_config
-	opencode_config=$(find_opencode_config) || return 0
-
-	if [[ ! -f "$opencode_config" ]]; then
-		return 0
-	fi
-
-	if ! command -v jq &>/dev/null; then
-		return 0
-	fi
+# Remove deprecated MCP and tool entries from a config file.
+# Args: $1 = path to tmp config file to modify in-place
+# Sets _cleanup_count to number of entries removed.
+_remove_deprecated_mcp_entries() {
+	local tmp_config="$1"
+	_cleanup_count=0
 
 	# MCPs replaced by curl subagents in v2.79.0
 	local deprecated_mcps=(
@@ -488,17 +529,10 @@ cleanup_deprecated_mcps() {
 		"repomix_*"
 	)
 
-	local cleaned=0
-	local tmp_config
-	tmp_config=$(mktemp)
-	trap 'rm -f "${tmp_config:-}"' RETURN
-
-	cp "$opencode_config" "$tmp_config"
-
 	for mcp in "${deprecated_mcps[@]}"; do
 		if jq -e ".mcp[\"$mcp\"]" "$tmp_config" >/dev/null 2>&1; then
 			jq "del(.mcp[\"$mcp\"])" "$tmp_config" >"${tmp_config}.new" && mv "${tmp_config}.new" "$tmp_config"
-			((++cleaned))
+			((_cleanup_count++))
 		fi
 	done
 
@@ -513,7 +547,16 @@ cleanup_deprecated_mcps() {
 		jq 'del(.agent.SEO.tools["dataforseo_*"]) | del(.agent.SEO.tools["serper_*"]) | del(.agent.SEO.tools["ahrefs_*"])' "$tmp_config" >"${tmp_config}.new" && mv "${tmp_config}.new" "$tmp_config"
 	fi
 
-	# Migrate npx/pipx commands to full binary paths (faster startup, PATH-independent)
+	return 0
+}
+
+# Migrate npx/pipx/bunx MCP commands to full binary paths (faster startup).
+# Args: $1 = path to tmp config file to modify in-place
+# Sets _cleanup_count to number of entries migrated.
+_migrate_mcp_npx_to_binary() {
+	local tmp_config="$1"
+	_cleanup_count=0
+
 	# Parallel arrays avoid bash associative array issues with @ in package names
 	local -a mcp_pkgs=(
 		"chrome-devtools-mcp"
@@ -546,7 +589,7 @@ cleanup_deprecated_mcps() {
 			full_path=$(resolve_mcp_binary_path "$bin_name")
 			if [[ -n "$full_path" ]]; then
 				jq --arg k "$mcp_key" --arg p "$full_path" '.mcp[$k].command = [$p]' "$tmp_config" >"${tmp_config}.new" && mv "${tmp_config}.new" "$tmp_config"
-				((++cleaned))
+				((_cleanup_count++))
 			fi
 		fi
 	done
@@ -563,9 +606,41 @@ cleanup_deprecated_mcps() {
 				outscraper_key=$(source "$HOME/.config/aidevops/credentials.sh" && echo "${OUTSCRAPER_API_KEY:-}")
 			fi
 			jq --arg p "$outscraper_path" --arg key "$outscraper_key" '.mcp.outscraper.command = [$p] | .mcp.outscraper.environment = {"OUTSCRAPER_API_KEY": $key}' "$tmp_config" >"${tmp_config}.new" && mv "${tmp_config}.new" "$tmp_config"
-			((++cleaned))
+			((_cleanup_count++))
 		fi
 	fi
+
+	return 0
+}
+
+# Remove deprecated MCP entries from opencode.json
+# These MCPs have been replaced by curl-based subagents (zero context cost)
+cleanup_deprecated_mcps() {
+	local opencode_config
+	opencode_config=$(find_opencode_config) || return 0
+
+	if [[ ! -f "$opencode_config" ]]; then
+		return 0
+	fi
+
+	if ! command -v jq &>/dev/null; then
+		return 0
+	fi
+
+	local cleaned=0
+	local tmp_config
+	tmp_config=$(mktemp)
+	trap 'rm -f "${tmp_config:-}"' RETURN
+
+	cp "$opencode_config" "$tmp_config"
+
+	# Remove deprecated MCP and tool entries
+	_remove_deprecated_mcp_entries "$tmp_config"
+	cleaned=$((cleaned + _cleanup_count))
+
+	# Migrate npx/pipx commands to full binary paths (faster startup, PATH-independent)
+	_migrate_mcp_npx_to_binary "$tmp_config"
+	cleaned=$((cleaned + _cleanup_count))
 
 	if [[ $cleaned -gt 0 ]]; then
 		create_backup_with_rotation "$opencode_config" "opencode"
