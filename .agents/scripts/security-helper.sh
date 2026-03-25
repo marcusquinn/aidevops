@@ -484,6 +484,310 @@ update_scan_results_log() {
 	return 0
 }
 
+# Determine the skill scanner command to use.
+# Prints the command string to stdout; returns 1 if no scanner is available.
+_skill_scan_resolve_scanner() {
+	if check_command skill-scanner; then
+		echo "skill-scanner"
+		return 0
+	elif check_command uvx; then
+		echo "uvx cisco-ai-skill-scanner"
+		return 0
+	elif check_command pipx; then
+		echo "pipx run cisco-ai-skill-scanner"
+		return 0
+	fi
+
+	echo -e "${YELLOW}Cisco Skill Scanner not installed.${NC}"
+	echo ""
+	echo "Install with:"
+	echo "  uv tool install cisco-ai-skill-scanner"
+	echo "  # or via pip"
+	echo "  pip3 install --user cisco-ai-skill-scanner"
+	echo "  # or run setup.sh to auto-install"
+	echo "  aidevops update"
+	echo ""
+	return 1
+}
+
+# Phase 1: launch one background scan per skill; populate indexed temp files.
+# Arguments: scanner_cmd agents_dir skill_sources scan_tmpdir
+# Outputs (via stdout, newline-separated): "pid name local_path" per launched job.
+_skill_scan_launch_parallel() {
+	local scanner_cmd="$1"
+	local agents_dir="$2"
+	local skill_sources="$3"
+	local scan_tmpdir="$4"
+
+	local scan_index=0
+
+	while IFS= read -r skill_json; do
+		local name local_path full_path scan_target skill_dir
+		name=$(echo "$skill_json" | jq -r '.name')
+		local_path=$(echo "$skill_json" | jq -r '.local_path')
+		full_path="${agents_dir}/${local_path#.agents/}"
+
+		if [[ ! -f "$full_path" ]]; then
+			echo -e "${YELLOW}SKIP${NC}: $name (file not found: $local_path)"
+			continue
+		fi
+
+		# Skill scanner expects a directory with SKILL.md; scan parent dir for
+		# standalone markdown files.
+		skill_dir="${full_path%.md}"
+		if [[ -d "$skill_dir" ]]; then
+			scan_target="$skill_dir"
+		else
+			scan_target="$(dirname "$full_path")"
+		fi
+
+		# Launch scan in background; write output to indexed temp files.
+		$scanner_cmd scan "$scan_target" --format json \
+			>"$scan_tmpdir/$scan_index.json" \
+			2>"$scan_tmpdir/$scan_index.err" &
+		echo "$! $name $local_path"
+		scan_index=$((scan_index + 1))
+	done < <(jq -c '.skills[]' "$skill_sources" 2>/dev/null)
+
+	return 0
+}
+
+# Phase 2: wait for each background scan and accumulate counters.
+# Arguments: scan_tmpdir results_file
+#   scan_tmpdir  — directory containing indexed .json/.err files from Phase 1
+#   results_file — path to write "scanned issues findings critical high medium" summary line
+# Reads: indexed arrays scan_pids scan_names scan_paths (must be in caller scope — NOT a subshell).
+_skill_scan_collect_results() {
+	local scan_tmpdir="$1"
+	local results_file="$2"
+
+	local skills_scanned=0
+	local skills_with_issues=0
+	local total_findings=0
+	local total_critical=0
+	local total_high=0
+	local total_medium=0
+
+	local i
+	for i in "${!scan_pids[@]}"; do
+		wait "${scan_pids[$i]}" 2>/dev/null || true
+
+		echo -e "${CYAN}Scanning${NC}: ${scan_names[$i]} (${scan_paths[$i]})"
+
+		if [[ -s "$scan_tmpdir/$i.err" ]]; then
+			echo -e "${RED}Error scanning skill '${scan_names[$i]}':${NC}" >&2
+			cat "$scan_tmpdir/$i.err" >&2
+		fi
+
+		local scan_output=""
+		if [[ -s "$scan_tmpdir/$i.json" ]]; then
+			scan_output=$(cat "$scan_tmpdir/$i.json")
+		fi
+
+		if [[ -n "$scan_output" ]]; then
+			local findings max_severity
+			findings=$(echo "$scan_output" | jq -r '.total_findings // 0' 2>/dev/null || echo "0")
+			max_severity=$(echo "$scan_output" | jq -r '.max_severity // "SAFE"' 2>/dev/null || echo "SAFE")
+
+			if [[ "$findings" -gt 0 ]]; then
+				total_findings=$((total_findings + findings))
+				skills_with_issues=$((skills_with_issues + 1))
+				echo -e "  ${RED}ISSUES${NC}: $findings findings (max severity: $max_severity)"
+
+				local skill_critical skill_high skill_medium
+				skill_critical=$(echo "$scan_output" | jq '[.findings[]? | select(.severity == "CRITICAL")] | length' 2>/dev/null || echo "0")
+				skill_high=$(echo "$scan_output" | jq '[.findings[]? | select(.severity == "HIGH")] | length' 2>/dev/null || echo "0")
+				skill_medium=$(echo "$scan_output" | jq '[.findings[]? | select(.severity == "MEDIUM")] | length' 2>/dev/null || echo "0")
+				total_critical=$((total_critical + skill_critical))
+				total_high=$((total_high + skill_high))
+				total_medium=$((total_medium + skill_medium))
+
+				echo "$scan_output" | jq -r \
+					'.findings[]? | select(.severity == "CRITICAL" or .severity == "HIGH") | "  [\(.severity)] \(.rule_id): \(.description)"' \
+					2>/dev/null || true
+			else
+				echo -e "  ${GREEN}SAFE${NC}"
+			fi
+		else
+			echo -e "  ${GREEN}SAFE${NC} (no output from scanner)"
+		fi
+
+		skills_scanned=$((skills_scanned + 1))
+	done
+
+	# Write summary to file so the caller can read it without a subshell.
+	printf '%s %s %s %s %s %s\n' \
+		"$skills_scanned" "$skills_with_issues" "$total_findings" \
+		"$total_critical" "$total_high" "$total_medium" \
+		>"$results_file"
+	return 0
+}
+
+# Advisory VirusTotal scan over all imported skills (non-blocking).
+# Arguments: vt_helper agents_dir skill_sources
+_skill_scan_advisory_vt() {
+	local vt_helper="$1"
+	local agents_dir="$2"
+	local skill_sources="$3"
+
+	echo ""
+	echo -e "${CYAN}Running advisory VirusTotal scan...${NC}"
+	echo -e "${YELLOW}(VT scans are advisory only - Cisco scanner is the security gate)${NC}"
+	echo ""
+
+	local vt_issues=0
+	while IFS= read -r skill_json; do
+		local name local_path full_path scan_target
+		name=$(echo "$skill_json" | jq -r '.name')
+		local_path=$(echo "$skill_json" | jq -r '.local_path')
+		full_path="${agents_dir}/${local_path#.agents/}"
+
+		if [[ ! -f "$full_path" ]]; then
+			continue
+		fi
+
+		echo -e "${CYAN}VT Scanning${NC}: $name"
+		scan_target="$full_path"
+		if [[ -d "${full_path%.*}" ]]; then
+			scan_target="${full_path%.*}"
+		fi
+		"$vt_helper" scan-skill "$scan_target" --quiet 2>/dev/null || {
+			vt_issues=$((vt_issues + 1))
+			echo -e "  ${YELLOW}VT flagged issues${NC} for $name"
+		}
+	done < <(jq -c '.skills[]' "$skill_sources")
+
+	if [[ $vt_issues -gt 0 ]]; then
+		echo ""
+		echo -e "${YELLOW}VirusTotal flagged ${vt_issues} skill(s) - review recommended${NC}"
+	else
+		echo ""
+		echo -e "${GREEN}VirusTotal: No threats detected${NC}"
+	fi
+
+	return 0
+}
+
+# Scan all imported skills in parallel and report results.
+# Arguments: scanner_cmd agents_dir skill_sources
+_skill_scan_all() {
+	local scanner_cmd="$1"
+	local agents_dir="$2"
+	local skill_sources="$3"
+
+	if [[ ! -f "$skill_sources" ]] || ! check_command jq; then
+		echo -e "${YELLOW}No skill-sources.json found or jq not available.${NC}"
+		return 1
+	fi
+
+	local skill_count
+	skill_count=$(jq '.skills | length' "$skill_sources" 2>/dev/null || echo "0")
+
+	if [[ "$skill_count" -eq 0 ]]; then
+		echo -e "${GREEN}No imported skills to scan.${NC}"
+		return 0
+	fi
+
+	echo -e "Scanning ${skill_count} imported skills (parallel)..."
+	echo ""
+
+	# Parallelise skill scanning to avoid serial Python cold-start overhead.
+	# Each skill-scanner invocation cold-starts Python + litellm (~7.7s).
+	# Running 8 skills serially = ~62s; parallel = ~8s (1 cold-start latency).
+	local scan_tmpdir
+	scan_tmpdir=$(mktemp -d "${TMPDIR:-/tmp}/skill-scan-XXXXXX")
+	# shellcheck disable=SC2064
+	trap "rm -rf '$scan_tmpdir'" RETURN
+
+	# Phase 1: launch all scans in parallel; capture pid/name/path per job.
+	local scan_pids=()
+	local scan_names=()
+	local scan_paths=()
+
+	while IFS= read -r launch_line; do
+		local pid name lpath
+		pid=$(echo "$launch_line" | cut -d' ' -f1)
+		name=$(echo "$launch_line" | cut -d' ' -f2)
+		lpath=$(echo "$launch_line" | cut -d' ' -f3-)
+		scan_pids+=("$pid")
+		scan_names+=("$name")
+		scan_paths+=("$lpath")
+	done < <(_skill_scan_launch_parallel "$scanner_cmd" "$agents_dir" "$skill_sources" "$scan_tmpdir")
+
+	# Phase 2: collect results and accumulate counters.
+	# Called as a regular function (not a subshell) so it can access scan_pids/
+	# scan_names/scan_paths arrays and wait for the background PIDs.
+	# Results are written to a temp file to avoid subshell variable loss.
+	local results_file="$scan_tmpdir/results.txt"
+	_skill_scan_collect_results "$scan_tmpdir" "$results_file"
+	local skills_scanned skills_with_issues total_findings total_critical total_high total_medium
+	read -r skills_scanned skills_with_issues total_findings total_critical total_high total_medium \
+		<"$results_file"
+
+	local safe_count=$((skills_scanned - skills_with_issues))
+
+	echo ""
+	echo "═══════════════════════════════════════"
+	echo -e "Skills scanned: ${skills_scanned}"
+	echo -e "Skills with issues: ${skills_with_issues}"
+	echo -e "Total findings: ${total_findings}"
+	echo "═══════════════════════════════════════"
+
+	local notes="Routine scan"
+	if [[ "$skills_with_issues" -gt 0 ]]; then
+		notes="${skills_with_issues} skill(s) with findings"
+	fi
+	update_scan_results_log "$skills_scanned" "$safe_count" "$total_critical" "$total_high" "$total_medium" "$notes"
+
+	if [[ "$skills_with_issues" -gt 0 ]]; then
+		echo ""
+		echo -e "${YELLOW}Review skills with findings and consider removing unsafe ones:${NC}"
+		echo "  aidevops skill remove <name>"
+		return 1
+	fi
+
+	# Advisory: run VirusTotal scan if available.
+	local vt_helper="${SCRIPT_DIR}/virustotal-helper.sh"
+	if [[ -x "$vt_helper" ]] && "$vt_helper" status 2>/dev/null | grep -q "API key configured"; then
+		_skill_scan_advisory_vt "$vt_helper" "$agents_dir" "$skill_sources"
+	fi
+
+	echo ""
+	echo -e "${GREEN}All imported skills passed security scan.${NC}"
+	return 0
+}
+
+# Scan a single skill by name or path.
+# Arguments: scanner_cmd agents_dir skill_sources target [extra args...]
+_skill_scan_single() {
+	local scanner_cmd="$1"
+	local agents_dir="$2"
+	local skill_sources="$3"
+	local target="$4"
+	shift 4
+
+	local scan_path="$target"
+
+	# If target looks like a skill name (no slashes), resolve from registry.
+	if [[ "$target" != */* && -f "$skill_sources" ]] && check_command jq; then
+		local resolved_path
+		resolved_path=$(jq -r --arg name "$target" \
+			'.skills[] | select(.name == $name) | .local_path' \
+			"$skill_sources" 2>/dev/null || echo "")
+		if [[ -n "$resolved_path" ]]; then
+			scan_path="${agents_dir}/${resolved_path#.agents/}"
+			scan_path="$(dirname "$scan_path")"
+			echo -e "Resolved skill '$target' to: $scan_path"
+		fi
+	fi
+
+	echo -e "Scanning: ${scan_path}"
+	echo ""
+
+	$scanner_cmd scan "$scan_path" --use-behavioral "$@"
+	return $?
+}
+
 cmd_skill_scan() {
 	local target="${1:-all}"
 	shift || true
@@ -494,233 +798,17 @@ cmd_skill_scan() {
 	echo -e "${BLUE}Agent Skill Security Scan (Cisco Skill Scanner)${NC}"
 	echo ""
 
-	# Determine scanner command
-	local scanner_cmd=""
-
-	if check_command skill-scanner; then
-		scanner_cmd="skill-scanner"
-	elif check_command uvx; then
-		scanner_cmd="uvx cisco-ai-skill-scanner"
-	elif check_command pipx; then
-		scanner_cmd="pipx run cisco-ai-skill-scanner"
-	else
-		echo -e "${YELLOW}Cisco Skill Scanner not installed.${NC}"
-		echo ""
-		echo "Install with:"
-		echo "  uv tool install cisco-ai-skill-scanner"
-		echo "  # or via pip"
-		echo "  pip3 install --user cisco-ai-skill-scanner"
-		echo "  # or run setup.sh to auto-install"
-		echo "  aidevops update"
-		echo ""
-		return 1
-	fi
+	local scanner_cmd
+	scanner_cmd=$(_skill_scan_resolve_scanner) || return 1
 
 	local agents_dir="${AIDEVOPS_AGENTS_DIR:-$HOME/.aidevops/agents}"
 	local skill_sources="${agents_dir}/configs/skill-sources.json"
 
 	if [[ "$target" == "all" ]]; then
-		# Scan all imported skills
-		if [[ ! -f "$skill_sources" ]] || ! check_command jq; then
-			echo -e "${YELLOW}No skill-sources.json found or jq not available.${NC}"
-			return 1
-		fi
-
-		local skill_count
-		skill_count=$(jq '.skills | length' "$skill_sources" 2>/dev/null || echo "0")
-
-		if [[ "$skill_count" -eq 0 ]]; then
-			echo -e "${GREEN}No imported skills to scan.${NC}"
-			return 0
-		fi
-
-		echo -e "Scanning ${skill_count} imported skills (parallel)..."
-		echo ""
-
-		local total_findings=0
-		local skills_with_issues=0
-		local skills_scanned=0
-		local total_critical=0
-		local total_high=0
-		local total_medium=0
-
-		# Parallelise skill scanning to avoid serial Python cold-start overhead.
-		# Each skill-scanner invocation cold-starts Python + litellm (~7.7s).
-		# Running 8 skills serially = ~62s; parallel = ~8s (1 cold-start latency).
-		local scan_tmpdir
-		scan_tmpdir=$(mktemp -d "${TMPDIR:-/tmp}/skill-scan-XXXXXX")
-		# shellcheck disable=SC2064
-		trap "rm -rf '$scan_tmpdir'" RETURN
-
-		# Phase 1: Launch all scans in parallel
-		local scan_index=0
-		local scan_pids=()
-		local scan_names=()
-		local scan_paths=()
-
-		while IFS= read -r skill_json; do
-			local name local_path
-			name=$(echo "$skill_json" | jq -r '.name')
-			local_path=$(echo "$skill_json" | jq -r '.local_path')
-
-			local full_path="${agents_dir}/${local_path#.agents/}"
-
-			if [[ ! -f "$full_path" ]]; then
-				echo -e "${YELLOW}SKIP${NC}: $name (file not found: $local_path)"
-				continue
-			fi
-
-			# Skill scanner expects a directory with SKILL.md, so scan the parent dir
-			# or the file directly if it's a standalone markdown
-			local scan_target
-			local skill_dir="${full_path%.md}"
-			if [[ -d "$skill_dir" ]]; then
-				scan_target="$skill_dir"
-			else
-				scan_target="$(dirname "$full_path")"
-			fi
-
-			# Launch scan in background, write output to indexed temp file
-			$scanner_cmd scan "$scan_target" --format json >"$scan_tmpdir/$scan_index.json" 2>"$scan_tmpdir/$scan_index.err" &
-			scan_pids+=($!)
-			scan_names+=("$name")
-			scan_paths+=("$local_path")
-			scan_index=$((scan_index + 1))
-		done < <(jq -c '.skills[]' "$skill_sources" 2>/dev/null)
-
-		# Phase 2: Collect results in order (preserves deterministic output)
-		local i
-		for i in "${!scan_pids[@]}"; do
-			wait "${scan_pids[$i]}" 2>/dev/null || true
-
-			echo -e "${CYAN}Scanning${NC}: ${scan_names[$i]} (${scan_paths[$i]})"
-
-			if [[ -s "$scan_tmpdir/$i.err" ]]; then
-				echo -e "${RED}Error scanning skill '${scan_names[$i]}':${NC}" >&2
-				cat "$scan_tmpdir/$i.err" >&2
-			fi
-
-			local scan_output=""
-			if [[ -s "$scan_tmpdir/$i.json" ]]; then
-				scan_output=$(cat "$scan_tmpdir/$i.json")
-			fi
-
-			if [[ -n "$scan_output" ]]; then
-				local findings
-				findings=$(echo "$scan_output" | jq -r '.total_findings // 0' 2>/dev/null || echo "0")
-				local max_severity
-				max_severity=$(echo "$scan_output" | jq -r '.max_severity // "SAFE"' 2>/dev/null || echo "SAFE")
-
-				if [[ "$findings" -gt 0 ]]; then
-					total_findings=$((total_findings + findings))
-					skills_with_issues=$((skills_with_issues + 1))
-					echo -e "  ${RED}ISSUES${NC}: $findings findings (max severity: $max_severity)"
-
-					# Track severity counts
-					local skill_critical skill_high skill_medium
-					skill_critical=$(echo "$scan_output" | jq '[.findings[]? | select(.severity == "CRITICAL")] | length' 2>/dev/null || echo "0")
-					skill_high=$(echo "$scan_output" | jq '[.findings[]? | select(.severity == "HIGH")] | length' 2>/dev/null || echo "0")
-					skill_medium=$(echo "$scan_output" | jq '[.findings[]? | select(.severity == "MEDIUM")] | length' 2>/dev/null || echo "0")
-					total_critical=$((total_critical + skill_critical))
-					total_high=$((total_high + skill_high))
-					total_medium=$((total_medium + skill_medium))
-
-					# Show critical/high findings inline
-					echo "$scan_output" | jq -r '.findings[]? | select(.severity == "CRITICAL" or .severity == "HIGH") | "  [\(.severity)] \(.rule_id): \(.description)"' 2>/dev/null || true
-				else
-					echo -e "  ${GREEN}SAFE${NC}"
-				fi
-			else
-				echo -e "  ${GREEN}SAFE${NC} (no output from scanner)"
-			fi
-
-			skills_scanned=$((skills_scanned + 1))
-		done
-
-		local safe_count=$((skills_scanned - skills_with_issues))
-
-		echo ""
-		echo "═══════════════════════════════════════"
-		echo -e "Skills scanned: ${skills_scanned}"
-		echo -e "Skills with issues: ${skills_with_issues}"
-		echo -e "Total findings: ${total_findings}"
-		echo "═══════════════════════════════════════"
-
-		# Log results to SKILL-SCAN-RESULTS.md
-		local notes="Routine scan"
-		if [[ "$skills_with_issues" -gt 0 ]]; then
-			notes="${skills_with_issues} skill(s) with findings"
-		fi
-		update_scan_results_log "$skills_scanned" "$safe_count" "$total_critical" "$total_high" "$total_medium" "$notes"
-
-		if [[ "$skills_with_issues" -gt 0 ]]; then
-			echo ""
-			echo -e "${YELLOW}Review skills with findings and consider removing unsafe ones:${NC}"
-			echo "  aidevops skill remove <name>"
-			return 1
-		fi
-
-		# Advisory: Run VirusTotal scan if available
-		local vt_helper="${SCRIPT_DIR}/virustotal-helper.sh"
-		if [[ -x "$vt_helper" ]] && "$vt_helper" status 2>/dev/null | grep -q "API key configured"; then
-			echo ""
-			echo -e "${CYAN}Running advisory VirusTotal scan...${NC}"
-			echo -e "${YELLOW}(VT scans are advisory only - Cisco scanner is the security gate)${NC}"
-			echo ""
-
-			local vt_issues=0
-			while IFS= read -r skill_json; do
-				local name local_path
-				name=$(echo "$skill_json" | jq -r '.name')
-				local_path=$(echo "$skill_json" | jq -r '.local_path')
-				local full_path="${agents_dir}/${local_path#.agents/}"
-
-				if [[ ! -f "$full_path" ]]; then
-					continue
-				fi
-
-				echo -e "${CYAN}VT Scanning${NC}: $name"
-				local scan_target="$full_path"
-				if [[ -d "${full_path%.*}" ]]; then
-					scan_target="${full_path%.*}"
-				fi
-				"$vt_helper" scan-skill "$scan_target" --quiet 2>/dev/null || {
-					vt_issues=$((vt_issues + 1))
-					echo -e "  ${YELLOW}VT flagged issues${NC} for $name"
-				}
-			done < <(jq -c '.skills[]' "$skill_sources")
-
-			if [[ $vt_issues -gt 0 ]]; then
-				echo ""
-				echo -e "${YELLOW}VirusTotal flagged ${vt_issues} skill(s) - review recommended${NC}"
-			else
-				echo ""
-				echo -e "${GREEN}VirusTotal: No threats detected${NC}"
-			fi
-		fi
-
-		echo ""
-		echo -e "${GREEN}All imported skills passed security scan.${NC}"
-		return 0
+		_skill_scan_all "$scanner_cmd" "$agents_dir" "$skill_sources"
+		return $?
 	else
-		# Scan a specific skill by name or path
-		local scan_path="$target"
-
-		# If target looks like a skill name (no slashes), resolve from registry
-		if [[ "$target" != */* && -f "$skill_sources" ]] && check_command jq; then
-			local resolved_path
-			resolved_path=$(jq -r --arg name "$target" '.skills[] | select(.name == $name) | .local_path' "$skill_sources" 2>/dev/null || echo "")
-			if [[ -n "$resolved_path" ]]; then
-				scan_path="${agents_dir}/${resolved_path#.agents/}"
-				scan_path="$(dirname "$scan_path")"
-				echo -e "Resolved skill '$target' to: $scan_path"
-			fi
-		fi
-
-		echo -e "Scanning: ${scan_path}"
-		echo ""
-
-		$scanner_cmd scan "$scan_path" --use-behavioral "$@"
+		_skill_scan_single "$scanner_cmd" "$agents_dir" "$skill_sources" "$target" "$@"
 		return $?
 	fi
 }
