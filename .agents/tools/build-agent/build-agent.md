@@ -14,20 +14,11 @@ mode: subagent
 - **Pattern**: Main agents at root, subagents in folders
 - **Budget**: ~50-100 instructions per agent (research-backed limit)
 
-**Instruction Limits**:
-- ~150-200: frontier models can follow
-- ~50: consumed by AI assistant system prompt
-- **Your budget**: ~50-100 instructions max
+**Instruction Limits**: ~150-200 frontier models can follow; ~50 consumed by AI assistant system prompt; **your budget: ~50-100 max**.
 
-**Token Efficiency**:
-- Root AGENTS.md: <150 lines, universally applicable only
-- Subagents: Progressive disclosure (read when needed)
-- MCP servers: Disabled globally, enabled per-agent
-- Code refs: Use search patterns (`rg "pattern"`) not `file:line`
+**Token Efficiency**: Root AGENTS.md <150 lines, universally applicable only. Subagents: progressive disclosure. MCP servers: disabled globally, enabled per-agent. Code refs: use search patterns not `file:line`.
 
-**Agent Hierarchy**:
-- **Main Agents**: Orchestration, call subagents when needed
-- **Subagents**: Focused execution, minimal context, specific tools
+**Agent Hierarchy**: Main agents orchestrate and call subagents. Subagents execute focused tasks with minimal context.
 
 **Subagents** (in this folder):
 
@@ -36,42 +27,23 @@ mode: subagent
 | `agent-review.md` | Reviewing and improving existing agents |
 | `agent-testing.md` | Testing agent behavior with isolated AI sessions |
 
-**Related Agents**:
-- `@code-standards` for linting agent markdown
-- `aidevops/architecture.md` for framework structure
-- `tools/browser/browser-automation.md` for agents needing browser capabilities (tool hierarchy: Playwright → Playwriter → Stagehand → DevTools)
+**Related**: `@code-standards` for linting agent markdown, `aidevops/architecture.md` for framework structure.
 
-**Git Workflow**:
-- Branch strategy: `workflows/branch.md`
-- Git operations: `tools/git.md`
-
-**Testing**: Use `agent-test-helper.sh` for automated testing, or OpenCode/Claude CLI for quick manual tests:
+**Testing**:
 
 ```bash
-# Automated test suite
-agent-test-helper.sh run my-tests
-
-# Quick manual test
-claude -p "Test query"
+agent-test-helper.sh run my-tests   # Automated test suite
+claude -p "Test query"              # Quick manual test
 opencode run "Test query" --agent Build+
 ```
 
-See `agent-testing.md` for the full testing framework.
-
-**After creating or promoting agents**: Regenerate the subagent index so the OpenCode plugin discovers them at startup:
+**After creating or promoting agents**: regenerate the subagent index:
 
 ```bash
 ~/.aidevops/agents/scripts/subagent-index-helper.sh generate
 ```
 
-**Model tier in frontmatter**: Use evidence, not just rules. Before setting `model:`, check pattern data:
-
-```bash
-/route "task description"    # rules + pattern history combined
-/patterns recommend "type"   # data-driven tier recommendation
-```
-
-Static rules (`haiku` → formatting, `sonnet` → code, `opus` → architecture) are starting points. Pattern data overrides when >75% success rate with 3+ samples. See "Model Tier Selection: Evidence-Based Routing" section below.
+**Model tier in frontmatter**: use evidence, not just rules. Check pattern data with `/route "task description"` or `/patterns recommend "type"` before setting `model:`.
 
 <!-- AI-CONTEXT-END -->
 
@@ -79,55 +51,19 @@ Static rules (`haiku` → formatting, `sonnet` → code, `opus` → architecture
 
 ### Why This Matters
 
-LLMs are stateless functions. AGENTS.md is the only file that goes into every conversation. This makes it the highest leverage point - for better or worse.
+LLMs are stateless functions. AGENTS.md is the only file that goes into every conversation — the highest leverage point.
 
-Research indicates:
-- Frontier thinking models can follow ~150-200 instructions consistently
-- Instruction-following quality degrades **uniformly** as count increases
-- AI assistant system prompts already consume ~50 instructions
-- The system may tell models to ignore AGENTS.md content deemed irrelevant
-
-**Implication**: Every instruction in AGENTS.md must be universally applicable to ALL tasks.
+Research: frontier thinking models follow ~150-200 instructions consistently; quality degrades uniformly as count increases; AI assistant system prompts consume ~50 instructions. **Every instruction must be universally applicable to ALL tasks.**
 
 ### Main Agent vs Subagent Design
 
-#### When to Design a Main Agent
+**Main agents** (root of `.agents/`): broad domain orchestration, coordinates subagents, maintains project-level context. Examples: `seo.md`, `build-plus.md`, `marketing.md`.
 
-Main agents are for high-level project orchestration:
-
-- **Scope**: Broad domain (wordpress, seo, content, aidevops)
-- **Role**: Coordinates subagents, makes strategic decisions
-- **Context**: Needs awareness of multiple related concerns
-- **Location**: Root of `.agents/` folder
-- **Examples**: `seo.md`, `build-plus.md`, `marketing.md`
-
-**Main agent characteristics:**
-- Calls subagents when specialized work needed
-- Maintains project-level context
-- Makes decisions about which tools/subagents to invoke
-- Can run in parallel with other main agents (different projects)
-
-#### When to Design a Subagent
-
-Subagents are for focused, parallel execution:
-
-- **Scope**: Specific tool, service, or task type
-- **Role**: Execute focused operations independently
-- **Context**: Minimal, task-specific only
-- **Location**: Inside domain folders or `tools/`, `services/`, `workflows/`
-- **Examples**: `tools/git/github-cli.md`, `services/hosting/hostinger.md`
-
-**Subagent characteristics:**
-- Can run in parallel without context conflicts
-- Has specific MCP tools enabled (others disabled)
-- Completes discrete tasks, returns results
-- Doesn't need knowledge of other domains
+**Subagents** (inside domain folders or `tools/`, `services/`, `workflows/`): focused execution, minimal context, specific tools, can run in parallel. Examples: `tools/git/github-cli.md`, `services/hosting/hostinger.md`.
 
 #### Subagent YAML Frontmatter (Required)
 
-Every subagent **must** include YAML frontmatter defining its tool permissions. Without explicit permissions, subagents default to read-only analysis mode, which causes confusion when agents recommend actions they cannot perform.
-
-**Required frontmatter structure:**
+Every subagent **must** include YAML frontmatter. Without it, agents default to read-only mode.
 
 ```yaml
 ---
@@ -145,61 +81,27 @@ tools:
 ---
 ```
 
-**Tool permission options:**
+| Tool | Risk Level |
+|------|------------|
+| `read`, `glob`, `grep`, `webfetch` | Low |
+| `task`, `edit`, `write` | Medium |
+| `bash` | High |
 
-| Tool | Purpose | Risk Level |
-|------|---------|------------|
-| `read` | Read file contents | Low - passive observation |
-| `glob` | Find files by pattern | Low - discovery only |
-| `grep` | Search file contents | Low - discovery only |
-| `webfetch` | Fetch URLs | Low - read-only external |
-| `task` | Spawn subagents | Medium - delegates work |
-| `edit` | Modify existing files | Medium - changes files |
-| `write` | Create new files | Medium - adds files |
-| `bash` | Execute commands | High - arbitrary execution |
-
-**MCP tool patterns** (for agents needing specific MCP access):
+**MCP tool patterns**:
 
 ```yaml
 tools:
-  context7_*: true              # Context7 documentation tools
-  augment-context-engine_*: true # Augment codebase search
-  wordpress-mcp_*: true         # WordPress MCP tools
+  context7_*: true
+  augment-context-engine_*: true
+  wordpress-mcp_*: true
 ```
 
-**CRITICAL: MCP Placement Rule**
+**CRITICAL: MCP Placement Rule** — Enable MCPs in **subagents only**, never in main agents. Main agents reference subagents for MCP functionality.
 
-- **Enable MCPs in SUBAGENTS only** (files in subdirectories like `services/crm/`, `tools/wordpress/`)
-- **NEVER enable MCPs in main agents** (`sales.md`, `marketing.md`, `seo.md`, etc.)
-- Main agents reference subagents for MCP functionality
-- This ensures MCPs only load when the specific subagent is invoked
-
-```yaml
-# CORRECT: MCP in subagent (services/crm/fluentcrm.md)
-tools:
-  fluentcrm_*: true
-
-# WRONG: MCP in main agent (sales.md)
-tools:
-  fluentcrm_*: true  # DON'T DO THIS - use subagent reference instead
-```
-
-**MCP requirements with tool filtering** (documents intent for future `includeTools` support):
+**MCP requirements** (documents intent for future `includeTools` support):
 
 ```yaml
 ---
-description: Preview and screenshot local dev servers
-mcp_requirements:
-  chrome-devtools:
-    tools: [navigate_page, take_screenshot, new_page, list_pages]
----
-```
-
-**Example with multiple MCPs:**
-
-```yaml
----
-description: Agent that uses browser and security tools
 mcp_requirements:
   chrome-devtools:
     tools: [navigate_page, take_screenshot]
@@ -208,107 +110,16 @@ mcp_requirements:
 ---
 ```
 
-This convention documents which specific tools an agent needs from an MCP server. Currently informational only - OpenCode doesn't yet support `includeTools` filtering (see [OpenCode #7399](https://github.com/anomalyco/opencode/issues/7399)). When supported, our agent generator can use this to configure filtered MCP access.
+**Main-branch write restrictions**: Subagents with `write: true`/`edit: true` invoked via Task tool must respect branch protection. On `main`/`master`: allowed: `README.md`, `TODO.md`, `todo/PLANS.md`, `todo/tasks/*`; blocked: all other files. State this explicitly in any subagent with `write: true`.
 
-**Why document MCP requirements?**
-- Prepares agents for future `includeTools` support
-- Documents intent for humans reviewing agent design
-- Enables token savings when OpenCode implements filtering (e.g., 17k → 1.5k tokens for chrome-devtools)
-- Prior art: [Amp's lazy-load MCP with skills](https://ampcode.com/news/lazy-load-mcp-with-skills)
-
-**Example: Read-only analysis agent**
-
-```yaml
----
-description: Analyzes agent files for quality issues
-mode: subagent
-tools:
-  read: true
-  write: false
-  edit: false
-  bash: false
-  glob: true
-  grep: true
-  webfetch: false
-  task: true
----
-```text
-
-**Example: Write-capable task agent**
-
-```yaml
----
-description: Updates wiki documentation from agent changes
-mode: subagent
-tools:
-  read: true
-  write: true
-  edit: true
-  bash: true
-  glob: true
-  grep: true
-  webfetch: false
-  task: true
----
-```text
-
-**Example: Agent with MCP access**
-
-```yaml
----
-description: WordPress development with MCP tools
-mode: subagent
-temperature: 0.2
-tools:
-  read: true
-  write: true
-  edit: true
-  bash: true
-  glob: true
-  grep: true
-  webfetch: true
-  task: true
-  wordpress-mcp_*: true
-  context7_*: true
----
-```text
-
-**Note on permissions**: Path-based permissions (e.g., restricting which files can be edited) are configured in `opencode.json` for OpenCode, not in markdown frontmatter. The frontmatter defines which tools are available; the JSON config defines granular restrictions.
-
-**Main-branch write restrictions**: Subagents with `write: true` / `edit: true` that are invoked via the Task tool MUST respect the same branch protection as the primary agent. When the working directory is on `main`/`master`:
-
-- **ALLOWED**: `README.md`, `TODO.md`, `todo/PLANS.md`, `todo/tasks/*` (planning and documentation files)
-- **BLOCKED**: All other files (code, scripts, configs, agent definitions)
-- **WORKTREE**: If a worktree is active, writes to the worktree path are unrestricted
-
-Subagents cannot run `pre-edit-check.sh` (many lack `bash: true`), so this rule must be stated explicitly in the subagent's markdown. Add a "Write Restrictions" section to any subagent that has `write: true` and may be invoked on the main repo path.
-
-**Why this matters:**
-- Prevents confusion when agents recommend actions they cannot perform
-- Makes agent capabilities explicit and predictable
-- Enables safer parallel execution (read-only agents can't conflict)
-- Prevents subagents from bypassing branch protection when invoked via Task tool
-- Documents intent for both humans and AI systems
+**Note on permissions**: Path-based restrictions are configured in `opencode.json`, not frontmatter.
 
 #### Agent Directory Architecture
 
-This repository has two agent directories with different purposes:
-
-| Directory | Purpose | Used By |
-|-----------|---------|---------|
-| `.agents/` | Source of truth with full documentation | Deployed to `~/.aidevops/agents/` by `setup.sh` |
-| `.opencode/agent/` | Generated stubs for OpenCode | OpenCode CLI (reads these directly) |
-
-**How it works:**
-1. `.agents/` contains the authoritative agent files with rich documentation
-2. `setup.sh` deploys `.agents/` to `~/.aidevops/agents/`
-3. `generate-opencode-agents.sh` creates minimal stubs in `~/.config/opencode/agent/` that reference the deployed files
-4. OpenCode reads the stubs, which point to the full agent content
-
-**Frontmatter in `.agents/` files** serves as:
-- Documentation of intended permissions
-- Reference for AI assistants that read AGENTS.md
-- Template for what the generated stubs should enable
+| Directory | Purpose |
+|-----------|---------|
+| `.agents/` | Source of truth, deployed to `~/.aidevops/agents/` by `setup.sh` |
+| `.opencode/agent/` | Generated stubs for OpenCode |
 
 #### Decision Framework
 
@@ -316,296 +127,101 @@ This repository has two agent directories with different purposes:
 Is this a broad domain or strategic concern?
   YES → Main Agent at root
   NO  ↓
-
-Can this run independently without needing other domain knowledge?
+Can this run independently without other domain knowledge?
   YES → Subagent in appropriate folder
   NO  ↓
-
 Does this coordinate multiple tools/services?
-  YES → Consider if it should be main agent or call existing subagents
+  YES → Consider main agent or call existing subagents
   NO  → Subagent, or add to existing agent
-```text
+```
 
-#### Calling Other Agents
-
-When designing an agent, prefer calling existing agents over duplicating:
-
-```markdown
-# Good: Reference existing capability
-For Git operations, invoke `@git-platforms` subagent.
-For code quality, invoke `@code-standards` subagent.
-
-# Bad: Duplicate instructions
-## Git Operations
-[50 lines duplicating git-platforms.md content]
-```text
+**Calling other agents**: prefer calling existing agents over duplicating. Reference `@git-platforms` for Git operations, `@code-standards` for quality — don't copy their content.
 
 ### MCP Configuration Pattern
 
-**Global disabled, per-agent enabled:**
+**Global disabled, per-agent enabled** in `opencode.json`:
 
 ```json
-// In opencode.json
 {
-  "mcp": {
-    "hostinger-api": { "enabled": false },
-    "hetzner-*": { "enabled": false }
-  },
-  "tools": {
-    "hostinger-api_*": false,
-    "hetzner-*": false
-  },
+  "mcp": { "hostinger-api": { "enabled": false } },
   "agent": {
-    "hostinger": {
-      "tools": { "hostinger-api_*": true }
-    },
-    "hetzner": {
-      "tools": { "hetzner-*": true }
-    }
+    "hostinger": { "tools": { "hostinger-api_*": true } }
   }
 }
-```text
-
-**Why this matters:**
-- Reduces context window usage (MCP tools add tokens)
-- Prevents tool confusion (wrong MCP for task)
-- Enables focused subagent execution
-- Allows parallel subagents without conflicts
-
-**When designing agents, specify:**
-- Which MCPs should be enabled for this agent
-- Which should remain disabled
-- Any tools that need special permissions
+```
 
 ### Code References: Search Patterns over Line Numbers
 
-Line numbers drift as code changes. Use search patterns instead:
+Line numbers drift. Use search patterns:
 
 ```markdown
-# Bad (will drift)
-See error handling at `.agents/scripts/hostinger-helper.sh:145`
-
-# Good (stable)
-Search for `handle_api_error` in `.agents/scripts/hostinger-helper.sh`
-
-# Better (with fallback)
-Search for `handle_api_error` in hostinger-helper.sh.
-If not found, search for `api_error` or `error handling` patterns.
-```text
-
-**Search pattern hierarchy:**
-1. Function/variable name (most specific)
-2. Unique string literals in the code
-3. Comment markers (e.g., `# ERROR HANDLING SECTION`)
-4. Broader pattern search if specific not found
+# Bad: .agents/scripts/hostinger-helper.sh:145
+# Good: Search for `handle_api_error` in hostinger-helper.sh
+```
 
 ### Model Tier Selection: Evidence-Based Routing
 
-When designing an agent that dispatches workers or recommends a model tier, use pattern data — not just static rules.
-
-**Static rules** (from `tools/context/model-routing.md`) are a starting point:
-
-```text
-haiku → classification, formatting
-sonnet → code, most dev tasks (default)
-opus  → architecture, novel problems
-```
-
-**Pattern data** overrides static rules when evidence is strong (>75% success rate, 3+ samples). Before hardcoding a `model:` in frontmatter or dispatching a worker, check:
+Static rules (`haiku` → formatting, `sonnet` → code, `opus` → architecture) are starting points. Pattern data overrides when >75% success rate, 3+ samples.
 
 ```bash
-# What has worked for this task type before?
-/patterns suggest "shell script agent"
-# → "pattern data shows sonnet with prompt-repeat is optimal for shell-script agents (87% success, 14 samples)"
-
-# Get a data-driven tier recommendation
-/patterns recommend "code review"
-# → "sonnet: 85% success rate from 12 samples (vs opus: 60% from 5 samples)"
-
-# Or use the /route command (combines rules + pattern history)
 /route "write unit tests for a bash helper script"
+/patterns recommend "code review"
 ```
-
-**When to trust pattern data over static rules:**
 
 | Situation | Action |
 |-----------|--------|
-| Pattern data: >75% success, 3+ samples | Use model from pattern data (overrides static rule) |
-| Pattern data: sparse or inconclusive | Fall back to routing rules |
-| Pattern data contradicts routing rules | Note the conflict, explain in agent docs |
-| No pattern data yet | Use routing rules, record outcomes to build data |
+| Pattern data: >75% success, 3+ samples | Use model from pattern data |
+| Pattern data: sparse | Fall back to routing rules |
+| No pattern data | Use routing rules, record outcomes |
 
-**Recording outcomes** (the supervisor does this automatically; agents can also record manually):
-
-```bash
-# After a successful task — record via memory
-/remember "SUCCESS: shell script agent with sonnet — prompt-repeat pattern resolved ambiguous instructions"
-
-# After a failure — record via memory
-/remember "FAILURE: architecture design with sonnet — needed opus, missed cross-service dependency trade-offs"
-```
-
-**In agent frontmatter**, document the evidence behind your `model:` choice:
+Document evidence in frontmatter:
 
 ```yaml
----
-description: Shell script quality checker
-mode: subagent
 model: sonnet  # pattern data: 87% success rate from 14 samples for shell-script tasks
-tools:
-  bash: true
-  read: true
----
 ```
 
-**Why this matters**: Static rules are educated guesses. Pattern data is empirical evidence from your actual workload. An agent that says "use opus for architecture" is applying a rule; an agent that says "pattern data shows opus succeeds 91% of the time on architecture tasks vs 54% for sonnet (from 22 samples)" is applying evidence. The latter is more trustworthy and self-correcting as patterns accumulate.
-
-**Full docs**: `tools/context/model-routing.md`, `memory/README.md` "Pattern Tracking", `scripts/commands/route.md`
+Full docs: `tools/context/model-routing.md`, `scripts/commands/route.md`.
 
 ### Quality Checking: Linters First
 
 **Never send an LLM to do a linter's job.**
 
-Preference order for code quality:
+1. **Deterministic linters** (fast, cheap): ShellCheck, ESLint, Ruff/Pylint — run first, automatically
+2. **Static analysis** (comprehensive): SonarCloud, Codacy, Snyk, Secretlint — after linters pass
+3. **LLM review** (expensive, slow): CodeRabbit — for architectural concerns only
 
-1. **Deterministic linters** (fast, cheap, consistent)
-   - ShellCheck for bash
-   - ESLint for JavaScript
-   - Ruff/Pylint for Python
-   - Run these FIRST, automatically
+Consider `bun`/`bunx` over `npm`/`npx` for performance. For Node.js helper scripts using globally installed packages, set `NODE_PATH` — see `tools/build-agent/node-helpers.md:13`.
 
-2. **Static analysis tools** (comprehensive, still fast)
-   - SonarCloud, Codacy, CodeFactor
-   - Security scanners (Snyk, Secretlint)
-   - Run after linters pass
+### Information Quality
 
-3. **LLM review** (expensive, slow, variable)
-   - CodeRabbit, AI-assisted review
-   - Use for architectural concerns
-   - Use when deterministic tools insufficient
-
-**In agent instructions:**
-
-```markdown
-# Good
-Run ShellCheck before committing. Use `@code-standards` for comprehensive analysis.
-
-# Bad
-Ask the AI to check your code formatting and style.
-```text
-
-**Consider bun for performance:**
-Where agents reference `npm` or `npx`, consider if `bun` would be faster:
-- `bun` is significantly faster for package operations
-- Compatible with most npm packages
-- Prefer `bunx` over `npx` for one-off executions
-
-**Node.js-based helper scripts:**
-If your helper script uses `node -e` with globally installed npm packages, set `NODE_PATH` near the top of the script.
-See `tools/build-agent/node-helpers.md:13` for the snippet and explanation.
-
-### Information Quality (All Domains)
-
-Agent instructions must be accurate. Apply these standards:
-
-#### Source Evaluation
-
-1. **Primary sources preferred**
-   - Official documentation over blog posts
-   - API specs over tutorials
-   - First-hand data over summaries
-
-2. **Cross-reference claims**
-   - Verify facts across multiple sources
-   - Note when sources disagree
-   - Prefer recent over dated sources
-
-3. **Bias awareness**
-   - Consider source's agenda (vendor docs promote their product)
-   - Note commercial vs independent sources
-   - Acknowledge limitations of any source
-
-4. **Fact-checking**
-   - Commands should be tested before documenting
-   - URLs should be verified accessible
-   - Version numbers should be current
-
-#### Domain-Specific Considerations
+1. **Primary sources preferred**: official docs, API specs, first-hand data
+2. **Cross-reference claims**: verify across multiple sources, note disagreements
+3. **Bias awareness**: vendor docs promote their product; note commercial vs independent sources
+4. **Fact-checking**: test commands before documenting, verify URLs, check version numbers
 
 | Domain | Primary Sources | Watch For |
 |--------|-----------------|-----------|
-| **Code/DevOps** | Official docs, RFCs, source code | Outdated tutorials, version drift |
-| **SEO** | SERPsWebmaster tools, Search Console data, Domain Rank, Search Volume, Link Juice, Topical Relevance, Entity Authority | SEO vendor claims, outdated tactics, Google FUD |
-| **Legal** | Legislation, case law, official guidance | Jurisdiction differences, dated info |
-| **Health** | Peer-reviewed research, official health bodies, practicing researchers | Commercial health claims, fads, conflicted interests |
-| **Marketing** | Platform official docs, first-party data, clickbait effectiveness, integrity | Vendor case studies, inflated metrics, conflicted interests |
-| **Accounting** | Tax authority guidance, accounting standards, meaningful chart of accounts, clear audit trails for events, reasons, and changes | Jurisdiction-specific rules |
-| **Content** | Style guides, brand guidelines, readability, tone of voice, shorter sentences, one sentence per paragraph for online content, Plain English, personal experience, first-person voice unless otherwise appropriate, references, quotes, citations, facts, supporting data, observations | Subjective preferences as rules, bias, lack of references and citations, opinions |
+| Code/DevOps | Official docs, RFCs, source code | Outdated tutorials, version drift |
+| SEO | Search Console data, Domain Rank, Search Volume | Vendor claims, outdated tactics |
+| Legal | Legislation, case law, official guidance | Jurisdiction differences, dated info |
+| Marketing | Platform official docs, first-party data | Vendor case studies, inflated metrics |
+| Content | Style guides, readability, Plain English, first-person | Subjective preferences as rules |
 
 ### Agent Design Checklist
 
 Before adding content to any agent file:
 
-1. **Does this subagent have YAML frontmatter?**
-   - All subagents require tool permission declarations
-   - Without frontmatter, agents default to read-only
-   - See "Subagent YAML Frontmatter" section for template
-
-2. **Is this universally applicable?**
-   - Will this instruction be relevant to >80% of tasks for this agent?
-   - If not, move to a more specific subagent
-
-3. **Could this be a pointer instead?**
-   - Does the content exist elsewhere?
-   - Use search patterns to reference codebase
-   - Use Context7 MCP for external library documentation
-
-4. **Is this a code example?**
-   - Is it authoritative (the reference implementation)?
-   - Will it drift from actual implementation?
-   - For security patterns: include placeholders, note secure storage
-
-5. **What's the instruction count impact?**
-   - Each bullet point, rule, or directive counts
-   - Combine related instructions where possible
-   - Remove redundant or obvious instructions
-
-6. **Does this duplicate other agents?**
-   - Search: `rg "pattern" .agents/` before adding
-   - Check for conflicting guidance across files
-   - Single source of truth for each concept
-
-7. **Should another agent be called instead?**
-   - Does an existing agent handle this?
-   - Would calling it and improving its instructions be more efficient than duplicating?
-
-8. **Are sources verified?**
-   - Primary sources used?
-   - Facts cross-referenced?
-   - Biases acknowledged?
-
-9. **Does the markdown pass linting?**
-   - Single H1 heading per file (MD025)
-   - Blank lines around headings (MD022)
-   - Blank lines around code blocks (MD031)
-   - No multiple consecutive blank lines (MD012)
-   - Run `npx markdownlint-cli2 "path/to/file.md"` to verify
+1. Does this subagent have YAML frontmatter?
+2. Is this universally applicable (>80% of tasks)?
+3. Could this be a pointer instead? (content exists elsewhere?)
+4. Is this a code example? (authoritative? will it drift?)
+5. What's the instruction count impact? (combine related, remove redundant)
+6. Does this duplicate other agents? (`rg "pattern" .agents/` before adding)
+7. Should another agent be called instead?
+8. Are sources verified? (primary sources, cross-referenced, biases acknowledged)
+9. Does the markdown pass linting? (MD025, MD022, MD031, MD012 — run `npx markdownlint-cli2 "path/to/file.md"`)
 
 ### Progressive Disclosure Pattern
-
-Instead of putting everything in AGENTS.md:
-
-```markdown
-# Bad: Everything in AGENTS.md
-## Database Schema Guidelines
-[50 lines of schema rules...]
-
-## API Design Patterns
-[40 lines of API rules...]
-
-## Testing Requirements
-[30 lines of testing rules...]
-```text
 
 ```markdown
 # Good: Pointers in AGENTS.md, details in subagents
@@ -614,171 +230,40 @@ Instead of putting everything in AGENTS.md:
 - `aidevops/architecture.md` - Schema and API patterns
 
 Read subagents only when task requires them.
-```text
+```
 
 ### Code Examples: When to Use
 
-**Include code examples when:**
+**Include when**: authoritative reference (no implementation elsewhere), security-critical template (must be followed exactly), command syntax reference (the example IS the documentation).
 
-1. **It's the authoritative reference** - No implementation exists elsewhere
-
-   ```bash
-   # Pattern for credential storage (authoritative)
-   # Store actual values in ~/.config/aidevops/credentials.sh
-   export SERVICE_API_KEY="${SERVICE_API_KEY:-}"
-   ```
-
-2. **Security-critical template** - Must be followed exactly
-
-   ```bash
-   # Correct: Placeholder for secret
-   curl -H "Authorization: Bearer ${API_TOKEN}" ...
-
-   # Wrong: Actual secret in example
-   curl -H "Authorization: Bearer sk-abc123..." ...
-   ```
-
-3. **Command syntax reference** - The example IS the documentation
-
-   ```bash
-   .agents/scripts/[service]-helper.sh [command] [account] [target]
-   ```
-
-**Avoid code examples when:**
-
-1. **Code exists in codebase** - Use search pattern reference
-
-   ```markdown
-   # Bad
-   Here's how to handle errors:
-   [20 lines of error handling code]
-
-   # Good
-   Search for `handle_api_error` in service-helper.sh for error handling pattern.
-   ```
-
-2. **External library patterns** - Use Context7 MCP
-
-   ```markdown
-   # Bad
-   Here's the React Query pattern:
-   [code that may be outdated]
-
-   # Good
-   Use Context7 MCP to fetch current React Query documentation
-   ```
-
-3. **Will become outdated** - Point to maintained source
-
-   ```markdown
-   # Bad
-   Current API endpoint: https://api.service.com/v2/...
-
-   # Good
-   See `configs/service-config.json.txt` for current endpoints
-   ```
-
-### Testing Code Examples
-
-When code examples are used during a task:
-
-1. **Test the example** - Does it produce expected results?
-2. **If failure** - Trigger self-assessment
-3. **Evaluate cause**:
-   - Example outdated? Update or add version note
-   - Context different? Add clarifying conditions
-   - Example wrong? Fix and check for duplicates
+**Avoid when**: code exists in codebase (use search pattern reference), external library patterns (use Context7 MCP), will become outdated (point to maintained source).
 
 ### Self-Assessment Protocol
 
-#### Triggers
+**Triggers**: observable failure (command syntax fails, paths don't exist, auth patterns broken), user correction, contradiction detection (Context7 differs from agent, codebase patterns differ), staleness indicators.
 
-1. **Observable Failure**
-   - Command syntax fails (API changed)
-   - Paths/URLs don't exist (infrastructure changed)
-   - Auth patterns don't work (security model changed)
-
-2. **User Correction**
-   - Immediate trigger for self-assessment
-   - Analyze which instruction led to incorrect response
-   - Consider if correction applies to other contexts
-
-3. **Contradiction Detection**
-   - Context7 MCP documentation differs from agent
-   - Codebase patterns differ from instructions
-   - User requirements conflict with instructions
-
-4. **Staleness Indicators**
-   - Version numbers don't match installed versions
-   - Deprecated APIs/tools referenced
-   - "Last updated" significantly old
-
-#### Process
-
-1. **Complete current task first** - Never abandon user's goal
-
-2. **Identify root cause**:
-   - Which specific instruction led to the issue?
-   - Is this a single-point fix or systemic pattern?
-
-3. **Duplicate/Conflict Check** (CRITICAL):
-
-   ```bash
-   # Search for similar instructions
-   rg "pattern" .agents/
-
-   # Check files that might have parallel instructions
-   # Note potential conflicts if change is made
-   ```
-
-4. **Propose improvement**:
-   - Specific change with rationale
-   - List ALL files that may need coordinated updates
-   - Flag if change might conflict with other agents
-
-5. **Request permission**:
-
-   ```text
-   > Agent Feedback: While [task], I noticed [issue] in
-   > `.agents/[file].md`. Related instructions also exist in
-   > `[other-files]`. Suggested improvement: [change].
-   > Should I update these after completing your request?
-   ```
-
-#### Self-Assessment of Self-Assessment
-
-This protocol should also be reviewed when:
-- False positives occur (unnecessary suggestions)
-- False negatives occur (missed opportunities)
-- User feedback indicates protocol is too aggressive/passive
-- Duplicate detection fails to catch conflicts
+**Process**:
+1. Complete current task first
+2. Identify root cause (which instruction caused the issue?)
+3. Duplicate/conflict check: `rg "pattern" .agents/`
+4. Propose improvement with rationale and list of files needing coordinated updates
+5. Request permission: "Agent Feedback: While [task], I noticed [issue] in `.agents/[file].md`. Suggested improvement: [change]. Should I update these?"
 
 ### Tool Selection Checklist
 
-Before using tools, verify you're using the optimal choice:
+| Task | Preferred | Avoid |
+|------|-----------|-------|
+| Find files by pattern | `git ls-files` or `fd` | `mcp_glob` |
+| Search file contents | `rg` (ripgrep) | `mcp_grep` |
+| Read file contents | `mcp_read` | `cat` via bash |
+| Edit files | `mcp_edit` | `sed` via bash |
+| Web content | `mcp_webfetch` | `curl` via bash |
+| Remote repo research | `mcp_webfetch` README first | `npx repomix --remote` |
+| Parallel AI dispatch | OpenCode server API | Multiple TUI instances |
 
-| Task | Preferred Tool | Avoid | Why |
-|------|---------------|-------|-----|
-| Find files by pattern | `git ls-files` or `fd` | `mcp_glob` | CLI is 10x faster |
-| Search file contents | `rg` (ripgrep) | `mcp_grep` | CLI is more powerful |
-| Read file contents | `mcp_read` | `cat` via bash | Better error handling |
-| Edit files | `mcp_edit` | `sed` via bash | Safer, atomic |
-| Web content | `mcp_webfetch` | `curl` via bash | Handles redirects |
-| Remote repo research | `mcp_webfetch` README first | `npx repomix --remote` | Prevents context overload |
-| Interactive CLIs | Bash directly | N/A | Full PTY - run vim, psql, ssh, htop |
-| Parallel AI dispatch | OpenCode server API | Multiple TUI instances | Headless, programmatic |
-
-**Self-check prompt**: Before calling any MCP tool, ask:
-> "Is there a faster CLI alternative I should use via Bash?"
-
-**Context budget check**: Before context-heavy operations, ask:
-> "Could this return >50K tokens? Have I checked the size first?"
-
-See `tools/context/context-guardrails.md` for detailed guardrails.
+Before any MCP tool: "Is there a faster CLI alternative?" Before context-heavy operations: "Could this return >50K tokens?" See `tools/context/context-guardrails.md`.
 
 ### Agent File Structure Convention
-
-All agent files should follow this structure:
 
 **Main agents** (no frontmatter required):
 
@@ -786,374 +271,97 @@ All agent files should follow this structure:
 # Agent Name - Brief Purpose
 
 <!-- AI-CONTEXT-START -->
-
 ## Quick Reference
-
-- **Purpose**: One-line description
-- **Key Info**: Essential facts only (avoid numbers that change)
-- **Commands**: Primary commands if applicable
-
 [Condensed, universally-applicable content]
-
 <!-- AI-CONTEXT-END -->
 
 ## Detailed Documentation
-
-[Verbose human-readable content, examples, edge cases]
-[Read only when specific details needed]
-```text
+[Verbose content, examples, edge cases — read when needed]
+```
 
 **Subagents** (YAML frontmatter required):
 
 ```markdown
 ---
-description: Brief description of agent purpose
+description: Brief description
 mode: subagent
 tools:
   read: true
-  write: false
-  edit: false
-  bash: false
-  glob: true
-  grep: true
-  webfetch: false
-  task: true
+  ...
 ---
 
 # Subagent Name - Brief Purpose
+[Content...]
+```
 
-[Subagent content...]
-```text
-
-See "Subagent YAML Frontmatter" section for full permission options.
-
-**Avoid in agents:**
-- Hardcoded counts that change (e.g., "29+ services")
-- Specific version numbers unless critical
-- Dates that will become stale
+**Avoid in agents**: hardcoded counts that change, specific version numbers unless critical, dates that will become stale.
 
 ### Folder Organization
 
 ```text
 .agents/
-├── AGENTS.md                 # Entry point (ALLCAPS - special root file)
-├── {domain}.md               # Main agents at root (lowercase)
+├── AGENTS.md                 # Entry point
+├── {domain}.md               # Main agents at root
 ├── {domain}/                 # Subagents for that domain
-│   ├── {subagent}.md         # Specialized guidance (lowercase)
 ├── tools/                    # Cross-domain utilities
-│   ├── {category}/           # Grouped by function
 ├── services/                 # External integrations
-│   ├── {category}/           # Grouped by type
 ├── workflows/                # Process guides
 └── scripts/
     └── commands/             # Slash command definitions
-```text
+```
 
 ### Slash Command Placement
 
 **CRITICAL**: Never define slash commands inline in main agents.
 
-| Command Type | Location | Example |
-|--------------|----------|---------|
-| Generic (cross-domain) | `scripts/commands/{command}.md` | `/save-todo`, `/remember`, `/code-simplifier` |
-| Domain-specific | `{domain}/{subagent}.md` | `/keyword-research` in `seo/keyword-research.md` |
+| Command Type | Location |
+|--------------|----------|
+| Generic (cross-domain) | `scripts/commands/{command}.md` |
+| Domain-specific | `{domain}/{subagent}.md` |
 
-**Main agents only reference commands** - they list available commands but never contain the implementation:
+Main agents only reference commands — never contain implementation.
 
-```markdown
-# Good: Reference in main agent (seo.md)
-**Commands**: `/keyword-research`, `/autocomplete-research`
-
-# Bad: Implementation in main agent
-## /keyword-research Command
-[50 lines of command implementation...]
-```text
-
-**Why this matters:**
-- Keeps main agents under instruction budget
-- Enables command reuse across agents
-- Allows targeted reading (only load command when invoked)
-- Prevents duplication when multiple agents use same command
-
-**Naming conventions:**
-
-- **Main agents**: Lowercase with hyphens at root (`build-mcp.md`, `seo.md`)
-- **Subagents**: Lowercase with hyphens in folders (`build-mcp/deployment.md`)
-- **Special files**: ALLCAPS for entry points only (`AGENTS.md`, `README.md`)
-- **Pattern**: Main agent matches folder name: `{domain}.md` + `{domain}/`
-
-**Why lowercase for main agents (not ALLCAPS)?**
-
-- Location (root vs folder) already distinguishes main from subagents
-- ALLCAPS causes cross-platform issues (Linux is case-sensitive)
-- Matches common framework conventions
-- `ls .agents/*.md` instantly shows all main agents
-
-**Why main agents stay at root (not inside folders)?**
-
-- Tooling uses `find -mindepth 2` to discover subagents
-- Quick visibility: main agents visible without opening folders
-- Clear mental model: "main file + supporting folder"
-- OpenCode expects main agents at predictable paths
-
-**Main agent → subagent relationship:**
-
-Main agents provide overview and point to subagents for details (progressive disclosure):
-
-```markdown
-**Subagents** (`build-mcp/`):
-| Subagent | When to Read |
-|----------|--------------|
-| `deployment.md` | Adding MCP to AI assistants |
-| `server-patterns.md` | Registering tools, resources |
-```text
+**Naming conventions**: main agents lowercase with hyphens at root (`build-mcp.md`); subagents lowercase with hyphens in folders (`build-mcp/deployment.md`); special files ALLCAPS (`AGENTS.md`).
 
 ### Agent Lifecycle Tiers
 
-When creating an agent, determine which tier it belongs to. This affects where it lives, whether it survives updates, and whether it gets shared.
-
 | Tier | Location | Survives `setup.sh` | Git Tracked | Purpose |
 |------|----------|---------------------|-------------|---------|
-| **Draft** | `~/.aidevops/agents/draft/` | Yes | No | R&D, experimental, auto-created by orchestration |
+| **Draft** | `~/.aidevops/agents/draft/` | Yes | No | R&D, experimental |
 | **Custom** | `~/.aidevops/agents/custom/` | Yes | No | User's permanent private agents |
-| **Sourced** | `~/.aidevops/agents/custom/<source>/` | Yes | In private repo | Agents synced from private Git repos |
+| **Sourced** | `~/.aidevops/agents/custom/<source>/` | Yes | In private repo | Synced from private Git repos |
 | **Shared** | `.agents/` in repo | Yes (deployed) | Yes | Open-source, submitted via PR |
 
-**When creating an agent, ask the user:**
+When creating an agent, ask the user which tier: Draft (experimental), Custom (private), Sourced (private repo), or Shared (PR to `.agents/`).
 
-```text
-Where should this agent live?
-1. Draft  - Experimental, for review later (draft/)
-2. Custom - Private, stays on your machine (custom/)
-3. Sourced - In a private Git repo, synced via agent-sources (custom/<source>/)
-4. Shared - Add to aidevops for everyone (PR to .agents/)
-```
+**Draft agents**: created during R&D or orchestration. Place in `~/.aidevops/agents/draft/` with `status: draft` and `created` date in frontmatter. After proving useful, log a TODO for review and promote to Custom or Shared.
 
-#### Draft Agents
+**Orchestration agents creating drafts**: when a subtask requires reusable domain-specific instructions, create a draft agent, log a TODO item, and reference the draft in subsequent Task tool calls.
 
-Draft agents are created during R&D, orchestration tasks, or exploratory work. They are intentionally rough and expected to evolve.
-
-**When to create a draft:**
-- An orchestration task needs a reusable subagent for parallel processing
-- Exploring a new domain and capturing patterns as you go
-- A Task tool subagent would benefit from persistent instructions across sessions
-
-**Draft conventions:**
-- Place in `~/.aidevops/agents/draft/`
-- Include `status: draft` and `created` date in frontmatter
-- Use descriptive filenames: `draft/{domain}-{purpose}.md`
-
-```yaml
----
-description: Experimental agent for X
-mode: subagent
-status: draft
-created: 2026-02-07
-tools:
-  read: true
-  write: false
-  edit: false
-  bash: false
-  glob: true
-  grep: true
----
-```
-
-**Promotion workflow:**
-
-After a draft proves useful, log a TODO item for review:
-
-```text
-- [ ] tXXX Review draft agent: {name} - promote to custom/ or .agents/ #agent-review
-```
-
-Then decide:
-
-1. **Promote to Custom** -- Move to `~/.aidevops/agents/custom/`, remove `status: draft`
-2. **Promote to Shared** -- Move to `.agents/` in the repo, refine to framework standards, submit PR
-3. **Discard** -- Delete from `draft/` if no longer useful
-
-#### Custom (Private) Agents
-
-Custom agents are the user's permanent private agents. They are never shared and never overwritten by `setup.sh`.
-
-**When to use custom:**
-- Business-specific workflows (your company's deploy process)
-- Personal preferences (your coding style agent)
-- Client-specific agents (per-project orchestration)
-- Agents containing proprietary knowledge
-
-**Custom conventions:**
-- Place in `~/.aidevops/agents/custom/`
-- Follow the same structure as shared agents (frontmatter, AI-CONTEXT blocks)
-- Organize with subdirectories if needed: `custom/mycompany/`, `custom/clients/`
-
-#### Shared Agents
-
-Shared agents live in `.agents/` in the aidevops repository and are distributed to all users via `setup.sh`.
-
-**When to share:**
-- The agent solves a general problem others would face
-- It follows framework conventions (frontmatter, quality standards)
-- It doesn't contain proprietary or personal information
-
-**Submission process:**
-1. Create a feature branch: `wt switch -c feature/agent-{name}`
-2. Place the agent in the appropriate `.agents/` location
-3. Follow the Agent Design Checklist (see above)
-4. Submit a PR to the aidevops repository
-
-#### Orchestration and Task Agents Creating Drafts
-
-Agents running orchestration tasks (via the Task tool, Ralph loop, or parallel dispatch) **can and should** create draft agents when they identify reusable patterns. This is a key mechanism for the framework to evolve.
-
-**When an orchestration agent should create a draft:**
-- A subtask requires domain-specific instructions that would be reused
-- Parallel workers need shared context that doesn't fit in a single prompt
-- A complex workflow has emerged that should be captured as a repeatable agent
-- The same Task tool prompt is being duplicated across multiple invocations
-
-**How orchestration agents create drafts:**
-
-```bash
-# Write the draft agent
-cat > ~/.aidevops/agents/draft/data-migration-validator.md << 'AGENT'
----
-description: Validates data migration between PostgreSQL schemas
-mode: subagent
-status: draft
-created: 2026-02-07
-source: auto-created by orchestration task
-tools:
-  read: true
-  bash: true
-  glob: true
-  grep: true
----
-
-# Data Migration Validator
-
-[Agent instructions captured from the orchestration context...]
-AGENT
-```
-
-**After creating a draft, the orchestration agent should:**
-1. Log a TODO item: `- [ ] tXXX Review draft agent: data-migration-validator #agent-review`
-2. Reference the draft in subsequent Task tool calls instead of repeating instructions
-3. Note the draft's existence in its completion summary
-
-This creates a natural feedback loop: orchestration discovers patterns, drafts capture them, humans review and promote the useful ones.
+**Shared agents**: follow the Agent Design Checklist, submit via PR to aidevops repository.
 
 ### Deployment Sync
 
-Agent changes in `.agents/` require `setup.sh` to deploy to `~/.aidevops/agents/`:
+Agent changes in `.agents/` require `setup.sh` to deploy:
 
 ```bash
 cd ~/Git/aidevops && ./setup.sh
-```text
+```
 
-**Offer to run setup.sh when:**
-- Creating new agents
-- Renaming or moving agents
-- Merging or deleting agents
-- Modifying agent content users need immediately
-
-See `aidevops/setup.md` for deployment details.
+Offer to run when: creating new agents, renaming/moving agents, merging/deleting agents, modifying content users need immediately.
 
 ### Cache-Aware Prompt Patterns
 
-LLM providers implement prompt caching to reduce costs and latency. Anthropic's prompt caching, for example, caches the first N tokens of a prompt and reuses them across calls. To maximize cache hits:
+**Stable Prefix Pattern**: keep beginning of prompts stable across calls — AGENTS.md and subagent content are cached; user messages are not. Never reorder instructions between calls (causes cache miss).
 
-**Stable Prefix Pattern**
+**Instruction Ordering — Primacy Effect**: order by importance — critical rules first, frequent operations middle, edge cases and reference last.
 
-Keep the beginning of your prompts stable across calls:
+**Avoid Dynamic Prefixes**: don't put variable content (timestamps, version numbers) at the start of agent files.
 
-```text
-# Good: Stable prefix, variable suffix
-[AGENTS.md content - stable]     ← Cached
-[Subagent content - stable]      ← Cached
-[User message - variable]        ← Not cached
+**AI-CONTEXT Blocks**: put stable, essential content first (always cached); detailed docs after (may be truncated, but prefix cached).
 
-# Bad: Variable content early
-[Dynamic timestamp]              ← Breaks cache
-[AGENTS.md content]              ← Not cached (prefix changed)
-```
-
-**Instruction Ordering — Primacy Effect**
-
-LLMs weight instructions near the top of context more heavily than those near the bottom (primacy bias). This is separate from the cache concern below — it affects instruction-following reliability even within a single call.
-
-Order agent content by importance:
-1. **Critical rules** (security, safety, core workflow) — top of file
-2. **Frequent operations** (common tasks, standard patterns) — middle
-3. **Edge cases and reference** (rare scenarios, examples) — bottom
-
-This means the most important instructions get the strongest attention signal, and if context is truncated or attention degrades, the critical rules are the last to be affected.
-
-Never reorder instructions between calls (cache concern):
-
-```markdown
-# Good: Consistent order
-1. Security rules
-2. Code standards
-3. Output format
-
-# Bad: Reordering based on task
-# Call 1: Security, Code, Output
-# Call 2: Code, Security, Output  ← Cache miss
-```
-
-**Avoid Dynamic Prefixes**
-
-Don't put variable content at the start of agent files:
-
-```markdown
-# Bad: Dynamic content at top
-Last updated: 2025-01-21  ← Changes daily, breaks cache
-Version: 2.41.0           ← Changes on release
-
-# Good: Static content at top
-# Agent Name - Purpose
-[Static instructions...]
-
-<!-- Dynamic content at end if needed -->
-```
-
-**AI-CONTEXT Blocks**
-
-The `<!-- AI-CONTEXT-START -->` pattern helps by:
-1. Putting essential, stable content first
-2. Detailed docs after (may be truncated, but prefix cached)
-
-```markdown
-<!-- AI-CONTEXT-START -->
-[Stable, essential content - always cached]
-<!-- AI-CONTEXT-END -->
-
-## Detailed Documentation
-[Less critical, may vary - cache still benefits from prefix]
-```
-
-**MCP Tool Definitions**
-
-MCP tools are injected into prompts. Minimize tool churn:
-
-```json
-// Good: Stable tool set per agent
-"SEO": { "tools": { "dataforseo_*": true, "serper_*": true } }
-
-// Bad: Dynamically changing tools
-// Session 1: dataforseo_*, serper_*
-// Session 2: dataforseo_*, gsc_*  ← Different tools, cache miss
-```
-
-**Measuring Cache Effectiveness**
-
-Monitor your API usage for cache hit rates. High cache hits indicate:
-- Stable instruction prefixes
-- Consistent tool configurations
-- Effective progressive disclosure (subagents loaded only when needed)
+**MCP Tool Definitions**: minimize tool churn — stable tool sets per agent maximize cache hits.
 
 ### Reviewing Existing Agents
 
-See `build-agent/agent-review.md` for systematic review sessions. It covers instruction budgets, universal applicability, duplicates, code examples, AI-CONTEXT blocks, stale content, and MCP configuration.
+See `build-agent/agent-review.md` for systematic review sessions covering instruction budgets, universal applicability, duplicates, code examples, AI-CONTEXT blocks, stale content, and MCP configuration.

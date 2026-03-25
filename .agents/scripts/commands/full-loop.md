@@ -98,79 +98,6 @@ This gate applies regardless of how you were dispatched (pulse, `/runners`, bare
 
 ## Workflow
 
-### Step 0.45: Task Decomposition Check (t1408.2)
-
-Before claiming and starting work, classify the task to determine if it should be decomposed into subtasks. This catches over-scoped tasks before a worker spends hours on something that should be multiple focused PRs.
-
-**When to run:** After resolving the task description (Step 0) and before claiming (Step 0.5). Skip if `--no-decompose` flag is passed or if the task already has subtasks in TODO.md.
-
-**How it works:**
-
-```bash
-DECOMPOSE_HELPER="$HOME/.aidevops/agents/scripts/task-decompose-helper.sh"
-
-# Only run if the helper exists (t1408.1 must be merged)
-if [[ -x "$DECOMPOSE_HELPER" && -n "$TASK_ID" ]]; then
-  # Check if subtasks already exist (returns "true" or "false")
-  HAS_SUBS=$(/bin/bash "$DECOMPOSE_HELPER" has-subtasks "$TASK_ID") || HAS_SUBS="false"
-
-  if [[ "$HAS_SUBS" == "true" ]]; then
-    # Subtasks already exist — skip decomposition
-    echo "[t1408.2] Task $TASK_ID already has subtasks — proceeding with implementation"
-  else
-    # No existing subtasks — classify the task description
-    CLASSIFY=$(/bin/bash "$DECOMPOSE_HELPER" classify "$TASK_DESC" --depth 0) || CLASSIFY=""
-    TASK_KIND=$(echo "$CLASSIFY" | jq -r '.kind // "atomic"' || echo "atomic")
-  fi
-fi
-```
-
-**If atomic (or helper unavailable):** Proceed to Step 0.5 (claim and implement directly). This is the default path — most tasks are atomic.
-
-**If composite — interactive mode:**
-
-Show the decomposition tree and ask for confirmation:
-
-```bash
-DECOMPOSE=$(/bin/bash "$DECOMPOSE_HELPER" decompose "$TASK_DESC" --max-subtasks "${DECOMPOSE_MAX_SUBTASKS:-5}") || DECOMPOSE=""
-SUBTASK_COUNT=$(echo "$DECOMPOSE" | jq '.subtasks | length' || echo 0)
-```
-
-Present to the user:
-
-```text
-This task appears to be composite (contains 2+ independent concerns).
-Suggested decomposition:
-
-1. {subtask_1_description} (~{estimate})
-2. {subtask_2_description} (~{estimate}) [depends on: 1]
-3. {subtask_3_description} (~{estimate})
-
-Options:
-  Y - Create subtasks and dispatch them separately (recommended)
-  n - Implement as a single task anyway
-  e - Edit the decomposition before creating subtasks
-```
-
-If the user confirms (Y):
-
-1. Create child task IDs using `claim-task-id.sh` for each subtask
-2. Add child entries to TODO.md with `blocked-by:` edges from the decomposition
-3. Create briefs for each child task (inheriting parent context + subtask-specific scope)
-4. Label the parent task `status:blocked` with `blocked-by:` refs to children
-5. Ask: "Implement the first leaf task now, or queue all for dispatch?"
-
-**If composite — headless mode:**
-
-Auto-decompose without confirmation (the pulse already classified this as composite):
-
-1. Create child tasks, briefs, and TODO entries automatically
-2. Label parent as `status:blocked`
-3. Exit cleanly with: `DECOMPOSED: task $TASK_ID split into $SUBTASK_COUNT subtasks ($CHILD_IDS). Parent blocked. Children queued for dispatch.`
-4. The next pulse cycle dispatches the leaf tasks
-
-**Depth limit:** Controlled by `DECOMPOSE_MAX_DEPTH` env var (default: 3). At depth 3+, tasks are always treated as atomic regardless of classification.
-
 ### Step 0.5: Claim Task (t1017)
 
 If the first argument is a task ID (`t\d+`), claim it before starting work. This prevents two agents (or a human and an agent) from working on the same task concurrently.
@@ -316,34 +243,28 @@ fi
 
 **For interactive sessions** (not headless dispatch): If you are working on a task interactively and the issue exists, apply the label based on your own model identity. This ensures all task work is attributed, not just headless dispatches.
 
-### Step 0.8: Task Decomposition Check (t1408)
+### Step 0.8: Task Decomposition Check (t1408, t1408.2)
 
-Before starting implementation, check if the task should be decomposed into subtasks. This catches over-scoped tasks before they waste a worker session.
+Before claiming and starting work, classify the task. Skip if `--no-decompose` is passed or subtasks already exist in TODO.md.
 
 ```bash
-# Check if task already has subtasks (skip if already decomposed)
-HAS_SUBS=$(~/.aidevops/agents/scripts/task-decompose-helper.sh has-subtasks "$TASK_ID" || echo "false")
-
-if [[ "$HAS_SUBS" == "false" ]]; then
-  # Classify the task
-  CLASSIFY=$(~/.aidevops/agents/scripts/task-decompose-helper.sh classify "$TASK_DESC" || echo '{"kind":"atomic"}')
-  TASK_KIND=$(echo "$CLASSIFY" | sed -n 's/.*"kind"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
-
-  if [[ "$TASK_KIND" == "composite" ]]; then
-    # Decompose into subtasks
-    DECOMPOSITION=$(~/.aidevops/agents/scripts/task-decompose-helper.sh decompose "$TASK_DESC" || echo "")
-
-    # Interactive mode: show tree and ask for confirmation
-    # Headless mode: auto-proceed (create child tasks and dispatch)
+DECOMPOSE_HELPER="$HOME/.aidevops/agents/scripts/task-decompose-helper.sh"
+if [[ -x "$DECOMPOSE_HELPER" && -n "$TASK_ID" ]]; then
+  HAS_SUBS=$(/bin/bash "$DECOMPOSE_HELPER" has-subtasks "$TASK_ID") || HAS_SUBS="false"
+  if [[ "$HAS_SUBS" == "false" ]]; then
+    CLASSIFY=$(/bin/bash "$DECOMPOSE_HELPER" classify "$TASK_DESC" --depth 0) || CLASSIFY=""
+    TASK_KIND=$(echo "$CLASSIFY" | jq -r '.kind // "atomic"' || echo "atomic")
   fi
 fi
 ```
 
-**Interactive mode:** If the task is composite, show the decomposition tree and ask: "This task has multiple independent concerns. Should I split it into subtasks? [Y/n/edit]". On confirm, create child TODO entries with `claim-task-id.sh`, set `blocked-by:` edges, and dispatch workers for each leaf subtask.
+**If atomic (default):** Proceed to Step 0.5. Most tasks are atomic; the classify call costs ~$0.001.
 
-**Headless mode:** Auto-decompose and create child tasks. Depth limit: `DECOMPOSE_MAX_DEPTH` (default: 3). Skip decomposition for tasks that already have subtasks in TODO.md.
+**If composite — interactive:** Show decomposition tree, ask Y/n/edit. On confirm: create child task IDs via `claim-task-id.sh`, add `blocked-by:` edges, create briefs, label parent `status:blocked`.
 
-**When to skip:** If the task is atomic (most tasks), proceed directly to Step 1. The classify call costs ~$0.001 (haiku-tier) and takes <1 second.
+**If composite — headless:** Auto-decompose, create child tasks and briefs, exit with: `DECOMPOSED: task $TASK_ID split into $SUBTASK_COUNT subtasks ($CHILD_IDS). Parent blocked. Children queued for dispatch.`
+
+**Depth limit:** `DECOMPOSE_MAX_DEPTH` env var (default: 3). At depth 3+, always treat as atomic.
 
 ### Step 1: Auto-Branch Setup
 
@@ -391,124 +312,47 @@ git status --short
 
 ### Step 1.5: Operation Verification (t1364.3)
 
-Before executing high-stakes operations (production deploys, database migrations, force pushes, secret rotation), the pipeline invokes cross-provider model verification. This catches single-model hallucinations before destructive operations cause irreversible damage.
-
-**How it works:**
+Before high-stakes operations (production deploys, DB migrations, force pushes, secret rotation), invoke cross-provider model verification to catch single-model hallucinations.
 
 ```bash
-# The pre-edit-check.sh now accepts --verify-op for operation-level checks
 ~/.aidevops/agents/scripts/pre-edit-check.sh --verify-op "git push --force origin main"
-
-# Or source the helper directly for programmatic use
-source ~/.aidevops/agents/scripts/verify-operation-helper.sh
-risk=$(check_operation "terraform destroy")        # Returns: critical, high, moderate, low
-result=$(verify_operation "terraform destroy" "$risk")  # Returns: verified, concerns:*, blocked:*
+# Or: source verify-operation-helper.sh; risk=$(check_operation "cmd"); result=$(verify_operation "cmd" "$risk")
 ```
 
-**Risk taxonomy:**
-
-| Level | Examples | Action |
-|-------|----------|--------|
-| critical | Force push to main, `rm -rf /`, drop database, deploy to production, expose secrets | Block (headless) or require confirmation (interactive) |
-| high | Force push, hard reset, branch deletion, DB migration, npm publish | Verify via cross-provider model call |
-| moderate | Package installs, config changes, permission changes | Log only (verify in `block` policy mode) |
+| Risk | Examples | Action |
+|------|----------|--------|
+| critical | Force push to main, `rm -rf /`, drop DB, production deploy, expose secrets | Block (headless) / confirm (interactive) |
+| high | Hard reset, branch deletion, DB migration, npm publish | Verify via cross-provider model call |
+| moderate | Package installs, config/permission changes | Log only |
 | low | Code edits, docs, tests | No verification |
 
-**Pipeline integration points:**
-
-- **pre-edit-check.sh**: Pass `--verify-op "command"` to verify before execution
-- **dispatch.sh**: Automatically screens task descriptions for high-stakes indicators before committing a worker
-- **full-loop**: Verification runs at branch setup and before destructive git operations
-
-**Configuration** (environment variables):
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `VERIFY_ENABLED` | `true` | Enable/disable verification globally |
-| `VERIFY_POLICY` | `warn` | `warn` (log concerns), `block` (stop on concerns), `skip` (disable) |
-| `VERIFY_TIMEOUT` | `30` | Seconds to wait for verifier response |
-| `VERIFY_MODEL` | `haiku` | Model tier for verification (cheapest sufficient) |
+Config env vars: `VERIFY_ENABLED=true`, `VERIFY_POLICY=warn` (warn/block/skip), `VERIFY_TIMEOUT=30`, `VERIFY_MODEL=haiku`.
 
 ### Step 1.7: Parse Lineage Context (t1408.3)
 
-If the dispatch prompt contains a `TASK LINEAGE:` block (injected by the pulse or interactive dispatcher for subtasks), parse it at session start. This block tells you your place in a task hierarchy — what the parent task is, what sibling tasks exist, and what your specific scope is.
-
-**Detection:**
-
-```bash
-# Check if the dispatch arguments contain lineage context
-if echo "$ARGUMENTS" | grep -q "TASK LINEAGE:"; then
-  HAS_LINEAGE=true
-fi
-```
+If the dispatch prompt contains a `TASK LINEAGE:` block, parse it at session start to understand your scope within a task hierarchy.
 
 **Worker rules when lineage is present:**
 
-1. **Scope boundary** — Only implement what's marked with `<-- THIS TASK`. If you find yourself implementing functionality described in a sibling task's description, stop and refocus.
-
-2. **Stub dependencies** — If your task needs types, APIs, or interfaces that a sibling task will create, define minimal stubs (e.g., a TypeScript interface, a function signature with `TODO` body). Document these stubs in the PR body under a "Cross-task stubs" section so the sibling worker knows to replace them.
-
-3. **No sibling work** — Do not implement features described in sibling task descriptions, even if they seem easy or closely related. Each sibling has its own worker, branch, and PR. Overlapping implementations cause merge conflicts.
-
-4. **PR body lineage section** — When creating the PR, include a "Task Lineage" section:
-
-   ```markdown
-   ## Task Lineage
-
-   This task is part of a decomposed parent task:
-   - **Parent:** t1408 — Recursive task decomposition for dispatch
-   - **This task:** t1408.3 — Add lineage context to worker dispatch prompts
-   - **Siblings:** t1408.1 (classify/decompose helper), t1408.2 (dispatch integration), t1408.4 (batch strategies), t1408.5 (testing)
-
-   ### Cross-task stubs
-   - None (this task is documentation-only)
-   ```
-
-5. **Blocked by sibling** — If you discover a hard dependency on a sibling task (not just a stub-able interface, but a fundamental prerequisite like "the database table doesn't exist yet"), exit cleanly:
-
-   ```text
-   BLOCKED: This task (t1408.3) requires task-decompose-helper.sh from sibling t1408.1,
-   which has not been merged yet. Cannot test lineage formatting without the helper.
-   Partial work committed on branch feature/t1408.3-lineage-context.
-   ```
+1. **Scope boundary** — Only implement what's marked `<-- THIS TASK`. Stop if you find yourself implementing a sibling's work.
+2. **Stub dependencies** — For types/APIs a sibling will create, define minimal stubs and document them in the PR body under "Cross-task stubs".
+3. **No sibling work** — Each sibling has its own worker, branch, and PR. Overlapping implementations cause merge conflicts.
+4. **PR body lineage section** — Include parent, this task, and siblings with task IDs.
+5. **Blocked by sibling** — If a hard dependency (not just a stub) is unmet, exit: `BLOCKED: This task (tX.Y) requires <item> from sibling tX.Z, which has not been merged yet.`
 
 ### Step 2: Start Full Loop
 
-**Supervisor dispatch** (headless mode - t174):
-
-When dispatched by the supervisor, `--headless` is passed automatically. This suppresses all interactive prompts, prevents TODO.md edits, and ensures clean exit on errors. You can also set `FULL_LOOP_HEADLESS=true` as an environment variable.
-
-**Recommended: Background mode** (avoids timeout issues):
+When dispatched by the supervisor, `--headless` is passed automatically (suppresses prompts, prevents TODO.md edits, ensures clean exit). Also settable via `FULL_LOOP_HEADLESS=true`.
 
 ```bash
+# Recommended: background mode (avoids MCP Bash 120s timeout)
 ~/.aidevops/agents/scripts/full-loop-helper.sh start "$ARGUMENTS" --background
-```
 
-This starts the loop in the background and returns immediately. Use these commands to monitor:
-
-```bash
-# Check status
+# Monitor: status | logs | cancel
 ~/.aidevops/agents/scripts/full-loop-helper.sh status
-
-# View logs
 ~/.aidevops/agents/scripts/full-loop-helper.sh logs
-
-# Cancel if needed
 ~/.aidevops/agents/scripts/full-loop-helper.sh cancel
 ```
-
-**Foreground mode** (may timeout in MCP tools):
-
-```bash
-~/.aidevops/agents/scripts/full-loop-helper.sh start "$ARGUMENTS"
-```
-
-This will:
-1. Initialize the Ralph loop for task development
-2. Set up state tracking in `.agents/loop-state/full-loop.local.md`
-3. Begin iterating on the task
-
-**Note**: Foreground mode may timeout when called via MCP Bash tool (default 120s timeout). Use `--background` for long-running tasks.
 
 ### Step 3: Task Development (Ralph Loop)
 
@@ -604,149 +448,58 @@ waste entire sessions guessing at root causes. Common pitfalls:
 
 **Quality-debt blast radius cap (t1422 — MANDATORY for quality-debt tasks):**
 
-When working on a quality-debt, simplification-debt, or batch-fix task (any task whose issue has `quality-debt` or `simplification-debt` labels, or whose description mentions "batch", "across N files", or "harden N scripts"), the PR must touch **at most 5 files**. This is a hard cap — not a guideline.
+PRs for `quality-debt`/`simplification-debt` tasks must touch **at most 5 files** (hard cap, not guideline). Large batch PRs (10-69 files) conflict with every other PR in flight — 63%+ of open PRs become `CONFLICTING`. Small PRs merge cleanly in any order.
 
-**Why:** Large batch PRs (10-69 files) conflict with every other PR in flight. When multiple batch PRs exist concurrently, each merge moves main and invalidates the others, creating a cascade where 63%+ of open PRs become `CONFLICTING`. Small PRs merge cleanly in any order.
-
-**How to comply:**
-
-1. If the issue describes fixes across more than 5 files, implement only the first 5 (prioritise by severity). Commit and create the PR for those 5.
-2. File follow-up issues for the remaining files — one issue per 5-file batch, or one issue per file for complex fixes.
-3. Do NOT attempt to fix all files in a single PR. A partial PR that merges cleanly is worth more than a complete PR that conflicts.
-
-**Detection:** Before creating the PR, count the files you've changed:
+If the issue covers more than 5 files: implement the first 5 (by severity), create the PR, then file follow-up issues for the rest. This rule does NOT apply to feature PRs, bug fixes, or refactors.
 
 ```bash
 CHANGED_FILES=$(git diff --name-only origin/main | wc -l | tr -d ' ')
-if [[ "$CHANGED_FILES" -gt 5 ]]; then
-  echo "[t1422] WARNING: $CHANGED_FILES files changed — quality-debt PRs must touch at most 5 files"
-  echo "Split into multiple PRs or file follow-up issues for remaining files"
-fi
+[[ "$CHANGED_FILES" -gt 5 ]] && echo "[t1422] WARNING: split into multiple PRs"
 ```
-
-If you exceed 5 files, split the work before creating the PR. This rule does NOT apply to feature PRs, bug fixes, or refactors — only to automated quality-debt and batch-fix tasks.
 
 **Headless dispatch rules (MANDATORY for supervisor-dispatched workers - t158/t174):**
 
-When running as a headless worker (dispatched by the supervisor via `opencode run` or `Claude -p`), the `--headless` flag is passed automatically. The full-loop-helper.sh script enforces these rules:
+When running as a headless worker, `--headless` is passed automatically. Rules:
 
-1. **NEVER prompt for user input** - There is no human at the terminal. Use the uncertainty decision framework (rule 7) to decide whether to proceed or exit.
+1. **NEVER prompt for user input** — use the uncertainty framework (rule 7) to proceed or exit.
+2. **Do NOT edit TODO.md or shared planning files** (`todo/PLANS.md`, `todo/tasks/*`) — use commit messages and PR body instead. See `workflows/plans.md` "Worker TODO.md Restriction".
+3. **Handle auth failures gracefully** — retry `gh auth status` 3 times then exit cleanly. Do NOT retry indefinitely.
+4. **Exit cleanly on unrecoverable errors** — emit a clear message and exit. Do not loop forever.
+5. **git pull --rebase before push** (t174) — avoids push rejections from diverged branches.
 
-2. **Do NOT edit TODO.md** - Put notes in commit messages or PR body instead. See `workflows/plans.md` "Worker TODO.md Restriction".
+6. **Uncertainty decision framework** (t176):
 
-3. **Do NOT edit shared planning files** - Files like `todo/PLANS.md`, `todo/tasks/*` are managed by the supervisor. Workers should only modify files relevant to their assigned task.
+   **PROCEED autonomously** (document in commit message): multiple valid approaches → pick simplest; style/naming ambiguity → follow codebase conventions; vague description with clear intent → interpret reasonably; minor scope questions → stay focused.
 
-4. **Handle auth failures gracefully** - If `gh auth status` fails, the script retries 3 times then exits cleanly with a clear error for supervisor evaluation. Do NOT retry indefinitely.
+   **EXIT cleanly** (specific explanation): task contradicts codebase; requires breaking API changes; task already done/obsolete; missing dependencies/credentials; architectural decisions affecting other tasks; create-vs-modify ambiguity with data loss risk.
 
-5. **Exit cleanly on unrecoverable errors** - If you cannot complete the task (missing dependencies, permissions, etc.), emit a clear error message and exit. Do not loop forever.
+   Examples: `feat: add retry logic (chose exponential backoff — matches existing patterns)` / `BLOCKED: Task says 'update auth endpoint' but 3 exist (JWT, OAuth, API key). Need clarification.`
 
-6. **git pull --rebase before push** (t174) - The PR create phase automatically runs `git pull --rebase` to sync with any remote changes before pushing, avoiding push rejections.
+7. **Worker time budget and progressive PR (MANDATORY):** Always produce a PR, even if partial.
 
-7. **Uncertainty decision framework** (t176) - When facing ambiguity, use this decision tree:
+   - **At 45 min:** Self-check. If stuck on a dependency, commit what you have and exit: `BLOCKED: dependency not available — <specific>. Partial work committed on branch.`
+   - **At 90 min:** Begin PR phase immediately. Commit with `feat: partial implementation of <task> (time budget)`, create draft PR, file subtask issues for remaining work.
+   - **At 120 min (hard limit):** Stop implementation. If ANY commits exist: create draft PR with "What's done / What remains". If NO commits: exit with detailed `BLOCKED:` message. Never exceed 2 hours without a PR or clear exit.
 
-   **PROCEED autonomously** (document decision in commit message):
-   - Multiple valid approaches exist but all achieve the goal — pick the simplest
-   - Style/naming choices are ambiguous — follow existing codebase conventions
-   - Task description is slightly vague but intent is clear from context
-   - Choosing between equivalent libraries/patterns — match project precedent
-   - Minor scope questions (e.g., fix adjacent issue?) — stay focused on assigned task
+   **Dependency detection (early exit):** Before writing any code, verify prerequisites exist. Check `gh pr list --state merged --search "tXXX"` for `blocked-by:` tasks. If missing, exit immediately: `BLOCKED: prerequisite tXXX not merged — <specific missing item>`. Why: 5 workers × 4h with no PRs = 20h wasted compute.
 
-   **EXIT cleanly** (include clear explanation in output):
-   - Task description contradicts what you find in the codebase
-   - Completing the task requires breaking changes to public APIs or shared interfaces
-   - The task is already done or obsolete
-   - Required dependencies, credentials, or services are missing and cannot be inferred
-   - The task requires architectural decisions that affect other tasks
-   - Unsure whether to create vs modify a file, and getting it wrong risks data loss
+   **Push/PR failure recovery (#2452):** On any `git push` or `gh pr create` failure: log the error, retry once after `git pull --rebase origin main`, then exit: `BLOCKED: push/PR creation failed — <exact error>. Commits on branch <name> in worktree <path>.` Do NOT continue implementing after a push failure.
 
-   When proceeding, document the choice: `feat: add retry logic (chose exponential backoff — matches existing patterns)`
-   When exiting, be specific: `BLOCKED: Task says 'update auth endpoint' but 3 exist (JWT, OAuth, API key). Need clarification.`
-
-8. **Worker time budget and progressive PR (MANDATORY for headless workers):**
-
-   Workers MUST be aware of elapsed time and act progressively to avoid the systemic pattern of running 3-9 hours without producing any PR. The goal is: **always produce a PR, even if partial.**
-
-   **Time checkpoints:**
-
-   - **At 45 minutes:** Self-check — have you made meaningful progress? If you're stuck on a dependency (missing schema, unmerged prerequisite, missing API), do NOT keep trying to work around it. Instead:
-     1. Commit what you have (even if incomplete)
-     2. Exit cleanly with: `BLOCKED: dependency not available — <specific dependency>. Partial work committed on branch.`
-     3. The supervisor will re-dispatch when the dependency merges.
-
-   - **At 90 minutes:** If you have working code (even partial), begin the PR phase immediately:
-     1. Commit all work with `feat: partial implementation of <task> (time budget)`
-     2. Create a draft PR with `gh pr create --draft` explaining what's done and what remains
-     3. File subtask issues for remaining work
-     4. Exit cleanly — a partial PR is infinitely more valuable than no PR after 3 hours
-
-   - **At 120 minutes (hard limit):** Stop all implementation work. PR whatever you have:
-     1. If you have ANY commits: create a draft PR with a clear "What's done / What remains" section
-     2. If you have NO commits (completely stuck): exit with a detailed `BLOCKED:` message explaining exactly what prevented progress
-     3. Never exceed 2 hours without either a PR or a clear exit message
-
-   **Dependency detection (early exit):** At the START of task development, before writing any code, verify that the task's prerequisites exist in the codebase:
-    - If the task references tables, APIs, or schemas from another task, check if they exist with a context-appropriate search: start broad (`rg 'tableName|functionName'`) and only add file filters that match the repo/task (for example `--glob '*.sql'`, `--glob '*.py'`, `--glob '*.ts'`). Do not assume one language.
-   - If the task says "blocked-by: tXXX" in TODO.md or the issue body, check if tXXX's PR is merged: `gh pr list --state merged --search "tXXX"`
-   - If prerequisites are missing, exit immediately with `BLOCKED: prerequisite tXXX not merged — <specific missing item>`. Do not attempt to implement the missing prerequisite yourself.
-
-   **Why this matters:** 5 workers running 4+ hours each with no PRs = 20+ hours of wasted compute. A worker that exits after 10 minutes with "BLOCKED: t030 not merged, profile table doesn't exist" saves 3h 50m and gives the supervisor actionable information.
-
-   **Push/PR failure recovery (#2452 pattern):** If `git push` or `gh pr create` fails, do NOT silently continue working. This is the root cause of workers that commit code but never produce a PR — they hit a push failure (auth, branch protection, network) and keep iterating on code instead of addressing the failure. On any push or PR creation failure:
-   1. Log the exact error message
-   2. Retry once after `git pull --rebase origin main` (handles diverged branches)
-   3. If retry fails, exit immediately with: `BLOCKED: push/PR creation failed — <exact error>. Commits exist on local branch <branch-name> in worktree <path>.`
-   4. Do NOT continue implementing code after a push failure — the work is unrecoverable without a PR
-
-9. **Cross-repo routing** — If you discover mid-task that the fix belongs in a different repo (e.g., working in a webapp repo but the bug is in an aidevops framework script), do NOT create tasks or TODO entries in the current repo. Instead, file a GitHub issue in the correct repo:
+8. **Cross-repo routing** — If the fix belongs in a different repo, file a GitHub issue there (always allowed) and stop code changes if that repo is outside `PULSE_SCOPE_REPOS`:
 
    ```bash
-   gh issue create --repo <owner/correct-repo> --title "<description>" \
-     --body "Discovered while working on <current-task> in <current-repo>. <details>"
-   ```
-
-   **If creating TODOs/PLANS in another repo** (e.g., adding a TODO to `~/Git/aidevops/TODO.md` while working in a webapp repo): always commit and push them immediately so the issue-sync workflow picks them up. Uncommitted TODOs are invisible to the supervisor and issue-sync.
-
-   ```bash
-   git -C ~/Git/<target-repo> add TODO.md todo/PLANS.md
-   git -C ~/Git/<target-repo> commit -m "chore: add t{id} TODO from <current-repo> session"
-   git -C ~/Git/<target-repo> push origin main
-   ```
-
-   Then continue with your assigned task in the current repo. The pulse supervisor will pick up the cross-repo issue on its next cycle. This prevents framework-level work from being tracked in app repos and vice versa.
-
-   **Scope boundary for code changes (t1405, GH#2928):** When dispatched by the pulse (headless mode), the `PULSE_SCOPE_REPOS` env var contains a comma-separated list of repo slugs that you are allowed to create branches and PRs on. This is set by `pulse-wrapper.sh` from repos with `pulse: true` in repos.json.
-
-   - **Filing issues**: ALWAYS allowed on any repo, regardless of scope. Cross-repo bug reports are valuable feedback to maintainers.
-   - **Creating branches, PRs, or committing code**: ONLY allowed on repos listed in `PULSE_SCOPE_REPOS`. If the target repo is not in scope, file the issue and stop — do NOT implement the fix.
-   - **If `PULSE_SCOPE_REPOS` is empty or unset**: you are in interactive mode (not pulse-dispatched) — no scope restriction applies.
-
-   ```bash
-   # Check if a target repo is in scope before creating code changes
-   TARGET_SLUG="owner/repo"
    if [[ -n "${PULSE_SCOPE_REPOS:-}" ]]; then
      if ! echo ",$PULSE_SCOPE_REPOS," | grep -qF ",$TARGET_SLUG,"; then
-       echo "Repo $TARGET_SLUG is outside pulse scope — filing issue only, not implementing fix"
-       gh issue create --repo "$TARGET_SLUG" --title "TITLE" \
-         --body "Discovered while working on CURRENT_TASK. DETAILS"
+       gh issue create --repo "$TARGET_SLUG" --title "TITLE" --body "..."
        echo "BLOCKED: target repo out of pulse scope; issue filed — stopping."
        exit 0
      fi
    fi
    ```
 
-   This prevents the pattern where a pulse-dispatched worker creates PRs on repos the user doesn't manage (observed: 4 PRs + a fork on a repo the user doesn't own).
+   If creating TODOs in another repo, commit and push them immediately — uncommitted TODOs are invisible to the supervisor.
 
-10. **Issue-task alignment (MANDATORY)** — Before linking your PR to an issue or claiming a task, verify your work matches the issue's actual description. Workers have hijacked issues by using a task ID for completely unrelated work (e.g., PR "Fix ShellCheck noise" closed issue "Add local dev row to build-plus.md" because both used t1344).
-
-    **Before creating a PR that references an issue:**
-    - Read the issue title and body: `gh issue view <number> --repo <owner/repo>`
-    - Verify your PR's changes actually implement what the issue describes
-    - If your work is unrelated to the issue, create a new issue for your work instead
-
-    **If you discover your assigned task is already done or the issue was closed:**
-    - Check if the closing PR actually implemented the task (read the PR diff)
-    - If the PR was unrelated work that incorrectly closed the issue, reopen it and comment explaining the mismatch
-    - Do NOT silently reuse a task ID for different work
+9. **Issue-task alignment (MANDATORY)** — Before linking your PR to an issue, read the issue (`gh issue view <number>`) and verify your changes implement what it describes. Workers have hijacked issues by reusing task IDs for unrelated work (e.g., t1344 incident). If your work is unrelated, create a new issue. If the issue was incorrectly closed by an unrelated PR, reopen it with a comment.
 
 **README gate (MANDATORY - do NOT skip):**
 
@@ -794,168 +547,90 @@ After `TASK_COMPLETE` (which requires the commit+PR gate from Step 3 criterion 9
 
 **Issue-state guard before any label/comment modification (t1343 — MANDATORY):**
 
-Before modifying any linked issue (adding labels, posting comments, or changing state), ALWAYS check its current state. Use fail-closed semantics — only proceed when state is explicitly `OPEN`:
+Before modifying any linked issue, ALWAYS check its state. Use fail-closed semantics — only proceed when state is explicitly `OPEN`. This prevents race conditions where a worker's delayed transition overwrites a supervisor's correct closure, and protects against transient `gh` failures.
 
 ```bash
 for ISSUE_NUM in $LINKED_ISSUES; do
   ISSUE_STATE=$(gh issue view "$ISSUE_NUM" --repo "$REPO" --json state -q .state 2>/dev/null || echo "UNKNOWN")
   if [[ "$ISSUE_STATE" != "OPEN" ]]; then
-    # Fail closed: skip on CLOSED, UNKNOWN, empty, or any non-OPEN state.
-    # CLOSED = already resolved by another session. UNKNOWN = gh failure/timeout.
-    # Either way, do NOT modify — modifications on ambiguous state cause noise.
     echo "[t1343] Skipping issue #$ISSUE_NUM — state is $ISSUE_STATE (not OPEN)"
     continue
   fi
-  # ... proceed with label/comment updates only for OPEN issues
+  # proceed with label/comment updates only for OPEN issues
 done
 ```
 
-This prevents the race condition where a worker's delayed lifecycle transition overwrites a supervisor's correct closure. If the issue is already closed with a merged PR, any further label changes (`needs-review`, `status:in-review`, etc.) are noise. The fail-closed design also protects against transient `gh` failures — if the state check fails, modifications are skipped rather than allowed.
-
-**PR lookup fallback (t1343):** When checking whether a merged PR exists for the current task (e.g., before deciding to flag an issue as `needs-review`), do NOT rely solely on your session's local state. Use the fallback chain from `planning-detail.md` "PR Lookup Fallback" — check local state first, then `gh pr list --state merged --search "<task_id>"`, then issue timeline cross-references. If ANY source confirms a merged PR, the task has PR evidence.
+**PR lookup fallback (t1343):** Do NOT rely solely on session-local state. Check: local state → `gh pr list --state merged --search "<task_id>"` → issue timeline. If ANY source confirms a merged PR, the task has PR evidence.
 
 **Issue label update on PR create — `status:in-review`:**
 
-After creating the PR, update linked issues to `status:in-review`. Extract linked issue numbers from the PR body (`Fixes #NNN`, `Closes #NNN`, `Resolves #NNN`) and update each:
+After creating the PR, extract linked issue numbers from the PR body (`Fixes/Closes/Resolves #NNN`) and for each OPEN issue:
 
 ```bash
-for ISSUE_NUM in $LINKED_ISSUES; do
-  # t1343: Check issue state before modifying — fail closed (only modify if explicitly OPEN)
-  ISSUE_STATE=$(gh issue view "$ISSUE_NUM" --repo "$REPO" --json state -q .state 2>/dev/null || echo "UNKNOWN")
-  if [[ "$ISSUE_STATE" != "OPEN" ]]; then
-    echo "[t1343] Skipping issue #$ISSUE_NUM — state is $ISSUE_STATE (not OPEN)"
-    continue
-  fi
-  gh issue edit "$ISSUE_NUM" --repo "$REPO" --add-label "status:in-review" 2>/dev/null || true
-  gh issue edit "$ISSUE_NUM" --repo "$REPO" --remove-label "status:in-progress" 2>/dev/null || true
-done
+gh issue edit "$ISSUE_NUM" --repo "$REPO" --add-label "status:in-review" 2>/dev/null || true
+gh issue edit "$ISSUE_NUM" --repo "$REPO" --remove-label "status:in-progress" 2>/dev/null || true
 ```
 
-The `status:done` transition is handled automatically by the `sync-on-pr-merge` workflow when the PR merges — workers do not need to set it.
+The `status:done` transition is handled automatically by the `sync-on-pr-merge` workflow — workers do not need to set it.
 
 **Review Bot Gate (t1382 — MANDATORY before merge):**
 
-Before merging any PR, wait for AI code review bots to post their reviews. This is a defense-in-depth gate with three layers:
+Wait for AI review bots before merging. Three enforcement layers: CI (`review-bot-gate.yml` required check), agent (this rule), branch protection.
 
-1. **CI layer**: The `review-bot-gate` GitHub Actions workflow (`.github/workflows/review-bot-gate.yml`) runs as a required status check. It checks for comments/reviews from known bots (CodeRabbit, Gemini Code Assist, Augment Code, Copilot) and fails until at least one has posted. The workflow re-triggers on `pull_request_review` and `issue_comment` events, so it automatically passes once a bot reviews.
+```bash
+RESULT=$(~/.aidevops/agents/scripts/review-bot-gate-helper.sh check "$PR_NUMBER" "$REPO")
+# Returns: PASS | WAITING | SKIP
+```
 
-2. **Agent layer (this rule)**: After creating the PR and before merging, the agent MUST verify that at least one AI review bot has posted. Use the helper script:
+- **WAITING**: Poll every 60s up to 10 min (`REVIEW_BOT_WAIT_MAX=600`). Interactive: ask user. Headless: proceed with warning (CI gate is the hard stop).
+- **PASS**: Read reviews, address critical/security findings before merging.
+- **SKIP**: PR has `skip-review-gate` label (docs-only PRs, repos without bots).
 
-   ```bash
-   REPO=$(gh repo view --json nameWithOwner -q .nameWithOwner)
-   RESULT=$(~/.aidevops/agents/scripts/review-bot-gate-helper.sh check "$PR_NUMBER" "$REPO")
-   # Returns: PASS (bots found), WAITING (no bots yet), SKIP (label present)
-   ```
-
-   **If WAITING**: Poll every 60 seconds for up to 10 minutes (configurable via `REVIEW_BOT_WAIT_MAX=600`). Most bots post within 2-5 minutes. If still waiting after the timeout:
-   - In **interactive mode**: warn the user and ask whether to proceed or wait longer
-   - In **headless mode**: proceed with merge but log a warning — the CI gate will block if configured as a required check
-
-   **If PASS**: Proceed to merge. Read the bot reviews and address any critical/security findings before merging. Non-critical suggestions can be noted for follow-up.
-
-   **If SKIP**: The PR has the `skip-review-gate` label — proceed to merge. Use this for docs-only PRs or repos without review bots.
-
-3. **Branch protection layer**: For repos with review bots configured, add `review-bot-gate` as a required status check in GitHub Settings > Branches > Branch protection rules. This is the hard enforcement — even if the agent skips the wait, GitHub blocks the merge.
-
-**Why this matters**: PR #1 on aidevops-cloudron-app was merged before review bots posted, losing all security findings. The bots found real issues that would have been caught if the merge had waited 3 minutes.
-
-**Known review bots** (from `workflows/pr.md`):
-
-| Bot | Login pattern | Typical review time |
-|-----|---------------|-------------------|
-| CodeRabbit | `coderabbitai` | 1-3 minutes |
-| Gemini Code Assist | `gemini-code-assist[bot]` | 2-5 minutes |
-| Augment Code | `augment-code[bot]` | 2-4 minutes |
-| GitHub Copilot | `copilot[bot]` | 1-3 minutes |
+Known bots: `coderabbitai` (1-3 min), `gemini-code-assist[bot]` (2-5 min), `augment-code[bot]` (2-4 min), `copilot[bot]` (1-3 min). Incident: PR #1 on aidevops-cloudron-app merged before bots posted, losing all security findings.
 
 **Auto-release after merge (aidevops repo only — MANDATORY):**
 
-After merging a PR on the aidevops repo (`marcusquinn/aidevops`), cut a patch release so contributors and auto-update users receive the fix immediately. Without this step, fixes sit on main indefinitely until someone manually releases.
+After merging on `marcusquinn/aidevops`, cut a patch release so auto-update users receive the fix immediately.
 
 ```bash
-# Only for the aidevops repo — skip for all other repos
 REPO_SLUG=$(gh repo view --json nameWithOwner -q .nameWithOwner 2>/dev/null || echo "")
 if [[ "$REPO_SLUG" == "marcusquinn/aidevops" ]]; then
-  # Pull the merge commit to the canonical repo directory
-  REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null)
-  CANONICAL_DIR="${REPO_ROOT%%.*}"  # Strip worktree suffix if present
+  CANONICAL_DIR="${REPO_ROOT%%.*}"  # Strip worktree suffix
   git -C "$CANONICAL_DIR" pull origin main
-
-  # Bump patch version (updates VERSION, package.json, setup.sh, etc.)
   (cd "$CANONICAL_DIR" && "$HOME/.aidevops/agents/scripts/version-manager.sh" bump patch)
   NEW_VERSION=$(cat "$CANONICAL_DIR/VERSION")
-
-  # Commit, tag, push, create release
   git -C "$CANONICAL_DIR" add -A
   git -C "$CANONICAL_DIR" commit -m "chore(release): bump version to v${NEW_VERSION}"
   git -C "$CANONICAL_DIR" push origin main
-  git -C "$CANONICAL_DIR" tag "v${NEW_VERSION}"
-  git -C "$CANONICAL_DIR" push origin "v${NEW_VERSION}"
-
-  # Create GitHub release with auto-generated notes
+  git -C "$CANONICAL_DIR" tag "v${NEW_VERSION}" && git -C "$CANONICAL_DIR" push origin "v${NEW_VERSION}"
   gh release create "v${NEW_VERSION}" --repo "$REPO_SLUG" \
-    --title "v${NEW_VERSION} - AI DevOps Framework" \
-    --generate-notes
-
-  # Deploy locally
+    --title "v${NEW_VERSION} - AI DevOps Framework" --generate-notes
   "$CANONICAL_DIR/setup.sh" --non-interactive || true
 fi
 ```
 
-**Why patch (not minor/major)?** Workers cannot determine release significance — that requires human judgment about breaking changes and feature scope. Patch is always safe. The maintainer can manually cut a minor/major release when appropriate.
-
-**Headless mode:** Auto-release runs in headless mode too. The version bump is atomic (single commit + tag), and `--generate-notes` avoids the need to compose release notes.
+Patch (not minor/major) because workers cannot determine release significance — the maintainer cuts minor/major manually when appropriate.
 
 **Issue closing comment (MANDATORY — do NOT skip):**
 
-After the PR merges, post a closing comment on every linked GitHub issue. This preserves the context that would otherwise die with the worker session. The comment is the permanent record of what was done.
-
-Find linked issues from the PR body (`Fixes #NNN`, `Closes #NNN`, `Resolves #NNN`):
-
-```bash
-# Get the PR body and extract linked issue numbers
-PR_BODY=$(gh pr view <PR_NUMBER> --repo <owner/repo> --json body -q .body)
-# Parse "Fixes #123", "Closes #456", "Resolves #789" patterns
-```
-
-For each linked issue, post a comment with this structure:
+After the PR merges, post a closing comment on every linked issue. This is the permanent record of what was done — context that would otherwise die with the worker session.
 
 ```bash
 gh issue comment <ISSUE_NUMBER> --repo <owner/repo> --body "$(cat <<'COMMENT'
 ## Completed via PR #<PR_NUMBER>
 
-**What was done:**
-- <bullet list of what was implemented/fixed>
-
-**How it was tested:**
-- <what tests were run, what was verified>
-
-**Key decisions:**
-- <any non-obvious choices made and why>
-
-**Files changed:**
-- `path/to/file.ext` — <what changed and why>
-
-**Blockers encountered:**
-- <any issues hit during implementation, and how they were resolved>
-- None (if clean)
-
-**Follow-up needs:**
-- <anything that should be done next but was out of scope>
-- None (if complete)
-
+**What was done:** <bullet list>
+**How it was tested:** <what was verified>
+**Key decisions:** <non-obvious choices and why>
+**Files changed:** `path/to/file.ext` — <what changed and why>
+**Blockers encountered:** <issues hit and how resolved, or None>
+**Follow-up needs:** <out-of-scope items, or None>
 **Released in:** v<VERSION> — run `aidevops update` to get this fix.
 COMMENT
 )"
 ```
 
-**Rules:**
-- Every section must have at least one bullet (use "None" if nothing to report)
-- Be specific — "fixed the bug" is useless; "fixed race condition in worktree creation by adding `sleep 2` between dispatches" is useful
-- Include file paths with brief descriptions so future workers can find the changes
-- If the task was dispatched by the supervisor, include the original dispatch description for traceability
-- **Include the release version** in the "Released in" line if an auto-release was cut (aidevops repo). Read the version from `VERSION` after the release step. For non-aidevops repos, omit the "Released in" line.
-- This is a gate: do NOT emit `FULL_LOOP_COMPLETE` until closing comments are posted
+Rules: every section needs at least one bullet (use "None"); be specific (not "fixed the bug" — "fixed race condition in worktree creation by adding `sleep 2`"); include file paths; omit "Released in" for non-aidevops repos. This is a gate: do NOT emit `FULL_LOOP_COMPLETE` until closing comments are posted.
 
 **Worktree cleanup after merge:**
 
@@ -1041,76 +716,13 @@ Pass options after the prompt:
 
 ## Documentation & Changelog
 
-### README Updates
+README updates are enforced by the **README gate** in Step 3 — no need to include "update README" in your prompt.
 
-README updates are enforced by the **README gate** in Step 3 completion criteria. You do NOT need to include "and update README" in your prompt - the gate catches it automatically.
-
-When the gate triggers, update README.md with:
-- New feature documentation
-- Usage examples
-- API endpoint descriptions
-- Configuration options
-
-### Changelog (Auto-Generated)
-
-The release workflow auto-generates CHANGELOG.md from conventional commits. Use proper commit prefixes during task development:
-
-| Prefix | Changelog Section | Example |
-|--------|-------------------|---------|
-| `feat:` | Added | `feat: add JWT authentication` |
-| `fix:` | Fixed | `fix: resolve token expiration bug` |
-| `docs:` | Changed | `docs: update API documentation` |
-| `perf:` | Changed | `perf: optimize database queries` |
-| `refactor:` | Changed | `refactor: simplify auth middleware` |
-| `chore:` | (excluded) | `chore: update dependencies` |
-
-See `workflows/changelog.md` for format details.
+CHANGELOG.md is auto-generated from conventional commits: `feat:` (Added), `fix:` (Fixed), `docs:/perf:/refactor:` (Changed), `chore:` (excluded). See `workflows/changelog.md`.
 
 ## OpenProse Orchestration
 
-For complex multi-phase workflows, consider expressing the full loop in OpenProse DSL:
-
-```prose
-agent developer:
-  model: opus
-  prompt: "You are a senior developer"
-
-# Phase 1: Task Development
-loop until **task is complete** (max: 50):
-  session: developer
-    prompt: "Implement the feature, run tests, fix issues"
-
-# Phase 2: Preflight (parallel quality checks)
-parallel:
-  lint = session "Run linters and fix issues"
-  types = session "Check types and fix issues"
-  tests = session "Run tests and fix failures"
-
-if **any checks failed**:
-  loop until **all checks pass** (max: 5):
-    session "Fix remaining issues"
-      context: { lint, types, tests }
-
-# Phase 3: PR Creation
-let pr = session "Create pull request with gh pr create --fill"
-
-# Phase 4: PR Review Loop
-loop until **PR is merged** (max: 20):
-  parallel:
-    ci = session "Check CI status"
-    review = session "Check review status"
-
-  if **CI failed**:
-    session "Fix CI issues and push"
-
-  if **changes requested**:
-    session "Evaluate review feedback: verify factual claims against runtime/docs/project conventions, dismiss incorrect suggestions with evidence, address valid ones, then push"
-
-# Phase 5: Postflight
-session "Verify release health"
-```
-
-See `tools/ai-orchestration/openprose.md` for full OpenProse documentation.
+For complex multi-phase workflows, the full loop can be expressed in OpenProse DSL. See `tools/ai-orchestration/openprose.md` for documentation and examples.
 
 ## Related
 
