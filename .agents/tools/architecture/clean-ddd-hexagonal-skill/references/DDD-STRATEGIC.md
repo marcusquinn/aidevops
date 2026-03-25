@@ -1,18 +1,8 @@
 # DDD Strategic Patterns
 
-> Sources:
-> - [Domain-Driven Design: The Blue Book](https://www.domainlanguage.com/ddd/blue-book/) — Eric Evans (2003)
-> - [DDD Resources](https://www.domainlanguage.com/ddd/) — Domain Language (Eric Evans)
-> - [Bounded Context](https://martinfowler.com/bliki/BoundedContext.html) — Martin Fowler
-> - [Domain Driven Design](https://martinfowler.com/bliki/DomainDrivenDesign.html) — Martin Fowler
-> - [Anti-Corruption Layer](https://docs.aws.amazon.com/prescriptive-guidance/latest/cloud-design-patterns/acl.html) — AWS
-> - [Domain Analysis for Microservices](https://learn.microsoft.com/en-us/azure/architecture/microservices/model/domain-analysis) — Microsoft
+> Sources: [Blue Book](https://www.domainlanguage.com/ddd/blue-book/) — Evans (2003) · [Bounded Context](https://martinfowler.com/bliki/BoundedContext.html) · [Anti-Corruption Layer](https://docs.aws.amazon.com/prescriptive-guidance/latest/cloud-design-patterns/acl.html) · [Domain Analysis for Microservices](https://learn.microsoft.com/en-us/azure/architecture/microservices/model/domain-analysis)
 
-## Overview
-
-Strategic DDD patterns help decompose large systems into manageable parts with clear boundaries. They answer: **"How do we divide a complex domain?"**
-
-**DDD is fundamentally collaborative.** The patterns below emerge from conversations, whiteboarding, and modeling sessions with domain experts—not from coding alone.
+Strategic DDD patterns decompose large systems into manageable parts with clear boundaries. **DDD is fundamentally collaborative** — patterns emerge from conversations with domain experts, not from coding alone.
 
 ---
 
@@ -20,57 +10,32 @@ Strategic DDD patterns help decompose large systems into manageable parts with c
 
 ### Event Storming
 
-A workshop technique for discovering domain events, aggregates, and bounded contexts.
+Workshop technique for discovering domain events, aggregates, and bounded contexts.
 
 ```
 Orange sticky: Domain Event (past tense: "OrderPlaced")
-Blue sticky: Command (imperative: "Place Order")
+Blue sticky:   Command (imperative: "Place Order")
 Yellow sticky: Aggregate (noun: "Order")
-Pink sticky: External System / Policy
+Pink sticky:   External System / Policy
 Purple sticky: Problem / Question
 ```
 
-**Workshop flow:**
-1. **Chaotic exploration** — Everyone adds events they know about
-2. **Timeline ordering** — Arrange events chronologically
-3. **Identify aggregates** — Group related events
-4. **Find boundaries** — Where language changes = bounded context boundary
-5. **Surface problems** — Mark unclear areas for follow-up
+**Flow:** Chaotic exploration → Timeline ordering → Identify aggregates → Find boundaries (where language changes = bounded context boundary) → Surface problems
 
 ### Context Mapping Workshop
 
-For existing systems, map how bounded contexts currently interact:
-1. List all systems/services
-2. Identify which team owns each
-3. Draw relationships (upstream/downstream)
-4. Label relationship types (ACL, Conformist, etc.)
-5. Identify pain points in current integrations
+For existing systems: list all systems/services → identify team ownership → draw upstream/downstream relationships → label relationship types (ACL, Conformist, etc.) → identify pain points.
 
 ---
 
 ## Ubiquitous Language
 
-The foundation of DDD. A shared vocabulary between developers and domain experts that appears in:
-- Code (class names, method names)
-- Documentation
-- Conversations
-- UI labels
+Shared vocabulary between developers and domain experts appearing in code, docs, conversations, and UI.
 
-### Principles
-
-1. **One language per bounded context** - Different contexts may use the same word differently
-2. **Code reflects the language** - `Order.confirm()` not `Order.setStatus("confirmed")`
-3. **Evolve together** - When language changes, code changes
-
-### Example
-
-```
-❌ Technical language:
-   "Set the order entity's status field to 2 and insert a record"
-
-✅ Ubiquitous language:
-   "Confirm the order and record that it was confirmed"
-```
+**Principles:**
+1. One language per bounded context — same word may mean different things in different contexts
+2. Code reflects the language — `Order.confirm()` not `Order.setStatus("confirmed")`
+3. Evolve together — when language changes, code changes
 
 ```typescript
 // ❌ Technical, not ubiquitous
@@ -97,13 +62,9 @@ class Order {
 
 A **semantic boundary** where a particular domain model applies. Within a bounded context, terms have precise, unambiguous meaning.
 
-> **Key insight:** Polysemy (same word, different meanings) across departments is natural, not a problem. The same term meaning different things in different contexts is expected—"the dominant boundary factor is human culture and language variation." — Martin Fowler
+> **Key insight:** Polysemy across departments is natural — "the dominant boundary factor is human culture and language variation." — Martin Fowler
 
-### Key Concepts
-
-- Each bounded context has its **own ubiquitous language**
-- Each bounded context has its **own model**
-- The same real-world concept may have **different representations** in different contexts
+Each bounded context has its own ubiquitous language, its own model, and the same real-world concept may have different representations across contexts.
 
 ### Example: E-Commerce System
 
@@ -124,7 +85,6 @@ flowchart TB
         end
         subgraph Catalog["Catalog Context"]
             CC1["Product: name, description, price"]
-            CC2["(no customer concept)"]
         end
     end
 
@@ -134,40 +94,9 @@ flowchart TB
     style Catalog fill:#8b5cf6,stroke:#7c3aed,color:white
 ```
 
-**"Customer" means different things:**
-- **Sales**: Email, preferences, order history
-- **Shipping**: Delivery address, phone number
-- **Billing**: Payment methods, billing address
+"Customer" means: Sales = email/preferences/history · Shipping = delivery address/phone · Billing = payment methods/billing address
 
-### Bounded Context = Microservice Boundary
-
-In microservices, each bounded context typically becomes a separate service:
-
-```mermaid
-flowchart LR
-    subgraph Sales["Sales Service"]
-        S1["Orders DB"]
-        S2["Order API"]
-    end
-    subgraph Shipping["Shipping Service"]
-        SH1["Shipments DB"]
-        SH2["Shipping API"]
-    end
-    subgraph Billing["Billing Service"]
-        B1["Invoices DB"]
-        B2["Billing API"]
-    end
-
-    Sales -->|events| Shipping
-    Shipping -->|events| Billing
-    Sales -.->|Integration Events| Events[("Event Bus")]
-    Shipping -.-> Events
-    Billing -.-> Events
-
-    style Sales fill:#3b82f6,stroke:#2563eb,color:white
-    style Shipping fill:#10b981,stroke:#059669,color:white
-    style Billing fill:#f59e0b,stroke:#d97706,color:white
-```
+In microservices, each bounded context typically becomes a separate service with its own database.
 
 ---
 
@@ -175,52 +104,13 @@ flowchart LR
 
 Areas of business expertise. Subdomains are **discovered**, not designed.
 
-### Types
-
 | Type | Description | Investment | Example |
 |------|-------------|------------|---------|
 | **Core** | Competitive advantage | High | Product recommendation engine |
 | **Supporting** | Necessary but not unique | Medium | Order management |
 | **Generic** | Commodity, buy/outsource | Low | Email sending, payments |
 
-### Identification Questions
-
-1. What makes us different from competitors? → **Core**
-2. What do we need but isn't our specialty? → **Supporting**
-3. What does everyone need the same way? → **Generic**
-
-### Example: E-Commerce
-
-```mermaid
-flowchart TB
-    subgraph Subdomains["Subdomains"]
-        subgraph Core["CORE"]
-            C1["Product search & recommendations"]
-            C2["Pricing engine"]
-            C3["Personalization"]
-        end
-        subgraph Supporting["SUPPORTING"]
-            S1["Order management"]
-            S2["Inventory"]
-            S3["Customer support"]
-            S4["Reporting"]
-        end
-        subgraph Generic["GENERIC"]
-            G1["Authentication (Auth0)"]
-            G2["Payments (Stripe)"]
-            G3["Email (SendGrid)"]
-            G4["File storage (S3)"]
-        end
-    end
-
-    Core --> CoreStrat["Build in-house\nBest developers"]
-    Supporting --> SuppStrat["Build or buy\nSolid but simple"]
-    Generic --> GenStrat["Use third-party\nDon't reinvent"]
-
-    style Core fill:#ef4444,stroke:#dc2626,color:white
-    style Supporting fill:#f59e0b,stroke:#d97706,color:white
-    style Generic fill:#6b7280,stroke:#4b5563,color:white
-```
+**Identification:** What makes us different? → Core · What do we need but isn't our specialty? → Supporting · What does everyone need the same way? → Generic
 
 ---
 
@@ -230,92 +120,18 @@ Describes relationships between bounded contexts.
 
 ### Relationship Patterns
 
-#### Partnership
+**Partnership** — Two contexts succeed or fail together. Teams coordinate closely.
 
-Two contexts succeed or fail together. Teams coordinate closely.
+**Shared Kernel** — Two contexts share a subset of the domain model. Creates coupling — use sparingly.
 
-```mermaid
-flowchart LR
-    A["Context A"] <-->|"Partnership\nJoint planning\nShared success"| B["Context B"]
+**Customer-Supplier** — Upstream provides what downstream needs.
 
-    style A fill:#3b82f6,stroke:#2563eb,color:white
-    style B fill:#3b82f6,stroke:#2563eb,color:white
-```
+**Conformist** — Downstream conforms to upstream's model with no negotiation power. Example: integrating with Stripe, AWS.
 
-#### Shared Kernel
-
-Two contexts share a subset of the domain model.
-
-```mermaid
-flowchart LR
-    subgraph A["Context A"]
-        SK["Shared Kernel"]
-    end
-    subgraph B["Context B"]
-        B1[" "]
-    end
-
-    SK <-->|shared| B
-
-    style A fill:#3b82f6,stroke:#2563eb,color:white
-    style B fill:#10b981,stroke:#059669,color:white
-    style SK fill:#f59e0b,stroke:#d97706,color:white
-```
-
-**Warning:** Shared kernels create coupling. Use sparingly.
-
-#### Customer-Supplier
-
-Upstream context provides what downstream needs.
-
-```mermaid
-flowchart LR
-    U["Upstream\n(Supplier)"] -->|"Provides API"| D["Downstream\n(Customer)"]
-
-    style U fill:#3b82f6,stroke:#2563eb,color:white
-    style D fill:#10b981,stroke:#059669,color:white
-```
-
-#### Conformist
-
-Downstream conforms to upstream's model with no negotiation power.
-
-```mermaid
-flowchart LR
-    U["Upstream\n(Dictator)"] -->|"Take it or leave it"| D["Downstream\n(Conformist)\nUses their model"]
-
-    style U fill:#ef4444,stroke:#dc2626,color:white
-    style D fill:#6b7280,stroke:#4b5563,color:white
-```
-
-**Example:** Integrating with a third-party API (Stripe, AWS).
-
-#### Anti-Corruption Layer (ACL)
-
-Translation layer protecting your model from external models.
-
-```mermaid
-flowchart LR
-    Ext["External\nContext"] --> ACL["ACL\nTranslator + Adapter"]
-    ACL --> Your["Your\nContext"]
-
-    ACL -.->|"Translates external\nmodel to your model"| Note[" "]
-
-    style Ext fill:#ef4444,stroke:#dc2626,color:white
-    style ACL fill:#f59e0b,stroke:#d97706,color:white
-    style Your fill:#10b981,stroke:#059669,color:white
-    style Note fill:none,stroke:none
-```
-
-**Use when:**
-- Integrating with legacy systems
-- Integrating with third-party APIs
-- External model is messy or poorly designed
+**Anti-Corruption Layer (ACL)** — Translation layer protecting your model from external models. Use when integrating with legacy systems, third-party APIs, or poorly designed external models.
 
 ```typescript
-// Anti-Corruption Layer Example
 // infrastructure/external/stripe/stripe_payment_acl.ts
-
 import Stripe from 'stripe';
 import { Payment, PaymentStatus } from '@/domain/payment/payment';
 import { Money } from '@/domain/shared/money';
@@ -332,7 +148,6 @@ export class StripePaymentACL {
         customerId: payment.customerId.value,
       },
     });
-
     return paymentIntent.id;
   }
 
@@ -346,20 +161,18 @@ export class StripePaymentACL {
       'canceled': PaymentStatus.Cancelled,
       'requires_capture': PaymentStatus.Authorized,
     };
-
     return mapping[stripeStatus] ?? PaymentStatus.Unknown;
   }
 
   translateWebhook(event: Stripe.Event): DomainEvent | null {
     switch (event.type) {
-      case 'payment_intent.succeeded':
+      case 'payment_intent.succeeded': {
         const intent = event.data.object as Stripe.PaymentIntent;
         return new PaymentCompleted(
           PaymentId.from(intent.metadata.orderId),
           Money.fromCents(intent.amount, intent.currency.toUpperCase())
         );
-      case 'payment_intent.payment_failed':
-        return null;
+      }
       default:
         return null;
     }
@@ -367,33 +180,9 @@ export class StripePaymentACL {
 }
 ```
 
-#### Open Host Service / Published Language
+**Open Host Service / Published Language** — Expose a well-defined protocol (REST API, gRPC, event schema) for integration by multiple consumers.
 
-Expose a well-defined protocol for integration.
-
-```mermaid
-flowchart TB
-    subgraph OHS["Open Host Service"]
-        PL["Published Language\n(REST API, gRPC, Events Schema)"]
-        BC["Your Bounded Context"]
-    end
-
-    PL --> A["Consumer A"]
-    PL --> B["Consumer B"]
-    PL --> C["Consumer C"]
-
-    style OHS fill:#3b82f6,stroke:#2563eb,color:white
-    style PL fill:#10b981,stroke:#059669,color:white
-    style A fill:#6b7280,stroke:#4b5563,color:white
-    style B fill:#6b7280,stroke:#4b5563,color:white
-    style C fill:#6b7280,stroke:#4b5563,color:white
-```
-
----
-
-## Context Map Diagram
-
-Visual representation of all bounded contexts and their relationships:
+### Context Map Diagram
 
 ```mermaid
 flowchart TB
@@ -442,7 +231,6 @@ class ShippingOrderPlacedHandler {
       recipient: Recipient.fromAddress(event.shippingAddress),
       packages: this.calculatePackages(event.items),
     });
-
     await this.shipmentRepository.save(shipment);
   }
 }
@@ -459,15 +247,12 @@ class BillingOrderPlacedHandler {
       })),
       total: Money.fromNumber(event.total),
     });
-
     await this.invoiceRepository.save(invoice);
   }
 }
 ```
 
 ### Event Schema Registry
-
-Define and version integration event schemas:
 
 ```json
 {
