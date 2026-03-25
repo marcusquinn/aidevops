@@ -704,42 +704,21 @@ EOF
 }
 
 # --- Test 2.4: SOPS encrypt/decrypt git round-trip (if tools available) ---
-test_sops_git_roundtrip() {
-	echo ""
-	echo "=== Test 2.4: SOPS encrypt/decrypt git round-trip ==="
 
-	if [[ "$HAS_SOPS" != "true" ]]; then
-		skip "sops not installed -- skipping SOPS git round-trip test"
-		return 0
-	fi
-
-	if [[ "$HAS_AGE" != "true" ]]; then
-		skip "age not installed -- skipping SOPS git round-trip test"
-		return 0
-	fi
-
-	info "Testing full SOPS encrypt -> git commit -> decrypt round-trip"
-
-	local test_repo="$TEST_DIR/sops-git-repo"
-	mkdir -p "$test_repo"
-
-	# Generate a temporary age key for testing
-	local age_key_dir="$TEST_DIR/sops-age-keys"
+# Setup age key and return pub_key via stdout; sets SOPS_AGE_KEY_FILE in caller env
+_sops_setup_age_key() {
+	local age_key_dir="$1"
 	mkdir -p "$age_key_dir"
 	chmod 700 "$age_key_dir"
-	age-keygen -o "$age_key_dir/keys.txt"
+	age-keygen -o "$age_key_dir/keys.txt" 2>/dev/null || return 1
+	grep "^# public key:" "$age_key_dir/keys.txt" | sed 's/^# public key: //'
+	return 0
+}
 
-	local pub_key
-	pub_key=$(grep "^# public key:" "$age_key_dir/keys.txt" | sed 's/^# public key: //')
-
-	if [[ -z "$pub_key" ]]; then
-		fail "Failed to generate age key pair"
-		return 0
-	fi
-
-	pass "Generated temporary age key for testing"
-
-	# Initialize git repo with .sops.yaml
+# Initialize a git repo with .sops.yaml and a plaintext config file
+_sops_init_git_repo() {
+	local test_repo="$1"
+	local pub_key="$2"
 	(
 		cd "$test_repo"
 		git init -q
@@ -753,7 +732,6 @@ creation_rules:
       ${pub_key}
 EOF
 
-		# Create a config file with test data
 		cat >config.enc.yaml <<'EOF'
 database:
     host: db.example.com
@@ -769,52 +747,41 @@ EOF
 		git add .sops.yaml
 		git commit -q -m "init: add sops config"
 	)
+	return 0
+}
 
-	# Encrypt the config file
-	local original_content
-	original_content=$(cat "$test_repo/config.enc.yaml")
+# Verify that the encrypted file has sops metadata and no plaintext secrets
+_sops_verify_encryption() {
+	local config_file="$1"
 
-	export SOPS_AGE_KEY_FILE="$age_key_dir/keys.txt"
-
-	if sops encrypt -i "$test_repo/config.enc.yaml"; then
-		pass "SOPS encryption succeeded"
-	else
-		fail "SOPS encryption failed"
-		return 0
-	fi
-
-	# Verify the file is now encrypted (contains sops metadata)
-	if grep -q "sops:" "$test_repo/config.enc.yaml"; then
+	if grep -q "sops:" "$config_file"; then
 		pass "Encrypted file contains sops metadata"
 	else
 		fail "Encrypted file missing sops metadata"
 	fi
 
-	# Verify plaintext values are NOT in the encrypted file
-	if ! grep -q "super-secret-password-12345" "$test_repo/config.enc.yaml"; then
+	if ! grep -q "super-secret-password-12345" "$config_file"; then
 		pass "Plaintext password not visible in encrypted file"
 	else
 		fail "Plaintext password visible in encrypted file"
 	fi
 
-	if ! grep -q "sk-test-abcdefghijklmnop" "$test_repo/config.enc.yaml"; then
+	if ! grep -q "sk-test-abcdefghijklmnop" "$config_file"; then
 		pass "Plaintext API key not visible in encrypted file"
 	else
 		fail "Plaintext API key visible in encrypted file"
 	fi
 
-	# Commit encrypted file to git
-	(
-		cd "$test_repo"
-		git add config.enc.yaml
-		git commit -q -m "feat: add encrypted config"
-	)
+	return 0
+}
 
-	pass "Committed encrypted config to git"
+# Verify decrypted content matches original plaintext values
+_sops_verify_decryption() {
+	local config_file="$1"
+	local test_repo="$2"
 
-	# Decrypt and verify round-trip integrity
 	local decrypted
-	decrypted=$(sops decrypt "$test_repo/config.enc.yaml") || true
+	decrypted=$(sops decrypt "$config_file") || true
 
 	if echo "$decrypted" | grep -q "super-secret-password-12345"; then
 		pass "Decrypted content contains original password"
@@ -834,7 +801,6 @@ EOF
 		fail "Decrypted content missing original host"
 	fi
 
-	# Verify git log shows the encrypted commit
 	local commit_count
 	commit_count=$(cd "$test_repo" && git log --oneline | wc -l | tr -d ' ')
 	if [[ "$commit_count" -eq 2 ]]; then
@@ -842,6 +808,63 @@ EOF
 	else
 		fail "Expected 2 commits, got $commit_count"
 	fi
+
+	return 0
+}
+
+test_sops_git_roundtrip() {
+	echo ""
+	echo "=== Test 2.4: SOPS encrypt/decrypt git round-trip ==="
+
+	if [[ "$HAS_SOPS" != "true" ]]; then
+		skip "sops not installed -- skipping SOPS git round-trip test"
+		return 0
+	fi
+
+	if [[ "$HAS_AGE" != "true" ]]; then
+		skip "age not installed -- skipping SOPS git round-trip test"
+		return 0
+	fi
+
+	info "Testing full SOPS encrypt -> git commit -> decrypt round-trip"
+
+	local test_repo="$TEST_DIR/sops-git-repo"
+	mkdir -p "$test_repo"
+
+	local age_key_dir="$TEST_DIR/sops-age-keys"
+	local pub_key
+	pub_key=$(_sops_setup_age_key "$age_key_dir") || true
+
+	if [[ -z "$pub_key" ]]; then
+		fail "Failed to generate age key pair"
+		return 0
+	fi
+
+	pass "Generated temporary age key for testing"
+
+	_sops_init_git_repo "$test_repo" "$pub_key"
+
+	export SOPS_AGE_KEY_FILE="$age_key_dir/keys.txt"
+
+	if sops encrypt -i "$test_repo/config.enc.yaml"; then
+		pass "SOPS encryption succeeded"
+	else
+		fail "SOPS encryption failed"
+		unset SOPS_AGE_KEY_FILE
+		return 0
+	fi
+
+	_sops_verify_encryption "$test_repo/config.enc.yaml"
+
+	(
+		cd "$test_repo"
+		git add config.enc.yaml
+		git commit -q -m "feat: add encrypted config"
+	)
+
+	pass "Committed encrypted config to git"
+
+	_sops_verify_decryption "$test_repo/config.enc.yaml" "$test_repo"
 
 	unset SOPS_AGE_KEY_FILE
 

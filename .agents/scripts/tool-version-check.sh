@@ -385,14 +385,8 @@ check_category() {
 	return 0
 }
 
-# Main
-main() {
-	if [[ "$JSON_OUTPUT" != "true" && "$QUIET" != "true" ]]; then
-		echo -e "${BOLD}${BLUE}Tool Version Check${NC}"
-		echo "=================="
-	fi
-
-	# Check requested categories
+# Dispatch category checks based on CATEGORY variable
+_check_all_categories() {
 	case "$CATEGORY" in
 	npm)
 		check_category "NPM" "${NPM_TOOLS[@]}"
@@ -421,33 +415,37 @@ main() {
 		fi
 		;;
 	esac
+	return 0
+}
 
-	# Output results
-	if [[ "$JSON_OUTPUT" == "true" ]]; then
-		echo "{"
-		echo "  \"summary\": {"
-		echo "    \"installed\": $INSTALLED_COUNT,"
-		echo "    \"outdated\": $OUTDATED_COUNT,"
-		echo "    \"not_installed\": $NOT_INSTALLED_COUNT,"
-		echo "    \"timeout\": $TIMEOUT_COUNT,"
-		echo "    \"unknown\": $UNKNOWN_COUNT"
-		echo "  },"
-		echo "  \"tools\": ["
-		local first=true
-		for result in "${JSON_RESULTS[@]}"; do
-			if [[ "$first" == "true" ]]; then
-				first=false
-			else
-				echo ","
-			fi
-			echo -n "    $result"
-		done
-		echo ""
-		echo "  ]"
-		echo "}"
-		return 0
-	fi
+# Emit JSON output for all results and return
+_output_json_results() {
+	echo "{"
+	echo "  \"summary\": {"
+	echo "    \"installed\": $INSTALLED_COUNT,"
+	echo "    \"outdated\": $OUTDATED_COUNT,"
+	echo "    \"not_installed\": $NOT_INSTALLED_COUNT,"
+	echo "    \"timeout\": $TIMEOUT_COUNT,"
+	echo "    \"unknown\": $UNKNOWN_COUNT"
+	echo "  },"
+	echo "  \"tools\": ["
+	local first=true
+	for result in "${JSON_RESULTS[@]}"; do
+		if [[ "$first" == "true" ]]; then
+			first=false
+		else
+			echo ","
+		fi
+		echo -n "    $result"
+	done
+	echo ""
+	echo "  ]"
+	echo "}"
+	return 0
+}
 
+# Print summary counts and handle auto-update or update instructions
+_output_summary_and_updates() {
 	# Summary (skip in quiet mode if nothing outdated)
 	if [[ "$QUIET" == "true" && $OUTDATED_COUNT -eq 0 ]]; then
 		return 0
@@ -468,7 +466,6 @@ main() {
 		echo ""
 	fi
 
-	# Handle updates
 	if [[ $OUTDATED_COUNT -gt 0 ]]; then
 		if [[ "$AUTO_UPDATE" == "true" ]]; then
 			echo -e "${BLUE}Updating outdated tools...${NC}"
@@ -510,6 +507,24 @@ main() {
 	else
 		echo -e "${GREEN}All installed tools are up to date!${NC}"
 	fi
+	return 0
+}
+
+# Main
+main() {
+	if [[ "$JSON_OUTPUT" != "true" && "$QUIET" != "true" ]]; then
+		echo -e "${BOLD}${BLUE}Tool Version Check${NC}"
+		echo "=================="
+	fi
+
+	_check_all_categories
+
+	if [[ "$JSON_OUTPUT" == "true" ]]; then
+		_output_json_results
+		return 0
+	fi
+
+	_output_summary_and_updates
 }
 
 main

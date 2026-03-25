@@ -983,6 +983,104 @@ test_regression_no_side_effects() {
 # MAIN
 # =============================================================================
 
+#######################################
+# Run classify test sections
+# Returns: 0 always
+#######################################
+_run_classify_tests() {
+	echo "--- Classify (Heuristic) ---"
+	test_classify_atomic_simple
+	test_classify_atomic_bugfix
+	test_classify_atomic_refactor
+	test_classify_atomic_docs
+	test_classify_atomic_single_feature
+	test_classify_composite_multi_feature
+	test_classify_composite_multiple_and
+	test_classify_depth_override
+	test_classify_json_output
+	test_classify_empty_description
+	echo ""
+
+	echo "--- Classify (Context-Aware) ---"
+	test_classify_skips_already_decomposed
+	test_classify_proceeds_for_new_task
+	test_decompose_refuses_already_decomposed
+	test_decompose_proceeds_for_new_task
+	echo ""
+
+	echo "--- Classify (LLM) ---"
+	test_classify_llm_atomic
+	test_classify_llm_composite
+	test_classify_llm_real_tasks
+	echo ""
+	return 0
+}
+
+#######################################
+# Run decompose test sections
+# Returns: 0 always
+#######################################
+_run_decompose_tests() {
+	echo "--- Decompose (Heuristic) ---"
+	test_decompose_basic
+	test_decompose_has_strategy
+	test_decompose_subtask_structure
+	test_decompose_max_subtasks
+	test_decompose_empty_description
+	echo ""
+
+	echo "--- Decompose (LLM) ---"
+	test_decompose_llm_quality
+	test_decompose_llm_dependencies
+	echo ""
+	return 0
+}
+
+#######################################
+# Run lineage and subtask test sections
+# Returns: 0 always
+#######################################
+_run_lineage_and_subtask_tests() {
+	echo "--- Format Lineage ---"
+	test_format_lineage_self_test
+	test_format_lineage_structure
+	test_format_lineage_no_current
+	test_format_lineage_string_array
+	test_format_lineage_missing_args
+	echo ""
+
+	echo "--- Has Subtasks ---"
+	test_has_subtasks_true
+	test_has_subtasks_false
+	test_has_subtasks_completed
+	test_has_subtasks_nonexistent
+	test_has_subtasks_missing_file
+	test_has_subtasks_empty_id
+	echo ""
+	return 0
+}
+
+#######################################
+# Run edge case, e2e, and regression tests
+# Returns: 0 always
+#######################################
+_run_edge_and_regression_tests() {
+	echo "--- Help & Edge Cases ---"
+	test_help_command
+	test_unknown_command
+	test_no_args
+	echo ""
+
+	echo "--- End-to-End ---"
+	test_e2e_classify_then_decompose
+	echo ""
+
+	echo "--- Regression ---"
+	test_regression_no_side_effects
+	echo ""
+	return 0
+}
+
 main() {
 	# Parse args
 	while [[ $# -gt 0 ]]; do
@@ -1031,75 +1129,10 @@ main() {
 
 	setup
 
-	echo "--- Classify (Heuristic) ---"
-	test_classify_atomic_simple
-	test_classify_atomic_bugfix
-	test_classify_atomic_refactor
-	test_classify_atomic_docs
-	test_classify_atomic_single_feature
-	test_classify_composite_multi_feature
-	test_classify_composite_multiple_and
-	test_classify_depth_override
-	test_classify_json_output
-	test_classify_empty_description
-	echo ""
-
-	echo "--- Classify (Context-Aware) ---"
-	test_classify_skips_already_decomposed
-	test_classify_proceeds_for_new_task
-	test_decompose_refuses_already_decomposed
-	test_decompose_proceeds_for_new_task
-	echo ""
-
-	echo "--- Classify (LLM) ---"
-	test_classify_llm_atomic
-	test_classify_llm_composite
-	test_classify_llm_real_tasks
-	echo ""
-
-	echo "--- Decompose (Heuristic) ---"
-	test_decompose_basic
-	test_decompose_has_strategy
-	test_decompose_subtask_structure
-	test_decompose_max_subtasks
-	test_decompose_empty_description
-	echo ""
-
-	echo "--- Decompose (LLM) ---"
-	test_decompose_llm_quality
-	test_decompose_llm_dependencies
-	echo ""
-
-	echo "--- Format Lineage ---"
-	test_format_lineage_self_test
-	test_format_lineage_structure
-	test_format_lineage_no_current
-	test_format_lineage_string_array
-	test_format_lineage_missing_args
-	echo ""
-
-	echo "--- Has Subtasks ---"
-	test_has_subtasks_true
-	test_has_subtasks_false
-	test_has_subtasks_completed
-	test_has_subtasks_nonexistent
-	test_has_subtasks_missing_file
-	test_has_subtasks_empty_id
-	echo ""
-
-	echo "--- Help & Edge Cases ---"
-	test_help_command
-	test_unknown_command
-	test_no_args
-	echo ""
-
-	echo "--- End-to-End ---"
-	test_e2e_classify_then_decompose
-	echo ""
-
-	echo "--- Regression ---"
-	test_regression_no_side_effects
-	echo ""
+	_run_classify_tests
+	_run_decompose_tests
+	_run_lineage_and_subtask_tests
+	_run_edge_and_regression_tests
 
 	teardown
 
