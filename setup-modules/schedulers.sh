@@ -11,6 +11,99 @@ IFS=$'\n\t'
 trap 'rc=$?; echo "[ERROR] ${BASH_SOURCE[0]}:${LINENO} exit $rc" >&2' ERR
 shopt -s inherit_errexit 2>/dev/null || true
 
+# Resolve the user's pulse consent setting from all config layers.
+# Priority: env var > jsonc config > legacy .conf. Prints the raw value
+# (may be empty if never configured, or "true"/"false").
+_resolve_pulse_consent() {
+	local _pulse_user_config=""
+
+	# Read explicit user consent from config.jsonc (not merged defaults).
+	# Empty = user never configured this; "true"/"false" = explicit choice.
+	if type _jsonc_get_raw &>/dev/null && [[ -f "${JSONC_USER:-$HOME/.config/aidevops/config.jsonc}" ]]; then
+		_pulse_user_config=$(_jsonc_get_raw "${JSONC_USER:-$HOME/.config/aidevops/config.jsonc}" "orchestration.supervisor_pulse")
+	fi
+
+	# Also check legacy .conf user override
+	if [[ -z "$_pulse_user_config" && -f "${FEATURE_TOGGLES_USER:-$HOME/.config/aidevops/feature-toggles.conf}" ]]; then
+		local _legacy_val
+		# Use awk instead of grep|tail|cut — grep exits 1 on no match, which
+		# aborts the script under set -euo pipefail. awk always exits 0.
+		_legacy_val=$(awk -F= '/^supervisor_pulse=/{val=$2} END{print val}' "${FEATURE_TOGGLES_USER:-$HOME/.config/aidevops/feature-toggles.conf}")
+		if [[ -n "$_legacy_val" ]]; then
+			_pulse_user_config="$_legacy_val"
+		fi
+	fi
+
+	# Also check env var override (highest priority)
+	if [[ -n "${AIDEVOPS_SUPERVISOR_PULSE:-}" ]]; then
+		_pulse_user_config="$AIDEVOPS_SUPERVISOR_PULSE"
+	fi
+
+	printf '%s' "$_pulse_user_config"
+	return 0
+}
+
+# Determine whether to install the pulse based on consent state.
+# Handles interactive prompting and persisting the user's choice.
+# Args: $1=pulse_user_config (raw), $2=wrapper_script path
+# Prints "true" or "false".
+_determine_pulse_install() {
+	local _pulse_user_config="$1"
+	local wrapper_script="$2"
+	local _do_install=false
+	local _pulse_lower
+	_pulse_lower=$(echo "$_pulse_user_config" | tr '[:upper:]' '[:lower:]')
+
+	if [[ "$_pulse_lower" == "false" ]]; then
+		# User explicitly declined — never prompt, never install
+		_do_install=false
+	elif [[ "$_pulse_lower" == "true" ]]; then
+		# User explicitly consented — install/regenerate
+		_do_install=true
+	elif [[ -z "$_pulse_user_config" ]]; then
+		# No explicit config — fresh install or never configured
+		if [[ "$NON_INTERACTIVE" == "true" ]]; then
+			# Non-interactive: default OFF, do not install without consent
+			_do_install=false
+		elif [[ -f "$wrapper_script" ]]; then
+			# Interactive: prompt with default-no
+			# All user-facing output goes to stderr so $() captures only the result
+			echo "" >&2
+			echo "The supervisor pulse enables autonomous orchestration." >&2
+			echo "It will act under your GitHub identity and consume API credits:" >&2
+			echo "  - Dispatches AI workers to implement tasks from GitHub issues" >&2
+			echo "  - Creates PRs, merges passing PRs, files improvement issues" >&2
+			echo "  - 4-hourly strategic review (opus-tier) for queue health" >&2
+			echo "  - Circuit breaker pauses dispatch on consecutive failures" >&2
+			echo "" >&2
+			read -r -p "Enable supervisor pulse? [y/N]: " enable_pulse
+			if [[ "$enable_pulse" =~ ^[Yy]$ ]]; then
+				_do_install=true
+				# Record explicit consent
+				if type cmd_set &>/dev/null; then
+					cmd_set "orchestration.supervisor_pulse" "true" || true
+				fi
+			else
+				_do_install=false
+				# Record explicit decline so we never re-prompt on updates
+				if type cmd_set &>/dev/null; then
+					cmd_set "orchestration.supervisor_pulse" "false" || true
+				fi
+				print_info "Skipped. Enable later: aidevops config set orchestration.supervisor_pulse true && ./setup.sh" >&2
+			fi
+		fi
+	fi
+
+	# Guard: wrapper must exist
+	if [[ "$_do_install" == "true" && ! -f "$wrapper_script" ]]; then
+		# Wrapper not deployed yet — skip (will install on next run after rsync)
+		_do_install=false
+	fi
+
+	printf '%s' "$_do_install"
+	return 0
+}
+
 # Setup the supervisor pulse scheduler (consent-gated autonomous orchestration).
 # Uses pulse-wrapper.sh which handles dedup, orphan cleanup, and RAM-based concurrency.
 # macOS: launchd plist invoking wrapper | Linux: cron entry invoking wrapper
@@ -33,78 +126,15 @@ setup_supervisor_pulse() {
 	#   - Non-interactive: only installs if config explicitly says true
 	local wrapper_script="$HOME/.aidevops/agents/scripts/pulse-wrapper.sh"
 	local pulse_label="com.aidevops.aidevops-supervisor-pulse"
-	# Read explicit user consent from config.jsonc (not merged defaults).
-	# Empty = user never configured this; "true"/"false" = explicit choice.
-	local _pulse_user_config=""
-	if type _jsonc_get_raw &>/dev/null && [[ -f "${JSONC_USER:-$HOME/.config/aidevops/config.jsonc}" ]]; then
-		_pulse_user_config=$(_jsonc_get_raw "${JSONC_USER:-$HOME/.config/aidevops/config.jsonc}" "orchestration.supervisor_pulse")
-	fi
 
-	# Also check legacy .conf user override
-	if [[ -z "$_pulse_user_config" && -f "${FEATURE_TOGGLES_USER:-$HOME/.config/aidevops/feature-toggles.conf}" ]]; then
-		local _legacy_val
-		# Use awk instead of grep|tail|cut — grep exits 1 on no match, which
-		# aborts the script under set -euo pipefail. awk always exits 0.
-		_legacy_val=$(awk -F= '/^supervisor_pulse=/{val=$2} END{print val}' "${FEATURE_TOGGLES_USER:-$HOME/.config/aidevops/feature-toggles.conf}")
-		if [[ -n "$_legacy_val" ]]; then
-			_pulse_user_config="$_legacy_val"
-		fi
-	fi
+	local _pulse_user_config
+	_pulse_user_config=$(_resolve_pulse_consent)
 
-	# Also check env var override (highest priority)
-	if [[ -n "${AIDEVOPS_SUPERVISOR_PULSE:-}" ]]; then
-		_pulse_user_config="$AIDEVOPS_SUPERVISOR_PULSE"
-	fi
+	local _do_install
+	_do_install=$(_determine_pulse_install "$_pulse_user_config" "$wrapper_script")
 
-	# Determine action based on consent state
-	local _do_install=false
 	local _pulse_lower
 	_pulse_lower=$(echo "$_pulse_user_config" | tr '[:upper:]' '[:lower:]')
-
-	if [[ "$_pulse_lower" == "false" ]]; then
-		# User explicitly declined — never prompt, never install
-		_do_install=false
-	elif [[ "$_pulse_lower" == "true" ]]; then
-		# User explicitly consented — install/regenerate
-		_do_install=true
-	elif [[ -z "$_pulse_user_config" ]]; then
-		# No explicit config — fresh install or never configured
-		if [[ "$NON_INTERACTIVE" == "true" ]]; then
-			# Non-interactive: default OFF, do not install without consent
-			_do_install=false
-		elif [[ -f "$wrapper_script" ]]; then
-			# Interactive: prompt with default-no
-			echo ""
-			echo "The supervisor pulse enables autonomous orchestration."
-			echo "It will act under your GitHub identity and consume API credits:"
-			echo "  - Dispatches AI workers to implement tasks from GitHub issues"
-			echo "  - Creates PRs, merges passing PRs, files improvement issues"
-			echo "  - 4-hourly strategic review (opus-tier) for queue health"
-			echo "  - Circuit breaker pauses dispatch on consecutive failures"
-			echo ""
-			read -r -p "Enable supervisor pulse? [y/N]: " enable_pulse
-			if [[ "$enable_pulse" =~ ^[Yy]$ ]]; then
-				_do_install=true
-				# Record explicit consent
-				if type cmd_set &>/dev/null; then
-					cmd_set "orchestration.supervisor_pulse" "true" || true
-				fi
-			else
-				_do_install=false
-				# Record explicit decline so we never re-prompt on updates
-				if type cmd_set &>/dev/null; then
-					cmd_set "orchestration.supervisor_pulse" "false" || true
-				fi
-				print_info "Skipped. Enable later: aidevops config set orchestration.supervisor_pulse true && ./setup.sh"
-			fi
-		fi
-	fi
-
-	# Guard: wrapper must exist
-	if [[ "$_do_install" == "true" && ! -f "$wrapper_script" ]]; then
-		# Wrapper not deployed yet — skip (will install on next run after rsync)
-		_do_install=false
-	fi
 
 	# Detect if pulse is already installed (for upgrade messaging)
 	# Uses shared helper to check both launchd and cron consistently
@@ -658,23 +688,10 @@ ST_PLIST
 	return 0
 }
 
-# Setup contribution watch — monitors external issues/PRs for new activity (t1554).
-# Auto-seeds on first run (discovers authored/commented issues/PRs), then installs
-# a launchd/cron job to scan periodically. Requires gh CLI authenticated.
-# No consent needed — this is passive monitoring (read-only notifications API),
-# not autonomous action. Comment bodies are never processed by LLM in automated context.
-# Respects config: aidevops config set orchestration.contribution_watch false
-setup_contribution_watch() {
-	local cw_script="$HOME/.aidevops/agents/scripts/contribution-watch-helper.sh"
-	local cw_label="sh.aidevops.contribution-watch"
-	local cw_state="$HOME/.aidevops/cache/contribution-watch.json"
-	if ! [[ -x "$cw_script" ]] || ! is_feature_enabled orchestration.contribution_watch 2>/dev/null || ! command -v gh &>/dev/null || ! gh auth status &>/dev/null 2>&1; then
-		return 0
-	fi
-
-	# Resolve log directory from config (paths.log_dir), expanding ~ to $HOME.
-	# Falls back to the default if config is unavailable or jq is missing.
-	# Validate before expansion to guard against shell metacharacter injection.
+# Resolve and validate the log directory from config for contribution watch.
+# Reads paths.log_dir from jsonc config, validates characters, expands tilde.
+# Prints the resolved absolute path. Returns 1 on invalid characters.
+_resolve_cw_log_dir() {
 	local _cw_log_dir
 	# shellcheck disable=SC2088  # Tilde is intentionally literal here; expanded below via ${/#\~/$HOME}
 	if type _jsonc_get &>/dev/null; then
@@ -688,34 +705,31 @@ setup_contribution_watch() {
 	# and a variable avoids quoting issues with special chars in the pattern.
 	local _cw_log_dir_re='^[A-Za-z0-9_./ ~-]+$'
 	if ! [[ "$_cw_log_dir" =~ $_cw_log_dir_re ]]; then
-		print_error "Invalid characters in paths.log_dir (only [A-Za-z0-9_./ ~-] allowed): $_cw_log_dir"
+		# Redirect to stderr so $() captures only the path result
+		print_error "Invalid characters in paths.log_dir (only [A-Za-z0-9_./ ~-] allowed): $_cw_log_dir" >&2
 		return 1
 	fi
 	_cw_log_dir="${_cw_log_dir/#\~/$HOME}"
-	mkdir -p "$HOME/.aidevops/cache" "$_cw_log_dir"
+	printf '%s' "$_cw_log_dir"
+	return 0
+}
 
-	# Auto-seed on first run (populates state file with existing contributions)
-	if [[ ! -f "$cw_state" ]]; then
-		print_info "Discovering external contributions for contribution watch..."
-		if bash "$cw_script" seed >/dev/null 2>&1; then
-			print_info "Contribution watch seeded (external issues/PRs discovered)"
-		else
-			print_warning "Contribution watch seed failed (non-fatal, will retry on next run)"
-		fi
-	fi
+# Install contribution watch via launchd (macOS).
+# Args: $1=label, $2=script path, $3=log dir
+_install_cw_launchd() {
+	local cw_label="$1"
+	local cw_script="$2"
+	local _cw_log_dir="$3"
+	local cw_plist="$HOME/Library/LaunchAgents/${cw_label}.plist"
 
-	# Install/update scheduled scanner
-	if [[ "$(uname -s)" == "Darwin" ]]; then
-		local cw_plist="$HOME/Library/LaunchAgents/${cw_label}.plist"
+	local _xml_cw_script _xml_cw_home _xml_cw_log_dir
+	_xml_cw_script=$(_xml_escape "$cw_script")
+	_xml_cw_home=$(_xml_escape "$HOME")
+	_xml_cw_log_dir=$(_xml_escape "$_cw_log_dir")
 
-		local _xml_cw_script _xml_cw_home _xml_cw_log_dir
-		_xml_cw_script=$(_xml_escape "$cw_script")
-		_xml_cw_home=$(_xml_escape "$HOME")
-		_xml_cw_log_dir=$(_xml_escape "$_cw_log_dir")
-
-		local cw_plist_content
-		cw_plist_content=$(
-			cat <<CW_PLIST
+	local cw_plist_content
+	cw_plist_content=$(
+		cat <<CW_PLIST
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
@@ -754,27 +768,70 @@ setup_contribution_watch() {
 </dict>
 </plist>
 CW_PLIST
-		)
+	)
 
-		if _launchd_install_if_changed "$cw_label" "$cw_plist" "$cw_plist_content"; then
-			print_info "Contribution watch enabled (launchd, hourly scan)"
-		else
-			print_warning "Failed to load contribution watch LaunchAgent"
-		fi
+	if _launchd_install_if_changed "$cw_label" "$cw_plist" "$cw_plist_content"; then
+		print_info "Contribution watch enabled (launchd, hourly scan)"
 	else
-		# Linux: cron entry (hourly)
-		local _cron_cw_script _cron_cw_log_dir
-		_cron_cw_script=$(_cron_escape "$cw_script")
-		_cron_cw_log_dir=$(_cron_escape "$_cw_log_dir")
-		(
-			crontab -l 2>/dev/null | grep -v 'aidevops: contribution-watch' || true
-			echo "0 * * * * /bin/bash ${_cron_cw_script} scan >> \"${_cron_cw_log_dir}/contribution-watch.log\" 2>&1 # aidevops: contribution-watch"
-		) | crontab - 2>/dev/null || true
-		if crontab -l 2>/dev/null | grep -qF "aidevops: contribution-watch" 2>/dev/null; then
-			print_info "Contribution watch enabled (cron, hourly scan)"
+		print_warning "Failed to load contribution watch LaunchAgent"
+	fi
+	return 0
+}
+
+# Install contribution watch via cron (Linux).
+# Args: $1=script path, $2=log dir
+_install_cw_cron() {
+	local cw_script="$1"
+	local _cw_log_dir="$2"
+	local _cron_cw_script _cron_cw_log_dir
+	_cron_cw_script=$(_cron_escape "$cw_script")
+	_cron_cw_log_dir=$(_cron_escape "$_cw_log_dir")
+	(
+		crontab -l 2>/dev/null | grep -v 'aidevops: contribution-watch' || true
+		echo "0 * * * * /bin/bash ${_cron_cw_script} scan >> \"${_cron_cw_log_dir}/contribution-watch.log\" 2>&1 # aidevops: contribution-watch"
+	) | crontab - 2>/dev/null || true
+	if crontab -l 2>/dev/null | grep -qF "aidevops: contribution-watch" 2>/dev/null; then
+		print_info "Contribution watch enabled (cron, hourly scan)"
+	else
+		print_warning "Failed to install contribution watch cron entry"
+	fi
+	return 0
+}
+
+# Setup contribution watch — monitors external issues/PRs for new activity (t1554).
+# Auto-seeds on first run (discovers authored/commented issues/PRs), then installs
+# a launchd/cron job to scan periodically. Requires gh CLI authenticated.
+# No consent needed — this is passive monitoring (read-only notifications API),
+# not autonomous action. Comment bodies are never processed by LLM in automated context.
+# Respects config: aidevops config set orchestration.contribution_watch false
+setup_contribution_watch() {
+	local cw_script="$HOME/.aidevops/agents/scripts/contribution-watch-helper.sh"
+	local cw_label="sh.aidevops.contribution-watch"
+	local cw_state="$HOME/.aidevops/cache/contribution-watch.json"
+	if ! [[ -x "$cw_script" ]] || ! is_feature_enabled orchestration.contribution_watch 2>/dev/null || ! command -v gh &>/dev/null || ! gh auth status &>/dev/null 2>&1; then
+		return 0
+	fi
+
+	# Resolve and validate log directory
+	local _cw_log_dir
+	_cw_log_dir=$(_resolve_cw_log_dir) || return 1
+	mkdir -p "$HOME/.aidevops/cache" "$_cw_log_dir"
+
+	# Auto-seed on first run (populates state file with existing contributions)
+	if [[ ! -f "$cw_state" ]]; then
+		print_info "Discovering external contributions for contribution watch..."
+		if bash "$cw_script" seed >/dev/null 2>&1; then
+			print_info "Contribution watch seeded (external issues/PRs discovered)"
 		else
-			print_warning "Failed to install contribution watch cron entry"
+			print_warning "Contribution watch seed failed (non-fatal, will retry on next run)"
 		fi
+	fi
+
+	# Install/update scheduled scanner
+	if [[ "$(uname -s)" == "Darwin" ]]; then
+		_install_cw_launchd "$cw_label" "$cw_script" "$_cw_log_dir"
+	else
+		_install_cw_cron "$cw_script" "$_cw_log_dir"
 	fi
 	return 0
 }
