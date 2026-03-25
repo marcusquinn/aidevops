@@ -296,35 +296,32 @@ end tell'
 # smart-mailbox — Create smart mailboxes via AppleScript
 # =============================================================================
 
-cmd_smart_mailbox() {
-	local action="${1:-help}"
-
-	case "$action" in
-	create)
-		local name="${2:-}"
-		local predicate="${3:-}"
-		if [[ -z "$name" || -z "$predicate" ]]; then
-			print_error "Usage: $0 smart-mailbox create <name> <predicate>"
-			print_info "Predicate examples:"
-			print_info "  'sender contains \"example.com\"'"
-			print_info "  'subject contains \"invoice\"'"
-			print_info "  'sender = \"user@example.com\"'"
-			return 1
-		fi
-		print_info "Creating smart mailbox '$name'..."
-		# Escape for AppleScript
-		local escaped_name="${name//\"/\\\"}"
-		local escaped_pred="${predicate//\"/\\\"}"
-		run_applescript_stdin <<APPLESCRIPT
+_smart_mailbox_create() {
+	local name="${1:-}"
+	local predicate="${2:-}"
+	if [[ -z "$name" || -z "$predicate" ]]; then
+		print_error "Usage: $0 smart-mailbox create <name> <predicate>"
+		print_info "Predicate examples:"
+		print_info "  'sender contains \"example.com\"'"
+		print_info "  'subject contains \"invoice\"'"
+		print_info "  'sender = \"user@example.com\"'"
+		return 1
+	fi
+	print_info "Creating smart mailbox '$name'..."
+	local escaped_name="${name//\"/\\\"}"
+	local escaped_pred="${predicate//\"/\\\"}"
+	run_applescript_stdin <<APPLESCRIPT
 tell application "Mail"
     make new smart mailbox with properties {name:"$escaped_name", search predicate:"$escaped_pred"}
 end tell
 APPLESCRIPT
-		print_success "Smart mailbox '$name' created"
-		;;
-	list)
-		print_info "Smart mailboxes:"
-		run_applescript '
+	print_success "Smart mailbox '$name' created"
+	return 0
+}
+
+_smart_mailbox_list() {
+	print_info "Smart mailboxes:"
+	run_applescript '
 tell application "Mail"
     set output to ""
     repeat with smb in smart mailboxes
@@ -333,68 +330,89 @@ tell application "Mail"
     end repeat
     return output
 end tell'
-		;;
-	contact)
-		local contact_email="${2:-}"
-		if [[ -z "$contact_email" ]]; then
-			print_error "Usage: $0 smart-mailbox contact <email>"
-			return 1
-		fi
-		local box_name="From: $contact_email"
-		local escaped_email="${contact_email//\"/\\\"}"
-		local escaped_box="${box_name//\"/\\\"}"
-		print_info "Creating smart mailbox for contact '$contact_email'..."
-		run_applescript_stdin <<APPLESCRIPT
+	return 0
+}
+
+_smart_mailbox_contact() {
+	local contact_email="${1:-}"
+	if [[ -z "$contact_email" ]]; then
+		print_error "Usage: $0 smart-mailbox contact <email>"
+		return 1
+	fi
+	local box_name="From: $contact_email"
+	local escaped_email="${contact_email//\"/\\\"}"
+	local escaped_box="${box_name//\"/\\\"}"
+	print_info "Creating smart mailbox for contact '$contact_email'..."
+	run_applescript_stdin <<APPLESCRIPT
 tell application "Mail"
     make new smart mailbox with properties {name:"$escaped_box", search predicate:"sender = \"$escaped_email\""}
 end tell
 APPLESCRIPT
-		print_success "Smart mailbox '$box_name' created"
-		;;
-	domain)
-		local domain="${2:-}"
-		if [[ -z "$domain" ]]; then
-			print_error "Usage: $0 smart-mailbox domain <domain>"
-			return 1
-		fi
-		local box_name="Domain: $domain"
-		local escaped_domain="${domain//\"/\\\"}"
-		local escaped_box="${box_name//\"/\\\"}"
-		print_info "Creating smart mailbox for domain '$domain'..."
-		run_applescript_stdin <<APPLESCRIPT
+	print_success "Smart mailbox '$box_name' created"
+	return 0
+}
+
+_smart_mailbox_domain() {
+	local domain="${1:-}"
+	if [[ -z "$domain" ]]; then
+		print_error "Usage: $0 smart-mailbox domain <domain>"
+		return 1
+	fi
+	local box_name="Domain: $domain"
+	local escaped_domain="${domain//\"/\\\"}"
+	local escaped_box="${box_name//\"/\\\"}"
+	print_info "Creating smart mailbox for domain '$domain'..."
+	run_applescript_stdin <<APPLESCRIPT
 tell application "Mail"
     make new smart mailbox with properties {name:"$escaped_box", search predicate:"sender contains \"@$escaped_domain\""}
 end tell
 APPLESCRIPT
-		print_success "Smart mailbox '$box_name' created"
-		;;
-	project)
-		local project_name="${2:-}"
-		if [[ -z "$project_name" ]]; then
-			print_error "Usage: $0 smart-mailbox project <project-name>"
-			return 1
-		fi
-		local box_name="Project: $project_name"
-		local escaped_project="${project_name//\"/\\\"}"
-		local escaped_box="${box_name//\"/\\\"}"
-		print_info "Creating smart mailbox for project '$project_name'..."
-		run_applescript_stdin <<APPLESCRIPT
+	print_success "Smart mailbox '$box_name' created"
+	return 0
+}
+
+_smart_mailbox_project() {
+	local project_name="${1:-}"
+	if [[ -z "$project_name" ]]; then
+		print_error "Usage: $0 smart-mailbox project <project-name>"
+		return 1
+	fi
+	local box_name="Project: $project_name"
+	local escaped_project="${project_name//\"/\\\"}"
+	local escaped_box="${box_name//\"/\\\"}"
+	print_info "Creating smart mailbox for project '$project_name'..."
+	run_applescript_stdin <<APPLESCRIPT
 tell application "Mail"
     make new smart mailbox with properties {name:"$escaped_box", search predicate:"subject contains \"$escaped_project\""}
 end tell
 APPLESCRIPT
-		print_success "Smart mailbox '$box_name' created"
-		;;
-	help | *)
-		echo "Usage: $0 smart-mailbox <action> [options]"
-		echo ""
-		echo "Actions:"
-		echo "  list                          List all smart mailboxes"
-		echo "  create <name> <predicate>     Create with custom predicate"
-		echo "  contact <email>               Create for a specific contact"
-		echo "  domain <domain>               Create for a domain"
-		echo "  project <project-name>        Create for a project (subject match)"
-		;;
+	print_success "Smart mailbox '$box_name' created"
+	return 0
+}
+
+_smart_mailbox_help() {
+	echo "Usage: $0 smart-mailbox <action> [options]"
+	echo ""
+	echo "Actions:"
+	echo "  list                          List all smart mailboxes"
+	echo "  create <name> <predicate>     Create with custom predicate"
+	echo "  contact <email>               Create for a specific contact"
+	echo "  domain <domain>               Create for a domain"
+	echo "  project <project-name>        Create for a project (subject match)"
+	return 0
+}
+
+cmd_smart_mailbox() {
+	local action="${1:-help}"
+	shift || true
+
+	case "$action" in
+	create) _smart_mailbox_create "$@" ;;
+	list) _smart_mailbox_list ;;
+	contact) _smart_mailbox_contact "$@" ;;
+	domain) _smart_mailbox_domain "$@" ;;
+	project) _smart_mailbox_project "$@" ;;
+	help | *) _smart_mailbox_help ;;
 	esac
 	return 0
 }
