@@ -563,6 +563,97 @@ sql_escape() {
 # Query Commands
 # =============================================================================
 
+# Build a SQL WHERE clause from optional pr_number, severity, and category filters.
+# Outputs the WHERE clause string (empty string if no filters).
+_query_build_where() {
+	local pr_number="$1"
+	local severity="$2"
+	local category="$3"
+
+	local where_clauses=()
+	if [[ -n "$pr_number" ]]; then
+		where_clauses+=("pr_number = $pr_number")
+	fi
+	if [[ -n "$severity" ]]; then
+		where_clauses+=("severity = '$(sql_escape "$severity")'")
+	fi
+	if [[ -n "$category" ]]; then
+		where_clauses+=("category = '$(sql_escape "$category")'")
+	fi
+
+	if [[ ${#where_clauses[@]} -eq 0 ]]; then
+		echo ""
+		return 0
+	fi
+
+	local where_sql="WHERE "
+	local first=true
+	local clause
+	for clause in "${where_clauses[@]}"; do
+		if [[ "$first" == "true" ]]; then
+			where_sql="${where_sql}${clause}"
+			first=false
+		else
+			where_sql="${where_sql} AND ${clause}"
+		fi
+	done
+	echo "$where_sql"
+	return 0
+}
+
+# Print query results in human-readable text format with colour-coded severity.
+_query_print_text() {
+	local pr_number="$1"
+	local severity="$2"
+	local category="$3"
+	local where_sql="$4"
+	local limit="$5"
+
+	echo ""
+	echo "CodeRabbit Review Comments"
+	echo "=========================="
+	[[ -n "$pr_number" ]] && echo "PR: #${pr_number}"
+	[[ -n "$severity" ]] && echo "Severity: ${severity}"
+	[[ -n "$category" ]] && echo "Category: ${category}"
+	echo ""
+
+	db "$COLLECTOR_DB" -separator $'\x1f' "
+        SELECT severity, path, line,
+               substr(replace(replace(body, char(10), ' '), char(13), ''), 1, 120)
+        FROM comments
+        $where_sql
+        ORDER BY
+            CASE severity
+                WHEN 'critical' THEN 1
+                WHEN 'high' THEN 2
+                WHEN 'medium' THEN 3
+                WHEN 'low' THEN 4
+                ELSE 5
+            END,
+            created_at DESC
+        LIMIT $limit;
+    " | while IFS=$'\x1f' read -r sev path line body_preview; do
+		local color="$NC"
+		case "$sev" in
+		critical | high) color="$RED" ;;
+		medium) color="$YELLOW" ;;
+		low) color="$BLUE" ;;
+		esac
+
+		local location="(review summary)"
+		[[ -n "$path" ]] && location="${path}:${line}"
+
+		echo -e "  ${color}[${sev}]${NC} ${location}"
+		echo "    ${body_preview}"
+		echo ""
+	done
+
+	local total
+	total=$(db "$COLLECTOR_DB" "SELECT COUNT(*) FROM comments $where_sql;")
+	echo "Total: ${total} comment(s)"
+	return 0
+}
+
 cmd_query() {
 	local pr_number=""
 	local severity=""
@@ -621,32 +712,8 @@ cmd_query() {
 
 	ensure_db
 
-	# Build WHERE clause
-	local where_clauses=()
-	if [[ -n "$pr_number" ]]; then
-		where_clauses+=("pr_number = $pr_number")
-	fi
-	if [[ -n "$severity" ]]; then
-		where_clauses+=("severity = '$(sql_escape "$severity")'")
-	fi
-	if [[ -n "$category" ]]; then
-		where_clauses+=("category = '$(sql_escape "$category")'")
-	fi
-
-	local where_sql=""
-	if [[ ${#where_clauses[@]} -gt 0 ]]; then
-		where_sql="WHERE "
-		local first=true
-		local clause
-		for clause in "${where_clauses[@]}"; do
-			if [[ "$first" == "true" ]]; then
-				where_sql="${where_sql}${clause}"
-				first=false
-			else
-				where_sql="${where_sql} AND ${clause}"
-			fi
-		done
-	fi
+	local where_sql
+	where_sql=$(_query_build_where "$pr_number" "$severity" "$category")
 
 	if [[ "$format" == "json" ]]; then
 		db "$COLLECTOR_DB" -json "
@@ -666,60 +733,7 @@ cmd_query() {
             LIMIT $limit;
         "
 	else
-		echo ""
-		echo "CodeRabbit Review Comments"
-		echo "=========================="
-		if [[ -n "$pr_number" ]]; then
-			echo "PR: #${pr_number}"
-		fi
-		if [[ -n "$severity" ]]; then
-			echo "Severity: ${severity}"
-		fi
-		if [[ -n "$category" ]]; then
-			echo "Category: ${category}"
-		fi
-		echo ""
-
-		db "$COLLECTOR_DB" -separator $'\x1f' "
-            SELECT severity, path, line,
-                   substr(replace(replace(body, char(10), ' '), char(13), ''), 1, 120)
-            FROM comments
-            $where_sql
-            ORDER BY
-                CASE severity
-                    WHEN 'critical' THEN 1
-                    WHEN 'high' THEN 2
-                    WHEN 'medium' THEN 3
-                    WHEN 'low' THEN 4
-                    ELSE 5
-                END,
-                created_at DESC
-            LIMIT $limit;
-        " | while IFS=$'\x1f' read -r sev path line body_preview; do
-			local color="$NC"
-			case "$sev" in
-			critical) color="$RED" ;;
-			high) color="$RED" ;;
-			medium) color="$YELLOW" ;;
-			low) color="$BLUE" ;;
-			*) color="$NC" ;;
-			esac
-
-			local location=""
-			if [[ -n "$path" && "$path" != "" ]]; then
-				location="${path}:${line}"
-			else
-				location="(review summary)"
-			fi
-
-			echo -e "  ${color}[${sev}]${NC} ${location}"
-			echo "    ${body_preview}"
-			echo ""
-		done
-
-		local total
-		total=$(db "$COLLECTOR_DB" "SELECT COUNT(*) FROM comments $where_sql;")
-		echo "Total: ${total} comment(s)"
+		_query_print_text "$pr_number" "$severity" "$category" "$where_sql" "$limit"
 	fi
 
 	return 0
@@ -728,6 +742,86 @@ cmd_query() {
 # =============================================================================
 # Summary Command
 # =============================================================================
+
+# Print severity breakdown table for the given WHERE clause.
+_summary_print_severity() {
+	local where_sql="$1"
+	echo "Severity Breakdown:"
+	db "$COLLECTOR_DB" -separator '|' "
+        SELECT severity, COUNT(*) as cnt
+        FROM comments
+        $where_sql
+        GROUP BY severity
+        ORDER BY
+            CASE severity
+                WHEN 'critical' THEN 1
+                WHEN 'high' THEN 2
+                WHEN 'medium' THEN 3
+                WHEN 'low' THEN 4
+                ELSE 5
+            END;
+    " | while IFS='|' read -r sev cnt; do
+		local color="$NC"
+		case "$sev" in
+		critical | high) color="$RED" ;;
+		medium) color="$YELLOW" ;;
+		low) color="$BLUE" ;;
+		esac
+		printf "  ${color}%-10s${NC} %s\n" "$sev" "$cnt"
+	done
+	return 0
+}
+
+# Print category breakdown table for the given WHERE clause.
+_summary_print_categories() {
+	local where_sql="$1"
+	echo "Category Breakdown:"
+	db "$COLLECTOR_DB" -separator '|' "
+        SELECT category, COUNT(*) as cnt
+        FROM comments
+        $where_sql
+        GROUP BY category
+        ORDER BY cnt DESC;
+    " | while IFS='|' read -r cat cnt; do
+		printf "  %-15s %s\n" "$cat" "$cnt"
+	done
+	return 0
+}
+
+# Print the top 10 most-affected files for the given PR (or all PRs).
+_summary_print_files() {
+	local pr_number="$1"
+	local files_where="WHERE path != ''"
+	[[ -n "$pr_number" ]] && files_where="WHERE pr_number = $pr_number AND path != ''"
+	echo "Most Affected Files:"
+	db "$COLLECTOR_DB" -separator '|' "
+        SELECT path, COUNT(*) as cnt,
+               GROUP_CONCAT(DISTINCT severity) as severities
+        FROM comments
+        $files_where
+        GROUP BY path
+        ORDER BY cnt DESC
+        LIMIT 10;
+    " | while IFS='|' read -r path cnt severities; do
+		printf "  %-50s %3s (%s)\n" "$path" "$cnt" "$severities"
+	done
+	return 0
+}
+
+# Print the most recent N collection runs.
+_summary_print_runs() {
+	local last_n="$1"
+	echo "Recent Collection Runs (last $last_n):"
+	db "$COLLECTOR_DB" -separator '|' "
+        SELECT id, repo, pr_number, head_sha, collected_at, review_count, comment_count
+        FROM collection_runs
+        ORDER BY collected_at DESC
+        LIMIT $last_n;
+    " | while IFS='|' read -r run_id repo pr sha collected reviews comments; do
+		echo "  Run #${run_id}: PR #${pr} (${sha:0:8}) - ${reviews} reviews, ${comments} comments [${collected}]"
+	done
+	return 0
+}
 
 cmd_summary() {
 	local pr_number=""
@@ -765,79 +859,16 @@ cmd_summary() {
 	echo "========================="
 	echo ""
 
-	# Severity breakdown
 	local where_sql=""
-	if [[ -n "$pr_number" ]]; then
-		where_sql="WHERE pr_number = $pr_number"
-	fi
+	[[ -n "$pr_number" ]] && where_sql="WHERE pr_number = $pr_number"
 
-	echo "Severity Breakdown:"
-	db "$COLLECTOR_DB" -separator '|' "
-        SELECT severity, COUNT(*) as cnt
-        FROM comments
-        $where_sql
-        GROUP BY severity
-        ORDER BY
-            CASE severity
-                WHEN 'critical' THEN 1
-                WHEN 'high' THEN 2
-                WHEN 'medium' THEN 3
-                WHEN 'low' THEN 4
-                ELSE 5
-            END;
-    " | while IFS='|' read -r sev cnt; do
-		local color="$NC"
-		case "$sev" in
-		critical) color="$RED" ;;
-		high) color="$RED" ;;
-		medium) color="$YELLOW" ;;
-		low) color="$BLUE" ;;
-		*) color="$NC" ;;
-		esac
-		printf "  ${color}%-10s${NC} %s\n" "$sev" "$cnt"
-	done
-
+	_summary_print_severity "$where_sql"
 	echo ""
-	echo "Category Breakdown:"
-	db "$COLLECTOR_DB" -separator '|' "
-        SELECT category, COUNT(*) as cnt
-        FROM comments
-        $where_sql
-        GROUP BY category
-        ORDER BY cnt DESC;
-    " | while IFS='|' read -r cat cnt; do
-		printf "  %-15s %s\n" "$cat" "$cnt"
-	done
-
+	_summary_print_categories "$where_sql"
 	echo ""
-	echo "Most Affected Files:"
-	local files_where="WHERE path != ''"
-	if [[ -n "$pr_number" ]]; then
-		files_where="WHERE pr_number = $pr_number AND path != ''"
-	fi
-	db "$COLLECTOR_DB" -separator '|' "
-        SELECT path, COUNT(*) as cnt,
-               GROUP_CONCAT(DISTINCT severity) as severities
-        FROM comments
-        $files_where
-        GROUP BY path
-        ORDER BY cnt DESC
-        LIMIT 10;
-    " | while IFS='|' read -r path cnt severities; do
-		printf "  %-50s %3s (%s)\n" "$path" "$cnt" "$severities"
-	done
-
+	_summary_print_files "$pr_number"
 	echo ""
-	echo "Recent Collection Runs (last $last_n):"
-	db "$COLLECTOR_DB" -separator '|' "
-        SELECT id, repo, pr_number, head_sha, collected_at, review_count, comment_count
-        FROM collection_runs
-        ORDER BY collected_at DESC
-        LIMIT $last_n;
-    " | while IFS='|' read -r run_id repo pr sha collected reviews comments; do
-		echo "  Run #${run_id}: PR #${pr} (${sha:0:8}) - ${reviews} reviews, ${comments} comments [${collected}]"
-	done
-
+	_summary_print_runs "$last_n"
 	echo ""
 	return 0
 }
