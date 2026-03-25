@@ -42,6 +42,48 @@ fail() {
 	return 0
 }
 
+# ─── Shared test environment setup ──────────────────────────────────
+# Sets common env vars, stubs, and sources the actions script.
+# Must be called inside a subshell. Callers can override vars after calling.
+# Args: $1 - (optional) SUPERVISOR_DB path override
+#        $2 - (optional) if "mkdir" also creates AI_ACTIONS_LOG_DIR
+_setup_test_env() {
+	local db_path="${1:-"/tmp/test-$$.db"}"
+	local create_log_dir="${2:-""}"
+
+	BLUE='' GREEN='' YELLOW='' RED='' NC=''
+	SUPERVISOR_DB="$db_path"
+	SUPERVISOR_LOG="/dev/null"
+	SCRIPT_DIR="$REPO_DIR/.agents/scripts"
+	REPO_PATH="$REPO_DIR"
+	AI_ACTIONS_LOG_DIR="/tmp/test-ai-actions-logs-$$"
+	if [[ "$create_log_dir" == "mkdir" ]]; then
+		mkdir -p "$AI_ACTIONS_LOG_DIR"
+	fi
+	db() { sqlite3 -cmd ".timeout 5000" "$@" 2>/dev/null || true; }
+	log_info() { :; }
+	log_success() { :; }
+	log_warn() { :; }
+	log_error() { :; }
+	log_verbose() { :; }
+	sql_escape() { printf '%s' "$1" | sed "s/'/''/g"; }
+	detect_repo_slug() { echo "test/repo"; }
+	commit_and_push_todo() { :; }
+	find_task_issue_number() { echo ""; }
+	build_ai_context() { echo "# test"; }
+	run_ai_reasoning() { echo '[]'; }
+
+	source "$ACTIONS_SCRIPT"
+	return 0
+}
+
+# Clean up temp files created by _setup_test_env.
+# Args: $1... - additional paths to remove
+_cleanup_test_env() {
+	rm -rf "/tmp/test-ai-actions-logs-$$" "$@" 2>/dev/null || true
+	return 0
+}
+
 echo "=== AI Actions Executor Tests (t1085.3) ==="
 echo ""
 
@@ -174,189 +216,190 @@ fi
 # ─── Test 4: validate_action_fields ─────────────────────────────────
 echo "Test 4: Field validation"
 
+# Sub-function: validate comment_on_issue and create_task/create_subtasks fields.
+# Returns failure count via exit code. Must run inside a subshell with test env.
+_test_fields_comment_and_create() {
+	local failures=0
+	local result
+
+	# comment_on_issue: valid
+	result=$(validate_action_fields '{"type":"comment_on_issue","issue_number":123,"body":"test comment"}' "comment_on_issue")
+	if [[ -n "$result" ]]; then
+		echo "FAIL: valid comment_on_issue rejected: $result"
+		failures=$((failures + 1))
+	fi
+
+	# comment_on_issue: missing body
+	result=$(validate_action_fields '{"type":"comment_on_issue","issue_number":123}' "comment_on_issue")
+	if [[ -z "$result" ]]; then
+		echo "FAIL: comment_on_issue without body accepted"
+		failures=$((failures + 1))
+	fi
+
+	# comment_on_issue: missing issue_number
+	result=$(validate_action_fields '{"type":"comment_on_issue","body":"test"}' "comment_on_issue")
+	if [[ -z "$result" ]]; then
+		echo "FAIL: comment_on_issue without issue_number accepted"
+		failures=$((failures + 1))
+	fi
+
+	# comment_on_issue: non-numeric issue_number
+	result=$(validate_action_fields '{"type":"comment_on_issue","issue_number":"abc","body":"test"}' "comment_on_issue")
+	if [[ -z "$result" ]]; then
+		echo "FAIL: comment_on_issue with non-numeric issue_number accepted"
+		failures=$((failures + 1))
+	fi
+
+	# comment_on_issue: zero issue_number
+	result=$(validate_action_fields '{"type":"comment_on_issue","issue_number":0,"body":"test"}' "comment_on_issue")
+	if [[ -z "$result" ]]; then
+		echo "FAIL: comment_on_issue with zero issue_number accepted"
+		failures=$((failures + 1))
+	fi
+
+	# create_task: valid
+	result=$(validate_action_fields '{"type":"create_task","title":"Test task"}' "create_task")
+	if [[ -n "$result" ]]; then
+		echo "FAIL: valid create_task rejected: $result"
+		failures=$((failures + 1))
+	fi
+
+	# create_task: missing title
+	result=$(validate_action_fields '{"type":"create_task"}' "create_task")
+	if [[ -z "$result" ]]; then
+		echo "FAIL: create_task without title accepted"
+		failures=$((failures + 1))
+	fi
+
+	# create_subtasks: valid
+	result=$(validate_action_fields '{"type":"create_subtasks","parent_task_id":"t100","subtasks":[{"title":"sub1"}]}' "create_subtasks")
+	if [[ -n "$result" ]]; then
+		echo "FAIL: valid create_subtasks rejected: $result"
+		failures=$((failures + 1))
+	fi
+
+	# create_subtasks: empty subtasks array
+	result=$(validate_action_fields '{"type":"create_subtasks","parent_task_id":"t100","subtasks":[]}' "create_subtasks")
+	if [[ -z "$result" ]]; then
+		echo "FAIL: create_subtasks with empty array accepted"
+		failures=$((failures + 1))
+	fi
+
+	# create_subtasks: missing parent_task_id
+	result=$(validate_action_fields '{"type":"create_subtasks","subtasks":[{"title":"sub1"}]}' "create_subtasks")
+	if [[ -z "$result" ]]; then
+		echo "FAIL: create_subtasks without parent_task_id accepted"
+		failures=$((failures + 1))
+	fi
+
+	return "$failures"
+}
+
+# Sub-function: validate flag_for_review, adjust_priority, close_verified, request_info fields.
+# Returns failure count via exit code. Must run inside a subshell with test env.
+_test_fields_flag_adjust_close_request() {
+	local failures=0
+	local result
+
+	# flag_for_review: valid
+	result=$(validate_action_fields '{"type":"flag_for_review","issue_number":42,"reason":"needs human judgment"}' "flag_for_review")
+	if [[ -n "$result" ]]; then
+		echo "FAIL: valid flag_for_review rejected: $result"
+		failures=$((failures + 1))
+	fi
+
+	# flag_for_review: missing reason
+	result=$(validate_action_fields '{"type":"flag_for_review","issue_number":42}' "flag_for_review")
+	if [[ -z "$result" ]]; then
+		echo "FAIL: flag_for_review without reason accepted"
+		failures=$((failures + 1))
+	fi
+
+	# adjust_priority: valid
+	result=$(validate_action_fields '{"type":"adjust_priority","task_id":"t100","new_priority":"high"}' "adjust_priority")
+	if [[ -n "$result" ]]; then
+		echo "FAIL: valid adjust_priority rejected: $result"
+		failures=$((failures + 1))
+	fi
+
+	# adjust_priority: missing task_id
+	result=$(validate_action_fields '{"type":"adjust_priority","new_priority":"high"}' "adjust_priority")
+	if [[ -z "$result" ]]; then
+		echo "FAIL: adjust_priority without task_id accepted"
+		failures=$((failures + 1))
+	fi
+
+	# adjust_priority: missing new_priority is OK — executor infers from reasoning
+	result=$(validate_action_fields '{"type":"adjust_priority","task_id":"t100"}' "adjust_priority")
+	if [[ -n "$result" ]]; then
+		echo "FAIL: adjust_priority without new_priority should be accepted (executor infers from reasoning): $result"
+		failures=$((failures + 1))
+	fi
+
+	# adjust_priority: invalid new_priority value must be rejected (t1197)
+	result=$(validate_action_fields '{"type":"adjust_priority","task_id":"t100","new_priority":"urgent"}' "adjust_priority")
+	if [[ -z "$result" ]]; then
+		echo "FAIL: adjust_priority with invalid new_priority value accepted (must be high|medium|low|critical)"
+		failures=$((failures + 1))
+	fi
+
+	# adjust_priority: valid new_priority values
+	for prio in high medium low critical; do
+		result=$(validate_action_fields "{\"type\":\"adjust_priority\",\"task_id\":\"t100\",\"new_priority\":\"$prio\"}" "adjust_priority")
+		if [[ -n "$result" ]]; then
+			echo "FAIL: adjust_priority with new_priority='$prio' rejected: $result"
+			failures=$((failures + 1))
+		fi
+	done
+
+	# close_verified: valid
+	result=$(validate_action_fields '{"type":"close_verified","issue_number":10,"pr_number":20}' "close_verified")
+	if [[ -n "$result" ]]; then
+		echo "FAIL: valid close_verified rejected: $result"
+		failures=$((failures + 1))
+	fi
+
+	# close_verified: missing pr_number (CRITICAL safety check)
+	result=$(validate_action_fields '{"type":"close_verified","issue_number":10}' "close_verified")
+	if [[ -z "$result" ]]; then
+		echo "FAIL: close_verified without pr_number accepted (SAFETY VIOLATION)"
+		failures=$((failures + 1))
+	fi
+
+	# close_verified: zero pr_number
+	result=$(validate_action_fields '{"type":"close_verified","issue_number":10,"pr_number":0}' "close_verified")
+	if [[ -z "$result" ]]; then
+		echo "FAIL: close_verified with zero pr_number accepted"
+		failures=$((failures + 1))
+	fi
+
+	# request_info: valid
+	result=$(validate_action_fields '{"type":"request_info","issue_number":5,"questions":["What version?"]}' "request_info")
+	if [[ -n "$result" ]]; then
+		echo "FAIL: valid request_info rejected: $result"
+		failures=$((failures + 1))
+	fi
+
+	# request_info: missing questions
+	result=$(validate_action_fields '{"type":"request_info","issue_number":5}' "request_info")
+	if [[ -z "$result" ]]; then
+		echo "FAIL: request_info without questions accepted"
+		failures=$((failures + 1))
+	fi
+
+	return "$failures"
+}
+
 _test_field_validation() {
 	(
-		BLUE='' GREEN='' YELLOW='' RED='' NC=''
-		SUPERVISOR_DB="/tmp/test-$$.db"
-		SUPERVISOR_LOG="/dev/null"
-		SCRIPT_DIR="$REPO_DIR/.agents/scripts"
-		REPO_PATH="$REPO_DIR"
-		AI_ACTIONS_LOG_DIR="/tmp/test-ai-actions-logs-$$"
-		db() { sqlite3 -cmd ".timeout 5000" "$@" 2>/dev/null || true; }
-		log_info() { :; }
-		log_success() { :; }
-		log_warn() { :; }
-		log_error() { :; }
-		log_verbose() { :; }
-		sql_escape() { printf '%s' "$1" | sed "s/'/''/g"; }
-		detect_repo_slug() { echo "test/repo"; }
-		commit_and_push_todo() { :; }
-		find_task_issue_number() { echo ""; }
-		build_ai_context() { echo "# test"; }
-		run_ai_reasoning() { echo '[]'; }
-
-		source "$ACTIONS_SCRIPT"
+		_setup_test_env "/tmp/test-$$.db"
 
 		local failures=0
 
-		# comment_on_issue: valid
-		local result
-		result=$(validate_action_fields '{"type":"comment_on_issue","issue_number":123,"body":"test comment"}' "comment_on_issue")
-		if [[ -n "$result" ]]; then
-			echo "FAIL: valid comment_on_issue rejected: $result"
-			failures=$((failures + 1))
-		fi
+		_test_fields_comment_and_create || failures=$((failures + $?))
+		_test_fields_flag_adjust_close_request || failures=$((failures + $?))
 
-		# comment_on_issue: missing body
-		result=$(validate_action_fields '{"type":"comment_on_issue","issue_number":123}' "comment_on_issue")
-		if [[ -z "$result" ]]; then
-			echo "FAIL: comment_on_issue without body accepted"
-			failures=$((failures + 1))
-		fi
-
-		# comment_on_issue: missing issue_number
-		result=$(validate_action_fields '{"type":"comment_on_issue","body":"test"}' "comment_on_issue")
-		if [[ -z "$result" ]]; then
-			echo "FAIL: comment_on_issue without issue_number accepted"
-			failures=$((failures + 1))
-		fi
-
-		# comment_on_issue: non-numeric issue_number
-		result=$(validate_action_fields '{"type":"comment_on_issue","issue_number":"abc","body":"test"}' "comment_on_issue")
-		if [[ -z "$result" ]]; then
-			echo "FAIL: comment_on_issue with non-numeric issue_number accepted"
-			failures=$((failures + 1))
-		fi
-
-		# comment_on_issue: zero issue_number
-		result=$(validate_action_fields '{"type":"comment_on_issue","issue_number":0,"body":"test"}' "comment_on_issue")
-		if [[ -z "$result" ]]; then
-			echo "FAIL: comment_on_issue with zero issue_number accepted"
-			failures=$((failures + 1))
-		fi
-
-		# create_task: valid
-		result=$(validate_action_fields '{"type":"create_task","title":"Test task"}' "create_task")
-		if [[ -n "$result" ]]; then
-			echo "FAIL: valid create_task rejected: $result"
-			failures=$((failures + 1))
-		fi
-
-		# create_task: missing title
-		result=$(validate_action_fields '{"type":"create_task"}' "create_task")
-		if [[ -z "$result" ]]; then
-			echo "FAIL: create_task without title accepted"
-			failures=$((failures + 1))
-		fi
-
-		# create_subtasks: valid
-		result=$(validate_action_fields '{"type":"create_subtasks","parent_task_id":"t100","subtasks":[{"title":"sub1"}]}' "create_subtasks")
-		if [[ -n "$result" ]]; then
-			echo "FAIL: valid create_subtasks rejected: $result"
-			failures=$((failures + 1))
-		fi
-
-		# create_subtasks: empty subtasks array
-		result=$(validate_action_fields '{"type":"create_subtasks","parent_task_id":"t100","subtasks":[]}' "create_subtasks")
-		if [[ -z "$result" ]]; then
-			echo "FAIL: create_subtasks with empty array accepted"
-			failures=$((failures + 1))
-		fi
-
-		# create_subtasks: missing parent_task_id
-		result=$(validate_action_fields '{"type":"create_subtasks","subtasks":[{"title":"sub1"}]}' "create_subtasks")
-		if [[ -z "$result" ]]; then
-			echo "FAIL: create_subtasks without parent_task_id accepted"
-			failures=$((failures + 1))
-		fi
-
-		# flag_for_review: valid
-		result=$(validate_action_fields '{"type":"flag_for_review","issue_number":42,"reason":"needs human judgment"}' "flag_for_review")
-		if [[ -n "$result" ]]; then
-			echo "FAIL: valid flag_for_review rejected: $result"
-			failures=$((failures + 1))
-		fi
-
-		# flag_for_review: missing reason
-		result=$(validate_action_fields '{"type":"flag_for_review","issue_number":42}' "flag_for_review")
-		if [[ -z "$result" ]]; then
-			echo "FAIL: flag_for_review without reason accepted"
-			failures=$((failures + 1))
-		fi
-
-		# adjust_priority: valid
-		result=$(validate_action_fields '{"type":"adjust_priority","task_id":"t100","new_priority":"high"}' "adjust_priority")
-		if [[ -n "$result" ]]; then
-			echo "FAIL: valid adjust_priority rejected: $result"
-			failures=$((failures + 1))
-		fi
-
-		# adjust_priority: missing task_id
-		result=$(validate_action_fields '{"type":"adjust_priority","new_priority":"high"}' "adjust_priority")
-		if [[ -z "$result" ]]; then
-			echo "FAIL: adjust_priority without task_id accepted"
-			failures=$((failures + 1))
-		fi
-
-		# adjust_priority: missing new_priority is OK — executor infers from reasoning
-		result=$(validate_action_fields '{"type":"adjust_priority","task_id":"t100"}' "adjust_priority")
-		if [[ -n "$result" ]]; then
-			echo "FAIL: adjust_priority without new_priority should be accepted (executor infers from reasoning): $result"
-			failures=$((failures + 1))
-		fi
-
-		# adjust_priority: invalid new_priority value must be rejected (t1197)
-		result=$(validate_action_fields '{"type":"adjust_priority","task_id":"t100","new_priority":"urgent"}' "adjust_priority")
-		if [[ -z "$result" ]]; then
-			echo "FAIL: adjust_priority with invalid new_priority value accepted (must be high|medium|low|critical)"
-			failures=$((failures + 1))
-		fi
-
-		# adjust_priority: valid new_priority values
-		for prio in high medium low critical; do
-			result=$(validate_action_fields "{\"type\":\"adjust_priority\",\"task_id\":\"t100\",\"new_priority\":\"$prio\"}" "adjust_priority")
-			if [[ -n "$result" ]]; then
-				echo "FAIL: adjust_priority with new_priority='$prio' rejected: $result"
-				failures=$((failures + 1))
-			fi
-		done
-
-		# close_verified: valid
-		result=$(validate_action_fields '{"type":"close_verified","issue_number":10,"pr_number":20}' "close_verified")
-		if [[ -n "$result" ]]; then
-			echo "FAIL: valid close_verified rejected: $result"
-			failures=$((failures + 1))
-		fi
-
-		# close_verified: missing pr_number (CRITICAL safety check)
-		result=$(validate_action_fields '{"type":"close_verified","issue_number":10}' "close_verified")
-		if [[ -z "$result" ]]; then
-			echo "FAIL: close_verified without pr_number accepted (SAFETY VIOLATION)"
-			failures=$((failures + 1))
-		fi
-
-		# close_verified: zero pr_number
-		result=$(validate_action_fields '{"type":"close_verified","issue_number":10,"pr_number":0}' "close_verified")
-		if [[ -z "$result" ]]; then
-			echo "FAIL: close_verified with zero pr_number accepted"
-			failures=$((failures + 1))
-		fi
-
-		# request_info: valid
-		result=$(validate_action_fields '{"type":"request_info","issue_number":5,"questions":["What version?"]}' "request_info")
-		if [[ -n "$result" ]]; then
-			echo "FAIL: valid request_info rejected: $result"
-			failures=$((failures + 1))
-		fi
-
-		# request_info: missing questions
-		result=$(validate_action_fields '{"type":"request_info","issue_number":5}' "request_info")
-		if [[ -z "$result" ]]; then
-			echo "FAIL: request_info without questions accepted"
-			failures=$((failures + 1))
-		fi
-
-		rm -rf "/tmp/test-ai-actions-logs-$$" "/tmp/test-$$.db"
+		_cleanup_test_env "/tmp/test-$$.db"
 		exit "$failures"
 	)
 }
@@ -1893,117 +1936,117 @@ fi
 # ─── Test 28: create_subtasks — malformed subtask arrays (t1238) ─────
 echo "Test 28: create_subtasks executor — malformed subtask arrays handled gracefully"
 
+# Sub-function: test null, string, and empty subtask array inputs.
+# Must run inside a subshell with test env and set +e.
+_test_malformed_null_string_empty() {
+	local failures=0
+	local result rc error_field
+
+	# Case 1: subtasks field is null (not an array)
+	result=$(_exec_create_subtasks '{"type":"create_subtasks","parent_task_id":"t555","subtasks":null,"reasoning":"test"}' "$REPO_DIR" 2>/dev/null)
+	rc=$?
+	if [[ $rc -eq 0 ]]; then
+		echo "FAIL: null subtasks should return rc=1, got rc=0"
+		failures=$((failures + 1))
+	fi
+	error_field=$(printf '%s' "$result" | jq -r '.error // "MISSING"' 2>/dev/null || echo "PARSE_ERROR")
+	if [[ "$error_field" != "missing_subtasks" ]]; then
+		echo "FAIL: null subtasks should return error=missing_subtasks, got: $result"
+		failures=$((failures + 1))
+	fi
+
+	# Case 2: subtasks field is a string (wrong type).
+	# Note: jq '.subtasks | length' on a string returns the string length (not 0),
+	# so the executor does NOT catch this as missing_subtasks — it proceeds and
+	# fails at parent_task_not_found (t555 is not in the aidevops TODO.md).
+	# This is a known gap; the test documents actual behaviour.
+	result=$(_exec_create_subtasks '{"type":"create_subtasks","parent_task_id":"t555","subtasks":"not an array","reasoning":"test"}' "$REPO_DIR" 2>/dev/null)
+	rc=$?
+	if [[ $rc -eq 0 ]]; then
+		echo "FAIL: string subtasks should return rc=1 (fails at parent lookup), got rc=0"
+		failures=$((failures + 1))
+	fi
+	# The executor fails at parent_task_not_found (not missing_subtasks) for string input
+	error_field=$(printf '%s' "$result" | jq -r '.error // "MISSING"' 2>/dev/null || echo "PARSE_ERROR")
+	if [[ "$error_field" != "parent_task_not_found" && "$error_field" != "missing_subtasks" && "$error_field" != "task_not_in_db" ]]; then
+		echo "FAIL: string subtasks should return a validation error, got: $result"
+		failures=$((failures + 1))
+	fi
+
+	# Case 3: subtasks field is an empty array
+	result=$(_exec_create_subtasks '{"type":"create_subtasks","parent_task_id":"t555","subtasks":[],"reasoning":"test"}' "$REPO_DIR" 2>/dev/null)
+	rc=$?
+	if [[ $rc -eq 0 ]]; then
+		echo "FAIL: empty subtasks array should return rc=1, got rc=0"
+		failures=$((failures + 1))
+	fi
+	error_field=$(printf '%s' "$result" | jq -r '.error // "MISSING"' 2>/dev/null || echo "PARSE_ERROR")
+	if [[ "$error_field" != "missing_subtasks" ]]; then
+		echo "FAIL: empty subtasks array should return error=missing_subtasks, got: $result"
+		failures=$((failures + 1))
+	fi
+
+	return "$failures"
+}
+
+# Sub-function: test partial objects and missing subtasks field.
+# Must run inside a subshell with test env and set +e.
+_test_malformed_partial_and_missing() {
+	local failures=0
+	local result rc error_field
+
+	# Case 4: subtasks array with partial objects (missing title) — executor should
+	# use fallback title "Untitled subtask" and still succeed if parent exists
+	local tmp_dir
+	tmp_dir=$(mktemp -d)
+	printf '# Test TODO\n\n- [ ] t556 Parent task ~2h\n' >"$tmp_dir/TODO.md"
+
+	result=$(_exec_create_subtasks '{"type":"create_subtasks","parent_task_id":"t556","subtasks":[{"estimate":"~1h","model":"sonnet"}],"reasoning":"test"}' "$tmp_dir" 2>/dev/null)
+	rc=$?
+	if [[ $rc -ne 0 ]]; then
+		echo "FAIL: partial subtask object (missing title) should use fallback and succeed, got rc=$rc (result: $result)"
+		failures=$((failures + 1))
+	fi
+	local created
+	created=$(printf '%s' "$result" | jq -r '.created // "MISSING"' 2>/dev/null || echo "PARSE_ERROR")
+	if [[ "$created" != "true" ]]; then
+		echo "FAIL: partial subtask should succeed with fallback title, got: $result"
+		failures=$((failures + 1))
+	fi
+	# Verify fallback title was used
+	if ! grep -q "Untitled subtask" "$tmp_dir/TODO.md" 2>/dev/null; then
+		echo "FAIL: partial subtask should use 'Untitled subtask' fallback title"
+		failures=$((failures + 1))
+	fi
+
+	# Case 5: subtasks field is missing entirely
+	result=$(_exec_create_subtasks '{"type":"create_subtasks","parent_task_id":"t555","reasoning":"test"}' "$REPO_DIR" 2>/dev/null)
+	rc=$?
+	if [[ $rc -eq 0 ]]; then
+		echo "FAIL: missing subtasks field should return rc=1, got rc=0"
+		failures=$((failures + 1))
+	fi
+	error_field=$(printf '%s' "$result" | jq -r '.error // "MISSING"' 2>/dev/null || echo "PARSE_ERROR")
+	if [[ "$error_field" != "missing_subtasks" ]]; then
+		echo "FAIL: missing subtasks field should return error=missing_subtasks, got: $result"
+		failures=$((failures + 1))
+	fi
+
+	rm -rf "$tmp_dir" 2>/dev/null || true
+	return "$failures"
+}
+
 _test_create_subtasks_malformed_arrays() {
 	(
 		set +e
-		BLUE='' GREEN='' YELLOW='' RED='' NC=''
-		SUPERVISOR_DB="/tmp/test-subtasks-malformed-$$.db"
-		SUPERVISOR_LOG="/dev/null"
-		SCRIPT_DIR="$REPO_DIR/.agents/scripts"
-		REPO_PATH="$REPO_DIR"
-		AI_ACTIONS_LOG_DIR="/tmp/test-ai-actions-logs-$$"
-		mkdir -p "$AI_ACTIONS_LOG_DIR"
-		db() { sqlite3 -cmd ".timeout 5000" "$@" 2>/dev/null || true; }
-		log_info() { :; }
-		log_success() { :; }
-		log_warn() { :; }
-		log_error() { :; }
-		log_verbose() { :; }
-		sql_escape() { printf '%s' "$1" | sed "s/'/''/g"; }
-		detect_repo_slug() { echo "test/repo"; }
-		commit_and_push_todo() { :; }
-		find_task_issue_number() { echo ""; }
-		build_ai_context() { echo "# test"; }
-		run_ai_reasoning() { echo '[]'; }
-
-		source "$ACTIONS_SCRIPT"
+		_setup_test_env "/tmp/test-subtasks-malformed-$$.db" "mkdir"
 
 		local failures=0
 
-		# Case 1: subtasks field is null (not an array)
-		local result rc
-		result=$(_exec_create_subtasks '{"type":"create_subtasks","parent_task_id":"t555","subtasks":null,"reasoning":"test"}' "$REPO_DIR" 2>/dev/null)
-		rc=$?
-		if [[ $rc -eq 0 ]]; then
-			echo "FAIL: null subtasks should return rc=1, got rc=0"
-			failures=$((failures + 1))
-		fi
-		local error_field
-		error_field=$(printf '%s' "$result" | jq -r '.error // "MISSING"' 2>/dev/null || echo "PARSE_ERROR")
-		if [[ "$error_field" != "missing_subtasks" ]]; then
-			echo "FAIL: null subtasks should return error=missing_subtasks, got: $result"
-			failures=$((failures + 1))
-		fi
+		_test_malformed_null_string_empty || failures=$((failures + $?))
+		_test_malformed_partial_and_missing || failures=$((failures + $?))
 
-		# Case 2: subtasks field is a string (wrong type).
-		# Note: jq '.subtasks | length' on a string returns the string length (not 0),
-		# so the executor does NOT catch this as missing_subtasks — it proceeds and
-		# fails at parent_task_not_found (t555 is not in the aidevops TODO.md).
-		# This is a known gap; the test documents actual behaviour.
-		result=$(_exec_create_subtasks '{"type":"create_subtasks","parent_task_id":"t555","subtasks":"not an array","reasoning":"test"}' "$REPO_DIR" 2>/dev/null)
-		rc=$?
-		if [[ $rc -eq 0 ]]; then
-			echo "FAIL: string subtasks should return rc=1 (fails at parent lookup), got rc=0"
-			failures=$((failures + 1))
-		fi
-		# The executor fails at parent_task_not_found (not missing_subtasks) for string input
-		error_field=$(printf '%s' "$result" | jq -r '.error // "MISSING"' 2>/dev/null || echo "PARSE_ERROR")
-		if [[ "$error_field" != "parent_task_not_found" && "$error_field" != "missing_subtasks" && "$error_field" != "task_not_in_db" ]]; then
-			echo "FAIL: string subtasks should return a validation error, got: $result"
-			failures=$((failures + 1))
-		fi
-
-		# Case 3: subtasks field is an empty array
-		result=$(_exec_create_subtasks '{"type":"create_subtasks","parent_task_id":"t555","subtasks":[],"reasoning":"test"}' "$REPO_DIR" 2>/dev/null)
-		rc=$?
-		if [[ $rc -eq 0 ]]; then
-			echo "FAIL: empty subtasks array should return rc=1, got rc=0"
-			failures=$((failures + 1))
-		fi
-		error_field=$(printf '%s' "$result" | jq -r '.error // "MISSING"' 2>/dev/null || echo "PARSE_ERROR")
-		if [[ "$error_field" != "missing_subtasks" ]]; then
-			echo "FAIL: empty subtasks array should return error=missing_subtasks, got: $result"
-			failures=$((failures + 1))
-		fi
-
-		# Case 4: subtasks array with partial objects (missing title) — executor should
-		# use fallback title "Untitled subtask" and still succeed if parent exists
-		local tmp_dir
-		tmp_dir=$(mktemp -d)
-		printf '# Test TODO\n\n- [ ] t556 Parent task ~2h\n' >"$tmp_dir/TODO.md"
-
-		result=$(_exec_create_subtasks '{"type":"create_subtasks","parent_task_id":"t556","subtasks":[{"estimate":"~1h","model":"sonnet"}],"reasoning":"test"}' "$tmp_dir" 2>/dev/null)
-		rc=$?
-		if [[ $rc -ne 0 ]]; then
-			echo "FAIL: partial subtask object (missing title) should use fallback and succeed, got rc=$rc (result: $result)"
-			failures=$((failures + 1))
-		fi
-		local created
-		created=$(printf '%s' "$result" | jq -r '.created // "MISSING"' 2>/dev/null || echo "PARSE_ERROR")
-		if [[ "$created" != "true" ]]; then
-			echo "FAIL: partial subtask should succeed with fallback title, got: $result"
-			failures=$((failures + 1))
-		fi
-		# Verify fallback title was used
-		if ! grep -q "Untitled subtask" "$tmp_dir/TODO.md" 2>/dev/null; then
-			echo "FAIL: partial subtask should use 'Untitled subtask' fallback title"
-			failures=$((failures + 1))
-		fi
-
-		# Case 5: subtasks field is missing entirely
-		result=$(_exec_create_subtasks '{"type":"create_subtasks","parent_task_id":"t555","reasoning":"test"}' "$REPO_DIR" 2>/dev/null)
-		rc=$?
-		if [[ $rc -eq 0 ]]; then
-			echo "FAIL: missing subtasks field should return rc=1, got rc=0"
-			failures=$((failures + 1))
-		fi
-		error_field=$(printf '%s' "$result" | jq -r '.error // "MISSING"' 2>/dev/null || echo "PARSE_ERROR")
-		if [[ "$error_field" != "missing_subtasks" ]]; then
-			echo "FAIL: missing subtasks field should return error=missing_subtasks, got: $result"
-			failures=$((failures + 1))
-		fi
-
-		rm -rf "$tmp_dir" "/tmp/test-ai-actions-logs-$$" "$SUPERVISOR_DB" 2>/dev/null || true
+		_cleanup_test_env "$SUPERVISOR_DB"
 		exit "$failures"
 	)
 }
