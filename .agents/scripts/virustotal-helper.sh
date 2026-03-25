@@ -432,52 +432,23 @@ cmd_scan_domain() {
 	return 0
 }
 
-# Scan all files in a skill directory
-# Hashes each file, checks URLs/domains found in content
-cmd_scan_skill() {
-	local skill_path="$1"
-	local output_json="${2:-false}"
-	local quiet="${3:-false}"
+# Phase 1: Hash-based file scanning for cmd_scan_skill
+# Populates malicious_count, suspicious_count, safe_count, unknown_count via side-effects on
+# the caller's variables (passed by name via eval). Returns updated request_count via stdout.
+# Args: files_ref quiet request_count max_requests
+# Outputs: updated counts written to temp file; prints per-file results
+_scan_skill_files() {
+	local quiet="$1"
+	local request_count="$2"
+	local max_requests="$3"
+	shift 3
+	local files=("$@")
 
-	if [[ ! -e "$skill_path" ]]; then
-		log_error "Path not found: ${skill_path}"
-		return 1
-	fi
-
-	# Determine files to scan
-	local files=()
-	if [[ -f "$skill_path" ]]; then
-		files=("$skill_path")
-	elif [[ -d "$skill_path" ]]; then
-		while IFS= read -r -d '' f; do
-			files+=("$f")
-		done < <(find "$skill_path" -type f \( -name "*.md" -o -name "*.sh" -o -name "*.py" -o -name "*.js" -o -name "*.ts" -o -name "*.yaml" -o -name "*.yml" -o -name "*.json" \) -print0 2>/dev/null)
-	fi
-
-	if [[ ${#files[@]} -eq 0 ]]; then
-		log_warning "No scannable files found in: ${skill_path}"
-		return 0
-	fi
-
-	local skill_name=""
-	skill_name=$(basename "$skill_path" | sed 's/-skill$//' | sed 's/\.md$//')
-
-	if [[ "$quiet" != "true" ]]; then
-		log_info "Scanning skill '${skill_name}': ${#files[@]} file(s)"
-		echo ""
-	fi
-
-	local total_files=${#files[@]}
 	local malicious_count=0
 	local suspicious_count=0
 	local safe_count=0
 	local unknown_count=0
-	local urls_found=()
-	local domains_found=()
-	local request_count=0
-	local max_requests=8 # Limit per skill scan to avoid rate limiting
 
-	# Phase 1: Hash-based file scanning
 	for file in "${files[@]}"; do
 		if [[ $request_count -ge $max_requests ]]; then
 			log_warning "Rate limit reached (${max_requests} requests), skipping remaining file hashes"
@@ -516,39 +487,47 @@ cmd_scan_skill() {
 		case "$status" in
 		MALICIOUS)
 			malicious_count=$((malicious_count + 1))
-			if [[ "$quiet" != "true" ]]; then
-				echo -e "  ${RED}MALICIOUS${NC} ${basename_file}: ${detail}"
-			fi
+			[[ "$quiet" != "true" ]] && echo -e "  ${RED}MALICIOUS${NC} ${basename_file}: ${detail}"
 			;;
 		SUSPICIOUS)
 			suspicious_count=$((suspicious_count + 1))
-			if [[ "$quiet" != "true" ]]; then
-				echo -e "  ${YELLOW}SUSPICIOUS${NC} ${basename_file}: ${detail}"
-			fi
+			[[ "$quiet" != "true" ]] && echo -e "  ${YELLOW}SUSPICIOUS${NC} ${basename_file}: ${detail}"
 			;;
 		SAFE)
 			safe_count=$((safe_count + 1))
-			if [[ "$quiet" != "true" ]]; then
-				echo -e "  ${GREEN}SAFE${NC} ${basename_file}: ${detail}"
-			fi
+			[[ "$quiet" != "true" ]] && echo -e "  ${GREEN}SAFE${NC} ${basename_file}: ${detail}"
 			;;
 		*)
 			unknown_count=$((unknown_count + 1))
-			if [[ "$quiet" != "true" ]]; then
-				echo -e "  ${BLUE}UNKNOWN${NC} ${basename_file}: ${detail}"
-			fi
+			[[ "$quiet" != "true" ]] && echo -e "  ${BLUE}UNKNOWN${NC} ${basename_file}: ${detail}"
 			;;
 		esac
 
-		# Rate limit between requests
-		if [[ $request_count -lt $max_requests ]]; then
-			rate_limit_wait
-		fi
+		[[ $request_count -lt $max_requests ]] && rate_limit_wait
 	done
 
-	# Phase 2: Extract and scan URLs from skill content
-	# bash 3.2-compatible: newline-separated string instead of associative array
+	# Return counts via stdout as KEY=VALUE lines for caller to eval
+	printf 'malicious=%d\nsuspicious=%d\nsafe=%d\nunknown=%d\nrequest_count=%d\n' \
+		"$malicious_count" "$suspicious_count" "$safe_count" "$unknown_count" "$request_count"
+	return 0
+}
+
+# Phase 2: Extract domains from skill files and scan them
+# Args: quiet request_count max_requests files...
+# Outputs: updated counts + request_count as KEY=VALUE lines; prints per-domain results
+_scan_skill_domains() {
+	local quiet="$1"
+	local request_count="$2"
+	local max_requests="$3"
+	shift 3
+	local files=("$@")
+
+	local malicious_count=0
+	local suspicious_count=0
+	local domains_found=()
 	local domains_seen=""
+
+	# Extract unique domains from skill content (skip well-known safe hosts)
 	for file in "${files[@]}"; do
 		while IFS= read -r url; do
 			case "$url" in
@@ -556,8 +535,6 @@ cmd_scan_skill() {
 				continue
 				;;
 			esac
-			urls_found+=("$url")
-
 			local domain=""
 			domain=$(echo "$url" | sed -E 's|https?://([^/]+).*|\1|')
 			if ! echo "$domains_seen" | grep -qxF "$domain"; then
@@ -568,72 +545,83 @@ cmd_scan_skill() {
 		done < <(grep -oE 'https?://[^ "'"'"'<>]+' "$file" 2>/dev/null | sort -u || true)
 	done
 
-	# Scan unique domains (up to rate limit)
-	if [[ ${#domains_found[@]} -gt 0 && $request_count -lt $max_requests ]]; then
-		if [[ "$quiet" != "true" ]]; then
-			echo ""
-			log_info "Checking ${#domains_found[@]} domain(s) referenced in skill..."
-		fi
-
-		for domain in "${domains_found[@]}"; do
-			if [[ $request_count -ge $max_requests ]]; then
-				log_warning "Rate limit reached, skipping remaining domains"
-				break
-			fi
-
-			rate_limit_wait
-
-			local response=""
-			local vt_exit=0
-			response=$(vt_request "GET" "/domains/${domain}" 2>/dev/null) || vt_exit=$?
-			request_count=$((request_count + 1))
-
-			if [[ $vt_exit -ne 0 ]]; then
-				if [[ "$quiet" != "true" ]]; then
-					echo -e "  ${BLUE}SKIP${NC} ${domain} (lookup failed)"
-				fi
-				continue
-			fi
-
-			local verdict=""
-			verdict=$(parse_verdict "$response")
-			local status="${verdict%%|*}"
-			local detail="${verdict#*|}"
-
-			case "$status" in
-			MALICIOUS)
-				malicious_count=$((malicious_count + 1))
-				if [[ "$quiet" != "true" ]]; then
-					echo -e "  ${RED}MALICIOUS${NC} ${domain}: ${detail}"
-				fi
-				;;
-			SUSPICIOUS)
-				suspicious_count=$((suspicious_count + 1))
-				if [[ "$quiet" != "true" ]]; then
-					echo -e "  ${YELLOW}SUSPICIOUS${NC} ${domain}: ${detail}"
-				fi
-				;;
-			SAFE)
-				if [[ "$quiet" != "true" ]]; then
-					echo -e "  ${GREEN}SAFE${NC} ${domain}: ${detail}"
-				fi
-				;;
-			*)
-				if [[ "$quiet" != "true" ]]; then
-					echo -e "  ${BLUE}UNKNOWN${NC} ${domain}: ${detail}"
-				fi
-				;;
-			esac
-		done
+	if [[ ${#domains_found[@]} -eq 0 || $request_count -ge $max_requests ]]; then
+		printf 'malicious=%d\nsuspicious=%d\ndomains_count=%d\nrequest_count=%d\n' \
+			"$malicious_count" "$suspicious_count" "${#domains_found[@]}" "$request_count"
+		return 0
 	fi
 
-	# Summary
+	if [[ "$quiet" != "true" ]]; then
+		echo ""
+		log_info "Checking ${#domains_found[@]} domain(s) referenced in skill..."
+	fi
+
+	for domain in "${domains_found[@]}"; do
+		if [[ $request_count -ge $max_requests ]]; then
+			log_warning "Rate limit reached, skipping remaining domains"
+			break
+		fi
+
+		rate_limit_wait
+
+		local response=""
+		local vt_exit=0
+		response=$(vt_request "GET" "/domains/${domain}" 2>/dev/null) || vt_exit=$?
+		request_count=$((request_count + 1))
+
+		if [[ $vt_exit -ne 0 ]]; then
+			[[ "$quiet" != "true" ]] && echo -e "  ${BLUE}SKIP${NC} ${domain} (lookup failed)"
+			continue
+		fi
+
+		local verdict=""
+		verdict=$(parse_verdict "$response")
+		local status="${verdict%%|*}"
+		local detail="${verdict#*|}"
+
+		case "$status" in
+		MALICIOUS)
+			malicious_count=$((malicious_count + 1))
+			[[ "$quiet" != "true" ]] && echo -e "  ${RED}MALICIOUS${NC} ${domain}: ${detail}"
+			;;
+		SUSPICIOUS)
+			suspicious_count=$((suspicious_count + 1))
+			[[ "$quiet" != "true" ]] && echo -e "  ${YELLOW}SUSPICIOUS${NC} ${domain}: ${detail}"
+			;;
+		SAFE)
+			[[ "$quiet" != "true" ]] && echo -e "  ${GREEN}SAFE${NC} ${domain}: ${detail}"
+			;;
+		*)
+			[[ "$quiet" != "true" ]] && echo -e "  ${BLUE}UNKNOWN${NC} ${domain}: ${detail}"
+			;;
+		esac
+	done
+
+	printf 'malicious=%d\nsuspicious=%d\ndomains_count=%d\nrequest_count=%d\n' \
+		"$malicious_count" "$suspicious_count" "${#domains_found[@]}" "$request_count"
+	return 0
+}
+
+# Print summary and optional JSON output for cmd_scan_skill
+# Args: skill_name total_files domains_count request_count malicious suspicious safe unknown output_json quiet
+_scan_skill_summary() {
+	local skill_name="$1"
+	local total_files="$2"
+	local domains_count="$3"
+	local request_count="$4"
+	local malicious_count="$5"
+	local suspicious_count="$6"
+	local safe_count="$7"
+	local unknown_count="$8"
+	local output_json="$9"
+	local quiet="${10}"
+
 	if [[ "$quiet" != "true" ]]; then
 		echo ""
 		echo "═══════════════════════════════════════"
 		echo -e "Skill: ${skill_name}"
 		echo -e "Files scanned: ${total_files}"
-		echo -e "Domains checked: ${#domains_found[@]}"
+		echo -e "Domains checked: ${domains_count}"
 		echo -e "VT API requests: ${request_count}"
 		if [[ $malicious_count -gt 0 ]]; then
 			echo -e "Result: ${RED}MALICIOUS (${malicious_count} threat(s))${NC}"
@@ -645,21 +633,101 @@ cmd_scan_skill() {
 		echo "═══════════════════════════════════════"
 	fi
 
-	# Output JSON summary if requested
 	if [[ "$output_json" == "true" ]]; then
+		local verdict_str="SAFE"
+		[[ $malicious_count -gt 0 ]] && verdict_str="MALICIOUS"
+		[[ $malicious_count -eq 0 && $suspicious_count -gt 0 ]] && verdict_str="SUSPICIOUS"
 		cat <<ENDJSON
 {
   "skill": "${skill_name}",
   "files_scanned": ${total_files},
-  "domains_checked": ${#domains_found[@]},
+  "domains_checked": ${domains_count},
   "malicious": ${malicious_count},
   "suspicious": ${suspicious_count},
   "safe": ${safe_count},
   "unknown": ${unknown_count},
-  "verdict": "$(if [[ $malicious_count -gt 0 ]]; then echo "MALICIOUS"; elif [[ $suspicious_count -gt 0 ]]; then echo "SUSPICIOUS"; else echo "SAFE"; fi)"
+  "verdict": "${verdict_str}"
 }
 ENDJSON
 	fi
+	return 0
+}
+
+# Scan all files in a skill directory
+# Hashes each file, checks URLs/domains found in content
+cmd_scan_skill() {
+	local skill_path="$1"
+	local output_json="${2:-false}"
+	local quiet="${3:-false}"
+
+	if [[ ! -e "$skill_path" ]]; then
+		log_error "Path not found: ${skill_path}"
+		return 1
+	fi
+
+	# Determine files to scan
+	local files=()
+	if [[ -f "$skill_path" ]]; then
+		files=("$skill_path")
+	elif [[ -d "$skill_path" ]]; then
+		while IFS= read -r -d '' f; do
+			files+=("$f")
+		done < <(find "$skill_path" -type f \( -name "*.md" -o -name "*.sh" -o -name "*.py" -o -name "*.js" -o -name "*.ts" -o -name "*.yaml" -o -name "*.yml" -o -name "*.json" \) -print0 2>/dev/null)
+	fi
+
+	if [[ ${#files[@]} -eq 0 ]]; then
+		log_warning "No scannable files found in: ${skill_path}"
+		return 0
+	fi
+
+	local skill_name=""
+	skill_name=$(basename "$skill_path" | sed 's/-skill$//' | sed 's/\.md$//')
+	local total_files=${#files[@]}
+	local max_requests=8
+
+	if [[ "$quiet" != "true" ]]; then
+		log_info "Scanning skill '${skill_name}': ${total_files} file(s)"
+		echo ""
+	fi
+
+	# Phase 1: Hash-based file scanning
+	local phase1_out
+	phase1_out=$(_scan_skill_files "$quiet" 0 "$max_requests" "${files[@]}")
+	local malicious_count=0 suspicious_count=0 safe_count=0 unknown_count=0 request_count=0
+	while IFS='=' read -r key val; do
+		case "$key" in
+		malicious) malicious_count="$val" ;;
+		suspicious) suspicious_count="$val" ;;
+		safe) safe_count="$val" ;;
+		unknown) unknown_count="$val" ;;
+		request_count) request_count="$val" ;;
+		esac
+	done <<EOF
+$phase1_out
+EOF
+
+	# Phase 2: Domain scanning
+	local phase2_out
+	phase2_out=$(_scan_skill_domains "$quiet" "$request_count" "$max_requests" "${files[@]}")
+	local domains_count=0
+	local d_malicious=0 d_suspicious=0
+	while IFS='=' read -r key val; do
+		case "$key" in
+		malicious) d_malicious="$val" ;;
+		suspicious) d_suspicious="$val" ;;
+		domains_count) domains_count="$val" ;;
+		request_count) request_count="$val" ;;
+		esac
+	done <<EOF
+$phase2_out
+EOF
+	malicious_count=$((malicious_count + d_malicious))
+	suspicious_count=$((suspicious_count + d_suspicious))
+
+	# Summary
+	_scan_skill_summary "$skill_name" "$total_files" "$domains_count" "$request_count" \
+		"$malicious_count" "$suspicious_count" "$safe_count" "$unknown_count" \
+		"$output_json" "$quiet"
 
 	# Return non-zero if threats found
 	if [[ $malicious_count -gt 0 ]]; then
