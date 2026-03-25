@@ -33,7 +33,7 @@ matterbridge-helper.sh validate       # Validate config before starting
 matterbridge-helper.sh start --daemon
 ```
 
-**Security/privacy warnings**: See `tools/security/opsec.md` — bridging to unencrypted platforms (Discord, Slack, IRC) exposes messages to those platforms' operators and metadata collection. E2E encryption is broken at bridge boundaries.
+**Security/privacy**: Bridging to unencrypted platforms (Discord, Slack, IRC) exposes messages to those platforms' operators. E2E encryption is broken at bridge boundaries. See `tools/security/opsec.md`.
 
 <!-- AI-CONTEXT-END -->
 
@@ -71,45 +71,29 @@ matterbridge-helper.sh start --daemon
 ### Binary (Recommended)
 
 ```bash
-# Download latest stable
+# Linux
 curl -L https://github.com/42wim/matterbridge/releases/latest/download/matterbridge-1.26.0-linux-64bit \
-  -o /usr/local/bin/matterbridge
-chmod +x /usr/local/bin/matterbridge
+  -o /usr/local/bin/matterbridge && chmod +x /usr/local/bin/matterbridge
 
-# macOS (Intel)
+# macOS Intel
 curl -L https://github.com/42wim/matterbridge/releases/latest/download/matterbridge-1.26.0-darwin-64bit \
-  -o /usr/local/bin/matterbridge
-chmod +x /usr/local/bin/matterbridge
+  -o /usr/local/bin/matterbridge && chmod +x /usr/local/bin/matterbridge
 
-# macOS (Apple Silicon)
+# macOS Apple Silicon
 curl -L https://github.com/42wim/matterbridge/releases/latest/download/matterbridge-1.26.0-darwin-arm64 \
-  -o /usr/local/bin/matterbridge
-chmod +x /usr/local/bin/matterbridge
+  -o /usr/local/bin/matterbridge && chmod +x /usr/local/bin/matterbridge
 
-# Verify
 matterbridge -version
 ```
 
-### Packages
-
-```bash
-snap install matterbridge          # Snap
-scoop install matterbridge         # Windows Scoop
-```
+Packages: `snap install matterbridge` / `scoop install matterbridge`
 
 ### Build from Source
 
 ```bash
-# Standard build (all bridges, ~3GB RAM to compile)
-go install github.com/42wim/matterbridge
-
-# Reduced build (exclude MS Teams, saves ~2.5GB RAM)
-go install -tags nomsteams github.com/42wim/matterbridge
-
-# With WhatsApp multidevice (GPL3 dependency — binary not distributed)
-go install -tags whatsappmulti github.com/42wim/matterbridge@master
-
-# Without MS Teams + with WhatsApp multidevice
+go install github.com/42wim/matterbridge                                    # All bridges (~3GB RAM)
+go install -tags nomsteams github.com/42wim/matterbridge                    # Exclude MS Teams (~500MB)
+go install -tags whatsappmulti github.com/42wim/matterbridge@master         # WhatsApp multidevice (GPL3)
 go install -tags nomsteams,whatsappmulti github.com/42wim/matterbridge@master
 ```
 
@@ -118,12 +102,9 @@ go install -tags nomsteams,whatsappmulti github.com/42wim/matterbridge@master
 ### Config File Location
 
 ```bash
-# Default search order
-./matterbridge.toml
-~/.config/aidevops/matterbridge.toml  # aidevops convention
-
-# Explicit path
-matterbridge -conf /path/to/matterbridge.toml
+./matterbridge.toml                        # Current directory
+~/.config/aidevops/matterbridge.toml       # aidevops convention
+matterbridge -conf /path/to/matterbridge.toml  # Explicit path
 ```
 
 ### Basic Structure
@@ -134,10 +115,9 @@ Every config has three sections:
 2. **`[general]`** — global settings (nick format, etc.)
 3. **`[[gateway]]`** — bridge definitions connecting accounts to channels
 
-> **Security**: All credential values below are `<PLACEHOLDER>` examples. Store actual tokens and passwords via `aidevops secret set NAME` (gopass) or the credentials agents in `tools/credentials/`. See `tools/credentials/gopass.md` and `tools/security/opsec.md`.
+> **Security**: All credential values below are `<PLACEHOLDER>` examples. Store actual tokens via `aidevops secret set NAME` (gopass). See `tools/credentials/gopass.md`.
 
 ```toml
-# Protocol block: one per platform instance
 [matrix]
   [matrix.home]
   Server="https://matrix.example.com"
@@ -160,11 +140,9 @@ Every config has three sections:
   Nick="matterbridge"
   UseTLS=true
 
-# Global settings
 [general]
 RemoteNickFormat="[{PROTOCOL}/{BRIDGE}] <{NICK}> "
 
-# Gateway: connects accounts + channels
 [[gateway]]
 name="mybridge"
 enable=true
@@ -195,19 +173,17 @@ enable=true
 | `{BRIDGE}` | Bridge instance name |
 | `{GATEWAY}` | Gateway name |
 
-### One-Way Bridges (in/out)
+### One-Way Bridges
 
 ```toml
 [[gateway]]
 name="announcements"
 enable=true
 
-  # Source: only receives from this channel
   [[gateway.in]]
   account="slack.work"
   channel="announcements"
 
-  # Destinations: only sends to these channels
   [[gateway.out]]
   account="discord.myserver"
   channel="announcements"
@@ -219,97 +195,51 @@ enable=true
 
 ### Platform-Specific Configuration
 
-#### Matrix
-
 ```toml
-[matrix]
-  [matrix.home]
-  Server="https://matrix.example.com"
-  Login="bridgebot"
-  Password="<MATRIX_PASSWORD>"
-  # Or use access token (preferred — store via: aidevops secret set MATTERBRIDGE_MATRIX_TOKEN)
-  # Token="<MATRIX_ACCESS_TOKEN>"
-  RemoteNickFormat="[{PROTOCOL}] <{NICK}> "
-  # Preserve threading
-  PreserveThreading=true
-```
+# Matrix — use access token (preferred over password)
+[matrix.home]
+Server="https://matrix.example.com"
+Login="bridgebot"
+Token="<MATRIX_ACCESS_TOKEN>"   # aidevops secret set MATTERBRIDGE_MATRIX_TOKEN
+PreserveThreading=true
 
-#### Discord
+# Discord — use webhooks for better username/avatar spoofing
+[discord.myserver]
+Token="Bot <DISCORD_BOT_TOKEN>"
+Server="My Server Name"
+WebhookURL="<DISCORD_WEBHOOK_URL>"   # aidevops secret set MATTERBRIDGE_DISCORD_WEBHOOK
 
-```toml
-[discord]
-  [discord.myserver]
-  Token="Bot <DISCORD_BOT_TOKEN>"
-  Server="My Server Name"
-  # Use webhooks for better username/avatar spoofing
-  # Store webhook URL via: aidevops secret set MATTERBRIDGE_DISCORD_WEBHOOK
-  WebhookURL="<DISCORD_WEBHOOK_URL>"
-  RemoteNickFormat="{NICK} [{PROTOCOL}]"
-```
+# Telegram — get group ID via @userinfobot
+[telegram.main]
+Token="<TELEGRAM_BOT_TOKEN>"   # aidevops secret set MATTERBRIDGE_TELEGRAM_TOKEN
 
-#### Telegram
+# Slack — use bot token (xoxb-...), not legacy xoxp-
+[slack.workspace]
+Token="<SLACK_BOT_TOKEN>"   # aidevops secret set MATTERBRIDGE_SLACK_TOKEN
+PrefixMessagesWithNick=true
 
-```toml
-[telegram]
-  [telegram.main]
-  # Store via: aidevops secret set MATTERBRIDGE_TELEGRAM_TOKEN
-  Token="<TELEGRAM_BOT_TOKEN>"
-  # For supergroups, use negative ID
-  # Get ID: add @userinfobot to group
-```
+# IRC
+[irc.libera]
+Server="irc.libera.chat:6697"
+Nick="matterbridge"
+UseTLS=true
+NickServPassword="<IRC_NICKSERV_PASSWORD>"   # aidevops secret set MATTERBRIDGE_IRC_NICKSERV_PASSWORD
 
-#### Slack
+# XMPP
+[xmpp.jabber]
+Server="jabber.example.com:5222"
+Jid="bridgebot@jabber.example.com"
+Password="<XMPP_PASSWORD>"   # aidevops secret set MATTERBRIDGE_XMPP_PASSWORD
+Muc="conference.jabber.example.com"
+Nick="matterbridge"
 
-```toml
-[slack]
-  [slack.workspace]
-  # Store via: aidevops secret set MATTERBRIDGE_SLACK_TOKEN
-  Token="<SLACK_BOT_TOKEN>"
-  # Legacy token (deprecated): xoxp-...
-  # Bot token (recommended): xoxb-...
-  PrefixMessagesWithNick=true
-```
-
-#### IRC
-
-```toml
-[irc]
-  [irc.libera]
-  Server="irc.libera.chat:6697"
-  Nick="matterbridge"
-  Password=""
-  UseTLS=true
-  SkipTLSVerify=false
-  NickServNick="NickServ"
-  # Store via: aidevops secret set MATTERBRIDGE_IRC_NICKSERV_PASSWORD
-  NickServPassword="<IRC_NICKSERV_PASSWORD>"
-```
-
-#### XMPP
-
-```toml
-[xmpp]
-  [xmpp.jabber]
-  Server="jabber.example.com:5222"
-  Jid="bridgebot@jabber.example.com"
-  # Store via: aidevops secret set MATTERBRIDGE_XMPP_PASSWORD
-  Password="<XMPP_PASSWORD>"
-  Muc="conference.jabber.example.com"
-  Nick="matterbridge"
-```
-
-#### Mattermost
-
-```toml
-[mattermost]
-  [mattermost.work]
-  Server="mattermost.example.com"
-  Team="myteam"
-  Login="bridgebot@example.com"
-  # Store via: aidevops secret set MATTERBRIDGE_MATTERMOST_PASSWORD
-  Password="<MATTERMOST_PASSWORD>"
-  PrefixMessagesWithNick=true
-  RemoteNickFormat="[{PROTOCOL}] <{NICK}> "
+# Mattermost
+[mattermost.work]
+Server="mattermost.example.com"
+Team="myteam"
+Login="bridgebot@example.com"
+Password="<MATTERMOST_PASSWORD>"   # aidevops secret set MATTERBRIDGE_MATTERMOST_PASSWORD
+PrefixMessagesWithNick=true
 ```
 
 ### SimpleX via Adapter
@@ -317,23 +247,16 @@ enable=true
 SimpleX is not natively supported. Use [matterbridge-simplex](https://github.com/simplex-chat/matterbridge-simplex):
 
 ```bash
-# Install SimpleX CLI first
 curl -o- https://raw.githubusercontent.com/simplex-chat/simplex-chat/stable/install.sh | bash
-
-# Install matterbridge-simplex adapter
 go install github.com/simplex-chat/matterbridge-simplex@latest
-
-# Run adapter (exposes Matterbridge API endpoint)
 matterbridge-simplex --port 4242 --profile simplex-bridge
 ```
 
 ```toml
-# Matterbridge config: use API bridge to connect to adapter
-# Store the API token via: aidevops secret set MATTERBRIDGE_SIMPLEX_API_TOKEN
 [api]
   [api.simplex]
   BindAddress="0.0.0.0:4243"
-  Token="<SIMPLEX_API_TOKEN>"
+  Token="<SIMPLEX_API_TOKEN>"   # aidevops secret set MATTERBRIDGE_SIMPLEX_API_TOKEN
 
 [[gateway]]
 name="simplex-matrix"
@@ -348,11 +271,9 @@ enable=true
   channel="#bridged:example.com"
 ```
 
-**Note**: SimpleX E2E encryption is broken at the bridge boundary. Messages entering the bridge are decrypted and re-encrypted for the destination platform. See `tools/security/opsec.md` for implications.
+**Note**: SimpleX E2E encryption is broken at the bridge boundary.
 
 ## Running
-
-### CLI
 
 ```bash
 # Foreground (debug)
@@ -360,33 +281,14 @@ matterbridge -conf matterbridge.toml -debug
 
 # Background
 matterbridge -conf matterbridge.toml &
-
-# Validate config only
-matterbridge -conf matterbridge.toml -validate  # (if supported by version)
 ```
 
 ### Docker
 
 ```bash
-# Docker run
-docker run -d \
-  --name matterbridge \
-  --restart unless-stopped \
+docker run -d --name matterbridge --restart unless-stopped \
   -v /path/to/matterbridge.toml:/etc/matterbridge/matterbridge.toml:ro \
   42wim/matterbridge:stable
-
-# Docker Compose
-cat > docker-compose.yml <<'EOF'
-version: "3"
-services:
-  matterbridge:
-    image: 42wim/matterbridge:stable
-    restart: unless-stopped
-    volumes:
-      - ./matterbridge.toml:/etc/matterbridge/matterbridge.toml:ro
-EOF
-
-docker compose up -d
 ```
 
 ### Systemd
@@ -409,33 +311,26 @@ WantedBy=multi-user.target
 ```
 
 ```bash
-sudo systemctl daemon-reload
-sudo systemctl enable --now matterbridge
+sudo systemctl daemon-reload && sudo systemctl enable --now matterbridge
 sudo journalctl -fu matterbridge
 ```
 
 ## REST API
 
-Matterbridge exposes a simple REST API for custom integrations:
-
 ```toml
-# Store the API token via: aidevops secret set MATTERBRIDGE_API_TOKEN
 [api]
   [api.myapi]
   BindAddress="127.0.0.1:4242"
-  Token="<MATTERBRIDGE_API_TOKEN>"
+  Token="<MATTERBRIDGE_API_TOKEN>"   # aidevops secret set MATTERBRIDGE_API_TOKEN
   Buffer=1000
 ```
 
 ```bash
-# Send message to bridge
-# Retrieve token: aidevops secret get MATTERBRIDGE_API_TOKEN
 curl -X POST http://localhost:4242/api/message \
   -H "Authorization: Bearer <MATTERBRIDGE_API_TOKEN>" \
   -H "Content-Type: application/json" \
   -d '{"text": "Hello from API", "username": "bot", "gateway": "mybridge"}'
 
-# Receive messages (long-poll)
 curl http://localhost:4242/api/messages \
   -H "Authorization: Bearer <MATTERBRIDGE_API_TOKEN>"
 ```
@@ -452,19 +347,12 @@ curl http://localhost:4242/api/messages \
 | High memory on build | Use `-tags nomsteams` to reduce build memory to ~500MB |
 | IRC nick conflicts | Set `NickServPassword` or use unique nick |
 
-## Security Considerations
+## Security
 
-**E2E encryption is broken at bridge boundaries.** When bridging:
-
-- Messages are decrypted by Matterbridge process
-- Re-encrypted (or sent plaintext) to destination platform
-- The bridge host has access to all message content in plaintext
-- Metadata (sender, timestamp, channel) is visible to all bridged platforms
+**E2E encryption is broken at bridge boundaries.** Messages are decrypted by Matterbridge and re-encrypted (or sent plaintext) to the destination. The bridge host has access to all message content.
 
 **Mitigations**:
-
-- Run Matterbridge on a trusted, hardened host
-- Use NetBird/WireGuard to restrict access to the bridge host
+- Run on a trusted, hardened host (NetBird/WireGuard to restrict access)
 - Avoid bridging sensitive channels to unencrypted platforms (IRC, Slack, Discord)
 - Store credentials in gopass: `aidevops secret set MATTERBRIDGE_DISCORD_TOKEN`
 - Config file must have 600 permissions: `chmod 600 matterbridge.toml`
@@ -473,28 +361,9 @@ See `tools/security/opsec.md` for full platform trust matrix and threat modeling
 
 ## Related
 
-### Platforms with native Matterbridge support
-
-- `services/communications/matrix-bot.md` — Matrix bot for aidevops runner dispatch
-- `services/communications/simplex.md` — SimpleX (via custom adapter)
-- `services/communications/telegram.md` — Telegram Bot API
-- `services/communications/signal.md` — Signal (via signal-cli)
-- `services/communications/whatsapp.md` — WhatsApp (via whatsmeow)
-- `services/communications/slack.md` — Slack Bot API
-- `services/communications/discord.md` — Discord Bot API
-- `services/communications/msteams.md` — MS Teams (webhook/Bot Framework)
-- `services/communications/nextcloud-talk.md` — Nextcloud Talk API
-
-### Platforms without native Matterbridge support
-
-- `services/communications/nostr.md` — Nostr (would require custom gateway)
-- `services/communications/imessage.md` — iMessage (would require BlueBubbles gateway)
-- `services/communications/google-chat.md` — Google Chat (would require custom gateway)
-- `services/communications/urbit.md` — Urbit (would require Eyre HTTP gateway)
-
-### Other
-
-- `services/communications/bitchat.md` — Bitchat (Bluetooth mesh, offline P2P)
-- `services/communications/xmtp.md` — XMTP (Web3 messaging, agent SDK, payments)
-- `tools/security/opsec.md` — Platform trust matrix, privacy comparison, AI training risks
+- `services/communications/matrix-bot.md`, `simplex.md`, `telegram.md`, `signal.md`, `whatsapp.md`, `slack.md`, `discord.md`, `msteams.md`, `nextcloud-talk.md`
+- `services/communications/nostr.md`, `imessage.md`, `google-chat.md`, `urbit.md` — no native Matterbridge support
+- `services/communications/bitchat.md` — Bluetooth mesh, offline P2P
+- `services/communications/xmtp.md` — Web3 messaging, agent SDK
+- `tools/security/opsec.md` — Platform trust matrix, privacy comparison
 - `tools/ai-assistants/headless-dispatch.md` — Headless dispatch patterns
