@@ -849,10 +849,27 @@ EOF
 	fi
 
 	local consolidated=0
+	# Track removed IDs to skip stale pairs from the static snapshot.
+	# A result set like A|B, A|C, B|C would otherwise try to merge B|C after B
+	# was already deleted, repointing relations to a non-existent keep row.
+	# removed_set is newline-delimited; grep -qxF matches exact lines only.
+	local removed_set=""
 	while IFS='|' read -r id1 id2 _type _content1 _content2 created1 created2; do
 		[[ -z "$id1" ]] && continue
+		# Skip if either side was already removed by an earlier iteration
+		printf '%s\n' "$removed_set" | grep -qxF "$id1" && continue
+		printf '%s\n' "$removed_set" | grep -qxF "$id2" && continue
 		_consolidate_merge_pair "$id1" "$id2" "$created1" "$created2"
 		consolidated=$((consolidated + 1))
+		# Record the deleted (older) ID so subsequent pairs skip it
+		local _del_id
+		if [[ "$created1" < "$created2" ]]; then
+			_del_id="$id1"
+		else
+			_del_id="$id2"
+		fi
+		removed_set="${removed_set}
+${_del_id}"
 	done <<<"$duplicates"
 
 	db "$MEMORY_DB" "INSERT INTO learnings(learnings) VALUES('rebuild');"
@@ -1321,6 +1338,10 @@ _migrate_execute() {
 	db "$to_db" <<EOF
 ATTACH DATABASE '$from_db' AS source;
 
+-- Wrap all three INSERTs in a transaction so either all tables are migrated
+-- or none are, preventing partial copies (learnings without relations, etc.).
+BEGIN TRANSACTION;
+
 INSERT OR IGNORE INTO learnings (id, session_id, content, type, tags, confidence, created_at, event_date, project_path, source)
 SELECT id, session_id, content, type, tags, confidence, created_at, event_date, project_path, source
 FROM source.learnings;
@@ -1332,6 +1353,8 @@ FROM source.learning_access;
 INSERT OR IGNORE INTO learning_relations (id, supersedes_id, relation_type, created_at)
 SELECT id, supersedes_id, relation_type, created_at
 FROM source.learning_relations;
+
+COMMIT;
 
 DETACH DATABASE source;
 EOF
