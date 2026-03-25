@@ -29,6 +29,130 @@ readonly AI_RESEARCH="${SCRIPT_DIR}/ai-research-helper.sh"
 readonly MEMORY_BASE_DIR="${AIDEVOPS_MEMORY_DIR:-$HOME/.aidevops/.agent-workspace/memory}"
 
 #######################################
+# Heuristic fallback for prune relevance judgment
+# Called when AI judgment is unavailable or inconclusive.
+#
+# Arguments:
+#   $1  mem_type   Memory type string
+#   $2  accessed   "true" or "false"
+#   $3  age_days   Days since creation (integer)
+#
+# Output: "prune" or "keep" on stdout
+# Returns: 0 always
+#######################################
+_prune_heuristic_fallback() {
+	local mem_type="$1"
+	local accessed="$2"
+	local age_days="$3"
+
+	# Improved heuristics (better than flat 90-day cutoff)
+	case "${mem_type:-}" in
+	WORKING_SOLUTION | ARCHITECTURAL_DECISION)
+		# Long-lived types: 180 days if never accessed
+		if [[ "$accessed" == "false" && "$age_days" -gt 180 ]]; then
+			echo "prune"
+		else
+			echo "keep"
+		fi
+		;;
+	ERROR_FIX | FAILED_APPROACH)
+		# Medium-lived: 120 days if never accessed
+		if [[ "$accessed" == "false" && "$age_days" -gt 120 ]]; then
+			echo "prune"
+		else
+			echo "keep"
+		fi
+		;;
+	CONTEXT | OPEN_THREAD)
+		# Short-lived: 60 days if never accessed
+		if [[ "$accessed" == "false" && "$age_days" -gt 60 ]]; then
+			echo "prune"
+		else
+			echo "keep"
+		fi
+		;;
+	USER_PREFERENCE)
+		# Keep user preferences longer — 365 days
+		if [[ "$accessed" == "false" && "$age_days" -gt 365 ]]; then
+			echo "prune"
+		else
+			echo "keep"
+		fi
+		;;
+	*)
+		# Default: original 90-day threshold for unknown types
+		if [[ "$accessed" == "false" && "$age_days" -gt 90 ]]; then
+			echo "prune"
+		else
+			echo "keep"
+		fi
+		;;
+	esac
+
+	return 0
+}
+
+#######################################
+# AI judgment for prune relevance (borderline cases)
+# Calls ai-research-helper.sh at haiku tier.
+#
+# Arguments:
+#   $1  content     Memory content text (will be truncated to 300 chars)
+#   $2  age_days    Days since creation
+#   $3  mem_type    Memory type string
+#   $4  accessed    "true" or "false"
+#   $5  confidence  Confidence level string
+#   $6  entity      Entity ID (may be empty)
+#
+# Output: "prune", "keep", or "" (empty = AI unavailable/inconclusive)
+# Returns: 0 always
+#######################################
+_prune_ai_judge() {
+	local content="$1"
+	local age_days="$2"
+	local mem_type="$3"
+	local accessed="$4"
+	local confidence="$5"
+	local entity="$6"
+
+	if [[ ! -x "$AI_RESEARCH" ]]; then
+		echo ""
+		return 0
+	fi
+
+	local truncated_content="${content:0:300}"
+	local ai_prompt="You are a memory relevance judge. Given this memory entry, decide if it should be PRUNED (removed) or KEPT.
+
+Memory content (truncated): ${truncated_content}
+Age: ${age_days} days
+Type: ${mem_type:-unknown}
+Ever accessed: ${accessed}
+Confidence: ${confidence:-medium}
+Entity context: ${entity:-none}
+
+Consider:
+- WORKING_SOLUTION and ARCHITECTURAL_DECISION types are long-lived — keep unless very stale
+- ERROR_FIX entries lose relevance as codebases change — prune after ~120 days if never accessed
+- USER_PREFERENCE entries are valuable if tied to an active entity
+- CONTEXT entries are ephemeral — prune after ~60 days if never accessed
+- Never-accessed entries are less valuable than frequently-accessed ones
+
+Respond with ONLY one word: 'prune' or 'keep'"
+
+	local ai_result
+	ai_result=$("$AI_RESEARCH" --model haiku --max-tokens 10 --prompt "$ai_prompt" 2>/dev/null || echo "")
+	ai_result=$(echo "$ai_result" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')
+
+	if [[ "$ai_result" == "prune" || "$ai_result" == "keep" ]]; then
+		echo "$ai_result"
+	else
+		echo ""
+	fi
+
+	return 0
+}
+
+#######################################
 # Judge whether a memory entry should be pruned
 # Replaces fixed DEFAULT_MAX_AGE_DAYS=90 with context-aware judgment.
 #
@@ -97,79 +221,15 @@ cmd_judge_prune_relevance() {
 	fi
 
 	# Borderline cases: use AI judgment
-	if [[ -x "$AI_RESEARCH" ]]; then
-		local truncated_content="${content:0:300}"
-		local ai_prompt="You are a memory relevance judge. Given this memory entry, decide if it should be PRUNED (removed) or KEPT.
-
-Memory content (truncated): ${truncated_content}
-Age: ${age_days} days
-Type: ${mem_type:-unknown}
-Ever accessed: ${accessed}
-Confidence: ${confidence:-medium}
-Entity context: ${entity:-none}
-
-Consider:
-- WORKING_SOLUTION and ARCHITECTURAL_DECISION types are long-lived — keep unless very stale
-- ERROR_FIX entries lose relevance as codebases change — prune after ~120 days if never accessed
-- USER_PREFERENCE entries are valuable if tied to an active entity
-- CONTEXT entries are ephemeral — prune after ~60 days if never accessed
-- Never-accessed entries are less valuable than frequently-accessed ones
-
-Respond with ONLY one word: 'prune' or 'keep'"
-
-		local ai_result
-		ai_result=$("$AI_RESEARCH" --model haiku --max-tokens 10 --prompt "$ai_prompt" 2>/dev/null || echo "")
-		ai_result=$(echo "$ai_result" | tr '[:upper:]' '[:lower:]' | tr -d '[:space:]')
-
-		if [[ "$ai_result" == "prune" || "$ai_result" == "keep" ]]; then
-			echo "$ai_result"
-			return 0
-		fi
+	local ai_result
+	ai_result=$(_prune_ai_judge "$content" "$age_days" "$mem_type" "$accessed" "$confidence" "$entity")
+	if [[ -n "$ai_result" ]]; then
+		echo "$ai_result"
+		return 0
 	fi
 
-	# Fallback: improved heuristics (better than flat 90-day cutoff)
-	case "${mem_type:-}" in
-	WORKING_SOLUTION | ARCHITECTURAL_DECISION)
-		# Long-lived types: 180 days if never accessed
-		if [[ "$accessed" == "false" && "$age_days" -gt 180 ]]; then
-			echo "prune"
-		else
-			echo "keep"
-		fi
-		;;
-	ERROR_FIX | FAILED_APPROACH)
-		# Medium-lived: 120 days if never accessed
-		if [[ "$accessed" == "false" && "$age_days" -gt 120 ]]; then
-			echo "prune"
-		else
-			echo "keep"
-		fi
-		;;
-	CONTEXT | OPEN_THREAD)
-		# Short-lived: 60 days if never accessed
-		if [[ "$accessed" == "false" && "$age_days" -gt 60 ]]; then
-			echo "prune"
-		else
-			echo "keep"
-		fi
-		;;
-	USER_PREFERENCE)
-		# Keep user preferences longer — 365 days
-		if [[ "$accessed" == "false" && "$age_days" -gt 365 ]]; then
-			echo "prune"
-		else
-			echo "keep"
-		fi
-		;;
-	*)
-		# Default: original 90-day threshold for unknown types
-		if [[ "$accessed" == "false" && "$age_days" -gt 90 ]]; then
-			echo "prune"
-		else
-			echo "keep"
-		fi
-		;;
-	esac
+	# Fallback: improved heuristics
+	_prune_heuristic_fallback "$mem_type" "$accessed" "$age_days"
 
 	return 0
 }
