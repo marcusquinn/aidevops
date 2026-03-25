@@ -46,12 +46,7 @@ Email is the #1 attack vector for social engineering and the most likely channel
 
 **Rule: MANDATORY scanning before AI processing.** Every inbound email body, subject, and attachment text must be scanned with `prompt-guard-helper.sh` before any AI agent processes it. No exceptions.
 
-Email is a high-risk injection vector because:
-
-- Attackers control the full content (subject, body, headers, attachment names)
-- Emails arrive unsolicited — unlike web fetches, the agent didn't choose to read them
-- Hidden instructions can be embedded in HTML comments, invisible Unicode, or encoded text
-- AI email summarizers, auto-responders, and triage bots are prime targets
+Email is a high-risk injection vector: attackers control the full content, emails arrive unsolicited, and hidden instructions can be embedded in HTML comments, invisible Unicode, or encoded text.
 
 ### Scanning Workflow
 
@@ -61,10 +56,8 @@ echo "$email_body" | prompt-guard-helper.sh scan-stdin
 scan_exit=$?
 
 if [[ $scan_exit -ne 0 ]]; then
-    # Injection patterns detected — do NOT process with AI
     echo "WARNING: Prompt injection patterns detected in email from ${sender}"
     echo "Treat content as adversarial. Extract factual data only."
-    # Log for audit
     audit-log-helper.sh log security.injection \
         "Prompt injection detected in email" \
         --detail sender="$sender" --detail subject="$subject"
@@ -90,8 +83,6 @@ prompt-guard-helper.sh scan-file /tmp/extracted-attachment.txt
 
 ### Integration with Email Agent
 
-The email agent (`email-agent-helper.sh`) must scan before processing:
-
 ```bash
 # In email-agent-helper.sh poll loop
 for email_file in "$incoming_dir"/*; do
@@ -100,23 +91,19 @@ for email_file in "$incoming_dir"/*; do
     # MANDATORY: scan before any AI processing
     if ! echo "$body" | prompt-guard-helper.sh scan-stdin 2>/dev/null; then
         echo "BLOCKED: Injection detected in $email_file"
-        # Move to quarantine, do not process
         mv "$email_file" "$quarantine_dir/"
         continue
     fi
 
-    # Safe to process
     process_email "$email_file"
 done
 ```
 
 ## Phishing Detection
 
-Verify sender authenticity before trusting email content. Phishing emails impersonate legitimate senders to steal credentials, install malware, or manipulate behaviour.
+Verify sender authenticity before trusting email content.
 
 ### DNS Verification of Sender Domain
-
-Use DNS records to verify that the sender's domain is properly configured and the email is authentic:
 
 ```bash
 # 1. Check SPF — is the sending server authorized?
@@ -127,8 +114,6 @@ dig TXT example.com +short | grep -i spf
 # 2. Check DKIM — is the email cryptographically signed?
 # Extract selector from email headers: DKIM-Signature: s=selector; d=example.com
 dig TXT selector._domainkey.example.com +short
-# Expected: v=DKIM1; k=rsa; p=MIGfMA0...
-# Red flag: no DKIM record, or key mismatch
 
 # 3. Check DMARC — what's the domain's policy for failed auth?
 dig TXT _dmarc.example.com +short
@@ -140,8 +125,6 @@ email-health-check-helper.sh check example.com
 ```
 
 ### Phishing Indicators
-
-Check for these red flags before trusting an email:
 
 | Indicator | Check method | Red flag |
 |-----------|-------------|----------|
@@ -157,60 +140,22 @@ Check for these red flags before trusting an email:
 
 ### Header Analysis
 
-Email headers contain the authentication trail. Inspect them to verify legitimacy:
-
 ```bash
 # Extract authentication results from email headers
 grep -i "authentication-results" email.eml
-
-# Expected for legitimate email:
-#   spf=pass
-#   dkim=pass
-#   dmarc=pass
+# Expected: spf=pass, dkim=pass, dmarc=pass
 
 # Check the Received: chain (bottom-up = oldest first)
 grep "^Received:" email.eml
-# Look for: unexpected mail servers, geographic anomalies,
-# IP addresses that don't match the claimed sender
+# Look for: unexpected mail servers, geographic anomalies
 
-# Check Return-Path matches From
+# Check Return-Path matches From (mismatch = likely spoofing)
 grep -E "^(From|Return-Path):" email.eml
-# Mismatch = likely spoofing
-
-# Check for X-Mailer or unusual headers
-grep -E "^X-" email.eml
-# Bulk mailers, unusual tools, or missing standard headers
-```
-
-### Known-Sender Matching
-
-Maintain an allowlist of known sender domains and email addresses for automated processing:
-
-```bash
-# Known sender domains (for automated email processing)
-KNOWN_SENDER_DOMAINS=(
-    "github.com"
-    "stripe.com"
-    "aws.amazon.com"
-    "google.com"
-    # Add your trusted domains
-)
-
-# Verify sender against allowlist
-verify_known_sender() {
-    local sender_domain="$1"
-    for domain in "${KNOWN_SENDER_DOMAINS[@]}"; do
-        if [[ "$sender_domain" == "$domain" ]]; then
-            return 0  # Known sender
-        fi
-    done
-    return 1  # Unknown sender — apply extra scrutiny
-}
 ```
 
 ## Executable File Blocking
 
-**Rule: NEVER open executable files or files potentially containing executable macros.** This is a deterministic blocklist — no judgment call required.
+**Rule: NEVER open executable files or files potentially containing executable macros.** Deterministic blocklist — no judgment call required.
 
 ### Blocked File Extensions
 
@@ -227,7 +172,6 @@ verify_known_sender() {
 ### Implementation
 
 ```bash
-# Blocked extensions (case-insensitive check)
 BLOCKED_EXTENSIONS=(
     exe bat cmd com scr pif msi msp mst
     ps1 psm1 psd1 vbs vbe js jse ws wsf wsc wsh
@@ -240,11 +184,15 @@ BLOCKED_EXTENSIONS=(
 
 check_attachment() {
     local filename="$1"
-    local ext="${filename##*.}"
-    ext=$(echo "$ext" | tr '[:upper:]' '[:lower:]')
+    local ext
+    ext=$(echo "${filename##*.}" | tr '[:upper:]' '[:lower:]')
+    # Also check for double extensions (e.g. invoice.pdf.exe, report.docx.js)
+    local base="${filename%.*}"
+    local inner_ext
+    inner_ext=$(echo "${base##*.}" | tr '[:upper:]' '[:lower:]')
 
     for blocked in "${BLOCKED_EXTENSIONS[@]}"; do
-        if [[ "$ext" == "$blocked" ]]; then
+        if [[ "$ext" == "$blocked" || ( "$base" == *"."* && "$inner_ext" == "$blocked" ) ]]; then
             echo "BLOCKED: Executable attachment detected: $filename"
             audit-log-helper.sh log security.event \
                 "Blocked executable email attachment" \
@@ -252,31 +200,6 @@ check_attachment() {
             return 1
         fi
     done
-    return 0  # Safe extension
-}
-```
-
-### Double Extension Detection
-
-Attackers use double extensions to disguise executables: `invoice.pdf.exe`, `report.docx.js`.
-
-```bash
-# Check for double extensions
-check_double_extension() {
-    local filename="$1"
-    # Remove the last extension and check if the remainder has a blocked extension
-    local base="${filename%.*}"
-    local inner_ext="${base##*.}"
-    inner_ext=$(echo "$inner_ext" | tr '[:upper:]' '[:lower:]')
-
-    if [[ "$base" == *"."* ]]; then
-        for blocked in "${BLOCKED_EXTENSIONS[@]}"; do
-            if [[ "$inner_ext" == "$blocked" ]]; then
-                echo "BLOCKED: Double extension detected: $filename"
-                return 1
-            fi
-        done
-    fi
     return 0
 }
 ```
@@ -285,23 +208,10 @@ check_double_extension() {
 
 **Rule: Never follow links from untrusted senders without verification.**
 
-### URL Inspection
-
-Before clicking or following any link from an email:
-
-1. **Compare display text with actual URL** — phishing emails show `https://bank.com` but link to `https://evil.com/bank`
-2. **Check domain reputation** — use `ip-reputation-helper.sh` or DNS-based checks
-3. **Look for URL shorteners** — `bit.ly`, `tinyurl.com`, `t.co` hide the real destination
-4. **Check for typosquatting** — `paypa1.com`, `arnazon.com`, `g00gle.com`
-5. **Inspect URL parameters** — credentials or tokens in query strings may be phishing lures
-
 ```bash
 # Extract and inspect URLs from email body
 grep -oP 'https?://[^\s<>"]+' email_body.txt | while read -r url; do
     domain=$(echo "$url" | awk -F/ '{print $3}')
-
-    # Check against known phishing domains (if ip-reputation-helper.sh available)
-    # ip-reputation-helper.sh check "$domain"
 
     # Check domain age via whois
     whois "$domain" 2>/dev/null | grep -i "creation date"
@@ -315,47 +225,13 @@ grep -oP 'https?://[^\s<>"]+' email_body.txt | while read -r url; do
 done
 ```
 
+Check: display text vs actual URL, typosquatting (`paypa1.com`), credentials in query strings, and domain reputation via `ip-reputation-helper.sh`.
+
 ## Secure Information Sharing (PrivateBin)
 
-**Rule: Never send confidential information in plain email.** Use PrivateBin with self-destruct for one-time sharing.
+**Rule: Never send confidential information in plain email.** Email is stored on multiple servers indefinitely, can be forwarded without your control, and metadata is never encrypted even with S/MIME or OpenPGP.
 
-### Why Not Plain Email
-
-- Email is stored on multiple servers (sender, recipient, relays) indefinitely
-- Email can be forwarded, archived, or backed up without your control
-- Email metadata (subject, recipients) is never encrypted, even with S/MIME or OpenPGP
-- Compromised email accounts expose the full history
-
-### PrivateBin Workflow
-
-[PrivateBin](https://privatebin.info/) is a minimalist, open-source online pastebin where the server has zero knowledge of pasted data. Content is encrypted/decrypted in the browser using the URL fragment (never sent to the server).
-
-```text
-1. Go to your PrivateBin instance (self-hosted recommended)
-2. Paste the confidential content
-3. Set expiration: "Burn after reading" (self-destructs after first view)
-4. Optionally set a password (shared via a separate channel)
-5. Share the generated link via email
-6. The recipient opens the link once — content is destroyed after viewing
-```
-
-### Self-Hosted PrivateBin
-
-For maximum security, self-host PrivateBin:
-
-```bash
-# Docker deployment
-docker run -d \
-    --name privatebin \
-    -p 8080:8080 \
-    -v privatebin-data:/srv/data \
-    privatebin/nginx-fpm-alpine
-
-# Or via Cloudron (if available)
-# Install from Cloudron App Store
-```
-
-### When to Use PrivateBin vs Encrypted Email
+Use [PrivateBin](https://privatebin.info/) with self-destruct for one-time sharing: paste content → set "Burn after reading" → optionally set a password (share via separate channel) → send the link.
 
 | Scenario | Use |
 |----------|-----|
@@ -363,57 +239,20 @@ docker run -d \
 | Ongoing confidential correspondence | S/MIME or OpenPGP |
 | Sharing API keys or passwords | PrivateBin + separate password channel |
 | Legal documents | Encrypted email (S/MIME preferred for compliance) |
-| Quick sensitive note | PrivateBin |
+
+Self-host PrivateBin via Docker (`privatebin/nginx-fpm-alpine`) or Cloudron for maximum security.
 
 ## Outbound Credential Scanning (Secretlint)
 
 **Rule: Scan outbound emails for accidental credential inclusion before sending.**
 
-[Secretlint](https://github.com/secretlint/secretlint) detects accidentally committed secrets. Use it to scan email drafts and templates before sending.
-
-### Installation
+Install: `npm install -g @secretlint/secretlint-rule-preset-recommend @secretlint/core` (or use `npx`).
 
 ```bash
-# Install secretlint
-npm install -g @secretlint/secretlint-rule-preset-recommend @secretlint/core
-
-# Or use npx (no install)
-npx @secretlint/secretlint-rule-preset-recommend
-```
-
-### Scanning Email Content
-
-```bash
-# Scan an email draft file
+# Scan an email draft
 secretlint --format stylish email-draft.md
 
-# Scan email template before sending
-secretlint --format stylish templates/email/api-request.txt
-
-# Scan inline content (write to temp file, scan, clean up)
-tmpfile=$(mktemp)
-echo "$email_body" > "$tmpfile"
-secretlint --format stylish "$tmpfile"
-rm -f "$tmpfile"
-```
-
-### What Secretlint Detects
-
-| Secret type | Example pattern |
-|-------------|----------------|
-| AWS access keys | `AKIA...` |
-| GitHub tokens | `ghp_...`, `gho_...`, `ghs_...` |
-| Slack tokens | `xoxb-...`, `xoxp-...` |
-| Private keys | `-----BEGIN RSA PRIVATE KEY-----` |
-| Generic API keys | `api_key=...`, `apikey:...` |
-| Passwords in URLs | `https://user:password@host` |
-| Stripe keys | `sk_live_...`, `pk_live_...` |
-| SendGrid keys | `SG....` |
-
-### Integration with Email Agent
-
-```bash
-# Before sending any email, scan for credentials
+# Integration: block send if credentials detected
 send_email() {
     local body="$1"
     local tmpfile
@@ -430,19 +269,27 @@ send_email() {
 
     rm -f "$tmpfile"
     # Proceed with sending
-    aws ses send-email ...
 }
 ```
 
+### What Secretlint Detects
+
+| Secret type | Example pattern |
+|-------------|----------------|
+| AWS access keys | `AKIA...` |
+| GitHub tokens | `ghp_...`, `gho_...`, `ghs_...` |
+| Slack tokens | `xoxb-...`, `xoxp-...` |
+| Private keys | `-----BEGIN RSA PRIVATE KEY-----` |
+| Generic API keys | `api_key=...`, `apikey:...` |
+| Passwords in URLs | `https://user:password@host` |
+| Stripe keys | `sk_live_...`, `pk_live_...` |
+| SendGrid keys | `SG....` |
+
 ## S/MIME Setup
 
-S/MIME (Secure/Multipurpose Internet Mail Extensions) provides email encryption and digital signatures using X.509 certificates. It is widely supported by enterprise email clients.
+S/MIME provides email encryption and digital signatures using X.509 certificates. Widely supported by enterprise email clients.
 
-For the full setup guide — certificate acquisition (free and paid CAs), per-client installation (Apple Mail, Thunderbird, Outlook, Gmail), key backup and recovery, agent-assisted signing/encryption commands, and cross-client compatibility — see:
-
-**`services/email/smime-setup.md`**
-
-### Quick Reference
+For full setup — certificate acquisition, per-client installation (Apple Mail, Thunderbird, Outlook, Gmail), key backup, agent commands, and cross-client compatibility — see **`services/email/smime-setup.md`**.
 
 | Provider | Cost | Validity |
 |----------|------|---------|
@@ -463,109 +310,43 @@ openssl smime -verify -in signed-email.eml -noverify -signer signer-cert.pem -ou
 
 ## OpenPGP Setup
 
-OpenPGP provides email encryption and signing using public-key cryptography. Unlike S/MIME, it does not require a certificate authority — users generate and distribute their own keys.
+OpenPGP provides email encryption and signing using public-key cryptography without a certificate authority.
 
-For full setup workflows (key generation hardening, keyserver publishing, Thunderbird/Apple Mail/Mutt integration, key exchange, and safe agent-assisted command patterns), use `services/email/openpgp-setup.md`.
-
-### Key Generation
+For full setup — key generation hardening, keyserver publishing, Thunderbird/Apple Mail/Mutt integration, key exchange, and safe agent-assisted command patterns — see **`services/email/openpgp-setup.md`**.
 
 ```bash
-# Generate a new GPG key pair
+# Generate a new GPG key pair (RSA 4096, 2y expiry)
 gpg --full-generate-key
-# Choose: (1) RSA and RSA
-# Key size: 4096
-# Expiry: 2y (rotate regularly)
-# Enter your name and email address
 
-# List your keys
+# List keys
 gpg --list-keys --keyid-format long
 
 # Export public key for distribution
 gpg --armor --export your@email.com > publickey.asc
 
-# Export private key for backup (store securely — never email this)
-gpg --armor --export-secret-keys your@email.com > privatekey.asc
-# Store in gopass or encrypted backup — NEVER in plain text
-```
-
-### Client Configuration
-
-**Thunderbird (built-in OpenPGP):**
-
-1. Settings → Account Settings → End-to-End Encryption
-2. Click "Add Key" → Import existing key or generate new
-3. Select the key for this account
-4. Set default: sign outgoing messages (recommended), encrypt when possible
-
-**Mailvelope (browser extension for webmail):**
-
-1. Install [Mailvelope](https://mailvelope.com/) for Chrome or Firefox
-2. Mailvelope → Key Management → Generate Key (or Import)
-3. Enter name, email, and passphrase
-4. Mailvelope integrates with Gmail, Outlook.com, Yahoo Mail, and others
-5. When composing, click the Mailvelope icon to encrypt/sign
-
-**Apple Mail (via GPGTools):**
-
-1. Install [GPG Suite](https://gpgtools.org/) (macOS)
-2. GPG Keychain → New → generate key pair
-3. Apple Mail automatically detects GPG keys
-4. Compose email — OpenPGP sign/encrypt buttons appear
-
-### Public Key Distribution
-
-```bash
-# Upload to a keyserver
-gpg --keyserver hkps://keys.openpgp.org --send-keys YOUR_KEY_ID
-
-# Or publish via DNS (OPENPGPKEY record)
-# Generate the hash for your email's local part
-echo -n "user" | sha256sum | cut -c1-56
-# Create DNS record:
-# <hash>._openpgpkey.example.com. IN OPENPGPKEY <base64-encoded-key>
-
-# Or publish on your website
-# https://example.com/.well-known/openpgpkey/hu/<hash>
-```
-
-### Key Management Best Practices
-
-- **Rotate keys** every 1-2 years
-- **Use subkeys** for daily signing/encryption — keep master key offline
-- **Revocation certificate**: generate immediately after key creation and store securely
-- **Key backup**: encrypted USB or gopass, never cloud storage without encryption
-- **Web of Trust**: sign keys of people you've verified in person
-
-```bash
-# Generate revocation certificate (do this immediately after key creation)
+# Generate revocation certificate immediately after key creation
 gpg --gen-revoke YOUR_KEY_ID > revocation-cert.asc
-# Store this securely — it can invalidate your key if compromised
+# Store securely — never in plain text
+
+# Upload to keyserver
+gpg --keyserver hkps://keys.openpgp.org --send-keys YOUR_KEY_ID
 ```
+
+Key management: rotate every 1–2 years, use subkeys for daily use (keep master offline), back up to gopass or encrypted USB.
 
 ## Inbound Command Security
 
 **Rule: Only permitted senders can trigger aidevops tasks via email.**
 
-When the email agent processes inbound emails that may trigger automated actions (task creation, code deployment, system commands), strict sender verification is required.
-
 ### Permitted Sender Allowlist
 
 ```bash
-# Permitted senders for inbound commands
-# Store in config, not in code
 # File: ~/.config/aidevops/email-permitted-senders.conf
-
 # Format: email_address|permission_level|description
-# Permission levels:
-#   admin    — can trigger any command
-#   operator — can trigger operational commands (deploy, restart)
-#   reporter — can create tasks and issues only
-#   readonly — can query status only
-
-# Example entries:
+# Permission levels: admin, operator, reporter, readonly
+# Example:
 # admin@example.com|admin|Primary administrator
 # ops@example.com|operator|Operations team
-# pm@example.com|reporter|Project manager
 ```
 
 ### Verification Flow
@@ -581,7 +362,6 @@ verify_command_sender() {
         return 1
     fi
 
-    # Look up sender
     local entry
     entry=$(grep "^${sender_email}|" "$config_file" 2>/dev/null)
 
@@ -596,20 +376,11 @@ verify_command_sender() {
     local permission
     permission=$(echo "$entry" | cut -d'|' -f2)
 
-    # Check permission level
     case "$required_permission" in
-        admin)
-            [[ "$permission" == "admin" ]] && return 0
-            ;;
-        operator)
-            [[ "$permission" == "admin" || "$permission" == "operator" ]] && return 0
-            ;;
-        reporter)
-            [[ "$permission" != "readonly" ]] && return 0
-            ;;
-        readonly)
-            return 0  # Any permitted sender can read
-            ;;
+        admin)    [[ "$permission" == "admin" ]] && return 0 ;;
+        operator) [[ "$permission" == "admin" || "$permission" == "operator" ]] && return 0 ;;
+        reporter) [[ "$permission" != "readonly" ]] && return 0 ;;
+        readonly) return 0 ;;
     esac
 
     echo "DENIED: $sender_email has '$permission' permission, needs '$required_permission'"
@@ -629,21 +400,11 @@ verify_command_sender() {
 
 **Rule: Verify authenticity before forwarding receipts, invoices, or financial emails to accounts.**
 
-Transaction emails (receipts, invoices, payment confirmations) are high-value phishing targets. Attackers send fake invoices that look identical to legitimate ones, hoping they'll be paid or forwarded to accounting.
-
 ### Verification Checklist
 
-Before forwarding any transaction email:
-
-1. **Check sender authentication** — SPF/DKIM/DMARC must all pass
-2. **Verify sender domain** — is it the actual vendor domain, not a lookalike?
-3. **Cross-reference with known transactions** — does this match an expected purchase/subscription?
-4. **Check payment details** — do bank details or payment links match the vendor's known details?
-5. **Inspect links** — do payment links go to the vendor's actual domain?
-6. **Check amount** — does the amount match expected pricing?
+Before forwarding any transaction email: check SPF/DKIM/DMARC pass, verify sender domain (not a lookalike), cross-reference with known transactions, check payment details match the vendor's known details, inspect links go to the vendor's actual domain, and verify the amount matches expected pricing.
 
 ```bash
-# Automated transaction email verification
 verify_transaction_email() {
     local email_file="$1"
 
@@ -672,9 +433,7 @@ verify_transaction_email() {
     fi
 
     # 4. Check domain age
-    local creation_date
-    creation_date=$(whois "$from_domain" 2>/dev/null | grep -i "creation date" | head -1)
-    echo "Domain registration: $creation_date"
+    whois "$from_domain" 2>/dev/null | grep -i "creation date" | head -1
 }
 ```
 
