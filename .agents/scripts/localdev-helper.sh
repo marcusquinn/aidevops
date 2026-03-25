@@ -79,14 +79,113 @@ cmd_init() {
 	return 0
 }
 
+# Install mkcert if not present. Supports macOS (brew) and Linux (apt, dnf,
+# pacman, apk). On Linux, the apt package name is "mkcert" (available in
+# Ubuntu 20.04+ and Debian 11+). libnss3-tools is required on Debian/Ubuntu
+# for mkcert to install the CA root into Firefox/Chrome trust stores.
+# Falls back to downloading the upstream binary from dl.filippo.io for
+# distributions without a supported package manager (x86_64, arm64, armv7l).
+# After installation, runs `mkcert -install`
+# to create and trust the local CA root.
+# Returns: 0 if mkcert is available after this function, 1 if installation failed.
+ensure_mkcert() {
+	if command -v mkcert >/dev/null 2>&1; then
+		return 0
+	fi
+
+	print_info "mkcert not found — attempting to install..."
+
+	local installed=false
+
+	if command -v brew >/dev/null 2>&1; then
+		if brew install mkcert 2>/dev/null; then
+			installed=true
+		fi
+	elif command -v apt-get >/dev/null 2>&1; then
+		if sudo apt-get update -qq && sudo apt-get install -y -qq mkcert libnss3-tools 2>/dev/null; then
+			installed=true
+		fi
+	elif command -v dnf >/dev/null 2>&1; then
+		if sudo dnf install -y mkcert 2>/dev/null; then
+			installed=true
+		fi
+	elif command -v pacman >/dev/null 2>&1; then
+		if sudo pacman -S --noconfirm mkcert 2>/dev/null; then
+			installed=true
+		fi
+	elif command -v apk >/dev/null 2>&1; then
+		if sudo apk add mkcert 2>/dev/null; then
+			installed=true
+		fi
+	fi
+
+	# Binary download fallback for distros without a supported package manager.
+	# Supports x86_64 (amd64), aarch64/arm64, and armv7l architectures.
+	if [[ "$installed" != "true" ]] && command -v curl >/dev/null 2>&1; then
+		local raw_arch
+		raw_arch=$(uname -m)
+		local arch=""
+		case "$raw_arch" in
+		x86_64) arch="amd64" ;;
+		aarch64 | arm64) arch="arm64" ;;
+		armv7l) arch="armv7l" ;;
+		*) arch="" ;;
+		esac
+
+		if [[ -n "$arch" ]]; then
+			print_info "Attempting binary download fallback for linux/$arch..."
+			local bin_dir="$HOME/.local/bin"
+			mkdir -p "$bin_dir"
+			local mkcert_url="https://dl.filippo.io/mkcert/latest?for=linux/$arch"
+			if curl -fsSL "$mkcert_url" -o "$bin_dir/mkcert" 2>/dev/null && chmod +x "$bin_dir/mkcert"; then
+				# Ensure ~/.local/bin is on PATH for this session
+				export PATH="$bin_dir:$PATH"
+				if command -v mkcert >/dev/null 2>&1; then
+					installed=true
+					print_success "mkcert installed via binary download to $bin_dir/mkcert"
+				fi
+			fi
+		fi
+	fi
+
+	if [[ "$installed" != "true" ]] || ! command -v mkcert >/dev/null 2>&1; then
+		print_error "Failed to install mkcert automatically"
+		echo "  Manual install options:"
+		echo "    macOS:         brew install mkcert"
+		echo "    Ubuntu/Debian: sudo apt install mkcert libnss3-tools"
+		echo "    Fedora:        sudo dnf install mkcert"
+		echo "    Arch:          sudo pacman -S mkcert"
+		echo "    Other:         https://github.com/FiloSottile/mkcert#installation"
+		return 1
+	fi
+
+	print_success "mkcert installed"
+
+	# Install the local CA into the system trust store (one-time setup).
+	# This makes mkcert-generated certs trusted by browsers and curl.
+	print_info "Installing mkcert local CA root (may require sudo)..."
+	if mkcert -install 2>/dev/null; then
+		print_success "mkcert CA root installed and trusted"
+	else
+		print_warning "mkcert -install failed — certs will generate but browsers may not trust them"
+		echo "  Run manually: mkcert -install"
+	fi
+
+	return 0
+}
+
 # Check that required tools are installed
 check_init_prerequisites() {
 	local missing=()
 
 	command -v docker >/dev/null 2>&1 || missing+=("docker")
-	command -v mkcert >/dev/null 2>&1 || missing+=("mkcert")
 
-	# dnsmasq: check brew installation
+	# Try to auto-install mkcert if missing (GH#6415)
+	if ! command -v mkcert >/dev/null 2>&1 && ! ensure_mkcert; then
+		missing+=("mkcert")
+	fi
+
+	# dnsmasq: check brew installation or system-wide
 	local brew_prefix
 	brew_prefix="$(detect_brew_prefix)"
 	if [[ -z "$brew_prefix" ]] || [[ ! -f "$brew_prefix/etc/dnsmasq.conf" ]]; then
@@ -97,7 +196,11 @@ check_init_prerequisites() {
 
 	if [[ ${#missing[@]} -gt 0 ]]; then
 		print_error "Missing required tools: ${missing[*]}"
-		echo "  Install: brew install ${missing[*]}"
+		echo "  Install:"
+		echo "    macOS:         brew install ${missing[*]}"
+		echo "    Ubuntu/Debian: sudo apt install ${missing[*]}"
+		echo "    Fedora:        sudo dnf install ${missing[*]}"
+		echo "    Arch:          sudo pacman -S ${missing[*]}"
 		exit 1
 	fi
 
@@ -670,6 +773,12 @@ generate_cert() {
 	local name="$1"
 	local domain="${name}.local"
 	local wildcard="*.${domain}"
+
+	# Ensure mkcert is available (auto-install if missing, GH#6415)
+	if ! command -v mkcert >/dev/null 2>&1 && ! ensure_mkcert; then
+		print_error "mkcert is required to generate SSL certificates"
+		return 1
+	fi
 
 	mkdir -p "$CERTS_DIR"
 
@@ -2688,7 +2797,9 @@ cmd_help() {
 	echo "  Note: dnsmasq resolves .local for CLI tools only. Browsers need /etc/hosts"
 	echo "  entries (added automatically by 'add' command) due to macOS mDNS."
 	echo ""
-	echo "Requires: docker, mkcert, dnsmasq (brew install dnsmasq)"
+	echo "Requires: docker, mkcert, dnsmasq"
+	echo "  mkcert is auto-installed if missing (apt, dnf, pacman, brew)"
+	echo "  dnsmasq: brew install dnsmasq (macOS) / sudo apt install dnsmasq (Linux)"
 	echo "Requires: sudo (for /etc/hosts and dnsmasq restart)"
 	echo ""
 	echo "LocalWP coexistence:"
