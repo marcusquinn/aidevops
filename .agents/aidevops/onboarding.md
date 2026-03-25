@@ -35,7 +35,7 @@ subagents:
 ~/.aidevops/agents/scripts/generate-opencode-agents.sh
 ```
 
-**Settings file**: All onboarding choices are persisted to `~/.config/aidevops/settings.json`. This file is the canonical config — users can edit it directly or via `/onboarding`. Created with documented defaults on first run.
+**Settings file**: All onboarding choices are persisted to `~/.config/aidevops/settings.json`. Created with documented defaults on first run.
 
 **Workflow**:
 1. Welcome & explain aidevops capabilities
@@ -49,241 +49,63 @@ subagents:
 
 ## Welcome Flow
 
-When invoked, follow this conversation flow:
-
 ### Step 1: Introduction (if new user)
 
-Ask if the user would like an explanation of what aidevops does:
-
-```text
-Welcome to aidevops setup!
-
-Would you like me to explain what aidevops can help you with? (yes/no)
-```
-
-If yes, provide a brief overview:
+Ask if the user would like an explanation of what aidevops does. If yes:
 
 ```text
 aidevops gives your AI assistant superpowers for DevOps and infrastructure management.
 
-**Recommended tool:** You should be running this in [OpenCode](https://opencode.ai/) - the recommended AI coding agent for aidevops. All features, agents, and workflows are designed and tested for OpenCode first. OpenCode supports multiple AI providers (Zen, Anthropic, OpenAI, and more) so you can use whichever model you prefer.
+Recommended tool: OpenCode (https://opencode.ai/) — all features are designed and tested for OpenCode first.
 
-**Capabilities:**
-
-- **Autonomous Orchestration**: Supervisor dispatches AI workers, merges PRs, tracks tasks across repos
-- **Infrastructure**: Manage servers across Hetzner, Hostinger, Cloudron, Coolify
-- **Domains & DNS**: Purchase domains, manage DNS via Cloudflare, Spaceship, 101domains
-- **Git Platforms**: GitHub, GitLab, Gitea with full CLI integration
-- **Code Quality**: SonarCloud, Codacy, CodeRabbit, Snyk, Qlty analysis
-- **WordPress**: LocalWP development, MainWP fleet management
-- **SEO**: Keyword research, SERP analysis, Google Search Console
-- **Browser Automation**: Playwright, Stagehand, Chrome DevTools
-- **Context Tools**: Augment, Context7, Repomix for AI context
-
-All through natural conversation - just tell me what you need!
+Capabilities:
+- Autonomous Orchestration: Supervisor dispatches AI workers, merges PRs, tracks tasks across repos
+- Infrastructure: Manage servers across Hetzner, Hostinger, Cloudron, Coolify
+- Domains & DNS: Cloudflare, Spaceship, 101domains
+- Git Platforms: GitHub, GitLab, Gitea with full CLI integration
+- Code Quality: SonarCloud, Codacy, CodeRabbit, Snyk, Qlty
+- WordPress: LocalWP development, MainWP fleet management
+- SEO: Keyword research, SERP analysis, Google Search Console
+- Browser Automation: Playwright, Stagehand, Chrome DevTools
+- Context Tools: Augment, Context7, Repomix
 ```
 
 ### Step 2: Check Concept Familiarity
 
-Before diving in, gauge what concepts the user is comfortable with:
+Ask which concepts they know (Git, Terminal, API keys, Hosting, SEO, AI assistants, or none). Offer brief explanations for unfamiliar ones — keep explanations to 3-4 sentences each. Save results:
 
-```text
-To tailor this onboarding, which of these concepts are you already familiar with?
-
-1. Git & version control (commits, branches, pull requests)
-2. Terminal/command line basics
-3. API keys and authentication
-4. Web hosting and servers
-5. SEO (Search Engine Optimization)
-6. AI assistants and prompting
-7. None of these / I'm new to all of this
-
-Reply with numbers (e.g., "1, 2, 5") or "all" if you're comfortable with everything.
-```
-
-**Based on their response, offer to explain unfamiliar concepts:**
-
-If they're unfamiliar with **Git**:
-
-```text
-Git is a version control system that tracks changes to your code. Think of it like
-"save points" in a video game - you can always go back. Key concepts:
-- **Repository (repo)**: A project folder tracked by Git
-- **Commit**: A saved snapshot of your changes
-- **Branch**: A parallel version to experiment without affecting the main code
-- **Pull Request (PR)**: A proposal to merge your changes into the main branch
-
-aidevops uses Git workflows extensively - but I'll guide you through each step.
-```
-
-If they're unfamiliar with **Terminal**:
-
-```text
-The terminal (or command line) is a text-based way to control your computer.
-Instead of clicking, you type commands. Examples:
-- `cd ~/projects` - Go to your projects folder
-- `ls` - List files in current folder
-- `git status` - Check what's changed in your code
-
-Don't worry - I'll provide the exact commands to run, and explain what each does.
-```
-
-If they're unfamiliar with **API keys**:
-
-```text
-An API key is like a password that lets software talk to other software.
-When you sign up for services like OpenAI or GitHub, they give you a secret key.
-You store this key securely, and aidevops uses it to access those services on your behalf.
-
-I'll show you exactly where to get each key and how to store it safely.
-```
-
-If they're unfamiliar with **Hosting**:
-
-```text
-Hosting is where your website or application lives on the internet.
-- **Shared hosting**: Your site shares a server with others (cheap, simple)
-- **VPS**: Your own virtual server (more control, more responsibility)
-- **PaaS**: Platform that handles servers for you (Vercel, Coolify)
-
-aidevops can help manage servers across multiple providers from one conversation.
-```
-
-If they're unfamiliar with **SEO**:
-
-```text
-SEO (Search Engine Optimization) is how you help people find your website through
-search engines like Google. Key concepts:
-- **Keywords**: Words people type when searching (e.g., "best coffee shops near me")
-- **SERP**: Search Engine Results Page - what Google shows for a search
-- **Ranking**: Your position in search results (higher = more traffic)
-- **Backlinks**: Links from other websites to yours (builds authority)
-- **Search Console**: Google's tool showing how your site performs in search
-
-aidevops has powerful SEO capabilities:
-- Research keywords with volume, difficulty, and competition data
-- Analyze SERPs to find ranking opportunities
-- Track your site's performance in Google Search Console
-- Discover what keywords competitors rank for
-- Automate SEO audits and reporting
-
-Even if you're not an SEO expert, I can help you understand and improve your
-site's search visibility through natural conversation.
-```
-
-If they're unfamiliar with **AI assistants**:
-
-```text
-AI assistants (like me!) can help you code, manage infrastructure, and automate tasks.
-Key concepts:
-- **Prompt**: What you ask the AI to do
-- **Context**: Information the AI needs to help you effectively
-- **Agents**: Specialized AI personas for different tasks (SEO, WordPress, etc.)
-- **Commands**: Shortcuts that trigger specific workflows (/release, /feature)
-
-The more specific you are, the better I can help. Don't hesitate to ask questions!
-```
-
-If they're **new to everything**:
-
-```text
-No problem! Everyone starts somewhere. I'll explain each concept as we go.
-The key thing to know: aidevops lets you manage complex technical tasks through
-natural conversation. You tell me what you want to accomplish, and I'll handle
-the technical details - explaining each step along the way.
-
-Let's start simple and build up from there.
+```bash
+~/.aidevops/agents/scripts/onboarding-helper.sh save-concepts 'git,terminal,api-keys'
 ```
 
 ### Step 3: Understand User's Work
 
-Ask what they do or might work on:
-
-```text
-What kind of work do you do, or what would you like aidevops to help with?
-
-For example:
-1. Web development (WordPress, React, Node.js)
-2. DevOps & infrastructure management
-3. SEO & content marketing
-4. Multiple client/site management
-5. Something else (describe it)
-```
-
-Based on their answer, highlight relevant services and **save the choice**:
+Ask what they do (web dev, DevOps, SEO, WordPress, other). Save the choice:
 
 ```bash
-# Save work type (maps 1=web, 2=devops, 3=seo, 4=wordpress)
 ~/.aidevops/agents/scripts/onboarding-helper.sh save-work-type devops
 ```
 
-Also save the concept familiarity from Step 2:
-
-```bash
-# Save familiar concepts (from Step 2 responses)
-~/.aidevops/agents/scripts/onboarding-helper.sh save-concepts 'git,terminal,api-keys'
-```
-
 ### Step 4: Show Current Status
-
-Run the status check and display results:
 
 ```bash
 ~/.aidevops/agents/scripts/onboarding-helper.sh status
 ```
 
-Display in a clear format:
-
-```text
-## Your aidevops Setup Status
-
-### Configured & Ready
-- GitHub CLI (gh) - authenticated
-- OpenAI API - key loaded
-- Cloudflare - API token configured
-
-### Needs Setup
-- Hetzner Cloud - no API token found
-- DataForSEO - credentials not configured
-- Google Search Console - not connected
-
-### Optional (based on your interests)
-- MainWP - for WordPress fleet management
-- Stagehand - for browser automation
-```
+Display configured vs needs-setup services clearly.
 
 ### Step 5: Guide Setup
 
-Ask which service to set up:
-
-```text
-Which service would you like to set up next?
-
-1. Hetzner Cloud (VPS servers)
-2. DataForSEO (keyword research)
-3. Google Search Console (search analytics)
-4. Skip for now
-
-Enter a number or service name:
-```
-
-For each service, provide:
-1. What it does and why it's useful
-2. Link to create account/get API key
-3. Step-by-step instructions
-4. Command to store the credential
-5. Verification that it works
+For each service: explain purpose, link to get credentials, setup command, verification.
 
 ## Service Catalog
 
-### AI Providers (Core)
+### AI Providers
 
 | Service | Env Var | Setup Link | Purpose |
 |---------|---------|------------|---------|
 | OpenAI | `OPENAI_API_KEY` | https://platform.openai.com/api-keys | GPT models, Stagehand |
 | Anthropic | `ANTHROPIC_API_KEY` | https://console.anthropic.com/settings/keys | Claude models |
-
-**Setup command**:
 
 ```bash
 ~/.aidevops/agents/scripts/setup-local-api-keys.sh set OPENAI_API_KEY "sk-..."
@@ -291,407 +113,112 @@ For each service, provide:
 
 ### Git Platforms
 
-| Service | Auth Method | Setup Command | Purpose |
-|---------|-------------|---------------|---------|
-| GitHub | `gh auth login` | Opens browser OAuth | Repos, PRs, Actions |
-| GitLab | `glab auth login` | Opens browser OAuth | Repos, MRs, Pipelines |
-| Gitea | `tea login add` | Token-based | Self-hosted Git |
-
-**Verification**:
-
-```bash
-gh auth status
-glab auth status
-tea login list
-```
+| Service | Auth Method | Purpose |
+|---------|-------------|---------|
+| GitHub | `gh auth login` | Repos, PRs, Actions |
+| GitLab | `glab auth login` | Repos, MRs, Pipelines |
+| Gitea | `tea login add` | Self-hosted Git |
 
 ### Hosting Providers
 
 | Service | Env Var(s) | Setup Link | Purpose |
 |---------|------------|------------|---------|
-| Hetzner Cloud | `HCLOUD_TOKEN_*` | https://console.hetzner.cloud/ -> Security -> API Tokens | VPS, networking |
+| Hetzner Cloud | `HCLOUD_TOKEN_*` | https://console.hetzner.cloud/ → Security → API Tokens | VPS, networking |
 | Cloudflare | `CLOUDFLARE_API_TOKEN` | https://dash.cloudflare.com/profile/api-tokens | DNS, CDN, security |
-| Coolify | `COOLIFY_API_TOKEN` | Your Coolify instance -> Settings -> API | Self-hosted PaaS |
+| Coolify | `COOLIFY_API_TOKEN` | Your Coolify instance → Settings → API | Self-hosted PaaS |
 | Vercel | `VERCEL_TOKEN` | https://vercel.com/account/tokens | Serverless deployment |
-
-**Hetzner multi-account setup**:
-
-```bash
-# For each project/account
-~/.aidevops/agents/scripts/setup-local-api-keys.sh set HCLOUD_TOKEN_MAIN "your-token"
-~/.aidevops/agents/scripts/setup-local-api-keys.sh set HCLOUD_TOKEN_CLIENT1 "client-token"
-```
 
 ### Code Quality
 
 | Service | Env Var | Setup Link | Purpose |
 |---------|---------|------------|---------|
 | SonarCloud | `SONAR_TOKEN` | https://sonarcloud.io/account/security | Security analysis |
-| Codacy | `CODACY_PROJECT_TOKEN` | https://app.codacy.com -> Project -> Settings -> Integrations | Code quality |
+| Codacy | `CODACY_PROJECT_TOKEN` | https://app.codacy.com → Project → Settings | Code quality |
 | CodeRabbit | `CODERABBIT_API_KEY` | https://app.coderabbit.ai/settings | AI code review |
 | Snyk | `SNYK_TOKEN` | https://app.snyk.io/account | Vulnerability scanning |
 
-**CodeRabbit special storage**:
-
-```bash
-mkdir -p ~/.config/coderabbit
-echo "your-api-key" > ~/.config/coderabbit/api_key
-chmod 600 ~/.config/coderabbit/api_key
-```
+CodeRabbit key storage: `mkdir -p ~/.config/coderabbit && echo "key" > ~/.config/coderabbit/api_key && chmod 600 ~/.config/coderabbit/api_key`
 
 ### SEO & Research
 
-aidevops provides comprehensive SEO capabilities through multiple integrated services:
-
 | Service | Env Var(s) | Setup Link | Purpose |
 |---------|------------|------------|---------|
-| DataForSEO | `DATAFORSEO_USERNAME`, `DATAFORSEO_PASSWORD` | https://app.dataforseo.com/api-access | SERP, keywords, backlinks, on-page analysis |
-| Serper | `SERPER_API_KEY` | https://serper.dev/api-key | Google Search API (web, images, news) |
-| Outscraper | `OUTSCRAPER_API_KEY` | https://outscraper.com/dashboard | Business data, Google Maps extraction |
-| Google Search Console | OAuth via MCP | https://search.google.com/search-console | Your site's search performance |
+| DataForSEO | `DATAFORSEO_USERNAME`, `DATAFORSEO_PASSWORD` | https://app.dataforseo.com/api-access | SERP, keywords, backlinks |
+| Serper | `SERPER_API_KEY` | https://serper.dev/api-key | Google Search API |
+| Outscraper | `OUTSCRAPER_API_KEY` | https://outscraper.com/dashboard | Business data extraction |
+| Google Search Console | OAuth via MCP | https://search.google.com/search-console | Site search performance |
 
-**What you can do with SEO tools:**
-
-- **Keyword Research**: Find keywords with volume, CPC, difficulty, and search intent
-- **SERP Analysis**: Analyze top 10 results for any keyword, find weaknesses to exploit
-- **Competitor Research**: See what keywords competitors rank for
-- **Keyword Gap Analysis**: Find keywords they have that you don't
-- **Autocomplete Mining**: Discover long-tail keywords from Google suggestions
-- **Site Auditing**: Crawl sites for SEO issues (broken links, missing meta, etc.)
-- **Rank Tracking**: Monitor your positions in search results
-- **Backlink Analysis**: Research link profiles and find opportunities
-
-**DataForSEO setup** (recommended - most comprehensive):
-
-```bash
-~/.aidevops/agents/scripts/setup-local-api-keys.sh set DATAFORSEO_USERNAME "your-email"
-~/.aidevops/agents/scripts/setup-local-api-keys.sh set DATAFORSEO_PASSWORD "your-password"
-```
-
-**Serper setup** (simpler, good for basic searches):
-
-```bash
-~/.aidevops/agents/scripts/setup-local-api-keys.sh set SERPER_API_KEY "your-key"
-```
-
-**SEO Commands available:**
-
-| Command | Purpose |
-|---------|---------|
-| `/keyword-research` | Expand seed keywords with volume, CPC, difficulty |
-| `/autocomplete-research` | Mine Google autocomplete for long-tail keywords |
-| `/keyword-research-extended` | Full SERP analysis with 17 weakness indicators |
-| `/webmaster-keywords` | Get keywords from your Google Search Console |
-
-**Example workflow:**
-
-```text
-# Switch to SEO agent
-Tab → SEO
-
-# Research keywords
-/keyword-research "best project management tools"
-
-# Deep dive on promising keywords
-/keyword-research-extended "project management software for small teams"
-
-# Check your own site's performance
-/webmaster-keywords https://yoursite.com
-```
+SEO commands: `/keyword-research`, `/autocomplete-research`, `/keyword-research-extended`, `/webmaster-keywords`
 
 ### Context & Semantic Search
 
-| Service | Auth Method | Setup Command | Purpose |
-|---------|-------------|---------------|---------|
-| Augment Context Engine | `auggie login` | Opens browser OAuth | Semantic codebase search |
-| Context7 | None | MCP config only | Library documentation |
-
-**Augment setup**:
+| Service | Auth Method | Purpose |
+|---------|-------------|---------|
+| Augment Context Engine | `auggie login` | Semantic codebase search |
+| Context7 | None (MCP config) | Library documentation |
 
 ```bash
-npm install -g @augmentcode/auggie@prerelease
-auggie login  # Opens browser
-auggie token print  # Verify
+npm install -g @augmentcode/auggie@prerelease && auggie login
 ```
 
 ### Browser Automation
 
-| Service | Requirements | Setup | Purpose |
-|---------|--------------|-------|---------|
-| Playwright | Node.js | `npx playwright install` | Cross-browser testing |
-| Stagehand | OpenAI/Anthropic key | Key already configured | AI browser automation |
-| Chrome DevTools | Chrome running | `--remote-debugging-port=9222` | Browser debugging |
-| Playwriter | Browser extension | Install from Chrome Web Store | Extension-based automation |
+| Service | Requirements | Purpose |
+|---------|--------------|---------|
+| Playwright | Node.js | Cross-browser testing (`npx playwright install`) |
+| Stagehand | OpenAI/Anthropic key | AI browser automation |
+| Chrome DevTools | Chrome running | Browser debugging (`--remote-debugging-port=9222`) |
 
-### Containers & VMs
+### Containers & Networking
 
-| Service | Requirements | Setup | Purpose |
-|---------|--------------|-------|---------|
-| OrbStack | macOS | `brew install orbstack` | Docker + Linux VMs (replaces Docker Desktop) |
+| Service | Setup | Purpose |
+|---------|-------|---------|
+| OrbStack | `brew install orbstack` | Docker + Linux VMs (macOS) |
+| Tailscale | `brew install tailscale` | Zero-config mesh VPN |
 
-OrbStack is the recommended container runtime for aidevops on macOS. It provides Docker-compatible CLI with lower resource usage and native macOS integration.
-
-**Docs**: `@orbstack` or `tools/containers/orbstack.md`
-
-### Networking
-
-| Service | Requirements | Setup | Purpose |
-|---------|--------------|-------|---------|
-| Tailscale | Any OS | `brew install tailscale` (macOS) or `curl -fsSL https://tailscale.com/install.sh \| sh` (Linux) | Zero-config mesh VPN |
-
-Tailscale connects your devices (laptop, phone, VPS) into a secure private network without port forwarding. Essential for remote OpenClaw gateway access and SSH to VPS servers.
-
-**Docs**: `@tailscale` or `services/networking/tailscale.md`
+Docs: `@orbstack`, `@tailscale`
 
 ### Personal AI Assistant (OpenClaw)
 
-| Service | Requirements | Setup | Purpose |
-|---------|--------------|-------|---------|
-| OpenClaw | Node.js >= 22 | `curl -fsSL https://openclaw.ai/install.sh \| bash && openclaw onboard` | AI via WhatsApp, Telegram, Slack, Discord, Signal, iMessage |
-
-OpenClaw is a personal AI assistant accessible via messaging channels. It complements aidevops by providing always-on, mobile-accessible AI from any messaging platform.
-
-**Full docs**: `@openclaw` or `tools/ai-assistants/openclaw.md`
-
-**To set up OpenClaw during onboarding, follow the guided flow below.**
-
-#### OpenClaw Guided Setup
-
-When a user expresses interest in OpenClaw or mobile AI access, follow this conversation flow:
-
-**Step A: Business Discovery**
-
-Ask about their business and use cases to tailor the setup:
-
-```text
-OpenClaw gives you AI accessible from WhatsApp, Telegram, Slack, Discord, Signal,
-iMessage, and more. Before we set it up, tell me a bit about your situation:
-
-1. What does your business/work involve?
-2. Do you manage clients or a team?
-3. What messaging platforms do you already use?
-4. Do you need AI available 24/7, or just when your laptop is open?
-5. Do you already have a VPS (Hetzner, Hostinger, etc.)?
-```
-
-Based on their answers, suggest specific use cases:
-
-| Business Type | OpenClaw Use Cases |
-|---------------|-------------------|
-| Agency/freelancer | Client communication bot, project status via WhatsApp, automated reporting |
-| SaaS/product | Customer support triage, internal team bot, deployment notifications |
-| Content creator | Research assistant via Telegram, voice notes transcription, content scheduling |
-| DevOps/sysadmin | Server monitoring alerts, incident response via messaging, cron-triggered health checks |
-| Consultant | Meeting prep via voice, quick research from phone, client follow-ups |
-
-**Step B: Deployment Tier Selection**
-
-```text
-How would you like to run OpenClaw?
-
-1. Native local - Runs on your laptop (simplest, only available when laptop is on)
-2. OrbStack container - Docker on your Mac (isolated, easy to reset)
-3. Remote VPS - Always-on server with Tailscale (available 24/7 from any device)
-
-Which sounds right for you?
-```
-
-**Step C: Installation (based on tier)**
-
-For **Tier 1 (Native local)**:
-
 ```bash
-# Install OpenClaw
-curl -fsSL https://openclaw.ai/install.sh | bash
-
-# Run onboarding wizard
-openclaw onboard --install-daemon
-
-# Verify
-openclaw doctor
+curl -fsSL https://openclaw.ai/install.sh | bash && openclaw onboard --install-daemon
 ```
 
-For **Tier 2 (OrbStack container)**:
-
-```bash
-# Ensure OrbStack is running
-orb status  # Install with: brew install orbstack
-
-# Clone and set up OpenClaw in Docker
-git clone https://github.com/openclaw/openclaw.git
-cd openclaw
-./docker-setup.sh
-
-# Access Control UI at http://127.0.0.1:18789/
-```
-
-For **Tier 3 (Remote VPS)**:
-
-```text
-We'll need to:
-1. Provision a VPS (I can help via @hetzner or @hostinger)
-2. Install Tailscale on both your machine and the VPS
-3. Install OpenClaw on the VPS
-4. Configure Tailscale Serve for secure HTTPS access
-
-Shall I walk you through each step?
-```
-
-Guide them through:
-
-1. VPS provisioning (use `@hetzner` -- minimum CX22: 2 vCPU, 4GB RAM)
-2. Tailscale setup on both machines (see `@tailscale`)
-3. OpenClaw install on VPS via SSH over Tailscale
-4. Gateway config with Tailscale Serve
-
-**Step D: Channel Setup (Security-First)**
-
-```text
-Which messaging channels would you like to connect?
-
-1. WhatsApp (most popular, QR code pairing)
-2. Telegram (simple bot token setup)
-3. Discord (bot in your server)
-4. Slack (workspace app)
-5. Signal (privacy-focused)
-6. iMessage (via BlueBubbles on macOS)
-7. Skip for now (use Control UI only)
-```
-
-For each selected channel, guide through setup with security defaults:
-
-- DM policy: `pairing` (default, recommended)
-- Group policy: `requireMention: true`
-- Allowlists configured before going live
-
-```bash
-# After channel setup, verify security
-openclaw security audit --fix
-```
-
-**Step E: Security Hardening**
-
-Always run the security audit after setup:
-
-```bash
-openclaw security audit --deep
-```
-
-Walk through each finding and explain:
-
-```text
-The security audit checks:
-- Who can message your bot (DM policies, allowlists)
-- What the bot can do (tool permissions, sandboxing)
-- Network exposure (gateway bind, auth tokens)
-- File permissions (~/.openclaw/ directory)
-- Plugin trust (only load what you explicitly trust)
-
-Any findings marked as warnings should be addressed before going live.
-```
-
-**Step F: aidevops vs OpenClaw Decision Tree**
-
-Explain when to use each tool:
-
-```text
-Now that OpenClaw is set up, here's when to use each:
-
-aidevops (terminal/IDE):
-- Writing and editing code
-- Git workflows, PRs, releases
-- Server management and deployment
-- SEO research and analysis
-- Complex multi-file operations
-
-OpenClaw (messaging/voice):
-- Quick questions from your phone
-- Voice interaction (Talk Mode, Voice Wake)
-- Always-on monitoring and alerts
-- Client/team communication bots
-- Hands-free interaction while mobile
-
-They work together:
-- aidevops manages the server OpenClaw runs on
-- OpenClaw can trigger aidevops workflows via messages
-- Both use the same AI models and can share workspace context
-```
+Deployment tiers: (1) Native local, (2) OrbStack container, (3) Remote VPS with Tailscale.
+After setup: `openclaw security audit --deep`
+Full docs: `@openclaw` or `tools/ai-assistants/openclaw.md`
 
 ### WordPress
 
-| Service | Requirements | Setup Link | Purpose |
-|---------|--------------|------------|---------|
-| LocalWP | LocalWP installed | https://localwp.com/releases | Local WordPress dev |
-| MainWP | MainWP Dashboard plugin | https://mainwp.com/ | WordPress fleet management |
+| Service | Setup Link | Purpose |
+|---------|------------|---------|
+| LocalWP | https://localwp.com/releases | Local WordPress dev |
+| MainWP | https://mainwp.com/ | WordPress fleet management |
 
-**MainWP config** (`configs/mainwp-config.json`):
+### AWS & Other Services
 
-```json
-{
-  "dashboard_url": "https://your-mainwp-dashboard.com",
-  "api_key": "your-api-key"
-}
-```
-
-### AWS Services
-
-| Service | Env Var(s) | Setup Link | Purpose |
-|---------|------------|------------|---------|
-| AWS General | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_DEFAULT_REGION` | https://console.aws.amazon.com/iam | AWS services |
-| Amazon SES | Same as above + SES permissions | IAM with SES permissions | Email sending |
-
-### Domain Registrars
-
-| Service | Config File | Setup Link | Purpose |
-|---------|-------------|------------|---------|
-| Spaceship | `configs/spaceship-config.json` | https://www.spaceship.com/ | Domain registration |
-| 101domains | `configs/101domains-config.json` | https://www.101domain.com/ | Domain purchasing |
-
-### Password Management
-
-| Service | Config | Setup | Purpose |
-|---------|--------|-------|---------|
-| Vaultwarden | `configs/vaultwarden-config.json` | Self-hosted Bitwarden | Secrets management |
+| Service | Env Var(s) | Purpose |
+|---------|------------|---------|
+| AWS | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_DEFAULT_REGION` | AWS services |
+| Spaceship | `configs/spaceship-config.json` | Domain registration |
+| 101domains | `configs/101domains-config.json` | Domain purchasing |
+| Vaultwarden | `configs/vaultwarden-config.json` | Secrets management |
 
 ## Verification Commands
 
-After setting up each service, verify it works:
-
 ```bash
-# Git platforms
-gh auth status
-glab auth status
-
-# Hetzner
+gh auth status && glab auth status
 hcloud server list
-
-# Cloudflare
-curl -s -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
-  "https://api.cloudflare.com/client/v4/user/tokens/verify" | jq .success
-
-# DataForSEO
-curl -s -u "$DATAFORSEO_USERNAME:$DATAFORSEO_PASSWORD" \
-  "https://api.dataforseo.com/v3/appendix/user_data" | jq .status_message
-
-# Augment
+curl -s -H "Authorization: Bearer $CLOUDFLARE_API_TOKEN" "https://api.cloudflare.com/client/v4/user/tokens/verify" | jq .success
+curl -s -u "$DATAFORSEO_USERNAME:$DATAFORSEO_PASSWORD" "https://api.dataforseo.com/v3/appendix/user_data" | jq .status_message
 auggie token print
-
-# OpenClaw
 openclaw doctor
-
-# Tailscale
 tailscale status
-
-# OrbStack
 orb status
-
-# All keys overview
 ~/.aidevops/agents/scripts/list-keys-helper.sh
 ```
 
 ## Credential Storage
-
-All credentials are stored securely:
 
 | Location | Purpose | Permissions |
 |----------|---------|-------------|
@@ -699,128 +226,44 @@ All credentials are stored securely:
 | `~/.config/coderabbit/api_key` | CodeRabbit token | 600 |
 | `configs/*-config.json` | Service-specific configs | 600, gitignored |
 
-**Add a new credential**:
-
 ```bash
 ~/.aidevops/agents/scripts/setup-local-api-keys.sh set SERVICE_NAME "value"
-```
-
-**List all credentials** (names only, never values):
-
-```bash
-~/.aidevops/agents/scripts/list-keys-helper.sh
+~/.aidevops/agents/scripts/list-keys-helper.sh  # names only, never values
 ```
 
 ## Recommended Setup Order
 
-For new users, suggest this order based on their interests:
-
-### Web Developer
-
-1. GitHub CLI (`gh auth login`)
-2. OpenAI API (for AI features)
-3. Augment Context Engine (semantic search)
-4. Playwright (browser testing)
-
-### DevOps Engineer
-
-1. GitHub/GitLab CLI
-2. Hetzner Cloud or preferred hosting
-3. Cloudflare (DNS)
-4. Tailscale (secure mesh networking)
-5. Coolify or Vercel (deployment)
-6. OrbStack (containers)
-7. SonarCloud + Codacy (code quality)
-8. Supervisor pulse (autonomous task dispatch and PR management)
-
-### SEO Professional
-
-1. DataForSEO (keyword research)
-2. Serper (Google Search API)
-3. Google Search Console
-4. Outscraper (business data)
-
-### WordPress Developer
-
-1. LocalWP (local development)
-2. MainWP (if managing multiple sites)
-3. GitHub CLI
-4. Hostinger or preferred hosting
-
-### Full Stack
-
-1. All Git CLIs
-2. OpenAI + Anthropic
-3. Augment Context Engine
-4. Hetzner + Cloudflare
-5. Tailscale (mesh networking)
-6. OrbStack (containers)
-7. All code quality tools
-8. Supervisor pulse (autonomous orchestration)
-9. DataForSEO + Serper
-10. OpenClaw (mobile AI access)
-
-### Mobile-First / Always-On
-
-1. OpenClaw (follow guided setup above)
-2. OpenAI or Anthropic API key
-3. Tailscale (if using remote VPS)
-4. Connect WhatsApp or Telegram channel
-5. Run `openclaw security audit --fix`
-6. Optional: Voice Wake for hands-free
+| Profile | Priority order |
+|---------|---------------|
+| Web Developer | GitHub CLI → OpenAI → Augment → Playwright |
+| DevOps Engineer | GitHub/GitLab CLI → Hetzner → Cloudflare → Tailscale → Coolify → OrbStack → SonarCloud/Codacy → Supervisor pulse |
+| SEO Professional | DataForSEO → Serper → Google Search Console → Outscraper |
+| WordPress Developer | LocalWP → MainWP → GitHub CLI → Hostinger |
+| Full Stack | All Git CLIs → OpenAI/Anthropic → Augment → Hetzner/Cloudflare → Tailscale → OrbStack → Code quality → Supervisor pulse → DataForSEO → OpenClaw |
+| Mobile-First | OpenClaw → OpenAI/Anthropic → Tailscale → WhatsApp/Telegram channel → `openclaw security audit --fix` |
 
 ## Troubleshooting
 
-### Key not loading
-
 ```bash
-# Check if credentials.sh is sourced
+# Key not loading
 grep "credentials.sh" ~/.zshrc ~/.bashrc
-
-# Source manually
 source ~/.config/aidevops/credentials.sh
 
-# Verify
-echo "${OPENAI_API_KEY:0:10}..."
-```
-
-### MCP not connecting
-
-```bash
-# Check MCP status
+# MCP not connecting
 opencode mcp list
-
-# Diagnose specific MCP
 ~/.aidevops/agents/scripts/mcp-diagnose.sh <name>
-```
 
-### Permission denied
-
-```bash
-# Fix permissions
-chmod 600 ~/.config/aidevops/credentials.sh
-chmod 700 ~/.config/aidevops
+# Permission denied
+chmod 600 ~/.config/aidevops/credentials.sh && chmod 700 ~/.config/aidevops
 ```
 
 ## OpenCode Configuration
 
-**CRITICAL**: When setting up OpenCode with aidevops, ALWAYS use the generator script. NEVER manually write `opencode.json` - the schema is complex and easy to get wrong.
-
-### Correct Setup Method
+**CRITICAL**: NEVER manually write `opencode.json`. Always use the generator:
 
 ```bash
-# Run the generator script - it handles all schema requirements
 ~/.aidevops/agents/scripts/generate-opencode-agents.sh
 ```
-
-This script:
-- Auto-discovers agents from `~/.aidevops/agents/*.md`
-- Configures MCP servers with correct `type: "local"` or `type: "remote"` fields
-- Sets up tools as objects (not arrays) with boolean values
-- Applies proper loading policies (eager vs lazy MCPs)
-- Creates subagent markdown files in `~/.config/opencode/agent/`
-
-### Common Schema Errors (if manually written)
 
 | Error | Wrong | Correct |
 |-------|-------|---------|
@@ -828,437 +271,76 @@ This script:
 | `Invalid input mcp.*` | Missing `type` field | Add `"type": "local"` or `"type": "remote"` |
 | `expected boolean, received object` for tools | `"tool_name": {...}` | `"tool_name": true` |
 
-### If OpenCode Won't Start
+If OpenCode won't start: `mv ~/.config/opencode/opencode.json ~/.config/opencode/opencode.json.broken && ~/.aidevops/agents/scripts/generate-opencode-agents.sh`
 
-```bash
-# Backup broken config
-mv ~/.config/opencode/opencode.json ~/.config/opencode/opencode.json.broken
-
-# Regenerate from scratch
-~/.aidevops/agents/scripts/generate-opencode-agents.sh
-
-# Restart OpenCode
-opencode
-```
-
-### Verify Configuration
-
-```bash
-# Check config is valid JSON
-jq . ~/.config/opencode/opencode.json > /dev/null && echo "Valid JSON" || echo "Invalid JSON"
-
-# List configured agents
-jq '.agent | keys' ~/.config/opencode/opencode.json
-
-# List configured MCPs
-jq '.mcp | keys' ~/.config/opencode/opencode.json
-```
+Verify: `jq . ~/.config/opencode/opencode.json > /dev/null && echo "Valid JSON"`
 
 ## Understanding Agents, Subagents, and Commands
 
-aidevops uses a layered system to give your AI assistant the right context at the right time, without wasting tokens on irrelevant information.
+| Layer | How to Use | Purpose |
+|-------|------------|---------|
+| **Main Agents** | Tab key in OpenCode | Switch AI persona with focused capabilities |
+| **Subagents** | `@name` mention | Pull in specialized knowledge on demand |
+| **Commands** | `/name` | Execute specific workflows |
 
-### The Three Layers
+**Main agents**: `Build+` (coding/DevOps), `SEO` (search optimization), `WordPress` (WP ecosystem)
 
-| Layer | How to Use | Purpose | Example |
-|-------|------------|---------|---------|
-| **Main Agents** | Tab key in OpenCode | Switch AI persona with focused capabilities | `Build+`, `SEO`, `WordPress` |
-| **Subagents** | `@name` mention | Pull in specialized knowledge on demand | `@hetzner`, `@dataforseo`, `@code-standards` |
-| **Commands** | `/name` | Execute specific workflows | `/release`, `/feature`, `/keyword-research` |
+**Common subagents**: `@hetzner`, `@cloudflare`, `@coolify`, `@vercel`, `@github-cli`, `@dataforseo`, `@augment-context-engine`, `@code-standards`, `@wp-dev`
 
-### Main Agents (Tab to Switch)
-
-Main agents are complete AI personas with their own tools and focus areas. In OpenCode, press **Tab** to switch between them:
-
-| Agent | Focus | Best For |
-|-------|-------|----------|
-| `Build+` | Unified coding agent | Planning, coding, debugging, DevOps |
-| `SEO` | Search optimization | Keyword research, SERP analysis, GSC |
-| `WordPress` | WordPress ecosystem | Theme/plugin dev, MainWP, LocalWP |
-
-**Build+ intent detection:** Build+ automatically detects your intent:
-- "What do you think..." / "How should we..." → Deliberation mode (research, discuss)
-- "Implement X" / "Fix Y" / "Add Z" → Execution mode (code changes)
-- Ambiguous → Asks for clarification
-
-**Specialist subagents:** Use `@aidevops` for framework operations, `@plan-plus` for planning-only mode.
-
-**When to switch agents:** Switch when your task changes domain. Need SEO analysis? Switch to `SEO`. WordPress work? Switch to `WordPress`.
-
-### Subagents (@mention)
-
-Subagents provide specialized knowledge without switching your main agent. Use `@name` to pull in context:
-
-```text
-@hetzner list all my servers
-@code-standards check this function
-@dataforseo research keywords for "ai tools"
-```
-
-**How it works:** When you mention a subagent, the AI reads that agent's instructions and gains its specialized knowledge - but stays in your current main agent context.
-
-**Common subagents:**
-
-| Category | Subagents |
-|----------|-----------|
-| Hosting | `@hetzner`, `@cloudflare`, `@coolify`, `@vercel` |
-| Git | `@github-cli`, `@gitlab-cli`, `@gitea-cli` |
-| Quality | `@code-standards`, `@codacy`, `@coderabbit`, `@snyk` |
-| SEO | `@dataforseo`, `@serper`, `@keyword-research` |
-| Context | `@augment-context-engine`, `@context7` |
-| WordPress | `@wp-dev`, `@wp-admin`, `@localwp`, `@mainwp` |
-
-### Commands (/slash)
-
-Commands execute specific workflows with predefined steps:
-
-```text
-/feature add-user-auth
-/release minor
-/keyword-research "best ai tools"
-```
-
-**How it works:** Commands invoke a workflow that may use multiple tools and follow a specific process. They're action-oriented.
-
-**When to use what:**
-
-| Situation | Use | Example |
-|-----------|-----|---------|
-| Need to switch focus entirely | Main agent (Tab) | Tab → `SEO` |
-| Need specialized knowledge | Subagent (@) | `@hetzner help me configure` |
-| Need to execute a workflow | Command (/) | `/release minor` |
-| General conversation | Just talk | "How do I deploy this?" |
-
-### Progressive Context Loading
-
-aidevops uses **progressive disclosure** - agents only load the context they need:
-
-1. **Root AGENTS.md** loads first (minimal, universal rules)
-2. **Main agent** loads when selected (focused capabilities)
-3. **Subagents** load on @mention (specialized knowledge)
-4. **Commands** load workflow steps (action sequences)
-
-This keeps token usage efficient while giving you access to deep expertise when needed.
-
-### Example Session
-
-```text
-# Start in Build+ agent (Tab to select)
-
-> I need to add a new API endpoint for user profiles
-
-# AI helps you plan and code...
-
-> @code-standards check my implementation
-
-# AI reads code-standards subagent, reviews your code
-
-> /pr
-
-# AI runs the PR workflow: linting, auditing, standards check
-
-# Later, need to research keywords for the feature...
-
-# Tab → SEO agent
-
-> /keyword-research "user profile api"
-
-# AI runs keyword research with SEO context
-```
+**Progressive context loading**: Root AGENTS.md → Main agent → Subagents on @mention → Commands on /invoke. Keeps token usage efficient.
 
 ## Workflow Features
-
-aidevops isn't just about API integrations - it provides powerful workflow enhancements for any project, including autonomous orchestration that dispatches AI workers, manages PRs across repos, and self-improves.
-
-### Enable Features in Any Project
 
 ```bash
 cd ~/your-project
 aidevops init                         # Enable all features
-aidevops init planning                # Enable only planning
 aidevops init planning,git-workflow   # Enable specific features
 aidevops features                     # List available features
 ```
 
-**Available features:** `planning`, `git-workflow`, `code-quality`, `time-tracking`
+Creates: `.aidevops.json`, `.agent` symlink, `TODO.md`, `todo/PLANS.md`
 
-This creates:
-
-- `.aidevops.json` - Configuration with enabled features
-- `.agent` symlink → `~/.aidevops/agents/`
-- `TODO.md` - Quick task tracking
-- `todo/PLANS.md` - Complex execution plans
-
-### Slash Commands
-
-Once aidevops is configured, these commands are available in OpenCode:
-
-**Planning & Tasks:**
-
-| Command | Purpose |
-|---------|---------|
-| `/create-prd` | Create Product Requirements Document for complex features |
-| `/generate-tasks` | Generate implementation tasks from a PRD |
-| `/plan-status` | Check status of plans and TODO.md |
-| `/log-time-spent` | Log time spent on a task |
-
-**Development Workflow:**
-
-| Command | Purpose |
-|---------|---------|
-| `/feature` | Create and develop a feature branch |
-| `/bugfix` | Create and resolve a bugfix branch |
-| `/hotfix` | Urgent hotfix for critical issues |
-| `/context` | Build AI context for complex tasks |
-
-**Quality & Release:**
-
-| Command | Purpose |
-|---------|---------|
-| `/linters-local` | Run local linting (ShellCheck, secretlint) |
-| `/code-audit-remote` | Run remote auditing (CodeRabbit, Codacy, SonarCloud) |
-| `/pr` | Unified PR workflow (orchestrates all checks) |
-| `/preflight` | Quality checks before release |
-| `/release` | Full release workflow (bump, tag, GitHub release) |
-| `/changelog` | Update CHANGELOG.md |
-
-**SEO (if configured):**
-
-| Command | Purpose |
-|---------|---------|
-| `/keyword-research` | Seed keyword expansion |
-| `/keyword-research-extended` | Full SERP analysis with weakness detection |
-
-### Time Tracking
-
-Tasks support time estimates and actuals:
-
-```markdown
-- [ ] Add user dashboard @marcus #feature ~4h (ai:2h test:1h) started:2025-01-15T10:30Z
-```
-
-| Field | Purpose | Example |
-|-------|---------|---------|
-| `~estimate` | Total time estimate | `~4h`, `~30m` |
-| `(breakdown)` | AI/test/read time | `(ai:2h test:1h)` |
-| `started:` | When work began | ISO timestamp |
-| `actual:` | Actual time spent | `actual:5h30m` |
-
-## Hands-On Playground
-
-The best way to learn aidevops is by doing. Let's create a playground project to experiment with.
-
-### Step 1: Create Playground Repository
-
-```bash
-mkdir -p ~/Git/aidevops-playground
-cd ~/Git/aidevops-playground
-git init
-aidevops init
-```
-
-### Step 2: Explore What's Possible
-
-Based on your interests (from earlier in onboarding), here are some ideas:
-
-**For Web Developers:**
-- "Create a simple landing page with a contact form"
-- "Build a REST API with authentication"
-- "Set up a React component library"
-
-**For DevOps Engineers:**
-- "Create a deployment script for my servers"
-- "Build a monitoring dashboard"
-- "Automate SSL certificate renewal"
-
-**For SEO Professionals:**
-- "Build a keyword tracking spreadsheet"
-- "Create a site audit report generator"
-- "Automate competitor analysis"
-
-**For WordPress Developers:**
-- "Create a custom plugin skeleton"
-- "Build a theme starter template"
-- "Automate plugin updates across sites"
-
-### Step 3: Try the Full Workflow
-
-Pick a simple idea and experience the complete workflow:
-
-1. **Plan it**: `/create-prd my-first-feature`
-2. **Generate tasks**: `/generate-tasks`
-3. **Start development**: `/feature my-first-feature`
-4. **Build it**: Work with the AI to implement
-5. **Quality check**: `/linters-local` then `/pr`
-6. **Release it**: `/release patch`
-
-### Step 4: Personalized Project Ideas
-
-If you're not sure what to build, tell me:
-- What problems do you face regularly?
-- What repetitive tasks do you wish were automated?
-- What tools do you wish existed?
-
-I'll suggest a small project tailored to your needs that we can build together in the playground.
+**Key commands**: `/create-prd`, `/generate-tasks`, `/feature`, `/bugfix`, `/hotfix`, `/pr`, `/preflight`, `/release`, `/linters-local`, `/keyword-research`
 
 ## Repo Sync Configuration
 
-During onboarding, ask the user about their git parent directories for daily repo sync:
-
-```text
-Repo sync keeps your local git repos up to date by running git pull --ff-only
-daily on repos that are clean and on their default branch.
-
-Where do you keep your git repos? (default: ~/Git)
-Enter one or more directories separated by commas, or press Enter for default:
-```
-
-If the user provides directories, configure them:
-
 ```bash
-# Update repos.json with git_parent_dirs
+# Configure git parent directories for daily repo sync
 jq --argjson dirs '["~/Git", "~/Projects"]' \
   '. + {git_parent_dirs: $dirs}' \
-  ~/.config/aidevops/repos.json > /tmp/repos.json && \
-  mv /tmp/repos.json ~/.config/aidevops/repos.json
-
-# Enable the daily scheduler
+  ~/.config/aidevops/repos.json > /tmp/repos.json && mv /tmp/repos.json ~/.config/aidevops/repos.json
 aidevops repo-sync enable
-```
-
-If the user skips, note they can configure later:
-
-```bash
-aidevops repo-sync config   # Show configuration instructions
-aidevops repo-sync enable   # Enable after configuring
 ```
 
 ## Autonomous Orchestration (Optional)
 
-aidevops can work autonomously — dispatching AI workers, merging PRs, evaluating results, and self-improving. This is opt-in because it uses your API keys.
+Features: supervisor pulse (every 2 min), auto-pickup, cross-repo visibility, strategic review (every 4h), model routing, budget tracking, session miner, circuit breaker.
 
-Ask the user:
-
-```text
-aidevops includes autonomous orchestration features that can work in the background:
-
-1. Supervisor pulse    - Dispatches AI workers every 2 min to implement tasks from TODO.md
-2. Auto-pickup         - Workers claim #auto-dispatch tasks automatically
-3. Cross-repo visibility - Manages tasks, issues, and PRs across all repos in repos.json
-4. Strategic review    - Separate scheduled process (every 4h) — opus-tier review checks
-                         queue health, finds stuck chains, identifies root causes, and
-                         creates self-improvement tasks (see scripts/commands/runners.md)
-5. Model routing       - Cost-aware dispatch: local > haiku > flash > sonnet > pro > opus
-6. Budget tracking     - Per-provider spend limits, subscription-aware routing
-7. Session miner       - Daily extraction of learning signals from past sessions
-8. Circuit breaker     - Auto-pauses dispatch if workers fail consecutively
-
-These require API keys (Anthropic/OpenAI) and will make API calls on your behalf.
-
-Would you like to enable autonomous orchestration? (yes/no/explain more)
-```
-
-If **explain more**:
-
-```text
-Here's how it works:
-
-- You add tasks to TODO.md with #auto-dispatch tag
-- The supervisor pulse picks them up and launches AI workers
-- Workers create branches, implement changes, and open PRs
-- The pulse evaluates results, merges passing PRs, and cleans up
-- Cross-repo: the supervisor sees tasks, issues, and PRs across all repos in repos.json
-- Model routing picks the cheapest model that can handle each task (haiku for simple, opus for complex)
-- Budget tracking prevents overspend — set daily limits per provider
-- Every 4 hours, a separate opus-tier strategic review assesses the whole operation:
-  finds blocked chains, stale state, idle capacity, and systemic issues.
-  This runs as its own scheduled process (see scripts/commands/runners.md for setup),
-  not as a step within the pulse itself.
-
-Cost depends on how you access the models:
-
-Subscription plans (recommended for regular use):
-- Claude Max ($100-200/mo) or Pro ($20/mo) give generous allowances
-- OpenAI Pro ($200/mo) or Plus ($20/mo) for GPT models
-- Subscriptions are significantly cheaper than API for sustained daily use
-- The pulse, workers, and strategic review all run within your allowance
-
-API billing (for testing and occasional use only):
-- Pay-per-token pricing adds up fast with autonomous orchestration
-- A busy day with 10+ workers can cost $20-50+ on API billing
-- Reserve API keys for testing new providers or burst capacity
-
-Recommendation: use a subscription plan as your primary provider.
-Configure API keys as fallback only.
-
-You stay in control — the supervisor only dispatches tasks you've tagged.
-```
-
-If **yes**:
+Cost: subscription plans (Claude Max/Pro, OpenAI Pro/Plus) are significantly cheaper than API for sustained use. Reserve API keys for testing.
 
 ```bash
-# Save preference and enable the supervisor pulse (every 2 min)
+# Enable
 ~/.aidevops/agents/scripts/onboarding-helper.sh save-orchestration true
-# See scripts/commands/runners.md for macOS (launchd) and Linux (cron) setup
-# The pulse dispatches workers, merges PRs, and manages cross-repo work
-```
-
-If **no**:
-
-```bash
-# Save preference
-~/.aidevops/agents/scripts/onboarding-helper.sh save-orchestration false
-```
-
-```text
-No problem. You can enable it anytime — see scripts/commands/runners.md
-for setup instructions (launchd on macOS, cron on Linux).
-
-The session miner and circuit breaker run as exit steps within the pulse.
-The strategic review runs as a separate scheduled process — see
-scripts/commands/runners.md for setup instructions for both.
+# See scripts/commands/runners.md for launchd (macOS) and cron (Linux) setup
 ```
 
 ## Settings File
 
-All onboarding choices are saved to `~/.config/aidevops/settings.json`. This is the canonical config file for aidevops — users can edit it directly with any text editor.
-
-**View current settings:**
-
 ```bash
 ~/.aidevops/agents/scripts/settings-helper.sh list
-```
-
-**Edit a setting:**
-
-```bash
 ~/.aidevops/agents/scripts/settings-helper.sh set orchestration.enabled true
 ~/.aidevops/agents/scripts/settings-helper.sh set user.work_type devops
-~/.aidevops/agents/scripts/settings-helper.sh set repo_sync.directories '["~/Git","~/Projects"]'
-```
-
-**Export as clean JSON (no docs):**
-
-```bash
-~/.aidevops/agents/scripts/settings-helper.sh json
-```
-
-**Reset to defaults:**
-
-```bash
 ~/.aidevops/agents/scripts/settings-helper.sh reset
 ```
 
-Settings sections: `user` (profile), `orchestration` (autonomous workers), `repo_sync` (daily pulls), `quality` (linting), `model_routing` (AI providers), `notifications`, `ui` (display). Each setting has inline documentation — run `settings-helper.sh list` to see descriptions.
+Settings sections: `user`, `orchestration`, `repo_sync`, `quality`, `model_routing`, `notifications`, `ui`.
 
 ## Next Steps After Setup
 
-Once services are configured:
-
-1. **Create your playground**: `mkdir ~/Git/aidevops-playground && cd ~/Git/aidevops-playground && git init && aidevops init`
-2. **Test a simple task**: "List my GitHub repos" or "Check my Hetzner servers"
-3. **Enable orchestration**: set up the pulse scheduler (see `scripts/commands/runners.md`) — autonomous task dispatch, PR management, cross-repo visibility, and strategic review
+1. **Create playground**: `mkdir ~/Git/aidevops-playground && cd ~/Git/aidevops-playground && git init && aidevops init`
+2. **Test**: "List my GitHub repos" or "Check my Hetzner servers"
+3. **Enable orchestration**: see `scripts/commands/runners.md`
 4. **Explore agents**: Type `@` to see available agents
 5. **Try a workflow**: `/create-prd` → `/generate-tasks` → `/feature` → build → `/release`
-6. **Try autonomous mode**: Add `#auto-dispatch` to a TODO.md task and watch the supervisor pick it up
+6. **Try autonomous mode**: Add `#auto-dispatch` to a TODO.md task
 7. **Read the docs**: `@aidevops` for framework guidance
