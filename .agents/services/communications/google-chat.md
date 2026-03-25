@@ -121,6 +121,7 @@ google-chat-helper.sh setup  # Interactive wizard
 | `allowedUsers` | `[]` (all domain users) | Email addresses allowed to use the bot |
 | `spaceMappings` | `{}` | Space name → runner mapping |
 | `defaultRunner` | `""` | Runner for unmapped spaces/DMs (empty = ignore) |
+| `maxResponseLength` | `4096` | Max response text length before truncation |
 | `responseTimeout` | `30` | Seconds before returning async acknowledgment |
 | `asyncResponseTimeout` | `600` | Max seconds for async runner response |
 | `verifyGoogleTokens` | `true` | **Must remain `true` in production** — disable only for local dev |
