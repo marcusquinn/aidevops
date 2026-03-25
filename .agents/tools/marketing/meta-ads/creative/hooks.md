@@ -2,14 +2,7 @@
 
 > The hook is everything. These first words/seconds determine whether your ad lives or dies.
 
----
-
-## How to Use This Guide
-
-1. Find the category that matches your angle
-2. Adapt the template to your product
-3. Test 3-5 variations
-4. Winner hook + winning body = optimized ad
+**How to use**: Find the category matching your angle → adapt the template → test 3-5 variations → winner hook + winning body = optimized ad.
 
 ---
 
@@ -363,20 +356,9 @@
 
 ### A/B Test Process
 
-**Week 1: Concept Test**
-- Test 3-5 hooks from different categories
-- Same body, same CTA
-- Find winning category
-
-**Week 2: Variation Test**
-- Take winning category
-- Test 3-5 variations within category
-- Find exact winning hook
-
-**Week 3: Iterate**
-- Take winner, test small modifications
-- Different words, same structure
-- Optimize to perfection
+- **Week 1 (Concept)**: Test 3-5 hooks from different categories, same body + CTA → find winning category
+- **Week 2 (Variation)**: Test 3-5 variations within winning category → find exact winning hook
+- **Week 3 (Iterate)**: Small modifications to winner (different words, same structure) → optimize
 
 ### Hook Performance Benchmarks
 
@@ -404,7 +386,6 @@
 
 ### For SaaS/B2B
 
-**Problem-Focused:**
 ```
 173. "Your [software/process] is costing you hours every week"
 174. "Why your team keeps missing deadlines (and how to fix it)"
@@ -412,10 +393,6 @@
 176. "The tool your competitors are using (and you're not)"
 177. "Stop paying for features you don't use"
 178. "Why [industry] leaders are switching to [product category]"
-```
-
-**Solution-Focused:**
-```
 179. "Automate your [task] in under 5 minutes"
 180. "The dashboard that changed how we [do thing]"
 181. "Everything you need to [achieve goal] in one place"
@@ -426,7 +403,6 @@
 
 ### For Ecommerce
 
-**Product-Focused:**
 ```
 185. "The [product] that [X,000] people can't stop talking about"
 186. "Why this [product] is going viral on TikTok"
@@ -434,10 +410,6 @@
 188. "Everything you want in a [product], nothing you don't"
 189. "Designed in [location], loved by [people]"
 190. "The [adjective] [product] that actually delivers"
-```
-
-**Social Proof-Focused:**
-```
 191. "What our customers are saying shocked us"
 192. "[Number] happy customers can't be wrong"
 193. "The [product] our customers keep buying again"
@@ -448,7 +420,6 @@
 
 ### For Services/Lead Gen
 
-**Consultation-Focused:**
 ```
 197. "Get a free [analysis/audit/consultation] in [timeframe]"
 198. "See what's really going on with your [area]"
@@ -456,10 +427,6 @@
 200. "What we found when we analyzed [X] [businesses/cases]"
 201. "Your custom [report/plan] is ready"
 202. "Let's fix your [problem] together — free consultation"
-```
-
-**Expertise-Focused:**
-```
 203. "After [years] in [industry], here's what I know"
 204. "The strategy I use for my own [business/clients]"
 205. "What I learned from [X] [projects/clients/years]"
@@ -472,36 +439,28 @@
 
 ## Hook Formulas (Mix & Match)
 
-### The Number + Benefit Formula
 ```
+# Number + Benefit
 "[Number] [things] to [achieve benefit]"
 "[Number] [people] already [achieving outcome]"
 "[Number] [time unit] to [transform/achieve]"
-```
 
-### The Question + Implication Formula
-```
+# Question + Implication
 "What if [positive possibility]?"
 "Have you ever [relatable struggle]?"
 "Why do [group] always [problem]?"
-```
 
-### The Contrast Formula
-```
+# Contrast
 "[Old way] vs [New way]"
 "[Bad outcome] or [Good outcome]?"
 "Most [people] do [X]. The best do [Y]."
-```
 
-### The Direct Address Formula
-```
+# Direct Address
 "If you're [specific situation], watch this"
 "[Role/Type of person], this is for you"
 "To everyone who [specific struggle]..."
-```
 
-### The Credibility + Promise Formula
-```
+# Credibility + Promise
 "After [credibility], here's [promise]"
 "[Credibility]. Now I'm sharing [value]"
 "I've [achievement]. Here's how you can too."
@@ -509,28 +468,14 @@
 
 ---
 
-## Platform-Specific Hook Guidance
+## Platform-Specific Notes
 
-### For Facebook Feed
-- Can be slightly longer (full sentence)
-- Question hooks perform well
-- Testimonial quotes work well
-- First line visible before "See More"
-
-### For Instagram Feed
-- Keep shorter and punchier
-- Visual hook must match text hook
-- Hashtags can be part of discovery
-
-### For Stories/Reels
-- Must work in first 1-2 seconds
-- Text overlay is the hook
-- Sound/music can be hook
-
-### For Audience Network
-- Very short hooks
-- Direct value statement
-- Click-bait doesn't work (gets ignored)
+| Platform | Hook guidance |
+|----------|--------------|
+| Facebook Feed | Full sentence OK; question + testimonial hooks perform well; first line visible before "See More" |
+| Instagram Feed | Shorter/punchier; visual hook must match text hook |
+| Stories/Reels | Must work in first 1-2 seconds; text overlay is the hook |
+| Audience Network | Very short; direct value statement; click-bait gets ignored |
 
 ---
 
