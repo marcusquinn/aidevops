@@ -135,6 +135,11 @@ _build_permissions_json() {
 	while IFS= read -r perm; do
 		perm="${perm#"${perm%%[![:space:]]*}"}"
 		perm="${perm%"${perm##*[![:space:]]}"}"
+		[[ -z "$perm" ]] && continue
+		if [[ "$perm" != *:* ]] || [[ "$perm" == :* ]] || [[ "$perm" == *: ]]; then
+			log_token "ERROR" "Invalid permission entry: ${perm} (expected name:level)"
+			return 1
+		fi
 		local perm_name="${perm%%:*}"
 		local perm_level="${perm##*:}"
 		if [[ "$first" == true ]]; then
@@ -144,6 +149,10 @@ _build_permissions_json() {
 		fi
 		perms_json+="\"${perm_name}\":\"${perm_level}\""
 	done < <(printf '%s\n' "$permissions" | tr ',' '\n')
+	if [[ "$first" == true ]]; then
+		log_token "ERROR" "At least one valid permission is required"
+		return 1
+	fi
 	perms_json+="}"
 	printf '%s' "$perms_json"
 	return 0
@@ -196,7 +205,10 @@ _request_app_token() {
 	fi
 
 	local token_file
-	token_file=$(create_token_file "$token" "$repo" "github-app" "$expires_at")
+	token_file=$(create_token_file "$token" "$repo" "github-app" "$expires_at") || {
+		log_token "ERROR" "Failed to persist GitHub App token for ${repo}"
+		return 1
+	}
 
 	if [[ -z "$token_file" ]] || [[ ! -f "$token_file" ]]; then
 		log_token "ERROR" "Failed to create token file for GitHub App token (repo: ${repo})"
@@ -249,7 +261,7 @@ create_app_token() {
 
 	# Build permissions JSON and request the installation token
 	local perms_json
-	perms_json=$(_build_permissions_json "$permissions")
+	perms_json=$(_build_permissions_json "$permissions") || return 1
 
 	_request_app_token "$repo" "$jwt" "$installation_id" "$perms_json" "$ttl"
 	return $?
