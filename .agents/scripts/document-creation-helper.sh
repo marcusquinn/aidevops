@@ -625,10 +625,10 @@ cmd_formats() {
 # MIME/Email conversion functions
 # ============================================================================
 
-# Python MIME parser for a single .eml file.
-# Writes markdown + raw-headers files and prints status lines to stdout.
+# Resolve email metadata and build the output directory path.
+# Prints the email_dir and base_name (tab-separated) to stdout.
 # Args: input_file output_dir
-_eml_parse_mime() {
+_eml_resolve_paths() {
 	local input="$1"
 	local output_dir="$2"
 
@@ -645,137 +645,205 @@ import re
 input_file = sys.argv[1]
 output_dir = sys.argv[2]
 
-# Read email
 with open(input_file, 'rb') as f:
     msg = message_from_binary_file(f, policy=email.policy.default)
 
-# Extract metadata
 subject = msg.get('Subject', 'no-subject')
 from_header = msg.get('From', '')
 date_header = msg.get('Date', '')
 
-# Parse sender
 sender_name, sender_email = parseaddr(from_header)
 if not sender_email:
     sender_email = 'unknown'
 if not sender_name:
     sender_name = 'unknown'
 
-# Parse date
 try:
     dt = parsedate_to_datetime(date_header)
     timestamp = dt.strftime('%Y-%m-%d-%H%M%S')
-except:
+except Exception:
     timestamp = datetime.now().strftime('%Y-%m-%d-%H%M%S')
 
-# Sanitize components for filename
 def sanitize(s):
     s = re.sub(r'[^\w\s.-]', '', s)
     s = re.sub(r'\s+', '-', s)
-    s = s[:50]  # Limit length
-    return s
+    return s[:50]
 
 subject_safe = sanitize(subject)
 sender_email_safe = sanitize(sender_email.replace('@', '-at-'))
 sender_name_safe = sanitize(sender_name)
 
-# Build base filename
 base_name = f"{timestamp}-{subject_safe}-{sender_email_safe}-{sender_name_safe}"
-
-# Create output directory for this email
 email_dir = os.path.join(output_dir, base_name)
 os.makedirs(email_dir, exist_ok=True)
 
-# Write main markdown file
-md_file = os.path.join(email_dir, f"{base_name}.md")
-raw_headers_file = os.path.join(email_dir, f"{base_name}-raw-headers.md")
+print(f"{email_dir}\t{base_name}")
+PYEOF
+
+	return 0
+}
+
+# Write markdown and raw-headers files from a parsed .eml.
+# Prints "Email converted: <path>" and "Raw headers: <path>" to stdout.
+# Args: input_file email_dir base_name
+_eml_write_markdown() {
+	local input="$1"
+	local email_dir="$2"
+	local base_name="$3"
+
+	python3 - "$input" "$email_dir" "$base_name" <<'PYEOF'
+import sys
+import os
+import email
+import email.policy
+from email import message_from_binary_file
+
+input_file = sys.argv[1]
+email_dir = sys.argv[2]
+base_name = sys.argv[3]
+
+with open(input_file, 'rb') as f:
+    msg = message_from_binary_file(f, policy=email.policy.default)
+
+subject = msg.get('Subject', 'no-subject')
+from_header = msg.get('From', '')
+date_header = msg.get('Date', '')
+to_header = msg.get('To', '')
+cc_header = msg.get('Cc', '')
+
+from email.utils import parseaddr
+sender_name, sender_email = parseaddr(from_header)
+if not sender_email:
+    sender_email = 'unknown'
+if not sender_name:
+    sender_name = 'unknown'
 
 # Extract body
 body_text = ""
 body_html = ""
-
 if msg.is_multipart():
     for part in msg.walk():
-        content_type = part.get_content_type()
         content_disposition = str(part.get("Content-Disposition", ""))
-
-        # Skip attachments in body extraction
         if "attachment" in content_disposition:
             continue
-
-        if content_type == "text/plain":
+        ct = part.get_content_type()
+        if ct == "text/plain":
             try:
                 body_text = part.get_content()
-            except:
+            except Exception:
                 pass
-        elif content_type == "text/html":
+        elif ct == "text/html":
             try:
                 body_html = part.get_content()
-            except:
+            except Exception:
                 pass
 else:
-    content_type = msg.get_content_type()
-    if content_type == "text/plain":
+    ct = msg.get_content_type()
+    if ct == "text/plain":
         try:
             body_text = msg.get_content()
-        except:
+        except Exception:
             pass
-    elif content_type == "text/html":
+    elif ct == "text/html":
         try:
             body_html = msg.get_content()
-        except:
+        except Exception:
             pass
 
-# Prefer plain text, fallback to HTML
 body = body_text if body_text else body_html
 
-# Write markdown
+md_file = os.path.join(email_dir, f"{base_name}.md")
 with open(md_file, 'w', encoding='utf-8') as f:
     f.write(f"# Email: {subject}\n\n")
     f.write(f"**From:** {sender_name} <{sender_email}>\n")
     f.write(f"**Date:** {date_header}\n")
-
-    to_header = msg.get('To', '')
     if to_header:
         f.write(f"**To:** {to_header}\n")
-
-    cc_header = msg.get('Cc', '')
     if cc_header:
         f.write(f"**Cc:** {cc_header}\n")
-
-    f.write(f"\n---\n\n")
+    f.write("\n---\n\n")
     f.write(body)
 
-# Write raw headers
+raw_headers_file = os.path.join(email_dir, f"{base_name}-raw-headers.md")
 with open(raw_headers_file, 'w', encoding='utf-8') as f:
-    f.write("# Raw Email Headers\n\n")
-    f.write("```\n")
+    f.write("# Raw Email Headers\n\n```\n")
     for key, value in msg.items():
         f.write(f"{key}: {value}\n")
     f.write("```\n")
 
-# Extract attachments
+print(f"Email converted: {md_file}")
+print(f"Raw headers: {raw_headers_file}")
+PYEOF
+
+	return 0
+}
+
+# Extract attachments from a .eml file into email_dir.
+# Prints "Extracted attachment: <name>" lines and "Attachments: N" to stdout.
+# Args: input_file email_dir
+_eml_extract_attachments() {
+	local input="$1"
+	local email_dir="$2"
+
+	python3 - "$input" "$email_dir" <<'PYEOF'
+import sys
+import os
+import email
+import email.policy
+from email import message_from_binary_file
+
+input_file = sys.argv[1]
+email_dir = sys.argv[2]
+
+with open(input_file, 'rb') as f:
+    msg = message_from_binary_file(f, policy=email.policy.default)
+
 attachment_count = 0
 if msg.is_multipart():
     for part in msg.walk():
         content_disposition = str(part.get("Content-Disposition", ""))
-
         if "attachment" in content_disposition:
             filename = part.get_filename()
             if filename:
                 attachment_count += 1
-                # Save attachment
                 attachment_path = os.path.join(email_dir, filename)
                 with open(attachment_path, 'wb') as f:
                     f.write(part.get_payload(decode=True))
-
                 print(f"  Extracted attachment: {filename}")
 
-print(f"Email converted: {md_file}")
-print(f"Raw headers: {raw_headers_file}")
 print(f"Attachments: {attachment_count}")
-print(f"Output directory: {email_dir}")
 PYEOF
+
+	return 0
+}
+
+# Python MIME parser for a single .eml file.
+# Writes markdown + raw-headers files and prints status lines to stdout.
+# Orchestrates _eml_resolve_paths, _eml_write_markdown, _eml_extract_attachments.
+# Args: input_file output_dir
+_eml_parse_mime() {
+	local input="$1"
+	local output_dir="$2"
+
+	# Step 1: resolve output paths from email metadata
+	local path_info
+	path_info=$(_eml_resolve_paths "$input" "$output_dir")
+	local email_dir
+	email_dir=$(printf '%s' "$path_info" | cut -f1)
+	local base_name
+	base_name=$(printf '%s' "$path_info" | cut -f2)
+
+	if [[ -z "$email_dir" || -z "$base_name" ]]; then
+		die "Failed to resolve email paths for: ${input}"
+	fi
+
+	# Step 2: write markdown and raw headers
+	_eml_write_markdown "$input" "$email_dir" "$base_name"
+
+	# Step 3: extract attachments
+	_eml_extract_attachments "$input" "$email_dir"
+
+	printf 'Output directory: %s\n' "$email_dir"
 
 	return 0
 }
@@ -2258,27 +2326,19 @@ PYEOF
 	return 0
 }
 
-# Python implementation: parse signature and write/update a TOON contact record.
-# Args: md_file contacts_dir
-_extract_contact_python() {
+# Extract sender name and email from a converted email markdown file.
+# Prints "name\temail" to stdout, or exits silently if no sender found.
+# Args: md_file
+_contact_parse_sender() {
 	local md_file="$1"
-	local contacts_dir="$2"
 
-	python3 - "$md_file" "$contacts_dir" <<'PYEOF'
+	python3 - "$md_file" <<'PYEOF'
 import sys
-import os
 import re
-from datetime import datetime
 
-md_file = sys.argv[1]
-contacts_dir = sys.argv[2]
-
-os.makedirs(contacts_dir, exist_ok=True)
-
-with open(md_file, 'r', encoding='utf-8', errors='replace') as f:
+with open(sys.argv[1], 'r', encoding='utf-8', errors='replace') as f:
     content = f.read()
 
-# Extract sender email from frontmatter/header
 from_match = re.search(r'\*\*From:\*\*\s*(.+?)(?:<(.+?)>)?$', content, re.MULTILINE)
 if not from_match:
     sys.exit(0)
@@ -2287,7 +2347,6 @@ sender_name = (from_match.group(1) or '').strip()
 sender_email = (from_match.group(2) or '').strip()
 
 if not sender_email:
-    # Try extracting email from the name field
     email_in_name = re.search(r'[\w.+-]+@[\w.-]+\.\w+', sender_name)
     if email_in_name:
         sender_email = email_in_name.group(0)
@@ -2296,21 +2355,31 @@ if not sender_email:
 if not sender_email:
     sys.exit(0)
 
-# Extract date
-date_match = re.search(r'\*\*Date:\*\*\s*(.+)$', content, re.MULTILINE)
-email_date = date_match.group(1).strip() if date_match else datetime.now().isoformat()
+print(f"{sender_name}\t{sender_email}")
+PYEOF
 
-# Detect signature block
+	return 0
+}
+
+# Parse signature block from email markdown and extract contact fields.
+# Prints tab-separated "phone\twebsite\ttitle\tcompany" to stdout.
+# Args: md_file sender_name
+_contact_parse_signature() {
+	local md_file="$1"
+	local sender_name="$2"
+
+	python3 - "$md_file" "$sender_name" <<'PYEOF'
+import sys
+import re
+
+with open(sys.argv[1], 'r', encoding='utf-8', errors='replace') as f:
+    content = f.read()
+sender_name = sys.argv[2]
+
 sig_patterns = [
-    r'\n--\s*\n',
-    r'\nBest regards,?\s*\n',
-    r'\nKind regards,?\s*\n',
-    r'\nRegards,?\s*\n',
-    r'\nSincerely,?\s*\n',
-    r'\nCheers,?\s*\n',
-    r'\nThanks,?\s*\n',
-    r'\nThank you,?\s*\n',
-    r'\nBest,?\s*\n',
+    r'\n--\s*\n', r'\nBest regards,?\s*\n', r'\nKind regards,?\s*\n',
+    r'\nRegards,?\s*\n', r'\nSincerely,?\s*\n', r'\nCheers,?\s*\n',
+    r'\nThanks,?\s*\n', r'\nThank you,?\s*\n', r'\nBest,?\s*\n',
     r'\nWarm regards,?\s*\n',
 ]
 
@@ -2321,24 +2390,23 @@ for pattern in sig_patterns:
         signature = content[match.start():]
         break
 
-# Strip the greeting line and sender name from signature for field extraction
 sig_lines = signature.strip().split('\n')
-# Remove greeting lines (Best regards, --, etc.) and blank lines at start
 sig_body_lines = []
 skip_header = True
 for line in sig_lines:
     stripped = line.strip()
     if skip_header:
-        if not stripped or re.match(r'^(--|Best regards|Kind regards|Regards|Sincerely|Cheers|Thanks|Thank you|Best|Warm regards),?\s*$', stripped, re.IGNORECASE):
+        if not stripped or re.match(
+            r'^(--|Best regards|Kind regards|Regards|Sincerely|Cheers|Thanks|Thank you|Best|Warm regards),?\s*$',
+            stripped, re.IGNORECASE
+        ):
             continue
-        # Skip the sender's own name line
         if sender_name and stripped.lower() == sender_name.lower():
             continue
         skip_header = False
     sig_body_lines.append(line)
 sig_body = '\n'.join(sig_body_lines)
 
-# Extract contact fields from signature body (after greeting + name)
 phone_match = re.search(r'(?:(?:tel|phone|mob|cell|fax)[:\s]*)?(\+?[\d\s\-().]{7,20})', sig_body, re.IGNORECASE)
 website_match = re.search(r'(?:https?://)?(?:www\.)?[\w.-]+\.\w{2,}(?:/[\w.-]*)*', sig_body, re.IGNORECASE)
 title_roles = r'(?:Manager|Director|Engineer|Developer|Designer|Analyst|Consultant|Officer|Lead|Head|VP|CEO|CTO|CFO|COO|President|Founder|Partner|Architect|Coordinator|Specialist|Administrator|Supervisor|Executive|Associate|Assistant|Advisor|Strategist)'
@@ -2350,17 +2418,47 @@ website = website_match.group(0).strip() if website_match else ""
 title = title_match.group(1).strip() if title_match else ""
 company = company_match.group(1).strip() if company_match else ""
 
-# Build TOON record
+print(f"{phone}\t{website}\t{title}\t{company}")
+PYEOF
+
+	return 0
+}
+
+# Write or update a TOON contact record file.
+# Args: contacts_dir sender_email sender_name phone website title company
+_contact_write_toon() {
+	local contacts_dir="$1"
+	local sender_email="$2"
+	local sender_name="$3"
+	local phone="$4"
+	local website="$5"
+	local title="$6"
+	local company="$7"
+
+	python3 - "$contacts_dir" "$sender_email" "$sender_name" \
+		"$phone" "$website" "$title" "$company" <<'PYEOF'
+import sys
+import os
+import re
+from datetime import datetime
+
+contacts_dir = sys.argv[1]
+sender_email = sys.argv[2]
+sender_name = sys.argv[3]
+phone = sys.argv[4]
+website = sys.argv[5]
+title = sys.argv[6]
+company = sys.argv[7]
+
+os.makedirs(contacts_dir, exist_ok=True)
+
 email_safe = sender_email.replace('@', '-at-').replace('.', '-')
 toon_file = os.path.join(contacts_dir, f"{email_safe}.toon")
-
 now = datetime.now().strftime('%Y-%m-%dT%H:%M:%S')
 
-# Check if contact file exists (merge/update)
 if os.path.exists(toon_file):
     with open(toon_file, 'r', encoding='utf-8') as f:
         existing = f.read()
-    # Update last_seen
     existing = re.sub(r'last_seen\t[^\n]+', f'last_seen\t{now}', existing)
     with open(toon_file, 'w', encoding='utf-8') as f:
         f.write(existing)
@@ -2381,8 +2479,41 @@ else:
         f.write(f"\tfirst_seen\t{now}\n")
         f.write(f"\tlast_seen\t{now}\n")
         f.write(f"\tconfidence\tlow\n")
-
 PYEOF
+
+	return 0
+}
+
+# Python implementation: parse signature and write/update a TOON contact record.
+# Orchestrates _contact_parse_sender, _contact_parse_signature, _contact_write_toon.
+# Args: md_file contacts_dir
+_extract_contact_python() {
+	local md_file="$1"
+	local contacts_dir="$2"
+
+	# Step 1: extract sender name and email
+	local sender_info
+	sender_info=$(_contact_parse_sender "$md_file") || return 0
+	if [[ -z "$sender_info" ]]; then
+		return 0
+	fi
+	local sender_name
+	sender_name=$(printf '%s' "$sender_info" | cut -f1)
+	local sender_email
+	sender_email=$(printf '%s' "$sender_info" | cut -f2)
+
+	# Step 2: parse signature for contact fields
+	local sig_fields
+	sig_fields=$(_contact_parse_signature "$md_file" "$sender_name") || true
+	local phone website title company
+	phone=$(printf '%s' "$sig_fields" | cut -f1)
+	website=$(printf '%s' "$sig_fields" | cut -f2)
+	title=$(printf '%s' "$sig_fields" | cut -f3)
+	company=$(printf '%s' "$sig_fields" | cut -f4)
+
+	# Step 3: write/update TOON contact record
+	_contact_write_toon "$contacts_dir" "$sender_email" "$sender_name" \
+		"$phone" "$website" "$title" "$company"
 
 	return 0
 }
