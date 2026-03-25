@@ -1164,13 +1164,11 @@ test_mail_tls() {
 	return 0
 }
 
-# Write the HTML content for the test email template
-_generate_email_html() {
+# Write the <head> section of the test email template
+_generate_email_head() {
 	local output_file="$1"
 
-	cat >"$output_file" <<'HTMLEOF'
-<!DOCTYPE html>
-<html xmlns="http://www.w3.org/1999/xhtml" lang="en">
+	cat >>"$output_file" <<'HTMLEOF'
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -1211,9 +1209,16 @@ _generate_email_html() {
         }
     </style>
 </head>
-<body style="margin: 0; padding: 0; background-color: #f4f4f4;" class="email-body">
-    <!--[if mso]><table role="presentation" width="600" align="center" cellpadding="0" cellspacing="0" border="0"><tr><td><![endif]-->
-    <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="max-width: 600px; margin: 0 auto;" class="email-container">
+HTMLEOF
+
+	return 0
+}
+
+# Write the header row of the test email body
+_generate_email_body_header() {
+	local output_file="$1"
+
+	cat >>"$output_file" <<'HTMLEOF'
         <!-- Header -->
         <tr>
             <td style="background-color: #2c3e50; padding: 30px 20px; text-align: center;" class="header-bg">
@@ -1222,6 +1227,16 @@ _generate_email_html() {
                 </h1>
             </td>
         </tr>
+HTMLEOF
+
+	return 0
+}
+
+# Write the main content row of the test email body
+_generate_email_body_content() {
+	local output_file="$1"
+
+	cat >>"$output_file" <<'HTMLEOF'
         <!-- Body -->
         <tr>
             <td style="background-color: #ffffff; padding: 30px 20px;" class="mobile-padding">
@@ -1254,6 +1269,16 @@ _generate_email_html() {
                 </p>
             </td>
         </tr>
+HTMLEOF
+
+	return 0
+}
+
+# Write the footer row of the test email body
+_generate_email_body_footer() {
+	local output_file="$1"
+
+	cat >>"$output_file" <<'HTMLEOF'
         <!-- Footer -->
         <tr>
             <td style="background-color: #ecf0f1; padding: 20px; text-align: center;">
@@ -1265,6 +1290,36 @@ _generate_email_html() {
                 </p>
             </td>
         </tr>
+HTMLEOF
+
+	return 0
+}
+
+# Write the HTML content for the test email template
+_generate_email_html() {
+	local output_file="$1"
+
+	# Open document and html tag
+	cat >"$output_file" <<'HTMLEOF'
+<!DOCTYPE html>
+<html xmlns="http://www.w3.org/1999/xhtml" lang="en">
+HTMLEOF
+
+	_generate_email_head "$output_file"
+
+	# Open body and outer table
+	cat >>"$output_file" <<'HTMLEOF'
+<body style="margin: 0; padding: 0; background-color: #f4f4f4;" class="email-body">
+    <!--[if mso]><table role="presentation" width="600" align="center" cellpadding="0" cellspacing="0" border="0"><tr><td><![endif]-->
+    <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="100%" style="max-width: 600px; margin: 0 auto;" class="email-container">
+HTMLEOF
+
+	_generate_email_body_header "$output_file"
+	_generate_email_body_content "$output_file"
+	_generate_email_body_footer "$output_file"
+
+	# Close outer table and body
+	cat >>"$output_file" <<'HTMLEOF'
     </table>
     <!--[if mso]></td></tr></table><![endif]-->
 </body>
