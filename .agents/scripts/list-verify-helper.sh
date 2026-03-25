@@ -195,6 +195,56 @@ _count_entries() {
 	return 0
 }
 
+# _print_section_header: print the markdown table header for a section.
+# Args: $1 = section name (failed|pending|passed)
+# Returns: 0 always.
+_print_section_header() {
+	local section="$1"
+	case "$section" in
+	failed)
+		echo "| # | Verify | Task | Description | PR | Merged | Reason |"
+		echo "|---|--------|------|-------------|-----|--------|--------|"
+		;;
+	pending)
+		echo "| # | Verify | Task | Description | PR | Merged | Checks |"
+		echo "|---|--------|------|-------------|-----|--------|--------|"
+		;;
+	passed)
+		echo "| # | Verify | Task | Description | PR | Merged | Verified |"
+		echo "|---|--------|------|-------------|-----|--------|----------|"
+		;;
+	esac
+	return 0
+}
+
+# _print_section_rows: print table rows for a section from entries_file.
+# Args: $1 = section name, $2 = entries_file
+# Returns: 0 always.
+_print_section_rows() {
+	local section="$1"
+	local entries_file="$2"
+	local num=0
+
+	while IFS='|' read -r status vid tid desc pr merged files checks verified failed_reason; do
+		[[ "$status" != "$section" ]] && continue
+		((++num))
+		case "$section" in
+		failed)
+			echo "| $num | $vid | $tid | $desc | $pr | $merged | ${failed_reason:--} |"
+			;;
+		pending)
+			local check_count=0
+			[[ -n "$checks" ]] && check_count=$(echo "$checks" | tr ';' '\n' | wc -l | tr -d ' ')
+			echo "| $num | $vid | $tid | $desc | $pr | $merged | ${check_count} checks |"
+			;;
+		passed)
+			echo "| $num | $vid | $tid | $desc | $pr | $merged | ${verified:--} |"
+			;;
+		esac
+	done <"$entries_file"
+	return 0
+}
+
 # Render one status section (failed / pending / passed) in markdown
 # Args: $1 = section name, $2 = count, $3 = entries_file, $4 = color code
 _output_markdown_section() {
@@ -225,38 +275,8 @@ _output_markdown_section() {
 			esac
 		done <"$entries_file"
 	else
-		case "$section" in
-		failed)
-			echo "| # | Verify | Task | Description | PR | Merged | Reason |"
-			echo "|---|--------|------|-------------|-----|--------|--------|"
-			;;
-		pending)
-			echo "| # | Verify | Task | Description | PR | Merged | Checks |"
-			echo "|---|--------|------|-------------|-----|--------|--------|"
-			;;
-		passed)
-			echo "| # | Verify | Task | Description | PR | Merged | Verified |"
-			echo "|---|--------|------|-------------|-----|--------|----------|"
-			;;
-		esac
-		local num=0
-		while IFS='|' read -r status vid tid desc pr merged files checks verified failed_reason; do
-			[[ "$status" != "$section" ]] && continue
-			((++num))
-			case "$section" in
-			failed)
-				echo "| $num | $vid | $tid | $desc | $pr | $merged | ${failed_reason:--} |"
-				;;
-			pending)
-				local check_count=0
-				[[ -n "$checks" ]] && check_count=$(echo "$checks" | tr ';' '\n' | wc -l | tr -d ' ')
-				echo "| $num | $vid | $tid | $desc | $pr | $merged | ${check_count} checks |"
-				;;
-			passed)
-				echo "| $num | $vid | $tid | $desc | $pr | $merged | ${verified:--} |"
-				;;
-			esac
-		done <"$entries_file"
+		_print_section_header "$section"
+		_print_section_rows "$section" "$entries_file"
 	fi
 	echo ""
 	echo "---"
