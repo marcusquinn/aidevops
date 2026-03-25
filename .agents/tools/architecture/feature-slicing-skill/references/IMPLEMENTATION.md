@@ -1,14 +1,8 @@
 # FSD Implementation Patterns
 
-> **Sources:** [Tutorial](https://feature-sliced.design/docs/get-started/tutorial) | [Examples](https://github.com/feature-sliced/examples) | [Awesome FSD](https://github.com/feature-sliced/awesome)
+Code patterns for Feature-Sliced Design architecture. Sources: [Tutorial](https://feature-sliced.design/docs/get-started/tutorial) | [Examples](https://github.com/feature-sliced/examples) | [Awesome FSD](https://github.com/feature-sliced/awesome)
 
-Code patterns for Feature-Sliced Design architecture.
-
----
-
-## Entity Pattern
-
-### Complete Entity: User
+## Entity Pattern: User
 
 **Model Layer** (`entities/user/model/`):
 
@@ -180,11 +174,7 @@ export { mapUserDTO } from './model/mapper';
 export { userSchema, type UserFormData } from './model/schema';
 ```
 
----
-
-## Feature Pattern
-
-### Complete Feature: Authentication
+## Feature Pattern: Authentication
 
 **Model Layer** (`features/auth/model/`):
 
@@ -368,11 +358,7 @@ export type { LoginCredentials, AuthTokens } from './model/types';
 export { loginSchema, registerSchema } from './model/schema';
 ```
 
----
-
-## Widget Pattern
-
-### Header Widget
+## Widget Pattern: Header
 
 ```tsx
 // widgets/header/ui/Header.tsx
@@ -409,11 +395,7 @@ export function Header() {
 export { Header } from './ui/Header';
 ```
 
----
-
-## Page Pattern
-
-### Product Detail Page
+## Page Pattern: Product Detail
 
 ```typescript
 // pages/product-detail/api/loader.ts
@@ -452,11 +434,7 @@ export { ProductDetailPage } from './ui/ProductDetailPage';
 export { productDetailLoader } from './api/loader';
 ```
 
----
-
 ## Shared Layer Pattern
-
-### API Client
 
 ```typescript
 // shared/api/client.ts
@@ -554,11 +532,7 @@ export { Button } from './Button';
 export { Input } from './Input';
 ```
 
----
-
 ## App Layer Pattern
-
-### Providers Setup
 
 ```tsx
 // app/providers/index.tsx
@@ -601,8 +575,6 @@ export const router = createBrowserRouter([
   { path: '/login', element: <LoginPage /> },
 ]);
 ```
-
----
 
 ## TypeScript Configuration
 
