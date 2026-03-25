@@ -16,6 +16,7 @@
 # Exit codes: 0=success (response on stdout), 1=error, 2=no API key
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
+# shellcheck source=shared-constants.sh
 source "${SCRIPT_DIR}/shared-constants.sh"
 
 set -euo pipefail
