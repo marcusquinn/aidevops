@@ -32,8 +32,6 @@ AI-powered image generation for thumbnails, social media graphics, blog headers,
 
 ## Tool Routing Decision Tree
 
-Choose the right tool for your image generation task:
-
 ```text
 Need structured JSON control?           → Nanobanana Pro
 Need objects/environments/landscapes?   → Midjourney (--ar 16:9 --style raw)
@@ -94,368 +92,107 @@ Nanobanana Pro uses structured JSON prompts for precise control over composition
 
 ### Template Variants
 
-#### 1. Editorial Portrait Template
+Four ready-to-use templates — swap `subject` and `concept`, keep the rest for brand consistency:
 
-Use for: Professional headshots, team photos, author bios, speaker profiles.
+| Template | Use for | Key settings |
+|----------|---------|-------------|
+| **Editorial Portrait** | Headshots, team photos, author bios | Canon R5, 85mm f/1.2, studio 3-point, neutral 5500K, 4:5 |
+| **Environmental Product Shot** | E-commerce, lifestyle product placement | Sony A7IV, 50mm f/1.8, golden hour, warm 3500K, 16:9 |
+| **Magazine Cover** | YouTube thumbnails, blog headers, hero images | Canon R5, 85mm f/1.2, dramatic front+rim, complementary palette, 9:16 |
+| **Street Photography** | Authentic lifestyle, documentary, UGC aesthetic | Leica Q2, 28mm f/1.7, overcast available light, monochromatic, 3:2 |
 
+Full JSON for each template: swap `subject`, `concept`, and `composition.focal_point` per shot. Keep lighting, color, and style constant for brand consistency.
+
+**Example (Editorial Portrait)**:
 ```json
 {
-  "subject": "[NAME], a [AGE] [ETHNICITY] [GENDER] with [HAIR_DETAILS], [EYE_COLOR] eyes, wearing [CLOTHING]",
+  "subject": "[NAME], a [AGE] [ETHNICITY] [GENDER] with [HAIR_DETAILS], wearing [CLOTHING]",
   "concept": "Professional editorial portrait for [CONTEXT]",
-  "composition": {
-    "framing": "medium shot",
-    "angle": "eye-level",
-    "rule_of_thirds": true,
-    "focal_point": "eyes",
-    "depth_of_field": "shallow"
-  },
-  "lighting": {
-    "type": "studio",
-    "direction": "three-point",
-    "quality": "soft diffused",
-    "color_temperature": "neutral (5500K)",
-    "mood": "bright and airy"
-  },
-  "color": {
-    "palette": ["#F5F5F5", "#2C3E50", "#E8E8E8"],
-    "dominant": "#F5F5F5",
-    "accent": "#2C3E50",
-    "saturation": "muted",
-    "harmony": "monochromatic"
-  },
-  "style": {
-    "aesthetic": "editorial",
-    "texture": "smooth",
-    "post_processing": "light grading",
-    "reference": "Annie Leibovitz editorial style"
-  },
-  "technical": {
-    "camera": "Canon R5",
-    "lens": "85mm f/1.2",
-    "settings": "f/1.8, 1/200s, ISO 200",
-    "resolution": "4K",
-    "aspect_ratio": "4:5"
-  },
+  "composition": { "framing": "medium shot", "angle": "eye-level", "rule_of_thirds": true, "focal_point": "eyes", "depth_of_field": "shallow" },
+  "lighting": { "type": "studio", "direction": "three-point", "quality": "soft diffused", "color_temperature": "neutral (5500K)", "mood": "bright and airy" },
+  "color": { "palette": ["#F5F5F5", "#2C3E50", "#E8E8E8"], "dominant": "#F5F5F5", "accent": "#2C3E50", "saturation": "muted", "harmony": "monochromatic" },
+  "style": { "aesthetic": "editorial", "texture": "smooth", "post_processing": "light grading", "reference": "Annie Leibovitz editorial style" },
+  "technical": { "camera": "Canon R5", "lens": "85mm f/1.2", "settings": "f/1.8, 1/200s, ISO 200", "resolution": "4K", "aspect_ratio": "4:5" },
   "negative": "blurry, low quality, distorted face, unnatural skin, oversaturated, harsh shadows, watermark"
-}
-```
-
-#### 2. Environmental Product Shot Template
-
-Use for: Product photography, e-commerce, lifestyle product placement.
-
-```json
-{
-  "subject": "[PRODUCT] with [PHYSICAL_DETAILS]",
-  "concept": "Lifestyle product shot in natural environment",
-  "composition": {
-    "framing": "medium shot",
-    "angle": "slightly elevated (30 degrees)",
-    "rule_of_thirds": true,
-    "focal_point": "product center",
-    "depth_of_field": "medium"
-  },
-  "lighting": {
-    "type": "natural",
-    "direction": "side",
-    "quality": "golden hour",
-    "color_temperature": "warm (3500K)",
-    "mood": "warm and inviting"
-  },
-  "color": {
-    "palette": ["#F4E4C1", "#8B7355", "#FFFFFF"],
-    "dominant": "#F4E4C1",
-    "accent": "#8B7355",
-    "saturation": "vibrant",
-    "harmony": "analogous"
-  },
-  "style": {
-    "aesthetic": "cinematic",
-    "texture": "film grain",
-    "post_processing": "light grading",
-    "reference": "Kinfolk magazine aesthetic"
-  },
-  "technical": {
-    "camera": "Sony A7IV",
-    "lens": "50mm f/1.8",
-    "settings": "f/2.8, 1/250s, ISO 400",
-    "resolution": "4K",
-    "aspect_ratio": "16:9"
-  },
-  "negative": "studio background, artificial lighting, harsh shadows, cluttered, distracting elements, watermark"
-}
-```
-
-#### 3. Magazine Cover Template
-
-Use for: YouTube thumbnails, blog headers, social media hero images.
-
-```json
-{
-  "subject": "[MAIN_SUBJECT] with [EXPRESSION/ACTION]",
-  "concept": "Bold magazine cover style with high impact",
-  "composition": {
-    "framing": "close-up",
-    "angle": "eye-level",
-    "rule_of_thirds": false,
-    "focal_point": "centered subject",
-    "depth_of_field": "shallow"
-  },
-  "lighting": {
-    "type": "dramatic",
-    "direction": "front with rim light",
-    "quality": "high contrast",
-    "color_temperature": "neutral (5500K)",
-    "mood": "high contrast"
-  },
-  "color": {
-    "palette": ["#FF6B35", "#004E89", "#FFFFFF"],
-    "dominant": "#004E89",
-    "accent": "#FF6B35",
-    "saturation": "vibrant",
-    "harmony": "complementary"
-  },
-  "style": {
-    "aesthetic": "modern",
-    "texture": "digital clean",
-    "post_processing": "heavy grading",
-    "reference": "Vogue cover style"
-  },
-  "technical": {
-    "camera": "Canon R5",
-    "lens": "85mm f/1.2",
-    "settings": "f/2.0, 1/200s, ISO 100",
-    "resolution": "4K",
-    "aspect_ratio": "9:16"
-  },
-  "negative": "blurry, low contrast, washed out colors, cluttered background, watermark, text overlays"
-}
-```
-
-#### 4. Street Photography Template
-
-Use for: Authentic lifestyle content, documentary-style visuals, UGC aesthetic.
-
-```json
-{
-  "subject": "[SCENE_DESCRIPTION] with [HUMAN_ELEMENT]",
-  "concept": "Candid street photography moment",
-  "composition": {
-    "framing": "wide shot",
-    "angle": "eye-level",
-    "rule_of_thirds": true,
-    "focal_point": "human subject in environment",
-    "depth_of_field": "deep"
-  },
-  "lighting": {
-    "type": "natural",
-    "direction": "available light",
-    "quality": "overcast",
-    "color_temperature": "neutral (5500K)",
-    "mood": "authentic and raw"
-  },
-  "color": {
-    "palette": ["#8B8B8B", "#D4D4D4", "#4A4A4A"],
-    "dominant": "#8B8B8B",
-    "accent": "#4A4A4A",
-    "saturation": "desaturated",
-    "harmony": "monochromatic"
-  },
-  "style": {
-    "aesthetic": "photorealistic",
-    "texture": "grainy",
-    "post_processing": "film emulation",
-    "reference": "Henri Cartier-Bresson street photography"
-  },
-  "technical": {
-    "camera": "Leica Q2",
-    "lens": "28mm f/1.7",
-    "settings": "f/5.6, 1/500s, ISO 800",
-    "resolution": "4K",
-    "aspect_ratio": "3:2"
-  },
-  "negative": "staged, posed, studio lighting, oversaturated, digital artifacts, watermark"
 }
 ```
 
 ## Style Library System
 
-The **Style Library** is a collection of saved JSON templates that maintain brand consistency across all visual content. Instead of re-engineering prompts from scratch, swap the `subject` and `concept` fields while keeping composition, lighting, color, and style constant.
+Save winning JSON templates with descriptive names (`brand-thumbnail-v1.json`, `product-lifestyle-v2.json`). Reuse by swapping only `subject` and `concept` — keep composition, lighting, color, and style constant.
 
-### Building Your Style Library
-
-1. **Generate test images** using the templates above
-2. **Score outputs** on brand alignment, visual quality, and platform performance
-3. **Save winning templates** with descriptive names: `brand-thumbnail-v1.json`, `product-lifestyle-v2.json`, `editorial-portrait-v1.json`
-4. **Categorize by use case**: thumbnails, social graphics, blog headers, product shots, character portraits
-5. **Version control**: Track template iterations (`v1`, `v2`, `v3`) as you refine
+**Storage**: `~/.aidevops/.agent-workspace/work/[project]/style-library/` or version-control in your content repo.
 
 ### Style Library Categories
 
 | Category | Use Case | Key Attributes |
 |----------|----------|----------------|
-| **Thumbnails** | YouTube, blog headers | High contrast, bold colors, centered composition, 16:9 |
-| **Social Graphics** | Instagram, Twitter, LinkedIn | Platform-specific aspect ratios, vibrant colors, clear focal point |
-| **Product Shots** | E-commerce, reviews | Clean backgrounds, natural lighting, product-focused |
-| **Character Portraits** | About pages, team bios | Professional lighting, neutral backgrounds, editorial style |
-| **Lifestyle** | Blog content, storytelling | Environmental context, natural lighting, authentic feel |
-| **Editorial** | Magazine-style content | Dramatic lighting, bold composition, high production value |
-
-### Reusing Templates
-
-**Example workflow**:
-
-1. Start with `brand-thumbnail-v3.json` (proven template with 4.2% CTR)
-2. Swap `subject`: `"A laptop on a desk"` → `"A smartphone in hand"`
-3. Adjust `concept`: `"Productivity setup"` → `"Mobile workflow"`
-4. Keep all other fields (lighting, color, style) identical
-5. Generate → instant brand-consistent output
-
-**Storage**: Save templates in `~/.aidevops/.agent-workspace/work/[project]/style-library/` or version-control them in your content repo.
+| **Thumbnails** | YouTube, blog headers | High contrast, bold colors, centered, 16:9 |
+| **Social Graphics** | Instagram, Twitter, LinkedIn | Platform aspect ratios, vibrant, clear focal point |
+| **Product Shots** | E-commerce, reviews | Clean backgrounds, natural lighting |
+| **Character Portraits** | About pages, team bios | Professional lighting, neutral backgrounds |
+| **Lifestyle** | Blog content, storytelling | Environmental context, natural lighting |
+| **Editorial** | Magazine-style content | Dramatic lighting, bold composition |
 
 ## Thumbnail Factory Pattern
 
-The **Thumbnail Factory** is a production system for generating 5-10 thumbnail variants per video/article at scale using style library templates.
+Generate 5-10 thumbnail variants per video/article at scale using style library templates.
 
-### Automated Workflow (via `thumbnail-helper.sh`)
-
-The `thumbnail-helper.sh` script automates the entire thumbnail A/B testing pipeline:
+### Automated Workflow
 
 ```bash
-# 1. Generate 10 thumbnail variants with a specific template
 thumbnail-helper.sh generate "Your Video Topic" --count 10 --template high-contrast-face
-
-# 2. Download generated images from Higgsfield UI to the output directory
-
-# 3. Score all variants using the rubric below
 thumbnail-helper.sh batch-score ~/.cache/aidevops/thumbnails/[output_dir]/
-
-# 4. Upload passing thumbnails (score >= 7.5) for A/B testing
 thumbnail-helper.sh ab-test VIDEO_ID ~/.cache/aidevops/thumbnails/[output_dir]/
-
-# 5. Analyze performance after 1000+ impressions
 thumbnail-helper.sh analyze VIDEO_ID
 ```
 
 **Available templates**: `high-contrast-face`, `text-heavy`, `before-after`, `curiosity-gap`, `product-showcase`, `cinematic`, `minimalist`, `action-packed`
 
-### Manual Workflow
-
-1. **Script/outline complete** → Extract 3-5 key visual moments
-2. **Select style template** → Use proven thumbnail template from style library
-3. **Generate variants** → Swap subject/concept for each key moment
-4. **Batch generate** → Use Nanobanana Pro API or Midjourney batch mode
-5. **Score outputs** → Evaluate on: face prominence, text readability, contrast, emotion, brand alignment
-6. **A/B test** → Upload top 3-5 to platform for testing (see `content/optimization.md`)
-
 ### Thumbnail Best Practices
 
 - **Face prominence**: Human faces increase CTR by 30-40% (close-up, clear emotion)
-- **High contrast**: Thumbnail must be readable at 320px width
-- **Bold colors**: Use brand accent colors for instant recognition
-- **Text overlay space**: Leave 30% of frame clear for title text (add in post, not in generation)
+- **High contrast**: Must be readable at 320px width
+- **Text overlay space**: Leave 30% of frame clear for title text (add in post)
 - **Emotion**: Surprised, excited, or curious expressions outperform neutral
-- **Consistency**: Use same style template across all channel content for brand recognition
+- **Consistency**: Same style template across all channel content
 
 ### Thumbnail Scoring Rubric
 
-Score each generated thumbnail on these criteria (1-10 scale):
-
 | Criterion | Weight | What to Check |
 |-----------|--------|---------------|
-| **Face Prominence** | 25% | Is face visible, clear, and emotionally expressive? |
-| **Contrast** | 20% | Does it stand out in a grid of thumbnails? |
-| **Text Space** | 15% | Is there clear space for title overlay? |
-| **Brand Alignment** | 15% | Does it match channel/brand visual identity? |
-| **Emotion** | 15% | Does it evoke curiosity, surprise, or excitement? |
-| **Clarity** | 10% | Is it readable at small sizes (320px)? |
+| **Face Prominence** | 25% | Visible, clear, emotionally expressive? |
+| **Contrast** | 20% | Stands out in a thumbnail grid? |
+| **Text Space** | 15% | Clear space for title overlay? |
+| **Brand Alignment** | 15% | Matches channel visual identity? |
+| **Emotion** | 15% | Evokes curiosity, surprise, or excitement? |
+| **Clarity** | 10% | Readable at small sizes (320px)? |
 
-**Threshold**: Only use thumbnails scoring 7.5+ overall. Below 7.5 = regenerate.
+**Threshold**: Only use thumbnails scoring 7.5+. Below 7.5 = regenerate.
 
 ## Annotated Frame-to-Video Workflow
 
-Generate a static image, annotate it with motion indicators, then feed to video model for animation. This workflow gives precise control over composition before committing to video generation.
+Generate a static image, annotate it with motion indicators, then feed to video model for animation.
 
-### Steps
-
-1. **Generate base frame** using Nanobanana Pro or Midjourney
-   - Use JSON template for exact composition control
-   - Generate at 16:9 aspect ratio for video compatibility
-   - Ensure subject is in desired starting position
-
-2. **Annotate with motion indicators**
-   - Use image editing tool (Photoshop, Figma, Canva) to add:
-     - **Arrows**: Direction of movement (character walks left, camera pans right)
-     - **Labels**: Action descriptions ("character picks up cup", "camera zooms in")
-     - **Timing markers**: "0-2s: character enters", "2-4s: camera follows"
-   - Color-code annotations: red = character movement, blue = camera movement, green = object interaction
-
-3. **Feed to video model**
-   - Upload annotated frame to Veo 3.1 (ingredients-to-video) or Sora 2
-   - Prompt: "Animate this scene following the annotated motion indicators. [DESCRIBE ACTIONS]"
-   - Video model interprets annotations and generates motion
-
-4. **Refine**
-   - If motion is incorrect, adjust annotations and regenerate
-   - Cheaper than regenerating video from scratch
-
-**Use case**: Complex scenes with specific choreography, product demos with precise movements, multi-step actions.
+1. **Generate base frame** using Nanobanana Pro or Midjourney (16:9, subject in desired starting position)
+2. **Annotate with motion indicators** — arrows (direction), labels (action descriptions), timing markers. Color-code: red = character, blue = camera, green = object
+3. **Feed to video model** — Veo 3.1 (ingredients-to-video) or Sora 2. Prompt: "Animate this scene following the annotated motion indicators."
+4. **Refine** — adjust annotations and regenerate if motion is incorrect
 
 **Reference**: See `content/production/video.md` for Veo 3.1 ingredients-to-video workflow (NOT frame-to-video, which produces grainy output).
 
 ## Shotdeck Reference Library Workflow
 
-[Shotdeck](https://shotdeck.com/) is a database of cinematic reference frames from films. Use it to reverse-engineer professional composition, lighting, and color grading.
+[Shotdeck](https://shotdeck.com/) is a database of cinematic reference frames. Use it to reverse-engineer professional composition, lighting, and color grading.
 
-### Workflow
-
-1. **Find reference on Shotdeck**
-   - Search by mood, genre, or visual style
-   - Download high-res frame
-
-2. **Reverse-engineer with Gemini**
-   - Upload frame to Gemini 2.0 Flash or Pro
-   - Prompt: "Analyze this cinematic frame. Describe: composition (framing, angle, rule of thirds), lighting (type, direction, quality, color temperature), color palette (hex codes), camera settings (lens, aperture, focal length), and mood. Output as structured data."
-
-3. **Convert to Nanobanana JSON**
-   - Take Gemini's analysis and map to JSON schema
-   - Adjust `subject` and `concept` for your content
-   - Keep composition, lighting, and color from reference
-
-4. **Generate**
-   - Use Nanobanana Pro with reference-based JSON
-   - Result: Your subject in the style of the cinematic reference
-
-**Example**:
-
-- **Reference**: Blade Runner 2049 neon-lit street scene
-- **Gemini analysis**: "Low angle, wide shot, neon pink and cyan color palette (#FF006E, #00D9FF), backlit with rim lighting, f/2.8 shallow depth of field, moody and atmospheric"
-- **Your JSON**: Keep lighting/color/composition, swap subject to "A developer at a desk with dual monitors"
-- **Result**: Developer scene with Blade Runner aesthetic
+1. **Find reference on Shotdeck** — search by mood, genre, or visual style
+2. **Reverse-engineer with Gemini** — upload frame, prompt: "Analyze this cinematic frame. Describe composition, lighting, color palette (hex codes), camera settings, and mood. Output as structured data."
+3. **Convert to Nanobanana JSON** — map Gemini's analysis to JSON schema, adjust `subject` and `concept`, keep composition/lighting/color from reference
+4. **Generate** — result: your subject in the style of the cinematic reference
 
 ## Hex Color Code Precision
 
-Always specify exact hex codes in JSON prompts for brand consistency. Avoid vague color descriptions like "blue" or "warm tones."
-
-### Brand Color Palette Template
-
-```json
-{
-  "brand_colors": {
-    "primary": "#HEX",
-    "secondary": "#HEX",
-    "accent": "#HEX",
-    "neutral_light": "#HEX",
-    "neutral_dark": "#HEX"
-  },
-  "use_cases": {
-    "thumbnails": ["primary", "accent"],
-    "social_graphics": ["secondary", "accent"],
-    "product_shots": ["neutral_light", "primary"],
-    "editorial": ["neutral_dark", "accent"]
-  }
-}
-```
+Always specify exact hex codes in JSON prompts. Avoid vague descriptions like "blue" or "warm tones."
 
 ### Color Harmony Rules
 
@@ -466,13 +203,11 @@ Always specify exact hex codes in JSON prompts for brand consistency. Avoid vagu
 | **Complementary** | High contrast, bold | #FF6B35 (orange), #004E89 (blue) |
 | **Triadic** | Vibrant, balanced | #FF6B35, #4ECDC4, #C44569 |
 
-**Tool**: Use [Coolors.co](https://coolors.co/) or [Adobe Color](https://color.adobe.com/) to generate palettes, then extract hex codes for JSON.
+**Tool**: [Coolors.co](https://coolors.co/) or [Adobe Color](https://color.adobe.com/) to generate palettes.
 
 ## Camera Settings in Prompts
 
-Including camera settings (lens, aperture, ISO) in prompts improves photorealism and gives control over depth of field and bokeh.
-
-### Common Camera/Lens Combinations
+Including camera settings improves photorealism and controls depth of field.
 
 | Use Case | Camera | Lens | Settings | Effect |
 |----------|--------|------|----------|--------|
@@ -482,188 +217,83 @@ Including camera settings (lens, aperture, ISO) in prompts improves photorealism
 | **Street** | Leica Q2 | 28mm f/1.7 | f/5.6, 1/500s, ISO 800 | Natural perspective, grainy |
 | **Cinematic** | RED Komodo 6K | 35mm f/1.4 | f/2.0, 1/50s, ISO 800 | Film-like, shallow DOF |
 
-**Prompt example**: `"Shot on Canon R5 with 85mm f/1.2 lens at f/1.8, 1/200s, ISO 200. Shallow depth of field with creamy bokeh."`
-
 ## Texture Descriptions
-
-Texture keywords control the "feel" of the image — smooth digital, grainy film, or textured analog.
-
-### Texture Vocabulary
 
 | Texture | Description | Use Case |
 |---------|-------------|----------|
 | **Digital clean** | Smooth, sharp, no grain | Modern tech, corporate, minimalist |
 | **Film grain** | Subtle grain, analog feel | Lifestyle, editorial, authentic |
 | **Grainy** | Heavy grain, vintage | Street photography, documentary, retro |
-| **Smooth** | Polished, no texture | Product shots, e-commerce, professional |
+| **Smooth** | Polished, no texture | Product shots, e-commerce |
 | **Textured** | Visible surface detail | Artistic, tactile, handmade |
 
-**Prompt example**: `"Film grain texture with subtle analog feel, shot on Kodak Portra 400"`
-
 ## Midjourney-Specific Prompting
-
-When using Midjourney (for objects/environments/landscapes), use these flags:
-
-### Essential Flags
-
-| Flag | Purpose | Example |
-|------|---------|---------|
-| `--ar 16:9` | Aspect ratio | `--ar 16:9` (video), `--ar 9:16` (mobile), `--ar 1:1` (square) |
-| `--style raw` | Less stylized, more photorealistic | Always use for content production |
-| `--v 6` | Model version | Use latest version (v6 as of 2024) |
-| `--no text, watermark` | Negative prompt | Exclude unwanted elements |
-
-### Midjourney Prompt Structure
 
 ```text
 [SUBJECT] [doing ACTION] in [ENVIRONMENT], [LIGHTING], [STYLE], [CAMERA], --ar 16:9 --style raw --v 6 --no text, watermark
 ```
 
-**Example**:
-
-```text
-A laptop on a wooden desk in a modern home office, natural window light from the left, minimalist aesthetic, shot on Sony A7IV with 50mm lens, --ar 16:9 --style raw --v 6 --no text, watermark, clutter
-```
+| Flag | Purpose |
+|------|---------|
+| `--ar 16:9` | Aspect ratio (16:9 video, 9:16 mobile, 1:1 square) |
+| `--style raw` | Less stylized, more photorealistic — always use for content production |
+| `--v 6` | Latest model version |
+| `--no text, watermark` | Exclude unwanted elements |
 
 ## Freepik Character-Driven Workflow
 
-Freepik excels at character-driven scenes with consistent human subjects. Use for:
+Best for team photos, lifestyle content with people, testimonial visuals, social media with faces.
 
-- Team photos
-- Lifestyle content with people
-- Testimonial visuals
-- Social media graphics with faces
-
-### Freepik Prompt Tips
-
-1. **Be specific about demographics**: Age, ethnicity, gender, clothing style
-2. **Describe emotion clearly**: "smiling confidently", "looking surprised", "focused and determined"
-3. **Specify environment**: "in a modern office", "outdoors in a park", "at a coffee shop"
-4. **Use style keywords**: "professional photography", "lifestyle photography", "editorial style"
-
-**Example**: `"A 30-year-old Asian woman with long black hair, wearing a white blouse, smiling confidently at the camera, in a modern office with natural light, professional photography style"`
+**Prompt tips**: Specify demographics (age, ethnicity, gender, clothing), emotion ("smiling confidently"), environment ("in a modern office"), and style ("professional photography").
 
 ## Seedream 4 Refinement
 
-Seedream 4 is a 4K upscaling and refinement model. Use it as a **post-processing step** after generating with Nanobanana, Midjourney, or Freepik.
+Post-processing step after generating with Nanobanana/Midjourney/Freepik. Use when: resolution is too low, need 4K for print, want enhanced details, or preparing for video generation.
 
-### When to Use Seedream 4
-
-- Generated image is good but resolution is too low
-- Need 4K output for print or high-res web
-- Want to enhance details (facial features, textures, sharpness)
-- Preparing images for video generation (higher res = better video quality)
-
-### Workflow
-
-1. Generate base image with Nanobanana/Midjourney/Freepik
-2. Upload to Seedream 4
-3. Prompt: "Upscale to 4K resolution, enhance details, maintain original composition and style"
-4. Download refined 4K output
-
-**Cost consideration**: Only refine images that passed initial quality checks. Don't upscale every generation.
+**Cost**: Only refine images that passed initial quality checks.
 
 ## Ideogram Face Swap
 
-Ideogram's face swap feature enables **character consistency** across multiple images. Use for:
+Enables character consistency across multiple images. Workflow: generate base character portrait → upload to Ideogram as reference face → generate new scenes → face swap.
 
-- Multi-image campaigns with the same character
-- Before/after comparisons
-- Character-driven storytelling
-- Brand mascots or spokespeople
-
-### Workflow
-
-1. **Generate base character portrait** with Nanobanana or Freepik
-2. **Upload to Ideogram** as reference face
-3. **Generate new scenes** with different backgrounds/actions
-4. **Face swap** to maintain character consistency
-
-**Alternative**: See `content/production/characters.md` for Facial Engineering Framework (exhaustive facial analysis for consistency across 100+ outputs).
+**Alternative**: See `content/production/characters.md` for Facial Engineering Framework.
 
 ## Platform-Specific Image Specs
 
-Different platforms have different optimal image dimensions and aspect ratios.
+| Platform | Dimensions | Aspect Ratio | Notes |
+|----------|------------|--------------|-------|
+| **YouTube Thumbnail** | 1280x720 | 16:9 | Max 2MB, high contrast |
+| **Instagram Feed** | 1080x1080 | 1:1 | Square, vibrant colors |
+| **Instagram Story** | 1080x1920 | 9:16 | Vertical, text-safe zones |
+| **Twitter/X** | 1200x675 | 16:9 | Clear at small size |
+| **LinkedIn** | 1200x627 | 1.91:1 | Professional aesthetic |
+| **Pinterest** | 1000x1500 | 2:3 | Vertical, text overlay friendly |
+| **Blog Header** | 1920x1080 | 16:9 | High res, SEO-optimized alt text |
 
-### Social Media Specs
-
-| Platform | Format | Dimensions | Aspect Ratio | Notes |
-|----------|--------|------------|--------------|-------|
-| **YouTube Thumbnail** | JPG/PNG | 1280x720 | 16:9 | Max 2MB, high contrast |
-| **Instagram Feed** | JPG/PNG | 1080x1080 | 1:1 | Square, vibrant colors |
-| **Instagram Story** | JPG/PNG | 1080x1920 | 9:16 | Vertical, text-safe zones |
-| **Twitter/X** | JPG/PNG | 1200x675 | 16:9 | Landscape, clear at small size |
-| **LinkedIn** | JPG/PNG | 1200x627 | 1.91:1 | Professional aesthetic |
-| **Facebook** | JPG/PNG | 1200x630 | 1.91:1 | Similar to LinkedIn |
-| **Pinterest** | JPG/PNG | 1000x1500 | 2:3 | Vertical, text overlay friendly |
-| **Blog Header** | JPG/PNG | 1920x1080 | 16:9 | High res, SEO-optimized alt text |
-
-### File Format Guidelines
-
-- **JPG**: Photographs, complex images, smaller file size
-- **PNG**: Graphics with transparency, text overlays, logos
-- **WebP**: Modern format, smaller than JPG, use for web when supported
+**Formats**: JPG (photos, smaller size), PNG (transparency, text overlays), WebP (modern web).
 
 ## UGC Brief Image Template
 
-Generate keyframe images for each shot in a UGC storyboard (from `content/story.md` UGC Brief Storyboard). Each keyframe becomes either a standalone social image or a reference frame for video generation via the annotated frame-to-video workflow.
-
-### When to Use
-
-- Generating static keyframes before committing to video generation (cheaper iteration)
-- Creating social media stills from a storyboard (Instagram carousel, blog headers)
-- Producing reference frames for the annotated frame-to-video workflow (see above)
-- Building a visual shot list for a video editor or director
+Generate keyframe images for each shot in a UGC storyboard. Each keyframe becomes a standalone social image or reference frame for the annotated frame-to-video workflow.
 
 ### UGC Keyframe JSON Template
 
-This template extends the Street Photography Template (above) with UGC-specific defaults. Swap `subject`, `concept`, and `composition.focal_point` per shot while keeping the authentic UGC aesthetic constant.
+Extends the Street Photography Template with UGC-specific defaults. Swap `subject`, `concept`, and `composition.focal_point` per shot; keep the authentic UGC aesthetic constant.
 
 ```json
 {
   "subject": "[PRESENTER_DESCRIPTION — identical across all shots]",
-  "concept": "[SHOT_PURPOSE from storyboard — e.g., 'Hook: presenter reacts to bold claim']",
-  "composition": {
-    "framing": "[Per shot: CU for hook/emotion, MS for dialogue, WS for context]",
-    "angle": "eye-level",
-    "rule_of_thirds": true,
-    "focal_point": "[Per shot: eyes for hook, product for hero, presenter for CTA]",
-    "depth_of_field": "shallow"
-  },
-  "lighting": {
-    "type": "natural",
-    "direction": "available light",
-    "quality": "soft diffused",
-    "color_temperature": "warm (4000K)",
-    "mood": "authentic and approachable"
-  },
-  "color": {
-    "palette": ["[BRAND_PRIMARY]", "[BRAND_SECONDARY]", "[NEUTRAL]"],
-    "dominant": "[BRAND_PRIMARY]",
-    "accent": "[BRAND_SECONDARY]",
-    "saturation": "muted",
-    "harmony": "analogous"
-  },
-  "style": {
-    "aesthetic": "photorealistic",
-    "texture": "film grain",
-    "post_processing": "film emulation",
-    "reference": "iPhone 15 Pro casual photography"
-  },
-  "technical": {
-    "camera": "iPhone 15 Pro",
-    "lens": "24mm f/1.78",
-    "settings": "f/1.78, 1/120s, ISO 640",
-    "resolution": "4K",
-    "aspect_ratio": "[9:16 for TikTok/Reels | 16:9 for YouTube]"
-  },
+  "concept": "[SHOT_PURPOSE from storyboard]",
+  "composition": { "framing": "[CU for hook/emotion, MS for dialogue, WS for context]", "angle": "eye-level", "rule_of_thirds": true, "focal_point": "[Per shot]", "depth_of_field": "shallow" },
+  "lighting": { "type": "natural", "direction": "available light", "quality": "soft diffused", "color_temperature": "warm (4000K)", "mood": "authentic and approachable" },
+  "color": { "palette": ["[BRAND_PRIMARY]", "[BRAND_SECONDARY]", "[NEUTRAL]"], "dominant": "[BRAND_PRIMARY]", "accent": "[BRAND_SECONDARY]", "saturation": "muted", "harmony": "analogous" },
+  "style": { "aesthetic": "photorealistic", "texture": "film grain", "post_processing": "film emulation", "reference": "iPhone 15 Pro casual photography" },
+  "technical": { "camera": "iPhone 15 Pro", "lens": "24mm f/1.78", "settings": "f/1.78, 1/120s, ISO 640", "resolution": "4K", "aspect_ratio": "[9:16 for TikTok/Reels | 16:9 for YouTube]" },
   "negative": "studio lighting, professional setup, staged, posed, oversaturated, digital artifacts, watermark, text overlays, perfect skin retouching"
 }
 ```
 
 ### Per-Shot Keyframe Variations
-
-Map each storyboard shot to specific JSON overrides:
 
 | Shot | Framing | Focal Point | Concept Override | Lighting Override |
 |------|---------|-------------|-----------------|-------------------|
@@ -673,203 +303,65 @@ Map each storyboard shot to specific JSON overrides:
 | 4: After State | CU | Face (satisfied) | "Transformation result — [outcome]" | Warm, rich, inviting |
 | 5: CTA | MS | Presenter (direct to camera) | "Call to action — [CTA text]" | Clean, warm, confident |
 
-### Worked Example: FreshBrew Shot 3 (Product Hero)
+### Batch Generation Workflow
 
-Using the FreshBrew storyboard from `content/story.md`:
-
-```json
-{
-  "subject": "Maya, a 32-year-old South Asian woman with shoulder-length dark wavy hair, warm brown eyes, light olive skin, wearing a cream knit sweater over a white tee, relaxed posture, genuine warm smile, minimal gold stud earrings, natural makeup",
-  "concept": "Product reveal — Maya opens FreshBrew subscription box with visible excitement, colourful coffee bags inside",
-  "composition": {
-    "framing": "medium shot",
-    "angle": "eye-level",
-    "rule_of_thirds": true,
-    "focal_point": "FreshBrew box and coffee bags in hands",
-    "depth_of_field": "shallow"
-  },
-  "lighting": {
-    "type": "natural",
-    "direction": "side (window light from left)",
-    "quality": "golden hour",
-    "color_temperature": "warm (3500K)",
-    "mood": "warm and inviting"
-  },
-  "color": {
-    "palette": ["#F4E4C1", "#6B4226", "#D4A574"],
-    "dominant": "#F4E4C1",
-    "accent": "#6B4226",
-    "saturation": "muted",
-    "harmony": "analogous"
-  },
-  "style": {
-    "aesthetic": "photorealistic",
-    "texture": "film grain",
-    "post_processing": "film emulation",
-    "reference": "iPhone 15 Pro casual photography"
-  },
-  "technical": {
-    "camera": "iPhone 15 Pro",
-    "lens": "24mm f/1.78",
-    "settings": "f/1.78, 1/120s, ISO 640",
-    "resolution": "4K",
-    "aspect_ratio": "9:16"
-  },
-  "negative": "studio lighting, professional setup, staged, posed, oversaturated, digital artifacts, watermark, text overlays, perfect skin retouching, blurry product text"
-}
-```
+1. Create base JSON with presenter description and UGC defaults
+2. For each shot, override only: `concept`, `composition.framing`, `composition.focal_point`, and `lighting`
+3. Batch generate via Nanobanana Pro API or sequential Midjourney prompts
+4. Score all outputs (threshold 7.5+), regenerate any below
+5. Assemble into visual shot list before committing to video generation
 
 ### Keyframe-to-Video Handoff
 
-After generating keyframe images:
-
-1. **Score keyframes** using the Thumbnail Scoring Rubric (above) — threshold 7.5+
-2. **Annotate with motion** — Add arrows and labels per the Annotated Frame-to-Video Workflow (above)
-3. **Feed to video model** — Use the corresponding 7-component prompt from the storyboard
-4. **Model selection**: Sora 2 Pro for UGC aesthetic, Veo 3.1 for cinematic (see `content/production/video.md`)
-
-### Batch Generation Workflow
-
-Generate all 5 keyframes in a single session:
-
-1. Create base JSON with presenter description and UGC defaults (template above)
-2. For each shot, override only: `concept`, `composition.framing`, `composition.focal_point`, and `lighting` per the Per-Shot Keyframe Variations table
-3. Batch generate via Nanobanana Pro API or sequential Midjourney prompts
-4. Score all outputs, regenerate any below 7.5
-5. Assemble into a visual shot list for review before committing to video generation
+1. Score keyframes using Thumbnail Scoring Rubric (7.5+ threshold)
+2. Annotate with motion per the Annotated Frame-to-Video Workflow
+3. Feed to video model with the corresponding 7-component prompt from the storyboard
+4. **Model selection**: Sora 2 Pro for UGC aesthetic, Veo 3.1 for cinematic
 
 ## Post-Processing Enhancement with Enhancor AI
 
-After generating images with Nanobanana, Midjourney, or Freepik, use **Enhancor AI** for professional-grade post-processing enhancement, especially for portrait and headshot content.
+After generating images, use **Enhancor AI** for professional-grade post-processing, especially for portrait content.
 
-### When to Use Enhancor
-
-**Portrait Enhancement**:
-- Professional headshots and team photos
-- Social media profile pictures
-- Dating app photos
-- Corporate photography
-- Event photography
-
-**Image Upscaling**:
-- Print-ready enlargements
-- High-resolution displays
-- Archival restoration
-- Low-quality source recovery
-
-**AI Generation** (Kora Pro):
-- Marketing visuals
-- Social media content
-- Concept art
-- Product mockups
-
-### Enhancor Workflow Integration
-
-**Standard Pipeline**:
-
-1. **Generate** base image (Nanobanana/Midjourney/Freepik)
-2. **Enhance** with Enhancor (skin refinement, upscaling)
-3. **Optimize** for web delivery (compression, format conversion)
-4. **Distribute** to target platforms
-
-**CLI Usage**:
+**When to use**: Professional headshots, social media profile pictures, print-ready enlargements, archival restoration, AI generation (Kora Pro).
 
 ```bash
 # Professional headshot enhancement
 enhancor-helper.sh enhance --img-url https://example.com/headshot.jpg \
-    --model enhancorv3 \
-    --type face \
-    --skin-refinement 60 \
-    --skin-realism 1.2 \
-    --portrait-depth 0.25 \
-    --resolution 2048 \
-    --area-background \
-    --sync -o professional_headshot.png
+    --model enhancorv3 --type face --skin-refinement 60 \
+    --skin-realism 1.2 --portrait-depth 0.25 --resolution 2048 \
+    --area-background --sync -o professional_headshot.png
 
-# Portrait upscale (professional mode)
+# Portrait upscale
 enhancor-helper.sh upscale --img-url https://example.com/portrait.jpg \
     --mode professional --sync -o upscaled.png
 
-# Batch portrait processing
-cat > photoshoot.txt <<EOF
-https://example.com/photo1.jpg
-https://example.com/photo2.jpg
-https://example.com/photo3.jpg
-EOF
-
+# Batch processing
 enhancor-helper.sh batch --command enhance --input photoshoot.txt \
-    --output-dir enhanced_photoshoot/ \
-    --model enhancorv3 \
-    --skin-refinement 50 \
-    --resolution 2048
+    --output-dir enhanced/ --model enhancorv3 --skin-refinement 50 --resolution 2048
 ```
 
-### Enhancor Capabilities
+**Capabilities**: Realistic skin enhancement (v1/v3), portrait upscaler, general image upscaler, detailed enhancement, Kora Pro AI generation (kora_pro, kora_pro_cinema; modes: normal, 2k_pro, 4k_ultra).
 
-**1. Realistic Skin Enhancement** (`/realistic-skin/v1`):
-- v1/v3 models with face/body modes
-- Granular area control (eyes, nose, mouth, hair, background)
-- Skin refinement 0-100
-- Portrait depth control
-- Mask support (v3)
+**Best practices**: Start with `skin_refinement_level` 40-60; use `professional` mode for final deliverables; only enhance images that passed initial quality checks.
 
-**2. Portrait Upscaler** (`/upscaler/v1`):
-- Fast/professional modes
-- Facial feature optimization
-- Resolution upscaling
-
-**3. General Image Upscaler** (`/general-upscaler/v1`):
-- Universal upscaling for all image types
-
-**4. Detailed API** (`/detailed/v1`):
-- Upscaling + detailed enhancement
-- Professional work
-
-**5. Kora Pro** (`/kora/v1`):
-- AI image generation from text prompts
-- Cinematic models (kora_pro, kora_pro_cinema)
-- Generation modes: normal, 2k_pro, 4k_ultra
-
-### Best Practices
-
-**Skin Enhancement**:
-- Start with `skin_refinement_level` 40-60 for natural results
-- Use `skin_realism_Level` 1.0-2.0 for v1, 0.1-0.5 for v3
-- Enable area control for background/hair to preserve non-skin areas
-- Use v3 with masks for selective enhancement
-
-**Upscaling**:
-- Use `professional` mode for final deliverables
-- Use `fast` mode for testing and iteration
-- Portrait upscaler is optimized for faces (better than general upscaler)
-
-**Cost Optimization**:
-- Use `enhancorv1` for basic enhancement (lower cost)
-- Use `enhancorv3` for advanced features (mask support, higher resolution)
-- Only enhance images that passed initial quality checks
-- Batch process multiple images in one session
-
-### Full Documentation
-
-See `tools/video/enhancor.md` for complete API reference, examples, and integration details.
+Full API reference: `tools/video/enhancor.md`.
 
 ## Cross-References
 
-- **Brand identity**: `tools/design/brand-identity.md` — when a project has `context/brand-identity.toon`, check it for imagery style, iconography, colour palette, and visual identity parameters before generating images
-- **Design catalogue**: `tools/design/ui-ux-catalogue.toon` — 96 colour palettes, 67 UI styles, and industry-specific design patterns for style selection
-- **Model comparison**: `tools/vision/image-generation.md` — detailed comparison of DALL-E 3, Midjourney, FLUX, SD XL
-- **Video production**: `content/production/video.md` — frame-to-video workflow, Veo 3.1 ingredients
-- **Character consistency**: `content/production/characters.md` — Facial Engineering Framework, character bibles
+- **Brand identity**: `tools/design/brand-identity.md` — check `context/brand-identity.toon` for imagery style before generating
+- **Design catalogue**: `tools/design/ui-ux-catalogue.toon` — 96 colour palettes, 67 UI styles
+- **Model comparison**: `tools/vision/image-generation.md` — DALL-E 3, Midjourney, FLUX, SD XL
+- **Video production**: `content/production/video.md` — frame-to-video workflow, Veo 3.1
+- **Character consistency**: `content/production/characters.md` — Facial Engineering Framework
 - **A/B testing**: `content/optimization.md` — thumbnail variant testing, scoring, analytics
-- **Distribution**: `content/distribution/` — platform-specific formatting for YouTube, social, blog
-- **UGC storyboard**: `content/story.md` — UGC Brief Storyboard template (generates the shot list this template visualises)
-- **Video prompts**: `tools/video/video-prompt-design.md` — 7-component format for video generation from keyframes
-- **Enhancor AI**: `tools/video/enhancor.md` — Portrait enhancement, upscaling, and AI generation post-processing
+- **UGC storyboard**: `content/story.md` — UGC Brief Storyboard template
+- **Video prompts**: `tools/video/video-prompt-design.md` — 7-component format
+- **Enhancor AI**: `tools/video/enhancor.md` — portrait enhancement, upscaling, AI generation
 
 ## See Also
 
 - `tools/vision/overview.md` — Vision AI decision tree
 - `tools/vision/image-editing.md` — Modify existing images
 - `tools/vision/image-understanding.md` — Analyze images
-- `content/story.md` — Hook formulas, visual storytelling frameworks, and UGC Brief Storyboard
+- `content/story.md` — Hook formulas, visual storytelling, UGC Brief Storyboard
 - `content/research.md` — Audience research to inform visual style
