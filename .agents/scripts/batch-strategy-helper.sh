@@ -409,18 +409,21 @@ cmd_next_batch() {
 }
 
 #######################################
-# Command: validate
-# Validate task dependency graph
-# Performs all validation in a single jq pass for efficiency:
+# Build and run the jq validation pipeline against the task graph.
+# Performs all checks in a single jq pass for efficiency:
 #   - Duplicate ID detection
 #   - Missing blocker reference detection
 #   - Circular dependency detection (proper DFS with path tracking)
 #   - Orphan task warnings
 #   - Deep nesting warnings
+# Arguments:
+#   $1 - tasks JSON array
+# Output: JSON validation result object {valid, errors[], warnings[]}
 #######################################
-cmd_validate() {
-	local result
-	result=$(echo "$TASKS_JSON" | jq '
+_validate_build_graph() {
+	local tasks_json="$1"
+
+	echo "$tasks_json" | jq '
 		# Build lookup structures once
 		(map({(.id): .}) | add // {}) as $by_id
 		| ([.[].id] | unique) as $unique_ids
@@ -509,12 +512,22 @@ cmd_validate() {
 		| if $deep_count > 0 then
 			.warnings += ["\($deep_count) task(s) exceed recommended depth limit of 3"]
 		  else . end
-	')
+	'
+	return 0
+}
+
+#######################################
+# Log the validation result summary to stderr and print JSON to stdout.
+# Arguments:
+#   $1 - validation result JSON {valid, errors[], warnings[]}
+#   $2 - task count (integer)
+#######################################
+_validate_log_result() {
+	local result="$1"
+	local task_count="$2"
 
 	local is_valid
 	is_valid=$(echo "$result" | jq -r '.valid')
-	local task_count
-	task_count=$(echo "$TASKS_JSON" | jq 'length')
 
 	if [[ "$is_valid" == "true" ]]; then
 		log_success "Task graph is valid ($task_count tasks)"
@@ -525,6 +538,21 @@ cmd_validate() {
 	fi
 
 	echo "$result" | jq '.'
+	return 0
+}
+
+#######################################
+# Command: validate
+# Validate task dependency graph
+#######################################
+cmd_validate() {
+	local result
+	result=$(_validate_build_graph "$TASKS_JSON")
+
+	local task_count
+	task_count=$(echo "$TASKS_JSON" | jq 'length')
+
+	_validate_log_result "$result" "$task_count"
 	return 0
 }
 
