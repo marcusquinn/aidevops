@@ -1343,98 +1343,47 @@ should_skip_gate() {
 	return 1
 }
 
-# Run all gate checks in order, respecting bundle skip_gates.
-# Writes to the exit_code variable in the caller's scope via a temp file.
-# Returns: 0 if all gates passed, 1 if any gate failed.
-_run_gate_checks() {
-	local exit_code=0
+# Run a single quality gate: skip if bundle says so, otherwise run and track failures.
+# Arguments:
+#   $1 - gate name (for should_skip_gate lookup)
+#   $2 - function name to call
+# Reads/writes _GATE_EXIT_CODE in caller scope.
+_run_gate() {
+	local gate_name="$1"
+	local func_name="$2"
 
-	if ! should_skip_gate "sonarcloud"; then
-		check_sonarcloud_status || exit_code=1
+	if ! should_skip_gate "$gate_name"; then
+		$func_name || _GATE_EXIT_CODE=1
 		echo ""
 	fi
 
-	if ! should_skip_gate "qlty"; then
-		check_qlty_maintainability || exit_code=1
-		echo ""
-	fi
+	return 0
+}
 
-	if ! should_skip_gate "return-statements"; then
-		check_return_statements || exit_code=1
-		echo ""
-	fi
+# Run all quality gates in sequence, respecting bundle skip_gates.
+# Returns: 0 if all gates passed, 1 if any failed.
+_run_quality_gates() {
+	_GATE_EXIT_CODE=0
 
-	if ! should_skip_gate "positional-parameters"; then
-		check_positional_parameters || exit_code=1
-		echo ""
-	fi
+	_run_gate "sonarcloud" check_sonarcloud_status
+	_run_gate "qlty" check_qlty_maintainability
+	_run_gate "return-statements" check_return_statements
+	_run_gate "positional-parameters" check_positional_parameters
+	_run_gate "string-literals" check_string_literals
+	_run_gate "shfmt" run_shfmt
+	_run_gate "shellcheck" run_shellcheck
+	_run_gate "secretlint" check_secrets
+	_run_gate "markdownlint" check_markdown_lint
+	_run_gate "toon-syntax" check_toon_syntax
+	_run_gate "skill-frontmatter" check_skill_frontmatter
+	_run_gate "secret-policy" check_secret_policy
+	_run_gate "bash32-compat" check_bash32_compat
+	_run_gate "function-complexity" check_function_complexity
+	_run_gate "nesting-depth" check_nesting_depth
+	_run_gate "file-size" check_file_size
+	_run_gate "python-complexity" check_python_complexity
 
-	if ! should_skip_gate "string-literals"; then
-		check_string_literals || exit_code=1
-		echo ""
-	fi
-
-	if ! should_skip_gate "shfmt"; then
-		run_shfmt
-		echo ""
-	fi
-
-	if ! should_skip_gate "shellcheck"; then
-		run_shellcheck || exit_code=1
-		echo ""
-	fi
-
-	if ! should_skip_gate "secretlint"; then
-		check_secrets || exit_code=1
-		echo ""
-	fi
-
-	if ! should_skip_gate "markdownlint"; then
-		check_markdown_lint || exit_code=1
-		echo ""
-	fi
-
-	if ! should_skip_gate "toon-syntax"; then
-		check_toon_syntax || exit_code=1
-		echo ""
-	fi
-
-	if ! should_skip_gate "skill-frontmatter"; then
-		check_skill_frontmatter || exit_code=1
-		echo ""
-	fi
-
-	if ! should_skip_gate "secret-policy"; then
-		check_secret_policy || exit_code=1
-		echo ""
-	fi
-
-	if ! should_skip_gate "bash32-compat"; then
-		check_bash32_compat || exit_code=1
-		echo ""
-	fi
-
-	if ! should_skip_gate "function-complexity"; then
-		check_function_complexity || exit_code=1
-		echo ""
-	fi
-
-	if ! should_skip_gate "nesting-depth"; then
-		check_nesting_depth || exit_code=1
-		echo ""
-	fi
-
-	if ! should_skip_gate "file-size"; then
-		check_file_size || exit_code=1
-		echo ""
-	fi
-
-	if ! should_skip_gate "python-complexity"; then
-		check_python_complexity || exit_code=1
-		echo ""
-	fi
-
-	return $exit_code
+	return $_GATE_EXIT_CODE
 }
 
 main() {
@@ -1448,7 +1397,7 @@ main() {
 
 	# Run all local quality checks (respecting bundle skip_gates)
 	local exit_code=0
-	_run_gate_checks || exit_code=1
+	_run_quality_gates || exit_code=1
 
 	check_remote_cli_status
 	echo ""
