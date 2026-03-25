@@ -6,199 +6,76 @@ Video Sales Letter frameworks and examples.
 
 ## What Is a VSL?
 
-A Video Sales Letter (VSL) is a sales page in video format. It follows the same principles as written sales copy but leverages:
-- Voice for emotional impact
-- Visuals for engagement
-- Pacing for retention
+A Video Sales Letter (VSL) is a sales page in video format leveraging voice for emotional impact, visuals for engagement, and pacing for retention.
 
-**When to use a VSL:**
-- High-ticket offers ($500+)
-- Complex products that need explanation
-- Personal brand/coaching offers
-- When your audience prefers video
+**When to use:** High-ticket offers ($500+), complex products needing explanation, personal brand/coaching, video-preferring audiences.
 
 ---
 
-## The Classic VSL Framework (PASTOR)
+## The PASTOR Framework
 
-### P — Problem
+| Phase | Goal | Duration |
+|-------|------|----------|
+| **P — Problem** | Get viewers nodding "yes, that's me" | 30-60s |
+| **A — Amplify** | Make the pain feel urgent | 30-60s |
+| **S — Story** | Build connection through narrative | 2-4 min |
+| **T — Transformation** | Paint the after picture with proof | 2-3 min |
+| **O — Offer** | Present everything they get + bonuses | 3-5 min |
+| **R — Response** | Close with clear CTA + guarantee | 60-90s |
 
-**Goal:** Get viewers nodding "yes, that's me"
+### Script Templates
 
+**Problem:**
 ```
-SCRIPT:
-
 "Have you ever [specific frustrating experience]?
-
-You know that feeling when [emotional description of problem]...
-
-And no matter what you try—[solution they've tried 1], 
-[solution they've tried 2], [solution they've tried 3]—
-nothing seems to work?
-
-If that sounds familiar, I have something important 
-to share with you.
-
-But first, let me ask..."
+You know that feeling when [emotional description]...
+And no matter what you try—[solution 1], [solution 2], [solution 3]—nothing works?
+If that sounds familiar, I have something important to share with you."
 ```
 
-**Duration:** 30-60 seconds
-
----
-
-### A — Amplify
-
-**Goal:** Make the pain feel urgent
-
+**Amplify:**
 ```
-SCRIPT:
-
 "Here's what happens if you don't solve this:
-
-[Negative consequence 1]
-[Negative consequence 2]
-[Negative consequence 3]
-
-And the worst part?
-
-Every day you wait, [escalating consequence].
-
+[Negative consequence 1], [2], [3].
+And the worst part? Every day you wait, [escalating consequence].
 I know because I was in the exact same spot [timeframe] ago..."
 ```
 
-**Duration:** 30-60 seconds
-
----
-
-### S — Story
-
-**Goal:** Build connection through narrative
-
+**Story:**
 ```
-SCRIPT:
-
-"[Personal story or customer story]
-
-When I was [situation], I struggled with [same problem].
-
-I tried [what didn't work].
-I spent [money/time/effort] on [failed solutions].
-I was about to [give up / accept failure].
-
-Then [discovery moment].
-
-That's when I realized [key insight].
-
-And that changed everything."
+"When I was [situation], I struggled with [same problem].
+I tried [what didn't work]. I spent [money/time] on [failed solutions].
+Then [discovery moment]. That's when I realized [key insight]. And that changed everything."
 ```
 
-**Duration:** 2-4 minutes
-
----
-
-### T — Transformation
-
-**Goal:** Paint the after picture
-
+**Transformation:**
 ```
-SCRIPT:
-
 "Within [timeframe], [transformation result].
-
-Specifically:
-- [Specific result 1]
-- [Specific result 2]
-- [Specific result 3]
-
-But I'm not special. The same thing happened for [customer examples]:
-
-[Testimonial 1]
-[Testimonial 2]
-
-And it can happen for you too."
+Specifically: [result 1], [result 2], [result 3].
+But I'm not special. [Testimonial 1]. [Testimonial 2]. And it can happen for you too."
 ```
 
-**Duration:** 2-3 minutes
-
----
-
-### O — Offer
-
-**Goal:** Present everything they get
-
+**Offer:**
 ```
-SCRIPT:
-
-"That's why I created [Product Name].
-
-Here's exactly what you get:
-
-Component 1: [Name]
-[Description of what it is and what it does for them]
-
-Component 2: [Name]
-[Description]
-
-Component 3: [Name]
-[Description]
-
-But that's not all.
-
-When you join today, you also get:
-
-Bonus 1: [Name] ($X value)
-Bonus 2: [Name] ($X value)
-Bonus 3: [Name] ($X value)
-
-Total value: $[Large Number]
-
-But you won't pay anywhere near that.
-
-Your investment today is just $[Price]."
+"That's why I created [Product Name]. Here's exactly what you get:
+Component 1: [Name] — [what it does for them]
+Component 2: [Name] — [description]
+Bonus 1: [Name] ($X value), Bonus 2: [Name] ($X value)
+Total value: $[Large Number]. Your investment today is just $[Price]."
 ```
 
-**Duration:** 3-5 minutes
-
----
-
-### R — Response
-
-**Goal:** Close the sale with clear CTA
-
+**Response:**
 ```
-SCRIPT:
-
-"Here's what to do next:
-
-Click the button below this video to [action].
-
-You'll be taken to a secure checkout page.
-Enter your information.
-Get instant access.
-
-And you're protected by our [X]-day guarantee.
-
-If [Product] doesn't [deliver specific result],
-just email us and you'll get a full refund.
-
-No questions asked.
-
-So you literally have nothing to lose.
-
-Click the button now while this is fresh in your mind.
-
-I'll see you inside."
+"Click the button below. You'll be taken to a secure checkout.
+You're protected by our [X]-day guarantee — if [Product] doesn't [deliver result], full refund, no questions asked.
+Click the button now while this is fresh in your mind. I'll see you inside."
 ```
-
-**Duration:** 60-90 seconds
 
 ---
 
 ## Complete VSL Script Example
 
-**Product:** Course on Landing Page Copywriting
-**Price:** $497
-**Duration:** ~15 minutes
+**Product:** Course on Landing Page Copywriting | **Price:** $497 | **Duration:** ~15 minutes
 
 ---
 
@@ -208,16 +85,16 @@ I'll see you inside."
 
 "If your landing pages aren't converting...
 
-If you've tried tweaking your headlines, testing buttons, 
+If you've tried tweaking your headlines, testing buttons,
 and even hiring copywriters...
 
 And nothing seems to move the needle...
 
 Then what I'm about to share might change everything.
 
-My name is [Name], and in the next few minutes, 
-I'm going to show you the exact framework 
-I've used to write landing pages that convert 
+My name is [Name], and in the next few minutes,
+I'm going to show you the exact framework
+I've used to write landing pages that convert
 at 2-3x the industry average."
 
 ---
@@ -236,7 +113,7 @@ So they read 10 blog posts about 'best practices'...
 They copy what their competitors are doing...
 They A/B test tiny details that don't matter...
 
-And they end up with a page that looks good 
+And they end up with a page that looks good
 but doesn't convert.
 
 Sound familiar?
@@ -253,7 +130,7 @@ Every dollar you spend on ads gets wasted.
 Every piece of content you create leads nowhere.
 Every visitor bounces and never comes back.
 
-You're literally paying to send people 
+You're literally paying to send people
 to a page that doesn't work.
 
 And every day you let this continue,
@@ -278,7 +155,7 @@ I tested hundreds of variations.
 
 Nothing worked.
 
-I was about to shut down the agency when 
+I was about to shut down the agency when
 I discovered something that changed everything.
 
 I was reading an old copywriting book from the 1960s...
@@ -308,10 +185,8 @@ That's when I knew I was onto something."
 
 **[SOCIAL PROOF — 7:00-9:00]**
 
-"Since then, I've helped hundreds of businesses 
+"Since then, I've helped hundreds of businesses
 transform their landing pages.
-
-Here's what they've experienced:
 
 [Name] increased her conversion rate from 2.1% to 8.7%
 That translated to $127,000 in additional revenue—
@@ -333,74 +208,42 @@ And now I want to share this framework with you."
 
 "Introducing: The Landing Page Accelerator.
 
-Here's exactly what you get:
-
 Module 1: The Psychology of Conversion
-Understand how people actually make buying decisions
-so you can structure your page to match.
-Value: $197
+Understand how people actually make buying decisions. Value: $197
 
 Module 2: The Page Framework
-The exact 12-section structure I use for every 
-high-converting landing page.
-Value: $297
+The exact 12-section structure for every high-converting page. Value: $297
 
 Module 3: Writing Copy That Converts
-How to write headlines, body copy, and CTAs 
-that move people to action.
-Value: $197
+Headlines, body copy, and CTAs that move people to action. Value: $197
 
 Module 4: Testing and Optimization
-How to test smart, iterate fast, and continuously improve.
-Value: $97
+Test smart, iterate fast, continuously improve. Value: $97
 
 Total Training Value: $788
 
-But that's not all.
-
-When you enroll today, you also get:
-
-BONUS 1: The Swipe File
-50+ high-converting landing page examples with annotations
-showing exactly why they work.
-Value: $197
-
-BONUS 2: Page Templates
-Copy-paste templates for every page type—
-lead gen, product, webinar, and more.
-Value: $147
-
-BONUS 3: Private Community
-Access to our members-only community where you can
-get feedback on your pages and learn from others.
-Value: $97
+BONUS 1: The Swipe File — 50+ annotated high-converting examples. Value: $197
+BONUS 2: Page Templates — Copy-paste templates for every page type. Value: $147
+BONUS 3: Private Community — Members-only feedback and learning. Value: $97
 
 That's $1,229 in total value.
 
-But your investment today isn't $1,229.
-It isn't $997.
-It isn't even $697.
-
-Your investment is just $497.
-
-Or 3 payments of $177."
+Your investment is just $497. Or 3 payments of $177."
 
 ---
 
 **[GUARANTEE — 12:00-13:00]**
 
-"And you're completely protected by our 
+"You're completely protected by our
 30-Day 'Landing Page Transformation' Guarantee.
 
-Go through the training.
-Apply the framework.
-Build your landing page.
+Go through the training. Apply the framework. Build your landing page.
 
 If your conversion rate doesn't improve significantly—
 or if you're unhappy for any reason—
 just email us within 30 days.
 
-We'll give you a full refund. No questions asked.
+Full refund. No questions asked.
 
 You literally have nothing to lose."
 
@@ -410,7 +253,7 @@ You literally have nothing to lose."
 
 "So here's my question:
 
-How much longer are you going to let 
+How much longer are you going to let
 underperforming pages cost you customers?
 
 Every day you wait is another day of wasted ad spend...
@@ -422,11 +265,7 @@ The results are real.
 The guarantee removes all risk.
 
 Click the button below this video to get started.
-
-You'll be taken to a secure checkout page.
-Enter your details.
-Get instant access.
-
+Enter your details. Get instant access.
 And start building landing pages that actually convert.
 
 I'll see you inside."
@@ -437,73 +276,34 @@ I'll see you inside."
 
 ## VSL Best Practices
 
-### Pacing
-- Start slow (build trust)
-- Speed up during story (build momentum)
-- Slow down for offer (ensure comprehension)
-- Fast close (urgency)
-
-### Visuals
-- Text on screen reinforces key points
-- Slides > talking head for longer VSLs
-- Show proof (screenshots, testimonials)
-- Progress bar keeps viewers watching
-
-### Voice
-- Conversational, not scripted-sounding
-- Vary energy levels
-- Pause for emphasis
-- Sound like you're talking to one person
-
-### Length
-- Lead magnet VSL: 5-10 minutes
-- Low-ticket ($100-500): 10-20 minutes
-- Mid-ticket ($500-2000): 20-35 minutes
-- High-ticket ($2000+): 30-60 minutes
-
-### Testing
-- Test hooks (first 30 seconds determine everything)
-- Test different story angles
-- Test offer presentations
-- Test CTA placement and timing
+| Area | Guidance |
+|------|----------|
+| **Pacing** | Start slow (trust) → speed up in story (momentum) → slow for offer (comprehension) → fast close (urgency) |
+| **Visuals** | Text on screen reinforces key points; slides > talking head for longer VSLs; show proof |
+| **Voice** | Conversational, not scripted; vary energy; pause for emphasis; talk to one person |
+| **Length** | Lead magnet: 5-10 min · Low-ticket ($100-500): 10-20 min · Mid-ticket ($500-2k): 20-35 min · High-ticket ($2k+): 30-60 min |
+| **Testing** | Test hooks first (first 30s determines everything), then story angles, offer presentation, CTA timing |
 
 ---
 
 ## Quick VSL Script Template
 
 ```
-[0:00-0:30] HOOK
-"If you [problem/frustration], then..."
-
-[0:30-2:00] PROBLEM
-"Here's what most people do... and why it doesn't work."
-
-[2:00-3:00] AGITATE  
-"The real cost of this problem..."
-
-[3:00-6:00] STORY
-"I was in the same spot... here's what changed."
-
-[6:00-8:00] MECHANISM
-"The key insight that makes this work..."
-
-[8:00-10:00] SOCIAL PROOF
-"Here's what happened for others..."
-
-[10:00-13:00] OFFER
-"Here's everything you get..."
-
-[13:00-14:00] GUARANTEE
-"You're protected by..."
-
-[14:00-15:00] CLOSE
-"Here's what to do next..."
+[0:00-0:30]  HOOK        "If you [problem/frustration], then..."
+[0:30-2:00]  PROBLEM     "Here's what most people do... and why it doesn't work."
+[2:00-3:00]  AGITATE     "The real cost of this problem..."
+[3:00-6:00]  STORY       "I was in the same spot... here's what changed."
+[6:00-8:00]  MECHANISM   "The key insight that makes this work..."
+[8:00-10:00] SOCIAL PROOF "Here's what happened for others..."
+[10:00-13:00] OFFER      "Here's everything you get..."
+[13:00-14:00] GUARANTEE  "You're protected by..."
+[14:00-15:00] CLOSE      "Here's what to do next..."
 ```
 
 ---
 
 ## Further Reading
 
-- See [Landing Page Structure](../frameworks/landing-page-structure.md) for written page framework
-- See [Offer Construction](../frameworks/offer-construction.md) for value stacking
-- See [Objection Handling](../frameworks/objection-handling.md) for FAQ sections
+- [Landing Page Structure](../frameworks/landing-page-structure.md) — written page framework
+- [Offer Construction](../frameworks/offer-construction.md) — value stacking
+- [Objection Handling](../frameworks/objection-handling.md) — FAQ sections
