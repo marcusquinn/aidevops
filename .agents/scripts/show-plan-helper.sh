@@ -112,25 +112,52 @@ extract_plan() {
 	return 1
 }
 
+# Detect and apply #### section header flags
+# Sets in_purpose/in_progress/in_decisions/in_discoveries/in_context via stdout
+# Returns the active section name, or empty string if line is not a section header
+_parse_plan_detect_section() {
+	local line="$1"
+	if [[ "$line" =~ ^####[[:space:]]+Purpose ]]; then
+		echo "purpose"
+	elif [[ "$line" =~ ^####[[:space:]]+Progress ]]; then
+		echo "progress"
+	elif [[ "$line" =~ ^####[[:space:]]+Decision ]]; then
+		echo "decisions"
+	elif [[ "$line" =~ ^####[[:space:]]+(Surprises|Discoveries) ]]; then
+		echo "discoveries"
+	elif [[ "$line" =~ ^####[[:space:]]+Context ]]; then
+		echo "context"
+	else
+		echo ""
+	fi
+	return 0
+}
+
+# Emit pipe-delimited output fields for a parsed plan
+_parse_plan_emit_output() {
+	local title="$1" status="$2" estimate="$3" phase="$4" total_phases="$5"
+	local purpose="$6" progress="$7" decisions="$8" discoveries="$9"
+	local context="${10}"
+	echo "TITLE|$title"
+	echo "STATUS|$status"
+	echo "ESTIMATE|$estimate"
+	echo "PHASE|$phase"
+	echo "TOTAL_PHASES|$total_phases"
+	echo "PURPOSE|${purpose//$'\n'/\\n}"
+	echo "PROGRESS|${progress//$'\n'/\\n}"
+	echo "DECISIONS|${decisions//$'\n'/\\n}"
+	echo "DISCOVERIES|${discoveries//$'\n'/\\n}"
+	echo "CONTEXT|${context//$'\n'/\\n}"
+	return 0
+}
+
 # Parse plan content into structured data
 parse_plan_content() {
 	local content="$1"
 
-	local title=""
-	local status=""
-	local estimate=""
-	local phase="0"
-	local total_phases="0"
-	local purpose=""
-	local in_purpose=false
-	local progress=""
-	local in_progress=false
-	local decisions=""
-	local in_decisions=false
-	local discoveries=""
-	local in_discoveries=false
-	local context=""
-	local in_context=false
+	local title="" status="" estimate="" phase="0" total_phases="0"
+	local purpose="" progress="" decisions="" discoveries="" context=""
+	local active_section=""
 
 	while IFS= read -r line; do
 		# Title
@@ -140,7 +167,7 @@ parse_plan_content() {
 			continue
 		fi
 
-		# Status
+		# Status (with optional phase extraction)
 		if [[ "$line" =~ ^\*\*Status:\*\*[[:space:]]+(.+)$ ]]; then
 			status="${BASH_REMATCH[1]}"
 			if [[ "$status" =~ \(Phase[[:space:]]+([0-9]+)/([0-9]+)\) ]]; then
@@ -156,49 +183,11 @@ parse_plan_content() {
 			continue
 		fi
 
-		# Section headers
-		if [[ "$line" =~ ^####[[:space:]]+Purpose ]]; then
-			in_purpose=true
-			in_progress=false
-			in_decisions=false
-			in_discoveries=false
-			in_context=false
-			continue
-		fi
-
-		if [[ "$line" =~ ^####[[:space:]]+Progress ]]; then
-			in_purpose=false
-			in_progress=true
-			in_decisions=false
-			in_discoveries=false
-			in_context=false
-			continue
-		fi
-
-		if [[ "$line" =~ ^####[[:space:]]+Decision ]]; then
-			in_purpose=false
-			in_progress=false
-			in_decisions=true
-			in_discoveries=false
-			in_context=false
-			continue
-		fi
-
-		if [[ "$line" =~ ^####[[:space:]]+(Surprises|Discoveries) ]]; then
-			in_purpose=false
-			in_progress=false
-			in_decisions=false
-			in_discoveries=true
-			in_context=false
-			continue
-		fi
-
-		if [[ "$line" =~ ^####[[:space:]]+Context ]]; then
-			in_purpose=false
-			in_progress=false
-			in_decisions=false
-			in_discoveries=false
-			in_context=true
+		# Section headers — delegate detection to helper
+		local detected_section
+		detected_section=$(_parse_plan_detect_section "$line")
+		if [[ -n "$detected_section" ]]; then
+			active_section="$detected_section"
 			continue
 		fi
 
@@ -206,36 +195,29 @@ parse_plan_content() {
 		[[ "$line" =~ ^\<\!--TOON ]] && continue
 		[[ "$line" =~ ^--\> ]] && continue
 
-		# Accumulate content
-		if $in_purpose && [[ -n "$line" ]]; then
-			purpose+="$line"$'\n'
-		fi
-		if $in_progress && [[ "$line" =~ ^-\ \[ ]]; then
-			progress+="$line"$'\n'
-		fi
-		if $in_decisions && [[ "$line" =~ ^-\ \*\*Decision ]]; then
-			decisions+="$line"$'\n'
-		fi
-		if $in_discoveries && [[ "$line" =~ ^-\ \*\*Observation ]]; then
-			discoveries+="$line"$'\n'
-		fi
-		if $in_context && [[ -n "$line" ]]; then
-			context+="$line"$'\n'
-		fi
+		# Accumulate content into the active section
+		case "$active_section" in
+		purpose)
+			[[ -n "$line" ]] && purpose+="$line"$'\n'
+			;;
+		progress)
+			[[ "$line" =~ ^-\ \[ ]] && progress+="$line"$'\n'
+			;;
+		decisions)
+			[[ "$line" =~ ^-\ \*\*Decision ]] && decisions+="$line"$'\n'
+			;;
+		discoveries)
+			[[ "$line" =~ ^-\ \*\*Observation ]] && discoveries+="$line"$'\n'
+			;;
+		context)
+			[[ -n "$line" ]] && context+="$line"$'\n'
+			;;
+		esac
 
 	done <<<"$content"
 
-	# Output as pipe-delimited for easy parsing
-	echo "TITLE|$title"
-	echo "STATUS|$status"
-	echo "ESTIMATE|$estimate"
-	echo "PHASE|$phase"
-	echo "TOTAL_PHASES|$total_phases"
-	echo "PURPOSE|${purpose//$'\n'/\\n}"
-	echo "PROGRESS|${progress//$'\n'/\\n}"
-	echo "DECISIONS|${decisions//$'\n'/\\n}"
-	echo "DISCOVERIES|${discoveries//$'\n'/\\n}"
-	echo "CONTEXT|${context//$'\n'/\\n}"
+	_parse_plan_emit_output "$title" "$status" "$estimate" "$phase" "$total_phases" \
+		"$purpose" "$progress" "$decisions" "$discoveries" "$context"
 	return 0
 }
 
