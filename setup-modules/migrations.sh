@@ -300,13 +300,19 @@ _migrate_repo_agent_symlinks() {
 			mkdir -p "$repo_path/.agents"
 		fi
 		print_info "  Removed legacy .agent symlink in $(basename "$repo_path")"
-		((_migrate_count++))
+		((++_migrate_count))
 	elif [[ -d "$repo_path/.agent" && ! -L "$repo_path/.agent" ]]; then
 		# Real directory (not symlink) - rename it
+		# Handle mixed state: .agents may be a legacy symlink blocking the rename
+		if [[ -L "$repo_path/.agents" ]]; then
+			rm -f "$repo_path/.agents"
+			print_info "  Removed legacy .agents symlink in $(basename "$repo_path")"
+			((++_migrate_count))
+		fi
 		if [[ ! -e "$repo_path/.agents" ]]; then
 			mv "$repo_path/.agent" "$repo_path/.agents"
 			print_info "  Renamed directory: $repo_path/.agent -> .agents"
-			((_migrate_count++))
+			((++_migrate_count))
 		fi
 	fi
 
@@ -315,7 +321,7 @@ _migrate_repo_agent_symlinks() {
 		rm -f "$repo_path/.agents"
 		mkdir -p "$repo_path/.agents"
 		print_info "  Replaced .agents symlink with real directory in $(basename "$repo_path")"
-		((_migrate_count++))
+		((++_migrate_count))
 	fi
 
 	return 0
@@ -331,9 +337,7 @@ _migrate_repo_gitignore() {
 	if [[ "${NON_INTERACTIVE:-false}" == "true" ]]; then
 		if [[ -f "$gitignore" ]]; then
 			local needs_gitignore_update=false
-			if grep -q "^\.agents$" "$gitignore" 2>/dev/null ||
-				grep -q "^\.agent$" "$gitignore" 2>/dev/null ||
-				grep -q "^\.agent/loop-state/" "$gitignore" 2>/dev/null ||
+			if grep -q -e "^\.agents$" -e "^\.agent$" -e "^\.agent/loop-state/" "$gitignore" 2>/dev/null ||
 				! grep -q "^\.agents/loop-state/" "$gitignore" 2>/dev/null; then
 				needs_gitignore_update=true
 			fi
@@ -404,13 +408,13 @@ _migrate_git_dir_agent_paths() {
 				mkdir -p "$repo_dir/.agents"
 			fi
 			print_info "  Removed legacy .agent symlink: $agent_path"
-			((_migrate_count++))
+			((++_migrate_count))
 		elif [[ -d "$agent_path" ]]; then
 			# Directory: rename to .agents if .agents doesn't exist
 			if [[ ! -e "$repo_dir/.agents" ]]; then
 				mv "$agent_path" "$repo_dir/.agents"
 				print_info "  Renamed directory: $agent_path -> .agents"
-				((_migrate_count++))
+				((++_migrate_count))
 			fi
 		fi
 	done < <(find "$HOME/Git" -maxdepth 3 -name ".agent" \( -type l -o -type d \) -print0 2>/dev/null)
@@ -436,7 +440,7 @@ _migrate_ai_config_agent_refs() {
 				sed -i '' 's|\.agent/|.agents/|g' "$config_file" 2>/dev/null ||
 					sed -i 's|\.agent/|.agents/|g' "$config_file" 2>/dev/null || true
 				print_info "  Updated references in $config_file"
-				((_migrate_count++))
+				((++_migrate_count))
 			fi
 		fi
 	done
@@ -447,6 +451,7 @@ _migrate_ai_config_agent_refs() {
 		if grep -q '\.agent/' "$greeting_cache" 2>/dev/null; then
 			sed -i '' 's|\.agent/|.agents/|g' "$greeting_cache" 2>/dev/null ||
 				sed -i 's|\.agent/|.agents/|g' "$greeting_cache" 2>/dev/null || true
+			((++_migrate_count))
 		fi
 	fi
 
@@ -532,19 +537,25 @@ _remove_deprecated_mcp_entries() {
 	for mcp in "${deprecated_mcps[@]}"; do
 		if jq -e ".mcp[\"$mcp\"]" "$tmp_config" >/dev/null 2>&1; then
 			jq "del(.mcp[\"$mcp\"])" "$tmp_config" >"${tmp_config}.new" && mv "${tmp_config}.new" "$tmp_config"
-			((_cleanup_count++))
+			((++_cleanup_count))
 		fi
 	done
 
 	for tool in "${deprecated_tools[@]}"; do
 		if jq -e ".tools[\"$tool\"]" "$tmp_config" >/dev/null 2>&1; then
-			jq "del(.tools[\"$tool\"])" "$tmp_config" >"${tmp_config}.new" && mv "${tmp_config}.new" "$tmp_config"
+			jq "del(.tools[\"$tool\"])" "$tmp_config" >"${tmp_config}.new" &&
+				mv "${tmp_config}.new" "$tmp_config" &&
+				((++_cleanup_count))
 		fi
 	done
 
 	# Also remove deprecated tool refs from SEO agent
-	if jq -e '.agent.SEO.tools["dataforseo_*"]' "$tmp_config" >/dev/null 2>&1; then
-		jq 'del(.agent.SEO.tools["dataforseo_*"]) | del(.agent.SEO.tools["serper_*"]) | del(.agent.SEO.tools["ahrefs_*"])' "$tmp_config" >"${tmp_config}.new" && mv "${tmp_config}.new" "$tmp_config"
+	if jq -e '(.agent.SEO.tools // {}) | keys[]? | select(. == "dataforseo_*" or . == "serper_*" or . == "ahrefs_*")' \
+		"$tmp_config" >/dev/null 2>&1; then
+		jq 'del(.agent.SEO.tools["dataforseo_*"]) | del(.agent.SEO.tools["serper_*"]) | del(.agent.SEO.tools["ahrefs_*"])' \
+			"$tmp_config" >"${tmp_config}.new" &&
+			mv "${tmp_config}.new" "$tmp_config" &&
+			((++_cleanup_count))
 	fi
 
 	return 0
@@ -589,7 +600,7 @@ _migrate_mcp_npx_to_binary() {
 			full_path=$(resolve_mcp_binary_path "$bin_name")
 			if [[ -n "$full_path" ]]; then
 				jq --arg k "$mcp_key" --arg p "$full_path" '.mcp[$k].command = [$p]' "$tmp_config" >"${tmp_config}.new" && mv "${tmp_config}.new" "$tmp_config"
-				((_cleanup_count++))
+				((++_cleanup_count))
 			fi
 		fi
 	done
@@ -606,7 +617,7 @@ _migrate_mcp_npx_to_binary() {
 				outscraper_key=$(source "$HOME/.config/aidevops/credentials.sh" && echo "${OUTSCRAPER_API_KEY:-}")
 			fi
 			jq --arg p "$outscraper_path" --arg key "$outscraper_key" '.mcp.outscraper.command = [$p] | .mcp.outscraper.environment = {"OUTSCRAPER_API_KEY": $key}' "$tmp_config" >"${tmp_config}.new" && mv "${tmp_config}.new" "$tmp_config"
-			((_cleanup_count++))
+			((++_cleanup_count))
 		fi
 	fi
 
