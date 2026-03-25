@@ -319,6 +319,7 @@ cmd_flux() {
 	submit_and_poll "flux-dev-image" "${payload}" \
 		"${_flux_poll_interval}" "${_flux_timeout}" \
 		"${_flux_output_file}" "${_flux_webhook}"
+	return $?
 }
 
 # Parse arguments for cmd_effects — sets _effects_* globals
@@ -438,6 +439,7 @@ cmd_effects() {
 	submit_and_poll "generate_wan_ai_effects" "${payload}" \
 		"${_effects_poll_interval}" "${_effects_timeout}" \
 		"${_effects_output_file}" "${_effects_webhook}"
+	return $?
 }
 
 # Music generation (Suno)
@@ -522,6 +524,7 @@ cmd_music() {
 	fi
 
 	submit_and_poll "${endpoint}" "${payload}" "${poll_interval}" "${timeout}" "${output_file}" "${webhook}"
+	return $?
 }
 
 # Lip-sync
@@ -598,6 +601,7 @@ cmd_lipsync() {
 		'{video_url: $video, audio_url: $audio}')
 
 	submit_and_poll "${endpoint}" "${payload}" "${poll_interval}" "${timeout}" "${output_file}" "${webhook}"
+	return $?
 }
 
 # Agent operations
