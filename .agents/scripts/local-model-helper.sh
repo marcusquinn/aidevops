@@ -655,6 +655,107 @@ get_release_asset_pattern() {
 }
 
 # =============================================================================
+# Helper: Resolve download URL for a llama.cpp release asset
+# =============================================================================
+
+_setup_find_asset_url() {
+	local platform="$1"
+	local release_json="$2"
+
+	local asset_pattern
+	asset_pattern="$(get_release_asset_pattern "$platform")" || {
+		print_error "No binary available for platform: ${platform}"
+		return 1
+	}
+
+	local download_url
+	download_url="$(echo "$release_json" | jq -r --arg pat "$asset_pattern" \
+		'.assets[] | select(.name | test($pat)) | .browser_download_url' | head -1)"
+
+	if [[ -z "$download_url" ]]; then
+		print_error "No matching release asset for pattern: ${asset_pattern}"
+		print_info "Available assets:"
+		echo "$release_json" | jq -r '.assets[].name' 2>/dev/null | head -10
+		return 1
+	fi
+
+	echo "$download_url"
+	return 0
+}
+
+# =============================================================================
+# Helper: Download and extract a llama.cpp release archive into a temp dir
+# =============================================================================
+
+_setup_extract_archive() {
+	local download_url="$1"
+	local tmp_dir="$2"
+
+	local asset_name
+	asset_name="$(basename "$download_url")"
+	local tmp_archive="${tmp_dir}/${asset_name}"
+
+	print_info "Downloading ${asset_name}..."
+	if ! curl -sL -o "$tmp_archive" "$download_url"; then
+		print_error "Download failed: ${download_url}"
+		return 1
+	fi
+
+	print_info "Extracting..."
+	mkdir -p "${tmp_dir}/extracted"
+	if [[ "$asset_name" == *.tar.gz ]] || [[ "$asset_name" == *.tgz ]]; then
+		if ! tar -xzf "$tmp_archive" -C "${tmp_dir}/extracted"; then
+			print_error "Extraction failed (tar.gz)"
+			return 1
+		fi
+	elif [[ "$asset_name" == *.zip ]]; then
+		if ! unzip -qo "$tmp_archive" -d "${tmp_dir}/extracted"; then
+			print_error "Extraction failed (zip)"
+			return 1
+		fi
+	else
+		print_error "Unknown archive format: ${asset_name}"
+		return 1
+	fi
+
+	return 0
+}
+
+# =============================================================================
+# Helper: Install llama-server (and optionally llama-cli) from extracted dir
+# =============================================================================
+
+_setup_install_binaries() {
+	local extracted_dir="$1"
+
+	local server_bin
+	server_bin="$(find "$extracted_dir" -name "llama-server" -type f | head -1)"
+	if [[ -z "$server_bin" ]]; then
+		server_bin="$(find "$extracted_dir" -name "llama-server*" -type f ! -name "*.dll" | head -1)"
+	fi
+
+	if [[ -z "$server_bin" ]]; then
+		print_error "llama-server binary not found in release archive"
+		print_info "Archive contents:"
+		find "$extracted_dir" -type f | head -20
+		return 1
+	fi
+
+	cp "$server_bin" "$LLAMA_SERVER_BIN"
+	chmod +x "$LLAMA_SERVER_BIN"
+
+	# Also copy llama-cli if present
+	local cli_bin
+	cli_bin="$(find "$extracted_dir" -name "llama-cli" -type f | head -1)"
+	if [[ -n "$cli_bin" ]]; then
+		cp "$cli_bin" "$LLAMA_CLI_BIN"
+		chmod +x "$LLAMA_CLI_BIN"
+	fi
+
+	return 0
+}
+
+# =============================================================================
 # Helper: Download and extract llama.cpp release
 # =============================================================================
 
@@ -680,81 +781,20 @@ _setup_download_llama() {
 	fi
 	print_info "Latest release: ${tag_name}"
 
-	local asset_pattern
-	asset_pattern="$(get_release_asset_pattern "$platform")" || {
-		print_error "No binary available for platform: ${platform}"
-		return 1
-	}
-
 	local download_url
-	download_url="$(echo "$release_json" | jq -r --arg pat "$asset_pattern" \
-		'.assets[] | select(.name | test($pat)) | .browser_download_url' | head -1)"
-
-	if [[ -z "$download_url" ]]; then
-		print_error "No matching release asset for pattern: ${asset_pattern}"
-		print_info "Available assets:"
-		echo "$release_json" | jq -r '.assets[].name' 2>/dev/null | head -10
-		return 1
-	fi
-
-	local asset_name
-	asset_name="$(basename "$download_url")"
-	print_info "Downloading ${asset_name}..."
+	download_url="$(_setup_find_asset_url "$platform" "$release_json")" || return $?
 
 	local tmp_dir
 	tmp_dir="$(mktemp -d)"
-	local tmp_archive="${tmp_dir}/${asset_name}"
 
-	if ! curl -sL -o "$tmp_archive" "$download_url"; then
-		print_error "Download failed: ${download_url}"
+	if ! _setup_extract_archive "$download_url" "$tmp_dir"; then
 		rm -rf "$tmp_dir"
 		return 1
 	fi
 
-	print_info "Extracting..."
-	mkdir -p "$tmp_dir/extracted"
-	if [[ "$asset_name" == *.tar.gz ]] || [[ "$asset_name" == *.tgz ]]; then
-		if ! tar -xzf "$tmp_archive" -C "$tmp_dir/extracted"; then
-			print_error "Extraction failed (tar.gz)"
-			rm -rf "$tmp_dir"
-			return 1
-		fi
-	elif [[ "$asset_name" == *.zip ]]; then
-		if ! unzip -qo "$tmp_archive" -d "$tmp_dir/extracted"; then
-			print_error "Extraction failed (zip)"
-			rm -rf "$tmp_dir"
-			return 1
-		fi
-	else
-		print_error "Unknown archive format: ${asset_name}"
+	if ! _setup_install_binaries "${tmp_dir}/extracted"; then
 		rm -rf "$tmp_dir"
 		return 1
-	fi
-
-	# Find and copy the server binary
-	local server_bin
-	server_bin="$(find "$tmp_dir/extracted" -name "llama-server" -type f | head -1)"
-	if [[ -z "$server_bin" ]]; then
-		server_bin="$(find "$tmp_dir/extracted" -name "llama-server*" -type f ! -name "*.dll" | head -1)"
-	fi
-
-	if [[ -z "$server_bin" ]]; then
-		print_error "llama-server binary not found in release archive"
-		print_info "Archive contents:"
-		find "$tmp_dir/extracted" -type f | head -20
-		rm -rf "$tmp_dir"
-		return 1
-	fi
-
-	cp "$server_bin" "$LLAMA_SERVER_BIN"
-	chmod +x "$LLAMA_SERVER_BIN"
-
-	# Also copy llama-cli if present
-	local cli_bin
-	cli_bin="$(find "$tmp_dir/extracted" -name "llama-cli" -type f | head -1)"
-	if [[ -n "$cli_bin" ]]; then
-		cp "$cli_bin" "$LLAMA_CLI_BIN"
-		chmod +x "$LLAMA_CLI_BIN"
 	fi
 
 	rm -rf "$tmp_dir"
