@@ -84,13 +84,8 @@ _setup_agno_venv() {
 	return 0
 }
 
-# Write the AgentOS Python configuration file
-_write_agno_agent_os_py() {
-	if [[ -f "agent_os.py" ]]; then
-		return 0
-	fi
-
-	print_info "Creating AgentOS configuration..."
+# Write the Python imports and browser tool class sections of agent_os.py
+_write_agno_agent_os_py_header() {
 	cat >agent_os.py <<'EOF'
 #!/usr/bin/env python3
 """
@@ -180,6 +175,13 @@ model = OpenAIChat(
     temperature=0.1,
     max_tokens=4000
 )
+EOF
+	return 0
+}
+
+# Write the core DevOps, code review, and documentation agent definitions
+_write_agno_agent_os_py_core_agents() {
+	cat >>agent_os.py <<'EOF'
 
 # DevOps Assistant Agent
 devops_agent = Agent(
@@ -255,6 +257,13 @@ docs_agent = Agent(
     show_tool_calls=True,
     markdown=True
 )
+EOF
+	return 0
+}
+
+# Write the browser automation agent definitions (LinkedIn and web automation)
+_write_agno_agent_os_py_browser_agents() {
+	cat >>agent_os.py <<'EOF'
 
 # LinkedIn Automation Agent (Local Browser Only)
 linkedin_tools = [
@@ -327,6 +336,13 @@ web_automation_agent = Agent(
     show_tool_calls=True,
     markdown=True
 )
+EOF
+	return 0
+}
+
+# Write the AgentOS instance setup and main entrypoint
+_write_agno_agent_os_py_entrypoint() {
+	cat >>agent_os.py <<'EOF'
 
 # Create AgentOS instance
 available_agents = [devops_agent, code_review_agent, docs_agent]
@@ -359,6 +375,20 @@ if __name__ == "__main__":
 
     agent_os.serve()
 EOF
+	return 0
+}
+
+# Write the AgentOS Python configuration file
+_write_agno_agent_os_py() {
+	if [[ -f "agent_os.py" ]]; then
+		return 0
+	fi
+
+	print_info "Creating AgentOS configuration..."
+	_write_agno_agent_os_py_header
+	_write_agno_agent_os_py_core_agents
+	_write_agno_agent_os_py_browser_agents
+	_write_agno_agent_os_py_entrypoint
 	print_success "Created AgentOS configuration"
 	return 0
 }
