@@ -381,11 +381,11 @@ _log_verification() {
 # Commands
 # =============================================================================
 
-# verify — Perform cross-provider verification of an operation.
-cmd_verify() {
-	local operation="" op_type="" risk_tier="" repo="" branch="" details=""
-	local primary_model="" skip_reason="" session_id=""
-
+# _cmd_verify_parse_args — Parse verify command arguments into named variables.
+# Sets: operation, op_type, risk_tier, repo, branch, details, primary_model,
+#       session_id, skip_reason via caller's local variables (passed by name).
+# Usage: call with "$@" from cmd_verify; variables must be declared local first.
+_cmd_verify_parse_args() {
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--operation)
@@ -429,12 +429,21 @@ cmd_verify() {
 			;;
 		esac
 	done
+	return 0
+}
 
-	# Validate required params
-	if [[ -z "$operation" ]]; then
-		print_error "Usage: verify-operation-helper.sh verify --operation \"command\" [options]"
-		return 1
-	fi
+# _cmd_verify_check_skip — Handle skip conditions and auto-classify the operation.
+# Arguments: $1=operation $2=op_type $3=risk_tier $4=session_id $5=repo $6=branch $7=skip_reason
+# Outputs: "SKIPPED" or "PROCEED" on stdout if short-circuit applies; nothing otherwise.
+# Returns: 0 to continue, 1 to short-circuit (caller should return 0).
+_cmd_verify_check_skip() {
+	local operation="$1"
+	local op_type="$2"
+	local risk_tier="$3"
+	local session_id="$4"
+	local repo="$5"
+	local branch="$6"
+	local skip_reason="$7"
 
 	# Check global skip
 	if [[ "${AIDEVOPS_SKIP_VERIFY:-}" == "1" ]]; then
@@ -442,7 +451,7 @@ cmd_verify() {
 		_log_verification "${op_type:-unknown}" "${risk_tier:-unknown}" "unknown" "none" "none" \
 			"skipped" "0" "" "true" "env:AIDEVOPS_SKIP_VERIFY" "$session_id" "$repo" "$branch"
 		echo "SKIPPED"
-		return 0
+		return 1
 	fi
 
 	# Check explicit skip
@@ -451,29 +460,27 @@ cmd_verify() {
 		_log_verification "${op_type:-unknown}" "${risk_tier:-unknown}" "unknown" "none" "none" \
 			"skipped" "0" "" "true" "$skip_reason" "$session_id" "$repo" "$branch"
 		echo "SKIPPED"
-		return 0
+		return 1
 	fi
 
-	# Auto-classify if type/tier not provided
-	if [[ -z "$op_type" || -z "$risk_tier" ]]; then
-		local classification
-		classification=$(classify_operation "$operation")
-		op_type="${op_type:-${classification%%|*}}"
-		risk_tier="${risk_tier:-${classification#*|}}"
-	fi
+	return 0
+}
 
-	# Standard tier doesn't require verification unless explicitly requested
-	if [[ "$risk_tier" == "standard" ]]; then
-		log_info "Operation classified as standard risk — verification not required"
-		echo "PROCEED"
-		return 0
-	fi
+# _cmd_verify_select_verifier — Select a cross-provider verifier and resolve model details.
+# Arguments: $1=primary_model $2=op_type $3=risk_tier $4=session_id $5=repo $6=branch
+# Outputs on stdout: "verifier_provider|verifier_model|model_short" or "PROCEED_UNVERIFIED"
+# Returns: 0 on success, 1 if no verifier available (caller should echo PROCEED_UNVERIFIED).
+_cmd_verify_select_verifier() {
+	local primary_model="$1"
+	local op_type="$2"
+	local risk_tier="$3"
+	local session_id="$4"
+	local repo="$5"
+	local branch="$6"
 
-	# Detect primary provider
 	local primary_provider
 	primary_provider=$(detect_provider "${primary_model:-claude-sonnet-4-6}")
 
-	# Select verifier
 	local verifier_entry verifier_provider verifier_model
 	verifier_entry=$(select_verifier "$primary_provider") || {
 		local rc=$?
@@ -482,20 +489,13 @@ cmd_verify() {
 			_log_verification "$op_type" "$risk_tier" "$primary_provider" "none" "none" \
 				"unavailable" "0" "No verifier available" "false" "" "$session_id" "$repo" "$branch"
 			echo "PROCEED_UNVERIFIED"
-			return 0
+			return 1
 		fi
 		# rc=1 means same-provider fallback — continue with it
 		true
 	}
 	verifier_provider="${verifier_entry%%|*}"
 	verifier_model="${verifier_entry#*|}"
-
-	log_info "Verifying operation: ${op_type} (${risk_tier})"
-	log_info "Primary: ${primary_provider} -> Verifier: ${verifier_provider} (${verifier_model})"
-
-	# Build prompt
-	local prompt
-	prompt=$(_build_verification_prompt "$operation" "$op_type" "$risk_tier" "$repo" "$branch" "$details")
 
 	# Determine model short name for ai-research-helper
 	local model_short
@@ -516,26 +516,23 @@ cmd_verify() {
 		model_short="haiku"
 	fi
 
-	# Call verifier
-	local raw_response
-	raw_response=$(_call_verifier "$prompt" "$model_short") || {
-		log_warn "Verification call failed — proceeding with warning"
-		_log_verification "$op_type" "$risk_tier" "$primary_provider" "$verifier_provider" "$verifier_model" \
-			"error" "0" "API call failed" "false" "" "$session_id" "$repo" "$branch"
-		echo "PROCEED_UNVERIFIED"
-		return 0
-	}
+	log_info "Verifying operation: ${op_type} (${risk_tier})"
+	log_info "Primary: ${primary_provider} -> Verifier: ${verifier_provider} (${verifier_model})"
 
-	# Parse response
-	local parsed verified confidence recommendation reasoning concerns
-	parsed=$(_parse_verification_response "$raw_response") || true
-	IFS='|' read -r verified confidence recommendation reasoning concerns <<<"$parsed"
+	echo "${verifier_provider}|${verifier_model}|${model_short}"
+	return 0
+}
 
-	# Log the decision
-	_log_verification "$op_type" "$risk_tier" "$primary_provider" "$verifier_provider" "$verifier_model" \
-		"$recommendation" "$confidence" "$concerns" "false" "" "$session_id" "$repo" "$branch"
+# _cmd_verify_act_on_recommendation — Emit the result based on the verifier's recommendation.
+# Arguments: $1=recommendation $2=confidence $3=reasoning $4=concerns
+# Outputs: PROCEED / PROCEED_LOW_CONFIDENCE / WARN / BLOCK on stdout.
+# Returns: 0 for proceed/warn, 1 for block.
+_cmd_verify_act_on_recommendation() {
+	local recommendation="$1"
+	local confidence="$2"
+	local reasoning="$3"
+	local concerns="$4"
 
-	# Act on the recommendation
 	case "$recommendation" in
 	proceed)
 		if awk "BEGIN {exit !($confidence < 0.8)}" 2>/dev/null; then
@@ -568,6 +565,78 @@ cmd_verify() {
 	esac
 
 	return 0
+}
+
+# verify — Perform cross-provider verification of an operation.
+cmd_verify() {
+	local operation="" op_type="" risk_tier="" repo="" branch="" details=""
+	local primary_model="" skip_reason="" session_id=""
+
+	_cmd_verify_parse_args "$@"
+
+	# Validate required params
+	if [[ -z "$operation" ]]; then
+		print_error "Usage: verify-operation-helper.sh verify --operation \"command\" [options]"
+		return 1
+	fi
+
+	# Handle skip conditions — short-circuit if applicable
+	_cmd_verify_check_skip "$operation" "$op_type" "$risk_tier" \
+		"$session_id" "$repo" "$branch" "$skip_reason" || return 0
+
+	# Auto-classify if type/tier not provided
+	if [[ -z "$op_type" || -z "$risk_tier" ]]; then
+		local classification
+		classification=$(classify_operation "$operation")
+		op_type="${op_type:-${classification%%|*}}"
+		risk_tier="${risk_tier:-${classification#*|}}"
+	fi
+
+	# Standard tier doesn't require verification unless explicitly requested
+	if [[ "$risk_tier" == "standard" ]]; then
+		log_info "Operation classified as standard risk — verification not required"
+		echo "PROCEED"
+		return 0
+	fi
+
+	# Select verifier — short-circuit if none available
+	local verifier_info
+	verifier_info=$(_cmd_verify_select_verifier "$primary_model" "$op_type" "$risk_tier" \
+		"$session_id" "$repo" "$branch") || {
+		echo "$verifier_info"
+		return 0
+	}
+	local verifier_provider verifier_model model_short
+	IFS='|' read -r verifier_provider verifier_model model_short <<<"$verifier_info"
+
+	# Build prompt and call verifier
+	local prompt
+	prompt=$(_build_verification_prompt "$operation" "$op_type" "$risk_tier" "$repo" "$branch" "$details")
+
+	local primary_provider
+	primary_provider=$(detect_provider "${primary_model:-claude-sonnet-4-6}")
+
+	local raw_response
+	raw_response=$(_call_verifier "$prompt" "$model_short") || {
+		log_warn "Verification call failed — proceeding with warning"
+		_log_verification "$op_type" "$risk_tier" "$primary_provider" "$verifier_provider" "$verifier_model" \
+			"error" "0" "API call failed" "false" "" "$session_id" "$repo" "$branch"
+		echo "PROCEED_UNVERIFIED"
+		return 0
+	}
+
+	# Parse response
+	local parsed verified confidence recommendation reasoning concerns
+	parsed=$(_parse_verification_response "$raw_response") || true
+	IFS='|' read -r verified confidence recommendation reasoning concerns <<<"$parsed"
+
+	# Log the decision
+	_log_verification "$op_type" "$risk_tier" "$primary_provider" "$verifier_provider" "$verifier_model" \
+		"$recommendation" "$confidence" "$concerns" "false" "" "$session_id" "$repo" "$branch"
+
+	# Act on the recommendation
+	_cmd_verify_act_on_recommendation "$recommendation" "$confidence" "$reasoning" "$concerns"
+	return $?
 }
 
 # check — Determine if an operation needs verification (without performing it).
