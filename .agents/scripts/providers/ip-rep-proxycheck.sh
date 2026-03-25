@@ -58,13 +58,13 @@ error_json() {
 	return 0
 }
 
-# Main check function
-cmd_check() {
-	local ip="$1"
-	local api_key="${PROXYCHECK_API_KEY:-}"
-	local timeout="$DEFAULT_TIMEOUT"
-
-	shift
+# Parse --api-key and --timeout flags from remaining args.
+# Prints shell assignments: api_key=<val> timeout=<val>
+# Caller: eval "$(_parse_check_args "$api_key" "$timeout" "$@")"
+_parse_check_args() {
+	local api_key="$1"
+	local timeout="$2"
+	shift 2
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--api-key)
@@ -88,30 +88,50 @@ cmd_check() {
 			;;
 		esac
 	done
+	printf 'api_key=%q timeout=%q\n' "$api_key" "$timeout"
+	return 0
+}
 
-	# Build URL — key is optional for free tier
+# Fetch from ProxyCheck API. Prints response body on stdout; returns http_code via stdout line 1.
+# Usage: _fetch_proxycheck <ip> <api_key> <timeout>
+# Output format: first line = http_code, remaining lines = response body
+_fetch_proxycheck() {
+	local ip="$1"
+	local api_key="$2"
+	local timeout="$3"
+
 	local url="${API_BASE}/${ip}?vpn=1&risk=1&port=1&seen=1&days=7&tag=ip-reputation-helper"
 	if [[ -n "$api_key" ]]; then
 		url="${url}&key=${api_key}"
 	fi
 
-	local response http_code
 	local tmp_body
 	tmp_body=$(mktemp)
 	# shellcheck disable=SC2064
 	trap "rm -f '${tmp_body}'" RETURN
+
+	local http_code
 	http_code=$(curl -s -o "$tmp_body" -w '%{http_code}' \
 		--max-time "$timeout" \
 		-H "Accept: application/json" \
 		"$url" 2>/dev/null) || {
 		rm -f "$tmp_body"
-		error_json "$ip" "curl request failed"
+		echo "curl_failed"
 		return 0
 	}
-	response=$(cat "$tmp_body")
-	rm -f "$tmp_body"
 
-	# Handle HTTP 429 rate limiting
+	echo "$http_code"
+	cat "$tmp_body"
+	rm -f "$tmp_body"
+	return 0
+}
+
+# Handle HTTP-level errors (429 rate limit, 4xx/5xx).
+# Returns 0 if an error was handled (caller should return), 1 if no error.
+_handle_http_error() {
+	local ip="$1"
+	local http_code="$2"
+
 	if [[ "$http_code" == "429" ]]; then
 		jq -n \
 			--arg provider "$PROVIDER_NAME" \
@@ -120,18 +140,25 @@ cmd_check() {
 		return 0
 	fi
 
-	# Handle other HTTP errors
 	if [[ "$http_code" -ge 400 ]]; then
 		error_json "$ip" "HTTP ${http_code}"
 		return 0
 	fi
+
+	return 1
+}
+
+# Validate JSON, check API-level status, extract fields, and emit result JSON.
+# Usage: _parse_proxycheck_response <ip> <response>
+_parse_proxycheck_response() {
+	local ip="$1"
+	local response="$2"
 
 	if ! echo "$response" | jq empty 2>/dev/null; then
 		error_json "$ip" "invalid JSON response"
 		return 0
 	fi
 
-	# Check API status
 	local status
 	status=$(echo "$response" | jq -r '.status // "ok"')
 	if [[ "$status" == "error" ]]; then
@@ -153,7 +180,7 @@ cmd_check() {
 	local data
 	data=$(echo "$response" | jq --arg ip "$ip" '.[$ip] // {}')
 
-	local score is_proxy is_vpn is_tor proxy_type country isp
+	local score is_proxy is_vpn is_tor proxy_type country isp is_listed risk_level
 	score=$(echo "$data" | jq -r '.risk // 0')
 	is_proxy=$(echo "$data" | jq -r 'if .proxy == "yes" then true else false end')
 	is_vpn=$(echo "$data" | jq -r 'if .type == "VPN" then true else false end')
@@ -161,11 +188,7 @@ cmd_check() {
 	proxy_type=$(echo "$data" | jq -r '.type // "none"')
 	country=$(echo "$data" | jq -r '.isocode // "unknown"')
 	isp=$(echo "$data" | jq -r '.provider // "unknown"')
-
-	local is_listed
 	is_listed=$(echo "$data" | jq -r 'if .proxy == "yes" then true else false end')
-
-	local risk_level
 	risk_level=$(score_to_risk "${score%.*}")
 
 	jq -n \
@@ -195,6 +218,33 @@ cmd_check() {
             isp: $isp,
             raw: $raw
         }'
+	return 0
+}
+
+# Main check function — orchestrates arg parsing, fetch, and response parsing
+cmd_check() {
+	local ip="$1"
+	local api_key="${PROXYCHECK_API_KEY:-}"
+	local timeout="$DEFAULT_TIMEOUT"
+
+	shift
+	eval "$(_parse_check_args "$api_key" "$timeout" "$@")" || return 1
+
+	local fetch_output http_code response
+	fetch_output=$(_fetch_proxycheck "$ip" "$api_key" "$timeout")
+	http_code=$(echo "$fetch_output" | head -1)
+	response=$(echo "$fetch_output" | tail -n +2)
+
+	if [[ "$http_code" == "curl_failed" ]]; then
+		error_json "$ip" "curl request failed"
+		return 0
+	fi
+
+	if _handle_http_error "$ip" "$http_code"; then
+		return 0
+	fi
+
+	_parse_proxycheck_response "$ip" "$response"
 	return 0
 }
 
