@@ -81,7 +81,9 @@ cmd_init() {
 
 # Install mkcert if not present. Supports macOS (brew) and Linux (apt, dnf,
 # pacman, apk). On Linux, the apt package name is "mkcert" (available in
-# Ubuntu 20.04+ and Debian 11+). After installation, runs `mkcert -install`
+# Ubuntu 20.04+ and Debian 11+). libnss3-tools is required on Debian/Ubuntu
+# for mkcert to install the CA root into Firefox/Chrome trust stores.
+# After installation, runs `mkcert -install`
 # to create and trust the local CA root.
 # Returns: 0 if mkcert is available after this function, 1 if installation failed.
 ensure_mkcert() {
@@ -98,7 +100,7 @@ ensure_mkcert() {
 			installed=true
 		fi
 	elif command -v apt-get >/dev/null 2>&1; then
-		if sudo apt-get update -qq && sudo apt-get install -y -qq mkcert 2>/dev/null; then
+		if sudo apt-get update -qq && sudo apt-get install -y -qq mkcert libnss3-tools 2>/dev/null; then
 			installed=true
 		fi
 	elif command -v dnf >/dev/null 2>&1; then
@@ -119,7 +121,7 @@ ensure_mkcert() {
 		print_error "Failed to install mkcert automatically"
 		echo "  Manual install options:"
 		echo "    macOS:         brew install mkcert"
-		echo "    Ubuntu/Debian: sudo apt install mkcert"
+		echo "    Ubuntu/Debian: sudo apt install mkcert libnss3-tools"
 		echo "    Fedora:        sudo dnf install mkcert"
 		echo "    Arch:          sudo pacman -S mkcert"
 		echo "    Other:         https://github.com/FiloSottile/mkcert#installation"
