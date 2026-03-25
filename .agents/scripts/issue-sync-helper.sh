@@ -249,6 +249,131 @@ _do_close() {
 # Commands
 # =============================================================================
 
+# _push_build_task_list: populate tasks array from target or full TODO.md scan.
+# Outputs one task ID per line to stdout; caller reads into array.
+_push_build_task_list() {
+	local target_task="$1" todo_file="$2"
+	if [[ -n "$target_task" ]]; then
+		echo "$target_task"
+		return 0
+	fi
+	while IFS= read -r line; do
+		local tid
+		tid=$(echo "$line" | grep -oE 't[0-9]+(\.[0-9]+)*' | head -1 || echo "")
+		[[ -n "$tid" ]] && ! echo "$line" | grep -qE 'ref:GH#[0-9]+' && echo "$tid"
+	done < <(strip_code_fences <"$todo_file" | grep -E '^\s*- \[ \] t[0-9]+' || true)
+	return 0
+}
+
+# _push_create_issue: create a GitHub issue for task_id with race-condition guard.
+# Sets _PUSH_CREATED_NUM on success (empty on failure/skip).
+# Returns 0=created, 1=skipped (race), 2=error.
+_push_create_issue() {
+	local task_id="$1" repo="$2" todo_file="$3" title="$4" body="$5" labels="$6" assignee="$7"
+	_PUSH_CREATED_NUM=""
+
+	[[ -n "$labels" ]] && ensure_labels_exist "$labels" "$repo"
+	local status_label="status:available"
+	[[ -n "$assignee" ]] && {
+		status_label="status:claimed"
+		gh_create_label "$repo" "status:claimed" "D93F0B" "Task is claimed"
+	}
+	local all_labels="${labels:+${labels},}${status_label}"
+
+	# Race-condition guard: re-check immediately before creating
+	local recheck
+	recheck=$(gh_find_issue_by_title "$repo" "${task_id}:" "all" 50)
+	if [[ -n "$recheck" && "$recheck" != "null" ]]; then
+		add_gh_ref_to_todo "$task_id" "$recheck" "$todo_file"
+		return 1
+	fi
+
+	local -a args=("issue" "create" "--repo" "$repo" "--title" "$title" "--body" "$body" "--label" "$all_labels")
+	[[ -n "$assignee" ]] && args+=("--assignee" "$assignee")
+	local url
+	url=$(gh "${args[@]}" 2>/dev/null || echo "")
+	[[ -z "$url" ]] && {
+		print_error "Failed to create issue for $task_id"
+		return 2
+	}
+	local num
+	num=$(echo "$url" | grep -oE '[0-9]+$' || echo "")
+	[[ -n "$num" ]] && _PUSH_CREATED_NUM="$num"
+	return 0
+}
+
+# _push_process_task: process a single task_id — skip if existing/completed,
+# parse metadata, dry-run or create issue. Updates created/skipped counters
+# via stdout tokens "CREATED" or "SKIPPED" for the caller to count.
+_push_process_task() {
+	local task_id="$1" repo="$2" todo_file="$3" project_root="$4"
+	log_verbose "Processing $task_id..."
+	local task_id_ere
+	task_id_ere=$(_escape_ere "$task_id")
+
+	# Skip if issue already exists
+	local existing
+	existing=$(gh_find_issue_by_title "$repo" "${task_id}:" "all" 50)
+	if [[ -n "$existing" && "$existing" != "null" ]]; then
+		add_gh_ref_to_todo "$task_id" "$existing" "$todo_file"
+		echo "SKIPPED"
+		return 0
+	fi
+
+	local task_line
+	task_line=$(strip_code_fences <"$todo_file" | grep -E "^\s*- \[.\] ${task_id_ere} " | head -1 || echo "")
+	[[ -z "$task_line" ]] && {
+		print_warning "Task $task_id not found in TODO.md"
+		return 0
+	}
+
+	# GH#5212: Skip tasks already marked [x] (completed) — prevents duplicate
+	# issues when push is called with a specific task_id that is already done.
+	# The TOON backlog cache in TODO.md can be stale, showing tasks as pending
+	# even after [x] completion. The pulse reads the stale cache and calls
+	# push <task_id>, which previously matched [x] lines via the [.] pattern.
+	# GH#5280: trailing space made optional — matches [x] at end-of-line too.
+	if [[ "$task_line" =~ ^[[:space:]]*-[[:space:]]+\[x\]([[:space:]]|$) ]]; then
+		print_info "Skipping $task_id — already completed ([x] in TODO.md)"
+		echo "SKIPPED"
+		return 0
+	fi
+
+	local parsed
+	parsed=$(parse_task_line "$task_line")
+	local description
+	description=$(echo "$parsed" | grep '^description=' | cut -d= -f2-)
+	local tags
+	tags=$(echo "$parsed" | grep '^tags=' | cut -d= -f2-)
+	local assignee
+	assignee=$(echo "$parsed" | grep '^assignee=' | cut -d= -f2-)
+	local title
+	title=$(_build_title "$task_id" "$description")
+	local labels
+	labels=$(map_tags_to_labels "$tags")
+	local body
+	body=$(compose_issue_body "$task_id" "$project_root")
+
+	if [[ "$DRY_RUN" == "true" ]]; then
+		print_info "[DRY-RUN] Would create: $title"
+		echo "CREATED"
+		return 0
+	fi
+
+	_PUSH_CREATED_NUM=""
+	local rc
+	_push_create_issue "$task_id" "$repo" "$todo_file" "$title" "$body" "$labels" "$assignee"
+	rc=$?
+	if [[ $rc -eq 0 && -n "$_PUSH_CREATED_NUM" ]]; then
+		print_success "Created #${_PUSH_CREATED_NUM}: $title"
+		add_gh_ref_to_todo "$task_id" "$_PUSH_CREATED_NUM" "$todo_file"
+		echo "CREATED"
+	elif [[ $rc -eq 1 ]]; then
+		echo "SKIPPED"
+	fi
+	return 0
+}
+
 cmd_push() {
 	local target_task="${1:-}"
 	_init_cmd || return 1
@@ -273,15 +398,10 @@ cmd_push() {
 	fi
 
 	local tasks=()
-	if [[ -n "$target_task" ]]; then
-		tasks=("$target_task")
-	else
-		while IFS= read -r line; do
-			local tid
-			tid=$(echo "$line" | grep -oE 't[0-9]+(\.[0-9]+)*' | head -1 || echo "")
-			[[ -n "$tid" ]] && ! echo "$line" | grep -qE 'ref:GH#[0-9]+' && tasks+=("$tid")
-		done < <(strip_code_fences <"$todo_file" | grep -E '^\s*- \[ \] t[0-9]+' || true)
-	fi
+	while IFS= read -r tid; do
+		[[ -n "$tid" ]] && tasks+=("$tid")
+	done < <(_push_build_task_list "$target_task" "$todo_file")
+
 	[[ ${#tasks[@]} -eq 0 ]] && {
 		print_info "No tasks to push"
 		return 0
@@ -292,91 +412,13 @@ cmd_push() {
 
 	local created=0 skipped=0
 	for task_id in "${tasks[@]}"; do
-		log_verbose "Processing $task_id..."
-		local task_id_ere
-		task_id_ere=$(_escape_ere "$task_id")
-		local existing
-		existing=$(gh_find_issue_by_title "$repo" "${task_id}:" "all" 50)
-		if [[ -n "$existing" && "$existing" != "null" ]]; then
-			add_gh_ref_to_todo "$task_id" "$existing" "$todo_file"
-			skipped=$((skipped + 1))
-			continue
-		fi
-
-		local task_line
-		task_line=$(strip_code_fences <"$todo_file" | grep -E "^\s*- \[.\] ${task_id_ere} " | head -1 || echo "")
-		[[ -z "$task_line" ]] && {
-			print_warning "Task $task_id not found in TODO.md"
-			continue
-		}
-
-		# GH#5212: Skip tasks already marked [x] (completed) — prevents duplicate
-		# issues when push is called with a specific task_id that is already done.
-		# The TOON backlog cache in TODO.md can be stale, showing tasks as pending
-		# even after [x] completion. The pulse reads the stale cache and calls
-		# push <task_id>, which previously matched [x] lines via the [.] pattern.
-		# GH#5280: trailing space made optional — matches [x] at end-of-line too.
-		if [[ "$task_line" =~ ^[[:space:]]*-[[:space:]]+\[x\]([[:space:]]|$) ]]; then
-			print_info "Skipping $task_id — already completed ([x] in TODO.md)"
-			skipped=$((skipped + 1))
-			continue
-		fi
-
-		local parsed
-		parsed=$(parse_task_line "$task_line")
-		local description
-		description=$(echo "$parsed" | grep '^description=' | cut -d= -f2-)
-		local tags
-		tags=$(echo "$parsed" | grep '^tags=' | cut -d= -f2-)
-		local assignee
-		assignee=$(echo "$parsed" | grep '^assignee=' | cut -d= -f2-)
-		local title
-		title=$(_build_title "$task_id" "$description")
-		local labels
-		labels=$(map_tags_to_labels "$tags")
-		local body
-		body=$(compose_issue_body "$task_id" "$project_root")
-
-		if [[ "$DRY_RUN" == "true" ]]; then
-			print_info "[DRY-RUN] Would create: $title"
-			created=$((created + 1))
-			continue
-		fi
-
-		[[ -n "$labels" ]] && ensure_labels_exist "$labels" "$repo"
-		local status_label="status:available"
-		[[ -n "$assignee" ]] && {
-			status_label="status:claimed"
-			gh_create_label "$repo" "status:claimed" "D93F0B" "Task is claimed"
-		}
-		local all_labels="${labels:+${labels},}${status_label}"
-
-		# Race-condition guard
-		local recheck
-		recheck=$(gh_find_issue_by_title "$repo" "${task_id}:" "all" 50)
-		if [[ -n "$recheck" && "$recheck" != "null" ]]; then
-			add_gh_ref_to_todo "$task_id" "$recheck" "$todo_file"
-			skipped=$((skipped + 1))
-			continue
-		fi
-
-		local -a args=("issue" "create" "--repo" "$repo" "--title" "$title" "--body" "$body" "--label" "$all_labels")
-		[[ -n "$assignee" ]] && args+=("--assignee" "$assignee")
-		local url
-		url=$(gh "${args[@]}" 2>/dev/null || echo "")
-		[[ -z "$url" ]] && {
-			print_error "Failed to create issue for $task_id"
-			continue
-		}
-		local num
-		num=$(echo "$url" | grep -oE '[0-9]+$' || echo "")
-		[[ -n "$num" ]] && {
-			print_success "Created #$num: $title"
-			add_gh_ref_to_todo "$task_id" "$num" "$todo_file"
-			created=$((created + 1))
-		}
+		local result
+		result=$(_push_process_task "$task_id" "$repo" "$todo_file" "$project_root")
+		[[ "$result" == *"CREATED"* ]] && created=$((created + 1))
+		[[ "$result" == *"SKIPPED"* ]] && skipped=$((skipped + 1))
 	done
 	print_info "Push complete: $created created, $skipped skipped"
+	return 0
 }
 
 cmd_enrich() {
