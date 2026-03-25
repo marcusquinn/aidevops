@@ -110,6 +110,192 @@ _q_compute_percentage() {
 	return 0
 }
 
+# Build a jq filter string and populate jq_args array for source/severity filters.
+# Outputs the filter string to stdout; caller must declare jq_args before calling.
+# Usage: jq_filter="$(_q_build_jq_filter "$filter_source" "$filter_severity" jq_args)"
+# Note: jq_args is passed by name and modified via eval (bash 3.2 compatible).
+_q_build_jq_filter() {
+	local filter_source="$1"
+	local filter_severity="$2"
+	local arr_name="$3"
+
+	local jq_filter="."
+	if [[ -n "$filter_source" ]]; then
+		jq_filter="${jq_filter} | select(.source == \$fsrc)"
+		eval "${arr_name}+=( --arg fsrc \"\$filter_source\" )"
+	fi
+	if [[ -n "$filter_severity" ]]; then
+		jq_filter="${jq_filter} | select(.severity == \$fsev)"
+		eval "${arr_name}+=( --arg fsev \"\$filter_severity\" )"
+	fi
+	printf '%s' "$jq_filter"
+	return 0
+}
+
+# Parse --source/--severity flags shared by list and digest commands.
+# Outputs: sets filter_source and filter_severity in the caller's scope via eval.
+# Usage: eval "$(_q_parse_filter_args "$@")"
+_q_parse_filter_args() {
+	local out_source="" out_severity=""
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--source)
+			out_source="$2"
+			shift 2
+			;;
+		--severity)
+			out_severity="$2"
+			shift 2
+			;;
+		*) shift ;;
+		esac
+	done
+	printf "filter_source=%q; filter_severity=%q" "$out_source" "$out_severity"
+	return 0
+}
+
+# Parse all flags for cmd_add. Outputs shell assignments for eval.
+_q_parse_add_args() {
+	local out_source="" out_severity="" out_category="" out_content=""
+	local out_session_id="" out_worker_id="" out_metadata="{}"
+
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--source)
+			out_source="$2"
+			shift 2
+			;;
+		--severity)
+			out_severity="$2"
+			shift 2
+			;;
+		--category)
+			out_category="$2"
+			shift 2
+			;;
+		--content)
+			out_content="$2"
+			shift 2
+			;;
+		--session-id)
+			out_session_id="$2"
+			shift 2
+			;;
+		--worker-id)
+			out_worker_id="$2"
+			shift 2
+			;;
+		--metadata)
+			out_metadata="$2"
+			shift 2
+			;;
+		*)
+			log_error "Unknown option: $1"
+			return 1
+			;;
+		esac
+	done
+
+	printf "source=%q; severity=%q; category=%q; content=%q; session_id=%q; worker_id=%q; metadata=%q" \
+		"$out_source" "$out_severity" "$out_category" "$out_content" \
+		"$out_session_id" "$out_worker_id" "$out_metadata"
+	return 0
+}
+
+# Build a JSON quarantine record. Outputs the JSON string to stdout.
+_q_build_record() {
+	local item_id="$1"
+	local timestamp="$2"
+	local source="$3"
+	local severity="$4"
+	local category="$5"
+	local content_trunc="$6"
+	local session_id="$7"
+	local worker_id="$8"
+	local metadata="$9"
+
+	if command -v jq &>/dev/null; then
+		jq -nc \
+			--arg id "$item_id" \
+			--arg ts "$timestamp" \
+			--arg src "$source" \
+			--arg sev "$severity" \
+			--arg cat "$category" \
+			--arg content "$content_trunc" \
+			--arg sid "${session_id:-}" \
+			--arg wid "${worker_id:-}" \
+			--argjson meta "$metadata" \
+			'{id:$id, timestamp:$ts, source:$src, severity:$sev, category:$cat, content:$content, session_id:$sid, worker_id:$wid, metadata:$meta, status:"pending"}'
+	else
+		local stored_content
+		stored_content="$(_q_json_escape "$content_trunc")"
+		printf '{"id":"%s","timestamp":"%s","source":"%s","severity":"%s","category":"%s","content":"%s","session_id":"%s","worker_id":"%s","metadata":%s,"status":"pending"}' \
+			"$item_id" "$timestamp" "$source" "$severity" \
+			"$(_q_json_escape "$category")" "$stored_content" \
+			"$(_q_json_escape "${session_id:-}")" \
+			"$(_q_json_escape "${worker_id:-}")" \
+			"$metadata"
+	fi
+	return 0
+}
+
+# Print suggested learn actions for a quarantine item based on its source.
+_q_print_source_actions() {
+	local item_id="$1"
+	local src="$2"
+
+	case "$src" in
+	network-tier)
+		echo "  Actions:  learn ${item_id} allow   — Add domain to Tier 3 (known tools)"
+		echo "            learn ${item_id} deny    — Add domain to Tier 5 (deny list)"
+		echo "            learn ${item_id} dismiss — False positive, no action"
+		;;
+	prompt-guard)
+		echo "  Actions:  learn ${item_id} deny    — Add pattern to prompt-guard-custom.txt"
+		echo "            learn ${item_id} dismiss — False positive, no action"
+		;;
+	mcp-audit)
+		echo "  Actions:  learn ${item_id} trust   — Add MCP server to trusted list"
+		echo "            learn ${item_id} deny    — Flag MCP server as untrusted"
+		echo "            learn ${item_id} dismiss — False positive, no action"
+		;;
+	sandbox-exec)
+		echo "  Actions:  learn ${item_id} allow   — Mark command pattern as safe"
+		echo "            learn ${item_id} deny    — Block command pattern"
+		echo "            learn ${item_id} dismiss — False positive, no action"
+		;;
+	esac
+	return 0
+}
+
+# Render a single quarantine item in digest format.
+_q_render_digest_item() {
+	local line="$1"
+	[[ -z "$line" ]] && return 0
+
+	# Note: no 'local' — this runs in a subshell (piped while-read)
+	id="$(printf '%s' "$line" | jq -r '.id // "?"')"
+	ts="$(printf '%s' "$line" | jq -r '.timestamp // "?"')"
+	sev="$(printf '%s' "$line" | jq -r '.severity // "?"')"
+	cat="$(printf '%s' "$line" | jq -r '.category // "?"')"
+	content="$(printf '%s' "$line" | jq -r '.content // ""' | head -c 200)"
+	wid="$(printf '%s' "$line" | jq -r '.worker_id // ""')"
+	src="$(printf '%s' "$line" | jq -r '.source // ""')"
+
+	echo "  ID:       ${id}"
+	echo "  Time:     ${ts}"
+	echo "  Severity: ${sev}"
+	echo "  Category: ${cat}"
+	if [[ -n "$wid" ]]; then
+		echo "  Worker:   ${wid}"
+	fi
+	echo "  Content:  ${content}"
+	echo ""
+	_q_print_source_actions "$id" "$src"
+	echo ""
+	return 0
+}
+
 # =============================================================================
 # Add Command
 # =============================================================================
@@ -120,42 +306,9 @@ cmd_add() {
 	local source="" severity="" category="" content=""
 	local session_id="" worker_id="" metadata="{}"
 
-	while [[ $# -gt 0 ]]; do
-		case "$1" in
-		--source)
-			source="$2"
-			shift 2
-			;;
-		--severity)
-			severity="$2"
-			shift 2
-			;;
-		--category)
-			category="$2"
-			shift 2
-			;;
-		--content)
-			content="$2"
-			shift 2
-			;;
-		--session-id)
-			session_id="$2"
-			shift 2
-			;;
-		--worker-id)
-			worker_id="$2"
-			shift 2
-			;;
-		--metadata)
-			metadata="$2"
-			shift 2
-			;;
-		*)
-			log_error "Unknown option: $1"
-			return 1
-			;;
-		esac
-	done
+	local _parsed
+	_parsed="$(_q_parse_add_args "$@")" || return 1
+	eval "$_parsed"
 
 	# Validate required fields
 	if [[ -z "$source" ]]; then
@@ -182,35 +335,11 @@ cmd_add() {
 	timestamp="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
 	# Truncate content for storage (max 1000 chars)
-	local content_trunc
-	content_trunc="${content:0:1000}"
+	local content_trunc="${content:0:1000}"
 
-	# Build JSON record
 	local record
-	if command -v jq &>/dev/null; then
-		# jq --arg handles escaping automatically — no pre-escaping needed
-		record="$(jq -nc \
-			--arg id "$item_id" \
-			--arg ts "$timestamp" \
-			--arg src "$source" \
-			--arg sev "$severity" \
-			--arg cat "$category" \
-			--arg content "$content_trunc" \
-			--arg sid "${session_id:-}" \
-			--arg wid "${worker_id:-}" \
-			--argjson meta "$metadata" \
-			'{id:$id, timestamp:$ts, source:$src, severity:$sev, category:$cat, content:$content, session_id:$sid, worker_id:$wid, metadata:$meta, status:"pending"}')"
-	else
-		# Manual escaping needed for printf path
-		local stored_content
-		stored_content="$(_q_json_escape "$content_trunc")"
-		record="$(printf '{"id":"%s","timestamp":"%s","source":"%s","severity":"%s","category":"%s","content":"%s","session_id":"%s","worker_id":"%s","metadata":%s,"status":"pending"}' \
-			"$item_id" "$timestamp" "$source" "$severity" \
-			"$(_q_json_escape "$category")" "$stored_content" \
-			"$(_q_json_escape "${session_id:-}")" \
-			"$(_q_json_escape "${worker_id:-}")" \
-			"$metadata")"
-	fi
+	record="$(_q_build_record "$item_id" "$timestamp" "$source" "$severity" \
+		"$category" "$content_trunc" "${session_id:-}" "${worker_id:-}" "$metadata")"
 
 	echo "$record" >>"$QUARANTINE_PENDING"
 	log_info "Quarantined: ${item_id} [${source}/${severity}] ${category}"
@@ -227,23 +356,18 @@ cmd_add() {
 cmd_list() {
 	local filter_source="" filter_severity="" last_n=50
 
+	local _parsed
+	_parsed="$(_q_parse_filter_args "$@")" || return 1
+	eval "$_parsed"
+
+	# Extract --last separately (not handled by _q_parse_filter_args)
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
-		--source)
-			filter_source="$2"
-			shift 2
-			;;
-		--severity)
-			filter_severity="$2"
-			shift 2
-			;;
 		--last)
 			last_n="$2"
 			shift 2
 			;;
-		*)
-			shift
-			;;
+		*) shift ;;
 		esac
 	done
 
@@ -265,17 +389,9 @@ cmd_list() {
 		_q_validate_value "$filter_severity" "$VALID_SEVERITIES" "severity filter" || return 1
 	fi
 
-	# Build jq filter using --arg to avoid injection (values already validated above)
-	local jq_filter=". "
-	local -a jq_args=()
-	if [[ -n "$filter_source" ]]; then
-		jq_filter="${jq_filter} | select(.source == \$fsrc)"
-		jq_args+=(--arg fsrc "$filter_source")
-	fi
-	if [[ -n "$filter_severity" ]]; then
-		jq_filter="${jq_filter} | select(.severity == \$fsev)"
-		jq_args+=(--arg fsev "$filter_severity")
-	fi
+	local jq_args=()
+	local jq_filter
+	jq_filter="$(_q_build_jq_filter "$filter_source" "$filter_severity" jq_args)"
 
 	local count
 	count="$(jq -c ${jq_args[@]+"${jq_args[@]}"} "$jq_filter" "$QUARANTINE_PENDING" 2>/dev/null | wc -l | tr -d ' ')"
@@ -307,21 +423,9 @@ cmd_list() {
 cmd_digest() {
 	local filter_source="" filter_severity=""
 
-	while [[ $# -gt 0 ]]; do
-		case "$1" in
-		--source)
-			filter_source="$2"
-			shift 2
-			;;
-		--severity)
-			filter_severity="$2"
-			shift 2
-			;;
-		*)
-			shift
-			;;
-		esac
-	done
+	local _parsed
+	_parsed="$(_q_parse_filter_args "$@")" || return 1
+	eval "$_parsed"
 
 	if [[ ! -f "$QUARANTINE_PENDING" ]]; then
 		echo "No quarantine items pending review."
@@ -341,17 +445,9 @@ cmd_digest() {
 		_q_validate_value "$filter_severity" "$VALID_SEVERITIES" "severity filter" || return 1
 	fi
 
-	# Build jq filter using --arg to avoid injection (values already validated above)
-	local jq_filter="."
-	local -a jq_args=()
-	if [[ -n "$filter_source" ]]; then
-		jq_filter="${jq_filter} | select(.source == \$fsrc)"
-		jq_args+=(--arg fsrc "$filter_source")
-	fi
-	if [[ -n "$filter_severity" ]]; then
-		jq_filter="${jq_filter} | select(.severity == \$fsev)"
-		jq_args+=(--arg fsev "$filter_severity")
-	fi
+	local jq_args=()
+	local jq_filter
+	jq_filter="$(_q_build_jq_filter "$filter_source" "$filter_severity" jq_args)"
 
 	local total
 	total="$(jq -c ${jq_args[@]+"${jq_args[@]}"} "$jq_filter" "$QUARANTINE_PENDING" 2>/dev/null | wc -l | tr -d ' ')"
@@ -384,48 +480,7 @@ cmd_digest() {
 		echo ""
 
 		printf '%s\n' "$src_items" | while IFS= read -r line; do
-			[[ -z "$line" ]] && continue
-			# Note: no 'local' — this runs in a subshell (piped while-read)
-			id="$(printf '%s' "$line" | jq -r '.id // "?"')"
-			ts="$(printf '%s' "$line" | jq -r '.timestamp // "?"')"
-			sev="$(printf '%s' "$line" | jq -r '.severity // "?"')"
-			cat="$(printf '%s' "$line" | jq -r '.category // "?"')"
-			content="$(printf '%s' "$line" | jq -r '.content // ""' | head -c 200)"
-			wid="$(printf '%s' "$line" | jq -r '.worker_id // ""')"
-
-			echo "  ID:       ${id}"
-			echo "  Time:     ${ts}"
-			echo "  Severity: ${sev}"
-			echo "  Category: ${cat}"
-			if [[ -n "$wid" ]]; then
-				echo "  Worker:   ${wid}"
-			fi
-			echo "  Content:  ${content}"
-			echo ""
-
-			# Suggest action based on source
-			case "$src" in
-			network-tier)
-				echo "  Actions:  learn ${id} allow   — Add domain to Tier 3 (known tools)"
-				echo "            learn ${id} deny    — Add domain to Tier 5 (deny list)"
-				echo "            learn ${id} dismiss — False positive, no action"
-				;;
-			prompt-guard)
-				echo "  Actions:  learn ${id} deny    — Add pattern to prompt-guard-custom.txt"
-				echo "            learn ${id} dismiss — False positive, no action"
-				;;
-			mcp-audit)
-				echo "  Actions:  learn ${id} trust   — Add MCP server to trusted list"
-				echo "            learn ${id} deny    — Flag MCP server as untrusted"
-				echo "            learn ${id} dismiss — False positive, no action"
-				;;
-			sandbox-exec)
-				echo "  Actions:  learn ${id} allow   — Mark command pattern as safe"
-				echo "            learn ${id} deny    — Block command pattern"
-				echo "            learn ${id} dismiss — False positive, no action"
-				;;
-			esac
-			echo ""
+			_q_render_digest_item "$line"
 		done
 	done
 
