@@ -160,13 +160,13 @@ cmd_discover() {
 # Manifest Validation
 # =============================================================================
 
-# Validate a plugin manifest (plugin.json)
-# Arguments: namespace
-# Returns: 0 if valid, 1 if invalid or missing
-validate_manifest() {
-	local namespace="$1"
-	local plugin_dir="$AGENTS_DIR/$namespace"
-	local manifest="$plugin_dir/plugin.json"
+# Check plugin directory, manifest file presence, jq availability, and JSON syntax.
+# Arguments: plugin_dir, manifest, namespace
+# Returns: 0 = ready to validate, 1 = hard error, 2 = skip (no manifest / no jq)
+_validate_manifest_prereqs() {
+	local plugin_dir="$1"
+	local manifest="$2"
+	local namespace="$3"
 
 	if [[ ! -d "$plugin_dir" ]]; then
 		log_error "Plugin directory not found: $plugin_dir"
@@ -176,12 +176,12 @@ validate_manifest() {
 	# Manifest is optional — plugins work without it (backward compatible)
 	if [[ ! -f "$manifest" ]]; then
 		log_info "No manifest found for '$namespace' (using defaults)"
-		return 0
+		return 2
 	fi
 
 	if ! command -v jq &>/dev/null; then
 		log_warning "jq not found; cannot validate manifest"
-		return 0
+		return 2
 	fi
 
 	# Validate JSON syntax
@@ -190,9 +190,17 @@ validate_manifest() {
 		return 1
 	fi
 
+	return 0
+}
+
+# Validate required fields (name, version) and semver format.
+# Arguments: manifest
+# Outputs: increments errors via stdout (echo count); logs errors/warnings
+# Returns: number of field errors found (0 = none)
+_validate_manifest_required_fields() {
+	local manifest="$1"
 	local errors=0
 
-	# Check required fields
 	local name
 	name=$(jq -r '.name // empty' "$manifest" 2>/dev/null)
 	if [[ -z "$name" ]]; then
@@ -212,54 +220,117 @@ validate_manifest() {
 		log_warning "Version '$version' is not semver format (expected: X.Y.Z)"
 	fi
 
-	# Validate agents array if present
+	return "$errors"
+}
+
+# Validate agents array entries: each must have a 'file' field that exists on disk.
+# Arguments: manifest, plugin_dir
+# Returns: number of agent errors found (0 = none)
+_validate_manifest_agents() {
+	local manifest="$1"
+	local plugin_dir="$2"
+	local errors=0
+
 	local agents_count
 	agents_count=$(jq '.agents | length // 0' "$manifest" 2>/dev/null || echo "0")
-	if [[ "$agents_count" -gt 0 ]]; then
-		# Check each agent has required fields
-		local i=0
-		while [[ "$i" -lt "$agents_count" ]]; do
-			local agent_file
-			agent_file=$(jq -r --argjson i "$i" '.agents[$i].file // empty' "$manifest" 2>/dev/null)
-			if [[ -z "$agent_file" ]]; then
-				log_error "Agent entry $i missing required field: file"
-				errors=$((errors + 1))
-			elif [[ ! -f "$plugin_dir/$agent_file" ]]; then
-				log_warning "Agent file not found: $plugin_dir/$agent_file"
-			fi
-			i=$((i + 1))
-		done
+	if [[ "$agents_count" -eq 0 ]]; then
+		return 0
 	fi
 
-	# Validate hooks if present
+	local i=0
+	while [[ "$i" -lt "$agents_count" ]]; do
+		local agent_file
+		agent_file=$(jq -r --argjson i "$i" '.agents[$i].file // empty' "$manifest" 2>/dev/null)
+		if [[ -z "$agent_file" ]]; then
+			log_error "Agent entry $i missing required field: file"
+			errors=$((errors + 1))
+		elif [[ ! -f "$plugin_dir/$agent_file" ]]; then
+			log_warning "Agent file not found: $plugin_dir/$agent_file"
+		fi
+		i=$((i + 1))
+	done
+
+	return "$errors"
+}
+
+# Validate hook scripts declared in the manifest exist on disk.
+# Arguments: manifest, plugin_dir
+# Returns: 0 always (hook absence is a warning, not an error)
+_validate_manifest_hooks() {
+	local manifest="$1"
+	local plugin_dir="$2"
+
 	local hooks
 	hooks=$(jq -r '.hooks // empty | keys[]' "$manifest" 2>/dev/null || true)
-	if [[ -n "$hooks" ]]; then
-		while IFS= read -r hook; do
-			local hook_script
-			hook_script=$(jq -r --arg h "$hook" '.hooks[$h] // empty' "$manifest" 2>/dev/null)
-			if [[ -n "$hook_script" && ! -f "$plugin_dir/$hook_script" ]]; then
-				log_warning "Hook script not found: $plugin_dir/$hook_script (hook: $hook)"
-			fi
-		done <<<"$hooks"
+	if [[ -z "$hooks" ]]; then
+		return 0
 	fi
 
-	# Validate min_version if present
+	while IFS= read -r hook; do
+		local hook_script
+		hook_script=$(jq -r --arg h "$hook" '.hooks[$h] // empty' "$manifest" 2>/dev/null)
+		if [[ -n "$hook_script" && ! -f "$plugin_dir/$hook_script" ]]; then
+			log_warning "Hook script not found: $plugin_dir/$hook_script (hook: $hook)"
+		fi
+	done <<<"$hooks"
+
+	return 0
+}
+
+# Check that the current aidevops version satisfies the plugin's min_aidevops_version.
+# Arguments: manifest, agents_dir
+# Returns: 0 always (version mismatch is a warning, not an error)
+_validate_manifest_min_version() {
+	local manifest="$1"
+	local agents_dir="$2"
+
 	local min_version
 	min_version=$(jq -r '.min_aidevops_version // empty' "$manifest" 2>/dev/null)
-	if [[ -n "$min_version" ]]; then
-		local current_version
-		current_version=$(cat "$AGENTS_DIR/VERSION" 2>/dev/null || echo "0.0.0")
-		# Simple version comparison (major.minor only)
-		local min_major min_minor cur_major cur_minor
-		min_major=$(echo "$min_version" | cut -d. -f1)
-		min_minor=$(echo "$min_version" | cut -d. -f2)
-		cur_major=$(echo "$current_version" | cut -d. -f1)
-		cur_minor=$(echo "$current_version" | cut -d. -f2)
-		if [[ "$cur_major" -lt "$min_major" ]] || { [[ "$cur_major" -eq "$min_major" ]] && [[ "$cur_minor" -lt "$min_minor" ]]; }; then
-			log_warning "Plugin requires aidevops >= $min_version (current: $current_version)"
-		fi
+	if [[ -z "$min_version" ]]; then
+		return 0
 	fi
+
+	local current_version
+	current_version=$(cat "$agents_dir/VERSION" 2>/dev/null || echo "0.0.0")
+
+	# Simple version comparison (major.minor only)
+	local min_major min_minor cur_major cur_minor
+	min_major=$(echo "$min_version" | cut -d. -f1)
+	min_minor=$(echo "$min_version" | cut -d. -f2)
+	cur_major=$(echo "$current_version" | cut -d. -f1)
+	cur_minor=$(echo "$current_version" | cut -d. -f2)
+
+	if [[ "$cur_major" -lt "$min_major" ]] || { [[ "$cur_major" -eq "$min_major" ]] && [[ "$cur_minor" -lt "$min_minor" ]]; }; then
+		log_warning "Plugin requires aidevops >= $min_version (current: $current_version)"
+	fi
+
+	return 0
+}
+
+# Validate a plugin manifest (plugin.json).
+# Orchestrates prereq checks then delegates to focused sub-validators.
+# Arguments: namespace
+# Returns: 0 if valid, 1 if invalid or missing
+validate_manifest() {
+	local namespace="$1"
+	local plugin_dir="$AGENTS_DIR/$namespace"
+	local manifest="$plugin_dir/plugin.json"
+
+	local prereq_rc
+	_validate_manifest_prereqs "$plugin_dir" "$manifest" "$namespace"
+	prereq_rc=$?
+	if [[ "$prereq_rc" -eq 1 ]]; then
+		return 1
+	elif [[ "$prereq_rc" -eq 2 ]]; then
+		return 0
+	fi
+
+	local errors=0
+
+	_validate_manifest_required_fields "$manifest" || errors=$((errors + $?))
+	_validate_manifest_agents "$manifest" "$plugin_dir" || errors=$((errors + $?))
+	_validate_manifest_hooks "$manifest" "$plugin_dir"
+	_validate_manifest_min_version "$manifest" "$AGENTS_DIR"
 
 	if [[ "$errors" -gt 0 ]]; then
 		log_error "Manifest validation failed with $errors error(s)"
