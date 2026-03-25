@@ -183,22 +183,16 @@ run_wave_audit() {
 	return 0
 }
 
-# Parse and display WAVE API report
-parse_wave_report() {
+# Print WAVE page statistics from report JSON
+_wave_print_statistics() {
 	local report_file="$1"
-	local report_type="${2:-2}"
 
-	echo ""
-	print_header_line "WAVE API Results"
-
-	# Statistics
-	local page_title page_url total_elements aim_score credits_remaining wave_url
+	local page_title page_url total_elements aim_score credits_remaining
 	page_title=$(jq -r '.statistics.pagetitle // "N/A"' "$report_file")
 	page_url=$(jq -r '.statistics.pageurl // "N/A"' "$report_file")
 	total_elements=$(jq -r '.statistics.totalelements // "N/A"' "$report_file")
 	aim_score=$(jq -r '.statistics.AIMscore // "N/A"' "$report_file")
 	credits_remaining=$(jq -r '.statistics.creditsremaining // "N/A"' "$report_file")
-	wave_url=$(jq -r '.statistics.waveurl // "N/A"' "$report_file")
 
 	echo "  Page: $page_title"
 	echo "  URL: $page_url"
@@ -208,8 +202,13 @@ parse_wave_report() {
 	fi
 	echo "  Credits remaining: $credits_remaining"
 	echo ""
+	return 0
+}
 
-	# Category counts
+# Print WAVE category summary with color-coded counts
+_wave_print_category_summary() {
+	local report_file="$1"
+
 	print_header_line "Category Summary"
 
 	local errors contrasts alerts features structures arias
@@ -242,53 +241,82 @@ parse_wave_report() {
 	echo "  Structure:  $structures"
 	echo "  ARIA:       $arias"
 	echo ""
+	return 0
+}
 
-	# Item details (reporttype >= 2)
-	if [[ "$report_type" -ge 2 ]]; then
-		# Errors
-		if [[ "$errors" -gt 0 ]]; then
-			print_header_line "Errors (must fix)"
-			jq -r '
-                .categories.error.items // {} | to_entries[]
-                | "  \(.value.id): \(.value.description) (x\(.value.count))"
-            ' "$report_file" 2>/dev/null || true
-			echo ""
-		fi
+# Print WAVE item details (errors, contrast, alerts) for reporttype >= 2
+_wave_print_item_details() {
+	local report_file="$1"
+	local report_type="$2"
 
-		# Contrast errors
-		if [[ "$contrasts" -gt 0 ]]; then
-			print_header_line "Contrast Errors"
-			jq -r '
-                .categories.contrast.items // {} | to_entries[]
-                | "  \(.value.id): \(.value.description) (x\(.value.count))"
-            ' "$report_file" 2>/dev/null || true
+	local errors contrasts alerts
+	errors=$(jq -r '.categories.error.count // 0' "$report_file")
+	contrasts=$(jq -r '.categories.contrast.count // 0' "$report_file")
+	alerts=$(jq -r '.categories.alert.count // 0' "$report_file")
 
-			# Show contrast data if available (reporttype 3 or 4)
-			if [[ "$report_type" -ge 3 ]]; then
-				local contrast_data
-				contrast_data=$(jq -r '
-                    .categories.contrast.items.contrast.contrastdata // [] | .[]
-                    | "    Ratio: \(.[0]):1 | FG: \(.[1]) | BG: \(.[2]) | Large: \(.[3])"
-                ' "$report_file" 2>/dev/null || echo "")
-				if [[ -n "$contrast_data" ]]; then
-					echo "$contrast_data"
-				fi
+	# Errors
+	if [[ "$errors" -gt 0 ]]; then
+		print_header_line "Errors (must fix)"
+		jq -r '
+            .categories.error.items // {} | to_entries[]
+            | "  \(.value.id): \(.value.description) (x\(.value.count))"
+        ' "$report_file" 2>/dev/null || true
+		echo ""
+	fi
+
+	# Contrast errors
+	if [[ "$contrasts" -gt 0 ]]; then
+		print_header_line "Contrast Errors"
+		jq -r '
+            .categories.contrast.items // {} | to_entries[]
+            | "  \(.value.id): \(.value.description) (x\(.value.count))"
+        ' "$report_file" 2>/dev/null || true
+
+		# Show contrast data if available (reporttype 3 or 4)
+		if [[ "$report_type" -ge 3 ]]; then
+			local contrast_data
+			contrast_data=$(jq -r '
+                .categories.contrast.items.contrast.contrastdata // [] | .[]
+                | "    Ratio: \(.[0]):1 | FG: \(.[1]) | BG: \(.[2]) | Large: \(.[3])"
+            ' "$report_file" 2>/dev/null || echo "")
+			if [[ -n "$contrast_data" ]]; then
+				echo "$contrast_data"
 			fi
-			echo ""
 		fi
+		echo ""
+	fi
 
-		# Alerts
-		if [[ "$alerts" -gt 0 ]]; then
-			print_header_line "Alerts (should review)"
-			jq -r '
-                .categories.alert.items // {} | to_entries[]
-                | "  \(.value.id): \(.value.description) (x\(.value.count))"
-            ' "$report_file" 2>/dev/null || true
-			echo ""
-		fi
+	# Alerts
+	if [[ "$alerts" -gt 0 ]]; then
+		print_header_line "Alerts (should review)"
+		jq -r '
+            .categories.alert.items // {} | to_entries[]
+            | "  \(.value.id): \(.value.description) (x\(.value.count))"
+        ' "$report_file" 2>/dev/null || true
+		echo ""
+	fi
+
+	return 0
+}
+
+# Parse and display WAVE API report
+parse_wave_report() {
+	local report_file="$1"
+	local report_type="${2:-2}"
+
+	echo ""
+	print_header_line "WAVE API Results"
+
+	_wave_print_statistics "$report_file"
+	_wave_print_category_summary "$report_file"
+
+	if [[ "$report_type" -ge 2 ]]; then
+		_wave_print_item_details "$report_file" "$report_type"
 	fi
 
 	# Full WAVE report link
+	local wave_url
+	wave_url=$(jq -r '.statistics.waveurl // "N/A"' "$report_file")
 	if [[ "$wave_url" != "N/A" ]]; then
 		print_info "Full WAVE report: $wave_url"
 	fi
@@ -631,6 +659,122 @@ parse_pa11y_report() {
 # Email HTML Accessibility Check
 # ============================================================================
 
+# Count matched occurrences (not matching lines) so minified HTML is handled correctly
+_email_grep_count() {
+	local pattern="$1"
+	local target_file="$2"
+	(grep -oiE "$pattern" "$target_file" 2>/dev/null || true) | awk 'END { print NR }'
+}
+
+# Check images for alt text. Prints findings, returns issue count via stdout last line.
+_email_check_images() {
+	local file="$1"
+	local total_imgs imgs_with_alt imgs_missing_alt empty_alts
+	local issues=0 warnings=0
+
+	total_imgs=$(_email_grep_count '<img ' "$file")
+	imgs_with_alt=$(_email_grep_count '<img [^>]*alt=' "$file")
+	imgs_missing_alt=$((total_imgs - imgs_with_alt))
+
+	if [[ "$imgs_missing_alt" -gt 0 ]]; then
+		echo "FAIL: $imgs_missing_alt image(s) missing alt attribute"
+		echo "  WCAG 1.1.1 — All images must have alt text"
+		issues=$((issues + imgs_missing_alt))
+	else
+		echo "PASS: All images have alt attributes ($total_imgs images)"
+	fi
+	echo ""
+
+	empty_alts=$(_email_grep_count '<img [^>]*alt=""' "$file")
+	if [[ "$empty_alts" -gt 0 ]]; then
+		echo "WARN: $empty_alts image(s) with empty alt=\"\" (OK only if decorative)"
+		warnings=$((warnings + 1))
+	fi
+	echo ""
+
+	echo "COUNTS:$issues:$warnings"
+	return 0
+}
+
+# Check lang attribute, tables, fonts, links, headings, colors.
+# Prints findings, returns issue/warning counts via stdout last line.
+_email_check_structure() {
+	local file="$1"
+	local issues=0 warnings=0
+
+	# Check: language attribute on html tag
+	if grep -qiE '<html[^>]*lang=' "$file" 2>/dev/null; then
+		echo "PASS: HTML lang attribute present"
+	else
+		echo "FAIL: Missing lang attribute on <html> tag"
+		echo "  WCAG 3.1.1 — Page language must be specified"
+		issues=$((issues + 1))
+	fi
+	echo ""
+
+	# Check: table role or summary for layout tables
+	local tables tables_with_role
+	tables=$(_email_grep_count '<table' "$file")
+	tables_with_role=$(_email_grep_count '<table[^>]*role=' "$file")
+	if [[ "$tables" -gt 0 && "$tables_with_role" -eq 0 ]]; then
+		echo "WARN: $tables table(s) without role attribute"
+		echo "  Email layout tables should have role=\"presentation\""
+		warnings=$((warnings + 1))
+	elif [[ "$tables" -gt 0 ]]; then
+		echo "PASS: Tables have role attributes ($tables_with_role/$tables)"
+	fi
+	echo ""
+
+	# Check: inline styles with small font sizes
+	local small_fonts
+	small_fonts=$(_email_grep_count 'font-size:\s*(([0-9]|1[0-3])px|0\.(0[0-9]*|[1-7][0-9]*|8([0-6][0-9]*|7[0-5]?))em)' "$file")
+	if [[ "$small_fonts" -gt 0 ]]; then
+		echo "WARN: $small_fonts instance(s) of font-size below 14px"
+		echo "  WCAG 1.4.4 — Text should be resizable; small fonts harm readability"
+		warnings=$((warnings + 1))
+	else
+		echo "PASS: No excessively small font sizes detected"
+	fi
+	echo ""
+
+	# Check: links with descriptive text
+	local generic_links
+	generic_links=$(_email_grep_count '<a [^>]*>[[:space:]]*(click here|here|read more|learn more|more)[[:space:]]*</a>' "$file")
+	if [[ "$generic_links" -gt 0 ]]; then
+		echo "WARN: $generic_links link(s) with generic text (e.g., 'click here')"
+		echo "  WCAG 2.4.4 — Link text should describe the destination"
+		warnings=$((warnings + 1))
+	else
+		echo "PASS: No generic link text detected"
+	fi
+	echo ""
+
+	# Check: sufficient heading structure
+	local headings
+	headings=$(_email_grep_count '<h[1-6]' "$file")
+	if [[ "$headings" -eq 0 ]]; then
+		echo "WARN: No heading elements found"
+		echo "  WCAG 1.3.1 — Use headings to convey document structure"
+		warnings=$((warnings + 1))
+	else
+		echo "PASS: $headings heading element(s) found"
+	fi
+	echo ""
+
+	# Check: color-only information indicators
+	local color_only
+	color_only=$(_email_grep_count 'color:\s*(red|green)' "$file")
+	if [[ "$color_only" -gt 0 ]]; then
+		echo "WARN: $color_only instance(s) of red/green color usage"
+		echo "  WCAG 1.4.1 — Do not use color as the only means of conveying information"
+		warnings=$((warnings + 1))
+	fi
+	echo ""
+
+	echo "COUNTS:$issues:$warnings"
+	return 0
+}
+
 check_email_a11y() {
 	local file="$1"
 
@@ -646,20 +790,11 @@ check_email_a11y() {
 	local report_file="${A11Y_REPORTS_DIR}/email_a11y_${timestamp}.txt"
 	local issues=0
 	local warnings=0
-
-	# Run all checks, collecting output to a variable to avoid subshell from tee
 	local output=""
 
 	_append() {
 		output="${output}${1}"$'\n'
 		return 0
-	}
-
-	# Count matched occurrences (not matching lines) so minified HTML is handled correctly
-	_grep_count() {
-		local pattern="$1"
-		local file="$2"
-		(grep -oiE "$pattern" "$file" 2>/dev/null || true) | awk 'END { print NR }'
 	}
 
 	_append "Email Accessibility Report"
@@ -669,100 +804,21 @@ check_email_a11y() {
 	_append "=========================================="
 	_append ""
 
-	# Check: images without alt text
-	local total_imgs
-	total_imgs=$(_grep_count '<img ' "$file")
-	local imgs_with_alt
-	imgs_with_alt=$(_grep_count '<img [^>]*alt=' "$file")
-	local imgs_missing_alt=$((total_imgs - imgs_with_alt))
+	# Run image checks — parse counts from last line
+	local img_output img_counts
+	img_output=$(_email_check_images "$file")
+	img_counts=$(echo "$img_output" | tail -1)
+	_append "$(echo "$img_output" | sed '$d')"
+	issues=$((issues + $(echo "$img_counts" | cut -d: -f2)))
+	warnings=$((warnings + $(echo "$img_counts" | cut -d: -f3)))
 
-	if [[ "$imgs_missing_alt" -gt 0 ]]; then
-		_append "FAIL: $imgs_missing_alt image(s) missing alt attribute"
-		_append "  WCAG 1.1.1 — All images must have alt text"
-		issues=$((issues + imgs_missing_alt))
-	else
-		_append "PASS: All images have alt attributes ($total_imgs images)"
-	fi
-	_append ""
-
-	# Check: empty alt on non-decorative images
-	local empty_alts
-	empty_alts=$(_grep_count '<img [^>]*alt=""' "$file")
-	if [[ "$empty_alts" -gt 0 ]]; then
-		_append "WARN: $empty_alts image(s) with empty alt=\"\" (OK only if decorative)"
-		warnings=$((warnings + 1))
-	fi
-	_append ""
-
-	# Check: language attribute on html tag
-	if grep -qiE '<html[^>]*lang=' "$file" 2>/dev/null; then
-		_append "PASS: HTML lang attribute present"
-	else
-		_append "FAIL: Missing lang attribute on <html> tag"
-		_append "  WCAG 3.1.1 — Page language must be specified"
-		issues=$((issues + 1))
-	fi
-	_append ""
-
-	# Check: table role or summary for layout tables
-	local tables
-	tables=$(_grep_count '<table' "$file")
-	local tables_with_role
-	tables_with_role=$(_grep_count '<table[^>]*role=' "$file")
-	if [[ "$tables" -gt 0 && "$tables_with_role" -eq 0 ]]; then
-		_append "WARN: $tables table(s) without role attribute"
-		_append "  Email layout tables should have role=\"presentation\""
-		warnings=$((warnings + 1))
-	elif [[ "$tables" -gt 0 ]]; then
-		_append "PASS: Tables have role attributes ($tables_with_role/$tables)"
-	fi
-	_append ""
-
-	# Check: inline styles with small font sizes
-	local small_fonts
-	small_fonts=$(_grep_count 'font-size:\s*(([0-9]|1[0-3])px|0\.(0[0-9]*|[1-7][0-9]*|8([0-6][0-9]*|7[0-5]?))em)' "$file")
-	if [[ "$small_fonts" -gt 0 ]]; then
-		_append "WARN: $small_fonts instance(s) of font-size below 14px"
-		_append "  WCAG 1.4.4 — Text should be resizable; small fonts harm readability"
-		warnings=$((warnings + 1))
-	else
-		_append "PASS: No excessively small font sizes detected"
-	fi
-	_append ""
-
-	# Check: links with descriptive text
-	local generic_links
-	generic_links=$(_grep_count '<a [^>]*>[[:space:]]*(click here|here|read more|learn more|more)[[:space:]]*</a>' "$file")
-	if [[ "$generic_links" -gt 0 ]]; then
-		_append "WARN: $generic_links link(s) with generic text (e.g., 'click here')"
-		_append "  WCAG 2.4.4 — Link text should describe the destination"
-		warnings=$((warnings + 1))
-	else
-		_append "PASS: No generic link text detected"
-	fi
-	_append ""
-
-	# Check: sufficient heading structure
-	local headings
-	headings=$(_grep_count '<h[1-6]' "$file")
-	if [[ "$headings" -eq 0 ]]; then
-		_append "WARN: No heading elements found"
-		_append "  WCAG 1.3.1 — Use headings to convey document structure"
-		warnings=$((warnings + 1))
-	else
-		_append "PASS: $headings heading element(s) found"
-	fi
-	_append ""
-
-	# Check: color-only information indicators
-	local color_only
-	color_only=$(_grep_count 'color:\s*(red|green)' "$file")
-	if [[ "$color_only" -gt 0 ]]; then
-		_append "WARN: $color_only instance(s) of red/green color usage"
-		_append "  WCAG 1.4.1 — Do not use color as the only means of conveying information"
-		warnings=$((warnings + 1))
-	fi
-	_append ""
+	# Run structural checks — parse counts from last line
+	local struct_output struct_counts
+	struct_output=$(_email_check_structure "$file")
+	struct_counts=$(echo "$struct_output" | tail -1)
+	_append "$(echo "$struct_output" | sed '$d')"
+	issues=$((issues + $(echo "$struct_counts" | cut -d: -f2)))
+	warnings=$((warnings + $(echo "$struct_counts" | cut -d: -f3)))
 
 	# Summary
 	_append "=========================================="
@@ -1088,42 +1144,89 @@ print_header_line() {
 # Main
 # ============================================================================
 
+# Validate that a required argument is present, print usage on failure
+_main_require_arg() {
+	local arg_value="$1"
+	local error_msg="$2"
+	local usage_msg="$3"
+
+	if [[ -z "$arg_value" ]]; then
+		print_error "$error_msg"
+		print_info "$usage_msg"
+		return 1
+	fi
+	return 0
+}
+
+# Print help text for all available commands
+_main_print_help() {
+	print_header_line "Accessibility & Contrast Testing Helper"
+	echo "Usage: $0 [command] [options]"
+	echo ""
+	echo "Commands:"
+	echo "  audit <url>                    Full accessibility audit (Lighthouse + pa11y + WAVE)"
+	echo "  lighthouse <url> [strategy]    Lighthouse accessibility-only audit"
+	echo "  pa11y <url> [standard]         pa11y WCAG compliance test"
+	echo "  wave <url> [type] [width]      WAVE API accessibility analysis"
+	echo "  wave-mobile <url> [type]       WAVE API audit at mobile viewport (375px)"
+	echo "  wave-docs <item-id>            Look up WAVE item documentation"
+	echo "  wave-credits                   Check WAVE API credits remaining"
+	echo "  email <file.html>              Check HTML email accessibility"
+	echo "  contrast <fg-hex> <bg-hex>     Calculate WCAG contrast ratio"
+	echo "  playwright-contrast <url> [fmt] [level]"
+	echo "                                 Extract contrast from all visible elements via Playwright"
+	echo "                                 Formats: json, markdown, summary (default)"
+	echo "                                 Levels: AA (default), AAA"
+	echo "  bulk <urls-file>               Audit multiple URLs from file"
+	echo "  install-deps                   Install required dependencies"
+	echo "  help                           Show this help"
+	echo ""
+	echo "WAVE Report Types: 1=stats (1 credit), 2=items (2 credits),"
+	echo "  3=items+xpath (3 credits), 4=items+selectors (3 credits)"
+	echo ""
+	echo "Standards: WCAG2A, WCAG2AA (default), WCAG2AAA"
+	echo "Strategies: desktop (default), mobile"
+	echo ""
+	echo "Environment Variables:"
+	echo "  A11Y_WCAG_LEVEL    Default WCAG level (default: WCAG2AA)"
+	echo "  WAVE_API_KEY       WAVE API key (or use: aidevops secret set wave-api-key)"
+	echo ""
+	echo "Examples:"
+	echo "  $0 audit https://example.com"
+	echo "  $0 lighthouse https://example.com mobile"
+	echo "  $0 pa11y https://example.com WCAG2AAA"
+	echo "  $0 wave https://example.com 3"
+	echo "  $0 wave-mobile https://example.com"
+	echo "  $0 wave-docs alt_missing"
+	echo "  $0 email ./newsletter.html"
+	echo "  $0 contrast '#333333' '#ffffff'"
+	echo "  $0 playwright-contrast https://example.com json AAA"
+	echo "  $0 bulk websites.txt"
+	echo ""
+	echo "Reports saved to: $A11Y_REPORTS_DIR"
+	return 0
+}
+
 main() {
 	local command="${1:-help}"
 	local account_name="${2:-}"
 
 	case "$command" in
 	"audit" | "check")
-		if [[ -z "$account_name" ]]; then
-			print_error "Please provide a URL to audit"
-			print_info "Usage: $0 audit <url>"
-			return 1
-		fi
+		_main_require_arg "$account_name" "Please provide a URL to audit" "Usage: $0 audit <url>" || return 1
 		run_full_audit "$account_name"
 		;;
 	"lighthouse" | "lh")
-		if [[ -z "$account_name" ]]; then
-			print_error "Please provide a URL"
-			print_info "Usage: $0 lighthouse <url> [desktop|mobile]"
-			return 1
-		fi
+		_main_require_arg "$account_name" "Please provide a URL" "Usage: $0 lighthouse <url> [desktop|mobile]" || return 1
 		check_jq || return 1
 		run_lighthouse_a11y "$account_name" "${3:-desktop}"
 		;;
 	"pa11y" | "wcag")
-		if [[ -z "$account_name" ]]; then
-			print_error "Please provide a URL"
-			print_info "Usage: $0 pa11y <url> [WCAG2A|WCAG2AA|WCAG2AAA]"
-			return 1
-		fi
+		_main_require_arg "$account_name" "Please provide a URL" "Usage: $0 pa11y <url> [WCAG2A|WCAG2AA|WCAG2AAA]" || return 1
 		run_pa11y_audit "$account_name" "${3:-$A11Y_WCAG_LEVEL}"
 		;;
 	"email")
-		if [[ -z "$account_name" ]]; then
-			print_error "Please provide an HTML file path"
-			print_info "Usage: $0 email <file.html>"
-			return 1
-		fi
+		_main_require_arg "$account_name" "Please provide an HTML file path" "Usage: $0 email <file.html>" || return 1
 		check_email_a11y "$account_name"
 		;;
 	"contrast")
@@ -1136,11 +1239,7 @@ main() {
 		check_contrast "$account_name" "$3"
 		;;
 	"playwright-contrast" | "pw-contrast" | "extract-contrast")
-		if [[ -z "$account_name" ]]; then
-			print_error "Please provide a URL"
-			print_info "Usage: $0 playwright-contrast <url> [json|markdown|summary] [AA|AAA]"
-			return 1
-		fi
+		_main_require_arg "$account_name" "Please provide a URL" "Usage: $0 playwright-contrast <url> [json|markdown|summary] [AA|AAA]" || return 1
 		run_playwright_contrast "$account_name" "${3:-summary}" "${4:-AA}"
 		;;
 	"wave")
@@ -1153,11 +1252,7 @@ main() {
 		run_wave_audit "$account_name" "${3:-2}" "${4:-1200}"
 		;;
 	"wave-mobile")
-		if [[ -z "$account_name" ]]; then
-			print_error "Please provide a URL"
-			print_info "Usage: $0 wave-mobile <url> [reporttype]"
-			return 1
-		fi
+		_main_require_arg "$account_name" "Please provide a URL" "Usage: $0 wave-mobile <url> [reporttype]" || return 1
 		run_wave_mobile "$account_name" "${3:-2}"
 		;;
 	"wave-docs")
@@ -1167,61 +1262,14 @@ main() {
 		wave_credits
 		;;
 	"bulk")
-		if [[ -z "$account_name" ]]; then
-			print_error "Please provide a file containing URLs"
-			print_info "Usage: $0 bulk <urls-file>"
-			return 1
-		fi
+		_main_require_arg "$account_name" "Please provide a file containing URLs" "Usage: $0 bulk <urls-file>" || return 1
 		bulk_audit "$account_name"
 		;;
 	"install-deps")
 		install_deps
 		;;
 	"help")
-		print_header_line "Accessibility & Contrast Testing Helper"
-		echo "Usage: $0 [command] [options]"
-		echo ""
-		echo "Commands:"
-		echo "  audit <url>                    Full accessibility audit (Lighthouse + pa11y + WAVE)"
-		echo "  lighthouse <url> [strategy]    Lighthouse accessibility-only audit"
-		echo "  pa11y <url> [standard]         pa11y WCAG compliance test"
-		echo "  wave <url> [type] [width]      WAVE API accessibility analysis"
-		echo "  wave-mobile <url> [type]       WAVE API audit at mobile viewport (375px)"
-		echo "  wave-docs <item-id>            Look up WAVE item documentation"
-		echo "  wave-credits                   Check WAVE API credits remaining"
-		echo "  email <file.html>              Check HTML email accessibility"
-		echo "  contrast <fg-hex> <bg-hex>     Calculate WCAG contrast ratio"
-		echo "  playwright-contrast <url> [fmt] [level]"
-		echo "                                 Extract contrast from all visible elements via Playwright"
-		echo "                                 Formats: json, markdown, summary (default)"
-		echo "                                 Levels: AA (default), AAA"
-		echo "  bulk <urls-file>               Audit multiple URLs from file"
-		echo "  install-deps                   Install required dependencies"
-		echo "  help                           Show this help"
-		echo ""
-		echo "WAVE Report Types: 1=stats (1 credit), 2=items (2 credits),"
-		echo "  3=items+xpath (3 credits), 4=items+selectors (3 credits)"
-		echo ""
-		echo "Standards: WCAG2A, WCAG2AA (default), WCAG2AAA"
-		echo "Strategies: desktop (default), mobile"
-		echo ""
-		echo "Environment Variables:"
-		echo "  A11Y_WCAG_LEVEL    Default WCAG level (default: WCAG2AA)"
-		echo "  WAVE_API_KEY       WAVE API key (or use: aidevops secret set wave-api-key)"
-		echo ""
-		echo "Examples:"
-		echo "  $0 audit https://example.com"
-		echo "  $0 lighthouse https://example.com mobile"
-		echo "  $0 pa11y https://example.com WCAG2AAA"
-		echo "  $0 wave https://example.com 3"
-		echo "  $0 wave-mobile https://example.com"
-		echo "  $0 wave-docs alt_missing"
-		echo "  $0 email ./newsletter.html"
-		echo "  $0 contrast '#333333' '#ffffff'"
-		echo "  $0 playwright-contrast https://example.com json AAA"
-		echo "  $0 bulk websites.txt"
-		echo ""
-		echo "Reports saved to: $A11Y_REPORTS_DIR"
+		_main_print_help
 		;;
 	*)
 		print_error "Unknown command: $command"
