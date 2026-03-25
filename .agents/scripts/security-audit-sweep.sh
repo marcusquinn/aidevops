@@ -194,162 +194,147 @@ run_posture_check() {
 	return $?
 }
 
-# Run sweep across all pulse-enabled repos
-cmd_run() {
-	local json_output=false
-	if [[ "${1:-}" == "--json" ]]; then
-		json_output=true
-	fi
-
+# Print the sweep banner header
+_print_sweep_header() {
 	echo -e "${CYAN}"
 	echo "╔═══════════════════════════════════════════════════════════╗"
 	echo "║       Security Audit Sweep v${VERSION}                        ║"
 	echo "║   Scanning all pulse-enabled repos in repos.json         ║"
 	echo "╚═══════════════════════════════════════════════════════════╝"
 	echo -e "${NC}"
+	return 0
+}
 
-	local repos_json_arr="[]"
-	local total_repos=0
-	local repos_with_issues=0
-	local repos_with_ai_deps=0
-	local total_critical=0
-	local total_warning=0
+# Display AI/LLM dependency results for a repo
+# Args: ai_deps (string, may be empty)
+# Prints display output; no return value
+_display_ai_deps() {
+	local ai_deps="$1"
 
-	while IFS= read -r repo_json; do
-		local repo_path repo_slug local_only
-		repo_path=$(echo "$repo_json" | jq -r '.path')
-		repo_slug=$(echo "$repo_json" | jq -r '.slug')
-		local_only=$(echo "$repo_json" | jq -r '.local_only')
-
-		total_repos=$((total_repos + 1))
-
-		echo ""
-		echo -e "${BOLD}═══════════════════════════════════════${NC}"
-		echo -e "${BOLD}  Repo ${total_repos}: ${repo_slug}${NC}"
-		echo -e "${BOLD}  Path: ${repo_path}${NC}"
-		echo -e "${BOLD}═══════════════════════════════════════${NC}"
-
-		# Verify repo exists
-		if [[ ! -d "$repo_path" ]]; then
-			echo -e "${RED}  SKIP: Directory not found${NC}"
-			continue
+	echo ""
+	echo -e "${BLUE}  Checking AI/LLM dependencies...${NC}"
+	if [[ -n "$ai_deps" ]]; then
+		echo -e "${YELLOW}  AI/LLM dependencies found:${NC}"
+		echo "$ai_deps" | while IFS= read -r dep; do
+			echo -e "    - $dep"
+		done
+		if echo "$ai_deps" | grep -q '@stackone/defender'; then
+			echo -e "${GREEN}  @stackone/defender already integrated${NC}"
+		else
+			echo -e "${YELLOW}  RECOMMEND: Add @stackone/defender for prompt injection defense${NC}"
 		fi
+	else
+		echo -e "${GREEN}  No AI/LLM dependencies found${NC}"
+	fi
+	return 0
+}
 
-		if ! git -C "$repo_path" rev-parse --is-inside-work-tree &>/dev/null; then
-			echo -e "${RED}  SKIP: Not a git repository${NC}"
-			continue
-		fi
+# Display CI workflow security findings for a repo
+# Args: ci_findings (string, may be empty)
+# Prints display output; no return value
+_display_ci_findings() {
+	local ci_findings="$1"
 
-		# 1. Check AI/LLM dependencies
-		echo ""
-		echo -e "${BLUE}  Checking AI/LLM dependencies...${NC}"
-		local ai_deps
-		ai_deps=$(check_ai_deps "$repo_path")
-		if [[ -n "$ai_deps" ]]; then
-			repos_with_ai_deps=$((repos_with_ai_deps + 1))
-			echo -e "${YELLOW}  AI/LLM dependencies found:${NC}"
-			echo "$ai_deps" | while IFS= read -r dep; do
-				echo -e "    - $dep"
-			done
-
-			# Check if @stackone/defender is already present
-			if echo "$ai_deps" | grep -q '@stackone/defender'; then
-				echo -e "${GREEN}  @stackone/defender already integrated${NC}"
+	echo ""
+	echo -e "${BLUE}  Checking CI workflow security...${NC}"
+	if [[ -n "$ci_findings" ]]; then
+		echo "$ci_findings" | while IFS= read -r finding; do
+			if [[ "$finding" == CRITICAL:* ]]; then
+				echo -e "  ${RED}$finding${NC}"
 			else
-				echo -e "${YELLOW}  RECOMMEND: Add @stackone/defender for prompt injection defense${NC}"
+				echo -e "  ${YELLOW}$finding${NC}"
 			fi
-		else
-			echo -e "${GREEN}  No AI/LLM dependencies found${NC}"
-		fi
+		done
+	else
+		echo -e "${GREEN}  No CI workflow security issues found${NC}"
+	fi
+	return 0
+}
 
-		# 2. Check CI workflow patterns
-		echo ""
-		echo -e "${BLUE}  Checking CI workflow security...${NC}"
-		local ci_findings
-		ci_findings=$(check_ci_patterns "$repo_path")
-		if [[ -n "$ci_findings" ]]; then
-			echo "$ci_findings" | while IFS= read -r finding; do
-				if [[ "$finding" == CRITICAL:* ]]; then
-					echo -e "  ${RED}$finding${NC}"
-				else
-					echo -e "  ${YELLOW}$finding${NC}"
-				fi
-			done
-		else
-			echo -e "${GREEN}  No CI workflow security issues found${NC}"
-		fi
+# Extract posture counts from posture helper output
+# Args: posture_output (string)
+# Prints: "critical_count warning_count pass_count" on stdout
+_extract_posture_counts() {
+	local posture_output="$1"
+	local critical_count warning_count pass_count
 
-		# 3. Run full posture check (captures output)
-		echo ""
-		echo -e "${BLUE}  Running full security posture check...${NC}"
-		local posture_output
-		local posture_exit=0
-		posture_output=$(run_posture_check "$repo_path" 2>&1) || posture_exit=$?
+	critical_count=$(printf '%s' "$posture_output" | grep -c '^\[CRIT\]') || critical_count=0
+	warning_count=$(printf '%s' "$posture_output" | grep -c '^\[WARN\]') || warning_count=0
+	pass_count=$(printf '%s' "$posture_output" | grep -c '^\[PASS\]') || pass_count=0
 
-		# Extract summary counts from posture output
-		local critical_count warning_count pass_count
-		critical_count=$(printf '%s' "$posture_output" | grep -c '^\[CRIT\]') || critical_count=0
-		warning_count=$(printf '%s' "$posture_output" | grep -c '^\[WARN\]') || warning_count=0
-		pass_count=$(printf '%s' "$posture_output" | grep -c '^\[PASS\]') || pass_count=0
+	# The posture helper uses ANSI codes, so also check with color codes
+	if [[ "$critical_count" -eq 0 ]]; then
+		critical_count=$(printf '%s' "$posture_output" | grep -c '\[CRIT\]') || critical_count=0
+	fi
+	if [[ "$warning_count" -eq 0 ]]; then
+		warning_count=$(printf '%s' "$posture_output" | grep -c '\[WARN\]') || warning_count=0
+	fi
+	if [[ "$pass_count" -eq 0 ]]; then
+		pass_count=$(printf '%s' "$posture_output" | grep -c '\[PASS\]') || pass_count=0
+	fi
 
-		# The posture helper uses ANSI codes, so also check with color codes
-		if [[ "$critical_count" -eq 0 ]]; then
-			critical_count=$(printf '%s' "$posture_output" | grep -c '\[CRIT\]') || critical_count=0
-		fi
-		if [[ "$warning_count" -eq 0 ]]; then
-			warning_count=$(printf '%s' "$posture_output" | grep -c '\[WARN\]') || warning_count=0
-		fi
-		if [[ "$pass_count" -eq 0 ]]; then
-			pass_count=$(printf '%s' "$posture_output" | grep -c '\[PASS\]') || pass_count=0
-		fi
+	echo "${critical_count} ${warning_count} ${pass_count}"
+	return 0
+}
 
-		total_critical=$((total_critical + critical_count))
-		total_warning=$((total_warning + warning_count))
+# Build a JSON entry for a single repo
+# Args: repo_slug repo_path local_only critical_count warning_count pass_count ai_deps ci_findings
+# Prints: JSON object on stdout
+_build_repo_json_entry() {
+	local repo_slug="$1"
+	local repo_path="$2"
+	local local_only="$3"
+	local critical_count="$4"
+	local warning_count="$5"
+	local pass_count="$6"
+	local ai_deps="$7"
+	local ci_findings="$8"
 
-		if [[ "$critical_count" -gt 0 ]] || [[ "$warning_count" -gt 0 ]]; then
-			repos_with_issues=$((repos_with_issues + 1))
-		fi
+	local ai_deps_json="[]"
+	if [[ -n "$ai_deps" ]]; then
+		ai_deps_json=$(echo "$ai_deps" | jq -R -s 'split("\n") | map(select(length > 0))')
+	fi
 
-		echo -e "  Summary: ${RED}${critical_count} critical${NC}, ${YELLOW}${warning_count} warnings${NC}, ${GREEN}${pass_count} passed${NC}"
+	local ci_findings_json="[]"
+	if [[ -n "$ci_findings" ]]; then
+		ci_findings_json=$(echo "$ci_findings" | jq -R -s 'split("\n") | map(select(length > 0))')
+	fi
 
-		# Build JSON entry for this repo
-		local ai_deps_json="[]"
-		if [[ -n "$ai_deps" ]]; then
-			ai_deps_json=$(echo "$ai_deps" | jq -R -s 'split("\n") | map(select(length > 0))')
-		fi
+	jq -n \
+		--arg slug "$repo_slug" \
+		--arg path "$repo_path" \
+		--argjson local_only "${local_only}" \
+		--argjson critical "$critical_count" \
+		--argjson warnings "$warning_count" \
+		--argjson passed "$pass_count" \
+		--argjson ai_deps "$ai_deps_json" \
+		--argjson ci_findings "$ci_findings_json" \
+		'{
+			slug: $slug,
+			path: $path,
+			local_only: $local_only,
+			critical: $critical,
+			warnings: $warnings,
+			passed: $passed,
+			ai_deps: $ai_deps,
+			ci_findings: $ci_findings,
+			needs_defender: (($ai_deps | length) > 0 and ([$ai_deps[] | select(. == "@stackone/defender")] | length) == 0)
+		}'
+	return 0
+}
 
-		local ci_findings_json="[]"
-		if [[ -n "$ci_findings" ]]; then
-			ci_findings_json=$(echo "$ci_findings" | jq -R -s 'split("\n") | map(select(length > 0))')
-		fi
+# Print overall sweep summary and optional JSON output
+# Args: json_output total_repos repos_with_issues repos_with_ai_deps
+#       total_critical total_warning repos_json_arr
+_print_sweep_summary() {
+	local json_output="$1"
+	local total_repos="$2"
+	local repos_with_issues="$3"
+	local repos_with_ai_deps="$4"
+	local total_critical="$5"
+	local total_warning="$6"
+	local repos_json_arr="$7"
 
-		local repo_entry
-		repo_entry=$(jq -n \
-			--arg slug "$repo_slug" \
-			--arg path "$repo_path" \
-			--argjson local_only "${local_only}" \
-			--argjson critical "$critical_count" \
-			--argjson warnings "$warning_count" \
-			--argjson passed "$pass_count" \
-			--argjson ai_deps "$ai_deps_json" \
-			--argjson ci_findings "$ci_findings_json" \
-			'{
-				slug: $slug,
-				path: $path,
-				local_only: $local_only,
-				critical: $critical,
-				warnings: $warnings,
-				passed: $passed,
-				ai_deps: $ai_deps,
-				ci_findings: $ci_findings,
-				needs_defender: (($ai_deps | length) > 0 and ([$ai_deps[] | select(. == "@stackone/defender")] | length) == 0)
-			}')
-
-		repos_json_arr=$(echo "$repos_json_arr" | jq --argjson entry "$repo_entry" '. += [$entry]')
-
-	done < <(get_pulse_repos)
-
-	# Print overall summary
 	echo ""
 	echo -e "${BOLD}${CYAN}═══════════════════════════════════════${NC}"
 	echo -e "${BOLD}${CYAN}  Overall Sweep Summary${NC}"
@@ -385,6 +370,96 @@ cmd_run() {
 			}')
 		echo "$sweep_json"
 	fi
+	return 0
+}
+
+# Run sweep across all pulse-enabled repos
+cmd_run() {
+	local json_output=false
+	if [[ "${1:-}" == "--json" ]]; then
+		json_output=true
+	fi
+
+	_print_sweep_header
+
+	local repos_json_arr="[]"
+	local total_repos=0
+	local repos_with_issues=0
+	local repos_with_ai_deps=0
+	local total_critical=0
+	local total_warning=0
+
+	while IFS= read -r repo_json; do
+		local repo_path repo_slug local_only
+		repo_path=$(echo "$repo_json" | jq -r '.path')
+		repo_slug=$(echo "$repo_json" | jq -r '.slug')
+		local_only=$(echo "$repo_json" | jq -r '.local_only')
+
+		total_repos=$((total_repos + 1))
+
+		echo ""
+		echo -e "${BOLD}═══════════════════════════════════════${NC}"
+		echo -e "${BOLD}  Repo ${total_repos}: ${repo_slug}${NC}"
+		echo -e "${BOLD}  Path: ${repo_path}${NC}"
+		echo -e "${BOLD}═══════════════════════════════════════${NC}"
+
+		if [[ ! -d "$repo_path" ]]; then
+			echo -e "${RED}  SKIP: Directory not found${NC}"
+			continue
+		fi
+
+		if ! git -C "$repo_path" rev-parse --is-inside-work-tree &>/dev/null; then
+			echo -e "${RED}  SKIP: Not a git repository${NC}"
+			continue
+		fi
+
+		# 1. Check AI/LLM dependencies
+		local ai_deps
+		ai_deps=$(check_ai_deps "$repo_path")
+		_display_ai_deps "$ai_deps"
+		if [[ -n "$ai_deps" ]]; then
+			repos_with_ai_deps=$((repos_with_ai_deps + 1))
+		fi
+
+		# 2. Check CI workflow patterns
+		local ci_findings
+		ci_findings=$(check_ci_patterns "$repo_path")
+		_display_ci_findings "$ci_findings"
+
+		# 3. Run full posture check and extract counts
+		echo ""
+		echo -e "${BLUE}  Running full security posture check...${NC}"
+		local posture_output posture_counts
+		local posture_exit=0
+		posture_output=$(run_posture_check "$repo_path" 2>&1) || posture_exit=$?
+		posture_counts=$(_extract_posture_counts "$posture_output")
+
+		local critical_count warning_count pass_count
+		critical_count=$(echo "$posture_counts" | cut -d' ' -f1)
+		warning_count=$(echo "$posture_counts" | cut -d' ' -f2)
+		pass_count=$(echo "$posture_counts" | cut -d' ' -f3)
+
+		total_critical=$((total_critical + critical_count))
+		total_warning=$((total_warning + warning_count))
+
+		if [[ "$critical_count" -gt 0 ]] || [[ "$warning_count" -gt 0 ]]; then
+			repos_with_issues=$((repos_with_issues + 1))
+		fi
+
+		echo -e "  Summary: ${RED}${critical_count} critical${NC}, ${YELLOW}${warning_count} warnings${NC}, ${GREEN}${pass_count} passed${NC}"
+
+		# Build JSON entry and append to array
+		local repo_entry
+		repo_entry=$(_build_repo_json_entry \
+			"$repo_slug" "$repo_path" "$local_only" \
+			"$critical_count" "$warning_count" "$pass_count" \
+			"$ai_deps" "$ci_findings")
+		repos_json_arr=$(echo "$repos_json_arr" | jq --argjson entry "$repo_entry" '. += [$entry]')
+
+	done < <(get_pulse_repos)
+
+	_print_sweep_summary "$json_output" "$total_repos" "$repos_with_issues" \
+		"$repos_with_ai_deps" "$total_critical" "$total_warning" "$repos_json_arr"
 
 	if [[ "$total_critical" -gt 0 ]]; then
 		return 1
