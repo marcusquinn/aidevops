@@ -434,6 +434,7 @@ _sandbox_exec_with_pgkill() {
 	shift 3
 	local child_pid=""
 	local child_pgid=""
+	local child_start_token=""
 	local t_exit_code=0
 	local watchdog_pid=""
 
@@ -495,6 +496,13 @@ _sandbox_exec_with_pgkill() {
 		child_pgid=""
 	fi
 
+	# PID recycling safety: capture a stable identity token at spawn time.
+	# On macOS, use 'ps -o lstart=' which returns the absolute start timestamp
+	# of the process. This is stable for the lifetime of the process and changes
+	# when the PID is recycled. If ps fails (child already exited), token is
+	# empty — the watchdog will skip signal delivery (safe: child already gone).
+	child_start_token="$(ps -o lstart= -p "$child_pid" 2>/dev/null | tr -s ' ')" || true
+
 	# Secondary watchdog (GH#6413): independent wall-clock timeout enforcement.
 	# Spawned as a background subshell that sleeps for the timeout duration,
 	# then checks if the child is still alive and kills it. This catches cases
@@ -502,7 +510,8 @@ _sandbox_exec_with_pgkill() {
 	# The watchdog uses date(1) for wall-clock verification rather than relying
 	# solely on sleep duration, which can drift under system load.
 	# 10% grace period avoids racing with the primary loop's normal timeout.
-	_sandbox_spawn_watchdog "$t_secs" "$child_pid" "$child_pgid" &
+	# child_start_token is passed for PID recycling safety (see _sandbox_spawn_watchdog).
+	_sandbox_spawn_watchdog "$t_secs" "$child_pid" "$child_pgid" "$child_start_token" &
 	watchdog_pid=$!
 
 	# Poll until the child exits or the deadline is reached.
@@ -522,6 +531,18 @@ _sandbox_exec_with_pgkill() {
 
 	wait "$child_pid" 2>/dev/null
 	t_exit_code=$?
+
+	# Watchdog exit status override: if the secondary watchdog killed the child,
+	# it will have left a marker file at /tmp/.sandbox_timeout_${child_pid}.
+	# Override the exit code to 124 (standard timeout) so callers can distinguish
+	# a watchdog-killed process from a normal non-zero exit.
+	local wd_marker="/tmp/.sandbox_timeout_${child_pid}"
+	if [[ -f "$wd_marker" ]]; then
+		log_sandbox "WARN" "Secondary watchdog marker detected for PID ${child_pid} — overriding exit code to 124"
+		t_exit_code=124
+		rm -f "$wd_marker" 2>/dev/null || true
+	fi
+
 	# Explicitly clean up any remaining descendants in the process group.
 	# The EXIT trap is cleared below, so cleanup must be called explicitly
 	# here — the trap does not fire on a normal function return.
@@ -537,14 +558,27 @@ _sandbox_exec_with_pgkill() {
 # polling loop in _sandbox_exec_with_pgkill fails (parent crash, OOM, sleep
 # drift), this watchdog independently enforces the timeout.
 #
+# Exit status override: before sending TERM/KILL, the watchdog touches a marker
+# file at /tmp/.sandbox_timeout_${child_pid}. The parent checks for this marker
+# after 'wait "$child_pid"' returns and overrides the exit code to 124 (standard
+# timeout exit code) so callers can distinguish watchdog-killed from normal exit.
+#
+# PID recycling safety: $4 (child_start_token) is the output of
+# 'ps -o lstart= -p $child_pid' captured at spawn time. Before sending any
+# signal, the watchdog re-reads the process start time and compares it to the
+# stored token. If they differ, the PID has been recycled — the watchdog logs
+# and exits cleanly without sending signals.
+#
 # Arguments:
 #   $1 - timeout_secs (original timeout)
 #   $2 - child_pid (PID to monitor)
 #   $3 - child_pgid (process group ID, may be empty)
+#   $4 - child_start_token (ps -o lstart= output captured at spawn time, may be empty)
 _sandbox_spawn_watchdog() {
 	local wd_timeout="$1"
 	local wd_pid="$2"
 	local wd_pgid="$3"
+	local wd_start_token="$4"
 	local wd_start
 	wd_start="$(date +%s)"
 
@@ -586,9 +620,35 @@ _sandbox_spawn_watchdog() {
 		return 0
 	fi
 
-	# Child is still alive past the deadline — kill it
+	# Child is still alive past the deadline — verify PID identity before killing.
 	if kill -0 "$wd_pid" 2>/dev/null; then
+		# PID recycling safety: re-read the process start time and compare to
+		# the token captured at spawn. If the PID has been recycled (new process
+		# with the same PID), the start times will differ — skip signal delivery.
+		if [[ -n "$wd_start_token" ]]; then
+			local wd_current_token
+			wd_current_token="$(ps -o lstart= -p "$wd_pid" 2>/dev/null | tr -s ' ')" || true
+			if [[ -z "$wd_current_token" ]]; then
+				# ps returned nothing — process already exited between kill -0 and now
+				return 0
+			fi
+			if [[ "$wd_current_token" != "$wd_start_token" ]]; then
+				log_sandbox "WARN" "Secondary watchdog: PID ${wd_pid} start time changed (token mismatch) — PID recycled, skipping kill"
+				return 0
+			fi
+		fi
+
 		log_sandbox "WARN" "Secondary watchdog: child PID ${wd_pid} still alive after ${wd_elapsed}s (timeout=${wd_timeout}s) — killing"
+
+		# Touch marker file before sending signals so the parent can detect
+		# that this watchdog (not a normal exit) caused the child's termination.
+		# The parent checks for this file after 'wait "$child_pid"' and overrides
+		# the exit code to 124. Use a temp-then-move pattern to make the create
+		# atomic — avoids a partial file being read by the parent.
+		local wd_marker="/tmp/.sandbox_timeout_${wd_pid}"
+		local wd_marker_tmp="${wd_marker}.tmp$$"
+		printf '%s\n' "$wd_elapsed" >"$wd_marker_tmp" 2>/dev/null &&
+			mv -f "$wd_marker_tmp" "$wd_marker" 2>/dev/null || true
 
 		if [[ -n "$wd_pgid" ]]; then
 			kill -- "-${wd_pgid}" 2>/dev/null || true
