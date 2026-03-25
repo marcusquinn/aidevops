@@ -93,10 +93,6 @@ _recall_parse_args() {
 			manual_only=true
 			shift
 			;;
-		--stats)
-			cmd_stats
-			return 0
-			;;
 		*)
 			# Allow query as positional argument
 			if [[ -z "$query" ]]; then query="$1"; fi
@@ -258,7 +254,6 @@ WHERE learnings MATCH :query $extra_filters $auto_join_filter $entity_fts_where
 ORDER BY score
 LIMIT $limit;
 EOF
-	return 0
 }
 
 #######################################
@@ -458,6 +453,15 @@ _recall_output() {
 # Recall learnings with search
 #######################################
 cmd_recall() {
+	# Handle --stats early exit before argument parsing
+	local arg
+	for arg in "$@"; do
+		if [[ "$arg" == "--stats" ]]; then
+			cmd_stats
+			return $?
+		fi
+	done
+
 	# Parse arguments into KEY=VALUE pairs
 	local parsed
 	parsed=$(_recall_parse_args "$@") || return $?
