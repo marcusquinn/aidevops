@@ -672,9 +672,6 @@ Good (Benefit-Focused):
 
 ---
 
-
----
-
 ## Brand Voice in Ads
 
 ### Defining Your Brand Voice
