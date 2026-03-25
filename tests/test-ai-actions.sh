@@ -74,13 +74,12 @@ _setup_test_env() {
 	run_ai_reasoning() { echo '[]'; }
 
 	source "$ACTIONS_SCRIPT"
-	return 0
 }
 
 # Clean up temp files created by _setup_test_env.
 # Args: $1... - additional paths to remove
 _cleanup_test_env() {
-	rm -rf "/tmp/test-ai-actions-logs-$$" "$@" 2>/dev/null || true
+	rm -rf "${AI_ACTIONS_LOG_DIR:-"/tmp/test-ai-actions-logs-$$"}" "$@" 2>/dev/null || true
 	return 0
 }
 
