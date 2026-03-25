@@ -539,92 +539,85 @@ cmd_check() {
 }
 
 #######################################
-# Enable repo-sync scheduler (platform-aware)
-# On macOS: installs LaunchAgent plist (daily)
-# On Linux: installs crontab entry
+# Enable repo-sync via launchd (macOS)
+# Arguments:
+#   $1 - script_path
+#   $2 - interval (minutes)
 #######################################
-cmd_enable() {
-	ensure_dirs
+_enable_launchd() {
+	local script_path="$1"
+	local interval="$2"
+	local interval_seconds=$((interval * 60))
 
-	local interval="${AIDEVOPS_REPO_SYNC_INTERVAL:-$DEFAULT_INTERVAL}"
-	local script_path="$HOME/.aidevops/agents/scripts/repo-sync-helper.sh"
-
-	# Verify the script exists at the deployed location
-	if [[ ! -x "$script_path" ]]; then
-		# Fall back to repo location
-		script_path="$INSTALL_DIR/.agents/scripts/repo-sync-helper.sh"
-		if [[ ! -x "$script_path" ]]; then
-			print_error "repo-sync-helper.sh not found"
-			return 1
-		fi
+	# Migrate from old label if present (com.aidevops -> sh.aidevops)
+	local old_label="com.aidevops.aidevops-repo-sync"
+	local old_plist="${LAUNCHD_DIR}/${old_label}.plist"
+	# Capture output first to avoid SIGPIPE (141) under set -o pipefail (t3270)
+	local launchctl_list
+	launchctl_list=$(launchctl list 2>/dev/null) || true
+	if echo "$launchctl_list" | grep -qF "$old_label"; then
+		launchctl unload -w "$old_plist" 2>/dev/null || true
+		log_info "Unloaded old LaunchAgent: $old_label"
 	fi
+	rm -f "$old_plist"
 
-	local backend
-	backend="$(_get_scheduler_backend)"
+	mkdir -p "$LAUNCHD_DIR"
 
-	if [[ "$backend" == "launchd" ]]; then
-		local interval_seconds=$((interval * 60))
+	# Create named symlink so macOS System Settings shows "aidevops-repo-sync"
+	local bin_dir="$HOME/.aidevops/bin"
+	mkdir -p "$bin_dir"
+	local display_link="$bin_dir/aidevops-repo-sync"
+	ln -sf "$script_path" "$display_link"
 
-		# Migrate from old label if present (com.aidevops -> sh.aidevops)
-		local old_label="com.aidevops.aidevops-repo-sync"
-		local old_plist="${LAUNCHD_DIR}/${old_label}.plist"
-		# Capture output first to avoid SIGPIPE (141) under set -o pipefail (t3270)
-		local launchctl_list
-		launchctl_list=$(launchctl list 2>/dev/null) || true
-		if echo "$launchctl_list" | grep -qF "$old_label"; then
-			launchctl unload -w "$old_plist" 2>/dev/null || true
-			log_info "Unloaded old LaunchAgent: $old_label"
-		fi
-		rm -f "$old_plist"
+	# Generate plist content and compare to existing (t1265)
+	local new_content
+	new_content=$(_generate_plist "$display_link" "$interval_seconds" "${PATH}")
 
-		mkdir -p "$LAUNCHD_DIR"
-
-		# Create named symlink so macOS System Settings shows "aidevops-repo-sync"
-		local bin_dir="$HOME/.aidevops/bin"
-		mkdir -p "$bin_dir"
-		local display_link="$bin_dir/aidevops-repo-sync"
-		ln -sf "$script_path" "$display_link"
-
-		# Generate plist content and compare to existing (t1265)
-		local new_content
-		new_content=$(_generate_plist "$display_link" "$interval_seconds" "${PATH}")
-
-		# Skip if already loaded with identical config (avoids macOS notification)
-		if _launchd_is_loaded && [[ -f "$LAUNCHD_PLIST" ]]; then
-			local existing_content
-			existing_content=$(cat "$LAUNCHD_PLIST" 2>/dev/null) || existing_content=""
-			if [[ "$existing_content" == "$new_content" ]]; then
-				print_info "Repo sync LaunchAgent already installed with identical config ($LAUNCHD_LABEL)"
-				update_state_action "enable" "enabled"
-				return 0
-			fi
-			print_info "Repo sync LaunchAgent already loaded ($LAUNCHD_LABEL)"
+	# Skip if already loaded with identical config (avoids macOS notification)
+	if _launchd_is_loaded && [[ -f "$LAUNCHD_PLIST" ]]; then
+		local existing_content
+		existing_content=$(cat "$LAUNCHD_PLIST" 2>/dev/null) || existing_content=""
+		if [[ "$existing_content" == "$new_content" ]]; then
+			print_info "Repo sync LaunchAgent already installed with identical config ($LAUNCHD_LABEL)"
 			update_state_action "enable" "enabled"
 			return 0
 		fi
-
-		echo "$new_content" >"$LAUNCHD_PLIST"
-
-		if launchctl load -w "$LAUNCHD_PLIST" 2>/dev/null; then
-			update_state_action "enable" "enabled"
-			print_success "Repo sync enabled (every ${interval} minutes)"
-			echo ""
-			echo "  Scheduler: launchd (macOS LaunchAgent)"
-			echo "  Label:     $LAUNCHD_LABEL"
-			echo "  Plist:     $LAUNCHD_PLIST"
-			echo "  Script:    $script_path"
-			echo "  Logs:      $LOG_FILE"
-			echo ""
-			echo "  Disable with: aidevops repo-sync disable"
-			echo "  Sync now:     aidevops repo-sync check"
-		else
-			print_error "Failed to load LaunchAgent: $LAUNCHD_LABEL"
-			return 1
-		fi
+		print_info "Repo sync LaunchAgent already loaded ($LAUNCHD_LABEL)"
+		update_state_action "enable" "enabled"
 		return 0
 	fi
 
-	# Linux: cron backend
+	echo "$new_content" >"$LAUNCHD_PLIST"
+
+	if launchctl load -w "$LAUNCHD_PLIST" 2>/dev/null; then
+		update_state_action "enable" "enabled"
+		print_success "Repo sync enabled (every ${interval} minutes)"
+		echo ""
+		echo "  Scheduler: launchd (macOS LaunchAgent)"
+		echo "  Label:     $LAUNCHD_LABEL"
+		echo "  Plist:     $LAUNCHD_PLIST"
+		echo "  Script:    $script_path"
+		echo "  Logs:      $LOG_FILE"
+		echo ""
+		echo "  Disable with: aidevops repo-sync disable"
+		echo "  Sync now:     aidevops repo-sync check"
+	else
+		print_error "Failed to load LaunchAgent: $LAUNCHD_LABEL"
+		return 1
+	fi
+	return 0
+}
+
+#######################################
+# Enable repo-sync via cron (Linux)
+# Arguments:
+#   $1 - script_path
+#   $2 - interval (minutes)
+#######################################
+_enable_cron() {
+	local script_path="$1"
+	local interval="$2"
+
 	# Build cron expression from interval (minutes)
 	local cron_expr cron_desc
 	if [[ "$interval" -ge 1440 ]]; then
@@ -663,6 +656,39 @@ cmd_enable() {
 	echo "  Disable with: aidevops repo-sync disable"
 	echo "  Sync now:     aidevops repo-sync check"
 	return 0
+}
+
+#######################################
+# Enable repo-sync scheduler (platform-aware)
+# On macOS: installs LaunchAgent plist (daily)
+# On Linux: installs crontab entry
+#######################################
+cmd_enable() {
+	ensure_dirs
+
+	local interval="${AIDEVOPS_REPO_SYNC_INTERVAL:-$DEFAULT_INTERVAL}"
+	local script_path="$HOME/.aidevops/agents/scripts/repo-sync-helper.sh"
+
+	# Verify the script exists at the deployed location
+	if [[ ! -x "$script_path" ]]; then
+		# Fall back to repo location
+		script_path="$INSTALL_DIR/.agents/scripts/repo-sync-helper.sh"
+		if [[ ! -x "$script_path" ]]; then
+			print_error "repo-sync-helper.sh not found"
+			return 1
+		fi
+	fi
+
+	local backend
+	backend="$(_get_scheduler_backend)"
+
+	if [[ "$backend" == "launchd" ]]; then
+		_enable_launchd "$script_path" "$interval"
+		return $?
+	fi
+
+	_enable_cron "$script_path" "$interval"
+	return $?
 }
 
 #######################################
@@ -833,6 +859,143 @@ cmd_status() {
 }
 
 #######################################
+# Ensure repos.json exists and has git_parent_dirs key
+# Returns: 0 on success, 1 on failure
+#######################################
+_dirs_ensure_config() {
+	if [[ ! -f "$CONFIG_FILE" ]]; then
+		mkdir -p "$(dirname "$CONFIG_FILE")"
+		echo '{"initialized_repos": [], "git_parent_dirs": ["~/Git"]}' >"$CONFIG_FILE"
+		return 0
+	fi
+	if ! jq -e '.git_parent_dirs' "$CONFIG_FILE" &>/dev/null; then
+		local temp_file="${CONFIG_FILE}.tmp"
+		if jq '. + {"git_parent_dirs": ["~/Git"]}' "$CONFIG_FILE" >"$temp_file"; then
+			mv "$temp_file" "$CONFIG_FILE"
+		else
+			rm -f "$temp_file"
+			print_error "Failed to initialize git_parent_dirs in config. Please check $CONFIG_FILE"
+			return 1
+		fi
+	fi
+	return 0
+}
+
+#######################################
+# List configured git parent directories
+#######################################
+_dirs_list() {
+	local dirs
+	dirs=$(jq -r '.git_parent_dirs[]? // empty' "$CONFIG_FILE" || true)
+	if [[ -z "$dirs" ]]; then
+		echo "No parent directories configured."
+		echo "Add one with: aidevops repo-sync dirs add ~/Git"
+	else
+		echo "Configured git parent directories:"
+		while IFS= read -r dir; do
+			local expanded="${dir/#\~/$HOME}"
+			if [[ -d "$expanded" ]]; then
+				echo "  $dir"
+			else
+				echo "  $dir  (not found)"
+			fi
+		done <<<"$dirs"
+	fi
+	return 0
+}
+
+#######################################
+# Add a git parent directory to config
+# Arguments:
+#   $1 - directory path to add
+#######################################
+_dirs_add() {
+	local new_dir="${1:-}"
+	if [[ -z "$new_dir" ]]; then
+		print_error "Usage: aidevops repo-sync dirs add <path>"
+		return 1
+	fi
+
+	# Normalize: collapse to ~ prefix if under HOME
+	local expanded="${new_dir/#\~/$HOME}"
+	if [[ "$expanded" == "$HOME"/* ]]; then
+		new_dir="~${expanded#"$HOME"}"
+	else
+		new_dir="$expanded"
+	fi
+
+	# Check if already present
+	if jq -e --arg d "$new_dir" '.git_parent_dirs | index($d)' "$CONFIG_FILE" &>/dev/null; then
+		print_warning "Already configured: $new_dir"
+		return 0
+	fi
+
+	# Validate directory exists
+	local check_path="${new_dir/#\~/$HOME}"
+	if [[ ! -d "$check_path" ]]; then
+		print_warning "Directory does not exist: $check_path"
+		echo "Adding anyway — create it before next sync."
+	fi
+
+	local temp_file="${CONFIG_FILE}.tmp"
+	if jq --arg d "$new_dir" '.git_parent_dirs += [$d]' "$CONFIG_FILE" >"$temp_file"; then
+		mv "$temp_file" "$CONFIG_FILE"
+		print_success "Added: $new_dir"
+	else
+		rm -f "$temp_file"
+		print_error "Failed to add directory"
+		return 1
+	fi
+	return 0
+}
+
+#######################################
+# Remove a git parent directory from config
+# Arguments:
+#   $1 - directory path to remove
+#######################################
+_dirs_remove() {
+	local rm_dir="${1:-}"
+	if [[ -z "$rm_dir" ]]; then
+		print_error "Usage: aidevops repo-sync dirs remove <path>"
+		return 1
+	fi
+
+	# Normalize the same way as add
+	local expanded="${rm_dir/#\~/$HOME}"
+	if [[ "$expanded" == "$HOME"/* ]]; then
+		rm_dir="~${expanded#"$HOME"}"
+	else
+		rm_dir="$expanded"
+	fi
+
+	# Check if present
+	if ! jq -e --arg d "$rm_dir" '.git_parent_dirs | index($d)' "$CONFIG_FILE" &>/dev/null; then
+		print_warning "Not configured: $rm_dir"
+		return 0
+	fi
+
+	# Confirm destructive operation
+	local _confirm=""
+	read -r -p "Remove '$rm_dir' from git_parent_dirs? [y/N] " _confirm
+	if [[ ! "$_confirm" =~ ^[Yy]$ ]]; then
+		print_info "Cancelled"
+		return 0
+	fi
+
+	local temp_file="${CONFIG_FILE}.tmp"
+	if jq --arg d "$rm_dir" '.git_parent_dirs |= map(select(. != $d))' "$CONFIG_FILE" >"$temp_file"; then
+		mv "$temp_file" "$CONFIG_FILE"
+		print_success "Removed: $rm_dir"
+	else
+		rm -f "$temp_file"
+		print_error "Failed to remove directory"
+		return 1
+	fi
+	return 0
+}
+
+#######################################
 # Manage git_parent_dirs in repos.json
 # Subcommands: add <path>, remove <path>, list
 #######################################
@@ -845,117 +1008,12 @@ cmd_dirs() {
 		return 1
 	fi
 
-	# Ensure config file exists with git_parent_dirs
-	if [[ ! -f "$CONFIG_FILE" ]]; then
-		mkdir -p "$(dirname "$CONFIG_FILE")"
-		echo '{"initialized_repos": [], "git_parent_dirs": ["~/Git"]}' >"$CONFIG_FILE"
-	elif ! jq -e '.git_parent_dirs' "$CONFIG_FILE" &>/dev/null; then
-		local temp_file="${CONFIG_FILE}.tmp"
-		if jq '. + {"git_parent_dirs": ["~/Git"]}' "$CONFIG_FILE" >"$temp_file"; then
-			mv "$temp_file" "$CONFIG_FILE"
-		else
-			rm -f "$temp_file"
-			print_error "Failed to initialize git_parent_dirs in config. Please check $CONFIG_FILE"
-			return 1
-		fi
-	fi
+	_dirs_ensure_config || return 1
 
 	case "$subcmd" in
-	list)
-		local dirs
-		dirs=$(jq -r '.git_parent_dirs[]? // empty' "$CONFIG_FILE" || true)
-		if [[ -z "$dirs" ]]; then
-			echo "No parent directories configured."
-			echo "Add one with: aidevops repo-sync dirs add ~/Git"
-		else
-			echo "Configured git parent directories:"
-			while IFS= read -r dir; do
-				local expanded="${dir/#\~/$HOME}"
-				if [[ -d "$expanded" ]]; then
-					echo "  $dir"
-				else
-					echo "  $dir  (not found)"
-				fi
-			done <<<"$dirs"
-		fi
-		;;
-	add)
-		local new_dir="${1:-}"
-		if [[ -z "$new_dir" ]]; then
-			print_error "Usage: aidevops repo-sync dirs add <path>"
-			return 1
-		fi
-
-		# Normalize: collapse to ~ prefix if under HOME
-		local expanded="${new_dir/#\~/$HOME}"
-		if [[ "$expanded" == "$HOME"/* ]]; then
-			new_dir="~${expanded#"$HOME"}"
-		else
-			new_dir="$expanded"
-		fi
-
-		# Check if already present
-		if jq -e --arg d "$new_dir" '.git_parent_dirs | index($d)' "$CONFIG_FILE" &>/dev/null; then
-			print_warning "Already configured: $new_dir"
-			return 0
-		fi
-
-		# Validate directory exists
-		local check_path="${new_dir/#\~/$HOME}"
-		if [[ ! -d "$check_path" ]]; then
-			print_warning "Directory does not exist: $check_path"
-			echo "Adding anyway — create it before next sync."
-		fi
-
-		local temp_file="${CONFIG_FILE}.tmp"
-		if jq --arg d "$new_dir" '.git_parent_dirs += [$d]' "$CONFIG_FILE" >"$temp_file"; then
-			mv "$temp_file" "$CONFIG_FILE"
-			print_success "Added: $new_dir"
-		else
-			rm -f "$temp_file"
-			print_error "Failed to add directory"
-			return 1
-		fi
-		;;
-	remove | rm)
-		local rm_dir="${1:-}"
-		if [[ -z "$rm_dir" ]]; then
-			print_error "Usage: aidevops repo-sync dirs remove <path>"
-			return 1
-		fi
-
-		# Normalize the same way as add
-		local expanded="${rm_dir/#\~/$HOME}"
-		if [[ "$expanded" == "$HOME"/* ]]; then
-			rm_dir="~${expanded#"$HOME"}"
-		else
-			rm_dir="$expanded"
-		fi
-
-		# Check if present
-		if ! jq -e --arg d "$rm_dir" '.git_parent_dirs | index($d)' "$CONFIG_FILE" &>/dev/null; then
-			print_warning "Not configured: $rm_dir"
-			return 0
-		fi
-
-		# Confirm destructive operation
-		local _confirm=""
-		read -r -p "Remove '$rm_dir' from git_parent_dirs? [y/N] " _confirm
-		if [[ ! "$_confirm" =~ ^[Yy]$ ]]; then
-			print_info "Cancelled"
-			return 0
-		fi
-
-		local temp_file="${CONFIG_FILE}.tmp"
-		if jq --arg d "$rm_dir" '.git_parent_dirs |= map(select(. != $d))' "$CONFIG_FILE" >"$temp_file"; then
-			mv "$temp_file" "$CONFIG_FILE"
-			print_success "Removed: $rm_dir"
-		else
-			rm -f "$temp_file"
-			print_error "Failed to remove directory"
-			return 1
-		fi
-		;;
+	list) _dirs_list ;;
+	add) _dirs_add "$@" ;;
+	remove | rm) _dirs_remove "$@" ;;
 	*)
 		print_error "Unknown dirs subcommand: $subcmd"
 		echo "Usage: aidevops repo-sync dirs [list|add|remove|rm]"
