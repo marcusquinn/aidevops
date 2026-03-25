@@ -60,6 +60,37 @@ show_help() {
 	return 0
 }
 
+# Validate parsed arguments (task ID format, proof-log presence, field formats).
+# Called by parse_args() after the flag loop completes.
+_validate_args() {
+	# Validate task ID format
+	if ! echo "$TASK_ID" | grep -qE '^t[0-9]+(\.[0-9]+)*$'; then
+		log_error "Invalid task ID format: $TASK_ID (expected: tNNN or tNNN.N)"
+		return 1
+	fi
+
+	# Require either --pr or --verified
+	if [[ -z "$PR_NUMBER" && -z "$VERIFIED_DATE" ]]; then
+		log_error "Missing required proof-log: specify either --pr <number> or --verified [date]"
+		show_help
+		return 1
+	fi
+
+	# Validate PR number if provided
+	if [[ -n "$PR_NUMBER" ]] && ! echo "$PR_NUMBER" | grep -qE '^[0-9]+$'; then
+		log_error "Invalid PR number: $PR_NUMBER (expected: numeric)"
+		return 1
+	fi
+
+	# Validate verified date if provided
+	if [[ -n "$VERIFIED_DATE" ]] && ! echo "$VERIFIED_DATE" | grep -qE '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'; then
+		log_error "Invalid verified date: $VERIFIED_DATE (expected: YYYY-MM-DD)"
+		return 1
+	fi
+
+	return 0
+}
+
 # Parse arguments
 parse_args() {
 	if [[ $# -eq 0 ]]; then
@@ -138,32 +169,8 @@ parse_args() {
 		esac
 	done
 
-	# Validate task ID format
-	if ! echo "$TASK_ID" | grep -qE '^t[0-9]+(\.[0-9]+)*$'; then
-		log_error "Invalid task ID format: $TASK_ID (expected: tNNN or tNNN.N)"
-		return 1
-	fi
-
-	# Require either --pr or --verified
-	if [[ -z "$PR_NUMBER" && -z "$VERIFIED_DATE" ]]; then
-		log_error "Missing required proof-log: specify either --pr <number> or --verified [date]"
-		show_help
-		return 1
-	fi
-
-	# Validate PR number if provided
-	if [[ -n "$PR_NUMBER" ]] && ! echo "$PR_NUMBER" | grep -qE '^[0-9]+$'; then
-		log_error "Invalid PR number: $PR_NUMBER (expected: numeric)"
-		return 1
-	fi
-
-	# Validate verified date if provided
-	if [[ -n "$VERIFIED_DATE" ]] && ! echo "$VERIFIED_DATE" | grep -qE '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'; then
-		log_error "Invalid verified date: $VERIFIED_DATE (expected: YYYY-MM-DD)"
-		return 1
-	fi
-
-	return 0
+	_validate_args
+	return $?
 }
 
 # Verify a PR is actually merged before allowing task completion.
@@ -326,6 +333,74 @@ complete_task() {
 	return 0
 }
 
+# Check whether all task IDs listed in a plan's TODO line are complete in TODO.md.
+# Arguments:
+#   $1 - space-separated list of task IDs extracted from the plan's TODO line
+#   $2 - path to TODO.md
+# Returns:
+#   0 - all tasks are complete (or list is empty)
+#   1 - at least one task is still open
+_check_plan_tasks_complete() {
+	local plan_tasks="$1"
+	local todo_file="$2"
+
+	local ptask=""
+	for ptask in $plan_tasks; do
+		if grep -qE "^[[:space:]]*- \[ \] ${ptask}( |$)" "$todo_file"; then
+			log_info "Task $ptask is still open — plan not complete"
+			return 1
+		fi
+	done
+	return 0
+}
+
+# Find the line number of the **Status:** field for the plan that owns the given
+# TODO line in PLANS.md. Walks backward from todo_line to find the ### header,
+# then forward to find **Status:** within that header-to-TODO range.
+# (GH#5392 — robust against extra metadata fields between Status and TODO lines)
+# Arguments:
+#   $1 - line number of the plan's **TODO:** line in PLANS.md
+#   $2 - path to PLANS.md
+# Outputs (stdout):
+#   The line number of the **Status:** line, or empty string if not found
+_find_plan_status_line() {
+	local todo_line="$1"
+	local plans_file="$2"
+
+	# Walk backward to find the enclosing ### [ header
+	local header_line=""
+	local search_line=$((todo_line - 1))
+	while [[ "$search_line" -ge 1 ]]; do
+		local line_content
+		line_content=$(sed -n "${search_line}p" "$plans_file")
+		if echo "$line_content" | grep -q '^### \['; then
+			header_line="$search_line"
+			break
+		fi
+		search_line=$((search_line - 1))
+	done
+
+	if [[ -z "$header_line" ]]; then
+		echo ""
+		return 0
+	fi
+
+	# Scan forward from header to todo_line for **Status:**
+	local scan_line=$((header_line + 1))
+	while [[ "$scan_line" -lt "$todo_line" ]]; do
+		local line_content
+		line_content=$(sed -n "${scan_line}p" "$plans_file")
+		if echo "$line_content" | grep -q '^\*\*Status:\*\*'; then
+			echo "$scan_line"
+			return 0
+		fi
+		scan_line=$((scan_line + 1))
+	done
+
+	echo ""
+	return 0
+}
+
 # Sync PLANS.md status when a task is completed.
 # If all tasks referenced by a plan are now [x] in TODO.md,
 # update the plan's Status to Completed. Plans stay in PLANS.md
@@ -367,50 +442,13 @@ sync_plans_status() {
 		fi
 
 		# Check if ALL tasks in this plan are complete in TODO.md
-		local all_done=true
-		local ptask=""
-		for ptask in $plan_tasks; do
-			if grep -qE "^[[:space:]]*- \[ \] ${ptask}( |$)" "$todo_file"; then
-				log_info "Task $ptask is still open — plan not complete"
-				all_done=false
-				break
-			fi
-		done
-
-		if [[ "$all_done" != "true" ]]; then
+		if ! _check_plan_tasks_complete "$plan_tasks" "$todo_file"; then
 			continue
 		fi
 
-		# Find the plan's Status line by locating the preceding ### header,
-		# then searching within the header-to-TODO range. This is robust
-		# against additional metadata fields being added between Status and
-		# TODO lines. (GH#5392 — review feedback from PR#5357)
-		local status_line=""
-		local header_line=""
-		local search_line=$((todo_line - 1))
-		while [[ "$search_line" -ge 1 ]]; do
-			local line_content
-			line_content=$(sed -n "${search_line}p" "$plans_file")
-			if echo "$line_content" | grep -q '^### \['; then
-				header_line="$search_line"
-				break
-			fi
-			search_line=$((search_line - 1))
-		done
-
-		# Search for Status line between header and TODO line
-		if [[ -n "$header_line" ]]; then
-			local scan_line=$((header_line + 1))
-			while [[ "$scan_line" -lt "$todo_line" ]]; do
-				local line_content
-				line_content=$(sed -n "${scan_line}p" "$plans_file")
-				if echo "$line_content" | grep -q '^\*\*Status:\*\*'; then
-					status_line="$scan_line"
-					break
-				fi
-				scan_line=$((scan_line + 1))
-			done
-		fi
+		# Find the plan's Status line
+		local status_line
+		status_line=$(_find_plan_status_line "$todo_line" "$plans_file")
 
 		if [[ -z "$status_line" ]]; then
 			continue
