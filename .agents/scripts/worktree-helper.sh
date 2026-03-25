@@ -471,12 +471,20 @@ get_worktree_path_for_branch() {
 # =============================================================================
 
 # Resolve a remove target (path or branch name) to an absolute worktree path.
+# Always outputs an absolute path (via cd+pwd) to ensure safety checks against
+# absolute paths (main worktree, "inside worktree") work correctly.
 # Prints the resolved path on success. Returns 1 with an error message on failure.
 _remove_resolve_path() {
 	local target="$1"
 
 	if [[ -d "$target" ]]; then
-		echo "$target"
+		# Resolve to absolute path — target may be relative (e.g., "." or "../foo")
+		local abs_path
+		abs_path="$(cd "$target" && pwd)" || {
+			echo -e "${RED}Error: Cannot resolve path '$target'${NC}" >&2
+			return 1
+		}
+		echo "$abs_path"
 		return 0
 	fi
 
@@ -618,7 +626,7 @@ cmd_list() {
 					local merged_marker=""
 					local default_branch
 					default_branch=$(get_default_branch)
-					if [[ -n "$worktree_branch" ]] && git branch --merged "$default_branch" 2>/dev/null | grep -q "^\s*$worktree_branch$"; then
+					if [[ -n "$worktree_branch" ]] && git branch --merged "$default_branch" 2>/dev/null | grep -q "^[[:space:]]*$worktree_branch$"; then
 						merged_marker=" ${YELLOW}(merged)${NC}"
 					fi
 
@@ -704,7 +712,7 @@ cmd_remove() {
 	rm -rf "$path_to_remove/.agents/loop-state" 2>/dev/null || true
 	rm -rf "$path_to_remove/.agents/tmp" 2>/dev/null || true
 	rm -f "$path_to_remove/.agents/.DS_Store" 2>/dev/null || true
-	rmdir "$path_to_remove/.agent" 2>/dev/null || true # Only removes if empty
+	rmdir "$path_to_remove/.agents" 2>/dev/null || true # Only removes if empty (after subdirs cleaned above)
 
 	# Capture branch name before removal for localdev cleanup (t1224.8)
 	local removed_branch=""
@@ -1005,7 +1013,8 @@ _clean_classify_worktree() {
 	local merge_type=""
 
 	# Check 1: Traditional merge detection
-	if git branch --merged "$default_br" 2>/dev/null | grep -q "^\s*$wt_branch$"; then
+	# Use [[:space:]] instead of \s — \s is not portable in BSD/macOS grep.
+	if git branch --merged "$default_br" 2>/dev/null | grep -q "^[[:space:]]*$wt_branch$"; then
 		is_merged=true
 		merge_type="merged"
 	# Check 2: Remote branch deleted (indicates squash merge or PR closed)
@@ -1124,7 +1133,7 @@ _clean_remove_merged() {
 					rm -rf "$worktree_path/.agents/loop-state" 2>/dev/null || true
 					rm -rf "$worktree_path/.agents/tmp" 2>/dev/null || true
 					rm -f "$worktree_path/.agents/.DS_Store" 2>/dev/null || true
-					rmdir "$worktree_path/.agent" 2>/dev/null || true
+					rmdir "$worktree_path/.agents" 2>/dev/null || true # Only removes if empty (after subdirs cleaned above)
 
 					local remove_flag=""
 					if [[ "$use_force" == "true" ]]; then
