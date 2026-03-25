@@ -940,13 +940,8 @@ cmd_add() {
 #   localdev run --name myapp pnpm dev
 #   localdev run bun run dev
 
-cmd_run() {
-	local name_override=""
-	local port_override=""
-	local set_host=1
-	local cmd_args=()
-
-	# Parse options before the command
+# Parse cmd_run options; sets name_override, port_override, set_host, cmd_args via caller's locals
+_cmd_run_parse_args() {
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--name)
@@ -985,25 +980,30 @@ cmd_run() {
 			;;
 		esac
 	done
+	return 0
+}
 
-	if [[ ${#cmd_args[@]} -eq 0 ]]; then
-		print_error "Usage: localdev run [options] <command...>"
-		print_info ""
-		print_info "Wraps a dev command with automatic project registration and port injection."
-		print_info ""
-		print_info "Examples:"
-		print_info "  localdev run npm run dev"
-		print_info "  localdev run --name myapp pnpm dev"
-		print_info "  localdev run bun run dev"
-		print_info ""
-		print_info "Options:"
-		print_info "  --name <name>   Override inferred project name"
-		print_info "  --port <port>   Override auto-assigned port"
-		print_info "  --no-host       Don't set HOST=0.0.0.0"
-		return 1
-	fi
+# Print cmd_run usage and return 1
+_cmd_run_usage() {
+	print_error "Usage: localdev run [options] <command...>"
+	print_info ""
+	print_info "Wraps a dev command with automatic project registration and port injection."
+	print_info ""
+	print_info "Examples:"
+	print_info "  localdev run npm run dev"
+	print_info "  localdev run --name myapp pnpm dev"
+	print_info "  localdev run bun run dev"
+	print_info ""
+	print_info "Options:"
+	print_info "  --name <name>   Override inferred project name"
+	print_info "  --port <port>   Override auto-assigned port"
+	print_info "  --no-host       Don't set HOST=0.0.0.0"
+	return 1
+}
 
-	# Step 1: Determine project name
+# Resolve the project name for cmd_run; outputs name to stdout
+_cmd_run_resolve_name() {
+	local name_override="$1"
 	local name=""
 	if [[ -n "$name_override" ]]; then
 		# Sanitise: lowercase, replace non-alphanumeric with hyphens, collapse, trim
@@ -1019,8 +1019,12 @@ cmd_run() {
 			return 1
 		}
 	fi
+	echo "$name"
+	return 0
+}
 
-	# Step 2: Detect if we're in a worktree (branch context)
+# Detect worktree/branch context; outputs "is_worktree branch_name is_feature_branch" (tab-separated)
+_cmd_run_detect_worktree() {
 	local is_worktree=0
 	local branch_name=""
 	local is_feature_branch=0
@@ -1031,6 +1035,75 @@ cmd_run() {
 			is_feature_branch=1
 		fi
 	fi
+	printf '%s\t%s\t%s\n' "$is_worktree" "$branch_name" "$is_feature_branch"
+	return 0
+}
+
+# Resolve the port for cmd_run; outputs port to stdout
+_cmd_run_resolve_port() {
+	local name="$1"
+	local port_override="$2"
+	local is_feature_branch="$3"
+	local branch_name="$4"
+
+	local port=""
+	if [[ -n "$port_override" ]]; then
+		port="$port_override"
+	elif [[ "$is_feature_branch" -eq 1 ]]; then
+		local sanitised_branch
+		sanitised_branch="$(sanitise_branch_name "$branch_name")"
+		if is_branch_registered "$name" "$sanitised_branch"; then
+			port="$(get_branch_port "$name" "$sanitised_branch")"
+			print_info "Using branch port: $port (${sanitised_branch}.${name}.local)"
+		else
+			print_info "Creating branch route for $sanitised_branch..."
+			cmd_branch "$name" "$branch_name"
+			port="$(get_branch_port "$name" "$sanitised_branch")"
+			if [[ -z "$port" ]]; then
+				port="$(get_app_port "$name")"
+				print_warning "Branch route creation failed — using main port: $port"
+			else
+				print_info "Using branch port: $port (${sanitised_branch}.${name}.local)"
+			fi
+		fi
+	else
+		port="$(get_app_port "$name")"
+	fi
+
+	if [[ -z "$port" ]]; then
+		print_error "Cannot determine port for '$name'"
+		return 1
+	fi
+	echo "$port"
+	return 0
+}
+
+cmd_run() {
+	local name_override=""
+	local port_override=""
+	local set_host=1
+	local cmd_args=()
+
+	# Step 0: Parse options
+	_cmd_run_parse_args "$@" || return 1
+	# Rebuild positional args from cmd_args (populated by _cmd_run_parse_args via caller scope)
+	set -- "${cmd_args[@]+"${cmd_args[@]}"}"
+
+	if [[ ${#cmd_args[@]} -eq 0 ]]; then
+		_cmd_run_usage
+		return 1
+	fi
+
+	# Step 1: Determine project name
+	local name
+	name="$(_cmd_run_resolve_name "$name_override")" || return 1
+
+	# Step 2: Detect worktree/branch context
+	local worktree_info is_worktree branch_name is_feature_branch
+	worktree_info="$(_cmd_run_detect_worktree)"
+	is_worktree="$(echo "$worktree_info" | cut -f1)"
+	branch_name="$(echo "$worktree_info" | cut -f2)"
+	is_feature_branch="$(echo "$worktree_info" | cut -f3)"
 
 	# Step 3: Auto-register if not already registered
 	if ! is_app_registered "$name"; then
@@ -1052,38 +1125,8 @@ cmd_run() {
 	fi
 
 	# Step 4: Resolve the correct port
-	local port=""
-	if [[ -n "$port_override" ]]; then
-		port="$port_override"
-	elif [[ "$is_feature_branch" -eq 1 ]]; then
-		# In a worktree on a feature branch — check for branch port
-		local sanitised_branch
-		sanitised_branch="$(sanitise_branch_name "$branch_name")"
-		if is_branch_registered "$name" "$sanitised_branch"; then
-			port="$(get_branch_port "$name" "$sanitised_branch")"
-			print_info "Using branch port: $port (${sanitised_branch}.${name}.local)"
-		else
-			# Auto-create branch route
-			print_info "Creating branch route for $sanitised_branch..."
-			cmd_branch "$name" "$branch_name"
-			port="$(get_branch_port "$name" "$sanitised_branch")"
-			if [[ -z "$port" ]]; then
-				# Fallback to main port if branch registration failed
-				port="$(get_app_port "$name")"
-				print_warning "Branch route creation failed — using main port: $port"
-			else
-				print_info "Using branch port: $port (${sanitised_branch}.${name}.local)"
-			fi
-		fi
-	else
-		# Main repo — use the app's main port
-		port="$(get_app_port "$name")"
-	fi
-
-	if [[ -z "$port" ]]; then
-		print_error "Cannot determine port for '$name'"
-		return 1
-	fi
+	local port
+	port="$(_cmd_run_resolve_port "$name" "$port_override" "$is_feature_branch" "$branch_name")" || return 1
 
 	# Step 5: Build the environment and exec
 	local domain="${name}.local"
@@ -1313,27 +1356,101 @@ remove_all_branches() {
 	return 0
 }
 
+# Route cmd_branch subcommands (rm, list, help).
+# Returns 0 if a subcommand was matched (caller should return immediately),
+# returns 1 if no subcommand matched (caller should continue with add logic).
+# Sets _BRANCH_SUBCMD_EXIT to the exit code of the dispatched subcommand.
+_cmd_branch_route_subcmd() {
+	local subcmd="$1"
+	local app="$2"
+	local branch_raw="$3"
+	_BRANCH_SUBCMD_EXIT=0
+	case "$subcmd" in
+	rm | remove)
+		cmd_branch_rm "$app" "$branch_raw"
+		_BRANCH_SUBCMD_EXIT=$?
+		return 0
+		;;
+	list | ls)
+		cmd_branch_list "$app"
+		_BRANCH_SUBCMD_EXIT=$?
+		return 0
+		;;
+	help | -h | --help)
+		cmd_branch_help
+		_BRANCH_SUBCMD_EXIT=0
+		return 0
+		;;
+	esac
+	return 1
+}
+
+# Validate branch add prerequisites (app registered, branch not duplicate, no LocalWP collision)
+# Args: app branch subdomain
+_cmd_branch_validate() {
+	local app="$1"
+	local branch="$2"
+	local subdomain="$3"
+
+	if ! is_app_registered "$app"; then
+		print_error "App '$app' is not registered. Register it first:"
+		print_info "  localdev-helper.sh add $app"
+		exit 1
+	fi
+
+	if is_branch_registered "$app" "$branch"; then
+		local existing_port
+		existing_port="$(get_branch_port "$app" "$branch")"
+		print_error "Branch '$branch' is already registered for '$app' on port $existing_port"
+		print_info "  Remove first: localdev-helper.sh branch rm $app $branch"
+		exit 1
+	fi
+
+	if is_localwp_domain "$subdomain"; then
+		print_error "Subdomain '$subdomain' is already used by LocalWP"
+		exit 1
+	fi
+	return 0
+}
+
+# Assign port for a branch; outputs port to stdout
+# Args: port_arg (may be empty for auto-assign)
+_cmd_branch_assign_port() {
+	local port_arg="$1"
+	local port=""
+	if [[ -n "$port_arg" ]]; then
+		port="$port_arg"
+		if ! echo "$port" | grep -qE '^[0-9]+$'; then
+			print_error "Invalid port '$port': must be a number"
+			exit 1
+		fi
+		if is_port_registered "$port"; then
+			print_error "Port $port is already registered in port registry"
+			exit 1
+		fi
+		if is_port_in_use "$port"; then
+			print_warning "Port $port is currently in use by another process"
+		fi
+	else
+		print_info "Auto-assigning port from range $PORT_RANGE_START-$PORT_RANGE_END..."
+		port="$(assign_port)" || exit 1
+		print_success "Assigned port: $port"
+	fi
+	echo "$port"
+	return 0
+}
+
 cmd_branch() {
 	local subcmd="${1:-}"
 	local app="${2:-}"
 	local branch_raw="${3:-}"
 	local port_arg="${4:-}"
 
-	# Handle subcommands: branch rm, branch list
-	case "$subcmd" in
-	rm | remove)
-		cmd_branch_rm "$app" "$branch_raw"
-		return $?
-		;;
-	list | ls)
-		cmd_branch_list "$app"
-		return $?
-		;;
-	help | -h | --help)
-		cmd_branch_help
-		return 0
-		;;
-	esac
+	# Handle subcommands: branch rm, branch list, branch help
+	_BRANCH_SUBCMD_EXIT=0
+	if _cmd_branch_route_subcmd "$subcmd" "$app" "$branch_raw"; then
+		return "$_BRANCH_SUBCMD_EXIT"
+	fi
 
 	# Default: branch add <app> <branch> [port]
 	# If subcmd looks like an app name (not a known subcommand), shift args
@@ -1375,48 +1492,12 @@ cmd_branch() {
 	print_info "localdev branch $app $branch ($subdomain)"
 	echo ""
 
-	# Step 1: Verify parent app is registered
-	if ! is_app_registered "$app"; then
-		print_error "App '$app' is not registered. Register it first:"
-		print_info "  localdev-helper.sh add $app"
-		exit 1
-	fi
-
-	# Step 2: Check branch not already registered
-	if is_branch_registered "$app" "$branch"; then
-		local existing_port
-		existing_port="$(get_branch_port "$app" "$branch")"
-		print_error "Branch '$branch' is already registered for '$app' on port $existing_port"
-		print_info "  Remove first: localdev-helper.sh branch rm $app $branch"
-		exit 1
-	fi
-
-	# Step 3: Check subdomain collision with LocalWP
-	if is_localwp_domain "$subdomain"; then
-		print_error "Subdomain '$subdomain' is already used by LocalWP"
-		exit 1
-	fi
+	# Steps 1–3: Validate prerequisites
+	_cmd_branch_validate "$app" "$branch" "$subdomain"
 
 	# Step 4: Assign port
 	local port
-	if [[ -n "$port_arg" ]]; then
-		port="$port_arg"
-		if ! echo "$port" | grep -qE '^[0-9]+$'; then
-			print_error "Invalid port '$port': must be a number"
-			exit 1
-		fi
-		if is_port_registered "$port"; then
-			print_error "Port $port is already registered in port registry"
-			exit 1
-		fi
-		if is_port_in_use "$port"; then
-			print_warning "Port $port is currently in use by another process"
-		fi
-	else
-		print_info "Auto-assigning port from range $PORT_RANGE_START-$PORT_RANGE_END..."
-		port="$(assign_port)" || exit 1
-		print_success "Assigned port: $port"
-	fi
+	port="$(_cmd_branch_assign_port "$port_arg")"
 
 	# Step 5: Verify parent cert exists (wildcard from `add` covers subdomains)
 	local cert_file="$CERTS_DIR/${app}.local+1.pem"
@@ -1751,13 +1832,8 @@ format_status() {
 # List Command — Unified dashboard
 # =============================================================================
 
-cmd_list() {
-	ensure_ports_file
-
-	echo "=== Local Development Dashboard ==="
-	echo ""
-
-	# --- localdev-managed projects ---
+# Print the localdev-managed projects section of cmd_list
+_cmd_list_localdev_projects() {
 	echo "--- localdev projects ---"
 	echo ""
 
@@ -1767,11 +1843,9 @@ cmd_list() {
 		if [[ "$count" -eq 0 ]]; then
 			print_info "  No apps registered. Use: localdev-helper.sh add <name>"
 		else
-			# Header
 			printf "  %-20s %-28s %-6s %-6s %-6s %s\n" "NAME" "URL" "PORT" "CERT" "PROC" "PROCESS"
 			printf "  %-20s %-28s %-6s %-6s %-6s %s\n" "----" "---" "----" "----" "----" "-------"
 
-			# Iterate apps
 			local apps_json
 			apps_json="$(jq -r '.apps | to_entries[] | "\(.key)\t\(.value.port)\t\(.value.domain)"' "$PORTS_FILE")"
 			while IFS=$'\t' read -r app_name app_port app_domain; do
@@ -1785,7 +1859,6 @@ cmd_list() {
 					"$(format_status "$cert_st")" "$(format_status "$health_st")" \
 					"${proc_name:--}"
 
-				# Show branches for this app
 				local branches_json
 				branches_json="$(jq -r --arg a "$app_name" \
 					'.apps[$a].branches // {} | to_entries[] | "\(.key)\t\(.value.port)\t\(.value.subdomain)"' \
@@ -1846,9 +1919,11 @@ else:
             print(f"    > {bname:<16} https://{binfo.get('subdomain','?'):<24} {bp:<6} {'    ':<6} {'[OK]' if bp_up else '[--]':<6}")
 PYEOF
 	fi
+	return 0
+}
 
-	# --- LocalWP sites ---
-	echo ""
+# Print the LocalWP sites section of cmd_list
+_cmd_list_localwp_sites() {
 	echo "--- LocalWP sites (read-only) ---"
 	echo ""
 
@@ -1866,27 +1941,29 @@ PYEOF
 		if [[ ! -f "$LOCALWP_SITES_JSON" ]]; then
 			print_info "  (sites.json not found at: $LOCALWP_SITES_JSON)"
 		fi
-	else
-		printf "  %-20s %-28s %-6s %-6s %-10s %s\n" "NAME" "DOMAIN" "PORT" "PROC" "PHP" "MYSQL"
-		printf "  %-20s %-28s %-6s %-6s %-10s %s\n" "----" "------" "----" "----" "---" "-----"
+		return 0
+	fi
 
-		if command -v jq >/dev/null 2>&1; then
-			echo "$localwp_data" | jq -r '.[] | "\(.name)\t\(.domain)\t\(.http_port // "-")\t\(.php_version)\t\(.mysql_version)"' |
-				while IFS=$'\t' read -r lwp_name lwp_domain lwp_port lwp_php lwp_mysql; do
-					[[ -z "$lwp_name" ]] && continue
-					local lwp_health
-					if [[ "$lwp_port" != "-" ]] && [[ "$lwp_port" != "null" ]] && [[ -n "$lwp_port" ]]; then
-						lwp_health="$(check_port_health "$lwp_port")"
-					else
-						lwp_health="down"
-						lwp_port="-"
-					fi
-					printf "  %-20s %-28s %-6s %-6s %-10s %s\n" \
-						"$lwp_name" "$lwp_domain" "$lwp_port" \
-						"$(format_status "$lwp_health")" "$lwp_php" "$lwp_mysql"
-				done
-		else
-			python3 -c "
+	printf "  %-20s %-28s %-6s %-6s %-10s %s\n" "NAME" "DOMAIN" "PORT" "PROC" "PHP" "MYSQL"
+	printf "  %-20s %-28s %-6s %-6s %-10s %s\n" "----" "------" "----" "----" "---" "-----"
+
+	if command -v jq >/dev/null 2>&1; then
+		echo "$localwp_data" | jq -r '.[] | "\(.name)\t\(.domain)\t\(.http_port // "-")\t\(.php_version)\t\(.mysql_version)"' |
+			while IFS=$'\t' read -r lwp_name lwp_domain lwp_port lwp_php lwp_mysql; do
+				[[ -z "$lwp_name" ]] && continue
+				local lwp_health
+				if [[ "$lwp_port" != "-" ]] && [[ "$lwp_port" != "null" ]] && [[ -n "$lwp_port" ]]; then
+					lwp_health="$(check_port_health "$lwp_port")"
+				else
+					lwp_health="down"
+					lwp_port="-"
+				fi
+				printf "  %-20s %-28s %-6s %-6s %-10s %s\n" \
+					"$lwp_name" "$lwp_domain" "$lwp_port" \
+					"$(format_status "$lwp_health")" "$lwp_php" "$lwp_mysql"
+			done
+	else
+		python3 -c "
 import sys, json, subprocess
 data = json.loads(sys.argv[1])
 for site in data:
@@ -1907,11 +1984,12 @@ for site in data:
     status = '[OK]' if proc_up else '[--]'
     print(f'  {name:<20} {domain:<28} {port_str:<6} {status:<6} {php:<10} {mysql}')
 " "$localwp_data"
-		fi
 	fi
+	return 0
+}
 
-	# --- Shared Postgres ---
-	echo ""
+# Print the Shared Postgres section of cmd_list
+_cmd_list_postgres() {
 	echo "--- Shared Postgres ---"
 	echo ""
 	if pg_container_running; then
@@ -1926,6 +2004,22 @@ for site in data:
 	else
 		print_info "  Not configured (run: localdev db start)"
 	fi
+	return 0
+}
+
+cmd_list() {
+	ensure_ports_file
+
+	echo "=== Local Development Dashboard ==="
+	echo ""
+
+	_cmd_list_localdev_projects
+
+	echo ""
+	_cmd_list_localwp_sites
+
+	echo ""
+	_cmd_list_postgres
 
 	echo ""
 	echo "Legend: [OK]=healthy [--]=down [!!]=missing [!?]=partial"
@@ -1936,11 +2030,8 @@ for site in data:
 # Status Command
 # =============================================================================
 
-cmd_status() {
-	print_info "localdev status — infrastructure health"
-	echo ""
-
-	# dnsmasq
+# Print dnsmasq and macOS resolver status sections for cmd_status
+_cmd_status_dnsmasq() {
 	echo "--- dnsmasq ---"
 	local brew_prefix
 	brew_prefix="$(detect_brew_prefix)"
@@ -1950,7 +2041,6 @@ cmd_status() {
 		else
 			print_warning "dnsmasq: .local wildcard NOT configured (run: localdev init)"
 		fi
-		# Check if dnsmasq process is running
 		if pgrep -x dnsmasq >/dev/null 2>&1; then
 			print_success "dnsmasq process: running"
 		else
@@ -1960,7 +2050,6 @@ cmd_status() {
 		print_warning "dnsmasq: config not found"
 	fi
 
-	# Resolver
 	echo ""
 	echo "--- macOS resolver ---"
 	if [[ -f "/etc/resolver/local" ]]; then
@@ -1968,9 +2057,11 @@ cmd_status() {
 	else
 		print_warning "/etc/resolver/local missing (run: localdev init)"
 	fi
+	return 0
+}
 
-	# Traefik
-	echo ""
+# Print Traefik status section for cmd_status
+_cmd_status_traefik() {
 	echo "--- Traefik ---"
 	if [[ -d "$CONFD_DIR" ]]; then
 		local route_count
@@ -1987,21 +2078,21 @@ cmd_status() {
 
 	if docker ps --format '{{.Names}}' 2>/dev/null | grep -q '^local-traefik$'; then
 		print_success "Traefik container: running"
-		# Show Traefik dashboard URL
 		print_info "  Dashboard: http://localhost:8080"
 	else
 		print_warning "Traefik container: not running"
 	fi
+	return 0
+}
 
-	# Certificates
-	echo ""
+# Print certificates status section for cmd_status
+_cmd_status_certs() {
 	echo "--- Certificates ---"
 	if [[ -d "$CERTS_DIR" ]]; then
 		local cert_count
 		cert_count="$(find "$CERTS_DIR" -name '*.pem' -not -name '*-key.pem' 2>/dev/null | wc -l | tr -d ' ')"
 		print_info "Cert directory: $CERTS_DIR ($cert_count cert(s))"
 
-		# Check each registered app's cert status
 		ensure_ports_file
 		if command -v jq >/dev/null 2>&1; then
 			local app_names
@@ -2028,9 +2119,11 @@ cmd_status() {
 	else
 		print_warning "Cert directory not found: $CERTS_DIR"
 	fi
+	return 0
+}
 
-	# Port health
-	echo ""
+# Print port health section for cmd_status
+_cmd_status_ports() {
 	echo "--- Port health ---"
 	ensure_ports_file
 	if command -v jq >/dev/null 2>&1; then
@@ -2052,9 +2145,11 @@ cmd_status() {
 			print_info "  No apps registered"
 		fi
 	fi
+	return 0
+}
 
-	# LocalWP coexistence
-	echo ""
+# Print LocalWP coexistence section for cmd_status
+_cmd_status_localwp() {
 	echo "--- LocalWP ---"
 	if [[ -f "$LOCALWP_SITES_JSON" ]]; then
 		local lwp_count
@@ -2074,9 +2169,11 @@ cmd_status() {
 	if [[ "$hosts_count" -gt 0 ]]; then
 		print_info "LocalWP /etc/hosts entries: $hosts_count"
 	fi
+	return 0
+}
 
-	# Shared Postgres
-	echo ""
+# Print Shared Postgres section for cmd_status
+_cmd_status_postgres() {
 	echo "--- Shared Postgres ---"
 	if pg_container_running; then
 		print_success "$LOCALDEV_PG_CONTAINER: running (port $LOCALDEV_PG_PORT)"
@@ -2085,6 +2182,29 @@ cmd_status() {
 	else
 		print_info "$LOCALDEV_PG_CONTAINER: not created"
 	fi
+	return 0
+}
+
+cmd_status() {
+	print_info "localdev status — infrastructure health"
+	echo ""
+
+	_cmd_status_dnsmasq
+
+	echo ""
+	_cmd_status_traefik
+
+	echo ""
+	_cmd_status_certs
+
+	echo ""
+	_cmd_status_ports
+
+	echo ""
+	_cmd_status_localwp
+
+	echo ""
+	_cmd_status_postgres
 
 	return 0
 }
