@@ -542,15 +542,16 @@ cmd_show() {
 # Main
 # =============================================================================
 
-main() {
-	local command=""
-	local rules_dir="$DEFAULT_RULES_DIR"
-	local state_file="$DEFAULT_STATE_FILE"
-	local current_turn=1
-	local format="text"
-	local positional_args=()
+# Parse main() arguments into named variables
+# Sets: _rules_dir, _state_file, _current_turn, _format, _positional_args
+# Returns: 0 on success, non-zero on error (usage printed)
+_parse_main_args() {
+	_rules_dir="$DEFAULT_RULES_DIR"
+	_state_file="$DEFAULT_STATE_FILE"
+	_current_turn=1
+	_format="text"
+	_positional_args=()
 
-	# Parse arguments
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--rules-dir)
@@ -558,7 +559,7 @@ main() {
 				log_error "--rules-dir requires a value"
 				usage
 			}
-			rules_dir="$2"
+			_rules_dir="$2"
 			shift 2
 			;;
 		--state-file)
@@ -566,7 +567,7 @@ main() {
 				log_error "--state-file requires a value"
 				usage
 			}
-			state_file="$2"
+			_state_file="$2"
 			_STATE_FILE_IS_DEFAULT=false
 			shift 2
 			;;
@@ -579,7 +580,7 @@ main() {
 				log_error "--turn must be a positive integer"
 				usage
 			fi
-			current_turn="$2"
+			_current_turn="$2"
 			shift 2
 			;;
 		--format)
@@ -587,7 +588,7 @@ main() {
 				log_error "--format requires a value"
 				usage
 			}
-			format="$2"
+			_format="$2"
 			shift 2
 			;;
 		--help | -h)
@@ -596,7 +597,7 @@ main() {
 			;;
 		-)
 			# Stdin marker — treat as positional arg
-			positional_args+=("$1")
+			_positional_args+=("$1")
 			shift
 			;;
 		-*)
@@ -604,23 +605,30 @@ main() {
 			usage
 			;;
 		*)
-			positional_args+=("$1")
+			_positional_args+=("$1")
 			shift
 			;;
 		esac
 	done
 
 	# Resolve rules directory to absolute path
-	if [[ -d "$rules_dir" ]]; then
-		rules_dir="$(cd "$rules_dir" && pwd)"
+	if [[ -d "$_rules_dir" ]]; then
+		_rules_dir="$(cd "$_rules_dir" && pwd)"
 	fi
 
-	# Extract command
-	if [[ ${#positional_args[@]} -lt 1 ]]; then
-		log_error "No command specified"
-		usage
-	fi
-	command="${positional_args[0]}"
+	return 0
+}
+
+# Dispatch to the appropriate command handler
+# Arguments: command, rules_dir, state_file, current_turn, format, positional_args array
+_dispatch_command() {
+	local command="$1"
+	local rules_dir="$2"
+	local state_file="$3"
+	local current_turn="$4"
+	local format="$5"
+	shift 5
+	local positional_args=("$@")
 
 	case "$command" in
 	list)
@@ -653,6 +661,24 @@ main() {
 		usage
 		;;
 	esac
+	return $?
+}
+
+main() {
+	local _rules_dir _state_file _current_turn _format
+	local _positional_args=()
+
+	_parse_main_args "$@" || return $?
+
+	# Extract command
+	if [[ ${#_positional_args[@]} -lt 1 ]]; then
+		log_error "No command specified"
+		usage
+	fi
+	local command="${_positional_args[0]}"
+
+	_dispatch_command "$command" "$_rules_dir" "$_state_file" "$_current_turn" "$_format" "${_positional_args[@]}"
+	return $?
 }
 
 main "$@"

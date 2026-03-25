@@ -578,6 +578,145 @@ select_backend() {
 
 # ─── Main Commands ───────────────────────────────────────────────────
 
+# Prepare audio file from source (download/extract as needed)
+# Sets audio_file and cleanup_temp in caller scope via output vars
+# Arguments: source_type, input, cache_dir
+# Outputs: prints audio_file path on success
+_prepare_audio_file() {
+	local source_type="$1"
+	local input="$2"
+	local cache_dir="$3"
+
+	mkdir -p "$cache_dir"
+
+	case "$source_type" in
+	youtube)
+		local temp_audio="$cache_dir/yt-audio-$$.wav"
+		download_youtube_audio "$input" "$temp_audio" || return 1
+		# yt-dlp may add extension, find the actual file
+		if [[ ! -f "$temp_audio" ]]; then
+			temp_audio=$(find "$cache_dir" -name "yt-audio-$$.*" -type f | head -1)
+		fi
+		printf '%s' "$temp_audio"
+		;;
+	url)
+		local temp_audio="$cache_dir/url-audio-$$.wav"
+		download_url_audio "$input" "$temp_audio" || return 1
+		printf '%s' "$temp_audio"
+		;;
+	video)
+		local temp_audio="$cache_dir/extracted-audio-$$.wav"
+		extract_audio "$input" "$temp_audio" || return 1
+		printf '%s' "$temp_audio"
+		;;
+	audio)
+		printf '%s' "$input"
+		;;
+	*)
+		print_error "Unsupported source type: $source_type"
+		return 1
+		;;
+	esac
+	return 0
+}
+
+# Determine output file path for transcription
+# Arguments: source_type, input, output_override, output_dir_override, format
+# Outputs: prints resolved output file path
+_determine_output_path() {
+	local source_type="$1"
+	local input="$2"
+	local output_override="$3"
+	local output_dir_override="$4"
+	local format="$5"
+
+	if [[ -n "$output_override" ]]; then
+		printf '%s' "$output_override"
+		return 0
+	fi
+
+	local base_name=""
+	if [[ "$source_type" == "youtube" ]] || [[ "$source_type" == "url" ]]; then
+		base_name="transcription-$(date '+%Y%m%d-%H%M%S')"
+	else
+		base_name="$(basename "${input%.*}")"
+	fi
+	local out_dir="${output_dir_override:-$DEFAULT_OUTPUT_DIR}"
+	mkdir -p "$out_dir"
+	printf '%s' "$out_dir/${base_name}.${format}"
+	return 0
+}
+
+# Dispatch transcription to the selected backend
+# Arguments: backend, audio_file, model, language, format, output_file
+_run_transcription_backend() {
+	local backend="$1"
+	local audio_file="$2"
+	local model="$3"
+	local language="$4"
+	local format="$5"
+	local output_file="$6"
+
+	case "$backend" in
+	faster-whisper)
+		transcribe_faster_whisper "$audio_file" "$model" "$language" "$format" "$output_file"
+		;;
+	whisper-cpp)
+		transcribe_whisper_cpp "$audio_file" "$model" "$language" "$format" "$output_file"
+		;;
+	groq)
+		transcribe_groq "$audio_file" "$model" "$language" "$format" "$output_file"
+		;;
+	openai)
+		transcribe_openai "$audio_file" "$model" "$language" "$format" "$output_file"
+		;;
+	buzz)
+		print_info "Transcribing with Buzz CLI..."
+		local buzz_args=(transcribe "$audio_file" --model "$model")
+		if [[ "$language" != "auto" ]]; then
+			buzz_args+=(--language "$language")
+		fi
+		buzz_args+=(--output-format "$format")
+		buzz "${buzz_args[@]}" >"$output_file"
+		;;
+	*)
+		print_error "Unknown backend: $backend"
+		return 1
+		;;
+	esac
+	return $?
+}
+
+# Show transcription result summary and preview
+# Arguments: exit_code, output_file, format
+_show_transcription_result() {
+	local exit_code="$1"
+	local output_file="$2"
+	local format="$3"
+
+	if [[ $exit_code -eq 0 ]]; then
+		echo ""
+		print_success "Transcription saved to: $output_file"
+
+		if [[ -f "$output_file" ]]; then
+			local file_size
+			file_size=$(wc -c <"$output_file" | tr -d ' ')
+			local line_count
+			line_count=$(wc -l <"$output_file" | tr -d ' ')
+			print_info "Size: ${file_size} bytes, ${line_count} lines"
+
+			if [[ "$format" == "txt" ]] && [[ $line_count -gt 0 ]]; then
+				echo ""
+				print_info "Preview (first 5 lines):"
+				head -5 "$output_file"
+			fi
+		fi
+	else
+		print_error "Transcription failed (exit code: $exit_code)"
+	fi
+	return 0
+}
+
 # Parse transcription options
 parse_transcribe_options() {
 	TRANSCRIBE_INPUT=""
@@ -674,40 +813,11 @@ cmd_transcribe() {
 	local backend
 	backend=$(select_backend "$TRANSCRIBE_BACKEND") || return 1
 
-	# Prepare temp directory for intermediate files
-	mkdir -p "$CACHE_DIR"
-	local temp_audio=""
-	local cleanup_temp=false
-
 	# Prepare audio file based on source type
-	local audio_file=""
-	case "$source_type" in
-	youtube)
-		temp_audio="$CACHE_DIR/yt-audio-$$.wav"
-		download_youtube_audio "$TRANSCRIBE_INPUT" "$temp_audio" || return 1
-		# yt-dlp may add extension, find the actual file
-		if [[ ! -f "$temp_audio" ]]; then
-			temp_audio=$(find "$CACHE_DIR" -name "yt-audio-$$.*" -type f | head -1)
-		fi
-		audio_file="$temp_audio"
-		cleanup_temp=true
-		;;
-	url)
-		temp_audio="$CACHE_DIR/url-audio-$$.wav"
-		download_url_audio "$TRANSCRIBE_INPUT" "$temp_audio" || return 1
-		audio_file="$temp_audio"
-		cleanup_temp=true
-		;;
-	video)
-		temp_audio="$CACHE_DIR/extracted-audio-$$.wav"
-		extract_audio "$TRANSCRIBE_INPUT" "$temp_audio" || return 1
-		audio_file="$temp_audio"
-		cleanup_temp=true
-		;;
-	audio)
-		audio_file="$TRANSCRIBE_INPUT"
-		;;
-	esac
+	local audio_file
+	audio_file=$(_prepare_audio_file "$source_type" "$TRANSCRIBE_INPUT" "$CACHE_DIR") || return 1
+	local cleanup_temp=false
+	[[ "$source_type" != "audio" ]] && cleanup_temp=true
 
 	if [[ ! -f "$audio_file" ]]; then
 		print_error "Audio file not available after preparation."
@@ -715,18 +825,9 @@ cmd_transcribe() {
 	fi
 
 	# Determine output file path
-	local output_file="$TRANSCRIBE_OUTPUT"
-	if [[ -z "$output_file" ]]; then
-		local base_name=""
-		if [[ "$source_type" == "youtube" ]] || [[ "$source_type" == "url" ]]; then
-			base_name="transcription-$(date '+%Y%m%d-%H%M%S')"
-		else
-			base_name="$(basename "${TRANSCRIBE_INPUT%.*}")"
-		fi
-		local out_dir="${TRANSCRIBE_OUTPUT_DIR:-$DEFAULT_OUTPUT_DIR}"
-		mkdir -p "$out_dir"
-		output_file="$out_dir/${base_name}.${TRANSCRIBE_FORMAT}"
-	fi
+	local output_file
+	output_file=$(_determine_output_path "$source_type" "$TRANSCRIBE_INPUT" \
+		"$TRANSCRIBE_OUTPUT" "$TRANSCRIBE_OUTPUT_DIR" "$TRANSCRIBE_FORMAT")
 
 	print_header "Transcription"
 	print_info "Input:    $TRANSCRIBE_INPUT ($source_type)"
@@ -739,61 +840,15 @@ cmd_transcribe() {
 
 	# Run transcription
 	local exit_code=0
-	case "$backend" in
-	faster-whisper)
-		transcribe_faster_whisper "$audio_file" "$TRANSCRIBE_MODEL" \
-			"$TRANSCRIBE_LANGUAGE" "$TRANSCRIBE_FORMAT" "$output_file" || exit_code=$?
-		;;
-	whisper-cpp)
-		transcribe_whisper_cpp "$audio_file" "$TRANSCRIBE_MODEL" \
-			"$TRANSCRIBE_LANGUAGE" "$TRANSCRIBE_FORMAT" "$output_file" || exit_code=$?
-		;;
-	groq)
-		transcribe_groq "$audio_file" "$TRANSCRIBE_MODEL" \
-			"$TRANSCRIBE_LANGUAGE" "$TRANSCRIBE_FORMAT" "$output_file" || exit_code=$?
-		;;
-	openai)
-		transcribe_openai "$audio_file" "$TRANSCRIBE_MODEL" \
-			"$TRANSCRIBE_LANGUAGE" "$TRANSCRIBE_FORMAT" "$output_file" || exit_code=$?
-		;;
-	buzz)
-		print_info "Transcribing with Buzz CLI..."
-		local buzz_args=(transcribe "$audio_file" --model "$TRANSCRIBE_MODEL")
-		if [[ "$TRANSCRIBE_LANGUAGE" != "auto" ]]; then
-			buzz_args+=(--language "$TRANSCRIBE_LANGUAGE")
-		fi
-		buzz_args+=(--output-format "$TRANSCRIBE_FORMAT")
-		buzz "${buzz_args[@]}" >"$output_file" || exit_code=$?
-		;;
-	esac
+	_run_transcription_backend "$backend" "$audio_file" "$TRANSCRIBE_MODEL" \
+		"$TRANSCRIBE_LANGUAGE" "$TRANSCRIBE_FORMAT" "$output_file" || exit_code=$?
 
 	# Cleanup temp files
-	if [[ "$cleanup_temp" == true ]] && [[ -n "$temp_audio" ]]; then
-		rm -f "$temp_audio"
+	if [[ "$cleanup_temp" == true ]] && [[ -n "$audio_file" ]]; then
+		rm -f "$audio_file"
 	fi
 
-	if [[ $exit_code -eq 0 ]]; then
-		echo ""
-		print_success "Transcription saved to: $output_file"
-
-		# Show file size and preview
-		if [[ -f "$output_file" ]]; then
-			local file_size
-			file_size=$(wc -c <"$output_file" | tr -d ' ')
-			local line_count
-			line_count=$(wc -l <"$output_file" | tr -d ' ')
-			print_info "Size: ${file_size} bytes, ${line_count} lines"
-
-			if [[ "$TRANSCRIBE_FORMAT" == "txt" ]] && [[ $line_count -gt 0 ]]; then
-				echo ""
-				print_info "Preview (first 5 lines):"
-				head -5 "$output_file"
-			fi
-		fi
-	else
-		print_error "Transcription failed (exit code: $exit_code)"
-	fi
-
+	_show_transcription_result "$exit_code" "$output_file" "$TRANSCRIBE_FORMAT"
 	return $exit_code
 }
 
