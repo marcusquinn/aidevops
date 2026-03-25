@@ -56,13 +56,13 @@ error_json() {
 	return 0
 }
 
-# Main check function
-cmd_check() {
-	local ip="$1"
+# Parse --api-key and --timeout flags from remaining args after ip.
+# Outputs: api_key=<value> and timeout=<value> on stdout (one per line).
+# Caller evals the output to set local variables.
+_parse_check_args() {
 	local api_key="${SCAMALYTICS_API_KEY:-}"
 	local timeout="$DEFAULT_TIMEOUT"
 
-	shift
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--api-key)
@@ -87,12 +87,18 @@ cmd_check() {
 		esac
 	done
 
-	if [[ -z "$api_key" ]]; then
-		error_json "$ip" "SCAMALYTICS_API_KEY not set — 5000 checks/month free at scamalytics.com"
-		return 0
-	fi
+	printf 'api_key=%s\ntimeout=%s\n' "$api_key" "$timeout"
+	return 0
+}
 
-	# Scamalytics API: GET /v1/{api_key}/?ip={ip}
+# Fetch raw JSON from the Scamalytics API.
+# Usage: _fetch_scamalytics <ip> <api_key> <timeout>
+# Prints the raw response on stdout; calls error_json and returns 1 on failure.
+_fetch_scamalytics() {
+	local ip="$1"
+	local api_key="$2"
+	local timeout="$3"
+
 	local response
 	response=$(curl -sf \
 		--max-time "$timeout" \
@@ -100,28 +106,37 @@ cmd_check() {
 		"${API_BASE}/v1/${api_key}/?ip=${ip}" \
 		2>/dev/null) || {
 		error_json "$ip" "curl request failed"
-		return 0
+		return 1
 	}
 
-	if ! echo "$response" | jq empty 2>/dev/null; then
+	if ! printf '%s' "$response" | jq empty 2>/dev/null; then
 		error_json "$ip" "invalid JSON response"
-		return 0
+		return 1
 	fi
 
-	# Check for API errors
 	local api_error
-	api_error=$(echo "$response" | jq -r '.error // empty' 2>/dev/null || true)
+	api_error=$(printf '%s' "$response" | jq -r '.error // empty' 2>/dev/null || true)
 	if [[ -n "$api_error" ]]; then
 		error_json "$ip" "$api_error"
-		return 0
+		return 1
 	fi
 
+	printf '%s' "$response"
+	return 0
+}
+
+# Build and emit the normalised result JSON from a validated API response.
+# Usage: _build_result_json <ip> <response>
+_build_result_json() {
+	local ip="$1"
+	local response="$2"
+
 	local score is_proxy is_vpn is_tor is_datacenter
-	score=$(echo "$response" | jq -r '.score // 0')
-	is_proxy=$(echo "$response" | jq -r 'if .proxy == "yes" then true else false end')
-	is_vpn=$(echo "$response" | jq -r 'if .vpn == "yes" then true else false end')
-	is_tor=$(echo "$response" | jq -r 'if .tor == "yes" then true else false end')
-	is_datacenter=$(echo "$response" | jq -r 'if .datacenter == "yes" then true else false end')
+	score=$(printf '%s' "$response" | jq -r '.score // 0')
+	is_proxy=$(printf '%s' "$response" | jq -r 'if .proxy == "yes" then true else false end')
+	is_vpn=$(printf '%s' "$response" | jq -r 'if .vpn == "yes" then true else false end')
+	is_tor=$(printf '%s' "$response" | jq -r 'if .tor == "yes" then true else false end')
+	is_datacenter=$(printf '%s' "$response" | jq -r 'if .datacenter == "yes" then true else false end')
 
 	local score_int
 	score_int="${score%.*}"
@@ -158,6 +173,30 @@ cmd_check() {
             is_datacenter: $is_datacenter,
             raw: $raw
         }'
+	return 0
+}
+
+# Main check function — orchestrates arg parsing, fetch, and result building
+cmd_check() {
+	local ip="$1"
+	shift
+
+	local parsed
+	parsed=$(_parse_check_args "$@") || return 1
+
+	local api_key timeout
+	api_key=$(printf '%s\n' "$parsed" | grep '^api_key=' | cut -d= -f2-)
+	timeout=$(printf '%s\n' "$parsed" | grep '^timeout=' | cut -d= -f2-)
+
+	if [[ -z "$api_key" ]]; then
+		error_json "$ip" "SCAMALYTICS_API_KEY not set — 5000 checks/month free at scamalytics.com"
+		return 0
+	fi
+
+	local response
+	response=$(_fetch_scamalytics "$ip" "$api_key" "$timeout") || return 0
+
+	_build_result_json "$ip" "$response"
 	return 0
 }
 
