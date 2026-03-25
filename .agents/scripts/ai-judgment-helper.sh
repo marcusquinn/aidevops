@@ -547,7 +547,7 @@ _sp_format_judgment() {
 	local access_count="$3"
 	local entity_linked="$4"
 	if [[ "$result" == "prune" ]]; then
-		local reason="AI judged irrelevant (${age_days}d old, ${access_count} accesses"
+		local reason="AI judged irrelevant, ${age_days}d old, ${access_count} accesses"
 		[[ "$entity_linked" -gt 0 ]] && reason="${reason}, linked to ${entity_linked} entities"
 		echo "prune (${reason})"
 	else
@@ -726,7 +726,11 @@ _bpc_evaluate_loop() {
 		fi
 		sleep 0.1
 	done <<<"$candidates"
-	printf '%s\n%s\n' "$keep_count" "${prune_ids[*]}"
+	if [[ ${#prune_ids[@]} -gt 0 ]]; then
+		printf '%s\n%s\n' "$keep_count" "${prune_ids[*]}"
+	else
+		printf '%s\nNONE\n' "$keep_count"
+	fi
 	return 0
 }
 
@@ -756,7 +760,7 @@ cmd_batch_prune_check() {
 	keep_count=$(echo "$loop_result" | head -1)
 	prune_ids_str=$(echo "$loop_result" | tail -1)
 	local prune_ids=()
-	[[ -n "$prune_ids_str" ]] && read -ra prune_ids <<<"$prune_ids_str"
+	[[ -n "$prune_ids_str" ]] && [[ "$prune_ids_str" != "NONE" ]] && read -ra prune_ids <<<"$prune_ids_str"
 	local prune_count=${#prune_ids[@]}
 	log_info "Batch prune check: $keep_count keep, $prune_count prune (of $((keep_count + prune_count)) evaluated)"
 	if [[ "$_bpc_dry_run" == true ]]; then
