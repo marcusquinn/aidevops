@@ -161,6 +161,256 @@ is_headless() {
 	return 1
 }
 
+# -----------------------------------------------------------------------------
+# _build_version_str: resolve version string from current/remote versions.
+# Sets $1 (nameref not available in bash 3.2) — caller reads stdout.
+# Prints the version string, or "UPDATE_AVAILABLE|..." and returns 1 to signal
+# early exit.
+# -----------------------------------------------------------------------------
+_build_version_str() {
+	local current="$1" remote="$2" app_name="$3" cache_dir="$4"
+	if [[ "$current" == "unknown" ]]; then
+		echo "aidevops not installed"
+		return 0
+	elif [[ "$remote" == "unknown" ]]; then
+		echo "aidevops v$current (unable to check for updates)"
+		return 0
+	elif [[ "$current" != "$remote" ]]; then
+		# Special format for update available - parsed by AGENTS.md
+		# Cache the update-available string so no-Bash agents can display it too
+		mkdir -p "$cache_dir"
+		echo "UPDATE_AVAILABLE|$current|$remote|$app_name" >"$cache_dir/session-greeting.txt"
+		echo "UPDATE_AVAILABLE|$current|$remote|$app_name"
+		return 1
+	else
+		echo "aidevops v$current"
+		return 0
+	fi
+}
+
+# -----------------------------------------------------------------------------
+# _build_app_str: format app name + version for display.
+# -----------------------------------------------------------------------------
+_build_app_str() {
+	local app_name="$1" app_version="$2"
+	if [[ "$app_name" == "unknown" ]]; then
+		echo ""
+		return 0
+	fi
+	if [[ -n "$app_version" ]]; then
+		echo "$app_name v$app_version"
+	else
+		echo "$app_name"
+	fi
+	return 0
+}
+
+# -----------------------------------------------------------------------------
+# _build_output_line: assemble the final single-line status output.
+# -----------------------------------------------------------------------------
+_build_output_line() {
+	local version_str="$1" app_str="$2" git_context="$3"
+	local output="$version_str"
+	if [[ -n "$app_str" ]]; then
+		output="$output running in $app_str"
+	fi
+	if [[ -n "$git_context" ]]; then
+		output="$output | $git_context"
+	fi
+	echo "$output"
+	return 0
+}
+
+# -----------------------------------------------------------------------------
+# _get_runtime_hint: emit a runtime config hint for the AI model, if known.
+# -----------------------------------------------------------------------------
+_get_runtime_hint() {
+	local app_name="$1"
+	local runtime_hint=""
+	case "$app_name" in
+	OpenCode)
+		runtime_hint="You are running in OpenCode. Global config: ~/.config/opencode/opencode.json"
+		;;
+	"Claude Code")
+		runtime_hint="You are running in Claude Code. Global config: ~/.config/Claude/Claude.json"
+		;;
+	esac
+	echo "$runtime_hint"
+	return 0
+}
+
+# -----------------------------------------------------------------------------
+# _check_local_models: nudge if stale local models detected (>5 GB, >30d unused).
+# -----------------------------------------------------------------------------
+_check_local_models() {
+	local script_dir="$1"
+	local nudge_output=""
+	if [[ -x "${script_dir}/local-model-helper.sh" ]]; then
+		nudge_output="$("${script_dir}/local-model-helper.sh" nudge 2>/dev/null || true)"
+	fi
+	echo "$nudge_output"
+	return 0
+}
+
+# -----------------------------------------------------------------------------
+# _check_session_count: warn if excessive concurrent interactive sessions (t1398.4).
+# -----------------------------------------------------------------------------
+_check_session_count() {
+	local script_dir="$1"
+	local session_warning=""
+	if [[ -x "${script_dir}/session-count-helper.sh" ]]; then
+		session_warning="$("${script_dir}/session-count-helper.sh" check || true)"
+	fi
+	echo "$session_warning"
+	return 0
+}
+
+# -----------------------------------------------------------------------------
+# _check_security_posture: security posture check (t1412.6).
+# -----------------------------------------------------------------------------
+_check_security_posture() {
+	local script_dir="$1"
+	local security_posture=""
+	if [[ -x "${script_dir}/security-posture-helper.sh" ]]; then
+		security_posture="$("${script_dir}/security-posture-helper.sh" startup-check || true)"
+	fi
+	echo "$security_posture"
+	return 0
+}
+
+# -----------------------------------------------------------------------------
+# _check_secret_hygiene: secret hygiene & supply chain IoC check.
+# -----------------------------------------------------------------------------
+_check_secret_hygiene() {
+	local script_dir="$1"
+	local secret_hygiene=""
+	if [[ -x "${script_dir}/secret-hygiene-helper.sh" ]]; then
+		secret_hygiene="$("${script_dir}/secret-hygiene-helper.sh" startup-check || true)"
+	fi
+	echo "$secret_hygiene"
+	return 0
+}
+
+# -----------------------------------------------------------------------------
+# _check_advisories: surface active security advisories (not yet dismissed).
+# -----------------------------------------------------------------------------
+_check_advisories() {
+	local advisories_dir="$HOME/.aidevops/advisories"
+	local dismissed_file="$advisories_dir/dismissed.txt"
+	local advisories_output=""
+
+	if [[ ! -d "$advisories_dir" ]]; then
+		echo ""
+		return 0
+	fi
+
+	local advisory_file
+	for advisory_file in "$advisories_dir"/*.advisory; do
+		[[ -f "$advisory_file" ]] || continue
+		local adv_id
+		adv_id=$(basename "$advisory_file" .advisory)
+		# Skip dismissed advisories
+		if [[ -f "$dismissed_file" ]] && grep -qxF "$adv_id" "$dismissed_file" 2>/dev/null; then
+			continue
+		fi
+		local first_line
+		first_line=$(head -1 "$advisory_file" | sed 's/^[[:space:]]*//')
+		if [[ -n "$first_line" ]]; then
+			local entry
+			entry=$(printf '%s Run in your terminal: aidevops security | Dismiss: aidevops security dismiss %s' "$first_line" "$adv_id")
+			if [[ -n "$advisories_output" ]]; then
+				advisories_output=$(printf '%s\n%s' "$advisories_output" "$entry")
+			else
+				advisories_output="$entry"
+			fi
+		fi
+	done
+
+	echo "$advisories_output"
+	return 0
+}
+
+# -----------------------------------------------------------------------------
+# _check_contribution_watch: surface external contributions needing reply (t1419).
+# Reads cached state file — no API calls, no LLM, no comment bodies.
+# -----------------------------------------------------------------------------
+_check_contribution_watch() {
+	local contribution_watch=""
+	local cw_state="${HOME}/.aidevops/cache/contribution-watch.json"
+
+	if [[ ! -f "$cw_state" ]] || ! command -v jq &>/dev/null; then
+		echo ""
+		return 0
+	fi
+
+	local cw_username
+	cw_username=$(gh api user --jq '.login' 2>/dev/null || echo "")
+	if [[ -z "$cw_username" ]]; then
+		echo ""
+		return 0
+	fi
+
+	local cw_count
+	cw_count=$(jq -r --arg user "$cw_username" '
+		[.items | to_entries[] |
+		 select(.value.last_any_comment > (.value.last_our_comment // "")) |
+		 select(.value.last_notified == "" or .value.last_any_comment > .value.last_notified)
+		] | length
+	' "$cw_state" 2>/dev/null) || cw_count=0
+
+	if [[ "${cw_count:-0}" -gt 0 ]]; then
+		contribution_watch="${cw_count} external contribution(s) need your reply (run contribution-watch-helper.sh status to see them)."
+	fi
+
+	echo "$contribution_watch"
+	return 0
+}
+
+# -----------------------------------------------------------------------------
+# _write_cache: persist session greeting to cache for agents without Bash.
+# -----------------------------------------------------------------------------
+_write_cache() {
+	local cache_dir="$1"
+	local output="$2"
+	local runtime_hint="$3"
+	local nudge_output="$4"
+	local session_warning="$5"
+	local security_posture="$6"
+	local secret_hygiene="$7"
+	local advisories_output="$8"
+	local contribution_watch="$9"
+
+	mkdir -p "$cache_dir"
+	{
+		echo "$output"
+		[[ -n "$runtime_hint" ]] && echo "$runtime_hint"
+		[[ -n "$nudge_output" ]] && echo "$nudge_output"
+		[[ -n "$session_warning" ]] && echo "$session_warning"
+		[[ -n "$security_posture" ]] && echo "$security_posture"
+		[[ -n "$secret_hygiene" ]] && echo "$secret_hygiene"
+		[[ -n "$advisories_output" ]] && echo "$advisories_output"
+		[[ -n "$contribution_watch" ]] && echo "$contribution_watch"
+	} >"$cache_dir/session-greeting.txt"
+	return 0
+}
+
+# -----------------------------------------------------------------------------
+# _refresh_oauth_tokens: pre-emptive background token refresh on session startup.
+# Refreshes any OAuth tokens expiring within 1 hour — catches tokens that
+# expired while the machine was off. Runs silently; failures are harmless.
+# -----------------------------------------------------------------------------
+_refresh_oauth_tokens() {
+	local agents_dir="${AIDEVOPS_DIR:-$HOME/.aidevops}/agents"
+	local oauth_helper="$agents_dir/scripts/oauth-pool-helper.sh"
+	if [[ -f "$oauth_helper" && -f "$HOME/.aidevops/oauth-pool.json" ]]; then
+		(
+			bash "$oauth_helper" refresh anthropic >/dev/null 2>&1
+			bash "$oauth_helper" refresh openai >/dev/null 2>&1
+		) &
+	fi
+	return 0
+}
+
 main() {
 	# In headless/non-interactive mode, skip the network call entirely.
 	# This is the #1 fix for "update check kills non-interactive sessions".
@@ -186,176 +436,45 @@ main() {
 		app_version=""
 	fi
 
-	# Build version string
+	local cache_dir="$HOME/.aidevops/cache"
+
+	# Build version string — returns 1 and prints UPDATE_AVAILABLE if update found
 	local version_str
-	if [[ "$current" == "unknown" ]]; then
-		version_str="aidevops not installed"
-	elif [[ "$remote" == "unknown" ]]; then
-		version_str="aidevops v$current (unable to check for updates)"
-	elif [[ "$current" != "$remote" ]]; then
-		# Special format for update available - parsed by AGENTS.md
-		# Cache the update-available string so no-Bash agents can display it too
-		local cache_dir="$HOME/.aidevops/cache"
-		mkdir -p "$cache_dir"
-		echo "UPDATE_AVAILABLE|$current|$remote|$app_name" >"$cache_dir/session-greeting.txt"
-		echo "UPDATE_AVAILABLE|$current|$remote|$app_name"
+	if ! version_str=$(_build_version_str "$current" "$remote" "$app_name" "$cache_dir"); then
 		return 0
-	else
-		version_str="aidevops v$current"
 	fi
 
-	# Build app string with version if available
-	local app_str=""
-	if [[ "$app_name" != "unknown" ]]; then
-		if [[ -n "$app_version" ]]; then
-			app_str="$app_name v$app_version"
-		else
-			app_str="$app_name"
-		fi
-	fi
-
-	# Build final output
-	local output="$version_str"
-	if [[ -n "$app_str" ]]; then
-		output="$output running in $app_str"
-	fi
-	if [[ -n "$git_context" ]]; then
-		output="$output | $git_context"
-	fi
-
+	local app_str git_context_val output
+	app_str=$(_build_app_str "$app_name" "$app_version")
+	output=$(_build_output_line "$version_str" "$app_str" "$git_context")
 	echo "$output"
 
-	# Output runtime context hint for the AI model
-	local runtime_hint=""
-	case "$app_name" in
-	OpenCode)
-		runtime_hint="You are running in OpenCode. Global config: ~/.config/opencode/opencode.json"
-		;;
-	"Claude Code")
-		runtime_hint="You are running in Claude Code. Global config: ~/.config/Claude/Claude.json"
-		;;
-	esac
-	if [[ -n "$runtime_hint" ]]; then
-		echo "$runtime_hint"
-	fi
-
-	# Check for stale local models (nudge if >5 GB unused >30d)
-	local nudge_output=""
 	local script_dir
 	script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-	if [[ -x "${script_dir}/local-model-helper.sh" ]]; then
-		nudge_output="$("${script_dir}/local-model-helper.sh" nudge 2>/dev/null || true)"
-	fi
-	if [[ -n "$nudge_output" ]]; then
-		echo "$nudge_output"
-	fi
 
-	# Check for excessive concurrent interactive sessions (t1398.4)
-	local session_warning=""
-	if [[ -x "${script_dir}/session-count-helper.sh" ]]; then
-		session_warning="$("${script_dir}/session-count-helper.sh" check || true)"
-	fi
-	if [[ -n "$session_warning" ]]; then
-		echo "$session_warning"
-	fi
+	local runtime_hint nudge_output session_warning security_posture
+	local secret_hygiene advisories_output contribution_watch
+	runtime_hint=$(_get_runtime_hint "$app_name")
+	nudge_output=$(_check_local_models "$script_dir")
+	session_warning=$(_check_session_count "$script_dir")
+	security_posture=$(_check_security_posture "$script_dir")
+	secret_hygiene=$(_check_secret_hygiene "$script_dir")
+	advisories_output=$(_check_advisories)
+	contribution_watch=$(_check_contribution_watch)
 
-	# Security posture check (t1412.6)
-	local security_posture=""
-	if [[ -x "${script_dir}/security-posture-helper.sh" ]]; then
-		security_posture="$("${script_dir}/security-posture-helper.sh" startup-check || true)"
-	fi
-	if [[ -n "$security_posture" ]]; then
-		echo "$security_posture"
-	fi
+	[[ -n "$runtime_hint" ]] && echo "$runtime_hint"
+	[[ -n "$nudge_output" ]] && echo "$nudge_output"
+	[[ -n "$session_warning" ]] && echo "$session_warning"
+	[[ -n "$security_posture" ]] && echo "$security_posture"
+	[[ -n "$secret_hygiene" ]] && echo "$secret_hygiene"
+	[[ -n "$advisories_output" ]] && echo "$advisories_output"
+	[[ -n "$contribution_watch" ]] && echo "$contribution_watch"
 
-	# Secret hygiene & supply chain IoC check
-	local secret_hygiene=""
-	if [[ -x "${script_dir}/secret-hygiene-helper.sh" ]]; then
-		secret_hygiene="$("${script_dir}/secret-hygiene-helper.sh" startup-check || true)"
-	fi
-	if [[ -n "$secret_hygiene" ]]; then
-		echo "$secret_hygiene"
-	fi
+	_write_cache "$cache_dir" "$output" "$runtime_hint" "$nudge_output" \
+		"$session_warning" "$security_posture" "$secret_hygiene" \
+		"$advisories_output" "$contribution_watch"
 
-	# Active security advisories (delivered via aidevops updates, dismissed by user)
-	local advisories_output=""
-	local advisories_dir="$HOME/.aidevops/advisories"
-	local dismissed_file="$advisories_dir/dismissed.txt"
-	if [[ -d "$advisories_dir" ]]; then
-		for advisory_file in "$advisories_dir"/*.advisory; do
-			[[ -f "$advisory_file" ]] || continue
-			local adv_id
-			adv_id=$(basename "$advisory_file" .advisory)
-			# Skip dismissed advisories
-			if [[ -f "$dismissed_file" ]] && grep -qxF "$adv_id" "$dismissed_file" 2>/dev/null; then
-				continue
-			fi
-			local first_line
-			first_line=$(head -1 "$advisory_file" | sed 's/^[[:space:]]*//')
-			if [[ -n "$first_line" ]]; then
-				local entry
-				entry=$(printf '%s Run in your terminal: aidevops security | Dismiss: aidevops security dismiss %s' "$first_line" "$adv_id")
-				if [[ -n "$advisories_output" ]]; then
-					advisories_output=$(printf '%s\n%s' "$advisories_output" "$entry")
-				else
-					advisories_output="$entry"
-				fi
-			fi
-		done
-	fi
-	if [[ -n "$advisories_output" ]]; then
-		echo "$advisories_output"
-	fi
-
-	# Contribution watch: surface items needing reply (t1419)
-	# Reads cached state file — no API calls, no LLM, no comment bodies.
-	local contribution_watch=""
-	local cw_state="${HOME}/.aidevops/cache/contribution-watch.json"
-	if [[ -f "$cw_state" ]] && command -v jq &>/dev/null; then
-		local cw_username
-		cw_username=$(gh api user --jq '.login' 2>/dev/null || echo "")
-		if [[ -n "$cw_username" ]]; then
-			local cw_count
-			cw_count=$(jq -r --arg user "$cw_username" '
-				[.items | to_entries[] |
-				 select(.value.last_any_comment > (.value.last_our_comment // "")) |
-				 select(.value.last_notified == "" or .value.last_any_comment > .value.last_notified)
-				] | length
-			' "$cw_state" 2>/dev/null) || cw_count=0
-			if [[ "${cw_count:-0}" -gt 0 ]]; then
-				contribution_watch="${cw_count} external contribution(s) need your reply (run contribution-watch-helper.sh status to see them)."
-			fi
-		fi
-	fi
-	if [[ -n "$contribution_watch" ]]; then
-		echo "$contribution_watch"
-	fi
-
-	# Cache output for agents without Bash (e.g., Plan+)
-	local cache_dir="$HOME/.aidevops/cache"
-	mkdir -p "$cache_dir"
-	{
-		echo "$output"
-		[[ -n "$runtime_hint" ]] && echo "$runtime_hint"
-		[[ -n "$nudge_output" ]] && echo "$nudge_output"
-		[[ -n "$session_warning" ]] && echo "$session_warning"
-		[[ -n "$security_posture" ]] && echo "$security_posture"
-		[[ -n "$secret_hygiene" ]] && echo "$secret_hygiene"
-		[[ -n "$advisories_output" ]] && echo "$advisories_output"
-		[[ -n "$contribution_watch" ]] && echo "$contribution_watch"
-	} >"$cache_dir/session-greeting.txt"
-
-	# Pre-emptive token refresh on session startup (background, non-blocking).
-	# Refreshes any OAuth tokens expiring within 1 hour — catches tokens that
-	# expired while the machine was off. Runs silently; failures are harmless.
-	local agents_dir="${AIDEVOPS_DIR:-$HOME/.aidevops}/agents"
-	local oauth_helper="$agents_dir/scripts/oauth-pool-helper.sh"
-	if [[ -f "$oauth_helper" && -f "$HOME/.aidevops/oauth-pool.json" ]]; then
-		(
-			bash "$oauth_helper" refresh anthropic >/dev/null 2>&1
-			bash "$oauth_helper" refresh openai >/dev/null 2>&1
-		) &
-	fi
+	_refresh_oauth_tokens
 
 	return 0
 }
