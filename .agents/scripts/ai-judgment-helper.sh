@@ -1370,7 +1370,7 @@ eval_dataset() {
 		local stats_line
 		stats_line=$(echo "$row_output" | tail -1)
 		# Print all lines except the last (stats) line
-		echo "$row_output" | head -n -1
+		echo "$row_output" | sed '$d'
 		local rs rc rp
 		IFS='|' read -r rs rc rp <<<"$stats_line"
 		total_score=$(awk "BEGIN { print $total_score + $rs }")
