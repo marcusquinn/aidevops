@@ -483,12 +483,19 @@ confirm_send() {
 # Parse common options
 # ============================================================================
 
-parse_common_opts() {
-	# Sets variables in caller scope via nameref-free approach:
-	# opt_to, opt_subject, opt_context, opt_from, opt_cc, opt_bcc,
-	# opt_importance, opt_tone, opt_attachments, opt_no_review, opt_dry_run
-	# Remaining args left in "$@" after parsing
+# Guard that the next positional argument exists; print error and return 1 if not.
+_opt_require_value() {
+	local flag="$1"
+	local count="$2"
+	if [[ "$count" -lt 2 ]]; then
+		print_error "${flag} requires a value"
+		return 1
+	fi
+	return 0
+}
 
+# Initialise all opt_* variables to their defaults.
+_init_common_opts() {
 	opt_to=""
 	opt_subject=""
 	opt_context=""
@@ -501,86 +508,64 @@ parse_common_opts() {
 	opt_no_review=0
 	opt_dry_run=0
 	opt_signature="default"
+	return 0
+}
+
+parse_common_opts() {
+	# Sets variables in caller scope via nameref-free approach:
+	# opt_to, opt_subject, opt_context, opt_from, opt_cc, opt_bcc,
+	# opt_importance, opt_tone, opt_attachments, opt_no_review, opt_dry_run
+	_init_common_opts
 
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--to)
-			[[ $# -lt 2 ]] && {
-				print_error "--to requires a value"
-				return 1
-			}
+			_opt_require_value "$1" "$#" || return 1
 			opt_to="$2"
 			shift 2
 			;;
 		--subject)
-			[[ $# -lt 2 ]] && {
-				print_error "--subject requires a value"
-				return 1
-			}
+			_opt_require_value "$1" "$#" || return 1
 			opt_subject="$2"
 			shift 2
 			;;
 		--context | --message | --body)
-			[[ $# -lt 2 ]] && {
-				print_error "$1 requires a value"
-				return 1
-			}
+			_opt_require_value "$1" "$#" || return 1
 			opt_context="$2"
 			shift 2
 			;;
 		--from)
-			[[ $# -lt 2 ]] && {
-				print_error "--from requires a value"
-				return 1
-			}
+			_opt_require_value "$1" "$#" || return 1
 			opt_from="$2"
 			shift 2
 			;;
 		--cc)
-			[[ $# -lt 2 ]] && {
-				print_error "--cc requires a value"
-				return 1
-			}
+			_opt_require_value "$1" "$#" || return 1
 			opt_cc="$2"
 			shift 2
 			;;
 		--bcc)
-			[[ $# -lt 2 ]] && {
-				print_error "--bcc requires a value"
-				return 1
-			}
+			_opt_require_value "$1" "$#" || return 1
 			opt_bcc="$2"
 			shift 2
 			;;
 		--importance)
-			[[ $# -lt 2 ]] && {
-				print_error "--importance requires a value"
-				return 1
-			}
+			_opt_require_value "$1" "$#" || return 1
 			opt_importance="$2"
 			shift 2
 			;;
 		--tone)
-			[[ $# -lt 2 ]] && {
-				print_error "--tone requires a value"
-				return 1
-			}
+			_opt_require_value "$1" "$#" || return 1
 			opt_tone="$2"
 			shift 2
 			;;
 		--attach)
-			[[ $# -lt 2 ]] && {
-				print_error "--attach requires a value"
-				return 1
-			}
+			_opt_require_value "$1" "$#" || return 1
 			opt_attachments="${opt_attachments:+${opt_attachments},}$2"
 			shift 2
 			;;
 		--signature)
-			[[ $# -lt 2 ]] && {
-				print_error "--signature requires a value"
-				return 1
-			}
+			_opt_require_value "$1" "$#" || return 1
 			opt_signature="$2"
 			shift 2
 			;;
@@ -691,20 +676,15 @@ cmd_draft() {
 # reply command — compose reply to an existing message
 # ============================================================================
 
-cmd_reply() {
-	local opt_to opt_subject opt_context opt_from opt_cc opt_bcc
-	local opt_importance opt_tone opt_attachments opt_no_review opt_dry_run opt_signature
-	local opt_message_id="" opt_reply_all=0
-
-	# Parse reply-specific options first
-	local args=()
+# Extract --message-id and --reply-all from args; remaining args passed back via _reply_remaining.
+_parse_reply_opts() {
+	opt_message_id=""
+	opt_reply_all=0
+	_reply_remaining=()
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--message-id)
-			[[ $# -lt 2 ]] && {
-				print_error "--message-id requires a value"
-				return 1
-			}
+			_opt_require_value "$1" "$#" || return 1
 			opt_message_id="$2"
 			shift 2
 			;;
@@ -713,13 +693,22 @@ cmd_reply() {
 			shift
 			;;
 		*)
-			args+=("$1")
+			_reply_remaining+=("$1")
 			shift
 			;;
 		esac
 	done
+	return 0
+}
 
-	parse_common_opts "${args[@]}" || return 1
+cmd_reply() {
+	local opt_to opt_subject opt_context opt_from opt_cc opt_bcc
+	local opt_importance opt_tone opt_attachments opt_no_review opt_dry_run opt_signature
+	local opt_message_id opt_reply_all
+	local _reply_remaining=()
+
+	_parse_reply_opts "$@" || return 1
+	parse_common_opts "${_reply_remaining[@]}" || return 1
 
 	if [[ -z "$opt_to" && -z "$opt_message_id" ]]; then
 		print_error "Specify --to <email> or --message-id <id> to reply"
@@ -1310,7 +1299,7 @@ cmd_list() {
 # Help
 # ============================================================================
 
-show_help() {
+_help_usage_and_commands() {
 	cat <<EOF
 email-compose-helper.sh v${COMPOSE_VERSION} - AI-assisted email composition
 
@@ -1334,7 +1323,12 @@ Commands:
   remind       Reminder for outstanding requests
   notify       Project update notification
   list         Show saved drafts (--sent for sent archive)
+EOF
+	return 0
+}
 
+_help_options_and_routing() {
+	cat <<EOF
 Common Options:
   --to <email>         Recipient (required for most commands)
   --subject <text>     Email subject
@@ -1387,7 +1381,12 @@ Workflow:
   3. Editor opens for human review (unless --no-review)
   4. Confirm send prompt
   5. Sent archive: ~/.aidevops/.agent-workspace/email-compose/sent/
+EOF
+	return 0
+}
 
+_help_examples_and_related() {
+	cat <<EOF
 Examples:
   # Compose new email
   email-compose-helper.sh draft --to client@example.com \\
@@ -1420,6 +1419,13 @@ Related:
   email-mailbox.md         — Mailbox management and triage
   email-composition.md     — Composition guidance and tone calibration
 EOF
+	return 0
+}
+
+show_help() {
+	_help_usage_and_commands
+	_help_options_and_routing
+	_help_examples_and_related
 	return 0
 }
 
