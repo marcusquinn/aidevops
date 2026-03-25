@@ -552,26 +552,71 @@ PY
 	return 0
 }
 
-choose_model() {
-	local role="$1"
-	local explicit_model="${2:-}"
-	local -a models=()
-	local provider last_provider start_index i idx current_model current_provider
-
-	if [[ -n "$explicit_model" ]]; then
-		provider=$(extract_provider "$explicit_model" 2>/dev/null || printf '%s' "")
-		if [[ -z "$provider" ]]; then
-			print_error "Model must use provider/model format: $explicit_model"
-			return 1
-		fi
-		if model_backoff_active "$explicit_model"; then
-			print_warning "$explicit_model is currently backed off"
-			return 75
-		fi
-		printf '%s' "$explicit_model"
-		return 0
+# _choose_model_explicit: validate and return an explicitly-requested model.
+# Returns 0 on success (prints model), 1 on bad format, 75 if backed off.
+_choose_model_explicit() {
+	local explicit_model="$1"
+	local provider
+	provider=$(extract_provider "$explicit_model" 2>/dev/null || printf '%s' "")
+	if [[ -z "$provider" ]]; then
+		print_error "Model must use provider/model format: $explicit_model"
+		return 1
 	fi
+	if model_backoff_active "$explicit_model"; then
+		print_warning "$explicit_model is currently backed off"
+		return 75
+	fi
+	printf '%s' "$explicit_model"
+	return 0
+}
 
+# _choose_model_tier_downgrade: check pattern history for a cheaper tier.
+# Prints the downgraded model name if one is recommended; prints nothing otherwise.
+# Non-blocking — any failure falls through silently.
+_choose_model_tier_downgrade() {
+	local current_model="$1"
+	local downgrade_task_type="${AIDEVOPS_TIER_DOWNGRADE_TASK_TYPE:-}"
+	[[ -n "$downgrade_task_type" ]] || return 0
+
+	local current_tier=""
+	case "$current_model" in
+	*opus*) current_tier="opus" ;;
+	*sonnet*) current_tier="sonnet" ;;
+	*haiku*) current_tier="haiku" ;;
+	*flash*) current_tier="flash" ;;
+	*pro*) current_tier="pro" ;;
+	esac
+	[[ -n "$current_tier" ]] || return 0
+
+	local pattern_helper="${SCRIPT_DIR}/archived/pattern-tracker-helper.sh"
+	if [[ ! -x "$pattern_helper" ]]; then
+		pattern_helper="${HOME}/.aidevops/agents/scripts/archived/pattern-tracker-helper.sh"
+	fi
+	[[ -x "$pattern_helper" ]] || return 0
+
+	local lower_tier
+	lower_tier=$("$pattern_helper" tier-downgrade-check \
+		--requested-tier "$current_tier" \
+		--task-type "$downgrade_task_type" \
+		--min-samples "${AIDEVOPS_TIER_DOWNGRADE_MIN_SAMPLES:-3}" \
+		2>/dev/null || true)
+	[[ -n "$lower_tier" ]] || return 0
+
+	local lower_model
+	lower_model=$(resolve_model_tier "$lower_tier" 2>/dev/null || true)
+	if [[ -n "$lower_model" && "$lower_model" != "$current_model" ]]; then
+		print_info "Model for dispatch: pattern data recommends ${lower_tier} over ${current_tier} (TIER_DOWNGRADE_OK, task_type=${downgrade_task_type})"
+		printf '%s' "$lower_model"
+	fi
+	return 0
+}
+
+# _choose_model_auto: select the next available model via round-robin rotation.
+# Skips models that are backed off or have no auth. Returns 75 if all are backed off.
+_choose_model_auto() {
+	local role="$1"
+	local -a models=()
+	local current_model
 	while IFS= read -r current_model; do
 		models+=("$current_model")
 	done < <(get_configured_models)
@@ -580,6 +625,7 @@ choose_model() {
 		return 1
 	fi
 
+	local last_provider start_index i idx current_provider
 	last_provider=$(get_last_provider "$role")
 	start_index=0
 	if [[ -n "$last_provider" ]]; then
@@ -608,44 +654,12 @@ choose_model() {
 		fi
 		set_last_provider "$role" "$current_provider"
 
-		# Pattern-driven tier downgrade (t5148): check if historical evidence
-		# supports using a cheaper tier for this task type. Non-blocking — any
-		# failure in the pattern check falls through to the original model.
-		# Caller sets AIDEVOPS_TIER_DOWNGRADE_TASK_TYPE to enable this check.
-		local _downgrade_task_type="${AIDEVOPS_TIER_DOWNGRADE_TASK_TYPE:-}"
-		if [[ -n "$_downgrade_task_type" ]]; then
-			local _current_tier=""
-			case "$current_model" in
-			*opus*) _current_tier="opus" ;;
-			*sonnet*) _current_tier="sonnet" ;;
-			*haiku*) _current_tier="haiku" ;;
-			*flash*) _current_tier="flash" ;;
-			*pro*) _current_tier="pro" ;;
-			esac
-
-			if [[ -n "$_current_tier" ]]; then
-				local _pattern_helper="${SCRIPT_DIR}/archived/pattern-tracker-helper.sh"
-				if [[ ! -x "$_pattern_helper" ]]; then
-					_pattern_helper="${HOME}/.aidevops/agents/scripts/archived/pattern-tracker-helper.sh"
-				fi
-				if [[ -x "$_pattern_helper" ]]; then
-					local _lower_tier
-					_lower_tier=$("$_pattern_helper" tier-downgrade-check \
-						--requested-tier "$_current_tier" \
-						--task-type "$_downgrade_task_type" \
-						--min-samples "${AIDEVOPS_TIER_DOWNGRADE_MIN_SAMPLES:-3}" \
-						2>/dev/null || true)
-					if [[ -n "$_lower_tier" ]]; then
-						local _lower_model
-						_lower_model=$(resolve_model_tier "$_lower_tier" 2>/dev/null || true)
-						if [[ -n "$_lower_model" && "$_lower_model" != "$current_model" ]]; then
-							print_info "Model for dispatch: pattern data recommends ${_lower_tier} over ${_current_tier} (TIER_DOWNGRADE_OK, task_type=${_downgrade_task_type})"
-							printf '%s' "$_lower_model"
-							return 0
-						fi
-					fi
-				fi
-			fi
+		# Pattern-driven tier downgrade (t5148): non-blocking check.
+		local downgraded
+		downgraded=$(_choose_model_tier_downgrade "$current_model")
+		if [[ -n "$downgraded" ]]; then
+			printf '%s' "$downgraded"
+			return 0
 		fi
 
 		printf '%s' "$current_model"
@@ -654,6 +668,19 @@ choose_model() {
 
 	print_warning "All configured models are currently backed off"
 	return 75
+}
+
+choose_model() {
+	local role="$1"
+	local explicit_model="${2:-}"
+
+	if [[ -n "$explicit_model" ]]; then
+		_choose_model_explicit "$explicit_model"
+		return $?
+	fi
+
+	_choose_model_auto "$role"
+	return $?
 }
 
 cmd_select() {
@@ -757,17 +784,11 @@ cmd_session() {
 	esac
 }
 
-cmd_run() {
-	local role="worker"
-	local session_key=""
-	local work_dir=""
-	local title=""
-	local prompt=""
-	local prompt_file=""
-	local model_override=""
-	local agent_name=""
-	local -a extra_args=()
-
+# _parse_run_args: parse cmd_run flags into caller-scoped variables.
+# Caller must declare: role session_key work_dir title prompt prompt_file
+#                      model_override agent_name extra_args
+# Returns 1 on unknown flag.
+_parse_run_args() {
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--role)
@@ -812,7 +833,12 @@ cmd_run() {
 			;;
 		esac
 	done
+	return 0
+}
 
+# _validate_run_args: check required fields and resolve prompt from file if needed.
+# Operates on caller-scoped variables set by _parse_run_args.
+_validate_run_args() {
 	[[ -n "$session_key" ]] || {
 		print_error "run requires --session-key"
 		return 1
@@ -836,107 +862,148 @@ cmd_run() {
 		print_error "run requires --prompt or --prompt-file"
 		return 1
 	}
+	return 0
+}
+
+# _execute_run_attempt: run one opencode invocation and handle the result.
+# Args: role session_key work_dir title prompt selected_model agent_name model_override
+#       extra_args (array passed as remaining positional args after the named ones)
+# Prints the discovered session ID to stdout on success (may be empty).
+# Returns: 0 success, 75 no-activity backoff, non-zero on failure.
+# Sets caller variable _run_failure_reason on failure.
+_execute_run_attempt() {
+	local role="$1"
+	local session_key="$2"
+	local work_dir="$3"
+	local title="$4"
+	local prompt="$5"
+	local selected_model="$6"
+	local agent_name="$7"
+	local model_override="$8"
+	shift 8
+	local -a extra_args=("$@")
+
+	local provider persisted_session=""
+	provider=$(extract_provider "$selected_model")
+	if [[ "$role" == "pulse" ]]; then
+		# Pulse runs must start from the current pre-fetched state each cycle.
+		# Reusing a prior OpenCode session contaminates later /pulse runs with
+		# stale conversational context, which leads to idle watchdog kills and an
+		# empty worker pool. Workers still keep session reuse.
+		clear_session_id "$provider" "$session_key"
+	else
+		persisted_session=$(get_session_id "$provider" "$session_key")
+	fi
+
+	local -a cmd=("$OPENCODE_BIN_DEFAULT" run "$prompt" --dir "$work_dir" -m "$selected_model" --title "$title" --format json)
+	if [[ -n "$agent_name" ]]; then
+		cmd+=(--agent "$agent_name")
+	fi
+	if [[ -n "$persisted_session" ]]; then
+		cmd+=(--session "$persisted_session" --continue)
+	fi
+	if [[ ${#extra_args[@]} -gt 0 ]]; then
+		cmd+=("${extra_args[@]}")
+	fi
+
+	local output_file exit_code_file exit_code
+	output_file=$(mktemp)
+	exit_code_file=$(mktemp)
+	exit_code=0
+	# Run in subshell to avoid fragile set +e/set -e toggling (GH#4225).
+	# Subshell localises errexit so main shell state is never modified.
+	# Exit code is written to a temp file — NOT captured via $() — because
+	# tee stdout would contaminate the $() capture (bash 3.2 has no clean
+	# way to separate tee output from the exit code in a single $()).
+	(
+		set +e
+		if [[ -x "$SANDBOX_EXEC_HELPER" && "${AIDEVOPS_HEADLESS_SANDBOX_DISABLED:-}" != "1" ]]; then
+			# Pass cmd array elements as separate arguments after --.
+			# Previous code used printf -v to build a single escaped string,
+			# which the sandbox received as one argument and passed to env as
+			# a single executable path — causing "No such file or directory".
+			# Bash 3.2 compat: no local -a in subshells, no printf -v tricks.
+			local passthrough_csv
+			passthrough_csv="$(build_sandbox_passthrough_csv)"
+			if [[ -n "$passthrough_csv" ]]; then
+				"$SANDBOX_EXEC_HELPER" run --timeout "$HEADLESS_SANDBOX_TIMEOUT_DEFAULT" --allow-secret-io --passthrough "$passthrough_csv" -- "${cmd[@]}" 2>&1 | tee "$output_file"
+			else
+				"$SANDBOX_EXEC_HELPER" run --timeout "$HEADLESS_SANDBOX_TIMEOUT_DEFAULT" --allow-secret-io -- "${cmd[@]}" 2>&1 | tee "$output_file"
+			fi
+			printf '%s' "${PIPESTATUS[0]}" >"$exit_code_file"
+		else
+			"${cmd[@]}" 2>&1 | tee "$output_file"
+			printf '%s' "${PIPESTATUS[0]}" >"$exit_code_file"
+		fi
+	) || true
+	exit_code=$(cat "$exit_code_file" 2>/dev/null) || exit_code=1
+	rm -f "$exit_code_file"
+
+	local discovered_session activity_detected
+	discovered_session=$(extract_session_id_from_output "$output_file")
+	activity_detected=$(output_has_activity "$output_file")
+
+	if [[ "$exit_code" -eq 0 ]]; then
+		if [[ "$activity_detected" != "1" ]]; then
+			record_provider_backoff "$provider" "provider_error" "$output_file" "$selected_model"
+			rm -f "$output_file"
+			print_warning "$selected_model returned exit 0 without any model activity; backing off model"
+			return 75
+		fi
+		if [[ "$role" != "pulse" && -n "$discovered_session" ]]; then
+			store_session_id "$provider" "$session_key" "$discovered_session" "$selected_model"
+		fi
+		rm -f "$output_file"
+		return 0
+	fi
+
+	local failure_reason
+	failure_reason=$(classify_failure_reason "$output_file")
+	record_provider_backoff "$provider" "$failure_reason" "$output_file" "$selected_model"
+	rm -f "$output_file"
+	_run_failure_reason="$failure_reason"
+	return "$exit_code"
+}
+
+cmd_run() {
+	local role="worker"
+	local session_key=""
+	local work_dir=""
+	local title=""
+	local prompt=""
+	local prompt_file=""
+	local model_override=""
+	local agent_name=""
+	local -a extra_args=()
+
+	_parse_run_args "$@" || return 1
+	_validate_run_args || return 1
 
 	local selected_model
 	selected_model=$(choose_model "$role" "$model_override") || return $?
 
 	local attempt=1
 	local max_attempts=2
+	local _run_failure_reason=""
 	while [[ "$attempt" -le "$max_attempts" ]]; do
-		local provider persisted_session=""
+		_run_failure_reason=""
+		_execute_run_attempt \
+			"$role" "$session_key" "$work_dir" "$title" "$prompt" \
+			"$selected_model" "$agent_name" "$model_override" \
+			"${extra_args[@]+"${extra_args[@]}"}"
+		local attempt_exit=$?
+
+		[[ "$attempt_exit" -eq 0 ]] && return 0
+
+		# Only retry on auth errors when no explicit model was requested
+		# and we have attempts remaining.
+		if [[ -n "$model_override" || "$_run_failure_reason" != "auth_error" || "$attempt" -ge "$max_attempts" ]]; then
+			return "$attempt_exit"
+		fi
+
+		local provider next_model
 		provider=$(extract_provider "$selected_model")
-		if [[ "$role" == "pulse" ]]; then
-			# Pulse runs must start from the current pre-fetched state each cycle.
-			# Reusing a prior OpenCode session contaminates later /pulse runs with
-			# stale conversational context, which leads to idle watchdog kills and an
-			# empty worker pool. Workers still keep session reuse.
-			clear_session_id "$provider" "$session_key"
-		else
-			persisted_session=$(get_session_id "$provider" "$session_key")
-		fi
-
-		local -a cmd=("$OPENCODE_BIN_DEFAULT" run "$prompt" --dir "$work_dir" -m "$selected_model" --title "$title" --format json)
-		if [[ -n "$agent_name" ]]; then
-			cmd+=(--agent "$agent_name")
-		fi
-		if [[ -n "$persisted_session" ]]; then
-			cmd+=(--session "$persisted_session" --continue)
-		fi
-		if [[ ${#extra_args[@]} -gt 0 ]]; then
-			cmd+=("${extra_args[@]}")
-		fi
-
-		local output_file
-		output_file=$(mktemp)
-		local exit_code_file
-		exit_code_file=$(mktemp)
-		local exit_code=0
-		# Run in subshell to avoid fragile set +e/set -e toggling (GH#4225).
-		# Subshell localises errexit so main shell state is never modified.
-		# Exit code is written to a temp file — NOT captured via $() — because
-		# tee stdout would contaminate the $() capture (bash 3.2 has no clean
-		# way to separate tee output from the exit code in a single $()).
-		(
-			set +e
-			if [[ -x "$SANDBOX_EXEC_HELPER" && "${AIDEVOPS_HEADLESS_SANDBOX_DISABLED:-}" != "1" ]]; then
-				# Pass cmd array elements as separate arguments after --.
-				# Previous code used printf -v to build a single escaped string,
-				# which the sandbox received as one argument and passed to env as
-				# a single executable path — causing "No such file or directory".
-				# Bash 3.2 compat: no local -a in subshells, no printf -v tricks.
-				local passthrough_csv
-				passthrough_csv="$(build_sandbox_passthrough_csv)"
-				if [[ -n "$passthrough_csv" ]]; then
-					"$SANDBOX_EXEC_HELPER" run --timeout "$HEADLESS_SANDBOX_TIMEOUT_DEFAULT" --allow-secret-io --passthrough "$passthrough_csv" -- "${cmd[@]}" 2>&1 | tee "$output_file"
-				else
-					"$SANDBOX_EXEC_HELPER" run --timeout "$HEADLESS_SANDBOX_TIMEOUT_DEFAULT" --allow-secret-io -- "${cmd[@]}" 2>&1 | tee "$output_file"
-				fi
-				printf '%s' "${PIPESTATUS[0]}" >"$exit_code_file"
-			else
-				"${cmd[@]}" 2>&1 | tee "$output_file"
-				printf '%s' "${PIPESTATUS[0]}" >"$exit_code_file"
-			fi
-		) || true
-		exit_code=$(cat "$exit_code_file" 2>/dev/null) || exit_code=1
-		rm -f "$exit_code_file"
-
-		local discovered_session
-		discovered_session=$(extract_session_id_from_output "$output_file")
-		local activity_detected
-		activity_detected=$(output_has_activity "$output_file")
-		if [[ "$exit_code" -eq 0 ]]; then
-			if [[ "$activity_detected" != "1" ]]; then
-				record_provider_backoff "$provider" "provider_error" "$output_file" "$selected_model"
-				rm -f "$output_file"
-				print_warning "$selected_model returned exit 0 without any model activity; backing off model"
-				return 75
-			fi
-			if [[ "$role" != "pulse" && -n "$discovered_session" ]]; then
-				store_session_id "$provider" "$session_key" "$discovered_session" "$selected_model"
-			fi
-			rm -f "$output_file"
-			return 0
-		fi
-
-		local failure_reason
-		failure_reason=$(classify_failure_reason "$output_file")
-		record_provider_backoff "$provider" "$failure_reason" "$output_file" "$selected_model"
-		rm -f "$output_file"
-
-		if [[ -n "$model_override" ]]; then
-			return "$exit_code"
-		fi
-
-		if [[ "$failure_reason" != "auth_error" ]]; then
-			return "$exit_code"
-		fi
-
-		if [[ "$attempt" -ge "$max_attempts" ]]; then
-			return "$exit_code"
-		fi
-
-		local next_model
-		next_model=$(choose_model "$role" "") || return "$exit_code"
+		next_model=$(choose_model "$role" "") || return "$attempt_exit"
 		print_warning "$provider auth failure detected at startup; retrying once with alternate provider model $next_model"
 		selected_model="$next_model"
 		attempt=$((attempt + 1))
