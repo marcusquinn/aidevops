@@ -78,13 +78,9 @@ score_to_risk() {
 	return 0
 }
 
-# Main check function
-cmd_check() {
-	local ip="$1"
-	local api_key="${GREYNOISE_API_KEY:-}"
-	local timeout="$DEFAULT_TIMEOUT"
-
-	shift
+# Parse --api-key and --timeout flags; sets _api_key and _timeout in caller scope
+# Usage: _parse_check_args "$@"; sets exit status 1 on bad args
+_parse_check_args() {
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--api-key)
@@ -92,7 +88,7 @@ cmd_check() {
 				echo "Error: --api-key requires a value" >&2
 				return 1
 			}
-			api_key="$2"
+			_api_key="$2"
 			shift 2
 			;;
 		--timeout)
@@ -100,7 +96,7 @@ cmd_check() {
 				echo "Error: --timeout requires a value" >&2
 				return 1
 			}
-			timeout="$2"
+			_timeout="$2"
 			shift 2
 			;;
 		*)
@@ -108,9 +104,19 @@ cmd_check() {
 			;;
 		esac
 	done
+	return 0
+}
 
+# Fetch raw JSON from GreyNoise API; prints response to stdout
+# Usage: _fetch_greynoise <ip> <api_key> <timeout>
+# On curl failure: emits error_json and returns 1
+_fetch_greynoise() {
+	local ip="$1"
+	local api_key="$2"
+	local timeout="$3"
 	local api_url
 	local response
+
 	if [[ -n "$api_key" ]]; then
 		api_url="${API_BASE_FULL}/${ip}"
 		response=$(curl -sf \
@@ -120,7 +126,7 @@ cmd_check() {
 			"$api_url" \
 			2>/dev/null) || {
 			error_json "$ip" "curl request failed"
-			return 0
+			return 1
 		}
 	else
 		api_url="${API_BASE_COMMUNITY}/${ip}"
@@ -130,41 +136,78 @@ cmd_check() {
 			"$api_url" \
 			2>/dev/null) || {
 			error_json "$ip" "curl request failed"
-			return 0
+			return 1
 		}
 	fi
 
+	echo "$response"
+	return 0
+}
+
+# Validate JSON response and check for API-level errors
+# Usage: _validate_response <ip> <response>
+# On invalid JSON or API error: emits error_json and returns 1
+_validate_response() {
+	local ip="$1"
+	local response="$2"
+
 	if ! echo "$response" | jq empty 2>/dev/null; then
 		error_json "$ip" "invalid JSON response"
-		return 0
+		return 1
 	fi
 
-	# Check for API errors
 	local api_message
 	api_message=$(echo "$response" | jq -r '.message // empty' 2>/dev/null || true)
 	if [[ -n "$api_message" ]] && echo "$response" | jq -e '.noise == null' &>/dev/null; then
 		error_json "$ip" "$api_message"
-		return 0
+		return 1
 	fi
 
-	local is_noise is_riot classification name link
+	return 0
+}
+
+# Extract fields from response and compute score/risk/is_listed
+# Usage: _extract_fields <response>
+# Outputs: tab-separated is_noise, is_riot, classification, name, link, score, risk_level, is_listed
+_extract_fields() {
+	local response="$1"
+	local is_noise is_riot classification name link score risk_level is_listed
+
 	is_noise=$(echo "$response" | jq -r '.noise // false')
 	is_riot=$(echo "$response" | jq -r '.riot // false')
 	classification=$(echo "$response" | jq -r '.classification // "unknown"')
 	name=$(echo "$response" | jq -r '.name // "unknown"')
 	link=$(echo "$response" | jq -r '.link // ""')
 
-	local score
 	score=$(classification_to_score "$classification" "$is_noise" "$is_riot")
-	local risk_level
 	risk_level=$(score_to_risk "$score")
 
-	local is_listed
 	if [[ "$classification" == "malicious" && "$is_noise" == "true" ]]; then
 		is_listed="true"
 	else
 		is_listed="false"
 	fi
+
+	printf '%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+		"$is_noise" "$is_riot" "$classification" "$name" "$link" \
+		"$score" "$risk_level" "$is_listed"
+	return 0
+}
+
+# Assemble and emit the final result JSON
+# Usage: _build_result_json <ip> <response> <is_noise> <is_riot> <classification> \
+#                           <name> <link> <score> <risk_level> <is_listed>
+_build_result_json() {
+	local ip="$1"
+	local response="$2"
+	local is_noise="$3"
+	local is_riot="$4"
+	local classification="$5"
+	local name="$6"
+	local link="$7"
+	local score="$8"
+	local risk_level="$9"
+	local is_listed="${10}"
 
 	jq -n \
 		--arg provider "$PROVIDER_NAME" \
@@ -191,6 +234,32 @@ cmd_check() {
             link: $link,
             raw: $raw
         }'
+	return 0
+}
+
+# Main check function — orchestrates sub-functions
+cmd_check() {
+	local ip="$1"
+	local _api_key="${GREYNOISE_API_KEY:-}"
+	local _timeout="$DEFAULT_TIMEOUT"
+
+	shift
+	_parse_check_args "$@" || return 1
+
+	local response
+	response=$(_fetch_greynoise "$ip" "$_api_key" "$_timeout") || return 0
+
+	_validate_response "$ip" "$response" || return 0
+
+	local fields
+	fields=$(_extract_fields "$response")
+
+	local is_noise is_riot classification name link score risk_level is_listed
+	IFS=$'\t' read -r is_noise is_riot classification name link score risk_level is_listed <<<"$fields"
+
+	_build_result_json "$ip" "$response" \
+		"$is_noise" "$is_riot" "$classification" "$name" "$link" \
+		"$score" "$risk_level" "$is_listed"
 	return 0
 }
 
