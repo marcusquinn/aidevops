@@ -231,16 +231,11 @@ init_clis() {
 	fi
 }
 
-# Run analysis with CLIs
-analyze_with_clis() {
+# Run analysis for standard CLIs (coderabbit, codacy, sonar, qlty, snyk)
+# Outputs: increments success_count and total_count (caller must declare them)
+_analyze_standard_clis() {
 	local target_cli="$1"
-	shift
-	local args="$*"
-
-	print_header "Running Quality Analysis"
-
-	local success_count=0
-	local total_count=0
+	local args="$2"
 
 	if [[ "$target_cli" == "all" || "$target_cli" == "$CLI_CODERABBIT" ]]; then
 		print_info "Running CodeRabbit analysis..."
@@ -254,16 +249,6 @@ analyze_with_clis() {
 	if [[ "$target_cli" == "all" || "$target_cli" == "codacy" ]]; then
 		print_info "Running Codacy analysis..."
 		if execute_cli_command "codacy" "analyze" "$args"; then
-			((++success_count))
-		fi
-		((++total_count))
-		echo ""
-	fi
-
-	# Add auto-fix option for Codacy
-	if [[ "$target_cli" == "codacy-fix" ]]; then
-		print_info "Running Codacy analysis with auto-fix..."
-		if execute_cli_command "codacy" "analyze" "--fix"; then
 			((++success_count))
 		fi
 		((++total_count))
@@ -299,7 +284,26 @@ analyze_with_clis() {
 		echo ""
 	fi
 
-	# Add Snyk-specific scan options
+	return 0
+}
+
+# Run analysis for CLI-specific variants (codacy-fix, snyk-sca, snyk-code, snyk-iac)
+# Outputs: increments success_count and total_count (caller must declare them)
+_analyze_variant_clis() {
+	local target_cli="$1"
+	local args="$2"
+
+	# Auto-fix option for Codacy
+	if [[ "$target_cli" == "codacy-fix" ]]; then
+		print_info "Running Codacy analysis with auto-fix..."
+		if execute_cli_command "codacy" "analyze" "--fix"; then
+			((++success_count))
+		fi
+		((++total_count))
+		echo ""
+	fi
+
+	# Snyk-specific scan options
 	if [[ "$target_cli" == "snyk-sca" ]]; then
 		print_info "Running Snyk SCA (dependency) scan..."
 		if execute_cli_command "$CLI_SNYK" "test" "$args"; then
@@ -326,6 +330,23 @@ analyze_with_clis() {
 		((++total_count))
 		echo ""
 	fi
+
+	return 0
+}
+
+# Run analysis with CLIs
+analyze_with_clis() {
+	local target_cli="$1"
+	shift
+	local args="$*"
+
+	print_header "Running Quality Analysis"
+
+	local success_count=0
+	local total_count=0
+
+	_analyze_standard_clis "$target_cli" "$args"
+	_analyze_variant_clis "$target_cli" "$args"
 
 	print_info "Analysis Summary: $success_count/$total_count analyses completed successfully"
 
