@@ -435,74 +435,57 @@ cmd_resolve() {
 	return $?
 }
 
-# Show a human-readable summary of the resolved bundle for a project.
+# Determine the resolution source label for display in cmd_show.
 # Arguments:
-#   $1 - project path (defaults to current directory)
-#   --force - force re-detection
-# Output: formatted summary to stdout
+#   $1 - resolved absolute project path
+#   $2 - force flag ("--force" or "")
+# Output: source label string to stdout
 # Returns: 0
-cmd_show() {
-	local project_path=""
-	local force_flag=""
+_show_resolve_source() {
+	local resolved_path="$1"
+	local force_flag="$2"
 
-	# Parse arguments
-	while [[ $# -gt 0 ]]; do
-		case "$1" in
-		--force)
-			force_flag="--force"
-			shift
-			;;
-		*)
-			project_path="$1"
-			shift
-			;;
-		esac
-	done
-
-	local resolved_path
-	resolved_path="$(_resolve_project_path "${project_path:-.}")" || return 1
-
-	# Determine resolution source for display
-	local source="unknown"
 	local explicit_bundle
 	explicit_bundle="$(_lookup_repos_json_bundle "$resolved_path")"
 	if [[ -n "$explicit_bundle" ]]; then
-		source="repos.json (explicit)"
-	else
-		local project_bundle
-		project_bundle="$(_read_project_config_bundle "$resolved_path")"
-		if [[ -n "$project_bundle" ]]; then
-			source=".aidevops.json (explicit)"
-		else
-			local detected
-			if [[ -n "$force_flag" ]]; then
-				detected=$(cmd_detect "$resolved_path" --force 2>/dev/null) || true
-			else
-				detected=$(cmd_detect "$resolved_path" 2>/dev/null) || true
-			fi
-			if [[ -n "$detected" ]]; then
-				source="auto-detected"
-			else
-				source="fallback (${FALLBACK_BUNDLE})"
-			fi
-		fi
+		echo "repos.json (explicit)"
+		return 0
 	fi
 
-	# Resolve the bundle
-	local resolved
+	local project_bundle
+	project_bundle="$(_read_project_config_bundle "$resolved_path")"
+	if [[ -n "$project_bundle" ]]; then
+		echo ".aidevops.json (explicit)"
+		return 0
+	fi
+
+	local detected
 	if [[ -n "$force_flag" ]]; then
-		resolved=$(cmd_resolve "$resolved_path" --force 2>/dev/null) || {
-			print_error "Could not resolve bundle for ${resolved_path}"
-			return 1
-		}
+		detected=$(cmd_detect "$resolved_path" --force 2>/dev/null) || true
 	else
-		resolved=$(cmd_resolve "$resolved_path" 2>/dev/null) || {
-			print_error "Could not resolve bundle for ${resolved_path}"
-			return 1
-		}
+		detected=$(cmd_detect "$resolved_path" 2>/dev/null) || true
 	fi
 
-	# Format output
+	if [[ -n "$detected" ]]; then
+		echo "auto-detected"
+	else
+		echo "fallback (${FALLBACK_BUNDLE})"
+	fi
+
+	return 0
+}
+
+# Format and print the human-readable bundle summary.
+# Arguments:
+#   $1 - resolved absolute project path
+#   $2 - resolved bundle JSON string
+#   $3 - source label string
+# Returns: 0
+_show_format_output() {
+	local resolved_path="$1"
+	local resolved="$2"
+	local source="$3"
+
 	local name description
 	name=$(echo "$resolved" | jq -r '.name // "unknown"')
 	description=$(echo "$resolved" | jq -r '.description // "No description"')
@@ -559,6 +542,55 @@ cmd_show() {
 		echo ""
 	fi
 
+	return 0
+}
+
+# Show a human-readable summary of the resolved bundle for a project.
+# Arguments:
+#   $1 - project path (defaults to current directory)
+#   --force - force re-detection
+# Output: formatted summary to stdout
+# Returns: 0
+cmd_show() {
+	local project_path=""
+	local force_flag=""
+
+	# Parse arguments
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--force)
+			force_flag="--force"
+			shift
+			;;
+		*)
+			project_path="$1"
+			shift
+			;;
+		esac
+	done
+
+	local resolved_path
+	resolved_path="$(_resolve_project_path "${project_path:-.}")" || return 1
+
+	# Determine resolution source for display
+	local source
+	source="$(_show_resolve_source "$resolved_path" "$force_flag")"
+
+	# Resolve the bundle
+	local resolved
+	if [[ -n "$force_flag" ]]; then
+		resolved=$(cmd_resolve "$resolved_path" --force 2>/dev/null) || {
+			print_error "Could not resolve bundle for ${resolved_path}"
+			return 1
+		}
+	else
+		resolved=$(cmd_resolve "$resolved_path" 2>/dev/null) || {
+			print_error "Could not resolve bundle for ${resolved_path}"
+			return 1
+		}
+	fi
+
+	_show_format_output "$resolved_path" "$resolved" "$source"
 	return 0
 }
 
