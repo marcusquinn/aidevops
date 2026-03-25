@@ -804,9 +804,6 @@ Use insights to focus improvement efforts
 
 ---
 
-
----
-
 ## Dynamic Creative Optimization
 
 DCO uses machine learning to automatically test creative combinations and serve the best-performing version to each user.
@@ -1134,9 +1131,6 @@ PHASE 3: Scale Winners with DCO
 □ Created more variations of high performers
 □ Documented learnings for future campaigns
 ```
-
----
-
 
 ---
 
