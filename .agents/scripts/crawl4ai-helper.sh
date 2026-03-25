@@ -281,11 +281,9 @@ EOF
 	return 0
 }
 
-# Setup CapSolver integration for CAPTCHA solving
-capsolver_setup() {
-	print_header "Setting up CapSolver Integration for CAPTCHA Solving"
-
-	local capsolver_config="$CONFIG_DIR/capsolver-config.json"
+# Write CapSolver JSON configuration file
+_capsolver_write_config() {
+	local capsolver_config="$1"
 
 	print_info "Creating CapSolver configuration..."
 	cat >"$capsolver_config" <<EOF
@@ -411,9 +409,13 @@ capsolver_setup() {
 EOF
 
 	print_success "CapSolver configuration created at $capsolver_config"
+	return 0
+}
 
-	# Create Python example script
-	local example_script="$CONFIG_DIR/capsolver-example.py"
+# Write CapSolver Python example script
+_capsolver_write_example() {
+	local example_script="$1"
+
 	cat >"$example_script" <<'EOF'
 #!/usr/bin/env python3
 """
@@ -563,6 +565,12 @@ EOF
 
 	chmod +x "$example_script"
 	print_success "Python example script created at $example_script"
+	return 0
+}
+
+# Print CapSolver next-steps instructions
+_capsolver_print_instructions() {
+	local example_script="$1"
 
 	print_info "CapSolver Integration Setup Complete!"
 	print_info ""
@@ -581,6 +589,19 @@ EOF
 	print_info ""
 	print_info "💰 Pricing: Starting from $0.4/1000 requests"
 	print_info "🔗 Documentation: https://docs.capsolver.com/"
+	return 0
+}
+
+# Setup CapSolver integration for CAPTCHA solving
+capsolver_setup() {
+	print_header "Setting up CapSolver Integration for CAPTCHA Solving"
+
+	local capsolver_config="$CONFIG_DIR/capsolver-config.json"
+	local example_script="$CONFIG_DIR/capsolver-example.py"
+
+	_capsolver_write_config "$capsolver_config"
+	_capsolver_write_example "$example_script"
+	_capsolver_print_instructions "$example_script"
 
 	return 0
 }
@@ -715,34 +736,13 @@ EOF
 	return 0
 }
 
-# Crawl with CAPTCHA solving capabilities
-captcha_crawl() {
-	local url="$1"
-	local captcha_type="$2"
-	local site_key="$3"
-	local output_file="$4"
+# Write the Python CAPTCHA-crawl temp script to a file
+_captcha_write_script() {
+	local temp_script="$1"
+	local url="$2"
+	local captcha_type="$3"
+	local site_key="$4"
 
-	if [[ -z "$url" || -z "$captcha_type" ]]; then
-		print_error "URL and CAPTCHA type are required"
-		print_info "Usage: captcha-crawl <url> <captcha_type> [site_key] [output_file]"
-		print_info "CAPTCHA types: recaptcha_v2, recaptcha_v3, turnstile, aws_waf"
-		return 1
-	fi
-
-	print_header "Crawling with CAPTCHA Solving: $url"
-	print_info "CAPTCHA Type: $captcha_type"
-
-	# Check if Docker container is running
-	if ! docker ps -q -f name="$DOCKER_CONTAINER" | grep -q .; then
-		print_warning "Docker container is not running. Starting it..."
-		if ! docker_start; then
-			return 1
-		fi
-		sleep "$CRAWL4AI_STARTUP_WAIT"
-	fi
-
-	# Create Python script for CAPTCHA crawling
-	local temp_script="/tmp/captcha_crawl_$$.py"
 	cat >"$temp_script" <<EOF
 #!/usr/bin/env python3
 import asyncio
@@ -886,6 +886,14 @@ if __name__ == "__main__":
         print(result[:500] + "..." if len(result) > 500 else result)
 EOF
 
+	return 0
+}
+
+# Validate env, run the CAPTCHA Python script, and save optional output
+_captcha_run_script() {
+	local temp_script="$1"
+	local output_file="$2"
+
 	# Check if CapSolver API key is set
 	if [[ -z "$CAPSOLVER_API_KEY" ]]; then
 		print_error "CAPSOLVER_API_KEY environment variable not set"
@@ -910,6 +918,38 @@ EOF
 
 	rm -f "$temp_script"
 	return 0
+}
+
+# Crawl with CAPTCHA solving capabilities
+captcha_crawl() {
+	local url="$1"
+	local captcha_type="$2"
+	local site_key="$3"
+	local output_file="$4"
+
+	if [[ -z "$url" || -z "$captcha_type" ]]; then
+		print_error "URL and CAPTCHA type are required"
+		print_info "Usage: captcha-crawl <url> <captcha_type> [site_key] [output_file]"
+		print_info "CAPTCHA types: recaptcha_v2, recaptcha_v3, turnstile, aws_waf"
+		return 1
+	fi
+
+	print_header "Crawling with CAPTCHA Solving: $url"
+	print_info "CAPTCHA Type: $captcha_type"
+
+	# Check if Docker container is running
+	if ! docker ps -q -f name="$DOCKER_CONTAINER" | grep -q .; then
+		print_warning "Docker container is not running. Starting it..."
+		if ! docker_start; then
+			return 1
+		fi
+		sleep "$CRAWL4AI_STARTUP_WAIT"
+	fi
+
+	local temp_script="/tmp/captcha_crawl_$$.py"
+	_captcha_write_script "$temp_script" "$url" "$captcha_type" "$site_key"
+	_captcha_run_script "$temp_script" "$output_file"
+	return $?
 }
 
 # Check service status
