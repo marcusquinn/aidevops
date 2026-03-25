@@ -1231,7 +1231,7 @@ cmd_add() {
 	# Handle conflicts (may update skill_name/target_path in caller scope)
 	if ! _apply_conflict_resolution "$target_path" "$force" "$description" "$source_dir"; then
 		rm -rf "$TEMP_DIR"
-		return 0
+		return 1
 	fi
 
 	if [[ "$dry_run" == true ]]; then
@@ -1422,7 +1422,7 @@ cmd_add_url() {
 	# Handle conflicts (may update skill_name/target_path in caller scope)
 	if ! _apply_conflict_resolution "$target_path" "$force" "$description" "$fetch_dir"; then
 		rm -rf "$fetch_dir"
-		return 0
+		return 1
 	fi
 
 	if [[ "$dry_run" == true ]]; then
@@ -1437,7 +1437,10 @@ cmd_add_url() {
 
 	# Convert URL content to aidevops format
 	local target_file=".agents/${target_path}.md"
-	_convert_url_to_skill "$fetch_file" "$target_file" "$skill_name" "$description" "$url"
+	if ! _convert_url_to_skill "$fetch_file" "$target_file" "$skill_name" "$description" "$url"; then
+		rm -rf "$fetch_dir"
+		return 1
+	fi
 
 	# Finalize: security scan, register, cleanup
 	if ! _finalize_import "$fetch_dir" "$skill_name" "$skip_security" \
@@ -1510,7 +1513,7 @@ cmd_add_clawdhub() {
 
 	# Handle conflicts (may update skill_name/target_path in caller scope)
 	if ! _apply_conflict_resolution "$target_path" "$force" "$summary" "."; then
-		return 0
+		return 1
 	fi
 
 	if [[ "$dry_run" == true ]]; then
