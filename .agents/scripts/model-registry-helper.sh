@@ -164,6 +164,98 @@ db_query_json() {
 # Sync: Subagent Frontmatter
 # =============================================================================
 
+# Parse model frontmatter fields from a single markdown file.
+# Outputs: model_full, model_tier, model_fallback (one per line as key=value).
+# Returns 1 if the file has no valid model frontmatter.
+_parse_subagent_frontmatter() {
+	local md_file="$1"
+	local model_full="" model_tier="" model_fallback=""
+	local in_frontmatter=false
+	local line_num=0
+
+	while IFS= read -r line; do
+		line_num=$((line_num + 1))
+		if [[ $line_num -eq 1 && "$line" == "---" ]]; then
+			in_frontmatter=true
+			continue
+		fi
+		if [[ "$in_frontmatter" == "true" && "$line" == "---" ]]; then
+			break
+		fi
+		if [[ "$in_frontmatter" == "true" ]]; then
+			case "$line" in
+			model:*)
+				model_full="${line#model:}"
+				model_full="${model_full#"${model_full%%[![:space:]]*}"}"
+				;;
+			model-tier:*)
+				model_tier="${line#model-tier:}"
+				model_tier="${model_tier#"${model_tier%%[![:space:]]*}"}"
+				;;
+			model-fallback:*)
+				model_fallback="${line#model-fallback:}"
+				model_fallback="${model_fallback#"${model_fallback%%[![:space:]]*}"}"
+				;;
+			esac
+		fi
+	done <"$md_file"
+
+	if [[ -z "$model_tier" || -z "$model_full" ]]; then
+		return 1
+	fi
+
+	printf 'model_full=%s\nmodel_tier=%s\nmodel_fallback=%s\n' \
+		"$model_full" "$model_tier" "$model_fallback"
+	return 0
+}
+
+# Upsert a single subagent model file into the subagent_models table.
+# Arguments: md_file basename_file updated_ref
+# Increments the named counter variable via eval on success.
+_sync_subagent_file() {
+	local md_file="$1"
+	local basename_file="$2"
+	local updated_ref="$3"
+
+	local frontmatter
+	frontmatter=$(_parse_subagent_frontmatter "$md_file") || return 0
+
+	local model_full model_tier model_fallback
+	model_full=$(echo "$frontmatter" | grep '^model_full=' | cut -d= -f2-)
+	model_tier=$(echo "$frontmatter" | grep '^model_tier=' | cut -d= -f2-)
+	model_fallback=$(echo "$frontmatter" | grep '^model_fallback=' | cut -d= -f2-)
+
+	# Extract short model_id from full ID (e.g., anthropic/claude-sonnet-4-6 -> claude-sonnet-4-6)
+	local model_short
+	model_short="${model_full#*/}"
+	# Strip trailing date suffix (e.g., -20250514)
+	model_short="${model_short%-[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]}"
+
+	local norm_name
+	norm_name=$(normalize_model_name "$model_full")
+
+	db_query "
+        INSERT INTO subagent_models (tier, model_id, model_full_id, normalized_name, fallback_id, subagent_file, last_synced)
+        VALUES (
+            '$(sql_escape "$model_tier")',
+            '$(sql_escape "$model_short")',
+            '$(sql_escape "$model_full")',
+            '$(sql_escape "$norm_name")',
+            '$(sql_escape "$model_fallback")',
+            '$(sql_escape "$basename_file")',
+            strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+        )
+        ON CONFLICT(tier) DO UPDATE SET
+            model_id = excluded.model_id,
+            model_full_id = excluded.model_full_id,
+            normalized_name = excluded.normalized_name,
+            fallback_id = excluded.fallback_id,
+            subagent_file = excluded.subagent_file,
+            last_synced = excluded.last_synced;
+    " && eval "${updated_ref}=\$(( ${updated_ref} + 1 ))"
+	return 0
+}
+
 sync_subagents() {
 	local added=0
 	local updated=0
@@ -183,72 +275,7 @@ sync_subagents() {
 		[[ "$basename_file" == "README.md" ]] && continue
 		[[ "$basename_file" == *"-reviewer.md" ]] && continue
 
-		# Extract frontmatter fields
-		local model_full="" model_tier="" model_fallback=""
-		local in_frontmatter=false
-		local line_num=0
-
-		while IFS= read -r line; do
-			line_num=$((line_num + 1))
-			if [[ $line_num -eq 1 && "$line" == "---" ]]; then
-				in_frontmatter=true
-				continue
-			fi
-			if [[ "$in_frontmatter" == "true" && "$line" == "---" ]]; then
-				break
-			fi
-			if [[ "$in_frontmatter" == "true" ]]; then
-				case "$line" in
-				model:*)
-					model_full="${line#model:}"
-					model_full="${model_full#"${model_full%%[![:space:]]*}"}"
-					;;
-				model-tier:*)
-					model_tier="${line#model-tier:}"
-					model_tier="${model_tier#"${model_tier%%[![:space:]]*}"}"
-					;;
-				model-fallback:*)
-					model_fallback="${line#model-fallback:}"
-					model_fallback="${model_fallback#"${model_fallback%%[![:space:]]*}"}"
-					;;
-				esac
-			fi
-		done <"$md_file"
-
-		if [[ -z "$model_tier" || -z "$model_full" ]]; then
-			continue
-		fi
-
-		# Extract short model_id from full ID (e.g., anthropic/claude-sonnet-4-6 -> claude-sonnet-4-6)
-		local model_short
-		model_short="${model_full#*/}"
-		# Strip trailing date suffix (e.g., -20250514)
-		model_short="${model_short%-[0-9][0-9][0-9][0-9][0-9][0-9][0-9][0-9]}"
-
-		# Compute normalized name for fuzzy matching
-		local norm_name
-		norm_name=$(normalize_model_name "$model_full")
-
-		# Upsert into subagent_models
-		db_query "
-            INSERT INTO subagent_models (tier, model_id, model_full_id, normalized_name, fallback_id, subagent_file, last_synced)
-            VALUES (
-                '$(sql_escape "$model_tier")',
-                '$(sql_escape "$model_short")',
-                '$(sql_escape "$model_full")',
-                '$(sql_escape "$norm_name")',
-                '$(sql_escape "$model_fallback")',
-                '$(sql_escape "$basename_file")',
-                strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
-            )
-            ON CONFLICT(tier) DO UPDATE SET
-                model_id = excluded.model_id,
-                model_full_id = excluded.model_full_id,
-                normalized_name = excluded.normalized_name,
-                fallback_id = excluded.fallback_id,
-                subagent_file = excluded.subagent_file,
-                last_synced = excluded.last_synced;
-        " && updated=$((updated + 1))
+		_sync_subagent_file "$md_file" "$basename_file" updated
 	done
 
 	# Log sync

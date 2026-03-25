@@ -265,25 +265,10 @@ validate_parsed_inputs() {
 	return 0
 }
 
-parse_args() {
-	# Check for --help before positional arg validation
-	for arg in "$@"; do
-		if [[ "$arg" == "--help" || "$arg" == "-h" ]]; then
-			show_help
-			exit 0
-		fi
-	done
-
-	if [[ $# -lt 2 ]]; then
-		log_error "Missing required arguments: mission-file and milestone-number"
-		show_help
-		return 2
-	fi
-
-	MISSION_FILE="$1"
-	MILESTONE_NUM="$2"
-	shift 2
-
+# Parse the optional flags after positional arguments.
+# Modifies global config variables (REPO_PATH, BROWSER_TESTS, etc.).
+# Returns 2 on invalid option or missing value.
+_parse_args_options() {
 	while [[ $# -gt 0 ]]; do
 		local arg="$1"
 		case "$arg" in
@@ -350,6 +335,29 @@ parse_args() {
 			;;
 		esac
 	done
+	return 0
+}
+
+parse_args() {
+	# Check for --help before positional arg validation
+	for arg in "$@"; do
+		if [[ "$arg" == "--help" || "$arg" == "-h" ]]; then
+			show_help
+			exit 0
+		fi
+	done
+
+	if [[ $# -lt 2 ]]; then
+		log_error "Missing required arguments: mission-file and milestone-number"
+		show_help
+		return 2
+	fi
+
+	MISSION_FILE="$1"
+	MILESTONE_NUM="$2"
+	shift 2
+
+	_parse_args_options "$@" || return $?
 
 	validate_parsed_inputs
 }

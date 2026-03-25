@@ -377,20 +377,10 @@ _record_sent_message() {
 }
 
 #######################################
-# Send a templated email via SES
-#######################################
-cmd_send() {
-	# Parse arguments
-	local parsed_args
-	if ! parsed_args=$(_parse_send_args "$@"); then
-		return 1
-	fi
-
-	local SEND_ACCOUNT SEND_FROM SEND_TO SEND_SUBJECT SEND_TEMPLATE SEND_BODY
-	local SEND_THREAD_ID SEND_REGION SEND_TEMPLATE_VARS
-	eval "$parsed_args"
-
-	# Validate required fields
+# Validate required send fields (account, from, to, subject, body/template).
+# Expects SEND_* variables to be set in the caller's scope.
+# Returns 1 if any required field is missing.
+_validate_send_fields() {
 	if [[ -z "$SEND_ACCOUNT" ]]; then
 		log_error "Missing --account"
 		return 1
@@ -411,6 +401,48 @@ cmd_send() {
 		log_error "Either --template or --body is required"
 		return 1
 	fi
+	return 0
+}
+
+#######################################
+# Build the In-Reply-To header value for an existing thread.
+# Arguments: thread_id
+# Prints the header line (e.g. "In-Reply-To: <id>") or nothing if not found.
+_build_reply_to_header() {
+	local thread_id="$1"
+	if [[ -z "$thread_id" ]]; then
+		return 0
+	fi
+	ensure_db
+	local last_ses_id
+	last_ses_id=$(db "$EMAIL_DB" "
+		SELECT ses_message_id FROM messages
+		WHERE thread_id = '$(sql_escape "$thread_id")'
+		AND ses_message_id != ''
+		ORDER BY received_at DESC LIMIT 1;
+	")
+	if [[ -n "$last_ses_id" ]]; then
+		echo "In-Reply-To: <${last_ses_id}>"
+	fi
+	return 0
+}
+
+#######################################
+# Send a templated email via SES
+#######################################
+cmd_send() {
+	# Parse arguments
+	local parsed_args
+	if ! parsed_args=$(_parse_send_args "$@"); then
+		return 1
+	fi
+
+	local SEND_ACCOUNT SEND_FROM SEND_TO SEND_SUBJECT SEND_TEMPLATE SEND_BODY
+	local SEND_THREAD_ID SEND_REGION SEND_TEMPLATE_VARS
+	eval "$parsed_args"
+
+	# Validate required fields
+	_validate_send_fields || return 1
 
 	# Render template if specified
 	if [[ -n "$SEND_TEMPLATE" ]]; then
@@ -431,20 +463,8 @@ cmd_send() {
 	fi
 
 	# Build In-Reply-To header for threading
-	local extra_headers=""
-	if [[ -n "$SEND_THREAD_ID" ]]; then
-		ensure_db
-		local last_ses_id
-		last_ses_id=$(db "$EMAIL_DB" "
-			SELECT ses_message_id FROM messages
-			WHERE thread_id = '$(sql_escape "$SEND_THREAD_ID")'
-			AND ses_message_id != ''
-			ORDER BY received_at DESC LIMIT 1;
-		")
-		if [[ -n "$last_ses_id" ]]; then
-			extra_headers="In-Reply-To: <${last_ses_id}>"
-		fi
-	fi
+	local extra_headers
+	extra_headers=$(_build_reply_to_header "$SEND_THREAD_ID")
 
 	# Send via SES using raw email for header control
 	local raw_message
