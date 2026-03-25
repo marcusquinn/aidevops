@@ -194,13 +194,9 @@ check_pipecat_installed() {
 
 # ─── Bot Template ──────────────────────────────────────────────────────
 
-# Generate the bot.py file with the specified LLM provider
-generate_bot_template() {
-	local llm_provider="${1:-${DEFAULT_LLM_PROVIDER}}"
-	local voice_id="${2:-${DEFAULT_CARTESIA_VOICE_ID}}"
-
-	mkdir -p "$(dirname "${PIPECAT_BOT}")"
-
+# Write the Python bot.py content to disk (the full heredoc).
+# Called by generate_bot_template(); not intended for direct use.
+_generate_bot_python_content() {
 	cat >"${PIPECAT_BOT}" <<'BOTEOF'
 """Pipecat local voice agent with Soniox STT + LLM + Cartesia TTS.
 
@@ -486,8 +482,15 @@ if __name__ == "__main__":
 
     uvicorn.run(app, host="0.0.0.0", port=args.port, log_level="warning")
 BOTEOF
+	return 0
+}
 
-	# Patch the default values based on arguments (portable sed in-place)
+# Apply non-default LLM provider and voice-id patches to the generated bot.py.
+# Called by generate_bot_template() after _generate_bot_python_content().
+_patch_bot_defaults() {
+	local llm_provider="$1"
+	local voice_id="$2"
+
 	if [[ "${llm_provider}" != "anthropic" ]]; then
 		local tmp_bot
 		tmp_bot="$(mktemp)"
@@ -498,37 +501,45 @@ BOTEOF
 		tmp_bot2="$(mktemp)"
 		sed "s/${DEFAULT_CARTESIA_VOICE_ID}/${voice_id}/g" "${PIPECAT_BOT}" >"${tmp_bot2}" && mv "${tmp_bot2}" "${PIPECAT_BOT}"
 	fi
+	return 0
+}
 
+# Generate the bot.py file with the specified LLM provider.
+# Delegates content writing to _generate_bot_python_content() and
+# default-value patching to _patch_bot_defaults().
+generate_bot_template() {
+	local llm_provider="${1:-${DEFAULT_LLM_PROVIDER}}"
+	local voice_id="${2:-${DEFAULT_CARTESIA_VOICE_ID}}"
+
+	mkdir -p "$(dirname "${PIPECAT_BOT}")"
+	_generate_bot_python_content
+	_patch_bot_defaults "${llm_provider}" "${voice_id}"
 	print_success "Bot template generated: ${PIPECAT_BOT}"
 	return 0
 }
 
 # ─── Commands ──────────────────────────────────────────────────────────
 
-cmd_setup() {
-	local llm_provider="${1:-${DEFAULT_LLM_PROVIDER}}"
-	local with_client="${2:-true}"
+# Create project directories, venv, and install all pip packages.
+# Returns the python command used, via stdout.
+# Called by cmd_setup().
+_setup_python_venv() {
+	local llm_provider="$1"
 
-	echo ""
-	echo "=== Pipecat Voice Agent Setup ==="
-	echo ""
-
-	# Check Python
 	local python_cmd
 	python_cmd=$(find_python)
 	check_python "${python_cmd}"
 	local _cp_rc=$?
 	[[ ${_cp_rc} -eq 0 ]] || return 1
+
 	local python_version
 	python_version=$("${python_cmd}" --version 2>&1) || true
 	print_success "Python: ${python_version}"
 
-	# Create project directory
 	mkdir -p "${PIPECAT_DIR}"
 	mkdir -p "$(dirname "${PIPECAT_PID_FILE}")"
 	mkdir -p "$(dirname "${PIPECAT_LOG_FILE}")"
 
-	# Create virtual environment
 	if [[ ! -d "${PIPECAT_VENV}" ]]; then
 		print_info "Creating virtual environment..."
 		"${python_cmd}" -m venv "${PIPECAT_VENV}"
@@ -537,27 +548,15 @@ cmd_setup() {
 		print_success "Virtual environment exists: ${PIPECAT_VENV}"
 	fi
 
-	# Upgrade pip
 	"${PIPECAT_VENV}/bin/python" -m pip install --upgrade pip --quiet 2>&1 | tail -1
 
-	# Install Pipecat with required services
 	print_info "Installing Pipecat with Soniox STT, Cartesia TTS, Silero VAD, WebRTC..."
 	local pip_extras="soniox,cartesia,silero,webrtc"
-
-	# Add LLM provider
 	case "${llm_provider}" in
-	anthropic)
-		pip_extras="${pip_extras},anthropic"
-		;;
-	openai)
-		pip_extras="${pip_extras},openai"
-		;;
-	local)
-		pip_extras="${pip_extras},openai" # OpenAI-compatible API
-		;;
-	both)
-		pip_extras="${pip_extras},anthropic,openai"
-		;;
+	anthropic) pip_extras="${pip_extras},anthropic" ;;
+	openai) pip_extras="${pip_extras},openai" ;;
+	local) pip_extras="${pip_extras},openai" ;;
+	both) pip_extras="${pip_extras},anthropic,openai" ;;
 	*)
 		print_warning "Unknown LLM provider: ${llm_provider}, installing both"
 		pip_extras="${pip_extras},anthropic,openai"
@@ -565,23 +564,22 @@ cmd_setup() {
 	esac
 
 	"${PIPECAT_VENV}/bin/python" -m pip install "pipecat-ai[${pip_extras}]" --quiet 2>&1 | tail -3
-
-	# Install additional dependencies
 	"${PIPECAT_VENV}/bin/python" -m pip install \
 		python-dotenv uvicorn fastapi --quiet 2>&1 | tail -1
 
-	# Verify installation
 	local pipecat_version
 	pipecat_version=$("${PIPECAT_VENV}/bin/python" -c "import pipecat; print(pipecat.__version__)" 2>/dev/null || echo "unknown")
 	print_success "Pipecat installed: v${pipecat_version}"
+	return 0
+}
 
-	# Generate bot template
-	print_info "Generating bot template..."
-	generate_bot_template "${llm_provider}" "${DEFAULT_CARTESIA_VOICE_ID}"
-
-	# Create .env template (without actual keys)
-	if [[ ! -f "${PIPECAT_DIR}/.env" ]]; then
-		cat >"${PIPECAT_DIR}/.env" <<'ENVEOF'
+# Create the .env template file if it does not already exist.
+# Called by cmd_setup().
+_setup_env_template() {
+	if [[ -f "${PIPECAT_DIR}/.env" ]]; then
+		return 0
+	fi
+	cat >"${PIPECAT_DIR}/.env" <<'ENVEOF'
 # Pipecat Voice Agent Configuration
 # Store actual keys via: aidevops secret set <KEY_NAME>
 # Or uncomment and fill in below (less secure)
@@ -599,10 +597,27 @@ cmd_setup() {
 # PIPECAT_ANTHROPIC_MODEL=claude-sonnet-4-6
 # PIPECAT_OPENAI_MODEL=gpt-4o
 ENVEOF
-		print_success "Environment template created: ${PIPECAT_DIR}/.env"
-	fi
+	print_success "Environment template created: ${PIPECAT_DIR}/.env"
+	return 0
+}
 
-	# Setup web client
+cmd_setup() {
+	local llm_provider="${1:-${DEFAULT_LLM_PROVIDER}}"
+	local with_client="${2:-true}"
+
+	echo ""
+	echo "=== Pipecat Voice Agent Setup ==="
+	echo ""
+
+	_setup_python_venv "${llm_provider}"
+	local _venv_rc=$?
+	[[ ${_venv_rc} -eq 0 ]] || return 1
+
+	print_info "Generating bot template..."
+	generate_bot_template "${llm_provider}" "${DEFAULT_CARTESIA_VOICE_ID}"
+
+	_setup_env_template
+
 	if [[ "${with_client}" == "true" ]]; then
 		cmd_setup_client
 	fi
@@ -617,7 +632,6 @@ ENVEOF
 	echo "  2. Start agent:     pipecat-helper.sh start"
 	echo "  3. Open client:     http://localhost:${DEFAULT_CLIENT_PORT}"
 	echo ""
-
 	return 0
 }
 
@@ -773,6 +787,94 @@ PAGEEOF
 	return 0
 }
 
+# Validate that all API keys required for the given LLM provider are available.
+# Sets keys_ok to "false" and prints errors for any missing key.
+# Usage: _start_check_api_keys <llm_provider> <keys_ok_varname>
+# Returns 1 if the provider is unknown; 0 otherwise (caller checks keys_ok).
+_start_check_api_keys() {
+	local llm_provider="$1"
+	local keys_ok_ref="$2"
+
+	local _key_check
+	has_api_key "SONIOX_API_KEY"
+	_key_check=$?
+	if [[ ${_key_check} -ne 0 ]]; then
+		print_error "SONIOX_API_KEY not found"
+		print_info "Set it: aidevops secret set SONIOX_API_KEY"
+		eval "${keys_ok_ref}=false"
+	fi
+
+	has_api_key "CARTESIA_API_KEY"
+	_key_check=$?
+	if [[ ${_key_check} -ne 0 ]]; then
+		print_error "CARTESIA_API_KEY not found"
+		print_info "Set it: aidevops secret set CARTESIA_API_KEY"
+		eval "${keys_ok_ref}=false"
+	fi
+
+	case "${llm_provider}" in
+	anthropic)
+		has_api_key "ANTHROPIC_API_KEY"
+		_key_check=$?
+		if [[ ${_key_check} -ne 0 ]]; then
+			print_error "ANTHROPIC_API_KEY not found"
+			print_info "Set it: aidevops secret set ANTHROPIC_API_KEY"
+			eval "${keys_ok_ref}=false"
+		fi
+		;;
+	openai)
+		has_api_key "OPENAI_API_KEY"
+		_key_check=$?
+		if [[ ${_key_check} -ne 0 ]]; then
+			print_error "OPENAI_API_KEY not found"
+			print_info "Set it: aidevops secret set OPENAI_API_KEY"
+			eval "${keys_ok_ref}=false"
+		fi
+		;;
+	local)
+		print_info "Using local LLM — ensure it's running at ${PIPECAT_LOCAL_LLM_URL:-http://127.0.0.1:1234/v1}"
+		;;
+	*)
+		print_error "Unknown LLM provider: ${llm_provider}"
+		return 1
+		;;
+	esac
+	return 0
+}
+
+# Launch the bot server process and wait up to 10 s for it to become ready.
+# Writes the PID to PIPECAT_PID_FILE.
+# Called by cmd_start().
+_start_bot_server() {
+	local llm_provider="$1"
+	local server_port="$2"
+	local voice_id="$3"
+
+	"${PIPECAT_VENV}/bin/python" "${PIPECAT_BOT}" \
+		--port "${server_port}" \
+		--llm "${llm_provider}" \
+		--voice-id "${voice_id}" \
+		>>"${PIPECAT_LOG_FILE}" 2>&1 &
+
+	local bot_pid=$!
+	echo "${bot_pid}" >"${PIPECAT_PID_FILE}"
+
+	local attempts=0
+	while [[ ${attempts} -lt 20 ]]; do
+		if curl -s --max-time 1 "http://127.0.0.1:${server_port}/api/status" >/dev/null 2>&1; then
+			print_success "Voice agent started (PID: ${bot_pid})"
+			break
+		fi
+		sleep 0.5
+		attempts=$((attempts + 1))
+	done
+
+	if [[ ${attempts} -ge 20 ]]; then
+		print_warning "Server slow to start — check logs: pipecat-helper.sh logs"
+	fi
+	return 0
+}
+
 cmd_start() {
 	local llm_provider="${1:-${DEFAULT_LLM_PROVIDER}}"
 	local server_port="${2:-${DEFAULT_SERVER_PORT}}"
@@ -798,58 +900,15 @@ cmd_start() {
 		rm -f "${PIPECAT_PID_FILE}"
 	fi
 
-	# Load API keys from secure storage
 	local keys_ok=true
-	local _key_check
-	has_api_key "SONIOX_API_KEY"
-	_key_check=$?
-	if [[ ${_key_check} -ne 0 ]]; then
-		print_error "SONIOX_API_KEY not found"
-		print_info "Set it: aidevops secret set SONIOX_API_KEY"
-		keys_ok=false
-	fi
-	has_api_key "CARTESIA_API_KEY"
-	_key_check=$?
-	if [[ ${_key_check} -ne 0 ]]; then
-		print_error "CARTESIA_API_KEY not found"
-		print_info "Set it: aidevops secret set CARTESIA_API_KEY"
-		keys_ok=false
-	fi
-
-	case "${llm_provider}" in
-	anthropic)
-		has_api_key "ANTHROPIC_API_KEY"
-		_key_check=$?
-		if [[ ${_key_check} -ne 0 ]]; then
-			print_error "ANTHROPIC_API_KEY not found"
-			print_info "Set it: aidevops secret set ANTHROPIC_API_KEY"
-			keys_ok=false
-		fi
-		;;
-	openai)
-		has_api_key "OPENAI_API_KEY"
-		_key_check=$?
-		if [[ ${_key_check} -ne 0 ]]; then
-			print_error "OPENAI_API_KEY not found"
-			print_info "Set it: aidevops secret set OPENAI_API_KEY"
-			keys_ok=false
-		fi
-		;;
-	local)
-		print_info "Using local LLM — ensure it's running at ${PIPECAT_LOCAL_LLM_URL:-http://127.0.0.1:1234/v1}"
-		;;
-	*)
-		print_error "Unknown LLM provider: ${llm_provider}"
-		return 1
-		;;
-	esac
-
+	_start_check_api_keys "${llm_provider}" keys_ok
+	local _kc_rc=$?
+	[[ ${_kc_rc} -eq 0 ]] || return 1
 	if [[ "${keys_ok}" != "true" ]]; then
 		print_error "Missing API keys — cannot start"
 		return 1
 	fi
 
-	# Regenerate bot if needed
 	if [[ ! -f "${PIPECAT_BOT}" ]]; then
 		generate_bot_template "${llm_provider}" "${voice_id}"
 	fi
@@ -862,32 +921,8 @@ cmd_start() {
 	echo "  Signaling: http://localhost:${server_port}/api/offer"
 	echo ""
 
-	# Start the bot server
-	"${PIPECAT_VENV}/bin/python" "${PIPECAT_BOT}" \
-		--port "${server_port}" \
-		--llm "${llm_provider}" \
-		--voice-id "${voice_id}" \
-		>>"${PIPECAT_LOG_FILE}" 2>&1 &
+	_start_bot_server "${llm_provider}" "${server_port}" "${voice_id}"
 
-	local bot_pid=$!
-	echo "${bot_pid}" >"${PIPECAT_PID_FILE}"
-
-	# Wait for server to be ready
-	local attempts=0
-	while [[ ${attempts} -lt 20 ]]; do
-		if curl -s --max-time 1 "http://127.0.0.1:${server_port}/api/status" >/dev/null 2>&1; then
-			print_success "Voice agent started (PID: ${bot_pid})"
-			break
-		fi
-		sleep 0.5
-		attempts=$((attempts + 1))
-	done
-
-	if [[ ${attempts} -ge 20 ]]; then
-		print_warning "Server slow to start — check logs: pipecat-helper.sh logs"
-	fi
-
-	# Start web client
 	if [[ "${with_client}" == "true" ]] && [[ -d "${CLIENT_DIR}/node_modules" ]]; then
 		cmd_start_client "${DEFAULT_CLIENT_PORT}"
 	fi
@@ -896,7 +931,6 @@ cmd_start() {
 	echo "Voice agent is running. Open http://localhost:${DEFAULT_CLIENT_PORT} to talk."
 	echo "Stop with: pipecat-helper.sh stop"
 	echo ""
-
 	return 0
 }
 
@@ -977,12 +1011,9 @@ cmd_stop() {
 	return 0
 }
 
-cmd_status() {
-	echo ""
-	echo "=== Pipecat Voice Agent Status ==="
-	echo ""
-
-	# Check venv and Pipecat
+# Print the installation section of the status output (venv, pipecat, bot, client).
+# Called by cmd_status().
+_status_installation() {
 	echo "--- Installation ---"
 	if [[ -d "${PIPECAT_VENV}" ]]; then
 		print_success "Virtual environment: ${PIPECAT_VENV}"
@@ -998,31 +1029,29 @@ cmd_status() {
 		print_info "Run: pipecat-helper.sh setup"
 	fi
 
-	# Check bot template
 	if [[ -f "${PIPECAT_BOT}" ]]; then
 		print_success "Bot template: ${PIPECAT_BOT}"
 	else
 		print_warning "Bot template: not generated"
 	fi
 
-	# Check web client
 	if [[ -d "${CLIENT_DIR}/node_modules" ]]; then
 		print_success "Web client: installed"
 	else
 		print_warning "Web client: not installed"
 	fi
+	return 0
+}
 
-	echo ""
-
-	# Check running processes
+# Print the running-process section of the status output (PID files + API probe).
+# Called by cmd_status().
+_status_processes() {
 	echo "--- Processes ---"
 	if [[ -f "${PIPECAT_PID_FILE}" ]]; then
 		local pid
 		pid=$(cat "${PIPECAT_PID_FILE}")
 		if kill -0 "${pid}" 2>/dev/null; then
 			print_success "Voice agent: running (PID: ${pid})"
-
-			# Check API endpoint
 			local status_response
 			status_response=$(curl -s --max-time 2 "http://127.0.0.1:${DEFAULT_SERVER_PORT}/api/status" 2>/dev/null || echo "")
 			if [[ -n "${status_response}" ]]; then
@@ -1052,51 +1081,59 @@ cmd_status() {
 	else
 		print_info "Web client: not running"
 	fi
+	return 0
+}
 
-	echo ""
-
-	# Check API keys
-	cmd_keys
-
-	# Check services
+# Print the service-availability section of the status output (Python module checks).
+# Called by cmd_status().
+_status_services() {
 	echo "--- Service Availability ---"
-	if [[ -d "${PIPECAT_VENV}" ]]; then
-		# Check Soniox
-		if "${PIPECAT_VENV}/bin/python" -c "from pipecat.services.soniox.stt import SonioxSTTService" 2>/dev/null; then
-			print_success "Soniox STT: module available"
-		else
-			print_warning "Soniox STT: module not installed"
-		fi
-
-		# Check Cartesia
-		if "${PIPECAT_VENV}/bin/python" -c "from pipecat.services.cartesia.tts import CartesiaTTSService" 2>/dev/null; then
-			print_success "Cartesia TTS: module available"
-		else
-			print_warning "Cartesia TTS: module not installed"
-		fi
-
-		# Check Anthropic
-		if "${PIPECAT_VENV}/bin/python" -c "from pipecat.services.anthropic.llm import AnthropicLLMService" 2>/dev/null; then
-			print_success "Anthropic LLM: module available"
-		else
-			print_warning "Anthropic LLM: module not installed"
-		fi
-
-		# Check OpenAI
-		if "${PIPECAT_VENV}/bin/python" -c "from pipecat.services.openai.llm import OpenAILLMService" 2>/dev/null; then
-			print_success "OpenAI LLM: module available"
-		else
-			print_warning "OpenAI LLM: module not installed"
-		fi
-
-		# Check WebRTC transport
-		if "${PIPECAT_VENV}/bin/python" -c "from pipecat.transports.network.small_webrtc import SmallWebRTCTransport" 2>/dev/null; then
-			print_success "SmallWebRTC: module available"
-		else
-			print_warning "SmallWebRTC: module not installed"
-		fi
+	if [[ ! -d "${PIPECAT_VENV}" ]]; then
+		return 0
 	fi
 
+	if "${PIPECAT_VENV}/bin/python" -c "from pipecat.services.soniox.stt import SonioxSTTService" 2>/dev/null; then
+		print_success "Soniox STT: module available"
+	else
+		print_warning "Soniox STT: module not installed"
+	fi
+
+	if "${PIPECAT_VENV}/bin/python" -c "from pipecat.services.cartesia.tts import CartesiaTTSService" 2>/dev/null; then
+		print_success "Cartesia TTS: module available"
+	else
+		print_warning "Cartesia TTS: module not installed"
+	fi
+
+	if "${PIPECAT_VENV}/bin/python" -c "from pipecat.services.anthropic.llm import AnthropicLLMService" 2>/dev/null; then
+		print_success "Anthropic LLM: module available"
+	else
+		print_warning "Anthropic LLM: module not installed"
+	fi
+
+	if "${PIPECAT_VENV}/bin/python" -c "from pipecat.services.openai.llm import OpenAILLMService" 2>/dev/null; then
+		print_success "OpenAI LLM: module available"
+	else
+		print_warning "OpenAI LLM: module not installed"
+	fi
+
+	if "${PIPECAT_VENV}/bin/python" -c "from pipecat.transports.network.small_webrtc import SmallWebRTCTransport" 2>/dev/null; then
+		print_success "SmallWebRTC: module available"
+	else
+		print_warning "SmallWebRTC: module not installed"
+	fi
+	return 0
+}
+
+cmd_status() {
+	echo ""
+	echo "=== Pipecat Voice Agent Status ==="
+	echo ""
+	_status_installation
+	echo ""
+	_status_processes
+	echo ""
+	cmd_keys
+	_status_services
 	echo ""
 	return 0
 }
