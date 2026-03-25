@@ -733,6 +733,110 @@ cmd_transport_status() {
 }
 
 #######################################
+# Validate required send fields and allowed values
+# Arguments: to, msg_type, payload, priority
+# Returns: 0 if valid, 1 if invalid
+#######################################
+validate_send_args() {
+	local to="$1"
+	local msg_type="$2"
+	local payload="$3"
+	local priority="$4"
+
+	if [[ -z "$to" ]]; then
+		log_error "Missing --to <agent-id>"
+		return 1
+	fi
+	if [[ -z "$msg_type" ]]; then
+		log_error "Missing --type <message-type>"
+		return 1
+	fi
+	if [[ -z "$payload" ]]; then
+		log_error "Missing --payload <message>"
+		return 1
+	fi
+
+	local valid_types="task_dispatch status_report discovery request broadcast"
+	if ! echo "$valid_types" | grep -qw "$msg_type"; then
+		log_error "Invalid type: $msg_type (valid: $valid_types)"
+		return 1
+	fi
+
+	if ! echo "high normal low" | grep -qw "$priority"; then
+		log_error "Invalid priority: $priority (valid: high, normal, low)"
+		return 1
+	fi
+
+	return 0
+}
+
+#######################################
+# Insert a broadcast message (one row per active agent, or fallback to 'all')
+# Arguments: msg_id, from, msg_type, priority, escaped_convoy, escaped_payload
+# Returns: 0
+#######################################
+send_broadcast() {
+	local msg_id="$1"
+	local from="$2"
+	local msg_type="$3"
+	local priority="$4"
+	local escaped_convoy="$5"
+	local escaped_payload="$6"
+
+	local count
+	count=$(db "$MAIL_DB" "
+        SELECT count(*) FROM agents WHERE status='active' AND id != '$(sql_escape "$from")';
+    ")
+
+	local agents_list
+	agents_list=$(db "$MAIL_DB" "
+        SELECT id FROM agents WHERE status='active' AND id != '$(sql_escape "$from")';
+    ")
+
+	if [[ -n "$agents_list" ]]; then
+		while IFS= read -r agent_id; do
+			local broadcast_id
+			broadcast_id=$(generate_id)
+			db "$MAIL_DB" "
+                INSERT INTO messages (id, from_agent, to_agent, type, priority, convoy, payload)
+                VALUES ('$broadcast_id', '$(sql_escape "$from")', '$(sql_escape "$agent_id")', '$msg_type', '$priority', '$escaped_convoy', '$escaped_payload');
+            "
+		done <<<"$agents_list"
+		log_success "Broadcast sent: $msg_id (to $count agents)"
+	else
+		db "$MAIL_DB" "
+            INSERT INTO messages (id, from_agent, to_agent, type, priority, convoy, payload)
+            VALUES ('$msg_id', '$(sql_escape "$from")', 'all', '$msg_type', '$priority', '$escaped_convoy', '$escaped_payload');
+        "
+		log_success "Sent: $msg_id → all (no agents registered)"
+	fi
+
+	return 0
+}
+
+#######################################
+# Insert a direct (unicast) message
+# Arguments: msg_id, from, to, msg_type, priority, escaped_convoy, escaped_payload
+# Returns: 0
+#######################################
+send_direct() {
+	local msg_id="$1"
+	local from="$2"
+	local to="$3"
+	local msg_type="$4"
+	local priority="$5"
+	local escaped_convoy="$6"
+	local escaped_payload="$7"
+
+	db "$MAIL_DB" "
+        INSERT INTO messages (id, from_agent, to_agent, type, priority, convoy, payload)
+        VALUES ('$msg_id', '$(sql_escape "$from")', '$(sql_escape "$to")', '$msg_type', '$priority', '$escaped_convoy', '$escaped_payload');
+    "
+	log_success "Sent: $msg_id → $to (priority: $priority)"
+	return 0
+}
+
+#######################################
 # Send a message
 #######################################
 cmd_send() {
@@ -806,29 +910,7 @@ cmd_send() {
 		esac
 	done
 
-	if [[ -z "$to" ]]; then
-		log_error "Missing --to <agent-id>"
-		return 1
-	fi
-	if [[ -z "$msg_type" ]]; then
-		log_error "Missing --type <message-type>"
-		return 1
-	fi
-	if [[ -z "$payload" ]]; then
-		log_error "Missing --payload <message>"
-		return 1
-	fi
-
-	local valid_types="task_dispatch status_report discovery request broadcast"
-	if ! echo "$valid_types" | grep -qw "$msg_type"; then
-		log_error "Invalid type: $msg_type (valid: $valid_types)"
-		return 1
-	fi
-
-	if ! echo "high normal low" | grep -qw "$priority"; then
-		log_error "Invalid priority: $priority (valid: high, normal, low)"
-		return 1
-	fi
+	validate_send_args "$to" "$msg_type" "$payload" "$priority" || return 1
 
 	ensure_db
 
@@ -840,47 +922,16 @@ cmd_send() {
 	escaped_convoy=$(sql_escape "$convoy")
 
 	if [[ "$to" == "all" || "$msg_type" == "broadcast" ]]; then
-		# Broadcast: insert one message per active agent (excluding sender)
-		local count
-		count=$(db "$MAIL_DB" "
-            SELECT count(*) FROM agents WHERE status='active' AND id != '$(sql_escape "$from")';
-        ")
-
-		local agents_list
-		agents_list=$(db "$MAIL_DB" "
-            SELECT id FROM agents WHERE status='active' AND id != '$(sql_escape "$from")';
-        ")
-
-		if [[ -n "$agents_list" ]]; then
-			while IFS= read -r agent_id; do
-				local broadcast_id
-				broadcast_id=$(generate_id)
-				db "$MAIL_DB" "
-                    INSERT INTO messages (id, from_agent, to_agent, type, priority, convoy, payload)
-                    VALUES ('$broadcast_id', '$(sql_escape "$from")', '$(sql_escape "$agent_id")', '$msg_type', '$priority', '$escaped_convoy', '$escaped_payload');
-                "
-			done <<<"$agents_list"
-			log_success "Broadcast sent: $msg_id (to $count agents)"
-		else
-			# No agents registered, insert as general broadcast
-			db "$MAIL_DB" "
-                INSERT INTO messages (id, from_agent, to_agent, type, priority, convoy, payload)
-                VALUES ('$msg_id', '$(sql_escape "$from")', 'all', '$msg_type', '$priority', '$escaped_convoy', '$escaped_payload');
-            "
-			log_success "Sent: $msg_id → all (no agents registered)"
-		fi
+		send_broadcast "$msg_id" "$from" "$msg_type" "$priority" "$escaped_convoy" "$escaped_payload"
 	else
-		db "$MAIL_DB" "
-            INSERT INTO messages (id, from_agent, to_agent, type, priority, convoy, payload)
-            VALUES ('$msg_id', '$(sql_escape "$from")', '$(sql_escape "$to")', '$msg_type', '$priority', '$escaped_convoy', '$escaped_payload');
-        "
-		log_success "Sent: $msg_id → $to (priority: $priority)"
+		send_direct "$msg_id" "$from" "$to" "$msg_type" "$priority" "$escaped_convoy" "$escaped_payload"
 	fi
 
 	# Relay via configured transport adapter (non-fatal on failure)
 	transport_relay "$msg_id" "$from" "$to" "$msg_type" "$priority" "$convoy" "$payload" "$transport"
 
 	echo "$msg_id"
+	return 0
 }
 
 #######################################
@@ -1057,10 +1108,11 @@ cmd_archive() {
 }
 
 #######################################
-# Prune: manual deletion with storage report
-# By default shows storage report. Use --force to actually delete.
+# Parse arguments for cmd_prune
+# Outputs: older_than_days and force values to stdout as key=value lines
+# Returns: 0 on success, 1 on parse error
 #######################################
-cmd_prune() {
+parse_prune_args() {
 	local older_than_days="$DEFAULT_PRUNE_DAYS"
 	local force=false
 
@@ -1092,14 +1144,19 @@ cmd_prune() {
 		return 1
 	fi
 
-	ensure_db
+	printf 'older_than_days=%s\nforce=%s\n' "$older_than_days" "$force"
+	return 0
+}
 
-	# Storage report
-	local db_size_bytes
-	db_size_bytes=$(stat -f%z "$MAIL_DB" 2>/dev/null || stat -c%s "$MAIL_DB" 2>/dev/null || echo "0")
-	local db_size_kb=$((db_size_bytes / 1024))
+#######################################
+# Print the mailbox storage report
+# Arguments: older_than_days, db_size_kb (pre-computed)
+# Returns: prunable count via stdout last line "prunable=N archivable=N"
+#######################################
+prune_storage_report() {
+	local older_than_days="$1"
+	local db_size_kb="$2"
 
-	# Single query for all counts (reduces sqlite3 invocations)
 	local total_messages unread_messages read_messages archived_messages
 	IFS='|' read -r total_messages unread_messages read_messages archived_messages < <(db -separator '|' "$MAIL_DB" "
         SELECT count(*),
@@ -1109,7 +1166,6 @@ cmd_prune() {
         FROM messages;
     ")
 
-	# Single query for prunable + archivable counts
 	local prunable archivable
 	IFS='|' read -r prunable archivable < <(db -separator '|' "$MAIL_DB" "
         SELECT
@@ -1118,13 +1174,11 @@ cmd_prune() {
         FROM messages;
     ")
 
-	# Single query for date range
 	local oldest_msg newest_msg
 	IFS='|' read -r oldest_msg newest_msg < <(db -separator '|' "$MAIL_DB" "
         SELECT coalesce(min(created_at), 'none'), coalesce(max(created_at), 'none') FROM messages;
     ")
 
-	# Per-type breakdown
 	local type_breakdown
 	type_breakdown=$(db -separator ': ' "$MAIL_DB" "
         SELECT type, count(*) FROM messages GROUP BY type ORDER BY count(*) DESC;
@@ -1152,19 +1206,20 @@ cmd_prune() {
 	echo "  Prunable (archived >${older_than_days}d): $prunable messages"
 	echo "  Archivable (read >${older_than_days}d):   $archivable messages"
 
-	if [[ "$force" != true ]]; then
-		if [[ "$prunable" -gt 0 || "$archivable" -gt 0 ]]; then
-			echo ""
-			echo "  To delete prunable messages:  mail-helper.sh prune --force"
-			echo "  To change threshold:          mail-helper.sh prune --older-than-days 30 --force"
-		else
-			echo ""
-			echo "  Nothing to prune. All messages are within the ${older_than_days}-day window."
-		fi
-		return 0
-	fi
+	# Return counts for caller decision
+	printf 'prunable=%s archivable=%s\n' "$prunable" "$archivable"
+	return 0
+}
 
-	# --force: actually delete
+#######################################
+# Execute the prune deletion (--force path)
+# Arguments: older_than_days, db_size_kb (pre-computed, for savings report)
+# Returns: 0
+#######################################
+prune_execute() {
+	local older_than_days="$1"
+	local db_size_kb="$2"
+
 	log_info "Pruning with --force (${older_than_days}-day threshold)..."
 
 	# Backup before bulk delete (t188)
@@ -1228,6 +1283,75 @@ cmd_prune() {
 
 	# Clean up old backups (t188)
 	cleanup_sqlite_backups "$MAIL_DB" 5
+	return 0
+}
+
+#######################################
+# Prune: manual deletion with storage report
+# By default shows storage report. Use --force to actually delete.
+#######################################
+cmd_prune() {
+	local older_than_days="$DEFAULT_PRUNE_DAYS"
+	local force=false
+
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--older-than-days)
+			[[ $# -lt 2 ]] && {
+				log_error "--older-than-days requires a value"
+				return 1
+			}
+			older_than_days="$2"
+			shift 2
+			;;
+		--force)
+			force=true
+			shift
+			;;
+		--dry-run) shift ;;
+		*)
+			log_error "Unknown option: $1"
+			return 1
+			;;
+		esac
+	done
+
+	if ! [[ "$older_than_days" =~ ^[0-9]+$ ]]; then
+		log_error "Invalid value for --older-than-days: must be a positive integer"
+		return 1
+	fi
+
+	ensure_db
+
+	local db_size_bytes
+	db_size_bytes=$(stat -f%z "$MAIL_DB" 2>/dev/null || stat -c%s "$MAIL_DB" 2>/dev/null || echo "0")
+	local db_size_kb=$((db_size_bytes / 1024))
+
+	local report_output prunable archivable
+	report_output=$(prune_storage_report "$older_than_days" "$db_size_kb")
+	# Last line of report is "prunable=N archivable=N"
+	local counts_line
+	counts_line=$(printf '%s\n' "$report_output" | tail -1)
+	prunable="${counts_line#prunable=}"
+	prunable="${prunable% archivable=*}"
+	archivable="${counts_line##* archivable=}"
+	# Print the report (all lines except the last counts line)
+	printf '%s\n' "$report_output" | head -n -1
+
+	if [[ "$force" != true ]]; then
+		if [[ "$prunable" -gt 0 || "$archivable" -gt 0 ]]; then
+			echo ""
+			echo "  To delete prunable messages:  mail-helper.sh prune --force"
+			echo "  To change threshold:          mail-helper.sh prune --older-than-days 30 --force"
+		else
+			echo ""
+			echo "  Nothing to prune. All messages are within the ${older_than_days}-day window."
+		fi
+		return 0
+	fi
+
+	prune_execute "$older_than_days" "$db_size_kb"
+	return 0
 }
 
 #######################################
