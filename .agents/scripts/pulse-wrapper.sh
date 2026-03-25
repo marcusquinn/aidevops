@@ -225,15 +225,17 @@ STATE_FILE="${HOME}/.aidevops/logs/pulse-state.txt"
 QUEUE_METRICS_FILE="${HOME}/.aidevops/logs/pulse-queue-metrics"
 SCOPE_FILE="${HOME}/.aidevops/logs/pulse-scope-repos"
 COMPLEXITY_SCAN_LAST_RUN="${HOME}/.aidevops/logs/complexity-scan-last-run"
-COMPLEXITY_SCAN_INTERVAL="${COMPLEXITY_SCAN_INTERVAL:-604800}"                  # 7 days in seconds
+COMPLEXITY_SCAN_INTERVAL="${COMPLEXITY_SCAN_INTERVAL:-86400}"                   # 1 day in seconds (was 7 days)
 COMPLEXITY_FUNC_LINE_THRESHOLD="${COMPLEXITY_FUNC_LINE_THRESHOLD:-100}"         # Functions longer than this are violations
-COMPLEXITY_FILE_VIOLATION_THRESHOLD="${COMPLEXITY_FILE_VIOLATION_THRESHOLD:-5}" # Files with >= this many violations get an issue
+COMPLEXITY_FILE_VIOLATION_THRESHOLD="${COMPLEXITY_FILE_VIOLATION_THRESHOLD:-1}" # Files with >= this many violations get an issue (was 5)
+COMPLEXITY_MD_LINE_THRESHOLD="${COMPLEXITY_MD_LINE_THRESHOLD:-500}"             # Agent docs longer than this get an issue
 WORKER_WATCHDOG_HELPER="${SCRIPT_DIR}/worker-watchdog.sh"
 
 # Validate complexity scan configuration (defined above, validated here)
-COMPLEXITY_SCAN_INTERVAL=$(_validate_int COMPLEXITY_SCAN_INTERVAL "$COMPLEXITY_SCAN_INTERVAL" 604800 3600)
+COMPLEXITY_SCAN_INTERVAL=$(_validate_int COMPLEXITY_SCAN_INTERVAL "$COMPLEXITY_SCAN_INTERVAL" 86400 3600)
 COMPLEXITY_FUNC_LINE_THRESHOLD=$(_validate_int COMPLEXITY_FUNC_LINE_THRESHOLD "$COMPLEXITY_FUNC_LINE_THRESHOLD" 100 50)
-COMPLEXITY_FILE_VIOLATION_THRESHOLD=$(_validate_int COMPLEXITY_FILE_VIOLATION_THRESHOLD "$COMPLEXITY_FILE_VIOLATION_THRESHOLD" 5 1)
+COMPLEXITY_FILE_VIOLATION_THRESHOLD=$(_validate_int COMPLEXITY_FILE_VIOLATION_THRESHOLD "$COMPLEXITY_FILE_VIOLATION_THRESHOLD" 1 1)
+COMPLEXITY_MD_LINE_THRESHOLD=$(_validate_int COMPLEXITY_MD_LINE_THRESHOLD "$COMPLEXITY_MD_LINE_THRESHOLD" 500 200)
 
 if [[ ! -x "$HEADLESS_RUNTIME_HELPER" ]]; then
 	printf '[pulse-wrapper] ERROR: headless runtime helper is missing or not executable: %s (SCRIPT_DIR=%s)\n' "$HEADLESS_RUNTIME_HELPER" "$SCRIPT_DIR" >&2
@@ -2491,7 +2493,7 @@ normalize_active_issue_assignments() {
 }
 
 #######################################
-# Weekly complexity scan helpers (GH#5628)
+# Daily complexity scan helpers (GH#5628)
 #######################################
 
 # Check if the complexity scan interval has elapsed.
@@ -2583,6 +2585,133 @@ _complexity_scan_collect_violations() {
 	done <<<"$shell_files"
 	echo "[pulse-wrapper] Complexity scan: ${total_violations} violations across ${files_with_violations} files" >>"$LOGFILE"
 	printf '%s' "$scan_results"
+	return 0
+}
+
+# Collect oversized agent docs (.md files in .agents/).
+# Protected files (build.txt, AGENTS.md, pulse.md) are excluded — these are
+# core infrastructure that must be simplified manually with a maintainer present.
+# Results are sorted longest-first so biggest wins come early.
+# Arguments: $1 - aidevops_path
+# Outputs: scan_results (pipe-delimited lines: file_path|line_count) via stdout
+_complexity_scan_collect_md_violations() {
+	local aidevops_path="$1"
+
+	# Protected files — excluded from automated simplification (matches code-simplifier.md)
+	local protected_pattern='prompts/build\.txt|^\.agents/AGENTS\.md|^AGENTS\.md|scripts/commands/pulse\.md'
+
+	local md_files
+	md_files=$(git -C "$aidevops_path" ls-files '*.md' | grep -E '^\.agents/' | grep -Ev '_archive/|archived/' | grep -Ev "$protected_pattern" || true)
+	if [[ -z "$md_files" ]]; then
+		echo "[pulse-wrapper] Complexity scan (.md): no agent doc files found" >>"$LOGFILE"
+		return 1
+	fi
+
+	local scan_results=""
+	local oversized_count=0
+	while IFS= read -r file; do
+		[[ -n "$file" ]] || continue
+		local full_path="${aidevops_path}/${file}"
+		[[ -f "$full_path" ]] || continue
+		local lc
+		lc=$(wc -l <"$full_path" 2>/dev/null | tr -d ' ')
+		if [[ "$lc" -ge "$COMPLEXITY_MD_LINE_THRESHOLD" ]]; then
+			scan_results="${scan_results}${file}|${lc}"$'\n'
+			oversized_count=$((oversized_count + 1))
+		fi
+	done <<<"$md_files"
+
+	# Sort longest-first (descending by line count after the pipe)
+	scan_results=$(printf '%s' "$scan_results" | sort -t'|' -k2 -rn)
+
+	echo "[pulse-wrapper] Complexity scan (.md): ${oversized_count} files exceed ${COMPLEXITY_MD_LINE_THRESHOLD} lines" >>"$LOGFILE"
+	printf '%s' "$scan_results"
+	return 0
+}
+
+# Create GitHub issues for oversized agent docs.
+# Uses tier:thinking label (opus) because doc simplification requires deep
+# reasoning to distinguish noise from institutional knowledge.
+# Arguments: $1 - scan_results (pipe-delimited: file_path|line_count), $2 - repos_json, $3 - aidevops_slug
+_complexity_scan_create_md_issues() {
+	local scan_results="$1"
+	local repos_json="$2"
+	local aidevops_slug="$3"
+	local issues_created=0
+	local issues_skipped=0
+
+	local existing_issues
+	existing_issues=$(gh issue list --repo "$aidevops_slug" \
+		--label "simplification-debt" --state open \
+		--json number,title,body --limit 200 2>/dev/null) || existing_issues="[]"
+
+	local maintainer
+	maintainer=$(jq -r --arg slug "$aidevops_slug" \
+		'.initialized_repos[] | select(.slug == $slug) | .maintainer // empty' \
+		"$repos_json" 2>/dev/null)
+	if [[ -z "$maintainer" ]]; then
+		maintainer=$(echo "$aidevops_slug" | cut -d/ -f1)
+	fi
+
+	while IFS='|' read -r file_path line_count; do
+		[[ -n "$file_path" ]] || continue
+
+		local issue_key="$file_path"
+		local has_existing="false"
+		if echo "$existing_issues" | jq -e --arg key "$issue_key" \
+			'.[] | select((.title // "" | contains($key)) or (.body // "" | contains("**File:** `" + $key + "`")))' \
+			>/dev/null 2>&1; then
+			has_existing="true"
+		fi
+
+		if [[ "$has_existing" == "true" ]]; then
+			echo "[pulse-wrapper] Complexity scan (.md): skipping ${file_path} — existing open issue" >>"$LOGFILE"
+			issues_skipped=$((issues_skipped + 1))
+			continue
+		fi
+
+		local issue_body
+		issue_body="## Agent doc simplification (automated scan)
+
+**File:** \`${file_path}\`
+**Current size:** ${line_count} lines (threshold: ${COMPLEXITY_MD_LINE_THRESHOLD})
+
+### Proposed action
+
+Tighten and restructure this agent doc. Follow \`tools/build-agent/build-agent.md\` guidance. Key principles:
+
+1. **Preserve all institutional knowledge** — every verbose rule exists because something broke without it. Do not remove task IDs, incident references, error statistics, or decision rationale. Compress prose, not knowledge.
+2. **Order by importance** — most critical instructions first (primacy effect: LLMs weight earlier context more heavily). Security rules, core workflow, then edge cases.
+3. **Split if needed** — if the file covers multiple distinct concerns, extract sub-docs with a parent index. Use progressive disclosure (pointers, not inline content).
+4. **Use search patterns, not line numbers** — any \`file:line_number\` references to other files go stale on every edit. Use \`rg \"pattern\"\` or section heading references instead.
+
+### Verification
+
+- Content preservation: all code blocks, URLs, task ID references (\`tNNN\`, \`GH#NNN\`), and command examples must be present before and after
+- No broken internal links or references
+- Agent behaviour unchanged (test with a representative query if possible)
+
+### Confidence: medium
+
+Automated scan identified this file by size. The best simplification strategy requires human judgment — some large files are appropriately large.
+
+---
+**To approve or decline**, comment on this issue:
+- \`approved\` — removes the review gate and queues for automated dispatch
+- \`declined: <reason>\` — closes this issue (include your reason after the colon)"
+
+		if gh issue create --repo "$aidevops_slug" \
+			--title "simplification: tighten agent doc ${issue_key} (${line_count} lines)" \
+			--label "simplification-debt" --label "needs-maintainer-review" --label "tier:thinking" \
+			--assignee "$maintainer" \
+			--body "$issue_body" >/dev/null 2>&1; then
+			issues_created=$((issues_created + 1))
+			echo "[pulse-wrapper] Complexity scan (.md): created issue for ${file_path} (${line_count} lines)" >>"$LOGFILE"
+		else
+			echo "[pulse-wrapper] Complexity scan (.md): failed to create issue for ${file_path}" >>"$LOGFILE"
+		fi
+	done <<<"$scan_results"
+	echo "[pulse-wrapper] Complexity scan (.md) complete: ${issues_created} issues created, ${issues_skipped} skipped (existing)" >>"$LOGFILE"
 	return 0
 }
 
@@ -2691,20 +2820,22 @@ This is an automated scan. The function lengths are factual, but the best decomp
 }
 
 #######################################
-# Weekly complexity scan (GH#5628)
+# Daily complexity scan (GH#5628)
 #
-# Runs the same awk-based function complexity check used by CI
-# (code-quality.yml "Shell function complexity" step) and creates
-# simplification-debt issues for files that exceed the per-file
-# violation threshold. Runs at most once per COMPLEXITY_SCAN_INTERVAL
-# (default 7 days), tracked via a timestamp file.
+# Scans both shell scripts (.sh) and agent docs (.md) for complexity:
+# - .sh files: functions exceeding COMPLEXITY_FUNC_LINE_THRESHOLD lines
+# - .md files: agent docs exceeding COMPLEXITY_MD_LINE_THRESHOLD lines
 #
-# This is the "periodic trigger" that feeds the simplification pipeline:
-#   scan → issue (needs-maintainer-review) → maintainer approves →
-#   pulse dispatches worker → PR → merge → threshold ratchets down
+# Protected files (build.txt, AGENTS.md, pulse.md) are excluded from
+# .md scanning — these are core infrastructure requiring manual review.
 #
-# Deduplication: checks for existing open simplification-debt issues
-# matching the same repo-relative file path before creating a new one.
+# Results are processed longest-first so the biggest wins come early
+# and the process is refined by the time shorter files are reached.
+#
+# .md issues get tier:thinking (opus) because doc simplification requires
+# deep reasoning to distinguish noise from institutional knowledge.
+#
+# Runs at most once per COMPLEXITY_SCAN_INTERVAL (default 1 day).
 #
 # Returns: 0 always (best-effort, never breaks the pulse)
 #######################################
@@ -2717,15 +2848,26 @@ run_weekly_complexity_scan() {
 
 	_complexity_scan_check_interval "$now_epoch" || return 0
 
-	echo "[pulse-wrapper] Running weekly complexity scan (GH#5628)..." >>"$LOGFILE"
+	echo "[pulse-wrapper] Running daily complexity scan (GH#5628)..." >>"$LOGFILE"
 
 	local aidevops_path
 	aidevops_path=$(_complexity_scan_find_repo "$repos_json" "$aidevops_slug" "$now_epoch") || return 0
 
-	local scan_results
-	scan_results=$(_complexity_scan_collect_violations "$aidevops_path" "$now_epoch") || return 0
+	# Phase 1: Shell script function complexity (longest-first)
+	local sh_results
+	sh_results=$(_complexity_scan_collect_violations "$aidevops_path" "$now_epoch") || true
+	if [[ -n "$sh_results" ]]; then
+		# Sort longest-first by violation count (field 2)
+		sh_results=$(printf '%s' "$sh_results" | sort -t'|' -k2 -rn)
+		_complexity_scan_create_issues "$sh_results" "$repos_json" "$aidevops_slug"
+	fi
 
-	_complexity_scan_create_issues "$scan_results" "$repos_json" "$aidevops_slug"
+	# Phase 2: Agent doc size (.md files, longest-first)
+	local md_results
+	md_results=$(_complexity_scan_collect_md_violations "$aidevops_path") || true
+	if [[ -n "$md_results" ]]; then
+		_complexity_scan_create_md_issues "$md_results" "$repos_json" "$aidevops_slug"
+	fi
 
 	echo "$now_epoch" >"$COMPLEXITY_SCAN_LAST_RUN"
 	return 0
@@ -3494,7 +3636,7 @@ run_underfill_worker_recycler() {
 #   0. Instance lock (mkdir-based atomic — prevents concurrent pulses on macOS+Linux)
 #   1. Gate checks (consent, dedup)
 #   2. Cleanup (orphans, worktrees, stashes)
-#   2.5. Weekly complexity scan (creates simplification-debt issues)
+#   2.5. Daily complexity scan — .sh functions + .md agent docs (creates simplification-debt issues)
 #   3. Prefetch state (parallel gh API calls)
 #   4. Run pulse (LLM session — dispatch workers, merge PRs)
 #
@@ -3521,8 +3663,9 @@ _run_preflight_stages() {
 	calculate_priority_allocations
 	check_session_count >/dev/null
 
-	# Weekly complexity scan (GH#5628): creates simplification-debt issues
-	# for files with many complex functions. Runs at most once per week.
+	# Daily complexity scan (GH#5628): creates simplification-debt issues
+	# for .sh files with complex functions and .md agent docs exceeding size
+	# threshold. Longest files first. Runs at most once per day.
 	# Non-fatal — pulse proceeds even if the scan fails.
 	run_stage_with_timeout "complexity_scan" "$PRE_RUN_STAGE_TIMEOUT" run_weekly_complexity_scan || true
 

@@ -1079,9 +1079,18 @@ Keep the beginning of your prompts stable across calls:
 [AGENTS.md content]              ← Not cached (prefix changed)
 ```
 
-**Instruction Ordering**
+**Instruction Ordering — Primacy Effect**
 
-Never reorder instructions between calls:
+LLMs weight instructions near the top of context more heavily than those near the bottom (primacy bias). This is separate from the cache concern below — it affects instruction-following reliability even within a single call.
+
+Order agent content by importance:
+1. **Critical rules** (security, safety, core workflow) — top of file
+2. **Frequent operations** (common tasks, standard patterns) — middle
+3. **Edge cases and reference** (rare scenarios, examples) — bottom
+
+This means the most important instructions get the strongest attention signal, and if context is truncated or attention degrades, the critical rules are the last to be affected.
+
+Never reorder instructions between calls (cache concern):
 
 ```markdown
 # Good: Consistent order
