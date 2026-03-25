@@ -16,7 +16,7 @@ tools:
 
 # Brand Identity Bridge
 
-Per-project brand identity that bridges design agents and content agents. A designer picks "Glassmorphism + Trust Blue" -- this file ensures the copywriter knows that means "confident, technical, concise."
+Per-project brand identity that bridges design agents and content agents. A designer picks "Glassmorphism + Trust Blue" — this file ensures the copywriter knows that means "confident, technical, concise."
 
 <!-- AI-CONTEXT-START -->
 
@@ -29,37 +29,27 @@ Per-project brand identity that bridges design agents and content agents. A desi
 - **Create from existing site**: Run URL study via `tools/design/ui-ux-inspiration.md`
 - **Related**: `content/guidelines.md` (structural rules), `content/platform-personas.md` (channel adaptation), `content/production/image.md` (imagery params), `workflows/ui-verification.md` (quality gates)
 
-**When to use**: Before any design or content work on a project. Check `context/brand-identity.toon` -- if missing, create one before proceeding.
+**When to use**: Before any design or content work on a project. Check `context/brand-identity.toon` — if missing, create one before proceeding.
 
 <!-- AI-CONTEXT-END -->
 
 ## The Problem This Solves
 
-Design and content agents operate independently. Without a shared brand definition:
-
-- A designer picks colours and typography; the copywriter writes in a tone that doesn't match
-- Button styling says "premium and restrained" but CTA copy says "GRAB IT NOW!!!"
-- Image generation uses photorealistic style while the site uses flat illustrations
-- Icon libraries get mixed (Lucide outline on one page, Heroicons filled on another)
-- Brand decisions scatter across conversation history, lost between sessions
-
-The brand identity file is the single source of truth. It lives in the project repo as `context/brand-identity.toon` and persists across sessions.
+Without a shared brand definition: designers and copywriters produce mismatched output; button styling says "premium" but CTA copy says "GRAB IT NOW!!!"; image generation uses photorealistic style while the site uses flat illustrations; icon libraries get mixed; brand decisions scatter across conversation history. The brand identity file is the single source of truth, persisting across sessions in `context/brand-identity.toon`.
 
 ## Brand Identity Template
 
-Each project gets a `context/brand-identity.toon` file covering 8 dimensions. The template below defines the schema -- each section maps to a TOON block.
+Each project gets a `context/brand-identity.toon` file covering 8 dimensions.
 
 ### Dimension 1: Visual Style
-
-The foundation -- UI style, colour palette, and typography that define the visual language.
 
 ```toon
 [visual_style]
 ui_style = ""              # From catalogue: Glassmorphism, Neubrutalism, etc.
 ui_style_keywords = []     # CSS/design keywords for implementation
-colour_palette_name = ""   # From catalogue or custom
+colour_palette_name = ""
 colours
-  primary = ""             # Hex, used for primary actions and brand elements
+  primary = ""             # Hex, primary actions and brand elements
   secondary = ""           # Hex, supporting colour
   accent = ""              # Hex, highlights and interactive elements
   background = ""          # Hex, page/section backgrounds
@@ -69,26 +59,24 @@ colours
   success = ""             # Hex, positive states
   warning = ""             # Hex, caution states
   error = ""               # Hex, error states
-dark_mode = false          # Whether dark mode variant exists
+dark_mode = false
 dark_mode_strategy = ""    # "invert" | "separate_palette" | "dimmed"
 typography
-  heading_font = ""        # Font family for headings
-  body_font = ""           # Font family for body text
-  mono_font = ""           # Font family for code/technical
-  heading_weight = ""      # e.g., "700" or "bold"
-  body_weight = ""         # e.g., "400" or "regular"
-  base_size = ""           # e.g., "16px" or "1rem"
+  heading_font = ""
+  body_font = ""
+  mono_font = ""
+  heading_weight = ""      # e.g., "700"
+  body_weight = ""         # e.g., "400"
+  base_size = ""           # e.g., "16px"
   scale_ratio = ""         # e.g., "1.25" (Major Third)
   line_height = ""         # e.g., "1.6"
   letter_spacing = ""      # e.g., "normal" or "-0.02em"
 border_radius = ""         # e.g., "8px", "full", "none"
-spacing_unit = ""          # e.g., "4px", "0.25rem"
+spacing_unit = ""          # e.g., "4px"
 shadow_style = ""          # e.g., "subtle", "elevated", "flat", "layered"
 ```
 
 ### Dimension 2: Voice & Tone
-
-The verbal personality -- how the brand sounds in writing.
 
 ```toon
 [voice_and_tone]
@@ -101,7 +89,7 @@ perspective = ""           # "first_person_plural" | "first_person_singular" | "
 formality_spectrum = 0     # 1-10 scale, 1=very casual, 10=very formal
 emotional_range = ""       # "restrained" | "moderate" | "expressive"
 jargon_policy = ""         # "avoid" | "define_on_first_use" | "assume_knowledge"
-british_english = false    # Whether to use British spelling
+british_english = false
 brand_voice_examples
   do = []                  # Example phrases that sound like this brand
   dont = []                # Example phrases that do NOT sound like this brand
@@ -109,19 +97,17 @@ brand_voice_examples
 
 ### Dimension 3: Copywriting Patterns
 
-Specific writing rules -- how headlines, CTAs, and body copy are structured.
-
 ```toon
 [copywriting_patterns]
 headline_style = ""        # "question" | "statement" | "how_to" | "number" | "mixed"
 headline_case = ""         # "sentence" | "title" | "lowercase"
-headline_max_words = 0     # Maximum words in a headline
+headline_max_words = 0
 subheadline_style = ""     # "explanatory" | "benefit" | "action"
 paragraph_length = ""      # "one_sentence" | "two_three_sentences" | "varied"
 cta_language = ""          # "direct" | "benefit_led" | "urgency" | "conversational"
 cta_examples = []          # e.g., ["Start building", "See how it works", "Try free"]
-power_words = []           # Words that align with brand voice
-words_to_avoid = []        # Words that clash with brand voice
+power_words = []
+words_to_avoid = []
 transition_style = ""      # "none" | "subtle" | "explicit"
 list_style = ""            # "bullets" | "numbers" | "prose" | "mixed"
 social_proof_style = ""    # "testimonial_quotes" | "stats" | "logos" | "case_studies"
@@ -131,8 +117,6 @@ empty_state_tone = ""      # "encouraging" | "instructional" | "playful"
 
 ### Dimension 4: Imagery
 
-Photography, illustration, and visual content direction.
-
 ```toon
 [imagery]
 primary_style = ""         # "photography" | "illustration" | "3d" | "mixed" | "abstract"
@@ -140,7 +124,7 @@ photography_style = ""     # "editorial" | "lifestyle" | "product" | "documentar
 illustration_style = ""    # "flat" | "isometric" | "hand_drawn" | "geometric" | "line_art"
 mood = ""                  # "bright_optimistic" | "dark_moody" | "warm_natural" | "cool_technical"
 colour_treatment = ""      # "full_colour" | "muted" | "duotone" | "monochrome" | "brand_tinted"
-subjects = []              # e.g., ["people_working", "abstract_shapes", "product_screenshots"]
+subjects = []
 composition_preference = "" # "centered" | "rule_of_thirds" | "asymmetric" | "full_bleed"
 aspect_ratios
   hero = ""                # e.g., "16:9"
@@ -155,13 +139,11 @@ diversity_requirements = "" # "representative" | "industry_specific" | "not_appl
 
 ### Dimension 5: Iconography
 
-Icon library, style, and usage rules.
-
 ```toon
 [iconography]
 library = ""               # "lucide" | "heroicons" | "phosphor" | "tabler" | "custom"
 style = ""                 # "outline" | "filled" | "duotone" | "solid"
-stroke_width = ""          # e.g., "1.5px", "2px" (for outline icons)
+stroke_width = ""          # e.g., "1.5px", "2px"
 size_scale
   xs = ""                  # e.g., "12px"
   sm = ""                  # e.g., "16px"
@@ -171,75 +153,67 @@ size_scale
 corner_style = ""          # "rounded" | "sharp" | "mixed"
 colour_usage = ""          # "monochrome" | "brand_colours" | "contextual"
 animation = ""             # "none" | "hover_only" | "transition" | "micro_interaction"
-fallback_library = ""      # Secondary library if primary lacks an icon
-custom_icons = []          # List of custom icons not in the library
+fallback_library = ""
+custom_icons = []
 ```
 
 ### Dimension 6: Buttons & Forms
 
-Both visual styling AND verbal patterns for interactive elements.
-
 ```toon
 [buttons_and_forms]
-# Visual styling
 button_variants
   primary
     background = ""        # Hex or gradient
-    text_colour = ""       # Hex
+    text_colour = ""
     border_radius = ""     # e.g., "8px", "full"
     padding = ""           # e.g., "12px 24px"
     font_weight = ""       # e.g., "600"
-    shadow = ""            # e.g., "0 2px 4px rgba(0,0,0,0.1)"
+    shadow = ""
     hover_effect = ""      # "darken" | "lighten" | "scale" | "shadow" | "glow"
     transition = ""        # e.g., "all 150ms ease"
   secondary
     style = ""             # "outline" | "ghost" | "subtle" | "tonal"
   destructive
-    style = ""             # Visual style only: e.g., "red background, white text"
-    behaviour = ""         # Behavioural rules: e.g., "confirm before action"
+    style = ""
+    behaviour = ""         # e.g., "confirm before action"
 form_fields
   style = ""               # "outlined" | "filled" | "underlined" | "minimal"
-  border_radius = ""       # e.g., "6px"
-  focus_ring = ""          # e.g., "2px solid primary" or "glow"
+  border_radius = ""
+  focus_ring = ""          # e.g., "2px solid primary"
   label_position = ""      # "above" | "floating" | "inline" | "placeholder_only"
   validation_style = ""    # "inline" | "tooltip" | "below_field" | "summary"
-# Verbal patterns -- CTA copy, labels, and error messages
 button_copy_patterns
-  primary_cta = []         # e.g., ["Get started", "Start free trial", "Create account"]
-  secondary_cta = []       # e.g., ["Learn more", "See pricing", "View demo"]
-  destructive_cta = []     # e.g., ["Delete account", "Remove", "Cancel plan"]
-  confirmation_cta = []    # e.g., ["Yes, delete", "Confirm", "I understand"]
+  primary_cta = []         # e.g., ["Get started", "Start free trial"]
+  secondary_cta = []       # e.g., ["Learn more", "See pricing"]
+  destructive_cta = []     # e.g., ["Delete account", "Remove"]
+  confirmation_cta = []    # e.g., ["Yes, delete", "Confirm"]
 label_voice = ""           # "instructional" | "conversational" | "minimal"
 label_examples
   do = []                  # e.g., ["Your email", "Company name"]
-  dont = []                # e.g., ["Enter your email address here", "INPUT EMAIL"]
+  dont = []                # e.g., ["Enter your email address here"]
 placeholder_style = ""     # "example_data" | "instruction" | "none"
 error_message_examples
-  required = ""            # e.g., "Please enter your email" vs "Email is required"
-  invalid = ""             # e.g., "That doesn't look like an email" vs "Invalid email format"
-  server = ""              # e.g., "Something went wrong. Try again?" vs "Error 500"
+  required = ""
+  invalid = ""
+  server = ""
 success_message_style = "" # "celebratory" | "matter_of_fact" | "next_steps"
 ```
 
 ### Dimension 7: Media & Motion
 
-Video, animation, and dynamic content direction.
-
 ```toon
 [media_and_motion]
-# Visual motion
 animation_approach = ""    # "subtle" | "moderate" | "bold" | "none"
 transition_timing = ""     # "fast" (150ms) | "normal" (300ms) | "slow" (500ms)
 easing = ""                # "ease-out" | "spring" | "linear" | "custom"
 loading_pattern = ""       # "skeleton" | "spinner" | "shimmer" | "progressive"
 scroll_behaviour = ""      # "smooth" | "snap" | "parallax" | "none"
 hover_interactions = ""    # "subtle_lift" | "colour_shift" | "scale" | "none"
-page_transitions = ""     # "fade" | "slide" | "none" | "morph"
-micro_interactions = []    # e.g., ["button_press", "toggle_switch", "form_success"]
-# Video and audio
+page_transitions = ""      # "fade" | "slide" | "none" | "morph"
+micro_interactions = []
 video_style = ""           # "talking_head" | "screen_recording" | "animated" | "cinematic" | "mixed"
 video_pacing = ""          # "fast_cuts" | "measured" | "documentary" | "energetic"
-music_mood = ""            # "upbeat" | "ambient" | "corporate" | "none" | "genre_specific"
+music_mood = ""            # "upbeat" | "ambient" | "corporate" | "none"
 narration_style = ""       # "conversational" | "authoritative" | "storytelling" | "none"
 narration_perspective = "" # "first_person" | "second_person" | "third_person"
 sound_effects = ""         # "none" | "subtle" | "prominent"
@@ -248,8 +222,6 @@ video_outro_style = ""     # "cta_card" | "subscribe_prompt" | "fade_out" | "loo
 ```
 
 ### Dimension 8: Brand Positioning
-
-The shared axis that aligns design and content -- where the brand sits on key spectrums.
 
 ```toon
 [brand_positioning]
@@ -260,267 +232,104 @@ innovative_vs_established = 0  # 1=cutting-edge, 10=trusted and traditional
 minimal_vs_maximal = 0         # 1=stripped back, 10=feature-rich and dense
 technical_vs_simple = 0        # 1=consumer-friendly, 10=developer/expert
 global_vs_local = 0            # 1=hyper-local, 10=global/universal
-# Positioning statement
-tagline = ""                   # One-line brand promise
-value_proposition = ""         # What you do, for whom, why it matters
-competitive_differentiator = "" # What makes you different from alternatives
-target_audience = ""           # Primary audience description
+tagline = ""
+value_proposition = ""
+competitive_differentiator = ""
+target_audience = ""
 audience_sophistication = ""   # "beginner" | "intermediate" | "expert" | "mixed"
-industry = ""                  # e.g., "developer_tools", "healthcare", "ecommerce"
-# Emotional targets
-desired_first_impression = ""  # What someone should feel in the first 5 seconds
-desired_trust_signals = []     # e.g., ["social_proof", "certifications", "transparency"]
+industry = ""
+desired_first_impression = ""
+desired_trust_signals = []
 brand_archetype = ""           # e.g., "creator", "sage", "explorer", "hero"
 ```
 
 ## Agent Integration
 
-Every agent that produces design or content output must check for `context/brand-identity.toon` before generating. If present, all output must align. This is not optional guidance -- it is a constraint.
+Every agent that produces design or content output must check for `context/brand-identity.toon` before generating. If present, all output must align. This is not optional guidance — it is a constraint.
 
 ### Design Agents
 
-Design agents (UI implementation, component design, layout) read these sections:
-
-| Section | What it controls |
-|---------|-----------------|
-| `visual_style` | Colour palette, typography, border radius, shadows, spacing |
-| `iconography` | Icon library, style, sizing, animation |
-| `buttons_and_forms` | Button variants, form field styling, focus states, validation |
-| `media_and_motion` | Animation approach, transitions, hover effects, loading patterns |
-| `brand_positioning` | Premium vs accessible, minimal vs maximal (affects density and whitespace) |
-
-**Integration rule for design agents**: Before generating any UI component, read `context/brand-identity.toon`. Extract `visual_style`, `iconography`, and `buttons_and_forms`. Apply these as hard constraints -- not suggestions. If the brand identity specifies `border_radius = "full"`, every button and input uses full rounding. No exceptions without explicit user override.
-
-Also check `context/inspiration/` for project-specific design patterns extracted from studied URLs. These provide concrete visual references that complement the abstract brand identity.
+Read `visual_style`, `iconography`, `buttons_and_forms`, `media_and_motion`, `brand_positioning`. Apply as hard constraints — not suggestions. If `border_radius = "full"`, every button and input uses full rounding. Also check `context/inspiration/` for project-specific design patterns.
 
 ### Content Agents
 
-Content agents (copywriting, blog posts, social media, email) read these sections:
-
-| Section | What it controls |
-|---------|-----------------|
-| `voice_and_tone` | Register, vocabulary, personality, humour, perspective |
-| `copywriting_patterns` | Headlines, CTAs, paragraph structure, power words, error messages |
-| `buttons_and_forms` | CTA button copy, label voice, error message tone, placeholder style |
-| `brand_positioning` | Audience sophistication, formality level, emotional targets |
-| `imagery` | Image subjects and mood (for image selection in content) |
-
-**Integration rule for content agents**: Before writing any copy, read `context/brand-identity.toon`. Extract `voice_and_tone` and `copywriting_patterns`. These override the defaults in `content/guidelines.md`. When a brand identity is present, `guidelines.md` provides structural rules (paragraph length, HTML formatting, SEO bolding) while `brand-identity.toon` provides the voice. When no brand identity exists, `guidelines.md` is the sole authority.
+Read `voice_and_tone`, `copywriting_patterns`, `buttons_and_forms`, `brand_positioning`, `imagery`. These override defaults in `content/guidelines.md`. When brand identity is present, `guidelines.md` provides structural rules; `brand-identity.toon` provides the voice.
 
 ### Production Agents
 
-Production agents (image generation, video, audio, character design) read these sections:
-
-| Section | What it controls |
-|---------|-----------------|
-| `imagery` | Photography vs illustration, mood, colour treatment, composition |
-| `iconography` | Icon style for any generated graphics containing icons |
-| `media_and_motion` | Video style, pacing, music mood, narration |
-| `brand_positioning` | Premium vs accessible, playful vs serious (affects visual tone) |
-| `visual_style` | Colour palette (for brand-consistent image generation) |
-
-**Integration rule for production agents**: Before generating any visual or video asset, read `context/brand-identity.toon`. Extract `imagery` and `visual_style.colours`. Pass the colour palette as constraints to image generation tools (see `content/production/image.md` for Nanobanana Pro JSON schema -- map brand colours to the `color.palette` field). For character design, also read `brand_positioning` to align character personality with brand archetype (see `content/production/characters.md`).
+Read `imagery`, `iconography`, `media_and_motion`, `brand_positioning`, `visual_style`. Pass colour palette as constraints to image generation tools (see `content/production/image.md` for Nanobanana Pro JSON schema). For character design, read `brand_positioning` to align character personality with brand archetype.
 
 ### All Agents
 
-Every agent reads `brand_positioning` -- it is the shared axis that keeps design and content aligned. A brand positioned at `premium_vs_accessible = 9` and `playful_vs_serious = 8` demands both restrained visual design AND formal, confident copy. Neither side can deviate independently.
+Every agent reads `brand_positioning` — it is the shared axis that keeps design and content aligned. A brand at `premium_vs_accessible = 9` and `playful_vs_serious = 8` demands both restrained visual design AND formal, confident copy.
 
-**Relationship to `content/humanise.md`**: The humanise agent removes AI writing patterns but must respect the brand voice. If the brand identity specifies `humour = "dry"` and `personality_traits = ["witty"]`, humanise should preserve wit rather than flattening to neutral. Pass the `voice_and_tone` section to humanise as context.
+**Relationship to `content/humanise.md`**: Pass `voice_and_tone` as context. Preserves brand personality traits during AI pattern removal instead of flattening to neutral.
 
-**Relationship to `workflows/ui-verification.md`**: UI verification quality gates always apply regardless of brand identity. Brand identity adds constraints on top (e.g., "all buttons must use the primary colour") but never relaxes verification requirements. The verification workflow checks that implemented UI matches the brand identity when one exists.
+**Relationship to `workflows/ui-verification.md`**: Brand identity adds constraints (colour consistency, icon library, typography) but never relaxes verification requirements.
 
-## Workflow: Create Brand Identity from Scratch
+## Workflow: Create Brand Identity
 
-When a project has no `context/brand-identity.toon`, create one before starting design or content work.
+### From Scratch
 
-### Step 1: Visual Identity Interview
+1. **Visual identity interview** — Run style interview from `tools/design/ui-ux-inspiration.md`. Produces: preferred UI style, colour palette, typography pairing, imagery direction, extracted patterns from reference sites (saved to `context/inspiration/`).
 
-Run the style interview from `tools/design/ui-ux-inspiration.md`. This presents UI styles from the catalogue (`tools/design/ui-ux-catalogue.toon`), asks the user to share sites they like, and extracts visual patterns.
+2. **Verbal identity interview** — Ask: voice adjectives (3-5), tone spectrum (1-10 scales for casual/formal, playful/serious, simple/technical), CTA style pairs ("Get started" vs "Begin your journey"), error message tone (casual/neutral/technical), words to avoid.
 
-The interview produces:
+3. **Imagery and media interview** — Image style (photography/illustration/3D/abstract), people in images, icon library (show visual samples of Lucide/Heroicons/Phosphor/Tabler), animation level, video style.
 
-- Preferred UI style (or combination)
-- Colour palette (from catalogue or custom)
-- Typography pairing
-- Imagery direction
-- Extracted patterns from reference sites (saved to `context/inspiration/`)
+4. **Brand positioning** — Walk through each spectrum with examples at each end. Derive positioning statement from answers.
 
-### Step 2: Verbal Identity Interview
+5. **Generate and review** — Synthesise into `context/brand-identity.toon`. Highlight internal contradictions (e.g., "playful" voice with "corporate" positioning). Iterate until approved.
 
-After visual identity is established, interview the user on verbal identity:
+### From Existing Site
 
-1. **Voice**: "How should your brand sound? Pick 3-5 adjectives." Show examples:
-   - Confident and direct (Stripe)
-   - Warm and encouraging (Notion)
-   - Technical and precise (Vercel)
-   - Playful and irreverent (Slack)
-   - Authoritative and trustworthy (IBM)
+1. **URL study** — Run URL study from `tools/design/ui-ux-inspiration.md`. Extracts: colour palette, typography, UI patterns, button/form styling, icon library, animation patterns.
 
-2. **Tone spectrum**: "On a scale of 1-10, where does your brand sit?"
-   - Casual (1) -------- Formal (10)
-   - Playful (1) -------- Serious (10)
-   - Simple (1) -------- Technical (10)
+2. **Content analysis** — Read 5-10 pages. Identify voice patterns, CTA language, error messages, imagery style.
 
-3. **CTA style**: Show pairs and ask which feels right:
-   - "Get started" vs "Begin your journey"
-   - "Try free" vs "Start your free trial"
-   - "Learn more" vs "Discover how it works"
-   - "Sign up" vs "Create your account"
-   - "Buy now" vs "Add to cart"
+3. **Present findings** — Show current brand identity as a filled-in template: "Here's your current visual identity / how your copy sounds / patterns in your CTAs."
 
-4. **Error messages**: "When something goes wrong, how should your product respond?"
-   - "Oops! That didn't work. Try again?" (casual)
-   - "We couldn't process your request. Please try again." (neutral)
-   - "Request failed. Check your input and retry." (technical)
+4. **Refine** — Ask: what should stay, what should change, what's missing, new directions?
 
-5. **Words to avoid**: "Any words or phrases that feel wrong for your brand?"
-
-### Step 3: Imagery and Media Interview
-
-1. **Image style**: Show examples of photography, illustration, 3D, and abstract. Ask preference.
-2. **People in images**: "Should your visuals include people? Always, sometimes, never?"
-3. **Icon library**: Present options (Lucide, Heroicons, Phosphor, Tabler) with visual samples.
-4. **Animation**: "How much motion? Subtle and functional, or bold and expressive?"
-5. **Video**: "If you make videos, what style? Talking head, screen recording, animated, cinematic?"
-
-### Step 4: Brand Positioning
-
-Walk through the positioning spectrums:
-
-1. Present each spectrum with examples at each end
-2. Ask the user to place their brand on each scale
-3. Derive the positioning statement from the answers
-
-### Step 5: Generate and Review
-
-1. Synthesise all interview answers into a `context/brand-identity.toon` file
-2. Present the complete file to the user for review
-3. Highlight any internal contradictions (e.g., "playful" voice with "corporate" positioning)
-4. Iterate until the user approves
-5. Save to the project's `context/brand-identity.toon`
-
-## Workflow: Brand Identity from Existing Site
-
-When rebranding or extending an existing project, extract the current identity first.
-
-### Step 1: URL Study
-
-Run the URL study workflow from `tools/design/ui-ux-inspiration.md` on the existing site. This extracts:
-
-- Current colour palette (from CSS/computed styles)
-- Typography (font families, sizes, weights)
-- UI patterns (border radius, shadows, spacing)
-- Button and form styling
-- Icon library in use
-- Animation and transition patterns
-
-### Step 2: Content Analysis
-
-Analyse existing copy on the site:
-
-1. Read 5-10 pages of existing content
-2. Identify voice patterns: formal/casual, technical/simple, personality traits
-3. Catalogue CTA language across buttons and links
-4. Note error messages, empty states, and form labels
-5. Identify imagery style (photography, illustration, stock, custom)
-
-### Step 3: Present Findings
-
-Show the user what their current brand identity looks like as a filled-in template:
-
-- "Here's your current visual identity based on what's live on your site"
-- "Here's how your copy currently sounds"
-- "Here are the patterns I found in your CTAs and error messages"
-
-### Step 4: Refine
-
-Ask the user:
-
-1. "What should stay the same?"
-2. "What should change?"
-3. "What's missing that you want to add?"
-4. "Are there new directions you want to explore?"
-
-### Step 5: Generate Updated Identity
-
-1. Merge kept elements with new directions
-2. Generate the updated `context/brand-identity.toon`
-3. Flag any breaking changes (e.g., switching icon libraries means updating every icon)
-4. Save to the project's `context/brand-identity.toon`
+5. **Generate updated identity** — Merge kept elements with new directions. Flag breaking changes (e.g., switching icon libraries means updating every icon).
 
 ## Relationship Map
 
-How `context/brand-identity.toon` connects to existing agents:
-
 ```text
 context/brand-identity.toon (per-project)
-    |
-    |-- read by: tools/design/ui-ux-inspiration.md
-    |     Design decisions reference brand identity for consistency.
-    |     The interview workflow WRITES this file; subsequent design
-    |     work READS it.
-    |
-    |-- read by: content/guidelines.md
-    |     When brand identity exists: guidelines.md provides structural
-    |     rules (paragraph length, HTML formatting, SEO bolding).
-    |     brand-identity.toon provides the voice.
-    |     When no brand identity: guidelines.md is sole authority.
-    |
-    |-- read by: content/platform-personas.md
-    |     Reads brand-identity.toon for the base voice, then applies
-    |     platform-specific shifts (LinkedIn = more formal, Instagram =
-    |     more casual). Replaces the previous context/brand-voice.md
-    |     reference.
-    |
-    |-- read by: content/production/image.md
-    |     Reads imagery and visual_style sections. Maps brand colours
-    |     to Nanobanana Pro JSON color.palette field. Uses imagery.mood
-    |     for lighting and style parameters.
-    |
-    |-- read by: content/production/characters.md
-    |     Reads brand_positioning and imagery for character design
-    |     alignment. Brand archetype informs character personality.
-    |
-    |-- read by: content/humanise.md
-    |     Receives voice_and_tone as context. Preserves brand
-    |     personality traits during AI pattern removal instead of
-    |     flattening to neutral.
-    |
-    |-- read by: workflows/ui-verification.md
-    |     Quality gates always apply. Brand identity adds constraints
-    |     (colour consistency, icon library, typography) but never
-    |     relaxes verification requirements.
-    |
-    |-- read by: tools/design/ui-ux-catalogue.toon
-    |     Catalogue provides the style/palette/typography options.
-    |     Brand identity records which options were chosen.
+    |-- read by: tools/design/ui-ux-inspiration.md (interview WRITES, design work READS)
+    |-- read by: content/guidelines.md (structural rules; brand-identity.toon provides voice)
+    |-- read by: content/platform-personas.md (base voice + platform-specific shifts)
+    |-- read by: content/production/image.md (imagery + visual_style → Nanobanana Pro params)
+    |-- read by: content/production/characters.md (brand_positioning → character personality)
+    |-- read by: content/humanise.md (voice_and_tone → preserve personality, not flatten)
+    |-- read by: workflows/ui-verification.md (brand identity adds constraints, never relaxes gates)
+    |-- read by: tools/design/ui-ux-catalogue.toon (catalogue provides options; identity records choices)
 ```
 
 ## Example: Complete Brand Identity
 
-A fictional SaaS product -- "Launchpad" -- a developer tool for deploying side projects.
+A fictional SaaS product — "Launchpad" — a developer tool for deploying side projects.
 
 ```toon
 # Brand Identity: Launchpad
 # Developer tool for deploying side projects
-# Created: 2026-03-01
-# Last updated: 2026-03-01
 
 [visual_style]
 ui_style = "Clean Minimal"
 ui_style_keywords = ["whitespace", "clear-hierarchy", "functional", "modern"]
 colour_palette_name = "Developer Calm"
 colours
-  primary = "#6366F1"          # Indigo -- primary actions, brand mark
-  secondary = "#0EA5E9"        # Sky blue -- secondary elements, links
-  accent = "#F59E0B"           # Amber -- highlights, notifications, badges
-  background = "#FAFAFA"       # Near-white -- page background
-  surface = "#FFFFFF"          # White -- cards, modals
-  text_primary = "#18181B"     # Near-black -- body text
-  text_secondary = "#71717A"   # Zinc -- secondary text, captions
-  success = "#22C55E"          # Green -- deploy success, positive states
-  warning = "#F59E0B"          # Amber -- build warnings
-  error = "#EF4444"            # Red -- deploy failures, errors
+  primary = "#6366F1"          # Indigo
+  secondary = "#0EA5E9"        # Sky blue
+  accent = "#F59E0B"           # Amber
+  background = "#FAFAFA"
+  surface = "#FFFFFF"
+  text_primary = "#18181B"
+  text_secondary = "#71717A"
+  success = "#22C55E"
+  warning = "#F59E0B"
+  error = "#EF4444"
 dark_mode = true
 dark_mode_strategy = "separate_palette"
 typography
@@ -632,7 +441,7 @@ button_copy_patterns
 label_voice = "minimal"
 label_examples
   do = ["Project name", "Region", "Build command"]
-  dont = ["Please enter your project name", "SELECT A REGION", "Type your build command here"]
+  dont = ["Please enter your project name", "SELECT A REGION"]
 placeholder_style = "example_data"
 error_message_examples
   required = "Project name is required"
@@ -678,7 +487,7 @@ brand_archetype = "creator"
 
 ## File Location and Naming
 
-- **Template definition**: `.agents/tools/design/brand-identity.md` (this file -- shared framework)
+- **Template definition**: `.agents/tools/design/brand-identity.md` (this file — shared framework)
 - **Per-project identity**: `context/brand-identity.toon` (in each project repo)
 - **Inspiration patterns**: `context/inspiration/*.toon` (in each project repo)
 - **Style catalogue**: `.agents/tools/design/ui-ux-catalogue.toon` (shared framework)
