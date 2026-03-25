@@ -353,6 +353,97 @@ RULE_EOF
 	return 0
 }
 
+# Determine which Sieve extensions are needed and populate the requires array.
+# Outputs: sets needs_fileinto and needs_flags in the caller's scope via stdout.
+# Usage: eval "$(_generate_sieve_requires "$patterns_file")"
+_generate_sieve_requires() {
+	local patterns_file="$1"
+
+	local needs_fileinto=0
+	local needs_flags=0
+
+	local pattern_count
+	pattern_count=$(jq '.patterns | length' "$patterns_file")
+
+	if [[ "$pattern_count" -gt 0 ]]; then
+		needs_fileinto=1
+		local flagged_count
+		flagged_count=$(jq '[.patterns[] | select(.flags != "")] | length' "$patterns_file")
+		if [[ "$flagged_count" -gt 0 ]]; then
+			needs_flags=1
+		fi
+	fi
+
+	# Built-in rule types that always need fileinto
+	local has_transaction has_list has_notification
+	has_transaction=$(jq '[.patterns[] | select(.type == "transaction")] | length' "$patterns_file")
+	has_list=$(jq '[.patterns[] | select(.type == "list-id")] | length' "$patterns_file")
+	has_notification=$(jq '[.patterns[] | select(.type == "notification")] | length' "$patterns_file")
+
+	if [[ "$has_transaction" -gt 0 ]] || [[ "$has_list" -gt 0 ]] || [[ "$has_notification" -gt 0 ]]; then
+		needs_fileinto=1
+	fi
+
+	echo "$needs_fileinto $needs_flags"
+	return 0
+}
+
+# Iterate over sorted patterns and emit Sieve rules to stdout.
+_generate_sieve_rules() {
+	local patterns_file="$1"
+
+	local total
+	total=$(jq '.patterns | length' "$patterns_file")
+
+	local idx=0
+	while [[ "$idx" -lt "$total" ]]; do
+		local pattern
+		pattern=$(jq -c ".patterns | sort_by(.priority) | .[$idx]" "$patterns_file")
+
+		local ptype pvalue pfolder pflags
+		ptype=$(echo "$pattern" | jq -r '.type')
+		pvalue=$(echo "$pattern" | jq -r '.value')
+		pfolder=$(echo "$pattern" | jq -r '.folder')
+		pflags=$(echo "$pattern" | jq -r '.flags // ""')
+
+		case "$ptype" in
+		sender)
+			generate_sender_rule "$pvalue" "$pfolder" "$pflags"
+			;;
+		domain)
+			generate_domain_rule "$pvalue" "$pfolder" "$pflags"
+			;;
+		subject)
+			generate_subject_rule "$pvalue" "$pfolder" "$pflags"
+			;;
+		list-id)
+			generate_list_id_rule "$pvalue" "$pfolder" "$pflags"
+			;;
+		header)
+			local hname hval
+			hname=$(echo "$pvalue" | cut -d: -f1)
+			hval=$(echo "$pvalue" | cut -d: -f2-)
+			generate_header_rule "$hname" "$hval" "$pfolder" "$pflags"
+			;;
+		transaction)
+			generate_transaction_rules "$pfolder" "$pflags"
+			;;
+		mailing-list)
+			generate_mailing_list_rules "$pfolder" "$pflags"
+			;;
+		notification)
+			generate_notification_rules "$pfolder" "$pflags"
+			;;
+		*)
+			print_warning "Unknown pattern type '$ptype' — skipping"
+			;;
+		esac
+
+		idx=$((idx + 1))
+	done
+	return 0
+}
+
 # Main Sieve generation function — reads patterns file and emits Sieve script
 generate_sieve() {
 	local patterns_file="${1:-$DEFAULT_PATTERNS_FILE}"
@@ -364,34 +455,16 @@ generate_sieve() {
 		return 1
 	fi
 
-	# Determine which Sieve extensions are needed
-	local needs_fileinto=0
-	local needs_flags=0
-
 	local pattern_count
 	pattern_count=$(jq '.patterns | length' "$patterns_file")
 
-	if [[ "$pattern_count" -gt 0 ]]; then
-		needs_fileinto=1
-		# Check if any pattern uses flags
-		local flagged_count
-		flagged_count=$(jq '[.patterns[] | select(.flags != "")] | length' "$patterns_file")
-		if [[ "$flagged_count" -gt 0 ]]; then
-			needs_flags=1
-		fi
-	fi
+	# Determine required Sieve extensions
+	local req_result needs_fileinto needs_flags
+	req_result=$(_generate_sieve_requires "$patterns_file")
+	needs_fileinto=$(echo "$req_result" | cut -d' ' -f1)
+	needs_flags=$(echo "$req_result" | cut -d' ' -f2)
 
-	# Check for built-in rule types that need fileinto
-	local has_transaction has_list has_notification
-	has_transaction=$(jq '[.patterns[] | select(.type == "transaction")] | length' "$patterns_file")
-	has_list=$(jq '[.patterns[] | select(.type == "list-id")] | length' "$patterns_file")
-	has_notification=$(jq '[.patterns[] | select(.type == "notification")] | length' "$patterns_file")
-
-	if [[ "$has_transaction" -gt 0 ]] || [[ "$has_list" -gt 0 ]] || [[ "$has_notification" -gt 0 ]]; then
-		needs_fileinto=1
-	fi
-
-	# Build requires list
+	# Build requires array
 	local requires=()
 	if [[ "$needs_fileinto" -eq 1 ]]; then
 		requires+=("$SIEVE_REQUIRES_FILEINTO")
@@ -400,7 +473,7 @@ generate_sieve() {
 		requires+=("$SIEVE_REQUIRES_IMAP_FLAGS")
 	fi
 
-	# Write to output file
+	# Write header + rules + footer to output file
 	{
 		# Use "${requires[@]+"${requires[@]}"}" to handle empty array under set -u (bash 3.2 compat)
 		if [[ "${#requires[@]}" -gt 0 ]]; then
@@ -409,60 +482,7 @@ generate_sieve() {
 			generate_header
 		fi
 
-		# Sort patterns by priority (lower number = higher priority) and generate rules
-		local sorted_patterns
-		sorted_patterns=$(jq -c '[.patterns | sort_by(.priority) | .[]]' "$patterns_file")
-
-		# Process each pattern
-		local idx=0
-		local total
-		total=$(jq '.patterns | length' "$patterns_file")
-
-		while [[ "$idx" -lt "$total" ]]; do
-			local pattern
-			pattern=$(jq -c ".patterns | sort_by(.priority) | .[$idx]" "$patterns_file")
-
-			local ptype pvalue pfolder pflags
-			ptype=$(echo "$pattern" | jq -r '.type')
-			pvalue=$(echo "$pattern" | jq -r '.value')
-			pfolder=$(echo "$pattern" | jq -r '.folder')
-			pflags=$(echo "$pattern" | jq -r '.flags // ""')
-
-			case "$ptype" in
-			sender)
-				generate_sender_rule "$pvalue" "$pfolder" "$pflags"
-				;;
-			domain)
-				generate_domain_rule "$pvalue" "$pfolder" "$pflags"
-				;;
-			subject)
-				generate_subject_rule "$pvalue" "$pfolder" "$pflags"
-				;;
-			list-id)
-				generate_list_id_rule "$pvalue" "$pfolder" "$pflags"
-				;;
-			header)
-				local hname hval
-				hname=$(echo "$pvalue" | cut -d: -f1)
-				hval=$(echo "$pvalue" | cut -d: -f2-)
-				generate_header_rule "$hname" "$hval" "$pfolder" "$pflags"
-				;;
-			transaction)
-				generate_transaction_rules "$pfolder" "$pflags"
-				;;
-			mailing-list)
-				generate_mailing_list_rules "$pfolder" "$pflags"
-				;;
-			notification)
-				generate_notification_rules "$pfolder" "$pflags"
-				;;
-			*)
-				print_warning "Unknown pattern type '$ptype' — skipping"
-				;;
-			esac
-
-			idx=$((idx + 1))
-		done
+		_generate_sieve_rules "$patterns_file"
 
 		# Always end with a keep (implicit, but explicit is clearer)
 		echo ""
@@ -572,10 +592,9 @@ PYEOF
 # ManageSieve deployment (RFC 5804)
 # ============================================================================
 
-# Write the Python ManageSieve helper to a temp file
-write_managesieve_helper() {
+# Write the Python module header, imports, and low-level protocol helpers.
+_write_managesieve_py_header() {
 	local helper_file="$1"
-
 	cat >"$helper_file" <<'PYEOF'
 #!/usr/bin/env python3
 """
@@ -619,6 +638,14 @@ def read_response(sock):
 def send_command(sock, cmd):
     """Send a ManageSieve command."""
     sock.sendall((cmd + "\r\n").encode("utf-8"))
+PYEOF
+	return 0
+}
+
+# Append the connect_managesieve function to the Python helper file.
+_write_managesieve_py_connect() {
+	local helper_file="$1"
+	cat >>"$helper_file" <<'PYEOF'
 
 def connect_managesieve(host, port, user, password):
     """Connect and authenticate to ManageSieve server."""
@@ -674,6 +701,14 @@ def connect_managesieve(host, port, user, password):
         raise RuntimeError("Authentication failed: " + resp_str)
 
     return sock
+PYEOF
+	return 0
+}
+
+# Append the cmd_list/get/put/delete command functions to the Python helper file.
+_write_managesieve_py_commands() {
+	local helper_file="$1"
+	cat >>"$helper_file" <<'PYEOF'
 
 def cmd_list(sock):
     send_command(sock, "LISTSCRIPTS")
@@ -725,6 +760,14 @@ def cmd_delete(sock, script_name):
     else:
         print("ERROR: " + resp_str, file=sys.stderr)
         return 1
+PYEOF
+	return 0
+}
+
+# Append the Python main() entry point and __main__ guard to the helper file.
+_write_managesieve_py_main() {
+	local helper_file="$1"
+	cat >>"$helper_file" <<'PYEOF'
 
 def main():
     if len(sys.argv) < 6:
@@ -785,6 +828,18 @@ def main():
 if __name__ == "__main__":
     main()
 PYEOF
+	return 0
+}
+
+# Write the Python ManageSieve helper to a temp file
+write_managesieve_helper() {
+	local helper_file="$1"
+
+	_write_managesieve_py_header "$helper_file"
+	_write_managesieve_py_connect "$helper_file"
+	_write_managesieve_py_commands "$helper_file"
+	_write_managesieve_py_main "$helper_file"
+
 	chmod 0700 "$helper_file"
 	return 0
 }
@@ -1091,6 +1146,204 @@ HELP_EOF
 }
 
 # ============================================================================
+# Argument parsers for main() sub-commands
+# ============================================================================
+
+# Parse and execute the 'generate' sub-command.
+_cmd_generate() {
+	local output_file="$DEFAULT_OUTPUT_FILE"
+	local patterns_file="$DEFAULT_PATTERNS_FILE"
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--output)
+			output_file="$2"
+			shift 2
+			;;
+		--patterns)
+			patterns_file="$2"
+			shift 2
+			;;
+		*)
+			print_error "Unknown option: $1"
+			return 1
+			;;
+		esac
+	done
+	check_dependencies || return 1
+	generate_sieve "$patterns_file" "$output_file"
+	return $?
+}
+
+# Parse and execute the 'deploy' sub-command.
+_cmd_deploy() {
+	local server="" user="" port="$DEFAULT_SIEVE_PORT"
+	local script_name="$DEFAULT_SCRIPT_NAME"
+	local sieve_file="$DEFAULT_OUTPUT_FILE"
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--server)
+			server="$2"
+			shift 2
+			;;
+		--user)
+			user="$2"
+			shift 2
+			;;
+		--port)
+			port="$2"
+			shift 2
+			;;
+		--script)
+			script_name="$2"
+			shift 2
+			;;
+		--file)
+			sieve_file="$2"
+			shift 2
+			;;
+		*)
+			print_error "Unknown option: $1"
+			return 1
+			;;
+		esac
+	done
+	if [[ -z "$server" ]]; then
+		print_error "--server is required"
+		return 1
+	fi
+	if [[ -z "$user" ]]; then
+		print_error "--user is required"
+		return 1
+	fi
+	check_dependencies || return 1
+	deploy_sieve "$server" "$user" "$port" "$script_name" "$sieve_file"
+	return $?
+}
+
+# Parse and execute the 'list-scripts' sub-command.
+_cmd_list_scripts() {
+	local server="" user="" port="$DEFAULT_SIEVE_PORT"
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--server)
+			server="$2"
+			shift 2
+			;;
+		--user)
+			user="$2"
+			shift 2
+			;;
+		--port)
+			port="$2"
+			shift 2
+			;;
+		*)
+			print_error "Unknown option: $1"
+			return 1
+			;;
+		esac
+	done
+	if [[ -z "$server" ]] || [[ -z "$user" ]]; then
+		print_error "--server and --user are required"
+		return 1
+	fi
+	list_scripts "$server" "$user" "$port"
+	return $?
+}
+
+# Parse and execute the 'show-script' or 'delete-script' sub-command.
+# $1: action — "show" or "delete"
+# Remaining args: the original CLI options.
+_cmd_show_or_delete_script() {
+	local action="$1"
+	shift
+	local server="" user="" script_name="" port="$DEFAULT_SIEVE_PORT"
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--server)
+			server="$2"
+			shift 2
+			;;
+		--user)
+			user="$2"
+			shift 2
+			;;
+		--script)
+			script_name="$2"
+			shift 2
+			;;
+		--port)
+			port="$2"
+			shift 2
+			;;
+		*)
+			print_error "Unknown option: $1"
+			return 1
+			;;
+		esac
+	done
+	if [[ -z "$server" ]] || [[ -z "$user" ]] || [[ -z "$script_name" ]]; then
+		print_error "--server, --user, and --script are required"
+		return 1
+	fi
+	if [[ "$action" == "show" ]]; then
+		show_script "$server" "$user" "$script_name" "$port"
+	else
+		delete_script "$server" "$user" "$script_name" "$port"
+	fi
+	return $?
+}
+
+# Parse and execute the 'add-pattern' sub-command.
+_cmd_add_pattern() {
+	local ptype="" pvalue="" pfolder="" pflags="" ppriority="50"
+	local patterns_file="$DEFAULT_PATTERNS_FILE"
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--type)
+			ptype="$2"
+			shift 2
+			;;
+		--value)
+			pvalue="$2"
+			shift 2
+			;;
+		--folder)
+			pfolder="$2"
+			shift 2
+			;;
+		--flags)
+			pflags="$2"
+			shift 2
+			;;
+		--priority)
+			ppriority="$2"
+			shift 2
+			;;
+		--patterns)
+			patterns_file="$2"
+			shift 2
+			;;
+		*)
+			print_error "Unknown option: $1"
+			return 1
+			;;
+		esac
+	done
+	if [[ -z "$ptype" ]]; then
+		print_error "--type is required"
+		return 1
+	fi
+	if [[ -z "$pfolder" ]]; then
+		print_error "--folder is required"
+		return 1
+	fi
+	check_dependencies || return 1
+	add_pattern "$ptype" "$pvalue" "$pfolder" "$patterns_file" "$pflags" "$ppriority"
+	return $?
+}
+
+# ============================================================================
 # Main
 # ============================================================================
 
@@ -1100,72 +1353,11 @@ main() {
 
 	case "$command" in
 	generate)
-		local output_file="$DEFAULT_OUTPUT_FILE"
-		local patterns_file="$DEFAULT_PATTERNS_FILE"
-		while [[ $# -gt 0 ]]; do
-			case "$1" in
-			--output)
-				output_file="$2"
-				shift 2
-				;;
-			--patterns)
-				patterns_file="$2"
-				shift 2
-				;;
-			*)
-				print_error "Unknown option: $1"
-				return 1
-				;;
-			esac
-		done
-		check_dependencies || return 1
-		generate_sieve "$patterns_file" "$output_file"
+		_cmd_generate "$@"
 		;;
-
 	deploy)
-		local server="" user="" port="$DEFAULT_SIEVE_PORT"
-		local script_name="$DEFAULT_SCRIPT_NAME"
-		local sieve_file="$DEFAULT_OUTPUT_FILE"
-		while [[ $# -gt 0 ]]; do
-			case "$1" in
-			--server)
-				server="$2"
-				shift 2
-				;;
-			--user)
-				user="$2"
-				shift 2
-				;;
-			--port)
-				port="$2"
-				shift 2
-				;;
-			--script)
-				script_name="$2"
-				shift 2
-				;;
-			--file)
-				sieve_file="$2"
-				shift 2
-				;;
-			*)
-				print_error "Unknown option: $1"
-				return 1
-				;;
-			esac
-		done
-		if [[ -z "$server" ]]; then
-			print_error "--server is required"
-			return 1
-		fi
-		if [[ -z "$user" ]]; then
-			print_error "--user is required"
-			return 1
-		fi
-		check_dependencies || return 1
-		deploy_sieve "$server" "$user" "$port" "$script_name" "$sieve_file"
+		_cmd_deploy "$@"
 		;;
-
 	validate)
 		local sieve_file="$DEFAULT_OUTPUT_FILE"
 		while [[ $# -gt 0 ]]; do
@@ -1182,157 +1374,24 @@ main() {
 		done
 		validate_sieve "$sieve_file"
 		;;
-
 	list-scripts)
-		local server="" user="" port="$DEFAULT_SIEVE_PORT"
-		while [[ $# -gt 0 ]]; do
-			case "$1" in
-			--server)
-				server="$2"
-				shift 2
-				;;
-			--user)
-				user="$2"
-				shift 2
-				;;
-			--port)
-				port="$2"
-				shift 2
-				;;
-			*)
-				print_error "Unknown option: $1"
-				return 1
-				;;
-			esac
-		done
-		if [[ -z "$server" ]] || [[ -z "$user" ]]; then
-			print_error "--server and --user are required"
-			return 1
-		fi
-		list_scripts "$server" "$user" "$port"
+		_cmd_list_scripts "$@"
 		;;
-
 	show-script)
-		local server="" user="" script_name="" port="$DEFAULT_SIEVE_PORT"
-		while [[ $# -gt 0 ]]; do
-			case "$1" in
-			--server)
-				server="$2"
-				shift 2
-				;;
-			--user)
-				user="$2"
-				shift 2
-				;;
-			--script)
-				script_name="$2"
-				shift 2
-				;;
-			--port)
-				port="$2"
-				shift 2
-				;;
-			*)
-				print_error "Unknown option: $1"
-				return 1
-				;;
-			esac
-		done
-		if [[ -z "$server" ]] || [[ -z "$user" ]] || [[ -z "$script_name" ]]; then
-			print_error "--server, --user, and --script are required"
-			return 1
-		fi
-		show_script "$server" "$user" "$script_name" "$port"
+		_cmd_show_or_delete_script "show" "$@"
 		;;
-
 	delete-script)
-		local server="" user="" script_name="" port="$DEFAULT_SIEVE_PORT"
-		while [[ $# -gt 0 ]]; do
-			case "$1" in
-			--server)
-				server="$2"
-				shift 2
-				;;
-			--user)
-				user="$2"
-				shift 2
-				;;
-			--script)
-				script_name="$2"
-				shift 2
-				;;
-			--port)
-				port="$2"
-				shift 2
-				;;
-			*)
-				print_error "Unknown option: $1"
-				return 1
-				;;
-			esac
-		done
-		if [[ -z "$server" ]] || [[ -z "$user" ]] || [[ -z "$script_name" ]]; then
-			print_error "--server, --user, and --script are required"
-			return 1
-		fi
-		delete_script "$server" "$user" "$script_name" "$port"
+		_cmd_show_or_delete_script "delete" "$@"
 		;;
-
 	add-pattern)
-		local ptype="" pvalue="" pfolder="" pflags="" ppriority="50"
-		local patterns_file="$DEFAULT_PATTERNS_FILE"
-		while [[ $# -gt 0 ]]; do
-			case "$1" in
-			--type)
-				ptype="$2"
-				shift 2
-				;;
-			--value)
-				pvalue="$2"
-				shift 2
-				;;
-			--folder)
-				pfolder="$2"
-				shift 2
-				;;
-			--flags)
-				pflags="$2"
-				shift 2
-				;;
-			--priority)
-				ppriority="$2"
-				shift 2
-				;;
-			--patterns)
-				patterns_file="$2"
-				shift 2
-				;;
-			*)
-				print_error "Unknown option: $1"
-				return 1
-				;;
-			esac
-		done
-		if [[ -z "$ptype" ]]; then
-			print_error "--type is required"
-			return 1
-		fi
-		if [[ -z "$pfolder" ]]; then
-			print_error "--folder is required"
-			return 1
-		fi
-		check_dependencies || return 1
-		add_pattern "$ptype" "$pvalue" "$pfolder" "$patterns_file" "$pflags" "$ppriority"
+		_cmd_add_pattern "$@"
 		;;
-
 	status)
 		show_status
 		;;
-
 	help | --help | -h)
 		show_help
 		;;
-
 	*)
 		print_error "Unknown command: $command"
 		show_help
