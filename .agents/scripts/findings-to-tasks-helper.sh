@@ -245,72 +245,12 @@ create_task_for_finding() {
 	return 0
 }
 
-cmd_create() {
-	local input_file=""
-	local repo_path_arg=""
-	local source="$DEFAULT_SOURCE"
-	local extra_labels=""
-	local extra_tags=""
-	local output_file=""
-	local offline_mode="false"
-	local no_issue_mode="false"
-	local dry_run_mode="false"
-	local allow_partial="false"
-
-	while [[ $# -gt 0 ]]; do
-		local arg="$1"
-		case "$arg" in
-		--input)
-			input_file="${2:-}"
-			shift 2
-			;;
-		--repo-path)
-			repo_path_arg="${2:-}"
-			shift 2
-			;;
-		--source)
-			source="${2:-$DEFAULT_SOURCE}"
-			shift 2
-			;;
-		--labels)
-			extra_labels="${2:-}"
-			shift 2
-			;;
-		--tags)
-			extra_tags="${2:-}"
-			shift 2
-			;;
-		--output)
-			output_file="${2:-}"
-			shift 2
-			;;
-		--offline)
-			offline_mode="true"
-			shift
-			;;
-		--no-issue)
-			no_issue_mode="true"
-			shift
-			;;
-		--dry-run)
-			dry_run_mode="true"
-			shift
-			;;
-		--allow-partial)
-			allow_partial="true"
-			shift
-			;;
-		help | --help | -h)
-			show_help
-			return 0
-			;;
-		*)
-			log_error "Unknown argument: $arg"
-			show_help
-			return 1
-			;;
-		esac
-	done
+# validate_cmd_create_inputs: check that required inputs exist and are accessible.
+# Arguments: input_file repo_path_arg
+# Outputs: resolved repo_path to stdout on success.
+validate_cmd_create_inputs() {
+	local input_file="${1:-}"
+	local repo_path_arg="${2:-}"
 
 	if [[ -z "$input_file" ]]; then
 		log_error "--input is required"
@@ -335,6 +275,24 @@ cmd_create() {
 
 	local repo_path=""
 	repo_path="$(resolve_repo_path "$repo_path_arg")" || return 1
+	printf '%s' "$repo_path"
+	return 0
+}
+
+# process_findings_file: iterate over findings and create tasks.
+# Arguments: input_file repo_path source extra_labels extra_tags output_file
+#            offline_mode no_issue_mode dry_run_mode allow_partial
+process_findings_file() {
+	local input_file="${1:-}"
+	local repo_path="${2:-}"
+	local source="${3:-$DEFAULT_SOURCE}"
+	local extra_labels="${4:-}"
+	local extra_tags="${5:-}"
+	local output_file="${6:-}"
+	local offline_mode="${7:-false}"
+	local no_issue_mode="${8:-false}"
+	local dry_run_mode="${9:-false}"
+	local allow_partial="${10:-false}"
 
 	local actionable_findings_total=0
 	local deferred_tasks_created=0
@@ -416,6 +374,90 @@ cmd_create() {
 	fi
 
 	return 0
+}
+
+cmd_create() {
+	local input_file=""
+	local repo_path_arg=""
+	local source="$DEFAULT_SOURCE"
+	local extra_labels=""
+	local extra_tags=""
+	local output_file=""
+	local offline_mode="false"
+	local no_issue_mode="false"
+	local dry_run_mode="false"
+	local allow_partial="false"
+
+	while [[ $# -gt 0 ]]; do
+		local arg="$1"
+		case "$arg" in
+		--input)
+			input_file="${2:-}"
+			shift 2
+			;;
+		--repo-path)
+			repo_path_arg="${2:-}"
+			shift 2
+			;;
+		--source)
+			source="${2:-$DEFAULT_SOURCE}"
+			shift 2
+			;;
+		--labels)
+			extra_labels="${2:-}"
+			shift 2
+			;;
+		--tags)
+			extra_tags="${2:-}"
+			shift 2
+			;;
+		--output)
+			output_file="${2:-}"
+			shift 2
+			;;
+		--offline)
+			offline_mode="true"
+			shift
+			;;
+		--no-issue)
+			no_issue_mode="true"
+			shift
+			;;
+		--dry-run)
+			dry_run_mode="true"
+			shift
+			;;
+		--allow-partial)
+			allow_partial="true"
+			shift
+			;;
+		help | --help | -h)
+			show_help
+			return 0
+			;;
+		*)
+			log_error "Unknown argument: $arg"
+			show_help
+			return 1
+			;;
+		esac
+	done
+
+	local repo_path=""
+	repo_path="$(validate_cmd_create_inputs "$input_file" "$repo_path_arg")" || return 1
+
+	process_findings_file \
+		"$input_file" \
+		"$repo_path" \
+		"$source" \
+		"$extra_labels" \
+		"$extra_tags" \
+		"$output_file" \
+		"$offline_mode" \
+		"$no_issue_mode" \
+		"$dry_run_mode" \
+		"$allow_partial"
+	return $?
 }
 
 main() {
