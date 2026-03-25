@@ -26,38 +26,26 @@ tools:
 
 ## Quick Reference
 
-- **Purpose**: Generate professional AI video content using Sora 2, Veo 3.1, and Higgsfield
-- **Primary Models**: Sora 2 Pro (UGC/authentic), Veo 3.1 (cinematic/character-consistent)
+- **Primary Models**: Sora 2 Pro (UGC/authentic, <$10k), Veo 3.1 (cinematic/character-consistent, >$100k)
 - **Key Technique**: Seed bracketing (15% → 70%+ success rate)
-- **Production Value Threshold**: <$10k = Sora 2, >$100k = Veo 3.1
+- **Seed ranges**: people 1000-1999, action 2000-2999, landscape 3000-3999, product 4000-4999, YouTube 2000-3000
+- **2-Track production**: objects/environments (Midjourney→VEO) vs characters (Freepik→Seedream→VEO)
+- **Veo 3.1**: ALWAYS use ingredients-to-video, NEVER frame-to-video (produces grainy yellow output)
 
-**When to Use**: Read this when generating AI video content, planning video production workflows, or optimizing video generation quality.
-
-**Model Selection Decision Tree**:
+**Model Selection**:
 
 ```text
 Content Type?
-├─ UGC/Authentic/Social (<$10k production value)
-│  └─ Sora 2 Pro
-├─ Cinematic/Commercial (>$100k production value)
-│  └─ Veo 3.1
-└─ Character-Consistent Series
-   └─ Veo 3.1 (with Ingredients)
+├─ UGC/Authentic/Social (<$10k)  → Sora 2 Pro
+├─ Cinematic/Commercial (>$100k) → Veo 3.1
+└─ Character-Consistent Series   → Veo 3.1 (with Ingredients)
 ```
-
-**Critical Techniques**:
-- Seed bracketing: Test seeds 1000-1010, score outputs, iterate
-- Content-type seed ranges: people 1000-1999, action 2000-2999, landscape 3000-3999, product 4000-4999, YouTube 2000-3000
-- 2-Track production: objects/environments (Midjourney→VEO) vs characters (Freepik→Seedream→VEO)
-- Veo 3.1: ALWAYS use ingredients-to-video, NEVER frame-to-video (produces grainy yellow output)
 
 <!-- AI-CONTEXT-END -->
 
 ## Sora 2 Pro Master Template
 
-Sora 2 excels at UGC-style, authentic content with <$10k production value. Use the 6-section master template for professional results.
-
-### Template Structure
+Sora 2 excels at UGC-style, authentic content. Use the 6-section master template for professional results.
 
 ```text
 [1. HEADER - Style Definition (7 parameters)]
@@ -71,15 +59,9 @@ Shot 1 (0-2s):
 - Focus: [subject/background/rack focus]
 - Composition: [rule of thirds/centered/leading lines/symmetry]
 
-Shot 2 (2-4s):
-[repeat 5-point spec]
-
 [3. TIMESTAMPED ACTIONS - 0.5s intervals]
 0.0s: [precise action description]
 0.5s: [micro-movement or expression change]
-1.0s: [next action beat]
-1.5s: [continuation or transition]
-2.0s: [new action or camera shift]
 [continue through full duration]
 
 [4. DIALOGUE - Delivery Style]
@@ -109,127 +91,65 @@ Negative Prompt: subtitles, captions, watermark, text overlays, poor lighting, b
 Style: authentic, energetic, warm natural tones, soft window lighting, organic texture, contemporary 2024, creator economy aesthetic
 
 [2. SHOT-BY-SHOT]
-Shot 1 (0-3s):
-- Type: MCU (medium close-up)
-- Angle: Eye-level, slightly off-center
-- Movement: Handheld with subtle natural shake
-- Focus: Subject's face, shallow depth of field
-- Composition: Rule of thirds, subject left, product right
-
-Shot 2 (3-6s):
-- Type: CU (close-up) on product
-- Angle: Overhead, 45-degree tilt
-- Movement: Slow dolly in
-- Focus: Product details, rack focus to hands
-- Composition: Centered with leading lines from hands
+Shot 1 (0-3s): MCU, eye-level slightly off-center, handheld natural shake, shallow DOF, rule of thirds
+Shot 2 (3-6s): CU on product, overhead 45-degree, slow dolly in, rack focus to hands, centered
 
 [3. TIMESTAMPED ACTIONS]
-0.0s: Creator looks directly at camera, genuine smile forming
-0.5s: Picks up product from desk with right hand
-1.0s: Holds product at chest level, slight rotation to show features
-1.5s: Left hand gestures toward product feature
+0.0s: Creator looks at camera, genuine smile forming
+0.5s: Picks up product with right hand
+1.0s: Holds product at chest level, slight rotation
+1.5s: Left hand gestures toward feature
 2.0s: Camera shifts to overhead view
-2.5s: Hands demonstrate product use with natural movements
-3.0s: Close-up of product in action
-3.5s: Hands adjust product position
-4.0s: Camera pulls back slightly
-4.5s: Creator's face re-enters frame, nodding
-5.0s: Final product showcase position
-5.5s: Creator maintains eye contact with camera
+2.5s-5.5s: Hands demonstrate use, creator face re-enters, maintains eye contact
 
 [4. DIALOGUE]
 Creator: "This completely changed how I work. The build quality is incredible, and it just works."
-Delivery: Conversational, authentic enthusiasm, slight emphasis on "completely" and "incredible", natural pacing with brief pause after "work"
+Delivery: Conversational, authentic enthusiasm, natural pacing
 Duration: 6 seconds (14 words, 22 syllables)
 
 [5. BACKGROUND SOUND]
-Layer 1 (Dialogue): Clear voice, warm tone, -15 LUFS
-Layer 2 (Ambient): Quiet home office, distant keyboard typing, soft room tone, -25 LUFS
-Layer 3 (SFX): Product pickup sound (0.5s), subtle handling sounds (2.5s-4.0s)
-Layer 4 (Music): None (UGC authenticity)
+Layer 1: Clear voice, warm tone, -15 LUFS
+Layer 2: Quiet home office, distant keyboard, -25 LUFS
+Layer 3: Product pickup (0.5s), handling sounds (2.5s-4.0s)
+Layer 4: None (UGC authenticity)
 
 [6. TECHNICAL SPECS]
-Duration: 6 seconds
-Aspect Ratio: 9:16 (vertical for social)
-Resolution: 1080p
-Frame Rate: 30fps
+Duration: 6s | Aspect Ratio: 9:16 | Resolution: 1080p | Frame Rate: 30fps
 Camera Model: iPhone 15 Pro aesthetic (UGC authenticity)
-Negative Prompt: subtitles, captions, watermark, text overlays, professional studio lighting, overly polished, corporate aesthetic, artificial movements, poor lighting, blurry footage, artifacts, distorted hands
+Negative Prompt: subtitles, captions, watermark, professional studio lighting, corporate aesthetic, distorted hands
 ```
 
 ## Veo 3.1 Production Workflow
 
-Veo 3.1 excels at cinematic, character-consistent content with >$100k production value. CRITICAL: Always use ingredients-to-video workflow, NEVER frame-to-video.
+Veo 3.1 excels at cinematic, character-consistent content. **CRITICAL**: Always use ingredients-to-video, NEVER frame-to-video.
 
 ### VEO Prompting Framework (7 Components)
 
 ```text
-[1. TECHNICAL SPECS]
-Camera: [model/lens], [resolution], [frame rate], [aspect ratio]
-Lighting: [setup], [color temperature], [mood]
-Movement: [type], [speed], [direction]
-
-[2. SUBJECT]
-Character: [15+ attributes for consistency - see Character Bible]
-OR
-Object: [detailed physical description]
-
-[3. ACTION]
-Primary: [main movement/activity]
-Secondary: [supporting actions, micro-expressions]
-Timing: [pacing, beats, transitions]
-
-[4. CONTEXT]
-Environment: [location, time of day, weather]
-Props: [relevant objects, their placement]
-Atmosphere: [mood, energy, tone]
-
-[5. CAMERA MOVEMENT]
-Type: [static/dolly/pan/tracking/crane/handheld]
-Path: [direction, speed, focal changes]
-Motivation: [why this movement serves the story]
-
-[6. COMPOSITION]
-Framing: [shot type, rule of thirds, symmetry]
-Depth: [foreground/midground/background elements]
-Visual Hierarchy: [what draws the eye first]
-
-[7. AUDIO]
-Dialogue: [exact words, delivery style] (NO SUBTITLES in prompt)
-Ambient: [environment sounds, specific to location]
-SFX: [action-specific sounds with timing]
-Music: [score/diegetic, mood, instrumentation]
+[1. TECHNICAL SPECS] Camera: [model/lens], [resolution], [frame rate], [aspect ratio] | Lighting | Movement
+[2. SUBJECT] Character: [15+ attributes for consistency] OR Object: [detailed description]
+[3. ACTION] Primary: [main movement] | Secondary: [supporting actions] | Timing: [pacing, beats]
+[4. CONTEXT] Environment: [location, time, weather] | Props | Atmosphere
+[5. CAMERA MOVEMENT] Type | Path: [direction, speed, focal changes] | Motivation
+[6. COMPOSITION] Framing: [shot type] | Depth: [foreground/midground/background] | Visual Hierarchy
+[7. AUDIO] Dialogue: [exact words, delivery] (NO SUBTITLES in prompt) | Ambient | SFX | Music
 ```
 
 ### Ingredients-to-Video Workflow (MANDATORY)
 
 **CRITICAL**: Frame-to-video produces grainy, yellow-tinted output. Always use ingredients.
 
-**Step 1: Prepare Ingredients**
-
-Upload reference assets as "ingredients" (not as frame-to-video input):
-- Character faces (for consistency across scenes)
-- Product images (for accurate representation)
-- Brand assets (logos, colors, textures)
-- Style references (lighting, composition examples)
-
-**Step 2: Create Ingredient Library**
+**Step 1**: Upload reference assets as "ingredients" (character faces, product images, brand assets, style references).
 
 ```bash
-# Via Higgsfield API
+# Create ingredient via Higgsfield API
 curl -X POST 'https://platform.higgsfield.ai/api/characters' \
-  --header 'hf-api-key: {api-key}' \
-  --header 'hf-secret: {secret}' \
+  --header 'hf-api-key: {api-key}' --header 'hf-secret: {secret}' \
   --form 'photo=@/path/to/character_face.jpg'
-
-# Response includes ingredient ID
-{
-  "id": "3eb3ad49-775d-40bd-b5e5-38b105108780",
-  "photo_url": "https://cdn.higgsfield.ai/characters/photo_123.jpg"
-}
+# Returns: {"id": "3eb3ad49-775d-40bd-b5e5-38b105108780", "photo_url": "..."}
 ```
 
-**Step 3: Generate with Ingredients**
+**Step 2**: Generate with ingredient:
 
 ```json
 {
@@ -242,576 +162,259 @@ curl -X POST 'https://platform.higgsfield.ai/api/characters' \
 }
 ```
 
-**Ingredient Strength Guidelines**:
-- 0.7-0.8: Subtle influence, allows creative variation
-- 0.9-1.0: Strong consistency, minimal deviation
-- Character faces: 0.9+
-- Products: 0.95+
-- Style references: 0.7-0.8
-
-### Example: Cinematic Commercial
-
-```text
-[1. TECHNICAL SPECS]
-Camera: ARRI Alexa LF, 35mm anamorphic lens, 8K, 24fps, 2.39:1 aspect ratio
-Lighting: Golden hour natural light, 3200K color temperature, warm cinematic mood
-Movement: Slow dolly in (2 seconds), smooth gimbal stabilization
-
-[2. SUBJECT]
-Character: [Reference ingredient ID: 3eb3ad49-775d-40bd-b5e5-38b105108780]
-Woman, late 20s, Mediterranean features, shoulder-length dark brown hair with natural wave, hazel eyes, confident posture, wearing tailored charcoal blazer, minimal jewelry (small gold earrings), professional yet approachable demeanor
-
-[3. ACTION]
-Primary: Character walks slowly toward camera through modern office lobby, maintaining eye contact
-Secondary: Slight smile forming at 2-second mark, natural arm swing, confident stride
-Timing: Deliberate pacing, 3 steps total over 5 seconds, pause at 4-second mark
-
-[4. CONTEXT]
-Environment: Contemporary glass-walled office lobby, floor-to-ceiling windows, city skyline visible, golden hour sunlight streaming through, polished concrete floors reflecting light
-Props: Minimalist reception desk (background), potted plants (midground), architectural columns (framing)
-Atmosphere: Aspirational, professional, warm, inviting
-
-[5. CAMERA MOVEMENT]
-Type: Dolly in
-Path: Starts at medium shot (MS), ends at medium close-up (MCU), smooth 0.5m forward movement over 5 seconds
-Motivation: Creates intimacy, draws viewer into character's confidence
-
-[6. COMPOSITION]
-Framing: Rule of thirds, character positioned on right third, leading lines from floor tiles guide eye to subject
-Depth: Foreground (character), midground (lobby elements), background (windows/skyline with bokeh)
-Visual Hierarchy: Character's face (primary), blazer details (secondary), environment (tertiary)
-
-[7. AUDIO]
-Dialogue: None (visual storytelling)
-Ambient: Quiet office atmosphere, distant keyboard typing, soft HVAC hum, -25 LUFS
-SFX: Footsteps on polished concrete (subtle, 0.5s intervals), clothing rustle, -20 LUFS
-Music: Minimal piano score, hopeful progression, 80 BPM, strings enter at 3s, -18 LUFS
-```
+**Ingredient strength**: 0.7-0.8 = subtle influence; 0.9-1.0 = strong consistency. Character faces: 0.9+, Products: 0.95+, Style references: 0.7-0.8.
 
 ## Seed Bracketing Method
 
-Seed bracketing increases success rate from 15% to 70%+ by systematically testing seed ranges and scoring outputs.
+Increases success rate from 15% to 70%+ by systematically testing seed ranges.
 
-### Process
+**Step 1**: Select seed range by content type (people 1000-1999, action 2000-2999, landscape 3000-3999, product 4000-4999).
 
-**Step 1: Define Content Type**
-
-Select seed range based on content:
-- **People/Characters**: 1000-1999
-- **Action/Movement**: 2000-2999
-- **Landscape/Environment**: 3000-3999
-- **Product/Object**: 4000-4999
-- **YouTube-Optimized**: 2000-3000 (hybrid action/people)
-
-**Step 2: Generate Test Batch**
-
-Generate 10-15 variations with sequential seeds:
+**Step 2**: Generate 10-15 variations with sequential seeds:
 
 ```bash
 #!/bin/bash
 set -euo pipefail
-
-# Example: Product video (seed range 4000-4999)
 for seed in {4000..4010}; do
-  echo "Testing seed $seed..."
-
-  # Generate with identical prompt, varying only seed
   result=$(curl --fail --show-error --silent -X POST \
     'https://platform.higgsfield.ai/v1/image2video/dop' \
-    --header 'hf-api-key: {api-key}' \
-    --header 'hf-secret: {secret}' \
-    --data "{
-      \"params\": {
-        \"prompt\": \"[your prompt]\",
-        \"seed\": $seed,
-        \"model\": \"dop-turbo\"
-      }
-    }") || { echo "ERROR: API call failed for seed $seed" >&2; continue; }
-
-  # Validate response before using
+    --header 'hf-api-key: {api-key}' --header 'hf-secret: {secret}' \
+    --data "{\"params\":{\"prompt\":\"[your prompt]\",\"seed\":$seed,\"model\":\"dop-turbo\"}}") \
+    || { echo "ERROR: API call failed for seed $seed" >&2; continue; }
   job_id=$(echo "$result" | jq -r '.jobs[0].id // empty' || true)
-  if [[ -z "$job_id" ]]; then
-    echo "ERROR: Failed to extract job_id for seed $seed (invalid API response)" >&2
-    continue
-  fi
-
-  echo "Job $job_id queued for seed $seed"
+  [[ -z "$job_id" ]] && { echo "ERROR: No job_id for seed $seed" >&2; continue; }
   echo "$seed,$job_id" >> seed_bracket_results.csv
 done
 ```
 
-**Step 3: Score Outputs**
+**Step 3**: Score outputs (1-10 scale): Composition 25%, Quality 25%, Style Adherence 20%, Motion Realism 20%, Subject Accuracy 10%.
 
-Evaluate each output on 5 criteria (1-10 scale):
-
-| Criterion | Weight | Description |
-|-----------|--------|-------------|
-| Composition | 25% | Framing, balance, visual hierarchy |
-| Quality | 25% | Resolution, artifacts, smoothness |
-| Style Adherence | 20% | Matches intended aesthetic |
-| Motion Realism | 20% | Natural movement, physics |
-| Subject Accuracy | 10% | Prompt adherence, details |
-
-**Scoring Formula**:
-
-```text
-Total Score = (Composition × 0.25) + (Quality × 0.25) + (Style × 0.20) + (Motion × 0.20) + (Accuracy × 0.10)
-```
-
-**Step 4: Identify Winners**
-
-- **Score 8.0+**: Production-ready, use immediately
-- **Score 6.5-7.9**: Acceptable, minor tweaks needed
-- **Score <6.5**: Discard, try different seed range
-
-**Step 5: Iterate**
-
-If no winners in initial range:
-1. Shift to adjacent range (+/- 100)
-2. Test 10 more seeds
-3. If still no winners, revise prompt (likely prompt issue, not seed)
+**Step 4**: Score 8.0+ = production-ready; 6.5-7.9 = acceptable; <6.5 = discard. If no winners, shift to adjacent range (+/- 100) or revise prompt.
 
 ### Automation
 
-Use `seed-bracket-helper.sh` for the full automation workflow:
-
 ```bash
-# Generate 11 product video variants with seed bracketing
 seed-bracket-helper.sh generate --type product --prompt "Product rotating on white background"
-
-# Check job status
 seed-bracket-helper.sh status
-
-# Score completed outputs (composition, quality, style, motion, accuracy — each 1-10)
 seed-bracket-helper.sh score 4005 8 9 7 8 9
-
-# View report with winners and recommendations
 seed-bracket-helper.sh report
-
-# List content-type presets and scoring weights
 seed-bracket-helper.sh presets
 ```
 
-The helper manages bracket runs, tracks job status via the Higgsfield API, calculates weighted scores, and identifies production-ready winners (80+/100) vs acceptable outputs (65-80) vs rejects.
-
 ## 8K Camera Model Prompting
 
-Append professional camera models to prompts for cinematic quality and specific aesthetic characteristics.
+| Camera | Aesthetic | Use Case |
+|--------|-----------|----------|
+| **RED Komodo 6K** | Digital cinema, sharp | Action, sports, high-motion |
+| **ARRI Alexa LF** | Film-like, organic | Drama, narrative, skin tones |
+| **Sony Venice 8K** | Clean, clinical | Commercial, product, precision |
+| **Blackmagic URSA 12K** | Raw, flexible | Indie, experimental |
+| **Canon C500 Mark II** | Smooth, polished | Corporate, documentary |
 
-### Camera Model Library
-
-| Camera | Aesthetic | Use Case | Color Science |
-|--------|-----------|----------|---------------|
-| **RED Komodo 6K** | Digital cinema, sharp | Action, sports, high-motion | Vibrant, punchy reds |
-| **ARRI Alexa LF** | Film-like, organic | Drama, narrative, skin tones | Warm, natural, forgiving |
-| **Sony Venice 8K** | Clean, clinical | Commercial, product, precision | Neutral, accurate |
-| **Blackmagic URSA 12K** | Raw, flexible | Indie, experimental | Flat, gradable |
-| **Canon C500 Mark II** | Smooth, polished | Corporate, documentary | Warm, Canon color |
-| **Panasonic Varicam LT** | Broadcast, reliable | News, live, fast turnaround | Neutral, broadcast-safe |
-
-### Lens Characteristics
-
-| Lens Type | Effect | Prompt Addition |
-|-----------|--------|-----------------|
-| **35mm Anamorphic** | Cinematic, oval bokeh, lens flares | "35mm anamorphic lens, 2.39:1 aspect ratio, horizontal lens flares" |
-| **50mm Prime** | Natural perspective, sharp | "50mm prime lens, shallow depth of field, sharp focus" |
-| **24mm Wide** | Expansive, environmental | "24mm wide-angle lens, environmental context, slight distortion" |
-| **85mm Portrait** | Flattering, compressed | "85mm portrait lens, compressed perspective, creamy bokeh" |
-| **14mm Ultra-Wide** | Dramatic, immersive | "14mm ultra-wide lens, dramatic perspective, deep focus" |
-
-### Example Prompts
-
-**Cinematic Drama**:
-
-```text
-Shot on ARRI Alexa LF with 35mm anamorphic lens, 8K resolution, 24 fps, 2.39:1 aspect ratio.
-Warm color grading, film grain texture, natural lighting with practical sources.
-[rest of prompt]
-```
-
-**High-Action Sports**:
-
-```text
-Shot on RED Komodo 6K with 24mm wide-angle lens, 6K resolution, 60fps, 16:9 aspect ratio.
-Vibrant color grading, sharp detail, high shutter speed for motion clarity.
-[rest of prompt]
-```
-
-**Commercial Product**:
-
-```text
-Shot on Sony Venice 8K with 50mm prime lens, 8K resolution, 30fps, 16:9 aspect ratio.
-Neutral color grading, clinical precision, controlled studio lighting.
-[rest of prompt]
-```
+**Lens characteristics**: 35mm Anamorphic (cinematic, oval bokeh, 2.39:1), 50mm Prime (natural, sharp), 24mm Wide (expansive), 85mm Portrait (flattering, compressed), 14mm Ultra-Wide (dramatic).
 
 ## 2-Track Production Workflow
 
-Separate workflows for objects/environments vs characters optimize quality and efficiency.
-
-### Track 1: Objects & Environments
-
-**Pipeline**: Midjourney → Veo 3.1
-
-**Step 1: Generate Base Image (Midjourney)**
+**Track 1 (Objects & Environments)**: Midjourney → Veo 3.1
 
 ```text
 /imagine [object/environment description] --ar 16:9 --style raw --v 6
 ```
 
-Midjourney excels at:
-- Product renders
-- Architectural spaces
-- Landscapes
-- Abstract concepts
-- Inanimate objects
+Upload Midjourney output as ingredient, apply VEO framework for animation.
 
-**Step 2: Animate with Veo 3.1**
-
-Upload Midjourney output as ingredient, apply VEO prompting framework for animation.
-
-### Track 2: Characters & People
-
-**Pipeline**: Freepik → Seedream 4 → Veo 3.1
-
-**Step 1: Generate Character (Freepik)**
-
-Freepik AI excels at character-driven scenes with consistent facial features.
-
-**Step 2: Refine to 4K (Seedream 4)**
+**Track 2 (Characters & People)**: Freepik → Seedream 4 → Veo 3.1
 
 ```bash
-# Via Higgsfield API
+# Refine to 4K via Higgsfield API
 curl -X POST 'https://platform.higgsfield.ai/bytedance/seedream/v4/upscale' \
   --header 'Authorization: Key {api_key}:{api_secret}' \
-  --data '{
-    "image_url": "https://freepik-output.jpg",
-    "target_resolution": "4K"
-  }'
+  --data '{"image_url": "https://freepik-output.jpg", "target_resolution": "4K"}'
 ```
-
-**Step 3: Animate with Veo 3.1**
-
-Upload refined character as ingredient, generate video with character consistency.
-
-### When to Use Each Track
 
 | Content Type | Track | Reason |
 |--------------|-------|--------|
 | Product demo | Track 1 | Objects, no facial consistency needed |
 | Landscape flythrough | Track 1 | Environment, no characters |
 | Talking head | Track 2 | Facial expressions, character consistency |
-| Character narrative | Track 2 | Emotional range, consistent identity |
 | Mixed (character + product) | Both | Generate separately, composite in post |
 
 ## Content Type Presets
 
-Pre-configured settings for common video formats.
-
-### UGC (User-Generated Content)
-
-```yaml
-aspect_ratio: 9:16
-duration: 3-10s
-cuts: 1-3s per shot
-camera: Handheld, natural shake
-lighting: Available light, authentic
-audio: All diegetic (no score)
-model: Sora 2 Pro
-seed_range: 2000-3000
-```
-
-**Use Cases**: TikTok, Instagram Reels, YouTube Shorts, authentic testimonials
-
-### Commercial
-
-```yaml
-aspect_ratio: 16:9
-duration: 15-30s
-cuts: 2-5s per shot
-camera: Gimbal-stabilized, smooth
-lighting: Controlled, 3-point setup
-audio: Mixed diegetic + score
-model: Veo 3.1
-seed_range: 4000-4999 (product) or 1000-1999 (people)
-```
-
-**Use Cases**: Brand ads, product launches, corporate videos
-
-### Cinematic
-
-```yaml
-aspect_ratio: 2.39:1 (anamorphic)
-duration: 10-30s
-cuts: 4-10s per shot
-camera: Dolly/crane, deliberate movement
-lighting: Motivated, cinematic color grading
-audio: Score-driven, minimal diegetic
-model: Veo 3.1
-seed_range: 3000-3999 (landscape) or 1000-1999 (character)
-```
-
-**Use Cases**: Film trailers, high-end commercials, narrative content
-
-### Documentary
-
-```yaml
-aspect_ratio: 16:9
-duration: 15-60s
-cuts: 5-15s per shot
-camera: Tripod/handheld mix, observational
-lighting: Natural, minimal intervention
-audio: Diegetic priority, subtle score
-model: Sora 2 Pro (authentic) or Veo 3.1 (polished)
-seed_range: 2000-2999 (action) or 3000-3999 (environment)
-```
-
-**Use Cases**: Educational content, explainers, journalistic pieces
+| Format | Aspect | Duration | Camera | Model | Seed Range |
+|--------|--------|----------|--------|-------|------------|
+| UGC | 9:16 | 3-10s | Handheld | Sora 2 Pro | 2000-3000 |
+| Commercial | 16:9 | 15-30s | Gimbal | Veo 3.1 | 4000-4999 (product) / 1000-1999 (people) |
+| Cinematic | 2.39:1 | 10-30s | Dolly/crane | Veo 3.1 | 3000-3999 / 1000-1999 |
+| Documentary | 16:9 | 15-60s | Tripod/handheld | Sora 2 Pro or Veo 3.1 | 2000-2999 / 3000-3999 |
 
 ## Post-Production Guidelines
 
 ### Upscaling
 
-**REAL Video Enhancer** (open-source, GPU-accelerated) and **Topaz Video AI** (commercial) are the primary upscaling tools.
-
-**REAL Video Enhancer** (recommended for AI-generated content):
+**REAL Video Enhancer** (open-source, GPU-accelerated):
 
 ```bash
-# 2x upscale (720p → 1080p or 1080p → 4K)
 real-video-enhancer-helper.sh upscale input.mp4 output.mp4 --scale 2
-
-# 4x upscale (540p → 1080p or 720p → 4K)
-real-video-enhancer-helper.sh upscale input.mp4 output.mp4 --scale 4
-
-# Custom model selection
-real-video-enhancer-helper.sh upscale input.mp4 output.mp4 \
-  --scale 2 \
-  --model realesrgan  # or 'span', 'animejanai'
+real-video-enhancer-helper.sh upscale input.mp4 output.mp4 --scale 4 --model realesrgan
+# Models: span (fast, default), realesrgan (photo-realistic), animejanai (animation)
 ```
 
-**Models**:
-- `span`: Fast, general-purpose (default)
-- `realesrgan`: Slower, photo-realistic content
-- `animejanai`: Anime/animation content
+**Topaz Video AI** (commercial): Max 1.25-1.75x upscale. Settings: Artemis High Quality, low noise reduction, minimal sharpening, grain preservation on. 4K→8K NOT RECOMMENDED.
 
-**Topaz Video AI** (commercial alternative):
+### Frame Rate Conversion
 
-**Rules**:
-- Maximum 1.25-1.75x upscale (beyond this introduces artifacts)
-- 1080p → 1440p: 1.33x (safe)
-- 1080p → 4K: 2x (risky, only for high-quality source)
-- 4K → 8K: NOT RECOMMENDED (diminishing returns, high artifact risk)
+```bash
+real-video-enhancer-helper.sh interpolate input.mp4 output.mp4 --fps 60
+# Models: rife (fast, default), gmfss (very high quality), ifrnet (very fast)
+```
 
-**Settings**:
+**CRITICAL**: Never upconvert 24fps to 60fps for non-action content (creates soap opera effect).
 
-```yaml
-model: Artemis High Quality
-noise_reduction: Low (preserve texture)
-sharpening: Minimal (avoid over-sharpening)
-grain_preservation: On
+### Denoising and Full Enhancement Pipeline
+
+```bash
+real-video-enhancer-helper.sh denoise input.mp4 output.mp4
+# All-in-one for social media delivery:
+real-video-enhancer-helper.sh enhance input.mp4 output.mp4 --scale 2 --fps 60 --denoise
 ```
 
 ### Film Grain
 
-Add subtle film grain for organic, less-AI-detected aesthetic.
-
-**Recommended Settings** (DaVinci Resolve):
-
-```yaml
-grain_size: 0.5-0.8
-grain_intensity: 5-10%
-color_variation: 2-5%
-```
-
-**When to Apply**:
-- Cinematic content: Always
-- UGC content: Optional (can reduce authenticity)
-- Commercial: Selective (brand-dependent)
-
-### Frame Rate Conversion
-
-**60 fps**: ONLY for high-action content (sports, fast motion) or social media platforms
-
-**24 fps**: Cinematic standard, use for narrative/commercial
-**30 fps**: Broadcast/web standard, use for UGC/documentary
-
-**REAL Video Enhancer** (AI-based interpolation):
-
-```bash
-# 24 fps to 60 fps (cinematic to social media)
-real-video-enhancer-helper.sh interpolate input.mp4 output.mp4 --fps 60
-
-# 24 fps to 48 fps (balanced smoothness)
-real-video-enhancer-helper.sh interpolate input.mp4 output.mp4 --fps 48
-
-# Custom model selection
-real-video-enhancer-helper.sh interpolate input.mp4 output.mp4 \
-  --fps 60 \
-  --model gmfss  # or 'rife', 'ifrnet'
-```
-
-**Models**:
-- `rife`: Fast, high quality (default)
-- `gmfss`: Slower, very high quality, complex motion
-- `ifrnet`: Very fast, medium quality, low-end hardware
-
-**Alternative Tools**:
-- DaVinci Resolve: Optical Flow (best quality)
-- Adobe Premiere: Frame Blending (fast, lower quality)
-- Topaz Video AI: Chronos (AI-based, good for complex motion)
-
-**CRITICAL**: Never upconvert 24 fps to 60 fps for non-action content (creates soap opera effect) unless targeting social media platforms where 60 fps is preferred
-
-### Denoising and Artifact Removal
-
-**REAL Video Enhancer** provides AI-powered denoising and H.264 decompression:
-
-```bash
-# Remove noise from compressed/low-quality video
-real-video-enhancer-helper.sh denoise input.mp4 output.mp4
-
-# Custom model selection
-real-video-enhancer-helper.sh denoise input.mp4 output.mp4 \
-  --model drunet  # or 'dncnn'
-```
-
-**Models**:
-- `drunet`: Medium speed, high quality (default)
-- `dncnn`: Fast, medium quality
-
-**Full Enhancement Pipeline** (upscale + interpolate + denoise):
-
-```bash
-# All-in-one enhancement for social media delivery
-real-video-enhancer-helper.sh enhance input.mp4 output.mp4 \
-  --scale 2 \
-  --fps 60 \
-  --denoise
-
-# Maximum quality (slower)
-real-video-enhancer-helper.sh enhance input.mp4 output.mp4 \
-  --scale 2 \
-  --fps 60 \
-  --denoise \
-  --upscale-model realesrgan \
-  --interpolate-model gmfss \
-  --denoise-model drunet
-```
-
-**When to Use**:
-- AI-generated video with compression artifacts
-- Low-quality source material
-- Social media delivery (upscale + interpolate + denoise)
-- Batch processing video libraries
+Add subtle grain for organic, less-AI-detected aesthetic. DaVinci Resolve settings: grain_size 0.5-0.8, intensity 5-10%, color_variation 2-5%. Always for cinematic; optional for UGC; selective for commercial.
 
 See `tools/video/real-video-enhancer.md` for full documentation.
 
 ## Shot Type Reference
 
-### Framing
-
 | Abbreviation | Name | Framing | Use Case |
 |--------------|------|---------|----------|
-| **EWS** | Extreme Wide Shot | Full environment, subject tiny | Establishing, scale, context |
-| **WS** | Wide Shot | Full body, environment visible | Subject in context, movement |
-| **MWS** | Medium Wide Shot | Knees up, some environment | Group shots, interaction |
-| **MS** | Medium Shot | Waist up | Standard conversation, presentation |
-| **MCU** | Medium Close-Up | Chest up | Emotional connection, detail |
-| **CU** | Close-Up | Head and shoulders | Emotion, intimacy |
-| **ECU** | Extreme Close-Up | Eyes, mouth, hands | Intense emotion, detail |
+| EWS | Extreme Wide Shot | Full environment, subject tiny | Establishing, scale |
+| WS | Wide Shot | Full body | Subject in context |
+| MS | Medium Shot | Waist up | Standard conversation |
+| MCU | Medium Close-Up | Chest up | Emotional connection |
+| CU | Close-Up | Head and shoulders | Emotion, intimacy |
+| ECU | Extreme Close-Up | Eyes, mouth, hands | Intense emotion, detail |
 
-### Camera Angles
+**Camera angles**: Eye-Level (neutral), High Angle (vulnerability), Low Angle (power), Dutch (unease), Overhead (observation), POV (immersion).
 
-| Angle | Effect | Use Case |
-|-------|--------|----------|
-| **Eye-Level** | Neutral, relatable | Standard dialogue, natural perspective |
-| **High Angle** | Vulnerability, weakness | Subject looking up, diminished power |
-| **Low Angle** | Power, dominance | Subject looking down, authority |
-| **Dutch Angle** | Unease, tension | Disorientation, psychological thriller |
-| **Overhead** | Observation, isolation | God's-eye view, planning, maps |
-| **POV** | Immersion, subjectivity | First-person perspective, empathy |
-
-### Camera Movements
-
-| Movement | Description | Effect | Use Case |
-|----------|-------------|--------|----------|
-| **Static** | No camera movement | Stability, observation | Dialogue, contemplation |
-| **Pan** | Horizontal rotation | Reveal, follow | Landscape reveal, subject tracking |
-| **Tilt** | Vertical rotation | Scale, reveal | Building height, subject reveal |
-| **Dolly In** | Move toward subject | Intimacy, focus | Emotional intensification |
-| **Dolly Out** | Move away from subject | Context, isolation | Reveal environment, distance |
-| **Tracking** | Follow subject laterally | Energy, continuity | Walking, running, vehicles |
-| **Crane** | Vertical movement | Drama, scale | Establishing, dramatic reveal |
-| **Handheld** | Natural shake | Authenticity, energy | UGC, documentary, action |
-| **Gimbal** | Smooth stabilization | Cinematic, polished | Commercial, narrative |
+**Camera movements**: Static (stability), Pan (horizontal reveal), Tilt (vertical reveal), Dolly In/Out (intimacy/context), Tracking (energy), Crane (drama), Handheld (authenticity), Gimbal (cinematic).
 
 ## Model Comparison
 
-### Sora 2 Pro
+| Model | Strengths | Limitations | Best For |
+|-------|-----------|-------------|----------|
+| **Sora 2 Pro** | Authentic UGC, fast (<2 min), lower cost, natural movement | Max 10s, less cinematography control, 1080p native | TikTok, Reels, Shorts, testimonials |
+| **Veo 3.1** | Cinematic quality, character consistency, 8K, precise control | Slower (5-10 min), higher cost, complex prompting | Commercials, brand content, character series |
+| **Higgsfield** | 100+ models via single API, Kling/Seedance/DOP, webhook support | API-based only, model availability varies | Automated pipelines, batch generation, A/B testing |
 
-**Strengths**:
-- Authentic, UGC aesthetic
-- Fast generation (<2 min)
-- Lower cost per generation
-- Excellent for social media content
-- Natural, organic movement
+## Longform Talking-Head Pipeline (30s+)
 
-**Limitations**:
-- Maximum 10 seconds per generation
-- Less control over cinematography
-- Character consistency across shots is challenging
-- Lower resolution (1080p native)
+Audio-driven pipeline — voice audio controls lip movement and timing.
 
-**Best For**: TikTok, Reels, Shorts, testimonials, authentic content, <$10k production value
+```text
+Starting Image → Script → Voice Audio → Talking-Head Video → Post-Processing
+     (1)           (2)        (3)              (4)                (5)
+```
 
-### Veo 3.1
+### Step 1: Starting Image
 
-**Strengths**:
-- Cinematic quality
-- Character consistency (with ingredients)
-- Precise control over all parameters
-- 8K output capability
-- Professional-grade results
+Use Nanobanana Pro with JSON prompts (see `content/production/image.md`) for precise color grading. The JSON `color` and `lighting` fields prevent flat greyscale output. Video models amplify any source artifacts — use high-resolution, photorealistic images.
 
-**Limitations**:
-- Slower generation (5-10 min)
-- Higher cost per generation
-- Requires more detailed prompting
-- Ingredients workflow adds complexity
+Tool routing: Character/person → Nanobanana Pro or Freepik; 4K refinement → Seedream 4; face consistency across series → Ideogram face swap.
 
-**Best For**: Commercials, brand content, narrative, character-driven series, >$100k production value
+### Step 2: Script
 
-### Higgsfield (Multi-Model)
+Write for natural speech, not written text:
+- Contractions: "it's", "don't", "we're" — never "it is", "do not"
+- Short sentences: 8-12 words for natural pacing
+- Emotional block cues: `[excited]This changed how I work.[/excited]`
+- Read aloud test: if it sounds awkward spoken, rewrite it
 
-**Strengths**:
-- Access to 100+ models via single API
-- Kling, Seedance, DOP models available
-- Unified workflow across models
-- Webhook support for async pipelines
+### Step 3: Voice Audio
 
-**Limitations**:
-- API-based (no UI for quick tests)
-- Requires technical integration
-- Model availability varies
+**This is the most important step.** Robotic audio gets scrolled past immediately.
 
-**Best For**: Automated pipelines, batch generation, A/B testing, production workflows
+| Tool | Quality | Cost | Voice Clone | Best For |
+|------|---------|------|-------------|----------|
+| **ElevenLabs** | Highest | $5-99/mo | Yes (10-30s clip) | Maximum realism, custom voices |
+| **MiniMax TTS** | High | $5/mo (120 min) | Yes (10s clip) | Easiest setup, best value |
+| **Qwen3-TTS** | High | Free (local, CUDA) | Yes (3s clip) | Self-hosted, open source |
+
+**NEVER use pre-made ElevenLabs voices** for realism — widely recognised as AI. Use Voice Design or Instant Voice Clone. For cloning: quiet room, single speaker, no background music. Run through CapCut cleanup pipeline first if cloning from existing content (see `content/production/audio.md`).
+
+MiniMax: best quality-to-effort ratio, natural-sounding by default, $5/month for 120 minutes. Qwen3-TTS: 97ms streaming latency, instruction-controlled emotion — see `tools/voice/qwen3-tts.md`.
+
+### Step 4: Talking-Head Video
+
+| Model | Quality | Cost | Best For |
+|-------|---------|------|----------|
+| **HeyGen Avatar 4** | High | Subscription | Best all-around, easiest workflow |
+| **VEED Fabric 1.0** | Highest | Higher | Maximum quality, premium content |
+| **InfiniteTalk** | Good | Free (self-hosted) | Budget/self-hosted |
+
+HeyGen: upload starting image as photo avatar, upload voice audio, generate. See `tools/video/heygen-skill.md`. VEED: via MuAPI lipsync endpoint `POST /api/v1/veed-lipsync` (see `tools/video/muapi.md`).
+
+### Step 5: Post-Processing
+
+1. Upscale if needed: `real-video-enhancer-helper.sh upscale input.mp4 output.mp4 --scale 2`
+2. Denoise: `real-video-enhancer-helper.sh denoise input.mp4 output.mp4`
+3. Film grain: subtle grain for organic aesthetic
+4. Audio mix: layer ambient sound and music behind voice (see `content/production/audio.md` 4-Layer Audio Design)
+
+### Longform Assembly (30s+)
+
+```bash
+# Split script into segments matching model's max duration (e.g., 10s for HeyGen)
+# Generate each segment with same starting image and voice settings
+# Stitch segments:
+printf "file '%s'\n" segment_*.mp4 > concat.txt
+ffmpeg -f concat -safe 0 -i concat.txt -c copy longform_output.mp4
+# Add B-roll cuts between segments to hide transition artifacts
+# Replace stitched audio with original full-length voice track for seamless continuity
+```
+
+### Use Case Routing
+
+| Use Case | Starting Image | Voice | Video Model | Post-Processing |
+|----------|---------------|-------|-------------|-----------------|
+| Paid ads | Nanobanana Pro (brand colors) | ElevenLabs (custom clone) | VEED Fabric | Full pipeline |
+| Organic social | Nanobanana Pro or Freepik | MiniMax (default voice) | HeyGen Avatar 4 | Light denoise |
+| AI influencer | Nanobanana Pro (consistent character) | ElevenLabs (cloned persona) | HeyGen Avatar 4 | Film grain + upscale |
+| Budget/volume | Freepik | Qwen3-TTS (local) | InfiniteTalk | Minimal |
 
 ## Related Tools & Resources
 
 ### Internal References
 
-- `tools/video/video-prompt-design.md` - Veo 3 Meta Framework (7-component prompting)
-- `tools/video/higgsfield.md` - Higgsfield API integration
-- `tools/video/heygen-skill.md` - HeyGen Avatar API (talking-head generation)
-- `tools/video/muapi.md` - MuAPI (VEED lipsync, face swap, VFX)
-- `tools/video/remotion.md` - Programmatic video editing
-- `tools/voice/voice-models.md` - TTS model comparison (ElevenLabs, MiniMax, Qwen3-TTS)
-- `tools/voice/qwen3-tts.md` - Qwen3-TTS setup and voice cloning
-- `content/production/image.md` - Image generation (Nanobanana Pro, Midjourney, Freepik)
-- `content/production/audio.md` - Voice pipeline (CapCut cleanup + ElevenLabs), `voice-pipeline-helper.sh`
-- `content/production/characters.md` - Character consistency (Facial Engineering, Character Bibles)
-- `content/optimization.md` - A/B testing, seed bracketing automation
-- `scripts/seed-bracket-helper.sh` - Seed bracketing CLI (generate, score, report)
+- `tools/video/video-prompt-design.md` — Veo 3 Meta Framework (7-component prompting)
+- `tools/video/higgsfield.md` — Higgsfield API integration
+- `tools/video/heygen-skill.md` — HeyGen Avatar API (talking-head generation)
+- `tools/video/muapi.md` — MuAPI (VEED lipsync, face swap, VFX)
+- `tools/video/remotion.md` — Programmatic video editing
+- `tools/voice/voice-models.md` — TTS model comparison (ElevenLabs, MiniMax, Qwen3-TTS)
+- `tools/voice/qwen3-tts.md` — Qwen3-TTS setup and voice cloning
+- `content/production/image.md` — Image generation (Nanobanana Pro, Midjourney, Freepik)
+- `content/production/audio.md` — Voice pipeline, 4-Layer Audio Design
+- `content/production/characters.md` — Character consistency (Facial Engineering, Character Bibles)
+- `content/optimization.md` — A/B testing, seed bracketing automation
+- `scripts/seed-bracket-helper.sh` — Seed bracketing CLI
+
+### Helper Scripts
+
+```bash
+# Seed bracketing
+seed-bracket-helper.sh generate --type product --prompt "Product rotating on white background"
+seed-bracket-helper.sh score 4005 8 9 7 8 9 && seed-bracket-helper.sh report
+
+# Unified video generation CLI (Sora 2, Veo 3.1, Nanobanana Pro)
+video-gen-helper.sh generate sora "A cat reading a book" sora-2-pro 8 1280x720
+video-gen-helper.sh generate veo "Cinematic mountain sunset" veo-3.1-generate-001 16:9
+video-gen-helper.sh character /path/to/face.jpg
+video-gen-helper.sh bracket "Product demo" https://example.com/product.jpg 4000 4010 dop-turbo
+video-gen-helper.sh status sora vid_abc123 && video-gen-helper.sh download sora vid_abc123 ./output
+video-gen-helper.sh models
+```
 
 ### External Resources
 
@@ -819,235 +422,4 @@ See `tools/video/real-video-enhancer.md` for full documentation.
 - [Veo 3.1 Documentation](https://deepmind.google/technologies/veo/)
 - [Higgsfield Platform](https://platform.higgsfield.ai)
 - [HeyGen Platform](https://www.heygen.com/)
-- [MiniMax / Hailuo](https://www.minimax.io/)
-- [VEED](https://www.veed.io/)
 - [Topaz Video AI](https://www.topazlabs.com/topaz-video-ai)
-
-### Helper Scripts
-
-```bash
-# Seed bracketing automation
-seed-bracket-helper.sh generate --type product --prompt "Product rotating on white background"
-seed-bracket-helper.sh status
-seed-bracket-helper.sh score 4005 8 9 7 8 9
-seed-bracket-helper.sh report
-
-# Unified video generation CLI (Sora 2, Veo 3.1, Nanobanana Pro)
-video-gen-helper.sh generate sora "A cat reading a book" sora-2-pro 8 1280x720
-video-gen-helper.sh generate veo "Cinematic mountain sunset" veo-3.1-generate-001 16:9
-video-gen-helper.sh generate nanobanana "Cat walks through garden" https://example.com/cat.jpg dop-turbo
-
-# Image generation (Nanobanana Pro / Soul model)
-video-gen-helper.sh image "Product on desk, studio lighting" 1696x960 1080p
-
-# Character creation for consistency
-video-gen-helper.sh character /path/to/face.jpg
-
-# Seed bracketing automation
-video-gen-helper.sh bracket "Product demo" https://example.com/product.jpg 4000 4010 dop-turbo
-
-# Check status and download
-video-gen-helper.sh status sora vid_abc123
-video-gen-helper.sh download sora vid_abc123 ./output
-
-# Show all available models
-video-gen-helper.sh models
-
-# Batch upscaling (planned)
-topaz-upscale-helper.sh --input ./raw/ --output ./upscaled/ --scale 1.5
-```
-
-## Longform Talking-Head Pipeline (30s+)
-
-For talking-head videos (AI influencers, paid ads, organic content), the pipeline is **audio-driven** rather than prompt-driven. The voice audio controls lip movement and timing, so audio quality is the single biggest determinant of perceived realism.
-
-### Pipeline Overview
-
-```text
-Starting Image → Script → Voice Audio → Talking-Head Video → Post-Processing
-     (1)           (2)        (3)              (4)                (5)
-```
-
-Each step gates the next. A weak starting image or robotic audio ruins everything downstream.
-
-### Step 1: Generate Starting Image
-
-Use Nanobanana Pro with JSON prompts (see `content/production/image.md`) for precise color grading control. The JSON `color` and `lighting` fields prevent the flat greyscale look common in default AI generations.
-
-**Critical**: The starting image must be high-resolution and photorealistic. Video models amplify any artifacts in the source image.
-
-```text
-Tool routing:
-├─ Character/person → Nanobanana Pro (JSON color grading) or Freepik
-├─ Need 4K refinement → Seedream 4 post-processing
-└─ Face consistency across series → Ideogram face swap
-```
-
-See `content/production/image.md` "Nanobanana Pro JSON Prompt Schema" for the full JSON structure with color palette hex codes.
-
-### Step 2: Generate Script
-
-Write scripts that sound like natural speech, not written text. Key rules:
-
-- **Contractions**: "it's", "don't", "we're" — never "it is", "do not"
-- **Short sentences**: 8-12 words per sentence for natural pacing
-- **Conversational fillers**: Occasional "so", "actually", "honestly" add authenticity
-- **Read aloud test**: If it sounds awkward spoken, rewrite it
-
-Use emotional block cues from `content/production/audio.md` to mark delivery changes:
-
-```text
-[excited]This completely changed how I work.[/excited]
-[confident]The build quality is incredible, and it just works.[/confident]
-```
-
-### Step 3: Generate Voice Audio
-
-**This is the most important step.** A perfect video with robotic audio gets scrolled past immediately.
-
-#### Tool Selection
-
-| Tool | Quality | Cost | Voice Clone | Best For |
-|------|---------|------|-------------|----------|
-| **ElevenLabs** | Highest | $5-99/mo | Yes (instant, 10-30s clip) | Maximum realism, custom voices |
-| **MiniMax TTS** | High | $5/mo (120 min) | Yes (10s clip) | Easiest setup, best value |
-| **Qwen3-TTS** | High | Free (local, CUDA) | Yes (3s clip) | Self-hosted, open source |
-
-#### ElevenLabs Best Practices
-
-- **NEVER use pre-made voices** for realism — they are widely recognised and signal "AI" immediately
-- Use **Voice Design** to create a unique voice from a text description, or **Instant Voice Clone** with a 10-30 second clean audio clip
-- For voice cloning: record in a quiet room, single speaker, clear pronunciation, no background music
-- Always run through the CapCut cleanup pipeline first if cloning from existing content (see `content/production/audio.md`)
-
-#### MiniMax TTS
-
-MiniMax (Hailuo) offers the best quality-to-effort ratio for talking-head content:
-
-- Default voice output is already natural-sounding with minimal configuration
-- Voice clone works well with just a 10-second reference clip
-- $5/month for 120 minutes of generation — best value in the category
-- API available via Higgsfield platform (web UI) or direct MiniMax API
-
-#### Qwen3-TTS (Open Source)
-
-Solid self-hosted alternative requiring CUDA GPU. See `tools/voice/qwen3-tts.md` for full setup.
-
-- 3-second reference clip for voice cloning
-- Instruction-controlled emotion and prosody
-- 97ms streaming latency for real-time applications
-
-### Step 4: Generate Talking-Head Video
-
-Feed the starting image + voice audio to a talking-head model. These models animate the face to match the audio, handling lip sync, facial expressions, and head movement.
-
-#### Model Selection
-
-| Model | Quality | Cost | Open Source | Best For |
-|-------|---------|------|-------------|----------|
-| **HeyGen Avatar 4** | High | Subscription | No | Best all-around, easiest workflow |
-| **VEED Fabric 1.0** | Highest | Higher than HeyGen | No | Maximum quality, premium content |
-| **InfiniteTalk** | Good | Free (self-hosted) | Yes | Budget/self-hosted, decent quality |
-
-#### HeyGen Avatar 4
-
-Best all-around model for talking-head generation. Handles lip sync, expressions, and natural head movement well. See `tools/video/heygen-skill.md` for full API integration.
-
-**Workflow**:
-
-1. Upload starting image as photo avatar (see `heygen-skill/rules/photo-avatars.md`)
-2. Upload voice audio as audio asset (see `heygen-skill/rules/assets.md`)
-3. Generate video with audio input (see `heygen-skill/rules/video-generation.md`)
-
-#### VEED Fabric 1.0
-
-Higher quality than HeyGen but at a premium price point. Best for content where maximum realism justifies the cost (paid ads, brand content).
-
-- Accessible via MuAPI lipsync endpoint: `POST /api/v1/veed-lipsync` (see `tools/video/muapi.md`)
-- Also available via VEED's direct platform
-
-#### InfiniteTalk (Open Source)
-
-Voice-to-video model for self-hosted talking-head generation. Decent quality for an open-source solution.
-
-- GitHub: search for "InfiniteTalk voice-to-video"
-- Requires GPU for inference
-- Good for high-volume generation where API costs would be prohibitive
-- Quality gap vs HeyGen/VEED is narrowing with each release
-
-### Step 5: Post-Processing
-
-After generating the talking-head video:
-
-1. **Upscale** if needed: `real-video-enhancer-helper.sh upscale input.mp4 output.mp4 --scale 2`
-2. **Denoise**: `real-video-enhancer-helper.sh denoise input.mp4 output.mp4` (removes compression artifacts)
-3. **Film grain**: Add subtle grain for organic aesthetic (see Post-Production Guidelines below)
-4. **Audio mix**: Layer ambient sound and music behind the voice (see `content/production/audio.md` 4-Layer Audio Design)
-
-### Longform Assembly (30s+ Videos)
-
-For videos longer than a single generation window:
-
-1. **Split script into segments** matching the model's maximum duration (e.g., 10s for HeyGen)
-2. **Generate each segment** with the same starting image and voice settings for consistency
-3. **Stitch segments** in a video editor or with ffmpeg:
-
-```bash
-# Concatenate segments
-printf "file '%s'\n" segment_*.mp4 > concat.txt
-ffmpeg -f concat -safe 0 -i concat.txt -c copy longform_output.mp4
-```
-
-4. **Add B-roll cuts** between segments to hide any transition artifacts
-5. **Final audio pass**: Replace stitched audio with the original full-length voice track for seamless audio continuity
-
-### Use Case Routing
-
-| Use Case | Starting Image | Voice | Video Model | Post-Processing |
-|----------|---------------|-------|-------------|-----------------|
-| **Paid ads** | Nanobanana Pro (brand colors) | ElevenLabs (custom clone) | VEED Fabric | Full pipeline |
-| **Organic social** | Nanobanana Pro or Freepik | MiniMax (default voice) | HeyGen Avatar 4 | Light denoise |
-| **AI influencer** | Nanobanana Pro (consistent character) | ElevenLabs (cloned persona) | HeyGen Avatar 4 | Film grain + upscale |
-| **Budget/volume** | Freepik | Qwen3-TTS (local) | InfiniteTalk | Minimal |
-
-## Quick Start Checklist
-
-**For Longform Talking-Head (30s+)**:
-- [ ] Generate high-quality starting image (Nanobanana Pro with JSON color grading)
-- [ ] Write conversational script with emotional block cues
-- [ ] Generate voice audio (ElevenLabs custom clone or MiniMax)
-- [ ] NEVER use pre-made ElevenLabs voices for realism content
-- [ ] Feed image + audio to talking-head model (HeyGen/VEED/InfiniteTalk)
-- [ ] For 30s+: split into segments, stitch, replace audio with full track
-- [ ] Post-process: denoise, optional upscale, optional film grain
-- [ ] Layer ambient audio and music behind voice track
-
-**For UGC/Social Content (Sora 2)**:
-- [ ] Use 6-section master template
-- [ ] Set aspect ratio to 9:16
-- [ ] Keep duration 3-10 seconds
-- [ ] Use seed range 2000-3000
-- [ ] Specify handheld camera movement
-- [ ] Include authentic, natural lighting
-- [ ] Test 10 seeds, score outputs
-- [ ] Add subtle film grain in post
-
-**For Cinematic/Commercial (Veo 3.1)**:
-- [ ] Prepare character/product ingredients
-- [ ] Use 7-component VEO framework
-- [ ] Set aspect ratio to 16:9 or 2.39:1
-- [ ] Specify professional camera model (ARRI/RED/Sony)
-- [ ] Use seed range based on content type
-- [ ] Test ingredients-to-video workflow (NEVER frame-to-video)
-- [ ] Score outputs, iterate on winners
-- [ ] Upscale with Topaz (max 1.75x)
-- [ ] Add film grain for organic aesthetic
-
-**For Character-Consistent Series**:
-- [ ] Create character ingredient library
-- [ ] Document character bible (15+ attributes)
-- [ ] Use Veo 3.1 with ingredient strength 0.9+
-- [ ] Test seed range 1000-1999
-- [ ] Maintain identical character description across all prompts
-- [ ] Store winning seeds for reuse
-- [ ] Verify consistency across all outputs before finalizing
