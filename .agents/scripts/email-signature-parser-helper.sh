@@ -353,6 +353,36 @@ extract_address() {
 # TOON Generation and Merging (t1044.4 Enhanced)
 # =============================================================================
 
+# Emit a YAML history entry if a field value changed.
+# Args: field_name new_val old_val source now
+# Prints a history block to stdout when new_val differs from old_val (and old_val is non-empty).
+# Returns:
+#   0 — field changed (caller should update the record)
+#   1 — field is new/empty (caller should fill it)
+#   2 — no change (caller should skip)
+_emit_history_entry() {
+	local field_name="$1"
+	local new_val="$2"
+	local old_val="$3"
+	local source="$4"
+	local now="$5"
+
+	# Skip if new value is empty
+	if [[ -z "$new_val" ]]; then
+		return 2
+	fi
+
+	if [[ -n "$old_val" && "$new_val" != "$old_val" ]]; then
+		printf '    - date: %s\n      field: %s\n      old: %s\n      new: %s\n      source: %s\n' \
+			"$now" "$field_name" "$old_val" "$new_val" "$source"
+		return 0
+	elif [[ -z "$old_val" ]]; then
+		return 1
+	fi
+
+	return 2
+}
+
 # Generate a new TOON contact record
 generate_toon_record() {
 	local email="$1"
@@ -416,9 +446,30 @@ merge_toon_contact() {
 	# File exists — update last_seen and detect field changes
 	local existing
 	existing=$(cat "$toon_file")
+	existing=$(_merge_update_fields "$existing" "$name" "$title" "$company" "$phone" "$website" "$address" "$source" "$confidence" "$now")
+
+	echo "$existing" >"$toon_file"
+	return 0
+}
+
+# Extract existing field values, apply updates, build history, and return the updated record.
+# Args: existing name title company phone website address source confidence now
+# Prints the updated TOON record to stdout.
+_merge_update_fields() {
+	local existing="$1"
+	local name="$2"
+	local title="$3"
+	local company="$4"
+	local phone="$5"
+	local website="$6"
+	local address="$7"
+	local source="$8"
+	local confidence="$9"
+	local now="${10}"
 
 	# Extract existing field values in a single pass (avoids repeated grep per field)
-	local existing_name existing_title existing_company existing_phone existing_website existing_address
+	local existing_name="" existing_title="" existing_company=""
+	local existing_phone="" existing_website="" existing_address=""
 	while IFS= read -r _line; do
 		case "$_line" in
 		"  name: "*) existing_name="${_line#  name: }" ;;
@@ -430,71 +481,61 @@ merge_toon_contact() {
 		esac
 	done <<<"$existing"
 
-	# Update last_seen (here-string: line-anchored replacement in multiline string)
+	# Update last_seen
 	existing=$(sed "s/^  last_seen: .*/  last_seen: ${now}/" <<<"$existing")
 
-	# Detect field changes and build history entries
+	# Process each field: emit history entry and update record as needed
 	local history_entries=""
+	local entry rc field_name new_val old_val
 
-	# Helper function to check and update a field
-	check_and_update_field() {
-		local field_name="$1"
-		local new_val="$2"
-		local old_val="$3"
+	for _spec in \
+		"name|${name}|${existing_name}" \
+		"title|${title}|${existing_title}" \
+		"company|${company}|${existing_company}" \
+		"phone|${phone}|${existing_phone}" \
+		"website|${website}|${existing_website}" \
+		"address|${address}|${existing_address}"; do
+		field_name="${_spec%%|*}"
+		new_val="${_spec#*|}"
+		new_val="${new_val%|*}"
+		old_val="${_spec##*|}"
 
-		# Skip if new value is empty
-		[[ -z "$new_val" ]] && return 0
+		entry=$(_emit_history_entry "$field_name" "$new_val" "$old_val" "$source" "$now") || rc=$?
+		rc=${rc:-0}
 
-		# Detect change: new value differs from old value and old value is not empty
-		if [[ -n "$old_val" && "$new_val" != "$old_val" ]]; then
-			# Append to history
-			history_entries="${history_entries}    - date: ${now}
-      field: ${field_name}
-      old: ${old_val}
-      new: ${new_val}
-      source: ${source}
+		if [[ "$rc" -eq 0 ]]; then
+			# Field changed — record history and update value
+			history_entries="${history_entries}${entry}
 "
-			# Update the field in the existing record (here-string: line-anchored multiline replacement)
 			existing=$(sed "s|^  ${field_name}: .*|  ${field_name}: ${new_val}|" <<<"$existing")
-		elif [[ -z "$old_val" ]]; then
-			# Fill empty field (here-string: line-anchored multiline replacement)
+		elif [[ "$rc" -eq 1 ]]; then
+			# Field was empty — fill it
 			existing=$(sed "s|^  ${field_name}: $|  ${field_name}: ${new_val}|" <<<"$existing")
 		fi
-		return 0
-	}
-
-	# Check each field for changes
-	check_and_update_field "name" "$name" "$existing_name"
-	check_and_update_field "title" "$title" "$existing_title"
-	check_and_update_field "company" "$company" "$existing_company"
-	check_and_update_field "phone" "$phone" "$existing_phone"
-	check_and_update_field "website" "$website" "$existing_website"
-	check_and_update_field "address" "$address" "$existing_address"
+		rc=0
+	done
 
 	# Append history entries if any changes detected
 	if [[ -n "$history_entries" ]]; then
-		# Check if history section exists
 		if ! echo "$existing" | grep -q "^  history:"; then
-			# Add history section
 			existing="${existing}
   history:
 ${history_entries}"
 		else
-			# Append to existing history section
 			existing="${existing}
 ${history_entries}"
 		fi
 	fi
 
 	# Upgrade confidence if new is higher
-	local existing_conf
+	local existing_conf _field_line
 	_field_line=$(echo "$existing" | grep -E "^  confidence: " || true)
 	existing_conf="${_field_line#  confidence: }"
 	if [[ "$confidence" == "high" && "$existing_conf" != "high" ]]; then
 		existing=$(sed "s/^  confidence: .*/  confidence: ${confidence}/" <<<"$existing")
 	fi
 
-	echo "$existing" >"$toon_file"
+	printf '%s' "$existing"
 	return 0
 }
 
@@ -745,6 +786,123 @@ parse_llm_output() {
 }
 
 # =============================================================================
+# Main Parsing Logic — Helpers
+# =============================================================================
+
+# Calculate confidence level from a count of extracted fields.
+# Args: field_count [downgrade]
+# downgrade=1 caps the result at "medium" (used after LLM fallback).
+# Prints: "low", "medium", or "high"
+_calculate_confidence() {
+	local field_count="$1"
+	local downgrade="${2:-0}"
+	local confidence="high"
+
+	if [[ "$field_count" -le 1 ]]; then
+		confidence="low"
+	elif [[ "$field_count" -le 3 ]]; then
+		confidence="medium"
+	fi
+
+	if [[ "$downgrade" -eq 1 && "$confidence" == "high" ]]; then
+		confidence="medium"
+	fi
+
+	printf '%s' "$confidence"
+	return 0
+}
+
+# Count non-empty fields from the six contact fields.
+# Args: name title company phone website address
+# Prints the integer count.
+_count_fields() {
+	local count=0
+	local f
+	for f in "$@"; do
+		[[ -n "$f" ]] && count=$((count + 1))
+	done
+	printf '%d' "$count"
+	return 0
+}
+
+# Fill missing contact fields from LLM output globals (LLM_*).
+# Modifies the caller's variables via printf to stdout as KEY=VALUE lines.
+# Args: name title company phone website address emails_raw
+# Prints lines: NAME=... TITLE=... COMPANY=... PHONE=... WEBSITE=... ADDRESS=... EMAILS=...
+_apply_llm_fields() {
+	local name="$1"
+	local title="$2"
+	local company="$3"
+	local phone="$4"
+	local website="$5"
+	local address="$6"
+	local emails_raw="$7"
+
+	[[ -z "$name" && -n "$LLM_NAME" ]] && name="$LLM_NAME"
+	[[ -z "$title" && -n "$LLM_TITLE" ]] && title="$LLM_TITLE"
+	[[ -z "$company" && -n "$LLM_COMPANY" ]] && company="$LLM_COMPANY"
+	[[ -z "$phone" && -n "$LLM_PHONE" ]] && phone="$LLM_PHONE"
+	[[ -z "$website" && -n "$LLM_WEBSITE" ]] && website="$LLM_WEBSITE"
+	[[ -z "$address" && -n "$LLM_ADDRESS" ]] && address="$LLM_ADDRESS"
+
+	if [[ -n "$LLM_EMAIL" ]]; then
+		emails_raw=$(printf '%s\n%s' "$emails_raw" "$LLM_EMAIL" | sort -uf | grep -v '^$' || true)
+	fi
+
+	printf 'NAME=%s\nTITLE=%s\nCOMPANY=%s\nPHONE=%s\nWEBSITE=%s\nADDRESS=%s\nEMAILS=%s\n' \
+		"$name" "$title" "$company" "$phone" "$website" "$address" "$emails_raw"
+	return 0
+}
+
+# Save contact to TOON, cross-reference additional emails, and print summary.
+# Args: contacts_dir emails_raw name title company phone website address source_label confidence used_llm
+# Prints the toon_file path to stdout.
+_persist_contact() {
+	local contacts_dir="$1"
+	local emails_raw="$2"
+	local name="$3"
+	local title="$4"
+	local company="$5"
+	local phone="$6"
+	local website="$7"
+	local address="$8"
+	local source_label="$9"
+	local confidence="${10}"
+	local used_llm="${11}"
+
+	local primary_email toon_file
+	primary_email=$(printf '%s' "$emails_raw" | head -1)
+	toon_file=$(resolve_contact_filename "$contacts_dir" "$primary_email" "$name")
+
+	merge_toon_contact "$toon_file" "$primary_email" "$name" "$title" "$company" \
+		"$phone" "$website" "$address" "$source_label" "$confidence"
+
+	# Cross-reference additional emails
+	local email_count additional_email
+	email_count=$(echo "$emails_raw" | wc -l | tr -d ' ')
+	if [[ "$email_count" -gt 1 ]]; then
+		while IFS= read -r additional_email; do
+			[[ "$additional_email" == "$primary_email" ]] && continue
+			add_email_cross_reference "$toon_file" "$additional_email"
+		done <<<"$emails_raw"
+	fi
+
+	print_success "Contact saved: ${toon_file}"
+	print_info "  Name: ${name:-<not found>}"
+	print_info "  Title: ${title:-<not found>}"
+	print_info "  Company: ${company:-<not found>}"
+	print_info "  Email: ${primary_email}"
+	print_info "  Phone: ${phone:-<not found>}"
+	print_info "  Website: ${website:-<not found>}"
+	print_info "  Address: ${address:-<not found>}"
+	print_info "  Confidence: ${confidence}"
+	[[ "$used_llm" == true ]] && print_info "  LLM fallback: yes"
+
+	printf '%s' "$toon_file"
+	return 0
+}
+
+# =============================================================================
 # Main Parsing Logic
 # =============================================================================
 
@@ -772,19 +930,17 @@ parse_email_signature() {
 		return 1
 	fi
 
-	# Create contacts directory
 	mkdir -p "$contacts_dir"
 
 	# Extract signature block
 	local sig_block
 	sig_block=$(extract_signature_block "$email_text")
-
 	if [[ -z "$sig_block" ]]; then
 		print_warning "No signature block detected"
 		return 1
 	fi
 
-	# Rule-based extraction
+	# Rule-based field extraction
 	local emails_raw phones_raw websites_raw
 	local name="" title="" company="" phone="" website="" address=""
 
@@ -792,121 +948,54 @@ parse_email_signature() {
 	phones_raw=$(extract_phones "$sig_block")
 	websites_raw=$(extract_websites "$sig_block")
 	name=$(extract_name "$sig_block" 2>/dev/null) || true
-	phone=$(echo "$phones_raw" | head -1)
-	website=$(echo "$websites_raw" | head -1)
+	phone=$(printf '%s' "$phones_raw" | head -1)
+	website=$(printf '%s' "$websites_raw" | head -1)
 	address=$(extract_address "$sig_block" 2>/dev/null) || true
 
-	# Extract title and company (depend on name)
 	if [[ -n "$name" ]]; then
 		title=$(extract_title "$sig_block" "$name" 2>/dev/null) || true
 		company=$(extract_company "$sig_block" "$name" "$title" 2>/dev/null) || true
 	fi
 
-	# Determine confidence based on how many fields we extracted
-	local field_count=0
-	[[ -n "$name" ]] && field_count=$((field_count + 1))
-	[[ -n "$title" ]] && field_count=$((field_count + 1))
-	[[ -n "$company" ]] && field_count=$((field_count + 1))
-	[[ -n "$phone" ]] && field_count=$((field_count + 1))
-	[[ -n "$website" ]] && field_count=$((field_count + 1))
-	[[ -n "$address" ]] && field_count=$((field_count + 1))
-
-	local confidence="high"
-	if [[ "$field_count" -le 1 ]]; then
-		confidence="low"
-	elif [[ "$field_count" -le 3 ]]; then
-		confidence="medium"
-	fi
+	local field_count confidence
+	field_count=$(_count_fields "$name" "$title" "$company" "$phone" "$website" "$address")
+	confidence=$(_calculate_confidence "$field_count")
 
 	# LLM fallback if regex extraction was poor
 	local used_llm=false
 	if [[ "$confidence" == "low" || -z "$emails_raw" ]]; then
 		print_info "Low confidence from regex — attempting LLM extraction..."
-		local llm_output
+		local llm_output llm_fields
 		if llm_output=$(llm_extract_signature "$sig_block"); then
 			parse_llm_output "$llm_output"
 			used_llm=true
 
-			# Fill in missing fields from LLM
-			[[ -z "$name" && -n "$LLM_NAME" ]] && name="$LLM_NAME"
-			[[ -z "$title" && -n "$LLM_TITLE" ]] && title="$LLM_TITLE"
-			[[ -z "$company" && -n "$LLM_COMPANY" ]] && company="$LLM_COMPANY"
-			[[ -z "$phone" && -n "$LLM_PHONE" ]] && phone="$LLM_PHONE"
-			[[ -z "$website" && -n "$LLM_WEBSITE" ]] && website="$LLM_WEBSITE"
-			[[ -z "$address" && -n "$LLM_ADDRESS" ]] && address="$LLM_ADDRESS"
+			llm_fields=$(_apply_llm_fields "$name" "$title" "$company" "$phone" "$website" "$address" "$emails_raw")
+			name=$(printf '%s' "$llm_fields" | grep '^NAME=' | cut -d= -f2-)
+			title=$(printf '%s' "$llm_fields" | grep '^TITLE=' | cut -d= -f2-)
+			company=$(printf '%s' "$llm_fields" | grep '^COMPANY=' | cut -d= -f2-)
+			phone=$(printf '%s' "$llm_fields" | grep '^PHONE=' | cut -d= -f2-)
+			website=$(printf '%s' "$llm_fields" | grep '^WEBSITE=' | cut -d= -f2-)
+			address=$(printf '%s' "$llm_fields" | grep '^ADDRESS=' | cut -d= -f2-)
+			emails_raw=$(printf '%s' "$llm_fields" | grep '^EMAILS=' | cut -d= -f2-)
 
-			# Add LLM-discovered emails
-			if [[ -n "$LLM_EMAIL" ]]; then
-				emails_raw=$(printf '%s\n%s' "$emails_raw" "$LLM_EMAIL" | sort -uf | grep -v '^$' || true)
-			fi
-
-			# Recalculate confidence
-			field_count=0
-			[[ -n "$name" ]] && field_count=$((field_count + 1))
-			[[ -n "$title" ]] && field_count=$((field_count + 1))
-			[[ -n "$company" ]] && field_count=$((field_count + 1))
-			[[ -n "$phone" ]] && field_count=$((field_count + 1))
-			[[ -n "$website" ]] && field_count=$((field_count + 1))
-			[[ -n "$address" ]] && field_count=$((field_count + 1))
-
-			if [[ "$field_count" -le 1 ]]; then
-				confidence="low"
-			elif [[ "$field_count" -le 3 ]]; then
-				confidence="medium"
-			else
-				confidence="high"
-			fi
-
-			# Downgrade slightly since LLM was needed
-			if [[ "$confidence" == "high" ]]; then
-				confidence="medium"
-			fi
+			field_count=$(_count_fields "$name" "$title" "$company" "$phone" "$website" "$address")
+			confidence=$(_calculate_confidence "$field_count" 1)
 		fi
 	fi
 
-	# Check we have at least one email
 	if [[ -z "$emails_raw" ]]; then
 		print_warning "No email addresses found in signature"
 		return 1
 	fi
 
-	# Determine the source label
-	if [[ "$used_llm" == true ]]; then
-		source_label="${source_label}+llm"
-	fi
+	[[ "$used_llm" == true ]] && source_label="${source_label}+llm"
 
-	# t1044.4: Resolve contact filename (handle name collisions)
-	local primary_email
-	primary_email=$(echo "$emails_raw" | head -1)
 	local toon_file
-	toon_file=$(resolve_contact_filename "$contacts_dir" "$primary_email" "$name")
+	toon_file=$(_persist_contact "$contacts_dir" "$emails_raw" "$name" "$title" "$company" \
+		"$phone" "$website" "$address" "$source_label" "$confidence" "$used_llm")
 
-	# t1044.4: Merge contact with field change detection and history tracking
-	merge_toon_contact "$toon_file" "$primary_email" "$name" "$title" "$company" "$phone" "$website" "$address" "$source_label" "$confidence"
-
-	# t1044.4: Cross-reference additional emails
-	local email_count
-	email_count=$(echo "$emails_raw" | wc -l | tr -d ' ')
-	if [[ "$email_count" -gt 1 ]]; then
-		local additional_email
-		while IFS= read -r additional_email; do
-			[[ "$additional_email" == "$primary_email" ]] && continue
-			add_email_cross_reference "$toon_file" "$additional_email"
-		done <<<"$emails_raw"
-	fi
-
-	print_success "Contact saved: ${toon_file}"
-	print_info "  Name: ${name:-<not found>}"
-	print_info "  Title: ${title:-<not found>}"
-	print_info "  Company: ${company:-<not found>}"
-	print_info "  Email: ${primary_email}"
-	print_info "  Phone: ${phone:-<not found>}"
-	print_info "  Website: ${website:-<not found>}"
-	print_info "  Address: ${address:-<not found>}"
-	print_info "  Confidence: ${confidence}"
-	[[ "$used_llm" == true ]] && print_info "  LLM fallback: yes"
-
-	echo "$toon_file"
+	printf '%s\n' "$toon_file"
 	return 0
 }
 
