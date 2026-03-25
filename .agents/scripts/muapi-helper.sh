@@ -199,70 +199,71 @@ submit_and_poll() {
 
 # --- Commands ---
 
-# Flux Dev image generation
-cmd_flux() {
-	local prompt=""
-	local image=""
-	local mask_image=""
-	local size="1024*1024"
-	local steps=28
-	local seed=-1
-	local guidance=3.5
-	local num_images=1
-	local strength=0.8
-	local poll_interval="${DEFAULT_POLL_INTERVAL}"
-	local timeout="${DEFAULT_TIMEOUT}"
-	local output_file=""
-	local webhook=""
+# Parse arguments for cmd_flux — sets _flux_* globals
+# Returns 1 on unknown option or duplicate positional arg
+_parse_flux_args() {
+	_flux_prompt=""
+	_flux_image=""
+	_flux_mask_image=""
+	_flux_size="1024*1024"
+	_flux_steps=28
+	_flux_seed=-1
+	_flux_guidance=3.5
+	_flux_num_images=1
+	_flux_strength=0.8
+	_flux_poll_interval="${DEFAULT_POLL_INTERVAL}"
+	_flux_timeout="${DEFAULT_TIMEOUT}"
+	_flux_output_file=""
+	_flux_webhook=""
 
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--image)
-			image="$2"
+			_flux_image="$2"
 			shift 2
 			;;
 		--mask)
-			mask_image="$2"
+			_flux_mask_image="$2"
 			shift 2
 			;;
 		--size)
-			size="$2"
+			_flux_size="$2"
 			shift 2
 			;;
 		--steps)
-			steps="$2"
+			_flux_steps="$2"
 			shift 2
 			;;
 		--seed)
-			seed="$2"
+			_flux_seed="$2"
 			shift 2
 			;;
 		--guidance)
-			guidance="$2"
+			_flux_guidance="$2"
 			shift 2
 			;;
 		--num)
-			num_images="$2"
+			_flux_num_images="$2"
 			shift 2
 			;;
 		--strength)
-			strength="$2"
+			_flux_strength="$2"
 			shift 2
 			;;
 		--poll)
-			poll_interval="$2"
+			_flux_poll_interval="$2"
 			shift 2
 			;;
 		--timeout)
-			timeout="$2"
+			_flux_timeout="$2"
 			shift 2
 			;;
 		--output | -o)
-			output_file="$2"
+			_flux_output_file="$2"
 			shift 2
 			;;
 		--webhook)
-			webhook="$2"
+			_flux_webhook="$2"
 			shift 2
 			;;
 		--*)
@@ -270,8 +271,8 @@ cmd_flux() {
 			return 1
 			;;
 		*)
-			if [[ -z "${prompt}" ]]; then
-				prompt="$1"
+			if [[ -z "${_flux_prompt}" ]]; then
+				_flux_prompt="$1"
 			else
 				print_error "Unexpected argument: $1"
 				return 1
@@ -280,8 +281,14 @@ cmd_flux() {
 			;;
 		esac
 	done
+	return 0
+}
 
-	if [[ -z "${prompt}" ]]; then
+# Flux Dev image generation
+cmd_flux() {
+	_parse_flux_args "$@" || return 1
+
+	if [[ -z "${_flux_prompt}" ]]; then
 		print_error "Prompt is required"
 		print_info "Usage: muapi-helper.sh flux \"your prompt\" [--size 1024*1024] [--steps 28]"
 		return 1
@@ -289,15 +296,15 @@ cmd_flux() {
 
 	local payload
 	payload=$(jq -n \
-		--arg prompt "${prompt}" \
-		--arg image "${image}" \
-		--arg mask "${mask_image}" \
-		--arg size "${size}" \
-		--argjson steps "${steps}" \
-		--argjson seed "${seed}" \
-		--argjson guidance "${guidance}" \
-		--argjson num "${num_images}" \
-		--argjson strength "${strength}" \
+		--arg prompt "${_flux_prompt}" \
+		--arg image "${_flux_image}" \
+		--arg mask "${_flux_mask_image}" \
+		--arg size "${_flux_size}" \
+		--argjson steps "${_flux_steps}" \
+		--argjson seed "${_flux_seed}" \
+		--argjson guidance "${_flux_guidance}" \
+		--argjson num "${_flux_num_images}" \
+		--argjson strength "${_flux_strength}" \
 		'{
             prompt: $prompt,
             size: $size,
@@ -309,63 +316,66 @@ cmd_flux() {
         + (if $image != "" then {image: $image, strength: $strength} else {} end)
         + (if $mask != "" then {mask_image: $mask} else {} end)')
 
-	submit_and_poll "flux-dev-image" "${payload}" "${poll_interval}" "${timeout}" "${output_file}" "${webhook}"
+	submit_and_poll "flux-dev-image" "${payload}" \
+		"${_flux_poll_interval}" "${_flux_timeout}" \
+		"${_flux_output_file}" "${_flux_webhook}"
 }
 
-# AI Video Effects / VFX / Motion Controls (shared endpoint)
-cmd_effects() {
-	local prompt=""
-	local image_url=""
-	local effect_name=""
-	local aspect_ratio="16:9"
-	local resolution="480p"
-	local quality="medium"
-	local duration=5
-	local poll_interval="${DEFAULT_POLL_INTERVAL}"
-	local timeout="${DEFAULT_TIMEOUT}"
-	local output_file=""
-	local webhook=""
+# Parse arguments for cmd_effects — sets _effects_* globals
+# Returns 1 on unknown option or duplicate positional arg
+_parse_effects_args() {
+	_effects_prompt=""
+	_effects_image_url=""
+	_effects_effect_name=""
+	_effects_aspect_ratio="16:9"
+	_effects_resolution="480p"
+	_effects_quality="medium"
+	_effects_duration=5
+	_effects_poll_interval="${DEFAULT_POLL_INTERVAL}"
+	_effects_timeout="${DEFAULT_TIMEOUT}"
+	_effects_output_file=""
+	_effects_webhook=""
 
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--image)
-			image_url="$2"
+			_effects_image_url="$2"
 			shift 2
 			;;
 		--effect)
-			effect_name="$2"
+			_effects_effect_name="$2"
 			shift 2
 			;;
 		--ratio)
-			aspect_ratio="$2"
+			_effects_aspect_ratio="$2"
 			shift 2
 			;;
 		--resolution)
-			resolution="$2"
+			_effects_resolution="$2"
 			shift 2
 			;;
 		--quality)
-			quality="$2"
+			_effects_quality="$2"
 			shift 2
 			;;
 		--duration)
-			duration="$2"
+			_effects_duration="$2"
 			shift 2
 			;;
 		--poll)
-			poll_interval="$2"
+			_effects_poll_interval="$2"
 			shift 2
 			;;
 		--timeout)
-			timeout="$2"
+			_effects_timeout="$2"
 			shift 2
 			;;
 		--output | -o)
-			output_file="$2"
+			_effects_output_file="$2"
 			shift 2
 			;;
 		--webhook)
-			webhook="$2"
+			_effects_webhook="$2"
 			shift 2
 			;;
 		--*)
@@ -373,8 +383,8 @@ cmd_effects() {
 			return 1
 			;;
 		*)
-			if [[ -z "${prompt}" ]]; then
-				prompt="$1"
+			if [[ -z "${_effects_prompt}" ]]; then
+				_effects_prompt="$1"
 			else
 				print_error "Unexpected argument: $1"
 				return 1
@@ -383,32 +393,38 @@ cmd_effects() {
 			;;
 		esac
 	done
+	return 0
+}
 
-	if [[ -z "${prompt}" ]]; then
+# AI Video Effects / VFX / Motion Controls (shared endpoint)
+cmd_effects() {
+	_parse_effects_args "$@" || return 1
+
+	if [[ -z "${_effects_prompt}" ]]; then
 		print_error "Prompt is required"
 		print_info "Usage: muapi-helper.sh video-effects \"prompt\" --image URL --effect \"Effect Name\""
 		return 1
 	fi
 
-	if [[ -z "${image_url}" ]]; then
+	if [[ -z "${_effects_image_url}" ]]; then
 		print_error "Image URL is required (--image)"
 		return 1
 	fi
 
-	if [[ -z "${effect_name}" ]]; then
+	if [[ -z "${_effects_effect_name}" ]]; then
 		print_error "Effect name is required (--effect)"
 		return 1
 	fi
 
 	local payload
 	payload=$(jq -n \
-		--arg prompt "${prompt}" \
-		--arg image_url "${image_url}" \
-		--arg name "${effect_name}" \
-		--arg aspect_ratio "${aspect_ratio}" \
-		--arg resolution "${resolution}" \
-		--arg quality "${quality}" \
-		--argjson duration "${duration}" \
+		--arg prompt "${_effects_prompt}" \
+		--arg image_url "${_effects_image_url}" \
+		--arg name "${_effects_effect_name}" \
+		--arg aspect_ratio "${_effects_aspect_ratio}" \
+		--arg resolution "${_effects_resolution}" \
+		--arg quality "${_effects_quality}" \
+		--argjson duration "${_effects_duration}" \
 		'{
             prompt: $prompt,
             image_url: $image_url,
@@ -419,7 +435,9 @@ cmd_effects() {
             duration: $duration
         }')
 
-	submit_and_poll "generate_wan_ai_effects" "${payload}" "${poll_interval}" "${timeout}" "${output_file}" "${webhook}"
+	submit_and_poll "generate_wan_ai_effects" "${payload}" \
+		"${_effects_poll_interval}" "${_effects_timeout}" \
+		"${_effects_output_file}" "${_effects_webhook}"
 }
 
 # Music generation (Suno)
@@ -1224,8 +1242,8 @@ cmd_status() {
 	return 0
 }
 
-# Show help
-show_help() {
+# Help: command listing
+_show_help_commands() {
 	cat <<'EOF'
 MuAPI Helper - REST API client for MuAPI (muapi.ai)
 
@@ -1255,7 +1273,13 @@ Commands:
   agent-skills            List available agent skills
   status <request-id>     Check task status
   help                    Show this help
+EOF
+	return 0
+}
 
+# Help: per-command option reference
+_show_help_options() {
+	cat <<'EOF'
 Common Options:
   --poll <seconds>        Poll interval (default: 2)
   --timeout <seconds>     Timeout (default: 300)
@@ -1303,7 +1327,13 @@ Stylize Options:
 Object Erase Options:
   --image <url>           Source image URL (required)
   --mask <url>            Mask image URL (white=erase area)
+EOF
+	return 0
+}
 
+# Help: usage examples and environment
+_show_help_examples() {
+	cat <<'EOF'
 Examples:
   # Generate an image
   muapi-helper.sh flux "A cyberpunk city at night" --size 1024*1024
@@ -1354,6 +1384,15 @@ Environment:
   MUAPI_API_KEY  API key (get from https://muapi.ai/access-keys)
                  Store via: aidevops secret set MUAPI_API_KEY
 EOF
+	return 0
+}
+
+# Show help
+show_help() {
+	_show_help_commands
+	_show_help_options
+	_show_help_examples
+	return 0
 }
 
 # Main
