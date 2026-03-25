@@ -23,6 +23,9 @@ Avatars are AI-generated presenters. Use public HeyGen avatars or custom avatars
 # macOS: open URL in browser (no download)
 open "https://files.heygen.ai/avatar/preview/josh.jpg"
 open "https://files.heygen.ai/avatar/preview/josh.mp4"
+
+# Linux
+xdg-open "https://files.heygen.ai/avatar/preview/josh.jpg"
 ```
 
 ## Listing Avatars
@@ -47,6 +50,7 @@ async function listAvatars(): Promise<Avatar[]> {
   const response = await fetch("https://api.heygen.com/v2/avatars", {
     headers: { "X-Api-Key": process.env.HEYGEN_API_KEY! },
   });
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
   const json = await response.json();
   if (json.error) throw new Error(json.error);
   return json.data.avatars;
@@ -134,6 +138,7 @@ async function listAvatarGroups(
     `https://api.heygen.com/v3/avatar_group.list?${params}`,
     { headers: { "X-Api-Key": process.env.HEYGEN_API_KEY! } }
   );
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
   const json = await response.json();
   if (json.error) throw new Error(json.error);
   return json.data;
@@ -194,6 +199,7 @@ async function getAvatarDetails(avatarId: string): Promise<AvatarDetails> {
     `https://api.heygen.com/v2/avatar/${avatarId}/details`,
     { headers: { "X-Api-Key": process.env.HEYGEN_API_KEY! } }
   );
+  if (!response.ok) throw new Error(`HTTP ${response.status}`);
   const json = await response.json();
   if (json.error) throw new Error(json.error);
   return json.data;
