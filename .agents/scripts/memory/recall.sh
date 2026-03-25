@@ -9,9 +9,11 @@
 _MEMORY_RECALL_LOADED=1
 
 #######################################
-# Recall learnings with search
+# Parse arguments for cmd_recall
+# Usage: _recall_parse_args "$@"
+# Outputs: newline-separated KEY=VALUE pairs
 #######################################
-cmd_recall() {
+_recall_parse_args() {
 	local query=""
 	local limit=5
 	local type_filter=""
@@ -52,6 +54,14 @@ cmd_recall() {
 			entity_filter="$2"
 			shift 2
 			;;
+		--format)
+			format="$2"
+			shift 2
+			;;
+		--json)
+			format="json"
+			shift
+			;;
 		--recent)
 			recent_mode=true
 			# Only consume next arg as limit if it's a number (not another flag)
@@ -83,27 +93,394 @@ cmd_recall() {
 			manual_only=true
 			shift
 			;;
-		--format)
-			format="$2"
-			shift 2
-			;;
-		--json)
-			format="json"
-			shift
-			;;
 		--stats)
 			cmd_stats
 			return 0
 			;;
 		*)
 			# Allow query as positional argument
-			if [[ -z "$query" ]]; then
-				query="$1"
-			fi
+			if [[ -z "$query" ]]; then query="$1"; fi
 			shift
 			;;
 		esac
 	done
+
+	printf '%s\n' \
+		"query=${query}" \
+		"limit=${limit}" \
+		"type_filter=${type_filter}" \
+		"max_age_days=${max_age_days}" \
+		"project_filter=${project_filter}" \
+		"format=${format}" \
+		"recent_mode=${recent_mode}" \
+		"semantic_mode=${semantic_mode}" \
+		"hybrid_mode=${hybrid_mode}" \
+		"shared_mode=${shared_mode}" \
+		"auto_only=${auto_only}" \
+		"manual_only=${manual_only}" \
+		"entity_filter=${entity_filter}"
+	return 0
+}
+
+#######################################
+# Build entity JOIN and WHERE clauses (t1363.3)
+# Usage: _recall_build_entity_clauses <entity_filter>
+# Outputs: two lines — entity_join and entity_where
+#######################################
+_recall_build_entity_clauses() {
+	local entity_filter="$1"
+	local entity_join=""
+	local entity_where=""
+	if [[ -n "$entity_filter" ]]; then
+		local escaped_entity="${entity_filter//"'"/"''"}"
+		entity_join="INNER JOIN learning_entities le ON l.id = le.learning_id"
+		entity_where="AND le.entity_id = '$escaped_entity'"
+	fi
+	printf '%s\n' "$entity_join" "$entity_where"
+	return 0
+}
+
+#######################################
+# Build auto-capture filter clause
+# Usage: _recall_build_auto_filter <auto_only> <manual_only>
+# Outputs: filter SQL fragment
+#######################################
+_recall_build_auto_filter() {
+	local auto_only="$1"
+	local manual_only="$2"
+	local auto_filter=""
+	if [[ "$auto_only" == true ]]; then
+		auto_filter="AND COALESCE(a.auto_captured, 0) = 1"
+	elif [[ "$manual_only" == true ]]; then
+		auto_filter="AND COALESCE(a.auto_captured, 0) = 0"
+	fi
+	printf '%s' "$auto_filter"
+	return 0
+}
+
+#######################################
+# Build extra SQL filters (type, age, project)
+# Usage: _recall_build_extra_filters <type_filter> <max_age_days> <project_filter>
+# Outputs: SQL fragment or exits non-zero on validation error
+#######################################
+_recall_build_extra_filters() {
+	local type_filter="$1"
+	local max_age_days="$2"
+	local project_filter="$3"
+	local extra_filters=""
+
+	if [[ -n "$type_filter" ]]; then
+		local type_pattern=" $type_filter "
+		if [[ ! " $VALID_TYPES " =~ $type_pattern ]]; then
+			log_error "Invalid type: $type_filter"
+			log_error "Valid types: $VALID_TYPES"
+			return 1
+		fi
+		extra_filters="$extra_filters AND type = '$type_filter'"
+	fi
+	if [[ -n "$max_age_days" ]]; then
+		if ! [[ "$max_age_days" =~ ^[0-9]+$ ]]; then
+			log_error "--max-age-days must be a positive integer"
+			return 1
+		fi
+		extra_filters="$extra_filters AND created_at >= datetime('now', '-$max_age_days days')"
+	fi
+	if [[ -n "$project_filter" ]]; then
+		local escaped_project="${project_filter//"'"/"''"}"
+		escaped_project="${escaped_project//\\/\\\\}"
+		escaped_project="${escaped_project//%/\\%}"
+		escaped_project="${escaped_project//_/\\_}"
+		extra_filters="$extra_filters AND project_path LIKE '%$escaped_project%' ESCAPE '\\'"
+	fi
+
+	printf '%s' "$extra_filters"
+	return 0
+}
+
+#######################################
+# Build FTS5 parameterised query string
+# Usage: _recall_build_fts_param <query>
+# Outputs: param_query string safe for .param set
+#######################################
+_recall_build_fts_param() {
+	local query="$1"
+	# Strip backslashes — not valid FTS5 syntax
+	local query_clean="${query//\\/  }"
+	local tokenised_query=""
+	local token
+	set -f # Disable globbing during tokenization (SC2086)
+	for token in $query_clean; do
+		token="${token//\"/\"\"}"
+		if [[ -n "$tokenised_query" ]]; then
+			tokenised_query="$tokenised_query \"$token\""
+		else
+			tokenised_query="\"$token\""
+		fi
+	done
+	set +f # Re-enable globbing
+	# Build SQL single-quoted literal, then escape for dot-command double-quoted arg (GH#5678)
+	printf "'%s'" "$(printf '%s' "$tokenised_query" | sed "s/'/''/g")" | sed 's/\\/\\\\/g; s/"/\\"/g'
+	return 0
+}
+
+#######################################
+# Execute FTS5 search against a database
+# Usage: _recall_search_db <db_path> <param_query> <entity_fts_join> <entity_fts_where>
+#                          <extra_filters> <auto_join_filter> <limit>
+# Outputs: JSON results
+#######################################
+_recall_search_db() {
+	local db_path="$1"
+	local param_query="$2"
+	local entity_fts_join="$3"
+	local entity_fts_where="$4"
+	local extra_filters="$5"
+	local auto_join_filter="$6"
+	local limit="$7"
+
+	db -json "$db_path" <<EOF
+.param set :query "${param_query}"
+SELECT
+    learnings.id,
+    learnings.content,
+    learnings.type,
+    learnings.tags,
+    learnings.confidence,
+    learnings.created_at,
+    COALESCE(learning_access.last_accessed_at, '') as last_accessed_at,
+    COALESCE(learning_access.access_count, 0) as access_count,
+    COALESCE(learning_access.auto_captured, 0) as auto_captured,
+    bm25(learnings) as score
+FROM learnings
+LEFT JOIN learning_access ON learnings.id = learning_access.id
+$entity_fts_join
+WHERE learnings MATCH :query $extra_filters $auto_join_filter $entity_fts_where
+ORDER BY score
+LIMIT $limit;
+EOF
+	return 0
+}
+
+#######################################
+# Update access tracking for returned results
+# Usage: _recall_update_access <db_path> <json_results>
+#######################################
+_recall_update_access() {
+	local db_path="$1"
+	local results="$2"
+
+	[[ -z "$results" || "$results" == "[]" ]] && return 0
+
+	local ids
+	ids=$(printf '%s' "$results" | extract_ids_from_json)
+	[[ -z "$ids" ]] && return 0
+
+	local id_values=""
+	while IFS= read -r id; do
+		[[ -z "$id" ]] && continue
+		local escaped_id="${id//"'"/"''"}"
+		if [[ -n "$id_values" ]]; then
+			id_values="${id_values}, ('${escaped_id}', datetime('now'), 1)"
+		else
+			id_values="('${escaped_id}', datetime('now'), 1)"
+		fi
+	done <<<"$ids"
+
+	[[ -z "$id_values" ]] && return 0
+
+	db "$db_path" <<EOF
+INSERT INTO learning_access (id, last_accessed_at, access_count)
+VALUES $id_values
+ON CONFLICT(id) DO UPDATE SET
+    last_accessed_at = datetime('now'),
+    access_count = access_count + 1;
+EOF
+	return 0
+}
+
+#######################################
+# Build entity JOIN/WHERE for FTS5 queries (no alias support)
+# Usage: _recall_build_entity_fts_clauses <entity_filter>
+# Outputs: two lines — entity_fts_join and entity_fts_where
+#######################################
+_recall_build_entity_fts_clauses() {
+	local entity_filter="$1"
+	local entity_fts_join=""
+	local entity_fts_where=""
+	if [[ -n "$entity_filter" ]]; then
+		local escaped_entity="${entity_filter//"'"/"''"}"
+		entity_fts_join="INNER JOIN learning_entities ON learnings.id = learning_entities.learning_id"
+		entity_fts_where="AND learning_entities.entity_id = '$escaped_entity'"
+	fi
+	printf '%s\n' "$entity_fts_join" "$entity_fts_where"
+	return 0
+}
+
+#######################################
+# Perform shared (global DB) search and update access tracking
+# Usage: _recall_shared_search <param_query> <entity_fts_join> <entity_fts_where>
+#                              <extra_filters> <auto_join_filter> <limit>
+# Outputs: JSON results (may be empty)
+#######################################
+_recall_shared_search() {
+	local param_query="$1"
+	local entity_fts_join="$2"
+	local entity_fts_where="$3"
+	local extra_filters="$4"
+	local auto_join_filter="$5"
+	local limit="$6"
+
+	local global_db
+	global_db=$(global_db_path)
+	[[ ! -f "$global_db" ]] && return 0
+
+	local shared_results
+	shared_results=$(_recall_search_db "$global_db" "$param_query" \
+		"$entity_fts_join" "$entity_fts_where" \
+		"$extra_filters" "$auto_join_filter" "$limit")
+
+	_recall_update_access "$global_db" "$shared_results"
+	printf '%s' "$shared_results"
+	return 0
+}
+
+#######################################
+# Handle --recent mode: query and print recent memories
+# Usage: _recall_recent <db> <entity_join> <entity_where> <auto_filter> <limit> <format>
+#######################################
+_recall_recent() {
+	local db_path="$1"
+	local entity_join="$2"
+	local entity_where="$3"
+	local auto_filter="$4"
+	local limit="$5"
+	local format="$6"
+
+	local results
+	results=$(db -json "$db_path" "SELECT l.id, l.content, l.type, l.tags, l.confidence, l.created_at, COALESCE(a.last_accessed_at, '') as last_accessed_at, COALESCE(a.access_count, 0) as access_count, COALESCE(a.auto_captured, 0) as auto_captured FROM learnings l LEFT JOIN learning_access a ON l.id = a.id $entity_join WHERE 1=1 $entity_where $auto_filter ORDER BY l.created_at DESC LIMIT $limit;")
+	if [[ "$format" == "json" ]]; then
+		printf '%s\n' "$results"
+	else
+		printf '\n=== Recent Memories (last %s) ===\n\n' "$limit"
+		printf '%s' "$results" | format_results_text
+	fi
+	return 0
+}
+
+#######################################
+# Handle --semantic / --hybrid mode: delegate to embeddings helper
+# Usage: _recall_semantic <query> <limit> <hybrid_mode> <format>
+# Returns: exit code from embeddings helper, or 1 if unavailable
+#######################################
+_recall_semantic() {
+	local query="$1"
+	local limit="$2"
+	local hybrid_mode="$3"
+	local format="$4"
+
+	local embeddings_script
+	embeddings_script="$(dirname "${BASH_SOURCE[0]}")/../memory-embeddings-helper.sh"
+	if [[ ! -x "$embeddings_script" ]]; then
+		log_error "Semantic search not available. Run: memory-embeddings-helper.sh setup"
+		return 1
+	fi
+	local semantic_args=()
+	if [[ -n "$MEMORY_NAMESPACE" ]]; then
+		semantic_args+=("--namespace" "$MEMORY_NAMESPACE")
+	fi
+	semantic_args+=("search" "$query" "--limit" "$limit")
+	if [[ "$hybrid_mode" == true ]]; then
+		semantic_args+=("--hybrid")
+	fi
+	if [[ "$format" == "json" ]]; then
+		semantic_args+=("--json")
+	fi
+	"$embeddings_script" "${semantic_args[@]}"
+	return $?
+}
+
+#######################################
+# Output recall results in the requested format
+# Usage: _recall_output <format> <query> <entity_filter> <results> <shared_results> <limit>
+#######################################
+_recall_output() {
+	local format="$1"
+	local query="$2"
+	local entity_filter="$3"
+	local results="$4"
+	local shared_results="$5"
+	local limit="$6"
+
+	if [[ "$format" == "json" ]]; then
+		if [[ -n "$shared_results" && "$shared_results" != "[]" ]]; then
+			if command -v jq &>/dev/null; then
+				local ns_json="${results:-[]}"
+				jq -s '.[0] + .[1] | sort_by(.score) | .[:'"$limit"']' \
+					<(printf '%s' "$ns_json") <(printf '%s' "$shared_results")
+			else
+				printf '%s\n' "$results" "$shared_results"
+			fi
+		else
+			printf '%s\n' "$results"
+		fi
+		return 0
+	fi
+
+	# Text format
+	if [[ -z "$results" || "$results" == "[]" ]] &&
+		[[ -z "$shared_results" || "$shared_results" == "[]" ]]; then
+		log_warn "No results found for: $query"
+		return 0
+	fi
+
+	local header_suffix=""
+	if [[ -n "$MEMORY_NAMESPACE" ]]; then
+		header_suffix=" [namespace: $MEMORY_NAMESPACE]"
+	fi
+	if [[ -n "$entity_filter" ]]; then
+		header_suffix="${header_suffix} [entity: $entity_filter]"
+	fi
+
+	printf '\n=== Memory Recall: "%s"%s ===\n\n' "$query" "$header_suffix"
+
+	if [[ -n "$results" && "$results" != "[]" ]]; then
+		printf '%s' "$results" | format_results_text
+	fi
+
+	if [[ -n "$shared_results" && "$shared_results" != "[]" ]]; then
+		printf '\n--- Shared (global) results ---\n\n'
+		printf '%s' "$shared_results" | format_results_text
+	fi
+	return 0
+}
+
+#######################################
+# Recall learnings with search
+#######################################
+cmd_recall() {
+	# Parse arguments into KEY=VALUE pairs
+	local parsed
+	parsed=$(_recall_parse_args "$@") || return $?
+
+	local query limit type_filter max_age_days project_filter format
+	local recent_mode semantic_mode hybrid_mode shared_mode auto_only manual_only entity_filter
+	while IFS='=' read -r key val; do
+		case "$key" in
+		query) query="$val" ;;
+		limit) limit="$val" ;;
+		type_filter) type_filter="$val" ;;
+		max_age_days) max_age_days="$val" ;;
+		project_filter) project_filter="$val" ;;
+		format) format="$val" ;;
+		recent_mode) recent_mode="$val" ;;
+		semantic_mode) semantic_mode="$val" ;;
+		hybrid_mode) hybrid_mode="$val" ;;
+		shared_mode) shared_mode="$val" ;;
+		auto_only) auto_only="$val" ;;
+		manual_only) manual_only="$val" ;;
+		entity_filter) entity_filter="$val" ;;
+		esac
+	done <<<"$parsed"
 
 	init_db
 
@@ -115,36 +492,19 @@ cmd_recall() {
 		fi
 	fi
 
-	# Build entity JOIN/filter clauses (t1363.3)
-	# When --entity is set, INNER JOIN learning_entities to scope results
-	local entity_join=""
-	local entity_where=""
-	if [[ -n "$entity_filter" ]]; then
-		local escaped_entity="${entity_filter//"'"/"''"}"
-		entity_join="INNER JOIN learning_entities le ON l.id = le.learning_id"
-		entity_where="AND le.entity_id = '$escaped_entity'"
-	fi
+	# Build entity clauses for non-FTS queries
+	local entity_clauses entity_join entity_where
+	entity_clauses=$(_recall_build_entity_clauses "$entity_filter")
+	entity_join=$(printf '%s' "$entity_clauses" | head -1)
+	entity_where=$(printf '%s' "$entity_clauses" | tail -1)
 
-	# Build auto-capture filter clause
-	local auto_filter=""
-	if [[ "$auto_only" == true ]]; then
-		auto_filter="AND COALESCE(a.auto_captured, 0) = 1"
-	elif [[ "$manual_only" == true ]]; then
-		auto_filter="AND COALESCE(a.auto_captured, 0) = 0"
-	fi
+	# Build auto-capture filter
+	local auto_filter
+	auto_filter=$(_recall_build_auto_filter "$auto_only" "$manual_only")
 
 	# Handle --recent mode (no query required)
 	if [[ "$recent_mode" == true ]]; then
-		local results
-		results=$(db -json "$MEMORY_DB" "SELECT l.id, l.content, l.type, l.tags, l.confidence, l.created_at, COALESCE(a.last_accessed_at, '') as last_accessed_at, COALESCE(a.access_count, 0) as access_count, COALESCE(a.auto_captured, 0) as auto_captured FROM learnings l LEFT JOIN learning_access a ON l.id = a.id $entity_join WHERE 1=1 $entity_where $auto_filter ORDER BY l.created_at DESC LIMIT $limit;")
-		if [[ "$format" == "json" ]]; then
-			echo "$results"
-		else
-			echo ""
-			echo "=== Recent Memories (last $limit) ==="
-			echo ""
-			echo "$results" | format_results_text
-		fi
+		_recall_recent "$MEMORY_DB" "$entity_join" "$entity_where" "$auto_filter" "$limit" "$format"
 		return 0
 	fi
 
@@ -155,116 +515,19 @@ cmd_recall() {
 
 	# Handle --semantic or --hybrid mode (delegate to embeddings helper)
 	if [[ "$semantic_mode" == true || "$hybrid_mode" == true ]]; then
-		local embeddings_script
-		embeddings_script="$(dirname "${BASH_SOURCE[0]}")/../memory-embeddings-helper.sh"
-		if [[ ! -x "$embeddings_script" ]]; then
-			log_error "Semantic search not available. Run: memory-embeddings-helper.sh setup"
-			return 1
-		fi
-		local semantic_args=()
-		if [[ -n "$MEMORY_NAMESPACE" ]]; then
-			semantic_args+=("--namespace" "$MEMORY_NAMESPACE")
-		fi
-		semantic_args+=("search" "$query" "--limit" "$limit")
-		if [[ "$hybrid_mode" == true ]]; then
-			semantic_args+=("--hybrid")
-		fi
-		if [[ "$format" == "json" ]]; then
-			semantic_args+=("--json")
-		fi
-		"$embeddings_script" "${semantic_args[@]}"
+		_recall_semantic "$query" "$limit" "$hybrid_mode" "$format"
 		return $?
 	fi
 
-	# Build FTS5 query — tokenise into individual words joined by AND.
-	# Previous approach wrapped the entire query in double quotes, making it a
-	# phrase search (words must appear adjacent and in order). This caused most
-	# multi-word queries to return zero results — e.g., "shellcheck memory"
-	# only matched if those exact words appeared side-by-side in content.
-	#
-	# FTS5 implicit AND (space-separated tokens) is the correct default:
-	# each word must appear somewhere in the document, but not necessarily
-	# adjacent. Special characters (hyphens, asterisks) are handled by
-	# quoting individual tokens that contain them.
-	#
-	# The tokenised query is passed to sqlite3 via .param set (parameterized
-	# binding) rather than string interpolation to prevent SQL injection.
-	# Quote each token individually to handle special chars (hyphens = NOT in FTS5)
-	# "foo-bar baz" → "\"foo-bar\" \"baz\"" (each token quoted, joined by implicit AND)
-	#
-	# Backslashes are stripped before tokenization — they are not valid FTS5 query
-	# syntax and cause a parse error. Apostrophes are preserved through proper
-	# quoting (see param_query construction below).
-	local query_clean="${query//\\/  }"
-	local tokenised_query=""
-	local token
-	set -f # Disable globbing during tokenization (SC2086)
-	for token in $query_clean; do
-		# Escape embedded double quotes within each token for FTS5 syntax
-		token="${token//\"/\"\"}"
-		if [[ -n "$tokenised_query" ]]; then
-			tokenised_query="$tokenised_query \"$token\""
-		else
-			tokenised_query="\"$token\""
-		fi
-	done
-	set +f # Re-enable globbing
-	# Build an SQL single-quoted literal for .param set, then escape it for the
-	# sqlite3 dot-command's outer double-quoted argument (GH#5678).
-	#
-	# The sqlite3 dot-command parser has its own quoting rules separate from SQL:
-	# - Single-quoted args: the parser does NOT support '' escaping, so embedded
-	#   apostrophes (e.g., O'Reilly) break the argument boundary.
-	# - Double-quoted args: the parser supports \" for literal double quotes.
-	#
-	# Strategy: build an SQL single-quoted literal (with '' for apostrophes),
-	# then escape backslashes and double quotes for the outer double-quoted
-	# dot-command argument. The result is passed as: .param set :query "VALUE"
-	# where VALUE is the SQL expression (e.g., '\"O''Reilly\" \"guide\"').
-	#
-	# Step 1: Double single quotes for SQL literal (sed avoids bash quoting issues)
-	# Step 2: Wrap in SQL single quotes via printf
-	# Step 3: Escape \ and " for dot-command double-quoted argument (sed)
-	#
-	# Security note: the heredoc uses <<EOF (not <<'EOF'), so ${param_query} is
-	# expanded by the shell. This is safe because shell variable expansion is NOT
-	# recursive — the content of param_query is substituted literally; any
-	# command-substitution syntax ($(…), `…`) or variable references inside the
-	# value are NOT re-evaluated. The :query parameter binding then isolates the
-	# value from SQL execution, preventing injection at the SQLite layer.
+	# Build FTS5 parameterised query
 	local param_query
-	param_query=$(printf "'%s'" "$(printf '%s' "$tokenised_query" | sed "s/'/''/g")" | sed 's/\\/\\\\/g; s/"/\\"/g')
+	param_query=$(_recall_build_fts_param "$query")
 
-	# Build filters with validation
-	local extra_filters=""
-	if [[ -n "$type_filter" ]]; then
-		# Validate type to prevent SQL injection
-		local type_pattern=" $type_filter "
-		if [[ ! " $VALID_TYPES " =~ $type_pattern ]]; then
-			log_error "Invalid type: $type_filter"
-			log_error "Valid types: $VALID_TYPES"
-			return 1
-		fi
-		extra_filters="$extra_filters AND type = '$type_filter'"
-	fi
-	if [[ -n "$max_age_days" ]]; then
-		# Validate max_age_days is a positive integer
-		if ! [[ "$max_age_days" =~ ^[0-9]+$ ]]; then
-			log_error "--max-age-days must be a positive integer"
-			return 1
-		fi
-		extra_filters="$extra_filters AND created_at >= datetime('now', '-$max_age_days days')"
-	fi
-	if [[ -n "$project_filter" ]]; then
-		local escaped_project="${project_filter//"'"/"''"}"
-		# Escape LIKE wildcards (%, _) to prevent wildcard injection
-		escaped_project="${escaped_project//\\/\\\\}"
-		escaped_project="${escaped_project//%/\\%}"
-		escaped_project="${escaped_project//_/\\_}"
-		extra_filters="$extra_filters AND project_path LIKE '%$escaped_project%' ESCAPE '\\'"
-	fi
+	# Build extra filters (validates type/age/project)
+	local extra_filters
+	extra_filters=$(_recall_build_extra_filters "$type_filter" "$max_age_days" "$project_filter") || return $?
 
-	# Build auto-capture filter for main query
+	# Build auto-capture filter for FTS query (uses full table name, no alias)
 	local auto_join_filter=""
 	if [[ "$auto_only" == true ]]; then
 		auto_join_filter="AND COALESCE(learning_access.auto_captured, 0) = 1"
@@ -272,174 +535,117 @@ cmd_recall() {
 		auto_join_filter="AND COALESCE(learning_access.auto_captured, 0) = 0"
 	fi
 
-	# Build entity JOIN for FTS5 query (t1363.3)
-	# FTS5 tables can't use aliases for bm25(), so we use full table names
-	local entity_fts_join=""
-	local entity_fts_where=""
-	if [[ -n "$entity_filter" ]]; then
-		local escaped_entity="${entity_filter//"'"/"''"}"
-		entity_fts_join="INNER JOIN learning_entities ON learnings.id = learning_entities.learning_id"
-		entity_fts_where="AND learning_entities.entity_id = '$escaped_entity'"
-	fi
+	# Build entity clauses for FTS5 (no alias support)
+	local entity_fts_clauses entity_fts_join entity_fts_where
+	entity_fts_clauses=$(_recall_build_entity_fts_clauses "$entity_filter")
+	entity_fts_join=$(printf '%s' "$entity_fts_clauses" | head -1)
+	entity_fts_where=$(printf '%s' "$entity_fts_clauses" | tail -1)
 
-	# Search using FTS5 with BM25 ranking
-	# Note: FTS5 tables require special handling - can't use table alias in bm25()
-	# The FTS5 query is bound via .param set to prevent SQL injection (GH#3155).
+	# Execute FTS5 search and update access tracking
 	local results
-	results=$(
-		db -json "$MEMORY_DB" <<EOF
-.param set :query "${param_query}"
-SELECT 
-    learnings.id,
-    learnings.content,
-    learnings.type,
-    learnings.tags,
-    learnings.confidence,
-    learnings.created_at,
-    COALESCE(learning_access.last_accessed_at, '') as last_accessed_at,
-    COALESCE(learning_access.access_count, 0) as access_count,
-    COALESCE(learning_access.auto_captured, 0) as auto_captured,
-    bm25(learnings) as score
-FROM learnings
-LEFT JOIN learning_access ON learnings.id = learning_access.id
-$entity_fts_join
-WHERE learnings MATCH :query $extra_filters $auto_join_filter $entity_fts_where
-ORDER BY score
-LIMIT $limit;
-EOF
-	)
-
-	# Update access tracking for returned results (prevents staleness)
-	# Batched into a single SQL statement for performance
-	if [[ -n "$results" && "$results" != "[]" ]]; then
-		local ids
-		ids=$(echo "$results" | extract_ids_from_json)
-		if [[ -n "$ids" ]]; then
-			local id_values=""
-			while IFS= read -r id; do
-				[[ -z "$id" ]] && continue
-				local escaped_id="${id//"'"/"''"}"
-				if [[ -n "$id_values" ]]; then
-					id_values="${id_values}, ('${escaped_id}', datetime('now'), 1)"
-				else
-					id_values="('${escaped_id}', datetime('now'), 1)"
-				fi
-			done <<<"$ids"
-			if [[ -n "$id_values" ]]; then
-				db "$MEMORY_DB" <<EOF
-INSERT INTO learning_access (id, last_accessed_at, access_count)
-VALUES $id_values
-ON CONFLICT(id) DO UPDATE SET 
-    last_accessed_at = datetime('now'),
-    access_count = access_count + 1;
-EOF
-			fi
-		fi
-	fi
+	results=$(_recall_search_db "$MEMORY_DB" "$param_query" \
+		"$entity_fts_join" "$entity_fts_where" \
+		"$extra_filters" "$auto_join_filter" "$limit")
+	_recall_update_access "$MEMORY_DB" "$results"
 
 	# Shared search: also query global DB when in a namespace with --shared
 	local shared_results=""
 	if [[ "$shared_mode" == true && -n "$MEMORY_NAMESPACE" ]]; then
-		local global_db
-		global_db=$(global_db_path)
-		if [[ -f "$global_db" ]]; then
-			shared_results=$(
-				db -json "$global_db" <<EOF
-.param set :query "${param_query}"
-SELECT 
-    learnings.id,
-    learnings.content,
-    learnings.type,
-    learnings.tags,
-    learnings.confidence,
-    learnings.created_at,
-    COALESCE(learning_access.last_accessed_at, '') as last_accessed_at,
-    COALESCE(learning_access.access_count, 0) as access_count,
-    COALESCE(learning_access.auto_captured, 0) as auto_captured,
-    bm25(learnings) as score
-FROM learnings
-LEFT JOIN learning_access ON learnings.id = learning_access.id
-$entity_fts_join
-WHERE learnings MATCH :query $extra_filters $auto_join_filter $entity_fts_where
-ORDER BY score
-LIMIT $limit;
-EOF
-			)
-			# Update access tracking in global DB for shared results
-			# Batched into a single SQL statement for performance
-			if [[ -n "$shared_results" && "$shared_results" != "[]" ]]; then
-				local shared_ids
-				shared_ids=$(echo "$shared_results" | extract_ids_from_json)
-				if [[ -n "$shared_ids" ]]; then
-					local shared_id_values=""
-					while IFS= read -r sid; do
-						[[ -z "$sid" ]] && continue
-						local escaped_sid="${sid//"'"/"''"}"
-						if [[ -n "$shared_id_values" ]]; then
-							shared_id_values="${shared_id_values}, ('${escaped_sid}', datetime('now'), 1)"
-						else
-							shared_id_values="('${escaped_sid}', datetime('now'), 1)"
-						fi
-					done <<<"$shared_ids"
-					if [[ -n "$shared_id_values" ]]; then
-						db "$global_db" <<EOF
-INSERT INTO learning_access (id, last_accessed_at, access_count)
-VALUES $shared_id_values
-ON CONFLICT(id) DO UPDATE SET 
-    last_accessed_at = datetime('now'),
-    access_count = access_count + 1;
-EOF
-					fi
-				fi
-			fi
-		fi
+		shared_results=$(_recall_shared_search "$param_query" \
+			"$entity_fts_join" "$entity_fts_where" \
+			"$extra_filters" "$auto_join_filter" "$limit")
 	fi
 
-	# Output based on format
-	if [[ "$format" == "json" ]]; then
-		if [[ -n "$shared_results" && "$shared_results" != "[]" ]]; then
-			# Merge namespace and global results into single JSON array
-			if command -v jq &>/dev/null; then
-				local ns_json="${results:-[]}"
-				jq -s '.[0] + .[1] | sort_by(.score) | .[:'"$limit"']' \
-					<(echo "$ns_json") <(echo "$shared_results")
-			else
-				echo "$results"
-				echo "$shared_results"
-			fi
-		else
-			echo "$results"
-		fi
+	_recall_output "$format" "$query" "$entity_filter" "$results" "$shared_results" "$limit"
+	return 0
+}
+
+#######################################
+# Display ancestor chain for a memory
+# Usage: _history_show_ancestors <db_path> <escaped_id>
+#######################################
+_history_show_ancestors() {
+	local db_path="$1"
+	local escaped_id="$2"
+
+	printf '\nSupersedes (ancestors):\n'
+	local ancestors
+	ancestors=$(
+		db "$db_path" <<EOF
+WITH RECURSIVE ancestors AS (
+    SELECT lr.supersedes_id, lr.relation_type, 1 as depth
+    FROM learning_relations lr
+    WHERE lr.id = '$escaped_id'
+    UNION ALL
+    SELECT lr.supersedes_id, lr.relation_type, a.depth + 1
+    FROM learning_relations lr
+    JOIN ancestors a ON lr.id = a.supersedes_id
+    WHERE a.depth < 10
+)
+SELECT a.supersedes_id, a.relation_type, a.depth,
+       l.type, substr(l.content, 1, 60), l.created_at
+FROM ancestors a
+JOIN learnings l ON a.supersedes_id = l.id
+ORDER BY a.depth;
+EOF
+	)
+
+	if [[ -z "$ancestors" ]]; then
+		printf '  (none - this is the original)\n'
 	else
-		if [[ -z "$results" || "$results" == "[]" ]] &&
-			[[ -z "$shared_results" || "$shared_results" == "[]" ]]; then
-			log_warn "No results found for: $query"
-			return 0
-		fi
-
-		local header_suffix=""
-		if [[ -n "$MEMORY_NAMESPACE" ]]; then
-			header_suffix=" [namespace: $MEMORY_NAMESPACE]"
-		fi
-		if [[ -n "$entity_filter" ]]; then
-			header_suffix="${header_suffix} [entity: $entity_filter]"
-		fi
-
-		echo ""
-		echo "=== Memory Recall: \"$query\"${header_suffix} ==="
-		echo ""
-
-		if [[ -n "$results" && "$results" != "[]" ]]; then
-			echo "$results" | format_results_text
-		fi
-
-		if [[ -n "$shared_results" && "$shared_results" != "[]" ]]; then
-			echo ""
-			echo "--- Shared (global) results ---"
-			echo ""
-			echo "$shared_results" | format_results_text
-		fi
+		printf '%s' "$ancestors" | while IFS='|' read -r sup_id rel_type depth mem_type content created; do
+			local indent
+			indent=$(printf '%*s' "$((depth * 2))" '')
+			printf '%s[%s] %s\n' "$indent" "$rel_type" "$sup_id"
+			printf '%s  [%s] %s...\n' "$indent" "$mem_type" "$content"
+			printf '%s  Created: %s\n' "$indent" "$created"
+		done
 	fi
+	return 0
+}
+
+#######################################
+# Display descendant chain for a memory
+# Usage: _history_show_descendants <db_path> <escaped_id>
+#######################################
+_history_show_descendants() {
+	local db_path="$1"
+	local escaped_id="$2"
+
+	printf '\nSuperseded by (descendants):\n'
+	local descendants
+	descendants=$(
+		db "$db_path" <<EOF
+WITH RECURSIVE descendants AS (
+    SELECT lr.id as child_id, lr.relation_type, 1 as depth
+    FROM learning_relations lr
+    WHERE lr.supersedes_id = '$escaped_id'
+    UNION ALL
+    SELECT lr.id, lr.relation_type, d.depth + 1
+    FROM learning_relations lr
+    JOIN descendants d ON lr.supersedes_id = d.child_id
+    WHERE d.depth < 10
+)
+SELECT d.child_id, d.relation_type, d.depth,
+       l.type, substr(l.content, 1, 60), l.created_at
+FROM descendants d
+JOIN learnings l ON d.child_id = l.id
+ORDER BY d.depth;
+EOF
+	)
+
+	if [[ -z "$descendants" ]]; then
+		printf '  (none - this is the latest)\n'
+	else
+		printf '%s' "$descendants" | while IFS='|' read -r child_id rel_type depth mem_type content created; do
+			local indent
+			indent=$(printf '%*s' "$((depth * 2))" '')
+			printf '%s[%s] %s\n' "$indent" "$rel_type" "$child_id"
+			printf '%s  [%s] %s...\n' "$indent" "$mem_type" "$content"
+			printf '%s  Created: %s\n' "$indent" "$created"
+		done
+	fi
+	return 0
 }
 
 #######################################
@@ -467,12 +673,10 @@ cmd_history() {
 		return 1
 	fi
 
-	echo ""
-	echo "=== Version History for $memory_id ==="
-	echo ""
+	printf '\n=== Version History for %s ===\n\n' "$memory_id"
 
 	# Show the current memory
-	echo "Current:"
+	printf 'Current:\n'
 	db "$MEMORY_DB" <<EOF
 SELECT '  [' || type || '] ' || substr(content, 1, 80) || '...'
 FROM learnings WHERE id = '$escaped_id';
@@ -480,77 +684,8 @@ SELECT '  Created: ' || created_at || ' | Event: ' || COALESCE(event_date, 'N/A'
 FROM learnings WHERE id = '$escaped_id';
 EOF
 
-	# Show what this memory supersedes (ancestors)
-	echo ""
-	echo "Supersedes (ancestors):"
-	local ancestors
-	ancestors=$(
-		db "$MEMORY_DB" <<EOF
-WITH RECURSIVE ancestors AS (
-    SELECT lr.supersedes_id, lr.relation_type, 1 as depth
-    FROM learning_relations lr
-    WHERE lr.id = '$escaped_id'
-    UNION ALL
-    SELECT lr.supersedes_id, lr.relation_type, a.depth + 1
-    FROM learning_relations lr
-    JOIN ancestors a ON lr.id = a.supersedes_id
-    WHERE a.depth < 10
-)
-SELECT a.supersedes_id, a.relation_type, a.depth, 
-       l.type, substr(l.content, 1, 60), l.created_at
-FROM ancestors a
-JOIN learnings l ON a.supersedes_id = l.id
-ORDER BY a.depth;
-EOF
-	)
-
-	if [[ -z "$ancestors" ]]; then
-		echo "  (none - this is the original)"
-	else
-		echo "$ancestors" | while IFS='|' read -r sup_id rel_type depth mem_type content created; do
-			local indent
-			indent=$(printf '%*s' "$((depth * 2))" '')
-			echo "${indent}[${rel_type}] $sup_id"
-			echo "${indent}  [${mem_type}] $content..."
-			echo "${indent}  Created: $created"
-		done
-	fi
-
-	# Show what supersedes this memory (descendants)
-	echo ""
-	echo "Superseded by (descendants):"
-	local descendants
-	descendants=$(
-		db "$MEMORY_DB" <<EOF
-WITH RECURSIVE descendants AS (
-    SELECT lr.id as child_id, lr.relation_type, 1 as depth
-    FROM learning_relations lr
-    WHERE lr.supersedes_id = '$escaped_id'
-    UNION ALL
-    SELECT lr.id, lr.relation_type, d.depth + 1
-    FROM learning_relations lr
-    JOIN descendants d ON lr.supersedes_id = d.child_id
-    WHERE d.depth < 10
-)
-SELECT d.child_id, d.relation_type, d.depth,
-       l.type, substr(l.content, 1, 60), l.created_at
-FROM descendants d
-JOIN learnings l ON d.child_id = l.id
-ORDER BY d.depth;
-EOF
-	)
-
-	if [[ -z "$descendants" ]]; then
-		echo "  (none - this is the latest)"
-	else
-		echo "$descendants" | while IFS='|' read -r child_id rel_type depth mem_type content created; do
-			local indent
-			indent=$(printf '%*s' "$((depth * 2))" '')
-			echo "${indent}[${rel_type}] $child_id"
-			echo "${indent}  [${mem_type}] $content..."
-			echo "${indent}  Created: $created"
-		done
-	fi
+	_history_show_ancestors "$MEMORY_DB" "$escaped_id"
+	_history_show_descendants "$MEMORY_DB" "$escaped_id"
 
 	return 0
 }
@@ -597,7 +732,7 @@ EOF
 	# Escape latest_id for the final query
 	local escaped_latest="${latest_id//"'"/"''"}"
 
-	echo "$latest_id"
+	printf '%s\n' "$latest_id"
 
 	# Show the content
 	db "$MEMORY_DB" <<EOF
