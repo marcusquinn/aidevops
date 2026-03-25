@@ -865,6 +865,113 @@ _validate_run_args() {
 	return 0
 }
 
+# _build_run_cmd: build the opencode command array for a run attempt.
+# Args: selected_model work_dir prompt title agent_name persisted_session
+#       extra_args (remaining positional args)
+# Outputs: space-separated command (caller must eval or use array assignment).
+# Returns: 0 always.
+_build_run_cmd() {
+	local selected_model="$1"
+	local work_dir="$2"
+	local prompt="$3"
+	local title="$4"
+	local agent_name="$5"
+	local persisted_session="$6"
+	shift 6
+
+	# Emit base command args as null-delimited tokens (bash 3.2 compat: no local -a in subshell)
+	printf '%s\0' "$OPENCODE_BIN_DEFAULT" run "$prompt" --dir "$work_dir" -m "$selected_model" --title "$title" --format json
+	if [[ -n "$agent_name" ]]; then
+		printf '%s\0' --agent "$agent_name"
+	fi
+	if [[ -n "$persisted_session" ]]; then
+		printf '%s\0' --session "$persisted_session" --continue
+	fi
+	# Emit any extra args passed as positional parameters
+	while [[ $# -gt 0 ]]; do
+		printf '%s\0' "$1"
+		shift
+	done
+	return 0
+}
+
+# _invoke_opencode: run the opencode command (with or without sandbox) and capture output.
+# Args: output_file exit_code_file cmd_args (null-delimited, read from stdin via process sub)
+# Caller passes the cmd array elements as positional args after the two file args.
+# Returns: 0 always (exit code written to exit_code_file).
+_invoke_opencode() {
+	local output_file="$1"
+	local exit_code_file="$2"
+	shift 2
+	local -a cmd=("$@")
+
+	# Run in subshell to avoid fragile set +e/set -e toggling (GH#4225).
+	# Subshell localises errexit so main shell state is never modified.
+	# Exit code is written to a temp file — NOT captured via $() — because
+	# tee stdout would contaminate the $() capture (bash 3.2 has no clean
+	# way to separate tee output from the exit code in a single $()).
+	(
+		set +e
+		if [[ -x "$SANDBOX_EXEC_HELPER" && "${AIDEVOPS_HEADLESS_SANDBOX_DISABLED:-}" != "1" ]]; then
+			# Pass cmd array elements as separate arguments after --.
+			# Previous code used printf -v to build a single escaped string,
+			# which the sandbox received as one argument and passed to env as
+			# a single executable path — causing "No such file or directory".
+			# Bash 3.2 compat: no local -a in subshells, no printf -v tricks.
+			local passthrough_csv
+			passthrough_csv="$(build_sandbox_passthrough_csv)"
+			if [[ -n "$passthrough_csv" ]]; then
+				"$SANDBOX_EXEC_HELPER" run --timeout "$HEADLESS_SANDBOX_TIMEOUT_DEFAULT" --allow-secret-io --passthrough "$passthrough_csv" -- "${cmd[@]}" 2>&1 | tee "$output_file"
+			else
+				"$SANDBOX_EXEC_HELPER" run --timeout "$HEADLESS_SANDBOX_TIMEOUT_DEFAULT" --allow-secret-io -- "${cmd[@]}" 2>&1 | tee "$output_file"
+			fi
+			printf '%s' "${PIPESTATUS[0]}" >"$exit_code_file"
+		else
+			"${cmd[@]}" 2>&1 | tee "$output_file"
+			printf '%s' "${PIPESTATUS[0]}" >"$exit_code_file"
+		fi
+	) || true
+	return 0
+}
+
+# _handle_run_result: process output_file after opencode exits.
+# Args: exit_code output_file role provider session_key selected_model
+# Sets caller variable _run_failure_reason on failure.
+# Returns: 0 success, 75 no-activity backoff, non-zero on failure.
+_handle_run_result() {
+	local exit_code="$1"
+	local output_file="$2"
+	local role="$3"
+	local provider="$4"
+	local session_key="$5"
+	local selected_model="$6"
+
+	local discovered_session activity_detected
+	discovered_session=$(extract_session_id_from_output "$output_file")
+	activity_detected=$(output_has_activity "$output_file")
+
+	if [[ "$exit_code" -eq 0 ]]; then
+		if [[ "$activity_detected" != "1" ]]; then
+			record_provider_backoff "$provider" "provider_error" "$output_file" "$selected_model"
+			rm -f "$output_file"
+			print_warning "$selected_model returned exit 0 without any model activity; backing off model"
+			return 75
+		fi
+		if [[ "$role" != "pulse" && -n "$discovered_session" ]]; then
+			store_session_id "$provider" "$session_key" "$discovered_session" "$selected_model"
+		fi
+		rm -f "$output_file"
+		return 0
+	fi
+
+	local failure_reason
+	failure_reason=$(classify_failure_reason "$output_file")
+	record_provider_backoff "$provider" "$failure_reason" "$output_file" "$selected_model"
+	rm -f "$output_file"
+	_run_failure_reason="$failure_reason"
+	return "$exit_code"
+}
+
 # _execute_run_attempt: run one opencode invocation and handle the result.
 # Args: role session_key work_dir title prompt selected_model agent_name model_override
 #       extra_args (array passed as remaining positional args after the named ones)
@@ -895,74 +1002,23 @@ _execute_run_attempt() {
 		persisted_session=$(get_session_id "$provider" "$session_key")
 	fi
 
-	local -a cmd=("$OPENCODE_BIN_DEFAULT" run "$prompt" --dir "$work_dir" -m "$selected_model" --title "$title" --format json)
-	if [[ -n "$agent_name" ]]; then
-		cmd+=(--agent "$agent_name")
-	fi
-	if [[ -n "$persisted_session" ]]; then
-		cmd+=(--session "$persisted_session" --continue)
-	fi
-	if [[ ${#extra_args[@]} -gt 0 ]]; then
-		cmd+=("${extra_args[@]}")
-	fi
+	local -a cmd=()
+	while IFS= read -r -d '' arg; do
+		cmd+=("$arg")
+	done < <(_build_run_cmd "$selected_model" "$work_dir" "$prompt" "$title" \
+		"$agent_name" "$persisted_session" "${extra_args[@]+"${extra_args[@]}"}")
 
 	local output_file exit_code_file exit_code
 	output_file=$(mktemp)
 	exit_code_file=$(mktemp)
 	exit_code=0
-	# Run in subshell to avoid fragile set +e/set -e toggling (GH#4225).
-	# Subshell localises errexit so main shell state is never modified.
-	# Exit code is written to a temp file — NOT captured via $() — because
-	# tee stdout would contaminate the $() capture (bash 3.2 has no clean
-	# way to separate tee output from the exit code in a single $()).
-	(
-		set +e
-		if [[ -x "$SANDBOX_EXEC_HELPER" && "${AIDEVOPS_HEADLESS_SANDBOX_DISABLED:-}" != "1" ]]; then
-			# Pass cmd array elements as separate arguments after --.
-			# Previous code used printf -v to build a single escaped string,
-			# which the sandbox received as one argument and passed to env as
-			# a single executable path — causing "No such file or directory".
-			# Bash 3.2 compat: no local -a in subshells, no printf -v tricks.
-			local passthrough_csv
-			passthrough_csv="$(build_sandbox_passthrough_csv)"
-			if [[ -n "$passthrough_csv" ]]; then
-				"$SANDBOX_EXEC_HELPER" run --timeout "$HEADLESS_SANDBOX_TIMEOUT_DEFAULT" --allow-secret-io --passthrough "$passthrough_csv" -- "${cmd[@]}" 2>&1 | tee "$output_file"
-			else
-				"$SANDBOX_EXEC_HELPER" run --timeout "$HEADLESS_SANDBOX_TIMEOUT_DEFAULT" --allow-secret-io -- "${cmd[@]}" 2>&1 | tee "$output_file"
-			fi
-			printf '%s' "${PIPESTATUS[0]}" >"$exit_code_file"
-		else
-			"${cmd[@]}" 2>&1 | tee "$output_file"
-			printf '%s' "${PIPESTATUS[0]}" >"$exit_code_file"
-		fi
-	) || true
+
+	_invoke_opencode "$output_file" "$exit_code_file" "${cmd[@]}"
 	exit_code=$(cat "$exit_code_file" 2>/dev/null) || exit_code=1
 	rm -f "$exit_code_file"
 
-	local discovered_session activity_detected
-	discovered_session=$(extract_session_id_from_output "$output_file")
-	activity_detected=$(output_has_activity "$output_file")
-
-	if [[ "$exit_code" -eq 0 ]]; then
-		if [[ "$activity_detected" != "1" ]]; then
-			record_provider_backoff "$provider" "provider_error" "$output_file" "$selected_model"
-			rm -f "$output_file"
-			print_warning "$selected_model returned exit 0 without any model activity; backing off model"
-			return 75
-		fi
-		if [[ "$role" != "pulse" && -n "$discovered_session" ]]; then
-			store_session_id "$provider" "$session_key" "$discovered_session" "$selected_model"
-		fi
-		rm -f "$output_file"
-		return 0
-	fi
-
-	local failure_reason
-	failure_reason=$(classify_failure_reason "$output_file")
-	record_provider_backoff "$provider" "$failure_reason" "$output_file" "$selected_model"
-	rm -f "$output_file"
-	_run_failure_reason="$failure_reason"
-	return "$exit_code"
+	_handle_run_result "$exit_code" "$output_file" "$role" "$provider" "$session_key" "$selected_model"
+	return $?
 }
 
 cmd_run() {

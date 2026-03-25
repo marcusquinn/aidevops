@@ -1203,6 +1203,58 @@ check_secret_policy() {
 # results — no error message, just broken behaviour. ShellCheck does NOT catch
 # most version incompatibilities, so this is a dedicated scanner.
 
+# _scan_bash32_file: scan a single file for bash 4.0+ incompatibilities.
+# Appends findings to tmp_file. Args: $1=file $2=tmp_file
+# Returns: 0 always.
+_scan_bash32_file() {
+	local file="$1"
+	local tmp_file="$2"
+
+	# declare -A / local -A (associative arrays — bash 4.0+)
+	grep -nE '^[[:space:]]*(declare|local)[[:space:]]+-A[[:space:]]' "$file" 2>/dev/null | while IFS= read -r line; do
+		printf '%s:%s [associative array — bash 4.0+]\n' "$file" "$line" >>"$tmp_file"
+	done
+
+	# mapfile / readarray (bash 4.0+)
+	grep -nE '^[[:space:]]*(mapfile|readarray)[[:space:]]' "$file" 2>/dev/null | while IFS= read -r line; do
+		printf '%s:%s [mapfile/readarray — bash 4.0+]\n' "$file" "$line" >>"$tmp_file"
+	done
+
+	# ${var,,} / ${var^^} case conversion (bash 4.0+)
+	# Exclude comments — grep -n prefixes "NNN:" so comments appear as "NNN:\s*#"
+	grep -n ',,}' "$file" 2>/dev/null | grep '\${' | grep -vE '^[0-9]+:[[:space:]]*#' | while IFS= read -r line; do
+		printf '%s:%s [case conversion ,,} — bash 4.0+]\n' "$file" "$line" >>"$tmp_file"
+	done
+	grep -n '^^}' "$file" 2>/dev/null | grep '\${' | grep -vE '^[0-9]+:[[:space:]]*#' | while IFS= read -r line; do
+		printf '%s:%s [case conversion ^^} — bash 4.0+]\n' "$file" "$line" >>"$tmp_file"
+	done
+
+	# declare -n / local -n namerefs (bash 4.3+)
+	grep -nE '^[[:space:]]*(declare|local)[[:space:]]+-n[[:space:]]' "$file" 2>/dev/null | while IFS= read -r line; do
+		printf '%s:%s [nameref — bash 4.3+]\n' "$file" "$line" >>"$tmp_file"
+	done
+
+	# coproc (bash 4.0+)
+	grep -nE '^[[:space:]]*coproc[[:space:]]' "$file" 2>/dev/null | while IFS= read -r line; do
+		printf '%s:%s [coproc — bash 4.0+]\n' "$file" "$line" >>"$tmp_file"
+	done
+
+	# &>> append-both (bash 4.0+)
+	grep -n '&>>' "$file" 2>/dev/null | grep -vE '^[0-9]+:[[:space:]]*#' | while IFS= read -r line; do
+		printf '%s:%s [&>> append — bash 4.0+]\n' "$file" "$line" >>"$tmp_file"
+	done
+
+	# "\t" or "\n" in string concatenation (likely wants $'\t' or $'\n')
+	# Only flag += or = assignments, not awk/sed/printf/echo -e/python contexts
+	grep -nE '\+="\\[tn]|="\\[tn]' "$file" 2>/dev/null |
+		grep -vE '^[0-9]+:[[:space:]]*#' |
+		grep -vE 'awk|sed|printf|echo.*-e|python|f\.write|gsub|join|split|print |replace|coords|excerpt|delimiter|regex|pattern' |
+		while IFS= read -r line; do
+			printf '%s:%s ["\t"/"\n" — use $'"'"'\\t'"'"' or $'"'"'\\n'"'"' for actual whitespace]\n' "$file" "$line" >>"$tmp_file"
+		done
+	return 0
+}
+
 check_bash32_compat() {
 	echo -e "${BLUE}Checking Bash 3.2 Compatibility...${NC}"
 
@@ -1222,49 +1274,7 @@ check_bash32_compat() {
 	for file in "${ALL_SH_FILES[@]}"; do
 		[[ -f "$file" ]] || continue
 		[[ "$(basename "$file")" == "$self_basename" ]] && continue
-
-		# declare -A / local -A (associative arrays — bash 4.0+)
-		grep -nE '^[[:space:]]*(declare|local)[[:space:]]+-A[[:space:]]' "$file" 2>/dev/null | while IFS= read -r line; do
-			printf '%s:%s [associative array — bash 4.0+]\n' "$file" "$line" >>"$tmp_file"
-		done
-
-		# mapfile / readarray (bash 4.0+)
-		grep -nE '^[[:space:]]*(mapfile|readarray)[[:space:]]' "$file" 2>/dev/null | while IFS= read -r line; do
-			printf '%s:%s [mapfile/readarray — bash 4.0+]\n' "$file" "$line" >>"$tmp_file"
-		done
-
-		# ${var,,} / ${var^^} case conversion (bash 4.0+)
-		# Exclude comments — grep -n prefixes "NNN:" so comments appear as "NNN:\s*#"
-		grep -n ',,}' "$file" 2>/dev/null | grep '\${' | grep -vE '^[0-9]+:[[:space:]]*#' | while IFS= read -r line; do
-			printf '%s:%s [case conversion ,,} — bash 4.0+]\n' "$file" "$line" >>"$tmp_file"
-		done
-		grep -n '^^}' "$file" 2>/dev/null | grep '\${' | grep -vE '^[0-9]+:[[:space:]]*#' | while IFS= read -r line; do
-			printf '%s:%s [case conversion ^^} — bash 4.0+]\n' "$file" "$line" >>"$tmp_file"
-		done
-
-		# declare -n / local -n namerefs (bash 4.3+)
-		grep -nE '^[[:space:]]*(declare|local)[[:space:]]+-n[[:space:]]' "$file" 2>/dev/null | while IFS= read -r line; do
-			printf '%s:%s [nameref — bash 4.3+]\n' "$file" "$line" >>"$tmp_file"
-		done
-
-		# coproc (bash 4.0+)
-		grep -nE '^[[:space:]]*coproc[[:space:]]' "$file" 2>/dev/null | while IFS= read -r line; do
-			printf '%s:%s [coproc — bash 4.0+]\n' "$file" "$line" >>"$tmp_file"
-		done
-
-		# &>> append-both (bash 4.0+)
-		grep -n '&>>' "$file" 2>/dev/null | grep -vE '^[0-9]+:[[:space:]]*#' | while IFS= read -r line; do
-			printf '%s:%s [&>> append — bash 4.0+]\n' "$file" "$line" >>"$tmp_file"
-		done
-
-		# "\t" or "\n" in string concatenation (likely wants $'\t' or $'\n')
-		# Only flag += or = assignments, not awk/sed/printf/echo -e/python contexts
-		grep -nE '\+="\\[tn]|="\\[tn]' "$file" 2>/dev/null |
-			grep -vE '^[0-9]+:[[:space:]]*#' |
-			grep -vE 'awk|sed|printf|echo.*-e|python|f\.write|gsub|join|split|print |replace|coords|excerpt|delimiter|regex|pattern' |
-			while IFS= read -r line; do
-				printf '%s:%s ["\t"/"\n" — use $'"'"'\\t'"'"' or $'"'"'\\n'"'"' for actual whitespace]\n' "$file" "$line" >>"$tmp_file"
-			done
+		_scan_bash32_file "$file" "$tmp_file"
 	done
 
 	if [[ -s "$tmp_file" ]]; then
@@ -1343,10 +1353,9 @@ should_skip_gate() {
 	return 1
 }
 
-# Run all gate checks in order, respecting bundle skip_gates.
-# Writes to the exit_code variable in the caller's scope via a temp file.
-# Returns: 0 if all gates passed, 1 if any gate failed.
-_run_gate_checks() {
+# _run_gate_checks_static: run static analysis gates (sonarcloud through secret-policy).
+# Returns: 0 if all passed, 1 if any failed.
+_run_gate_checks_static() {
 	local exit_code=0
 
 	if ! should_skip_gate "sonarcloud"; then
@@ -1409,6 +1418,14 @@ _run_gate_checks() {
 		echo ""
 	fi
 
+	return $exit_code
+}
+
+# _run_gate_checks_complexity: run complexity and compatibility gates (bash32 through python).
+# Returns: 0 if all passed, 1 if any failed.
+_run_gate_checks_complexity() {
+	local exit_code=0
+
 	if ! should_skip_gate "bash32-compat"; then
 		check_bash32_compat || exit_code=1
 		echo ""
@@ -1433,6 +1450,17 @@ _run_gate_checks() {
 		check_python_complexity || exit_code=1
 		echo ""
 	fi
+
+	return $exit_code
+}
+
+# Run all gate checks in order, respecting bundle skip_gates.
+# Returns: 0 if all gates passed, 1 if any gate failed.
+_run_gate_checks() {
+	local exit_code=0
+
+	_run_gate_checks_static || exit_code=1
+	_run_gate_checks_complexity || exit_code=1
 
 	return $exit_code
 }
