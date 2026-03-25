@@ -638,85 +638,56 @@ parse_transcribe_options() {
 	return 0
 }
 
-# Main transcribe command
-cmd_transcribe() {
-	if [[ $# -eq 0 ]]; then
-		print_error "Input file or URL required."
-		print_info "Usage: transcription-helper.sh transcribe <file|url> [options]"
-		return 1
-	fi
+# Prepare audio file from source (download/extract as needed).
+# Arguments: $1 - source_type, $2 - input path/URL
+# Sets: _AUDIO_FILE, _TEMP_AUDIO, _CLEANUP_TEMP in caller scope.
+# Returns: 1 on failure.
+_transcribe_prepare_audio() {
+	local source_type="$1"
+	local input="$2"
 
-	parse_transcribe_options "$@" || return 1
-
-	if [[ -z "$TRANSCRIBE_INPUT" ]]; then
-		print_error "Input file or URL required."
-		return 1
-	fi
-
-	# Detect source type
-	local source_type
-	source_type=$(detect_source "$TRANSCRIBE_INPUT")
-
-	case "$source_type" in
-	not_found)
-		print_error "File not found: $TRANSCRIBE_INPUT"
-		return 1
-		;;
-	unknown)
-		print_error "Unsupported file type: $TRANSCRIBE_INPUT"
-		print_info "Supported audio: $AUDIO_EXTENSIONS"
-		print_info "Supported video: $VIDEO_EXTENSIONS"
-		return 1
-		;;
-	esac
-
-	# Select backend
-	local backend
-	backend=$(select_backend "$TRANSCRIBE_BACKEND") || return 1
-
-	# Prepare temp directory for intermediate files
 	mkdir -p "$CACHE_DIR"
-	local temp_audio=""
-	local cleanup_temp=false
+	_TEMP_AUDIO=""
+	_CLEANUP_TEMP=false
 
-	# Prepare audio file based on source type
-	local audio_file=""
 	case "$source_type" in
 	youtube)
-		temp_audio="$CACHE_DIR/yt-audio-$$.wav"
-		download_youtube_audio "$TRANSCRIBE_INPUT" "$temp_audio" || return 1
-		# yt-dlp may add extension, find the actual file
-		if [[ ! -f "$temp_audio" ]]; then
-			temp_audio=$(find "$CACHE_DIR" -name "yt-audio-$$.*" -type f | head -1)
+		_TEMP_AUDIO="$CACHE_DIR/yt-audio-$$.wav"
+		download_youtube_audio "$input" "$_TEMP_AUDIO" || return 1
+		if [[ ! -f "$_TEMP_AUDIO" ]]; then
+			_TEMP_AUDIO=$(find "$CACHE_DIR" -name "yt-audio-$$.*" -type f | head -1)
 		fi
-		audio_file="$temp_audio"
-		cleanup_temp=true
+		_AUDIO_FILE="$_TEMP_AUDIO"
+		_CLEANUP_TEMP=true
 		;;
 	url)
-		temp_audio="$CACHE_DIR/url-audio-$$.wav"
-		download_url_audio "$TRANSCRIBE_INPUT" "$temp_audio" || return 1
-		audio_file="$temp_audio"
-		cleanup_temp=true
+		_TEMP_AUDIO="$CACHE_DIR/url-audio-$$.wav"
+		download_url_audio "$input" "$_TEMP_AUDIO" || return 1
+		_AUDIO_FILE="$_TEMP_AUDIO"
+		_CLEANUP_TEMP=true
 		;;
 	video)
-		temp_audio="$CACHE_DIR/extracted-audio-$$.wav"
-		extract_audio "$TRANSCRIBE_INPUT" "$temp_audio" || return 1
-		audio_file="$temp_audio"
-		cleanup_temp=true
+		_TEMP_AUDIO="$CACHE_DIR/extracted-audio-$$.wav"
+		extract_audio "$input" "$_TEMP_AUDIO" || return 1
+		_AUDIO_FILE="$_TEMP_AUDIO"
+		_CLEANUP_TEMP=true
 		;;
 	audio)
-		audio_file="$TRANSCRIBE_INPUT"
+		_AUDIO_FILE="$input"
 		;;
 	esac
 
-	if [[ ! -f "$audio_file" ]]; then
-		print_error "Audio file not available after preparation."
-		return 1
-	fi
+	return 0
+}
 
-	# Determine output file path
-	local output_file="$TRANSCRIBE_OUTPUT"
-	if [[ -z "$output_file" ]]; then
+# Determine the output file path from options or defaults.
+# Arguments: $1 - source_type
+# Sets: _OUTPUT_FILE in caller scope.
+_transcribe_determine_output() {
+	local source_type="$1"
+
+	_OUTPUT_FILE="$TRANSCRIBE_OUTPUT"
+	if [[ -z "$_OUTPUT_FILE" ]]; then
 		local base_name=""
 		if [[ "$source_type" == "youtube" ]] || [[ "$source_type" == "url" ]]; then
 			base_name="transcription-$(date '+%Y%m%d-%H%M%S')"
@@ -725,19 +696,20 @@ cmd_transcribe() {
 		fi
 		local out_dir="${TRANSCRIBE_OUTPUT_DIR:-$DEFAULT_OUTPUT_DIR}"
 		mkdir -p "$out_dir"
-		output_file="$out_dir/${base_name}.${TRANSCRIBE_FORMAT}"
+		_OUTPUT_FILE="$out_dir/${base_name}.${TRANSCRIBE_FORMAT}"
 	fi
 
-	print_header "Transcription"
-	print_info "Input:    $TRANSCRIBE_INPUT ($source_type)"
-	print_info "Backend:  $backend"
-	print_info "Model:    $TRANSCRIBE_MODEL"
-	print_info "Language: $TRANSCRIBE_LANGUAGE"
-	print_info "Format:   $TRANSCRIBE_FORMAT"
-	print_info "Output:   $output_file"
-	echo ""
+	return 0
+}
 
-	# Run transcription
+# Dispatch transcription to the selected backend.
+# Arguments: $1 - backend, $2 - audio_file, $3 - output_file
+# Returns: exit code from the backend.
+_transcribe_run_backend() {
+	local backend="$1"
+	local audio_file="$2"
+	local output_file="$3"
+
 	local exit_code=0
 	case "$backend" in
 	faster-whisper)
@@ -767,16 +739,19 @@ cmd_transcribe() {
 		;;
 	esac
 
-	# Cleanup temp files
-	if [[ "$cleanup_temp" == true ]] && [[ -n "$temp_audio" ]]; then
-		rm -f "$temp_audio"
-	fi
+	return $exit_code
+}
+
+# Show transcription result: success message, size, and optional preview.
+# Arguments: $1 - output_file, $2 - exit_code
+_transcribe_show_result() {
+	local output_file="$1"
+	local exit_code="$2"
 
 	if [[ $exit_code -eq 0 ]]; then
 		echo ""
 		print_success "Transcription saved to: $output_file"
 
-		# Show file size and preview
 		if [[ -f "$output_file" ]]; then
 			local file_size
 			file_size=$(wc -c <"$output_file" | tr -d ' ')
@@ -793,6 +768,72 @@ cmd_transcribe() {
 	else
 		print_error "Transcription failed (exit code: $exit_code)"
 	fi
+
+	return 0
+}
+
+# Main transcribe command
+cmd_transcribe() {
+	if [[ $# -eq 0 ]]; then
+		print_error "Input file or URL required."
+		print_info "Usage: transcription-helper.sh transcribe <file|url> [options]"
+		return 1
+	fi
+
+	parse_transcribe_options "$@" || return 1
+
+	if [[ -z "$TRANSCRIBE_INPUT" ]]; then
+		print_error "Input file or URL required."
+		return 1
+	fi
+
+	local source_type
+	source_type=$(detect_source "$TRANSCRIBE_INPUT")
+
+	case "$source_type" in
+	not_found)
+		print_error "File not found: $TRANSCRIBE_INPUT"
+		return 1
+		;;
+	unknown)
+		print_error "Unsupported file type: $TRANSCRIBE_INPUT"
+		print_info "Supported audio: $AUDIO_EXTENSIONS"
+		print_info "Supported video: $VIDEO_EXTENSIONS"
+		return 1
+		;;
+	esac
+
+	local backend
+	backend=$(select_backend "$TRANSCRIBE_BACKEND") || return 1
+
+	local _AUDIO_FILE="" _TEMP_AUDIO="" _CLEANUP_TEMP=false
+	_transcribe_prepare_audio "$source_type" "$TRANSCRIBE_INPUT" || return 1
+
+	if [[ ! -f "$_AUDIO_FILE" ]]; then
+		print_error "Audio file not available after preparation."
+		return 1
+	fi
+
+	local _OUTPUT_FILE=""
+	_transcribe_determine_output "$source_type"
+
+	print_header "Transcription"
+	print_info "Input:    $TRANSCRIBE_INPUT ($source_type)"
+	print_info "Backend:  $backend"
+	print_info "Model:    $TRANSCRIBE_MODEL"
+	print_info "Language: $TRANSCRIBE_LANGUAGE"
+	print_info "Format:   $TRANSCRIBE_FORMAT"
+	print_info "Output:   $_OUTPUT_FILE"
+	echo ""
+
+	local exit_code=0
+	_transcribe_run_backend "$backend" "$_AUDIO_FILE" "$_OUTPUT_FILE" || exit_code=$?
+
+	if [[ "$_CLEANUP_TEMP" == true ]] && [[ -n "$_TEMP_AUDIO" ]]; then
+		rm -f "$_TEMP_AUDIO"
+	fi
+
+	_transcribe_show_result "$_OUTPUT_FILE" "$exit_code"
 
 	return $exit_code
 }

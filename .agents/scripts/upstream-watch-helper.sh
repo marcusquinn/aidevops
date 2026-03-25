@@ -396,6 +396,236 @@ cmd_remove() {
 # Globals:
 #   VERBOSE - Show commit-level detail when true
 #######################################
+#######################################
+# Check a single GitHub repo for new releases and commits.
+# Arguments:
+#   $1 - slug (owner/repo)
+#   $2 - config JSON
+#   $3 - state JSON (by reference name)
+#   $4 - now (ISO timestamp)
+#   $5 - verbose (true/false)
+#   $6 - updates_found_var (name of integer counter to increment)
+#   $7 - had_probe_failure_var (name of boolean to set true on failure)
+# Returns: 0 always
+#######################################
+_check_single_github_repo() {
+	local slug="$1"
+	local config="$2"
+	local _state_var="$3"
+	local now="$4"
+	local verbose="$5"
+	local _uf_var="$6"
+	local _hpf_var="$7"
+
+	local state
+	eval "state=\"\${${_state_var}}\""
+
+	local relevance
+	relevance=$(echo "$config" | jq -r --arg slug "$slug" '.repos[] | select(.slug == $slug) | .relevance // ""')
+
+	local last_release_seen last_commit_seen
+	last_release_seen=$(echo "$state" | jq -r --arg slug "$slug" '.repos[$slug].last_release_seen // ""')
+	last_commit_seen=$(echo "$state" | jq -r --arg slug "$slug" '.repos[$slug].last_commit_seen // ""')
+
+	# --- Check releases ---
+	local latest_release_tag="" latest_release_name="" latest_release_date=""
+	local release_json=""
+	local probe_failed=false
+	local api_stderr
+	api_stderr=$(mktemp)
+	if release_json=$(gh api "repos/${slug}/releases/latest" 2>"$api_stderr"); then
+		: # success
+	else
+		local release_err
+		release_err=$(<"$api_stderr")
+		if [[ "$release_err" == *"Not Found"* || "$release_err" == *"404"* ]]; then
+			release_json=""
+		else
+			_log_warn "gh api releases failed for ${slug}: ${release_err}"
+			echo -e "${YELLOW}Warning${NC}: Could not fetch releases for ${slug}" >&2
+			release_json=""
+			probe_failed=true
+		fi
+	fi
+	rm -f "$api_stderr"
+
+	if [[ -n "$release_json" ]]; then
+		latest_release_tag=$(echo "$release_json" | jq -r '.tag_name // ""')
+		latest_release_name=$(echo "$release_json" | jq -r '.name // ""')
+		latest_release_date=$(echo "$release_json" | jq -r '.published_at // ""')
+	fi
+
+	local has_new_release=false
+	if [[ -n "$latest_release_tag" && "$latest_release_tag" != "$last_release_seen" ]]; then
+		has_new_release=true
+	fi
+
+	# --- Check commits ---
+	local latest_commit="" latest_commit_date=""
+	local commit_json=""
+	api_stderr=$(mktemp)
+	if commit_json=$(gh api "repos/${slug}/commits?per_page=1" --jq '.[0]' 2>"$api_stderr"); then
+		: # success
+	else
+		local commit_err
+		commit_err=$(<"$api_stderr")
+		_log_warn "gh api commits failed for ${slug}: ${commit_err}"
+		echo -e "${YELLOW}Warning${NC}: Could not fetch commits for ${slug}" >&2
+		commit_json=""
+		probe_failed=true
+	fi
+	rm -f "$api_stderr"
+
+	if [[ -n "$commit_json" ]]; then
+		latest_commit=$(echo "$commit_json" | jq -r '.sha // ""')
+		latest_commit_date=$(echo "$commit_json" | jq -r '.commit.committer.date // ""')
+	fi
+
+	local has_new_commits=false
+	if [[ -n "$latest_commit" && "${latest_commit:0:7}" != "$last_commit_seen" ]]; then
+		has_new_commits=true
+	fi
+
+	# --- Report ---
+	if [[ "$has_new_release" == true ]]; then
+		eval "${_uf_var}=\$(( \${${_uf_var}} + 1 ))"
+		echo ""
+		echo -e "${YELLOW}NEW RELEASE${NC}: ${slug}"
+		[[ -n "$relevance" ]] && echo -e "  Relevance: ${CYAN}${relevance}${NC}"
+		echo "  Previous:  ${last_release_seen:-none}"
+		echo "  Latest:    ${latest_release_tag} (${latest_release_date:-unknown})"
+		[[ -n "$latest_release_name" && "$latest_release_name" != "$latest_release_tag" ]] &&
+			echo "  Name:      ${latest_release_name}"
+		_show_release_diff "$slug" "$last_release_seen" "$latest_release_tag"
+		if [[ "$verbose" == true ]]; then
+			_show_commit_diff "$slug" "$last_commit_seen" "${latest_commit:0:7}"
+		fi
+		echo "  Action:    Review changes, then run: upstream-watch-helper.sh ack ${slug}"
+	elif [[ "$has_new_commits" == true ]]; then
+		eval "${_uf_var}=\$(( \${${_uf_var}} + 1 ))"
+		echo ""
+		echo -e "${BLUE}NEW COMMITS${NC}: ${slug} (no new release)"
+		[[ -n "$relevance" ]] && echo -e "  Relevance: ${CYAN}${relevance}${NC}"
+		if [[ "$verbose" == true ]]; then
+			_show_commit_diff "$slug" "$last_commit_seen" "${latest_commit:0:7}"
+		else
+			echo "  Latest commit: ${latest_commit:0:7} (${latest_commit_date:-unknown})"
+			echo "  Action:        Review changes, then run: upstream-watch-helper.sh ack ${slug}"
+		fi
+	else
+		echo -e "${GREEN}Up to date${NC}: ${slug} (${latest_release_tag:-no releases})"
+	fi
+
+	# Update state (skip on probe failure to avoid masking errors as "up to date")
+	if [[ "$probe_failed" != true ]]; then
+		state=$(echo "$state" | jq --arg slug "$slug" --arg now "$now" \
+			--argjson pending "$([[ "$has_new_release" == true || "$has_new_commits" == true ]] && echo 1 || echo 0)" \
+			'.repos[$slug].last_checked = $now | .repos[$slug].updates_pending = $pending')
+		eval "${_state_var}=\"\${state}\""
+	else
+		eval "${_hpf_var}=true"
+	fi
+
+	return 0
+}
+
+#######################################
+# Check non-GitHub upstreams (Docker Hub, GitLab, Forgejo, etc.)
+# Arguments:
+#   $1 - non_github_names (newline-separated)
+#   $2 - config JSON
+#   $3 - state JSON (by reference name)
+#   $4 - now (ISO timestamp)
+#   $5 - updates_found_var (name of integer counter to increment)
+#   $6 - had_probe_failure_var (name of boolean to set true on failure)
+# Returns: 0 always
+#######################################
+_check_non_github_upstreams() {
+	local non_github_names="$1"
+	local config="$2"
+	local _state_var="$3"
+	local now="$4"
+	local _uf_var="$5"
+	local _hpf_var="$6"
+
+	local state
+	eval "state=\"\${${_state_var}}\""
+
+	while IFS= read -r entry_name; do
+		[[ -z "$entry_name" ]] && continue
+
+		local entry_json
+		entry_json=$(echo "$config" | jq --arg name "$entry_name" '.non_github_upstreams[] | select(.name == $name)')
+
+		local check_cmd source_type description relevance entry_url
+		check_cmd=$(echo "$entry_json" | jq -r '.check_command // ""')
+		source_type=$(echo "$entry_json" | jq -r '.source_type // "unknown"')
+		description=$(echo "$entry_json" | jq -r '.description // ""')
+		relevance=$(echo "$entry_json" | jq -r '.relevance // ""')
+		entry_url=$(echo "$entry_json" | jq -r '.url // ""')
+
+		if [[ -z "$check_cmd" ]]; then
+			echo -e "${YELLOW}Warning${NC}: No check_command for ${entry_name}, skipping" >&2
+			continue
+		fi
+
+		local last_seen_value
+		last_seen_value=$(echo "$state" | jq -r --arg name "$entry_name" '.non_github[$name].last_seen // ""')
+
+		local current_value=""
+		local probe_failed=false
+		current_value=$(bash -c "$check_cmd" 2>/dev/null) || {
+			_log_warn "check_command failed for ${entry_name}"
+			echo -e "${YELLOW}Warning${NC}: Could not check ${entry_name} (${source_type})" >&2
+			probe_failed=true
+		}
+
+		current_value=$(echo "$current_value" | tr -d '[:space:]')
+
+		local has_update=false
+		if [[ "$probe_failed" != true && -n "$current_value" && "$current_value" != "$last_seen_value" ]]; then
+			has_update=true
+		fi
+
+		if [[ "$has_update" == true ]]; then
+			eval "${_uf_var}=\$(( \${${_uf_var}} + 1 ))"
+			echo ""
+			echo -e "${YELLOW}UPDATE DETECTED${NC}: ${entry_name} (${source_type})"
+			echo "  Description: ${description}"
+			[[ -n "$relevance" ]] && echo -e "  Relevance:   ${CYAN}${relevance}${NC}"
+			echo "  Previous:    ${last_seen_value:-none}"
+			echo "  Current:     ${current_value}"
+			[[ -n "$entry_url" ]] && echo "  URL:         ${entry_url}"
+
+			local affects
+			affects=$(echo "$entry_json" | jq -r '.affects // [] | .[]' 2>/dev/null)
+			if [[ -n "$affects" ]]; then
+				echo "  Affects:"
+				while IFS= read -r affected_file; do
+					[[ -n "$affected_file" ]] && echo "    - ${affected_file}"
+				done <<<"$affects"
+			fi
+
+			echo "  Action:      Review changes, then run: upstream-watch-helper.sh ack ${entry_name}"
+		elif [[ "$probe_failed" != true ]]; then
+			echo -e "${GREEN}Up to date${NC}: ${entry_name} (${source_type}: ${current_value:-unknown})"
+		fi
+
+		if [[ "$probe_failed" != true ]]; then
+			state=$(echo "$state" | jq --arg name "$entry_name" --arg now "$now" \
+				--arg current "$current_value" \
+				--argjson pending "$([[ "$has_update" == true ]] && echo 1 || echo 0)" \
+				'.non_github[$name].last_checked = $now | .non_github[$name].current_value = $current | .non_github[$name].updates_pending = $pending')
+			eval "${_state_var}=\"\${state}\""
+		else
+			eval "${_hpf_var}=true"
+		fi
+
+	done <<<"$non_github_names"
+
+	return 0
+}
+
 cmd_check() {
 	local target_slug="${1:-}"
 	local verbose="${VERBOSE:-false}"
@@ -407,7 +637,6 @@ cmd_check() {
 	local state
 	state=$(_read_state)
 
-	# Check if target is a non-GitHub upstream name
 	local target_is_non_github=false
 	if [[ -n "$target_slug" ]]; then
 		if echo "$config" | jq -e --arg name "$target_slug" '.non_github_upstreams // [] | .[] | select(.name == $name)' >/dev/null 2>&1; then
@@ -417,7 +646,6 @@ cmd_check() {
 
 	local slugs=""
 	if [[ -n "$target_slug" && "$target_is_non_github" != true ]]; then
-		# Validate that the target slug is on the GitHub watchlist
 		if ! echo "$config" | jq -e --arg slug "$target_slug" '.repos[] | select(.slug == $slug)' >/dev/null 2>&1; then
 			echo -e "${RED}Error: Not watching ${target_slug}. Add it first with 'upstream-watch-helper.sh add ${target_slug}'.${NC}" >&2
 			return 1
@@ -446,127 +674,10 @@ cmd_check() {
 
 	while IFS= read -r slug; do
 		[[ -z "$slug" ]] && continue
-
-		# Get relevance from config
-		local relevance
-		relevance=$(echo "$config" | jq -r --arg slug "$slug" '.repos[] | select(.slug == $slug) | .relevance // ""')
-
-		# Get last-seen state
-		local last_release_seen last_commit_seen
-		last_release_seen=$(echo "$state" | jq -r --arg slug "$slug" '.repos[$slug].last_release_seen // ""')
-		last_commit_seen=$(echo "$state" | jq -r --arg slug "$slug" '.repos[$slug].last_commit_seen // ""')
-
-		# --- Check releases ---
-		local latest_release_tag="" latest_release_name="" latest_release_date=""
-		local release_json=""
-		local probe_failed=false
-		local api_stderr
-		api_stderr=$(mktemp)
-		if release_json=$(gh api "repos/${slug}/releases/latest" 2>"$api_stderr"); then
-			: # success — release_json has the response
-		else
-			local release_err
-			release_err=$(<"$api_stderr")
-			# 404 = no releases (normal), anything else = real error
-			if [[ "$release_err" == *"Not Found"* || "$release_err" == *"404"* ]]; then
-				release_json=""
-			else
-				_log_warn "gh api releases failed for ${slug}: ${release_err}"
-				echo -e "${YELLOW}Warning${NC}: Could not fetch releases for ${slug}" >&2
-				release_json=""
-				probe_failed=true
-			fi
-		fi
-		rm -f "$api_stderr"
-
-		if [[ -n "$release_json" ]]; then
-			latest_release_tag=$(echo "$release_json" | jq -r '.tag_name // ""')
-			latest_release_name=$(echo "$release_json" | jq -r '.name // ""')
-			latest_release_date=$(echo "$release_json" | jq -r '.published_at // ""')
-		fi
-
-		local has_new_release=false
-		if [[ -n "$latest_release_tag" && "$latest_release_tag" != "$last_release_seen" ]]; then
-			has_new_release=true
-		fi
-
-		# --- Check commits (even if no new release) ---
-		local latest_commit="" latest_commit_date=""
-		local commit_json=""
-		api_stderr=$(mktemp)
-		if commit_json=$(gh api "repos/${slug}/commits?per_page=1" --jq '.[0]' 2>"$api_stderr"); then
-			: # success
-		else
-			local commit_err
-			commit_err=$(<"$api_stderr")
-			_log_warn "gh api commits failed for ${slug}: ${commit_err}"
-			echo -e "${YELLOW}Warning${NC}: Could not fetch commits for ${slug}" >&2
-			commit_json=""
-			probe_failed=true
-		fi
-		rm -f "$api_stderr"
-
-		if [[ -n "$commit_json" ]]; then
-			latest_commit=$(echo "$commit_json" | jq -r '.sha // ""')
-			latest_commit_date=$(echo "$commit_json" | jq -r '.commit.committer.date // ""')
-		fi
-
-		local has_new_commits=false
-		if [[ -n "$latest_commit" && "${latest_commit:0:7}" != "$last_commit_seen" ]]; then
-			has_new_commits=true
-		fi
-
-		# --- Report ---
-		if [[ "$has_new_release" == true ]]; then
-			updates_found=$((updates_found + 1))
-			echo ""
-			echo -e "${YELLOW}NEW RELEASE${NC}: ${slug}"
-			[[ -n "$relevance" ]] && echo -e "  Relevance: ${CYAN}${relevance}${NC}"
-			echo "  Previous:  ${last_release_seen:-none}"
-			echo "  Latest:    ${latest_release_tag} (${latest_release_date:-unknown})"
-			[[ -n "$latest_release_name" && "$latest_release_name" != "$latest_release_tag" ]] &&
-				echo "  Name:      ${latest_release_name}"
-
-			# Show releases between last-seen and latest
-			_show_release_diff "$slug" "$last_release_seen" "$latest_release_tag"
-
-			# Show commit summary if verbose
-			if [[ "$verbose" == true ]]; then
-				_show_commit_diff "$slug" "$last_commit_seen" "${latest_commit:0:7}"
-			fi
-
-			echo "  Action:    Review changes, then run: upstream-watch-helper.sh ack ${slug}"
-
-		elif [[ "$has_new_commits" == true ]]; then
-			updates_found=$((updates_found + 1))
-			echo ""
-			echo -e "${BLUE}NEW COMMITS${NC}: ${slug} (no new release)"
-			[[ -n "$relevance" ]] && echo -e "  Relevance: ${CYAN}${relevance}${NC}"
-			if [[ "$verbose" == true ]]; then
-				_show_commit_diff "$slug" "$last_commit_seen" "${latest_commit:0:7}"
-			else
-				echo "  Latest commit: ${latest_commit:0:7} (${latest_commit_date:-unknown})"
-				echo "  Action:        Review changes, then run: upstream-watch-helper.sh ack ${slug}"
-			fi
-		else
-			echo -e "${GREEN}Up to date${NC}: ${slug} (${latest_release_tag:-no releases})"
-		fi
-
-		# Update last_checked and updates_pending (but NOT last_release_seen or last_commit_seen — those require explicit ack)
-		# Skip state update if probes failed to avoid masking errors as "up to date"
-		if [[ "$probe_failed" != true ]]; then
-			state=$(echo "$state" | jq --arg slug "$slug" --arg now "$now" \
-				--argjson pending "$([[ "$has_new_release" == true || "$has_new_commits" == true ]] && echo 1 || echo 0)" \
-				'.repos[$slug].last_checked = $now | .repos[$slug].updates_pending = $pending')
-		else
-			had_probe_failure=true
-		fi
-
+		_check_single_github_repo "$slug" "$config" state "$now" "$verbose" \
+			updates_found had_probe_failure
 	done <<<"$slugs"
 
-	# =========================================================================
-	# Non-GitHub upstreams (Docker Hub, GitLab, Forgejo, etc.)
-	# =========================================================================
 	if [[ "$has_non_github" == true ]]; then
 		local non_github_names
 		if [[ "$target_is_non_github" == true ]]; then
@@ -574,87 +685,10 @@ cmd_check() {
 		else
 			non_github_names=$(echo "$config" | jq -r '.non_github_upstreams // [] | .[].name')
 		fi
-
-		while IFS= read -r entry_name; do
-			[[ -z "$entry_name" ]] && continue
-
-			local entry_json
-			entry_json=$(echo "$config" | jq --arg name "$entry_name" '.non_github_upstreams[] | select(.name == $name)')
-
-			local check_cmd source_type description relevance entry_url
-			check_cmd=$(echo "$entry_json" | jq -r '.check_command // ""')
-			source_type=$(echo "$entry_json" | jq -r '.source_type // "unknown"')
-			description=$(echo "$entry_json" | jq -r '.description // ""')
-			relevance=$(echo "$entry_json" | jq -r '.relevance // ""')
-			entry_url=$(echo "$entry_json" | jq -r '.url // ""')
-
-			if [[ -z "$check_cmd" ]]; then
-				echo -e "${YELLOW}Warning${NC}: No check_command for ${entry_name}, skipping" >&2
-				continue
-			fi
-
-			# Get last-seen state
-			local last_seen_value
-			last_seen_value=$(echo "$state" | jq -r --arg name "$entry_name" '.non_github[$name].last_seen // ""')
-
-			# Run the check command (curl + jq) in a subshell for isolation
-			# Note: check_command comes from a committed config file, not user input
-			local current_value=""
-			local probe_failed=false
-			current_value=$(bash -c "$check_cmd" 2>/dev/null) || {
-				_log_warn "check_command failed for ${entry_name}"
-				echo -e "${YELLOW}Warning${NC}: Could not check ${entry_name} (${source_type})" >&2
-				probe_failed=true
-			}
-
-			# Trim whitespace
-			current_value=$(echo "$current_value" | tr -d '[:space:]')
-
-			local has_update=false
-			if [[ "$probe_failed" != true && -n "$current_value" && "$current_value" != "$last_seen_value" ]]; then
-				has_update=true
-			fi
-
-			if [[ "$has_update" == true ]]; then
-				updates_found=$((updates_found + 1))
-				echo ""
-				echo -e "${YELLOW}UPDATE DETECTED${NC}: ${entry_name} (${source_type})"
-				echo "  Description: ${description}"
-				[[ -n "$relevance" ]] && echo -e "  Relevance:   ${CYAN}${relevance}${NC}"
-				echo "  Previous:    ${last_seen_value:-none}"
-				echo "  Current:     ${current_value}"
-				[[ -n "$entry_url" ]] && echo "  URL:         ${entry_url}"
-
-				# Show affected files
-				local affects
-				affects=$(echo "$entry_json" | jq -r '.affects // [] | .[]' 2>/dev/null)
-				if [[ -n "$affects" ]]; then
-					echo "  Affects:"
-					while IFS= read -r affected_file; do
-						[[ -n "$affected_file" ]] && echo "    - ${affected_file}"
-					done <<<"$affects"
-				fi
-
-				echo "  Action:      Review changes, then run: upstream-watch-helper.sh ack ${entry_name}"
-			elif [[ "$probe_failed" != true ]]; then
-				echo -e "${GREEN}Up to date${NC}: ${entry_name} (${source_type}: ${current_value:-unknown})"
-			fi
-
-			# Update state (but not last_seen — that requires explicit ack)
-			if [[ "$probe_failed" != true ]]; then
-				state=$(echo "$state" | jq --arg name "$entry_name" --arg now "$now" \
-					--arg current "$current_value" \
-					--argjson pending "$([[ "$has_update" == true ]] && echo 1 || echo 0)" \
-					'.non_github[$name].last_checked = $now | .non_github[$name].current_value = $current | .non_github[$name].updates_pending = $pending')
-			else
-				had_probe_failure=true
-			fi
-
-		done <<<"$non_github_names"
+		_check_non_github_upstreams "$non_github_names" "$config" state "$now" \
+			updates_found had_probe_failure
 	fi
 
-	# Only advance global last_check if all probes succeeded — partial failures
-	# should not advance the 24h gate so the caller retries on the next cycle
 	if [[ "$had_probe_failure" != true ]]; then
 		state=$(echo "$state" | jq --arg now "$now" '.last_check = $now')
 	fi

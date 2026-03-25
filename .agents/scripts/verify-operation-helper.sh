@@ -381,80 +381,73 @@ _log_verification() {
 # Commands
 # =============================================================================
 
-# verify — Perform cross-provider verification of an operation.
-cmd_verify() {
-	local operation="" op_type="" risk_tier="" repo="" branch="" details=""
-	local primary_model="" skip_reason="" session_id=""
+# Parse verify subcommand arguments into named variables.
+# Sets: _V_OPERATION, _V_OP_TYPE, _V_RISK_TIER, _V_REPO, _V_BRANCH,
+#       _V_DETAILS, _V_PRIMARY_MODEL, _V_SKIP_REASON, _V_SESSION_ID
+_verify_parse_args() {
+	_V_OPERATION="" _V_OP_TYPE="" _V_RISK_TIER="" _V_REPO="" _V_BRANCH=""
+	_V_DETAILS="" _V_PRIMARY_MODEL="" _V_SKIP_REASON="" _V_SESSION_ID=""
 
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--operation)
-			operation="${2:-}"
+			_V_OPERATION="${2:-}"
 			shift 2
 			;;
 		--type)
-			op_type="${2:-}"
+			_V_OP_TYPE="${2:-}"
 			shift 2
 			;;
 		--risk-tier)
-			risk_tier="${2:-}"
+			_V_RISK_TIER="${2:-}"
 			shift 2
 			;;
 		--repo)
-			repo="${2:-}"
+			_V_REPO="${2:-}"
 			shift 2
 			;;
 		--branch)
-			branch="${2:-}"
+			_V_BRANCH="${2:-}"
 			shift 2
 			;;
 		--details)
-			details="${2:-}"
+			_V_DETAILS="${2:-}"
 			shift 2
 			;;
 		--primary-model)
-			primary_model="${2:-}"
+			_V_PRIMARY_MODEL="${2:-}"
 			shift 2
 			;;
 		--session)
-			session_id="${2:-}"
+			_V_SESSION_ID="${2:-}"
 			shift 2
 			;;
 		--skip)
-			skip_reason="${2:-}"
+			_V_SKIP_REASON="${2:-}"
 			shift 2
 			;;
-		*)
-			shift
-			;;
+		*) shift ;;
 		esac
 	done
 
-	# Validate required params
-	if [[ -z "$operation" ]]; then
-		print_error "Usage: verify-operation-helper.sh verify --operation \"command\" [options]"
-		return 1
-	fi
+	return 0
+}
 
-	# Check global skip
-	if [[ "${AIDEVOPS_SKIP_VERIFY:-}" == "1" ]]; then
-		log_warn "Verification skipped (AIDEVOPS_SKIP_VERIFY=1)"
-		_log_verification "${op_type:-unknown}" "${risk_tier:-unknown}" "unknown" "none" "none" \
-			"skipped" "0" "" "true" "env:AIDEVOPS_SKIP_VERIFY" "$session_id" "$repo" "$branch"
-		echo "SKIPPED"
-		return 0
-	fi
+# Classify the operation and select the verifier provider/model.
+# Arguments: $1 - operation, $2 - op_type (may be empty), $3 - risk_tier (may be empty),
+#            $4 - primary_model, $5 - session_id, $6 - repo, $7 - branch
+# Sets: _VC_OP_TYPE, _VC_RISK_TIER, _VC_PRIMARY_PROVIDER,
+#       _VC_VERIFIER_PROVIDER, _VC_VERIFIER_MODEL, _VC_MODEL_SHORT
+# Returns: 0 to proceed, 1 to abort (standard tier or no verifier).
+_verify_classify_and_select() {
+	local operation="$1"
+	local op_type="$2"
+	local risk_tier="$3"
+	local primary_model="$4"
+	local session_id="$5"
+	local repo="$6"
+	local branch="$7"
 
-	# Check explicit skip
-	if [[ -n "$skip_reason" ]]; then
-		log_warn "Verification skipped: ${skip_reason}"
-		_log_verification "${op_type:-unknown}" "${risk_tier:-unknown}" "unknown" "none" "none" \
-			"skipped" "0" "" "true" "$skip_reason" "$session_id" "$repo" "$branch"
-		echo "SKIPPED"
-		return 0
-	fi
-
-	# Auto-classify if type/tier not provided
 	if [[ -z "$op_type" || -z "$risk_tier" ]]; then
 		local classification
 		classification=$(classify_operation "$operation")
@@ -462,61 +455,73 @@ cmd_verify() {
 		risk_tier="${risk_tier:-${classification#*|}}"
 	fi
 
-	# Standard tier doesn't require verification unless explicitly requested
+	_VC_OP_TYPE="$op_type"
+	_VC_RISK_TIER="$risk_tier"
+
 	if [[ "$risk_tier" == "standard" ]]; then
 		log_info "Operation classified as standard risk — verification not required"
 		echo "PROCEED"
-		return 0
+		return 1
 	fi
 
-	# Detect primary provider
-	local primary_provider
-	primary_provider=$(detect_provider "${primary_model:-claude-sonnet-4-6}")
+	_VC_PRIMARY_PROVIDER=$(detect_provider "${primary_model:-claude-sonnet-4-6}")
 
-	# Select verifier
-	local verifier_entry verifier_provider verifier_model
-	verifier_entry=$(select_verifier "$primary_provider") || {
+	local verifier_entry
+	verifier_entry=$(select_verifier "$_VC_PRIMARY_PROVIDER") || {
 		local rc=$?
 		if [[ $rc -eq 2 ]]; then
 			log_warn "No verification provider available — proceeding with warning"
-			_log_verification "$op_type" "$risk_tier" "$primary_provider" "none" "none" \
+			_log_verification "$op_type" "$risk_tier" "$_VC_PRIMARY_PROVIDER" "none" "none" \
 				"unavailable" "0" "No verifier available" "false" "" "$session_id" "$repo" "$branch"
 			echo "PROCEED_UNVERIFIED"
-			return 0
+			return 1
 		fi
-		# rc=1 means same-provider fallback — continue with it
 		true
 	}
-	verifier_provider="${verifier_entry%%|*}"
-	verifier_model="${verifier_entry#*|}"
+	_VC_VERIFIER_PROVIDER="${verifier_entry%%|*}"
+	_VC_VERIFIER_MODEL="${verifier_entry#*|}"
+
+	case "$_VC_VERIFIER_MODEL" in
+	claude-haiku-*) _VC_MODEL_SHORT="haiku" ;;
+	claude-sonnet-*) _VC_MODEL_SHORT="sonnet" ;;
+	claude-opus-*) _VC_MODEL_SHORT="opus" ;;
+	*) _VC_MODEL_SHORT="haiku" ;;
+	esac
+
+	# For non-Anthropic verifiers, fall back to Anthropic (t1364.3 tracks full multi-provider)
+	if [[ "$_VC_VERIFIER_PROVIDER" != "anthropic" ]]; then
+		log_info "Note: Using Anthropic API for verification call (multi-provider API support planned in t1364.3)"
+		_VC_VERIFIER_PROVIDER="anthropic"
+		_VC_VERIFIER_MODEL="claude-haiku-4-5"
+		_VC_MODEL_SHORT="haiku"
+	fi
+
+	return 0
+}
+
+# Call the verifier and act on its recommendation.
+# Arguments: $1 - operation, $2 - op_type, $3 - risk_tier, $4 - repo, $5 - branch,
+#            $6 - details, $7 - primary_provider, $8 - verifier_provider,
+#            $9 - verifier_model, $10 - model_short, $11 - session_id
+_verify_call_and_act() {
+	local operation="$1"
+	local op_type="$2"
+	local risk_tier="$3"
+	local repo="$4"
+	local branch="$5"
+	local details="$6"
+	local primary_provider="$7"
+	local verifier_provider="$8"
+	local verifier_model="$9"
+	local model_short="${10}"
+	local session_id="${11}"
 
 	log_info "Verifying operation: ${op_type} (${risk_tier})"
 	log_info "Primary: ${primary_provider} -> Verifier: ${verifier_provider} (${verifier_model})"
 
-	# Build prompt
 	local prompt
 	prompt=$(_build_verification_prompt "$operation" "$op_type" "$risk_tier" "$repo" "$branch" "$details")
 
-	# Determine model short name for ai-research-helper
-	local model_short
-	case "$verifier_model" in
-	claude-haiku-*) model_short="haiku" ;;
-	claude-sonnet-*) model_short="sonnet" ;;
-	claude-opus-*) model_short="opus" ;;
-	*) model_short="haiku" ;; # ai-research-helper only supports anthropic
-	esac
-
-	# For non-Anthropic verifiers, we still use ai-research-helper (Anthropic)
-	# but log the intended cross-provider preference. Full multi-provider
-	# support is a future enhancement (t1364.3).
-	if [[ "$verifier_provider" != "anthropic" ]]; then
-		log_info "Note: Using Anthropic API for verification call (multi-provider API support planned in t1364.3)"
-		verifier_provider="anthropic"
-		verifier_model="claude-haiku-4-5"
-		model_short="haiku"
-	fi
-
-	# Call verifier
 	local raw_response
 	raw_response=$(_call_verifier "$prompt" "$model_short") || {
 		log_warn "Verification call failed — proceeding with warning"
@@ -526,16 +531,13 @@ cmd_verify() {
 		return 0
 	}
 
-	# Parse response
 	local parsed verified confidence recommendation reasoning concerns
 	parsed=$(_parse_verification_response "$raw_response") || true
 	IFS='|' read -r verified confidence recommendation reasoning concerns <<<"$parsed"
 
-	# Log the decision
 	_log_verification "$op_type" "$risk_tier" "$primary_provider" "$verifier_provider" "$verifier_model" \
 		"$recommendation" "$confidence" "$concerns" "false" "" "$session_id" "$repo" "$branch"
 
-	# Act on the recommendation
 	case "$recommendation" in
 	proceed)
 		if awk "BEGIN {exit !($confidence < 0.8)}" 2>/dev/null; then
@@ -548,16 +550,12 @@ cmd_verify() {
 		;;
 	warn)
 		log_warn "Verification concerns: ${reasoning}"
-		if [[ -n "$concerns" ]]; then
-			log_warn "Specific concerns: ${concerns}"
-		fi
+		[[ -n "$concerns" ]] && log_warn "Specific concerns: ${concerns}"
 		echo "WARN"
 		;;
 	block)
 		print_error "Verification BLOCKED: ${reasoning}"
-		if [[ -n "$concerns" ]]; then
-			print_error "Concerns: ${concerns}"
-		fi
+		[[ -n "$concerns" ]] && print_error "Concerns: ${concerns}"
 		echo "BLOCK"
 		return 1
 		;;
@@ -568,6 +566,48 @@ cmd_verify() {
 	esac
 
 	return 0
+}
+
+# verify — Perform cross-provider verification of an operation.
+cmd_verify() {
+	local _V_OPERATION _V_OP_TYPE _V_RISK_TIER _V_REPO _V_BRANCH
+	local _V_DETAILS _V_PRIMARY_MODEL _V_SKIP_REASON _V_SESSION_ID
+	_verify_parse_args "$@"
+
+	if [[ -z "$_V_OPERATION" ]]; then
+		print_error "Usage: verify-operation-helper.sh verify --operation \"command\" [options]"
+		return 1
+	fi
+
+	if [[ "${AIDEVOPS_SKIP_VERIFY:-}" == "1" ]]; then
+		log_warn "Verification skipped (AIDEVOPS_SKIP_VERIFY=1)"
+		_log_verification "${_V_OP_TYPE:-unknown}" "${_V_RISK_TIER:-unknown}" "unknown" "none" "none" \
+			"skipped" "0" "" "true" "env:AIDEVOPS_SKIP_VERIFY" "$_V_SESSION_ID" "$_V_REPO" "$_V_BRANCH"
+		echo "SKIPPED"
+		return 0
+	fi
+
+	if [[ -n "$_V_SKIP_REASON" ]]; then
+		log_warn "Verification skipped: ${_V_SKIP_REASON}"
+		_log_verification "${_V_OP_TYPE:-unknown}" "${_V_RISK_TIER:-unknown}" "unknown" "none" "none" \
+			"skipped" "0" "" "true" "$_V_SKIP_REASON" "$_V_SESSION_ID" "$_V_REPO" "$_V_BRANCH"
+		echo "SKIPPED"
+		return 0
+	fi
+
+	local _VC_OP_TYPE _VC_RISK_TIER _VC_PRIMARY_PROVIDER
+	local _VC_VERIFIER_PROVIDER _VC_VERIFIER_MODEL _VC_MODEL_SHORT
+	_verify_classify_and_select \
+		"$_V_OPERATION" "$_V_OP_TYPE" "$_V_RISK_TIER" \
+		"$_V_PRIMARY_MODEL" "$_V_SESSION_ID" "$_V_REPO" "$_V_BRANCH" || return 0
+
+	_verify_call_and_act \
+		"$_V_OPERATION" "$_VC_OP_TYPE" "$_VC_RISK_TIER" \
+		"$_V_REPO" "$_V_BRANCH" "$_V_DETAILS" \
+		"$_VC_PRIMARY_PROVIDER" "$_VC_VERIFIER_PROVIDER" "$_VC_VERIFIER_MODEL" \
+		"$_VC_MODEL_SHORT" "$_V_SESSION_ID"
+
+	return $?
 }
 
 # check — Determine if an operation needs verification (without performing it).
