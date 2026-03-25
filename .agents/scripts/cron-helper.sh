@@ -207,14 +207,24 @@ cmd_list() {
 }
 
 #######################################
-# Add a new job
+# Parse arguments for cmd_add
+# Sets variables in caller scope via eval.
+# Arguments: all original "$@" from cmd_add
+# Outputs (via eval): _add_schedule _add_task _add_name _add_notify
+#                     _add_timeout _add_workdir _add_model _add_paused
+#                     _add_provider
+# Returns: 0 on success, 1 on parse error
 #######################################
-cmd_add() {
-	check_jq || return 1
-	ensure_setup
-
-	local schedule="" task="" name="" notify="none" timeout="$DEFAULT_TIMEOUT"
-	local workdir="" model="$DEFAULT_MODEL" paused=false provider=""
+_parse_add_args() {
+	_add_schedule=""
+	_add_task=""
+	_add_name=""
+	_add_notify="none"
+	_add_timeout="$DEFAULT_TIMEOUT"
+	_add_workdir=""
+	_add_model="$DEFAULT_MODEL"
+	_add_paused=false
+	_add_provider=""
 
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
@@ -223,7 +233,7 @@ cmd_add() {
 				log_error "--schedule requires a value"
 				return 1
 			}
-			schedule="$2"
+			_add_schedule="$2"
 			shift 2
 			;;
 		--task)
@@ -231,7 +241,7 @@ cmd_add() {
 				log_error "--task requires a value"
 				return 1
 			}
-			task="$2"
+			_add_task="$2"
 			shift 2
 			;;
 		--name)
@@ -239,7 +249,7 @@ cmd_add() {
 				log_error "--name requires a value"
 				return 1
 			}
-			name="$2"
+			_add_name="$2"
 			shift 2
 			;;
 		--notify)
@@ -247,7 +257,7 @@ cmd_add() {
 				log_error "--notify requires a value"
 				return 1
 			}
-			notify="$2"
+			_add_notify="$2"
 			shift 2
 			;;
 		--timeout)
@@ -255,7 +265,7 @@ cmd_add() {
 				log_error "--timeout requires a value"
 				return 1
 			}
-			timeout="$2"
+			_add_timeout="$2"
 			shift 2
 			;;
 		--workdir)
@@ -263,7 +273,7 @@ cmd_add() {
 				log_error "--workdir requires a value"
 				return 1
 			}
-			workdir="$2"
+			_add_workdir="$2"
 			shift 2
 			;;
 		--model)
@@ -271,7 +281,7 @@ cmd_add() {
 				log_error "--model requires a value"
 				return 1
 			}
-			model="$2"
+			_add_model="$2"
 			shift 2
 			;;
 		--provider)
@@ -279,11 +289,11 @@ cmd_add() {
 				log_error "--provider requires a value"
 				return 1
 			}
-			provider="$2"
+			_add_provider="$2"
 			shift 2
 			;;
 		--paused)
-			paused=true
+			_add_paused=true
 			shift
 			;;
 		*)
@@ -292,45 +302,36 @@ cmd_add() {
 			;;
 		esac
 	done
+	return 0
+}
 
-	# Resolve tier names to full model strings (t132.7)
-	model=$(resolve_model_tier "$model")
+#######################################
+# Write a new job entry to the config file
+# Arguments:
+#   $1 - job_id
+#   $2 - name
+#   $3 - schedule
+#   $4 - task
+#   $5 - workdir
+#   $6 - timeout
+#   $7 - notify
+#   $8 - model
+#   $9 - status
+#   $10 - timestamp (ISO 8601)
+# Returns: 0 on success, 1 on failure
+#######################################
+_write_job_to_config() {
+	local job_id="$1"
+	local name="$2"
+	local schedule="$3"
+	local task="$4"
+	local workdir="$5"
+	local timeout="$6"
+	local notify="$7"
+	local model="$8"
+	local status="$9"
+	local timestamp="${10}"
 
-	# Apply provider override if specified (t132.7)
-	if [[ -n "$provider" && "$model" == *"/"* ]]; then
-		local model_id="${model#*/}"
-		model="${provider}/${model_id}"
-	fi
-
-	# Validate required fields
-	if [[ -z "$schedule" ]]; then
-		log_error "--schedule is required (e.g., \"0 9 * * *\")"
-		return 1
-	fi
-
-	if [[ -z "$task" ]]; then
-		log_error "--task is required (description of what the AI should do)"
-		return 1
-	fi
-
-	# Generate name if not provided
-	if [[ -z "$name" ]]; then
-		name=$(echo "$task" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g' | cut -c1-30)
-	fi
-
-	# Set workdir to current if not specified
-	if [[ -z "$workdir" ]]; then
-		workdir="$(pwd)"
-	fi
-
-	local job_id
-	job_id=$(generate_job_id)
-	local timestamp
-	timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-	local status="active"
-	[[ "$paused" == "true" ]] && status="paused"
-
-	# Add job to config
 	local temp_file
 	temp_file=$(mktemp)
 	_save_cleanup_scope
@@ -361,9 +362,24 @@ cmd_add() {
          lastStatus: null
        }]' "$CONFIG_FILE" >"$temp_file"
 	mv "$temp_file" "$CONFIG_FILE"
+	return 0
+}
 
-	# Sync crontab
-	sync_crontab
+#######################################
+# Print success output after adding a job
+# Arguments:
+#   $1 - job_id
+#   $2 - name
+#   $3 - schedule
+#   $4 - task
+#   $5 - status
+#######################################
+_print_add_result() {
+	local job_id="$1"
+	local name="$2"
+	local schedule="$3"
+	local task="$4"
+	local status="$5"
 
 	log_success "Created job: $job_id ($name)"
 	echo ""
@@ -376,7 +392,60 @@ cmd_add() {
 		echo "Job will run according to schedule. Test with:"
 		echo "  cron-helper.sh run $job_id"
 	fi
+	return 0
+}
 
+#######################################
+# Add a new job
+#######################################
+cmd_add() {
+	check_jq || return 1
+	ensure_setup
+
+	_parse_add_args "$@" || return 1
+
+	# Resolve tier names to full model strings (t132.7)
+	_add_model=$(resolve_model_tier "$_add_model")
+
+	# Apply provider override if specified (t132.7)
+	if [[ -n "$_add_provider" && "$_add_model" == *"/"* ]]; then
+		local model_id="${_add_model#*/}"
+		_add_model="${_add_provider}/${model_id}"
+	fi
+
+	# Validate required fields
+	if [[ -z "$_add_schedule" ]]; then
+		log_error "--schedule is required (e.g., \"0 9 * * *\")"
+		return 1
+	fi
+	if [[ -z "$_add_task" ]]; then
+		log_error "--task is required (description of what the AI should do)"
+		return 1
+	fi
+
+	# Generate name if not provided
+	if [[ -z "$_add_name" ]]; then
+		_add_name=$(echo "$_add_task" | tr '[:upper:]' '[:lower:]' | sed 's/[^a-z0-9]/-/g' | cut -c1-30)
+	fi
+
+	# Set workdir to current if not specified
+	if [[ -z "$_add_workdir" ]]; then
+		_add_workdir="$(pwd)"
+	fi
+
+	local job_id timestamp status
+	job_id=$(generate_job_id)
+	timestamp=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+	status="active"
+	[[ "$_add_paused" == "true" ]] && status="paused"
+
+	_write_job_to_config "$job_id" "$_add_name" "$_add_schedule" "$_add_task" \
+		"$_add_workdir" "$_add_timeout" "$_add_notify" "$_add_model" \
+		"$status" "$timestamp" || return 1
+
+	sync_crontab
+
+	_print_add_result "$job_id" "$_add_name" "$_add_schedule" "$_add_task" "$status"
 	return 0
 }
 
