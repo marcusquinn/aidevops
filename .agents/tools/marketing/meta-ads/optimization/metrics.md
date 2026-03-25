@@ -342,62 +342,23 @@ Track how different acquisition cohorts perform over time:
 | Feb Acquired | $95 | $165 | $290 |
 | Mar Acquired | $110 | $195 | $350 |
 
-**What This Tells You:**
-- Which campaigns bring higher-value customers
-- If recent acquisitions are improving or declining
-- True ROI of campaigns over time
-
 ### Incrementality-Adjusted Metrics
 
-**Raw ROAS vs Incremental ROAS:**
+Use for budget allocation, channel comparison, and true ROI reporting.
+
 ```
-Raw ROAS: 3.0x (what Meta reports)
-Incrementality: 60% (from lift study)
-Incremental ROAS: 3.0 × 0.6 = 1.8x (true value)
+Incremental ROAS = Raw ROAS × Incrementality %
+Example: 3.0x × 60% lift = 1.8x true value
 ```
 
-**When to Use:**
-- Budget allocation decisions
-- Channel comparison
-- True ROI reporting
+### Contribution Margin & Break-Even
 
-### Contribution Margin Analysis
-
-**Formula:**
 ```
 Contribution Margin = Revenue - COGS - Ad Spend - Variable Costs
 CM% = Contribution Margin / Revenue × 100
-```
 
-**Example:**
-```
-Revenue: $10,000
-COGS: $4,000
-Ad Spend: $2,500
-Shipping/Variable: $500
-Contribution Margin: $3,000
-CM%: 30%
-```
-
-### Break-Even Calculations
-
-**Break-Even ROAS:**
-```
-Break-Even ROAS = 1 / Gross Margin %
-
-Example:
-Gross Margin: 60%
-Break-Even ROAS: 1 / 0.60 = 1.67x
-```
-
-**Break-Even CPA:**
-```
-Break-Even CPA = Average Order Value × Gross Margin %
-
-Example:
-AOV: $80
-Gross Margin: 60%
-Break-Even CPA: $80 × 0.60 = $48
+Break-Even ROAS = 1 / Gross Margin %   (e.g. 60% margin → 1.67x)
+Break-Even CPA  = AOV × Gross Margin % (e.g. $80 AOV × 60% → $48)
 ```
 
 ---
@@ -440,66 +401,11 @@ Create these in Ads Manager → Columns → Customize Columns:
 
 ### Calculated Metrics to Add
 
-**Hook Rate:**
-```
-3-Second Video Views / Impressions × 100
-```
-
-**Landing Page View Rate:**
-```
-Landing Page Views / Link Clicks × 100
-```
-
-**Cost Per Landing Page View:**
-```
-Amount Spent / Landing Page Views
-```
-
----
-
-## Reporting Templates
-
-### Daily Report (5 min)
-```
-Date: ___________
-
-Spend: $_______ (vs plan: $_______)
-Results: _______ (vs plan: _______)
-CPA: $_______ (vs target: $_______)
-
-Issues: ________________________
-
-Action: ________________________
-```
-
-### Weekly Report
-```
-Week: ___________
-
-Performance vs Target:
-| Metric | Target | Actual | Variance |
-|--------|--------|--------|----------|
-| Spend | | | |
-| Results | | | |
-| CPA | | | |
-| ROAS | | | |
-
-Top Performers:
-1. [Ad/Ad Set] — [Metric]
-2. [Ad/Ad Set] — [Metric]
-
-Underperformers:
-1. [Ad/Ad Set] — [Metric]
-2. [Ad/Ad Set] — [Metric]
-
-Actions Taken:
-- 
--
-
-Next Week Plan:
--
--
-```
+| Metric | Formula |
+|--------|---------|
+| Hook Rate | `3-Second Video Views / Impressions × 100` |
+| Landing Page View Rate | `Landing Page Views / Link Clicks × 100` |
+| Cost Per LPV | `Amount Spent / Landing Page Views` |
 
 ---
 

@@ -136,29 +136,16 @@ Automated reports arrive from SEO tools, domain registrars, hosting providers, a
 
 ### Source Authentication
 
-Before acting on any report email, verify the sender is legitimate:
+Before acting on any report email, verify the sender is legitimate. Maintain `trusted_report_senders` in `configs/email-actions-config.json`; treat unknown senders as suspicious until DNS checks pass.
 
 ```bash
-# Check SPF/DKIM/DMARC alignment
 email-triage-helper.sh verify-sender --message-id <id>
-
-# Check against known sender list
 email-triage-helper.sh check-sender --from "reports@domain.com"
-```
 
-**Known-sender validation**: Maintain a list of expected report senders in `configs/email-actions-config.json` under `trusted_report_senders`. Any report from an unknown sender should be treated as suspicious until DNS checks pass.
-
-**DNS checks to run:**
-
-```bash
-# Verify SPF record
-dig TXT <sender-domain> | grep "v=spf1"
-
-# Verify DMARC policy
-dig TXT _dmarc.<sender-domain>
-
-# Check if domain is recently registered (phishing signal)
-whois <sender-domain> | grep "Creation Date"
+# Manual DNS checks if needed
+dig TXT <sender-domain> | grep "v=spf1"          # SPF
+dig TXT _dmarc.<sender-domain>                    # DMARC
+whois <sender-domain> | grep "Creation Date"      # Phishing signal
 ```
 
 ### Report Categories and Actions
@@ -174,35 +161,16 @@ whois <sender-domain> | grep "Creation Date"
 | Renewal invoice | Payment due | Create task with deadline, tag `#billing` |
 | Compliance notification | Regulatory requirement | Legal case file (see below) |
 
-### Report Filing
+### Report Filing & Renewal Tracking
 
-Reports that require no immediate action should still be filed for reference:
+File no-action reports for reference: `email-triage-helper.sh file-report --message-id <id> --category seo --folder Reports/SEO/ --summary "..."`.
 
-```bash
-# File report with metadata
-email-triage-helper.sh file-report \
-  --message-id <id> \
-  --category seo \
-  --folder Reports/SEO/ \
-  --summary "Ranking report: 3 drops, 1 new opportunity"
-```
-
-### Renewal and Expiry Tracking
-
-Domain, SSL, and subscription renewals are high-value signals — missing them causes outages or data loss.
+Renewal tasks: 60 days before expiry (domains), 30 days (SSL), 14 days (subscriptions). Set `blocked-by:` on dependent tasks.
 
 ```bash
-# Extract expiry dates from email body
 email-triage-helper.sh extract-dates --message-id <id>
-
-# Add to renewal tracker
-email-triage-helper.sh track-renewal \
-  --service "domain.com" \
-  --expiry "2026-12-01" \
-  --source-email <message-id>
+email-triage-helper.sh track-renewal --service "domain.com" --expiry "2026-12-01" --source-email <id>
 ```
-
-Renewal tasks should be created 60 days before expiry (domains), 30 days (SSL), and 14 days (subscriptions). Set `blocked-by:` to the renewal task on any task that depends on the service.
 
 ## Legal Case Files
 
@@ -256,17 +224,6 @@ Original IMAP folder: Legal/<subfolder>
 Original Message-IDs: <list>
 ```
 
-### IMAP Folder Structure for Legal
-
-```text
-Legal/
-├── Active/          # Ongoing matters
-├── Resolved/        # Closed matters
-├── Contracts/       # Signed agreements
-├── Notices/         # GDPR, DMCA, compliance
-└── Disputes/        # Vendor, customer, IP disputes
-```
-
 ### Legal Task Creation
 
 Every legal email requires a task, even if the action is "review and decide":
@@ -304,16 +261,6 @@ email-triage-helper.sh flag-opportunity \
   --message-id <id> \
   --score <1-5> \
   --notes "Partnership proposal from Acme — references our SEO work"
-```
-
-### Opportunity IMAP Folders
-
-```text
-Opportunities/
-├── Hot/             # Score 4-5, respond within 24h
-├── Warm/            # Score 2-3, respond within 1 week
-├── Cold/            # Score 1, archive after 30 days
-└── Responded/       # Awaiting reply
 ```
 
 ### CRM Integration
@@ -372,16 +319,6 @@ email-triage-helper.sh draft-response \
 ```
 
 Review all drafted responses before sending. The agent drafts; a human (or the email-agent with explicit approval) sends.
-
-### Support IMAP Folders
-
-```text
-Support/
-├── Open/            # Awaiting resolution
-├── Pending/         # Waiting for customer reply
-├── Resolved/        # Closed tickets
-└── Escalated/       # Requires human or specialist review
-```
 
 ## Newsletter Training Material Extraction
 
@@ -448,14 +385,14 @@ topics: [seo, content-strategy]
 - <structural pattern observed>
 ```
 
-### Newsletter IMAP Folders
+## IMAP Folder Structure
 
-```text
-Newsletters/
-├── Training/        # High-value, extract from these
-├── Reference/       # Keep for reference, don't extract
-└── Unsubscribe/     # Queue for unsubscription
-```
+| Category | Subfolders |
+|----------|-----------|
+| `Legal/` | `Active/`, `Resolved/`, `Contracts/`, `Notices/`, `Disputes/` |
+| `Opportunities/` | `Hot/` (score 4-5, 24h), `Warm/` (2-3, 1 week), `Cold/` (1, archive 30d), `Responded/` |
+| `Support/` | `Open/`, `Pending/`, `Resolved/`, `Escalated/` |
+| `Newsletters/` | `Training/`, `Reference/`, `Unsubscribe/` |
 
 ## Configuration
 
