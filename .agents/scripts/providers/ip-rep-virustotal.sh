@@ -61,14 +61,12 @@ error_json() {
 	return 0
 }
 
-# Main check function
-cmd_check() {
-	local ip="$1"
-	local api_key="${VIRUSTOTAL_API_KEY:-}"
-	local timeout="$DEFAULT_TIMEOUT"
+# Parse --api-key and --timeout flags from remaining arguments after ip.
+# Prints newline-separated key=value pairs: api_key=<val> and timeout=<val>.
+_parse_check_args() {
+	local _api_key="${VIRUSTOTAL_API_KEY:-}"
+	local _timeout="$DEFAULT_TIMEOUT"
 
-	# Parse optional flags
-	shift
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--api-key)
@@ -76,7 +74,7 @@ cmd_check() {
 				echo "Error: --api-key requires a value" >&2
 				return 1
 			}
-			api_key="$2"
+			_api_key="$2"
 			shift 2
 			;;
 		--timeout)
@@ -84,7 +82,7 @@ cmd_check() {
 				echo "Error: --timeout requires a value" >&2
 				return 1
 			}
-			timeout="$2"
+			_timeout="$2"
 			shift 2
 			;;
 		*)
@@ -93,15 +91,28 @@ cmd_check() {
 		esac
 	done
 
-	# Try gopass fallback if env var not set
+	printf 'api_key=%s\ntimeout=%s\n' "$_api_key" "$_timeout"
+	return 0
+}
+
+# Resolve API key: env var already in _api_key, or fall back to gopass.
+# Prints the resolved key (may be empty if unavailable).
+_resolve_api_key() {
+	local api_key="$1"
 	if [[ -z "$api_key" ]] && command -v gopass &>/dev/null; then
 		api_key=$(gopass show -o "aidevops/VIRUSTOTAL_API_KEY" 2>/dev/null || true)
 	fi
+	printf '%s' "$api_key"
+	return 0
+}
 
-	if [[ -z "$api_key" ]]; then
-		error_json "$ip" "VIRUSTOTAL_API_KEY not set — free tier requires API key (virustotal.com)"
-		return 0
-	fi
+# Fetch VirusTotal API response for an IP.
+# On curl failure or API error, prints error JSON and returns 0.
+# On success, prints the raw API JSON response.
+_fetch_vt_response() {
+	local ip="$1"
+	local api_key="$2"
+	local timeout="$3"
 
 	local response
 	response=$(curl -sf \
@@ -114,30 +125,35 @@ cmd_check() {
 	}
 
 	# Validate JSON
-	if ! echo "$response" | jq empty 2>/dev/null; then
+	if ! printf '%s' "$response" | jq empty 2>/dev/null; then
 		error_json "$ip" "invalid JSON response"
 		return 0
 	fi
 
 	# Check for API errors
 	local api_error
-	api_error=$(echo "$response" | jq -r '.error.code // empty' 2>/dev/null || true)
+	api_error=$(printf '%s' "$response" | jq -r '.error.code // empty' 2>/dev/null || true)
 	if [[ -n "$api_error" ]]; then
 		local api_msg
-		api_msg=$(echo "$response" | jq -r '.error.message // "Unknown error"' 2>/dev/null || true)
+		api_msg=$(printf '%s' "$response" | jq -r '.error.message // "Unknown error"' 2>/dev/null || true)
 		error_json "$ip" "${api_error}: ${api_msg}"
 		return 0
 	fi
 
-	local attrs
-	attrs=$(echo "$response" | jq '.data.attributes // {}')
+	printf '%s' "$response"
+	return 0
+}
 
-	# Extract analysis stats
+# Calculate threat score (0-100) and detection flags from analysis stats.
+# Prints newline-separated key=value pairs for score, is_listed, and engine counts.
+_calculate_score() {
+	local attrs="$1"
+
 	local malicious suspicious harmless undetected
-	malicious=$(echo "$attrs" | jq -r '.last_analysis_stats.malicious // 0')
-	suspicious=$(echo "$attrs" | jq -r '.last_analysis_stats.suspicious // 0')
-	harmless=$(echo "$attrs" | jq -r '.last_analysis_stats.harmless // 0')
-	undetected=$(echo "$attrs" | jq -r '.last_analysis_stats.undetected // 0')
+	malicious=$(printf '%s' "$attrs" | jq -r '.last_analysis_stats.malicious // 0')
+	suspicious=$(printf '%s' "$attrs" | jq -r '.last_analysis_stats.suspicious // 0')
+	harmless=$(printf '%s' "$attrs" | jq -r '.last_analysis_stats.harmless // 0')
+	undetected=$(printf '%s' "$attrs" | jq -r '.last_analysis_stats.undetected // 0')
 
 	local total=$((malicious + suspicious + harmless + undetected))
 
@@ -158,15 +174,28 @@ cmd_check() {
 		is_listed=true
 	fi
 
-	local risk_level
-	risk_level=$(score_to_risk "$score")
+	printf 'score=%s\nis_listed=%s\nmalicious=%s\nsuspicious=%s\nharmless=%s\nundetected=%s\n' \
+		"$score" "$is_listed" "$malicious" "$suspicious" "$harmless" "$undetected"
+	return 0
+}
 
-	# Extract metadata
+# Build and output the final result JSON from extracted fields.
+_build_result_json() {
+	local ip="$1"
+	local attrs="$2"
+	local score="$3"
+	local risk_level="$4"
+	local is_listed="$5"
+	local malicious="$6"
+	local suspicious="$7"
+	local harmless="$8"
+	local undetected="$9"
+
 	local reputation as_owner country network
-	reputation=$(echo "$attrs" | jq -r '.reputation // 0')
-	as_owner=$(echo "$attrs" | jq -r '.as_owner // "unknown"')
-	country=$(echo "$attrs" | jq -r '.country // "unknown"')
-	network=$(echo "$attrs" | jq -r '.network // "unknown"')
+	reputation=$(printf '%s' "$attrs" | jq -r '.reputation // 0')
+	as_owner=$(printf '%s' "$attrs" | jq -r '.as_owner // "unknown"')
+	country=$(printf '%s' "$attrs" | jq -r '.country // "unknown"')
+	network=$(printf '%s' "$attrs" | jq -r '.network // "unknown"')
 
 	jq -n \
 		--arg provider "$PROVIDER_NAME" \
@@ -199,6 +228,54 @@ cmd_check() {
             network: $network,
             raw: $raw
         }'
+	return 0
+}
+
+# Main check function — orchestrates argument parsing, key resolution,
+# HTTP fetch, score calculation, and result assembly.
+cmd_check() {
+	local ip="$1"
+	shift
+
+	# Parse flags
+	local parsed api_key timeout
+	parsed=$(_parse_check_args "$@") || return 1
+	api_key=$(printf '%s' "$parsed" | grep '^api_key=' | cut -d= -f2-)
+	timeout=$(printf '%s' "$parsed" | grep '^timeout=' | cut -d= -f2-)
+
+	# Resolve API key (env var → gopass fallback)
+	api_key=$(_resolve_api_key "$api_key")
+	if [[ -z "$api_key" ]]; then
+		error_json "$ip" "VIRUSTOTAL_API_KEY not set — free tier requires API key (virustotal.com)"
+		return 0
+	fi
+
+	# Fetch and validate response; error JSON already printed on failure
+	local response
+	response=$(_fetch_vt_response "$ip" "$api_key" "$timeout")
+	if printf '%s' "$response" | jq -e '.error' &>/dev/null; then
+		printf '%s\n' "$response"
+		return 0
+	fi
+
+	local attrs
+	attrs=$(printf '%s' "$response" | jq '.data.attributes // {}')
+
+	# Calculate score and detection flags
+	local calc score is_listed malicious suspicious harmless undetected
+	calc=$(_calculate_score "$attrs")
+	score=$(printf '%s' "$calc" | grep '^score=' | cut -d= -f2-)
+	is_listed=$(printf '%s' "$calc" | grep '^is_listed=' | cut -d= -f2-)
+	malicious=$(printf '%s' "$calc" | grep '^malicious=' | cut -d= -f2-)
+	suspicious=$(printf '%s' "$calc" | grep '^suspicious=' | cut -d= -f2-)
+	harmless=$(printf '%s' "$calc" | grep '^harmless=' | cut -d= -f2-)
+	undetected=$(printf '%s' "$calc" | grep '^undetected=' | cut -d= -f2-)
+
+	local risk_level
+	risk_level=$(score_to_risk "$score")
+
+	_build_result_json "$ip" "$attrs" "$score" "$risk_level" "$is_listed" \
+		"$malicious" "$suspicious" "$harmless" "$undetected"
 	return 0
 }
 
