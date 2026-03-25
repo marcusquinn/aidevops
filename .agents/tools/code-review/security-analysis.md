@@ -55,8 +55,8 @@ AI-powered security analysis using taint analysis and the two-pass investigation
 # Analyze changes (default: git diff; options: staged, branch, full)
 ./.agents/scripts/security-helper.sh analyze [diff|staged|branch|full]
 
-# Full codebase with filters
-./.agents/scripts/security-helper.sh analyze full --include="src/**/*.ts" --exclude="**/*.test.ts"
+# Full codebase scan
+./.agents/scripts/security-helper.sh analyze full
 
 # Git history (commit count, range, date, or author)
 ./.agents/scripts/security-helper.sh history 50
@@ -64,14 +64,15 @@ AI-powered security analysis using taint analysis and the two-pass investigation
 ./.agents/scripts/security-helper.sh history --since="2024-01-01"
 ./.agents/scripts/security-helper.sh history --author="developer@example.com"
 
-# Dependency scan (OSV-Scanner)
-./.agents/scripts/security-helper.sh scan-deps [--recursive] [--format=json]
+# Dependency scan (OSV-Scanner; optional path argument)
+./.agents/scripts/security-helper.sh scan-deps [path]
 
 # Skill scan (Cisco + VirusTotal advisory)
 ./.agents/scripts/security-helper.sh skill-scan
 
-# VirusTotal scan (file, URL, domain, or skill directory)
-./.agents/scripts/security-helper.sh vt-scan [status|file|url|domain|skill] <target>
+# VirusTotal scan (status needs no target; file/url/domain/skill take a target; bare path auto-detects)
+./.agents/scripts/security-helper.sh vt-scan status
+./.agents/scripts/security-helper.sh vt-scan [file|url|domain|skill] <target>
 
 # AI CLI config scan (Ferret)
 ./.agents/scripts/security-helper.sh ferret
@@ -345,7 +346,7 @@ Tools: `find_line_numbers` (exact line numbers for code snippets), `get_audit_sc
 
 **"OSV-Scanner not found"**: Install via `go install github.com/google/osv-scanner/cmd/osv-scanner@latest` or `brew install osv-scanner`.
 
-**"Analysis timeout"**: Scan specific directories instead of full codebase: `cd src && ./.agents/scripts/security-helper.sh analyze full`.
+**"Analysis timeout"**: For large codebases, run the analysis from the repo root targeting specific paths, or limit scope with `analyze branch` instead of `analyze full`.
 
 **"Too many false positives"**: Use allowlist (`vuln_allowlist.txt`) for known safe patterns, or Ferret's baseline feature (`ferret baseline create`) for AI config scans.
 
