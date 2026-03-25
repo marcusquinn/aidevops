@@ -437,115 +437,102 @@ invalidate_cache() {
 # returns quickly, and confirms both API key validity and service availability.
 #
 # Returns: 0=healthy, 1=unhealthy, 2=rate-limited, 3=key-invalid
-probe_provider() {
+
+# Return cached probe result if still valid. Outputs nothing; returns exit code.
+# Returns: 0=healthy, 1=unhealthy, 2=rate-limited, 3=key-invalid, 99=no valid cache
+_probe_return_cached() {
 	local provider="$1"
-	local force="${2:-false}"
-	local custom_ttl="${3:-}"
-	local quiet="${4:-false}"
+	local custom_ttl="${2:-}"
+	local quiet="${3:-false}"
 
-	# Check cache first (unless forced)
-	if [[ "$force" != "true" ]] && is_cache_valid "$provider" "provider_health" "$custom_ttl"; then
-		local cached_status
-		cached_status=$(db_query "SELECT status FROM provider_health WHERE provider = '$(sql_escape "$provider")';")
-		if [[ "$cached_status" == "healthy" ]]; then
-			[[ "$quiet" != "true" ]] && print_info "$provider: cached healthy"
-			return 0
-		elif [[ "$cached_status" == "rate_limited" ]]; then
-			[[ "$quiet" != "true" ]] && print_warning "$provider: cached rate-limited"
-			return 2
-		elif [[ "$cached_status" == "key_invalid" ]]; then
-			[[ "$quiet" != "true" ]] && print_warning "$provider: cached key-invalid"
-			return 3
-		else
-			[[ "$quiet" != "true" ]] && print_warning "$provider: cached unhealthy"
-			return 1
-		fi
+	if ! is_cache_valid "$provider" "provider_health" "$custom_ttl"; then
+		return 99
 	fi
 
-	# OpenCode provider: check via models cache (no API key needed)
-	if [[ "$provider" == "opencode" ]]; then
-		if _is_opencode_available; then
-			local oc_models_count=0
-			oc_models_count=$(jq -r '.opencode.models | length' "$OPENCODE_MODELS_CACHE" 2>/dev/null || echo "0")
-			_record_health "opencode" "healthy" 200 0 "" "$oc_models_count"
-			[[ "$quiet" != "true" ]] && print_success "opencode: healthy ($oc_models_count models in cache)"
-			db_query "
-                INSERT INTO probe_log (provider, action, result, duration_ms, details)
-                VALUES ('opencode', 'cache_check', 'healthy', 0, '$oc_models_count models from cache');
-            " || true
-			return 0
-		else
-			_record_health "opencode" "unhealthy" 0 0 "OpenCode CLI or models cache not found" 0
-			[[ "$quiet" != "true" ]] && print_warning "opencode: CLI or models cache not available"
-			return 1
-		fi
-	fi
-
-	# Resolve API key
-	local key_var
-	if ! key_var=$(resolve_api_key "$provider"); then
-		[[ "$quiet" != "true" ]] && print_warning "$provider: no API key configured"
-		_record_health "$provider" "no_key" 0 0 "No API key found" 0
+	local cached_status
+	cached_status=$(db_query "SELECT status FROM provider_health WHERE provider = '$(sql_escape "$provider")';")
+	case "$cached_status" in
+	healthy)
+		[[ "$quiet" != "true" ]] && print_info "$provider: cached healthy"
+		return 0
+		;;
+	rate_limited)
+		[[ "$quiet" != "true" ]] && print_warning "$provider: cached rate-limited"
+		return 2
+		;;
+	key_invalid)
+		[[ "$quiet" != "true" ]] && print_warning "$provider: cached key-invalid"
 		return 3
+		;;
+	*)
+		[[ "$quiet" != "true" ]] && print_warning "$provider: cached unhealthy"
+		return 1
+		;;
+	esac
+}
+
+# Probe the OpenCode meta-provider via its local models cache (no API key needed).
+# Returns: 0=healthy, 1=unhealthy
+_probe_opencode() {
+	local quiet="${1:-false}"
+
+	if _is_opencode_available; then
+		local oc_models_count=0
+		oc_models_count=$(jq -r '.opencode.models | length' "$OPENCODE_MODELS_CACHE" 2>/dev/null || echo "0")
+		_record_health "opencode" "healthy" 200 0 "" "$oc_models_count"
+		[[ "$quiet" != "true" ]] && print_success "opencode: healthy ($oc_models_count models in cache)"
+		db_query "
+            INSERT INTO probe_log (provider, action, result, duration_ms, details)
+            VALUES ('opencode', 'cache_check', 'healthy', 0, '$oc_models_count models from cache');
+        " || true
+		return 0
 	fi
 
-	local api_key
-	if ! api_key=$(_get_key_value "$provider"); then
-		[[ "$quiet" != "true" ]] && print_warning "$provider: could not resolve API key value"
-		_record_health "$provider" "no_key" 0 0 "Key var $key_var found but empty" 0
-		return 3
-	fi
+	_record_health "opencode" "unhealthy" 0 0 "OpenCode CLI or models cache not found" 0
+	[[ "$quiet" != "true" ]] && print_warning "opencode: CLI or models cache not available"
+	return 1
+}
+
+# Build curl argument array and resolve the final endpoint URL for a provider.
+# Outputs two lines: first the endpoint URL, then the curl args (space-separated).
+# Caller must reconstruct the array from the second line.
+# Sets REPLY_ENDPOINT and REPLY_CURL_ARGS (space-separated) in caller scope via stdout.
+_probe_build_request() {
+	local provider="$1"
+	local api_key="$2"
 
 	local endpoint
 	endpoint=$(get_provider_endpoint "$provider" 2>/dev/null) || true
 	if [[ -z "$endpoint" ]]; then
-		[[ "$quiet" != "true" ]] && print_error "$provider: no endpoint configured"
 		return 1
 	fi
 
-	# Build curl command based on provider auth style
-	local -a curl_args=(-s -w '\n%{http_code}\n%{time_total}' --max-time "$PROBE_TIMEOUT" -D -)
+	local curl_args="-s -w '\n%{http_code}\n%{time_total}' --max-time $PROBE_TIMEOUT -D -"
 	case "$provider" in
 	anthropic)
-		curl_args+=(-H "x-api-key: ${api_key}" -H "anthropic-version: 2023-06-01")
+		curl_args="$curl_args -H 'x-api-key: ${api_key}' -H 'anthropic-version: 2023-06-01'"
 		;;
 	google)
-		# Google uses query parameter for key
 		endpoint="${endpoint}?key=${api_key}&pageSize=1"
 		;;
 	*)
-		# OpenAI-compatible: Bearer token
-		curl_args+=(-H "Authorization: Bearer ${api_key}")
+		curl_args="$curl_args -H 'Authorization: Bearer ${api_key}'"
 		;;
 	esac
 
-	# Execute probe
-	local start_ms
-	start_ms=$(date +%s%N 2>/dev/null || echo "0")
+	echo "$endpoint"
+	echo "$curl_args"
+	return 0
+}
 
-	local response
-	response=$(curl "${curl_args[@]}" "$endpoint" 2>/dev/null) || true
+# Parse an HTTP response code into status, error_msg, models_count, and exit_code.
+# Outputs four lines: status, error_msg, models_count, exit_code.
+_probe_parse_http_response() {
+	local provider="$1"
+	local http_code="$2"
+	local body="$3"
+	local quiet="${4:-false}"
 
-	local end_ms
-	end_ms=$(date +%s%N 2>/dev/null || echo "0")
-	local duration_ms=0
-	if [[ "$start_ms" != "0" && "$end_ms" != "0" ]]; then
-		duration_ms=$(((end_ms - start_ms) / 1000000))
-	fi
-
-	# Parse response: last two lines are http_code and time_total
-	local http_code headers body
-	http_code=$(echo "$response" | tail -1)
-	# response_time from curl -w is in the second-to-last line (unused; duration_ms is more precise)
-
-	# Separate headers from body (split on blank line)
-	headers=$(echo "$response" | sed '/^$/q' | head -50)
-	body=$(echo "$response" | sed '1,/^$/d' | head -n -2)
-
-	# Parse rate limit headers (provider-specific)
-	_parse_rate_limits "$provider" "$headers"
-
-	# Determine status based on HTTP code
 	local status="unknown"
 	local error_msg=""
 	local models_count=0
@@ -555,16 +542,11 @@ probe_provider() {
 	200)
 		status="healthy"
 		exit_code=0
-		# Count models in response
 		case "$provider" in
-		google)
-			models_count=$(echo "$body" | jq -r '.models | length' 2>/dev/null || echo "0")
-			;;
-		*)
-			models_count=$(echo "$body" | jq -r '.data | length' 2>/dev/null || echo "0")
-			;;
+		google) models_count=$(echo "$body" | jq -r '.models | length' 2>/dev/null || echo "0") ;;
+		*) models_count=$(echo "$body" | jq -r '.data | length' 2>/dev/null || echo "0") ;;
 		esac
-		[[ "$quiet" != "true" ]] && print_success "$provider: healthy (${duration_ms}ms, $models_count models)"
+		[[ "$quiet" != "true" ]] && print_success "$provider: healthy (${models_count} models)"
 		;;
 	401 | 403)
 		status="key_invalid"
@@ -598,10 +580,21 @@ probe_provider() {
 		;;
 	esac
 
-	# Record health status
-	_record_health "$provider" "$status" "$http_code" "$duration_ms" "$error_msg" "$models_count"
+	echo "$status"
+	echo "$error_msg"
+	echo "$models_count"
+	echo "$exit_code"
+	return 0
+}
 
-	# Log the probe
+# Write a probe result to the probe_log table and prune old entries.
+_probe_log_and_prune() {
+	local provider="$1"
+	local status="$2"
+	local http_code="$3"
+	local duration_ms="$4"
+	local models_count="$5"
+
 	db_query "
         INSERT INTO probe_log (provider, action, result, duration_ms, details)
         VALUES (
@@ -613,7 +606,6 @@ probe_provider() {
         );
     " || true
 
-	# Prune old probe logs (keep last 100 per provider)
 	db_query "
         DELETE FROM probe_log WHERE id IN (
             SELECT id FROM probe_log
@@ -622,6 +614,82 @@ probe_provider() {
             LIMIT -1 OFFSET 100
         );
     " || true
+	return 0
+}
+
+probe_provider() {
+	local provider="$1"
+	local force="${2:-false}"
+	local custom_ttl="${3:-}"
+	local quiet="${4:-false}"
+
+	# Return cached result when still valid (unless forced)
+	if [[ "$force" != "true" ]]; then
+		local cache_exit=0
+		_probe_return_cached "$provider" "$custom_ttl" "$quiet" || cache_exit=$?
+		if [[ "$cache_exit" -ne 99 ]]; then
+			return "$cache_exit"
+		fi
+	fi
+
+	# OpenCode uses its local models cache — no HTTP probe needed
+	if [[ "$provider" == "opencode" ]]; then
+		_probe_opencode "$quiet"
+		return $?
+	fi
+
+	# Resolve API key
+	local key_var
+	if ! key_var=$(resolve_api_key "$provider"); then
+		[[ "$quiet" != "true" ]] && print_warning "$provider: no API key configured"
+		_record_health "$provider" "no_key" 0 0 "No API key found" 0
+		return 3
+	fi
+
+	local api_key
+	if ! api_key=$(_get_key_value "$provider"); then
+		[[ "$quiet" != "true" ]] && print_warning "$provider: could not resolve API key value"
+		_record_health "$provider" "no_key" 0 0 "Key var $key_var found but empty" 0
+		return 3
+	fi
+
+	# Build request parameters
+	local request_info endpoint curl_extra
+	request_info=$(_probe_build_request "$provider" "$api_key") || {
+		[[ "$quiet" != "true" ]] && print_error "$provider: no endpoint configured"
+		return 1
+	}
+	endpoint=$(echo "$request_info" | head -1)
+	curl_extra=$(echo "$request_info" | tail -1)
+
+	# Execute probe (eval is safe: curl_extra is built from controlled provider strings)
+	local start_ms response end_ms duration_ms=0
+	start_ms=$(date +%s%N 2>/dev/null || echo "0")
+	# shellcheck disable=SC2086
+	response=$(eval curl $curl_extra "$endpoint" 2>/dev/null) || true
+	end_ms=$(date +%s%N 2>/dev/null || echo "0")
+	if [[ "$start_ms" != "0" && "$end_ms" != "0" ]]; then
+		duration_ms=$(((end_ms - start_ms) / 1000000))
+	fi
+
+	# Split response into headers and body
+	local http_code headers body
+	http_code=$(echo "$response" | tail -1)
+	headers=$(echo "$response" | sed '/^$/q' | head -50)
+	body=$(echo "$response" | sed '1,/^$/d' | head -n -2)
+
+	_parse_rate_limits "$provider" "$headers"
+
+	# Parse HTTP response into status fields
+	local parsed status error_msg models_count exit_code
+	parsed=$(_probe_parse_http_response "$provider" "$http_code" "$body" "$quiet")
+	status=$(echo "$parsed" | sed -n '1p')
+	error_msg=$(echo "$parsed" | sed -n '2p')
+	models_count=$(echo "$parsed" | sed -n '3p')
+	exit_code=$(echo "$parsed" | sed -n '4p')
+
+	_record_health "$provider" "$status" "$http_code" "$duration_ms" "$error_msg" "$models_count"
+	_probe_log_and_prune "$provider" "$status" "$http_code" "$duration_ms" "$models_count"
 
 	return "$exit_code"
 }
@@ -1166,6 +1234,119 @@ cmd_probe() {
 	return 0
 }
 
+# Print the provider health table section of the status output.
+_status_print_providers() {
+	echo "Provider Health:"
+	echo ""
+	printf "  %-12s %-12s %-6s %-8s %-8s %-20s\n" \
+		"Provider" "Status" "HTTP" "Time" "Models" "Last Check"
+	printf "  %-12s %-12s %-6s %-8s %-8s %-20s\n" \
+		"--------" "------" "----" "----" "------" "----------"
+
+	db_query "
+        SELECT provider, status, http_code, response_ms, models_count, checked_at
+        FROM provider_health ORDER BY provider;
+    " | while IFS='|' read -r prov stat code ms models checked; do
+		local status_display="$stat"
+		case "$stat" in
+		healthy) status_display="${GREEN}healthy${NC}" ;;
+		unhealthy | unreachable) status_display="${RED}$stat${NC}" ;;
+		rate_limited) status_display="${YELLOW}rate-ltd${NC}" ;;
+		key_invalid) status_display="${RED}bad-key${NC}" ;;
+		no_key) status_display="${YELLOW}no-key${NC}" ;;
+		esac
+
+		local age_display="$checked"
+		local checked_epoch now_epoch
+		if [[ "$(uname)" == "Darwin" ]]; then
+			checked_epoch=$(date -j -f "%Y-%m-%dT%H:%M:%SZ" "$checked" "+%s" 2>/dev/null || echo "0")
+		else
+			checked_epoch=$(date -d "$checked" "+%s" 2>/dev/null || echo "0")
+		fi
+		now_epoch=$(date "+%s")
+		local age=$((now_epoch - checked_epoch))
+		if [[ "$age" -lt 60 ]]; then
+			age_display="${age}s ago"
+		elif [[ "$age" -lt 3600 ]]; then
+			age_display="$((age / 60))m ago"
+		else
+			age_display="$((age / 3600))h ago"
+		fi
+
+		printf "  %-12s %-12b %-6s %-8s %-8s %-20s\n" \
+			"$prov" "$status_display" "$code" "${ms}ms" "$models" "$age_display"
+	done
+	return 0
+}
+
+# Print the rate limits table section of the status output (only when data exists).
+_status_print_rate_limits() {
+	local rl_count
+	rl_count=$(db_query "SELECT COUNT(*) FROM rate_limits WHERE requests_limit > 0;")
+	if [[ "$rl_count" -eq 0 ]]; then
+		return 0
+	fi
+
+	echo ""
+	echo "Rate Limits:"
+	echo ""
+	printf "  %-12s %-15s %-15s %-15s\n" \
+		"Provider" "Req Remaining" "Tok Remaining" "Reset"
+	printf "  %-12s %-15s %-15s %-15s\n" \
+		"--------" "-------------" "-------------" "-----"
+
+	db_query "
+        SELECT provider, requests_limit, requests_remaining, requests_reset,
+               tokens_limit, tokens_remaining, tokens_reset
+        FROM rate_limits WHERE requests_limit > 0 ORDER BY provider;
+    " | while IFS='|' read -r prov rl rr rres tl tr tres; do
+		local req_display="${rr}/${rl}"
+		local tok_display="${tr}/${tl}"
+		[[ "$tl" == "0" ]] && tok_display="n/a"
+		printf "  %-12s %-15s %-15s %-15s\n" \
+			"$prov" "$req_display" "$tok_display" "${rres:-n/a}"
+	done
+	return 0
+}
+
+# Print the tier resolution table section of the status output.
+_status_print_tiers() {
+	echo ""
+	echo "Tier Resolution:"
+	echo ""
+	printf "  %-8s %-35s %-35s\n" "Tier" "Primary" "Fallback"
+	printf "  %-8s %-35s %-35s\n" "----" "-------" "--------"
+	for tier in haiku flash sonnet pro opus health eval coding; do
+		local spec
+		spec=$(get_tier_models "$tier" 2>/dev/null) || spec=""
+		local primary="${spec%%|*}"
+		local fallback="${spec#*|}"
+		printf "  %-8s %-35s %-35s\n" "$tier" "$primary" "$fallback"
+	done
+	return 0
+}
+
+# Print the recent probe log section of the status output (only when entries exist).
+_status_print_probe_log() {
+	local log_count
+	log_count=$(db_query "SELECT COUNT(*) FROM probe_log;")
+	if [[ "$log_count" -eq 0 ]]; then
+		return 0
+	fi
+
+	echo ""
+	echo "Recent Probes (last 10):"
+	echo ""
+	db_query "
+        SELECT timestamp, provider, action, result, duration_ms
+        FROM probe_log ORDER BY timestamp DESC LIMIT 10;
+    " | while IFS='|' read -r ts prov _action result ms; do
+		echo "  $ts  $prov  $result  ${ms}ms"
+	done
+	echo ""
+	return 0
+}
+
 cmd_status() {
 	local json_flag=false
 
@@ -1200,103 +1381,11 @@ cmd_status() {
 	echo "========================="
 	echo ""
 
-	echo "Provider Health:"
+	_status_print_providers
+	_status_print_rate_limits
+	_status_print_tiers
 	echo ""
-	printf "  %-12s %-12s %-6s %-8s %-8s %-20s\n" \
-		"Provider" "Status" "HTTP" "Time" "Models" "Last Check"
-	printf "  %-12s %-12s %-6s %-8s %-8s %-20s\n" \
-		"--------" "------" "----" "----" "------" "----------"
-
-	db_query "
-        SELECT provider, status, http_code, response_ms, models_count, checked_at
-        FROM provider_health ORDER BY provider;
-    " | while IFS='|' read -r prov stat code ms models checked; do
-		local status_display="$stat"
-		case "$stat" in
-		healthy) status_display="${GREEN}healthy${NC}" ;;
-		unhealthy | unreachable) status_display="${RED}$stat${NC}" ;;
-		rate_limited) status_display="${YELLOW}rate-ltd${NC}" ;;
-		key_invalid) status_display="${RED}bad-key${NC}" ;;
-		no_key) status_display="${YELLOW}no-key${NC}" ;;
-		esac
-
-		# Calculate age
-		local age_display="$checked"
-		local checked_epoch now_epoch
-		if [[ "$(uname)" == "Darwin" ]]; then
-			checked_epoch=$(date -j -f "%Y-%m-%dT%H:%M:%SZ" "$checked" "+%s" 2>/dev/null || echo "0")
-		else
-			checked_epoch=$(date -d "$checked" "+%s" 2>/dev/null || echo "0")
-		fi
-		now_epoch=$(date "+%s")
-		local age=$((now_epoch - checked_epoch))
-		if [[ "$age" -lt 60 ]]; then
-			age_display="${age}s ago"
-		elif [[ "$age" -lt 3600 ]]; then
-			age_display="$((age / 60))m ago"
-		else
-			age_display="$((age / 3600))h ago"
-		fi
-
-		printf "  %-12s %-12b %-6s %-8s %-8s %-20s\n" \
-			"$prov" "$status_display" "$code" "${ms}ms" "$models" "$age_display"
-	done
-
-	# Show rate limits if available
-	local rl_count
-	rl_count=$(db_query "SELECT COUNT(*) FROM rate_limits WHERE requests_limit > 0;")
-	if [[ "$rl_count" -gt 0 ]]; then
-		echo ""
-		echo "Rate Limits:"
-		echo ""
-		printf "  %-12s %-15s %-15s %-15s\n" \
-			"Provider" "Req Remaining" "Tok Remaining" "Reset"
-		printf "  %-12s %-15s %-15s %-15s\n" \
-			"--------" "-------------" "-------------" "-----"
-
-		db_query "
-            SELECT provider, requests_limit, requests_remaining, requests_reset,
-                   tokens_limit, tokens_remaining, tokens_reset
-            FROM rate_limits WHERE requests_limit > 0 ORDER BY provider;
-        " | while IFS='|' read -r prov rl rr rres tl tr tres; do
-			local req_display="${rr}/${rl}"
-			local tok_display="${tr}/${tl}"
-			[[ "$tl" == "0" ]] && tok_display="n/a"
-			printf "  %-12s %-15s %-15s %-15s\n" \
-				"$prov" "$req_display" "$tok_display" "${rres:-n/a}"
-		done
-	fi
-
-	# Show tier resolution
-	echo ""
-	echo "Tier Resolution:"
-	echo ""
-	printf "  %-8s %-35s %-35s\n" "Tier" "Primary" "Fallback"
-	printf "  %-8s %-35s %-35s\n" "----" "-------" "--------"
-	for tier in haiku flash sonnet pro opus health eval coding; do
-		local spec
-		spec=$(get_tier_models "$tier" 2>/dev/null) || spec=""
-		local primary="${spec%%|*}"
-		local fallback="${spec#*|}"
-		printf "  %-8s %-35s %-35s\n" "$tier" "$primary" "$fallback"
-	done
-
-	echo ""
-
-	# Show recent probe log
-	local log_count
-	log_count=$(db_query "SELECT COUNT(*) FROM probe_log;")
-	if [[ "$log_count" -gt 0 ]]; then
-		echo "Recent Probes (last 10):"
-		echo ""
-		db_query "
-            SELECT timestamp, provider, action, result, duration_ms
-            FROM probe_log ORDER BY timestamp DESC LIMIT 10;
-        " | while IFS='|' read -r ts prov _action result ms; do
-			echo "  $ts  $prov  $result  ${ms}ms"
-		done
-		echo ""
-	fi
+	_status_print_probe_log
 
 	return 0
 }
