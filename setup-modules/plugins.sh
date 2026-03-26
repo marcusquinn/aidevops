@@ -222,14 +222,15 @@ generate_agent_skills() {
 	if [[ -f "$skills_script" ]]; then
 		if bash "$skills_script" 2>/dev/null; then
 			print_success "Agent Skills SKILL.md files generated"
+			return 0
 		else
 			print_warning "Agent Skills generation encountered issues (non-critical)"
+			return 1
 		fi
 	else
 		print_warning "Agent Skills generator not found at $skills_script"
+		return 1
 	fi
-
-	return 0
 }
 
 create_skill_symlinks() {

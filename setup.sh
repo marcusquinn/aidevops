@@ -689,7 +689,213 @@ init_settings_json() {
 	return 0
 }
 
-# Main setup function
+# Print the setup header based on active mode flags.
+_setup_print_header() {
+	echo "🤖 AI DevOps Framework Setup"
+	echo "============================="
+	if [[ "$CLEAN_MODE" == "true" ]]; then
+		echo "Mode: Clean (removing stale files)"
+	fi
+	if [[ "$NON_INTERACTIVE" == "true" ]]; then
+		echo "Mode: Non-interactive (deploy + migrations only, no prompts)"
+	elif [[ "$INTERACTIVE_MODE" == "true" ]]; then
+		echo "Mode: Interactive (confirm each step)"
+		echo ""
+		echo "Controls: [Y]es (default) / [n]o skip / [q]uit"
+	fi
+	if [[ "$UPDATE_TOOLS_MODE" == "true" ]]; then
+		echo "Mode: Update (will check for tool updates after setup)"
+	fi
+	echo ""
+	return 0
+}
+
+# Non-interactive path: deploy agents and run safe migrations only (no prompts).
+_setup_run_non_interactive() {
+	print_info "Non-interactive mode: deploying agents and running safe migrations only"
+	verify_location
+	check_requirements
+	check_python_upgrade_available
+	set_permissions
+	migrate_old_backups
+	migrate_loop_state_directories
+	migrate_agent_to_agents_folder
+	migrate_mcp_env_to_credentials
+	migrate_pulse_repos_to_repos_json
+	cleanup_deprecated_paths
+	migrate_orphaned_supervisor
+	cleanup_deprecated_mcps
+	cleanup_stale_bun_opencode
+	validate_opencode_config
+	deploy_aidevops_agents
+	sync_agent_sources
+	setup_shellcheck_wrapper
+	if is_feature_enabled safety_hooks 2>/dev/null; then
+		setup_safety_hooks
+	fi
+	init_settings_json
+
+	# Parallelise independent skill operations (t1356: ~84s serial -> ~18s parallel)
+	# generate_agent_skills must complete before create_skill_symlinks (symlinks
+	# depend on generated SKILL.md files). scan_imported_skills is independent.
+	local _pid_symlinks=""
+	if generate_agent_skills; then
+		create_skill_symlinks &
+		_pid_symlinks=$!
+	else
+		print_warning "Agent skills generation failed — skipping skill symlinks"
+	fi
+
+	scan_imported_skills &
+	local _pid_scan=$!
+
+	if [[ -n "$_pid_symlinks" ]]; then
+		wait "$_pid_symlinks" 2>/dev/null || print_warning "Skill symlink creation encountered issues (non-critical)"
+	fi
+	wait "$_pid_scan" 2>/dev/null || print_warning "Skill security scan encountered issues (non-critical)"
+
+	inject_agents_reference
+	update_opencode_config
+	update_claude_config
+	update_codex_config
+	update_cursor_config
+	disable_ondemand_mcps
+	return 0
+}
+
+# Interactive path: all optional steps gated behind confirm_step prompts.
+_setup_run_interactive() {
+	# Required steps (always run)
+	verify_location
+	check_requirements
+
+	# Quality tools check (optional but recommended)
+	confirm_step "Check quality tools (shellcheck, shfmt)" && check_quality_tools
+
+	# Core runtime setup (early - many later steps depend on these)
+	confirm_step "Setup Node.js runtime (required for OpenCode and tools)" && setup_nodejs
+
+	# Shell environment setup (early, so later tools benefit from zsh/Oh My Zsh)
+	confirm_step "Setup Oh My Zsh (optional, enhances zsh)" && setup_oh_my_zsh
+	confirm_step "Setup cross-shell compatibility (preserve bash config in zsh)" && setup_shell_compatibility
+
+	# OrbStack (macOS only - offer VM option early)
+	confirm_step "Setup OrbStack (lightweight Linux VMs on macOS)" && setup_orbstack_vm
+
+	# Optional steps with confirmation in interactive mode
+	confirm_step "Check optional dependencies (bun, node, python)" && check_optional_deps
+	confirm_step "Check Python version (recommend upgrade if outdated)" && check_python_upgrade_available
+	confirm_step "Setup recommended tools (Tabby, Zed, etc.)" && setup_recommended_tools
+	confirm_step "Setup MiniSim (iOS/Android emulator launcher)" && setup_minisim
+	confirm_step "Setup ClaudeBar (AI quota monitor in menu bar)" && setup_claudebar
+	confirm_step "Setup Git CLIs (gh, glab, tea)" && setup_git_clis
+	confirm_step "Setup file discovery tools (fd, ripgrep, ripgrep-all)" && setup_file_discovery_tools
+	confirm_step "Setup rtk (token-optimized CLI output, 60-90% savings)" && setup_rtk
+	confirm_step "Setup shell linting tools (shellcheck, shfmt)" && {
+		setup_shell_linting_tools
+		setup_shellcheck_wrapper
+	}
+	confirm_step "Setup Qlty CLI (multi-linter code quality)" && setup_qlty_cli
+	confirm_step "Rosetta audit (Apple Silicon x86 migration)" && setup_rosetta_audit
+	confirm_step "Setup Worktrunk (git worktree management)" && setup_worktrunk
+	confirm_step "Setup SSH key" && setup_ssh_key
+	confirm_step "Setup configuration files" && setup_configs
+	confirm_step "Set secure permissions on config files" && set_permissions
+	confirm_step "Install aidevops CLI command" && install_aidevops_cli
+	confirm_step "Setup shell aliases" && setup_aliases
+	confirm_step "Setup terminal title integration" && setup_terminal_title
+	confirm_step "Deploy AI templates to home directories" && deploy_ai_templates
+	confirm_step "Migrate old backups to new structure" && migrate_old_backups
+	confirm_step "Migrate loop state from .claude/.agent/ to .agents/loop-state/" && migrate_loop_state_directories
+	confirm_step "Migrate .agent -> .agents in user projects" && migrate_agent_to_agents_folder
+	confirm_step "Migrate mcp-env.sh -> credentials.sh" && migrate_mcp_env_to_credentials
+	confirm_step "Migrate pulse-repos.json into repos.json" && migrate_pulse_repos_to_repos_json
+	confirm_step "Cleanup deprecated agent paths" && cleanup_deprecated_paths
+	confirm_step "Migrate orphaned supervisor to pulse-wrapper" && migrate_orphaned_supervisor
+	confirm_step "Cleanup deprecated MCP entries (hetzner, serper, etc.)" && cleanup_deprecated_mcps
+	confirm_step "Cleanup stale bun opencode install" && cleanup_stale_bun_opencode
+	confirm_step "Validate and repair OpenCode config schema" && validate_opencode_config
+	confirm_step "Extract OpenCode prompts" && extract_opencode_prompts
+	confirm_step "Check OpenCode prompt drift" && check_opencode_prompt_drift
+	confirm_step "Deploy aidevops agents to ~/.aidevops/agents/" && deploy_aidevops_agents
+	confirm_step "Sync agents from private repositories" && sync_agent_sources
+	is_feature_enabled safety_hooks 2>/dev/null && confirm_step "Install Claude Code safety hooks (block destructive commands)" && setup_safety_hooks
+	confirm_step "Initialize settings.json (canonical config file)" && init_settings_json
+	confirm_step "Setup multi-tenant credential storage" && setup_multi_tenant_credentials
+	confirm_step "Generate agent skills (SKILL.md files)" && generate_agent_skills
+	confirm_step "Create symlinks for imported skills" && create_skill_symlinks
+	confirm_step "Check for skill updates from upstream" && check_skill_updates
+	confirm_step "Security scan imported skills" && scan_imported_skills
+	confirm_step "Inject agents reference into AI configs" && inject_agents_reference
+	confirm_step "Setup Python environment (DSPy, crawl4ai)" && setup_python_env
+	confirm_step "Setup Node.js environment" && setup_nodejs_env
+	confirm_step "Install MCP packages globally (fast startup)" && install_mcp_packages
+	confirm_step "Setup LocalWP MCP server" && setup_localwp_mcp
+	confirm_step "Setup Augment Context Engine MCP" && setup_augment_context_engine
+	confirm_step "Setup Beads task management" && setup_beads
+	confirm_step "Setup SEO integrations (curl subagents)" && setup_seo_mcps
+	confirm_step "Setup Google Analytics MCP" && setup_google_analytics_mcp
+	confirm_step "Setup QuickFile MCP (UK accounting)" && setup_quickfile_mcp
+	confirm_step "Setup browser automation tools" && setup_browser_tools
+	confirm_step "Setup AI orchestration frameworks info" && setup_ai_orchestration
+	confirm_step "Setup Google Workspace CLI (Gmail, Calendar, Drive)" && setup_google_workspace_cli
+	confirm_step "Setup OpenCode CLI (AI coding tool)" && setup_opencode_cli
+	confirm_step "Setup OpenCode plugins" && setup_opencode_plugins
+	confirm_step "Setup Codex CLI (OpenAI AI coding tool)" && setup_codex_cli
+	confirm_step "Setup Droid CLI (Factory.AI coding tool)" && setup_droid_cli
+	# Run AFTER CLI installs so config dirs may exist for agent config
+	confirm_step "Update OpenCode configuration" && update_opencode_config
+	# Run AFTER OpenCode config so Claude Code gets equivalent setup
+	confirm_step "Update Claude Code configuration (slash commands, MCPs, settings)" && update_claude_config
+	# Run AFTER Claude Code config so Codex/Cursor get equivalent setup
+	confirm_step "Update Codex configuration (MCPs, instructions)" && update_codex_config
+	confirm_step "Update Cursor configuration (MCPs)" && update_cursor_config
+	# Run AFTER all MCP setup functions to ensure disabled state persists
+	confirm_step "Disable on-demand MCPs globally" && disable_ondemand_mcps
+	return 0
+}
+
+# Post-setup steps: schedulers, final instructions, optional tool update check.
+_setup_post_setup_steps() {
+	local os="$1"
+
+	# Print setup summary before final success message (GH#5240)
+	print_setup_summary
+
+	echo ""
+	print_success "Setup complete!"
+
+	# Non-interactive mode: deploy + migrations only — skip schedulers,
+	# services, and optional post-setup work (CI/agent shells don't need them).
+	if [[ "$NON_INTERACTIVE" == "true" ]]; then
+		return 0
+	fi
+
+	# Post-setup: auto-update, schedulers, final instructions (GH#5793)
+	setup_auto_update
+	setup_supervisor_pulse "$os"
+	setup_stats_wrapper "${PULSE_ENABLED:-}"
+	setup_repo_sync
+	setup_process_guard
+	setup_memory_pressure_monitor
+	setup_screen_time_snapshot
+	setup_contribution_watch
+	setup_draft_responses
+	setup_profile_readme
+	setup_oauth_token_refresh
+	print_final_instructions
+
+	# Check for tool updates if --update flag was passed
+	if [[ "$UPDATE_TOOLS_MODE" == "true" ]]; then
+		echo ""
+		check_tool_updates
+	fi
+
+	setup_onboarding_prompt
+	return 0
+}
+
+# Main setup function — orchestrates init, mode dispatch, and post-setup.
 main() {
 	# Bootstrap first (handles curl install)
 	bootstrap_repo "$@"
@@ -710,190 +916,15 @@ main() {
 		exit 1
 	fi
 
-	echo "🤖 AI DevOps Framework Setup"
-	echo "============================="
-	if [[ "$CLEAN_MODE" == "true" ]]; then
-		echo "Mode: Clean (removing stale files)"
-	fi
+	_setup_print_header
+
 	if [[ "$NON_INTERACTIVE" == "true" ]]; then
-		echo "Mode: Non-interactive (deploy + migrations only, no prompts)"
-	elif [[ "$INTERACTIVE_MODE" == "true" ]]; then
-		echo "Mode: Interactive (confirm each step)"
-		echo ""
-		echo "Controls: [Y]es (default) / [n]o skip / [q]uit"
-	fi
-	if [[ "$UPDATE_TOOLS_MODE" == "true" ]]; then
-		echo "Mode: Update (will check for tool updates after setup)"
-	fi
-	echo ""
-
-	# Non-interactive mode: deploy agents only, skip all optional installs
-	if [[ "$NON_INTERACTIVE" == "true" ]]; then
-		print_info "Non-interactive mode: deploying agents and running safe migrations only"
-		verify_location
-		check_requirements
-		check_python_upgrade_available
-		set_permissions
-		migrate_old_backups
-		migrate_loop_state_directories
-		migrate_agent_to_agents_folder
-		migrate_mcp_env_to_credentials
-		migrate_pulse_repos_to_repos_json
-		cleanup_deprecated_paths
-		migrate_orphaned_supervisor
-		cleanup_deprecated_mcps
-		cleanup_stale_bun_opencode
-		validate_opencode_config
-		deploy_aidevops_agents
-		sync_agent_sources
-		setup_shellcheck_wrapper
-		if is_feature_enabled safety_hooks 2>/dev/null; then
-			setup_safety_hooks
-		fi
-		init_settings_json
-
-		# Parallelise independent skill operations (t1356: ~84s serial -> ~18s parallel)
-		# generate_agent_skills (18s), create_skill_symlinks (<1s), and
-		# scan_imported_skills (66s serial, ~10s with parallel scanning) are independent.
-		generate_agent_skills &
-		local _pid_skills=$!
-		create_skill_symlinks &
-		local _pid_symlinks=$!
-		scan_imported_skills &
-		local _pid_scan=$!
-		wait "$_pid_skills" 2>/dev/null || print_warning "Agent skills generation encountered issues (non-critical)"
-		wait "$_pid_symlinks" 2>/dev/null || print_warning "Skill symlink creation encountered issues (non-critical)"
-		wait "$_pid_scan" 2>/dev/null || print_warning "Skill security scan encountered issues (non-critical)"
-
-		inject_agents_reference
-		if is_feature_enabled manage_opencode_config 2>/dev/null; then
-			update_opencode_config
-		else
-			print_info "OpenCode config management disabled via config (integrations.manage_opencode_config)"
-		fi
-		if is_feature_enabled manage_claude_config 2>/dev/null; then
-			update_claude_config
-		else
-			print_info "Claude config management disabled via config (integrations.manage_claude_config)"
-		fi
-		update_codex_config
-		update_cursor_config
-		disable_ondemand_mcps
+		_setup_run_non_interactive
 	else
-		# Required steps (always run)
-		verify_location
-		check_requirements
-
-		# Quality tools check (optional but recommended)
-		confirm_step "Check quality tools (shellcheck, shfmt)" && check_quality_tools
-
-		# Core runtime setup (early - many later steps depend on these)
-		confirm_step "Setup Node.js runtime (required for OpenCode and tools)" && setup_nodejs
-
-		# Shell environment setup (early, so later tools benefit from zsh/Oh My Zsh)
-		confirm_step "Setup Oh My Zsh (optional, enhances zsh)" && setup_oh_my_zsh
-		confirm_step "Setup cross-shell compatibility (preserve bash config in zsh)" && setup_shell_compatibility
-
-		# OrbStack (macOS only - offer VM option early)
-		confirm_step "Setup OrbStack (lightweight Linux VMs on macOS)" && setup_orbstack_vm
-
-		# Optional steps with confirmation in interactive mode
-		confirm_step "Check optional dependencies (bun, node, python)" && check_optional_deps
-		confirm_step "Check Python version (recommend upgrade if outdated)" && check_python_upgrade_available
-		confirm_step "Setup recommended tools (Tabby, Zed, etc.)" && setup_recommended_tools
-		confirm_step "Setup MiniSim (iOS/Android emulator launcher)" && setup_minisim
-		confirm_step "Setup ClaudeBar (AI quota monitor in menu bar)" && setup_claudebar
-		confirm_step "Setup Git CLIs (gh, glab, tea)" && setup_git_clis
-		confirm_step "Setup file discovery tools (fd, ripgrep, ripgrep-all)" && setup_file_discovery_tools
-		confirm_step "Setup rtk (token-optimized CLI output, 60-90% savings)" && setup_rtk
-		confirm_step "Setup shell linting tools (shellcheck, shfmt)" && setup_shell_linting_tools
-		setup_shellcheck_wrapper
-		confirm_step "Setup Qlty CLI (multi-linter code quality)" && setup_qlty_cli
-		confirm_step "Rosetta audit (Apple Silicon x86 migration)" && setup_rosetta_audit
-		confirm_step "Setup Worktrunk (git worktree management)" && setup_worktrunk
-		confirm_step "Setup SSH key" && setup_ssh_key
-		confirm_step "Setup configuration files" && setup_configs
-		confirm_step "Set secure permissions on config files" && set_permissions
-		confirm_step "Install aidevops CLI command" && install_aidevops_cli
-		confirm_step "Setup shell aliases" && setup_aliases
-		confirm_step "Setup terminal title integration" && setup_terminal_title
-		confirm_step "Deploy AI templates to home directories" && deploy_ai_templates
-		confirm_step "Migrate old backups to new structure" && migrate_old_backups
-		confirm_step "Migrate loop state from .claude/.agent/ to .agents/loop-state/" && migrate_loop_state_directories
-		confirm_step "Migrate .agent -> .agents in user projects" && migrate_agent_to_agents_folder
-		confirm_step "Migrate mcp-env.sh -> credentials.sh" && migrate_mcp_env_to_credentials
-		confirm_step "Migrate pulse-repos.json into repos.json" && migrate_pulse_repos_to_repos_json
-		confirm_step "Cleanup deprecated agent paths" && cleanup_deprecated_paths
-		confirm_step "Migrate orphaned supervisor to pulse-wrapper" && migrate_orphaned_supervisor
-		confirm_step "Cleanup deprecated MCP entries (hetzner, serper, etc.)" && cleanup_deprecated_mcps
-		confirm_step "Cleanup stale bun opencode install" && cleanup_stale_bun_opencode
-		confirm_step "Validate and repair OpenCode config schema" && validate_opencode_config
-		confirm_step "Extract OpenCode prompts" && extract_opencode_prompts
-		confirm_step "Check OpenCode prompt drift" && check_opencode_prompt_drift
-		confirm_step "Deploy aidevops agents to ~/.aidevops/agents/" && deploy_aidevops_agents
-		confirm_step "Sync agents from private repositories" && sync_agent_sources
-		confirm_step "Install Claude Code safety hooks (block destructive commands)" && setup_safety_hooks
-		confirm_step "Initialize settings.json (canonical config file)" && init_settings_json
-		confirm_step "Setup multi-tenant credential storage" && setup_multi_tenant_credentials
-		confirm_step "Generate agent skills (SKILL.md files)" && generate_agent_skills
-		confirm_step "Create symlinks for imported skills" && create_skill_symlinks
-		confirm_step "Check for skill updates from upstream" && check_skill_updates
-		confirm_step "Security scan imported skills" && scan_imported_skills
-		confirm_step "Inject agents reference into AI configs" && inject_agents_reference
-		confirm_step "Setup Python environment (DSPy, crawl4ai)" && setup_python_env
-		confirm_step "Setup Node.js environment" && setup_nodejs_env
-		confirm_step "Install MCP packages globally (fast startup)" && install_mcp_packages
-		confirm_step "Setup LocalWP MCP server" && setup_localwp_mcp
-		confirm_step "Setup Augment Context Engine MCP" && setup_augment_context_engine
-		confirm_step "Setup Beads task management" && setup_beads
-		confirm_step "Setup SEO integrations (curl subagents)" && setup_seo_mcps
-		confirm_step "Setup Google Analytics MCP" && setup_google_analytics_mcp
-		confirm_step "Setup QuickFile MCP (UK accounting)" && setup_quickfile_mcp
-		confirm_step "Setup browser automation tools" && setup_browser_tools
-		confirm_step "Setup AI orchestration frameworks info" && setup_ai_orchestration
-		confirm_step "Setup Google Workspace CLI (Gmail, Calendar, Drive)" && setup_google_workspace_cli
-		confirm_step "Setup OpenCode CLI (AI coding tool)" && setup_opencode_cli
-		confirm_step "Setup OpenCode plugins" && setup_opencode_plugins
-		confirm_step "Setup Codex CLI (OpenAI AI coding tool)" && setup_codex_cli
-		confirm_step "Setup Droid CLI (Factory.AI coding tool)" && setup_droid_cli
-		# Run AFTER CLI installs so config dirs may exist for agent config
-		confirm_step "Update OpenCode configuration" && update_opencode_config
-		# Run AFTER OpenCode config so Claude Code gets equivalent setup
-		confirm_step "Update Claude Code configuration (slash commands, MCPs, settings)" && update_claude_config
-		# Run AFTER Claude Code config so Codex/Cursor get equivalent setup
-		confirm_step "Update Codex configuration (MCPs, instructions)" && update_codex_config
-		confirm_step "Update Cursor configuration (MCPs)" && update_cursor_config
-		# Run AFTER all MCP setup functions to ensure disabled state persists
-		confirm_step "Disable on-demand MCPs globally" && disable_ondemand_mcps
+		_setup_run_interactive
 	fi
 
-	# Print setup summary before final success message (GH#5240)
-	print_setup_summary
-
-	echo ""
-	print_success "Setup complete!"
-
-	# Post-setup: auto-update, schedulers, final instructions (GH#5793)
-	setup_auto_update
-	setup_supervisor_pulse "$_os"
-	setup_stats_wrapper "${PULSE_ENABLED:-}"
-	setup_repo_sync
-	setup_process_guard
-	setup_memory_pressure_monitor
-	setup_screen_time_snapshot
-	setup_contribution_watch
-	setup_draft_responses
-	setup_profile_readme
-	setup_oauth_token_refresh
-	print_final_instructions
-
-	# Check for tool updates if --update flag was passed
-	if [[ "$UPDATE_TOOLS_MODE" == "true" ]]; then
-		echo ""
-		check_tool_updates
-	fi
-
-	setup_onboarding_prompt
+	_setup_post_setup_steps "$_os"
 
 	return 0
 }
