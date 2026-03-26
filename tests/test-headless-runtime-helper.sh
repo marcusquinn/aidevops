@@ -418,6 +418,23 @@ else
 fi
 rm -f "$LOCK_DIR/issue-other.pid"
 
+section "OPENCODE_PID Passthrough Exclusion (GH#6668)"
+# OPENCODE_PID must never appear in the sandbox passthrough CSV — workers that
+# inherit it attach to the pulse's session instead of creating independent ones.
+passthrough_csv=$(OPENCODE_PID="12345" bash "$HELPER" passthrough-csv 2>/dev/null || true)
+if [[ -z "$passthrough_csv" ]] || [[ "$passthrough_csv" != *"OPENCODE_PID"* ]]; then
+	pass "OPENCODE_PID excluded from sandbox passthrough CSV"
+else
+	fail "OPENCODE_PID excluded from sandbox passthrough CSV" "got: $passthrough_csv"
+fi
+# Other OPENCODE_* vars must still be passed through.
+passthrough_csv2=$(OPENCODE_THEME="dark" bash "$HELPER" passthrough-csv 2>/dev/null || true)
+if [[ "$passthrough_csv2" == *"OPENCODE_THEME"* ]]; then
+	pass "other OPENCODE_* vars still included in passthrough CSV"
+else
+	fail "other OPENCODE_* vars still included in passthrough CSV" "got: $passthrough_csv2"
+fi
+
 echo ""
 printf "Total: %d, Passed: %d, Failed: %d\n" "$TOTAL_COUNT" "$PASS_COUNT" "$FAIL_COUNT"
 
