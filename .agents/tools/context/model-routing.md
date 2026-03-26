@@ -158,9 +158,9 @@ Concrete model subagents are defined across these paths (`tools/ai-assistants/mo
 | `flash` | `models/flash.md` | gemini-2.5-flash-preview-05-20 | gpt-4.1-mini |
 | `haiku` | `models/haiku.md` | claude-haiku-4-5-20251001 | gemini-2.5-flash-preview-05-20 |
 | `composer2` | `models/composer2.md` | cursor/composer-2 | claude-sonnet-4-6 |
-| `sonnet` | `models/sonnet.md` | claude-sonnet-4-6 | gpt-4.1 |
+| `sonnet` | `models/sonnet.md` | claude-sonnet-4-6 | gpt-5.3-codex |
 | `pro` | `models/pro.md` | gemini-2.5-pro | claude-sonnet-4-6 |
-| `opus` | `models/opus.md` | claude-opus-4-6 | o3 |
+| `opus` | `models/opus.md` | claude-opus-4-6 | gpt-5.4 |
 
 Cross-provider reviewers: `models/gemini-reviewer.md`, `models/gpt-reviewer.md`
 
@@ -218,9 +218,9 @@ Each tier defines a primary model and a fallback from a different provider. When
 | `flash` | gemini-2.5-flash-preview-05-20 | gpt-4.1-mini | No Google key |
 | `haiku` | claude-haiku-4-5-20251001 | gemini-2.5-flash-preview-05-20 | No Anthropic key |
 | `composer2` | cursor/composer-2 | claude-sonnet-4-6 | No Cursor OAuth pool configured (t1549) or pool exhausted |
-| `sonnet` | claude-sonnet-4-6 | gpt-4.1 | No Anthropic key |
+| `sonnet` | claude-sonnet-4-6 | gpt-5.3-codex | No Anthropic key |
 | `pro` | gemini-2.5-pro | claude-sonnet-4-6 | No Google key |
-| `opus` | claude-opus-4-6 | o3 | No Anthropic key |
+| `opus` | claude-opus-4-6 | gpt-5.4 | No Anthropic key |
 
 The supervisor resolves fallbacks automatically during headless dispatch. For interactive sessions, the orchestrating agent should run `compare-models-helper.sh discover` to check availability before selecting a model.
 

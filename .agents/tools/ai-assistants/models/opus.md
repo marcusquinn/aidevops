@@ -3,10 +3,10 @@ description: Highest-capability model for architecture decisions, novel problems
 mode: subagent
 model: anthropic/claude-opus-4-6
 model-tier: opus
-model-fallback: openai/o3
+model-fallback: openai/gpt-5.4
 fallback-chain:
   - anthropic/claude-opus-4-6
-  - openai/o3
+  - openai/gpt-5.4
   - anthropic/claude-sonnet-4-6
   - openrouter/anthropic/claude-opus-4-6
 tools:
