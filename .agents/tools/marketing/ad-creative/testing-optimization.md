@@ -17,7 +17,7 @@ Test different hooks/angles (problem vs. benefit, educational vs. promotional, e
 
 - Same format, audience, budget per creative
 - Minimum 3 days, ideally 7 days
-- Success: CPA below target, scalable to $1K+/day, >14 day lifespan
+- Success: CPA below target, scalable to $1K+/day, >14-day lifespan
 
 ```text
 CONTROL: "Tired of [problem]?" hook
@@ -102,6 +102,8 @@ GOOD: New video + Same headline + Same audience + Same offer → know it's the v
 
 Use calculators: VWO, Optimizely Stats Engine, AB Test Guide, Google Analytics Experiments.
 
+**Example:** Variant A: 100 conversions, 2.5% CVR, $40 CPA. Variant B: 110 conversions, 3.2% CVR, $31 CPA. Confidence: 96% → Scale Variant B.
+
 ---
 
 ### Creative Fatigue Detection
@@ -113,6 +115,7 @@ Use calculators: VWO, Optimizely Stats Engine, AB Test Guide, Google Analytics E
 | CTR decline | Stable/rising | >20% from peak |
 | CPA increase | Stable/decreasing | >25% from baseline |
 | Frequency | <3 | >5 |
+| Relevance Score | Good/Excellent | Average/Below Average |
 | Hook rate (video) | >50% | <35% |
 
 **Refresh levels:**
@@ -135,7 +138,7 @@ Use calculators: VWO, Optimizely Stats Engine, AB Test Guide, Google Analytics E
 
 **Phase 3 — Winner declaration (day 7+):**
 
-A creative is a winner if: CPA 20%+ better than target, volume >10 conversions/day potential, confidence >90%, stable (not declining).
+A creative is a winner if: CPA 20%+ better than target, volume >10 conversions/day potential, confidence >=95%, stable (not declining).
 
 **Decision verdicts:**
 
@@ -225,7 +228,7 @@ Control: "40% off first month"
 B: "Free 30 days, no credit card" | C: "First month free, then $29/mo" | D: "50% off for 3 months"
 Same creative/headline/audience | 14 days | 120+ conversions each
 
-Results: A: $44 CPA, $180 LTV | B: $36 CPA, $245 LTV (WINNER) | C: $38, $220 | D: $42, $165
+Results: A: $44 CPA, $180 LTV | B: $36 CPA, $245 LTV (WINNER) | C: $38 CPA, $220 LTV | D: $42 CPA, $165 LTV
 Learning: Free trial best CPA AND best LTV; no-CC reduced friction
 ```
 
@@ -500,10 +503,10 @@ Higher rankings = lower costs + better delivery. Improve via better creative, ta
 
 **Attribution windows:**
 
-| Platform | Default | Options |
-|----------|---------|---------|
-| Facebook | 7-day click, 1-day view | 1-day click/view, 28-day click/view |
-| Google | Last click (data-driven recommended) | First click, linear, time decay, position-based |
+| Platform | Default | Other options |
+|----------|---------|---------------|
+| Facebook | 7-day click or 1-day view | 1-day click or 1-day view, 28-day options |
+| Google | Data-driven (recommended) | Last click, first click, linear, time decay, position-based |
 
 Different windows = different CPA reporting.
 
