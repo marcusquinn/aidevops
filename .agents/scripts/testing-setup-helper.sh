@@ -46,9 +46,6 @@ else
 	}
 fi
 
-# Ensure ERROR_UNKNOWN_COMMAND is always defined (shared-constants.sh may or may not be available)
-[[ -z "${ERROR_UNKNOWN_COMMAND:-}" ]] && readonly ERROR_UNKNOWN_COMMAND="Unknown command"
-
 set -euo pipefail
 
 # =============================================================================
@@ -56,6 +53,9 @@ set -euo pipefail
 # =============================================================================
 
 readonly TESTING_CONFIG_FILE=".aidevops-testing.json"
+# ERROR_UNKNOWN_COMMAND defined here unconditionally so it is always available
+# regardless of whether shared-constants.sh was sourced above.
+readonly ERROR_UNKNOWN_COMMAND="Unknown command"
 
 # =============================================================================
 # Utility Functions
