@@ -184,6 +184,8 @@ export AIDEVOPS_HEADLESS_MODELS="anthropic/claude-sonnet-4-6,openai/gpt-5.3-code
 
 `AIDEVOPS_HEADLESS_MODELS` is a rotation pool with backoff handling, not a strict tier escalation chain. If you need guaranteed tiered escalation, use task-tier labels (`tier:thinking`) so the supervisor dispatches at a higher tier directly.
 
+For this split config, keep `openai/gpt-5.4` out of default worker rotation and use it as an explicit escalation target for high-thinking dispatches (for example via `tier:thinking` or explicit `--model openai/gpt-5.4`).
+
 ## Integration with Task Tool
 
 When using the Task tool to dispatch subagents, the `model:` field in the subagent's frontmatter serves as a recommendation. The orchestrating agent can override based on task complexity.
