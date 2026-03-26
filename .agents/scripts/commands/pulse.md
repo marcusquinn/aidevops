@@ -295,6 +295,12 @@ After 2+ failed attempts on the same issue (count kill/failure comments), escala
 
 ## Dispatch Refinements
 
+### Peak-hours worker cap (t1677)
+
+`MAX_WORKERS` is computed by `pulse-wrapper.sh` before the pulse starts and written to `~/.aidevops/logs/pulse-max-workers`. When `supervisor.peak_hours_enabled` is `true` in `settings.json`, the wrapper automatically reduces `MAX_WORKERS` to `ceil(off_peak_max × peak_hours_worker_fraction)` (minimum 1) during the configured local-time window. The pulse reads the already-capped value — no action required here.
+
+To enable: `settings-helper.sh set supervisor.peak_hours_enabled true`. Default window: 5 AM–11 AM local time (Anthropic peak). Default fraction: 0.2 (20%). See `reference/settings.md` for full configuration.
+
 ### Per-repo worker cap
 
 Default `MAX_WORKERS_PER_REPO=5`. If a repo already has this many active workers, skip dispatch for that repo this cycle.

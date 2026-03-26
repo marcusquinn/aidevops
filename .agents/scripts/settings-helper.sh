@@ -63,7 +63,12 @@ _generate_defaults() {
     "pulse_interval_seconds": 120,
     "stale_threshold_seconds": 1800,
     "circuit_breaker_max_failures": 3,
-    "strategic_review_hours": 4
+    "strategic_review_hours": 4,
+    "peak_hours_enabled": false,
+    "peak_hours_start": 5,
+    "peak_hours_end": 11,
+    "peak_hours_tz": "America/Los_Angeles",
+    "peak_hours_worker_fraction": 0.2
   },
   "repo_sync": {
     "enabled": true,
@@ -111,6 +116,11 @@ _env_var_for_key() {
 	auto_update.openclaw_auto_update) echo "AIDEVOPS_OPENCLAW_AUTO_UPDATE" ;;
 	auto_update.openclaw_freshness_hours) echo "AIDEVOPS_OPENCLAW_FRESHNESS_HOURS" ;;
 	supervisor.pulse_enabled) echo "AIDEVOPS_SUPERVISOR_PULSE" ;;
+	supervisor.peak_hours_enabled) echo "AIDEVOPS_PEAK_HOURS_ENABLED" ;;
+	supervisor.peak_hours_start) echo "AIDEVOPS_PEAK_HOURS_START" ;;
+	supervisor.peak_hours_end) echo "AIDEVOPS_PEAK_HOURS_END" ;;
+	supervisor.peak_hours_tz) echo "AIDEVOPS_PEAK_HOURS_TZ" ;;
+	supervisor.peak_hours_worker_fraction) echo "AIDEVOPS_PEAK_HOURS_WORKER_FRACTION" ;;
 	repo_sync.enabled) echo "AIDEVOPS_REPO_SYNC" ;;
 	*) echo "" ;;
 	esac
@@ -383,6 +393,31 @@ cmd_validate() {
 		errors=$((errors + 1))
 	fi
 
+	# Validate peak_hours settings when enabled
+	local peak_enabled
+	peak_enabled=$(jq -r '.supervisor.peak_hours_enabled // false' "$SETTINGS_FILE" 2>/dev/null)
+	if [[ "$peak_enabled" == "true" ]]; then
+		local ph_start ph_end ph_fraction
+		ph_start=$(jq -r '.supervisor.peak_hours_start // -1' "$SETTINGS_FILE" 2>/dev/null)
+		ph_end=$(jq -r '.supervisor.peak_hours_end // -1' "$SETTINGS_FILE" 2>/dev/null)
+		ph_fraction=$(jq -r '.supervisor.peak_hours_worker_fraction // -1' "$SETTINGS_FILE" 2>/dev/null)
+		if [[ "$ph_start" -lt 0 || "$ph_start" -gt 23 ]]; then
+			print_warning "supervisor.peak_hours_start ($ph_start) should be 0-23"
+			errors=$((errors + 1))
+		fi
+		if [[ "$ph_end" -lt 0 || "$ph_end" -gt 23 ]]; then
+			print_warning "supervisor.peak_hours_end ($ph_end) should be 0-23"
+			errors=$((errors + 1))
+		fi
+		# Validate fraction is a number between 0.01 and 1.0
+		if ! jq -e --argjson f "$ph_fraction" '$f > 0 and $f <= 1' /dev/null 2>/dev/null; then
+			if ! echo "$ph_fraction" | grep -qE '^0\.[0-9]+$|^1(\.0+)?$'; then
+				print_warning "supervisor.peak_hours_worker_fraction ($ph_fraction) should be 0.01-1.0"
+				errors=$((errors + 1))
+			fi
+		fi
+	fi
+
 	if [[ $errors -eq 0 ]]; then
 		print_success "Settings file is valid"
 	else
@@ -417,6 +452,11 @@ cmd_export_env() {
 		"auto_update.openclaw_auto_update"
 		"auto_update.openclaw_freshness_hours"
 		"supervisor.pulse_enabled"
+		"supervisor.peak_hours_enabled"
+		"supervisor.peak_hours_start"
+		"supervisor.peak_hours_end"
+		"supervisor.peak_hours_tz"
+		"supervisor.peak_hours_worker_fraction"
 		"repo_sync.enabled"
 	)
 
@@ -470,6 +510,11 @@ SETTINGS KEYS (dot-notation):
     supervisor.stale_threshold_seconds   Stale worker threshold (default: 1800)
     supervisor.circuit_breaker_max_failures  Max failures before pause (default: 3)
     supervisor.strategic_review_hours    Hours between strategic reviews (default: 4)
+    supervisor.peak_hours_enabled        Cap workers during peak hours (default: false)
+    supervisor.peak_hours_start          Peak window start hour 0-23 (default: 5)
+    supervisor.peak_hours_end            Peak window end hour 0-23 (default: 11)
+    supervisor.peak_hours_tz             Timezone for peak window (default: America/Los_Angeles)
+    supervisor.peak_hours_worker_fraction  Fraction of off-peak MAX_WORKERS during peak (default: 0.2)
     repo_sync.enabled                    Daily repo sync on/off (default: true)
     repo_sync.schedule                   Sync schedule (default: daily)
     quality.shellcheck_enabled           ShellCheck on/off (default: true)

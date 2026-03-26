@@ -49,6 +49,11 @@ Controls the autonomous orchestration supervisor that dispatches AI workers.
 | `supervisor.stale_threshold_seconds` | number | `1800` | -- | Seconds before a worker is considered stale/stuck. |
 | `supervisor.circuit_breaker_max_failures` | number | `3` | -- | Consecutive worker failures before the circuit breaker pauses dispatch. |
 | `supervisor.strategic_review_hours` | number | `4` | -- | Hours between opus-tier strategic reviews of queue health. |
+| `supervisor.peak_hours_enabled` | boolean | `false` | `AIDEVOPS_PEAK_HOURS_ENABLED` | Enable peak-hours worker cap. When `true`, `MAX_WORKERS` is reduced during the configured window. **Disabled by default.** |
+| `supervisor.peak_hours_start` | number | `5` | `AIDEVOPS_PEAK_HOURS_START` | Start hour of the peak window (0-23, local time). Default 5 = 5 AM. |
+| `supervisor.peak_hours_end` | number | `11` | `AIDEVOPS_PEAK_HOURS_END` | End hour of the peak window (0-23, local time, exclusive). Default 11 = 11 AM. Overnight windows supported (start > end, e.g., `22` → `6`). |
+| `supervisor.peak_hours_tz` | string | `"America/Los_Angeles"` | `AIDEVOPS_PEAK_HOURS_TZ` | Timezone label for documentation. The pulse uses system local time (`date +%H`), so set your system timezone to match. |
+| `supervisor.peak_hours_worker_fraction` | number | `0.2` | `AIDEVOPS_PEAK_HOURS_WORKER_FRACTION` | Fraction of off-peak `MAX_WORKERS` allowed during peak hours. `0.2` = 20%. Result is rounded up, minimum 1. |
 
 ### repo_sync
 
@@ -169,3 +174,25 @@ Previously, aidevops settings were configured exclusively via `AIDEVOPS_*` envir
 | `AIDEVOPS_TOOL_AUTO_UPDATE=false` | `auto_update.tool_auto_update = false` |
 | `AIDEVOPS_SUPERVISOR_PULSE=false` | `supervisor.pulse_enabled = false` |
 | `AIDEVOPS_REPO_SYNC=false` | `repo_sync.enabled = false` |
+
+## Peak Hours Configuration
+
+Anthropic tightens session limits during weekday peak hours (5 AM–11 AM PT). Enable the peak-hours cap to automatically reduce `MAX_WORKERS` during this window:
+
+```bash
+# Enable peak-hours cap (disabled by default)
+settings-helper.sh set supervisor.peak_hours_enabled true
+
+# Customise the window (default: 5→11 local time)
+settings-helper.sh set supervisor.peak_hours_start 5
+settings-helper.sh set supervisor.peak_hours_end 11
+
+# Set the fraction (default: 0.2 = 20% of off-peak MAX_WORKERS, rounded up, min 1)
+settings-helper.sh set supervisor.peak_hours_worker_fraction 0.2
+```
+
+**How it works**: `calculate_max_workers()` in `pulse-wrapper.sh` computes the RAM-based worker count first, then calls `apply_peak_hours_cap()`. If the current local hour falls within `[peak_hours_start, peak_hours_end)`, the result is capped at `ceil(off_peak_max × peak_hours_worker_fraction)`, minimum 1. The cap is applied after the RAM-based clamp so it can only reduce, never increase, the worker count.
+
+**Timezone**: The pulse uses `date +%H` (system local time). Set your system timezone to match the desired window timezone. The `peak_hours_tz` field is documentation-only.
+
+**Overnight windows**: Set `peak_hours_start > peak_hours_end` for overnight windows (e.g., `start=22, end=6` covers 10 PM–6 AM).

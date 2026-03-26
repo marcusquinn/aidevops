@@ -123,6 +123,37 @@
           "minimum": 0,
           "maximum": 100,
           "description": "Maximum share of worker slots quality-debt issues may consume. Env: AIDEVOPS_QUALITY_DEBT_CAP_PCT"
+        },
+        "peak_hours_enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Cap MAX_WORKERS during peak hours to reduce session-limit pressure. Disabled by default. Env: AIDEVOPS_PEAK_HOURS_ENABLED"
+        },
+        "peak_hours_start": {
+          "type": "integer",
+          "default": 5,
+          "minimum": 0,
+          "maximum": 23,
+          "description": "Start hour of the peak window (0-23, local time). Default 5 = 5 AM. Env: AIDEVOPS_PEAK_HOURS_START"
+        },
+        "peak_hours_end": {
+          "type": "integer",
+          "default": 11,
+          "minimum": 0,
+          "maximum": 23,
+          "description": "End hour of the peak window (0-23, local time, exclusive). Overnight windows supported (start > end). Env: AIDEVOPS_PEAK_HOURS_END"
+        },
+        "peak_hours_tz": {
+          "type": "string",
+          "default": "America/Los_Angeles",
+          "description": "Timezone label for documentation. Pulse uses system local time (date +%H). Env: AIDEVOPS_PEAK_HOURS_TZ"
+        },
+        "peak_hours_worker_fraction": {
+          "type": "number",
+          "default": 0.2,
+          "minimum": 0.01,
+          "maximum": 1.0,
+          "description": "Fraction of off-peak MAX_WORKERS allowed during peak hours (0.2 = 20%). Result is rounded up, minimum 1. Env: AIDEVOPS_PEAK_HOURS_WORKER_FRACTION"
         }
       },
       "additionalProperties": false

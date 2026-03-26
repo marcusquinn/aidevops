@@ -4218,6 +4218,103 @@ cleanup_orphans() {
 }
 
 #######################################
+# Apply peak-hours worker cap (t1677)
+#
+# When supervisor.peak_hours_enabled is true and the current local time
+# falls within the configured window, caps MAX_WORKERS at
+# ceil(off_peak_max * peak_hours_worker_fraction), minimum 1.
+#
+# The cap is applied AFTER the RAM-based calculation so it can only
+# reduce, never increase, the worker count.
+#
+# Settings read via settings-helper.sh (respects env var overrides):
+#   supervisor.peak_hours_enabled        (default: false)
+#   supervisor.peak_hours_start          (default: 5,  0-23 local hour)
+#   supervisor.peak_hours_end            (default: 11, 0-23 local hour)
+#   supervisor.peak_hours_tz             (default: America/Los_Angeles)
+#   supervisor.peak_hours_worker_fraction (default: 0.2)
+#
+# Arguments:
+#   $1 - current off-peak max_workers value (integer >= 1)
+#
+# Output: (possibly reduced) max_workers value to stdout
+# Returns: 0 always
+#######################################
+apply_peak_hours_cap() {
+	local off_peak_max="$1"
+
+	# Validate input
+	[[ "$off_peak_max" =~ ^[0-9]+$ ]] || off_peak_max=1
+	[[ "$off_peak_max" -lt 1 ]] && off_peak_max=1
+
+	# Read settings via helper (respects env var overrides)
+	local settings_helper="${SCRIPT_DIR}/settings-helper.sh"
+	if [[ ! -x "$settings_helper" ]]; then
+		echo "$off_peak_max"
+		return 0
+	fi
+
+	local peak_enabled
+	peak_enabled=$("$settings_helper" get supervisor.peak_hours_enabled 2>/dev/null || echo "false")
+	if [[ "$peak_enabled" != "true" ]]; then
+		echo "$off_peak_max"
+		return 0
+	fi
+
+	local ph_start ph_end ph_fraction
+	ph_start=$("$settings_helper" get supervisor.peak_hours_start 2>/dev/null || echo "5")
+	ph_end=$("$settings_helper" get supervisor.peak_hours_end 2>/dev/null || echo "11")
+	ph_fraction=$("$settings_helper" get supervisor.peak_hours_worker_fraction 2>/dev/null || echo "0.2")
+
+	# Validate hour values
+	[[ "$ph_start" =~ ^[0-9]+$ ]] || ph_start=5
+	[[ "$ph_end" =~ ^[0-9]+$ ]] || ph_end=11
+	[[ "$ph_start" -gt 23 ]] && ph_start=5
+	[[ "$ph_end" -gt 23 ]] && ph_end=11
+
+	# Get current local hour (strip leading zero to avoid octal interpretation)
+	local current_hour
+	current_hour=$(date +%H)
+	local cur ph_s ph_e
+	cur=$((10#${current_hour}))
+	ph_s=$((10#${ph_start}))
+	ph_e=$((10#${ph_end}))
+
+	# Determine if we are inside the peak window
+	# Supports overnight windows (start > end, e.g., 22→6)
+	local in_peak=false
+	if [[ "$ph_s" -le "$ph_e" ]]; then
+		# Normal window: in peak when cur >= start AND cur < end
+		if [[ "$cur" -ge "$ph_s" && "$cur" -lt "$ph_e" ]]; then
+			in_peak=true
+		fi
+	else
+		# Overnight window: in peak when cur >= start OR cur < end
+		if [[ "$cur" -ge "$ph_s" || "$cur" -lt "$ph_e" ]]; then
+			in_peak=true
+		fi
+	fi
+
+	if [[ "$in_peak" != "true" ]]; then
+		echo "$off_peak_max"
+		return 0
+	fi
+
+	# Compute capped value: ceil(off_peak_max * fraction), minimum 1
+	# Use awk for floating-point arithmetic (bash has no native float support)
+	local peak_max
+	peak_max=$(awk -v max="$off_peak_max" -v frac="$ph_fraction" \
+		'BEGIN { v = max * frac; c = int(v); if (c < v) c++; if (c < 1) c = 1; print c }' \
+		2>/dev/null || echo "1")
+	[[ "$peak_max" =~ ^[0-9]+$ ]] || peak_max=1
+	[[ "$peak_max" -lt 1 ]] && peak_max=1
+
+	echo "[pulse-wrapper] Peak hours active (window ${ph_s}→${ph_e}, current hour ${cur}): capping MAX_WORKERS ${off_peak_max}→${peak_max} (fraction=${ph_fraction})" >>"$LOGFILE"
+	echo "$peak_max"
+	return 0
+}
+
+#######################################
 # Calculate max workers from available RAM
 #
 # Formula: (free_ram - RAM_RESERVE_MB) / RAM_PER_WORKER_MB
@@ -4253,6 +4350,11 @@ calculate_max_workers() {
 	elif [[ "$max_workers" -gt "$MAX_WORKERS_CAP" ]]; then
 		max_workers="$MAX_WORKERS_CAP"
 	fi
+
+	# Apply peak-hours cap (t1677) — may further reduce max_workers
+	max_workers=$(apply_peak_hours_cap "$max_workers")
+	[[ "$max_workers" =~ ^[0-9]+$ ]] || max_workers=1
+	[[ "$max_workers" -lt 1 ]] && max_workers=1
 
 	# Write to a file that pulse.md can read
 	local max_workers_file="${HOME}/.aidevops/logs/pulse-max-workers"
