@@ -18,16 +18,13 @@ tools:
 
 ## Quick Reference
 
-- **Purpose**: Bridge Matrix chat rooms to aidevops runners via OpenCode with entity-aware context
+- **Purpose**: Bridge Matrix rooms to aidevops runners via OpenCode with entity-aware context
 - **Script**: `matrix-dispatch-helper.sh [setup|start|stop|status|map|unmap|mappings|sessions|test|logs]`
 - **Config**: `~/.config/aidevops/matrix-bot.json` (600 permissions)
 - **Data**: `~/.aidevops/.agent-workspace/matrix-bot/`
 - **Session DB**: `~/.aidevops/.agent-workspace/memory/memory.db` (shared entity tables, SQLite WAL)
 - **Entity helper**: `entity-helper.sh` (identity resolution, Layer 0/1 interaction logging)
-- **SDK**: `matrix-bot-sdk`, `better-sqlite3` (npm)
-- **Requires**: Node.js >= 18, jq, OpenCode server, Matrix homeserver
-
-**Quick start**:
+- **SDK**: `matrix-bot-sdk`, `better-sqlite3` (npm); Node.js >= 18, jq, OpenCode server, Matrix homeserver
 
 ```bash
 matrix-dispatch-helper.sh setup          # Interactive wizard
@@ -40,186 +37,64 @@ matrix-dispatch-helper.sh start --daemon
 ## Architecture
 
 ```text
-┌──────────────────┐     ┌──────────────────┐     ┌──────────────────┐
-│ Matrix Room      │     │ Matrix Bot       │     │ OpenCode Server  │
-│                  │     │ (Node.js)        │     │                  │
-│ User types:      │────▶│ 1. Parse prefix  │────▶│ runner-helper.sh │
-│ !ai Review auth  │     │ 2. Check perms   │     │ → AI session     │
-│                  │◀────│ 3. Resolve entity │◀────│ → response       │
-│ AI response      │     │ 4. Load context  │     │                  │
-│                  │     │ 5. Dispatch      │     │                  │
-└──────────────────┘     └──────────────────┘     └──────────────────┘
-                                │
-                                ▼
-                    ┌──────────────────────┐
-                    │ memory.db (shared)   │
-                    │ ├── entities         │  Layer 2: Entity profiles
-                    │ ├── entity_channels  │  Cross-channel identity
-                    │ ├── interactions     │  Layer 0: Immutable log
-                    │ ├── conversations    │  Layer 1: Context summaries
-                    │ └── matrix_room_     │  Room-to-entity mapping
-                    │     sessions         │
-                    └──────────────────────┘
+Matrix Room ──▶ Matrix Bot ──▶ OpenCode / runner-helper.sh ──▶ AI session
+                    │
+                    ▼
+              memory.db (shared)
+              ├── entities / entity_channels / entity_profiles  (Layer 2)
+              ├── interactions      (Layer 0: immutable log)
+              ├── conversations     (Layer 1: summaries)
+              └── matrix_room_sessions
 ```
 
-**Message flow**:
+**Message flow**: `!ai <prompt>` → sync → permission check → room-to-runner lookup → entity resolution → Layer 0 log → load entity profile + conversation summary + recent interactions → privacy filter → dispatch → log response → post to room + reaction (⏳/✓/✗).
 
-1. User sends `!ai <prompt>` in a mapped Matrix room
-2. Bot receives message via Matrix sync
-3. Bot checks user permissions (allowedUsers config)
-4. Bot looks up room-to-runner mapping
-5. **Entity resolution**: Bot resolves Matrix user ID (`@user:server`) to an entity via `entity-helper.sh` (creates entity if new)
-6. **Layer 0 logging**: Bot logs the user message as an immutable interaction (append-only, never deleted)
-7. **Context loading**: Bot loads entity profile (preferences, communication style) + conversation summary + recent interactions
-8. **Privacy filtering**: Cross-channel information is filtered based on channel privacy level
-9. Bot dispatches entity-aware contextual prompt to runner via `runner-helper.sh`
-10. Runner executes via OpenCode (headless or warm server)
-11. Bot logs the AI response to Layer 0 and posts it back to the Matrix room
-12. Bot adds reaction emoji (hourglass while processing, checkmark on success, X on failure)
-
-**Session lifecycle**:
-
-1. First message in a room creates a session in `matrix_room_sessions` (shared memory.db)
-2. Entity is resolved from Matrix user ID and linked to the session
-3. All messages are logged to Layer 0 (immutable `interactions` table) via `entity-helper.sh`
-4. Subsequent messages include entity profile + conversation summary + recent interactions as context
-5. After `sessionIdleTimeout` seconds of inactivity, the bot compacts the session (AI summarises the conversation)
-6. The compacted summary is stored in the `conversations` table (Layer 1); **Layer 0 interactions are never deleted**
-7. Next message in that room primes a new session with the entity profile and conversation summary
-8. On graceful shutdown (SIGINT/SIGTERM), all active sessions are compacted before exit
+**Session lifecycle**: First message creates session → entity linked → all messages logged to Layer 0 (immutable) → after `sessionIdleTimeout` idle, AI summarises → summary stored in Layer 1; **Layer 0 never deleted** → next message primed with entity profile + summary → SIGINT/SIGTERM compacts all sessions before exit.
 
 ## Setup
 
-### Prerequisites
-
-1. **Matrix homeserver** - Synapse (recommended), Dendrite, or Conduit
-2. **Bot account** - Dedicated Matrix user for the bot
-3. **Access token** - Bot's Matrix access token
-4. **OpenCode server** - Running locally or remotely
-5. **Runners** - At least one runner created via `runner-helper.sh`
-
-### Auto-Setup Wizard
-
-The interactive setup wizard guides you through configuration with validation and defaults.
+**Prerequisites**: Matrix homeserver (Synapse recommended), bot account + access token, OpenCode server, at least one runner.
 
 ```bash
-# Test configuration without saving (dry-run mode)
-matrix-dispatch-helper.sh setup --dry-run
-
-# Run full setup (saves configuration)
-matrix-dispatch-helper.sh setup
+matrix-dispatch-helper.sh setup --dry-run  # Preview without saving
+matrix-dispatch-helper.sh setup            # Apply (prompts: homeserver URL, access token,
+                                           # allowed users, default runner, session idle timeout)
 ```
 
-**Dry-run mode** is useful for:
-- Testing configuration before committing to a live server
-- Previewing settings without installing dependencies
-- Validating homeserver URL and token format
-- Training or documentation purposes
-
-The wizard will prompt for:
-1. **Homeserver URL** - Your Matrix server (e.g., `https://matrix.example.com`)
-2. **Access token** - Bot account token (securely stored with 600 permissions)
-3. **Allowed users** - Optional comma-separated list of Matrix user IDs
-4. **Default runner** - Optional fallback runner for unmapped rooms
-5. **Session idle timeout** - Seconds before compacting conversation context (default: 300)
-
-After setup, the wizard automatically:
-- Installs Node.js dependencies (`matrix-bot-sdk`, `better-sqlite3`)
-- Generates session store and bot scripts
-- Creates necessary directories with secure permissions
-
-### Cloudron Setup (Recommended for Self-Hosted)
-
-Cloudron provides one-click Synapse installation with automatic SSL and updates. See `services/hosting/cloudron.md` for the `install-app` command reference.
+### Cloudron Setup (Recommended)
 
 ```bash
-# 1. Install Synapse on Cloudron
-# Dashboard > App Store > Matrix Synapse > Install
-# Set user management to "Leave user management to the app"
-# Or via CLI: cloudron-helper.sh install-app production matrix synapse.yourdomain.com
-
-# 2. Create bot user via Cloudron terminal (App > Terminal)
+# 1. Install Synapse: Dashboard > App Store > Matrix Synapse > Install
+# 2. Create bot user (App > Terminal):
 /app/code/env/bin/register_new_matrix_user -c /app/data/configs/homeserver.yaml http://localhost:8008
-# Username: aibot, Admin: No
-
-# 3. Get access token via login API (from Cloudron terminal)
+# 3. Get access token:
 curl -s -X POST "http://localhost:8008/_matrix/client/v3/login" \
   -H "Content-Type: application/json" \
   -d '{"type":"m.login.password","identifier":{"type":"m.id.user","user":"aibot"},"password":"YOUR_PASSWORD"}' \
-  | python3 -m json.tool
-# Copy the access_token value
-
-# 4. Disable federation and registration (in Cloudron terminal)
-# Edit /app/data/configs/homeserver.yaml:
-#   enable_registration: false
-#   enable_registration_without_verification: false
-#   resources: - names: [client]  (remove 'federation')
-# Then restart the app from Cloudron dashboard
-
-# 5. Create unencrypted rooms
-# IMPORTANT: Use Element client (web/desktop) — NOT FluffyChat.
-# FluffyChat forces encryption on all new rooms with no toggle to disable.
-# Element has an explicit encryption toggle during room creation.
-# Alternative: create rooms via Synapse API (see below)
-
-# 6. Configure the bot (use --dry-run to test first)
-matrix-dispatch-helper.sh setup --dry-run  # Preview configuration
-matrix-dispatch-helper.sh setup            # Apply configuration
-# Enter: https://synapse.yourdomain.com
-# Enter: access token from step 3
-# Enter allowed users (optional)
-# Enter default runner (optional)
-
-# 7. Create runners for each room mapping
-runner-helper.sh create code-reviewer --description "Code review bot" --workdir ~/Git/myproject
-
-# 8. Invite bot to rooms
-# In Element: Invite @aibot:yourdomain.com to your rooms
-
-# 9. Map rooms to runners
+  | python3 -m json.tool   # copy access_token
+# 4. In homeserver.yaml: set enable_registration: false, remove 'federation' from resources. Restart.
+# 5. Create unencrypted rooms via Element (NOT FluffyChat — forces encryption with no toggle)
+#    Or via API: curl -X POST ".../createRoom" -d '{"preset":"private_chat","initial_state":[]}'
+# 6. Configure + map + start:
+matrix-dispatch-helper.sh setup
+runner-helper.sh create code-reviewer --workdir ~/Git/myproject
 matrix-dispatch-helper.sh map '!roomid:yourdomain.com' code-reviewer
-
-# 10. Start the bot
 matrix-dispatch-helper.sh start --daemon
 ```
 
-**Creating unencrypted rooms via API** (alternative to Element):
+**Stale invites** (bot crashes on startup): `matrix-dispatch-helper.sh cleanup-invites`
+
+### Manual Synapse
 
 ```bash
-TOKEN="<admin-access-token>"
-curl -s -X POST "http://localhost:8008/_matrix/client/v3/createRoom" \
-  -H "Authorization: Bearer $TOKEN" \
-  -H "Content-Type: application/json" \
-  -d '{"name":"room-name","room_alias_name":"room-name","visibility":"private","preset":"private_chat","initial_state":[]}'
-```
-
-**Cleaning up stale invites** (if bot crashes on startup due to deleted rooms):
-
-```bash
-matrix-dispatch-helper.sh cleanup-invites
-```
-
-### Manual Synapse Setup
-
-```bash
-# Register bot user (if registration is closed)
-register_new_matrix_user -c /etc/synapse/homeserver.yaml \
-  http://localhost:8008 \
+register_new_matrix_user -c /etc/synapse/homeserver.yaml http://localhost:8008 \
   --user aibot --password "secure-password" --no-admin
-
-# Get access token via login API
 curl -X POST "https://matrix.example.com/_matrix/client/v3/login" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "type": "m.login.password",
-    "identifier": {"type": "m.id.user", "user": "aibot"},
-    "password": "secure-password"
-  }' | jq -r '.access_token'
+  -d '{"type":"m.login.password","identifier":{"type":"m.id.user","user":"aibot"},"password":"secure-password"}' \
+  | jq -r '.access_token'
 ```
 
 ## Configuration
-
-### Config File
 
 `~/.config/aidevops/matrix-bot.json` (600 permissions):
 
@@ -231,8 +106,7 @@ curl -X POST "https://matrix.example.com/_matrix/client/v3/login" \
   "defaultRunner": "",
   "roomMappings": {
     "!abc123:example.com": "code-reviewer",
-    "!def456:example.com": "seo-analyst",
-    "!ghi789:example.com": "ops-monitor"
+    "!def456:example.com": "seo-analyst"
   },
   "botPrefix": "!ai",
   "ignoreOwnMessages": true,
@@ -242,229 +116,117 @@ curl -X POST "https://matrix.example.com/_matrix/client/v3/login" \
 }
 ```
 
-### Configuration Options
-
 | Option | Default | Description |
 |--------|---------|-------------|
-| `homeserverUrl` | (required) | Matrix homeserver URL |
-| `accessToken` | (required) | Bot's Matrix access token |
-| `allowedUsers` | `""` (all) | Comma-separated list of allowed Matrix user IDs |
-| `defaultRunner` | `""` | Runner for unmapped rooms (empty = ignore) |
-| `roomMappings` | `{}` | Room ID to runner name mapping |
-| `botPrefix` | `!ai` | Command prefix to trigger the bot |
-| `ignoreOwnMessages` | `true` | Ignore messages from the bot itself |
-| `maxPromptLength` | `3000` | Max response length before truncation (channel-appropriate default) |
-| `responseTimeout` | `600` | Max seconds to wait for runner response |
-| `sessionIdleTimeout` | `300` | Fallback idle timeout in seconds (AI-judged idle detection is primary) |
+| `homeserverUrl` | required | Matrix homeserver URL |
+| `accessToken` | required | Bot's access token |
+| `allowedUsers` | `""` (all) | Comma-separated allowed user IDs |
+| `defaultRunner` | `""` | Runner for unmapped rooms |
+| `roomMappings` | `{}` | Room ID → runner name |
+| `botPrefix` | `!ai` | Command prefix |
+| `ignoreOwnMessages` | `true` | Ignore bot's own messages |
+| `maxPromptLength` | `3000` | Max prompt length |
+| `responseTimeout` | `600` | Max seconds to wait for runner |
+| `sessionIdleTimeout` | `300` | Idle timeout before compaction |
 
 ## Room-to-Runner Mapping
 
-Each Matrix room maps to exactly one runner. This determines which AI personality and instructions handle messages from that room.
-
 ```bash
-# Map rooms to runners
 matrix-dispatch-helper.sh map '!dev-room:server' code-reviewer
-matrix-dispatch-helper.sh map '!seo-room:server' seo-analyst
-matrix-dispatch-helper.sh map '!ops-room:server' ops-monitor
-
-# List mappings
 matrix-dispatch-helper.sh mappings
-
-# Remove a mapping
 matrix-dispatch-helper.sh unmap '!dev-room:server'
 ```
-
-### Recommended Room Layout
 
 | Room | Runner | Purpose |
 |------|--------|---------|
 | `#dev:server` | `code-reviewer` | Code review, security analysis |
 | `#seo:server` | `seo-analyst` | SEO audits, keyword research |
 | `#ops:server` | `ops-monitor` | Server health, deployment status |
-| `#general:server` | (default runner) | General AI assistance |
+| `#general:server` | (default) | General AI assistance |
 
-## Usage in Matrix
-
-### Basic Commands
+## Usage
 
 ```text
 !ai Review src/auth.ts for security vulnerabilities
 !ai Generate unit tests for the user registration flow
 !ai What are the top 10 keywords for "cloud hosting"?
-!ai Check the deployment status of production
 ```
 
-### Bot Behavior
+**Bot behaviour**: typing indicator; hourglass/checkmark/X reactions; one dispatch per room (prevents flooding); long responses truncated; auto-joins on invite; per-room context persisted.
 
-- **Typing indicator**: Bot shows typing while processing
-- **Reactions**: Hourglass while processing, checkmark on success, X on failure
-- **Concurrency**: One dispatch per room at a time (prevents flooding)
-- **Truncation**: Long responses are truncated with a note about full logs
-- **Auto-join**: Bot automatically joins rooms when invited
-- **Session persistence**: Each room maintains conversation context across messages
+## Session Persistence & Entity Integration
 
-## Session Persistence and Entity Integration
+**Entity resolution**: `@user:server` → lookup `entity_channels` → create if new → cache per session. Cross-channel profiles available if the same person is linked on SimpleX, email, etc.
 
-Each Matrix room maintains a persistent conversation session backed by the shared `memory.db` entity tables. This gives a continuous conversation feel with entity-aware context — the bot knows who you are, your preferences, and your conversation history across sessions.
+**Context loaded per prompt**:
 
-### How It Works
-
-1. **Message arrives** in room -- bot resolves Matrix user ID to entity via `entity-helper.sh`
-2. **Interaction logged** -- message recorded in Layer 0 (immutable, append-only `interactions` table)
-3. **Context loaded** -- entity profile + conversation summary + recent interactions prepended to prompt
-4. **Response received** -- AI response also logged to Layer 0
-5. **Idle timeout** (default 300s) -- bot asks the AI to summarise the conversation
-6. **Summary stored** -- conversation summary saved to Layer 1 (`conversations` table); **Layer 0 interactions are never deleted**
-7. **Next message** -- session primed with entity profile and conversation summary
-
-### Entity Resolution
-
-When a Matrix user sends a message, the bot resolves their Matrix user ID to an entity:
-
-- **Known user**: Exact match on `entity_channels` table (channel=matrix, channel_id=@user:server)
-- **New user**: Creates a new entity via `entity-helper.sh create` with the Matrix user ID linked
-- **Cross-channel**: If the same person is linked on other channels (SimpleX, email), their full profile is available
-
-Entity resolution is cached per bot session to avoid repeated lookups.
-
-### Privacy-Aware Context
-
-When loading entity context for a prompt:
-
-1. **Entity profile** (Layer 2) -- preferences, communication style, known needs
-2. **Conversation summary** (Layer 1) -- previous conversation context for this room
-3. **Recent interactions** (Layer 0) -- last N messages from this channel only
-4. **Privacy filter** -- emails, IPs, and API keys are redacted; cross-channel private information is not leaked
-
-### Session Management
+1. Entity profile (Layer 2) — preferences, communication style
+2. Conversation summary (Layer 1) — previous context for this room
+3. Recent interactions (Layer 0) — last N messages from this channel only
+4. Privacy filter — emails, IPs, API keys redacted; cross-channel private info not leaked
 
 ```bash
-# List all sessions with stats
 matrix-dispatch-helper.sh sessions list
-
-# View session statistics
 matrix-dispatch-helper.sh sessions stats
-
-# Clear a specific room's session
 matrix-dispatch-helper.sh sessions clear '!room:server'
-
-# Clear all sessions
 matrix-dispatch-helper.sh sessions clear-all
 ```
 
-### Graceful Shutdown
-
-When the bot receives SIGINT or SIGTERM, it compacts all active sessions before exiting. This ensures no conversation context is lost on restart.
-
-### Storage
-
-- **Database**: `~/.aidevops/.agent-workspace/memory/memory.db` (shared with entity system)
-- **Mode**: SQLite WAL (concurrent reads, single writer)
-- **Tables**:
-  - `matrix_room_sessions` -- per-room session state (room-to-entity mapping, activity tracking)
-  - `interactions` -- Layer 0 immutable interaction log (shared across all channels)
-  - `conversations` -- Layer 1 conversation summaries
-  - `entities` / `entity_channels` -- Layer 2 entity identity and cross-channel linking
-  - `entity_profiles` -- Layer 2 versioned entity preferences and needs
-- **Compaction**: Summarises conversation to Layer 1; Layer 0 interactions are never deleted
-- **Legacy**: Old `sessions.db` is still supported for backward compatibility (auto-detected)
+**Storage** (`memory.db`, SQLite WAL): `matrix_room_sessions` (per-room state), `interactions` (Layer 0 immutable), `conversations` (Layer 1 summaries), `entities`/`entity_channels`/`entity_profiles` (Layer 2 identity). Legacy `sessions.db` auto-detected.
 
 ## Operations
 
-### Start/Stop
-
 ```bash
-# Start in daemon mode (background)
-matrix-dispatch-helper.sh start --daemon
-
-# Start in foreground (for debugging)
-matrix-dispatch-helper.sh start
-
-# Stop the bot
+matrix-dispatch-helper.sh start --daemon   # Background
+matrix-dispatch-helper.sh start            # Foreground (debug)
 matrix-dispatch-helper.sh stop
-
-# Check status
 matrix-dispatch-helper.sh status
-```
-
-### Monitoring
-
-```bash
-# View latest logs
-matrix-dispatch-helper.sh logs
-
-# Follow logs in real-time
-matrix-dispatch-helper.sh logs --follow
-
-# View more history
-matrix-dispatch-helper.sh logs --tail 200
-```
-
-### Testing
-
-```bash
-# Test dispatch without Matrix (directly to runner)
+matrix-dispatch-helper.sh logs [--follow] [--tail 200]
 matrix-dispatch-helper.sh test code-reviewer "Review src/auth.ts"
-
-# Test room mapping resolution
-matrix-dispatch-helper.sh test '!abc123:server' "Test message"
 ```
 
-## Integration with Runners
-
-The bot dispatches to runners via `runner-helper.sh`, which handles:
-
-- Runner AGENTS.md (personality/instructions)
-- OpenCode session management
-- Memory namespace isolation
-- Mailbox integration (status reports)
-- Run logging
+## Runners
 
 ```bash
-# Create runners for Matrix rooms
-runner-helper.sh create code-reviewer \
-  --description "Reviews code for security and quality"
-
-runner-helper.sh create seo-analyst \
-  --description "SEO analysis and keyword research"
-
-# Edit runner instructions
+runner-helper.sh create code-reviewer --description "Reviews code for security and quality"
+runner-helper.sh create seo-analyst --description "SEO analysis and keyword research"
 runner-helper.sh edit code-reviewer
 ```
 
+Dispatches via `runner-helper.sh` — handles AGENTS.md, OpenCode sessions, memory namespace isolation, mailbox, run logging.
+
 ## Security
 
-1. **Access token**: Stored in config file with 600 permissions
-2. **User allowlist**: Restrict which Matrix users can trigger the bot
-3. **Room mapping**: Only mapped rooms can dispatch to runners
-4. **No admin access**: Bot account should not have Synapse admin privileges
-5. **Network**: OpenCode server should be localhost-only unless secured
-6. **Concurrency**: One dispatch per room prevents resource exhaustion
-7. **OpenCode server password**: Set `OPENCODE_SERVER_PASSWORD` env var to secure the server. Without it, any local process can dispatch to the AI. Low risk on single-user machines (localhost-only), but recommended for shared systems.
-8. **Encryption**: The bot cannot read encrypted messages. All rooms used with the bot must have encryption disabled. Use Element (not FluffyChat) to create rooms with encryption off.
+1. Config stored with 600 permissions
+2. `allowedUsers` restricts who can trigger the bot
+3. Only mapped rooms can dispatch to runners
+4. Bot account should NOT have Synapse admin privileges
+5. OpenCode server should be localhost-only unless secured
+6. One dispatch per room prevents resource exhaustion
+7. Set `OPENCODE_SERVER_PASSWORD` env var (recommended on shared systems)
+8. Bot cannot read encrypted messages — rooms must have encryption disabled; use Element (not FluffyChat) when creating rooms
 
 ## Troubleshooting
 
 | Issue | Solution |
 |-------|----------|
-| Bot not responding | Check `matrix-dispatch-helper.sh status` and logs |
-| "Not mapped" error | Map the room: `matrix-dispatch-helper.sh map '!room:server' runner` |
-| Runner dispatch fails | Ensure OpenCode server is running: `opencode serve` |
-| Runner not found | Create the runner: `runner-helper.sh create <name> --workdir /path` |
+| Bot not responding | `matrix-dispatch-helper.sh status` + logs |
+| "Not mapped" error | `matrix-dispatch-helper.sh map '!room:server' runner` |
+| Runner dispatch fails | Ensure OpenCode server running: `opencode serve` |
+| Runner not found | `runner-helper.sh create <name> --workdir /path` |
 | Access denied | Check `allowedUsers` in config |
-| Bot not joining rooms | Invite the bot user to the room via Element |
-| Bot crashes on startup | Run `matrix-dispatch-helper.sh cleanup-invites` to reject stale invites |
-| Raw JSON in responses | Regenerate bot script: `matrix-dispatch-helper.sh setup`, then restart: `matrix-dispatch-helper.sh stop && matrix-dispatch-helper.sh start` |
-| Stale PID file | Run `matrix-dispatch-helper.sh stop` to clean up |
-| Wrong working directory | Check runner config: `runner-helper.sh status <name>` (verify workdir) |
+| Bot not joining rooms | Invite bot user via Element |
+| Bot crashes on startup | `matrix-dispatch-helper.sh cleanup-invites` |
+| Raw JSON in responses | `matrix-dispatch-helper.sh setup` then restart |
+| Stale PID file | `matrix-dispatch-helper.sh stop` |
+| Wrong working directory | `runner-helper.sh status <name>` (verify workdir) |
 
 ## Related
 
-- `scripts/entity-helper.sh` - Entity memory system (identity resolution, Layer 0/1/2)
-- `scripts/runner-helper.sh` - Runner management
-- `scripts/memory-helper.sh` - Memory system (shared memory.db)
-- `scripts/cron-dispatch.sh` - Cron-triggered dispatch (similar pattern)
-- `tools/ai-assistants/headless-dispatch.md` - Headless dispatch patterns
-- `tools/ai-assistants/opencode-server.md` - OpenCode server API
-- `tools/ai-assistants/openclaw.md` - Alternative: OpenClaw multi-channel bot
-- `services/hosting/cloudron.md` - Cloudron platform for hosting Synapse
+- `scripts/entity-helper.sh` — Entity memory system (identity resolution, Layer 0/1/2)
+- `scripts/runner-helper.sh` — Runner management
+- `scripts/memory-helper.sh` — Memory system (shared memory.db)
+- `tools/ai-assistants/headless-dispatch.md` — Headless dispatch patterns
+- `tools/ai-assistants/opencode-server.md` — OpenCode server API
+- `tools/ai-assistants/openclaw.md` — Alternative: OpenClaw multi-channel bot
+- `services/hosting/cloudron.md` — Cloudron platform for hosting Synapse
