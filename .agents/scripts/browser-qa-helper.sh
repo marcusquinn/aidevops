@@ -791,6 +791,323 @@ cmd_a11y() {
 }
 
 # =============================================================================
+# Stability Testing (Reload + Polling Quiescence Detection)
+# =============================================================================
+
+# Generate the Playwright stability test script file.
+# Args: $1=script_file $2=safe_url $3=pages_array $4=reloads $5=timeout $6=poll_interval $7=poll_max_wait
+_generate_stability_script() {
+	local script_file="$1"
+	local safe_url="$2"
+	local pages_array="$3"
+	local reloads="$4"
+	local timeout="$5"
+	local poll_interval="$6"
+	local poll_max_wait="$7"
+
+	cat >"$script_file" <<SCRIPT
+import { chromium } from 'playwright';
+
+const baseUrl = '${safe_url}'.replace(/\/\$/, '');
+const pages = [${pages_array}];
+const reloads = ${reloads};
+const timeout = ${timeout};
+const pollInterval = ${poll_interval};
+const pollMaxWait = ${poll_max_wait};
+
+// Wait for network quiescence: no in-flight requests for pollInterval ms.
+async function waitForNetworkQuiescence(page) {
+  let inFlight = 0;
+  let quiesceTimer = null;
+  let resolved = false;
+
+  return new Promise((resolve) => {
+    const hardTimeout = setTimeout(() => {
+      if (!resolved) { resolved = true; resolve(false); }
+    }, pollMaxWait);
+
+    page.on('request', () => { inFlight++; clearTimeout(quiesceTimer); });
+    page.on('requestfinished', () => {
+      inFlight = Math.max(0, inFlight - 1);
+      if (inFlight === 0) {
+        quiesceTimer = setTimeout(() => {
+          if (!resolved) { resolved = true; clearTimeout(hardTimeout); resolve(true); }
+        }, pollInterval);
+      }
+    });
+    page.on('requestfailed', () => {
+      inFlight = Math.max(0, inFlight - 1);
+      if (inFlight === 0) {
+        quiesceTimer = setTimeout(() => {
+          if (!resolved) { resolved = true; clearTimeout(hardTimeout); resolve(true); }
+        }, pollInterval);
+      }
+    });
+
+    // If already quiescent at start, resolve after one interval.
+    quiesceTimer = setTimeout(() => {
+      if (inFlight === 0 && !resolved) { resolved = true; clearTimeout(hardTimeout); resolve(true); }
+    }, pollInterval);
+  });
+}
+
+// Capture a DOM fingerprint: element counts and text length.
+async function domFingerprint(page) {
+  return page.evaluate(() => ({
+    elementCount: document.querySelectorAll('*').length,
+    bodyLength: document.body ? document.body.innerText.length : 0,
+    title: document.title || '',
+  }));
+}
+
+async function run() {
+  const browser = await chromium.launch({ headless: true });
+  const allResults = [];
+
+  for (const pagePath of pages) {
+    const url = baseUrl + pagePath;
+    const reloadResults = [];
+    let stable = true;
+    let baseFingerprint = null;
+
+    const context = await browser.newContext();
+    const page = await context.newPage();
+
+    for (let i = 0; i < reloads; i++) {
+      const consoleErrors = [];
+      const networkErrors = [];
+
+      page.on('console', msg => {
+        if (msg.type() === 'error') {
+          consoleErrors.push({ text: msg.text(), location: msg.location() });
+        }
+      });
+      page.on('requestfailed', request => {
+        networkErrors.push({
+          url: request.url(),
+          method: request.method(),
+          error: request.failure() ? request.failure().errorText : 'unknown',
+        });
+      });
+
+      const startMs = Date.now();
+      let loadOk = true;
+      let loadError = null;
+      let status = 0;
+
+      try {
+        const response = await page.goto(url, { waitUntil: 'networkidle', timeout });
+        status = response ? response.status() : 0;
+        await waitForNetworkQuiescence(page);
+      } catch (err) {
+        loadOk = false;
+        loadError = err.message;
+      }
+
+      const loadMs = Date.now() - startMs;
+      let fingerprint = null;
+      if (loadOk) {
+        try { fingerprint = await domFingerprint(page); } catch (_) {}
+      }
+
+      if (i === 0) {
+        baseFingerprint = fingerprint;
+      } else if (fingerprint && baseFingerprint) {
+        // Quiescence check: title and element count must match baseline.
+        if (
+          fingerprint.title !== baseFingerprint.title ||
+          Math.abs(fingerprint.elementCount - baseFingerprint.elementCount) > 5
+        ) {
+          stable = false;
+        }
+      }
+
+      reloadResults.push({
+        reload: i + 1,
+        status,
+        loadMs,
+        ok: loadOk && status >= 200 && status < 400,
+        loadError,
+        consoleErrors,
+        networkErrors,
+        fingerprint,
+      });
+    }
+
+    await context.close();
+
+    const totalConsoleErrors = reloadResults.reduce((s, r) => s + r.consoleErrors.length, 0);
+    const totalNetworkErrors = reloadResults.reduce((s, r) => s + r.networkErrors.length, 0);
+    const allLoadsOk = reloadResults.every(r => r.ok);
+    const avgLoadMs = Math.round(
+      reloadResults.reduce((s, r) => s + r.loadMs, 0) / reloadResults.length
+    );
+
+    allResults.push({
+      page: pagePath,
+      reloads,
+      stable: stable && allLoadsOk && totalConsoleErrors === 0,
+      allLoadsOk,
+      stable_dom: stable,
+      totalConsoleErrors,
+      totalNetworkErrors,
+      avgLoadMs,
+      baseFingerprint,
+      reloadResults,
+    });
+  }
+
+  await browser.close();
+
+  const summary = {
+    total: allResults.length,
+    stable: allResults.filter(r => r.stable).length,
+    unstable: allResults.filter(r => !r.stable).length,
+  };
+
+  console.log(JSON.stringify({ summary, pages: allResults }, null, 2));
+}
+
+run().catch(err => {
+  console.error('Fatal error:', err.message);
+  process.exit(1);
+});
+SCRIPT
+	return 0
+}
+
+# Run stability testing: reload pages N times and detect quiescence.
+# Checks for consistent DOM structure, stable titles, no console errors,
+# and network quiescence across reloads.
+# Args: --url URL --pages "/ /about" --reloads N --timeout MS
+#       --poll-interval MS --poll-max-wait MS --format json|markdown
+# Output: JSON or markdown stability report
+cmd_stability() {
+	local url=""
+	local pages="/"
+	local reloads=3
+	local timeout="$BROWSER_QA_DEFAULT_TIMEOUT"
+	local poll_interval=500
+	local poll_max_wait=10000
+	local format="json"
+
+	while [[ $# -gt 0 ]]; do
+		case "$1" in
+		--url)
+			url="$2"
+			shift 2
+			;;
+		--pages)
+			pages="$2"
+			shift 2
+			;;
+		--reloads)
+			reloads="$2"
+			shift 2
+			;;
+		--timeout)
+			timeout="$2"
+			shift 2
+			;;
+		--poll-interval)
+			poll_interval="$2"
+			shift 2
+			;;
+		--poll-max-wait)
+			poll_max_wait="$2"
+			shift 2
+			;;
+		--format)
+			format="$2"
+			shift 2
+			;;
+		*)
+			log_error "Unknown option: $1"
+			return 1
+			;;
+		esac
+	done
+
+	if [[ -z "$url" ]]; then
+		log_error "URL is required. Use --url http://localhost:3000"
+		return 1
+	fi
+
+	if ! [[ "$reloads" =~ ^[0-9]+$ ]] || [[ "$reloads" -lt 1 ]]; then
+		log_error "--reloads must be a positive integer, got: ${reloads}"
+		return 1
+	fi
+
+	local script_file
+	script_file=$(mktemp "${TMPDIR:-/tmp}/browser-qa-stability-XXXXXX.mjs")
+
+	local pages_array
+	pages_array=$(_build_pages_js_array "$pages")
+	local safe_url
+	safe_url=$(js_escape_string "$url")
+
+	_generate_stability_script "$script_file" "$safe_url" "$pages_array" \
+		"$reloads" "$timeout" "$poll_interval" "$poll_max_wait"
+
+	log_info "Running stability test on ${url} for pages: ${pages} (${reloads} reloads each)"
+	local exit_code=0
+	local output
+	output=$(node "$script_file") || exit_code=$?
+	rm -f "$script_file"
+
+	if [[ $exit_code -ne 0 ]]; then
+		printf '%s\n' "$output"
+		return $exit_code
+	fi
+
+	if [[ "$format" == "markdown" ]]; then
+		_format_stability_markdown "$output"
+	else
+		printf '%s\n' "$output" | jq '.' 2>/dev/null || printf '%s\n' "$output"
+	fi
+	return 0
+}
+
+# Convert stability JSON report to markdown.
+# Args: $1 = JSON string with { summary: {...}, pages: [...] }
+_format_stability_markdown() {
+	local json="$1"
+
+	echo "## Stability Test Report"
+	echo ""
+	echo "**Date**: $(date -u +"%Y-%m-%dT%H:%M:%SZ")"
+	echo ""
+
+	local total stable unstable
+	total=$(printf '%s' "$json" | jq -r '.summary.total // 0' 2>/dev/null)
+	stable=$(printf '%s' "$json" | jq -r '.summary.stable // 0' 2>/dev/null)
+	unstable=$(printf '%s' "$json" | jq -r '.summary.unstable // 0' 2>/dev/null)
+
+	echo "### Summary"
+	echo ""
+	echo "| Metric | Count |"
+	echo "|--------|-------|"
+	echo "| Pages tested | ${total} |"
+	echo "| Stable | ${stable} |"
+	echo "| Unstable | ${unstable} |"
+	echo ""
+
+	local unstable_count
+	unstable_count=$(printf '%s' "$json" | jq '[.pages[] | select(.stable == false)] | length' 2>/dev/null)
+	if [[ "${unstable_count:-0}" -gt 0 ]]; then
+		echo "### Unstable Pages"
+		echo ""
+		printf '%s' "$json" | jq -r '
+			.pages[] | select(.stable == false) |
+			"- **\(.page)**: dom_stable=\(.stable_dom), loads_ok=\(.allLoadsOk), console_errors=\(.totalConsoleErrors), network_errors=\(.totalNetworkErrors), avg_load_ms=\(.avgLoadMs)"
+		' 2>/dev/null
+		echo ""
+	fi
+
+	return 0
+}
+
+# =============================================================================
 # Smoke Test (Console Errors + Basic Rendering)
 # =============================================================================
 
@@ -1203,6 +1520,7 @@ Commands:
   links        Check for broken internal links
   a11y         Run accessibility checks (contrast, ARIA, structure)
   smoke        Check for console errors and basic rendering
+  stability    Reload pages N times and verify DOM/network quiescence
   help         Show this help message
 
 Common Options:
@@ -1214,12 +1532,19 @@ Common Options:
   --output-dir DIR    Directory for screenshots and reports
   --max-dim PX        Resize screenshots to this max dimension (default: 4000, Anthropic hard limit: 8000)
 
+Stability-specific Options:
+  --reloads N         Number of reloads per page (default: 3, minimum: 1)
+  --poll-interval MS  Quiescence poll interval in milliseconds (default: 500)
+  --poll-max-wait MS  Maximum wait for network quiescence per reload (default: 10000)
+
 Examples:
   browser-qa-helper.sh run --url http://localhost:3000 --pages "/ /about /dashboard"
   browser-qa-helper.sh screenshot --url http://localhost:3000 --viewports desktop,tablet,mobile --max-dim 4000
   browser-qa-helper.sh links --url http://localhost:3000 --depth 3
   browser-qa-helper.sh a11y --url http://localhost:3000 --level AAA
   browser-qa-helper.sh smoke --url http://localhost:3000 --pages "/ /login"
+  browser-qa-helper.sh stability --url http://localhost:3000 --pages "/ /dashboard" --reloads 5
+  browser-qa-helper.sh stability --url http://localhost:3000 --format markdown --reloads 3
 
 Prerequisites:
   - Node.js and npm installed
@@ -1246,6 +1571,7 @@ main() {
 	links) cmd_links "$@" ;;
 	a11y) cmd_a11y "$@" ;;
 	smoke) cmd_smoke "$@" ;;
+	stability) cmd_stability "$@" ;;
 	help | --help | -h) cmd_help ;;
 	*)
 		log_error "${ERROR_UNKNOWN_COMMAND}: ${command}"
