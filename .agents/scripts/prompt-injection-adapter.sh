@@ -572,20 +572,39 @@ data['read'] = existing
 with open('$tmp_file', 'w') as f:
     yaml.dump(data, f, default_flow_style=False, sort_keys=False)
 " 2>/dev/null || {
-				# python3/pyyaml not available — safe fallback: convert inline
-				# to block format manually (handles empty [] only)
-				sed 's/^read:[[:space:]]*\[\]/read:/' "$aider_config" >"$tmp_file"
-				printf '  - %s\n' "$_PIA_AGENTS_MD" >>"$tmp_file"
+				# python3/pyyaml not available — safe fallback for empty
+				# inline lists only. Non-empty inline lists (read: ["a"])
+				# cannot be safely converted without a YAML parser; skip
+				# to avoid data loss.
+				if echo "$read_line" | grep -qE '^read:[[:space:]]*\[\]'; then
+					awk -v path="$_PIA_AGENTS_MD" '
+						/^read:[[:space:]]*\[\]/ {
+							print "read:"
+							print "  - " path
+							next
+						}
+						{ print }
+					' "$aider_config" >"$tmp_file"
+				else
+					_pia_log "warning" "Cannot modify inline read: list without python3+pyyaml — skipping"
+					rm -f "$tmp_file"
+					return 0
+				fi
 			}
 		else
 			# Scalar format (read: /path/to/file) — convert to block list
+			# preserving position in the file (replace in-place via awk)
 			local existing_path
 			existing_path=$(echo "$read_line" | sed 's/^read:[[:space:]]*//')
-			{
-				# Replace the read: line with block format
-				sed '/^read:/d' "$aider_config"
-				printf 'read:\n  - %s\n  - %s\n' "$existing_path" "$_PIA_AGENTS_MD"
-			} >"$tmp_file"
+			awk -v existing="$existing_path" -v new_path="$_PIA_AGENTS_MD" '
+				/^read:[[:space:]]/ && !/^read:[[:space:]]*\[/ {
+					print "read:"
+					print "  - " existing
+					print "  - " new_path
+					next
+				}
+				{ print }
+			' "$aider_config" >"$tmp_file"
 		fi
 
 		mv "$tmp_file" "$aider_config"
