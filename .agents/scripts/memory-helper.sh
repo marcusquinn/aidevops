@@ -97,6 +97,7 @@ USAGE:
 COMMANDS:
     store       Store a new learning (with automatic deduplication)
     recall      Search and retrieve learnings
+    feedback    Record retrieval feedback (mark a recalled memory as useful/not useful)
     log         Show recent auto-captured memories (alias for recall --recent --auto-only)
     history     Show version history for a memory (ancestors/descendants)
     latest      Find the latest version of a memory chain
@@ -169,6 +170,18 @@ RECALL OPTIONS:
     --hybrid              Combine FTS5 keyword + semantic search using RRF
     --stats               Show memory statistics
     --json                Output as JSON
+
+FEEDBACK OPTIONS:
+    <memory_id>           Memory ID to record feedback for (required)
+    --signal <type>       Signal type: cited, edited, led_to_new, reused, dead_end
+    --value <float>       Custom reward value (overrides --signal)
+
+FEEDBACK SIGNALS (retrieval feedback loop):
+    cited      (+1.0) — memory was referenced/linked in new content
+    edited     (+0.5) — memory was edited/updated after retrieval
+    led_to_new (+0.6) — a new memory was created after retrieving this one
+    reused     (+0.4) — same memory recalled across different queries
+    dead_end   (-0.15) — retrieved in top results but no follow-up action
 EOF
 	return 0
 }
@@ -269,6 +282,15 @@ EXAMPLES:
 
     # Recall learnings (hybrid FTS5+semantic - best results)
     memory-helper.sh recall --query "authentication patterns" --hybrid
+
+    # Record feedback: memory was cited in new content
+    memory-helper.sh feedback mem_xxx --signal cited
+
+    # Record feedback: memory was a dead end (retrieved but not used)
+    memory-helper.sh feedback mem_xxx --signal dead_end
+
+    # Record feedback with custom reward value
+    memory-helper.sh feedback mem_xxx --value 0.8
 
     # Check for stale entries
     memory-helper.sh validate
@@ -378,6 +400,7 @@ main() {
 	case "$command" in
 	store) cmd_store "$@" ;;
 	recall) cmd_recall "$@" ;;
+	feedback) cmd_feedback "$@" ;;
 	log) cmd_log "$@" ;;
 	history) cmd_history "$@" ;;
 	latest) cmd_latest "$@" ;;
