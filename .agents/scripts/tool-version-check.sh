@@ -8,7 +8,7 @@
 #   tool-version-check.sh --category npm  # Check only npm tools
 #   tool-version-check.sh --json       # Output as JSON
 #
-# Categories: npm, brew, pip, custom, all (default)
+# Categories: npm, brew, pip, pipx, uv, custom, all (default)
 
 # shellcheck disable=SC1091
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
@@ -32,7 +32,7 @@ while [[ $# -gt 0 ]]; do
 		;;
 	--category | -c)
 		if [[ -z "${2:-}" ]]; then
-			echo "Error: --category requires a value (npm, brew, pip, custom, all)"
+			echo "Error: --category requires a value (npm, brew, pip, pipx, uv, custom, all)"
 			exit 1
 		fi
 		CATEGORY="$2"
@@ -51,7 +51,7 @@ while [[ $# -gt 0 ]]; do
 		echo ""
 		echo "Options:"
 		echo "  --update, -u       Automatically update outdated tools"
-		echo "  --category, -c     Check only specific category (npm, brew, pip, custom, all)"
+		echo "  --category, -c     Check only specific category (npm, brew, pip, pipx, uv, custom, all)"
 		echo "  --json, -j         Output results as JSON"
 		echo "  --quiet, -q        Only show outdated tools"
 		echo "  --help, -h         Show this help"
@@ -74,6 +74,7 @@ _oc_upgrade_cmd='if r=$(command -v opencode 2>/dev/null); [[ "$r" == *bun* ]]; t
 
 # Tool definitions
 # Format: category|display_name|cli_command|version_flag|package_name|update_command
+# Categories: npm, brew, pip, pipx, uv, custom/self
 
 NPM_TOOLS=(
 	"npm|OpenCode|opencode|--version|opencode-ai|${_oc_upgrade_cmd}"
@@ -106,8 +107,16 @@ PIP_TOOLS=(
 	"pip|Beads Viewer|beads_viewer|--version|beads-viewer|pip install --upgrade beads-viewer"
 	"pip|DSPy|dspy|--version|dspy-ai|pip install --upgrade dspy-ai"
 	"pip|Crawl4AI|crawl4ai|--version|crawl4ai|pip install --upgrade crawl4ai"
-	"pip|Analytics MCP|analytics-mcp|--version|analytics-mcp|pipx upgrade analytics-mcp"
-	"pip|Outscraper MCP|outscraper-mcp-server|--version|outscraper-mcp-server|uv tool upgrade outscraper-mcp-server"
+)
+
+# Tools installed via pipx (isolated environments — not visible to pip show)
+PIPX_TOOLS=(
+	"pipx|Analytics MCP|analytics-mcp|--version|analytics-mcp|pipx upgrade analytics-mcp"
+)
+
+# Tools installed via uv tool install (isolated environments — not visible to pip show)
+UV_TOOLS=(
+	"uv|Outscraper MCP|outscraper-mcp-server|--version|outscraper-mcp-server|uv tool upgrade outscraper-mcp-server"
 )
 
 # Tools installed via curl/custom installers (not in brew/npm/pip registries)
@@ -132,38 +141,64 @@ declare -a JSON_RESULTS=()
 # slow interpreters (Python, Ruby) while still catching hung MCP servers.
 readonly VERSION_TIMEOUT=10
 
-# Get installed version for Python packages.
-# Tries pip show first (standard pip installs), then pipx list (pipx-isolated
-# tools like analytics-mcp), then uv tool list (uv-isolated tools like
-# outscraper-mcp-server). pip-only libraries (e.g. crawl4ai, dspy) have no
-# CLI binary so command -v always fails — this function handles all three cases.
+# Get installed version for packages installed via standard pip.
+# Uses `pip show` which only finds packages in the active pip environment.
+# pip-only libraries (e.g. crawl4ai, dspy) have no CLI binary so
+# command -v always fails — this function handles that case.
+# For pipx-isolated packages use get_pipx_installed_version().
+# For uv-isolated packages use get_uv_installed_version().
 get_pip_installed_version() {
 	local pkg="$1"
 	local version
 
-	# 1. Try pip show (standard pip installs and library packages)
 	version=$(pip show "$pkg" 2>/dev/null | grep -i '^Version:' | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1)
 	if [[ -n "$version" ]]; then
 		echo "$version"
 		return 0
 	fi
 
-	# 2. Try pipx list (packages installed in isolated pipx environments)
-	if command -v pipx &>/dev/null; then
-		version=$(pipx list --short 2>/dev/null | grep -i "^${pkg}" | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1)
-		if [[ -n "$version" ]]; then
-			echo "$version"
-			return 0
-		fi
+	echo "not installed"
+	return 0
+}
+
+# Get installed version for packages in pipx isolated environments.
+# Uses `pipx list --short` which outputs lines like: "package 1.2.3".
+# Only handles packages installed via `pipx install` — not pip or uv.
+get_pipx_installed_version() {
+	local pkg="$1"
+	local version
+
+	if ! command -v pipx &>/dev/null; then
+		echo "not installed"
+		return 0
 	fi
 
-	# 3. Try uv tool list (packages installed via uv tool install)
-	if command -v uv &>/dev/null; then
-		version=$(uv tool list 2>/dev/null | grep -i "^${pkg}" | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1)
-		if [[ -n "$version" ]]; then
-			echo "$version"
-			return 0
-		fi
+	version=$(pipx list --short 2>/dev/null | grep -i "^${pkg}" | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1)
+	if [[ -n "$version" ]]; then
+		echo "$version"
+		return 0
+	fi
+
+	echo "not installed"
+	return 0
+}
+
+# Get installed version for packages in uv isolated tool environments.
+# Uses `uv tool list` which outputs lines like: "package v1.2.3".
+# Only handles packages installed via `uv tool install` — not pip or pipx.
+get_uv_installed_version() {
+	local pkg="$1"
+	local version
+
+	if ! command -v uv &>/dev/null; then
+		echo "not installed"
+		return 0
+	fi
+
+	version=$(uv tool list 2>/dev/null | grep -i "^${pkg}" | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1)
+	if [[ -n "$version" ]]; then
+		echo "$version"
+		return 0
 	fi
 
 	echo "not installed"
@@ -321,12 +356,18 @@ check_tool() {
 	local update_cmd="$6"
 
 	local installed
-	# pip tools: use pip show for version detection — pip-only libraries (e.g.
-	# crawl4ai, dspy) have no CLI binary so command -v always fails.
+	# pip tools: use pip show — pip-only libraries (e.g. crawl4ai, dspy) have
+	# no CLI binary so command -v always fails.
+	# pipx tools: use pipx list — packages in isolated pipx environments.
+	# uv tools: use uv tool list — packages in isolated uv environments.
 	# npm tools: pass package name so fallback to package.json works.
 	# All other categories: standard CLI binary detection.
 	if [[ "$category" == "pip" ]]; then
 		installed=$(get_pip_installed_version "$pkg")
+	elif [[ "$category" == "pipx" ]]; then
+		installed=$(get_pipx_installed_version "$pkg")
+	elif [[ "$category" == "uv" ]]; then
+		installed=$(get_uv_installed_version "$pkg")
 	elif [[ "$category" == "npm" ]]; then
 		installed=$(get_installed_version "$cmd" "$ver_flag" "$pkg")
 	else
@@ -337,7 +378,7 @@ check_tool() {
 	case "$category" in
 	npm) latest=$(get_npm_latest "$pkg") ;;
 	brew) latest=$(get_brew_latest "$pkg") ;;
-	pip) latest=$(get_pip_latest "$pkg") ;;
+	pip | pipx | uv) latest=$(get_pip_latest "$pkg") ;;
 	self) latest="$installed" ;; # Self-updating tools — no registry to check
 	*) latest="unknown" ;;
 	esac
@@ -442,6 +483,12 @@ _check_all_categories() {
 	pip)
 		check_category "Python/Pip" "${PIP_TOOLS[@]}"
 		;;
+	pipx)
+		check_category "Python/Pipx" "${PIPX_TOOLS[@]}"
+		;;
+	uv)
+		check_category "Python/uv" "${UV_TOOLS[@]}"
+		;;
 	custom)
 		check_category "Custom/Self-Updating" "${CUSTOM_TOOLS[@]}"
 		;;
@@ -454,6 +501,12 @@ _check_all_categories() {
 		fi
 		if command -v pip &>/dev/null && [[ ${#PIP_TOOLS[@]} -gt 0 ]]; then
 			check_category "Python/Pip" "${PIP_TOOLS[@]}"
+		fi
+		if command -v pipx &>/dev/null && [[ ${#PIPX_TOOLS[@]} -gt 0 ]]; then
+			check_category "Python/Pipx" "${PIPX_TOOLS[@]}"
+		fi
+		if command -v uv &>/dev/null && [[ ${#UV_TOOLS[@]} -gt 0 ]]; then
+			check_category "Python/uv" "${UV_TOOLS[@]}"
 		fi
 		if [[ ${#CUSTOM_TOOLS[@]} -gt 0 ]]; then
 			check_category "Custom/Self-Updating" "${CUSTOM_TOOLS[@]}"
