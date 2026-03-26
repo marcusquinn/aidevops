@@ -2690,7 +2690,14 @@ _complexity_scan_create_md_issues() {
 **File:** \`${file_path}\`
 **Current size:** ${line_count} lines (threshold: ${COMPLEXITY_MD_LINE_THRESHOLD})
 
-### Proposed action
+### Classify before acting
+
+**First, determine the file type** — the correct action depends on whether this is an instruction doc or a reference corpus:
+
+- **Instruction doc** (agent rules, workflows, decision trees, operational procedures): Tighten prose, reorder by importance, split if multiple concerns. Follow guidance below.
+- **Reference corpus** (SKILL.md, domain knowledge base, textbook-style content with self-contained sections): Do NOT compress content. Instead, split into chapter files with a slim index. See \`tools/code-review/code-simplifier.md\` \"Reference corpora\" classification (GH#6432).
+
+### For instruction docs — proposed action
 
 Tighten and restructure this agent doc. Follow \`tools/build-agent/build-agent.md\` guidance. Key principles:
 
@@ -2699,15 +2706,23 @@ Tighten and restructure this agent doc. Follow \`tools/build-agent/build-agent.m
 3. **Split if needed** — if the file covers multiple distinct concerns, extract sub-docs with a parent index. Use progressive disclosure (pointers, not inline content).
 4. **Use search patterns, not line numbers** — any \`file:line_number\` references to other files go stale on every edit. Use \`rg \"pattern\"\` or section heading references instead.
 
+### For reference corpora — proposed action
+
+1. **Extract each major section** into its own file (e.g., \`01-introduction.md\`, \`02-fundamentals.md\`)
+2. **Replace the original with a slim index** (~100-200 lines) — table of contents with one-line descriptions and file pointers
+3. **Zero content loss** — every line moves to a chapter file, nothing is deleted or compressed
+4. **Reconcile existing chapter files** — if partial splits already exist, deduplicate and keep the most complete version
+
 ### Verification
 
 - Content preservation: all code blocks, URLs, task ID references (\`tNNN\`, \`GH#NNN\`), and command examples must be present before and after
 - No broken internal links or references
 - Agent behaviour unchanged (test with a representative query if possible)
+- For reference corpora: \`wc -l\` total of chapter files >= original line count minus index overhead
 
 ### Confidence: medium
 
-Automated scan identified this file by size. The best simplification strategy requires human judgment — some large files are appropriately large.
+Automated scan identified this file by size. The best simplification strategy requires human judgment — some large files are appropriately large. Reference corpora (SKILL.md, domain knowledge bases) need restructuring into chapters, not content reduction.
 
 ---
 **To approve or decline**, comment on this issue:

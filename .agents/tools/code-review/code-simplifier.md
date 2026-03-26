@@ -134,6 +134,27 @@ Workers that skip verification or mark a PR ready without running the specified 
 - Abstractions that add indirection without clear benefit
 - Consolidating similar sections that address different audiences or contexts
 
+### Reference corpora — restructure, do not compress (GH#6432)
+
+Some large `.md` files are **knowledge bases** (skill docs, domain reference material, textbooks) rather than agent instruction docs. Their size comes from breadth of domain knowledge, not verbosity — the content is already as dense as it should be.
+
+**How to identify:** The file is a SKILL.md or similar reference doc where sections are self-contained domain knowledge (e.g., "Landing Page Optimization", "Checkout Flow Psychology") rather than operational rules, workflows, or decision trees. The content reads like a textbook chapter, not like agent instructions.
+
+**Correct action: split into chapter files with a slim index.** Do NOT compress, summarise, or remove domain knowledge. Instead:
+
+1. Extract each major section (`## N. Section`) into its own file (e.g., `01-introduction.md`, `02-fundamentals.md`)
+2. Replace the original file with a slim index (~100-200 lines) — table of contents with one-line descriptions and file pointers to each chapter
+3. Verify zero content loss: `wc -l` total of all chapter files >= original line count minus index overhead
+4. This enables progressive disclosure — agents load only the chapter they need, not the entire corpus
+
+**What NOT to do with reference corpora:**
+
+- Do not "tighten prose" — reference material is already dense
+- Do not merge small sections to reduce file count — each section is a distinct domain concern
+- Do not remove sections that seem to overlap — domain topics overlap by nature (e.g., social proof appears in landing pages AND checkout flows)
+
+**Issue template guidance:** When creating `simplification-debt` issues for oversized files, classify the file first. If it's a reference corpus, the issue title should say "restructure" not "tighten", and the body should recommend chapter splitting, not prose compression.
+
 ### Almost never simplify (flag but do not recommend)
 
 - Comments containing task IDs, incident numbers, or error pattern data (e.g., `t1345`, `GH#2928`, `46.8% failure rate`) -- these are institutional memory
