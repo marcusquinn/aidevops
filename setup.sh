@@ -736,29 +736,19 @@ _setup_run_non_interactive() {
 	init_settings_json
 
 	# Parallelise independent skill operations (t1356: ~84s serial -> ~18s parallel)
-	# generate_agent_skills (18s), create_skill_symlinks (<1s), and
-	# scan_imported_skills (66s serial, ~10s with parallel scanning) are independent.
-	generate_agent_skills &
-	local _pid_skills=$!
+	# generate_agent_skills must complete before create_skill_symlinks (symlinks
+	# depend on generated SKILL.md files). scan_imported_skills is independent.
+	generate_agent_skills || print_warning "Agent skills generation encountered issues (non-critical)"
 	create_skill_symlinks &
 	local _pid_symlinks=$!
 	scan_imported_skills &
 	local _pid_scan=$!
-	wait "$_pid_skills" 2>/dev/null || print_warning "Agent skills generation encountered issues (non-critical)"
 	wait "$_pid_symlinks" 2>/dev/null || print_warning "Skill symlink creation encountered issues (non-critical)"
 	wait "$_pid_scan" 2>/dev/null || print_warning "Skill security scan encountered issues (non-critical)"
 
 	inject_agents_reference
-	if is_feature_enabled manage_opencode_config 2>/dev/null; then
-		update_opencode_config
-	else
-		print_info "OpenCode config management disabled via config (integrations.manage_opencode_config)"
-	fi
-	if is_feature_enabled manage_claude_config 2>/dev/null; then
-		update_claude_config
-	else
-		print_info "Claude config management disabled via config (integrations.manage_claude_config)"
-	fi
+	update_opencode_config
+	update_claude_config
 	update_codex_config
 	update_cursor_config
 	disable_ondemand_mcps
@@ -793,8 +783,10 @@ _setup_run_interactive() {
 	confirm_step "Setup Git CLIs (gh, glab, tea)" && setup_git_clis
 	confirm_step "Setup file discovery tools (fd, ripgrep, ripgrep-all)" && setup_file_discovery_tools
 	confirm_step "Setup rtk (token-optimized CLI output, 60-90% savings)" && setup_rtk
-	confirm_step "Setup shell linting tools (shellcheck, shfmt)" && setup_shell_linting_tools
-	setup_shellcheck_wrapper
+	confirm_step "Setup shell linting tools (shellcheck, shfmt)" && {
+		setup_shell_linting_tools
+		setup_shellcheck_wrapper
+	}
 	confirm_step "Setup Qlty CLI (multi-linter code quality)" && setup_qlty_cli
 	confirm_step "Rosetta audit (Apple Silicon x86 migration)" && setup_rosetta_audit
 	confirm_step "Setup Worktrunk (git worktree management)" && setup_worktrunk
@@ -819,7 +811,7 @@ _setup_run_interactive() {
 	confirm_step "Check OpenCode prompt drift" && check_opencode_prompt_drift
 	confirm_step "Deploy aidevops agents to ~/.aidevops/agents/" && deploy_aidevops_agents
 	confirm_step "Sync agents from private repositories" && sync_agent_sources
-	confirm_step "Install Claude Code safety hooks (block destructive commands)" && setup_safety_hooks
+	is_feature_enabled safety_hooks 2>/dev/null && confirm_step "Install Claude Code safety hooks (block destructive commands)" && setup_safety_hooks
 	confirm_step "Initialize settings.json (canonical config file)" && init_settings_json
 	confirm_step "Setup multi-tenant credential storage" && setup_multi_tenant_credentials
 	confirm_step "Generate agent skills (SKILL.md files)" && generate_agent_skills
@@ -864,6 +856,12 @@ _setup_post_setup_steps() {
 
 	echo ""
 	print_success "Setup complete!"
+
+	# Non-interactive mode: deploy + migrations only — skip schedulers,
+	# services, and optional post-setup work (CI/agent shells don't need them).
+	if [[ "$NON_INTERACTIVE" == "true" ]]; then
+		return 0
+	fi
 
 	# Post-setup: auto-update, schedulers, final instructions (GH#5793)
 	setup_auto_update
