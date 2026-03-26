@@ -539,7 +539,7 @@ _deploy_prompt_factory() {
 
 # Gemini CLI: deploy AGENTS.md to ~/.gemini/
 _deploy_prompt_gemini() {
-	_deploy_prompt_agents_md "gemini"
+	_deploy_prompt_agents_md "gemini-cli"
 	return $?
 }
 

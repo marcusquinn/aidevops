@@ -331,7 +331,7 @@ _register_mcp_mcpservers() {
 		config_path="$HOME/.codeium/windsurf/mcp_config.json"
 		mkdir -p "$HOME/.codeium/windsurf"
 		;;
-	gemini)
+	gemini | gemini-cli)
 		config_path="$HOME/.gemini/settings.json"
 		mkdir -p "$HOME/.gemini"
 		;;
@@ -342,6 +342,10 @@ _register_mcp_mcpservers() {
 	kiro)
 		config_path="$HOME/.kiro/settings/mcp.json"
 		mkdir -p "$HOME/.kiro/settings"
+		;;
+	amp)
+		config_path="$HOME/.amp/settings.json"
+		mkdir -p "$HOME/.amp"
 		;;
 	*)
 		print_warning "Unknown mcpServers runtime: $runtime_id"
@@ -550,13 +554,13 @@ register_mcp_for_runtime() {
 	opencode)
 		_register_mcp_opencode "$mcp_name" "$mcp_json"
 		;;
-	claude)
+	claude | claude-code)
 		_register_mcp_claude "$mcp_name" "$mcp_json"
 		;;
 	codex)
 		_register_mcp_codex "$mcp_name" "$mcp_json"
 		;;
-	cursor | windsurf | gemini | kilo | kiro)
+	cursor | windsurf | gemini | gemini-cli | kilo | kiro | amp)
 		_register_mcp_mcpservers "$runtime_id" "$mcp_name" "$mcp_json"
 		;;
 	droid)
