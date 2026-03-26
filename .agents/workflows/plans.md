@@ -134,6 +134,8 @@ Use `templates/brief-template.md`. The brief captures: origin (session ID, date,
 
 Task descriptions in TODO.md become GitHub issue titles. Write them so that a reader scanning a list of 50 issues can immediately tell whether two issues describe the same work. This is the primary input to the pulse's intelligence-first duplicate detection.
 
+Exception: persistent/pinned monitoring issues (for example daily review, dashboard, or long-lived watcher threads) keep their existing concise title style for continuity. Apply the verbosity guidance to normal task-generated issues, not pinned monitoring threads.
+
 **Good descriptions** — specific enough to distinguish from similar work:
 - `Add WooCommerce tax fallback when no tax class matches product category`
 - `Fix infinite redirect loop on /login when session cookie is expired`
