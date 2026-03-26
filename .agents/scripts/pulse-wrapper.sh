@@ -2807,7 +2807,11 @@ _complexity_scan_has_existing_issue() {
 	local issue_key="$2"
 
 	if echo "$existing_issues" | jq -e --arg key "$issue_key" \
-		'.[] | select((.title // "" | contains($key)) or (.body // "" | contains("**File:** `" + $key + "`")))' \
+		'.[] | select(
+			(.title // "" | contains($key)) or
+			(.body // "" | contains("**File:** `" + $key + "`")) or
+			(.body // "" | contains("## Qlty Maintainability \u2014 " + $key))
+		)' \
 		>/dev/null 2>&1; then
 		return 0
 	fi
