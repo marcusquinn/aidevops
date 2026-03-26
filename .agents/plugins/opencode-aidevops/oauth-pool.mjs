@@ -247,6 +247,28 @@ const TOKEN_ENDPOINT = ANTHROPIC_TOKEN_ENDPOINT;
 // ---------------------------------------------------------------------------
 
 /**
+ * Format milliseconds as a human-readable time string (e.g. "2h 15m" or "45m").
+ * @param {number} ms
+ * @returns {string}
+ */
+function formatDuration(ms) {
+  const mins = Math.floor(ms / 60000);
+  const hours = Math.floor(mins / 60);
+  return hours > 0 ? `${hours}h ${mins % 60}m` : `${mins}m`;
+}
+
+/**
+ * Format elapsed milliseconds as a human-readable "ago" string.
+ * @param {number} ms - elapsed milliseconds
+ * @returns {string}
+ */
+function formatAgo(ms) {
+  const mins = Math.floor(ms / 60000);
+  const hours = Math.floor(mins / 60);
+  return hours > 0 ? `${hours}h ${mins % 60}m ago` : `${mins}m ago`;
+}
+
+/**
  * Parse Retry-After header and return a bounded cooldown.
  * Supports both integer seconds and HTTP-date formats.
  * @param {string|null} retryAfter
@@ -267,6 +289,74 @@ function parseRetryAfterCooldown(retryAfter) {
   }
 
   return TOKEN_ENDPOINT_COOLDOWN_MS;
+}
+
+/**
+ * Handle a 429 response from a token endpoint: parse Retry-After, set the
+ * cooldown variable, and log a message. Returns the cooldown duration (ms).
+ *
+ * @param {object} response - Response-like object with headers.get()
+ * @param {string} context - description for logging
+ * @param {string} providerLabel - e.g. "Anthropic", "OpenAI", "Google"
+ * @param {(until: number) => void} setCooldown - setter for the cooldown variable
+ * @returns {number} cooldown duration in ms
+ */
+function handleTokenEndpoint429(response, context, providerLabel, setCooldown) {
+  const retryAfter = response.headers.get("retry-after");
+  const cooldownMs = parseRetryAfterCooldown(retryAfter);
+  setCooldown(Date.now() + cooldownMs);
+  const cooldownMinutes = Math.ceil(cooldownMs / 60000);
+  console.error(
+    [
+      `[aidevops] OAuth pool: ${context} failed: rate limited by ${providerLabel}.`,
+      `Cooldown set for ${cooldownMinutes}m — no further token requests until then.`,
+      "Use /model-accounts-pool reset-cooldowns to clear manually.",
+    ].join(" "),
+  );
+  return cooldownMs;
+}
+
+/**
+ * Check whether a token endpoint is currently rate-limited (in cooldown).
+ * If so, logs a message and returns a synthetic 429 response.
+ * Returns null if the endpoint is available.
+ *
+ * @param {number} cooldownUntil - timestamp until which the endpoint is gated
+ * @param {string} context - description for logging
+ * @param {string} providerLabel - e.g. "OpenAI", "Google"
+ * @returns {{ ok: false, status: 429, statusText: string, headers: object, json(): Promise<any>, text(): Promise<string> } | null}
+ */
+function checkCooldownGate(cooldownUntil, context, providerLabel) {
+  const now = Date.now();
+  if (cooldownUntil <= now) return null;
+  const remainingMinutes = Math.ceil((cooldownUntil - now) / 60000);
+  console.error(
+    [
+      `[aidevops] OAuth pool: ${context} skipped — ${providerLabel} token endpoint rate limited,`,
+      `cooldown ${remainingMinutes}m remaining.`,
+      "Use /model-accounts-pool reset-cooldowns to clear manually.",
+    ].join(" "),
+  );
+  return {
+    ok: false,
+    status: 429,
+    statusText: "Rate Limited (cooldown)",
+    headers: { get() { return null; } },
+    async json() { return { error: "Rate limited (cooldown)" }; },
+    async text() { return "Rate limited (cooldown)"; },
+  };
+}
+
+/**
+ * Resolve the inject function for a given provider.
+ * @param {"anthropic"|"openai"|"cursor"|"google"} provider
+ * @returns {Function}
+ */
+function resolveInjectFn(provider) {
+  if (provider === "cursor") return injectCursorPoolToken;
+  if (provider === "openai") return injectOpenAIPoolToken;
+  if (provider === "google") return injectGooglePoolToken;
+  return injectPoolToken;
 }
 
 /**
@@ -408,51 +498,42 @@ function curlTokenEndpoint(url, options, context) {
  * @param {string} context - description for logging
  * @returns {Promise<{ ok: boolean, status: number, statusText: string, headers: { get(k: string): string|null }, json(): Promise<any>, text(): Promise<string> }>}
  */
-async function fetchTokenEndpoint(body, context) {
-  // Check cooldown gate — skip the request entirely if rate limited recently
-  const now = Date.now();
-  if (tokenEndpointCooldownUntil > now) {
-    const remainingSeconds = Math.ceil((tokenEndpointCooldownUntil - now) / 1000);
-    const remainingMinutes = Math.ceil(remainingSeconds / 60);
-    console.error(
-      [
-        `[aidevops] OAuth pool: ${context} skipped — token endpoint rate limited,`,
-        `cooldown ${remainingMinutes}m remaining.`,
-        "Use /model-accounts-pool reset-cooldowns to clear manually.",
-      ].join(" "),
-    );
-    return {
-      ok: false,
-      status: 429,
-      statusText: "Rate Limited (cooldown)",
-      headers: { get() { return null; } },
-      async json() { return { error: "Rate limited (cooldown)" }; },
-      async text() { return "Rate limited (cooldown)"; },
-    };
-  }
+/**
+ * Generic token endpoint fetch with cooldown gate and 429 handling.
+ * All three provider-specific fetch functions delegate here.
+ *
+ * @param {{ url: string, userAgent: string, body: string, contentType?: string, cooldownUntil: number, providerLabel: string, setCooldown: (until: number) => void }} opts
+ * @param {string} context - description for logging
+ * @returns {Promise<{ ok: boolean, status: number, statusText: string, headers: object, json(): Promise<any>, text(): Promise<string> }>}
+ */
+async function fetchProviderTokenEndpoint(opts, context) {
+  const gated = checkCooldownGate(opts.cooldownUntil, context, opts.providerLabel);
+  if (gated) return gated;
 
-  const response = curlTokenEndpoint(ANTHROPIC_TOKEN_ENDPOINT, {
-    headers: { "User-Agent": ANTHROPIC_USER_AGENT },
-    body,
+  const response = curlTokenEndpoint(opts.url, {
+    headers: { "User-Agent": opts.userAgent },
+    body: opts.body,
+    contentType: opts.contentType,
   }, context);
 
   if (response.status === 429) {
-    const retryAfter = response.headers.get("retry-after");
-    const cooldownMs = parseRetryAfterCooldown(retryAfter);
-    tokenEndpointCooldownUntil = Date.now() + cooldownMs;
-    const cooldownMinutes = Math.ceil(cooldownMs / 60000);
-    console.error(
-      [
-        `[aidevops] OAuth pool: ${context} failed: rate limited by Anthropic.`,
-        `Cooldown set for ${cooldownMinutes}m — no further token requests until then.`,
-        "Use /model-accounts-pool reset-cooldowns to clear manually.",
-      ].join(" "),
-    );
+    handleTokenEndpoint429(response, context, opts.providerLabel, opts.setCooldown);
   } else if (!response.ok) {
     console.error(`[aidevops] OAuth pool: ${context} failed: HTTP ${response.status}`);
   }
 
   return response;
+}
+
+async function fetchTokenEndpoint(body, context) {
+  return fetchProviderTokenEndpoint({
+    url: ANTHROPIC_TOKEN_ENDPOINT,
+    userAgent: ANTHROPIC_USER_AGENT,
+    body,
+    cooldownUntil: tokenEndpointCooldownUntil,
+    providerLabel: "Anthropic",
+    setCooldown: (until) => { tokenEndpointCooldownUntil = until; },
+  }, context);
 }
 
 /**
@@ -465,49 +546,15 @@ async function fetchTokenEndpoint(body, context) {
  * @returns {Promise<{ ok: boolean, status: number, statusText: string, headers: { get(k: string): string|null }, json(): Promise<any>, text(): Promise<string> }>}
  */
 async function fetchOpenAITokenEndpoint(params, context) {
-  const now = Date.now();
-  if (openaiTokenEndpointCooldownUntil > now) {
-    const remainingMinutes = Math.ceil((openaiTokenEndpointCooldownUntil - now) / 60000);
-    console.error(
-      [
-        `[aidevops] OAuth pool: ${context} skipped — OpenAI token endpoint rate limited,`,
-        `cooldown ${remainingMinutes}m remaining.`,
-        "Use /model-accounts-pool reset-cooldowns to clear manually.",
-      ].join(" "),
-    );
-    return {
-      ok: false,
-      status: 429,
-      statusText: "Rate Limited (cooldown)",
-      headers: { get() { return null; } },
-      async json() { return { error: "Rate limited (cooldown)" }; },
-      async text() { return "Rate limited (cooldown)"; },
-    };
-  }
-
-  const response = curlTokenEndpoint(OPENAI_TOKEN_ENDPOINT, {
-    headers: { "User-Agent": OPENCODE_USER_AGENT },
+  return fetchProviderTokenEndpoint({
+    url: OPENAI_TOKEN_ENDPOINT,
+    userAgent: OPENCODE_USER_AGENT,
     body: params.toString(),
     contentType: "application/x-www-form-urlencoded",
+    cooldownUntil: openaiTokenEndpointCooldownUntil,
+    providerLabel: "OpenAI",
+    setCooldown: (until) => { openaiTokenEndpointCooldownUntil = until; },
   }, context);
-
-  if (response.status === 429) {
-    const retryAfter = response.headers.get("retry-after");
-    const cooldownMs = parseRetryAfterCooldown(retryAfter);
-    openaiTokenEndpointCooldownUntil = Date.now() + cooldownMs;
-    const cooldownMinutes = Math.ceil(cooldownMs / 60000);
-    console.error(
-      [
-        `[aidevops] OAuth pool: ${context} failed: rate limited by OpenAI.`,
-        `Cooldown set for ${cooldownMinutes}m — no further token requests until then.`,
-        "Use /model-accounts-pool reset-cooldowns to clear manually.",
-      ].join(" "),
-    );
-  } else if (!response.ok) {
-    console.error(`[aidevops] OAuth pool: ${context} failed: HTTP ${response.status}`);
-  }
-
-  return response;
 }
 
 /**
@@ -521,48 +568,14 @@ async function fetchOpenAITokenEndpoint(params, context) {
  * @returns {Promise<{ ok: boolean, status: number, statusText: string, headers: { get(k: string): string|null }, json(): Promise<any>, text(): Promise<string> }>}
  */
 async function fetchGoogleTokenEndpoint(body, context) {
-  const now = Date.now();
-  if (googleTokenEndpointCooldownUntil > now) {
-    const remainingMinutes = Math.ceil((googleTokenEndpointCooldownUntil - now) / 60000);
-    console.error(
-      [
-        `[aidevops] OAuth pool: ${context} skipped — Google token endpoint rate limited,`,
-        `cooldown ${remainingMinutes}m remaining.`,
-        "Use /model-accounts-pool reset-cooldowns to clear manually.",
-      ].join(" "),
-    );
-    return {
-      ok: false,
-      status: 429,
-      statusText: "Rate Limited (cooldown)",
-      headers: { get() { return null; } },
-      async json() { return { error: "Rate limited (cooldown)" }; },
-      async text() { return "Rate limited (cooldown)"; },
-    };
-  }
-
-  const response = curlTokenEndpoint(GOOGLE_TOKEN_ENDPOINT, {
-    headers: { "User-Agent": ANTHROPIC_USER_AGENT },
+  return fetchProviderTokenEndpoint({
+    url: GOOGLE_TOKEN_ENDPOINT,
+    userAgent: ANTHROPIC_USER_AGENT,
     body,
+    cooldownUntil: googleTokenEndpointCooldownUntil,
+    providerLabel: "Google",
+    setCooldown: (until) => { googleTokenEndpointCooldownUntil = until; },
   }, context);
-
-  if (response.status === 429) {
-    const retryAfter = response.headers.get("retry-after");
-    const cooldownMs = parseRetryAfterCooldown(retryAfter);
-    googleTokenEndpointCooldownUntil = Date.now() + cooldownMs;
-    const cooldownMinutes = Math.ceil(cooldownMs / 60000);
-    console.error(
-      [
-        `[aidevops] OAuth pool: ${context} failed: rate limited by Google.`,
-        `Cooldown set for ${cooldownMinutes}m — no further Google token requests until then.`,
-        "Use /model-accounts-pool reset-cooldowns to clear manually.",
-      ].join(" "),
-    );
-  } else if (!response.ok) {
-    console.error(`[aidevops] OAuth pool: ${context} failed: HTTP ${response.status}`);
-  }
-
-  return response;
 }
 
 // ---------------------------------------------------------------------------
@@ -1366,6 +1379,28 @@ function pickNextAccount(provider, excludeEmail) {
  * @param {() => Promise<Response>} request
  * @returns {Promise<Response>}
  */
+/**
+ * Rotate to the next pool account and retry a request once.
+ * Returns the retry response, or the original response if no alternate account exists.
+ * @param {{ client: any, provider: string, currentEmail: string, statusLabel: string, request: () => Promise<Response>, originalResponse: Response }} ctx
+ * @returns {Promise<Response>}
+ */
+async function rotateAndRetry(ctx) {
+  const { client, provider, currentEmail, statusLabel, request, originalResponse } = ctx;
+  const injectFn = resolveInjectFn(provider);
+  const rotated = await injectFn(client, currentEmail);
+  if (!rotated) {
+    console.error(
+      `[aidevops] OAuth pool: ${provider} ${statusLabel} for ${currentEmail}; no alternate account available for failover.`,
+    );
+    return originalResponse;
+  }
+  console.error(
+    `[aidevops] OAuth pool: ${provider} ${statusLabel} for ${currentEmail}; rotated account and retrying once.`,
+  );
+  return request();
+}
+
 export async function fetchWithPoolFailover(client, provider, currentEmail, request) {
   const response = await request();
   if (!currentEmail) {
@@ -1410,28 +1445,7 @@ export async function fetchWithPoolFailover(client, provider, currentEmail, requ
       cooldownUntil: Date.now() + AUTH_FAILURE_COOLDOWN_MS,
     });
 
-    let injectFn;
-    if (provider === "cursor") {
-      injectFn = injectCursorPoolToken;
-    } else if (provider === "openai") {
-      injectFn = injectOpenAIPoolToken;
-    } else if (provider === "google") {
-      injectFn = injectGooglePoolToken;
-    } else {
-      injectFn = injectPoolToken;
-    }
-    const rotated = await injectFn(client, currentEmail);
-    if (!rotated) {
-      console.error(
-        `[aidevops] OAuth pool: ${provider} ${response.status} for ${currentEmail}; no alternate account available for failover.`,
-      );
-      return response;
-    }
-
-    console.error(
-      `[aidevops] OAuth pool: ${provider} ${response.status} for ${currentEmail}; rotated account and retrying once.`,
-    );
-    return request();
+    return rotateAndRetry({ client, provider, currentEmail, statusLabel: String(response.status), request, originalResponse: response });
   }
 
   // Handle rate limits (429) — rotate to next account immediately
@@ -1441,29 +1455,7 @@ export async function fetchWithPoolFailover(client, provider, currentEmail, requ
       cooldownUntil: Date.now() + RATE_LIMIT_COOLDOWN_MS,
     });
 
-    let injectFn;
-    if (provider === "cursor") {
-      injectFn = injectCursorPoolToken;
-    } else if (provider === "openai") {
-      injectFn = injectOpenAIPoolToken;
-    } else if (provider === "google") {
-      injectFn = injectGooglePoolToken;
-    } else {
-      injectFn = injectPoolToken;
-    }
-    const rotated = await injectFn(client, currentEmail);
-    if (!rotated) {
-      console.error(
-        `[aidevops] OAuth pool: ${provider} 429 for ${currentEmail}; no alternate account available for failover.`,
-      );
-      return response;
-    }
-
-    console.error(
-      `[aidevops] OAuth pool: ${provider} 429 for ${currentEmail}; rotated account and retrying once.`,
-    );
-
-    return request();
+    return rotateAndRetry({ client, provider, currentEmail, statusLabel: "429", request, originalResponse: response });
   }
 
   return response;
@@ -1885,6 +1877,35 @@ export async function injectGooglePoolToken(client, skipEmail) {
 }
 
 /**
+ * Build the email prompt object for a pool auth hook.
+ * All four providers (anthropic, openai, cursor, google) use the same structure.
+ * @param {string} provider - pool provider key (e.g. "anthropic")
+ * @param {string} [placeholder] - placeholder text (default "you@example.com")
+ * @returns {object} prompt definition
+ */
+function makeEmailPrompt(provider, placeholder = "you@example.com") {
+  return {
+    type: "text",
+    key: "email",
+    get message() {
+      const accounts = getAccounts(provider);
+      if (accounts.length === 0) {
+        return "Account email (required to match tokens to accounts)";
+      }
+      const emails = accounts.map((a, i) => `  ${i + 1}. ${a.email}`).join("\n");
+      return `Existing accounts:\n${emails}\nEnter email (existing to re-auth, or new to add)`;
+    },
+    placeholder,
+    validate: (value) => {
+      if (!value || !value.includes("@")) {
+        return "Please enter a valid email address";
+      }
+      return undefined;
+    },
+  };
+}
+
+/**
  * Create the auth hook for the anthropic-pool provider.
  * This provider exists solely for the "Add Account to Pool" OAuth flow.
  * It has no models — users select models from the built-in "anthropic" provider,
@@ -1906,27 +1927,7 @@ export function createPoolAuthHook(client) {
           return `Add Account to Pool (${accounts.length} account${accounts.length === 1 ? "" : "s"})`;
         },
         type: "oauth",
-        prompts: [
-          {
-            type: "text",
-            key: "email",
-            get message() {
-              const accounts = getAccounts("anthropic");
-              if (accounts.length === 0) {
-                return "Account email (required to match tokens to accounts)";
-              }
-              const emails = accounts.map((a, i) => `  ${i + 1}. ${a.email}`).join("\n");
-              return `Existing accounts:\n${emails}\nEnter email (existing to re-auth, or new to add)`;
-            },
-            placeholder: "you@example.com",
-            validate: (value) => {
-              if (!value || !value.includes("@")) {
-                return "Please enter a valid email address";
-              }
-              return undefined;
-            },
-          },
-        ],
+        prompts: [makeEmailPrompt("anthropic")],
         authorize: async (inputs) => {
           const email = inputs?.email || "unknown";
           const pkce = generatePKCE();
@@ -2087,27 +2088,7 @@ export function createOpenAIPoolAuthHook(client) {
           return `Add Account to Pool (${accounts.length} account${accounts.length === 1 ? "" : "s"})`;
         },
         type: "oauth",
-        prompts: [
-          {
-            type: "text",
-            key: "email",
-            get message() {
-              const accounts = getAccounts("openai");
-              if (accounts.length === 0) {
-                return "Account email (required to match tokens to accounts)";
-              }
-              const emails = accounts.map((a, i) => `  ${i + 1}. ${a.email}`).join("\n");
-              return `Existing accounts:\n${emails}\nEnter email (existing to re-auth, or new to add)`;
-            },
-            placeholder: "you@example.com",
-            validate: (value) => {
-              if (!value || !value.includes("@")) {
-                return "Please enter a valid email address";
-              }
-              return undefined;
-            },
-          },
-        ],
+        prompts: [makeEmailPrompt("openai")],
         authorize: async (inputs) => {
           const email = inputs?.email || "unknown";
           const pkce = generatePKCE();
@@ -2342,27 +2323,7 @@ export function createCursorPoolAuthHook(client) {
           return `Add Account to Pool (${accounts.length} account${accounts.length === 1 ? "" : "s"})`;
         },
         type: "api",
-        prompts: [
-          {
-            type: "text",
-            key: "email",
-            get message() {
-              const accounts = getAccounts("cursor");
-              if (accounts.length === 0) {
-                return "Account email (required to match tokens to accounts)";
-              }
-              const emails = accounts.map((a, i) => `  ${i + 1}. ${a.email}`).join("\n");
-              return `Existing accounts:\n${emails}\nEnter email (existing to re-auth, or new to add)`;
-            },
-            placeholder: "you@example.com",
-            validate: (value) => {
-              if (!value || !value.includes("@")) {
-                return "Please enter a valid email address";
-              }
-              return undefined;
-            },
-          },
-        ],
+        prompts: [makeEmailPrompt("cursor")],
         authorize: async (inputs) => {
           const email = inputs?.email || "unknown";
 
@@ -2521,27 +2482,7 @@ export function createGooglePoolAuthHook(client) {
           return `Add Account to Pool (${accounts.length} account${accounts.length === 1 ? "" : "s"})`;
         },
         type: "oauth",
-        prompts: [
-          {
-            type: "text",
-            key: "email",
-            get message() {
-              const accounts = getAccounts("google");
-              if (accounts.length === 0) {
-                return "Google account email (required to match tokens to accounts)";
-              }
-              const emails = accounts.map((a, i) => `  ${i + 1}. ${a.email}`).join("\n");
-              return `Existing accounts:\n${emails}\nEnter email (existing to re-auth, or new to add)`;
-            },
-            placeholder: "you@gmail.com",
-            validate: (value) => {
-              if (!value || !value.includes("@")) {
-                return "Please enter a valid email address";
-              }
-              return undefined;
-            },
-          },
-        ],
+        prompts: [makeEmailPrompt("google", "you@gmail.com")],
         authorize: async (inputs) => {
           const email = inputs?.email || "unknown";
           const pkce = generatePKCE();
@@ -2787,6 +2728,321 @@ export function registerPoolProvider(config) {
 // ---------------------------------------------------------------------------
 
 /**
+ * Get the in-memory token endpoint cooldown for a provider.
+ * @param {string} prov
+ * @returns {number}
+ */
+function getEndpointCooldown(prov) {
+  if (prov === "anthropic") return tokenEndpointCooldownUntil;
+  if (prov === "openai") return openaiTokenEndpointCooldownUntil;
+  if (prov === "google") return googleTokenEndpointCooldownUntil;
+  return cursorProxyCooldownUntil;
+}
+
+/**
+ * Interpret an HTTP status from a token validity check into a display string.
+ * @param {number} status
+ * @param {boolean} okOn403 - treat 403 as OK (Anthropic/Google)
+ * @param {string} [on403msg] - custom message for 403 (Google)
+ * @returns {string}
+ */
+function interpretValidityStatus(status, okOn403, on403msg) {
+  if (status === 401) return "INVALID (401 — needs refresh)";
+  if (status === 403 && okOn403) return on403msg || "OK";
+  if (status >= 200 && status < 300) return "OK";
+  return `HTTP ${status}`;
+}
+
+/**
+ * Test token validity for a single account via a lightweight API call.
+ * Returns a validity string for display.
+ * @param {string} prov
+ * @param {PoolAccount} account
+ * @returns {Promise<string>}
+ */
+async function checkAccountTokenValidity(prov, account) {
+  try {
+    if (prov === "anthropic") {
+      const testResp = await fetch("https://api.anthropic.com/v1/models", {
+        method: "GET",
+        headers: {
+          "Authorization": `Bearer ${account.access}`,
+          "User-Agent": ANTHROPIC_USER_AGENT,
+          "anthropic-version": "2023-06-01",
+          "anthropic-beta": "oauth-2025-04-20",
+        },
+      });
+      // 403 means token is valid but lacks scope — still proves auth works
+      return interpretValidityStatus(testResp.status, true);
+    }
+    if (prov === "openai") {
+      const testResp = await fetch("https://api.openai.com/v1/models", {
+        headers: {
+          "Authorization": `Bearer ${account.access}`,
+          "User-Agent": OPENCODE_USER_AGENT,
+        },
+      });
+      return interpretValidityStatus(testResp.status, false);
+    }
+    if (prov === "google") {
+      const testResp = await fetch(GOOGLE_HEALTH_CHECK_URL, {
+        headers: { "Authorization": `Bearer ${account.access}` },
+      });
+      return interpretValidityStatus(testResp.status, true, "OK (403 — token valid, check AI Pro/Ultra subscription)");
+    }
+    return `(skipped — ${prov} uses proxy)`;
+  } catch (err) {
+    return `ERROR (${err.code || err.message})`;
+  }
+}
+
+/**
+ * Format a single account's health check lines for the "check" action.
+ * @param {string} prov
+ * @param {PoolAccount} account
+ * @param {number} now
+ * @returns {Promise<string>}
+ */
+async function formatAccountCheckLines(prov, account, now) {
+  const lines = [];
+  lines.push(`  ${account.email}:`);
+
+  const expiresIn = account.expires - now;
+  if (expiresIn <= 0) {
+    lines.push(`    Token: EXPIRED (${new Date(account.expires).toLocaleString()})`);
+  } else {
+    lines.push(`    Token: expires in ${formatDuration(expiresIn)}`);
+  }
+
+  lines.push(`    Status: ${account.status}`);
+  if (account.cooldownUntil && account.cooldownUntil > now) {
+    const cdMins = Math.ceil((account.cooldownUntil - now) / 60000);
+    lines.push(`    Cooldown: ${cdMins}m remaining`);
+  }
+
+  if (account.lastUsed) {
+    const elapsed = now - new Date(account.lastUsed).getTime();
+    lines.push(`    Last used: ${formatAgo(elapsed)}`);
+  }
+
+  lines.push(`    Refresh token: ${account.refresh ? "present" : "MISSING"}`);
+
+  if (account.access && expiresIn > 0) {
+    const validity = await checkAccountTokenValidity(prov, account);
+    lines.push(`    Validity: ${validity}`);
+  } else if (expiresIn <= 0) {
+    lines.push(`    Validity: EXPIRED — will auto-refresh on next use`);
+  } else {
+    lines.push(`    Validity: no access token`);
+  }
+
+  return lines.join("\n");
+}
+
+// ---------------------------------------------------------------------------
+// Pool tool action handlers (extracted to reduce execute() complexity)
+// ---------------------------------------------------------------------------
+
+/**
+ * @param {string} provider
+ * @param {PoolAccount[]} accounts
+ * @param {string} addAccountHint
+ * @param {number} now
+ * @returns {string}
+ */
+function poolActionList(provider, accounts, addAccountHint, now) {
+  if (accounts.length === 0) {
+    return `No accounts in the ${provider} pool.\n\n${addAccountHint}`;
+  }
+  const lines = accounts.map((a, i) => {
+    const cooldown =
+      a.cooldownUntil && a.cooldownUntil > now
+        ? ` (cooldown: ${Math.ceil((a.cooldownUntil - now) / 60000)}m remaining)`
+        : "";
+    const lastUsed = a.lastUsed
+      ? ` | last used: ${new Date(a.lastUsed).toLocaleString()}`
+      : "";
+    const accountIdSuffix = a.accountId ? ` | id: ${a.accountId.slice(0, 8)}...` : "";
+    return `${i + 1}. ${a.email} [${a.status}]${cooldown}${lastUsed}${accountIdSuffix}`;
+  });
+  const pending = getPendingToken(provider);
+  const pendingLine = pending
+    ? `\n\nPENDING: Unassigned token (added: ${pending.added}). Use assign-pending <email> to assign it.`
+    : "";
+  return `${provider} pool (${accounts.length} account${accounts.length === 1 ? "" : "s"}):\n\n${lines.join("\n")}${pendingLine}`;
+}
+
+/**
+ * @param {string} provider
+ * @param {string} email
+ * @returns {string}
+ */
+function poolActionRemove(provider, email) {
+  if (!email) return "Error: email is required for remove action. Usage: remove <email>";
+  const removed = removeAccount(provider, email);
+  if (removed) {
+    const remaining = getAccounts(provider).length;
+    return `Removed ${email} from ${provider} pool (${remaining} account${remaining === 1 ? "" : "s"} remaining).`;
+  }
+  return `Account ${email} not found in ${provider} pool.`;
+}
+
+/**
+ * @param {string} provider
+ * @param {PoolAccount[]} accounts
+ * @param {string} addAccountHint
+ * @param {number} endpointCooldownUntil
+ * @param {number} now
+ * @returns {string}
+ */
+function poolActionStatus(provider, accounts, addAccountHint, endpointCooldownUntil, now) {
+  if (accounts.length === 0) {
+    return `No accounts in the ${provider} pool.\n\n${addAccountHint}`;
+  }
+  const active = accounts.filter((a) => ["active", "idle"].includes(a.status)).length;
+  const rateLimited = accounts.filter(
+    (a) => a.status === "rate-limited" && a.cooldownUntil && a.cooldownUntil > now,
+  ).length;
+  const authError = accounts.filter((a) => a.status === "auth-error").length;
+  const available = accounts.filter((a) => !a.cooldownUntil || a.cooldownUntil <= now).length;
+  const tokenGated = endpointCooldownUntil > now;
+  const tokenGateInfo = tokenGated
+    ? `  TOKEN ENDPOINT: RATE LIMITED (${Math.ceil((endpointCooldownUntil - now) / 60000)}m remaining)`
+    : `  Token endpoint: OK`;
+  return [
+    `${provider} pool status:`,
+    `  Total accounts: ${accounts.length}`,
+    `  Available now:  ${available}`,
+    `  Active/idle:    ${active}`,
+    `  Rate limited:   ${rateLimited}`,
+    `  Auth errors:    ${authError}`,
+    "",
+    tokenGateInfo,
+    `Pool file: ${POOL_FILE}`,
+  ].join("\n");
+}
+
+/**
+ * @param {string} provider
+ * @returns {string}
+ */
+function poolActionResetCooldowns(provider) {
+  let wasGated = false;
+  if (provider === "cursor") {
+    wasGated = cursorProxyCooldownUntil > Date.now();
+    cursorProxyCooldownUntil = 0;
+  } else if (provider === "openai") {
+    wasGated = openaiTokenEndpointCooldownUntil > Date.now();
+    openaiTokenEndpointCooldownUntil = 0;
+  } else if (provider === "google") {
+    wasGated = googleTokenEndpointCooldownUntil > Date.now();
+    googleTokenEndpointCooldownUntil = 0;
+  } else {
+    wasGated = tokenEndpointCooldownUntil > Date.now();
+    tokenEndpointCooldownUntil = 0;
+  }
+  const resetCount = withPoolLock(() => {
+    const pool = loadPool();
+    let count = 0;
+    if (pool[provider]) {
+      for (const account of pool[provider]) {
+        if (account.cooldownUntil) {
+          account.cooldownUntil = null;
+          account.status = "idle";
+          count++;
+        }
+      }
+      savePool(pool);
+    }
+    return count;
+  });
+  const parts = [];
+  if (wasGated) parts.push("token endpoint cooldown cleared");
+  if (resetCount > 0) parts.push(`${resetCount} account cooldown${resetCount === 1 ? "" : "s"} cleared`);
+  if (parts.length === 0) parts.push("no active cooldowns");
+  return `Reset (${provider}): ${parts.join(", ")}. Token endpoint requests will proceed on next attempt.`;
+}
+
+/**
+ * @param {any} client
+ * @param {string} provider
+ * @param {PoolAccount[]} accounts
+ * @returns {Promise<string>}
+ */
+async function poolActionRotate(client, provider, accounts) {
+  if (accounts.length < 2) {
+    const poolNames = { anthropic: "Anthropic Pool", openai: "OpenAI Pool", cursor: "Cursor Pool", google: "Google Pool" };
+    const poolName = poolNames[provider] || "Pool";
+    return `Cannot rotate: only ${accounts.length} account(s) in pool. Add more accounts via Ctrl+A → ${poolName}.`;
+  }
+  const current = [...accounts].sort(
+    (a, b) => new Date(b.lastUsed || 0) - new Date(a.lastUsed || 0),
+  )[0];
+  const injected = await resolveInjectFn(provider)(client, current?.email);
+  if (injected) {
+    const nowAccounts = getAccounts(provider);
+    const newest = [...nowAccounts].sort(
+      (a, b) => new Date(b.lastUsed || 0) - new Date(a.lastUsed || 0),
+    )[0];
+    return `Rotated (${provider}): now using ${newest?.email || "unknown"}. Previous: ${current?.email || "unknown"}.`;
+  }
+  return `Rotation failed (${provider}) — no other active accounts available.`;
+}
+
+/**
+ * @param {string} provider
+ * @param {PoolAccount[]} accounts
+ * @param {string|undefined} email
+ * @returns {string}
+ */
+function poolActionAssignPending(provider, accounts, email) {
+  const pending = getPendingToken(provider);
+  if (!pending) {
+    return `No pending token for ${provider}. Pending tokens are created when you re-auth via the Pool provider but the email couldn't be identified.`;
+  }
+  if (!email) {
+    const emails = accounts.map((a) => a.email).join(", ");
+    return `Pending ${provider} token found (added: ${pending.added}). Assign it to one of: ${emails}\n\nUsage: assign-pending with email parameter.`;
+  }
+  const assigned = assignPendingToken(provider, email);
+  if (assigned) return `Assigned pending token to ${email} in ${provider} pool. Token is now active.`;
+  return `Failed to assign: account ${email} not found in ${provider} pool. Available: ${accounts.map((a) => a.email).join(", ")}`;
+}
+
+/**
+ * @param {string|undefined} providerArg
+ * @param {number} now
+ * @returns {Promise<string>}
+ */
+async function poolActionCheck(providerArg, now) {
+  const providersToCheck = providerArg
+    ? [providerArg]
+    : ["anthropic", "openai", "cursor", "google"];
+  const results = [];
+  for (const prov of providersToCheck) {
+    const provAccounts = getAccounts(prov);
+    if (provAccounts.length === 0) continue;
+    results.push(`\n## ${prov} (${provAccounts.length} account${provAccounts.length === 1 ? "" : "s"})`);
+    for (const account of provAccounts) {
+      results.push(await formatAccountCheckLines(prov, account, now));
+    }
+    const epCooldown = getEndpointCooldown(prov);
+    if (epCooldown > now) {
+      results.push(`  Token endpoint: RATE LIMITED (${Math.ceil((epCooldown - now) / 60000)}m remaining)`);
+    } else {
+      results.push(`  Token endpoint: OK`);
+    }
+    const pending = getPendingToken(prov);
+    if (pending) results.push(`  PENDING: Unassigned token (added: ${pending.added})`);
+  }
+  if (results.length === 0) {
+    const poolNames = { anthropic: "Anthropic Pool", openai: "OpenAI Pool", cursor: "Cursor Pool", google: "Google Pool" };
+    return `No accounts in any pool.\n\nTo add an account:\n1. Run \`opencode auth login\` (or Ctrl+A)\n2. Select a pool provider (${Object.values(poolNames).join(", ")})\n3. Enter your account email and complete the OAuth flow\n4. After success, switch to the main provider and select a model`;
+  }
+  return `OAuth Pool Health Check${results.join("\n")}`;
+}
+
+/**
  * Create the model-accounts-pool tool definition.
  * @param {any} client - OpenCode SDK client (for token injection)
  * @returns {import('@opencode-ai/plugin').ToolDefinition}
@@ -2832,8 +3088,7 @@ export function createPoolTool(client) {
     async execute(args) {
       const provider = args.provider || "anthropic";
       const accounts = getAccounts(provider);
-
-      // Provider-specific add-account instructions
+      const now = Date.now();
       const addAccountHints = {
         anthropic: `To add an account: run \`opencode auth login\` and select "Anthropic Pool".`,
         openai: `To add an account: run \`opencode auth login\` and select "OpenAI Pool".`,
@@ -2841,329 +3096,17 @@ export function createPoolTool(client) {
         google: `To add an account: run \`opencode auth login\` and select "Google Pool". Requires Google AI Pro/Ultra or Workspace subscription.`,
       };
       const addAccountHint = addAccountHints[provider] || addAccountHints.anthropic;
-
-      // Provider-specific token endpoint cooldown
-      const now = Date.now();
-      const endpointCooldowns = {
-        anthropic: tokenEndpointCooldownUntil,
-        openai: openaiTokenEndpointCooldownUntil,
-        cursor: cursorProxyCooldownUntil,
-        google: googleTokenEndpointCooldownUntil,
-      };
-      const endpointCooldownUntil = endpointCooldowns[provider] || 0;
+      const endpointCooldownUntil = getEndpointCooldown(provider);
 
       switch (args.action) {
-        case "list": {
-          if (accounts.length === 0) {
-            return `No accounts in the ${provider} pool.\n\n${addAccountHint}`;
-          }
-          const lines = accounts.map((a, i) => {
-            const cooldown =
-              a.cooldownUntil && a.cooldownUntil > now
-                ? ` (cooldown: ${Math.ceil((a.cooldownUntil - now) / 60000)}m remaining)`
-                : "";
-            const lastUsed = a.lastUsed
-              ? ` | last used: ${new Date(a.lastUsed).toLocaleString()}`
-              : "";
-            const accountIdSuffix = a.accountId ? ` | id: ${a.accountId.slice(0, 8)}...` : "";
-            return `${i + 1}. ${a.email} [${a.status}]${cooldown}${lastUsed}${accountIdSuffix}`;
-          });
-          // Check for pending unassigned tokens
-          const pending = getPendingToken(provider);
-          const pendingLine = pending
-            ? `\n\nPENDING: Unassigned token (added: ${pending.added}). Use assign-pending <email> to assign it.`
-            : "";
-          return `${provider} pool (${accounts.length} account${accounts.length === 1 ? "" : "s"}):\n\n${lines.join("\n")}${pendingLine}`;
-        }
-
-        case "remove": {
-          if (!args.email) {
-            return "Error: email is required for remove action. Usage: remove <email>";
-          }
-          const removed = removeAccount(provider, args.email);
-          if (removed) {
-            const remaining = getAccounts(provider).length;
-            return `Removed ${args.email} from ${provider} pool (${remaining} account${remaining === 1 ? "" : "s"} remaining).`;
-          }
-          return `Account ${args.email} not found in ${provider} pool.`;
-        }
-
-        case "status": {
-          if (accounts.length === 0) {
-            return `No accounts in the ${provider} pool.\n\n${addAccountHint}`;
-          }
-          const active = accounts.filter(
-            (a) => ["active", "idle"].includes(a.status),
-          ).length;
-          const rateLimited = accounts.filter(
-            (a) =>
-              a.status === "rate-limited" &&
-              a.cooldownUntil &&
-              a.cooldownUntil > now,
-          ).length;
-          const authError = accounts.filter(
-            (a) => a.status === "auth-error",
-          ).length;
-          const available = accounts.filter(
-            (a) => !a.cooldownUntil || a.cooldownUntil <= now,
-          ).length;
-
-          const tokenGated = endpointCooldownUntil > now;
-          const tokenGateInfo = tokenGated
-            ? `  TOKEN ENDPOINT: RATE LIMITED (${Math.ceil((endpointCooldownUntil - now) / 60000)}m remaining)`
-            : `  Token endpoint: OK`;
-
-          return [
-            `${provider} pool status:`,
-            `  Total accounts: ${accounts.length}`,
-            `  Available now:  ${available}`,
-            `  Active/idle:    ${active}`,
-            `  Rate limited:   ${rateLimited}`,
-            `  Auth errors:    ${authError}`,
-            "",
-            tokenGateInfo,
-            `Pool file: ${POOL_FILE}`,
-          ].join("\n");
-        }
-
-        case "reset-cooldowns": {
-          // Reset token endpoint cooldown (in-memory) for the selected provider
-          let wasGated = false;
-          if (provider === "cursor") {
-            wasGated = cursorProxyCooldownUntil > Date.now();
-            cursorProxyCooldownUntil = 0;
-          } else if (provider === "openai") {
-            wasGated = openaiTokenEndpointCooldownUntil > Date.now();
-            openaiTokenEndpointCooldownUntil = 0;
-          } else if (provider === "google") {
-            wasGated = googleTokenEndpointCooldownUntil > Date.now();
-            googleTokenEndpointCooldownUntil = 0;
-          } else {
-            wasGated = tokenEndpointCooldownUntil > Date.now();
-            tokenEndpointCooldownUntil = 0;
-          }
-
-          // Reset per-account cooldowns (pool file)
-          const resetCount = withPoolLock(() => {
-            const pool = loadPool();
-            let count = 0;
-            if (pool[provider]) {
-              for (const account of pool[provider]) {
-                if (account.cooldownUntil) {
-                  account.cooldownUntil = null;
-                  account.status = "idle";
-                  count++;
-                }
-              }
-              savePool(pool);
-            }
-            return count;
-          });
-
-          const parts = [];
-          if (wasGated) parts.push("token endpoint cooldown cleared");
-          if (resetCount > 0) parts.push(`${resetCount} account cooldown${resetCount === 1 ? "" : "s"} cleared`);
-          if (parts.length === 0) parts.push("no active cooldowns");
-          return `Reset (${provider}): ${parts.join(", ")}. Token endpoint requests will proceed on next attempt.`;
-        }
-
-        case "rotate": {
-          if (accounts.length < 2) {
-            const poolNames = { anthropic: "Anthropic Pool", openai: "OpenAI Pool", cursor: "Cursor Pool", google: "Google Pool" };
-            const poolName = poolNames[provider] || "Pool";
-            return `Cannot rotate: only ${accounts.length} account(s) in pool. Add more accounts via Ctrl+A → ${poolName}.`;
-          }
-
-          // Find which account is currently injected (most recently used)
-          const current = [...accounts].sort(
-            (a, b) => new Date(b.lastUsed || 0) - new Date(a.lastUsed || 0),
-          )[0];
-
-          let injectFn;
-          if (provider === "cursor") {
-            injectFn = injectCursorPoolToken;
-          } else if (provider === "openai") {
-            injectFn = injectOpenAIPoolToken;
-          } else if (provider === "google") {
-            injectFn = injectGooglePoolToken;
-          } else {
-            injectFn = injectPoolToken;
-          }
-          const injected = await injectFn(client, current?.email);
-          if (injected) {
-            // Find which account was injected
-            const nowAccounts = getAccounts(provider);
-            const newest = [...nowAccounts].sort(
-              (a, b) => new Date(b.lastUsed || 0) - new Date(a.lastUsed || 0),
-            )[0];
-            return `Rotated (${provider}): now using ${newest?.email || "unknown"}. Previous: ${current?.email || "unknown"}.`;
-          }
-          return `Rotation failed (${provider}) — no other active accounts available.`;
-        }
-
-        case "assign-pending": {
-          const pending = getPendingToken(provider);
-          if (!pending) {
-            return `No pending token for ${provider}. Pending tokens are created when you re-auth via the Pool provider but the email couldn't be identified.`;
-          }
-          if (!args.email) {
-            const emails = accounts.map((a) => a.email).join(", ");
-            return `Pending ${provider} token found (added: ${pending.added}). Assign it to one of: ${emails}\n\nUsage: assign-pending with email parameter.`;
-          }
-          const assigned = assignPendingToken(provider, args.email);
-          if (assigned) {
-            return `Assigned pending token to ${args.email} in ${provider} pool. Token is now active.`;
-          }
-          return `Failed to assign: account ${args.email} not found in ${provider} pool. Available: ${accounts.map((a) => a.email).join(", ")}`;
-        }
-
-        case "check": {
-          // Health check: test token validity for all accounts across all
-          // providers (or a specific provider if specified)
-          const providersToCheck = args.provider
-            ? [args.provider]
-            : ["anthropic", "openai", "cursor", "google"];
-
-          const results = [];
-
-          for (const prov of providersToCheck) {
-            const provAccounts = getAccounts(prov);
-            if (provAccounts.length === 0) continue;
-
-            results.push(`\n## ${prov} (${provAccounts.length} account${provAccounts.length === 1 ? "" : "s"})`);
-
-            for (const account of provAccounts) {
-              const lines = [];
-              lines.push(`  ${account.email}:`);
-
-              // Token expiry
-              const expiresIn = account.expires - now;
-              if (expiresIn <= 0) {
-                lines.push(`    Token: EXPIRED (${new Date(account.expires).toLocaleString()})`);
-              } else {
-                const mins = Math.floor(expiresIn / 60000);
-                const hours = Math.floor(mins / 60);
-                const timeStr = hours > 0 ? `${hours}h ${mins % 60}m` : `${mins}m`;
-                lines.push(`    Token: expires in ${timeStr}`);
-              }
-
-              // Status and cooldown
-              lines.push(`    Status: ${account.status}`);
-              if (account.cooldownUntil && account.cooldownUntil > now) {
-                const cdMins = Math.ceil((account.cooldownUntil - now) / 60000);
-                lines.push(`    Cooldown: ${cdMins}m remaining`);
-              }
-
-              // Last used
-              if (account.lastUsed) {
-                const lastUsedAgo = now - new Date(account.lastUsed).getTime();
-                const lastMins = Math.floor(lastUsedAgo / 60000);
-                const lastHours = Math.floor(lastMins / 60);
-                const lastStr = lastHours > 0 ? `${lastHours}h ${lastMins % 60}m ago` : `${lastMins}m ago`;
-                lines.push(`    Last used: ${lastStr}`);
-              }
-
-              // Refresh token presence (not the value)
-              lines.push(`    Refresh token: ${account.refresh ? "present" : "MISSING"}`);
-
-              // Test token validity via a lightweight /v1/models GET request
-              if (account.access && expiresIn > 0) {
-                try {
-                  let testOk = false;
-                  if (prov === "anthropic") {
-                    const testResp = await fetch("https://api.anthropic.com/v1/models", {
-                      method: "GET",
-                      headers: {
-                        "Authorization": `Bearer ${account.access}`,
-                        "User-Agent": ANTHROPIC_USER_AGENT,
-                        "anthropic-version": "2023-06-01",
-                        "anthropic-beta": "oauth-2025-04-20",
-                      },
-                    });
-                    testOk = testResp.ok || testResp.status === 403;
-                    // 403 means token is valid but lacks scope — still proves auth works
-                    if (testResp.status === 401) {
-                      lines.push(`    Validity: INVALID (401 — needs refresh)`);
-                    } else if (testOk) {
-                      lines.push(`    Validity: OK`);
-                    } else {
-                      lines.push(`    Validity: HTTP ${testResp.status}`);
-                    }
-                  } else if (prov === "openai") {
-                    const testResp = await fetch("https://api.openai.com/v1/models", {
-                      headers: {
-                        "Authorization": `Bearer ${account.access}`,
-                        "User-Agent": OPENCODE_USER_AGENT,
-                      },
-                    });
-                    testOk = testResp.ok;
-                    if (testResp.status === 401) {
-                      lines.push(`    Validity: INVALID (401 — needs refresh)`);
-                    } else if (testOk) {
-                      lines.push(`    Validity: OK`);
-                    } else {
-                      lines.push(`    Validity: HTTP ${testResp.status}`);
-                    }
-                  } else if (prov === "google") {
-                    // Health check against Gemini API (generativelanguage.googleapis.com)
-                    const testResp = await fetch(GOOGLE_HEALTH_CHECK_URL, {
-                      headers: {
-                        "Authorization": `Bearer ${account.access}`,
-                      },
-                    });
-                    testOk = testResp.ok || testResp.status === 403;
-                    if (testResp.status === 401) {
-                      lines.push(`    Validity: INVALID (401 — needs refresh)`);
-                    } else if (testResp.status === 403) {
-                      lines.push(`    Validity: OK (403 — token valid, check AI Pro/Ultra subscription)`);
-                    } else if (testOk) {
-                      lines.push(`    Validity: OK`);
-                    } else {
-                      lines.push(`    Validity: HTTP ${testResp.status}`);
-                    }
-                  } else {
-                    lines.push(`    Validity: (skipped — ${prov} uses proxy)`);
-                  }
-                } catch (err) {
-                  lines.push(`    Validity: ERROR (${err.code || err.message})`);
-                }
-              } else if (expiresIn <= 0) {
-                lines.push(`    Validity: EXPIRED — will auto-refresh on next use`);
-              } else {
-                lines.push(`    Validity: no access token`);
-              }
-
-              results.push(lines.join("\n"));
-            }
-
-            // Token endpoint status for this provider
-            const epCooldown = prov === "anthropic" ? tokenEndpointCooldownUntil
-              : prov === "openai" ? openaiTokenEndpointCooldownUntil
-              : prov === "google" ? googleTokenEndpointCooldownUntil
-              : cursorProxyCooldownUntil;
-            if (epCooldown > now) {
-              results.push(`  Token endpoint: RATE LIMITED (${Math.ceil((epCooldown - now) / 60000)}m remaining)`);
-            } else {
-              results.push(`  Token endpoint: OK`);
-            }
-
-            // Pending tokens
-            const pending = getPendingToken(prov);
-            if (pending) {
-              results.push(`  PENDING: Unassigned token (added: ${pending.added})`);
-            }
-          }
-
-          if (results.length === 0) {
-            const poolNames = { anthropic: "Anthropic Pool", openai: "OpenAI Pool", cursor: "Cursor Pool", google: "Google Pool" };
-            return `No accounts in any pool.\n\nTo add an account:\n1. Run \`opencode auth login\` (or Ctrl+A)\n2. Select a pool provider (${Object.values(poolNames).join(", ")})\n3. Enter your account email and complete the OAuth flow\n4. After success, switch to the main provider and select a model`;
-          }
-
-          return `OAuth Pool Health Check${results.join("\n")}`;
-        }
-
-        default:
-          return `Unknown action: ${args.action}. Available: list, rotate, remove, assign-pending, status, reset-cooldowns, check`;
+        case "list":         return poolActionList(provider, accounts, addAccountHint, now);
+        case "remove":       return poolActionRemove(provider, args.email);
+        case "status":       return poolActionStatus(provider, accounts, addAccountHint, endpointCooldownUntil, now);
+        case "reset-cooldowns": return poolActionResetCooldowns(provider);
+        case "rotate":       return poolActionRotate(client, provider, accounts);
+        case "assign-pending": return poolActionAssignPending(provider, accounts, args.email);
+        case "check":        return poolActionCheck(args.provider, now);
+        default:             return `Unknown action: ${args.action}. Available: list, rotate, remove, assign-pending, status, reset-cooldowns, check`;
       }
     },
   };
