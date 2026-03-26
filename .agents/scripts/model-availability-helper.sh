@@ -395,7 +395,7 @@ is_cache_valid() {
 
 	local checked_epoch now_epoch
 	if [[ "$(uname)" == "Darwin" ]]; then
-		checked_epoch=$(date -j -f "%Y-%m-%dT%H:%M:%SZ" "$checked_at" "+%s" 2>/dev/null || echo "0")
+		checked_epoch=$(TZ=UTC date -j -f "%Y-%m-%dT%H:%M:%SZ" "$checked_at" "+%s" 2>/dev/null || echo "0")
 	else
 		checked_epoch=$(date -d "$checked_at" "+%s" 2>/dev/null || echo "0")
 	fi
@@ -1259,7 +1259,7 @@ _status_print_providers() {
 		local age_display="$checked"
 		local checked_epoch now_epoch
 		if [[ "$(uname)" == "Darwin" ]]; then
-			checked_epoch=$(date -j -f "%Y-%m-%dT%H:%M:%SZ" "$checked" "+%s" 2>/dev/null || echo "0")
+			checked_epoch=$(TZ=UTC date -j -f "%Y-%m-%dT%H:%M:%SZ" "$checked" "+%s" 2>/dev/null || echo "0")
 		else
 			checked_epoch=$(date -d "$checked" "+%s" 2>/dev/null || echo "0")
 		fi
