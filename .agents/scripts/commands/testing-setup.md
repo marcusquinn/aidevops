@@ -71,7 +71,7 @@ Run `testing-setup-helper.sh discover .` to scan the project for existing test t
 | Linter configs | `.eslintrc*`, `.prettierrc*`, `tsconfig.json`, `.shellcheckrc` | File glob |
 | Coverage configs | `.nycrc`, `coverage/`, `jest --coverage`, `c8`, `istanbul` | Config files, package.json scripts |
 | E2E/integration | `playwright.config.*`, `cypress.config.*`, `*.spec.ts` | File glob |
-| Quality gates | `linters-local.sh` integration, pre-commit hooks | File existence (TODO: not yet implemented in helper) |
+| Quality gates | `linters-local.sh` integration, pre-commit hooks | Not yet detected (TODO: t1660.2+) |
 
 Display results as a status table:
 

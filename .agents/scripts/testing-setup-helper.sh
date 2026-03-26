@@ -148,27 +148,47 @@ discover_runners() {
 	fi
 
 	# Pytest — detect via repository declarations, not runtime environment
-	# Checks: pytest.ini, pyproject.toml [tool.pytest.ini_options], setup.cfg [tool:pytest],
-	# setup.py tests_require/extras_require, or pyproject.toml dev-dependencies mentioning pytest
+	# Checks: pytest.ini, pyproject.toml [tool.pytest], setup.cfg [tool:pytest],
+	# setup.py, requirements.txt, requirements-dev.txt
 	local _pytest_declared="false"
+	local _pytest_source=""
 	if [[ -f "${project_dir}/pytest.ini" ]]; then
 		_pytest_declared="true"
-	elif [[ -f "${project_dir}/pyproject.toml" ]] && grep -qE '^\[tool\.pytest' "${project_dir}/pyproject.toml" 2>/dev/null; then
+		_pytest_source="pytest.ini"
+	elif [[ -f "${project_dir}/pyproject.toml" ]] &&
+		grep -qE '\[tool\.pytest' "${project_dir}/pyproject.toml" 2>/dev/null; then
 		_pytest_declared="true"
-	elif [[ -f "${project_dir}/pyproject.toml" ]] && grep -qiE '"pytest|pytest"' "${project_dir}/pyproject.toml" 2>/dev/null; then
+		_pytest_source="pyproject.toml"
+	elif [[ -f "${project_dir}/pyproject.toml" ]] &&
+		grep -qi 'pytest' "${project_dir}/pyproject.toml" 2>/dev/null; then
 		_pytest_declared="true"
-	elif [[ -f "${project_dir}/setup.cfg" ]] && grep -qE '^\[tool:pytest\]' "${project_dir}/setup.cfg" 2>/dev/null; then
+		_pytest_source="pyproject.toml"
+	elif [[ -f "${project_dir}/setup.cfg" ]] &&
+		grep -qE '\[tool:pytest\]|tests_require.*pytest' "${project_dir}/setup.cfg" 2>/dev/null; then
 		_pytest_declared="true"
-	elif [[ -f "${project_dir}/setup.py" ]] && grep -qiE 'pytest' "${project_dir}/setup.py" 2>/dev/null; then
+		_pytest_source="setup.cfg"
+	elif [[ -f "${project_dir}/setup.py" ]] &&
+		grep -qi 'pytest' "${project_dir}/setup.py" 2>/dev/null; then
 		_pytest_declared="true"
+		_pytest_source="setup.py"
+	elif [[ -f "${project_dir}/requirements.txt" ]] &&
+		grep -qi 'pytest' "${project_dir}/requirements.txt" 2>/dev/null; then
+		_pytest_declared="true"
+		_pytest_source="requirements.txt"
+	elif [[ -f "${project_dir}/requirements-dev.txt" ]] &&
+		grep -qi 'pytest' "${project_dir}/requirements-dev.txt" 2>/dev/null; then
+		_pytest_declared="true"
+		_pytest_source="requirements-dev.txt"
 	fi
 	if [[ "$_pytest_declared" == "true" ]]; then
 		local configured="false"
-		if [[ -f "${project_dir}/pytest.ini" ]] || [[ -f "${project_dir}/pyproject.toml" ]]; then
+		if [[ -f "${project_dir}/pytest.ini" ]] ||
+			{ [[ -f "${project_dir}/pyproject.toml" ]] &&
+				grep -q '\[tool\.pytest' "${project_dir}/pyproject.toml" 2>/dev/null; }; then
 			configured="true"
 		fi
-		runners=$(echo "$runners" | jq --arg c "$configured" \
-			'. + [{"name":"pytest","source":"project declaration","configured":($c == "true")}]')
+		runners=$(echo "$runners" | jq --arg c "$configured" --arg s "$_pytest_source" \
+			'. + [{"name":"pytest","source":$s,"configured":($c == "true")}]')
 	fi
 
 	# Cargo test (Rust)
