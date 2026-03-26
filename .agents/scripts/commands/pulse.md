@@ -190,6 +190,8 @@ Before merging ANY PR:
 
 2. **Maintainer review gate (MANDATORY).** Check all issues linked by the PR (from `Closes #N` / `Fixes #N` in body, or task ID in title). If ANY linked issue has the `needs-maintainer-review` label, do NOT merge. This label means a maintainer has not yet approved the issue for development. Also verify all linked issues have an assignee — unassigned issues should not have work in progress. The `maintainer-gate.yml` CI check enforces this as a required status check, but the pulse must also respect it to avoid merge attempts that will be blocked by CI.
 
+   **Security invariant:** Never bypass maintainer-gate checks by exempting trusted workflow labels (for example `quality-debt`). Approval and merge trust must stay tied to maintainer review state + accountable assignee, not to label class. If a queue deadlock appears, fix upstream metadata creation (for example auto-assign issues at creation time) instead of weakening the gate.
+
 3. **Workflow file guard.** Use `check_workflow_merge_guard` from `pulse-wrapper.sh`. If the PR modifies `.github/workflows/` and the token lacks `workflow` scope, the merge will fail. The helper posts a comment telling the user to run `gh auth refresh -s workflow`.
 
 4. **Review gate.** Run `review-bot-gate-helper.sh check NUMBER SLUG`. Merge when any of: formal review count > 0, bot gate returns PASS, bot gate returns PASS_RATE_LIMITED (grace period elapsed), or PR has `skip-review-gate` label. Do NOT merge when formal review count is 0 AND bot gate returns WAITING. Run `review-bot-gate-helper.sh request-retry` to self-heal rate-limited bots.
