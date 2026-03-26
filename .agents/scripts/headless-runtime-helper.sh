@@ -22,6 +22,63 @@ readonly OPENCODE_BIN_DEFAULT="${OPENCODE_BIN:-opencode}"
 readonly SANDBOX_EXEC_HELPER="${SCRIPT_DIR}/sandbox-exec-helper.sh"
 readonly HEADLESS_SANDBOX_TIMEOUT_DEFAULT="${AIDEVOPS_HEADLESS_SANDBOX_TIMEOUT:-3600}"
 readonly OPENCODE_AUTH_FILE="${HOME}/.local/share/opencode/auth.json"
+readonly LOCK_DIR="${STATE_DIR}/locks"
+
+# _acquire_session_lock: prevent duplicate workers for the same session-key (GH#6538).
+#
+# Creates a PID lock file at $LOCK_DIR/<session_key>.pid. If a lock file
+# already exists with a live PID, returns 1 (duplicate — caller should exit).
+# If the PID is dead, cleans up the stale lock and acquires a new one.
+#
+# Args: $1 = session_key
+# Returns: 0 = lock acquired, 1 = duplicate detected (live process exists)
+_acquire_session_lock() {
+	local lock_session_key="$1"
+	mkdir -p "$LOCK_DIR" 2>/dev/null || true
+
+	# Sanitise session key for use as filename (replace / and spaces)
+	local safe_key
+	safe_key=$(printf '%s' "$lock_session_key" | tr '/ ' '__')
+	local lock_file="${LOCK_DIR}/${safe_key}.pid"
+
+	if [[ -f "$lock_file" ]]; then
+		local existing_pid
+		existing_pid=$(cat "$lock_file" 2>/dev/null) || existing_pid=""
+		if [[ -n "$existing_pid" ]] && [[ "$existing_pid" =~ ^[0-9]+$ ]]; then
+			if kill -0 "$existing_pid" 2>/dev/null; then
+				# Live process exists — duplicate dispatch
+				print_warning "Duplicate dispatch blocked: session-key '${lock_session_key}' already has active worker PID ${existing_pid} (GH#6538)"
+				return 1
+			fi
+			# PID is dead — stale lock, clean up and proceed
+		fi
+		rm -f "$lock_file"
+	fi
+
+	# Write our PID to the lock file
+	printf '%s' "$$" >"$lock_file"
+	return 0
+}
+
+# _release_session_lock: remove the PID lock file for a session-key.
+# Only removes if the lock file contains our own PID (safety against races).
+#
+# Args: $1 = session_key
+_release_session_lock() {
+	local lock_session_key="$1"
+	local safe_key
+	safe_key=$(printf '%s' "$lock_session_key" | tr '/ ' '__')
+	local lock_file="${LOCK_DIR}/${safe_key}.pid"
+
+	if [[ -f "$lock_file" ]]; then
+		local stored_pid
+		stored_pid=$(cat "$lock_file" 2>/dev/null) || stored_pid=""
+		if [[ "$stored_pid" == "$$" ]]; then
+			rm -f "$lock_file"
+		fi
+	fi
+	return 0
+}
 
 build_sandbox_passthrough_csv() {
 	local names=()
@@ -1035,12 +1092,29 @@ cmd_run() {
 	_parse_run_args "$@" || return 1
 	_validate_run_args || return 1
 
+	# GH#6538: Acquire a session-key lock to prevent duplicate workers.
+	# The pulse (or any caller) may dispatch the same session-key twice in
+	# rapid succession — before the first worker appears in process lists.
+	# The lock file acts as an immediate dedup guard: the second invocation
+	# sees the first's PID and exits without spawning a sandbox process.
+	if ! _acquire_session_lock "$session_key"; then
+		return 0
+	fi
+	# shellcheck disable=SC2064
+	trap "_release_session_lock '$session_key'" EXIT
+
 	local selected_model
-	selected_model=$(choose_model "$role" "$model_override") || return $?
+	selected_model=$(choose_model "$role" "$model_override") || {
+		local choose_exit=$?
+		_release_session_lock "$session_key"
+		trap - EXIT
+		return "$choose_exit"
+	}
 
 	local attempt=1
 	local max_attempts=2
 	local _run_failure_reason=""
+	local run_exit=1
 	while [[ "$attempt" -le "$max_attempts" ]]; do
 		_run_failure_reason=""
 		_execute_run_attempt \
@@ -1049,17 +1123,27 @@ cmd_run() {
 			"${extra_args[@]+"${extra_args[@]}"}"
 		local attempt_exit=$?
 
-		[[ "$attempt_exit" -eq 0 ]] && return 0
+		if [[ "$attempt_exit" -eq 0 ]]; then
+			_release_session_lock "$session_key"
+			trap - EXIT
+			return 0
+		fi
 
 		# Only retry on auth errors when no explicit model was requested
 		# and we have attempts remaining.
 		if [[ -n "$model_override" || "$_run_failure_reason" != "auth_error" || "$attempt" -ge "$max_attempts" ]]; then
+			_release_session_lock "$session_key"
+			trap - EXIT
 			return "$attempt_exit"
 		fi
 
 		local provider next_model
 		provider=$(extract_provider "$selected_model")
-		next_model=$(choose_model "$role" "") || return "$attempt_exit"
+		next_model=$(choose_model "$role" "") || {
+			_release_session_lock "$session_key"
+			trap - EXIT
+			return "$attempt_exit"
+		}
 		print_warning "$provider auth failure detected at startup; retrying once with alternate provider model $next_model"
 		selected_model="$next_model"
 		attempt=$((attempt + 1))
@@ -1067,6 +1151,8 @@ cmd_run() {
 
 	# Unreachable: loop always executes (attempt starts at 1, max_attempts=2)
 	# and every path inside returns explicitly. Kept as defensive fallback.
+	_release_session_lock "$session_key"
+	trap - EXIT
 	return 1
 }
 
@@ -1085,6 +1171,12 @@ Backoff granularity:
   Rate limits and provider errors are recorded per model (e.g. anthropic/claude-sonnet-4-6).
   Auth errors are recorded per provider (e.g. anthropic) since credentials are shared.
   This allows fallback from sonnet to opus when only sonnet is rate-limited.
+
+Dedup guard (GH#6538):
+  Each 'run' invocation acquires a PID lock file keyed by --session-key.
+  If a live process already holds the lock, the second invocation exits
+  immediately (exit 0) without spawning a worker. Stale locks (dead PIDs)
+  are cleaned up automatically. Lock files: $STATE_DIR/locks/<key>.pid
 
 Defaults:
   AIDEVOPS_HEADLESS_MODELS defaults to anthropic/claude-sonnet-4-6,openai/gpt-4o

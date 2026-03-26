@@ -357,6 +357,67 @@ else
 	fail "explicit --model opencode/* is accepted" "got: $explicit_gateway"
 fi
 
+section "Session-Key Dedup Guard (GH#6538)"
+# Test 1: A second run with the same session-key while the first is "running"
+# should be blocked. Simulate by writing a lock file with our own PID (which
+# is alive), then attempting a run with the same session-key.
+LOCK_DIR="$TEST_TMP_DIR/runtime/locks"
+mkdir -p "$LOCK_DIR"
+echo "$$" >"$LOCK_DIR/issue-dedup-test.pid"
+rm -f "$STUB_LOG_FILE"
+AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST=anthropic bash "$HELPER" run \
+	--role worker \
+	--session-key "issue-dedup-test" \
+	--dir "$REPO_DIR" \
+	--title "Issue #999: Dedup test" \
+	--prompt "Reply with exactly OK" >/dev/null 2>&1 || true
+if [[ -f "$STUB_LOG_FILE" ]]; then
+	fail "dedup guard blocks second dispatch with same session-key" "stub was invoked (opencode ran)"
+else
+	pass "dedup guard blocks second dispatch with same session-key"
+fi
+rm -f "$LOCK_DIR/issue-dedup-test.pid"
+
+# Test 2: A stale lock (dead PID) should be cleaned up and the run should proceed.
+echo "99999999" >"$LOCK_DIR/issue-stale-test.pid"
+rm -f "$STUB_LOG_FILE"
+export STUB_SESSION_ID="ses_stale_lock"
+AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST=anthropic bash "$HELPER" run \
+	--role worker \
+	--session-key "issue-stale-test" \
+	--dir "$REPO_DIR" \
+	--title "Issue #998: Stale lock test" \
+	--prompt "Reply with exactly OK" >/dev/null 2>&1
+if [[ -f "$STUB_LOG_FILE" ]] && grep -q 'Reply with exactly OK' "$STUB_LOG_FILE"; then
+	pass "stale lock (dead PID) is cleaned up and run proceeds"
+else
+	fail "stale lock (dead PID) is cleaned up and run proceeds" "stub log: $(cat "$STUB_LOG_FILE" 2>/dev/null || echo 'missing')"
+fi
+
+# Test 3: Lock file should be cleaned up after a successful run.
+if [[ -f "$LOCK_DIR/issue-stale-test.pid" ]]; then
+	fail "lock file cleaned up after successful run" "lock file still exists"
+else
+	pass "lock file cleaned up after successful run"
+fi
+
+# Test 4: Different session-keys should not block each other.
+echo "$$" >"$LOCK_DIR/issue-other.pid"
+rm -f "$STUB_LOG_FILE"
+export STUB_SESSION_ID="ses_different_key"
+AIDEVOPS_HEADLESS_PROVIDER_ALLOWLIST=anthropic bash "$HELPER" run \
+	--role worker \
+	--session-key "issue-different" \
+	--dir "$REPO_DIR" \
+	--title "Issue #997: Different key" \
+	--prompt "Reply with exactly OK" >/dev/null 2>&1
+if [[ -f "$STUB_LOG_FILE" ]] && grep -q 'Reply with exactly OK' "$STUB_LOG_FILE"; then
+	pass "different session-keys do not block each other"
+else
+	fail "different session-keys do not block each other" "stub log: $(cat "$STUB_LOG_FILE" 2>/dev/null || echo 'missing')"
+fi
+rm -f "$LOCK_DIR/issue-other.pid"
+
 echo ""
 printf "Total: %d, Passed: %d, Failed: %d\n" "$TOTAL_COUNT" "$PASS_COUNT" "$FAIL_COUNT"
 
