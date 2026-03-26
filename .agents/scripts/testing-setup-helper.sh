@@ -926,11 +926,12 @@ main() {
 	verify) cmd_verify "$@" ;;
 	help | --help | -h) cmd_help ;;
 	*)
-		print_error "Unknown command: ${command}"
+		print_error "Unknown command: ${command}. Run 'testing-setup-helper.sh help' for usage."
 		cmd_help
 		return 1
 		;;
 	esac
+	return 0
 }
 
 main "$@"

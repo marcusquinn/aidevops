@@ -262,6 +262,6 @@ Default test runner recommendations per bundle:
 
 - `tools/build-agent/agent-testing.md` — Agent-specific testing framework
 - `bundles/*.json` — Bundle definitions with quality gates
-- `.agents/scripts/linters-local.sh` — Local quality checks
+- `.agents/scripts/linters-local.sh` — Local quality checks (run directly, not via `scripts/linters-local.sh`)
 - `.agents/scripts/bundle-helper.sh` — Bundle detection and resolution
 - `workflows/preflight.md` — Pre-commit quality workflow
