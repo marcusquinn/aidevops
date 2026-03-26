@@ -776,7 +776,9 @@ show_prompt_deployment_status() {
 	local i
 	for i in "${!_PIA_RUNTIME_IDS[@]}"; do
 		local rid="${_PIA_RUNTIME_IDS[$i]}"
-		local mechanism="${_PIA_PROMPT_MECHANISMS[$i]}"
+		# Use the function API (works with both registry and stub paths)
+		local mechanism
+		mechanism=$(get_runtime_prompt_mechanism "$rid" 2>/dev/null || echo "")
 		local installed="no"
 		local deployed="no"
 
