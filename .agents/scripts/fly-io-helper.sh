@@ -1,79 +1,51 @@
 #!/usr/bin/env bash
-# fly-io-helper.sh — Fly.io deployment automation
+
+# Fly.io Helper Script
+# Wrapper around flyctl CLI for common deployment and management operations
 # Managed by AI DevOps Framework
-# Subcommands: deploy, scale, status, secrets, volumes, logs, apps, machines, ssh
+#
 # Usage: fly-io-helper.sh <command> [app] [args...]
+# Commands: deploy, scale, status, secrets, volumes, logs, apps
 # Bash 3.2 compatible (macOS default shell)
 
 set -euo pipefail
 
 # ------------------------------------------------------------------------------
-# CONSTANTS
+# CONFIGURATION & CONSTANTS
 # ------------------------------------------------------------------------------
 
-readonly SCRIPT_NAME="fly-io-helper.sh"
-readonly FLY_CMD="fly"
+script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck source=shared-constants.sh
+source "${script_dir}/shared-constants.sh"
+
+readonly SCRIPT_DIR="$script_dir"
+_script_name="$(basename "$0")"
+readonly SCRIPT_NAME="$_script_name"
+
+# Error messages
+readonly ERROR_FLY_NOT_INSTALLED="flyctl (fly) is not installed"
+readonly ERROR_APP_NAME_REQUIRED="App name is required"
+readonly ERROR_FLY_NOT_AUTHENTICATED="Not authenticated with Fly.io. Run: fly auth login"
 
 # ------------------------------------------------------------------------------
-# UTILITY FUNCTIONS
+# DEPENDENCY CHECKS
 # ------------------------------------------------------------------------------
 
-print_info() {
-	local msg="$1"
-	printf '[fly-io] %s\n' "$msg" >&2
-	return 0
+get_fly_cmd() {
+	if command -v fly &>/dev/null; then
+		printf '%s' "fly"
+		return 0
+	fi
+	if command -v flyctl &>/dev/null; then
+		printf '%s' "flyctl"
+		return 0
+	fi
+	return 1
 }
-
-print_error() {
-	local msg="$1"
-	printf '[fly-io] ERROR: %s\n' "$msg" >&2
-	return 0
-}
-
-print_usage() {
-	cat >&2 <<'EOF'
-fly-io-helper.sh — Fly.io deployment automation
-
-Usage: fly-io-helper.sh <command> [app] [args...]
-
-Commands:
-  deploy   <app> [--image <img>] [--region <r>]  Deploy app (fly deploy)
-  scale    <app> <count> [--region <r>]           Scale machine count
-  status   <app>                                  Show app status and machines
-  secrets  <app>                                  List secret names (never values)
-  volumes  <app> [create <name> <size> <region>]  Manage persistent volumes
-  logs     <app> [--region <r>]                   Stream recent logs
-  apps     [--org <org>]                          List all apps
-  machines <app> [list|start|stop] [machine-id]   Manage Fly Machines
-  ssh      <app> [--command <cmd>]                SSH into a running machine
-  postgres <cluster-app> [connect|status|list]    Manage Fly Postgres
-  help                                            Show this help
-
-Examples:
-  fly-io-helper.sh deploy my-app
-  fly-io-helper.sh scale my-app 3
-  fly-io-helper.sh scale my-app 2 --region lhr
-  fly-io-helper.sh status my-app
-  fly-io-helper.sh secrets my-app
-  fly-io-helper.sh volumes my-app
-  fly-io-helper.sh volumes my-app create app_data 10 lhr
-  fly-io-helper.sh logs my-app
-  fly-io-helper.sh apps
-  fly-io-helper.sh machines my-app list
-  fly-io-helper.sh ssh my-app
-  fly-io-helper.sh ssh my-app --command "env | cut -d= -f1"
-  fly-io-helper.sh postgres my-db-app status
-EOF
-	return 0
-}
-
-# ------------------------------------------------------------------------------
-# DEPENDENCY CHECK
-# ------------------------------------------------------------------------------
 
 check_flyctl() {
-	if ! command -v "$FLY_CMD" >/dev/null 2>&1; then
-		print_error "flyctl is not installed"
+	if ! get_fly_cmd >/dev/null 2>&1; then
+		print_error "$ERROR_FLY_NOT_INSTALLED"
 		print_info "Install: curl -L https://fly.io/install.sh | sh"
 		print_info "Or: brew install flyctl"
 		return 1
@@ -82,345 +54,291 @@ check_flyctl() {
 }
 
 check_auth() {
-	if ! "$FLY_CMD" auth whoami >/dev/null 2>&1; then
-		print_error "Not authenticated with Fly.io"
-		print_info "Run: fly auth login"
+	local fly_cmd="$1"
+
+	if ! "$fly_cmd" auth whoami >/dev/null 2>&1; then
+		print_error "$ERROR_FLY_NOT_AUTHENTICATED"
 		return 1
 	fi
 	return 0
 }
 
 require_app() {
-	local app="$1"
-	if [[ -z "$app" ]]; then
-		print_error "App name required"
-		print_usage
+	local app_name="$1"
+
+	if [[ -z "$app_name" ]]; then
+		print_error "$ERROR_APP_NAME_REQUIRED"
+		print_info "Usage: $SCRIPT_NAME <command> <app-name> [args...]"
 		return 1
 	fi
 	return 0
 }
 
 # ------------------------------------------------------------------------------
-# COMMANDS
+# SUBCOMMANDS
 # ------------------------------------------------------------------------------
 
 cmd_deploy() {
-	local app="$1"
-	shift
+	local fly_cmd="$1"
+	local app="$2"
+	shift 2
+
 	require_app "$app" || return 1
-
-	local extra_args=""
-	local image=""
-	local region=""
-
-	while [[ $# -gt 0 ]]; do
-		case "$1" in
-		--image)
-			image="$2"
-			shift 2
-			;;
-		--region)
-			region="$2"
-			shift 2
-			;;
-		*)
-			extra_args="$extra_args $1"
-			shift
-			;;
-		esac
-	done
 
 	print_info "Deploying app: $app"
 
-	local deploy_args="--app $app"
-	if [[ -n "$image" ]]; then
-		deploy_args="$deploy_args --image $image"
+	if [[ $# -gt 0 ]]; then
+		"$fly_cmd" deploy --app "$app" "$@"
+	else
+		"$fly_cmd" deploy --app "$app"
 	fi
-	if [[ -n "$region" ]]; then
-		deploy_args="$deploy_args --region $region"
-	fi
+	local rc=$?
 
-	# shellcheck disable=SC2086
-	"$FLY_CMD" deploy $deploy_args $extra_args
-	print_info "Deploy complete: $app"
-	return 0
+	if [[ $rc -eq 0 ]]; then
+		print_success "Deploy completed for $app"
+	else
+		print_error "Deploy failed for $app (exit $rc)"
+	fi
+	return $rc
 }
 
 cmd_scale() {
-	local app="$1"
-	local count="${2:-}"
-	shift 2 || shift 1
+	local fly_cmd="$1"
+	local app="$2"
+	shift 2
 
 	require_app "$app" || return 1
 
-	if [[ -z "$count" ]]; then
-		print_error "Machine count required"
-		print_info "Usage: fly-io-helper.sh scale <app> <count> [--region <r>]"
-		return 1
+	# No args: show current scale
+	if [[ $# -eq 0 ]]; then
+		print_info "Current scale for $app:"
+		"$fly_cmd" scale show --app "$app"
+		return $?
 	fi
 
-	local region=""
-	while [[ $# -gt 0 ]]; do
-		case "$1" in
-		--region)
-			region="$2"
-			shift 2
-			;;
-		*)
+	local first_arg="$1"
+
+	case "$first_arg" in
+	count | vm | memory | show)
+		# Pass through to fly scale <subcommand> ... --app
+		"$fly_cmd" scale "$@" --app "$app"
+		return $?
+		;;
+	*)
+		# If first arg is a number, treat as shorthand for count
+		if [[ "$first_arg" =~ ^[0-9]+$ ]]; then
+			print_info "Scaling $app to $first_arg machines"
 			shift
-			;;
-		esac
-	done
-
-	print_info "Scaling $app to $count machines${region:+ in $region}"
-
-	if [[ -n "$region" ]]; then
-		"$FLY_CMD" scale count "$count" --region "$region" --app "$app"
-	else
-		"$FLY_CMD" scale count "$count" --app "$app"
-	fi
-
-	print_info "Scale complete: $app ($count machines)"
-	return 0
+			if [[ $# -gt 0 ]]; then
+				"$fly_cmd" scale count "$first_arg" --app "$app" "$@"
+			else
+				"$fly_cmd" scale count "$first_arg" --app "$app"
+			fi
+			return $?
+		fi
+		# Otherwise pass through
+		"$fly_cmd" scale "$@" --app "$app"
+		return $?
+		;;
+	esac
 }
 
 cmd_status() {
-	local app="$1"
+	local fly_cmd="$1"
+	local app="$2"
+	shift 2
+
 	require_app "$app" || return 1
 
-	print_info "Status for: $app"
-	"$FLY_CMD" status --app "$app"
+	print_info "Status for $app:"
+	"$fly_cmd" status --app "$app"
 	echo ""
 	print_info "Machines:"
-	"$FLY_CMD" machines list --app "$app"
-	return 0
+	"$fly_cmd" machines list --app "$app"
+	return $?
 }
 
 cmd_secrets() {
-	local app="$1"
+	local fly_cmd="$1"
+	local app="$2"
+	shift 2
+
 	require_app "$app" || return 1
 
-	print_info "Secret names for: $app (values never shown)"
-	"$FLY_CMD" secrets list --app "$app"
-	print_info "To set a secret: echo 'value' | fly secrets set KEY=- --app $app"
-	print_info "To import from file: fly secrets import --app $app < .env.production"
-	return 0
+	# Default: list secret names (never values)
+	if [[ $# -eq 0 ]]; then
+		print_info "Secrets for $app (names only — values never shown):"
+		"$fly_cmd" secrets list --app "$app"
+		return $?
+	fi
+
+	local action="$1"
+	shift
+
+	case "$action" in
+	list)
+		print_info "Secrets for $app (names only — values never shown):"
+		"$fly_cmd" secrets list --app "$app"
+		return $?
+		;;
+	set)
+		if [[ $# -eq 0 ]]; then
+			print_error "Secret NAME=VALUE pair required"
+			print_info "Usage: echo 'value' | $SCRIPT_NAME secrets <app> set NAME=-"
+			print_warning "Prefer piping values via stdin (NAME=-) to avoid shell history exposure"
+			return 1
+		fi
+		"$fly_cmd" secrets set "$@" --app "$app"
+		return $?
+		;;
+	unset)
+		if [[ $# -eq 0 ]]; then
+			print_error "Secret name required for unset"
+			print_info "Usage: $SCRIPT_NAME secrets <app> unset SECRET_NAME"
+			return 1
+		fi
+		"$fly_cmd" secrets unset "$@" --app "$app"
+		return $?
+		;;
+	import)
+		print_info "Importing secrets for $app from stdin"
+		"$fly_cmd" secrets import --app "$app"
+		return $?
+		;;
+	*)
+		print_error "Unknown secrets action: $action"
+		print_info "Available: list, set, unset, import"
+		return 1
+		;;
+	esac
 }
 
 cmd_volumes() {
-	local app="$1"
-	local subcommand="${2:-list}"
-	shift 2 || shift 1
+	local fly_cmd="$1"
+	local app="$2"
+	shift 2
 
 	require_app "$app" || return 1
 
-	case "$subcommand" in
-	list | "")
-		print_info "Volumes for: $app"
-		"$FLY_CMD" volumes list --app "$app"
+	# Default: list volumes
+	if [[ $# -eq 0 ]]; then
+		print_info "Volumes for $app:"
+		"$fly_cmd" volumes list --app "$app"
+		return $?
+	fi
+
+	local action="$1"
+	shift
+
+	case "$action" in
+	list)
+		print_info "Volumes for $app:"
+		"$fly_cmd" volumes list --app "$app"
+		return $?
 		;;
 	create)
-		local vol_name="${1:-}"
-		local vol_size="${2:-10}"
-		local vol_region="${3:-}"
-
-		if [[ -z "$vol_name" ]]; then
+		if [[ $# -lt 1 ]]; then
 			print_error "Volume name required"
-			print_info "Usage: fly-io-helper.sh volumes <app> create <name> <size-gb> <region>"
+			print_info "Usage: $SCRIPT_NAME volumes <app> create <name> [--size N] [--region REGION]"
 			return 1
 		fi
-
-		local create_args="$vol_name --size $vol_size --app $app"
-		if [[ -n "$vol_region" ]]; then
-			create_args="$create_args --region $vol_region"
-		fi
-
-		print_info "Creating volume: $vol_name (${vol_size}GB) for $app"
-		# shellcheck disable=SC2086
-		"$FLY_CMD" volumes create $create_args
-		print_info "Volume created. Add to fly.toml:"
-		printf '  [[mounts]]\n    source = "%s"\n    destination = "/data"\n' "$vol_name"
+		print_info "Creating volume for $app"
+		"$fly_cmd" volumes create "$@" --app "$app"
+		return $?
 		;;
 	extend)
-		local vol_id="${1:-}"
-		local new_size="${2:-}"
-
-		if [[ -z "$vol_id" || -z "$new_size" ]]; then
-			print_error "Volume ID and new size required"
-			print_info "Usage: fly-io-helper.sh volumes <app> extend <volume-id> <new-size-gb>"
+		if [[ $# -lt 1 ]]; then
+			print_error "Volume ID required"
+			print_info "Usage: $SCRIPT_NAME volumes <app> extend <volume-id> --size N"
 			return 1
 		fi
-
-		print_info "Extending volume $vol_id to ${new_size}GB"
-		"$FLY_CMD" volumes extend "$vol_id" --size "$new_size" --app "$app"
+		print_info "Extending volume for $app"
+		"$fly_cmd" volumes extend "$@" --app "$app"
+		return $?
+		;;
+	destroy)
+		if [[ $# -lt 1 ]]; then
+			print_error "Volume ID required"
+			print_info "Usage: $SCRIPT_NAME volumes <app> destroy <volume-id>"
+			return 1
+		fi
+		print_warning "IRREVERSIBLE: Destroying volume $1 on $app"
+		"$fly_cmd" volumes destroy "$@" --app "$app"
+		return $?
 		;;
 	*)
-		print_error "Unknown volumes subcommand: $subcommand"
-		print_info "Valid: list, create, extend"
+		print_error "Unknown volumes action: $action"
+		print_info "Available: list, create, extend, destroy"
 		return 1
 		;;
 	esac
-	return 0
 }
 
 cmd_logs() {
-	local app="$1"
-	shift
+	local fly_cmd="$1"
+	local app="$2"
+	shift 2
+
 	require_app "$app" || return 1
 
-	local region=""
-	while [[ $# -gt 0 ]]; do
-		case "$1" in
-		--region)
-			region="$2"
-			shift 2
-			;;
-		*)
-			shift
-			;;
-		esac
-	done
-
-	print_info "Logs for: $app${region:+ (region: $region)}"
-
-	if [[ -n "$region" ]]; then
-		"$FLY_CMD" logs --app "$app" --region "$region"
+	print_info "Logs for $app:"
+	if [[ $# -gt 0 ]]; then
+		"$fly_cmd" logs --app "$app" "$@"
 	else
-		"$FLY_CMD" logs --app "$app"
+		"$fly_cmd" logs --app "$app"
 	fi
-	return 0
+	return $?
 }
 
 cmd_apps() {
-	local org=""
-	while [[ $# -gt 0 ]]; do
-		case "$1" in
-		--org)
-			org="$2"
-			shift 2
-			;;
-		*)
-			shift
-			;;
-		esac
-	done
-
-	print_info "Listing apps${org:+ for org: $org}"
-
-	if [[ -n "$org" ]]; then
-		"$FLY_CMD" apps list --org "$org"
-	else
-		"$FLY_CMD" apps list
-	fi
-	return 0
-}
-
-cmd_machines() {
-	local app="$1"
-	local subcommand="${2:-list}"
-	local machine_id="${3:-}"
-
-	require_app "$app" || return 1
-
-	case "$subcommand" in
-	list | "")
-		print_info "Machines for: $app"
-		"$FLY_CMD" machines list --app "$app"
-		;;
-	start)
-		if [[ -z "$machine_id" ]]; then
-			print_error "Machine ID required for start"
-			print_info "Usage: fly-io-helper.sh machines <app> start <machine-id>"
-			return 1
-		fi
-		print_info "Starting machine: $machine_id"
-		"$FLY_CMD" machines start "$machine_id" --app "$app"
-		;;
-	stop)
-		if [[ -z "$machine_id" ]]; then
-			print_error "Machine ID required for stop"
-			print_info "Usage: fly-io-helper.sh machines <app> stop <machine-id>"
-			return 1
-		fi
-		print_info "Stopping machine: $machine_id"
-		"$FLY_CMD" machines stop "$machine_id" --app "$app"
-		;;
-	destroy)
-		if [[ -z "$machine_id" ]]; then
-			print_error "Machine ID required for destroy"
-			print_info "Usage: fly-io-helper.sh machines <app> destroy <machine-id>"
-			return 1
-		fi
-		print_info "Destroying machine: $machine_id (IRREVERSIBLE)"
-		"$FLY_CMD" machines destroy "$machine_id" --app "$app" --force
-		;;
-	*)
-		print_error "Unknown machines subcommand: $subcommand"
-		print_info "Valid: list, start, stop, destroy"
-		return 1
-		;;
-	esac
-	return 0
-}
-
-cmd_ssh() {
-	local app="$1"
+	local fly_cmd="$1"
 	shift
-	require_app "$app" || return 1
 
-	local ssh_command=""
-	while [[ $# -gt 0 ]]; do
-		case "$1" in
-		--command)
-			ssh_command="$2"
-			shift 2
-			;;
-		*)
-			shift
-			;;
-		esac
-	done
-
-	if [[ -n "$ssh_command" ]]; then
-		print_info "Running command on $app: $ssh_command"
-		"$FLY_CMD" ssh console --app "$app" --command "$ssh_command"
+	print_info "Fly.io apps:"
+	if [[ $# -gt 0 ]]; then
+		"$fly_cmd" apps list "$@"
 	else
-		print_info "Opening SSH console for: $app"
-		"$FLY_CMD" ssh console --app "$app"
+		"$fly_cmd" apps list
 	fi
-	return 0
+	return $?
 }
 
-cmd_postgres() {
-	local cluster_app="$1"
-	local subcommand="${2:-status}"
-	local db_name="${3:-}"
+# ------------------------------------------------------------------------------
+# HELP
+# ------------------------------------------------------------------------------
 
-	require_app "$cluster_app" || return 1
+show_help() {
+	cat <<EOF
+$HELP_LABEL_USAGE
+  $SCRIPT_NAME <command> [app] [args...]
 
-	case "$subcommand" in
-	status)
-		print_info "Postgres cluster status: $cluster_app"
-		"$FLY_CMD" status --app "$cluster_app"
-		;;
-	connect)
-		print_info "Connecting to Postgres: $cluster_app"
-		if [[ -n "$db_name" ]]; then
-			"$FLY_CMD" postgres connect --app "$cluster_app" --database "$db_name"
-		else
-			"$FLY_CMD" postgres connect --app "$cluster_app"
-		fi
-		;;
-	list)
-		print_info "Databases in cluster: $cluster_app"
-		"$FLY_CMD" postgres db list --app "$cluster_app"
-		;;
-	*)
-		print_error "Unknown postgres subcommand: $subcommand"
-		print_info "Valid: status, connect, list"
-		return 1
-		;;
-	esac
+$HELP_LABEL_COMMANDS
+  deploy  <app> [flags]                          Deploy app (wraps fly deploy)
+  scale   <app> [count|vm|memory|show] [args]    Scale machines or show current scale
+  status  <app>                                   Show app health and machine status
+  secrets <app> [list|set|unset|import] [args]    Manage secrets (names only — values never shown)
+  volumes <app> [list|create|extend|destroy] [args]  Manage persistent volumes
+  logs    <app> [flags]                           Show recent logs
+  apps    [flags]                                 List all Fly.io apps
+  help                                            Show this help
+
+$HELP_LABEL_EXAMPLES
+  $SCRIPT_NAME deploy my-app
+  $SCRIPT_NAME deploy my-app --strategy rolling
+  $SCRIPT_NAME scale my-app 3
+  $SCRIPT_NAME scale my-app vm performance-2x
+  $SCRIPT_NAME scale my-app memory 1024
+  $SCRIPT_NAME status my-app
+  $SCRIPT_NAME secrets my-app
+  $SCRIPT_NAME secrets my-app set NAME=- < <(echo "value")
+  $SCRIPT_NAME secrets my-app unset OLD_SECRET
+  $SCRIPT_NAME volumes my-app
+  $SCRIPT_NAME volumes my-app create data_vol --size 10 --region lhr
+  $SCRIPT_NAME volumes my-app extend vol_abc123 --size 20
+  $SCRIPT_NAME logs my-app
+  $SCRIPT_NAME logs my-app --region lhr
+  $SCRIPT_NAME apps
+EOF
 	return 0
 }
 
@@ -432,63 +350,43 @@ main() {
 	local command="${1:-help}"
 	shift || true
 
-	case "$command" in
-	help | -h | --help)
-		print_usage
+	# Help doesn't need flyctl
+	if [[ "$command" == "help" || "$command" == "-h" || "$command" == "--help" ]]; then
+		show_help
 		return 0
-		;;
-	esac
+	fi
 
+	# Check flyctl is installed
 	check_flyctl || return 1
 
+	local fly_cmd
+	fly_cmd="$(get_fly_cmd)" || return 1
+
+	# Check auth for all operational commands
 	case "$command" in
-	deploy)
-		check_auth || return 1
-		cmd_deploy "$@"
-		;;
-	scale)
-		check_auth || return 1
-		cmd_scale "$@"
-		;;
-	status)
-		check_auth || return 1
-		cmd_status "$@"
-		;;
-	secrets)
-		check_auth || return 1
-		cmd_secrets "$@"
-		;;
-	volumes)
-		check_auth || return 1
-		cmd_volumes "$@"
-		;;
-	logs)
-		check_auth || return 1
-		cmd_logs "$@"
-		;;
-	apps)
-		check_auth || return 1
-		cmd_apps "$@"
-		;;
-	machines)
-		check_auth || return 1
-		cmd_machines "$@"
-		;;
-	ssh)
-		check_auth || return 1
-		cmd_ssh "$@"
-		;;
-	postgres)
-		check_auth || return 1
-		cmd_postgres "$@"
+	deploy | scale | status | secrets | volumes | logs | apps)
+		check_auth "$fly_cmd" || return 1
 		;;
 	*)
-		print_error "Unknown command: $command"
-		print_usage
+		print_error "$ERROR_UNKNOWN_COMMAND: $command"
+		show_help
 		return 1
 		;;
 	esac
-	return 0
+
+	# Dispatch to subcommand
+	case "$command" in
+	apps)
+		cmd_apps "$fly_cmd" "$@"
+		return $?
+		;;
+	deploy | scale | status | secrets | volumes | logs)
+		local app_name="${1:-}"
+		shift || true
+		"cmd_${command}" "$fly_cmd" "$app_name" "$@"
+		return $?
+		;;
+	esac
 }
 
 main "$@"
