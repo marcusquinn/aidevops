@@ -8,6 +8,7 @@
 # Options:
 #   --pr <number>              PR number (e.g., 123)
 #   --verified <date>          Verified date (YYYY-MM-DD, defaults to today)
+#   --testing-level <level>    Testing level: runtime-verified | self-assessed | untested
 #   --verify                   Run verify-brief.sh on task brief before completing
 #   --repo-path <path>         Path to git repository (default: current directory)
 #   --gh-repo <owner/repo>     GitHub repo slug for PR lookup (default: auto-detect from git remote)
@@ -21,6 +22,14 @@
 #   task-complete-helper.sh t125 --verified  # Uses today's date
 #   task-complete-helper.sh t126 --pr 789 --verify  # Verify brief before completing
 #   task-complete-helper.sh t127 --pr 101 --gh-repo owner/repo  # Cross-repo PR lookup
+#   task-complete-helper.sh t128 --pr 102 --testing-level runtime-verified
+#   task-complete-helper.sh t129 --verified --testing-level self-assessed
+#   task-complete-helper.sh t130 --verified --testing-level untested
+#
+# Testing levels:
+#   runtime-verified  Dev environment started, Playwright/smoke tests ran and passed
+#   self-assessed     Code reviewed by AI, no runtime execution (default for most tasks)
+#   untested          No testing performed (docs, config, or blocked by environment)
 #
 # Exit codes:
 #   0 - Success (task marked complete, committed, and pushed)
@@ -31,11 +40,13 @@
 #   - When --pr is given, verifies the PR is actually MERGED before proceeding
 #   - Marks task [x] in TODO.md
 #   - Adds pr:#NNN or verified:YYYY-MM-DD to the task line
+#   - Adds testing:LEVEL to the task line when --testing-level is specified
 #   - Adds completed:YYYY-MM-DD timestamp
 #   - Commits and pushes the change
 #
 # This closes the interactive AI enforcement gap (t317).
 # PR merge verification closes the premature-completion bug (GH#466 on Ultimate-Multisite/ai-agent).
+# Testing level recording closes the observability gap (t1660.5).
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)" || exit
 source "${SCRIPT_DIR}/shared-constants.sh"
@@ -46,11 +57,15 @@ set -euo pipefail
 TASK_ID=""
 PR_NUMBER=""
 VERIFIED_DATE=""
+TESTING_LEVEL=""
 REPO_PATH="$PWD"
 GH_REPO=""
 NO_PUSH=false
 VERIFY_BRIEF=false
 SKIP_MERGE_CHECK=false
+
+# Valid testing levels (t1660.5)
+VALID_TESTING_LEVELS="runtime-verified self-assessed untested"
 
 # Logging: uses shared log_* from shared-constants.sh
 
@@ -86,6 +101,23 @@ _validate_args() {
 	if [[ -n "$VERIFIED_DATE" ]] && ! echo "$VERIFIED_DATE" | grep -qE '^[0-9]{4}-[0-9]{2}-[0-9]{2}$'; then
 		log_error "Invalid verified date: $VERIFIED_DATE (expected: YYYY-MM-DD)"
 		return 1
+	fi
+
+	# Validate testing level if provided (t1660.5)
+	if [[ -n "$TESTING_LEVEL" ]]; then
+		local valid_level=""
+		local level=""
+		for level in $VALID_TESTING_LEVELS; do
+			if [[ "$TESTING_LEVEL" == "$level" ]]; then
+				valid_level="$level"
+				break
+			fi
+		done
+		if [[ -z "$valid_level" ]]; then
+			log_error "Invalid testing level: $TESTING_LEVEL"
+			log_error "Valid values: $VALID_TESTING_LEVELS"
+			return 1
+		fi
 	fi
 
 	return 0
@@ -144,6 +176,15 @@ parse_args() {
 				exit 1
 			fi
 			GH_REPO="$val"
+			shift 2
+			;;
+		--testing-level)
+			val="${2:-}"
+			if [[ -z "$val" || "$val" == --* ]]; then
+				echo "Error: --testing-level requires a value (runtime-verified|self-assessed|untested)" >&2
+				exit 1
+			fi
+			TESTING_LEVEL="$val"
 			shift 2
 			;;
 		--skip-merge-check)
@@ -578,6 +619,12 @@ main() {
 	else
 		proof_log="verified:${VERIFIED_DATE}"
 		log_info "Proof-log: verified ${VERIFIED_DATE}"
+	fi
+
+	# Append testing level to proof-log when provided (t1660.5)
+	if [[ -n "$TESTING_LEVEL" ]]; then
+		proof_log="${proof_log} testing:${TESTING_LEVEL}"
+		log_info "Testing level: ${TESTING_LEVEL}"
 	fi
 
 	# Mark task complete
