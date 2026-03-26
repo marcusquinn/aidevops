@@ -158,10 +158,17 @@ kill PID
 
 ### Model round-robin
 
-The headless runtime helper alternates between configured providers:
-`AIDEVOPS_HEADLESS_MODELS=anthropic/claude-sonnet-4-6`
+The headless runtime helper alternates between configured providers in
+`AIDEVOPS_HEADLESS_MODELS`.
 
-> **Note**: The pulse supervisor requires Anthropic (sonnet). OpenAI models are unreliable for orchestration — they exit immediately without producing model activity, wasting every other pulse cycle. Workers can use any provider via the rotation, but the pulse itself should be sonnet-only. Set in `~/.config/aidevops/credentials.sh`.
+Recommended split config (pulse pinned, workers rotated):
+
+```bash
+export PULSE_MODEL="anthropic/claude-sonnet-4-6"
+export AIDEVOPS_HEADLESS_MODELS="anthropic/claude-sonnet-4-6,openai/gpt-5.3-codex"
+```
+
+> **Note**: The pulse supervisor requires Anthropic (sonnet). OpenAI models are unreliable for orchestration — they exit immediately without producing model activity, wasting every other pulse cycle. Workers can use any provider via `AIDEVOPS_HEADLESS_MODELS`, but the pulse itself should be pinned with `PULSE_MODEL`.
 
 ### Backoff handling
 

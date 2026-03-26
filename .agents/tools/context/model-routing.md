@@ -168,9 +168,23 @@ Cross-provider reviewers: `models/gemini-reviewer.md`, `models/gpt-reviewer.md`
 
 The pulse supervisor and headless workers have different model requirements:
 
-- **Pulse supervisor**: Anthropic sonnet only. OpenAI models are unreliable for orchestration — they exit immediately without producing model activity, wasting the entire pulse cycle. This is a proven failure mode, not a preference. Set via `AIDEVOPS_HEADLESS_MODELS=anthropic/claude-sonnet-4-6` in `~/.config/aidevops/credentials.sh`.
-- **Workers**: Can use any configured provider. The headless runtime helper rotates between providers in `AIDEVOPS_HEADLESS_MODELS`. For worker-only multi-provider rotation, configure the env var with multiple models but ensure the pulse plist only has anthropic.
+- **Pulse supervisor**: Anthropic sonnet only. OpenAI models are unreliable for orchestration — they exit immediately without producing model activity, wasting the entire pulse cycle. This is a proven failure mode, not a preference. Pin with `PULSE_MODEL=anthropic/claude-sonnet-4-6` in `~/.config/aidevops/credentials.sh`.
+- **Workers**: Can use any configured provider. The headless runtime helper rotates models from `AIDEVOPS_HEADLESS_MODELS`. For worker-only OpenAI usage, keep pulse pinned with `PULSE_MODEL` and set workers separately.
 - **Default** (no env var set): `anthropic/claude-sonnet-4-6` (single provider, no rotation).
+
+Recommended split configuration:
+
+```bash
+# Pulse orchestration model (stable)
+export PULSE_MODEL="anthropic/claude-sonnet-4-6"
+
+# Worker rotation pool
+export AIDEVOPS_HEADLESS_MODELS="anthropic/claude-sonnet-4-6,openai/gpt-5.3-codex"
+```
+
+`AIDEVOPS_HEADLESS_MODELS` is a rotation pool with backoff handling, not a strict tier escalation chain. If you need guaranteed tiered escalation, use task-tier labels (`tier:thinking`) so the supervisor dispatches at a higher tier directly.
+
+For this split config, keep `openai/gpt-5.4` out of default worker rotation and use it as an explicit escalation target for high-thinking dispatches (for example via `tier:thinking` or explicit `--model openai/gpt-5.4`).
 
 ## Integration with Task Tool
 
