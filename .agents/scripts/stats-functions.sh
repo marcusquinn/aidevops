@@ -1003,6 +1003,22 @@ _update_health_issue_for_repo() {
 	}
 
 	# Build title with stats (correct pluralization)
+	# Re-extract headline counts from the rendered body to avoid relying on
+	# function-local variables from _assemble_health_issue_body.
+	local pr_count=0
+	local assigned_issue_count=0
+	local worker_count=0
+	local body_line
+	while IFS= read -r body_line; do
+		if [[ "$body_line" =~ ^\|\ Open\ PRs\ \|\ ([0-9]+)\ \|$ ]]; then
+			pr_count="${BASH_REMATCH[1]}"
+		elif [[ "$body_line" =~ ^\|\ Assigned\ Issues\ \|\ ([0-9]+)\ \|$ ]]; then
+			assigned_issue_count="${BASH_REMATCH[1]}"
+		elif [[ "$body_line" =~ ^\|\ Active\ Workers\ \|\ ([0-9]+)\ \|$ ]]; then
+			worker_count="${BASH_REMATCH[1]}"
+		fi
+	done <<<"$body"
+
 	local pr_label="PRs"
 	[[ "$pr_count" -eq 1 ]] && pr_label="PR"
 	local worker_label="workers"
