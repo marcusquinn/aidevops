@@ -572,6 +572,248 @@ else
 fi
 
 # ============================================================
+section "Runtime method: dry-run and skip behaviour"
+# ============================================================
+
+# Brief with runtime verify block (no start_cmd — URL won't be reachable in CI)
+create_runtime_brief() {
+	local file="$1"
+	cat >"$file" <<'BRIEF'
+---
+mode: subagent
+---
+# t991: Runtime verify task
+
+## Acceptance Criteria
+
+- [ ] Dev environment responds on expected URL
+  ```yaml
+  verify:
+    method: runtime
+    url: "http://localhost:19999"
+    pages: "/"
+    timeout: 5
+  ```
+
+## Context & Decisions
+
+None.
+BRIEF
+	return 0
+}
+
+# Brief with runtime verify block using start_cmd
+create_runtime_with_start_brief() {
+	local file="$1"
+	cat >"$file" <<'BRIEF'
+---
+mode: subagent
+---
+# t990: Runtime verify with start_cmd
+
+## Acceptance Criteria
+
+- [ ] Dev environment starts and responds
+  ```yaml
+  verify:
+    method: runtime
+    url: "http://localhost:19998"
+    pages: "/ /about"
+    start_cmd: "python3 -m http.server 19998"
+    timeout: 10
+  ```
+
+## Context & Decisions
+
+None.
+BRIEF
+	return 0
+}
+
+RUNTIME_BRIEF="$TEMP_DIR/runtime-brief.md"
+create_runtime_brief "$RUNTIME_BRIEF"
+
+# Dry-run should identify runtime method
+runtime_dry=$("$VERIFY_SCRIPT" "$RUNTIME_BRIEF" --repo-path "$REPO_DIR" --dry-run ${VERBOSE_ARG:+$VERBOSE_ARG} 2>&1) || true
+if echo "$runtime_dry" | grep -q "\[runtime\]"; then
+	pass "Dry-run identifies runtime method"
+else
+	fail "Dry-run should identify runtime method" "Output: $runtime_dry"
+fi
+
+if echo "$runtime_dry" | grep -q "url:"; then
+	pass "Dry-run shows url field for runtime method"
+else
+	fail "Dry-run should show url field" "Output: $runtime_dry"
+fi
+
+if echo "$runtime_dry" | grep -q "timeout:"; then
+	pass "Dry-run shows timeout field for runtime method"
+else
+	fail "Dry-run should show timeout field" "Output: $runtime_dry"
+fi
+
+# Execution: URL not reachable, no start_cmd — should FAIL (not skip)
+rc=0
+runtime_out=$("$VERIFY_SCRIPT" "$RUNTIME_BRIEF" --repo-path "$REPO_DIR" ${VERBOSE_ARG:+$VERBOSE_ARG} 2>&1) || rc=$?
+if [[ $rc -eq 1 ]]; then
+	pass "Runtime method fails when URL unreachable and no start_cmd"
+else
+	fail "Runtime method should fail when URL unreachable, got exit $rc" "Output: $runtime_out"
+fi
+
+if echo "$runtime_out" | grep -q "\[FAIL\]"; then
+	pass "Runtime method reports FAIL for unreachable URL"
+else
+	fail "Runtime method should report FAIL" "Output: $runtime_out"
+fi
+
+# Dry-run with start_cmd brief
+RUNTIME_START_BRIEF="$TEMP_DIR/runtime-start-brief.md"
+create_runtime_with_start_brief "$RUNTIME_START_BRIEF"
+
+runtime_start_dry=$("$VERIFY_SCRIPT" "$RUNTIME_START_BRIEF" --repo-path "$REPO_DIR" --dry-run ${VERBOSE_ARG:+$VERBOSE_ARG} 2>&1) || true
+if echo "$runtime_start_dry" | grep -q "start_cmd:"; then
+	pass "Dry-run shows start_cmd field for runtime method"
+else
+	fail "Dry-run should show start_cmd field" "Output: $runtime_start_dry"
+fi
+
+if echo "$runtime_start_dry" | grep -q "pages:"; then
+	pass "Dry-run shows pages field for runtime method"
+else
+	fail "Dry-run should show pages field" "Output: $runtime_start_dry"
+fi
+
+# JSON output includes runtime method
+json_runtime=$("$VERIFY_SCRIPT" "$RUNTIME_BRIEF" --repo-path "$REPO_DIR" --json ${VERBOSE_ARG:+$VERBOSE_ARG} 2>/dev/null) || true
+if echo "$json_runtime" | grep -q '"method":"runtime"'; then
+	pass "JSON output records runtime method"
+else
+	fail "JSON output should record runtime method" "Output: $json_runtime"
+fi
+
+# Runtime with start_cmd: start a real HTTP server, verify it passes
+# Only run if python3 is available AND Playwright is installed (skip in minimal CI environments)
+_playwright_available() {
+	node -e "require.resolve('playwright')" >/dev/null 2>&1
+	return $?
+}
+
+if command -v python3 >/dev/null 2>&1 && _playwright_available; then
+	RUNTIME_PASS_BRIEF="$TEMP_DIR/runtime-pass-brief.md"
+	# Use a unique port to avoid conflicts
+	TEST_PORT=19997
+	cat >"$RUNTIME_PASS_BRIEF" <<BRIEF
+---
+mode: subagent
+---
+# t989: Runtime verify with real server
+
+## Acceptance Criteria
+
+- [ ] HTTP server responds on test port
+  \`\`\`yaml
+  verify:
+    method: runtime
+    url: "http://localhost:${TEST_PORT}"
+    pages: "/"
+    start_cmd: "python3 -m http.server ${TEST_PORT}"
+    timeout: 15
+  \`\`\`
+
+## Context & Decisions
+
+None.
+BRIEF
+
+	rc=0
+	runtime_pass_out=$("$VERIFY_SCRIPT" "$RUNTIME_PASS_BRIEF" --repo-path "$REPO_DIR" ${VERBOSE_ARG:+$VERBOSE_ARG} 2>&1) || rc=$?
+	if [[ $rc -eq 0 ]]; then
+		pass "Runtime method passes when server starts and responds"
+	else
+		fail "Runtime method should pass with real HTTP server, got exit $rc" "Output: $runtime_pass_out"
+	fi
+
+	if echo "$runtime_pass_out" | grep -q "\[PASS\]"; then
+		pass "Runtime method reports PASS for reachable URL"
+	else
+		fail "Runtime method should report PASS" "Output: $runtime_pass_out"
+	fi
+else
+	skip "python3 or Playwright not available — skipping runtime start_cmd integration test"
+	skip "python3 or Playwright not available — skipping runtime PASS report test"
+fi
+
+# ============================================================
+section "Runtime method: testing.json defaults"
+# ============================================================
+
+# Brief with runtime method but no fields (relies on testing.json or defaults)
+create_runtime_defaults_brief() {
+	local file="$1"
+	cat >"$file" <<'BRIEF'
+---
+mode: subagent
+---
+# t988: Runtime defaults task
+
+## Acceptance Criteria
+
+- [ ] Dev environment responds using testing.json defaults
+  ```yaml
+  verify:
+    method: runtime
+    timeout: 3
+  ```
+
+## Context & Decisions
+
+None.
+BRIEF
+	return 0
+}
+
+RUNTIME_DEFAULTS_BRIEF="$TEMP_DIR/runtime-defaults-brief.md"
+create_runtime_defaults_brief "$RUNTIME_DEFAULTS_BRIEF"
+
+# Dry-run should show defaults
+defaults_dry=$("$VERIFY_SCRIPT" "$RUNTIME_DEFAULTS_BRIEF" --repo-path "$REPO_DIR" --dry-run ${VERBOSE_ARG:+$VERBOSE_ARG} 2>&1) || true
+if echo "$defaults_dry" | grep -q "url:"; then
+	pass "Dry-run shows url field even when not specified (from testing.json or default)"
+else
+	fail "Dry-run should show url field for runtime method" "Output: $defaults_dry"
+fi
+
+# Execution without testing.json: should fail (default URL http://localhost:3000 not running)
+rc=0
+"$VERIFY_SCRIPT" "$RUNTIME_DEFAULTS_BRIEF" --repo-path "$REPO_DIR" ${VERBOSE_ARG:+$VERBOSE_ARG} >/dev/null 2>&1 || rc=$?
+if [[ $rc -eq 1 ]]; then
+	pass "Runtime method with defaults fails when default URL not reachable"
+else
+	fail "Runtime method with defaults should fail when localhost:3000 not running, got exit $rc"
+fi
+
+# With a testing.json that points to a non-existent URL
+TESTING_JSON_DIR="$TEMP_DIR/repo-with-testing-json"
+mkdir -p "$TESTING_JSON_DIR"
+cat >"$TESTING_JSON_DIR/testing.json" <<'JSON'
+{
+  "url": "http://localhost:19996",
+  "smoke_pages": "/",
+  "start_command": ""
+}
+JSON
+
+rc=0
+"$VERIFY_SCRIPT" "$RUNTIME_DEFAULTS_BRIEF" --repo-path "$TESTING_JSON_DIR" ${VERBOSE_ARG:+$VERBOSE_ARG} >/dev/null 2>&1 || rc=$?
+if [[ $rc -eq 1 ]]; then
+	pass "Runtime method reads url from testing.json and fails when not reachable"
+else
+	fail "Runtime method should read testing.json url, got exit $rc"
+fi
+
+# ============================================================
 section "Integration: task-complete-helper.sh --verify flag"
 # ============================================================
 
