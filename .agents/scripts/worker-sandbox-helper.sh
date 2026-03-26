@@ -66,46 +66,17 @@ log_worker_sandbox_event() {
 }
 
 #######################################
-# Create a sandboxed HOME directory for a worker
-#
-# Creates a temporary directory with minimal git config and
-# symlinks to read-only framework resources. The worker gets:
-#   - Git identity (name/email) for commits
-#   - GH_TOKEN for GitHub API access (via env var, not filesystem)
-#   - Read-only access to agent prompts (symlink)
-#   - Writable XDG dirs for tool state
-#
-# Does NOT include:
-#   - ~/.ssh/ (no SSH key access)
-#   - gopass / pass stores
-#   - ~/.config/aidevops/credentials.sh
-#   - Cloud provider tokens (AWS, GCP, Azure)
-#   - npm/pypi publish tokens
-#   - Browser profiles or cookies
+# Set up git config (identity only, no credential helpers)
 #
 # Args:
-#   $1 = task_id (used for directory naming and logging)
+#   $1 = sandbox_dir
 #
-# Outputs: sandbox HOME path on stdout
-# Returns: 0 on success, 1 on failure
+# Returns: 0 on success
 #######################################
-create_worker_sandbox() {
-	local task_id="$1"
-
-	if [[ -z "$task_id" ]]; then
-		echo "ERROR: task_id required" >&2
-		return 1
-	fi
-
-	# Create unique sandbox directory
-	local sandbox_dir
-	sandbox_dir=$(mktemp -d "${SANDBOX_BASE}-${task_id}-XXXXXX") || {
-		echo "ERROR: failed to create sandbox directory" >&2
-		return 1
-	}
-
-	# --- Git config (identity only, no credential helpers) ---
+setup_sandbox_git_config() {
+	local sandbox_dir="$1"
 	local git_name git_email
+
 	git_name=$(git config --global user.name 2>/dev/null || echo "aidevops-worker")
 	git_email=$(git config --global user.email 2>/dev/null || echo "worker@aidevops.sh")
 
@@ -122,10 +93,25 @@ create_worker_sandbox() {
 		    directory = *
 	GITCONFIG
 
-	# --- gh CLI auth ---
-	# Workers use GH_TOKEN env var (set by the dispatch script), not filesystem auth.
-	# Create a minimal gh config directory so gh doesn't complain about missing config.
+	return 0
+}
+
+#######################################
+# Set up gh CLI config and agent prompts symlink
+#
+# Workers use GH_TOKEN env var (set by the dispatch script), not filesystem auth.
+# Creates a minimal gh config so gh doesn't complain about missing config.
+# Also symlinks agent prompts for /full-loop, /define, etc.
+#
+# Args:
+#   $1 = sandbox_dir
+#
+# Returns: 0 on success
+#######################################
+setup_sandbox_gh_config() {
+	local sandbox_dir="$1"
 	local gh_config_dir="$sandbox_dir/.config/gh"
+
 	mkdir -p "$gh_config_dir"
 	cat >"$gh_config_dir/config.yml" <<-GHCONFIG
 		version: 1
@@ -134,22 +120,37 @@ create_worker_sandbox() {
 		prompt: disabled
 	GHCONFIG
 
-	# --- Agent prompts (read-only symlink) ---
-	# Workers need access to agent prompts for /full-loop, /define, etc.
-	# Symlink to the deployed agents directory (read-only for the worker).
+	# Agent prompts (read-only symlink)
 	local agents_source="${REAL_HOME}/.aidevops"
 	if [[ -d "$agents_source" ]]; then
 		ln -sf "$agents_source" "$sandbox_dir/.aidevops"
 	fi
 
-	# --- Runtime config files (t1665.5 — registry-driven) ---
-	# Workers need their tool configs. Copy only the specific config files needed,
-	# not the entire .config directory (which may contain credentials).
+	return 0
+}
+
+#######################################
+# Copy runtime config files into sandbox (t1665.5 — registry-driven)
+#
+# Workers need their tool configs. Copies only the specific config files
+# needed, not the entire .config directory (which may contain credentials).
+# Uses the runtime registry if available, otherwise falls back to hardcoded paths.
+#
+# Does NOT copy: credentials.json, .credentials, auth tokens
+#
+# Args:
+#   $1 = sandbox_dir
+#
+# Returns: 0 on success
+#######################################
+setup_sandbox_runtime_configs() {
+	local sandbox_dir="$1"
 	local config_dir="$sandbox_dir/.config"
+
 	mkdir -p "$config_dir"
 
 	# Copy MCP config files for all configured runtimes
-	if type rt_detect_configured &>/dev/null; then
+	if type rt_detect_configured >/dev/null 2>&1; then
 		local _sb_rt_id _sb_cfg_path _sb_cfg_dir _sb_cfg_file _sb_dst_dir
 		while IFS= read -r _sb_rt_id; do
 			_sb_cfg_path=$(rt_config_path "$_sb_rt_id") || continue
@@ -189,21 +190,84 @@ create_worker_sandbox() {
 			[[ -f "$claude_dir_src/settings.json" ]] && cp "$claude_dir_src/settings.json" "$claude_dir_dst/"
 		fi
 	fi
-	# Do NOT copy: credentials.json, .credentials, auth tokens
 
-	# --- XDG directories for tool state ---
-	# Tools like npm, bun, etc. need writable cache/data dirs
+	return 0
+}
+
+#######################################
+# Create XDG directories and sentinel file for sandbox detection
+#
+# Sets up writable cache/data dirs for tools (npm, bun, etc.) and
+# writes a sentinel file so workers and scripts can detect they're sandboxed.
+#
+# Args:
+#   $1 = sandbox_dir
+#   $2 = task_id
+#
+# Returns: 0 on success
+#######################################
+setup_sandbox_dirs_and_sentinel() {
+	local sandbox_dir="$1"
+	local task_id="$2"
+
+	# XDG directories for tool state
 	mkdir -p "$sandbox_dir/.local/share"
 	mkdir -p "$sandbox_dir/.cache"
 	mkdir -p "$sandbox_dir/.npm"
 
-	# --- Sentinel file for sandbox detection ---
-	# Workers and scripts can check for this to know they're sandboxed
+	# Sentinel file for sandbox detection
 	cat >"$sandbox_dir/.aidevops-sandbox" <<-SENTINEL
 		task_id=${task_id}
 		created=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 		real_home=${REAL_HOME}
 	SENTINEL
+
+	return 0
+}
+
+#######################################
+# Create a sandboxed HOME directory for a worker
+#
+# Creates a temporary directory with minimal git config and
+# symlinks to read-only framework resources. The worker gets:
+#   - Git identity (name/email) for commits
+#   - GH_TOKEN for GitHub API access (via env var, not filesystem)
+#   - Read-only access to agent prompts (symlink)
+#   - Writable XDG dirs for tool state
+#
+# Does NOT include:
+#   - ~/.ssh/ (no SSH key access)
+#   - gopass / pass stores
+#   - ~/.config/aidevops/credentials.sh
+#   - Cloud provider tokens (AWS, GCP, Azure)
+#   - npm/pypi publish tokens
+#   - Browser profiles or cookies
+#
+# Args:
+#   $1 = task_id (used for directory naming and logging)
+#
+# Outputs: sandbox HOME path on stdout
+# Returns: 0 on success, 1 on failure
+#######################################
+create_worker_sandbox() {
+	local task_id="$1"
+
+	if [[ -z "$task_id" ]]; then
+		echo "ERROR: task_id required" >&2
+		return 1
+	fi
+
+	# Create unique sandbox directory
+	local sandbox_dir
+	sandbox_dir=$(mktemp -d "${SANDBOX_BASE}-${task_id}-XXXXXX") || {
+		echo "ERROR: failed to create sandbox directory" >&2
+		return 1
+	}
+
+	setup_sandbox_git_config "$sandbox_dir"
+	setup_sandbox_gh_config "$sandbox_dir"
+	setup_sandbox_runtime_configs "$sandbox_dir"
+	setup_sandbox_dirs_and_sentinel "$sandbox_dir" "$task_id"
 
 	log_worker_sandbox_event "created" "$task_id" "$sandbox_dir"
 
