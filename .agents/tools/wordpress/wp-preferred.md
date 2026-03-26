@@ -20,12 +20,7 @@ tools:
 **Theme**: Kadence (https://wordpress.org/themes/kadence/)
 **Total Plugins**: 127+ curated plugins across 19 categories
 
-**Selection Criteria** (applied globally):
-- Speed optimization (minimal frontend impact)
-- WP standards compliance (native UI patterns)
-- Quality documentation
-- Regular updates without breaking changes
-- Tested compatibility with this stack
+**Selection Criteria**: speed-first, WP standards compliant, well-documented, non-breaking updates, stack-tested.
 
 **Key Ecosystems**:
 - **Kadence**: Theme, Blocks Pro, Conversions, Shop Kit, Starter Templates
@@ -44,16 +39,6 @@ wp theme install kadence --activate
 **Updates**: Git Updater available for managing plugin updates from Git repositories
 <!-- AI-CONTEXT-END -->
 
-## Selection Criteria
-
-Plugins are chosen based on:
-
-1. **Speed Optimization** - Minimal frontend impact, efficient code
-2. **WP Standards** - Following WordPress coding standards and UI patterns
-3. **Documentation** - Clear, comprehensive, up-to-date docs
-4. **Update Frequency** - Regular updates without breaking changes
-5. **Conflict-Free** - Tested for compatibility with this stack
-
 ## Theme
 
 | Name | Slug | Source |
@@ -64,8 +49,6 @@ Plugins are chosen based on:
 ## Plugins by Category
 
 ### Minimal (Essential Starter Stack)
-
-These 5 plugins form the minimal recommended installation for any new WordPress site.
 
 | Slug | Name | Source |
 |------|------|--------|
@@ -228,9 +211,10 @@ These 5 plugins form the minimal recommended installation for any new WordPress 
 
 ### Speed & Performance
 
+*Also see: `compressx` (Minimal).*
+
 | Slug | Name | Source |
 |------|------|--------|
-| `compressx` | CompressX | https://wordpress.org/plugins/compressx/ |
 | `disable-wordpress-updates` | Disable All WordPress Updates | https://wordpress.org/plugins/disable-wordpress-updates/ |
 | `disable-dashboard-for-woocommerce-pro` | Disable Bloat PRO | https://disablebloat.com/ |
 | `flying-analytics` | Flying Analytics | https://wordpress.org/plugins/flying-analytics/ |
@@ -247,10 +231,7 @@ These 5 plugins form the minimal recommended installation for any new WordPress 
 
 ### Translation
 
-| Slug | Name | Source |
-|------|------|--------|
-| `hreflang-manager` | Hreflang Manager | https://wordpress.org/plugins/hreflang-manager/ |
-| `performant-translations` | Performant Translations | https://wordpress.org/plugins/performant-translations/ |
+*Also see: `hreflang-manager` (SEO), `performant-translations` (Speed & Performance).*
 
 ### Advanced (Developer Tools)
 
@@ -266,28 +247,26 @@ These 5 plugins form the minimal recommended installation for any new WordPress 
 
 ### Debug & Troubleshooting
 
+*Also see: `user-switching` (Admin), `gotmls` (Security).*
+
 | Slug | Name | Source |
 |------|------|--------|
 | `advanced-database-cleaner` | Advanced Database Cleaner | https://wordpress.org/plugins/advanced-database-cleaner/ |
 | `advanced-database-cleaner-pro` | Advanced Database Cleaner PRO | https://sigmaplugin.com/downloads/wordpress-advanced-database-cleaner |
 | `code-profiler-pro` | Code Profiler Pro | https://codeprofiler.io/ |
 | `debug-log-manager` | Debug Log Manager | https://wordpress.org/plugins/debug-log-manager/ |
-| `gotmls` | Anti-Malware Security | https://wordpress.org/plugins/gotmls/ |
 | `query-monitor` | Query Monitor | https://wordpress.org/plugins/query-monitor/ |
 | `string-locator` | String Locator | https://wordpress.org/plugins/string-locator/ |
-| `user-switching` | User Switching | https://wordpress.org/plugins/user-switching/ |
 | `wp-crontrol` | WP Crontrol | https://wordpress.org/plugins/wp-crontrol/ |
 
 ### Security
 
+*Also see: `antispam-bee` (Minimal), `simple-cloudflare-turnstile` (Minimal), `really-simple-ssl`/`-pro` (Compliance).*
+
 | Slug | Name | Source |
 |------|------|--------|
-| `antispam-bee` | Antispam Bee | https://wordpress.org/plugins/antispam-bee/ |
 | `comment_goblin` | Comment Goblin | https://commentgoblin.com/ |
 | `gotmls` | Anti-Malware Security | https://wordpress.org/plugins/gotmls/ |
-| `really-simple-ssl` | Really Simple SSL | https://wordpress.org/plugins/really-simple-ssl/ |
-| `really-simple-ssl-pro` | Really Simple Security Pro | https://really-simple-ssl.com/pro/ |
-| `simple-cloudflare-turnstile` | Simple Cloudflare Turnstile | https://wordpress.org/plugins/simple-cloudflare-turnstile/ |
 
 ### Kadence Ecosystem
 
@@ -313,9 +292,10 @@ These 5 plugins form the minimal recommended installation for any new WordPress 
 
 ### Multisite
 
+*Also see: `network-plugin-auditor` (Admin).*
+
 | Slug | Name | Source |
 |------|------|--------|
-| `network-plugin-auditor` | Network Plugin Auditor | https://wordpress.org/plugins/network-plugin-auditor/ |
 | `ultimate-multisite` | Ultimate Multisite | https://wordpress.org/plugins/ultimate-multisite/ |
 
 ### Hosting-Specific
@@ -325,54 +305,29 @@ These 5 plugins form the minimal recommended installation for any new WordPress 
 | `closte-requirements` | Closte.com | Only for Closte.com hosting |
 | `eos-deactivate-plugins` | Freesoul Deactivate Plugins [FDP] | Closte variant |
 
-## WP-CLI Quick Install Commands
-
-### Minimal Stack
+## WP-CLI Install Stacks
 
 ```bash
-wp plugin install antispam-bee compressx fluent-smtp kadence-blocks simple-cloudflare-turnstile --activate
-wp theme install kadence --activate
-```
-
-### Admin Stack
-
-```bash
+# Admin
 wp plugin install admin-bar-dashboard-control hide-admin-notices manage-notification-emails plugin-toggle user-switching --activate
-```
 
-### Performance Stack
-
-```bash
+# Performance
 wp plugin install flying-analytics flying-pages flying-scripts freesoul-deactivate-plugins index-wp-mysql-for-speed performant-translations --activate
-```
 
-### SEO Stack
-
-```bash
+# SEO
 wp plugin install seo-by-rank-math burst-statistics syndication-links webmention --activate
-```
 
-### Forms & CRM Stack
-
-```bash
+# Forms & CRM
 wp plugin install fluentform fluent-crm fluent-smtp fluent-support --activate
-```
 
-### WooCommerce Stack
-
-```bash
+# WooCommerce
 wp plugin install woocommerce kadence-woocommerce-email-designer pymntpl-paypal-woocommerce woo-stripe-payment --activate
-```
 
-### Debug Stack
-
-```bash
+# Debug
 wp plugin install query-monitor debug-log-manager string-locator wp-crontrol user-switching --activate
 ```
 
-## Pro Plugin Vendor URLs
-
-For premium plugins, use these vendor sites for purchase and license management:
+## Pro Plugin Vendors
 
 | Ecosystem | Vendor URL |
 |-----------|------------|
