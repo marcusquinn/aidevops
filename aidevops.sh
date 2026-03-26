@@ -1656,6 +1656,30 @@ SOPSEOF
 		fi
 	fi
 
+	# Ensure .gitattributes has ai-training=false (opt out of AI model training)
+	# GitHub and other platforms respect this attribute to exclude repo content
+	# from AI/ML training datasets. Idempotent — only adds if not already present.
+	local gitattributes="$project_root/.gitattributes"
+	if [[ -f "$gitattributes" ]]; then
+		if ! grep -qE '^\*[[:space:]]+ai-training=false' "$gitattributes" 2>/dev/null; then
+			ensure_trailing_newline "$gitattributes"
+			{
+				echo ""
+				echo "# Opt out of AI model training"
+				echo "* ai-training=false"
+			} >>"$gitattributes"
+			print_success "Added ai-training=false to .gitattributes"
+		else
+			print_info ".gitattributes already has ai-training=false"
+		fi
+	else
+		cat >"$gitattributes" <<'GITATTRSEOF'
+# Opt out of AI model training
+* ai-training=false
+GITATTRSEOF
+		print_success "Created .gitattributes with ai-training=false"
+	fi
+
 	# Add aidevops runtime artifacts to .gitignore
 	# Note: .agents/ itself is NOT ignored — it contains committed project-specific agents.
 	# Only runtime artifacts (loop state, tmp, memory) are ignored.
@@ -1793,6 +1817,7 @@ SOPSEOF
 	# Auto-commit initialized files so they don't linger as mystery unstaged
 	# changes (#2570 bug 2). Collect all files that cmd_init creates/modifies.
 	local init_files=()
+	[[ -f "$project_root/.gitattributes" ]] && init_files+=(".gitattributes")
 	[[ -f "$project_root/.gitignore" ]] && init_files+=(".gitignore")
 	[[ -d "$project_root/.agents" ]] && init_files+=(".agents/")
 	[[ -f "$project_root/AGENTS.md" ]] && init_files+=("AGENTS.md")
