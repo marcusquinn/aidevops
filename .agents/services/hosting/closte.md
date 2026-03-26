@@ -260,9 +260,11 @@ curl -sI https://example.com | grep -i cf-ray
 # Verify no redirect loop
 curl -sI https://example.com | head -5
 
-# Verify TLS 1.1 is rejected at the edge
+# Verify TLS 1.1 is rejected at the edge (requires curl 7.54.0+ with OpenSSL)
 curl --tlsv1.1 --tls-max 1.1 https://example.com 2>&1 | head -3
 # Expected: SSL handshake failure or protocol error
+# Alternative for older curl or restricted environments:
+# openssl s_client -connect example.com:443 -tls1_1 < /dev/null 2>&1 | head -5
 ```
 
 ### Multisite with Domain Mapping
