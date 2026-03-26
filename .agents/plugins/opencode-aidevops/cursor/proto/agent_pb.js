@@ -2765,27 +2765,30 @@ export const EmptySchema = /*@__PURE__*/ messageDesc(file_agent, 490);
  */
 export const BidiRequestIdSchema = /*@__PURE__*/ messageDesc(file_agent, 491);
 /**
+ * Populates a TypeScript-style bidirectional enum object from an entries array.
+ * Each entry is [numericValue, stringKey]. Eliminates repetitive IIFE boilerplate.
+ * @param {object} enumObj - The enum variable to populate (passed by reference via ||= init).
+ * @param {Array<[number, string]>} entries - Pairs of [value, key] for each enum member.
+ * @returns {object} The populated enum object.
+ */
+function defineEnum(enumObj, entries) {
+    for (var i = 0; i < entries.length; i++) {
+        var value = entries[i][0];
+        var key = entries[i][1];
+        enumObj[enumObj[key] = value] = key;
+    }
+    return enumObj;
+}
+/**
  * @generated from enum agent.v1.AppliedAgentChange_ChangeType
  */
 export var AppliedAgentChange_ChangeType;
-(function (AppliedAgentChange_ChangeType) {
-    /**
-     * @generated from enum value: CHANGE_TYPE_UNSPECIFIED = 0;
-     */
-    AppliedAgentChange_ChangeType[AppliedAgentChange_ChangeType["CHANGE_TYPE_UNSPECIFIED"] = 0] = "CHANGE_TYPE_UNSPECIFIED";
-    /**
-     * @generated from enum value: CHANGE_TYPE_CREATED = 1;
-     */
-    AppliedAgentChange_ChangeType[AppliedAgentChange_ChangeType["CHANGE_TYPE_CREATED"] = 1] = "CHANGE_TYPE_CREATED";
-    /**
-     * @generated from enum value: CHANGE_TYPE_MODIFIED = 2;
-     */
-    AppliedAgentChange_ChangeType[AppliedAgentChange_ChangeType["CHANGE_TYPE_MODIFIED"] = 2] = "CHANGE_TYPE_MODIFIED";
-    /**
-     * @generated from enum value: CHANGE_TYPE_DELETED = 3;
-     */
-    AppliedAgentChange_ChangeType[AppliedAgentChange_ChangeType["CHANGE_TYPE_DELETED"] = 3] = "CHANGE_TYPE_DELETED";
-})(AppliedAgentChange_ChangeType || (AppliedAgentChange_ChangeType = {}));
+defineEnum(AppliedAgentChange_ChangeType || (AppliedAgentChange_ChangeType = {}), [
+    [0, "CHANGE_TYPE_UNSPECIFIED"],
+    [1, "CHANGE_TYPE_CREATED"],
+    [2, "CHANGE_TYPE_MODIFIED"],
+    [3, "CHANGE_TYPE_DELETED"],
+]);
 /**
  * Describes the enum agent.v1.AppliedAgentChange_ChangeType.
  */
@@ -2796,32 +2799,14 @@ enumDesc(file_agent, 0);
  * @generated from enum agent.v1.MouseButton
  */
 export var MouseButton;
-(function (MouseButton) {
-    /**
-     * @generated from enum value: MOUSE_BUTTON_UNSPECIFIED = 0;
-     */
-    MouseButton[MouseButton["UNSPECIFIED"] = 0] = "UNSPECIFIED";
-    /**
-     * @generated from enum value: MOUSE_BUTTON_LEFT = 1;
-     */
-    MouseButton[MouseButton["LEFT"] = 1] = "LEFT";
-    /**
-     * @generated from enum value: MOUSE_BUTTON_RIGHT = 2;
-     */
-    MouseButton[MouseButton["RIGHT"] = 2] = "RIGHT";
-    /**
-     * @generated from enum value: MOUSE_BUTTON_MIDDLE = 3;
-     */
-    MouseButton[MouseButton["MIDDLE"] = 3] = "MIDDLE";
-    /**
-     * @generated from enum value: MOUSE_BUTTON_BACK = 4;
-     */
-    MouseButton[MouseButton["BACK"] = 4] = "BACK";
-    /**
-     * @generated from enum value: MOUSE_BUTTON_FORWARD = 5;
-     */
-    MouseButton[MouseButton["FORWARD"] = 5] = "FORWARD";
-})(MouseButton || (MouseButton = {}));
+defineEnum(MouseButton || (MouseButton = {}), [
+    [0, "UNSPECIFIED"],
+    [1, "LEFT"],
+    [2, "RIGHT"],
+    [3, "MIDDLE"],
+    [4, "BACK"],
+    [5, "FORWARD"],
+]);
 /**
  * Describes the enum agent.v1.MouseButton.
  */
@@ -2830,28 +2815,13 @@ export const MouseButtonSchema = /*@__PURE__*/ enumDesc(file_agent, 1);
  * @generated from enum agent.v1.ScrollDirection
  */
 export var ScrollDirection;
-(function (ScrollDirection) {
-    /**
-     * @generated from enum value: SCROLL_DIRECTION_UNSPECIFIED = 0;
-     */
-    ScrollDirection[ScrollDirection["UNSPECIFIED"] = 0] = "UNSPECIFIED";
-    /**
-     * @generated from enum value: SCROLL_DIRECTION_UP = 1;
-     */
-    ScrollDirection[ScrollDirection["UP"] = 1] = "UP";
-    /**
-     * @generated from enum value: SCROLL_DIRECTION_DOWN = 2;
-     */
-    ScrollDirection[ScrollDirection["DOWN"] = 2] = "DOWN";
-    /**
-     * @generated from enum value: SCROLL_DIRECTION_LEFT = 3;
-     */
-    ScrollDirection[ScrollDirection["LEFT"] = 3] = "LEFT";
-    /**
-     * @generated from enum value: SCROLL_DIRECTION_RIGHT = 4;
-     */
-    ScrollDirection[ScrollDirection["RIGHT"] = 4] = "RIGHT";
-})(ScrollDirection || (ScrollDirection = {}));
+defineEnum(ScrollDirection || (ScrollDirection = {}), [
+    [0, "UNSPECIFIED"],
+    [1, "UP"],
+    [2, "DOWN"],
+    [3, "LEFT"],
+    [4, "RIGHT"],
+]);
 /**
  * Describes the enum agent.v1.ScrollDirection.
  */
@@ -2860,20 +2830,11 @@ export const ScrollDirectionSchema = /*@__PURE__*/ enumDesc(file_agent, 2);
  * @generated from enum agent.v1.CursorRuleSource
  */
 export var CursorRuleSource;
-(function (CursorRuleSource) {
-    /**
-     * @generated from enum value: CURSOR_RULE_SOURCE_UNSPECIFIED = 0;
-     */
-    CursorRuleSource[CursorRuleSource["UNSPECIFIED"] = 0] = "UNSPECIFIED";
-    /**
-     * @generated from enum value: CURSOR_RULE_SOURCE_TEAM = 1;
-     */
-    CursorRuleSource[CursorRuleSource["TEAM"] = 1] = "TEAM";
-    /**
-     * @generated from enum value: CURSOR_RULE_SOURCE_USER = 2;
-     */
-    CursorRuleSource[CursorRuleSource["USER"] = 2] = "USER";
-})(CursorRuleSource || (CursorRuleSource = {}));
+defineEnum(CursorRuleSource || (CursorRuleSource = {}), [
+    [0, "UNSPECIFIED"],
+    [1, "TEAM"],
+    [2, "USER"],
+]);
 /**
  * Describes the enum agent.v1.CursorRuleSource.
  */
@@ -2882,28 +2843,13 @@ export const CursorRuleSourceSchema = /*@__PURE__*/ enumDesc(file_agent, 3);
  * @generated from enum agent.v1.DiagnosticSeverity
  */
 export var DiagnosticSeverity;
-(function (DiagnosticSeverity) {
-    /**
-     * @generated from enum value: DIAGNOSTIC_SEVERITY_UNSPECIFIED = 0;
-     */
-    DiagnosticSeverity[DiagnosticSeverity["UNSPECIFIED"] = 0] = "UNSPECIFIED";
-    /**
-     * @generated from enum value: DIAGNOSTIC_SEVERITY_ERROR = 1;
-     */
-    DiagnosticSeverity[DiagnosticSeverity["ERROR"] = 1] = "ERROR";
-    /**
-     * @generated from enum value: DIAGNOSTIC_SEVERITY_WARNING = 2;
-     */
-    DiagnosticSeverity[DiagnosticSeverity["WARNING"] = 2] = "WARNING";
-    /**
-     * @generated from enum value: DIAGNOSTIC_SEVERITY_INFORMATION = 3;
-     */
-    DiagnosticSeverity[DiagnosticSeverity["INFORMATION"] = 3] = "INFORMATION";
-    /**
-     * @generated from enum value: DIAGNOSTIC_SEVERITY_HINT = 4;
-     */
-    DiagnosticSeverity[DiagnosticSeverity["HINT"] = 4] = "HINT";
-})(DiagnosticSeverity || (DiagnosticSeverity = {}));
+defineEnum(DiagnosticSeverity || (DiagnosticSeverity = {}), [
+    [0, "UNSPECIFIED"],
+    [1, "ERROR"],
+    [2, "WARNING"],
+    [3, "INFORMATION"],
+    [4, "HINT"],
+]);
 /**
  * Describes the enum agent.v1.DiagnosticSeverity.
  */
@@ -2912,24 +2858,12 @@ export const DiagnosticSeveritySchema = /*@__PURE__*/ enumDesc(file_agent, 4);
  * @generated from enum agent.v1.RecordingMode
  */
 export var RecordingMode;
-(function (RecordingMode) {
-    /**
-     * @generated from enum value: RECORDING_MODE_UNSPECIFIED = 0;
-     */
-    RecordingMode[RecordingMode["UNSPECIFIED"] = 0] = "UNSPECIFIED";
-    /**
-     * @generated from enum value: RECORDING_MODE_START_RECORDING = 1;
-     */
-    RecordingMode[RecordingMode["START_RECORDING"] = 1] = "START_RECORDING";
-    /**
-     * @generated from enum value: RECORDING_MODE_SAVE_RECORDING = 2;
-     */
-    RecordingMode[RecordingMode["SAVE_RECORDING"] = 2] = "SAVE_RECORDING";
-    /**
-     * @generated from enum value: RECORDING_MODE_DISCARD_RECORDING = 3;
-     */
-    RecordingMode[RecordingMode["DISCARD_RECORDING"] = 3] = "DISCARD_RECORDING";
-})(RecordingMode || (RecordingMode = {}));
+defineEnum(RecordingMode || (RecordingMode = {}), [
+    [0, "UNSPECIFIED"],
+    [1, "START_RECORDING"],
+    [2, "SAVE_RECORDING"],
+    [3, "DISCARD_RECORDING"],
+]);
 /**
  * Describes the enum agent.v1.RecordingMode.
  */
@@ -2938,16 +2872,10 @@ export const RecordingModeSchema = /*@__PURE__*/ enumDesc(file_agent, 5);
  * @generated from enum agent.v1.RequestedFilePathRejectedReason
  */
 export var RequestedFilePathRejectedReason;
-(function (RequestedFilePathRejectedReason) {
-    /**
-     * @generated from enum value: REQUESTED_FILE_PATH_REJECTED_REASON_UNSPECIFIED = 0;
-     */
-    RequestedFilePathRejectedReason[RequestedFilePathRejectedReason["UNSPECIFIED"] = 0] = "UNSPECIFIED";
-    /**
-     * @generated from enum value: REQUESTED_FILE_PATH_REJECTED_REASON_SLASHES_NOT_ALLOWED = 1;
-     */
-    RequestedFilePathRejectedReason[RequestedFilePathRejectedReason["SLASHES_NOT_ALLOWED"] = 1] = "SLASHES_NOT_ALLOWED";
-})(RequestedFilePathRejectedReason || (RequestedFilePathRejectedReason = {}));
+defineEnum(RequestedFilePathRejectedReason || (RequestedFilePathRejectedReason = {}), [
+    [0, "UNSPECIFIED"],
+    [1, "SLASHES_NOT_ALLOWED"],
+]);
 /**
  * Describes the enum agent.v1.RequestedFilePathRejectedReason.
  */
@@ -2958,28 +2886,13 @@ enumDesc(file_agent, 6);
  * @generated from enum agent.v1.PackageType
  */
 export var PackageType;
-(function (PackageType) {
-    /**
-     * @generated from enum value: PACKAGE_TYPE_UNSPECIFIED = 0;
-     */
-    PackageType[PackageType["UNSPECIFIED"] = 0] = "UNSPECIFIED";
-    /**
-     * @generated from enum value: PACKAGE_TYPE_CURSOR_PROJECT = 1;
-     */
-    PackageType[PackageType["CURSOR_PROJECT"] = 1] = "CURSOR_PROJECT";
-    /**
-     * @generated from enum value: PACKAGE_TYPE_CURSOR_PERSONAL = 2;
-     */
-    PackageType[PackageType["CURSOR_PERSONAL"] = 2] = "CURSOR_PERSONAL";
-    /**
-     * @generated from enum value: PACKAGE_TYPE_CLAUDE_SKILL = 3;
-     */
-    PackageType[PackageType["CLAUDE_SKILL"] = 3] = "CLAUDE_SKILL";
-    /**
-     * @generated from enum value: PACKAGE_TYPE_CLAUDE_PLUGIN = 4;
-     */
-    PackageType[PackageType["CLAUDE_PLUGIN"] = 4] = "CLAUDE_PLUGIN";
-})(PackageType || (PackageType = {}));
+defineEnum(PackageType || (PackageType = {}), [
+    [0, "UNSPECIFIED"],
+    [1, "CURSOR_PROJECT"],
+    [2, "CURSOR_PERSONAL"],
+    [3, "CLAUDE_SKILL"],
+    [4, "CLAUDE_PLUGIN"],
+]);
 /**
  * Describes the enum agent.v1.PackageType.
  */
@@ -2988,24 +2901,12 @@ export const PackageTypeSchema = /*@__PURE__*/ enumDesc(file_agent, 7);
  * @generated from enum agent.v1.SandboxPolicy_Type
  */
 export var SandboxPolicy_Type;
-(function (SandboxPolicy_Type) {
-    /**
-     * @generated from enum value: TYPE_UNSPECIFIED = 0;
-     */
-    SandboxPolicy_Type[SandboxPolicy_Type["TYPE_UNSPECIFIED"] = 0] = "TYPE_UNSPECIFIED";
-    /**
-     * @generated from enum value: TYPE_INSECURE_NONE = 1;
-     */
-    SandboxPolicy_Type[SandboxPolicy_Type["TYPE_INSECURE_NONE"] = 1] = "TYPE_INSECURE_NONE";
-    /**
-     * @generated from enum value: TYPE_WORKSPACE_READWRITE = 2;
-     */
-    SandboxPolicy_Type[SandboxPolicy_Type["TYPE_WORKSPACE_READWRITE"] = 2] = "TYPE_WORKSPACE_READWRITE";
-    /**
-     * @generated from enum value: TYPE_WORKSPACE_READONLY = 3;
-     */
-    SandboxPolicy_Type[SandboxPolicy_Type["TYPE_WORKSPACE_READONLY"] = 3] = "TYPE_WORKSPACE_READONLY";
-})(SandboxPolicy_Type || (SandboxPolicy_Type = {}));
+defineEnum(SandboxPolicy_Type || (SandboxPolicy_Type = {}), [
+    [0, "TYPE_UNSPECIFIED"],
+    [1, "TYPE_INSECURE_NONE"],
+    [2, "TYPE_WORKSPACE_READWRITE"],
+    [3, "TYPE_WORKSPACE_READONLY"],
+]);
 /**
  * Describes the enum agent.v1.SandboxPolicy_Type.
  */
@@ -3014,20 +2915,11 @@ export const SandboxPolicy_TypeSchema = /*@__PURE__*/ enumDesc(file_agent, 8);
  * @generated from enum agent.v1.TimeoutBehavior
  */
 export var TimeoutBehavior;
-(function (TimeoutBehavior) {
-    /**
-     * @generated from enum value: TIMEOUT_BEHAVIOR_UNSPECIFIED = 0;
-     */
-    TimeoutBehavior[TimeoutBehavior["UNSPECIFIED"] = 0] = "UNSPECIFIED";
-    /**
-     * @generated from enum value: TIMEOUT_BEHAVIOR_CANCEL = 1;
-     */
-    TimeoutBehavior[TimeoutBehavior["CANCEL"] = 1] = "CANCEL";
-    /**
-     * @generated from enum value: TIMEOUT_BEHAVIOR_BACKGROUND = 2;
-     */
-    TimeoutBehavior[TimeoutBehavior["BACKGROUND"] = 2] = "BACKGROUND";
-})(TimeoutBehavior || (TimeoutBehavior = {}));
+defineEnum(TimeoutBehavior || (TimeoutBehavior = {}), [
+    [0, "UNSPECIFIED"],
+    [1, "CANCEL"],
+    [2, "BACKGROUND"],
+]);
 /**
  * Describes the enum agent.v1.TimeoutBehavior.
  */
@@ -3036,20 +2928,11 @@ export const TimeoutBehaviorSchema = /*@__PURE__*/ enumDesc(file_agent, 9);
  * @generated from enum agent.v1.ShellAbortReason
  */
 export var ShellAbortReason;
-(function (ShellAbortReason) {
-    /**
-     * @generated from enum value: SHELL_ABORT_REASON_UNSPECIFIED = 0;
-     */
-    ShellAbortReason[ShellAbortReason["UNSPECIFIED"] = 0] = "UNSPECIFIED";
-    /**
-     * @generated from enum value: SHELL_ABORT_REASON_USER_ABORT = 1;
-     */
-    ShellAbortReason[ShellAbortReason["USER_ABORT"] = 1] = "USER_ABORT";
-    /**
-     * @generated from enum value: SHELL_ABORT_REASON_TIMEOUT = 2;
-     */
-    ShellAbortReason[ShellAbortReason["TIMEOUT"] = 2] = "TIMEOUT";
-})(ShellAbortReason || (ShellAbortReason = {}));
+defineEnum(ShellAbortReason || (ShellAbortReason = {}), [
+    [0, "UNSPECIFIED"],
+    [1, "USER_ABORT"],
+    [2, "TIMEOUT"],
+]);
 /**
  * Describes the enum agent.v1.ShellAbortReason.
  */
@@ -3058,20 +2941,11 @@ export const ShellAbortReasonSchema = /*@__PURE__*/ enumDesc(file_agent, 10);
  * @generated from enum agent.v1.CustomSubagentPermissionMode
  */
 export var CustomSubagentPermissionMode;
-(function (CustomSubagentPermissionMode) {
-    /**
-     * @generated from enum value: CUSTOM_SUBAGENT_PERMISSION_MODE_UNSPECIFIED = 0;
-     */
-    CustomSubagentPermissionMode[CustomSubagentPermissionMode["UNSPECIFIED"] = 0] = "UNSPECIFIED";
-    /**
-     * @generated from enum value: CUSTOM_SUBAGENT_PERMISSION_MODE_DEFAULT = 1;
-     */
-    CustomSubagentPermissionMode[CustomSubagentPermissionMode["DEFAULT"] = 1] = "DEFAULT";
-    /**
-     * @generated from enum value: CUSTOM_SUBAGENT_PERMISSION_MODE_READONLY = 2;
-     */
-    CustomSubagentPermissionMode[CustomSubagentPermissionMode["READONLY"] = 2] = "READONLY";
-})(CustomSubagentPermissionMode || (CustomSubagentPermissionMode = {}));
+defineEnum(CustomSubagentPermissionMode || (CustomSubagentPermissionMode = {}), [
+    [0, "UNSPECIFIED"],
+    [1, "DEFAULT"],
+    [2, "READONLY"],
+]);
 /**
  * Describes the enum agent.v1.CustomSubagentPermissionMode.
  */
@@ -3082,28 +2956,13 @@ enumDesc(file_agent, 11);
  * @generated from enum agent.v1.TodoStatus
  */
 export var TodoStatus;
-(function (TodoStatus) {
-    /**
-     * @generated from enum value: TODO_STATUS_UNSPECIFIED = 0;
-     */
-    TodoStatus[TodoStatus["UNSPECIFIED"] = 0] = "UNSPECIFIED";
-    /**
-     * @generated from enum value: TODO_STATUS_PENDING = 1;
-     */
-    TodoStatus[TodoStatus["PENDING"] = 1] = "PENDING";
-    /**
-     * @generated from enum value: TODO_STATUS_IN_PROGRESS = 2;
-     */
-    TodoStatus[TodoStatus["IN_PROGRESS"] = 2] = "IN_PROGRESS";
-    /**
-     * @generated from enum value: TODO_STATUS_COMPLETED = 3;
-     */
-    TodoStatus[TodoStatus["COMPLETED"] = 3] = "COMPLETED";
-    /**
-     * @generated from enum value: TODO_STATUS_CANCELLED = 4;
-     */
-    TodoStatus[TodoStatus["CANCELLED"] = 4] = "CANCELLED";
-})(TodoStatus || (TodoStatus = {}));
+defineEnum(TodoStatus || (TodoStatus = {}), [
+    [0, "UNSPECIFIED"],
+    [1, "PENDING"],
+    [2, "IN_PROGRESS"],
+    [3, "COMPLETED"],
+    [4, "CANCELLED"],
+]);
 /**
  * Describes the enum agent.v1.TodoStatus.
  */
@@ -3112,24 +2971,12 @@ export const TodoStatusSchema = /*@__PURE__*/ enumDesc(file_agent, 12);
  * @generated from enum agent.v1.ClientOS
  */
 export var ClientOS;
-(function (ClientOS) {
-    /**
-     * @generated from enum value: CLIENT_OS_UNSPECIFIED = 0;
-     */
-    ClientOS[ClientOS["CLIENT_OS_UNSPECIFIED"] = 0] = "CLIENT_OS_UNSPECIFIED";
-    /**
-     * @generated from enum value: CLIENT_OS_WINDOWS = 1;
-     */
-    ClientOS[ClientOS["CLIENT_OS_WINDOWS"] = 1] = "CLIENT_OS_WINDOWS";
-    /**
-     * @generated from enum value: CLIENT_OS_MACOS = 2;
-     */
-    ClientOS[ClientOS["CLIENT_OS_MACOS"] = 2] = "CLIENT_OS_MACOS";
-    /**
-     * @generated from enum value: CLIENT_OS_LINUX = 3;
-     */
-    ClientOS[ClientOS["CLIENT_OS_LINUX"] = 3] = "CLIENT_OS_LINUX";
-})(ClientOS || (ClientOS = {}));
+defineEnum(ClientOS || (ClientOS = {}), [
+    [0, "CLIENT_OS_UNSPECIFIED"],
+    [1, "CLIENT_OS_WINDOWS"],
+    [2, "CLIENT_OS_MACOS"],
+    [3, "CLIENT_OS_LINUX"],
+]);
 /**
  * Describes the enum agent.v1.ClientOS.
  */
@@ -3138,24 +2985,12 @@ export const ClientOSSchema = /*@__PURE__*/ enumDesc(file_agent, 13);
  * @generated from enum agent.v1.ArtifactUploadDispatchStatus
  */
 export var ArtifactUploadDispatchStatus;
-(function (ArtifactUploadDispatchStatus) {
-    /**
-     * @generated from enum value: ARTIFACT_UPLOAD_DISPATCH_STATUS_UNSPECIFIED = 0;
-     */
-    ArtifactUploadDispatchStatus[ArtifactUploadDispatchStatus["UNSPECIFIED"] = 0] = "UNSPECIFIED";
-    /**
-     * @generated from enum value: ARTIFACT_UPLOAD_DISPATCH_STATUS_ACCEPTED = 1;
-     */
-    ArtifactUploadDispatchStatus[ArtifactUploadDispatchStatus["ACCEPTED"] = 1] = "ACCEPTED";
-    /**
-     * @generated from enum value: ARTIFACT_UPLOAD_DISPATCH_STATUS_REJECTED = 2;
-     */
-    ArtifactUploadDispatchStatus[ArtifactUploadDispatchStatus["REJECTED"] = 2] = "REJECTED";
-    /**
-     * @generated from enum value: ARTIFACT_UPLOAD_DISPATCH_STATUS_SKIPPED_ALREADY_IN_PROGRESS = 3;
-     */
-    ArtifactUploadDispatchStatus[ArtifactUploadDispatchStatus["SKIPPED_ALREADY_IN_PROGRESS"] = 3] = "SKIPPED_ALREADY_IN_PROGRESS";
-})(ArtifactUploadDispatchStatus || (ArtifactUploadDispatchStatus = {}));
+defineEnum(ArtifactUploadDispatchStatus || (ArtifactUploadDispatchStatus = {}), [
+    [0, "UNSPECIFIED"],
+    [1, "ACCEPTED"],
+    [2, "REJECTED"],
+    [3, "SKIPPED_ALREADY_IN_PROGRESS"],
+]);
 /**
  * Describes the enum agent.v1.ArtifactUploadDispatchStatus.
  */
@@ -3166,24 +3001,12 @@ enumDesc(file_agent, 14);
  * @generated from enum agent.v1.Frame_Kind
  */
 export var Frame_Kind;
-(function (Frame_Kind) {
-    /**
-     * @generated from enum value: KIND_UNSPECIFIED = 0;
-     */
-    Frame_Kind[Frame_Kind["KIND_UNSPECIFIED"] = 0] = "KIND_UNSPECIFIED";
-    /**
-     * @generated from enum value: KIND_REQUEST = 1;
-     */
-    Frame_Kind[Frame_Kind["KIND_REQUEST"] = 1] = "KIND_REQUEST";
-    /**
-     * @generated from enum value: KIND_RESPONSE = 2;
-     */
-    Frame_Kind[Frame_Kind["KIND_RESPONSE"] = 2] = "KIND_RESPONSE";
-    /**
-     * @generated from enum value: KIND_ERROR = 3;
-     */
-    Frame_Kind[Frame_Kind["KIND_ERROR"] = 3] = "KIND_ERROR";
-})(Frame_Kind || (Frame_Kind = {}));
+defineEnum(Frame_Kind || (Frame_Kind = {}), [
+    [0, "KIND_UNSPECIFIED"],
+    [1, "KIND_REQUEST"],
+    [2, "KIND_RESPONSE"],
+    [3, "KIND_ERROR"],
+]);
 /**
  * Describes the enum agent.v1.Frame_Kind.
  */
@@ -3192,32 +3015,14 @@ export const Frame_KindSchema = /*@__PURE__*/ enumDesc(file_agent, 15);
  * @generated from enum agent.v1.BugbotDeeplinkEventKind
  */
 export var BugbotDeeplinkEventKind;
-(function (BugbotDeeplinkEventKind) {
-    /**
-     * @generated from enum value: BUGBOT_DEEPLINK_EVENT_KIND_UNSPECIFIED = 0;
-     */
-    BugbotDeeplinkEventKind[BugbotDeeplinkEventKind["UNSPECIFIED"] = 0] = "UNSPECIFIED";
-    /**
-     * @generated from enum value: BUGBOT_DEEPLINK_EVENT_KIND_CLICKED = 1;
-     */
-    BugbotDeeplinkEventKind[BugbotDeeplinkEventKind["CLICKED"] = 1] = "CLICKED";
-    /**
-     * @generated from enum value: BUGBOT_DEEPLINK_EVENT_KIND_HANDLED_DIALOG_SHOWN = 2;
-     */
-    BugbotDeeplinkEventKind[BugbotDeeplinkEventKind["HANDLED_DIALOG_SHOWN"] = 2] = "HANDLED_DIALOG_SHOWN";
-    /**
-     * @generated from enum value: BUGBOT_DEEPLINK_EVENT_KIND_HANDLED_CHAT_CREATED = 3;
-     */
-    BugbotDeeplinkEventKind[BugbotDeeplinkEventKind["HANDLED_CHAT_CREATED"] = 3] = "HANDLED_CHAT_CREATED";
-    /**
-     * @generated from enum value: BUGBOT_DEEPLINK_EVENT_KIND_ERROR = 4;
-     */
-    BugbotDeeplinkEventKind[BugbotDeeplinkEventKind["ERROR"] = 4] = "ERROR";
-    /**
-     * @generated from enum value: BUGBOT_DEEPLINK_EVENT_KIND_HANDLED_FIX_IN_WEB = 5;
-     */
-    BugbotDeeplinkEventKind[BugbotDeeplinkEventKind["HANDLED_FIX_IN_WEB"] = 5] = "HANDLED_FIX_IN_WEB";
-})(BugbotDeeplinkEventKind || (BugbotDeeplinkEventKind = {}));
+defineEnum(BugbotDeeplinkEventKind || (BugbotDeeplinkEventKind = {}), [
+    [0, "UNSPECIFIED"],
+    [1, "CLICKED"],
+    [2, "HANDLED_DIALOG_SHOWN"],
+    [3, "HANDLED_CHAT_CREATED"],
+    [4, "ERROR"],
+    [5, "HANDLED_FIX_IN_WEB"],
+]);
 /**
  * Describes the enum agent.v1.BugbotDeeplinkEventKind.
  */
