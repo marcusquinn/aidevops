@@ -797,8 +797,8 @@ cmd_verify() {
 					echo "  [fail] secretlint"
 					fail_count=$((fail_count + 1))
 				fi
-			elif command -v npx >/dev/null 2>&1; then
-				if (cd "$project_dir" && npx secretlint "**/*" 2>/dev/null); then
+			elif command -v npx >/dev/null 2>&1 && (cd "$project_dir" && npx --no-install secretlint --version >/dev/null 2>&1); then
+				if (cd "$project_dir" && npx --no-install secretlint "**/*" 2>/dev/null); then
 					echo "  [pass] secretlint"
 					pass_count=$((pass_count + 1))
 				else
@@ -819,8 +819,8 @@ cmd_verify() {
 					echo "  [fail] markdownlint"
 					fail_count=$((fail_count + 1))
 				fi
-			elif command -v npx >/dev/null 2>&1; then
-				if (cd "$project_dir" && npx markdownlint-cli2 "**/*.md" 2>/dev/null); then
+			elif command -v npx >/dev/null 2>&1 && (cd "$project_dir" && npx --no-install markdownlint-cli2 --version >/dev/null 2>&1); then
+				if (cd "$project_dir" && npx --no-install markdownlint-cli2 "**/*.md" 2>/dev/null); then
 					echo "  [pass] markdownlint"
 					pass_count=$((pass_count + 1))
 				else
