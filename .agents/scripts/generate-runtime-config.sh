@@ -828,6 +828,7 @@ _generate_subagents_opencode() {
 
 	export -f generate_subagent_stub 2>/dev/null || true
 	export AGENTS_DIR
+	export agent_dir
 
 	local _ncpu
 	_ncpu=$(nproc 2>/dev/null || sysctl -n hw.ncpu 2>/dev/null || echo 4)
