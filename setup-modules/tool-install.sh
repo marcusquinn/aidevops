@@ -1535,6 +1535,150 @@ setup_opencode_cli() {
 	return 0
 }
 
+setup_codex_cli() {
+	print_info "Setting up OpenAI Codex CLI..."
+
+	# Check if Codex is already installed
+	if command -v codex >/dev/null 2>&1; then
+		local codex_version
+		codex_version=$(codex --version 2>/dev/null | head -1 || echo "unknown")
+		print_success "Codex already installed: $codex_version"
+		# Fix broken MCP_DOCKER if present
+		_fix_codex_docker_mcp
+		return 0
+	fi
+
+	# Need either bun or npm to install
+	local installer=""
+	local install_pkg="@openai/codex@latest"
+
+	if command -v bun >/dev/null 2>&1; then
+		installer="bun"
+	elif command -v npm >/dev/null 2>&1; then
+		installer="npm"
+	else
+		print_warning "Neither bun nor npm found - cannot install Codex"
+		print_info "Install Node.js first, then re-run setup"
+		return 0
+	fi
+
+	print_info "Codex is OpenAI's AI coding CLI (terminal-based, agentic)"
+	echo "  It provides an AI-powered terminal interface using OpenAI models."
+	echo ""
+
+	local install_codex="Y"
+	if [[ "${NON_INTERACTIVE:-}" != "true" ]]; then
+		read -r -p "Install Codex via $installer? [Y/n]: " install_codex || install_codex="Y"
+	fi
+	if [[ "$install_codex" =~ ^[Yy]?$ ]]; then
+		if run_with_spinner "Installing Codex" npm_global_install "$install_pkg"; then
+			print_success "Codex installed"
+			echo ""
+			print_info "Codex needs OpenAI authentication."
+			print_info "Run 'codex' and follow the auth prompts."
+			echo ""
+			# Fix broken MCP_DOCKER if Codex created a default config
+			_fix_codex_docker_mcp
+		else
+			print_warning "Codex installation failed"
+			print_info "Try manually: npm install -g $install_pkg"
+		fi
+	else
+		print_info "Skipped Codex installation"
+		print_info "Install later: $installer install -g $install_pkg"
+	fi
+
+	return 0
+}
+
+# P0 fix: Remove broken MCP_DOCKER from Codex config.toml
+# Docker Desktop 4.40+ with MCP Toolkit extension is required for `docker mcp`.
+# OrbStack, Colima, Rancher Desktop do not support it.
+_fix_codex_docker_mcp() {
+	local config="$HOME/.codex/config.toml"
+	[[ -f "$config" ]] || return 0
+
+	# Check if MCP_DOCKER section exists
+	if ! grep -q '^\[mcp_servers\.MCP_DOCKER\]' "$config" 2>/dev/null; then
+		return 0
+	fi
+
+	# Check if `docker mcp` subcommand is actually available
+	if docker mcp --help >/dev/null 2>&1; then
+		return 0
+	fi
+
+	# Comment out the MCP_DOCKER section (from header to next section or EOF)
+	# Use sed to comment out lines from [mcp_servers.MCP_DOCKER] to the next
+	# section header or end of file. Portable sed (no -i on macOS without ext).
+	local tmp_config
+	tmp_config=$(mktemp)
+	local in_mcp_docker=false
+	while IFS= read -r line || [[ -n "$line" ]]; do
+		if [[ "$line" == "[mcp_servers.MCP_DOCKER]" ]]; then
+			in_mcp_docker=true
+			printf '# %s  # Disabled by aidevops: docker mcp not available\n' "$line" >>"$tmp_config"
+			continue
+		fi
+		# If we hit another section header, stop commenting
+		if [[ "$in_mcp_docker" == "true" ]] && [[ "$line" == "["* ]]; then
+			in_mcp_docker=false
+		fi
+		if [[ "$in_mcp_docker" == "true" ]]; then
+			printf '# %s\n' "$line" >>"$tmp_config"
+		else
+			printf '%s\n' "$line" >>"$tmp_config"
+		fi
+	done <"$config"
+	mv "$tmp_config" "$config"
+	print_info "Disabled MCP_DOCKER in Codex config (docker mcp not available on this system)"
+	return 0
+}
+
+setup_droid_cli() {
+	print_info "Setting up Factory.AI Droid CLI..."
+
+	# Check if Droid is already installed
+	if command -v droid >/dev/null 2>&1; then
+		local droid_version
+		droid_version=$(droid --version 2>/dev/null | head -1 || echo "unknown")
+		print_success "Droid already installed: $droid_version"
+		return 0
+	fi
+
+	# Droid uses its own installer — not available via npm/brew
+	print_info "Droid (Factory.AI) is an AI coding agent CLI"
+	echo "  It provides autonomous coding capabilities with Factory.AI models."
+	echo ""
+
+	local install_droid="Y"
+	if [[ "${NON_INTERACTIVE:-}" != "true" ]]; then
+		read -r -p "Install Droid CLI? [Y/n]: " install_droid || install_droid="Y"
+	fi
+	if [[ "$install_droid" =~ ^[Yy]?$ ]]; then
+		print_info "Installing Droid CLI..."
+		if command -v curl >/dev/null 2>&1; then
+			if curl -fsSL https://app.factory.ai/install.sh | bash 2>/dev/null; then
+				print_success "Droid installed"
+				echo ""
+				print_info "Run 'droid auth login' to authenticate with Factory.AI."
+				echo ""
+			else
+				print_warning "Droid installation failed"
+				print_info "Install manually from: https://docs.factory.ai/cli/installation"
+			fi
+		else
+			print_warning "curl not found - cannot install Droid"
+			print_info "Install manually from: https://docs.factory.ai/cli/installation"
+		fi
+	else
+		print_info "Skipped Droid installation"
+		print_info "Install later: curl -fsSL https://app.factory.ai/install.sh | bash"
+	fi
+
+	return 0
+}
+
 setup_google_workspace_cli() {
 	print_info "Setting up Google Workspace CLI (gws)..."
 

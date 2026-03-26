@@ -776,6 +776,8 @@ main() {
 		else
 			print_info "Claude config management disabled via config (integrations.manage_claude_config)"
 		fi
+		update_codex_config
+		update_cursor_config
 		disable_ondemand_mcps
 	else
 		# Required steps (always run)
@@ -852,10 +854,15 @@ main() {
 		confirm_step "Setup Google Workspace CLI (Gmail, Calendar, Drive)" && setup_google_workspace_cli
 		confirm_step "Setup OpenCode CLI (AI coding tool)" && setup_opencode_cli
 		confirm_step "Setup OpenCode plugins" && setup_opencode_plugins
-		# Run AFTER OpenCode CLI install so opencode.json may exist for agent config
+		confirm_step "Setup Codex CLI (OpenAI AI coding tool)" && setup_codex_cli
+		confirm_step "Setup Droid CLI (Factory.AI coding tool)" && setup_droid_cli
+		# Run AFTER CLI installs so config dirs may exist for agent config
 		confirm_step "Update OpenCode configuration" && update_opencode_config
 		# Run AFTER OpenCode config so Claude Code gets equivalent setup
 		confirm_step "Update Claude Code configuration (slash commands, MCPs, settings)" && update_claude_config
+		# Run AFTER Claude Code config so Codex/Cursor get equivalent setup
+		confirm_step "Update Codex configuration (MCPs, instructions)" && update_codex_config
+		confirm_step "Update Cursor configuration (MCPs)" && update_cursor_config
 		# Run AFTER all MCP setup functions to ensure disabled state persists
 		confirm_step "Disable on-demand MCPs globally" && disable_ondemand_mcps
 	fi
