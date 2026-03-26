@@ -226,6 +226,11 @@ daytona logs <sandbox-id>
 
 # Command timeout — increase or use background + poll
 result = sandbox.process.exec("long-running-command", timeout=300)
+# Background execution with polling:
+proc = sandbox.process.exec_async("long-running-command")
+while not proc.is_done():
+    time.sleep(5)
+result = proc.wait()
 
 # Port not accessible — verify listening, then re-expose
 daytona exec <sandbox-id> -- ss -tlnp | grep 8080
