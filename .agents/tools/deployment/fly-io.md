@@ -29,13 +29,13 @@ tools:
 
 **Usage**: `./.agents/scripts/fly-io-helper.sh [command] [app] [args]`
 
-**Key concepts**: Fly Machines (Firecracker micro-VMs), anycast routing, auto-stop/start, Sprites (AI sandboxes)
+**Key concepts**: Fly Machines (Firecracker micro-VMs), anycast routing, auto-stop/start, Sprites (AI sandboxes), Tigris (S3-compatible object storage)
 
 <!-- AI-CONTEXT-END -->
 
 Fly.io runs apps on Firecracker micro-VMs (Fly Machines) across 30+ regions with anycast routing. Best for latency-sensitive workloads, AI agent sandboxes (Sprites), and global apps needing auto-stop cost savings.
 
-**Best use cases**: global low-latency apps, AI agent sandboxes, Elixir/Phoenix, full-stack apps, cost-sensitive workloads, multi-region databases (LiteFS/Fly Postgres).
+**Best use cases**: global low-latency apps, AI agent sandboxes, Elixir/Phoenix, full-stack apps, cost-sensitive workloads, multi-region databases (LiteFS/Fly Postgres), GPU inference.
 
 **When NOT to use**: serverless functions (use Cloudflare Workers/Vercel Edge), static sites only (use Cloudflare Pages/Vercel), Kubernetes-native workloads, Windows containers.
 
@@ -55,9 +55,9 @@ primary_region = "lhr"
 [http_service]
   internal_port = 8080
   force_https = true
-  auto_stop_machines = true   # Stop when idle (cost saving)
-  auto_start_machines = true  # Start on first request
-  min_machines_running = 0    # 0 = full auto-stop; 1 = always-on
+  auto_stop_machines = "stop"   # "stop" | "suspend" | true | false
+  auto_start_machines = true    # Start on first request
+  min_machines_running = 0      # 0 = full auto-stop; 1 = always-on
 
   [http_service.concurrency]
     type = "requests"
@@ -84,10 +84,13 @@ primary_region = "lhr"
 | Option | Values | Notes |
 |--------|--------|-------|
 | `primary_region` | `lhr`, `iad`, `nrt`, etc. | Where volumes and primary Machine live |
-| `auto_stop_machines` | `true`/`false` | Stop idle Machines (saves cost) |
-| `min_machines_running` | `0`–N | 0 = full auto-stop, 1+ = always-on |
+| `auto_stop_machines` | `"stop"`, `"suspend"`, `true`, `false` | `"stop"` = full stop; `"suspend"` = faster resume; `true` = legacy (same as `"stop"`) |
+| `auto_start_machines` | `true`/`false` | Fly Proxy starts Machines on incoming request |
+| `min_machines_running` | `0`-N | 0 = full auto-stop, 1+ = always-on |
 | `cpu_kind` | `shared`, `performance` | Shared = burstable, Performance = dedicated |
-| `memory` | `256mb`–`64gb` | RAM per Machine |
+| `memory` | `256mb`-`64gb` | RAM per Machine |
+| `vm.size` | `a100-40gb`, `a100-80gb`, `l40s` | GPU preset (shorthand for `[[vm]]` section) |
+| `swap_size_mb` | integer | Swap space in MB (useful for GPU workloads) |
 
 ## Deployment
 
@@ -120,6 +123,8 @@ fly open --app my-app
 
 Firecracker micro-VMs — sub-second start, billed per second of active time.
 
+### CLI Management
+
 ```bash
 fly machines list --app my-app
 fly machines start <machine-id> --app my-app
@@ -128,6 +133,34 @@ fly machines destroy <machine-id> --app my-app --force
 fly ssh console --app my-app
 fly ssh console --app my-app --command "rails db:migrate"
 ```
+
+### Machines REST API
+
+For programmatic control (CI/CD, custom orchestration):
+
+```bash
+# List all Machines
+curl "${FLY_API_HOSTNAME}/v1/apps/my-app/machines" \
+  -H "Authorization: Bearer ${FLY_API_TOKEN}"
+
+# Start a stopped Machine
+curl -X POST "${FLY_API_HOSTNAME}/v1/apps/my-app/machines/MACHINE_ID/start" \
+  -H "Authorization: Bearer ${FLY_API_TOKEN}"
+
+# Stop a running Machine (graceful)
+curl -X POST "${FLY_API_HOSTNAME}/v1/apps/my-app/machines/MACHINE_ID/stop" \
+  -H "Authorization: Bearer ${FLY_API_TOKEN}" \
+  -H "Content-Type: application/json" \
+  -d '{"signal": "SIGTERM", "timeout": "30s"}'
+
+# Delete a Machine permanently
+curl -X DELETE "${FLY_API_HOSTNAME}/v1/apps/my-app/machines/MACHINE_ID" \
+  -H "Authorization: Bearer ${FLY_API_TOKEN}"
+```
+
+API base: `https://api.machines.dev` (or `FLY_API_HOSTNAME` env var). Token: `fly tokens create` or `FLY_API_TOKEN`.
+
+### Machine Sizes
 
 | Size | CPU | RAM | Use case |
 |------|-----|-----|----------|
@@ -138,6 +171,42 @@ fly ssh console --app my-app --command "rails db:migrate"
 | `performance-2x` | 2 dedicated | 4 GB | High-throughput |
 | `performance-4x` | 4 dedicated | 8 GB | Heavy compute |
 | `performance-8x` | 8 dedicated | 16 GB | AI inference |
+
+## GPU Machines
+
+For ML inference, fine-tuning, and compute-heavy workloads. GPU Machines use dedicated hardware in specific regions.
+
+```toml
+# fly.toml — GPU configuration
+app = "my-gpu-app"
+primary_region = "ord"       # Ensure region offers GPUs
+vm.size = "a100-40gb"        # GPU preset shorthand
+swap_size_mb = 32768         # 32 GB swap for large models
+
+[build]
+  [build.args]
+    NONROOT_USER = "mluser"
+
+[mounts]
+  source = "model_data"
+  destination = "/home/mluser"
+```
+
+| GPU Size | GPU | VRAM | Use case |
+|----------|-----|------|----------|
+| `a100-40gb` | A100 | 40 GB | Large model inference, fine-tuning |
+| `a100-80gb` | A100 | 80 GB | Very large models (70B+) |
+| `l40s` | L40S | 48 GB | Inference, video processing |
+
+```bash
+# Deploy GPU app
+fly deploy --app my-gpu-app
+
+# Check GPU availability by region
+fly platform vm-sizes
+```
+
+GPU Machines are billed per second of active time. Use auto-stop to avoid idle GPU costs.
 
 ## Scaling
 
@@ -172,9 +241,35 @@ fly volumes create myapp_data --size 10 --region lhr --app my-app
 fly volumes list --app my-app
 fly volumes extend <volume-id> --size 20 --app my-app  # Increase only — cannot shrink
 fly volumes destroy <volume-id> --app my-app           # IRREVERSIBLE
+fly volumes snapshots list --app my-app
 ```
 
-Create volumes before deploying apps that need them. For multi-region shared data, use Fly Postgres or LiteFS instead.
+Create volumes before deploying apps that need them. For multi-region shared data, use Fly Postgres, LiteFS, or Tigris instead.
+
+## Tigris Object Storage
+
+S3-compatible global object storage built on Fly.io infrastructure. Data is cached at edge locations for low-latency reads.
+
+```bash
+# Create a Tigris storage bucket (sets AWS_* secrets automatically)
+fly storage create
+
+# List buckets
+fly storage list
+
+# Dashboard
+fly storage dashboard
+```
+
+Creating a bucket sets these secrets on the app:
+
+- `AWS_ACCESS_KEY_ID` — Tigris access key
+- `AWS_SECRET_ACCESS_KEY` — Tigris secret key
+- `AWS_ENDPOINT_URL_S3` — `https://fly.storage.tigris.dev`
+- `AWS_REGION` — `auto`
+- `BUCKET_NAME` — bucket name
+
+Use any S3-compatible SDK (AWS SDK, boto3, `@aws-sdk/client-s3`) with these credentials. No code changes needed if your app already uses S3.
 
 ## Databases
 
@@ -210,9 +305,52 @@ fly regions backup iad --app my-app  # Failover region
 
 Fly Postgres handles read replica routing automatically when `DATABASE_URL` points to the cluster. Set `PRIMARY_REGION` env var to direct writes to the primary.
 
+### Resilient Multi-Machine Pattern
+
+For production apps, run 2+ Machines with auto-stop to balance cost and availability:
+
+```toml
+[http_service]
+  internal_port = 8080
+  force_https = true
+  auto_stop_machines = "stop"
+  auto_start_machines = true
+  min_machines_running = 1    # 1 always-on, extras auto-stop
+
+  [http_service.concurrency]
+    type = "requests"
+    soft_limit = 200
+```
+
+## Networking
+
+### Private Networking
+
+All Fly apps in the same organization share a private WireGuard mesh (6PN). Apps communicate via `<app-name>.internal` DNS over IPv6.
+
+```bash
+# Connect to another app's internal service
+curl http://my-other-app.internal:8080/api
+
+# DNS lookup
+dig aaaa my-other-app.internal
+```
+
+### Flycast (Private Load Balancing)
+
+Allocate a private IPv6 address for internal-only services (not exposed to the internet):
+
+```bash
+fly ips allocate-v6 --private --app my-internal-service
+```
+
+Access via `<app-name>.flycast` from other apps in the same org.
+
 ## Sprites (AI Agent Sandboxes)
 
-Isolated ephemeral Machines for running untrusted AI agent code.
+Isolated ephemeral Machines for running untrusted AI agent code. Two interfaces: CLI (quick) and SDK (programmatic).
+
+### CLI (Quick Sandbox)
 
 ```bash
 fly machines run my-sandbox-image \
@@ -223,6 +361,51 @@ fly machines run my-sandbox-image \
   --restart no
 
 fly machines destroy <machine-id> --app my-sprites-app --force
+```
+
+### TypeScript SDK (`@fly/sprites`)
+
+The SDK mirrors Node.js `child_process` API for remote command execution:
+
+```typescript
+import { SpritesClient } from '@fly/sprites';
+
+const client = new SpritesClient(process.env.SPRITES_TOKEN!);
+const sprite = client.sprite('my-sprite');
+
+// Event-based (mirrors child_process.spawn)
+const cmd = sprite.spawn('ls', ['-la']);
+cmd.stdout.on('data', (chunk) => process.stdout.write(chunk));
+cmd.on('exit', (code) => console.log(`Exited: ${code}`));
+
+// Promise-based (mirrors child_process.exec)
+const { stdout, stderr, exitCode } = await sprite.exec('echo hello');
+
+// With environment and working directory
+const result = await sprite.execFile('python', ['-c', 'print(2+2)'], {
+  cwd: '/app',
+  env: { MY_VAR: 'value' },
+});
+```
+
+### Network Policies (Sandbox Security)
+
+Control which domains a sprite can access:
+
+```typescript
+// Restrictive policy — allow only specific domains
+await sprite.updateNetworkPolicy({
+  rules: [
+    { include: 'defaults' },
+    { domain: 'api.github.com', action: 'allow' },
+    { domain: '*.npmjs.org', action: 'allow' },
+  ],
+});
+
+// Allow all (development only)
+await sprite.updateNetworkPolicy({
+  rules: [{ domain: '*', action: 'allow' }],
+});
 ```
 
 ## Logs and Monitoring
@@ -238,6 +421,8 @@ fly dashboard --app my-app  # Opens browser dashboard
 
 Bills per second of Machine active time + storage + bandwidth. Auto-stop eliminates idle costs.
 
+### Compute
+
 | Machine | RAM | Price/month (always-on) |
 |---------|-----|------------------------|
 | shared-cpu-1x | 256 MB | ~$1.94 |
@@ -248,9 +433,27 @@ Bills per second of Machine active time + storage + bandwidth. Auto-stop elimina
 | performance-4x | 8 GB | ~$124.00 |
 | performance-8x | 16 GB | ~$248.00 |
 
-**Storage**: ~$0.15/GB/month volumes, ~$0.03/GB/month snapshots, ~$0.02/GB outbound (after 160 GB free).
+### GPU Compute
 
-**Free allowances (Hobby)**: 3 shared-cpu-1x VMs (256 MB), 3 GB volume storage, 160 GB transfer, shared IPv4 (dedicated: $2/month).
+| GPU | VRAM | Price/hour |
+|-----|------|------------|
+| A100 40 GB | 40 GB | ~$2.50 |
+| A100 80 GB | 80 GB | ~$3.50 |
+| L40S | 48 GB | ~$2.00 |
+
+### Storage and Transfer
+
+- **Volumes**: ~$0.15/GB/month (NVMe SSD)
+- **Snapshots**: ~$0.03/GB/month
+- **Tigris**: ~$0.02/GB/month stored, free egress to Fly apps
+- **Outbound transfer**: ~$0.02/GB (after 160 GB free)
+
+### Free Allowances (Hobby Plan)
+
+- 3 shared-cpu-1x VMs (256 MB each)
+- 3 GB volume storage
+- 160 GB outbound transfer
+- Shared IPv4 (dedicated: $2/month)
 
 Check current rates: `https://fly.io/calculator`
 
@@ -259,7 +462,7 @@ Check current rates: `https://fly.io/calculator`
 ```bash
 fly status --app my-app
 fly ssh console --app my-app
-fly ssh console --app my-app --command "env | grep -v SECRET"
+fly ssh console --app my-app --command "env | cut -d= -f1"  # Key names only
 fly logs --app my-app
 fly machines list --app my-app          # Check if machines are stopped
 fly machines start <machine-id> --app my-app
@@ -277,6 +480,9 @@ fly config validate --app my-app
 ./.agents/scripts/fly-io-helper.sh volumes my-app
 ./.agents/scripts/fly-io-helper.sh logs my-app
 ./.agents/scripts/fly-io-helper.sh apps
+./.agents/scripts/fly-io-helper.sh machines my-app list
+./.agents/scripts/fly-io-helper.sh ssh my-app
+./.agents/scripts/fly-io-helper.sh postgres my-db-app status
 ```
 
 ## References
@@ -284,6 +490,8 @@ fly config validate --app my-app
 - **Docs**: https://fly.io/docs/
 - **Regions**: https://fly.io/docs/reference/regions/
 - **Machines API**: https://fly.io/docs/machines/api/
-- **Sprites**: https://fly.io/docs/machines/guides-examples/machines-api-app/
+- **Sprites SDK**: https://github.com/superfly/sprites-js
+- **Tigris**: https://fly.io/docs/tigris/
 - **LiteFS**: https://fly.io/docs/litefs/
+- **Blueprints**: https://fly.io/docs/blueprints/
 - **Community**: https://community.fly.io/
