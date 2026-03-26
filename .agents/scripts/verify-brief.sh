@@ -521,19 +521,16 @@ _wait_for_url() {
 	return 1
 }
 
-# Execute a runtime verification: start dev env, run smoke checks.
-# Args: $1=url, $2=pages, $3=start_cmd, $4=timeout, $5=repo_path
-# Returns: 0=pass, 1=fail, 3=skip (browser-qa-helper.sh not available)
-exec_runtime() {
+# Resolve runtime verify defaults from testing.json for empty fields.
+# Mutates caller's url/pages/start_cmd via nameref-free approach: prints
+# three newline-separated values (url, pages, start_cmd) to stdout.
+# Args: $1=url, $2=pages, $3=start_cmd, $4=repo_path
+_runtime_resolve_defaults() {
 	local url="$1"
 	local pages="$2"
 	local start_cmd="$3"
-	local timeout_secs="$4"
-	local repo_path="$5"
+	local repo_path="$4"
 
-	local browser_qa_helper="${SCRIPT_DIR}/browser-qa-helper.sh"
-
-	# Resolve defaults from testing.json if fields are empty
 	if [[ -z "$url" ]]; then
 		url=$(_read_testing_json_field "url" "$repo_path" "http://localhost:3000")
 	fi
@@ -544,45 +541,61 @@ exec_runtime() {
 		start_cmd=$(_read_testing_json_field "start_command" "$repo_path" "")
 	fi
 
-	log_debug "Runtime verify: url=$url pages=$pages timeout=${timeout_secs}s"
+	printf '%s\n' "$url" "$pages" "$start_cmd"
+	return 0
+}
 
-	# Check if browser-qa-helper.sh is available
-	if [[ ! -x "$browser_qa_helper" ]]; then
-		log_skip "Runtime verification: browser-qa-helper.sh not found at $browser_qa_helper"
-		return 3
-	fi
+# Ensure the dev environment is running at the given URL.
+# Starts it via start_cmd if not already reachable.
+# On success: prints the background PID (or 0 if already running) to stdout.
+# Args: $1=url, $2=start_cmd, $3=timeout_secs, $4=repo_path
+# Returns: 0=running, 1=failed to start
+_runtime_start_dev_env() {
+	local url="$1"
+	local start_cmd="$2"
+	local timeout_secs="$3"
+	local repo_path="$4"
 
-	# Phase 1: Ensure dev environment is running
-	local env_started=false
 	if _url_reachable "$url" 5; then
 		log_debug "Dev environment already running at $url"
-	elif [[ -n "$start_cmd" ]]; then
-		log_info "  Starting dev environment: $start_cmd"
-		# Start in background, capture PID for cleanup
-		local start_log
-		start_log=$(mktemp "${TMPDIR:-/tmp}/verify-brief-runtime-XXXXXX.log")
-		(cd "$repo_path" && bash -c "$start_cmd" >"$start_log" 2>&1) &
-		local start_pid=$!
-		log_debug "Dev env started with PID $start_pid, log: $start_log"
-		env_started=true
+		echo "0"
+		return 0
+	fi
 
-		# Wait for URL to become reachable
-		log_info "  Waiting for $url (timeout: ${timeout_secs}s)..."
-		if ! _wait_for_url "$url" "$timeout_secs"; then
-			log_fail "Dev environment did not start within ${timeout_secs}s"
-			# Attempt cleanup
-			kill "$start_pid" 2>/dev/null || true
-			rm -f "$start_log"
-			return 1
-		fi
-		log_debug "Dev environment ready at $url"
-	else
+	if [[ -z "$start_cmd" ]]; then
 		log_fail "Dev environment not running at $url and no start_cmd provided"
 		log_info "  Set start_cmd in verify block or testing.json to auto-start"
 		return 1
 	fi
 
-	# Phase 2: Run smoke checks via browser-qa-helper.sh
+	log_info "  Starting dev environment: $start_cmd"
+	local start_log
+	start_log=$(mktemp "${TMPDIR:-/tmp}/verify-brief-runtime-XXXXXX.log")
+	(cd "$repo_path" && bash -c "$start_cmd" >"$start_log" 2>&1) &
+	local start_pid=$!
+	log_debug "Dev env started with PID $start_pid, log: $start_log"
+
+	log_info "  Waiting for $url (timeout: ${timeout_secs}s)..."
+	if ! _wait_for_url "$url" "$timeout_secs"; then
+		log_fail "Dev environment did not start within ${timeout_secs}s"
+		kill "$start_pid" 2>/dev/null || true
+		rm -f "$start_log"
+		return 1
+	fi
+
+	log_debug "Dev environment ready at $url"
+	echo "$start_pid"
+	return 0
+}
+
+# Run browser-qa smoke checks and return their raw output via stdout.
+# Args: $1=browser_qa_helper, $2=url, $3=pages
+# Returns: exit code from browser-qa-helper.sh smoke command
+_runtime_run_smoke() {
+	local browser_qa_helper="$1"
+	local url="$2"
+	local pages="$3"
+
 	log_info "  Running smoke checks on $url (pages: $pages)"
 	local smoke_output
 	local smoke_rc=0
@@ -596,33 +609,48 @@ exec_runtime() {
 		echo "$smoke_output" | head -30 >&2
 	fi
 
-	# Phase 3: Parse smoke results
+	printf '%s' "$smoke_output"
+	return $smoke_rc
+}
+
+# Parse JSON summary from smoke output.
+# Prints three newline-separated values: passed, total, console_errors.
+# Args: $1=smoke_output
+_runtime_parse_smoke_results() {
+	local smoke_output="$1"
 	local passed=0
 	local total=0
 	local console_errors=0
 
 	if command -v jq >/dev/null 2>&1; then
-		# Try to parse JSON output from smoke command
 		local json_part
-		json_part=$(echo "$smoke_output" | grep -E '^\{' | head -1 || true)
+		json_part=$(printf '%s' "$smoke_output" | grep -E '^\{' | head -1 || true)
 		if [[ -n "$json_part" ]]; then
-			passed=$(echo "$json_part" | jq -r '.summary.passed // 0' 2>/dev/null || echo "0")
-			total=$(echo "$json_part" | jq -r '.summary.total // 0' 2>/dev/null || echo "0")
-			console_errors=$(echo "$json_part" | jq -r '.summary.consoleErrors // 0' 2>/dev/null || echo "0")
+			passed=$(printf '%s' "$json_part" | jq -r '.summary.passed // 0' 2>/dev/null || echo "0")
+			total=$(printf '%s' "$json_part" | jq -r '.summary.total // 0' 2>/dev/null || echo "0")
+			console_errors=$(printf '%s' "$json_part" | jq -r '.summary.consoleErrors // 0' 2>/dev/null || echo "0")
 		fi
 	fi
 
-	# Cleanup: stop dev env if we started it
-	if [[ "$env_started" == "true" ]]; then
-		kill "$start_pid" 2>/dev/null || true
-		rm -f "${start_log:-}" 2>/dev/null || true
-	fi
+	printf '%s\n' "$passed" "$total" "$console_errors"
+	return 0
+}
 
-	# Evaluate result
+# Evaluate smoke results and log pass/fail.
+# Args: $1=smoke_rc, $2=smoke_output, $3=passed, $4=total, $5=console_errors, $6=url
+# Returns: 0=pass, 1=fail
+_runtime_evaluate_smoke() {
+	local smoke_rc="$1"
+	local smoke_output="$2"
+	local passed="$3"
+	local total="$4"
+	local console_errors="$5"
+	local url="$6"
+
 	if [[ $smoke_rc -ne 0 ]]; then
 		log_fail "Smoke checks failed (exit $smoke_rc)"
 		if [[ "$VERBOSE" != "true" && -n "$smoke_output" ]]; then
-			echo "$smoke_output" | tail -5 >&2
+			printf '%s' "$smoke_output" | tail -5 >&2
 		fi
 		return 1
 	fi
@@ -639,6 +667,58 @@ exec_runtime() {
 	fi
 
 	return 0
+}
+
+# Execute a runtime verification: start dev env, run smoke checks.
+# Args: $1=url, $2=pages, $3=start_cmd, $4=timeout, $5=repo_path
+# Returns: 0=pass, 1=fail, 3=skip (browser-qa-helper.sh not available)
+exec_runtime() {
+	local url="$1"
+	local pages="$2"
+	local start_cmd="$3"
+	local timeout_secs="$4"
+	local repo_path="$5"
+
+	local browser_qa_helper="${SCRIPT_DIR}/browser-qa-helper.sh"
+
+	# Resolve defaults from testing.json for any empty fields
+	local resolved
+	resolved=$(_runtime_resolve_defaults "$url" "$pages" "$start_cmd" "$repo_path")
+	url=$(printf '%s\n' "$resolved" | sed -n '1p')
+	pages=$(printf '%s\n' "$resolved" | sed -n '2p')
+	start_cmd=$(printf '%s\n' "$resolved" | sed -n '3p')
+
+	log_debug "Runtime verify: url=$url pages=$pages timeout=${timeout_secs}s"
+
+	if [[ ! -x "$browser_qa_helper" ]]; then
+		log_skip "Runtime verification: browser-qa-helper.sh not found at $browser_qa_helper"
+		return 3
+	fi
+
+	# Phase 1: Ensure dev environment is running
+	local start_pid
+	start_pid=$(_runtime_start_dev_env "$url" "$start_cmd" "$timeout_secs" "$repo_path") || return 1
+
+	# Phase 2: Run smoke checks
+	local smoke_output
+	local smoke_rc=0
+	smoke_output=$(_runtime_run_smoke "$browser_qa_helper" "$url" "$pages") || smoke_rc=$?
+
+	# Phase 3: Parse smoke results
+	local smoke_results
+	smoke_results=$(_runtime_parse_smoke_results "$smoke_output")
+	local passed total console_errors
+	passed=$(printf '%s\n' "$smoke_results" | sed -n '1p')
+	total=$(printf '%s\n' "$smoke_results" | sed -n '2p')
+	console_errors=$(printf '%s\n' "$smoke_results" | sed -n '3p')
+
+	# Cleanup: stop dev env if we started it
+	if [[ "${start_pid:-0}" -gt 0 ]]; then
+		kill "$start_pid" 2>/dev/null || true
+	fi
+
+	_runtime_evaluate_smoke "$smoke_rc" "$smoke_output" "$passed" "$total" "$console_errors" "$url"
+	return $?
 }
 
 # Add a result to the results array
