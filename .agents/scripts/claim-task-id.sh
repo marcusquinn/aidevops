@@ -55,7 +55,15 @@
 #
 # Offline fallback:
 #   - Reads local .task-counter + 100 offset to avoid collisions
+#   - If local .task-counter is missing, bootstraps from TODO.md highest ID
 #   - Reconciliation required when back online
+#
+# Auto-bootstrap (GH#6569 — repo-agnostic):
+#   - If .task-counter is missing on remote, bootstrap_remote_counter() seeds it
+#   - Seed precedence: highest task ID in TODO.md + 1, otherwise 1
+#   - Bootstrap uses the same CAS git plumbing — safe from any branch
+#   - Emits BOOTSTRAP_COUNTER_OK / BOOTSTRAP_COUNTER_FAILED for observability
+#   - Concurrent bootstrap: if another session wins the push, we retry read
 #
 # Migration from TODO.md scanning:
 #   - If .task-counter doesn't exist, initialize from TODO.md highest ID
@@ -286,6 +294,101 @@ get_highest_task_id() {
 	echo "$highest"
 }
 
+# Compute seed value for .task-counter bootstrap from TODO.md (or default 1).
+# Reads TODO.md from the repo root; falls back to 1 if not found or empty.
+# Returns the seed value (highest task ID + 1, minimum 1).
+_compute_counter_seed() {
+	local repo_path="$1"
+	local todo_file="${repo_path}/TODO.md"
+	local seed=1
+
+	if [[ -f "$todo_file" ]]; then
+		local todo_content
+		todo_content=$(cat "$todo_file" 2>/dev/null || true)
+		if [[ -n "$todo_content" ]]; then
+			local highest
+			highest=$(get_highest_task_id "$todo_content")
+			if [[ "$highest" =~ ^[0-9]+$ ]] && [[ "$highest" -gt 0 ]]; then
+				seed=$((highest + 1))
+			fi
+		fi
+	fi
+
+	echo "$seed"
+	return 0
+}
+
+# Bootstrap .task-counter on <remote>/<counter_branch> when it is missing.
+# Seeds from TODO.md highest task ID (or 1 for fresh repos).
+# Uses the same git plumbing as allocate_counter_cas to stay branch-safe.
+# Returns 0 on success (counter now exists on remote), 1 on failure.
+bootstrap_remote_counter() {
+	local repo_path="$1"
+
+	cd "$repo_path" || return 1
+
+	log_info "BOOTSTRAP_COUNTER: .task-counter missing on ${REMOTE_NAME}/${COUNTER_BRANCH} — bootstrapping"
+
+	local seed
+	seed=$(_compute_counter_seed "$repo_path")
+	log_info "BOOTSTRAP_COUNTER: seeding from TODO.md → counter=${seed}"
+
+	# Create a blob with the seed value
+	local blob_sha
+	blob_sha=$(echo "$seed" | git hash-object -w --stdin 2>/dev/null) || {
+		log_warn "BOOTSTRAP_COUNTER: failed to create blob"
+		return 1
+	}
+
+	# Check whether .task-counter already exists in the remote tree
+	local existing_tree
+	existing_tree=$(git ls-tree "${REMOTE_NAME}/${COUNTER_BRANCH}" 2>/dev/null || true)
+
+	local tree_sha
+	if echo "$existing_tree" | grep -q "${COUNTER_FILE}$"; then
+		# Replace existing (invalid) entry
+		tree_sha=$(echo "$existing_tree" | sed "s|[0-9a-f]\{40,64\}	${COUNTER_FILE}$|${blob_sha}	${COUNTER_FILE}|" | git mktree 2>/dev/null) || {
+			log_warn "BOOTSTRAP_COUNTER: failed to create tree (replace)"
+			return 1
+		}
+	else
+		# Add new entry to existing tree
+		tree_sha=$(
+			{
+				echo "$existing_tree"
+				printf '100644 blob %s\t%s\n' "$blob_sha" "$COUNTER_FILE"
+			} | git mktree 2>/dev/null
+		) || {
+			log_warn "BOOTSTRAP_COUNTER: failed to create tree (add)"
+			return 1
+		}
+	fi
+
+	local parent_sha
+	parent_sha=$(git rev-parse "${REMOTE_NAME}/${COUNTER_BRANCH}" 2>/dev/null) || {
+		log_warn "BOOTSTRAP_COUNTER: failed to resolve ${REMOTE_NAME}/${COUNTER_BRANCH}"
+		return 1
+	}
+
+	local commit_sha
+	commit_sha=$(git commit-tree "$tree_sha" -p "$parent_sha" -m "chore: bootstrap .task-counter (seed=${seed})" 2>/dev/null) || {
+		log_warn "BOOTSTRAP_COUNTER: failed to create commit"
+		return 1
+	}
+
+	if ! git push "$REMOTE_NAME" "${commit_sha}:refs/heads/${COUNTER_BRANCH}" 2>/dev/null; then
+		log_warn "BOOTSTRAP_COUNTER: push failed (conflict — another session may have bootstrapped)"
+		git fetch "$REMOTE_NAME" "$COUNTER_BRANCH" 2>/dev/null || true
+		# Not a hard failure — the remote may now have a valid counter from the other session
+		return 1
+	fi
+
+	git fetch "$REMOTE_NAME" "$COUNTER_BRANCH" 2>/dev/null || true
+	log_info "BOOTSTRAP_COUNTER_OK: counter initialized to ${seed} on ${REMOTE_NAME}/${COUNTER_BRANCH}"
+	echo "BOOTSTRAP_COUNTER_OK"
+	return 0
+}
+
 # Read .task-counter from <remote>/<counter_branch> (fetches first)
 read_remote_counter() {
 	local repo_path="$1"
@@ -339,10 +442,19 @@ allocate_counter_cas() {
 
 	cd "$repo_path" || return 1
 
-	# Step 1: Read current counter from <remote>/<counter_branch>
+	# Step 1: Read current counter from <remote>/<counter_branch>.
+	# If missing/invalid, auto-bootstrap from TODO.md (GH#6569).
 	local current_value
 	if ! current_value=$(read_remote_counter "$repo_path"); then
-		return 1
+		log_info "Counter missing — attempting auto-bootstrap (GH#6569)"
+		local bootstrap_result
+		bootstrap_result=$(bootstrap_remote_counter "$repo_path") || true
+		# After bootstrap attempt, retry reading the counter.
+		# If another session bootstrapped concurrently, we still get a valid value.
+		if ! current_value=$(read_remote_counter "$repo_path"); then
+			log_error "BOOTSTRAP_COUNTER_FAILED: counter unavailable after bootstrap attempt"
+			return 1
+		fi
 	fi
 
 	local first_id="$current_value"
@@ -452,6 +564,7 @@ allocate_online() {
 }
 
 # Offline allocation (with safety offset)
+# Falls back to TODO.md seed when local .task-counter is missing (GH#6569).
 allocate_offline() {
 	local repo_path="$1"
 	local count="$2"
@@ -460,8 +573,14 @@ allocate_offline() {
 
 	local current_value
 	if ! current_value=$(read_local_counter "$repo_path"); then
-		log_error "Cannot read local ${COUNTER_FILE}"
-		return 1
+		# Auto-bootstrap local counter from TODO.md (GH#6569)
+		log_warn "Local ${COUNTER_FILE} missing — bootstrapping from TODO.md for offline use"
+		local seed
+		seed=$(_compute_counter_seed "$repo_path")
+		log_info "BOOTSTRAP_COUNTER: offline seed from TODO.md → ${seed}"
+		echo "$seed" >"${repo_path}/${COUNTER_FILE}"
+		current_value="$seed"
+		log_info "BOOTSTRAP_COUNTER_OK: local counter initialized to ${seed}"
 	fi
 
 	local first_id=$((current_value + OFFLINE_OFFSET))

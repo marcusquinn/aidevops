@@ -926,41 +926,64 @@ EOF
 	return 0
 }
 
-# Helper: verify missing .task-counter produces an error
+# Helper: verify missing .task-counter auto-bootstraps from TODO.md (GH#6569)
 _counter_validation_check_missing() {
 	local test_repo="$1"
+
+	# Remove any existing counter to simulate missing state
+	rm -f "$test_repo/.task-counter"
 
 	local output
 	output=$("$SCRIPT_DIR/claim-task-id.sh" --title "No counter test" --offline --no-issue --repo-path "$test_repo" 2>&1) || true
 
-	if echo "$output" | grep -qi "not found\|invalid\|missing\|error"; then
-		pass "Missing .task-counter correctly produces error"
+	local task_id
+	task_id=$(echo "$output" | grep "^task_id=" | cut -d= -f2 || echo "")
+
+	# TODO.md has t1, so seed=2, offline offset=100 → t102
+	if [[ -n "$task_id" ]] && [[ "$task_id" =~ ^t[0-9]+$ ]]; then
+		pass "Missing .task-counter auto-bootstraps from TODO.md (got $task_id)"
 	else
-		fail "Missing .task-counter did not produce expected error"
+		fail "Missing .task-counter should auto-bootstrap, got: $task_id (output: $output)"
+	fi
+
+	# Verify BOOTSTRAP_COUNTER_OK marker was emitted
+	if echo "$output" | grep -q "BOOTSTRAP_COUNTER_OK"; then
+		pass "BOOTSTRAP_COUNTER_OK marker emitted for observability"
+	else
+		fail "BOOTSTRAP_COUNTER_OK marker not found in output"
+	fi
+
+	# Verify .task-counter was created locally
+	if [[ -f "$test_repo/.task-counter" ]]; then
+		pass ".task-counter file created after bootstrap"
+	else
+		fail ".task-counter file not created after bootstrap"
 	fi
 	return 0
 }
 
-# Helper: verify non-numeric and valid .task-counter values
+# Helper: verify non-numeric .task-counter auto-bootstraps, and valid counter works
 _counter_validation_check_values() {
 	local test_repo="$1"
 
-	# Test with non-numeric .task-counter
+	# Test with non-numeric .task-counter — should auto-bootstrap from TODO.md
 	echo "abc" >"$test_repo/.task-counter"
 	local output
 	output=$("$SCRIPT_DIR/claim-task-id.sh" --title "Bad counter test" --offline --no-issue --repo-path "$test_repo" 2>&1) || true
 
-	if echo "$output" | grep -qi "invalid\|error"; then
-		pass "Non-numeric .task-counter correctly produces error"
+	local task_id
+	task_id=$(echo "$output" | grep "^task_id=" | cut -d= -f2 || echo "")
+
+	if [[ -n "$task_id" ]] && [[ "$task_id" =~ ^t[0-9]+$ ]]; then
+		pass "Non-numeric .task-counter auto-bootstraps from TODO.md (got $task_id)"
 	else
-		fail "Non-numeric .task-counter did not produce expected error"
+		fail "Non-numeric .task-counter should auto-bootstrap, got: $task_id"
 	fi
 
 	# Test with valid .task-counter
 	echo "42" >"$test_repo/.task-counter"
 	output=$("$SCRIPT_DIR/claim-task-id.sh" --title "Valid counter test" --offline --no-issue --repo-path "$test_repo" 2>/dev/null) || true
 
-	local task_id
 	task_id=$(echo "$output" | grep "^task_id=" | cut -d= -f2 || echo "")
 
 	if [[ "$task_id" == "t142" ]]; then
@@ -973,14 +996,57 @@ _counter_validation_check_values() {
 
 test_counter_validation() {
 	echo ""
-	echo "=== Test 11: .task-counter file validation ==="
-	info "Testing invalid counter file handling"
+	echo "=== Test 11: .task-counter file validation (GH#6569 auto-bootstrap) ==="
+	info "Testing auto-bootstrap when .task-counter is missing or invalid"
 
 	local test_repo="$TEST_DIR/test-repo-validate"
 
 	_counter_validation_setup "$test_repo"
 	_counter_validation_check_missing "$test_repo"
 	_counter_validation_check_values "$test_repo"
+	return 0
+}
+
+# =============================================================================
+# Test 12: Fresh repo bootstrap (no TODO.md, no .task-counter) — GH#6569
+# =============================================================================
+test_fresh_repo_bootstrap() {
+	echo ""
+	echo "=== Test 12: Fresh repo bootstrap (no TODO.md, no .task-counter) ==="
+	info "Testing auto-bootstrap seeds counter at 1 when no TODO.md exists"
+
+	local test_repo="$TEST_DIR/test-repo-fresh"
+	mkdir -p "$test_repo"
+	(
+		cd "$test_repo"
+		git init -q
+		git config user.email "test@test.com"
+		git config user.name "Test"
+		# No TODO.md, no .task-counter — truly fresh repo
+		touch README.md
+		git add README.md
+		git commit -q -m "init"
+	)
+
+	local output
+	output=$("$SCRIPT_DIR/claim-task-id.sh" --title "Fresh repo test" --offline --no-issue --repo-path "$test_repo" 2>&1) || true
+
+	local task_id
+	task_id=$(echo "$output" | grep "^task_id=" | cut -d= -f2 || echo "")
+
+	# Seed=1 (no TODO.md), offline offset=100 → t101
+	if [[ "$task_id" == "t101" ]]; then
+		pass "Fresh repo (no TODO.md) bootstraps at seed=1, allocates t101"
+	else
+		fail "Expected t101 for fresh repo, got '$task_id'"
+	fi
+
+	# Verify .task-counter was created
+	if [[ -f "$test_repo/.task-counter" ]]; then
+		pass ".task-counter created in fresh repo after bootstrap"
+	else
+		fail ".task-counter not created in fresh repo"
+	fi
 	return 0
 }
 
@@ -1007,6 +1073,7 @@ test_highest_task_id
 test_edge_cases
 test_batch_allocation
 test_counter_validation
+test_fresh_repo_bootstrap
 
 # =============================================================================
 # Summary
