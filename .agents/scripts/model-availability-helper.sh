@@ -117,12 +117,12 @@ get_tier_models() {
 		local) echo "local/llama.cpp|anthropic/claude-haiku-4-5" ;;
 		haiku) echo "opencode/claude-haiku-4-5|opencode/gemini-3-flash" ;;
 		flash) echo "google/gemini-2.5-flash|opencode/gemini-3-flash" ;;
-		sonnet) echo "opencode/claude-sonnet-4-6|anthropic/claude-sonnet-4-6" ;;
+		sonnet) echo "opencode/claude-sonnet-4-6|openai/gpt-5.3-codex|anthropic/claude-sonnet-4-6" ;;
 		pro) echo "google/gemini-2.5-pro|opencode/gemini-3-pro" ;;
-		opus) echo "opencode/claude-opus-4-6|anthropic/claude-opus-4-6" ;;
+		opus) echo "opencode/claude-opus-4-6|openai/gpt-5.4|anthropic/claude-opus-4-6" ;;
 		health) echo "opencode/claude-sonnet-4-6|google/gemini-2.5-flash" ;;
 		eval) echo "opencode/claude-sonnet-4-6|google/gemini-2.5-flash" ;;
-		coding) echo "opencode/claude-opus-4-6|anthropic/claude-opus-4-6" ;;
+		coding) echo "opencode/claude-opus-4-6|openai/gpt-5.4|anthropic/claude-opus-4-6" ;;
 		*) return 1 ;;
 		esac
 	else
@@ -130,12 +130,12 @@ get_tier_models() {
 		local) echo "local/llama.cpp|anthropic/claude-haiku-4-5" ;;
 		haiku) echo "anthropic/claude-haiku-4-5|google/gemini-2.5-flash" ;;
 		flash) echo "google/gemini-2.5-flash|openai/gpt-4.1-mini" ;;
-		sonnet) echo "anthropic/claude-sonnet-4-6|openai/gpt-4.1" ;;
+		sonnet) echo "anthropic/claude-sonnet-4-6|openai/gpt-5.3-codex" ;;
 		pro) echo "google/gemini-2.5-pro|anthropic/claude-sonnet-4-6" ;;
-		opus) echo "anthropic/claude-opus-4-6|openai/o3" ;;
+		opus) echo "anthropic/claude-opus-4-6|openai/gpt-5.4" ;;
 		health) echo "anthropic/claude-sonnet-4-6|google/gemini-2.5-flash" ;;
 		eval) echo "anthropic/claude-sonnet-4-6|google/gemini-2.5-flash" ;;
-		coding) echo "anthropic/claude-opus-4-6|openai/o3" ;;
+		coding) echo "anthropic/claude-opus-4-6|openai/gpt-5.4" ;;
 		*) return 1 ;;
 		esac
 	fi

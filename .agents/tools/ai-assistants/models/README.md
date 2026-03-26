@@ -8,10 +8,10 @@ Model-specific subagents enable cross-provider model routing. Instead of passing
 |------|----------|---------------|----------|
 | `haiku` | `models/haiku.md` | claude-haiku-4-5-20251001 | gemini-2.5-flash-preview-05-20 |
 | `flash` | `models/flash.md` | gemini-2.5-flash-preview-05-20 | gpt-4.1-mini |
-| `sonnet` | `models/sonnet.md` | claude-sonnet-4-6 | gpt-4.1 |
+| `sonnet` | `models/sonnet.md` | claude-sonnet-4-6 | gpt-5.3-codex |
 | `composer2` | `models/composer2.md` | cursor/composer-2 | claude-sonnet-4-6 |
 | `pro` | `models/pro.md` | gemini-2.5-pro | claude-sonnet-4-6 |
-| `opus` | `models/opus.md` | claude-opus-4-6 | o3 |
+| `opus` | `models/opus.md` | claude-opus-4-6 | gpt-5.4 |
 
 ## How It Works
 
@@ -51,7 +51,7 @@ Add `fallback-chain:` to any model tier's YAML frontmatter for per-agent overrid
 ```yaml
 fallback-chain:
   - anthropic/claude-sonnet-4-6
-  - openai/gpt-4.1
+  - openai/gpt-5.3-codex
   - google/gemini-2.5-pro
   - openrouter/anthropic/claude-sonnet-4-6
 ```

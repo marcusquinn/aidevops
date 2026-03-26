@@ -100,7 +100,9 @@ model_id_to_tier() {
 	*sonnet*) echo "sonnet" ;;
 	*haiku*) echo "haiku" ;;
 	*flash* | gemini-2.0*) echo "flash" ;;
-	*pro* | gpt-4.1 | o3) echo "pro" ;;
+	*pro* | gpt-4.1 | o3 | gpt-5.2) echo "pro" ;;
+	gpt-5.4 | gpt-5.4-*) echo "opus" ;;
+	gpt-5.3-codex | gpt-5.3-codex-*) echo "sonnet" ;;
 	o4-mini | gpt-4.1-mini | gpt-4o-mini | deepseek* | llama* | gpt-4.1-nano) echo "haiku" ;;
 	gpt-4o) echo "sonnet" ;;
 	*) echo "" ;;
@@ -180,18 +182,18 @@ opus|claude-opus-4-6|Architecture decisions, complex multi-step reasoning"
 # Task-to-Model Recommendations
 # =============================================================================
 
-readonly TASK_RECOMMENDATIONS="code review|claude-sonnet-4-6|o4-mini|gemini-2.5-flash
-code implementation|claude-sonnet-4-6|gpt-4.1|gemini-2.5-pro
+readonly TASK_RECOMMENDATIONS="code review|claude-sonnet-4-6|gpt-5.3-codex|gemini-2.5-flash
+code implementation|claude-sonnet-4-6|gpt-5.3-codex|gemini-2.5-pro
 architecture design|claude-opus-4-6|o3|gemini-2.5-pro
-bug fixing|claude-sonnet-4-6|gpt-4.1|o4-mini
-refactoring|claude-sonnet-4-6|gpt-4.1|gemini-2.5-pro
+bug fixing|claude-sonnet-4-6|gpt-5.3-codex|o4-mini
+refactoring|claude-sonnet-4-6|gpt-5.3-codex|gemini-2.5-pro
 documentation|claude-sonnet-4-6|gpt-4o|gemini-2.5-flash
-testing|claude-sonnet-4-6|gpt-4.1|o4-mini
+testing|claude-sonnet-4-6|gpt-5.3-codex|o4-mini
 classification|claude-haiku-4-5|gpt-4.1-nano|gemini-2.5-flash
 summarization|gemini-2.5-flash|gpt-4o-mini|claude-haiku-4-5
-large codebase analysis|gemini-2.5-pro|gpt-4.1|claude-sonnet-4-6
-math reasoning|o3|deepseek-r1|gemini-2.5-pro
-security audit|claude-opus-4-6|o3|claude-sonnet-4-6
+large codebase analysis|gemini-2.5-pro|gpt-5.3-codex|claude-sonnet-4-6
+math reasoning|gpt-5.4|deepseek-r1|gemini-2.5-pro
+security audit|claude-opus-4-6|gpt-5.4|claude-sonnet-4-6
 data extraction|gemini-2.5-flash|gpt-4o-mini|claude-haiku-4-5
 commit messages|claude-haiku-4-5|gpt-4.1-nano|gemini-2.5-flash
 pr description|claude-sonnet-4-6|gpt-4o|gemini-2.5-flash"
@@ -481,10 +483,10 @@ cmd_recommend() {
 	if [[ "$found" != "true" ]]; then
 		echo "No exact task match. Showing general recommendations:"
 		echo ""
-		echo "  High capability: claude-opus-4-6 or o3"
-		echo "  Balanced:        claude-sonnet-4-6 or gpt-4.1"
+		echo "  High capability: claude-opus-4-6 or gpt-5.4"
+		echo "  Balanced:        claude-sonnet-4-6 or gpt-5.3-codex"
 		echo "  Budget:          gemini-2.5-flash or gpt-4.1-nano"
-		echo "  Large context:   gemini-2.5-pro or gpt-4.1 (1M tokens)"
+		echo "  Large context:   gemini-2.5-pro or gpt-5.3-codex"
 		echo ""
 		echo "Available task types:"
 		echo "$TASK_RECOMMENDATIONS" | cut -d'|' -f1 | while IFS= read -r t; do
@@ -1478,7 +1480,7 @@ cmd_help() {
 	echo "Scoring examples:"
 	echo "  compare-models-helper.sh score --task 'fix React bug' --type code \\"
 	echo "    --model claude-sonnet-4-6 --correctness 9 --completeness 8 --quality 8 --clarity 9 --adherence 9 \\"
-	echo "    --model gpt-4.1 --correctness 8 --completeness 7 --quality 7 --clarity 8 --adherence 8 \\"
+	echo "    --model gpt-5.3-codex --correctness 8 --completeness 7 --quality 7 --clarity 8 --adherence 8 \\"
 	echo "    --winner claude-sonnet-4-6"
 	echo "  compare-models-helper.sh score --task 'review code' --prompt-file prompts/build.txt \\"
 	echo "    --model sonnet --correctness 9 --completeness 8 --quality 8 --clarity 9 --adherence 9"
@@ -1510,7 +1512,7 @@ cmd_help() {
 	echo ""
 	echo "Bench examples (t1393):"
 	echo "  compare-models-helper.sh bench 'What is 2+2?' claude-sonnet-4-6 gpt-4o"
-	echo "  compare-models-helper.sh bench 'Explain quicksort' claude-sonnet-4-6 gpt-4.1 gemini-2.5-pro --judge"
+	echo "  compare-models-helper.sh bench 'Explain quicksort' claude-sonnet-4-6 gpt-5.3-codex gemini-2.5-pro --judge"
 	echo "  compare-models-helper.sh bench --dataset prompts.jsonl claude-sonnet-4-6 gpt-4o --judge"
 	echo "  compare-models-helper.sh bench 'What is 2+2?' claude-sonnet-4-6 --dry-run"
 	echo "  compare-models-helper.sh bench --history --limit 10"
