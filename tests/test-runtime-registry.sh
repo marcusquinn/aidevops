@@ -89,17 +89,17 @@ else
 fi
 
 result=$(rt_config_format "opencode")
-if [[ "$result" == "jsonc" ]]; then
-	pass "rt_config_format opencode = jsonc"
+if [[ "$result" == "json" ]]; then
+	pass "rt_config_format opencode = json"
 else
-	fail "rt_config_format opencode" "expected 'jsonc', got '$result'"
+	fail "rt_config_format opencode" "expected 'json', got '$result'"
 fi
 
 result=$(rt_mcp_root_key "opencode")
-if [[ "$result" == "mcpServers" ]]; then
-	pass "rt_mcp_root_key opencode = mcpServers"
+if [[ "$result" == "mcp" ]]; then
+	pass "rt_mcp_root_key opencode = mcp"
 else
-	fail "rt_mcp_root_key opencode" "expected 'mcpServers', got '$result'"
+	fail "rt_mcp_root_key opencode" "expected 'mcp', got '$result'"
 fi
 
 result=$(rt_prompt_mechanism "opencode")
@@ -180,7 +180,7 @@ section "Path Expansion"
 # =============================================================================
 
 result=$(rt_config_path "opencode")
-expected="$HOME/.config/opencode/config.jsonc"
+expected="$HOME/.config/opencode/opencode.json"
 if [[ "$result" == "$expected" ]]; then
 	pass "rt_config_path opencode expands \$HOME correctly"
 else

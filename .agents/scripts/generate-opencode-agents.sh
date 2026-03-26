@@ -1,5 +1,9 @@
 #!/usr/bin/env bash
 # =============================================================================
+# DEPRECATED: Use generate-runtime-config.sh instead (t1665.4)
+# This script is kept for one release cycle as a fallback.
+# setup-modules/config.sh will use generate-runtime-config.sh when available.
+# =============================================================================
 # Generate OpenCode Agent Configuration
 # =============================================================================
 # Architecture:
@@ -867,7 +871,7 @@ generate_subagent_stub() {
 	echo 1 # Return 1 for counting
 }
 
-export -f generate_subagent_stub
+export -f generate_subagent_stub 2>/dev/null || true
 export AGENTS_DIR
 export OPENCODE_AGENT_DIR
 
