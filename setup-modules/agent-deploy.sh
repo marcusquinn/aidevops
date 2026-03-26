@@ -105,12 +105,11 @@ _deploy_agents_copy() {
 	local source_dir="$1"
 	local target_dir="$2"
 	shift 2
-	local -a plugin_namespaces=("$@")
 
 	local deploy_ok=false
 	if command -v rsync &>/dev/null; then
 		local -a rsync_excludes=("--exclude=loop-state/" "--exclude=custom/" "--exclude=draft/")
-		for pns in "${plugin_namespaces[@]}"; do
+		for pns in "$@"; do
 			rsync_excludes+=("--exclude=${pns}/")
 		done
 		if rsync -a "${rsync_excludes[@]}" "$source_dir/" "$target_dir/"; then
@@ -119,7 +118,7 @@ _deploy_agents_copy() {
 	else
 		# Fallback: use tar with exclusions to match rsync behavior
 		local -a tar_excludes=("--exclude=loop-state" "--exclude=custom" "--exclude=draft")
-		for pns in "${plugin_namespaces[@]}"; do
+		for pns in "$@"; do
 			tar_excludes+=("--exclude=$pns")
 		done
 		if (cd "$source_dir" && tar cf - "${tar_excludes[@]}" .) | (cd "$target_dir" && tar xf -); then
@@ -290,9 +289,11 @@ deploy_aidevops_agents() {
 	# If clean mode, remove stale files first (preserving user and plugin directories)
 	if [[ "$CLEAN_MODE" == "true" ]]; then
 		local -a preserved_dirs=("custom" "draft")
-		for pns in "${plugin_namespaces[@]}"; do
-			preserved_dirs+=("$pns")
-		done
+		if [[ ${#plugin_namespaces[@]} -gt 0 ]]; then
+			for pns in "${plugin_namespaces[@]}"; do
+				preserved_dirs+=("$pns")
+			done
+		fi
 		_deploy_agents_clean_mode "$target_dir" "${preserved_dirs[@]}" || return 1
 	fi
 
@@ -301,7 +302,15 @@ deploy_aidevops_agents() {
 	# - custom/ (user's private agents, never overwritten)
 	# - draft/ (user's experimental agents, never overwritten)
 	# - plugin namespace directories (managed separately)
-	if _deploy_agents_copy "$source_dir" "$target_dir" "${plugin_namespaces[@]}"; then
+	local copy_rc
+	if [[ ${#plugin_namespaces[@]} -gt 0 ]]; then
+		_deploy_agents_copy "$source_dir" "$target_dir" "${plugin_namespaces[@]}"
+		copy_rc=$?
+	else
+		_deploy_agents_copy "$source_dir" "$target_dir"
+		copy_rc=$?
+	fi
+	if [[ "$copy_rc" -eq 0 ]]; then
 		print_success "Deployed agents to $target_dir"
 		_deploy_agents_post_copy "$target_dir" "$repo_dir" "$source_dir" "$plugins_file"
 	else
