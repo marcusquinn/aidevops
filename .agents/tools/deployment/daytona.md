@@ -22,7 +22,7 @@ tools:
 - **SDK**: Python (`pip install daytona-sdk`) | TypeScript (`npm install @daytonaio/sdk`)
 - **CLI**: `daytona` — install: `brew install daytonaio/tap/daytona` or `curl -sf -L https://download.daytona.io/daytona/install.sh | sudo bash`
 - **API**: REST at `https://app.daytona.io/api` (Bearer token auth)
-- **Helper**: `daytona-helper.sh [create|start|stop|destroy|list|exec|snapshot|status] [args]`
+- **Helper**: `daytona-helper.sh [create|start|stop|destroy|list|exec|snapshot|status] [args]` — note: helper uses `destroy` (maps to SDK `daytona.delete()` / REST `DELETE`)
 - **Auth**: `daytona login` (browser) or `export DAYTONA_API_KEY="..."` + `aidevops secret set DAYTONA_API_KEY`
 - **Billing**: Per-second, resource-based (vCPU + RAM + disk). Stopped sandboxes: disk only. Archived: minimal storage cost.
 - **Isolation**: gVisor kernel-level sandbox per workspace
