@@ -738,12 +738,20 @@ _setup_run_non_interactive() {
 	# Parallelise independent skill operations (t1356: ~84s serial -> ~18s parallel)
 	# generate_agent_skills must complete before create_skill_symlinks (symlinks
 	# depend on generated SKILL.md files). scan_imported_skills is independent.
-	generate_agent_skills || print_warning "Agent skills generation encountered issues (non-critical)"
-	create_skill_symlinks &
-	local _pid_symlinks=$!
+	local _pid_symlinks=""
+	if generate_agent_skills; then
+		create_skill_symlinks &
+		_pid_symlinks=$!
+	else
+		print_warning "Agent skills generation failed — skipping skill symlinks"
+	fi
+
 	scan_imported_skills &
 	local _pid_scan=$!
-	wait "$_pid_symlinks" 2>/dev/null || print_warning "Skill symlink creation encountered issues (non-critical)"
+
+	if [[ -n "$_pid_symlinks" ]]; then
+		wait "$_pid_symlinks" 2>/dev/null || print_warning "Skill symlink creation encountered issues (non-critical)"
+	fi
 	wait "$_pid_scan" 2>/dev/null || print_warning "Skill security scan encountered issues (non-critical)"
 
 	inject_agents_reference
