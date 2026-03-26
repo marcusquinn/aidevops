@@ -1344,4 +1344,3 @@ Microcopy is often overlooked but highly testable.
 - Result: +18% trust signal effectiveness (measured via survey)
 
 ---
-

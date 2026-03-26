@@ -654,4 +654,3 @@ Before launching personalization:
 - [ ] Documentation (what's personalized, why, and for whom?)
 
 ---
-

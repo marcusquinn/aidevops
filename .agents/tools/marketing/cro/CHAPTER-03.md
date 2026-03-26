@@ -360,7 +360,8 @@ Don't prioritize tests you can't actually implement with available resources.
 To further inform prioritization, estimate ROI:
 
 **Expected Value Calculation**:
-```
+
+```text
 Expected Value = (Probability of Success × Expected Lift × Revenue Impacted) - Cost of Implementation
 ```
 
@@ -411,4 +412,3 @@ This becomes an invaluable knowledge repository showing:
 - Research supporting future tests
 
 ---
-

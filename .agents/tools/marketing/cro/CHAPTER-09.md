@@ -2476,4 +2476,3 @@ Let's analyze pricing pages from successful companies across industries, identif
 6. **Education/nonprofit discounts** build goodwill and long-term loyalty
 
 ---
-

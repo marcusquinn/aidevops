@@ -143,4 +143,3 @@ Effective CRO requires understanding where optimization efforts fit into the bro
 Each stage requires different optimization strategies, and improvements in early stages can have compounding effects on later stages.
 
 ---
-

@@ -119,30 +119,35 @@
 ## 20.4 CRO Maturity Model
 
 ### Level 1: Reactive
+
 - Ad-hoc testing
 - Limited resources
 - Basic tools
 - No formal process
 
 ### Level 2: Developing
+
 - Regular testing
 - Dedicated resources
 - Standard tools
 - Emerging process
 
 ### Level 3: Defined
+
 - Structured program
 - Full-time team
 - Advanced tools
 - Documented process
 
 ### Level 4: Managed
+
 - Optimized program
 - Center of excellence
 - Integrated stack
 - Metrics-driven
 
 ### Level 5: Optimizing
+
 - Innovation leader
 - Industry best practice
 - Custom solutions

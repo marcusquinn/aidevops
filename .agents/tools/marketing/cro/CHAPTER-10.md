@@ -1026,11 +1026,13 @@ Happy shopping!
 
 6. **Exit Survey**:
    In Email 2 or 3, ask why they didn't purchase:
-   ```
+
+   ```text
    Why didn't you complete your purchase?
    [Too expensive] [Unexpected shipping cost] [Not ready to buy]
    [Found it cheaper elsewhere] [Other]
    ```
+
    Feedback improves checkout optimization.
 
 **Advanced: Browse Abandonment vs Cart Abandonment**:
@@ -1230,7 +1232,8 @@ The order confirmation page is not just a receipt—it's a high-engagement oppor
 **Essential Elements**:
 
 1. **Order Confirmation**:
-   ```
+
+   ```text
    ✓ Order Confirmed!
    
    Order #12345
@@ -1240,7 +1243,8 @@ The order confirmation page is not just a receipt—it's a high-engagement oppor
    ```
 
 2. **What's Next**:
-   ```
+
+   ```text
    What happens next?
    1. We'll prepare your order (1 business day)
    2. Your order ships (2-3 business days)
@@ -1250,7 +1254,8 @@ The order confirmation page is not just a receipt—it's a high-engagement oppor
    ```
 
 3. **Order Summary**:
-   ```
+
+   ```text
    Order Summary
    ━━━━━━━━━━━━━━━━━━━━━━━━
    Running Shoes (Size 10) - $99.99
@@ -1266,14 +1271,16 @@ The order confirmation page is not just a receipt—it's a high-engagement oppor
    ```
 
 4. **Track Your Order**:
-   ```
+
+   ```text
    [Track Your Order]
    
    (Tracking link will be emailed when shipped)
    ```
 
 5. **Support**:
-   ```
+
+   ```text
    Questions?
    Email: support@example.com
    Phone: 1-800-555-1234
@@ -1541,4 +1548,3 @@ Accessible checkout ensures all users can complete purchases.
 - Automated tools (axe, WAVE)
 
 ---
-

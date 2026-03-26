@@ -92,7 +92,8 @@ Characteristics of Strong UVPs:
 - **Concise**: Communicated in seconds, not minutes
 
 UVP Formula:
-```
+
+```text
 [End Result] + [Specific Period] + [Address Objection]
 ```
 
@@ -962,6 +963,7 @@ With 50-60% of traffic on mobile, mobile optimization is critical:
 Use this checklist for every landing page:
 
 #### Content
+
 - [ ] Clear, compelling headline that conveys value proposition
 - [ ] Supporting subheadline that adds context
 - [ ] Benefit-focused copy (not just features)
@@ -972,6 +974,7 @@ Use this checklist for every landing page:
 - [ ] Clear, specific CTA copy
 
 #### Design
+
 - [ ] Strong visual hierarchy
 - [ ] High-quality, relevant images/video
 - [ ] Sufficient white space
@@ -982,6 +985,7 @@ Use this checklist for every landing page:
 - [ ] Fast load time (<3 seconds)
 
 #### Trust & Credibility
+
 - [ ] Social proof (testimonials, reviews, logos)
 - [ ] Trust badges/security seals
 - [ ] Guarantee or risk reversal
@@ -990,6 +994,7 @@ Use this checklist for every landing page:
 - [ ] Professional appearance
 
 #### CTA & Form
+
 - [ ] Prominent, high-contrast CTA button
 - [ ] CTA visible above fold
 - [ ] Multiple CTAs for long pages
@@ -1000,6 +1005,7 @@ Use this checklist for every landing page:
 - [ ] Button states (hover, loading)
 
 #### Technical
+
 - [ ] Proper tracking implemented (analytics, conversion tracking)
 - [ ] A/B test set up correctly
 - [ ] No broken links
@@ -1010,6 +1016,7 @@ Use this checklist for every landing page:
 - [ ] Tested across browsers
 
 #### Psychology
+
 - [ ] Urgency/scarcity (if appropriate and genuine)
 - [ ] Risk reversal (guarantee, trial, etc.)
 - [ ] Reciprocity (free value offered)
@@ -1019,4 +1026,3 @@ Use this checklist for every landing page:
 - [ ] Speaks to target audience
 
 ---
-

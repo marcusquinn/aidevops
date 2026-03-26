@@ -82,11 +82,13 @@ Why: Specific, measurable benefit of upgrading
 
 **2. Feature Comparison Table**:
 Add table:
-```
+
+```text
 Free: Basic grammar and spelling
 Premium: Advanced suggestions, tone detection, plagiarism check
 Business: All premium + team analytics
 ```
+
 Why: Clear differentiation encourages upsells
 
 **3. Add Testimonial Section**:
@@ -1262,7 +1264,7 @@ Prominent: "7-Day Free Trial — Cancel Anytime"
 Why: Reduces commitment fear
 
 **4. Comparison Table**:
-Add: 
+Add:
 | Feature | This App | Peloton | Apple Fitness+ |
 | Price | $14.99/mo | $44/mo | $9.99/mo |
 | Equipment needed | None | $1,500 bike | Apple Watch |
@@ -1278,4 +1280,3 @@ Why: Social proof, reach new audiences
 **Estimated Impact**: 30-50% increase in downloads, 15-20% increase in subscription conversion
 
 ---
-

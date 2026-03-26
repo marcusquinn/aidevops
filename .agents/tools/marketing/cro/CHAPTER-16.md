@@ -220,14 +220,14 @@ MMM analyzes aggregate data to understand marketing impact on business outcomes.
 
 1. **Adstock (Carryover Effects)**
    Marketing impact persists beyond the spend period.
-   
+
    Formula: A_t = S_t + λ × A_{t-1}
-   
+
    Where λ = decay rate (typically 0.3-0.8)
 
 2. **Saturation (Diminishing Returns)**
    Additional spend yields decreasing returns.
-   
+
    Formula: Response = Spend^α / (Spend^α + γ^α)
 
 3. **Seasonality**
@@ -320,8 +320,8 @@ def calculate_rfm_scores(df):
     """
     from datetime import datetime, timedelta
     
-    # Calculate metrics
-    snapshot_date = df['purchase_date'].max() + timedelta(days=1)
+    # Calculate metrics (use pd.Timestamp.now() for timezone-safe snapshot)
+    snapshot_date = pd.Timestamp(df['purchase_date'].max()) + pd.Timedelta(days=1)
     
     rfm = df.groupby('customer_id').agg({
         'purchase_date': lambda x: (snapshot_date - x.max()).days,
@@ -424,7 +424,6 @@ def create_cohort_table(df, period='M'):
     """
     Create cohort retention table
     """
-    from operator import attrgetter
     # Get first purchase date for each customer
     df['first_purchase'] = df.groupby('customer_id')['purchase_date'].transform('min')
     
@@ -432,8 +431,8 @@ def create_cohort_table(df, period='M'):
     df['cohort'] = df['first_purchase'].dt.to_period(period)
     df['period'] = df['purchase_date'].dt.to_period(period)
     
-    # Calculate period number
-    df['period_number'] = (df['period'] - df['cohort']).apply(attrgetter('n'))
+    # Calculate period number (use .n attribute of DateOffset safely)
+    df['period_number'] = (df['period'] - df['cohort']).apply(lambda x: x.n)
     
     # Create cohort table
     cohort_data = df.groupby(['cohort', 'period_number'])['customer_id'].nunique().reset_index()
@@ -528,11 +527,16 @@ LTV = Average Order Value × Purchase Frequency × Customer Lifespan
 ```python
 def predict_ltv(customer_data, model):
     """
-    Predict lifetime value using trained model
+    Predict lifetime value using trained model.
+    Requires model with a .predict() method (e.g., sklearn estimator).
     """
+    if model is None or not hasattr(model, 'predict'):
+        raise ValueError("model must be a fitted estimator with a predict() method")
+    if customer_data is None or len(customer_data) == 0:
+        raise ValueError("customer_data must be a non-empty DataFrame or array")
+    
     # Features: acquisition channel, first purchase amount,
     # first purchase category, demographic data
-    
     predicted_ltv = model.predict(customer_data)
     
     return predicted_ltv

@@ -9,7 +9,8 @@ Before you can optimize conversions, you must establish a clear baseline underst
 The basic conversion rate calculation is straightforward, but it's important to calculate it correctly based on your business model:
 
 **Standard Conversion Rate** (for actions that can occur multiple times per visitor):
-```
+
+```text
 Conversion Rate = (Total Conversions / Total Sessions) × 100
 ```
 
@@ -17,7 +18,8 @@ Example: An e-commerce site had 10,000 sessions last month and 250 purchases.
 Conversion Rate = (250 / 10,000) × 100 = 2.5%
 
 **Unique User Conversion Rate** (for one-time actions like subscriptions):
-```
+
+```text
 Conversion Rate = (Total Conversions / Total Unique Visitors) × 100
 ```
 
@@ -408,7 +410,7 @@ If reducing friction by simplifying the checkout (removing unnecessary fields, a
 
 The relationship between value and friction determines conversion likelihood:
 
-```
+```text
 Conversion Likelihood ∝ Perceived Value / Perceived Friction
 ```
 
@@ -442,7 +444,7 @@ Effective CRO requires robust data collection and analysis:
 - Rage click detection
 - Error tracking
 
-**3. A/B Testing Platforms** (Optimizely, VWO, Google Optimize)
+**3. A/B Testing Platforms** (Optimizely, VWO, Google Optimize — sunsetted Sept 2023, migrate to GA4 Experiments)
 - Test performance data
 - Variant conversion rates
 - Statistical significance
@@ -509,4 +511,3 @@ By combining these insights, you can form targeted hypotheses:
 - Providing more educational content and social proof for social media traffic may improve their conversion rates
 
 ---
-

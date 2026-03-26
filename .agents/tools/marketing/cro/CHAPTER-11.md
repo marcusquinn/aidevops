@@ -1028,4 +1028,3 @@ Before launching mobile experience:
 - [ ] Touch gestures work (swipe, pinch-zoom where appropriate)
 
 ---
-

@@ -31,7 +31,6 @@ Where:
 - Friction = obstacles/concerns
 ```
 
-
 #### The Commitment Gradient
 
 People are more likely to take action when:
@@ -1046,6 +1045,7 @@ window.addEventListener('online', () => {
 Before launching any CTA, verify:
 
 #### Design
+
 - [ ] High color contrast (minimum 3:1 ratio)
 - [ ] Large enough (minimum 44×44px)
 - [ ] Clear visual hierarchy (most prominent element)
@@ -1056,6 +1056,7 @@ Before launching any CTA, verify:
 - [ ] Mobile-optimized size and spacing
 
 #### Copy
+
 - [ ] Starts with action verb
 - [ ] Specific and clear
 - [ ] Benefits-focused (not just action)
@@ -1065,6 +1066,7 @@ Before launching any CTA, verify:
 - [ ] Urgent when appropriate (and genuine)
 
 #### Placement
+
 - [ ] Primary CTA above fold (for most pages)
 - [ ] Multiple CTAs for long pages
 - [ ] Strategic placement after value communication
@@ -1073,6 +1075,7 @@ Before launching any CTA, verify:
 - [ ] Aligned with visual flow
 
 #### Technical
+
 - [ ] Proper HTML semantics (button vs. link)
 - [ ] Accessible (ARIA labels, keyboard navigation)
 - [ ] Loading state implemented
@@ -1084,6 +1087,7 @@ Before launching any CTA, verify:
 - [ ] Fast to load (no render-blocking)
 
 #### Context
+
 - [ ] Matches user intent for page
 - [ ] Appropriate for traffic source
 - [ ] Aligned with stage in funnel
@@ -1211,6 +1215,3 @@ AR shopping experiences:
 "See in Space" (product scale)
 
 New CTA paradigms for immersive experiences.
-
-
-

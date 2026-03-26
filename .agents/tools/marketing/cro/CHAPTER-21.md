@@ -22,6 +22,7 @@ Every test should start with a clear hypothesis following this structure:
 - Competitor benchmarking
 
 **Prioritization Matrix:**
+
 | Factor | Weight | Score | Weighted |
 |--------|--------|-------|----------|
 | Potential Impact | 30% | 8 | 2.4 |
@@ -107,6 +108,7 @@ Stop tests early when significance is reached, but **only when using pre-specifi
 - Browser type
 
 **Implementation:**
+
 ```sql
 SELECT 
   device_type,

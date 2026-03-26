@@ -141,7 +141,7 @@ Unlike UX-focused CRO where you optimize for conversion rate, monetization CRO o
 
 The north star metric for monetization CRO is **Lifetime Revenue Per Visitor (LRPV)**:
 
-```
+```text
 LRPV = Conversion Rate × Average Initial Transaction × (1 + Expansion Rate) × Average Customer Lifetime
 ```
 

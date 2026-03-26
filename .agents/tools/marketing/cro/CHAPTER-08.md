@@ -1324,6 +1324,7 @@ Bot: Perfect! Let's get you connected with a marketing expert.
 Before launching any form:
 
 #### Design
+
 - [ ] Single-column layout
 - [ ] Labels above fields (not just placeholders)
 - [ ] Adequate field height (minimum 44px mobile)
@@ -1334,6 +1335,7 @@ Before launching any form:
 - [ ] Accessible color contrast
 
 #### Fields
+
 - [ ] Only essential fields included
 - [ ] Optional fields clearly marked or removed
 - [ ] Smart defaults where appropriate
@@ -1344,6 +1346,7 @@ Before launching any form:
 - [ ] No confirmation fields (email, password) unless critical
 
 #### Validation
+
 - [ ] Inline validation implemented
 - [ ] Specific, helpful error messages
 - [ ] Positive language in errors
@@ -1353,6 +1356,7 @@ Before launching any form:
 - [ ] Preserve data on error
 
 #### UX
+
 - [ ] Privacy assurances included
 - [ ] Submit button clearly labeled
 - [ ] Loading state on submission
@@ -1362,6 +1366,7 @@ Before launching any form:
 - [ ] Save progress option (if long form)
 
 #### Copy
+
 - [ ] Clear, concise labels
 - [ ] Helpful placeholder examples
 - [ ] Required fields indicated
@@ -1370,6 +1375,7 @@ Before launching any form:
 - [ ] Terms and conditions if applicable
 
 #### Technical
+
 - [ ] Form analytics tracking
 - [ ] A/B test ready
 - [ ] Tested across browsers
@@ -1380,6 +1386,7 @@ Before launching any form:
 - [ ] Spam protection (CAPTCHA, honeypot)
 
 #### Accessibility
+
 - [ ] Keyboard navigable
 - [ ] Screen reader compatible
 - [ ] ARIA labels where needed
@@ -1528,4 +1535,3 @@ Already emerging:
 - Tally
 
 ---
-

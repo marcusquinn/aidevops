@@ -372,14 +372,14 @@ Primary: Emotional messaging (how you'll feel, lifestyle, status)
 Secondary: Rational justification (quality, features)
 
 Example: "Feel confident and powerful every time you walk in the room" (emotional)
-+ "Crafted from premium Italian leather that lasts a lifetime" (rational)
+- "Crafted from premium Italian leather that lasts a lifetime" (rational)
 
 **Highly Rational Products** (enterprise software, financial services):
 Primary: Rational messaging (ROI, features, security, compliance)
 Secondary: Emotional elements (peace of mind, confidence, pride)
 
 Example: "Reduce infrastructure costs by 45% while improving uptime to 99.99%" (rational)
-+ "Sleep better knowing your systems are secure and reliable" (emotional)
+- "Sleep better knowing your systems are secure and reliable" (emotional)
 
 **Balanced Products** (most consumer products and services):
 Mix of both throughout messaging
@@ -552,6 +552,3 @@ Create a message map that connects your value proposition to all touchpoints:
 **Customer Support**: Reinforcing benefits while solving problems
 
 Consistency across touchpoints reinforces your message and builds brand recognition.
-
-
-
