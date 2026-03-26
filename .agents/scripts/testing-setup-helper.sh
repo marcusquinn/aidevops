@@ -202,7 +202,9 @@ _discover_pytest() {
 		local configured="false"
 		if [[ -f "${project_dir}/pytest.ini" ]] ||
 			{ [[ -f "${project_dir}/pyproject.toml" ]] &&
-				grep -q '\[tool\.pytest' "${project_dir}/pyproject.toml" 2>/dev/null; }; then
+				grep -q '\[tool\.pytest' "${project_dir}/pyproject.toml" 2>/dev/null; } ||
+			{ [[ -f "${project_dir}/setup.cfg" ]] &&
+				grep -qE '\[tool:pytest\]' "${project_dir}/setup.cfg" 2>/dev/null; }; then
 			configured="true"
 		fi
 		runners=$(echo "$runners" | jq --arg c "$configured" --arg s "$_pytest_source" \
@@ -994,7 +996,7 @@ cmd_verify() {
 	local runner_output runner_counts
 	runner_output=$(_verify_runners "$discovery" "$project_dir")
 	runner_counts=$(echo "$runner_output" | grep '^counts:' | tail -1)
-	echo "$runner_output" | grep -v '^counts:'
+	printf '%s\n' "$runner_output" | sed '/^counts:/d'
 
 	if [[ -n "$runner_counts" ]]; then
 		local rp rf rs
@@ -1010,7 +1012,7 @@ cmd_verify() {
 	local linter_output linter_counts
 	linter_output=$(_verify_linters "$discovery" "$project_dir")
 	linter_counts=$(echo "$linter_output" | grep '^counts:' | tail -1)
-	echo "$linter_output" | grep -v '^counts:'
+	printf '%s\n' "$linter_output" | sed '/^counts:/d'
 
 	if [[ -n "$linter_counts" ]]; then
 		local lp lf ls
