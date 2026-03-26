@@ -19,344 +19,144 @@ model: haiku
 
 ## Quick Reference
 
-- **Purpose**: Route tasks to the cheapest model that can handle them well
-- **Philosophy**: Use the smallest model that produces acceptable quality
-- **Default**: sonnet (best balance of cost/capability for most tasks)
-- **Cost spectrum**: local (free) -> composer2 -> flash -> haiku -> sonnet -> pro -> opus (highest)
+- **Default**: `sonnet` (best cost/capability balance)
+- **Cost spectrum**: local (free) → composer2 → flash → haiku → sonnet → pro → opus
+- **Rule**: use the smallest model that produces acceptable quality
 
 ## Model Tiers
 
-| Tier | Model | Cost | Best For |
-|------|-------|------|----------|
-| `local` | llama.cpp (user-selected GGUF) | Free ($0) | Privacy-sensitive tasks, offline work, bulk processing, experimentation |
-| `flash` | gemini-2.5-flash-preview-05-20 | Lowest (~0.20x) | Large context reads, summarization, bulk processing |
-| `haiku` | claude-haiku-4-5-20251001 | Low (~0.25x) | Triage, classification, simple transforms, formatting |
-| `composer2` | cursor/composer-2 | Low (~0.17x) | Frontier-level coding: complex multi-file implementation, large refactors, high-quality code generation |
-| `sonnet` | claude-sonnet-4-6 | Medium | Code implementation, review, most development tasks |
-| `pro` | gemini-2.5-pro | Medium-High | Large codebase analysis, complex reasoning with big context |
-| `opus` | claude-opus-4-6 | Highest | Architecture decisions, complex multi-step reasoning, novel problems |
+| Tier | Model | Relative Cost | Best For |
+|------|-------|---------------|----------|
+| `local` | llama.cpp (user GGUF) | $0 | Privacy/on-device, offline, bulk, experimentation |
+| `flash` | gemini-2.5-flash-preview-05-20 | ~0.20x | Large context reads (>50K tokens), summarization, bulk |
+| `haiku` | claude-haiku-4-5-20251001 | ~0.25x | Triage, classification, simple transforms, commit messages |
+| `composer2` | cursor/composer-2 | ~0.17x | Complex multi-file coding, large refactors (requires Cursor OAuth pool t1549) |
+| `sonnet` | claude-sonnet-4-6 | 1x | Code implementation, review, debugging — most dev tasks |
+| `pro` | gemini-2.5-pro | ~1.5x | Very large codebases (>100K tokens) + complex reasoning |
+| `opus` | claude-opus-4-6 | ~3x | Architecture decisions, novel problems, security audits, complex trade-offs |
 
-## Model ID Convention
+**Model ID convention**: Always use fully-qualified IDs (e.g., `claude-sonnet-4-6`, not `claude-sonnet-4`). Short-form names cause `ProviderModelNotFoundError`. Tier names are routing labels resolved at dispatch time — never pass a tier name where a model ID is expected. For CLI flags: `anthropic/claude-sonnet-4-6`, `google/gemini-2.5-pro`.
 
-**Always use fully-qualified model IDs** — the exact string accepted by the provider API. Short-form names like `claude-sonnet-4` or `claude-opus-4` cause `ProviderModelNotFoundError` at dispatch time. The canonical model ID for each tier is defined in the subagent frontmatter (`models/*.md`) and must match what the provider API accepts.
-
-When referencing models in docs, scripts, or dispatch commands, use the full ID from the subagent frontmatter (e.g., `claude-sonnet-4-6`, not `claude-sonnet-4`). For provider-prefixed contexts (CLI `--model` flags, fallback chains), use `anthropic/claude-sonnet-4-6` or `google/gemini-2.5-pro`.
-
-**Tier names vs model IDs**: Tier names (`haiku`, `sonnet`, `opus`) are abstract routing labels. They are resolved to concrete model IDs at dispatch time by reading the corresponding subagent frontmatter. Never pass a tier name where a model ID is expected.
+**Billing**: Subscription plans (Claude Pro/Max, OpenAI Plus/Pro) recommended for regular use. Reserve API keys for testing or burst capacity.
 
 ## Routing Rules
 
-### Use `local` when:
-
-- Data must stay on-device (privacy, compliance, air-gapped environments)
-- Working offline (no internet after initial model download)
-- Bulk processing where per-token cost matters (RAG indexing, embeddings, batch transforms)
-- Experimenting with open models (Qwen, Llama, DeepSeek, Mistral, Gemma, Phi)
-- Simple tasks where network latency exceeds local inference time
-- The task fits within the local model's capability (typically <32K context, simpler reasoning)
-
-**Limitations**: Local models are smaller and less capable than cloud models. Do not route complex reasoning, large-context analysis, or architecture decisions to local.
-
-**Fallback behaviour**: If a local model is not running or not installed, the routing depends on why `local` was selected:
-
-- **Privacy/on-device requirement**: FAIL — do not route to cloud. Return an error instructing the user to start the local server or pass `--allow-cloud` to explicitly override.
-- **Cost optimisation or experimentation**: Fall back to `composer2` (next tier in the routing chain). Local has no same-tier fallback — it skips directly to the next cloud tier.
-
-### Use `flash` when:
-
-- Reading large files or codebases (>50K tokens of context)
-- Summarizing documents, PRs, or discussions
-- Bulk processing (many small tasks in sequence)
-- Initial research sweeps before deeper analysis
-
-### Use `haiku` when:
-
-- Classifying or triaging (bug vs feature, priority assignment)
-- Simple text transforms (rename, reformat, extract fields)
-- Generating commit messages from diffs
-- Answering factual questions about code (no reasoning needed)
-- Routing decisions (which subagent to use)
-
-### Use `sonnet` when (default):
-
-- Writing or modifying code
-- Code review with actionable feedback
-- Debugging with reasoning
-- Creating documentation from code
-- Most interactive development tasks
-
-### Use `composer2` when:
-
-- Implementing complex features spanning multiple files where coding quality is the priority
-- Large refactors requiring deep understanding of existing code patterns
-- Code generation tasks where frontier-level accuracy reduces review cycles
-- Projects where Cursor OAuth pool is configured (t1549) — at ~0.17x sonnet cost, it is the best value coding tier when available
-- Prefer over `sonnet` for complex coding tasks when Cursor pool is configured (cheaper and higher quality)
-- Prefer over `pro` when the task is primarily code (not large-context analysis)
-
-**Requires**: Cursor OAuth pool configured via `oauth-pool.mjs` (t1549). Falls back to `sonnet` if no Cursor account is available.
-
-### Use `pro` when:
-
-- Analyzing very large codebases (>100K tokens)
-- Complex reasoning that also needs large context
-- Multi-file refactoring across many files
-
-### Use `opus` when:
-
-- Architecture and system design decisions
-- Novel problem-solving (no existing patterns to follow)
-- Security audits requiring deep reasoning
-- Complex multi-step plans with dependencies
-- Evaluating trade-offs with many variables
-
-## Subagent Frontmatter
-
-Add `model:` to subagent YAML frontmatter to declare the recommended tier:
-
-```yaml
----
-description: Simple text formatting utility
-mode: subagent
-model: haiku
-tools:
-  read: true
----
-```
-
-Valid values: `local`, `composer2`, `flash`, `haiku`, `sonnet`, `pro`, `opus`
-
-> **Note**: The `local` tier requires `local-model-helper.sh` to be set up and a model server running. If no local server is available, `local` in frontmatter falls back to `composer2` (next tier in the routing chain — local has no same-tier fallback). See `tools/local-models/local-models.md` for setup.
-
-When `model:` is absent, `sonnet` is assumed (the default tier).
-
-## Cost Estimation
-
-**Subscription vs API billing:** Subscription plans (Claude Pro/Max, OpenAI Plus/Pro) are recommended for regular use — they provide generous allowances at a flat monthly rate. API billing is pay-per-token and adds up fast with autonomous orchestration (pulse, workers, strategic review). Reserve API keys for testing new providers or burst capacity beyond your subscription allowance.
-
-Approximate relative API costs (sonnet = 1x baseline):
-
-| Tier | Input Cost | Output Cost | Relative |
-|------|-----------|-------------|----------|
-| local | 0x | 0x | $0 (electricity only) |
-| flash | 0.15x | 0.30x | ~0.20x |
-| haiku | 0.25x | 0.25x | ~0.25x |
-| composer2 | 0.17x | 0.17x | ~0.17x |
-| sonnet | 1x | 1x | 1x |
-| pro | 1.25x | 2.5x | ~1.5x |
-| opus | 3x | 3x | ~3x |
-
-> **composer2 pricing note**: Cursor Composer 2 is priced at $0.50/$2.50 per M tokens (input/output). Relative to sonnet ($3/$15 per M), both input and output are ~0.17x — making it significantly cheaper than sonnet while delivering frontier-level coding capability. Requires Cursor OAuth pool (t1549).
-
-## Model-Specific Subagents
-
-Concrete model subagents are defined across these paths (`tools/ai-assistants/models/` for cloud tiers, `tools/local-models/` for the local tier):
-
-| Tier | Subagent | Primary Model | Fallback |
-|------|----------|---------------|----------|
-| `local` | `tools/local-models/local-models.md` | llama.cpp (user GGUF) | FAIL (privacy) or composer2 (cost) |
-| `flash` | `models/flash.md` | gemini-2.5-flash-preview-05-20 | gpt-4.1-mini |
-| `haiku` | `models/haiku.md` | claude-haiku-4-5-20251001 | gemini-2.5-flash-preview-05-20 |
-| `composer2` | `models/composer2.md` | cursor/composer-2 | claude-sonnet-4-6 |
-| `sonnet` | `models/sonnet.md` | claude-sonnet-4-6 | gpt-5.3-codex |
-| `pro` | `models/pro.md` | gemini-2.5-pro | claude-sonnet-4-6 |
-| `opus` | `models/opus.md` | claude-opus-4-6 | gpt-5.4 |
-
-Cross-provider reviewers: `models/gemini-reviewer.md`, `models/gpt-reviewer.md`
-
-## Headless Dispatch Model Constraints
-
-The pulse supervisor and headless workers have different model requirements:
-
-- **Pulse supervisor**: Anthropic sonnet only. OpenAI models are unreliable for orchestration — they exit immediately without producing model activity, wasting the entire pulse cycle. This is a proven failure mode, not a preference. Pin with `PULSE_MODEL=anthropic/claude-sonnet-4-6` in `~/.config/aidevops/credentials.sh`.
-- **Workers**: Can use any configured provider. The headless runtime helper rotates models from `AIDEVOPS_HEADLESS_MODELS`. For worker-only OpenAI usage, keep pulse pinned with `PULSE_MODEL` and set workers separately.
-- **Default** (no env var set): `anthropic/claude-sonnet-4-6` (single provider, no rotation).
-
-Recommended split configuration:
-
-```bash
-# Pulse orchestration model (stable)
-export PULSE_MODEL="anthropic/claude-sonnet-4-6"
-
-# Worker rotation pool
-export AIDEVOPS_HEADLESS_MODELS="anthropic/claude-sonnet-4-6,openai/gpt-5.3-codex"
-```
-
-`AIDEVOPS_HEADLESS_MODELS` is a rotation pool with backoff handling, not a strict tier escalation chain. If you need guaranteed tiered escalation, use task-tier labels (`tier:thinking`) so the supervisor dispatches at a higher tier directly.
-
-For this split config, keep `openai/gpt-5.4` out of default worker rotation and use it as an explicit escalation target for high-thinking dispatches (for example via `tier:thinking` or explicit `--model openai/gpt-5.4`).
-
-## Integration with Task Tool
-
-When using the Task tool to dispatch subagents, the `model:` field in the subagent's frontmatter serves as a recommendation. The orchestrating agent can override based on task complexity.
-
-For headless dispatch, the supervisor reads `model:` from subagent frontmatter and passes it as the `--model` flag to the CLI.
-
-## Provider Discovery
-
-Before routing to a model, verify the provider is available. The `compare-models-helper.sh discover` command detects configured providers by checking environment variables, gopass secrets, and `credentials.sh`:
-
-```bash
-# Quick check: which providers have API keys?
-compare-models-helper.sh discover
-
-# Verify keys work by probing provider APIs
-compare-models-helper.sh discover --probe
-
-# List live models from each verified provider
-compare-models-helper.sh discover --list-models
-
-# Machine-readable output for scripting
-compare-models-helper.sh discover --json
-```
-
-Discovery checks three sources (in order): environment variables, gopass encrypted secrets, plaintext `credentials.sh`. Use discovery output to constrain routing to models the user can actually access.
-
-For local models, use `local-model-helper.sh status` to check if a local model server is running:
-
-```bash
-# Check if local model server is running and which model is loaded
-local-model-helper.sh status
-
-# List downloaded local models
-local-model-helper.sh models
-```
-
-## Fallback Routing
-
-Each tier defines a primary model and a fallback from a different provider. When the primary provider is unavailable (no API key configured, key invalid, or API down), route to the fallback:
-
-| Tier | Primary | Fallback | When to Fallback |
-|------|---------|----------|------------------|
-| `local` | llama.cpp (localhost) | composer2 (cost-only) or FAIL (privacy) | Server not running, no model installed. Fails closed for privacy/on-device tasks; falls back to composer2 (next tier in chain) for cost-optimisation use cases. No same-tier fallback exists — local skips directly to cloud. |
-| `flash` | gemini-2.5-flash-preview-05-20 | gpt-4.1-mini | No Google key |
-| `haiku` | claude-haiku-4-5-20251001 | gemini-2.5-flash-preview-05-20 | No Anthropic key |
-| `composer2` | cursor/composer-2 | claude-sonnet-4-6 | No Cursor OAuth pool configured (t1549) or pool exhausted |
-| `sonnet` | claude-sonnet-4-6 | gpt-5.3-codex | No Anthropic key |
-| `pro` | gemini-2.5-pro | claude-sonnet-4-6 | No Google key |
-| `opus` | claude-opus-4-6 | gpt-5.4 | No Anthropic key |
-
-The supervisor resolves fallbacks automatically during headless dispatch. For interactive sessions, the orchestrating agent should run `compare-models-helper.sh discover` to check availability before selecting a model.
-
-## Model Comparison
-
-For detailed model comparison (pricing, context windows, capabilities), use the compare-models helper:
-
-```bash
-# List all tracked models with pricing
-compare-models-helper.sh list
-
-# Compare specific models side-by-side
-compare-models-helper.sh compare sonnet gpt-4o gemini-pro
-
-# Get task-specific recommendations
-compare-models-helper.sh recommend "code review"
-
-# Show capability matrix
-compare-models-helper.sh capabilities
-```
-
-Interactive commands: `/compare-models` (with live web fetch), `/compare-models-free` (offline), `/route <task>` (suggest optimal tier).
-
-## Prompt Version Tracking (t1396)
-
-Observability traces and comparison results can include prompt version metadata, enabling correlation between prompt changes and output quality over time.
-
-When `--prompt-file` is provided to `observability-helper.sh record` or `compare-models-helper.sh score/cross-review`, the git short hash of the last commit that modified the file is automatically resolved as `prompt_version`. Use `--prompt-version` to set an explicit version tag instead (overrides git hash detection).
-
-```bash
-# Record a trace with prompt version
-observability-helper.sh record --model claude-sonnet-4-6 \
-  --input-tokens 150 --output-tokens 320 \
-  --prompt-file prompts/build.txt
-
-# Filter comparison results by prompt version
-compare-models-helper.sh results --prompt-version a1b2c3d
-```
-
-Combined with model comparison scoring, this enables prompt regression detection: run the same dataset against two prompt versions and compare quality scores.
-
-## Model Registry
-
-The model registry (`model-registry-helper.sh`) maintains a SQLite database tracking all known models across providers. It syncs from subagent frontmatter, embedded pricing data, and live provider APIs. Use `model-registry-helper.sh status` to check registry health and `model-registry-helper.sh check` to verify configured models are available.
-
-## Model Availability (Pre-Dispatch)
-
-The model availability checker (`model-availability-helper.sh`) provides lightweight, cached health probes for use before dispatch. Unlike the model registry (which tracks what models exist), the availability checker tests whether providers are currently responding and API keys are valid.
-
-```bash
-# Check if a provider is healthy (fast: direct HTTP, ~1-2s, cached 5min)
-model-availability-helper.sh check anthropic
-
-# Check a specific model
-model-availability-helper.sh check anthropic/claude-sonnet-4-6
-
-# Resolve best available model for a tier (with automatic fallback)
-model-availability-helper.sh resolve opus
-
-# Probe all configured providers
-model-availability-helper.sh probe
-
-# View cached status and rate limits
-model-availability-helper.sh status
-model-availability-helper.sh rate-limits
-```
-
-The supervisor uses this automatically during dispatch (t132.3). The availability helper is ~4-8x faster than the previous CLI-based health probe because it calls provider `/models` endpoints directly via HTTP instead of spawning a full AI CLI session.
-
-Exit codes: 0=available, 1=unavailable, 2=rate-limited, 3=API-key-invalid.
-
-<!-- AI-CONTEXT-END -->
+| Use | When |
+|-----|------|
+| `local` | Data must stay on-device; offline; bulk where cost matters; task fits <32K context |
+| `flash` | >50K token context; summarization; bulk processing; initial research sweeps |
+| `haiku` | Classification/triage; simple text transforms; commit messages; routing decisions |
+| `sonnet` | Writing/modifying code; code review; debugging; documentation; most interactive dev |
+| `composer2` | Complex multi-file features; large refactors; Cursor pool configured → prefer over sonnet (cheaper + higher quality) |
+| `pro` | >100K token codebases; complex reasoning + large context |
+| `opus` | Architecture/system design; novel problems; security audits; multi-step plans; evaluating many trade-offs |
+
+**`local` fallback**: Privacy/on-device → FAIL (require `--allow-cloud` to override). Cost optimisation → fall back to `composer2`.
 
 ## Decision Flowchart
 
 ```text
-Is the task privacy/on-device constrained?
-  → YES: Is a local model running and capable enough?
-    → YES: local
-    → NO: FAIL (require --allow-cloud to override)
-  → NO: Is the task bulk/offline where local saves cost?
-    → YES: Is a local model running and capable enough?
-      → YES: local
-      → NO: composer2 (next tier in chain — local has no same-tier fallback)
-    → NO: Is the task simple classification/formatting?
-      → YES: haiku
-      → NO: Does it need >50K tokens of context?
-        → YES: Is deep reasoning also needed?
-          → YES: pro
-          → NO: flash
-        → NO: Is it a novel architecture/design problem?
-          → YES: opus
-          → NO: Is Cursor OAuth pool configured (t1549)?
-            → YES: composer2 (cheaper than sonnet, frontier coding quality)
-            → NO: sonnet
+Privacy/on-device constrained?
+  YES → local model running? → YES: local | NO: FAIL (require --allow-cloud)
+  NO → bulk/offline saves cost?
+    YES → local model running? → YES: local | NO: composer2
+    NO → simple classification/formatting? → YES: haiku
+         NO → >50K tokens?
+           YES → deep reasoning needed? → YES: pro | NO: flash
+           NO → novel architecture/design? → YES: opus
+                NO → Cursor OAuth pool configured (t1549)? → YES: composer2 | NO: sonnet
 ```
+
+## Fallback Routing
+
+| Tier | Primary | Fallback | Trigger |
+|------|---------|----------|---------|
+| `local` | llama.cpp | composer2 (cost) or FAIL (privacy) | Server not running |
+| `flash` | gemini-2.5-flash-preview-05-20 | gpt-4.1-mini | No Google key |
+| `haiku` | claude-haiku-4-5-20251001 | gemini-2.5-flash-preview-05-20 | No Anthropic key |
+| `composer2` | cursor/composer-2 | claude-sonnet-4-6 | No Cursor OAuth pool |
+| `sonnet` | claude-sonnet-4-6 | gpt-5.3-codex | No Anthropic key |
+| `pro` | gemini-2.5-pro | claude-sonnet-4-6 | No Google key |
+| `opus` | claude-opus-4-6 | gpt-5.4 | No Anthropic key |
+
+Supervisor resolves fallbacks automatically during headless dispatch. For interactive sessions, run `compare-models-helper.sh discover` to check availability first.
+
+## Subagent Frontmatter
+
+```yaml
+---
+model: haiku   # valid: local, composer2, flash, haiku, sonnet, pro, opus
+---
+```
+
+Absent `model:` → `sonnet`. `local` requires `local-model-helper.sh` setup; falls back to `composer2` if no server running.
+
+## Headless Dispatch Constraints
+
+- **Pulse supervisor**: Anthropic sonnet only — OpenAI models exit immediately without producing activity (proven failure mode). Pin: `PULSE_MODEL=anthropic/claude-sonnet-4-6`.
+- **Workers**: Any configured provider. Rotation pool: `AIDEVOPS_HEADLESS_MODELS`.
+- **Default** (no env var): `anthropic/claude-sonnet-4-6`.
+
+```bash
+export PULSE_MODEL="anthropic/claude-sonnet-4-6"
+export AIDEVOPS_HEADLESS_MODELS="anthropic/claude-sonnet-4-6,openai/gpt-5.3-codex"
+```
+
+`AIDEVOPS_HEADLESS_MODELS` is a rotation pool with backoff, not tiered escalation. For guaranteed tier escalation, use `tier:thinking` labels.
+
+## Provider Discovery
+
+```bash
+compare-models-helper.sh discover              # Which providers have keys?
+compare-models-helper.sh discover --probe      # Verify keys work
+compare-models-helper.sh discover --list-models
+compare-models-helper.sh discover --json       # Machine-readable
+local-model-helper.sh status                   # Local model server status
+local-model-helper.sh models                   # Downloaded local models
+```
+
+## Model Availability (Pre-Dispatch)
+
+```bash
+model-availability-helper.sh check anthropic                    # Provider health (~1-2s, cached 5min)
+model-availability-helper.sh check anthropic/claude-sonnet-4-6  # Specific model
+model-availability-helper.sh resolve opus                        # Best available for tier
+model-availability-helper.sh probe                               # All providers
+model-availability-helper.sh status / rate-limits
+```
+
+Exit codes: 0=available, 1=unavailable, 2=rate-limited, 3=API-key-invalid. ~4-8x faster than CLI-based probes (direct HTTP to provider `/models` endpoints).
+
+## Model Comparison
+
+```bash
+compare-models-helper.sh list
+compare-models-helper.sh compare sonnet gpt-4o gemini-pro
+compare-models-helper.sh recommend "code review"
+compare-models-helper.sh capabilities
+```
+
+Interactive: `/compare-models`, `/compare-models-free`, `/route <task>`
 
 ## Examples
 
-| Task | Recommended | Why |
-|------|-------------|-----|
-| "Process these 1000 log entries locally" | local | Bulk processing, no cloud cost |
-| "Summarize this doc (offline/air-gapped)" | local | No internet available |
-| "Quick chat completion (privacy-sensitive)" | local | Data stays on-device |
-| "Rename variable X to Y across files" | haiku | Simple text transform |
-| "Summarize this 200-page PDF" | flash | Large context, low reasoning |
-| "Fix this React component bug" | sonnet | Code + reasoning |
-| "Implement a new auth module across 10 files" | composer2 | Frontier coding, multi-file, quality matters |
-| "Refactor the entire data layer to use Drizzle" | composer2 | Complex refactor, frontier coding accuracy |
-| "Review this 500-file PR" | pro | Large context + reasoning |
-| "Design the auth system architecture" | opus | Novel design, trade-offs |
-| "Generate a commit message" | haiku | Simple text generation |
-| "Write unit tests for this module" | sonnet | Code generation |
-| "Evaluate 3 database options for our use case" | opus | Complex trade-off analysis |
+| Task | Tier | Why |
+|------|------|-----|
+| Process 1000 log entries locally | local | Bulk, no cloud cost |
+| Rename variable across files | haiku | Simple text transform |
+| Summarize 200-page PDF | flash | Large context, low reasoning |
+| Fix React component bug | sonnet | Code + reasoning |
+| Implement auth module across 10 files | composer2 | Frontier coding, multi-file |
+| Refactor data layer to Drizzle | composer2 | Complex refactor |
+| Review 500-file PR | pro | Large context + reasoning |
+| Design auth system architecture | opus | Novel design, trade-offs |
+| Generate commit message | haiku | Simple text generation |
+| Write unit tests | sonnet | Code generation |
+| Evaluate 3 database options | opus | Complex trade-off analysis |
 
 ## Bundle-Based Project Presets (t1364.6)
 
-Bundles pre-configure model tier defaults per project type, so a content site doesn't use opus for simple text changes and a web app doesn't use haiku for complex refactors.
-
-### How Bundles Interact with Model Routing
-
-Each bundle defines `model_defaults` — a mapping from task type to recommended tier:
+Bundles pre-configure `model_defaults` per project type. Example:
 
 ```json
 {
@@ -371,100 +171,70 @@ Each bundle defines `model_defaults` — a mapping from task type to recommended
 }
 ```
 
-For coding-intensive project types (e.g., `agent`, `cli-tool`), bundles may use `composer2` for `implementation` to get frontier-level coding quality when Cursor OAuth pool is configured.
+**Precedence** (highest wins):
+1. Explicit `model:` tag in TODO.md
+2. Subagent frontmatter `model:`
+3. Bundle `model_defaults`
+4. Framework default: `sonnet`
 
-### Precedence (highest wins)
+**Composition**: When multiple bundles apply, most-restrictive (highest) tier wins per task type.
 
-1. **Explicit `model:` tag in TODO.md** — always wins. If a task says `model:opus`, that's what it gets regardless of bundle.
-2. **Subagent frontmatter `model:`** — the subagent's declared tier for its domain.
-3. **Bundle `model_defaults`** — project-type-appropriate defaults from the resolved bundle.
-4. **Framework default** — `sonnet` (the global fallback).
-
-### Resolution Flow
-
+**Resolution flow**:
 ```text
 Task dispatched for repo X
   ├── Task has explicit model: tag? → Use it
   ├── Subagent has model: in frontmatter? → Use it
-  ├── Repo has bundle? (explicit in repos.json or auto-detected)
-  │   ├── YES → Look up task type in bundle.model_defaults
-  │   │   ├── Found → Use bundle tier
-  │   │   └── Not found → Fall through to framework default
-  │   └── NO → Fall through to framework default
+  ├── Repo has bundle? → Look up task type in bundle.model_defaults
   └── Framework default: sonnet
 ```
 
-### Bundle Composition
-
-When multiple bundles apply (e.g., a project is both a web-app and has infrastructure), they compose:
-- **model_defaults**: most-restrictive (highest) tier wins per task type
-- This prevents under-provisioning — if either bundle says `opus` for architecture, that's what's used
-
-### CLI
-
 ```bash
-# Check what model a bundle recommends for implementation
 bundle-helper.sh get model_defaults.implementation ~/Git/my-project
-
-# See the full resolved bundle for a project
 bundle-helper.sh resolve ~/Git/my-project
-
-# List available bundles
 bundle-helper.sh list
 ```
 
-### Integration Points
-
-- **cron-dispatch.sh**: Reads bundle `model_defaults.implementation` when no explicit model is configured for a cron job
-- **pulse.md**: Supervisor uses bundle `agent_routing` to select the right agent for non-code tasks
-- **linters-local.sh**: Reads bundle `skip_gates` to skip irrelevant quality checks (e.g., ShellCheck on a pure web-app)
+**Integration**: `cron-dispatch.sh` reads `model_defaults.implementation`; pulse uses `agent_routing`; `linters-local.sh` reads `skip_gates`.
 
 ## Failure-Based Escalation (t1416)
 
-When a worker fails on a task (killed for thrashing, 0 commits, PR closed without merge), the supervisor escalates to a higher model tier. This is cost-effective: one opus dispatch (~3x sonnet) costs far less than 5+ failed sonnet dispatches.
+After 2 failed worker attempts on the same issue, escalate to the next tier up (typically sonnet → opus). Add `--model anthropic/claude-opus-4-6` to the dispatch command.
 
-**Escalation rule:** After 2 failed worker attempts on the same issue, escalate from the current tier to the next tier up. In practice this means sonnet -> opus for most tasks (sonnet is the default dispatch tier).
+**Cost justification**: One opus dispatch (~3x sonnet) costs less than 3+ failed sonnet dispatches. Break-even is 1 failed re-dispatch.
 
-**How to escalate:** Add `--model anthropic/claude-opus-4-6` to the `opencode run` dispatch command. This overrides the default "do not add --model" rule in pulse.md.
-
-**Recording:** Every dispatch and kill comment on the issue MUST include the model tier used. Without this, it's impossible to audit whether escalation was attempted. See pulse.md "Audit-quality state in issue and PR comments" (t1416).
-
-**Cost justification:** The t748 incident dispatched 7 sonnet workers over 30+ hours, all thrashing. A single opus dispatch would have cost ~3x one sonnet attempt but saved 6 failed attempts. The break-even point is 1 failed re-dispatch — escalation after 2 failures is always cheaper than a 3rd attempt at the same tier.
+Every dispatch and kill comment MUST include the model tier used — without this, escalation auditing is impossible.
 
 ## Tier Drift Detection (t1191)
 
-When tasks are requested at one tier but executed at another (e.g., `model:sonnet` in
-TODO.md but actually dispatched to opus), this creates cost drift. The framework tracks
-this automatically via `requested_tier` and `actual_tier` fields in both the pattern
-tracker and budget tracker.
-
-**CLI**:
-
 ```bash
-# Pattern-based analysis via slash commands
-/patterns report                    # Full pattern report
-/patterns recommend "task type"     # Tier recommendation from pattern data
-
-# Cost-based analysis (from budget spend events)
-budget-tracker-helper.sh tier-drift               # Full cost report
-budget-tracker-helper.sh tier-drift --json        # Machine-readable
-budget-tracker-helper.sh tier-drift --summary     # One-line for automation
+/patterns report                              # Full pattern report
+/patterns recommend "task type"               # Tier recommendation
+budget-tracker-helper.sh tier-drift           # Cost report
+budget-tracker-helper.sh tier-drift --json
+budget-tracker-helper.sh tier-drift --summary # One-line for automation
 ```
 
-**Automatic detection**: The supervisor pulse cycle (Phase 12b) checks tier drift hourly
-and logs warnings when escalation rate exceeds 25% (notice) or 50% (warning).
+Supervisor pulse (Phase 12b) checks drift hourly: >25% escalation rate → notice; >50% → warning.
 
-**Data flow**: `dispatch.sh` records `requested_tier`/`actual_tier` to the tasks DB →
-`evaluate.sh` reads these and tags pattern entries with `tier_delta:sonnet->opus` →
-budget-tracker records spend with both tiers for cost comparison.
+## Prompt Version Tracking (t1396)
+
+```bash
+observability-helper.sh record --model claude-sonnet-4-6 \
+  --input-tokens 150 --output-tokens 320 \
+  --prompt-file prompts/build.txt
+
+compare-models-helper.sh results --prompt-version a1b2c3d
+```
+
+<!-- AI-CONTEXT-END -->
 
 ## Related
 
-- `tools/local-models/local-models.md` — Local model setup, runtime management (llama.cpp)
-- `tools/local-models/huggingface.md` — Model discovery, GGUF format, quantization guidance
-- `scripts/local-model-helper.sh` — CLI for local model install, serve, search, cleanup
+- `tools/local-models/local-models.md` — Local model setup (llama.cpp)
+- `tools/local-models/huggingface.md` — Model discovery, GGUF, quantization
+- `scripts/local-model-helper.sh` — Local model CLI
 - `tools/ai-assistants/compare-models.md` — Full model comparison subagent
 - `tools/ai-assistants/models/README.md` — Model-specific subagent definitions
-- `scripts/compare-models-helper.sh` — CLI for model comparison and provider discovery
-- `scripts/model-registry-helper.sh` — Provider/model registry with periodic sync
-- `scripts/commands/route.md` — `/route` command (uses this document's routing rules)
+- `scripts/compare-models-helper.sh` — Model comparison and provider discovery
+- `scripts/model-registry-helper.sh` — Provider/model registry
+- `scripts/commands/route.md` — `/route` command
