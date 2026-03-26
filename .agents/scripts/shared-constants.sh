@@ -1540,6 +1540,13 @@ if [[ -r "$_CONFIG_HELPER" ]]; then
 	source "$_CONFIG_HELPER"
 fi
 
+# Source runtime registry (t1665.1) — central data source for all AI CLI runtimes
+_RUNTIME_REGISTRY="${_SC_SELF%/*}/runtime-registry.sh"
+if [[ -r "$_RUNTIME_REGISTRY" ]]; then
+	# shellcheck source=/dev/null
+	source "$_RUNTIME_REGISTRY"
+fi
+
 # Legacy paths (kept for backward compatibility and migration)
 FEATURE_TOGGLES_DEFAULTS="${HOME}/.aidevops/agents/configs/feature-toggles.conf.defaults"
 FEATURE_TOGGLES_USER="${HOME}/.config/aidevops/feature-toggles.conf"
