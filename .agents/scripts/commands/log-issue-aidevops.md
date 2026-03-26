@@ -82,6 +82,21 @@ Is your issue related to any of these?
 3. Not sure, let me review them first
 ```
 
+### Step 3.5: Architectural Alignment (enhancements and architectural changes)
+
+For bug reports with clear reproduction steps, skip this step — bugs are observed failures and belong in the issue tracker.
+
+For **enhancements, feature requests, and architectural changes**, evaluate the proposal against the framework's core principles before composing the issue. The model already has this knowledge — this step ensures it's applied at composition time rather than after maintainer review.
+
+**Questions to consider:**
+
+- **Observed failure first**: Is this addressing a failure mode that has actually occurred, or is it preemptive? Preemptive rules for unobserved failure modes are prompt bloat — every sentence in `build.txt` is processed on every turn. The bar for adding guidance is: observed failure, then minimal guidance.
+- **Intelligence over determinism**: Does the proposed change add a deterministic gate, checklist, or mechanism where the model's judgment would handle it better? If the right answer depends on context, it's guidance not a rule. See `aidevops/architecture.md` "Intelligence Over Scripts".
+- **Prompt cost**: Every instruction added to agent docs has a per-turn cost. Is the value of this addition worth the cost of processing it on every turn for every task? A one-line note costs less than a paragraph, but even one-liners accumulate.
+- **External pattern adoption**: If the suggestion comes from comparing aidevops to another framework, consider that the other framework may have a fundamentally different philosophy. A "gap" compared to a deterministic framework may be a deliberate omission in an intelligence-first framework.
+
+If the proposal doesn't survive these questions, discuss with the user before filing. The issue may be better as a conversation note or memory entry rather than a tracked task.
+
 ### Step 4: Compose the Issue
 
 Build the issue with this structure:
