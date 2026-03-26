@@ -80,8 +80,8 @@ setup_sandbox_git_config() {
 	git_name=$(git config --global user.name 2>/dev/null || echo "aidevops-worker")
 	git_email=$(git config --global user.email 2>/dev/null || echo "worker@aidevops.sh")
 
-	mkdir -p "$sandbox_dir"
-	cat >"$sandbox_dir/.gitconfig" <<-GITCONFIG
+	mkdir -p "$sandbox_dir" || return 1
+	cat >"$sandbox_dir/.gitconfig" <<-GITCONFIG || return 1
 		[user]
 		    name = ${git_name}
 		    email = ${git_email}
@@ -112,8 +112,8 @@ setup_sandbox_gh_config() {
 	local sandbox_dir="$1"
 	local gh_config_dir="$sandbox_dir/.config/gh"
 
-	mkdir -p "$gh_config_dir"
-	cat >"$gh_config_dir/config.yml" <<-GHCONFIG
+	mkdir -p "$gh_config_dir" || return 1
+	cat >"$gh_config_dir/config.yml" <<-GHCONFIG || return 1
 		version: 1
 		git_protocol: https
 		editor: ""
@@ -147,7 +147,7 @@ setup_sandbox_runtime_configs() {
 	local sandbox_dir="$1"
 	local config_dir="$sandbox_dir/.config"
 
-	mkdir -p "$config_dir"
+	mkdir -p "$config_dir" || return 1
 
 	# Copy MCP config files for all configured runtimes
 	if type rt_detect_configured >/dev/null 2>&1; then
@@ -211,12 +211,12 @@ setup_sandbox_dirs_and_sentinel() {
 	local task_id="$2"
 
 	# XDG directories for tool state
-	mkdir -p "$sandbox_dir/.local/share"
-	mkdir -p "$sandbox_dir/.cache"
-	mkdir -p "$sandbox_dir/.npm"
+	mkdir -p "$sandbox_dir/.local/share" || return 1
+	mkdir -p "$sandbox_dir/.cache" || return 1
+	mkdir -p "$sandbox_dir/.npm" || return 1
 
 	# Sentinel file for sandbox detection
-	cat >"$sandbox_dir/.aidevops-sandbox" <<-SENTINEL
+	cat >"$sandbox_dir/.aidevops-sandbox" <<-SENTINEL || return 1
 		task_id=${task_id}
 		created=$(date -u +%Y-%m-%dT%H:%M:%SZ)
 		real_home=${REAL_HOME}
@@ -264,10 +264,22 @@ create_worker_sandbox() {
 		return 1
 	}
 
-	setup_sandbox_git_config "$sandbox_dir"
-	setup_sandbox_gh_config "$sandbox_dir"
-	setup_sandbox_runtime_configs "$sandbox_dir"
-	setup_sandbox_dirs_and_sentinel "$sandbox_dir" "$task_id"
+	setup_sandbox_git_config "$sandbox_dir" || {
+		rm -rf "$sandbox_dir"
+		return 1
+	}
+	setup_sandbox_gh_config "$sandbox_dir" || {
+		rm -rf "$sandbox_dir"
+		return 1
+	}
+	setup_sandbox_runtime_configs "$sandbox_dir" || {
+		rm -rf "$sandbox_dir"
+		return 1
+	}
+	setup_sandbox_dirs_and_sentinel "$sandbox_dir" "$task_id" || {
+		rm -rf "$sandbox_dir"
+		return 1
+	}
 
 	log_worker_sandbox_event "created" "$task_id" "$sandbox_dir"
 
