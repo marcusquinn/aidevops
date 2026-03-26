@@ -104,7 +104,10 @@ if ! declare -f get_runtime_prompt_mechanism >/dev/null 2>&1; then
 			local i
 			for i in "${!_PIA_RUNTIME_IDS[@]}"; do
 				if [[ "${_PIA_RUNTIME_IDS[$i]}" == "$runtime_id" ]]; then
-					command -v "${_PIA_RUNTIME_BINARIES[$i]}" &>/dev/null
+					# Use type -P to find real executables only — command -v
+					# matches shell builtins/keywords (e.g., "continue") causing
+					# false positives.
+					type -P "${_PIA_RUNTIME_BINARIES[$i]}" &>/dev/null
 					return $?
 				fi
 			done
@@ -114,7 +117,7 @@ if ! declare -f get_runtime_prompt_mechanism >/dev/null 2>&1; then
 		detect_installed_runtimes() {
 			local i
 			for i in "${!_PIA_RUNTIME_IDS[@]}"; do
-				if command -v "${_PIA_RUNTIME_BINARIES[$i]}" &>/dev/null; then
+				if type -P "${_PIA_RUNTIME_BINARIES[$i]}" &>/dev/null; then
 					echo "${_PIA_RUNTIME_IDS[$i]}"
 				fi
 			done
@@ -205,11 +208,16 @@ _pia_json_set() {
 import json, sys
 with open('$json_file') as f:
     data = json.load(f)
-# Apply the equivalent of jq filter via exec
-# Only supports the specific patterns we use
+# Merge into existing instructions array (preserve user entries, deduplicate)
 filter_str = '''$jq_filter'''
 if '.instructions' in filter_str:
-    data['instructions'] = ['$_PIA_AGENTS_MD']
+    existing = data.get('instructions', [])
+    if not isinstance(existing, list):
+        existing = []
+    new_entry = '$_PIA_AGENTS_MD'
+    if new_entry not in existing:
+        existing.append(new_entry)
+    data['instructions'] = existing
 with open('$tmp_file', 'w') as f:
     json.dump(data, f, indent=2)
     f.write('\n')
@@ -291,24 +299,34 @@ _deploy_prompt_json_instructions() {
 		fi
 	fi
 
-	# Set instructions field
-	if _pia_json_set "$config_file" ".instructions = [\"${_PIA_AGENTS_MD}\"]"; then
-		_pia_log "success" "Set OpenCode instructions to load ${_PIA_AGENTS_MD}"
+	# Merge our path into existing instructions array (preserve user entries)
+	if _pia_json_set "$config_file" \
+		".instructions = ((.instructions // []) + [\"${_PIA_AGENTS_MD}\"] | unique)"; then
+		_pia_log "success" "Added ${_PIA_AGENTS_MD} to OpenCode instructions"
 	else
 		_pia_log "warning" "Failed to set OpenCode instructions field"
 		return 1
 	fi
 
 	# Also deploy the config-root AGENTS.md (session greeting)
+	# Use diff/backup semantics — only replace if content differs
 	local opencode_config_dir="${HOME}/.config/opencode"
+	local target_agents="${opencode_config_dir}/AGENTS.md"
 	local template_source
 	# Look for template in both repo and deployed locations
 	for template_source in \
 		"${_PIA_DIR}/../../templates/opencode-config-agents.md" \
 		"${HOME}/.aidevops/templates/opencode-config-agents.md"; do
 		if [[ -f "$template_source" ]]; then
-			cp "$template_source" "${opencode_config_dir}/AGENTS.md"
-			_pia_log "success" "Deployed greeting template to ${opencode_config_dir}/AGENTS.md"
+			if [[ -f "$target_agents" ]] && diff -q "$template_source" "$target_agents" &>/dev/null; then
+				_pia_log "info" "Greeting template already up to date at ${target_agents}"
+			else
+				if [[ -f "$target_agents" ]]; then
+					cp "$target_agents" "${target_agents}.bak"
+				fi
+				cp "$template_source" "$target_agents"
+				_pia_log "success" "Deployed greeting template to ${target_agents}"
+			fi
 			break
 		fi
 	done
@@ -478,7 +496,9 @@ _deploy_prompt_windsurf() {
 _deploy_prompt_continue() {
 	local continue_dir="${HOME}/.continue"
 
-	if ! command -v continue &>/dev/null && [[ ! -d "$continue_dir" ]]; then
+	# Use type -P to find real executables only — "continue" is a shell
+	# builtin keyword, so command -v always matches it (false positive).
+	if ! type -P continue &>/dev/null && [[ ! -d "$continue_dir" ]]; then
 		_pia_log "info" "Continue.dev not installed — skipping"
 		return 0
 	fi
@@ -520,17 +540,54 @@ _deploy_prompt_aider() {
 		return 0
 	fi
 
-	# Append read entry — aider YAML is simple enough for sed
-	# Check if read: section exists
+	# Append read entry to aider YAML config.
+	# Must handle both block format (read:\n  - path) and inline format
+	# (read: [] or read: ["path"]) to avoid corrupting existing entries.
 	if grep -q '^read:' "$aider_config" 2>/dev/null; then
-		# Add entry under existing read: section
 		local tmp_file
 		tmp_file=$(mktemp)
-		# Use awk to insert after the read: line (Bash 3.2 safe)
-		awk -v path="$_PIA_AGENTS_MD" '
-			/^read:/ { print; print "  - " path; next }
-			{ print }
-		' "$aider_config" >"$tmp_file"
+		local read_line
+		read_line=$(grep '^read:' "$aider_config")
+
+		if echo "$read_line" | grep -qE '^read:[[:space:]]*$'; then
+			# Block format header (read: on its own line) — insert after it
+			awk -v path="$_PIA_AGENTS_MD" '
+				/^read:[[:space:]]*$/ { print; print "  - " path; next }
+				{ print }
+			' "$aider_config" >"$tmp_file"
+		elif echo "$read_line" | grep -qE '^read:[[:space:]]*\['; then
+			# Inline list format (read: [] or read: ["a","b"]) — convert to
+			# block format preserving existing entries, then append ours
+			python3 -c "
+import yaml, sys
+with open('$aider_config') as f:
+    data = yaml.safe_load(f) or {}
+existing = data.get('read', [])
+if not isinstance(existing, list):
+    existing = [existing] if existing else []
+new_entry = '$_PIA_AGENTS_MD'
+if new_entry not in existing:
+    existing.append(new_entry)
+data['read'] = existing
+with open('$tmp_file', 'w') as f:
+    yaml.dump(data, f, default_flow_style=False, sort_keys=False)
+" 2>/dev/null || {
+				# python3/pyyaml not available — safe fallback: convert inline
+				# to block format manually (handles empty [] only)
+				sed 's/^read:[[:space:]]*\[\]/read:/' "$aider_config" >"$tmp_file"
+				printf '  - %s\n' "$_PIA_AGENTS_MD" >>"$tmp_file"
+			}
+		else
+			# Scalar format (read: /path/to/file) — convert to block list
+			local existing_path
+			existing_path=$(echo "$read_line" | sed 's/^read:[[:space:]]*//')
+			{
+				# Replace the read: line with block format
+				sed '/^read:/d' "$aider_config"
+				printf 'read:\n  - %s\n  - %s\n' "$existing_path" "$_PIA_AGENTS_MD"
+			} >"$tmp_file"
+		fi
+
 		mv "$tmp_file" "$aider_config"
 		_pia_log "success" "Added AGENTS.md to aider read: list"
 	else
