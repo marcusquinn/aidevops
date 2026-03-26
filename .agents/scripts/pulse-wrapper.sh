@@ -759,6 +759,102 @@ _append_prefetch_sub_helpers() {
 # This is a deterministic data-fetch utility. The intelligence about
 # what to DO with this data stays in pulse.md.
 #######################################
+########################################
+# Check per-repo pulse schedule constraints (GH#6510)
+#
+# Enforces two optional repos.json fields:
+#   pulse_hours: {"start": N, "end": N}  — 24h local time window
+#   pulse_expires: "YYYY-MM-DD"          — ISO date after which pulse stops
+#
+# When pulse_expires is past today, this function atomically sets
+# pulse: false in repos.json (temp file + mv) and returns 1 (skip).
+# When pulse_hours is set and the current hour is outside the window,
+# returns 1 (skip). Overnight windows (start > end, e.g., 17→5) are
+# supported. Repos without either field always return 0 (include).
+#
+# Bash 3.2 compatible: no associative arrays, no bash 4+ features.
+# date +%H returns zero-padded strings — strip with 10# prefix for
+# arithmetic to avoid octal interpretation (e.g., 08 → 10#08 = 8).
+#
+# Arguments:
+#   $1 - slug (owner/repo, for log messages)
+#   $2 - pulse_hours_start (integer 0-23, or "" if not set)
+#   $3 - pulse_hours_end   (integer 0-23, or "" if not set)
+#   $4 - pulse_expires     (YYYY-MM-DD string, or "" if not set)
+#   $5 - repos_json        (path to repos.json, for expiry auto-disable)
+#
+# Exit codes:
+#   0 - repo is in schedule window (include in this pulse)
+#   1 - repo is outside window or expired (skip this pulse)
+########################################
+check_repo_pulse_schedule() {
+	local slug="$1"
+	local ph_start="$2"
+	local ph_end="$3"
+	local expires="$4"
+	local repos_json="$5"
+
+	# --- pulse_expires check ---
+	if [[ -n "$expires" ]]; then
+		local today_date
+		today_date=$(date +%Y-%m-%d)
+		# String comparison works for ISO dates (lexicographic == chronological)
+		if [[ "$today_date" > "$expires" ]]; then
+			echo "[pulse-wrapper] pulse_expires reached for ${slug} (expires=${expires}, today=${today_date}) — auto-disabling pulse" >>"$LOGFILE"
+			# Atomic write: temp file + mv (POSIX-guaranteed atomic on local fs)
+			# Last-writer-wins is acceptable since expiry is idempotent.
+			if [[ -f "$repos_json" ]] && command -v jq &>/dev/null; then
+				local tmp_json
+				tmp_json=$(mktemp)
+				if jq --arg slug "$slug" '
+					.initialized_repos |= map(
+						if .slug == $slug then .pulse = false else . end
+					)
+				' "$repos_json" >"$tmp_json" 2>/dev/null; then
+					mv "$tmp_json" "$repos_json"
+					echo "[pulse-wrapper] Set pulse:false for ${slug} in repos.json (expiry auto-disable)" >>"$LOGFILE"
+				else
+					rm -f "$tmp_json"
+					echo "[pulse-wrapper] WARNING: jq failed to update repos.json for ${slug} expiry — skipping this cycle only" >>"$LOGFILE"
+				fi
+			fi
+			return 1
+		fi
+	fi
+
+	# --- pulse_hours check ---
+	if [[ -n "$ph_start" && -n "$ph_end" ]]; then
+		# Strip leading zeros before arithmetic to avoid octal interpretation
+		# (bash treats 08/09 as invalid octal without the 10# prefix)
+		local current_hour
+		current_hour=$(date +%H)
+		local cur ph_s ph_e
+		cur=$((10#${current_hour}))
+		ph_s=$((10#${ph_start}))
+		ph_e=$((10#${ph_end}))
+
+		local in_window=false
+		if [[ "$ph_s" -le "$ph_e" ]]; then
+			# Normal window (e.g., 9→17): in window when cur >= start AND cur < end
+			if [[ "$cur" -ge "$ph_s" && "$cur" -lt "$ph_e" ]]; then
+				in_window=true
+			fi
+		else
+			# Overnight window (e.g., 17→5): in window when cur >= start OR cur < end
+			if [[ "$cur" -ge "$ph_s" || "$cur" -lt "$ph_e" ]]; then
+				in_window=true
+			fi
+		fi
+
+		if [[ "$in_window" != "true" ]]; then
+			echo "[pulse-wrapper] pulse_hours window ${ph_s}→${ph_e} not active for ${slug} (current hour: ${cur}) — skipping" >>"$LOGFILE"
+			return 1
+		fi
+	fi
+
+	return 0
+}
+
 prefetch_state() {
 	local repos_json="$REPOS_JSON"
 
@@ -770,13 +866,37 @@ prefetch_state() {
 
 	echo "[pulse-wrapper] Pre-fetching state for all pulse-enabled repos..." >>"$LOGFILE"
 
-	# Extract pulse-enabled, non-local-only repos as slug|path pairs
-	local repo_entries
-	repo_entries=$(jq -r '.initialized_repos[] | select(.pulse == true and (.local_only // false) == false and .slug != "") | "\(.slug)|\(.path)"' "$repos_json")
+	# Extract pulse-enabled, non-local-only repos as slug|path|ph_start|ph_end|expires
+	# pulse_hours fields default to "" when absent; pulse_expires defaults to "".
+	# Bash 3.2: no associative arrays — use pipe-delimited fields.
+	local repo_entries_raw
+	repo_entries_raw=$(jq -r '.initialized_repos[] |
+		select(.pulse == true and (.local_only // false) == false and .slug != "") |
+		[
+			.slug,
+			.path,
+			(if .pulse_hours then (.pulse_hours.start | tostring) else "" end),
+			(if .pulse_hours then (.pulse_hours.end   | tostring) else "" end),
+			(.pulse_expires // "")
+		] | join("|")
+	' "$repos_json")
+
+	# Filter repos through schedule check; build slug|path pairs for downstream use
+	local repo_entries=""
+	while IFS='|' read -r slug path ph_start ph_end expires; do
+		[[ -n "$slug" ]] || continue
+		if check_repo_pulse_schedule "$slug" "$ph_start" "$ph_end" "$expires" "$repos_json"; then
+			if [[ -z "$repo_entries" ]]; then
+				repo_entries="${slug}|${path}"
+			else
+				repo_entries="${repo_entries}"$'\n'"${slug}|${path}"
+			fi
+		fi
+	done <<<"$repo_entries_raw"
 
 	if [[ -z "$repo_entries" ]]; then
-		echo "[pulse-wrapper] No pulse-enabled repos found" >>"$LOGFILE"
-		echo "No pulse-enabled repos found in repos.json" >"$STATE_FILE"
+		echo "[pulse-wrapper] No pulse-enabled repos in schedule window" >>"$LOGFILE"
+		echo "No pulse-enabled repos in schedule window in repos.json" >"$STATE_FILE"
 		return 1
 	fi
 
