@@ -279,6 +279,11 @@ fly config validate --app my-app
 ./.agents/scripts/fly-io-helper.sh apps
 ```
 
+## Related
+
+- **Hosting comparison**: `tools/deployment/hosting-comparison.md` — Fly.io vs Daytona vs Coolify vs Cloudron vs Vercel decision guide
+- **Helper script**: `.agents/scripts/fly-io-helper.sh`
+
 ## References
 
 - **Docs**: https://fly.io/docs/
