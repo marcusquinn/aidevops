@@ -47,7 +47,7 @@ Full factorial: 2 × 2 × 2 = 8 variations
 
 **Benefits:**
 - Detect interaction effects between variables
-- Can reduce total visitors when testing multiple factors jointly (but may require substantial traffic per cell to detect interactions)
+- Can be more sample-efficient than running many separate tests when interactions matter
 - Comprehensive understanding of variable combinations
 
 **Challenges:**
