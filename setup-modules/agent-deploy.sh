@@ -407,6 +407,113 @@ inject_agents_reference() {
 		fi
 	fi
 
+	# Deploy Codex instructions.md (Codex reads ~/.codex/instructions.md as system prompt)
+	_deploy_codex_instructions
+
+	# Deploy Cursor AGENTS.md (Cursor reads ~/.cursor/rules/*.md as context)
+	_deploy_cursor_agents_reference
+
+	# Deploy Droid AGENTS.md (Droid reads ~/.factory/skills/*.md as context)
+	_deploy_droid_agents_reference
+
+	return 0
+}
+
+# Deploy instructions.md to Codex config directory.
+# Codex reads ~/.codex/instructions.md as its system-level instructions.
+_deploy_codex_instructions() {
+	local codex_dir="$HOME/.codex"
+	local instructions_file="$codex_dir/instructions.md"
+
+	# Only deploy if Codex is installed or config dir exists
+	if [[ ! -d "$codex_dir" ]] && ! command -v codex >/dev/null 2>&1; then
+		return 0
+	fi
+
+	mkdir -p "$codex_dir"
+
+	local reference_content
+	reference_content="Add ~/.aidevops/agents/AGENTS.md to context for AI DevOps capabilities."
+
+	if [[ -f "$instructions_file" ]]; then
+		# Check if our reference is already present
+		# shellcheck disable=SC2088  # Tilde is a literal grep pattern, not a path
+		if grep -q '~/.aidevops/agents/AGENTS.md' "$instructions_file" 2>/dev/null; then
+			print_info "Codex instructions.md already has aidevops reference"
+			return 0
+		fi
+		# Prepend reference to existing instructions
+		local temp_file
+		temp_file=$(mktemp)
+		echo "$reference_content" >"$temp_file"
+		echo "" >>"$temp_file"
+		cat "$instructions_file" >>"$temp_file"
+		mv "$temp_file" "$instructions_file"
+		print_success "Added aidevops reference to $instructions_file"
+	else
+		echo "$reference_content" >"$instructions_file"
+		print_success "Created $instructions_file with aidevops reference"
+	fi
+	return 0
+}
+
+# Deploy AGENTS.md reference to Cursor rules directory.
+# Cursor reads ~/.cursor/rules/*.md files as additional context.
+_deploy_cursor_agents_reference() {
+	local cursor_dir="$HOME/.cursor"
+	local rules_dir="$cursor_dir/rules"
+	local agents_file="$rules_dir/aidevops.md"
+
+	# Only deploy if Cursor is installed or config dir exists
+	if [[ ! -d "$cursor_dir" ]] && ! command -v cursor >/dev/null 2>&1 && ! command -v agent >/dev/null 2>&1; then
+		return 0
+	fi
+
+	mkdir -p "$rules_dir"
+
+	local reference_content
+	reference_content="Add ~/.aidevops/agents/AGENTS.md to context for AI DevOps capabilities."
+
+	if [[ -f "$agents_file" ]]; then
+		# shellcheck disable=SC2088  # Tilde is a literal grep pattern, not a path
+		if grep -q '~/.aidevops/agents/AGENTS.md' "$agents_file" 2>/dev/null; then
+			print_info "Cursor rules/aidevops.md already has aidevops reference"
+			return 0
+		fi
+	fi
+
+	echo "$reference_content" >"$agents_file"
+	print_success "Deployed aidevops reference to $agents_file"
+	return 0
+}
+
+# Deploy AGENTS.md reference to Droid skills directory.
+# Droid reads ~/.factory/skills/*.md files as additional context.
+_deploy_droid_agents_reference() {
+	local factory_dir="$HOME/.factory"
+	local skills_dir="$factory_dir/skills"
+	local agents_file="$skills_dir/aidevops.md"
+
+	# Only deploy if Droid is installed or config dir exists
+	if [[ ! -d "$factory_dir" ]] && ! command -v droid >/dev/null 2>&1; then
+		return 0
+	fi
+
+	mkdir -p "$skills_dir"
+
+	local reference_content
+	reference_content="Add ~/.aidevops/agents/AGENTS.md to context for AI DevOps capabilities."
+
+	if [[ -f "$agents_file" ]]; then
+		# shellcheck disable=SC2088  # Tilde is a literal grep pattern, not a path
+		if grep -q '~/.aidevops/agents/AGENTS.md' "$agents_file" 2>/dev/null; then
+			print_info "Droid skills/aidevops.md already has aidevops reference"
+			return 0
+		fi
+	fi
+
+	echo "$reference_content" >"$agents_file"
+	print_success "Deployed aidevops reference to $agents_file"
 	return 0
 }
 

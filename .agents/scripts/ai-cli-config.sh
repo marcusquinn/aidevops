@@ -248,6 +248,33 @@ _configure_openapi_kilo_kiro() {
 	return 0
 }
 
+# Configure OpenAPI Search MCP for Codex (OpenAI) via config.toml.
+# Codex uses TOML config at ~/.codex/config.toml with [mcp_servers.NAME] sections.
+_configure_openapi_codex() {
+	local mcp_name="$1"
+	local mcp_url="$2"
+	local codex_config="$HOME/.codex/config.toml"
+	if [[ -d "$HOME/.codex" ]] || command -v codex >/dev/null 2>&1; then
+		print_info "Configuring OpenAPI Search for Codex..."
+		mkdir -p "$HOME/.codex"
+		# Codex uses TOML — append section if not already present
+		if grep -q "\\[mcp_servers\\.${mcp_name}\\]" "$codex_config" 2>/dev/null; then
+			print_info "$mcp_name already configured in $codex_config - skipping"
+		else
+			{
+				echo ""
+				echo "[mcp_servers.${mcp_name}]"
+				echo "type = 'url'"
+				echo "url = '${mcp_url}'"
+			} >>"$codex_config"
+			print_success "Codex configured for OpenAPI Search"
+		fi
+	else
+		print_info "Codex not detected - skipping"
+	fi
+	return 0
+}
+
 # Configure OpenAPI Search MCP for Droid (Factory.AI) via droid CLI.
 _configure_openapi_droid() {
 	local mcp_name="$1"
@@ -271,6 +298,7 @@ configure_openapi_search_mcp() {
 
 	_configure_openapi_opencode "$mcp_name" "$mcp_url"
 	_configure_openapi_claude_code "$mcp_name" "$mcp_url"
+	_configure_openapi_codex "$mcp_name" "$mcp_url"
 	_configure_openapi_cursor "$mcp_name" "$mcp_url"
 	_configure_openapi_windsurf "$mcp_name" "$mcp_url"
 	_configure_openapi_gemini "$mcp_name" "$mcp_url"
