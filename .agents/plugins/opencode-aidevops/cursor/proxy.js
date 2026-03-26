@@ -97,6 +97,30 @@ function frameConnectMessage(data, flags = 0) {
     frame.set(data, 5);
     return frame;
 }
+/** Read length-prefixed frames from the bridge stdout and dispatch to callbacks. */
+async function readBridgeOutput(proc, cbs) {
+    const reader = proc.stdout.getReader();
+    let pending = Buffer.alloc(0);
+    try {
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done)
+                break;
+            pending = Buffer.concat([pending, Buffer.from(value)]);
+            while (pending.length >= 4) {
+                const len = pending.readUInt32BE(0);
+                if (pending.length < 4 + len)
+                    break;
+                const payload = pending.subarray(4, 4 + len);
+                pending = pending.subarray(4 + len);
+                cbs.data?.(Buffer.from(payload));
+            }
+        }
+    }
+    catch {
+        // Stream ended
+    }
+}
 function spawnBridge(options) {
     const proc = Bun.spawn(["node", BRIDGE_PATH], {
         stdin: "pipe",
@@ -117,27 +141,7 @@ function spawnBridge(options) {
     let exited = false;
     let exitCode = 1;
     (async () => {
-        const reader = proc.stdout.getReader();
-        let pending = Buffer.alloc(0);
-        try {
-            while (true) {
-                const { done, value } = await reader.read();
-                if (done)
-                    break;
-                pending = Buffer.concat([pending, Buffer.from(value)]);
-                while (pending.length >= 4) {
-                    const len = pending.readUInt32BE(0);
-                    if (pending.length < 4 + len)
-                        break;
-                    const payload = pending.subarray(4, 4 + len);
-                    pending = pending.subarray(4 + len);
-                    cbs.data?.(Buffer.from(payload));
-                }
-            }
-        }
-        catch {
-            // Stream ended
-        }
+        await readBridgeOutput(proc, cbs);
         const code = await proc.exited ?? 1;
         exited = true;
         exitCode = code;
@@ -388,7 +392,10 @@ function handleChatCompletion(body, accessToken) {
     const effectiveUserText = userText || (toolResults.length > 0
         ? toolResults.map((r) => r.content).join("\n")
         : "");
-    const payload = buildCursorRequest(modelId, systemPrompt, effectiveUserText, turns, stored.conversationId, stored.checkpoint, stored.blobStore);
+    const payload = buildCursorRequest(
+        { modelId, systemPrompt, userText: effectiveUserText, turns },
+        { conversationId: stored.conversationId, checkpoint: stored.checkpoint, blobStore: stored.blobStore }
+    );
     payload.mcpTools = mcpTools;
     if (body.stream === false) {
         return handleNonStreamingResponse(payload, accessToken, modelId, bridgeKey);
@@ -486,59 +493,66 @@ function decodeMcpArgsMap(args) {
     }
     return decoded;
 }
-function buildCursorRequest(modelId, systemPrompt, userText, turns, conversationId, checkpoint, existingBlobStore) {
-    const blobStore = new Map(existingBlobStore ?? []);
+/** Encode a single conversation turn (user + optional assistant) to bytes. */
+function encodeTurn(turn) {
+    const userMsg = create(UserMessageSchema, {
+        text: turn.userText,
+        messageId: crypto.randomUUID(),
+    });
+    const userMsgBytes = toBinary(UserMessageSchema, userMsg);
+    const stepBytes = [];
+    if (turn.assistantText) {
+        const step = create(ConversationStepSchema, {
+            message: {
+                case: "assistantMessage",
+                value: create(AssistantMessageSchema, { text: turn.assistantText }),
+            },
+        });
+        stepBytes.push(toBinary(ConversationStepSchema, step));
+    }
+    const agentTurn = create(AgentConversationTurnStructureSchema, {
+        userMessage: userMsgBytes,
+        steps: stepBytes,
+    });
+    const turnStructure = create(ConversationTurnStructureSchema, {
+        turn: { case: "agentConversationTurn", value: agentTurn },
+    });
+    return toBinary(ConversationTurnStructureSchema, turnStructure);
+}
+/** Build or restore a ConversationStateStructure from turns or a checkpoint. */
+function buildConversationState(turns, systemBlobId, checkpoint) {
+    if (checkpoint) {
+        return fromBinary(ConversationStateStructureSchema, checkpoint);
+    }
+    return create(ConversationStateStructureSchema, {
+        rootPromptMessagesJson: [systemBlobId],
+        turns: turns.map(encodeTurn),
+        todos: [],
+        pendingToolCalls: [],
+        previousWorkspaceUris: [],
+        fileStates: {},
+        fileStatesV2: {},
+        summaryArchives: [],
+        turnTimings: [],
+        subagentStates: {},
+        selfSummaryCount: 0,
+        readPaths: [],
+    });
+}
+/**
+ * Build a Cursor AgentRunRequest payload.
+ * @param {{ modelId: string, systemPrompt: string, userText: string, turns: Array }} req
+ * @param {{ conversationId: string, checkpoint: Uint8Array|null, blobStore: Map }} ctx
+ */
+function buildCursorRequest(req, ctx) {
+    const { modelId, systemPrompt, userText, turns } = req;
+    const blobStore = new Map(ctx.blobStore ?? []);
     // System prompt → blob store (Cursor requests it back via KV handshake)
     const systemJson = JSON.stringify({ role: "system", content: systemPrompt });
     const systemBytes = new TextEncoder().encode(systemJson);
     const systemBlobId = new Uint8Array(createHash("sha256").update(systemBytes).digest());
     blobStore.set(Buffer.from(systemBlobId).toString("hex"), systemBytes);
-    let conversationState;
-    if (checkpoint) {
-        conversationState = fromBinary(ConversationStateStructureSchema, checkpoint);
-    }
-    else {
-        const turnBytes = [];
-        for (const turn of turns) {
-            const userMsg = create(UserMessageSchema, {
-                text: turn.userText,
-                messageId: crypto.randomUUID(),
-            });
-            const userMsgBytes = toBinary(UserMessageSchema, userMsg);
-            const stepBytes = [];
-            if (turn.assistantText) {
-                const step = create(ConversationStepSchema, {
-                    message: {
-                        case: "assistantMessage",
-                        value: create(AssistantMessageSchema, { text: turn.assistantText }),
-                    },
-                });
-                stepBytes.push(toBinary(ConversationStepSchema, step));
-            }
-            const agentTurn = create(AgentConversationTurnStructureSchema, {
-                userMessage: userMsgBytes,
-                steps: stepBytes,
-            });
-            const turnStructure = create(ConversationTurnStructureSchema, {
-                turn: { case: "agentConversationTurn", value: agentTurn },
-            });
-            turnBytes.push(toBinary(ConversationTurnStructureSchema, turnStructure));
-        }
-        conversationState = create(ConversationStateStructureSchema, {
-            rootPromptMessagesJson: [systemBlobId],
-            turns: turnBytes,
-            todos: [],
-            pendingToolCalls: [],
-            previousWorkspaceUris: [],
-            fileStates: {},
-            fileStatesV2: {},
-            summaryArchives: [],
-            turnTimings: [],
-            subagentStates: {},
-            selfSummaryCount: 0,
-            readPaths: [],
-        });
-    }
+    const conversationState = buildConversationState(turns, systemBlobId, ctx.checkpoint);
     const userMessage = create(UserMessageSchema, {
         text: userText,
         messageId: crypto.randomUUID(),
@@ -558,7 +572,7 @@ function buildCursorRequest(modelId, systemPrompt, userText, turns, conversation
         conversationState,
         action,
         modelDetails,
-        conversationId,
+        conversationId: ctx.conversationId,
     });
     const clientMessage = create(AgentClientMessageSchema, {
         message: { case: "runRequest", value: runRequest },
@@ -672,7 +686,14 @@ function createThinkingTagFilter() {
         },
     };
 }
-function processServerMessage(msg, blobStore, mcpTools, sendFrame, state, onText, onMcpExec, onCheckpoint) {
+/**
+ * @param {object} msg - AgentServerMessage
+ * @param {{ blobStore: Map, mcpTools: Array, sendFrame: Function }} transport
+ * @param {{ onText: Function, onMcpExec: Function, onCheckpoint: Function }} handlers
+ */
+function processServerMessage(msg, transport, handlers) {
+    const { blobStore, mcpTools, sendFrame } = transport;
+    const { onText, onMcpExec, onCheckpoint } = handlers;
     const msgCase = msg.message.case;
     if (msgCase === "interactionUpdate") {
         handleInteractionUpdate(msg.message.value, onText);
@@ -770,18 +791,22 @@ function handleMcpArgs(execMsg, onMcpExec) {
 /**
  * Reject a native Cursor tool with a "path"-based rejection message.
  * Used for read, ls, write, delete exec types.
+ * @param {{ resultCase: string, resultSchema: object, rejectedSchema: object }} schemas
  */
-function rejectPathTool(execMsg, resultCase, resultSchema, rejectedSchema, reason, sendFrame) {
+function rejectPathTool(execMsg, schemas, reason, sendFrame) {
     const args = execMsg.message.value;
-    const result = create(resultSchema, {
-        result: { case: "rejected", value: create(rejectedSchema, { path: args.path, reason }) },
+    const result = create(schemas.resultSchema, {
+        result: { case: "rejected", value: create(schemas.rejectedSchema, { path: args.path, reason }) },
     });
-    sendExecResult(execMsg, resultCase, result, sendFrame);
+    sendExecResult(execMsg, schemas.resultCase, result, sendFrame);
 }
-/** Reject a shell-type exec with command/workingDirectory fields. */
-function rejectShellTool(execMsg, resultCase, resultSchema, reason, sendFrame) {
+/**
+ * Reject a shell-type exec with command/workingDirectory fields.
+ * @param {{ resultCase: string, resultSchema: object }} schemas
+ */
+function rejectShellTool(execMsg, schemas, reason, sendFrame) {
     const args = execMsg.message.value;
-    const result = create(resultSchema, {
+    const result = create(schemas.resultSchema, {
         result: {
             case: "rejected",
             value: create(ShellRejectedSchema, {
@@ -792,54 +817,59 @@ function rejectShellTool(execMsg, resultCase, resultSchema, reason, sendFrame) {
             }),
         },
     });
-    sendExecResult(execMsg, resultCase, result, sendFrame);
+    sendExecResult(execMsg, schemas.resultCase, result, sendFrame);
 }
-/** Reject an exec with an error-type result (grep, writeShellStdin, fetch). */
-function rejectErrorTool(execMsg, resultCase, resultSchema, errorSchema, errorFields, sendFrame) {
-    const result = create(resultSchema, {
-        result: { case: "error", value: create(errorSchema, errorFields) },
+/**
+ * Reject an exec with an error-type result (grep, writeShellStdin, fetch).
+ * @param {{ resultCase: string, resultSchema: object, errorSchema: object }} schemas
+ */
+function rejectErrorTool(execMsg, schemas, errorFields, sendFrame) {
+    const result = create(schemas.resultSchema, {
+        result: { case: "error", value: create(schemas.errorSchema, errorFields) },
     });
-    sendExecResult(execMsg, resultCase, result, sendFrame);
+    sendExecResult(execMsg, schemas.resultCase, result, sendFrame);
 }
+/**
+ * Reject native Cursor tools so the model falls back to MCP tools.
+ * Returns true if the exec was handled, false otherwise.
+ */
+// Static rejection tables — defined once, reused per call.
+const PATH_REJECTIONS = {
+    readArgs:   { resultCase: "readResult",   resultSchema: ReadResultSchema,   rejectedSchema: ReadRejectedSchema },
+    lsArgs:     { resultCase: "lsResult",     resultSchema: LsResultSchema,     rejectedSchema: LsRejectedSchema },
+    writeArgs:  { resultCase: "writeResult",  resultSchema: WriteResultSchema,  rejectedSchema: WriteRejectedSchema },
+    deleteArgs: { resultCase: "deleteResult", resultSchema: DeleteResultSchema, rejectedSchema: DeleteRejectedSchema },
+};
+const SHELL_REJECTIONS = {
+    shellArgs:                 { resultCase: "shellResult",                resultSchema: ShellResultSchema },
+    shellStreamArgs:           { resultCase: "shellResult",                resultSchema: ShellResultSchema },
+    backgroundShellSpawnArgs:  { resultCase: "backgroundShellSpawnResult", resultSchema: BackgroundShellSpawnResultSchema },
+};
+const ERROR_REJECTIONS = {
+    grepArgs:           { resultCase: "grepResult",           resultSchema: GrepResultSchema,           errorSchema: GrepErrorSchema },
+    writeShellStdinArgs:{ resultCase: "writeShellStdinResult", resultSchema: WriteShellStdinResultSchema, errorSchema: WriteShellStdinErrorSchema },
+};
+const MISC_RESULT_CASES = {
+    listMcpResourcesExecArgs: "listMcpResourcesExecResult",
+    readMcpResourceExecArgs:  "readMcpResourceExecResult",
+    recordScreenArgs:         "recordScreenResult",
+    computerUseArgs:          "computerUseResult",
+};
 /**
  * Reject native Cursor tools so the model falls back to MCP tools.
  * Returns true if the exec was handled, false otherwise.
  */
 function rejectNativeCursorTool(execCase, execMsg, sendFrame) {
     const REJECT_REASON = "Tool not available in this environment. Use the MCP tools provided instead.";
-    // Path-based rejections (read, ls, write, delete)
-    const pathRejections = {
-        readArgs:   { resultCase: "readResult",   resultSchema: ReadResultSchema,   rejectedSchema: ReadRejectedSchema },
-        lsArgs:     { resultCase: "lsResult",     resultSchema: LsResultSchema,     rejectedSchema: LsRejectedSchema },
-        writeArgs:  { resultCase: "writeResult",  resultSchema: WriteResultSchema,  rejectedSchema: WriteRejectedSchema },
-        deleteArgs: { resultCase: "deleteResult", resultSchema: DeleteResultSchema, rejectedSchema: DeleteRejectedSchema },
-    };
-    const pathEntry = pathRejections[execCase];
-    if (pathEntry) {
-        rejectPathTool(execMsg, pathEntry.resultCase, pathEntry.resultSchema, pathEntry.rejectedSchema, REJECT_REASON, sendFrame);
-        return true;
-    }
-    // Shell-type rejections
-    if (execCase === "shellArgs" || execCase === "shellStreamArgs") {
-        rejectShellTool(execMsg, "shellResult", ShellResultSchema, REJECT_REASON, sendFrame);
-        return true;
-    }
-    if (execCase === "backgroundShellSpawnArgs") {
-        rejectShellTool(execMsg, "backgroundShellSpawnResult", BackgroundShellSpawnResultSchema, REJECT_REASON, sendFrame);
-        return true;
-    }
-    // Error-type rejections
-    if (execCase === "grepArgs") {
-        rejectErrorTool(execMsg, "grepResult", GrepResultSchema, GrepErrorSchema, { error: REJECT_REASON }, sendFrame);
-        return true;
-    }
-    if (execCase === "writeShellStdinArgs") {
-        rejectErrorTool(execMsg, "writeShellStdinResult", WriteShellStdinResultSchema, WriteShellStdinErrorSchema, { error: REJECT_REASON }, sendFrame);
-        return true;
-    }
+    const pathEntry = PATH_REJECTIONS[execCase];
+    if (pathEntry) { rejectPathTool(execMsg, pathEntry, REJECT_REASON, sendFrame); return true; }
+    const shellEntry = SHELL_REJECTIONS[execCase];
+    if (shellEntry) { rejectShellTool(execMsg, shellEntry, REJECT_REASON, sendFrame); return true; }
+    const errorEntry = ERROR_REJECTIONS[execCase];
+    if (errorEntry) { rejectErrorTool(execMsg, errorEntry, { error: REJECT_REASON }, sendFrame); return true; }
     if (execCase === "fetchArgs") {
         const args = execMsg.message.value;
-        rejectErrorTool(execMsg, "fetchResult", FetchResultSchema, FetchErrorSchema, { url: args.url ?? "", error: REJECT_REASON }, sendFrame);
+        rejectErrorTool(execMsg, { resultCase: "fetchResult", resultSchema: FetchResultSchema, errorSchema: FetchErrorSchema }, { url: args.url ?? "", error: REJECT_REASON }, sendFrame);
         return true;
     }
     // Diagnostics — return empty result (not a rejection)
@@ -847,18 +877,8 @@ function rejectNativeCursorTool(execCase, execMsg, sendFrame) {
         sendExecResult(execMsg, "diagnosticsResult", create(DiagnosticsResultSchema, {}), sendFrame);
         return true;
     }
-    // MCP resource/screen/computer exec types
-    const miscCaseMap = {
-        listMcpResourcesExecArgs: "listMcpResourcesExecResult",
-        readMcpResourceExecArgs: "readMcpResourceExecResult",
-        recordScreenArgs: "recordScreenResult",
-        computerUseArgs: "computerUseResult",
-    };
-    const resultCase = miscCaseMap[execCase];
-    if (resultCase) {
-        sendExecResult(execMsg, resultCase, create(McpResultSchema, {}), sendFrame);
-        return true;
-    }
+    const miscResultCase = MISC_RESULT_CASES[execCase];
+    if (miscResultCase) { sendExecResult(execMsg, miscResultCase, create(McpResultSchema, {}), sendFrame); return true; }
     return false;
 }
 function handleExecMessage(execMsg, mcpTools, sendFrame, onMcpExec) {
@@ -900,37 +920,65 @@ function deriveBridgeKey(modelId, messages) {
         .digest("hex")
         .slice(0, 16);
 }
-/** Create an SSE streaming Response that reads from a live bridge. */
-function createBridgeStreamResponse(bridge, heartbeatTimer, blobStore, mcpTools, modelId, bridgeKey) {
+/** Build SSE sender helpers bound to a ReadableStream controller. */
+function createSSESenders(controller, completionId, created, modelId) {
+    const encoder = new TextEncoder();
+    let closed = false;
+    const sendSSE = (data) => {
+        if (closed)
+            return;
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify(data)}\n\n`));
+    };
+    const sendDone = () => {
+        if (closed)
+            return;
+        controller.enqueue(encoder.encode("data: [DONE]\n\n"));
+    };
+    const closeController = () => {
+        if (closed)
+            return;
+        closed = true;
+        controller.close();
+    };
+    const makeChunk = (delta, finishReason = null) => ({
+        id: completionId,
+        object: "chat.completion.chunk",
+        created,
+        model: modelId,
+        choices: [{ index: 0, delta, finish_reason: finishReason }],
+    });
+    return { sendSSE, sendDone, closeController, makeChunk };
+}
+/** Flush tag filter output and send any buffered reasoning/content as SSE. */
+function flushTagFilterToSSE(tagFilter, makeChunk, sendSSE) {
+    const flushed = tagFilter.flush();
+    if (flushed.reasoning)
+        sendSSE(makeChunk({ reasoning_content: flushed.reasoning }));
+    if (flushed.content)
+        sendSSE(makeChunk({ content: flushed.content }));
+}
+/** Merge blobStore entries into stored conversation state. */
+function mergeBlobStoreIntoState(bridgeKey, blobStore) {
+    const stored = conversationStates.get(bridgeKey);
+    if (stored) {
+        for (const [k, v] of blobStore)
+            stored.blobStore.set(k, v);
+        stored.lastAccessMs = Date.now();
+    }
+}
+/**
+ * Create an SSE streaming Response that reads from a live bridge.
+ * @param {{ bridge: object, heartbeatTimer: number, blobStore: Map, mcpTools: Array }} bridgeCtx
+ * @param {string} modelId
+ * @param {string} bridgeKey
+ */
+function createBridgeStreamResponse(bridgeCtx, modelId, bridgeKey) {
+    const { bridge, heartbeatTimer, blobStore, mcpTools } = bridgeCtx;
     const completionId = `chatcmpl-${crypto.randomUUID().replace(/-/g, "").slice(0, 28)}`;
     const created = Math.floor(Date.now() / 1000);
     const stream = new ReadableStream({
         start(controller) {
-            const encoder = new TextEncoder();
-            let closed = false;
-            const sendSSE = (data) => {
-                if (closed)
-                    return;
-                controller.enqueue(encoder.encode(`data: ${JSON.stringify(data)}\n\n`));
-            };
-            const sendDone = () => {
-                if (closed)
-                    return;
-                controller.enqueue(encoder.encode("data: [DONE]\n\n"));
-            };
-            const closeController = () => {
-                if (closed)
-                    return;
-                closed = true;
-                controller.close();
-            };
-            const makeChunk = (delta, finishReason = null) => ({
-                id: completionId,
-                object: "chat.completion.chunk",
-                created,
-                model: modelId,
-                choices: [{ index: 0, delta, finish_reason: finishReason }],
-            });
+            const { sendSSE, sendDone, closeController, makeChunk } = createSSESenders(controller, completionId, created, modelId);
             const state = {
                 toolCallIndex: 0,
                 pendingExecs: [],
@@ -940,56 +988,55 @@ function createBridgeStreamResponse(bridge, heartbeatTimer, blobStore, mcpTools,
             const processChunk = createConnectFrameParser((messageBytes) => {
                 try {
                     const serverMessage = fromBinary(AgentServerMessageSchema, messageBytes);
-                    processServerMessage(serverMessage, blobStore, mcpTools, (data) => bridge.write(data), state, (text, isThinking) => {
-                        if (isThinking) {
-                            sendSSE(makeChunk({ reasoning_content: text }));
-                        }
-                        else {
-                            const { content, reasoning } = tagFilter.process(text);
-                            if (reasoning)
-                                sendSSE(makeChunk({ reasoning_content: reasoning }));
-                            if (content)
-                                sendSSE(makeChunk({ content }));
-                        }
-                    }, 
-                    // onMcpExec — the model wants to execute a tool.
-                    (exec) => {
-                        state.pendingExecs.push(exec);
-                        mcpExecReceived = true;
-                        const flushed = tagFilter.flush();
-                        if (flushed.reasoning)
-                            sendSSE(makeChunk({ reasoning_content: flushed.reasoning }));
-                        if (flushed.content)
-                            sendSSE(makeChunk({ content: flushed.content }));
-                        const toolCallIndex = state.toolCallIndex++;
-                        sendSSE(makeChunk({
-                            tool_calls: [{
-                                    index: toolCallIndex,
-                                    id: exec.toolCallId,
-                                    type: "function",
-                                    function: {
-                                        name: exec.toolName,
-                                        arguments: exec.decodedArgs,
-                                    },
-                                }],
-                        }));
-                        // Keep the bridge alive for tool result continuation.
-                        activeBridges.set(bridgeKey, {
-                            bridge,
-                            heartbeatTimer,
-                            blobStore,
-                            mcpTools,
-                            pendingExecs: state.pendingExecs,
-                        });
-                        sendSSE(makeChunk({}, "tool_calls"));
-                        sendDone();
-                        closeController();
-                    }, (checkpointBytes) => {
-                        const stored = conversationStates.get(bridgeKey);
-                        if (stored) {
-                            stored.checkpoint = checkpointBytes;
-                            stored.lastAccessMs = Date.now();
-                        }
+                    processServerMessage(serverMessage, { blobStore, mcpTools, sendFrame: (data) => bridge.write(data) }, {
+                        onText(text, isThinking) {
+                            if (isThinking) {
+                                sendSSE(makeChunk({ reasoning_content: text }));
+                            }
+                            else {
+                                const { content, reasoning } = tagFilter.process(text);
+                                if (reasoning)
+                                    sendSSE(makeChunk({ reasoning_content: reasoning }));
+                                if (content)
+                                    sendSSE(makeChunk({ content }));
+                            }
+                        },
+                        // onMcpExec — the model wants to execute a tool.
+                        onMcpExec(exec) {
+                            state.pendingExecs.push(exec);
+                            mcpExecReceived = true;
+                            flushTagFilterToSSE(tagFilter, makeChunk, sendSSE);
+                            const toolCallIndex = state.toolCallIndex++;
+                            sendSSE(makeChunk({
+                                tool_calls: [{
+                                        index: toolCallIndex,
+                                        id: exec.toolCallId,
+                                        type: "function",
+                                        function: {
+                                            name: exec.toolName,
+                                            arguments: exec.decodedArgs,
+                                        },
+                                    }],
+                            }));
+                            // Keep the bridge alive for tool result continuation.
+                            activeBridges.set(bridgeKey, {
+                                bridge,
+                                heartbeatTimer,
+                                blobStore,
+                                mcpTools,
+                                pendingExecs: state.pendingExecs,
+                            });
+                            sendSSE(makeChunk({}, "tool_calls"));
+                            sendDone();
+                            closeController();
+                        },
+                        onCheckpoint(checkpointBytes) {
+                            const stored = conversationStates.get(bridgeKey);
+                            if (stored) {
+                                stored.checkpoint = checkpointBytes;
+                                stored.lastAccessMs = Date.now();
+                            }
+                        },
                     });
                 }
                 catch {
@@ -1004,18 +1051,9 @@ function createBridgeStreamResponse(bridge, heartbeatTimer, blobStore, mcpTools,
             bridge.onData(processChunk);
             bridge.onClose((code) => {
                 clearInterval(heartbeatTimer);
-                const stored = conversationStates.get(bridgeKey);
-                if (stored) {
-                    for (const [k, v] of blobStore)
-                        stored.blobStore.set(k, v);
-                    stored.lastAccessMs = Date.now();
-                }
+                mergeBlobStoreIntoState(bridgeKey, blobStore);
                 if (!mcpExecReceived) {
-                    const flushed = tagFilter.flush();
-                    if (flushed.reasoning)
-                        sendSSE(makeChunk({ reasoning_content: flushed.reasoning }));
-                    if (flushed.content)
-                        sendSSE(makeChunk({ content: flushed.content }));
+                    flushTagFilterToSSE(tagFilter, makeChunk, sendSSE);
                     sendSSE(makeChunk({}, "stop"));
                     sendDone();
                     closeController();
@@ -1047,7 +1085,7 @@ function startBridge(accessToken, requestBytes) {
 }
 function handleStreamingResponse(payload, accessToken, modelId, bridgeKey) {
     const { bridge, heartbeatTimer } = startBridge(accessToken, payload.requestBytes);
-    return createBridgeStreamResponse(bridge, heartbeatTimer, payload.blobStore, payload.mcpTools, modelId, bridgeKey);
+    return createBridgeStreamResponse({ bridge, heartbeatTimer, blobStore: payload.blobStore, mcpTools: payload.mcpTools }, modelId, bridgeKey);
 }
 /** Resume a paused bridge by sending MCP results and continuing to stream. */
 function handleToolResultResume(active, toolResults, modelId, bridgeKey) {
@@ -1091,7 +1129,7 @@ function handleToolResultResume(active, toolResults, modelId, bridgeKey) {
         });
         bridge.write(frameConnectMessage(toBinary(AgentClientMessageSchema, clientMessage)));
     }
-    return createBridgeStreamResponse(bridge, heartbeatTimer, blobStore, mcpTools, modelId, bridgeKey);
+    return createBridgeStreamResponse({ bridge, heartbeatTimer, blobStore, mcpTools }, modelId, bridgeKey);
 }
 async function handleNonStreamingResponse(payload, accessToken, modelId, bridgeKey) {
     const completionId = `chatcmpl-${crypto.randomUUID().replace(/-/g, "").slice(0, 28)}`;
@@ -1122,9 +1160,40 @@ async function handleNonStreamingResponse(payload, accessToken, modelId, bridgeK
         },
     }), { headers: { "Content-Type": "application/json" } });
 }
+/**
+ * Handle a tool call exec during non-streaming response collection.
+ * Resolves the promise with tool_calls and parks the bridge for continuation.
+ * @param {{ bridge, heartbeatTimer, payload, bridgeKey }} bridgeCtx
+ * @param {{ state, tagFilter, fullTextRef, resolve }} collectCtx
+ */
+function handleNonStreamToolCall(exec, bridgeCtx, collectCtx) {
+    const { bridge, heartbeatTimer, payload, bridgeKey } = bridgeCtx;
+    const { state, tagFilter, fullTextRef, resolve } = collectCtx;
+    state.pendingExecs.push(exec);
+    const flushed = tagFilter.flush();
+    fullTextRef.value += flushed.content;
+    state.toolCallIndex++;
+    const toolCalls = [{
+        id: exec.toolCallId,
+        type: "function",
+        function: {
+            name: exec.toolName,
+            arguments: exec.decodedArgs,
+        },
+    }];
+    // Keep the bridge alive for tool result continuation.
+    activeBridges.set(bridgeKey, {
+        bridge,
+        heartbeatTimer,
+        blobStore: payload.blobStore,
+        mcpTools: payload.mcpTools,
+        pendingExecs: state.pendingExecs,
+    });
+    resolve({ text: fullTextRef.value, toolCalls });
+}
 async function collectFullResponse(payload, accessToken, bridgeKey) {
     const { promise, resolve } = Promise.withResolvers();
-    let fullText = "";
+    const fullTextRef = { value: "" };
     let resolved = false;
     const { bridge, heartbeatTimer } = startBridge(accessToken, payload.requestBytes);
     const state = {
@@ -1135,43 +1204,27 @@ async function collectFullResponse(payload, accessToken, bridgeKey) {
     bridge.onData(createConnectFrameParser((messageBytes) => {
         try {
             const serverMessage = fromBinary(AgentServerMessageSchema, messageBytes);
-            processServerMessage(serverMessage, payload.blobStore, payload.mcpTools, (data) => bridge.write(data), state, (text, isThinking) => {
-                if (isThinking)
-                    return;
-                const { content } = tagFilter.process(text);
-                fullText += content;
-            }, (exec) => {
-                // Tool call received — resolve immediately with tool_calls
-                // and keep the bridge alive for tool result continuation.
-                if (resolved) return;
-                resolved = true;
-                state.pendingExecs.push(exec);
-                const flushed = tagFilter.flush();
-                fullText += flushed.content;
-                const toolCallIndex = state.toolCallIndex++;
-                const toolCalls = [{
-                    id: exec.toolCallId,
-                    type: "function",
-                    function: {
-                        name: exec.toolName,
-                        arguments: exec.decodedArgs,
-                    },
-                }];
-                // Keep the bridge alive for tool result continuation.
-                activeBridges.set(bridgeKey, {
-                    bridge,
-                    heartbeatTimer,
-                    blobStore: payload.blobStore,
-                    mcpTools: payload.mcpTools,
-                    pendingExecs: state.pendingExecs,
-                });
-                resolve({ text: fullText, toolCalls });
-            }, (checkpointBytes) => {
-                const stored = conversationStates.get(bridgeKey);
-                if (stored) {
-                    stored.checkpoint = checkpointBytes;
-                    stored.lastAccessMs = Date.now();
-                }
+            processServerMessage(serverMessage, { blobStore: payload.blobStore, mcpTools: payload.mcpTools, sendFrame: (data) => bridge.write(data) }, {
+                onText(text, isThinking) {
+                    if (isThinking)
+                        return;
+                    const { content } = tagFilter.process(text);
+                    fullTextRef.value += content;
+                },
+                onMcpExec(exec) {
+                    // Tool call received — resolve immediately with tool_calls
+                    // and keep the bridge alive for tool result continuation.
+                    if (resolved) return;
+                    resolved = true;
+                    handleNonStreamToolCall(exec, { bridge, heartbeatTimer, payload, bridgeKey }, { state, tagFilter, fullTextRef, resolve });
+                },
+                onCheckpoint(checkpointBytes) {
+                    const stored = conversationStates.get(bridgeKey);
+                    if (stored) {
+                        stored.checkpoint = checkpointBytes;
+                        stored.lastAccessMs = Date.now();
+                    }
+                },
             });
         }
         catch {
@@ -1180,17 +1233,12 @@ async function collectFullResponse(payload, accessToken, bridgeKey) {
     }, () => { }));
     bridge.onClose(() => {
         clearInterval(heartbeatTimer);
-        const stored = conversationStates.get(bridgeKey);
-        if (stored) {
-            for (const [k, v] of payload.blobStore)
-                stored.blobStore.set(k, v);
-            stored.lastAccessMs = Date.now();
-        }
+        mergeBlobStoreIntoState(bridgeKey, payload.blobStore);
         if (!resolved) {
             resolved = true;
             const flushed = tagFilter.flush();
-            fullText += flushed.content;
-            resolve({ text: fullText, toolCalls: null });
+            fullTextRef.value += flushed.content;
+            resolve({ text: fullTextRef.value, toolCalls: null });
         }
     });
     return promise;
