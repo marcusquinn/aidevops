@@ -507,6 +507,98 @@ print(json.dumps({
 }
 
 # ---------------------------------------------------------------------------
+# Add account — PKCE authorize phase
+# ---------------------------------------------------------------------------
+
+# Open the browser for OAuth and return the authorization code.
+# Usage: _cmd_add_pkce_authorize "$provider" "$email" "$verifier" "$challenge" \
+#            "$state_nonce" "$client_id" "$redirect_uri" "$scopes"
+# Prints the authorization code to stdout; returns 1 on failure.
+_cmd_add_pkce_authorize() {
+	local provider="$1"
+	local email="$2"
+	local verifier="$3"
+	local challenge="$4"
+	local state_nonce="$5"
+	local client_id="$6"
+	local redirect_uri="$7"
+	local scopes="$8"
+
+	local full_url
+	full_url=$(_add_build_authorize_url "$provider" "$client_id" "$redirect_uri" "$scopes" "$challenge" "$state_nonce")
+
+	print_info "Opening browser for ${provider} OAuth..."
+	open_browser "$full_url"
+
+	local code
+	code=$(_add_read_auth_code "$state_nonce") || return 1
+	printf '%s' "$code"
+	return 0
+}
+
+# ---------------------------------------------------------------------------
+# Add account — token exchange and pool save phase
+# ---------------------------------------------------------------------------
+
+# Exchange an authorization code for tokens and save the account to the pool.
+# Usage: _cmd_add_exchange_and_save "$provider" "$email" "$code" \
+#            "$client_id" "$redirect_uri" "$verifier" "$state_nonce" \
+#            "$token_endpoint" "$content_type" "$ua_header"
+# Returns 1 on any failure.
+_cmd_add_exchange_and_save() {
+	local provider="$1"
+	local email="$2"
+	local code="$3"
+	local client_id="$4"
+	local redirect_uri="$5"
+	local verifier="$6"
+	local state_nonce="$7"
+	local token_endpoint="$8"
+	local content_type="$9"
+	local ua_header="${10}"
+
+	print_info "Exchanging authorization code for tokens..."
+
+	local token_body
+	token_body=$(_add_build_token_body "$provider" "$code" "$client_id" "$redirect_uri" "$verifier" "$state_nonce")
+
+	local response http_status body
+	response=$(_oauth_exchange_code "$token_endpoint" "$content_type" "$ua_header" "$token_body") || {
+		print_error "curl failed"
+		return 1
+	}
+	http_status=$(printf '%s' "$response" | tail -1)
+	body=$(printf '%s' "$response" | sed '$d')
+
+	if [[ "$http_status" != "200" ]]; then
+		print_error "Token exchange failed: HTTP ${http_status}"
+		local error_msg
+		error_msg=$(printf '%s' "$body" | extract_token_error)
+		print_error "Error: ${error_msg}"
+		return 1
+	fi
+
+	# Extract tokens (three lines: access, refresh, expires_in)
+	local token_fields access_token refresh_token expires_in
+	token_fields=$(printf '%s' "$body" | _extract_token_fields)
+	access_token=$(printf '%s\n' "$token_fields" | sed -n '1p')
+	refresh_token=$(printf '%s\n' "$token_fields" | sed -n '2p')
+	expires_in=$(printf '%s\n' "$token_fields" | sed -n '3p')
+
+	if [[ -z "$access_token" ]]; then
+		print_error "No access token in response"
+		return 1
+	fi
+
+	local now_ms expires_ms now_iso
+	now_ms=$(get_now_ms)
+	expires_ms=$((now_ms + expires_in * 1000))
+	now_iso=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+	_add_save_to_pool "$provider" "$email" "$access_token" "$refresh_token" "$expires_ms" "$now_iso"
+	return 0
+}
+
+# ---------------------------------------------------------------------------
 # Add account
 # ---------------------------------------------------------------------------
 
@@ -570,53 +662,14 @@ cmd_add() {
 	content_type=$(printf '%s\n' "$params" | sed -n '5p')
 	ua_header=$(printf '%s\n' "$params" | sed -n '6p')
 
-	local full_url
-	full_url=$(_add_build_authorize_url "$provider" "$client_id" "$redirect_uri" "$scopes" "$challenge" "$state_nonce")
-
-	print_info "Opening browser for ${provider} OAuth..."
-	open_browser "$full_url"
-
 	local code
-	code=$(_add_read_auth_code "$state_nonce") || return 1
+	code=$(_cmd_add_pkce_authorize "$provider" "$email" "$verifier" "$challenge" \
+		"$state_nonce" "$client_id" "$redirect_uri" "$scopes") || return 1
 
-	print_info "Exchanging authorization code for tokens..."
+	_cmd_add_exchange_and_save "$provider" "$email" "$code" \
+		"$client_id" "$redirect_uri" "$verifier" "$state_nonce" \
+		"$token_endpoint" "$content_type" "$ua_header" || return 1
 
-	local token_body
-	token_body=$(_add_build_token_body "$provider" "$code" "$client_id" "$redirect_uri" "$verifier" "$state_nonce")
-
-	local response http_status body
-	response=$(_oauth_exchange_code "$token_endpoint" "$content_type" "$ua_header" "$token_body") || {
-		print_error "curl failed"
-		return 1
-	}
-	http_status=$(printf '%s' "$response" | tail -1)
-	body=$(printf '%s' "$response" | sed '$d')
-
-	if [[ "$http_status" != "200" ]]; then
-		print_error "Token exchange failed: HTTP ${http_status}"
-		local error_msg
-		error_msg=$(printf '%s' "$body" | extract_token_error)
-		print_error "Error: ${error_msg}"
-		return 1
-	fi
-
-	# Extract tokens (three lines: access, refresh, expires_in)
-	local token_fields access_token refresh_token expires_in
-	token_fields=$(printf '%s' "$body" | _extract_token_fields)
-	access_token=$(printf '%s\n' "$token_fields" | sed -n '1p')
-	refresh_token=$(printf '%s\n' "$token_fields" | sed -n '2p')
-	expires_in=$(printf '%s\n' "$token_fields" | sed -n '3p')
-
-	if [[ -z "$access_token" ]]; then
-		print_error "No access token in response"
-		return 1
-	fi
-
-	local now_ms expires_ms now_iso
-	now_ms=$(get_now_ms)
-	expires_ms=$((now_ms + expires_in * 1000))
-	now_iso=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-	_add_save_to_pool "$provider" "$email" "$access_token" "$refresh_token" "$expires_ms" "$now_iso"
 	print_info "Restart OpenCode to use the new token."
 	print_info "Then switch to the '${provider^}' provider and select a model to start chatting."
 	return 0
