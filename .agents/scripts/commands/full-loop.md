@@ -366,13 +366,21 @@ fi
 
 ### 4.7 Issue Closing Comment (MANDATORY)
 
-After merge, post on every linked issue:
+After merge, post on every linked issue. The **Testing Evidence** section replaces free-text with structured fields so future workers can assess stability at a glance.
 
 ```markdown
 ## Completed via PR #<PR_NUMBER>
 
 **What was done:** <bullet list>
-**How it was tested:** <tests/verification>
+
+**Testing Evidence:**
+- **Testing level:** `runtime-verified` | `self-assessed` | `untested`
+  - `runtime-verified` — dev server started, Playwright/curl smoke checks passed
+  - `self-assessed` — manual review of diff, no runtime execution
+  - `untested` — docs/config only, no executable code changed
+- **Stability results:** <pass/fail counts, error messages, or "N/A — docs only">
+- **Smoke pages/endpoints checked:** <URLs or commands verified, or "N/A">
+
 **Key decisions:** <non-obvious choices and why>
 **Files changed:** `path/to/file` — <what and why>
 **Blockers encountered:** <issues hit and resolution, or "None">
@@ -380,7 +388,13 @@ After merge, post on every linked issue:
 **Released in:** v<VERSION> — run `aidevops update` to get this fix.
 ```
 
-Rules: every section needs ≥1 bullet ("None" if empty), be specific, include file paths, include release version (aidevops repo only). This is a gate — no `FULL_LOOP_COMPLETE` until comments posted.
+**Rules:**
+- Every section needs ≥1 bullet ("None" / "N/A" if nothing to report)
+- **Testing level is required** — never omit it. If you did not start a dev server or run any automated check, use `self-assessed`. If the change is docs/config only with no executable code, use `untested`.
+- Be specific — "fixed the bug" is useless; "fixed race condition in worktree creation by adding `sleep 2` between dispatches" is useful
+- Include file paths with brief descriptions so future workers can find the changes
+- Include release version (aidevops repo only). For non-aidevops repos, omit the "Released in" line.
+- This is a gate — no `FULL_LOOP_COMPLETE` until closing comments are posted
 
 ### 4.8 Worktree Cleanup
 
