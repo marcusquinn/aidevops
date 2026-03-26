@@ -29,6 +29,8 @@
       "sup",
       "div",
       "span",
+      "details",
+      "summary",
       "system-reminder"
     ]
   },
