@@ -151,6 +151,7 @@ test_all_event_types() {
 		"system.startup"
 		"system.update"
 		"system.rotate"
+		"testing.runtime"
 	)
 
 	local all_ok="true"
@@ -569,6 +570,76 @@ test_input_validation() {
 	return 0
 }
 
+test_testing_runtime_event() {
+	echo "Test: testing.runtime event type"
+	setup
+
+	# Log a passing test run with structured detail fields
+	if bash "$SCRIPT" log testing.runtime "Runtime test suite passed" \
+		--detail suite=test-audit-log-helper \
+		--detail result=pass \
+		--detail tests_run=17 \
+		--detail tests_failed=0 \
+		--detail runtime_ms=1234 2>/dev/null; then
+		pass "testing.runtime event accepted"
+	else
+		fail "testing.runtime event rejected"
+		cleanup
+		return 0
+	fi
+
+	# Log a failing test run
+	if bash "$SCRIPT" log testing.runtime "Runtime test suite failed" \
+		--detail suite=test-worker-sandbox \
+		--detail result=fail \
+		--detail tests_run=5 \
+		--detail tests_failed=2 2>/dev/null; then
+		pass "testing.runtime fail result accepted"
+	else
+		fail "testing.runtime fail result rejected"
+	fi
+
+	# Log a skipped test run
+	if bash "$SCRIPT" log testing.runtime "Runtime test skipped (no docker)" \
+		--detail suite=test-container-helper \
+		--detail result=skip \
+		--detail reason=docker_unavailable 2>/dev/null; then
+		pass "testing.runtime skip result accepted"
+	else
+		fail "testing.runtime skip result rejected"
+	fi
+
+	# Verify chain integrity after all three entries
+	if bash "$SCRIPT" verify --quiet 2>/dev/null; then
+		pass "chain intact after testing.runtime entries"
+	else
+		fail "chain broken after testing.runtime entries"
+	fi
+
+	# Verify detail fields are stored correctly
+	if command -v jq &>/dev/null; then
+		local entry
+		entry="$(head -1 "$AUDIT_LOG_FILE")"
+		local suite result tests_run
+		suite="$(echo "$entry" | jq -r '.detail.suite' 2>/dev/null)"
+		result="$(echo "$entry" | jq -r '.detail.result' 2>/dev/null)"
+		tests_run="$(echo "$entry" | jq -r '.detail.tests_run' 2>/dev/null)"
+
+		if [[ "$suite" == "test-audit-log-helper" ]] &&
+			[[ "$result" == "pass" ]] &&
+			[[ "$tests_run" == "17" ]]; then
+			pass "testing.runtime detail fields stored correctly"
+		else
+			fail "testing.runtime detail fields wrong: suite=$suite result=$result tests_run=$tests_run"
+		fi
+	else
+		pass "testing.runtime detail check skipped (no jq)"
+	fi
+
+	cleanup
+	return 0
+}
+
 # Build a minimal PATH with jq excluded, using a shadow directory of symlinks
 # Prints the minimal PATH string; returns 1 if jq cannot be excluded
 _build_no_jq_path() {
@@ -735,6 +806,7 @@ test_message_with_special_chars
 test_sequence_numbers
 test_help_output
 test_input_validation
+test_testing_runtime_event
 test_no_jq_fallback
 
 echo ""

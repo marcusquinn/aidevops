@@ -7,7 +7,7 @@
 # hash of the previous entry, creating a chain. Modifying or deleting any
 # entry breaks the chain, making tampering detectable via `verify`.
 #
-# Event types (15 — must match AUDIT_EVENT_TYPES array below):
+# Event types (16 — must match AUDIT_EVENT_TYPES array below):
 #   worker.dispatch    — Worker spawned by pulse/supervisor
 #   worker.complete    — Worker finished (success or failure)
 #   worker.error       — Worker encountered an error
@@ -23,6 +23,7 @@
 #   system.startup     — Framework startup
 #   system.update      — Framework update
 #   system.rotate      — Audit log rotation
+#   testing.runtime    — Runtime test execution (pass/fail/skip with structured detail)
 #
 # Usage:
 #   audit-log-helper.sh log <event-type> <message> [--detail key=value ...]
@@ -73,6 +74,7 @@ readonly -a AUDIT_EVENT_TYPES=(
 	"system.startup"
 	"system.update"
 	"system.rotate"
+	"testing.runtime"
 )
 
 # =============================================================================
@@ -785,6 +787,7 @@ Event types:
   system.startup      Framework startup
   system.update       Framework update
   system.rotate       Audit log rotation
+  testing.runtime     Runtime test execution (pass/fail/skip)
 
 Examples:
   # Log a worker dispatch
