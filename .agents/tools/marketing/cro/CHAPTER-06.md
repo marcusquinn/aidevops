@@ -164,7 +164,7 @@ Case studies provide the deepest form of social proof. Best for: B2B, high-consi
 ```text
 Before:                          After:
 - Manual data entry: 8 hrs/wk   - Automated (saving 8 hrs/wk)
-- Error rate: 12%                - Error rate: <1%
+- Error rate: 12%               - Error rate: <1%
 - Response time: 24 hours       - Response time: 2 hours
 ```
 
@@ -209,6 +209,8 @@ Large numbers provide powerful social proof through wisdom of crowds.
 **Big numbers on homepage:**
 
 ```text
+Trusted by Marketing Teams Worldwide
+
 2M+            500K+           $1B+
 Active Users   Companies       Revenue Powered
 
