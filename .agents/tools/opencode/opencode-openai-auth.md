@@ -25,16 +25,14 @@ Uses the same token injection architecture as the Anthropic pool.
 
 ```bash
 # Add your first ChatGPT Plus/Pro account to the pool
-opencode auth login
-# Select: OpenAI Pool
-# Enter your ChatGPT account email
-# Complete OAuth flow in browser (redirects to localhost:1455)
-# Copy the "code" parameter from the redirect URL
-# Paste into the OpenCode prompt
+aidevops model-accounts-pool add openai
+# Default flow: OpenAI Codex device auth (recommended)
+# You will see:
+#   Go to: https://auth.openai.com/codex/device
+#   Enter code: XXXX-XXXXX
 
-# Optionally add more accounts for automatic rotation
-opencode auth login
-# Select: OpenAI Pool → enter second account email
+# Optional fallback (callback URL flow)
+AIDEVOPS_OPENAI_ADD_MODE=callback aidevops model-accounts-pool add openai
 
 # Manage accounts
 # /model-accounts-pool list provider=openai
@@ -60,22 +58,24 @@ The OpenAI pool uses the same token injection architecture as the Anthropic pool
 |--------|-----------|--------|
 | Token endpoint | `platform.claude.com/v1/oauth/token` | `auth.openai.com/oauth/token` |
 | Body format | JSON | `application/x-www-form-urlencoded` |
-| Redirect URI | `console.anthropic.com/oauth/code/callback` | `localhost:1455/auth/callback` |
+| Primary auth UX | Browser callback | Codex device auth (`auth.openai.com/codex/device`) |
+| Callback fallback | N/A | `localhost:1455/auth/callback` (optional via `AIDEVOPS_OPENAI_ADD_MODE=callback`) |
 | Scopes | `org:create_api_key user:profile ...` | `openid profile email offline_access` |
 | Account ID | N/A | `chatgpt_account_id` (from JWT claims) |
 | Auth.json fields | `type, refresh, access, expires` | `type, refresh, access, expires, accountId` |
 
 ## OAuth Flow
 
-OpenAI uses a local redirect server (port 1455) for its built-in OAuth flow.
-The pool's add-account flow uses the same redirect URI with a code-paste UX:
+The pool helper uses a **device-auth-first** flow for OpenAI:
 
-1. Browser opens to `https://auth.openai.com/oauth/authorize`
-2. User signs in with their ChatGPT Plus/Pro account
-3. Browser redirects to `http://localhost:1455/auth/callback?code=...`
-4. User copies the `code` parameter from the URL
-5. User pastes the code into the OpenCode terminal prompt
-6. Pool exchanges the code for tokens and stores them
+1. Run `aidevops model-accounts-pool add openai`
+2. Terminal prompts OpenCode headless login flow
+3. Browser opens to `https://auth.openai.com/codex/device`
+4. User enters the device code shown in terminal
+5. OpenCode stores OAuth tokens in `~/.local/share/opencode/auth.json`
+6. Pool helper reads those tokens and stores them in `~/.aidevops/oauth-pool.json`
+
+If device auth is unavailable in your environment, set `AIDEVOPS_OPENAI_ADD_MODE=callback` to use the legacy callback URL flow.
 
 ## Managing the Pool
 
@@ -93,7 +93,7 @@ Or inspect the pool file directly (key names only):
 
 ```bash
 # List account emails (never expose token values)
-cat ~/.aidevops/oauth-pool.json | jq -r '.openai[].email'
+jq -r '.openai[].email' ~/.aidevops/oauth-pool.json
 ```
 
 ## Pool File Structure
@@ -121,7 +121,7 @@ cat ~/.aidevops/oauth-pool.json | jq -r '.openai[].email'
 - Pool file has 0600 permissions (owner-only read/write)
 - Tokens are stored locally, never transmitted to third parties
 - Do not commit `~/.aidevops/oauth-pool.json` to version control
-- Rotate tokens by re-running `opencode auth login` → OpenAI Pool
+- Rotate tokens by re-running `aidevops model-accounts-pool add openai`
 
 ## Related Documentation
 
