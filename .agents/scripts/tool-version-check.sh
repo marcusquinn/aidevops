@@ -148,11 +148,26 @@ get_npm_pkg_version() {
 	return 1
 }
 
+# Get installed version from pip show
+# Fallback for pip packages that have no CLI binary (e.g., crawl4ai, dspy)
+get_pip_pkg_version() {
+	local pkg="$1"
+	local ver
+	ver=$(pip show "$pkg" 2>/dev/null | grep -i '^Version:' | grep -oE '[0-9]+\.[0-9]+[0-9.]*' | head -1)
+	if [[ -n "$ver" ]]; then
+		echo "$ver"
+		return 0
+	fi
+	return 1
+}
+
 # Get installed version
+# Args: cmd ver_flag [pkg] [category]
 get_installed_version() {
 	local cmd="$1"
 	local ver_flag="$2"
 	local pkg="${3:-}"
+	local category="${4:-}"
 
 	if command -v "$cmd" &>/dev/null; then
 		local version
@@ -194,10 +209,14 @@ get_installed_version() {
 			version=$(echo "$ver_output" | grep -oE '[0-9]+\.[0-9]+' | head -1)
 		fi
 
-		# If --version produced no parseable version, try npm package.json fallback
+		# If --version produced no parseable version, try package manager fallback
 		if [[ -z "$version" ]] && [[ -n "$pkg" ]]; then
-			local pkg_version
-			pkg_version=$(get_npm_pkg_version "$pkg")
+			local pkg_version=""
+			if [[ "$category" == "pip" ]]; then
+				pkg_version=$(get_pip_pkg_version "$pkg")
+			else
+				pkg_version=$(get_npm_pkg_version "$pkg")
+			fi
 			if [[ -n "$pkg_version" ]]; then
 				echo "$pkg_version"
 				return 0
@@ -206,6 +225,16 @@ get_installed_version() {
 
 		echo "${version:-unknown}"
 	else
+		# No CLI binary found — for pip packages, try pip show as fallback
+		# Many pip packages are libraries without CLI entry points
+		if [[ "$category" == "pip" && -n "$pkg" ]]; then
+			local pip_version
+			pip_version=$(get_pip_pkg_version "$pkg")
+			if [[ -n "$pip_version" ]]; then
+				echo "$pip_version"
+				return 0
+			fi
+		fi
 		echo "not installed"
 	fi
 	return 0
@@ -283,9 +312,10 @@ check_tool() {
 	local update_cmd="$6"
 
 	local installed
-	# Pass package name for npm tools so fallback to package.json works
-	if [[ "$category" == "npm" ]]; then
-		installed=$(get_installed_version "$cmd" "$ver_flag" "$pkg")
+	# Pass package name and category so fallback detection works
+	# npm: falls back to package.json; pip: falls back to pip show
+	if [[ "$category" == "npm" || "$category" == "pip" ]]; then
+		installed=$(get_installed_version "$cmd" "$ver_flag" "$pkg" "$category")
 	else
 		installed=$(get_installed_version "$cmd" "$ver_flag")
 	fi
