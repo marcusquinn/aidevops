@@ -36,7 +36,7 @@ Overall rates mask important variations. Always segment by:
 | SaaS free trial | 2–5% |
 | Email newsletter signup | 1–5% |
 | Content download | 2–7% |
-| Mobile vs. desktop | 40–70% |
+| Mobile vs. desktop | 40–70% of desktop |
 
 Benchmarks are reference points only. Your own trend matters more.
 
