@@ -4,6 +4,10 @@
 # SC2317: Functions defined after arg-parsing case (which contains exit 0 in --help)
 #         appear unreachable to ShellCheck but are always reached in normal execution
 # =============================================================================
+# DEPRECATED: Use generate-runtime-config.sh instead (t1665.4)
+# This script is kept for one release cycle as a fallback.
+# setup-modules/config.sh will use generate-runtime-config.sh when available.
+# =============================================================================
 # Generate Claude Code Commands from Agent Files
 # =============================================================================
 # Creates slash commands in Claude Code from the same source as OpenCode commands.
