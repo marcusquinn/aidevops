@@ -1,138 +1,92 @@
-# Chapter 19: SaaS CRO Optimization
+# Chapter 19: Advanced CRO Tactics
 
-## 19.1 Trial-to-Paid Conversion
+## 19.1 Behavioral Economics in CRO
 
-### The SaaS Trial Challenge
+### Cognitive Biases to Leverage
 
-SaaS companies face unique conversion challenges:
-- Users must experience value before paying
-- Time-delayed conversion decision
-- Multiple stakeholders in B2B
-- Product-qualified leads (PQLs) vs marketing-qualified
+**Loss Aversion:**
+People prefer avoiding losses to acquiring gains. Frame offers in terms of what users will lose by not converting.
 
-### Trial Engagement Optimization
+**Social Proof:**
+Users follow others' behavior. Display customer numbers, testimonials, and usage statistics.
 
-**Onboarding Milestones:**
-1. **First Login:** Welcome sequence, guided tour
-2. **First Action:** Core feature activation
-3. **Team Invitation:** Collaboration setup
-4. **Integration:** Connected to existing tools
-5. **Value Realization:** First successful outcome
+**Scarcity:**
+Limited availability increases perceived value. Show stock levels or time-limited offers.
 
-**Engagement Metrics:**
-- Days active during trial
-- Features used
-- Data input volume
-- Team members added
-- Time-to-first-value
+**Anchoring:**
+First price seen influences perception. Display higher-priced option first.
 
-### Conversion Timing Optimization
+### Nudge Theory Applications
 
-**The 14-Day Trial Myth:**
-Standard 14-day trials aren't optimal for all products.
+**Default Options:**
+Pre-select the choice you want users to make.
 
-**Finding Optimal Trial Length:**
-- Time to first value: 3 days → 7-day trial
-- Complex implementation: 30-day trial
-- Simple tools: 3-day trial
+**Choice Architecture:**
+Present options to guide decision-making without restricting choice.
 
-**Trial Extension Strategy:**
-- Offer extensions to engaged users
-- Require specific actions to extend
-- Use as conversion opportunity
+**Feedback Loops:**
+Provide immediate feedback on user actions.
 
-## 19.2 Pricing Page Optimization
+## 19.2 Advanced Personalization
 
-### Pricing Page Best Practices
+### Real-Time Personalization
 
-**Plan Structure:**
-- 3-4 plans maximum
-- Clear differentiation
-- Recommended plan highlighted
-- Annual discount visible
+**Dynamic Content:**
+Change content based on user behavior in the same session.
 
-**Pricing Psychology:**
-- Decoy pricing (middle plan most popular)
-- Anchoring (enterprise price makes others look reasonable)
-- Charm pricing ($99 vs $100)
-- Free trial emphasis
+**Behavioral Triggers:**
+- Exit intent offers
+- Scroll-based messaging
+- Time-on-page triggers
+- Inactivity prompts
 
-### Interactive Pricing
+**Segmented Experiences:**
+Create different experiences for:
+- New vs. returning visitors
+- Traffic source
+- Geographic location
+- Device type
 
-**Calculators:**
-- ROI calculators
-- Savings estimators
-- Cost comparison tools
+### Machine Learning Personalization
 
-**Sliders:**
-- Usage-based pricing
-- Team size adjustments
-- Feature toggles
+**Recommendation Engines:**
+Suggest products or content based on:
+- Collaborative filtering
+- Content-based filtering
+- Hybrid approaches
 
-## 19.3 Product-Led Growth CRO
+**Predictive Content:**
+Show content predicted to drive conversion based on similar user patterns.
 
-### PLG Principles
+## 19.3 Mobile CRO Deep Dive
 
-**Self-Serve Onboarding:**
-- No sales required to start
-- Immediate value delivery
-- In-app education
-- Viral sharing mechanisms
+### Mobile-Specific Optimization
 
-**Viral Loops:**
-- Invite team members
-- Shareable content
-- Public profiles
-- Social proof
+**Touch Target Sizing:**
+Minimum 44x44 pixels for touch targets.
 
-**Freemium Optimization:**
-- Clear upgrade triggers
-- Feature limitations
-- Usage quotas
-- Watermarks/removal
+**Thumb Zone Optimization:**
+Place primary actions in easy-to-reach areas.
 
-### In-App Conversion Tactics
+**Mobile Form Design:**
+- Single-column layout
+- Input type optimization
+- Auto-fill compatibility
+- Progress indicators
 
-**Contextual Upsells:**
-- Feature gate messages
-- Usage limit warnings
-- Advanced feature teasers
-- Power user prompts
+**Speed Optimization:**
+- Lazy loading images
+- Minimize JavaScript
+- Optimize above-fold content
+- Reduce server response time
 
-**Upgrade Triggers:**
-- Feature attempt
-- Limit reached
-- Team size growth
-- Usage milestone
+### App Store Optimization (ASO)
 
-## 19.4 B2B SaaS Specifics
+**Conversion Elements:**
+- App icon design
+- Screenshot optimization
+- Preview video
+- Ratings and reviews
+- App description
 
-### Multi-Stakeholder Conversion
-
-**Champion Enablement:**
-- Business case templates
-- ROI calculators
-- Competitor comparisons
-- Security documentation
-
-**Decision Maker Content:**
-- Executive summaries
-- Total cost of ownership
-- Implementation timelines
-- Risk mitigation
-
-### Enterprise Conversion
-
-**Sales-Assisted Trials:**
-- Dedicated success manager
-- Custom onboarding
-- Technical implementation support
-- Executive business reviews
-
-**Proof of Concept:**
-- Limited scope pilot
-- Success criteria defined
-- Timeline commitments
-- Expansion planning
-
-This SaaS CRO deep dive addresses the unique challenges of software conversion optimization.
+This chapter covers advanced tactics for sophisticated CRO programs.
