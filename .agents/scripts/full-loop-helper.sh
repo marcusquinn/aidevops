@@ -15,6 +15,7 @@ readonly DEFAULT_MAX_TASK_ITERATIONS=50 DEFAULT_MAX_PREFLIGHT_ITERATIONS=5 DEFAU
 readonly BOLD='\033[1m'
 
 HEADLESS="${FULL_LOOP_HEADLESS:-false}"
+_FG_PID_FILE=""
 
 is_headless() { [[ "$HEADLESS" == "true" ]]; }
 
@@ -56,7 +57,8 @@ load_state() {
 		_val="${_line#*=}"
 		# Allowlist: only set known state variables
 		case "$_key" in
-		PHASE | ACTIVE | ITERATION | MAX_TASK_ITERATIONS | MAX_PREFLIGHT_ITERATIONS | \
+		PHASE | ACTIVE | ITERATION | STARTED_AT | UPDATED_AT | \
+			MAX_TASK_ITERATIONS | MAX_PREFLIGHT_ITERATIONS | \
 			MAX_PR_ITERATIONS | SKIP_PREFLIGHT | SKIP_POSTFLIGHT | SKIP_RUNTIME_TESTING | \
 			NO_AUTO_PR | NO_AUTO_DEPLOY | HEADLESS | PR_NUMBER)
 			printf -v "$_key" '%s' "$_val"
@@ -67,6 +69,8 @@ load_state() {
 		print toupper(k) "=" $2
 	}' "$STATE_FILE")
 	CURRENT_PHASE="${PHASE:-}"
+	STARTED_AT="${STARTED_AT:-unknown}"
+	UPDATED_AT="${UPDATED_AT:-}"
 	HEADLESS="${HEADLESS:-false}"
 	SAVED_PROMPT=$(sed -n '/^---$/,/^---$/d; p' "$STATE_FILE")
 	return 0
@@ -139,6 +143,17 @@ cmd_start() {
 	local prompt="$1"
 	shift
 	local background=false
+	# Initialize option variables with defaults so set -u doesn't crash on
+	# export (line ~220) when flags are not passed.
+	MAX_TASK_ITERATIONS="${MAX_TASK_ITERATIONS:-$DEFAULT_MAX_TASK_ITERATIONS}"
+	MAX_PREFLIGHT_ITERATIONS="${MAX_PREFLIGHT_ITERATIONS:-$DEFAULT_MAX_PREFLIGHT_ITERATIONS}"
+	MAX_PR_ITERATIONS="${MAX_PR_ITERATIONS:-$DEFAULT_MAX_PR_ITERATIONS}"
+	SKIP_PREFLIGHT="${SKIP_PREFLIGHT:-false}"
+	SKIP_POSTFLIGHT="${SKIP_POSTFLIGHT:-false}"
+	SKIP_RUNTIME_TESTING="${SKIP_RUNTIME_TESTING:-false}"
+	NO_AUTO_PR="${NO_AUTO_PR:-false}"
+	NO_AUTO_DEPLOY="${NO_AUTO_DEPLOY:-false}"
+	DRY_RUN="${DRY_RUN:-false}"
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--max-task-iterations)
@@ -329,10 +344,11 @@ EOF
 
 _run_foreground() {
 	local prompt="$1"
-	local pid_file="${STATE_DIR}/full-loop.pid"
-	# On exit (normal or error), clear the PID file so status/logs don't report
-	# a background loop that is no longer running.
-	trap 'rm -f "$pid_file"' EXIT
+	# Use a global for the trap — local variables are out of scope when the
+	# EXIT trap fires after the function returns (causes unbound variable
+	# crash under set -u).
+	_FG_PID_FILE="${STATE_DIR}/full-loop.pid"
+	trap 'rm -f "$_FG_PID_FILE"' EXIT
 	emit_task_phase "$prompt"
 	return 0
 }
