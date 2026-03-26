@@ -220,11 +220,11 @@ jobs:
           fi
 
   # =========================================================================
-  # Job 3: Re-run PR checks when a linked issue's labels change
-  #         (so the gate re-evaluates after maintainer approves)
+  # Job 3: Re-evaluate PR gate when a linked issue's labels change
+  #         (evaluates conditions and posts final success/failure status)
   # =========================================================================
   retrigger-pr-checks:
-    name: Retrigger PR Checks on Issue Label Change
+    name: Re-evaluate PR Gate on Issue Label Change
     if: >-
       github.event_name == 'issues' &&
       (github.event.action == 'labeled' || github.event.action == 'unlabeled')
@@ -232,11 +232,12 @@ jobs:
     timeout-minutes: 3
     permissions:
       pull-requests: read
+      issues: read
       contents: read
       statuses: write
 
     steps:
-      - name: Find PRs linked to this issue and retrigger
+      - name: Find linked PRs and re-evaluate gate
         env:
           ISSUE_NUMBER: ${{ github.event.issue.number }}
           REPO: ${{ github.repository }}
@@ -257,17 +258,106 @@ jobs:
 
           echo "Found PRs referencing issue #$ISSUE_NUMBER: $OPEN_PRS"
 
-          # Post a status update to retrigger the maintainer-gate check
           for PR_NUM in $OPEN_PRS; do
+            echo "=== Evaluating gate for PR #$PR_NUM ==="
+
             HEAD_SHA=$(gh pr view "$PR_NUM" --repo "$REPO" --json headRefOid --jq '.headRefOid' 2>/dev/null || true)
-            if [[ -n "$HEAD_SHA" ]]; then
-              echo "Posting pending status on PR #$PR_NUM (SHA: ${HEAD_SHA:0:8}) to retrigger checks"
-              # Create a commit status to signal the gate should re-evaluate
+            if [[ -z "$HEAD_SHA" ]]; then
+              echo "::warning::Could not get HEAD SHA for PR #$PR_NUM — skipping"
+              continue
+            fi
+
+            # Post pending status while we evaluate
+            gh api "repos/${REPO}/statuses/${HEAD_SHA}" \
+              --method POST \
+              -f state=pending \
+              -f context="maintainer-gate" \
+              -f description="Re-evaluating after issue #${ISSUE_NUMBER} label change" \
+              2>/dev/null || true
+
+            # Get PR body to find ALL linked issues (not just the triggering one)
+            PR_BODY=$(gh pr view "$PR_NUM" --repo "$REPO" --json body --jq '.body' 2>/dev/null || true)
+            PR_TITLE=$(gh pr view "$PR_NUM" --repo "$REPO" --json title --jq '.title' 2>/dev/null || true)
+
+            LINKED_ISSUES=""
+            if [[ -n "$PR_BODY" ]]; then
+              LINKED_ISSUES=$(echo "$PR_BODY" | grep -oiE '(closes?|fixes?|resolves?)[[:space:]]*#[0-9]+' | grep -oE '[0-9]+' | sort -u | tr '\n' ' ' || true)
+            fi
+
+            # Also check PR title for task ID and find matching issue
+            TASK_ID=$(echo "$PR_TITLE" | grep -oE '^t[0-9]+(\.[0-9]+)*' || true)
+            if [[ -n "$TASK_ID" && -z "$LINKED_ISSUES" ]]; then
+              FOUND=$(gh issue list --repo "$REPO" --state all --search "${TASK_ID}:" --json number,title --limit 5 \
+                | jq -r --arg tid "$TASK_ID" '[.[] | select(.title | test("^" + $tid + "[.:\\s]"))] | .[0].number // empty' 2>/dev/null || true)
+              if [[ -n "$FOUND" && "$FOUND" != "null" ]]; then
+                LINKED_ISSUES="$FOUND"
+              fi
+            fi
+
+            if [[ -z "$LINKED_ISSUES" ]]; then
+              echo "No linked issues found for PR #$PR_NUM — gate passes"
               gh api "repos/${REPO}/statuses/${HEAD_SHA}" \
                 --method POST \
-                -f state=pending \
+                -f state=success \
                 -f context="maintainer-gate" \
-                -f description="Re-evaluating after issue #${ISSUE_NUMBER} label change" \
+                -f description="No linked issues to check" \
                 2>/dev/null || echo "::warning::Could not post status on PR #$PR_NUM"
+              continue
+            fi
+
+            echo "Checking linked issues for PR #$PR_NUM: $LINKED_ISSUES"
+
+            # Evaluate gate conditions on all linked issues
+            BLOCKED=false
+            DESCRIPTION="All linked issues pass gate checks"
+
+            for ISSUE_NUM in $LINKED_ISSUES; do
+              echo "--- Checking issue #$ISSUE_NUM ---"
+
+              ISSUE_DATA=$(gh api "repos/${REPO}/issues/${ISSUE_NUM}" \
+                --jq '{labels: [.labels[].name], assignees: [.assignees[].login], state: .state}' 2>/dev/null || echo '{}')
+
+              LABELS=$(echo "$ISSUE_DATA" | jq -r '.labels[]' 2>/dev/null || true)
+              ASSIGNEES=$(echo "$ISSUE_DATA" | jq -r '.assignees[]' 2>/dev/null || true)
+              STATE=$(echo "$ISSUE_DATA" | jq -r '.state' 2>/dev/null || echo "unknown")
+
+              # Skip closed issues — they've already been reviewed
+              if [[ "$STATE" == "closed" ]]; then
+                echo "Issue #$ISSUE_NUM is closed — skipping"
+                continue
+              fi
+
+              # Check 1: needs-maintainer-review label
+              if echo "$LABELS" | grep -q 'needs-maintainer-review'; then
+                BLOCKED=true
+                DESCRIPTION="Issue #${ISSUE_NUM} has needs-maintainer-review label"
+                echo "BLOCKED: Issue #$ISSUE_NUM has needs-maintainer-review"
+              fi
+
+              # Check 2: no assignee
+              if [[ -z "$ASSIGNEES" ]]; then
+                BLOCKED=true
+                DESCRIPTION="Issue #${ISSUE_NUM} has no assignee"
+                echo "BLOCKED: Issue #$ISSUE_NUM has no assignee"
+              fi
+            done
+
+            # Post final status
+            if [[ "$BLOCKED" == "true" ]]; then
+              echo "Gate BLOCKED for PR #$PR_NUM: $DESCRIPTION"
+              gh api "repos/${REPO}/statuses/${HEAD_SHA}" \
+                --method POST \
+                -f state=failure \
+                -f context="maintainer-gate" \
+                -f description="$DESCRIPTION" \
+                2>/dev/null || echo "::warning::Could not post failure status on PR #$PR_NUM"
+            else
+              echo "Gate PASSED for PR #$PR_NUM"
+              gh api "repos/${REPO}/statuses/${HEAD_SHA}" \
+                --method POST \
+                -f state=success \
+                -f context="maintainer-gate" \
+                -f description="$DESCRIPTION" \
+                2>/dev/null || echo "::warning::Could not post success status on PR #$PR_NUM"
             fi
           done
