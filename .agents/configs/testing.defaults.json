@@ -1,0 +1,173 @@
+{
+  "$schema": "https://aidevops.sh/schemas/testing.json",
+  "_comment": "Example testing.json configurations for each supported environment. Copy the relevant section to .aidevops/testing.json in your project root, then customise. Created by /testing-setup (t1660.1).",
+
+  "_examples": {
+    "npm_nextjs": {
+      "$schema": "https://aidevops.sh/schemas/testing.json",
+      "environment": "npm",
+      "dev_command": "npm run dev",
+      "test_command": "npm test",
+      "dev_port": 3000,
+      "smoke_urls": ["http://localhost:3000", "http://localhost:3000/api/health"],
+      "startup_wait_seconds": 5,
+      "environment_config": {
+        "npm": {
+          "package_manager": "npm",
+          "env_file": ".env.local"
+        }
+      },
+      "notes": "Next.js app. Requires .env.local with NEXT_PUBLIC_API_URL before running."
+    },
+
+    "npm_vite": {
+      "$schema": "https://aidevops.sh/schemas/testing.json",
+      "environment": "npm",
+      "dev_command": "pnpm dev",
+      "test_command": "pnpm test",
+      "dev_port": 5173,
+      "smoke_urls": ["http://localhost:5173"],
+      "startup_wait_seconds": 3,
+      "environment_config": {
+        "npm": {
+          "package_manager": "pnpm",
+          "env_file": ".env"
+        }
+      }
+    },
+
+    "docker_compose": {
+      "$schema": "https://aidevops.sh/schemas/testing.json",
+      "environment": "docker",
+      "dev_command": "docker compose up -d",
+      "dev_stop_command": "docker compose down",
+      "test_command": "docker compose exec app npm test",
+      "dev_port": 8080,
+      "smoke_urls": ["http://localhost:8080", "http://localhost:8080/health"],
+      "startup_wait_seconds": 15,
+      "environment_config": {
+        "docker": {
+          "compose_file": "docker-compose.yml",
+          "services": ["app", "db"],
+          "health_check_service": "app",
+          "pull_before_start": false
+        }
+      },
+      "notes": "Docker must be running before starting. First run pulls images (~2 min)."
+    },
+
+    "localwp_wordpress": {
+      "$schema": "https://aidevops.sh/schemas/testing.json",
+      "environment": "localwp",
+      "test_command": "wp eval 'echo \"OK\";'",
+      "dev_host": "mysite.local",
+      "smoke_urls": ["http://mysite.local", "http://mysite.local/wp-admin/"],
+      "startup_wait_seconds": 3,
+      "environment_config": {
+        "localwp": {
+          "site_name": "My WordPress Site",
+          "site_domain": "mysite.local",
+          "theme_build_command": "npm run build",
+          "theme_path": "wp-content/themes/my-theme"
+        }
+      },
+      "notes": "LocalWP site must be started in the Local app before running tests. Theme assets built with npm."
+    },
+
+    "expo_react_native": {
+      "$schema": "https://aidevops.sh/schemas/testing.json",
+      "environment": "expo",
+      "dev_command": "expo start --no-dev",
+      "test_command": "jest",
+      "startup_wait_seconds": 20,
+      "required_level": "unit-tested",
+      "environment_config": {
+        "expo": {
+          "platform": "ios",
+          "simulator_device": "iPhone 15",
+          "use_expo_go": true,
+          "tunnel": false
+        }
+      },
+      "notes": "Expo Go required on simulator. Run 'expo install' if dependencies are missing."
+    },
+
+    "xcode_ios": {
+      "$schema": "https://aidevops.sh/schemas/testing.json",
+      "environment": "xcode",
+      "test_command": "xcodebuild test -scheme MyApp -destination 'platform=iOS Simulator,name=iPhone 15' -quiet",
+      "startup_wait_seconds": 30,
+      "required_level": "unit-tested",
+      "environment_config": {
+        "xcode": {
+          "scheme": "MyApp",
+          "workspace": "MyApp.xcworkspace",
+          "destination": "platform=iOS Simulator,name=iPhone 15",
+          "configuration": "Debug"
+        }
+      },
+      "notes": "Requires Xcode 15+. Simulator must be installed. First run compiles (~5 min)."
+    },
+
+    "tauri_desktop": {
+      "$schema": "https://aidevops.sh/schemas/testing.json",
+      "environment": "tauri",
+      "dev_command": "npm run tauri dev",
+      "test_command": "cargo test",
+      "startup_wait_seconds": 30,
+      "environment_config": {
+        "tauri": {
+          "frontend_dev_command": "npm run dev",
+          "frontend_port": 1420,
+          "features": []
+        }
+      },
+      "notes": "Requires Rust toolchain and system WebView. Run 'cargo install tauri-cli' if missing."
+    },
+
+    "binary_go_server": {
+      "$schema": "https://aidevops.sh/schemas/testing.json",
+      "environment": "binary",
+      "dev_command": "go run ./cmd/server --port 8080",
+      "test_command": "go test ./...",
+      "dev_port": 8080,
+      "smoke_urls": ["http://localhost:8080/health"],
+      "startup_wait_seconds": 3,
+      "environment_config": {
+        "binary": {
+          "build_command": "go build -o ./bin/server ./cmd/server",
+          "binary_path": "./bin/server",
+          "run_args": ["--port", "8080"],
+          "is_server": true
+        }
+      }
+    },
+
+    "binary_rust_cli": {
+      "$schema": "https://aidevops.sh/schemas/testing.json",
+      "environment": "binary",
+      "test_command": "cargo test",
+      "environment_config": {
+        "binary": {
+          "build_command": "cargo build",
+          "binary_path": "./target/debug/mytool",
+          "run_args": ["--help"],
+          "is_server": false
+        }
+      }
+    },
+
+    "manual_no_automation": {
+      "$schema": "https://aidevops.sh/schemas/testing.json",
+      "environment": "manual",
+      "required_level": "self-assessed",
+      "environment_config": {
+        "manual": {
+          "instructions": "Open the app, navigate to the affected screen, and verify the change works as expected. Check for console errors in the browser DevTools.",
+          "testing_contact": "@marcusquinn"
+        }
+      },
+      "notes": "No automated dev environment configured. Runtime testing requires manual steps."
+    }
+  }
+}
