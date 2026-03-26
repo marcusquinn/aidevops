@@ -571,36 +571,38 @@ def cmd_hybrid(provider: str, embeddings_db: str, memory_db: str, query: str, li
     mem_conn = sqlite3.connect(memory_db)
     mem_conn.execute("PRAGMA busy_timeout=5000")
 
-    fts_results = _hybrid_fts5_search(mem_conn, query, semantic_limit)
-    usefulness_lookup = _hybrid_usefulness_lookup(mem_conn, semantic_results, fts_results)
+    try:
+        fts_results = _hybrid_fts5_search(mem_conn, query, semantic_limit)
+        usefulness_lookup = _hybrid_usefulness_lookup(mem_conn, semantic_results, fts_results)
 
-    combined = _hybrid_rrf_fuse(semantic_results, fts_results, usefulness_lookup, limit)
+        combined = _hybrid_rrf_fuse(semantic_results, fts_results, usefulness_lookup, limit)
 
-    semantic_lookup = {mid: score for mid, score in semantic_results}
+        semantic_lookup = {mid: score for mid, score in semantic_results}
 
-    output = []
-    for memory_id, rrf_score in combined:
-        row = mem_conn.execute(
-            "SELECT content, type, tags, confidence, created_at FROM learnings WHERE id = ?",
-            (memory_id,)
-        ).fetchone()
-        if row:
-            u_score = usefulness_lookup.get(memory_id, 0.0)
-            entry = {
-                "id": memory_id,
-                "content": row[0],
-                "type": row[1],
-                "tags": row[2],
-                "confidence": row[3],
-                "created_at": row[4],
-                "score": round(rrf_score, 4),
-                "semantic_score": round(semantic_lookup.get(memory_id, 0.0), 4),
-                "search_method": "hybrid",
-            }
-            if u_score != 0.0:
-                entry["usefulness_score"] = round(u_score, 2)
-            output.append(entry)
-    mem_conn.close()
+        output = []
+        for memory_id, rrf_score in combined:
+            row = mem_conn.execute(
+                "SELECT content, type, tags, confidence, created_at FROM learnings WHERE id = ?",
+                (memory_id,)
+            ).fetchone()
+            if row:
+                u_score = usefulness_lookup.get(memory_id, 0.0)
+                entry = {
+                    "id": memory_id,
+                    "content": row[0],
+                    "type": row[1],
+                    "tags": row[2],
+                    "confidence": row[3],
+                    "created_at": row[4],
+                    "score": round(rrf_score, 4),
+                    "semantic_score": round(semantic_lookup.get(memory_id, 0.0), 4),
+                    "search_method": "hybrid",
+                }
+                if u_score != 0.0:
+                    entry["usefulness_score"] = round(u_score, 2)
+                output.append(entry)
+    finally:
+        mem_conn.close()
     print(json.dumps(output))
 PYEOF
 	return 0
