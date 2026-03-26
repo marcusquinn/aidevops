@@ -23,12 +23,12 @@ tools:
 - **S1192**: `readonly CONSTANT` for strings used 3+ times
 - **S1481**: Remove unused variables or enhance functionality
 - **Explicit returns**: Every function must end with `return 0` or error code
-- **Pre/post**: Run `linters-local.sh` before and after changes
+- **Pre/post**: Run `.agents/scripts/linters-local.sh` before and after changes
 - **Targets**: SonarCloud <50 issues, 0 critical violations, 100% feature preservation
 
 <!-- AI-CONTEXT-END -->
 
-> **IMPORTANT**: Supplementary to [AGENTS.md](../../../AGENTS.md). For conflicts, AGENTS.md takes precedence.
+> **IMPORTANT**: Supplementary to [AGENTS.md](../../AGENTS.md). For conflicts, AGENTS.md takes precedence.
 
 ## Shell Script Standards (MANDATORY)
 
@@ -67,7 +67,7 @@ fi
 
 ## Quality Tools
 
-- `linters-local.sh` — run before and after changes
+- `.agents/scripts/linters-local.sh` — run before and after changes
 - `fix-content-type.sh`, `fix-auth-headers.sh`, `fix-error-messages.sh` — targeted fixers
 - `coderabbit-cli.sh review`, `codacy-cli.sh analyze`, `sonarscanner-cli.sh analyze`
 
@@ -218,14 +218,14 @@ Use for long-running polls to avoid hammering APIs:
 
 ```bash
 poll_with_backoff() {
-    local check_cmd="$1"
+    local check_fn="$1"
     local max_wait="${2:-300}"
     local interval="${3:-2}"
     local max_interval="${4:-30}"
     local elapsed=0
 
     while [[ "$elapsed" -lt "$max_wait" ]]; do
-        if $check_cmd; then return 0; fi
+        if "$check_fn"; then return 0; fi
         sleep "$interval"
         elapsed=$(( elapsed + interval ))
         interval=$(( interval * 2 ))
