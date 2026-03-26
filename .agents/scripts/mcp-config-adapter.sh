@@ -57,78 +57,83 @@ source "${SCRIPT_DIR}/ai-cli-config.sh"
 # Runtime Detection Stub (t1665.1 — will be replaced by runtime-registry.sh)
 # =============================================================================
 # These stubs provide the minimal interface this adapter needs from the runtime
-# registry. When t1665.1 lands, replace this section with:
-#   source "${SCRIPT_DIR}/runtime-registry.sh"
+# registry. Only defined if runtime-registry.sh hasn't been sourced yet.
 
-# Detect which runtimes are installed on this system.
-# Returns one runtime ID per line on stdout.
-detect_installed_runtimes() {
-	# OpenCode
-	if [[ -d "$HOME/.config/opencode" ]] || command -v opencode >/dev/null 2>&1; then
-		echo "opencode"
-	fi
-	# Claude Code
-	if command -v claude >/dev/null 2>&1; then
-		echo "claude"
-	fi
-	# Codex
-	if [[ -d "$HOME/.codex" ]] || command -v codex >/dev/null 2>&1; then
-		echo "codex"
-	fi
-	# Cursor
-	if [[ -d "$HOME/.cursor" ]] || command -v cursor >/dev/null 2>&1; then
-		echo "cursor"
-	fi
-	# Windsurf
-	if [[ -d "$HOME/.codeium/windsurf" ]] || command -v windsurf >/dev/null 2>&1; then
-		echo "windsurf"
-	fi
-	# Gemini CLI
-	if [[ -d "$HOME/.gemini" ]] || command -v gemini >/dev/null 2>&1; then
-		echo "gemini"
-	fi
-	# Kilo Code
-	if [[ -d "$HOME/.kilo" ]]; then
-		echo "kilo"
-	fi
-	# Kiro
-	if [[ -d "$HOME/.kiro" ]]; then
-		echo "kiro"
-	fi
-	# Droid (Factory.AI)
-	if command -v droid >/dev/null 2>&1; then
-		echo "droid"
-	fi
-	# Continue.dev — 'continue' is a bash builtin, use type -P for filesystem search
-	if [[ -d "$HOME/.continue" ]] || type -P continue >/dev/null 2>&1; then
-		echo "continue"
-	fi
-	# Aider
-	if command -v aider >/dev/null 2>&1 || [[ -f "$HOME/.aider.conf.yml" ]]; then
-		echo "aider"
-	fi
-	return 0
-}
+# Guard: only define stubs if runtime-registry.sh functions are not available
+if ! declare -f rt_detect_installed >/dev/null 2>&1; then
 
-# Get the human-readable display name for a runtime.
-get_runtime_display_name() {
-	local runtime_id="$1"
-	case "$runtime_id" in
-	opencode) echo "OpenCode" ;;
-	claude) echo "Claude Code" ;;
-	codex) echo "Codex CLI" ;;
-	cursor) echo "Cursor" ;;
-	windsurf) echo "Windsurf" ;;
-	gemini) echo "Gemini CLI" ;;
-	kilo) echo "Kilo Code" ;;
-	kiro) echo "Kiro" ;;
-	droid) echo "Droid (Factory.AI)" ;;
-	continue) echo "Continue.dev" ;;
-	aider) echo "Aider" ;;
-	*) echo "$runtime_id" ;;
-	esac
-	return 0
-}
+	# Detect which runtimes are installed on this system.
+	# Returns one runtime ID per line on stdout.
+	# IDs match runtime-registry.sh canonical names.
+	detect_installed_runtimes() {
+		# OpenCode
+		if [[ -d "$HOME/.config/opencode" ]] || command -v opencode >/dev/null 2>&1; then
+			echo "opencode"
+		fi
+		# Claude Code (ID: claude-code, binary: claude)
+		if command -v claude >/dev/null 2>&1; then
+			echo "claude-code"
+		fi
+		# Codex
+		if [[ -d "$HOME/.codex" ]] || command -v codex >/dev/null 2>&1; then
+			echo "codex"
+		fi
+		# Cursor
+		if [[ -d "$HOME/.cursor" ]] || command -v cursor >/dev/null 2>&1; then
+			echo "cursor"
+		fi
+		# Windsurf
+		if [[ -d "$HOME/.codeium/windsurf" ]] || command -v windsurf >/dev/null 2>&1; then
+			echo "windsurf"
+		fi
+		# Gemini CLI (ID: gemini-cli, binary: gemini)
+		if [[ -d "$HOME/.gemini" ]] || command -v gemini >/dev/null 2>&1; then
+			echo "gemini-cli"
+		fi
+		# Kilo Code
+		if [[ -d "$HOME/.kilo" ]]; then
+			echo "kilo"
+		fi
+		# Kiro
+		if [[ -d "$HOME/.kiro" ]]; then
+			echo "kiro"
+		fi
+		# Droid (Factory.AI)
+		if command -v droid >/dev/null 2>&1; then
+			echo "droid"
+		fi
+		# Continue.dev — 'continue' is a bash builtin, use type -P for filesystem search
+		if [[ -d "$HOME/.continue" ]] || type -P continue >/dev/null 2>&1; then
+			echo "continue"
+		fi
+		# Aider
+		if command -v aider >/dev/null 2>&1 || [[ -f "$HOME/.aider.conf.yml" ]]; then
+			echo "aider"
+		fi
+		return 0
+	}
+
+	# Get the human-readable display name for a runtime.
+	get_runtime_display_name() {
+		local runtime_id="$1"
+		case "$runtime_id" in
+		opencode) echo "OpenCode" ;;
+		claude-code) echo "Claude Code" ;;
+		codex) echo "Codex CLI" ;;
+		cursor) echo "Cursor" ;;
+		windsurf) echo "Windsurf" ;;
+		gemini-cli) echo "Gemini CLI" ;;
+		kilo) echo "Kilo Code" ;;
+		kiro) echo "Kiro" ;;
+		droid) echo "Droid (Factory.AI)" ;;
+		continue) echo "Continue.dev" ;;
+		aider) echo "Aider" ;;
+		*) echo "$runtime_id" ;;
+		esac
+		return 0
+	}
+
+fi # end runtime-registry.sh guard
 
 # =============================================================================
 # Command Validation
@@ -312,61 +317,43 @@ _register_mcp_mcpservers() {
 		return 0
 	fi
 
-	# Determine config path and entry format per runtime
+	# Determine config path per runtime
 	local config_path=""
-	local entry=""
 
 	case "$runtime_id" in
 	cursor)
 		config_path="$HOME/.cursor/mcp.json"
 		mkdir -p "$HOME/.cursor"
-		entry=$(echo "$mcp_json" | jq -c '{
-                command: .command,
-                args: (.args // []),
-                env: (.env // {})
-            }')
 		;;
 	windsurf)
 		config_path="$HOME/.codeium/windsurf/mcp_config.json"
 		mkdir -p "$HOME/.codeium/windsurf"
-		entry=$(echo "$mcp_json" | jq -c '{
-                command: .command,
-                args: (.args // []),
-                env: (.env // {})
-            }')
 		;;
 	gemini)
 		config_path="$HOME/.gemini/settings.json"
 		mkdir -p "$HOME/.gemini"
-		entry=$(echo "$mcp_json" | jq -c '{
-                command: .command,
-                args: (.args // []),
-                env: (.env // {})
-            }')
 		;;
 	kilo)
 		config_path="$HOME/.kilo/mcp.json"
 		mkdir -p "$HOME/.kilo"
-		entry=$(echo "$mcp_json" | jq -c '{
-                command: .command,
-                args: (.args // []),
-                env: (.env // {})
-            }')
 		;;
 	kiro)
 		config_path="$HOME/.kiro/mcp.json"
 		mkdir -p "$HOME/.kiro"
-		entry=$(echo "$mcp_json" | jq -c '{
-                command: .command,
-                args: (.args // []),
-                env: (.env // {})
-            }')
 		;;
 	*)
 		print_warning "Unknown mcpServers runtime: $runtime_id"
 		return 0
 		;;
 	esac
+
+	# Common entry format for all mcpServers-style runtimes
+	local entry
+	entry=$(echo "$mcp_json" | jq -c '{
+		command: .command,
+		args: (.args // []),
+		env: (.env // {})
+	}')
 
 	json_set_nested "$config_path" "mcpServers" "$mcp_name" "$entry"
 	return 0
@@ -487,10 +474,13 @@ _register_mcp_aider() {
 		printf '\nmcpServers:\n' >>"$aider_config"
 	fi
 
-	# Build YAML entry
+	# Build YAML entry (escape embedded quotes and backslashes for YAML safety)
 	{
 		printf '  %s:\n' "$mcp_name"
-		printf '    command: %s\n' "$cmd"
+		# Quote command if it contains YAML-special characters
+		local safe_cmd="${cmd//\\/\\\\}"
+		safe_cmd="${safe_cmd//\"/\\\"}"
+		printf '    command: "%s"\n' "$safe_cmd"
 
 		# Args as YAML list
 		local arg_count
@@ -501,6 +491,9 @@ _register_mcp_aider() {
 			for ((i = 0; i < arg_count; i++)); do
 				local arg_val
 				arg_val=$(echo "$args_json" | jq -r ".[$i]")
+				# Escape embedded quotes and backslashes
+				arg_val="${arg_val//\\/\\\\}"
+				arg_val="${arg_val//\"/\\\"}"
 				printf '      - "%s"\n' "$arg_val"
 			done
 		fi
@@ -516,6 +509,9 @@ _register_mcp_aider() {
 			while IFS= read -r key; do
 				local val
 				val=$(echo "$env_json" | jq -r --arg k "$key" '.[$k]')
+				# Escape embedded quotes and backslashes
+				val="${val//\\/\\\\}"
+				val="${val//\"/\\\"}"
 				printf '      %s: "%s"\n' "$key" "$val"
 			done <<<"$env_keys"
 		fi

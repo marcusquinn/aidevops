@@ -99,7 +99,7 @@ _RT_DISPLAY_NAME=(
 # --- MCP config file paths (~ expanded at lookup time) ---
 # Use $HOME explicitly; ~ is not expanded inside double quotes.
 _RT_CONFIG_PATH=(
-	"\$HOME/.config/opencode/config.jsonc"             # opencode
+	"\$HOME/.config/opencode/opencode.json"            # opencode
 	"\$HOME/.config/Claude/claude_desktop_config.json" # claude-code
 	"\$HOME/.codex/config.json"                        # codex
 	"\$HOME/.cursor/mcp.json"                          # cursor
@@ -115,23 +115,23 @@ _RT_CONFIG_PATH=(
 
 # --- Config file formats ---
 _RT_CONFIG_FORMAT=(
-	"jsonc" # opencode
-	"json"  # claude-code
-	"json"  # codex
-	"json"  # cursor
-	"json"  # droid
-	"json"  # gemini-cli
-	"json"  # windsurf
-	"json"  # continue
-	"json"  # kilo
-	"json"  # kiro
-	""      # aider
-	"json"  # amp
+	"json" # opencode
+	"json" # claude-code
+	"json" # codex
+	"json" # cursor
+	"json" # droid
+	"json" # gemini-cli
+	"json" # windsurf
+	"json" # continue
+	"json" # kilo
+	"json" # kiro
+	""     # aider
+	"json" # amp
 )
 
 # --- MCP root key (the JSON key under which MCP servers are defined) ---
 _RT_MCP_ROOT_KEY=(
-	"mcpServers" # opencode — inside config.jsonc
+	"mcp"        # opencode — inside opencode.json
 	"mcpServers" # claude-code
 	"mcpServers" # codex
 	"mcpServers" # cursor
@@ -400,7 +400,9 @@ rt_detect_installed() {
 	local bin
 	while [[ $i -lt $_RT_COUNT ]]; do
 		bin="${_RT_BINARY[$i]}"
-		if [[ -n "$bin" ]] && command -v "$bin" >/dev/null 2>&1; then
+		# Use type -P to find only filesystem executables — command -v matches
+		# shell builtins (e.g., "continue") causing false positives.
+		if [[ -n "$bin" ]] && type -P "$bin" >/dev/null 2>&1; then
 			echo "${_RT_IDS[$i]}"
 			found=1
 		fi

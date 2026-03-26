@@ -233,7 +233,14 @@ LAZY_MCPS = {
 # =============================================================================
 
 def parse_frontmatter(filepath):
-    """Parse YAML frontmatter from markdown file."""
+    """Parse YAML frontmatter from markdown file.
+
+    Minimal parser — no PyYAML dependency. Supports:
+      - Simple key: value pairs (unquoted, single-line)
+      - Dash-prefixed list items (single level)
+    Does NOT support: quoted values containing colons, multi-line blocks,
+    or nested mappings. Agent frontmatter must stay within these constraints.
+    """
     try:
         with open(filepath, 'r', encoding='utf-8') as f:
             content = f.read()
@@ -728,8 +735,9 @@ _generate_subagents_opencode() {
 
 	print_info "Generating subagent markdown files..."
 
-	# Remove existing subagent files (regenerate fresh)
-	find "$agent_dir" -name "*.md" -type f -delete 2>/dev/null || true
+	# Remove existing generated subagent files (regenerate fresh)
+	# Only delete files that have "mode: subagent" in frontmatter to preserve user-created agents
+	find "$agent_dir" -name "*.md" -type f -exec grep -l "^mode: subagent" {} + 2>/dev/null | while IFS= read -r f; do rm -f "$f"; done
 
 	# Generate subagent stubs from subfolders
 	generate_subagent_stub() {
@@ -813,7 +821,7 @@ _generate_subagents_opencode() {
 		echo 1
 	}
 
-	export -f generate_subagent_stub
+	export -f generate_subagent_stub 2>/dev/null || true
 	export AGENTS_DIR
 
 	local _ncpu
@@ -1104,8 +1112,6 @@ _generate_mcp_for_runtime() {
 
 	print_info "Registering MCP servers for $display_name..."
 
-	local pkg_runner
-	pkg_runner=$(_get_pkg_runner)
 	local mcp_count=0
 
 	# Shared MCP definitions — defined once, registered for each runtime

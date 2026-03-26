@@ -63,10 +63,10 @@ if ! declare -f get_runtime_prompt_mechanism >/dev/null 2>&1; then
 		source "${_PIA_DIR}/runtime-registry.sh"
 	else
 		# Stub: parallel arrays for prompt mechanism lookup
-		# These match the t1665.1 design spec exactly.
+		# IDs match runtime-registry.sh canonical names.
 		_PIA_RUNTIME_IDS=(
-			"opencode" "claude" "codex" "cursor" "droid"
-			"gemini" "windsurf" "continue" "kilo" "kiro" "aider"
+			"opencode" "claude-code" "codex" "cursor" "droid"
+			"gemini-cli" "windsurf" "continue" "kilo" "kiro" "aider"
 		)
 		_PIA_RUNTIME_BINARIES=(
 			"opencode" "claude" "codex" "cursor" "droid"
@@ -166,10 +166,13 @@ _pia_ensure_reference_in_file() {
 		# Prepend reference to existing file (preserve user content)
 		local tmp_file
 		tmp_file=$(mktemp)
+		# Ensure cleanup on interruption
+		trap 'rm -f "$tmp_file" 2>/dev/null' EXIT INT TERM
 		echo "$ref_line" >"$tmp_file"
 		echo "" >>"$tmp_file"
 		cat "$target_file" >>"$tmp_file"
 		mv "$tmp_file" "$target_file"
+		trap - EXIT INT TERM
 		_pia_log "success" "Added reference to $target_file"
 	else
 		# Create new file with just the reference
@@ -281,7 +284,9 @@ _pia_log() {
 
 # OpenCode: set "instructions" field in opencode.json to auto-load AGENTS.md
 _deploy_prompt_json_instructions() {
-	local runtime_id="$1"
+	# runtime_id accepted for interface consistency with other _deploy_prompt_* functions
+	# but unused here since this function is OpenCode-specific.
+	local _unused_runtime_id="$1"
 	local config_file="${HOME}/.config/opencode/opencode.json"
 
 	if [[ ! -f "$config_file" ]]; then

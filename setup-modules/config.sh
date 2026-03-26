@@ -178,14 +178,42 @@ update_claude_config() {
 # Unified runtime config update (t1665.4)
 # Generates config for all installed runtimes in a single pass.
 # Called by setup.sh as an alternative to separate update_opencode_config + update_claude_config.
+# Respects per-runtime opt-outs (manage_opencode_config, manage_claude_config).
 update_runtime_configs() {
 	print_info "Updating runtime configurations..."
 
-	_run_generator ".agents/scripts/generate-runtime-config.sh" \
-		"Generating configuration for all installed runtimes..." \
-		"All runtime configurations updated" \
-		"Runtime configuration encountered issues" \
-		all
+	if [[ ! -f ".agents/scripts/generate-runtime-config.sh" ]]; then
+		# Legacy fallback — use per-runtime update functions
+		print_info "Unified generator not found — falling back to per-runtime updates"
+		update_opencode_config
+		update_claude_config
+		return 0
+	fi
+
+	# Build list of runtimes to generate, respecting opt-outs
+	local runtimes_to_generate=()
+
+	if is_feature_enabled manage_opencode_config 2>/dev/null; then
+		runtimes_to_generate+=("opencode")
+	else
+		print_info "OpenCode config management disabled via config"
+	fi
+
+	if is_feature_enabled manage_claude_config 2>/dev/null; then
+		runtimes_to_generate+=("claude-code")
+	else
+		print_info "Claude Code config management disabled via config"
+	fi
+
+	# Generate for each enabled runtime
+	local runtime
+	for runtime in "${runtimes_to_generate[@]}"; do
+		_run_generator ".agents/scripts/generate-runtime-config.sh" \
+			"Generating configuration for $runtime..." \
+			"$runtime configuration updated" \
+			"$runtime configuration encountered issues" \
+			all --runtime "$runtime"
+	done
 
 	return 0
 }

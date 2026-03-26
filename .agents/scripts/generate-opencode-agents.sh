@@ -871,7 +871,7 @@ generate_subagent_stub() {
 	echo 1 # Return 1 for counting
 }
 
-export -f generate_subagent_stub
+export -f generate_subagent_stub 2>/dev/null || true
 export AGENTS_DIR
 export OPENCODE_AGENT_DIR
 
