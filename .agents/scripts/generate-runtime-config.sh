@@ -734,99 +734,119 @@ AGENTSEOF
 	return 0
 }
 
+# Determine additional MCP tools for a subagent based on its name.
+# Arguments: $1 - subagent name (basename without .md)
+# Outputs: extra tool lines to stdout (empty if none)
+_get_subagent_extra_tools() {
+	local name="$1"
+
+	case "$name" in
+	outscraper)
+		printf '%s\n' '  outscraper_*: true' '  webfetch: true'
+		;;
+	mainwp | localwp)
+		printf '%s\n' '  localwp_*: true'
+		;;
+	quickfile)
+		printf '%s\n' '  quickfile_*: true'
+		;;
+	google-search-console)
+		printf '%s\n' '  gsc_*: true'
+		;;
+	dataforseo)
+		printf '%s\n' '  dataforseo_*: true' '  webfetch: true'
+		;;
+	claude-code)
+		printf '%s\n' '  claude-code-mcp_*: true'
+		;;
+	openapi-search)
+		printf '%s\n' '  openapi-search_*: true' '  webfetch: true'
+		;;
+	aidevops)
+		printf '%s\n' '  openapi-search_*: true'
+		;;
+	playwriter)
+		printf '%s\n' '  playwriter_*: true'
+		;;
+	shadcn)
+		printf '%s\n' '  shadcn_*: true' '  write: true' '  edit: true'
+		;;
+	macos-automator | mac)
+		if [[ "$(uname -s)" == "Darwin" ]]; then
+			printf '%s\n' '  macos-automator_*: true' '  webfetch: true'
+		fi
+		;;
+	ios-simulator-mcp)
+		if [[ "$(uname -s)" == "Darwin" ]]; then
+			printf '%s\n' '  ios-simulator_*: true'
+		fi
+		;;
+	*) ;;
+	esac
+	return 0
+}
+
+# Write a single subagent markdown stub file.
+# Arguments: $1 - source .md file path
+# Requires: AGENTS_DIR and agent_dir to be set (exported for xargs usage)
+# Outputs: "1" to stdout on success (for counting)
+_write_subagent_stub() {
+	local f="$1"
+	local name
+	name=$(basename "$f" .md)
+	[[ "$name" == "AGENTS" || "$name" == "README" ]] && return 0
+
+	local rel_path="${f#"$AGENTS_DIR"/}"
+
+	# Extract description from source file frontmatter
+	local src_desc
+	src_desc=$(sed -n '/^---$/,/^---$/{ /^description:/{s/^description: *//p; q} }' "$f" 2>/dev/null)
+	if [[ -z "$src_desc" ]]; then
+		src_desc="Read ~/.aidevops/agents/${rel_path}"
+	fi
+
+	local extra_tools
+	extra_tools=$(_get_subagent_extra_tools "$name")
+
+	{
+		printf '%s\n' \
+			"---" \
+			"description: ${src_desc}" \
+			"mode: subagent" \
+			"temperature: 0.2" \
+			"permission:" \
+			"  external_directory: allow" \
+			"tools:" \
+			"  read: true" \
+			"  bash: true"
+		[[ -n "$extra_tools" ]] && printf '%s\n' "$extra_tools"
+		printf '%s\n' \
+			"---" \
+			"" \
+			"**MANDATORY**: Your first action MUST be to read ~/.aidevops/agents/${rel_path} and follow ALL rules within it."
+	} >"$agent_dir/$name.md"
+	echo 1
+	return 0
+}
+
+# Remove previously generated subagent files (those with "mode: subagent" frontmatter).
+# Arguments: $1 - agent output directory
+_clean_generated_subagents() {
+	local agent_dir="$1"
+	find "$agent_dir" -name "*.md" -type f -exec grep -l "^mode: subagent" {} + 2>/dev/null | while IFS= read -r f; do rm -f "$f"; done
+	return 0
+}
+
 # Generate subagent markdown stubs for OpenCode
 _generate_subagents_opencode() {
 	local agent_dir="$1"
 
 	print_info "Generating subagent markdown files..."
 
-	# Remove existing generated subagent files (regenerate fresh)
-	# Only delete files that have "mode: subagent" in frontmatter to preserve user-created agents
-	find "$agent_dir" -name "*.md" -type f -exec grep -l "^mode: subagent" {} + 2>/dev/null | while IFS= read -r f; do rm -f "$f"; done
+	_clean_generated_subagents "$agent_dir"
 
-	# Generate subagent stubs from subfolders
-	generate_subagent_stub() {
-		local f="$1"
-		local name
-		name=$(basename "$f" .md)
-		[[ "$name" == "AGENTS" || "$name" == "README" ]] && return 0
-
-		local rel_path="${f#"$AGENTS_DIR"/}"
-
-		# Extract description from source file frontmatter
-		local src_desc
-		src_desc=$(sed -n '/^---$/,/^---$/{ /^description:/{s/^description: *//p; q} }' "$f" 2>/dev/null)
-		if [[ -z "$src_desc" ]]; then
-			src_desc="Read ~/.aidevops/agents/${rel_path}"
-		fi
-
-		# Determine additional tools based on subagent name
-		local extra_tools=""
-		case "$name" in
-		outscraper)
-			extra_tools=$'  outscraper_*: true\n  webfetch: true'
-			;;
-		mainwp | localwp)
-			extra_tools=$'  localwp_*: true'
-			;;
-		quickfile)
-			extra_tools=$'  quickfile_*: true'
-			;;
-		google-search-console)
-			extra_tools=$'  gsc_*: true'
-			;;
-		dataforseo)
-			extra_tools=$'  dataforseo_*: true\n  webfetch: true'
-			;;
-		claude-code)
-			extra_tools=$'  claude-code-mcp_*: true'
-			;;
-		openapi-search)
-			extra_tools=$'  openapi-search_*: true\n  webfetch: true'
-			;;
-		aidevops)
-			extra_tools=$'  openapi-search_*: true'
-			;;
-		playwriter)
-			extra_tools=$'  playwriter_*: true'
-			;;
-		shadcn)
-			extra_tools=$'  shadcn_*: true\n  write: true\n  edit: true'
-			;;
-		macos-automator | mac)
-			if [[ "$(uname -s)" == "Darwin" ]]; then
-				extra_tools=$'  macos-automator_*: true\n  webfetch: true'
-			fi
-			;;
-		ios-simulator-mcp)
-			if [[ "$(uname -s)" == "Darwin" ]]; then
-				extra_tools=$'  ios-simulator_*: true'
-			fi
-			;;
-		*) ;;
-		esac
-
-		{
-			printf '%s\n' \
-				"---" \
-				"description: ${src_desc}" \
-				"mode: subagent" \
-				"temperature: 0.2" \
-				"permission:" \
-				"  external_directory: allow" \
-				"tools:" \
-				"  read: true" \
-				"  bash: true"
-			[[ -n "$extra_tools" ]] && printf '%s\n' "$extra_tools"
-			printf '%s\n' \
-				"---" \
-				"" \
-				"**MANDATORY**: Your first action MUST be to read ~/.aidevops/agents/${rel_path} and follow ALL rules within it."
-		} >"$agent_dir/$name.md"
-		echo 1
-	}
-
-	export -f generate_subagent_stub 2>/dev/null || true
+	export -f _get_subagent_extra_tools 2>/dev/null || true
+	export -f _write_subagent_stub 2>/dev/null || true
 	export AGENTS_DIR
 	export agent_dir
 
@@ -835,7 +855,7 @@ _generate_subagents_opencode() {
 	local _parallel_jobs=$((_ncpu > 4 ? _ncpu : 4))
 	local subagent_count
 	subagent_count=$(find "$AGENTS_DIR" -mindepth 2 -name "*.md" -type f -not -path "*/loop-state/*" -not -name "*-skill.md" -print0 |
-		xargs -0 -P "$_parallel_jobs" -I {} bash -c 'generate_subagent_stub "$@"' _ {} |
+		xargs -0 -P "$_parallel_jobs" -I {} bash -c '_write_subagent_stub "$@"' _ {} |
 		awk '{sum+=$1} END {print sum+0}')
 
 	print_success "Generated $subagent_count subagent files"
@@ -975,40 +995,47 @@ _generate_commands_for_runtime() {
 	return 0
 }
 
-# Generate hardcoded commands not in scripts/commands/
-# Returns the count of generated commands via exit code (max 255)
-_generate_hardcoded_commands() {
+# Write a hardcoded command if not already present from auto-discovery.
+# Writes using the appropriate format for the given runtime.
+# Arguments:
+#   $1 - runtime_id
+#   $2 - cmd_dir
+#   $3 - command name
+#   $4 - description
+#   $5 - body content
+# Returns: 0 if written, 1 if skipped (already exists)
+_maybe_write_hardcoded_command() {
+	local runtime_id="$1"
+	local cmd_dir="$2"
+	local name="$3"
+	local description="$4"
+	local body="$5"
+
+	# Skip if already exists from auto-discovery
+	[[ -f "${cmd_dir}/${name}.md" ]] && return 1
+
+	case "$runtime_id" in
+	opencode)
+		_write_opencode_command "$cmd_dir" "$name" "$description" "Build+" "true" "$body"
+		;;
+	*)
+		_write_claude_command "$cmd_dir" "$name" "$description" "$body"
+		;;
+	esac
+	return 0
+}
+
+# Generate quality/review hardcoded commands (agent-review, preflight, postflight).
+# Arguments: $1 - runtime_id, $2 - cmd_dir
+# Returns: count of generated commands via exit code
+_generate_hardcoded_quality_commands() {
 	local runtime_id="$1"
 	local cmd_dir="$2"
 	local count=0
 
-	# Only generate if not already present from auto-discovery
-	_maybe_write_command() {
-		local name="$1"
-		local description="$2"
-		local body="$3"
-
-		# Skip if already exists from auto-discovery
-		[[ -f "${cmd_dir}/${name}.md" ]] && return 0
-
-		case "$runtime_id" in
-		opencode)
-			_write_opencode_command "$cmd_dir" "$name" "$description" "Build+" "true" "$body"
-			;;
-		claude-code)
-			_write_claude_command "$cmd_dir" "$name" "$description" "$body"
-			;;
-		*)
-			_write_claude_command "$cmd_dir" "$name" "$description" "$body"
-			;;
-		esac
-		count=$((count + 1))
-		return 0
-	}
-
 	# --- Agent Review ---
 	# shellcheck disable=SC2016
-	_maybe_write_command "agent-review" \
+	if _maybe_write_hardcoded_command "$runtime_id" "$cmd_dir" "agent-review" \
 		"Systematic review and improvement of agent instructions" \
 		'Read ~/.aidevops/agents/tools/build-agent/agent-review.md and follow its instructions.
 
@@ -1021,11 +1048,13 @@ If no specific file is provided, review the agents used in this session and prop
 4. Universal applicability (>80% of tasks)
 5. Duplicate detection across agents
 
-Follow the improvement proposal format from the agent-review instructions.'
+Follow the improvement proposal format from the agent-review instructions.'; then
+		count=$((count + 1))
+	fi
 
 	# --- Preflight ---
 	# shellcheck disable=SC2016
-	_maybe_write_command "preflight" \
+	if _maybe_write_hardcoded_command "$runtime_id" "$cmd_dir" "preflight" \
 		"Run quality checks before version bump and release" \
 		'Read ~/.aidevops/agents/workflows/preflight.md and follow its instructions.
 
@@ -1035,11 +1064,13 @@ This includes:
 1. Code quality checks (ShellCheck, SonarCloud, secrets scan)
 2. Markdown formatting validation
 3. Version consistency verification
-4. Git status check (clean working tree)'
+4. Git status check (clean working tree)'; then
+		count=$((count + 1))
+	fi
 
 	# --- Postflight ---
 	# shellcheck disable=SC2016
-	_maybe_write_command "postflight" \
+	if _maybe_write_hardcoded_command "$runtime_id" "$cmd_dir" "postflight" \
 		"Check code audit feedback on latest push (branch or PR)" \
 		'Check code audit tool feedback on the latest push.
 
@@ -1056,11 +1087,24 @@ Target: $ARGUMENTS
 3. Codacy analysis results
 4. SonarCloud quality gate status
 
-Report findings and recommend next actions (fix issues, merge, etc.)'
+Report findings and recommend next actions (fix issues, merge, etc.)'; then
+		count=$((count + 1))
+	fi
+
+	return "$count"
+}
+
+# Generate lifecycle hardcoded commands (release, onboarding, setup-aidevops).
+# Arguments: $1 - runtime_id, $2 - cmd_dir
+# Returns: count of generated commands via exit code
+_generate_hardcoded_lifecycle_commands() {
+	local runtime_id="$1"
+	local cmd_dir="$2"
+	local count=0
 
 	# --- Release ---
 	# shellcheck disable=SC2016
-	_maybe_write_command "release" \
+	if _maybe_write_hardcoded_command "$runtime_id" "$cmd_dir" "release" \
 		"Full release workflow with version bump, tag, and GitHub release" \
 		'Execute a release for the current repository.
 
@@ -1073,19 +1117,23 @@ Release type: $ARGUMENTS (valid: major, minor, patch)
    ```bash
    .agents/scripts/version-manager.sh release [type] --skip-preflight --force
    ```
-4. Report the result with the GitHub release URL'
+4. Report the result with the GitHub release URL'; then
+		count=$((count + 1))
+	fi
 
 	# --- Onboarding ---
 	# shellcheck disable=SC2016
-	_maybe_write_command "onboarding" \
+	if _maybe_write_hardcoded_command "$runtime_id" "$cmd_dir" "onboarding" \
 		"Interactive onboarding wizard - discover services, configure integrations" \
 		'Read ${AIDEVOPS_HOME:-$HOME/.aidevops}/agents/onboarding.md and follow its Welcome Flow instructions to guide the user through setup. Do NOT repeat these instructions — go straight to the Welcome Flow conversation.
 
-Arguments: $ARGUMENTS'
+Arguments: $ARGUMENTS'; then
+		count=$((count + 1))
+	fi
 
 	# --- Setup ---
 	# shellcheck disable=SC2016
-	_maybe_write_command "setup-aidevops" \
+	if _maybe_write_hardcoded_command "$runtime_id" "$cmd_dir" "setup-aidevops" \
 		"Deploy latest aidevops agent changes locally" \
 		'Run the aidevops setup script to deploy the latest changes.
 
@@ -1102,7 +1150,25 @@ cd "$AIDEVOPS_REPO" && ./setup.sh || exit
 ```
 
 This deploys agents, updates commands, regenerates configs.
-Arguments: $ARGUMENTS'
+Arguments: $ARGUMENTS'; then
+		count=$((count + 1))
+	fi
+
+	return "$count"
+}
+
+# Generate hardcoded commands not in scripts/commands/
+# Returns the count of generated commands via exit code (max 255)
+_generate_hardcoded_commands() {
+	local runtime_id="$1"
+	local cmd_dir="$2"
+	local count=0
+
+	_generate_hardcoded_quality_commands "$runtime_id" "$cmd_dir"
+	count=$((count + $?))
+
+	_generate_hardcoded_lifecycle_commands "$runtime_id" "$cmd_dir"
+	count=$((count + $?))
 
 	return "$count"
 }
