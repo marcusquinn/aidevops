@@ -93,12 +93,12 @@ GOOD: New video + Same headline + Same audience + Same offer → know it's the v
 | Image/text | 50+ | 95% | 7 days |
 | Video | 30+ | 95% | 7 days |
 | Audience | 100+ | 95% | 14 days |
-| Format | 20+ | 90% | 7 days |
+| Format | 20+ | 95% | 7 days |
 
 **Interpreting confidence levels:**
 - **95%+**: Safe to declare winner and scale
-- **75%**: Not enough data — keep testing
-- **50%**: Coin flip — results meaningless, keep testing
+- **90-94%**: Directional only — keep running until 95% if budget allows
+- **<90%**: Insufficient evidence — do not declare winner
 
 Use calculators: VWO, Optimizely Stats Engine, AB Test Guide, Google Analytics Experiments.
 
@@ -203,7 +203,7 @@ Rapid (clear winners, CPA 30%+ below target): 5x at day 8, monitor closely
 1. **Hypothesis:** "If we change [variable] from [A] to [B], [metric] will [improve] because [reasoning]."
 2. **Design:** Control vs. variant(s), everything else identical. Winner becomes new control.
 3. **Traffic:** Equal split (50/50) default. Unequal (80/20) when protecting a strong control.
-4. **Duration:** 100+ conversions per variant, 95% confidence, minimum 7 days (day-of-week variance).
+4. **Duration:** Per-test-type thresholds from **Statistical Significance** table; >=95% confidence before winner declaration; minimum 7 days (day-of-week variance).
 5. **Analysis:** Primary metric (CPA/ROAS), then secondary (CTR, CVR, CPC, watch time, engagement).
 6. **Implementation:** Scale winner (new control), pause loser (document why), plan next test.
 
@@ -215,8 +215,8 @@ Control: "Want Better Project Management?"
 B: "Manage Projects 50% Faster" | C: "Never Miss a Deadline Again" | D: "The PM Tool Your Team Will Actually Use"
 Same image/copy/audience | $equal budget | 7 days | 100+ conversions each
 
-Results: A: $48 CPA | B: $52 (loser) | C: $39 (WINNER) | D: $44
-Learning: Specific benefit > generic benefit > question
+Results: A: $48 CPA, 1.2% CTR | B: $52 CPA, 0.9% CTR (loser) | C: $39 CPA, 1.8% CTR (WINNER) | D: $44 CPA, 1.4% CTR
+Learning: Specific benefit > generic benefit > question; C won on both CPA and CTR
 Action: C becomes control, test more specific benefit angles
 ```
 
@@ -228,8 +228,8 @@ Control: "40% off first month"
 B: "Free 30 days, no credit card" | C: "First month free, then $29/mo" | D: "50% off for 3 months"
 Same creative/headline/audience | 14 days | 120+ conversions each
 
-Results: A: $44 CPA, $180 LTV | B: $36 CPA, $245 LTV (WINNER) | C: $38 CPA, $220 LTV | D: $42 CPA, $165 LTV
-Learning: Free trial best CPA AND best LTV; no-CC reduced friction
+Results: A: $44 CPA, $180 LTV, 3.1% CVR | B: $36 CPA, $245 LTV, 4.2% CVR (WINNER) | C: $38 CPA, $220 LTV, 3.8% CVR | D: $42 CPA, $165 LTV, 2.9% CVR
+Learning: Free trial best CPA AND best LTV; no-CC reduced friction; B's higher CVR drove lower CPA
 ```
 
 ---
@@ -503,7 +503,7 @@ Higher rankings = lower costs + better delivery. Improve via better creative, ta
 
 **Attribution windows:**
 
-| Platform | Default | Other options |
+| Platform | Default | Other Options |
 |----------|---------|---------------|
 | Facebook | 7-day click or 1-day view | 1-day click or 1-day view, 28-day options |
 | Google | Data-driven (recommended) | Last click, first click, linear, time decay, position-based |
