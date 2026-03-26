@@ -155,12 +155,9 @@ emit_deploy_phase() {
 	echo "Run setup.sh per full-loop.md guidance."
 }
 
-cmd_start() {
-	local prompt="$1"
-	shift
-	local background=false
-	# Initialize option variables with defaults so set -u doesn't crash on
-	# export (line ~220) when flags are not passed.
+# Initialize option variables with defaults so set -u doesn't crash on
+# export when flags are not passed.
+_init_start_defaults() {
 	MAX_TASK_ITERATIONS="${MAX_TASK_ITERATIONS:-$DEFAULT_MAX_TASK_ITERATIONS}"
 	MAX_PREFLIGHT_ITERATIONS="${MAX_PREFLIGHT_ITERATIONS:-$DEFAULT_MAX_PREFLIGHT_ITERATIONS}"
 	MAX_PR_ITERATIONS="${MAX_PR_ITERATIONS:-$DEFAULT_MAX_PR_ITERATIONS}"
@@ -170,6 +167,14 @@ cmd_start() {
 	NO_AUTO_PR="${NO_AUTO_PR:-false}"
 	NO_AUTO_DEPLOY="${NO_AUTO_DEPLOY:-false}"
 	DRY_RUN="${DRY_RUN:-false}"
+	_BACKGROUND=false
+	return 0
+}
+
+# Parse start subcommand options. Sets global option variables and _BACKGROUND.
+# Arguments: all remaining args after the prompt string.
+# Returns: 0 on success, 1 on unknown option.
+_parse_start_options() {
 	while [[ $# -gt 0 ]]; do
 		case "$1" in
 		--max-task-iterations)
@@ -213,7 +218,7 @@ cmd_start() {
 			shift
 			;;
 		--background | --bg)
-			background=true
+			_BACKGROUND=true
 			shift
 			;;
 		*)
@@ -222,6 +227,28 @@ cmd_start() {
 			;;
 		esac
 	done
+	return 0
+}
+
+# Launch the loop in the background via nohup.
+# Arguments: $1 — prompt string.
+_launch_background() {
+	local prompt="$1"
+	mkdir -p "$STATE_DIR"
+	export MAX_TASK_ITERATIONS MAX_PREFLIGHT_ITERATIONS MAX_PR_ITERATIONS
+	export SKIP_PREFLIGHT SKIP_POSTFLIGHT SKIP_RUNTIME_TESTING NO_AUTO_PR NO_AUTO_DEPLOY FULL_LOOP_HEADLESS="$HEADLESS"
+	nohup "$0" _run_foreground "$prompt" >"${STATE_DIR}/full-loop.log" 2>&1 &
+	echo "$!" >"${STATE_DIR}/full-loop.pid"
+	print_success "Background loop started (PID: $!). Use 'status' or 'logs' to monitor."
+	return 0
+}
+
+cmd_start() {
+	local prompt="$1"
+	shift
+
+	_init_start_defaults
+	_parse_start_options "$@" || return 1
 
 	[[ -z "$prompt" ]] && {
 		print_error "Usage: full-loop-helper.sh start \"<prompt>\" [options]"
@@ -246,13 +273,8 @@ cmd_start() {
 	save_state "task" "$prompt"
 	SAVED_PROMPT="$prompt"
 
-	if [[ "$background" == "true" ]]; then
-		mkdir -p "$STATE_DIR"
-		export MAX_TASK_ITERATIONS MAX_PREFLIGHT_ITERATIONS MAX_PR_ITERATIONS
-		export SKIP_PREFLIGHT SKIP_POSTFLIGHT SKIP_RUNTIME_TESTING NO_AUTO_PR NO_AUTO_DEPLOY FULL_LOOP_HEADLESS="$HEADLESS"
-		nohup "$0" _run_foreground "$prompt" >"${STATE_DIR}/full-loop.log" 2>&1 &
-		echo "$!" >"${STATE_DIR}/full-loop.pid"
-		print_success "Background loop started (PID: $!). Use 'status' or 'logs' to monitor."
+	if [[ "$_BACKGROUND" == "true" ]]; then
+		_launch_background "$prompt"
 		return 0
 	fi
 	emit_task_phase "$prompt"
