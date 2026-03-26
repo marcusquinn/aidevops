@@ -15,7 +15,6 @@ subagents:
   - error-feedback
   # Planning workflows
   - plans
-  - plans-quick
   - prd-template
   - tasks-template
   # Code quality
