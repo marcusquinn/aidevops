@@ -53,13 +53,31 @@ set -euo pipefail
 # =============================================================================
 
 readonly TESTING_CONFIG_FILE=".aidevops-testing.json"
-# ERROR_UNKNOWN_COMMAND defined here unconditionally so it is always available
-# regardless of whether shared-constants.sh was sourced above.
-readonly ERROR_UNKNOWN_COMMAND="Unknown command"
+readonly CONFIG_UNKNOWN="unknown"
 
 # =============================================================================
 # Utility Functions
 # =============================================================================
+
+# Find the first config file matching one or more glob patterns in a directory.
+# Returns the basename, or CONFIG_UNKNOWN if no match found.
+# Usage: get_first_config_file /path/to/project "pattern1" "pattern2" ...
+get_first_config_file() {
+	local project_dir="$1"
+	shift
+	local result=""
+	local pattern
+	for pattern in "$@"; do
+		result=$(compgen -G "${project_dir}/${pattern}" 2>/dev/null | head -1) || true
+		[[ -n "$result" ]] && break
+	done
+	if [[ -n "$result" ]]; then
+		basename "$result" 2>/dev/null || echo "$CONFIG_UNKNOWN"
+	else
+		echo "$CONFIG_UNKNOWN"
+	fi
+	return 0
+}
 
 resolve_project_path() {
 	local path="${1:-.}"
@@ -254,11 +272,7 @@ discover_linters() {
 	if has_file "$project_dir" ".eslintrc*" || has_file "$project_dir" "eslint.config.*" ||
 		has_file "$project_dir" ".eslintrc.json" || has_file "$project_dir" ".eslintrc.js"; then
 		local config_file
-		config_file=$({
-			compgen -G "${project_dir}/.eslintrc*" 2>/dev/null
-			compgen -G "${project_dir}/eslint.config.*" 2>/dev/null
-		} | head -1 || true)
-		config_file=$(basename "${config_file:-unknown}" 2>/dev/null || echo "unknown")
+		config_file=$(get_first_config_file "$project_dir" ".eslintrc*" "eslint.config.*")
 		linters=$(echo "$linters" | jq --arg f "$config_file" \
 			'. + [{"name":"eslint","config_file":$f,"status":"configured"}]')
 	elif has_npm_dep "$project_dir" "eslint"; then
@@ -269,11 +283,7 @@ discover_linters() {
 	# Prettier
 	if has_file "$project_dir" ".prettierrc*" || has_file "$project_dir" "prettier.config.*"; then
 		local config_file
-		config_file=$({
-			compgen -G "${project_dir}/.prettierrc*" 2>/dev/null
-			compgen -G "${project_dir}/prettier.config.*" 2>/dev/null
-		} | head -1 || true)
-		config_file=$(basename "${config_file:-unknown}" 2>/dev/null || echo "unknown")
+		config_file=$(get_first_config_file "$project_dir" ".prettierrc*" "prettier.config.*")
 		linters=$(echo "$linters" | jq --arg f "$config_file" \
 			'. + [{"name":"prettier","config_file":$f,"status":"configured"}]')
 	elif has_npm_dep "$project_dir" "prettier"; then
@@ -306,8 +316,7 @@ discover_linters() {
 	if [[ -f "${project_dir}/.markdownlint.json" ]] || [[ -f "${project_dir}/.markdownlint.jsonc" ]] ||
 		[[ -f "${project_dir}/.markdownlint-cli2.jsonc" ]]; then
 		local config_file
-		config_file=$(compgen -G "${project_dir}/.markdownlint*" 2>/dev/null | head -1 || true)
-		config_file=$(basename "${config_file:-unknown}" 2>/dev/null || echo "unknown")
+		config_file=$(get_first_config_file "$project_dir" ".markdownlint*")
 		linters=$(echo "$linters" | jq --arg f "$config_file" \
 			'. + [{"name":"markdownlint","config_file":$f,"status":"configured"}]')
 	fi
@@ -917,7 +926,7 @@ main() {
 	verify) cmd_verify "$@" ;;
 	help | --help | -h) cmd_help ;;
 	*)
-		print_error "${ERROR_UNKNOWN_COMMAND}: ${command}"
+		print_error "Unknown command: ${command}"
 		cmd_help
 		return 1
 		;;
