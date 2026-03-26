@@ -1958,6 +1958,7 @@ Configure time tracking per-repo via `.aidevops.json`.
 | `/code-audit-remote` | Run remote auditing (CodeRabbit, Codacy, SonarCloud) |
 | `/code-standards` | Check against documented quality standards |
 | `/code-simplifier` | Simplify and refine code for clarity and maintainability |
+| `/testing-setup` | Interactive per-repo testing infrastructure setup with bundle-aware defaults |
 | `/list-keys` | List all configured API keys and their storage locations |
 | `/performance` | Web performance audit (Core Web Vitals, Lighthouse, PageSpeed) |
 | `/pr` | Unified PR workflow (orchestrates all checks) |

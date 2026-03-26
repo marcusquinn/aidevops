@@ -309,6 +309,7 @@ Read subagents on-demand. Full index: `subagent-index.toon`.
 | Model routing | `tools/context/model-routing.md`, `reference/orchestration.md` |
 | Orchestration | `reference/orchestration.md`, `tools/ai-assistants/headless-dispatch.md`, `scripts/commands/pulse.md`, `scripts/commands/dashboard.md` |
 | Upstream watch | `scripts/upstream-watch-helper.sh`, `.agents/configs/upstream-watch.json` |
+| Testing | `scripts/commands/testing-setup.md`, `tools/build-agent/agent-testing.md`, `scripts/testing-setup-helper.sh` |
 | Agent/MCP dev | `tools/build-agent/build-agent.md`, `tools/build-mcp/build-mcp.md`, `tools/mcp-toolkit/mcporter.md` |
 | Framework | `aidevops/architecture.md`, `scripts/commands/skills.md` |
 
