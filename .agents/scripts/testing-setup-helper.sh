@@ -86,7 +86,6 @@ has_dir() {
 	local project_dir="$1"
 	local dirname="$2"
 	[[ -d "${project_dir}/${dirname}" ]]
-	return $?
 }
 
 # Check if package.json has a specific devDependency
@@ -150,37 +149,29 @@ discover_runners() {
 	# Pytest — detect via repository declarations, not runtime environment
 	# Checks: pytest.ini, pyproject.toml [tool.pytest], setup.cfg [tool:pytest],
 	# setup.py, requirements.txt, requirements-dev.txt
-	local _pytest_declared="false"
 	local _pytest_source=""
 	if [[ -f "${project_dir}/pytest.ini" ]]; then
-		_pytest_declared="true"
 		_pytest_source="pytest.ini"
 	elif [[ -f "${project_dir}/pyproject.toml" ]] &&
 		grep -qE '\[tool\.pytest' "${project_dir}/pyproject.toml" 2>/dev/null; then
-		_pytest_declared="true"
 		_pytest_source="pyproject.toml"
 	elif [[ -f "${project_dir}/pyproject.toml" ]] &&
 		grep -qi 'pytest' "${project_dir}/pyproject.toml" 2>/dev/null; then
-		_pytest_declared="true"
 		_pytest_source="pyproject.toml"
 	elif [[ -f "${project_dir}/setup.cfg" ]] &&
 		grep -qE '\[tool:pytest\]|tests_require.*pytest' "${project_dir}/setup.cfg" 2>/dev/null; then
-		_pytest_declared="true"
 		_pytest_source="setup.cfg"
 	elif [[ -f "${project_dir}/setup.py" ]] &&
 		grep -qi 'pytest' "${project_dir}/setup.py" 2>/dev/null; then
-		_pytest_declared="true"
 		_pytest_source="setup.py"
 	elif [[ -f "${project_dir}/requirements.txt" ]] &&
 		grep -qi 'pytest' "${project_dir}/requirements.txt" 2>/dev/null; then
-		_pytest_declared="true"
 		_pytest_source="requirements.txt"
 	elif [[ -f "${project_dir}/requirements-dev.txt" ]] &&
 		grep -qi 'pytest' "${project_dir}/requirements-dev.txt" 2>/dev/null; then
-		_pytest_declared="true"
 		_pytest_source="requirements-dev.txt"
 	fi
-	if [[ "$_pytest_declared" == "true" ]]; then
+	if [[ -n "$_pytest_source" ]]; then
 		local configured="false"
 		if [[ -f "${project_dir}/pytest.ini" ]] ||
 			{ [[ -f "${project_dir}/pyproject.toml" ]] &&
@@ -204,8 +195,7 @@ discover_runners() {
 	fi
 
 	# Bats (Bash testing)
-	if has_file "$project_dir" "*.bats" || { has_dir "$project_dir" "test" &&
-		ls "${project_dir}"/test/*.bats >/dev/null 2>&1; }; then
+	if has_file "$project_dir" "*.bats" || has_file "$project_dir" "test/*.bats"; then
 		runners=$(echo "$runners" | jq \
 			'. + [{"name":"bats","source":".bats files","configured":true}]')
 	fi
@@ -264,8 +254,11 @@ discover_linters() {
 	if has_file "$project_dir" ".eslintrc*" || has_file "$project_dir" "eslint.config.*" ||
 		has_file "$project_dir" ".eslintrc.json" || has_file "$project_dir" ".eslintrc.js"; then
 		local config_file
-		config_file=$(ls "${project_dir}"/.eslintrc* "${project_dir}"/eslint.config.* 2>/dev/null | head -1 || echo "unknown")
-		config_file=$(basename "$config_file" 2>/dev/null || echo "unknown")
+		config_file=$({
+			compgen -G "${project_dir}/.eslintrc*" 2>/dev/null
+			compgen -G "${project_dir}/eslint.config.*" 2>/dev/null
+		} | head -1 || true)
+		config_file=$(basename "${config_file:-unknown}" 2>/dev/null || echo "unknown")
 		linters=$(echo "$linters" | jq --arg f "$config_file" \
 			'. + [{"name":"eslint","config_file":$f,"status":"configured"}]')
 	elif has_npm_dep "$project_dir" "eslint"; then
@@ -276,8 +269,11 @@ discover_linters() {
 	# Prettier
 	if has_file "$project_dir" ".prettierrc*" || has_file "$project_dir" "prettier.config.*"; then
 		local config_file
-		config_file=$(ls "${project_dir}"/.prettierrc* "${project_dir}"/prettier.config.* 2>/dev/null | head -1 || echo "unknown")
-		config_file=$(basename "$config_file" 2>/dev/null || echo "unknown")
+		config_file=$({
+			compgen -G "${project_dir}/.prettierrc*" 2>/dev/null
+			compgen -G "${project_dir}/prettier.config.*" 2>/dev/null
+		} | head -1 || true)
+		config_file=$(basename "${config_file:-unknown}" 2>/dev/null || echo "unknown")
 		linters=$(echo "$linters" | jq --arg f "$config_file" \
 			'. + [{"name":"prettier","config_file":$f,"status":"configured"}]')
 	elif has_npm_dep "$project_dir" "prettier"; then
@@ -310,8 +306,8 @@ discover_linters() {
 	if [[ -f "${project_dir}/.markdownlint.json" ]] || [[ -f "${project_dir}/.markdownlint.jsonc" ]] ||
 		[[ -f "${project_dir}/.markdownlint-cli2.jsonc" ]]; then
 		local config_file
-		config_file=$(ls "${project_dir}"/.markdownlint* 2>/dev/null | head -1 || echo "unknown")
-		config_file=$(basename "$config_file" 2>/dev/null || echo "unknown")
+		config_file=$(compgen -G "${project_dir}/.markdownlint*" 2>/dev/null | head -1 || true)
+		config_file=$(basename "${config_file:-unknown}" 2>/dev/null || echo "unknown")
 		linters=$(echo "$linters" | jq --arg f "$config_file" \
 			'. + [{"name":"markdownlint","config_file":$f,"status":"configured"}]')
 	fi
@@ -364,7 +360,8 @@ discover_ci() {
 	# GitLab CI
 	if [[ -f "${project_dir}/.gitlab-ci.yml" ]]; then
 		local has_test_step="false"
-		if grep -q 'test' "${project_dir}/.gitlab-ci.yml" 2>/dev/null; then
+		if grep -qE '(^test:|^\s+script:.*\b(pytest|npm test|yarn test|pnpm test|cargo test|go test|bats)\b)' \
+			"${project_dir}/.gitlab-ci.yml" 2>/dev/null; then
 			has_test_step="true"
 		fi
 		ci=$(echo "$ci" | jq --arg t "$has_test_step" \
