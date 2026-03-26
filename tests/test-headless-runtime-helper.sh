@@ -297,6 +297,39 @@ fi
 # Clean up
 bash "$HELPER" backoff clear anthropic >/dev/null 2>&1 || true
 
+section "Backoff Expiry UTC Timezone (GH#6549)"
+# Regression test: backoff_active_for_key() must treat stored retry_after as UTC.
+# On macOS, date -j -f without TZ=UTC interprets the timestamp as local time,
+# causing an expired backoff to appear still active when the local timezone is
+# behind UTC (e.g. UTC-5 adds 18000 seconds to the epoch).
+#
+# Strategy: write a retry_after timestamp 1 second in the past (UTC), then
+# verify that backoff is NOT active (i.e. the expiry check correctly sees it
+# as expired). If the timezone bug is present, the epoch will be inflated by
+# the local UTC offset and the backoff will appear active.
+bash "$HELPER" backoff clear anthropic >/dev/null 2>&1 || true
+PAST_UTC=$(date -u -v-1S '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || date -u -d '1 second ago' '+%Y-%m-%dT%H:%M:%SZ' 2>/dev/null || true)
+if [[ -n "$PAST_UTC" ]]; then
+	# Directly insert a row with an already-expired retry_after into the DB
+	RUNTIME_DB="$TEST_TMP_DIR/runtime/runtime.db"
+	mkdir -p "$(dirname "$RUNTIME_DB")"
+	sqlite3 "$RUNTIME_DB" "CREATE TABLE IF NOT EXISTS provider_backoff (provider TEXT PRIMARY KEY, reason TEXT DEFAULT '', retry_after TEXT DEFAULT '', auth_signature TEXT DEFAULT '', details TEXT DEFAULT '', updated_at TEXT DEFAULT '');" 2>/dev/null || true
+	sqlite3 "$RUNTIME_DB" "INSERT OR REPLACE INTO provider_backoff (provider, reason, retry_after, auth_signature, details, updated_at) VALUES ('anthropic', 'rate_limit', '$(printf '%s' "$PAST_UTC")', '', '', '$(date -u '+%Y-%m-%dT%H:%M:%SZ')');" 2>/dev/null || true
+	# Now select a model — if backoff is correctly expired, anthropic should be available
+	expired_backoff_model=$(
+		AIDEVOPS_HEADLESS_MODELS="anthropic/claude-sonnet-4-6" \
+			bash "$HELPER" select --role worker 2>/dev/null || true
+	)
+	if [[ "$expired_backoff_model" == "anthropic/claude-sonnet-4-6" ]]; then
+		pass "expired UTC backoff is correctly treated as inactive (GH#6549)"
+	else
+		fail "expired UTC backoff is correctly treated as inactive (GH#6549)" "got: '$expired_backoff_model' — timezone offset bug may still be present"
+	fi
+	bash "$HELPER" backoff clear anthropic >/dev/null 2>&1 || true
+else
+	pass "expired UTC backoff test skipped (date command unavailable)"
+fi
+
 section "OpenCode Gateway Models"
 # opencode/* models should be selectable when configured and auth file exists
 # Create a fake auth file so provider_auth_available("opencode") returns true
