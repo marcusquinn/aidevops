@@ -64,6 +64,17 @@ die() {
 	exit 1
 }
 
+# Escape a string for safe JSON interpolation (handles ", \, newlines, tabs)
+json_escape() {
+	local str="$1"
+	str="${str//\\/\\\\}"
+	str="${str//\"/\\\"}"
+	# Replace literal newlines and tabs using tr (bash 3.2 safe)
+	str="$(printf '%s' "$str" | tr '\n' ' ' | tr '\t' ' ')"
+	printf '%s' "$str"
+	return 0
+}
+
 # ---------------------------------------------------------------------------
 # Auth
 # ---------------------------------------------------------------------------
@@ -182,17 +193,23 @@ cmd_create() {
 		esac
 	done
 
-	# Build JSON body
+	# Build JSON body (escape user-supplied strings)
+	local safe_template
+	safe_template="$(json_escape "$template")"
 	local resources
 	resources="{\"cpus\":$cpus,\"memory\":$memory,\"disk\":$disk}"
 	if [ -n "$gpu" ]; then
-		resources="{\"cpus\":$cpus,\"memory\":$memory,\"disk\":$disk,\"gpu\":\"$gpu\"}"
+		local safe_gpu
+		safe_gpu="$(json_escape "$gpu")"
+		resources="{\"cpus\":$cpus,\"memory\":$memory,\"disk\":$disk,\"gpu\":\"$safe_gpu\"}"
 	fi
 
 	local body
-	body="{\"template\":\"$template\",\"resources\":$resources}"
+	body="{\"template\":\"$safe_template\",\"resources\":$resources}"
 	if [ -n "$name" ]; then
-		body="{\"name\":\"$name\",\"template\":\"$template\",\"resources\":$resources}"
+		local safe_name
+		safe_name="$(json_escape "$name")"
+		body="{\"name\":\"$safe_name\",\"template\":\"$safe_template\",\"resources\":$resources}"
 	fi
 
 	log_info "Creating sandbox (template=$template, cpus=$cpus, memory=${memory}GB, disk=${disk}GB)..."
@@ -294,8 +311,10 @@ cmd_exec() {
 	fi
 
 	local command_str="$*"
+	local safe_command
+	safe_command="$(json_escape "$command_str")"
 	local body
-	body="{\"command\":\"$command_str\",\"timeout\":300}"
+	body="{\"command\":\"$safe_command\",\"timeout\":300}"
 
 	log_info "Executing in sandbox $sandbox_id: $command_str"
 	local result
@@ -318,6 +337,10 @@ cmd_exec() {
 		if [ -n "$stderr" ]; then
 			printf '%s\n' "$stderr" >&2
 		fi
+		# Cap exit code at 125 (bash truncates values > 255; reserve 126-128)
+		if [ "$exit_code" -gt 125 ]; then
+			return 125
+		fi
 		return "$exit_code"
 	fi
 
@@ -331,8 +354,10 @@ cmd_snapshot() {
 	fi
 	local snapshot_name="${2:-snapshot-$(date +%Y%m%d-%H%M%S)}"
 
+	local safe_snapshot_name
+	safe_snapshot_name="$(json_escape "$snapshot_name")"
 	local body
-	body="{\"name\":\"$snapshot_name\"}"
+	body="{\"name\":\"$safe_snapshot_name\"}"
 
 	log_info "Creating snapshot '$snapshot_name' for sandbox $sandbox_id..."
 	local result
