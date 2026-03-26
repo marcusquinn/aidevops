@@ -22,7 +22,7 @@ usage() {
 Usage: $SCRIPT_NAME <command> [options]
 
 Commands:
-  create  [name] [--template T] [--cpus N] [--memory N] [--disk N] [--gpu G]
+  create  [name] [--template T] [--cpu N] [--memory N] [--disk N] [--gpu G]
   start   <sandbox-id>
   stop    <sandbox-id>
   destroy <sandbox-id>
@@ -37,7 +37,7 @@ Environment:
   DAYTONA_API_BASE  API base URL (default: https://app.daytona.io/api)
 
 Examples:
-  $SCRIPT_NAME create my-sandbox --template python-3.11 --cpus 2 --memory 4
+  $SCRIPT_NAME create my-sandbox --template python-3.11 --cpu 2 --memory 4
   $SCRIPT_NAME exec abc123 "python script.py"
   $SCRIPT_NAME snapshot abc123 "after-deps-installed"
   $SCRIPT_NAME list
@@ -146,7 +146,7 @@ api_delete() {
 cmd_create() {
 	local name=""
 	local template="ubuntu-22.04"
-	local cpus="2"
+	local cpu="2"
 	local memory="4"
 	local disk="10"
 	local gpu=""
@@ -158,8 +158,8 @@ cmd_create() {
 			template="$2"
 			shift 2
 			;;
-		--cpus)
-			cpus="$2"
+		--cpu)
+			cpu="$2"
 			shift 2
 			;;
 		--memory)
@@ -182,20 +182,20 @@ cmd_create() {
 		esac
 	done
 
-	# Build JSON body
-	local resources
-	resources="{\"cpus\":$cpus,\"memory\":$memory,\"disk\":$disk}"
-	if [ -n "$gpu" ]; then
-		resources="{\"cpus\":$cpus,\"memory\":$memory,\"disk\":$disk,\"gpu\":\"$gpu\"}"
-	fi
-
+	# Build JSON body — flat top-level fields per current Daytona API
 	local body
-	body="{\"template\":\"$template\",\"resources\":$resources}"
+	body="{\"template\":\"$template\",\"cpu\":$cpu,\"memory\":$memory,\"disk\":$disk}"
+	if [ -n "$gpu" ]; then
+		body="{\"template\":\"$template\",\"cpu\":$cpu,\"memory\":$memory,\"disk\":$disk,\"gpu\":\"$gpu\"}"
+	fi
 	if [ -n "$name" ]; then
-		body="{\"name\":\"$name\",\"template\":\"$template\",\"resources\":$resources}"
+		body="{\"name\":\"$name\",\"template\":\"$template\",\"cpu\":$cpu,\"memory\":$memory,\"disk\":$disk}"
+		if [ -n "$gpu" ]; then
+			body="{\"name\":\"$name\",\"template\":\"$template\",\"cpu\":$cpu,\"memory\":$memory,\"disk\":$disk,\"gpu\":\"$gpu\"}"
+		fi
 	fi
 
-	log_info "Creating sandbox (template=$template, cpus=$cpus, memory=${memory}GB, disk=${disk}GB)..."
+	log_info "Creating sandbox (template=$template, cpu=$cpu, memory=${memory}GB, disk=${disk}GB)..."
 	local result
 	result="$(api_post "/sandboxes" "$body")"
 
