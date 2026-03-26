@@ -358,7 +358,7 @@ Base URL: `https://app.daytona.io/api` — `Authorization: Bearer $DAYTONA_API_K
 AUTH="Authorization: Bearer $DAYTONA_API_KEY"
 curl -H "$AUTH" https://app.daytona.io/api/sandboxes                                          # list
 curl -X POST -H "$AUTH" -H "Content-Type: application/json" \
-  -d '{"template":"python-3.11","resources":{"cpus":2,"memory":4,"disk":10}}' \
+  -d '{"template":"python-3.11","cpu":2,"memory":4,"disk":10}' \
   https://app.daytona.io/api/sandboxes                                                        # create
 curl -X POST -H "$AUTH" https://app.daytona.io/api/sandboxes/<id>/start                      # start
 curl -X POST -H "$AUTH" https://app.daytona.io/api/sandboxes/<id>/stop                       # stop
@@ -394,7 +394,7 @@ daytona-helper.sh status <sandbox-id>
 daytona logs <sandbox-id>
 # Causes: resource limits exceeded, template not found, API key expired
 
-# Command timeout — increase or use background + poll
+# Command timeout — increase the timeout value
 result = sandbox.process.exec("long-running-command", timeout=300)
 
 # Port not accessible — verify listening, then re-expose
