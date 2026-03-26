@@ -1661,7 +1661,7 @@ SOPSEOF
 	# from AI/ML training datasets. Idempotent — only adds if not already present.
 	local gitattributes="$project_root/.gitattributes"
 	if [[ -f "$gitattributes" ]]; then
-		if ! grep -q "ai-training=false" "$gitattributes" 2>/dev/null; then
+		if ! grep -qE '^\*[[:space:]]+ai-training=false' "$gitattributes" 2>/dev/null; then
 			ensure_trailing_newline "$gitattributes"
 			{
 				echo ""
