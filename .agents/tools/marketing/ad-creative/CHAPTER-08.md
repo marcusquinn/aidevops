@@ -3,236 +3,136 @@
 ## Creative Production Pipeline
 
 ```
-     STRATEGY              CREATION              LAUNCH
-        ↓                    ↓                    ↓
-┌──────────────┐      ┌──────────────┐      ┌──────────────┐
-│  1. Brief    │  →   │  4. Ideate   │  →   │  9. Approve  │
-│  2. Plan     │      │  5. Produce  │      │ 10. Deliver  │
-│  3. Assign   │      │  6. Edit     │      │ 11. Launch   │
-│              │      │  7. Review   │      │ 12. Optimize │
-│              │      │  8. Revise   │      │              │
-└──────────────┘      └──────────────┘      └──────────────┘
-
-Timeline: Week 1          Week 2-3              Week 4
+STRATEGY (Week 1)     CREATION (Week 2-3)    LAUNCH (Week 4)
+1. Brief              4. Ideate              9.  Approve
+2. Plan               5. Produce            10.  Deliver
+3. Assign             6. Edit               11.  Launch
+                      7. Review             12.  Optimize
+                      8. Revise
 ```
 
 ### Stage 1: Strategy (Days 1-5)
 
-**Brief Development** — the foundation. A bad brief guarantees bad creative.
+**Brief** — the foundation. Required: campaign objective, target personas, key message, platform/format specs, brand guidelines, timeline, budget, success metrics, references. *(Full template below.)*
 
-Required elements: campaign objective (awareness/consideration/conversion), target audience personas, key message, platform/format specs, brand guidelines, timeline and milestones, budget constraints, success metrics, reference materials. *(See "Briefing Templates" below for full template.)*
+**Planning** (post-brief approval): concepting time, production resources, asset timeline, review cycles, contingency buffer.
 
-**Production Planning** (once brief is approved): creative concepting time, production resources, asset timeline, review cycles, contingency buffer.
-
-**Team Assignment** — match project to talent: lead creative (oversight/concept), designers (static), video producers (motion), copywriters, motion designers, editors.
+**Assignment** — match to talent: lead creative (oversight), designers (static), video producers (motion), copywriters, motion designers, editors.
 
 ### Stage 2: Creation (Days 6-20)
 
-**Ideation**: brainstorm, mood boards, concept sketches/wireframes, scripts/treatments, platform adaptation planning. Deliver 3-5 concepts with written treatments, visual references, and storyboards (video).
+**Ideation**: brainstorm, mood boards, wireframes, scripts/treatments. Deliver 3-5 concepts with treatments, visual references, storyboards.
 
-**Production**: photography/videography, graphic design, motion graphics, audio, copywriting. Shoot for multiple formats simultaneously (vertical, square, landscape). Record multiple takes. Build in post-production flexibility.
+**Production**: shoot for multiple formats simultaneously (vertical, square, landscape). Record multiple takes. Build post-production flexibility.
 
-**Editing**: rough cut → fine cut → final, design refinement, motion graphics, audio mixing, color correction.
+**Editing**: rough cut → fine cut → final. Design refinement, motion graphics, audio mixing, color correction.
 
-**Internal Review**: creative director review, copy edit, brand compliance, technical spec verification.
-
-**Revisions**: document all changes, prioritize by importance, estimate time, execute, update status.
+**Review + Revisions**: creative director review, copy edit, brand compliance, technical spec verification. Document all changes, prioritize, execute.
 
 ### Stage 3: Launch (Days 21-28)
 
-**Approval**: present final creative, explain strategic choices, obtain sign-off.
+**Approval**: present final, explain strategic choices, obtain sign-off.
 
-**Delivery**: export all formats, apply naming conventions, package with captions/copy, upload to ad platforms or DAM, confirm receipt.
+**Delivery**: export all formats, apply naming conventions, package with captions/copy, upload to platforms/DAM.
 
-**Launch**: upload to ad accounts, set targeting/budget, schedule, monitor first 24-48 hours.
-
-**Optimization**: review metrics, identify underperformers, create test variations, produce additional assets, document learnings.
+**Launch + Optimize**: set targeting/budget, schedule, monitor first 24-48h. Review metrics, identify underperformers, create variations, document learnings.
 
 ### Workflow Speed Optimization
 
-**Parallel processing**: run Design, Copy, and Motion simultaneously (not sequentially). Coordinate via daily standups. Reduces production time 40-50%.
+- **Parallel processing**: run Design, Copy, Motion simultaneously. Coordinate via daily standups. Reduces production 40-50%.
+- **Template libraries**: pre-built templates per platform. 3-5x speed increase.
+- **Asset standardization**: document format specs, naming, color profiles, compression. No reinventing per project.
 
-**Template libraries**: pre-built templates for Instagram Stories, Facebook Feed, YouTube pre-roll, TikTok, LinkedIn. Production = custom content + pre-built frames. Speed increase: 3-5x.
-
-**Asset standardization**: document format specs, file naming conventions, color profiles, compression standards. No reinventing per project.
-
-**48-hour turnaround** (urgent campaigns):
-
-```
-Day 1 Morning:   Brief received
-Day 1 Afternoon: Concept approved
-Day 1 Evening:   Production begins
-Day 2 Morning:   First cut review
-Day 2 Afternoon: Revisions + final approval
-Day 2 Evening:   Delivery + launch
-
-Requirements: Dedicated team, clear brief, limited scope
-```
+**48-hour turnaround** (urgent): Day 1 AM brief → PM concept → evening production. Day 2 AM review → PM revisions/approval → evening launch. Requires dedicated team, clear brief, limited scope.
 
 ## Briefing Templates
 
 ### Creative Brief Template
 
 ```
-PROJECT OVERVIEW
-  Project Name | Brand/Client | Request Date | Launch Date | Budget
+PROJECT: Name | Brand | Request Date | Launch Date | Budget
 
-OBJECTIVES
-  Primary (one): Brand Awareness | Lead Gen | E-commerce Sales |
-    App Installs | Traffic | Engagement | Video Views | Other
-  Secondary Objectives: [describe]
+OBJECTIVE
+  Primary (one): Awareness | Lead Gen | Sales | Installs | Traffic | Engagement
+  Secondary: [describe]
 
-TARGET AUDIENCE
+AUDIENCE
   Primary: Age, Gender, Location, Interests, Pain Points, Motivations
-  Persona: "The target customer is a [demographic] who [problem]
-    and wants [outcome]. They value [values] and are frustrated by
-    [frustration]."
+  Persona: "[demographic] who [problem] and wants [outcome].
+    Values [values], frustrated by [frustration]."
 
-KEY MESSAGE
-  Single Most Important Message: [one sentence]
-  Supporting Messages (2-3 max): [list]
-  Value Proposition: "Because [product], [audience] can [benefit],
-    unlike [alternative], which [problem with alternative]."
+MESSAGE
+  Single Most Important: [one sentence]
+  Supporting (2-3 max): [list]
+  Value Prop: "Because [product], [audience] can [benefit],
+    unlike [alternative] which [problem]."
 
-PLATFORM & FORMAT REQUIREMENTS
-  Platforms: Facebook Feed/Stories | Instagram Feed/Stories/Reels |
-    TikTok | YouTube Pre-roll/In-stream | LinkedIn Feed/Stories |
-    Twitter/X | Pinterest | Snapchat | Other
-  Formats: Static Images | Carousel | Video (length) | GIF/Animation |
-    Interactive | Other
-  Quantity per Format: [specify]
+PLATFORM & FORMAT
+  Platforms: FB Feed/Stories | IG Feed/Stories/Reels | TikTok |
+    YouTube | LinkedIn | Twitter/X | Pinterest | Snapchat
+  Formats: Static | Carousel | Video (length) | GIF | Interactive
+  Quantity per format: [specify]
 
-BRAND GUIDELINES
-  Logo: Standard | White | Icon only | No logo | Specific
+BRAND
+  Logo: Standard | White | Icon | None | Specific
   Colors: Primary, Secondary, Accent
   Typography: Headlines, Body
-  Tone: Professional | Casual | Playful | Authoritative |
-    Aspirational | Friendly | Other
-  Dos: [list]
-  Don'ts: [list]
+  Tone: Professional | Casual | Playful | Authoritative | Aspirational
+  Dos/Don'ts: [list]
 
-COMPETITIVE LANDSCAPE
-  Main Competitors (3): [list]
-  Differentiation: [describe]
-  Approach: Head-to-head | Differentiate | Ignore competitors
+COMPETITIVE: Top 3 competitors | Differentiation | Approach (head-to-head | differentiate | ignore)
 
 VISUAL DIRECTION
-  Mood: Minimal | Bold | Warm | Cool | Luxurious | Playful | Other
-  Photography: Studio | Lifestyle | UGC | Dramatic | Other
-  Video: Polished | UGC | Animation | Documentary | Other
-  References (3): [links/images]
+  Mood: Minimal | Bold | Warm | Cool | Luxurious | Playful
+  Photography: Studio | Lifestyle | UGC | Dramatic
+  Video: Polished | UGC | Animation | Documentary
+  References (3): [links]
 
-CTA & MESSAGING
-  Headline Options (3): [list]
-  Body Copy Options (3): [list]
-  CTA: Shop Now | Learn More | Sign Up | Get Started | Download |
-    Watch Now | Custom
+CTA: Headline options (3) | Body copy options (3) | CTA button text
+LANDING PAGE: URL | Match level | Special elements
 
-LANDING PAGE
-  URL: [link]
-  Match: Exact | Close | Different but relevant | Needs updating
-  Special Elements: [describe]
+METRICS
+  Primary KPI + target | Secondary KPIs (2) | Past benchmarks
 
-SUCCESS METRICS
-  Primary KPI + Target: [specify]
-  Secondary KPIs (2): [list]
-  Benchmarks (past performance): [describe]
-
-TIMELINE
-  Brief Due | Concept Review | First Draft | Revisions |
-  Final Delivery | Campaign Launch
-
-APPROVALS
-  Required: Marketing Lead | Creative Director | Brand Manager |
-    Legal/Compliance | Client | Other
+TIMELINE: Brief Due | Concept Review | First Draft | Revisions | Final | Launch
+APPROVALS: Marketing Lead | Creative Director | Brand | Legal | Client
 ```
 
-### Video Ad Brief (additional fields)
+### Supplementary Brief Fields
 
-```
-Video Length: ___ seconds
-Aspect Ratios: 16:9 | 1:1 | 9:16 | 4:5
+**Video**: length (sec), aspect ratios (16:9/1:1/9:16/4:5), script (provided/outline/freedom), talent type, voiceover (gender/tone/accent), music source, locations, B-roll needs.
 
-Script: Provided | Concept outline | Creative freedom
+**Static**: sizes (1080x1080 feed, 1080x1350 portrait, 1080x1920 stories, 1200x628 ads), layout style, product imagery source, text density level.
 
-Talent: Professional actors | Real customers | Founders/employees |
-  Influencers (specify) | UGC creators | Voiceover only
-Voiceover: Male/Female/Either | Tone | Accent
-
-Music: Licensed track (reference) | Original | Stock library | None
-Locations: Studio | On-location (specify) | Remote/UGC
-B-Roll: Product shots | Lifestyle | Testimonials | Demo | Stock OK
-```
-
-### Static Ad Brief (additional fields)
-
-```
-Sizes: 1080x1080 (IG/FB Feed) | 1080x1350 (IG Portrait) |
-  1080x1920 (Stories/Reels/TikTok) | 1200x628 (FB Ads) | Other
-
-Layout: Product-focused | Lifestyle | Text-heavy | Minimal |
-  Comparison | Testimonial
-
-Product Imagery: Provided | Needs sourcing | Needs shooting | 3D render
-Text Density: Headline only | Headline + subhead |
-  Headline + body + CTA | Information-heavy
-```
-
-### UGC Brief (additional fields)
-
-```
-Creator Instructions: Loose guidelines | Detailed shot list |
-  Script provided | Product + talking points
-
-Creator Requirements: Number, Demographics, Follower count,
-  Engagement rate, Niche/Category
-
-Content Type: Before/after | Unboxing | Tutorial | Testimonial |
-  Lifestyle integration | Challenge
-
-Deliverables per Creator: 1/3/5 videos | Photo assets |
-  Usage rights for ads: Yes/No
-
-Hook: Must start with hook | Options provided | Creative freedom
-```
+**UGC**: creator instructions (loose/detailed/scripted), creator requirements (count, demographics, engagement), content type (before-after/unboxing/tutorial/testimonial/lifestyle), deliverables per creator, hook requirements.
 
 ## Feedback Loops
 
 ### Feedback Hierarchy
 
-Priority order (highest to lowest): **Strategic direction** > **Brand compliance** > **Technical execution** > **Personal preference**.
+Priority: **Strategic direction** > **Brand compliance** > **Technical execution** > **Personal preference**.
 
-### Feedback Channels
+**Synchronous** (live reviews, calls): first-round concepts, complex strategy, major pivots, client presentations.
 
-**Synchronous** (live reviews, video calls, in-person): use for first-round concepts, complex strategic discussions, major pivots, client presentations.
+**Asynchronous** (threads, Loom, annotations): routine revisions, technical feedback, multi-timezone, documentation.
 
-**Asynchronous** (comment threads, Loom, annotated docs, time-coded notes): use for routine revisions, detailed technical feedback, multi-timezone teams, decision documentation.
+### Review Tools
 
-### Video Review (Frame.io)
+**Video (Frame.io)**: Upload → Set deadline/reviewers → Time-coded comments → Consolidate/prioritize → Revise → Approve/archive.
 
-```
-1. UPLOAD   → Set review deadline, assign reviewers, add context
-2. REVIEW   → Time-coded comments, draw on frame, @mention people
-3. CONSOLIDATE → Export comment report, group/prioritize changes
-4. REVISE   → Address each comment, mark done, re-upload new version
-5. APPROVE  → Final review, status "Approved", download, archive
-```
+**Design (Figma)**: Pin comments to elements, @mention, categorize (Visual/Content/Brand/Critical), mark resolved.
 
-**Comment quality:**
+### Feedback Quality
+
+Every piece of feedback must include strategic reasoning:
 
 ```
-Good: "The logo at 0:15 feels too small. Suggest increasing by 20%
-       for better visibility."
-Bad:  "Logo needs work"
+Bad:  "Make the logo bigger"
+Good: "Increase logo 20% for mobile visibility and brand recall"
 
-Good: "The CTA at 0:08-0:12 is on screen too long. Cut to 2 seconds
-       for better pacing."
 Bad:  "Fix timing"
+Good: "CTA at 0:08-0:12 is on screen too long — cut to 2 seconds for pacing"
 ```
-
-### Design Review (Figma)
-
-Create comments on specific elements, pin to canvas location, @mention team members, mark resolved when addressed. Categorize: Visual (color/typography/layout), Content (copy/messaging), Brand (guidelines/consistency), Critical (must fix before launch).
 
 ### Feedback Template
 
@@ -240,46 +140,26 @@ Create comments on specific elements, pin to canvas location, @mention team memb
 Project | Round | Reviewer | Date
 
 WHAT'S WORKING (2-3 items)
-STRATEGIC FEEDBACK (big picture issues)
-SPECIFIC REVISIONS (with location/timestamp):
-  [Timestamp/Element] | [Issue] | [Suggested Fix]
-QUESTIONS (anything unclear)
+STRATEGIC FEEDBACK (big picture)
+SPECIFIC REVISIONS: [Timestamp/Element] | [Issue] | [Fix]
+QUESTIONS
 
-DIRECTION: Approved as-is | Minor revisions | Significant revisions |
-  New direction
-PRIORITY: Critical (blocks launch) | High | Medium | Low
+DIRECTION: Approved | Minor revisions | Significant revisions | New direction
+PRIORITY: Critical | High | Medium | Low
 REVISION TIMELINE: [date]
 ```
 
 ### Reducing Feedback Rounds
 
-Industry average: 3-4 rounds. Top performers: 1-2 rounds.
+Industry average: 3-4 rounds. Top performers: 1-2.
 
-How to reduce:
+1. Better briefs — fewer "discovery" revisions
+2. Approve references BEFORE production
+3. Present 3 options (safe to bold) — get direction early
+4. Single decision-maker — consolidate before giving to creative
+5. Real-time reviews — present live, get immediate reactions
 
-1. **Better briefs** — clearer direction, fewer "discovery" revisions
-2. **Reference alignment** — approve references BEFORE production
-3. **Present 3 options** (safe to bold) — get directional preference early
-4. **Single decision-maker** — consolidate feedback, resolve conflicts before giving to creative
-5. **Real-time reviews** — present live, get immediate reactions
-
-### Feedback Culture
-
-**Givers**: start with what's working, be specific ("increase by 20%" not "bigger"), explain strategic reasoning, distinguish preference from principle, consider feasibility.
-
-**Receivers**: listen actively, ask clarifying questions, confirm understanding, set expectations on timeline, push back when strategically necessary.
-
-**The "Why" Rule** — every piece of feedback must include strategic reasoning:
-
-```
-Bad:  "Make the logo bigger"
-Good: "Make the logo 20% bigger so it's visible at mobile size
-       and increases brand recall"
-
-Bad:  "Change the color"
-Good: "Change the button to brand orange for better CTA visibility
-       and brand consistency"
-```
+**Culture**: givers — be specific, explain reasoning, distinguish preference from principle. Receivers — ask clarifying questions, push back when strategically necessary.
 
 ## Asset Management and DAM
 
@@ -287,84 +167,39 @@ Good: "Change the button to brand orange for better CTA visibility
 
 ```
 Assets/
-├── 01_Raw/
-│   ├── Photography/[Year]/[Month]/[shoot_name]/
-│   ├── Video/Footage/ + B-Roll/
-│   └── Audio/Music/ + SFX/
-├── 02_Working/
-│   └── [Campaign_Name]/Concepts/ + Drafts/ + Final/
-├── 03_Final/
-│   ├── Social_Media/Instagram/(Feed|Stories|Reels) + Facebook/ +
-│   │   TikTok/ + LinkedIn/
-│   ├── Display_Ads/
-│   ├── Print/
-│   └── Video/
+├── 01_Raw/Photography/[Year]/[Month]/ + Video/ + Audio/
+├── 02_Working/[Campaign]/Concepts/ + Drafts/ + Final/
+├── 03_Final/Social_Media/(IG|FB|TikTok|LI)/ + Display/ + Print/ + Video/
 ├── 04_Archive/[Year]/
 └── 05_Templates/Photoshop/ + After_Effects/ + Canva/
 ```
 
-### File Naming Conventions
+### File Naming
 
 ```
-Format: [Date]_[Campaign]_[AssetType]_[Platform]_[Version]_[Status]
+Format: [YYYYMMDD]_[Campaign]_[AssetType]_[Platform]_[Version]_[Status]
+Example: 20260210_SpringSale_Video_9x16_v03_APPROVED.mp4
 
-Examples:
-  20260210_SpringSale_Static_IGFeed_v01_FA.jpg
-  20260210_SpringSale_Video_9x16_v03_APPROVED.mp4
-  20260210_SpringSale_Carousel_FB_v02_DRAFT.psd
-
-Components:
-  Date: YYYYMMDD
-  Campaign: Underscores_for_spaces
-  AssetType: Static, Video, Carousel, GIF
-  Platform: IGFeed, IGS, IGR, FB, TT, LI
-  Version: v01, v02, v03...
-  Status: DRAFT, REVIEW, FA (Final Art), APPROVED
-
-Localized assets add market/language:
-  [Date]_[Campaign]_[Market]_[Language]_[AssetType]_[Version]
-  20260210_SpringSale_FR_FR_Static_v01.jpg
+Platform codes: IGFeed, IGS, IGR, FB, TT, LI
+Status: DRAFT, REVIEW, FA (Final Art), APPROVED
+Versions: v01 (first draft) → v02 (round 1 revisions) → vFA (client approved)
+Localized: add [Market]_[Language] after Campaign
 ```
-
-### Version Control
-
-```
-v01 = First draft
-v02 = First round revisions
-v03 = Second round revisions
-vFA = Final Art (client approved)
-vAPPROVED = Final approved version
-```
-
-Keep all versions in versioned folder. Archive old versions after campaign. Keep final + one backup active. Delete obvious wrong versions immediately.
 
 ### DAM Systems
 
 | Tier | Options |
 |------|---------|
-| Enterprise ($$$) | Bynder, Widen |
-| Mid-market ($$) | Brandfolder, Canto, Air (AI-powered, recommended for creative teams — auto-tagging, visual search, approval workflows, ~$50/user/month) |
-| Lightweight ($) | Dash, ImageKit |
-| Free/basic | Google Drive, Dropbox, Notion, Airtable |
+| Enterprise | Bynder, Widen |
+| Mid-market | Brandfolder, Canto, Air (AI-powered — auto-tagging, visual search, ~$50/user/mo) |
+| Lightweight | Dash, ImageKit |
+| Free | Google Drive, Dropbox, Notion, Airtable |
 
-### Metadata and Tagging
+### Metadata and Rights
 
-**Standard fields**: file name, date created, campaign, asset type, platform, format, dimensions, color profile, file size, creator, usage rights, expiration date.
+**Standard tags**: campaign, asset type, platform, format, dimensions, creator, usage rights, expiration, mood, subject, color.
 
-**Custom tags**: campaign (SpringSale2026), product, season, holiday, mood (Energetic/Calm/Luxurious), subject (Person/Product/Landscape), color, format (Square/Vertical/Landscape), usage (Social/Print/Web).
-
-### Rights and Usage Management
-
-For every asset, track: source, license type (royalty-free/rights-managed), usage rights (web/print/social/global), expiration, model/property releases, credit requirements, restrictions.
-
-**Required releases**: talent/model, property, location, music licensing, font licensing, stock image licensing.
-
-**License tracking:**
-
-| Asset | Source | License | Expires | Usage | Restrictions |
-|-------|--------|---------|---------|-------|--------------|
-| Image_001 | Getty | RF | Never | All | None |
-| Song_BGM | Epidemic | Music | 2027 | Web | No broadcast |
+**Rights tracking per asset**: source, license type (royalty-free/rights-managed), usage scope (web/print/social/global), expiration, required releases (talent/property/location/music/font/stock).
 
 ## Creative Team Structure
 
@@ -372,72 +207,56 @@ For every asset, track: source, license type (royalty-free/rights-managed), usag
 
 | Stage | Size | Key Roles |
 |-------|------|-----------|
-| Startup ($0-1M) | 1-2 | Creative generalist, designer/editor hybrid. Flat structure. |
-| Growth ($1-10M) | 3-6 | Creative Director, Senior Designer, Video Producer, Junior Designer, Copywriter (part-time). Functional specialists. |
-| Scale ($10-50M) | 7-15 | VP/Head of Creative, Creative Directors (by channel), Senior Designers (2-3), Senior Video Producers (2-3), Motion Designers (1-2), Copywriters (2-3), Production Coordinator. Channel/product specialization. |
-| Enterprise ($50M+) | 15+ | CCO, multiple Creative Directors, Senior/Mid/Junior Creatives, specialized roles (UX, Motion, 3D, Illustration, Photography), Project Managers, Creative Ops Manager. Multi-team coordination. |
+| Startup ($0-1M) | 1-2 | Creative generalist, designer/editor hybrid |
+| Growth ($1-10M) | 3-6 | Creative Director, Sr Designer, Video Producer, Jr Designer, Copywriter |
+| Scale ($10-50M) | 7-15 | VP Creative, CDs by channel, Sr Designers/Video (2-3 each), Motion, Copywriters, Coordinator |
+| Enterprise ($50M+) | 15+ | CCO, multiple CDs, full creative hierarchy, specialized roles, Creative Ops |
 
 ### Organizational Models
 
-**Functional** (by discipline): Design Team, Video Team, Copy Team, Motion Team under Head of Creative. Best for clear specialization and efficiency. Challenge: cross-function coordination.
+- **Functional** (by discipline): Design/Video/Copy/Motion teams. Best for specialization. Challenge: cross-function coordination.
+- **Channel** (by platform): Social/Paid/Brand/Web teams with own leads. Best for channel expertise. Challenge: resource duplication.
+- **Campaign** (by project): Pods with Creative Lead + Designer + Video. Best for ownership. Challenge: uneven workload.
 
-**Channel** (by platform): Social Media Creative, Paid Media Creative, Brand Creative, Web/UX — each with its own lead + designers + video. Best for channel expertise and agility. Challenge: resource duplication.
+### Key Roles
 
-**Campaign** (by project): Campaign pods with Creative Lead + Designer + Video Producer each. Best for campaign focus and ownership. Challenge: uneven workload.
+| Role | Core Focus |
+|------|------------|
+| Creative Director | Strategy, vision, team leadership, quality control |
+| Senior Designer | Complex projects, design system, mentorship, concepting |
+| Designer | Asset creation, production, brand adherence |
+| Sr Video Producer | Video strategy, directing, post-production oversight |
+| Video Producer | Editing, production support, format optimization |
+| Motion Designer | Animation, motion graphics, interactive elements |
+| Copywriter | Headlines, body copy, concepts, scripts, brand voice |
+| Creative Ops Manager | Workflow optimization, resource allocation, tools, process docs |
 
-### Role Definitions
+### Cadence
 
-| Role | Core Responsibilities |
-|------|----------------------|
-| Creative Director | Strategic oversight, creative vision, team leadership, stakeholder management, quality control |
-| Senior Designer | Lead complex projects, design system ownership, mentorship, concepting, client presentation |
-| Designer | Asset creation, production, brand guideline adherence, cross-functional collaboration |
-| Senior Video Producer | Video strategy, production management, shooting/directing, post-production oversight |
-| Video Producer | Editing, production support, asset management, format optimization |
-| Motion Designer | Animation, motion graphics, video enhancement, interactive elements |
-| Copywriter | Headlines, body copy, concept ideation, brand voice, script writing |
-| Creative Ops Manager | Workflow optimization, resource allocation, timeline management, tool implementation, process documentation |
-
-### Team Cadence
-
-- **Daily standup** (15 min): completed, working on, blockers
-- **Weekly creative review** (1 hr): WIP review, feedback, inspiration, blockers, plan next week
-- **Monthly strategy** (2 hr): performance review, wins/losses analysis, priorities, process improvements
-- **Quarterly audit**: review all assets, identify gaps, archive old work, update templates, assess training needs
+- **Daily standup** (15 min): done, doing, blockers
+- **Weekly creative review** (1 hr): WIP, feedback, inspiration, next week
+- **Monthly strategy** (2 hr): performance, wins/losses, priorities, process improvements
+- **Quarterly audit**: review assets, identify gaps, archive, update templates, assess training
 
 ## Freelancer Management
 
-### When to Use Freelancers
+**Use for**: capacity overflow, specialized skills (3D, animation), one-time projects, temporary coverage. **Avoid for**: ongoing high-volume (expensive), core brand work (needs institutional knowledge), daily fast-turnaround (coordination overhead).
 
-**Ideal for**: capacity overflow, specialized skills (3D, animation, illustration), one-time projects (rebrand, major campaign), temporary coverage, cost efficiency vs. full-time hire.
-
-**Not ideal for**: ongoing high-volume work (expensive long-term), core brand work (needs institutional knowledge), fast-turnaround daily needs (coordination overhead).
-
-### Finding and Evaluating
+### Sourcing
 
 | Platform | Strength |
 |----------|----------|
-| Upwork | Largest marketplace, vet carefully |
-| Fiverr | Budget-friendly, quality varies |
-| Toptal | Vetted, high-end ($$$) |
-| Dribbble | Designer-focused |
-| Behance | Portfolio-based discovery |
-| LinkedIn | Direct outreach |
 | Referrals | Best source |
+| Toptal | Vetted, high-end |
+| Dribbble/Behance | Designer portfolios |
+| Upwork | Largest marketplace |
+| LinkedIn | Direct outreach |
 
-**Evaluation process**: Portfolio review (quality, relevance, style match) → Paid test project (realistic scope, evaluate communication + delivery) → Reference check (reliability, collaboration style) → Trial period (1-2 small projects before larger scope).
+**Evaluation**: Portfolio review → Paid test project → Reference check → Trial period (1-2 small projects).
 
-### Onboarding Checklist
+**Onboarding**: brand guidelines, tool/asset access, communication channels, first brief, feedback process, payment terms, timezone alignment. Create a freelancer handbook (brand voice, design standards, delivery requirements, naming conventions, revision process).
 
-Brand guidelines provided, tool access, asset library access, communication channels (Slack/email), project management access, first brief delivered, feedback process explained, payment terms confirmed, timezone discussed.
-
-**Freelancer handbook** (create a simple doc): brand voice/tone, design standards, file delivery requirements, naming conventions, revision process, communication expectations, approval workflows.
-
-### Contracts and Pricing
-
-**Essential contract elements**: scope of work (deliverables, timeline, revisions included), payment terms (rate, schedule, method, late terms), rights and usage (ownership, usage rights, portfolio rights), confidentiality (NDA, sensitive info), termination (notice, cancellation, kill fee).
-
-**Typical pricing:**
+### Pricing Reference
 
 | Deliverable | Range |
 |-------------|-------|
@@ -445,114 +264,62 @@ Brand guidelines provided, tool access, asset library access, communication chan
 | 15-sec video | $500-2,000 |
 | 30-sec video | $1,000-5,000 |
 | Full campaign (10 assets) | $3,000-10,000 |
-| Hourly (senior) | $75-150 |
-| Hourly (junior) | $35-75 |
+| Hourly (senior/junior) | $75-150 / $35-75 |
 
-### Quality Management
-
-**Quality gates:**
+### Quality Gates
 
 1. **Concept approval** — before full production (saves rework)
-2. **Rough cut** — direction check, course correction
-3. **Final delivery** — thorough review, brand compliance, technical spec verification
-
-Treat freelancers like team members: regular check-ins, recognition, fair payment, referrals.
+2. **Rough cut** — direction check
+3. **Final delivery** — brand compliance, technical spec verification
 
 ## Creative QA
 
-### QA Checklists
+### Checklists
 
-**Technical**: file format correct, resolution meets platform specs, file size under limits, aspect ratio correct, color profile (sRGB for web), compression optimized, no artifacts, audio normalized (video), closed captions present (video), smooth loop points, consistent frame rate (30fps).
+**Technical**: correct format/resolution/aspect ratio, file size under limits, sRGB color, compression optimized, no artifacts, audio normalized, captions present, consistent frame rate.
 
-**Brand**: correct logo version/size, accurate brand colors, correct typography, brand voice maintained, messaging on-brand, visual style consistent, tagline present if applicable.
+**Brand**: correct logo/colors/typography, brand voice maintained, visual style consistent.
 
-**Copy**: spelling checked (US vs UK), grammar, punctuation consistency, brand terms capitalized, no prohibited words, CTA clear, pricing accurate, legal claims compliant, disclaimers present if required.
+**Copy**: spelling/grammar, brand terms, no prohibited words, CTA clear, pricing accurate, legal claims compliant, disclaimers present.
 
-**Functional**: landing page URL works, URL correct (no typos), UTM parameters present, CTA clickable (if interactive), video plays correctly, sound works, mobile display correct, loads within 3 seconds.
+**Functional**: landing page URL works (no typos), UTM parameters present, CTA clickable, video/sound works, mobile display correct, loads <3s.
 
-**Legal/Compliance**: no unsubstantiated claims, required disclosures present, copyrighted material licensed, model releases on file, trademark usage correct, industry compliance (FDA, FTC), promotional terms clear, T&C accessible.
+**Legal**: no unsubstantiated claims, required disclosures, licensed materials, model releases, trademark usage, industry compliance (FDA/FTC).
 
 ### QA Process
 
-```
-Creator → Internal Review → QA Check → Final Approval → Launch
-   ↓           ↓              ↓              ↓
-  Draft     Feedback      Checklist      Stakeholder
-  Complete  Incorporated  Verified       Sign-off
-```
+Creator → Internal Review → QA Checklist → Final Approval → Launch. QA team: primary (project lead), secondary (fresh eyes), final (marketing/client sign-off).
 
-**QA team**: primary (project lead/Creative Ops), secondary (another creative — fresh eyes), final (marketing/client — business approval).
-
-**QA tools**: Grammarly/Hemingway (copy), URL validators + manual click-through (links), Meta Ads Preview / Google Ads Preview / LinkedIn Campaign Manager Preview (platform rendering), Frame.io (video QA), Figma (design QA), Asana/Monday (checklist tracking).
+**Tools**: Grammarly (copy), URL validators (links), platform ad previews (rendering), Frame.io (video), Figma (design), Asana/Monday (tracking).
 
 ## Localization and Versioning
 
-### Localization vs Translation
-
-**Translation**: language only, word-for-word, misses cultural nuance. **Localization**: language + culture — idioms, humor, visual relevance, market-specific offers.
+**Localization vs translation**: translation = language only. Localization = language + culture (idioms, humor, visual relevance, market-specific offers).
 
 ### What Gets Localized
 
-**Must localize**: all text, currency/pricing, units of measurement, date formats, phone numbers, legal disclaimers, promotional terms.
+| Level | Items |
+|-------|-------|
+| Must | Text, currency/pricing, units, date formats, phone numbers, legal disclaimers, promotional terms |
+| Should | Imagery (ethnicity, settings), cultural references, humor, color meanings, testimonials |
+| Global OK | Product shots, brand elements, abstract graphics, iconography, instrumental music |
 
-**Should localize**: imagery (ethnicity, settings, clothing), cultural references, humor, color meanings, celebrity/influencer faces, testimonials.
+### Pipeline
 
-**Can stay global**: product shots, brand elements (logo, colors), abstract graphics, iconography, instrumental music.
+Source approved → Extract text → Professional translation → In-market review (cultural + brand) → Creative adaptation → Local QA → Deploy.
 
-### Localization Pipeline
+**Tools**: Smartling (enterprise), Lokalise (dev-friendly), Crowdin (community), Phrase (agile). AI first-draft via DeepL or ChatGPT — always human-reviewed.
 
-```
-1. Source Creative Approved
-2. Extract All Text (copy deck, text-on-image, voiceover scripts)
-3. Translation (professional native speakers with industry expertise)
-4. Localization Review (in-market team: cultural + brand check)
-5. Creative Adaptation (update designs, replace voiceover, adjust visuals)
-6. Local QA (native speaker review, functional testing, local approval)
-7. Deploy (upload to local ad accounts, launch)
-```
+### Versioning Dimensions
 
-**Translation tools**: Smartling (enterprise TMS), Lokalise (developer-friendly), Crowdin (community), Phrase (agile). AI first-draft: DeepL (high quality), Google Translate (quick checks), ChatGPT (context-aware). Always have human translator review AI translations.
+| Dimension | Example |
+|-----------|---------|
+| Geographic | US "$50 free shipping" / UK "£40 free delivery" / EU "€45" / AU "A$75" |
+| Demographic | 18-24: fast cuts, TikTok / 25-34: problem-solution / 35-44: detailed benefits / 45+: clear, larger text |
+| Audience segment | New: welcome offer / Active: upsell / Lapsed: win-back / VIP: exclusive access |
+| Channel | IG: square, aspirational / TikTok: vertical, raw / LinkedIn: professional / YouTube: landscape, storytelling |
 
-### Market-Specific Versioning
-
-**Geographic:**
-
-```
-US: "Free shipping on orders over $50"
-UK: "Free delivery on orders over £40"
-EU: "Free shipping on orders over €45"
-AU: "Free delivery on orders over A$75"
-```
-
-**Demographic:**
-
-```
-18-24: Trendy language, fast cuts, TikTok format
-25-34: Problem-solution, value-focused, mixed formats
-35-44: Detailed benefits, longer form, Facebook focus
-45+:   Clear messaging, larger text, straightforward CTAs
-```
-
-**Audience segment:**
-
-```
-New:    "Welcome offer, try us out"
-Active: "Thanks for being a customer, here's more"
-Lapsed: "We miss you, come back for 20% off"
-VIP:    "Exclusive access, you deserve this"
-```
-
-**Channel:**
-
-```
-Instagram: Square, aspirational lifestyle
-TikTok:    Vertical, trending audio, raw
-LinkedIn:  Professional, business benefit
-Facebook:  Mixed formats, broader appeal
-YouTube:   Landscape, longer storytelling
-```
-
-**Version tracking**: master asset in source language, localized versions as children. Update master → cascade to localized versions. Track which versions are current.
+Track master asset in source language; localized versions as children. Update master → cascade.
 
 ## Creative Toolstack
 
@@ -560,55 +327,23 @@ YouTube:   Landscape, longer storytelling
 
 | Category | Tools |
 |----------|-------|
-| **Design** | Adobe Photoshop (image editing), Illustrator (vector), Figma (collaborative UI), Canva (quick design/templates), Sketch (Mac UI) |
-| **Video** | Adobe Premiere Pro, After Effects (motion/VFX), DaVinci Resolve (color/editing, free tier), Final Cut Pro (Mac), CapCut (mobile, TikTok/Reels) |
-| **Motion** | After Effects (industry standard), Cinema 4D (3D), Blender (free 3D), Lottie (lightweight web/mobile) |
-| **Audio** | Adobe Audition, Audacity (free), Logic Pro (Mac), Epidemic Sound (royalty-free), Artlist (licensing) |
-| **AI Image** | Midjourney (artistic), DALL-E 3 (OpenAI), Stable Diffusion (open-source), Adobe Firefly (Adobe-integrated) |
-| **AI Video** | Runway ML (editing/generation), Pika Labs (creation), Synthesia (avatars), Descript (AI editing) |
-| **AI Copy** | ChatGPT (general), Jasper (marketing focus), Copy.ai (ad copy), Grammarly (enhancement) |
-| **AI Design** | Canva Magic Studio, Adobe Sensei, Remove.bg (backgrounds), Let's Enhance (upscaling) |
+| Design | Photoshop, Illustrator, Figma, Canva, Sketch |
+| Video | Premiere Pro, After Effects, DaVinci Resolve (free), Final Cut Pro, CapCut |
+| Motion | After Effects, Cinema 4D, Blender (free), Lottie |
+| Audio | Audition, Audacity (free), Logic Pro, Epidemic Sound, Artlist |
+| AI Image | Midjourney, DALL-E 3, Stable Diffusion, Adobe Firefly |
+| AI Video | Runway ML, Pika Labs, Synthesia, Descript |
+| AI Copy | ChatGPT, Jasper, Copy.ai, Grammarly |
+| Collaboration | Monday/Asana/Trello/Notion/ClickUp, Slack/Teams/Discord/Loom, Drive/Dropbox/Frame.io/Air |
 
-### Collaboration and Project Management
+### Recommended Stacks
 
-| Category | Tools |
-|----------|-------|
-| **Project management** | Monday.com (visual boards), Asana (task tracking), Trello (kanban), Notion (docs + databases), Airtable (spreadsheet-database), ClickUp (all-in-one) |
-| **Communication** | Slack, Microsoft Teams, Discord, Loom (async video) |
-| **File sharing/review** | Google Drive, Dropbox, WeTransfer (large files), Frame.io (video review), Air (visual asset management) |
+| Size | Stack (~monthly cost) |
+|------|----------------------|
+| Startup (1-3) | Canva Pro + Figma, CapCut + DaVinci, Notion/Trello, Google Drive, Slack free (~$100-200) |
+| Growth (5-10) | Adobe CC, Premiere + AE, Monday/Asana, Dropbox/Air, Slack, ChatGPT + Midjourney (~$500-1K) |
+| Scale (15+) | Adobe CC Teams + Frame.io, Monday Enterprise, DAM (Bynder/Air), enterprise AI (~$2-5K) |
 
-### Tool Selection Criteria
+### Selection Criteria
 
-| Factor | Considerations |
-|--------|---------------|
-| Team skill | Expert → Adobe CC; mixed → Canva + Adobe; non-designers → Canva |
-| Integration | Existing tool compatibility, API, SSO |
-| Scalability | Cost per user, enterprise features, admin controls |
-| Collaboration | Real-time editing, review/approval, version control |
-| Output quality | Export formats, resolution, platform compatibility |
-
-### Recommended Stacks by Team Size
-
-**Startup (1-3 creatives, ~$100-200/mo)**: Canva Pro + Figma, CapCut + DaVinci Resolve (free), Notion or Trello, Google Drive, Slack free tier.
-
-**Growth (5-10 creatives, ~$500-1,000/mo)**: Adobe Creative Cloud, Premiere + After Effects, Monday.com or Asana, Dropbox Business or Air, Slack Standard, ChatGPT Plus + Midjourney.
-
-**Scale (15+ creatives, ~$2,000-5,000/mo)**: Adobe CC for Teams + Frame.io, Monday.com Enterprise or Asana, Enterprise DAM (Bynder/Air), Slack Enterprise, enterprise AI tools.
-
-### Tool Onboarding
-
-Account access, software installed, naming conventions explained, tutorial resources shared, template library access, best practices documented, first project walkthrough, Q&A session scheduled. Maintain living docs for workflows, shortcuts, export settings, troubleshooting.
-
----
-
-## Conclusion
-
-**Operational advantages**: Speed (workflows eliminate delays), Quality (QA catches errors), Scale (systems handle volume), Consistency (templates ensure standards), Morale (clear processes reduce burnout).
-
-**Action plan:**
-
-1. Audit current state — identify bottlenecks
-2. Quick wins — file naming, project management, feedback templates
-3. Build systematically — document one workflow at a time, train, iterate
-4. Invest in tools — start with essentials, scale as team grows
-5. Maintain — regular process reviews, continuous optimization
+Team skill level, integration with existing tools, scalability/cost per user, real-time collaboration features, export format support.
