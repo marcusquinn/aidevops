@@ -4,7 +4,7 @@
 
 **Components of an Irresistible Offer:**
 
-```
+```text
 CORE OFFER
 +
 BONUSES (Increase Perceived Value)
@@ -25,7 +25,7 @@ IRRESISTIBLE OFFER
 **1. Discount Offer**
 
 **Percentage Off:**
-```
+```text
 STRUCTURE: "X% off [product/service]"
 
 WHEN TO USE:
@@ -44,7 +44,7 @@ PSYCHOLOGY:
 ```
 
 **Dollar Amount Off:**
-```
+```text
 STRUCTURE: "$X off [product/service]"
 
 WHEN TO USE:
@@ -64,7 +64,7 @@ PSYCHOLOGY:
 
 **2. Free Trial Offer**
 
-```
+```text
 STRUCTURE: "Try [product] free for [timeframe]"
 
 VARIATIONS:
@@ -91,7 +91,7 @@ EXAMPLE:
 
 **3. Free Bonus Offer**
 
-```
+```text
 STRUCTURE: "Get [product] + [valuable bonus] free"
 
 WHEN TO USE:
@@ -112,7 +112,7 @@ EXAMPLE:
 
 **4. BOGO (Buy One Get One)**
 
-```
+```text
 STRUCTURE: "Buy [X], Get [Y] free/discounted"
 
 VARIATIONS:
@@ -138,7 +138,7 @@ EXAMPLE:
 
 **5. Bundle Offer**
 
-```
+```text
 STRUCTURE: "Get [multiple products] together for [price]"
 
 WHEN TO USE:
@@ -166,7 +166,7 @@ You Save: $39 (33% off)"
 
 **6. Limited-Time Offer**
 
-```
+```text
 STRUCTURE: "[Offer] - Ends [specific time/date]"
 
 VARIATIONS:
@@ -193,7 +193,7 @@ EXAMPLE:
 
 **7. First-Time Customer Offer**
 
-```
+```text
 STRUCTURE: "[Offer] for new customers only"
 
 VARIATIONS:
@@ -214,7 +214,7 @@ EXAMPLE:
 
 **8. Money-Back Guarantee Offer**
 
-```
+```text
 STRUCTURE: "[Timeframe] money-back guarantee"
 
 VARIATIONS:
@@ -243,7 +243,7 @@ EXAMPLE:
 
 **How to Stack Bonuses:**
 
-```
+```text
 CORE PRODUCT: $X value
 
 BONUS 1: Related product/service ($Y value)
@@ -265,7 +265,7 @@ SAVINGS: $[Difference]
 
 **Example - Online Course:**
 
-```
+```text
 CORE: "SEO Mastery Course" ($997 value)
 
 BONUS 1: "Keyword Research Template Pack" ($97 value)
@@ -308,7 +308,7 @@ Plus: 30-day money-back guarantee
 **Types of Urgency:**
 
 **1. Time-Based Urgency**
-```
+```text
 "Offer ends [date/time]"
 "Limited-time sale"
 "Flash sale: 24 hours only"
@@ -326,7 +326,7 @@ CREDIBILITY:
 ```
 
 **2. Quantity-Based Scarcity**
-```
+```text
 "Only [X] left in stock"
 "Limited to [X] units"
 "[X] of [Y] already claimed"
@@ -344,7 +344,7 @@ CREDIBILITY:
 ```
 
 **3. Exclusive Access**
-```
+```text
 "Only available to [group]"
 "Invite-only offer"
 "VIP members only"
@@ -362,7 +362,7 @@ EXECUTION:
 ```
 
 **4. Seasonal/Event Urgency**
-```
+```text
 "Black Friday Sale"
 "Holiday Special"
 "Back to School Offer"
@@ -384,7 +384,7 @@ POWER:
 **Guarantee Types:**
 
 **1. Money-Back Guarantee**
-```
+```text
 "Not satisfied? Full refund within [X] days"
 
 VARIATIONS:
@@ -399,7 +399,7 @@ POSITIONING:
 ```
 
 **2. Satisfaction Guarantee**
-```
+```text
 "Love it or your money back"
 
 EMOTIONAL APPROACH:
@@ -407,7 +407,7 @@ EMOTIONAL APPROACH:
 ```
 
 **3. Results Guarantee**
-```
+```text
 "[Specific result] or your money back"
 
 HIGH CONFIDENCE:
@@ -418,7 +418,7 @@ EXAMPLE:
 ```
 
 **4. Performance Guarantee**
-```
+```text
 "If it doesn't perform as promised, return it"
 
 PRODUCT-SPECIFIC:
@@ -426,7 +426,7 @@ PRODUCT-SPECIFIC:
 ```
 
 **5. Upgrade Guarantee**
-```
+```text
 "Try basic now, upgrade anytime"
 
 SAFETY NET:
@@ -434,7 +434,7 @@ SAFETY NET:
 ```
 
 **6. Double Guarantee**
-```
+```text
 "Money-back + [additional guarantee]"
 
 ULTRA-LOW RISK:
@@ -446,7 +446,7 @@ ULTRA-LOW RISK:
 **What to Test:**
 
 **Test 1: Offer Type**
-```
+```text
 Variant A: 40% discount
 Variant B: Free shipping + 20% off
 Variant C: Buy one, get one 50% off
@@ -457,7 +457,7 @@ Measure: Conversion rate, AOV, profitability
 ```
 
 **Test 2: Discount Depth**
-```
+```text
 Variant A: 20% off
 Variant B: 30% off
 Variant C: 40% off
@@ -468,7 +468,7 @@ Watch for: Sweet spot where conversions increase more than margin decrease
 ```
 
 **Test 3: Urgency Type**
-```
+```text
 Variant A: No urgency
 Variant B: "Ends in 48 hours"
 Variant C: "Only 50 left"
@@ -478,7 +478,7 @@ Measure impact of urgency on conversion rate
 ```
 
 **Test 4: Guarantee Strength**
-```
+```text
 Variant A: No guarantee mentioned
 Variant B: "30-day money-back guarantee"
 Variant C: "60-day money-back guarantee"
@@ -488,7 +488,7 @@ See how risk reversal affects conversion
 ```
 
 **Test 5: Bonus Structure**
-```
+```text
 Variant A: No bonuses
 Variant B: 1 bonus ($100 value)
 Variant C: 3 bonuses ($500 total value)
@@ -525,7 +525,7 @@ Find point of diminishing returns (more bonuses ≠ always better)
 
 **Example Iteration:**
 
-```
+```text
 MONTH 1 OFFER:
 "40% off first order"
 Result: 3.2% CR, $75 AOV, $24 CAC, profitable
@@ -559,7 +559,7 @@ Continue testing...
 - CTA button: Action-oriented ("Claim 40% Off")
 
 **Example Ad:**
-```
+```text
 IMAGE: Product with "40% OFF" badge
 
 HEADLINE:
@@ -589,7 +589,7 @@ CTA BUTTON:
 ### Offer Psychology
 
 **Anchoring:**
-```
+```text
 Show original price, then discounted price
 
 "Regular price: $299
@@ -600,7 +600,7 @@ The $299 anchor makes $179 feel like exceptional value
 ```
 
 **Framing:**
-```
+```text
 Same discount, different frames:
 
 Frame 1: "Save $30"
@@ -612,7 +612,7 @@ Test which resonates most with audience
 ```
 
 **Loss Aversion:**
-```
+```text
 Frame as preventing loss, not just gaining:
 
 GAIN FRAME: "Get 40% off today"
@@ -622,7 +622,7 @@ Loss framing typically outperforms gain framing
 ```
 
 **Reciprocity:**
-```
+```text
 Give first, ask second:
 
 "As a thank you for subscribing, here's 20% off your first order"
@@ -631,7 +631,7 @@ The free gift (discount) creates reciprocity obligation
 ```
 
 **Social Proof in Offers:**
-```
+```text
 "Join 10,000+ customers who saved with this offer"
 "427 people claimed this deal in the last 24 hours"
 "Best-selling bundle - 5,000+ sold this month"
@@ -670,7 +670,7 @@ The consistent thread from ad → landing page → checkout that assures the vis
 
 **Example of Strong Scent:**
 
-```
+```text
 AD:
 Headline: "Get 50% Off Premium Yoga Mats - Today Only"
 Image: Purple yoga mat on hardwood floor
@@ -685,7 +685,7 @@ CTA: "Add to Cart - 50% Off" [MATCH]
 
 **Example of Broken Scent:**
 
-```
+```text
 AD:
 Headline: "Get 50% Off Premium Yoga Mats - Today Only"
 Image: Purple yoga mat on hardwood floor
@@ -711,7 +711,7 @@ Result: High bounce rate, low conversion
 - Retargeting campaigns
 
 **Essential Elements:**
-```
+```text
 ABOVE THE FOLD:
 - Product hero image (multiple angles)
 - Product name/headline
@@ -748,7 +748,7 @@ BELOW THE FOLD:
 - Building email list
 
 **Essential Elements:**
-```
+```text
 ABOVE THE FOLD:
 - Compelling headline (benefit-driven)
 - Brief value proposition
@@ -788,7 +788,7 @@ BELOW THE FOLD (optional):
 - Courses, coaching, consulting
 
 **Structure:**
-```
+```text
 SECTION 1: HOOK
 - Headline (problem or result-focused)
 - Subheadline (amplify)
@@ -872,7 +872,7 @@ SECTION 12: FINAL CTA
 - Complex solutions
 
 **Essential Elements:**
-```
+```text
 ABOVE THE FOLD:
 - Compelling headline (what they'll learn)
 - Subheadline (who it's for)
@@ -910,7 +910,7 @@ BELOW THE FOLD:
 - Complex value propositions
 
 **Layout:**
-```
+```text
 MINIMAL DISTRACTION DESIGN:
 - Auto-play video (center of page)
 - No header navigation
@@ -940,7 +940,7 @@ POST-VIDEO:
 
 **Pre-Launch Audit:**
 
-```
+```text
 □ Ad headline matches landing page headline (or very similar)
 □ Offer in ad is identical to offer on page
 □ Visual style is consistent (colors, fonts, images)
@@ -955,7 +955,7 @@ POST-VIDEO:
 
 **Example Checklist Filled:**
 
-```
+```text
 CAMPAIGN: 50% off premium plan
 
 AD:
@@ -980,7 +980,7 @@ RESULT: High conversion rate (message match strong)
 ### Common Congruence Mistakes
 
 **Mistake 1: Generic Landing Page**
-```
+```text
 AD: "50% off running shoes"
 PAGE: Homepage with all products
 
@@ -988,7 +988,7 @@ FIX: Dedicated landing page for running shoes, showing the discount
 ```
 
 **Mistake 2: Different Offer**
-```
+```text
 AD: "Free trial"
 PAGE: "Start for $1"
 
@@ -996,7 +996,7 @@ FIX: Honor the free trial offer mentioned in ad
 ```
 
 **Mistake 3: Visual Mismatch**
-```
+```text
 AD: Purple yoga mat product image
 PAGE: Generic yoga lifestyle image
 
@@ -1004,7 +1004,7 @@ FIX: Use the exact same purple yoga mat image on landing page
 ```
 
 **Mistake 4: Tone Shift**
-```
+```text
 AD: Casual, friendly tone ("Hey! Check this out...")
 PAGE: Corporate, formal tone ("Our enterprise solution provides...")
 
@@ -1012,7 +1012,7 @@ FIX: Match the tone throughout the funnel
 ```
 
 **Mistake 5: Hidden Information**
-```
+```text
 AD: "Starting at $29"
 PAGE: Pricing not visible without scrolling or clicking
 
@@ -1020,7 +1020,7 @@ FIX: Show starting price prominently above the fold
 ```
 
 **Mistake 6: Increased Friction**
-```
+```text
 AD: "Get instant access"
 PAGE: 10-field form requiring verification
 
@@ -1028,7 +1028,7 @@ FIX: Minimal form, deliver on "instant access" promise
 ```
 
 **Mistake 7: Bait and Switch**
-```
+```text
 AD: Free shipping
 PAGE: "Free shipping on orders over $100" (not mentioned in ad)
 
@@ -1070,7 +1070,7 @@ FIX: Clearly state threshold in ad or honor unconditional free shipping
 
 **Mobile Landing Page Template:**
 
-```
+```text
 ABOVE FOLD (no scrolling):
 - Headline (large, readable)
 - Single hero image
@@ -1094,7 +1094,7 @@ Keep it simple. Mobile users have less patience.
 **Elements to Test:**
 
 **Test 1: Headline**
-```
+```text
 Variant A: Benefit-focused headline
 Variant B: Question headline
 Variant C: Result-focused headline
@@ -1104,7 +1104,7 @@ Measure: Conversion rate
 ```
 
 **Test 2: Hero Image**
-```
+```text
 Variant A: Product-only image
 Variant B: Product in use (lifestyle)
 Variant C: Before/after image
@@ -1114,7 +1114,7 @@ Measure: Engagement + conversion rate
 ```
 
 **Test 3: Form Length**
-```
+```text
 Variant A: 2 fields (name, email)
 Variant B: 4 fields (name, email, phone, company)
 Variant C: 6 fields (+ job title, company size)
@@ -1123,7 +1123,7 @@ Measure: Form completion rate vs. lead quality
 ```
 
 **Test 4: CTA Button**
-```
+```text
 Variant A: "Get Started"
 Variant B: "Claim 50% Off"
 Variant C: "Yes, I Want This"
@@ -1134,7 +1134,7 @@ Measure: Click-through rate, conversion rate
 ```
 
 **Test 5: Social Proof Placement**
-```
+```text
 Variant A: Reviews below CTA
 Variant B: Reviews above CTA
 Variant C: Reviews as testimonials throughout page
@@ -1144,7 +1144,7 @@ Measure: Impact on conversion rate
 ```
 
 **Test 6: Page Length**
-```
+```text
 Variant A: Short form (2 scrolls)
 Variant B: Medium form (4 scrolls)
 Variant C: Long form (8+ scrolls)

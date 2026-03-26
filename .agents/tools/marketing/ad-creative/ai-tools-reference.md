@@ -1,5 +1,7 @@
 ## AI Tools for Creative
 
+> **Note:** Pricing information is current as of early 2025 and may change. Verify current pricing on vendor websites before purchasing.
+
 ### AI Image Generation
 
 **1. Midjourney**
@@ -21,7 +23,7 @@ Text-to-image AI that creates stunning visuals from prompts
 
 **Prompting Tips:**
 
-```
+```text
 BASIC STRUCTURE:
 [Subject] [style] [mood/lighting] [aspect ratio] [quality settings]
 
@@ -45,7 +47,7 @@ STYLE MODIFIERS:
 
 **Example Prompts for Ads:**
 
-```
+```text
 PRODUCT SHOT:
 "Professional product photography of [product], white background, studio lighting, high resolution, commercial photography --ar 1:1 --v 6"
 
@@ -60,7 +62,7 @@ TESTIMONIAL BACKGROUND:
 ```
 
 **Workflow:**
-```
+```text
 1. Generate 4 variations with /imagine
 2. Upscale favorites (U1, U2, U3, U4)
 3. Create variations of upscales (V1, V2, etc.)
@@ -89,7 +91,7 @@ OpenAI's image generator, integrated into ChatGPT
 - Ad mockups
 
 **Prompting:**
-```
+```text
 NATURAL LANGUAGE:
 "Create an image of a happy entrepreneur working on a laptop in a bright cafe. Make it feel authentic and energetic, like it's from an Instagram post."
 
@@ -97,7 +99,7 @@ DALL-E understands context better, less need for technical modifiers
 ```
 
 **Workflow:**
-```
+```text
 1. Describe what you want to ChatGPT
 2. ChatGPT generates image
 3. Ask for modifications: "Make the laptop more prominent" or "Change background to home office"
@@ -128,7 +130,7 @@ Adobe's AI image generator, integrated into Creative Cloud
 
 **Unique Features:**
 
-```
+```text
 GENERATIVE FILL (in Photoshop):
 - Select area with lasso
 - Click "Generative Fill"
@@ -164,7 +166,7 @@ AI video editing and generation tools
 
 **Key Features:**
 
-```
+```text
 TEXT TO VIDEO:
 Generate video clips from text prompts
 
@@ -235,7 +237,7 @@ $12-24/month
 
 **Use Cases for Ad Creative:**
 
-```
+```text
 HEADLINE GENERATION:
 "Generate 10 headline variations for [product] targeting [audience]"
 
@@ -254,7 +256,7 @@ LANDING PAGE COPY:
 
 **Prompting Tips:**
 
-```
+```text
 BE SPECIFIC:
 ❌ "Write an ad"
 ✅ "Write a 125-character Facebook ad headline for a project management SaaS targeting marketing agencies, focusing on the benefit of saving time"
@@ -497,7 +499,7 @@ $19.99/month
 
 **Creating Video Ad Using AI:**
 
-```
+```text
 STEP 1: Script (ChatGPT)
 "Write a 45-second UGC-style video ad script for [product] targeting [audience]"
 
@@ -563,7 +565,7 @@ Traditional production: Days + $500-2000
 ### 30-Day Implementation Plan
 
 **Week 1: Audit & Setup**
-```
+```text
 DAY 1-2: Creative Audit
 - Analyze current creative performance
 - Identify winners and losers
@@ -585,7 +587,7 @@ DAY 5-7: Strategy & Planning
 ```
 
 **Week 2: Production**
-```
+```text
 DAY 8-10: Generate Creative Concepts
 - Brainstorm 10 concepts
 - Use frameworks (PAS, hooks, etc.)
@@ -602,7 +604,7 @@ DAY 11-14: Produce Initial Creative
 ```
 
 **Week 3: Launch & Test**
-```
+```text
 DAY 15-16: Campaign Setup
 - Create ad sets with 5 creatives each
 - Equal budget allocation
@@ -617,7 +619,7 @@ DAY 17-21: Monitor & Learn
 ```
 
 **Week 4: Optimize & Scale**
-```
+```text
 DAY 22-24: Analysis
 - Review 7-day performance
 - Identify top 20% performers
@@ -698,7 +700,7 @@ DAY 28-30: Systematize
 
 ### Quick Reference: Hook Formulas
 
-```
+```text
 QUESTIONS:
 - "Still [doing pain point]?"
 - "Want to [desired outcome]?"
@@ -716,7 +718,7 @@ STATEMENTS:
 
 ### Quick Reference: Ad Copy Structure
 
-```
+```text
 FACEBOOK/INSTAGRAM AD:
 - Hook (first line) - 15 words max
 - Amplify (2-3 sentences)
@@ -734,7 +736,7 @@ GOOGLE SEARCH AD:
 
 ### Quick Reference: Video Structure
 
-```
+```text
 0-3s: HOOK (pattern interrupt)
 3-10s: PROBLEM (pain/desire)
 10-30s: SOLUTION (product/service)
@@ -748,7 +750,7 @@ Shorter versions:
 
 ### Quick Reference: Specs
 
-```
+```text
 FACEBOOK:
 Image: 1080x1080 (1:1), 30MB max
 Video: 1080x1920 (9:16), 4GB max, 1-240min
@@ -770,7 +772,7 @@ Video: 1080x1920 (9:16), 15-60s
 
 ### Quick Reference: Testing Priority
 
-```
+```text
 TEST FIRST:
 1. Hook (video ads)
 2. Core message/value prop
@@ -791,7 +793,7 @@ TEST THIRD:
 
 ### Quick Reference: Fatigue Indicators
 
-```
+```text
 IMMEDIATE ACTION NEEDED:
 - CTR down 30%+
 - CPA up 25%+
@@ -811,7 +813,7 @@ MONITOR:
 
 ### Quick Reference: Performance Benchmarks
 
-```
+```text
 FACEBOOK/INSTAGRAM:
 CTR: 1.5-3% (feed), 0.8-2% (stories)
 CVR: 2-5% (e-commerce), 5-15% (lead gen)
@@ -828,4 +830,4 @@ View Rate: 30-40%
 
 ---
 
-*End of SKILL.md*
+*End of ai-tools-reference.md*

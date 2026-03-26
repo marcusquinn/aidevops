@@ -46,7 +46,7 @@
 - Creative doesn't fatigue quickly (>14 day lifespan)
 
 **Example Test:**
-```
+```text
 CONTROL: "Tired of [problem]?" hook
 VARIANT 1: "How I [achieved result]" hook
 VARIANT 2: "[Surprising statistic]" hook
@@ -80,7 +80,7 @@ Winner Criteria: Lowest CPA with >20 conversions
 - Engagement rate
 
 **Example Test:**
-```
+```text
 CONCEPT: "Before/After Transformation"
 
 FORMAT A: Single image - before/after split screen
@@ -117,7 +117,7 @@ $50/day each
 - Clear winner emerges
 
 **Example Test - Headlines:**
-```
+```text
 CREATIVE: Same video, same primary text
 
 HEADLINE 1: "How to [Benefit] in [Timeframe]"
@@ -151,7 +151,7 @@ Winner: Lowest CPA + acceptable volume
 - Volume available in each segment
 
 **Example Test:**
-```
+```text
 PRODUCT: Project management software
 
 AUDIENCE 1: Marketing agencies
@@ -198,14 +198,14 @@ When testing, change ONLY ONE of these at a time:
    - Keep creative/audience same
 
 **Bad Test (Multiple Variables):**
-```
+```text
 ❌ New video creative + New headline + New audience + New offer
 
 Result: If it wins or loses, you don't know why
 ```
 
 **Good Test (Isolated Variable):**
-```
+```text
 ✅ New video creative + Same headline + Same audience + Same offer
 
 Result: If it wins or loses, you know it's the video
@@ -228,7 +228,7 @@ Result: If it wins or loses, you know it's the video
 Use a statistical significance calculator (e.g., VWO, Optimizely, or Google's)
 
 **Example:**
-```
+```text
 Variant A: 100 conversions, 2.5% conversion rate, $40 CPA
 Variant B: 100 conversions, 3.2% conversion rate, $31 CPA
 
@@ -312,7 +312,7 @@ When an ad's performance degrades over time as the audience becomes oversaturate
 
 **Winner Criteria:**
 
-```
+```text
 A creative is a "winner" if:
 ✅ CPA is 20%+ better than target
 ✅ Volume is sufficient (>10 conversions/day potential)
@@ -322,7 +322,7 @@ A creative is a "winner" if:
 
 **Example Decision Matrix:**
 
-```
+```text
 CREATIVE A:
 - CPA: $35 (target: $40)
 - Daily conversions: 15
@@ -367,7 +367,7 @@ CREATIVE E:
 **Step 4: Scaling Winners**
 
 **Gradual Scaling:**
-```
+```text
 Day 1-7: Test budget ($50-100/day)
 Day 8-14: If winner, 2x budget ($100-200/day)
 Day 15-21: If still performing, 2x again ($200-400/day)
@@ -375,7 +375,7 @@ Day 22+: Continue scaling at 20-40% increases until performance degrades
 ```
 
 **Rapid Scaling (for clear winners):**
-```
+```text
 Day 1-7: Test budget
 Day 8: If CPA is 30%+ below target, immediately 5x budget
 Day 9+: Monitor closely, scale or roll back based on performance
@@ -385,7 +385,7 @@ Day 9+: Monitor closely, scale or roll back based on performance
 
 **Don't stop at one winner. Create variations:**
 
-```
+```text
 WINNING CREATIVE: UGC testimonial video
 - CPA: $30
 - Hook: "I tried everything for my acne..."
@@ -465,7 +465,7 @@ Build a "creative cluster" around winning concept
 
 **Category 1: Hook Quality (25 points)**
 
-```
+```text
 5 points: PATTERN INTERRUPT
 □ Stops the scroll visually (5)
 □ Somewhat noticeable (3)
@@ -494,7 +494,7 @@ Build a "creative cluster" around winning concept
 
 **Category 2: Value Proposition (20 points)**
 
-```
+```text
 5 points: BENEFIT CLARITY
 □ Clear what customer gets (5)
 □ Implied benefit (3)
@@ -518,7 +518,7 @@ Build a "creative cluster" around winning concept
 
 **Category 3: Creative Execution (20 points)**
 
-```
+```text
 5 points: PRODUCTION QUALITY
 □ High quality, platform-appropriate (5)
 □ Adequate quality (3)
@@ -542,7 +542,7 @@ Build a "creative cluster" around winning concept
 
 **Category 4: Copy Quality (20 points)**
 
-```
+```text
 5 points: HEADLINE
 □ Benefit-driven, compelling (5)
 □ Adequate (3)
@@ -566,7 +566,7 @@ Build a "creative cluster" around winning concept
 
 **Category 5: Offer & CTA (15 points)**
 
-```
+```text
 5 points: OFFER STRENGTH
 □ Compelling, hard to resist (5)
 □ Decent offer (3)
@@ -593,7 +593,7 @@ Build a "creative cluster" around winning concept
 
 **Example Scoring:**
 
-```
+```text
 CREATIVE: UGC video for sleep supplement
 
 HOOK QUALITY: 22/25
@@ -634,7 +634,7 @@ Recommendation: Launch, but test variation with specific stat in hook and add ur
 
 **After 7 days of live data:**
 
-```
+```text
 PERFORMANCE METRICS SCORE (100 points possible)
 
 CPA vs. Target: ___/30
@@ -692,7 +692,7 @@ TOTAL: ___/100
 
 **Video Creative Quality Rubric:**
 
-```
+```text
 HOOK (First 3 Seconds): ___/30
 □ Stops scroll visually (10)
 □ Clear verbal/text hook (10)
@@ -740,7 +740,7 @@ TOTAL: ___/100
 
 **Static Image Quality Rubric:**
 
-```
+```text
 VISUAL IMPACT: ___/25
 □ Thumb-stopping visual (10)
 □ Clear focal point (8)
@@ -793,7 +793,7 @@ TOTAL: ___/100
 4. Adjust rubric based on learnings
 
 **Pattern Analysis:**
-```
+```text
 Track over time:
 "Our ads scoring 85+ in pre-launch typically achieve CPA 20% below target"
 "Hook quality score correlates most strongly with CTR"
@@ -815,7 +815,7 @@ DCO uses machine learning to automatically test creative combinations and serve 
 
 **How It Works:**
 
-```
+```text
 YOU PROVIDE:
 - Up to 10 images or videos
 - Up to 5 headlines
@@ -852,7 +852,7 @@ RESULT:
 
 **Asset Strategy:**
 
-```
+```text
 IMAGES/VIDEOS (10):
 - 3 product-focused
 - 3 lifestyle/in-use
@@ -881,7 +881,7 @@ DESCRIPTIONS (5):
 
 **Performance Analysis:**
 
-```
+```text
 After 7+ days, check asset performance report:
 
 HIGH PERFORMERS (more impressions):
@@ -916,7 +916,7 @@ LOW PERFORMERS (fewer impressions):
 
 **Quick DCO Strategy:**
 
-```
+```text
 PROVIDE:
 - 15 headlines (maximize asset count)
 - 4 descriptions
@@ -928,7 +928,7 @@ PROVIDE:
 
 **Optimization Cycle:**
 
-```
+```text
 WEEK 1-2: Launch with maximum assets
 WEEK 3: Review performance (check for "Low" assets)
 WEEK 4: Replace bottom 20% of assets
@@ -941,7 +941,7 @@ Repeat indefinitely
 
 **Asset Group Strategy:**
 
-```
+```text
 ASSET GROUP STRUCTURE:
 - 20 images (all 3 aspect ratios)
 - 5 videos (multiple aspect ratios)
@@ -983,7 +983,7 @@ GOOGLE'S OPTIMIZATION:
 
 **Example Asset Group:**
 
-```
+```text
 PRODUCT: Running shoes
 
 IMAGES (20):
@@ -1033,7 +1033,7 @@ DESCRIPTIONS (5):
 
 **How It Works:**
 
-```
+```text
 YOU PROVIDE:
 - Multiple video clips
 - Multiple text options
@@ -1097,7 +1097,7 @@ TIKTOK:
 
 **Hybrid Approach (Recommended):**
 
-```
+```text
 PHASE 1: DCO for Concept Discovery
 - Use dynamic creative to find winning concepts quickly
 - Let platform test broadly
@@ -1117,7 +1117,7 @@ PHASE 3: Scale Winners with DCO
 
 ### DCO Optimization Checklist
 
-```
+```text
 □ Provided maximum number of assets (don't leave slots empty)
 □ Assets are diverse (not just minor variations)
 □ Each asset can stand alone (no dependencies)
@@ -1149,7 +1149,7 @@ Running two (or more) variations simultaneously to determine which performs bett
 
 **A/B Test vs. Multivariate Test:**
 
-```
+```text
 A/B TEST:
 - Test ONE variable
 - Two variations (A vs. B)
@@ -1194,7 +1194,7 @@ MULTIVARIATE TEST:
 
 **Step 1: Hypothesis Formation**
 
-```
+```text
 FORMAT:
 "If we change [variable] from [A] to [B], we believe [metric] will [improve/worsen] because [reasoning]."
 
@@ -1205,7 +1205,7 @@ EXAMPLE:
 **Step 2: Test Design**
 
 **Isolation Rules:**
-```
+```text
 ✅ GOOD TEST:
 Variable: Headline
 A: "Get Organized"
@@ -1220,7 +1220,7 @@ Result: Can't determine what caused the difference
 ```
 
 **Control vs. Variant:**
-```
+```text
 CONTROL: Current champion (or baseline)
 VARIANT: New test challenger
 
@@ -1232,7 +1232,7 @@ Continuous improvement
 **Step 3: Traffic Allocation**
 
 **Equal Split:**
-```
+```text
 50% traffic to A
 50% traffic to B
 
@@ -1241,7 +1241,7 @@ Clear winner emerges
 ```
 
 **Unequal Split (Advanced):**
-```
+```text
 80% traffic to Control (safe bet)
 20% traffic to Variant (testing)
 
@@ -1255,7 +1255,7 @@ Use when:
 
 **Minimum Thresholds:**
 
-```
+```text
 FOR STATISTICAL SIGNIFICANCE:
 - 100+ conversions per variant (minimum)
 - 95% confidence level
@@ -1271,7 +1271,7 @@ If you get 50 conversions/day:
 
 **When to Stop Test:**
 
-```
+```text
 STOP WHEN:
 ✅ Reached statistical significance (95%+ confidence)
 ✅ Hit minimum conversion threshold (100+)
@@ -1289,7 +1289,7 @@ DON'T STOP WHEN:
 
 **Metrics to Compare:**
 
-```
+```text
 PRIMARY METRIC:
 The main goal (usually CPA or ROAS)
 
@@ -1311,7 +1311,7 @@ Action: B becomes new control, retire A
 
 **Step 6: Implementation**
 
-```
+```text
 WINNER:
 - Scale budget
 - Becomes new control
@@ -1331,7 +1331,7 @@ NEXT TEST:
 
 **Framework 1: Sequential Testing**
 
-```
+```text
 WEEK 1: Test headlines (5 variations)
 WEEK 2: Take winning headline, test images (5 variations)
 WEEK 3: Take winning image+headline, test CTAs (3 variations)
@@ -1349,7 +1349,7 @@ Then start over with new concepts.
 
 **Framework 2: Champion vs. Challengers**
 
-```
+```text
 STRUCTURE:
 - 1 Champion (current best performer, 40% budget)
 - 4-5 Challengers (new tests, 15% budget each)
@@ -1367,7 +1367,7 @@ BENEFIT:
 
 **Framework 3: Bracket Testing**
 
-```
+```text
 ROUND 1:
 Test 8 variations (equal budget)
 
@@ -1390,7 +1390,7 @@ BENEFIT:
 
 **Test 1: Headline Test**
 
-```
+```text
 HYPOTHESIS:
 Benefit-focused headlines will outperform question headlines
 
@@ -1427,7 +1427,7 @@ Test more specific benefit angles
 
 **Test 2: Image Test**
 
-```
+```text
 HYPOTHESIS:
 UGC-style images will outperform professional product photos
 
@@ -1463,7 +1463,7 @@ Create more lifestyle imagery
 
 **Test 3: Video Hook Test**
 
-```
+```text
 HYPOTHESIS:
 Question hooks will outperform statement hooks for cold traffic
 
@@ -1500,7 +1500,7 @@ Test more result-driven hooks
 
 **Test 4: Offer Test**
 
-```
+```text
 HYPOTHESIS:
 Free trial offer will outperform discount offer
 
@@ -1567,7 +1567,7 @@ Use an A/B test significance calculator:
 
 **Interpreting Results:**
 
-```
+```text
 CONFIDENCE LEVEL: 95%
 MEANING: 95% certain this result is real, not random chance
 ACTION: Safe to declare winner and scale
@@ -1584,7 +1584,7 @@ ACTION: Results are meaningless, keep testing
 ### Common Testing Mistakes
 
 **Mistake 1: Testing Too Many Variables**
-```
+```text
 PROBLEM: Changed headline, image, copy, and audience
 RESULT: Can't determine what caused the difference
 
@@ -1592,7 +1592,7 @@ FIX: One variable at a time
 ```
 
 **Mistake 2: Stopping Test Too Early**
-```
+```text
 PROBLEM: "Variant B is winning after 1 day! Let's scale it!"
 RESULT: Random noise, not real result. Variant B fails when scaled.
 
@@ -1600,7 +1600,7 @@ FIX: Wait for statistical significance + minimum sample size + minimum duration
 ```
 
 **Mistake 3: Not Running Long Enough**
-```
+```text
 PROBLEM: Tested Monday-Wednesday only
 RESULT: Missed weekend behavior, incomplete data
 
@@ -1608,7 +1608,7 @@ FIX: Minimum 7 days to account for day-of-week variance
 ```
 
 **Mistake 4: Unequal Sample Sizes**
-```
+```text
 PROBLEM: Variant A got 1000 visitors, Variant B got 200
 RESULT: Not a fair comparison
 
@@ -1616,7 +1616,7 @@ FIX: Equal traffic split (or adjust for unequal if intentional)
 ```
 
 **Mistake 5: Looking at Wrong Metric**
-```
+```text
 PROBLEM: "Variant B has higher CTR, so it wins!"
 RESULT: But Variant B has worse CPA (what actually matters)
 
@@ -1624,7 +1624,7 @@ FIX: Always optimize for primary business metric (usually CPA or ROAS)
 ```
 
 **Mistake 6: Not Documenting Results**
-```
+```text
 PROBLEM: Ran test, forgot results, tested same thing again 3 months later
 RESULT: Wasted time and money
 
@@ -1635,7 +1635,7 @@ FIX: Test documentation system (spreadsheet, tool, etc.)
 
 **Testing Log Template:**
 
-```
+```text
 TEST ID: [Unique identifier]
 DATE: [Start - End]
 CAMPAIGN: [Which campaign]
@@ -1684,7 +1684,7 @@ SCREENSHOTS:
 
 **Knowledge Base:**
 
-```
+```text
 Build institutional knowledge:
 
 WINNERS LIBRARY:
@@ -1719,7 +1719,7 @@ BEST PRACTICES LOG:
 **Formula:** Total Spend ÷ Total Conversions
 
 **Example:**
-```
+```text
 Spent: $5,000
 Conversions: 100
 CPA: $50
@@ -1742,7 +1742,7 @@ CPA: $50
 **Formula:** Revenue ÷ Ad Spend
 
 **Example:**
-```
+```text
 Revenue: $25,000
 Ad Spend: $5,000
 ROAS: 5:1 (or 5x or 500%)
@@ -1765,7 +1765,7 @@ ROAS: 5:1 (or 5x or 500%)
 **Formula:** (Clicks ÷ Impressions) × 100
 
 **Example:**
-```
+```text
 Impressions: 100,000
 Clicks: 2,500
 CTR: 2.5%
@@ -1795,7 +1795,7 @@ CTR: 2.5%
 **Formula:** (Conversions ÷ Clicks) × 100
 
 **Example:**
-```
+```text
 Clicks: 2,500
 Conversions: 100
 CVR: 4%
@@ -1836,7 +1836,7 @@ CVR: 4%
 **Formula:** Total Watch Time ÷ Total Views
 
 **Example:**
-```
+```text
 Video length: 45 seconds
 Average watch time: 18 seconds
 Hold rate: 40%
@@ -1869,7 +1869,7 @@ Hold rate: 40%
 
 **Definitions Vary by Platform:**
 
-```
+```text
 FACEBOOK/INSTAGRAM:
 - 3-second view: Watched 3+ seconds
 - 10-second view: Watched 10+ seconds
@@ -1958,7 +1958,7 @@ Read comments for insights:
 **Formula:** (Total Spend ÷ Impressions) × 1,000
 
 **Example:**
-```
+```text
 Spent: $500
 Impressions: 100,000
 CPM: $5
@@ -1983,7 +1983,7 @@ CPM: $5
 **Formula:** Total Spend ÷ Clicks
 
 **Example:**
-```
+```text
 Spent: $1,000
 Clicks: 500
 CPC: $2
@@ -1994,7 +1994,7 @@ CPC: $2
 - Efficiency of driving traffic
 
 **Relationship to Other Metrics:**
-```
+```text
 CPA = CPC ÷ CVR
 
 If CPC = $2 and CVR = 5%:
@@ -2084,7 +2084,7 @@ Facebook's rating of ad quality (1-10 scale)
 
 **Attribution Windows:**
 
-```
+```text
 FACEBOOK:
 - 1-day click, 1-day view
 - 7-day click, 1-day view (default)
@@ -2101,7 +2101,7 @@ Different windows = different CPA reporting
 ### Metrics Dashboard
 
 **Daily Monitoring (Quick Check):**
-```
+```text
 □ Spend (on track?)
 □ CPA / ROAS (hitting targets?)
 □ Volume (enough conversions?)
@@ -2109,7 +2109,7 @@ Different windows = different CPA reporting
 ```
 
 **Weekly Analysis (Deep Dive):**
-```
+```text
 □ Creative performance (winners/losers)
 □ Frequency (any fatigue?)
 □ Audience performance (any changes?)
@@ -2118,7 +2118,7 @@ Different windows = different CPA reporting
 ```
 
 **Monthly Review (Strategic):**
-```
+```text
 □ Overall account health
 □ Creative library performance
 □ Winning patterns (what works?)
@@ -2144,7 +2144,7 @@ Secondary: CTR, CPC
 ### Calculating ROI
 
 **Formula:**
-```
+```text
 ROI = (Revenue - Ad Spend) ÷ Ad Spend × 100
 
 Example:
@@ -2154,7 +2154,7 @@ ROI = ($25,000 - $5,000) ÷ $5,000 × 100 = 400%
 ```
 
 **Break-Even:**
-```
+```text
 Break-even ROAS = 1 ÷ Profit Margin
 
 If profit margin is 40%:
@@ -2183,7 +2183,7 @@ Need 2.5:1 ROAS to break even
 - Funnel.io (multi-platform aggregation)
 
 **Spreadsheet Tracking:**
-```
+```text
 Simple daily log:
 Date | Campaign | Spend | Clicks | Conv | CPA | ROAS | Notes
 [Track daily to spot trends quickly]

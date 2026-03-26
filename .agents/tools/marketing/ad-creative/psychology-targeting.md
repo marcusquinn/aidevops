@@ -28,7 +28,7 @@ Humans are hardwired to avoid loss more than seek gain. Loss aversion is 2-3x mo
 - "Only 3 Days Left Before Price Increases 40%"
 
 **Example Copy Framework:**
-```
+```text
 [IDENTIFY LOSS]:
 "Every day you don't optimize your ads, you're burning money."
 
@@ -84,7 +84,7 @@ The pursuit of gain, wealth, advantage, or more. Different from fear - this is a
 - "The $27 Tool That Replaced Our $5K/Month Agency"
 
 **Example Copy Framework:**
-```
+```text
 [CURRENT STATE]:
 "You're spending $10K/month on ads."
 
@@ -141,7 +141,7 @@ Humans have a psychological need to fill knowledge gaps. When you create a gap b
 - "The Unusual Strategy Behind Our Best Month Ever"
 
 **Example Copy Framework:**
-```
+```text
 [CREATE GAP]:
 "There's a reason 93% of Facebook ads fail. But it's not what you think."
 
@@ -198,7 +198,7 @@ People want to see themselves positively and be seen positively by others. Produ
 - "Transform From Beginner to Expert in 12 Weeks"
 
 **Example Copy Framework:**
-```
+```text
 [CURRENT SELF]:
 "You're good at what you do. But 'good' isn't enough anymore."
 
@@ -256,7 +256,7 @@ Humans are tribal. We want to be part of groups, movements, and communities. We 
 - "The Community Every [Professional] is Joining"
 
 **Example Copy Framework:**
-```
+```text
 [IDENTIFY IN-GROUP]:
 "There are two types of business owners..."
 
@@ -314,7 +314,7 @@ People want to feel accomplished, capable, and proud of their achievements. Prod
 - "Finally Master [Skill] You've Always Wanted"
 
 **Example Copy Framework:**
-```
+```text
 [RECOGNIZE CURRENT EFFORT]:
 "You've been working hard. Showing up. Putting in the hours."
 
@@ -372,7 +372,7 @@ When people are frustrated with the status quo, products that offer an alternati
 - "The Industry Doesn't Want You to Know This"
 
 **Example Copy Framework:**
-```
+```text
 [VALIDATE FRUSTRATION]:
 "You're right to be frustrated. You've tried 3 agencies. Each one promised results. Each one failed to deliver."
 
@@ -450,7 +450,7 @@ When people are frustrated with the status quo, products that offer an alternati
 
 **Test Framework:**
 
-```
+```text
 CONTROL: Curiosity-based ad
 "Want to know the secret to [outcome]?"
 
@@ -505,7 +505,7 @@ Winner = most effective trigger for this audience
 - Pattern interrupts
 
 **Example:**
-```
+```text
 PRODUCT: Email marketing software
 
 BAD (selling features):
@@ -538,7 +538,7 @@ GOOD (creating awareness):
 - Authority building
 
 **Example:**
-```
+```text
 PRODUCT: Project management tool
 
 BAD (assuming solution awareness):
@@ -571,7 +571,7 @@ GOOD (meeting them at problem awareness):
 - Expert positioning
 
 **Example:**
-```
+```text
 PRODUCT: Organic meal delivery
 
 BAD (generic benefits):
@@ -604,7 +604,7 @@ GOOD (differentiation):
 - Risk reversal
 
 **Example:**
-```
+```text
 PRODUCT: CRM software
 
 BAD (still educating):
@@ -637,7 +637,7 @@ GOOD (assuming product knowledge):
 - Exclusive deals
 
 **Example:**
-```
+```text
 PRODUCT: Subscription box
 
 BAD (generic awareness):
@@ -660,7 +660,7 @@ GOOD (highly aware):
 - Skeptical of traditional advertising
 
 **Example:**
-```
+```text
 BAD: "Premium quality craftsmanship since 1952"
 GOOD: "No cap, these are actually good. And sustainably made. Here's the proof. [Shows supply chain]"
 ```
@@ -674,7 +674,7 @@ GOOD: "No cap, these are actually good. And sustainably made. Here's the proof. 
 - Convenience prioritized
 
 **Example:**
-```
+```text
 BAD: "Own the best [product]"
 GOOD: "Life's too short for [pain point]. Get [benefit] delivered monthly, cancel anytime. Join 50K+ members."
 ```
@@ -688,7 +688,7 @@ GOOD: "Life's too short for [pain point]. Get [benefit] delivered monthly, cance
 - Results-focused
 
 **Example:**
-```
+```text
 BAD: "OMG this is amazing!!!"
 GOOD: "No gimmicks. No false promises. Just a product that does exactly what it says, backed by 10,000+ verified reviews."
 ```
@@ -702,7 +702,7 @@ GOOD: "No gimmicks. No false promises. Just a product that does exactly what it 
 - Clear, straightforward messaging
 
 **Example:**
-```
+```text
 BAD: "Disrupt your industry with AI-powered..."
 GOOD: "Family-owned since 1985. Trusted by 100,000+ customers. Exceptional service guaranteed. Call us: [number]"
 ```
@@ -710,7 +710,7 @@ GOOD: "Family-owned since 1985. Trusted by 100,000+ customers. Exceptional servi
 ### Industry-Specific Messaging
 
 **B2B SaaS:**
-```
+```text
 FOCUS: ROI, efficiency, time saved
 TONE: Professional but not stuffy
 PROOF: Case studies, data, testimonials
@@ -722,7 +722,7 @@ EXAMPLE:
 ```
 
 **E-commerce (Fashion/Beauty):**
-```
+```text
 FOCUS: Transformation, status, belonging
 TONE: Aspirational, trendy, visual-first
 PROOF: UGC, influencer content, before/after
@@ -734,7 +734,7 @@ EXAMPLE:
 ```
 
 **Professional Services:**
-```
+```text
 FOCUS: Expertise, results, trustworthiness
 TONE: Confident, authoritative, helpful
 PROOF: Credentials, case studies, results
@@ -746,7 +746,7 @@ EXAMPLE:
 ```
 
 **Health/Wellness:**
-```
+```text
 FOCUS: Transformation, science/proof, empathy
 TONE: Supportive, knowledgeable, personal
 PROOF: Results, research, testimonials
@@ -758,7 +758,7 @@ EXAMPLE:
 ```
 
 **Financial Services:**
-```
+```text
 FOCUS: Security, growth, expertise
 TONE: Trustworthy, clear, educational
 PROOF: Credentials, track record, guarantees
@@ -772,7 +772,7 @@ EXAMPLE:
 ### Psychographic Matching
 
 **Early Adopters:**
-```
+```text
 MESSAGE: Innovation, cutting-edge, first access
 TRIGGER: Curiosity, vanity (status of being first)
 HOOK: "Be among the first to..."
@@ -780,7 +780,7 @@ PROOF: Beta results, tech specs, roadmap
 ```
 
 **Pragmatists:**
-```
+```text
 MESSAGE: Proven, reliable, mainstream
 TRIGGER: Belonging (others like them use it), fear (being left behind)
 HOOK: "Join thousands who've already made the switch"
@@ -788,7 +788,7 @@ PROOF: User count, testimonials, longevity
 ```
 
 **Value Seekers:**
-```
+```text
 MESSAGE: Best price, maximum value, smart spending
 TRIGGER: Greed (more for less), pride (smart shopper)
 HOOK: "Same quality, 60% lower price"
@@ -796,7 +796,7 @@ PROOF: Comparison charts, price breakdowns
 ```
 
 **Premium Buyers:**
-```
+```text
 MESSAGE: Quality, exclusivity, premium experience
 TRIGGER: Vanity, belonging (exclusive group)
 HOOK: "For those who refuse to compromise"
@@ -807,7 +807,7 @@ PROOF: Materials, craftsmanship, prestige
 
 **Test Protocol:**
 
-```
+```text
 STEP 1: Identify Audience Segments
 - Demographics
 - Psychographics
@@ -838,7 +838,7 @@ STEP 5: Iterate
 
 **Example Test:**
 
-```
+```text
 PRODUCT: Productivity app
 
 AUDIENCE 1: Freelancers (25-35)

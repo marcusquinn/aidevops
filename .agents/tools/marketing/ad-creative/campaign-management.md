@@ -9,7 +9,7 @@
 
 ### Standard Creative Brief Template
 
-```
+```text
 PROJECT NAME: [Campaign/Creative Name]
 DATE: [Today's Date]
 REQUESTER: [Your Name/Team]
@@ -191,7 +191,7 @@ Any other relevant information:
 
 ### Video-Specific Creative Brief
 
-```
+```text
 PROJECT: [Video Ad Name]
 LENGTH: [15s / 30s / 60s]
 PLATFORM: [Platform(s)]
@@ -296,7 +296,7 @@ BUDGET: $___
 
 ### UGC Creator Brief Template
 
-```
+```text
 HI [CREATOR NAME]!
 
 Thanks for working with us! Here's everything you need to create an amazing video for [BRAND].
@@ -466,7 +466,7 @@ We're excited to see what you create!
 
 **[Quick version for agencies/in-house teams]**
 
-```
+```text
 CAMPAIGN: [Name]
 OBJECTIVE: [Primary goal + KPI]
 PLATFORM: [Where it runs]
@@ -536,7 +536,7 @@ SUCCESS METRICS:
 Free, public database of all active ads running on Facebook/Instagram
 
 **How to Use:**
-```
+```text
 1. Go to facebook.com/ads/library
 2. Select "All Ads"
 3. Search competitor brand name
@@ -566,7 +566,7 @@ Free, public database of all active ads running on Facebook/Instagram
 Similar to Facebook Ad Library, but for Google Ads
 
 **How to Use:**
-```
+```text
 1. Go to adstransparency.google.com
 2. Search competitor name
 3. View their display ads, video ads, text ads
@@ -590,7 +590,7 @@ Similar to Facebook Ad Library, but for Google Ads
 - Estimated spend
 
 **How to Use:**
-```
+```text
 1. Enter competitor domain
 2. Navigate to PPC/Ads section
 3. Review:
@@ -622,7 +622,7 @@ Similar to Facebook Ad Library, but for Google Ads
 **5. Manual Research**
 
 **Social Media Stalking:**
-```
+```text
 1. Follow competitors on all platforms
 2. Turn on notifications
 3. Screenshot every ad you see from them
@@ -630,7 +630,7 @@ Similar to Facebook Ad Library, but for Google Ads
 ```
 
 **Search Engine Research:**
-```
+```text
 1. Google your primary keywords
 2. Screenshot all competitor ads
 3. Note: messaging, offers, landing pages
@@ -638,7 +638,7 @@ Similar to Facebook Ad Library, but for Google Ads
 ```
 
 **TikTok/Instagram Research:**
-```
+```text
 1. Follow competitors
 2. Watch for promoted content (ads)
 3. Check "Sponsored" label
@@ -649,7 +649,7 @@ Similar to Facebook Ad Library, but for Google Ads
 
 **For Each Competitor Ad, Document:**
 
-```
+```text
 BASIC INFO:
 - Competitor name:
 - Date first seen:
@@ -705,7 +705,7 @@ Gaps they're leaving:
 
 **Example Analysis:**
 
-```
+```text
 COMPETITOR: ProjectToolX
 DATE: May 2024
 PLATFORM: Facebook
@@ -739,7 +739,7 @@ Opportunity: Create UGC-style ad highlighting integrations + collaboration
 **After analyzing competitors, identify:**
 
 **1. What Everyone is Saying (Commoditized Messages)**
-```
+```text
 If all competitors are saying the same thing, that message is commoditized.
 
 Example in project management software:
@@ -751,7 +751,7 @@ STRATEGY: Say something different or say it better
 ```
 
 **2. What Nobody is Saying (Opportunity)**
-```
+```text
 Gaps in competitor messaging = your opportunity
 
 Example:
@@ -763,7 +763,7 @@ STRATEGY: Own that messaging
 ```
 
 **3. Unique Strengths (Your Unfair Advantages)**
-```
+```text
 What can you claim that competitors can't?
 
 Examples:
@@ -789,7 +789,7 @@ STRATEGY: Lead with this
 
 **Monthly Competitor Ad Check:**
 
-```
+```text
 FREQUENCY: Monthly (first Monday of each month)
 TIME REQUIRED: 1-2 hours
 
@@ -821,7 +821,7 @@ PROCESS:
 
 **Competitor Tracking Template:**
 
-```
+```text
 SPREADSHEET COLUMNS:
 - Competitor name
 - Date seen
@@ -858,7 +858,7 @@ SPREADSHEET COLUMNS:
 
 **Inspiration vs. Imitation:**
 
-```
+```text
 INSPIRATION (Good):
 "They're using UGC testimonials effectively. Let's create our own UGC testimonials."
 
@@ -876,7 +876,7 @@ IMITATION (Bad):
 
 **From Analysis → Creative Tests:**
 
-```
+```text
 INSIGHT: "Competitor X's UGC ads have been running 6+ months (likely working)"
 
 ACTION:
@@ -932,7 +932,7 @@ ACTION:
 **Seasonal Creative Best Practices:**
 
 **1. Plan Ahead**
-```
+```text
 TIMELINE:
 - 6-8 weeks before: Creative concept approval
 - 4-6 weeks before: Creative production
@@ -942,7 +942,7 @@ TIMELINE:
 ```
 
 **2. Don't Force It**
-```
+```text
 GOOD: Seasonal angle that makes sense for product
 "New Year, New Workspace - 40% Off Desk Organizers"
 
@@ -951,7 +951,7 @@ BAD: Forced seasonal connection
 ```
 
 **3. Refresh Assets**
-```
+```text
 Option 1: Seasonal Rebrand
 - Update colors (red/green for Christmas)
 - Seasonal imagery
@@ -971,7 +971,7 @@ Option 3: Minimal Reference
 **Seasonal Creative Examples:**
 
 **Black Friday / Cyber Monday:**
-```
+```text
 VISUAL:
 - Bold "BLACK FRIDAY" text
 - Discount badges
@@ -993,7 +993,7 @@ Shop Now 🛍️"
 ```
 
 **New Year's / Resolutions:**
-```
+```text
 VISUAL:
 - Fresh, clean imagery
 - "New Year, New [Benefit]"
@@ -1014,7 +1014,7 @@ First month free - start your transformation."
 ```
 
 **Valentine's Day:**
-```
+```text
 VISUAL (if relevant):
 - Red/pink colors
 - Heart imagery
@@ -1040,7 +1040,7 @@ Because self-love is the best love. ❤️"
 ```
 
 **Back to School:**
-```
+```text
 VISUAL:
 - School-related imagery
 - Organization-focused
@@ -1078,7 +1078,7 @@ Verify your student status for exclusive pricing.
 **How to Leverage Trends:**
 
 **1. Speed is Critical**
-```
+```text
 Trends have short lifecycles:
 - Viral meme: 3-7 days relevance
 - Platform trend: 2-4 weeks
@@ -1093,7 +1093,7 @@ PROCESS:
 ```
 
 **2. Brand-Trend Fit**
-```
+```text
 ASK:
 □ Does this trend align with our brand?
 □ Will our audience find it relevant?
@@ -1105,7 +1105,7 @@ If NO to any: Skip it.
 ```
 
 **3. Add Value, Don't Just Participate**
-```
+```text
 BAD:
 [Just using trending sound with no connection to product]
 
@@ -1132,7 +1132,7 @@ Good: [Making it relevant and entertaining]
 - Creative tools (Foreplay, Motion, etc.)
 
 **How to Use:**
-```
+```text
 STEP 1: Find trending audio in your niche
 STEP 2: Watch top videos using it
 STEP 3: Adapt format to your product
@@ -1143,7 +1143,7 @@ STEP 7: Kill if trend dies or performance drops
 ```
 
 **Example:**
-```
+```text
 TRENDING AUDIO: "It's corn!"
 
 ORIGINAL: Kid talking about loving corn
@@ -1161,7 +1161,7 @@ BRAND ADAPTATION:
 **Moment**: Olympics, World Cup, Awards Shows, etc.
 
 **Strategies:**
-```
+```text
 DIRECT TIE-IN (if relevant):
 "Going for gold? So are we. 🥇
 Our athletes use [Product] to train smarter.
@@ -1190,7 +1190,7 @@ Fast as Usain Bolt. ⚡ Free 2-day shipping."
 - If you can't add value
 
 **Example (Good Newsjacking):**
-```
+```text
 EVENT: Apple releases new iPhone
 
 YOUR BRAND: Phone accessory company
@@ -1204,7 +1204,7 @@ Orders ship same day."
 ```
 
 **Example (Bad Newsjacking):**
-```
+```text
 EVENT: Tragedy/disaster
 
 YOUR BRAND: Any
@@ -1218,7 +1218,7 @@ ATTEMPT: Trying to sell using the tragedy
 
 **Annual Planning:**
 
-```
+```text
 JANUARY:
 - New Year's/Resolutions creative
 - Post-holiday sales
@@ -1286,7 +1286,7 @@ DECEMBER:
 
 **Planning Template:**
 
-```
+```text
 [SEASON/EVENT]:
 Date: [When]
 Target Audience: [Who celebrates/cares]
@@ -1304,7 +1304,7 @@ Success Metrics: [KPIs]
 
 **Budget Allocation:**
 
-```
+```text
 EVERGREEN (60-70% of budget):
 - Core product/service promotion
 - Always-on campaigns
@@ -1331,7 +1331,7 @@ SEASONAL (30-40% of budget):
 ### The Retargeting Funnel
 
 **Level 1: Site Visitors (Low Intent)**
-```
+```text
 WHO: Visited website, didn't convert
 AWARENESS: Problem aware, solution aware
 TIME SINCE VISIT: 1-30 days
@@ -1349,7 +1349,7 @@ MESSAGE EXAMPLE:
 ```
 
 **Level 2: Engaged Visitors (Medium Intent)**
-```
+```text
 WHO: Multiple page views, spent 2+ minutes, watched video, etc.
 AWARENESS: Product aware
 TIME SINCE VISIT: 1-14 days
@@ -1367,7 +1367,7 @@ MESSAGE EXAMPLE:
 ```
 
 **Level 3: Cart Abandoners (High Intent)**
-```
+```text
 WHO: Added to cart, didn't purchase
 AWARENESS: Most aware (ready to buy)
 TIME SINCE ABANDONMENT: 1-7 days
@@ -1387,7 +1387,7 @@ Still available - but only [X] left in stock."
 ```
 
 **Level 4: Past Customers (Retention/Upsell)**
-```
+```text
 WHO: Already purchased
 AWARENESS: Customer
 TIME SINCE PURCHASE: Varies
@@ -1412,7 +1412,7 @@ Get 30% off [Product B] as a thank you for being a customer."
 ### Retargeting Creative Best Practices
 
 **1. Acknowledge the Relationship**
-```
+```text
 DON'T pretend it's the first interaction:
 ❌ "Discover our amazing product!"
 
@@ -1423,7 +1423,7 @@ DO acknowledge they know you:
 ```
 
 **2. Dynamic Creative (Show What They Viewed)**
-```
+```text
 FACEBOOK/INSTAGRAM:
 - Dynamic Product Ads (DPA)
 - Automatically shows products they viewed
@@ -1440,7 +1440,7 @@ BENEFIT:
 ```
 
 **3. Progression Messaging**
-```
+```text
 Don't show the same ad forever. Progress the narrative:
 
 DAY 1-3:
@@ -1457,7 +1457,7 @@ DAY 15-30:
 ```
 
 **4. Objection Handling**
-```
+```text
 Common objections by retargeting segment:
 
 SITE VISITORS:
@@ -1479,7 +1479,7 @@ PAST CUSTOMERS:
 ```
 
 **5. Offer Escalation**
-```
+```text
 Start soft, increase incentive over time:
 
 WEEK 1:
@@ -1501,7 +1501,7 @@ RATIONALE:
 ```
 
 **6. Frequency Capping**
-```
+```text
 DON'T show same ad 50 times/day
 
 RECOMMENDED CAPS:
@@ -1518,7 +1518,7 @@ BURN OUT PREVENTION:
 ### Retargeting Creative Formulas
 
 **Formula 1: Reminder + Social Proof**
-```
+```text
 [REMINDER]:
 "You were looking at [Product]"
 
@@ -1537,7 +1537,7 @@ Get yours today - free shipping included."
 ```
 
 **Formula 2: Objection Handling**
-```
+```text
 [ACKNOWLEDGE HESITATION]:
 "Not sure yet? We get it."
 
@@ -1562,7 +1562,7 @@ Try it risk-free for 60 days. Love it or get your money back."
 ```
 
 **Formula 3: Urgency/Scarcity**
-```
+```text
 [ACKNOWLEDGE DELAY]:
 "You haven't ordered yet"
 
@@ -1583,7 +1583,7 @@ Complete your order now and get free overnight shipping."
 ```
 
 **Formula 4: Value Stack**
-```
+```text
 [PRODUCT REMINDER]:
 "You viewed [Product]"
 
@@ -1618,7 +1618,7 @@ Add to cart now →"
 ```
 
 **Formula 5: Comparison/Differentiation**
-```
+```text
 [ACKNOWLEDGE RESEARCH]:
 "We know you're comparing options"
 
@@ -1654,7 +1654,7 @@ See the full comparison →"
 **Facebook/Instagram Retargeting:**
 
 **Audience Segments:**
-```
+```text
 1. Website Visitors (180 days)
    └─ All visitors
    └─ Specific pages (product, pricing, blog)
@@ -1679,7 +1679,7 @@ See the full comparison →"
 
 **Creative Approach by Segment:**
 
-```
+```text
 VIDEO VIEWERS (50%+):
 - They know your story/value prop
 - Skip re-introduction
@@ -1708,7 +1708,7 @@ PAST CUSTOMERS:
 **Google Retargeting:**
 
 **RLSA (Remarketing Lists for Search Ads):**
-```
+```text
 STRATEGY:
 - Bid higher on search ads for past visitors
 - Adjust messaging for warm audience
@@ -1725,7 +1725,7 @@ RLSA AD (for past visitors):
 ```
 
 **Display Retargeting:**
-```
+```text
 - Use dynamic remarketing (show products they viewed)
 - Rotate creative frequently
 - Frequency cap (don't oversaturate)
@@ -1733,7 +1733,7 @@ RLSA AD (for past visitors):
 ```
 
 **YouTube Retargeting:**
-```
+```text
 WHO: People who visited site or watched your videos
 CREATIVE: Video ads (skippable in-stream or bumpers)
 MESSAGE: Continuation of their journey
@@ -1748,7 +1748,7 @@ They abandoned cart → Show the exact product + urgency
 
 While not "ads," email retargeting follows similar principles:
 
-```
+```text
 EMAIL 1 (1 hour after cart abandonment):
 Subject: "Forget something?"
 Content: Cart contents, easy checkout link
@@ -1770,7 +1770,7 @@ Content: Win-back offer, last attempt
 
 **Expected Performance (vs. Cold Traffic):**
 
-```
+```text
 METRICS:
 - CTR: 2-4x higher than cold traffic
 - CPA: 30-50% lower than cold traffic
@@ -1801,42 +1801,42 @@ Past Customers:
 ### Retargeting Mistakes to Avoid
 
 **Mistake 1: Retargeting Too Broadly**
-```
+```text
 PROBLEM: Retargeting everyone who visited homepage
 
 FIX: Segment by intent (product viewers > blog readers)
 ```
 
 **Mistake 2: Same Ad Forever**
-```
+```text
 PROBLEM: One static retargeting ad for 90 days
 
 FIX: Creative rotation + progressive messaging
 ```
 
 **Mistake 3: No Frequency Cap**
-```
+```text
 PROBLEM: Showing ad 100x to same person
 
 FIX: Cap at 3-5x per day, rotate creative
 ```
 
 **Mistake 4: Weak Offers**
-```
+```text
 PROBLEM: Same offer as cold traffic
 
 FIX: Stronger offers for warm audience (they need incentive)
 ```
 
 **Mistake 5: Not Excluding Converters**
-```
+```text
 PROBLEM: Showing ads to people who already bought
 
 FIX: Exclude conversion event audience
 ```
 
 **Mistake 6: Retargeting Too Long**
-```
+```text
 PROBLEM: 180-day retargeting window
 
 FIX: 30-60 days for most products (intent decays)
@@ -1869,7 +1869,7 @@ When an audience sees the same ad too many times, performance degrades (CTR drop
 **Strategy 1: Creative Rotation**
 
 **The 5-Creative Minimum:**
-```
+```text
 RULE: Always run minimum 5 creative variations per ad set
 
 WHY:
@@ -1885,7 +1885,7 @@ STRUCTURE:
 ```
 
 **Rotation Schedule:**
-```
+```text
 WEEKLY:
 - Add 2-3 new creatives
 - Remove bottom 2 performers
@@ -1907,7 +1907,7 @@ MONTHLY:
 **Iteration (Refresh):**
 Change ONE element of winning creative
 
-```
+```text
 WINNING AD: UGC testimonial video
 
 ITERATIONS:
@@ -1921,7 +1921,7 @@ ITERATIONS:
 **New Concepts (Replacement):**
 Entirely new angle/approach
 
-```
+```text
 CURRENT: Problem-solution UGC video
 
 NEW CONCEPTS:
@@ -1933,7 +1933,7 @@ NEW CONCEPTS:
 ```
 
 **When to Iterate vs. Create New:**
-```
+```text
 ITERATE when:
 - Creative is performing well
 - Frequency is rising but performance acceptable
@@ -1954,7 +1954,7 @@ CREATE NEW when:
 - More scale potential
 
 **Expansion Methods:**
-```
+```text
 LOOKALIKE AUDIENCES:
 - 1% lookalike (start here)
 - 2-3% lookalike (expand)
@@ -1974,7 +1974,7 @@ GEO EXPANSION:
 **Strategy 4: Frequency Management**
 
 **Frequency Caps:**
-```
+```text
 FACEBOOK/INSTAGRAM:
 No built-in frequency cap, monitor manually
 
@@ -1990,7 +1990,7 @@ ACTION WHEN EXCEEDED:
 ```
 
 **Frequency Monitoring:**
-```
+```text
 DAILY CHECK:
 - Campaigns with frequency >5
 
@@ -2007,7 +2007,7 @@ ACTION TRIGGERS:
 **Strategy 5: Creative Lifespan Planning**
 
 **Planned Obsolescence:**
-```
+```text
 DON'T: Run creative until it dies
 DO: Retire creative at peak and introduce fresh options
 
@@ -2034,7 +2034,7 @@ Keep video body the same, change first 3 seconds
 - Fast to test (only film new hooks)
 
 **Process:**
-```
+```text
 1. Identify winning video ad
 2. Film 5-10 different hooks (3-second openings)
 3. Keep body identical (seconds 3-60)
@@ -2044,7 +2044,7 @@ Keep video body the same, change first 3 seconds
 ```
 
 **Example:**
-```
+```text
 WINNING VIDEO: 45-second SaaS product demo
 
 ORIGINAL HOOK:
@@ -2070,7 +2070,7 @@ Extends creative lifespan
 - Mitigates risk of single-platform saturation
 
 **Platform Strategy:**
-```
+```text
 PRIMARY PLATFORM:
 Facebook/Instagram (60% budget)
 
@@ -2088,7 +2088,7 @@ If Facebook fatigues, others still perform
 
 **Detection Framework:**
 
-```
+```text
 WEEKLY FATIGUE AUDIT:
 
 STEP 1: Pull performance data (last 7 days vs. prior 7 days)
@@ -2121,7 +2121,7 @@ STEP 4: Take action based on severity
 **Response Playbook:**
 
 **Response 1: Creative Injection**
-```
+```text
 WHEN: Light-moderate fatigue
 ACTION:
 - Launch 3-5 new creatives immediately
@@ -2130,7 +2130,7 @@ ACTION:
 ```
 
 **Response 2: Pause & Refresh**
-```
+```text
 WHEN: Moderate fatigue
 ACTION:
 - Pause fatigued creative for 48-72 hours
@@ -2139,7 +2139,7 @@ ACTION:
 ```
 
 **Response 3: Kill & Replace**
-```
+```text
 WHEN: Severe fatigue
 ACTION:
 - Turn off creative immediately
@@ -2148,7 +2148,7 @@ ACTION:
 ```
 
 **Response 4: Audience Expansion**
-```
+```text
 WHEN: Any fatigue level + small audience
 ACTION:
 - Expand targeting by 50-100%
@@ -2157,7 +2157,7 @@ ACTION:
 ```
 
 **Response 5: Budget Reduction**
-```
+```text
 WHEN: Can't expand audience, creative fatigued
 ACTION:
 - Reduce budget 50%
@@ -2169,7 +2169,7 @@ ACTION:
 
 **Tactic 1: Evergreen Angles**
 
-```
+```text
 AVOID:
 Time-sensitive creative that dates itself
 
@@ -2189,7 +2189,7 @@ Universal benefits
 
 **Tactic 2: Variety in Sameness**
 
-```
+```text
 CONCEPT: Create 10 variations of the same winning message
 
 WINNING MESSAGE: "Get organized in 5 minutes"
@@ -2206,7 +2206,7 @@ BENEFIT: Looks fresh, same core message
 
 **Tactic 3: Modular Video Content**
 
-```
+```text
 FILM ONCE, EDIT MANY WAYS:
 
 Record:
@@ -2222,7 +2222,7 @@ Edit into:
 
 **Tactic 4: Dynamic Creative**
 
-```
+```text
 USE PLATFORM DCO:
 - Facebook Dynamic Creative
 - Google Responsive Ads
@@ -2235,7 +2235,7 @@ WHY:
 
 **Tactic 5: Sequential Messaging**
 
-```
+```text
 Don't show same ad repeatedly.
 Show progression:
 
@@ -2264,7 +2264,7 @@ Reduces fatigue feeling
 **Production Strategies:**
 
 **Strategy 1: UGC at Scale**
-```
+```text
 - Hire 10-20 UGC creators
 - Each creates 2-3 videos per month
 - = 20-60 new videos monthly
@@ -2272,7 +2272,7 @@ Reduces fatigue feeling
 ```
 
 **Strategy 2: In-House Content Team**
-```
+```text
 - 1-2 content creators (full-time)
 - Produce 30-50 assets per month
 - Mix of video, image, copy variations
@@ -2280,7 +2280,7 @@ Reduces fatigue feeling
 ```
 
 **Strategy 3: Agency Partnership**
-```
+```text
 - Monthly creative retainer
 - 20-40 creatives per month
 - Professional production
@@ -2288,7 +2288,7 @@ Reduces fatigue feeling
 ```
 
 **Strategy 4: Hybrid Approach**
-```
+```text
 - In-house for quick iterations
 - UGC for authenticity
 - Agency for hero/brand content
@@ -2297,7 +2297,7 @@ Reduces fatigue feeling
 
 ### Fatigue Prevention Checklist
 
-```
+```text
 □ Running minimum 5 creatives per ad set
 □ Adding 2-3 new creatives per week
 □ Removing bottom performers weekly
@@ -2343,7 +2343,7 @@ Viewer decides in 1 second whether to click/watch based on thumbnail
 - Eye contact captures attention
 
 **Best Practices:**
-```
+```text
 ✅ DO:
 - Close-up faces (fill 40-60% of thumbnail)
 - Exaggerated expressions (shock, excitement, curiosity)
@@ -2375,7 +2375,7 @@ Viewer decides in 1 second whether to click/watch based on thumbnail
 - Highlight key benefit
 
 **Best Practices:**
-```
+```text
 TEXT LENGTH:
 - 3-6 words maximum
 - Readable at thumbnail size
@@ -2399,7 +2399,7 @@ COLOR:
 
 **Text Formulas:**
 
-```
+```text
 FORMULA 1: Result/Number
 "$10K in 30 Days"
 "10X Growth"
@@ -2458,7 +2458,7 @@ FORMULA 5: Question
 
 **High-Performing Thumbnail Colors:**
 
-```
+```text
 RED:
 - Emotion: Urgency, excitement
 - Use: Mistakes, warnings, alerts
@@ -2491,7 +2491,7 @@ ORANGE:
 ```
 
 **Color Contrast Rules:**
-```
+```text
 HIGH CONTRAST (Use these):
 - Black + White
 - Yellow + Black
@@ -2508,7 +2508,7 @@ LOW CONTRAST (Avoid):
 ### Thumbnail Design Process
 
 **Step 1: Concept**
-```
+```text
 QUESTIONS TO ANSWER:
 - What is the video about?
 - What will make people click?
@@ -2524,7 +2524,7 @@ SKETCH:
 **Step 2: Photography/Capture**
 
 **For YouTube Thumbnails:**
-```
+```text
 CAMERA:
 - DSLR or high-quality smartphone
 - 1920x1080 minimum resolution
@@ -2547,7 +2547,7 @@ EXPRESSION:
 
 **For Social Media Thumbnails:**
 
-```
+```text
 VERTICAL (Stories, Reels, TikTok):
 - 9:16 aspect ratio
 - First frame of video
@@ -2569,7 +2569,7 @@ SQUARE (Feed posts):
 - Pixlr (browser-based)
 
 **Editing Checklist:**
-```
+```text
 □ Face in focus (if using face)
 □ High contrast (elements pop)
 □ Text readable at small size (test it!)
@@ -2584,7 +2584,7 @@ SQUARE (Feed posts):
 
 **A/B Test Thumbnails:**
 
-```
+```text
 YOUTUBE:
 - Upload video with Thumbnail A
 - After 24-48 hours, note CTR
@@ -2596,7 +2596,7 @@ Or use TubeBuddy/VidIQ for split testing
 ```
 
 **FACEBOOK/INSTAGRAM:**
-```
+```text
 - Launch same video with different thumbnail
 - Create separate ad sets
 - Measure CTR and video views
@@ -2604,7 +2604,7 @@ Or use TubeBuddy/VidIQ for split testing
 ```
 
 **Small-Size Test:**
-```
+```text
 Before finalizing:
 - Shrink thumbnail to actual display size
 - Is text readable?
@@ -2623,7 +2623,7 @@ Before finalizing:
 - Format: JPG, GIF, PNG
 
 **Best Practices:**
-```
+```text
 TEXT RULES:
 - 3-6 words max
 - Bold, thick fonts
@@ -2647,7 +2647,7 @@ DESIGN:
 
 **Thumbnail Types:**
 
-```
+```text
 1. FACE + TEXT
 [Large face with expression + 3-6 word text overlay]
 Best for: Personal brand, vlog-style
@@ -2671,7 +2671,7 @@ Best for: Narratives, case studies
 
 **YouTube Thumbnail Examples:**
 
-```
+```text
 EXAMPLE 1 - Finance Video:
 - Face: Excited expression, pointing
 - Text: "$10K in 30 Days"
@@ -2699,7 +2699,7 @@ EXAMPLE 3 - Vs. Comparison:
 - Landscape (16:9): 1920x1080
 
 **Best Practices:**
-```
+```text
 FIRST FRAME RULES:
 - Assume sound-off viewing
 - Text on-screen (not just in audio)
@@ -2714,7 +2714,7 @@ DESIGN:
 ```
 
 **Feed Video (Square):**
-```
+```text
 DESIGN:
 - Center focus (cropped top/bottom on mobile)
 - Text in safe zone (avoid edges)
@@ -2722,7 +2722,7 @@ DESIGN:
 ```
 
 **Stories/Reels (Vertical):**
-```
+```text
 DESIGN:
 - Vertical composition
 - Text in middle third
@@ -2737,7 +2737,7 @@ DESIGN:
 - Cover image pulled from video (can't upload separate)
 
 **Best Practices:**
-```
+```text
 FIRST FRAME OPTIMIZATION:
 - Start with hook visual
 - Text overlay on first frame
@@ -2753,7 +2753,7 @@ DESIGN:
 ### Thumbnail Mistakes to Avoid
 
 **Mistake 1: Tiny Text**
-```
+```text
 PROBLEM: Text too small, unreadable at thumbnail size
 
 TEST: Shrink thumbnail to actual display size. Can you still read it?
@@ -2762,21 +2762,21 @@ FIX: Increase font size, reduce word count
 ```
 
 **Mistake 2: Too Much Information**
-```
+```text
 PROBLEM: Cluttered thumbnail with face + text + product + arrows + multiple colors
 
 FIX: Maximum 3 elements (face + text + one other thing)
 ```
 
 **Mistake 3: Low Contrast**
-```
+```text
 PROBLEM: Yellow text on white background (can't see it)
 
 FIX: Add stroke/outline, change background, or change text color
 ```
 
 **Mistake 4: Misleading Thumbnail**
-```
+```text
 PROBLEM: Thumbnail shows something not in video (clickbait)
 
 CONSEQUENCE: High CTR, low watch time, lower rankings, viewer distrust
@@ -2785,14 +2785,14 @@ FIX: Thumbnail should accurately represent video content
 ```
 
 **Mistake 5: Generic Stock Photos**
-```
+```text
 PROBLEM: Using obvious stock photos (looks impersonal, low-quality)
 
 FIX: Custom photos or authentic images
 ```
 
 **Mistake 6: No Human Element**
-```
+```text
 PROBLEM: Just product or text (no face)
 
 FIX: Add face with emotion (performs better in most cases)
@@ -2801,7 +2801,7 @@ EXCEPTION: Product demos where showing product is most important
 ```
 
 **Mistake 7: Ignoring Brand Consistency**
-```
+```text
 PROBLEM: Every thumbnail looks completely different
 
 FIX: Establish template/style (fonts, colors, layout) and maintain it
@@ -2810,7 +2810,7 @@ FIX: Establish template/style (fonts, colors, layout) and maintain it
 ### Thumbnail Templates
 
 **Template 1: Face + Text Formula**
-```
+```text
 LAYOUT:
 - Face: Left or right side, 50% of frame
 - Text: Opposite side, 3-6 words
@@ -2821,7 +2821,7 @@ USE FOR: Personal brand, testimonials, reactions
 ```
 
 **Template 2: Split Screen**
-```
+```text
 LAYOUT:
 - Left half: Before/Option A
 - Right half: After/Option B
@@ -2832,7 +2832,7 @@ USE FOR: Comparisons, transformations, A vs. B
 ```
 
 **Template 3: Text-Dominant**
-```
+```text
 LAYOUT:
 - Background: Solid bold color or relevant image
 - Text: Large, taking up 60-70% of space
@@ -2842,7 +2842,7 @@ USE FOR: Listicles, quick tips, number-focused content
 ```
 
 **Template 4: Over-the-Shoulder**
-```
+```text
 LAYOUT:
 - Person looking at screen/object
 - Viewer sees what they're seeing
@@ -2853,7 +2853,7 @@ USE FOR: Tutorials, reviews, demonstrations
 ```
 
 **Template 5: Reaction Thumbnail**
-```
+```text
 LAYOUT:
 - Large expressive face (shocked, surprised, excited)
 - Text: Result or statement causing reaction
@@ -2865,7 +2865,7 @@ USE FOR: Results, case studies, surprising facts
 ### Advanced Thumbnail Tactics
 
 **Tactic 1: Series Branding**
-```
+```text
 For video series, create consistent template:
 - Same layout across all videos
 - Same color scheme
@@ -2875,7 +2875,7 @@ For video series, create consistent template:
 ```
 
 **Tactic 2: Curiosity Gaps**
-```
+```text
 Show partial information:
 - Blurred area (what's being hidden?)
 - Arrows pointing to blank space
@@ -2884,7 +2884,7 @@ Show partial information:
 ```
 
 **Tactic 3: Social Proof in Thumbnail**
-```
+```text
 Add elements showing popularity:
 - "1M+ Views"
 - "⭐⭐⭐⭐⭐ Rated"
@@ -2893,7 +2893,7 @@ Add elements showing popularity:
 ```
 
 **Tactic 4: Negative Space**
-```
+```text
 Don't fill every pixel:
 - Simple, clean designs often outperform busy ones
 - Negative space creates focus
@@ -2901,7 +2901,7 @@ Don't fill every pixel:
 ```
 
 **Tactic 5: Movement Suggestion**
-```
+```text
 Static thumbnail that implies motion:
 - Motion blur
 - Mid-action pose

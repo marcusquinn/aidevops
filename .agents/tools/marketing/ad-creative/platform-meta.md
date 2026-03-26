@@ -144,7 +144,7 @@ Options include:
 
 **Image Ad Copy Formula:**
 
-```
+```text
 PRIMARY TEXT:
 [Hook - First line that stops the scroll]
 [Amplify - Expand on the hook, add context]
@@ -161,7 +161,7 @@ DESCRIPTION:
 
 **Example - E-commerce Product:**
 
-```
+```text
 PRIMARY TEXT:
 Still using razors from the grocery store? 🪒
 
@@ -185,7 +185,7 @@ CTA: Shop Now
 
 **Example - Lead Generation (B2B):**
 
-```
+```text
 PRIMARY TEXT:
 Wasting $10K/month on Google Ads with nothing to show for it?
 
@@ -206,7 +206,7 @@ CTA: Get Quote
 
 **Example - App Download:**
 
-```
+```text
 PRIMARY TEXT:
 Can't fall asleep? 😴
 
@@ -340,7 +340,7 @@ CTA: Install Now
 **Video Ad Structure Formula:**
 
 **The 15-Second Performance Video:**
-```
+```text
 0-3 seconds: HOOK (pattern interrupt, question, or bold claim)
 3-7 seconds: PROBLEM/DESIRE (what they want or struggle with)
 7-12 seconds: SOLUTION (your product/service in action)
@@ -348,7 +348,7 @@ CTA: Install Now
 ```
 
 **Example Script - Skincare Product:**
-```
+```text
 [0-3s]: Close-up of face with acne scars
 Text overlay: "I tried EVERYTHING for my acne scars..."
 
@@ -363,7 +363,7 @@ Text overlay: "60% off today only 🔥 Link in bio"
 ```
 
 **The 30-Second Storytelling Video:**
-```
+```text
 0-3 seconds: HOOK (visual or verbal pattern interrupt)
 3-8 seconds: RELATE (show you understand their problem)
 8-15 seconds: REVEAL (introduce solution with proof)
@@ -372,7 +372,7 @@ Text overlay: "60% off today only 🔥 Link in bio"
 ```
 
 **Example Script - Productivity App:**
-```
+```text
 [0-3s]: Person drowning in sticky notes, looking stressed
 Voiceover: "Drowning in tasks?"
 
@@ -391,7 +391,7 @@ Text overlay: "Download Free 👆"
 ```
 
 **The 60-Second Educational Video:**
-```
+```text
 0-3 seconds: HOOK (surprising fact, question, or result)
 3-10 seconds: CONTEXT (why this matters)
 10-25 seconds: EDUCATION (how it works, framework, tips)
@@ -401,7 +401,7 @@ Text overlay: "Download Free 👆"
 ```
 
 **Example Script - Business Coaching:**
-```
+```text
 [0-3s]: Money counter showing "$847,392"
 Text overlay: "This business made $847K last year"
 Voiceover: "From a $0 social media budget"
@@ -429,7 +429,7 @@ Voiceover: "Register free while spots last"
 UGC (user-generated content) style videos consistently outperform polished brand content for performance campaigns.
 
 **Structure:**
-```
+```text
 0-2 seconds: AUTHENTIC HOOK (person speaking directly to camera)
 2-8 seconds: PERSONAL STORY (their problem/struggle)
 8-20 seconds: SOLUTION DISCOVERY (how they found you)
@@ -448,7 +448,7 @@ UGC (user-generated content) style videos consistently outperform polished brand
 - Specific details (dates, numbers, names)
 
 **Example UGC Script - Supplement:**
-```
+```text
 [Person in kitchen, talking to camera]
 
 "Okay, so I normally don't do this, but I have to share this because it literally changed my life.
@@ -556,7 +556,7 @@ Up to 10 images/videos in a single ad, each with its own link. Use for multiple 
 **Carousel Ad Formula:**
 
 **Product Showcase Carousel:**
-```
+```text
 CARD 1: Best-selling product with social proof
 Headline: "Customer Favorite - 4.9★ Rating"
 Image: Hero product shot
@@ -575,7 +575,7 @@ Image: Promotional graphic with discount code
 ```
 
 **Educational Carousel:**
-```
+```text
 CARD 1: Problem/Hook
 Headline: "Struggling With [Problem]?"
 Image: Visual representation of problem
@@ -602,7 +602,7 @@ Image: Clear next step with offer
 ```
 
 **Storytelling Carousel:**
-```
+```text
 CARD 1: Relatable Hook
 Headline: Customer's original problem
 Image: "Before" state
@@ -685,7 +685,7 @@ Mobile-only format combining video/image with product catalog. Opens an Instant 
 
 **Collection Ad Formula:**
 
-```
+```text
 COVER IMAGE/VIDEO:
 [Lifestyle scene showing products in aspirational context]
 Primary Text: "Get The [Season] Look" or "New Arrivals: [Category]"
@@ -759,7 +759,7 @@ Full-screen, mobile-only interactive format that loads instantly. Use standalone
 
 **Instant Experience Formula:**
 
-```
+```text
 SCREEN 1 (HOOK):
 [Full-screen video or striking image]
 [Bold headline that stops scroll]
@@ -854,7 +854,7 @@ Full-screen vertical ads appearing between user stories on Facebook and Instagra
 **Story Ad Formula:**
 
 **6-Second Story Ad:**
-```
+```text
 0-1s: HOOK (visual pattern interrupt)
 1-3s: BENEFIT (what they get)
 3-5s: CTA (clear action)
@@ -862,7 +862,7 @@ Full-screen vertical ads appearing between user stories on Facebook and Instagra
 ```
 
 **Example:**
-```
+```text
 [0-1s]: Product dropping into frame with splash effect
 [1-3s]: Text overlay: "Smooth skin in 2 weeks"
 [3-5s]: "Swipe up - 50% off today"
@@ -870,7 +870,7 @@ Full-screen vertical ads appearing between user stories on Facebook and Instagra
 ```
 
 **15-Second Story Ad:**
-```
+```text
 0-2s: HOOK (question or bold statement)
 2-6s: PROBLEM (relatable pain point)
 6-11s: SOLUTION (product in action)
@@ -878,7 +878,7 @@ Full-screen vertical ads appearing between user stories on Facebook and Instagra
 ```
 
 **Example:**
-```
+```text
 [0-2s]: "Still using [competitor]?" - Person looking disappointed
 [2-6s]: Fast cuts of common problems with old solution
 [6-11s]: New product being used, happy reactions
@@ -947,7 +947,7 @@ Fastest-growing placement on Instagram and Facebook Reels. Requires entertainmen
 **Reel Ad Formula:**
 
 **9-Second Reel Ad (Maximum Completion):**
-```
+```text
 0-1s: HOOK (visual surprise or text hook)
 1-4s: ENTERTAINMENT (the interesting part)
 4-7s: PRODUCT (subtle integration)
@@ -955,7 +955,7 @@ Fastest-growing placement on Instagram and Facebook Reels. Requires entertainmen
 ```
 
 **Example - Skincare:**
-```
+```text
 [0-1s]: Text on screen: "POV: You finally found a cleanser that works"
 [1-4s]: Person washing face in trendy bathroom, satisfying foam
 [4-7s]: Happy skin reveal, product visible but not featured
@@ -964,7 +964,7 @@ Fastest-growing placement on Instagram and Facebook Reels. Requires entertainmen
 ```
 
 **15-Second Reel Ad (Story-Based):**
-```
+```text
 0-2s: HOOK (text hook + visual)
 2-8s: DEMO (product use in entertaining way)
 8-13s: RESULT (payoff/transformation)
@@ -972,7 +972,7 @@ Fastest-growing placement on Instagram and Facebook Reels. Requires entertainmen
 ```
 
 **Example - Cleaning Product:**
-```
+```text
 [0-2s]: Text: "Cleaning hacks that actually work 🤯"
 [2-8s]: Satisfying cleaning transformations using product
 [8-13s]: Before/after reveal
@@ -981,7 +981,7 @@ Fastest-growing placement on Instagram and Facebook Reels. Requires entertainmen
 ```
 
 **30-Second Reel Ad (Creator Partnership):**
-```
+```text
 0-3s: HOOK (creator intro + problem)
 3-12s: STORY (how they discovered product)
 12-25s: DEMO (showing it in action)
@@ -989,7 +989,7 @@ Fastest-growing placement on Instagram and Facebook Reels. Requires entertainmen
 ```
 
 **Example - Fitness Product:**
-```
+```text
 [0-3s]: Creator: "Okay so I've been getting DMs about my home gym setup..."
 [3-12s]: "I used to hate working out at home because [problem]. Then I found this..."
 [12-25s]: Fast cuts of using product, different exercises

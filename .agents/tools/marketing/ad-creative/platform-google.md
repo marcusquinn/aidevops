@@ -92,7 +92,7 @@ Default search ad format. Provide up to 15 headlines and 4 descriptions; Google'
 
 **Headline Set Structure (15 Headlines):**
 
-```
+```text
 HEADLINES 1-3: Keyword-Rich (High Relevance)
 H1: [Primary Keyword] - [Differentiator]
 H2: [Secondary Keyword] | [Benefit]
@@ -121,7 +121,7 @@ H15: Try Risk-Free for [Timeframe]
 
 **Example - Project Management Software:**
 
-```
+```text
 H1: Project Management Software
 H2: Manage Projects Efficiently
 H3: Official ToolName Site
@@ -143,7 +143,7 @@ H15: Book a Demo Now
 
 **4 Descriptions (90 characters each):**
 
-```
+```text
 D1: Value Proposition + Key Benefits (comprehensive)
 [What you offer]. [Top 3 benefits separated by periods]. [Differentiation].
 
@@ -159,7 +159,7 @@ D4: Features + Convenience
 
 **Example - Project Management Software:**
 
-```
+```text
 D1: "Complete project management platform. Track tasks, collaborate in real-time, hit deadlines. Everything your team needs in one simple tool."
 
 D2: "Join 50,000+ successful teams. Rated 4.8/5 stars. Start your free 30-day trial today—no credit card required."
@@ -192,7 +192,7 @@ D4: "Task management, time tracking, team chat, file sharing & more. Intuitive i
 4. **Advanced Tactics:**
    - Use IF functions: {IF(device=mobile):Mobile Text|Desktop Text}
    - Location insertion: {LOCATION(City)}
-   - Countdown: {COUNTDOWN(2024/12/31 23:59:59)}
+   - Countdown: {COUNTDOWN(2027/12/31 23:59:59)}
    - Test question headlines vs. statements
 
 #### 2. Responsive Display Ads (RDA)
@@ -235,7 +235,7 @@ Auto-adjust size, appearance, and format across the Google Display Network (3M+ 
 - Shown in most ad variations
 
 **Call-to-Action:**
-- Automated or automated
+- Automated or manual
 - Options: Learn More, Get Quote, Apply Now, Sign Up, etc.
 
 **Creative Best Practices for RDAs:**
@@ -283,7 +283,7 @@ Auto-adjust size, appearance, and format across the Google Display Network (3M+ 
 
 **RDA Asset Formula:**
 
-```
+```text
 IMAGES (15 total):
 Images 1-3: Hero product shots (different angles)
 Images 4-6: Product in use (lifestyle context)
@@ -311,7 +311,7 @@ D5: CTA with guarantee or risk reversal
 
 **Example - Online Courses:**
 
-```
+```text
 IMAGES:
 1-3: Course dashboard screenshots, instructor photos, certificate
 4-6: Students taking courses on laptop, completing projects
@@ -430,7 +430,7 @@ Single campaign running across all Google properties (Search, Display, YouTube, 
 
 **Performance Max Asset Formula:**
 
-```
+```text
 IMAGES (20 total):
 Landscape (1.91:1) - 8 images:
 - 3 hero product shots
@@ -476,7 +476,7 @@ D5: [Guarantee + CTA]
 
 **Example - E-commerce (Running Shoes):**
 
-```
+```text
 SHORT HEADLINES:
 H1: Premium Running Shoes
 H2: Run Faster, Recover Quicker
@@ -539,7 +539,7 @@ D5: 90-day comfort guarantee. If they don't feel amazing, send them back. No que
 
 **In-Stream Ad Structure:**
 
-```
+```text
 0-5 SECONDS (PRE-SKIP):
 - Hook (visual pattern interrupt)
 - Brand/product reveal
@@ -597,7 +597,7 @@ D5: 90-day comfort guarantee. If they don't feel amazing, send them back. No que
 
 **Bumper Ad Formula:**
 
-```
+```text
 SECONDS 0-2: Hook/Visual
 SECONDS 2-4: Product/Benefit
 SECONDS 4-6: Brand/CTA
@@ -605,7 +605,7 @@ SECONDS 4-6: Brand/CTA
 
 **Examples:**
 
-```
+```text
 Product Launch:
 [0-2s]: New product reveal with motion
 [2-4s]: Product name + key benefit
@@ -660,7 +660,7 @@ Event Promotion:
 
 **Shorts Ad Formula:**
 
-```
+```text
 0-3 SECONDS: Hook (scroll-stopper)
 3-15 SECONDS: Value/Entertainment
 15-45 SECONDS: Product Integration

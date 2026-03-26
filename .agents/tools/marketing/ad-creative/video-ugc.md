@@ -18,140 +18,140 @@
 ### Category 1: Question Hooks (20 formulas)
 
 **1. Problem-Focused Question**
-```
+```text
 "Still [doing painful thing]?"
 Example: "Still manually scheduling your social posts?"
 Visual: Person visibly frustrated at computer
 ```
 
 **2. Identification Question**
-```
+```text
 "Are you a [type of person] who [struggles with X]?"
 Example: "Are you a small business owner struggling to get noticed online?"
 Visual: Small business storefront or owner
 ```
 
 **3. Yes-Set Question**
-```
+```text
 "Want to [desired outcome]?"
 Example: "Want to double your Instagram followers in 30 days?"
 Visual: Instagram profile with follower count
 ```
 
 **4. Challenging Question**
-```
+```text
 "What if everything you know about [topic] is wrong?"
 Example: "What if everything you know about weight loss is wrong?"
 Visual: Confusing diet books or scale
 ```
 
 **5. Curiosity Question**
-```
+```text
 "Want to know the secret [type of people] use to [achieve result]?"
 Example: "Want to know the secret top podcasters use to grow fast?"
 Visual: Podcaster with headphones
 ```
 
 **6. Direct Pain Question**
-```
+```text
 "Tired of [specific frustration]?"
 Example: "Tired of ads that waste your money?"
 Visual: Money burning or frustrated expression
 ```
 
 **7. Future-Pacing Question**
-```
+```text
 "What would [timeframe] look like with [desired outcome]?"
 Example: "What would your business look like with 100 qualified leads per month?"
 Visual: Successful business or happy customers
 ```
 
 **8. Comparison Question**
-```
+```text
 "Why do [successful group] [action] while you [other action]?"
 Example: "Why do top brands use video ads while you're still using images?"
 Visual: Split screen comparison
 ```
 
 **9. Verification Question**
-```
+```text
 "Did you know [surprising fact]?"
 Example: "Did you know 70% of Facebook ads fail in the first 3 days?"
 Visual: Declining graph or stats
 ```
 
 **10. Personal Question**
-```
+```text
 "How much money are you leaving on the table with [bad strategy]?"
 Example: "How much money are you leaving on the table with poor ad creative?"
 Visual: Money or calculator
 ```
 
 **11. Achievement Question**
-```
+```text
 "Ready to [milestone]?"
 Example: "Ready to hit your first $10K month?"
 Visual: Revenue dashboard or celebration
 ```
 
 **12. Objection Question**
-```
+```text
 "What if you could [achieve goal] without [common objection]?"
 Example: "What if you could build muscle without spending hours at the gym?"
 Visual: Fit person in casual setting
 ```
 
 **13. Timeline Question**
-```
+```text
 "How long will you keep [negative behavior]?"
 Example: "How long will you keep paying for software you don't use?"
 Visual: Cancelled subscriptions or confused person
 ```
 
 **14. Awareness Question**
-```
+```text
 "Do you know what's killing your [desired outcome]?"
 Example: "Do you know what's killing your conversion rate?"
 Visual: Declining metrics
 ```
 
 **15. Diagnostic Question**
-```
+```text
 "Which of these [number] mistakes are you making?"
 Example: "Which of these 5 Instagram mistakes are you making?"
 Visual: Checklist or error symbols
 ```
 
 **16. Qualifier Question**
-```
+```text
 "If you're [criteria], watch this"
 Example: "If you're spending $5K+/month on ads, watch this"
 Visual: Ad dashboard with spend
 ```
 
 **17. Rhetorical Question**
-```
+```text
 "Who else wants [desired outcome]?"
 Example: "Who else wants passive income while they sleep?"
 Visual: Person sleeping + money
 ```
 
 **18. Negative Assumption Question**
-```
+```text
 "Struggling with [problem]? You're not alone"
 Example: "Struggling with engagement? You're not alone"
 Visual: Low engagement metrics
 ```
 
 **19. Alternative Question**
-```
+```text
 "What if there's a better way to [achieve goal]?"
 Example: "What if there's a better way to find customers?"
 Visual: Traditional vs. new method
 ```
 
 **20. Direct Challenge Question**
-```
+```text
 "Think [common belief]? Think again"
 Example: "Think you need a huge budget for video ads? Think again"
 Visual: Low budget vs. results
@@ -160,140 +160,140 @@ Visual: Low budget vs. results
 ### Category 2: Statement Hooks (20 formulas)
 
 **21. Bold Claim**
-```
+```text
 "[Impressive result] in [timeframe]"
 Example: "$40K in sales in 30 days from this strategy"
 Visual: Revenue dashboard or results screen
 ```
 
 **22. Shocking Statistic**
-```
+```text
 "[Number]% of [people] are [doing wrong thing]"
 Example: "87% of Facebook ads fail because of this one mistake"
 Visual: Percentage visualization or failing ad
 ```
 
 **23. Negative Callout**
-```
+```text
 "Stop [common behavior]"
 Example: "Stop wasting money on bad ads"
 Visual: Money in trash or X through bad ad
 ```
 
 **24. Contrarian Statement**
-```
+```text
 "[Common advice] is killing your [desired outcome]"
 Example: "Posting more content is killing your engagement"
 Visual: Overposted feed or declining metrics
 ```
 
 **25. Personal Testimony**
-```
+```text
 "[Timeframe] ago I [negative state]. Now I [positive state]"
 Example: "6 months ago I had 0 clients. Now I have a waitlist"
 Visual: Before/after or person sharing
 ```
 
 **26. Revelation Hook**
-```
+```text
 "I just discovered why [problem occurs]"
 Example: "I just discovered why your landing pages don't convert"
 Visual: Discovery moment or "aha" expression
 ```
 
 **27. Story Beginning**
-```
+```text
 "This is the story of how [outcome happened]"
 Example: "This is the story of how we 10x'd our revenue"
 Visual: Storyteller or outcome visual
 ```
 
 **28. Single Solution**
-```
+```text
 "One [thing] changed everything"
 Example: "One tweak to our ad copy doubled our ROI"
 Visual: Highlight the one thing
 ```
 
 **29. Warning**
-```
+```text
 "If you're [doing action], you need to see this"
 Example: "If you're running Facebook ads, you need to see this"
 Visual: Warning symbol or alert
 ```
 
 **30. Mistake Identification**
-```
+```text
 "This is the #1 mistake [type of person] make"
 Example: "This is the #1 mistake new e-com stores make"
 Visual: Mistake example or X mark
 ```
 
 **31. Secret Reveal**
-```
+```text
 "[Type of people] don't want you to know this"
 Example: "Ad agencies don't want you to know this"
 Visual: "Secret" graphic or whisper gesture
 ```
 
 **32. Current Event**
-```
+```text
 "[Recent change/trend] changes everything for [people]"
 Example: "iOS 14 changes everything for advertisers"
 Visual: News or update notification
 ```
 
 **33. Urgency**
-```
+```text
 "You have [timeframe] to [action] before [consequence]"
 Example: "You have 30 days to fix your ad account before Q4"
 Visual: Clock or calendar
 ```
 
 **34. Diagnosis**
-```
+```text
 "Here's why your [thing] isn't working"
 Example: "Here's why your email campaigns aren't converting"
 Visual: Broken or failed example
 ```
 
 **35. Permission**
-```
+```text
 "It's okay to [non-traditional action]"
 Example: "It's okay to spend less on ads and get better results"
 Visual: Permission-granting gesture
 ```
 
 **36. Attention Grab**
-```
+```text
 "Attention [type of person]"
 Example: "Attention e-commerce store owners"
 Visual: Text on screen or person pointing
 ```
 
 **37. Achievement Declaration**
-```
+```text
 "We just [accomplished impressive feat]"
 Example: "We just scaled a client from $5K to $100K/month"
 Visual: Results screen or celebration
 ```
 
 **38. Controversial Statement**
-```
+```text
 "[Popular thing] is overrated. Here's what works"
 Example: "Influencer marketing is overrated. Here's what works"
 Visual: Crossed-out old way, new way highlighted
 ```
 
 **39. Direct Address**
-```
+```text
 "If you [qualifier], this is for you"
 Example: "If you spend $10K+/month on ads, this is for you"
 Visual: Direct camera address
 ```
 
 **40. Negative Consequence**
-```
+```text
 "Every day you [inaction] costs you [loss]"
 Example: "Every day you don't optimize costs you $500"
 Visual: Money lost or opportunity missed
@@ -302,105 +302,105 @@ Visual: Money lost or opportunity missed
 ### Category 3: Visual Pattern Interrupts (15 formulas)
 
 **41. Text Slap**
-```
+```text
 Bold text appears suddenly on screen
 Example: "WAIT" or "STOP SCROLLING"
 Visual: Large, contrasting text overlay
 ```
 
 **42. Unexpected Perspective**
-```
+```text
 Unusual camera angle or POV
 Example: Over-shoulder view of dashboard with shocking metrics
 Visual: Unique angle that stands out
 ```
 
 **43. Fast Motion**
-```
+```text
 Quick action or movement in frame
 Example: Money being thrown, product appearing suddenly
 Visual: Dynamic movement
 ```
 
 **44. Face Close-Up**
-```
+```text
 Extreme close-up of face with strong expression
 Example: Shocked, excited, or concerned face
 Visual: Emotional facial expression
 ```
 
 **45. Contrast Shock**
-```
+```text
 Sudden shift from dark to bright or vice versa
 Example: Black screen to bright dashboard
 Visual: High visual contrast
 ```
 
 **46. Text On/Off**
-```
+```text
 Text appears and disappears rapidly
 Example: Key phrases flashing on screen
 Visual: Kinetic typography
 ```
 
 **47. Split Screen**
-```
+```text
 Before/after or old way/new way shown simultaneously
 Example: Low results vs. high results side by side
 Visual: Divided screen comparison
 ```
 
 **48. Object Drop**
-```
+```text
 Product or object drops into frame
 Example: Phone dropping with app interface visible
 Visual: Physics-based motion
 ```
 
 **49. Color Flash**
-```
+```text
 Bright color flash at beginning
 Example: Brand color fills screen then reveals content
 Visual: Color pop
 ```
 
 **50. Zoom Effect**
-```
+```text
 Rapid zoom in or out
 Example: Zoom into specific metric on dashboard
 Visual: Camera zoom motion
 ```
 
 **51. Hand-Held Shake**
-```
+```text
 Intentionally shaky cam for authenticity
 Example: Person speaking with natural phone movement
 Visual: UGC-style camera work
 ```
 
 **52. Emoji/Sticker Pop**
-```
+```text
 Animated emoji or sticker appears
 Example: Fire emoji or "NEW" sticker
 Visual: Playful graphic element
 ```
 
 **53. Graph/Data Visualization**
-```
+```text
 Striking chart or stat appears
 Example: Upward trending graph animation
 Visual: Data visual with movement
 ```
 
 **54. Product Showcase**
-```
+```text
 Product appears dramatically
 Example: Product spinning or being unboxed
 Visual: Product hero moment
 ```
 
 **55. Scene Jump**
-```
+```text
 Quick cut between contrasting scenes
 Example: Messy desk to organized desk
 Visual: Fast scene transition
@@ -409,70 +409,70 @@ Visual: Fast scene transition
 ### Category 4: Combination Hooks (10 formulas)
 
 **56. Question + Statistic**
-```
+```text
 "Did you know [X]% of [people] [fact]?"
 Example: "Did you know 73% of your website visitors leave without buying?"
 Visual: Stat + question text
 ```
 
 **57. Statement + Question**
-```
+```text
 "[Bold claim]. Want to know how?"
 Example: "I 5x'd my revenue in 60 days. Want to know how?"
 Visual: Result shown + person asking
 ```
 
 **58. Visual + Text Slap**
-```
+```text
 Striking visual with bold text overlay
 Example: Money visual with "YOU'RE LEAVING MONEY ON THE TABLE"
 Visual: Layered impact
 ```
 
 **59. Personal Story + Result**
-```
+```text
 "[Timeframe] ago: [struggle]. Today: [success]"
 Example: "30 days ago: $0 in sales. Today: $15K"
 Visual: Before/after metrics
 ```
 
 **60. Warning + Question**
-```
+```text
 "If you're [doing X], are you [negative consequence]?"
 Example: "If you're running ads, are you losing money?"
 Visual: Warning visual + question
 ```
 
 **61. Negative + Positive**
-```
+```text
 "Stop [bad thing]. Start [good thing]"
 Example: "Stop chasing followers. Start building community"
 Visual: X on old way, check on new way
 ```
 
 **62. Identify + Promise**
-```
+```text
 "[Type of person]? Here's how to [achieve goal]"
 Example: "E-comm owner? Here's how to scale to $100K/month"
 Visual: Identification + solution tease
 ```
 
 **63. Shock + Explanation Tease**
-```
+```text
 "[Shocking fact]. Here's why it matters"
 Example: "Your best ad is being shown to the wrong people. Here's why it matters"
 Visual: Shocking visual + continuation promise
 ```
 
 **64. Challenge + Invitation**
-```
+```text
 "Think you can't [goal]? Watch this"
 Example: "Think you can't afford video ads? Watch this"
 Visual: Challenge + proof tease
 ```
 
 **65. Pain + Solution Tease**
-```
+```text
 "Struggling with [problem]? I found the fix"
 Example: "Struggling with high CPAs? I found the fix"
 Visual: Pain shown + solution promised
@@ -564,7 +564,7 @@ Content that looks and feels like it was created by a real customer (not a brand
 
 **Effective UGC Brief Template:**
 
-```
+```text
 CREATOR: [Name/Type]
 PRODUCT: [What they're promoting]
 OBJECTIVE: [What the video should accomplish]
@@ -615,7 +615,7 @@ DELIVERABLES:
 
 **Example Brief - Supplement:**
 
-```
+```text
 CREATOR: Health-conscious female, 25-40
 PRODUCT: Sleep supplement (SleepWell)
 OBJECTIVE: Drive trials for new sleep supplement
@@ -741,7 +741,7 @@ DELIVERABLE:
 
 **Framework 1: Problem-Discovery-Solution**
 
-```
+```text
 [0-3s] HOOK: Relatable problem
 "I used to struggle with [specific pain point]"
 
@@ -761,7 +761,7 @@ DELIVERABLE:
 ```
 
 **Example - Skincare:**
-```
+```text
 "I've struggled with acne scars for years.
 
 I tried expensive creams, laser treatments, dermatologists... spent thousands with barely any improvement.
@@ -775,7 +775,7 @@ If you have scarring or texture issues, please try this. It's the only thing tha
 
 **Framework 2: Transformation Story**
 
-```
+```text
 [0-3s] HOOK: Where you started
 "[Timeframe] ago I [negative state]"
 
@@ -797,7 +797,7 @@ Now: [current state]"
 ```
 
 **Example - Productivity App:**
-```
+```text
 "6 months ago I was drowning in tasks.
 
 I had sticky notes everywhere, 3 different to-do apps, and I still forgot important stuff. I felt constantly behind and stressed.
@@ -815,7 +815,7 @@ If you feel overwhelmed by your workload, try this. It's literally life-changing
 
 **Framework 3: Comparison/Alternative**
 
-```
+```text
 [0-3s] HOOK: What you switched from
 "I switched from [popular solution] to [your product]"
 
@@ -835,7 +835,7 @@ If you feel overwhelmed by your workload, try this. It's literally life-changing
 ```
 
 **Example - Email Marketing Tool:**
-```
+```text
 "I switched from Mailchimp to this email tool and I'm never going back.
 
 Here's why: Mailchimp was charging me $300/month, the editor was clunky, and my open rates were stuck at 18%.
@@ -851,7 +851,7 @@ Try it free for 14 days, link below. Seriously, make the switch."
 
 **Framework 4: Unexpected Benefit**
 
-```
+```text
 [0-3s] HOOK: Surprising result
 "I bought [product] for [reason] but [unexpected benefit]"
 
@@ -871,7 +871,7 @@ Try it free for 14 days, link below. Seriously, make the switch."
 ```
 
 **Example - Standing Desk:**
-```
+```text
 "I bought this standing desk to fix my back pain, but it completely cured my afternoon energy crashes.
 
 I got this 2 months ago because I was having serious lower back pain from sitting all day.
@@ -887,7 +887,7 @@ Link in bio, and they have financing if you can't drop $600 at once."
 
 **Framework 5: Direct Recommendation**
 
-```
+```text
 [0-3s] HOOK: Direct statement
 "If you [qualifier], you need this"
 
@@ -907,7 +907,7 @@ Link in bio, and they have financing if you can't drop $600 at once."
 ```
 
 **Example - Budgeting App:**
-```
+```text
 "If you have no idea where your money goes each month, you need this app.
 
 Here's why it's perfect for people who hate budgeting: It's automatic. You don't have to manually categorize anything.
