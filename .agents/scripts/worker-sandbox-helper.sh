@@ -142,33 +142,54 @@ create_worker_sandbox() {
 		ln -sf "$agents_source" "$sandbox_dir/.aidevops"
 	fi
 
-	# --- Claude Code / OpenCode config ---
+	# --- Runtime config files (t1665.5 — registry-driven) ---
 	# Workers need their tool configs. Copy only the specific config files needed,
 	# not the entire .config directory (which may contain credentials).
 	local config_dir="$sandbox_dir/.config"
 	mkdir -p "$config_dir"
 
-	# OpenCode config (if exists) — needed for MCP server definitions
-	local opencode_src="${REAL_HOME}/.config/opencode"
-	if [[ -d "$opencode_src" ]]; then
-		mkdir -p "$config_dir/opencode"
-		# Copy only opencode.json (MCP config), not auth files
-		if [[ -f "$opencode_src/opencode.json" ]]; then
-			cp "$opencode_src/opencode.json" "$config_dir/opencode/"
-		fi
-	fi
+	# Copy MCP config files for all configured runtimes
+	if type rt_detect_configured &>/dev/null; then
+		local _sb_rt_id _sb_cfg_path _sb_cfg_dir _sb_cfg_file _sb_dst_dir
+		while IFS= read -r _sb_rt_id; do
+			_sb_cfg_path=$(rt_config_path "$_sb_rt_id") || continue
+			[[ -z "$_sb_cfg_path" || ! -f "$_sb_cfg_path" ]] && continue
 
-	# Claude Code settings (if exists) — needed for MCP server definitions
-	local claude_dir_src="${REAL_HOME}/.claude"
-	if [[ -d "$claude_dir_src" ]]; then
-		local claude_dir_dst="$sandbox_dir/.claude"
-		mkdir -p "$claude_dir_dst"
-		# Copy settings.json (MCP config, preferences) but NOT credentials
-		if [[ -f "$claude_dir_src/settings.json" ]]; then
-			cp "$claude_dir_src/settings.json" "$claude_dir_dst/"
+			# Reconstruct the path relative to HOME for the sandbox
+			_sb_cfg_dir=$(dirname "$_sb_cfg_path")
+			_sb_cfg_file=$(basename "$_sb_cfg_path")
+			# Strip REAL_HOME prefix to get relative path
+			local _sb_rel_dir="${_sb_cfg_dir#"${REAL_HOME}"/}"
+			if [[ "$_sb_rel_dir" == "$_sb_cfg_dir" ]]; then
+				# Path doesn't start with REAL_HOME — skip
+				continue
+			fi
+
+			# Handle paths under .config/ vs paths under ~/.<dir>/
+			if [[ "$_sb_rel_dir" == .config/* ]]; then
+				_sb_dst_dir="$config_dir/${_sb_rel_dir#.config/}"
+			else
+				_sb_dst_dir="$sandbox_dir/$_sb_rel_dir"
+			fi
+
+			mkdir -p "$_sb_dst_dir"
+			cp "$_sb_cfg_path" "$_sb_dst_dir/$_sb_cfg_file"
+		done < <(rt_detect_configured)
+	else
+		# Fallback: hardcoded paths (registry not loaded)
+		local opencode_src="${REAL_HOME}/.config/opencode"
+		if [[ -d "$opencode_src" ]]; then
+			mkdir -p "$config_dir/opencode"
+			[[ -f "$opencode_src/opencode.json" ]] && cp "$opencode_src/opencode.json" "$config_dir/opencode/"
 		fi
-		# Do NOT copy: credentials.json, .credentials, auth tokens
+		local claude_dir_src="${REAL_HOME}/.claude"
+		if [[ -d "$claude_dir_src" ]]; then
+			local claude_dir_dst="$sandbox_dir/.claude"
+			mkdir -p "$claude_dir_dst"
+			[[ -f "$claude_dir_src/settings.json" ]] && cp "$claude_dir_src/settings.json" "$claude_dir_dst/"
+		fi
 	fi
+	# Do NOT copy: credentials.json, .credentials, auth tokens
 
 	# --- XDG directories for tool state ---
 	# Tools like npm, bun, etc. need writable cache/data dirs

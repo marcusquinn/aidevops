@@ -458,7 +458,21 @@ scan_mcp_configs() {
 
 	local found_risk=0
 
-	for config in "$HOME/.config/Claude/claude_desktop_config.json" "$HOME/.cursor/mcp.json"; do
+	# Build config list from registry (t1665.5), fallback to hardcoded
+	local -a _sh_configs=()
+	if type rt_detect_configured &>/dev/null; then
+		local _sh_rt_id _sh_cfg
+		while IFS= read -r _sh_rt_id; do
+			_sh_cfg=$(rt_config_path "$_sh_rt_id") || continue
+			[[ -n "$_sh_cfg" && -f "$_sh_cfg" ]] && _sh_configs+=("$_sh_cfg")
+		done < <(rt_detect_configured)
+	fi
+	# Fallback if registry not loaded or no configs found
+	if [[ ${#_sh_configs[@]} -eq 0 ]]; then
+		[[ -f "$HOME/.config/Claude/claude_desktop_config.json" ]] && _sh_configs+=("$HOME/.config/Claude/claude_desktop_config.json")
+		[[ -f "$HOME/.cursor/mcp.json" ]] && _sh_configs+=("$HOME/.cursor/mcp.json")
+	fi
+	for config in "${_sh_configs[@]}"; do
 		[[ -f "$config" ]] || continue
 
 		local uvx_count=0 npx_count=0

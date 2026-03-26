@@ -571,12 +571,30 @@ cross_repo_summary() {
 }
 
 #######################################
-# Auto-detect AI assistant session database path
+# Auto-detect AI assistant session database path (t1665.5)
 #
-# Checks known locations for OpenCode and Claude Code databases.
+# Uses runtime registry to find the first available session DB.
+# Falls back to hardcoded paths if registry is not loaded.
 # Output: database path to stdout, or empty string if not found
 #######################################
 _session_time_detect_db() {
+	# Use runtime registry if available (t1665.5)
+	if type rt_list_ids &>/dev/null; then
+		local _db_rt_id _db_path _db_fmt
+		while IFS= read -r _db_rt_id; do
+			_db_path=$(rt_session_db "$_db_rt_id") || continue
+			_db_fmt=$(rt_session_db_format "$_db_rt_id") || continue
+			# Only return SQLite databases (this function is used for SQL queries)
+			if [[ "$_db_fmt" == "sqlite" && -n "$_db_path" && -f "$_db_path" ]]; then
+				echo "$_db_path"
+				return 0
+			fi
+		done < <(rt_list_ids)
+		echo ""
+		return 0
+	fi
+
+	# Fallback: hardcoded paths
 	if [[ -f "${HOME}/.local/share/opencode/opencode.db" ]]; then
 		echo "${HOME}/.local/share/opencode/opencode.db"
 	elif [[ -f "${HOME}/.local/share/claude/Claude.db" ]]; then

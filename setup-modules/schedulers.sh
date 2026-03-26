@@ -150,9 +150,20 @@ setup_supervisor_pulse() {
 		_pulse_installed=true
 	fi
 
-	# Detect opencode binary location
+	# Detect dispatch backend binary location (t1665.5 — registry-driven)
 	local opencode_bin
-	opencode_bin=$(command -v opencode 2>/dev/null || echo "/opt/homebrew/bin/opencode")
+	if type rt_list_headless &>/dev/null; then
+		local _sched_rt_id _sched_bin
+		while IFS= read -r _sched_rt_id; do
+			_sched_bin=$(rt_binary "$_sched_rt_id") || continue
+			if [[ -n "$_sched_bin" ]] && command -v "$_sched_bin" &>/dev/null; then
+				opencode_bin=$(command -v "$_sched_bin")
+				break
+			fi
+		done < <(rt_list_headless)
+	fi
+	# Fallback if registry not loaded or no runtime found
+	opencode_bin="${opencode_bin:-$(command -v opencode 2>/dev/null || echo "/opt/homebrew/bin/opencode")}"
 
 	if [[ "$_do_install" == "true" ]]; then
 		mkdir -p "$HOME/.aidevops/logs"

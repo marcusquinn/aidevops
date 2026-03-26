@@ -1377,26 +1377,35 @@ resolve_model_tier() {
 }
 
 #######################################
-# Detect available AI CLI backends (t132.7)
-# Returns a newline-separated list of available backends.
-# Checks: opencode, claude
+# Detect available AI CLI backends (t132.7, t1665.5)
+# Returns a newline-separated list of available backend runtime IDs.
+# Delegates to runtime-registry.sh rt_detect_installed().
 #######################################
 detect_ai_backends() {
-	local -a backends=()
+	# Use runtime registry if loaded (t1665.5)
+	if type rt_detect_installed &>/dev/null; then
+		local installed
+		installed=$(rt_detect_installed) || true
+		if [[ -z "$installed" ]]; then
+			echo "none"
+			return 1
+		fi
+		echo "$installed"
+		return 0
+	fi
 
+	# Fallback: hardcoded check (registry not loaded)
+	local -a backends=()
 	if command -v opencode &>/dev/null; then
 		backends+=("opencode")
 	fi
-
 	if command -v claude &>/dev/null; then
 		backends+=("claude")
 	fi
-
 	if [[ ${#backends[@]} -eq 0 ]]; then
 		echo "none"
 		return 1
 	fi
-
 	printf '%s\n' "${backends[@]}"
 	return 0
 }

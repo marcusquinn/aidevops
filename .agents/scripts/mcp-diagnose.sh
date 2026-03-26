@@ -65,29 +65,59 @@ if [[ "$INSTALLED_VERSION" != *"$LATEST_VERSION"* ]] && [[ "$LATEST_VERSION" != 
 	echo -e "   ${YELLOW}⚠️  UPDATE AVAILABLE - run: npm update -g $NPM_PKG${NC}"
 fi
 
-# 3. Check OpenCode config
+# 3. Check runtime configs for MCP (t1665.5 — registry-driven)
 echo ""
-echo "3. Checking OpenCode configuration..."
-CONFIG_FILE="$HOME/.config/opencode/opencode.json"
-if [[ -f "$CONFIG_FILE" ]]; then
-	if grep -q "\"$MCP_NAME\"" "$CONFIG_FILE"; then
-		echo -e "   ${GREEN}✓ MCP configured in opencode.json${NC}"
+echo "3. Checking runtime configurations..."
+
+# Build list of config files to check from registry, fallback to hardcoded
+_MCP_DIAG_CONFIGS=()
+if type rt_detect_configured &>/dev/null; then
+	while IFS= read -r _rt_id; do
+		_cfg=$(rt_config_path "$_rt_id") || continue
+		[[ -n "$_cfg" && -f "$_cfg" ]] && _MCP_DIAG_CONFIGS+=("$_rt_id:$_cfg")
+	done < <(rt_detect_configured)
+fi
+# Fallback if registry not loaded or no configs found
+if [[ ${#_MCP_DIAG_CONFIGS[@]} -eq 0 ]]; then
+	_fallback_cfg="$HOME/.config/opencode/opencode.json"
+	[[ -f "$_fallback_cfg" ]] && _MCP_DIAG_CONFIGS+=("opencode:$_fallback_cfg")
+fi
+
+_mcp_found_in_any=0
+for _diag_entry in "${_MCP_DIAG_CONFIGS[@]}"; do
+	_diag_rt="${_diag_entry%%:*}"
+	CONFIG_FILE="${_diag_entry#*:}"
+	_diag_name=""
+	if type rt_display_name &>/dev/null; then
+		_diag_name=$(rt_display_name "$_diag_rt") || _diag_name="$_diag_rt"
+	else
+		_diag_name="$_diag_rt"
+	fi
+
+	if grep -q "\"$MCP_NAME\"" "$CONFIG_FILE" 2>/dev/null; then
+		echo -e "   ${GREEN}✓ MCP configured in ${_diag_name} config${NC}"
 		# Extract and show the command using Python
 		python3 -c "
 import json
 with open('$CONFIG_FILE') as f:
     cfg = json.load(f)
-mcp = cfg.get('mcp', {}).get('$MCP_NAME', {})
+# Try both 'mcp' (opencode) and 'mcpServers' (other runtimes) root keys
+mcp = cfg.get('mcp', cfg.get('mcpServers', {})).get('$MCP_NAME', {})
 cmd = mcp.get('command', 'not set')
 enabled = mcp.get('enabled', 'not set')
 print(f'   Command: {cmd}')
 print(f'   Enabled: {enabled}')
 " 2>/dev/null || echo "   (Could not parse config)"
-	else
-		echo -e "   ${RED}✗ MCP not found in config${NC}"
+		_mcp_found_in_any=1
 	fi
-else
-	echo -e "   ${RED}✗ Config file not found: $CONFIG_FILE${NC}"
+done
+
+if [[ "$_mcp_found_in_any" -eq 0 ]]; then
+	if [[ ${#_MCP_DIAG_CONFIGS[@]} -eq 0 ]]; then
+		echo -e "   ${RED}✗ No runtime config files found${NC}"
+	else
+		echo -e "   ${RED}✗ MCP '$MCP_NAME' not found in any runtime config${NC}"
+	fi
 fi
 
 # 4. Check for known breaking changes
@@ -130,4 +160,4 @@ echo "1. Update tool: npm update -g $NPM_PKG"
 echo "2. Check official docs for command changes"
 echo "3. Run: $CLI_CMD --help"
 echo "4. Check ~/.aidevops/agents/tools/ for updated documentation"
-echo "5. Run: opencode mcp list (to verify status after fixes)"
+echo "5. Verify MCP status in your runtime's config after fixes"
