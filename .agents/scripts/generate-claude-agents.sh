@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 # shellcheck disable=SC2016 # $ARGUMENTS is a Claude Code template placeholder written literally to .md files
 # =============================================================================
+# DEPRECATED: Use generate-runtime-config.sh instead (t1665.4)
+# This script is kept for one release cycle as a fallback.
+# setup-modules/config.sh will use generate-runtime-config.sh when available.
+# =============================================================================
 # Generate Claude Code Configuration
 # =============================================================================
 # Achieves config parity between OpenCode and Claude Code by:
