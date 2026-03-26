@@ -5,7 +5,7 @@
 # accounts when the OpenCode TUI auth hooks are unavailable.
 #
 # Usage:
-#   oauth-pool-helper.sh add [anthropic|openai|cursor|google]           # Add account via OAuth
+#   oauth-pool-helper.sh add [anthropic|openai|cursor|google]           # Add account via OAuth/device flow
 #   oauth-pool-helper.sh check [anthropic|openai|cursor|google|all]     # Health check all accounts
 #   oauth-pool-helper.sh list [anthropic|openai|cursor|google|all]      # List accounts
 #   oauth-pool-helper.sh remove <provider> <email>                      # Remove an account
@@ -160,9 +160,10 @@ pool_upsert_account() {
 	local refresh_token="$4"
 	local expires_ms="$5"
 	local now_iso="$6"
+	local account_id="${7:-}"
 	PROVIDER="$provider" EMAIL="$email" \
 		ACCESS="$access_token" REFRESH="$refresh_token" \
-		EXPIRES="$expires_ms" NOW_ISO="$now_iso" \
+		EXPIRES="$expires_ms" NOW_ISO="$now_iso" ACCOUNT_ID="$account_id" \
 		python3 -c "
 import sys, json, os
 pool = json.load(sys.stdin)
@@ -172,6 +173,7 @@ access = os.environ['ACCESS']
 refresh = os.environ['REFRESH']
 expires = int(os.environ['EXPIRES'])
 now_iso = os.environ['NOW_ISO']
+account_id = os.environ.get('ACCOUNT_ID', '')
 
 if provider not in pool:
     pool[provider] = []
@@ -185,11 +187,13 @@ for account in pool[provider]:
         account['lastUsed'] = now_iso
         account['status'] = 'active'
         account['cooldownUntil'] = None
+        if account_id:
+            account['accountId'] = account_id
         found = True
         break
 
 if not found:
-    pool[provider].append({
+    entry = {
         'email': email,
         'access': access,
         'refresh': refresh,
@@ -198,7 +202,10 @@ if not found:
         'lastUsed': now_iso,
         'status': 'active',
         'cooldownUntil': None,
-    })
+    }
+    if account_id:
+        entry['accountId'] = account_id
+    pool[provider].append(entry)
 
 json.dump(pool, sys.stdout, indent=2)
 "
@@ -328,13 +335,93 @@ _add_save_to_pool() {
 	local refresh_token="$4"
 	local expires_ms="$5"
 	local now_iso="$6"
+	local account_id="${7:-}"
 	local pool count
 	pool=$(load_pool)
 	pool=$(printf '%s' "$pool" | pool_upsert_account "$provider" "$email" \
-		"$access_token" "$refresh_token" "$expires_ms" "$now_iso")
+		"$access_token" "$refresh_token" "$expires_ms" "$now_iso" "$account_id")
 	save_pool "$pool"
 	count=$(printf '%s' "$pool" | count_provider_accounts "$provider")
 	print_success "Added ${email} to ${provider} pool (${count} account(s) total)"
+	return 0
+}
+
+# Read OpenCode OpenAI auth fields (access, refresh, expires, accountId).
+# Prints four lines in that order.
+_openai_read_opencode_auth_fields() {
+	local auth_path="$OPENCODE_AUTH_FILE"
+	if [[ ! -f "$auth_path" ]]; then
+		print_error "OpenCode auth file not found: ${auth_path}"
+		return 1
+	fi
+	python3 -c "
+import json, sys
+path = sys.argv[1]
+try:
+    with open(path) as f:
+        auth = json.load(f)
+except Exception:
+    print('')
+    print('')
+    print('')
+    print('')
+    sys.exit(0)
+
+entry = auth.get('openai', {}) if isinstance(auth, dict) else {}
+print(entry.get('access', ''))
+print(entry.get('refresh', ''))
+print(entry.get('expires', ''))
+print(entry.get('accountId', ''))
+" "$auth_path" 2>/dev/null
+	return 0
+}
+
+# Add OpenAI account via OpenCode's headless Codex device flow.
+# Falls back to callback mode in cmd_add() when this returns non-zero.
+_cmd_add_openai_device() {
+	local prefill_email="$1"
+	local email
+	email=$(_add_prompt_email "$prefill_email") || return 1
+
+	if ! command -v opencode &>/dev/null; then
+		print_error "OpenCode CLI not found. Cannot run OpenAI device login flow."
+		return 1
+	fi
+
+	print_info "Starting OpenAI device login (Codex) via OpenCode..."
+	print_info "Follow the browser/device prompts, then return to this terminal."
+	if ! opencode providers login -p OpenAI -m "ChatGPT Pro/Plus (headless)"; then
+		print_error "OpenAI device login failed"
+		return 1
+	fi
+
+	local auth_fields access_token refresh_token expires_raw account_id
+	auth_fields=$(_openai_read_opencode_auth_fields) || return 1
+	access_token=$(printf '%s\n' "$auth_fields" | sed -n '1p')
+	refresh_token=$(printf '%s\n' "$auth_fields" | sed -n '2p')
+	expires_raw=$(printf '%s\n' "$auth_fields" | sed -n '3p')
+	account_id=$(printf '%s\n' "$auth_fields" | sed -n '4p')
+
+	if [[ -z "$access_token" ]]; then
+		print_error "OpenCode login completed but no OpenAI access token was found"
+		return 1
+	fi
+
+	local now_ms expires_ms now_iso
+	now_ms=$(get_now_ms)
+	if [[ "$expires_raw" =~ ^[0-9]+$ ]]; then
+		if [[ "$expires_raw" -gt 1000000000000 ]]; then
+			expires_ms="$expires_raw"
+		else
+			expires_ms=$((expires_raw * 1000))
+		fi
+	else
+		expires_ms=$((now_ms + 3600 * 1000))
+	fi
+	now_iso=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
+
+	_add_save_to_pool "openai" "$email" "$access_token" "$refresh_token" "$expires_ms" "$now_iso" "$account_id"
+	print_info "OpenAI account added via device flow. Restart OpenCode to use the pool token."
 	return 0
 }
 
@@ -442,6 +529,26 @@ cmd_add() {
 	if [[ "$provider" == "google" ]]; then
 		cmd_add_google "$prefill_email"
 		return $?
+	fi
+
+	# OpenAI default path: headless device auth (Codex). Callback flow remains fallback.
+	if [[ "$provider" == "openai" ]]; then
+		local openai_add_mode="${AIDEVOPS_OPENAI_ADD_MODE:-device}"
+		case "$openai_add_mode" in
+		device)
+			if _cmd_add_openai_device "$prefill_email"; then
+				return 0
+			fi
+			print_warning "OpenAI device login failed — falling back to callback URL flow"
+			;;
+		callback)
+			print_info "Using callback URL flow for OpenAI (AIDEVOPS_OPENAI_ADD_MODE=callback)"
+			;;
+		*)
+			print_error "Invalid AIDEVOPS_OPENAI_ADD_MODE: ${openai_add_mode} (valid: device, callback)"
+			return 1
+			;;
+		esac
 	fi
 
 	local email
@@ -1041,7 +1148,7 @@ cmd_check() {
 		echo ""
 		echo "To add an account:"
 		echo "  oauth-pool-helper.sh add anthropic    # Claude Pro/Max"
-		echo "  oauth-pool-helper.sh add openai       # ChatGPT Plus/Pro"
+		echo "  oauth-pool-helper.sh add openai       # ChatGPT Plus/Pro (device flow default)"
 		echo "  oauth-pool-helper.sh add cursor       # Cursor Pro (reads from IDE)"
 		echo "  oauth-pool-helper.sh add google       # Google AI Pro/Ultra/Workspace"
 	fi
@@ -1261,12 +1368,17 @@ try:
     if next_account.get('expires', 0) <= now_ms and next_account.get('refresh'):
         _try_refresh(next_account, provider, now_ms)
 
-    auth[provider] = {
+    auth_entry = {
         'type':    current_auth.get('type', 'oauth'),
         'refresh': next_account.get('refresh', ''),
         'access':  next_account.get('access', ''),
         'expires': next_account.get('expires', 0),
     }
+    if provider == 'openai':
+        account_id = next_account.get('accountId', current_auth.get('accountId', ''))
+        if account_id:
+            auth_entry['accountId'] = account_id
+    auth[provider] = auth_entry
     _atomic_write_json(auth_path, auth)
 
     now_iso = datetime.now(timezone.utc).strftime('%Y-%m-%dT%H:%M:%SZ')
@@ -1508,12 +1620,17 @@ try:
                     # and check if auth still has the expired token)
                     auth_expires = auth.get(provider, {}).get('expires', 0)
                     if auth_expires and auth_expires <= now_ms:
-                        auth[provider] = {
+                        auth_entry = {
                             'type': 'oauth',
                             'refresh': acct.get('refresh', ''),
                             'access': acct.get('access', ''),
                             'expires': acct.get('expires', 0),
                         }
+                        if provider == 'openai':
+                            account_id = acct.get('accountId', auth.get(provider, {}).get('accountId', ''))
+                            if account_id:
+                                auth_entry['accountId'] = account_id
+                        auth[provider] = auth_entry
                         auth_dir = os.path.dirname(auth_path)
                         fd2, tmp2 = tempfile.mkstemp(dir=auth_dir, prefix='.auth-', suffix='.tmp')
                         try:
@@ -1640,7 +1757,7 @@ print(f'  Auth errors:    {auth_error}')
 		echo ""
 		echo "To add an account:"
 		echo "  oauth-pool-helper.sh add anthropic    # Claude Pro/Max"
-		echo "  oauth-pool-helper.sh add openai       # ChatGPT Plus/Pro"
+		echo "  oauth-pool-helper.sh add openai       # ChatGPT Plus/Pro (device flow default)"
 		echo "  oauth-pool-helper.sh add cursor       # Cursor Pro (reads from IDE)"
 		echo "  oauth-pool-helper.sh add google       # Google AI Pro/Ultra/Workspace"
 	fi
@@ -1867,7 +1984,7 @@ if available == 0 and total > 0:
 		echo ""
 		echo "Add an account:"
 		echo "  aidevops model-accounts-pool add anthropic    # Claude Pro/Max"
-		echo "  aidevops model-accounts-pool add openai       # ChatGPT Plus/Pro"
+		echo "  aidevops model-accounts-pool add openai       # ChatGPT Plus/Pro (device flow default)"
 		echo "  aidevops model-accounts-pool add cursor       # Cursor Pro"
 		echo "  aidevops model-accounts-pool add google       # Google AI Pro/Ultra/Workspace"
 		echo "  aidevops model-accounts-pool import claude-cli"
@@ -2084,7 +2201,7 @@ Preferred CLI (same commands, no path needed):
   aidevops model-accounts-pool <command>
 
 Commands:
-  add [anthropic|openai|cursor|google]            Add an account (browser OAuth flow)
+  add [anthropic|openai|cursor|google]            Add an account (OAuth; OpenAI defaults to device flow)
   check [anthropic|openai|cursor|google|all]      Health check: token expiry + live validity
   list [anthropic|openai|cursor|google|all]       List accounts with per-account status
   status [anthropic|openai|cursor|google|all]     Pool aggregate stats (counts, availability)
@@ -2104,7 +2221,7 @@ Quickstart (if you see "Key Missing" or auth errors):
 
 Examples:
   oauth-pool-helper.sh add anthropic                      # Claude Pro/Max (browser OAuth)
-  oauth-pool-helper.sh add openai                         # ChatGPT Plus/Pro (browser OAuth)
+  oauth-pool-helper.sh add openai                         # ChatGPT Plus/Pro (device flow default)
   oauth-pool-helper.sh add cursor                         # Cursor Pro (reads from IDE)
   oauth-pool-helper.sh add google                         # Google AI Pro/Ultra/Workspace (browser OAuth)
   oauth-pool-helper.sh import claude-cli                  # Import from Claude CLI auth
