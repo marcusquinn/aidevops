@@ -726,7 +726,7 @@ The Enterprise or Custom tier typically doesn't show a price, instead displaying
 - **Opportunity**: Allows sales team to qualify, pitch, and potentially close higher-value deals
 - **Deterrent**: Small businesses won't bother contacting
 
-**Research Finding**: 
+**Research Finding**:
 A SaaS company tested showing Enterprise pricing ($499/mo) vs. "Contact Sales" on the same tier:
 - **With price**: 47 clicks to "Start Trial"
 - **Contact Sales**: 12 clicks to "Contact Sales" button
@@ -1052,7 +1052,7 @@ Emotional ("love"), confident ("guaranteed"), clear outcome ("money back").
 - We won't make you jump through hoops
 - We value customer relationships over squeezing every dollar
 
-**Research Finding**: 
+**Research Finding**:
 An e-commerce company tested:
 - **Version A**: "30-day money-back guarantee"
 - **Version B**: "30-day money-back guarantee—no questions asked"

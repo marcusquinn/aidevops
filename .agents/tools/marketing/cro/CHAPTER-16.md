@@ -56,6 +56,7 @@ Requirements: Minimum 300 conversions per month, 3,000+ path interactions, 90 da
 ### Implementing Data-Driven Attribution
 
 **Google Analytics 4 Setup:**
+
 ```javascript
 // Enable data-driven attribution in GA4
 gtag('config', 'GA_MEASUREMENT_ID', {
@@ -74,6 +75,7 @@ function trackConversion(eventName, value) {
 ```
 
 **Attribution Path Analysis:**
+
 ```sql
 -- BigQuery path analysis query
 WITH user_paths AS (
@@ -125,6 +127,7 @@ Incrementality answers: "What would have happened without this marketing activit
 - Sufficient sample size (minimum 5 markets per group)
 
 **Statistical Design:**
+
 ```python
 import numpy as np
 from scipy import stats
@@ -234,6 +237,7 @@ MMM analyzes aggregate data to understand marketing impact on business outcomes.
    Long-term growth or decline.
 
 **Python Implementation:**
+
 ```python
 import pandas as pd
 import numpy as np
@@ -279,6 +283,7 @@ Mathematical optimization to maximize revenue or conversions.
 ### Modern Bayesian MMM
 
 **Robyn (Meta's Open Source MMM):**
+
 ```python
 from robyn import Robyn
 
@@ -307,6 +312,7 @@ Segment users based on actions, not demographics.
 - Monetary: How much do they spend?
 
 **Implementation:**
+
 ```python
 def calculate_rfm_scores(df):
     """
@@ -361,6 +367,7 @@ Segment based on where users are in the buying journey.
 - Email engagement
 
 **Implementation:**
+
 ```javascript
 // Intent scoring system
 const intentSignals = {
@@ -401,7 +408,8 @@ Analyze behavior of users acquired in the same time period.
 - Time to first purchase
 
 **Cohort Table:**
-```
+
+```text
         Month 0   Month 1   Month 2   Month 3
 Jan     100%      45%       38%       32%
 Feb     100%      42%       35%       29%
@@ -410,6 +418,7 @@ Apr     100%      44%       -         -
 ```
 
 **Python Implementation:**
+
 ```python
 def create_cohort_table(df, period='M'):
     """
@@ -453,6 +462,7 @@ Predict likelihood of conversion using machine learning.
 - Contextual: time of day, day of week, seasonality
 
 **Model Implementation:**
+
 ```python
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
@@ -508,11 +518,13 @@ Identify users at risk of churning before they leave.
 Predict customer LTV for better acquisition decisions.
 
 **Simple LTV Formula:**
-```
+
+```text
 LTV = Average Order Value × Purchase Frequency × Customer Lifespan
 ```
 
 **Predictive LTV:**
+
 ```python
 def predict_ltv(customer_data, model):
     """
@@ -548,6 +560,7 @@ for channel in channels:
 - Statistical power (1-beta)
 
 **Formula:**
+
 ```python
 import scipy.stats as stats
 import math
@@ -597,6 +610,7 @@ Stop tests early when significance is reached, without inflating false positive 
 - Lower traffic requirements
 
 **Implementation:**
+
 ```python
 from scipy import stats
 
@@ -625,6 +639,7 @@ Use Bayesian methods for more intuitive test interpretation.
 - Smaller sample sizes often needed
 
 **Implementation:**
+
 ```python
 import numpy as np
 from scipy import stats
@@ -694,7 +709,8 @@ def bayesian_ab_test(a_conversions, a_visitors, b_conversions, b_visitors,
 ### Automated Reporting
 
 **Weekly CRO Report:**
-```
+
+```text
 1. Executive Summary
    - Revenue impact from CRO this week
    - Active tests and their status
@@ -717,6 +733,7 @@ def bayesian_ab_test(a_conversions, a_visitors, b_conversions, b_visitors,
 ```
 
 **Automated Email Report:**
+
 ```python
 def generate_weekly_report():
     """

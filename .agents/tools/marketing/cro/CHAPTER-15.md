@@ -38,6 +38,7 @@ Auto-detect language preference and display accordingly.
 **Implementation**:
 
 **Client-Side (JavaScript)**:
+
 ```javascript
 fetch('https://ipapi.co/json/')
   .then(res => res.json())
@@ -76,25 +77,29 @@ Recognize returning visitors and adapt experience.
 **Examples**:
 
 **Different Headline**:
-```
+
+```text
 First-time visitor: "Welcome! Discover the best CRM for small business"
 Returning visitor: "Welcome back! Ready to start your free trial?"
 ```
 
 **Content Focus**:
-```
+
+```text
 First visit: Educational content, features overview
 Return visit: Case studies, pricing, CTAs
 ```
 
 **Cart Recovery**:
-```
+
+```text
 "You left items in your cart: [Product Name]
 [Complete Your Purchase]"
 ```
 
 **Recommendations**:
-```
+
+```text
 "Based on your last visit, you might like:"
 [Recommended products]
 ```
@@ -102,6 +107,7 @@ Return visit: Case studies, pricing, CTAs
 **Implementation**:
 
 **Cookie-Based**:
+
 ```javascript
 // Set cookie on first visit
 if (!getCookie('returning_visitor')) {
@@ -113,6 +119,7 @@ if (!getCookie('returning_visitor')) {
 ```
 
 **Local Storage**:
+
 ```javascript
 if (!localStorage.getItem('visited')) {
   localStorage.setItem('visited', 'true');
@@ -156,7 +163,8 @@ Comparison messaging.
 **Implementation**:
 
 **URL Parameters**:
-```
+
+```text
 yoursite.com/landing?source=facebook-ad&campaign=50-off
 ```
 
@@ -170,6 +178,7 @@ if (source === 'facebook-ad') {
 ```
 
 **Referrer Detection**:
+
 ```javascript
 const referrer = document.referrer;
 if (referrer.includes('competitor.com')) {
@@ -216,6 +225,7 @@ Show: "Add $5 more for free shipping!"
 **Implementation**:
 
 **Scroll Tracking**:
+
 ```javascript
 let scrolledToBottom = false;
 window.addEventListener('scroll', () => {
@@ -229,6 +239,7 @@ window.addEventListener('scroll', () => {
 ```
 
 **Time-Based**:
+
 ```javascript
 setTimeout(() => {
   showSubscribePopup();
@@ -255,25 +266,29 @@ Change headlines based on visitor attributes.
 **Examples**:
 
 **Location-Based**:
-```
+
+```text
 San Francisco visitor: "Join 5,000+ San Francisco startups using our CRM"
 New York visitor: "Join 5,000+ New York startups using our CRM"
 ```
 
 **Industry-Based** (if known from form submission or referrer):
-```
+
+```text
 Real estate agent: "CRM Built for Real Estate Agents"
 Insurance agent: "CRM Built for Insurance Agents"
 ```
 
 **Device-Based**:
-```
+
+```text
 Mobile: "Download our app for on-the-go access"
 Desktop: "Access anywhere with our cloud platform"
 ```
 
 **Time-Based**:
-```
+
+```text
 Morning: "Good morning! Start your day with..."
 Evening: "Relax tonight with..."
 ```
@@ -281,6 +296,7 @@ Evening: "Relax tonight with..."
 **Implementation**:
 
 **Time-Based**:
+
 ```javascript
 const hour = new Date().getHours();
 let greeting;
@@ -293,7 +309,8 @@ document.querySelector('.headline').textContent = `${greeting}! Welcome to...`;
 
 **A/B Test Integration**:
 Combine personalization with A/B testing:
-```
+
+```text
 Version A: "Save 20% today"
 Version B: "Join 10,000+ customers"
 
@@ -310,7 +327,8 @@ CTAs that adapt to user context.
 **Examples**:
 
 **Lifecycle Stage**:
-```
+
+```text
 Anonymous visitor: "Start Free Trial"
 Known contact (email): "Continue Where You Left Off"
 Active trial user: "Upgrade to Pro"
@@ -318,13 +336,15 @@ Paying customer: "Refer a Friend, Get $50"
 ```
 
 **Cart State**:
-```
+
+```text
 Empty cart: "Start Shopping"
 Items in cart: "Checkout Now ($142.00)"
 ```
 
 **Time-Sensitive**:
-```
+
+```text
 During sale: "Save 30% - Sale Ends Tonight"
 After sale: "Get Started Today"
 ```
@@ -339,7 +359,8 @@ HubSpot Smart CTAs change based on:
 - Referral source
 
 **Setup**:
-```
+
+```text
 Default CTA: "Start Free Trial"
 
 Rules:
@@ -378,6 +399,7 @@ Combination of both approaches
 **Implementation**:
 
 **Simple**: Based on category/tags
+
 ```javascript
 // User viewed product in "Running Shoes" category
 // Recommend other products in "Running Shoes"

@@ -16,7 +16,8 @@ Shows where users click (or tap on mobile).
 **Example Insights**:
 
 **Product Image Clicks**:
-```
+
+```text
 Heatmap shows 1,000 clicks on product image (not clickable)
 0 clicks on "View Details" link
 ```
@@ -24,7 +25,8 @@ Heatmap shows 1,000 clicks on product image (not clickable)
 **Action**: Make product image clickable, or add "Click to enlarge" text.
 
 **Non-Button Text Clicked**:
-```
+
+```text
 Heatmap shows 500 clicks on "Free Shipping" text (looks like button but isn't)
 ```
 
@@ -42,7 +44,8 @@ Shows how far down the page users scroll before leaving.
 **Example Insights**:
 
 **CTA Below the Fold**:
-```
+
+```text
 Scroll map shows 60% of users never scroll past hero section
 CTA is at 70% page depth
 ```
@@ -50,7 +53,8 @@ CTA is at 70% page depth
 **Action**: Add CTA above the fold OR create sticky CTA.
 
 **Content Drop-Off**:
-```
+
+```text
 Scroll map shows 90% engagement at top, 40% at middle, 10% at bottom
 ```
 
@@ -68,7 +72,8 @@ Shows where users move their mouse cursor (desktop only).
 **Example Insights**:
 
 **Pricing Hesitation**:
-```
+
+```text
 Move map shows cursors hovering over price for 10+ seconds
 Then leaving without clicking CTA
 ```
@@ -76,7 +81,8 @@ Then leaving without clicking CTA
 **Action**: Price may be too high, or value not clear. Add guarantees, testimonials near pricing.
 
 **Reading Patterns**:
-```
+
+```text
 Move map shows users reading first 3 bullet points, skipping rest
 ```
 
@@ -94,14 +100,16 @@ Shows which areas of the page get the most visual attention based on time spent.
 **Example Insights**:
 
 **Ignored Value Proposition**:
-```
+
+```text
 Attention map shows users spend 2 seconds on headline, 30 seconds on image, 0 seconds on benefits section
 ```
 
 **Action**: Make benefits section more visual, scannable, or reposition.
 
 **Confused Navigation**:
-```
+
+```text
 Attention map shows users spending 20+ seconds on navigation menu (indicating confusion)
 ```
 
@@ -299,7 +307,8 @@ Where do users leave?
 
 **5. Take Notes**:
 Track patterns:
-```
+
+```text
 Issue: Users confused by navigation
 Frequency: 8/20 recordings
 Action: Simplify nav labels
