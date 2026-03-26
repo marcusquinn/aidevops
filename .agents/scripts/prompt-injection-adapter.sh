@@ -643,24 +643,22 @@ data['read'] = existing
 with open('$tmp_file', 'w') as f:
     yaml.dump(data, f, default_flow_style=False, sort_keys=False)
 " 2>/dev/null || {
-				# python3/pyyaml not available — safe fallback for empty
-				# inline lists only. Non-empty inline lists (read: ["a"])
-				# cannot be safely converted without a YAML parser; skip
-				# to avoid data loss.
-				if echo "$read_line" | grep -qE '^read:[[:space:]]*\[\]'; then
-					awk -v path="$_PIA_AGENTS_MD" '
-						/^read:[[:space:]]*\[\]/ {
-							print "read:"
-							print "  - " path
-							next
-						}
-						{ print }
-					' "$aider_config" >"$tmp_file"
-				else
-					_pia_log "warning" "Cannot modify inline read: list without python3+pyyaml — skipping"
-					rm -f "$tmp_file"
-					return 0
+				# python3/pyyaml not available — safe fallback: convert inline
+				# to block format manually (handles any inline list).
+				# Extract existing entries from the inline list, convert to
+				# block format, then append our entry.
+				local inline_content
+				inline_content=$(echo "$read_line" | sed 's/^read:[[:space:]]*\[//;s/\][[:space:]]*$//')
+				sed '/^read:[[:space:]]*\[/d' "$aider_config" >"$tmp_file"
+				printf 'read:\n' >>"$tmp_file"
+				# Parse comma-separated entries (strip quotes and whitespace)
+				if [[ -n "$inline_content" ]]; then
+					echo "$inline_content" | tr ',' '\n' | while IFS= read -r entry; do
+						entry=$(echo "$entry" | sed 's/^[[:space:]]*"//;s/"[[:space:]]*$//')
+						[[ -n "$entry" ]] && printf '  - %s\n' "$entry" >>"$tmp_file"
+					done
 				fi
+				printf '  - %s\n' "$_PIA_AGENTS_MD" >>"$tmp_file"
 			}
 		else
 			# Scalar format (read: /path/to/file) — convert to block list
