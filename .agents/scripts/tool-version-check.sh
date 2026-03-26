@@ -132,12 +132,44 @@ declare -a JSON_RESULTS=()
 # slow interpreters (Python, Ruby) while still catching hung MCP servers.
 readonly VERSION_TIMEOUT=10
 
-# Get installed version for Python packages.
-# Tries pip show first (standard pip installs), then pipx list (pipx-isolated
-# tools like analytics-mcp), then uv tool list (uv-isolated tools like
-# outscraper-mcp-server). pip-only libraries (e.g. crawl4ai, dspy) have no
-# CLI binary so command -v always fails — this function handles all three cases.
-get_pip_installed_version() {
+# Get installed version from pipx isolated environments.
+# pipx installs each package in its own venv — pip show cannot see them.
+get_pipx_installed_version() {
+	local pkg="$1"
+	local version=""
+	if command -v pipx &>/dev/null; then
+		version=$(pipx list --short 2>/dev/null | grep -i "^${pkg}" | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1)
+	fi
+	if [[ -n "$version" ]]; then
+		echo "$version"
+		return 0
+	fi
+	echo "not installed"
+	return 0
+}
+
+# Get installed version from uv tool isolated environments.
+# uv tool installs each package in its own managed venv — pip show cannot see them.
+get_uv_installed_version() {
+	local pkg="$1"
+	local version=""
+	if command -v uv &>/dev/null; then
+		version=$(uv tool list 2>/dev/null | grep -i "^${pkg}" | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1)
+	fi
+	if [[ -n "$version" ]]; then
+		echo "$version"
+		return 0
+	fi
+	echo "not installed"
+	return 0
+}
+
+# Get installed version for Python packages across all install methods.
+# Tries pip show first (standard pip installs), then pipx (isolated tools like
+# analytics-mcp), then uv tool (isolated tools like outscraper-mcp-server).
+# pip-only libraries (e.g. crawl4ai, dspy) have no CLI binary so command -v
+# always fails — this function handles all three installation methods.
+get_python_installed_version() {
 	local pkg="$1"
 	local version
 
@@ -148,22 +180,18 @@ get_pip_installed_version() {
 		return 0
 	fi
 
-	# 2. Try pipx list (packages installed in isolated pipx environments)
-	if command -v pipx &>/dev/null; then
-		version=$(pipx list --short 2>/dev/null | grep -i "^${pkg}" | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1)
-		if [[ -n "$version" ]]; then
-			echo "$version"
-			return 0
-		fi
+	# 2. Try pipx (packages installed in isolated pipx environments)
+	version=$(get_pipx_installed_version "$pkg")
+	if [[ "$version" != "not installed" ]]; then
+		echo "$version"
+		return 0
 	fi
 
-	# 3. Try uv tool list (packages installed via uv tool install)
-	if command -v uv &>/dev/null; then
-		version=$(uv tool list 2>/dev/null | grep -i "^${pkg}" | grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' | head -1)
-		if [[ -n "$version" ]]; then
-			echo "$version"
-			return 0
-		fi
+	# 3. Try uv tool (packages installed via uv tool install)
+	version=$(get_uv_installed_version "$pkg")
+	if [[ "$version" != "not installed" ]]; then
+		echo "$version"
+		return 0
 	fi
 
 	echo "not installed"
@@ -321,12 +349,12 @@ check_tool() {
 	local update_cmd="$6"
 
 	local installed
-	# pip tools: use pip show for version detection — pip-only libraries (e.g.
+	# pip tools: detect across pip/pipx/uv — pip-only libraries (e.g.
 	# crawl4ai, dspy) have no CLI binary so command -v always fails.
 	# npm tools: pass package name so fallback to package.json works.
 	# All other categories: standard CLI binary detection.
 	if [[ "$category" == "pip" ]]; then
-		installed=$(get_pip_installed_version "$pkg")
+		installed=$(get_python_installed_version "$pkg")
 	elif [[ "$category" == "npm" ]]; then
 		installed=$(get_installed_version "$cmd" "$ver_flag" "$pkg")
 	else
