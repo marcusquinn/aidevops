@@ -1,833 +1,253 @@
 ## AI Tools for Creative
 
-> **Note:** Pricing information is current as of early 2025 and may change. Verify current pricing on vendor websites before purchasing.
+> Pricing as of early 2025 — verify on vendor sites before purchasing.
 
 ### AI Image Generation
 
-**1. Midjourney**
+**1. Midjourney** — Text-to-image via Discord. $10-60/month. Commercial use with paid plan.
 
-**What It Is:**
-Text-to-image AI that creates stunning visuals from prompts
-
-**Access:**
-- Discord-based interface
-- Subscription: $10/month (basic), $30/month (standard), $60/month (pro)
-- Commercial use allowed (with paid plan)
-
-**Best Use Cases:**
-- Concept visualization
-- Background images
-- Unique product shots
-- Lifestyle scenes
-- Abstract/artistic elements
-
-**Prompting Tips:**
+Best for: concept visualization, backgrounds, product shots, lifestyle scenes, abstract elements.
 
 ```text
-BASIC STRUCTURE:
+PROMPT STRUCTURE:
 [Subject] [style] [mood/lighting] [aspect ratio] [quality settings]
 
 EXAMPLE:
-"A modern workspace with laptop, coffee, and notebook, clean minimalist style, bright natural lighting, professional photography --ar 16:9 --v 6"
+"Modern workspace with laptop, clean minimalist style, bright natural lighting, professional photography --ar 16:9 --v 6"
 
-ADVANCED MODIFIERS:
---ar 16:9 (aspect ratio)
---v 6 (version 6, latest)
---stylize 100 (how artistic, 0-1000)
---chaos 50 (variety, 0-100)
---seed 12345 (reproducible results)
+KEY MODIFIERS:
+--ar 16:9    aspect ratio
+--v 6        latest version
+--stylize N  artistic level (0-1000)
+--chaos N    variety (0-100)
+--seed N     reproducible results
 
-STYLE MODIFIERS:
-"photorealistic"
-"8k ultra HD"
-"cinematic lighting"
-"professional photography"
-"shot on Canon 5D"
+STYLE KEYWORDS: "photorealistic", "8k ultra HD", "cinematic lighting", "shot on Canon 5D"
 ```
 
-**Example Prompts for Ads:**
+Ad prompt patterns:
 
 ```text
-PRODUCT SHOT:
-"Professional product photography of [product], white background, studio lighting, high resolution, commercial photography --ar 1:1 --v 6"
-
-LIFESTYLE SCENE:
-"Happy person using [product] in modern home office, natural window light, authentic moment, documentary photography style --ar 4:5 --v 6"
-
-HERO IMAGE:
-"Dynamic action shot of [product in use], motion blur, vibrant colors, advertising photography, energetic mood --ar 16:9 --v 6"
-
-TESTIMONIAL BACKGROUND:
-"Soft blurred background, warm tones, professional setting, bokeh effect, shallow depth of field --ar 9:16 --v 6"
+PRODUCT: "Professional product photography of [product], white background, studio lighting --ar 1:1 --v 6"
+LIFESTYLE: "Happy person using [product] in modern home office, natural light, documentary style --ar 4:5 --v 6"
+HERO: "Dynamic action shot of [product in use], motion blur, vibrant colors, advertising photography --ar 16:9 --v 6"
 ```
 
-**Workflow:**
-```text
-1. Generate 4 variations with /imagine
-2. Upscale favorites (U1, U2, U3, U4)
-3. Create variations of upscales (V1, V2, etc.)
-4. Download finals
-5. Edit in Photoshop/Canva (add text, brand elements)
-```
+Workflow: /imagine → upscale favorites (U1-U4) → create variations (V1+) → download → edit in Photoshop/Canva.
 
-**2. DALL-E 3 (via ChatGPT Plus)**
+**2. DALL-E 3** — OpenAI's generator via ChatGPT Plus ($20/month) or Bing Image Creator (free, limited).
 
-**What It Is:**
-OpenAI's image generator, integrated into ChatGPT
+Advantages: natural language prompts, no Discord, conversational iteration. Best for: quick concepts, illustrations, ad mockups.
 
-**Access:**
-- ChatGPT Plus subscription ($20/month)
-- Also available via Bing Image Creator (free, limited)
+Workflow: describe to ChatGPT → generate → request modifications ("make laptop more prominent") → iterate → download.
 
-**Advantages:**
-- Natural language prompts (easier for beginners)
-- No Discord required (clean interface)
-- Integrated with ChatGPT (can iterate conversationally)
+**3. Adobe Firefly** — Adobe's generator. Free (25 credits/month), $4.99/month (100 credits), or included with Creative Cloud.
 
-**Best Use Cases:**
-- Quick concept generation
-- Illustrations
-- Edited photos (can describe edits in natural language)
-- Ad mockups
+Advantages: commercially safe (trained on Adobe Stock), integrated into Photoshop. Best for: generative fill (extend/expand images), object removal, background changes.
 
-**Prompting:**
-```text
-NATURAL LANGUAGE:
-"Create an image of a happy entrepreneur working on a laptop in a bright cafe. Make it feel authentic and energetic, like it's from an Instagram post."
+Generative Fill: select area with lasso → click "Generative Fill" → describe replacement → AI generates options.
 
-DALL-E understands context better, less need for technical modifiers
-```
+**4. Stable Diffusion** — Free, open-source. Run locally (requires GPU) or via DreamStudio, Playground AI, Clipdrop.
 
-**Workflow:**
-```text
-1. Describe what you want to ChatGPT
-2. ChatGPT generates image
-3. Ask for modifications: "Make the laptop more prominent" or "Change background to home office"
-4. Iterate until satisfied
-5. Download and use
-```
-
-**3. Adobe Firefly**
-
-**What It Is:**
-Adobe's AI image generator, integrated into Creative Cloud
-
-**Access:**
-- Free tier (25 credits/month)
-- Paid: $4.99/month (100 credits)
-- Included with Creative Cloud
-
-**Advantages:**
-- Commercially safe (trained on Adobe Stock)
-- Integrated into Photoshop (generative fill, expand)
-- Simple interface
-
-**Best Use Cases:**
-- Extending/expanding images (generative fill)
-- Removing objects
-- Changing backgrounds
-- Creating variations
-
-**Unique Features:**
-
-```text
-GENERATIVE FILL (in Photoshop):
-- Select area with lasso
-- Click "Generative Fill"
-- Describe what should fill the area
-- AI generates options
-
-EXAMPLE USE:
-- Remove background object
-- Extend image beyond original borders
-- Add elements that weren't there
-```
-
-**4. Stable Diffusion (Open Source)**
-
-**What It Is:**
-Free, open-source AI image generation
-
-**Access:**
-- Run locally (requires GPU)
-- Or use: DreamStudio, Playground AI, Clipdrop
-
-**Best For:**
-- Free image generation (unlimited)
-- Fine-tuned models (specific styles)
-- Full control over output
+Best for: unlimited free generation, fine-tuned models, full control.
 
 ### AI Video Generation
 
-**5. Runway ML**
+**5. Runway ML** — AI video editing and generation. Free tier, $12-28/month.
 
-**What It Is:**
-AI video editing and generation tools
+Features: text-to-video, video-to-video style transfer, background/object removal, green screen without green screen, slow motion. Best for: B-roll generation, background removal, visual effects.
 
-**Key Features:**
+**6. Synthesia / HeyGen** — AI avatar video (talking head without filming). Write script → choose avatar → select voice → generate.
 
-```text
-TEXT TO VIDEO:
-Generate video clips from text prompts
+Best for: explainer videos, multilingual content, product demos. Limitations: can look artificial; not suitable for all brands.
 
-VIDEO TO VIDEO:
-Transform existing video styles
+**7. Descript** — Video editing via transcript. $12-24/month.
 
-AI EDITING:
-- Background removal
-- Object removal
-- Green screen (without green screen)
-- Slow motion
-
-PRICING:
-Free tier, $12-28/month paid
-```
-
-**Use Cases for Ads:**
-- Generate B-roll footage
-- Remove backgrounds from product videos
-- Create unique visual effects
-- Speed up editing
-
-**6. Synthesia / HeyGen**
-
-**What It Is:**
-AI avatar video creation (talking head videos without filming)
-
-**How It Works:**
-1. Write script
-2. Choose AI avatar
-3. Select voice
-4. Generate video
-
-**Use Cases:**
-- Testimonial-style videos (controversial, use carefully)
-- Explainer videos
-- Multilingual videos (same avatar, different languages)
-- Product demos
-
-**Limitations:**
-- Can look artificial (uncanny valley)
-- Best for straightforward content
-- Not suitable for all brands
-
-**7. Descript**
-
-**What It Is:**
-Video editing by editing transcript (+ AI features)
-
-**AI Features:**
-- Overdub (AI voice cloning)
-- Studio Sound (remove background noise)
-- Eye Contact (makes speaker look at camera)
-- Filler word removal
-
-**Use Cases:**
-- Edit UGC videos quickly
-- Remove "ums" and "ahs"
-- Fix audio quality
-- Create variations (change script, video auto-adjusts)
-
-**Pricing:**
-$12-24/month
+AI features: Overdub (voice cloning), Studio Sound (noise removal), Eye Contact, filler word removal. Best for: editing UGC quickly, fixing audio, creating script variations.
 
 ### AI Copywriting
 
-**8. ChatGPT**
-
-**Use Cases for Ad Creative:**
+**8. ChatGPT** — General-purpose AI for ad copy.
 
 ```text
-HEADLINE GENERATION:
-"Generate 10 headline variations for [product] targeting [audience]"
+HEADLINE: "Generate 10 headline variations for [product] targeting [audience]"
+BODY COPY: "Write Facebook ad copy for [product] using PAS framework"
+HOOKS: "Give me 20 video ad hooks for [product] that would stop the scroll"
 
-BODY COPY:
-"Write Facebook ad copy for [product] using PAS framework"
-
-HOOK IDEAS:
-"Give me 20 video ad hooks for [product] that would stop the scroll"
-
-VARIATIONS:
-"Rewrite this ad copy in 5 different ways"
-
-LANDING PAGE COPY:
-"Write landing page copy for [product] with sections: hero, benefits, social proof, FAQ, CTA"
+PROMPTING TIPS:
+- Be specific: "125-character Facebook headline for project management SaaS targeting marketing agencies, focusing on saving time"
+- Provide context: target audience, value prop, tone, deliverable
+- Iterate: "more casual", "shorter, punchier", "add urgency"
 ```
 
-**Prompting Tips:**
+**9. Jasper AI** — Marketing-specialized AI writer. $49-125/month.
 
-```text
-BE SPECIFIC:
-❌ "Write an ad"
-✅ "Write a 125-character Facebook ad headline for a project management SaaS targeting marketing agencies, focusing on the benefit of saving time"
+Features: pre-built ad templates, brand voice customization, batch generation, SEO optimization.
 
-PROVIDE CONTEXT:
-"Our target audience is [description]
-Our unique value prop is [X]
-Our tone is [casual/professional/etc.]
-Write [deliverable]"
+**10. Copy.ai** — Short-form copy focus. Free tier, $49/month pro.
 
-ITERATE:
-"Make it more casual"
-"Remove jargon"
-"Shorter, punchier"
-"Add urgency"
-```
-
-**9. Jasper AI**
-
-**What It Is:**
-AI writing assistant specialized for marketing
-
-**Features:**
-- Pre-built templates (Facebook ads, Google ads, etc.)
-- Brand voice customization
-- Batch generation
-- SEO optimization
-
-**Use Cases:**
-- Quickly generate ad variations
-- Maintain brand voice across team
-- Scale content production
-
-**Pricing:**
-$49-125/month
-
-**10. Copy.ai**
-
-**What It Is:**
-Similar to Jasper, focused on short-form copy
-
-**Features:**
-- Ad copy templates
-- Headline generators
-- CTA generators
-- Social media captions
-
-**Pricing:**
-Free tier, $49/month pro
+Features: ad copy templates, headline/CTA generators, social media captions.
 
 ### AI Creative Testing
 
-**11. AdCreative.ai**
+**11. AdCreative.ai** — AI-generated ad creative optimized for conversion. $29-149/month.
 
-**What It Is:**
-AI that generates ad creative specifically optimized for conversion
+Upload product photos/URLs → AI generates variations with predicted CTR → download and test. Features: pre-scored creative, multiple formats, brand color integration.
 
-**How It Works:**
-1. Upload product photos or URLs
-2. AI generates ad variations
-3. Platform predicts which will perform best
-4. Download and test
+**12. Pencil (TrueMedia)** — AI creative testing platform. Enterprise pricing.
 
-**Features:**
-- Pre-scored creative (predicted CTR)
-- Multiple size formats
-- Text overlay
-- Brand color integration
-
-**Use Cases:**
-- Quickly generate test variations
-- Find winning concepts fast
-- Scale creative production
-
-**Pricing:**
-$29-149/month
-
-**12. Pencil (by TrueMedia)**
-
-**What It Is:**
-AI creative testing and generation platform
-
-**Features:**
-- Generate static and video ads
-- AI benchmarking
-- Creative insights
-- Performance predictions
-
-**Best For:**
-- E-commerce brands
-- Scaling creative testing
-- Performance predictions
-
-**Pricing:**
-Enterprise (contact for pricing)
+Features: static and video ad generation, AI benchmarking, performance predictions. Best for e-commerce brands scaling creative testing.
 
 ### AI Video Editing
 
-**13. CapCut**
+**13. CapCut** — Free video editor with AI. Free (watermark), $7.99/month (no watermark).
 
-**What It Is:**
-Free video editor with built-in AI features
+AI features: auto captions, background removal, auto transitions, beat sync, templates. Best for: UGC editing, Reels/TikToks.
 
-**AI Features:**
-- Auto captions
-- Background removal
-- Auto transitions
-- Beat sync (music)
-- Templates
+**14. OpusClip** — Long video → short clips. $9-19/month.
 
-**Use Cases:**
-- Edit UGC quickly
-- Add captions to videos
-- Create Reels/TikToks
-- Quick social media content
-
-**Pricing:**
-Free (with watermark), $7.99/month (no watermark)
-
-**14. OpusClip**
-
-**What It Is:**
-AI that turns long videos into short clips
-
-**How It Works:**
-1. Upload long video (webinar, podcast, etc.)
-2. AI identifies best moments
-3. Auto-generates short clips with captions
-4. Download for social media
-
-**Use Cases:**
-- Repurpose long content into ads
-- Create multiple clips from one video
-- Quick social media content
-
-**Pricing:**
-$9-19/month
+Upload long video → AI identifies best moments → auto-generates captioned clips. Best for: repurposing webinars/podcasts into ads.
 
 ### AI Voice & Audio
 
-**15. ElevenLabs**
+**15. ElevenLabs** — AI voice generation. Free tier (limited), $5-99/month.
 
-**What It Is:**
-AI voice generation (text-to-speech)
+Features: realistic voices, voice cloning, multiple languages, emotion control. Quality nearly indistinguishable from real. Best for: voiceovers, multilingual ads.
 
-**Features:**
-- Realistic AI voices
-- Voice cloning
-- Multiple languages
-- Emotion control
+**16. Murf AI** — Similar to ElevenLabs. $19-99/month. Best for: video narration, multilingual ads.
 
-**Use Cases:**
-- Voiceovers for videos
-- Multilingual ads (same voice, different languages)
-- Quick VO without recording
+### AI Background & Image Editing
 
-**Quality:**
-Very high (hard to distinguish from real)
+**17. Remove.bg** — One-click background removal. Free (low-res), $9/month (HD), API available.
 
-**Pricing:**
-Free tier (limited), $5-99/month
-
-**16. Murf AI**
-
-**What It Is:**
-Similar to ElevenLabs, AI voice generation
-
-**Use Cases:**
-- Video narration
-- Ads in multiple languages
-- Quick voiceover needs
-
-**Pricing:**
-$19-99/month
-
-### AI Background Removal
-
-**17. Remove.bg**
-
-**What It Is:**
-One-click background removal
-
-**Use Cases:**
-- Product photos (white background)
-- Creative cutouts
-- Composite images
-
-**Pricing:**
-Free (low-res), $9/month (HD), API available
-
-**18. Photoshop AI (Generative Fill)**
-
-**What It Is:**
-Adobe's built-in AI for extending, removing, adding elements
-
-**Use Cases:**
-- Extend images to fit different aspect ratios
-- Remove unwanted objects
-- Add elements
-- Change backgrounds
-
-**Best Practice:**
-Keep original images, use AI to create variations for different placements
+**18. Photoshop AI (Generative Fill)** — Extend images for different aspect ratios, remove/add objects, change backgrounds. Best practice: keep originals, use AI for placement variations.
 
 ### AI Music & Sound
 
-**19. Epidemic Sound**
+**19. Epidemic Sound** — Royalty-free music library with AI search. $15-99/month. Commercial-safe.
 
-**What It Is:**
-Royalty-free music library (with AI search)
+**20. Soundraw** — AI-generated custom music. $19.99/month. Choose mood/genre/length → AI generates unique royalty-free track → customize intensity/instruments.
 
-**Use Cases:**
-- Background music for video ads
-- Commercial-safe
-- AI helps find perfect track
-
-**Pricing:**
-$15-99/month
-
-**20. Soundraw**
-
-**What It Is:**
-AI-generated custom music
-
-**How It Works:**
-1. Choose mood, genre, length
-2. AI generates unique track
-3. Customize (intensity, instruments)
-4. Download royalty-free
-
-**Use Cases:**
-- Unique background music
-- Custom length tracks
-- No licensing issues
-
-**Pricing:**
-$19.99/month
-
-### AI Workflow Example
-
-**Creating Video Ad Using AI:**
+### AI Workflow: Creating a Video Ad
 
 ```text
-STEP 1: Script (ChatGPT)
-"Write a 45-second UGC-style video ad script for [product] targeting [audience]"
+1. Script (ChatGPT): "Write a 45-second UGC-style video ad script for [product] targeting [audience]"
+2. Voiceover (ElevenLabs): Generate VO from script
+3. B-Roll (Runway ML / Pexels): Generate or source footage
+4. Edit (CapCut): Import footage + VO, auto-captions, transitions
+5. Thumbnail (Midjourney): Generate eye-catching thumbnail
+6. Variations: Repeat with different scripts/voices
 
-STEP 2: Voiceover (ElevenLabs)
-Generate voiceover from script
-
-STEP 3: B-Roll (Runway ML or Pexels)
-Generate or source relevant footage
-
-STEP 4: Edit (CapCut)
-- Import footage
-- Add voiceover
-- Auto-generate captions
-- Add transitions
-
-STEP 5: Thumbnail (Midjourney)
-Generate eye-catching thumbnail
-
-STEP 6: Variations (Repeat with different scripts/voices)
-
-Total time: 1-2 hours
-Cost: ~$20-50 (tool subscriptions)
-Traditional production: Days + $500-2000
+Time: 1-2 hours | Cost: ~$20-50 (subscriptions) | Traditional: days + $500-2000
 ```
 
-### AI Tool Limitations
+### AI Limitations & Best Approach
 
-**What AI Can't Do (Yet):**
-- Replace strategic thinking (what to say, to whom)
-- Understand your brand deeply (requires human input)
-- Make creative decisions (what's "good" for your brand)
-- Replace testing (must still test performance)
-- Capture truly authentic UGC (AI-generated feels different)
+**AI can't replace:** strategic thinking, deep brand understanding, creative judgment, performance testing, authentic UGC feel.
 
-**What AI Is Great For:**
-- Speed (generate 100 variations in minutes)
-- Iteration (quick changes)
-- Ideation (creative concepts)
-- Grunt work (background removal, captions, etc.)
-- Volume (scale production)
+**AI excels at:** speed (100 variations in minutes), iteration, ideation, grunt work (background removal, captions), volume/scale.
 
-**Hybrid Approach (Best):**
-- Human strategy + AI execution
-- Human creativity + AI production
-- Human editing + AI first draft
-- Human testing + AI variation
+**Best approach:** Human strategy + AI execution. Human creativity + AI production. Human editing + AI first draft.
 
 ---
 
-## Conclusion & Implementation
+## Implementation
 
-### Key Takeaways
+### 30-Day Plan
 
-1. **Creative is the #1 lever** — beats targeting and bidding; refresh prevents fatigue
-2. **Platform-native wins** — don't repurpose blindly; mobile-first; captions required
-3. **Test everything** — data over opinions; small changes = big impact; document learnings
-4. **Audience-message match** — cold ≠ warm ≠ hot; address awareness stage
-5. **Volume matters** — 20+ active variations; weekly launches; build production systems
-6. **Creative has a lifespan** — 30-60 day lifespan; refresh before fatigue; retire at peak
-7. **Framework > randomness** — PAS, AIDA, BAB; platform specs; emotional triggers
-8. **AI accelerates production** — faster variations; lower cost; human oversight required
+**Week 1 — Audit & Setup:** Analyze current creative performance, set benchmarks (CPA, CTR). Audit competitors via Facebook Ad Library, build swipe file. Define audiences, map awareness stages, create brief templates, set production schedule.
 
-### 30-Day Implementation Plan
+**Week 2 — Production:** Brainstorm 10+ concepts using frameworks (PAS, hooks). Produce 20 ad variations minimum: 5 image, 5 UGC video, 5 professional video, 5 carousel/other.
 
-**Week 1: Audit & Setup**
-```text
-DAY 1-2: Creative Audit
-- Analyze current creative performance
-- Identify winners and losers
-- Document patterns (what works, what doesn't)
-- Set benchmarks (current CPA, CTR, etc.)
+**Week 3 — Launch & Test:** Create ad sets with 5 creatives each, equal budget. Monitor daily, flag early losers, let tests run full duration.
 
-DAY 3-4: Competitor Research
-- Facebook Ad Library audit
-- Screenshot top competitors
-- Identify gaps and opportunities
-- Build swipe file
+**Week 4 — Optimize & Scale:** Review 7-day performance, identify top 20% and why they won. Create 10 iterations of winners, pause bottom performers, scale budget on winners. Document learnings, update guidelines, plan next 30 days.
 
-DAY 5-7: Strategy & Planning
-- Define target audiences
-- Map awareness stages
-- Plan message match
-- Create creative brief templates
-- Set production schedule
-```
+### Ongoing Cadence
 
-**Week 2: Production**
-```text
-DAY 8-10: Generate Creative Concepts
-- Brainstorm 10 concepts
-- Use frameworks (PAS, hooks, etc.)
-- Assign to production team or creator
-- Brief clearly
+| Cadence | Time | Activities |
+|---------|------|------------|
+| Daily | 15 min | Check spend/CPA, flag issues |
+| Weekly | 2 hrs | Performance review, launch 2-3 new creatives, pause losers |
+| Bi-weekly | 3 hrs | Fatigue audit, competitor research, test documentation |
+| Monthly | Half day | Full account audit, strategic planning, next month's production |
 
-DAY 11-14: Produce Initial Creative
-- 20 ad variations minimum:
-  - 5 image ads
-  - 5 UGC videos
-  - 5 professional videos
-  - 5 carousel/other formats
-- Get assets ready for launch
-```
+### Production System
 
-**Week 3: Launch & Test**
-```text
-DAY 15-16: Campaign Setup
-- Create ad sets with 5 creatives each
-- Equal budget allocation
-- Proper tracking setup
-- Launch campaigns
+**Pipeline:** Brainstorm (20+ concepts/month) → Brief → Produce (multi-format) → Review/score → Launch (with tracking) → Analyze (iterate/kill/scale weekly).
 
-DAY 17-21: Monitor & Learn
-- Daily performance checks
-- Flag early losers
-- Let tests run (don't stop early)
-- Take notes on performance
-```
+**Creator network:** 5-10 UGC creators (Fiverr, Billo) + 1-2 editors + 1 designer + 1 copywriter. Template briefs, clear specs, retainer relationships.
 
-**Week 4: Optimize & Scale**
-```text
-DAY 22-24: Analysis
-- Review 7-day performance
-- Identify top 20% performers
-- Determine why they won
-- Plan iterations
+**Swipe file:** Organize by format/platform, tag by concept, note performance. Monthly review.
 
-DAY 25-27: Iterate & Refresh
-- Create 10 iterations of winners
-- Launch new tests
-- Pause bottom performers
-- Scale budget on winners
-
-DAY 28-30: Systematize
-- Document learnings
-- Update creative guidelines
-- Plan next 30 days
-- Set up production pipeline
-```
-
-### Ongoing Workflow
-
-**Daily (15 min):**
-- Check spend and CPA
-- Flag any major issues
-- Quick performance scan
-
-**Weekly (2 hours):**
-- Creative performance review
-- Launch 2-3 new creatives
-- Pause bottom performers
-- Analyze trends
-
-**Bi-Weekly (3 hours):**
-- Creative fatigue audit
-- Competitor research update
-- Test documentation
-- Team creative review
-
-**Monthly (Half day):**
-- Full account audit
-- Strategic planning session
-- Creative production for next month
-- Performance deep dive
-
-### Building Your Creative System
-
-**1. Production pipeline:** Brainstorm (20+ concepts/month) → Brief (clear specs, deadlines) → Produce (multi-format) → Review (scoring, revisions) → Launch (tracking, docs) → Analyze (weekly, iterate/kill/scale)
-
-**2. Creator network:** 5-10 UGC creators (Fiverr, Billo) + 1-2 editors + 1 designer + 1 copywriter. Use template briefs, clear specs, fast approval, retainer relationships.
-
-**3. Swipe file:** Organize by format/platform; tag by concept; note performance data. Monthly review — add winners, remove outdated, share with team.
-
-**4. Knowledge base:** Document every test result, winning formulas, failed attempts. Team wiki, living doc, onboarding material. Reference before creating; avoid repeating mistakes.
+**Knowledge base:** Document every test result, winning formulas, failed attempts. Living doc, onboarding material.
 
 ### Resources
 
-**Learning Resources:**
-- Facebook Blueprint (free courses)
-- Google Skillshop (free courses)
-- YouTube channels: Ben Heath, Charley T, Depesh Mandalia
-- Blogs: AdEspresso, Jon Loomer, Social Media Examiner
+**Learning:** Facebook Blueprint, Google Skillshop, YouTube (Ben Heath, Charley T, Depesh Mandalia), Blogs (AdEspresso, Jon Loomer, Social Media Examiner).
 
-**Tools:**
-- Creative: Canva, Adobe Suite, CapCut
-- AI: Midjourney, ChatGPT, ElevenLabs
-- Testing: Facebook Ads Manager, Google Ads
-- Analytics: Triple Whale, Hyros, GA4
+**Tools:** Creative (Canva, Adobe Suite, CapCut), AI (Midjourney, ChatGPT, ElevenLabs), Testing (Facebook/Google Ads Manager), Analytics (Triple Whale, Hyros, GA4).
 
-**Communities:**
-- Facebook Ad Buyers Facebook group
-- Agency Owner Facebook groups
-- Reddit: r/PPC, r/marketing
-- Twitter: Follow top media buyers
+**Communities:** Facebook Ad Buyers group, Agency Owner groups, Reddit (r/PPC, r/marketing), Twitter media buyers.
 
 ---
 
-## Appendix: Quick Reference Guides
+## Quick Reference
 
-### Quick Reference: Hook Formulas
-
-```text
-QUESTIONS:
-- "Still [doing pain point]?"
-- "Want to [desired outcome]?"
-- "What if [hypothetical]?"
-- "Why [surprising fact]?"
-- "Are you [problem identifier]?"
-
-STATEMENTS:
-- "[Result] in [timeframe]"
-- "Stop [bad thing]"
-- "I [achieved result]. Here's how."
-- "[Surprising stat]"
-- "This is why [problem occurs]"
-```
-
-### Quick Reference: Ad Copy Structure
+### Hook Formulas
 
 ```text
-FACEBOOK/INSTAGRAM AD:
-- Hook (first line) - 15 words max
-- Amplify (2-3 sentences)
-- Proof (social proof, stat)
-- Offer (what they get)
-- CTA (clear next step)
-
-GOOGLE SEARCH AD:
-- Headline 1: Keyword + differentiator
-- Headline 2: Primary benefit
-- Headline 3: Offer/CTA
-- Description 1: Value prop + benefits
-- Description 2: Social proof + guarantee
+QUESTIONS: "Still [pain point]?" | "Want to [outcome]?" | "What if [hypothetical]?" | "Why [surprising fact]?"
+STATEMENTS: "[Result] in [timeframe]" | "Stop [bad thing]" | "I [achieved result]. Here's how." | "[Surprising stat]"
 ```
 
-### Quick Reference: Video Structure
-
-```text
-0-3s: HOOK (pattern interrupt)
-3-10s: PROBLEM (pain/desire)
-10-30s: SOLUTION (product/service)
-30-45s: PROOF (testimonial/results)
-45-60s: CTA (clear next step)
-
-Shorter versions:
-15s: Hook → Solution → CTA
-30s: Hook → Problem → Solution → CTA
-```
-
-### Quick Reference: Specs
-
-```text
-FACEBOOK:
-Image: 1080x1080 (1:1), 30MB max
-Video: 1080x1920 (9:16), 4GB max, 1-240min
-Carousel: 1080x1080 (1:1), 2-10 cards
-
-INSTAGRAM:
-Feed: 1080x1080 (1:1) or 1080x1350 (4:5)
-Stories: 1080x1920 (9:16)
-Reels: 1080x1920 (9:16), 15-90s
-
-GOOGLE:
-RSA: 15 headlines (30 char), 4 descriptions (90 char)
-Display: 1200x628 (landscape), 300x250, 160x600
-YouTube: 16:9 (horizontal), 1080p min
-
-TIKTOK:
-Video: 1080x1920 (9:16), 15-60s
-```
-
-### Quick Reference: Testing Priority
-
-```text
-TEST FIRST:
-1. Hook (video ads)
-2. Core message/value prop
-3. Offer
-4. Creative format
-
-TEST SECOND:
-5. Headlines
-6. Images/visuals
-7. CTA
-8. Social proof
-
-TEST THIRD:
-9. Body copy variations
-10. Length
-11. Style elements
-```
-
-### Quick Reference: Fatigue Indicators
-
-```text
-IMMEDIATE ACTION NEEDED:
-- CTR down 30%+
-- CPA up 25%+
-- Frequency over 7
-
-WARNING SIGNS:
-- CTR down 20%
-- CPA up 15%
-- Frequency 5-7
-- Negative comments increasing
-
-MONITOR:
-- CTR down 10-15%
-- CPA up 10%
-- Frequency 4-5
-```
-
-### Quick Reference: Performance Benchmarks
+### Ad Copy Structure
 
 ```text
 FACEBOOK/INSTAGRAM:
-CTR: 1.5-3% (feed), 0.8-2% (stories)
-CVR: 2-5% (e-commerce), 5-15% (lead gen)
-Frequency: Keep under 4-5
+Hook (15 words max) → Amplify (2-3 sentences) → Proof (social proof/stat) → Offer → CTA
 
 GOOGLE SEARCH:
-CTR: 3-8%+
-CVR: 5-15%
-
-YOUTUBE:
-CTR: 0.5-2%
-View Rate: 30-40%
+H1: Keyword + differentiator | H2: Primary benefit | H3: Offer/CTA
+D1: Value prop + benefits | D2: Social proof + guarantee
 ```
 
----
+### Video Structure
 
-*End of ai-tools-reference.md*
+```text
+0-3s: HOOK (pattern interrupt) → 3-10s: PROBLEM → 10-30s: SOLUTION → 30-45s: PROOF → 45-60s: CTA
+Short: 15s = Hook→Solution→CTA | 30s = Hook→Problem→Solution→CTA
+```
+
+### Platform Specs
+
+```text
+FACEBOOK: Image 1080x1080 (1:1) 30MB | Video 1080x1920 (9:16) 4GB 1-240min | Carousel 1080x1080 2-10 cards
+INSTAGRAM: Feed 1080x1080 or 1080x1350 (4:5) | Stories/Reels 1080x1920 (9:16) 15-90s
+GOOGLE: RSA 15 headlines (30 char) 4 descriptions (90 char) | Display 1200x628, 300x250, 160x600 | YouTube 16:9 1080p+
+TIKTOK: Video 1080x1920 (9:16) 15-60s
+```
+
+### Testing Priority
+
+```text
+FIRST: 1. Hook  2. Core message/value prop  3. Offer  4. Creative format
+SECOND: 5. Headlines  6. Images/visuals  7. CTA  8. Social proof
+THIRD: 9. Body copy variations  10. Length  11. Style elements
+```
+
+### Fatigue Indicators
+
+```text
+IMMEDIATE (act now): CTR -30%+ | CPA +25%+ | Frequency >7
+WARNING: CTR -20% | CPA +15% | Frequency 5-7 | Negative comments increasing
+MONITOR: CTR -10-15% | CPA +10% | Frequency 4-5
+```
+
+### Performance Benchmarks
+
+```text
+FACEBOOK/INSTAGRAM: CTR 1.5-3% (feed) 0.8-2% (stories) | CVR 2-5% (ecom) 5-15% (lead gen) | Frequency <4-5
+GOOGLE SEARCH: CTR 3-8%+ | CVR 5-15%
+YOUTUBE: CTR 0.5-2% | View Rate 30-40%
+```
