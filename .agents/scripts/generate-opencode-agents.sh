@@ -326,6 +326,14 @@ def filename_to_display(filename):
     # Convert kebab-case to Title-Case
     return "-".join(word.capitalize() for word in name.split("-"))
 
+
+def display_to_filename(display_name):
+    """Convert display name back to filename stem."""
+    reverse_map = {value: key for key, value in DISPLAY_NAMES.items()}
+    if display_name in reverse_map:
+        return reverse_map[display_name]
+    return display_name.lower()
+
 def get_agent_config(display_name, filename, subagents=None, model_tier=None):
     """Generate agent configuration.
     
@@ -403,10 +411,13 @@ for filepath in glob.glob(os.path.join(agents_dir, "*.md")):
 
 # Validate subagent references against actual files
 # Built-in agent types (general, explore) don't have .md files — skip them
-# Discovery must match the generator's rules: only nested dirs (not root),
-# skip AGENTS.md/README.md, skip *-skill.md files, skip loop-state dirs
+# Discovery must match runtime resolution semantics:
+# - only nested dirs (not root)
+# - only files with frontmatter mode: subagent
+# - skip AGENTS.md/README.md, skip *-skill.md files, skip loop-state dirs
 BUILTIN_SUBAGENTS = {"general", "explore"}
 all_subagent_files = set()
+all_subagent_paths = set()
 for root, _, files in os.walk(agents_dir):
     rel_root = os.path.relpath(root, agents_dir)
     if rel_root == "." or "loop-state" in rel_root.split(os.sep):
@@ -416,7 +427,41 @@ for root, _, files in os.walk(agents_dir):
             continue
         if f in {"AGENTS.md", "README.md"} or f.endswith("-skill.md"):
             continue
-        all_subagent_files.add(os.path.splitext(f)[0])
+        full_path = os.path.join(root, f)
+        fm = parse_frontmatter(full_path)
+        if fm.get("mode") != "subagent":
+            continue
+
+        stem = os.path.splitext(f)[0]
+        rel_path = os.path.relpath(full_path, agents_dir)
+        rel_stem = os.path.splitext(rel_path)[0].replace(os.sep, "/")
+        all_subagent_files.add(stem)
+        all_subagent_paths.add(rel_stem)
+
+
+def subagent_ref_exists(agent_name, subagent_ref):
+    # Exact basename match (legacy/global short refs)
+    if subagent_ref in all_subagent_files:
+        return True
+
+    # Exact path from agents root (e.g. workflows/plans)
+    if subagent_ref in all_subagent_paths:
+        return True
+
+    # Agent-local relative path (e.g. content -> production/writing)
+    agent_slug = display_to_filename(agent_name)
+    if f"{agent_slug}/{subagent_ref}" in all_subagent_paths:
+        return True
+
+    # Folder shorthand (e.g. distribution/youtube -> .../distribution/youtube/youtube.md)
+    if "/" in subagent_ref:
+        leaf = subagent_ref.rsplit("/", 1)[1]
+        if f"{agent_slug}/{subagent_ref}/{leaf}" in all_subagent_paths:
+            return True
+        if f"{subagent_ref}/{leaf}" in all_subagent_paths:
+            return True
+
+    return False
 
 missing_refs = []
 for display_name, agent_config in primary_agents.items():
@@ -428,7 +473,7 @@ for display_name, agent_config in primary_agents.items():
             continue
         if subagent_name in BUILTIN_SUBAGENTS:
             continue
-        if subagent_name not in all_subagent_files:
+        if not subagent_ref_exists(display_name, subagent_name):
             missing_refs.append((display_name, subagent_name))
 
 if missing_refs:
