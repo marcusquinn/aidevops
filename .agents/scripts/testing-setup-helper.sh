@@ -134,16 +134,13 @@ has_npm_script() {
 }
 
 # =============================================================================
-# Discovery Functions
+# Per-Runner Discovery Helpers
 # =============================================================================
 
-# Discover test runners present in the project
-# Output: JSON array of {name, source, configured} objects
-discover_runners() {
+# Detect Jest and append to runners JSON array (stdout)
+_discover_jest() {
 	local project_dir="$1"
-	local runners="[]"
-
-	# Jest
+	local runners="$2"
 	if has_npm_dep "$project_dir" "jest"; then
 		local configured="false"
 		if has_file "$project_dir" "jest.config.*" ||
@@ -153,8 +150,14 @@ discover_runners() {
 		runners=$(echo "$runners" | jq --arg c "$configured" \
 			'. + [{"name":"jest","source":"package.json devDependencies","configured":($c == "true")}]')
 	fi
+	echo "$runners"
+	return 0
+}
 
-	# Vitest
+# Detect Vitest and append to runners JSON array (stdout)
+_discover_vitest() {
+	local project_dir="$1"
+	local runners="$2"
 	if has_npm_dep "$project_dir" "vitest"; then
 		local configured="false"
 		if has_file "$project_dir" "vitest.config.*" || has_file "$project_dir" "vite.config.*"; then
@@ -163,10 +166,16 @@ discover_runners() {
 		runners=$(echo "$runners" | jq --arg c "$configured" \
 			'. + [{"name":"vitest","source":"package.json devDependencies","configured":($c == "true")}]')
 	fi
+	echo "$runners"
+	return 0
+}
 
-	# Pytest — detect via repository declarations, not runtime environment
-	# Checks: pytest.ini, pyproject.toml [tool.pytest], setup.cfg [tool:pytest],
-	# setup.py, requirements.txt, requirements-dev.txt
+# Detect Pytest via repository declarations (not runtime environment) and append to runners JSON array (stdout)
+# Checks: pytest.ini, pyproject.toml [tool.pytest], setup.cfg [tool:pytest], setup.py,
+# requirements.txt, requirements-dev.txt
+_discover_pytest() {
+	local project_dir="$1"
+	local runners="$2"
 	local _pytest_source=""
 	if [[ -f "${project_dir}/pytest.ini" ]]; then
 		_pytest_source="pytest.ini"
@@ -193,32 +202,58 @@ discover_runners() {
 		local configured="false"
 		if [[ -f "${project_dir}/pytest.ini" ]] ||
 			{ [[ -f "${project_dir}/pyproject.toml" ]] &&
-				grep -q '\[tool\.pytest' "${project_dir}/pyproject.toml" 2>/dev/null; }; then
+				grep -q '\[tool\.pytest' "${project_dir}/pyproject.toml" 2>/dev/null; } ||
+			{ [[ -f "${project_dir}/setup.cfg" ]] &&
+				grep -qE '\[tool:pytest\]' "${project_dir}/setup.cfg" 2>/dev/null; }; then
 			configured="true"
 		fi
 		runners=$(echo "$runners" | jq --arg c "$configured" --arg s "$_pytest_source" \
 			'. + [{"name":"pytest","source":$s,"configured":($c == "true")}]')
 	fi
+	echo "$runners"
+	return 0
+}
 
-	# Cargo test (Rust)
+# Detect Cargo test (Rust) and append to runners JSON array (stdout)
+_discover_cargo_test() {
+	local project_dir="$1"
+	local runners="$2"
 	if [[ -f "${project_dir}/Cargo.toml" ]]; then
 		runners=$(echo "$runners" | jq \
 			'. + [{"name":"cargo-test","source":"Cargo.toml","configured":true}]')
 	fi
+	echo "$runners"
+	return 0
+}
 
-	# Go test
+# Detect Go test and append to runners JSON array (stdout)
+_discover_go_test() {
+	local project_dir="$1"
+	local runners="$2"
 	if [[ -f "${project_dir}/go.mod" ]]; then
 		runners=$(echo "$runners" | jq \
 			'. + [{"name":"go-test","source":"go.mod","configured":true}]')
 	fi
+	echo "$runners"
+	return 0
+}
 
-	# Bats (Bash testing)
+# Detect Bats (Bash testing) and append to runners JSON array (stdout)
+_discover_bats() {
+	local project_dir="$1"
+	local runners="$2"
 	if has_file "$project_dir" "*.bats" || has_file "$project_dir" "test/*.bats"; then
 		runners=$(echo "$runners" | jq \
 			'. + [{"name":"bats","source":".bats files","configured":true}]')
 	fi
+	echo "$runners"
+	return 0
+}
 
-	# Bash test scripts (aidevops pattern)
+# Detect Bash test scripts (aidevops pattern) and append to runners JSON array (stdout)
+_discover_bash_tests() {
+	local project_dir="$1"
+	local runners="$2"
 	local bash_test_count=0
 	if has_dir "$project_dir" "tests"; then
 		bash_test_count=$(find "${project_dir}/tests" -maxdepth 1 -name "test-*.sh" 2>/dev/null | wc -l | tr -d ' ')
@@ -227,8 +262,14 @@ discover_runners() {
 		runners=$(echo "$runners" | jq --arg c "$bash_test_count" \
 			'. + [{"name":"bash-tests","source":"tests/test-*.sh","configured":true,"count":($c | tonumber)}]')
 	fi
+	echo "$runners"
+	return 0
+}
 
-	# Agent test helper (aidevops-specific)
+# Detect agent test helper (aidevops-specific) and append to runners JSON array (stdout)
+_discover_agent_tests() {
+	local project_dir="$1"
+	local runners="$2"
 	if [[ -f "${project_dir}/.agents/scripts/agent-test-helper.sh" ]]; then
 		local suite_count=0
 		if has_dir "$project_dir" ".agents/tests"; then
@@ -237,8 +278,14 @@ discover_runners() {
 		runners=$(echo "$runners" | jq --arg c "$suite_count" \
 			'. + [{"name":"agent-tests","source":"agent-test-helper.sh","configured":true,"suites":($c | tonumber)}]')
 	fi
+	echo "$runners"
+	return 0
+}
 
-	# Playwright
+# Detect Playwright and append to runners JSON array (stdout)
+_discover_playwright() {
+	local project_dir="$1"
+	local runners="$2"
 	if has_npm_dep "$project_dir" "@playwright/test" || has_npm_dep "$project_dir" "playwright"; then
 		local configured="false"
 		if has_file "$project_dir" "playwright.config.*"; then
@@ -247,8 +294,14 @@ discover_runners() {
 		runners=$(echo "$runners" | jq --arg c "$configured" \
 			'. + [{"name":"playwright","source":"package.json","configured":($c == "true")}]')
 	fi
+	echo "$runners"
+	return 0
+}
 
-	# Cypress
+# Detect Cypress and append to runners JSON array (stdout)
+_discover_cypress() {
+	local project_dir="$1"
+	local runners="$2"
 	if has_npm_dep "$project_dir" "cypress"; then
 		local configured="false"
 		if has_file "$project_dir" "cypress.config.*"; then
@@ -257,6 +310,30 @@ discover_runners() {
 		runners=$(echo "$runners" | jq --arg c "$configured" \
 			'. + [{"name":"cypress","source":"package.json","configured":($c == "true")}]')
 	fi
+	echo "$runners"
+	return 0
+}
+
+# =============================================================================
+# Discovery Functions
+# =============================================================================
+
+# Discover test runners present in the project
+# Output: JSON array of {name, source, configured} objects
+discover_runners() {
+	local project_dir="$1"
+	local runners="[]"
+
+	runners=$(_discover_jest "$project_dir" "$runners")
+	runners=$(_discover_vitest "$project_dir" "$runners")
+	runners=$(_discover_pytest "$project_dir" "$runners")
+	runners=$(_discover_cargo_test "$project_dir" "$runners")
+	runners=$(_discover_go_test "$project_dir" "$runners")
+	runners=$(_discover_bats "$project_dir" "$runners")
+	runners=$(_discover_bash_tests "$project_dir" "$runners")
+	runners=$(_discover_agent_tests "$project_dir" "$runners")
+	runners=$(_discover_playwright "$project_dir" "$runners")
+	runners=$(_discover_cypress "$project_dir" "$runners")
 
 	echo "$runners"
 	return 0
@@ -611,6 +688,291 @@ cmd_status() {
 }
 
 # =============================================================================
+# Verify Helpers
+# =============================================================================
+
+# Run a single test runner by name. Updates pass_count/fail_count/skip_count via
+# output lines that the caller accumulates. Prints [pass]/[fail]/[skip] lines.
+# Usage: _verify_runner <runner_name> <project_dir>
+# Returns: 0 always (caller reads stdout for result)
+_verify_runner() {
+	local runner_name="$1"
+	local project_dir="$2"
+
+	case "$runner_name" in
+	bats)
+		if command -v bats >/dev/null 2>&1; then
+			local bats_errors=0
+			while IFS= read -r bats_file; do
+				[[ -f "$bats_file" ]] || continue
+				if ! bats --tap "$bats_file" >/dev/null 2>&1; then
+					bats_errors=$((bats_errors + 1))
+				fi
+			done < <(find "$project_dir" -name "*.bats" -not -path "*/.git/*" 2>/dev/null)
+			if [[ "$bats_errors" -eq 0 ]]; then
+				echo "pass:bats"
+			else
+				echo "fail:bats (${bats_errors} test files failed)"
+			fi
+		else
+			echo "skip:bats (not installed)"
+		fi
+		;;
+	jest)
+		if (cd "$project_dir" && npx jest --passWithNoTests --silent 2>/dev/null); then
+			echo "pass:jest"
+		else
+			echo "fail:jest"
+		fi
+		;;
+	vitest)
+		if (cd "$project_dir" && npx vitest run --silent 2>/dev/null); then
+			echo "pass:vitest"
+		else
+			echo "fail:vitest"
+		fi
+		;;
+	pytest)
+		if (cd "$project_dir" && python -m pytest --quiet 2>/dev/null); then
+			echo "pass:pytest"
+		else
+			echo "fail:pytest"
+		fi
+		;;
+	cargo-test)
+		if (cd "$project_dir" && cargo test --quiet 2>/dev/null); then
+			echo "pass:cargo test"
+		else
+			echo "fail:cargo test"
+		fi
+		;;
+	go-test)
+		if (cd "$project_dir" && go test ./... 2>/dev/null); then
+			echo "pass:go test"
+		else
+			echo "fail:go test"
+		fi
+		;;
+	bash-tests)
+		local test_pass=0
+		local test_fail=0
+		for test_file in "${project_dir}"/tests/test-*.sh; do
+			[[ -f "$test_file" ]] || continue
+			if bash -n "$test_file" 2>/dev/null; then
+				test_pass=$((test_pass + 1))
+			else
+				test_fail=$((test_fail + 1))
+			fi
+		done
+		if [[ "$test_fail" -eq 0 ]]; then
+			echo "pass:bash-tests (${test_pass} scripts pass syntax check)"
+		else
+			echo "fail:bash-tests (${test_fail} syntax errors)"
+		fi
+		;;
+	agent-tests)
+		echo "skip:agent-tests (requires interactive CLI)"
+		;;
+	playwright | cypress)
+		echo "skip:${runner_name} (E2E tests require browser environment)"
+		;;
+	*)
+		echo "skip:${runner_name} (no verify handler)"
+		;;
+	esac
+	return 0
+}
+
+# Run a single linter by name. Prints pass:/fail:/skip: lines for the caller.
+# Usage: _verify_linter <linter_name> <project_dir>
+_verify_linter() {
+	local linter_name="$1"
+	local project_dir="$2"
+
+	case "$linter_name" in
+	eslint)
+		if (cd "$project_dir" && npx eslint . --quiet 2>/dev/null); then
+			echo "pass:eslint"
+		else
+			echo "fail:eslint"
+		fi
+		;;
+	prettier)
+		if (cd "$project_dir" && npx prettier --check . 2>/dev/null); then
+			echo "pass:prettier"
+		else
+			echo "fail:prettier"
+		fi
+		;;
+	typescript-check)
+		if (cd "$project_dir" && npx tsc --noEmit 2>/dev/null); then
+			echo "pass:typescript-check"
+		else
+			echo "fail:typescript-check"
+		fi
+		;;
+	shellcheck)
+		_verify_linter_shellcheck "$project_dir"
+		;;
+	secretlint)
+		_verify_linter_secretlint "$project_dir"
+		;;
+	markdownlint)
+		_verify_linter_markdownlint "$project_dir"
+		;;
+	hadolint)
+		_verify_linter_hadolint "$project_dir"
+		;;
+	*)
+		echo "skip:${linter_name}"
+		;;
+	esac
+	return 0
+}
+
+# Verify shellcheck across all .sh files in the project
+_verify_linter_shellcheck() {
+	local project_dir="$1"
+	if command -v shellcheck >/dev/null 2>&1; then
+		local sc_errors=0
+		while IFS= read -r sh_file; do
+			[[ -f "$sh_file" ]] || continue
+			if ! shellcheck "$sh_file" >/dev/null 2>&1; then
+				sc_errors=$((sc_errors + 1))
+			fi
+		done < <(find "$project_dir" -name "*.sh" -not -path "*/node_modules/*" -not -path "*/.git/*" 2>/dev/null)
+		if [[ "$sc_errors" -eq 0 ]]; then
+			echo "pass:shellcheck"
+		else
+			echo "fail:shellcheck (${sc_errors} files with issues)"
+		fi
+	else
+		echo "skip:shellcheck (not installed)"
+	fi
+	return 0
+}
+
+# Verify secretlint — tries system binary then npx fallback
+_verify_linter_secretlint() {
+	local project_dir="$1"
+	local linter_cmd=()
+	if command -v secretlint >/dev/null 2>&1; then
+		linter_cmd=(secretlint "**/*")
+	elif command -v npx >/dev/null 2>&1 && (cd "$project_dir" && npx --no-install secretlint --version >/dev/null 2>&1); then
+		linter_cmd=(npx --no-install secretlint "**/*")
+	fi
+	if [[ ${#linter_cmd[@]} -gt 0 ]]; then
+		if (cd "$project_dir" && "${linter_cmd[@]}" 2>/dev/null); then
+			echo "pass:secretlint"
+		else
+			echo "fail:secretlint"
+		fi
+	else
+		echo "skip:secretlint (not installed)"
+	fi
+	return 0
+}
+
+# Verify markdownlint — tries system binary then npx fallback
+_verify_linter_markdownlint() {
+	local project_dir="$1"
+	local linter_cmd=()
+	if command -v markdownlint-cli2 >/dev/null 2>&1; then
+		linter_cmd=(markdownlint-cli2 "**/*.md")
+	elif command -v npx >/dev/null 2>&1 && (cd "$project_dir" && npx --no-install markdownlint-cli2 --version >/dev/null 2>&1); then
+		linter_cmd=(npx --no-install markdownlint-cli2 "**/*.md")
+	fi
+	if [[ ${#linter_cmd[@]} -gt 0 ]]; then
+		if (cd "$project_dir" && "${linter_cmd[@]}" 2>/dev/null); then
+			echo "pass:markdownlint"
+		else
+			echo "fail:markdownlint"
+		fi
+	else
+		echo "skip:markdownlint (not installed)"
+	fi
+	return 0
+}
+
+# Verify hadolint across all Dockerfiles in the project
+_verify_linter_hadolint() {
+	local project_dir="$1"
+	if command -v hadolint >/dev/null 2>&1; then
+		local hl_errors=0
+		while IFS= read -r dockerfile; do
+			[[ -f "$dockerfile" ]] || continue
+			if ! hadolint "$dockerfile" >/dev/null 2>&1; then
+				hl_errors=$((hl_errors + 1))
+			fi
+		done < <(find "$project_dir" -name "Dockerfile*" -not -path "*/.git/*" 2>/dev/null)
+		if [[ "$hl_errors" -eq 0 ]]; then
+			echo "pass:hadolint"
+		else
+			echo "fail:hadolint (${hl_errors} Dockerfiles with issues)"
+		fi
+	else
+		echo "skip:hadolint (not installed)"
+	fi
+	return 0
+}
+
+# Run all discovered test runners and accumulate pass/fail/skip counts.
+# Prints [pass]/[fail]/[skip] lines and returns counts via stdout on last line.
+# Usage: _verify_runners <discovery_json> <project_dir>
+_verify_runners() {
+	local discovery="$1"
+	local project_dir="$2"
+	local pass_count=0
+	local fail_count=0
+	local skip_count=0
+
+	while IFS= read -r runner_name; do
+		[[ -z "$runner_name" ]] && continue
+		local result
+		result=$(_verify_runner "$runner_name" "$project_dir")
+		local status="${result%%:*}"
+		local label="${result#*:}"
+		echo "  [${status}] ${label}"
+		case "$status" in
+		pass) pass_count=$((pass_count + 1)) ;;
+		fail) fail_count=$((fail_count + 1)) ;;
+		*) skip_count=$((skip_count + 1)) ;;
+		esac
+	done < <(echo "$discovery" | jq -r '.test_runners[].name')
+
+	echo "counts:${pass_count}:${fail_count}:${skip_count}"
+	return 0
+}
+
+# Run all discovered linters and accumulate pass/fail/skip counts.
+# Prints [pass]/[fail]/[skip] lines and returns counts via stdout on last line.
+# Usage: _verify_linters <discovery_json> <project_dir>
+_verify_linters() {
+	local discovery="$1"
+	local project_dir="$2"
+	local pass_count=0
+	local fail_count=0
+	local skip_count=0
+
+	while IFS= read -r linter_name; do
+		[[ -z "$linter_name" ]] && continue
+		local result
+		result=$(_verify_linter "$linter_name" "$project_dir")
+		local status="${result%%:*}"
+		local label="${result#*:}"
+		echo "  [${status}] ${label}"
+		case "$status" in
+		pass) pass_count=$((pass_count + 1)) ;;
+		fail) fail_count=$((fail_count + 1)) ;;
+		*) skip_count=$((skip_count + 1)) ;;
+		esac
+	done < <(echo "$discovery" | jq -r '.linters[].name')
+
+	echo "counts:${pass_count}:${fail_count}:${skip_count}"
+	return 0
+}
+
+# =============================================================================
 # Verify Command
 # =============================================================================
 
@@ -622,243 +984,45 @@ cmd_verify() {
 	echo "=== Test Verification ==="
 	echo ""
 
-	local pass_count=0
-	local fail_count=0
-	local skip_count=0
-
 	# Discover what's available
 	local discovery
 	discovery=$(cmd_discover "$project_dir")
 
-	# Try each discovered runner
-	while IFS= read -r runner_name; do
-		[[ -z "$runner_name" ]] && continue
+	local pass_count=0
+	local fail_count=0
+	local skip_count=0
 
-		case "$runner_name" in
-		bats)
-			if command -v bats >/dev/null 2>&1; then
-				local bats_errors=0
-				while IFS= read -r bats_file; do
-					[[ -f "$bats_file" ]] || continue
-					if ! bats --tap "$bats_file" >/dev/null 2>&1; then
-						bats_errors=$((bats_errors + 1))
-					fi
-				done < <(find "$project_dir" -name "*.bats" -not -path "*/.git/*" 2>/dev/null)
-				if [[ "$bats_errors" -eq 0 ]]; then
-					echo "  [pass] bats"
-					pass_count=$((pass_count + 1))
-				else
-					echo "  [fail] bats (${bats_errors} test files failed)"
-					fail_count=$((fail_count + 1))
-				fi
-			else
-				echo "  [skip] bats (not installed)"
-				skip_count=$((skip_count + 1))
-			fi
-			;;
-		jest)
-			if (cd "$project_dir" && npx jest --passWithNoTests --silent 2>/dev/null); then
-				echo "  [pass] jest"
-				pass_count=$((pass_count + 1))
-			else
-				echo "  [fail] jest"
-				fail_count=$((fail_count + 1))
-			fi
-			;;
-		vitest)
-			if (cd "$project_dir" && npx vitest run --silent 2>/dev/null); then
-				echo "  [pass] vitest"
-				pass_count=$((pass_count + 1))
-			else
-				echo "  [fail] vitest"
-				fail_count=$((fail_count + 1))
-			fi
-			;;
-		pytest)
-			if (cd "$project_dir" && python -m pytest --quiet 2>/dev/null); then
-				echo "  [pass] pytest"
-				pass_count=$((pass_count + 1))
-			else
-				echo "  [fail] pytest"
-				fail_count=$((fail_count + 1))
-			fi
-			;;
-		cargo-test)
-			if (cd "$project_dir" && cargo test --quiet 2>/dev/null); then
-				echo "  [pass] cargo test"
-				pass_count=$((pass_count + 1))
-			else
-				echo "  [fail] cargo test"
-				fail_count=$((fail_count + 1))
-			fi
-			;;
-		go-test)
-			if (cd "$project_dir" && go test ./... 2>/dev/null); then
-				echo "  [pass] go test"
-				pass_count=$((pass_count + 1))
-			else
-				echo "  [fail] go test"
-				fail_count=$((fail_count + 1))
-			fi
-			;;
-		bash-tests)
-			local test_pass=0
-			local test_fail=0
-			for test_file in "${project_dir}"/tests/test-*.sh; do
-				[[ -f "$test_file" ]] || continue
-				if bash -n "$test_file" 2>/dev/null; then
-					test_pass=$((test_pass + 1))
-				else
-					test_fail=$((test_fail + 1))
-				fi
-			done
-			if [[ "$test_fail" -eq 0 ]]; then
-				echo "  [pass] bash-tests (${test_pass} scripts pass syntax check)"
-				pass_count=$((pass_count + 1))
-			else
-				echo "  [fail] bash-tests (${test_fail} syntax errors)"
-				fail_count=$((fail_count + 1))
-			fi
-			;;
-		agent-tests)
-			echo "  [skip] agent-tests (requires interactive CLI)"
-			skip_count=$((skip_count + 1))
-			;;
-		playwright | cypress)
-			echo "  [skip] ${runner_name} (E2E tests require browser environment)"
-			skip_count=$((skip_count + 1))
-			;;
-		*)
-			echo "  [skip] ${runner_name} (no verify handler)"
-			skip_count=$((skip_count + 1))
-			;;
-		esac
-	done < <(echo "$discovery" | jq -r '.test_runners[].name')
+	# Run test runners
+	local runner_output runner_counts
+	runner_output=$(_verify_runners "$discovery" "$project_dir")
+	runner_counts=$(echo "$runner_output" | grep '^counts:' | tail -1)
+	printf '%s\n' "$runner_output" | sed '/^counts:/d'
 
-	# Try linters
-	while IFS= read -r linter_name; do
-		[[ -z "$linter_name" ]] && continue
+	if [[ -n "$runner_counts" ]]; then
+		local rp rf rs
+		rp=$(echo "$runner_counts" | cut -d: -f2)
+		rf=$(echo "$runner_counts" | cut -d: -f3)
+		rs=$(echo "$runner_counts" | cut -d: -f4)
+		pass_count=$((pass_count + rp))
+		fail_count=$((fail_count + rf))
+		skip_count=$((skip_count + rs))
+	fi
 
-		case "$linter_name" in
-		eslint)
-			if (cd "$project_dir" && npx eslint . --quiet 2>/dev/null); then
-				echo "  [pass] eslint"
-				pass_count=$((pass_count + 1))
-			else
-				echo "  [fail] eslint"
-				fail_count=$((fail_count + 1))
-			fi
-			;;
-		prettier)
-			if (cd "$project_dir" && npx prettier --check . 2>/dev/null); then
-				echo "  [pass] prettier"
-				pass_count=$((pass_count + 1))
-			else
-				echo "  [fail] prettier"
-				fail_count=$((fail_count + 1))
-			fi
-			;;
-		typescript-check)
-			if (cd "$project_dir" && npx tsc --noEmit 2>/dev/null); then
-				echo "  [pass] typescript-check"
-				pass_count=$((pass_count + 1))
-			else
-				echo "  [fail] typescript-check"
-				fail_count=$((fail_count + 1))
-			fi
-			;;
-		shellcheck)
-			if command -v shellcheck >/dev/null 2>&1; then
-				local sc_errors=0
-				while IFS= read -r sh_file; do
-					[[ -f "$sh_file" ]] || continue
-					if ! shellcheck "$sh_file" >/dev/null 2>&1; then
-						sc_errors=$((sc_errors + 1))
-					fi
-				done < <(find "$project_dir" -name "*.sh" -not -path "*/node_modules/*" -not -path "*/.git/*" 2>/dev/null)
-				if [[ "$sc_errors" -eq 0 ]]; then
-					echo "  [pass] shellcheck"
-					pass_count=$((pass_count + 1))
-				else
-					echo "  [fail] shellcheck (${sc_errors} files with issues)"
-					fail_count=$((fail_count + 1))
-				fi
-			else
-				echo "  [skip] shellcheck (not installed)"
-				skip_count=$((skip_count + 1))
-			fi
-			;;
-		secretlint)
-			if command -v secretlint >/dev/null 2>&1; then
-				if (cd "$project_dir" && secretlint "**/*" 2>/dev/null); then
-					echo "  [pass] secretlint"
-					pass_count=$((pass_count + 1))
-				else
-					echo "  [fail] secretlint"
-					fail_count=$((fail_count + 1))
-				fi
-			elif command -v npx >/dev/null 2>&1 && (cd "$project_dir" && npx --no-install secretlint --version >/dev/null 2>&1); then
-				if (cd "$project_dir" && npx --no-install secretlint "**/*" 2>/dev/null); then
-					echo "  [pass] secretlint"
-					pass_count=$((pass_count + 1))
-				else
-					echo "  [fail] secretlint"
-					fail_count=$((fail_count + 1))
-				fi
-			else
-				echo "  [skip] secretlint (not installed)"
-				skip_count=$((skip_count + 1))
-			fi
-			;;
-		markdownlint)
-			if command -v markdownlint-cli2 >/dev/null 2>&1; then
-				if (cd "$project_dir" && markdownlint-cli2 "**/*.md" 2>/dev/null); then
-					echo "  [pass] markdownlint"
-					pass_count=$((pass_count + 1))
-				else
-					echo "  [fail] markdownlint"
-					fail_count=$((fail_count + 1))
-				fi
-			elif command -v npx >/dev/null 2>&1 && (cd "$project_dir" && npx --no-install markdownlint-cli2 --version >/dev/null 2>&1); then
-				if (cd "$project_dir" && npx --no-install markdownlint-cli2 "**/*.md" 2>/dev/null); then
-					echo "  [pass] markdownlint"
-					pass_count=$((pass_count + 1))
-				else
-					echo "  [fail] markdownlint"
-					fail_count=$((fail_count + 1))
-				fi
-			else
-				echo "  [skip] markdownlint (not installed)"
-				skip_count=$((skip_count + 1))
-			fi
-			;;
-		hadolint)
-			if command -v hadolint >/dev/null 2>&1; then
-				local hl_errors=0
-				while IFS= read -r dockerfile; do
-					[[ -f "$dockerfile" ]] || continue
-					if ! hadolint "$dockerfile" >/dev/null 2>&1; then
-						hl_errors=$((hl_errors + 1))
-					fi
-				done < <(find "$project_dir" -name "Dockerfile*" -not -path "*/.git/*" 2>/dev/null)
-				if [[ "$hl_errors" -eq 0 ]]; then
-					echo "  [pass] hadolint"
-					pass_count=$((pass_count + 1))
-				else
-					echo "  [fail] hadolint (${hl_errors} Dockerfiles with issues)"
-					fail_count=$((fail_count + 1))
-				fi
-			else
-				echo "  [skip] hadolint (not installed)"
-				skip_count=$((skip_count + 1))
-			fi
-			;;
-		*)
-			echo "  [skip] ${linter_name}"
-			skip_count=$((skip_count + 1))
-			;;
-		esac
-	done < <(echo "$discovery" | jq -r '.linters[].name')
+	# Run linters
+	local linter_output linter_counts
+	linter_output=$(_verify_linters "$discovery" "$project_dir")
+	linter_counts=$(echo "$linter_output" | grep '^counts:' | tail -1)
+	printf '%s\n' "$linter_output" | sed '/^counts:/d'
+
+	if [[ -n "$linter_counts" ]]; then
+		local lp lf ls
+		lp=$(echo "$linter_counts" | cut -d: -f2)
+		lf=$(echo "$linter_counts" | cut -d: -f3)
+		ls=$(echo "$linter_counts" | cut -d: -f4)
+		pass_count=$((pass_count + lp))
+		fail_count=$((fail_count + lf))
+		skip_count=$((skip_count + ls))
+	fi
 
 	echo ""
 	echo "  Results: ${pass_count} passed, ${fail_count} failed, ${skip_count} skipped"
