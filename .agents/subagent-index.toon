@@ -60,7 +60,7 @@ tools/vision/,Vision AI - image generation understanding and editing with local 
 tools/voice/,Voice AI - TTS/STT/S2S model catalog voice bridge Pipecat pipeline cloud voice agents and audio transcription (Whisper Buzz AssemblyAI Deepgram),voice-models|voice-ai-models|speech-to-speech|cloud-voice-agents|voice-bridge|hyprwhspr|pipecat-opencode|transcription|buzz|qwen3-tts
 tools/research/,Website research - tech stack detection and analysis providers,providers/crft-lookup
 tools/data-extraction/,Data extraction - scraping business data,outscraper
-tools/deployment/,Deployment automation - self-hosted PaaS cloud platforms and orchestration,coolify|coolify-cli|vercel|fly-io|cloudron-app-packaging|cloudron-app-packaging-skill|cloudron-app-publishing-skill|cloudron-server-ops-skill|uncloud
+tools/deployment/,Deployment automation - self-hosted PaaS cloud platforms sandbox hosting and orchestration,coolify|coolify-cli|vercel|fly-io|daytona|cloudron-app-packaging|cloudron-app-packaging-skill|cloudron-app-publishing-skill|cloudron-server-ops-skill|uncloud
 tools/git/,Git operations - GitHub/GitLab/Gitea CLIs and diff tools,github-cli|gitlab-cli|gitea-cli|github-actions|worktrunk|lumen|jujutsu|conflict-resolution
 tools/credentials/,Secret management - API keys vaults and encryption stack,api-key-setup|api-key-management|vaultwarden|gopass|psst|multi-tenant|list-keys|sops|gocryptfs|encryption-stack
 tools/security/,Security tools - terminal guards privacy filtering IP reputation scanning prompt injection defense and opsec,tirith|shannon|cdn-origin-ip|privacy-filter|ip-reputation|opsec|prompt-injection-defender
@@ -145,6 +145,7 @@ local-model-helper.sh,Local AI model management via llama.cpp (setup start stop 
 github-cli-helper.sh,GitHub operations
 coolify-helper.sh,Coolify deployment management
 fly-io-helper.sh,Fly.io deployment — deploy scale status secrets volumes logs apps machines ssh postgres
+daytona-helper.sh,Daytona sandbox lifecycle management (create start stop destroy exec snapshot)
 uncloud-helper.sh,Uncloud multi-machine container orchestration
 stagehand-helper.sh,Browser automation with Stagehand
 crawl4ai-helper.sh,Web crawling and extraction

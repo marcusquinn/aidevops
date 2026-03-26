@@ -301,7 +301,7 @@ Read subagents on-demand. Full index: `subagent-index.toon`.
 | Database/Local-first | `tools/database/pglite-local-first.md`, `services/database/postgres-drizzle-skill.md` |
 | Vector Search | `tools/database/vector-search.md`, `tools/database/vector-search/zvec.md` |
 | Local Development | `services/hosting/local-hosting.md` |
-| Hosting/Deployment | `tools/deployment/fly-io.md`, `tools/deployment/coolify.md`, `tools/deployment/vercel.md`, `tools/deployment/uncloud.md` |
+| Hosting/Deployment | `tools/deployment/fly-io.md`, `tools/deployment/coolify.md`, `tools/deployment/vercel.md`, `tools/deployment/uncloud.md`, `tools/deployment/daytona.md` |
 | Infrastructure | `tools/infrastructure/cloud-gpu.md`, `tools/containers/orbstack.md`, `tools/containers/remote-dispatch.md` |
 | Accessibility | `services/accessibility/accessibility-audit.md` |
 | OpenAPI exploration | `tools/context/openapi-search.md` |
