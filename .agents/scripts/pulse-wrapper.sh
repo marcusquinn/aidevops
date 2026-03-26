@@ -2763,6 +2763,38 @@ _complexity_scan_collect_md_violations() {
 	return 0
 }
 
+# Extract a concise, meaningful topic label from a markdown file's H1 heading.
+# For chapter-style headings such as "# Chapter 13: Heatmap Analysis", returns
+# "Heatmap Analysis" so issue titles stay semantic instead of numeric-only.
+# Arguments: $1 - aidevops_path, $2 - file_path (repo-relative)
+# Outputs: topic label via stdout
+_complexity_scan_extract_md_topic_label() {
+	local aidevops_path="$1"
+	local file_path="$2"
+	local full_path="${aidevops_path}/${file_path}"
+
+	if [[ ! -f "$full_path" ]]; then
+		return 1
+	fi
+
+	local heading
+	heading=$(awk '/^# / { print; exit }' "$full_path" 2>/dev/null)
+	if [[ -z "$heading" ]]; then
+		return 1
+	fi
+
+	local topic
+	topic=$(printf '%s' "$heading" | sed -E 's/^#[[:space:]]*//; s/^[Cc][Hh][Aa][Pp][Tt][Ee][Rr][[:space:]]*[0-9]+[[:space:]]*[:.-]?[[:space:]]*//; s/^[[:space:]]+//; s/[[:space:]]+$//')
+	if [[ -z "$topic" ]]; then
+		return 1
+	fi
+
+	# Keep issue titles concise and stable
+	topic=$(printf '%s' "$topic" | cut -c1-80)
+	printf '%s' "$topic"
+	return 0
+}
+
 # Create GitHub issues for oversized agent docs.
 # Uses tier:thinking label (opus) because doc simplification requires deep
 # reasoning to distinguish noise from institutional knowledge.
@@ -2787,6 +2819,11 @@ _complexity_scan_create_md_issues() {
 		maintainer=$(echo "$aidevops_slug" | cut -d/ -f1)
 	fi
 
+	local aidevops_path
+	aidevops_path=$(jq -r --arg slug "$aidevops_slug" \
+		'.initialized_repos[] | select(.slug == $slug) | .path' \
+		"$repos_json" 2>/dev/null | head -n 1)
+
 	while IFS='|' read -r file_path line_count; do
 		[[ -n "$file_path" ]] || continue
 
@@ -2804,10 +2841,21 @@ _complexity_scan_create_md_issues() {
 			continue
 		fi
 
+		local topic_label=""
+		if [[ -n "$aidevops_path" ]]; then
+			topic_label=$(_complexity_scan_extract_md_topic_label "$aidevops_path" "$file_path" 2>/dev/null || true)
+		fi
+
+		local issue_title="simplification: tighten agent doc ${issue_key} (${line_count} lines)"
+		if [[ -n "$topic_label" ]]; then
+			issue_title="simplification: tighten agent doc ${topic_label} (${issue_key}, ${line_count} lines)"
+		fi
+
 		local issue_body
 		issue_body="## Agent doc simplification (automated scan)
 
 **File:** \`${file_path}\`
+**Detected topic:** ${topic_label:-Unknown}
 **Current size:** ${line_count} lines (threshold: ${COMPLEXITY_MD_LINE_THRESHOLD})
 
 ### Classify before acting
@@ -2850,7 +2898,7 @@ Automated scan identified this file by size. The best simplification strategy re
 - \`declined: <reason>\` — closes this issue (include your reason after the colon)"
 
 		if gh issue create --repo "$aidevops_slug" \
-			--title "simplification: tighten agent doc ${issue_key} (${line_count} lines)" \
+			--title "$issue_title" \
 			--label "simplification-debt" --label "needs-maintainer-review" --label "tier:thinking" \
 			--assignee "$maintainer" \
 			--body "$issue_body" >/dev/null 2>&1; then
