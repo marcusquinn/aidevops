@@ -50,7 +50,26 @@ EOF
 
 load_state() {
 	[[ -f "$STATE_FILE" ]] || return 1
-	# Single-pass parse of YAML frontmatter — safe variable assignment via declare
+	# Pre-initialize all state variables with safe defaults so that set -u does
+	# not abort when the state file is incomplete (missing fields are never set
+	# by the awk parse loop, leaving variables unbound).
+	PHASE=""
+	ACTIVE=""
+	ITERATION=""
+	STARTED_AT="unknown"
+	UPDATED_AT=""
+	PR_NUMBER=""
+	MAX_TASK_ITERATIONS="$DEFAULT_MAX_TASK_ITERATIONS"
+	MAX_PREFLIGHT_ITERATIONS="$DEFAULT_MAX_PREFLIGHT_ITERATIONS"
+	MAX_PR_ITERATIONS="$DEFAULT_MAX_PR_ITERATIONS"
+	SKIP_PREFLIGHT="false"
+	SKIP_POSTFLIGHT="false"
+	SKIP_RUNTIME_TESTING="false"
+	NO_AUTO_PR="false"
+	NO_AUTO_DEPLOY="false"
+	HEADLESS="${FULL_LOOP_HEADLESS:-false}"
+	SAVED_PROMPT=""
+	# Single-pass parse of YAML frontmatter — safe variable assignment via printf -v
 	local _key _val _line
 	while IFS= read -r _line; do
 		_key="${_line%%=*}"
@@ -69,9 +88,6 @@ load_state() {
 		print toupper(k) "=" $2
 	}' "$STATE_FILE")
 	CURRENT_PHASE="${PHASE:-}"
-	STARTED_AT="${STARTED_AT:-unknown}"
-	UPDATED_AT="${UPDATED_AT:-}"
-	HEADLESS="${HEADLESS:-false}"
 	SAVED_PROMPT=$(sed -n '/^---$/,/^---$/d; p' "$STATE_FILE")
 	return 0
 }
