@@ -908,8 +908,8 @@ _check_approvals_safety_net() {
 		if [[ -n "$sa_created" && "$now_epoch" -gt 0 ]]; then
 			# Convert ISO8601 to epoch (macOS date -j -f)
 			local sa_created_epoch=0
-			if date -j -f "%Y-%m-%dT%H:%M:%SZ" "$sa_created" +%s &>/dev/null 2>&1; then
-				sa_created_epoch=$(date -j -f "%Y-%m-%dT%H:%M:%SZ" "$sa_created" +%s 2>/dev/null) || sa_created_epoch=0
+			if TZ=UTC date -j -f "%Y-%m-%dT%H:%M:%SZ" "$sa_created" +%s &>/dev/null 2>&1; then
+				sa_created_epoch=$(TZ=UTC date -j -f "%Y-%m-%dT%H:%M:%SZ" "$sa_created" +%s 2>/dev/null) || sa_created_epoch=0
 			elif date -d "$sa_created" +%s &>/dev/null 2>&1; then
 				# GNU date fallback (Linux)
 				sa_created_epoch=$(date -d "$sa_created" +%s 2>/dev/null) || sa_created_epoch=0
